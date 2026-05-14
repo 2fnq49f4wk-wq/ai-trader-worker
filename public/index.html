@@ -14,7 +14,7 @@
 * { margin: 0; padding: 0; box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
 body { background: var(--bg); color: var(--text); font-family: 'Courier New', monospace; font-size: 14px; line-height: 1.5; }
 .app { display: flex; flex-direction: column; min-height: 100vh; }
-.topbar { display: flex; justify-content: space-between; align-items: center; padding: 14px 16px; gap: 10px; border-bottom: 2px solid var(--amber); background: var(--panel); position: sticky; top: 0; z-index: 100; flex-wrap: wrap; box-shadow: 0 2px 8px rgba(255,215,0,0.1); }
+.topbar { display: flex; justify-content: space-between; align-items: center; padding: 14px 16px; gap: 10px; border-bottom: 2px solid var(--amber); background: var(--panel); position: sticky; top: 0; z-index: 100; flex-wrap: wrap; }
 .brand { font-size: 18px; color: var(--amber); font-weight: bold; letter-spacing: 2px; text-shadow: 0 0 10px rgba(255,215,0,0.3); }
 .topbar-btns { display: flex; gap: 8px; flex-wrap: wrap; }
 .main { flex: 1; padding: 14px; display: flex; flex-direction: column; gap: 14px; }
@@ -24,12 +24,19 @@ body { background: var(--bg); color: var(--text); font-family: 'Courier New', mo
 .grid-2 { display: grid; gap: 14px; grid-template-columns: 1fr; }
 @media (min-width: 768px) { .grid-2 { grid-template-columns: 1fr 1fr; } }
 
+.indices-row { display: grid; gap: 2px; background: var(--border); }
+.idx-card { background: var(--panel); padding: 12px 14px; }
+.idx-name { font-size: 11px; color: var(--amber); font-weight: bold; letter-spacing: 1px; }
+.idx-price { font-size: 17px; font-weight: 700; margin-top: 4px; }
+.idx-bottom { display: flex; justify-content: space-between; align-items: center; margin-top: 4px; gap: 8px; }
+.idx-day { font-size: 12px; font-weight: bold; }
+.idx-spark { flex: 1; height: 28px; }
+
 .summary-grid { display: grid; grid-template-columns: repeat(2, 1fr); gap: 2px; background: var(--border); }
 @media (min-width: 768px) { .summary-grid { grid-template-columns: repeat(5, 1fr); } }
 .summary-item { background: var(--panel); padding: 14px 12px; }
 .summary-label { font-size: 10px; color: var(--dim); text-transform: uppercase; font-weight: bold; letter-spacing: 1px; }
 .summary-value { font-size: 16px; font-weight: 700; margin-top: 4px; color: var(--text); word-break: break-all; }
-.summary-sub { font-size: 10px; color: var(--faint); margin-top: 2px; }
 
 .table { width: 100%; border-collapse: collapse; font-size: 12px; }
 .table th { padding: 10px 12px; text-align: left; color: var(--dim); font-size: 10px; letter-spacing: 1px; border-bottom: 1px solid var(--border); background: var(--elev); }
@@ -61,6 +68,7 @@ button.btn.loading { opacity: 0.5; pointer-events: none; }
 .log-line { padding: 6px 8px; border-left: 3px solid var(--faint); margin-bottom: 4px; color: var(--dim); word-break: break-all; line-height: 1.5; background: rgba(255,255,255,0.02); }
 .log-line.INFO { border-color: var(--blue); color: var(--blue); }
 .log-line.TRADE { border-color: var(--amber); color: var(--amber); font-weight: bold; }
+.log-line.TUNE { border-color: var(--green); color: var(--green); font-weight: bold; }
 .log-line.ERROR { border-color: var(--red); color: var(--red); }
 .log-line.WARN { border-color: var(--orange); color: var(--orange); }
 .log-line.SKIP { border-color: var(--faint); color: var(--faint); }
@@ -91,8 +99,13 @@ button.btn.loading { opacity: 0.5; pointer-events: none; }
 .wl-price { font-size: 15px; font-weight: bold; margin-top: 2px; }
 .wl-day { font-size: 10px; margin-top: 2px; }
 .wl-meta { font-size: 9px; color: var(--faint); margin-top: 2px; }
-.hint-box { padding: 10px 14px; background: rgba(255,215,0,0.08); border-left: 3px solid var(--amber); color: var(--dim); font-size: 11px; line-height: 1.6; }
-.hint-box b { color: var(--amber); }
+.tune-banner { padding: 10px 14px; background: rgba(63,185,80,0.08); border-left: 3px solid var(--green); color: var(--green); font-size: 11px; line-height: 1.6; }
+.tune-banner b { color: var(--amber); }
+.cfg-display { display: flex; gap: 14px; font-size: 11px; color: var(--dim); flex-wrap: wrap; }
+.cfg-display b { color: var(--amber); }
+.checkbox-row { display: flex; align-items: center; gap: 10px; margin-bottom: 14px; }
+.checkbox-row input[type="checkbox"] { width: 20px; height: 20px; }
+.checkbox-row label { font-size: 13px; color: var(--text); font-weight: bold; }
 </style>
 </head>
 <body>
@@ -111,12 +124,33 @@ button.btn.loading { opacity: 0.5; pointer-events: none; }
     <span id="engineText">엔진 상태 확인 중...</span>
   </div>
 
+  <div id="tuneBanner" class="tune-banner" style="display:none;">
+    <b>🤖 AUTO-TUNE:</b> <span id="tuneText"></span>
+  </div>
+
   <div class="main">
 
-    <!-- 1. 자산 요약 (US/KR 통합) -->
     <div class="grid-2">
       <div class="panel">
-        <div class="panel-header"><div class="panel-title">[US] PORTFOLIO</div></div>
+        <div class="panel-header"><div class="panel-title">[US] INDICES</div></div>
+        <div class="indices-row" id="indicesUS" style="grid-template-columns: 1fr 1fr 1fr;">
+          <div class="empty">대기 중...</div>
+        </div>
+      </div>
+      <div class="panel">
+        <div class="panel-header"><div class="panel-title">[KR] INDICES</div></div>
+        <div class="indices-row" id="indicesKR" style="grid-template-columns: 1fr 1fr;">
+          <div class="empty">대기 중...</div>
+        </div>
+      </div>
+    </div>
+
+    <div class="grid-2">
+      <div class="panel">
+        <div class="panel-header">
+          <div class="panel-title">[US] PORTFOLIO</div>
+          <div class="cfg-display" id="cfgDisplayUS"></div>
+        </div>
         <div class="summary-grid">
           <div class="summary-item"><div class="summary-label">CASH</div><div class="summary-value" id="cashUS">-</div></div>
           <div class="summary-item"><div class="summary-label">INVESTED</div><div class="summary-value" id="investedUS">-</div></div>
@@ -137,44 +171,38 @@ button.btn.loading { opacity: 0.5; pointer-events: none; }
       </div>
     </div>
 
-    <!-- 2. 보유 포지션 (위로 올림) -->
     <div class="panel">
       <div class="panel-header"><div class="panel-title">CURRENT POSITIONS</div></div>
       <div id="positionsBox"><div class="empty">No positions yet</div></div>
     </div>
 
-    <!-- 3. WATCHLIST -->
     <div class="grid-2">
       <div class="panel">
         <div class="panel-header"><div class="panel-title">[US] WATCHLIST</div></div>
-        <div class="watchlist" id="watchlistUS"><div class="empty">대기 중... RUN NOW를 한번 누르세요</div></div>
+        <div class="watchlist" id="watchlistUS"><div class="empty">대기 중...</div></div>
       </div>
       <div class="panel">
         <div class="panel-header"><div class="panel-title">[KR] WATCHLIST</div></div>
-        <div class="watchlist" id="watchlistKR"><div class="empty">대기 중... RUN NOW를 한번 누르세요</div></div>
+        <div class="watchlist" id="watchlistKR"><div class="empty">대기 중...</div></div>
       </div>
     </div>
 
-    <!-- 4. 로그 -->
     <div class="panel">
       <div class="panel-header">
         <div class="panel-title">ENGINE LOGS</div>
         <div class="log-filter">
           <button data-filter="ALL" class="active">ALL</button>
           <button data-filter="TRADE">TRADE</button>
+          <button data-filter="TUNE">TUNE</button>
           <button data-filter="ERROR">ERROR</button>
           <button data-filter="NOBUY">NOBUY</button>
           <button data-filter="SKIP">SKIP</button>
           <button data-filter="INFO">INFO</button>
         </div>
       </div>
-      <div id="hintBox" class="hint-box" style="display:none;">
-        <b>매수가 안 되는 이유:</b> <span id="hintText"></span>
-      </div>
       <div class="log-box" id="logsBox"><div class="empty">No logs yet</div></div>
     </div>
 
-    <!-- 5. 거래 내역 -->
     <div class="panel">
       <div class="panel-header"><div class="panel-title">RECENT TRADES</div></div>
       <div id="tradesBox"><div class="empty">No trades yet</div></div>
@@ -185,6 +213,11 @@ button.btn.loading { opacity: 0.5; pointer-events: none; }
 <div class="modal" id="settingsModal">
   <div class="modal-content">
     <h2>⚙ SETTINGS</h2>
+
+    <div class="checkbox-row">
+      <input type="checkbox" id="cfgAutoTune">
+      <label for="cfgAutoTune">AUTO-TUNE 활성화 (엔진이 스스로 파라미터 조정)</label>
+    </div>
 
     <div class="section-title">TICKERS</div>
     <div class="field">
@@ -197,7 +230,7 @@ button.btn.loading { opacity: 0.5; pointer-events: none; }
     </div>
 
     <div class="section-divider"></div>
-    <div class="section-title">STRATEGY (조건 완화하려면 RSI Buy를 높이세요. 예: 45→55)</div>
+    <div class="section-title">STRATEGY</div>
     <div class="field-row">
       <div class="field"><label>RSI Buy</label><input type="number" id="cfgRsiBuy" min="1" max="99"></div>
       <div class="field"><label>RSI Sell</label><input type="number" id="cfgRsiSell" min="1" max="99"></div>
@@ -209,13 +242,13 @@ button.btn.loading { opacity: 0.5; pointer-events: none; }
       <div class="field"><label>PosSize %</label><input type="number" id="cfgPosSize" min="1" max="100"></div>
     </div>
     <div class="field-row">
-      <div class="field"><label>Day Buy- %</label><input type="number" id="cfgDayBuyPct" min="0.5" max="20" step="0.5"></div>
+      <div class="field"><label>Day Buy- %</label><input type="number" id="cfgDayBuyPct" min="0.1" max="20" step="0.1"></div>
       <div class="field"><label>Day Sell+ %</label><input type="number" id="cfgDaySellPct" min="0.5" max="20" step="0.5"></div>
       <div class="field"><label>MA Period</label><input type="number" id="cfgMaPeriod" min="2" max="120"></div>
     </div>
 
     <div class="section-divider"></div>
-    <div class="section-title">ATR (변동성 손절)</div>
+    <div class="section-title">ATR</div>
     <div class="field-row">
       <div class="field"><label>ATR Period</label><input type="number" id="cfgAtrPeriod" min="2" max="60"></div>
       <div class="field"><label>ATR Stop x</label><input type="number" id="cfgAtrStopMult" min="0.5" max="6" step="0.1"></div>
@@ -248,6 +281,14 @@ button.btn.loading { opacity: 0.5; pointer-events: none; }
   var logFilter = 'ALL';
   var currentCfg = null;
   var lastQuotes = {};
+
+  var INDEX_NAMES = {
+    '^IXIC': 'NASDAQ',
+    '^DJI': 'DOW JONES',
+    '^GSPC': 'S&P 500',
+    '^KS11': 'KOSPI',
+    '^KQ11': 'KOSDAQ'
+  };
 
   function $(id) { return document.getElementById(id); }
 
@@ -291,6 +332,23 @@ button.btn.loading { opacity: 0.5; pointer-events: none; }
     });
   }
 
+  function makeSparkline(history, color) {
+    if (!history || history.length < 2) return '';
+    var w = 80, h = 28, pad = 2;
+    var min = Math.min.apply(null, history);
+    var max = Math.max.apply(null, history);
+    var range = max - min || 1;
+    var step = (w - pad*2) / (history.length - 1);
+    var pts = history.map(function(v, i){
+      var x = pad + i * step;
+      var y = h - pad - ((v - min) / range) * (h - pad*2);
+      return x.toFixed(1) + ',' + y.toFixed(1);
+    }).join(' ');
+    return '<svg class="idx-spark" viewBox="0 0 '+w+' '+h+'" preserveAspectRatio="none">'+
+      '<polyline fill="none" stroke="'+color+'" stroke-width="1.5" points="'+pts+'"/>'+
+      '</svg>';
+  }
+
   function renderEngine(lastTick) {
     var dot = $('engineDot'), txt = $('engineText');
     if (!lastTick) { dot.className='dot unknown'; txt.textContent='엔진 상태 미확인 (RUN NOW를 한번 누르세요)'; return; }
@@ -299,7 +357,28 @@ button.btn.loading { opacity: 0.5; pointer-events: none; }
     else { dot.className='dot stale'; txt.textContent='엔진 지연 · 마지막 실행: '+fmtAgo(lastTick); }
   }
 
-  // 시장별 자산 요약 계산
+  function renderIndices(indices) {
+    var boxUS = $('indicesUS'), boxKR = $('indicesKR');
+    function card(idx) {
+      var name = INDEX_NAMES[idx.symbol] || idx.symbol;
+      var dayClass = idx.dayPct > 0 ? 'pos' : (idx.dayPct < 0 ? 'neg' : '');
+      var color = idx.dayPct >= 0 ? '#3fb950' : '#f85149';
+      var sign = idx.dayPct >= 0 ? '+' : '';
+      return '<div class="idx-card">'+
+        '<div class="idx-name">'+escapeHtml(name)+'</div>'+
+        '<div class="idx-price">'+fmtNum(idx.price)+'</div>'+
+        '<div class="idx-bottom">'+
+          '<span class="idx-day '+dayClass+'">'+sign+fmtNum(idx.dayPct,2)+'%</span>'+
+          makeSparkline(idx.history, color)+
+        '</div>'+
+        '</div>';
+    }
+    var us = indices.filter(function(i){return i.region==='us';});
+    var kr = indices.filter(function(i){return i.region==='kr';});
+    boxUS.innerHTML = us.length ? us.map(card).join('') : '<div class="empty">대기 중...</div>';
+    boxKR.innerHTML = kr.length ? kr.map(card).join('') : '<div class="empty">대기 중...</div>';
+  }
+
   function calcSummary(market, cash, positions) {
     var symbol = market === 'us' ? '$' : '₩';
     var invested = 0, marketVal = 0;
@@ -313,10 +392,7 @@ button.btn.loading { opacity: 0.5; pointer-events: none; }
     var total = cash + marketVal;
     var pnl = marketVal - invested;
     var pnlPct = invested > 0 ? (pnl / invested * 100) : 0;
-    return {
-      symbol: symbol, cash: cash, invested: invested,
-      marketVal: marketVal, total: total, pnl: pnl, pnlPct: pnlPct
-    };
+    return { symbol: symbol, cash: cash, invested: invested, marketVal: marketVal, total: total, pnl: pnl, pnlPct: pnlPct };
   }
 
   function renderSummary(market, s) {
@@ -354,7 +430,6 @@ button.btn.loading { opacity: 0.5; pointer-events: none; }
   function renderWatchlist(quotes) {
     lastQuotes = {};
     quotes.forEach(function(q){ lastQuotes[q.symbol] = q; });
-
     var boxUS = $('watchlistUS'), boxKR = $('watchlistKR');
     var us = quotes.filter(function(q){return q.market==='us';});
     var kr = quotes.filter(function(q){return q.market==='kr';});
@@ -399,60 +474,42 @@ button.btn.loading { opacity: 0.5; pointer-events: none; }
     }).join('');
   }
 
-  function analyzeNoBuyReason(logs, cfg) {
-    if (!logs || !cfg) return null;
-    var nobuy = logs.filter(function(l){return l.level==='NOBUY';}).slice(0, 30);
-    if (nobuy.length < 5) return null;
-    var rsiHigh = 0, dayLow = 0;
-    nobuy.forEach(function(l){
-      var rsiMatch = l.message.match(/RSI=([\d.]+)/);
-      var dayMatch = l.message.match(/day=(-?[\d.]+)/);
-      if (rsiMatch && parseFloat(rsiMatch[1]) >= cfg.rsiBuy) rsiHigh++;
-      if (dayMatch && parseFloat(dayMatch[1]) > -cfg.dayBuyPct) dayLow++;
-    });
-    var msgs = [];
-    if (rsiHigh > nobuy.length * 0.7) {
-      msgs.push('대부분 RSI가 매수선('+cfg.rsiBuy+')보다 높음. SETTINGS에서 RSI Buy를 '+(cfg.rsiBuy+10)+' 정도로 올려보세요.');
+  function renderCfgDisplay(cfg) {
+    if (!cfg) return;
+    var el = $('cfgDisplayUS');
+    el.innerHTML = 'RSI Buy/<b>'+cfg.rsiBuy+'</b>/Sell/<b>'+cfg.rsiSell+'</b> · Stop/<b>'+cfg.stopLoss+'%</b> · TP/<b>'+cfg.takeProfit+'%</b> · Size/<b>'+cfg.posSize+'%</b>';
+
+    var lastTune = allLogs.filter(function(l){return l.level==='TUNE';})[0];
+    var banner = $('tuneBanner'), tuneText = $('tuneText');
+    if (lastTune && cfg.autoTune) {
+      tuneText.textContent = lastTune.message + ' (' + fmtAgo(lastTune.ts) + ')';
+      banner.style.display = 'block';
+    } else if (cfg.autoTune) {
+      tuneText.textContent = '활성화됨 · 거래/조건 데이터 수집 중 (충분한 데이터 모이면 자동 조정 시작)';
+      banner.style.display = 'block';
+    } else {
+      banner.style.display = 'none';
     }
-    if (dayLow > nobuy.length * 0.7) {
-      msgs.push('당일 하락폭이 매수 기준('+cfg.dayBuyPct+'%)에 못 미침. Day Buy- %를 1로 낮춰보세요.');
-    }
-    return msgs.length ? msgs.join(' · ') : '시장 조건이 매수 신호와 맞지 않음. 기다리거나 설정을 완화하세요.';
   }
 
   function refreshAll() {
-    Promise.all([api('/api/state'), api('/api/trades?limit=50'), api('/api/logs?limit=200'), api('/api/watchlist')])
+    Promise.all([api('/api/state'), api('/api/trades?limit=50'), api('/api/logs?limit=200'), api('/api/watchlist'), api('/api/indices')])
       .then(function(r){
-        var state = r[0], trades = r[1], logs = r[2]||[], quotes = r[3]||[];
+        var state = r[0], trades = r[1], logs = r[2]||[], quotes = r[3]||[], indices = r[4]||[];
         currentCfg = state.cfg;
-
+        renderIndices(indices);
         renderWatchlist(quotes);
-
         var posUS = (state.positions && state.positions.us) || {};
         var posKR = (state.positions && state.positions.kr) || {};
         var cash = state.cash || {us:0,kr:0};
-
-        var sUS = calcSummary('us', cash.us, posUS);
-        var sKR = calcSummary('kr', cash.kr, posKR);
-        renderSummary('us', sUS);
-        renderSummary('kr', sKR);
-
+        renderSummary('us', calcSummary('us', cash.us, posUS));
+        renderSummary('kr', calcSummary('kr', cash.kr, posKR));
         renderPositions(posUS, posKR);
         renderEngine(state.lastTick);
         renderTrades(trades);
         allLogs = logs;
         renderLogs();
-
-        // 매수 안 되는 이유 진단
-        var reason = analyzeNoBuyReason(logs, state.cfg);
-        var hintBox = $('hintBox'), hintText = $('hintText');
-        var hasPositions = Object.keys(posUS).length + Object.keys(posKR).length > 0;
-        if (reason && !hasPositions) {
-          hintText.textContent = reason;
-          hintBox.style.display = 'block';
-        } else {
-          hintBox.style.display = 'none';
-        }
+        renderCfgDisplay(state.cfg);
       })
       ['catch'](function(e){ toast('로드 실패: '+e.message); });
   }
@@ -469,6 +526,7 @@ button.btn.loading { opacity: 0.5; pointer-events: none; }
 
   function openSettings() {
     if (!currentCfg) { toast('설정 로드 중...'); return; }
+    $('cfgAutoTune').checked = !!currentCfg.autoTune;
     $('cfgUS').value = (currentCfg.usTickers||[]).join(', ');
     $('cfgKR').value = (currentCfg.krTickers||[]).join(', ');
     $('cfgRsiBuy').value = currentCfg.rsiBuy;
@@ -493,6 +551,7 @@ button.btn.loading { opacity: 0.5; pointer-events: none; }
   function saveSettings() {
     function parseTickers(s) { return s.split(/[,\s]+/).map(function(x){return x.trim();}).filter(Boolean); }
     var body = {
+      autoTune: $('cfgAutoTune').checked,
       usTickers: parseTickers($('cfgUS').value),
       krTickers: parseTickers($('cfgKR').value),
       rsiBuy: parseFloat($('cfgRsiBuy').value),
