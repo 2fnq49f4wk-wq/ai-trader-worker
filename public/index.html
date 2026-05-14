@@ -35,6 +35,7 @@ button.btn { padding: 9px 13px; background: var(--panel); border: 1px solid var(
 button.btn:hover { background: var(--elev); }
 button.btn.primary { background: var(--amber); color: var(--bg); border-color: var(--amber); font-weight: 700; }
 button.btn.refresh { color: var(--blue); border-color: var(--blue); }
+button.btn.danger { color: var(--red); border-color: var(--red); }
 button.btn:active { opacity: 0.6; }
 button.btn.loading { opacity: 0.5; pointer-events: none; }
 .pos { color: var(--green); font-weight: bold; }
@@ -52,7 +53,7 @@ button.btn.loading { opacity: 0.5; pointer-events: none; }
 .market-badge { display: inline-block; padding: 2px 6px; font-size: 9px; border-radius: 3px; background: var(--elev); border: 1px solid var(--border); color: var(--dim); margin-right: 6px; letter-spacing: 1px; }
 .trade-buy { color: var(--green); font-weight: bold; }
 .trade-sell { color: var(--red); font-weight: bold; }
-.log-box { max-height: 420px; overflow-y: auto; background: #000; padding: 10px; font-size: 11px; }
+.log-box { max-height: 360px; overflow-y: auto; background: #000; padding: 10px; font-size: 11px; }
 .log-line { padding: 6px 8px; border-left: 3px solid var(--faint); margin-bottom: 4px; color: var(--dim); word-break: break-all; line-height: 1.5; background: rgba(255,255,255,0.02); }
 .log-line.INFO { border-color: var(--blue); color: var(--blue); }
 .log-line.TRADE { border-color: var(--amber); color: var(--amber); font-weight: bold; }
@@ -60,13 +61,32 @@ button.btn.loading { opacity: 0.5; pointer-events: none; }
 .log-line.WARN { border-color: var(--orange); color: var(--orange); }
 .log-line.SKIP { border-color: var(--faint); color: var(--faint); }
 .log-line.NOBUY { border-color: var(--purple); color: var(--purple); }
-.log-line.HOLD { border-color: var(--dim); color: var(--dim); }
 .log-ts { color: var(--faint); margin-right: 6px; }
 .log-level { display: inline-block; min-width: 50px; font-weight: bold; margin-right: 6px; }
 .log-symbol { color: var(--text); font-weight: bold; margin-right: 6px; }
 .log-filter { display: flex; gap: 4px; flex-wrap: wrap; }
 .log-filter button { padding: 4px 8px; font-size: 9px; background: var(--panel); border: 1px solid var(--border); color: var(--dim); border-radius: 3px; cursor: pointer; font-family: inherit; letter-spacing: 1px; }
 .log-filter button.active { background: var(--amber); color: var(--bg); border-color: var(--amber); font-weight: bold; }
+.modal { display: none; position: fixed; inset: 0; background: rgba(0,0,0,0.85); z-index: 9000; padding: 20px; overflow-y: auto; }
+.modal.show { display: block; }
+.modal-content { max-width: 700px; margin: 0 auto; background: var(--panel); border: 1px solid var(--amber); border-radius: 6px; padding: 24px; }
+.modal-content h2 { color: var(--amber); margin-bottom: 18px; font-size: 18px; letter-spacing: 1.5px; }
+.field { margin-bottom: 14px; }
+.field label { display: block; font-size: 11px; color: var(--dim); margin-bottom: 4px; font-weight: bold; letter-spacing: 0.5px; }
+.field input, .field textarea { width: 100%; padding: 9px 11px; background: var(--bg); border: 1px solid var(--border); color: var(--text); font-family: inherit; font-size: 13px; border-radius: 4px; outline: none; }
+.field input:focus, .field textarea:focus { border-color: var(--amber); }
+.field textarea { min-height: 60px; resize: vertical; }
+.field-row { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 8px; }
+.section-divider { border-top: 1px solid var(--border); margin: 18px 0 14px; padding-top: 4px; }
+.section-title { font-size: 12px; color: var(--amber); letter-spacing: 1.5px; font-weight: bold; margin-bottom: 12px; }
+.modal-actions { display: flex; gap: 8px; margin-top: 18px; }
+.modal-actions button { flex: 1; padding: 11px; }
+.watchlist { display: grid; grid-template-columns: repeat(auto-fill, minmax(140px, 1fr)); gap: 6px; padding: 10px; }
+.wl-card { background: var(--elev); border: 1px solid var(--border); border-radius: 4px; padding: 8px 10px; }
+.wl-sym { font-size: 11px; color: var(--amber); font-weight: bold; letter-spacing: 0.5px; }
+.wl-price { font-size: 15px; font-weight: bold; margin-top: 2px; }
+.wl-day { font-size: 10px; margin-top: 2px; }
+.wl-meta { font-size: 9px; color: var(--faint); margin-top: 2px; }
 </style>
 </head>
 <body>
@@ -75,6 +95,7 @@ button.btn.loading { opacity: 0.5; pointer-events: none; }
     <div class="brand">AI TRADER v5</div>
     <div class="topbar-btns">
       <button type="button" class="btn refresh" id="btnRefresh">REFRESH</button>
+      <button type="button" class="btn" id="btnSettings">SETTINGS</button>
       <button type="button" class="btn primary" id="btnTick">RUN NOW</button>
     </div>
   </div>
@@ -87,24 +108,28 @@ button.btn.loading { opacity: 0.5; pointer-events: none; }
   <div class="main">
     <div class="grid-2">
       <div class="panel">
-        <div class="panel-header"><div class="panel-title">[US] CASH &amp; PnL</div></div>
+        <div class="panel-header"><div class="panel-title">[US] CASH</div></div>
         <div class="stat-grid">
           <div class="stat-item"><div class="stat-label">CASH (USD)</div><div class="stat-value" id="cashUS">-</div></div>
           <div class="stat-item"><div class="stat-label">POSITIONS</div><div class="stat-value" id="posCountUS">-</div></div>
         </div>
+        <div class="panel-header"><div class="panel-title">[US] WATCHLIST</div></div>
+        <div class="watchlist" id="watchlistUS"><div class="empty">대기 중...</div></div>
       </div>
       <div class="panel">
-        <div class="panel-header"><div class="panel-title">[KR] CASH &amp; PnL</div></div>
+        <div class="panel-header"><div class="panel-title">[KR] CASH</div></div>
         <div class="stat-grid">
           <div class="stat-item"><div class="stat-label">CASH (KRW)</div><div class="stat-value" id="cashKR">-</div></div>
           <div class="stat-item"><div class="stat-label">POSITIONS</div><div class="stat-value" id="posCountKR">-</div></div>
         </div>
+        <div class="panel-header"><div class="panel-title">[KR] WATCHLIST</div></div>
+        <div class="watchlist" id="watchlistKR"><div class="empty">대기 중...</div></div>
       </div>
     </div>
 
     <div class="panel">
       <div class="panel-header">
-        <div class="panel-title">ENGINE LOGS (진단)</div>
+        <div class="panel-title">ENGINE LOGS</div>
         <div class="log-filter">
           <button data-filter="ALL" class="active">ALL</button>
           <button data-filter="TRADE">TRADE</button>
@@ -114,23 +139,73 @@ button.btn.loading { opacity: 0.5; pointer-events: none; }
           <button data-filter="INFO">INFO</button>
         </div>
       </div>
-      <div class="log-box" id="logsBox">
-        <div class="empty">No logs yet. Click RUN NOW to start.</div>
-      </div>
+      <div class="log-box" id="logsBox"><div class="empty">No logs yet</div></div>
     </div>
 
     <div class="panel">
       <div class="panel-header"><div class="panel-title">CURRENT POSITIONS</div></div>
-      <div id="positionsBox">
-        <div class="empty">No positions yet</div>
-      </div>
+      <div id="positionsBox"><div class="empty">No positions yet</div></div>
     </div>
 
     <div class="panel">
       <div class="panel-header"><div class="panel-title">RECENT TRADES</div></div>
-      <div id="tradesBox">
-        <div class="empty">No trades yet</div>
-      </div>
+      <div id="tradesBox"><div class="empty">No trades yet</div></div>
+    </div>
+  </div>
+</div>
+
+<div class="modal" id="settingsModal">
+  <div class="modal-content">
+    <h2>⚙ SETTINGS</h2>
+
+    <div class="section-title">TICKERS</div>
+    <div class="field">
+      <label>US TICKERS (콤마 구분)</label>
+      <textarea id="cfgUS"></textarea>
+    </div>
+    <div class="field">
+      <label>KR TICKERS (예: 005930.KS)</label>
+      <textarea id="cfgKR"></textarea>
+    </div>
+
+    <div class="section-divider"></div>
+    <div class="section-title">STRATEGY (RSI / 가격)</div>
+    <div class="field-row">
+      <div class="field"><label>RSI Buy</label><input type="number" id="cfgRsiBuy" min="1" max="99"></div>
+      <div class="field"><label>RSI Sell</label><input type="number" id="cfgRsiSell" min="1" max="99"></div>
+      <div class="field"><label>RSI Period</label><input type="number" id="cfgRsiPeriod" min="2" max="50"></div>
+    </div>
+    <div class="field-row">
+      <div class="field"><label>StopLoss %</label><input type="number" id="cfgStopLoss" min="0.5" max="50" step="0.5"></div>
+      <div class="field"><label>TakeProfit %</label><input type="number" id="cfgTakeProfit" min="0.5" max="50" step="0.5"></div>
+      <div class="field"><label>PosSize %</label><input type="number" id="cfgPosSize" min="1" max="100"></div>
+    </div>
+    <div class="field-row">
+      <div class="field"><label>Day Buy- %</label><input type="number" id="cfgDayBuyPct" min="0.5" max="20" step="0.5"></div>
+      <div class="field"><label>Day Sell+ %</label><input type="number" id="cfgDaySellPct" min="0.5" max="20" step="0.5"></div>
+      <div class="field"><label>MA Period</label><input type="number" id="cfgMaPeriod" min="2" max="120"></div>
+    </div>
+
+    <div class="section-divider"></div>
+    <div class="section-title">ATR (변동성 손절)</div>
+    <div class="field-row">
+      <div class="field"><label>ATR Period</label><input type="number" id="cfgAtrPeriod" min="2" max="60"></div>
+      <div class="field"><label>ATR Stop x</label><input type="number" id="cfgAtrStopMult" min="0.5" max="6" step="0.1"></div>
+      <div class="field"><label>Trail x</label><input type="number" id="cfgTrailMult" min="0.5" max="8" step="0.1"></div>
+    </div>
+
+    <div class="section-divider"></div>
+    <div class="section-title">FEES</div>
+    <div class="field-row">
+      <div class="field"><label>US Fee</label><input type="number" id="cfgFeeUS" min="0" max="0.05" step="0.0001"></div>
+      <div class="field"><label>KR Fee</label><input type="number" id="cfgFeeKR" min="0" max="0.05" step="0.0001"></div>
+      <div class="field"></div>
+    </div>
+
+    <div class="modal-actions">
+      <button type="button" class="btn danger" id="btnReset">RESET ALL DATA</button>
+      <button type="button" class="btn" id="btnCancelSettings">CANCEL</button>
+      <button type="button" class="btn primary" id="btnSaveSettings">SAVE</button>
     </div>
   </div>
 </div>
@@ -143,28 +218,24 @@ button.btn.loading { opacity: 0.5; pointer-events: none; }
   var timer = null;
   var allLogs = [];
   var logFilter = 'ALL';
+  var currentCfg = null;
 
   function $(id) { return document.getElementById(id); }
 
-  function fmtNum(n) {
+  function fmtNum(n, dec) {
     if (typeof n !== 'number' || isNaN(n)) return '-';
-    return n.toLocaleString(undefined, { maximumFractionDigits: 2 });
+    return n.toLocaleString(undefined, { maximumFractionDigits: dec != null ? dec : 2 });
   }
-
   function fmtTime(ts) {
     if (!ts) return '-';
-    var d = new Date(ts);
-    var p = function (n) { return n < 10 ? '0' + n : n; };
-    return p(d.getHours()) + ':' + p(d.getMinutes()) + ':' + p(d.getSeconds());
+    var d = new Date(ts), p = function(n){return n<10?'0'+n:n;};
+    return p(d.getHours())+':'+p(d.getMinutes())+':'+p(d.getSeconds());
   }
-
   function fmtFullTime(ts) {
     if (!ts) return '-';
-    var d = new Date(ts);
-    var p = function (n) { return n < 10 ? '0' + n : n; };
-    return d.getFullYear() + '-' + p(d.getMonth() + 1) + '-' + p(d.getDate()) + ' ' + p(d.getHours()) + ':' + p(d.getMinutes()) + ':' + p(d.getSeconds());
+    var d = new Date(ts), p = function(n){return n<10?'0'+n:n;};
+    return d.getFullYear()+'-'+p(d.getMonth()+1)+'-'+p(d.getDate())+' '+p(d.getHours())+':'+p(d.getMinutes())+':'+p(d.getSeconds());
   }
-
   function fmtAgo(ts) {
     if (!ts) return '없음';
     var sec = Math.floor((Date.now() - ts) / 1000);
@@ -172,148 +243,190 @@ button.btn.loading { opacity: 0.5; pointer-events: none; }
     if (sec < 3600) return Math.floor(sec / 60) + '분 전';
     return Math.floor(sec / 3600) + '시간 전';
   }
-
   function escapeHtml(s) {
-    return String(s).replace(/[&<>"']/g, function (c) {
-      return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c];
+    return String(s).replace(/[&<>"']/g, function(c){
+      return {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c];
     });
   }
-
   function toast(msg) {
     var t = $('toast');
     t.textContent = msg;
     t.classList.add('show');
-    setTimeout(function () { t.classList.remove('show'); }, 2500);
+    setTimeout(function(){ t.classList.remove('show'); }, 2500);
   }
-
   function api(path, opts) {
     opts = opts || {};
-    return fetch(path, opts).then(function (r) {
-      if (!r.ok) throw new Error('HTTP ' + r.status);
+    return fetch(path, opts).then(function(r){
+      if (!r.ok) throw new Error('HTTP '+r.status);
       return r.json();
     });
   }
 
   function renderEngine(lastTick) {
     var dot = $('engineDot'), txt = $('engineText');
-    if (!lastTick) {
-      dot.className = 'dot unknown';
-      txt.textContent = '엔진 상태 미확인 (아직 한 번도 실행 안 됨)';
-      return;
-    }
+    if (!lastTick) { dot.className='dot unknown'; txt.textContent='엔진 상태 미확인 (아직 한 번도 실행 안 됨)'; return; }
     var age = Date.now() - lastTick;
-    if (age < 90 * 1000) {
-      dot.className = 'dot alive';
-      txt.textContent = '엔진 정상 작동 · 마지막 실행: ' + fmtAgo(lastTick);
-    } else {
-      dot.className = 'dot stale';
-      txt.textContent = '엔진 지연 의심 · 마지막 실행: ' + fmtAgo(lastTick);
-    }
+    if (age < 90*1000) { dot.className='dot alive'; txt.textContent='엔진 정상 작동 · 마지막 실행: '+fmtAgo(lastTick); }
+    else { dot.className='dot stale'; txt.textContent='엔진 지연 의심 · 마지막 실행: '+fmtAgo(lastTick); }
   }
 
   function renderState(data) {
-    var cash = data.cash || { us: 0, kr: 0 };
+    var cash = data.cash || {us:0,kr:0};
     $('cashUS').textContent = '$' + fmtNum(cash.us);
     $('cashKR').textContent = '₩' + fmtNum(cash.kr);
-
-    var posUS = data.positions && data.positions.us ? data.positions.us : {};
-    var posKR = data.positions && data.positions.kr ? data.positions.kr : {};
-    var usKeys = Object.keys(posUS), krKeys = Object.keys(posKR);
-    $('posCountUS').textContent = usKeys.length;
-    $('posCountKR').textContent = krKeys.length;
+    var posUS = (data.positions && data.positions.us) || {};
+    var posKR = (data.positions && data.positions.kr) || {};
+    $('posCountUS').textContent = Object.keys(posUS).length;
+    $('posCountKR').textContent = Object.keys(posKR).length;
 
     var box = $('positionsBox');
     var all = [];
-    usKeys.forEach(function (s) { all.push({ market: 'US', symbol: s, p: posUS[s] }); });
-    krKeys.forEach(function (s) { all.push({ market: 'KR', symbol: s, p: posKR[s] }); });
-
-    if (all.length === 0) {
-      box.innerHTML = '<div class="empty">No positions yet</div>';
-      return;
-    }
+    Object.keys(posUS).forEach(function(s){ all.push({market:'US',symbol:s,p:posUS[s]}); });
+    Object.keys(posKR).forEach(function(s){ all.push({market:'KR',symbol:s,p:posKR[s]}); });
+    if (all.length === 0) { box.innerHTML='<div class="empty">No positions yet</div>'; return; }
     var html = '<table class="table"><thead><tr><th>MARKET</th><th>SYMBOL</th><th class="right">QTY</th><th class="right">AVG</th><th class="right">OPENED</th></tr></thead><tbody>';
-    all.forEach(function (row) {
-      html += '<tr><td><span class="market-badge">' + row.market + '</span></td><td><b>' + escapeHtml(row.symbol) + '</b></td><td class="right">' + fmtNum(row.p.qty) + '</td><td class="right">' + fmtNum(row.p.avg) + '</td><td class="right">' + fmtAgo(row.p.opened_ts) + '</td></tr>';
+    all.forEach(function(row){
+      html += '<tr><td><span class="market-badge">'+row.market+'</span></td><td><b>'+escapeHtml(row.symbol)+'</b></td><td class="right">'+fmtNum(row.p.qty)+'</td><td class="right">'+fmtNum(row.p.avg)+'</td><td class="right">'+fmtAgo(row.p.opened_ts)+'</td></tr>';
     });
-    html += '</tbody></table>';
-    box.innerHTML = html;
+    box.innerHTML = html + '</tbody></table>';
+  }
+
+  function renderWatchlist(quotes) {
+    var boxUS = $('watchlistUS'), boxKR = $('watchlistKR');
+    var us = quotes.filter(function(q){return q.market==='us';});
+    var kr = quotes.filter(function(q){return q.market==='kr';});
+    function card(q) {
+      var dayClass = q.dayPct > 0 ? 'pos' : (q.dayPct < 0 ? 'neg' : '');
+      var sign = q.dayPct >= 0 ? '+' : '';
+      return '<div class="wl-card">'+
+        '<div class="wl-sym">'+escapeHtml(q.symbol)+'</div>'+
+        '<div class="wl-price">'+fmtNum(q.price)+'</div>'+
+        '<div class="wl-day '+dayClass+'">'+sign+fmtNum(q.dayPct,2)+'%</div>'+
+        '<div class="wl-meta">RSI '+(q.rsi!=null?q.rsi.toFixed(1):'-')+' · '+fmtAgo(q.ts)+'</div>'+
+        '</div>';
+    }
+    boxUS.innerHTML = us.length ? us.map(card).join('') : '<div class="empty">대기 중...</div>';
+    boxKR.innerHTML = kr.length ? kr.map(card).join('') : '<div class="empty">대기 중...</div>';
   }
 
   function renderTrades(trades) {
     var box = $('tradesBox');
-    if (!trades || trades.length === 0) {
-      box.innerHTML = '<div class="empty">No trades yet</div>';
-      return;
-    }
+    if (!trades || trades.length === 0) { box.innerHTML='<div class="empty">No trades yet</div>'; return; }
     var html = '<table class="table"><thead><tr><th>TIME</th><th>MKT</th><th>SYMBOL</th><th>SIDE</th><th class="right">QTY</th><th class="right">PRICE</th><th class="right">PnL%</th><th>REASON</th></tr></thead><tbody>';
-    trades.slice(0, 50).forEach(function (t) {
-      var sideClass = t.side === 'BUY' ? 'trade-buy' : 'trade-sell';
-      var pnlPct = t.pnl_pct != null ? (t.pnl_pct >= 0 ? '+' : '') + t.pnl_pct.toFixed(2) + '%' : '-';
-      var pnlClass = t.pnl_pct != null ? (t.pnl_pct >= 0 ? 'pos' : 'neg') : '';
-      html += '<tr><td>' + fmtFullTime(t.ts) + '</td><td><span class="market-badge">' + escapeHtml(t.market.toUpperCase()) + '</span></td><td><b>' + escapeHtml(t.symbol) + '</b></td><td class="' + sideClass + '">' + t.side + '</td><td class="right">' + fmtNum(t.qty) + '</td><td class="right">' + fmtNum(t.price) + '</td><td class="right ' + pnlClass + '">' + pnlPct + '</td><td>' + escapeHtml(t.reason || '') + '</td></tr>';
+    trades.slice(0,50).forEach(function(t){
+      var sc = t.side==='BUY'?'trade-buy':'trade-sell';
+      var pct = t.pnl_pct!=null ? (t.pnl_pct>=0?'+':'')+t.pnl_pct.toFixed(2)+'%' : '-';
+      var pc = t.pnl_pct!=null ? (t.pnl_pct>=0?'pos':'neg') : '';
+      html += '<tr><td>'+fmtFullTime(t.ts)+'</td><td><span class="market-badge">'+t.market.toUpperCase()+'</span></td><td><b>'+escapeHtml(t.symbol)+'</b></td><td class="'+sc+'">'+t.side+'</td><td class="right">'+fmtNum(t.qty)+'</td><td class="right">'+fmtNum(t.price)+'</td><td class="right '+pc+'">'+pct+'</td><td>'+escapeHtml(t.reason||'')+'</td></tr>';
     });
-    html += '</tbody></table>';
-    box.innerHTML = html;
+    box.innerHTML = html + '</tbody></table>';
   }
 
   function renderLogs() {
     var box = $('logsBox');
-    var filtered = logFilter === 'ALL' ? allLogs : allLogs.filter(function (l) { return l.level === logFilter; });
-    if (filtered.length === 0) {
-      box.innerHTML = '<div class="empty">No logs for filter: ' + logFilter + '</div>';
-      return;
-    }
-    var html = '';
-    filtered.forEach(function (l) {
-      html += '<div class="log-line ' + escapeHtml(l.level) + '">' +
-        '<span class="log-ts">' + fmtTime(l.ts) + '</span>' +
-        '<span class="log-level">[' + escapeHtml(l.level) + ']</span>' +
-        (l.symbol ? '<span class="log-symbol">' + escapeHtml(l.symbol) + '</span>' : '') +
-        escapeHtml(l.message) +
+    var f = logFilter==='ALL' ? allLogs : allLogs.filter(function(l){return l.level===logFilter;});
+    if (f.length===0) { box.innerHTML='<div class="empty">No logs for: '+logFilter+'</div>'; return; }
+    box.innerHTML = f.map(function(l){
+      return '<div class="log-line '+escapeHtml(l.level)+'">'+
+        '<span class="log-ts">'+fmtTime(l.ts)+'</span>'+
+        '<span class="log-level">['+escapeHtml(l.level)+']</span>'+
+        (l.symbol?'<span class="log-symbol">'+escapeHtml(l.symbol)+'</span>':'')+
+        escapeHtml(l.message)+
         '</div>';
-    });
-    box.innerHTML = html;
+    }).join('');
   }
 
   function refreshAll() {
-    Promise.all([api('/api/state'), api('/api/trades?limit=50'), api('/api/logs?limit=200')])
-      .then(function (results) {
-        renderState(results[0]);
-        renderEngine(results[0].lastTick);
-        renderTrades(results[1]);
-        allLogs = results[2] || [];
+    Promise.all([api('/api/state'), api('/api/trades?limit=50'), api('/api/logs?limit=200'), api('/api/watchlist')])
+      .then(function(r){
+        currentCfg = r[0].cfg;
+        renderState(r[0]);
+        renderEngine(r[0].lastTick);
+        renderTrades(r[1]);
+        allLogs = r[2]||[];
         renderLogs();
+        renderWatchlist(r[3]||[]);
       })
-      ['catch'](function (e) {
-        toast('데이터 로드 실패: ' + e.message);
-      });
+      ['catch'](function(e){ toast('로드 실패: '+e.message); });
   }
 
   function runNow() {
     var btn = $('btnTick');
-    btn.classList.add('loading');
-    btn.textContent = 'RUNNING...';
-    fetch('/api/tick', { method: 'POST' })
-      .then(function (r) { return r.json(); })
-      .then(function () {
-        toast('엔진 1회 실행 완료');
-        refreshAll();
-      })
-      ['catch'](function (e) {
-        toast('실행 실패: ' + e.message);
-      })
-      .then(function () {
-        btn.classList.remove('loading');
-        btn.textContent = 'RUN NOW';
-      });
+    btn.classList.add('loading'); btn.textContent='RUNNING...';
+    fetch('/api/tick', {method:'POST'})
+      .then(function(r){return r.json();})
+      .then(function(){ toast('엔진 1회 실행 완료'); refreshAll(); })
+      ['catch'](function(e){ toast('실행 실패: '+e.message); })
+      .then(function(){ btn.classList.remove('loading'); btn.textContent='RUN NOW'; });
+  }
+
+  function openSettings() {
+    if (!currentCfg) { toast('설정 로드 중...'); return; }
+    $('cfgUS').value = (currentCfg.usTickers||[]).join(', ');
+    $('cfgKR').value = (currentCfg.krTickers||[]).join(', ');
+    $('cfgRsiBuy').value = currentCfg.rsiBuy;
+    $('cfgRsiSell').value = currentCfg.rsiSell;
+    $('cfgRsiPeriod').value = currentCfg.rsiPeriod;
+    $('cfgStopLoss').value = currentCfg.stopLoss;
+    $('cfgTakeProfit').value = currentCfg.takeProfit;
+    $('cfgPosSize').value = currentCfg.posSize;
+    $('cfgDayBuyPct').value = currentCfg.dayBuyPct;
+    $('cfgDaySellPct').value = currentCfg.daySellPct;
+    $('cfgMaPeriod').value = currentCfg.maPeriod;
+    $('cfgAtrPeriod').value = currentCfg.atrPeriod;
+    $('cfgAtrStopMult').value = currentCfg.atrStopMult;
+    $('cfgTrailMult').value = currentCfg.trailMult;
+    $('cfgFeeUS').value = currentCfg.feeUS;
+    $('cfgFeeKR').value = currentCfg.feeKR;
+    $('settingsModal').classList.add('show');
+  }
+
+  function closeSettings() { $('settingsModal').classList.remove('show'); }
+
+  function saveSettings() {
+    function parseTickers(s) { return s.split(/[,\s]+/).map(function(x){return x.trim();}).filter(Boolean); }
+    var body = {
+      usTickers: parseTickers($('cfgUS').value),
+      krTickers: parseTickers($('cfgKR').value),
+      rsiBuy: parseFloat($('cfgRsiBuy').value),
+      rsiSell: parseFloat($('cfgRsiSell').value),
+      rsiPeriod: parseInt($('cfgRsiPeriod').value, 10),
+      stopLoss: parseFloat($('cfgStopLoss').value),
+      takeProfit: parseFloat($('cfgTakeProfit').value),
+      posSize: parseFloat($('cfgPosSize').value),
+      dayBuyPct: parseFloat($('cfgDayBuyPct').value),
+      daySellPct: parseFloat($('cfgDaySellPct').value),
+      maPeriod: parseInt($('cfgMaPeriod').value, 10),
+      atrPeriod: parseInt($('cfgAtrPeriod').value, 10),
+      atrStopMult: parseFloat($('cfgAtrStopMult').value),
+      trailMult: parseFloat($('cfgTrailMult').value),
+      feeUS: parseFloat($('cfgFeeUS').value),
+      feeKR: parseFloat($('cfgFeeKR').value),
+    };
+    fetch('/api/cfg', { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify(body) })
+      .then(function(r){return r.json();})
+      .then(function(j){ toast('설정 저장됨'); closeSettings(); refreshAll(); })
+      ['catch'](function(e){ toast('저장 실패: '+e.message); });
+  }
+
+  function resetAll() {
+    if (!confirm('정말 모든 거래/포지션/로그를 초기화하시겠습니까?')) return;
+    fetch('/api/reset', {method:'POST'})
+      .then(function(r){return r.json();})
+      .then(function(){ toast('초기화 완료'); closeSettings(); refreshAll(); })
+      ['catch'](function(e){ toast('초기화 실패: '+e.message); });
   }
 
   $('btnRefresh').addEventListener('click', refreshAll);
   $('btnTick').addEventListener('click', runNow);
+  $('btnSettings').addEventListener('click', openSettings);
+  $('btnCancelSettings').addEventListener('click', closeSettings);
+  $('btnSaveSettings').addEventListener('click', saveSettings);
+  $('btnReset').addEventListener('click', resetAll);
 
-  document.querySelectorAll('.log-filter button').forEach(function (b) {
-    b.addEventListener('click', function () {
-      document.querySelectorAll('.log-filter button').forEach(function (x) { x.classList.remove('active'); });
+  document.querySelectorAll('.log-filter button').forEach(function(b){
+    b.addEventListener('click', function(){
+      document.querySelectorAll('.log-filter button').forEach(function(x){x.classList.remove('active');});
       b.classList.add('active');
       logFilter = b.getAttribute('data-filter');
       renderLogs();
