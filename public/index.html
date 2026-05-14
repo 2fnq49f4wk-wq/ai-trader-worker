@@ -1,0 +1,250 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>AI TRADER v5</title>
+<style>
+:root {
+  --bg: #0d1117; --panel: #161b22; --elev: #1c232c;
+  --border: #30363d; --text: #f0f6fc; --dim: #8b949e; --faint: #6e7681;
+  --amber: #ffd700; --green: #3fb950; --red: #f85149; --blue: #58a6ff;
+}
+* { margin: 0; padding: 0; box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
+body { background: var(--bg); color: var(--text); font-family: 'Courier New', monospace; font-size: 14px; line-height: 1.5; }
+.app { display: flex; flex-direction: column; min-height: 100vh; }
+.topbar { display: flex; justify-content: space-between; align-items: center; padding: 14px 16px; gap: 10px; border-bottom: 2px solid var(--amber); background: var(--panel); position: sticky; top: 0; z-index: 100; flex-wrap: wrap; box-shadow: 0 2px 8px rgba(255,215,0,0.1); }
+.brand { font-size: 18px; color: var(--amber); font-weight: bold; letter-spacing: 2px; text-shadow: 0 0 10px rgba(255,215,0,0.3); }
+.topbar-btns { display: flex; gap: 8px; flex-wrap: wrap; }
+.main { flex: 1; padding: 14px; display: flex; flex-direction: column; gap: 14px; }
+.panel { background: var(--panel); border: 1px solid var(--border); border-radius: 6px; overflow: hidden; }
+.panel-header { padding: 12px 14px; border-bottom: 1px solid var(--border); background: var(--elev); display: flex; justify-content: space-between; align-items: center; gap: 10px; flex-wrap: wrap; }
+.panel-title { font-size: 13px; color: var(--amber); letter-spacing: 1.5px; font-weight: 700; }
+.grid-2 { display: grid; gap: 14px; grid-template-columns: 1fr; }
+@media (min-width: 768px) { .grid-2 { grid-template-columns: 1fr 1fr; } }
+.stat-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 2px; background: var(--border); }
+.stat-item { background: var(--panel); padding: 12px; }
+.stat-label { font-size: 10px; color: var(--dim); text-transform: uppercase; font-weight: bold; letter-spacing: 1px; }
+.stat-value { font-size: 18px; font-weight: 700; margin-top: 4px; color: var(--text); }
+.table { width: 100%; border-collapse: collapse; font-size: 12px; }
+.table th { padding: 10px 12px; text-align: left; color: var(--dim); font-size: 10px; letter-spacing: 1px; border-bottom: 1px solid var(--border); background: var(--elev); }
+.table td { padding: 10px 12px; border-bottom: 1px solid var(--border); }
+.table tbody tr:hover { background: rgba(88,166,255,0.05); }
+button.btn { padding: 9px 13px; background: var(--panel); border: 1px solid var(--border); color: var(--text); font-family: inherit; font-size: 11px; cursor: pointer; outline: none; border-radius: 4px; font-weight: bold; transition: all 0.15s; letter-spacing: 1px; }
+button.btn:hover { background: var(--elev); }
+button.btn.primary { background: var(--amber); color: var(--bg); border-color: var(--amber); font-weight: 700; }
+button.btn.refresh { color: var(--blue); border-color: var(--blue); }
+button.btn:active { opacity: 0.6; }
+button.btn.loading { opacity: 0.5; pointer-events: none; }
+.pos { color: var(--green); font-weight: bold; }
+.neg { color: var(--red); font-weight: bold; }
+.right { text-align: right; }
+.engine-status { display: flex; align-items: center; gap: 8px; font-size: 11px; padding: 8px 14px; background: var(--elev); border-bottom: 1px solid var(--border); font-weight: bold; flex-wrap: wrap; }
+.dot { width: 8px; height: 8px; border-radius: 50%; display: inline-block; }
+.dot.alive { background: var(--green); box-shadow: 0 0 6px var(--green); animation: pulse 2s infinite; }
+.dot.stale { background: var(--red); }
+.dot.unknown { background: var(--faint); }
+@keyframes pulse { 0%,100%{opacity:1} 50%{opacity:0.5} }
+.empty { padding: 20px; text-align: center; color: var(--faint); font-size: 12px; }
+.toast { position: fixed; bottom: 20px; left: 50%; transform: translateX(-50%); background: var(--panel); border: 1px solid var(--amber); padding: 12px 20px; border-radius: 4px; color: var(--amber); font-weight: bold; z-index: 9999; display: none; }
+.toast.show { display: block; }
+.market-badge { display: inline-block; padding: 2px 6px; font-size: 9px; border-radius: 3px; background: var(--elev); border: 1px solid var(--border); color: var(--dim); margin-right: 6px; letter-spacing: 1px; }
+.trade-buy { color: var(--green); font-weight: bold; }
+.trade-sell { color: var(--red); font-weight: bold; }
+</style>
+</head>
+<body>
+<div class="app">
+  <div class="topbar">
+    <div class="brand">AI TRADER v5</div>
+    <div class="topbar-btns">
+      <button type="button" class="btn refresh" id="btnRefresh">REFRESH</button>
+      <button type="button" class="btn primary" id="btnTick">RUN NOW</button>
+    </div>
+  </div>
+
+  <div class="engine-status">
+    <span class="dot unknown" id="engineDot"></span>
+    <span id="engineText">엔진 상태 확인 중...</span>
+  </div>
+
+  <div class="main">
+    <div class="grid-2">
+      <div class="panel">
+        <div class="panel-header"><div class="panel-title">[US] CASH &amp; PnL</div></div>
+        <div class="stat-grid">
+          <div class="stat-item"><div class="stat-label">CASH (USD)</div><div class="stat-value" id="cashUS">-</div></div>
+          <div class="stat-item"><div class="stat-label">POSITIONS</div><div class="stat-value" id="posCountUS">-</div></div>
+        </div>
+      </div>
+      <div class="panel">
+        <div class="panel-header"><div class="panel-title">[KR] CASH &amp; PnL</div></div>
+        <div class="stat-grid">
+          <div class="stat-item"><div class="stat-label">CASH (KRW)</div><div class="stat-value" id="cashKR">-</div></div>
+          <div class="stat-item"><div class="stat-label">POSITIONS</div><div class="stat-value" id="posCountKR">-</div></div>
+        </div>
+      </div>
+    </div>
+
+    <div class="panel">
+      <div class="panel-header"><div class="panel-title">CURRENT POSITIONS</div></div>
+      <div id="positionsBox">
+        <div class="empty">No positions yet</div>
+      </div>
+    </div>
+
+    <div class="panel">
+      <div class="panel-header"><div class="panel-title">RECENT TRADES</div></div>
+      <div id="tradesBox">
+        <div class="empty">No trades yet</div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<div class="toast" id="toast"></div>
+
+<script>
+(function () {
+  var REFRESH_MS = 10000;
+  var timer = null;
+
+  function $(id) { return document.getElementById(id); }
+
+  function fmtNum(n) {
+    if (typeof n !== 'number' || isNaN(n)) return '-';
+    return n.toLocaleString(undefined, { maximumFractionDigits: 2 });
+  }
+
+  function fmtTime(ts) {
+    if (!ts) return '-';
+    var d = new Date(ts);
+    var p = function (n) { return n < 10 ? '0' + n : n; };
+    return d.getFullYear() + '-' + p(d.getMonth() + 1) + '-' + p(d.getDate()) + ' ' + p(d.getHours()) + ':' + p(d.getMinutes()) + ':' + p(d.getSeconds());
+  }
+
+  function fmtAgo(ts) {
+    if (!ts) return '없음';
+    var sec = Math.floor((Date.now() - ts) / 1000);
+    if (sec < 60) return sec + '초 전';
+    if (sec < 3600) return Math.floor(sec / 60) + '분 전';
+    return Math.floor(sec / 3600) + '시간 전';
+  }
+
+  function toast(msg) {
+    var t = $('toast');
+    t.textContent = msg;
+    t.classList.add('show');
+    setTimeout(function () { t.classList.remove('show'); }, 2500);
+  }
+
+  function api(path, opts) {
+    opts = opts || {};
+    return fetch(path, opts).then(function (r) {
+      if (!r.ok) throw new Error('HTTP ' + r.status);
+      return r.json();
+    });
+  }
+
+  function renderEngine(lastTick) {
+    var dot = $('engineDot'), txt = $('engineText');
+    if (!lastTick) {
+      dot.className = 'dot unknown';
+      txt.textContent = '엔진 상태 미확인 (아직 한 번도 실행 안 됨)';
+      return;
+    }
+    var age = Date.now() - lastTick;
+    if (age < 90 * 1000) {
+      dot.className = 'dot alive';
+      txt.textContent = '엔진 정상 작동 · 마지막 실행: ' + fmtAgo(lastTick);
+    } else {
+      dot.className = 'dot stale';
+      txt.textContent = '엔진 지연 의심 · 마지막 실행: ' + fmtAgo(lastTick);
+    }
+  }
+
+  function renderState(data) {
+    var cash = data.cash || { us: 0, kr: 0 };
+    $('cashUS').textContent = '$' + fmtNum(cash.us);
+    $('cashKR').textContent = '₩' + fmtNum(cash.kr);
+
+    var posUS = data.positions && data.positions.us ? data.positions.us : {};
+    var posKR = data.positions && data.positions.kr ? data.positions.kr : {};
+    var usKeys = Object.keys(posUS), krKeys = Object.keys(posKR);
+    $('posCountUS').textContent = usKeys.length;
+    $('posCountKR').textContent = krKeys.length;
+
+    var box = $('positionsBox');
+    var all = [];
+    usKeys.forEach(function (s) { all.push({ market: 'US', symbol: s, p: posUS[s] }); });
+    krKeys.forEach(function (s) { all.push({ market: 'KR', symbol: s, p: posKR[s] }); });
+
+    if (all.length === 0) {
+      box.innerHTML = '<div class="empty">No positions yet</div>';
+      return;
+    }
+    var html = '<table class="table"><thead><tr><th>MARKET</th><th>SYMBOL</th><th class="right">QTY</th><th class="right">AVG</th><th class="right">OPENED</th></tr></thead><tbody>';
+    all.forEach(function (row) {
+      html += '<tr><td><span class="market-badge">' + row.market + '</span></td><td><b>' + row.symbol + '</b></td><td class="right">' + fmtNum(row.p.qty) + '</td><td class="right">' + fmtNum(row.p.avg) + '</td><td class="right">' + fmtAgo(row.p.opened_ts) + '</td></tr>';
+    });
+    html += '</tbody></table>';
+    box.innerHTML = html;
+  }
+
+  function renderTrades(trades) {
+    var box = $('tradesBox');
+    if (!trades || trades.length === 0) {
+      box.innerHTML = '<div class="empty">No trades yet</div>';
+      return;
+    }
+    var html = '<table class="table"><thead><tr><th>TIME</th><th>MKT</th><th>SYMBOL</th><th>SIDE</th><th class="right">QTY</th><th class="right">PRICE</th><th class="right">PnL%</th><th>REASON</th></tr></thead><tbody>';
+    trades.slice(0, 50).forEach(function (t) {
+      var sideClass = t.side === 'BUY' ? 'trade-buy' : 'trade-sell';
+      var pnlPct = t.pnl_pct != null ? (t.pnl_pct >= 0 ? '+' : '') + t.pnl_pct.toFixed(2) + '%' : '-';
+      var pnlClass = t.pnl_pct != null ? (t.pnl_pct >= 0 ? 'pos' : 'neg') : '';
+      html += '<tr><td>' + fmtTime(t.ts) + '</td><td><span class="market-badge">' + t.market.toUpperCase() + '</span></td><td><b>' + t.symbol + '</b></td><td class="' + sideClass + '">' + t.side + '</td><td class="right">' + fmtNum(t.qty) + '</td><td class="right">' + fmtNum(t.price) + '</td><td class="right ' + pnlClass + '">' + pnlPct + '</td><td>' + (t.reason || '') + '</td></tr>';
+    });
+    html += '</tbody></table>';
+    box.innerHTML = html;
+  }
+
+  function refreshAll() {
+    Promise.all([api('/api/state'), api('/api/trades?limit=50')])
+      .then(function (results) {
+        renderState(results[0]);
+        renderEngine(results[0].lastTick);
+        renderTrades(results[1]);
+      })
+      ['catch'](function (e) {
+        toast('데이터 로드 실패: ' + e.message);
+      });
+  }
+
+  function runNow() {
+    var btn = $('btnTick');
+    btn.classList.add('loading');
+    btn.textContent = 'RUNNING...';
+    fetch('/api/tick', { method: 'POST' })
+      .then(function (r) { return r.json(); })
+      .then(function (j) {
+        toast('엔진 1회 실행 완료');
+        refreshAll();
+      })
+      ['catch'](function (e) {
+        toast('실행 실패: ' + e.message);
+      })
+      .then(function () {
+        btn.classList.remove('loading');
+        btn.textContent = 'RUN NOW';
+      });
+  }
+
+  $('btnRefresh').addEventListener('click', refreshAll);
+  $('btnTick').addEventListener('click', runNow);
+
+  refreshAll();
+  timer = setInterval(refreshAll, REFRESH_MS);
+})();
+</script>
+</body>
+</html>
