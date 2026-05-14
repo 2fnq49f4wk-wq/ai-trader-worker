@@ -9,6 +9,7 @@
   --bg: #0d1117; --panel: #161b22; --elev: #1c232c;
   --border: #30363d; --text: #f0f6fc; --dim: #8b949e; --faint: #6e7681;
   --amber: #ffd700; --green: #3fb950; --red: #f85149; --blue: #58a6ff;
+  --orange: #f0883e; --purple: #bc8cff;
 }
 * { margin: 0; padding: 0; box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
 body { background: var(--bg); color: var(--text); font-family: 'Courier New', monospace; font-size: 14px; line-height: 1.5; }
@@ -51,6 +52,21 @@ button.btn.loading { opacity: 0.5; pointer-events: none; }
 .market-badge { display: inline-block; padding: 2px 6px; font-size: 9px; border-radius: 3px; background: var(--elev); border: 1px solid var(--border); color: var(--dim); margin-right: 6px; letter-spacing: 1px; }
 .trade-buy { color: var(--green); font-weight: bold; }
 .trade-sell { color: var(--red); font-weight: bold; }
+.log-box { max-height: 420px; overflow-y: auto; background: #000; padding: 10px; font-size: 11px; }
+.log-line { padding: 6px 8px; border-left: 3px solid var(--faint); margin-bottom: 4px; color: var(--dim); word-break: break-all; line-height: 1.5; background: rgba(255,255,255,0.02); }
+.log-line.INFO { border-color: var(--blue); color: var(--blue); }
+.log-line.TRADE { border-color: var(--amber); color: var(--amber); font-weight: bold; }
+.log-line.ERROR { border-color: var(--red); color: var(--red); }
+.log-line.WARN { border-color: var(--orange); color: var(--orange); }
+.log-line.SKIP { border-color: var(--faint); color: var(--faint); }
+.log-line.NOBUY { border-color: var(--purple); color: var(--purple); }
+.log-line.HOLD { border-color: var(--dim); color: var(--dim); }
+.log-ts { color: var(--faint); margin-right: 6px; }
+.log-level { display: inline-block; min-width: 50px; font-weight: bold; margin-right: 6px; }
+.log-symbol { color: var(--text); font-weight: bold; margin-right: 6px; }
+.log-filter { display: flex; gap: 4px; flex-wrap: wrap; }
+.log-filter button { padding: 4px 8px; font-size: 9px; background: var(--panel); border: 1px solid var(--border); color: var(--dim); border-radius: 3px; cursor: pointer; font-family: inherit; letter-spacing: 1px; }
+.log-filter button.active { background: var(--amber); color: var(--bg); border-color: var(--amber); font-weight: bold; }
 </style>
 </head>
 <body>
@@ -87,6 +103,23 @@ button.btn.loading { opacity: 0.5; pointer-events: none; }
     </div>
 
     <div class="panel">
+      <div class="panel-header">
+        <div class="panel-title">ENGINE LOGS (진단)</div>
+        <div class="log-filter">
+          <button data-filter="ALL" class="active">ALL</button>
+          <button data-filter="TRADE">TRADE</button>
+          <button data-filter="ERROR">ERROR</button>
+          <button data-filter="NOBUY">NOBUY</button>
+          <button data-filter="SKIP">SKIP</button>
+          <button data-filter="INFO">INFO</button>
+        </div>
+      </div>
+      <div class="log-box" id="logsBox">
+        <div class="empty">No logs yet. Click RUN NOW to start.</div>
+      </div>
+    </div>
+
+    <div class="panel">
       <div class="panel-header"><div class="panel-title">CURRENT POSITIONS</div></div>
       <div id="positionsBox">
         <div class="empty">No positions yet</div>
@@ -108,6 +141,8 @@ button.btn.loading { opacity: 0.5; pointer-events: none; }
 (function () {
   var REFRESH_MS = 10000;
   var timer = null;
+  var allLogs = [];
+  var logFilter = 'ALL';
 
   function $(id) { return document.getElementById(id); }
 
@@ -120,6 +155,13 @@ button.btn.loading { opacity: 0.5; pointer-events: none; }
     if (!ts) return '-';
     var d = new Date(ts);
     var p = function (n) { return n < 10 ? '0' + n : n; };
+    return p(d.getHours()) + ':' + p(d.getMinutes()) + ':' + p(d.getSeconds());
+  }
+
+  function fmtFullTime(ts) {
+    if (!ts) return '-';
+    var d = new Date(ts);
+    var p = function (n) { return n < 10 ? '0' + n : n; };
     return d.getFullYear() + '-' + p(d.getMonth() + 1) + '-' + p(d.getDate()) + ' ' + p(d.getHours()) + ':' + p(d.getMinutes()) + ':' + p(d.getSeconds());
   }
 
@@ -129,6 +171,12 @@ button.btn.loading { opacity: 0.5; pointer-events: none; }
     if (sec < 60) return sec + '초 전';
     if (sec < 3600) return Math.floor(sec / 60) + '분 전';
     return Math.floor(sec / 3600) + '시간 전';
+  }
+
+  function escapeHtml(s) {
+    return String(s).replace(/[&<>"']/g, function (c) {
+      return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c];
+    });
   }
 
   function toast(msg) {
@@ -185,7 +233,7 @@ button.btn.loading { opacity: 0.5; pointer-events: none; }
     }
     var html = '<table class="table"><thead><tr><th>MARKET</th><th>SYMBOL</th><th class="right">QTY</th><th class="right">AVG</th><th class="right">OPENED</th></tr></thead><tbody>';
     all.forEach(function (row) {
-      html += '<tr><td><span class="market-badge">' + row.market + '</span></td><td><b>' + row.symbol + '</b></td><td class="right">' + fmtNum(row.p.qty) + '</td><td class="right">' + fmtNum(row.p.avg) + '</td><td class="right">' + fmtAgo(row.p.opened_ts) + '</td></tr>';
+      html += '<tr><td><span class="market-badge">' + row.market + '</span></td><td><b>' + escapeHtml(row.symbol) + '</b></td><td class="right">' + fmtNum(row.p.qty) + '</td><td class="right">' + fmtNum(row.p.avg) + '</td><td class="right">' + fmtAgo(row.p.opened_ts) + '</td></tr>';
     });
     html += '</tbody></table>';
     box.innerHTML = html;
@@ -202,18 +250,39 @@ button.btn.loading { opacity: 0.5; pointer-events: none; }
       var sideClass = t.side === 'BUY' ? 'trade-buy' : 'trade-sell';
       var pnlPct = t.pnl_pct != null ? (t.pnl_pct >= 0 ? '+' : '') + t.pnl_pct.toFixed(2) + '%' : '-';
       var pnlClass = t.pnl_pct != null ? (t.pnl_pct >= 0 ? 'pos' : 'neg') : '';
-      html += '<tr><td>' + fmtTime(t.ts) + '</td><td><span class="market-badge">' + t.market.toUpperCase() + '</span></td><td><b>' + t.symbol + '</b></td><td class="' + sideClass + '">' + t.side + '</td><td class="right">' + fmtNum(t.qty) + '</td><td class="right">' + fmtNum(t.price) + '</td><td class="right ' + pnlClass + '">' + pnlPct + '</td><td>' + (t.reason || '') + '</td></tr>';
+      html += '<tr><td>' + fmtFullTime(t.ts) + '</td><td><span class="market-badge">' + escapeHtml(t.market.toUpperCase()) + '</span></td><td><b>' + escapeHtml(t.symbol) + '</b></td><td class="' + sideClass + '">' + t.side + '</td><td class="right">' + fmtNum(t.qty) + '</td><td class="right">' + fmtNum(t.price) + '</td><td class="right ' + pnlClass + '">' + pnlPct + '</td><td>' + escapeHtml(t.reason || '') + '</td></tr>';
     });
     html += '</tbody></table>';
     box.innerHTML = html;
   }
 
+  function renderLogs() {
+    var box = $('logsBox');
+    var filtered = logFilter === 'ALL' ? allLogs : allLogs.filter(function (l) { return l.level === logFilter; });
+    if (filtered.length === 0) {
+      box.innerHTML = '<div class="empty">No logs for filter: ' + logFilter + '</div>';
+      return;
+    }
+    var html = '';
+    filtered.forEach(function (l) {
+      html += '<div class="log-line ' + escapeHtml(l.level) + '">' +
+        '<span class="log-ts">' + fmtTime(l.ts) + '</span>' +
+        '<span class="log-level">[' + escapeHtml(l.level) + ']</span>' +
+        (l.symbol ? '<span class="log-symbol">' + escapeHtml(l.symbol) + '</span>' : '') +
+        escapeHtml(l.message) +
+        '</div>';
+    });
+    box.innerHTML = html;
+  }
+
   function refreshAll() {
-    Promise.all([api('/api/state'), api('/api/trades?limit=50')])
+    Promise.all([api('/api/state'), api('/api/trades?limit=50'), api('/api/logs?limit=200')])
       .then(function (results) {
         renderState(results[0]);
         renderEngine(results[0].lastTick);
         renderTrades(results[1]);
+        allLogs = results[2] || [];
+        renderLogs();
       })
       ['catch'](function (e) {
         toast('데이터 로드 실패: ' + e.message);
@@ -226,7 +295,7 @@ button.btn.loading { opacity: 0.5; pointer-events: none; }
     btn.textContent = 'RUNNING...';
     fetch('/api/tick', { method: 'POST' })
       .then(function (r) { return r.json(); })
-      .then(function (j) {
+      .then(function () {
         toast('엔진 1회 실행 완료');
         refreshAll();
       })
@@ -241,6 +310,15 @@ button.btn.loading { opacity: 0.5; pointer-events: none; }
 
   $('btnRefresh').addEventListener('click', refreshAll);
   $('btnTick').addEventListener('click', runNow);
+
+  document.querySelectorAll('.log-filter button').forEach(function (b) {
+    b.addEventListener('click', function () {
+      document.querySelectorAll('.log-filter button').forEach(function (x) { x.classList.remove('active'); });
+      b.classList.add('active');
+      logFilter = b.getAttribute('data-filter');
+      renderLogs();
+    });
+  });
 
   refreshAll();
   timer = setInterval(refreshAll, REFRESH_MS);
