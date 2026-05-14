@@ -23,10 +23,14 @@ body { background: var(--bg); color: var(--text); font-family: 'Courier New', mo
 .panel-title { font-size: 13px; color: var(--amber); letter-spacing: 1.5px; font-weight: 700; }
 .grid-2 { display: grid; gap: 14px; grid-template-columns: 1fr; }
 @media (min-width: 768px) { .grid-2 { grid-template-columns: 1fr 1fr; } }
-.stat-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 2px; background: var(--border); }
-.stat-item { background: var(--panel); padding: 12px; }
-.stat-label { font-size: 10px; color: var(--dim); text-transform: uppercase; font-weight: bold; letter-spacing: 1px; }
-.stat-value { font-size: 18px; font-weight: 700; margin-top: 4px; color: var(--text); }
+
+.summary-grid { display: grid; grid-template-columns: repeat(2, 1fr); gap: 2px; background: var(--border); }
+@media (min-width: 768px) { .summary-grid { grid-template-columns: repeat(5, 1fr); } }
+.summary-item { background: var(--panel); padding: 14px 12px; }
+.summary-label { font-size: 10px; color: var(--dim); text-transform: uppercase; font-weight: bold; letter-spacing: 1px; }
+.summary-value { font-size: 16px; font-weight: 700; margin-top: 4px; color: var(--text); word-break: break-all; }
+.summary-sub { font-size: 10px; color: var(--faint); margin-top: 2px; }
+
 .table { width: 100%; border-collapse: collapse; font-size: 12px; }
 .table th { padding: 10px 12px; text-align: left; color: var(--dim); font-size: 10px; letter-spacing: 1px; border-bottom: 1px solid var(--border); background: var(--elev); }
 .table td { padding: 10px 12px; border-bottom: 1px solid var(--border); }
@@ -87,6 +91,8 @@ button.btn.loading { opacity: 0.5; pointer-events: none; }
 .wl-price { font-size: 15px; font-weight: bold; margin-top: 2px; }
 .wl-day { font-size: 10px; margin-top: 2px; }
 .wl-meta { font-size: 9px; color: var(--faint); margin-top: 2px; }
+.hint-box { padding: 10px 14px; background: rgba(255,215,0,0.08); border-left: 3px solid var(--amber); color: var(--dim); font-size: 11px; line-height: 1.6; }
+.hint-box b { color: var(--amber); }
 </style>
 </head>
 <body>
@@ -106,27 +112,50 @@ button.btn.loading { opacity: 0.5; pointer-events: none; }
   </div>
 
   <div class="main">
+
+    <!-- 1. 자산 요약 (US/KR 통합) -->
     <div class="grid-2">
       <div class="panel">
-        <div class="panel-header"><div class="panel-title">[US] CASH</div></div>
-        <div class="stat-grid">
-          <div class="stat-item"><div class="stat-label">CASH (USD)</div><div class="stat-value" id="cashUS">-</div></div>
-          <div class="stat-item"><div class="stat-label">POSITIONS</div><div class="stat-value" id="posCountUS">-</div></div>
+        <div class="panel-header"><div class="panel-title">[US] PORTFOLIO</div></div>
+        <div class="summary-grid">
+          <div class="summary-item"><div class="summary-label">CASH</div><div class="summary-value" id="cashUS">-</div></div>
+          <div class="summary-item"><div class="summary-label">INVESTED</div><div class="summary-value" id="investedUS">-</div></div>
+          <div class="summary-item"><div class="summary-label">MARKET VAL</div><div class="summary-value" id="marketValUS">-</div></div>
+          <div class="summary-item"><div class="summary-label">TOTAL</div><div class="summary-value" id="totalUS">-</div></div>
+          <div class="summary-item"><div class="summary-label">UNREAL PnL</div><div class="summary-value" id="pnlUS">-</div></div>
         </div>
-        <div class="panel-header"><div class="panel-title">[US] WATCHLIST</div></div>
-        <div class="watchlist" id="watchlistUS"><div class="empty">대기 중...</div></div>
       </div>
       <div class="panel">
-        <div class="panel-header"><div class="panel-title">[KR] CASH</div></div>
-        <div class="stat-grid">
-          <div class="stat-item"><div class="stat-label">CASH (KRW)</div><div class="stat-value" id="cashKR">-</div></div>
-          <div class="stat-item"><div class="stat-label">POSITIONS</div><div class="stat-value" id="posCountKR">-</div></div>
+        <div class="panel-header"><div class="panel-title">[KR] PORTFOLIO</div></div>
+        <div class="summary-grid">
+          <div class="summary-item"><div class="summary-label">CASH</div><div class="summary-value" id="cashKR">-</div></div>
+          <div class="summary-item"><div class="summary-label">INVESTED</div><div class="summary-value" id="investedKR">-</div></div>
+          <div class="summary-item"><div class="summary-label">MARKET VAL</div><div class="summary-value" id="marketValKR">-</div></div>
+          <div class="summary-item"><div class="summary-label">TOTAL</div><div class="summary-value" id="totalKR">-</div></div>
+          <div class="summary-item"><div class="summary-label">UNREAL PnL</div><div class="summary-value" id="pnlKR">-</div></div>
         </div>
-        <div class="panel-header"><div class="panel-title">[KR] WATCHLIST</div></div>
-        <div class="watchlist" id="watchlistKR"><div class="empty">대기 중...</div></div>
       </div>
     </div>
 
+    <!-- 2. 보유 포지션 (위로 올림) -->
+    <div class="panel">
+      <div class="panel-header"><div class="panel-title">CURRENT POSITIONS</div></div>
+      <div id="positionsBox"><div class="empty">No positions yet</div></div>
+    </div>
+
+    <!-- 3. WATCHLIST -->
+    <div class="grid-2">
+      <div class="panel">
+        <div class="panel-header"><div class="panel-title">[US] WATCHLIST</div></div>
+        <div class="watchlist" id="watchlistUS"><div class="empty">대기 중... RUN NOW를 한번 누르세요</div></div>
+      </div>
+      <div class="panel">
+        <div class="panel-header"><div class="panel-title">[KR] WATCHLIST</div></div>
+        <div class="watchlist" id="watchlistKR"><div class="empty">대기 중... RUN NOW를 한번 누르세요</div></div>
+      </div>
+    </div>
+
+    <!-- 4. 로그 -->
     <div class="panel">
       <div class="panel-header">
         <div class="panel-title">ENGINE LOGS</div>
@@ -139,14 +168,13 @@ button.btn.loading { opacity: 0.5; pointer-events: none; }
           <button data-filter="INFO">INFO</button>
         </div>
       </div>
+      <div id="hintBox" class="hint-box" style="display:none;">
+        <b>매수가 안 되는 이유:</b> <span id="hintText"></span>
+      </div>
       <div class="log-box" id="logsBox"><div class="empty">No logs yet</div></div>
     </div>
 
-    <div class="panel">
-      <div class="panel-header"><div class="panel-title">CURRENT POSITIONS</div></div>
-      <div id="positionsBox"><div class="empty">No positions yet</div></div>
-    </div>
-
+    <!-- 5. 거래 내역 -->
     <div class="panel">
       <div class="panel-header"><div class="panel-title">RECENT TRADES</div></div>
       <div id="tradesBox"><div class="empty">No trades yet</div></div>
@@ -169,7 +197,7 @@ button.btn.loading { opacity: 0.5; pointer-events: none; }
     </div>
 
     <div class="section-divider"></div>
-    <div class="section-title">STRATEGY (RSI / 가격)</div>
+    <div class="section-title">STRATEGY (조건 완화하려면 RSI Buy를 높이세요. 예: 45→55)</div>
     <div class="field-row">
       <div class="field"><label>RSI Buy</label><input type="number" id="cfgRsiBuy" min="1" max="99"></div>
       <div class="field"><label>RSI Sell</label><input type="number" id="cfgRsiSell" min="1" max="99"></div>
@@ -219,6 +247,7 @@ button.btn.loading { opacity: 0.5; pointer-events: none; }
   var allLogs = [];
   var logFilter = 'ALL';
   var currentCfg = null;
+  var lastQuotes = {};
 
   function $(id) { return document.getElementById(id); }
 
@@ -264,34 +293,68 @@ button.btn.loading { opacity: 0.5; pointer-events: none; }
 
   function renderEngine(lastTick) {
     var dot = $('engineDot'), txt = $('engineText');
-    if (!lastTick) { dot.className='dot unknown'; txt.textContent='엔진 상태 미확인 (아직 한 번도 실행 안 됨)'; return; }
+    if (!lastTick) { dot.className='dot unknown'; txt.textContent='엔진 상태 미확인 (RUN NOW를 한번 누르세요)'; return; }
     var age = Date.now() - lastTick;
-    if (age < 90*1000) { dot.className='dot alive'; txt.textContent='엔진 정상 작동 · 마지막 실행: '+fmtAgo(lastTick); }
-    else { dot.className='dot stale'; txt.textContent='엔진 지연 의심 · 마지막 실행: '+fmtAgo(lastTick); }
+    if (age < 90*1000) { dot.className='dot alive'; txt.textContent='엔진 자동 작동 중 · 마지막 실행: '+fmtAgo(lastTick)+' (1분마다 자동)'; }
+    else { dot.className='dot stale'; txt.textContent='엔진 지연 · 마지막 실행: '+fmtAgo(lastTick); }
   }
 
-  function renderState(data) {
-    var cash = data.cash || {us:0,kr:0};
-    $('cashUS').textContent = '$' + fmtNum(cash.us);
-    $('cashKR').textContent = '₩' + fmtNum(cash.kr);
-    var posUS = (data.positions && data.positions.us) || {};
-    var posKR = (data.positions && data.positions.kr) || {};
-    $('posCountUS').textContent = Object.keys(posUS).length;
-    $('posCountKR').textContent = Object.keys(posKR).length;
+  // 시장별 자산 요약 계산
+  function calcSummary(market, cash, positions) {
+    var symbol = market === 'us' ? '$' : '₩';
+    var invested = 0, marketVal = 0;
+    Object.keys(positions).forEach(function(sym) {
+      var p = positions[sym];
+      invested += p.qty * p.avg;
+      var q = lastQuotes[sym];
+      var curPrice = q ? q.price : p.avg;
+      marketVal += p.qty * curPrice;
+    });
+    var total = cash + marketVal;
+    var pnl = marketVal - invested;
+    var pnlPct = invested > 0 ? (pnl / invested * 100) : 0;
+    return {
+      symbol: symbol, cash: cash, invested: invested,
+      marketVal: marketVal, total: total, pnl: pnl, pnlPct: pnlPct
+    };
+  }
 
+  function renderSummary(market, s) {
+    var up = market.toUpperCase();
+    $('cash'+up).textContent = s.symbol + fmtNum(s.cash);
+    $('invested'+up).textContent = s.symbol + fmtNum(s.invested);
+    $('marketVal'+up).textContent = s.symbol + fmtNum(s.marketVal);
+    $('total'+up).textContent = s.symbol + fmtNum(s.total);
+    var pnlEl = $('pnl'+up);
+    var sign = s.pnl >= 0 ? '+' : '';
+    pnlEl.textContent = sign + s.symbol + fmtNum(s.pnl) + ' (' + sign + fmtNum(s.pnlPct, 2) + '%)';
+    pnlEl.className = 'summary-value ' + (s.pnl > 0 ? 'pos' : (s.pnl < 0 ? 'neg' : ''));
+  }
+
+  function renderPositions(positionsUS, positionsKR) {
     var box = $('positionsBox');
     var all = [];
-    Object.keys(posUS).forEach(function(s){ all.push({market:'US',symbol:s,p:posUS[s]}); });
-    Object.keys(posKR).forEach(function(s){ all.push({market:'KR',symbol:s,p:posKR[s]}); });
+    Object.keys(positionsUS).forEach(function(s){ all.push({market:'US',symbol:s,p:positionsUS[s]}); });
+    Object.keys(positionsKR).forEach(function(s){ all.push({market:'KR',symbol:s,p:positionsKR[s]}); });
     if (all.length === 0) { box.innerHTML='<div class="empty">No positions yet</div>'; return; }
-    var html = '<table class="table"><thead><tr><th>MARKET</th><th>SYMBOL</th><th class="right">QTY</th><th class="right">AVG</th><th class="right">OPENED</th></tr></thead><tbody>';
+    var html = '<table class="table"><thead><tr><th>MKT</th><th>SYMBOL</th><th class="right">QTY</th><th class="right">AVG</th><th class="right">CUR</th><th class="right">PnL%</th><th class="right">OPENED</th></tr></thead><tbody>';
     all.forEach(function(row){
-      html += '<tr><td><span class="market-badge">'+row.market+'</span></td><td><b>'+escapeHtml(row.symbol)+'</b></td><td class="right">'+fmtNum(row.p.qty)+'</td><td class="right">'+fmtNum(row.p.avg)+'</td><td class="right">'+fmtAgo(row.p.opened_ts)+'</td></tr>';
+      var q = lastQuotes[row.symbol];
+      var curPrice = q ? q.price : null;
+      var pnlPct = curPrice != null ? ((curPrice - row.p.avg) / row.p.avg * 100) : null;
+      var pnlClass = pnlPct == null ? '' : (pnlPct >= 0 ? 'pos' : 'neg');
+      var sign = pnlPct != null && pnlPct >= 0 ? '+' : '';
+      var pnlText = pnlPct != null ? sign + pnlPct.toFixed(2) + '%' : '-';
+      var curText = curPrice != null ? fmtNum(curPrice) : '-';
+      html += '<tr><td><span class="market-badge">'+row.market+'</span></td><td><b>'+escapeHtml(row.symbol)+'</b></td><td class="right">'+fmtNum(row.p.qty)+'</td><td class="right">'+fmtNum(row.p.avg)+'</td><td class="right">'+curText+'</td><td class="right '+pnlClass+'">'+pnlText+'</td><td class="right">'+fmtAgo(row.p.opened_ts)+'</td></tr>';
     });
     box.innerHTML = html + '</tbody></table>';
   }
 
   function renderWatchlist(quotes) {
+    lastQuotes = {};
+    quotes.forEach(function(q){ lastQuotes[q.symbol] = q; });
+
     var boxUS = $('watchlistUS'), boxKR = $('watchlistKR');
     var us = quotes.filter(function(q){return q.market==='us';});
     var kr = quotes.filter(function(q){return q.market==='kr';});
@@ -336,16 +399,60 @@ button.btn.loading { opacity: 0.5; pointer-events: none; }
     }).join('');
   }
 
+  function analyzeNoBuyReason(logs, cfg) {
+    if (!logs || !cfg) return null;
+    var nobuy = logs.filter(function(l){return l.level==='NOBUY';}).slice(0, 30);
+    if (nobuy.length < 5) return null;
+    var rsiHigh = 0, dayLow = 0;
+    nobuy.forEach(function(l){
+      var rsiMatch = l.message.match(/RSI=([\d.]+)/);
+      var dayMatch = l.message.match(/day=(-?[\d.]+)/);
+      if (rsiMatch && parseFloat(rsiMatch[1]) >= cfg.rsiBuy) rsiHigh++;
+      if (dayMatch && parseFloat(dayMatch[1]) > -cfg.dayBuyPct) dayLow++;
+    });
+    var msgs = [];
+    if (rsiHigh > nobuy.length * 0.7) {
+      msgs.push('대부분 RSI가 매수선('+cfg.rsiBuy+')보다 높음. SETTINGS에서 RSI Buy를 '+(cfg.rsiBuy+10)+' 정도로 올려보세요.');
+    }
+    if (dayLow > nobuy.length * 0.7) {
+      msgs.push('당일 하락폭이 매수 기준('+cfg.dayBuyPct+'%)에 못 미침. Day Buy- %를 1로 낮춰보세요.');
+    }
+    return msgs.length ? msgs.join(' · ') : '시장 조건이 매수 신호와 맞지 않음. 기다리거나 설정을 완화하세요.';
+  }
+
   function refreshAll() {
     Promise.all([api('/api/state'), api('/api/trades?limit=50'), api('/api/logs?limit=200'), api('/api/watchlist')])
       .then(function(r){
-        currentCfg = r[0].cfg;
-        renderState(r[0]);
-        renderEngine(r[0].lastTick);
-        renderTrades(r[1]);
-        allLogs = r[2]||[];
+        var state = r[0], trades = r[1], logs = r[2]||[], quotes = r[3]||[];
+        currentCfg = state.cfg;
+
+        renderWatchlist(quotes);
+
+        var posUS = (state.positions && state.positions.us) || {};
+        var posKR = (state.positions && state.positions.kr) || {};
+        var cash = state.cash || {us:0,kr:0};
+
+        var sUS = calcSummary('us', cash.us, posUS);
+        var sKR = calcSummary('kr', cash.kr, posKR);
+        renderSummary('us', sUS);
+        renderSummary('kr', sKR);
+
+        renderPositions(posUS, posKR);
+        renderEngine(state.lastTick);
+        renderTrades(trades);
+        allLogs = logs;
         renderLogs();
-        renderWatchlist(r[3]||[]);
+
+        // 매수 안 되는 이유 진단
+        var reason = analyzeNoBuyReason(logs, state.cfg);
+        var hintBox = $('hintBox'), hintText = $('hintText');
+        var hasPositions = Object.keys(posUS).length + Object.keys(posKR).length > 0;
+        if (reason && !hasPositions) {
+          hintText.textContent = reason;
+          hintBox.style.display = 'block';
+        } else {
+          hintBox.style.display = 'none';
+        }
       })
       ['catch'](function(e){ toast('로드 실패: '+e.message); });
   }
@@ -401,11 +508,11 @@ button.btn.loading { opacity: 0.5; pointer-events: none; }
       atrStopMult: parseFloat($('cfgAtrStopMult').value),
       trailMult: parseFloat($('cfgTrailMult').value),
       feeUS: parseFloat($('cfgFeeUS').value),
-      feeKR: parseFloat($('cfgFeeKR').value),
+      feeKR: parseFloat($('cfgFeeKR').value)
     };
     fetch('/api/cfg', { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify(body) })
       .then(function(r){return r.json();})
-      .then(function(j){ toast('설정 저장됨'); closeSettings(); refreshAll(); })
+      .then(function(){ toast('설정 저장됨'); closeSettings(); refreshAll(); })
       ['catch'](function(e){ toast('저장 실패: '+e.message); });
   }
 
