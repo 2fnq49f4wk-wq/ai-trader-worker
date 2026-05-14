@@ -1,0 +1,15 @@
+name = "ai-trader-app"
+main = "src/index.js"
+compatibility_date = "2025-01-01"
+
+[[d1_databases]]
+binding = "DB"
+database_name = "ai-trader-db"
+database_id = "77db8a94-9d85-473a-9f43-9659ee8374c0"
+
+[triggers]
+crons = ["*/1 * * * *"]
+
+[assets]
+directory = "./public"
+binding = "ASSETS"
