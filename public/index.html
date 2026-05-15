@@ -33,7 +33,7 @@ body { background: var(--bg); color: var(--text); font-family: 'Courier New', mo
 .idx-spark { flex: 1; height: 28px; }
 
 .summary-grid { display: grid; grid-template-columns: repeat(2, 1fr); gap: 2px; background: var(--border); }
-@media (min-width: 768px) { .summary-grid { grid-template-columns: repeat(5, 1fr); } }
+@media (min-width: 768px) { .summary-grid { grid-template-columns: repeat(4, 1fr); } }
 .summary-item { background: var(--panel); padding: 14px 12px; min-width: 0; }
 .summary-label { font-size: 10px; color: var(--dim); text-transform: uppercase; font-weight: bold; letter-spacing: 1px; }
 .summary-value { font-size: 14px; font-weight: 700; margin-top: 4px; color: var(--text); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
@@ -45,7 +45,6 @@ body { background: var(--bg); color: var(--text); font-family: 'Courier New', mo
 button.btn { padding: 9px 13px; background: var(--panel); border: 1px solid var(--border); color: var(--text); font-family: inherit; font-size: 11px; cursor: pointer; outline: none; border-radius: 4px; font-weight: bold; transition: all 0.15s; letter-spacing: 1px; }
 button.btn:hover { background: var(--elev); }
 button.btn.primary { background: var(--amber); color: var(--bg); border-color: var(--amber); font-weight: 700; }
-button.btn.refresh { color: var(--blue); border-color: var(--blue); }
 button.btn.danger { color: var(--red); border-color: var(--red); }
 button.btn:active { opacity: 0.6; }
 button.btn.loading { opacity: 0.5; pointer-events: none; }
@@ -116,7 +115,6 @@ button.btn.loading { opacity: 0.5; pointer-events: none; }
   <div class="topbar">
     <div class="brand">AI TRADER v5</div>
     <div class="topbar-btns">
-      <button type="button" class="btn refresh" id="btnRefresh">REFRESH</button>
       <button type="button" class="btn" id="btnSettings">SETTINGS</button>
       <button type="button" class="btn primary" id="btnTick">RUN NOW</button>
     </div>
@@ -155,21 +153,19 @@ button.btn.loading { opacity: 0.5; pointer-events: none; }
           <div class="cfg-display" id="cfgDisplayUS"></div>
         </div>
         <div class="summary-grid">
-          <div class="summary-item"><div class="summary-label">CASH</div><div class="summary-value" id="cashUS">-</div></div>
-          <div class="summary-item"><div class="summary-label">INVESTED</div><div class="summary-value" id="investedUS">-</div></div>
-          <div class="summary-item"><div class="summary-label">MARKET VAL</div><div class="summary-value" id="marketValUS">-</div></div>
           <div class="summary-item"><div class="summary-label">TOTAL</div><div class="summary-value" id="totalUS">-</div></div>
-          <div class="summary-item"><div class="summary-label">UNREAL PnL</div><div class="summary-value" id="pnlUS">-</div></div>
+          <div class="summary-item"><div class="summary-label">INVESTED</div><div class="summary-value" id="investedUS">-</div></div>
+          <div class="summary-item"><div class="summary-label">CASH</div><div class="summary-value" id="cashUS">-</div></div>
+          <div class="summary-item"><div class="summary-label">vs INITIAL</div><div class="summary-value" id="changeUS">-</div></div>
         </div>
       </div>
       <div class="panel">
         <div class="panel-header"><div class="panel-title">[KR] PORTFOLIO</div></div>
         <div class="summary-grid">
-          <div class="summary-item"><div class="summary-label">CASH</div><div class="summary-value" id="cashKR">-</div></div>
-          <div class="summary-item"><div class="summary-label">INVESTED</div><div class="summary-value" id="investedKR">-</div></div>
-          <div class="summary-item"><div class="summary-label">MARKET VAL</div><div class="summary-value" id="marketValKR">-</div></div>
           <div class="summary-item"><div class="summary-label">TOTAL</div><div class="summary-value" id="totalKR">-</div></div>
-          <div class="summary-item"><div class="summary-label">UNREAL PnL</div><div class="summary-value" id="pnlKR">-</div></div>
+          <div class="summary-item"><div class="summary-label">INVESTED</div><div class="summary-value" id="investedKR">-</div></div>
+          <div class="summary-item"><div class="summary-label">CASH</div><div class="summary-value" id="cashKR">-</div></div>
+          <div class="summary-item"><div class="summary-label">vs INITIAL</div><div class="summary-value" id="changeKR">-</div></div>
         </div>
       </div>
     </div>
@@ -191,6 +187,11 @@ button.btn.loading { opacity: 0.5; pointer-events: none; }
     </div>
 
     <div class="panel">
+      <div class="panel-header"><div class="panel-title">RECENT TRADES</div></div>
+      <div id="tradesBox"><div class="empty">No trades yet</div></div>
+    </div>
+
+    <div class="panel">
       <div class="panel-header">
         <div class="panel-title">ENGINE LOGS</div>
         <div class="log-filter">
@@ -204,11 +205,6 @@ button.btn.loading { opacity: 0.5; pointer-events: none; }
         </div>
       </div>
       <div class="log-box" id="logsBox"><div class="empty">No logs yet</div></div>
-    </div>
-
-    <div class="panel">
-      <div class="panel-header"><div class="panel-title">RECENT TRADES</div></div>
-      <div id="tradesBox"><div class="empty">No trades yet</div></div>
     </div>
   </div>
 </div>
@@ -312,29 +308,17 @@ button.btn.loading { opacity: 0.5; pointer-events: none; }
     '012450.KS': '한화에어로스페이스',
     '034020.KS': '두산에너빌리티',
     '006800.KS': '미래에셋증권',
-    '009540.KS': 'HD한국조선해양',
-    '207940.KS': '삼성바이오로직스',
-    '005490.KS': 'POSCO홀딩스',
-    '000270.KS': '기아',
-    '035420.KS': 'NAVER',
-    '006400.KS': '삼성SDI',
-    '068270.KS': '셀트리온',
-    '035720.KS': '카카오',
-    '051910.KS': 'LG화학',
-    '105560.KS': 'KB금융',
-    '055550.KS': '신한지주',
-    '012330.KS': '현대모비스',
-    '066570.KS': 'LG전자'
+    '009540.KS': 'HD한국조선해양'
   };
 
   function krLabel(symbol) { return KR_NAMES[symbol] || ''; }
-
   function $(id) { return document.getElementById(id); }
 
   function fmtNum(n, dec) {
     if (typeof n !== 'number' || isNaN(n)) return '-';
     return n.toLocaleString(undefined, { maximumFractionDigits: dec != null ? dec : 2 });
   }
+
   function fmtCompact(n) {
     if (typeof n !== 'number' || isNaN(n)) return '-';
     var abs = Math.abs(n);
@@ -342,16 +326,19 @@ button.btn.loading { opacity: 0.5; pointer-events: none; }
     if (abs >= 1e4) return (n/1e4).toFixed(1) + '만';
     return n.toLocaleString(undefined, { maximumFractionDigits: 0 });
   }
+
   function fmtTime(ts) {
     if (!ts) return '-';
     var d = new Date(ts), p = function(n){return n<10?'0'+n:n;};
     return p(d.getHours())+':'+p(d.getMinutes())+':'+p(d.getSeconds());
   }
+
   function fmtFullTime(ts) {
     if (!ts) return '-';
     var d = new Date(ts), p = function(n){return n<10?'0'+n:n;};
     return d.getFullYear()+'-'+p(d.getMonth()+1)+'-'+p(d.getDate())+' '+p(d.getHours())+':'+p(d.getMinutes())+':'+p(d.getSeconds());
   }
+
   function fmtAgo(ts) {
     if (!ts) return '없음';
     var sec = Math.floor((Date.now() - ts) / 1000);
@@ -359,17 +346,20 @@ button.btn.loading { opacity: 0.5; pointer-events: none; }
     if (sec < 3600) return Math.floor(sec / 60) + '분 전';
     return Math.floor(sec / 3600) + '시간 전';
   }
+
   function escapeHtml(s) {
     return String(s).replace(/[&<>"']/g, function(c){
       return {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c];
     });
   }
+
   function toast(msg) {
     var t = $('toast');
     t.textContent = msg;
     t.classList.add('show');
     setTimeout(function(){ t.classList.remove('show'); }, 2500);
   }
+
   function api(path, opts) {
     opts = opts || {};
     return fetch(path, opts).then(function(r){
@@ -390,17 +380,24 @@ button.btn.loading { opacity: 0.5; pointer-events: none; }
       var y = h - pad - ((v - min) / range) * (h - pad*2);
       return x.toFixed(1) + ',' + y.toFixed(1);
     }).join(' ');
-    return '<svg class="idx-spark" viewBox="0 0 '+w+' '+h+'" preserveAspectRatio="none">'+
-      '<polyline fill="none" stroke="'+color+'" stroke-width="1.5" points="'+pts+'"/>'+
-      '</svg>';
+    return '<svg class="idx-spark" viewBox="0 0 '+w+' '+h+'" preserveAspectRatio="none"><polyline fill="none" stroke="'+color+'" stroke-width="1.5" points="'+pts+'"/></svg>';
   }
 
   function renderEngine(lastTick) {
     var dot = $('engineDot'), txt = $('engineText');
-    if (!lastTick) { dot.className='dot unknown'; txt.textContent='엔진 상태 미확인 (RUN NOW를 한번 누르세요)'; return; }
+    if (!lastTick) {
+      dot.className='dot unknown';
+      txt.textContent='엔진 상태 미확인 (RUN NOW를 한번 누르세요)';
+      return;
+    }
     var age = Date.now() - lastTick;
-    if (age < 90*1000) { dot.className='dot alive'; txt.textContent='엔진 자동 작동 중 · 마지막 실행: '+fmtAgo(lastTick)+' (1분마다 자동)'; }
-    else { dot.className='dot stale'; txt.textContent='엔진 지연 · 마지막 실행: '+fmtAgo(lastTick); }
+    if (age < 90*1000) {
+      dot.className='dot alive';
+      txt.textContent='엔진 자동 작동 중 · 마지막 실행: '+fmtAgo(lastTick)+' (1분마다 자동)';
+    } else {
+      dot.className='dot stale';
+      txt.textContent='엔진 지연 · 마지막 실행: '+fmtAgo(lastTick);
+    }
   }
 
   function renderIndices(indices) {
@@ -410,14 +407,7 @@ button.btn.loading { opacity: 0.5; pointer-events: none; }
       var dayClass = idx.dayPct > 0 ? 'pos' : (idx.dayPct < 0 ? 'neg' : '');
       var color = idx.dayPct >= 0 ? '#3fb950' : '#f85149';
       var sign = idx.dayPct >= 0 ? '+' : '';
-      return '<div class="idx-card">'+
-        '<div class="idx-name">'+escapeHtml(name)+'</div>'+
-        '<div class="idx-price">'+fmtNum(idx.price)+'</div>'+
-        '<div class="idx-bottom">'+
-          '<span class="idx-day '+dayClass+'">'+sign+fmtNum(idx.dayPct,2)+'%</span>'+
-          makeSparkline(idx.history, color)+
-        '</div>'+
-        '</div>';
+      return '<div class="idx-card"><div class="idx-name">'+escapeHtml(name)+'</div><div class="idx-price">'+fmtNum(idx.price)+'</div><div class="idx-bottom"><span class="idx-day '+dayClass+'">'+sign+fmtNum(idx.dayPct,2)+'%</span>'+makeSparkline(idx.history, color)+'</div></div>';
     }
     var us = indices.filter(function(i){return i.region==='us';});
     var kr = indices.filter(function(i){return i.region==='kr';});
@@ -425,7 +415,7 @@ button.btn.loading { opacity: 0.5; pointer-events: none; }
     boxKR.innerHTML = kr.length ? kr.map(card).join('') : '<div class="empty">대기 중...</div>';
   }
 
-  function calcSummary(market, cash, positions) {
+  function calcSummary(market, cash, positions, initialCash) {
     var symbol = market === 'us' ? '$' : '₩';
     var invested = 0, marketVal = 0;
     Object.keys(positions).forEach(function(sym) {
@@ -436,23 +426,22 @@ button.btn.loading { opacity: 0.5; pointer-events: none; }
       marketVal += p.qty * curPrice;
     });
     var total = cash + marketVal;
-    var pnl = marketVal - invested;
-    var pnlPct = invested > 0 ? (pnl / invested * 100) : 0;
-    return { symbol: symbol, cash: cash, invested: invested, marketVal: marketVal, total: total, pnl: pnl, pnlPct: pnlPct };
+    var change = total - initialCash;
+    var changePct = initialCash > 0 ? (change / initialCash * 100) : 0;
+    return { symbol: symbol, cash: cash, invested: invested, marketVal: marketVal, total: total, change: change, changePct: changePct };
   }
 
   function renderSummary(market, s) {
     var up = market.toUpperCase();
     var useCompact = market === 'kr';
     var fmt = useCompact ? fmtCompact : function(n){ return fmtNum(n, 2); };
-    $('cash'+up).textContent = s.symbol + fmt(s.cash);
-    $('invested'+up).textContent = s.symbol + fmt(s.invested);
-    $('marketVal'+up).textContent = s.symbol + fmt(s.marketVal);
     $('total'+up).textContent = s.symbol + fmt(s.total);
-    var pnlEl = $('pnl'+up);
-    var sign = s.pnl >= 0 ? '+' : '';
-    pnlEl.textContent = sign + s.symbol + fmt(s.pnl) + ' (' + sign + fmtNum(s.pnlPct, 2) + '%)';
-    pnlEl.className = 'summary-value ' + (s.pnl > 0 ? 'pos' : (s.pnl < 0 ? 'neg' : ''));
+    $('invested'+up).textContent = s.symbol + fmt(s.invested);
+    $('cash'+up).textContent = s.symbol + fmt(s.cash);
+    var changeEl = $('change'+up);
+    var sign = s.change >= 0 ? '+' : '';
+    changeEl.textContent = sign + s.symbol + fmt(s.change) + ' (' + sign + fmtNum(s.changePct, 2) + '%)';
+    changeEl.className = 'summary-value ' + (s.change > 0 ? 'pos' : (s.change < 0 ? 'neg' : ''));
   }
 
   function renderPositions(positionsUS, positionsKR) {
@@ -470,9 +459,7 @@ button.btn.loading { opacity: 0.5; pointer-events: none; }
       var sign = pnlPct != null && pnlPct >= 0 ? '+' : '';
       var pnlText = pnlPct != null ? sign + pnlPct.toFixed(2) + '%' : '-';
       var curText = curPrice != null ? fmtNum(curPrice) : '-';
-      var label = row.market === 'KR' && krLabel(row.symbol)
-        ? '<b>'+escapeHtml(row.symbol)+'</b> <span style="color:var(--dim);font-size:10px;">'+escapeHtml(krLabel(row.symbol))+'</span>'
-        : '<b>'+escapeHtml(row.symbol)+'</b>';
+      var label = row.market === 'KR' && krLabel(row.symbol) ? '<b>'+escapeHtml(row.symbol)+'</b> <span style="color:var(--dim);font-size:10px;">'+escapeHtml(krLabel(row.symbol))+'</span>' : '<b>'+escapeHtml(row.symbol)+'</b>';
       html += '<tr><td><span class="market-badge">'+row.market+'</span></td><td>'+label+'</td><td class="right">'+fmtNum(row.p.qty)+'</td><td class="right">'+fmtNum(row.p.avg)+'</td><td class="right">'+curText+'</td><td class="right '+pnlClass+'">'+pnlText+'</td><td class="right">'+fmtAgo(row.p.opened_ts)+'</td></tr>';
     });
     box.innerHTML = html + '</tbody></table>';
@@ -487,24 +474,13 @@ button.btn.loading { opacity: 0.5; pointer-events: none; }
     function cardUS(q) {
       var dayClass = q.dayPct > 0 ? 'pos' : (q.dayPct < 0 ? 'neg' : '');
       var sign = q.dayPct >= 0 ? '+' : '';
-      return '<div class="wl-card">'+
-        '<div class="wl-sym">'+escapeHtml(q.symbol)+'</div>'+
-        '<div class="wl-price">'+fmtNum(q.price)+'</div>'+
-        '<div class="wl-day '+dayClass+'">'+sign+fmtNum(q.dayPct,2)+'%</div>'+
-        '<div class="wl-meta">RSI '+(q.rsi!=null?q.rsi.toFixed(1):'-')+' · '+fmtAgo(q.ts)+'</div>'+
-        '</div>';
+      return '<div class="wl-card"><div class="wl-sym">'+escapeHtml(q.symbol)+'</div><div class="wl-price">'+fmtNum(q.price)+'</div><div class="wl-day '+dayClass+'">'+sign+fmtNum(q.dayPct,2)+'%</div><div class="wl-meta">RSI '+(q.rsi!=null?q.rsi.toFixed(1):'-')+' · '+fmtAgo(q.ts)+'</div></div>';
     }
     function cardKR(q) {
       var dayClass = q.dayPct > 0 ? 'pos' : (q.dayPct < 0 ? 'neg' : '');
       var sign = q.dayPct >= 0 ? '+' : '';
       var name = krLabel(q.symbol);
-      return '<div class="wl-card">'+
-        '<div class="wl-sym">'+escapeHtml(q.symbol)+'</div>'+
-        (name ? '<div class="wl-name">'+escapeHtml(name)+'</div>' : '')+
-        '<div class="wl-price">'+fmtNum(q.price)+'</div>'+
-        '<div class="wl-day '+dayClass+'">'+sign+fmtNum(q.dayPct,2)+'%</div>'+
-        '<div class="wl-meta">RSI '+(q.rsi!=null?q.rsi.toFixed(1):'-')+' · '+fmtAgo(q.ts)+'</div>'+
-        '</div>';
+      return '<div class="wl-card"><div class="wl-sym">'+escapeHtml(q.symbol)+'</div>'+(name ? '<div class="wl-name">'+escapeHtml(name)+'</div>' : '')+'<div class="wl-price">'+fmtNum(q.price)+'</div><div class="wl-day '+dayClass+'">'+sign+fmtNum(q.dayPct,2)+'%</div><div class="wl-meta">RSI '+(q.rsi!=null?q.rsi.toFixed(1):'-')+' · '+fmtAgo(q.ts)+'</div></div>';
     }
     boxUS.innerHTML = us.length ? us.map(cardUS).join('') : '<div class="empty">대기 중...</div>';
     boxKR.innerHTML = kr.length ? kr.map(cardKR).join('') : '<div class="empty">대기 중...</div>';
@@ -518,9 +494,7 @@ button.btn.loading { opacity: 0.5; pointer-events: none; }
       var sc = t.side==='BUY'?'trade-buy':'trade-sell';
       var pct = t.pnl_pct!=null ? (t.pnl_pct>=0?'+':'')+t.pnl_pct.toFixed(2)+'%' : '-';
       var pc = t.pnl_pct!=null ? (t.pnl_pct>=0?'pos':'neg') : '';
-      var label = t.market === 'kr' && krLabel(t.symbol)
-        ? '<b>'+escapeHtml(t.symbol)+'</b> <span style="color:var(--dim);font-size:10px;">'+escapeHtml(krLabel(t.symbol))+'</span>'
-        : '<b>'+escapeHtml(t.symbol)+'</b>';
+      var label = t.market === 'kr' && krLabel(t.symbol) ? '<b>'+escapeHtml(t.symbol)+'</b> <span style="color:var(--dim);font-size:10px;">'+escapeHtml(krLabel(t.symbol))+'</span>' : '<b>'+escapeHtml(t.symbol)+'</b>';
       html += '<tr><td>'+fmtFullTime(t.ts)+'</td><td><span class="market-badge">'+t.market.toUpperCase()+'</span></td><td>'+label+'</td><td class="'+sc+'">'+t.side+'</td><td class="right">'+fmtNum(t.qty)+'</td><td class="right">'+fmtNum(t.price)+'</td><td class="right '+pc+'">'+pct+'</td><td>'+escapeHtml(t.reason||'')+'</td></tr>';
     });
     box.innerHTML = html + '</tbody></table>';
@@ -532,15 +506,8 @@ button.btn.loading { opacity: 0.5; pointer-events: none; }
     if (f.length===0) { box.innerHTML='<div class="empty">No logs for: '+logFilter+'</div>'; return; }
     box.innerHTML = f.map(function(l){
       var symbolDisplay = l.symbol || '';
-      if (symbolDisplay && krLabel(symbolDisplay)) {
-        symbolDisplay = symbolDisplay + ' (' + krLabel(symbolDisplay) + ')';
-      }
-      return '<div class="log-line '+escapeHtml(l.level)+'">'+
-        '<span class="log-ts">'+fmtTime(l.ts)+'</span>'+
-        '<span class="log-level">['+escapeHtml(l.level)+']</span>'+
-        (l.symbol?'<span class="log-symbol">'+escapeHtml(symbolDisplay)+'</span>':'')+
-        escapeHtml(l.message)+
-        '</div>';
+      if (symbolDisplay && krLabel(symbolDisplay)) symbolDisplay = symbolDisplay + ' (' + krLabel(symbolDisplay) + ')';
+      return '<div class="log-line '+escapeHtml(l.level)+'"><span class="log-ts">'+fmtTime(l.ts)+'</span><span class="log-level">['+escapeHtml(l.level)+']</span>'+(l.symbol?'<span class="log-symbol">'+escapeHtml(symbolDisplay)+'</span>':'')+escapeHtml(l.message)+'</div>';
     }).join('');
   }
 
@@ -548,7 +515,6 @@ button.btn.loading { opacity: 0.5; pointer-events: none; }
     if (!cfg) return;
     var el = $('cfgDisplayUS');
     el.innerHTML = 'RSI Buy/<b>'+cfg.rsiBuy+'</b>/Sell/<b>'+cfg.rsiSell+'</b> · Stop/<b>'+cfg.stopLoss+'%</b> · TP/<b>'+cfg.takeProfit+'%</b> · Size/<b>'+cfg.posSize+'%</b>';
-
     var lastTune = allLogs.filter(function(l){return l.level==='TUNE';})[0];
     var banner = $('tuneBanner'), tuneText = $('tuneText');
     if (lastTune && cfg.autoTune) {
@@ -572,21 +538,23 @@ button.btn.loading { opacity: 0.5; pointer-events: none; }
         var posUS = (state.positions && state.positions.us) || {};
         var posKR = (state.positions && state.positions.kr) || {};
         var cash = state.cash || {us:0,kr:0};
-        renderSummary('us', calcSummary('us', cash.us, posUS));
-        renderSummary('kr', calcSummary('kr', cash.kr, posKR));
+        var initUS = (state.cfg && state.cfg.initialCashUS) || 0;
+        var initKR = (state.cfg && state.cfg.initialCashKR) || 0;
+        renderSummary('us', calcSummary('us', cash.us, posUS, initUS));
+        renderSummary('kr', calcSummary('kr', cash.kr, posKR, initKR));
         renderPositions(posUS, posKR);
         renderEngine(state.lastTick);
         renderTrades(trades);
         allLogs = logs;
         renderLogs();
         renderCfgDisplay(state.cfg);
-      })
-      ['catch'](function(e){ toast('로드 실패: '+e.message); });
+      })['catch'](function(e){ toast('로드 실패: '+e.message); });
   }
 
   function runNow() {
     var btn = $('btnTick');
-    btn.classList.add('loading'); btn.textContent='RUNNING...';
+    btn.classList.add('loading');
+    btn.textContent='RUNNING...';
     fetch('/api/tick', {method:'POST'})
       .then(function(r){return r.json();})
       .then(function(){ toast('엔진 1회 실행 완료'); refreshAll(); })
@@ -670,7 +638,6 @@ button.btn.loading { opacity: 0.5; pointer-events: none; }
       ['catch'](function(e){ toast('복원 실패: '+e.message); });
   }
 
-  $('btnRefresh').addEventListener('click', refreshAll);
   $('btnTick').addEventListener('click', runNow);
   $('btnSettings').addEventListener('click', openSettings);
   $('btnCancelSettings').addEventListener('click', closeSettings);
