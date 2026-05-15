@@ -375,10 +375,11 @@ button.btn.loading { opacity: 0.5; pointer-events: none; }
     '329180.KS': 'HD현대중공업',
     '042660.KS': '한화오션',
     '196170.KS': '알테오젠',
-    '497570.KS': 'TIGER 미국우주테크',
+    '047040.KS': '대우건설',
+    '005490.KS': 'POSCO홀딩스',
     '042700.KS': '한미반도체',
     '064350.KS': '현대로템',
-    '518880.KS': 'LIG디펜스앤에어로스페이스',
+    '079550.KS': 'LIG디펜스앤에어로스페이스',
     '047810.KS': '한국항공우주',
     '069500.KS': 'KODEX 200'
   };
@@ -624,14 +625,12 @@ button.btn.loading { opacity: 0.5; pointer-events: none; }
       return;
     }
 
-    // 즐겨찾기와 나머지 분리
     var favs = quotes.filter(function(q){ return favorites.indexOf(q.symbol) >= 0; });
     var rest = quotes.filter(function(q){ return favorites.indexOf(q.symbol) < 0; });
 
     var html = '';
 
     if (expanded) {
-      // 펼친 상태: 즐겨찾기 먼저, 그 다음 전체
       if (favs.length > 0) {
         html += '<div class="watchlist-section fav">★ 즐겨찾기 ('+favs.length+')</div>';
         html += '<div class="watchlist">'+favs.map(function(q){return buildWatchlistCard(q, market);}).join('')+'</div>';
@@ -641,7 +640,6 @@ button.btn.loading { opacity: 0.5; pointer-events: none; }
         html += '<div class="watchlist">'+rest.map(function(q){return buildWatchlistCard(q, market);}).join('')+'</div>';
       }
     } else {
-      // 접힌 상태: 즐겨찾기 + 일반 합쳐서 상위 5개
       var topItems = favs.concat(rest).slice(0, 5);
       if (favs.length > 0) {
         html += '<div class="watchlist-section fav">★ 즐겨찾기 우선 표시 (총 '+quotes.length+'개 중 5개)</div>';
@@ -653,7 +651,6 @@ button.btn.loading { opacity: 0.5; pointer-events: none; }
 
     container.innerHTML = html;
 
-    // 즐겨찾기 토글 이벤트 등록
     container.querySelectorAll('.wl-fav').forEach(function(el){
       el.addEventListener('click', function(e){
         e.stopPropagation();
@@ -684,7 +681,6 @@ button.btn.loading { opacity: 0.5; pointer-events: none; }
     if (market === 'us') usFavorites = favorites;
     else krFavorites = favorites;
 
-    // 서버에 저장
     fetch('/api/favorites', {
       method: 'POST',
       headers: {'Content-Type': 'application/json'},
