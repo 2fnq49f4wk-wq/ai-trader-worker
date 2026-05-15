@@ -34,9 +34,9 @@ body { background: var(--bg); color: var(--text); font-family: 'Courier New', mo
 
 .summary-grid { display: grid; grid-template-columns: repeat(2, 1fr); gap: 2px; background: var(--border); }
 @media (min-width: 768px) { .summary-grid { grid-template-columns: repeat(5, 1fr); } }
-.summary-item { background: var(--panel); padding: 14px 12px; }
+.summary-item { background: var(--panel); padding: 14px 12px; min-width: 0; }
 .summary-label { font-size: 10px; color: var(--dim); text-transform: uppercase; font-weight: bold; letter-spacing: 1px; }
-.summary-value { font-size: 16px; font-weight: 700; margin-top: 4px; color: var(--text); word-break: break-all; }
+.summary-value { font-size: 14px; font-weight: 700; margin-top: 4px; color: var(--text); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 
 .table { width: 100%; border-collapse: collapse; font-size: 12px; }
 .table th { padding: 10px 12px; text-align: left; color: var(--dim); font-size: 10px; letter-spacing: 1px; border-bottom: 1px solid var(--border); background: var(--elev); }
@@ -87,13 +87,13 @@ button.btn.loading { opacity: 0.5; pointer-events: none; }
 .field label { display: block; font-size: 11px; color: var(--dim); margin-bottom: 4px; font-weight: bold; letter-spacing: 0.5px; }
 .field input, .field textarea { width: 100%; padding: 9px 11px; background: var(--bg); border: 1px solid var(--border); color: var(--text); font-family: inherit; font-size: 13px; border-radius: 4px; outline: none; }
 .field input:focus, .field textarea:focus { border-color: var(--amber); }
-.field textarea { min-height: 60px; resize: vertical; }
+.field textarea { min-height: 80px; resize: vertical; }
 .field-row { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 8px; }
 .field-row-2 { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
 .section-divider { border-top: 1px solid var(--border); margin: 18px 0 14px; padding-top: 4px; }
 .section-title { font-size: 12px; color: var(--amber); letter-spacing: 1.5px; font-weight: bold; margin-bottom: 12px; }
-.modal-actions { display: flex; gap: 8px; margin-top: 18px; }
-.modal-actions button { flex: 1; padding: 11px; }
+.modal-actions { display: flex; gap: 8px; margin-top: 18px; flex-wrap: wrap; }
+.modal-actions button { flex: 1; padding: 11px; min-width: 100px; }
 .watchlist { display: grid; grid-template-columns: repeat(auto-fill, minmax(160px, 1fr)); gap: 6px; padding: 10px; }
 .wl-card { background: var(--elev); border: 1px solid var(--border); border-radius: 4px; padding: 8px 10px; }
 .wl-sym { font-size: 11px; color: var(--amber); font-weight: bold; letter-spacing: 0.5px; }
@@ -239,6 +239,7 @@ button.btn.loading { opacity: 0.5; pointer-events: none; }
       <label>KR TICKERS (예: 005930.KS)</label>
       <textarea id="cfgKR"></textarea>
     </div>
+    <button type="button" class="btn" id="btnResetTickers" style="margin-bottom:10px;">티커 기본값으로 복원</button>
 
     <div class="section-divider"></div>
     <div class="section-title">STRATEGY</div>
@@ -301,7 +302,6 @@ button.btn.loading { opacity: 0.5; pointer-events: none; }
     '^KQ11': 'KOSDAQ'
   };
 
-  // 한국 종목코드 -> 회사명 매핑 (UI 표시용, 시스템은 코드 그대로 사용)
   var KR_NAMES = {
     '005930.KS': '삼성전자',
     '000660.KS': 'SK하이닉스',
@@ -327,15 +327,20 @@ button.btn.loading { opacity: 0.5; pointer-events: none; }
     '066570.KS': 'LG전자'
   };
 
-  function krLabel(symbol) {
-    return KR_NAMES[symbol] || '';
-  }
+  function krLabel(symbol) { return KR_NAMES[symbol] || ''; }
 
   function $(id) { return document.getElementById(id); }
 
   function fmtNum(n, dec) {
     if (typeof n !== 'number' || isNaN(n)) return '-';
     return n.toLocaleString(undefined, { maximumFractionDigits: dec != null ? dec : 2 });
+  }
+  function fmtCompact(n) {
+    if (typeof n !== 'number' || isNaN(n)) return '-';
+    var abs = Math.abs(n);
+    if (abs >= 1e8) return (n/1e8).toFixed(2) + '억';
+    if (abs >= 1e4) return (n/1e4).toFixed(1) + '만';
+    return n.toLocaleString(undefined, { maximumFractionDigits: 0 });
   }
   function fmtTime(ts) {
     if (!ts) return '-';
@@ -438,13 +443,15 @@ button.btn.loading { opacity: 0.5; pointer-events: none; }
 
   function renderSummary(market, s) {
     var up = market.toUpperCase();
-    $('cash'+up).textContent = s.symbol + fmtNum(s.cash);
-    $('invested'+up).textContent = s.symbol + fmtNum(s.invested);
-    $('marketVal'+up).textContent = s.symbol + fmtNum(s.marketVal);
-    $('total'+up).textContent = s.symbol + fmtNum(s.total);
+    var useCompact = market === 'kr';
+    var fmt = useCompact ? fmtCompact : function(n){ return fmtNum(n, 2); };
+    $('cash'+up).textContent = s.symbol + fmt(s.cash);
+    $('invested'+up).textContent = s.symbol + fmt(s.invested);
+    $('marketVal'+up).textContent = s.symbol + fmt(s.marketVal);
+    $('total'+up).textContent = s.symbol + fmt(s.total);
     var pnlEl = $('pnl'+up);
     var sign = s.pnl >= 0 ? '+' : '';
-    pnlEl.textContent = sign + s.symbol + fmtNum(s.pnl) + ' (' + sign + fmtNum(s.pnlPct, 2) + '%)';
+    pnlEl.textContent = sign + s.symbol + fmt(s.pnl) + ' (' + sign + fmtNum(s.pnlPct, 2) + '%)';
     pnlEl.className = 'summary-value ' + (s.pnl > 0 ? 'pos' : (s.pnl < 0 ? 'neg' : ''));
   }
 
@@ -650,12 +657,26 @@ button.btn.loading { opacity: 0.5; pointer-events: none; }
       ['catch'](function(e){ toast('초기화 실패: '+e.message); });
   }
 
+  function resetTickers() {
+    if (!confirm('티커 목록을 코드의 기본값으로 복원합니까? (자본금/포지션은 유지)')) return;
+    fetch('/api/reset_tickers', {method:'POST'})
+      .then(function(r){return r.json();})
+      .then(function(d){
+        toast('티커 기본값 복원 완료');
+        if (d.usTickers) $('cfgUS').value = d.usTickers.join(', ');
+        if (d.krTickers) $('cfgKR').value = d.krTickers.join(', ');
+        refreshAll();
+      })
+      ['catch'](function(e){ toast('복원 실패: '+e.message); });
+  }
+
   $('btnRefresh').addEventListener('click', refreshAll);
   $('btnTick').addEventListener('click', runNow);
   $('btnSettings').addEventListener('click', openSettings);
   $('btnCancelSettings').addEventListener('click', closeSettings);
   $('btnSaveSettings').addEventListener('click', saveSettings);
   $('btnReset').addEventListener('click', resetAll);
+  $('btnResetTickers').addEventListener('click', resetTickers);
 
   document.querySelectorAll('.log-filter button').forEach(function(b){
     b.addEventListener('click', function(){
