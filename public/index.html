@@ -89,13 +89,15 @@ button.btn.loading { opacity: 0.5; pointer-events: none; }
 .field input:focus, .field textarea:focus { border-color: var(--amber); }
 .field textarea { min-height: 60px; resize: vertical; }
 .field-row { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 8px; }
+.field-row-2 { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
 .section-divider { border-top: 1px solid var(--border); margin: 18px 0 14px; padding-top: 4px; }
 .section-title { font-size: 12px; color: var(--amber); letter-spacing: 1.5px; font-weight: bold; margin-bottom: 12px; }
 .modal-actions { display: flex; gap: 8px; margin-top: 18px; }
 .modal-actions button { flex: 1; padding: 11px; }
-.watchlist { display: grid; grid-template-columns: repeat(auto-fill, minmax(140px, 1fr)); gap: 6px; padding: 10px; }
+.watchlist { display: grid; grid-template-columns: repeat(auto-fill, minmax(160px, 1fr)); gap: 6px; padding: 10px; }
 .wl-card { background: var(--elev); border: 1px solid var(--border); border-radius: 4px; padding: 8px 10px; }
 .wl-sym { font-size: 11px; color: var(--amber); font-weight: bold; letter-spacing: 0.5px; }
+.wl-name { font-size: 9px; color: var(--dim); margin-top: 1px; }
 .wl-price { font-size: 15px; font-weight: bold; margin-top: 2px; }
 .wl-day { font-size: 10px; margin-top: 2px; }
 .wl-meta { font-size: 9px; color: var(--faint); margin-top: 2px; }
@@ -106,6 +108,7 @@ button.btn.loading { opacity: 0.5; pointer-events: none; }
 .checkbox-row { display: flex; align-items: center; gap: 10px; margin-bottom: 14px; }
 .checkbox-row input[type="checkbox"] { width: 20px; height: 20px; }
 .checkbox-row label { font-size: 13px; color: var(--text); font-weight: bold; }
+.hint { font-size: 10px; color: var(--faint); margin-top: 4px; }
 </style>
 </head>
 <body>
@@ -219,6 +222,14 @@ button.btn.loading { opacity: 0.5; pointer-events: none; }
       <label for="cfgAutoTune">AUTO-TUNE 활성화 (엔진이 스스로 파라미터 조정)</label>
     </div>
 
+    <div class="section-title">초기 자본금 (RESET 시 적용)</div>
+    <div class="field-row-2">
+      <div class="field"><label>US 초기자금 ($)</label><input type="number" id="cfgInitCashUS" min="1000" step="1000"></div>
+      <div class="field"><label>KR 초기자금 (₩)</label><input type="number" id="cfgInitCashKR" min="100000" step="100000"></div>
+    </div>
+    <div class="hint">※ 자본금은 SETTINGS 저장 후 RESET ALL DATA를 눌러야 적용됩니다.</div>
+
+    <div class="section-divider"></div>
     <div class="section-title">TICKERS</div>
     <div class="field">
       <label>US TICKERS (콤마 구분)</label>
@@ -289,6 +300,44 @@ button.btn.loading { opacity: 0.5; pointer-events: none; }
     '^KS11': 'KOSPI',
     '^KQ11': 'KOSDAQ'
   };
+
+  // 한국 종목코드 -> 회사명 매핑 (UI 표시용, 시스템은 코드 그대로 사용)
+  var KR_NAMES = {
+    '005930.KS': '삼성전자',
+    '000660.KS': 'SK하이닉스',
+    '373220.KS': 'LG에너지솔루션',
+    '207940.KS': '삼성바이오로직스',
+    '005380.KS': '현대차',
+    '005490.KS': 'POSCO홀딩스',
+    '000270.KS': '기아',
+    '035420.KS': 'NAVER',
+    '006400.KS': '삼성SDI',
+    '068270.KS': '셀트리온',
+    '035720.KS': '카카오',
+    '051910.KS': 'LG화학',
+    '028260.KS': '삼성물산',
+    '105560.KS': 'KB금융',
+    '055550.KS': '신한지주',
+    '012330.KS': '현대모비스',
+    '003670.KS': '포스코퓨처엠',
+    '096770.KS': 'SK이노베이션',
+    '034730.KS': 'SK',
+    '015760.KS': '한국전력',
+    '017670.KS': 'SK텔레콤',
+    '030200.KS': 'KT',
+    '009150.KS': '삼성전기',
+    '011200.KS': 'HMM',
+    '329180.KS': 'HD현대중공업',
+    '010130.KS': '고려아연',
+    '066570.KS': 'LG전자',
+    '003550.KS': 'LG',
+    '018260.KS': '삼성에스디에스',
+    '032830.KS': '삼성생명'
+  };
+
+  function krLabel(symbol) {
+    return KR_NAMES[symbol] || '';
+  }
 
   function $(id) { return document.getElementById(id); }
 
@@ -422,7 +471,10 @@ button.btn.loading { opacity: 0.5; pointer-events: none; }
       var sign = pnlPct != null && pnlPct >= 0 ? '+' : '';
       var pnlText = pnlPct != null ? sign + pnlPct.toFixed(2) + '%' : '-';
       var curText = curPrice != null ? fmtNum(curPrice) : '-';
-      html += '<tr><td><span class="market-badge">'+row.market+'</span></td><td><b>'+escapeHtml(row.symbol)+'</b></td><td class="right">'+fmtNum(row.p.qty)+'</td><td class="right">'+fmtNum(row.p.avg)+'</td><td class="right">'+curText+'</td><td class="right '+pnlClass+'">'+pnlText+'</td><td class="right">'+fmtAgo(row.p.opened_ts)+'</td></tr>';
+      var label = row.market === 'KR' && krLabel(row.symbol)
+        ? '<b>'+escapeHtml(row.symbol)+'</b> <span style="color:var(--dim);font-size:10px;">'+escapeHtml(krLabel(row.symbol))+'</span>'
+        : '<b>'+escapeHtml(row.symbol)+'</b>';
+      html += '<tr><td><span class="market-badge">'+row.market+'</span></td><td>'+label+'</td><td class="right">'+fmtNum(row.p.qty)+'</td><td class="right">'+fmtNum(row.p.avg)+'</td><td class="right">'+curText+'</td><td class="right '+pnlClass+'">'+pnlText+'</td><td class="right">'+fmtAgo(row.p.opened_ts)+'</td></tr>';
     });
     box.innerHTML = html + '</tbody></table>';
   }
@@ -433,7 +485,7 @@ button.btn.loading { opacity: 0.5; pointer-events: none; }
     var boxUS = $('watchlistUS'), boxKR = $('watchlistKR');
     var us = quotes.filter(function(q){return q.market==='us';});
     var kr = quotes.filter(function(q){return q.market==='kr';});
-    function card(q) {
+    function cardUS(q) {
       var dayClass = q.dayPct > 0 ? 'pos' : (q.dayPct < 0 ? 'neg' : '');
       var sign = q.dayPct >= 0 ? '+' : '';
       return '<div class="wl-card">'+
@@ -443,8 +495,20 @@ button.btn.loading { opacity: 0.5; pointer-events: none; }
         '<div class="wl-meta">RSI '+(q.rsi!=null?q.rsi.toFixed(1):'-')+' · '+fmtAgo(q.ts)+'</div>'+
         '</div>';
     }
-    boxUS.innerHTML = us.length ? us.map(card).join('') : '<div class="empty">대기 중...</div>';
-    boxKR.innerHTML = kr.length ? kr.map(card).join('') : '<div class="empty">대기 중...</div>';
+    function cardKR(q) {
+      var dayClass = q.dayPct > 0 ? 'pos' : (q.dayPct < 0 ? 'neg' : '');
+      var sign = q.dayPct >= 0 ? '+' : '';
+      var name = krLabel(q.symbol);
+      return '<div class="wl-card">'+
+        '<div class="wl-sym">'+escapeHtml(q.symbol)+'</div>'+
+        (name ? '<div class="wl-name">'+escapeHtml(name)+'</div>' : '')+
+        '<div class="wl-price">'+fmtNum(q.price)+'</div>'+
+        '<div class="wl-day '+dayClass+'">'+sign+fmtNum(q.dayPct,2)+'%</div>'+
+        '<div class="wl-meta">RSI '+(q.rsi!=null?q.rsi.toFixed(1):'-')+' · '+fmtAgo(q.ts)+'</div>'+
+        '</div>';
+    }
+    boxUS.innerHTML = us.length ? us.map(cardUS).join('') : '<div class="empty">대기 중...</div>';
+    boxKR.innerHTML = kr.length ? kr.map(cardKR).join('') : '<div class="empty">대기 중...</div>';
   }
 
   function renderTrades(trades) {
@@ -455,7 +519,10 @@ button.btn.loading { opacity: 0.5; pointer-events: none; }
       var sc = t.side==='BUY'?'trade-buy':'trade-sell';
       var pct = t.pnl_pct!=null ? (t.pnl_pct>=0?'+':'')+t.pnl_pct.toFixed(2)+'%' : '-';
       var pc = t.pnl_pct!=null ? (t.pnl_pct>=0?'pos':'neg') : '';
-      html += '<tr><td>'+fmtFullTime(t.ts)+'</td><td><span class="market-badge">'+t.market.toUpperCase()+'</span></td><td><b>'+escapeHtml(t.symbol)+'</b></td><td class="'+sc+'">'+t.side+'</td><td class="right">'+fmtNum(t.qty)+'</td><td class="right">'+fmtNum(t.price)+'</td><td class="right '+pc+'">'+pct+'</td><td>'+escapeHtml(t.reason||'')+'</td></tr>';
+      var label = t.market === 'kr' && krLabel(t.symbol)
+        ? '<b>'+escapeHtml(t.symbol)+'</b> <span style="color:var(--dim);font-size:10px;">'+escapeHtml(krLabel(t.symbol))+'</span>'
+        : '<b>'+escapeHtml(t.symbol)+'</b>';
+      html += '<tr><td>'+fmtFullTime(t.ts)+'</td><td><span class="market-badge">'+t.market.toUpperCase()+'</span></td><td>'+label+'</td><td class="'+sc+'">'+t.side+'</td><td class="right">'+fmtNum(t.qty)+'</td><td class="right">'+fmtNum(t.price)+'</td><td class="right '+pc+'">'+pct+'</td><td>'+escapeHtml(t.reason||'')+'</td></tr>';
     });
     box.innerHTML = html + '</tbody></table>';
   }
@@ -465,10 +532,14 @@ button.btn.loading { opacity: 0.5; pointer-events: none; }
     var f = logFilter==='ALL' ? allLogs : allLogs.filter(function(l){return l.level===logFilter;});
     if (f.length===0) { box.innerHTML='<div class="empty">No logs for: '+logFilter+'</div>'; return; }
     box.innerHTML = f.map(function(l){
+      var symbolDisplay = l.symbol || '';
+      if (symbolDisplay && krLabel(symbolDisplay)) {
+        symbolDisplay = symbolDisplay + ' (' + krLabel(symbolDisplay) + ')';
+      }
       return '<div class="log-line '+escapeHtml(l.level)+'">'+
         '<span class="log-ts">'+fmtTime(l.ts)+'</span>'+
         '<span class="log-level">['+escapeHtml(l.level)+']</span>'+
-        (l.symbol?'<span class="log-symbol">'+escapeHtml(l.symbol)+'</span>':'')+
+        (l.symbol?'<span class="log-symbol">'+escapeHtml(symbolDisplay)+'</span>':'')+
         escapeHtml(l.message)+
         '</div>';
     }).join('');
@@ -527,6 +598,8 @@ button.btn.loading { opacity: 0.5; pointer-events: none; }
   function openSettings() {
     if (!currentCfg) { toast('설정 로드 중...'); return; }
     $('cfgAutoTune').checked = !!currentCfg.autoTune;
+    $('cfgInitCashUS').value = currentCfg.initialCashUS;
+    $('cfgInitCashKR').value = currentCfg.initialCashKR;
     $('cfgUS').value = (currentCfg.usTickers||[]).join(', ');
     $('cfgKR').value = (currentCfg.krTickers||[]).join(', ');
     $('cfgRsiBuy').value = currentCfg.rsiBuy;
@@ -552,6 +625,8 @@ button.btn.loading { opacity: 0.5; pointer-events: none; }
     function parseTickers(s) { return s.split(/[,\s]+/).map(function(x){return x.trim();}).filter(Boolean); }
     var body = {
       autoTune: $('cfgAutoTune').checked,
+      initialCashUS: parseFloat($('cfgInitCashUS').value),
+      initialCashKR: parseFloat($('cfgInitCashKR').value),
       usTickers: parseTickers($('cfgUS').value),
       krTickers: parseTickers($('cfgKR').value),
       rsiBuy: parseFloat($('cfgRsiBuy').value),
@@ -571,12 +646,12 @@ button.btn.loading { opacity: 0.5; pointer-events: none; }
     };
     fetch('/api/cfg', { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify(body) })
       .then(function(r){return r.json();})
-      .then(function(){ toast('설정 저장됨'); closeSettings(); refreshAll(); })
+      .then(function(){ toast('설정 저장됨 (자본금 변경은 RESET 후 적용)'); closeSettings(); refreshAll(); })
       ['catch'](function(e){ toast('저장 실패: '+e.message); });
   }
 
   function resetAll() {
-    if (!confirm('정말 모든 거래/포지션/로그를 초기화하시겠습니까?')) return;
+    if (!confirm('정말 모든 거래/포지션/로그를 초기화하시겠습니까? 자본금이 설정된 초기값으로 돌아갑니다.')) return;
     fetch('/api/reset', {method:'POST'})
       .then(function(r){return r.json();})
       .then(function(){ toast('초기화 완료'); closeSettings(); refreshAll(); })
