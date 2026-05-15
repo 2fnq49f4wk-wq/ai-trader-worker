@@ -16,7 +16,7 @@ body { background: var(--bg); color: var(--text); font-family: 'Courier New', mo
 .app { display: flex; flex-direction: column; min-height: 100vh; }
 .topbar { display: flex; justify-content: space-between; align-items: center; padding: 14px 16px; gap: 10px; border-bottom: 2px solid var(--amber); background: var(--panel); position: sticky; top: 0; z-index: 100; flex-wrap: wrap; }
 .brand { font-size: 18px; color: var(--amber); font-weight: bold; letter-spacing: 2px; text-shadow: 0 0 10px rgba(255,215,0,0.3); }
-.topbar-btns { display: flex; gap: 8px; flex-wrap: wrap; }
+.topbar-btns { display: flex; gap: 6px; flex-wrap: wrap; }
 .main { flex: 1; padding: 14px; display: flex; flex-direction: column; gap: 14px; }
 .panel { background: var(--panel); border: 1px solid var(--border); border-radius: 6px; overflow: hidden; }
 .panel-header { padding: 12px 14px; border-bottom: 1px solid var(--border); background: var(--elev); display: flex; justify-content: space-between; align-items: center; gap: 10px; flex-wrap: wrap; }
@@ -38,14 +38,16 @@ body { background: var(--bg); color: var(--text); font-family: 'Courier New', mo
 .summary-label { font-size: 10px; color: var(--dim); text-transform: uppercase; font-weight: bold; letter-spacing: 1px; }
 .summary-value { font-size: 14px; font-weight: 700; margin-top: 4px; color: var(--text); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 
+.table-wrap { overflow-x: auto; }
 .table { width: 100%; border-collapse: collapse; font-size: 12px; }
-.table th { padding: 10px 12px; text-align: left; color: var(--dim); font-size: 10px; letter-spacing: 1px; border-bottom: 1px solid var(--border); background: var(--elev); }
-.table td { padding: 10px 12px; border-bottom: 1px solid var(--border); }
+.table th { padding: 10px 12px; text-align: left; color: var(--dim); font-size: 10px; letter-spacing: 1px; border-bottom: 1px solid var(--border); background: var(--elev); white-space: nowrap; }
+.table td { padding: 10px 12px; border-bottom: 1px solid var(--border); white-space: nowrap; }
 .table tbody tr:hover { background: rgba(88,166,255,0.05); }
 button.btn { padding: 9px 13px; background: var(--panel); border: 1px solid var(--border); color: var(--text); font-family: inherit; font-size: 11px; cursor: pointer; outline: none; border-radius: 4px; font-weight: bold; transition: all 0.15s; letter-spacing: 1px; }
 button.btn:hover { background: var(--elev); }
 button.btn.primary { background: var(--amber); color: var(--bg); border-color: var(--amber); font-weight: 700; }
 button.btn.danger { color: var(--red); border-color: var(--red); }
+button.btn.refresh { color: var(--blue); border-color: var(--blue); }
 button.btn:active { opacity: 0.6; }
 button.btn.loading { opacity: 0.5; pointer-events: none; }
 .pos { color: var(--green); font-weight: bold; }
@@ -137,6 +139,8 @@ button.btn.loading { opacity: 0.5; pointer-events: none; }
   <div class="topbar">
     <div class="brand">AI TRADER v5</div>
     <div class="topbar-btns">
+      <button type="button" class="btn refresh" id="btnRefreshUS">US 시세조회</button>
+      <button type="button" class="btn refresh" id="btnRefreshKR">KR 시세조회</button>
       <button type="button" class="btn" id="btnSettings">SETTINGS</button>
       <button type="button" class="btn primary" id="btnTick">RUN NOW</button>
     </div>
@@ -354,86 +358,50 @@ button.btn.loading { opacity: 0.5; pointer-events: none; }
   var krFavorites = [];
 
   var INDEX_NAMES = {
-    '^IXIC': 'NASDAQ',
-    '^DJI': 'DOW JONES',
-    '^GSPC': 'S&P 500',
-    '^KS11': 'KOSPI',
-    '^KQ11': 'KOSDAQ'
+    '^IXIC': 'NASDAQ', '^DJI': 'DOW JONES', '^GSPC': 'S&P 500',
+    '^KS11': 'KOSPI', '^KQ11': 'KOSDAQ'
   };
 
   var KR_NAMES = {
-    '005930.KS': '삼성전자',
-    '000660.KS': 'SK하이닉스',
-    '005380.KS': '현대차',
-    '373220.KS': 'LG에너지솔루션',
-    '009150.KS': '삼성전기',
-    '006400.KS': '삼성SDI',
-    '034020.KS': '두산에너빌리티',
-    '006800.KS': '미래에셋증권',
-    '012450.KS': '한화에어로스페이스',
-    '402340.KS': 'SK스퀘어',
-    '329180.KS': 'HD현대중공업',
-    '042660.KS': '한화오션',
-    '196170.KS': '알테오젠',
-    '047040.KS': '대우건설',
-    '005490.KS': 'POSCO홀딩스',
-    '042700.KS': '한미반도체',
-    '064350.KS': '현대로템',
-    '079550.KS': 'LIG디펜스앤에어로스페이스',
-    '047810.KS': '한국항공우주',
-    '069500.KS': 'KODEX 200'
+    '005930.KS': '삼성전자', '000660.KS': 'SK하이닉스', '005380.KS': '현대차',
+    '373220.KS': 'LG에너지솔루션', '009150.KS': '삼성전기', '006400.KS': '삼성SDI',
+    '034020.KS': '두산에너빌리티', '006800.KS': '미래에셋증권', '012450.KS': '한화에어로스페이스',
+    '402340.KS': 'SK스퀘어', '329180.KS': 'HD현대중공업', '042660.KS': '한화오션',
+    '196170.KS': '알테오젠', '047040.KS': '대우건설', '005490.KS': 'POSCO홀딩스',
+    '042700.KS': '한미반도체', '064350.KS': '현대로템', '079550.KS': 'LIG디펜스앤에어로스페이스',
+    '047810.KS': '한국항공우주', '069500.KS': 'KODEX 200'
   };
 
   var US_NAMES = {
-    'AAPL': '애플',
-    'NVDA': '엔비디아',
-    'TSLA': '테슬라',
-    'GOOGL': '알파벳A',
-    'AMZN': '아마존',
-    'AVGO': '브로드컴',
-    'RKLB': '로켓랩',
-    'META': '메타',
-    'AMD': 'AMD',
-    'SNDK': '샌디스크',
-    'SOXL': 'SOXL',
-    'SOXS': 'SOXS',
-    'GS': '골드만삭스',
-    'BA': '보잉',
-    'VOO': 'Vanguard S&P500',
-    'BRK-B': '버크셔 해서웨이B',
-    'INTC': '인텔',
-    'ORCL': '오라클',
-    'KO': '코카콜라',
-    'PLTR': '팔란티어'
+    'AAPL': '애플', 'NVDA': '엔비디아', 'TSLA': '테슬라', 'GOOGL': '알파벳A',
+    'AMZN': '아마존', 'AVGO': '브로드컴', 'RKLB': '로켓랩', 'META': '메타',
+    'AMD': 'AMD', 'SNDK': '샌디스크', 'SOXL': 'SOXL', 'SOXS': 'SOXS',
+    'GS': '골드만삭스', 'BA': '보잉', 'VOO': 'Vanguard S&P500',
+    'BRK-B': '버크셔 해서웨이B', 'INTC': '인텔', 'ORCL': '오라클',
+    'KO': '코카콜라', 'PLTR': '팔란티어'
   };
 
-  function krLabel(symbol) { return KR_NAMES[symbol] || ''; }
-  function usLabel(symbol) { return US_NAMES[symbol] || ''; }
+  function krLabel(s) { return KR_NAMES[s] || ''; }
+  function usLabel(s) { return US_NAMES[s] || ''; }
   function $(id) { return document.getElementById(id); }
 
   function getMarketStatus() {
     var now = new Date();
-    var utcHour = now.getUTCHours();
-    var utcMinute = now.getUTCMinutes();
-    var utcDay = now.getUTCDay();
-    
+    var utcHour = now.getUTCHours(), utcMinute = now.getUTCMinutes(), utcDay = now.getUTCDay();
     var etTotalMin = (utcHour - 4) * 60 + utcMinute;
     if (etTotalMin < 0) etTotalMin += 24 * 60;
     var usOpen = utcDay >= 1 && utcDay <= 5 && etTotalMin >= 570 && etTotalMin < 960;
-    
     var kstTotalMin = (utcHour + 9) * 60 + utcMinute;
     if (kstTotalMin >= 24 * 60) kstTotalMin -= 24 * 60;
     var kstDay = utcDay;
     if (utcHour + 9 >= 24) kstDay = (utcDay + 1) % 7;
     var krOpen = kstDay >= 1 && kstDay <= 5 && kstTotalMin >= 540 && kstTotalMin < 930;
-    
     return { us: usOpen, kr: krOpen };
   }
 
   function renderMarketStatus() {
     var status = getMarketStatus();
-    var usEl = $('usMarketStatus');
-    var krEl = $('krMarketStatus');
+    var usEl = $('usMarketStatus'), krEl = $('krMarketStatus');
     usEl.textContent = status.us ? '🟢 정규장 OPEN' : '🟠 장 종료';
     usEl.className = status.us ? 'market-status-open' : 'market-status-closed';
     krEl.textContent = status.kr ? '🟢 정규장 OPEN' : '🟠 장 종료';
@@ -514,7 +482,7 @@ button.btn.loading { opacity: 0.5; pointer-events: none; }
     var status = getMarketStatus();
     if (!status.us && !status.kr) {
       dot.className='dot closed';
-      txt.textContent='시장 종료 시간 · 거래 대기 중 (정규장 시간만 거래)';
+      txt.textContent='시장 종료 시간 · 거래 대기 중 (시세조회 버튼으로 종가 확인 가능)';
       return;
     }
     if (!lastTick) {
@@ -525,7 +493,7 @@ button.btn.loading { opacity: 0.5; pointer-events: none; }
     var age = Date.now() - lastTick;
     if (age < 90*1000) {
       dot.className='dot alive';
-      txt.textContent='엔진 자동 작동 중 · 마지막 실행: '+fmtAgo(lastTick)+' (1분마다 자동)';
+      txt.textContent='엔진 자동 작동 중 · 마지막 실행: '+fmtAgo(lastTick);
     } else {
       dot.className='dot stale';
       txt.textContent='엔진 지연 · 마지막 실행: '+fmtAgo(lastTick);
@@ -582,20 +550,29 @@ button.btn.loading { opacity: 0.5; pointer-events: none; }
     Object.keys(positionsUS).forEach(function(s){ all.push({market:'US',symbol:s,p:positionsUS[s]}); });
     Object.keys(positionsKR).forEach(function(s){ all.push({market:'KR',symbol:s,p:positionsKR[s]}); });
     if (all.length === 0) { box.innerHTML='<div class="empty">No positions yet</div>'; return; }
-    var html = '<table class="table"><thead><tr><th>MKT</th><th>SYMBOL</th><th class="right">QTY</th><th class="right">AVG</th><th class="right">CUR</th><th class="right">PnL%</th><th class="right">OPENED</th></tr></thead><tbody>';
+    var html = '<div class="table-wrap"><table class="table"><thead><tr><th>MKT</th><th>SYMBOL</th><th class="right">QTY</th><th class="right">AVG</th><th class="right">CUR</th><th class="right">COST</th><th class="right">VALUE</th><th class="right">PnL</th><th class="right">PnL%</th><th class="right">OPENED</th></tr></thead><tbody>';
     all.forEach(function(row){
       var q = lastQuotes[row.symbol];
       var curPrice = q ? q.price : null;
+      var cost = row.p.qty * row.p.avg;
+      var value = curPrice != null ? row.p.qty * curPrice : null;
+      var pnl = value != null ? value - cost : null;
       var pnlPct = curPrice != null ? ((curPrice - row.p.avg) / row.p.avg * 100) : null;
       var pnlClass = pnlPct == null ? '' : (pnlPct >= 0 ? 'pos' : 'neg');
       var sign = pnlPct != null && pnlPct >= 0 ? '+' : '';
-      var pnlText = pnlPct != null ? sign + pnlPct.toFixed(2) + '%' : '-';
+      var pnlPctText = pnlPct != null ? sign + pnlPct.toFixed(2) + '%' : '-';
       var curText = curPrice != null ? fmtNum(curPrice) : '-';
+      var sym = row.market === 'US' ? '$' : '₩';
+      var fmtMoney = row.market === 'KR' ? fmtCompact : function(n){return fmtNum(n,2);};
+      var costText = sym + fmtMoney(cost);
+      var valueText = value != null ? sym + fmtMoney(value) : '-';
+      var pnlText = pnl != null ? (pnl >= 0 ? '+' : '') + sym + fmtMoney(Math.abs(pnl)) : '-';
+      if (pnl != null && pnl < 0) pnlText = '-' + sym + fmtMoney(Math.abs(pnl));
       var name = row.market === 'KR' ? krLabel(row.symbol) : usLabel(row.symbol);
       var label = name ? '<b>'+escapeHtml(row.symbol)+'</b> <span style="color:var(--dim);font-size:10px;">'+escapeHtml(name)+'</span>' : '<b>'+escapeHtml(row.symbol)+'</b>';
-      html += '<tr><td><span class="market-badge">'+row.market+'</span></td><td>'+label+'</td><td class="right">'+fmtNum(row.p.qty)+'</td><td class="right">'+fmtNum(row.p.avg)+'</td><td class="right">'+curText+'</td><td class="right '+pnlClass+'">'+pnlText+'</td><td class="right">'+fmtAgo(row.p.opened_ts)+'</td></tr>';
+      html += '<tr><td><span class="market-badge">'+row.market+'</span></td><td>'+label+'</td><td class="right">'+fmtNum(row.p.qty)+'</td><td class="right">'+fmtNum(row.p.avg)+'</td><td class="right">'+curText+'</td><td class="right">'+costText+'</td><td class="right">'+valueText+'</td><td class="right '+pnlClass+'">'+pnlText+'</td><td class="right '+pnlClass+'">'+pnlPctText+'</td><td class="right">'+fmtAgo(row.p.opened_ts)+'</td></tr>';
     });
-    box.innerHTML = html + '</tbody></table>';
+    box.innerHTML = html + '</tbody></table></div>';
   }
 
   function buildWatchlistCard(q, market) {
@@ -619,17 +596,10 @@ button.btn.loading { opacity: 0.5; pointer-events: none; }
     var expanded = market === 'us' ? usExpanded : krExpanded;
     var favorites = market === 'us' ? usFavorites : krFavorites;
     var container = $(containerId);
-
-    if (quotes.length === 0) {
-      container.innerHTML = '<div class="empty">대기 중...</div>';
-      return;
-    }
-
+    if (quotes.length === 0) { container.innerHTML = '<div class="empty">대기 중...</div>'; return; }
     var favs = quotes.filter(function(q){ return favorites.indexOf(q.symbol) >= 0; });
     var rest = quotes.filter(function(q){ return favorites.indexOf(q.symbol) < 0; });
-
     var html = '';
-
     if (expanded) {
       if (favs.length > 0) {
         html += '<div class="watchlist-section fav">★ 즐겨찾기 ('+favs.length+')</div>';
@@ -648,15 +618,11 @@ button.btn.loading { opacity: 0.5; pointer-events: none; }
       }
       html += '<div class="watchlist">'+topItems.map(function(q){return buildWatchlistCard(q, market);}).join('')+'</div>';
     }
-
     container.innerHTML = html;
-
     container.querySelectorAll('.wl-fav').forEach(function(el){
       el.addEventListener('click', function(e){
         e.stopPropagation();
-        var sym = el.getAttribute('data-symbol');
-        var mkt = el.getAttribute('data-market');
-        toggleFavorite(mkt, sym);
+        toggleFavorite(el.getAttribute('data-market'), el.getAttribute('data-symbol'));
       });
     });
   }
@@ -673,42 +639,25 @@ button.btn.loading { opacity: 0.5; pointer-events: none; }
   function toggleFavorite(market, symbol) {
     var favorites = market === 'us' ? usFavorites : krFavorites;
     var idx = favorites.indexOf(symbol);
-    if (idx >= 0) {
-      favorites.splice(idx, 1);
-    } else {
-      favorites.push(symbol);
-    }
-    if (market === 'us') usFavorites = favorites;
-    else krFavorites = favorites;
-
+    if (idx >= 0) favorites.splice(idx, 1); else favorites.push(symbol);
+    if (market === 'us') usFavorites = favorites; else krFavorites = favorites;
     fetch('/api/favorites', {
       method: 'POST',
       headers: {'Content-Type': 'application/json'},
       body: JSON.stringify({ usFavorites: usFavorites, krFavorites: krFavorites })
-    }).then(function(){ refreshAll(); })
-      ['catch'](function(e){ toast('즐겨찾기 저장 실패'); });
+    }).then(function(){ refreshAll(); })['catch'](function(){ toast('즐겨찾기 저장 실패'); });
   }
 
   function toggleWatchlist(market) {
-    if (market === 'us') {
-      usExpanded = !usExpanded;
-      $('btnToggleUS').textContent = usExpanded ? '접기' : '펼치기';
-    } else {
-      krExpanded = !krExpanded;
-      $('btnToggleKR').textContent = krExpanded ? '접기' : '펼치기';
-    }
+    if (market === 'us') { usExpanded = !usExpanded; $('btnToggleUS').textContent = usExpanded ? '접기' : '펼치기'; }
+    else { krExpanded = !krExpanded; $('btnToggleKR').textContent = krExpanded ? '접기' : '펼치기'; }
     refreshAll();
   }
 
   function renderTrades(trades) {
     var box = $('tradesBox');
-    if (!trades || trades.length === 0) { 
-      box.innerHTML='<div class="empty">No trades yet</div>'; 
-      updateTradesSummary([]);
-      return; 
-    }
-
-    var html = '<table class="table"><thead><tr><th>TIME</th><th>MKT</th><th>SYMBOL</th><th>SIDE</th><th class="right">QTY</th><th class="right">PRICE</th><th class="right">PnL</th><th class="right">PnL%</th><th>REASON</th></tr></thead><tbody>';
+    if (!trades || trades.length === 0) { box.innerHTML='<div class="empty">No trades yet</div>'; updateTradesSummary([]); return; }
+    var html = '<div class="table-wrap"><table class="table"><thead><tr><th>TIME</th><th>MKT</th><th>SYMBOL</th><th>SIDE</th><th class="right">QTY</th><th class="right">PRICE</th><th class="right">PnL</th><th class="right">PnL%</th><th>REASON</th></tr></thead><tbody>';
     trades.slice(0,50).forEach(function(t){
       var sc = t.side==='BUY'?'trade-buy':'trade-sell';
       var pct = t.pnl_pct!=null ? (t.pnl_pct>=0?'+':'')+t.pnl_pct.toFixed(2)+'%' : '-';
@@ -720,24 +669,16 @@ button.btn.loading { opacity: 0.5; pointer-events: none; }
       var label = name ? '<b>'+escapeHtml(t.symbol)+'</b> <span style="color:var(--dim);font-size:10px;">'+escapeHtml(name)+'</span>' : '<b>'+escapeHtml(t.symbol)+'</b>';
       html += '<tr><td>'+fmtFullTime(t.ts)+'</td><td><span class="market-badge">'+t.market.toUpperCase()+'</span></td><td>'+label+'</td><td class="'+sc+'">'+t.side+'</td><td class="right">'+fmtNum(t.qty)+'</td><td class="right">'+fmtNum(t.price)+'</td><td class="right '+pc+'">'+pnlText+'</td><td class="right '+pc+'">'+pct+'</td><td>'+escapeHtml(t.reason||'')+'</td></tr>';
     });
-    box.innerHTML = html + '</tbody></table>';
+    box.innerHTML = html + '</tbody></table></div>';
     updateTradesSummary(trades);
   }
 
   function updateTradesSummary(trades) {
     if (!trades || trades.length === 0) {
-      $('tradesTotalCount').textContent = '0';
-      $('tradesWinRate').textContent = '0%';
-      $('tradesAvgPnl').textContent = '0%';
-      return;
+      $('tradesTotalCount').textContent = '0'; $('tradesWinRate').textContent = '0%'; $('tradesAvgPnl').textContent = '0%'; return;
     }
     var sells = trades.filter(function(t){ return t.side === 'SELL'; });
-    if (sells.length === 0) {
-      $('tradesTotalCount').textContent = trades.length;
-      $('tradesWinRate').textContent = '-';
-      $('tradesAvgPnl').textContent = '-';
-      return;
-    }
+    if (sells.length === 0) { $('tradesTotalCount').textContent = trades.length; $('tradesWinRate').textContent = '-'; $('tradesAvgPnl').textContent = '-'; return; }
     var wins = sells.filter(function(t){ return t.pnl_pct > 0; });
     var winRate = (wins.length / sells.length * 100).toFixed(1);
     var avgPnl = (sells.reduce(function(a,t){ return a + (t.pnl_pct || 0); }, 0) / sells.length).toFixed(2);
@@ -764,32 +705,19 @@ button.btn.loading { opacity: 0.5; pointer-events: none; }
 
   function renderCfgDisplay(cfg) {
     if (!cfg) return;
-    var el = $('cfgDisplayUS');
-    el.innerHTML = 'RSI Buy/<b>'+cfg.rsiBuy+'</b>/Sell/<b>'+cfg.rsiSell+'</b> · Stop/<b>'+cfg.stopLoss+'%</b> · TP/<b>'+cfg.takeProfit+'%</b> · Size/<b>'+cfg.posSize+'%</b>';
+    $('cfgDisplayUS').innerHTML = 'RSI Buy/<b>'+cfg.rsiBuy+'</b>/Sell/<b>'+cfg.rsiSell+'</b> · Stop/<b>'+cfg.stopLoss+'%</b> · TP/<b>'+cfg.takeProfit+'%</b> · Size/<b>'+cfg.posSize+'%</b>';
     var lastTune = allLogs.filter(function(l){return l.level==='TUNE';})[0];
     var banner = $('tuneBanner'), tuneText = $('tuneText');
-    if (lastTune && cfg.autoTune) {
-      tuneText.textContent = lastTune.message + ' (' + fmtAgo(lastTune.ts) + ')';
-      banner.style.display = 'block';
-    } else if (cfg.autoTune) {
-      tuneText.textContent = '활성화됨 · 거래/조건 데이터 수집 중 (충분한 데이터 모이면 자동 조정 시작)';
-      banner.style.display = 'block';
-    } else {
-      banner.style.display = 'none';
-    }
+    if (lastTune && cfg.autoTune) { tuneText.textContent = lastTune.message + ' (' + fmtAgo(lastTune.ts) + ')'; banner.style.display = 'block'; }
+    else if (cfg.autoTune) { tuneText.textContent = '활성화됨 · 거래/조건 데이터 수집 중'; banner.style.display = 'block'; }
+    else { banner.style.display = 'none'; }
   }
 
   function toggleTrades() {
-    var tableBox = $('tradesTableBox');
-    var btn = $('tradesToggleBtn');
+    var tableBox = $('tradesTableBox'), btn = $('tradesToggleBtn');
     tradesExpanded = !tradesExpanded;
-    if (tradesExpanded) {
-      tableBox.classList.add('show');
-      btn.textContent = '접기';
-    } else {
-      tableBox.classList.remove('show');
-      btn.textContent = '펼치기';
-    }
+    if (tradesExpanded) { tableBox.classList.add('show'); btn.textContent = '접기'; }
+    else { tableBox.classList.remove('show'); btn.textContent = '펼치기'; }
   }
 
   function refreshAll() {
@@ -820,13 +748,24 @@ button.btn.loading { opacity: 0.5; pointer-events: none; }
 
   function runNow() {
     var btn = $('btnTick');
-    btn.classList.add('loading');
-    btn.textContent='RUNNING...';
-    fetch('/api/tick', {method:'POST'})
-      .then(function(r){return r.json();})
+    btn.classList.add('loading'); btn.textContent='RUNNING...';
+    fetch('/api/tick', {method:'POST'}).then(function(r){return r.json();})
       .then(function(){ toast('엔진 1회 실행 완료'); refreshAll(); })
       ['catch'](function(e){ toast('실행 실패: '+e.message); })
       .then(function(){ btn.classList.remove('loading'); btn.textContent='RUN NOW'; });
+  }
+
+  function refreshQuotes(market) {
+    var btn = market === 'us' ? $('btnRefreshUS') : $('btnRefreshKR');
+    var originalText = btn.textContent;
+    btn.classList.add('loading'); btn.textContent='조회 중...';
+    fetch('/api/refresh_quotes?market=' + market, {method:'POST'}).then(function(r){return r.json();})
+      .then(function(d){ 
+        toast(market.toUpperCase() + ' 시세 조회 완료 (성공 ' + d.ok_count + ' / 실패 ' + d.fail_count + ')'); 
+        refreshAll(); 
+      })
+      ['catch'](function(e){ toast('조회 실패: '+e.message); })
+      .then(function(){ btn.classList.remove('loading'); btn.textContent=originalText; });
   }
 
   function openSettings() {
@@ -882,32 +821,31 @@ button.btn.loading { opacity: 0.5; pointer-events: none; }
     };
     fetch('/api/cfg', { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify(body) })
       .then(function(r){return r.json();})
-      .then(function(){ toast('설정 저장됨 (자본금 변경은 RESET 후 적용)'); closeSettings(); refreshAll(); })
+      .then(function(){ toast('설정 저장됨'); closeSettings(); refreshAll(); })
       ['catch'](function(e){ toast('저장 실패: '+e.message); });
   }
 
   function resetAll() {
-    if (!confirm('정말 모든 거래/포지션/로그를 초기화하시겠습니까? 자본금이 설정된 초기값으로 돌아갑니다.')) return;
-    fetch('/api/reset', {method:'POST'})
-      .then(function(r){return r.json();})
+    if (!confirm('정말 모든 거래/포지션/로그를 초기화하시겠습니까?')) return;
+    fetch('/api/reset', {method:'POST'}).then(function(r){return r.json();})
       .then(function(){ toast('초기화 완료'); closeSettings(); refreshAll(); })
       ['catch'](function(e){ toast('초기화 실패: '+e.message); });
   }
 
   function resetTickers() {
-    if (!confirm('티커 목록을 코드의 기본값으로 복원합니까? (자본금/포지션은 유지)')) return;
-    fetch('/api/reset_tickers', {method:'POST'})
-      .then(function(r){return r.json();})
+    if (!confirm('티커 목록을 코드의 기본값으로 복원합니까?')) return;
+    fetch('/api/reset_tickers', {method:'POST'}).then(function(r){return r.json();})
       .then(function(d){
         toast('티커 기본값 복원 완료');
         if (d.usTickers) $('cfgUS').value = d.usTickers.join(', ');
         if (d.krTickers) $('cfgKR').value = d.krTickers.join(', ');
         refreshAll();
-      })
-      ['catch'](function(e){ toast('복원 실패: '+e.message); });
+      })['catch'](function(e){ toast('복원 실패: '+e.message); });
   }
 
   $('btnTick').addEventListener('click', runNow);
+  $('btnRefreshUS').addEventListener('click', function(){ refreshQuotes('us'); });
+  $('btnRefreshKR').addEventListener('click', function(){ refreshQuotes('kr'); });
   $('btnSettings').addEventListener('click', openSettings);
   $('btnCancelSettings').addEventListener('click', closeSettings);
   $('btnSaveSettings').addEventListener('click', saveSettings);
