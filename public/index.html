@@ -667,21 +667,35 @@ button.btn.loading { opacity: 0.5; pointer-events: none; }
   }
 
   function toggleFavorite(market, symbol) {
-    var favorites = market === 'us' ? usFavorites : krFavorites;
+    var favorites = market === "us" ? usFavorites : krFavorites;
     var idx = favorites.indexOf(symbol);
     if (idx >= 0) favorites.splice(idx, 1); else favorites.push(symbol);
-    if (market === 'us') usFavorites = favorites; else krFavorites = favorites;
+    if (market === "us") usFavorites = favorites; else krFavorites = favorites;
+    
+    // API 저장은 백그라운드에서 (UI 블로킹 안 함)
     fetch('/api/favorites', {
       method: 'POST',
       headers: {'Content-Type': 'application/json'},
       body: JSON.stringify({ usFavorites: usFavorites, krFavorites: krFavorites })
-    }).then(function(){ refreshAll(); })['catch'](function(){ toast('즐겨찾기 저장 실패'); });
+    })['catch'](function(){ toast('즐겨찾기 저장 실패'); });
+    
+    // 즉시 로컬 렌더링 (API 응답 기다리지 않음)
+    var quotes = Object.keys(lastQuotes).map(function(s){ return lastQuotes[s]; });
+    renderWatchlist(quotes);
   }
 
   function toggleWatchlist(market) {
-    if (market === 'us') { usExpanded = !usExpanded; $('btnToggleUS').textContent = usExpanded ? '접기' : '펼치기'; }
-    else { krExpanded = !krExpanded; $('btnToggleKR').textContent = krExpanded ? '접기' : '펼치기'; }
-    refreshAll();
+    if (market === "us") { 
+      usExpanded = !usExpanded; 
+      $('btnToggleUS').textContent = usExpanded ? '접기' : '펼치기'; 
+    }
+    else { 
+      krExpanded = !krExpanded; 
+      $('btnToggleKR').textContent = krExpanded ? '접기' : '펼치기'; 
+    }
+    // 로컬에 있는 quotes 사용해서 즉시 렌더링 (API 재호출 없음)
+    var quotes = Object.keys(lastQuotes).map(function(s){ return lastQuotes[s]; });
+    renderWatchlist(quotes);
   }
 
   function renderTrades(trades) {
