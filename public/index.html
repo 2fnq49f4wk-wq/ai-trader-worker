@@ -33,7 +33,7 @@ body { background: var(--bg); color: var(--text); font-family: 'Courier New', mo
 .idx-spark { flex: 1; height: 28px; }
 
 .summary-grid { display: grid; grid-template-columns: repeat(2, 1fr); gap: 2px; background: var(--border); }
-@media (min-width: 768px) { .summary-grid { grid-template-columns: repeat(3, 1fr); } }
+@media (min-width: 768px) { .summary-grid { grid-template-columns: repeat(4, 1fr); } }
 .summary-item { background: var(--panel); padding: 14px 12px; min-width: 0; }
 .summary-label { font-size: 10px; color: var(--dim); text-transform: uppercase; font-weight: bold; letter-spacing: 1px; }
 .summary-value { font-size: 14px; font-weight: 700; margin-top: 4px; color: var(--text); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
@@ -56,6 +56,7 @@ button.btn.loading { opacity: 0.5; pointer-events: none; }
 .dot.alive { background: var(--green); box-shadow: 0 0 6px var(--green); animation: pulse 2s infinite; }
 .dot.stale { background: var(--red); }
 .dot.unknown { background: var(--faint); }
+.dot.closed { background: var(--orange); }
 @keyframes pulse { 0%,100%{opacity:1} 50%{opacity:0.5} }
 .empty { padding: 20px; text-align: center; color: var(--faint); font-size: 12px; }
 .toast { position: fixed; bottom: 20px; left: 50%; transform: translateX(-50%); background: var(--panel); border: 1px solid var(--amber); padding: 12px 20px; border-radius: 4px; color: var(--amber); font-weight: bold; z-index: 9999; display: none; }
@@ -72,6 +73,7 @@ button.btn.loading { opacity: 0.5; pointer-events: none; }
 .log-line.WARN { border-color: var(--orange); color: var(--orange); }
 .log-line.SKIP { border-color: var(--faint); color: var(--faint); }
 .log-line.NOBUY { border-color: var(--purple); color: var(--purple); }
+.log-line.CLOSED { border-color: var(--orange); color: var(--orange); }
 .log-ts { color: var(--faint); margin-right: 6px; }
 .log-level { display: inline-block; min-width: 50px; font-weight: bold; margin-right: 6px; }
 .log-symbol { color: var(--text); font-weight: bold; margin-right: 6px; }
@@ -102,6 +104,10 @@ button.btn.loading { opacity: 0.5; pointer-events: none; }
 .wl-meta { font-size: 9px; color: var(--faint); margin-top: 2px; }
 .tune-banner { padding: 10px 14px; background: rgba(63,185,80,0.08); border-left: 3px solid var(--green); color: var(--green); font-size: 11px; line-height: 1.6; }
 .tune-banner b { color: var(--amber); }
+.market-status-banner { padding: 8px 14px; background: rgba(240,136,62,0.08); border-left: 3px solid var(--orange); color: var(--orange); font-size: 11px; line-height: 1.6; display: flex; gap: 16px; flex-wrap: wrap; }
+.market-status-banner b { color: var(--text); }
+.market-status-open { color: var(--green) !important; }
+.market-status-closed { color: var(--orange) !important; }
 .cfg-display { display: flex; gap: 14px; font-size: 11px; color: var(--dim); flex-wrap: wrap; }
 .cfg-display b { color: var(--amber); }
 .checkbox-row { display: flex; align-items: center; gap: 10px; margin-bottom: 14px; }
@@ -132,6 +138,11 @@ button.btn.loading { opacity: 0.5; pointer-events: none; }
   <div class="engine-status">
     <span class="dot unknown" id="engineDot"></span>
     <span id="engineText">엔진 상태 확인 중...</span>
+  </div>
+
+  <div class="market-status-banner" id="marketStatusBanner">
+    <span>🇺🇸 US: <b id="usMarketStatus">확인 중...</b></span>
+    <span>🇰🇷 KR: <b id="krMarketStatus">확인 중...</b></span>
   </div>
 
   <div id="tuneBanner" class="tune-banner" style="display:none;">
@@ -229,6 +240,7 @@ button.btn.loading { opacity: 0.5; pointer-events: none; }
           <button data-filter="ERROR">ERROR</button>
           <button data-filter="NOBUY">NOBUY</button>
           <button data-filter="SKIP">SKIP</button>
+          <button data-filter="CLOSED">CLOSED</button>
           <button data-filter="INFO">INFO</button>
         </div>
       </div>
@@ -244,6 +256,11 @@ button.btn.loading { opacity: 0.5; pointer-events: none; }
     <div class="checkbox-row">
       <input type="checkbox" id="cfgAutoTune">
       <label for="cfgAutoTune">AUTO-TUNE 활성화 (엔진이 스스로 파라미터 조정)</label>
+    </div>
+
+    <div class="checkbox-row">
+      <input type="checkbox" id="cfgMarketHoursOnly">
+      <label for="cfgMarketHoursOnly">정규장 시간에만 거래 (권장)</label>
     </div>
 
     <div class="section-title">초기 자본금 (RESET 시 적용)</div>
@@ -266,10 +283,10 @@ button.btn.loading { opacity: 0.5; pointer-events: none; }
     <button type="button" class="btn" id="btnResetTickers" style="margin-bottom:10px;">티커 기본값으로 복원</button>
 
     <div class="section-divider"></div>
-    <div class="section-title">STRATEGY</div>
+    <div class="section-title">STRATEGY (스윙 트레이딩 권장값)</div>
     <div class="field-row">
-      <div class="field"><label>RSI Buy</label><input type="number" id="cfgRsiBuy" min="1" max="99"></div>
-      <div class="field"><label>RSI Sell</label><input type="number" id="cfgRsiSell" min="1" max="99"></div>
+      <div class="field"><label>RSI Buy (낮을수록 엄격)</label><input type="number" id="cfgRsiBuy" min="1" max="99"></div>
+      <div class="field"><label>RSI Sell (높을수록 엄격)</label><input type="number" id="cfgRsiSell" min="1" max="99"></div>
       <div class="field"><label>RSI Period</label><input type="number" id="cfgRsiPeriod" min="2" max="50"></div>
     </div>
     <div class="field-row">
@@ -343,6 +360,40 @@ button.btn.loading { opacity: 0.5; pointer-events: none; }
   function krLabel(symbol) { return KR_NAMES[symbol] || ''; }
   function $(id) { return document.getElementById(id); }
 
+  // 시장 시간 체크
+  function getMarketStatus() {
+    var now = new Date();
+    var utcHour = now.getUTCHours();
+    var utcMinute = now.getUTCMinutes();
+    var utcDay = now.getUTCDay(); // 0=일, 6=토
+    
+    // 미국 정규장: Mon-Fri 09:30-16:00 ET (EST=UTC-5, EDT=UTC-4)
+    // 단순화를 위해 EDT(UTC-4) 기준
+    var etTotalMin = (utcHour - 4) * 60 + utcMinute;
+    if (etTotalMin < 0) etTotalMin += 24 * 60;
+    var usOpen = utcDay >= 1 && utcDay <= 5 && etTotalMin >= 570 && etTotalMin < 960;
+    
+    // 한국 정규장: Mon-Fri 09:00-15:30 KST (UTC+9)
+    var kstTotalMin = (utcHour + 9) * 60 + utcMinute;
+    if (kstTotalMin >= 24 * 60) kstTotalMin -= 24 * 60;
+    // UTC 요일과 KST 요일이 다를 수 있음
+    var kstDay = utcDay;
+    if (utcHour + 9 >= 24) kstDay = (utcDay + 1) % 7;
+    var krOpen = kstDay >= 1 && kstDay <= 5 && kstTotalMin >= 540 && kstTotalMin < 930;
+    
+    return { us: usOpen, kr: krOpen };
+  }
+
+  function renderMarketStatus() {
+    var status = getMarketStatus();
+    var usEl = $('usMarketStatus');
+    var krEl = $('krMarketStatus');
+    usEl.textContent = status.us ? '🟢 정규장 OPEN' : '🟠 장 종료';
+    usEl.className = status.us ? 'market-status-open' : 'market-status-closed';
+    krEl.textContent = status.kr ? '🟢 정규장 OPEN' : '🟠 장 종료';
+    krEl.className = status.kr ? 'market-status-open' : 'market-status-closed';
+  }
+
   function fmtNum(n, dec) {
     if (typeof n !== 'number' || isNaN(n)) return '-';
     return n.toLocaleString(undefined, { maximumFractionDigits: dec != null ? dec : 2 });
@@ -414,6 +465,12 @@ button.btn.loading { opacity: 0.5; pointer-events: none; }
 
   function renderEngine(lastTick) {
     var dot = $('engineDot'), txt = $('engineText');
+    var status = getMarketStatus();
+    if (!status.us && !status.kr) {
+      dot.className='dot closed';
+      txt.textContent='시장 종료 시간 · 거래 대기 중 (정규장 시간만 거래)';
+      return;
+    }
     if (!lastTick) {
       dot.className='dot unknown';
       txt.textContent='엔진 상태 미확인 (RUN NOW를 한번 누르세요)';
@@ -523,13 +580,16 @@ button.btn.loading { opacity: 0.5; pointer-events: none; }
       return; 
     }
 
-    var html = '<table class="table"><thead><tr><th>TIME</th><th>MKT</th><th>SYMBOL</th><th>SIDE</th><th class="right">QTY</th><th class="right">PRICE</th><th class="right">PnL%</th><th>REASON</th></tr></thead><tbody>';
+    var html = '<table class="table"><thead><tr><th>TIME</th><th>MKT</th><th>SYMBOL</th><th>SIDE</th><th class="right">QTY</th><th class="right">PRICE</th><th class="right">PnL</th><th class="right">PnL%</th><th>REASON</th></tr></thead><tbody>';
     trades.slice(0,50).forEach(function(t){
       var sc = t.side==='BUY'?'trade-buy':'trade-sell';
       var pct = t.pnl_pct!=null ? (t.pnl_pct>=0?'+':'')+t.pnl_pct.toFixed(2)+'%' : '-';
       var pc = t.pnl_pct!=null ? (t.pnl_pct>=0?'pos':'neg') : '';
+      var pnlSymbol = t.market === 'us' ? '$' : '₩';
+      var pnlFmt = t.market === 'kr' ? fmtCompact : function(n){ return fmtNum(n, 2); };
+      var pnlText = t.pnl!=null ? (t.pnl>=0?'+':'')+pnlSymbol+pnlFmt(t.pnl) : '-';
       var label = t.market === 'kr' && krLabel(t.symbol) ? '<b>'+escapeHtml(t.symbol)+'</b> <span style="color:var(--dim);font-size:10px;">'+escapeHtml(krLabel(t.symbol))+'</span>' : '<b>'+escapeHtml(t.symbol)+'</b>';
-      html += '<tr><td>'+fmtFullTime(t.ts)+'</td><td><span class="market-badge">'+t.market.toUpperCase()+'</span></td><td>'+label+'</td><td class="'+sc+'">'+t.side+'</td><td class="right">'+fmtNum(t.qty)+'</td><td class="right">'+fmtNum(t.price)+'</td><td class="right '+pc+'">'+pct+'</td><td>'+escapeHtml(t.reason||'')+'</td></tr>';
+      html += '<tr><td>'+fmtFullTime(t.ts)+'</td><td><span class="market-badge">'+t.market.toUpperCase()+'</span></td><td>'+label+'</td><td class="'+sc+'">'+t.side+'</td><td class="right">'+fmtNum(t.qty)+'</td><td class="right">'+fmtNum(t.price)+'</td><td class="right '+pc+'">'+pnlText+'</td><td class="right '+pc+'">'+pct+'</td><td>'+escapeHtml(t.reason||'')+'</td></tr>';
     });
     box.innerHTML = html + '</tbody></table>';
     updateTradesSummary(trades);
@@ -604,6 +664,7 @@ button.btn.loading { opacity: 0.5; pointer-events: none; }
   }
 
   function refreshAll() {
+    renderMarketStatus();
     Promise.all([api('/api/state'), api('/api/trades?limit=50'), api('/api/logs?limit=200'), api('/api/watchlist'), api('/api/indices')])
       .then(function(r){
         var state = r[0], trades = r[1], logs = r[2]||[], quotes = r[3]||[], indices = r[4]||[];
@@ -640,6 +701,7 @@ button.btn.loading { opacity: 0.5; pointer-events: none; }
   function openSettings() {
     if (!currentCfg) { toast('설정 로드 중...'); return; }
     $('cfgAutoTune').checked = !!currentCfg.autoTune;
+    $('cfgMarketHoursOnly').checked = currentCfg.marketHoursOnly !== false;
     $('cfgInitCashUS').value = currentCfg.initialCashUS;
     $('cfgInitCashKR').value = currentCfg.initialCashKR;
     $('cfgUS').value = (currentCfg.usTickers||[]).join(', ');
@@ -667,6 +729,7 @@ button.btn.loading { opacity: 0.5; pointer-events: none; }
     function parseTickers(s) { return s.split(/[,\s]+/).map(function(x){return x.trim();}).filter(Boolean); }
     var body = {
       autoTune: $('cfgAutoTune').checked,
+      marketHoursOnly: $('cfgMarketHoursOnly').checked,
       initialCashUS: parseFloat($('cfgInitCashUS').value),
       initialCashKR: parseFloat($('cfgInitCashKR').value),
       usTickers: parseTickers($('cfgUS').value),
