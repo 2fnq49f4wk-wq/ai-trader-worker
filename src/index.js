@@ -13,7 +13,7 @@ const DEFAULT_CFG = {
   posSize: 12,
   maPeriod: 20, atrPeriod: 14,
   atrStopMult: 3.0, trailMult: 3.0,
-  initialCashUS: 10000000, initialCashKR: 10000000,
+  initialCashUS: 10000, initialCashKR: 10000000,
   enabled: true,
   autoTune: true,
   autoTuneAggression: "moderate",
