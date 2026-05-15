@@ -24,15 +24,15 @@ async function ensureSchema(DB) {
     const cols = await DB.prepare("PRAGMA table_info(positions)").all();
     const hasMeta = (cols.results || []).some(function(c){ return c.name === "meta"; });
     if (!hasMeta) {
-      await DB.prepare("ALTER TABLE positions ADD COLUMN meta TEXT").run();
-      await log(DB, "INFO", null, "schema migrated: added meta column to positions");
+      try {
+        await DB.prepare("ALTER TABLE positions ADD COLUMN meta TEXT").run();
+        await log(DB, "INFO", null, "schema migrated: added meta column to positions");
+      } catch (e) { console.error("alter fail:", e.message); }
     }
   } catch (e) {
     try {
       await DB.prepare("CREATE TABLE IF NOT EXISTS positions (symbol TEXT PRIMARY KEY, market TEXT NOT NULL, qty REAL NOT NULL, avg_price REAL NOT NULL, opened_ts INTEGER NOT NULL, meta TEXT)").run();
-    } catch (e2) {
-      console.error("schema ensure fail:", e2.message);
-    }
+    } catch (e2) { console.error("schema ensure fail:", e2.message); }
   }
 }
 
@@ -73,58 +73,22 @@ function getATR(h, p) {
   return s / p;
 }
 
-async function fetchPrice(symbol) {
-  const headers = {
-    "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
-    "Accept": "application/json"
-  };
-
-  const url = "https://query1.finance.yahoo.com/v8/finance/chart/" + encodeURIComponent(symbol) + "?interval=1m&range=1d";
-  const r = await fetch(url, { headers: headers });
-  if (!r.ok) throw new Error("HTTP " + r.status);
-  const j = await r.json();
-  const result = j && j.chart && j.chart.result && j.chart.result[0];
-  if (!result) throw new Error("no chart data");
-
-  const rawCloses = (result.indicators && result.indicators.quote && result.indicators.quote[0] && result.indicators.quote[0].close) || [];
-  const meta = result.meta || {};
-
-  // null/undefined를 직전 유효값으로 forward-fill
-  const closes = [];
+function forwardFill(rawArr) {
+  const out = [];
   let lastValid = null;
-  for (let i = 0; i < rawCloses.length; i++) {
-    const v = rawCloses[i];
-    if (typeof v === "number" && !isNaN(v)) {
+  for (let i = 0; i < rawArr.length; i++) {
+    const v = rawArr[i];
+    if (typeof v === "number" && !isNaN(v) && v > 0) {
       lastValid = v;
-      closes.push(v);
+      out.push(v);
     } else if (lastValid !== null) {
-      closes.push(lastValid);
+      out.push(lastValid);
     }
   }
-
-  // 1분봉이 너무 짧으면 일봉으로 폴백
-  if (closes.length < 20) {
-    const url2 = "https://query1.finance.yahoo.com/v8/finance/chart/" + encodeURIComponent(symbol) + "?interval=1d&range=3mo";
-    const r2 = await fetch(url2, { headers: headers });
-    if (!r2.ok) throw new Error("HTTP " + r2.status);
-    const j2 = await r2.json();
-    const result2 = j2 && j2.chart && j2.chart.result && j2.chart.result[0];
-    if (!result2) throw new Error("no chart data (daily)");
-    const rawDaily = (result2.indicators && result2.indicators.quote && result2.indicators.quote[0] && result2.indicators.quote[0].close) || [];
-    const daily = rawDaily.filter(function(x){ return typeof x === "number" && !isNaN(x); });
-    if (daily.length === 0) throw new Error("no close data");
-    const price = (typeof meta.regularMarketPrice === "number") ? meta.regularMarketPrice : daily[daily.length - 1];
-    const prevClose = daily.length >= 2 ? daily[daily.length - 2] : (meta.chartPreviousClose || meta.previousClose || price);
-    return { symbol: symbol, price: price, prevClose: prevClose, history: daily };
-  }
-
-  const price = (typeof meta.regularMarketPrice === "number") ? meta.regularMarketPrice : closes[closes.length - 1];
-  const prevClose = meta.chartPreviousClose || meta.previousClose || closes[0];
-  return { symbol: symbol, price: price, prevClose: prevClose, history: closes };
+  return out;
 }
 
-async function fetchDaily(symbol) {
-  const url = "https://query1.finance.yahoo.com/v8/finance/chart/" + encodeURIComponent(symbol) + "?interval=1d&range=1mo";
+async function yahooFetch(url) {
   const r = await fetch(url, {
     headers: {
       "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
@@ -132,20 +96,58 @@ async function fetchDaily(symbol) {
     }
   });
   if (!r.ok) throw new Error("HTTP " + r.status);
-  const j = await r.json();
+  return await r.json();
+}
+
+async function fetchPrice(symbol) {
+  // 1차: 1분봉
+  try {
+    const j = await yahooFetch("https://query1.finance.yahoo.com/v8/finance/chart/" + encodeURIComponent(symbol) + "?interval=1m&range=1d");
+    const result = j && j.chart && j.chart.result && j.chart.result[0];
+    if (result) {
+      const meta = result.meta || {};
+      const raw = (result.indicators && result.indicators.quote && result.indicators.quote[0] && result.indicators.quote[0].close) || [];
+      const closes = forwardFill(raw);
+      if (closes.length >= 20) {
+        const price = (typeof meta.regularMarketPrice === "number" && meta.regularMarketPrice > 0) ? meta.regularMarketPrice : closes[closes.length - 1];
+        const prevClose = (typeof meta.chartPreviousClose === "number" && meta.chartPreviousClose > 0) ? meta.chartPreviousClose : (meta.previousClose || closes[0]);
+        return { symbol: symbol, price: price, prevClose: prevClose, history: closes };
+      }
+    }
+  } catch (e) { /* fall through */ }
+
+  // 2차: 일봉 폴백
+  const j2 = await yahooFetch("https://query1.finance.yahoo.com/v8/finance/chart/" + encodeURIComponent(symbol) + "?interval=1d&range=3mo");
+  const result2 = j2 && j2.chart && j2.chart.result && j2.chart.result[0];
+  if (!result2) throw new Error("no chart data");
+  const meta2 = result2.meta || {};
+  const raw2 = (result2.indicators && result2.indicators.quote && result2.indicators.quote[0] && result2.indicators.quote[0].close) || [];
+  const daily = forwardFill(raw2);
+  if (daily.length === 0) throw new Error("no close data");
+  const price = (typeof meta2.regularMarketPrice === "number" && meta2.regularMarketPrice > 0) ? meta2.regularMarketPrice : daily[daily.length - 1];
+  const prevClose = daily.length >= 2 ? daily[daily.length - 2] : (meta2.chartPreviousClose || meta2.previousClose || price);
+  return { symbol: symbol, price: price, prevClose: prevClose, history: daily };
+}
+
+async function fetchDaily(symbol) {
+  const j = await yahooFetch("https://query1.finance.yahoo.com/v8/finance/chart/" + encodeURIComponent(symbol) + "?interval=1d&range=1mo");
   const result = j && j.chart && j.chart.result && j.chart.result[0];
   if (!result) throw new Error("no daily data");
-  const closes = ((result.indicators && result.indicators.quote && result.indicators.quote[0] && result.indicators.quote[0].close) || []).filter(function(x){ return typeof x === "number"; });
+  const meta = result.meta || {};
+  const raw = (result.indicators && result.indicators.quote && result.indicators.quote[0] && result.indicators.quote[0].close) || [];
+  const closes = forwardFill(raw);
   if (closes.length === 0) throw new Error("no daily close");
-  const price = closes[closes.length - 1];
+  const price = (typeof meta.regularMarketPrice === "number" && meta.regularMarketPrice > 0) ? meta.regularMarketPrice : closes[closes.length - 1];
   const prevClose = closes.length >= 2 ? closes[closes.length - 2] : price;
   return { symbol: symbol, price: price, prevClose: prevClose, history: closes };
 }
 
 async function getState(DB, k, def) {
-  const row = await DB.prepare("SELECT v FROM state WHERE k = ?").bind(k).first();
-  if (!row) return def;
-  try { return JSON.parse(row.v); } catch (e) { return def; }
+  try {
+    const row = await DB.prepare("SELECT v FROM state WHERE k = ?").bind(k).first();
+    if (!row) return def;
+    try { return JSON.parse(row.v); } catch (e) { return def; }
+  } catch (e) { return def; }
 }
 
 async function setState(DB, k, v) {
@@ -154,12 +156,14 @@ async function setState(DB, k, v) {
 }
 
 async function getPositions(DB, market) {
-  const res = await DB.prepare("SELECT * FROM positions WHERE market = ?").bind(market).all();
-  const map = {};
-  for (const p of res.results) {
-    map[p.symbol] = { qty: p.qty, avg: p.avg_price, opened_ts: p.opened_ts, meta: p.meta ? JSON.parse(p.meta) : {} };
-  }
-  return map;
+  try {
+    const res = await DB.prepare("SELECT * FROM positions WHERE market = ?").bind(market).all();
+    const map = {};
+    for (const p of res.results) {
+      map[p.symbol] = { qty: p.qty, avg: p.avg_price, opened_ts: p.opened_ts, meta: p.meta ? JSON.parse(p.meta) : {} };
+    }
+    return map;
+  } catch (e) { return {}; }
 }
 
 async function savePosition(DB, market, symbol, pos) {
@@ -187,8 +191,7 @@ async function executeBuy(DB, market, symbol, qty, price, reason, atr, cfg, cash
     await savePosition(DB, market, symbol, {
       qty: qty, avg: price, opened_ts: Date.now(),
       meta: {
-        feePaid: fee,
-        atrAtEntry: atr,
+        feePaid: fee, atrAtEntry: atr,
         stopPrice: atr ? price - atr * cfg.atrStopMult : null,
         peakPrice: price,
         usedCfg: { rsiBuy: cfg.rsiBuy, dayBuyPct: cfg.dayBuyPct, atrStopMult: cfg.atrStopMult, trailMult: cfg.trailMult }
@@ -230,108 +233,95 @@ async function saveQuote(DB, symbol, market, q) {
 async function saveIndex(DB, symbol, region, data) {
   const dayPct = data.prevClose ? ((data.price - data.prevClose) / data.prevClose) * 100 : 0;
   await setState(DB, "index:" + symbol, {
-    region: region,
-    price: data.price,
-    prevClose: data.prevClose,
-    dayPct: dayPct,
-    history: data.history.slice(-30),
-    ts: Date.now()
+    region: region, price: data.price, prevClose: data.prevClose,
+    dayPct: dayPct, history: data.history.slice(-30), ts: Date.now()
   });
 }
 
 async function autoTune(DB, cfg) {
   if (!cfg.autoTune) return cfg;
+  try {
+    const tradesRes = await DB.prepare("SELECT * FROM trades WHERE side = ? ORDER BY ts DESC LIMIT 30").bind("SELL").all();
+    const recentSells = tradesRes.results || [];
 
-  const tradesRes = await DB.prepare("SELECT * FROM trades WHERE side = ? ORDER BY ts DESC LIMIT 30").bind("SELL").all();
-  const recentSells = tradesRes.results || [];
+    if (recentSells.length >= 10) {
+      const tuneState = await getState(DB, "autotune_state", { lastTunedAt: 0, tradeCountAtLastTune: 0 });
+      const totalSells = await DB.prepare("SELECT COUNT(*) as c FROM trades WHERE side = ?").bind("SELL").first();
+      const sellCount = totalSells.c || 0;
 
-  if (recentSells.length >= 10) {
-    const tuneState = await getState(DB, "autotune_state", { lastTunedAt: 0, tradeCountAtLastTune: 0 });
-    const totalSells = await DB.prepare("SELECT COUNT(*) as c FROM trades WHERE side = ?").bind("SELL").first();
-    const sellCount = totalSells.c || 0;
-
-    if (sellCount - tuneState.tradeCountAtLastTune >= 10) {
-      const wins = recentSells.filter(function(t){ return t.pnl_pct > 0; });
-      const winRate = wins.length / recentSells.length;
-      const avgPnl = recentSells.reduce(function(a,t){ return a + t.pnl_pct; }, 0) / recentSells.length;
-
-      const changes = [];
-      const newCfg = Object.assign({}, cfg);
-
-      if (avgPnl < 0 || winRate < 0.4) {
-        const newRsiBuy = Math.max(40, cfg.rsiBuy - 3);
-        const newStopLoss = Math.max(3, cfg.stopLoss - 0.5);
-        if (newRsiBuy !== cfg.rsiBuy) { changes.push("RSI Buy " + cfg.rsiBuy + "->" + newRsiBuy); newCfg.rsiBuy = newRsiBuy; }
-        if (newStopLoss !== cfg.stopLoss) { changes.push("StopLoss " + cfg.stopLoss + "->" + newStopLoss); newCfg.stopLoss = newStopLoss; }
-      } else if (winRate > 0.6 && avgPnl > 1) {
-        const newRsiBuy = Math.min(65, cfg.rsiBuy + 2);
-        const newPosSize = Math.min(20, cfg.posSize + 1);
-        if (newRsiBuy !== cfg.rsiBuy) { changes.push("RSI Buy " + cfg.rsiBuy + "->" + newRsiBuy); newCfg.rsiBuy = newRsiBuy; }
-        if (newPosSize !== cfg.posSize) { changes.push("PosSize " + cfg.posSize + "->" + newPosSize); newCfg.posSize = newPosSize; }
-      }
-
-      if (changes.length > 0) {
-        await setState(DB, "cfg", newCfg);
-        await setState(DB, "autotune_state", { lastTunedAt: Date.now(), tradeCountAtLastTune: sellCount });
-        await log(DB, "TUNE", null, "[result-based] winRate=" + (winRate*100).toFixed(0) + "% avgPnL=" + avgPnl.toFixed(2) + "% -> " + changes.join(", "));
-        return newCfg;
-      }
-    }
-  }
-
-  const positionsCount = await DB.prepare("SELECT COUNT(*) as c FROM positions").first();
-  if ((positionsCount.c || 0) === 0) {
-    const nobuyRes = await DB.prepare("SELECT * FROM logs WHERE level = 'NOBUY' ORDER BY id DESC LIMIT 100").all();
-    const nobuyLogs = nobuyRes.results || [];
-
-    if (nobuyLogs.length >= 50) {
-      const tuneState = await getState(DB, "autotune_nobuy_state", { lastTunedAt: 0 });
-      const sinceLastTune = Date.now() - tuneState.lastTunedAt;
-
-      if (sinceLastTune > 5 * 60 * 1000) {
-        let rsiAboveCount = 0, dayAboveCount = 0;
-        for (const l of nobuyLogs) {
-          const rsiM = l.message.match(/RSI=([\d.]+)/);
-          const dayM = l.message.match(/day=(-?[\d.]+)/);
-          if (rsiM && parseFloat(rsiM[1]) >= cfg.rsiBuy) rsiAboveCount++;
-          if (dayM && parseFloat(dayM[1]) > -cfg.dayBuyPct) dayAboveCount++;
-        }
-
+      if (sellCount - tuneState.tradeCountAtLastTune >= 10) {
+        const wins = recentSells.filter(function(t){ return t.pnl_pct > 0; });
+        const winRate = wins.length / recentSells.length;
+        const avgPnl = recentSells.reduce(function(a,t){ return a + t.pnl_pct; }, 0) / recentSells.length;
         const changes = [];
         const newCfg = Object.assign({}, cfg);
 
-        if (rsiAboveCount > nobuyLogs.length * 0.6 && cfg.rsiBuy < 70) {
-          const newRsiBuy = Math.min(70, cfg.rsiBuy + 5);
-          changes.push("RSI Buy " + cfg.rsiBuy + "->" + newRsiBuy);
-          newCfg.rsiBuy = newRsiBuy;
+        if (avgPnl < 0 || winRate < 0.4) {
+          const newRsiBuy = Math.max(40, cfg.rsiBuy - 3);
+          const newStopLoss = Math.max(3, cfg.stopLoss - 0.5);
+          if (newRsiBuy !== cfg.rsiBuy) { changes.push("RSI Buy " + cfg.rsiBuy + "->" + newRsiBuy); newCfg.rsiBuy = newRsiBuy; }
+          if (newStopLoss !== cfg.stopLoss) { changes.push("StopLoss " + cfg.stopLoss + "->" + newStopLoss); newCfg.stopLoss = newStopLoss; }
+        } else if (winRate > 0.6 && avgPnl > 1) {
+          const newRsiBuy = Math.min(65, cfg.rsiBuy + 2);
+          const newPosSize = Math.min(20, cfg.posSize + 1);
+          if (newRsiBuy !== cfg.rsiBuy) { changes.push("RSI Buy " + cfg.rsiBuy + "->" + newRsiBuy); newCfg.rsiBuy = newRsiBuy; }
+          if (newPosSize !== cfg.posSize) { changes.push("PosSize " + cfg.posSize + "->" + newPosSize); newCfg.posSize = newPosSize; }
         }
-        if (dayAboveCount > nobuyLogs.length * 0.6 && cfg.dayBuyPct > 0.3) {
-          const newDayBuy = Math.max(0.3, cfg.dayBuyPct - 0.3);
-          changes.push("DayBuy " + cfg.dayBuyPct + "->" + newDayBuy.toFixed(1));
-          newCfg.dayBuyPct = parseFloat(newDayBuy.toFixed(1));
-        }
-
         if (changes.length > 0) {
           await setState(DB, "cfg", newCfg);
-          await setState(DB, "autotune_nobuy_state", { lastTunedAt: Date.now() });
-          await log(DB, "TUNE", null, "[nobuy-based] no positions, easing conditions -> " + changes.join(", "));
+          await setState(DB, "autotune_state", { lastTunedAt: Date.now(), tradeCountAtLastTune: sellCount });
+          await log(DB, "TUNE", null, "[result-based] winRate=" + (winRate*100).toFixed(0) + "% avgPnL=" + avgPnl.toFixed(2) + "% -> " + changes.join(", "));
           return newCfg;
         }
       }
     }
-  }
 
+    const positionsCount = await DB.prepare("SELECT COUNT(*) as c FROM positions").first();
+    if ((positionsCount.c || 0) === 0) {
+      const nobuyRes = await DB.prepare("SELECT * FROM logs WHERE level = 'NOBUY' ORDER BY id DESC LIMIT 100").all();
+      const nobuyLogs = nobuyRes.results || [];
+      if (nobuyLogs.length >= 50) {
+        const tuneState = await getState(DB, "autotune_nobuy_state", { lastTunedAt: 0 });
+        const sinceLastTune = Date.now() - tuneState.lastTunedAt;
+        if (sinceLastTune > 5 * 60 * 1000) {
+          let rsiAboveCount = 0, dayAboveCount = 0;
+          for (const l of nobuyLogs) {
+            const rsiM = l.message.match(/RSI=([\d.]+)/);
+            const dayM = l.message.match(/day=(-?[\d.]+)/);
+            if (rsiM && parseFloat(rsiM[1]) >= cfg.rsiBuy) rsiAboveCount++;
+            if (dayM && parseFloat(dayM[1]) > -cfg.dayBuyPct) dayAboveCount++;
+          }
+          const changes = [];
+          const newCfg = Object.assign({}, cfg);
+          if (rsiAboveCount > nobuyLogs.length * 0.6 && cfg.rsiBuy < 70) {
+            const newRsiBuy = Math.min(70, cfg.rsiBuy + 5);
+            changes.push("RSI Buy " + cfg.rsiBuy + "->" + newRsiBuy);
+            newCfg.rsiBuy = newRsiBuy;
+          }
+          if (dayAboveCount > nobuyLogs.length * 0.6 && cfg.dayBuyPct > 0.3) {
+            const newDayBuy = Math.max(0.3, cfg.dayBuyPct - 0.3);
+            changes.push("DayBuy " + cfg.dayBuyPct + "->" + newDayBuy.toFixed(1));
+            newCfg.dayBuyPct = parseFloat(newDayBuy.toFixed(1));
+          }
+          if (changes.length > 0) {
+            await setState(DB, "cfg", newCfg);
+            await setState(DB, "autotune_nobuy_state", { lastTunedAt: Date.now() });
+            await log(DB, "TUNE", null, "[nobuy-based] no positions, easing conditions -> " + changes.join(", "));
+            return newCfg;
+          }
+        }
+      }
+    }
+  } catch (e) { await log(DB, "WARN", null, "autoTune skipped: " + e.message); }
   return cfg;
 }
 
 async function runTradingCycle(env) {
   const DB = env.DB;
-
   await ensureSchema(DB);
 
   let cfg = Object.assign({}, DEFAULT_CFG, await getState(DB, "cfg", {}));
   if (!cfg.enabled) { await log(DB, "INFO", null, "engine disabled"); return; }
-
   cfg = await autoTune(DB, cfg);
 
   await log(DB, "INFO", null, "=== Cycle start ===");
@@ -360,9 +350,9 @@ async function runTradingCycle(env) {
         const data = await fetchPrice(symbol);
         fetched++;
 
-        if (!data.price || !data.history || data.history.length < 20) {
+        if (!data.price || data.price <= 0 || !data.history || data.history.length < 20) {
           skipped++;
-          await log(DB, "SKIP", symbol, "history short (" + (data.history ? data.history.length : 0) + ")");
+          await log(DB, "SKIP", symbol, "history short or no price (" + (data.history ? data.history.length : 0) + ")");
           continue;
         }
 
@@ -382,7 +372,7 @@ async function runTradingCycle(env) {
         if (held) {
           if (atr && held.meta && held.meta.peakPrice != null && price > held.meta.peakPrice) {
             held.meta.peakPrice = price;
-            await savePosition(DB, market, symbol, held);
+            try { await savePosition(DB, market, symbol, held); } catch (e) {}
           }
           const pnlRate = ((price - held.avg) / held.avg) * 100;
           const hardStop = held.meta && held.meta.stopPrice;
@@ -428,11 +418,11 @@ async function runTradingCycle(env) {
     }
   }
 
-  await setState(DB, "cash", cash);
-  await setState(DB, "last_tick", Date.now());
+  try { await setState(DB, "cash", cash); } catch (e) {}
+  try { await setState(DB, "last_tick", Date.now()); } catch (e) {}
   await log(DB, "INFO", null, "Done: tried=" + tried + " fetched=" + fetched + " skip=" + skipped + " buy=" + bought + " sell=" + sold);
 
-  await DB.prepare("DELETE FROM logs WHERE id NOT IN (SELECT id FROM logs ORDER BY id DESC LIMIT 500)").run();
+  try { await DB.prepare("DELETE FROM logs WHERE id NOT IN (SELECT id FROM logs ORDER BY id DESC LIMIT 500)").run(); } catch (e) {}
 }
 
 async function handleRequest(request, env) {
@@ -445,84 +435,88 @@ async function handleRequest(request, env) {
   };
   if (request.method === "OPTIONS") return new Response(null, { headers: cors });
 
-  if (path === "/api/state") {
-    const cfg = Object.assign({}, DEFAULT_CFG, await getState(env.DB, "cfg", {}));
-    const cash = await getState(env.DB, "cash", { us: cfg.initialCashUS, kr: cfg.initialCashKR });
-    const positionsUS = await getPositions(env.DB, "us");
-    const positionsKR = await getPositions(env.DB, "kr");
-    const lastTick = await getState(env.DB, "last_tick", null);
-    return Response.json({ cash: cash, positions: { us: positionsUS, kr: positionsKR }, lastTick: lastTick, cfg: cfg }, { headers: cors });
-  }
-
-  if (path === "/api/watchlist") {
-    const cfg = Object.assign({}, DEFAULT_CFG, await getState(env.DB, "cfg", {}));
-    const allSymbols = cfg.usTickers.concat(cfg.krTickers);
-    const quotes = [];
-    for (const sym of allSymbols) {
-      const q = await getState(env.DB, "quote:" + sym, null);
-      if (q) quotes.push(Object.assign({ symbol: sym }, q));
+  try {
+    if (path === "/api/state") {
+      const cfg = Object.assign({}, DEFAULT_CFG, await getState(env.DB, "cfg", {}));
+      const cash = await getState(env.DB, "cash", { us: cfg.initialCashUS, kr: cfg.initialCashKR });
+      const positionsUS = await getPositions(env.DB, "us");
+      const positionsKR = await getPositions(env.DB, "kr");
+      const lastTick = await getState(env.DB, "last_tick", null);
+      return Response.json({ cash: cash, positions: { us: positionsUS, kr: positionsKR }, lastTick: lastTick, cfg: cfg }, { headers: cors });
     }
-    return Response.json(quotes, { headers: cors });
-  }
 
-  if (path === "/api/indices") {
-    const indices = [];
-    for (const sym of US_INDICES.concat(KR_INDICES)) {
-      const idx = await getState(env.DB, "index:" + sym, null);
-      if (idx) indices.push(Object.assign({ symbol: sym }, idx));
+    if (path === "/api/watchlist") {
+      const cfg = Object.assign({}, DEFAULT_CFG, await getState(env.DB, "cfg", {}));
+      const allSymbols = cfg.usTickers.concat(cfg.krTickers);
+      const quotes = [];
+      for (const sym of allSymbols) {
+        const q = await getState(env.DB, "quote:" + sym, null);
+        if (q) quotes.push(Object.assign({ symbol: sym }, q));
+      }
+      return Response.json(quotes, { headers: cors });
     }
-    return Response.json(indices, { headers: cors });
-  }
 
-  if (path === "/api/trades") {
-    const limit = parseInt(url.searchParams.get("limit") || "100", 10);
-    const res = await env.DB.prepare("SELECT * FROM trades ORDER BY ts DESC LIMIT ?").bind(limit).all();
-    return Response.json(res.results, { headers: cors });
-  }
+    if (path === "/api/indices") {
+      const indices = [];
+      for (const sym of US_INDICES.concat(KR_INDICES)) {
+        const idx = await getState(env.DB, "index:" + sym, null);
+        if (idx) indices.push(Object.assign({ symbol: sym }, idx));
+      }
+      return Response.json(indices, { headers: cors });
+    }
 
-  if (path === "/api/logs") {
-    const limit = parseInt(url.searchParams.get("limit") || "200", 10);
-    const res = await env.DB.prepare("SELECT * FROM logs ORDER BY id DESC LIMIT ?").bind(limit).all();
-    return Response.json(res.results, { headers: cors });
-  }
+    if (path === "/api/trades") {
+      const limit = parseInt(url.searchParams.get("limit") || "100", 10);
+      const res = await env.DB.prepare("SELECT * FROM trades ORDER BY ts DESC LIMIT ?").bind(limit).all();
+      return Response.json(res.results, { headers: cors });
+    }
 
-  if (path === "/api/cfg" && request.method === "GET") {
-    const cfg = Object.assign({}, DEFAULT_CFG, await getState(env.DB, "cfg", {}));
-    return Response.json(cfg, { headers: cors });
-  }
+    if (path === "/api/logs") {
+      const limit = parseInt(url.searchParams.get("limit") || "200", 10);
+      const res = await env.DB.prepare("SELECT * FROM logs ORDER BY id DESC LIMIT ?").bind(limit).all();
+      return Response.json(res.results, { headers: cors });
+    }
 
-  if (path === "/api/cfg" && request.method === "POST") {
-    const body = await request.json();
-    const current = Object.assign({}, DEFAULT_CFG, await getState(env.DB, "cfg", {}));
-    const next = Object.assign({}, current, body);
-    await setState(env.DB, "cfg", next);
-    await log(env.DB, "INFO", null, "cfg updated manually");
-    return Response.json({ ok: true, cfg: next }, { headers: cors });
-  }
+    if (path === "/api/cfg" && request.method === "GET") {
+      const cfg = Object.assign({}, DEFAULT_CFG, await getState(env.DB, "cfg", {}));
+      return Response.json(cfg, { headers: cors });
+    }
 
-  if (path === "/api/reset" && request.method === "POST") {
-    await ensureSchema(env.DB);
-    const cfg = Object.assign({}, DEFAULT_CFG, await getState(env.DB, "cfg", {}));
-    await env.DB.prepare("DELETE FROM trades").run();
-    await env.DB.prepare("DELETE FROM positions").run();
-    await env.DB.prepare("DELETE FROM logs").run();
-    await env.DB.prepare("DELETE FROM state WHERE k NOT LIKE 'quote:%' AND k NOT LIKE 'index:%'").run();
-    await setState(env.DB, "cash", { us: cfg.initialCashUS, kr: cfg.initialCashKR });
-    await log(env.DB, "INFO", null, "RESET: all cleared, cash reset to US=" + cfg.initialCashUS + " KR=" + cfg.initialCashKR);
-    return Response.json({ ok: true, cash: { us: cfg.initialCashUS, kr: cfg.initialCashKR } }, { headers: cors });
-  }
+    if (path === "/api/cfg" && request.method === "POST") {
+      const body = await request.json();
+      const current = Object.assign({}, DEFAULT_CFG, await getState(env.DB, "cfg", {}));
+      const next = Object.assign({}, current, body);
+      await setState(env.DB, "cfg", next);
+      await log(env.DB, "INFO", null, "cfg updated manually");
+      return Response.json({ ok: true, cfg: next }, { headers: cors });
+    }
 
-  if (path === "/api/tick" && request.method === "POST") {
-    await runTradingCycle(env);
-    return Response.json({ ok: true, ts: Date.now() }, { headers: cors });
-  }
+    if (path === "/api/reset" && request.method === "POST") {
+      await ensureSchema(env.DB);
+      const cfg = Object.assign({}, DEFAULT_CFG, await getState(env.DB, "cfg", {}));
+      await env.DB.prepare("DELETE FROM trades").run();
+      await env.DB.prepare("DELETE FROM positions").run();
+      await env.DB.prepare("DELETE FROM logs").run();
+      await env.DB.prepare("DELETE FROM state WHERE k NOT LIKE 'quote:%' AND k NOT LIKE 'index:%'").run();
+      await setState(env.DB, "cash", { us: cfg.initialCashUS, kr: cfg.initialCashKR });
+      await log(env.DB, "INFO", null, "RESET: all cleared, cash reset to US=" + cfg.initialCashUS + " KR=" + cfg.initialCashKR);
+      return Response.json({ ok: true, cash: { us: cfg.initialCashUS, kr: cfg.initialCashKR } }, { headers: cors });
+    }
 
-  if (path === "/api/migrate" && request.method === "POST") {
-    await ensureSchema(env.DB);
-    return Response.json({ ok: true, message: "schema ensured" }, { headers: cors });
-  }
+    if (path === "/api/tick" && request.method === "POST") {
+      await runTradingCycle(env);
+      return Response.json({ ok: true, ts: Date.now() }, { headers: cors });
+    }
 
-  return env.ASSETS ? env.ASSETS.fetch(request) : new Response("Not Found", { status: 404, headers: cors });
+    if (path === "/api/migrate" && request.method === "POST") {
+      await ensureSchema(env.DB);
+      return Response.json({ ok: true, message: "schema ensured" }, { headers: cors });
+    }
+
+    return env.ASSETS ? env.ASSETS.fetch(request) : new Response("Not Found", { status: 404, headers: cors });
+  } catch (e) {
+    return Response.json({ error: e.message }, { status: 500, headers: cors });
+  }
 }
 
 export default {
