@@ -74,21 +74,52 @@ function getATR(h, p) {
 }
 
 async function fetchPrice(symbol) {
+  const headers = {
+    "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+    "Accept": "application/json"
+  };
+
   const url = "https://query1.finance.yahoo.com/v8/finance/chart/" + encodeURIComponent(symbol) + "?interval=1m&range=1d";
-  const r = await fetch(url, {
-    headers: {
-      "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
-      "Accept": "application/json"
-    }
-  });
+  const r = await fetch(url, { headers: headers });
   if (!r.ok) throw new Error("HTTP " + r.status);
   const j = await r.json();
   const result = j && j.chart && j.chart.result && j.chart.result[0];
   if (!result) throw new Error("no chart data");
-  const closes = ((result.indicators && result.indicators.quote && result.indicators.quote[0] && result.indicators.quote[0].close) || []).filter(function(x){ return typeof x === "number"; });
-  if (closes.length === 0) throw new Error("no close data");
-  const price = closes[closes.length - 1];
-  const prevClose = (result.meta && (result.meta.chartPreviousClose || result.meta.previousClose));
+
+  const rawCloses = (result.indicators && result.indicators.quote && result.indicators.quote[0] && result.indicators.quote[0].close) || [];
+  const meta = result.meta || {};
+
+  // null/undefined를 직전 유효값으로 forward-fill
+  const closes = [];
+  let lastValid = null;
+  for (let i = 0; i < rawCloses.length; i++) {
+    const v = rawCloses[i];
+    if (typeof v === "number" && !isNaN(v)) {
+      lastValid = v;
+      closes.push(v);
+    } else if (lastValid !== null) {
+      closes.push(lastValid);
+    }
+  }
+
+  // 1분봉이 너무 짧으면 일봉으로 폴백
+  if (closes.length < 20) {
+    const url2 = "https://query1.finance.yahoo.com/v8/finance/chart/" + encodeURIComponent(symbol) + "?interval=1d&range=3mo";
+    const r2 = await fetch(url2, { headers: headers });
+    if (!r2.ok) throw new Error("HTTP " + r2.status);
+    const j2 = await r2.json();
+    const result2 = j2 && j2.chart && j2.chart.result && j2.chart.result[0];
+    if (!result2) throw new Error("no chart data (daily)");
+    const rawDaily = (result2.indicators && result2.indicators.quote && result2.indicators.quote[0] && result2.indicators.quote[0].close) || [];
+    const daily = rawDaily.filter(function(x){ return typeof x === "number" && !isNaN(x); });
+    if (daily.length === 0) throw new Error("no close data");
+    const price = (typeof meta.regularMarketPrice === "number") ? meta.regularMarketPrice : daily[daily.length - 1];
+    const prevClose = daily.length >= 2 ? daily[daily.length - 2] : (meta.chartPreviousClose || meta.previousClose || price);
+    return { symbol: symbol, price: price, prevClose: prevClose, history: daily };
+  }
+
+  const price = (typeof meta.regularMarketPrice === "number") ? meta.regularMarketPrice : closes[closes.length - 1];
+  const prevClose = meta.chartPreviousClose || meta.previousClose || closes[0];
   return { symbol: symbol, price: price, prevClose: prevClose, history: closes };
 }
 
@@ -498,4 +529,3 @@ export default {
   async fetch(request, env, ctx) { return handleRequest(request, env); },
   async scheduled(event, env, ctx) { ctx.waitUntil(runTradingCycle(env)); }
 };
-
