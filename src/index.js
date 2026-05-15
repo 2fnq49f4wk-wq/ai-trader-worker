@@ -26,12 +26,13 @@ const DEFAULT_CFG = {
   feeUS: 0.0001, feeKR: 0.0015,
   posSize: 10,
   maPeriod: 20, atrPeriod: 14,
-  atrStopMult: 2.5, trailMult: 2.0,
+  atrStopMult: 2.5, trailMult: 3.0,        // [수정] 2.0 -> 3.0
   minHoldMin: 30,
-  maxHoldHours: 72,         // [5] 최대 보유 72시간
-  marketCrashPct: -2.0,     // [1] 지수 이 % 이하 폭락 시 매수 금지
-  minStopPct: 5.0,          // [7] 최소 손절폭 보장 (-5% 미만으로 가까우면 -5%로 강제)
-  trailStartPct: 0.5,       // [2] 본전 +0.5% 이상부터 트레일링 발동
+  maxHoldHours: 72,
+  marketCrashPct: -2.0,
+  minStopPct: 5.0,
+  minProfitToSell: 2.0,                    // [신규] 트레일/RSI 매도 시 최소 +2% 수익 강제
+  trailStartPct: 3.0,                      // [수정] 0.5 -> 3.0
   initialCashUS: 10000, initialCashKR: 10000000,
   enabled: true,
   autoTune: true,
@@ -112,7 +113,6 @@ function getATR(h, p) {
   return s / p;
 }
 
-// [3] null은 그냥 제외 (forwardFill 안 함) - 가짜 횡보 방지
 function filterNulls(rawArr) {
   const out = [];
   for (let i = 0; i < rawArr.length; i++) {
@@ -135,14 +135,12 @@ async function yahooFetch(url) {
   return await r.json();
 }
 
-// [6] 1m range=5d로 변경 (장 초반에도 충분한 history)
 async function fetchPrice(symbol) {
   let intradayCloses = [];
   let intradayMeta = null;
   let dailyCloses = [];
   let dailyMeta = null;
 
-  // 1차: 1m 5d (이전 영업일 데이터까지 포함)
   try {
     const j = await yahooFetch("https://query1.finance.yahoo.com/v8/finance/chart/" + encodeURIComponent(symbol) + "?interval=1m&range=5d");
     const result = j && j.chart && j.chart.result && j.chart.result[0];
@@ -153,7 +151,6 @@ async function fetchPrice(symbol) {
     }
   } catch (e) { /* fall through */ }
 
-  // 2차: daily 3mo (ATR/MA 계산용)
   try {
     const j2 = await yahooFetch("https://query1.finance.yahoo.com/v8/finance/chart/" + encodeURIComponent(symbol) + "?interval=1d&range=3mo");
     const result2 = j2 && j2.chart && j2.chart.result && j2.chart.result[0];
@@ -164,21 +161,18 @@ async function fetchPrice(symbol) {
     }
   } catch (e) { /* fall through */ }
 
-  // 1m 충분하면 메인으로 사용
   if (intradayCloses.length >= 20 && intradayMeta) {
     const price = (typeof intradayMeta.regularMarketPrice === "number" && intradayMeta.regularMarketPrice > 0) ? intradayMeta.regularMarketPrice : intradayCloses[intradayCloses.length - 1];
     const prevClose = (typeof intradayMeta.chartPreviousClose === "number" && intradayMeta.chartPreviousClose > 0) ? intradayMeta.chartPreviousClose : (intradayMeta.previousClose || intradayCloses[0]);
     return { symbol: symbol, price: price, prevClose: prevClose, history: intradayCloses, daily: dailyCloses };
   }
 
-  // 1m 부족하면 daily만 사용
   if (dailyCloses.length > 0 && dailyMeta) {
     const price = (typeof dailyMeta.regularMarketPrice === "number" && dailyMeta.regularMarketPrice > 0) ? dailyMeta.regularMarketPrice : dailyCloses[dailyCloses.length - 1];
     const prevClose = dailyCloses.length >= 2 ? dailyCloses[dailyCloses.length - 2] : (dailyMeta.chartPreviousClose || dailyMeta.previousClose || price);
     return { symbol: symbol, price: price, prevClose: prevClose, history: dailyCloses, daily: dailyCloses };
   }
 
-  // 3차 fallback: daily 1y
   try {
     const j3 = await yahooFetch("https://query1.finance.yahoo.com/v8/finance/chart/" + encodeURIComponent(symbol) + "?interval=1d&range=1y");
     const result3 = j3 && j3.chart && j3.chart.result && j3.chart.result[0];
@@ -254,7 +248,6 @@ async function recordTrade(DB, t) {
     .bind(t.ts, t.market, t.symbol, t.side, t.qty, t.price, t.pnl == null ? null : t.pnl, t.pnl_pct == null ? null : t.pnl_pct, t.reason).run();
 }
 
-// [1] + [4] 시장 상태 분석 함수
 async function analyzeMarketRegime(DB, market) {
   const indices = market === "us" ? US_INDICES : KR_INDICES;
   let totalDayPct = 0, validIdx = 0;
@@ -268,7 +261,6 @@ async function analyzeMarketRegime(DB, market) {
     validIdx++;
     if (idx.dayPct < worstDayPct) worstDayPct = idx.dayPct;
 
-    // MA20 계산해서 정배열/역배열 판단
     if (idx.history && idx.history.length >= 20) {
       const ma20 = getMA(idx.history, 20);
       if (ma20 != null) {
@@ -290,7 +282,7 @@ async function analyzeMarketRegime(DB, market) {
     worstDayPct: worstDayPct,
     aboveMa: aboveMa,
     belowMa: belowMa,
-    crashing: false  // runTradingCycle에서 cfg.marketCrashPct로 판단
+    crashing: false
   };
 }
 
@@ -301,15 +293,19 @@ async function executeBuy(DB, market, symbol, qty, price, reason, dailyAtr, cfg,
   const total = gross + fee;
   if (total > cash[market]) { await log(DB, "WARN", symbol, "BUY aborted: cash short"); return cash; }
 
-  // [7] 최소 손절폭 보장: ATR이 너무 작으면 -minStopPct%로 강제
-  let stopPrice = null;
+  // [수정] 무조건 매수가 -minStopPct% 이하에서만 손절 (안전 가드 강화)
+  const pctStop = price * (1 - cfg.minStopPct / 100);
+  let stopPrice = pctStop;
+  
   if (dailyAtr) {
     const atrStop = price - dailyAtr * cfg.atrStopMult;
-    const pctStop = price * (1 - cfg.minStopPct / 100);
-    stopPrice = Math.min(atrStop, pctStop);  // 둘 중 더 먼 쪽 (값이 작은 쪽 = 더 멀리)
-  } else {
-    stopPrice = price * (1 - cfg.minStopPct / 100);
+    // atrStop vs pctStop 중 더 먼 쪽 = 더 작은 값
+    stopPrice = Math.min(atrStop, pctStop);
   }
+  
+  // 안전 가드: 손절선이 minStopPct보다 가까우면 강제로 조정
+  const maxStopPrice = price * (1 - cfg.minStopPct / 100);
+  if (stopPrice > maxStopPrice) stopPrice = maxStopPrice;
 
   try {
     await savePosition(DB, market, symbol, {
@@ -363,7 +359,7 @@ async function saveIndex(DB, symbol, region, data) {
   const dayPct = data.prevClose ? ((data.price - data.prevClose) / data.prevClose) * 100 : 0;
   await setState(DB, "index:" + symbol, {
     region: region, price: data.price, prevClose: data.prevClose,
-    dayPct: dayPct, history: data.history.slice(-60), ts: Date.now()  // MA20 계산 위해 60일 확보
+    dayPct: dayPct, history: data.history.slice(-60), ts: Date.now()
   });
 }
 
@@ -411,7 +407,6 @@ async function refreshQuotesOnly(env, market) {
   return { ok: ok, fail: fail };
 }
 
-// [4] 시장 인식 autoTune - 단순히 rsiBuy 낮추는 게 아니라 시장 상태로 프리셋 스위칭
 async function autoTune(DB, cfg, regimes) {
   if (!cfg.autoTune) return cfg;
   try {
@@ -430,14 +425,12 @@ async function autoTune(DB, cfg, regimes) {
         const changes = [];
         const newCfg = Object.assign({}, cfg);
 
-        // 시장 상태에 따라 다른 튜닝 적용
         const usRegime = regimes.us ? regimes.us.regime : "UNKNOWN";
         const krRegime = regimes.kr ? regimes.kr.regime : "UNKNOWN";
         const dominantRegime = (usRegime === "BEAR" || krRegime === "BEAR") ? "BEAR" :
                                (usRegime === "BULL" && krRegime === "BULL") ? "BULL" : "NEUTRAL";
 
         if (dominantRegime === "BEAR") {
-          // 하락장: 매수 빈도 줄이고 익절 가까이
           newCfg.rsiBuy = Math.max(28, cfg.rsiBuy - 1);
           newCfg.takeProfit = Math.max(3, cfg.takeProfit - 0.5);
           newCfg.posSize = Math.max(5, cfg.posSize - 1);
@@ -445,7 +438,6 @@ async function autoTune(DB, cfg, regimes) {
           if (newCfg.takeProfit !== cfg.takeProfit) changes.push("TP " + cfg.takeProfit + "->" + newCfg.takeProfit);
           if (newCfg.posSize !== cfg.posSize) changes.push("Size " + cfg.posSize + "->" + newCfg.posSize);
         } else if (dominantRegime === "BULL" && winRate > 0.55 && avgPnl > 2) {
-          // 상승장 + 성과 좋음: 매수 빈도 늘리고 익절 멀리
           newCfg.rsiBuy = Math.min(38, cfg.rsiBuy + 1);
           newCfg.takeProfit = Math.min(10, cfg.takeProfit + 0.5);
           newCfg.posSize = Math.min(15, cfg.posSize + 1);
@@ -453,7 +445,6 @@ async function autoTune(DB, cfg, regimes) {
           if (newCfg.takeProfit !== cfg.takeProfit) changes.push("TP " + cfg.takeProfit + "->" + newCfg.takeProfit);
           if (newCfg.posSize !== cfg.posSize) changes.push("Size " + cfg.posSize + "->" + newCfg.posSize);
         } else if (avgPnl < 0 && winRate < 0.4) {
-          // 중립이지만 성과 나쁨: minHold만 늘려서 시간 더 줌
           const newMinHold = Math.min(90, cfg.minHoldMin + 10);
           if (newMinHold !== cfg.minHoldMin) { changes.push("MinHold " + cfg.minHoldMin + "->" + newMinHold + "min"); newCfg.minHoldMin = newMinHold; }
         }
@@ -482,7 +473,6 @@ async function runTradingCycle(env) {
   const usOpen = isMarketOpen("us");
   const krOpen = isMarketOpen("kr");
 
-  // 지수 먼저 fetch (시장 필터에 사용)
   if (usOpen) {
     for (const idx of US_INDICES) {
       try { const d = await fetchDaily(idx); await saveIndex(DB, idx, "us", d); }
@@ -496,14 +486,12 @@ async function runTradingCycle(env) {
     }
   }
 
-  // [1] + [4] 시장 상태 분석
   const regimes = {
     us: await analyzeMarketRegime(DB, "us"),
     kr: await analyzeMarketRegime(DB, "kr")
   };
   await log(DB, "INFO", null, "Regime US:" + regimes.us.regime + " (avg " + regimes.us.avgDayPct.toFixed(2) + "%, worst " + regimes.us.worstDayPct.toFixed(2) + "%), KR:" + regimes.kr.regime + " (avg " + regimes.kr.avgDayPct.toFixed(2) + "%, worst " + regimes.kr.worstDayPct.toFixed(2) + "%)");
 
-  // autoTune에 regime 정보 전달
   cfg = await autoTune(DB, cfg, regimes);
 
   const cash = await getState(DB, "cash", { us: cfg.initialCashUS, kr: cfg.initialCashKR });
@@ -526,7 +514,6 @@ async function runTradingCycle(env) {
     const feeRate = market === "us" ? cfg.feeUS : cfg.feeKR;
     const regime = regimes[market];
 
-    // [1] 시장 폭락 감지 - 매수 금지 플래그
     const marketCrashing = regime.worstDayPct <= cfg.marketCrashPct;
     if (marketCrashing) {
       await log(DB, "WARN", null, market.toUpperCase() + " 시장 폭락 감지 (worst " + regime.worstDayPct.toFixed(2) + "% <= " + cfg.marketCrashPct + "%) - 신규 매수 금지");
@@ -560,6 +547,18 @@ async function runTradingCycle(env) {
         const held = positions[symbol];
 
         if (held) {
+          // [수정] 기존 포지션 stopPrice 보정: 구버전 손절선이 너무 가깝면 강제 조정
+          if (held.meta && held.meta.stopPrice != null) {
+            const safeStop = held.avg * (1 - cfg.minStopPct / 100);
+            if (held.meta.stopPrice > safeStop) {
+              held.meta.stopPrice = safeStop;
+              try {
+                await savePosition(DB, market, symbol, held);
+                await log(DB, "INFO", symbol, "stopPrice corrected to " + safeStop.toFixed(2) + " (-" + cfg.minStopPct + "%)");
+              } catch (e) {}
+            }
+          }
+
           // 트레일링용 peak 갱신
           if (held.meta && held.meta.peakPrice != null && price > held.meta.peakPrice) {
             held.meta.peakPrice = price;
@@ -569,11 +568,12 @@ async function runTradingCycle(env) {
           const hardStop = held.meta && held.meta.stopPrice;
           const entryAtr = held.meta && held.meta.atrAtEntry;
           const peakPrice = held.meta && held.meta.peakPrice;
-          // [2] 트레일링 스톱 독립 작동 (entryAtr가 있으면 ATR 기준, 없으면 trailMult% 기준)
+          
+          // [수정] 트레일링 거리 더 넓게 (trailMult: 3.0)
           const trailDist = entryAtr ? entryAtr * cfg.trailMult : peakPrice * (cfg.trailMult / 100);
           const trailStop = peakPrice ? peakPrice - trailDist : null;
-          // 본전 +trailStartPct% 이상 도달했었는지 (peak가 매수가 대비 충분히 올랐는지)
           const peakPnlPct = peakPrice ? ((peakPrice - held.avg) / held.avg * 100) : 0;
+          // [수정] 트레일링 발동 기준: 본전 +3% (trailStartPct: 3.0)
           const trailArmed = peakPnlPct >= cfg.trailStartPct;
           
           const heldMin = held.opened_ts ? (Date.now() - held.opened_ts) / 60000 : 0;
@@ -594,20 +594,20 @@ async function runTradingCycle(env) {
             await executeSell(DB, market, symbol, held, price, "ATR-STOP " + pnlRate.toFixed(2) + "%", cfg, cash);
             didSell = true;
           }
-          // 3. [2] 독립 트레일링 스톱 - 본전 +0.5% 이상 갔다 왔으면 작동
-          else if (minHoldPassed && trailArmed && trailStop != null && price <= trailStop) {
+          // 3. [수정] 독립 트레일링 스톱 - 본전 +3% 이상 갔다 왔으면 작동 + 최소 수익 +2% 강제
+          else if (minHoldPassed && trailArmed && trailStop != null && price <= trailStop && pnlRate >= cfg.minProfitToSell) {
             await executeSell(DB, market, symbol, held, price, "TRAIL peak=" + peakPrice.toFixed(2) + " PnL=" + pnlRate.toFixed(2) + "%", cfg, cash);
             didSell = true;
           }
-          // 4. [5] 최대 보유시간 초과 - 본전 ±1% 근처면 청산
+          // 4. 최대 보유시간 초과 - 본전 ±1% 근처면 청산
           else if (maxHoldReached && Math.abs(pnlRate) <= 1.0) {
             await executeSell(DB, market, symbol, held, price, "TIME-CUT " + heldHours.toFixed(0) + "h PnL=" + pnlRate.toFixed(2) + "%", cfg, cash);
             didSell = true;
           }
           // 5. minHold 통과 후 일반 매도들
           else if (minHoldPassed) {
-            // RSI 과매수 + 의미있는 차익
-            if (rsi > cfg.rsiSell && pnlRate >= cfg.takeProfit * 0.5) {
+            // [수정] RSI 과매수 + 의미있는 차익 + 최소 수익 2% 강제
+            if (rsi > cfg.rsiSell && pnlRate >= Math.max(cfg.minProfitToSell, cfg.takeProfit * 0.5)) {
               await executeSell(DB, market, symbol, held, price, "RSI " + rsi.toFixed(1) + " +" + pnlRate.toFixed(1) + "%", cfg, cash); didSell = true;
             }
             // RALLY: 일중 급등 + 2% 이상 차익
@@ -623,20 +623,18 @@ async function runTradingCycle(env) {
           }
           if (didSell) sold++;
         } else {
-          // [1] 시장 폭락 중이면 매수 자체를 차단
+          // 시장 폭락 중이면 매수 차단
           if (marketCrashing) {
             await log(DB, "NOBUY", symbol, "MARKET-CRASH block");
             continue;
           }
 
-          // 추세 필터: 일봉 MA20 사용
           const trendMa = dailyMa || ma;
           const trendOK = trendMa == null || price >= trendMa;
 
-          // [1] BEAR regime이면 추세 필터를 더 엄격하게 (MA + 5% 이상)
           let strictTrendOK = trendOK;
           if (regime.regime === "BEAR" && trendMa != null) {
-            strictTrendOK = price >= trendMa * 1.02;  // BEAR에선 MA보다 +2% 이상일 때만
+            strictTrendOK = price >= trendMa * 1.02;
           }
 
           const rsiOK = rsi < cfg.rsiBuy;
