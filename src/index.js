@@ -39,7 +39,6 @@ function isMarketOpen(market) {
   const utcHour = now.getUTCHours();
   const utcMinute = now.getUTCMinutes();
   const utcDay = now.getUTCDay();
-  
   if (market === "us") {
     let etTotalMin = (utcHour - 4) * 60 + utcMinute;
     if (etTotalMin < 0) etTotalMin += 24 * 60;
@@ -136,31 +135,65 @@ async function yahooFetch(url) {
 }
 
 async function fetchPrice(symbol) {
+  // 1차 시도: 1m intraday
+  let intradayCloses = [];
+  let intradayMeta = null;
   try {
     const j = await yahooFetch("https://query1.finance.yahoo.com/v8/finance/chart/" + encodeURIComponent(symbol) + "?interval=1m&range=1d");
     const result = j && j.chart && j.chart.result && j.chart.result[0];
     if (result) {
-      const meta = result.meta || {};
+      intradayMeta = result.meta || {};
       const raw = (result.indicators && result.indicators.quote && result.indicators.quote[0] && result.indicators.quote[0].close) || [];
-      const closes = forwardFill(raw);
-      if (closes.length >= 20) {
-        const price = (typeof meta.regularMarketPrice === "number" && meta.regularMarketPrice > 0) ? meta.regularMarketPrice : closes[closes.length - 1];
-        const prevClose = (typeof meta.chartPreviousClose === "number" && meta.chartPreviousClose > 0) ? meta.chartPreviousClose : (meta.previousClose || closes[0]);
-        return { symbol: symbol, price: price, prevClose: prevClose, history: closes };
+      intradayCloses = forwardFill(raw);
+    }
+  } catch (e) { /* fall through */ }
+
+  if (intradayCloses.length >= 20 && intradayMeta) {
+    const price = (typeof intradayMeta.regularMarketPrice === "number" && intradayMeta.regularMarketPrice > 0) ? intradayMeta.regularMarketPrice : intradayCloses[intradayCloses.length - 1];
+    const prevClose = (typeof intradayMeta.chartPreviousClose === "number" && intradayMeta.chartPreviousClose > 0) ? intradayMeta.chartPreviousClose : (intradayMeta.previousClose || intradayCloses[0]);
+    return { symbol: symbol, price: price, prevClose: prevClose, history: intradayCloses };
+  }
+
+  // 2차 시도: daily 3mo
+  try {
+    const j2 = await yahooFetch("https://query1.finance.yahoo.com/v8/finance/chart/" + encodeURIComponent(symbol) + "?interval=1d&range=3mo");
+    const result2 = j2 && j2.chart && j2.chart.result && j2.chart.result[0];
+    if (result2) {
+      const meta2 = result2.meta || {};
+      const raw2 = (result2.indicators && result2.indicators.quote && result2.indicators.quote[0] && result2.indicators.quote[0].close) || [];
+      const daily = forwardFill(raw2);
+      if (daily.length > 0) {
+        const price = (typeof meta2.regularMarketPrice === "number" && meta2.regularMarketPrice > 0) ? meta2.regularMarketPrice : daily[daily.length - 1];
+        const prevClose = daily.length >= 2 ? daily[daily.length - 2] : (meta2.chartPreviousClose || meta2.previousClose || price);
+        return { symbol: symbol, price: price, prevClose: prevClose, history: daily };
       }
     }
   } catch (e) { /* fall through */ }
 
-  const j2 = await yahooFetch("https://query1.finance.yahoo.com/v8/finance/chart/" + encodeURIComponent(symbol) + "?interval=1d&range=3mo");
-  const result2 = j2 && j2.chart && j2.chart.result && j2.chart.result[0];
-  if (!result2) throw new Error("no chart data");
-  const meta2 = result2.meta || {};
-  const raw2 = (result2.indicators && result2.indicators.quote && result2.indicators.quote[0] && result2.indicators.quote[0].close) || [];
-  const daily = forwardFill(raw2);
-  if (daily.length === 0) throw new Error("no close data");
-  const price = (typeof meta2.regularMarketPrice === "number" && meta2.regularMarketPrice > 0) ? meta2.regularMarketPrice : daily[daily.length - 1];
-  const prevClose = daily.length >= 2 ? daily[daily.length - 2] : (meta2.chartPreviousClose || meta2.previousClose || price);
-  return { symbol: symbol, price: price, prevClose: prevClose, history: daily };
+  // 3차 시도: daily 1y (신규 상장 종목 대비)
+  try {
+    const j3 = await yahooFetch("https://query1.finance.yahoo.com/v8/finance/chart/" + encodeURIComponent(symbol) + "?interval=1d&range=1y");
+    const result3 = j3 && j3.chart && j3.chart.result && j3.chart.result[0];
+    if (result3) {
+      const meta3 = result3.meta || {};
+      const raw3 = (result3.indicators && result3.indicators.quote && result3.indicators.quote[0] && result3.indicators.quote[0].close) || [];
+      const daily = forwardFill(raw3);
+      if (daily.length > 0) {
+        const price = (typeof meta3.regularMarketPrice === "number" && meta3.regularMarketPrice > 0) ? meta3.regularMarketPrice : daily[daily.length - 1];
+        const prevClose = daily.length >= 2 ? daily[daily.length - 2] : (meta3.chartPreviousClose || meta3.previousClose || price);
+        return { symbol: symbol, price: price, prevClose: prevClose, history: daily };
+      }
+    }
+  } catch (e) { /* fall through */ }
+
+  // 마지막: 1m 데이터가 짧아도 있으면 그거라도 반환
+  if (intradayCloses.length > 0 && intradayMeta) {
+    const price = (typeof intradayMeta.regularMarketPrice === "number" && intradayMeta.regularMarketPrice > 0) ? intradayMeta.regularMarketPrice : intradayCloses[intradayCloses.length - 1];
+    const prevClose = (typeof intradayMeta.chartPreviousClose === "number" && intradayMeta.chartPreviousClose > 0) ? intradayMeta.chartPreviousClose : (intradayMeta.previousClose || price);
+    return { symbol: symbol, price: price, prevClose: prevClose, history: intradayCloses };
+  }
+
+  throw new Error("no data from any endpoint");
 }
 
 async function fetchDaily(symbol) {
@@ -272,6 +305,50 @@ async function saveIndex(DB, symbol, region, data) {
   });
 }
 
+// 시세만 갱신하는 함수 (거래 안 함, 정규장 무관하게 동작)
+async function refreshQuotesOnly(env, market) {
+  const DB = env.DB;
+  await ensureSchema(DB);
+  const cfg = Object.assign({}, DEFAULT_CFG, await getState(DB, "cfg", {}));
+
+  await log(DB, "INFO", null, "=== Manual quote refresh: " + market.toUpperCase() + " ===");
+
+  // 지수 fetch
+  const indices = market === "us" ? US_INDICES : KR_INDICES;
+  for (const idx of indices) {
+    try { const d = await fetchDaily(idx); await saveIndex(DB, idx, market, d); }
+    catch (e) { await log(DB, "WARN", idx, "index fetch fail: " + e.message); }
+  }
+
+  const tickers = market === "us" ? cfg.usTickers : cfg.krTickers;
+  let ok = 0, fail = 0;
+
+  for (const symbol of tickers) {
+    try {
+      const data = await fetchPrice(symbol);
+      if (!data.price || data.price <= 0) {
+        fail++;
+        await log(DB, "SKIP", symbol, "no valid price");
+        continue;
+      }
+      const price = data.price;
+      const prevClose = data.prevClose || price;
+      const dayPct = ((price - prevClose) / prevClose) * 100;
+      const rsi = data.history && data.history.length >= cfg.rsiPeriod + 1 ? getRSI(data.history, cfg.rsiPeriod) : null;
+      const ma = data.history && data.history.length >= cfg.maPeriod ? getMA(data.history, cfg.maPeriod) : null;
+      const atr = data.history && data.history.length >= cfg.atrPeriod + 1 ? getATR(data.history, cfg.atrPeriod) : null;
+      await saveQuote(DB, symbol, market, { price: price, prevClose: prevClose, dayPct: dayPct, rsi: rsi, ma: ma, atr: atr });
+      ok++;
+    } catch (e) {
+      fail++;
+      await log(DB, "ERROR", symbol, "fetch fail: " + e.message);
+    }
+  }
+
+  await log(DB, "INFO", null, market.toUpperCase() + " quote refresh done: ok=" + ok + " fail=" + fail);
+  return { ok: ok, fail: fail };
+}
+
 async function autoTune(DB, cfg) {
   if (!cfg.autoTune) return cfg;
   try {
@@ -362,22 +439,22 @@ async function runTradingCycle(env) {
         const data = await fetchPrice(symbol);
         fetched++;
 
-        if (!data.price || data.price <= 0 || !data.history || data.history.length < 20) {
+        if (!data.price || data.price <= 0) {
           skipped++;
-          await log(DB, "SKIP", symbol, "history short or no price (" + (data.history ? data.history.length : 0) + ")");
+          await log(DB, "SKIP", symbol, "no valid price");
           continue;
         }
 
         const price = data.price;
         const prevClose = data.prevClose || price;
         const dayPct = ((price - prevClose) / prevClose) * 100;
-        const rsi = getRSI(data.history, cfg.rsiPeriod);
-        const ma = getMA(data.history, cfg.maPeriod);
-        const atr = getATR(data.history, cfg.atrPeriod);
+        const rsi = data.history && data.history.length >= cfg.rsiPeriod + 1 ? getRSI(data.history, cfg.rsiPeriod) : null;
+        const ma = data.history && data.history.length >= cfg.maPeriod ? getMA(data.history, cfg.maPeriod) : null;
+        const atr = data.history && data.history.length >= cfg.atrPeriod + 1 ? getATR(data.history, cfg.atrPeriod) : null;
 
         await saveQuote(DB, symbol, market, { price: price, prevClose: prevClose, dayPct: dayPct, rsi: rsi, ma: ma, atr: atr });
 
-        if (rsi == null) { skipped++; await log(DB, "SKIP", symbol, "RSI null"); continue; }
+        if (rsi == null) { skipped++; await log(DB, "SKIP", symbol, "RSI not enough history (len=" + (data.history ? data.history.length : 0) + ")"); continue; }
 
         const held = positions[symbol];
 
@@ -554,6 +631,16 @@ async function handleRequest(request, env) {
     if (path === "/api/tick" && request.method === "POST") {
       await runTradingCycle(env);
       return Response.json({ ok: true, ts: Date.now() }, { headers: cors });
+    }
+
+    // 새 엔드포인트: 시세만 조회 (거래 안 함, 정규장 무관)
+    if (path === "/api/refresh_quotes" && request.method === "POST") {
+      const market = url.searchParams.get("market") || "us";
+      if (market !== "us" && market !== "kr") {
+        return Response.json({ error: "invalid market" }, { status: 400, headers: cors });
+      }
+      const result = await refreshQuotesOnly(env, market);
+      return Response.json({ ok: true, market: market, ok_count: result.ok, fail_count: result.fail }, { headers: cors });
     }
 
     if (path === "/api/migrate" && request.method === "POST") {
