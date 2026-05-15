@@ -8,8 +8,8 @@ const DEFAULT_US = [
 const DEFAULT_KR = [
   "005930.KS","000660.KS","005380.KS","373220.KS","009150.KS",
   "006400.KS","034020.KS","006800.KS","012450.KS","402340.KS",
-  "329180.KS","042660.KS","196170.KS","497570.KS","042660.KS",
-  "042700.KS","064350.KS","518880.KS","047810.KS","069500.KS"
+  "329180.KS","042660.KS","196170.KS","047040.KS","005490.KS",
+  "042700.KS","064350.KS","079550.KS","047810.KS","069500.KS"
 ];
 
 const US_INDICES = ["^IXIC", "^DJI", "^GSPC"];
@@ -324,7 +324,6 @@ async function runTradingCycle(env) {
   const usOpen = isMarketOpen("us");
   const krOpen = isMarketOpen("kr");
 
-  // 정규장 열린 시장의 지수만 조회
   if (usOpen) {
     for (const idx of US_INDICES) {
       try { const d = await fetchDaily(idx); await saveIndex(DB, idx, "us", d); }
