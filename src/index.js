@@ -6,18 +6,43 @@ const KR_INDICES = ["^KS11", "^KQ11"];
 const DEFAULT_CFG = {
   usTickers: DEFAULT_US,
   krTickers: DEFAULT_KR,
-  rsiBuy: 55, rsiSell: 50, rsiPeriod: 14,
-  stopLoss: 7, takeProfit: 2.5,
-  dayBuyPct: 1.0, daySellPct: 2,
+  rsiBuy: 35, rsiSell: 65, rsiPeriod: 14,
+  stopLoss: 10, takeProfit: 8,
+  dayBuyPct: 3.0, daySellPct: 5,
   feeUS: 0.0001, feeKR: 0.0015,
   posSize: 12,
   maPeriod: 20, atrPeriod: 14,
-  atrStopMult: 2.5, trailMult: 2.5,
+  atrStopMult: 3.0, trailMult: 3.0,
   initialCashUS: 10000000, initialCashKR: 10000000,
   enabled: true,
   autoTune: true,
-  autoTuneAggression: "aggressive"
+  autoTuneAggression: "moderate",
+  marketHoursOnly: true
 };
+
+// 시장 시간 체크 함수
+function isMarketOpen(market) {
+  const now = new Date();
+  const utcHour = now.getUTCHours();
+  const utcMinute = now.getUTCMinutes();
+  const utcDay = now.getUTCDay(); // 0=일, 6=토
+  
+  if (market === "us") {
+    // 미국 정규장: Mon-Fri 09:30-16:00 ET (EDT=UTC-4 기준)
+    let etTotalMin = (utcHour - 4) * 60 + utcMinute;
+    if (etTotalMin < 0) etTotalMin += 24 * 60;
+    return utcDay >= 1 && utcDay <= 5 && etTotalMin >= 570 && etTotalMin < 960;
+  }
+  if (market === "kr") {
+    // 한국 정규장: Mon-Fri 09:00-15:30 KST (UTC+9)
+    let kstTotalMin = (utcHour + 9) * 60 + utcMinute;
+    if (kstTotalMin >= 24 * 60) kstTotalMin -= 24 * 60;
+    let kstDay = utcDay;
+    if (utcHour + 9 >= 24) kstDay = (utcDay + 1) % 7;
+    return kstDay >= 1 && kstDay <= 5 && kstTotalMin >= 540 && kstTotalMin < 930;
+  }
+  return false;
+}
 
 async function ensureSchema(DB) {
   try {
@@ -255,14 +280,14 @@ async function autoTune(DB, cfg) {
         const newCfg = Object.assign({}, cfg);
 
         if (avgPnl < 0 || winRate < 0.4) {
-          const newRsiBuy = Math.max(40, cfg.rsiBuy - 3);
-          const newStopLoss = Math.max(3, cfg.stopLoss - 0.5);
+          // 손실 중 → 더 엄격하게 (RSI 더 낮춤, 손절 더 엄격하게)
+          const newRsiBuy = Math.max(25, cfg.rsiBuy - 2);
+          const newTakeProfit = Math.min(15, cfg.takeProfit + 1);
           if (newRsiBuy !== cfg.rsiBuy) { changes.push("RSI Buy " + cfg.rsiBuy + "->" + newRsiBuy); newCfg.rsiBuy = newRsiBuy; }
-          if (newStopLoss !== cfg.stopLoss) { changes.push("StopLoss " + cfg.stopLoss + "->" + newStopLoss); newCfg.stopLoss = newStopLoss; }
-        } else if (winRate > 0.6 && avgPnl > 1) {
-          const newRsiBuy = Math.min(65, cfg.rsiBuy + 2);
+          if (newTakeProfit !== cfg.takeProfit) { changes.push("TakeProfit " + cfg.takeProfit + "->" + newTakeProfit); newCfg.takeProfit = newTakeProfit; }
+        } else if (winRate > 0.6 && avgPnl > 3) {
+          // 수익 중 → 약간 완화 (포지션 크기 늘림)
           const newPosSize = Math.min(20, cfg.posSize + 1);
-          if (newRsiBuy !== cfg.rsiBuy) { changes.push("RSI Buy " + cfg.rsiBuy + "->" + newRsiBuy); newCfg.rsiBuy = newRsiBuy; }
           if (newPosSize !== cfg.posSize) { changes.push("PosSize " + cfg.posSize + "->" + newPosSize); newCfg.posSize = newPosSize; }
         }
         if (changes.length > 0) {
@@ -270,43 +295,6 @@ async function autoTune(DB, cfg) {
           await setState(DB, "autotune_state", { lastTunedAt: Date.now(), tradeCountAtLastTune: sellCount });
           await log(DB, "TUNE", null, "[result-based] winRate=" + (winRate*100).toFixed(0) + "% avgPnL=" + avgPnl.toFixed(2) + "% -> " + changes.join(", "));
           return newCfg;
-        }
-      }
-    }
-
-    const positionsCount = await DB.prepare("SELECT COUNT(*) as c FROM positions").first();
-    if ((positionsCount.c || 0) === 0) {
-      const nobuyRes = await DB.prepare("SELECT * FROM logs WHERE level = 'NOBUY' ORDER BY id DESC LIMIT 100").all();
-      const nobuyLogs = nobuyRes.results || [];
-      if (nobuyLogs.length >= 50) {
-        const tuneState = await getState(DB, "autotune_nobuy_state", { lastTunedAt: 0 });
-        const sinceLastTune = Date.now() - tuneState.lastTunedAt;
-        if (sinceLastTune > 5 * 60 * 1000) {
-          let rsiAboveCount = 0, dayAboveCount = 0;
-          for (const l of nobuyLogs) {
-            const rsiM = l.message.match(/RSI=([\d.]+)/);
-            const dayM = l.message.match(/day=(-?[\d.]+)/);
-            if (rsiM && parseFloat(rsiM[1]) >= cfg.rsiBuy) rsiAboveCount++;
-            if (dayM && parseFloat(dayM[1]) > -cfg.dayBuyPct) dayAboveCount++;
-          }
-          const changes = [];
-          const newCfg = Object.assign({}, cfg);
-          if (rsiAboveCount > nobuyLogs.length * 0.6 && cfg.rsiBuy < 70) {
-            const newRsiBuy = Math.min(70, cfg.rsiBuy + 5);
-            changes.push("RSI Buy " + cfg.rsiBuy + "->" + newRsiBuy);
-            newCfg.rsiBuy = newRsiBuy;
-          }
-          if (dayAboveCount > nobuyLogs.length * 0.6 && cfg.dayBuyPct > 0.3) {
-            const newDayBuy = Math.max(0.3, cfg.dayBuyPct - 0.3);
-            changes.push("DayBuy " + cfg.dayBuyPct + "->" + newDayBuy.toFixed(1));
-            newCfg.dayBuyPct = parseFloat(newDayBuy.toFixed(1));
-          }
-          if (changes.length > 0) {
-            await setState(DB, "cfg", newCfg);
-            await setState(DB, "autotune_nobuy_state", { lastTunedAt: Date.now() });
-            await log(DB, "TUNE", null, "[nobuy-based] no positions, easing conditions -> " + changes.join(", "));
-            return newCfg;
-          }
         }
       }
     }
@@ -324,6 +312,7 @@ async function runTradingCycle(env) {
 
   await log(DB, "INFO", null, "=== Cycle start ===");
 
+  // 지수는 시장 닫혀도 정보용으로 가져옴
   for (const idx of US_INDICES) {
     try { const d = await fetchDaily(idx); await saveIndex(DB, idx, "us", d); }
     catch (e) { await log(DB, "WARN", idx, "index fetch fail: " + e.message); }
@@ -338,6 +327,29 @@ async function runTradingCycle(env) {
   let tried = 0, fetched = 0, bought = 0, sold = 0, skipped = 0;
 
   for (const market of ["us", "kr"]) {
+    // 정규장 시간 체크
+    if (cfg.marketHoursOnly && !isMarketOpen(market)) {
+      await log(DB, "CLOSED", null, market.toUpperCase() + " 정규장 시간 아님 - 거래 스킵 (시세만 업데이트)");
+      
+      // 시장 닫혔어도 watchlist 시세는 업데이트 (UI에 표시용)
+      const tickers = market === "us" ? cfg.usTickers : cfg.krTickers;
+      for (const symbol of tickers) {
+        try {
+          const data = await fetchPrice(symbol);
+          if (data.price && data.price > 0 && data.history && data.history.length >= 20) {
+            const price = data.price;
+            const prevClose = data.prevClose || price;
+            const dayPct = ((price - prevClose) / prevClose) * 100;
+            const rsi = getRSI(data.history, cfg.rsiPeriod);
+            const ma = getMA(data.history, cfg.maPeriod);
+            const atr = getATR(data.history, cfg.atrPeriod);
+            await saveQuote(DB, symbol, market, { price: price, prevClose: prevClose, dayPct: dayPct, rsi: rsi, ma: ma, atr: atr });
+          }
+        } catch (e) { /* 무시 */ }
+      }
+      continue; // 다음 시장으로
+    }
+
     const tickers = market === "us" ? cfg.usTickers : cfg.krTickers;
     const positions = await getPositions(DB, market);
     const feeRate = market === "us" ? cfg.feeUS : cfg.feeKR;
@@ -368,6 +380,7 @@ async function runTradingCycle(env) {
         const held = positions[symbol];
 
         if (held) {
+          // 보유 중 - SELL 판단
           if (atr && held.meta && held.meta.peakPrice != null && price > held.meta.peakPrice) {
             held.meta.peakPrice = price;
             try { await savePosition(DB, market, symbol, held); } catch (e) {}
@@ -377,27 +390,48 @@ async function runTradingCycle(env) {
           const trailStop = (atr && held.meta && held.meta.peakPrice) ? held.meta.peakPrice - atr * cfg.trailMult : null;
 
           let didSell = false;
-          if (rsi > cfg.rsiSell) {
-            await executeSell(DB, market, symbol, held, price, "RSI " + rsi.toFixed(1), cfg, cash); didSell = true;
-          } else if (dayPct >= cfg.daySellPct) {
+          
+          // 1. RSI 과매수 + 목표 수익 달성 (사람처럼 - 강한 신호일 때만)
+          if (rsi > cfg.rsiSell && pnlRate >= cfg.takeProfit * 0.5) {
+            await executeSell(DB, market, symbol, held, price, "RSI " + rsi.toFixed(1) + " +" + pnlRate.toFixed(1) + "%", cfg, cash); didSell = true;
+          }
+          // 2. 큰 급등 (수익 실현)
+          else if (dayPct >= cfg.daySellPct && pnlRate > 0) {
             await executeSell(DB, market, symbol, held, price, "RALLY +" + dayPct.toFixed(1) + "%", cfg, cash); didSell = true;
-          } else if (hardStop != null && price <= hardStop) {
+          }
+          // 3. ATR 하드 스톱 (큰 손실 방지)
+          else if (hardStop != null && price <= hardStop) {
             await executeSell(DB, market, symbol, held, price, "ATR-STOP " + pnlRate.toFixed(2) + "%", cfg, cash); didSell = true;
-          } else if (trailStop != null && price <= trailStop && pnlRate > 0) {
+          }
+          // 4. 추적 손절 (수익 보호) - 수익이 충분할 때만
+          else if (trailStop != null && price <= trailStop && pnlRate >= cfg.takeProfit) {
             await executeSell(DB, market, symbol, held, price, "TRAIL " + pnlRate.toFixed(2) + "%", cfg, cash); didSell = true;
-          } else if (hardStop == null && pnlRate <= -cfg.stopLoss) {
+          }
+          // 5. 큰 손실 손절
+          else if (pnlRate <= -cfg.stopLoss) {
             await executeSell(DB, market, symbol, held, price, "STOPLOSS " + pnlRate.toFixed(2) + "%", cfg, cash); didSell = true;
-          } else if (trailStop == null && pnlRate >= cfg.takeProfit) {
+          }
+          // 6. 큰 수익 실현 (목표 수익 달성)
+          else if (pnlRate >= cfg.takeProfit) {
             await executeSell(DB, market, symbol, held, price, "TAKEPROFIT " + pnlRate.toFixed(2) + "%", cfg, cash); didSell = true;
           }
           if (didSell) sold++;
         } else {
-          const trendOK = (ma == null) || (price >= ma * 0.98);
+          // 미보유 - BUY 판단 (사람처럼 - 강한 신호일 때만)
+          const trendOK = (ma == null) || (price >= ma * 0.95);
           let canBuy = false, reason = "";
+          
           if (trendOK) {
-            if (rsi < cfg.rsiBuy) { canBuy = true; reason = "RSI " + rsi.toFixed(1); }
-            else if (dayPct <= -cfg.dayBuyPct) { canBuy = true; reason = "DIP " + dayPct.toFixed(1) + "%"; }
+            // 강한 매수 신호 1: RSI 과매도 (극도로 낮음)
+            if (rsi < cfg.rsiBuy) {
+              canBuy = true; reason = "RSI " + rsi.toFixed(1) + " 과매도";
+            }
+            // 강한 매수 신호 2: 큰 급락 (저점 매수 기회)
+            else if (dayPct <= -cfg.dayBuyPct) {
+              canBuy = true; reason = "DIP " + dayPct.toFixed(1) + "%";
+            }
           }
+          
           if (canBuy) {
             const budget = cash[market] * posSizeRatio;
             const qty = Math.floor(budget / (price * (1 + feeRate)));
@@ -440,7 +474,13 @@ async function handleRequest(request, env) {
       const positionsUS = await getPositions(env.DB, "us");
       const positionsKR = await getPositions(env.DB, "kr");
       const lastTick = await getState(env.DB, "last_tick", null);
-      return Response.json({ cash: cash, positions: { us: positionsUS, kr: positionsKR }, lastTick: lastTick, cfg: cfg }, { headers: cors });
+      return Response.json({ 
+        cash: cash, 
+        positions: { us: positionsUS, kr: positionsKR }, 
+        lastTick: lastTick, 
+        cfg: cfg,
+        marketStatus: { us: isMarketOpen("us"), kr: isMarketOpen("kr") }
+      }, { headers: cors });
     }
 
     if (path === "/api/watchlist") {
