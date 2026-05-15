@@ -96,12 +96,15 @@ button.btn.loading { opacity: 0.5; pointer-events: none; }
 .modal-actions { display: flex; gap: 8px; margin-top: 18px; flex-wrap: wrap; }
 .modal-actions button { flex: 1; padding: 11px; min-width: 100px; }
 .watchlist { display: grid; grid-template-columns: repeat(auto-fill, minmax(160px, 1fr)); gap: 6px; padding: 10px; }
-.wl-card { background: var(--elev); border: 1px solid var(--border); border-radius: 4px; padding: 8px 10px; }
-.wl-sym { font-size: 11px; color: var(--amber); font-weight: bold; letter-spacing: 0.5px; }
+.wl-card { background: var(--elev); border: 1px solid var(--border); border-radius: 4px; padding: 8px 10px; position: relative; }
+.wl-sym { font-size: 11px; color: var(--amber); font-weight: bold; letter-spacing: 0.5px; padding-right: 18px; }
 .wl-name { font-size: 9px; color: var(--dim); margin-top: 1px; }
 .wl-price { font-size: 15px; font-weight: bold; margin-top: 2px; }
 .wl-day { font-size: 10px; margin-top: 2px; }
 .wl-meta { font-size: 9px; color: var(--faint); margin-top: 2px; }
+.wl-fav { position: absolute; top: 6px; right: 6px; cursor: pointer; font-size: 14px; line-height: 1; user-select: none; color: var(--faint); transition: all 0.15s; }
+.wl-fav:hover { transform: scale(1.2); }
+.wl-fav.active { color: var(--amber); text-shadow: 0 0 4px rgba(255,215,0,0.6); }
 .tune-banner { padding: 10px 14px; background: rgba(63,185,80,0.08); border-left: 3px solid var(--green); color: var(--green); font-size: 11px; line-height: 1.6; }
 .tune-banner b { color: var(--amber); }
 .market-status-banner { padding: 8px 14px; background: rgba(240,136,62,0.08); border-left: 3px solid var(--orange); color: var(--orange); font-size: 11px; line-height: 1.6; display: flex; gap: 16px; flex-wrap: wrap; }
@@ -123,6 +126,10 @@ button.btn.loading { opacity: 0.5; pointer-events: none; }
 .trades-summary-value { font-weight: bold; color: var(--text); }
 .trades-table { display: none; }
 .trades-table.show { display: block; }
+.watchlist-toggle-btn { font-size: 10px; color: var(--amber); font-weight: bold; padding: 3px 8px; background: var(--panel); border: 1px solid var(--border); border-radius: 3px; cursor: pointer; font-family: inherit; letter-spacing: 1px; }
+.watchlist-section { padding: 4px 12px 8px; font-size: 10px; color: var(--amber); font-weight: bold; letter-spacing: 1px; background: rgba(255,215,0,0.05); border-bottom: 1px solid var(--border); }
+.watchlist-section.fav { color: var(--amber); }
+.watchlist-section.all { color: var(--dim); }
 </style>
 </head>
 <body>
@@ -197,12 +204,18 @@ button.btn.loading { opacity: 0.5; pointer-events: none; }
 
     <div class="grid-2">
       <div class="panel">
-        <div class="panel-header"><div class="panel-title">[US] WATCHLIST</div></div>
-        <div class="watchlist" id="watchlistUS"><div class="empty">대기 중...</div></div>
+        <div class="panel-header">
+          <div class="panel-title">[US] WATCHLIST</div>
+          <button type="button" class="watchlist-toggle-btn" id="btnToggleUS">펼치기</button>
+        </div>
+        <div id="watchlistUSContainer"></div>
       </div>
       <div class="panel">
-        <div class="panel-header"><div class="panel-title">[KR] WATCHLIST</div></div>
-        <div class="watchlist" id="watchlistKR"><div class="empty">대기 중...</div></div>
+        <div class="panel-header">
+          <div class="panel-title">[KR] WATCHLIST</div>
+          <button type="button" class="watchlist-toggle-btn" id="btnToggleKR">펼치기</button>
+        </div>
+        <div id="watchlistKRContainer"></div>
       </div>
     </div>
 
@@ -283,10 +296,10 @@ button.btn.loading { opacity: 0.5; pointer-events: none; }
     <button type="button" class="btn" id="btnResetTickers" style="margin-bottom:10px;">티커 기본값으로 복원</button>
 
     <div class="section-divider"></div>
-    <div class="section-title">STRATEGY (스윙 트레이딩 권장값)</div>
+    <div class="section-title">STRATEGY</div>
     <div class="field-row">
-      <div class="field"><label>RSI Buy (낮을수록 엄격)</label><input type="number" id="cfgRsiBuy" min="1" max="99"></div>
-      <div class="field"><label>RSI Sell (높을수록 엄격)</label><input type="number" id="cfgRsiSell" min="1" max="99"></div>
+      <div class="field"><label>RSI Buy</label><input type="number" id="cfgRsiBuy" min="1" max="99"></div>
+      <div class="field"><label>RSI Sell</label><input type="number" id="cfgRsiSell" min="1" max="99"></div>
       <div class="field"><label>RSI Period</label><input type="number" id="cfgRsiPeriod" min="2" max="50"></div>
     </div>
     <div class="field-row">
@@ -335,6 +348,10 @@ button.btn.loading { opacity: 0.5; pointer-events: none; }
   var currentCfg = null;
   var lastQuotes = {};
   var tradesExpanded = false;
+  var usExpanded = false;
+  var krExpanded = false;
+  var usFavorites = [];
+  var krFavorites = [];
 
   var INDEX_NAMES = {
     '^IXIC': 'NASDAQ',
@@ -348,35 +365,63 @@ button.btn.loading { opacity: 0.5; pointer-events: none; }
     '005930.KS': '삼성전자',
     '000660.KS': 'SK하이닉스',
     '005380.KS': '현대차',
-    '402340.KS': 'SK스퀘어',
     '373220.KS': 'LG에너지솔루션',
     '009150.KS': '삼성전기',
-    '012450.KS': '한화에어로스페이스',
+    '006400.KS': '삼성SDI',
     '034020.KS': '두산에너빌리티',
     '006800.KS': '미래에셋증권',
-    '009540.KS': 'HD한국조선해양'
+    '012450.KS': '한화에어로스페이스',
+    '402340.KS': 'SK스퀘어',
+    '329180.KS': 'HD현대중공업',
+    '042660.KS': '한화오션',
+    '196170.KS': '알테오젠',
+    '497570.KS': 'TIGER 미국우주테크',
+    '042700.KS': '한미반도체',
+    '064350.KS': '현대로템',
+    '518880.KS': 'LIG디펜스앤에어로스페이스',
+    '047810.KS': '한국항공우주',
+    '069500.KS': 'KODEX 200'
+  };
+
+  var US_NAMES = {
+    'AAPL': '애플',
+    'NVDA': '엔비디아',
+    'TSLA': '테슬라',
+    'GOOGL': '알파벳A',
+    'AMZN': '아마존',
+    'AVGO': '브로드컴',
+    'RKLB': '로켓랩',
+    'META': '메타',
+    'AMD': 'AMD',
+    'SNDK': '샌디스크',
+    'SOXL': 'SOXL',
+    'SOXS': 'SOXS',
+    'GS': '골드만삭스',
+    'BA': '보잉',
+    'VOO': 'Vanguard S&P500',
+    'BRK-B': '버크셔 해서웨이B',
+    'INTC': '인텔',
+    'ORCL': '오라클',
+    'KO': '코카콜라',
+    'PLTR': '팔란티어'
   };
 
   function krLabel(symbol) { return KR_NAMES[symbol] || ''; }
+  function usLabel(symbol) { return US_NAMES[symbol] || ''; }
   function $(id) { return document.getElementById(id); }
 
-  // 시장 시간 체크
   function getMarketStatus() {
     var now = new Date();
     var utcHour = now.getUTCHours();
     var utcMinute = now.getUTCMinutes();
-    var utcDay = now.getUTCDay(); // 0=일, 6=토
+    var utcDay = now.getUTCDay();
     
-    // 미국 정규장: Mon-Fri 09:30-16:00 ET (EST=UTC-5, EDT=UTC-4)
-    // 단순화를 위해 EDT(UTC-4) 기준
     var etTotalMin = (utcHour - 4) * 60 + utcMinute;
     if (etTotalMin < 0) etTotalMin += 24 * 60;
     var usOpen = utcDay >= 1 && utcDay <= 5 && etTotalMin >= 570 && etTotalMin < 960;
     
-    // 한국 정규장: Mon-Fri 09:00-15:30 KST (UTC+9)
     var kstTotalMin = (utcHour + 9) * 60 + utcMinute;
     if (kstTotalMin >= 24 * 60) kstTotalMin -= 24 * 60;
-    // UTC 요일과 KST 요일이 다를 수 있음
     var kstDay = utcDay;
     if (utcHour + 9 >= 24) kstDay = (utcDay + 1) % 7;
     var krOpen = kstDay >= 1 && kstDay <= 5 && kstTotalMin >= 540 && kstTotalMin < 930;
@@ -545,31 +590,118 @@ button.btn.loading { opacity: 0.5; pointer-events: none; }
       var sign = pnlPct != null && pnlPct >= 0 ? '+' : '';
       var pnlText = pnlPct != null ? sign + pnlPct.toFixed(2) + '%' : '-';
       var curText = curPrice != null ? fmtNum(curPrice) : '-';
-      var label = row.market === 'KR' && krLabel(row.symbol) ? '<b>'+escapeHtml(row.symbol)+'</b> <span style="color:var(--dim);font-size:10px;">'+escapeHtml(krLabel(row.symbol))+'</span>' : '<b>'+escapeHtml(row.symbol)+'</b>';
+      var name = row.market === 'KR' ? krLabel(row.symbol) : usLabel(row.symbol);
+      var label = name ? '<b>'+escapeHtml(row.symbol)+'</b> <span style="color:var(--dim);font-size:10px;">'+escapeHtml(name)+'</span>' : '<b>'+escapeHtml(row.symbol)+'</b>';
       html += '<tr><td><span class="market-badge">'+row.market+'</span></td><td>'+label+'</td><td class="right">'+fmtNum(row.p.qty)+'</td><td class="right">'+fmtNum(row.p.avg)+'</td><td class="right">'+curText+'</td><td class="right '+pnlClass+'">'+pnlText+'</td><td class="right">'+fmtAgo(row.p.opened_ts)+'</td></tr>';
     });
     box.innerHTML = html + '</tbody></table>';
   }
 
+  function buildWatchlistCard(q, market) {
+    var dayClass = q.dayPct > 0 ? 'pos' : (q.dayPct < 0 ? 'neg' : '');
+    var sign = q.dayPct >= 0 ? '+' : '';
+    var name = market === 'kr' ? krLabel(q.symbol) : usLabel(q.symbol);
+    var favorites = market === 'kr' ? krFavorites : usFavorites;
+    var isFav = favorites.indexOf(q.symbol) >= 0;
+    return '<div class="wl-card">'+
+      '<span class="wl-fav '+(isFav?'active':'')+'" data-symbol="'+escapeHtml(q.symbol)+'" data-market="'+market+'">'+(isFav?'★':'☆')+'</span>'+
+      '<div class="wl-sym">'+escapeHtml(q.symbol)+'</div>'+
+      (name ? '<div class="wl-name">'+escapeHtml(name)+'</div>' : '')+
+      '<div class="wl-price">'+fmtNum(q.price)+'</div>'+
+      '<div class="wl-day '+dayClass+'">'+sign+fmtNum(q.dayPct,2)+'%</div>'+
+      '<div class="wl-meta">RSI '+(q.rsi!=null?q.rsi.toFixed(1):'-')+' · '+fmtAgo(q.ts)+'</div>'+
+      '</div>';
+  }
+
+  function renderWatchlistMarket(market, quotes) {
+    var containerId = market === 'us' ? 'watchlistUSContainer' : 'watchlistKRContainer';
+    var expanded = market === 'us' ? usExpanded : krExpanded;
+    var favorites = market === 'us' ? usFavorites : krFavorites;
+    var container = $(containerId);
+
+    if (quotes.length === 0) {
+      container.innerHTML = '<div class="empty">대기 중...</div>';
+      return;
+    }
+
+    // 즐겨찾기와 나머지 분리
+    var favs = quotes.filter(function(q){ return favorites.indexOf(q.symbol) >= 0; });
+    var rest = quotes.filter(function(q){ return favorites.indexOf(q.symbol) < 0; });
+
+    var html = '';
+
+    if (expanded) {
+      // 펼친 상태: 즐겨찾기 먼저, 그 다음 전체
+      if (favs.length > 0) {
+        html += '<div class="watchlist-section fav">★ 즐겨찾기 ('+favs.length+')</div>';
+        html += '<div class="watchlist">'+favs.map(function(q){return buildWatchlistCard(q, market);}).join('')+'</div>';
+      }
+      if (rest.length > 0) {
+        html += '<div class="watchlist-section all">전체 종목 ('+rest.length+')</div>';
+        html += '<div class="watchlist">'+rest.map(function(q){return buildWatchlistCard(q, market);}).join('')+'</div>';
+      }
+    } else {
+      // 접힌 상태: 즐겨찾기 + 일반 합쳐서 상위 5개
+      var topItems = favs.concat(rest).slice(0, 5);
+      if (favs.length > 0) {
+        html += '<div class="watchlist-section fav">★ 즐겨찾기 우선 표시 (총 '+quotes.length+'개 중 5개)</div>';
+      } else {
+        html += '<div class="watchlist-section all">상위 5개 표시 (총 '+quotes.length+'개)</div>';
+      }
+      html += '<div class="watchlist">'+topItems.map(function(q){return buildWatchlistCard(q, market);}).join('')+'</div>';
+    }
+
+    container.innerHTML = html;
+
+    // 즐겨찾기 토글 이벤트 등록
+    container.querySelectorAll('.wl-fav').forEach(function(el){
+      el.addEventListener('click', function(e){
+        e.stopPropagation();
+        var sym = el.getAttribute('data-symbol');
+        var mkt = el.getAttribute('data-market');
+        toggleFavorite(mkt, sym);
+      });
+    });
+  }
+
   function renderWatchlist(quotes) {
     lastQuotes = {};
     quotes.forEach(function(q){ lastQuotes[q.symbol] = q; });
-    var boxUS = $('watchlistUS'), boxKR = $('watchlistKR');
     var us = quotes.filter(function(q){return q.market==='us';});
     var kr = quotes.filter(function(q){return q.market==='kr';});
-    function cardUS(q) {
-      var dayClass = q.dayPct > 0 ? 'pos' : (q.dayPct < 0 ? 'neg' : '');
-      var sign = q.dayPct >= 0 ? '+' : '';
-      return '<div class="wl-card"><div class="wl-sym">'+escapeHtml(q.symbol)+'</div><div class="wl-price">'+fmtNum(q.price)+'</div><div class="wl-day '+dayClass+'">'+sign+fmtNum(q.dayPct,2)+'%</div><div class="wl-meta">RSI '+(q.rsi!=null?q.rsi.toFixed(1):'-')+' · '+fmtAgo(q.ts)+'</div></div>';
+    renderWatchlistMarket('us', us);
+    renderWatchlistMarket('kr', kr);
+  }
+
+  function toggleFavorite(market, symbol) {
+    var favorites = market === 'us' ? usFavorites : krFavorites;
+    var idx = favorites.indexOf(symbol);
+    if (idx >= 0) {
+      favorites.splice(idx, 1);
+    } else {
+      favorites.push(symbol);
     }
-    function cardKR(q) {
-      var dayClass = q.dayPct > 0 ? 'pos' : (q.dayPct < 0 ? 'neg' : '');
-      var sign = q.dayPct >= 0 ? '+' : '';
-      var name = krLabel(q.symbol);
-      return '<div class="wl-card"><div class="wl-sym">'+escapeHtml(q.symbol)+'</div>'+(name ? '<div class="wl-name">'+escapeHtml(name)+'</div>' : '')+'<div class="wl-price">'+fmtNum(q.price)+'</div><div class="wl-day '+dayClass+'">'+sign+fmtNum(q.dayPct,2)+'%</div><div class="wl-meta">RSI '+(q.rsi!=null?q.rsi.toFixed(1):'-')+' · '+fmtAgo(q.ts)+'</div></div>';
+    if (market === 'us') usFavorites = favorites;
+    else krFavorites = favorites;
+
+    // 서버에 저장
+    fetch('/api/favorites', {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({ usFavorites: usFavorites, krFavorites: krFavorites })
+    }).then(function(){ refreshAll(); })
+      ['catch'](function(e){ toast('즐겨찾기 저장 실패'); });
+  }
+
+  function toggleWatchlist(market) {
+    if (market === 'us') {
+      usExpanded = !usExpanded;
+      $('btnToggleUS').textContent = usExpanded ? '접기' : '펼치기';
+    } else {
+      krExpanded = !krExpanded;
+      $('btnToggleKR').textContent = krExpanded ? '접기' : '펼치기';
     }
-    boxUS.innerHTML = us.length ? us.map(cardUS).join('') : '<div class="empty">대기 중...</div>';
-    boxKR.innerHTML = kr.length ? kr.map(cardKR).join('') : '<div class="empty">대기 중...</div>';
+    refreshAll();
   }
 
   function renderTrades(trades) {
@@ -588,7 +720,8 @@ button.btn.loading { opacity: 0.5; pointer-events: none; }
       var pnlSymbol = t.market === 'us' ? '$' : '₩';
       var pnlFmt = t.market === 'kr' ? fmtCompact : function(n){ return fmtNum(n, 2); };
       var pnlText = t.pnl!=null ? (t.pnl>=0?'+':'')+pnlSymbol+pnlFmt(t.pnl) : '-';
-      var label = t.market === 'kr' && krLabel(t.symbol) ? '<b>'+escapeHtml(t.symbol)+'</b> <span style="color:var(--dim);font-size:10px;">'+escapeHtml(krLabel(t.symbol))+'</span>' : '<b>'+escapeHtml(t.symbol)+'</b>';
+      var name = t.market === 'kr' ? krLabel(t.symbol) : usLabel(t.symbol);
+      var label = name ? '<b>'+escapeHtml(t.symbol)+'</b> <span style="color:var(--dim);font-size:10px;">'+escapeHtml(name)+'</span>' : '<b>'+escapeHtml(t.symbol)+'</b>';
       html += '<tr><td>'+fmtFullTime(t.ts)+'</td><td><span class="market-badge">'+t.market.toUpperCase()+'</span></td><td>'+label+'</td><td class="'+sc+'">'+t.side+'</td><td class="right">'+fmtNum(t.qty)+'</td><td class="right">'+fmtNum(t.price)+'</td><td class="right '+pc+'">'+pnlText+'</td><td class="right '+pc+'">'+pct+'</td><td>'+escapeHtml(t.reason||'')+'</td></tr>';
     });
     box.innerHTML = html + '</tbody></table>';
@@ -602,7 +735,6 @@ button.btn.loading { opacity: 0.5; pointer-events: none; }
       $('tradesAvgPnl').textContent = '0%';
       return;
     }
-
     var sells = trades.filter(function(t){ return t.side === 'SELL'; });
     if (sells.length === 0) {
       $('tradesTotalCount').textContent = trades.length;
@@ -610,11 +742,9 @@ button.btn.loading { opacity: 0.5; pointer-events: none; }
       $('tradesAvgPnl').textContent = '-';
       return;
     }
-
     var wins = sells.filter(function(t){ return t.pnl_pct > 0; });
     var winRate = (wins.length / sells.length * 100).toFixed(1);
     var avgPnl = (sells.reduce(function(a,t){ return a + (t.pnl_pct || 0); }, 0) / sells.length).toFixed(2);
-
     $('tradesTotalCount').textContent = trades.length;
     $('tradesWinRate').textContent = winRate + '%';
     var avgEl = $('tradesAvgPnl');
@@ -628,7 +758,10 @@ button.btn.loading { opacity: 0.5; pointer-events: none; }
     if (f.length===0) { box.innerHTML='<div class="empty">No logs for: '+logFilter+'</div>'; return; }
     box.innerHTML = f.map(function(l){
       var symbolDisplay = l.symbol || '';
-      if (symbolDisplay && krLabel(symbolDisplay)) symbolDisplay = symbolDisplay + ' (' + krLabel(symbolDisplay) + ')';
+      if (symbolDisplay) {
+        var name = krLabel(symbolDisplay) || usLabel(symbolDisplay);
+        if (name) symbolDisplay = symbolDisplay + ' (' + name + ')';
+      }
       return '<div class="log-line '+escapeHtml(l.level)+'"><span class="log-ts">'+fmtTime(l.ts)+'</span><span class="log-level">['+escapeHtml(l.level)+']</span>'+(l.symbol?'<span class="log-symbol">'+escapeHtml(symbolDisplay)+'</span>':'')+escapeHtml(l.message)+'</div>';
     }).join('');
   }
@@ -669,6 +802,8 @@ button.btn.loading { opacity: 0.5; pointer-events: none; }
       .then(function(r){
         var state = r[0], trades = r[1], logs = r[2]||[], quotes = r[3]||[], indices = r[4]||[];
         currentCfg = state.cfg;
+        usFavorites = (state.cfg && state.cfg.usFavorites) || [];
+        krFavorites = (state.cfg && state.cfg.krFavorites) || [];
         renderIndices(indices);
         renderWatchlist(quotes);
         var posUS = (state.positions && state.positions.us) || {};
@@ -783,6 +918,8 @@ button.btn.loading { opacity: 0.5; pointer-events: none; }
   $('btnReset').addEventListener('click', resetAll);
   $('btnResetTickers').addEventListener('click', resetTickers);
   $('tradesToggle').addEventListener('click', toggleTrades);
+  $('btnToggleUS').addEventListener('click', function(){ toggleWatchlist('us'); });
+  $('btnToggleKR').addEventListener('click', function(){ toggleWatchlist('kr'); });
 
   document.querySelectorAll('.log-filter button').forEach(function(b){
     b.addEventListener('click', function(){
