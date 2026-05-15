@@ -100,7 +100,6 @@ async function yahooFetch(url) {
 }
 
 async function fetchPrice(symbol) {
-  // 1차: 1분봉
   try {
     const j = await yahooFetch("https://query1.finance.yahoo.com/v8/finance/chart/" + encodeURIComponent(symbol) + "?interval=1m&range=1d");
     const result = j && j.chart && j.chart.result && j.chart.result[0];
@@ -116,7 +115,6 @@ async function fetchPrice(symbol) {
     }
   } catch (e) { /* fall through */ }
 
-  // 2차: 일봉 폴백
   const j2 = await yahooFetch("https://query1.finance.yahoo.com/v8/finance/chart/" + encodeURIComponent(symbol) + "?interval=1d&range=3mo");
   const result2 = j2 && j2.chart && j2.chart.result && j2.chart.result[0];
   if (!result2) throw new Error("no chart data");
@@ -501,6 +499,15 @@ async function handleRequest(request, env) {
       await setState(env.DB, "cash", { us: cfg.initialCashUS, kr: cfg.initialCashKR });
       await log(env.DB, "INFO", null, "RESET: all cleared, cash reset to US=" + cfg.initialCashUS + " KR=" + cfg.initialCashKR);
       return Response.json({ ok: true, cash: { us: cfg.initialCashUS, kr: cfg.initialCashKR } }, { headers: cors });
+    }
+
+    if (path === "/api/reset_tickers" && request.method === "POST") {
+      const current = Object.assign({}, DEFAULT_CFG, await getState(env.DB, "cfg", {}));
+      current.usTickers = DEFAULT_US;
+      current.krTickers = DEFAULT_KR;
+      await setState(env.DB, "cfg", current);
+      await log(env.DB, "INFO", null, "tickers reset to defaults");
+      return Response.json({ ok: true, usTickers: DEFAULT_US, krTickers: DEFAULT_KR }, { headers: cors });
     }
 
     if (path === "/api/tick" && request.method === "POST") {
