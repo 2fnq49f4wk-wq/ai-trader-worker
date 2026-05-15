@@ -33,7 +33,7 @@ body { background: var(--bg); color: var(--text); font-family: 'Courier New', mo
 .idx-spark { flex: 1; height: 28px; }
 
 .summary-grid { display: grid; grid-template-columns: repeat(2, 1fr); gap: 2px; background: var(--border); }
-@media (min-width: 768px) { .summary-grid { grid-template-columns: repeat(4, 1fr); } }
+@media (min-width: 768px) { .summary-grid { grid-template-columns: repeat(3, 1fr); } }
 .summary-item { background: var(--panel); padding: 14px 12px; min-width: 0; }
 .summary-label { font-size: 10px; color: var(--dim); text-transform: uppercase; font-weight: bold; letter-spacing: 1px; }
 .summary-value { font-size: 14px; font-weight: 700; margin-top: 4px; color: var(--text); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
@@ -108,6 +108,15 @@ button.btn.loading { opacity: 0.5; pointer-events: none; }
 .checkbox-row input[type="checkbox"] { width: 20px; height: 20px; }
 .checkbox-row label { font-size: 13px; color: var(--text); font-weight: bold; }
 .hint { font-size: 10px; color: var(--faint); margin-top: 4px; }
+.trades-toggle { display: flex; justify-content: space-between; align-items: center; padding: 10px 14px; background: var(--elev); border-bottom: 1px solid var(--border); cursor: pointer; }
+.trades-toggle:hover { background: rgba(255,215,0,0.05); }
+.trades-toggle-btn { font-size: 11px; color: var(--amber); font-weight: bold; padding: 4px 8px; background: var(--panel); border: 1px solid var(--border); border-radius: 3px; cursor: pointer; }
+.trades-summary { display: flex; gap: 16px; font-size: 11px; color: var(--dim); }
+.trades-summary-item { display: flex; flex-direction: column; }
+.trades-summary-label { font-size: 9px; color: var(--faint); margin-bottom: 2px; }
+.trades-summary-value { font-weight: bold; color: var(--text); }
+.trades-table { display: none; }
+.trades-table.show { display: block; }
 </style>
 </head>
 <body>
@@ -188,7 +197,26 @@ button.btn.loading { opacity: 0.5; pointer-events: none; }
 
     <div class="panel">
       <div class="panel-header"><div class="panel-title">RECENT TRADES</div></div>
-      <div id="tradesBox"><div class="empty">No trades yet</div></div>
+      <div class="trades-toggle" id="tradesToggle">
+        <div class="trades-summary" id="tradesSummary">
+          <div class="trades-summary-item">
+            <div class="trades-summary-label">TOTAL</div>
+            <div class="trades-summary-value" id="tradesTotalCount">0</div>
+          </div>
+          <div class="trades-summary-item">
+            <div class="trades-summary-label">WIN RATE</div>
+            <div class="trades-summary-value" id="tradesWinRate">0%</div>
+          </div>
+          <div class="trades-summary-item">
+            <div class="trades-summary-label">AVG PnL</div>
+            <div class="trades-summary-value" id="tradesAvgPnl">0%</div>
+          </div>
+        </div>
+        <button type="button" class="trades-toggle-btn" id="tradesToggleBtn">펼치기</button>
+      </div>
+      <div class="trades-table" id="tradesTableBox">
+        <div id="tradesBox"><div class="empty">No trades yet</div></div>
+      </div>
     </div>
 
     <div class="panel">
@@ -289,6 +317,7 @@ button.btn.loading { opacity: 0.5; pointer-events: none; }
   var logFilter = 'ALL';
   var currentCfg = null;
   var lastQuotes = {};
+  var tradesExpanded = false;
 
   var INDEX_NAMES = {
     '^IXIC': 'NASDAQ',
@@ -439,9 +468,9 @@ button.btn.loading { opacity: 0.5; pointer-events: none; }
     $('invested'+up).textContent = s.symbol + fmt(s.invested);
     $('cash'+up).textContent = s.symbol + fmt(s.cash);
     var changeEl = $('change'+up);
-    var sign = s.change >= 0 ? '+' : '';
-    changeEl.textContent = sign + s.symbol + fmt(s.change) + ' (' + sign + fmtNum(s.changePct, 2) + '%)';
-    changeEl.className = 'summary-value ' + (s.change > 0 ? 'pos' : (s.change < 0 ? 'neg' : ''));
+    var sign = s.changePct >= 0 ? '+' : '';
+    changeEl.textContent = sign + fmtNum(s.changePct, 2) + '%';
+    changeEl.className = 'summary-value ' + (s.changePct > 0 ? 'pos' : (s.changePct < 0 ? 'neg' : ''));
   }
 
   function renderPositions(positionsUS, positionsKR) {
@@ -488,7 +517,12 @@ button.btn.loading { opacity: 0.5; pointer-events: none; }
 
   function renderTrades(trades) {
     var box = $('tradesBox');
-    if (!trades || trades.length === 0) { box.innerHTML='<div class="empty">No trades yet</div>'; return; }
+    if (!trades || trades.length === 0) { 
+      box.innerHTML='<div class="empty">No trades yet</div>'; 
+      updateTradesSummary([]);
+      return; 
+    }
+
     var html = '<table class="table"><thead><tr><th>TIME</th><th>MKT</th><th>SYMBOL</th><th>SIDE</th><th class="right">QTY</th><th class="right">PRICE</th><th class="right">PnL%</th><th>REASON</th></tr></thead><tbody>';
     trades.slice(0,50).forEach(function(t){
       var sc = t.side==='BUY'?'trade-buy':'trade-sell';
@@ -498,6 +532,34 @@ button.btn.loading { opacity: 0.5; pointer-events: none; }
       html += '<tr><td>'+fmtFullTime(t.ts)+'</td><td><span class="market-badge">'+t.market.toUpperCase()+'</span></td><td>'+label+'</td><td class="'+sc+'">'+t.side+'</td><td class="right">'+fmtNum(t.qty)+'</td><td class="right">'+fmtNum(t.price)+'</td><td class="right '+pc+'">'+pct+'</td><td>'+escapeHtml(t.reason||'')+'</td></tr>';
     });
     box.innerHTML = html + '</tbody></table>';
+    updateTradesSummary(trades);
+  }
+
+  function updateTradesSummary(trades) {
+    if (!trades || trades.length === 0) {
+      $('tradesTotalCount').textContent = '0';
+      $('tradesWinRate').textContent = '0%';
+      $('tradesAvgPnl').textContent = '0%';
+      return;
+    }
+
+    var sells = trades.filter(function(t){ return t.side === 'SELL'; });
+    if (sells.length === 0) {
+      $('tradesTotalCount').textContent = trades.length;
+      $('tradesWinRate').textContent = '-';
+      $('tradesAvgPnl').textContent = '-';
+      return;
+    }
+
+    var wins = sells.filter(function(t){ return t.pnl_pct > 0; });
+    var winRate = (wins.length / sells.length * 100).toFixed(1);
+    var avgPnl = (sells.reduce(function(a,t){ return a + (t.pnl_pct || 0); }, 0) / sells.length).toFixed(2);
+
+    $('tradesTotalCount').textContent = trades.length;
+    $('tradesWinRate').textContent = winRate + '%';
+    var avgEl = $('tradesAvgPnl');
+    avgEl.textContent = (avgPnl >= 0 ? '+' : '') + avgPnl + '%';
+    avgEl.className = 'trades-summary-value ' + (parseFloat(avgPnl) > 0 ? 'pos' : (parseFloat(avgPnl) < 0 ? 'neg' : ''));
   }
 
   function renderLogs() {
@@ -525,6 +587,19 @@ button.btn.loading { opacity: 0.5; pointer-events: none; }
       banner.style.display = 'block';
     } else {
       banner.style.display = 'none';
+    }
+  }
+
+  function toggleTrades() {
+    var tableBox = $('tradesTableBox');
+    var btn = $('tradesToggleBtn');
+    tradesExpanded = !tradesExpanded;
+    if (tradesExpanded) {
+      tableBox.classList.add('show');
+      btn.textContent = '접기';
+    } else {
+      tableBox.classList.remove('show');
+      btn.textContent = '펼치기';
     }
   }
 
@@ -644,6 +719,7 @@ button.btn.loading { opacity: 0.5; pointer-events: none; }
   $('btnSaveSettings').addEventListener('click', saveSettings);
   $('btnReset').addEventListener('click', resetAll);
   $('btnResetTickers').addEventListener('click', resetTickers);
+  $('tradesToggle').addEventListener('click', toggleTrades);
 
   document.querySelectorAll('.log-filter button').forEach(function(b){
     b.addEventListener('click', function(){
