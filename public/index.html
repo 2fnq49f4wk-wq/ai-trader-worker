@@ -14,31 +14,16 @@
 }
 * { margin: 0; padding: 0; box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
 body { background: var(--bg); color: var(--text); font-family: 'Courier New', monospace; font-size: 14px; line-height: 1.5; }
-
-/* 스플래시 스크린 */
-.splash { position: fixed; inset: 0; background-image: linear-gradient(rgba(10,14,39,0.4), rgba(13,27,42,0.6)), url(‘galaxy-bg.webp’); background-size: cover; background-position: center; display: flex; align-items: center; justify-content: center; z-index: 10000; }
-.splash.fade-out { animation: fadeOut 0.8s ease-out forwards; }
-@keyframes fadeOut { 0% { opacity: 1; } 100% { opacity: 0; visibility: hidden; } }
-.splash-content { text-align: center; position: relative; z-index: 10; }
-.splash-logo { font-size: 56px; font-weight: bold; letter-spacing: 4px; color: #ffffff; text-shadow: 0 0 30px rgba(255,255,255,0.8), 0 0 60px rgba(135,206,250,0.5); margin-bottom: 18px; animation: logoGlow 2.5s ease-in-out infinite; font-family: ‘Courier New’, monospace; }
-@keyframes logoGlow { 0%, 100% { text-shadow: 0 0 30px rgba(255,255,255,0.8), 0 0 60px rgba(135,206,250,0.5); } 50% { text-shadow: 0 0 50px rgba(255,255,255,1), 0 0 80px rgba(135,206,250,0.8); } }
-.splash-subtitle { font-size: 16px; color: #ffffff; letter-spacing: 3px; margin-bottom: 32px; opacity: 0.95; text-shadow: 0 0 15px rgba(255,255,255,0.5); font-weight: 300; }
-.splash-loader { display: flex; gap: 12px; justify-content: center; align-items: center; }
-.loader-dot { width: 12px; height: 12px; border-radius: 50%; background: #ffffff; box-shadow: 0 0 15px rgba(255,255,255,0.8); animation: dotBounce 1.4s infinite ease-in-out; }
-.loader-dot:nth-child(1) { animation-delay: 0s; }
-.loader-dot:nth-child(2) { animation-delay: 0.2s; }
-.loader-dot:nth-child(3) { animation-delay: 0.4s; }
-@keyframes dotBounce { 0%, 80%, 100% { transform: scale(0.8); opacity: 0.5; } 40% { transform: scale(1.3); opacity: 1; } }
 .app { display: flex; flex-direction: column; min-height: 100vh; }
-.topbar { display: flex; justify-content: space-between; align-items: center; padding: 14px 16px; gap: 10px; border-bottom: 2px solid var(–amber); background: var(–panel); position: sticky; top: 0; z-index: 100; flex-wrap: wrap; }
+.topbar { display: flex; justify-content: space-between; align-items: center; padding: 14px 16px; gap: 10px; border-bottom: 2px solid var(--amber); background: var(--panel); position: sticky; top: 0; z-index: 100; flex-wrap: wrap; }
 .brand-container { display: flex; align-items: baseline; gap: 8px; }
-.brand { font-size: 18px; color: var(–amber); font-weight: bold; letter-spacing: 2px; text-shadow: 0 0 10px rgba(255,215,0,0.3); }
-.brand-sub { font-size: 10px; color: var(–dim); font-weight: normal; letter-spacing: 1px; }
+.brand { font-size: 18px; color: var(--amber); font-weight: bold; letter-spacing: 2px; text-shadow: 0 0 10px rgba(255,215,0,0.3); }
+.brand-sub { font-size: 10px; color: var(--dim); font-weight: normal; letter-spacing: 1px; }
 .topbar-btns { display: flex; gap: 6px; flex-wrap: wrap; }
 .main { flex: 1; padding: 14px; display: flex; flex-direction: column; gap: 14px; }
-.panel { background: var(–panel); border: 1px solid var(–border); border-radius: 6px; overflow: hidden; }
-.panel-header { padding: 12px 14px; border-bottom: 1px solid var(–border); background: var(–elev); display: flex; justify-content: space-between; align-items: center; gap: 10px; flex-wrap: wrap; }
-.panel-title { font-size: 13px; color: var(–amber); letter-spacing: 1.5px; font-weight: 700; }
+.panel { background: var(--panel); border: 1px solid var(--border); border-radius: 6px; overflow: hidden; }
+.panel-header { padding: 12px 14px; border-bottom: 1px solid var(--border); background: var(--elev); display: flex; justify-content: space-between; align-items: center; gap: 10px; flex-wrap: wrap; }
+.panel-title { font-size: 13px; color: var(--amber); letter-spacing: 1.5px; font-weight: 700; }
 .grid-2 { display: grid; gap: 14px; grid-template-columns: 1fr; }
 @media (min-width: 768px) { .grid-2 { grid-template-columns: 1fr 1fr; } }
 
@@ -160,23 +145,10 @@ button.btn.loading { opacity: 0.5; pointer-events: none; }
 .watchlist-section.fav { color: var(–amber); }
 .watchlist-section.all { color: var(–dim); }
 .password-error { color: var(–red); font-size: 11px; margin-top: 8px; display: none; text-align: center; font-weight: bold; }
-.password-modal-content { max-width: 400px; }
-.password-error { color: var(–red); font-size: 11px; margin-top: 8px; display: none; text-align: center; font-weight: bold; }
 </style>
 
 </head>
 <body>
-<div class="splash" id="splash">
-  <div class="splash-content">
-    <div class="splash-logo">LUX-engine</div>
-    <div class="splash-subtitle">Powered by BLAUENACHT</div>
-    <div class="splash-loader">
-      <div class="loader-dot"></div>
-      <div class="loader-dot"></div>
-      <div class="loader-dot"></div>
-    </div>
-  </div>
-</div>
 <div class="app">
   <div class="topbar">
     <div class="brand-container">
@@ -317,24 +289,6 @@ button.btn.loading { opacity: 0.5; pointer-events: none; }
 </div>
 
 <!-- SETTINGS 모달 -->
-
-<!-- 암호 입력 모달 -->
-
-<div class="modal" id="passwordModal">
-  <div class="modal-content password-modal-content">
-    <h2>🔐 SETTINGS 암호</h2>
-    <p style="color: var(--dim); font-size: 12px; margin-bottom: 14px;">설정 변경을 위해 암호를 입력하세요</p>
-    <div class="field">
-      <label>암호</label>
-      <input type="password" id="passwordInput" placeholder="암호 입력..." style="font-size: 16px; text-align: center; letter-spacing: 2px;">
-    </div>
-    <div class="password-error" id="passwordError">❌ 암호가 틀렸습니다</div>
-    <div class="modal-actions">
-      <button type="button" class="btn" id="btnCancelPassword">CANCEL</button>
-      <button type="button" class="btn primary" id="btnConfirmPassword">확인</button>
-    </div>
-  </div>
-</div>
 
 <div class="modal" id="settingsModal">
   <div class="modal-content">
@@ -1082,19 +1036,6 @@ button.btn.loading { opacity: 0.5; pointer-events: none; }
 
   refreshAll();
   timer = setInterval(refreshAll, REFRESH_MS);
-  
-  // 스플래시 페이드아웃 효과 + 자동 RUN NOW
-  setTimeout(function(){
-    var splash = $('splash');
-    if (splash) {
-      splash.classList.add('fade-out');
-      setTimeout(function(){
-        if (splash.parentNode) splash.parentNode.removeChild(splash);
-      }, 800);
-    }
-    // 자동 RUN NOW 실행
-    runNow();
-  }, 2000);
 })();
 </script>
 
