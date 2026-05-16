@@ -4,7 +4,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>AI TRADER v5</title>
+<title>LUX-engine V6</title>
 <style>
 :root {
   --bg: #0d1117; --panel: #161b22; --elev: #1c232c;
@@ -17,6 +17,7 @@ body { background: var(--bg); color: var(--text); font-family: 'Courier New', mo
 .app { display: flex; flex-direction: column; min-height: 100vh; }
 .topbar { display: flex; justify-content: space-between; align-items: center; padding: 14px 16px; gap: 10px; border-bottom: 2px solid var(--amber); background: var(--panel); position: sticky; top: 0; z-index: 100; flex-wrap: wrap; }
 .brand { font-size: 18px; color: var(--amber); font-weight: bold; letter-spacing: 2px; text-shadow: 0 0 10px rgba(255,215,0,0.3); }
+.brand-sub { font-size: 12px; color: var(--amber); font-weight: 600; letter-spacing: 1px; margin-left: 10px; opacity: 0.85; }
 .topbar-btns { display: flex; gap: 6px; flex-wrap: wrap; }
 .main { flex: 1; padding: 14px; display: flex; flex-direction: column; gap: 14px; }
 .panel { background: var(--panel); border: 1px solid var(--border); border-radius: 6px; overflow: hidden; }
@@ -142,23 +143,13 @@ button.btn.loading { opacity: 0.5; pointer-events: none; }
 .watchlist-section { padding: 4px 12px 8px; font-size: 10px; color: var(–amber); font-weight: bold; letter-spacing: 1px; background: rgba(255,215,0,0.05); border-bottom: 1px solid var(–border); }
 .watchlist-section.fav { color: var(–amber); }
 .watchlist-section.all { color: var(–dim); }
-
-/* === 암호 입력 모달 === */
-.modal-pw { max-width: 360px; margin: 80px auto 0; background: var(–panel); border: 1px solid var(–amber); border-radius: 6px; padding: 24px; }
-.modal-pw h2 { color: var(–amber); margin-bottom: 14px; font-size: 16px; letter-spacing: 1.5px; text-align: center; }
-.modal-pw .pw-hint { font-size: 11px; color: var(–dim); text-align: center; margin-bottom: 16px; }
-.modal-pw input { width: 100%; padding: 12px 14px; background: var(–bg); border: 1px solid var(–border); color: var(–text); font-family: inherit; font-size: 18px; border-radius: 4px; outline: none; text-align: center; letter-spacing: 8px; }
-.modal-pw input:focus { border-color: var(–amber); }
-.modal-pw .pw-error { color: var(–red); font-size: 11px; text-align: center; margin-top: 8px; min-height: 14px; font-weight: bold; }
-.modal-pw .pw-actions { display: flex; gap: 8px; margin-top: 16px; }
-.modal-pw .pw-actions button { flex: 1; padding: 10px; }
 </style>
 
 </head>
 <body>
 <div class="app">
   <div class="topbar">
-    <div class="brand">AI TRADER v5</div>
+    <div><span class="brand">LUX-engine V6</span><span class="brand-sub">Powered by BLAUENACHT</span></div>
     <div class="topbar-btns">
       <button type="button" class="btn refresh" id="btnRefreshUS">US 시세조회</button>
       <button type="button" class="btn refresh" id="btnRefreshKR">KR 시세조회</button>
@@ -274,6 +265,21 @@ button.btn.loading { opacity: 0.5; pointer-events: none; }
   </div>
 </div>
 
+<!-- 암호 모달 -->
+
+<div class="modal" id="passwordModal">
+  <div class="modal-content" style="max-width: 380px; text-align: center;">
+    <h2>🔐 SETTINGS 접근</h2>
+    <div style="color: var(--faint); font-size: 11px; margin-bottom: 18px;">암호를 입력하세요</div>
+    <input type="password" id="passwordInput" placeholder="암호 입력" style="width: 100%; padding: 12px; font-size: 16px; background: var(--bg); border: 1px solid var(--border); color: var(--text); border-radius: 4px; margin-bottom: 14px; font-family: inherit; text-align: center; letter-spacing: 3px; outline: none;">
+    <div id="passwordError" style="color: var(--red); font-size: 12px; margin-bottom: 14px; display: none;">암호가 틀렸습니다</div>
+    <div style="display: flex; gap: 8px;">
+      <button type="button" class="btn" id="btnCancelPassword" style="flex: 1;">취소</button>
+      <button type="button" class="btn primary" id="btnPasswordSubmit" style="flex: 1;">확인</button>
+    </div>
+  </div>
+</div>
+
 <!-- LOGS 모달 -->
 
 <div class="modal" id="logsModal">
@@ -298,21 +304,6 @@ button.btn.loading { opacity: 0.5; pointer-events: none; }
       <button data-filter="INFO">INFO</button>
     </div>
     <div class="log-box-modal" id="logsBox"><div class="empty">No logs yet</div></div>
-  </div>
-</div>
-
-<!-- 암호 입력 모달 -->
-
-<div class="modal" id="pwModal">
-  <div class="modal-pw">
-    <h2>🔒 SETTINGS LOCK</h2>
-    <div class="pw-hint">설정에 접근하려면 암호를 입력하세요</div>
-    <input type="password" id="pwInput" inputmode="numeric" maxlength="20" autocomplete="off" placeholder="••••">
-    <div class="pw-error" id="pwError"></div>
-    <div class="pw-actions">
-      <button type="button" class="btn" id="btnPwCancel">CANCEL</button>
-      <button type="button" class="btn primary" id="btnPwConfirm">UNLOCK</button>
-    </div>
   </div>
 </div>
 
@@ -405,7 +396,6 @@ button.btn.loading { opacity: 0.5; pointer-events: none; }
 
 <script>
 (function () {
-  var SETTINGS_PASSWORD = '0728';
   var REFRESH_MS = 10000;
   var LOGS_REFRESH_MS = 5000;
   var timer = null;
@@ -421,6 +411,8 @@ button.btn.loading { opacity: 0.5; pointer-events: none; }
   var usFavorites = [];
   var krFavorites = [];
   var logsModalOpen = false;
+  var passwordVerified = false;
+  var PASSWORD = "0728";
 
   var INDEX_NAMES = {
     '^IXIC': 'NASDAQ', '^DJI': 'DOW JONES', '^GSPC': 'S&P 500',
@@ -757,7 +749,7 @@ button.btn.loading { opacity: 0.5; pointer-events: none; }
     if (sells.length === 0) { $('tradesTotalCount').textContent = trades.length; $('tradesWinRate').textContent = '-'; $('tradesAvgPnl').textContent = '-'; return; }
     var wins = sells.filter(function(t){ return t.pnl_pct > 0; });
     var winRate = (wins.length / sells.length * 100).toFixed(1);
-    var avgPnl = (sells.reduce(function(a,t){ return a + (t.pnl_pct || 0); }, 0) / sells.length).toFixed(2);
+    var avgPnl = (sells.reduce(function(a,t){ return a + t.pnl_pct; }, 0) / sells.length).toFixed(2);
     $('tradesTotalCount').textContent = trades.length;
     $('tradesWinRate').textContent = winRate + '%';
     var avgEl = $('tradesAvgPnl');
@@ -881,34 +873,39 @@ button.btn.loading { opacity: 0.5; pointer-events: none; }
       .then(function(){ btn.classList.remove('loading'); btn.textContent=originalText; });
   }
 
-  // === 암호 입력 모달 ===
-  function requestSettingsAccess() {
-    if (!currentCfg) { toast('설정 로드 중...'); return; }
-    $('pwInput').value = '';
-    $('pwError').textContent = '';
-    $('pwModal').classList.add('show');
-    setTimeout(function(){ $('pwInput').focus(); }, 50);
+  function openPasswordModal() {
+    $('passwordModal').classList.add('show');
+    setTimeout(function(){ $('passwordInput').focus(); }, 100);
   }
 
-  function closePwModal() {
-    $('pwModal').classList.remove('show');
-    $('pwInput').value = '';
-    $('pwError').textContent = '';
+  function closePasswordModal() {
+    $('passwordModal').classList.remove('show');
+    $('passwordInput').value = '';
+    $('passwordError').style.display = 'none';
   }
 
   function verifyPassword() {
-    var pw = $('pwInput').value;
-    if (pw === SETTINGS_PASSWORD) {
-      closePwModal();
-      openSettings();
+    var pwd = $('passwordInput').value;
+    if (pwd === PASSWORD) {
+      passwordVerified = true;
+      closePasswordModal();
+      openSettingsPanel();
     } else {
-      $('pwError').textContent = '❌ 암호가 일치하지 않습니다';
-      $('pwInput').value = '';
-      $('pwInput').focus();
+      $('passwordError').style.display = 'block';
+      $('passwordInput').value = '';
+      $('passwordInput').focus();
     }
   }
 
   function openSettings() {
+    if (!passwordVerified) {
+      openPasswordModal();
+      return;
+    }
+    openSettingsPanel();
+  }
+
+  function openSettingsPanel() {
     if (!currentCfg) { toast('설정 로드 중...'); return; }
     $('cfgAutoTune').checked = !!currentCfg.autoTune;
     $('cfgMarketHoursOnly').checked = currentCfg.marketHoursOnly !== false;
@@ -990,7 +987,7 @@ button.btn.loading { opacity: 0.5; pointer-events: none; }
   $('btnRefreshKR').addEventListener('click', function(){ refreshQuotes('kr'); });
   $('btnLogs').addEventListener('click', openLogs);
   $('btnCloseLogs').addEventListener('click', closeLogs);
-  $('btnSettings').addEventListener('click', requestSettingsAccess);
+  $('btnSettings').addEventListener('click', openSettings);
   $('btnCancelSettings').addEventListener('click', closeSettings);
   $('btnSaveSettings').addEventListener('click', saveSettings);
   $('btnReset').addEventListener('click', resetAll);
@@ -998,27 +995,20 @@ button.btn.loading { opacity: 0.5; pointer-events: none; }
   $('tradesToggle').addEventListener('click', toggleTrades);
   $('btnToggleUS').addEventListener('click', function(){ toggleWatchlist('us'); });
   $('btnToggleKR').addEventListener('click', function(){ toggleWatchlist('kr'); });
+  $('btnPasswordSubmit').addEventListener('click', verifyPassword);
+  $('btnCancelPassword').addEventListener('click', closePasswordModal);
+  $('passwordInput').addEventListener('keypress', function(e){ if (e.key === 'Enter') verifyPassword(); });
 
-  // 암호 모달 이벤트
-  $('btnPwConfirm').addEventListener('click', verifyPassword);
-  $('btnPwCancel').addEventListener('click', closePwModal);
-  $('pwInput').addEventListener('keydown', function(e){
-    if (e.key === 'Enter') { e.preventDefault(); verifyPassword(); }
-    if (e.key === 'Escape') { e.preventDefault(); closePwModal(); }
-  });
-  $('pwModal').addEventListener('click', function(e){
-    if (e.target === $('pwModal')) closePwModal();
-  });
-
-  // 모달 배경 클릭으로 닫기
   $('logsModal').addEventListener('click', function(e){
     if (e.target === $('logsModal')) closeLogs();
   });
   $('settingsModal').addEventListener('click', function(e){
     if (e.target === $('settingsModal')) closeSettings();
   });
+  $('passwordModal').addEventListener('click', function(e){
+    if (e.target === $('passwordModal')) closePasswordModal();
+  });
 
-  // 로그 검색
   $('logsSearch').addEventListener('input', function(){
     logSearchText = this.value.trim();
     renderLogs();
