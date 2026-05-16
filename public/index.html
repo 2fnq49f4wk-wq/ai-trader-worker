@@ -1,9 +1,10 @@
 <!DOCTYPE html>
+
 <html lang="ko">
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>AI TRADER v5</title>
+<title>LUX-engine V6</title>
 <style>
 :root {
   --bg: #0d1117; --panel: #161b22; --elev: #1c232c;
@@ -15,138 +16,159 @@
 body { background: var(--bg); color: var(--text); font-family: 'Courier New', monospace; font-size: 14px; line-height: 1.5; }
 .app { display: flex; flex-direction: column; min-height: 100vh; }
 .topbar { display: flex; justify-content: space-between; align-items: center; padding: 14px 16px; gap: 10px; border-bottom: 2px solid var(--amber); background: var(--panel); position: sticky; top: 0; z-index: 100; flex-wrap: wrap; }
-.brand { font-size: 18px; color: var(--amber); font-weight: bold; letter-spacing: 2px; text-shadow: 0 0 10px rgba(255,215,0,0.3); }
+
+/* === 독립적인 로고 섹션 (다른 요소 영향 안 함) === */
+.logo-section { display: flex; align-items: center; gap: 12px; }
+.logo-main { font-size: 18px; color: #ffffff; font-weight: bold; letter-spacing: 2px; text-shadow: 0 0 10px rgba(255,255,255,0.2); }
+.logo-sub { font-size: 12px; color: #ffffff; font-weight: 600; letter-spacing: 1px; opacity: 0.85; }
+
 .topbar-btns { display: flex; gap: 6px; flex-wrap: wrap; }
 .main { flex: 1; padding: 14px; display: flex; flex-direction: column; gap: 14px; }
-.panel { background: var(--panel); border: 1px solid var(--border); border-radius: 6px; overflow: hidden; }
-.panel-header { padding: 12px 14px; border-bottom: 1px solid var(--border); background: var(--elev); display: flex; justify-content: space-between; align-items: center; gap: 10px; flex-wrap: wrap; }
-.panel-title { font-size: 13px; color: var(--amber); letter-spacing: 1.5px; font-weight: 700; }
+.panel { background: var(–panel); border: 1px solid var(–border); border-radius: 6px; overflow: hidden; }
+.panel-header { padding: 12px 14px; border-bottom: 1px solid var(–border); background: var(–elev); display: flex; justify-content: space-between; align-items: center; gap: 10px; flex-wrap: wrap; }
+.panel-title { font-size: 13px; color: var(–amber); letter-spacing: 1.5px; font-weight: 700; }
 .grid-2 { display: grid; gap: 14px; grid-template-columns: 1fr; }
 @media (min-width: 768px) { .grid-2 { grid-template-columns: 1fr 1fr; } }
 
-.indices-row { display: grid; gap: 2px; background: var(--border); }
-.idx-card { background: var(--panel); padding: 12px 14px; }
-.idx-name { font-size: 11px; color: var(--amber); font-weight: bold; letter-spacing: 1px; }
+.indices-row { display: grid; gap: 2px; background: var(–border); }
+.idx-card { background: var(–panel); padding: 12px 14px; }
+.idx-name { font-size: 11px; color: var(–amber); font-weight: bold; letter-spacing: 1px; }
 .idx-price { font-size: 17px; font-weight: 700; margin-top: 4px; }
 .idx-bottom { display: flex; justify-content: space-between; align-items: center; margin-top: 4px; gap: 8px; }
 .idx-day { font-size: 12px; font-weight: bold; }
 .idx-spark { flex: 1; height: 28px; }
 
-.summary-grid { display: grid; grid-template-columns: repeat(2, 1fr); gap: 2px; background: var(--border); }
+.summary-grid { display: grid; grid-template-columns: repeat(2, 1fr); gap: 2px; background: var(–border); }
 @media (min-width: 768px) { .summary-grid { grid-template-columns: repeat(4, 1fr); } }
-.summary-item { background: var(--panel); padding: 14px 12px; min-width: 0; }
-.summary-label { font-size: 10px; color: var(--dim); text-transform: uppercase; font-weight: bold; letter-spacing: 1px; }
-.summary-value { font-size: 14px; font-weight: 700; margin-top: 4px; color: var(--text); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.summary-item { background: var(–panel); padding: 14px 12px; min-width: 0; }
+.summary-label { font-size: 10px; color: var(–dim); text-transform: uppercase; font-weight: bold; letter-spacing: 1px; }
+.summary-value { font-size: 14px; font-weight: 700; margin-top: 4px; color: var(–text); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 
 .table-wrap { overflow-x: auto; }
 .table { width: 100%; border-collapse: collapse; font-size: 12px; }
-.table th { padding: 10px 12px; text-align: left; color: var(--dim); font-size: 10px; letter-spacing: 1px; border-bottom: 1px solid var(--border); background: var(--elev); white-space: nowrap; }
-.table td { padding: 10px 12px; border-bottom: 1px solid var(--border); white-space: nowrap; }
+.table th { padding: 10px 12px; text-align: left; color: var(–dim); font-size: 10px; letter-spacing: 1px; border-bottom: 1px solid var(–border); background: var(–elev); white-space: nowrap; }
+.table td { padding: 10px 12px; border-bottom: 1px solid var(–border); white-space: nowrap; }
 .table tbody tr:hover { background: rgba(88,166,255,0.05); }
-button.btn { padding: 9px 13px; background: var(--panel); border: 1px solid var(--border); color: var(--text); font-family: inherit; font-size: 11px; cursor: pointer; outline: none; border-radius: 4px; font-weight: bold; transition: all 0.15s; letter-spacing: 1px; }
-button.btn:hover { background: var(--elev); }
-button.btn.primary { background: var(--amber); color: var(--bg); border-color: var(--amber); font-weight: 700; }
-button.btn.danger { color: var(--red); border-color: var(--red); }
-button.btn.refresh { color: var(--blue); border-color: var(--blue); }
-button.btn.logs { color: var(--purple); border-color: var(--purple); }
+button.btn { padding: 9px 13px; background: var(–panel); border: 1px solid var(–border); color: var(–text); font-family: inherit; font-size: 11px; cursor: pointer; outline: none; border-radius: 4px; font-weight: bold; transition: all 0.15s; letter-spacing: 1px; }
+button.btn:hover { background: var(–elev); }
+button.btn.primary { background: var(–amber); color: var(–bg); border-color: var(–amber); font-weight: 700; }
+button.btn.danger { color: var(–red); border-color: var(–red); }
+button.btn.refresh { color: var(–blue); border-color: var(–blue); }
+button.btn.logs { color: var(–purple); border-color: var(–purple); }
 button.btn:active { opacity: 0.6; }
 button.btn.loading { opacity: 0.5; pointer-events: none; }
-.pos { color: var(--green); font-weight: bold; }
-.neg { color: var(--red); font-weight: bold; }
+.pos { color: var(–green); font-weight: bold; }
+.neg { color: var(–red); font-weight: bold; }
 .right { text-align: right; }
-.engine-status { display: flex; align-items: center; gap: 8px; font-size: 11px; padding: 8px 14px; background: var(--elev); border-bottom: 1px solid var(--border); font-weight: bold; flex-wrap: wrap; }
+.engine-status { display: flex; align-items: center; gap: 8px; font-size: 11px; padding: 8px 14px; background: var(–elev); border-bottom: 1px solid var(–border); font-weight: bold; flex-wrap: wrap; }
 .dot { width: 8px; height: 8px; border-radius: 50%; display: inline-block; }
-.dot.alive { background: var(--green); box-shadow: 0 0 6px var(--green); animation: pulse 2s infinite; }
-.dot.stale { background: var(--red); }
-.dot.unknown { background: var(--faint); }
-.dot.closed { background: var(--orange); }
+.dot.alive { background: var(–green); box-shadow: 0 0 6px var(–green); animation: pulse 2s infinite; }
+.dot.stale { background: var(–red); }
+.dot.unknown { background: var(–faint); }
+.dot.closed { background: var(–orange); }
 @keyframes pulse { 0%,100%{opacity:1} 50%{opacity:0.5} }
-.empty { padding: 20px; text-align: center; color: var(--faint); font-size: 12px; }
-.toast { position: fixed; bottom: 20px; left: 50%; transform: translateX(-50%); background: var(--panel); border: 1px solid var(--amber); padding: 12px 20px; border-radius: 4px; color: var(--amber); font-weight: bold; z-index: 9999; display: none; }
+.empty { padding: 20px; text-align: center; color: var(–faint); font-size: 12px; }
+.toast { position: fixed; bottom: 20px; left: 50%; transform: translateX(-50%); background: var(–panel); border: 1px solid var(–amber); padding: 12px 20px; border-radius: 4px; color: var(–amber); font-weight: bold; z-index: 9999; display: none; }
 .toast.show { display: block; }
-.market-badge { display: inline-block; padding: 2px 6px; font-size: 9px; border-radius: 3px; background: var(--elev); border: 1px solid var(--border); color: var(--dim); margin-right: 6px; letter-spacing: 1px; }
-.trade-buy { color: var(--green); font-weight: bold; }
-.trade-sell { color: var(--red); font-weight: bold; }
-.log-line { padding: 6px 8px; border-left: 3px solid var(--faint); margin-bottom: 4px; color: var(--dim); word-break: break-all; line-height: 1.5; background: rgba(255,255,255,0.02); }
-.log-line.INFO { border-color: var(--blue); color: var(--blue); }
-.log-line.TRADE { border-color: var(--amber); color: var(--amber); font-weight: bold; }
-.log-line.TUNE { border-color: var(--green); color: var(--green); font-weight: bold; }
-.log-line.ERROR { border-color: var(--red); color: var(--red); }
-.log-line.WARN { border-color: var(--orange); color: var(--orange); }
-.log-line.SKIP { border-color: var(--faint); color: var(--faint); }
-.log-line.NOBUY { border-color: var(--purple); color: var(--purple); }
-.log-line.CLOSED { border-color: var(--orange); color: var(--orange); }
-.log-ts { color: var(--faint); margin-right: 6px; }
+.market-badge { display: inline-block; padding: 2px 6px; font-size: 9px; border-radius: 3px; background: var(–elev); border: 1px solid var(–border); color: var(–dim); margin-right: 6px; letter-spacing: 1px; }
+.trade-buy { color: var(–green); font-weight: bold; }
+.trade-sell { color: var(–red); font-weight: bold; }
+.log-line { padding: 6px 8px; border-left: 3px solid var(–faint); margin-bottom: 4px; color: var(–dim); word-break: break-all; line-height: 1.5; background: rgba(255,255,255,0.02); }
+.log-line.INFO { border-color: var(–blue); color: var(–blue); }
+.log-line.TRADE { border-color: var(–amber); color: var(–amber); font-weight: bold; }
+.log-line.TUNE { border-color: var(–green); color: var(–green); font-weight: bold; }
+.log-line.ERROR { border-color: var(–red); color: var(–red); }
+.log-line.WARN { border-color: var(–orange); color: var(–orange); }
+.log-line.SKIP { border-color: var(–faint); color: var(–faint); }
+.log-line.NOBUY { border-color: var(–purple); color: var(–purple); }
+.log-line.CLOSED { border-color: var(–orange); color: var(–orange); }
+.log-ts { color: var(–faint); margin-right: 6px; }
 .log-level { display: inline-block; min-width: 50px; font-weight: bold; margin-right: 6px; }
-.log-symbol { color: var(--text); font-weight: bold; margin-right: 6px; }
+.log-symbol { color: var(–text); font-weight: bold; margin-right: 6px; }
 .log-filter { display: flex; gap: 4px; flex-wrap: wrap; }
-.log-filter button { padding: 4px 8px; font-size: 9px; background: var(--panel); border: 1px solid var(--border); color: var(--dim); border-radius: 3px; cursor: pointer; font-family: inherit; letter-spacing: 1px; }
-.log-filter button.active { background: var(--amber); color: var(--bg); border-color: var(--amber); font-weight: bold; }
+.log-filter button { padding: 4px 8px; font-size: 9px; background: var(–panel); border: 1px solid var(–border); color: var(–dim); border-radius: 3px; cursor: pointer; font-family: inherit; letter-spacing: 1px; }
+.log-filter button.active { background: var(–amber); color: var(–bg); border-color: var(–amber); font-weight: bold; }
 .modal { display: none; position: fixed; inset: 0; background: rgba(0,0,0,0.85); z-index: 9000; padding: 20px; overflow-y: auto; }
 .modal.show { display: block; }
-.modal-content { max-width: 700px; margin: 0 auto; background: var(--panel); border: 1px solid var(--amber); border-radius: 6px; padding: 24px; }
-.modal-content h2 { color: var(--amber); margin-bottom: 18px; font-size: 18px; letter-spacing: 1.5px; }
-.modal-logs { max-width: 1000px; margin: 0 auto; background: var(--panel); border: 1px solid var(--purple); border-radius: 6px; padding: 20px; }
-.modal-logs h2 { color: var(--purple); margin-bottom: 14px; font-size: 18px; letter-spacing: 1.5px; display: flex; justify-content: space-between; align-items: center; gap: 10px; flex-wrap: wrap; }
-.modal-logs h2 .close-x { font-size: 24px; cursor: pointer; color: var(--dim); line-height: 1; user-select: none; padding: 0 8px; }
-.modal-logs h2 .close-x:hover { color: var(--red); }
+.modal-content { max-width: 700px; margin: 0 auto; background: var(–panel); border: 1px solid var(–amber); border-radius: 6px; padding: 24px; }
+.modal-content h2 { color: var(–amber); margin-bottom: 18px; font-size: 18px; letter-spacing: 1.5px; }
+.modal-logs { max-width: 1000px; margin: 0 auto; background: var(–panel); border: 1px solid var(–purple); border-radius: 6px; padding: 20px; }
+.modal-logs h2 { color: var(–purple); margin-bottom: 14px; font-size: 18px; letter-spacing: 1.5px; display: flex; justify-content: space-between; align-items: center; gap: 10px; flex-wrap: wrap; }
+.modal-logs h2 .close-x { font-size: 24px; cursor: pointer; color: var(–dim); line-height: 1; user-select: none; padding: 0 8px; }
+.modal-logs h2 .close-x:hover { color: var(–red); }
 .logs-toolbar { display: flex; gap: 8px; align-items: center; margin-bottom: 12px; flex-wrap: wrap; }
-.logs-search { flex: 1; min-width: 180px; padding: 8px 11px; background: var(--bg); border: 1px solid var(--border); color: var(--text); font-family: inherit; font-size: 12px; border-radius: 4px; outline: none; }
-.logs-search:focus { border-color: var(--purple); }
-.logs-info { font-size: 10px; color: var(--faint); white-space: nowrap; }
-.log-box-modal { max-height: 70vh; overflow-y: auto; background: #000; padding: 10px; font-size: 11px; border-radius: 4px; border: 1px solid var(--border); }
+.logs-search { flex: 1; min-width: 180px; padding: 8px 11px; background: var(–bg); border: 1px solid var(–border); color: var(–text); font-family: inherit; font-size: 12px; border-radius: 4px; outline: none; }
+.logs-search:focus { border-color: var(–purple); }
+.logs-info { font-size: 10px; color: var(–faint); white-space: nowrap; }
+.log-box-modal { max-height: 70vh; overflow-y: auto; background: #000; padding: 10px; font-size: 11px; border-radius: 4px; border: 1px solid var(–border); }
 .field { margin-bottom: 14px; }
-.field label { display: block; font-size: 11px; color: var(--dim); margin-bottom: 4px; font-weight: bold; letter-spacing: 0.5px; }
-.field input, .field textarea { width: 100%; padding: 9px 11px; background: var(--bg); border: 1px solid var(--border); color: var(--text); font-family: inherit; font-size: 13px; border-radius: 4px; outline: none; }
-.field input:focus, .field textarea:focus { border-color: var(--amber); }
+.field label { display: block; font-size: 11px; color: var(–dim); margin-bottom: 4px; font-weight: bold; letter-spacing: 0.5px; }
+.field input, .field textarea { width: 100%; padding: 9px 11px; background: var(–bg); border: 1px solid var(–border); color: var(–text); font-family: inherit; font-size: 13px; border-radius: 4px; outline: none; }
+.field input:focus, .field textarea:focus { border-color: var(–amber); }
 .field textarea { min-height: 80px; resize: vertical; }
 .field-row { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 8px; }
 .field-row-2 { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
-.section-divider { border-top: 1px solid var(--border); margin: 18px 0 14px; padding-top: 4px; }
-.section-title { font-size: 12px; color: var(--amber); letter-spacing: 1.5px; font-weight: bold; margin-bottom: 12px; }
+.section-divider { border-top: 1px solid var(–border); margin: 18px 0 14px; padding-top: 4px; }
+.section-title { font-size: 12px; color: var(–amber); letter-spacing: 1.5px; font-weight: bold; margin-bottom: 12px; }
 .modal-actions { display: flex; gap: 8px; margin-top: 18px; flex-wrap: wrap; }
 .modal-actions button { flex: 1; padding: 11px; min-width: 100px; }
 .watchlist { display: grid; grid-template-columns: repeat(auto-fill, minmax(160px, 1fr)); gap: 6px; padding: 10px; }
-.wl-card { background: var(--elev); border: 1px solid var(--border); border-radius: 4px; padding: 8px 10px; position: relative; }
-.wl-sym { font-size: 11px; color: var(--amber); font-weight: bold; letter-spacing: 0.5px; padding-right: 18px; }
-.wl-name { font-size: 9px; color: var(--dim); margin-top: 1px; }
+.wl-card { background: var(–elev); border: 1px solid var(–border); border-radius: 4px; padding: 8px 10px; position: relative; }
+.wl-sym { font-size: 11px; color: var(–amber); font-weight: bold; letter-spacing: 0.5px; padding-right: 18px; }
+.wl-name { font-size: 9px; color: var(–dim); margin-top: 1px; }
 .wl-price { font-size: 15px; font-weight: bold; margin-top: 2px; }
 .wl-day { font-size: 10px; margin-top: 2px; }
-.wl-meta { font-size: 9px; color: var(--faint); margin-top: 2px; }
-.wl-fav { position: absolute; top: 6px; right: 6px; cursor: pointer; font-size: 14px; line-height: 1; user-select: none; color: var(--faint); transition: all 0.15s; }
+.wl-meta { font-size: 9px; color: var(–faint); margin-top: 2px; }
+.wl-fav { position: absolute; top: 6px; right: 6px; cursor: pointer; font-size: 14px; line-height: 1; user-select: none; color: var(–faint); transition: all 0.15s; }
 .wl-fav:hover { transform: scale(1.2); }
-.wl-fav.active { color: var(--amber); text-shadow: 0 0 4px rgba(255,215,0,0.6); }
-.tune-banner { padding: 10px 14px; background: rgba(63,185,80,0.08); border-left: 3px solid var(--green); color: var(--green); font-size: 11px; line-height: 1.6; }
-.tune-banner b { color: var(--amber); }
-.market-status-banner { padding: 8px 14px; background: rgba(240,136,62,0.08); border-left: 3px solid var(--orange); color: var(--orange); font-size: 11px; line-height: 1.6; display: flex; gap: 16px; flex-wrap: wrap; }
-.market-status-banner b { color: var(--text); }
-.market-status-open { color: var(--green) !important; }
-.market-status-closed { color: var(--orange) !important; }
-.cfg-display { display: flex; gap: 14px; font-size: 11px; color: var(--dim); flex-wrap: wrap; }
-.cfg-display b { color: var(--amber); }
+.wl-fav.active { color: var(–amber); text-shadow: 0 0 4px rgba(255,215,0,0.6); }
+.tune-banner { padding: 10px 14px; background: rgba(63,185,80,0.08); border-left: 3px solid var(–green); color: var(–green); font-size: 11px; line-height: 1.6; }
+.tune-banner b { color: var(–amber); }
+.market-status-banner { padding: 8px 14px; background: rgba(240,136,62,0.08); border-left: 3px solid var(–orange); color: var(–orange); font-size: 11px; line-height: 1.6; display: flex; gap: 16px; flex-wrap: wrap; }
+.market-status-banner b { color: var(–text); }
+.market-status-open { color: var(–green) !important; }
+.market-status-closed { color: var(–orange) !important; }
+.cfg-display { display: flex; gap: 14px; font-size: 11px; color: var(–dim); flex-wrap: wrap; }
+.cfg-display b { color: var(–amber); }
 .checkbox-row { display: flex; align-items: center; gap: 10px; margin-bottom: 14px; }
-.checkbox-row input[type="checkbox"] { width: 20px; height: 20px; }
-.checkbox-row label { font-size: 13px; color: var(--text); font-weight: bold; }
-.hint { font-size: 10px; color: var(--faint); margin-top: 4px; }
-.trades-toggle { display: flex; justify-content: space-between; align-items: center; padding: 10px 14px; background: var(--elev); border-bottom: 1px solid var(--border); cursor: pointer; }
+.checkbox-row input[type=“checkbox”] { width: 20px; height: 20px; }
+.checkbox-row label { font-size: 13px; color: var(–text); font-weight: bold; }
+.hint { font-size: 10px; color: var(–faint); margin-top: 4px; }
+.trades-toggle { display: flex; justify-content: space-between; align-items: center; padding: 10px 14px; background: var(–elev); border-bottom: 1px solid var(–border); cursor: pointer; }
 .trades-toggle:hover { background: rgba(255,215,0,0.05); }
-.trades-toggle-btn { font-size: 11px; color: var(--amber); font-weight: bold; padding: 4px 8px; background: var(--panel); border: 1px solid var(--border); border-radius: 3px; cursor: pointer; }
-.trades-summary { display: flex; gap: 16px; font-size: 11px; color: var(--dim); }
+.trades-toggle-btn { font-size: 11px; color: var(–amber); font-weight: bold; padding: 4px 8px; background: var(–panel); border: 1px solid var(–border); border-radius: 3px; cursor: pointer; }
+.trades-summary { display: flex; gap: 16px; font-size: 11px; color: var(–dim); }
 .trades-summary-item { display: flex; flex-direction: column; }
-.trades-summary-label { font-size: 9px; color: var(--faint); margin-bottom: 2px; }
-.trades-summary-value { font-weight: bold; color: var(--text); }
+.trades-summary-label { font-size: 9px; color: var(–faint); margin-bottom: 2px; }
+.trades-summary-value { font-weight: bold; color: var(–text); }
 .trades-table { display: none; }
 .trades-table.show { display: block; }
-.watchlist-toggle-btn { font-size: 10px; color: var(--amber); font-weight: bold; padding: 3px 8px; background: var(--panel); border: 1px solid var(--border); border-radius: 3px; cursor: pointer; font-family: inherit; letter-spacing: 1px; }
-.watchlist-section { padding: 4px 12px 8px; font-size: 10px; color: var(--amber); font-weight: bold; letter-spacing: 1px; background: rgba(255,215,0,0.05); border-bottom: 1px solid var(--border); }
-.watchlist-section.fav { color: var(--amber); }
-.watchlist-section.all { color: var(--dim); }
+.watchlist-toggle-btn { font-size: 10px; color: var(–amber); font-weight: bold; padding: 3px 8px; background: var(–panel); border: 1px solid var(–border); border-radius: 3px; cursor: pointer; font-family: inherit; letter-spacing: 1px; }
+.watchlist-section { padding: 4px 12px 8px; font-size: 10px; color: var(–amber); font-weight: bold; letter-spacing: 1px; background: rgba(255,215,0,0.05); border-bottom: 1px solid var(–border); }
+.watchlist-section.fav { color: var(–amber); }
+.watchlist-section.all { color: var(–dim); }
+
+/* === 암호 모달 === */
+.password-modal { display: none; position: fixed; inset: 0; background: rgba(0,0,0,0.95); z-index: 10000; padding: 20px; }
+.password-modal.show { display: flex; align-items: center; justify-content: center; }
+.password-box { background: var(–panel); border: 2px solid var(–amber); border-radius: 8px; padding: 40px; text-align: center; max-width: 350px; }
+.password-box h2 { color: var(–amber); margin-bottom: 20px; font-size: 18px; letter-spacing: 2px; }
+.password-box input { width: 100%; padding: 12px; font-size: 16px; background: var(–bg); border: 1px solid var(–border); color: var(–text); border-radius: 4px; margin-bottom: 20px; font-family: inherit; text-align: center; letter-spacing: 3px; }
+.password-box input:focus { border-color: var(–amber); outline: none; }
+.password-box .hint-text { color: var(–faint); font-size: 11px; margin-bottom: 20px; }
+.password-box button { padding: 12px 24px; background: var(–amber); color: var(–bg); border: none; border-radius: 4px; font-weight: bold; cursor: pointer; font-size: 13px; font-family: inherit; letter-spacing: 1px; }
+.password-box button:hover { opacity: 0.9; }
+.password-error { color: var(–red); font-size: 12px; margin-top: 10px; display: none; }
 </style>
+
 </head>
 <body>
 <div class="app">
   <div class="topbar">
-    <div class="brand">AI TRADER v5</div>
+    <div class="logo-section">
+      <div class="logo-main">LUX-engine V6</div>
+      <div class="logo-sub">Powered by BLAUENACHT</div>
+    </div>
     <div class="topbar-btns">
       <button type="button" class="btn refresh" id="btnRefreshUS">US 시세조회</button>
       <button type="button" class="btn refresh" id="btnRefreshKR">KR 시세조회</button>
@@ -172,95 +194,110 @@ button.btn.loading { opacity: 0.5; pointer-events: none; }
 
   <div class="main">
 
-    <div class="grid-2">
-      <div class="panel">
-        <div class="panel-header"><div class="panel-title">[US] INDICES</div></div>
-        <div class="indices-row" id="indicesUS" style="grid-template-columns: 1fr 1fr 1fr;">
-          <div class="empty">대기 중...</div>
-        </div>
-      </div>
-      <div class="panel">
-        <div class="panel-header"><div class="panel-title">[KR] INDICES</div></div>
-        <div class="indices-row" id="indicesKR" style="grid-template-columns: 1fr 1fr;">
-          <div class="empty">대기 중...</div>
-        </div>
-      </div>
+```
+<div class="grid-2">
+  <div class="panel">
+    <div class="panel-header"><div class="panel-title">[US] INDICES</div></div>
+    <div class="indices-row" id="indicesUS" style="grid-template-columns: 1fr 1fr 1fr;">
+      <div class="empty">대기 중...</div>
     </div>
+  </div>
+  <div class="panel">
+    <div class="panel-header"><div class="panel-title">[KR] INDICES</div></div>
+    <div class="indices-row" id="indicesKR" style="grid-template-columns: 1fr 1fr;">
+      <div class="empty">대기 중...</div>
+    </div>
+  </div>
+</div>
 
-    <div class="grid-2">
-      <div class="panel">
-        <div class="panel-header">
-          <div class="panel-title">[US] PORTFOLIO</div>
-          <div class="cfg-display" id="cfgDisplayUS"></div>
-        </div>
-        <div class="summary-grid">
-          <div class="summary-item"><div class="summary-label">TOTAL</div><div class="summary-value" id="totalUS">-</div></div>
-          <div class="summary-item"><div class="summary-label">INVESTED</div><div class="summary-value" id="investedUS">-</div></div>
-          <div class="summary-item"><div class="summary-label">CASH</div><div class="summary-value" id="cashUS">-</div></div>
-          <div class="summary-item"><div class="summary-label">vs INITIAL</div><div class="summary-value" id="changeUS">-</div></div>
-        </div>
-      </div>
-      <div class="panel">
-        <div class="panel-header"><div class="panel-title">[KR] PORTFOLIO</div></div>
-        <div class="summary-grid">
-          <div class="summary-item"><div class="summary-label">TOTAL</div><div class="summary-value" id="totalKR">-</div></div>
-          <div class="summary-item"><div class="summary-label">INVESTED</div><div class="summary-value" id="investedKR">-</div></div>
-          <div class="summary-item"><div class="summary-label">CASH</div><div class="summary-value" id="cashKR">-</div></div>
-          <div class="summary-item"><div class="summary-label">vs INITIAL</div><div class="summary-value" id="changeKR">-</div></div>
-        </div>
-      </div>
+<div class="grid-2">
+  <div class="panel">
+    <div class="panel-header">
+      <div class="panel-title">[US] PORTFOLIO</div>
+      <div class="cfg-display" id="cfgDisplayUS"></div>
     </div>
+    <div class="summary-grid">
+      <div class="summary-item"><div class="summary-label">TOTAL</div><div class="summary-value" id="totalUS">-</div></div>
+      <div class="summary-item"><div class="summary-label">INVESTED</div><div class="summary-value" id="investedUS">-</div></div>
+      <div class="summary-item"><div class="summary-label">CASH</div><div class="summary-value" id="cashUS">-</div></div>
+      <div class="summary-item"><div class="summary-label">vs INITIAL</div><div class="summary-value" id="changeUS">-</div></div>
+    </div>
+  </div>
+  <div class="panel">
+    <div class="panel-header"><div class="panel-title">[KR] PORTFOLIO</div></div>
+    <div class="summary-grid">
+      <div class="summary-item"><div class="summary-label">TOTAL</div><div class="summary-value" id="totalKR">-</div></div>
+      <div class="summary-item"><div class="summary-label">INVESTED</div><div class="summary-value" id="investedKR">-</div></div>
+      <div class="summary-item"><div class="summary-label">CASH</div><div class="summary-value" id="cashKR">-</div></div>
+      <div class="summary-item"><div class="summary-label">vs INITIAL</div><div class="summary-value" id="changeKR">-</div></div>
+    </div>
+  </div>
+</div>
 
-    <div class="panel">
-      <div class="panel-header"><div class="panel-title">CURRENT POSITIONS</div></div>
-      <div id="positionsBox"><div class="empty">No positions yet</div></div>
-    </div>
+<div class="panel">
+  <div class="panel-header"><div class="panel-title">CURRENT POSITIONS</div></div>
+  <div id="positionsBox"><div class="empty">No positions yet</div></div>
+</div>
 
-    <div class="grid-2">
-      <div class="panel">
-        <div class="panel-header">
-          <div class="panel-title">[US] WATCHLIST</div>
-          <button type="button" class="watchlist-toggle-btn" id="btnToggleUS">펼치기</button>
-        </div>
-        <div id="watchlistUSContainer"></div>
-      </div>
-      <div class="panel">
-        <div class="panel-header">
-          <div class="panel-title">[KR] WATCHLIST</div>
-          <button type="button" class="watchlist-toggle-btn" id="btnToggleKR">펼치기</button>
-        </div>
-        <div id="watchlistKRContainer"></div>
-      </div>
+<div class="grid-2">
+  <div class="panel">
+    <div class="panel-header">
+      <div class="panel-title">[US] WATCHLIST</div>
+      <button type="button" class="watchlist-toggle-btn" id="btnToggleUS">펼치기</button>
     </div>
+    <div id="watchlistUSContainer"></div>
+  </div>
+  <div class="panel">
+    <div class="panel-header">
+      <div class="panel-title">[KR] WATCHLIST</div>
+      <button type="button" class="watchlist-toggle-btn" id="btnToggleKR">펼치기</button>
+    </div>
+    <div id="watchlistKRContainer"></div>
+  </div>
+</div>
 
-    <div class="panel">
-      <div class="panel-header"><div class="panel-title">RECENT TRADES</div></div>
-      <div class="trades-toggle" id="tradesToggle">
-        <div class="trades-summary" id="tradesSummary">
-          <div class="trades-summary-item">
-            <div class="trades-summary-label">TOTAL</div>
-            <div class="trades-summary-value" id="tradesTotalCount">0</div>
-          </div>
-          <div class="trades-summary-item">
-            <div class="trades-summary-label">WIN RATE</div>
-            <div class="trades-summary-value" id="tradesWinRate">0%</div>
-          </div>
-          <div class="trades-summary-item">
-            <div class="trades-summary-label">AVG PnL</div>
-            <div class="trades-summary-value" id="tradesAvgPnl">0%</div>
-          </div>
-        </div>
-        <button type="button" class="trades-toggle-btn" id="tradesToggleBtn">펼치기</button>
+<div class="panel">
+  <div class="panel-header"><div class="panel-title">RECENT TRADES</div></div>
+  <div class="trades-toggle" id="tradesToggle">
+    <div class="trades-summary" id="tradesSummary">
+      <div class="trades-summary-item">
+        <div class="trades-summary-label">TOTAL</div>
+        <div class="trades-summary-value" id="tradesTotalCount">0</div>
       </div>
-      <div class="trades-table" id="tradesTableBox">
-        <div id="tradesBox"><div class="empty">No trades yet</div></div>
+      <div class="trades-summary-item">
+        <div class="trades-summary-label">WIN RATE</div>
+        <div class="trades-summary-value" id="tradesWinRate">0%</div>
+      </div>
+      <div class="trades-summary-item">
+        <div class="trades-summary-label">AVG PnL</div>
+        <div class="trades-summary-value" id="tradesAvgPnl">0%</div>
       </div>
     </div>
+    <button type="button" class="trades-toggle-btn" id="tradesToggleBtn">펼치기</button>
+  </div>
+  <div class="trades-table" id="tradesTableBox">
+    <div id="tradesBox"><div class="empty">No trades yet</div></div>
+  </div>
+</div>
+```
 
   </div>
 </div>
 
+<!-- 암호 모달 -->
+
+<div class="password-modal" id="passwordModal">
+  <div class="password-box">
+    <h2>🔐 SETTINGS 접근</h2>
+    <div class="hint-text">암호를 입력하세요</div>
+    <input type="password" id="passwordInput" placeholder="암호 입력">
+    <button id="btnPasswordSubmit">확인</button>
+    <div class="password-error" id="passwordError">암호가 틀렸습니다</div>
+  </div>
+</div>
+
 <!-- LOGS 모달 -->
+
 <div class="modal" id="logsModal">
   <div class="modal-logs">
     <h2>
@@ -287,83 +324,87 @@ button.btn.loading { opacity: 0.5; pointer-events: none; }
 </div>
 
 <!-- SETTINGS 모달 -->
+
 <div class="modal" id="settingsModal">
   <div class="modal-content">
     <h2>⚙ SETTINGS</h2>
 
-    <div class="checkbox-row">
-      <input type="checkbox" id="cfgAutoTune">
-      <label for="cfgAutoTune">AUTO-TUNE 활성화 (엔진이 스스로 파라미터 조정)</label>
-    </div>
+```
+<div class="checkbox-row">
+  <input type="checkbox" id="cfgAutoTune">
+  <label for="cfgAutoTune">AUTO-TUNE 활성화 (엔진이 스스로 파라미터 조정)</label>
+</div>
 
-    <div class="checkbox-row">
-      <input type="checkbox" id="cfgMarketHoursOnly">
-      <label for="cfgMarketHoursOnly">정규장 시간에만 거래 (권장)</label>
-    </div>
+<div class="checkbox-row">
+  <input type="checkbox" id="cfgMarketHoursOnly">
+  <label for="cfgMarketHoursOnly">정규장 시간에만 거래 (권장)</label>
+</div>
 
-    <div class="section-title">초기 자본금 (RESET 시 적용)</div>
-    <div class="field-row-2">
-      <div class="field"><label>US 초기자금 ($)</label><input type="number" id="cfgInitCashUS" min="1000" step="1000"></div>
-      <div class="field"><label>KR 초기자금 (₩)</label><input type="number" id="cfgInitCashKR" min="100000" step="100000"></div>
-    </div>
-    <div class="hint">※ 자본금은 SETTINGS 저장 후 RESET ALL DATA를 눌러야 적용됩니다.</div>
+<div class="section-title">초기 자본금 (RESET 시 적용)</div>
+<div class="field-row-2">
+  <div class="field"><label>US 초기자금 ($)</label><input type="number" id="cfgInitCashUS" min="1000" step="1000"></div>
+  <div class="field"><label>KR 초기자금 (₩)</label><input type="number" id="cfgInitCashKR" min="100000" step="100000"></div>
+</div>
+<div class="hint">※ 자본금은 SETTINGS 저장 후 RESET ALL DATA를 눌러야 적용됩니다.</div>
 
-    <div class="section-divider"></div>
-    <div class="section-title">TICKERS</div>
-    <div class="field">
-      <label>US TICKERS (콤마 구분)</label>
-      <textarea id="cfgUS"></textarea>
-    </div>
-    <div class="field">
-      <label>KR TICKERS (예: 005930.KS)</label>
-      <textarea id="cfgKR"></textarea>
-    </div>
-    <button type="button" class="btn" id="btnResetTickers" style="margin-bottom:10px;">티커 기본값으로 복원</button>
+<div class="section-divider"></div>
+<div class="section-title">TICKERS</div>
+<div class="field">
+  <label>US TICKERS (콤마 구분)</label>
+  <textarea id="cfgUS"></textarea>
+</div>
+<div class="field">
+  <label>KR TICKERS (예: 005930.KS)</label>
+  <textarea id="cfgKR"></textarea>
+</div>
+<button type="button" class="btn" id="btnResetTickers" style="margin-bottom:10px;">티커 기본값으로 복원</button>
 
-    <div class="section-divider"></div>
-    <div class="section-title">STRATEGY</div>
-    <div class="field-row">
-      <div class="field"><label>RSI Buy</label><input type="number" id="cfgRsiBuy" min="1" max="99"></div>
-      <div class="field"><label>RSI Sell</label><input type="number" id="cfgRsiSell" min="1" max="99"></div>
-      <div class="field"><label>RSI Period</label><input type="number" id="cfgRsiPeriod" min="2" max="50"></div>
-    </div>
-    <div class="field-row">
-      <div class="field"><label>StopLoss %</label><input type="number" id="cfgStopLoss" min="0.5" max="50" step="0.5"></div>
-      <div class="field"><label>TakeProfit %</label><input type="number" id="cfgTakeProfit" min="0.5" max="50" step="0.5"></div>
-      <div class="field"><label>PosSize %</label><input type="number" id="cfgPosSize" min="1" max="100"></div>
-    </div>
-    <div class="field-row">
-      <div class="field"><label>Day Buy- %</label><input type="number" id="cfgDayBuyPct" min="0.1" max="20" step="0.1"></div>
-      <div class="field"><label>Day Sell+ %</label><input type="number" id="cfgDaySellPct" min="0.5" max="20" step="0.5"></div>
-      <div class="field"><label>MA Period</label><input type="number" id="cfgMaPeriod" min="2" max="120"></div>
-    </div>
-    <div class="field-row">
-      <div class="field"><label>Min Hold (min)</label><input type="number" id="cfgMinHoldMin" min="0" max="1440" step="5"></div>
-      <div class="field"></div>
-      <div class="field"></div>
-    </div>
+<div class="section-divider"></div>
+<div class="section-title">STRATEGY</div>
+<div class="field-row">
+  <div class="field"><label>RSI Buy</label><input type="number" id="cfgRsiBuy" min="1" max="99"></div>
+  <div class="field"><label>RSI Sell</label><input type="number" id="cfgRsiSell" min="1" max="99"></div>
+  <div class="field"><label>RSI Period</label><input type="number" id="cfgRsiPeriod" min="2" max="50"></div>
+</div>
+<div class="field-row">
+  <div class="field"><label>StopLoss %</label><input type="number" id="cfgStopLoss" min="0.5" max="50" step="0.5"></div>
+  <div class="field"><label>TakeProfit %</label><input type="number" id="cfgTakeProfit" min="0.5" max="50" step="0.5"></div>
+  <div class="field"><label>PosSize %</label><input type="number" id="cfgPosSize" min="1" max="100"></div>
+</div>
+<div class="field-row">
+  <div class="field"><label>Day Buy- %</label><input type="number" id="cfgDayBuyPct" min="0.1" max="20" step="0.1"></div>
+  <div class="field"><label>Day Sell+ %</label><input type="number" id="cfgDaySellPct" min="0.5" max="20" step="0.5"></div>
+  <div class="field"><label>MA Period</label><input type="number" id="cfgMaPeriod" min="2" max="120"></div>
+</div>
+<div class="field-row">
+  <div class="field"><label>Min Hold (min)</label><input type="number" id="cfgMinHoldMin" min="0" max="1440" step="5"></div>
+  <div class="field"></div>
+  <div class="field"></div>
+</div>
 
-    <div class="section-divider"></div>
-    <div class="section-title">ATR</div>
-    <div class="field-row">
-      <div class="field"><label>ATR Period</label><input type="number" id="cfgAtrPeriod" min="2" max="60"></div>
-      <div class="field"><label>ATR Stop x</label><input type="number" id="cfgAtrStopMult" min="0.5" max="6" step="0.1"></div>
-      <div class="field"><label>Trail x</label><input type="number" id="cfgTrailMult" min="0.5" max="8" step="0.1"></div>
-    </div>
+<div class="section-divider"></div>
+<div class="section-title">ATR</div>
+<div class="field-row">
+  <div class="field"><label>ATR Period</label><input type="number" id="cfgAtrPeriod" min="2" max="60"></div>
+  <div class="field"><label>ATR Stop x</label><input type="number" id="cfgAtrStopMult" min="0.5" max="6" step="0.1"></div>
+  <div class="field"><label>Trail x</label><input type="number" id="cfgTrailMult" min="0.5" max="8" step="0.1"></div>
+</div>
 
-    <div class="section-divider"></div>
-    <div class="section-title">FEES</div>
-    <div class="field-row">
-      <div class="field"><label>US Fee</label><input type="number" id="cfgFeeUS" min="0" max="0.05" step="0.0001"></div>
-      <div class="field"><label>KR Fee</label><input type="number" id="cfgFeeKR" min="0" max="0.05" step="0.0001"></div>
-      <div class="field"></div>
-    </div>
+<div class="section-divider"></div>
+<div class="section-title">FEES</div>
+<div class="field-row">
+  <div class="field"><label>US Fee</label><input type="number" id="cfgFeeUS" min="0" max="0.05" step="0.0001"></div>
+  <div class="field"><label>KR Fee</label><input type="number" id="cfgFeeKR" min="0" max="0.05" step="0.0001"></div>
+  <div class="field"></div>
+</div>
 
-    <div class="modal-actions">
-      <button type="button" class="btn danger" id="btnReset">RESET ALL DATA</button>
-      <button type="button" class="btn" id="btnCancelSettings">CANCEL</button>
-      <button type="button" class="btn primary" id="btnSaveSettings">SAVE</button>
-    </div>
+<div class="modal-actions">
+  <button type="button" class="btn danger" id="btnReset">RESET ALL DATA</button>
+  <button type="button" class="btn" id="btnCancelSettings">CANCEL</button>
+  <button type="button" class="btn primary" id="btnSaveSettings">SAVE</button>
+</div>
+```
+
   </div>
 </div>
 
@@ -386,6 +427,8 @@ button.btn.loading { opacity: 0.5; pointer-events: none; }
   var usFavorites = [];
   var krFavorites = [];
   var logsModalOpen = false;
+  var passwordVerified = false;
+  var PASSWORD = "0728";
 
   var INDEX_NAMES = {
     '^IXIC': 'NASDAQ', '^DJI': 'DOW JONES', '^GSPC': 'S&P 500',
@@ -672,14 +715,12 @@ button.btn.loading { opacity: 0.5; pointer-events: none; }
     if (idx >= 0) favorites.splice(idx, 1); else favorites.push(symbol);
     if (market === "us") usFavorites = favorites; else krFavorites = favorites;
     
-    // API 저장은 백그라운드에서 (UI 블로킹 안 함)
     fetch('/api/favorites', {
       method: 'POST',
       headers: {'Content-Type': 'application/json'},
       body: JSON.stringify({ usFavorites: usFavorites, krFavorites: krFavorites })
     })['catch'](function(){ toast('즐겨찾기 저장 실패'); });
     
-    // 즉시 로컬 렌더링 (API 응답 기다리지 않음)
     var quotes = Object.keys(lastQuotes).map(function(s){ return lastQuotes[s]; });
     renderWatchlist(quotes);
   }
@@ -693,7 +734,6 @@ button.btn.loading { opacity: 0.5; pointer-events: none; }
       krExpanded = !krExpanded; 
       $('btnToggleKR').textContent = krExpanded ? '접기' : '펼치기'; 
     }
-    // 로컬에 있는 quotes 사용해서 즉시 렌더링 (API 재호출 없음)
     var quotes = Object.keys(lastQuotes).map(function(s){ return lastQuotes[s]; });
     renderWatchlist(quotes);
   }
@@ -725,7 +765,7 @@ button.btn.loading { opacity: 0.5; pointer-events: none; }
     if (sells.length === 0) { $('tradesTotalCount').textContent = trades.length; $('tradesWinRate').textContent = '-'; $('tradesAvgPnl').textContent = '-'; return; }
     var wins = sells.filter(function(t){ return t.pnl_pct > 0; });
     var winRate = (wins.length / sells.length * 100).toFixed(1);
-    var avgPnl = (sells.reduce(function(a,t){ return a + (t.pnl_pct || 0); }, 0) / sells.length).toFixed(2);
+    var avgPnl = (sells.reduce(function(a,t){ return a + t.pnl_pct; }, 0) / sells.length).toFixed(2);
     $('tradesTotalCount').textContent = trades.length;
     $('tradesWinRate').textContent = winRate + '%';
     var avgEl = $('tradesAvgPnl');
@@ -819,7 +859,6 @@ button.btn.loading { opacity: 0.5; pointer-events: none; }
         renderTrades(trades);
         renderCfgDisplay(state.cfg);
       })['catch'](function(e){ toast('로드 실패: '+e.message); });
-    // 튠 배너용으로 가벼운 로그 한번 (TUNE 1개만 필요)
     if (!logsModalOpen) {
       api('/api/logs?limit=50').then(function(logs){
         allLogs = logs || [];
@@ -850,7 +889,39 @@ button.btn.loading { opacity: 0.5; pointer-events: none; }
       .then(function(){ btn.classList.remove('loading'); btn.textContent=originalText; });
   }
 
+  function openPasswordModal() {
+    $('passwordModal').classList.add('show');
+    $('passwordInput').focus();
+  }
+
+  function closePasswordModal() {
+    $('passwordModal').classList.remove('show');
+    $('passwordInput').value = '';
+    $('passwordError').style.display = 'none';
+  }
+
+  function verifyPassword() {
+    var pwd = $('passwordInput').value;
+    if (pwd === PASSWORD) {
+      passwordVerified = true;
+      closePasswordModal();
+      openSettingsPanel();
+    } else {
+      $('passwordError').style.display = 'block';
+      $('passwordInput').value = '';
+      $('passwordInput').focus();
+    }
+  }
+
   function openSettings() {
+    if (!passwordVerified) {
+      openPasswordModal();
+      return;
+    }
+    openSettingsPanel();
+  }
+
+  function openSettingsPanel() {
     if (!currentCfg) { toast('설정 로드 중...'); return; }
     $('cfgAutoTune').checked = !!currentCfg.autoTune;
     $('cfgMarketHoursOnly').checked = currentCfg.marketHoursOnly !== false;
@@ -940,16 +1011,19 @@ button.btn.loading { opacity: 0.5; pointer-events: none; }
   $('tradesToggle').addEventListener('click', toggleTrades);
   $('btnToggleUS').addEventListener('click', function(){ toggleWatchlist('us'); });
   $('btnToggleKR').addEventListener('click', function(){ toggleWatchlist('kr'); });
+  $('btnPasswordSubmit').addEventListener('click', verifyPassword);
+  $('passwordInput').addEventListener('keypress', function(e){ if (e.key === 'Enter') verifyPassword(); });
 
-  // 모달 배경 클릭으로 닫기
   $('logsModal').addEventListener('click', function(e){
     if (e.target === $('logsModal')) closeLogs();
   });
   $('settingsModal').addEventListener('click', function(e){
     if (e.target === $('settingsModal')) closeSettings();
   });
+  $('passwordModal').addEventListener('click', function(e){
+    if (e.target === $('passwordModal')) closePasswordModal();
+  });
 
-  // 로그 검색
   $('logsSearch').addEventListener('input', function(){
     logSearchText = this.value.trim();
     renderLogs();
@@ -968,5 +1042,6 @@ button.btn.loading { opacity: 0.5; pointer-events: none; }
   timer = setInterval(refreshAll, REFRESH_MS);
 })();
 </script>
+
 </body>
 </html>
