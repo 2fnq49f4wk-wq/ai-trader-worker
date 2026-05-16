@@ -142,6 +142,7 @@ button.btn.loading { opacity: 0.5; pointer-events: none; }
 .watchlist-section { padding: 4px 12px 8px; font-size: 10px; color: var(–amber); font-weight: bold; letter-spacing: 1px; background: rgba(255,215,0,0.05); border-bottom: 1px solid var(–border); }
 .watchlist-section.fav { color: var(–amber); }
 .watchlist-section.all { color: var(–dim); }
+.password-error { color: var(–red); font-size: 11px; margin-top: 8px; display: none; text-align: center; font-weight: bold; }
 </style>
 
 </head>
@@ -264,30 +265,21 @@ button.btn.loading { opacity: 0.5; pointer-events: none; }
   </div>
 </div>
 
-<!-- LOGS 모달 -->
+<!-- 암호 입력 모달 -->
 
-<div class="modal" id="logsModal">
-  <div class="modal-logs">
-    <h2>
-      <span>📋 ENGINE LOGS</span>
-      <span class="close-x" id="btnCloseLogs">✕</span>
-    </h2>
-    <div class="logs-toolbar">
-      <input type="text" class="logs-search" id="logsSearch" placeholder="검색 (심볼/메시지/RSI 등)...">
-      <span class="logs-info" id="logsInfo">0 / 0</span>
+<div class="modal" id="passwordModal">
+  <div class="modal-content" style="max-width: 400px;">
+    <h2>🔐 SETTINGS 암호</h2>
+    <p style="color: var(--dim); font-size: 12px; margin-bottom: 14px;">설정 변경을 위해 암호를 입력하세요</p>
+    <div class="field">
+      <label>암호</label>
+      <input type="password" id="passwordInput" placeholder="암호 입력..." style="font-size: 16px; text-align: center; letter-spacing: 2px;">
     </div>
-    <div class="log-filter" style="margin-bottom: 12px;">
-      <button data-filter="ALL" class="active">ALL</button>
-      <button data-filter="TRADE">TRADE</button>
-      <button data-filter="TUNE">TUNE</button>
-      <button data-filter="ERROR">ERROR</button>
-      <button data-filter="WARN">WARN</button>
-      <button data-filter="NOBUY">NOBUY</button>
-      <button data-filter="SKIP">SKIP</button>
-      <button data-filter="CLOSED">CLOSED</button>
-      <button data-filter="INFO">INFO</button>
+    <div class="password-error" id="passwordError">❌ 암호가 틀렸습니다</div>
+    <div class="modal-actions">
+      <button type="button" class="btn" id="btnCancelPassword">CANCEL</button>
+      <button type="button" class="btn primary" id="btnConfirmPassword">확인</button>
     </div>
-    <div class="log-box-modal" id="logsBox"><div class="empty">No logs yet</div></div>
   </div>
 </div>
 
@@ -376,12 +368,40 @@ button.btn.loading { opacity: 0.5; pointer-events: none; }
   </div>
 </div>
 
+<!-- LOGS 모달 -->
+
+<div class="modal" id="logsModal">
+  <div class="modal-logs">
+    <h2>
+      <span>📋 ENGINE LOGS</span>
+      <span class="close-x" id="btnCloseLogs">✕</span>
+    </h2>
+    <div class="logs-toolbar">
+      <input type="text" class="logs-search" id="logsSearch" placeholder="검색 (심볼/메시지/RSI 등)...">
+      <span class="logs-info" id="logsInfo">0 / 0</span>
+    </div>
+    <div class="log-filter" style="margin-bottom: 12px;">
+      <button data-filter="ALL" class="active">ALL</button>
+      <button data-filter="TRADE">TRADE</button>
+      <button data-filter="TUNE">TUNE</button>
+      <button data-filter="ERROR">ERROR</button>
+      <button data-filter="WARN">WARN</button>
+      <button data-filter="NOBUY">NOBUY</button>
+      <button data-filter="SKIP">SKIP</button>
+      <button data-filter="CLOSED">CLOSED</button>
+      <button data-filter="INFO">INFO</button>
+    </div>
+    <div class="log-box-modal" id="logsBox"><div class="empty">No logs yet</div></div>
+  </div>
+</div>
+
 <div class="toast" id="toast"></div>
 
 <script>
 (function () {
   var REFRESH_MS = 10000;
   var LOGS_REFRESH_MS = 5000;
+  var CORRECT_PASSWORD = '0728';
   var timer = null;
   var logsTimer = null;
   var allLogs = [];
@@ -681,14 +701,12 @@ button.btn.loading { opacity: 0.5; pointer-events: none; }
     if (idx >= 0) favorites.splice(idx, 1); else favorites.push(symbol);
     if (market === "us") usFavorites = favorites; else krFavorites = favorites;
     
-    // API 저장은 백그라운드에서 (UI 블로킹 안 함)
     fetch('/api/favorites', {
       method: 'POST',
       headers: {'Content-Type': 'application/json'},
       body: JSON.stringify({ usFavorites: usFavorites, krFavorites: krFavorites })
     })['catch'](function(){ toast('즐겨찾기 저장 실패'); });
     
-    // 즉시 로컬 렌더링 (API 응답 기다리지 않음)
     var quotes = Object.keys(lastQuotes).map(function(s){ return lastQuotes[s]; });
     renderWatchlist(quotes);
   }
@@ -702,7 +720,6 @@ button.btn.loading { opacity: 0.5; pointer-events: none; }
       krExpanded = !krExpanded; 
       $('btnToggleKR').textContent = krExpanded ? '접기' : '펼치기'; 
     }
-    // 로컬에 있는 quotes 사용해서 즉시 렌더링 (API 재호출 없음)
     var quotes = Object.keys(lastQuotes).map(function(s){ return lastQuotes[s]; });
     renderWatchlist(quotes);
   }
@@ -806,60 +823,34 @@ button.btn.loading { opacity: 0.5; pointer-events: none; }
     if (logsTimer) { clearInterval(logsTimer); logsTimer = null; }
   }
 
-  function refreshAll() {
-    renderMarketStatus();
-    Promise.all([api('/api/state'), api('/api/trades?limit=50'), api('/api/watchlist'), api('/api/indices')])
-      .then(function(r){
-        var state = r[0], trades = r[1], quotes = r[2]||[], indices = r[3]||[];
-        currentCfg = state.cfg;
-        usFavorites = (state.cfg && state.cfg.usFavorites) || [];
-        krFavorites = (state.cfg && state.cfg.krFavorites) || [];
-        renderIndices(indices);
-        renderWatchlist(quotes);
-        var posUS = (state.positions && state.positions.us) || {};
-        var posKR = (state.positions && state.positions.kr) || {};
-        var cash = state.cash || {us:0,kr:0};
-        var initUS = (state.cfg && state.cfg.initialCashUS) || 0;
-        var initKR = (state.cfg && state.cfg.initialCashKR) || 0;
-        renderSummary('us', calcSummary('us', cash.us, posUS, initUS));
-        renderSummary('kr', calcSummary('kr', cash.kr, posKR, initKR));
-        renderPositions(posUS, posKR);
-        renderEngine(state.lastTick);
-        renderTrades(trades);
-        renderCfgDisplay(state.cfg);
-      })['catch'](function(e){ toast('로드 실패: '+e.message); });
-    // 튠 배너용으로 가벼운 로그 한번 (TUNE 1개만 필요)
-    if (!logsModalOpen) {
-      api('/api/logs?limit=50').then(function(logs){
-        allLogs = logs || [];
-        renderCfgDisplay(currentCfg);
-      })['catch'](function(){});
+  function openPasswordModal() {
+    var pwInput = $('passwordInput');
+    pwInput.value = '';
+    var errEl = $('passwordError');
+    errEl.style.display = 'none';
+    $('passwordModal').classList.add('show');
+    pwInput.focus();
+  }
+
+  function closePasswordModal() {
+    $('passwordModal').classList.remove('show');
+  }
+
+  function confirmPassword() {
+    var pwInput = $('passwordInput');
+    var enteredPw = pwInput.value;
+    var errEl = $('passwordError');
+    if (enteredPw === CORRECT_PASSWORD) {
+      closePasswordModal();
+      actuallyOpenSettings();
+    } else {
+      errEl.style.display = 'block';
+      pwInput.value = '';
+      pwInput.focus();
     }
   }
 
-  function runNow() {
-    var btn = $('btnTick');
-    btn.classList.add('loading'); btn.textContent='RUNNING...';
-    fetch('/api/tick', {method:'POST'}).then(function(r){return r.json();})
-      .then(function(){ toast('엔진 1회 실행 완료'); refreshAll(); })
-      ['catch'](function(e){ toast('실행 실패: '+e.message); })
-      .then(function(){ btn.classList.remove('loading'); btn.textContent='RUN NOW'; });
-  }
-
-  function refreshQuotes(market) {
-    var btn = market === 'us' ? $('btnRefreshUS') : $('btnRefreshKR');
-    var originalText = btn.textContent;
-    btn.classList.add('loading'); btn.textContent='조회 중...';
-    fetch('/api/refresh_quotes?market=' + market, {method:'POST'}).then(function(r){return r.json();})
-      .then(function(d){ 
-        toast(market.toUpperCase() + ' 시세 조회 완료 (성공 ' + d.ok_count + ' / 실패 ' + d.fail_count + ')'); 
-        refreshAll(); 
-      })
-      ['catch'](function(e){ toast('조회 실패: '+e.message); })
-      .then(function(){ btn.classList.remove('loading'); btn.textContent=originalText; });
-  }
-
-  function openSettings() {
+  function actuallyOpenSettings() {
     if (!currentCfg) { toast('설정 로드 중...'); return; }
     $('cfgAutoTune').checked = !!currentCfg.autoTune;
     $('cfgMarketHoursOnly').checked = currentCfg.marketHoursOnly !== false;
@@ -936,29 +927,94 @@ button.btn.loading { opacity: 0.5; pointer-events: none; }
       })['catch'](function(e){ toast('복원 실패: '+e.message); });
   }
 
+  function refreshAll() {
+    renderMarketStatus();
+    Promise.all([api('/api/state'), api('/api/trades?limit=50'), api('/api/watchlist'), api('/api/indices')])
+      .then(function(r){
+        var state = r[0], trades = r[1], quotes = r[2]||[], indices = r[3]||[];
+        currentCfg = state.cfg;
+        usFavorites = (state.cfg && state.cfg.usFavorites) || [];
+        krFavorites = (state.cfg && state.cfg.krFavorites) || [];
+        renderIndices(indices);
+        renderWatchlist(quotes);
+        var posUS = (state.positions && state.positions.us) || {};
+        var posKR = (state.positions && state.positions.kr) || {};
+        var cash = state.cash || {us:0,kr:0};
+        var initUS = (state.cfg && state.cfg.initialCashUS) || 0;
+        var initKR = (state.cfg && state.cfg.initialCashKR) || 0;
+        renderSummary('us', calcSummary('us', cash.us, posUS, initUS));
+        renderSummary('kr', calcSummary('kr', cash.kr, posKR, initKR));
+        renderPositions(posUS, posKR);
+        renderEngine(state.lastTick);
+        renderTrades(trades);
+        renderCfgDisplay(state.cfg);
+      })['catch'](function(e){ toast('로드 실패: '+e.message); });
+    if (!logsModalOpen) {
+      api('/api/logs?limit=50').then(function(logs){
+        allLogs = logs || [];
+        renderCfgDisplay(currentCfg);
+      })['catch'](function(){});
+    }
+  }
+
+  function runNow() {
+    var btn = $('btnTick');
+    btn.classList.add('loading'); btn.textContent='RUNNING...';
+    fetch('/api/tick', {method:'POST'}).then(function(r){return r.json();})
+      .then(function(){ toast('엔진 1회 실행 완료'); refreshAll(); })
+      ['catch'](function(e){ toast('실행 실패: '+e.message); })
+      .then(function(){ btn.classList.remove('loading'); btn.textContent='RUN NOW'; });
+  }
+
+  function refreshQuotes(market) {
+    var btn = market === 'us' ? $('btnRefreshUS') : $('btnRefreshKR');
+    var originalText = btn.textContent;
+    btn.classList.add('loading'); btn.textContent='조회 중...';
+    fetch('/api/refresh_quotes?market=' + market, {method:'POST'}).then(function(r){return r.json();})
+      .then(function(d){ 
+        toast(market.toUpperCase() + ' 시세 조회 완료 (성공 ' + d.ok_count + ' / 실패 ' + d.fail_count + ')'); 
+        refreshAll(); 
+      })
+      ['catch'](function(e){ toast('조회 실패: '+e.message); })
+      .then(function(){ btn.classList.remove('loading'); btn.textContent=originalText; });
+  }
+
   $('btnTick').addEventListener('click', runNow);
   $('btnRefreshUS').addEventListener('click', function(){ refreshQuotes('us'); });
   $('btnRefreshKR').addEventListener('click', function(){ refreshQuotes('kr'); });
   $('btnLogs').addEventListener('click', openLogs);
   $('btnCloseLogs').addEventListener('click', closeLogs);
-  $('btnSettings').addEventListener('click', openSettings);
+  
+  // SETTINGS 버튼 - 암호 입력 모달 먼저 표시
+  $('btnSettings').addEventListener('click', openPasswordModal);
+  
+  // 암호 모달 버튼
+  $('btnCancelPassword').addEventListener('click', closePasswordModal);
+  $('btnConfirmPassword').addEventListener('click', confirmPassword);
+  $('passwordInput').addEventListener('keypress', function(e){
+    if (e.key === 'Enter') confirmPassword();
+  });
+  
+  // SETTINGS 모달 버튼
   $('btnCancelSettings').addEventListener('click', closeSettings);
   $('btnSaveSettings').addEventListener('click', saveSettings);
   $('btnReset').addEventListener('click', resetAll);
   $('btnResetTickers').addEventListener('click', resetTickers);
+  
   $('tradesToggle').addEventListener('click', toggleTrades);
   $('btnToggleUS').addEventListener('click', function(){ toggleWatchlist('us'); });
   $('btnToggleKR').addEventListener('click', function(){ toggleWatchlist('kr'); });
 
-  // 모달 배경 클릭으로 닫기
   $('logsModal').addEventListener('click', function(e){
     if (e.target === $('logsModal')) closeLogs();
+  });
+  $('passwordModal').addEventListener('click', function(e){
+    if (e.target === $('passwordModal')) closePasswordModal();
   });
   $('settingsModal').addEventListener('click', function(e){
     if (e.target === $('settingsModal')) closeSettings();
   });
 
-  // 로그 검색
   $('logsSearch').addEventListener('input', function(){
     logSearchText = this.value.trim();
     renderLogs();
