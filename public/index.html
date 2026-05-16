@@ -16,17 +16,13 @@
 body { background: var(--bg); color: var(--text); font-family: 'Courier New', monospace; font-size: 14px; line-height: 1.5; }
 .app { display: flex; flex-direction: column; min-height: 100vh; }
 .topbar { display: flex; justify-content: space-between; align-items: center; padding: 14px 16px; gap: 10px; border-bottom: 2px solid var(--amber); background: var(--panel); position: sticky; top: 0; z-index: 100; flex-wrap: wrap; }
-
-/* === 독립적인 로고 섹션 (다른 요소 영향 안 함) === */
-.logo-section { display: flex; align-items: center; gap: 12px; }
-.logo-main { font-size: 18px; color: #ffffff; font-weight: bold; letter-spacing: 2px; text-shadow: 0 0 10px rgba(255,255,255,0.2); }
-.logo-sub { font-size: 12px; color: #ffffff; font-weight: 600; letter-spacing: 1px; opacity: 0.85; }
-
+.brand { font-size: 18px; color: var(--amber); font-weight: bold; letter-spacing: 2px; text-shadow: 0 0 10px rgba(255,215,0,0.3); }
+.brand-sub { font-size: 12px; color: var(--amber); font-weight: 600; letter-spacing: 1px; margin-left: 10px; opacity: 0.85; }
 .topbar-btns { display: flex; gap: 6px; flex-wrap: wrap; }
 .main { flex: 1; padding: 14px; display: flex; flex-direction: column; gap: 14px; }
-.panel { background: var(–panel); border: 1px solid var(–border); border-radius: 6px; overflow: hidden; }
-.panel-header { padding: 12px 14px; border-bottom: 1px solid var(–border); background: var(–elev); display: flex; justify-content: space-between; align-items: center; gap: 10px; flex-wrap: wrap; }
-.panel-title { font-size: 13px; color: var(–amber); letter-spacing: 1.5px; font-weight: 700; }
+.panel { background: var(--panel); border: 1px solid var(--border); border-radius: 6px; overflow: hidden; }
+.panel-header { padding: 12px 14px; border-bottom: 1px solid var(--border); background: var(--elev); display: flex; justify-content: space-between; align-items: center; gap: 10px; flex-wrap: wrap; }
+.panel-title { font-size: 13px; color: var(--amber); letter-spacing: 1.5px; font-weight: 700; }
 .grid-2 { display: grid; gap: 14px; grid-template-columns: 1fr; }
 @media (min-width: 768px) { .grid-2 { grid-template-columns: 1fr 1fr; } }
 
@@ -147,28 +143,13 @@ button.btn.loading { opacity: 0.5; pointer-events: none; }
 .watchlist-section { padding: 4px 12px 8px; font-size: 10px; color: var(–amber); font-weight: bold; letter-spacing: 1px; background: rgba(255,215,0,0.05); border-bottom: 1px solid var(–border); }
 .watchlist-section.fav { color: var(–amber); }
 .watchlist-section.all { color: var(–dim); }
-
-/* === 암호 모달 === */
-.password-modal { display: none; position: fixed; inset: 0; background: rgba(0,0,0,0.95); z-index: 10000; padding: 20px; }
-.password-modal.show { display: flex; align-items: center; justify-content: center; }
-.password-box { background: var(–panel); border: 2px solid var(–amber); border-radius: 8px; padding: 40px; text-align: center; max-width: 350px; }
-.password-box h2 { color: var(–amber); margin-bottom: 20px; font-size: 18px; letter-spacing: 2px; }
-.password-box input { width: 100%; padding: 12px; font-size: 16px; background: var(–bg); border: 1px solid var(–border); color: var(–text); border-radius: 4px; margin-bottom: 20px; font-family: inherit; text-align: center; letter-spacing: 3px; }
-.password-box input:focus { border-color: var(–amber); outline: none; }
-.password-box .hint-text { color: var(–faint); font-size: 11px; margin-bottom: 20px; }
-.password-box button { padding: 12px 24px; background: var(–amber); color: var(–bg); border: none; border-radius: 4px; font-weight: bold; cursor: pointer; font-size: 13px; font-family: inherit; letter-spacing: 1px; }
-.password-box button:hover { opacity: 0.9; }
-.password-error { color: var(–red); font-size: 12px; margin-top: 10px; display: none; }
 </style>
 
 </head>
 <body>
 <div class="app">
   <div class="topbar">
-    <div class="logo-section">
-      <div class="logo-main">LUX-engine V6</div>
-      <div class="logo-sub">Powered by BLAUENACHT</div>
-    </div>
+    <div><span class="brand">LUX-engine V6</span><span class="brand-sub">Powered by BLAUENACHT</span></div>
     <div class="topbar-btns">
       <button type="button" class="btn refresh" id="btnRefreshUS">US 시세조회</button>
       <button type="button" class="btn refresh" id="btnRefreshKR">KR 시세조회</button>
@@ -286,13 +267,16 @@ button.btn.loading { opacity: 0.5; pointer-events: none; }
 
 <!-- 암호 모달 -->
 
-<div class="password-modal" id="passwordModal">
-  <div class="password-box">
+<div class="modal" id="passwordModal">
+  <div class="modal-content" style="max-width: 380px; text-align: center;">
     <h2>🔐 SETTINGS 접근</h2>
-    <div class="hint-text">암호를 입력하세요</div>
-    <input type="password" id="passwordInput" placeholder="암호 입력">
-    <button id="btnPasswordSubmit">확인</button>
-    <div class="password-error" id="passwordError">암호가 틀렸습니다</div>
+    <div style="color: var(--faint); font-size: 11px; margin-bottom: 18px;">암호를 입력하세요</div>
+    <input type="password" id="passwordInput" placeholder="암호 입력" style="width: 100%; padding: 12px; font-size: 16px; background: var(--bg); border: 1px solid var(--border); color: var(--text); border-radius: 4px; margin-bottom: 14px; font-family: inherit; text-align: center; letter-spacing: 3px; outline: none;">
+    <div id="passwordError" style="color: var(--red); font-size: 12px; margin-bottom: 14px; display: none;">암호가 틀렸습니다</div>
+    <div style="display: flex; gap: 8px;">
+      <button type="button" class="btn" id="btnCancelPassword" style="flex: 1;">취소</button>
+      <button type="button" class="btn primary" id="btnPasswordSubmit" style="flex: 1;">확인</button>
+    </div>
   </div>
 </div>
 
@@ -891,7 +875,7 @@ button.btn.loading { opacity: 0.5; pointer-events: none; }
 
   function openPasswordModal() {
     $('passwordModal').classList.add('show');
-    $('passwordInput').focus();
+    setTimeout(function(){ $('passwordInput').focus(); }, 100);
   }
 
   function closePasswordModal() {
@@ -1012,6 +996,7 @@ button.btn.loading { opacity: 0.5; pointer-events: none; }
   $('btnToggleUS').addEventListener('click', function(){ toggleWatchlist('us'); });
   $('btnToggleKR').addEventListener('click', function(){ toggleWatchlist('kr'); });
   $('btnPasswordSubmit').addEventListener('click', verifyPassword);
+  $('btnCancelPassword').addEventListener('click', closePasswordModal);
   $('passwordInput').addEventListener('keypress', function(e){ if (e.key === 'Enter') verifyPassword(); });
 
   $('logsModal').addEventListener('click', function(e){
