@@ -4,6 +4,9 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>LUX-engine V6</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600;700&family=Georgia:wght@400;700&display=swap" rel="stylesheet">
 <style>
 
 #lux-intro-overlay {
@@ -320,21 +323,21 @@ body { background: var(--bg); color: var(--text); font-family: 'Georgia', 'Garam
 .indices-row { display: grid; gap: 2px; background: var(--border); }
 .idx-card { background: var(--panel); padding: 12px 14px; }
 .idx-name { font-size: 11px; color: #ffffff; font-weight: bold; letter-spacing: 1px; text-shadow: 0 0 8px rgba(255,255,255,0.5), 0 0 15px rgba(88,166,255,0.25); }
-.idx-price { font-size: 17px; font-weight: 700; margin-top: 4px; }
+.idx-price { font-size: 17px; font-weight: 700; margin-top: 4px; font-family: 'IBM Plex Mono', 'Courier New', monospace; letter-spacing: 0.5px; }
 .idx-bottom { display: flex; justify-content: space-between; align-items: center; margin-top: 4px; gap: 8px; }
-.idx-day { font-size: 12px; font-weight: bold; }
+.idx-day { font-size: 12px; font-weight: bold; font-family: 'IBM Plex Mono', 'Courier New', monospace; letter-spacing: 0.3px; }
 .idx-spark { flex: 1; height: 28px; }
 
 .summary-grid { display: grid; grid-template-columns: repeat(2, 1fr); gap: 2px; background: var(--border); }
 @media (min-width: 768px) { .summary-grid { grid-template-columns: repeat(4, 1fr); } }
 .summary-item { background: var(--panel); padding: 14px 12px; min-width: 0; }
 .summary-label { font-size: 10px; color: #ffffff; text-transform: uppercase; font-weight: bold; letter-spacing: 1px; text-shadow: 0 0 8px rgba(255,255,255,0.5), 0 0 15px rgba(88,166,255,0.25); }
-.summary-value { font-size: 14px; font-weight: 700; margin-top: 4px; color: var(--text); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.summary-value { font-size: 14px; font-weight: 700; margin-top: 4px; color: var(--text); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; font-family: 'IBM Plex Mono', 'Courier New', monospace; letter-spacing: 0.5px; }
 
 .table-wrap { overflow-x: auto; }
 .table { width: 100%; border-collapse: collapse; font-size: 12px; }
 .table th { padding: 10px 12px; text-align: left; color: #ffffff; font-size: 10px; letter-spacing: 1px; border-bottom: 1px solid var(--border); background: var(--elev); white-space: nowrap; text-shadow: 0 0 8px rgba(255,255,255,0.5), 0 0 12px rgba(88,166,255,0.2); }
-.table td { padding: 10px 12px; border-bottom: 1px solid var(--border); white-space: nowrap; text-align: left; }
+.table td { padding: 10px 12px; border-bottom: 1px solid var(--border); white-space: nowrap; text-align: left; font-family: 'IBM Plex Mono', 'Courier New', monospace; letter-spacing: 0.3px; }
 .table tbody tr:hover { background: rgba(88,166,255,0.05); }
 button.btn { padding: 9px 13px; background: var(--panel); border: 1px solid var(--border); color: var(--text); font-family: inherit; font-size: 11px; cursor: pointer; outline: none; border-radius: 4px; font-weight: bold; transition: all 0.15s; letter-spacing: 1px; }
 button.btn:hover { background: var(--elev); }
@@ -403,9 +406,9 @@ button.btn.loading { opacity: 0.5; pointer-events: none; }
 .wl-card { background: var(--elev); border: 1px solid var(--border); border-radius: 4px; padding: 8px 10px; position: relative; }
 .wl-sym { font-size: 11px; color: #ffffff; font-weight: bold; letter-spacing: 0.5px; padding-right: 18px; text-shadow: 0 0 10px rgba(255,255,255,0.6), 0 0 15px rgba(88,166,255,0.3); }
 .wl-name { font-size: 9px; color: #ffffff; margin-top: 1px; text-shadow: 0 0 8px rgba(255,255,255,0.4); }
-.wl-price { font-size: 15px; font-weight: bold; margin-top: 2px; }
-.wl-day { font-size: 10px; margin-top: 2px; }
-.wl-meta { font-size: 9px; color: var(--faint); margin-top: 2px; }
+.wl-price { font-size: 15px; font-weight: bold; margin-top: 2px; font-family: 'IBM Plex Mono', 'Courier New', monospace; letter-spacing: 0.3px; }
+.wl-day { font-size: 10px; margin-top: 2px; font-family: 'IBM Plex Mono', 'Courier New', monospace; letter-spacing: 0.2px; }
+.wl-meta { font-size: 9px; color: var(--faint); margin-top: 2px; font-family: 'IBM Plex Mono', 'Courier New', monospace; letter-spacing: 0.2px; }
 .wl-fav { position: absolute; top: 6px; right: 6px; cursor: pointer; font-size: 14px; line-height: 1; user-select: none; color: var(--faint); transition: all 0.15s; }
 .wl-fav:hover { transform: scale(1.2); }
 .wl-fav.active { color: var(--amber); text-shadow: 0 0 4px rgba(255,215,0,0.6); }
