@@ -434,6 +434,8 @@ button.btn.loading { opacity: 0.5; pointer-events: none; }
 .trades-summary-value { font-weight: 700; color: #ffffff; font-family: 'IBM Plex Mono', 'Courier New', monospace; font-size: 13px; letter-spacing: 0.5px; }
 .trades-table { display: none; }
 .trades-table.show { display: block; }
+.positions-collapsed .table-wrap { max-height: calc(5 * 38px); overflow: hidden; }
+.positions-collapsed.expanded .table-wrap { max-height: none; }
 .watchlist-toggle-btn { font-size: 10px; color: var(--amber); font-weight: bold; padding: 3px 8px; background: var(--panel); border: 1px solid var(--border); border-radius: 3px; cursor: pointer; font-family: inherit; letter-spacing: 1px; }
 .watchlist-section { padding: 4px 12px 8px; font-size: 10px; color: var(--amber); font-weight: bold; letter-spacing: 1px; background: rgba(255,215,0,0.05); border-bottom: 1px solid var(--border); }
 .watchlist-section.fav { color: var(--amber); }
@@ -526,8 +528,11 @@ button.btn.loading { opacity: 0.5; pointer-events: none; }
     </div>
 
     <div class="panel">
-      <div class="panel-header"><div class="panel-title">CURRENT POSITIONS</div></div>
-      <div id="positionsBox"><div class="empty">No positions yet</div></div>
+      <div class="panel-header">
+        <div class="panel-title">CURRENT POSITIONS</div>
+        <button type="button" class="watchlist-toggle-btn" id="positionsToggleBtn">펼치기</button>
+      </div>
+      <div id="positionsBox" class="positions-collapsed"><div class="empty">No positions yet</div></div>
     </div>
 
     <div class="grid-2">
@@ -894,8 +899,21 @@ button.btn.loading { opacity: 0.5; pointer-events: none; }
     Object.keys(positionsUS).forEach(function(s){ all.push({market:'US',symbol:s,p:positionsUS[s]}); });
     Object.keys(positionsKR).forEach(function(s){ all.push({market:'KR',symbol:s,p:positionsKR[s]}); });
     if (all.length === 0) { box.innerHTML='<div class="empty">No positions yet</div>'; return; }
+    
+    // 수익률로 정렬하기 위해 먼저 pnlPct 계산
+    var allWithPnl = all.map(function(row){
+      var q = lastQuotes[row.symbol];
+      var curPrice = q ? q.price : null;
+      var pnlPct = curPrice != null ? ((curPrice - row.p.avg) / row.p.avg * 100) : -999;
+      return {row: row, pnlPct: pnlPct};
+    });
+    
+    // 수익률 높은순으로 정렬 (내림차순)
+    allWithPnl.sort(function(a, b){ return b.pnlPct - a.pnlPct; });
+    
     var html = '<div class="table-wrap"><table class="table"><thead><tr><th>MKT</th><th>SYMBOL</th><th class="right">QTY</th><th class="right">AVG</th><th class="right">CUR</th><th class="right">COST</th><th class="right">VALUE</th><th class="right">PnL</th><th class="right">PnL%</th><th class="right">OPENED</th></tr></thead><tbody>';
-    all.forEach(function(row){
+    allWithPnl.forEach(function(item){
+      var row = item.row;
       var q = lastQuotes[row.symbol];
       var curPrice = q ? q.price : null;
       var cost = row.p.qty * row.p.avg;
@@ -1245,6 +1263,13 @@ button.btn.loading { opacity: 0.5; pointer-events: none; }
       })['catch'](function(e){ toast('복원 실패: '+e.message); });
   }
 
+  function togglePositions() {
+    var box = $('positionsBox'), btn = $('positionsToggleBtn');
+    box.classList.toggle('expanded');
+    if (box.classList.contains('expanded')) { btn.textContent = '접기'; }
+    else { btn.textContent = '펼치기'; }
+  }
+
   $('btnTick').addEventListener('click', runNow);
   $('btnRefreshUS').addEventListener('click', function(){ refreshQuotes('us'); });
   $('btnRefreshKR').addEventListener('click', function(){ refreshQuotes('kr'); });
@@ -1256,6 +1281,7 @@ button.btn.loading { opacity: 0.5; pointer-events: none; }
   $('btnReset').addEventListener('click', resetAll);
   $('btnResetTickers').addEventListener('click', resetTickers);
   $('tradesToggle').addEventListener('click', toggleTrades);
+  $('positionsToggleBtn').addEventListener('click', togglePositions);
   $('btnToggleUS').addEventListener('click', function(){ toggleWatchlist('us'); });
   $('btnToggleKR').addEventListener('click', function(){ toggleWatchlist('kr'); });
 
