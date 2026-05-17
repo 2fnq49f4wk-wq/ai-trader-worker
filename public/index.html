@@ -5,6 +5,95 @@
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>LUX-engine V6</title>
 <style>
+
+/* LUX-ENGINE V6 전용 정밀 메탈릭 & 스타 로고 스타일 */
+.brand-container {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+}
+
+/* 2번째 사진 스타일의 미니멀 입체 실버 별 로고 (CSS Art) */
+.lux-star-logo {
+  position: relative;
+  width: 32px;
+  height: 32px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  filter: drop-shadow(0 0 8px rgba(88, 166, 255, 0.45)); /* 별 중심부 은은한 파란 광원 효과 */
+}
+
+.lux-star-logo::before {
+  content: "";
+  position: absolute;
+  width: 100%;
+  height: 100%;
+  background: conic-gradient(
+    from 0deg,
+    #ffffff 0deg 22.5deg, #8b949e 22.5deg 45deg,
+    #ffffff 45deg 67.5deg, #6e7681 67.5deg 90deg,
+    #ffffff 90deg 112.5deg, #8b949e 112.5deg 135deg,
+    #ffffff 135deg 157.5deg, #6e7681 157.5deg 180deg,
+    #ffffff 180deg 202.5deg, #8b949e 202.5deg 225deg,
+    #ffffff 225deg 247.5deg, #6e7681 247.5deg 270deg,
+    #ffffff 270deg 292.5deg, #8b949e 292.5deg 315deg,
+    #ffffff 315deg 337.5deg, #6e7681 337.5deg 360deg
+  );
+  clip-path: polygon(
+    50% 0%, 62% 38%, 100% 50%, 62% 62%, 
+    50% 100%, 38% 62%, 0% 50%, 38% 38%
+  );
+}
+
+.lux-star-logo::after {
+  content: "";
+  position: absolute;
+  width: 72%;
+  height: 72%;
+  background: conic-gradient(
+    from 22.5deg,
+    #ffffff 0deg 22.5deg, #4d5259 22.5deg 45deg,
+    #ffffff 45deg 67.5deg, #3a3f44 67.5deg 90deg,
+    #ffffff 90deg 112.5deg, #4d5259 112.5deg 135deg,
+    #ffffff 135deg 157.5deg, #3a3f44 157.5deg 180deg,
+    #ffffff 180deg 202.5deg, #4d5259 202.5deg 225deg,
+    #ffffff 225deg 247.5deg, #3a3f44 247.5deg 270deg,
+    #ffffff 270deg 292.5deg, #4d5259 292.5deg 315deg,
+    #ffffff 315deg 337.5deg, #3a3f44 337.5deg 360deg
+  );
+  clip-path: polygon(
+    50% 0%, 62% 38%, 100% 50%, 62% 62%, 
+    50% 100%, 38% 62%, 0% 50%, 38% 38%
+  );
+  transform: rotate(45deg);
+}
+
+/* 1번째 사진 스타일의 파란 네온이 빠진 선명한 실버 메탈릭 텍스트 */
+.lux-text-title {
+  font-family: 'Courier New', monospace;
+  font-size: 24px;
+  font-weight: 800;
+  color: #ffffff;
+  letter-spacing: 0.5px;
+  /* 파란빛 완전 제외 및 실버 음영만 제공 */
+  text-shadow: 
+    1px 1px 0px #30363d,
+    -1px -1px 0px #161b22,
+    0px 0px 4px rgba(255, 255, 255, 0.2);
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+}
+
+.lux-powered-by {
+  font-size: 11px;
+  color: var(--dim);
+  font-weight: 400;
+  letter-spacing: 0px;
+  text-shadow: none;
+}
+
 :root {
   --bg: #0d1117; --panel: #161b22; --elev: #1c232c;
   --border: #30363d; --text: #f0f6fc; --dim: #8b949e; --faint: #6e7681;
@@ -146,7 +235,13 @@ button.btn.loading { opacity: 0.5; pointer-events: none; }
 <body>
 <div class="app">
   <div class="topbar">
-    <div class="brand" style="color: #ffffff; font-weight: bold; display: flex; align-items: baseline; gap: 8px;"><span>LUX-engine V6</span><span style="font-size: 11px; color: var(--dim); font-weight: normal; letter-spacing: 0;">Powered by BLAUENACHT</span></div>
+    <div class="brand-container">
+    <div class="lux-star-logo"></div>
+    <div class="lux-text-title">
+      <span>LUX-ENGINE V6</span>
+      <span class="lux-powered-by">Powered by BLAUENACHT</span>
+    </div>
+  </div>
     <div class="topbar-btns">
       <button type="button" class="btn refresh" id="btnRefreshUS">US 시세조회</button>
       <button type="button" class="btn refresh" id="btnRefreshKR">KR 시세조회</button>
