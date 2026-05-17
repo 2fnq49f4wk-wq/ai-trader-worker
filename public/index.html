@@ -347,10 +347,10 @@ button.btn.refresh { color: var(--blue); border-color: var(--blue); }
 button.btn.logs { color: var(--purple); border-color: var(--purple); }
 button.btn:active { opacity: 0.6; }
 button.btn.loading { opacity: 0.5; pointer-events: none; }
-.pos { color: var(--green); font-weight: bold; }
-.neg { color: var(--red); font-weight: bold; }
+.pos { color: var(--green); font-weight: 700; font-family: 'IBM Plex Mono', 'Courier New', monospace; letter-spacing: 0.3px; }
+.neg { color: var(--red); font-weight: 700; font-family: 'IBM Plex Mono', 'Courier New', monospace; letter-spacing: 0.3px; }
 .right { text-align: right; }
-.engine-status { display: flex; align-items: center; gap: 8px; font-size: 11px; padding: 8px 14px; background: var(--elev); border-bottom: 1px solid var(--border); font-weight: bold; flex-wrap: wrap; text-shadow: 0 0 8px rgba(255,255,255,0.4); }
+.engine-status { display: flex; align-items: center; gap: 8px; font-size: 11px; padding: 8px 14px; background: var(--elev); border-bottom: 1px solid var(--border); font-weight: 700; flex-wrap: wrap; text-shadow: 0 0 8px rgba(255,255,255,0.4); font-family: 'IBM Plex Mono', 'Courier New', monospace; letter-spacing: 0.3px; }
 .dot { width: 8px; height: 8px; border-radius: 50%; display: inline-block; }
 .dot.alive { background: var(--green); box-shadow: 0 0 6px var(--green); animation: pulse 2s infinite; }
 .dot.stale { background: var(--red); }
@@ -419,7 +419,7 @@ button.btn.loading { opacity: 0.5; pointer-events: none; }
 .market-status-open { color: var(--green) !important; }
 .market-status-closed { color: var(--orange) !important; }
 .cfg-display { display: flex; gap: 14px; font-size: 11px; color: var(--dim); flex-wrap: wrap; }
-.cfg-display b { color: var(--amber); }
+.cfg-display b { color: #ffffff; font-weight: 700; font-family: 'IBM Plex Mono', 'Courier New', monospace; letter-spacing: 0.3px; font-size: 12px; }
 .checkbox-row { display: flex; align-items: center; gap: 10px; margin-bottom: 14px; }
 .checkbox-row input[type="checkbox"] { width: 20px; height: 20px; }
 .checkbox-row label { font-size: 13px; color: var(--text); font-weight: bold; }
@@ -430,7 +430,7 @@ button.btn.loading { opacity: 0.5; pointer-events: none; }
 .trades-summary { display: flex; gap: 16px; font-size: 11px; color: var(--dim); }
 .trades-summary-item { display: flex; flex-direction: column; }
 .trades-summary-label { font-size: 9px; color: var(--faint); margin-bottom: 2px; }
-.trades-summary-value { font-weight: bold; color: var(--text); }
+.trades-summary-value { font-weight: 700; color: #ffffff; font-family: 'IBM Plex Mono', 'Courier New', monospace; font-size: 13px; letter-spacing: 0.5px; }
 .trades-table { display: none; }
 .trades-table.show { display: block; }
 .watchlist-toggle-btn { font-size: 10px; color: var(--amber); font-weight: bold; padding: 3px 8px; background: var(--panel); border: 1px solid var(--border); border-radius: 3px; cursor: pointer; font-family: inherit; letter-spacing: 1px; }
