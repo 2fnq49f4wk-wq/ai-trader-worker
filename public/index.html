@@ -700,8 +700,8 @@ button.btn.loading { opacity: 0.5; pointer-events: none; }
 
 <script>
 (function () {
-  var REFRESH_MS = 10000;
-  var LOGS_REFRESH_MS = 5000;
+  var REFRESH_MS = 15000;  // [개선] 10s → 15s 폴링 부하 감소
+  var LOGS_REFRESH_MS = 7000;  // [개선] 5s → 7s (모달 열린 동안만 동작)
   var timer = null;
   var logsTimer = null;
   var allLogs = [];
@@ -1143,9 +1143,13 @@ button.btn.loading { opacity: 0.5; pointer-events: none; }
 
   function refreshAll() {
     renderMarketStatus();
-    Promise.all([api('/api/state'), api('/api/trades?limit=50'), api('/api/watchlist'), api('/api/indices')])
+    // [개선] /api/state 1회로 watchlist + indices까지 한 번에 받음
+    // trades는 별도 — 자주 안 바뀌니 분리 유지 (캐싱 가능성)
+    Promise.all([api('/api/state'), api('/api/trades?limit=50')])
       .then(function(r){
-        var state = r[0], trades = r[1], quotes = r[2]||[], indices = r[3]||[];
+        var state = r[0], trades = r[1];
+        var quotes = state.watchlist || [];
+        var indices = state.indices || [];
         currentCfg = state.cfg;
         usFavorites = (state.cfg && state.cfg.usFavorites) || [];
         krFavorites = (state.cfg && state.cfg.krFavorites) || [];
@@ -1163,13 +1167,7 @@ button.btn.loading { opacity: 0.5; pointer-events: none; }
         renderTrades(trades);
         renderCfgDisplay(state.cfg);
       })['catch'](function(e){ toast('로드 실패: '+e.message); });
-    // 튠 배너용으로 가벼운 로그 한번 (TUNE 1개만 필요)
-    if (!logsModalOpen) {
-      api('/api/logs?limit=50').then(function(logs){
-        allLogs = logs || [];
-        renderCfgDisplay(currentCfg);
-      })['catch'](function(){});
-    }
+    // [개선] 로그는 모달 열렸을 때만 fetch (불필요한 폴링 제거)
   }
 
   function runNow() {
