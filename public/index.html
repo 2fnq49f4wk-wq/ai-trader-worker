@@ -852,6 +852,10 @@ button.btn.loading { opacity: 0.5; pointer-events: none; }
 
   function openSettings() {
     if (!currentCfg) { toast('설정 로드 중...'); return; }
+    var pw = prompt('SETTINGS 비밀번호를 입력하세요:');
+    if (pw === null) return;
+    if (pw !== '0728') { toast('비밀번호가 틀렸습니다'); return; }
+    
     $('cfgAutoTune').checked = !!currentCfg.autoTune;
     $('cfgMarketHoursOnly').checked = currentCfg.marketHoursOnly !== false;
     $('cfgInitCashUS').value = currentCfg.initialCashUS;
@@ -874,7 +878,7 @@ button.btn.loading { opacity: 0.5; pointer-events: none; }
     $('cfgFeeUS').value = currentCfg.feeUS;
     $('cfgFeeKR').value = currentCfg.feeKR;
     $('settingsModal').classList.add('show');
-  }
+}
 
   function closeSettings() { $('settingsModal').classList.remove('show'); }
 
@@ -964,7 +968,11 @@ button.btn.loading { opacity: 0.5; pointer-events: none; }
     });
   });
 
-  refreshAll();
+    refreshAll();
+  // 자동 RUN NOW 1회
+  setTimeout(function() {
+    runNow();
+  }, 2000);
   timer = setInterval(refreshAll, REFRESH_MS);
 })();
 </script>
