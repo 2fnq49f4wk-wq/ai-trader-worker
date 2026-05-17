@@ -24,12 +24,16 @@ const DEFAULT_CFG = {
   rsiBuy: 35, rsiSell: 70, rsiPeriod: 14,
   stopLoss: 5.0,              // 하드 손절 -5% (유지)
   takeProfit1: 4.0,           // 1차 익절 +4% (절반 매도)
-  takeProfit2: 8.0,           // 2차 익절 +8% (전량)
+  takeProfit2: 11.0,          // 2차 익절 +11% (전량) — 손익비 개선
   // === 일중 필터 ===
   maxDailyDrop: 5.0,          // 일중 -5% 이상 폭락 종목은 매수 금지 (떨어지는 칼날)
   marketCrashPct: -2.0,       // 지수 -2% 이하면 매수 금지
   // === 수수료 ===
-  feeUS: 0.0001, feeKR: 0.0015,
+  // 미국: 매수+매도 통합 fee (낮음)
+  // 한국: 매수수수료 0.015% + 매도 시 거래세 0.18%가 별도로 붙음
+  feeUS: 0.0001,
+  feeKR: 0.00015,             // 한국 매수/매도 공통 수수료만 (거래세 제외)
+  krSellTax: 0.0018,          // 한국 매도 시 거래세 0.18% (별도)
   // === 포지션 사이징 ===
   posSize: 10,                // 기본 10%
   posSizeBear: 6,             // BEAR일 때 6%
@@ -47,7 +51,7 @@ const DEFAULT_CFG = {
   timeStopMaxDays: 7,         // 7일 보유 → 무조건 청산
   minHoldHours: 4,            // 최소 4시간은 보유 (당일 변동 무시)
   // === 캐시 ===
-  dailyCacheMinutes: 30,      // 일봉 데이터 30분 캐시
+  dailyCacheMinutes: 10,      // 일봉 데이터 10분 캐시 (변동성 대응)
   // === 자본 ===
   initialCashUS: 10000, initialCashKR: 10000000,
   // === 모드 ===
@@ -338,10 +342,10 @@ function evaluateBuySignals(price, dayPct, dailyData, cfg) {
     }
   }
   
-  // 신호 B: 골든크로스 풀백 (가장 강력)
-  if (ma5 != null && ma5 > ma20 && dailyRsi >= 40 && dailyRsi <= 55) {
+  // 신호 B: 골든크로스 풀백 (가장 강력) — 진입 범위 확장
+  if (ma5 != null && ma5 > ma20 && dailyRsi >= 40 && dailyRsi <= 60) {
     const ma5Gap = ((price - ma5) / ma5) * 100;
-    if (ma5Gap >= -2 && ma5Gap <= 1) {
+    if (ma5Gap >= -3 && ma5Gap <= 2) {
       return { name: "B_GOLDEN_PULLBACK", weight: 1.2, detail: "MA5>MA20, gap " + ma5Gap.toFixed(1) + "%" };
     }
   }
@@ -366,7 +370,8 @@ function evaluateBuySignals(price, dayPct, dailyData, cfg) {
 }
 
 // === 매수 차단 필터 (하나라도 걸리면 매수 금지) ===
-function evaluateBuyBlocks(price, dayPct, dailyData, cfg, regime) {
+// signal: evaluateBuySignals가 반환한 신호 (없으면 null) — BB하단 신호는 MA20 아래가 정상이므로 일부 차단을 면제
+function evaluateBuyBlocks(price, dayPct, dailyData, cfg, regime, signal) {
   const closes = dailyData.closes;
   if (!closes || closes.length < 25) return "INSUFFICIENT_DATA";
   
@@ -380,11 +385,13 @@ function evaluateBuyBlocks(price, dayPct, dailyData, cfg, regime) {
   const dailyRsi = getRSI(closes, cfg.rsiPeriod);
   
   // 3. MA20 아래 + RSI 40 이상 (하락 진행 중)
-  if (ma20 != null && price < ma20 && dailyRsi != null && dailyRsi >= 40) {
+  //    예외: 신호 A(RSI 반전) / C(BB 하단)는 본래 MA20 아래에서 발화하는 역추세 매수
+  const isCounterTrendSignal = signal && (signal.name === "A_RSI_REVERSAL" || signal.name === "C_BB_LOWER");
+  if (!isCounterTrendSignal && ma20 != null && price < ma20 && dailyRsi != null && dailyRsi >= 40) {
     return "DOWNTREND price<MA20 RSI=" + dailyRsi.toFixed(1);
   }
   
-  // 4. 최근 5일 중 3일 이상 음봉
+  // 4. 최근 5일 중 4일 이상 음봉
   const downDays = countDownDays(closes, 5);
   if (downDays >= 4) return "PERSISTENT_DOWN " + downDays + "/5";
   
@@ -449,7 +456,9 @@ async function executeSell(DB, market, symbol, pos, sellQty, price, reason, cfg,
   const feeRate = market === "us" ? cfg.feeUS : cfg.feeKR;
   const gross = price * sellQty;
   const fee = gross * feeRate;
-  const proceeds = gross - fee;
+  // 한국 시장은 매도 시 거래세(증권거래세 + 농특세, 약 0.18%) 추가 차감
+  const sellTax = market === "kr" ? gross * (cfg.krSellTax || 0) : 0;
+  const proceeds = gross - fee - sellTax;
   cash[market] += proceeds;
   
   const costPortion = (pos.meta && pos.meta.feePaid ? pos.meta.feePaid : 0) * (sellQty / (pos.meta.originalQty || pos.qty));
@@ -469,7 +478,8 @@ async function executeSell(DB, market, symbol, pos, sellQty, price, reason, cfg,
   }
   
   await recordTrade(DB, { ts: Date.now(), market: market, symbol: symbol, side: "SELL", qty: sellQty, price: price, pnl: pnl, pnl_pct: pnlPct, reason: reason });
-  await log(DB, "TRADE", symbol, "SELL x" + sellQty + " @" + price.toFixed(2) + " PnL " + pnlPct.toFixed(2) + "% (held " + heldMin + "min, " + reason + ")");
+  const taxNote = market === "kr" ? " tax=" + sellTax.toFixed(2) : "";
+  await log(DB, "TRADE", symbol, "SELL x" + sellQty + " @" + price.toFixed(2) + " PnL " + pnlPct.toFixed(2) + "% (held " + heldMin + "min, " + reason + ")" + taxNote);
   return { cash: cash, pnlPct: pnlPct };
 }
 
@@ -729,15 +739,17 @@ async function runTradingCycle(env) {
           if (didSell) sold++;
         } else {
           // === 신규 매수 평가 ===
-          const blockReason = evaluateBuyBlocks(price, dayPct, daily, cfg, regime);
-          if (blockReason) {
-            await log(DB, "NOBUY", symbol, "BLOCK: " + blockReason);
-            continue;
-          }
-          
+          // 1) 먼저 신호 평가 (어떤 신호인지에 따라 차단 예외 결정)
           const signal = evaluateBuySignals(price, dayPct, daily, cfg);
           if (!signal) {
             await log(DB, "NOBUY", symbol, "no signal (RSI=" + dailyRsi.toFixed(1) + ", day=" + dayPct.toFixed(2) + "%)");
+            continue;
+          }
+          
+          // 2) 차단 필터 (역추세 신호 A/C는 다운트렌드 차단 면제)
+          const blockReason = evaluateBuyBlocks(price, dayPct, daily, cfg, regime, signal);
+          if (blockReason) {
+            await log(DB, "NOBUY", symbol, "BLOCK[" + signal.name + "]: " + blockReason);
             continue;
           }
           
