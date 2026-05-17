@@ -1,13 +1,12 @@
 // ============================================================
-// LUX-engine V7 (개선판)
-// 주요 변경:
-//  1. Cycle Lock (race condition 차단)
-//  2. 인버스 페어 / 섹터 동시 보유 제한
-//  3. Signal Confluence (다중 신호 합의)
-//  4. 상대강도(RS) 필터
-//  5. Fetch fallback (intraday 실패 시 신규 매수 제외)
-//  6. API 통합 (/api/state 하나로 watchlist + indices 포함)
-//  7. AutoTune 강화 (신호별 승률 추적 → 가중치 동적 조정)
+// LUX-engine V7.1 (버그 수정판)
+// V7 -> V7.1 변경점:
+//  • Cycle Lock을 atomic INSERT로 교체 (D1 race condition 차단)
+//  • ATR을 진짜 True Range로 변경 (high/low 사용, fallback 있음)
+//  • 분할매도 시 진입수수료 비례 차감 (feeRemaining 필드)
+//  • AutoTune reason 파싱 구분자를 #entry= 로 변경 (충돌 방지)
+//  • Confluence type 모순 검사 추가 (COUNTER+TREND 혼합은 페널티)
+//  • 신호별 perfMult 최소표본 5→20, Bayesian shrinkage 적용
 // ============================================================
 
 const DEFAULT_US = [
@@ -80,6 +79,8 @@ const DEFAULT_CFG = {
   requireConfluence: true,      // 단독 신호 차단
   soloSignalWeight: 0.6,        // 단독 신호 허용 시 가중치 감소
   confluenceBonus: 1.3,         // 2개 이상 합의 시 보너스
+  allowMixedConfluence: true,   // [신규] COUNTER+TREND 혼합 합의 허용 여부
+  mixedConfluencePenalty: 0.8,  // [신규] 혼합 합의 가중치 (1.0 미만 = 페널티)
   // === [신규] 상대강도 ===
   rsFilterEnabled: true,
   rsLookbackDays: 20,
@@ -158,11 +159,26 @@ function getMA(h, p) {
   return s / p;
 }
 
-function getATR(h, p) {
+// [수정] 진짜 True Range 기반 ATR — highs/lows/closes 사용
+// 하위 호환: highs/lows가 없거나 길이 부족하면 close-to-close 변동량으로 fallback
+function getATR(closes, p, highs, lows) {
   p = p || 14;
-  if (!Array.isArray(h) || h.length < p + 1) return null;
+  if (!Array.isArray(closes) || closes.length < p + 1) return null;
+  const hasHL = Array.isArray(highs) && Array.isArray(lows)
+    && highs.length === closes.length && lows.length === closes.length;
   let s = 0;
-  for (let i = h.length - p; i < h.length; i++) s += Math.abs(h[i] - h[i-1]);
+  for (let i = closes.length - p; i < closes.length; i++) {
+    let tr;
+    if (hasHL && typeof highs[i] === "number" && typeof lows[i] === "number" && highs[i] > 0 && lows[i] > 0) {
+      const hl = highs[i] - lows[i];
+      const hc = Math.abs(highs[i] - closes[i-1]);
+      const lc = Math.abs(lows[i] - closes[i-1]);
+      tr = Math.max(hl, hc, lc);
+    } else {
+      tr = Math.abs(closes[i] - closes[i-1]);
+    }
+    s += tr;
+  }
   return s / p;
 }
 
@@ -233,12 +249,25 @@ async function fetchDailyFull(symbol) {
   if (!result) throw new Error("no daily data");
   const meta = result.meta || {};
   const quote = (result.indicators && result.indicators.quote && result.indicators.quote[0]) || {};
-  const closes = filterNulls(quote.close || []);
-  const volumes = (quote.volume || []).filter(function(v){ return typeof v === "number" && !isNaN(v) && v > 0; });
+  // [수정] highs/lows도 같이 추출 — ATR True Range 계산용
+  const rawCloses = quote.close || [];
+  const rawHighs = quote.high || [];
+  const rawLows = quote.low || [];
+  const rawVols = quote.volume || [];
+  // 인덱스 정렬을 유지하면서 null을 가진 row 전체를 제거
+  const closes = [], highs = [], lows = [], volumes = [];
+  for (let i = 0; i < rawCloses.length; i++) {
+    const c = rawCloses[i], h = rawHighs[i], l = rawLows[i], v = rawVols[i];
+    if (typeof c !== "number" || isNaN(c) || c <= 0) continue;
+    closes.push(c);
+    highs.push((typeof h === "number" && !isNaN(h) && h > 0) ? h : c);
+    lows.push((typeof l === "number" && !isNaN(l) && l > 0) ? l : c);
+    volumes.push((typeof v === "number" && !isNaN(v) && v > 0) ? v : 0);
+  }
   if (closes.length === 0) throw new Error("no daily close");
   const price = (typeof meta.regularMarketPrice === "number" && meta.regularMarketPrice > 0) ? meta.regularMarketPrice : closes[closes.length - 1];
   const prevClose = closes.length >= 2 ? closes[closes.length - 2] : price;
-  return { symbol: symbol, price: price, prevClose: prevClose, closes: closes, volumes: volumes };
+  return { symbol: symbol, price: price, prevClose: prevClose, closes: closes, highs: highs, lows: lows, volumes: volumes };
 }
 
 async function getDailyCached(DB, symbol, cacheMinutes) {
@@ -249,6 +278,8 @@ async function getDailyCached(DB, symbol, cacheMinutes) {
   const data = await fetchDailyFull(symbol);
   const toCache = {
     closes: data.closes,
+    highs: data.highs,        // [신규]
+    lows: data.lows,          // [신규]
     volumes: data.volumes,
     prevClose: data.prevClose,
     ts: Date.now()
@@ -409,7 +440,7 @@ function evaluateBuySignals(price, dayPct, dailyData, cfg) {
   return signals;
 }
 
-// === [신규] Confluence 해석 — 단독/합의 처리 + 신호별 승률 반영 ===
+// === [수정] Confluence 해석 — type 모순 차단 + 단독/합의 처리 + 신호별 승률 반영 ===
 function resolveSignals(signals, cfg, signalStats) {
   if (signals.length === 0) return null;
   if (signals.length === 1) {
@@ -424,6 +455,19 @@ function resolveSignals(signals, cfg, signalStats) {
       isCounterTrend: s.type === "COUNTER"
     };
   }
+  // [신규] type 모순 검사 — COUNTER와 TREND가 섞이면 같은 방향 신호 합의로 안 쳐줌
+  let counterCount = 0, trendCount = 0;
+  for (const s of signals) {
+    if (s.type === "COUNTER") counterCount++;
+    else if (s.type === "TREND") trendCount++;
+  }
+  const mixed = (counterCount > 0 && trendCount > 0);
+  // 모순 합의는 가중치 추가 페널티 (단독 신호보다 약간 나은 정도)
+  // 혹은 cfg.allowMixedConfluence === false면 아예 거부
+  if (mixed && cfg.allowMixedConfluence === false) {
+    return null;
+  }
+
   // 2개 이상 — 가중 평균 × 보너스, 신호별 성과 반영
   let totalW = 0;
   const names = [];
@@ -433,9 +477,11 @@ function resolveSignals(signals, cfg, signalStats) {
     let perfMult = 1.0;
     if (signalStats && signalStats[s.name]) {
       const st = signalStats[s.name];
-      if (st.count >= 5) {
-        // 승률 50% 기준 0.7~1.3배 스케일
-        perfMult = Math.max(0.7, Math.min(1.3, 0.4 + st.winRate * 1.2));
+      // [수정] 최소 표본 5 → 20으로 상향, Bayesian shrinkage 적용
+      // posterior ≈ (wins+α) / (count+α+β), α=β=10 → 사전 50% 가정에 평균 회귀
+      if (st.count >= 20) {
+        const shrunkRate = (st.wins + 10) / (st.count + 20);
+        perfMult = Math.max(0.7, Math.min(1.3, 0.4 + shrunkRate * 1.2));
       }
     }
     totalW += s.weight * perfMult;
@@ -444,9 +490,11 @@ function resolveSignals(signals, cfg, signalStats) {
     if (s.type === "COUNTER") anyCounter = true;
   }
   const avgW = totalW / signals.length;
+  // [신규] 모순 합의는 보너스 대신 감점
+  const bonus = mixed ? (cfg.mixedConfluencePenalty != null ? cfg.mixedConfluencePenalty : 0.8) : cfg.confluenceBonus;
   return {
-    name: "CONF[" + names.map(function(n){ return n.charAt(0); }).join("+") + "]",
-    weight: avgW * cfg.confluenceBonus,
+    name: (mixed ? "MIX[" : "CONF[") + names.map(function(n){ return n.charAt(0); }).join("+") + "]",
+    weight: avgW * bonus,
     type: anyCounter ? "MIXED" : "TREND",
     detail: details.join(" | "),
     members: names,
@@ -470,8 +518,11 @@ function evaluateBuyBlocks(price, dayPct, dailyData, cfg, regime, signal, ctx) {
   }
   const downDays = countDownDays(closes, 5);
   if (downDays >= 4) return "PERSISTENT_DOWN " + downDays + "/5";
-  const atr14 = getATR(closes, cfg.atrPeriod);
-  const atr30 = getATR(closes, 30);
+  // [수정] True Range ATR로 변동성 스파이크 감지
+  const highs = dailyData.highs || null;
+  const lows = dailyData.lows || null;
+  const atr14 = getATR(closes, cfg.atrPeriod, highs, lows);
+  const atr30 = getATR(closes, 30, highs, lows);
   if (atr14 != null && atr30 != null && atr14 > atr30 * 2.0) {
     return "VOLATILITY_SPIKE ATR14=" + atr14.toFixed(2) + " ATR30=" + atr30.toFixed(2);
   }
@@ -533,11 +584,12 @@ async function executeBuy(DB, market, symbol, qty, price, signal, dailyAtr, cfg,
       qty: qty, avg: price, opened_ts: Date.now(),
       meta: {
         feePaid: fee,
+        feeRemaining: fee,             // [수정] 분할매도 시 차감해 가는 진입수수료 잔액
         atrAtEntry: dailyAtr,
         stopPrice: stopPrice,
         peakPrice: price,
         signal: signal.name,
-        signalMembers: signal.members || [signal.name],   // [신규] 신호별 성과 추적용
+        signalMembers: signal.members || [signal.name],
         tp1Done: false,
         originalQty: qty
       }
@@ -562,20 +614,31 @@ async function executeSell(DB, market, symbol, pos, sellQty, price, reason, cfg,
   const proceeds = gross - fee - sellTax;
   cash[market] += proceeds;
 
-  const costPortion = (pos.meta && pos.meta.feePaid ? pos.meta.feePaid : 0) * (sellQty / (pos.meta.originalQty || pos.qty));
-  const costBasis = pos.avg * sellQty + costPortion;
+  // [수정] 진입수수료를 sellQty 비례로 분할 — feeRemaining에서 차감해 중복 계산 방지
+  pos.meta = pos.meta || {};
+  const origQty = pos.meta.originalQty || pos.qty;
+  const feeRemaining = (typeof pos.meta.feeRemaining === "number")
+    ? pos.meta.feeRemaining
+    : (pos.meta.feePaid || 0);
+  const entryFeePortion = feeRemaining * (sellQty / Math.max(origQty - (origQty - pos.qty), 1));
+  // 위 식은 직관적이지 않아 정리:
+  // 남은 진입수량 = pos.qty (이번 매도 직전)
+  // 이번 매도 비중 = sellQty / pos.qty (직전 남은 수량 대비)
+  // → 잔여 수수료 중 이 비중만큼 차감
+  const entryFeeForThisSell = feeRemaining * (sellQty / pos.qty);
+  const costBasis = pos.avg * sellQty + entryFeeForThisSell;
   const pnl = proceeds - costBasis;
   const pnlPct = costBasis > 0 ? (pnl / costBasis * 100) : 0;
   const heldMin = pos.opened_ts ? Math.floor((Date.now() - pos.opened_ts) / 60000) : 0;
 
-  // [신규] 매도 사유에 진입 신호 멤버 기록 → autoTune에서 파싱
-  const signalMembers = (pos.meta && pos.meta.signalMembers) ? pos.meta.signalMembers : [];
-  const enrichedReason = reason + " | entry=" + signalMembers.join(",");
+  // [수정] 매도 사유 인코딩 — '#entry=' 구분자로 파싱 충돌 차단
+  const signalMembers = pos.meta.signalMembers || [];
+  const enrichedReason = reason + " #entry=" + signalMembers.join(",");
 
   if (sellQty < pos.qty) {
     pos.qty = pos.qty - sellQty;
-    pos.meta = pos.meta || {};
     pos.meta.tp1Done = true;
+    pos.meta.feeRemaining = Math.max(0, feeRemaining - entryFeeForThisSell);  // [신규]
     await savePosition(DB, market, symbol, pos);
   } else {
     await deletePosition(DB, symbol);
@@ -610,10 +673,12 @@ async function refreshQuotesOnly(env, market) {
       const prevClose = intra.prevClose || price;
       const dayPct = ((price - prevClose) / prevClose) * 100;
       const closes = daily.closes || [];
+      const highs = daily.highs || null;
+      const lows = daily.lows || null;
       const dailyRsi = closes.length >= cfg.rsiPeriod + 1 ? getRSI(closes, cfg.rsiPeriod) : null;
       const dailyMa = closes.length >= cfg.maPeriod ? getMA(closes, cfg.maPeriod) : null;
       const dailyMaShort = closes.length >= cfg.maShortPeriod ? getMA(closes, cfg.maShortPeriod) : null;
-      const dailyAtr = closes.length >= cfg.atrPeriod + 1 ? getATR(closes, cfg.atrPeriod) : null;
+      const dailyAtr = closes.length >= cfg.atrPeriod + 1 ? getATR(closes, cfg.atrPeriod, highs, lows) : null;
       const bb = getBollingerBands(closes, cfg.maPeriod, cfg.bbStdMult);
       const return20 = getNDayReturn(closes, 20);
       await saveQuote(DB, symbol, market, {
@@ -645,11 +710,11 @@ async function autoTune(DB, cfg, regimes) {
     const sellCount = totalSells.c || 0;
     if (sellCount - tuneState.tradeCountAtLastTune < 10) return cfg;
 
-    // [신규] 신호별 성과 집계 (reason의 entry= 파싱)
+    // [수정] 신호별 성과 집계 — '#entry=' 구분자로 파싱 충돌 방지
     const signalStats = {};
     for (const t of recentSells) {
       const reason = t.reason || "";
-      const m = reason.match(/entry=([A-Z_,]+)/);
+      const m = reason.match(/#entry=([A-Z_][A-Z0-9_,]*)/);
       if (!m) continue;
       const members = m[1].split(",").filter(function(x){ return x; });
       for (const sigName of members) {
@@ -703,19 +768,50 @@ async function autoTune(DB, cfg, regimes) {
   return cfg;
 }
 
-// === [신규] Cycle Lock ===
+// === [수정] Cycle Lock — atomic INSERT WHERE NOT EXISTS로 race condition 차단 ===
+// state 테이블의 PRIMARY KEY 제약 + 조건부 INSERT로 atomic하게 락 획득.
+// D1은 단일 SQL 문장은 atomic하므로 두 동시 호출 중 하나만 성공함.
 async function acquireCycleLock(DB, ttl) {
-  const lock = await getState(DB, "lock:cycle", null);
   const now = Date.now();
-  if (lock && lock.until && lock.until > now) {
+  const lockKey = "lock:cycle";
+  const lockValue = JSON.stringify({ until: now + ttl, pid: now });
+
+  // 1) 만료된 락은 먼저 정리 (where 조건으로 atomic하게)
+  try {
+    await DB.prepare(
+      "DELETE FROM state WHERE k = ? AND CAST(json_extract(v, '$.until') AS INTEGER) <= ?"
+    ).bind(lockKey, now).run();
+  } catch (e) {
+    // json_extract 미지원 환경 fallback — 만료 검사 없이 진행
+    try {
+      const row = await DB.prepare("SELECT v FROM state WHERE k = ?").bind(lockKey).first();
+      if (row) {
+        let parsed = null;
+        try { parsed = JSON.parse(row.v); } catch (e2) {}
+        if (parsed && parsed.until && parsed.until <= now) {
+          await DB.prepare("DELETE FROM state WHERE k = ?").bind(lockKey).run();
+        }
+      }
+    } catch (e3) {}
+  }
+
+  // 2) atomic INSERT — 락이 이미 있으면 실패 (ON CONFLICT 사용 안 함)
+  try {
+    const res = await DB.prepare(
+      "INSERT INTO state (k, v, updated_ts) VALUES (?, ?, ?)"
+    ).bind(lockKey, lockValue, now).run();
+    // 성공 시 락 획득
+    return true;
+  } catch (e) {
+    // UNIQUE constraint 위반 = 다른 인스턴스가 락 보유 중
     return false;
   }
-  await setState(DB, "lock:cycle", { until: now + ttl, pid: now });
-  return true;
 }
 
 async function releaseCycleLock(DB) {
-  try { await setState(DB, "lock:cycle", { until: 0, pid: 0 }); } catch (e) {}
+  try {
+    await DB.prepare("DELETE FROM state WHERE k = ?").bind("lock:cycle").run();
+  } catch (e) {}
 }
 
 async function runTradingCycle(env) {
@@ -825,10 +921,12 @@ async function runTradingCycle(env) {
 
           const dayPct = ((price - prevClose) / prevClose) * 100;
           const closes = daily.closes || [];
+          const highs = daily.highs || null;
+          const lows = daily.lows || null;
           const dailyRsi = closes.length >= cfg.rsiPeriod + 1 ? getRSI(closes, cfg.rsiPeriod) : null;
           const dailyMa = closes.length >= cfg.maPeriod ? getMA(closes, cfg.maPeriod) : null;
           const dailyMaShort = closes.length >= cfg.maShortPeriod ? getMA(closes, cfg.maShortPeriod) : null;
-          const dailyAtr = closes.length >= cfg.atrPeriod + 1 ? getATR(closes, cfg.atrPeriod) : null;
+          const dailyAtr = closes.length >= cfg.atrPeriod + 1 ? getATR(closes, cfg.atrPeriod, highs, lows) : null;
           const bb = getBollingerBands(closes, cfg.maPeriod, cfg.bbStdMult);
           const return20 = getNDayReturn(closes, 20);
 
