@@ -13,9 +13,8 @@
 const DEFAULT_US = [
   "AAPL","NVDA","TSLA","GOOGL","AMZN",
   "AVGO","RKLB","META","AMD","SNDK",
-  "GS","BA","VOO",
+  "SOXL","SOXS","GS","BA","VOO",
   "BRK-B","INTC","ORCL","KO","PLTR"
-  // SOXL/SOXS 제거 — 3배 레버리지 ETF는 시간 가치 손실로 양쪽 다 마이너스 수렴
 ];
 
 const DEFAULT_KR = [
