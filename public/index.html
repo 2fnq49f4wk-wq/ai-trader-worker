@@ -648,34 +648,44 @@ button.btn.loading { opacity: 0.5; pointer-events: none; }
     </div>
     <div class="field-row">
       <div class="field"><label>StopLoss %</label><input type="number" id="cfgStopLoss" min="0.5" max="50" step="0.5"></div>
-      <div class="field"><label>TakeProfit %</label><input type="number" id="cfgTakeProfit" min="0.5" max="50" step="0.5"></div>
-      <div class="field"><label>PosSize %</label><input type="number" id="cfgPosSize" min="1" max="100"></div>
+      <div class="field"><label>TakeProfit1 % (절반매도)</label><input type="number" id="cfgTakeProfit1" min="0.5" max="50" step="0.5"></div>
+      <div class="field"><label>TakeProfit2 % (전량매도)</label><input type="number" id="cfgTakeProfit2" min="0.5" max="50" step="0.5"></div>
     </div>
     <div class="field-row">
-      <div class="field"><label>Day Buy- %</label><input type="number" id="cfgDayBuyPct" min="0.1" max="20" step="0.1"></div>
-      <div class="field"><label>Day Sell+ %</label><input type="number" id="cfgDaySellPct" min="0.5" max="20" step="0.5"></div>
+      <div class="field"><label>PosSize % (기본)</label><input type="number" id="cfgPosSize" min="1" max="100"></div>
+      <div class="field"><label>PosSize % (BULL)</label><input type="number" id="cfgPosSizeBull" min="1" max="100"></div>
+      <div class="field"><label>PosSize % (BEAR)</label><input type="number" id="cfgPosSizeBear" min="1" max="100"></div>
+    </div>
+    <div class="field-row">
+      <div class="field"><label>Max Daily Drop %</label><input type="number" id="cfgMaxDailyDrop" min="0.5" max="20" step="0.5"></div>
+      <div class="field"><label>Market Crash %</label><input type="number" id="cfgMarketCrashPct" max="0" step="0.5"></div>
       <div class="field"><label>MA Period</label><input type="number" id="cfgMaPeriod" min="2" max="120"></div>
     </div>
     <div class="field-row">
-      <div class="field"><label>Min Hold (min)</label><input type="number" id="cfgMinHoldMin" min="0" max="1440" step="5"></div>
-      <div class="field"></div>
-      <div class="field"></div>
+      <div class="field"><label>Min Hold (hours)</label><input type="number" id="cfgMinHoldHours" min="0" max="48" step="0.5"></div>
+      <div class="field"><label>Time Stop (days)</label><input type="number" id="cfgTimeStopDays" min="1" max="30"></div>
+      <div class="field"><label>Time Max (days)</label><input type="number" id="cfgTimeStopMaxDays" min="1" max="60"></div>
     </div>
 
     <div class="section-divider"></div>
-    <div class="section-title">ATR</div>
+    <div class="section-title">ATR / TRAILING</div>
     <div class="field-row">
       <div class="field"><label>ATR Period</label><input type="number" id="cfgAtrPeriod" min="2" max="60"></div>
       <div class="field"><label>ATR Stop x</label><input type="number" id="cfgAtrStopMult" min="0.5" max="6" step="0.1"></div>
-      <div class="field"><label>Trail x</label><input type="number" id="cfgTrailMult" min="0.5" max="8" step="0.1"></div>
+      <div class="field"><label>BB Std x</label><input type="number" id="cfgBbStdMult" min="0.5" max="4" step="0.1"></div>
+    </div>
+    <div class="field-row">
+      <div class="field"><label>Trail Start %</label><input type="number" id="cfgTrailStartPct" min="0.5" max="20" step="0.5"></div>
+      <div class="field"><label>Trail Drop %</label><input type="number" id="cfgTrailDropPct" min="0.5" max="20" step="0.5"></div>
+      <div class="field"><label>Cache (min)</label><input type="number" id="cfgDailyCacheMinutes" min="1" max="120"></div>
     </div>
 
     <div class="section-divider"></div>
     <div class="section-title">FEES</div>
     <div class="field-row">
       <div class="field"><label>US Fee</label><input type="number" id="cfgFeeUS" min="0" max="0.05" step="0.0001"></div>
-      <div class="field"><label>KR Fee</label><input type="number" id="cfgFeeKR" min="0" max="0.05" step="0.0001"></div>
-      <div class="field"></div>
+      <div class="field"><label>KR Fee</label><input type="number" id="cfgFeeKR" min="0" max="0.05" step="0.00001"></div>
+      <div class="field"><label>KR Sell Tax</label><input type="number" id="cfgKrSellTax" min="0" max="0.05" step="0.0001"></div>
     </div>
 
     <div class="modal-actions">
@@ -1093,7 +1103,9 @@ button.btn.loading { opacity: 0.5; pointer-events: none; }
 
   function renderCfgDisplay(cfg) {
     if (!cfg) return;
-    $('cfgDisplayUS').innerHTML = 'RSI Buy/<b>'+cfg.rsiBuy+'</b>/Sell/<b>'+cfg.rsiSell+'</b> · Stop/<b>'+cfg.stopLoss+'%</b> · TP/<b>'+cfg.takeProfit+'%</b> · Size/<b>'+cfg.posSize+'%</b>';
+    var tp1 = cfg.takeProfit1 != null ? cfg.takeProfit1 : cfg.takeProfit;
+    var tp2 = cfg.takeProfit2 != null ? cfg.takeProfit2 : '-';
+    $('cfgDisplayUS').innerHTML = 'RSI Buy/<b>'+cfg.rsiBuy+'</b>/Sell/<b>'+cfg.rsiSell+'</b> · Stop/<b>'+cfg.stopLoss+'%</b> · TP1/<b>'+tp1+'%</b> · TP2/<b>'+tp2+'%</b> · Size/<b>'+cfg.posSize+'%</b>';
     var lastTune = allLogs.filter(function(l){return l.level==='TUNE';})[0];
     var banner = $('tuneBanner'), tuneText = $('tuneText');
     if (lastTune && cfg.autoTune) { tuneText.textContent = lastTune.message + ' (' + fmtAgo(lastTune.ts) + ')'; banner.style.display = 'block'; }
@@ -1198,17 +1210,32 @@ button.btn.loading { opacity: 0.5; pointer-events: none; }
     $('cfgRsiSell').value = currentCfg.rsiSell;
     $('cfgRsiPeriod').value = currentCfg.rsiPeriod;
     $('cfgStopLoss').value = currentCfg.stopLoss;
-    $('cfgTakeProfit').value = currentCfg.takeProfit;
+    // takeProfit 단일값 호환 처리 (구버전 cfg에서 마이그레이션)
+    $('cfgTakeProfit1').value = currentCfg.takeProfit1 != null ? currentCfg.takeProfit1 : (currentCfg.takeProfit != null ? currentCfg.takeProfit : 4);
+    $('cfgTakeProfit2').value = currentCfg.takeProfit2 != null ? currentCfg.takeProfit2 : 11;
     $('cfgPosSize').value = currentCfg.posSize;
-    $('cfgDayBuyPct').value = currentCfg.dayBuyPct;
-    $('cfgDaySellPct').value = currentCfg.daySellPct;
+    $('cfgPosSizeBull').value = currentCfg.posSizeBull != null ? currentCfg.posSizeBull : 12;
+    $('cfgPosSizeBear').value = currentCfg.posSizeBear != null ? currentCfg.posSizeBear : 6;
+    $('cfgMaxDailyDrop').value = currentCfg.maxDailyDrop != null ? currentCfg.maxDailyDrop : 5;
+    $('cfgMarketCrashPct').value = currentCfg.marketCrashPct != null ? currentCfg.marketCrashPct : -2;
     $('cfgMaPeriod').value = currentCfg.maPeriod;
-    $('cfgMinHoldMin').value = currentCfg.minHoldMin != null ? currentCfg.minHoldMin : 30;
+    // 구버전 minHoldMin(분) → 시간 변환 후 fallback
+    var mhh = currentCfg.minHoldHours;
+    if (mhh == null && currentCfg.minHoldMin != null) mhh = currentCfg.minHoldMin / 60;
+    if (mhh == null) mhh = 4;
+    $('cfgMinHoldHours').value = mhh;
+    $('cfgTimeStopDays').value = currentCfg.timeStopDays != null ? currentCfg.timeStopDays : 3;
+    $('cfgTimeStopMaxDays').value = currentCfg.timeStopMaxDays != null ? currentCfg.timeStopMaxDays : 7;
     $('cfgAtrPeriod').value = currentCfg.atrPeriod;
     $('cfgAtrStopMult').value = currentCfg.atrStopMult;
-    $('cfgTrailMult').value = currentCfg.trailMult;
+    $('cfgBbStdMult').value = currentCfg.bbStdMult != null ? currentCfg.bbStdMult : 2.0;
+    // 구버전 trailMult → trailStartPct/trailDropPct 분리
+    $('cfgTrailStartPct').value = currentCfg.trailStartPct != null ? currentCfg.trailStartPct : 3;
+    $('cfgTrailDropPct').value = currentCfg.trailDropPct != null ? currentCfg.trailDropPct : 4;
+    $('cfgDailyCacheMinutes').value = currentCfg.dailyCacheMinutes != null ? currentCfg.dailyCacheMinutes : 10;
     $('cfgFeeUS').value = currentCfg.feeUS;
     $('cfgFeeKR').value = currentCfg.feeKR;
+    $('cfgKrSellTax').value = currentCfg.krSellTax != null ? currentCfg.krSellTax : 0.0018;
     $('settingsModal').classList.add('show');
 }
 
@@ -1227,17 +1254,26 @@ button.btn.loading { opacity: 0.5; pointer-events: none; }
       rsiSell: parseFloat($('cfgRsiSell').value),
       rsiPeriod: parseInt($('cfgRsiPeriod').value, 10),
       stopLoss: parseFloat($('cfgStopLoss').value),
-      takeProfit: parseFloat($('cfgTakeProfit').value),
+      takeProfit1: parseFloat($('cfgTakeProfit1').value),
+      takeProfit2: parseFloat($('cfgTakeProfit2').value),
       posSize: parseFloat($('cfgPosSize').value),
-      dayBuyPct: parseFloat($('cfgDayBuyPct').value),
-      daySellPct: parseFloat($('cfgDaySellPct').value),
+      posSizeBull: parseFloat($('cfgPosSizeBull').value),
+      posSizeBear: parseFloat($('cfgPosSizeBear').value),
+      maxDailyDrop: parseFloat($('cfgMaxDailyDrop').value),
+      marketCrashPct: parseFloat($('cfgMarketCrashPct').value),
       maPeriod: parseInt($('cfgMaPeriod').value, 10),
-      minHoldMin: parseInt($('cfgMinHoldMin').value, 10),
+      minHoldHours: parseFloat($('cfgMinHoldHours').value),
+      timeStopDays: parseInt($('cfgTimeStopDays').value, 10),
+      timeStopMaxDays: parseInt($('cfgTimeStopMaxDays').value, 10),
       atrPeriod: parseInt($('cfgAtrPeriod').value, 10),
       atrStopMult: parseFloat($('cfgAtrStopMult').value),
-      trailMult: parseFloat($('cfgTrailMult').value),
+      bbStdMult: parseFloat($('cfgBbStdMult').value),
+      trailStartPct: parseFloat($('cfgTrailStartPct').value),
+      trailDropPct: parseFloat($('cfgTrailDropPct').value),
+      dailyCacheMinutes: parseInt($('cfgDailyCacheMinutes').value, 10),
       feeUS: parseFloat($('cfgFeeUS').value),
-      feeKR: parseFloat($('cfgFeeKR').value)
+      feeKR: parseFloat($('cfgFeeKR').value),
+      krSellTax: parseFloat($('cfgKrSellTax').value)
     };
     fetch('/api/cfg', { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify(body) })
       .then(function(r){return r.json();})
