@@ -6,6 +6,130 @@
 <title>LUX-engine V6</title>
 <style>
 
+/* LUX-ENGINE V6 인트로 애니메이션 전용 스타일 */
+#lux-intro-overlay {
+  position: fixed;
+  top: 0;
+  left: 0;
+  width: 100vw;
+  height: 100vh;
+  background-color: #0d1117;
+  z-index: 99999;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: opacity 0.8s cubic-bezier(0.25, 1, 0.5, 1);
+  pointer-events: auto;
+}
+
+.intro-center-box {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 24px;
+}
+
+/* 인트로용 대형 입체 실버 별 */
+.intro-star-logo {
+  position: relative;
+  width: 120px;
+  height: 120px;
+  opacity: 0;
+  transform: scale(0.3) rotate(-45deg);
+  animation: 
+    starSpawn 1.2s cubic-bezier(0.34, 1.56, 0.64, 1) forwards,
+    starPulseGlow 2s ease-in-out infinite alternate 1.2s;
+}
+
+.intro-star-logo::before {
+  content: "";
+  position: absolute;
+  width: 100%;
+  height: 100%;
+  background: conic-gradient(
+    from 0deg,
+    #ffffff 0deg 22.5deg, #8b949e 22.5deg 45deg,
+    #ffffff 45deg 67.5deg, #6e7681 67.5deg 90deg,
+    #ffffff 90deg 112.5deg, #8b949e 112.5deg 135deg,
+    #ffffff 135deg 157.5deg, #6e7681 157.5deg 180deg,
+    #ffffff 180deg 202.5deg, #8b949e 202.5deg 225deg,
+    #ffffff 225deg 247.5deg, #6e7681 247.5deg 270deg,
+    #ffffff 270deg 292.5deg, #8b949e 292.5deg 315deg,
+    #ffffff 315deg 337.5deg, #6e7681 337.5deg 360deg
+  );
+  clip-path: polygon(
+    50% 0%, 62% 38%, 100% 50%, 62% 62%, 
+    50% 100%, 38% 62%, 0% 50%, 38% 38%
+  );
+}
+
+.intro-star-logo::after {
+  content: "";
+  position: absolute;
+  width: 72%;
+  height: 72%;
+  background: conic-gradient(
+    from 22.5deg,
+    #ffffff 0deg 22.5deg, #4d5259 22.5deg 45deg,
+    #ffffff 45deg 67.5deg, #3a3f44 67.5deg 90deg,
+    #ffffff 90deg 112.5deg, #4d5259 112.5deg 135deg,
+    #ffffff 135deg 157.5deg, #3a3f44 157.5deg 180deg,
+    #ffffff 180deg 202.5deg, #4d5259 202.5deg 225deg,
+    #ffffff 225deg 247.5deg, #3a3f44 247.5deg 270deg,
+    #ffffff 270deg 292.5deg, #4d5259 292.5deg 315deg,
+    #ffffff 315deg 337.5deg, #3a3f44 337.5deg 360deg
+  );
+  clip-path: polygon(
+    50% 0%, 62% 38%, 100% 50%, 62% 62%, 
+    50% 100%, 38% 62%, 0% 50%, 38% 38%
+  );
+  transform: rotate(45deg);
+}
+
+/* 인트로용 텍스트 클래스 */
+.intro-text-box {
+  opacity: 0;
+  transform: translateY(15px);
+  text-align: center;
+  animation: textFadeIn 1s cubic-bezier(0.25, 1, 0.5, 1) forwards 1.4s;
+}
+
+.intro-title {
+  font-family: 'Courier New', monospace;
+  font-size: 32px;
+  font-weight: 800;
+  color: #ffffff;
+  letter-spacing: 1px;
+  text-shadow: 1px 1px 0px #30363d, 0px 0px 8px rgba(255, 255, 255, 0.1);
+  margin-bottom: 4px;
+}
+
+.intro-subtitle {
+  font-size: 13px;
+  color: #8b949e;
+  letter-spacing: 1px;
+}
+
+/* Keyframes 애니메이션 구성 */
+@keyframes starSpawn {
+  0% { opacity: 0; transform: scale(0.3) rotate(-45deg); filter: drop-shadow(0 0 0px rgba(88, 166, 255, 0)); }
+  70% { transform: scale(1.1) rotate(10deg); }
+  100% { opacity: 1; transform: scale(1) rotate(0deg); filter: drop-shadow(0 0 25px rgba(88, 166, 255, 0.65)); }
+}
+
+@keyframes starPulseGlow {
+  0% { filter: drop-shadow(0 0 20px rgba(88, 166, 255, 0.5)); }
+  100% { filter: drop-shadow(0 0 40px rgba(88, 166, 255, 0.95)); }
+}
+
+@keyframes textFadeIn {
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+
 /* LUX-ENGINE V6 전용 정밀 메탈릭 & 스타 로고 스타일 */
 .brand-container {
   display: flex;
@@ -233,6 +357,17 @@ button.btn.loading { opacity: 0.5; pointer-events: none; }
 </style>
 </head>
 <body>
+
+<div id="lux-intro-overlay">
+  <div class="intro-center-box">
+    <div class="intro-star-logo"></div>
+    <div class="intro-text-box">
+      <div class="intro-title">LUX-ENGINE V6</div>
+      <div class="intro-subtitle">Powered by BLAUENACHT</div>
+    </div>
+  </div>
+</div>
+
 <div class="app">
   <div class="topbar">
     <div class="brand-container">
@@ -1070,6 +1205,20 @@ button.btn.loading { opacity: 0.5; pointer-events: none; }
   }, 2000);
   timer = setInterval(refreshAll, REFRESH_MS);
 })();
+
+// LUX-ENGINE 오프닝 시퀀스 페이드아웃 및 자동 해제 로직
+window.addEventListener('DOMContentLoaded', () => {
+  setTimeout(() => {
+    const overlay = document.getElementById('lux-intro-overlay');
+    if (overlay) {
+      overlay.style.opacity = '0';
+      overlay.style.pointerEvents = 'none';
+      setTimeout(() => {
+        overlay.remove();
+      }, 800);
+    }
+  }, 3500); // 설계 시나리오에 맞춘 3.5초 인트로 유지 시간
+});
 </script>
 </body>
 </html>
