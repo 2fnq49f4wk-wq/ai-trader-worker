@@ -532,7 +532,9 @@ button.btn.loading { opacity: 0.5; pointer-events: none; }
 
     <div class="panel">
       <div class="panel-header">
-        <div class="panel-title">CURRENT POSITIONS</div>
+        <div class="panel-title">CURRENT POSITIONS
+          <span id="positionsTotalPnl" style="margin-left:14px;font-size:12px;font-weight:500;letter-spacing:0.5px;"></span>
+        </div>
         <button type="button" class="watchlist-toggle-btn" id="positionsToggleBtn">펼치기</button>
       </div>
       <div id="positionsBox" class="positions-collapsed"><div class="empty">No positions yet</div></div>
@@ -781,6 +783,14 @@ button.btn.loading { opacity: 0.5; pointer-events: none; }
         <button type="button" class="btn" id="btnSetDeposits" style="width:100%;">DEPOSITS 설정</button>
       </div>
     </div>
+    <div style="margin-top:8px;">
+      <button type="button" class="btn" id="btnAutoFixDeposits" style="width:100%; font-size:11px;">
+        🔧 vs INITIAL을 현재 포지션 PnL과 일치시키기 (자동 보정)
+      </button>
+      <div style="font-size:10px; color:var(--faint); margin-top:4px;">
+        클릭 시: deposits = (cash + 평가액) − initialCash − 포지션PnL합계 로 계산. 입금/출금으로 vs Initial이 왜곡됐을 때 사용.
+      </div>
+    </div>
 
     <div class="modal-actions">
       <button type="button" class="btn danger" id="btnReset">RESET ALL DATA</button>
@@ -1021,6 +1031,7 @@ button.btn.loading { opacity: 0.5; pointer-events: none; }
 
   function renderPositions(positionsUS, positionsKR) {
     var box = $('positionsBox');
+    var totalEl = $('positionsTotalPnl');
     // [V8] positions는 array — [{symbol, strategy, qty, avg, opened_ts, meta, entrySignal}, ...]
     var listUS = Array.isArray(positionsUS) ? positionsUS : Object.keys(positionsUS).map(function(k){
       var p = positionsUS[k];
@@ -1030,6 +1041,33 @@ button.btn.loading { opacity: 0.5; pointer-events: none; }
       var p = positionsKR[k];
       return Object.assign({ symbol: p.symbol || k, strategy: p.strategy || 'swing' }, p);
     });
+
+    // [V8.2.4] 시장별 총 PnL/PnL% 계산 — 헤더에 표시용
+    function aggregate(list, marketSym, fmtFn) {
+      var costSum = 0, valSum = 0, hasPrice = false;
+      list.forEach(function(p){
+        var q = lastQuotes[p.symbol];
+        if (q) hasPrice = true;
+        var cur = q ? q.price : p.avg;
+        costSum += p.qty * p.avg;
+        valSum += p.qty * cur;
+      });
+      if (list.length === 0 || costSum === 0) return null;
+      var pnl = valSum - costSum;
+      var pnlPct = (pnl / costSum) * 100;
+      var sign = pnl >= 0 ? '+' : '-';
+      var cls = pnl >= 0 ? 'pos' : 'neg';
+      var pnlText = sign + marketSym + fmtFn(Math.abs(pnl));
+      var pctText = (pnl >= 0 ? '+' : '') + pnlPct.toFixed(2) + '%';
+      return { pnl: pnl, pnlPct: pnlPct, cls: cls, pnlText: pnlText, pctText: pctText, hasPrice: hasPrice };
+    }
+    var aggUS = aggregate(listUS, '$', function(n){ return fmtNum(n, 2); });
+    var aggKR = aggregate(listKR, '₩', fmtCompact);
+    var parts = [];
+    if (aggUS) parts.push('<span style="color:var(--dim);">US:</span> <span class="'+aggUS.cls+'">'+aggUS.pnlText+' ('+aggUS.pctText+')</span>');
+    if (aggKR) parts.push('<span style="color:var(--dim);">KR:</span> <span class="'+aggKR.cls+'">'+aggKR.pnlText+' ('+aggKR.pctText+')</span>');
+    if (totalEl) totalEl.innerHTML = parts.length ? parts.join(' &nbsp;·&nbsp; ') : '';
+
     var all = [];
     listUS.forEach(function(p){ all.push({ market:'US', symbol:p.symbol, p:p }); });
     listKR.forEach(function(p){ all.push({ market:'KR', symbol:p.symbol, p:p }); });
@@ -1570,6 +1608,89 @@ button.btn.loading { opacity: 0.5; pointer-events: none; }
       })['catch'](function(e){ toast('실패: ' + e.message); });
   }
 
+  // [V8.2.4] vs Initial 수익률 자동 보정
+  // 목표: vs Initial 수익률 = 현재 포지션 PnL 합계% 가 되도록 deposits를 역산.
+  //   total = cash + marketVal
+  //   목표: total - (initialCash + deposits) == positionPnL
+  //   ∴ deposits = total - initialCash - positionPnL
+  function autoFixDeposits() {
+    if (!currentCash || !currentCfg) { toast('데이터 로딩 중...'); return; }
+    // 최신 state로 한 번 더 fetch (포지션과 quote 최신화)
+    fetch('/api/state').then(function(r){ return r.json(); }).then(function(state){
+      var cfg = state.cfg || {};
+      var cash = state.cash || {us:0, kr:0};
+      var positions = state.positions || {us:[], kr:[]};
+      var quotes = state.watchlist || [];
+      var quoteMap = {};
+      quotes.forEach(function(q){ quoteMap[q.symbol] = q; });
+
+      function calcForMarket(market) {
+        var list = positions[market] || [];
+        var cost = 0, marketVal = 0, hasQuote = false;
+        list.forEach(function(p){
+          var q = quoteMap[p.symbol];
+          if (q) hasQuote = true;
+          var price = q ? q.price : p.avg;
+          cost += p.qty * p.avg;
+          marketVal += p.qty * price;
+        });
+        var positionPnL = marketVal - cost;
+        var total = cash[market] + marketVal;
+        var initialCash = market === 'us' ? (cfg.initialCashUS || 0) : (cfg.initialCashKR || 0);
+        var newDeposits = total - initialCash - positionPnL;
+        return {
+          total: total, initialCash: initialCash, positionPnL: positionPnL,
+          marketVal: marketVal, newDeposits: newDeposits, hasQuote: hasQuote, posCount: list.length
+        };
+      }
+      var us = calcForMarket('us');
+      var kr = calcForMarket('kr');
+
+      var sym = function(m){ return m === 'us' ? '$' : '₩'; };
+      var fmt = function(m, n){ return m === 'us' ? fmtNum(n, 2) : fmtCompact(n); };
+      var msg = 'vs Initial 수익률을 현재 포지션 PnL%로 맞춥니다.\n\n';
+      msg += '[US]\n';
+      msg += '  total: $' + fmt('us', us.total) + '\n';
+      msg += '  initialCash: $' + fmt('us', us.initialCash) + '\n';
+      msg += '  포지션 PnL: ' + (us.positionPnL >= 0 ? '+$' : '-$') + fmt('us', Math.abs(us.positionPnL)) + '\n';
+      msg += '  → 새 deposits: $' + fmt('us', us.newDeposits) + '\n\n';
+      msg += '[KR]\n';
+      msg += '  total: ₩' + fmt('kr', kr.total) + '\n';
+      msg += '  initialCash: ₩' + fmt('kr', kr.initialCash) + '\n';
+      msg += '  포지션 PnL: ' + (kr.positionPnL >= 0 ? '+₩' : '-₩') + fmt('kr', Math.abs(kr.positionPnL)) + '\n';
+      msg += '  → 새 deposits: ₩' + fmt('kr', kr.newDeposits) + '\n\n';
+      msg += '진행할까요? (cash는 안 바뀝니다)';
+
+      // 새 deposits가 음수면 막음 (논리적으로 입금액이 음수가 될 수 없음)
+      if (us.newDeposits < 0 || kr.newDeposits < 0) {
+        toast('새 deposits가 음수가 되어 진행 불가 — initialCash 설정을 확인하세요');
+        console.warn('autoFixDeposits: negative deposits', { us: us, kr: kr });
+        return;
+      }
+      if (!confirm(msg)) return;
+
+      var body = {
+        us: +us.newDeposits.toFixed(2),
+        kr: Math.round(kr.newDeposits)
+      };
+      fetch('/api/deposits/set', {
+        method:'POST',
+        headers:{'Content-Type':'application/json'},
+        body: JSON.stringify(body)
+      }).then(function(r){ return r.json().then(function(d){ return { ok: r.ok, data: d }; }); })
+        .then(function(res){
+          if (!res.ok || !res.data.ok) { toast('실패: ' + (res.data.error || 'unknown')); return; }
+          toast('자동 보정 완료 · vs Initial이 포지션 PnL과 일치합니다');
+          currentDeposits = res.data.deposits;
+          $('cfgCurrentDepositsUS').textContent = '$' + fmtNum(currentDeposits.us, 2);
+          $('cfgCurrentDepositsKR').textContent = '₩' + fmtCompact(currentDeposits.kr);
+          $('cfgSetDepositsUS').value = currentDeposits.us || '';
+          $('cfgSetDepositsKR').value = currentDeposits.kr || '';
+          refreshAll();
+        })['catch'](function(e){ toast('실패: ' + e.message); });
+    })['catch'](function(e){ toast('state 로드 실패: ' + e.message); });
+  }
+
   function resetAll() {
     if (!confirm('정말 모든 거래/포지션/로그를 초기화하시겠습니까?')) return;
     fetch('/api/reset', {method:'POST'}).then(function(r){return r.json();})
@@ -1593,33 +1714,17 @@ button.btn.loading { opacity: 0.5; pointer-events: none; }
     fetch('/api/cash/add', {
       method:'POST',
       headers:{'Content-Type':'application/json'},
-      body: JSON.stringify({ us: us, kr: kr, reconcile: true })
+      body: JSON.stringify({ us: us, kr: kr })
     }).then(function(r){ return r.json().then(function(d){ return { ok: r.ok, data: d }; }); })
       .then(function(res){
         if (!res.ok || !res.data.ok) {
           toast('실패: ' + (res.data.error || 'unknown'));
           return;
         }
-        // [V8.2.4] reconcile로 baseline 격차가 흡수됐으면 사용자에게 안내
-        var rec = res.data.reconciled || {};
-        var recMsgs = [];
-        if (rec.us && rec.us.gapAbsorbed !== 0) {
-          recMsgs.push('US baseline 보정: ' + (rec.us.gapAbsorbed >= 0 ? '+' : '') + '$' + Math.abs(rec.us.gapAbsorbed).toLocaleString());
-        }
-        if (rec.kr && rec.kr.gapAbsorbed !== 0) {
-          recMsgs.push('KR baseline 보정: ' + (rec.kr.gapAbsorbed >= 0 ? '+' : '') + '₩' + Math.abs(rec.kr.gapAbsorbed).toLocaleString());
-        }
-        if (recMsgs.length) {
-          toast('현금 추가 완료 · ' + recMsgs.join(' / '));
-        } else {
-          toast('현금 추가 완료');
-        }
+        toast('현금 추가 완료');
         currentCash = res.data.cash;
-        currentDeposits = res.data.deposits;
         $('cfgCurrentCashUS').textContent = '$' + fmtNum(currentCash.us, 2);
         $('cfgCurrentCashKR').textContent = '₩' + fmtCompact(currentCash.kr);
-        $('cfgCurrentDepositsUS').textContent = '$' + fmtNum(currentDeposits.us, 2);
-        $('cfgCurrentDepositsKR').textContent = '₩' + fmtCompact(currentDeposits.kr);
         $('cfgAddCashUS').value = '';
         $('cfgAddCashKR').value = '';
         refreshAll();
@@ -1655,6 +1760,7 @@ button.btn.loading { opacity: 0.5; pointer-events: none; }
   $('btnReset').addEventListener('click', resetAll);
   $('btnAddCash').addEventListener('click', addCash);
   $('btnSetDeposits').addEventListener('click', setDeposits);
+  $('btnAutoFixDeposits').addEventListener('click', autoFixDeposits);
   $('btnResetTickers').addEventListener('click', resetTickers);
   $('tradesToggle').addEventListener('click', toggleTrades);
   $('allTradesToggle').addEventListener('click', toggleAllTrades);
