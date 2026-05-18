@@ -84,13 +84,12 @@ const DEFAULT_CFG = {
     meanrev: true
   },
   // === [V8] 전략별 포지션 사이즈 (NEUTRAL base / BULL mult / BEAR mult) ===
-  // [V8.1.4] 보유기간 짧을수록 공격적으로 재정렬:
-  //   day(분~시간) > meanrev(2~5일) > swing(4h~7일) > momentum(2~30일)
+  // [V8.1.6] 사이즈 대폭 상향 - 한 번 살 때 수량 크게
   strategySizing: {
-    day:      { base: 13, bullMult: 1.7, bearMult: 1.0 },  // 가장 공격적 — 단타 회전
-    meanrev:  { base: 11, bullMult: 1.0, bearMult: 1.4 },  // [V8.1.4] 9→11, bull 0.7→1.0, bear 1.3→1.4
-    swing:    { base: 10, bullMult: 1.4, bearMult: 0.7 },  // [V8.1.4] 12→10 (base 줄임, bullMult 유지)
-    momentum: { base:  9, bullMult: 1.6, bearMult: 0.5 }   // [V8.1.4] 18→9 (base 대폭 줄임, BULL 신뢰도는 유지)
+    day:      { base: 22, bullMult: 1.6, bearMult: 1.0 },
+    meanrev:  { base: 18, bullMult: 1.0, bearMult: 1.4 },
+    swing:    { base: 17, bullMult: 1.4, bearMult: 0.7 },
+    momentum: { base: 15, bullMult: 1.6, bearMult: 0.5 }
   },
   // === [V8] Cross-strategy confluence — 같은 종목 + 다른 전략 동시 신호 ===
   crossConfluenceBonus: 1.2,
@@ -860,6 +859,16 @@ function evaluateAllStrategies(price, dayPct, dailyData, cfg, signalStats) {
     if (!resolved) continue;
     results.push({ strategy: stratName, signal: resolved, rawCount: sigs.length });
   }
+  // [V8.1.6] 중복 신호 시 보유기간 긴 전략 1개만 선택
+  // 우선순위: momentum > swing > meanrev > day
+  if (results.length >= 2) {
+    const priority = { momentum: 4, swing: 3, meanrev: 2, day: 1 };
+    let best = results[0];
+    for (const r of results) {
+      if ((priority[r.strategy] || 0) > (priority[best.strategy] || 0)) best = r;
+    }
+    return [best];
+  }
   return results;
 }
 
@@ -1510,6 +1519,16 @@ async function runTradingCycle(env) {
         if (sec) sectorCounts[sec] = (sectorCounts[sec] || 0) + 1;
       }
 
+      // [V8.1.6] 총자산 = 현금 + 보유 포지션 평가액 (최근 quote 기준)
+      // 이전엔 cash[market]만 사용해서 매수할수록 사이즈 작아짐
+      let portfolioValue = cash[market];
+      for (const key in positions) {
+        const p = positions[key];
+        const lastQuote = await getState(DB, "quote:" + p.symbol, null);
+        const lastPrice = (lastQuote && lastQuote.price) ? lastQuote.price : p.avg;
+        portfolioValue += p.qty * lastPrice;
+      }
+
       // [V8.1.1] === PREFETCH 단계 (배치 처리) ===
       // 한 시장(20개)을 10개씩 2배치로 처리.
       // Cloudflare Workers subrequest 한도(50/invocation) 회피하면서도
@@ -1671,11 +1690,7 @@ async function runTradingCycle(env) {
           }
 
           // [V8.1.5] 한 종목에 여러 전략 동시 진입 시 합산 cap (35%)
-          // 한 종목에 swing+day+meanrev 다 잡히면 합산 40%+ 되는 경우 방지
-          const PER_SYMBOL_CAP = 0.35;
-          let symbolAllocated = 0;
-
-          // 각 전략 신호별로 진입 시도
+          // 각 전략 신호별로 진입 시도 (V8.1.6 이후엔 보통 1개만)
           for (const sr of stratResults) {
             const strategy = sr.strategy;
             const signal = sr.signal;
@@ -1699,25 +1714,15 @@ async function runTradingCycle(env) {
             }
 
             const baseRatio = getPositionSizeRatio(cfg, strategy, regime.regime);
-            let adjustedRatio = baseRatio * signal.weight * crossBonus;
+            const adjustedRatio = baseRatio * signal.weight * crossBonus;
 
-            // [V8.1.5] per-symbol cap 적용
-            const remainingCap = PER_SYMBOL_CAP - symbolAllocated;
-            if (remainingCap <= 0.01) {
-              incNobuy("symbol_cap");
-              continue;
-            }
-            if (adjustedRatio > remainingCap) adjustedRatio = remainingCap;
-
-            const budget = cash[market] * adjustedRatio;
+            const budget = portfolioValue * adjustedRatio;
             let qty = Math.floor(budget / (price * (1 + feeRate)));
 
-            // [V8.1.5] 1주도 못 사는 경우: 잔액으로 1주 살 수 있으면 1주만 매수
-            // (한국 고가주 + 작은 사이즈로 budget < 1주가 자주 발생)
+            // [V8.1.5] 1주도 못 사는 경우: 잔액 10% 이내면 1주 매수 허용
             if (qty === 0) {
               const onePrice = price * (1 + feeRate);
-              if (onePrice <= cash[market] * Math.min(PER_SYMBOL_CAP - symbolAllocated, 0.10)) {
-                // 잔액에서 cap 또는 10% 이내라면 1주 매수 허용
+              if (onePrice <= cash[market] * 0.10) {
                 qty = 1;
               }
             }
@@ -1726,14 +1731,11 @@ async function runTradingCycle(env) {
             if (qty > 0 && totalCost <= cash[market]) {
               await executeBuy(DB, market, symbol, strategy, qty, price, signal, dailyAtr, cfg, cash);
               bought++;
-              symbolAllocated += adjustedRatio;
-              // 즉시 반영
               heldSymbols.add(symbol);
               strategiesHeldNow.add(strategy);
               const sec = SECTOR_MAP[symbol];
               if (sec) sectorCounts[sec] = (sectorCounts[sec] || 0) + 1;
             } else {
-              // [V8.1.5] cash_short 사유 세분화
               if (qty === 0) {
                 incNobuy("price_too_high[" + strategy + "]");
               } else {
