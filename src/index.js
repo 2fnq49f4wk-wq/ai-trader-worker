@@ -2120,6 +2120,19 @@ async function handleRequest(request, env) {
       await log(env.DB, "INFO", null, msg);
       return Response.json({ ok: true, cash: cash, deposits: deposits, before: before, added: { us: addUs, kr: addKr } }, { headers: cors });
     }
+    if (path === "/api/deposits/set" && request.method === "POST") {
+      // [V8.2.3] deposits 값을 직접 덮어씀 (과거 수동 입금 보정용)
+      // body: { us?: number, kr?: number } — 절대값, cash는 안 건드림
+      const body = await request.json();
+      const cur = await getState(env.DB, "deposits", { us: 0, kr: 0 });
+      const next = {
+        us: body.us !== undefined ? +Number(body.us).toFixed(2) : (cur.us || 0),
+        kr: body.kr !== undefined ? Math.round(Number(body.kr)) : (cur.kr || 0)
+      };
+      await setState(env.DB, "deposits", next);
+      await log(env.DB, "INFO", null, "DEPOSITS SET US:" + (cur.us || 0) + "->" + next.us + " KR:" + (cur.kr || 0) + "->" + next.kr);
+      return Response.json({ ok: true, deposits: next, before: cur }, { headers: cors });
+    }
     if (path === "/api/tick" && request.method === "POST") {
       await runTradingCycle(env);
       return Response.json({ ok: true, ts: Date.now() }, { headers: cors });
