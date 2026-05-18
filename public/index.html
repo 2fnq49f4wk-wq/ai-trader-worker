@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>LUX-engine V6</title>
+<title>LUX-engine V8</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600;700&family=Georgia:wght@400;700&display=swap" rel="stylesheet">
@@ -640,43 +640,82 @@ button.btn.loading { opacity: 0.5; pointer-events: none; }
     <button type="button" class="btn" id="btnResetTickers" style="margin-bottom:10px;">티커 기본값으로 복원</button>
 
     <div class="section-divider"></div>
-    <div class="section-title">STRATEGY</div>
+    <div class="section-title">STRATEGIES (V8 멀티 전략)</div>
+    <div class="hint" style="margin-bottom:8px;">활성 전략을 켜고 끄세요. 같은 종목이라도 다른 전략이면 별도 포지션이 생성됩니다.</div>
     <div class="field-row">
-      <div class="field"><label>RSI Buy</label><input type="number" id="cfgRsiBuy" min="1" max="99"></div>
-      <div class="field"><label>RSI Sell</label><input type="number" id="cfgRsiSell" min="1" max="99"></div>
-      <div class="field"><label>RSI Period</label><input type="number" id="cfgRsiPeriod" min="2" max="50"></div>
+      <div class="checkbox-row"><input type="checkbox" id="cfgStratSwing"><label for="cfgStratSwing"><b>SWING</b> (4시간~7일, 풀백/반전)</label></div>
     </div>
+    <div class="field-row">
+      <div class="checkbox-row"><input type="checkbox" id="cfgStratDay"><label for="cfgStratDay"><b>DAY</b> (수시간, 갭하락 후 반등)</label></div>
+    </div>
+    <div class="field-row">
+      <div class="checkbox-row"><input type="checkbox" id="cfgStratMomentum"><label for="cfgStratMomentum"><b>MOMENTUM</b> (5~30일, 신고가 돌파/추세)</label></div>
+    </div>
+    <div class="field-row">
+      <div class="checkbox-row"><input type="checkbox" id="cfgStratMeanrev"><label for="cfgStratMeanrev"><b>MEANREV</b> (1~5일, 극단 과매도 반전)</label></div>
+    </div>
+
+    <div class="section-title" style="margin-top:14px;">POSITION SIZE (전략별 %, NEUTRAL/BULL/BEAR multiplier)</div>
+    <div class="field-row">
+      <div class="field"><label>SWING base</label><input type="number" id="cfgSizeSwingBase" min="1" max="100" step="0.5"></div>
+      <div class="field"><label>SWING ×BULL</label><input type="number" id="cfgSizeSwingBull" min="0" max="3" step="0.1"></div>
+      <div class="field"><label>SWING ×BEAR</label><input type="number" id="cfgSizeSwingBear" min="0" max="3" step="0.1"></div>
+    </div>
+    <div class="field-row">
+      <div class="field"><label>DAY base</label><input type="number" id="cfgSizeDayBase" min="1" max="100" step="0.5"></div>
+      <div class="field"><label>DAY ×BULL</label><input type="number" id="cfgSizeDayBull" min="0" max="3" step="0.1"></div>
+      <div class="field"><label>DAY ×BEAR</label><input type="number" id="cfgSizeDayBear" min="0" max="3" step="0.1"></div>
+    </div>
+    <div class="field-row">
+      <div class="field"><label>MOM base</label><input type="number" id="cfgSizeMomBase" min="1" max="100" step="0.5"></div>
+      <div class="field"><label>MOM ×BULL</label><input type="number" id="cfgSizeMomBull" min="0" max="3" step="0.1"></div>
+      <div class="field"><label>MOM ×BEAR</label><input type="number" id="cfgSizeMomBear" min="0" max="3" step="0.1"></div>
+    </div>
+    <div class="field-row">
+      <div class="field"><label>MR base</label><input type="number" id="cfgSizeMrBase" min="1" max="100" step="0.5"></div>
+      <div class="field"><label>MR ×BULL</label><input type="number" id="cfgSizeMrBull" min="0" max="3" step="0.1"></div>
+      <div class="field"><label>MR ×BEAR</label><input type="number" id="cfgSizeMrBear" min="0" max="3" step="0.1"></div>
+    </div>
+    <div class="field-row">
+      <div class="field"><label>Cross-strategy 보너스 (동시 신호 시 가중치)</label><input type="number" id="cfgCrossConf" min="1" max="3" step="0.1"></div>
+    </div>
+
+    <div class="section-divider"></div>
+    <div class="section-title">SWING RULES (스윙 매매 룰)</div>
     <div class="field-row">
       <div class="field"><label>StopLoss %</label><input type="number" id="cfgStopLoss" min="0.5" max="50" step="0.5"></div>
       <div class="field"><label>TakeProfit1 % (절반매도)</label><input type="number" id="cfgTakeProfit1" min="0.5" max="50" step="0.5"></div>
       <div class="field"><label>TakeProfit2 % (전량매도)</label><input type="number" id="cfgTakeProfit2" min="0.5" max="50" step="0.5"></div>
     </div>
     <div class="field-row">
-      <div class="field"><label>PosSize % (기본)</label><input type="number" id="cfgPosSize" min="1" max="100"></div>
-      <div class="field"><label>PosSize % (BULL)</label><input type="number" id="cfgPosSizeBull" min="1" max="100"></div>
-      <div class="field"><label>PosSize % (BEAR)</label><input type="number" id="cfgPosSizeBear" min="1" max="100"></div>
+      <div class="field"><label>Min Hold (hours)</label><input type="number" id="cfgMinHoldHours" min="0" max="48" step="0.5"></div>
+      <div class="field"><label>Time Stop (days)</label><input type="number" id="cfgTimeStopDays" min="1" max="30"></div>
+      <div class="field"><label>Time Max (days)</label><input type="number" id="cfgTimeStopMaxDays" min="1" max="60"></div>
+    </div>
+    <div class="field-row">
+      <div class="field"><label>Trail Start %</label><input type="number" id="cfgTrailStartPct" min="0.5" max="20" step="0.5"></div>
+      <div class="field"><label>Trail Drop %</label><input type="number" id="cfgTrailDropPct" min="0.5" max="20" step="0.5"></div>
+      <div class="field"><label>ATR Stop x</label><input type="number" id="cfgAtrStopMult" min="0.5" max="6" step="0.1"></div>
+    </div>
+
+    <div class="section-divider"></div>
+    <div class="section-title">COMMON STRATEGY (공통 지표)</div>
+    <div class="field-row">
+      <div class="field"><label>RSI Buy</label><input type="number" id="cfgRsiBuy" min="1" max="99"></div>
+      <div class="field"><label>RSI Sell</label><input type="number" id="cfgRsiSell" min="1" max="99"></div>
+      <div class="field"><label>RSI Period</label><input type="number" id="cfgRsiPeriod" min="2" max="50"></div>
     </div>
     <div class="field-row">
       <div class="field"><label>Max Daily Drop %</label><input type="number" id="cfgMaxDailyDrop" min="0.5" max="20" step="0.5"></div>
       <div class="field"><label>Market Crash %</label><input type="number" id="cfgMarketCrashPct" max="0" step="0.5"></div>
       <div class="field"><label>MA Period</label><input type="number" id="cfgMaPeriod" min="2" max="120"></div>
     </div>
-    <div class="field-row">
-      <div class="field"><label>Min Hold (hours)</label><input type="number" id="cfgMinHoldHours" min="0" max="48" step="0.5"></div>
-      <div class="field"><label>Time Stop (days)</label><input type="number" id="cfgTimeStopDays" min="1" max="30"></div>
-      <div class="field"><label>Time Max (days)</label><input type="number" id="cfgTimeStopMaxDays" min="1" max="60"></div>
-    </div>
 
     <div class="section-divider"></div>
-    <div class="section-title">ATR / TRAILING</div>
+    <div class="section-title">ATR / BB</div>
     <div class="field-row">
       <div class="field"><label>ATR Period</label><input type="number" id="cfgAtrPeriod" min="2" max="60"></div>
-      <div class="field"><label>ATR Stop x</label><input type="number" id="cfgAtrStopMult" min="0.5" max="6" step="0.1"></div>
       <div class="field"><label>BB Std x</label><input type="number" id="cfgBbStdMult" min="0.5" max="4" step="0.1"></div>
-    </div>
-    <div class="field-row">
-      <div class="field"><label>Trail Start %</label><input type="number" id="cfgTrailStartPct" min="0.5" max="20" step="0.5"></div>
-      <div class="field"><label>Trail Drop %</label><input type="number" id="cfgTrailDropPct" min="0.5" max="20" step="0.5"></div>
       <div class="field"><label>Cache (min)</label><input type="number" id="cfgDailyCacheMinutes" min="1" max="120"></div>
     </div>
 
@@ -877,10 +916,14 @@ button.btn.loading { opacity: 0.5; pointer-events: none; }
   function calcSummary(market, cash, positions, initialCash) {
     var symbol = market === 'us' ? '$' : '₩';
     var invested = 0, marketVal = 0;
-    Object.keys(positions).forEach(function(sym) {
-      var p = positions[sym];
+    // [V8] positions는 array (각 row에 symbol, strategy, qty, avg)
+    var list = Array.isArray(positions) ? positions : Object.keys(positions).map(function(k){
+      var p = positions[k];
+      return { symbol: p.symbol || k, qty: p.qty, avg: p.avg };
+    });
+    list.forEach(function(p) {
       invested += p.qty * p.avg;
-      var q = lastQuotes[sym];
+      var q = lastQuotes[p.symbol];
       var curPrice = q ? q.price : p.avg;
       marketVal += p.qty * curPrice;
     });
@@ -903,46 +946,82 @@ button.btn.loading { opacity: 0.5; pointer-events: none; }
     changeEl.className = 'summary-value ' + (s.changePct > 0 ? 'pos' : (s.changePct < 0 ? 'neg' : ''));
   }
 
+  // [V8] 전략별 색상 매핑
+  var STRATEGY_COLORS = {
+    swing:    { bg: 'rgba(56, 189, 248, 0.15)', fg: '#38bdf8', label: 'SWING' },
+    day:      { bg: 'rgba(251, 146, 60, 0.15)', fg: '#fb923c', label: 'DAY' },
+    momentum: { bg: 'rgba(168, 85, 247, 0.15)', fg: '#a855f7', label: 'MOM' },
+    meanrev:  { bg: 'rgba(74, 222, 128, 0.15)', fg: '#4ade80', label: 'MR' }
+  };
+  function strategyBadge(strat) {
+    var s = STRATEGY_COLORS[strat] || { bg: 'rgba(148,163,184,0.15)', fg: '#94a3b8', label: (strat||'?').toUpperCase() };
+    return '<span style="display:inline-block;padding:2px 7px;border-radius:4px;background:'+s.bg+';color:'+s.fg+';font-size:10px;font-weight:600;letter-spacing:0.5px;">'+s.label+'</span>';
+  }
+
   function renderPositions(positionsUS, positionsKR) {
     var box = $('positionsBox');
+    // [V8] positions는 array — [{symbol, strategy, qty, avg, opened_ts, meta, entrySignal}, ...]
+    var listUS = Array.isArray(positionsUS) ? positionsUS : Object.keys(positionsUS).map(function(k){
+      var p = positionsUS[k];
+      return Object.assign({ symbol: p.symbol || k, strategy: p.strategy || 'swing' }, p);
+    });
+    var listKR = Array.isArray(positionsKR) ? positionsKR : Object.keys(positionsKR).map(function(k){
+      var p = positionsKR[k];
+      return Object.assign({ symbol: p.symbol || k, strategy: p.strategy || 'swing' }, p);
+    });
     var all = [];
-    Object.keys(positionsUS).forEach(function(s){ all.push({market:'US',symbol:s,p:positionsUS[s]}); });
-    Object.keys(positionsKR).forEach(function(s){ all.push({market:'KR',symbol:s,p:positionsKR[s]}); });
+    listUS.forEach(function(p){ all.push({ market:'US', symbol:p.symbol, p:p }); });
+    listKR.forEach(function(p){ all.push({ market:'KR', symbol:p.symbol, p:p }); });
     if (all.length === 0) { box.innerHTML='<div class="empty">No positions yet</div>'; return; }
-    
-    // 수익률로 정렬하기 위해 먼저 pnlPct 계산
+
     var allWithPnl = all.map(function(row){
       var q = lastQuotes[row.symbol];
       var curPrice = q ? q.price : null;
       var pnlPct = curPrice != null ? ((curPrice - row.p.avg) / row.p.avg * 100) : -999;
       return {row: row, pnlPct: pnlPct};
     });
-    
-    // 수익률 높은순으로 정렬 (내림차순)
     allWithPnl.sort(function(a, b){ return b.pnlPct - a.pnlPct; });
-    
-    var html = '<div class="table-wrap"><table class="table"><thead><tr><th>MKT</th><th>SYMBOL</th><th class="right">QTY</th><th class="right">AVG</th><th class="right">CUR</th><th class="right">COST</th><th class="right">VALUE</th><th class="right">PnL</th><th class="right">PnL%</th><th class="right">OPENED</th></tr></thead><tbody>';
+
+    var html = '<div class="table-wrap"><table class="table"><thead><tr>'+
+      '<th>MKT</th><th>SYMBOL</th><th>STRATEGY</th><th>REASON</th>'+
+      '<th class="right">QTY</th><th class="right">AVG</th><th class="right">CUR</th>'+
+      '<th class="right">VALUE</th><th class="right">PnL</th><th class="right">PnL%</th>'+
+      '<th class="right">OPENED</th></tr></thead><tbody>';
     allWithPnl.forEach(function(item){
       var row = item.row;
+      var p = row.p;
       var q = lastQuotes[row.symbol];
       var curPrice = q ? q.price : null;
-      var cost = row.p.qty * row.p.avg;
-      var value = curPrice != null ? row.p.qty * curPrice : null;
+      var cost = p.qty * p.avg;
+      var value = curPrice != null ? p.qty * curPrice : null;
       var pnl = value != null ? value - cost : null;
-      var pnlPct = curPrice != null ? ((curPrice - row.p.avg) / row.p.avg * 100) : null;
+      var pnlPct = curPrice != null ? ((curPrice - p.avg) / p.avg * 100) : null;
       var pnlClass = pnlPct == null ? '' : (pnlPct >= 0 ? 'pos' : 'neg');
       var sign = pnlPct != null && pnlPct >= 0 ? '+' : '';
       var pnlPctText = pnlPct != null ? sign + pnlPct.toFixed(2) + '%' : '-';
       var curText = curPrice != null ? fmtNum(curPrice) : '-';
       var sym = row.market === 'US' ? '$' : '₩';
       var fmtMoney = row.market === 'KR' ? fmtCompact : function(n){return fmtNum(n,2);};
-      var costText = sym + fmtMoney(cost);
       var valueText = value != null ? sym + fmtMoney(value) : '-';
-      var pnlText = pnl != null ? (pnl >= 0 ? '+' : '') + sym + fmtMoney(Math.abs(pnl)) : '-';
-      if (pnl != null && pnl < 0) pnlText = '-' + sym + fmtMoney(Math.abs(pnl));
+      var pnlText = pnl != null ? (pnl >= 0 ? '+' : '-') + sym + fmtMoney(Math.abs(pnl)) : '-';
       var name = row.market === 'KR' ? krLabel(row.symbol) : usLabel(row.symbol);
       var label = name ? '<b>'+escapeHtml(row.symbol)+'</b> <span style="color:var(--dim);font-size:10px;">'+escapeHtml(name)+'</span>' : '<b>'+escapeHtml(row.symbol)+'</b>';
-      html += '<tr><td><span class="market-badge">'+row.market+'</span></td><td>'+label+'</td><td class="right">'+fmtNum(row.p.qty)+'</td><td class="right">'+fmtNum(row.p.avg)+'</td><td class="right">'+curText+'</td><td class="right">'+costText+'</td><td class="right">'+valueText+'</td><td class="right '+pnlClass+'">'+pnlText+'</td><td class="right '+pnlClass+'">'+pnlPctText+'</td><td class="right">'+fmtAgo(row.p.opened_ts)+'</td></tr>';
+      var stratCell = strategyBadge(p.strategy || 'swing');
+      var reason = p.entrySignal || (p.meta && p.meta.signal) || '-';
+      var reasonCell = '<span style="font-size:10px;color:var(--dim);">'+escapeHtml(reason)+'</span>';
+      html += '<tr>'+
+        '<td><span class="market-badge">'+row.market+'</span></td>'+
+        '<td>'+label+'</td>'+
+        '<td>'+stratCell+'</td>'+
+        '<td>'+reasonCell+'</td>'+
+        '<td class="right">'+fmtNum(p.qty)+'</td>'+
+        '<td class="right">'+fmtNum(p.avg)+'</td>'+
+        '<td class="right">'+curText+'</td>'+
+        '<td class="right">'+valueText+'</td>'+
+        '<td class="right '+pnlClass+'">'+pnlText+'</td>'+
+        '<td class="right '+pnlClass+'">'+pnlPctText+'</td>'+
+        '<td class="right">'+fmtAgo(p.opened_ts)+'</td>'+
+      '</tr>';
     });
     box.innerHTML = html + '</tbody></table></div>';
   }
@@ -1103,9 +1182,18 @@ button.btn.loading { opacity: 0.5; pointer-events: none; }
 
   function renderCfgDisplay(cfg) {
     if (!cfg) return;
-    var tp1 = cfg.takeProfit1 != null ? cfg.takeProfit1 : cfg.takeProfit;
-    var tp2 = cfg.takeProfit2 != null ? cfg.takeProfit2 : '-';
-    $('cfgDisplayUS').innerHTML = 'RSI Buy/<b>'+cfg.rsiBuy+'</b>/Sell/<b>'+cfg.rsiSell+'</b> · Stop/<b>'+cfg.stopLoss+'%</b> · TP1/<b>'+tp1+'%</b> · TP2/<b>'+tp2+'%</b> · Size/<b>'+cfg.posSize+'%</b>';
+    var tp1 = (cfg.swingRules && cfg.swingRules.tp1) != null ? cfg.swingRules.tp1 : (cfg.takeProfit1 != null ? cfg.takeProfit1 : cfg.takeProfit);
+    var tp2 = (cfg.swingRules && cfg.swingRules.tp2) != null ? cfg.swingRules.tp2 : (cfg.takeProfit2 != null ? cfg.takeProfit2 : '-');
+    var sl = (cfg.swingRules && cfg.swingRules.stopLossPct) != null ? cfg.swingRules.stopLossPct : cfg.stopLoss;
+    var strats = cfg.strategies || {};
+    var activeStrats = [];
+    if (strats.swing !== false) activeStrats.push('SWING');
+    if (strats.day !== false) activeStrats.push('DAY');
+    if (strats.momentum !== false) activeStrats.push('MOM');
+    if (strats.meanrev !== false) activeStrats.push('MR');
+    var stratStr = activeStrats.length ? activeStrats.join('+') : 'NONE';
+    var swingBase = (cfg.strategySizing && cfg.strategySizing.swing && cfg.strategySizing.swing.base) || cfg.posSize || 12;
+    $('cfgDisplayUS').innerHTML = 'Strategies/<b>'+stratStr+'</b> · RSI Buy/<b>'+cfg.rsiBuy+'</b>/Sell/<b>'+cfg.rsiSell+'</b> · Stop/<b>'+sl+'%</b> · TP1/<b>'+tp1+'%</b> · TP2/<b>'+tp2+'%</b> · SwingSize/<b>'+swingBase+'%</b>';
     var lastTune = allLogs.filter(function(l){return l.level==='TUNE';})[0];
     var banner = $('tuneBanner'), tuneText = $('tuneText');
     if (lastTune && cfg.autoTune) { tuneText.textContent = lastTune.message + ' (' + fmtAgo(lastTune.ts) + ')'; banner.style.display = 'block'; }
@@ -1155,8 +1243,9 @@ button.btn.loading { opacity: 0.5; pointer-events: none; }
         krFavorites = (state.cfg && state.cfg.krFavorites) || [];
         renderIndices(indices);
         renderWatchlist(quotes);
-        var posUS = (state.positions && state.positions.us) || {};
-        var posKR = (state.positions && state.positions.kr) || {};
+        // [V8] positions는 array — 하위호환으로 object도 허용
+        var posUS = (state.positions && state.positions.us) || [];
+        var posKR = (state.positions && state.positions.kr) || [];
         var cash = state.cash || {us:0,kr:0};
         var initUS = (state.cfg && state.cfg.initialCashUS) || 0;
         var initKR = (state.cfg && state.cfg.initialCashKR) || 0;
@@ -1204,32 +1293,56 @@ button.btn.loading { opacity: 0.5; pointer-events: none; }
     $('cfgInitCashKR').value = currentCfg.initialCashKR;
     $('cfgUS').value = (currentCfg.usTickers||[]).join(', ');
     $('cfgKR').value = (currentCfg.krTickers||[]).join(', ');
+
+    // [V8] 전략 토글
+    var strats = currentCfg.strategies || { swing:true, day:true, momentum:true, meanrev:true };
+    $('cfgStratSwing').checked = strats.swing !== false;
+    $('cfgStratDay').checked = strats.day !== false;
+    $('cfgStratMomentum').checked = strats.momentum !== false;
+    $('cfgStratMeanrev').checked = strats.meanrev !== false;
+
+    // [V8] 전략 사이즈
+    var sz = currentCfg.strategySizing || {};
+    var dflt = {
+      swing:    { base: 12, bullMult: 1.5, bearMult: 0.6 },
+      day:      { base:  6, bullMult: 1.0, bearMult: 0.7 },
+      momentum: { base: 18, bullMult: 1.5, bearMult: 0.5 },
+      meanrev:  { base:  9, bullMult: 0.7, bearMult: 1.3 }
+    };
+    function loadSizing(name, idBase, idBull, idBear) {
+      var s = sz[name] || dflt[name];
+      $(idBase).value = s.base;
+      $(idBull).value = s.bullMult;
+      $(idBear).value = s.bearMult;
+    }
+    loadSizing('swing',    'cfgSizeSwingBase', 'cfgSizeSwingBull', 'cfgSizeSwingBear');
+    loadSizing('day',      'cfgSizeDayBase',   'cfgSizeDayBull',   'cfgSizeDayBear');
+    loadSizing('momentum', 'cfgSizeMomBase',   'cfgSizeMomBull',   'cfgSizeMomBear');
+    loadSizing('meanrev',  'cfgSizeMrBase',    'cfgSizeMrBull',    'cfgSizeMrBear');
+    $('cfgCrossConf').value = currentCfg.crossConfluenceBonus != null ? currentCfg.crossConfluenceBonus : 1.2;
+
+    // 공통 지표
     $('cfgRsiBuy').value = currentCfg.rsiBuy;
     $('cfgRsiSell').value = currentCfg.rsiSell;
     $('cfgRsiPeriod').value = currentCfg.rsiPeriod;
-    $('cfgStopLoss').value = currentCfg.stopLoss;
-    // takeProfit 단일값 호환 처리 (구버전 cfg에서 마이그레이션)
-    $('cfgTakeProfit1').value = currentCfg.takeProfit1 != null ? currentCfg.takeProfit1 : (currentCfg.takeProfit != null ? currentCfg.takeProfit : 4);
-    $('cfgTakeProfit2').value = currentCfg.takeProfit2 != null ? currentCfg.takeProfit2 : 11;
-    $('cfgPosSize').value = currentCfg.posSize;
-    $('cfgPosSizeBull').value = currentCfg.posSizeBull != null ? currentCfg.posSizeBull : 12;
-    $('cfgPosSizeBear').value = currentCfg.posSizeBear != null ? currentCfg.posSizeBear : 6;
+
+    // SWING 룰 (swingRules에서 우선, 없으면 cfg 최상위에서)
+    var sw = currentCfg.swingRules || {};
+    $('cfgStopLoss').value = sw.stopLossPct != null ? sw.stopLossPct : (currentCfg.stopLoss != null ? currentCfg.stopLoss : 5);
+    $('cfgTakeProfit1').value = sw.tp1 != null ? sw.tp1 : (currentCfg.takeProfit1 != null ? currentCfg.takeProfit1 : 4);
+    $('cfgTakeProfit2').value = sw.tp2 != null ? sw.tp2 : (currentCfg.takeProfit2 != null ? currentCfg.takeProfit2 : 11);
+    $('cfgMinHoldHours').value = sw.minHoldHours != null ? sw.minHoldHours : (currentCfg.minHoldHours != null ? currentCfg.minHoldHours : 4);
+    $('cfgTimeStopDays').value = sw.timeStopDays != null ? sw.timeStopDays : (currentCfg.timeStopDays != null ? currentCfg.timeStopDays : 3);
+    $('cfgTimeStopMaxDays').value = sw.timeStopMaxDays != null ? sw.timeStopMaxDays : (currentCfg.timeStopMaxDays != null ? currentCfg.timeStopMaxDays : 7);
+    $('cfgTrailStartPct').value = sw.trailStartPct != null ? sw.trailStartPct : (currentCfg.trailStartPct != null ? currentCfg.trailStartPct : 3);
+    $('cfgTrailDropPct').value = sw.trailDropPct != null ? sw.trailDropPct : (currentCfg.trailDropPct != null ? currentCfg.trailDropPct : 4);
+    $('cfgAtrStopMult').value = sw.atrStopMult != null ? sw.atrStopMult : (currentCfg.atrStopMult != null ? currentCfg.atrStopMult : 2.0);
+
     $('cfgMaxDailyDrop').value = currentCfg.maxDailyDrop != null ? currentCfg.maxDailyDrop : 5;
     $('cfgMarketCrashPct').value = currentCfg.marketCrashPct != null ? currentCfg.marketCrashPct : -2;
     $('cfgMaPeriod').value = currentCfg.maPeriod;
-    // 구버전 minHoldMin(분) → 시간 변환 후 fallback
-    var mhh = currentCfg.minHoldHours;
-    if (mhh == null && currentCfg.minHoldMin != null) mhh = currentCfg.minHoldMin / 60;
-    if (mhh == null) mhh = 4;
-    $('cfgMinHoldHours').value = mhh;
-    $('cfgTimeStopDays').value = currentCfg.timeStopDays != null ? currentCfg.timeStopDays : 3;
-    $('cfgTimeStopMaxDays').value = currentCfg.timeStopMaxDays != null ? currentCfg.timeStopMaxDays : 7;
     $('cfgAtrPeriod').value = currentCfg.atrPeriod;
-    $('cfgAtrStopMult').value = currentCfg.atrStopMult;
     $('cfgBbStdMult').value = currentCfg.bbStdMult != null ? currentCfg.bbStdMult : 2.0;
-    // 구버전 trailMult → trailStartPct/trailDropPct 분리
-    $('cfgTrailStartPct').value = currentCfg.trailStartPct != null ? currentCfg.trailStartPct : 3;
-    $('cfgTrailDropPct').value = currentCfg.trailDropPct != null ? currentCfg.trailDropPct : 4;
     $('cfgDailyCacheMinutes').value = currentCfg.dailyCacheMinutes != null ? currentCfg.dailyCacheMinutes : 10;
     $('cfgFeeUS').value = currentCfg.feeUS;
     $('cfgFeeKR').value = currentCfg.feeKR;
@@ -1248,30 +1361,56 @@ button.btn.loading { opacity: 0.5; pointer-events: none; }
       initialCashKR: parseFloat($('cfgInitCashKR').value),
       usTickers: parseTickers($('cfgUS').value),
       krTickers: parseTickers($('cfgKR').value),
+      // [V8] 전략 토글
+      strategies: {
+        swing: $('cfgStratSwing').checked,
+        day: $('cfgStratDay').checked,
+        momentum: $('cfgStratMomentum').checked,
+        meanrev: $('cfgStratMeanrev').checked
+      },
+      // [V8] 전략 사이즈
+      strategySizing: {
+        swing:    { base: parseFloat($('cfgSizeSwingBase').value), bullMult: parseFloat($('cfgSizeSwingBull').value), bearMult: parseFloat($('cfgSizeSwingBear').value) },
+        day:      { base: parseFloat($('cfgSizeDayBase').value),   bullMult: parseFloat($('cfgSizeDayBull').value),   bearMult: parseFloat($('cfgSizeDayBear').value) },
+        momentum: { base: parseFloat($('cfgSizeMomBase').value),   bullMult: parseFloat($('cfgSizeMomBull').value),   bearMult: parseFloat($('cfgSizeMomBear').value) },
+        meanrev:  { base: parseFloat($('cfgSizeMrBase').value),    bullMult: parseFloat($('cfgSizeMrBull').value),    bearMult: parseFloat($('cfgSizeMrBear').value) }
+      },
+      crossConfluenceBonus: parseFloat($('cfgCrossConf').value),
+      // 공통 지표
       rsiBuy: parseFloat($('cfgRsiBuy').value),
       rsiSell: parseFloat($('cfgRsiSell').value),
       rsiPeriod: parseInt($('cfgRsiPeriod').value, 10),
-      stopLoss: parseFloat($('cfgStopLoss').value),
-      takeProfit1: parseFloat($('cfgTakeProfit1').value),
-      takeProfit2: parseFloat($('cfgTakeProfit2').value),
-      posSize: parseFloat($('cfgPosSize').value),
-      posSizeBull: parseFloat($('cfgPosSizeBull').value),
-      posSizeBear: parseFloat($('cfgPosSizeBear').value),
       maxDailyDrop: parseFloat($('cfgMaxDailyDrop').value),
       marketCrashPct: parseFloat($('cfgMarketCrashPct').value),
       maPeriod: parseInt($('cfgMaPeriod').value, 10),
-      minHoldHours: parseFloat($('cfgMinHoldHours').value),
-      timeStopDays: parseInt($('cfgTimeStopDays').value, 10),
-      timeStopMaxDays: parseInt($('cfgTimeStopMaxDays').value, 10),
       atrPeriod: parseInt($('cfgAtrPeriod').value, 10),
-      atrStopMult: parseFloat($('cfgAtrStopMult').value),
       bbStdMult: parseFloat($('cfgBbStdMult').value),
-      trailStartPct: parseFloat($('cfgTrailStartPct').value),
-      trailDropPct: parseFloat($('cfgTrailDropPct').value),
       dailyCacheMinutes: parseInt($('cfgDailyCacheMinutes').value, 10),
       feeUS: parseFloat($('cfgFeeUS').value),
       feeKR: parseFloat($('cfgFeeKR').value),
-      krSellTax: parseFloat($('cfgKrSellTax').value)
+      krSellTax: parseFloat($('cfgKrSellTax').value),
+      // [V8] swingRules (개별 룰 객체)
+      swingRules: {
+        stopLossPct: parseFloat($('cfgStopLoss').value),
+        tp1: parseFloat($('cfgTakeProfit1').value),
+        tp2: parseFloat($('cfgTakeProfit2').value),
+        minHoldHours: parseFloat($('cfgMinHoldHours').value),
+        timeStopDays: parseInt($('cfgTimeStopDays').value, 10),
+        timeStopMaxDays: parseInt($('cfgTimeStopMaxDays').value, 10),
+        trailStartPct: parseFloat($('cfgTrailStartPct').value),
+        trailDropPct: parseFloat($('cfgTrailDropPct').value),
+        atrStopMult: parseFloat($('cfgAtrStopMult').value)
+      },
+      // 하위 호환 — 옛 백엔드 필드도 함께 전송
+      stopLoss: parseFloat($('cfgStopLoss').value),
+      takeProfit1: parseFloat($('cfgTakeProfit1').value),
+      takeProfit2: parseFloat($('cfgTakeProfit2').value),
+      minHoldHours: parseFloat($('cfgMinHoldHours').value),
+      timeStopDays: parseInt($('cfgTimeStopDays').value, 10),
+      timeStopMaxDays: parseInt($('cfgTimeStopMaxDays').value, 10),
+      atrStopMult: parseFloat($('cfgAtrStopMult').value),
+      trailStartPct: parseFloat($('cfgTrailStartPct').value),
+      trailDropPct: parseFloat($('cfgTrailDropPct').value)
     };
     fetch('/api/cfg', { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify(body) })
       .then(function(r){return r.json();})
