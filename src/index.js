@@ -86,7 +86,7 @@ const DEFAULT_CFG = {
   // === [V8] 전략별 포지션 사이즈 (NEUTRAL base / BULL mult / BEAR mult) ===
   strategySizing: {
     swing:    { base: 12, bullMult: 1.5, bearMult: 0.6 },
-    day:      { base: 11, bullMult: 1.5, bearMult: 0.9 },  // [V8.1] 더 공격적: base 9→11, bull 1.3→1.5
+    day:      { base: 13, bullMult: 1.7, bearMult: 1.0 },  // [V8.1.3] 더 공격적: 11→13, bull 1.5→1.7
     momentum: { base: 18, bullMult: 1.5, bearMult: 0.5 },
     meanrev:  { base:  9, bullMult: 0.7, bearMult: 1.3 }
   },
@@ -109,20 +109,20 @@ const DEFAULT_CFG = {
     forceCloseBeforeMinClose: 30,
     tp: 2.5,
     stopLossPct: 1.3,
-    // [V8.1.2] 진입 범위 더 넓게: -7% ~ +1% (보합 살짝 상승도 포함)
-    dayDropMin: -7.0,
-    dayDropMax: 1.0,                   // [V8.1.2] 0.5 → 1.0
-    rsiMaxForGap: 60,                  // [V8.1.2] 55→60 — 갭하락 RSI 더 완화
-    rsiMaxForBounce: 65,               // [V8.1.2] 60→65
-    bounceYestMin: -0.8,               // [V8.1.2] -1.0 → -0.8 — 더 작은 음봉도 OK
-    openDriveMinPct: 0.7,              // [V8.1.2] 1.0→0.7
-    openDriveMaxPct: 5.0,
-    vwapPullMinPct: -1.0,              // [V8.1.2] -0.5→-1.0
-    vwapPullMaxPct: 3.0,               // [V8.1.2] 2.5→3.0
-    momoRsiMin: 58,                    // [V8.1.2] 60→58
-    momoRsiMax: 78,                    // [V8.1.2] 75→78
-    dipMinPct: -3.5,                   // [V8.1.2] -3.0→-3.5
-    dipMaxPct: -0.2                    // [V8.1.2] -0.3→-0.2
+    // [V8.1.3] 범위 더 공격적
+    dayDropMin: -8.0,                  // [V8.1.3] -7→-8
+    dayDropMax: 1.5,                   // [V8.1.3] 1.0→1.5
+    rsiMaxForGap: 65,                  // [V8.1.3] 60→65
+    rsiMaxForBounce: 70,               // [V8.1.3] 65→70
+    bounceYestMin: -0.5,               // [V8.1.3] -0.8→-0.5 (작은 음봉도 잡기)
+    openDriveMinPct: 0.5,              // [V8.1.3] 0.7→0.5
+    openDriveMaxPct: 6.0,              // [V8.1.3] 5.0→6.0
+    vwapPullMinPct: -1.5,              // [V8.1.3] -1.0→-1.5
+    vwapPullMaxPct: 3.5,               // [V8.1.3] 3.0→3.5
+    momoRsiMin: 55,                    // [V8.1.3] 58→55
+    momoRsiMax: 80,                    // [V8.1.3] 78→80
+    dipMinPct: -5.0,                   // [V8.1.3] -3.5→-5.0 (큰 눌림도 잡기, 005380같은 -4.7%)
+    dipMaxPct: -0.1                    // [V8.1.3] -0.2→-0.1
   },
   momentumRules: {
     breakoutDays: 20,          // 20일 신고가 돌파
@@ -144,7 +144,9 @@ const DEFAULT_CFG = {
     stopLossPct: 3.0
   },
   // === Confluence (전략 내부) ===
-  requireConfluence: false,     // [V8] 멀티 전략이라 전략 내부 confluence는 기본 OFF
+  // [V8.1.3] 강제 OFF — 멀티 전략판이라 cross-strategy confluence로 충분.
+  // autoTune이 켜는 로직도 V8.1.3에서 비활성화함.
+  requireConfluence: false,
   soloSignalWeight: 1.0,
   confluenceBonus: 1.3,
   allowMixedConfluence: true,
@@ -699,18 +701,15 @@ function evaluateBuySignals_day(price, dayPct, dailyData, cfg) {
     });
   }
 
-  // [V8.1.2 신규] DAY7: DY_RANGE — catch-all 안전망
-  // 위 6개 신호의 dead zone(예: dayPct 0.5~1%, RSI 45~55, ma5<ma20)을 메움.
-  // RSI 35~70 + dayPct -3~+2 + 거의 모든 보통 상태 종목 진입 가능.
-  // weight를 낮게 잡아 사이즈는 작게.
-  if (dailyRsi >= 35 && dailyRsi <= 70
-      && dayPct >= -3.0 && dayPct <= 2.0) {
-    // 단, 위 신호 중 하나라도 이미 잡혔으면 중복 방지
+  // [V8.1.2 신규] DAY7: DY_RANGE — catch-all 안전망 (V8.1.3 더 넓힘)
+  // RSI 30~75 + dayPct -5~+3 → 거의 모든 정상 종목 진입 가능.
+  if (dailyRsi >= 30 && dailyRsi <= 75
+      && dayPct >= -5.0 && dayPct <= 3.0) {
     if (signals.length === 0) {
       const trendUp = ma5 != null && ma5 > ma20;
       signals.push({
         name: "DY_RANGE",
-        weight: 0.85,                                   // 낮은 가중치 = 작은 사이즈
+        weight: 0.9,                                    // [V8.1.3] 0.85→0.9
         type: trendUp ? "TREND" : "COUNTER",
         detail: "range day " + dayPct.toFixed(1) + "% RSI " + dailyRsi.toFixed(1) + (trendUp ? " up-trend" : " no-trend")
       });
@@ -1311,13 +1310,14 @@ async function autoTune(DB, cfg, regimes) {
       if (newCfg.rsiBuy !== cfg.rsiBuy) changes.push("RSI " + cfg.rsiBuy + "->" + newCfg.rsiBuy);
     }
 
-    // [신규] 승률 기반 Confluence 토글
-    if (winRate < 0.40 && !cfg.requireConfluence) {
-      newCfg.requireConfluence = true;
-      changes.push("CONF=ON (WR low)");
-    } else if (winRate > 0.60 && cfg.requireConfluence) {
+    // [V8.1.3] 승률 기반 Confluence 자동 토글 제거.
+    // 이전 V8까지는 winRate<40%면 자동으로 requireConfluence=true로 설정 →
+    // 단독 신호 전부 차단 → 거래 0건 빠짐.
+    // 멀티 전략판은 cross-strategy confluence로 이미 안전망 충분.
+    // 만약 과거 사이클에서 켜져 있었다면 강제로 OFF로 리셋.
+    if (cfg.requireConfluence) {
       newCfg.requireConfluence = false;
-      changes.push("CONF=OFF (WR high)");
+      changes.push("CONF=OFF (forced reset)");
     }
 
     if (changes.length > 0) {
@@ -1380,6 +1380,20 @@ async function runTradingCycle(env) {
   const DB = env.DB;
   await ensureSchema(DB);
   let cfg = Object.assign({}, DEFAULT_CFG, await getState(DB, "cfg", {}));
+
+  // [V8.1.3] 저장된 cfg에 박힌 잘못된 값 강제 리셋
+  // - requireConfluence: 과거 autoTune이 true로 설정했으면 단독 신호 전부 차단됨 → 거래 0
+  // - strategies: 비어있거나 누락된 키 있으면 해당 전략 자동 OFF → 거래 0
+  if (cfg.requireConfluence) cfg.requireConfluence = false;
+  if (!cfg.strategies || typeof cfg.strategies !== "object") {
+    cfg.strategies = { swing: true, day: true, momentum: true, meanrev: true };
+  } else {
+    // 누락된 키는 true로 채움
+    for (const s of ["swing", "day", "momentum", "meanrev"]) {
+      if (cfg.strategies[s] !== false) cfg.strategies[s] = true;
+    }
+  }
+
   if (!cfg.enabled) { await log(DB, "INFO", null, "engine disabled"); return; }
 
   // [신규] Cycle Lock — 동시 실행 차단
@@ -1390,7 +1404,8 @@ async function runTradingCycle(env) {
   }
 
   try {
-    await log(DB, "INFO", null, "=== Cycle start (V8.1 multi-strategy) ===");
+    const enabledStrats = ["swing","day","momentum","meanrev"].filter(function(s){ return cfg.strategies[s]; }).join(",");
+    await log(DB, "INFO", null, "=== Cycle start (V8.1.3) strats=[" + enabledStrats + "] conf=" + (cfg.requireConfluence ? "ON" : "OFF") + " ===");
     const cycleStartedAt = Date.now();
     const usOpen = isMarketOpen("us");
     const krOpen = isMarketOpen("kr");
