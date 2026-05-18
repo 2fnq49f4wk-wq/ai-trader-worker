@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>LUX-engine V8.1.4</title>
+<title>LUX-engine V8.2</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600;700&family=Georgia:wght@400;700&display=swap" rel="stylesheet">
@@ -448,7 +448,7 @@ button.btn.loading { opacity: 0.5; pointer-events: none; }
   <div class="intro-center-box">
     <div class="intro-star-logo"></div>
     <div class="intro-text-box">
-      <div class="intro-title">LUX-ENGINE V8.1.4</div>
+      <div class="intro-title">LUX-ENGINE V8.2</div>
       <div class="intro-subtitle">Powered by BLAUENACHT</div>
     </div>
   </div>
@@ -459,7 +459,7 @@ button.btn.loading { opacity: 0.5; pointer-events: none; }
     <div class="brand-container">
     <div class="lux-star-logo"></div>
     <div class="lux-text-title">
-      <span>LUX-ENGINE V8.1.4</span>
+      <span>LUX-ENGINE V8.2</span>
       <span class="lux-powered-by">Powered by BLAUENACHT</span>
     </div>
   </div>
@@ -667,7 +667,7 @@ button.btn.loading { opacity: 0.5; pointer-events: none; }
     <button type="button" class="btn" id="btnResetTickers" style="margin-bottom:10px;">티커 기본값으로 복원</button>
 
     <div class="section-divider"></div>
-    <div class="section-title">STRATEGIES (V8.1.4 멀티 전략)</div>
+    <div class="section-title">STRATEGIES (V8.2 멀티 전략)</div>
     <div class="hint" style="margin-bottom:8px;">활성 전략을 켜고 끄세요. 같은 종목이라도 다른 전략이면 별도 포지션이 생성됩니다.</div>
     <div class="field-row">
       <div class="checkbox-row"><input type="checkbox" id="cfgStratSwing"><label for="cfgStratSwing"><b>SWING</b> (4시간~7일, 풀백/반전)</label></div>
@@ -754,6 +754,19 @@ button.btn.loading { opacity: 0.5; pointer-events: none; }
       <div class="field"><label>KR Sell Tax</label><input type="number" id="cfgKrSellTax" min="0" max="0.05" step="0.0001"></div>
     </div>
 
+    <div class="section-title">CASH MANAGEMENT (현금 입출금)</div>
+    <div style="font-size:11px; color:var(--dim); margin-bottom:8px;">
+      현재 cash: <b id="cfgCurrentCashUS">-</b> · <b id="cfgCurrentCashKR">-</b>
+      <span style="color:var(--faint); margin-left:8px;">(음수 입력 시 출금)</span>
+    </div>
+    <div class="field-row">
+      <div class="field"><label>US 추가 ($)</label><input type="number" id="cfgAddCashUS" step="100" placeholder="예: 90000"></div>
+      <div class="field"><label>KR 추가 (₩)</label><input type="number" id="cfgAddCashKR" step="100000" placeholder="예: 90000000"></div>
+      <div class="field" style="display:flex; align-items:flex-end;">
+        <button type="button" class="btn primary" id="btnAddCash" style="width:100%;">CASH 추가</button>
+      </div>
+    </div>
+
     <div class="modal-actions">
       <button type="button" class="btn danger" id="btnReset">RESET ALL DATA</button>
       <button type="button" class="btn" id="btnCancelSettings">CANCEL</button>
@@ -774,6 +787,7 @@ button.btn.loading { opacity: 0.5; pointer-events: none; }
   var logFilter = 'ALL';
   var logSearchText = '';
   var currentCfg = null;
+  var currentCash = { us: 0, kr: 0 };
   var lastQuotes = {};
   var tradesExpanded = false;
   var allTradesExpanded = false;
@@ -1315,6 +1329,7 @@ button.btn.loading { opacity: 0.5; pointer-events: none; }
         var posUS = (state.positions && state.positions.us) || [];
         var posKR = (state.positions && state.positions.kr) || [];
         var cash = state.cash || {us:0,kr:0};
+        currentCash = cash;
         var initUS = (state.cfg && state.cfg.initialCashUS) || 0;
         var initKR = (state.cfg && state.cfg.initialCashKR) || 0;
         renderSummary('us', calcSummary('us', cash.us, posUS, initUS));
@@ -1362,6 +1377,11 @@ button.btn.loading { opacity: 0.5; pointer-events: none; }
     $('cfgMarketHoursOnly').checked = currentCfg.marketHoursOnly !== false;
     $('cfgInitCashUS').value = currentCfg.initialCashUS;
     $('cfgInitCashKR').value = currentCfg.initialCashKR;
+    // [V8.2.1] 현재 cash 표시 (CASH MANAGEMENT 섹션용)
+    $('cfgCurrentCashUS').textContent = '$' + fmtNum(currentCash.us, 2);
+    $('cfgCurrentCashKR').textContent = '₩' + fmtCompact(currentCash.kr);
+    $('cfgAddCashUS').value = '';
+    $('cfgAddCashKR').value = '';
     $('cfgUS').value = (currentCfg.usTickers||[]).join(', ');
     $('cfgKR').value = (currentCfg.krTickers||[]).join(', ');
 
@@ -1496,6 +1516,39 @@ button.btn.loading { opacity: 0.5; pointer-events: none; }
       ['catch'](function(e){ toast('초기화 실패: '+e.message); });
   }
 
+  function addCash() {
+    var usRaw = $('cfgAddCashUS').value;
+    var krRaw = $('cfgAddCashKR').value;
+    var us = usRaw === '' ? 0 : parseFloat(usRaw);
+    var kr = krRaw === '' ? 0 : parseFloat(krRaw);
+    if (isNaN(us)) us = 0;
+    if (isNaN(kr)) kr = 0;
+    if (us === 0 && kr === 0) { toast('US 또는 KR 금액을 입력하세요'); return; }
+    var msg = '현금 변경:\n';
+    if (us !== 0) msg += '  US: ' + (us >= 0 ? '+$' : '-$') + Math.abs(us).toLocaleString() + '\n';
+    if (kr !== 0) msg += '  KR: ' + (kr >= 0 ? '+₩' : '-₩') + Math.abs(kr).toLocaleString() + '\n';
+    msg += '진행할까요?';
+    if (!confirm(msg)) return;
+    fetch('/api/cash/add', {
+      method:'POST',
+      headers:{'Content-Type':'application/json'},
+      body: JSON.stringify({ us: us, kr: kr })
+    }).then(function(r){ return r.json().then(function(d){ return { ok: r.ok, data: d }; }); })
+      .then(function(res){
+        if (!res.ok || !res.data.ok) {
+          toast('실패: ' + (res.data.error || 'unknown'));
+          return;
+        }
+        toast('현금 추가 완료');
+        currentCash = res.data.cash;
+        $('cfgCurrentCashUS').textContent = '$' + fmtNum(currentCash.us, 2);
+        $('cfgCurrentCashKR').textContent = '₩' + fmtCompact(currentCash.kr);
+        $('cfgAddCashUS').value = '';
+        $('cfgAddCashKR').value = '';
+        refreshAll();
+      })['catch'](function(e){ toast('실패: ' + e.message); });
+  }
+
   function resetTickers() {
     if (!confirm('티커 목록을 코드의 기본값으로 복원합니까?')) return;
     fetch('/api/reset_tickers', {method:'POST'}).then(function(r){return r.json();})
@@ -1523,6 +1576,7 @@ button.btn.loading { opacity: 0.5; pointer-events: none; }
   $('btnCancelSettings').addEventListener('click', closeSettings);
   $('btnSaveSettings').addEventListener('click', saveSettings);
   $('btnReset').addEventListener('click', resetAll);
+  $('btnAddCash').addEventListener('click', addCash);
   $('btnResetTickers').addEventListener('click', resetTickers);
   $('tradesToggle').addEventListener('click', toggleTrades);
   $('allTradesToggle').addEventListener('click', toggleAllTrades);
