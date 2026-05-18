@@ -2088,6 +2088,30 @@ async function handleRequest(request, env) {
       await setState(env.DB, "cfg", current);
       return Response.json({ ok: true, usTickers: DEFAULT_US, krTickers: DEFAULT_KR }, { headers: cors });
     }
+    if (path === "/api/cash/add" && request.method === "POST") {
+      // 기존 cash에 금액 추가/차감 (포지션, 거래 기록 보존)
+      // body: { us?: number, kr?: number }  — 양수=입금, 음수=출금
+      const body = await request.json();
+      const cfg = migrateCfgToMarkets(Object.assign({}, DEFAULT_CFG, await getState(env.DB, "cfg", {})));
+      const cash = await getState(env.DB, "cash", { us: cfg.initialCashUS, kr: cfg.initialCashKR });
+      const addUs = Number(body.us) || 0;
+      const addKr = Number(body.kr) || 0;
+      if (addUs === 0 && addKr === 0) {
+        return Response.json({ ok: false, error: "no amount" }, { status: 400, headers: cors });
+      }
+      const before = { us: cash.us, kr: cash.kr };
+      cash.us = +(cash.us + addUs).toFixed(2);
+      cash.kr = Math.round(cash.kr + addKr);
+      // 출금 시 음수 방지
+      if (cash.us < 0 || cash.kr < 0) {
+        return Response.json({ ok: false, error: "insufficient cash", before: before, attempted: { us: addUs, kr: addKr } }, { status: 400, headers: cors });
+      }
+      await setState(env.DB, "cash", cash);
+      const msg = "CASH ADD US:" + (addUs >= 0 ? "+" : "") + addUs + " KR:" + (addKr >= 0 ? "+" : "") + addKr +
+                  " (US " + before.us + "->" + cash.us + ", KR " + before.kr + "->" + cash.kr + ")";
+      await log(env.DB, "INFO", null, msg);
+      return Response.json({ ok: true, cash: cash, before: before, added: { us: addUs, kr: addKr } }, { headers: cors });
+    }
     if (path === "/api/tick" && request.method === "POST") {
       await runTradingCycle(env);
       return Response.json({ ok: true, ts: Date.now() }, { headers: cors });
