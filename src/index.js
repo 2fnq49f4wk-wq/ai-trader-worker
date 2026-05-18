@@ -2093,9 +2093,17 @@ async function handleRequest(request, env) {
     }
     if (path === "/api/cash/add" && request.method === "POST") {
       // 기존 cash에 금액 추가/차감 (포지션, 거래 기록 보존)
-      // body: { us?: number, kr?: number }  — 양수=입금, 음수=출금
+      // body: { us?: number, kr?: number, reconcile?: boolean }
+      //   us/kr: 양수=입금, 음수=출금
+      //   reconcile (기본 true): 입금 직전 baseline 격차를 자동 흡수해서
+      //     "입금 자체가 수익으로 잡히는" 현상 방지.
       // [V8.2.2] deposits도 누적 기록 → 수익률 계산 시 입금분 차감용
+      // [V8.2.4] reconcile 모드 추가 — 입금 시점에 baseline을 portfolio total에 맞춰 정렬.
+      //   기존 cash + 포지션 평가액과 (initialCash + deposits)이 어긋나 있으면,
+      //   그 격차를 deposits에 흡수해서 입금 직전의 수익률을 0%로 리셋.
+      //   이후 발생하는 수익만 vs Initial에 반영됨.
       const body = await request.json();
+      const reconcile = body.reconcile !== false; // 기본 ON
       const cfg = migrateCfgToMarkets(Object.assign({}, DEFAULT_CFG, await getState(env.DB, "cfg", {})));
       const cash = await getState(env.DB, "cash", { us: cfg.initialCashUS, kr: cfg.initialCashKR });
       const deposits = await getState(env.DB, "deposits", { us: 0, kr: 0 });
@@ -2105,20 +2113,85 @@ async function handleRequest(request, env) {
         return Response.json({ ok: false, error: "no amount" }, { status: 400, headers: cors });
       }
       const before = { us: cash.us, kr: cash.kr };
+      const beforeDeposits = { us: deposits.us || 0, kr: deposits.kr || 0 };
+
+      // === [V8.2.4] reconcile: 입금 직전 portfolio total 계산 → baseline 격차 흡수 ===
+      // 입금이 일어나는 시장(addUs!=0이면 us, addKr!=0이면 kr)만 reconcile.
+      // 다른 시장은 건드리지 않음.
+      const reconcileInfo = { us: null, kr: null };
+      if (reconcile) {
+        for (const market of ['us', 'kr']) {
+          const addAmt = market === 'us' ? addUs : addKr;
+          if (addAmt === 0) continue; // 이 시장은 입금 없음 → 스킵
+
+          // 해당 시장의 포지션 평가액 계산
+          const posMap = await getPositions(env.DB, market);
+          let marketVal = 0;
+          for (const key in posMap) {
+            const p = posMap[key];
+            const q = await getState(env.DB, "quote:" + p.symbol, null);
+            const price = (q && q.price) ? q.price : p.avg;
+            marketVal += p.qty * price;
+          }
+          const totalBefore = cash[market] + marketVal;
+          const initialCash = market === 'us' ? cfg.initialCashUS : cfg.initialCashKR;
+          const baselineBefore = initialCash + (deposits[market] || 0);
+          const gap = totalBefore - baselineBefore; // 진짜 손익 (양수=수익, 음수=손실)
+
+          // 입금 직전 수익률을 0%로 리셋 → deposits에 gap만큼 추가 흡수
+          // (단, 이미 정확히 추적되고 있어서 gap이 미미하면 굳이 건드리지 않음)
+          // 임계: KR ₩1, US $0.01 이상의 격차만 보정
+          const eps = market === 'us' ? 0.01 : 1;
+          if (Math.abs(gap) >= eps) {
+            if (market === 'us') {
+              deposits.us = +((deposits.us || 0) + gap).toFixed(2);
+            } else {
+              deposits.kr = Math.round((deposits.kr || 0) + gap);
+            }
+            reconcileInfo[market] = {
+              totalBefore: market === 'us' ? +totalBefore.toFixed(2) : Math.round(totalBefore),
+              baselineBefore: market === 'us' ? +baselineBefore.toFixed(2) : Math.round(baselineBefore),
+              gapAbsorbed: market === 'us' ? +gap.toFixed(2) : Math.round(gap),
+              marketVal: market === 'us' ? +marketVal.toFixed(2) : Math.round(marketVal)
+            };
+          }
+        }
+      }
+
+      // === 실제 입금/출금 적용 ===
       cash.us = +(cash.us + addUs).toFixed(2);
       cash.kr = Math.round(cash.kr + addKr);
-      // 출금 시 음수 방지
+      // 출금 시 음수 방지 (reconcile 변경분 롤백)
       if (cash.us < 0 || cash.kr < 0) {
-        return Response.json({ ok: false, error: "insufficient cash", before: before, attempted: { us: addUs, kr: addKr } }, { status: 400, headers: cors });
+        return Response.json({
+          ok: false, error: "insufficient cash",
+          before: before, attempted: { us: addUs, kr: addKr }
+        }, { status: 400, headers: cors });
       }
+      // 입금/출금 금액을 deposits에 누적
       deposits.us = +((deposits.us || 0) + addUs).toFixed(2);
       deposits.kr = Math.round((deposits.kr || 0) + addKr);
+
       await setState(env.DB, "cash", cash);
       await setState(env.DB, "deposits", deposits);
+
+      const reconcileMsg = (reconcileInfo.us || reconcileInfo.kr) ?
+        " [reconciled US:" + (reconcileInfo.us ? reconcileInfo.us.gapAbsorbed : 0) +
+        " KR:" + (reconcileInfo.kr ? reconcileInfo.kr.gapAbsorbed : 0) + "]" : "";
       const msg = "CASH ADD US:" + (addUs >= 0 ? "+" : "") + addUs + " KR:" + (addKr >= 0 ? "+" : "") + addKr +
-                  " (US " + before.us + "->" + cash.us + ", KR " + before.kr + "->" + cash.kr + ")";
+                  " (US " + before.us + "->" + cash.us + ", KR " + before.kr + "->" + cash.kr + ")" +
+                  " deposits(US " + beforeDeposits.us + "->" + deposits.us + ", KR " + beforeDeposits.kr + "->" + deposits.kr + ")" +
+                  reconcileMsg;
       await log(env.DB, "INFO", null, msg);
-      return Response.json({ ok: true, cash: cash, deposits: deposits, before: before, added: { us: addUs, kr: addKr } }, { headers: cors });
+      return Response.json({
+        ok: true,
+        cash: cash,
+        deposits: deposits,
+        before: before,
+        beforeDeposits: beforeDeposits,
+        added: { us: addUs, kr: addKr },
+        reconciled: reconcileInfo
+      }, { headers: cors });
     }
     if (path === "/api/deposits/set" && request.method === "POST") {
       // [V8.2.3] deposits 값을 직접 덮어씀 (과거 수동 입금 보정용)
