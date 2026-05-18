@@ -942,14 +942,15 @@ function evaluateBuyBlocks(price, dayPct, dailyData, cfg, regime, signal, ctx) {
   const ma20 = getMA(closes, cfg.maPeriod);
   const dailyRsi = getRSI(closes, cfg.rsiPeriod);
 
-  // DOWNTREND — MOMENTUM은 신고가 돌파라 면제, MEANREV는 본질이 역추세라 면제
-  if (strategy !== "momentum" && strategy !== "meanrev"
+  // DOWNTREND — MOMENTUM/MEANREV 면제 + [V8.1.5] DAY도 면제 (단타는 일봉 추세 무관)
+  if (strategy !== "momentum" && strategy !== "meanrev" && strategy !== "day"
       && !signal.isCounterTrend && ma20 != null && price < ma20 && dailyRsi != null && dailyRsi >= 40) {
     return "DOWNTREND price<MA20 RSI=" + dailyRsi.toFixed(1);
   }
 
-  // PERSISTENT_DOWN — MEANREV는 면제 (오히려 많이 빠진 게 진입 조건)
-  if (strategy !== "meanrev") {
+  // PERSISTENT_DOWN — MEANREV/DAY 면제 (단타는 5일 패턴 무관, 갭하락 반등 노림)
+  // [V8.1.5] day 면제 — 7건 차단되던 KR 약세장에서도 단타 진입 가능
+  if (strategy !== "meanrev" && strategy !== "day") {
     const downDays = countDownDays(closes, 5);
     if (downDays >= 4) return "PERSISTENT_DOWN " + downDays + "/5";
   }
@@ -1669,6 +1670,11 @@ async function runTradingCycle(env) {
             await log(DB, "INFO", symbol, "CROSS-CONF (" + stratNames + ") x" + crossBonus);
           }
 
+          // [V8.1.5] 한 종목에 여러 전략 동시 진입 시 합산 cap (35%)
+          // 한 종목에 swing+day+meanrev 다 잡히면 합산 40%+ 되는 경우 방지
+          const PER_SYMBOL_CAP = 0.35;
+          let symbolAllocated = 0;
+
           // 각 전략 신호별로 진입 시도
           for (const sr of stratResults) {
             const strategy = sr.strategy;
@@ -1688,26 +1694,51 @@ async function runTradingCycle(env) {
             };
             const blockReason = evaluateBuyBlocks(price, dayPct, daily, cfg, regime, signal, ctx);
             if (blockReason) {
-              // [V8.1.2] BLOCK 사유는 별도 카운트
               incBlock(blockReason.split(" ")[0] + "[" + strategy + "]");
               continue;
             }
 
             const baseRatio = getPositionSizeRatio(cfg, strategy, regime.regime);
-            const adjustedRatio = baseRatio * signal.weight * crossBonus;
+            let adjustedRatio = baseRatio * signal.weight * crossBonus;
+
+            // [V8.1.5] per-symbol cap 적용
+            const remainingCap = PER_SYMBOL_CAP - symbolAllocated;
+            if (remainingCap <= 0.01) {
+              incNobuy("symbol_cap");
+              continue;
+            }
+            if (adjustedRatio > remainingCap) adjustedRatio = remainingCap;
+
             const budget = cash[market] * adjustedRatio;
-            const qty = Math.floor(budget / (price * (1 + feeRate)));
+            let qty = Math.floor(budget / (price * (1 + feeRate)));
+
+            // [V8.1.5] 1주도 못 사는 경우: 잔액으로 1주 살 수 있으면 1주만 매수
+            // (한국 고가주 + 작은 사이즈로 budget < 1주가 자주 발생)
+            if (qty === 0) {
+              const onePrice = price * (1 + feeRate);
+              if (onePrice <= cash[market] * Math.min(PER_SYMBOL_CAP - symbolAllocated, 0.10)) {
+                // 잔액에서 cap 또는 10% 이내라면 1주 매수 허용
+                qty = 1;
+              }
+            }
+
             const totalCost = qty * price * (1 + feeRate);
             if (qty > 0 && totalCost <= cash[market]) {
               await executeBuy(DB, market, symbol, strategy, qty, price, signal, dailyAtr, cfg, cash);
               bought++;
+              symbolAllocated += adjustedRatio;
               // 즉시 반영
               heldSymbols.add(symbol);
               strategiesHeldNow.add(strategy);
               const sec = SECTOR_MAP[symbol];
               if (sec) sectorCounts[sec] = (sectorCounts[sec] || 0) + 1;
             } else {
-              incNobuy("cash_short");
+              // [V8.1.5] cash_short 사유 세분화
+              if (qty === 0) {
+                incNobuy("price_too_high[" + strategy + "]");
+              } else {
+                incNobuy("cash_short[" + strategy + "]");
+              }
             }
           }
         } catch (e) {
