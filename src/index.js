@@ -71,7 +71,7 @@ const DEFAULT_CFG = {
   atrPeriod: 14, atrStopMult: 2.0,
   bbStdMult: 2.0,
   volSpikeMult: 1.5,
-  dailyCacheMinutes: 10,
+  dailyCacheMinutes: 30,   // [V8.1.1] 10→30 — Cloudflare subrequest 절약
   initialCashUS: 10000, initialCashKR: 10000000,
   enabled: true,
   autoTune: true,
@@ -1380,21 +1380,31 @@ async function runTradingCycle(env) {
     const usOpen = isMarketOpen("us");
     const krOpen = isMarketOpen("kr");
 
-    // [V8.1] 지수 fetch 병렬화 (US 3 + KR 2 = 5개 동시)
-    const indexJobs = [];
-    for (const idx of US_INDICES) {
-      indexJobs.push(
-        fetchIndexDaily(idx)
-          .then(function(d){ return saveIndex(DB, idx, "us", d); })
-          .catch(function(e){ return log(DB, "WARN", idx, "index fetch fail: " + e.message); })
-      );
+    // [V8.1.1] 양 시장 다 닫혔으면 사이클 전체 스킵 — 정규장에만 작동
+    if (!usOpen && !krOpen) {
+      await log(DB, "CLOSED", null, "US & KR 장 마감 — 사이클 스킵");
+      return;
     }
-    for (const idx of KR_INDICES) {
-      indexJobs.push(
-        fetchIndexDaily(idx)
-          .then(function(d){ return saveIndex(DB, idx, "kr", d); })
-          .catch(function(e){ return log(DB, "WARN", idx, "index fetch fail: " + e.message); })
-      );
+
+    // [V8.1] 지수 fetch — 열린 시장만 (Cloudflare subrequest 한도 절약)
+    const indexJobs = [];
+    if (usOpen) {
+      for (const idx of US_INDICES) {
+        indexJobs.push(
+          fetchIndexDaily(idx)
+            .then(function(d){ return saveIndex(DB, idx, "us", d); })
+            .catch(function(e){ return log(DB, "WARN", idx, "index fetch fail: " + e.message); })
+        );
+      }
+    }
+    if (krOpen) {
+      for (const idx of KR_INDICES) {
+        indexJobs.push(
+          fetchIndexDaily(idx)
+            .then(function(d){ return saveIndex(DB, idx, "kr", d); })
+            .catch(function(e){ return log(DB, "WARN", idx, "index fetch fail: " + e.message); })
+        );
+      }
     }
     await Promise.allSettled(indexJobs);
 
@@ -1410,16 +1420,11 @@ async function runTradingCycle(env) {
 
     let tried = 0, bought = 0, sold = 0, skipped = 0, fetchFail = 0;
 
-    // [수정] 시세 갱신은 항상, 트레이딩은 장 중일 때만
-    const marketsForQuotes = ["us", "kr"];     // 시세는 모든 시장
+    // [V8.1.1] 장 열린 시장만 처리 — 마감된 시장은 시세도 fetch 안 함
     const marketsToTrade = [];
     if (usOpen) marketsToTrade.push("us");
     if (krOpen) marketsToTrade.push("kr");
-
-    // 장 마감이면 트레이딩 스킵 알림만 남김 (예전처럼 return하지 않음)
-    if (marketsToTrade.length === 0) {
-      await log(DB, "CLOSED", null, "US & KR 장 마감 — 시세만 갱신");
-    }
+    const marketsForQuotes = marketsToTrade.slice();
 
     for (const market of marketsForQuotes) {
       const tickers = market === "us" ? cfg.usTickers : cfg.krTickers;
@@ -1440,23 +1445,29 @@ async function runTradingCycle(env) {
         if (sec) sectorCounts[sec] = (sectorCounts[sec] || 0) + 1;
       }
 
-      // [V8.1] === PREFETCH 단계 ===
-      // 모든 종목의 intraday + daily를 병렬로 동시에 fetch.
-      // 기존: 종목당 순차 await (200~500ms x 20개 = 4~10s)
-      // 신규: Promise.allSettled로 동시 호출 → 가장 느린 한 종목 시간만 소요
+      // [V8.1.1] === PREFETCH 단계 (배치 처리) ===
+      // 한 시장(20개)을 10개씩 2배치로 처리.
+      // Cloudflare Workers subrequest 한도(50/invocation) 회피하면서도
+      // 순차 await 대비 빠름.
       const prefetchStart = Date.now();
-      const fetched = await Promise.all(tickers.map(async function(symbol){
-        let intra = null, daily = null, intraOk = false;
-        let intraErr = null, dailyErr = null;
-        try {
-          intra = await fetchIntraday(symbol);
-          if (intra && intra.price > 0) intraOk = true;
-        } catch (e) { intraErr = e.message; }
-        try {
-          daily = await getDailyCached(DB, symbol, cfg.dailyCacheMinutes);
-        } catch (e) { dailyErr = e.message; }
-        return { symbol: symbol, intra: intra, daily: daily, intraOk: intraOk, intraErr: intraErr, dailyErr: dailyErr };
-      }));
+      const BATCH = 10;
+      const fetched = [];
+      for (let i = 0; i < tickers.length; i += BATCH) {
+        const slice = tickers.slice(i, i + BATCH);
+        const batchResults = await Promise.all(slice.map(async function(symbol){
+          let intra = null, daily = null, intraOk = false;
+          let intraErr = null, dailyErr = null;
+          try {
+            intra = await fetchIntraday(symbol);
+            if (intra && intra.price > 0) intraOk = true;
+          } catch (e) { intraErr = e.message; }
+          try {
+            daily = await getDailyCached(DB, symbol, cfg.dailyCacheMinutes);
+          } catch (e) { dailyErr = e.message; }
+          return { symbol: symbol, intra: intra, daily: daily, intraOk: intraOk, intraErr: intraErr, dailyErr: dailyErr };
+        }));
+        for (const r of batchResults) fetched.push(r);
+      }
       const prefetchMs = Date.now() - prefetchStart;
       await log(DB, "INFO", null, "prefetch[" + market + "] " + tickers.length + " syms in " + prefetchMs + "ms");
 
