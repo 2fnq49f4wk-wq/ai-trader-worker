@@ -517,7 +517,10 @@ button.btn.loading { opacity: 0.5; pointer-events: none; }
         </div>
       </div>
       <div class="panel">
-        <div class="panel-header"><div class="panel-title">[KR] PORTFOLIO</div></div>
+        <div class="panel-header">
+          <div class="panel-title">[KR] PORTFOLIO</div>
+          <div class="cfg-display" id="cfgDisplayKR"></div>
+        </div>
         <div class="summary-grid">
           <div class="summary-item"><div class="summary-label">TOTAL</div><div class="summary-value" id="totalKR">-</div></div>
           <div class="summary-item"><div class="summary-label">INVESTED</div><div class="summary-value" id="investedKR">-</div></div>
@@ -573,6 +576,30 @@ button.btn.loading { opacity: 0.5; pointer-events: none; }
       </div>
       <div class="trades-table" id="tradesTableBox">
         <div id="tradesBox"><div class="empty">No trades yet</div></div>
+      </div>
+    </div>
+
+    <div class="panel">
+      <div class="panel-header"><div class="panel-title">ALL TRADE HISTORY</div></div>
+      <div class="trades-toggle" id="allTradesToggle">
+        <div class="trades-summary" id="allTradesSummary">
+          <div class="trades-summary-item">
+            <div class="trades-summary-label">TOTAL</div>
+            <div class="trades-summary-value" id="allTradesTotalCount">0</div>
+          </div>
+          <div class="trades-summary-item">
+            <div class="trades-summary-label">WIN RATE</div>
+            <div class="trades-summary-value" id="allTradesWinRate">0%</div>
+          </div>
+          <div class="trades-summary-item">
+            <div class="trades-summary-label">AVG PnL</div>
+            <div class="trades-summary-value" id="allTradesAvgPnl">0%</div>
+          </div>
+        </div>
+        <button type="button" class="trades-toggle-btn" id="allTradesToggleBtn">펼치기</button>
+      </div>
+      <div class="trades-table" id="allTradesTableBox">
+        <div id="allTradesBox"><div class="empty">No trades yet</div></div>
       </div>
     </div>
 
@@ -749,6 +776,7 @@ button.btn.loading { opacity: 0.5; pointer-events: none; }
   var currentCfg = null;
   var lastQuotes = {};
   var tradesExpanded = false;
+  var allTradesExpanded = false;
   var usExpanded = false;
   var krExpanded = false;
   var usFavorites = [];
@@ -1120,10 +1148,19 @@ button.btn.loading { opacity: 0.5; pointer-events: none; }
   }
 
   function renderTrades(trades) {
-    var box = $('tradesBox');
-    if (!trades || trades.length === 0) { box.innerHTML='<div class="empty">No trades yet</div>'; updateTradesSummary([]); return; }
+    renderTradesInto(trades, 'tradesBox', 'tradesTotalCount', 'tradesWinRate', 'tradesAvgPnl', 50);
+  }
+
+  function renderAllTrades(trades) {
+    renderTradesInto(trades, 'allTradesBox', 'allTradesTotalCount', 'allTradesWinRate', 'allTradesAvgPnl', null);
+  }
+
+  function renderTradesInto(trades, boxId, totalId, winId, avgId, sliceLimit) {
+    var box = $(boxId);
+    if (!trades || trades.length === 0) { box.innerHTML='<div class="empty">No trades yet</div>'; updateTradesSummaryInto([], totalId, winId, avgId); return; }
     var html = '<div class="table-wrap"><table class="table"><thead><tr><th>TIME</th><th>MKT</th><th>SYMBOL</th><th>SIDE</th><th class="right">QTY</th><th class="right">PRICE</th><th class="right">PnL</th><th class="right">PnL%</th><th>REASON</th></tr></thead><tbody>';
-    trades.slice(0,50).forEach(function(t){
+    var rows = sliceLimit ? trades.slice(0, sliceLimit) : trades;
+    rows.forEach(function(t){
       var sc = t.side==='BUY'?'trade-buy':'trade-sell';
       var pct = t.pnl_pct!=null ? (t.pnl_pct>=0?'+':'')+t.pnl_pct.toFixed(2)+'%' : '-';
       var pc = t.pnl_pct!=null ? (t.pnl_pct>=0?'pos':'neg') : '';
@@ -1135,21 +1172,25 @@ button.btn.loading { opacity: 0.5; pointer-events: none; }
       html += '<tr><td>'+fmtFullTime(t.ts)+'</td><td><span class="market-badge">'+t.market.toUpperCase()+'</span></td><td>'+label+'</td><td class="'+sc+'">'+t.side+'</td><td class="right">'+fmtNum(t.qty)+'</td><td class="right">'+fmtNum(t.price)+'</td><td class="right '+pc+'">'+pnlText+'</td><td class="right '+pc+'">'+pct+'</td><td>'+escapeHtml(t.reason||'')+'</td></tr>';
     });
     box.innerHTML = html + '</tbody></table></div>';
-    updateTradesSummary(trades);
+    updateTradesSummaryInto(trades, totalId, winId, avgId);
   }
 
   function updateTradesSummary(trades) {
+    updateTradesSummaryInto(trades, 'tradesTotalCount', 'tradesWinRate', 'tradesAvgPnl');
+  }
+
+  function updateTradesSummaryInto(trades, totalId, winId, avgId) {
     if (!trades || trades.length === 0) {
-      $('tradesTotalCount').textContent = '0'; $('tradesWinRate').textContent = '0%'; $('tradesAvgPnl').textContent = '0%'; return;
+      $(totalId).textContent = '0'; $(winId).textContent = '0%'; $(avgId).textContent = '0%'; return;
     }
     var sells = trades.filter(function(t){ return t.side === 'SELL'; });
-    if (sells.length === 0) { $('tradesTotalCount').textContent = trades.length; $('tradesWinRate').textContent = '-'; $('tradesAvgPnl').textContent = '-'; return; }
+    if (sells.length === 0) { $(totalId).textContent = trades.length; $(winId).textContent = '-'; $(avgId).textContent = '-'; return; }
     var wins = sells.filter(function(t){ return t.pnl_pct > 0; });
     var winRate = (wins.length / sells.length * 100).toFixed(1);
     var avgPnl = (sells.reduce(function(a,t){ return a + (t.pnl_pct || 0); }, 0) / sells.length).toFixed(2);
-    $('tradesTotalCount').textContent = trades.length;
-    $('tradesWinRate').textContent = winRate + '%';
-    var avgEl = $('tradesAvgPnl');
+    $(totalId).textContent = trades.length;
+    $(winId).textContent = winRate + '%';
+    var avgEl = $(avgId);
     avgEl.textContent = (avgPnl >= 0 ? '+' : '') + avgPnl + '%';
     avgEl.className = 'trades-summary-value ' + (parseFloat(avgPnl) > 0 ? 'pos' : (parseFloat(avgPnl) < 0 ? 'neg' : ''));
   }
@@ -1193,7 +1234,9 @@ button.btn.loading { opacity: 0.5; pointer-events: none; }
     if (strats.meanrev !== false) activeStrats.push('MR');
     var stratStr = activeStrats.length ? activeStrats.join('+') : 'NONE';
     var swingBase = (cfg.strategySizing && cfg.strategySizing.swing && cfg.strategySizing.swing.base) || cfg.posSize || 12;
-    $('cfgDisplayUS').innerHTML = 'Strategies/<b>'+stratStr+'</b> · RSI Buy/<b>'+cfg.rsiBuy+'</b>/Sell/<b>'+cfg.rsiSell+'</b> · Stop/<b>'+sl+'%</b> · TP1/<b>'+tp1+'%</b> · TP2/<b>'+tp2+'%</b> · SwingSize/<b>'+swingBase+'%</b>';
+    var cfgHtml = 'Strategies/<b>'+stratStr+'</b> · RSI Buy/<b>'+cfg.rsiBuy+'</b>/Sell/<b>'+cfg.rsiSell+'</b> · Stop/<b>'+sl+'%</b> · TP1/<b>'+tp1+'%</b> · TP2/<b>'+tp2+'%</b> · SwingSize/<b>'+swingBase+'%</b>';
+    $('cfgDisplayUS').innerHTML = cfgHtml;
+    if ($('cfgDisplayKR')) $('cfgDisplayKR').innerHTML = cfgHtml;
     var lastTune = allLogs.filter(function(l){return l.level==='TUNE';})[0];
     var banner = $('tuneBanner'), tuneText = $('tuneText');
     if (lastTune && cfg.autoTune) { tuneText.textContent = lastTune.message + ' (' + fmtAgo(lastTune.ts) + ')'; banner.style.display = 'block'; }
@@ -1205,6 +1248,17 @@ button.btn.loading { opacity: 0.5; pointer-events: none; }
     var tableBox = $('tradesTableBox'), btn = $('tradesToggleBtn');
     tradesExpanded = !tradesExpanded;
     if (tradesExpanded) { tableBox.classList.add('show'); btn.textContent = '접기'; }
+    else { tableBox.classList.remove('show'); btn.textContent = '펼치기'; }
+  }
+
+  function toggleAllTrades() {
+    var tableBox = $('allTradesTableBox'), btn = $('allTradesToggleBtn');
+    allTradesExpanded = !allTradesExpanded;
+    if (allTradesExpanded) {
+      tableBox.classList.add('show'); btn.textContent = '접기';
+      // 펼칠 때 최신 전체 거래 fetch
+      api('/api/trades?limit=10000').then(function(trades){ renderAllTrades(trades || []); })['catch'](function(){});
+    }
     else { tableBox.classList.remove('show'); btn.textContent = '펼치기'; }
   }
 
@@ -1233,9 +1287,9 @@ button.btn.loading { opacity: 0.5; pointer-events: none; }
     renderMarketStatus();
     // [개선] /api/state 1회로 watchlist + indices까지 한 번에 받음
     // trades는 별도 — 자주 안 바뀌니 분리 유지 (캐싱 가능성)
-    Promise.all([api('/api/state'), api('/api/trades?limit=50')])
+    Promise.all([api('/api/state'), api('/api/trades?limit=50'), api('/api/trades?limit=10000')])
       .then(function(r){
-        var state = r[0], trades = r[1];
+        var state = r[0], trades = r[1], allTrades = r[2];
         var quotes = state.watchlist || [];
         var indices = state.indices || [];
         currentCfg = state.cfg;
@@ -1254,6 +1308,9 @@ button.btn.loading { opacity: 0.5; pointer-events: none; }
         renderPositions(posUS, posKR);
         renderEngine(state.lastTick);
         renderTrades(trades);
+        // ALL TRADE HISTORY — 요약은 항상 갱신, 테이블은 펼쳐졌을 때만
+        if (allTradesExpanded) renderAllTrades(allTrades || []);
+        else updateTradesSummaryInto(allTrades || [], 'allTradesTotalCount', 'allTradesWinRate', 'allTradesAvgPnl');
         renderCfgDisplay(state.cfg);
       })['catch'](function(e){ toast('로드 실패: '+e.message); });
     // [개선] 로그는 모달 열렸을 때만 fetch (불필요한 폴링 제거)
@@ -1454,6 +1511,7 @@ button.btn.loading { opacity: 0.5; pointer-events: none; }
   $('btnReset').addEventListener('click', resetAll);
   $('btnResetTickers').addEventListener('click', resetTickers);
   $('tradesToggle').addEventListener('click', toggleTrades);
+  $('allTradesToggle').addEventListener('click', toggleAllTrades);
   $('positionsToggleBtn').addEventListener('click', togglePositions);
   $('btnToggleUS').addEventListener('click', function(){ toggleWatchlist('us'); });
   $('btnToggleKR').addEventListener('click', function(){ toggleWatchlist('kr'); });
