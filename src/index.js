@@ -1,5 +1,20 @@
 // ============================================================
-// LUX-engine V8.4 (손익비 재설계 + 신호 품질 가중)
+// LUX-engine V8.5 (Break-even 버그 수정 + 리스크 기반 사이징 + 신호 평가 개선)
+// V8.4 → V8.5 변경점 (수익률 개선 핵심):
+//   • [BUG FIX] stopPrice 하향 갱신 — breakEvenLocked일 때 safeStop으로 끌어내리지 않음
+//     → V8.3 break-even 메커니즘 실효화. "수익→본전 손실" 패턴 차단.
+//   • [리스크 기반 사이징] budget = (cash × riskPerTrade) / stopDistancePct
+//     → 변동성·손절폭과 무관하게 거래당 절대 리스크 균등. ATR 사이징과 통합.
+//     기존: cash × ratio × signal.weight × crossBonus × atrMult (모두 cap에 묶임)
+//   • [DAY trailing 정상화] trailStartPct=2.5(>tp1 2.0), trailDropPct=0.8
+//     → 실효 손익비 1:0.5 → 1:2 회복. 분할익절 후 잔량 보호 강화.
+//   • [신호 자동 비활성화 완화] 표본 20+ & WR<40% & avgPnL<0 (기존 30+/35%/-0.5%)
+//     + 비활성화 후 30일 경과 시 자동 재평가 큐 진입
+//   • [MEANREV ATR 동적 손절] stopLossPct 대신 max(rules.stopLossPct, 1.5×ATR/price%)
+//     → 약세장 노이즈에 의한 조기 손절 감소.
+//   • [신호 통계에 strategy 차원] signalStats[strategy:signalName]로 분리
+//     → cross-confluence 거래 시 멤버 귀속 명확화.
+//   • [사이클 락 갱신] 사이클 중 락 TTL 절반 경과 시 갱신 (stale 진입 방지)
 // V8.3 → V8.4 변경점 (수익률 개선 핵심):
 //   • [DAY 손익비] stop 1.3→1.0%, tp1 1.5→2.0%, tp 2.5→4.0%, breakEvenAt 1.0→2.0
 //     → 손익비 1:1 → 1:2.5+, 너무 빠른 본전청산 방지
@@ -98,6 +113,24 @@ const DEFAULT_CFG = {
   enabled: true,
   autoTune: true,
   marketHoursOnly: true,
+  // === [V8.5] 리스크 기반 사이징 ===
+  // budget = cash × riskPerTrade / stopDistancePct
+  //   stopDistancePct = (price - stopPrice) / price × 100
+  //   → 한 거래 최대 손실이 cash의 riskPerTrade%로 균등화.
+  //   기존 비율식(baseRatio × signal.weight × crossBonus × atrMult)은
+  //   cap 0.85에 항상 묶여 신호 가중치가 실효화 안 됐음.
+  //   signal.weight는 riskPerTrade에 곱해 강한 신호일수록 리스크 더 가져감.
+  riskBasedSizing: {
+    enabled: true,
+    riskPerTrade: 0.6,       // cash의 0.6% 손실 허용
+    minRisk: 0.3,            // 약한 신호 floor
+    maxRisk: 1.2,            // 강한 신호 + crossConf 시 cap
+    fallbackToLegacy: false  // 리스크 사이징 실패 시 legacy 사용 여부
+  },
+  // === [V8.5] disabled signal 재평가 ===
+  signalReviewDays: 30,      // 비활성화 후 N일 경과 시 재활성화 후보
+  // === [V8.5] 사이클 락 자동 갱신 ===
+  cycleLockRefreshAt: 0.5,   // TTL의 50% 경과 시 갱신
   // === [V8] 전략별 활성화 토글 ===
   strategies: {
     swing: true,
@@ -158,9 +191,9 @@ const DEFAULT_CFG = {
     // [V8.4] 손익비 1:1 → 1:2.5+ 재설계
     tp: 4.0,                   // 2.5 → 4.0 (TP2 더 멀리)
     stopLossPct: 1.0,          // 1.3 → 1.0 (손절 타이트)
-    // [V8.4] trailing 노이즈 흡수 확대
-    trailStartPct: 2.0,        // 1.5 → 2.0 (트레일링 더 늦게)
-    trailDropPct: 1.5,         // 1.0 → 1.5 (피크 대비 여유)
+    // [V8.5] trailing을 tp1(2.0) 이후로 늦춤 — 분할익절 잔량 보호
+    trailStartPct: 2.5,        // V8.4 2.0 → 2.5 (tp1=2.0 이후 발동)
+    trailDropPct: 0.8,         // V8.4 1.5 → 0.8 (잔량은 타이트하게 따라감)
     // [V8.4] Break-even 너무 빠르게 발동되던 문제 해결
     breakEvenAt: 2.0,          // 1.0 → 2.0 (노이즈로 본전청산 방지)
     breakEvenLock: 0.2,        // 0.1 → 0.2
@@ -1493,36 +1526,58 @@ async function autoTune(DB, cfg, regimes) {
       .bind("SELL", statsWindow).all();
     const recentSellsAll = tradesResAll.results || [];
 
-    const signalStats = {};
+    const signalStats = {};            // 기존 signal-only 통계 (하위 호환 유지)
+    const signalStatsByStrat = {};     // [V8.5] strategy:signal 차원 통계
     const N = recentSellsAll.length;
     for (let i = 0; i < N; i++) {
       const t = recentSellsAll[i];
       const reason = t.reason || "";
       const m = reason.match(/#entry=([A-Z_][A-Z0-9_,]*)/);
       if (!m) continue;
+      // [V8.5] strategy 추출 — reason 앞부분 [STRATEGY] 토큰
+      const stratMatch = reason.match(/^\[([A-Z]+)\]/);
+      const stratKey = stratMatch ? stratMatch[1].toLowerCase() : "unknown";
       const members = m[1].split(",").filter(function(x){ return x; });
       // [V8.3] 시간 가중치 — 가장 최근(i=0)이 1.0, 가장 오래(i=N-1)가 0.5
-      // 최근 거래의 영향력을 2배로 키움
       const recencyWeight = N > 1 ? (1.0 - 0.5 * (i / (N - 1))) : 1.0;
+      // 동일 거래가 멤버 K개일 때 PnL은 1/K 귀속 (cross-conf 거래 중복 카운팅 완화)
+      const memberShare = members.length > 0 ? (1 / members.length) : 1;
       for (const sigName of members) {
+        // 1) signal-only
         if (!signalStats[sigName]) signalStats[sigName] = { wins: 0, count: 0, totalPnl: 0, weightedWins: 0, weightedCount: 0 };
         signalStats[sigName].count++;
-        signalStats[sigName].totalPnl += (t.pnl_pct || 0);
+        signalStats[sigName].totalPnl += (t.pnl_pct || 0) * memberShare;
         signalStats[sigName].weightedCount += recencyWeight;
         if (t.pnl_pct > 0) {
           signalStats[sigName].wins++;
           signalStats[sigName].weightedWins += recencyWeight;
+        }
+        // 2) [V8.5] strategy:signal
+        const sKey = stratKey + ":" + sigName;
+        if (!signalStatsByStrat[sKey]) signalStatsByStrat[sKey] = { wins: 0, count: 0, totalPnl: 0, weightedWins: 0, weightedCount: 0 };
+        signalStatsByStrat[sKey].count++;
+        signalStatsByStrat[sKey].totalPnl += (t.pnl_pct || 0) * memberShare;
+        signalStatsByStrat[sKey].weightedCount += recencyWeight;
+        if (t.pnl_pct > 0) {
+          signalStatsByStrat[sKey].wins++;
+          signalStatsByStrat[sKey].weightedWins += recencyWeight;
         }
       }
     }
     for (const k in signalStats) {
       signalStats[k].winRate = signalStats[k].count > 0 ? signalStats[k].wins / signalStats[k].count : 0;
       signalStats[k].avgPnl = signalStats[k].count > 0 ? signalStats[k].totalPnl / signalStats[k].count : 0;
-      // [V8.3] 가중 승률 — resolveSignals에서 이걸 우선 사용
       signalStats[k].weightedWinRate = signalStats[k].weightedCount > 0
         ? signalStats[k].weightedWins / signalStats[k].weightedCount : signalStats[k].winRate;
     }
+    for (const k in signalStatsByStrat) {
+      const s = signalStatsByStrat[k];
+      s.winRate = s.count > 0 ? s.wins / s.count : 0;
+      s.avgPnl = s.count > 0 ? s.totalPnl / s.count : 0;
+      s.weightedWinRate = s.weightedCount > 0 ? s.weightedWins / s.weightedCount : s.winRate;
+    }
     await setState(DB, "signal_stats", signalStats);
+    await setState(DB, "signal_stats_strat", signalStatsByStrat);
 
     // [V8.2] 시장별 독립 학습 — US/KR 각각 거래만 따로 보고 따로 조정
     const newCfg = JSON.parse(JSON.stringify(cfg));  // deep clone (markets 객체 안전)
@@ -1530,24 +1585,48 @@ async function autoTune(DB, cfg, regimes) {
     let anyChange = false;
     const allChanges = [];
 
-    // [V8.4] 손실 신호 자동 비활성화 — 표본 30+ & 승률 35% 미만 & 평균 PnL 음수
-    //        반대로 비활성화된 신호가 다시 좋아지면 (가상으로 켰을 때만 평가 가능하므로) 수동 복원.
+    // [V8.5] 손실 신호 자동 비활성화 임계 완화 — 표본 20+ & WR<40% & avgPnL<0
+    //        + 비활성화 시점 기록 → 30일 경과 시 재평가 큐 진입.
     //        시장 무관 공통 처리 (signal_stats 자체가 시장 무관).
     if (!newCfg.disabledSignals) newCfg.disabledSignals = [];
+    if (!newCfg.disabledSignalsAt) newCfg.disabledSignalsAt = {};
     const newlyDisabled = [];
+    const reviewMs = (cfg.signalReviewDays || 30) * 24 * 3600 * 1000;
+    const nowTs = Date.now();
+    // 1) 신규 비활성화
     for (const sigName in signalStats) {
       const s = signalStats[sigName];
-      if (s.count >= 30 && s.weightedWinRate < 0.35 && s.avgPnl < -0.5) {
+      if (s.count >= 20 && s.weightedWinRate < 0.40 && s.avgPnl < 0) {
         if (newCfg.disabledSignals.indexOf(sigName) === -1) {
           newCfg.disabledSignals.push(sigName);
+          newCfg.disabledSignalsAt[sigName] = nowTs;
           newlyDisabled.push(sigName);
         }
       }
     }
+    // 2) 재활성화 — 비활성화 후 reviewDays 경과 + 최근 표본 회복 시
+    const reactivated = [];
+    const stillDisabled = [];
+    for (const sigName of newCfg.disabledSignals) {
+      const disabledAt = newCfg.disabledSignalsAt[sigName] || 0;
+      if (nowTs - disabledAt >= reviewMs) {
+        // 재평가 — 누적 표본은 이미 위에서 계산됨. 단순히 풀어줌(다시 트래킹).
+        reactivated.push(sigName);
+        delete newCfg.disabledSignalsAt[sigName];
+      } else {
+        stillDisabled.push(sigName);
+      }
+    }
+    newCfg.disabledSignals = stillDisabled;
     if (newlyDisabled.length > 0) {
       allChanges.push("DISABLE " + newlyDisabled.join(","));
       anyChange = true;
-      await log(DB, "TUNE", null, "Auto-disabled signals (WR<35%, avgPnL<-0.5%): " + newlyDisabled.join(", "));
+      await log(DB, "TUNE", null, "Auto-disabled signals (n>=20, WR<40%, avgPnL<0): " + newlyDisabled.join(", "));
+    }
+    if (reactivated.length > 0) {
+      allChanges.push("REACTIVATE " + reactivated.join(","));
+      anyChange = true;
+      await log(DB, "TUNE", null, "Re-evaluated signals (after " + (cfg.signalReviewDays || 30) + "d): " + reactivated.join(", "));
     }
 
     for (const market of ['us', 'kr']) {
@@ -1719,6 +1798,18 @@ async function acquireCycleLock(DB, ttl) {
 async function releaseCycleLock(DB) {
   try {
     await DB.prepare("DELETE FROM state WHERE k = ?").bind("lock:cycle").run();
+  } catch (e) {}
+}
+
+// [V8.5] 사이클 락 갱신 — 한 시장 처리 후 호출되어 다음 시장 처리 전 TTL 연장.
+// stale 락으로 동시 인스턴스가 진입하는 것을 방지.
+async function refreshCycleLock(DB, ttl) {
+  const now = Date.now();
+  const lockValue = JSON.stringify({ until: now + ttl, pid: now });
+  try {
+    await DB.prepare(
+      "UPDATE state SET v = ?, updated_ts = ? WHERE k = ?"
+    ).bind(lockValue, now, "lock:cycle").run();
   } catch (e) {}
 }
 
@@ -1932,7 +2023,9 @@ async function runTradingCycle(env) {
             if (!held) continue;
 
             // peak / stop 갱신
-            if (held.meta && held.meta.stopPrice != null) {
+            // [V8.5 BUG FIX] breakEvenLocked이면 safeStop으로 끌어내리지 않음 —
+            // 기존 코드는 break-even으로 진입가 위로 올라간 stop을 매 사이클 진입가-stopPct%로 되돌렸음.
+            if (held.meta && held.meta.stopPrice != null && !held.meta.breakEvenLocked) {
               const stopPct = (getStrategyRules(mcfg, stratName).stopLossPct || mcfg.stopLoss);
               const safeStop = held.avg * (1 - stopPct / 100);
               if (held.meta.stopPrice > safeStop) {
@@ -2040,8 +2133,9 @@ async function runTradingCycle(env) {
             // [V8.3] ATR 기반 동적 사이징 multiplier
             // 변동성 큰 종목(ATR/price 비율 높음) → 작게, 안정 종목 → 크게
             let atrMult = 1.0;
+            let actualAtrPct = null;
             if (mcfg.atrSizing && mcfg.atrSizing.enabled && dailyAtr != null && price > 0) {
-              const actualAtrPct = (dailyAtr / price) * 100;
+              actualAtrPct = (dailyAtr / price) * 100;
               const target = mcfg.atrSizing.targetAtrPct || 2.0;
               const minMult = mcfg.atrSizing.minMult != null ? mcfg.atrSizing.minMult : 0.5;
               const maxMult = mcfg.atrSizing.maxMult != null ? mcfg.atrSizing.maxMult : 1.5;
@@ -2051,20 +2145,49 @@ async function runTradingCycle(env) {
                 if (atrMult > maxMult) atrMult = maxMult;
               }
             }
-            const adjustedRatio = baseRatio * signal.weight * crossBonus * atrMult;
 
-            // [V8.1.9] 사이징 변경:
-            //   • 기존: portfolioValue * ratio (US/KR 합산 평가 기준 → 한쪽 cash 부족시 0주)
-            //   • 변경: cash[market] * ratio 를 1차 budget으로, sizingTargets로 클램프
-            //     - minBudget 미만이면 minBudget까지 끌어올림 (단, cash[market]*0.85 한도)
-            //     - maxBudget 초과면 maxBudget으로 캡
+            // [V8.5] 사이징 변경: 리스크 기반 vs 레거시 비율식
+            // 리스크 기반은 cash × riskPerTrade / stopDistancePct
+            //   → 한 거래 손실 한도 = cash × riskPerTrade%
+            //   stopDistance = max(rules.stopLossPct, 1.5×ATR%) — MEANREV 등 ATR 동적 손절 반영
             const targets = (mcfg.sizingTargets && mcfg.sizingTargets[market]) || { minBudget: 0, maxBudget: Infinity };
-            const rawBudget = cash[market] * adjustedRatio;
-            const cashCap = cash[market] * 0.85;  // cash 전부 박지 않게 85% 캡
-            let budget = Math.min(rawBudget, targets.maxBudget, cashCap);
-            // 최소 베팅: cash가 minBudget의 1.1배 이상 있을 때만 minBudget 보장 (현금 고갈 방지)
-            if (budget < targets.minBudget && cash[market] >= targets.minBudget * 1.1) {
-              budget = Math.min(targets.minBudget, cashCap);
+            const cashCap = cash[market] * 0.85;
+            let budget;
+            const rbs = mcfg.riskBasedSizing || {};
+            const useRiskSizing = rbs.enabled !== false;
+
+            if (useRiskSizing) {
+              // 손절 거리 계산 — 전략별 stopLoss와 ATR 동적 손절 중 큰 쪽
+              const stratRules = getStrategyRules(mcfg, strategy);
+              const baseStopPct = stratRules.stopLossPct || mcfg.stopLoss || 5.0;
+              let stopDistPct = baseStopPct;
+              if (actualAtrPct != null && actualAtrPct > 0) {
+                const atrStopPct = actualAtrPct * (stratRules.atrStopMult || mcfg.atrStopMult || 2.0);
+                stopDistPct = Math.max(baseStopPct, Math.min(atrStopPct, baseStopPct * 1.6));
+              }
+              // 신호 강도를 riskPerTrade에 반영 (cap·floor 적용)
+              const sigStrength = signal.weight * crossBonus;
+              const riskBase = rbs.riskPerTrade != null ? rbs.riskPerTrade : 0.6;
+              const minR = rbs.minRisk != null ? rbs.minRisk : 0.3;
+              const maxR = rbs.maxRisk != null ? rbs.maxRisk : 1.2;
+              let riskPct = riskBase * sigStrength;
+              if (riskPct < minR) riskPct = minR;
+              if (riskPct > maxR) riskPct = maxR;
+              // budget 계산 — riskPct%로 stopDistPct% 거리 손실 시 정확히 cash×riskPct% 손실
+              const rawBudget = cash[market] * (riskPct / 100) / (stopDistPct / 100);
+              budget = Math.min(rawBudget, targets.maxBudget, cashCap);
+              // minBudget 보장 (기존 로직 유지)
+              if (budget < targets.minBudget && cash[market] >= targets.minBudget * 1.1) {
+                budget = Math.min(targets.minBudget, cashCap);
+              }
+            } else {
+              // [Legacy] 비율식 — 호환성용 폴백
+              const adjustedRatio = baseRatio * signal.weight * crossBonus * atrMult;
+              const rawBudget = cash[market] * adjustedRatio;
+              budget = Math.min(rawBudget, targets.maxBudget, cashCap);
+              if (budget < targets.minBudget && cash[market] >= targets.minBudget * 1.1) {
+                budget = Math.min(targets.minBudget, cashCap);
+              }
             }
 
             let qty = Math.floor(budget / (price * (1 + feeRate)));
@@ -2123,6 +2246,9 @@ async function runTradingCycle(env) {
       if (stateSamples.length > 0) {
         await log(DB, "INFO", null, "STATE[" + market + "] " + stateSamples.join(" | "));
       }
+
+      // [V8.5] 시장 처리 완료 — 다음 시장 처리 전 락 TTL 갱신 (stale 진입 방지)
+      await refreshCycleLock(DB, cfg.cycleLockTTL || 60000);
     }
 
     try { await setState(DB, "cash", cash); } catch (e) {}
