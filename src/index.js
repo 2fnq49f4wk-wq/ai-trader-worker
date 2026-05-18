@@ -1,10 +1,23 @@
 // ============================================================
-// LUX-engine V8.1.9 (멀티 전략판 - 거래금액 타겟팅)
+// LUX-engine V8.3 (멀티 전략판 + 승률·수익률 강화)
 // 4개 전략 동시 운용: swing, day, momentum, meanrev
 //   • 같은 종목 + 다른 전략 = 별도 포지션 가능 (composite PK)
 //   • 매도는 진입 전략의 룰을 따라감
 //   • 동시 신호 시 cross-strategy confluence 가중 (x1.2)
 //   • 전략별 base size + 시장국면 multiplier
+// V8.1.9 → V8.3 변경점 (승률·수익률 개선):
+//   • [Break-even stop] 수익 +breakEvenAt% 도달 시 손절가를 진입가+breakEvenLock%로 상향
+//     → 수익 → 본전 손실 전환 차단. 전략별 임계: swing 2%, day 1%, mom 3%, mr 1.5%
+//   • [공통 Trailing stop] 4개 전략 모두 trailing. 기존엔 swing/momentum만.
+//     → day/meanrev도 피크 대비 일정 % 하락 시 자동 청산
+//   • [분할익절] DAY는 +1.5%에서 절반, MOMENTUM은 +5%에서 1/3 청산
+//     → 일부 익절 후 나머지는 trail로 더 끌어가기
+//   • [ATR 동적 사이징] 변동성 높은 종목은 작게, 안정 종목은 크게 매수
+//     → 포지션당 절대 리스크 균등화. atrSizing.targetAtrPct=2% 기준
+//   • [MR 진입 강화] requireRsiUptick — RSI가 상승 전환된 날만 진입
+//     → catch-falling-knife 방지 (RSI 30 찍고 더 떨어지는 종목 회피)
+//   • [신호 통계 시간가중] 최근 거래(N=80)에 더 큰 가중. recency 1.0→0.5 선형 감쇠
+//     → 시장 국면 변할 때 신호 평가 추종력↑
 // V8.1.8 → V8.1.9 변경점:
 //   • 사이징 기준: portfolioValue → cash[market] 기반 (가용현금 직접 사용)
 //   • 거래당 금액 클램프: KR ₩100~300만 / US $1k~3k (cfg.sizingTargets)
@@ -97,6 +110,20 @@ const DEFAULT_CFG = {
     kr: { minBudget: 1000000, maxBudget: 3000000 },  // ₩100만 ~ ₩300만
     us: { minBudget: 1000,    maxBudget: 3000    }   // $1k ~ $3k
   },
+  // === [V8.3] ATR 기반 동적 사이징 ===
+  // 변동성 큰 종목은 작게, 안정된 종목은 크게 매수 → 포지션당 절대 리스크 균등화.
+  // budget *= clamp(targetAtrPct / actualAtrPct, minMult, maxMult)
+  //   actualAtrPct = ATR14 / price * 100 (가격 대비 일평균 변동성)
+  //   ATR이 평균(targetAtrPct)이면 그대로, 2배 변동성이면 사이즈 절반, 절반 변동성이면 1.5배까지.
+  atrSizing: {
+    enabled: true,
+    targetAtrPct: 2.0,    // 일 평균 변동성 2% 기준
+    minMult: 0.5,         // 변동성 매우 큼 → 최대 50%까지 축소
+    maxMult: 1.5          // 변동성 매우 작음 → 최대 150%까지 확대
+  },
+  // === [V8.3] 신호 통계 신선도 ===
+  // signal_stats 누적이 길어지면 옛날 시장 통계가 새 시장에 영향. 최근 N건만 사용.
+  signalStatsWindow: 80,  // 직전 80건 가중 평가 (0 = 무제한, 기존 동작)
   // === [V8] Cross-strategy confluence — 같은 종목 + 다른 전략 동시 신호 ===
   crossConfluenceBonus: 1.2,
   // === [V8] 전략별 진입/청산 룰 ===
@@ -108,7 +135,10 @@ const DEFAULT_CFG = {
     trailDropPct: 4.0,
     tp1: 3.5, tp2: 10.0,       // [V8.1.4] 4.0/11.0 → 3.5/10.0 (조금 더 자주 익절)
     stopLossPct: 5.0,
-    atrStopMult: 2.0
+    atrStopMult: 2.0,
+    // [V8.3] Break-even stop — 수익 +breakEvenAt% 도달 시 손절가를 진입가+breakEvenLock%로 올림
+    breakEvenAt: 2.0,
+    breakEvenLock: 0.3
   },
   dayRules: {
     minHoldMinutes: 10,
@@ -116,6 +146,13 @@ const DEFAULT_CFG = {
     forceCloseBeforeMinClose: 30,
     tp: 2.5,
     stopLossPct: 1.3,
+    // [V8.3] DAY 전략에도 trailing stop 추가
+    trailStartPct: 1.5,        // +1.5% 도달 시 트레일링 활성화
+    trailDropPct: 1.0,         // 피크 대비 1.0% 하락 시 청산
+    breakEvenAt: 1.0,          // +1% 도달 시 break-even
+    breakEvenLock: 0.1,
+    // [V8.3] TP1 분할익절
+    tp1: 1.5,                  // 1.5%에서 절반 청산
     // [V8.1.3] 범위 더 공격적
     dayDropMin: -8.0,                  // [V8.1.3] -7→-8
     dayDropMax: 1.5,                   // [V8.1.3] 1.0→1.5
@@ -140,7 +177,11 @@ const DEFAULT_CFG = {
     trailStartPct: 4.0,        // [V8.1.7] 5→4
     trailDropPct: 6.0,         // [V8.1.7] 7→6
     stopLossPct: 8.0,
-    atrStopMult: 3.0
+    atrStopMult: 3.0,
+    // [V8.3] Break-even + 분할익절
+    breakEvenAt: 3.0,
+    breakEvenLock: 0.5,
+    tp1: 5.0                   // +5% 도달 시 1/3 익절
   },
   meanrevRules: {
     zScoreThreshold: -1.3,     // [V8.1.7] -1.7→-1.3 (더 빈번)
@@ -148,7 +189,14 @@ const DEFAULT_CFG = {
     minHoldHours: 2,
     timeStopMaxDays: 5,
     tp: 999,
-    stopLossPct: 4.0           // [V8.1.7] 3.5→4.0
+    stopLossPct: 4.0,          // [V8.1.7] 3.5→4.0
+    // [V8.3] MEANREV trailing — MA20 닿기 전 갑작스런 하락에 보호
+    trailStartPct: 2.5,
+    trailDropPct: 1.8,
+    breakEvenAt: 1.5,
+    breakEvenLock: 0.2,
+    // [V8.3] MR 진입 조건 강화 — RSI 상승 전환 요구
+    requireRsiUptick: true     // 어제 RSI < 오늘 RSI 일 때만 진입 (catch-falling-knife 방지)
   },
   // === Confluence (전략 내부) ===
   // [V8.1.3] 강제 OFF — 멀티 전략판이라 cross-strategy confluence로 충분.
@@ -176,7 +224,9 @@ const MARKET_SCOPED_KEYS = [
   'rsiBuy', 'rsiSell', 'rsiPeriod',
   'stopLoss', 'takeProfit1', 'takeProfit2', 'posSize',
   'swingRules', 'dayRules', 'momentumRules', 'meanrevRules',
-  'strategySizing'
+  'strategySizing',
+  // [V8.3] ATR 사이징 & signal stats window도 시장별 학습 대상
+  'atrSizing', 'signalStatsWindow'
 ];
 
 // 베이스 cfg + cfg.markets[market] 머지해서 그 시장에서 쓸 cfg 반환.
@@ -846,18 +896,26 @@ function evaluateBuySignals_meanrev(price, dayPct, dailyData, cfg) {
   const dailyRsi = getRSI(closes, cfg.rsiPeriod);
   if (dailyRsi == null) return [];
 
+  // [V8.3] RSI 상승 전환 확인 — catch-falling-knife 방지
+  //   어제 RSI < 오늘 RSI 이어야 진입 (모멘텀이 둔화/반전되는 시점만)
+  const dailyRsiPrev = getRSI(closes.slice(0, -1), cfg.rsiPeriod);
+  const rsiUptick = (dailyRsiPrev != null && dailyRsi > dailyRsiPrev);
+  if (rules.requireRsiUptick && !rsiUptick) return [];
+
   const signals = [];
   const z = getZScore(closes, 20);
   const yesterday = closes[closes.length - 2];
   const today = closes[closes.length - 1];
   const isGreenCandle = today > yesterday;
+  // RSI uptick은 detail에 표시해서 로그/디버깅 용이하게
+  const uptickNote = rsiUptick ? " up" : "";
 
   // MR1: -2σ 이하 + RSI<25 + 양봉 (반전 시작)
   if (z != null && z <= rules.zScoreThreshold && dailyRsi < rules.rsiMax && isGreenCandle) {
     signals.push({
       name: "MR_OVERSOLD",
       weight: 1.2, type: "COUNTER",
-      detail: "z=" + z.toFixed(2) + " RSI " + dailyRsi.toFixed(1)
+      detail: "z=" + z.toFixed(2) + " RSI " + dailyRsi.toFixed(1) + uptickNote
     });
   }
 
@@ -866,7 +924,7 @@ function evaluateBuySignals_meanrev(price, dayPct, dailyData, cfg) {
     signals.push({
       name: "MR_EXTREME_RSI",
       weight: 1.1, type: "COUNTER",
-      detail: "RSI " + dailyRsi.toFixed(1) + " green"
+      detail: "RSI " + dailyRsi.toFixed(1) + " green" + uptickNote
     });
   }
 
@@ -876,7 +934,7 @@ function evaluateBuySignals_meanrev(price, dayPct, dailyData, cfg) {
       signals.push({
         name: "MR_DEEP_DROP",
         weight: 1.0, type: "COUNTER",
-        detail: "z=" + z.toFixed(2) + " RSI " + dailyRsi.toFixed(1) + " bouncing"
+        detail: "z=" + z.toFixed(2) + " RSI " + dailyRsi.toFixed(1) + " bouncing" + uptickNote
       });
     }
   }
@@ -953,8 +1011,13 @@ function resolveSignals(signals, cfg, signalStats, stratName) {
       const st = signalStats[s.name];
       // [수정] 최소 표본 5 → 20으로 상향, Bayesian shrinkage 적용
       // posterior ≈ (wins+α) / (count+α+β), α=β=10 → 사전 50% 가정에 평균 회귀
+      // [V8.3] weightedWinRate 있으면 우선 사용 — 최근 거래에 가중 부여
       if (st.count >= 20) {
-        const shrunkRate = (st.wins + 10) / (st.count + 20);
+        const rate = st.weightedWinRate != null ? st.weightedWinRate
+          : ((st.wins + 10) / (st.count + 20));
+        const shrunkRate = (st.weightedWinRate != null)
+          ? (st.weightedWins + 10) / (st.weightedCount + 20)
+          : rate;
         perfMult = Math.max(0.7, Math.min(1.3, 0.4 + shrunkRate * 1.2));
       }
     }
@@ -1186,9 +1249,21 @@ function evaluateSell(pos, price, daily, dailyRsi, dailyMa, dailyMaShort, cfg, m
   if (pnlRate <= -stopPct) {
     return { sell: true, sellQty: pos.qty, reason: "HARD-STOP " + pnlRate.toFixed(2) + "%" };
   }
-  // 공통: ATR-STOP
+  // 공통: ATR-STOP (진입 시 계산된 stopPrice + [V8.3] break-even으로 올라간 stopPrice 포함)
   if (pos.meta && pos.meta.stopPrice != null && price <= pos.meta.stopPrice) {
-    return { sell: true, sellQty: pos.qty, reason: "ATR-STOP " + pnlRate.toFixed(2) + "%" };
+    const beNote = pos.meta.breakEvenLocked ? " (BE-LOCKED)" : "";
+    return { sell: true, sellQty: pos.qty, reason: "ATR-STOP " + pnlRate.toFixed(2) + "%" + beNote };
+  }
+
+  // [V8.3] 공통: Trailing stop — 모든 전략에 적용.
+  //   trailStartPct 도달 후 피크에서 trailDropPct 이상 하락하면 청산.
+  //   기존엔 swing/momentum만 했지만 day/meanrev도 보호 가치 있음.
+  if (rules.trailStartPct != null && rules.trailDropPct != null
+      && peakPnlPct >= rules.trailStartPct && pnlRate < peakPnlPct) {
+    const trailStop = peakPrice * (1 - rules.trailDropPct / 100);
+    if (price <= trailStop) {
+      return { sell: true, sellQty: pos.qty, reason: "TRAIL[" + strategy + "] peak=" + peakPrice.toFixed(2) + " " + pnlRate.toFixed(2) + "% (from +" + peakPnlPct.toFixed(2) + "%)" };
+    }
   }
 
   // === DAY 전략 ===
@@ -1204,7 +1279,14 @@ function evaluateSell(pos, price, daily, dailyRsi, dailyMa, dailyMaShort, cfg, m
     }
     // 최소 보유시간
     if (heldMin < (r.minHoldMinutes || 20)) return { sell: false };
-    // 익절
+    // [V8.3] TP1 분할익절 — tp1 도달 시 절반 청산
+    if (!tp1Done && r.tp1 != null && pnlRate >= r.tp1) {
+      const halfQty = Math.floor(pos.qty / 2);
+      if (halfQty > 0) {
+        return { sell: true, sellQty: halfQty, reason: "DAY-TP1 +" + pnlRate.toFixed(2) + "%" };
+      }
+    }
+    // 익절 (TP2)
     if (pnlRate >= r.tp) {
       return { sell: true, sellQty: pos.qty, reason: "DAY-TP +" + pnlRate.toFixed(2) + "%" };
     }
@@ -1238,16 +1320,16 @@ function evaluateSell(pos, price, daily, dailyRsi, dailyMa, dailyMaShort, cfg, m
   if (strategy === "momentum") {
     const r = cfg.momentumRules;
     if (heldDays < (r.minHoldDays || 2)) return { sell: false };
+    // [V8.3] TP1 분할익절 — tp1 도달 시 1/3 청산 (모멘텀은 길게 끌기 위해 1/3만)
+    if (!tp1Done && r.tp1 != null && pnlRate >= r.tp1) {
+      const partialQty = Math.floor(pos.qty / 3);
+      if (partialQty > 0) {
+        return { sell: true, sellQty: partialQty, reason: "MO-TP1 +" + pnlRate.toFixed(2) + "%" };
+      }
+    }
     // 시간 만료
     if (heldDays >= (r.timeStopMaxDays || 30)) {
       return { sell: true, sellQty: pos.qty, reason: "MO-TIME " + heldDays.toFixed(1) + "d PnL=" + pnlRate.toFixed(2) + "%" };
-    }
-    // Trail stop (피크 대비 trailDropPct 하락)
-    if (peakPnlPct >= (r.trailStartPct || 5)) {
-      const trailStop = peakPrice * (1 - (r.trailDropPct || 7) / 100);
-      if (price <= trailStop) {
-        return { sell: true, sellQty: pos.qty, reason: "MO-TRAIL peak=" + peakPrice.toFixed(2) + " +" + pnlRate.toFixed(2) + "%" };
-      }
     }
     // MA20 이탈 (추세 종료 신호)
     if (dailyMa != null && price < dailyMa && pnlRate > 0) {
@@ -1288,12 +1370,7 @@ function evaluateSell(pos, price, daily, dailyRsi, dailyMa, dailyMaShort, cfg, m
       return { sell: true, sellQty: pos.qty, reason: "DEAD-X gap=" + ma5Gap.toFixed(1) + "% +" + pnlRate.toFixed(2) + "%" };
     }
   }
-  if (peakPnlPct >= (r.trailStartPct || 3) && pnlRate >= 2.0) {
-    const trailStop = peakPrice * (1 - (r.trailDropPct || 4) / 100);
-    if (price <= trailStop) {
-      return { sell: true, sellQty: pos.qty, reason: "TRAIL peak=" + peakPrice.toFixed(2) + " +" + pnlRate.toFixed(2) + "%" };
-    }
-  }
+  // SWING trailing은 공통 trailing이 이미 처리하므로 별도 분기 제거 (위쪽 공통 block에서 잡힘)
   return { sell: false };
 }
 
@@ -1348,26 +1425,42 @@ async function refreshQuotesOnly(env, market) {
 async function autoTune(DB, cfg, regimes) {
   if (!cfg.autoTune) return cfg;
   try {
-    // [V8.2] 신호별 통계는 시장 무관 (성능 평균) — 기존대로 전체 셀 50건
-    const tradesResAll = await DB.prepare("SELECT * FROM trades WHERE side = ? ORDER BY ts DESC LIMIT 50").bind("SELL").all();
+    // [V8.2] 신호별 통계는 시장 무관 (성능 평균)
+    // [V8.3] window 크기를 cfg.signalStatsWindow로 제어 (기본 80건)
+    //        + 최근 거래에 더 큰 가중치 (시간 감쇠) — 시장 국면 변화 추종력↑
+    const statsWindow = cfg.signalStatsWindow || 80;
+    const tradesResAll = await DB.prepare("SELECT * FROM trades WHERE side = ? ORDER BY ts DESC LIMIT ?")
+      .bind("SELL", statsWindow).all();
     const recentSellsAll = tradesResAll.results || [];
 
     const signalStats = {};
-    for (const t of recentSellsAll) {
+    const N = recentSellsAll.length;
+    for (let i = 0; i < N; i++) {
+      const t = recentSellsAll[i];
       const reason = t.reason || "";
       const m = reason.match(/#entry=([A-Z_][A-Z0-9_,]*)/);
       if (!m) continue;
       const members = m[1].split(",").filter(function(x){ return x; });
+      // [V8.3] 시간 가중치 — 가장 최근(i=0)이 1.0, 가장 오래(i=N-1)가 0.5
+      // 최근 거래의 영향력을 2배로 키움
+      const recencyWeight = N > 1 ? (1.0 - 0.5 * (i / (N - 1))) : 1.0;
       for (const sigName of members) {
-        if (!signalStats[sigName]) signalStats[sigName] = { wins: 0, count: 0, totalPnl: 0 };
+        if (!signalStats[sigName]) signalStats[sigName] = { wins: 0, count: 0, totalPnl: 0, weightedWins: 0, weightedCount: 0 };
         signalStats[sigName].count++;
         signalStats[sigName].totalPnl += (t.pnl_pct || 0);
-        if (t.pnl_pct > 0) signalStats[sigName].wins++;
+        signalStats[sigName].weightedCount += recencyWeight;
+        if (t.pnl_pct > 0) {
+          signalStats[sigName].wins++;
+          signalStats[sigName].weightedWins += recencyWeight;
+        }
       }
     }
     for (const k in signalStats) {
       signalStats[k].winRate = signalStats[k].count > 0 ? signalStats[k].wins / signalStats[k].count : 0;
       signalStats[k].avgPnl = signalStats[k].count > 0 ? signalStats[k].totalPnl / signalStats[k].count : 0;
+      // [V8.3] 가중 승률 — resolveSignals에서 이걸 우선 사용
+      signalStats[k].weightedWinRate = signalStats[k].weightedCount > 0
+        ? signalStats[k].weightedWins / signalStats[k].weightedCount : signalStats[k].winRate;
     }
     await setState(DB, "signal_stats", signalStats);
 
@@ -1770,6 +1863,23 @@ async function runTradingCycle(env) {
               try { await savePosition(DB, market, symbol, stratName, held); } catch (e) {}
             }
 
+            // [V8.3] Break-even stop — 수익 +breakEvenAt% 도달 시 stopPrice를 진입가 + breakEvenLock%로 끌어올림.
+            // 한 번 설정되면 더 내려가지 않음 (수익 → 본전 전환 방지).
+            // ATR-STOP 분기에서 사용되므로 stopPrice를 직접 조작.
+            const breakRules = getStrategyRules(mcfg, stratName);
+            if (held.meta && breakRules.breakEvenAt != null && !held.meta.breakEvenLocked) {
+              const curPnl = ((price - held.avg) / held.avg) * 100;
+              if (curPnl >= breakRules.breakEvenAt) {
+                const newStop = held.avg * (1 + (breakRules.breakEvenLock || 0) / 100);
+                if (held.meta.stopPrice == null || held.meta.stopPrice < newStop) {
+                  held.meta.stopPrice = newStop;
+                }
+                held.meta.breakEvenLocked = true;
+                try { await savePosition(DB, market, symbol, stratName, held); } catch (e) {}
+                await log(DB, "INFO", symbol, "BREAK-EVEN locked [" + stratName + "] at +" + curPnl.toFixed(2) + "% stop=" + newStop.toFixed(2));
+              }
+            }
+
             // 매도 판단
             const sellDecision = evaluateSell(held, price, daily, dailyRsi, dailyMa, dailyMaShort, mcfg, canTrade, market);
             if (sellDecision.minHoldLock) {
@@ -1844,7 +1954,22 @@ async function runTradingCycle(env) {
             }
 
             const baseRatio = getPositionSizeRatio(mcfg, strategy, regime.regime);
-            const adjustedRatio = baseRatio * signal.weight * crossBonus;
+
+            // [V8.3] ATR 기반 동적 사이징 multiplier
+            // 변동성 큰 종목(ATR/price 비율 높음) → 작게, 안정 종목 → 크게
+            let atrMult = 1.0;
+            if (mcfg.atrSizing && mcfg.atrSizing.enabled && dailyAtr != null && price > 0) {
+              const actualAtrPct = (dailyAtr / price) * 100;
+              const target = mcfg.atrSizing.targetAtrPct || 2.0;
+              const minMult = mcfg.atrSizing.minMult != null ? mcfg.atrSizing.minMult : 0.5;
+              const maxMult = mcfg.atrSizing.maxMult != null ? mcfg.atrSizing.maxMult : 1.5;
+              if (actualAtrPct > 0) {
+                atrMult = target / actualAtrPct;
+                if (atrMult < minMult) atrMult = minMult;
+                if (atrMult > maxMult) atrMult = maxMult;
+              }
+            }
+            const adjustedRatio = baseRatio * signal.weight * crossBonus * atrMult;
 
             // [V8.1.9] 사이징 변경:
             //   • 기존: portfolioValue * ratio (US/KR 합산 평가 기준 → 한쪽 cash 부족시 0주)
