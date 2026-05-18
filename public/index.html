@@ -1221,8 +1221,16 @@ button.btn.loading { opacity: 0.5; pointer-events: none; }
     }).join('');
   }
 
-  function renderCfgDisplay(cfg) {
-    if (!cfg) return;
+  // [V8.2] 시장별 cfg 머지 — JS 백엔드의 getMarketCfg와 동일 동작
+  function getMarketCfgFE(cfg, market) {
+    var out = Object.assign({}, cfg);
+    var m = (cfg.markets && cfg.markets[market]) || {};
+    var keys = ['rsiBuy','rsiSell','rsiPeriod','stopLoss','takeProfit1','takeProfit2','posSize','swingRules','dayRules','momentumRules','meanrevRules','strategySizing'];
+    keys.forEach(function(k){ if (m[k] !== undefined) out[k] = m[k]; });
+    return out;
+  }
+
+  function buildCfgHtml(cfg) {
     var tp1 = (cfg.swingRules && cfg.swingRules.tp1) != null ? cfg.swingRules.tp1 : (cfg.takeProfit1 != null ? cfg.takeProfit1 : cfg.takeProfit);
     var tp2 = (cfg.swingRules && cfg.swingRules.tp2) != null ? cfg.swingRules.tp2 : (cfg.takeProfit2 != null ? cfg.takeProfit2 : '-');
     var sl = (cfg.swingRules && cfg.swingRules.stopLossPct) != null ? cfg.swingRules.stopLossPct : cfg.stopLoss;
@@ -1234,9 +1242,15 @@ button.btn.loading { opacity: 0.5; pointer-events: none; }
     if (strats.meanrev !== false) activeStrats.push('MR');
     var stratStr = activeStrats.length ? activeStrats.join('+') : 'NONE';
     var swingBase = (cfg.strategySizing && cfg.strategySizing.swing && cfg.strategySizing.swing.base) || cfg.posSize || 12;
-    var cfgHtml = 'Strategies/<b>'+stratStr+'</b> · RSI Buy/<b>'+cfg.rsiBuy+'</b>/Sell/<b>'+cfg.rsiSell+'</b> · Stop/<b>'+sl+'%</b> · TP1/<b>'+tp1+'%</b> · TP2/<b>'+tp2+'%</b> · SwingSize/<b>'+swingBase+'%</b>';
-    $('cfgDisplayUS').innerHTML = cfgHtml;
-    if ($('cfgDisplayKR')) $('cfgDisplayKR').innerHTML = cfgHtml;
+    return 'Strategies/<b>'+stratStr+'</b> · RSI Buy/<b>'+cfg.rsiBuy+'</b>/Sell/<b>'+cfg.rsiSell+'</b> · Stop/<b>'+sl+'%</b> · TP1/<b>'+tp1+'%</b> · TP2/<b>'+tp2+'%</b> · SwingSize/<b>'+swingBase+'%</b>';
+  }
+
+  function renderCfgDisplay(cfg) {
+    if (!cfg) return;
+    var cfgUS = getMarketCfgFE(cfg, 'us');
+    var cfgKR = getMarketCfgFE(cfg, 'kr');
+    $('cfgDisplayUS').innerHTML = buildCfgHtml(cfgUS);
+    if ($('cfgDisplayKR')) $('cfgDisplayKR').innerHTML = buildCfgHtml(cfgKR);
     var lastTune = allLogs.filter(function(l){return l.level==='TUNE';})[0];
     var banner = $('tuneBanner'), tuneText = $('tuneText');
     if (lastTune && cfg.autoTune) { tuneText.textContent = lastTune.message + ' (' + fmtAgo(lastTune.ts) + ')'; banner.style.display = 'block'; }
