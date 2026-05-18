@@ -104,28 +104,25 @@ const DEFAULT_CFG = {
     atrStopMult: 2.0
   },
   dayRules: {
-    minHoldMinutes: 10,                // [V8.1] 20→10 — 단타 회전 더 빠르게
+    minHoldMinutes: 10,
     maxHoldHours: 8,
-    forceCloseBeforeMinClose: 30,      // 장 마감 30분 전 강제 청산
-    tp: 2.5,                           // [V8.1] 2.2→2.5
-    stopLossPct: 1.3,                  // [V8.1] 1.2→1.3 (손익비 1.92)
-    // [V8.1] 진입 범위 -7% ~ +0.5% — 평보합도 포함, 거래 빈도 ↑
+    forceCloseBeforeMinClose: 30,
+    tp: 2.5,
+    stopLossPct: 1.3,
+    // [V8.1.2] 진입 범위 더 넓게: -7% ~ +1% (보합 살짝 상승도 포함)
     dayDropMin: -7.0,
-    dayDropMax: 0.5,                   // [V8.1] -0.5 → +0.5 (보합 +α도 진입 가능)
-    rsiMaxForGap: 55,                  // [V8.1] 50→55 — 갭하락 진입 RSI 완화
-    rsiMaxForBounce: 60,               // [V8.1] 55→60
-    bounceYestMin: -1.0,               // [V8.1] -1.5 → -1.0 — 작은 음봉 다음날도 반등 진입
-    // 신규 신호 파라미터
-    openDriveMinPct: 1.0,              // [V8.1] 1.5→1.0 — 더 작은 갭상승도 추격
-    openDriveMaxPct: 5.0,              // [V8.1] 4.0→5.0
-    vwapPullMinPct: -0.5,              // [V8.1] 0→-0.5 — 살짝 눌린 것까지 OK
-    vwapPullMaxPct: 2.5,               // [V8.1] 2.0→2.5
-    // [V8.1 신규] DY_MOMO 파라미터 — 강세 모멘텀 추종
-    momoRsiMin: 60,
-    momoRsiMax: 75,
-    // [V8.1 신규] DY_DIP_BUY 파라미터 — 강세장 얕은 눌림 매수
-    dipMinPct: -3.0,
-    dipMaxPct: -0.3
+    dayDropMax: 1.0,                   // [V8.1.2] 0.5 → 1.0
+    rsiMaxForGap: 60,                  // [V8.1.2] 55→60 — 갭하락 RSI 더 완화
+    rsiMaxForBounce: 65,               // [V8.1.2] 60→65
+    bounceYestMin: -0.8,               // [V8.1.2] -1.0 → -0.8 — 더 작은 음봉도 OK
+    openDriveMinPct: 0.7,              // [V8.1.2] 1.0→0.7
+    openDriveMaxPct: 5.0,
+    vwapPullMinPct: -1.0,              // [V8.1.2] -0.5→-1.0
+    vwapPullMaxPct: 3.0,               // [V8.1.2] 2.5→3.0
+    momoRsiMin: 58,                    // [V8.1.2] 60→58
+    momoRsiMax: 78,                    // [V8.1.2] 75→78
+    dipMinPct: -3.5,                   // [V8.1.2] -3.0→-3.5
+    dipMaxPct: -0.2                    // [V8.1.2] -0.3→-0.2
   },
   momentumRules: {
     breakoutDays: 20,          // 20일 신고가 돌파
@@ -690,16 +687,34 @@ function evaluateBuySignals_day(price, dayPct, dailyData, cfg) {
 
   // [V8.1 신규] DAY6: DY_DIP_BUY — 강세장 얕은 눌림 단타
   // ma5 > ma20 추세 위에서 -0.3% ~ -3% 일시적 눌림 → 반등 노림
-  const dipMin = rules.dipMinPct != null ? rules.dipMinPct : -3.0;
-  const dipMax = rules.dipMaxPct != null ? rules.dipMaxPct : -0.3;
+  const dipMin = rules.dipMinPct != null ? rules.dipMinPct : -3.5;
+  const dipMax = rules.dipMaxPct != null ? rules.dipMaxPct : -0.2;
   if (ma5 != null && ma5 > ma20 && price > ma20
       && dayPct >= dipMin && dayPct <= dipMax
-      && dailyRsi >= 40 && dailyRsi <= 65) {
+      && dailyRsi >= 38 && dailyRsi <= 68) {
     signals.push({
       name: "DY_DIP_BUY",
       weight: 1.1, type: "COUNTER",
       detail: "dip " + dayPct.toFixed(1) + "% in uptrend RSI " + dailyRsi.toFixed(1)
     });
+  }
+
+  // [V8.1.2 신규] DAY7: DY_RANGE — catch-all 안전망
+  // 위 6개 신호의 dead zone(예: dayPct 0.5~1%, RSI 45~55, ma5<ma20)을 메움.
+  // RSI 35~70 + dayPct -3~+2 + 거의 모든 보통 상태 종목 진입 가능.
+  // weight를 낮게 잡아 사이즈는 작게.
+  if (dailyRsi >= 35 && dailyRsi <= 70
+      && dayPct >= -3.0 && dayPct <= 2.0) {
+    // 단, 위 신호 중 하나라도 이미 잡혔으면 중복 방지
+    if (signals.length === 0) {
+      const trendUp = ma5 != null && ma5 > ma20;
+      signals.push({
+        name: "DY_RANGE",
+        weight: 0.85,                                   // 낮은 가중치 = 작은 사이즈
+        type: trendUp ? "TREND" : "COUNTER",
+        detail: "range day " + dayPct.toFixed(1) + "% RSI " + dailyRsi.toFixed(1) + (trendUp ? " up-trend" : " no-trend")
+      });
+    }
   }
 
   return signals;
@@ -1474,7 +1489,10 @@ async function runTradingCycle(env) {
       // [V8.1] 카운터: NOBUY 로그를 매번 DB에 쓰면 사이클당 100+ INSERT 발생.
       // 사유별로 카운트만 누적해서 시장당 1줄만 요약 로그로 남김.
       const nobuyCounts = {};
+      const blockCounts = {};     // [V8.1.2] BLOCK 사유 별도 카운트
+      const stateSamples = [];    // [V8.1.2] 종목 상태 샘플 (진단용)
       function incNobuy(reason) { nobuyCounts[reason] = (nobuyCounts[reason] || 0) + 1; }
+      function incBlock(reason) { blockCounts[reason] = (blockCounts[reason] || 0) + 1; }
 
       // === 평가 단계 (직렬 처리: cash/positions 일관성 유지) ===
       for (const item of fetched) {
@@ -1503,7 +1521,8 @@ async function runTradingCycle(env) {
           } else if (daily && daily.closes && daily.closes.length > 0) {
             price = daily.closes[daily.closes.length - 1];
             prevClose = daily.prevClose || price;
-            await log(DB, "INFO", symbol, "using daily fallback price");
+            // [V8.1.2] fallback 로그 → 카운터로 (이전: 종목마다 DB write)
+            incNobuy("daily_fallback");
           } else {
             skipped++;
             continue;
@@ -1585,6 +1604,12 @@ async function runTradingCycle(env) {
 
           if (stratResults.length === 0) {
             incNobuy("no_signal");
+            // [V8.1.2] 진단: 처음 5개 종목의 상태를 샘플로 수집
+            if (stateSamples.length < 5) {
+              const trendStr = (dailyMaShort != null && dailyMa != null)
+                ? (dailyMaShort > dailyMa ? "up" : "dn") : "?";
+              stateSamples.push(symbol + "(RSI" + dailyRsi.toFixed(0) + " d" + dayPct.toFixed(1) + "% " + trendStr + ")");
+            }
             continue;
           }
 
@@ -1614,8 +1639,8 @@ async function runTradingCycle(env) {
             };
             const blockReason = evaluateBuyBlocks(price, dayPct, daily, cfg, regime, signal, ctx);
             if (blockReason) {
-              // [V8.1] BLOCK은 카운터로만. 단 인사이트가 필요한 사유는 로그.
-              incNobuy("block:" + blockReason.split(" ")[0]);
+              // [V8.1.2] BLOCK 사유는 별도 카운트
+              incBlock(blockReason.split(" ")[0] + "[" + strategy + "]");
               continue;
             }
 
@@ -1641,12 +1666,21 @@ async function runTradingCycle(env) {
         }
       }
 
-      // [V8.1] 시장당 NOBUY 사유 요약 1줄
+      // [V8.1.2] 시장당 NOBUY / BLOCK / 샘플 요약
       const nbKeys = Object.keys(nobuyCounts);
       if (nbKeys.length > 0) {
         const summary = nbKeys.sort(function(a,b){ return nobuyCounts[b]-nobuyCounts[a]; })
           .map(function(k){ return k + ":" + nobuyCounts[k]; }).join(", ");
         await log(DB, "INFO", null, "NOBUY[" + market + "] " + summary);
+      }
+      const blKeys = Object.keys(blockCounts);
+      if (blKeys.length > 0) {
+        const summary = blKeys.sort(function(a,b){ return blockCounts[b]-blockCounts[a]; })
+          .map(function(k){ return k + ":" + blockCounts[k]; }).join(", ");
+        await log(DB, "INFO", null, "BLOCK[" + market + "] " + summary);
+      }
+      if (stateSamples.length > 0) {
+        await log(DB, "INFO", null, "STATE[" + market + "] " + stateSamples.join(" | "));
       }
     }
 
