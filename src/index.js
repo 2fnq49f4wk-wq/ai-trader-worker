@@ -169,6 +169,45 @@ const DEFAULT_CFG = {
   cycleLockTTL: 60000   // 60s — 사용자 요청으로 복원
 };
 
+// === [V8.2] 시장별 독립 학습 — US/KR 따로 학습되는 매매 룰 키 목록 ===
+// 이 키들은 cfg.markets.us / cfg.markets.kr 안에 들어감.
+// 베이스 cfg에도 같은 키가 있으면 폴백으로 사용 (마이그레이션 호환용).
+const MARKET_SCOPED_KEYS = [
+  'rsiBuy', 'rsiSell', 'rsiPeriod',
+  'stopLoss', 'takeProfit1', 'takeProfit2', 'posSize',
+  'swingRules', 'dayRules', 'momentumRules', 'meanrevRules',
+  'strategySizing'
+];
+
+// 베이스 cfg + cfg.markets[market] 머지해서 그 시장에서 쓸 cfg 반환.
+// 시장 값이 있으면 우선, 없으면 베이스 값 폴백.
+function getMarketCfg(cfg, market) {
+  const out = Object.assign({}, cfg);
+  const m = (cfg.markets && cfg.markets[market]) || {};
+  for (const k of MARKET_SCOPED_KEYS) {
+    if (m[k] !== undefined) out[k] = m[k];
+  }
+  return out;
+}
+
+// cfg를 받아서 markets 구조가 없으면 현재 베이스 값을 양쪽에 복제해서 생성.
+// 이미 있으면 그대로. 베이스에 markets 누락된 키만 채워줌.
+function migrateCfgToMarkets(cfg) {
+  if (!cfg.markets) cfg.markets = {};
+  for (const market of ['us', 'kr']) {
+    if (!cfg.markets[market]) cfg.markets[market] = {};
+    for (const k of MARKET_SCOPED_KEYS) {
+      if (cfg.markets[market][k] === undefined && cfg[k] !== undefined) {
+        // 객체는 deep clone (이후 시장별 변경이 베이스를 오염시키지 않게)
+        cfg.markets[market][k] = (typeof cfg[k] === 'object' && cfg[k] !== null)
+          ? JSON.parse(JSON.stringify(cfg[k]))
+          : cfg[k];
+      }
+    }
+  }
+  return cfg;
+}
+
 function isMarketOpen(market) {
   const now = new Date();
   const utcHour = now.getUTCHours();
@@ -1261,7 +1300,7 @@ function evaluateSell(pos, price, daily, dailyRsi, dailyMa, dailyMaShort, cfg, m
 async function refreshQuotesOnly(env, market) {
   const DB = env.DB;
   await ensureSchema(DB);
-  const cfg = Object.assign({}, DEFAULT_CFG, await getState(DB, "cfg", {}));
+  const cfg = migrateCfgToMarkets(Object.assign({}, DEFAULT_CFG, await getState(DB, "cfg", {})));
   await log(DB, "INFO", null, "=== Manual quote refresh: " + market.toUpperCase() + " ===");
 
   const indices = market === "us" ? US_INDICES : KR_INDICES;
@@ -1309,18 +1348,12 @@ async function refreshQuotesOnly(env, market) {
 async function autoTune(DB, cfg, regimes) {
   if (!cfg.autoTune) return cfg;
   try {
-    const tradesRes = await DB.prepare("SELECT * FROM trades WHERE side = ? ORDER BY ts DESC LIMIT 50").bind("SELL").all();
-    const recentSells = tradesRes.results || [];
-    if (recentSells.length < 10) return cfg;
+    // [V8.2] 신호별 통계는 시장 무관 (성능 평균) — 기존대로 전체 셀 50건
+    const tradesResAll = await DB.prepare("SELECT * FROM trades WHERE side = ? ORDER BY ts DESC LIMIT 50").bind("SELL").all();
+    const recentSellsAll = tradesResAll.results || [];
 
-    const tuneState = await getState(DB, "autotune_state", { lastTunedAt: 0, tradeCountAtLastTune: 0 });
-    const totalSells = await DB.prepare("SELECT COUNT(*) as c FROM trades WHERE side = ?").bind("SELL").first();
-    const sellCount = totalSells.c || 0;
-    if (sellCount - tuneState.tradeCountAtLastTune < 10) return cfg;
-
-    // [수정] 신호별 성과 집계 — '#entry=' 구분자로 파싱 충돌 방지
     const signalStats = {};
-    for (const t of recentSells) {
+    for (const t of recentSellsAll) {
       const reason = t.reason || "";
       const m = reason.match(/#entry=([A-Z_][A-Z0-9_,]*)/);
       if (!m) continue;
@@ -1338,39 +1371,132 @@ async function autoTune(DB, cfg, regimes) {
     }
     await setState(DB, "signal_stats", signalStats);
 
-    const wins = recentSells.filter(function(t){ return t.pnl_pct > 0; });
-    const winRate = wins.length / recentSells.length;
-    const avgPnl = recentSells.reduce(function(a,t){ return a + (t.pnl_pct || 0); }, 0) / recentSells.length;
-    const changes = [];
-    const newCfg = Object.assign({}, cfg);
+    // [V8.2] 시장별 독립 학습 — US/KR 각각 거래만 따로 보고 따로 조정
+    const newCfg = JSON.parse(JSON.stringify(cfg));  // deep clone (markets 객체 안전)
+    if (!newCfg.markets) newCfg.markets = { us: {}, kr: {} };
+    let anyChange = false;
+    const allChanges = [];
 
-    const usRegime = regimes.us ? regimes.us.regime : "UNKNOWN";
-    const krRegime = regimes.kr ? regimes.kr.regime : "UNKNOWN";
-    const dominantRegime = (usRegime === "BEAR" || krRegime === "BEAR") ? "BEAR" :
-                           (usRegime === "BULL" && krRegime === "BULL") ? "BULL" : "NEUTRAL";
+    for (const market of ['us', 'kr']) {
+      // 시장별 최근 SELL 50건
+      const mtRes = await DB.prepare("SELECT * FROM trades WHERE side = ? AND market = ? ORDER BY ts DESC LIMIT 50")
+        .bind("SELL", market).all();
+      const mtSells = mtRes.results || [];
+      if (mtSells.length < 10) continue;  // 시장별 표본 10 미만 → 학습 보류
 
-    if (dominantRegime === "BEAR" && avgPnl < 0) {
-      newCfg.rsiBuy = Math.max(30, cfg.rsiBuy - 2);
-      if (newCfg.rsiBuy !== cfg.rsiBuy) changes.push("RSI " + cfg.rsiBuy + "->" + newCfg.rsiBuy);
-    } else if (dominantRegime === "BULL" && winRate > 0.55 && avgPnl > 2) {
-      newCfg.rsiBuy = Math.min(40, cfg.rsiBuy + 1);
-      if (newCfg.rsiBuy !== cfg.rsiBuy) changes.push("RSI " + cfg.rsiBuy + "->" + newCfg.rsiBuy);
+      // 시장별 튠 상태 — 10건마다만 재조정
+      const tuneKey = "autotune_state_" + market;
+      const tuneState = await getState(DB, tuneKey, { lastTunedAt: 0, tradeCountAtLastTune: 0 });
+      const totalRes = await DB.prepare("SELECT COUNT(*) as c FROM trades WHERE side = ? AND market = ?")
+        .bind("SELL", market).first();
+      const sellCount = (totalRes && totalRes.c) || 0;
+      if (sellCount - tuneState.tradeCountAtLastTune < 10) continue;
+
+      const wins = mtSells.filter(function(t){ return t.pnl_pct > 0; });
+      const winRate = wins.length / mtSells.length;
+      const avgPnl = mtSells.reduce(function(a,t){ return a + (t.pnl_pct || 0); }, 0) / mtSells.length;
+      const regime = (regimes[market] && regimes[market].regime) || "NEUTRAL";
+
+      // 시장 cfg 머지된 현재 값 (베이스 폴백 포함)
+      const curMcfg = getMarketCfg(cfg, market);
+      const mChanges = [];
+      const mNew = newCfg.markets[market];
+
+      // RSI 조정 — 시장별 regime + 시장별 성과 기준
+      if (regime === "BEAR" && avgPnl < 0) {
+        const next = Math.max(30, curMcfg.rsiBuy - 2);
+        if (next !== curMcfg.rsiBuy) { mNew.rsiBuy = next; mChanges.push("RSI " + curMcfg.rsiBuy + "->" + next); }
+      } else if (regime === "BULL" && winRate > 0.55 && avgPnl > 2) {
+        const next = Math.min(40, curMcfg.rsiBuy + 1);
+        if (next !== curMcfg.rsiBuy) { mNew.rsiBuy = next; mChanges.push("RSI " + curMcfg.rsiBuy + "->" + next); }
+      }
+
+      // [V8.2] 시장별 stopLoss 조정 — 시장 성과 나쁘면 손절 더 타이트
+      if (winRate < 0.40 && avgPnl < -1.0) {
+        const next = Math.max(2.0, +(curMcfg.stopLoss - 0.5).toFixed(2));
+        if (next !== curMcfg.stopLoss) { mNew.stopLoss = next; mChanges.push("STOP " + curMcfg.stopLoss + "->" + next); }
+      } else if (winRate > 0.55 && avgPnl > 1.5) {
+        // 잘 되면 살짝 여유 (조기 손절 방지)
+        const next = Math.min(8.0, +(curMcfg.stopLoss + 0.3).toFixed(2));
+        if (next !== curMcfg.stopLoss) { mNew.stopLoss = next; mChanges.push("STOP " + curMcfg.stopLoss + "->" + next); }
+      }
+
+      // [V8.2.1] rsiSell 조정 — 평균 PnL이 좋으면 더 늦게 익절(욕심), 나쁘면 빠르게
+      if (winRate > 0.55 && avgPnl > 2.0) {
+        const next = Math.min(80, curMcfg.rsiSell + 1);
+        if (next !== curMcfg.rsiSell) { mNew.rsiSell = next; mChanges.push("RSISELL " + curMcfg.rsiSell + "->" + next); }
+      } else if (winRate < 0.40 && avgPnl < 0) {
+        const next = Math.max(60, curMcfg.rsiSell - 1);
+        if (next !== curMcfg.rsiSell) { mNew.rsiSell = next; mChanges.push("RSISELL " + curMcfg.rsiSell + "->" + next); }
+      }
+
+      // [V8.2.1] takeProfit1 조정 — 잘되면 욕심, 안되면 빠르게 익절
+      const curTp1 = (curMcfg.swingRules && curMcfg.swingRules.tp1) != null ? curMcfg.swingRules.tp1 : curMcfg.takeProfit1;
+      if (curTp1 != null) {
+        let newTp1 = null;
+        if (winRate > 0.55 && avgPnl > 2.0) newTp1 = Math.min(8.0, +(curTp1 + 0.2).toFixed(2));
+        else if (winRate < 0.40 && avgPnl < 0) newTp1 = Math.max(2.0, +(curTp1 - 0.2).toFixed(2));
+        if (newTp1 !== null && newTp1 !== curTp1) {
+          mNew.takeProfit1 = newTp1;
+          // swingRules.tp1도 같이 sync (있을 때만)
+          if (curMcfg.swingRules) {
+            mNew.swingRules = Object.assign({}, curMcfg.swingRules, { tp1: newTp1 });
+          }
+          mChanges.push("TP1 " + curTp1 + "->" + newTp1);
+        }
+      }
+
+      // [V8.2.1] takeProfit2 조정 — TP1과 같은 방향, 더 큰 폭
+      const curTp2 = (curMcfg.swingRules && curMcfg.swingRules.tp2) != null ? curMcfg.swingRules.tp2 : curMcfg.takeProfit2;
+      if (curTp2 != null) {
+        let newTp2 = null;
+        if (winRate > 0.55 && avgPnl > 2.0) newTp2 = Math.min(20.0, +(curTp2 + 0.5).toFixed(2));
+        else if (winRate < 0.40 && avgPnl < 0) newTp2 = Math.max(6.0, +(curTp2 - 0.5).toFixed(2));
+        if (newTp2 !== null && newTp2 !== curTp2) {
+          mNew.takeProfit2 = newTp2;
+          if (curMcfg.swingRules) {
+            mNew.swingRules = Object.assign({}, mNew.swingRules || curMcfg.swingRules, { tp2: newTp2 });
+          }
+          mChanges.push("TP2 " + curTp2 + "->" + newTp2);
+        }
+      }
+
+      // [V8.2.1] SwingSize(strategySizing.swing.base) 조정 — 성과 매우 좋으면 사이즈 키움
+      const curSizing = curMcfg.strategySizing || {};
+      const curSwingBase = (curSizing.swing && curSizing.swing.base) != null ? curSizing.swing.base : curMcfg.posSize;
+      if (curSwingBase != null) {
+        let newSwingBase = null;
+        if (winRate > 0.60 && avgPnl > 2.5) newSwingBase = Math.min(40, curSwingBase + 1);
+        else if (winRate < 0.35 && avgPnl < -1.0) newSwingBase = Math.max(10, curSwingBase - 1);
+        if (newSwingBase !== null && newSwingBase !== curSwingBase) {
+          // strategySizing 객체 deep-ish copy해서 swing.base만 갱신
+          const baseSizing = mNew.strategySizing || JSON.parse(JSON.stringify(curSizing));
+          if (!baseSizing.swing) baseSizing.swing = { base: curSwingBase, bullMult: 1.0, bearMult: 1.0 };
+          baseSizing.swing.base = newSwingBase;
+          mNew.strategySizing = baseSizing;
+          // posSize도 같이 sync (폴백용)
+          mNew.posSize = newSwingBase;
+          mChanges.push("SWGSIZE " + curSwingBase + "->" + newSwingBase);
+        }
+      }
+
+      if (mChanges.length > 0) {
+        await setState(DB, tuneKey, { lastTunedAt: Date.now(), tradeCountAtLastTune: sellCount });
+        await log(DB, "TUNE", null, "[" + market.toUpperCase() + "/" + regime + "] WR=" + (winRate*100).toFixed(0) + "% PnL=" + avgPnl.toFixed(2) + "% -> " + mChanges.join(", "));
+        anyChange = true;
+        allChanges.push(market.toUpperCase() + ":" + mChanges.join(","));
+      }
     }
 
-    // [V8.1.3] 승률 기반 Confluence 자동 토글 제거.
-    // 이전 V8까지는 winRate<40%면 자동으로 requireConfluence=true로 설정 →
-    // 단독 신호 전부 차단 → 거래 0건 빠짐.
-    // 멀티 전략판은 cross-strategy confluence로 이미 안전망 충분.
-    // 만약 과거 사이클에서 켜져 있었다면 강제로 OFF로 리셋.
+    // [V8.1.3] requireConfluence 강제 OFF — 시장 무관 공통
     if (cfg.requireConfluence) {
       newCfg.requireConfluence = false;
-      changes.push("CONF=OFF (forced reset)");
+      allChanges.push("CONF=OFF (forced reset)");
+      anyChange = true;
     }
 
-    if (changes.length > 0) {
+    if (anyChange) {
       await setState(DB, "cfg", newCfg);
-      await setState(DB, "autotune_state", { lastTunedAt: Date.now(), tradeCountAtLastTune: sellCount });
-      await log(DB, "TUNE", null, "[" + dominantRegime + "] WR=" + (winRate*100).toFixed(0) + "% PnL=" + avgPnl.toFixed(2) + "% -> " + changes.join(", "));
       return newCfg;
     }
   } catch (e) { await log(DB, "WARN", null, "autoTune skipped: " + e.message); }
@@ -1426,7 +1552,7 @@ async function releaseCycleLock(DB) {
 async function runTradingCycle(env) {
   const DB = env.DB;
   await ensureSchema(DB);
-  let cfg = Object.assign({}, DEFAULT_CFG, await getState(DB, "cfg", {}));
+  let cfg = migrateCfgToMarkets(Object.assign({}, DEFAULT_CFG, await getState(DB, "cfg", {})));
 
   // [V8.1.3] 저장된 cfg에 박힌 잘못된 값 강제 리셋
   // - requireConfluence: 과거 autoTune이 true로 설정했으면 단독 신호 전부 차단됨 → 거래 0
@@ -1504,9 +1630,10 @@ async function runTradingCycle(env) {
     const marketsForQuotes = marketsToTrade.slice();
 
     for (const market of marketsForQuotes) {
-      const tickers = market === "us" ? cfg.usTickers : cfg.krTickers;
+      const mcfg = getMarketCfg(cfg, market);  // [V8.2] 시장별 독립 룰
+      const tickers = market === "us" ? mcfg.usTickers : mcfg.krTickers;
       const positions = await getPositions(DB, market);  // key: "SYM::strategy"
-      const feeRate = market === "us" ? cfg.feeUS : cfg.feeKR;
+      const feeRate = market === "us" ? mcfg.feeUS : mcfg.feeKR;
       const regime = regimes[market];
       const canTrade = marketsToTrade.indexOf(market) !== -1;
 
@@ -1549,7 +1676,7 @@ async function runTradingCycle(env) {
             if (intra && intra.price > 0) intraOk = true;
           } catch (e) { intraErr = e.message; }
           try {
-            daily = await getDailyCached(DB, symbol, cfg.dailyCacheMinutes);
+            daily = await getDailyCached(DB, symbol, mcfg.dailyCacheMinutes);
           } catch (e) { dailyErr = e.message; }
           return { symbol: symbol, intra: intra, daily: daily, intraOk: intraOk, intraErr: intraErr, dailyErr: dailyErr };
         }));
@@ -1604,11 +1731,11 @@ async function runTradingCycle(env) {
           const closes = daily.closes || [];
           const highs = daily.highs || null;
           const lows = daily.lows || null;
-          const dailyRsi = closes.length >= cfg.rsiPeriod + 1 ? getRSI(closes, cfg.rsiPeriod) : null;
-          const dailyMa = closes.length >= cfg.maPeriod ? getMA(closes, cfg.maPeriod) : null;
-          const dailyMaShort = closes.length >= cfg.maShortPeriod ? getMA(closes, cfg.maShortPeriod) : null;
-          const dailyAtr = closes.length >= cfg.atrPeriod + 1 ? getATR(closes, cfg.atrPeriod, highs, lows) : null;
-          const bb = getBollingerBands(closes, cfg.maPeriod, cfg.bbStdMult);
+          const dailyRsi = closes.length >= mcfg.rsiPeriod + 1 ? getRSI(closes, mcfg.rsiPeriod) : null;
+          const dailyMa = closes.length >= mcfg.maPeriod ? getMA(closes, mcfg.maPeriod) : null;
+          const dailyMaShort = closes.length >= mcfg.maShortPeriod ? getMA(closes, mcfg.maShortPeriod) : null;
+          const dailyAtr = closes.length >= mcfg.atrPeriod + 1 ? getATR(closes, mcfg.atrPeriod, highs, lows) : null;
+          const bb = getBollingerBands(closes, mcfg.maPeriod, mcfg.bbStdMult);
           const return20 = getNDayReturn(closes, 20);
 
           await saveQuote(DB, symbol, market, {
@@ -1631,7 +1758,7 @@ async function runTradingCycle(env) {
 
             // peak / stop 갱신
             if (held.meta && held.meta.stopPrice != null) {
-              const stopPct = (getStrategyRules(cfg, stratName).stopLossPct || cfg.stopLoss);
+              const stopPct = (getStrategyRules(mcfg, stratName).stopLossPct || mcfg.stopLoss);
               const safeStop = held.avg * (1 - stopPct / 100);
               if (held.meta.stopPrice > safeStop) {
                 held.meta.stopPrice = safeStop;
@@ -1644,7 +1771,7 @@ async function runTradingCycle(env) {
             }
 
             // 매도 판단
-            const sellDecision = evaluateSell(held, price, daily, dailyRsi, dailyMa, dailyMaShort, cfg, canTrade, market);
+            const sellDecision = evaluateSell(held, price, daily, dailyRsi, dailyMa, dailyMaShort, mcfg, canTrade, market);
             if (sellDecision.minHoldLock) {
               const heldHours = held.opened_ts ? (Date.now() - held.opened_ts) / 3600000 : 0;
               const pnlRate = ((price - held.avg) / held.avg) * 100;
@@ -1652,7 +1779,7 @@ async function runTradingCycle(env) {
               continue;
             }
             if (sellDecision.sell) {
-              await executeSell(DB, market, symbol, held, sellDecision.sellQty, price, sellDecision.reason, cfg, cash);
+              await executeSell(DB, market, symbol, held, sellDecision.sellQty, price, sellDecision.reason, mcfg, cash);
               sold++;
               // 전량 매도 시 카운트 갱신 — 같은 종목 다른 전략 남아 있는지 확인
               const stillHeld = Object.keys(positions).some(function(k){
@@ -1672,7 +1799,7 @@ async function runTradingCycle(env) {
             continue;
           }
           const strategiesHeldNow = getStrategiesHeldForSymbol(positions, symbol);
-          const stratResults = evaluateAllStrategies(price, dayPct, daily, cfg, signalStats);
+          const stratResults = evaluateAllStrategies(price, dayPct, daily, mcfg, signalStats);
 
           if (stratResults.length === 0) {
             incNobuy("no_signal");
@@ -1686,7 +1813,7 @@ async function runTradingCycle(env) {
           }
 
           // Cross-strategy confluence: 2개 이상 전략이 동시 신호면 보너스
-          const crossBonus = (stratResults.length >= 2) ? (cfg.crossConfluenceBonus || 1.0) : 1.0;
+          const crossBonus = (stratResults.length >= 2) ? (mcfg.crossConfluenceBonus || 1.0) : 1.0;
           if (stratResults.length >= 2) {
             const stratNames = stratResults.map(function(r){ return r.strategy; }).join("+");
             await log(DB, "INFO", symbol, "CROSS-CONF (" + stratNames + ") x" + crossBonus);
@@ -1710,13 +1837,13 @@ async function runTradingCycle(env) {
               sectorCounts: sectorCounts,
               strategiesHeld: strategiesHeldNow
             };
-            const blockReason = evaluateBuyBlocks(price, dayPct, daily, cfg, regime, signal, ctx);
+            const blockReason = evaluateBuyBlocks(price, dayPct, daily, mcfg, regime, signal, ctx);
             if (blockReason) {
               incBlock(blockReason.split(" ")[0] + "[" + strategy + "]");
               continue;
             }
 
-            const baseRatio = getPositionSizeRatio(cfg, strategy, regime.regime);
+            const baseRatio = getPositionSizeRatio(mcfg, strategy, regime.regime);
             const adjustedRatio = baseRatio * signal.weight * crossBonus;
 
             // [V8.1.9] 사이징 변경:
@@ -1724,7 +1851,7 @@ async function runTradingCycle(env) {
             //   • 변경: cash[market] * ratio 를 1차 budget으로, sizingTargets로 클램프
             //     - minBudget 미만이면 minBudget까지 끌어올림 (단, cash[market]*0.85 한도)
             //     - maxBudget 초과면 maxBudget으로 캡
-            const targets = (cfg.sizingTargets && cfg.sizingTargets[market]) || { minBudget: 0, maxBudget: Infinity };
+            const targets = (mcfg.sizingTargets && mcfg.sizingTargets[market]) || { minBudget: 0, maxBudget: Infinity };
             const rawBudget = cash[market] * adjustedRatio;
             const cashCap = cash[market] * 0.85;  // cash 전부 박지 않게 85% 캡
             let budget = Math.min(rawBudget, targets.maxBudget, cashCap);
@@ -1754,7 +1881,7 @@ async function runTradingCycle(env) {
 
             const totalCost = qty * price * (1 + feeRate);
             if (qty > 0 && totalCost <= cash[market]) {
-              await executeBuy(DB, market, symbol, strategy, qty, price, signal, dailyAtr, cfg, cash);
+              await executeBuy(DB, market, symbol, strategy, qty, price, signal, dailyAtr, mcfg, cash);
               bought++;
               heldSymbols.add(symbol);
               strategiesHeldNow.add(strategy);
@@ -1814,7 +1941,7 @@ async function handleRequest(request, env) {
   try {
     // === [개선] /api/state 통합 응답 ===
     if (path === "/api/state") {
-      const cfg = Object.assign({}, DEFAULT_CFG, await getState(env.DB, "cfg", {}));
+      const cfg = migrateCfgToMarkets(Object.assign({}, DEFAULT_CFG, await getState(env.DB, "cfg", {})));
       const cash = await getState(env.DB, "cash", { us: cfg.initialCashUS, kr: cfg.initialCashKR });
       const positionsUSRaw = await getPositions(env.DB, "us");
       const positionsKRRaw = await getPositions(env.DB, "kr");
@@ -1882,7 +2009,7 @@ async function handleRequest(request, env) {
 
     // 하위 호환 엔드포인트 유지
     if (path === "/api/watchlist") {
-      const cfg = Object.assign({}, DEFAULT_CFG, await getState(env.DB, "cfg", {}));
+      const cfg = migrateCfgToMarkets(Object.assign({}, DEFAULT_CFG, await getState(env.DB, "cfg", {})));
       const allSymbols = cfg.usTickers.concat(cfg.krTickers);
       const quotes = [];
       for (const sym of allSymbols) {
@@ -1910,20 +2037,34 @@ async function handleRequest(request, env) {
       return Response.json(res.results, { headers: cors });
     }
     if (path === "/api/cfg" && request.method === "GET") {
-      const cfg = Object.assign({}, DEFAULT_CFG, await getState(env.DB, "cfg", {}));
+      const cfg = migrateCfgToMarkets(Object.assign({}, DEFAULT_CFG, await getState(env.DB, "cfg", {})));
       return Response.json(cfg, { headers: cors });
     }
     if (path === "/api/cfg" && request.method === "POST") {
       const body = await request.json();
-      const current = Object.assign({}, DEFAULT_CFG, await getState(env.DB, "cfg", {}));
+      const current = migrateCfgToMarkets(Object.assign({}, DEFAULT_CFG, await getState(env.DB, "cfg", {})));
       const next = Object.assign({}, current, body);
+      // [V8.2] 사용자가 SETTINGS에서 시장별 학습 대상 키를 변경하면
+      // cfg.markets.us / cfg.markets.kr에도 같은 값으로 강제 sync.
+      // (안 그러면 markets 안의 학습값이 우선되어 사용자 변경이 무시됨)
+      if (!next.markets) next.markets = { us: {}, kr: {} };
+      for (const market of ['us', 'kr']) {
+        if (!next.markets[market]) next.markets[market] = {};
+        for (const k of MARKET_SCOPED_KEYS) {
+          if (body[k] !== undefined) {
+            next.markets[market][k] = (typeof body[k] === 'object' && body[k] !== null)
+              ? JSON.parse(JSON.stringify(body[k]))
+              : body[k];
+          }
+        }
+      }
       await setState(env.DB, "cfg", next);
       await log(env.DB, "INFO", null, "cfg updated manually");
       return Response.json({ ok: true, cfg: next }, { headers: cors });
     }
     if (path === "/api/favorites" && request.method === "POST") {
       const body = await request.json();
-      const current = Object.assign({}, DEFAULT_CFG, await getState(env.DB, "cfg", {}));
+      const current = migrateCfgToMarkets(Object.assign({}, DEFAULT_CFG, await getState(env.DB, "cfg", {})));
       if (body.usFavorites !== undefined) current.usFavorites = body.usFavorites;
       if (body.krFavorites !== undefined) current.krFavorites = body.krFavorites;
       await setState(env.DB, "cfg", current);
@@ -1931,7 +2072,7 @@ async function handleRequest(request, env) {
     }
     if (path === "/api/reset" && request.method === "POST") {
       await ensureSchema(env.DB);
-      const cfg = Object.assign({}, DEFAULT_CFG, await getState(env.DB, "cfg", {}));
+      const cfg = migrateCfgToMarkets(Object.assign({}, DEFAULT_CFG, await getState(env.DB, "cfg", {})));
       await env.DB.prepare("DELETE FROM trades").run();
       await env.DB.prepare("DELETE FROM positions").run();
       await env.DB.prepare("DELETE FROM logs").run();
@@ -1941,7 +2082,7 @@ async function handleRequest(request, env) {
       return Response.json({ ok: true, cash: { us: cfg.initialCashUS, kr: cfg.initialCashKR } }, { headers: cors });
     }
     if (path === "/api/reset_tickers" && request.method === "POST") {
-      const current = Object.assign({}, DEFAULT_CFG, await getState(env.DB, "cfg", {}));
+      const current = migrateCfgToMarkets(Object.assign({}, DEFAULT_CFG, await getState(env.DB, "cfg", {})));
       current.usTickers = DEFAULT_US;
       current.krTickers = DEFAULT_KR;
       await setState(env.DB, "cfg", current);
@@ -1976,7 +2117,7 @@ async function handleRequest(request, env) {
     if (path === "/api/diag") {
       const lock = await getState(env.DB, "lock:cycle", null);
       const lastTick = await getState(env.DB, "last_tick", null);
-      const cfg = Object.assign({}, DEFAULT_CFG, await getState(env.DB, "cfg", {}));
+      const cfg = migrateCfgToMarkets(Object.assign({}, DEFAULT_CFG, await getState(env.DB, "cfg", {})));
       const allSymbols = cfg.usTickers.concat(cfg.krTickers);
       let quoteCount = 0, freshCount = 0;
       const now = Date.now();
