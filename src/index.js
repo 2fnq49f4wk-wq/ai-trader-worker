@@ -70,7 +70,7 @@ const DEFAULT_CFG = {
   bbStdMult: 2.0,
   volSpikeMult: 1.5,
   dailyCacheMinutes: 30,   // [V8.1.1] 10→30 — Cloudflare subrequest 절약
-  initialCashUS: 10000, initialCashKR: 10000000,
+  initialCashUS: 100000, initialCashKR: 100000000,
   enabled: true,
   autoTune: true,
   marketHoursOnly: true,
