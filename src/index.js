@@ -1,15 +1,18 @@
 // ============================================================
-// LUX-engine V8 (멀티 전략판)
+// LUX-engine V8.1 (멀티 전략판 - Day 공격성 강화 + 지연 해결)
 // 4개 전략 동시 운용: swing, day, momentum, meanrev
 //   • 같은 종목 + 다른 전략 = 별도 포지션 가능 (composite PK)
 //   • 매도는 진입 전략의 룰을 따라감
 //   • 동시 신호 시 cross-strategy confluence 가중 (x1.2)
 //   • 전략별 base size + 시장국면 multiplier
-// V7.2 → V8 변경점:
-//   • positions 테이블 PK: symbol → (symbol, strategy)
-//   • evaluateBuySignals_{swing,day,momentum,meanrev} 분리
-//   • evaluateSell_{...} 매도 로직 전략별 분기
-//   • Current Positions UI에 strategy 컬럼
+// V8 → V8.1 변경점:
+//   • Day 전략 진입 조건 대폭 완화 (RSI<55, dayPct -7~+0.5, 신호 6종)
+//   • Day 신규 신호: DY_VWAP_PULL, DY_OPEN_DRIVE, DY_MOMO, DY_DIP_BUY (추세+모멘텀)
+//   • Day TP 1.5→2.5%, SL 1.0→1.3%, base 6→11%, bullMult 1.0→1.5
+//   • Day maxHold 6h → 8h, minHold 30 → 10분 (회전 빠르게)
+//   • 장 마감 30분전 강제청산 구현
+//   • [성능] 종목 fetch 병렬화 — 순차 await → Promise.all
+//   • [성능] NOBUY 로그 스팸 제거 (카운터로 대체)
 // ============================================================
 
 const DEFAULT_US = [
@@ -83,7 +86,7 @@ const DEFAULT_CFG = {
   // === [V8] 전략별 포지션 사이즈 (NEUTRAL base / BULL mult / BEAR mult) ===
   strategySizing: {
     swing:    { base: 12, bullMult: 1.5, bearMult: 0.6 },
-    day:      { base:  6, bullMult: 1.0, bearMult: 0.7 },
+    day:      { base: 11, bullMult: 1.5, bearMult: 0.9 },  // [V8.1] 더 공격적: base 9→11, bull 1.3→1.5
     momentum: { base: 18, bullMult: 1.5, bearMult: 0.5 },
     meanrev:  { base:  9, bullMult: 0.7, bearMult: 1.3 }
   },
@@ -101,14 +104,28 @@ const DEFAULT_CFG = {
     atrStopMult: 2.0
   },
   dayRules: {
-    minHoldMinutes: 30,
-    maxHoldHours: 6,
-    forceCloseBeforeMinClose: 30,   // 장 마감 30분 전 강제 청산
-    tp: 1.5,
-    stopLossPct: 1.0,
-    // 진입: day -3% ~ -5% (갭하락) + 시장 안정 + 분봉 RSI<40
-    dayDropMin: -5.0,
-    dayDropMax: -2.0
+    minHoldMinutes: 10,                // [V8.1] 20→10 — 단타 회전 더 빠르게
+    maxHoldHours: 8,
+    forceCloseBeforeMinClose: 30,      // 장 마감 30분 전 강제 청산
+    tp: 2.5,                           // [V8.1] 2.2→2.5
+    stopLossPct: 1.3,                  // [V8.1] 1.2→1.3 (손익비 1.92)
+    // [V8.1] 진입 범위 -7% ~ +0.5% — 평보합도 포함, 거래 빈도 ↑
+    dayDropMin: -7.0,
+    dayDropMax: 0.5,                   // [V8.1] -0.5 → +0.5 (보합 +α도 진입 가능)
+    rsiMaxForGap: 55,                  // [V8.1] 50→55 — 갭하락 진입 RSI 완화
+    rsiMaxForBounce: 60,               // [V8.1] 55→60
+    bounceYestMin: -1.0,               // [V8.1] -1.5 → -1.0 — 작은 음봉 다음날도 반등 진입
+    // 신규 신호 파라미터
+    openDriveMinPct: 1.0,              // [V8.1] 1.5→1.0 — 더 작은 갭상승도 추격
+    openDriveMaxPct: 5.0,              // [V8.1] 4.0→5.0
+    vwapPullMinPct: -0.5,              // [V8.1] 0→-0.5 — 살짝 눌린 것까지 OK
+    vwapPullMaxPct: 2.5,               // [V8.1] 2.0→2.5
+    // [V8.1 신규] DY_MOMO 파라미터 — 강세 모멘텀 추종
+    momoRsiMin: 60,
+    momoRsiMax: 75,
+    // [V8.1 신규] DY_DIP_BUY 파라미터 — 강세장 얕은 눌림 매수
+    dipMinPct: -3.0,
+    dipMaxPct: -0.3
   },
   momentumRules: {
     breakoutDays: 20,          // 20일 신고가 돌파
@@ -143,7 +160,7 @@ const DEFAULT_CFG = {
   maxPositionsPerSector: 3,    // [V8] 전략별 포지션 가능해서 2→3 완화
   blockInversePair: true,
   // === 사이클 락 ===
-  cycleLockTTL: 60000
+  cycleLockTTL: 60000   // 60s — 사용자 요청으로 복원
 };
 
 function isMarketOpen(market) {
@@ -164,6 +181,32 @@ function isMarketOpen(market) {
     return kstDay >= 1 && kstDay <= 5 && kstTotalMin >= 540 && kstTotalMin < 930;
   }
   return false;
+}
+
+// [V8.1 신규] 장 마감까지 남은 분 — Day 전략 강제 청산용
+// 장 마감 이후거나 장 시작 전이면 null 반환
+function marketMinutesUntilClose(market) {
+  const now = new Date();
+  const utcHour = now.getUTCHours();
+  const utcMinute = now.getUTCMinutes();
+  const utcDay = now.getUTCDay();
+  if (market === "us") {
+    let etTotalMin = (utcHour - 4) * 60 + utcMinute;
+    if (etTotalMin < 0) etTotalMin += 24 * 60;
+    if (utcDay < 1 || utcDay > 5) return null;
+    if (etTotalMin < 570 || etTotalMin >= 960) return null;
+    return 960 - etTotalMin;  // 16:00 ET 마감
+  }
+  if (market === "kr") {
+    let kstTotalMin = (utcHour + 9) * 60 + utcMinute;
+    if (kstTotalMin >= 24 * 60) kstTotalMin -= 24 * 60;
+    let kstDay = utcDay;
+    if (utcHour + 9 >= 24) kstDay = (utcDay + 1) % 7;
+    if (kstDay < 1 || kstDay > 5) return null;
+    if (kstTotalMin < 540 || kstTotalMin >= 930) return null;
+    return 930 - kstTotalMin;  // 15:30 KST 마감
+  }
+  return null;
 }
 
 async function ensureSchema(DB) {
@@ -568,36 +611,97 @@ function evaluateBuySignals_day(price, dayPct, dailyData, cfg) {
   const rules = cfg.dayRules;
   const dailyRsi = getRSI(closes, cfg.rsiPeriod);
   const ma20 = getMA(closes, cfg.maPeriod);
+  const ma5 = getMA(closes, cfg.maShortPeriod);
   if (dailyRsi == null || ma20 == null) return [];
 
   const signals = [];
+  const rsiGapLimit = rules.rsiMaxForGap != null ? rules.rsiMaxForGap : 55;
+  const rsiBounceLimit = rules.rsiMaxForBounce != null ? rules.rsiMaxForBounce : 60;
 
-  // DAY1: 갭하락 매수 — day -2% ~ -5% 범위 + RSI<40 + 가격이 MA20 -8% 이내
+  // DAY1: 갭하락 매수 — 더 넓은 범위 + RSI 완화 + MA20 -12% 이내
   if (dayPct >= rules.dayDropMin && dayPct <= rules.dayDropMax) {
-    if (dailyRsi < 40) {
+    if (dailyRsi < rsiGapLimit) {
       const maGap = ((price - ma20) / ma20) * 100;
-      if (maGap >= -8) {
+      if (maGap >= -12) {  // [V8.1] -10 → -12 완화
+        const depthBonus = dayPct < -3 ? 0.2 : (dayPct < -1.5 ? 0.1 : 0);
         signals.push({
           name: "DY_GAP_DOWN",
-          weight: 1.0, type: "COUNTER",
+          weight: 1.0 + depthBonus, type: "COUNTER",
           detail: "day " + dayPct.toFixed(1) + "% RSI " + dailyRsi.toFixed(1)
         });
       }
     }
   }
-  // DAY2: 강한 일중 반등 — 어제 음봉이 컸는데 오늘 양봉으로 회복 시작
+
+  // DAY2: 강한 일중 반등 — 어제 음봉 후 오늘 양봉
   if (closes.length >= 3) {
     const yest = closes[closes.length - 2];
     const dayBefore = closes[closes.length - 3];
     const yestPct = ((yest - dayBefore) / dayBefore) * 100;
-    if (yestPct < -2 && dayPct > 0 && dailyRsi >= 30 && dailyRsi <= 50) {
+    const yestThr = rules.bounceYestMin != null ? rules.bounceYestMin : -1.0;
+    if (yestPct < yestThr && dayPct > 0 && dailyRsi >= 25 && dailyRsi <= rsiBounceLimit) {
       signals.push({
         name: "DY_BOUNCE",
-        weight: 1.1, type: "COUNTER",
+        weight: 1.15, type: "COUNTER",
         detail: "yest " + yestPct.toFixed(1) + "% today +" + dayPct.toFixed(1) + "%"
       });
     }
   }
+
+  // [V8.1] DAY3: VWAP_PULL — 추세 위 가벼운 눌림
+  const vwapMin = rules.vwapPullMinPct != null ? rules.vwapPullMinPct : -0.5;
+  const vwapMax = rules.vwapPullMaxPct != null ? rules.vwapPullMaxPct : 2.5;
+  if (ma5 != null && ma5 > ma20 && price > ma5
+      && dayPct >= vwapMin && dayPct <= vwapMax
+      && dailyRsi >= 48 && dailyRsi <= 68) {  // [V8.1] 50~65 → 48~68 완화
+    signals.push({
+      name: "DY_VWAP_PULL",
+      weight: 1.05, type: "TREND",
+      detail: "trend ma5>ma20 day " + dayPct.toFixed(1) + "% RSI " + dailyRsi.toFixed(1)
+    });
+  }
+
+  // [V8.1] DAY4: OPEN_DRIVE — 갭상승 추격
+  const odMin = rules.openDriveMinPct != null ? rules.openDriveMinPct : 1.0;
+  const odMax = rules.openDriveMaxPct != null ? rules.openDriveMaxPct : 5.0;
+  if (dayPct >= odMin && dayPct <= odMax
+      && dailyRsi >= 52 && dailyRsi <= 72  // [V8.1] 55~70 → 52~72
+      && price > ma20) {
+    signals.push({
+      name: "DY_OPEN_DRIVE",
+      weight: 1.1, type: "TREND",
+      detail: "gap up " + dayPct.toFixed(1) + "% RSI " + dailyRsi.toFixed(1)
+    });
+  }
+
+  // [V8.1 신규] DAY5: DY_MOMO — 강세 모멘텀 단순 추종
+  // 강한 RSI (60~75) + 가격이 ma5/ma20 위 + 보합~상승 → 강세 지속 진입
+  const momoRsiMin = rules.momoRsiMin != null ? rules.momoRsiMin : 60;
+  const momoRsiMax = rules.momoRsiMax != null ? rules.momoRsiMax : 75;
+  if (dailyRsi >= momoRsiMin && dailyRsi <= momoRsiMax
+      && ma5 != null && price > ma5 && ma5 > ma20
+      && dayPct >= -1.0 && dayPct <= 3.0) {
+    signals.push({
+      name: "DY_MOMO",
+      weight: 1.05, type: "TREND",
+      detail: "momo RSI " + dailyRsi.toFixed(1) + " day " + dayPct.toFixed(1) + "%"
+    });
+  }
+
+  // [V8.1 신규] DAY6: DY_DIP_BUY — 강세장 얕은 눌림 단타
+  // ma5 > ma20 추세 위에서 -0.3% ~ -3% 일시적 눌림 → 반등 노림
+  const dipMin = rules.dipMinPct != null ? rules.dipMinPct : -3.0;
+  const dipMax = rules.dipMaxPct != null ? rules.dipMaxPct : -0.3;
+  if (ma5 != null && ma5 > ma20 && price > ma20
+      && dayPct >= dipMin && dayPct <= dipMax
+      && dailyRsi >= 40 && dailyRsi <= 65) {
+    signals.push({
+      name: "DY_DIP_BUY",
+      weight: 1.1, type: "COUNTER",
+      detail: "dip " + dayPct.toFixed(1) + "% in uptrend RSI " + dailyRsi.toFixed(1)
+    });
+  }
+
   return signals;
 }
 
@@ -965,7 +1069,8 @@ async function executeSell(DB, market, symbol, pos, sellQty, price, reason, cfg,
 
 // === [V8] 매도 평가 — 보유 포지션의 strategy에 따라 분기 ===
 // 반환: { sell: true/false, sellQty, reason } 또는 null
-function evaluateSell(pos, price, daily, dailyRsi, dailyMa, dailyMaShort, cfg, marketOpenForThis) {
+// [V8.1] market 인자 추가 — Day 전략 장 마감 강제청산용
+function evaluateSell(pos, price, daily, dailyRsi, dailyMa, dailyMaShort, cfg, marketOpenForThis, market) {
   const strategy = pos.strategy || (pos.meta && pos.meta.strategy) || "swing";
   const pnlRate = ((price - pos.avg) / pos.avg) * 100;
   const peakPrice = pos.meta && pos.meta.peakPrice ? pos.meta.peakPrice : pos.avg;
@@ -989,17 +1094,24 @@ function evaluateSell(pos, price, daily, dailyRsi, dailyMa, dailyMaShort, cfg, m
   // === DAY 전략 ===
   if (strategy === "day") {
     const r = cfg.dayRules;
+    // [V8.1] 장 마감 N분 전 강제 청산 — minHold 보다 우선 (장 종료가 임박하면 무조건 청산)
+    if (market) {
+      const mtc = marketMinutesUntilClose(market);
+      const forceMin = r.forceCloseBeforeMinClose || 30;
+      if (mtc != null && mtc <= forceMin) {
+        return { sell: true, sellQty: pos.qty, reason: "DAY-EOD " + mtc + "min PnL=" + pnlRate.toFixed(2) + "%" };
+      }
+    }
     // 최소 보유시간
-    if (heldMin < (r.minHoldMinutes || 30)) return { sell: false };
+    if (heldMin < (r.minHoldMinutes || 20)) return { sell: false };
     // 익절
     if (pnlRate >= r.tp) {
       return { sell: true, sellQty: pos.qty, reason: "DAY-TP +" + pnlRate.toFixed(2) + "%" };
     }
     // 최대 보유시간
-    if (heldHours >= (r.maxHoldHours || 6)) {
+    if (heldHours >= (r.maxHoldHours || 8)) {
       return { sell: true, sellQty: pos.qty, reason: "DAY-MAX " + heldHours.toFixed(1) + "h PnL=" + pnlRate.toFixed(2) + "%" };
     }
-    // TODO: 장 마감 30분 전 강제 청산 (시장별로 분 단위 계산 필요)
     return { sell: false };
   }
 
@@ -1263,20 +1375,28 @@ async function runTradingCycle(env) {
   }
 
   try {
-    await log(DB, "INFO", null, "=== Cycle start (V8 multi-strategy) ===");
+    await log(DB, "INFO", null, "=== Cycle start (V8.1 multi-strategy) ===");
+    const cycleStartedAt = Date.now();
     const usOpen = isMarketOpen("us");
     const krOpen = isMarketOpen("kr");
 
-    // [수정] 장 마감이어도 시세는 항상 갱신 (트레이딩만 차단)
-    // 지수는 전일 종가 기준이라도 보여줘야 UI가 살아있음
+    // [V8.1] 지수 fetch 병렬화 (US 3 + KR 2 = 5개 동시)
+    const indexJobs = [];
     for (const idx of US_INDICES) {
-      try { const d = await fetchIndexDaily(idx); await saveIndex(DB, idx, "us", d); }
-      catch (e) { await log(DB, "WARN", idx, "index fetch fail: " + e.message); }
+      indexJobs.push(
+        fetchIndexDaily(idx)
+          .then(function(d){ return saveIndex(DB, idx, "us", d); })
+          .catch(function(e){ return log(DB, "WARN", idx, "index fetch fail: " + e.message); })
+      );
     }
     for (const idx of KR_INDICES) {
-      try { const d = await fetchIndexDaily(idx); await saveIndex(DB, idx, "kr", d); }
-      catch (e) { await log(DB, "WARN", idx, "index fetch fail: " + e.message); }
+      indexJobs.push(
+        fetchIndexDaily(idx)
+          .then(function(d){ return saveIndex(DB, idx, "kr", d); })
+          .catch(function(e){ return log(DB, "WARN", idx, "index fetch fail: " + e.message); })
+      );
     }
+    await Promise.allSettled(indexJobs);
 
     const regimes = {
       us: await analyzeMarketRegime(DB, "us"),
@@ -1320,27 +1440,50 @@ async function runTradingCycle(env) {
         if (sec) sectorCounts[sec] = (sectorCounts[sec] || 0) + 1;
       }
 
-      for (const symbol of tickers) {
+      // [V8.1] === PREFETCH 단계 ===
+      // 모든 종목의 intraday + daily를 병렬로 동시에 fetch.
+      // 기존: 종목당 순차 await (200~500ms x 20개 = 4~10s)
+      // 신규: Promise.allSettled로 동시 호출 → 가장 느린 한 종목 시간만 소요
+      const prefetchStart = Date.now();
+      const fetched = await Promise.all(tickers.map(async function(symbol){
+        let intra = null, daily = null, intraOk = false;
+        let intraErr = null, dailyErr = null;
+        try {
+          intra = await fetchIntraday(symbol);
+          if (intra && intra.price > 0) intraOk = true;
+        } catch (e) { intraErr = e.message; }
+        try {
+          daily = await getDailyCached(DB, symbol, cfg.dailyCacheMinutes);
+        } catch (e) { dailyErr = e.message; }
+        return { symbol: symbol, intra: intra, daily: daily, intraOk: intraOk, intraErr: intraErr, dailyErr: dailyErr };
+      }));
+      const prefetchMs = Date.now() - prefetchStart;
+      await log(DB, "INFO", null, "prefetch[" + market + "] " + tickers.length + " syms in " + prefetchMs + "ms");
+
+      // [V8.1] 카운터: NOBUY 로그를 매번 DB에 쓰면 사이클당 100+ INSERT 발생.
+      // 사유별로 카운트만 누적해서 시장당 1줄만 요약 로그로 남김.
+      const nobuyCounts = {};
+      function incNobuy(reason) { nobuyCounts[reason] = (nobuyCounts[reason] || 0) + 1; }
+
+      // === 평가 단계 (직렬 처리: cash/positions 일관성 유지) ===
+      for (const item of fetched) {
+        const symbol = item.symbol;
         tried++;
         try {
-          // intraday fetch
-          let intra = null, daily = null;
-          let intraOk = false;
-          try {
-            intra = await fetchIntraday(symbol);
-            if (intra && intra.price > 0) intraOk = true;
-          } catch (e) {
+          if (item.intraErr) {
             fetchFail++;
-            await log(DB, "WARN", symbol, "intraday fail: " + e.message);
+            await log(DB, "WARN", symbol, "intraday fail: " + item.intraErr);
           }
-          try {
-            daily = await getDailyCached(DB, symbol, cfg.dailyCacheMinutes);
-          } catch (e) {
+          if (item.dailyErr) {
             fetchFail++;
-            await log(DB, "WARN", symbol, "daily fail: " + e.message);
+            await log(DB, "WARN", symbol, "daily fail: " + item.dailyErr);
             skipped++;
             continue;
           }
+          const intra = item.intra;
+          const daily = item.daily;
+          const intraOk = item.intraOk;
+          if (!daily) { skipped++; continue; }
 
           let price, prevClose;
           if (intraOk) {
@@ -1399,7 +1542,7 @@ async function runTradingCycle(env) {
             }
 
             // 매도 판단
-            const sellDecision = evaluateSell(held, price, daily, dailyRsi, dailyMa, dailyMaShort, cfg, canTrade);
+            const sellDecision = evaluateSell(held, price, daily, dailyRsi, dailyMa, dailyMaShort, cfg, canTrade, market);
             if (sellDecision.minHoldLock) {
               const heldHours = held.opened_ts ? (Date.now() - held.opened_ts) / 3600000 : 0;
               const pnlRate = ((price - held.avg) / held.avg) * 100;
@@ -1423,14 +1566,14 @@ async function runTradingCycle(env) {
 
           // === [V8] STEP 2: 모든 활성 전략에서 매수 신호 평가 ===
           if (!intraOk) {
-            await log(DB, "NOBUY", symbol, "skip new entry (intraday fetch failed)");
+            incNobuy("intra_fail");
             continue;
           }
           const strategiesHeldNow = getStrategiesHeldForSymbol(positions, symbol);
           const stratResults = evaluateAllStrategies(price, dayPct, daily, cfg, signalStats);
 
           if (stratResults.length === 0) {
-            await log(DB, "NOBUY", symbol, "no signal (RSI=" + dailyRsi.toFixed(1) + ", day=" + dayPct.toFixed(2) + "%)");
+            incNobuy("no_signal");
             continue;
           }
 
@@ -1460,7 +1603,8 @@ async function runTradingCycle(env) {
             };
             const blockReason = evaluateBuyBlocks(price, dayPct, daily, cfg, regime, signal, ctx);
             if (blockReason) {
-              await log(DB, "NOBUY", symbol, "BLOCK[" + strategy + ":" + signal.name + "]: " + blockReason);
+              // [V8.1] BLOCK은 카운터로만. 단 인사이트가 필요한 사유는 로그.
+              incNobuy("block:" + blockReason.split(" ")[0]);
               continue;
             }
 
@@ -1478,18 +1622,27 @@ async function runTradingCycle(env) {
               const sec = SECTOR_MAP[symbol];
               if (sec) sectorCounts[sec] = (sectorCounts[sec] || 0) + 1;
             } else {
-              await log(DB, "NOBUY", symbol, "cash short for [" + strategy + "] " + signal.name);
+              incNobuy("cash_short");
             }
           }
         } catch (e) {
           await log(DB, "ERROR", symbol, e.message);
         }
       }
+
+      // [V8.1] 시장당 NOBUY 사유 요약 1줄
+      const nbKeys = Object.keys(nobuyCounts);
+      if (nbKeys.length > 0) {
+        const summary = nbKeys.sort(function(a,b){ return nobuyCounts[b]-nobuyCounts[a]; })
+          .map(function(k){ return k + ":" + nobuyCounts[k]; }).join(", ");
+        await log(DB, "INFO", null, "NOBUY[" + market + "] " + summary);
+      }
     }
 
     try { await setState(DB, "cash", cash); } catch (e) {}
     try { await setState(DB, "last_tick", Date.now()); } catch (e) {}
-    await log(DB, "INFO", null, "Done: tried=" + tried + " skip=" + skipped + " buy=" + bought + " sell=" + sold + " fetchFail=" + fetchFail);
+    const cycleMs = Date.now() - cycleStartedAt;
+    await log(DB, "INFO", null, "Done: tried=" + tried + " skip=" + skipped + " buy=" + bought + " sell=" + sold + " fetchFail=" + fetchFail + " cycleMs=" + cycleMs);
     try { await DB.prepare("DELETE FROM logs WHERE id NOT IN (SELECT id FROM logs ORDER BY id DESC LIMIT 500)").run(); } catch (e) {}
   } finally {
     await releaseCycleLock(DB);
