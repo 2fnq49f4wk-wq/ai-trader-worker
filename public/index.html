@@ -955,7 +955,7 @@ button.btn.loading { opacity: 0.5; pointer-events: none; }
     boxKR.innerHTML = kr.length ? kr.map(card).join('') : '<div class="empty">대기 중...</div>';
   }
 
-  function calcSummary(market, cash, positions, initialCash) {
+  function calcSummary(market, cash, positions, initialCash, deposits) {
     var symbol = market === 'us' ? '$' : '₩';
     var invested = 0, marketVal = 0;
     // [V8] positions는 array (각 row에 symbol, strategy, qty, avg)
@@ -970,8 +970,11 @@ button.btn.loading { opacity: 0.5; pointer-events: none; }
       marketVal += p.qty * curPrice;
     });
     var total = cash + marketVal;
-    var change = total - initialCash;
-    var changePct = initialCash > 0 ? (change / initialCash * 100) : 0;
+    // [V8.2.2] 수익률 계산은 입금/출금분 제외 — change = total - (initialCash + 누적입금)
+    var deposited = deposits || 0;
+    var baseline = initialCash + deposited;
+    var change = total - baseline;
+    var changePct = baseline > 0 ? (change / baseline * 100) : 0;
     return { symbol: symbol, cash: cash, invested: invested, marketVal: marketVal, total: total, change: change, changePct: changePct };
   }
 
@@ -1330,10 +1333,11 @@ button.btn.loading { opacity: 0.5; pointer-events: none; }
         var posKR = (state.positions && state.positions.kr) || [];
         var cash = state.cash || {us:0,kr:0};
         currentCash = cash;
+        var deposits = state.deposits || {us:0,kr:0};
         var initUS = (state.cfg && state.cfg.initialCashUS) || 0;
         var initKR = (state.cfg && state.cfg.initialCashKR) || 0;
-        renderSummary('us', calcSummary('us', cash.us, posUS, initUS));
-        renderSummary('kr', calcSummary('kr', cash.kr, posKR, initKR));
+        renderSummary('us', calcSummary('us', cash.us, posUS, initUS, deposits.us));
+        renderSummary('kr', calcSummary('kr', cash.kr, posKR, initKR, deposits.kr));
         renderPositions(posUS, posKR);
         renderEngine(state.lastTick);
         renderTrades(trades);
