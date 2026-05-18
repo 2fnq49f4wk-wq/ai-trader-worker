@@ -84,12 +84,12 @@ const DEFAULT_CFG = {
     meanrev: true
   },
   // === [V8] 전략별 포지션 사이즈 (NEUTRAL base / BULL mult / BEAR mult) ===
-  // [V8.1.7] 다른 전략들도 더 공격적으로
+  // [V8.1.8] base 비율 추가 상향 - 한 거래당 금액 더 크게
   strategySizing: {
-    day:      { base: 22, bullMult: 1.6, bearMult: 1.0 },
-    meanrev:  { base: 22, bullMult: 1.2, bearMult: 1.5 },
-    swing:    { base: 22, bullMult: 1.5, bearMult: 0.8 },
-    momentum: { base: 20, bullMult: 1.7, bearMult: 0.6 }
+    day:      { base: 35, bullMult: 1.5, bearMult: 1.0 },
+    meanrev:  { base: 35, bullMult: 1.2, bearMult: 1.4 },
+    swing:    { base: 35, bullMult: 1.4, bearMult: 0.8 },
+    momentum: { base: 32, bullMult: 1.5, bearMult: 0.6 }
   },
   // === [V8] Cross-strategy confluence — 같은 종목 + 다른 전략 동시 신호 ===
   crossConfluenceBonus: 1.2,
