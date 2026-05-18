@@ -1,18 +1,16 @@
 // ============================================================
-// LUX-engine V8.1 (멀티 전략판 - Day 공격성 강화 + 지연 해결)
+// LUX-engine V8.1.9 (멀티 전략판 - 거래금액 타겟팅)
 // 4개 전략 동시 운용: swing, day, momentum, meanrev
 //   • 같은 종목 + 다른 전략 = 별도 포지션 가능 (composite PK)
 //   • 매도는 진입 전략의 룰을 따라감
 //   • 동시 신호 시 cross-strategy confluence 가중 (x1.2)
 //   • 전략별 base size + 시장국면 multiplier
-// V8 → V8.1 변경점:
-//   • Day 전략 진입 조건 대폭 완화 (RSI<55, dayPct -7~+0.5, 신호 6종)
-//   • Day 신규 신호: DY_VWAP_PULL, DY_OPEN_DRIVE, DY_MOMO, DY_DIP_BUY (추세+모멘텀)
-//   • Day TP 1.5→2.5%, SL 1.0→1.3%, base 6→11%, bullMult 1.0→1.5
-//   • Day maxHold 6h → 8h, minHold 30 → 10분 (회전 빠르게)
-//   • 장 마감 30분전 강제청산 구현
-//   • [성능] 종목 fetch 병렬화 — 순차 await → Promise.all
-//   • [성능] NOBUY 로그 스팸 제거 (카운터로 대체)
+// V8.1.8 → V8.1.9 변경점:
+//   • 사이징 기준: portfolioValue → cash[market] 기반 (가용현금 직접 사용)
+//   • 거래당 금액 클램프: KR ₩100~300만 / US $1k~3k (cfg.sizingTargets)
+//   • minBudget 보장 + maxBudget 캡 + cash 85% 안전선
+//   • floor() 손실 보정: budget의 +25% 여유분이면 1주 추가
+//   • strategySizing base 재조정 (35 → 25~30, cash 기준이라 실효 비중은 비슷)
 // ============================================================
 
 const DEFAULT_US = [
@@ -84,12 +82,20 @@ const DEFAULT_CFG = {
     meanrev: true
   },
   // === [V8] 전략별 포지션 사이즈 (NEUTRAL base / BULL mult / BEAR mult) ===
-  // [V8.1.8] base 비율 추가 상향 - 한 거래당 금액 더 크게
+  // [V8.1.9] base = 가용현금 대비 비율 (계산식이 cash[market] 기준으로 변경됨).
+  //          한 거래 목표금액 KR ₩100~300만 / US $1~3k 범위로 클램프됨 (아래 sizingTargets).
   strategySizing: {
-    day:      { base: 35, bullMult: 1.5, bearMult: 1.0 },
-    meanrev:  { base: 35, bullMult: 1.2, bearMult: 1.4 },
-    swing:    { base: 35, bullMult: 1.4, bearMult: 0.8 },
-    momentum: { base: 32, bullMult: 1.5, bearMult: 0.6 }
+    day:      { base: 25, bullMult: 1.5, bearMult: 1.0 },
+    meanrev:  { base: 25, bullMult: 1.2, bearMult: 1.4 },
+    swing:    { base: 30, bullMult: 1.4, bearMult: 0.8 },
+    momentum: { base: 28, bullMult: 1.5, bearMult: 0.6 }
+  },
+  // === [V8.1.9] 한 거래당 목표 금액 클램프 (시장별) ===
+  // budget이 minBudget 미만이면 minBudget으로 끌어올리고, maxBudget 넘으면 잘라냄.
+  // cash[market] 부족하면 cash 한도 내에서 최대한 채움.
+  sizingTargets: {
+    kr: { minBudget: 1000000, maxBudget: 3000000 },  // ₩100만 ~ ₩300만
+    us: { minBudget: 1000,    maxBudget: 3000    }   // $1k ~ $3k
   },
   // === [V8] Cross-strategy confluence — 같은 종목 + 다른 전략 동시 신호 ===
   crossConfluenceBonus: 1.2,
@@ -1713,8 +1719,30 @@ async function runTradingCycle(env) {
             const baseRatio = getPositionSizeRatio(cfg, strategy, regime.regime);
             const adjustedRatio = baseRatio * signal.weight * crossBonus;
 
-            const budget = portfolioValue * adjustedRatio;
+            // [V8.1.9] 사이징 변경:
+            //   • 기존: portfolioValue * ratio (US/KR 합산 평가 기준 → 한쪽 cash 부족시 0주)
+            //   • 변경: cash[market] * ratio 를 1차 budget으로, sizingTargets로 클램프
+            //     - minBudget 미만이면 minBudget까지 끌어올림 (단, cash[market]*0.85 한도)
+            //     - maxBudget 초과면 maxBudget으로 캡
+            const targets = (cfg.sizingTargets && cfg.sizingTargets[market]) || { minBudget: 0, maxBudget: Infinity };
+            const rawBudget = cash[market] * adjustedRatio;
+            const cashCap = cash[market] * 0.85;  // cash 전부 박지 않게 85% 캡
+            let budget = Math.min(rawBudget, targets.maxBudget, cashCap);
+            // 최소 베팅: cash가 minBudget의 1.1배 이상 있을 때만 minBudget 보장 (현금 고갈 방지)
+            if (budget < targets.minBudget && cash[market] >= targets.minBudget * 1.1) {
+              budget = Math.min(targets.minBudget, cashCap);
+            }
+
             let qty = Math.floor(budget / (price * (1 + feeRate)));
+
+            // [V8.1.9] floor 손실 보정: budget 대비 +1주 더 살 여유가 있고
+            //          maxBudget 초과 안 하면 1주 추가 (한국 고가주 1주 차이 큼)
+            if (qty >= 1) {
+              const nextCost = (qty + 1) * price * (1 + feeRate);
+              if (nextCost <= Math.min(budget * 1.25, targets.maxBudget, cash[market])) {
+                qty += 1;
+              }
+            }
 
             // [V8.1.5] 1주도 못 사는 경우: 잔액 10% 이내면 1주 매수 허용
             if (qty === 0) {
