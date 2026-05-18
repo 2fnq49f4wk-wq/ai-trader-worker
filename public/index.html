@@ -1593,17 +1593,33 @@ button.btn.loading { opacity: 0.5; pointer-events: none; }
     fetch('/api/cash/add', {
       method:'POST',
       headers:{'Content-Type':'application/json'},
-      body: JSON.stringify({ us: us, kr: kr })
+      body: JSON.stringify({ us: us, kr: kr, reconcile: true })
     }).then(function(r){ return r.json().then(function(d){ return { ok: r.ok, data: d }; }); })
       .then(function(res){
         if (!res.ok || !res.data.ok) {
           toast('실패: ' + (res.data.error || 'unknown'));
           return;
         }
-        toast('현금 추가 완료');
+        // [V8.2.4] reconcile로 baseline 격차가 흡수됐으면 사용자에게 안내
+        var rec = res.data.reconciled || {};
+        var recMsgs = [];
+        if (rec.us && rec.us.gapAbsorbed !== 0) {
+          recMsgs.push('US baseline 보정: ' + (rec.us.gapAbsorbed >= 0 ? '+' : '') + '$' + Math.abs(rec.us.gapAbsorbed).toLocaleString());
+        }
+        if (rec.kr && rec.kr.gapAbsorbed !== 0) {
+          recMsgs.push('KR baseline 보정: ' + (rec.kr.gapAbsorbed >= 0 ? '+' : '') + '₩' + Math.abs(rec.kr.gapAbsorbed).toLocaleString());
+        }
+        if (recMsgs.length) {
+          toast('현금 추가 완료 · ' + recMsgs.join(' / '));
+        } else {
+          toast('현금 추가 완료');
+        }
         currentCash = res.data.cash;
+        currentDeposits = res.data.deposits;
         $('cfgCurrentCashUS').textContent = '$' + fmtNum(currentCash.us, 2);
         $('cfgCurrentCashKR').textContent = '₩' + fmtCompact(currentCash.kr);
+        $('cfgCurrentDepositsUS').textContent = '$' + fmtNum(currentDeposits.us, 2);
+        $('cfgCurrentDepositsKR').textContent = '₩' + fmtCompact(currentDeposits.kr);
         $('cfgAddCashUS').value = '';
         $('cfgAddCashKR').value = '';
         refreshAll();
