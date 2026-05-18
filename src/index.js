@@ -1,12 +1,15 @@
 // ============================================================
-// LUX-engine V7.1 (버그 수정판)
-// V7 -> V7.1 변경점:
-//  • Cycle Lock을 atomic INSERT로 교체 (D1 race condition 차단)
-//  • ATR을 진짜 True Range로 변경 (high/low 사용, fallback 있음)
-//  • 분할매도 시 진입수수료 비례 차감 (feeRemaining 필드)
-//  • AutoTune reason 파싱 구분자를 #entry= 로 변경 (충돌 방지)
-//  • Confluence type 모순 검사 추가 (COUNTER+TREND 혼합은 페널티)
-//  • 신호별 perfMult 최소표본 5→20, Bayesian shrinkage 적용
+// LUX-engine V8 (멀티 전략판)
+// 4개 전략 동시 운용: swing, day, momentum, meanrev
+//   • 같은 종목 + 다른 전략 = 별도 포지션 가능 (composite PK)
+//   • 매도는 진입 전략의 룰을 따라감
+//   • 동시 신호 시 cross-strategy confluence 가중 (x1.2)
+//   • 전략별 base size + 시장국면 multiplier
+// V7.2 → V8 변경점:
+//   • positions 테이블 PK: symbol → (symbol, strategy)
+//   • evaluateBuySignals_{swing,day,momentum,meanrev} 분리
+//   • evaluateSell_{...} 매도 로직 전략별 분기
+//   • Current Positions UI에 strategy 컬럼
 // ============================================================
 
 const DEFAULT_US = [
@@ -25,6 +28,9 @@ const DEFAULT_KR = [
 
 const US_INDICES = ["^IXIC", "^DJI", "^GSPC"];
 const KR_INDICES = ["^KS11", "^KQ11"];
+
+// === 전략 식별자 ===
+const STRATEGIES = ["swing", "day", "momentum", "meanrev"];
 
 // === [신규] 섹터 매핑 (동시 보유 제한용) ===
 const SECTOR_MAP = {
@@ -58,37 +64,85 @@ const DEFAULT_CFG = {
   feeUS: 0.0001,
   feeKR: 0.00015,
   krSellTax: 0.0018,
-  posSize: 10,
-  posSizeBear: 6,
-  posSizeBull: 12,
   maPeriod: 20, maShortPeriod: 5,
   atrPeriod: 14, atrStopMult: 2.0,
   bbStdMult: 2.0,
   volSpikeMult: 1.5,
-  trailStartPct: 3.0,
-  trailDropPct: 4.0,
-  timeStopDays: 3,
-  timeStopMaxDays: 7,
-  minHoldHours: 4,
   dailyCacheMinutes: 10,
   initialCashUS: 10000, initialCashKR: 10000000,
   enabled: true,
   autoTune: true,
   marketHoursOnly: true,
-  // === [신규] Confluence ===
-  requireConfluence: true,      // 단독 신호 차단
-  soloSignalWeight: 0.6,        // 단독 신호 허용 시 가중치 감소
-  confluenceBonus: 1.3,         // 2개 이상 합의 시 보너스
-  allowMixedConfluence: true,   // [신규] COUNTER+TREND 혼합 합의 허용 여부
-  mixedConfluencePenalty: 0.8,  // [신규] 혼합 합의 가중치 (1.0 미만 = 페널티)
-  // === [신규] 상대강도 ===
+  // === [V8] 전략별 활성화 토글 ===
+  strategies: {
+    swing: true,
+    day: true,
+    momentum: true,
+    meanrev: true
+  },
+  // === [V8] 전략별 포지션 사이즈 (NEUTRAL base / BULL mult / BEAR mult) ===
+  strategySizing: {
+    swing:    { base: 12, bullMult: 1.5, bearMult: 0.6 },
+    day:      { base:  6, bullMult: 1.0, bearMult: 0.7 },
+    momentum: { base: 18, bullMult: 1.5, bearMult: 0.5 },
+    meanrev:  { base:  9, bullMult: 0.7, bearMult: 1.3 }
+  },
+  // === [V8] Cross-strategy confluence — 같은 종목 + 다른 전략 동시 신호 ===
+  crossConfluenceBonus: 1.2,
+  // === [V8] 전략별 진입/청산 룰 ===
+  swingRules: {
+    minHoldHours: 4,
+    timeStopDays: 3,
+    timeStopMaxDays: 7,
+    trailStartPct: 3.0,
+    trailDropPct: 4.0,
+    tp1: 4.0, tp2: 11.0,
+    stopLossPct: 5.0,
+    atrStopMult: 2.0
+  },
+  dayRules: {
+    minHoldMinutes: 30,
+    maxHoldHours: 6,
+    forceCloseBeforeMinClose: 30,   // 장 마감 30분 전 강제 청산
+    tp: 1.5,
+    stopLossPct: 1.0,
+    // 진입: day -3% ~ -5% (갭하락) + 시장 안정 + 분봉 RSI<40
+    dayDropMin: -5.0,
+    dayDropMax: -2.0
+  },
+  momentumRules: {
+    breakoutDays: 20,          // 20일 신고가 돌파
+    volMult: 1.5,
+    rsiMin: 55, rsiMax: 75,
+    minHoldDays: 2,
+    timeStopMaxDays: 30,
+    trailStartPct: 5.0,
+    trailDropPct: 7.0,
+    stopLossPct: 8.0,
+    atrStopMult: 3.0
+  },
+  meanrevRules: {
+    zScoreThreshold: -2.0,     // MA20 대비 -2σ 이하
+    rsiMax: 25,
+    minHoldHours: 2,
+    timeStopMaxDays: 5,
+    tp: 999,                   // MA20 복귀가 익절 신호 (가격 기반 TP 무력화)
+    stopLossPct: 3.0
+  },
+  // === Confluence (전략 내부) ===
+  requireConfluence: false,     // [V8] 멀티 전략이라 전략 내부 confluence는 기본 OFF
+  soloSignalWeight: 1.0,
+  confluenceBonus: 1.3,
+  allowMixedConfluence: true,
+  mixedConfluencePenalty: 0.8,
+  // === RS 필터 ===
   rsFilterEnabled: true,
   rsLookbackDays: 20,
-  rsMinOutperform: -2.0,        // 지수 대비 -2%까지 허용
-  // === [신규] 섹터 / 페어 제한 ===
-  maxPositionsPerSector: 2,
+  rsMinOutperform: -2.0,
+  // === 섹터 / 페어 제한 ===
+  maxPositionsPerSector: 3,    // [V8] 전략별 포지션 가능해서 2→3 완화
   blockInversePair: true,
-  // === [신규] 사이클 락 ===
+  // === 사이클 락 ===
   cycleLockTTL: 60000
 };
 
@@ -115,17 +169,41 @@ function isMarketOpen(market) {
 async function ensureSchema(DB) {
   try {
     const cols = await DB.prepare("PRAGMA table_info(positions)").all();
-    const hasMeta = (cols.results || []).some(function(c){ return c.name === "meta"; });
+    const colNames = (cols.results || []).map(function(c){ return c.name; });
+    const hasMeta = colNames.indexOf("meta") !== -1;
+    const hasStrategy = colNames.indexOf("strategy") !== -1;
+
     if (!hasMeta) {
       try {
         await DB.prepare("ALTER TABLE positions ADD COLUMN meta TEXT").run();
-        await log(DB, "INFO", null, "schema migrated: added meta column to positions");
-      } catch (e) { console.error("alter fail:", e.message); }
+        await log(DB, "INFO", null, "schema migrated: added meta column");
+      } catch (e) { console.error("alter meta fail:", e.message); }
+    }
+
+    // [V8] strategy 컬럼 추가 + composite PK 마이그레이션
+    if (!hasStrategy) {
+      try {
+        // 1) strategy 컬럼 추가 (기존 row는 'swing'으로 채움)
+        await DB.prepare("ALTER TABLE positions ADD COLUMN strategy TEXT NOT NULL DEFAULT 'swing'").run();
+        await log(DB, "INFO", null, "schema migrated: added strategy column (default=swing)");
+
+        // 2) 기존 PK가 symbol 단독이라 composite으로 재생성 필요
+        // SQLite는 PK 변경 불가 → 테이블 재생성
+        await DB.prepare("CREATE TABLE IF NOT EXISTS positions_new (symbol TEXT NOT NULL, strategy TEXT NOT NULL DEFAULT 'swing', market TEXT NOT NULL, qty REAL NOT NULL, avg_price REAL NOT NULL, opened_ts INTEGER NOT NULL, meta TEXT, PRIMARY KEY(symbol, strategy))").run();
+        await DB.prepare("INSERT OR IGNORE INTO positions_new (symbol, strategy, market, qty, avg_price, opened_ts, meta) SELECT symbol, COALESCE(strategy, 'swing'), market, qty, avg_price, opened_ts, meta FROM positions").run();
+        await DB.prepare("DROP TABLE positions").run();
+        await DB.prepare("ALTER TABLE positions_new RENAME TO positions").run();
+        await log(DB, "INFO", null, "schema migrated: composite PK (symbol, strategy)");
+      } catch (e) {
+        console.error("composite PK migration fail:", e.message);
+        await log(DB, "WARN", null, "PK migration partial: " + e.message);
+      }
     }
   } catch (e) {
+    // positions 테이블 자체가 없는 경우 — 새로 생성
     try {
-      await DB.prepare("CREATE TABLE IF NOT EXISTS positions (symbol TEXT PRIMARY KEY, market TEXT NOT NULL, qty REAL NOT NULL, avg_price REAL NOT NULL, opened_ts INTEGER NOT NULL, meta TEXT)").run();
-    } catch (e2) { console.error("schema ensure fail:", e2.message); }
+      await DB.prepare("CREATE TABLE IF NOT EXISTS positions (symbol TEXT NOT NULL, strategy TEXT NOT NULL DEFAULT 'swing', market TEXT NOT NULL, qty REAL NOT NULL, avg_price REAL NOT NULL, opened_ts INTEGER NOT NULL, meta TEXT, PRIMARY KEY(symbol, strategy))").run();
+    } catch (e2) { console.error("schema create fail:", e2.message); }
   }
 }
 
@@ -301,24 +379,46 @@ async function setState(DB, k, v) {
     .bind(k, JSON.stringify(v), Date.now()).run();
 }
 
+// === [V8] positions DAO — (symbol, strategy) 복합키 ===
+// 반환 구조: { "SYMBOL::strategy": { qty, avg, opened_ts, meta, strategy, symbol } }
 async function getPositions(DB, market) {
   try {
     const res = await DB.prepare("SELECT * FROM positions WHERE market = ?").bind(market).all();
     const map = {};
     for (const p of res.results) {
-      map[p.symbol] = { qty: p.qty, avg: p.avg_price, opened_ts: p.opened_ts, meta: p.meta ? JSON.parse(p.meta) : {} };
+      const strategy = p.strategy || "swing";
+      const key = p.symbol + "::" + strategy;
+      map[key] = {
+        symbol: p.symbol,
+        strategy: strategy,
+        qty: p.qty,
+        avg: p.avg_price,
+        opened_ts: p.opened_ts,
+        meta: p.meta ? JSON.parse(p.meta) : {}
+      };
     }
     return map;
   } catch (e) { return {}; }
 }
 
-async function savePosition(DB, market, symbol, pos) {
-  await DB.prepare("INSERT INTO positions (symbol, market, qty, avg_price, opened_ts, meta) VALUES (?, ?, ?, ?, ?, ?) ON CONFLICT(symbol) DO UPDATE SET qty=excluded.qty, avg_price=excluded.avg_price, meta=excluded.meta")
-    .bind(symbol, market, pos.qty, pos.avg, pos.opened_ts, JSON.stringify(pos.meta || {})).run();
+// 특정 종목의 모든 전략 포지션 조회 (Set으로 strategy 반환)
+function getStrategiesHeldForSymbol(positions, symbol) {
+  const set = new Set();
+  for (const key in positions) {
+    if (positions[key].symbol === symbol) set.add(positions[key].strategy);
+  }
+  return set;
 }
 
-async function deletePosition(DB, symbol) {
-  await DB.prepare("DELETE FROM positions WHERE symbol = ?").bind(symbol).run();
+async function savePosition(DB, market, symbol, strategy, pos) {
+  await DB.prepare(
+    "INSERT INTO positions (symbol, strategy, market, qty, avg_price, opened_ts, meta) VALUES (?, ?, ?, ?, ?, ?, ?) " +
+    "ON CONFLICT(symbol, strategy) DO UPDATE SET qty=excluded.qty, avg_price=excluded.avg_price, meta=excluded.meta"
+  ).bind(symbol, strategy, market, pos.qty, pos.avg, pos.opened_ts, JSON.stringify(pos.meta || {})).run();
+}
+
+async function deletePosition(DB, symbol, strategy) {
+  await DB.prepare("DELETE FROM positions WHERE symbol = ? AND strategy = ?").bind(symbol, strategy).run();
 }
 
 async function recordTrade(DB, t) {
@@ -391,8 +491,33 @@ async function saveQuote(DB, symbol, market, q) {
   });
 }
 
-// === [개선] 매수 신호 평가 — 발화한 모든 신호의 배열을 반환 ===
-function evaluateBuySignals(price, dayPct, dailyData, cfg) {
+// === [V8] 헬퍼: N일 최고가 (모멘텀 신고가 돌파용) ===
+function getNDayHigh(closes, n) {
+  if (!Array.isArray(closes) || closes.length < n + 1) return null;
+  let max = -Infinity;
+  for (let i = closes.length - n - 1; i < closes.length - 1; i++) {
+    if (closes[i] > max) max = closes[i];
+  }
+  return max;
+}
+
+// === [V8] 헬퍼: z-score (평균회귀용) ===
+function getZScore(closes, p) {
+  p = p || 20;
+  if (!Array.isArray(closes) || closes.length < p) return null;
+  const ma = getMA(closes, p);
+  if (ma == null) return null;
+  let variance = 0;
+  for (let i = closes.length - p; i < closes.length; i++) {
+    variance += Math.pow(closes[i] - ma, 2);
+  }
+  const std = Math.sqrt(variance / p);
+  if (std === 0) return 0;
+  return (closes[closes.length - 1] - ma) / std;
+}
+
+// === [V8] SWING 전략 — 기존 V7 로직 ===
+function evaluateBuySignals_swing(price, dayPct, dailyData, cfg) {
   const closes = dailyData.closes;
   const volumes = dailyData.volumes || [];
   if (!closes || closes.length < 25) return [];
@@ -409,39 +534,185 @@ function evaluateBuySignals(price, dayPct, dailyData, cfg) {
   const isGreenCandle = today > yesterday;
   const signals = [];
 
-  // A: RSI 과매도 반전
   if (dailyRsi < cfg.rsiBuy && dailyRsiPrev != null && dailyRsi > dailyRsiPrev) {
     const maGap = ((price - ma20) / ma20) * 100;
     if (maGap >= -10) {
-      signals.push({ name: "A_RSI_REVERSAL", weight: 1.0, type: "COUNTER", detail: "RSI " + dailyRsi.toFixed(1) + " (prev " + dailyRsiPrev.toFixed(1) + ")" });
+      signals.push({ name: "SW_RSI_REV", weight: 1.0, type: "COUNTER", detail: "RSI " + dailyRsi.toFixed(1) + " (prev " + dailyRsiPrev.toFixed(1) + ")" });
     }
   }
-  // B: 골든크로스 풀백
   if (ma5 != null && ma5 > ma20 && dailyRsi >= 40 && dailyRsi <= 60) {
     const ma5Gap = ((price - ma5) / ma5) * 100;
     if (ma5Gap >= -3 && ma5Gap <= 2) {
-      signals.push({ name: "B_GOLDEN_PULLBACK", weight: 1.2, type: "TREND", detail: "MA5>MA20 gap " + ma5Gap.toFixed(1) + "%" });
+      signals.push({ name: "SW_GOLDEN", weight: 1.2, type: "TREND", detail: "MA5>MA20 gap " + ma5Gap.toFixed(1) + "%" });
     }
   }
-  // C: 볼린저 하단 반전
   if (bb != null && price <= bb.lower && dailyRsi < 45 && isGreenCandle) {
-    signals.push({ name: "C_BB_LOWER", weight: 1.0, type: "COUNTER", detail: "BB lower " + bb.lower.toFixed(2) + " green" });
+    signals.push({ name: "SW_BB_LOW", weight: 1.0, type: "COUNTER", detail: "BB lower " + bb.lower.toFixed(2) });
   }
-  // D: 거래량 급증 + 양봉
   if (volumes.length >= 20 && isGreenCandle && dailyRsi >= 45 && dailyRsi <= 65) {
     const todayVol = volumes[volumes.length - 1];
     let avgVol = 0;
     for (let i = volumes.length - 21; i < volumes.length - 1; i++) avgVol += volumes[i];
     avgVol /= 20;
     if (todayVol >= avgVol * cfg.volSpikeMult) {
-      signals.push({ name: "D_VOL_SPIKE", weight: 1.1, type: "TREND", detail: "vol x" + (todayVol/avgVol).toFixed(1) });
+      signals.push({ name: "SW_VOL_SPK", weight: 1.1, type: "TREND", detail: "vol x" + (todayVol/avgVol).toFixed(1) });
     }
   }
   return signals;
 }
 
-// === [수정] Confluence 해석 — type 모순 차단 + 단독/합의 처리 + 신호별 승률 반영 ===
-function resolveSignals(signals, cfg, signalStats) {
+// === [V8] DAY 전략 — 갭하락 후 반등 노림수 (실제론 intraday swing) ===
+function evaluateBuySignals_day(price, dayPct, dailyData, cfg) {
+  const closes = dailyData.closes;
+  if (!closes || closes.length < 25) return [];
+  const rules = cfg.dayRules;
+  const dailyRsi = getRSI(closes, cfg.rsiPeriod);
+  const ma20 = getMA(closes, cfg.maPeriod);
+  if (dailyRsi == null || ma20 == null) return [];
+
+  const signals = [];
+
+  // DAY1: 갭하락 매수 — day -2% ~ -5% 범위 + RSI<40 + 가격이 MA20 -8% 이내
+  if (dayPct >= rules.dayDropMin && dayPct <= rules.dayDropMax) {
+    if (dailyRsi < 40) {
+      const maGap = ((price - ma20) / ma20) * 100;
+      if (maGap >= -8) {
+        signals.push({
+          name: "DY_GAP_DOWN",
+          weight: 1.0, type: "COUNTER",
+          detail: "day " + dayPct.toFixed(1) + "% RSI " + dailyRsi.toFixed(1)
+        });
+      }
+    }
+  }
+  // DAY2: 강한 일중 반등 — 어제 음봉이 컸는데 오늘 양봉으로 회복 시작
+  if (closes.length >= 3) {
+    const yest = closes[closes.length - 2];
+    const dayBefore = closes[closes.length - 3];
+    const yestPct = ((yest - dayBefore) / dayBefore) * 100;
+    if (yestPct < -2 && dayPct > 0 && dailyRsi >= 30 && dailyRsi <= 50) {
+      signals.push({
+        name: "DY_BOUNCE",
+        weight: 1.1, type: "COUNTER",
+        detail: "yest " + yestPct.toFixed(1) + "% today +" + dayPct.toFixed(1) + "%"
+      });
+    }
+  }
+  return signals;
+}
+
+// === [V8] MOMENTUM 전략 — 신고가 돌파 + 거래량 + 추세 정렬 ===
+function evaluateBuySignals_momentum(price, dayPct, dailyData, cfg) {
+  const closes = dailyData.closes;
+  const volumes = dailyData.volumes || [];
+  if (!closes || closes.length < 55) return [];
+  const rules = cfg.momentumRules;
+
+  const dailyRsi = getRSI(closes, cfg.rsiPeriod);
+  const ma20 = getMA(closes, 20);
+  const ma50 = getMA(closes, 50);
+  if (dailyRsi == null || ma20 == null || ma50 == null) return [];
+
+  const signals = [];
+
+  // MOM1: 20일 신고가 돌파 + 거래량 1.5배 + 추세 정렬
+  const high20 = getNDayHigh(closes, rules.breakoutDays);
+  const trendAligned = ma20 > ma50 && price > ma20;
+  const rsiInBand = dailyRsi >= rules.rsiMin && dailyRsi <= rules.rsiMax;
+
+  if (high20 != null && price > high20 && trendAligned && rsiInBand) {
+    if (volumes.length >= 20) {
+      const todayVol = volumes[volumes.length - 1];
+      let avgVol = 0;
+      for (let i = volumes.length - 21; i < volumes.length - 1; i++) avgVol += volumes[i];
+      avgVol /= 20;
+      if (todayVol >= avgVol * rules.volMult) {
+        signals.push({
+          name: "MO_BREAKOUT",
+          weight: 1.3, type: "TREND",
+          detail: "BO " + high20.toFixed(2) + " vol x" + (todayVol/avgVol).toFixed(1) + " RSI " + dailyRsi.toFixed(0)
+        });
+      }
+    } else {
+      signals.push({
+        name: "MO_BREAKOUT",
+        weight: 1.0, type: "TREND",
+        detail: "BO " + high20.toFixed(2) + " (no vol)"
+      });
+    }
+  }
+
+  // MOM2: 강한 추세 진행 (MA20>MA50 정배열 + RSI 60대 + 가격이 MA20 위 5% 이내 풀백)
+  if (trendAligned && dailyRsi >= 55 && dailyRsi <= 70) {
+    const ma20Gap = ((price - ma20) / ma20) * 100;
+    if (ma20Gap >= 0 && ma20Gap <= 5) {
+      signals.push({
+        name: "MO_TREND_PB",
+        weight: 1.1, type: "TREND",
+        detail: "MA20+" + ma20Gap.toFixed(1) + "% RSI " + dailyRsi.toFixed(0)
+      });
+    }
+  }
+  return signals;
+}
+
+// === [V8] MEANREV 전략 — z-score 극단 + RSI 극과매도 ===
+function evaluateBuySignals_meanrev(price, dayPct, dailyData, cfg) {
+  const closes = dailyData.closes;
+  if (!closes || closes.length < 25) return [];
+  const rules = cfg.meanrevRules;
+  const dailyRsi = getRSI(closes, cfg.rsiPeriod);
+  if (dailyRsi == null) return [];
+
+  const signals = [];
+  const z = getZScore(closes, 20);
+  const yesterday = closes[closes.length - 2];
+  const today = closes[closes.length - 1];
+  const isGreenCandle = today > yesterday;
+
+  // MR1: -2σ 이하 + RSI<25 + 양봉 (반전 시작)
+  if (z != null && z <= rules.zScoreThreshold && dailyRsi < rules.rsiMax && isGreenCandle) {
+    signals.push({
+      name: "MR_OVERSOLD",
+      weight: 1.2, type: "COUNTER",
+      detail: "z=" + z.toFixed(2) + " RSI " + dailyRsi.toFixed(1)
+    });
+  }
+
+  // MR2: 극단 RSI<20 (z-score 미달이어도 RSI만으로)
+  if (dailyRsi < 20 && isGreenCandle) {
+    signals.push({
+      name: "MR_EXTREME_RSI",
+      weight: 1.1, type: "COUNTER",
+      detail: "RSI " + dailyRsi.toFixed(1) + " green"
+    });
+  }
+  return signals;
+}
+
+// === [V8] 통합 평가기 — 모든 활성 전략에서 신호 수집 ===
+// 반환: [{ strategy, signal, signals: [...] }, ...]  (전략당 1개)
+function evaluateAllStrategies(price, dayPct, dailyData, cfg, signalStats) {
+  const results = [];
+  const evaluators = {
+    swing:    evaluateBuySignals_swing,
+    day:      evaluateBuySignals_day,
+    momentum: evaluateBuySignals_momentum,
+    meanrev:  evaluateBuySignals_meanrev
+  };
+  for (const stratName of STRATEGIES) {
+    if (!cfg.strategies || !cfg.strategies[stratName]) continue;
+    const sigs = evaluators[stratName](price, dayPct, dailyData, cfg);
+    if (sigs.length === 0) continue;
+    const resolved = resolveSignals(sigs, cfg, signalStats, stratName);
+    if (!resolved) continue;
+    results.push({ strategy: stratName, signal: resolved, rawCount: sigs.length });
+  }
+  return results;
+}
+
+// === [V8] Confluence 해석 — 전략 내부 신호 합의 ===
+function resolveSignals(signals, cfg, signalStats, stratName) {
   if (signals.length === 0) return null;
   if (signals.length === 1) {
     if (cfg.requireConfluence) return null;
@@ -502,23 +773,35 @@ function resolveSignals(signals, cfg, signalStats) {
   };
 }
 
-// === [개선] 매수 차단 필터 — RS, 인버스 페어, 섹터 제한 추가 ===
+// === [V8] 매수 차단 필터 — strategy 컨텍스트 인식 ===
 function evaluateBuyBlocks(price, dayPct, dailyData, cfg, regime, signal, ctx) {
   const closes = dailyData.closes;
   if (!closes || closes.length < 25) return "INSUFFICIENT_DATA";
+  const strategy = ctx && ctx.strategy ? ctx.strategy : "swing";
 
-  if (regime.worstDayPct <= cfg.marketCrashPct) return "MARKET_CRASH " + regime.worstDayPct.toFixed(2) + "%";
-  if (dayPct <= -cfg.maxDailyDrop) return "FALLING_KNIFE " + dayPct.toFixed(2) + "%";
+  // 시장 붕괴는 모든 전략 차단 (단 MEANREV는 worst 임계값 더 깊게 허용)
+  const crashThreshold = (strategy === "meanrev") ? cfg.marketCrashPct - 1.0 : cfg.marketCrashPct;
+  if (regime.worstDayPct <= crashThreshold) return "MARKET_CRASH " + regime.worstDayPct.toFixed(2) + "%";
+
+  // FALLING_KNIFE — DAY/MEANREV는 더 깊은 하락도 OK (반등 노림)
+  const knifeLimit = (strategy === "day" || strategy === "meanrev") ? cfg.maxDailyDrop + 2.0 : cfg.maxDailyDrop;
+  if (dayPct <= -knifeLimit) return "FALLING_KNIFE " + dayPct.toFixed(2) + "%";
 
   const ma20 = getMA(closes, cfg.maPeriod);
   const dailyRsi = getRSI(closes, cfg.rsiPeriod);
 
-  if (!signal.isCounterTrend && ma20 != null && price < ma20 && dailyRsi != null && dailyRsi >= 40) {
+  // DOWNTREND — MOMENTUM은 신고가 돌파라 면제, MEANREV는 본질이 역추세라 면제
+  if (strategy !== "momentum" && strategy !== "meanrev"
+      && !signal.isCounterTrend && ma20 != null && price < ma20 && dailyRsi != null && dailyRsi >= 40) {
     return "DOWNTREND price<MA20 RSI=" + dailyRsi.toFixed(1);
   }
-  const downDays = countDownDays(closes, 5);
-  if (downDays >= 4) return "PERSISTENT_DOWN " + downDays + "/5";
-  // [수정] True Range ATR로 변동성 스파이크 감지
+
+  // PERSISTENT_DOWN — MEANREV는 면제 (오히려 많이 빠진 게 진입 조건)
+  if (strategy !== "meanrev") {
+    const downDays = countDownDays(closes, 5);
+    if (downDays >= 4) return "PERSISTENT_DOWN " + downDays + "/5";
+  }
+
   const highs = dailyData.highs || null;
   const lows = dailyData.lows || null;
   const atr14 = getATR(closes, cfg.atrPeriod, highs, lows);
@@ -526,12 +809,15 @@ function evaluateBuyBlocks(price, dayPct, dailyData, cfg, regime, signal, ctx) {
   if (atr14 != null && atr30 != null && atr14 > atr30 * 2.0) {
     return "VOLATILITY_SPIKE ATR14=" + atr14.toFixed(2) + " ATR30=" + atr30.toFixed(2);
   }
-  if (regime.regime === "BEAR" && regime.worstDayPct <= -1.5) {
+
+  // BEAR_WEAK — MEANREV는 면제 (약세장 과매도 매수)
+  if (strategy !== "meanrev" && regime.regime === "BEAR" && regime.worstDayPct <= -1.5) {
     return "BEAR_WEAK worst=" + regime.worstDayPct.toFixed(2) + "%";
   }
 
-  // [신규] 상대강도 필터 — 역추세 신호는 면제
-  if (cfg.rsFilterEnabled && !signal.isCounterTrend && regime.idxReturn20 != null) {
+  // RS 필터 — COUNTER 성격 전략(DAY/MEANREV)과 isCounterTrend 신호는 면제
+  if (cfg.rsFilterEnabled && strategy !== "day" && strategy !== "meanrev"
+      && !signal.isCounterTrend && regime.idxReturn20 != null) {
     const stockRet = getNDayReturn(closes, cfg.rsLookbackDays);
     if (stockRet != null) {
       const relPerf = stockRet - regime.idxReturn20;
@@ -541,7 +827,7 @@ function evaluateBuyBlocks(price, dayPct, dailyData, cfg, regime, signal, ctx) {
     }
   }
 
-  // [신규] 인버스 페어 차단
+  // 인버스 페어 차단 (전략 무관)
   if (cfg.blockInversePair && ctx && ctx.heldSymbols) {
     const inv = INVERSE_PAIRS[ctx.symbol];
     if (inv && ctx.heldSymbols.has(inv)) {
@@ -549,7 +835,7 @@ function evaluateBuyBlocks(price, dayPct, dailyData, cfg, regime, signal, ctx) {
     }
   }
 
-  // [신규] 섹터 동시 보유 제한
+  // 섹터 동시 보유 제한 (전략 무관 — 전략별 포지션 있어도 같은 섹터 카운트)
   if (cfg.maxPositionsPerSector && ctx && ctx.sectorCounts) {
     const sec = SECTOR_MAP[ctx.symbol];
     if (sec) {
@@ -560,31 +846,43 @@ function evaluateBuyBlocks(price, dayPct, dailyData, cfg, regime, signal, ctx) {
     }
   }
 
+  // [V8] 같은 (종목, 전략) 조합 이미 보유 시 추가 진입 차단
+  if (ctx && ctx.strategiesHeld && ctx.strategiesHeld.has(strategy)) {
+    return "ALREADY_HELD " + strategy;
+  }
+
   return null;
 }
 
-async function executeBuy(DB, market, symbol, qty, price, signal, dailyAtr, cfg, cash) {
+// === [V8] executeBuy — strategy 필드 저장 ===
+async function executeBuy(DB, market, symbol, strategy, qty, price, signal, dailyAtr, cfg, cash) {
   const feeRate = market === "us" ? cfg.feeUS : cfg.feeKR;
   const gross = price * qty;
   const fee = gross * feeRate;
   const total = gross + fee;
   if (total > cash[market]) { await log(DB, "WARN", symbol, "BUY aborted: cash short"); return cash; }
 
-  const pctStop = price * (1 - cfg.stopLoss / 100);
+  // 전략별 손절가 계산
+  const rules = getStrategyRules(cfg, strategy);
+  const stopPct = rules.stopLossPct || cfg.stopLoss;
+  const atrMult = rules.atrStopMult || cfg.atrStopMult;
+
+  const pctStop = price * (1 - stopPct / 100);
   let stopPrice = pctStop;
   if (dailyAtr) {
-    const atrStop = price - dailyAtr * cfg.atrStopMult;
+    const atrStop = price - dailyAtr * atrMult;
     stopPrice = Math.min(atrStop, pctStop);
   }
-  const maxStopPrice = price * (1 - cfg.stopLoss / 100);
-  if (stopPrice > maxStopPrice) stopPrice = maxStopPrice;
+  // 최대 손절폭은 stopPct로 고정
+  if (stopPrice > pctStop) stopPrice = pctStop;
 
   try {
-    await savePosition(DB, market, symbol, {
+    await savePosition(DB, market, symbol, strategy, {
       qty: qty, avg: price, opened_ts: Date.now(),
       meta: {
+        strategy: strategy,
         feePaid: fee,
-        feeRemaining: fee,             // [수정] 분할매도 시 차감해 가는 진입수수료 잔액
+        feeRemaining: fee,
         atrAtEntry: dailyAtr,
         stopPrice: stopPrice,
         peakPrice: price,
@@ -600,13 +898,36 @@ async function executeBuy(DB, market, symbol, qty, price, signal, dailyAtr, cfg,
   }
 
   cash[market] -= total;
-  await recordTrade(DB, { ts: Date.now(), market: market, symbol: symbol, side: "BUY", qty: qty, price: price, reason: signal.name + " " + signal.detail });
-  const stopPct = ((stopPrice - price) / price * 100).toFixed(1);
-  await log(DB, "TRADE", symbol, "BUY x" + qty + " @" + price.toFixed(2) + " [" + signal.name + "] " + signal.detail + " stop=" + stopPrice.toFixed(2) + "(" + stopPct + "%)");
+  await recordTrade(DB, {
+    ts: Date.now(), market: market, symbol: symbol, side: "BUY",
+    qty: qty, price: price,
+    reason: "[" + strategy.toUpperCase() + "] " + signal.name + " " + signal.detail
+  });
+  const stopPctRel = ((stopPrice - price) / price * 100).toFixed(1);
+  await log(DB, "TRADE", symbol, "BUY [" + strategy + "] x" + qty + " @" + price.toFixed(2) + " " + signal.name + " " + signal.detail + " stop=" + stopPrice.toFixed(2) + "(" + stopPctRel + "%)");
   return cash;
 }
 
+// === [V8] 전략 룰 헬퍼 ===
+function getStrategyRules(cfg, strategy) {
+  if (strategy === "swing") return cfg.swingRules || {};
+  if (strategy === "day") return cfg.dayRules || {};
+  if (strategy === "momentum") return cfg.momentumRules || {};
+  if (strategy === "meanrev") return cfg.meanrevRules || {};
+  return {};
+}
+
+// === [V8] 전략별 포지션 사이즈 계산 ===
+function getPositionSizeRatio(cfg, strategy, regimeName) {
+  const sizing = (cfg.strategySizing && cfg.strategySizing[strategy]) || { base: 10, bullMult: 1.0, bearMult: 1.0 };
+  const base = sizing.base / 100;
+  if (regimeName === "BULL") return base * (sizing.bullMult || 1.0);
+  if (regimeName === "BEAR") return base * (sizing.bearMult || 1.0);
+  return base;
+}
+
 async function executeSell(DB, market, symbol, pos, sellQty, price, reason, cfg, cash) {
+  const strategy = pos.strategy || (pos.meta && pos.meta.strategy) || "swing";
   const feeRate = market === "us" ? cfg.feeUS : cfg.feeKR;
   const gross = price * sellQty;
   const fee = gross * feeRate;
@@ -614,40 +935,154 @@ async function executeSell(DB, market, symbol, pos, sellQty, price, reason, cfg,
   const proceeds = gross - fee - sellTax;
   cash[market] += proceeds;
 
-  // [수정] 진입수수료를 sellQty 비례로 분할 — feeRemaining에서 차감해 중복 계산 방지
   pos.meta = pos.meta || {};
-  const origQty = pos.meta.originalQty || pos.qty;
   const feeRemaining = (typeof pos.meta.feeRemaining === "number")
     ? pos.meta.feeRemaining
     : (pos.meta.feePaid || 0);
-  const entryFeePortion = feeRemaining * (sellQty / Math.max(origQty - (origQty - pos.qty), 1));
-  // 위 식은 직관적이지 않아 정리:
-  // 남은 진입수량 = pos.qty (이번 매도 직전)
-  // 이번 매도 비중 = sellQty / pos.qty (직전 남은 수량 대비)
-  // → 잔여 수수료 중 이 비중만큼 차감
   const entryFeeForThisSell = feeRemaining * (sellQty / pos.qty);
   const costBasis = pos.avg * sellQty + entryFeeForThisSell;
   const pnl = proceeds - costBasis;
   const pnlPct = costBasis > 0 ? (pnl / costBasis * 100) : 0;
   const heldMin = pos.opened_ts ? Math.floor((Date.now() - pos.opened_ts) / 60000) : 0;
 
-  // [수정] 매도 사유 인코딩 — '#entry=' 구분자로 파싱 충돌 차단
   const signalMembers = pos.meta.signalMembers || [];
-  const enrichedReason = reason + " #entry=" + signalMembers.join(",");
+  const enrichedReason = "[" + strategy.toUpperCase() + "] " + reason + " #entry=" + signalMembers.join(",");
 
   if (sellQty < pos.qty) {
     pos.qty = pos.qty - sellQty;
     pos.meta.tp1Done = true;
-    pos.meta.feeRemaining = Math.max(0, feeRemaining - entryFeeForThisSell);  // [신규]
-    await savePosition(DB, market, symbol, pos);
+    pos.meta.feeRemaining = Math.max(0, feeRemaining - entryFeeForThisSell);
+    await savePosition(DB, market, symbol, strategy, pos);
   } else {
-    await deletePosition(DB, symbol);
+    await deletePosition(DB, symbol, strategy);
   }
 
   await recordTrade(DB, { ts: Date.now(), market: market, symbol: symbol, side: "SELL", qty: sellQty, price: price, pnl: pnl, pnl_pct: pnlPct, reason: enrichedReason });
   const taxNote = market === "kr" ? " tax=" + sellTax.toFixed(2) : "";
-  await log(DB, "TRADE", symbol, "SELL x" + sellQty + " @" + price.toFixed(2) + " PnL " + pnlPct.toFixed(2) + "% (held " + heldMin + "min, " + reason + ")" + taxNote);
+  await log(DB, "TRADE", symbol, "SELL [" + strategy + "] x" + sellQty + " @" + price.toFixed(2) + " PnL " + pnlPct.toFixed(2) + "% (held " + heldMin + "min, " + reason + ")" + taxNote);
   return { cash: cash, pnlPct: pnlPct };
+}
+
+// === [V8] 매도 평가 — 보유 포지션의 strategy에 따라 분기 ===
+// 반환: { sell: true/false, sellQty, reason } 또는 null
+function evaluateSell(pos, price, daily, dailyRsi, dailyMa, dailyMaShort, cfg, marketOpenForThis) {
+  const strategy = pos.strategy || (pos.meta && pos.meta.strategy) || "swing";
+  const pnlRate = ((price - pos.avg) / pos.avg) * 100;
+  const peakPrice = pos.meta && pos.meta.peakPrice ? pos.meta.peakPrice : pos.avg;
+  const peakPnlPct = ((peakPrice - pos.avg) / pos.avg) * 100;
+  const heldMin = pos.opened_ts ? (Date.now() - pos.opened_ts) / 60000 : 0;
+  const heldHours = heldMin / 60;
+  const heldDays = heldHours / 24;
+  const tp1Done = pos.meta && pos.meta.tp1Done;
+
+  // 공통: 하드 스톱 (전략별 stopLossPct 적용)
+  const rules = getStrategyRules(cfg, strategy);
+  const stopPct = rules.stopLossPct || cfg.stopLoss;
+  if (pnlRate <= -stopPct) {
+    return { sell: true, sellQty: pos.qty, reason: "HARD-STOP " + pnlRate.toFixed(2) + "%" };
+  }
+  // 공통: ATR-STOP
+  if (pos.meta && pos.meta.stopPrice != null && price <= pos.meta.stopPrice) {
+    return { sell: true, sellQty: pos.qty, reason: "ATR-STOP " + pnlRate.toFixed(2) + "%" };
+  }
+
+  // === DAY 전략 ===
+  if (strategy === "day") {
+    const r = cfg.dayRules;
+    // 최소 보유시간
+    if (heldMin < (r.minHoldMinutes || 30)) return { sell: false };
+    // 익절
+    if (pnlRate >= r.tp) {
+      return { sell: true, sellQty: pos.qty, reason: "DAY-TP +" + pnlRate.toFixed(2) + "%" };
+    }
+    // 최대 보유시간
+    if (heldHours >= (r.maxHoldHours || 6)) {
+      return { sell: true, sellQty: pos.qty, reason: "DAY-MAX " + heldHours.toFixed(1) + "h PnL=" + pnlRate.toFixed(2) + "%" };
+    }
+    // TODO: 장 마감 30분 전 강제 청산 (시장별로 분 단위 계산 필요)
+    return { sell: false };
+  }
+
+  // === MEANREV 전략 ===
+  if (strategy === "meanrev") {
+    const r = cfg.meanrevRules;
+    if (heldHours < (r.minHoldHours || 2)) return { sell: false };
+    // MA20 복귀 시 즉시 익절
+    if (dailyMa != null && price >= dailyMa) {
+      return { sell: true, sellQty: pos.qty, reason: "MR-MA20 +" + pnlRate.toFixed(2) + "%" };
+    }
+    // RSI 50 도달 시 익절
+    if (dailyRsi != null && dailyRsi >= 50 && pnlRate > 0) {
+      return { sell: true, sellQty: pos.qty, reason: "MR-RSI50 +" + pnlRate.toFixed(2) + "%" };
+    }
+    // 시간 만료
+    if (heldDays >= (r.timeStopMaxDays || 5)) {
+      return { sell: true, sellQty: pos.qty, reason: "MR-TIME " + heldDays.toFixed(1) + "d PnL=" + pnlRate.toFixed(2) + "%" };
+    }
+    return { sell: false };
+  }
+
+  // === MOMENTUM 전략 ===
+  if (strategy === "momentum") {
+    const r = cfg.momentumRules;
+    if (heldDays < (r.minHoldDays || 2)) return { sell: false };
+    // 시간 만료
+    if (heldDays >= (r.timeStopMaxDays || 30)) {
+      return { sell: true, sellQty: pos.qty, reason: "MO-TIME " + heldDays.toFixed(1) + "d PnL=" + pnlRate.toFixed(2) + "%" };
+    }
+    // Trail stop (피크 대비 trailDropPct 하락)
+    if (peakPnlPct >= (r.trailStartPct || 5)) {
+      const trailStop = peakPrice * (1 - (r.trailDropPct || 7) / 100);
+      if (price <= trailStop) {
+        return { sell: true, sellQty: pos.qty, reason: "MO-TRAIL peak=" + peakPrice.toFixed(2) + " +" + pnlRate.toFixed(2) + "%" };
+      }
+    }
+    // MA20 이탈 (추세 종료 신호)
+    if (dailyMa != null && price < dailyMa && pnlRate > 0) {
+      return { sell: true, sellQty: pos.qty, reason: "MO-MA20-BREAK +" + pnlRate.toFixed(2) + "%" };
+    }
+    return { sell: false };
+  }
+
+  // === SWING 전략 (기본) ===
+  const r = cfg.swingRules;
+  const minHoldPassed = heldHours >= (r.minHoldHours || 4);
+
+  if (heldDays >= (r.timeStopMaxDays || 7)) {
+    return { sell: true, sellQty: pos.qty, reason: "TIME-MAX " + heldDays.toFixed(1) + "d PnL=" + pnlRate.toFixed(2) + "%" };
+  }
+  if (heldDays >= (r.timeStopDays || 3) && Math.abs(pnlRate) <= 1.5) {
+    return { sell: true, sellQty: pos.qty, reason: "TIME-CUT " + heldDays.toFixed(1) + "d PnL=" + pnlRate.toFixed(2) + "%" };
+  }
+
+  if (!minHoldPassed) return { sell: false, minHoldLock: true };
+
+  if (!tp1Done && pnlRate >= (r.tp1 || 4)) {
+    const halfQty = Math.floor(pos.qty / 2);
+    if (halfQty > 0) {
+      return { sell: true, sellQty: halfQty, reason: "TP1-HALF +" + pnlRate.toFixed(2) + "%" };
+    }
+    return { sell: true, sellQty: pos.qty, reason: "TP1-FULL +" + pnlRate.toFixed(2) + "%" };
+  }
+  if (pnlRate >= (r.tp2 || 11)) {
+    return { sell: true, sellQty: pos.qty, reason: "TP2 +" + pnlRate.toFixed(2) + "%" };
+  }
+  if (dailyRsi != null && dailyRsi > cfg.rsiSell && pnlRate >= 2.0) {
+    return { sell: true, sellQty: pos.qty, reason: "RSI " + dailyRsi.toFixed(1) + " +" + pnlRate.toFixed(2) + "%" };
+  }
+  if (dailyMaShort != null && dailyMa != null && dailyMaShort < dailyMa && pnlRate >= 2.0) {
+    const ma5Gap = ((dailyMaShort - dailyMa) / dailyMa) * 100;
+    if (ma5Gap < -1) {
+      return { sell: true, sellQty: pos.qty, reason: "DEAD-X gap=" + ma5Gap.toFixed(1) + "% +" + pnlRate.toFixed(2) + "%" };
+    }
+  }
+  if (peakPnlPct >= (r.trailStartPct || 3) && pnlRate >= 2.0) {
+    const trailStop = peakPrice * (1 - (r.trailDropPct || 4) / 100);
+    if (price <= trailStop) {
+      return { sell: true, sellQty: pos.qty, reason: "TRAIL peak=" + peakPrice.toFixed(2) + " +" + pnlRate.toFixed(2) + "%" };
+    }
+  }
+  return { sell: false };
 }
 
 async function refreshQuotesOnly(env, market) {
@@ -828,21 +1263,19 @@ async function runTradingCycle(env) {
   }
 
   try {
-    await log(DB, "INFO", null, "=== Cycle start (V7) ===");
+    await log(DB, "INFO", null, "=== Cycle start (V8 multi-strategy) ===");
     const usOpen = isMarketOpen("us");
     const krOpen = isMarketOpen("kr");
 
-    if (usOpen) {
-      for (const idx of US_INDICES) {
-        try { const d = await fetchIndexDaily(idx); await saveIndex(DB, idx, "us", d); }
-        catch (e) { await log(DB, "WARN", idx, "index fetch fail: " + e.message); }
-      }
+    // [수정] 장 마감이어도 시세는 항상 갱신 (트레이딩만 차단)
+    // 지수는 전일 종가 기준이라도 보여줘야 UI가 살아있음
+    for (const idx of US_INDICES) {
+      try { const d = await fetchIndexDaily(idx); await saveIndex(DB, idx, "us", d); }
+      catch (e) { await log(DB, "WARN", idx, "index fetch fail: " + e.message); }
     }
-    if (krOpen) {
-      for (const idx of KR_INDICES) {
-        try { const d = await fetchIndexDaily(idx); await saveIndex(DB, idx, "kr", d); }
-        catch (e) { await log(DB, "WARN", idx, "index fetch fail: " + e.message); }
-      }
+    for (const idx of KR_INDICES) {
+      try { const d = await fetchIndexDaily(idx); await saveIndex(DB, idx, "kr", d); }
+      catch (e) { await log(DB, "WARN", idx, "index fetch fail: " + e.message); }
     }
 
     const regimes = {
@@ -856,37 +1289,41 @@ async function runTradingCycle(env) {
     const cash = await getState(DB, "cash", { us: cfg.initialCashUS, kr: cfg.initialCashKR });
 
     let tried = 0, bought = 0, sold = 0, skipped = 0, fetchFail = 0;
+
+    // [수정] 시세 갱신은 항상, 트레이딩은 장 중일 때만
+    const marketsForQuotes = ["us", "kr"];     // 시세는 모든 시장
     const marketsToTrade = [];
     if (usOpen) marketsToTrade.push("us");
     if (krOpen) marketsToTrade.push("kr");
-    if (marketsToTrade.length === 0 && cfg.marketHoursOnly) {
-      await log(DB, "CLOSED", null, "US & KR 모두 장 마감");
-      await setState(DB, "last_tick", Date.now());
-      return;
+
+    // 장 마감이면 트레이딩 스킵 알림만 남김 (예전처럼 return하지 않음)
+    if (marketsToTrade.length === 0) {
+      await log(DB, "CLOSED", null, "US & KR 장 마감 — 시세만 갱신");
     }
 
-    for (const market of marketsToTrade) {
+    for (const market of marketsForQuotes) {
       const tickers = market === "us" ? cfg.usTickers : cfg.krTickers;
-      const positions = await getPositions(DB, market);
+      const positions = await getPositions(DB, market);  // key: "SYM::strategy"
       const feeRate = market === "us" ? cfg.feeUS : cfg.feeKR;
       const regime = regimes[market];
+      const canTrade = marketsToTrade.indexOf(market) !== -1;
 
-      // [신규] 보유 심볼 집합 + 섹터 카운트 (매수 차단용)
-      const heldSymbols = new Set(Object.keys(positions));
+      // [V8] 보유 심볼 집합 + 섹터 카운트 (전략 무관하게 종목 단위 집계)
+      const heldSymbols = new Set();
       const sectorCounts = {};
+      for (const key in positions) {
+        const sym = positions[key].symbol;
+        heldSymbols.add(sym);
+      }
       for (const sym of heldSymbols) {
         const sec = SECTOR_MAP[sym];
         if (sec) sectorCounts[sec] = (sectorCounts[sec] || 0) + 1;
       }
 
-      let posSizeRatio = cfg.posSize / 100;
-      if (regime.regime === "BEAR") posSizeRatio = cfg.posSizeBear / 100;
-      else if (regime.regime === "BULL") posSizeRatio = cfg.posSizeBull / 100;
-
       for (const symbol of tickers) {
         tried++;
         try {
-          // [개선] intraday 실패 fallback
+          // intraday fetch
           let intra = null, daily = null;
           let intraOk = false;
           try {
@@ -910,7 +1347,6 @@ async function runTradingCycle(env) {
             price = intra.price;
             prevClose = intra.prevClose || price;
           } else if (daily && daily.closes && daily.closes.length > 0) {
-            // [신규] intraday 실패 → daily 마지막 종가 사용 (손절 평가는 가능)
             price = daily.closes[daily.closes.length - 1];
             prevClose = daily.prevClose || price;
             await log(DB, "INFO", symbol, "using daily fallback price");
@@ -938,139 +1374,111 @@ async function runTradingCycle(env) {
           });
 
           if (dailyRsi == null) { skipped++; continue; }
+          if (!canTrade) { skipped++; continue; }
 
-          const held = positions[symbol];
+          // === [V8] STEP 1: 이 종목에 보유 중인 모든 전략 포지션 매도 평가 ===
+          const strategiesHeld = getStrategiesHeldForSymbol(positions, symbol);
+          for (const stratName of STRATEGIES) {
+            if (!strategiesHeld.has(stratName)) continue;
+            const posKey = symbol + "::" + stratName;
+            const held = positions[posKey];
+            if (!held) continue;
 
-          if (held) {
-            // === 매도 평가 (기존 로직 유지) ===
+            // peak / stop 갱신
             if (held.meta && held.meta.stopPrice != null) {
-              const safeStop = held.avg * (1 - cfg.stopLoss / 100);
+              const stopPct = (getStrategyRules(cfg, stratName).stopLossPct || cfg.stopLoss);
+              const safeStop = held.avg * (1 - stopPct / 100);
               if (held.meta.stopPrice > safeStop) {
                 held.meta.stopPrice = safeStop;
-                try { await savePosition(DB, market, symbol, held); } catch (e) {}
+                try { await savePosition(DB, market, symbol, stratName, held); } catch (e) {}
               }
             }
             if (held.meta && held.meta.peakPrice != null && price > held.meta.peakPrice) {
               held.meta.peakPrice = price;
-              try { await savePosition(DB, market, symbol, held); } catch (e) {}
+              try { await savePosition(DB, market, symbol, stratName, held); } catch (e) {}
             }
 
-            const pnlRate = ((price - held.avg) / held.avg) * 100;
-            const peakPrice = held.meta && held.meta.peakPrice;
-            const peakPnlPct = peakPrice ? ((peakPrice - held.avg) / held.avg * 100) : 0;
-            const heldMin = held.opened_ts ? (Date.now() - held.opened_ts) / 60000 : 0;
-            const heldHours = heldMin / 60;
-            const heldDays = heldHours / 24;
-            const minHoldPassed = heldHours >= cfg.minHoldHours;
-            const tp1Done = held.meta && held.meta.tp1Done;
-
-            let didSell = false;
-
-            if (pnlRate <= -cfg.stopLoss) {
-              await executeSell(DB, market, symbol, held, held.qty, price, "HARD-STOP " + pnlRate.toFixed(2) + "%", cfg, cash);
-              didSell = true;
+            // 매도 판단
+            const sellDecision = evaluateSell(held, price, daily, dailyRsi, dailyMa, dailyMaShort, cfg, canTrade);
+            if (sellDecision.minHoldLock) {
+              const heldHours = held.opened_ts ? (Date.now() - held.opened_ts) / 3600000 : 0;
+              const pnlRate = ((price - held.avg) / held.avg) * 100;
+              await log(DB, "INFO", symbol, "MIN-HOLD lock [" + stratName + "] (" + heldHours.toFixed(1) + "h, PnL " + pnlRate.toFixed(2) + "%)");
+              continue;
             }
-            else if (held.meta && held.meta.stopPrice != null && price <= held.meta.stopPrice) {
-              await executeSell(DB, market, symbol, held, held.qty, price, "ATR-STOP " + pnlRate.toFixed(2) + "%", cfg, cash);
-              didSell = true;
-            }
-            else if (heldDays >= cfg.timeStopMaxDays) {
-              await executeSell(DB, market, symbol, held, held.qty, price, "TIME-MAX " + heldDays.toFixed(1) + "d PnL=" + pnlRate.toFixed(2) + "%", cfg, cash);
-              didSell = true;
-            }
-            else if (heldDays >= cfg.timeStopDays && Math.abs(pnlRate) <= 1.5) {
-              await executeSell(DB, market, symbol, held, held.qty, price, "TIME-CUT " + heldDays.toFixed(1) + "d PnL=" + pnlRate.toFixed(2) + "%", cfg, cash);
-              didSell = true;
-            }
-            else if (minHoldPassed) {
-              if (!tp1Done && pnlRate >= cfg.takeProfit1) {
-                const halfQty = Math.floor(held.qty / 2);
-                if (halfQty > 0) {
-                  await executeSell(DB, market, symbol, held, halfQty, price, "TP1-HALF +" + pnlRate.toFixed(2) + "%", cfg, cash);
-                  didSell = true;
-                } else {
-                  await executeSell(DB, market, symbol, held, held.qty, price, "TP1-FULL +" + pnlRate.toFixed(2) + "%", cfg, cash);
-                  didSell = true;
-                }
-              }
-              else if (pnlRate >= cfg.takeProfit2) {
-                await executeSell(DB, market, symbol, held, held.qty, price, "TP2 +" + pnlRate.toFixed(2) + "%", cfg, cash);
-                didSell = true;
-              }
-              else if (dailyRsi > cfg.rsiSell && pnlRate >= 2.0) {
-                await executeSell(DB, market, symbol, held, held.qty, price, "RSI " + dailyRsi.toFixed(1) + " +" + pnlRate.toFixed(2) + "%", cfg, cash);
-                didSell = true;
-              }
-              else if (dailyMaShort != null && dailyMa != null && dailyMaShort < dailyMa && pnlRate >= 2.0) {
-                const ma5Gap = ((dailyMaShort - dailyMa) / dailyMa) * 100;
-                if (ma5Gap < -1) {
-                  await executeSell(DB, market, symbol, held, held.qty, price, "DEAD-X gap=" + ma5Gap.toFixed(1) + "% +" + pnlRate.toFixed(2) + "%", cfg, cash);
-                  didSell = true;
-                }
-              }
-              else if (peakPnlPct >= cfg.trailStartPct && pnlRate >= 2.0) {
-                const trailStop = peakPrice * (1 - cfg.trailDropPct / 100);
-                if (price <= trailStop) {
-                  await executeSell(DB, market, symbol, held, held.qty, price, "TRAIL peak=" + peakPrice.toFixed(2) + " +" + pnlRate.toFixed(2) + "%", cfg, cash);
-                  didSell = true;
-                }
-              }
-            } else {
-              await log(DB, "INFO", symbol, "MIN-HOLD lock (" + heldHours.toFixed(1) + "h/" + cfg.minHoldHours + "h, PnL " + pnlRate.toFixed(2) + "%)");
-            }
-            if (didSell) {
+            if (sellDecision.sell) {
+              await executeSell(DB, market, symbol, held, sellDecision.sellQty, price, sellDecision.reason, cfg, cash);
               sold++;
-              // 전량 매도 시 섹터 카운트 갱신
-              if (!positions[symbol] || positions[symbol].qty === 0) {
+              // 전량 매도 시 카운트 갱신 — 같은 종목 다른 전략 남아 있는지 확인
+              const stillHeld = Object.keys(positions).some(function(k){
+                return positions[k].symbol === symbol && k !== posKey;
+              });
+              if (!stillHeld && sellDecision.sellQty >= held.qty) {
                 heldSymbols.delete(symbol);
                 const sec = SECTOR_MAP[symbol];
                 if (sec && sectorCounts[sec]) sectorCounts[sec]--;
               }
             }
-          } else {
-            // === [개선] 신규 매수 — Confluence 평가 ===
+          }
 
-            // intraday 실패 종목은 신규 매수 금지
-            if (!intraOk) {
-              await log(DB, "NOBUY", symbol, "skip new entry (intraday fetch failed)");
+          // === [V8] STEP 2: 모든 활성 전략에서 매수 신호 평가 ===
+          if (!intraOk) {
+            await log(DB, "NOBUY", symbol, "skip new entry (intraday fetch failed)");
+            continue;
+          }
+          const strategiesHeldNow = getStrategiesHeldForSymbol(positions, symbol);
+          const stratResults = evaluateAllStrategies(price, dayPct, daily, cfg, signalStats);
+
+          if (stratResults.length === 0) {
+            await log(DB, "NOBUY", symbol, "no signal (RSI=" + dailyRsi.toFixed(1) + ", day=" + dayPct.toFixed(2) + "%)");
+            continue;
+          }
+
+          // Cross-strategy confluence: 2개 이상 전략이 동시 신호면 보너스
+          const crossBonus = (stratResults.length >= 2) ? (cfg.crossConfluenceBonus || 1.0) : 1.0;
+          if (stratResults.length >= 2) {
+            const stratNames = stratResults.map(function(r){ return r.strategy; }).join("+");
+            await log(DB, "INFO", symbol, "CROSS-CONF (" + stratNames + ") x" + crossBonus);
+          }
+
+          // 각 전략 신호별로 진입 시도
+          for (const sr of stratResults) {
+            const strategy = sr.strategy;
+            const signal = sr.signal;
+
+            // 같은 (종목, 전략) 보유중이면 스킵
+            if (strategiesHeldNow.has(strategy)) {
               continue;
             }
 
-            // 1) 모든 매수 신호 수집
-            const allSignals = evaluateBuySignals(price, dayPct, daily, cfg);
-
-            // 2) Confluence 해석
-            const signal = resolveSignals(allSignals, cfg, signalStats);
-            if (!signal) {
-              if (allSignals.length === 0) {
-                await log(DB, "NOBUY", symbol, "no signal (RSI=" + dailyRsi.toFixed(1) + ", day=" + dayPct.toFixed(2) + "%)");
-              } else {
-                await log(DB, "NOBUY", symbol, "SOLO blocked: " + allSignals[0].name);
-              }
-              continue;
-            }
-
-            // 3) 차단 필터 (RS / 인버스 / 섹터 포함)
-            const ctx = { symbol: symbol, heldSymbols: heldSymbols, sectorCounts: sectorCounts };
+            const ctx = {
+              symbol: symbol,
+              strategy: strategy,
+              heldSymbols: heldSymbols,
+              sectorCounts: sectorCounts,
+              strategiesHeld: strategiesHeldNow
+            };
             const blockReason = evaluateBuyBlocks(price, dayPct, daily, cfg, regime, signal, ctx);
             if (blockReason) {
-              await log(DB, "NOBUY", symbol, "BLOCK[" + signal.name + "]: " + blockReason);
+              await log(DB, "NOBUY", symbol, "BLOCK[" + strategy + ":" + signal.name + "]: " + blockReason);
               continue;
             }
 
-            const adjustedRatio = posSizeRatio * signal.weight;
+            const baseRatio = getPositionSizeRatio(cfg, strategy, regime.regime);
+            const adjustedRatio = baseRatio * signal.weight * crossBonus;
             const budget = cash[market] * adjustedRatio;
             const qty = Math.floor(budget / (price * (1 + feeRate)));
             const totalCost = qty * price * (1 + feeRate);
             if (qty > 0 && totalCost <= cash[market]) {
-              await executeBuy(DB, market, symbol, qty, price, signal, dailyAtr, cfg, cash);
+              await executeBuy(DB, market, symbol, strategy, qty, price, signal, dailyAtr, cfg, cash);
               bought++;
-              // 같은 사이클 내 다음 종목 평가에 즉시 반영
+              // 즉시 반영
               heldSymbols.add(symbol);
+              strategiesHeldNow.add(strategy);
               const sec = SECTOR_MAP[symbol];
               if (sec) sectorCounts[sec] = (sectorCounts[sec] || 0) + 1;
             } else {
-              await log(DB, "NOBUY", symbol, "cash short for " + signal.name);
+              await log(DB, "NOBUY", symbol, "cash short for [" + strategy + "] " + signal.name);
             }
           }
         } catch (e) {
@@ -1103,8 +1511,38 @@ async function handleRequest(request, env) {
     if (path === "/api/state") {
       const cfg = Object.assign({}, DEFAULT_CFG, await getState(env.DB, "cfg", {}));
       const cash = await getState(env.DB, "cash", { us: cfg.initialCashUS, kr: cfg.initialCashKR });
-      const positionsUS = await getPositions(env.DB, "us");
-      const positionsKR = await getPositions(env.DB, "kr");
+      const positionsUSRaw = await getPositions(env.DB, "us");
+      const positionsKRRaw = await getPositions(env.DB, "kr");
+
+      // [V8] 포지션 응답 가공:
+      // - list: 각 (symbol, strategy) 포지션을 row로 (프론트 테이블용)
+      // - bySymbol: 종목 단위로 묶음 (집계용)
+      function buildPositionViews(rawMap) {
+        const list = [];
+        const bySymbol = {};
+        for (const key in rawMap) {
+          const p = rawMap[key];
+          const row = {
+            symbol: p.symbol,
+            strategy: p.strategy,
+            qty: p.qty,
+            avg: p.avg,
+            opened_ts: p.opened_ts,
+            meta: p.meta || {},
+            entrySignal: (p.meta && p.meta.signal) || null,
+            stopPrice: (p.meta && p.meta.stopPrice) || null,
+            peakPrice: (p.meta && p.meta.peakPrice) || null
+          };
+          list.push(row);
+          if (!bySymbol[p.symbol]) bySymbol[p.symbol] = { symbol: p.symbol, totalQty: 0, strategies: [] };
+          bySymbol[p.symbol].totalQty += p.qty;
+          bySymbol[p.symbol].strategies.push(row);
+        }
+        return { list: list, bySymbol: bySymbol };
+      }
+      const posUS = buildPositionViews(positionsUSRaw);
+      const posKR = buildPositionViews(positionsKRRaw);
+
       const lastTick = await getState(env.DB, "last_tick", null);
 
       const allSymbols = cfg.usTickers.concat(cfg.krTickers);
@@ -1122,12 +1560,18 @@ async function handleRequest(request, env) {
 
       return Response.json({
         cash: cash,
-        positions: { us: positionsUS, kr: positionsKR },
+        positions: {
+          us: posUS.list,          // [V8] array of (symbol, strategy) rows
+          kr: posKR.list,
+          usBySymbol: posUS.bySymbol,
+          krBySymbol: posKR.bySymbol
+        },
         lastTick: lastTick, cfg: cfg,
         marketStatus: { us: isMarketOpen("us"), kr: isMarketOpen("kr") },
-        watchlist: quotes,       // [신규] 프론트 폴링 통합용
-        indices: indices,        // [신규]
-        signalStats: signalStats // [신규]
+        watchlist: quotes,
+        indices: indices,
+        signalStats: signalStats,
+        strategies: STRATEGIES   // [V8]
       }, { headers: cors });
     }
 
@@ -1216,6 +1660,43 @@ async function handleRequest(request, env) {
     if (path === "/api/signal_stats") {
       const stats = await getState(env.DB, "signal_stats", {});
       return Response.json(stats, { headers: cors });
+    }
+    // [신규] 락 강제 해제 — stuck 됐을 때 복구용
+    if (path === "/api/unlock" && request.method === "POST") {
+      await releaseCycleLock(env.DB);
+      await log(env.DB, "INFO", null, "cycle lock force-released via /api/unlock");
+      return Response.json({ ok: true }, { headers: cors });
+    }
+    // [신규] 진단 — 락 상태, 마지막 tick, 시세 수, 시장 오픈 여부
+    if (path === "/api/diag") {
+      const lock = await getState(env.DB, "lock:cycle", null);
+      const lastTick = await getState(env.DB, "last_tick", null);
+      const cfg = Object.assign({}, DEFAULT_CFG, await getState(env.DB, "cfg", {}));
+      const allSymbols = cfg.usTickers.concat(cfg.krTickers);
+      let quoteCount = 0, freshCount = 0;
+      const now = Date.now();
+      const staleSyms = [];
+      for (const sym of allSymbols) {
+        const q = await getState(env.DB, "quote:" + sym, null);
+        if (q) {
+          quoteCount++;
+          if (q.ts && (now - q.ts) < 5 * 60 * 1000) freshCount++;
+          else staleSyms.push({ sym: sym, ageMin: q.ts ? Math.round((now - q.ts) / 60000) : null });
+        } else {
+          staleSyms.push({ sym: sym, ageMin: null });
+        }
+      }
+      return Response.json({
+        now: now,
+        lock: lock,
+        lockAgeSec: lock && lock.until ? Math.round((lock.until - now) / 1000) : null,
+        lastTick: lastTick,
+        lastTickAgeMin: lastTick ? Math.round((now - lastTick) / 60000) : null,
+        market: { us: isMarketOpen("us"), kr: isMarketOpen("kr") },
+        quotes: { total: allSymbols.length, stored: quoteCount, freshUnder5min: freshCount },
+        staleOrMissing: staleSyms.slice(0, 20),
+        cfg: { enabled: cfg.enabled, marketHoursOnly: cfg.marketHoursOnly, cycleLockTTL: cfg.cycleLockTTL }
+      }, { headers: cors });
     }
     return env.ASSETS ? env.ASSETS.fetch(request) : new Response("Not Found", { status: 404, headers: cors });
   } catch (e) {
