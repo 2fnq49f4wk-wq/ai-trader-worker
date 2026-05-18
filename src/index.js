@@ -1,5 +1,16 @@
 // ============================================================
-// LUX-engine V8.3 (멀티 전략판 + 승률·수익률 강화)
+// LUX-engine V8.4 (손익비 재설계 + 신호 품질 가중)
+// V8.3 → V8.4 변경점 (수익률 개선 핵심):
+//   • [DAY 손익비] stop 1.3→1.0%, tp1 1.5→2.0%, tp 2.5→4.0%, breakEvenAt 1.0→2.0
+//     → 손익비 1:1 → 1:2.5+, 너무 빠른 본전청산 방지
+//   • [DY_RANGE 강화] catch-all 제거 — 추세 정렬(ma5>ma20) + RSI 45~65 + 변동 -2~+1.5% 만
+//     → 사실상 랜덤 매수였던 단독 신호 제거
+//   • [Solo signal penalty] soloSignalWeight 1.0→0.7 — 단독 진입 30% 감점
+//   • [전략 선택 로직] priority 단순매핑 → weightedWinRate × signal.weight 최댓값
+//     → 학습된 승률 통계가 실제 의사결정에 반영
+//   • [Signal auto-disable] 표본 30+ & 승률 35% 미만 & 평균PnL 음수 → 자동 비활성화
+//   • [Regime-aware MEANREV] BEAR에서는 z<-2 & RSI<25 만 진입 (catch-falling-knife 강화)
+//   • [Cost-aware TP] KR 0.21%, US 0.02% 왕복비용을 TP 판단에서 차감
 // 4개 전략 동시 운용: swing, day, momentum, meanrev
 //   • 같은 종목 + 다른 전략 = 별도 포지션 가능 (composite PK)
 //   • 매도는 진입 전략의 룰을 따라감
@@ -144,15 +155,17 @@ const DEFAULT_CFG = {
     minHoldMinutes: 10,
     maxHoldHours: 8,
     forceCloseBeforeMinClose: 30,
-    tp: 2.5,
-    stopLossPct: 1.3,
-    // [V8.3] DAY 전략에도 trailing stop 추가
-    trailStartPct: 1.5,        // +1.5% 도달 시 트레일링 활성화
-    trailDropPct: 1.0,         // 피크 대비 1.0% 하락 시 청산
-    breakEvenAt: 1.0,          // +1% 도달 시 break-even
-    breakEvenLock: 0.1,
-    // [V8.3] TP1 분할익절
-    tp1: 1.5,                  // 1.5%에서 절반 청산
+    // [V8.4] 손익비 1:1 → 1:2.5+ 재설계
+    tp: 4.0,                   // 2.5 → 4.0 (TP2 더 멀리)
+    stopLossPct: 1.0,          // 1.3 → 1.0 (손절 타이트)
+    // [V8.4] trailing 노이즈 흡수 확대
+    trailStartPct: 2.0,        // 1.5 → 2.0 (트레일링 더 늦게)
+    trailDropPct: 1.5,         // 1.0 → 1.5 (피크 대비 여유)
+    // [V8.4] Break-even 너무 빠르게 발동되던 문제 해결
+    breakEvenAt: 2.0,          // 1.0 → 2.0 (노이즈로 본전청산 방지)
+    breakEvenLock: 0.2,        // 0.1 → 0.2
+    // [V8.4] TP1 분할익절 — 절반 청산 임계 상향
+    tp1: 2.0,                  // 1.5 → 2.0
     // [V8.1.3] 범위 더 공격적
     dayDropMin: -8.0,                  // [V8.1.3] -7→-8
     dayDropMax: 1.5,                   // [V8.1.3] 1.0→1.5
@@ -196,16 +209,24 @@ const DEFAULT_CFG = {
     breakEvenAt: 1.5,
     breakEvenLock: 0.2,
     // [V8.3] MR 진입 조건 강화 — RSI 상승 전환 요구
-    requireRsiUptick: true     // 어제 RSI < 오늘 RSI 일 때만 진입 (catch-falling-knife 방지)
+    requireRsiUptick: true,    // 어제 RSI < 오늘 RSI 일 때만 진입 (catch-falling-knife 방지)
+    // [V8.4] BEAR 한정 강화 — 약세장에서 reversion 매수는 매우 위험
+    //        z-score 더 극단 & RSI 더 낮음 만 진입 허용
+    bearZScoreThreshold: -2.0,
+    bearRsiMax: 25
   },
   // === Confluence (전략 내부) ===
   // [V8.1.3] 강제 OFF — 멀티 전략판이라 cross-strategy confluence로 충분.
   // autoTune이 켜는 로직도 V8.1.3에서 비활성화함.
   requireConfluence: false,
-  soloSignalWeight: 1.0,
+  soloSignalWeight: 0.7,       // [V8.4] 1.0 → 0.7 (단독 신호 30% 감점)
   confluenceBonus: 1.3,
   allowMixedConfluence: true,
   mixedConfluencePenalty: 0.8,
+  // [V8.4] 거래비용(왕복) — TP 판단 시 차감
+  roundTripCostPct: { us: 0.02, kr: 0.21 },
+  // [V8.4] autoTune이 손실 신호를 여기에 자동 추가 → resolveSignals에서 제외
+  disabledSignals: [],
   // === RS 필터 ===
   rsFilterEnabled: true,
   rsLookbackDays: 20,
@@ -815,17 +836,18 @@ function evaluateBuySignals_day(price, dayPct, dailyData, cfg) {
     });
   }
 
-  // [V8.1.2 신규] DAY7: DY_RANGE — catch-all 안전망 (V8.1.3 더 넓힘)
-  // RSI 30~75 + dayPct -5~+3 → 거의 모든 정상 종목 진입 가능.
-  if (dailyRsi >= 30 && dailyRsi <= 75
-      && dayPct >= -5.0 && dayPct <= 3.0) {
+  // [V8.4] DAY7: DY_RANGE — 기존 catch-all (RSI 30~75, dayPct -5~+3) 제거.
+  // 정규분포상 약 60~70% 종목이 항상 충족 → 사실상 랜덤 매수 → 승률 50% 수렴 원인.
+  // 대체: 추세 정렬 강제 + RSI 중립 좁힘 + 변동 작을 때만 (확신 있는 안전망)
+  if (ma5 != null && ma5 > ma20 && price > ma5
+      && dailyRsi >= 45 && dailyRsi <= 65
+      && dayPct >= -2.0 && dayPct <= 1.5) {
     if (signals.length === 0) {
-      const trendUp = ma5 != null && ma5 > ma20;
       signals.push({
         name: "DY_RANGE",
-        weight: 0.9,                                    // [V8.1.3] 0.85→0.9
-        type: trendUp ? "TREND" : "COUNTER",
-        detail: "range day " + dayPct.toFixed(1) + "% RSI " + dailyRsi.toFixed(1) + (trendUp ? " up-trend" : " no-trend")
+        weight: 0.85,
+        type: "TREND",
+        detail: "trend+range day " + dayPct.toFixed(1) + "% RSI " + dailyRsi.toFixed(1)
       });
     }
   }
@@ -889,7 +911,8 @@ function evaluateBuySignals_momentum(price, dayPct, dailyData, cfg) {
 }
 
 // === [V8] MEANREV 전략 — z-score 극단 + RSI 극과매도 ===
-function evaluateBuySignals_meanrev(price, dayPct, dailyData, cfg) {
+// [V8.4] regime 인자 추가 — BEAR에서는 더 극단 임계만 진입
+function evaluateBuySignals_meanrev(price, dayPct, dailyData, cfg, regime) {
   const closes = dailyData.closes;
   if (!closes || closes.length < 25) return [];
   const rules = cfg.meanrevRules;
@@ -902,34 +925,42 @@ function evaluateBuySignals_meanrev(price, dayPct, dailyData, cfg) {
   const rsiUptick = (dailyRsiPrev != null && dailyRsi > dailyRsiPrev);
   if (rules.requireRsiUptick && !rsiUptick) return [];
 
+  // [V8.4] BEAR 시 임계 강화
+  const isBear = regime && regime.regime === "BEAR";
+  const zThr = isBear && rules.bearZScoreThreshold != null
+    ? rules.bearZScoreThreshold : rules.zScoreThreshold;
+  const rsiMax = isBear && rules.bearRsiMax != null
+    ? rules.bearRsiMax : rules.rsiMax;
+
   const signals = [];
   const z = getZScore(closes, 20);
   const yesterday = closes[closes.length - 2];
   const today = closes[closes.length - 1];
   const isGreenCandle = today > yesterday;
-  // RSI uptick은 detail에 표시해서 로그/디버깅 용이하게
   const uptickNote = rsiUptick ? " up" : "";
+  const bearNote = isBear ? " BEAR" : "";
 
-  // MR1: -2σ 이하 + RSI<25 + 양봉 (반전 시작)
-  if (z != null && z <= rules.zScoreThreshold && dailyRsi < rules.rsiMax && isGreenCandle) {
+  // MR1: zThr 이하 + RSI < rsiMax + 양봉 (반전 시작)
+  if (z != null && z <= zThr && dailyRsi < rsiMax && isGreenCandle) {
     signals.push({
       name: "MR_OVERSOLD",
       weight: 1.2, type: "COUNTER",
-      detail: "z=" + z.toFixed(2) + " RSI " + dailyRsi.toFixed(1) + uptickNote
+      detail: "z=" + z.toFixed(2) + " RSI " + dailyRsi.toFixed(1) + uptickNote + bearNote
     });
   }
 
-  // MR2: 극단 RSI (z-score 미달이어도 RSI만으로)
-  if (dailyRsi < 30 && isGreenCandle) {  // [V8.1.7] 25→30
+  // MR2: 극단 RSI — BEAR면 더 낮은 RSI 요구
+  const extremeRsi = isBear ? 22 : 30;
+  if (dailyRsi < extremeRsi && isGreenCandle) {
     signals.push({
       name: "MR_EXTREME_RSI",
       weight: 1.1, type: "COUNTER",
-      detail: "RSI " + dailyRsi.toFixed(1) + " green" + uptickNote
+      detail: "RSI " + dailyRsi.toFixed(1) + " green" + uptickNote + bearNote
     });
   }
 
-  // MR3: 큰 하락 후 반등 시작 (더 완화)
-  if (z != null && z <= -1.0 && dailyRsi < 42 && isGreenCandle) {  // [V8.1.7] -1.3/38 → -1.0/42
+  // MR3: 큰 하락 후 반등 — BEAR 시 비활성화 (위험)
+  if (!isBear && z != null && z <= -1.0 && dailyRsi < 42 && isGreenCandle) {
     if (!signals.some(function(s){ return s.name === "MR_OVERSOLD"; })) {
       signals.push({
         name: "MR_DEEP_DROP",
@@ -943,7 +974,8 @@ function evaluateBuySignals_meanrev(price, dayPct, dailyData, cfg) {
 
 // === [V8] 통합 평가기 — 모든 활성 전략에서 신호 수집 ===
 // 반환: [{ strategy, signal, signals: [...] }, ...]  (전략당 1개)
-function evaluateAllStrategies(price, dayPct, dailyData, cfg, signalStats) {
+// [V8.4] regime 인자 추가 — meanrev에 전달
+function evaluateAllStrategies(price, dayPct, dailyData, cfg, signalStats, regime) {
   const results = [];
   const evaluators = {
     swing:    evaluateBuySignals_swing,
@@ -953,19 +985,38 @@ function evaluateAllStrategies(price, dayPct, dailyData, cfg, signalStats) {
   };
   for (const stratName of STRATEGIES) {
     if (!cfg.strategies || !cfg.strategies[stratName]) continue;
-    const sigs = evaluators[stratName](price, dayPct, dailyData, cfg);
+    // [V8.4] meanrev만 regime 추가 인자
+    const sigs = (stratName === "meanrev")
+      ? evaluators[stratName](price, dayPct, dailyData, cfg, regime)
+      : evaluators[stratName](price, dayPct, dailyData, cfg);
     if (sigs.length === 0) continue;
     const resolved = resolveSignals(sigs, cfg, signalStats, stratName);
     if (!resolved) continue;
     results.push({ strategy: stratName, signal: resolved, rawCount: sigs.length });
   }
-  // [V8.1.6] 중복 신호 시 보유기간 긴 전략 1개만 선택
-  // 우선순위: momentum > swing > meanrev > day
+  // [V8.4] 중복 신호 시 — 단순 우선순위 매핑 폐기.
+  //         signal.weight × 학습된 weightedWinRate 가 가장 높은 결과 1개 선택.
+  //         → 학습 통계가 실제 의사결정에 반영됨.
   if (results.length >= 2) {
-    const priority = { momentum: 4, swing: 3, meanrev: 2, day: 1 };
+    function scoreResult(r) {
+      const members = (r.signal && r.signal.members) || [r.signal.name];
+      let wrSum = 0, n = 0;
+      for (const m of members) {
+        const s = signalStats && signalStats[m];
+        if (s && s.count >= 20) {
+          wrSum += (s.weightedWinRate != null ? s.weightedWinRate : (s.winRate || 0.5));
+          n++;
+        }
+      }
+      const avgWr = n > 0 ? (wrSum / n) : 0.5;  // 학습 안된 신호는 중립 50%
+      // 0.5 baseline + winRate * 1.0 → 가중치 0.5~1.5 범위
+      return (r.signal.weight || 1.0) * (0.5 + avgWr);
+    }
     let best = results[0];
-    for (const r of results) {
-      if ((priority[r.strategy] || 0) > (priority[best.strategy] || 0)) best = r;
+    let bestScore = scoreResult(results[0]);
+    for (let i = 1; i < results.length; i++) {
+      const s = scoreResult(results[i]);
+      if (s > bestScore) { best = results[i]; bestScore = s; }
     }
     return [best];
   }
@@ -975,6 +1026,13 @@ function evaluateAllStrategies(price, dayPct, dailyData, cfg, signalStats) {
 // === [V8] Confluence 해석 — 전략 내부 신호 합의 ===
 function resolveSignals(signals, cfg, signalStats, stratName) {
   if (signals.length === 0) return null;
+  // [V8.4] autoTune이 손실 누적으로 비활성화한 신호 제거
+  if (cfg.disabledSignals && cfg.disabledSignals.length > 0) {
+    signals = signals.filter(function(s){
+      return cfg.disabledSignals.indexOf(s.name) === -1;
+    });
+    if (signals.length === 0) return null;
+  }
   if (signals.length === 1) {
     if (cfg.requireConfluence) return null;
     const s = signals[0];
@@ -1269,6 +1327,8 @@ function evaluateSell(pos, price, daily, dailyRsi, dailyMa, dailyMaShort, cfg, m
   // === DAY 전략 ===
   if (strategy === "day") {
     const r = cfg.dayRules;
+    // [V8.4] 왕복 거래비용 (수수료 + KR 매도세) — TP 판단에서 차감
+    const cost = (cfg.roundTripCostPct && cfg.roundTripCostPct[market]) || 0;
     // [V8.1] 장 마감 N분 전 강제 청산 — minHold 보다 우선 (장 종료가 임박하면 무조건 청산)
     if (market) {
       const mtc = marketMinutesUntilClose(market);
@@ -1279,15 +1339,15 @@ function evaluateSell(pos, price, daily, dailyRsi, dailyMa, dailyMaShort, cfg, m
     }
     // 최소 보유시간
     if (heldMin < (r.minHoldMinutes || 20)) return { sell: false };
-    // [V8.3] TP1 분할익절 — tp1 도달 시 절반 청산
-    if (!tp1Done && r.tp1 != null && pnlRate >= r.tp1) {
+    // [V8.3+V8.4] TP1 분할익절 — tp1 + cost 도달 시 절반 청산 (실수익 기준)
+    if (!tp1Done && r.tp1 != null && pnlRate >= (r.tp1 + cost)) {
       const halfQty = Math.floor(pos.qty / 2);
       if (halfQty > 0) {
         return { sell: true, sellQty: halfQty, reason: "DAY-TP1 +" + pnlRate.toFixed(2) + "%" };
       }
     }
-    // 익절 (TP2)
-    if (pnlRate >= r.tp) {
+    // 익절 (TP2) — cost 반영
+    if (pnlRate >= (r.tp + cost)) {
       return { sell: true, sellQty: pos.qty, reason: "DAY-TP +" + pnlRate.toFixed(2) + "%" };
     }
     // 최대 보유시간
@@ -1469,6 +1529,26 @@ async function autoTune(DB, cfg, regimes) {
     if (!newCfg.markets) newCfg.markets = { us: {}, kr: {} };
     let anyChange = false;
     const allChanges = [];
+
+    // [V8.4] 손실 신호 자동 비활성화 — 표본 30+ & 승률 35% 미만 & 평균 PnL 음수
+    //        반대로 비활성화된 신호가 다시 좋아지면 (가상으로 켰을 때만 평가 가능하므로) 수동 복원.
+    //        시장 무관 공통 처리 (signal_stats 자체가 시장 무관).
+    if (!newCfg.disabledSignals) newCfg.disabledSignals = [];
+    const newlyDisabled = [];
+    for (const sigName in signalStats) {
+      const s = signalStats[sigName];
+      if (s.count >= 30 && s.weightedWinRate < 0.35 && s.avgPnl < -0.5) {
+        if (newCfg.disabledSignals.indexOf(sigName) === -1) {
+          newCfg.disabledSignals.push(sigName);
+          newlyDisabled.push(sigName);
+        }
+      }
+    }
+    if (newlyDisabled.length > 0) {
+      allChanges.push("DISABLE " + newlyDisabled.join(","));
+      anyChange = true;
+      await log(DB, "TUNE", null, "Auto-disabled signals (WR<35%, avgPnL<-0.5%): " + newlyDisabled.join(", "));
+    }
 
     for (const market of ['us', 'kr']) {
       // 시장별 최근 SELL 50건
@@ -1671,7 +1751,9 @@ async function runTradingCycle(env) {
 
   try {
     const enabledStrats = ["swing","day","momentum","meanrev"].filter(function(s){ return cfg.strategies[s]; }).join(",");
-    await log(DB, "INFO", null, "=== Cycle start (V8.1.3) strats=[" + enabledStrats + "] conf=" + (cfg.requireConfluence ? "ON" : "OFF") + " ===");
+    const disabledSigNote = (cfg.disabledSignals && cfg.disabledSignals.length > 0)
+      ? " disabled=[" + cfg.disabledSignals.join(",") + "]" : "";
+    await log(DB, "INFO", null, "=== Cycle start (V8.4) strats=[" + enabledStrats + "] conf=" + (cfg.requireConfluence ? "ON" : "OFF") + disabledSigNote + " ===");
     const cycleStartedAt = Date.now();
     const usOpen = isMarketOpen("us");
     const krOpen = isMarketOpen("kr");
@@ -1909,7 +1991,7 @@ async function runTradingCycle(env) {
             continue;
           }
           const strategiesHeldNow = getStrategiesHeldForSymbol(positions, symbol);
-          const stratResults = evaluateAllStrategies(price, dayPct, daily, mcfg, signalStats);
+          const stratResults = evaluateAllStrategies(price, dayPct, daily, mcfg, signalStats, regime);
 
           if (stratResults.length === 0) {
             incNobuy("no_signal");
