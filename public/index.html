@@ -767,6 +767,21 @@ button.btn.loading { opacity: 0.5; pointer-events: none; }
       </div>
     </div>
 
+    <div style="font-size:11px; color:var(--dim); margin-top:14px; margin-bottom:6px;">
+      <b>vs INITIAL 보정</b> — 누적 입금액 직접 설정 (수익률 계산에서 제외할 금액)
+    </div>
+    <div style="font-size:11px; color:var(--faint); margin-bottom:8px;">
+      현재 deposits: <b id="cfgCurrentDepositsUS">-</b> · <b id="cfgCurrentDepositsKR">-</b>
+      <span style="margin-left:8px;">코드 변경 이전에 추가한 금액을 여기 넣으면 vs INITIAL이 정확해집니다</span>
+    </div>
+    <div class="field-row">
+      <div class="field"><label>US deposits ($)</label><input type="number" id="cfgSetDepositsUS" step="100" placeholder="누적 입금액"></div>
+      <div class="field"><label>KR deposits (₩)</label><input type="number" id="cfgSetDepositsKR" step="100000" placeholder="누적 입금액"></div>
+      <div class="field" style="display:flex; align-items:flex-end;">
+        <button type="button" class="btn" id="btnSetDeposits" style="width:100%;">DEPOSITS 설정</button>
+      </div>
+    </div>
+
     <div class="modal-actions">
       <button type="button" class="btn danger" id="btnReset">RESET ALL DATA</button>
       <button type="button" class="btn" id="btnCancelSettings">CANCEL</button>
@@ -788,6 +803,7 @@ button.btn.loading { opacity: 0.5; pointer-events: none; }
   var logSearchText = '';
   var currentCfg = null;
   var currentCash = { us: 0, kr: 0 };
+  var currentDeposits = { us: 0, kr: 0 };
   var lastQuotes = {};
   var tradesExpanded = false;
   var allTradesExpanded = false;
@@ -1334,6 +1350,7 @@ button.btn.loading { opacity: 0.5; pointer-events: none; }
         var cash = state.cash || {us:0,kr:0};
         currentCash = cash;
         var deposits = state.deposits || {us:0,kr:0};
+        currentDeposits = deposits;
         var initUS = (state.cfg && state.cfg.initialCashUS) || 0;
         var initKR = (state.cfg && state.cfg.initialCashKR) || 0;
         renderSummary('us', calcSummary('us', cash.us, posUS, initUS, deposits.us));
@@ -1386,6 +1403,11 @@ button.btn.loading { opacity: 0.5; pointer-events: none; }
     $('cfgCurrentCashKR').textContent = '₩' + fmtCompact(currentCash.kr);
     $('cfgAddCashUS').value = '';
     $('cfgAddCashKR').value = '';
+    // [V8.2.3] 현재 deposits 표시 + 입력칸에 현재값 prefill
+    $('cfgCurrentDepositsUS').textContent = '$' + fmtNum(currentDeposits.us, 2);
+    $('cfgCurrentDepositsKR').textContent = '₩' + fmtCompact(currentDeposits.kr);
+    $('cfgSetDepositsUS').value = currentDeposits.us || '';
+    $('cfgSetDepositsKR').value = currentDeposits.kr || '';
     $('cfgUS').value = (currentCfg.usTickers||[]).join(', ');
     $('cfgKR').value = (currentCfg.krTickers||[]).join(', ');
 
@@ -1513,6 +1535,41 @@ button.btn.loading { opacity: 0.5; pointer-events: none; }
       ['catch'](function(e){ toast('저장 실패: '+e.message); });
   }
 
+  function setDeposits() {
+    var usRaw = $('cfgSetDepositsUS').value;
+    var krRaw = $('cfgSetDepositsKR').value;
+    if (usRaw === '' && krRaw === '') { toast('값을 입력하세요'); return; }
+    var body = {};
+    if (usRaw !== '') {
+      var us = parseFloat(usRaw);
+      if (isNaN(us) || us < 0) { toast('US 값이 잘못됨 (0 이상)'); return; }
+      body.us = us;
+    }
+    if (krRaw !== '') {
+      var kr = parseFloat(krRaw);
+      if (isNaN(kr) || kr < 0) { toast('KR 값이 잘못됨 (0 이상)'); return; }
+      body.kr = kr;
+    }
+    var msg = '누적 입금액(deposits)을 다음으로 설정:\n';
+    if (body.us !== undefined) msg += '  US: $' + body.us.toLocaleString() + '\n';
+    if (body.kr !== undefined) msg += '  KR: ₩' + body.kr.toLocaleString() + '\n';
+    msg += '(cash는 안 바뀝니다 — vs INITIAL 계산만 보정됨)\n진행할까요?';
+    if (!confirm(msg)) return;
+    fetch('/api/deposits/set', {
+      method:'POST',
+      headers:{'Content-Type':'application/json'},
+      body: JSON.stringify(body)
+    }).then(function(r){ return r.json().then(function(d){ return { ok: r.ok, data: d }; }); })
+      .then(function(res){
+        if (!res.ok || !res.data.ok) { toast('실패: ' + (res.data.error || 'unknown')); return; }
+        toast('deposits 설정 완료');
+        currentDeposits = res.data.deposits;
+        $('cfgCurrentDepositsUS').textContent = '$' + fmtNum(currentDeposits.us, 2);
+        $('cfgCurrentDepositsKR').textContent = '₩' + fmtCompact(currentDeposits.kr);
+        refreshAll();
+      })['catch'](function(e){ toast('실패: ' + e.message); });
+  }
+
   function resetAll() {
     if (!confirm('정말 모든 거래/포지션/로그를 초기화하시겠습니까?')) return;
     fetch('/api/reset', {method:'POST'}).then(function(r){return r.json();})
@@ -1581,6 +1638,7 @@ button.btn.loading { opacity: 0.5; pointer-events: none; }
   $('btnSaveSettings').addEventListener('click', saveSettings);
   $('btnReset').addEventListener('click', resetAll);
   $('btnAddCash').addEventListener('click', addCash);
+  $('btnSetDeposits').addEventListener('click', setDeposits);
   $('btnResetTickers').addEventListener('click', resetTickers);
   $('tradesToggle').addEventListener('click', toggleTrades);
   $('allTradesToggle').addEventListener('click', toggleAllTrades);
