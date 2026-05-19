@@ -621,7 +621,7 @@ function buildLLMPrompt(market, context) {
     "JSON만 출력하세요. 설명/머리말/코드블록 표시 모두 금지.";
 }
 
-async function runLLMDailyAnalysis(env, market) {
+async function runLLMDailyAnalysis(env, market, forceRun = false) {
   const DB = env.DB;
   const cfg = migrateCfgToMarkets(Object.assign({}, DEFAULT_CFG, await getState(DB, "cfg", {})));
   const llmCfg = cfg.llmHybrid || {};
@@ -632,6 +632,14 @@ async function runLLMDailyAnalysis(env, market) {
   if (!env.ANTHROPIC_API_KEY) {
     await log(DB, "WARN", null, "[LLM] ANTHROPIC_API_KEY not set");
     return { ok: false, reason: "no_api_key" };
+  }
+  
+  // [V8.6] 강제 실행 모드 (테스트용) — forceRun=true면 시장 체크 무시
+  if (!forceRun) {
+    const isOpen = market === "us" ? isTradingWindow("us") : isTradingWindow("kr");
+    if (!isOpen) {
+      return { ok: false, reason: "market_closed", forceRun: false };
+    }
   }
 
   try {
@@ -2893,10 +2901,11 @@ async function handleRequest(request, env) {
       let body = {};
       try { body = await request.json(); } catch (e) {}
       const m = body.market;
+      const force = body.force === true;  // forceRun 파라미터 읽기
       if (m !== "us" && m !== "kr") {
         return Response.json({ error: "market must be 'us' or 'kr'" }, { status: 400, headers: cors });
       }
-      const result = await runLLMDailyAnalysis(env, m);
+      const result = await runLLMDailyAnalysis(env, m, force);
       return Response.json(result, { headers: cors });
     }
     // [V8.6 Hybrid] LLM 지시 강제 삭제 — 잘못된 지시 적용 막을 때
