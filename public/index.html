@@ -1586,7 +1586,7 @@ button.btn.loading { opacity: 0.5; pointer-events: none; }
 
   function llmRun(market) {
     if (!confirm(market.toUpperCase() + ' 시장 LLM 분석을 지금 실행하시겠습니까?\n(API 키와 cfg.llmHybrid.enabled가 필요합니다)')) return;
-    fetch('/api/llm/run', {
+    fetch(window.location.origin + '/api/llm/run', {
       method: 'POST',
       headers: {'content-type': 'application/json'},
       body: JSON.stringify({market: market})
@@ -1604,7 +1604,7 @@ button.btn.loading { opacity: 0.5; pointer-events: none; }
   }
 
   function llmViewDetail() {
-    fetch('/api/llm/instruction')
+    fetch(window.location.origin + '/api/llm/instruction')
       .then(function(r) { return r.json(); })
       .then(function(d) {
         var w = window.open('', '_blank');
@@ -1615,7 +1615,7 @@ button.btn.loading { opacity: 0.5; pointer-events: none; }
 
   function llmClear() {
     if (!confirm('현재 활성 LLM 지시를 삭제하시겠습니까?\n다음 트리거 시각까지 V8.5 기본 동작으로 작동합니다.')) return;
-    fetch('/api/llm/clear', {
+    fetch(window.location.origin + '/api/llm/clear', {
       method: 'POST',
       headers: {'content-type': 'application/json'},
       body: JSON.stringify({})
