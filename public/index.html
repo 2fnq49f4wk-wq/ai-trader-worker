@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>LUX-engine V8.2</title>
+<title>LUX-engine V8.6</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600;700&family=Georgia:wght@400;700&display=swap" rel="stylesheet">
@@ -419,6 +419,25 @@ button.btn.loading { opacity: 0.5; pointer-events: none; }
 .market-status-banner b { color: var(--text); }
 .market-status-open { color: var(--green) !important; }
 .market-status-closed { color: var(--orange) !important; }
+
+/* [V8.6 Hybrid] LLM Banner */
+.llm-banner { padding: 10px 14px; background: rgba(56,189,248,0.08); border-left: 3px solid #38bdf8; color: #38bdf8; font-size: 11px; line-height: 1.6; }
+.llm-banner-header { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+.llm-banner-title { font-weight: 700; font-size: 11px; letter-spacing: 0.5px; }
+.llm-status-chip { font-size: 10px; padding: 2px 6px; border-radius: 3px; font-weight: 600; }
+.llm-status-chip.on { background: rgba(63,185,80,0.2); color: var(--green); }
+.llm-status-chip.off { background: rgba(248,81,73,0.2); color: var(--red); }
+.llm-status-chip.bullish { background: rgba(63,185,80,0.2); color: var(--green); }
+.llm-status-chip.bearish { background: rgba(248,81,73,0.2); color: var(--red); }
+.llm-status-chip.neutral { background: rgba(148,163,184,0.2); color: #94a3b8; }
+.llm-banner-body { margin-top: 6px; color: #cbd5e1; font-size: 11px; }
+.llm-meta { display: flex; gap: 12px; flex-wrap: wrap; margin-top: 6px; font-size: 10px; color: #94a3b8; }
+.llm-meta b { color: #cbd5e1; }
+.llm-actions { display: flex; gap: 6px; margin-top: 8px; flex-wrap: wrap; }
+.llm-btn { font-size: 10px; padding: 4px 10px; background: rgba(56,189,248,0.15); border: 1px solid #38bdf8; color: #38bdf8; border-radius: 3px; cursor: pointer; font-family: 'IBM Plex Mono', monospace; }
+.llm-btn:hover { background: rgba(56,189,248,0.25); }
+.llm-btn.danger { background: rgba(248,81,73,0.15); border-color: var(--red); color: var(--red); }
+.llm-btn.danger:hover { background: rgba(248,81,73,0.25); }
 .cfg-display { display: flex; gap: 14px; font-size: 11px; color: var(--dim); flex-wrap: wrap; }
 .cfg-display b { color: #ffffff; font-weight: 700; font-family: 'IBM Plex Mono', 'Courier New', monospace; letter-spacing: 0.3px; font-size: 12px; }
 .checkbox-row { display: flex; align-items: center; gap: 10px; margin-bottom: 14px; }
@@ -480,6 +499,24 @@ button.btn.loading { opacity: 0.5; pointer-events: none; }
   <div class="market-status-banner" id="marketStatusBanner">
     <span>🇺🇸 US: <b id="usMarketStatus">확인 중...</b></span>
     <span>🇰🇷 KR: <b id="krMarketStatus">확인 중...</b></span>
+  </div>
+
+  <!-- [V8.6 Hybrid] LLM 일일 지시 배너 -->
+  <div class="llm-banner" id="llmBanner">
+    <div class="llm-banner-header">
+      <span class="llm-banner-title">🤖 CLAUDE LLM HYBRID</span>
+      <span class="llm-status-chip" id="llmStatusChip">CHECKING...</span>
+      <span id="llmHeaderRight" style="margin-left: auto; font-size: 10px; color: #94a3b8;"></span>
+    </div>
+    <div class="llm-banner-body" id="llmBannerBody">상태 확인 중...</div>
+    <div class="llm-meta" id="llmMeta" style="display:none;"></div>
+    <div class="llm-actions">
+      <button class="llm-btn" onclick="llmRefresh()">↻ 새로고침</button>
+      <button class="llm-btn" onclick="llmRun('us')">▶ US 분석 실행</button>
+      <button class="llm-btn" onclick="llmRun('kr')">▶ KR 분석 실행</button>
+      <button class="llm-btn" onclick="llmViewDetail()">📋 상세 보기</button>
+      <button class="llm-btn danger" onclick="llmClear()">✕ 지시 삭제</button>
+    </div>
   </div>
 
   <div id="tuneBanner" class="tune-banner" style="display:none;">
@@ -851,27 +888,70 @@ button.btn.loading { opacity: 0.5; pointer-events: none; }
   function usLabel(s) { return US_NAMES[s] || ''; }
   function $(id) { return document.getElementById(id); }
 
+  // [V8.6] 미국 DST 자동 판정 — 3월 둘째 일요일 ~ 11월 첫째 일요일 = EDT(UTC-4), 그 외 EST(UTC-5)
+  function getUSEtOffset(now) {
+    var year = now.getUTCFullYear();
+    function nthSundayOfMonth(y, monthIdx, n) {
+      var d = new Date(Date.UTC(y, monthIdx, 1));
+      var firstDow = d.getUTCDay();
+      var firstSunday = (firstDow === 0) ? 1 : (8 - firstDow);
+      return firstSunday + (n - 1) * 7;
+    }
+    var dstStartDay = nthSundayOfMonth(year, 2, 2);
+    var dstEndDay = nthSundayOfMonth(year, 10, 1);
+    var dstStart = Date.UTC(year, 2, dstStartDay, 7, 0, 0);
+    var dstEnd = Date.UTC(year, 10, dstEndDay, 6, 0, 0);
+    var t = now.getTime();
+    return (t >= dstStart && t < dstEnd) ? -4 : -5;
+  }
+
   function getMarketStatus() {
     var now = new Date();
-    var utcHour = now.getUTCHours(), utcMinute = now.getUTCMinutes(), utcDay = now.getUTCDay();
-    var etTotalMin = (utcHour - 4) * 60 + utcMinute;
-    if (etTotalMin < 0) etTotalMin += 24 * 60;
-    var usOpen = utcDay >= 1 && utcDay <= 5 && etTotalMin >= 570 && etTotalMin < 960;
-    var kstTotalMin = (utcHour + 9) * 60 + utcMinute;
-    if (kstTotalMin >= 24 * 60) kstTotalMin -= 24 * 60;
-    var kstDay = utcDay;
-    if (utcHour + 9 >= 24) kstDay = (utcDay + 1) % 7;
+    var utcMin = now.getUTCHours() * 60 + now.getUTCMinutes();
+    var utcDay = now.getUTCDay();
+    // US — DST 자동
+    var etOffset = getUSEtOffset(now);
+    var etTotalMin = utcMin + etOffset * 60;
+    var etDayShift = 0;
+    if (etTotalMin < 0) { etTotalMin += 24 * 60; etDayShift = -1; }
+    if (etTotalMin >= 24 * 60) { etTotalMin -= 24 * 60; etDayShift = 1; }
+    var etDay = (utcDay + etDayShift + 7) % 7;
+    var usOpen = etDay >= 1 && etDay <= 5 && etTotalMin >= 570 && etTotalMin < 960;
+    var usTradingWindow = usOpen;  // US는 실시간이므로 동일
+    // KR — 야후 15분 지연 보정
+    var kstTotalMin = utcMin + 9 * 60;
+    var kstDayShift = 0;
+    if (kstTotalMin >= 24 * 60) { kstTotalMin -= 24 * 60; kstDayShift = 1; }
+    var kstDay = (utcDay + kstDayShift) % 7;
     var krOpen = kstDay >= 1 && kstDay <= 5 && kstTotalMin >= 540 && kstTotalMin < 930;
-    return { us: usOpen, kr: krOpen };
+    var krTradingWindow = kstDay >= 1 && kstDay <= 5 && kstTotalMin >= 555 && kstTotalMin < 945;
+    return {
+      us: usOpen, kr: krOpen,
+      usTrading: usTradingWindow, krTrading: krTradingWindow,
+      usEtOffset: etOffset
+    };
   }
 
   function renderMarketStatus() {
     var status = getMarketStatus();
     var usEl = $('usMarketStatus'), krEl = $('krMarketStatus');
-    usEl.textContent = status.us ? '🟢 정규장 OPEN' : '🟠 장 종료';
+    // US: 정규장 + DST 표시
+    var dstLabel = status.usEtOffset === -4 ? ' (EDT)' : ' (EST)';
+    usEl.textContent = status.us ? ('🟢 정규장 OPEN' + dstLabel) : ('🟠 장 종료' + dstLabel);
     usEl.className = status.us ? 'market-status-open' : 'market-status-closed';
-    krEl.textContent = status.kr ? '🟢 정규장 OPEN' : '🟠 장 종료';
-    krEl.className = status.kr ? 'market-status-open' : 'market-status-closed';
+    // KR: 4가지 상태 (정규장 / 엔진 대기 / 엔진 청산 / 종료)
+    var krText;
+    if (status.kr && status.krTrading) {
+      krText = '🟢 정규장 OPEN';
+    } else if (status.kr && !status.krTrading) {
+      krText = '🟡 정규장 OPEN (엔진 대기 09:15~)';
+    } else if (!status.kr && status.krTrading) {
+      krText = '🟡 정규장 마감 (엔진 청산 ~15:45)';
+    } else {
+      krText = '🟠 장 종료';
+    }
+    krEl.textContent = krText;
+    krEl.className = (status.kr || status.krTrading) ? 'market-status-open' : 'market-status-closed';
   }
 
   function fmtNum(n, dec) {
@@ -946,9 +1026,10 @@ button.btn.loading { opacity: 0.5; pointer-events: none; }
   function renderEngine(lastTick) {
     var dot = $('engineDot'), txt = $('engineText');
     var status = getMarketStatus();
-    if (!status.us && !status.kr) {
+    // [V8.6] 거래 윈도우 기준 — KR은 09:15~15:45, US는 정규장과 동일
+    if (!status.usTrading && !status.krTrading) {
       dot.className='dot closed';
-      txt.textContent='시장 종료 시간 · 거래 대기 중 (시세조회 버튼으로 종가 확인 가능)';
+      txt.textContent='거래 윈도우 외 · 거래 대기 중 (시세조회 버튼으로 종가 확인 가능)';
       return;
     }
     if (!lastTick) {
@@ -1368,6 +1449,129 @@ button.btn.loading { opacity: 0.5; pointer-events: none; }
     if (logsTimer) { clearInterval(logsTimer); logsTimer = null; }
   }
 
+  // ===== [V8.6 Hybrid] LLM Banner =====
+  function renderLLMBanner(llmDaily, cfg) {
+    var chip = $('llmStatusChip');
+    var body = $('llmBannerBody');
+    var meta = $('llmMeta');
+    var headerRight = $('llmHeaderRight');
+
+    var enabled = cfg && cfg.llmHybrid && cfg.llmHybrid.enabled;
+    if (!enabled) {
+      chip.className = 'llm-status-chip off';
+      chip.textContent = 'DISABLED';
+      body.innerHTML = 'LLM Hybrid 비활성화. cfg.llmHybrid.enabled=true 설정 후 API 키 등록 필요.';
+      meta.style.display = 'none';
+      headerRight.textContent = '';
+      return;
+    }
+
+    chip.className = 'llm-status-chip on';
+    chip.textContent = 'ENABLED';
+
+    var us = llmDaily && llmDaily.us;
+    var kr = llmDaily && llmDaily.kr;
+    var hasUs = us && us.instruction && (!us.expiresAt || Date.now() < us.expiresAt);
+    var hasKr = kr && kr.instruction && (!kr.expiresAt || Date.now() < kr.expiresAt);
+
+    if (!hasUs && !hasKr) {
+      body.innerHTML = '활성 지시 없음. 다음 트리거: KR 09:00 KST, US 09:20 ET';
+      meta.style.display = 'none';
+      headerRight.textContent = '';
+      return;
+    }
+
+    var parts = [];
+    if (hasUs) parts.push(renderInstructionLine('US', us));
+    if (hasKr) parts.push(renderInstructionLine('KR', kr));
+    body.innerHTML = parts.join('<br>');
+
+    // 메타 정보
+    var metaParts = [];
+    if (hasUs) {
+      var ageMin = Math.round((Date.now() - us.generatedAt) / 60000);
+      var leftMin = Math.round((us.expiresAt - Date.now()) / 60000);
+      metaParts.push('<span>US: <b>' + ageMin + '분 전</b> 생성 · <b>' + leftMin + '분</b> 후 만료</span>');
+    }
+    if (hasKr) {
+      var ageMinKr = Math.round((Date.now() - kr.generatedAt) / 60000);
+      var leftMinKr = Math.round((kr.expiresAt - Date.now()) / 60000);
+      metaParts.push('<span>KR: <b>' + ageMinKr + '분 전</b> 생성 · <b>' + leftMinKr + '분</b> 후 만료</span>');
+    }
+    meta.innerHTML = metaParts.join(' · ');
+    meta.style.display = 'flex';
+    headerRight.textContent = '';
+  }
+
+  function renderInstructionLine(label, stored) {
+    var ins = stored.instruction;
+    var sentimentClass = ins.sentiment || 'neutral';
+    var sentimentLabel = (ins.sentiment || 'neutral').toUpperCase();
+    var buyState = ins.buy_signals && ins.buy_signals.enabled ? 'BUY:ON' : 'BUY:OFF';
+    var sellState = ins.sell_signals && ins.sell_signals.enabled !== false ? 'SELL:ON' : 'SELL:OFF';
+    var sizing = (ins.position_sizing && ins.position_sizing.scale != null) ? ins.position_sizing.scale.toFixed(2) : '1.00';
+    var avoidCount = (ins.avoid_symbols && ins.avoid_symbols.length) || 0;
+    var disableCount = (ins.disable_signals && ins.disable_signals.length) || 0;
+    var stopOverride = (ins.stop_loss_adjustment && ins.stop_loss_adjustment.new_pct != null) ? ('stop:' + ins.stop_loss_adjustment.new_pct + '%') : '';
+    var summary = escapeHtml(ins.summary || '');
+    var chips = '<span class="llm-status-chip ' + sentimentClass + '">' + sentimentLabel + '</span>';
+    chips += ' <span class="llm-status-chip ' + (ins.buy_signals.enabled ? 'on' : 'off') + '">' + buyState + '</span>';
+    chips += ' <span class="llm-status-chip neutral">SIZE×' + sizing + '</span>';
+    if (avoidCount > 0) chips += ' <span class="llm-status-chip off">AVOID:' + avoidCount + '</span>';
+    if (disableCount > 0) chips += ' <span class="llm-status-chip off">DIS_SIG:' + disableCount + '</span>';
+    if (stopOverride) chips += ' <span class="llm-status-chip neutral">' + stopOverride + '</span>';
+    return '<b>[' + label + ']</b> ' + chips + (summary ? '<br><span style="color:#cbd5e1;">→ ' + summary + '</span>' : '');
+  }
+
+  function llmRefresh() {
+    refreshAll();
+    toast('LLM 상태 새로고침');
+  }
+
+  function llmRun(market) {
+    if (!confirm(market.toUpperCase() + ' 시장 LLM 분석을 지금 실행하시겠습니까?\n(API 키와 cfg.llmHybrid.enabled가 필요합니다)')) return;
+    fetch('/api/llm/run', {
+      method: 'POST',
+      headers: {'content-type': 'application/json'},
+      body: JSON.stringify({market: market})
+    })
+    .then(function(r) { return r.json(); })
+    .then(function(d) {
+      if (d.ok) {
+        toast('LLM 분석 완료: ' + market.toUpperCase());
+        refreshAll();
+      } else {
+        toast('LLM 실패: ' + (d.reason || 'unknown') + (d.error ? ' — ' + d.error : ''));
+      }
+    })
+    ['catch'](function(e) { toast('LLM 호출 에러: ' + e.message); });
+  }
+
+  function llmViewDetail() {
+    fetch('/api/llm/instruction')
+      .then(function(r) { return r.json(); })
+      .then(function(d) {
+        var w = window.open('', '_blank');
+        w.document.write('<pre style="background:#0d1117;color:#e0e0e0;padding:20px;font-family:monospace;">' + escapeHtml(JSON.stringify(d, null, 2)) + '</pre>');
+      })
+      ['catch'](function(e) { toast('조회 실패: ' + e.message); });
+  }
+
+  function llmClear() {
+    if (!confirm('현재 활성 LLM 지시를 삭제하시겠습니까?\n다음 트리거 시각까지 V8.5 기본 동작으로 작동합니다.')) return;
+    fetch('/api/llm/clear', {
+      method: 'POST',
+      headers: {'content-type': 'application/json'},
+      body: JSON.stringify({})
+    })
+    .then(function(r) { return r.json(); })
+    .then(function(d) {
+      toast('지시 삭제: ' + (d.cleared || 'done'));
+      refreshAll();
+    })
+    ['catch'](function(e) { toast('삭제 실패: ' + e.message); });
+  }
+
   function refreshAll() {
     renderMarketStatus();
     // [개선] /api/state 1회로 watchlist + indices까지 한 번에 받음
@@ -1396,6 +1600,8 @@ button.btn.loading { opacity: 0.5; pointer-events: none; }
         renderPositions(posUS, posKR);
         renderEngine(state.lastTick);
         renderTrades(trades);
+        // [V8.6 Hybrid] LLM 배너 렌더링
+        renderLLMBanner(state.llmDaily, state.cfg);
         // ALL TRADE HISTORY — 요약은 항상 갱신, 테이블은 펼쳐졌을 때만
         if (allTradesExpanded) renderAllTrades(allTrades || []);
         else updateTradesSummaryInto(allTrades || [], 'allTradesTotalCount', 'allTradesWinRate', 'allTradesAvgPnl');
