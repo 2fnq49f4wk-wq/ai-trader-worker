@@ -1,5 +1,25 @@
 // ============================================================
-// LUX-engine V8.5 (Break-even 버그 수정 + 리스크 기반 사이징 + 신호 평가 개선)
+// LUX-engine V8.6 Hybrid (V8.5 규칙 매매 + Claude 일일 지시)
+// 
+// 핵심 구조:
+//   • V8.5 규칙 매매 엔진은 매분 자동 작동 (기존과 동일)
+//   • Claude는 매일 시장 시작 전 1회씩 깨어남
+//       - KR: 09:00 KST (정규장 시작 시각)
+//       - US: 09:20 ET (정규장 10분 전, DST 자동)
+//   • Claude의 출력은 "일일 지시" — 신호/종목/사이징/손절 필터로만 작용
+//       - buy_signals.enabled — 매수 신호 전체 ON/OFF
+//       - disable_signals — 비활성화할 신호 이름 리스트
+//       - avoid_symbols — 진입 금지 종목 리스트
+//       - position_sizing.scale — 사이즈 배수 (0.3~1.5)
+//       - stop_loss_adjustment.new_pct — 손절폭 강제 적용 (선택)
+//   • 안전: Claude 응답 파싱 실패/타임아웃 시 지시는 무시되고 V8.5 그대로 작동
+//   • 비용: 하루 2회 Claude 호출 (시장당 1회)
+//
+// V8.6 시간처리 변경점 (이미 적용됨):
+//   • US 시장 시간 DST 자동 전환 (EST/EDT)
+//   • KR 거래 윈도우 09:15~15:45 (야후 15분 지연 보정)
+//   • isLLMTriggerTime() 헬퍼로 분 단위 정확한 트리거
+// V8.4 → V8.5 변경점 (수익률 개선 핵심):
 // V8.4 → V8.5 변경점 (수익률 개선 핵심):
 //   • [BUG FIX] stopPrice 하향 갱신 — breakEvenLocked일 때 safeStop으로 끌어내리지 않음
 //     → V8.3 break-even 메커니즘 실효화. "수익→본전 손실" 패턴 차단.
@@ -129,6 +149,19 @@ const DEFAULT_CFG = {
   },
   // === [V8.5] disabled signal 재평가 ===
   signalReviewDays: 30,      // 비활성화 후 N일 경과 시 재활성화 후보
+  // === [V8.6 Hybrid] Claude LLM 일일 지시 ===
+  llmHybrid: {
+    enabled: false,           // 기본 OFF — 사용자가 명시적으로 켜야 작동
+    model: "claude-opus-4-5",
+    maxTokens: 2000,
+    timeoutMs: 25000,         // 25초 타임아웃 (Workers CPU 한도 고려)
+    expiryHours: 18,          // 지시 유효 시간 — 18시간 지나면 무시 (다음날 지시 누락 시 안전)
+    minSizingScale: 0.3,      // Claude가 너무 작은 사이즈 요청해도 이 값까지만
+    maxSizingScale: 1.5,      // 너무 큰 사이즈 요청 차단
+    minStopPct: 0.3,          // 손절 최소폭 (너무 타이트해서 즉시 손절 방지)
+    maxStopPct: 5.0,          // 손절 최대폭 (너무 느슨해서 큰 손실 방지)
+    fallbackOnFail: true      // 호출 실패 시 V8.5 그대로 작동
+  },
   // === [V8.5] 사이클 락 자동 갱신 ===
   cycleLockRefreshAt: 0.5,   // TTL의 50% 경과 시 갱신
   // === [V8] 전략별 활성화 토글 ===
@@ -312,50 +345,346 @@ function migrateCfgToMarkets(cfg) {
   return cfg;
 }
 
+// [V8.6] 미국 DST(서머타임) 자동 판정
+// 2007년 이후 규칙: 3월 둘째 일요일 02:00 ET ~ 11월 첫째 일요일 02:00 ET
+// 반환: UTC 대비 ET 오프셋(-4 = EDT 서머타임, -5 = EST 겨울)
+function getUSEtOffset(now) {
+  const year = now.getUTCFullYear();
+  // 3월 둘째 일요일 찾기 (UTC 기준 자정 사용 — 약간의 경계 오차는 무시)
+  function nthSundayOfMonth(y, monthIdx, n) {
+    const d = new Date(Date.UTC(y, monthIdx, 1));
+    const firstDow = d.getUTCDay(); // 0=Sun
+    const firstSunday = (firstDow === 0) ? 1 : (8 - firstDow);
+    return firstSunday + (n - 1) * 7;
+  }
+  const dstStartDay = nthSundayOfMonth(year, 2, 2);  // March, 2nd Sunday
+  const dstEndDay   = nthSundayOfMonth(year, 10, 1); // November, 1st Sunday
+  // DST 전환은 현지 02:00에 발생. UTC 기준 ET 02:00 = EST면 UTC 07:00, EDT면 UTC 06:00.
+  // 단순화: 해당 일자의 UTC 자정~다음날 자정 사이에 있는 경우 안전쪽으로 처리.
+  // Spring forward: 그 날 07:00 UTC부터 EDT 적용
+  // Fall back: 그 날 06:00 UTC까지 EDT, 그 이후 EST
+  const dstStart = Date.UTC(year, 2, dstStartDay, 7, 0, 0);  // 07:00 UTC = 02:00 EST -> EDT 시작
+  const dstEnd   = Date.UTC(year, 10, dstEndDay, 6, 0, 0);   // 06:00 UTC = 02:00 EDT -> EST 복귀
+  const t = now.getTime();
+  return (t >= dstStart && t < dstEnd) ? -4 : -5;
+}
+
+// [V8.6] 미국 ET 분 단위 시각 + 요일 (DST 자동 반영)
+function getUSEt(now) {
+  const offset = getUSEtOffset(now);
+  const utcMin = now.getUTCHours() * 60 + now.getUTCMinutes();
+  let etTotalMin = utcMin + offset * 60;
+  let dayShift = 0;
+  if (etTotalMin < 0) { etTotalMin += 24 * 60; dayShift = -1; }
+  if (etTotalMin >= 24 * 60) { etTotalMin -= 24 * 60; dayShift = 1; }
+  let etDay = (now.getUTCDay() + dayShift + 7) % 7;
+  return { totalMin: etTotalMin, day: etDay, offset: offset };
+}
+
+// [V8.6] KST 분 단위 시각 + 요일
+function getKST(now) {
+  const utcMin = now.getUTCHours() * 60 + now.getUTCMinutes();
+  let kstTotalMin = utcMin + 9 * 60;
+  let dayShift = 0;
+  if (kstTotalMin >= 24 * 60) { kstTotalMin -= 24 * 60; dayShift = 1; }
+  let kstDay = (now.getUTCDay() + dayShift) % 7;
+  return { totalMin: kstTotalMin, day: kstDay };
+}
+
+// 실제 거래소 정규장 시간 — 시세 자체가 생성되는 시간
+// US: 09:30~16:00 ET (DST 자동)
+// KR: 09:00~15:30 KST
 function isMarketOpen(market) {
   const now = new Date();
-  const utcHour = now.getUTCHours();
-  const utcMinute = now.getUTCMinutes();
-  const utcDay = now.getUTCDay();
   if (market === "us") {
-    let etTotalMin = (utcHour - 4) * 60 + utcMinute;
-    if (etTotalMin < 0) etTotalMin += 24 * 60;
-    return utcDay >= 1 && utcDay <= 5 && etTotalMin >= 570 && etTotalMin < 960;
+    const et = getUSEt(now);
+    return et.day >= 1 && et.day <= 5 && et.totalMin >= 570 && et.totalMin < 960;
   }
   if (market === "kr") {
-    let kstTotalMin = (utcHour + 9) * 60 + utcMinute;
-    if (kstTotalMin >= 24 * 60) kstTotalMin -= 24 * 60;
-    let kstDay = utcDay;
-    if (utcHour + 9 >= 24) kstDay = (utcDay + 1) % 7;
-    return kstDay >= 1 && kstDay <= 5 && kstTotalMin >= 540 && kstTotalMin < 930;
+    const kst = getKST(now);
+    return kst.day >= 1 && kst.day <= 5 && kst.totalMin >= 540 && kst.totalMin < 930;
   }
   return false;
 }
 
-// [V8.1 신규] 장 마감까지 남은 분 — Day 전략 강제 청산용
-// 장 마감 이후거나 장 시작 전이면 null 반환
-function marketMinutesUntilClose(market) {
+// [V8.6 신규] 엔진이 거래해도 되는 시간 — 야후 KR 시세 15분 지연 보정
+// US: 09:30~16:00 ET (실시간이므로 정규장과 동일)
+// KR: 09:15~15:45 KST (15분 지연 데이터로 거래하므로 시작도 15분 늦추고 종료도 15분 늦춤)
+//     이로써 모든 매매가 "15분 전 실제 가격" 기준이 됨 — 데이터-가격 일치 보장.
+function isTradingWindow(market) {
   const now = new Date();
-  const utcHour = now.getUTCHours();
-  const utcMinute = now.getUTCMinutes();
-  const utcDay = now.getUTCDay();
   if (market === "us") {
-    let etTotalMin = (utcHour - 4) * 60 + utcMinute;
-    if (etTotalMin < 0) etTotalMin += 24 * 60;
-    if (utcDay < 1 || utcDay > 5) return null;
-    if (etTotalMin < 570 || etTotalMin >= 960) return null;
-    return 960 - etTotalMin;  // 16:00 ET 마감
+    const et = getUSEt(now);
+    return et.day >= 1 && et.day <= 5 && et.totalMin >= 570 && et.totalMin < 960;
   }
   if (market === "kr") {
-    let kstTotalMin = (utcHour + 9) * 60 + utcMinute;
-    if (kstTotalMin >= 24 * 60) kstTotalMin -= 24 * 60;
-    let kstDay = utcDay;
-    if (utcHour + 9 >= 24) kstDay = (utcDay + 1) % 7;
-    if (kstDay < 1 || kstDay > 5) return null;
-    if (kstTotalMin < 540 || kstTotalMin >= 930) return null;
-    return 930 - kstTotalMin;  // 15:30 KST 마감
+    const kst = getKST(now);
+    // 09:15 = 555, 15:45 = 945
+    return kst.day >= 1 && kst.day <= 5 && kst.totalMin >= 555 && kst.totalMin < 945;
+  }
+  return false;
+}
+
+// [V8.6 신규] LLM 트리거 시각 판정 — cron이 매분 돌 때 "지금이 분석 트리거 시각인가" 체크
+// KR: 09:00 KST (정규장 시작, 지연 데이터지만 데이터 자체는 이미 수집됨)
+// US: 시장시작 10분 전 = 09:20 ET (DST 자동)
+// 트리거가 cron 사이클 사이에 정확히 들어가도록 ±1분 윈도우 허용.
+function isLLMTriggerTime(market) {
+  const now = new Date();
+  if (market === "kr") {
+    const kst = getKST(now);
+    if (kst.day < 1 || kst.day > 5) return false;
+    // 09:00 KST = 540분, 한 사이클(1분) 안에 정확히 매치되도록
+    return kst.totalMin === 540;
+  }
+  if (market === "us") {
+    const et = getUSEt(now);
+    if (et.day < 1 || et.day > 5) return false;
+    // 09:20 ET = 560분 (정규장 09:30 시작 10분 전)
+    return et.totalMin === 560;
+  }
+  return false;
+}
+
+// [V8.6] 장 마감까지 남은 분 — Day 전략 강제 청산용
+// US: 16:00 ET 마감 기준 (DST 자동)
+// KR: 15:45 KST 기준 — 야후 15분 지연 데이터로 거래하므로 거래 윈도우 마감 시각 사용.
+//     실제 거래소는 15:30 마감이지만 우리가 보는 15:30 데이터는 15:15 시점의 가격이므로
+//     15:45까지 거래해야 실제 15:30 마감 직전 가격으로 청산 가능.
+function marketMinutesUntilClose(market) {
+  const now = new Date();
+  if (market === "us") {
+    const et = getUSEt(now);
+    if (et.day < 1 || et.day > 5) return null;
+    if (et.totalMin < 570 || et.totalMin >= 960) return null;
+    return 960 - et.totalMin;  // 16:00 ET
+  }
+  if (market === "kr") {
+    const kst = getKST(now);
+    if (kst.day < 1 || kst.day > 5) return null;
+    // 거래 윈도우: 09:15~15:45
+    if (kst.totalMin < 555 || kst.totalMin >= 945) return null;
+    return 945 - kst.totalMin;  // 15:45 KST (거래 윈도우 종료)
   }
   return null;
+}
+
+// ============================================================
+// [V8.6 Hybrid] Claude LLM 일일 지시 통합
+// ============================================================
+
+// 시장 데이터 수집 — Claude에게 보낼 컨텍스트
+async function collectLLMContext(DB, env, market) {
+  const cfg = migrateCfgToMarkets(Object.assign({}, DEFAULT_CFG, await getState(DB, "cfg", {})));
+
+  const sinceTs = Date.now() - 7 * 24 * 3600 * 1000;
+  const recentTrades = await DB.prepare(
+    "SELECT side, symbol, pnl_pct, reason, ts FROM trades WHERE market = ? AND ts >= ? AND side = 'SELL' ORDER BY ts DESC LIMIT 50"
+  ).bind(market, sinceTs).all();
+  const sells = recentTrades.results || [];
+
+  const wins = sells.filter(function(t) { return (t.pnl_pct || 0) > 0; });
+  const losses = sells.filter(function(t) { return (t.pnl_pct || 0) <= 0; });
+  const totalPnl = sells.reduce(function(a, t) { return a + (t.pnl_pct || 0); }, 0);
+
+  const positions = await DB.prepare(
+    "SELECT symbol, strategy, qty, avg_price FROM positions WHERE market = ?"
+  ).bind(market).all();
+  const cashState = await getState(DB, "cash", {});
+
+  const signalStats = await getState(DB, "signal_stats", {});
+  const topSignals = Object.keys(signalStats)
+    .map(function(k) { return Object.assign({ name: k }, signalStats[k]); })
+    .filter(function(s) { return s.count >= 5; })
+    .sort(function(a, b) { return (b.weightedWinRate || 0) - (a.weightedWinRate || 0); })
+    .slice(0, 15);
+
+  const indices = market === "us" ? US_INDICES : KR_INDICES;
+  const indexQuotes = {};
+  for (const idx of indices) {
+    const q = await getQuote(DB, idx);
+    if (q) indexQuotes[idx] = { price: q.price, dayChangePct: q.dayChangePct };
+  }
+
+  return {
+    market: market,
+    date: new Date().toISOString().slice(0, 10),
+    indices: indexQuotes,
+    cash: cashState[market] || 0,
+    positions: (positions.results || []).map(function(p) {
+      return { symbol: p.symbol, strategy: p.strategy, qty: p.qty, avg: p.avg_price };
+    }),
+    last7days: {
+      trades: sells.length,
+      winRate: sells.length > 0 ? (wins.length / sells.length) : 0,
+      avgPnl: sells.length > 0 ? (totalPnl / sells.length) : 0,
+      totalPnl: totalPnl,
+      bestTrade: wins.length > 0 ? wins.reduce(function(a, b) { return a.pnl_pct > b.pnl_pct ? a : b; }) : null,
+      worstTrade: losses.length > 0 ? losses.reduce(function(a, b) { return a.pnl_pct < b.pnl_pct ? a : b; }) : null
+    },
+    topSignals: topSignals,
+    disabledSignals: cfg.disabledSignals || [],
+    enabledStrategies: Object.keys(cfg.strategies || {}).filter(function(s) { return cfg.strategies[s]; })
+  };
+}
+
+async function callClaude(apiKey, model, prompt, maxTokens, timeoutMs) {
+  const controller = new AbortController();
+  const timeoutId = setTimeout(function() { controller.abort(); }, timeoutMs || 25000);
+  try {
+    const res = await fetch("https://api.anthropic.com/v1/messages", {
+      method: "POST",
+      headers: {
+        "x-api-key": apiKey,
+        "anthropic-version": "2023-06-01",
+        "content-type": "application/json"
+      },
+      body: JSON.stringify({
+        model: model || "claude-opus-4-5",
+        max_tokens: maxTokens || 2000,
+        messages: [{ role: "user", content: prompt }]
+      }),
+      signal: controller.signal
+    });
+    clearTimeout(timeoutId);
+    if (!res.ok) {
+      const errText = await res.text();
+      throw new Error("HTTP " + res.status + ": " + errText.slice(0, 200));
+    }
+    const data = await res.json();
+    const text = (data.content || []).filter(function(b) { return b.type === "text"; }).map(function(b) { return b.text; }).join("\n");
+    return { text: text, usage: data.usage };
+  } catch (e) {
+    clearTimeout(timeoutId);
+    throw e;
+  }
+}
+
+function parseLLMInstruction(text) {
+  let clean = text.replace(/```json\s*/g, "").replace(/```\s*/g, "").trim();
+  const start = clean.indexOf("{");
+  const end = clean.lastIndexOf("}");
+  if (start === -1 || end === -1) throw new Error("no JSON in response");
+  return JSON.parse(clean.slice(start, end + 1));
+}
+
+function sanitizeInstruction(raw, llmCfg) {
+  const sane = {
+    sentiment: ["bearish", "neutral", "bullish"].indexOf(raw.sentiment) >= 0 ? raw.sentiment : "neutral",
+    summary: typeof raw.summary === "string" ? raw.summary.slice(0, 500) : "",
+    buy_signals: { enabled: raw.buy_signals && raw.buy_signals.enabled !== false },
+    sell_signals: { enabled: !(raw.sell_signals && raw.sell_signals.enabled === false) },
+    disable_signals: Array.isArray(raw.disable_signals) ? raw.disable_signals.filter(function(s) { return typeof s === "string"; }).slice(0, 20) : [],
+    avoid_symbols: Array.isArray(raw.avoid_symbols) ? raw.avoid_symbols.filter(function(s) { return typeof s === "string"; }).slice(0, 30) : [],
+    position_sizing: { scale: 1.0 },
+    stop_loss_adjustment: null
+  };
+  if (raw.position_sizing && typeof raw.position_sizing.scale === "number") {
+    let s = raw.position_sizing.scale;
+    if (s < llmCfg.minSizingScale) s = llmCfg.minSizingScale;
+    if (s > llmCfg.maxSizingScale) s = llmCfg.maxSizingScale;
+    sane.position_sizing.scale = s;
+  }
+  if (raw.stop_loss_adjustment && typeof raw.stop_loss_adjustment.new_pct === "number") {
+    let sp = raw.stop_loss_adjustment.new_pct;
+    if (sp < llmCfg.minStopPct) sp = llmCfg.minStopPct;
+    if (sp > llmCfg.maxStopPct) sp = llmCfg.maxStopPct;
+    sane.stop_loss_adjustment = { new_pct: sp };
+  }
+  return sane;
+}
+
+function buildLLMPrompt(market, context) {
+  const marketLabel = market === "us" ? "미국 (US)" : "한국 (KR)";
+  return "당신은 LUX-engine 트레이딩 시스템의 일일 시장 분석가입니다.\n" +
+    "오늘 " + marketLabel + " 시장에 대한 \"일일 거래 지시\"를 JSON으로 출력하세요.\n\n" +
+    "# 컨텍스트\n```json\n" + JSON.stringify(context, null, 2) + "\n```\n\n" +
+    "# 분석 기준\n" +
+    "- 지수 데이터, 최근 7일 성과, 활성 신호 통계를 종합 판단\n" +
+    "- sentiment: bearish(약세) / neutral(중립) / bullish(강세)\n" +
+    "- 약세 판단 시: buy_signals를 끄거나, position_sizing.scale을 0.5 이하로, stop_loss를 타이트하게\n" +
+    "- 강세 판단 시: position_sizing.scale 1.2~1.4, stop_loss 1.2 정도\n" +
+    "- 손실 거래 패턴이 보이면 disable_signals에 추가 (signalStats 활용)\n" +
+    "- 특정 종목에 손실이 집중되면 avoid_symbols에 추가\n" +
+    "- 보수적으로 판단 — 데이터 부족 시 neutral, sizing 1.0, stop_loss_adjustment는 null 유지\n\n" +
+    "# 출력 (JSON만, 코드블록 표시 없이)\n" +
+    "{\n" +
+    "  \"sentiment\": \"neutral\",\n" +
+    "  \"summary\": \"한두 문장 시장 판단 + 근거\",\n" +
+    "  \"buy_signals\": { \"enabled\": true },\n" +
+    "  \"sell_signals\": { \"enabled\": true },\n" +
+    "  \"disable_signals\": [],\n" +
+    "  \"avoid_symbols\": [],\n" +
+    "  \"position_sizing\": { \"scale\": 1.0 },\n" +
+    "  \"stop_loss_adjustment\": null\n" +
+    "}\n\n" +
+    "JSON만 출력하세요. 설명/머리말/코드블록 표시 모두 금지.";
+}
+
+async function runLLMDailyAnalysis(env, market) {
+  const DB = env.DB;
+  const cfg = migrateCfgToMarkets(Object.assign({}, DEFAULT_CFG, await getState(DB, "cfg", {})));
+  const llmCfg = cfg.llmHybrid || {};
+
+  if (!llmCfg.enabled) {
+    return { ok: false, reason: "disabled" };
+  }
+  if (!env.ANTHROPIC_API_KEY) {
+    await log(DB, "WARN", null, "[LLM] ANTHROPIC_API_KEY not set");
+    return { ok: false, reason: "no_api_key" };
+  }
+
+  try {
+    await log(DB, "INFO", null, "[LLM] daily analysis start: " + market);
+    const context = await collectLLMContext(DB, env, market);
+    const prompt = buildLLMPrompt(market, context);
+
+    const res = await callClaude(
+      env.ANTHROPIC_API_KEY,
+      llmCfg.model || "claude-opus-4-5",
+      prompt,
+      llmCfg.maxTokens || 2000,
+      llmCfg.timeoutMs || 25000
+    );
+
+    let raw;
+    try {
+      raw = parseLLMInstruction(res.text);
+    } catch (e) {
+      await log(DB, "WARN", null, "[LLM] parse fail (" + market + "): " + e.message);
+      return { ok: false, reason: "parse_fail", raw: res.text };
+    }
+
+    const sanitized = sanitizeInstruction(raw, llmCfg);
+    const instruction = {
+      market: market,
+      generatedAt: Date.now(),
+      expiresAt: Date.now() + (llmCfg.expiryHours || 18) * 3600 * 1000,
+      instruction: sanitized,
+      rawResponse: res.text,
+      usage: res.usage
+    };
+
+    await setState(DB, "llm_daily:" + market, instruction);
+    await log(DB, "INFO", null,
+      "[LLM] " + market + " sentiment=" + sanitized.sentiment +
+      " buy=" + (sanitized.buy_signals.enabled ? "ON" : "OFF") +
+      " sizing=" + sanitized.position_sizing.scale +
+      " avoid=" + sanitized.avoid_symbols.length +
+      " disable=" + sanitized.disable_signals.length
+    );
+    return { ok: true, instruction: sanitized };
+  } catch (e) {
+    await log(DB, "ERROR", null, "[LLM] " + market + " fail: " + e.message);
+    return { ok: false, reason: "exception", error: e.message };
+  }
+}
+
+async function getActiveLLMInstruction(DB, market) {
+  const stored = await getState(DB, "llm_daily:" + market, null);
+  if (!stored) return null;
+  if (!stored.expiresAt || Date.now() > stored.expiresAt) return null;
+  return stored.instruction || null;
 }
 
 async function ensureSchema(DB) {
@@ -1213,16 +1542,17 @@ function evaluateBuyBlocks(price, dayPct, dailyData, cfg, regime, signal, ctx) {
 }
 
 // === [V8] executeBuy — strategy 필드 저장 ===
-async function executeBuy(DB, market, symbol, strategy, qty, price, signal, dailyAtr, cfg, cash) {
+async function executeBuy(DB, market, symbol, strategy, qty, price, signal, dailyAtr, cfg, cash, opts) {
   const feeRate = market === "us" ? cfg.feeUS : cfg.feeKR;
   const gross = price * qty;
   const fee = gross * feeRate;
   const total = gross + fee;
   if (total > cash[market]) { await log(DB, "WARN", symbol, "BUY aborted: cash short"); return cash; }
 
-  // 전략별 손절가 계산
+  // 전략별 손절가 계산 — [V8.6] opts.stopPctOverride 있으면 우선 적용 (LLM 지시)
   const rules = getStrategyRules(cfg, strategy);
-  const stopPct = rules.stopLossPct || cfg.stopLoss;
+  const stopPct = (opts && typeof opts.stopPctOverride === "number")
+    ? opts.stopPctOverride : (rules.stopLossPct || cfg.stopLoss);
   const atrMult = rules.atrStopMult || cfg.atrStopMult;
 
   const pctStop = price * (1 - stopPct / 100);
@@ -1844,14 +2174,30 @@ async function runTradingCycle(env) {
     const enabledStrats = ["swing","day","momentum","meanrev"].filter(function(s){ return cfg.strategies[s]; }).join(",");
     const disabledSigNote = (cfg.disabledSignals && cfg.disabledSignals.length > 0)
       ? " disabled=[" + cfg.disabledSignals.join(",") + "]" : "";
-    await log(DB, "INFO", null, "=== Cycle start (V8.4) strats=[" + enabledStrats + "] conf=" + (cfg.requireConfluence ? "ON" : "OFF") + disabledSigNote + " ===");
+    await log(DB, "INFO", null, "=== Cycle start (V8.6) strats=[" + enabledStrats + "] conf=" + (cfg.requireConfluence ? "ON" : "OFF") + disabledSigNote + " ===");
     const cycleStartedAt = Date.now();
-    const usOpen = isMarketOpen("us");
-    const krOpen = isMarketOpen("kr");
 
-    // [V8.1.1] 양 시장 다 닫혔으면 사이클 전체 스킵 — 정규장에만 작동
+    // [V8.6 Hybrid] LLM 일일 분석 트리거 — 시장별 정해진 시각에 1회 호출
+    // KR 09:00 KST, US 09:20 ET (시장 시작 10분 전, DST 자동)
+    // 호출은 try-catch로 격리되어 실패해도 매매 사이클은 정상 진행
+    if (cfg.llmHybrid && cfg.llmHybrid.enabled) {
+      if (isLLMTriggerTime("kr")) {
+        try { await runLLMDailyAnalysis(env, "kr"); }
+        catch (e) { await log(DB, "ERROR", null, "[LLM] kr trigger fail: " + e.message); }
+      }
+      if (isLLMTriggerTime("us")) {
+        try { await runLLMDailyAnalysis(env, "us"); }
+        catch (e) { await log(DB, "ERROR", null, "[LLM] us trigger fail: " + e.message); }
+      }
+    }
+
+    // [V8.6] 거래 윈도우 기준 — KR은 야후 15분 지연 보정해서 09:15~15:45
+    const usOpen = isTradingWindow("us");
+    const krOpen = isTradingWindow("kr");
+
+    // [V8.1.1] 양 시장 거래 윈도우 둘 다 닫혔으면 사이클 전체 스킵
     if (!usOpen && !krOpen) {
-      await log(DB, "CLOSED", null, "US & KR 장 마감 — 사이클 스킵");
+      await log(DB, "CLOSED", null, "US & KR 거래 윈도우 외 — 사이클 스킵");
       return;
     }
 
@@ -1958,6 +2304,18 @@ async function runTradingCycle(env) {
       const stateSamples = [];    // [V8.1.2] 종목 상태 샘플 (진단용)
       function incNobuy(reason) { nobuyCounts[reason] = (nobuyCounts[reason] || 0) + 1; }
       function incBlock(reason) { blockCounts[reason] = (blockCounts[reason] || 0) + 1; }
+
+      // [V8.6 Hybrid] 시장별 LLM 일일 지시 로드 — 없거나 만료면 null (V8.5 동작)
+      const llmInstr = (cfg.llmHybrid && cfg.llmHybrid.enabled)
+        ? await getActiveLLMInstruction(DB, market) : null;
+      if (llmInstr) {
+        await log(DB, "INFO", null,
+          "[LLM] " + market + " active: sentiment=" + llmInstr.sentiment +
+          " sizing×" + llmInstr.position_sizing.scale +
+          (llmInstr.avoid_symbols.length > 0 ? " avoid=" + llmInstr.avoid_symbols.join(",") : "") +
+          (llmInstr.disable_signals.length > 0 ? " disableSig=" + llmInstr.disable_signals.join(",") : "")
+        );
+      }
 
       // === 평가 단계 (직렬 처리: cash/positions 일관성 유지) ===
       for (const item of fetched) {
@@ -2128,6 +2486,27 @@ async function runTradingCycle(env) {
               continue;
             }
 
+            // [V8.6 Hybrid] LLM 일일 지시 적용 — 매수 차단 필터
+            if (llmInstr) {
+              // 1) 매수 신호 전체 OFF
+              if (!llmInstr.buy_signals.enabled) {
+                incBlock("LLM_BUY_OFF[" + strategy + "]");
+                continue;
+              }
+              // 2) 진입 금지 종목
+              if (llmInstr.avoid_symbols.indexOf(symbol) >= 0) {
+                incBlock("LLM_AVOID_SYM[" + strategy + "]");
+                continue;
+              }
+              // 3) 비활성화된 신호 — 신호명 또는 cross 멤버 어느 하나라도 매치되면 차단
+              const sigMembers = (signal.members && signal.members.length > 0) ? signal.members : [signal.name];
+              const blockedByLLM = sigMembers.some(function(m) { return llmInstr.disable_signals.indexOf(m) >= 0; });
+              if (blockedByLLM) {
+                incBlock("LLM_DISABLE_SIG[" + strategy + "]");
+                continue;
+              }
+            }
+
             const baseRatio = getPositionSizeRatio(mcfg, strategy, regime.regime);
 
             // [V8.3] ATR 기반 동적 사이징 multiplier
@@ -2190,6 +2569,11 @@ async function runTradingCycle(env) {
               }
             }
 
+            // [V8.6 Hybrid] LLM 사이징 스케일 적용 — cashCap 한도 내에서
+            if (llmInstr && llmInstr.position_sizing && typeof llmInstr.position_sizing.scale === "number") {
+              budget = Math.min(budget * llmInstr.position_sizing.scale, cashCap);
+            }
+
             let qty = Math.floor(budget / (price * (1 + feeRate)));
 
             // [V8.1.9] floor 손실 보정: budget 대비 +1주 더 살 여유가 있고
@@ -2211,7 +2595,10 @@ async function runTradingCycle(env) {
 
             const totalCost = qty * price * (1 + feeRate);
             if (qty > 0 && totalCost <= cash[market]) {
-              await executeBuy(DB, market, symbol, strategy, qty, price, signal, dailyAtr, mcfg, cash);
+              // [V8.6 Hybrid] LLM stop_loss_adjustment 적용 (지시 있으면)
+              const buyOpts = (llmInstr && llmInstr.stop_loss_adjustment && typeof llmInstr.stop_loss_adjustment.new_pct === "number")
+                ? { stopPctOverride: llmInstr.stop_loss_adjustment.new_pct } : null;
+              await executeBuy(DB, market, symbol, strategy, qty, price, signal, dailyAtr, mcfg, cash, buyOpts);
               bought++;
               heldSymbols.add(symbol);
               strategiesHeldNow.add(strategy);
@@ -2335,6 +2722,11 @@ async function handleRequest(request, env) {
         },
         lastTick: lastTick, cfg: cfg,
         marketStatus: { us: isMarketOpen("us"), kr: isMarketOpen("kr") },
+        tradingWindow: { us: isTradingWindow("us"), kr: isTradingWindow("kr") },
+        llmDaily: {
+          us: await getState(env.DB, "llm_daily:us", null),
+          kr: await getState(env.DB, "llm_daily:kr", null)
+        },
         watchlist: quotes,
         indices: indices,
         signalStats: signalStats,
@@ -2485,6 +2877,42 @@ async function handleRequest(request, env) {
       const stats = await getState(env.DB, "signal_stats", {});
       return Response.json(stats, { headers: cors });
     }
+    // [V8.6 Hybrid] LLM 일일 지시 조회 — ?market=us|kr (없으면 둘 다)
+    if (path === "/api/llm/instruction") {
+      const m = url.searchParams.get("market");
+      if (m === "us" || m === "kr") {
+        const stored = await getState(env.DB, "llm_daily:" + m, null);
+        return Response.json(stored || { empty: true }, { headers: cors });
+      }
+      const us = await getState(env.DB, "llm_daily:us", null);
+      const kr = await getState(env.DB, "llm_daily:kr", null);
+      return Response.json({ us: us, kr: kr }, { headers: cors });
+    }
+    // [V8.6 Hybrid] LLM 수동 트리거 — POST { market: "us" | "kr" }
+    if (path === "/api/llm/run" && request.method === "POST") {
+      let body = {};
+      try { body = await request.json(); } catch (e) {}
+      const m = body.market;
+      if (m !== "us" && m !== "kr") {
+        return Response.json({ error: "market must be 'us' or 'kr'" }, { status: 400, headers: cors });
+      }
+      const result = await runLLMDailyAnalysis(env, m);
+      return Response.json(result, { headers: cors });
+    }
+    // [V8.6 Hybrid] LLM 지시 강제 삭제 — 잘못된 지시 적용 막을 때
+    if (path === "/api/llm/clear" && request.method === "POST") {
+      let body = {};
+      try { body = await request.json(); } catch (e) {}
+      const m = body.market;
+      if (m === "us" || m === "kr") {
+        await env.DB.prepare("DELETE FROM state WHERE k = ?").bind("llm_daily:" + m).run();
+        await log(env.DB, "INFO", null, "[LLM] cleared instruction: " + m);
+        return Response.json({ ok: true, cleared: m }, { headers: cors });
+      }
+      await env.DB.prepare("DELETE FROM state WHERE k LIKE 'llm_daily:%'").run();
+      await log(env.DB, "INFO", null, "[LLM] cleared all instructions");
+      return Response.json({ ok: true, cleared: "all" }, { headers: cors });
+    }
     // [신규] 락 강제 해제 — stuck 됐을 때 복구용
     if (path === "/api/unlock" && request.method === "POST") {
       await releaseCycleLock(env.DB);
@@ -2517,6 +2945,8 @@ async function handleRequest(request, env) {
         lastTick: lastTick,
         lastTickAgeMin: lastTick ? Math.round((now - lastTick) / 60000) : null,
         market: { us: isMarketOpen("us"), kr: isMarketOpen("kr") },
+        tradingWindow: { us: isTradingWindow("us"), kr: isTradingWindow("kr") },
+        usEtOffset: getUSEtOffset(new Date()),  // -4=EDT(서머타임) / -5=EST(겨울)
         quotes: { total: allSymbols.length, stored: quoteCount, freshUnder5min: freshCount },
         staleOrMissing: staleSyms.slice(0, 20),
         cfg: { enabled: cfg.enabled, marketHoursOnly: cfg.marketHoursOnly, cycleLockTTL: cfg.cycleLockTTL }
