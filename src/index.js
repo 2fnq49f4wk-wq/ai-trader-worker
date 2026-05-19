@@ -502,7 +502,7 @@ async function collectLLMContext(DB, env, market) {
   const indices = market === "us" ? US_INDICES : KR_INDICES;
   const indexQuotes = {};
   for (const idx of indices) {
-    const q = await getQuote(DB, idx);
+    const q = await getState(DB, "index:" + idx, null);
     if (q) indexQuotes[idx] = { price: q.price, dayChangePct: q.dayChangePct };
   }
 
