@@ -1586,7 +1586,7 @@ button.btn.loading { opacity: 0.5; pointer-events: none; }
 
   function llmRun(market) {
     if (!confirm(market.toUpperCase() + ' 시장 LLM 분석을 지금 실행하시겠습니까?\n(API 키와 cfg.llmHybrid.enabled가 필요합니다)')) return;
-    fetch(window.location.origin + '/api/llm/run', {
+    fetch('/api/llm/run', {
       method: 'POST',
       headers: {'content-type': 'application/json'},
       body: JSON.stringify({market: market})
@@ -1604,7 +1604,7 @@ button.btn.loading { opacity: 0.5; pointer-events: none; }
   }
 
   function llmViewDetail() {
-    fetch(window.location.origin + '/api/llm/instruction')
+    fetch('/api/llm/instruction')
       .then(function(r) { return r.json(); })
       .then(function(d) {
         var w = window.open('', '_blank');
@@ -1615,7 +1615,7 @@ button.btn.loading { opacity: 0.5; pointer-events: none; }
 
   function llmClear() {
     if (!confirm('현재 활성 LLM 지시를 삭제하시겠습니까?\n다음 트리거 시각까지 V8.5 기본 동작으로 작동합니다.')) return;
-    fetch(window.location.origin + '/api/llm/clear', {
+    fetch('/api/llm/clear', {
       method: 'POST',
       headers: {'content-type': 'application/json'},
       body: JSON.stringify({})
@@ -2059,6 +2059,12 @@ button.btn.loading { opacity: 0.5; pointer-events: none; }
     runNow();
   }, 2000);
   timer = setInterval(refreshAll, REFRESH_MS);
+  
+  // [V8.6] LLM 함수들을 글로벌 스코프에 노출 (onclick="" 에서 접근 가능하게)
+  window.llmRefresh = llmRefresh;
+  window.llmRun = llmRun;
+  window.llmViewDetail = llmViewDetail;
+  window.llmClear = llmClear;
 })();
 
 // LUX-ENGINE 오프닝 시퀀스 페이드아웃 및 자동 해제 로직
