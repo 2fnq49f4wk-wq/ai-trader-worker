@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>LUX-engine V8.6</title>
+<title>LUX-engine V9(beta)</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600;700&family=Georgia:wght@400;700&display=swap" rel="stylesheet">
@@ -103,6 +103,27 @@
   justify-content: center;
   transition: opacity 0.8s cubic-bezier(0.25, 1, 0.5, 1);
   pointer-events: auto;
+  overflow: hidden;
+}
+
+/* 광학 렌즈 플레어 효과 */
+#lux-intro-overlay::before {
+  content: "";
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: 100%;
+  height: 100%;
+  background: 
+    radial-gradient(circle at 40% 40%, rgba(88, 166, 255, 0.08) 0%, transparent 40%),
+    radial-gradient(circle at 60% 60%, rgba(88, 166, 255, 0.05) 0%, transparent 40%);
+  pointer-events: none;
+  animation: lensFlareRotate 15s linear infinite;
+}
+
+@keyframes lensFlareRotate {
+  0% { transform: rotate(0deg); }
+  100% { transform: rotate(360deg); }
 }
 
 .intro-center-box {
@@ -121,7 +142,8 @@
   transform: scale(0.3) rotate(-45deg);
   animation: 
     starSpawn 1.2s cubic-bezier(0.34, 1.56, 0.64, 1) forwards,
-    starPulseGlow 2s ease-in-out infinite alternate 1.2s;
+    starPulseGlow 2s ease-in-out infinite alternate 1.2s,
+    chromaticWave 4s ease-in-out infinite 1.2s;
 }
 
 .intro-star-logo::before {
@@ -205,10 +227,43 @@
   100% { filter: drop-shadow(0 0 40px rgba(88, 166, 255, 0.95)); }
 }
 
+/* 크로매틱 수차 효과 - 광학 렌즈 색상분리 */
+@keyframes chromaticWave {
+  0%, 100% { 
+    filter: drop-shadow(0 0 25px rgba(88, 166, 255, 0.65));
+    transform: translate(0, 0);
+  }
+  25% { 
+    filter: drop-shadow(1px 0 15px rgba(100, 200, 255, 0.5)) drop-shadow(-1px 0 15px rgba(50, 100, 150, 0.3));
+    transform: translate(0.5px, 0);
+  }
+  50% { 
+    filter: drop-shadow(0 0 30px rgba(88, 166, 255, 0.75));
+    transform: translate(0, 0);
+  }
+  75% { 
+    filter: drop-shadow(-1px 0 15px rgba(100, 200, 255, 0.5)) drop-shadow(1px 0 15px rgba(50, 100, 150, 0.3));
+    transform: translate(-0.5px, 0);
+  }
+}
+
 @keyframes textFadeIn {
   to {
     opacity: 1;
     transform: translateY(0);
+  }
+}
+
+
+/* ============ OPTICAL EFFECTS ============ */
+
+/* 광학 반사/글리머 효과 */
+@keyframes opticalGlimmer {
+  0%, 100% { 
+    filter: drop-shadow(0 0 8px rgba(88, 166, 255, 0.45));
+  }
+  50% { 
+    filter: drop-shadow(0 0 15px rgba(88, 166, 255, 0.8)) drop-shadow(1px 1px 5px rgba(150, 200, 255, 0.3));
   }
 }
 
@@ -229,6 +284,7 @@
   align-items: center;
   justify-content: center;
   filter: drop-shadow(0 0 8px rgba(88, 166, 255, 0.45)); /* 별 중심부 은은한 파란 광원 효과 */
+  animation: opticalGlimmer 3s ease-in-out infinite;
 }
 
 .lux-star-logo::before {
@@ -467,7 +523,7 @@ button.btn.loading { opacity: 0.5; pointer-events: none; }
   <div class="intro-center-box">
     <div class="intro-star-logo"></div>
     <div class="intro-text-box">
-      <div class="intro-title">LUX-ENGINE V8.2</div>
+      <div class="intro-title">LUX-ENGINE V9(beta)</div>
       <div class="intro-subtitle">Powered by BLAUENACHT</div>
     </div>
   </div>
@@ -478,7 +534,7 @@ button.btn.loading { opacity: 0.5; pointer-events: none; }
     <div class="brand-container">
     <div class="lux-star-logo"></div>
     <div class="lux-text-title">
-      <span>LUX-ENGINE V8.2</span>
+      <span>LUX-ENGINE V9(beta)</span>
       <span class="lux-powered-by">Powered by BLAUENACHT</span>
     </div>
   </div>
@@ -706,7 +762,7 @@ button.btn.loading { opacity: 0.5; pointer-events: none; }
     <button type="button" class="btn" id="btnResetTickers" style="margin-bottom:10px;">티커 기본값으로 복원</button>
 
     <div class="section-divider"></div>
-    <div class="section-title">STRATEGIES (V8.2 멀티 전략)</div>
+    <div class="section-title">STRATEGIES (V9(beta) 멀티 전략)</div>
     <div class="hint" style="margin-bottom:8px;">활성 전략을 켜고 끄세요. 같은 종목이라도 다른 전략이면 별도 포지션이 생성됩니다.</div>
     <div class="field-row">
       <div class="checkbox-row"><input type="checkbox" id="cfgStratSwing"><label for="cfgStratSwing"><b>SWING</b> (4시간~7일, 풀백/반전)</label></div>
