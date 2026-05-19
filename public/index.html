@@ -1589,7 +1589,7 @@ button.btn.loading { opacity: 0.5; pointer-events: none; }
     fetch('/api/llm/run', {
       method: 'POST',
       headers: {'content-type': 'application/json'},
-      body: JSON.stringify({market: market})
+      body: JSON.stringify({market: market, force: true})
     })
     .then(function(r) { return r.json(); })
     .then(function(d) {
@@ -1607,8 +1607,21 @@ button.btn.loading { opacity: 0.5; pointer-events: none; }
     fetch('/api/llm/instruction')
       .then(function(r) { return r.json(); })
       .then(function(d) {
-        var w = window.open('', '_blank');
-        w.document.write('<pre style="background:#0d1117;color:#e0e0e0;padding:20px;font-family:monospace;">' + escapeHtml(JSON.stringify(d, null, 2)) + '</pre>');
+        // Safari 팝업 차단 대응 - alert 또는 모달로 표시
+        var jsonStr = JSON.stringify(d, null, 2);
+        if (!d || Object.keys(d).length === 0 || (!d.us && !d.kr)) {
+          toast('활성 LLM 지시 없음');
+          return;
+        }
+        // 모달 오버레이로 표시
+        var overlay = document.createElement('div');
+        overlay.style.cssText = 'position:fixed;top:0;left:0;right:0;bottom:0;background:rgba(0,0,0,0.9);z-index:99999;display:flex;align-items:center;justify-content:center;padding:20px;overflow:auto;';
+        overlay.onclick = function(e) { if (e.target === overlay) document.body.removeChild(overlay); };
+        var box = document.createElement('div');
+        box.style.cssText = 'background:#0d1117;color:#e0e0e0;padding:20px;border-radius:8px;max-width:90%;max-height:90vh;overflow:auto;border:1px solid #38bdf8;';
+        box.innerHTML = '<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px;"><strong style="color:#38bdf8;">🤖 LLM 활성 지시</strong><button style="background:#dc2626;color:white;border:none;padding:6px 12px;border-radius:4px;cursor:pointer;" onclick="this.parentElement.parentElement.parentElement.remove()">닫기</button></div><pre style="font-family:IBM Plex Mono,monospace;font-size:12px;white-space:pre-wrap;word-break:break-all;">' + escapeHtml(jsonStr) + '</pre>';
+        overlay.appendChild(box);
+        document.body.appendChild(overlay);
       })
       ['catch'](function(e) { toast('조회 실패: ' + e.message); });
   }
