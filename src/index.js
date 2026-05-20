@@ -555,6 +555,10 @@ async function callClaude(apiKey, model, prompt, maxTokens, timeoutMs, retryCfg)
   const maxBackoffMs = retryCfg.maxBackoffMs || 8000;
   const perAttemptTimeout = timeoutMs || 25000;
   const usedModel = model || "claude-sonnet-4-6";
+  // [V8.8] 요청 보낼 엔드포인트. 기본은 Anthropic 직통.
+  //   Cloudflare Workers 출구 IP가 차단 지역(예: 홍콩)을 거쳐 403이 날 경우,
+  //   AI Gateway나 외부 프록시 URL을 넣어 우회. 끝에 /v1/messages 포함한 전체 URL.
+  const endpoint = retryCfg.baseURL || "https://api.anthropic.com/v1/messages";
 
   const sleep = function(ms) { return new Promise(function(r) { setTimeout(r, ms); }); };
   const backoff = function(attempt) { return Math.min(baseBackoffMs * Math.pow(2, attempt), maxBackoffMs); };
@@ -565,7 +569,7 @@ async function callClaude(apiKey, model, prompt, maxTokens, timeoutMs, retryCfg)
     const controller = new AbortController();
     const timeoutId = setTimeout(function() { controller.abort(); }, perAttemptTimeout);
     try {
-      const res = await fetch("https://api.anthropic.com/v1/messages", {
+      const res = await fetch(endpoint, {
         method: "POST",
         headers: {
           "x-api-key": apiKey,
@@ -596,7 +600,7 @@ async function callClaude(apiKey, model, prompt, maxTokens, timeoutMs, retryCfg)
         let hint = "";
         if (status === 404) hint = " [모델 ID '" + usedModel + "'이(가) 잘못되었거나 사용 불가. 유효 예: claude-opus-4-7 / claude-sonnet-4-6 / claude-haiku-4-5-20251001]";
         else if (status === 401) hint = " [API 키 오류 — ANTHROPIC_API_KEY 확인]";
-        else if (status === 403) hint = " [권한 없음 — 키의 모델/조직 권한 확인]";
+        else if (status === 403) hint = " [요청 거부됨(403). 키 권한 문제이거나, Cloudflare Workers 출구 IP가 차단 지역을 거쳐 막혔을 수 있음. 후자라면 LLM_BASE_URL 환경변수로 AI Gateway/프록시 우회 필요]";
         else if (status === 400) hint = " [요청 형식 오류]";
         throw new Error("HTTP " + status + hint + ": " + errText.slice(0, 200));
       }
@@ -736,7 +740,11 @@ async function runLLMDailyAnalysis(env, market, forceRun = false) {
       prompt,
       llmCfg.maxTokens || 2000,
       llmCfg.timeoutMs || 25000,
-      { maxRetries: (typeof llmCfg.maxRetries === "number" ? llmCfg.maxRetries : 2) }
+      {
+        maxRetries: (typeof llmCfg.maxRetries === "number" ? llmCfg.maxRetries : 2),
+        // [V8.8] 환경변수로 우회 엔드포인트 지정 가능. 없으면 Anthropic 직통.
+        baseURL: env.LLM_BASE_URL || (llmCfg.baseURL || null)
+      }
     );
 
     let raw;
