@@ -1897,6 +1897,229 @@ function evaluateSell(pos, price, daily, dailyRsi, dailyMa, dailyMaShort, cfg, m
   return { sell: false };
 }
 
+// ============================================================
+// [V8.9] 백테스트 엔진 — 기존 신호/매도 로직을 과거 일봉에 그대로 적용
+//   • 목적: 파라미터 변경 효과를 데이터로 검증 (운/과최적화 구분)
+//   • look-ahead 방지: i일차 판단에 0..i 데이터만 사용
+//   • day(분봉) 전략은 일봉 백테스트에서 제외 (정직성)
+//   • 체결: 종가 기준 + 슬리피지/수수료/매도세 반영
+//   • 한계: 일봉 종가 체결이라 장중 변동 미반영, 과거≠미래
+// ============================================================
+
+// 백테스트용 긴 일봉 — range 파라미터로 기간 조절 (기본 2년)
+async function fetchDailyForBacktest(symbol, range) {
+  const j = await yahooFetch("https://query1.finance.yahoo.com/v8/finance/chart/" + encodeURIComponent(symbol) + "?interval=1d&range=" + (range || "2y"));
+  const result = j && j.chart && j.chart.result && j.chart.result[0];
+  if (!result) throw new Error("no daily data");
+  const ts = result.timestamp || [];
+  const quote = (result.indicators && result.indicators.quote && result.indicators.quote[0]) || {};
+  const rawCloses = quote.close || [], rawHighs = quote.high || [], rawLows = quote.low || [], rawVols = quote.volume || [];
+  const closes = [], highs = [], lows = [], volumes = [], dates = [];
+  for (let i = 0; i < rawCloses.length; i++) {
+    const c = rawCloses[i];
+    if (typeof c !== "number" || isNaN(c) || c <= 0) continue;
+    const h = rawHighs[i], l = rawLows[i], v = rawVols[i];
+    closes.push(c);
+    highs.push((typeof h === "number" && !isNaN(h) && h > 0) ? h : c);
+    lows.push((typeof l === "number" && !isNaN(l) && l > 0) ? l : c);
+    volumes.push((typeof v === "number" && !isNaN(v) && v > 0) ? v : 0);
+    dates.push((ts[i] ? ts[i] * 1000 : Date.now()));
+  }
+  if (closes.length === 0) throw new Error("no daily close");
+  return { symbol: symbol, closes: closes, highs: highs, lows: lows, volumes: volumes, dates: dates };
+}
+
+function _btSliceDaily(full, endIdx) {
+  return {
+    closes: full.closes.slice(0, endIdx + 1),
+    highs: full.highs.slice(0, endIdx + 1),
+    lows: full.lows.slice(0, endIdx + 1),
+    volumes: full.volumes ? full.volumes.slice(0, endIdx + 1) : [],
+    prevClose: endIdx >= 1 ? full.closes[endIdx - 1] : full.closes[endIdx]
+  };
+}
+
+// 단일 심볼 백테스트. fullData: fetchDailyForBacktest 반환물. cfg: 설정. market: 'us'|'kr'
+// evaluateSell이 Date.now()로 보유기간을 계산하므로, 각 봉의 날짜를 _btNow에 주입한다.
+let _btNow = null;  // null이면 실제 Date.now 사용
+const _btRealNow = Date.now;
+function backtestSymbol(fullData, cfg, market, opts) {
+  opts = opts || {};
+  const warmup = opts.warmup || 30;
+  const slippagePct = opts.slippagePct != null ? opts.slippagePct : 0.1;
+  const feeRate = market === "us" ? (cfg.feeUS || 0) : (cfg.feeKR || 0);
+  const sellTaxRate = market === "kr" ? (cfg.krSellTax || 0) : 0;
+  const n = fullData.closes.length;
+  if (n < warmup + 5) return { trades: [], skipped: "too_short" };
+
+  // day 전략 제외 (분봉 전략)
+  const cfgBt = JSON.parse(JSON.stringify(cfg));
+  if (cfgBt.strategies) cfgBt.strategies.day = false;
+
+  const signalStats = {};
+  const regime = { name: "NEUTRAL" };
+  const trades = [];
+  const openPositions = {};
+
+  // Date.now를 백테스트 시계로 교체
+  Date.now = function() { return _btNow != null ? _btNow : _btRealNow(); };
+  try {
+    for (let i = warmup; i < n; i++) {
+      const price = fullData.closes[i];
+      const prevClose = fullData.closes[i - 1];
+      const dayPct = prevClose > 0 ? ((price - prevClose) / prevClose) * 100 : 0;
+      const daily = _btSliceDaily(fullData, i);
+      const barTime = fullData.dates ? fullData.dates[i] : (_btRealNow() - (n - i) * 86400000);
+      _btNow = barTime;
+
+      const dailyRsi = getRSI(daily.closes, cfg.rsiPeriod || 14);
+      const dailyMa = getMA(daily.closes, 20);
+      const dailyMaShort = getMA(daily.closes, 5);
+
+      // 매도 평가
+      for (const strat of Object.keys(openPositions)) {
+        const pos = openPositions[strat];
+        if (!pos.meta.peakPrice || price > pos.meta.peakPrice) pos.meta.peakPrice = price;
+        const decision = evaluateSell(pos, price, daily, dailyRsi, dailyMa, dailyMaShort, cfgBt, true, market);
+        if (decision && decision.sell) {
+          const sellQty = decision.sellQty || pos.qty;
+          const execPrice = price * (1 - slippagePct / 100);
+          const gross = execPrice * sellQty;
+          const proceeds = gross - gross * feeRate - gross * sellTaxRate;
+          const entryCost = pos.avg * sellQty;
+          const entryFee = (pos.meta.feeRemaining || 0) * (sellQty / pos.qty);
+          const pnl = proceeds - entryCost - entryFee;
+          const pnlPct = (entryCost + entryFee) > 0 ? (pnl / (entryCost + entryFee)) * 100 : 0;
+          trades.push({ symbol: fullData.symbol, strategy: strat, entryIdx: pos.entryIdx, exitIdx: i, entryPrice: pos.avg, exitPrice: execPrice, qty: sellQty, pnl: pnl, pnlPct: pnlPct, reason: decision.reason, signal: pos.meta.signalName });
+          if (sellQty < pos.qty) { pos.qty -= sellQty; pos.meta.tp1Done = true; pos.meta.feeRemaining = Math.max(0, (pos.meta.feeRemaining || 0) - entryFee); }
+          else { delete openPositions[strat]; }
+        }
+      }
+
+      // 매수 평가
+      const results = evaluateAllStrategies(price, dayPct, daily, cfgBt, signalStats, regime);
+      for (const r of results) {
+        const strat = r.strategy;
+        if (openPositions[strat]) continue;
+        const signal = r.signal;
+        const ratio = getPositionSizeRatio(cfgBt, strat, regime.name);
+        const budget = (opts.capitalPerTrade || 1000000) * ratio / 0.25;
+        const qty = Math.max(1, Math.floor(budget / price));
+        const entryPrice = price * (1 + slippagePct / 100);
+        const entryFee = entryPrice * qty * feeRate;
+        const rules = getStrategyRules(cfgBt, strat);
+        const atr = getATR(daily.closes, 14, daily.highs, daily.lows);
+        let stopPrice = null;
+        if (atr != null && atr > 0) {
+          const atrStopPct = (atr / price) * 100 * 1.5;
+          const stopPct = Math.max(rules.stopLossPct || cfg.stopLoss || 5, atrStopPct);
+          stopPrice = entryPrice * (1 - stopPct / 100);
+        }
+        openPositions[strat] = {
+          symbol: fullData.symbol, strategy: strat, qty: qty, avg: entryPrice, opened_ts: barTime, entryIdx: i,
+          meta: { strategy: strat, signalName: signal.name, signalMembers: signal.members || [signal.name], peakPrice: entryPrice, stopPrice: stopPrice, feeRemaining: entryFee, tp1Done: false }
+        };
+      }
+    }
+
+    // 미청산 포지션 마지막 종가로 청산
+    const lastPrice = fullData.closes[n - 1];
+    for (const strat of Object.keys(openPositions)) {
+      const pos = openPositions[strat];
+      const proceeds = lastPrice * pos.qty * (1 - feeRate - sellTaxRate);
+      const entryCost = pos.avg * pos.qty;
+      const pnl = proceeds - entryCost - (pos.meta.feeRemaining || 0);
+      const pnlPct = entryCost > 0 ? (pnl / entryCost) * 100 : 0;
+      trades.push({ symbol: fullData.symbol, strategy: strat, entryIdx: pos.entryIdx, exitIdx: n - 1, entryPrice: pos.avg, exitPrice: lastPrice, qty: pos.qty, pnl: pnl, pnlPct: pnlPct, reason: "BT-END-MTM", signal: pos.meta.signalName });
+    }
+  } finally {
+    _btNow = null;
+    Date.now = _btRealNow;  // 반드시 복구 (워커 다른 로직 보호)
+  }
+
+  return { trades: trades };
+}
+
+function backtestStats(trades) {
+  if (trades.length === 0) return { trades: 0, note: "거래 없음" };
+  const wins = trades.filter(function(t) { return t.pnl > 0; });
+  const losses = trades.filter(function(t) { return t.pnl <= 0; });
+  const totalPnl = trades.reduce(function(s, t) { return s + t.pnl; }, 0);
+  const grossWin = wins.reduce(function(s, t) { return s + t.pnl; }, 0);
+  const grossLoss = Math.abs(losses.reduce(function(s, t) { return s + t.pnl; }, 0));
+  const avgWin = wins.length ? grossWin / wins.length : 0;
+  const avgLoss = losses.length ? grossLoss / losses.length : 0;
+  let cum = 0, peak = 0, mdd = 0;
+  const sorted = trades.slice().sort(function(a, b) { return a.exitIdx - b.exitIdx; });
+  for (const t of sorted) { cum += t.pnl; if (cum > peak) peak = cum; const dd = peak - cum; if (dd > mdd) mdd = dd; }
+  return {
+    trades: trades.length,
+    winRate: +(wins.length / trades.length * 100).toFixed(1),
+    totalPnl: +totalPnl.toFixed(0),
+    avgPnlPct: +(trades.reduce(function(s, t) { return s + t.pnlPct; }, 0) / trades.length).toFixed(2),
+    avgWinPct: wins.length ? +(wins.reduce(function(s,t){return s+t.pnlPct;},0)/wins.length).toFixed(2) : 0,
+    avgLossPct: losses.length ? +(losses.reduce(function(s,t){return s+t.pnlPct;},0)/losses.length).toFixed(2) : 0,
+    payoffRatio: avgLoss > 0 ? +(avgWin / avgLoss).toFixed(2) : null,
+    profitFactor: grossLoss > 0 ? +(grossWin / grossLoss).toFixed(2) : null,
+    maxDrawdown: +mdd.toFixed(0),
+    expectancy: +(totalPnl / trades.length).toFixed(0)
+  };
+}
+
+function backtestStatsByStrategy(trades) {
+  const out = {};
+  for (const strat of STRATEGIES) {
+    const subset = trades.filter(function(t) { return t.strategy === strat; });
+    if (subset.length > 0) out[strat] = backtestStats(subset);
+  }
+  return out;
+}
+
+function backtestStatsBySignal(trades) {
+  const out = {};
+  for (const t of trades) {
+    const sig = t.signal || "unknown";
+    if (!out[sig]) out[sig] = [];
+    out[sig].push(t);
+  }
+  const result = {};
+  for (const sig of Object.keys(out)) result[sig] = backtestStats(out[sig]);
+  return result;
+}
+
+// 여러 심볼 백테스트 실행 + 통합 통계
+async function runBacktest(env, opts) {
+  opts = opts || {};
+  const cfg = migrateCfgToMarkets(Object.assign({}, DEFAULT_CFG, await getState(env.DB, "cfg", {})));
+  const market = opts.market || "us";
+  const range = opts.range || "2y";
+  const symbols = opts.symbols || (market === "us" ? cfg.usTickers : cfg.krTickers).slice(0, opts.maxSymbols || 15);
+
+  const allTrades = [];
+  const perSymbol = {};
+  const errors = [];
+  for (const sym of symbols) {
+    try {
+      const data = await fetchDailyForBacktest(sym, range);
+      const res = backtestSymbol(data, cfg, market, { slippagePct: opts.slippagePct != null ? opts.slippagePct : 0.1, capitalPerTrade: opts.capitalPerTrade || 1000000 });
+      if (res.skipped) { errors.push({ symbol: sym, reason: res.skipped }); continue; }
+      perSymbol[sym] = backtestStats(res.trades);
+      for (const t of res.trades) allTrades.push(t);
+    } catch (e) {
+      errors.push({ symbol: sym, error: e.message });
+    }
+  }
+
+  return {
+    config: { market: market, range: range, symbols: symbols, slippagePct: opts.slippagePct != null ? opts.slippagePct : 0.1, note: "day 전략 제외(분봉), 일봉 종가 체결" },
+    overall: backtestStats(allTrades),
+    byStrategy: backtestStatsByStrategy(allTrades),
+    bySignal: backtestStatsBySignal(allTrades),
+    bySymbol: perSymbol,
+    errors: errors
+  };
+}
+
 async function refreshQuotesOnly(env, market) {
   const DB = env.DB;
   await ensureSchema(DB);
@@ -3019,6 +3242,27 @@ async function handleRequest(request, env) {
       await releaseCycleLock(env.DB);
       await log(env.DB, "INFO", null, "cycle lock force-released via /api/unlock");
       return Response.json({ ok: true }, { headers: cors });
+    }
+    // [V8.9] 백테스트 — GET 또는 POST
+    //   파라미터: market(us/kr), range(1y/2y/5y), maxSymbols, slippagePct, symbols(쉼표구분)
+    //   예: /api/backtest?market=us&range=2y&maxSymbols=10
+    if (path === "/api/backtest") {
+      let opts = {};
+      if (request.method === "POST") {
+        try { opts = await request.json(); } catch (e) {}
+      } else {
+        const p = url.searchParams;
+        if (p.get("market")) opts.market = p.get("market");
+        if (p.get("range")) opts.range = p.get("range");
+        if (p.get("maxSymbols")) opts.maxSymbols = parseInt(p.get("maxSymbols"), 10);
+        if (p.get("slippagePct")) opts.slippagePct = parseFloat(p.get("slippagePct"));
+        if (p.get("symbols")) opts.symbols = p.get("symbols").split(",").map(function(s){ return s.trim(); }).filter(Boolean);
+      }
+      if (opts.market !== "us" && opts.market !== "kr") opts.market = "us";
+      // 안전 가드: 심볼 과다 방지 (Workers 시간/CPU 한도)
+      if (!opts.maxSymbols || opts.maxSymbols > 20) opts.maxSymbols = 15;
+      const result = await runBacktest(env, opts);
+      return Response.json(result, { headers: cors });
     }
     // [신규] 진단 — 락 상태, 마지막 tick, 시세 수, 시장 오픈 여부
     if (path === "/api/diag") {
