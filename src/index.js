@@ -152,7 +152,7 @@ const DEFAULT_CFG = {
   // === [V8.6 Hybrid] Claude LLM 일일 지시 ===
   llmHybrid: {
     enabled: false,           // 기본 OFF — 사용자가 명시적으로 켜야 작동
-    model: "claude-opus-4-7", // [V8.7] 유효 모델 ID로 교정 (구 'claude-opus-4-5'는 존재하지 않아 404 발생)
+    model: "claude-sonnet-4-6", // [V8.7] 유효 모델 ID (구 'claude-opus-4-5'는 존재하지 않아 404 발생)
     maxTokens: 2000,
     timeoutMs: 20000,         // [V8.7] 시도당 20초 (재시도 포함 총량이 cron 60초/lock TTL 내에 들도록)
     maxRetries: 2,            // [V8.7] 재시도 2회 → 최악 ~63초, 정상 응답(5~10초)엔 영향 없음
@@ -335,7 +335,7 @@ function migrateCfgToMarkets(cfg) {
   //   얕은 병합(Object.assign) 특성상 DB에 저장된 llmHybrid가 DEFAULT_CFG를 통째로
   //   덮어쓰므로, 옛 'claude-opus-4-5' 등이 그대로 남아 404("서버를 찾을 수 없음")를 유발할 수 있음.
   const VALID_MODELS = ["claude-opus-4-7", "claude-sonnet-4-6", "claude-haiku-4-5-20251001", "claude-haiku-4-5"];
-  const FALLBACK_MODEL = "claude-opus-4-7";
+  const FALLBACK_MODEL = "claude-sonnet-4-6";
   if (cfg.llmHybrid && typeof cfg.llmHybrid === "object") {
     if (!cfg.llmHybrid.model || VALID_MODELS.indexOf(cfg.llmHybrid.model) === -1) {
       cfg.llmHybrid.model = FALLBACK_MODEL;
@@ -732,7 +732,7 @@ async function runLLMDailyAnalysis(env, market, forceRun = false) {
 
     const res = await callClaude(
       env.ANTHROPIC_API_KEY,
-      llmCfg.model || "claude-opus-4-7",
+      llmCfg.model || "claude-sonnet-4-6",
       prompt,
       llmCfg.maxTokens || 2000,
       llmCfg.timeoutMs || 25000,
