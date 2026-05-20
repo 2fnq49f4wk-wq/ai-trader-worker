@@ -537,16 +537,14 @@ async function callClaude(apiKey, model, prompt, maxTokens, timeoutMs) {
       headers: {
         "x-api-key": apiKey,
         "anthropic-version": "2023-06-01",
-        "content-type": "application/json",
-        "user-agent": "LUX-Engine/8.6 (Cloudflare Worker)"
+        "content-type": "application/json"
       },
       body: JSON.stringify({
         model: model || "claude-sonnet-4-6",
         max_tokens: maxTokens || 2000,
         messages: [{ role: "user", content: prompt }]
       }),
-      signal: controller.signal,
-      cf: { cacheTtl: 0, cacheEverything: false }
+      signal: controller.signal
     });
     clearTimeout(timeoutId);
     if (!res.ok) {
