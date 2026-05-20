@@ -152,9 +152,10 @@ const DEFAULT_CFG = {
   // === [V8.6 Hybrid] Claude LLM 일일 지시 ===
   llmHybrid: {
     enabled: false,           // 기본 OFF — 사용자가 명시적으로 켜야 작동
-    model: "claude-opus-4-5",
+    model: "claude-opus-4-7", // [V8.7] 유효 모델 ID로 교정 (구 'claude-opus-4-5'는 존재하지 않아 404 발생)
     maxTokens: 2000,
-    timeoutMs: 25000,         // 25초 타임아웃 (Workers CPU 한도 고려)
+    timeoutMs: 20000,         // [V8.7] 시도당 20초 (재시도 포함 총량이 cron 60초/lock TTL 내에 들도록)
+    maxRetries: 2,            // [V8.7] 재시도 2회 → 최악 ~63초, 정상 응답(5~10초)엔 영향 없음
     expiryHours: 18,          // 지시 유효 시간 — 18시간 지나면 무시 (다음날 지시 누락 시 안전)
     minSizingScale: 0.3,      // Claude가 너무 작은 사이즈 요청해도 이 값까지만
     maxSizingScale: 1.5,      // 너무 큰 사이즈 요청 차단
@@ -330,6 +331,19 @@ function getMarketCfg(cfg, market) {
 // cfg를 받아서 markets 구조가 없으면 현재 베이스 값을 양쪽에 복제해서 생성.
 // 이미 있으면 그대로. 베이스에 markets 누락된 키만 채워줌.
 function migrateCfgToMarkets(cfg) {
+  // [V8.7] 저장된 cfg에 남아있는 무효/구형 모델 ID를 유효한 현행 ID로 자동 교정.
+  //   얕은 병합(Object.assign) 특성상 DB에 저장된 llmHybrid가 DEFAULT_CFG를 통째로
+  //   덮어쓰므로, 옛 'claude-opus-4-5' 등이 그대로 남아 404("서버를 찾을 수 없음")를 유발할 수 있음.
+  const VALID_MODELS = ["claude-opus-4-7", "claude-sonnet-4-6", "claude-haiku-4-5-20251001", "claude-haiku-4-5"];
+  const FALLBACK_MODEL = "claude-opus-4-7";
+  if (cfg.llmHybrid && typeof cfg.llmHybrid === "object") {
+    if (!cfg.llmHybrid.model || VALID_MODELS.indexOf(cfg.llmHybrid.model) === -1) {
+      cfg.llmHybrid.model = FALLBACK_MODEL;
+    }
+    if (typeof cfg.llmHybrid.maxRetries !== "number") cfg.llmHybrid.maxRetries = 2;
+    if (typeof cfg.llmHybrid.timeoutMs !== "number") cfg.llmHybrid.timeoutMs = 20000;
+  }
+
   if (!cfg.markets) cfg.markets = {};
   for (const market of ['us', 'kr']) {
     if (!cfg.markets[market]) cfg.markets[market] = {};
@@ -528,36 +542,105 @@ async function collectLLMContext(DB, env, market) {
   };
 }
 
-async function callClaude(apiKey, model, prompt, maxTokens, timeoutMs) {
-  const controller = new AbortController();
-  const timeoutId = setTimeout(function() { controller.abort(); }, timeoutMs || 25000);
-  try {
-    const res = await fetch("https://api.anthropic.com/v1/messages", {
-      method: "POST",
-      headers: {
-        "x-api-key": apiKey,
-        "anthropic-version": "2023-06-01",
-        "content-type": "application/json"
-      },
-      body: JSON.stringify({
-        model: model || "claude-sonnet-4-6",
-        max_tokens: maxTokens || 2000,
-        messages: [{ role: "user", content: prompt }]
-      }),
-      signal: controller.signal
-    });
-    clearTimeout(timeoutId);
-    if (!res.ok) {
-      const errText = await res.text();
-      throw new Error("HTTP " + res.status + ": " + errText.slice(0, 200));
+// [V8.7] callClaude — 안정성 강화판
+//   • 일시적 실패(네트워크 끊김, 타임아웃, 429 rate-limit, 5xx 서버 에러)는 지수 백오프로 자동 재시도
+//   • 영구적 실패(400/401/403/404 — 모델명 오류/인증 실패/권한 없음)는 재시도 없이 즉시 명확한 메시지로 중단
+//   • 429는 retry-after 헤더 존중
+//   • timeoutMs는 "시도당" 타임아웃 — 전체가 아니라 매 attempt마다 적용
+// 이 함수는 "Claude 서버를 찾을 수 없다" 류의 일시적 연결 실패에 견디도록 설계됨.
+async function callClaude(apiKey, model, prompt, maxTokens, timeoutMs, retryCfg) {
+  retryCfg = retryCfg || {};
+  const maxRetries = (typeof retryCfg.maxRetries === "number") ? retryCfg.maxRetries : 3;
+  const baseBackoffMs = retryCfg.baseBackoffMs || 1000;
+  const maxBackoffMs = retryCfg.maxBackoffMs || 8000;
+  const perAttemptTimeout = timeoutMs || 25000;
+  const usedModel = model || "claude-sonnet-4-6";
+
+  const sleep = function(ms) { return new Promise(function(r) { setTimeout(r, ms); }); };
+  const backoff = function(attempt) { return Math.min(baseBackoffMs * Math.pow(2, attempt), maxBackoffMs); };
+
+  let lastErr = null;
+
+  for (let attempt = 0; attempt <= maxRetries; attempt++) {
+    const controller = new AbortController();
+    const timeoutId = setTimeout(function() { controller.abort(); }, perAttemptTimeout);
+    try {
+      const res = await fetch("https://api.anthropic.com/v1/messages", {
+        method: "POST",
+        headers: {
+          "x-api-key": apiKey,
+          "anthropic-version": "2023-06-01",
+          "content-type": "application/json"
+        },
+        body: JSON.stringify({
+          model: usedModel,
+          max_tokens: maxTokens || 2000,
+          messages: [{ role: "user", content: prompt }]
+        }),
+        signal: controller.signal
+      });
+      clearTimeout(timeoutId);
+
+      if (res.ok) {
+        const data = await res.json();
+        const text = (data.content || []).filter(function(b) { return b.type === "text"; }).map(function(b) { return b.text; }).join("\n");
+        return { text: text, usage: data.usage };
+      }
+
+      // --- 에러 응답 본문 읽기 ---
+      const errText = await res.text().catch(function() { return ""; });
+      const status = res.status;
+
+      // --- 영구 에러: 재시도해도 동일하므로 즉시 중단 ---
+      if (status === 400 || status === 401 || status === 403 || status === 404) {
+        let hint = "";
+        if (status === 404) hint = " [모델 ID '" + usedModel + "'이(가) 잘못되었거나 사용 불가. 유효 예: claude-opus-4-7 / claude-sonnet-4-6 / claude-haiku-4-5-20251001]";
+        else if (status === 401) hint = " [API 키 오류 — ANTHROPIC_API_KEY 확인]";
+        else if (status === 403) hint = " [권한 없음 — 키의 모델/조직 권한 확인]";
+        else if (status === 400) hint = " [요청 형식 오류]";
+        throw new Error("HTTP " + status + hint + ": " + errText.slice(0, 200));
+      }
+
+      // --- 일시 에러(429/5xx): 재시도 ---
+      lastErr = new Error("HTTP " + status + ": " + errText.slice(0, 200));
+      if (attempt < maxRetries) {
+        let waitMs;
+        const retryAfter = (res.headers && typeof res.headers.get === "function") ? res.headers.get("retry-after") : null;
+        if (status === 429 && retryAfter) {
+          const parsed = parseInt(retryAfter, 10);
+          waitMs = Math.min((isNaN(parsed) ? 2 : parsed) * 1000, maxBackoffMs);
+        } else {
+          waitMs = backoff(attempt);
+        }
+        await sleep(waitMs);
+        continue;
+      }
+      throw lastErr;
+
+    } catch (e) {
+      clearTimeout(timeoutId);
+
+      // 위에서 명시적으로 throw한 영구 에러(HTTP 4xx)는 그대로 전파
+      if (/^HTTP (400|401|403|404)\b/.test(e.message || "")) throw e;
+
+      // 타임아웃(Abort) 또는 네트워크 레벨 실패("서버 못 찾음" 포함) → 재시도 대상
+      const isAbort = e.name === "AbortError";
+      const isNetwork = (e instanceof TypeError) ||
+        /fetch failed|network|ENOTFOUND|EAI_AGAIN|ECONNREFUSED|ECONNRESET|terminated|socket|dns/i.test(e.message || "");
+      const retryable = isAbort || isNetwork;
+
+      if (retryable && attempt < maxRetries) {
+        lastErr = isAbort ? new Error("시도 타임아웃 (" + perAttemptTimeout + "ms)") : e;
+        await sleep(backoff(attempt));
+        continue;
+      }
+
+      if (isAbort) throw new Error("Claude 호출 타임아웃 (" + perAttemptTimeout + "ms × " + (attempt + 1) + "회 시도)");
+      throw e;
     }
-    const data = await res.json();
-    const text = (data.content || []).filter(function(b) { return b.type === "text"; }).map(function(b) { return b.text; }).join("\n");
-    return { text: text, usage: data.usage };
-  } catch (e) {
-    clearTimeout(timeoutId);
-    throw e;
   }
+
+  throw lastErr || new Error("callClaude: 알 수 없는 실패");
 }
 
 function parseLLMInstruction(text) {
@@ -649,10 +732,11 @@ async function runLLMDailyAnalysis(env, market, forceRun = false) {
 
     const res = await callClaude(
       env.ANTHROPIC_API_KEY,
-      llmCfg.model || "claude-opus-4-5",
+      llmCfg.model || "claude-opus-4-7",
       prompt,
       llmCfg.maxTokens || 2000,
-      llmCfg.timeoutMs || 25000
+      llmCfg.timeoutMs || 25000,
+      { maxRetries: (typeof llmCfg.maxRetries === "number" ? llmCfg.maxRetries : 2) }
     );
 
     let raw;
