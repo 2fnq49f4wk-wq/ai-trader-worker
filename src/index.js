@@ -3265,6 +3265,133 @@ async function handleRequest(request, env) {
       return Response.json(result, { headers: cors });
     }
     // [신규] 진단 — 락 상태, 마지막 tick, 시세 수, 시장 오픈 여부
+    // [신규] 거래 기록 다운로드 (CSV)
+    if (path === "/api/download/trades") {
+      const res = await env.DB.prepare("SELECT * FROM trades ORDER BY ts DESC").all();
+      const trades = res.results || [];
+      
+      let csv = "타임스탠프,종목,전략,수량,평단가,거래종류,이유,손절가,목표가,신호,거래금액,현재가,손익,손익률,발생일시\n";
+      trades.forEach(trade => {
+        const ts = new Date(trade.ts).toLocaleString('ko-KR');
+        const tradeType = trade.qty > 0 ? "매수" : "매도";
+        const reason = trade.reason || trade.signal || "자동";
+        const amount = Math.abs(trade.qty * trade.price);
+        const pnl = trade.pnl || "";
+        const pnlPct = trade.pnl_pct ? (trade.pnl_pct * 100).toFixed(2) + "%" : "";
+        const stop = trade.stop_price || "";
+        const tp = trade.target_price || "";
+        const signal = trade.signal || "";
+        const currentPrice = trade.price || "";
+        
+        csv += `"${ts}","${trade.symbol}","${trade.strategy}",${trade.qty},${trade.price},"${tradeType}","${reason}",${stop},${tp},"${signal}",${amount},${currentPrice},${pnl},${pnlPct},${new Date(trade.ts).toISOString()}\n`;
+      });
+      
+      return new Response(csv, {
+        status: 200,
+        headers: {
+          "Content-Type": "text/csv; charset=utf-8",
+          "Content-Disposition": `attachment; filename="trades_${new Date().toISOString().split('T')[0]}.csv"`,
+          ...cors
+        }
+      });
+    }
+    
+    // [신규] 거래 이유 로그 다운로드 (CSV)
+    if (path === "/api/download/logs") {
+      const res = await env.DB.prepare("SELECT * FROM logs ORDER BY id DESC").all();
+      const logs = res.results || [];
+      
+      let csv = "발생시간,레벨,종목,메시지,세부내용\n";
+      logs.forEach(log => {
+        const ts = new Date(log.ts).toLocaleString('ko-KR');
+        const level = log.level || "INFO";
+        const symbol = log.symbol || "";
+        const msg = (log.msg || "").replace(/"/g, '""');  // CSV 이스케이프
+        const detail = (log.detail || "").replace(/"/g, '""');
+        
+        csv += `"${ts}","${level}","${symbol}","${msg}","${detail}"\n`;
+      });
+      
+      return new Response(csv, {
+        status: 200,
+        headers: {
+          "Content-Type": "text/csv; charset=utf-8",
+          "Content-Disposition": `attachment; filename="logs_${new Date().toISOString().split('T')[0]}.csv"`,
+          ...cors
+        }
+      });
+    }
+    
+    // [신규] 통합 다운로드 (거래 + 로그 + 요약)
+    if (path === "/api/download/report") {
+      const tradesRes = await env.DB.prepare("SELECT * FROM trades ORDER BY ts DESC").all();
+      const logsRes = await env.DB.prepare("SELECT * FROM logs ORDER BY id DESC").all();
+      const trades = tradesRes.results || [];
+      const logs = logsRes.results || [];
+      const cfg = migrateCfgToMarkets(Object.assign({}, DEFAULT_CFG, await getState(env.DB, "cfg", {})));
+      const cash = await getState(env.DB, "cash", { us: cfg.initialCashUS, kr: cfg.initialCashKR });
+      const deposits = await getState(env.DB, "deposits", { us: 0, kr: 0 });
+      
+      // 수익률 계산
+      let totalPnL = 0, totalTrades = 0, winTrades = 0;
+      trades.forEach(t => {
+        if (t.pnl) { totalPnL += t.pnl; totalTrades++; }
+        if (t.pnl && t.pnl > 0) winTrades++;
+      });
+      const winRate = totalTrades > 0 ? ((winTrades / totalTrades) * 100).toFixed(2) : 0;
+      
+      // 리포트 생성
+      let report = "=== LUX-ENGINE 거래 분석 리포트 ===\n\n";
+      report += `생성일: ${new Date().toLocaleString('ko-KR')}\n\n`;
+      report += `[자산 현황]\n`;
+      report += `US 현금: $${cash.us.toLocaleString('en-US', {minimumFractionDigits: 2})}\n`;
+      report += `KR 현금: ₩${cash.kr.toLocaleString()}\n`;
+      report += `US 입금액: $${deposits.us.toLocaleString('en-US', {minimumFractionDigits: 2})}\n`;
+      report += `KR 입금액: ₩${deposits.kr.toLocaleString()}\n\n`;
+      report += `[성과]\n`;
+      report += `총 거래건: ${totalTrades}\n`;
+      report += `총 수익/손실: $${(totalPnL / (deposits.us || 1)).toFixed(2)} (${(totalPnL >= 0 ? '+' : '')}${totalPnL.toFixed(2)})\n`;
+      report += `승률: ${winRate}%\n`;
+      report += `우승 거래: ${winTrades}건\n\n`;
+      
+      report += "=== 거래 목록 ===\n";
+      report += "타임스탠프,종목,전략,수량,평단가,거래종류,이유,손절가,목표가,신호,거래금액,손익,손익률\n";
+      
+      trades.forEach(trade => {
+        const ts = new Date(trade.ts).toLocaleString('ko-KR');
+        const tradeType = trade.qty > 0 ? "매수" : "매도";
+        const reason = trade.reason || trade.signal || "자동";
+        const amount = Math.abs(trade.qty * trade.price);
+        const pnl = trade.pnl || "";
+        const pnlPct = trade.pnl_pct ? (trade.pnl_pct * 100).toFixed(2) + "%" : "";
+        const stop = trade.stop_price || "";
+        const tp = trade.target_price || "";
+        
+        report += `"${ts}","${trade.symbol}","${trade.strategy}",${trade.qty},${trade.price},"${tradeType}","${reason}",${stop},${tp},"${trade.signal || ''}",${amount},${pnl},${pnlPct}\n`;
+      });
+      
+      report += "\n=== 거래 로그 ===\n";
+      report += "발생시간,레벨,종목,메시지\n";
+      
+      logs.slice(0, 100).forEach(log => {
+        const ts = new Date(log.ts).toLocaleString('ko-KR');
+        const level = log.level || "INFO";
+        const symbol = log.symbol || "-";
+        const msg = (log.msg || "").replace(/\n/g, ' | ');
+        
+        report += `"${ts}","${level}","${symbol}","${msg}"\n`;
+      });
+      
+      return new Response(report, {
+        status: 200,
+        headers: {
+          "Content-Type": "text/plain; charset=utf-8",
+          "Content-Disposition": `attachment; filename="lux_report_${new Date().toISOString().split('T')[0]}.txt"`,
+          ...cors
+        }
+      });
+    }
+    
     if (path === "/api/diag") {
       const lock = await getState(env.DB, "lock:cycle", null);
       const lastTick = await getState(env.DB, "last_tick", null);
