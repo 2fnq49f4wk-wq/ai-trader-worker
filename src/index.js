@@ -153,7 +153,8 @@ const DEFAULT_CFG = {
   llmHybrid: {
     enabled: false,           // 기본 OFF — 사용자가 명시적으로 켜야 작동
     model: "claude-sonnet-4-6", // [V8.7] 유효 모델 ID (구 'claude-opus-4-5'는 존재하지 않아 404 발생)
-    maxTokens: 2000,
+    maxTokens: 3000,          // [V9.1] 2000→3000 (reasoning 단계적 추론 공간 확보)
+    confidenceWeighting: true, // [V9.1] LLM confidence로 sizing 개입 강도 조절 (낮으면 보수적)
     timeoutMs: 20000,         // [V8.7] 시도당 20초 (재시도 포함 총량이 cron 60초/lock TTL 내에 들도록)
     maxRetries: 2,            // [V8.7] 재시도 2회 → 최악 ~63초, 정상 응답(5~10초)엔 영향 없음
     expiryHours: 18,          // 지시 유효 시간 — 18시간 지나면 무시 (다음날 지시 누락 시 안전)
@@ -222,43 +223,31 @@ const DEFAULT_CFG = {
     minHoldMinutes: 10,
     maxHoldHours: 8,
     forceCloseBeforeMinClose: 30,
-    // [V9 손절 — 데이터 재검증 결과]
-    //   처음엔 손절을 1.0→1.6%로 넓히려 했으나, HARD-STOP 43건 분석 결과
-    //   "넓히면 36건이 -1.6%까지 더 버티는데 반등할지 더 빠질지 기록상 알 수 없음"
-    //   → 손절 확대는 표본으로 정당화 안 됨. 원래 1.0% 유지.
-    //   실제 슬리피지(-1.37%)의 원인은 손절폭이 아니라 ATR스톱이 %스톱보다 깊게
-    //   잡히던 것. executeBuy에서 stopPrice를 %스톱으로 상한 고정해 해결.
-    tp: 4.0,
-    stopLossPct: 1.0,          // [V9] 유지 (확대는 데이터로 정당화 안 됨)
-    // [V8.5] trailing을 tp1 이후로 늦춤 — 분할익절 잔량 보호
-    trailStartPct: 2.5,
-    trailDropPct: 0.8,
-    breakEvenAt: 1.8,          // [V9] 2.0 → 1.8 (tp1 직전 본전확보로 EOD 손실전환 차단)
-    breakEvenLock: 0.2,
-    tp1: 2.0,                  // 유지
-    // [V9 신규] EOD 횡보 청산 누수 차단 — 데이터 근거:
-    //   DAY-EOD 119건 중 손실 89 vs 이익 30, 평균 -0.0%. 방향성 없는 죽은 포지션이
-    //   마감까지 끌려가 비용만 까먹음. 일정 시간 내 일정 수익 못 내면 조기 청산.
-    chopExitMinutes: 90,       // 진입 90분 후
-    chopExitMaxPnl: 0.3,       // PnL이 +0.3% 미만이면(=방향성 없음) 비용 나기 전 청산
-    // === 진입 범위 — [V9] 과잉진입 억제로 약간 보수화 ===
-    // 하루 169건 진입 중 대부분이 EOD 횡보. 문턱을 좁혀 신호 질을 높임.
-    dayDropMin: -6.0,                  // [V9] -8.0 → -6.0 (너무 깊은 갭하락 = 칼날, 제외)
-    dayDropMax: 1.0,                   // [V9] 1.5 → 1.0
-    rsiMaxForGap: 60,                  // [V9] 65 → 60 (약세 종목 매수 억제)
-    requireGapRsiUptick: true,         // [V9 신규] 갭하락 매수는 RSI 상승전환 시에만 (falling-knife 방지)
-    rsiMaxForBounce: 68,               // [V9] 70 → 68
-    bounceYestMin: -0.8,               // [V9] -0.5 → -0.8 (의미있는 음봉만)
-    openDriveMinPct: 0.7,              // [V9] 0.5 → 0.7
-    openDriveMaxPct: 5.0,              // [V9] 6.0 → 5.0
-    vwapPullMinPct: -1.2,              // [V9] -1.5 → -1.2
-    vwapPullMaxPct: 3.0,               // [V9] 3.5 → 3.0
-    momoRsiMin: 58,                    // [V9] 55 → 58
-    momoRsiMax: 78,                    // [V9] 80 → 78
-    dipMinPct: -4.0,                   // [V9] -5.0 → -4.0
-    dipMaxPct: -0.2,                   // [V9] -0.1 → -0.2
-    // [V9] DY_RANGE catch-all 비활성화 — 횡보 EOD 누수의 주범. 확신신호만 진입.
-    enableRange: false
+    // [V8.4] 손익비 1:1 → 1:2.5+ 재설계
+    tp: 4.0,                   // 2.5 → 4.0 (TP2 더 멀리)
+    stopLossPct: 1.0,          // 1.3 → 1.0 (손절 타이트)
+    // [V8.5] trailing을 tp1(2.0) 이후로 늦춤 — 분할익절 잔량 보호
+    trailStartPct: 2.5,        // V8.4 2.0 → 2.5 (tp1=2.0 이후 발동)
+    trailDropPct: 0.8,         // V8.4 1.5 → 0.8 (잔량은 타이트하게 따라감)
+    // [V8.4] Break-even 너무 빠르게 발동되던 문제 해결
+    breakEvenAt: 2.0,          // 1.0 → 2.0 (노이즈로 본전청산 방지)
+    breakEvenLock: 0.2,        // 0.1 → 0.2
+    // [V8.4] TP1 분할익절 — 절반 청산 임계 상향
+    tp1: 2.0,                  // 1.5 → 2.0
+    // [V8.1.3] 범위 더 공격적
+    dayDropMin: -8.0,                  // [V8.1.3] -7→-8
+    dayDropMax: 1.5,                   // [V8.1.3] 1.0→1.5
+    rsiMaxForGap: 65,                  // [V8.1.3] 60→65
+    rsiMaxForBounce: 70,               // [V8.1.3] 65→70
+    bounceYestMin: -0.5,               // [V8.1.3] -0.8→-0.5 (작은 음봉도 잡기)
+    openDriveMinPct: 0.5,              // [V8.1.3] 0.7→0.5
+    openDriveMaxPct: 6.0,              // [V8.1.3] 5.0→6.0
+    vwapPullMinPct: -1.5,              // [V8.1.3] -1.0→-1.5
+    vwapPullMaxPct: 3.5,               // [V8.1.3] 3.0→3.5
+    momoRsiMin: 55,                    // [V8.1.3] 58→55
+    momoRsiMax: 80,                    // [V8.1.3] 78→80
+    dipMinPct: -5.0,                   // [V8.1.3] -3.5→-5.0 (큰 눌림도 잡기, 005380같은 -4.7%)
+    dipMaxPct: -0.1                    // [V8.1.3] -0.2→-0.1
   },
   momentumRules: {
     breakoutDays: 10,          // [V8.1.7] 15→10 (더 자주 돌파 진입)
@@ -525,17 +514,62 @@ async function collectLLMContext(DB, env, market) {
     .sort(function(a, b) { return (b.weightedWinRate || 0) - (a.weightedWinRate || 0); })
     .slice(0, 15);
 
+  // [V9] 손실 집중 신호 — 하위 성과 신호도 LLM에 보여줘 disable 판단을 도움.
+  //   (기존엔 top만 보여줘서 "뭘 꺼야 할지" 근거가 부족했음)
+  const worstSignals = Object.keys(signalStats)
+    .map(function(k) { return Object.assign({ name: k }, signalStats[k]); })
+    .filter(function(s) { return s.count >= 5; })
+    .sort(function(a, b) { return (a.weightedWinRate || 0) - (b.weightedWinRate || 0); })
+    .slice(0, 8);
+
+  // [V9] 전략별 7일 성과 — 5/20 같은 동반손실 패턴을 LLM이 인지하도록.
+  const byStrategy = {};
+  for (const t of sells) {
+    const m = /\[([A-Z]+)\]/.exec(t.reason || "");
+    const st = m ? m[1].toLowerCase() : "unknown";
+    if (!byStrategy[st]) byStrategy[st] = { trades: 0, wins: 0, sumPnl: 0 };
+    byStrategy[st].trades++;
+    if ((t.pnl_pct || 0) > 0) byStrategy[st].wins++;
+    byStrategy[st].sumPnl += (t.pnl_pct || 0);
+  }
+  const strategyPerf = {};
+  for (const st in byStrategy) {
+    const b = byStrategy[st];
+    strategyPerf[st] = {
+      trades: b.trades,
+      winRate: b.trades > 0 ? +(b.wins / b.trades).toFixed(3) : 0,
+      avgPnl: b.trades > 0 ? +(b.sumPnl / b.trades).toFixed(3) : 0
+    };
+  }
+
   const indices = market === "us" ? US_INDICES : KR_INDICES;
   const indexQuotes = {};
+  let worstIdxPct = null, sumIdxPct = 0, idxCnt = 0;
   for (const idx of indices) {
     const q = await getState(DB, "index:" + idx, null);
-    if (q) indexQuotes[idx] = { price: q.price, dayChangePct: q.dayChangePct };
+    if (q) {
+      indexQuotes[idx] = { price: q.price, dayChangePct: q.dayChangePct };
+      // [V9] 지수 변동 요약 — regime 근거
+      if (typeof q.dayChangePct === "number") {
+        sumIdxPct += q.dayChangePct; idxCnt++;
+        if (worstIdxPct === null || q.dayChangePct < worstIdxPct) worstIdxPct = q.dayChangePct;
+      }
+    }
   }
+  // [V9] 시장 상태 요약 — LLM이 "오늘 약세인가"를 명확히 보도록 단순화한 신호 제공
+  const marketSnapshot = {
+    avgIndexChangePct: idxCnt > 0 ? +(sumIdxPct / idxCnt).toFixed(2) : null,
+    worstIndexChangePct: worstIdxPct !== null ? +worstIdxPct.toFixed(2) : null,
+    note: (worstIdxPct !== null && worstIdxPct <= -1.0)
+      ? "주의: 지수 중 하나가 -1% 이상 하락 — 약세 가능성"
+      : "지수 특이 약세 신호 없음"
+  };
 
   return {
     market: market,
     date: new Date().toISOString().slice(0, 10),
     indices: indexQuotes,
+    marketSnapshot: marketSnapshot,
     cash: cashState[market] || 0,
     positions: (positions.results || []).map(function(p) {
       return { symbol: p.symbol, strategy: p.strategy, qty: p.qty, avg: p.avg_price };
@@ -548,7 +582,9 @@ async function collectLLMContext(DB, env, market) {
       bestTrade: wins.length > 0 ? wins.reduce(function(a, b) { return a.pnl_pct > b.pnl_pct ? a : b; }) : null,
       worstTrade: losses.length > 0 ? losses.reduce(function(a, b) { return a.pnl_pct < b.pnl_pct ? a : b; }) : null
     },
+    strategyPerf7d: strategyPerf,
     topSignals: topSignals,
+    worstSignals: worstSignals,
     disabledSignals: cfg.disabledSignals || [],
     enabledStrategies: Object.keys(cfg.strategies || {}).filter(function(s) { return cfg.strategies[s]; })
   };
@@ -660,17 +696,54 @@ async function callClaude(apiKey, model, prompt, maxTokens, timeoutMs, retryCfg)
 }
 
 function parseLLMInstruction(text) {
+  if (typeof text !== "string" || text.trim() === "") {
+    throw new Error("empty response");
+  }
   let clean = text.replace(/```json\s*/g, "").replace(/```\s*/g, "").trim();
   const start = clean.indexOf("{");
-  const end = clean.lastIndexOf("}");
-  if (start === -1 || end === -1) throw new Error("no JSON in response");
+  if (start === -1) throw new Error("no JSON in response");
+
+  // [V9] 균형 중괄호 매칭 — summary 등에 '{','}' 가 섞여도 정확히 첫 객체만 추출.
+  //   기존엔 lastIndexOf('}')로 잘라서, 본문에 중괄호가 있으면 잘못 잘릴 위험이 있었음.
+  //   문자열 리터럴 내부의 중괄호는 무시(따옴표·이스케이프 추적).
+  let depth = 0, inStr = false, esc = false, end = -1;
+  for (let i = start; i < clean.length; i++) {
+    const c = clean[i];
+    if (esc) { esc = false; continue; }
+    if (c === "\\") { esc = true; continue; }
+    if (c === '"') { inStr = !inStr; continue; }
+    if (inStr) continue;
+    if (c === "{") depth++;
+    else if (c === "}") {
+      depth--;
+      if (depth === 0) { end = i; break; }
+    }
+  }
+  if (end === -1) {
+    // 균형이 안 맞으면(잘린 응답 등) 폴백: 기존 방식
+    end = clean.lastIndexOf("}");
+    if (end === -1 || end < start) throw new Error("unbalanced JSON in response");
+  }
   return JSON.parse(clean.slice(start, end + 1));
 }
 
 function sanitizeInstruction(raw, llmCfg) {
+  // [V9] raw가 객체가 아니거나 null이면 안전한 기본값 반환 (방어)
+  if (!raw || typeof raw !== "object") raw = {};
+  // [V9] 유한한 숫자인지 검사 헬퍼 — NaN/Infinity 차단
+  const isFiniteNum = function(x) { return typeof x === "number" && isFinite(x); };
   const sane = {
     sentiment: ["bearish", "neutral", "bullish"].indexOf(raw.sentiment) >= 0 ? raw.sentiment : "neutral",
     summary: typeof raw.summary === "string" ? raw.summary.slice(0, 500) : "",
+    // [V9.1] reasoning — LLM 추론 과정 보존 (사후 검증·로깅용). 거래 로직엔 직접 안 쓰지만 투명성 확보.
+    reasoning: (raw.reasoning && typeof raw.reasoning === "object") ? {
+      market_regime: typeof raw.reasoning.market_regime === "string" ? raw.reasoning.market_regime.slice(0, 300) : "",
+      performance: typeof raw.reasoning.performance === "string" ? raw.reasoning.performance.slice(0, 300) : "",
+      signal_quality: typeof raw.reasoning.signal_quality === "string" ? raw.reasoning.signal_quality.slice(0, 300) : "",
+      symbol_risk: typeof raw.reasoning.symbol_risk === "string" ? raw.reasoning.symbol_risk.slice(0, 300) : ""
+    } : null,
+    // [V9.1] confidence — 0~1로 클램프. 없거나 비정상이면 0.5(중립적 확신).
+    confidence: isFiniteNum(raw.confidence) ? Math.max(0, Math.min(1, raw.confidence)) : 0.5,
     buy_signals: { enabled: raw.buy_signals && raw.buy_signals.enabled !== false },
     sell_signals: { enabled: !(raw.sell_signals && raw.sell_signals.enabled === false) },
     disable_signals: Array.isArray(raw.disable_signals) ? raw.disable_signals.filter(function(s) { return typeof s === "string"; }).slice(0, 20) : [],
@@ -678,13 +751,20 @@ function sanitizeInstruction(raw, llmCfg) {
     position_sizing: { scale: 1.0 },
     stop_loss_adjustment: null
   };
-  if (raw.position_sizing && typeof raw.position_sizing.scale === "number") {
+  if (raw.position_sizing && isFiniteNum(raw.position_sizing.scale)) {
     let s = raw.position_sizing.scale;
     if (s < llmCfg.minSizingScale) s = llmCfg.minSizingScale;
     if (s > llmCfg.maxSizingScale) s = llmCfg.maxSizingScale;
-    sane.position_sizing.scale = s;
+    // [V9.1] confidence 가중 — 확신이 낮으면 sizing 조정을 1.0 쪽으로 끌어당김(과잉개입 방지).
+    //   예: scale=0.4, confidence=0.5 → 실제 적용 0.4*0.5 + 1.0*0.5 = 0.7 (개입 절반만)
+    //   confidence=1.0이면 LLM 의도 그대로, 0이면 개입 안 함(1.0). 보수적 설계.
+    if (llmCfg.confidenceWeighting !== false) {
+      const c = sane.confidence;
+      s = s * c + 1.0 * (1 - c);
+    }
+    sane.position_sizing.scale = +s.toFixed(3);
   }
-  if (raw.stop_loss_adjustment && typeof raw.stop_loss_adjustment.new_pct === "number") {
+  if (raw.stop_loss_adjustment && isFiniteNum(raw.stop_loss_adjustment.new_pct)) {
     let sp = raw.stop_loss_adjustment.new_pct;
     if (sp < llmCfg.minStopPct) sp = llmCfg.minStopPct;
     if (sp > llmCfg.maxStopPct) sp = llmCfg.maxStopPct;
@@ -695,21 +775,40 @@ function sanitizeInstruction(raw, llmCfg) {
 
 function buildLLMPrompt(market, context) {
   const marketLabel = market === "us" ? "미국 (US)" : "한국 (KR)";
-  return "당신은 LUX-engine 트레이딩 시스템의 일일 시장 분석가입니다.\n" +
-    "오늘 " + marketLabel + " 시장에 대한 \"일일 거래 지시\"를 JSON으로 출력하세요.\n\n" +
+  return "당신은 LUX-engine 트레이딩 시스템의 일일 시장 리스크 분석가입니다.\n" +
+    "역할: 종목을 직접 고르지 않습니다. 오늘 " + marketLabel + " 시장의 '리스크 환경'을 평가해,\n" +
+    "알고리즘이 쓸 거시 거래 지시(sizing/신호 on-off/회피종목)를 JSON으로 출력합니다.\n\n" +
     "# 컨텍스트\n```json\n" + JSON.stringify(context, null, 2) + "\n```\n\n" +
-    "# 분석 기준\n" +
-    "- 지수 데이터, 최근 7일 성과, 활성 신호 통계를 종합 판단\n" +
-    "- sentiment: bearish(약세) / neutral(중립) / bullish(강세)\n" +
-    "- 약세 판단 시: buy_signals를 끄거나, position_sizing.scale을 0.5 이하로, stop_loss를 타이트하게\n" +
-    "- 강세 판단 시: position_sizing.scale 1.2~1.4, stop_loss 1.2 정도\n" +
-    "- 손실 거래 패턴이 보이면 disable_signals에 추가 (signalStats 활용)\n" +
-    "- 특정 종목에 손실이 집중되면 avoid_symbols에 추가\n" +
-    "- 보수적으로 판단 — 데이터 부족 시 neutral, sizing 1.0, stop_loss_adjustment는 null 유지\n\n" +
-    "# 출력 (JSON만, 코드블록 표시 없이)\n" +
+    "# 분석 절차 (반드시 이 순서로 사고할 것)\n" +
+    "1) 시장 국면: marketSnapshot(avg/worstIndexChangePct)과 indices를 보고 강세/중립/약세 판정.\n" +
+    "   - worstIndexChangePct <= -1.5% → 강한 약세 신호 / -1.0%~-1.5% → 약세 주의 / +0.5% 이상 광범위 상승 → 강세\n" +
+    "2) 최근 성과 진단: last7days.winRate와 avgPnl, strategyPerf7d를 보고 시스템이 현재 시장에 맞는지 평가.\n" +
+    "   - winRate < 0.40 이고 거래수가 충분(>=20)하면 → 시장 부적합 가능성 → 보수적으로.\n" +
+    "3) 신호 품질: worstSignals 중 count>=8 이고 winRate가 낮은 것만 disable 후보로. 표본 작으면 건드리지 말 것.\n" +
+    "4) 종목 리스크: positions와 worstTrade를 보고 손실 집중 종목이 있으면 avoid_symbols 후보로.\n" +
+    "5) 종합: 위 1~4를 근거로 sentiment / sizing / stop을 결정. 각 결정은 반드시 데이터 수치를 근거로 들 것.\n\n" +
+    "# 정량 가이드 (참고 기준 — 맥락에 따라 조정 가능)\n" +
+    "- 강한 약세: sizing 0.3~0.5, buy_signals OFF 고려, stop 0.8~1.0\n" +
+    "- 약세 주의: sizing 0.5~0.8, stop 1.0~1.2\n" +
+    "- 중립: sizing 0.9~1.1, stop 변경 없음(null)\n" +
+    "- 강세: sizing 1.2~1.4, stop 1.2~1.5\n\n" +
+    "# 판단 원칙\n" +
+    "- 모든 결론은 컨텍스트의 '구체적 수치'에 근거할 것. 데이터에 없는 외부 뉴스·예측을 지어내지 말 것.\n" +
+    "- 표본이 작으면(거래수 적음, count 낮음) 단정하지 말고 neutral·sizing 1.0 유지.\n" +
+    "- 한두 건의 우연한 손실로 신호·전략을 끄지 말 것.\n" +
+    "- 불확실하면 confidence를 낮추고 보수적으로. 과잉 개입보다 무개입이 안전.\n\n" +
+    "# 출력 형식 (JSON만, 코드블록·머리말 금지)\n" +
+    "reasoning 필드에 위 1~5단계 사고를 간결히 적고, 그 결론을 나머지 필드에 반영하세요.\n" +
     "{\n" +
+    "  \"reasoning\": {\n" +
+    "    \"market_regime\": \"국면 판정 + 근거 수치 (예: worstIdx -1.6% → 강한 약세)\",\n" +
+    "    \"performance\": \"최근 성과 진단 (예: 7일 winRate 0.38, day전략 부진)\",\n" +
+    "    \"signal_quality\": \"disable 후보와 근거 (없으면 '해당 없음')\",\n" +
+    "    \"symbol_risk\": \"손실 집중 종목 (없으면 '해당 없음')\"\n" +
+    "  },\n" +
     "  \"sentiment\": \"neutral\",\n" +
-    "  \"summary\": \"한두 문장 시장 판단 + 근거\",\n" +
+    "  \"confidence\": 0.6,\n" +
+    "  \"summary\": \"한두 문장 핵심 판단 + 근거 수치\",\n" +
     "  \"buy_signals\": { \"enabled\": true },\n" +
     "  \"sell_signals\": { \"enabled\": true },\n" +
     "  \"disable_signals\": [],\n" +
@@ -717,7 +816,7 @@ function buildLLMPrompt(market, context) {
     "  \"position_sizing\": { \"scale\": 1.0 },\n" +
     "  \"stop_loss_adjustment\": null\n" +
     "}\n\n" +
-    "JSON만 출력하세요. 설명/머리말/코드블록 표시 모두 금지.";
+    "JSON만 출력하세요. confidence는 0~1 사이. 설명/머리말/코드블록 표시 모두 금지.";
 }
 
 async function runLLMDailyAnalysis(env, market, forceRun = false) {
@@ -780,10 +879,12 @@ async function runLLMDailyAnalysis(env, market, forceRun = false) {
     await setState(DB, "llm_daily:" + market, instruction);
     await log(DB, "INFO", null,
       "[LLM] " + market + " sentiment=" + sanitized.sentiment +
+      " conf=" + sanitized.confidence +
       " buy=" + (sanitized.buy_signals.enabled ? "ON" : "OFF") +
       " sizing=" + sanitized.position_sizing.scale +
       " avoid=" + sanitized.avoid_symbols.length +
-      " disable=" + sanitized.disable_signals.length
+      " disable=" + sanitized.disable_signals.length +
+      (sanitized.reasoning ? " | regime: " + (sanitized.reasoning.market_regime || "").slice(0, 80) : "")
     );
     return { ok: true, instruction: sanitized };
   } catch (e) {
@@ -1225,25 +1326,17 @@ function evaluateBuySignals_day(price, dayPct, dailyData, cfg) {
   const signals = [];
   const rsiGapLimit = rules.rsiMaxForGap != null ? rules.rsiMaxForGap : 55;
   const rsiBounceLimit = rules.rsiMaxForBounce != null ? rules.rsiMaxForBounce : 60;
-  const dailyRsiPrev = getRSI(closes.slice(0, -1), cfg.rsiPeriod); // [V9] RSI 상승전환 판정용
 
-  // DAY1: 갭하락 매수 — [V9] falling-knife 방지 강화
-  //   기존엔 RSI<60 이면 무조건 진입 → 약세 종목을 계속 매수.
-  //   [V9] requireGapRsiUptick: RSI가 어제보다 상승(반등 시작)했을 때만 진입.
-  //   또 dayDropMin을 -6%로 좁혀 너무 깊은 갭(추세붕괴)은 제외.
+  // DAY1: 갭하락 매수 — 더 넓은 범위 + RSI 완화 + MA20 -12% 이내
   if (dayPct >= rules.dayDropMin && dayPct <= rules.dayDropMax) {
-    const rsiOk = dailyRsi < rsiGapLimit;
-    const uptickOk = !rules.requireGapRsiUptick
-      || (dailyRsiPrev != null && dailyRsi > dailyRsiPrev);
-    if (rsiOk && uptickOk) {
+    if (dailyRsi < rsiGapLimit) {
       const maGap = ((price - ma20) / ma20) * 100;
-      if (maGap >= -12) {
+      if (maGap >= -12) {  // [V8.1] -10 → -12 완화
         const depthBonus = dayPct < -3 ? 0.2 : (dayPct < -1.5 ? 0.1 : 0);
         signals.push({
           name: "DY_GAP_DOWN",
           weight: 1.0 + depthBonus, type: "COUNTER",
           detail: "day " + dayPct.toFixed(1) + "% RSI " + dailyRsi.toFixed(1)
-            + (rules.requireGapRsiUptick ? " uptick" : "")
         });
       }
     }
@@ -1318,11 +1411,10 @@ function evaluateBuySignals_day(price, dayPct, dailyData, cfg) {
     });
   }
 
-  // [V9] DAY7: DY_RANGE catch-all — enableRange로 토글 (기본 OFF).
-  //   데이터: EOD 횡보 청산 누수의 핵심. 정규분포상 60~70% 종목이 항상 충족 →
-  //   사실상 랜덤 매수 → 승률 50% 수렴. V9에서 기본 비활성화.
-  if (rules.enableRange === true
-      && ma5 != null && ma5 > ma20 && price > ma5
+  // [V8.4] DAY7: DY_RANGE — 기존 catch-all (RSI 30~75, dayPct -5~+3) 제거.
+  // 정규분포상 약 60~70% 종목이 항상 충족 → 사실상 랜덤 매수 → 승률 50% 수렴 원인.
+  // 대체: 추세 정렬 강제 + RSI 중립 좁힘 + 변동 작을 때만 (확신 있는 안전망)
+  if (ma5 != null && ma5 > ma20 && price > ma5
       && dailyRsi >= 45 && dailyRsi <= 65
       && dayPct >= -2.0 && dayPct <= 1.5) {
     if (signals.length === 0) {
@@ -1623,21 +1715,6 @@ function evaluateBuyBlocks(price, dayPct, dailyData, cfg, regime, signal, ctx) {
     return "BEAR_WEAK worst=" + regime.worstDayPct.toFixed(2) + "%";
   }
 
-  // [V9 신규] DAY 약세일 게이팅 — 데이터 근거:
-  //   5/20 KR 하락일에 모든 DAY 전략이 -1.4%, 승률 0%로 동반 손실.
-  //   기존 코드는 DAY를 DOWNTREND/PERSISTENT_DOWN/BEAR(약함)에서 전부 면제 →
-  //   하락하는 날 무방비 진입. 전면차단(과최적화) 대신:
-  //   "지수가 의미있게 약한 날(worst<=-1.0% 또는 평균<0)에는 추세추종 DAY 신호 차단,
-  //    반등성(isCounterTrend: GAP_DOWN/BOUNCE/DIP)만 허용"
-  if (strategy === "day" && !signal.isCounterTrend) {
-    const weakDay = (regime.worstDayPct != null && regime.worstDayPct <= -1.0)
-      || (regime.avgDayPct != null && regime.avgDayPct < 0 && regime.regime === "BEAR");
-    if (weakDay) {
-      return "DAY_WEAK_REGIME worst=" + (regime.worstDayPct != null ? regime.worstDayPct.toFixed(2) : "?")
-        + "% avg=" + (regime.avgDayPct != null ? regime.avgDayPct.toFixed(2) : "?") + "%";
-    }
-  }
-
   // RS 필터 — COUNTER 성격 전략(DAY/MEANREV)과 isCounterTrend 신호는 면제
   if (cfg.rsFilterEnabled && strategy !== "day" && strategy !== "meanrev"
       && !signal.isCounterTrend && regime.idxReturn20 != null) {
@@ -1695,18 +1772,10 @@ async function executeBuy(DB, market, symbol, strategy, qty, price, signal, dail
   let stopPrice = pctStop;
   if (dailyAtr) {
     const atrStop = price - dailyAtr * atrMult;
-    // [V9 슬리피지 수정] 기존 Math.min은 ATR스톱이 %스톱보다 깊으면 그걸 채택 →
-    //   실측 손절이 설정 -1.0%가 아니라 -1.37%로 깊어진 원인(HARD-STOP 43건 전부 초과).
-    //   수정: %스톱(pctStop)을 절대 하한(최대 손실)으로 고정.
-    //   ATR스톱은 그보다 "더 타이트할 때만"(=더 높은 가격) 채택해 손절폭을 좁힘.
-    if (atrStop > pctStop) {
-      stopPrice = atrStop;   // ATR이 더 타이트 → 손절 더 빨리 (손실 축소)
-    } else {
-      stopPrice = pctStop;   // ATR이 더 깊음 → %스톱으로 상한 고정 (슬리피지 차단)
-    }
+    stopPrice = Math.min(atrStop, pctStop);
   }
-  // 최대 손절폭은 stopPct로 절대 고정 (이중 안전장치)
-  if (stopPrice < pctStop) stopPrice = pctStop;
+  // 최대 손절폭은 stopPct로 고정
+  if (stopPrice > pctStop) stopPrice = pctStop;
 
   try {
     await savePosition(DB, market, symbol, strategy, {
@@ -1846,13 +1915,6 @@ function evaluateSell(pos, price, daily, dailyRsi, dailyMa, dailyMaShort, cfg, m
     }
     // 최소 보유시간
     if (heldMin < (r.minHoldMinutes || 20)) return { sell: false };
-    // [V9 신규] 횡보 조기청산 — 데이터: DAY-EOD 119건 중 손실 89(75%), 평균 -0.0%.
-    //   진입 후 chopExitMinutes 지나도 chopExitMaxPnl 미달이면 방향성 없는 죽은 포지션 →
-    //   EOD까지 끌고가 비용만 까먹기 전에 청산해 회전율/비용 개선.
-    if (r.chopExitMinutes != null && r.chopExitMaxPnl != null
-        && heldMin >= r.chopExitMinutes && pnlRate < r.chopExitMaxPnl) {
-      return { sell: true, sellQty: pos.qty, reason: "DAY-CHOP " + heldMin.toFixed(0) + "min PnL=" + pnlRate.toFixed(2) + "%" };
-    }
     // [V8.3+V8.4] TP1 분할익절 — tp1 + cost 도달 시 절반 청산 (실수익 기준)
     if (!tp1Done && r.tp1 != null && pnlRate >= (r.tp1 + cost)) {
       const halfQty = Math.floor(pos.qty / 2);
