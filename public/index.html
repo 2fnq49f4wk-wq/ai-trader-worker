@@ -712,7 +712,7 @@ button.btn.loading { opacity: 0.5; pointer-events: none; }
       <input type="text" class="logs-search" id="logsSearch" placeholder="검색 (심볼/메시지/RSI 등)...">
       <span class="logs-info" id="logsInfo">0 / 0</span>
     </div>
-    <div class="log-filter" style="margin-bottom: 12px;">
+    <div class="log-filter" style="margin-bottom: 12px; display: flex; gap: 8px; flex-wrap: wrap;">
       <button data-filter="ALL" class="active">ALL</button>
       <button data-filter="TRADE">TRADE</button>
       <button data-filter="TUNE">TUNE</button>
@@ -722,6 +722,9 @@ button.btn.loading { opacity: 0.5; pointer-events: none; }
       <button data-filter="SKIP">SKIP</button>
       <button data-filter="CLOSED">CLOSED</button>
       <button data-filter="INFO">INFO</button>
+      <button onclick="downloadTrades()" style="margin-left: auto; background-color: #0ea5e9; color: white; padding: 6px 12px; border: none; border-radius: 4px; cursor: pointer;">📥 거래기록</button>
+      <button onclick="downloadLogs()" style="background-color: #06b6d4; color: white; padding: 6px 12px; border: none; border-radius: 4px; cursor: pointer;">📥 로그</button>
+      <button onclick="downloadReport()" style="background-color: #10b981; color: white; padding: 6px 12px; border: none; border-radius: 4px; cursor: pointer;">📥 리포트</button>
     </div>
     <div class="log-box-modal" id="logsBox"><div class="empty">No logs yet</div></div>
   </div>
@@ -2027,6 +2030,36 @@ button.btn.loading { opacity: 0.5; pointer-events: none; }
   $('btnTick').addEventListener('click', runNow);
   $('btnRefreshUS').addEventListener('click', function(){ refreshQuotes('us'); });
   $('btnRefreshKR').addEventListener('click', function(){ refreshQuotes('kr'); });
+  function downloadTrades() {
+    const link = document.createElement('a');
+    link.href = '/api/download/trades';
+    link.download = 'trades_' + new Date().toISOString().split('T')[0] + '.csv';
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+    toast('거래 기록 다운로드 시작');
+  }
+
+  function downloadLogs() {
+    const link = document.createElement('a');
+    link.href = '/api/download/logs';
+    link.download = 'logs_' + new Date().toISOString().split('T')[0] + '.csv';
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+    toast('거래 로그 다운로드 시작');
+  }
+
+  function downloadReport() {
+    const link = document.createElement('a');
+    link.href = '/api/download/report';
+    link.download = 'lux_report_' + new Date().toISOString().split('T')[0] + '.txt';
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+    toast('통합 리포트 다운로드 시작');
+  }
+
   $('btnLogs').addEventListener('click', openLogs);
   $('btnCloseLogs').addEventListener('click', closeLogs);
   $('btnSettings').addEventListener('click', openSettings);
