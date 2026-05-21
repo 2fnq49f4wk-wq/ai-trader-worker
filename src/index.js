@@ -223,9 +223,20 @@ const DEFAULT_CFG = {
     minHoldMinutes: 10,
     maxHoldHours: 8,
     forceCloseBeforeMinClose: 30,
+    // [V8.6 데이터근거] DAY-EOD 강제마감이 청산의 48%, 승률 25%, 누적 -24.8만 = 최대 손실원.
+    //   원인: 방향 안 나온 포지션을 마감까지 끌다 손실 확정. 대책 ↓
+    //   (1) softTimeStop: 진입 후 N분 지나도 +threshold 못 넘으면 미세익절/본전 청산
+    softTimeStopMinutes: 90,        // 90분 경과 후
+    softTimeStopMinPnl: 0.15,       // PnL이 +0.15% 미만이면(=방향 안 남) 청산
+    //   [V8.6.1] KR은 EOD 손실 -53만의 진원지(US는 -76원). KR 한정 더 공격적 타임스톱.
+    softTimeStopMinutesKR: 50,      // KR은 50분으로 단축 — 질질 끌다 손실확정 방지
+    softTimeStopMinPnlKR: 0.25,     // 비용(0.21%) 고려 +0.25% 못 넘으면 정리
+    //   (2) EOD를 더 일찍 — 마감 직전 급락에 끌려나오기 전에 정리
+    eodProfitTakeBeforeMin: 45,     // 마감 45분 전, 수익(+)이면 미리 확정
     // [V8.4] 손익비 1:1 → 1:2.5+ 재설계
     tp: 4.0,                   // 2.5 → 4.0 (TP2 더 멀리)
-    stopLossPct: 1.0,          // 1.3 → 1.0 (손절 타이트)
+    stopLossPct: 0.85,         // [V8.6.1] 1.0→0.85: 실측 HARD-STOP 평균이 -1.35%로 설정 초과(갭/슬리피지).
+                               //   타이트하게 잡아 실제 체결 손실을 ~-1.1%로 억제. 손익비(승+2%) 유지.
     // [V8.5] trailing을 tp1(2.0) 이후로 늦춤 — 분할익절 잔량 보호
     trailStartPct: 2.5,        // V8.4 2.0 → 2.5 (tp1=2.0 이후 발동)
     trailDropPct: 0.8,         // V8.4 1.5 → 0.8 (잔량은 타이트하게 따라감)
@@ -1331,11 +1342,12 @@ function evaluateBuySignals_day(price, dayPct, dailyData, cfg) {
   if (dayPct >= rules.dayDropMin && dayPct <= rules.dayDropMax) {
     if (dailyRsi < rsiGapLimit) {
       const maGap = ((price - ma20) / ma20) * 100;
-      if (maGap >= -12) {  // [V8.1] -10 → -12 완화
-        const depthBonus = dayPct < -3 ? 0.2 : (dayPct < -1.5 ? 0.1 : 0);
+      // [V8.6.1] GAP_DOWN: 단독 -16만이지만 손익비 좋아 차단은 안 함(검증결과 수익거래 동반손실).
+      //   대신 너무 깊은 낙폭(-12%)은 칼날잡기 위험 → -8%로 제한, depthBonus 제거(깊을수록 보상=역효과).
+      if (maGap >= -8) {
         signals.push({
           name: "DY_GAP_DOWN",
-          weight: 1.0 + depthBonus, type: "COUNTER",
+          weight: 0.95, type: "COUNTER",
           detail: "day " + dayPct.toFixed(1) + "% RSI " + dailyRsi.toFixed(1)
         });
       }
@@ -1351,7 +1363,7 @@ function evaluateBuySignals_day(price, dayPct, dailyData, cfg) {
     if (yestPct < yestThr && dayPct > 0 && dailyRsi >= 25 && dailyRsi <= rsiBounceLimit) {
       signals.push({
         name: "DY_BOUNCE",
-        weight: 1.15, type: "COUNTER",
+        weight: 1.1, type: "COUNTER",
         detail: "yest " + yestPct.toFixed(1) + "% today +" + dayPct.toFixed(1) + "%"
       });
     }
@@ -1360,9 +1372,12 @@ function evaluateBuySignals_day(price, dayPct, dailyData, cfg) {
   // [V8.1] DAY3: VWAP_PULL — 추세 위 가벼운 눌림
   const vwapMin = rules.vwapPullMinPct != null ? rules.vwapPullMinPct : -0.5;
   const vwapMax = rules.vwapPullMaxPct != null ? rules.vwapPullMaxPct : 2.5;
-  if (ma5 != null && ma5 > ma20 && price > ma5
+  // [V8.6 데이터근거] DY_VWAP_PULL: 청산표본 11건 승률 18%, 누적 -3.6만 → 비활성화.
+  //   추세 위 얕은 눌림 컨셉이지만 실거래에선 DIP_BUY와 중복되며 더 나쁜 성과.
+  const VWAP_PULL_ENABLED = false;
+  if (VWAP_PULL_ENABLED && ma5 != null && ma5 > ma20 && price > ma5
       && dayPct >= vwapMin && dayPct <= vwapMax
-      && dailyRsi >= 48 && dailyRsi <= 68) {  // [V8.1] 50~65 → 48~68 완화
+      && dailyRsi >= 48 && dailyRsi <= 68) {
     signals.push({
       name: "DY_VWAP_PULL",
       weight: 1.05, type: "TREND",
@@ -1387,7 +1402,10 @@ function evaluateBuySignals_day(price, dayPct, dailyData, cfg) {
   // 강한 RSI (60~75) + 가격이 ma5/ma20 위 + 보합~상승 → 강세 지속 진입
   const momoRsiMin = rules.momoRsiMin != null ? rules.momoRsiMin : 60;
   const momoRsiMax = rules.momoRsiMax != null ? rules.momoRsiMax : 75;
-  if (dailyRsi >= momoRsiMin && dailyRsi <= momoRsiMax
+  // [V8.6 데이터근거] DY_MOMO: 청산표본 10건 승률 20%, 평균 -1.0%, 누적 -3.6만 → 비활성화.
+  //   고RSI 추격이 일봉 기준에선 고점매수가 되어 손절로 직행. OPEN_DRIVE가 같은 역할을 더 잘함.
+  const MOMO_ENABLED = false;
+  if (MOMO_ENABLED && dailyRsi >= momoRsiMin && dailyRsi <= momoRsiMax
       && ma5 != null && price > ma5 && ma5 > ma20
       && dayPct >= -1.0 && dayPct <= 3.0) {
     signals.push({
@@ -1611,6 +1629,9 @@ function resolveSignals(signals, cfg, signalStats, stratName) {
   if (signals.length === 1) {
     if (cfg.requireConfluence) return null;
     const s = signals[0];
+    // [V8.6.1 철회] soloEligible 차단은 과거데이터 검증 결과 수익거래(+9.4만)까지 버려 역효과.
+    //   GAP_DOWN/BOUNCE 단독도 손익비(승+2%/패-0.6%)가 좋아 승률 35%여도 합산 +.
+    //   대신 손실의 핵심은 KR 데이트레이드 EOD → 시장 게이트(아래)와 softTimeStop으로 처리.
     return {
       name: s.name,
       weight: s.weight * cfg.soloSignalWeight,
@@ -1909,12 +1930,28 @@ function evaluateSell(pos, price, daily, dailyRsi, dailyMa, dailyMaShort, cfg, m
     if (market) {
       const mtc = marketMinutesUntilClose(market);
       const forceMin = r.forceCloseBeforeMinClose || 30;
+      // [V8.6] 마감 45분 전부터: 수익 중이면 미리 확정 (마감 직전 급락에 끌려나오기 방지)
+      const ptBefore = r.eodProfitTakeBeforeMin || 45;
+      if (mtc != null && mtc <= ptBefore && mtc > forceMin && pnlRate >= 0.3) {
+        return { sell: true, sellQty: pos.qty, reason: "DAY-EOD-TP " + mtc + "min PnL=" + pnlRate.toFixed(2) + "%" };
+      }
       if (mtc != null && mtc <= forceMin) {
         return { sell: true, sellQty: pos.qty, reason: "DAY-EOD " + mtc + "min PnL=" + pnlRate.toFixed(2) + "%" };
       }
     }
     // 최소 보유시간
     if (heldMin < (r.minHoldMinutes || 20)) return { sell: false };
+    // [V8.6 데이터근거] softTimeStop: 진입 후 충분히 지났는데 방향이 안 나면(거의 본전/약손실) 미리 정리.
+    //   EOD까지 끌다 손실 확정되는 패턴(승률 25%)을 자르기 위함. 손절(-1%)보다 위, 미미한 수익 미만 구간만.
+    //   [V8.6.1] KR은 더 타이트(50분/+0.25%) — KR EOD 손실 -53만이 최대 손실원.
+    const isKR = (market === "kr");
+    const stMin = isKR ? (r.softTimeStopMinutesKR != null ? r.softTimeStopMinutesKR : r.softTimeStopMinutes)
+                       : r.softTimeStopMinutes;
+    const stPnl = isKR ? (r.softTimeStopMinPnlKR != null ? r.softTimeStopMinPnlKR : 0.25)
+                       : (r.softTimeStopMinPnl != null ? r.softTimeStopMinPnl : 0.15);
+    if (stMin != null && heldMin >= stMin && pnlRate < stPnl && !tp1Done) {
+      return { sell: true, sellQty: pos.qty, reason: "DAY-TIMESTOP " + heldMin.toFixed(0) + "min PnL=" + pnlRate.toFixed(2) + "%" };
+    }
     // [V8.3+V8.4] TP1 분할익절 — tp1 + cost 도달 시 절반 청산 (실수익 기준)
     if (!tp1Done && r.tp1 != null && pnlRate >= (r.tp1 + cost)) {
       const halfQty = Math.floor(pos.qty / 2);
@@ -2921,6 +2958,10 @@ async function runTradingCycle(env) {
               incBlock(blockReason.split(" ")[0] + "[" + strategy + "]");
               continue;
             }
+
+            // [V8.6.1 철회] KR 약신호 진입 차단은 과거데이터 검증 결과 수익거래(+9.4만)까지 버려 역효과.
+            //   이 시스템은 승률(41%)이 아닌 손익비(3.3:1)로 수익을 내는 구조 → 진입을 막으면 큰 승자도 잃음.
+            //   진짜 처방은 "진입 차단"이 아니라 "지는 거래의 손실 크기 축소" = softTimeStop(청산로직).
 
             // [V8.6 Hybrid] LLM 일일 지시 적용 — 매수 차단 필터
             if (llmInstr) {
