@@ -222,31 +222,43 @@ const DEFAULT_CFG = {
     minHoldMinutes: 10,
     maxHoldHours: 8,
     forceCloseBeforeMinClose: 30,
-    // [V8.4] 손익비 1:1 → 1:2.5+ 재설계
-    tp: 4.0,                   // 2.5 → 4.0 (TP2 더 멀리)
-    stopLossPct: 1.0,          // 1.3 → 1.0 (손절 타이트)
-    // [V8.5] trailing을 tp1(2.0) 이후로 늦춤 — 분할익절 잔량 보호
-    trailStartPct: 2.5,        // V8.4 2.0 → 2.5 (tp1=2.0 이후 발동)
-    trailDropPct: 0.8,         // V8.4 1.5 → 0.8 (잔량은 타이트하게 따라감)
-    // [V8.4] Break-even 너무 빠르게 발동되던 문제 해결
-    breakEvenAt: 2.0,          // 1.0 → 2.0 (노이즈로 본전청산 방지)
-    breakEvenLock: 0.2,        // 0.1 → 0.2
-    // [V8.4] TP1 분할익절 — 절반 청산 임계 상향
-    tp1: 2.0,                  // 1.5 → 2.0
-    // [V8.1.3] 범위 더 공격적
-    dayDropMin: -8.0,                  // [V8.1.3] -7→-8
-    dayDropMax: 1.5,                   // [V8.1.3] 1.0→1.5
-    rsiMaxForGap: 65,                  // [V8.1.3] 60→65
-    rsiMaxForBounce: 70,               // [V8.1.3] 65→70
-    bounceYestMin: -0.5,               // [V8.1.3] -0.8→-0.5 (작은 음봉도 잡기)
-    openDriveMinPct: 0.5,              // [V8.1.3] 0.7→0.5
-    openDriveMaxPct: 6.0,              // [V8.1.3] 5.0→6.0
-    vwapPullMinPct: -1.5,              // [V8.1.3] -1.0→-1.5
-    vwapPullMaxPct: 3.5,               // [V8.1.3] 3.0→3.5
-    momoRsiMin: 55,                    // [V8.1.3] 58→55
-    momoRsiMax: 80,                    // [V8.1.3] 78→80
-    dipMinPct: -5.0,                   // [V8.1.3] -3.5→-5.0 (큰 눌림도 잡기, 005380같은 -4.7%)
-    dipMaxPct: -0.1                    // [V8.1.3] -0.2→-0.1
+    // [V9 손절 — 데이터 재검증 결과]
+    //   처음엔 손절을 1.0→1.6%로 넓히려 했으나, HARD-STOP 43건 분석 결과
+    //   "넓히면 36건이 -1.6%까지 더 버티는데 반등할지 더 빠질지 기록상 알 수 없음"
+    //   → 손절 확대는 표본으로 정당화 안 됨. 원래 1.0% 유지.
+    //   실제 슬리피지(-1.37%)의 원인은 손절폭이 아니라 ATR스톱이 %스톱보다 깊게
+    //   잡히던 것. executeBuy에서 stopPrice를 %스톱으로 상한 고정해 해결.
+    tp: 4.0,
+    stopLossPct: 1.0,          // [V9] 유지 (확대는 데이터로 정당화 안 됨)
+    // [V8.5] trailing을 tp1 이후로 늦춤 — 분할익절 잔량 보호
+    trailStartPct: 2.5,
+    trailDropPct: 0.8,
+    breakEvenAt: 1.8,          // [V9] 2.0 → 1.8 (tp1 직전 본전확보로 EOD 손실전환 차단)
+    breakEvenLock: 0.2,
+    tp1: 2.0,                  // 유지
+    // [V9 신규] EOD 횡보 청산 누수 차단 — 데이터 근거:
+    //   DAY-EOD 119건 중 손실 89 vs 이익 30, 평균 -0.0%. 방향성 없는 죽은 포지션이
+    //   마감까지 끌려가 비용만 까먹음. 일정 시간 내 일정 수익 못 내면 조기 청산.
+    chopExitMinutes: 90,       // 진입 90분 후
+    chopExitMaxPnl: 0.3,       // PnL이 +0.3% 미만이면(=방향성 없음) 비용 나기 전 청산
+    // === 진입 범위 — [V9] 과잉진입 억제로 약간 보수화 ===
+    // 하루 169건 진입 중 대부분이 EOD 횡보. 문턱을 좁혀 신호 질을 높임.
+    dayDropMin: -6.0,                  // [V9] -8.0 → -6.0 (너무 깊은 갭하락 = 칼날, 제외)
+    dayDropMax: 1.0,                   // [V9] 1.5 → 1.0
+    rsiMaxForGap: 60,                  // [V9] 65 → 60 (약세 종목 매수 억제)
+    requireGapRsiUptick: true,         // [V9 신규] 갭하락 매수는 RSI 상승전환 시에만 (falling-knife 방지)
+    rsiMaxForBounce: 68,               // [V9] 70 → 68
+    bounceYestMin: -0.8,               // [V9] -0.5 → -0.8 (의미있는 음봉만)
+    openDriveMinPct: 0.7,              // [V9] 0.5 → 0.7
+    openDriveMaxPct: 5.0,              // [V9] 6.0 → 5.0
+    vwapPullMinPct: -1.2,              // [V9] -1.5 → -1.2
+    vwapPullMaxPct: 3.0,               // [V9] 3.5 → 3.0
+    momoRsiMin: 58,                    // [V9] 55 → 58
+    momoRsiMax: 78,                    // [V9] 80 → 78
+    dipMinPct: -4.0,                   // [V9] -5.0 → -4.0
+    dipMaxPct: -0.2,                   // [V9] -0.1 → -0.2
+    // [V9] DY_RANGE catch-all 비활성화 — 횡보 EOD 누수의 주범. 확신신호만 진입.
+    enableRange: false
   },
   momentumRules: {
     breakoutDays: 10,          // [V8.1.7] 15→10 (더 자주 돌파 진입)
@@ -1213,17 +1225,25 @@ function evaluateBuySignals_day(price, dayPct, dailyData, cfg) {
   const signals = [];
   const rsiGapLimit = rules.rsiMaxForGap != null ? rules.rsiMaxForGap : 55;
   const rsiBounceLimit = rules.rsiMaxForBounce != null ? rules.rsiMaxForBounce : 60;
+  const dailyRsiPrev = getRSI(closes.slice(0, -1), cfg.rsiPeriod); // [V9] RSI 상승전환 판정용
 
-  // DAY1: 갭하락 매수 — 더 넓은 범위 + RSI 완화 + MA20 -12% 이내
+  // DAY1: 갭하락 매수 — [V9] falling-knife 방지 강화
+  //   기존엔 RSI<60 이면 무조건 진입 → 약세 종목을 계속 매수.
+  //   [V9] requireGapRsiUptick: RSI가 어제보다 상승(반등 시작)했을 때만 진입.
+  //   또 dayDropMin을 -6%로 좁혀 너무 깊은 갭(추세붕괴)은 제외.
   if (dayPct >= rules.dayDropMin && dayPct <= rules.dayDropMax) {
-    if (dailyRsi < rsiGapLimit) {
+    const rsiOk = dailyRsi < rsiGapLimit;
+    const uptickOk = !rules.requireGapRsiUptick
+      || (dailyRsiPrev != null && dailyRsi > dailyRsiPrev);
+    if (rsiOk && uptickOk) {
       const maGap = ((price - ma20) / ma20) * 100;
-      if (maGap >= -12) {  // [V8.1] -10 → -12 완화
+      if (maGap >= -12) {
         const depthBonus = dayPct < -3 ? 0.2 : (dayPct < -1.5 ? 0.1 : 0);
         signals.push({
           name: "DY_GAP_DOWN",
           weight: 1.0 + depthBonus, type: "COUNTER",
           detail: "day " + dayPct.toFixed(1) + "% RSI " + dailyRsi.toFixed(1)
+            + (rules.requireGapRsiUptick ? " uptick" : "")
         });
       }
     }
@@ -1298,10 +1318,11 @@ function evaluateBuySignals_day(price, dayPct, dailyData, cfg) {
     });
   }
 
-  // [V8.4] DAY7: DY_RANGE — 기존 catch-all (RSI 30~75, dayPct -5~+3) 제거.
-  // 정규분포상 약 60~70% 종목이 항상 충족 → 사실상 랜덤 매수 → 승률 50% 수렴 원인.
-  // 대체: 추세 정렬 강제 + RSI 중립 좁힘 + 변동 작을 때만 (확신 있는 안전망)
-  if (ma5 != null && ma5 > ma20 && price > ma5
+  // [V9] DAY7: DY_RANGE catch-all — enableRange로 토글 (기본 OFF).
+  //   데이터: EOD 횡보 청산 누수의 핵심. 정규분포상 60~70% 종목이 항상 충족 →
+  //   사실상 랜덤 매수 → 승률 50% 수렴. V9에서 기본 비활성화.
+  if (rules.enableRange === true
+      && ma5 != null && ma5 > ma20 && price > ma5
       && dailyRsi >= 45 && dailyRsi <= 65
       && dayPct >= -2.0 && dayPct <= 1.5) {
     if (signals.length === 0) {
@@ -1602,6 +1623,21 @@ function evaluateBuyBlocks(price, dayPct, dailyData, cfg, regime, signal, ctx) {
     return "BEAR_WEAK worst=" + regime.worstDayPct.toFixed(2) + "%";
   }
 
+  // [V9 신규] DAY 약세일 게이팅 — 데이터 근거:
+  //   5/20 KR 하락일에 모든 DAY 전략이 -1.4%, 승률 0%로 동반 손실.
+  //   기존 코드는 DAY를 DOWNTREND/PERSISTENT_DOWN/BEAR(약함)에서 전부 면제 →
+  //   하락하는 날 무방비 진입. 전면차단(과최적화) 대신:
+  //   "지수가 의미있게 약한 날(worst<=-1.0% 또는 평균<0)에는 추세추종 DAY 신호 차단,
+  //    반등성(isCounterTrend: GAP_DOWN/BOUNCE/DIP)만 허용"
+  if (strategy === "day" && !signal.isCounterTrend) {
+    const weakDay = (regime.worstDayPct != null && regime.worstDayPct <= -1.0)
+      || (regime.avgDayPct != null && regime.avgDayPct < 0 && regime.regime === "BEAR");
+    if (weakDay) {
+      return "DAY_WEAK_REGIME worst=" + (regime.worstDayPct != null ? regime.worstDayPct.toFixed(2) : "?")
+        + "% avg=" + (regime.avgDayPct != null ? regime.avgDayPct.toFixed(2) : "?") + "%";
+    }
+  }
+
   // RS 필터 — COUNTER 성격 전략(DAY/MEANREV)과 isCounterTrend 신호는 면제
   if (cfg.rsFilterEnabled && strategy !== "day" && strategy !== "meanrev"
       && !signal.isCounterTrend && regime.idxReturn20 != null) {
@@ -1659,10 +1695,18 @@ async function executeBuy(DB, market, symbol, strategy, qty, price, signal, dail
   let stopPrice = pctStop;
   if (dailyAtr) {
     const atrStop = price - dailyAtr * atrMult;
-    stopPrice = Math.min(atrStop, pctStop);
+    // [V9 슬리피지 수정] 기존 Math.min은 ATR스톱이 %스톱보다 깊으면 그걸 채택 →
+    //   실측 손절이 설정 -1.0%가 아니라 -1.37%로 깊어진 원인(HARD-STOP 43건 전부 초과).
+    //   수정: %스톱(pctStop)을 절대 하한(최대 손실)으로 고정.
+    //   ATR스톱은 그보다 "더 타이트할 때만"(=더 높은 가격) 채택해 손절폭을 좁힘.
+    if (atrStop > pctStop) {
+      stopPrice = atrStop;   // ATR이 더 타이트 → 손절 더 빨리 (손실 축소)
+    } else {
+      stopPrice = pctStop;   // ATR이 더 깊음 → %스톱으로 상한 고정 (슬리피지 차단)
+    }
   }
-  // 최대 손절폭은 stopPct로 고정
-  if (stopPrice > pctStop) stopPrice = pctStop;
+  // 최대 손절폭은 stopPct로 절대 고정 (이중 안전장치)
+  if (stopPrice < pctStop) stopPrice = pctStop;
 
   try {
     await savePosition(DB, market, symbol, strategy, {
@@ -1802,6 +1846,13 @@ function evaluateSell(pos, price, daily, dailyRsi, dailyMa, dailyMaShort, cfg, m
     }
     // 최소 보유시간
     if (heldMin < (r.minHoldMinutes || 20)) return { sell: false };
+    // [V9 신규] 횡보 조기청산 — 데이터: DAY-EOD 119건 중 손실 89(75%), 평균 -0.0%.
+    //   진입 후 chopExitMinutes 지나도 chopExitMaxPnl 미달이면 방향성 없는 죽은 포지션 →
+    //   EOD까지 끌고가 비용만 까먹기 전에 청산해 회전율/비용 개선.
+    if (r.chopExitMinutes != null && r.chopExitMaxPnl != null
+        && heldMin >= r.chopExitMinutes && pnlRate < r.chopExitMaxPnl) {
+      return { sell: true, sellQty: pos.qty, reason: "DAY-CHOP " + heldMin.toFixed(0) + "min PnL=" + pnlRate.toFixed(2) + "%" };
+    }
     // [V8.3+V8.4] TP1 분할익절 — tp1 + cost 도달 시 절반 청산 (실수익 기준)
     if (!tp1Done && r.tp1 != null && pnlRate >= (r.tp1 + cost)) {
       const halfQty = Math.floor(pos.qty / 2);
