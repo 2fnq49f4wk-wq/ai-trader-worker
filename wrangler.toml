@@ -14,3 +14,9 @@ crons = ["*/1 * * * *"]
 [assets]
 directory = "./public"
 binding = "ASSETS"
+
+# === AI Gateway 경유 LLM 호출 ===
+# 배포해도 안 지워지도록 여기에 박아둠.
+# 끝이 /anthropic/v1/messages 형식이어야 코드와 맞음 (compat/chat/completions 아님)
+[vars]
+LLM_BASE_URL = "https://gateway.ai.cloudflare.com/v1/f146c5daff47728653b1e30b52c961af/trader1/anthropic/v1/messages"
