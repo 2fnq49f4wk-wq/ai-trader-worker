@@ -6,7 +6,7 @@
 <title>LUX-engine V9(beta)</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-<link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600;700&family=Georgia:wght@400;700&display=swap" rel="stylesheet">
+<link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600;700&family=Georgia:wght@400;700&family=Pinyon+Script&family=Cormorant+Garamond:ital,wght@1,500&display=swap" rel="stylesheet">
 <style>
 
 #lux-intro-overlay {
@@ -515,6 +515,43 @@ button.btn.loading { opacity: 0.5; pointer-events: none; }
 .watchlist-section { padding: 4px 12px 8px; font-size: 10px; color: var(--amber); font-weight: bold; letter-spacing: 1px; background: rgba(255,215,0,0.05); border-bottom: 1px solid var(--border); }
 .watchlist-section.fav { color: var(--amber); }
 .watchlist-section.all { color: var(--dim); }
+
+/* ── Epigraph above SETTINGS ── */
+.settings-epigraph {
+  text-align: center;
+  margin: -4px 0 22px;
+  padding: 0 10px;
+  line-height: 1.35;
+}
+.settings-epigraph .verse {
+  font-family: 'Pinyon Script', cursive;
+  font-size: 30px;
+  font-weight: 400;
+  color: #e9d8c4;
+  background: linear-gradient(180deg, #fdf3e3 0%, #d9b98a 55%, #b98a4e 100%);
+  -webkit-background-clip: text;
+  background-clip: text;
+  -webkit-text-fill-color: transparent;
+  text-shadow: 0 0 18px rgba(217,185,138,0.25);
+  letter-spacing: 0.4px;
+  display: block;
+}
+.settings-epigraph .verse-sub {
+  font-family: 'Cormorant Garamond', 'Georgia', serif;
+  font-style: italic;
+  font-size: 13px;
+  color: var(--dim);
+  margin-top: 6px;
+  letter-spacing: 0.6px;
+  opacity: 0.85;
+}
+.settings-epigraph .rule {
+  width: 60px;
+  height: 1px;
+  margin: 14px auto 0;
+  background: linear-gradient(90deg, transparent, var(--amber), transparent);
+  opacity: 0.6;
+}
 </style>
 </head>
 <body>
@@ -736,6 +773,10 @@ button.btn.loading { opacity: 0.5; pointer-events: none; }
 <!-- SETTINGS 모달 -->
 <div class="modal" id="settingsModal">
   <div class="modal-content">
+    <div class="settings-epigraph">
+      <span class="verse">Im stillen Liebestraum verglüht die blaue Nacht<br>für die Wintertulpen zur glühenden Morgenröte.</span>
+      <div class="rule"></div>
+    </div>
     <h2>⚙ SETTINGS</h2>
 
     <div class="checkbox-row">
