@@ -142,9 +142,12 @@ const DEFAULT_CFG = {
   //   signal.weight는 riskPerTrade에 곱해 강한 신호일수록 리스크 더 가져감.
   riskBasedSizing: {
     enabled: true,
-    riskPerTrade: 0.6,       // cash의 0.6% 손실 허용
+    // [V9.4] 0.6→0.8 / [V9.5] 0.8→1.0 추가 상향: 현금 활용도 더 끌어올림.
+    //   maxRisk는 1.2 유지 — 가장 공격적 거래도 한 거래 손실 자산 1.2%로 묶임.
+    //   결과: 기본 신호 거래 KR ₩1116만→₩1395만, 한 거래 손절시 손실 자산 0.8%→1.0%.
+    riskPerTrade: 1.0,       // cash의 1.0% 손실 허용
     minRisk: 0.3,            // 약한 신호 floor
-    maxRisk: 1.2,            // 강한 신호 + crossConf 시 cap
+    maxRisk: 1.2,            // 강한 신호 + crossConf 시 cap (유지 — 안전선)
     fallbackToLegacy: false  // 리스크 사이징 실패 시 legacy 사용 여부
   },
   // === [V8.5] disabled signal 재평가 ===
@@ -198,9 +201,20 @@ const DEFAULT_CFG = {
   // === [V8.1.9] 한 거래당 목표 금액 클램프 (시장별) ===
   // budget이 minBudget 미만이면 minBudget으로 끌어올리고, maxBudget 넘으면 잘라냄.
   // cash[market] 부족하면 cash 한도 내에서 최대한 채움.
+  // [V9.4] day의 기본 폴백값(전략별 오버라이드 없을 때 사용).
   sizingTargets: {
-    kr: { minBudget: 1000000, maxBudget: 3000000 },  // ₩100만 ~ ₩300만
-    us: { minBudget: 1000,    maxBudget: 3000    }   // $1k ~ $3k
+    kr: { minBudget: 1000000, maxBudget: 3000000 },  // ₩100만 ~ ₩300만 (day 기준)
+    us: { minBudget: 1000,    maxBudget: 3000    }   // $1k ~ $3k (day 기준)
+  },
+  // [V9.4] 전략별 한 거래 최대금액 오버라이드 — 현금 활용도↑, 좋은 신호에 크게 베팅.
+  //   day는 약전략이라 캡 유지(위 sizingTargets 사용). 나머지는 자산 비중 기준으로 상향.
+  //   swing/meanrev: 자산 ~20% / momentum: 자산 ~6% / day: 자산 ~3%(유지).
+  //   ※ 캡은 상한일 뿐, 실제 금액은 riskBasedSizing이 결정 → riskPerTrade도 함께 상향함.
+  sizingTargetsByStrategy: {
+    swing:    { kr: { minBudget: 1000000, maxBudget: 20000000 }, us: { minBudget: 1000, maxBudget: 20000 } },
+    meanrev:  { kr: { minBudget: 1000000, maxBudget: 20000000 }, us: { minBudget: 1000, maxBudget: 20000 } },
+    momentum: { kr: { minBudget: 1000000, maxBudget: 6000000  }, us: { minBudget: 1000, maxBudget: 6000  } }
+    // day: 오버라이드 없음 → 위 sizingTargets(₩300만/$3k) 사용
   },
   // === [V8.3] ATR 기반 동적 사이징 ===
   // 변동성 큰 종목은 작게, 안정된 종목은 크게 매수 → 포지션당 절대 리스크 균등화.
@@ -3124,7 +3138,11 @@ async function runTradingCycle(env) {
             // 리스크 기반은 cash × riskPerTrade / stopDistancePct
             //   → 한 거래 손실 한도 = cash × riskPerTrade%
             //   stopDistance = max(rules.stopLossPct, 1.5×ATR%) — MEANREV 등 ATR 동적 손절 반영
-            const targets = (mcfg.sizingTargets && mcfg.sizingTargets[market]) || { minBudget: 0, maxBudget: Infinity };
+            // [V9.4] 전략별 캡 우선 — 없으면 시장별 기본(day 등) 폴백.
+            const byStrat = mcfg.sizingTargetsByStrategy && mcfg.sizingTargetsByStrategy[strategy];
+            const targets = (byStrat && byStrat[market])
+              || (mcfg.sizingTargets && mcfg.sizingTargets[market])
+              || { minBudget: 0, maxBudget: Infinity };
             const cashCap = cash[market] * 0.85;
             let budget;
             const rbs = mcfg.riskBasedSizing || {};
