@@ -148,7 +148,15 @@ const DEFAULT_CFG = {
     riskPerTrade: 1.0,       // cash의 1.0% 손실 허용
     minRisk: 0.3,            // 약한 신호 floor
     maxRisk: 1.2,            // 강한 신호 + crossConf 시 cap (유지 — 안전선)
-    fallbackToLegacy: false  // 리스크 사이징 실패 시 legacy 사용 여부
+    fallbackToLegacy: false, // 리스크 사이징 실패 시 legacy 사용 여부
+    // [V9.6] 전략별 오버라이드. 지정 전략은 아래 값을, 미지정은 위 공통값 사용.
+    //   momentum: 손절폭이 8%로 넓어 공통 floor(0.3%)면 약신호·고변동 시 거래금액이
+    //   500만 밑으로 떨어짐. minRisk를 0.65%로 올려 최악 조건(stop 12.8%)에서도
+    //   ~500만 확보. riskPerTrade/maxRisk도 함께 올려 손익비 일관성 유지.
+    //   ※ 트레이드오프: momentum 한 거래 최대 손실한도가 자산의 1.2%→1.4%로 소폭 증가.
+    byStrategy: {
+      momentum: { riskPerTrade: 1.2, minRisk: 0.65, maxRisk: 1.4 }
+    }
   },
   // === [V8.5] disabled signal 재평가 ===
   signalReviewDays: 30,      // 비활성화 후 N일 경과 시 재활성화 후보
@@ -210,10 +218,14 @@ const DEFAULT_CFG = {
   //   day는 약전략이라 캡 유지(위 sizingTargets 사용). 나머지는 자산 비중 기준으로 상향.
   //   swing/meanrev: 자산 ~20% / momentum: 자산 ~6% / day: 자산 ~3%(유지).
   //   ※ 캡은 상한일 뿐, 실제 금액은 riskBasedSizing이 결정 → riskPerTrade도 함께 상향함.
+  // [V9.6] swing/meanrev/momentum 한 거래 캡 ₩3000만/$3만으로 상향(목표 500만~3000만).
+  //   minBudget=0 — 강제 하한 제거. riskBasedSizing이 정한 금액을 그대로 쓰고,
+  //   리스크 계산상 작게 나와도 억지로 500만을 채우지 않음(사용자 요청).
+  //   day: 오버라이드 없음 → 아래 sizingTargets(₩300만/$3k) 그대로 사용.
   sizingTargetsByStrategy: {
-    swing:    { kr: { minBudget: 1000000, maxBudget: 20000000 }, us: { minBudget: 1000, maxBudget: 20000 } },
-    meanrev:  { kr: { minBudget: 1000000, maxBudget: 20000000 }, us: { minBudget: 1000, maxBudget: 20000 } },
-    momentum: { kr: { minBudget: 1000000, maxBudget: 6000000  }, us: { minBudget: 1000, maxBudget: 6000  } }
+    swing:    { kr: { minBudget: 0, maxBudget: 30000000 }, us: { minBudget: 0, maxBudget: 30000 } },
+    meanrev:  { kr: { minBudget: 0, maxBudget: 30000000 }, us: { minBudget: 0, maxBudget: 30000 } },
+    momentum: { kr: { minBudget: 0, maxBudget: 30000000 }, us: { minBudget: 0, maxBudget: 30000 } }
     // day: 오버라이드 없음 → 위 sizingTargets(₩300만/$3k) 사용
   },
   // === [V8.3] ATR 기반 동적 사이징 ===
@@ -3164,9 +3176,14 @@ async function runTradingCycle(env) {
               }
               // 신호 강도를 riskPerTrade에 반영 (cap·floor 적용)
               const sigStrength = signal.weight * crossBonus;
-              const riskBase = rbs.riskPerTrade != null ? rbs.riskPerTrade : 0.6;
-              const minR = rbs.minRisk != null ? rbs.minRisk : 0.3;
-              const maxR = rbs.maxRisk != null ? rbs.maxRisk : 1.2;
+              // [V9.6] 전략별 오버라이드 우선 — 없으면 공통값.
+              const rbsOv = (rbs.byStrategy && rbs.byStrategy[strategy]) || {};
+              const riskBase = rbsOv.riskPerTrade != null ? rbsOv.riskPerTrade
+                             : (rbs.riskPerTrade != null ? rbs.riskPerTrade : 0.6);
+              const minR = rbsOv.minRisk != null ? rbsOv.minRisk
+                         : (rbs.minRisk != null ? rbs.minRisk : 0.3);
+              const maxR = rbsOv.maxRisk != null ? rbsOv.maxRisk
+                         : (rbs.maxRisk != null ? rbs.maxRisk : 1.2);
               let riskPct = riskBase * sigStrength;
               if (riskPct < minR) riskPct = minR;
               if (riskPct > maxR) riskPct = maxR;
