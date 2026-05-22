@@ -1451,7 +1451,11 @@ function evaluateBuySignals_day(price, dayPct, dailyData, cfg, market, intraday)
   }
 
   // DAY2: 강한 일중 반등 — 어제 음봉 후 오늘 양봉
-  if (closes.length >= 3) {
+  // [V9.6 데이터근거] DY_BOUNCE: 청산표본 31건 승률 0%, 누적 -6.23% → day 최대 손실원.
+  //   "어제 빠진 종목이 오늘 양봉이면 반등"이라는 가정이 실거래에선 데드캣 바운스에
+  //   걸려 전부 손절. DY_OPEN_DRIVE/DY_DIP_BUY가 더 나은 진입을 제공하므로 영구 비활성화.
+  const BOUNCE_ENABLED = false;
+  if (BOUNCE_ENABLED && closes.length >= 3) {
     const yest = closes[closes.length - 2];
     const dayBefore = closes[closes.length - 3];
     const yestPct = ((yest - dayBefore) / dayBefore) * 100;
