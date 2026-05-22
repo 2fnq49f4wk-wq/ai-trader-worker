@@ -276,20 +276,23 @@ const DEFAULT_CFG = {
     breakEvenLock: 0.2,        // 0.1 → 0.2
     // [V8.4] TP1 분할익절 — 절반 청산 임계 상향
     tp1: 2.0,                  // 1.5 → 2.0
-    // [V8.1.3] 범위 더 공격적
-    dayDropMin: -8.0,                  // [V8.1.3] -7→-8
-    dayDropMax: 1.5,                   // [V8.1.3] 1.0→1.5
-    rsiMaxForGap: 65,                  // [V8.1.3] 60→65
-    rsiMaxForBounce: 70,               // [V8.1.3] 65→70
-    bounceYestMin: -0.5,               // [V8.1.3] -0.8→-0.5 (작은 음봉도 잡기)
-    openDriveMinPct: 0.5,              // [V8.1.3] 0.7→0.5
-    openDriveMaxPct: 6.0,              // [V8.1.3] 5.0→6.0
-    vwapPullMinPct: -1.5,              // [V8.1.3] -1.0→-1.5
-    vwapPullMaxPct: 3.5,               // [V8.1.3] 3.0→3.5
-    momoRsiMin: 55,                    // [V8.1.3] 58→55
-    momoRsiMax: 80,                    // [V8.1.3] 78→80
-    dipMinPct: -5.0,                   // [V8.1.3] -3.5→-5.0 (큰 눌림도 잡기, 005380같은 -4.7%)
-    dipMaxPct: -0.1                    // [V8.1.3] -0.2→-0.1
+    // [V9.5 진입강화] 진입 범위만 보수화 — "확실할 때만 매수". 리스크/청산 파라미터는 미변경.
+    dayDropMin: -5.0,                  // [V9.5] -8.0→-5.0: 너무 깊은 낙폭(칼날잡기) 차단
+    dayDropMax: 0.5,                   // [V9.5] 1.5→0.5: 갭하락 매수는 진짜 하락일 때만
+    rsiMaxForGap: 55,                  // [V9.5] 65→55: 과매수 구간 갭매수 금지
+    rsiMaxForBounce: 60,               // [V9.5] 70→60: 반등매수도 RSI 낮을 때만
+    bounceYestMin: -1.2,               // [V9.5] -0.5→-1.2: 어제 확실히 빠진 종목만 반등 노림
+    openDriveMinPct: 1.0,              // [V9.5] 0.5→1.0: 약한 갭상승 추격 금지
+    openDriveMaxPct: 4.0,              // [V9.5] 6.0→4.0: 과열 갭상승 추격 금지
+    vwapPullMinPct: -1.0,              // [V9.5] -1.5→-1.0
+    vwapPullMaxPct: 2.5,               // [V9.5] 3.5→2.5
+    momoRsiMin: 58,                    // [V9.5] 55→58
+    momoRsiMax: 74,                    // [V9.5] 80→74: 고RSI 추격 금지
+    dipMinPct: -3.0,                   // [V9.5] -5.0→-3.0: 얕은 눌림만(깊은 눌림=추세훼손)
+    dipMaxPct: -0.3,                   // [V9.5] -0.1→-0.3: 진짜 눌림만
+    // [V9.5 진입강화] 신호 정제 게이트 (진입 단계만 영향)
+    maxSignalsKept: 1,                 // 신호 여러 개면 가장 강한 1개만 채택(확신 매수)
+    minConfirmWeight: 0.9              // weight 0.9 미만 약한 단독신호 보류(GAP_DOWN 0.95는 유지)
   },
   momentumRules: {
     breakoutDays: 10,          // [V8.1.7] 15→10 (더 자주 돌파 진입)
@@ -1424,9 +1427,8 @@ function evaluateBuySignals_day(price, dayPct, dailyData, cfg, market, intraday)
   if (dayPct >= rules.dayDropMin && dayPct <= rules.dayDropMax) {
     if (dailyRsi < rsiGapLimit) {
       const maGap = ((price - ma20) / ma20) * 100;
-      // [V8.6.1] GAP_DOWN: 단독 -16만이지만 손익비 좋아 차단은 안 함(검증결과 수익거래 동반손실).
-      //   대신 너무 깊은 낙폭(-12%)은 칼날잡기 위험 → -8%로 제한, depthBonus 제거(깊을수록 보상=역효과).
-      if (maGap >= -8) {
+      // [V9.5 진입강화] -8%→-5%: 추세 대비 너무 깊이 빠진 종목은 반등 아닌 추세붕괴 확률↑
+      if (maGap >= -5) {
         signals.push({
           name: "DY_GAP_DOWN",
           weight: 0.95, type: "COUNTER",
@@ -1527,13 +1529,16 @@ function evaluateBuySignals_day(price, dayPct, dailyData, cfg, market, intraday)
     }
   }
 
-  // [V9.2 데이터근거] day 신호가 3개 이상 모이면 손실 구간(승률 30%, 평균 -0.4%).
-  //   최우수인 2개 조합(승률 61%)으로 정제 — weight 상위 2개만 남김.
-  if (signals.length >= 3) {
-    signals.sort(function(a, b) { return (b.weight || 0) - (a.weight || 0); });
-    return signals.slice(0, 2);
+  // [V9.5 진입강화] 신호 정제: (a) weight 게이트로 약한 단독신호 제거,
+  //   (b) 신호 여러 개면 가장 강한 maxSignalsKept(기본1)개만 — 확신 있는 진입으로 제한.
+  const minW = rules.minConfirmWeight != null ? rules.minConfirmWeight : 0;
+  let filtered = signals.filter(function(s) { return (s.weight || 0) >= minW; });
+  const keepN = rules.maxSignalsKept != null ? rules.maxSignalsKept : 2;
+  if (filtered.length > keepN) {
+    filtered.sort(function(a, b) { return (b.weight || 0) - (a.weight || 0); });
+    return filtered.slice(0, keepN);
   }
-  return signals;
+  return filtered;
 }
 function evaluateBuySignals_momentum(price, dayPct, dailyData, cfg) {
   const closes = dailyData.closes;
