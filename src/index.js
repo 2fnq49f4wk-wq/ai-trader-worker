@@ -177,10 +177,13 @@ const DEFAULT_CFG = {
   // [V8.1.9] base = 가용현금 대비 비율 (계산식이 cash[market] 기준으로 변경됨).
   //          한 거래 목표금액 KR ₩100~300만 / US $1~3k 범위로 클램프됨 (아래 sizingTargets).
   strategySizing: {
-    day:      { base: 25, bullMult: 1.5, bearMult: 1.0 },
-    meanrev:  { base: 25, bullMult: 1.2, bearMult: 1.4 },
-    swing:    { base: 30, bullMult: 1.4, bearMult: 0.8 },
-    momentum: { base: 28, bullMult: 1.5, bearMult: 0.6 }
+    // [V9] LLM 분석 반영: 현재 NEUTRAL 국면에서 day winRate 0%/avgPnl -20%, momentum 신뢰도 급락, swing만 우수.
+    //   neutralMult 추가 — BULL/BEAR가 아닌 중립 횡보장에서의 전략별 사이즈 배수.
+    //   day/momentum은 추세가 명확할 때만 작동 → 중립장에선 대폭 축소. swing은 중립장에서도 안정 → 유지.
+    day:      { base: 25, bullMult: 1.5, bearMult: 1.0, neutralMult: 0.4 },
+    meanrev:  { base: 25, bullMult: 1.2, bearMult: 1.4, neutralMult: 1.0 },
+    swing:    { base: 30, bullMult: 1.4, bearMult: 0.8, neutralMult: 1.0 },
+    momentum: { base: 28, bullMult: 1.5, bearMult: 0.6, neutralMult: 0.4 }
   },
   // === [V8.1.9] 한 거래당 목표 금액 클램프 (시장별) ===
   // budget이 minBudget 미만이면 minBudget으로 끌어올리고, maxBudget 넘으면 잘라냄.
@@ -220,6 +223,10 @@ const DEFAULT_CFG = {
     breakEvenLock: 0.3
   },
   dayRules: {
+    // [V9] 시장별 차별화 파라미터
+    usIntradayGate: true,       // US: 분봉 일중 모멘텀 게이트 ON (단타 진입 타이밍)
+    krSwingMinHoldHours: 3,     // KR: 짧은 스윙 최소 보유 3시간
+    krSwingMaxHoldDays: 4,      // KR: 최대 보유 4일 (당일청산 강요 안 함)
     minHoldMinutes: 10,
     maxHoldHours: 8,
     forceCloseBeforeMinClose: 30,
@@ -628,13 +635,20 @@ async function callClaude(apiKey, model, prompt, maxTokens, timeoutMs, retryCfg)
     const controller = new AbortController();
     const timeoutId = setTimeout(function() { controller.abort(); }, perAttemptTimeout);
     try {
+      // [V8.8.1] 헤더 구성. AI Gateway에서 'Authenticated Gateway'를 켰다면
+      //   cf-aig-authorization: Bearer {토큰} 헤더가 추가로 필요(없으면 게이트웨이가 403).
+      //   retryCfg.aigToken(=env.AI_GATEWAY_TOKEN)이 있을 때만 붙임.
+      const reqHeaders = {
+        "x-api-key": apiKey,
+        "anthropic-version": "2023-06-01",
+        "content-type": "application/json"
+      };
+      if (retryCfg.aigToken) {
+        reqHeaders["cf-aig-authorization"] = "Bearer " + retryCfg.aigToken;
+      }
       const res = await fetch(endpoint, {
         method: "POST",
-        headers: {
-          "x-api-key": apiKey,
-          "anthropic-version": "2023-06-01",
-          "content-type": "application/json"
-        },
+        headers: reqHeaders,
         body: JSON.stringify({
           model: usedModel,
           max_tokens: maxTokens || 2000,
@@ -653,13 +667,22 @@ async function callClaude(apiKey, model, prompt, maxTokens, timeoutMs, retryCfg)
       // --- 에러 응답 본문 읽기 ---
       const errText = await res.text().catch(function() { return ""; });
       const status = res.status;
+      // [V8.8.1] 진단용: 게이트웨이 응답 헤더 캡처 — 어디서 막혔는지 구분.
+      //   cf-aig-* 헤더가 있으면 게이트웨이가 응답한 것, cf-ray만 있으면 통과 후 Anthropic 응답.
+      let diagHdr = "";
+      try {
+        const ray = res.headers.get("cf-ray");
+        const aigErr = res.headers.get("cf-aig-error") || res.headers.get("cf-aig-event-id");
+        if (aigErr) diagHdr += " aig=" + aigErr;
+        if (ray) diagHdr += " ray=" + ray;
+      } catch (he) { /* ignore */ }
 
       // --- 영구 에러: 재시도해도 동일하므로 즉시 중단 ---
       if (status === 400 || status === 401 || status === 403 || status === 404) {
         let hint = "";
         if (status === 404) hint = " [모델 ID '" + usedModel + "'이(가) 잘못되었거나 사용 불가. 유효 예: claude-opus-4-7 / claude-sonnet-4-6 / claude-haiku-4-5-20251001]";
         else if (status === 401) hint = " [API 키 오류 — ANTHROPIC_API_KEY 확인]";
-        else if (status === 403) hint = " [요청 거부됨(403). 키 권한 문제이거나, Cloudflare Workers 출구 IP가 차단 지역을 거쳐 막혔을 수 있음. 후자라면 LLM_BASE_URL 환경변수로 AI Gateway/프록시 우회 필요]";
+        else if (status === 403) hint = " [요청 거부됨(403). (a) AI Gateway URL이 .../anthropic/v1/messages 형식인지, (b) 게이트웨이 Authentication ON이면 AI_GATEWAY_TOKEN 환경변수 설정했는지, (c) API 키 권한/크레딧 확인. endpoint=" + endpoint + diagHdr + "]";
         else if (status === 400) hint = " [요청 형식 오류]";
         throw new Error("HTTP " + status + hint + ": " + errText.slice(0, 200));
       }
@@ -865,7 +888,9 @@ async function runLLMDailyAnalysis(env, market, forceRun = false) {
       {
         maxRetries: (typeof llmCfg.maxRetries === "number" ? llmCfg.maxRetries : 2),
         // [V8.8] 환경변수로 우회 엔드포인트 지정 가능. 없으면 Anthropic 직통.
-        baseURL: env.LLM_BASE_URL || (llmCfg.baseURL || null)
+        baseURL: env.LLM_BASE_URL || (llmCfg.baseURL || null),
+        // [V8.8.1] AI Gateway 'Authenticated Gateway' ON일 때 필요한 토큰. 없으면 헤더 미첨부.
+        aigToken: env.AI_GATEWAY_TOKEN || null
       }
     );
 
@@ -1246,6 +1271,28 @@ function getNDayHigh(closes, n) {
   return max;
 }
 
+// === [V9] 헬퍼: 당일 분봉 일중 모멘텀 확인 (US 단타 진입 타이밍 게이트) ===
+//   반환: true(상승/반등 중 → 진입OK), false(하락 중 → 진입 보류), null(데이터 부족 → 판단 보류)
+//   판단: 최근 분봉 종가가 (1) 짧은 분봉MA 위에 있고 (2) 직전 저점에서 반등했는지.
+//   단순·보수적으로 — 노이즈에 휘둘리지 않도록 "명확히 하락 중"일 때만 false.
+function checkIntradayMomentum(intraday) {
+  if (!intraday || !Array.isArray(intraday.closes)) return null;
+  const c = intraday.closes;
+  if (c.length < 15) return null;  // 장 초반 표본 부족 → 판단 보류(통과)
+  const last = c[c.length - 1];
+  // 최근 10분 단순 이동평균
+  let sma10 = 0;
+  for (let i = c.length - 10; i < c.length; i++) sma10 += c[i];
+  sma10 /= 10;
+  // 최근 10분 내 최저점 — 거기서 반등했는지
+  let recentLow = Infinity;
+  for (let i = c.length - 10; i < c.length; i++) if (c[i] < recentLow) recentLow = c[i];
+  const bounceFromLow = recentLow > 0 ? ((last - recentLow) / recentLow) * 100 : 0;
+  // 명확히 하락 중: 현재가가 분봉MA 아래 + 저점 대비 반등도 미미(0.1% 미만)
+  if (last < sma10 && bounceFromLow < 0.1) return false;
+  return true;
+}
+
 // === [V8] 헬퍼: z-score (평균회귀용) ===
 function getZScore(closes, p) {
   p = p || 20;
@@ -1324,8 +1371,10 @@ function evaluateBuySignals_swing(price, dayPct, dailyData, cfg) {
   return signals;
 }
 
-// === [V8] DAY 전략 — 갭하락 후 반등 노림수 (실제론 intraday swing) ===
-function evaluateBuySignals_day(price, dayPct, dailyData, cfg) {
+// === [V9] DAY 전략 — 시장별 차별화 ===
+//   US: 단타(분봉 실시간) — 분봉 타이밍 게이트로 "지금 반등 중"인 것만 진입, 당일 청산.
+//   KR: 짧은 스윙(야후 15분 지연으로 분봉 신뢰 불가) — 일봉 기반 진입, 보유 며칠로 연장.
+function evaluateBuySignals_day(price, dayPct, dailyData, cfg, market, intraday) {
   const closes = dailyData.closes;
   if (!closes || closes.length < 25) return [];
   const rules = cfg.dayRules;
@@ -1333,6 +1382,15 @@ function evaluateBuySignals_day(price, dayPct, dailyData, cfg) {
   const ma20 = getMA(closes, cfg.maPeriod);
   const ma5 = getMA(closes, cfg.maShortPeriod);
   if (dailyRsi == null || ma20 == null) return [];
+
+  // [V9] US 단타: 분봉으로 일중 방향 확인. 실시간 분봉이 있을 때만(US) 적용.
+  //   "지금 실제로 반등/상승 중"이 아니면 진입 보류 → 어제 정보로 칼날잡기 방지.
+  //   KR은 15분 지연이라 이 게이트를 건너뜀(일봉 기반 스윙).
+  if (market === "us" && cfg.dayRules && cfg.dayRules.usIntradayGate !== false) {
+    const intraOk = checkIntradayMomentum(intraday);
+    // intraOk === false (명확히 하락중)일 때만 차단. null(데이터부족)은 통과시켜 기존동작 유지.
+    if (intraOk === false) return [];
+  }
 
   const signals = [];
   const rsiGapLimit = rules.rsiMaxForGap != null ? rules.rsiMaxForGap : 55;
@@ -1489,10 +1547,12 @@ function evaluateBuySignals_momentum(price, dayPct, dailyData, cfg) {
     }
   }
 
-  // MOM2: 강한 추세 진행
-  if (trendAligned && dailyRsi >= 50 && dailyRsi <= 75) {  // [V8.1.7] 52~72 → 50~75
+  // MOM2: 강한 추세 진행 — [V9] 추격 상단 축소.
+  //   기존 ma20 대비 +10%까지 추격은 중립장에서 이미 오른 고점을 사는 꼴(momentum 손실 원인).
+  //   추세 진행 중 '얕은 눌림'만 잡도록 +10%→+5%로 제한, RSI 상단도 75→70으로 과열 회피.
+  if (trendAligned && dailyRsi >= 50 && dailyRsi <= 70) {
     const ma20Gap = ((price - ma20) / ma20) * 100;
-    if (ma20Gap >= -1 && ma20Gap <= 10) {  // [V8.1.7] 0~7 → -1~10
+    if (ma20Gap >= -1 && ma20Gap <= 5) {
       signals.push({
         name: "MO_TREND_PB",
         weight: 1.1, type: "TREND",
@@ -1568,7 +1628,7 @@ function evaluateBuySignals_meanrev(price, dayPct, dailyData, cfg, regime) {
 // === [V8] 통합 평가기 — 모든 활성 전략에서 신호 수집 ===
 // 반환: [{ strategy, signal, signals: [...] }, ...]  (전략당 1개)
 // [V8.4] regime 인자 추가 — meanrev에 전달
-function evaluateAllStrategies(price, dayPct, dailyData, cfg, signalStats, regime) {
+function evaluateAllStrategies(price, dayPct, dailyData, cfg, signalStats, regime, market, intraday) {
   const results = [];
   const evaluators = {
     swing:    evaluateBuySignals_swing,
@@ -1578,10 +1638,15 @@ function evaluateAllStrategies(price, dayPct, dailyData, cfg, signalStats, regim
   };
   for (const stratName of STRATEGIES) {
     if (!cfg.strategies || !cfg.strategies[stratName]) continue;
-    // [V8.4] meanrev만 regime 추가 인자
-    const sigs = (stratName === "meanrev")
-      ? evaluators[stratName](price, dayPct, dailyData, cfg, regime)
-      : evaluators[stratName](price, dayPct, dailyData, cfg);
+    // [V8.4] meanrev만 regime 인자 / [V9] day는 market·intraday 인자 (시장별 차별화)
+    let sigs;
+    if (stratName === "meanrev") {
+      sigs = evaluators[stratName](price, dayPct, dailyData, cfg, regime);
+    } else if (stratName === "day") {
+      sigs = evaluators[stratName](price, dayPct, dailyData, cfg, market, intraday);
+    } else {
+      sigs = evaluators[stratName](price, dayPct, dailyData, cfg);
+    }
     if (sigs.length === 0) continue;
     const resolved = resolveSignals(sigs, cfg, signalStats, stratName);
     if (!resolved) continue;
@@ -1841,11 +1906,12 @@ function getStrategyRules(cfg, strategy) {
 
 // === [V8] 전략별 포지션 사이즈 계산 ===
 function getPositionSizeRatio(cfg, strategy, regimeName) {
-  const sizing = (cfg.strategySizing && cfg.strategySizing[strategy]) || { base: 10, bullMult: 1.0, bearMult: 1.0 };
+  const sizing = (cfg.strategySizing && cfg.strategySizing[strategy]) || { base: 10, bullMult: 1.0, bearMult: 1.0, neutralMult: 1.0 };
   const base = sizing.base / 100;
   if (regimeName === "BULL") return base * (sizing.bullMult || 1.0);
   if (regimeName === "BEAR") return base * (sizing.bearMult || 1.0);
-  return base;
+  // [V9] NEUTRAL(중립 횡보) — day/momentum은 추세 부재 시 신뢰도 급락 → neutralMult로 축소.
+  return base * (sizing.neutralMult != null ? sizing.neutralMult : 1.0);
 }
 
 async function executeSell(DB, market, symbol, pos, sellQty, price, reason, cfg, cash) {
@@ -1921,16 +1987,40 @@ function evaluateSell(pos, price, daily, dailyRsi, dailyMa, dailyMaShort, cfg, m
     }
   }
 
-  // === DAY 전략 ===
+  // === DAY 전략 — [V9] 시장별 분기 ===
   if (strategy === "day") {
     const r = cfg.dayRules;
-    // [V8.4] 왕복 거래비용 (수수료 + KR 매도세) — TP 판단에서 차감
     const cost = (cfg.roundTripCostPct && cfg.roundTripCostPct[market]) || 0;
-    // [V8.1] 장 마감 N분 전 강제 청산 — minHold 보다 우선 (장 종료가 임박하면 무조건 청산)
+    const isKR = (market === "kr");
+
+    // ───────── [V9] KR day = 짧은 스윙 ─────────
+    //   야후 15분 지연으로 분 단위 단타 불가 → 당일청산(EOD)·분단위 타임스톱 모두 해제.
+    //   일봉 기반으로 며칠 보유, TP/손절/트레일링(상단 공통 로직)으로만 관리.
+    if (isKR) {
+      const swMinHoldH = r.krSwingMinHoldHours != null ? r.krSwingMinHoldHours : 3;
+      if (heldHours < swMinHoldH) return { sell: false };
+      // TP1 분할익절
+      if (!tp1Done && r.tp1 != null && pnlRate >= (r.tp1 + cost)) {
+        const halfQty = Math.floor(pos.qty / 2);
+        if (halfQty > 0) return { sell: true, sellQty: halfQty, reason: "DAY-KR-TP1 +" + pnlRate.toFixed(2) + "%" };
+      }
+      // TP2 전량 익절
+      if (pnlRate >= (r.tp + cost)) {
+        return { sell: true, sellQty: pos.qty, reason: "DAY-KR-TP +" + pnlRate.toFixed(2) + "%" };
+      }
+      // 며칠 단위 시간 손절 — 스윙답게 maxHoldHours 대신 maxHoldDays 사용
+      const maxDays = r.krSwingMaxHoldDays != null ? r.krSwingMaxHoldDays : 4;
+      if (heldDays >= maxDays) {
+        return { sell: true, sellQty: pos.qty, reason: "DAY-KR-MAX " + heldDays.toFixed(1) + "d PnL=" + pnlRate.toFixed(2) + "%" };
+      }
+      return { sell: false };
+    }
+
+    // ───────── [V9] US day = 단타 (기존 분 단위 로직) ─────────
+    // [V8.1] 장 마감 N분 전 강제 청산
     if (market) {
       const mtc = marketMinutesUntilClose(market);
       const forceMin = r.forceCloseBeforeMinClose || 30;
-      // [V8.6] 마감 45분 전부터: 수익 중이면 미리 확정 (마감 직전 급락에 끌려나오기 방지)
       const ptBefore = r.eodProfitTakeBeforeMin || 45;
       if (mtc != null && mtc <= ptBefore && mtc > forceMin && pnlRate >= 0.3) {
         return { sell: true, sellQty: pos.qty, reason: "DAY-EOD-TP " + mtc + "min PnL=" + pnlRate.toFixed(2) + "%" };
@@ -1939,31 +2029,25 @@ function evaluateSell(pos, price, daily, dailyRsi, dailyMa, dailyMaShort, cfg, m
         return { sell: true, sellQty: pos.qty, reason: "DAY-EOD " + mtc + "min PnL=" + pnlRate.toFixed(2) + "%" };
       }
     }
-    // 최소 보유시간
     if (heldMin < (r.minHoldMinutes || 20)) return { sell: false };
-    // [V8.6 데이터근거] softTimeStop: 진입 후 충분히 지났는데 방향이 안 나면(거의 본전/약손실) 미리 정리.
-    //   EOD까지 끌다 손실 확정되는 패턴(승률 25%)을 자르기 위함. 손절(-1%)보다 위, 미미한 수익 미만 구간만.
-    //   [V8.6.1] KR은 더 타이트(50분/+0.25%) — KR EOD 손실 -53만이 최대 손실원.
-    const isKR = (market === "kr");
-    const stMin = isKR ? (r.softTimeStopMinutesKR != null ? r.softTimeStopMinutesKR : r.softTimeStopMinutes)
-                       : r.softTimeStopMinutes;
-    const stPnl = isKR ? (r.softTimeStopMinPnlKR != null ? r.softTimeStopMinPnlKR : 0.25)
-                       : (r.softTimeStopMinPnl != null ? r.softTimeStopMinPnl : 0.15);
+    // softTimeStop (US 기준값)
+    const stMin = r.softTimeStopMinutes;
+    const stPnl = r.softTimeStopMinPnl != null ? r.softTimeStopMinPnl : 0.15;
     if (stMin != null && heldMin >= stMin && pnlRate < stPnl && !tp1Done) {
       return { sell: true, sellQty: pos.qty, reason: "DAY-TIMESTOP " + heldMin.toFixed(0) + "min PnL=" + pnlRate.toFixed(2) + "%" };
     }
-    // [V8.3+V8.4] TP1 분할익절 — tp1 + cost 도달 시 절반 청산 (실수익 기준)
+    // TP1 분할익절
     if (!tp1Done && r.tp1 != null && pnlRate >= (r.tp1 + cost)) {
       const halfQty = Math.floor(pos.qty / 2);
       if (halfQty > 0) {
         return { sell: true, sellQty: halfQty, reason: "DAY-TP1 +" + pnlRate.toFixed(2) + "%" };
       }
     }
-    // 익절 (TP2) — cost 반영
+    // TP2
     if (pnlRate >= (r.tp + cost)) {
       return { sell: true, sellQty: pos.qty, reason: "DAY-TP +" + pnlRate.toFixed(2) + "%" };
     }
-    // 최대 보유시간
+    // 최대 보유시간 (당일 내)
     if (heldHours >= (r.maxHoldHours || 8)) {
       return { sell: true, sellQty: pos.qty, reason: "DAY-MAX " + heldHours.toFixed(1) + "h PnL=" + pnlRate.toFixed(2) + "%" };
     }
@@ -2147,7 +2231,7 @@ function backtestSymbol(fullData, cfg, market, opts) {
       }
 
       // 매수 평가
-      const results = evaluateAllStrategies(price, dayPct, daily, cfgBt, signalStats, regime);
+      const results = evaluateAllStrategies(price, dayPct, daily, cfgBt, signalStats, regime, market, null);
       for (const r of results) {
         const strat = r.strategy;
         if (openPositions[strat]) continue;
@@ -2915,7 +2999,7 @@ async function runTradingCycle(env) {
             continue;
           }
           const strategiesHeldNow = getStrategiesHeldForSymbol(positions, symbol);
-          const stratResults = evaluateAllStrategies(price, dayPct, daily, mcfg, signalStats, regime);
+          const stratResults = evaluateAllStrategies(price, dayPct, daily, mcfg, signalStats, regime, market, intra);
 
           if (stratResults.length === 0) {
             incNobuy("no_signal");
