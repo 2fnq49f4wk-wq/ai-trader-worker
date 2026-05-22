@@ -180,9 +180,19 @@ const DEFAULT_CFG = {
     // [V9] LLM 분석 반영: 현재 NEUTRAL 국면에서 day winRate 0%/avgPnl -20%, momentum 신뢰도 급락, swing만 우수.
     //   neutralMult 추가 — BULL/BEAR가 아닌 중립 횡보장에서의 전략별 사이즈 배수.
     //   day/momentum은 추세가 명확할 때만 작동 → 중립장에선 대폭 축소. swing은 중립장에서도 안정 → 유지.
-    day:      { base: 25, bullMult: 1.5, bearMult: 1.0, neutralMult: 0.4 },
-    meanrev:  { base: 25, bullMult: 1.2, bearMult: 1.4, neutralMult: 1.0 },
-    swing:    { base: 30, bullMult: 1.4, bearMult: 0.8, neutralMult: 1.0 },
+    // [V9.1] day 사이즈 추가 감축: base 25→15 (전 국면 40%↓).
+    //   거래는 유지하되 금액만 축소 — 손익비(3.3:1)가 좋아 거래차단은 역효과였으므로 사이즈로만 리스크 관리.
+    //   결과 실효비중: BULL 22.5% / NEUTRAL 6% / BEAR 15% (전 전략 중 최소 수준).
+    //   US 분봉게이트·KR 스윙전환의 효과 검증용 표본은 계속 수집됨.
+    day:      { base: 15, bullMult: 1.5, bearMult: 1.0, neutralMult: 0.4 },
+    // [V9.2] meanrev 소폭 상향: base 25→27. 사용자 요청 반영하되 표본 1건뿐이라 최소폭만.
+    meanrev:  { base: 27, bullMult: 1.2, bearMult: 1.4, neutralMult: 1.0 },
+    // [V9.2] swing 소폭 상향: base 30→33. 사용자 요청(승률 우수 시 베팅 확대) 반영하되,
+    //   표본 15건·전부 우상향장이라는 한계 고려해 +10%만.
+    //   [V9.3] bearMult 0.8→0.6: base를 키운 만큼 하락장 쏠림 방어 강화.
+    //     이 사이즈 축소는 LLM과 무관하게 작동(코드 레벨) → LLM이 죽어도 하락장 swing 리스크 억제.
+    //     실효 BEAR 비중 = 33×0.6 = 19.8%로, 상향 전(30×0.8=24%)보다 오히려 보수적.
+    swing:    { base: 33, bullMult: 1.4, bearMult: 0.6, neutralMult: 1.0 },
     momentum: { base: 28, bullMult: 1.5, bearMult: 0.6, neutralMult: 0.4 }
   },
   // === [V8.1.9] 한 거래당 목표 금액 클램프 (시장별) ===
@@ -1503,10 +1513,14 @@ function evaluateBuySignals_day(price, dayPct, dailyData, cfg, market, intraday)
     }
   }
 
+  // [V9.2 데이터근거] day 신호가 3개 이상 모이면 손실 구간(승률 30%, 평균 -0.4%).
+  //   최우수인 2개 조합(승률 61%)으로 정제 — weight 상위 2개만 남김.
+  if (signals.length >= 3) {
+    signals.sort(function(a, b) { return (b.weight || 0) - (a.weight || 0); });
+    return signals.slice(0, 2);
+  }
   return signals;
 }
-
-// === [V8] MOMENTUM 전략 — 신고가 돌파 + 거래량 + 추세 정렬 ===
 function evaluateBuySignals_momentum(price, dayPct, dailyData, cfg) {
   const closes = dailyData.closes;
   const volumes = dailyData.volumes || [];
@@ -3068,7 +3082,27 @@ async function runTradingCycle(env) {
               }
             }
 
-            const baseRatio = getPositionSizeRatio(mcfg, strategy, regime.regime);
+            let baseRatio = getPositionSizeRatio(mcfg, strategy, regime.regime);
+
+            // [V9.2 데이터근거] day 전략 신호강도 차등 사이징.
+            //   과거 247건: 신호 2개 조합=승률 61%/+1.14%(우수), 단독=37%, 3개+=손실(→2개로 정제됨).
+            //   단독도 종류별로 갈림: BOUNCE 단독 +25만(흑자), OPEN_DRIVE +0.7만, GAP_DOWN 단독 -15.8만(손실원).
+            //   진입은 막지 않되(조합 동반손실 함정 회피) 손실 단독만 사이즈 축소.
+            if (strategy === "day") {
+              const mem = (signal.members && signal.members.length) ? signal.members : [signal.name];
+              const nSig = mem.length;
+              let dayConfMult;
+              if (nSig >= 2) {
+                dayConfMult = 1.5;                      // 최우수 조합 — 사이즈 키움
+              } else {
+                // 단독: 신호 종류로 차등
+                const solo = mem[0] || "";
+                if (solo.indexOf("GAP_DOWN") >= 0) dayConfMult = 0.4;   // 단독 손실원 — 대폭 축소
+                else if (solo.indexOf("BOUNCE") >= 0 || solo.indexOf("OPEN_DRIVE") >= 0) dayConfMult = 0.9; // 흑자 단독 — 거의 유지
+                else dayConfMult = 0.6;                 // 기타 단독 — 보수적
+              }
+              baseRatio = baseRatio * dayConfMult;
+            }
 
             // [V8.3] ATR 기반 동적 사이징 multiplier
             // 변동성 큰 종목(ATR/price 비율 높음) → 작게, 안정 종목 → 크게
