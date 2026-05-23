@@ -9,141 +9,63 @@
 <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600;700&family=Georgia:wght@400;700&family=Pinyon+Script&family=Cormorant+Garamond:ital,wght@1,500&display=swap" rel="stylesheet">
 <style>
 
+
+/* ===== LUX-ENGINE V9 인트로 애니메이션 (SpaceX 스타일) ===== */
 #lux-intro-overlay {
   position: fixed;
   top: 0;
   left: 0;
   width: 100vw;
   height: 100vh;
-  background-color: #05070b;
+  background-color: #000000;
   z-index: 99999;
   display: flex;
   align-items: center;
   justify-content: center;
-  transition: opacity 0.8s cubic-bezier(0.25, 1, 0.5, 1);
-  pointer-events: auto;
-}
-.intro-center-box {
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  gap: 20px;
-}
-.intro-star-logo {
-  position: relative;
-  width: 180px;
-  height: 180px;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  filter: drop-shadow(0 0 35px rgba(56, 189, 248, 0.75));
-}
-/* 사진 속 수많은 날카로운 광선 레이어가 미세하고 정밀하게 회전하는 애니메이션 */
-.lux-laser-rays {
-  transform-origin: 100px 100px;
-  animation: luxLaserSpin 15s linear infinite;
-}
-/* 전체 푸른 성운 광원의 은은한 맥동 효과 */
-.lux-nebula-glow {
-  transform-origin: 100px 100px;
-  animation: luxNebulaPulse 3s ease-in-out infinite alternate;
-}
-/* 화이트 중심 코어 스파클 */
-.lux-core-glare {
-  transform-origin: 100px 100px;
-  animation: luxCoreFlash 1s ease-in-out infinite alternate;
-}
-
-@keyframes luxLaserSpin {
-  0% { transform: rotate(0deg); opacity: 0.7; }
-  50% { opacity: 0.9; }
-  100% { transform: rotate(360deg); opacity: 0.7; }
-}
-@keyframes luxNebulaPulse {
-  0% { transform: scale(0.9); opacity: 0.75; }
-  100% { transform: scale(1.1); opacity: 1; filter: saturate(1.5) blur(1px); }
-}
-@keyframes luxCoreFlash {
-  0% { transform: scale(0.92); opacity: 0.9; }
-  100% { transform: scale(1.08); opacity: 1; }
-}
-
-/* 사진과 완벽 일치하는 하단 타이틀 텍스트 스타일 */
-.lux-text-title {
-  font-family: 'Segoe UI', -apple-system, BlinkMacSystemFont, Roboto, sans-serif;
-  font-weight: 900;
-  font-size: 34px;
-  color: #ffffff;
-  letter-spacing: 2px;
-  text-shadow: 0 4px 12px rgba(0,0,0,0.8), 0 0 20px rgba(255,255,255,0.1);
-  text-align: center;
-  margin: 0;
-}
-.lux-sub {
-  font-size: 13px; 
-  color: #94a3b8; 
-  margin-top: -12px; 
-  letter-spacing: 2px;
-  font-weight: 600;
-  text-transform: uppercase;
-}
-
-
-/* LUX-ENGINE V8 인트로 애니메이션 전용 스타일 */
-#lux-intro-overlay {
-  position: fixed;
-  top: 0;
-  left: 0;
-  width: 100vw;
-  height: 100vh;
-  background-color: #0d1117;
-  z-index: 99999;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  transition: opacity 0.8s cubic-bezier(0.25, 1, 0.5, 1);
+  transition: opacity 1.2s cubic-bezier(0.4, 0, 0.2, 1);
   pointer-events: auto;
   overflow: hidden;
 }
 
-/* 광학 렌즈 플레어 효과 */
+/* 중앙 상단에서 아래로 은은하게 비치는 광원 (SpaceX 발사 영상 느낌) */
 #lux-intro-overlay::before {
   content: "";
   position: absolute;
-  top: 0;
-  left: 0;
-  width: 100%;
-  height: 100%;
-  background: 
-    radial-gradient(circle at 40% 40%, rgba(88, 166, 255, 0.08) 0%, transparent 40%),
-    radial-gradient(circle at 60% 60%, rgba(88, 166, 255, 0.05) 0%, transparent 40%);
+  top: -20%;
+  left: 50%;
+  transform: translateX(-50%);
+  width: 140%;
+  height: 80%;
+  background: radial-gradient(ellipse at center top, rgba(255,255,255,0.06) 0%, transparent 60%);
   pointer-events: none;
-  animation: lensFlareRotate 15s linear infinite;
+  opacity: 0;
+  animation: skyGlow 3.5s ease-out forwards;
 }
 
-@keyframes lensFlareRotate {
-  0% { transform: rotate(0deg); }
-  100% { transform: rotate(360deg); }
+@keyframes skyGlow {
+  0% { opacity: 0; }
+  40% { opacity: 1; }
+  100% { opacity: 0.5; }
 }
 
 .intro-center-box {
   display: flex;
   flex-direction: column;
   align-items: center;
-  gap: 24px;
+  gap: 18px;
+  position: relative;
+  z-index: 2;
 }
 
-/* 인트로용 대형 입체 실버 별 */
+/* SpaceX 스타일에서는 별도 로고 그래픽 대신 타이포그래피 중심.
+   기존 별 로고는 가늘게 페이드인되는 미니멀 형태로 유지 */
 .intro-star-logo {
   position: relative;
-  width: 120px;
-  height: 120px;
+  width: 64px;
+  height: 64px;
   opacity: 0;
-  transform: scale(0.3) rotate(-45deg);
-  animation: 
-    starSpawn 1.2s cubic-bezier(0.34, 1.56, 0.64, 1) forwards,
-    starPulseGlow 2s ease-in-out infinite alternate 1.2s,
-    chromaticWave 4s ease-in-out infinite 1.2s;
+  transform: scale(0.85);
+  animation: introLogoFade 1.6s cubic-bezier(0.25, 0.1, 0.25, 1) forwards 0.2s;
 }
 
 .intro-star-logo::before {
@@ -153,14 +75,14 @@
   height: 100%;
   background: conic-gradient(
     from 0deg,
-    #ffffff 0deg 22.5deg, #8b949e 22.5deg 45deg,
-    #ffffff 45deg 67.5deg, #6e7681 67.5deg 90deg,
-    #ffffff 90deg 112.5deg, #8b949e 112.5deg 135deg,
-    #ffffff 135deg 157.5deg, #6e7681 157.5deg 180deg,
-    #ffffff 180deg 202.5deg, #8b949e 202.5deg 225deg,
-    #ffffff 225deg 247.5deg, #6e7681 247.5deg 270deg,
-    #ffffff 270deg 292.5deg, #8b949e 292.5deg 315deg,
-    #ffffff 315deg 337.5deg, #6e7681 337.5deg 360deg
+    #ffffff 0deg 22.5deg, #d0d0d0 22.5deg 45deg,
+    #ffffff 45deg 67.5deg, #c8c8c8 67.5deg 90deg,
+    #ffffff 90deg 112.5deg, #d0d0d0 112.5deg 135deg,
+    #ffffff 135deg 157.5deg, #c8c8c8 157.5deg 180deg,
+    #ffffff 180deg 202.5deg, #d0d0d0 202.5deg 225deg,
+    #ffffff 225deg 247.5deg, #c8c8c8 247.5deg 270deg,
+    #ffffff 270deg 292.5deg, #d0d0d0 292.5deg 315deg,
+    #ffffff 315deg 337.5deg, #c8c8c8 337.5deg 360deg
   );
   clip-path: polygon(
     50% 0%, 62% 38%, 100% 50%, 62% 62%, 
@@ -173,16 +95,18 @@
   position: absolute;
   width: 72%;
   height: 72%;
+  top: 14%;
+  left: 14%;
   background: conic-gradient(
     from 22.5deg,
-    #ffffff 0deg 22.5deg, #4d5259 22.5deg 45deg,
-    #ffffff 45deg 67.5deg, #3a3f44 67.5deg 90deg,
-    #ffffff 90deg 112.5deg, #4d5259 112.5deg 135deg,
-    #ffffff 135deg 157.5deg, #3a3f44 157.5deg 180deg,
-    #ffffff 180deg 202.5deg, #4d5259 202.5deg 225deg,
-    #ffffff 225deg 247.5deg, #3a3f44 247.5deg 270deg,
-    #ffffff 270deg 292.5deg, #4d5259 292.5deg 315deg,
-    #ffffff 315deg 337.5deg, #3a3f44 337.5deg 360deg
+    #ffffff 0deg 22.5deg, #9a9a9a 22.5deg 45deg,
+    #ffffff 45deg 67.5deg, #8a8a8a 67.5deg 90deg,
+    #ffffff 90deg 112.5deg, #9a9a9a 112.5deg 135deg,
+    #ffffff 135deg 157.5deg, #8a8a8a 157.5deg 180deg,
+    #ffffff 180deg 202.5deg, #9a9a9a 202.5deg 225deg,
+    #ffffff 225deg 247.5deg, #8a8a8a 247.5deg 270deg,
+    #ffffff 270deg 292.5deg, #9a9a9a 292.5deg 315deg,
+    #ffffff 315deg 337.5deg, #8a8a8a 337.5deg 360deg
   );
   clip-path: polygon(
     50% 0%, 62% 38%, 100% 50%, 62% 62%, 
@@ -191,68 +115,67 @@
   transform: rotate(45deg);
 }
 
-/* 인트로용 텍스트 클래스 */
+@keyframes introLogoFade {
+  0% { opacity: 0; transform: scale(0.85); }
+  100% { opacity: 1; transform: scale(1); }
+}
+
+/* SpaceX 스타일 타이포그래피 박스 */
 .intro-text-box {
-  opacity: 0;
-  transform: translateY(15px);
   text-align: center;
-  animation: textFadeIn 1s cubic-bezier(0.25, 1, 0.5, 1) forwards 1.4s;
 }
 
+/* 가늘고 넓은 자간의 미니멀 대문자 타이틀 — SpaceX 로고 타입 느낌 */
 .intro-title {
-  font-family: 'Courier New', monospace;
-  font-size: 32px;
-  font-weight: 800;
+  font-family: 'Helvetica Neue', 'Segoe UI', Arial, sans-serif;
+  font-size: 30px;
+  font-weight: 300;
   color: #ffffff;
-  letter-spacing: 1px;
-  text-shadow: 1px 1px 0px #30363d, 0px 0px 8px rgba(255, 255, 255, 0.1);
-  margin-bottom: 4px;
+  letter-spacing: 8px;
+  text-transform: uppercase;
+  margin-bottom: 10px;
+  text-indent: 8px; /* 자간 보정으로 시각적 중앙 정렬 */
+  /* 글자가 한 글자씩 좌우 블러에서 또렷하게 모이는 효과 */
+  opacity: 0;
+  filter: blur(8px);
+  animation: spacexTitleIn 2s cubic-bezier(0.16, 1, 0.3, 1) forwards 0.5s;
 }
 
+/* 얇은 구분선 + 서브타이틀 */
 .intro-subtitle {
-  font-size: 13px;
-  color: #8b949e;
-  letter-spacing: 1px;
+  font-family: 'Helvetica Neue', 'Segoe UI', Arial, sans-serif;
+  font-size: 11px;
+  font-weight: 300;
+  color: #888888;
+  letter-spacing: 5px;
+  text-transform: uppercase;
+  text-indent: 5px;
+  opacity: 0;
+  animation: spacexSubIn 1.6s ease-out forwards 1.3s;
 }
 
-/* Keyframes 애니메이션 구성 */
-@keyframes starSpawn {
-  0% { opacity: 0; transform: scale(0.3) rotate(-45deg); filter: drop-shadow(0 0 0px rgba(88, 166, 255, 0)); }
-  70% { transform: scale(1.1) rotate(10deg); }
-  100% { opacity: 1; transform: scale(1) rotate(0deg); filter: drop-shadow(0 0 25px rgba(88, 166, 255, 0.65)); }
-}
-
-@keyframes starPulseGlow {
-  0% { filter: drop-shadow(0 0 20px rgba(88, 166, 255, 0.5)); }
-  100% { filter: drop-shadow(0 0 40px rgba(88, 166, 255, 0.95)); }
-}
-
-/* 크로매틱 수차 효과 - 광학 렌즈 색상분리 */
-@keyframes chromaticWave {
-  0%, 100% { 
-    filter: drop-shadow(0 0 25px rgba(88, 166, 255, 0.65));
-    transform: translate(0, 0);
+@keyframes spacexTitleIn {
+  0% {
+    opacity: 0;
+    filter: blur(8px);
+    letter-spacing: 18px;
   }
-  25% { 
-    filter: drop-shadow(1px 0 15px rgba(100, 200, 255, 0.5)) drop-shadow(-1px 0 15px rgba(50, 100, 150, 0.3));
-    transform: translate(0.5px, 0);
-  }
-  50% { 
-    filter: drop-shadow(0 0 30px rgba(88, 166, 255, 0.75));
-    transform: translate(0, 0);
-  }
-  75% { 
-    filter: drop-shadow(-1px 0 15px rgba(100, 200, 255, 0.5)) drop-shadow(1px 0 15px rgba(50, 100, 150, 0.3));
-    transform: translate(-0.5px, 0);
-  }
-}
-
-@keyframes textFadeIn {
-  to {
+  60% {
     opacity: 1;
-    transform: translateY(0);
+    filter: blur(0px);
+  }
+  100% {
+    opacity: 1;
+    filter: blur(0px);
+    letter-spacing: 8px;
   }
 }
+
+@keyframes spacexSubIn {
+  0% { opacity: 0; letter-spacing: 10px; }
+  100% { opacity: 1; letter-spacing: 5px; }
+}
+
 
 
 /* ============ OPTICAL EFFECTS ============ */
@@ -2179,9 +2102,9 @@ window.addEventListener('DOMContentLoaded', () => {
       overlay.style.pointerEvents = 'none';
       setTimeout(() => {
         overlay.remove();
-      }, 800);
+      }, 1200);
     }
-  }, 3500); // 설계 시나리오에 맞춘 3.5초 인트로 유지 시간
+  }, 4200); // SpaceX 스타일: 타이포 완성 후 잠시 머물렀다 부드럽게 페이드아웃
 });
 </script>
 </body>
