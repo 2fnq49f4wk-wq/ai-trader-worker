@@ -3267,19 +3267,43 @@ function resetFetchBudget(max) {
 }
 function fetchBudgetLeft() { return Math.max(0, __fetchBudget.max - __fetchBudget.used); }
 
+let __yahooHostFlip = 0;
 async function yahooFetch(url) {
   if (__fetchBudget.used >= __fetchBudget.max) {
     throw new Error("fetch budget exceeded (" + __fetchBudget.used + "/" + __fetchBudget.max + ")");
   }
   __fetchBudget.used++;
-  const r = await fetch(url, {
-    headers: {
-      "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
-      "Accept": "application/json"
+  // query1 ↔ query2 호스트 로테이션 (한 호스트 IP 차단 회피)
+  let u = url;
+  if (u.indexOf("query1.finance.yahoo.com") !== -1) {
+    __yahooHostFlip = (__yahooHostFlip + 1) % 2;
+    if (__yahooHostFlip === 1) u = u.replace("query1.finance.yahoo.com", "query2.finance.yahoo.com");
+  }
+  const headers = {
+    "User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.0 Safari/605.1.15",
+    "Accept": "application/json,text/plain,*/*",
+    "Accept-Language": "en-US,en;q=0.9",
+    "Referer": "https://finance.yahoo.com/"
+  };
+  // 429/5xx/네트워크 실패 시 지수 백오프로 최대 3회 재시도
+  let lastErr = null;
+  for (let attempt = 0; attempt < 3; attempt++) {
+    try {
+      const r = await fetch(u, { headers: headers });
+      if (r.ok) return await r.json();
+      if (r.status === 429 || r.status >= 500) {
+        lastErr = new Error("HTTP " + r.status);
+        await new Promise(function(res){ setTimeout(res, 250 * Math.pow(2, attempt) + Math.random() * 200); });
+        continue;
+      }
+      throw new Error("HTTP " + r.status);
+    } catch (e) {
+      lastErr = e;
+      if (/HTTP 4(0[0-9]|[1-9][0-9])/.test(e.message || "") && !/HTTP 429/.test(e.message || "")) throw e;
+      await new Promise(function(res){ setTimeout(res, 250 * Math.pow(2, attempt) + Math.random() * 200); });
     }
-  });
-  if (!r.ok) throw new Error("HTTP " + r.status);
-  return await r.json();
+  }
+  throw lastErr || new Error("yahooFetch failed");
 }
 
 // === [V10] 배치 quote — 여러 종목 현재가/등락률을 한 번의 호출로 ===
@@ -3312,11 +3336,11 @@ async function fetchQuoteViaChart(symbol) {
 }
 
 async function fetchQuoteViaChartFallback(symbol) {
-  // 한국 종목은 .KS ↔ .KQ 스왑 재시도
+  // 한국 종목은 .KS ↔ .KQ 스왑 재시도 (429/5xx 재시도는 yahooFetch가 내부 처리)
   try {
     const q = await fetchQuoteViaChart(symbol);
     if (q) return q;
-  } catch (e) { /* fall through */ }
+  } catch (e) { /* fall through to suffix swap */ }
   if (symbol.endsWith(".KS") || symbol.endsWith(".KQ")) {
     const alt = symbol.endsWith(".KS") ? symbol.replace(".KS", ".KQ") : symbol.replace(".KQ", ".KS");
     try {
@@ -4784,7 +4808,7 @@ async function refreshQuotesOnly(env, market) {
 //     • 일봉 샤드(DAILY) — 일봉+지표. 30분 캐시라 자주 안 돌아도 됨. 샤드당 12종목.
 const PRICE_SHARD_SIZE = 30;   // 가격 전용: 종목당 fetch 1 → 30 < 45 예산, CPU 거의 0
 const DAILY_SHARD_SIZE = 12;   // 일봉+지표: 종목당 fetch 1~2 → 최대 24 < 45, CPU 여유
-const CONN_LIMIT = 6;          // 무료 플랜 invocation 당 동시 outgoing connection 한도
+const CONN_LIMIT = 3;          // 무료 플랜 invocation 당 동시 outgoing connection 한도
 
 function shardSlice(tickers, shard, size) {
   const start = shard * size;
