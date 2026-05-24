@@ -391,6 +391,23 @@ button.btn.loading { opacity: 0.5; pointer-events: none; }
 .wl-fav { position: absolute; top: 6px; right: 6px; cursor: pointer; font-size: 14px; line-height: 1; user-select: none; color: var(--faint); transition: all 0.15s; }
 .wl-fav:hover { transform: scale(1.2); }
 .wl-fav.active { color: var(--amber); text-shadow: 0 0 4px rgba(255,215,0,0.6); }
+/* [V10] 검색창 */
+.wl-search-wrap { padding: 8px 10px 4px; }
+.wl-search { width: 100%; box-sizing: border-box; background: var(--panel); border: 1px solid var(--border); border-radius: 4px; color: #e6edf3; font-family: inherit; font-size: 12px; padding: 7px 10px; letter-spacing: 0.3px; outline: none; transition: border-color 0.15s, box-shadow 0.15s; }
+.wl-search:focus { border-color: var(--accent, #58a6ff); box-shadow: 0 0 0 2px rgba(88,166,255,0.15); }
+.wl-search::placeholder { color: var(--faint); }
+/* [V10] 카운트 배지 */
+.wl-count { font-size: 10px; color: var(--dim); font-weight: 500; letter-spacing: 0.5px; margin-left: 6px; }
+/* [V10] 보유 종목 카드 강조 */
+.watchlist-section.held { color: #3fb950; background: rgba(63,185,80,0.08); }
+.wl-card.held { border-color: rgba(63,185,80,0.5); box-shadow: 0 0 0 1px rgba(63,185,80,0.2) inset; }
+.wl-held-badge { display: inline-block; font-size: 8px; font-weight: bold; color: #3fb950; border: 1px solid rgba(63,185,80,0.5); border-radius: 3px; padding: 0 3px; margin-left: 4px; vertical-align: middle; letter-spacing: 0.3px; }
+.wl-pnl { font-size: 9px; margin-top: 1px; font-family: 'IBM Plex Mono', monospace; }
+.wl-pnl.pos { color: #3fb950; }
+.wl-pnl.neg { color: #f85149; }
+.wl-etf-badge { display: inline-block; font-size: 8px; color: var(--amber); border: 1px solid rgba(255,215,0,0.4); border-radius: 3px; padding: 0 3px; margin-left: 4px; vertical-align: middle; letter-spacing: 0.3px; }
+.wl-loadmore { text-align: center; padding: 8px; margin: 4px 10px; background: var(--panel); border: 1px solid var(--border); border-radius: 4px; cursor: pointer; font-size: 11px; color: var(--dim); letter-spacing: 0.5px; font-family: inherit; }
+.wl-loadmore:hover { color: #e6edf3; border-color: var(--accent, #58a6ff); }
 .tune-banner { padding: 10px 14px; background: rgba(63,185,80,0.08); border-left: 3px solid var(--green); color: var(--green); font-size: 11px; line-height: 1.6; }
 .tune-banner b { color: var(--amber); }
 .market-status-banner { padding: 8px 14px; background: rgba(240,136,62,0.08); border-left: 3px solid var(--orange); color: var(--orange); font-size: 11px; line-height: 1.6; display: flex; gap: 16px; flex-wrap: wrap; }
@@ -665,15 +682,21 @@ button.btn.loading { opacity: 0.5; pointer-events: none; }
     <div class="grid-2">
       <div class="panel">
         <div class="panel-header">
-          <div class="panel-title">[US] WATCHLIST</div>
+          <div class="panel-title">[US] WATCHLIST <span class="wl-count" id="usCount"></span></div>
           <button type="button" class="watchlist-toggle-btn" id="btnToggleUS">펼치기</button>
+        </div>
+        <div class="wl-search-wrap">
+          <input type="text" class="wl-search" id="searchUS" placeholder="🔍 종목명 또는 심볼 검색 (예: 애플, AAPL)" autocomplete="off">
         </div>
         <div id="watchlistUSContainer"></div>
       </div>
       <div class="panel">
         <div class="panel-header">
-          <div class="panel-title">[KR] WATCHLIST</div>
+          <div class="panel-title">[KR] WATCHLIST <span class="wl-count" id="krCount"></span></div>
           <button type="button" class="watchlist-toggle-btn" id="btnToggleKR">펼치기</button>
+        </div>
+        <div class="wl-search-wrap">
+          <input type="text" class="wl-search" id="searchKR" placeholder="🔍 종목명 또는 코드 검색 (예: 삼성전자, 005930)" autocomplete="off">
         </div>
         <div id="watchlistKRContainer"></div>
       </div>
@@ -1095,6 +1118,12 @@ button.btn.loading { opacity: 0.5; pointer-events: none; }
   var usFavorites = [];
   var krFavorites = [];
   var logsModalOpen = false;
+  // [V10] 대규모 종목 UI 상태
+  var usSearch = '';
+  var krSearch = '';
+  var usShowCount = 30;   // 시총순 점진 표시 개수
+  var krShowCount = 30;
+  var heldMap = { us: {}, kr: {} };  // symbol -> {pnlPct, qty} (보유종목 등락 강조용)
 
   var INDEX_NAMES = {
     '^IXIC': 'NASDAQ', '^DJI': 'DOW JONES', '^GSPC': 'S&P 500',
@@ -1359,6 +1388,25 @@ button.btn.loading { opacity: 0.5; pointer-events: none; }
       return Object.assign({ symbol: p.symbol || k, strategy: p.strategy || 'swing' }, p);
     });
 
+    // [V10] 보유종목 맵 갱신 — watchlist 카드에서 "보유" 배지 + 평가손익 표시용
+    heldMap = { us: {}, kr: {} };
+    function fillHeld(list, mkt) {
+      list.forEach(function(p){
+        var q = lastQuotes[p.symbol];
+        var cur = q ? q.price : null;
+        var pnlPct = (cur != null && p.avg) ? ((cur - p.avg) / p.avg * 100) : null;
+        var existing = heldMap[mkt][p.symbol];
+        // 같은 종목 여러 전략 보유 시 수량 합산, 손익은 평균단가 기준 재계산이 복잡하므로 대표값 사용
+        if (existing) {
+          existing.qty += p.qty;
+        } else {
+          heldMap[mkt][p.symbol] = { qty: p.qty, pnlPct: pnlPct };
+        }
+      });
+    }
+    fillHeld(listUS, 'us');
+    fillHeld(listKR, 'kr');
+
     // [V8.2.4] 시장별 총 PnL/PnL% 계산 — 헤더에 표시용
     function aggregate(list, marketSym, fmtFn) {
       var costSum = 0, valSum = 0, hasPrice = false;
@@ -1558,50 +1606,120 @@ button.btn.loading { opacity: 0.5; pointer-events: none; }
       .then(function(){ btn.disabled = false; btn.textContent = orig; });
   }
 
+  // [V10] 종목 표시명 — 백엔드 NAME_MAP(q.name) 우선, 없으면 로컬 맵 fallback
+  function displayName(q, market) {
+    if (q && q.name && q.name !== q.symbol) return q.name;
+    return market === 'kr' ? krLabel(q.symbol) : usLabel(q.symbol);
+  }
+
   function buildWatchlistCard(q, market) {
     var dayClass = q.dayPct > 0 ? 'pos' : (q.dayPct < 0 ? 'neg' : '');
     var sign = q.dayPct >= 0 ? '+' : '';
-    var name = market === 'kr' ? krLabel(q.symbol) : usLabel(q.symbol);
+    var name = displayName(q, market);
     var favorites = market === 'kr' ? krFavorites : usFavorites;
     var isFav = favorites.indexOf(q.symbol) >= 0;
-    return '<div class="wl-card">'+
-      '<span class="wl-fav '+(isFav?'active':'')+'" data-symbol="'+escapeHtml(q.symbol)+'" data-market="'+market+'">'+(isFav?'★':'☆')+'</span>'+
-      '<div class="wl-sym">'+escapeHtml(q.symbol)+'</div>'+
+    var held = heldMap[market] && heldMap[market][q.symbol];
+    var heldBadge = held ? '<span class="wl-held-badge">보유</span>' : '';
+    var etfBadge = q.isEtf ? '<span class="wl-etf-badge">ETF</span>' : '';
+    // 보유 종목이면 손익률 한 줄 추가
+    var pnlLine = '';
+    if (held && typeof held.pnlPct === 'number') {
+      var pnlCls = held.pnlPct >= 0 ? 'pos' : 'neg';
+      var pnlSign = held.pnlPct >= 0 ? '+' : '';
+      pnlLine = '<div class="wl-pnl '+pnlCls+'">평가손익 '+pnlSign+held.pnlPct.toFixed(2)+'%</div>';
+    }
+    return '<div class="wl-card'+(held?' held':'')+'">'+
+      '<span class="wl-fav '+(isFav?'active':'')+'" data-symbol="'+escapeHtml(q.symbol)+'" data-market="'+market+'">'+(isFav?'\u2605':'\u2606')+'</span>'+
+      '<div class="wl-sym">'+escapeHtml(q.symbol)+heldBadge+etfBadge+'</div>'+
       (name ? '<div class="wl-name">'+escapeHtml(name)+'</div>' : '')+
       '<div class="wl-price">'+fmtNum(q.price)+'</div>'+
       '<div class="wl-day '+dayClass+'">'+sign+fmtNum(q.dayPct,2)+'%</div>'+
-      '<div class="wl-meta">RSI '+(q.rsi!=null?q.rsi.toFixed(1):'-')+' · '+fmtAgo(q.ts)+'</div>'+
+      pnlLine+
+      '<div class="wl-meta">RSI '+(q.rsi!=null?q.rsi.toFixed(1):'-')+' \u00b7 '+fmtAgo(q.ts)+'</div>'+
       '</div>';
+  }
+
+  // [V10] 검색 매칭 — 심볼/종목명/코드(.KS 제거) 부분일치, 대소문자 무시
+  function matchSearch(q, market, term) {
+    if (!term) return true;
+    term = term.toLowerCase();
+    var sym = (q.symbol || '').toLowerCase();
+    var name = (displayName(q, market) || '').toLowerCase();
+    var codeOnly = sym.replace('.ks','').replace('.kq','');
+    return sym.indexOf(term) >= 0 || name.indexOf(term) >= 0 || codeOnly.indexOf(term) >= 0;
   }
 
   function renderWatchlistMarket(market, quotes) {
     var containerId = market === 'us' ? 'watchlistUSContainer' : 'watchlistKRContainer';
     var expanded = market === 'us' ? usExpanded : krExpanded;
     var favorites = market === 'us' ? usFavorites : krFavorites;
+    var term = market === 'us' ? usSearch : krSearch;
+    var showCount = market === 'us' ? usShowCount : krShowCount;
     var container = $(containerId);
-    if (quotes.length === 0) { container.innerHTML = '<div class="empty">대기 중...</div>'; return; }
-    var favs = quotes.filter(function(q){ return favorites.indexOf(q.symbol) >= 0; });
-    var rest = quotes.filter(function(q){ return favorites.indexOf(q.symbol) < 0; });
-    var html = '';
-    if (expanded) {
-      if (favs.length > 0) {
-        html += '<div class="watchlist-section fav">★ 즐겨찾기 ('+favs.length+')</div>';
-        html += '<div class="watchlist">'+favs.map(function(q){return buildWatchlistCard(q, market);}).join('')+'</div>';
-      }
-      if (rest.length > 0) {
-        html += '<div class="watchlist-section all">전체 종목 ('+rest.length+')</div>';
-        html += '<div class="watchlist">'+rest.map(function(q){return buildWatchlistCard(q, market);}).join('')+'</div>';
-      }
-    } else {
-      var topItems = favs.concat(rest).slice(0, 5);
-      if (favs.length > 0) {
-        html += '<div class="watchlist-section fav">★ 즐겨찾기 우선 표시 (총 '+quotes.length+'개 중 5개)</div>';
+    var countEl = $(market === 'us' ? 'usCount' : 'krCount');
+    if (countEl) countEl.textContent = '(' + quotes.length + '종목)';
+    if (quotes.length === 0) { container.innerHTML = '<div class="empty">\ub300\uae30 \uc911...</div>'; return; }
+
+    // 시총순 정렬 (rank 작을수록 대형주)
+    var sorted = quotes.slice().sort(function(a,b){ return (a.rank||99999) - (b.rank||99999); });
+
+    // 검색 모드: 매칭되는 것만, 시총순으로 전부 표시
+    if (term) {
+      var matched = sorted.filter(function(q){ return matchSearch(q, market, term); });
+      var html = '<div class="watchlist-section all">\uac80\uc0c9 \uacb0\uacfc ('+matched.length+')</div>';
+      if (matched.length === 0) {
+        html += '<div class="empty">\uc77c\uce58\ud558\ub294 \uc885\ubaa9\uc774 \uc5c6\uc2b5\ub2c8\ub2e4</div>';
       } else {
-        html += '<div class="watchlist-section all">상위 5개 표시 (총 '+quotes.length+'개)</div>';
+        html += '<div class="watchlist">'+matched.slice(0,60).map(function(q){return buildWatchlistCard(q, market);}).join('')+'</div>';
+        if (matched.length > 60) html += '<div class="watchlist-section all">\uc0c1\uc704 60\uac1c\ub9cc \ud45c\uc2dc \u00b7 \ub354 \uc88c\ud788\uba74 \uac80\uc0c9\uc5b4\ub97c \uad6c\uccb4\ud654\ud558\uc138\uc694</div>';
       }
-      html += '<div class="watchlist">'+topItems.map(function(q){return buildWatchlistCard(q, market);}).join('')+'</div>';
+      container.innerHTML = html;
+      bindFavButtons(container);
+      return;
+    }
+
+    // 일반 모드: 보유 > 즐겨찾기 > 시총순 전체
+    var heldSyms = heldMap[market] || {};
+    var heldList = sorted.filter(function(q){ return heldSyms[q.symbol]; });
+    var favList = sorted.filter(function(q){ return !heldSyms[q.symbol] && favorites.indexOf(q.symbol) >= 0; });
+    var restList = sorted.filter(function(q){ return !heldSyms[q.symbol] && favorites.indexOf(q.symbol) < 0; });
+
+    var html = '';
+    // 보유 종목 (항상 전부 표시)
+    if (heldList.length > 0) {
+      html += '<div class="watchlist-section held">\u25c9 \ubcf4\uc720 \uc885\ubaa9 ('+heldList.length+')</div>';
+      html += '<div class="watchlist">'+heldList.map(function(q){return buildWatchlistCard(q, market);}).join('')+'</div>';
+    }
+    // 즐겨찾기 (항상 전부 표시)
+    if (favList.length > 0) {
+      html += '<div class="watchlist-section fav">\u2605 \uc990\uaca8\ucc3e\uae30 ('+favList.length+')</div>';
+      html += '<div class="watchlist">'+favList.map(function(q){return buildWatchlistCard(q, market);}).join('')+'</div>';
+    }
+    // 나머지 — 시총순. 펼치기 OFF면 상위 5개, ON이면 showCount까지 + 더보기
+    if (restList.length > 0) {
+      if (!expanded) {
+        html += '<div class="watchlist-section all">\uc2dc\ucd1d \uc0c1\uc704 ('+restList.length+'\uac1c \uc911 5\uac1c \u00b7 \ud3bc\uce58\uba74 \uc804\uccb4)</div>';
+        html += '<div class="watchlist">'+restList.slice(0,5).map(function(q){return buildWatchlistCard(q, market);}).join('')+'</div>';
+      } else {
+        var shown = restList.slice(0, showCount);
+        html += '<div class="watchlist-section all">\uc2dc\ucd1d\uc21c ('+shown.length+'/'+restList.length+')</div>';
+        html += '<div class="watchlist">'+shown.map(function(q){return buildWatchlistCard(q, market);}).join('')+'</div>';
+        if (restList.length > showCount) {
+          html += '<div class="wl-loadmore" data-market="'+market+'">\u25bc \ub354 \ubcf4\uae30 (+'+Math.min(30, restList.length-showCount)+'\uac1c)</div>';
+        }
+      }
     }
     container.innerHTML = html;
+    bindFavButtons(container);
+    // 더보기 버튼
+    var lm = container.querySelector('.wl-loadmore');
+    if (lm) lm.addEventListener('click', function(){
+      if (market === 'us') usShowCount += 30; else krShowCount += 30;
+      renderWatchlist(window.__lastQuotesArr || []);
+    });
+  }
+
+  function bindFavButtons(container) {
     container.querySelectorAll('.wl-fav').forEach(function(el){
       el.addEventListener('click', function(e){
         e.stopPropagation();
@@ -1611,6 +1729,7 @@ button.btn.loading { opacity: 0.5; pointer-events: none; }
   }
 
   function renderWatchlist(quotes) {
+    window.__lastQuotesArr = quotes;
     lastQuotes = {};
     quotes.forEach(function(q){ lastQuotes[q.symbol] = q; });
     var us = quotes.filter(function(q){return q.market==='us';});
@@ -2329,7 +2448,10 @@ button.btn.loading { opacity: 0.5; pointer-events: none; }
         usFavorites = (state.cfg && state.cfg.usFavorites) || [];
         krFavorites = (state.cfg && state.cfg.krFavorites) || [];
         renderIndices(indices);
-        renderWatchlist(quotes);
+        // [V10] lastQuotes를 먼저 채워서 renderPositions의 손익계산/heldMap이 정확하도록
+        lastQuotes = {};
+        quotes.forEach(function(q){ lastQuotes[q.symbol] = q; });
+        window.__lastQuotesArr = quotes;
         // [V8] positions는 array — 하위호환으로 object도 허용
         var posUS = (state.positions && state.positions.us) || [];
         var posKR = (state.positions && state.positions.kr) || [];
@@ -2341,7 +2463,8 @@ button.btn.loading { opacity: 0.5; pointer-events: none; }
         var initKR = (state.cfg && state.cfg.initialCashKR) || 0;
         renderSummary('us', calcSummary('us', cash.us, posUS, initUS, deposits.us));
         renderSummary('kr', calcSummary('kr', cash.kr, posKR, initKR, deposits.kr));
-        renderPositions(posUS, posKR);
+        renderPositions(posUS, posKR);   // heldMap 갱신 — watchlist보다 먼저
+        renderWatchlist(quotes);          // heldMap 반영된 상태로 카드 렌더
         renderEngine(state.lastTick);
         renderTrades(trades);
         // [V8.6 Hybrid] LLM 배너 렌더링
@@ -2733,6 +2856,26 @@ button.btn.loading { opacity: 0.5; pointer-events: none; }
   $('positionsToggleBtn').addEventListener('click', togglePositions);
   $('btnToggleUS').addEventListener('click', function(){ toggleWatchlist('us'); });
   $('btnToggleKR').addEventListener('click', function(){ toggleWatchlist('kr'); });
+
+  // [V10] 검색창 — 입력 시 즉시 필터링 (디바운스 150ms)
+  var searchTimer = null;
+  function bindSearch(inputId, market) {
+    var el = $(inputId);
+    if (!el) return;
+    el.addEventListener('input', function(){
+      var val = el.value.trim();
+      if (market === 'us') usSearch = val; else krSearch = val;
+      clearTimeout(searchTimer);
+      searchTimer = setTimeout(function(){
+        renderWatchlist(window.__lastQuotesArr || []);
+        // 검색 후 포커스 유지
+        var cur = $(inputId);
+        if (cur) cur.focus();
+      }, 150);
+    });
+  }
+  bindSearch('searchUS', 'us');
+  bindSearch('searchKR', 'kr');
 
   // 모달 배경 클릭으로 닫기
   $('logsModal').addEventListener('click', function(e){
