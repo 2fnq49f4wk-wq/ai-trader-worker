@@ -321,7 +321,7 @@ button.btn:hover { background: var(--elev); }
 button.btn.primary { background: #ffffff; color: #05070b; border-color: #ffffff; font-weight: 700; text-shadow: 0 0 0 rgba(255,255,255,0); box-shadow: 0 0 15px rgba(255,255,255,0.6), 0 0 25px rgba(88,166,255,0.4), inset 0 0 10px rgba(255,255,255,0.3); }
 button.btn.primary:hover { background: #e8f0f8; box-shadow: 0 0 20px rgba(255,255,255,0.8), 0 0 35px rgba(88,166,255,0.6), inset 0 0 15px rgba(255,255,255,0.4); }
 button.btn.danger { color: var(--red); border-color: var(--red); }
-button.btn.refresh { color: var(--blue); border-color: var(--blue); }
+button.btn.refresh { color: var(--blue); border-color: var(--blue); min-width: 110px; box-sizing: border-box; overflow: hidden; }
 button.btn.logs { color: var(--purple); border-color: var(--purple); }
 button.btn.macro { color: var(--orange); border-color: var(--orange); }
 button.btn:active { opacity: 0.6; }
@@ -1140,7 +1140,7 @@ button.btn.loading::after { content: "조회 중…"; position: absolute; left: 
     '373220.KS': 'LG에너지솔루션', '009150.KS': '삼성전기', '006400.KS': '삼성SDI',
     '034020.KS': '두산에너빌리티', '006800.KS': '미래에셋증권', '012450.KS': '한화에어로스페이스',
     '402340.KS': 'SK스퀘어', '329180.KS': 'HD현대중공업', '042660.KS': '한화오션',
-    '196170.KS': '알테오젠', '047040.KS': '대우건설', '005490.KS': 'POSCO홀딩스',
+    '196170.KS': '알테오젠', '196170.KQ': '알테오젠', '047040.KS': '대우건설', '005490.KS': 'POSCO홀딩스',
     '042700.KS': '한미반도체', '064350.KS': '현대로템', '079550.KS': 'LIG디펜스앤에어로스페이스',
     '047810.KS': '한국항공우주', '069500.KS': 'KODEX 200'
   };
@@ -1154,8 +1154,17 @@ button.btn.loading::after { content: "조회 중…"; position: absolute; left: 
     'KO': '코카콜라', 'PLTR': '팔란티어'
   };
 
-  function krLabel(s) { return KR_NAMES[s] || ''; }
-  function usLabel(s) { return US_NAMES[s] || ''; }
+  // [V17] 백엔드 NAME_MAP(전 종목)을 quote에서 수집해 채우는 동적 맵 — 하드코딩 맵보다 우선.
+  var DYNAMIC_NAMES = {};
+  function krLabel(s) {
+    if (DYNAMIC_NAMES[s]) return DYNAMIC_NAMES[s];
+    if (KR_NAMES[s]) return KR_NAMES[s];
+    // 접미사 무관 매칭 (.KS ↔ .KQ)
+    var code = s.replace(/\.(KS|KQ)$/, '');
+    return DYNAMIC_NAMES[code + '.KS'] || DYNAMIC_NAMES[code + '.KQ'] ||
+           KR_NAMES[code + '.KS'] || KR_NAMES[code + '.KQ'] || '';
+  }
+  function usLabel(s) { return DYNAMIC_NAMES[s] || US_NAMES[s] || ''; }
   function $(id) { return document.getElementById(id); }
 
   // [V8.6] 미국 DST 자동 판정 — 3월 둘째 일요일 ~ 11월 첫째 일요일 = EDT(UTC-4), 그 외 EST(UTC-5)
@@ -1736,7 +1745,10 @@ button.btn.loading::after { content: "조회 중…"; position: absolute; left: 
   function renderWatchlist(quotes) {
     window.__lastQuotesArr = quotes;
     lastQuotes = {};
-    quotes.forEach(function(q){ lastQuotes[q.symbol] = q; });
+    quotes.forEach(function(q){
+      lastQuotes[q.symbol] = q;
+      if (q.name && q.name !== q.symbol) DYNAMIC_NAMES[q.symbol] = q.name;
+    });
     var us = quotes.filter(function(q){return q.market==='us';});
     var kr = quotes.filter(function(q){return q.market==='kr';});
     renderWatchlistMarket('us', us);
