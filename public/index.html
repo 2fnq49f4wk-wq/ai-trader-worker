@@ -2455,7 +2455,7 @@ button.btn.loading { opacity: 0.5; pointer-events: none; }
 
   // 가격 전용 — 샤드를 한꺼번에 던지면 Yahoo가 워커 IP를 429로 차단한다.
   //   [V14] 동시 호출 수를 SHARD_CONCURRENCY로 제한해 순차 배치로 처리한다.
-  var SHARD_CONCURRENCY = 2;
+  var SHARD_CONCURRENCY = 4;
   function runShardPool(jobs, concurrency) {
     return new Promise(function(resolve){
       var idx = 0, active = 0, done = 0;
@@ -2483,6 +2483,7 @@ button.btn.loading { opacity: 0.5; pointer-events: none; }
     return metaPromise.then(function(meta){
       if (!meta) return;
       __priceBusy = true;
+      var busyGuard = setTimeout(function(){ __priceBusy = false; }, 120000);
       var jobs = [];
       ['us','kr'].forEach(function(mkt){
         // 장 닫힌 시장은 가격이 안 변하니 건너뛰어 요청 절약
@@ -2497,11 +2498,11 @@ button.btn.loading { opacity: 0.5; pointer-events: none; }
           })(mkt, s);
         }
       });
-      if (jobs.length === 0) { __priceBusy = false; return; }
+      if (jobs.length === 0) { __priceBusy = false; clearTimeout(busyGuard); return; }
       return runShardPool(jobs, SHARD_CONCURRENCY).then(function(){
-        __priceBusy = false;
+        __priceBusy = false; clearTimeout(busyGuard);
         return refreshAll();
-      })['catch'](function(){ __priceBusy = false; });
+      })['catch'](function(){ __priceBusy = false; clearTimeout(busyGuard); });
     });
   }
 
@@ -2602,9 +2603,13 @@ button.btn.loading { opacity: 0.5; pointer-events: none; }
 
   function refreshQuotes(market) {
     var btn = market === 'us' ? $('btnRefreshUS') : $('btnRefreshKR');
-    var originalText = btn.textContent;
+    var originalText = btn.getAttribute('data-label') || btn.textContent;
+    btn.setAttribute('data-label', originalText);
     btn.classList.add('loading'); btn.textContent='조회 중...';
-    // [V13] 해당 시장의 가격 샤드 전부 + 일봉 샤드 전부를 병렬 호출 (각 호출 = 독립 invocation)
+    var restored = false;
+    function restore() { if (restored) return; restored = true; btn.classList.remove('loading'); btn.textContent=originalText; }
+    // 안전장치: 90초 내 무조건 버튼 복구 (멈춤 방지)
+    var guard = setTimeout(restore, 90000);
     var metaPromise = __shardMeta ? Promise.resolve(__shardMeta) : loadShardMeta();
     metaPromise.then(function(meta){
       if (!meta || !meta[market]) throw new Error('shard meta 없음');
@@ -2635,7 +2640,7 @@ button.btn.loading { opacity: 0.5; pointer-events: none; }
         refreshAll();
       });
     })['catch'](function(e){ toast('조회 실패: '+e.message); })
-      .then(function(){ btn.classList.remove('loading'); btn.textContent=originalText; });
+      .then(function(){ clearTimeout(guard); restore(); });
   }
 
   function openSettings() {
