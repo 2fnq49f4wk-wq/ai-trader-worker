@@ -323,6 +323,7 @@ button.btn.primary:hover { background: #e8f0f8; box-shadow: 0 0 20px rgba(255,25
 button.btn.danger { color: var(--red); border-color: var(--red); }
 button.btn.refresh { color: var(--blue); border-color: var(--blue); }
 button.btn.logs { color: var(--purple); border-color: var(--purple); }
+button.btn.macro { color: var(--orange); border-color: var(--orange); }
 button.btn:active { opacity: 0.6; }
 button.btn.loading { opacity: 0.5; pointer-events: none; }
 .pos { color: var(--green); font-weight: 700; font-family: 'IBM Plex Mono', 'Courier New', monospace; letter-spacing: 0.3px; }
@@ -464,6 +465,82 @@ button.btn.loading { opacity: 0.5; pointer-events: none; }
   background: linear-gradient(135deg, #ffffff, #c8c8c8);
   clip-path: polygon(50% 0%, 62% 38%, 100% 50%, 62% 62%, 50% 100%, 38% 62%, 0% 50%, 38% 38%);
 }
+
+/* ─────────── 경제지표 (MACRO) 모달 ─────────── */
+.modal-macro {
+  max-width: 920px; margin: 0 auto;
+  background: var(--panel); border: 1px solid var(--orange);
+  border-radius: 6px; padding: 22px;
+}
+.modal-macro h2 {
+  color: #ffffff; margin-bottom: 4px; font-size: 18px; letter-spacing: 1.5px;
+  display: flex; justify-content: space-between; align-items: center; gap: 10px;
+  text-shadow: 0 0 12px rgba(255,255,255,0.6), 0 0 20px rgba(240,136,62,0.3);
+}
+.modal-macro h2 .close-x { font-size: 24px; cursor: pointer; color: var(--dim); line-height: 1; user-select: none; padding: 0 8px; }
+.modal-macro h2 .close-x:hover { color: var(--red); }
+.macro-sub { color: var(--dim); font-size: 11px; margin-bottom: 16px; font-family: 'IBM Plex Mono','Courier New',monospace; letter-spacing: 0.3px; }
+.macro-sub b { color: var(--orange); }
+
+/* 다음 발표 하이라이트 카드 */
+.macro-next { 
+  display: flex; gap: 10px; flex-wrap: wrap; margin-bottom: 18px;
+}
+.macro-next-card {
+  flex: 1; min-width: 150px;
+  background: linear-gradient(135deg, rgba(240,136,62,0.08), rgba(88,166,255,0.04));
+  border: 1px solid var(--border); border-left: 3px solid var(--orange);
+  border-radius: 5px; padding: 12px 14px;
+}
+.macro-next-card .lbl { font-size: 9px; color: var(--dim); letter-spacing: 1.2px; text-transform: uppercase; margin-bottom: 6px; }
+.macro-next-card .nm { font-size: 13px; color: var(--text); font-weight: 700; margin-bottom: 4px; }
+.macro-next-card .dt { font-size: 11px; color: #cbd5e1; font-family: 'IBM Plex Mono','Courier New',monospace; }
+.macro-next-card .dday { 
+  display: inline-block; margin-top: 7px; font-size: 11px; font-weight: 700;
+  font-family: 'IBM Plex Mono','Courier New',monospace; padding: 2px 8px; border-radius: 3px;
+  background: rgba(240,136,62,0.15); color: var(--orange); letter-spacing: 0.5px;
+}
+.macro-next-card .dday.soon { background: rgba(248,81,73,0.18); color: var(--red); animation: pulse 2s infinite; }
+.macro-next-card .dday.today { background: var(--red); color: #fff; }
+
+/* 시장 섹션 헤더 */
+.macro-mkt-head {
+  display: flex; align-items: center; gap: 8px; margin: 18px 0 8px;
+  font-size: 13px; font-weight: 700; letter-spacing: 1px; color: #fff;
+  padding-bottom: 6px; border-bottom: 1px solid var(--border);
+  text-shadow: 0 0 8px rgba(255,255,255,0.3);
+}
+.macro-mkt-head .flag { font-size: 16px; }
+
+/* 지표 테이블 */
+.macro-table-wrap { overflow-x: auto; margin-bottom: 6px; }
+.macro-table { width: 100%; border-collapse: collapse; font-size: 12px; }
+.macro-table th {
+  padding: 9px 10px; text-align: left; color: #fff; font-size: 9px;
+  letter-spacing: 1px; border-bottom: 1px solid var(--border); background: var(--elev);
+  white-space: nowrap; text-shadow: 0 0 8px rgba(255,255,255,0.4);
+}
+.macro-table th.r, .macro-table td.r { text-align: right; }
+.macro-table td {
+  padding: 9px 10px; border-bottom: 1px solid var(--border); white-space: nowrap;
+  font-family: 'IBM Plex Mono','Courier New',monospace; letter-spacing: 0.3px;
+}
+.macro-table tbody tr:hover { background: rgba(240,136,62,0.05); }
+.macro-table .ind-name { font-family: 'Helvetica Neue', Arial, sans-serif; font-weight: 600; color: var(--text); }
+.macro-table .ind-name small { display: block; font-weight: 400; color: var(--faint); font-size: 10px; letter-spacing: 0; margin-top: 1px; }
+.macro-table .val { color: #fff; font-weight: 700; font-size: 13px; }
+.macro-table .val .unit { font-size: 10px; color: var(--dim); font-weight: 400; margin-left: 2px; }
+.macro-table .relday { color: var(--dim); font-size: 11px; }
+.macro-table .nextday { color: #cbd5e1; }
+.macro-table .dd { font-weight: 700; }
+.macro-table .dd.soon { color: var(--orange); }
+.macro-table .dd.today { color: var(--red); }
+.macro-table .dd.far { color: var(--faint); }
+.macro-disclaimer {
+  margin-top: 14px; padding: 10px 12px; background: var(--elev);
+  border-radius: 4px; border: 1px solid var(--border);
+  font-size: 10px; color: var(--dim); line-height: 1.6;
+}
 </style>
 </head>
 <body>
@@ -491,6 +568,7 @@ button.btn.loading { opacity: 0.5; pointer-events: none; }
       <button type="button" class="btn refresh" id="btnRefreshUS">US 시세조회</button>
       <button type="button" class="btn refresh" id="btnRefreshKR">KR 시세조회</button>
       <button type="button" class="btn logs" id="btnLogs">LOGS</button>
+      <button type="button" class="btn macro" id="btnMacro">경제지표</button>
       <button type="button" class="btn" id="btnSettings">SETTINGS</button>
       <button type="button" class="btn primary" id="btnTick">RUN NOW</button>
     </div>
@@ -653,6 +731,65 @@ button.btn.loading { opacity: 0.5; pointer-events: none; }
       </div>
     </div>
 
+  </div>
+</div>
+
+<!-- 경제지표 (MACRO) 모달 -->
+<div class="modal" id="macroModal">
+  <div class="modal-macro">
+    <h2>
+      <span>📊 주요 경제지표</span>
+      <span class="close-x" id="btnCloseMacro">✕</span>
+    </h2>
+    <div class="macro-sub">미국 &amp; 한국 핵심 매크로 지표 · 발표일 / 다음 발표일 자동 D-day 계산 · 기준일 <b id="macroToday">—</b></div>
+    <div style="display:flex; align-items:center; justify-content:space-between; gap:10px; flex-wrap:wrap; margin-bottom:14px;">
+      <span id="macroStamp" style="font-size:10px; font-family:'IBM Plex Mono',monospace; color:var(--dim);">—</span>
+      <button class="llm-btn" id="btnMacroRefresh" style="font-size:11px;">↻ 지금 갱신</button>
+    </div>
+
+    <!-- 다음 발표 임박 카드 (JS가 채움) -->
+    <div class="macro-next" id="macroNext"></div>
+
+    <!-- 미국 -->
+    <div class="macro-mkt-head"><span class="flag">🇺🇸</span> 미국 (US)</div>
+    <div class="macro-table-wrap">
+      <table class="macro-table">
+        <thead>
+          <tr>
+            <th>지표</th>
+            <th class="r">최근치</th>
+            <th>최근 발표일</th>
+            <th>다음 발표일</th>
+            <th class="r">D-day</th>
+          </tr>
+        </thead>
+        <tbody id="macroUsBody"></tbody>
+      </table>
+    </div>
+
+    <!-- 한국 -->
+    <div class="macro-mkt-head"><span class="flag">🇰🇷</span> 한국 (KR)</div>
+    <div class="macro-table-wrap">
+      <table class="macro-table">
+        <thead>
+          <tr>
+            <th>지표</th>
+            <th class="r">최근치</th>
+            <th>최근 발표일</th>
+            <th>다음 발표일</th>
+            <th class="r">D-day</th>
+          </tr>
+        </thead>
+        <tbody id="macroKrBody"></tbody>
+      </table>
+    </div>
+
+    <div class="macro-disclaimer">
+      ※ <b>수치</b>는 매일 07:00(KST) Claude가 web_search로 공식 출처(BLS·BEA·연준·한국은행·통계청 등)를 조회해 자동 갱신합니다.
+      검색으로 확인되지 않은 값은 직전 값을 유지하며, ↗ 아이콘으로 출처를 열 수 있습니다.
+      <b>발표 일정</b>은 공식 캘린더 기준으로 코드에 관리되며 D-day는 기준일 대비 자동 계산됩니다.
+      자동 수집 값은 참고용이므로 매매 등 중요한 판단 전에는 공식 사이트에서 최종 확인하세요.
+    </div>
   </div>
 </div>
 
@@ -1524,6 +1661,201 @@ button.btn.loading { opacity: 0.5; pointer-events: none; }
     if (logsTimer) { clearInterval(logsTimer); logsTimer = null; }
   }
 
+  // ============================================================
+  // 경제지표 (MACRO) — 미국 & 한국 핵심 매크로 지표
+  //   [수치] value/asOf/released/source_url → 매일 07:00 KST에 worker가
+  //          Claude+web_search로 자동 갱신 (/api/macro). 아래 값은 폴백 기본값.
+  //   [일정] next(다음 발표 예정일)는 정적 관리 — 무료 API가 일정을 잘 안 줘서
+  //          코드에 박아두는 게 더 안정적. 연 1회 정도만 갱신하면 됨.
+  //   key   : /api/macro 응답과 매칭하는 식별자 (worker MACRO_INDICATORS와 동일)
+  // ============================================================
+  var MACRO_DATA = {
+    us: [
+      { key: 'fed_rate', name: '기준금리', sub: 'Fed Funds Rate', unit: '%',
+        value: '3.50–3.75', released: '2026-04-29', next: '2026-06-17', note: 'FOMC' },
+      { key: 'cpi', name: 'CPI', sub: '소비자물가 (전년비)', unit: '%',
+        value: '3.8', asOf: '4월분', released: '2026-05-12', next: '2026-06-10', note: 'BLS' },
+      { key: 'core_cpi', name: '근원 CPI', sub: 'Core CPI (전년비)', unit: '%',
+        value: '2.8', asOf: '4월분', released: '2026-05-12', next: '2026-06-10', note: 'BLS' },
+      { key: 'ppi', name: 'PPI', sub: '생산자물가 (전년비)', unit: '%',
+        value: '6.0', asOf: '4월분', released: '2026-05-13', next: '2026-06-12', note: 'BLS' },
+      { key: 'core_pce', name: '근원 PCE', sub: 'Core PCE (전년비)', unit: '%',
+        value: '3.0', asOf: '3월분', released: '2026-04-30', next: '2026-05-30', note: '연준 선호 지표' },
+      { key: 'unemployment', name: '실업률', sub: 'Unemployment', unit: '%',
+        value: '4.3', asOf: '4월분', released: '2026-05-08', next: '2026-06-05', note: '비농업고용 동반' },
+      { key: 'ust10y', name: '국채 10년', sub: '10Y Treasury', unit: '%',
+        value: '4.5', released: '2026-05-22', next: null, note: '시중금리 · 매일 갱신' }
+    ],
+    kr: [
+      { key: 'base_rate', name: '기준금리', sub: '한국은행 기준금리', unit: '%',
+        value: '2.50', released: '2026-04-10', next: '2026-05-28', note: '금통위' },
+      { key: 'cpi', name: 'CPI', sub: '소비자물가 (전년비)', unit: '%',
+        value: '2.3', asOf: '4월분', released: '2026-05-02', next: '2026-06-03', note: '통계청' },
+      { key: 'ppi', name: 'PPI', sub: '생산자물가 (전년비)', unit: '%',
+        value: '2.0', asOf: '3월분', released: '2026-04-22', next: '2026-06-23', note: '한국은행' },
+      { key: 'ktb3y', name: '국고채 3년', sub: '3Y KTB', unit: '%',
+        value: '2.6', released: '2026-05-22', next: null, note: '시중금리 · 매일 갱신' },
+      { key: 'ktb10y', name: '국고채 10년', sub: '10Y KTB', unit: '%',
+        value: '3.0', released: '2026-05-22', next: null, note: '시중금리 · 매일 갱신' }
+    ]
+  };
+
+  // /api/macro에서 받아온 자동 갱신 수치를 MACRO_DATA에 머지.
+  //   값이 있으면 value/asOf/released/source_url을 덮어쓰고, 없으면 정적 폴백 유지.
+  var macroAutoUpdatedAt = null;
+  function macroMergeAuto(api) {
+    if (!api) return;
+    macroAutoUpdatedAt = api.updatedAt || null;
+    ['us', 'kr'].forEach(function(mkt) {
+      if (!api[mkt]) return;
+      MACRO_DATA[mkt].forEach(function(row) {
+        var a = api[mkt][row.key];
+        if (a && a.value != null && String(a.value).trim() !== '') {
+          row.value = String(a.value).replace(/-/g, '–');  // 하이픈→en-dash (3.50-3.75 표기 통일)
+          if (a.asOf) row.asOf = a.asOf;
+          if (a.released) row.released = a.released;
+          if (a.source_url) row.source_url = a.source_url;
+        }
+      });
+    });
+  }
+
+  function macroParseDate(s) {
+    if (!s) return null;
+    var p = s.split('-');
+    return new Date(Number(p[0]), Number(p[1]) - 1, Number(p[2]));
+  }
+  function macroDaysUntil(dateStr) {
+    var d = macroParseDate(dateStr);
+    if (!d) return null;
+    var now = new Date();
+    var a = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+    return Math.round((d - a) / 86400000);
+  }
+  function macroFmtDate(s) {
+    var d = macroParseDate(s);
+    if (!d) return '—';
+    var days = ['일','월','화','수','목','금','토'];
+    return (d.getMonth() + 1) + '/' + d.getDate() + '(' + days[d.getDay()] + ')';
+  }
+  function macroDdayLabel(dd) {
+    if (dd === null) return { txt: '—', cls: 'far' };
+    if (dd === 0) return { txt: 'D-DAY', cls: 'today' };
+    if (dd < 0) return { txt: '발표완료', cls: 'far' };
+    return { txt: 'D-' + dd, cls: dd <= 3 ? 'soon' : (dd <= 10 ? '' : 'far') };
+  }
+  function macroRelDay(s) {
+    var dd = macroDaysUntil(s);
+    if (dd === null) return '';
+    if (dd === 0) return '오늘';
+    if (dd === -1) return '어제';
+    if (dd < 0) return (-dd) + '일 전';
+    return dd + '일 후';
+  }
+
+  function macroRenderTable(tbodyId, rows) {
+    var tb = $(tbodyId);
+    var html = '';
+    rows.forEach(function(r) {
+      var dd = macroDaysUntil(r.next);
+      var lab = macroDdayLabel(dd);
+      var nextTxt = r.next ? macroFmtDate(r.next) : '<span style="color:var(--faint)">상시</span>';
+      var relReleased = r.released ? '<span class="relday">(' + macroRelDay(r.released) + ')</span>' : '';
+      var asOf = r.asOf ? '<span style="color:var(--blue);font-size:10px;"> · ' + escapeHtml(r.asOf) + '</span>' : '';
+      var srcLink = r.source_url
+        ? ' <a href="' + escapeHtml(r.source_url) + '" target="_blank" rel="noopener" title="출처" style="color:var(--faint);text-decoration:none;font-size:10px;">↗</a>'
+        : '';
+      html += '<tr>' +
+        '<td class="ind-name">' + escapeHtml(r.name) + asOf +
+          (r.sub ? '<small>' + escapeHtml(r.sub) + '</small>' : '') +
+          (r.note ? '<small style="color:var(--dim)">' + escapeHtml(r.note) + '</small>' : '') + '</td>' +
+        '<td class="r"><span class="val">' + escapeHtml(r.value) +
+          (r.unit ? '<span class="unit">' + escapeHtml(r.unit) + '</span>' : '') + '</span>' + srcLink + '</td>' +
+        '<td>' + macroFmtDate(r.released) + ' ' + relReleased + '</td>' +
+        '<td class="nextday">' + nextTxt + '</td>' +
+        '<td class="r"><span class="dd ' + lab.cls + '">' + lab.txt + '</span></td>' +
+        '</tr>';
+    });
+    tb.innerHTML = html;
+  }
+
+  function macroRenderNext() {
+    // 다음 발표 예정 지표 중 가장 임박한 3개를 카드로
+    var all = [];
+    MACRO_DATA.us.forEach(function(r) { if (r.next) all.push({ mkt: '🇺🇸', r: r, dd: macroDaysUntil(r.next) }); });
+    MACRO_DATA.kr.forEach(function(r) { if (r.next) all.push({ mkt: '🇰🇷', r: r, dd: macroDaysUntil(r.next) }); });
+    all = all.filter(function(x) { return x.dd !== null && x.dd >= 0; });
+    all.sort(function(a, b) { return a.dd - b.dd; });
+    var top = all.slice(0, 3);
+    var box = $('macroNext');
+    if (!top.length) { box.innerHTML = ''; return; }
+    var html = '';
+    top.forEach(function(x) {
+      var lab = macroDdayLabel(x.dd);
+      html += '<div class="macro-next-card">' +
+        '<div class="lbl">다음 발표 임박</div>' +
+        '<div class="nm">' + x.mkt + ' ' + escapeHtml(x.r.name) + '</div>' +
+        '<div class="dt">' + macroFmtDate(x.r.next) + '</div>' +
+        '<span class="dday ' + lab.cls + '">' + lab.txt + '</span>' +
+        '</div>';
+    });
+    box.innerHTML = html;
+  }
+
+  function macroRenderAll() {
+    var now = new Date();
+    $('macroToday').textContent = (now.getMonth() + 1) + '월 ' + now.getDate() + '일';
+    // 자동 갱신 시각 표시
+    var stamp = $('macroStamp');
+    if (stamp) {
+      if (macroAutoUpdatedAt) {
+        var d = new Date(macroAutoUpdatedAt);
+        stamp.innerHTML = '🔄 수치 자동갱신: ' + (d.getMonth()+1) + '/' + d.getDate() + ' ' +
+          ('0'+d.getHours()).slice(-2) + ':' + ('0'+d.getMinutes()).slice(-2);
+        stamp.style.color = 'var(--green)';
+      } else {
+        stamp.innerHTML = '⚠ 자동갱신 대기중 (기본값 표시) — 매일 07:00 KST 갱신';
+        stamp.style.color = 'var(--dim)';
+      }
+    }
+    macroRenderNext();
+    macroRenderTable('macroUsBody', MACRO_DATA.us);
+    macroRenderTable('macroKrBody', MACRO_DATA.kr);
+  }
+
+  function macroLoadAndRender() {
+    macroRenderAll();  // 먼저 폴백/기존값으로 즉시 렌더
+    fetch('/api/macro')
+      .then(function(r) { return r.json(); })
+      .then(function(data) {
+        if (data && !data.empty) { macroMergeAuto(data); macroRenderAll(); }
+      })
+      .catch(function() { /* 네트워크 실패 시 폴백값 유지 */ });
+  }
+
+  function openMacro() {
+    macroLoadAndRender();
+    $('macroModal').classList.add('show');
+  }
+  function closeMacro() { $('macroModal').classList.remove('show'); }
+
+  // 수동 즉시 갱신 (모달 안 새로고침 버튼)
+  function macroRunNow() {
+    var btn = $('btnMacroRefresh');
+    if (btn) { btn.disabled = true; btn.textContent = '갱신 중… (검색에 30~60초)'; }
+    fetch('/api/macro/run', { method: 'POST' })
+      .then(function(r) { return r.json(); })
+      .then(function(res) {
+        if (res && res.ok && res.data) { macroMergeAuto(res.data); macroRenderAll(); }
+        if (btn) { btn.disabled = false; btn.textContent = '↻ 지금 갱신'; }
+        if (res && !res.ok) alert('갱신 실패: ' + (res.reason || res.error || '알 수 없음'));
+      })
+      .catch(function(e) {
+        if (btn) { btn.disabled = false; btn.textContent = '↻ 지금 갱신'; }
+        alert('갱신 요청 실패: ' + e.message);
+      });
+  }
+
   // ===== [V8.6 Hybrid] LLM Banner =====
   function renderLLMBanner(llmDaily, cfg) {
     var chip = $('llmStatusChip');
@@ -2048,6 +2380,9 @@ button.btn.loading { opacity: 0.5; pointer-events: none; }
   $('btnRefreshKR').addEventListener('click', function(){ refreshQuotes('kr'); });
   $('btnLogs').addEventListener('click', openLogs);
   $('btnCloseLogs').addEventListener('click', closeLogs);
+  $('btnMacro').addEventListener('click', openMacro);
+  $('btnCloseMacro').addEventListener('click', closeMacro);
+  $('btnMacroRefresh').addEventListener('click', macroRunNow);
   // [다운로드] 메인 UI 트레이드 기록 CSV 버튼
   $('btnDownloadRecent').addEventListener('click', function(){ downloadTradesCSV(50, 'recent_trades'); });
   $('btnDownloadAll').addEventListener('click', function(){ downloadTradesCSV(10000, 'all_trades'); });
@@ -2071,6 +2406,9 @@ button.btn.loading { opacity: 0.5; pointer-events: none; }
   });
   $('settingsModal').addEventListener('click', function(e){
     if (e.target === $('settingsModal')) closeSettings();
+  });
+  $('macroModal').addEventListener('click', function(e){
+    if (e.target === $('macroModal')) closeMacro();
   });
 
   // 로그 검색
