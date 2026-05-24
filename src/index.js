@@ -5439,21 +5439,33 @@ async function runTradingCycle(env) {
           try { prevQuoteMap[r.k.slice(6)] = JSON.parse(r.v); } catch (e) {}
         }
       } catch (e) { /* 일괄 로드 실패 시 빈 맵으로 진행 — 일봉값은 평가루프가 채움 */ }
+      // [V10 HOTFIX] setState를 종목마다 호출하면 수백 쿼리 → cron 타임아웃(503).
+      //   D1 batch로 한 번에 커밋한다.
+      const quoteStmts = [];
+      const nowTs = Date.now();
       for (const sym of tickers) {
         const bq = batchQuotes[sym];
         if (!bq) continue;
         const prevQ = prevQuoteMap[sym] || null;
         const merged = {
           market: market, price: bq.price, prevClose: bq.prevClose, dayPct: bq.dayPct,
-          // 일봉 파생값은 기존 것 유지 (라운드로빈으로 갱신될 때 덮어씀)
           rsi: prevQ ? prevQ.rsi : null, ma: prevQ ? prevQ.ma : null, atr: prevQ ? prevQ.atr : null,
           dailyAtr: prevQ ? prevQ.dailyAtr : null, dailyMa: prevQ ? prevQ.dailyMa : null,
           dailyMaShort: prevQ ? prevQ.dailyMaShort : null,
           bbLower: prevQ ? prevQ.bbLower : null, bbUpper: prevQ ? prevQ.bbUpper : null,
           return20: prevQ ? prevQ.return20 : null,
-          ts: Date.now()
+          ts: nowTs
         };
-        await setState(DB, "quote:" + sym, merged);
+        quoteStmts.push(
+          DB.prepare("INSERT INTO state (k, v, updated_ts) VALUES (?, ?, ?) ON CONFLICT(k) DO UPDATE SET v=excluded.v, updated_ts=excluded.updated_ts")
+            .bind("quote:" + sym, JSON.stringify(merged), nowTs)
+        );
+      }
+      // D1 batch는 한 번에 너무 많으면 거부될 수 있어 100개씩 나눠 커밋
+      for (let i = 0; i < quoteStmts.length; i += 100) {
+        try { await DB.batch(quoteStmts.slice(i, i + 100)); } catch (e) {
+          await log(DB, "WARN", null, "[V10] quote batch write fail: " + e.message);
+        }
       }
 
       // --- (2) 일봉 라운드로빈 갱신 대상 선정 ---
@@ -5976,8 +5988,17 @@ async function handleRequest(request, env) {
 
       const allSymbols = cfg.usTickers.concat(cfg.krTickers);
       const quotes = [];
+      // [V10 HOTFIX] 종목 수백 개를 getState로 하나씩 읽으면 응답 지연→503/타임아웃 발생.
+      //   quote: 전체를 단일 쿼리로 로드 후 메모리에서 매핑한다.
+      const quoteRowMap = {};
+      try {
+        const qrows = await env.DB.prepare("SELECT k, v FROM state WHERE k LIKE 'quote:%'").all();
+        for (const r of (qrows.results || [])) {
+          try { quoteRowMap[r.k.slice(6)] = JSON.parse(r.v); } catch (e) {}
+        }
+      } catch (e) {}
       for (const sym of allSymbols) {
-        const q = await getState(env.DB, "quote:" + sym, null);
+        const q = quoteRowMap[sym];
         if (q) quotes.push(Object.assign({
           symbol: sym,
           name: NAME_MAP[sym] || sym,
@@ -6021,8 +6042,13 @@ async function handleRequest(request, env) {
       const cfg = migrateCfgToMarkets(Object.assign({}, DEFAULT_CFG, await getState(env.DB, "cfg", {})));
       const allSymbols = cfg.usTickers.concat(cfg.krTickers);
       const quotes = [];
+      const _qmap = {};
+      try {
+        const _qr = await env.DB.prepare("SELECT k, v FROM state WHERE k LIKE 'quote:%'").all();
+        for (const r of (_qr.results || [])) { try { _qmap[r.k.slice(6)] = JSON.parse(r.v); } catch(e){} }
+      } catch(e){}
       for (const sym of allSymbols) {
-        const q = await getState(env.DB, "quote:" + sym, null);
+        const q = _qmap[sym];
         if (q) quotes.push(Object.assign({ symbol: sym }, q));
       }
       return Response.json(quotes, { headers: cors });
