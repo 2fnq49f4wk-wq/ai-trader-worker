@@ -107,6 +107,23 @@ const COMMODITY_SYMBOLS = COMMODITIES.map(function(c){ return c.symbol; });
 const COMMODITY_META = {};
 for (const c of COMMODITIES) COMMODITY_META[c.symbol] = c;
 
+// === [FX] 환율 조회 대상 ===
+//   야후 파이낸스 환율 심볼. 매일 06:30 KST 1회 갱신 (조회 전용 — 매매 없음).
+//   "XXXKRW=X" = 1 XXX당 원화. "KRW=X" = 1달러당 원화. "JPY=X" = 1달러당 엔.
+//   엔/원은 야후 직접 페어가 부정확할 수 있어 USD/KRW ÷ USD/JPY 로 파생 계산도 함께 제공.
+const FX_PAIRS = [
+  { key: "USDKRW", symbol: "KRW=X",     label: "달러/원",        sub: "USD/KRW",   unit: "₩" },
+  { key: "JPYKRW", symbol: "JPYKRW=X",  label: "엔/원 (100엔)",  sub: "JPY/KRW",   unit: "₩", per100: true },
+  { key: "USDJPY", symbol: "JPY=X",     label: "달러/엔",        sub: "USD/JPY",   unit: "¥" },
+  { key: "GBPKRW", symbol: "GBPKRW=X",  label: "파운드/원",      sub: "GBP/KRW",   unit: "₩" },
+  { key: "EURKRW", symbol: "EURKRW=X",  label: "유로/원",        sub: "EUR/KRW",   unit: "₩" },
+  { key: "CNYKRW", symbol: "CNYKRW=X",  label: "위안/원",        sub: "CNY/KRW",   unit: "₩" },
+  { key: "AUDKRW", symbol: "AUDKRW=X",  label: "호주달러/원",    sub: "AUD/KRW",   unit: "₩" },
+  { key: "CADKRW", symbol: "CADKRW=X",  label: "캐나다달러/원",  sub: "CAD/KRW",   unit: "₩" },
+  { key: "CHFKRW", symbol: "CHFKRW=X",  label: "스위스프랑/원",  sub: "CHF/KRW",   unit: "₩" },
+  { key: "DXY",    symbol: "DX-Y.NYB",  label: "달러 인덱스",    sub: "DXY",       unit: "" }
+];
+
 // === 전략 식별자 ===
 const STRATEGIES = ["swing", "day", "momentum", "meanrev"];
 
@@ -565,6 +582,14 @@ function isCommodityTriggerTime() {
   const kst = getKST(now);
   if (kst.day < 1 || kst.day > 5) return false;  // 평일만
   return kst.totalMin === 960;  // 16:00 KST = 960분
+}
+
+// [FX] 환율 조회 트리거 — 매일 06:30 KST 1회 (주말 포함, 조회 전용).
+//   06:30 KST = 390분. cron 1분 간격이라 06:30 정각에 정확히 매치.
+function isFxTriggerTime() {
+  const now = new Date();
+  const kst = getKST(now);
+  return kst.totalMin === 390;  // 06:30 KST = 390분
 }
 
 // [V8.6] 장 마감까지 남은 분 — Day 전략 강제 청산용
@@ -3017,7 +3042,81 @@ async function refreshCycleLock(DB, ttl) {
 }
 
 // ============================================================
-// [COMMODITY] 원자재 트레이딩 사이클
+// [FX] 환율 갱신 — 매일 06:30 KST 1회 (조회 전용, 매매 없음)
+//   • 대상: 달러/원·엔/원·달러/엔·파운드/원·유로/원·위안/원·호주달러/원·
+//           캐나다달러/원·스위스프랑/원 + 달러 인덱스(DXY)
+//   • 야후 환율 심볼을 fetchIntraday로 조회해 가격·전일대비% 저장.
+//   • 엔/원은 야후 직접 페어가 비거나 부정확하면 USD/KRW ÷ USD/JPY × 100 으로 파생.
+//   • 결과는 state "fx" 키에 저장 → /api/fx 로 프론트에 전달.
+// ============================================================
+async function runFxUpdate(env) {
+  const DB = env.DB;
+  await log(DB, "INFO", null, "[FX] === 환율 갱신 시작 ===");
+  const out = {};
+  let ok = 0, fail = 0;
+
+  // 배치 조회
+  const BATCH = 5;
+  for (let i = 0; i < FX_PAIRS.length; i += BATCH) {
+    const slice = FX_PAIRS.slice(i, i + BATCH);
+    const results = await Promise.all(slice.map(async function(pair){
+      try {
+        const q = await fetchIntraday(pair.symbol);
+        return { pair: pair, q: q, err: null };
+      } catch (e) {
+        // 폴백: 일봉으로 재시도 (환율은 일봉이 더 안정적일 때가 있음)
+        try {
+          const d = await fetchDailyFull(pair.symbol);
+          return { pair: pair, q: { price: d.price, prevClose: d.prevClose }, err: null };
+        } catch (e2) {
+          return { pair: pair, q: null, err: e2.message || e.message };
+        }
+      }
+    }));
+    for (const r of results) {
+      const p = r.pair;
+      if (r.err || !r.q || !(r.q.price > 0)) {
+        fail++;
+        out[p.key] = { key: p.key, label: p.label, sub: p.sub, unit: p.unit, price: null, dayPct: null, err: r.err || "no data" };
+        continue;
+      }
+      ok++;
+      const price = r.q.price;
+      const prev = (r.q.prevClose && r.q.prevClose > 0) ? r.q.prevClose : price;
+      const dayPct = prev ? ((price - prev) / prev) * 100 : 0;
+      out[p.key] = {
+        key: p.key, label: p.label, sub: p.sub, unit: p.unit,
+        per100: p.per100 || false,
+        price: price, prevClose: prev, dayPct: dayPct
+      };
+    }
+  }
+
+  // 엔/원 파생 보정: 직접 페어가 실패했거나 비정상(원/엔이 5 미만 등)일 때
+  //   USD/KRW ÷ USD/JPY × 100 = 100엔당 원화.
+  try {
+    const usdkrw = out["USDKRW"];
+    const usdjpy = out["USDJPY"];
+    const jpykrw = out["JPYKRW"];
+    if (usdkrw && usdkrw.price > 0 && usdjpy && usdjpy.price > 0) {
+      const derived100 = (usdkrw.price / usdjpy.price) * 100;  // 100엔당 원
+      const bad = !jpykrw || jpykrw.price == null || jpykrw.price <= 0 || jpykrw.price < 5;
+      if (bad) {
+        out["JPYKRW"] = {
+          key: "JPYKRW", label: "엔/원 (100엔)", sub: "JPY/KRW", unit: "₩", per100: true,
+          price: derived100, prevClose: derived100, dayPct: 0, derived: true
+        };
+      }
+    }
+  } catch (e) {}
+
+  const payload = { rates: out, updatedAt: Date.now() };
+  await setState(DB, "fx", payload);
+  await log(DB, "INFO", null, "[FX] 환율 갱신 완료 (성공 " + ok + " / 실패 " + fail + ")");
+  return payload;
+}
+
+
 //   • 대상: 금/은/플래티넘/구리/WTI/브렌트유/천연가스/알루미늄 (야후 선물 심볼)
 //   • 전략: 주식 swing 전략과 동일한 신호/매도 로직 사용 (evaluateBuySignals_swing / evaluateSell의 swing 분기)
 //   • 시각: 하루 1회, 16:00 KST에만 매수/매도 (isCommodityTriggerTime)
@@ -4082,6 +4181,18 @@ async function handleRequest(request, env) {
       return Response.json({ ok: true, forced: force, ts: Date.now() }, { headers: cors });
     }
 
+    // === [FX] 환율 조회 ===
+    if (path === "/api/fx") {
+      const fx = await getState(env.DB, "fx", null);
+      if (!fx) return Response.json({ empty: true, pairs: FX_PAIRS }, { headers: cors });
+      return Response.json(Object.assign({ pairs: FX_PAIRS }, fx), { headers: cors });
+    }
+    // === [FX] 환율 즉시 갱신 ===
+    if (path === "/api/fx/run" && request.method === "POST") {
+      const payload = await runFxUpdate(env);
+      return Response.json({ ok: true, data: payload, ts: Date.now() }, { headers: cors });
+    }
+
     // [신규] 신호별 성과 조회
     if (path === "/api/signal_stats") {
       const stats = await getState(env.DB, "signal_stats", {});
@@ -4337,6 +4448,10 @@ export default {
     //   runTradingCycle이 조기 return 해도 원자재는 정상 실행됨.
     if (isCommodityTriggerTime()) {
       ctx.waitUntil(runCommodityCycle(env));
+    }
+    // [FX] 06:30 KST 정각에만 환율 갱신 (조회 전용).
+    if (isFxTriggerTime()) {
+      ctx.waitUntil(runFxUpdate(env));
     }
   }
 };
