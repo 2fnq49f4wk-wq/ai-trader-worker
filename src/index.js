@@ -4933,25 +4933,7 @@ async function refreshPriceShard(env, market, shard) {
   const symbols = shardSlice(tickers, shard, PRICE_SHARD_SIZE);
   if (symbols.length === 0) return { ok: 0, fail: 0, shard: shard, shardCount: total, done: true };
   const tSetup = Date.now() - t0;
-
-  // 이 샤드 종목들의 기존 quote만 로드 (지표 보존용) — 단일 쿼리로 일괄 로드
-  const tPrev0 = Date.now();
-  const prevMap = {};
-  try {
-    const keys = symbols.map(function(s){ return "quote:" + s; });
-    const placeholders = keys.map(function(){ return "?"; }).join(",");
-    const stmt = DB.prepare("SELECT k, v FROM state WHERE k IN (" + placeholders + ")");
-    const rows = await stmt.bind.apply(stmt, keys).all();
-    for (const r of (rows.results || [])) {
-      try { prevMap[r.k.slice(6)] = JSON.parse(r.v); } catch (e) {}
-    }
-  } catch (e) {
-    for (const sym of symbols) {
-      const q = await getState(DB, "quote:" + sym, null);
-      if (q) prevMap[sym] = q;
-    }
-  }
-  const tPrev = Date.now() - tPrev0;
+  const tPrev = 0;
 
   const nowTs = Date.now();
   // [V15] v7 batch(crumb) 우선 — 50종목 1호출. 누락분만 chart 폴백.
@@ -4968,13 +4950,14 @@ async function refreshPriceShard(env, market, shard) {
   let ok = 0, fail = 0;
   for (const r of results) {
     if (r && r.ok) {
-      const prev = prevMap[r.symbol] || {};
-      const merged = Object.assign({}, prev, {
-        market: market, price: r.price, prevClose: r.prevClose, dayPct: r.dayPct, ts: nowTs
-      });
+      // [V18] 신규 quote 기본값 (해당 키가 없을 때 INSERT)
+      const fresh = { market: market, price: r.price, prevClose: r.prevClose, dayPct: r.dayPct, ts: nowTs };
+      // ON CONFLICT: 기존 JSON에서 가격 3필드 + ts만 갱신, 일봉 지표(rsi/ma/atr 등)는 보존.
       stmts.push(
-        DB.prepare("INSERT INTO state (k, v, updated_ts) VALUES (?, ?, ?) ON CONFLICT(k) DO UPDATE SET v=excluded.v, updated_ts=excluded.updated_ts")
-          .bind("quote:" + r.symbol, JSON.stringify(merged), nowTs)
+        DB.prepare(
+          "INSERT INTO state (k, v, updated_ts) VALUES (?1, ?2, ?6) " +
+          "ON CONFLICT(k) DO UPDATE SET v = json_set(v, '$.price', ?3, '$.prevClose', ?4, '$.dayPct', ?5, '$.ts', ?6), updated_ts = ?6"
+        ).bind("quote:" + r.symbol, JSON.stringify(fresh), r.price, r.prevClose, r.dayPct, nowTs)
       );
       ok++;
     } else if (r) { fail++; }
