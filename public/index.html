@@ -1101,6 +1101,8 @@ button.btn.loading { opacity: 0.5; pointer-events: none; }
 <script>
 (function () {
   var REFRESH_MS = 15000;  // [개선] 10s → 15s 폴링 부하 감소
+  var SHARD_REFRESH_MS = 60000;  // [V12] 전 종목 fan-out 갱신 주기 (60s)
+  var shardTimer = null;
   var LOGS_REFRESH_MS = 7000;  // [개선] 5s → 7s (모달 열린 동안만 동작)
   var timer = null;
   var logsTimer = null;
@@ -2435,6 +2437,43 @@ button.btn.loading { opacity: 0.5; pointer-events: none; }
     ['catch'](function(e) { toast('삭제 실패: ' + e.message); });
   }
 
+  // [V12] 샤드 fan-out — 무료 플랜 50 subrequest/invocation 우회.
+  //   각 샤드 호출이 독립 invocation(각자 50 예산)이므로, 모든 샤드를 "동시에" 던지면
+  //   전 종목이 한 번(≈수 초)에 병렬 갱신된다. 거래 판단은 서버 cron(runTradingCycle)이 담당.
+  var __shardMeta = null;
+  var __shardBusy = false;
+  function loadShardMeta() {
+    return api('/api/shard_meta').then(function(m){ __shardMeta = m; return m; })
+      ['catch'](function(){ return null; });
+  }
+  function refreshAllShards() {
+    if (__shardBusy) return Promise.resolve();   // 직전 fan-out이 안 끝났으면 건너뜀
+    var metaPromise = __shardMeta ? Promise.resolve(__shardMeta) : loadShardMeta();
+    return metaPromise.then(function(meta){
+      if (!meta) return;
+      __shardBusy = true;
+      var jobs = [];
+      ['us','kr'].forEach(function(mkt){
+        var n = (meta[mkt] && meta[mkt].shards) || 0;
+        for (var s = 0; s < n; s++) {
+          (function(market, shard){
+            // 각 호출 = 별도 invocation. 동시에 던져 병렬 처리.
+            jobs.push(
+              fetch('/api/refresh_shard?market=' + market + '&shard=' + shard)
+                .then(function(r){ return r.json(); })
+                ['catch'](function(){ return null; })
+            );
+          })(mkt, s);
+        }
+      });
+      return Promise.all(jobs).then(function(){
+        __shardBusy = false;
+        // 갱신된 시세를 화면에 반영
+        return refreshAll();
+      })['catch'](function(){ __shardBusy = false; });
+    });
+  }
+
   function refreshAll() {
     renderMarketStatus();
     // [개선] /api/state 1회로 watchlist + indices까지 한 번에 받음
@@ -2492,12 +2531,26 @@ button.btn.loading { opacity: 0.5; pointer-events: none; }
     var btn = market === 'us' ? $('btnRefreshUS') : $('btnRefreshKR');
     var originalText = btn.textContent;
     btn.classList.add('loading'); btn.textContent='조회 중...';
-    fetch('/api/refresh_quotes?market=' + market, {method:'POST'}).then(function(r){return r.json();})
-      .then(function(d){ 
-        toast(market.toUpperCase() + ' 시세 조회 완료 (성공 ' + d.ok_count + ' / 실패 ' + d.fail_count + ')'); 
-        refreshAll(); 
-      })
-      ['catch'](function(e){ toast('조회 실패: '+e.message); })
+    // [V12] 해당 시장의 모든 샤드를 병렬 호출 (각 호출 = 독립 invocation = 50 예산)
+    var metaPromise = __shardMeta ? Promise.resolve(__shardMeta) : loadShardMeta();
+    metaPromise.then(function(meta){
+      if (!meta || !meta[market]) throw new Error('shard meta 없음');
+      var n = meta[market].shards || 0;
+      var jobs = [];
+      var okSum = 0, failSum = 0;
+      for (var s = 0; s < n; s++) {
+        jobs.push(
+          fetch('/api/refresh_shard?market=' + market + '&shard=' + s)
+            .then(function(r){ return r.json(); })
+            .then(function(d){ if (d) { okSum += (d.ok||0); failSum += (d.fail||0); } })
+            ['catch'](function(){})
+        );
+      }
+      return Promise.all(jobs).then(function(){
+        toast(market.toUpperCase() + ' 시세 조회 완료 (성공 ' + okSum + ' / 실패 ' + failSum + ')');
+        refreshAll();
+      });
+    })['catch'](function(e){ toast('조회 실패: '+e.message); })
       .then(function(){ btn.classList.remove('loading'); btn.textContent=originalText; });
   }
 
@@ -2910,11 +2963,15 @@ button.btn.loading { opacity: 0.5; pointer-events: none; }
   });
 
     refreshAll();
+  // [V12] 샤드 메타 로드 후 즉시 1회 전 종목 fan-out 갱신, 이후 주기적 실행
+  loadShardMeta().then(function(){ refreshAllShards(); });
   // 자동 RUN NOW 1회
   setTimeout(function() {
     runNow();
   }, 2000);
   timer = setInterval(refreshAll, REFRESH_MS);
+  // [V12] 전 종목 시세는 60초마다 fan-out 으로 한 번에 갱신 (무료 플랜 한도 우회)
+  shardTimer = setInterval(refreshAllShards, SHARD_REFRESH_MS);
   
   // [V8.6] LLM 함수들을 글로벌 스코프에 노출 (onclick="" 에서 접근 가능하게)
   window.llmRefresh = llmRefresh;
