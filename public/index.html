@@ -866,19 +866,20 @@ button.btn.loading { opacity: 0.5; pointer-events: none; }
       <span id="heatmapTimestamp" style="font-size:10px;color:var(--dim);margin-left:auto;align-self:center;"></span>
     </div>
 
-    <!-- 히트맵 탭 (TradingView) -->
+    <!-- 히트맵 탭 (TradingView Stock Heatmap 위젯) -->
     <div id="heatmapChartView">
       <div style="font-size:11px;color:var(--dim);margin-bottom:12px;padding-bottom:10px;border-bottom:1px solid var(--border);letter-spacing:0.5px;">
-        💡 TradingView 실시간 시장 데이터 | 상자 크기 = 시가총액, 색상 = 등락(초록↑/빨강↓) | 장 중에만 업데이트됨
+        💡 S&P 500 히트맵 | 상자 크기 = 시가총액, 색상 = 등락(초록↑/빨강↓) | 섹터별 그룹 · 장 중 실시간 갱신
       </div>
-      <iframe 
-        src="https://www.tradingview.com/embed/market-ticker/?symbols=SPY,QQQ,IWM,DJIA"
-        style="border:0;width:100%;height:650px;border-radius:6px;background:#0a0e1a;">
-      </iframe>
+      <div id="tvHeatmapContainer" style="width:100%;height:650px;border-radius:6px;background:#0a0e1a;overflow:hidden;">
+        <div class="tradingview-widget-container" style="height:100%;width:100%;">
+          <div class="tradingview-widget-container__widget" style="height:100%;width:100%;"></div>
+        </div>
+      </div>
       <div style="font-size:10px;color:var(--faint);margin-top:12px;padding-top:12px;border-top:1px solid var(--border);line-height:1.6;">
-        SPY(S&P500) · QQQ(나스닥100) · IWM(소형주) · DJIA(다우존스) | 
+        S&P 500 (SPX500) 시가총액 상위 종목 · 섹터별 분류 | 
         데이터 제공: TradingView | 
-        새로고침: 자동(실시간, 장 중에만)
+        장 종료 후엔 마지막 거래 기준 표시 (실시간 갱신은 장 중에만)
       </div>
     </div>
 
@@ -2181,9 +2182,47 @@ button.btn.loading { opacity: 0.5; pointer-events: none; }
   var currentFxPairs = null;
 
   // ===== [HEATMAP] S&P 500 히트맵 =====
+  var tvHeatmapLoaded = false;
+  // TradingView Stock Heatmap 위젯 스크립트를 컨테이너에 주입 (또는 재주입)
+  function loadTVHeatmap() {
+    var host = $('tvHeatmapContainer');
+    if (!host) return;
+    // 컨테이너 초기화 후 재생성 (새로고침 시 깨끗하게 다시 그림)
+    host.innerHTML = '<div class="tradingview-widget-container" style="height:100%;width:100%;">'+
+                     '<div class="tradingview-widget-container__widget" style="height:100%;width:100%;"></div></div>';
+    var widgetDiv = host.querySelector('.tradingview-widget-container');
+    var script = document.createElement('script');
+    script.type = 'text/javascript';
+    script.async = true;
+    script.src = 'https://s3.tradingview.com/external-embedding/embed-widget-stock-heatmap.js';
+    script.innerHTML = JSON.stringify({
+      exchanges: [],
+      dataSource: "SPX500",
+      grouping: "sector",
+      blockSize: "market_cap_basic",
+      blockColor: "change",
+      locale: "kr",
+      symbolUrl: "",
+      colorTheme: "dark",
+      hasTopBar: true,
+      isDataSetEnabled: false,
+      isZoomEnabled: true,
+      hasSymbolTooltip: true,
+      isMonoSize: false,
+      width: "100%",
+      height: "100%"
+    });
+    widgetDiv.appendChild(script);
+    tvHeatmapLoaded = true;
+  }
+
   function openHeatmap() {
     $('heatmapModal').classList.add('show');
     heatmapShowChart();  // 기본으로 차트 탭 열기
+    // 위젯이 아직 로드 안 됐으면 주입 (모달 열릴 때 컨테이너 크기가 잡힌 뒤 그려야 정상 표시)
+    if (!tvHeatmapLoaded) {
+      setTimeout(loadTVHeatmap, 100);
+    }
   }
   function closeHeatmap() {
     $('heatmapModal').classList.remove('show');
@@ -2258,9 +2297,8 @@ button.btn.loading { opacity: 0.5; pointer-events: none; }
       // movers 탭에서는 바로 fetch
       heatmapLoadMovers();
     } else {
-      // chart 탭에서는 iframe 새로고침 (TradingView 자동 갱신)
-      var iframe = $('heatmapModal').querySelector('iframe');
-      if (iframe) iframe.src = iframe.src;  // 새로고침
+      // chart 탭에서는 TradingView 위젯 재주입
+      loadTVHeatmap();
     }
     
     setTimeout(function(){
