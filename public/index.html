@@ -2455,7 +2455,7 @@ button.btn.loading { opacity: 0.5; pointer-events: none; }
 
   // 가격 전용 — 샤드를 한꺼번에 던지면 Yahoo가 워커 IP를 429로 차단한다.
   //   [V14] 동시 호출 수를 SHARD_CONCURRENCY로 제한해 순차 배치로 처리한다.
-  var SHARD_CONCURRENCY = 4;
+  var SHARD_CONCURRENCY = 6;
   function runShardPool(jobs, concurrency) {
     return new Promise(function(resolve){
       var idx = 0, active = 0, done = 0;
@@ -2616,7 +2616,8 @@ button.btn.loading { opacity: 0.5; pointer-events: none; }
       var jobs = [];
       var okSum = 0, failSum = 0;
       var pn = meta[market].priceShards || 0;
-      var dn = meta[market].dailyShards || 0;
+      // [V16] 수동 조회는 가격 샤드만 — 일봉/지표는 서버 cron이 라운드로빈으로 갱신.
+      //   가격만 받으면 호출 수가 1/4로 줄어 훨씬 빠름.
       for (var s = 0; s < pn; s++) {
         (function(shard){
           jobs.push(function(){
@@ -2626,14 +2627,6 @@ button.btn.loading { opacity: 0.5; pointer-events: none; }
               ['catch'](function(){});
           });
         })(s);
-      }
-      for (var k = 0; k < dn; k++) {
-        (function(shard){
-          jobs.push(function(){
-            return fetch('/api/refresh_daily_shard?market=' + market + '&shard=' + shard)
-              .then(function(r){ return r.json(); })['catch'](function(){});
-          });
-        })(k);
       }
       return runShardPool(jobs, SHARD_CONCURRENCY).then(function(){
         toast(market.toUpperCase() + ' 시세 조회 완료 (성공 ' + okSum + ' / 실패 ' + failSum + ')');
