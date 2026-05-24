@@ -3269,9 +3269,53 @@ async function yahooFetch(url) {
 //   Yahoo v7/finance/quote 엔드포인트. URL 하나에 심볼을 콤마로 묶어 전송.
 //   한 호출에 최대 ~50종목 (URL 길이/안정성 고려). 시계열은 주지 않음 — 현재가/등락률 전용.
 //   반환: { symbol: { price, prevClose, dayPct } } 맵
-async function fetchBatchQuotes(symbols) {
+// [V11 FIX] Yahoo v7/finance/quote 는 crumb/cookie 인증을 요구해 워커 환경에서
+//   대부분 401/403/429 로 실패한다(→ batchQuotes 거의 빈 객체 → 라운드로빈으로
+//   채워진 일부 종목만 watchlist 에 노출되던 버그의 직접 원인).
+//   v7 을 먼저 시도하되, 실패하거나 누락된 심볼은 인증 불필요한 v8/finance/chart
+//   엔드포인트(meta 만 사용, range=1d)로 폴백해 가격/등락률을 채운다.
+async function fetchQuoteViaChart(symbol) {
+  // chart meta 만 필요 — 가장 가벼운 1d/1d 요청
+  const j = await yahooFetch("https://query1.finance.yahoo.com/v8/finance/chart/" +
+    encodeURIComponent(symbol) + "?interval=1d&range=1d");
+  const result = j && j.chart && j.chart.result && j.chart.result[0];
+  if (!result) return null;
+  const meta = result.meta || {};
+  const closesRaw = (result.indicators && result.indicators.quote && result.indicators.quote[0] &&
+                     result.indicators.quote[0].close) || [];
+  const closes = closesRaw.filter(function(c){ return typeof c === "number" && !isNaN(c) && c > 0; });
+  const price = (typeof meta.regularMarketPrice === "number" && meta.regularMarketPrice > 0)
+    ? meta.regularMarketPrice : (closes.length ? closes[closes.length - 1] : null);
+  if (price == null) return null;
+  const prevClose = (typeof meta.chartPreviousClose === "number" && meta.chartPreviousClose > 0)
+    ? meta.chartPreviousClose
+    : (typeof meta.previousClose === "number" && meta.previousClose > 0 ? meta.previousClose : price);
+  const dayPct = prevClose ? ((price - prevClose) / prevClose) * 100 : 0;
+  return { price: price, prevClose: prevClose || price, dayPct: dayPct };
+}
+
+async function fetchQuoteViaChartFallback(symbol) {
+  // 한국 종목은 .KS ↔ .KQ 스왑 재시도
+  try {
+    const q = await fetchQuoteViaChart(symbol);
+    if (q) return q;
+  } catch (e) { /* fall through */ }
+  if (symbol.endsWith(".KS") || symbol.endsWith(".KQ")) {
+    const alt = symbol.endsWith(".KS") ? symbol.replace(".KS", ".KQ") : symbol.replace(".KQ", ".KS");
+    try {
+      const q2 = await fetchQuoteViaChart(alt);
+      if (q2) return q2;
+    } catch (e2) { /* fall through */ }
+  }
+  return null;
+}
+
+async function fetchBatchQuotes(symbols, opts) {
+  opts = opts || {};
   const out = {};
   if (!symbols || symbols.length === 0) return out;
+
+  // --- 1) v7 batch 시도 (성공하면 호출 수가 적어 가장 효율적) ---
   const BATCH = 50;
   for (let i = 0; i < symbols.length; i += BATCH) {
     const slice = symbols.slice(i, i + BATCH);
@@ -3293,9 +3337,37 @@ async function fetchBatchQuotes(symbols) {
         }
       }
     } catch (e) {
-      // 한 배치 실패는 무시하고 다음 배치 진행 (부분 성공 허용)
+      // v7 배치 실패 — 아래 v8 폴백이 처리
     }
   }
+
+  // --- 2) v7 으로 채워지지 않은 심볼만 v8 chart 로 폴백 ---
+  //   v7 이 전면 차단된 환경에서는 missing 이 전 종목이 되므로, Cloudflare
+  //   subrequest 한도를 넘지 않게 한 사이클당 maxFallback 개만 라운드로빈으로 처리한다.
+  //   이전 사이클에서 저장된 quote 는 호출부(prevQuoteMap 병합 + ON CONFLICT UPDATE)에서
+  //   보존되므로, 여러 사이클에 걸쳐 전 종목이 한 바퀴 채워진다.
+  let missing = symbols.filter(function(s){ return !out[s]; });
+  const maxFallback = (typeof opts.maxFallback === "number" && opts.maxFallback > 0)
+    ? opts.maxFallback : missing.length;
+  if (missing.length > maxFallback) {
+    const off = ((typeof opts.fallbackOffset === "number" && opts.fallbackOffset >= 0)
+      ? opts.fallbackOffset : 0) % missing.length;
+    const rotated = missing.slice(off).concat(missing.slice(0, off));
+    missing = rotated.slice(0, maxFallback);
+  }
+
+  const CBATCH = 10;
+  for (let i = 0; i < missing.length; i += CBATCH) {
+    const slice = missing.slice(i, i + CBATCH);
+    const results = await Promise.all(slice.map(async function(sym){
+      try { return { sym: sym, q: await fetchQuoteViaChartFallback(sym) }; }
+      catch (e) { return { sym: sym, q: null }; }
+    }));
+    for (const r of results) {
+      if (r.q) out[r.sym] = r.q;
+    }
+  }
+
   return out;
 }
 
@@ -5423,12 +5495,23 @@ async function runTradingCycle(env) {
       const prefetchStart = Date.now();
 
       // --- (1) 전 종목 가격 배치 갱신 ---
+      //   v7 이 차단된 환경 대비: v8 폴백은 매 사이클 일부만(라운드로빈) 처리하고
+      //   나머지는 이전 quote 를 보존(아래 prevQuoteMap 병합 + ON CONFLICT UPDATE)한다.
+      const qpRrKey = "qp_rr:" + market;
+      let qpRr = await getState(DB, qpRrKey, 0);
+      if (typeof qpRr !== "number" || qpRr < 0) qpRr = 0;
+      const QP_FALLBACK_PER_CYCLE = 120;  // 사이클당 v8 폴백 상한 (subrequest 한도 여유)
       let batchQuotes = {};
       try {
-        batchQuotes = await fetchBatchQuotes(tickers);
+        batchQuotes = await fetchBatchQuotes(tickers, {
+          maxFallback: QP_FALLBACK_PER_CYCLE,
+          fallbackOffset: qpRr * QP_FALLBACK_PER_CYCLE
+        });
       } catch (e) {
         await log(DB, "WARN", null, "[V10] batchQuotes fail " + market + ": " + e.message);
       }
+      const qpSlices = Math.max(1, Math.ceil(tickers.length / QP_FALLBACK_PER_CYCLE));
+      await setState(DB, qpRrKey, (qpRr + 1) % qpSlices);
       // quote: 상태 저장 (UI 표시용). 일봉 지표는 기존 quote에서 보존(있으면).
       // quote: 상태 저장 (UI 표시용). 일봉 지표는 기존 quote에서 보존(있으면).
       // [V10] D1 부하 최소화 — 기존 quote를 종목마다 읽지 않고 한 번의 쿼리로 일괄 로드.
@@ -5999,13 +6082,21 @@ async function handleRequest(request, env) {
       } catch (e) {}
       for (const sym of allSymbols) {
         const q = quoteRowMap[sym];
-        if (q) quotes.push(Object.assign({
+        const base = {
           symbol: sym,
           name: NAME_MAP[sym] || sym,
           rank: MCAP_RANK[sym] || 99999,
           isEtf: ETF_SYMBOLS.has(sym),
           market: (sym.endsWith(".KS") || sym.endsWith(".KQ")) ? "kr" : "us"
-        }, q));
+        };
+        // [V11 FIX] quote 가 아직 없는 종목도 노출(가격 대기 상태). 기존엔 quote 있는
+        //   종목만 push 해서 v7 차단 + 라운드로빈 미도달 종목이 watchlist 에서 통째로
+        //   누락(미국 26개 / 한국 28개만 보이던 증상)됐다.
+        if (q) {
+          quotes.push(Object.assign(base, q));
+        } else {
+          quotes.push(Object.assign(base, { price: null, prevClose: null, dayPct: null, pending: true }));
+        }
       }
       const indices = [];
       for (const sym of US_INDICES.concat(KR_INDICES)) {
