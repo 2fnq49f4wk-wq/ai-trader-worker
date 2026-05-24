@@ -4924,6 +4924,7 @@ async function runPool(items, limit, worker) {
 // --- 가격 전용 샤드: 가격/등락률만 갱신, 지표는 기존 quote에서 보존 ---
 async function refreshPriceShard(env, market, shard) {
   const DB = env.DB;
+  const t0 = Date.now();
   resetFetchBudget(45);
   await ensureSchema(DB);
   const cfg = migrateCfgToMarkets(Object.assign({}, DEFAULT_CFG, await getState(DB, "cfg", {})));
@@ -4931,8 +4932,10 @@ async function refreshPriceShard(env, market, shard) {
   const total = shardCount(tickers, PRICE_SHARD_SIZE);
   const symbols = shardSlice(tickers, shard, PRICE_SHARD_SIZE);
   if (symbols.length === 0) return { ok: 0, fail: 0, shard: shard, shardCount: total, done: true };
+  const tSetup = Date.now() - t0;
 
   // 이 샤드 종목들의 기존 quote만 로드 (지표 보존용) — 단일 쿼리로 일괄 로드
+  const tPrev0 = Date.now();
   const prevMap = {};
   try {
     const keys = symbols.map(function(s){ return "quote:" + s; });
@@ -4948,10 +4951,13 @@ async function refreshPriceShard(env, market, shard) {
       if (q) prevMap[sym] = q;
     }
   }
+  const tPrev = Date.now() - tPrev0;
 
   const nowTs = Date.now();
   // [V15] v7 batch(crumb) 우선 — 50종목 1호출. 누락분만 chart 폴백.
+  const tFetch0 = Date.now();
   const bq = await fetchBatchQuotes(symbols, { maxFallback: symbols.length, DB: DB });
+  const tFetch = Date.now() - tFetch0;
   const results = symbols.map(function(symbol){
     const q = bq[symbol];
     if (q && q.price != null) return { symbol: symbol, ok: true, price: q.price, prevClose: q.prevClose, dayPct: q.dayPct };
@@ -4973,12 +4979,20 @@ async function refreshPriceShard(env, market, shard) {
       ok++;
     } else if (r) { fail++; }
   }
+  const tWrite0 = Date.now();
   for (let i = 0; i < stmts.length; i += 100) {
     try { await DB.batch(stmts.slice(i, i + 100)); } catch (e) {
       await log(DB, "WARN", null, "[V13] price shard write fail: " + e.message);
     }
   }
-  return { ok: ok, fail: fail, shard: shard, shardCount: total, done: shard >= total - 1 };
+  const tWrite = Date.now() - tWrite0;
+  const tTotal = Date.now() - t0;
+  if (tTotal > 3000) {
+    await log(DB, "INFO", null, "[V17] slow price shard " + market + "#" + shard +
+      " total=" + tTotal + "ms (setup=" + tSetup + " prev=" + tPrev + " fetch=" + tFetch + " write=" + tWrite + ") ok=" + ok + " fail=" + fail);
+  }
+  return { ok: ok, fail: fail, shard: shard, shardCount: total, done: shard >= total - 1,
+           ms: tTotal, msFetch: tFetch, msPrev: tPrev, msWrite: tWrite };
 }
 
 // --- 일봉+지표 샤드: 일봉 fetch(캐시 만료 시) + 지표 계산 후 quote에 병합 ---
