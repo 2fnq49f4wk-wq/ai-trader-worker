@@ -3254,7 +3254,24 @@ function filterNulls(rawArr) {
   return out;
 }
 
+// === [V11] Cloudflare subrequest 예산 가드 ===
+//   Workers 무료 플랜은 invocation 당 외부 fetch(subrequest)가 50개로 제한된다.
+//   (유료여도 1000) 한도를 넘으면 "Too many subrequests" 로 이후 fetch 가 전부 실패해
+//   로그가 ERROR 로 도배되고 시세 갱신이 끊긴다.
+//   → 한 invocation 동안 yahooFetch 호출 수를 카운트하고, 예산을 넘으면 실제 fetch 를
+//     하지 않고 즉시 throw 해서(=조용히 스킵) 한도 폭발을 막는다. 남은 종목은 다음
+//     사이클 라운드로빈으로 처리된다.
+let __fetchBudget = { used: 0, max: 45 };  // 50 중 여유 5개는 D1/기타용으로 남김
+function resetFetchBudget(max) {
+  __fetchBudget = { used: 0, max: (typeof max === "number" && max > 0) ? max : 45 };
+}
+function fetchBudgetLeft() { return Math.max(0, __fetchBudget.max - __fetchBudget.used); }
+
 async function yahooFetch(url) {
+  if (__fetchBudget.used >= __fetchBudget.max) {
+    throw new Error("fetch budget exceeded (" + __fetchBudget.used + "/" + __fetchBudget.max + ")");
+  }
+  __fetchBudget.used++;
   const r = await fetch(url, {
     headers: {
       "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
@@ -3316,11 +3333,18 @@ async function fetchBatchQuotes(symbols, opts) {
   if (!symbols || symbols.length === 0) return out;
 
   // --- 1) v7 batch 시도 (성공하면 호출 수가 적어 가장 효율적) ---
+  //   [V11] v7 은 crumb 인증이 없으면 전면 차단(401/403/429)되는 경우가 많다.
+  //         첫 배치가 0건이면 이후 배치도 실패할 게 뻔하므로 즉시 포기하고 v8 폴백으로
+  //         넘어가 예산(subrequest)을 아낀다.
   const BATCH = 50;
+  let v7Dead = false;
   for (let i = 0; i < symbols.length; i += BATCH) {
+    if (v7Dead) break;
+    if (fetchBudgetLeft() <= 0) break;
     const slice = symbols.slice(i, i + BATCH);
     const url = "https://query1.finance.yahoo.com/v7/finance/quote?symbols=" +
                 slice.map(function(s){ return encodeURIComponent(s); }).join(",");
+    let gotAny = false;
     try {
       const j = await yahooFetch(url);
       const rows = (j && j.quoteResponse && j.quoteResponse.result) || [];
@@ -3334,11 +3358,14 @@ async function fetchBatchQuotes(symbols, opts) {
         if (dayPct == null && price != null && prevClose) dayPct = ((price - prevClose) / prevClose) * 100;
         if (price != null) {
           out[sym] = { price: price, prevClose: prevClose || price, dayPct: dayPct != null ? dayPct : 0 };
+          gotAny = true;
         }
       }
     } catch (e) {
       // v7 배치 실패 — 아래 v8 폴백이 처리
     }
+    // 첫 배치에서 한 건도 못 얻으면 v7 죽은 것으로 보고 나머지 배치 생략
+    if (i === 0 && !gotAny) v7Dead = true;
   }
 
   // --- 2) v7 으로 채워지지 않은 심볼만 v8 chart 로 폴백 ---
@@ -3358,6 +3385,7 @@ async function fetchBatchQuotes(symbols, opts) {
 
   const CBATCH = 10;
   for (let i = 0; i < missing.length; i += CBATCH) {
+    if (fetchBudgetLeft() <= 0) break;  // [V11] 예산 소진 시 중단 (나머지는 다음 사이클)
     const slice = missing.slice(i, i + CBATCH);
     const results = await Promise.all(slice.map(async function(sym){
       try { return { sym: sym, q: await fetchQuoteViaChartFallback(sym) }; }
@@ -4677,6 +4705,7 @@ async function runBacktest(env, opts) {
 
 async function refreshQuotesOnly(env, market) {
   const DB = env.DB;
+  resetFetchBudget(45);  // [V11] subrequest 예산
   await ensureSchema(DB);
   const cfg = migrateCfgToMarkets(Object.assign({}, DEFAULT_CFG, await getState(DB, "cfg", {})));
   await log(DB, "INFO", null, "=== Manual quote refresh: " + market.toUpperCase() + " ===");
@@ -4688,12 +4717,22 @@ async function refreshQuotesOnly(env, market) {
   }
 
   const tickers = market === "us" ? cfg.usTickers : cfg.krTickers;
-  let ok = 0, fail = 0;
-  for (const symbol of tickers) {
+  // [V11] 전 종목을 한 번에 돌면 subrequest 한도를 넘으므로, 남은 예산만큼만
+  //   라운드로빈으로 갱신한다. 호출을 반복하면 전 종목이 순차로 갱신된다.
+  const rrKey = "refresh_rr:" + market;
+  let rrIdx = await getState(DB, rrKey, 0);
+  if (typeof rrIdx !== "number" || rrIdx < 0) rrIdx = 0;
+  let ok = 0, fail = 0, skippedBudget = 0;
+  const startIdx = rrIdx % tickers.length;
+  const ordered = tickers.slice(startIdx).concat(tickers.slice(0, startIdx));
+  let processed = 0;
+  for (const symbol of ordered) {
+    // intra(1) + 일봉 만료 시(최대 1~2) 여유를 두고, 예산이 3 미만이면 중단
+    if (fetchBudgetLeft() < 3) { skippedBudget++; continue; }
     try {
       const intra = await fetchIntraday(symbol);
       const daily = await getDailyCached(DB, symbol, cfg.dailyCacheMinutes);
-      if (!intra.price || intra.price <= 0) { fail++; continue; }
+      if (!intra.price || intra.price <= 0) { fail++; processed++; continue; }
       const price = intra.price;
       const prevClose = intra.prevClose || price;
       const dayPct = ((price - prevClose) / prevClose) * 100;
@@ -4712,14 +4751,146 @@ async function refreshQuotesOnly(env, market) {
         bbLower: bb ? bb.lower : null, bbUpper: bb ? bb.upper : null,
         return20: return20
       });
-      ok++;
+      ok++; processed++;
     } catch (e) {
-      fail++;
-      await log(DB, "ERROR", symbol, "fetch fail: " + e.message);
+      // 예산 초과 에러는 ERROR 로 남기지 않고 조용히 중단 (정상적인 라운드로빈 경계)
+      if (/budget/.test(e.message || "")) { skippedBudget++; break; }
+      fail++; processed++;
+      await log(DB, "WARN", symbol, "fetch fail: " + e.message);
     }
   }
-  await log(DB, "INFO", null, market.toUpperCase() + " quote refresh done: ok=" + ok + " fail=" + fail);
-  return { ok: ok, fail: fail };
+  // 다음 호출이 이어서 처리하도록 라운드로빈 인덱스 전진
+  await setState(DB, rrKey, (startIdx + processed) % tickers.length);
+  await log(DB, "INFO", null, market.toUpperCase() + " quote refresh: ok=" + ok + " fail=" + fail +
+    " budgetSkip=" + skippedBudget + " (라운드로빈 — 반복 호출 시 전 종목 갱신)");
+  return { ok: ok, fail: fail, skippedBudget: skippedBudget };
+}
+
+// === [V12] 샤드 단위 시세 갱신 — 무료 플랜 50 subrequest/invocation 우회 ===
+//   Cloudflare 무료 플랜은 한 invocation 당 외부 fetch 50개가 상한이고 못 늘린다.
+//   하지만 "HTTP 요청 1건 = 1 invocation = 새 50개 예산" 이다.
+//   따라서 종목을 작은 샤드(≈40종)로 쪼개 각 샤드를 별도 HTTP 요청으로 처리하면,
+//   프론트엔드가 모든 샤드를 "동시에" 호출할 때 각 호출이 독립 invocation 으로 떠
+//   각자 50개 예산을 받는다 → 한 번(=1분)에 전 종목이 병렬로 갱신된다.
+//   (Cloudflare 공식 권장 fan-out 패턴: 50개짜리 엔드포인트를 외부에서 N번 호출)
+const SHARD_SIZE = 20;  // 샤드당 종목 수. cold(일봉캐시 없음) 시 종목당 최대 2 fetch(일봉+가격)라 20*2=40<45 예산 안에서 한 호출에 완료.
+
+function getShardTickers(tickers, shard) {
+  const start = shard * SHARD_SIZE;
+  return tickers.slice(start, start + SHARD_SIZE);
+}
+function getShardCount(tickers) {
+  return Math.max(1, Math.ceil(tickers.length / SHARD_SIZE));
+}
+
+// 한 샤드(종목 ≈40개)를 처리: 가격(v8 chart) + 일봉 캐시 갱신 + 지표 저장.
+//   한 invocation 안에서 호출되므로 fetch 예산(45) 안에서 끝난다.
+async function refreshShard(env, market, shard) {
+  const DB = env.DB;
+  resetFetchBudget(45);
+  await ensureSchema(DB);
+  const cfg = migrateCfgToMarkets(Object.assign({}, DEFAULT_CFG, await getState(DB, "cfg", {})));
+  const mcfg = getMarketCfg(cfg, market);
+  const tickers = market === "us" ? cfg.usTickers : cfg.krTickers;
+  const shardCount = getShardCount(tickers);
+  const symbols = getShardTickers(tickers, shard);
+  if (symbols.length === 0) return { ok: 0, fail: 0, shard: shard, shardCount: shardCount, done: true };
+
+  const cacheMin = mcfg.dailyCacheMinutes || 30;
+  const prevQuoteMap = {};
+  try {
+    const rows = await DB.prepare("SELECT k, v FROM state WHERE k LIKE 'quote:%'").all();
+    for (const r of (rows.results || [])) {
+      try { prevQuoteMap[r.k.slice(6)] = JSON.parse(r.v); } catch (e) {}
+    }
+  } catch (e) {}
+
+  let ok = 0, fail = 0;
+  const quoteStmts = [];
+  const nowTs = Date.now();
+
+  // 샤드 내 종목을 10개씩 병렬 처리 (각 종목: 일봉 캐시 hit 시 가격만, miss 시 가격+일봉)
+  const DBATCH = 10;
+  for (let i = 0; i < symbols.length; i += DBATCH) {
+    if (fetchBudgetLeft() <= 0) break;
+    const slice = symbols.slice(i, i + DBATCH);
+    const results = await Promise.all(slice.map(async function(symbol){
+      try {
+        // 1) 일봉 — 캐시 우선
+        let daily = await getState(DB, "daily:" + symbol, null);
+        const dailyFresh = daily && daily.ts && (Date.now() - daily.ts) < cacheMin * 60 * 1000;
+        if (!dailyFresh && fetchBudgetLeft() > 0) {
+          try {
+            const fb = await fetchDailyWithFallback(symbol);
+            if (fb && fb.data) {
+              daily = {
+                closes: fb.data.closes, highs: fb.data.highs, lows: fb.data.lows,
+                volumes: fb.data.volumes, prevClose: fb.data.prevClose, ts: Date.now()
+              };
+              await setState(DB, "daily:" + symbol, daily);
+            }
+          } catch (e) { /* 일봉 실패 시 기존 캐시 유지 */ }
+        }
+        // 2) 가격 — v8 chart (intraday meta)
+        let price = null, prevClose = null;
+        if (fetchBudgetLeft() > 0) {
+          try {
+            const q = await fetchQuoteViaChartFallback(symbol);
+            if (q) { price = q.price; prevClose = q.prevClose; }
+          } catch (e) {}
+        }
+        // 가격을 못 받았으면 일봉 마지막값으로라도 대체
+        if (price == null && daily && daily.closes && daily.closes.length) {
+          price = daily.closes[daily.closes.length - 1];
+          prevClose = daily.prevClose || price;
+        }
+        if (price == null) return { symbol: symbol, ok: false };
+
+        const dayPct = prevClose ? ((price - prevClose) / prevClose) * 100 : 0;
+        const closes = (daily && daily.closes) || [];
+        const highs = (daily && daily.highs) || null;
+        const lows = (daily && daily.lows) || null;
+        const dailyRsi = closes.length >= mcfg.rsiPeriod + 1 ? getRSI(closes, mcfg.rsiPeriod) : null;
+        const dailyMa = closes.length >= mcfg.maPeriod ? getMA(closes, mcfg.maPeriod) : null;
+        const dailyMaShort = closes.length >= mcfg.maShortPeriod ? getMA(closes, mcfg.maShortPeriod) : null;
+        const dailyAtr = closes.length >= mcfg.atrPeriod + 1 ? getATR(closes, mcfg.atrPeriod, highs, lows) : null;
+        const bb = getBollingerBands(closes, mcfg.maPeriod, mcfg.bbStdMult);
+        const return20 = getNDayReturn(closes, 20);
+        const prevQ = prevQuoteMap[symbol] || null;
+        const merged = {
+          market: market, price: price, prevClose: prevClose, dayPct: dayPct,
+          dailyRsi: dailyRsi, rsi: dailyRsi,
+          dailyMa: dailyMa, ma: dailyMa, dailyMaShort: dailyMaShort,
+          dailyAtr: dailyAtr, atr: dailyAtr,
+          bbLower: bb ? bb.lower : (prevQ ? prevQ.bbLower : null),
+          bbUpper: bb ? bb.upper : (prevQ ? prevQ.bbUpper : null),
+          return20: return20 != null ? return20 : (prevQ ? prevQ.return20 : null),
+          ts: nowTs
+        };
+        return { symbol: symbol, ok: true, merged: merged };
+      } catch (e) {
+        return { symbol: symbol, ok: false };
+      }
+    }));
+    for (const r of results) {
+      if (r.ok && r.merged) {
+        quoteStmts.push(
+          DB.prepare("INSERT INTO state (k, v, updated_ts) VALUES (?, ?, ?) ON CONFLICT(k) DO UPDATE SET v=excluded.v, updated_ts=excluded.updated_ts")
+            .bind("quote:" + r.symbol, JSON.stringify(r.merged), nowTs)
+        );
+        ok++;
+      } else {
+        fail++;
+      }
+    }
+  }
+  // D1 일괄 커밋
+  for (let i = 0; i < quoteStmts.length; i += 100) {
+    try { await DB.batch(quoteStmts.slice(i, i + 100)); } catch (e) {
+      await log(DB, "WARN", null, "[V12] shard quote write fail: " + e.message);
+    }
+  }
+  return { ok: ok, fail: fail, shard: shard, shardCount: shardCount, done: shard >= shardCount - 1 };
 }
 
 // === [개선] AutoTune — 신호별 승률 추적 + Confluence 토글 ===
@@ -5031,6 +5202,7 @@ async function refreshCycleLock(DB, ttl) {
 // ============================================================
 async function runFxUpdate(env) {
   const DB = env.DB;
+  resetFetchBudget(45);  // [V11] subrequest 예산 (환율 ~10쌍)
   await log(DB, "INFO", null, "[FX] === 환율 갱신 시작 ===");
   const out = {};
   let ok = 0, fail = 0;
@@ -5194,6 +5366,7 @@ async function saveQuoteCM(DB, symbol, q) {
 
 async function runCommodityCycle(env, forceTrade) {
   const DB = env.DB;
+  resetFetchBudget(45);  // [V11] subrequest 예산 (원자재 ~12종이라 여유롭지만 명시적 가드)
   const cfg = migrateCfgToMarkets(Object.assign({}, DEFAULT_CFG, await getState(DB, "cfg", {})));
   const isTradeTime = forceTrade === true ? true : isCommodityTriggerTime();   // 16:00 KST 평일에만 true (force 시 항상)
   await log(DB, "INFO", null, "[CM] === Commodity cycle (trade=" + (isTradeTime ? (forceTrade ? "FORCED" : "ON 16:00KST") : "quote-only") + ") ===");
@@ -5349,6 +5522,7 @@ async function runCommodityCycle(env, forceTrade) {
 
 async function runTradingCycle(env) {
   const DB = env.DB;
+  resetFetchBudget(45);  // [V11] invocation 당 외부 fetch 예산 초기화 (subrequest 한도 가드)
   await ensureSchema(DB);
   let cfg = migrateCfgToMarkets(Object.assign({}, DEFAULT_CFG, await getState(DB, "cfg", {})));
 
@@ -5497,20 +5671,23 @@ async function runTradingCycle(env) {
       // --- (1) 전 종목 가격 배치 갱신 ---
       //   v7 이 차단된 환경 대비: v8 폴백은 매 사이클 일부만(라운드로빈) 처리하고
       //   나머지는 이전 quote 를 보존(아래 prevQuoteMap 병합 + ON CONFLICT UPDATE)한다.
+      //   [V11] 폴백 개수를 고정값이 아니라 "남은 fetch 예산"에서 가져온다.
+      //         가격에 예산의 약 60%를 쓰고, 나머지는 일봉 라운드로빈용으로 남긴다.
       const qpRrKey = "qp_rr:" + market;
       let qpRr = await getState(DB, qpRrKey, 0);
       if (typeof qpRr !== "number" || qpRr < 0) qpRr = 0;
-      const QP_FALLBACK_PER_CYCLE = 120;  // 사이클당 v8 폴백 상한 (subrequest 한도 여유)
+      // 이번 시장에 가격 폴백으로 허용할 fetch 수 (남은 예산의 60%, 최소 1)
+      const priceBudget = Math.max(1, Math.floor(fetchBudgetLeft() * 0.6));
       let batchQuotes = {};
       try {
         batchQuotes = await fetchBatchQuotes(tickers, {
-          maxFallback: QP_FALLBACK_PER_CYCLE,
-          fallbackOffset: qpRr * QP_FALLBACK_PER_CYCLE
+          maxFallback: priceBudget,
+          fallbackOffset: qpRr * priceBudget
         });
       } catch (e) {
-        await log(DB, "WARN", null, "[V10] batchQuotes fail " + market + ": " + e.message);
+        await log(DB, "WARN", null, "[V11] batchQuotes fail " + market + ": " + e.message);
       }
-      const qpSlices = Math.max(1, Math.ceil(tickers.length / QP_FALLBACK_PER_CYCLE));
+      const qpSlices = Math.max(1, Math.ceil(tickers.length / priceBudget));
       await setState(DB, qpRrKey, (qpRr + 1) % qpSlices);
       // quote: 상태 저장 (UI 표시용). 일봉 지표는 기존 quote에서 보존(있으면).
       // quote: 상태 저장 (UI 표시용). 일봉 지표는 기존 quote에서 보존(있으면).
@@ -5568,7 +5745,10 @@ async function runTradingCycle(env) {
       const dailyTargets = new Set(rrSymbols);
       for (const key in positions) dailyTargets.add(positions[key].symbol);
 
-      // --- 일봉 갱신 (배치 10개씩, subrequest 한도 내) ---
+      // --- 일봉 갱신 (배치 10개씩, subrequest 예산 내) ---
+      //   [V11] 캐시 히트는 fetch 0 — 만료/미존재 종목만 "남은 예산"만큼 실제 fetch 하고,
+      //         예산을 넘는 종목은 이번 사이클 캐시값(있으면)으로 평가하고 다음 라운드로빈에 맡긴다.
+      //         yahooFetch 의 예산 가드가 최종 방어선이라, 여기서 미리 끊어 ERROR 로그를 막는다.
       const DBATCH = 10;
       const dailyTargetArr = Array.from(dailyTargets);
       const dailyMap = {};   // symbol -> daily data (이번에 갱신/캐시 로드된 것)
@@ -5580,6 +5760,10 @@ async function runTradingCycle(env) {
             let cached = await getState(DB, "daily:" + symbol, null);
             if (cached && cached.ts && (Date.now() - cached.ts) < cacheMin * 60 * 1000) {
               return { symbol: symbol, daily: cached };
+            }
+            // 예산 소진 시 실제 fetch 생략 — 있으면 캐시값 사용, 없으면 null
+            if (fetchBudgetLeft() <= 0) {
+              return { symbol: symbol, daily: cached || null };
             }
             const fb = await fetchDailyWithFallback(symbol);
             if (fb && fb.data) {
@@ -5596,6 +5780,16 @@ async function runTradingCycle(env) {
           }
         }));
         for (const r of results) dailyMap[r.symbol] = r.daily;
+        // 배치 종료 후 예산이 바닥나면 남은 일봉 타깃은 캐시 조회로만 처리
+        if (fetchBudgetLeft() <= 0) {
+          for (let k = i + DBATCH; k < dailyTargetArr.length; k++) {
+            const sym2 = dailyTargetArr[k];
+            if (dailyMap[sym2] === undefined) {
+              dailyMap[sym2] = await getState(DB, "daily:" + sym2, null);
+            }
+          }
+          break;
+        }
       }
 
       // --- (3) 평가 대상 fetched 구성 ---
@@ -6266,6 +6460,24 @@ async function handleRequest(request, env) {
       if (market !== "us" && market !== "kr") return Response.json({ error: "invalid market" }, { status: 400, headers: cors });
       const result = await refreshQuotesOnly(env, market);
       return Response.json({ ok: true, market: market, ok_count: result.ok, fail_count: result.fail }, { headers: cors });
+    }
+    // [V12] 샤드 단위 갱신 — 무료 플랜 50 subrequest 우회. 프론트가 모든 샤드를 병렬 호출.
+    if (path === "/api/refresh_shard") {
+      const market = url.searchParams.get("market") || "us";
+      const shard = parseInt(url.searchParams.get("shard") || "0", 10);
+      if (market !== "us" && market !== "kr") return Response.json({ error: "invalid market" }, { status: 400, headers: cors });
+      if (isNaN(shard) || shard < 0) return Response.json({ error: "invalid shard" }, { status: 400, headers: cors });
+      const result = await refreshShard(env, market, shard);
+      return Response.json(Object.assign({ ok: true, market: market }, result), { headers: cors });
+    }
+    // [V12] 샤드 메타 — 프론트가 몇 개 샤드를 호출해야 하는지 알기 위함.
+    if (path === "/api/shard_meta") {
+      const cfg = migrateCfgToMarkets(Object.assign({}, DEFAULT_CFG, await getState(env.DB, "cfg", {})));
+      return Response.json({
+        shardSize: SHARD_SIZE,
+        us: { tickers: cfg.usTickers.length, shards: getShardCount(cfg.usTickers) },
+        kr: { tickers: cfg.krTickers.length, shards: getShardCount(cfg.krTickers) }
+      }, { headers: cors });
     }
     if (path === "/api/migrate" && request.method === "POST") {
       await ensureSchema(env.DB);
