@@ -89,6 +89,24 @@ const DEFAULT_KR = [
 const US_INDICES = ["^IXIC", "^DJI", "^GSPC"];
 const KR_INDICES = ["^KS11", "^KQ11"];
 
+// === [COMMODITY] 원자재 거래 대상 ===
+//   야후 파이낸스 선물 심볼 사용. 가격은 전부 USD 기준.
+//   거래는 swing 전략과 동일한 로직으로, 하루 1회(16:00 KST)만 실행.
+//   초기 보유 금액 $100,000. (DEFAULT_CFG.initialCashCM 참조)
+const COMMODITIES = [
+  { symbol: "GC=F",  name: "금 (Gold)",            unit: "oz" },
+  { symbol: "SI=F",  name: "은 (Silver)",          unit: "oz" },
+  { symbol: "PL=F",  name: "플래티넘 (Platinum)",  unit: "oz" },
+  { symbol: "HG=F",  name: "구리 (Copper)",        unit: "lb" },
+  { symbol: "CL=F",  name: "WTI 유가 (WTI Crude)", unit: "bbl" },
+  { symbol: "BZ=F",  name: "브렌트유 (Brent)",     unit: "bbl" },
+  { symbol: "NG=F",  name: "천연가스 (Nat Gas)",   unit: "MMBtu" },
+  { symbol: "ALI=F", name: "알루미늄 (Aluminum)",  unit: "t" }
+];
+const COMMODITY_SYMBOLS = COMMODITIES.map(function(c){ return c.symbol; });
+const COMMODITY_META = {};
+for (const c of COMMODITIES) COMMODITY_META[c.symbol] = c;
+
 // === 전략 식별자 ===
 const STRATEGIES = ["swing", "day", "momentum", "meanrev"];
 
@@ -130,6 +148,7 @@ const DEFAULT_CFG = {
   volSpikeMult: 1.5,
   dailyCacheMinutes: 30,   // [V8.1.1] 10→30 — Cloudflare subrequest 절약
   initialCashUS: 100000, initialCashKR: 100000000,
+  initialCashCM: 100000,   // [COMMODITY] 원자재 초기 보유 금액 $100,000 (USD)
   enabled: true,
   autoTune: true,
   marketHoursOnly: true,
@@ -536,6 +555,16 @@ function isMacroTriggerTime() {
   const now = new Date();
   const kst = getKST(now);
   return kst.totalMin === 420;  // 07:00 KST = 420분
+}
+
+// [COMMODITY] 원자재 거래 트리거 — 매일 16:00 KST 1회, 평일만.
+//   사용자 요청: "거래도 16시에만". cron 1분 간격이라 16:00 정각에 정확히 매치.
+//   16:00 KST = 960분.
+function isCommodityTriggerTime() {
+  const now = new Date();
+  const kst = getKST(now);
+  if (kst.day < 1 || kst.day > 5) return false;  // 평일만
+  return kst.totalMin === 960;  // 16:00 KST = 960분
 }
 
 // [V8.6] 장 마감까지 남은 분 — Day 전략 강제 청산용
@@ -2987,6 +3016,258 @@ async function refreshCycleLock(DB, ttl) {
   } catch (e) {}
 }
 
+// ============================================================
+// [COMMODITY] 원자재 트레이딩 사이클
+//   • 대상: 금/은/플래티넘/구리/WTI/브렌트유/천연가스/알루미늄 (야후 선물 심볼)
+//   • 전략: 주식 swing 전략과 동일한 신호/매도 로직 사용 (evaluateBuySignals_swing / evaluateSell의 swing 분기)
+//   • 시각: 하루 1회, 16:00 KST에만 매수/매도 (isCommodityTriggerTime)
+//   • 자금: 별도 현금 풀 cash.cm ($100,000), positions market="cm", trades market="cm"
+//   • 가격: 전부 USD. 수수료는 feeUS 사용, 매도세 없음.
+//   • 주식 로직과 완전히 분리 — 기존 US/KR 매매에 영향 없음.
+// ============================================================
+
+// 원자재 전용 매수 — executeBuy를 그대로 못 쓰는 이유: 기존 함수는
+//   market !== "us" 이면 feeKR/krSellTax를 적용함. 원자재는 USD·무세금이라 별도 작성.
+async function executeBuyCM(DB, symbol, qty, price, signal, dailyAtr, cfg, cash) {
+  const feeRate = cfg.feeUS || 0.0001;
+  const gross = price * qty;
+  const fee = gross * feeRate;
+  const total = gross + fee;
+  if (total > cash.cm) { await log(DB, "WARN", symbol, "[CM] BUY aborted: cash short"); return; }
+
+  const rules = cfg.swingRules || {};
+  const stopPct = rules.stopLossPct || cfg.stopLoss || 5.0;
+  const atrMult = rules.atrStopMult || cfg.atrStopMult || 2.0;
+  const pctStop = price * (1 - stopPct / 100);
+  let stopPrice = pctStop;
+  if (dailyAtr) {
+    const atrStop = price - dailyAtr * atrMult;
+    stopPrice = Math.min(atrStop, pctStop);
+  }
+  if (stopPrice > pctStop) stopPrice = pctStop;
+
+  try {
+    await savePosition(DB, "cm", symbol, "swing", {
+      qty: qty, avg: price, opened_ts: Date.now(),
+      meta: {
+        strategy: "swing", feePaid: fee, feeRemaining: fee,
+        atrAtEntry: dailyAtr, stopPrice: stopPrice, peakPrice: price,
+        signal: signal.name, signalMembers: signal.members || [signal.name],
+        tp1Done: false, originalQty: qty
+      }
+    });
+  } catch (e) {
+    await log(DB, "ERROR", symbol, "[CM] BUY savePosition fail: " + e.message);
+    return;
+  }
+
+  cash.cm -= total;
+  await recordTrade(DB, {
+    ts: Date.now(), market: "cm", symbol: symbol, side: "BUY",
+    qty: qty, price: price,
+    reason: "[CM-SWING] " + signal.name + " " + signal.detail
+  });
+  const stopPctRel = ((stopPrice - price) / price * 100).toFixed(1);
+  await log(DB, "TRADE", symbol, "[CM] BUY x" + qty + " @" + price.toFixed(2) + " " + signal.name + " " + signal.detail + " stop=" + stopPrice.toFixed(2) + "(" + stopPctRel + "%)");
+}
+
+// 원자재 전용 매도 — USD·무세금. 부분/전량 청산 지원.
+async function executeSellCM(DB, symbol, pos, sellQty, price, reason, cfg, cash) {
+  const feeRate = cfg.feeUS || 0.0001;
+  const gross = price * sellQty;
+  const fee = gross * feeRate;
+  const proceeds = gross - fee;   // 원자재: 매도세 없음
+  cash.cm += proceeds;
+
+  pos.meta = pos.meta || {};
+  const feeRemaining = (typeof pos.meta.feeRemaining === "number") ? pos.meta.feeRemaining : (pos.meta.feePaid || 0);
+  const entryFeeForThisSell = feeRemaining * (sellQty / pos.qty);
+  const costBasis = pos.avg * sellQty + entryFeeForThisSell;
+  const pnl = proceeds - costBasis;
+  const pnlPct = costBasis > 0 ? (pnl / costBasis * 100) : 0;
+  const heldMin = pos.opened_ts ? Math.floor((Date.now() - pos.opened_ts) / 60000) : 0;
+  const signalMembers = pos.meta.signalMembers || [];
+  const enrichedReason = "[CM-SWING] " + reason + " #entry=" + signalMembers.join(",");
+
+  if (sellQty < pos.qty) {
+    pos.qty = pos.qty - sellQty;
+    pos.meta.tp1Done = true;
+    pos.meta.feeRemaining = Math.max(0, feeRemaining - entryFeeForThisSell);
+    await savePosition(DB, "cm", symbol, "swing", pos);
+  } else {
+    await deletePosition(DB, symbol, "swing");
+  }
+
+  await recordTrade(DB, { ts: Date.now(), market: "cm", symbol: symbol, side: "SELL", qty: sellQty, price: price, pnl: pnl, pnl_pct: pnlPct, reason: enrichedReason });
+  await log(DB, "TRADE", symbol, "[CM] SELL x" + sellQty + " @" + price.toFixed(2) + " PnL " + pnlPct.toFixed(2) + "% (held " + heldMin + "min, " + reason + ")");
+  return { pnlPct: pnlPct };
+}
+
+// 원자재 시세 저장 (quote:SYM 키 재사용 — market="cm" 태그)
+async function saveQuoteCM(DB, symbol, q) {
+  await setState(DB, "quote:" + symbol, {
+    market: "cm", price: q.price, prevClose: q.prevClose, dayPct: q.dayPct,
+    rsi: q.dailyRsi, ma: q.dailyMa, atr: q.dailyAtr,
+    dailyAtr: q.dailyAtr, dailyMa: q.dailyMa, dailyMaShort: q.dailyMaShort,
+    bbLower: q.bbLower, bbUpper: q.bbUpper, return20: q.return20, ts: Date.now()
+  });
+}
+
+async function runCommodityCycle(env, forceTrade) {
+  const DB = env.DB;
+  const cfg = migrateCfgToMarkets(Object.assign({}, DEFAULT_CFG, await getState(DB, "cfg", {})));
+  const isTradeTime = forceTrade === true ? true : isCommodityTriggerTime();   // 16:00 KST 평일에만 true (force 시 항상)
+  await log(DB, "INFO", null, "[CM] === Commodity cycle (trade=" + (isTradeTime ? (forceTrade ? "FORCED" : "ON 16:00KST") : "quote-only") + ") ===");
+
+  const cash = await getState(DB, "cash", { us: cfg.initialCashUS, kr: cfg.initialCashKR, cm: cfg.initialCashCM });
+  if (typeof cash.cm !== "number") cash.cm = cfg.initialCashCM;   // 최초 1회 초기화
+
+  const positions = await getPositions(DB, "cm");   // key "SYM::swing"
+  const swingRules = cfg.swingRules || {};
+  let tried = 0, bought = 0, sold = 0, fetchFail = 0;
+
+  // 시세 prefetch (배치)
+  const BATCH = 8;
+  const fetched = [];
+  for (let i = 0; i < COMMODITY_SYMBOLS.length; i += BATCH) {
+    const slice = COMMODITY_SYMBOLS.slice(i, i + BATCH);
+    const results = await Promise.all(slice.map(async function(symbol){
+      try {
+        const daily = await fetchDailyFull(symbol);
+        return { symbol: symbol, daily: daily, err: null };
+      } catch (e) {
+        return { symbol: symbol, daily: null, err: e.message };
+      }
+    }));
+    for (const r of results) fetched.push(r);
+  }
+
+  for (const item of fetched) {
+    const symbol = item.symbol;
+    tried++;
+    try {
+      if (item.err || !item.daily) {
+        fetchFail++;
+        await log(DB, "WARN", symbol, "[CM] fetch fail: " + (item.err || "no data"));
+        continue;
+      }
+      const daily = item.daily;
+      const closes = daily.closes || [];
+      const highs = daily.highs || null;
+      const lows = daily.lows || null;
+      const price = daily.price;
+      const prevClose = daily.prevClose || price;
+      const dayPct = prevClose ? ((price - prevClose) / prevClose) * 100 : 0;
+
+      const dailyRsi = closes.length >= cfg.rsiPeriod + 1 ? getRSI(closes, cfg.rsiPeriod) : null;
+      const dailyMa = closes.length >= cfg.maPeriod ? getMA(closes, cfg.maPeriod) : null;
+      const dailyMaShort = closes.length >= cfg.maShortPeriod ? getMA(closes, cfg.maShortPeriod) : null;
+      const dailyAtr = closes.length >= cfg.atrPeriod + 1 ? getATR(closes, cfg.atrPeriod, highs, lows) : null;
+      const bb = getBollingerBands(closes, cfg.maPeriod, cfg.bbStdMult);
+      const return20 = getNDayReturn(closes, 20);
+
+      await saveQuoteCM(DB, symbol, {
+        price: price, prevClose: prevClose, dayPct: dayPct,
+        dailyRsi: dailyRsi, dailyMa: dailyMa, dailyMaShort: dailyMaShort, dailyAtr: dailyAtr,
+        bbLower: bb ? bb.lower : null, bbUpper: bb ? bb.upper : null, return20: return20
+      });
+
+      // 거래 시각이 아니면 시세만 갱신하고 매매 스킵
+      if (!isTradeTime) continue;
+      if (dailyRsi == null) continue;
+
+      // === STEP 1: 보유 포지션 매도 평가 (swing 분기) ===
+      const posKey = symbol + "::swing";
+      const held = positions[posKey];
+      if (held) {
+        // stop/peak 갱신 (주식 사이클과 동일 패턴)
+        if (held.meta && held.meta.stopPrice != null && !held.meta.breakEvenLocked) {
+          const stopPct = swingRules.stopLossPct || cfg.stopLoss;
+          const safeStop = held.avg * (1 - stopPct / 100);
+          if (held.meta.stopPrice > safeStop) {
+            held.meta.stopPrice = safeStop;
+            try { await savePosition(DB, "cm", symbol, "swing", held); } catch (e) {}
+          }
+        }
+        if (held.meta && held.meta.peakPrice != null && price > held.meta.peakPrice) {
+          held.meta.peakPrice = price;
+          try { await savePosition(DB, "cm", symbol, "swing", held); } catch (e) {}
+        }
+        if (held.meta && swingRules.breakEvenAt != null && !held.meta.breakEvenLocked) {
+          const curPnl = ((price - held.avg) / held.avg) * 100;
+          if (curPnl >= swingRules.breakEvenAt) {
+            const newStop = held.avg * (1 + (swingRules.breakEvenLock || 0) / 100);
+            if (held.meta.stopPrice == null || held.meta.stopPrice < newStop) held.meta.stopPrice = newStop;
+            held.meta.breakEvenLocked = true;
+            try { await savePosition(DB, "cm", symbol, "swing", held); } catch (e) {}
+          }
+        }
+        // evaluateSell의 swing 분기 사용 (market="cm" → 매도세 분기 안 탐)
+        const sellDecision = evaluateSell(held, price, daily, dailyRsi, dailyMa, dailyMaShort, cfg, true, "cm");
+        if (sellDecision.minHoldLock) {
+          // 최소 보유시간 미달 — 보류
+        } else if (sellDecision.sell) {
+          await executeSellCM(DB, symbol, held, sellDecision.sellQty, price, sellDecision.reason, cfg, cash);
+          sold++;
+          if (sellDecision.sellQty >= held.qty) delete positions[posKey];
+        }
+      }
+
+      // === STEP 2: swing 매수 신호 평가 ===
+      if (positions[posKey]) continue;   // 이미 보유 중이면 추가 매수 안 함
+      const signals = evaluateBuySignals_swing(price, dayPct, daily, cfg);
+      if (!signals || signals.length === 0) continue;
+
+      // 가장 강한 신호 1개 선택
+      let best = signals[0];
+      for (const s of signals) if ((s.weight || 0) > (best.weight || 0)) best = s;
+
+      // 리스크 기반 사이징 — 주식 swing과 동일 공식 (cash.cm 기준)
+      let actualAtrPct = (dailyAtr != null && price > 0) ? (dailyAtr / price) * 100 : null;
+      const baseStopPct = swingRules.stopLossPct || cfg.stopLoss || 5.0;
+      let stopDistPct = baseStopPct;
+      if (actualAtrPct != null && actualAtrPct > 0) {
+        const atrStopPct = actualAtrPct * (swingRules.atrStopMult || cfg.atrStopMult || 2.0);
+        stopDistPct = Math.max(baseStopPct, Math.min(atrStopPct, baseStopPct * 1.6));
+      }
+      const rbs = cfg.riskBasedSizing || {};
+      const riskBase = rbs.riskPerTrade != null ? rbs.riskPerTrade : 0.6;
+      const minR = rbs.minRisk != null ? rbs.minRisk : 0.3;
+      const maxR = rbs.maxRisk != null ? rbs.maxRisk : 1.2;
+      let riskPct = riskBase * (best.weight || 1.0);
+      if (riskPct < minR) riskPct = minR;
+      if (riskPct > maxR) riskPct = maxR;
+
+      const cashCap = cash.cm * 0.85;
+      // 원자재 한 거래 캡: 가용현금 25% (분산 위해)
+      const maxBudget = cash.cm * 0.25;
+      const rawBudget = cash.cm * (riskPct / 100) / (stopDistPct / 100);
+      let budget = Math.min(rawBudget, maxBudget, cashCap);
+
+      const feeRate = cfg.feeUS || 0.0001;
+      let qty = Math.floor(budget / (price * (1 + feeRate)));
+      // 선물 1계약도 못 사면(고가) — 잔액 10% 이내 1계약 허용
+      if (qty === 0) {
+        const onePrice = price * (1 + feeRate);
+        if (onePrice <= cash.cm * 0.10) qty = 1;
+      }
+      const totalCost = qty * price * (1 + feeRate);
+      if (qty > 0 && totalCost <= cash.cm) {
+        await executeBuyCM(DB, symbol, qty, price, best, dailyAtr, cfg, cash);
+        bought++;
+        positions[posKey] = { symbol: symbol, strategy: "swing", qty: qty, avg: price, opened_ts: Date.now(), meta: {} };
+      }
+    } catch (e) {
+      await log(DB, "ERROR", symbol, "[CM] " + e.message);
+    }
+  }
+
+  if (isTradeTime) {
+    try { await setState(DB, "cash", cash); } catch (e) {}
+  }
+  await log(DB, "INFO", null, "[CM] Done: tried=" + tried + " buy=" + bought + " sell=" + sold + " fetchFail=" + fetchFail);
+}
+
 async function runTradingCycle(env) {
   const DB = env.DB;
   await ensureSchema(DB);
@@ -3688,10 +3969,10 @@ async function handleRequest(request, env) {
       await env.DB.prepare("DELETE FROM positions").run();
       await env.DB.prepare("DELETE FROM logs").run();
       await env.DB.prepare("DELETE FROM state WHERE k NOT LIKE 'quote:%' AND k NOT LIKE 'index:%' AND k NOT LIKE 'daily:%'").run();
-      await setState(env.DB, "cash", { us: cfg.initialCashUS, kr: cfg.initialCashKR });
+      await setState(env.DB, "cash", { us: cfg.initialCashUS, kr: cfg.initialCashKR, cm: cfg.initialCashCM });
       await setState(env.DB, "deposits", { us: 0, kr: 0 });
       await log(env.DB, "INFO", null, "RESET");
-      return Response.json({ ok: true, cash: { us: cfg.initialCashUS, kr: cfg.initialCashKR } }, { headers: cors });
+      return Response.json({ ok: true, cash: { us: cfg.initialCashUS, kr: cfg.initialCashKR, cm: cfg.initialCashCM } }, { headers: cors });
     }
     if (path === "/api/reset_tickers" && request.method === "POST") {
       const current = migrateCfgToMarkets(Object.assign({}, DEFAULT_CFG, await getState(env.DB, "cfg", {})));
@@ -3756,6 +4037,51 @@ async function handleRequest(request, env) {
       await ensureSchema(env.DB);
       return Response.json({ ok: true, message: "schema ensured" }, { headers: cors });
     }
+
+    // === [COMMODITY] 원자재 상태 조회 ===
+    if (path === "/api/commodities") {
+      const cfg = migrateCfgToMarkets(Object.assign({}, DEFAULT_CFG, await getState(env.DB, "cfg", {})));
+      const cash = await getState(env.DB, "cash", { us: cfg.initialCashUS, kr: cfg.initialCashKR, cm: cfg.initialCashCM });
+      const cmCash = (typeof cash.cm === "number") ? cash.cm : cfg.initialCashCM;
+      const rawPos = await getPositions(env.DB, "cm");
+      const positions = [];
+      for (const key in rawPos) {
+        const p = rawPos[key];
+        positions.push({
+          symbol: p.symbol, name: (COMMODITY_META[p.symbol] && COMMODITY_META[p.symbol].name) || p.symbol,
+          strategy: p.strategy, qty: p.qty, avg: p.avg, opened_ts: p.opened_ts,
+          meta: p.meta || {},
+          entrySignal: (p.meta && p.meta.signal) || null,
+          stopPrice: (p.meta && p.meta.stopPrice) || null,
+          peakPrice: (p.meta && p.meta.peakPrice) || null
+        });
+      }
+      const quotes = [];
+      for (const c of COMMODITIES) {
+        const q = await getState(env.DB, "quote:" + c.symbol, null);
+        if (q) quotes.push(Object.assign({ symbol: c.symbol, name: c.name, unit: c.unit }, q));
+        else quotes.push({ symbol: c.symbol, name: c.name, unit: c.unit });
+      }
+      return Response.json({
+        cash: cmCash,
+        initialCash: cfg.initialCashCM,
+        positions: positions,
+        watchlist: quotes,
+        symbols: COMMODITIES,
+        tradeTime: "16:00 KST",
+        isTradeTimeNow: isCommodityTriggerTime()
+      }, { headers: cors });
+    }
+
+    // === [COMMODITY] 원자재 사이클 수동 실행 ===
+    //   ?force=1 이면 16:00 KST가 아니어도 매매까지 강제 실행 (테스트용).
+    //   force 없으면 시세만 갱신(트리거 시각이 아니므로 매매 스킵).
+    if (path === "/api/commodities/run" && request.method === "POST") {
+      const force = url.searchParams.get("force") === "1";
+      await runCommodityCycle(env, force);
+      return Response.json({ ok: true, forced: force, ts: Date.now() }, { headers: cors });
+    }
+
     // [신규] 신호별 성과 조회
     if (path === "/api/signal_stats") {
       const stats = await getState(env.DB, "signal_stats", {});
@@ -4004,5 +4330,13 @@ async function handleRequest(request, env) {
 
 export default {
   async fetch(request, env, ctx) { return handleRequest(request, env); },
-  async scheduled(event, env, ctx) { ctx.waitUntil(runTradingCycle(env)); }
+  async scheduled(event, env, ctx) {
+    ctx.waitUntil(runTradingCycle(env));
+    // [COMMODITY] 16:00 KST 정각에만 원자재 사이클 실행 (cron 매분 호출되지만 트리거 시각에만 동작).
+    //   이렇게 cron에서 직접 분기해야 주식 양시장 마감(16:00 KST엔 둘 다 닫힘) 시
+    //   runTradingCycle이 조기 return 해도 원자재는 정상 실행됨.
+    if (isCommodityTriggerTime()) {
+      ctx.waitUntil(runCommodityCycle(env));
+    }
+  }
 };
