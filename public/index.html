@@ -677,6 +677,26 @@ button.btn.loading { opacity: 0.5; pointer-events: none; }
       </div>
     </div>
 
+    <div class="panel" id="commoditiesPanel" style="border:1px solid var(--orange);">
+      <div class="panel-header" style="background:rgba(240,136,62,0.08);">
+        <div class="panel-title" style="color:#f0883e;text-shadow:0 0 10px rgba(240,136,62,0.6);">⛏ COMMODITIES · 원자재 (USD)</div>
+        <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;">
+          <span id="cmTradeInfo" style="font-size:10px;color:var(--dim);letter-spacing:0.5px;">거래: 매일 16:00 KST</span>
+          <button type="button" id="btnRunCM" style="font-size:10px;color:#fff;font-weight:bold;padding:5px 10px;background:#f0883e;border:none;border-radius:4px;cursor:pointer;letter-spacing:0.5px;">▶ 지금 실행</button>
+        </div>
+      </div>
+      <div class="summary-grid" style="border-bottom:1px solid var(--border);">
+        <div class="summary-item"><div class="summary-label">TOTAL</div><div class="summary-value" id="totalCM">-</div></div>
+        <div class="summary-item"><div class="summary-label">INVESTED</div><div class="summary-value" id="investedCM">-</div></div>
+        <div class="summary-item"><div class="summary-label">CASH</div><div class="summary-value" id="cashCM">-</div></div>
+        <div class="summary-item"><div class="summary-label">vs INITIAL</div><div class="summary-value" id="changeCM">-</div></div>
+      </div>
+      <div style="padding:6px 12px;font-size:10px;color:var(--orange);font-weight:bold;letter-spacing:1px;background:rgba(240,136,62,0.05);border-bottom:1px solid var(--border);">POSITIONS</div>
+      <div id="cmPositionsBox"><div class="empty">No commodity positions yet</div></div>
+      <div style="padding:6px 12px;font-size:10px;color:var(--dim);font-weight:bold;letter-spacing:1px;background:rgba(240,136,62,0.05);border-bottom:1px solid var(--border);border-top:1px solid var(--border);">WATCHLIST</div>
+      <div id="cmWatchlistBox"><div class="empty">대기 중...</div></div>
+    </div>
+
     <div class="panel">
       <div class="panel-header" style="display:flex; justify-content:space-between; align-items:center;">
         <div class="panel-title">RECENT TRADES</div>
@@ -1357,6 +1377,122 @@ button.btn.loading { opacity: 0.5; pointer-events: none; }
     box.innerHTML = html + '</tbody></table></div>';
   }
 
+  // === [COMMODITY] 원자재 렌더링 ===
+  var cmQuotes = {};   // symbol -> quote (USD)
+  function renderCommodities(data) {
+    if (!data) return;
+    var cash = (typeof data.cash === 'number') ? data.cash : 0;
+    var initial = data.initialCash || 100000;
+    var positions = data.positions || [];
+    var watchlist = data.watchlist || [];
+
+    // 시세 맵 갱신
+    cmQuotes = {};
+    watchlist.forEach(function(q){ if (q && q.symbol) cmQuotes[q.symbol] = q; });
+
+    // 거래 시각 안내
+    var info = $('cmTradeInfo');
+    if (info) info.textContent = '거래: 매일 16:00 KST' + (data.isTradeTimeNow ? ' · 🟢 지금 거래시간' : '');
+
+    // 평가액 / 요약
+    var invested = 0;
+    positions.forEach(function(p){
+      var q = cmQuotes[p.symbol];
+      var cur = (q && typeof q.price === 'number') ? q.price : p.avg;
+      invested += p.qty * cur;
+    });
+    var total = cash + invested;
+    var changePct = initial > 0 ? ((total - initial) / initial * 100) : 0;
+    $('totalCM').textContent = '$' + fmtNum(total, 2);
+    $('investedCM').textContent = '$' + fmtNum(invested, 2);
+    $('cashCM').textContent = '$' + fmtNum(cash, 2);
+    var chEl = $('changeCM');
+    chEl.textContent = (changePct >= 0 ? '+' : '') + fmtNum(changePct, 2) + '%';
+    chEl.className = 'summary-value ' + (changePct > 0 ? 'pos' : (changePct < 0 ? 'neg' : ''));
+
+    // 포지션 테이블
+    var posBox = $('cmPositionsBox');
+    if (positions.length === 0) {
+      posBox.innerHTML = '<div class="empty">No commodity positions yet</div>';
+    } else {
+      var rows = positions.map(function(p){
+        var q = cmQuotes[p.symbol];
+        var curPrice = (q && typeof q.price === 'number') ? q.price : null;
+        var cost = p.qty * p.avg;
+        var value = curPrice != null ? p.qty * curPrice : null;
+        var pnl = value != null ? value - cost : null;
+        var pnlPct = curPrice != null ? ((curPrice - p.avg) / p.avg * 100) : null;
+        return { p: p, curPrice: curPrice, value: value, pnl: pnl, pnlPct: pnlPct != null ? pnlPct : -999 };
+      });
+      rows.sort(function(a, b){ return b.pnlPct - a.pnlPct; });
+      var html = '<div class="table-wrap"><table class="table"><thead><tr>'+
+        '<th>COMMODITY</th><th>REASON</th>'+
+        '<th class="right">QTY</th><th class="right">AVG</th><th class="right">CUR</th>'+
+        '<th class="right">VALUE</th><th class="right">PnL</th><th class="right">PnL%</th>'+
+        '<th class="right">OPENED</th></tr></thead><tbody>';
+      rows.forEach(function(r){
+        var p = r.p;
+        var pnlClass = r.pnlPct === -999 ? '' : (r.pnlPct >= 0 ? 'pos' : 'neg');
+        var pctText = r.pnlPct === -999 ? '-' : (r.pnlPct >= 0 ? '+' : '') + r.pnlPct.toFixed(2) + '%';
+        var curText = r.curPrice != null ? '$' + fmtNum(r.curPrice, 2) : '-';
+        var valueText = r.value != null ? '$' + fmtNum(r.value, 2) : '-';
+        var pnlText = r.pnl != null ? (r.pnl >= 0 ? '+$' : '-$') + fmtNum(Math.abs(r.pnl), 2) : '-';
+        var reason = p.entrySignal || (p.meta && p.meta.signal) || '-';
+        var label = '<b>'+escapeHtml(p.name || p.symbol)+'</b> <span style="color:var(--dim);font-size:10px;">'+escapeHtml(p.symbol)+'</span>';
+        html += '<tr>'+
+          '<td>'+label+'</td>'+
+          '<td><span style="font-size:10px;color:var(--dim);">'+escapeHtml(reason)+'</span></td>'+
+          '<td class="right">'+fmtNum(p.qty)+'</td>'+
+          '<td class="right">$'+fmtNum(p.avg, 2)+'</td>'+
+          '<td class="right">'+curText+'</td>'+
+          '<td class="right">'+valueText+'</td>'+
+          '<td class="right '+pnlClass+'">'+pnlText+'</td>'+
+          '<td class="right '+pnlClass+'">'+pctText+'</td>'+
+          '<td class="right">'+fmtAgo(p.opened_ts)+'</td>'+
+        '</tr>';
+      });
+      posBox.innerHTML = html + '</tbody></table></div>';
+    }
+
+    // 워치리스트 (카드)
+    var wlBox = $('cmWatchlistBox');
+    if (watchlist.length === 0) {
+      wlBox.innerHTML = '<div class="empty">대기 중...</div>';
+    } else {
+      var cards = watchlist.map(function(q){
+        var hasPrice = typeof q.price === 'number';
+        var dayClass = (q.dayPct > 0) ? 'pos' : (q.dayPct < 0 ? 'neg' : '');
+        var sign = (q.dayPct >= 0) ? '+' : '';
+        return '<div class="wl-card">'+
+          '<div class="wl-sym">'+escapeHtml(q.name || q.symbol)+'</div>'+
+          '<div class="wl-name">'+escapeHtml(q.symbol)+(q.unit ? ' · '+escapeHtml(q.unit) : '')+'</div>'+
+          '<div class="wl-price">'+(hasPrice ? '$'+fmtNum(q.price, 2) : '-')+'</div>'+
+          '<div class="wl-day '+dayClass+'">'+(typeof q.dayPct === 'number' ? sign+fmtNum(q.dayPct,2)+'%' : '-')+'</div>'+
+          '<div class="wl-meta">RSI '+(q.rsi!=null?q.rsi.toFixed(1):'-')+' · '+(q.ts?fmtAgo(q.ts):'-')+'</div>'+
+          '</div>';
+      }).join('');
+      wlBox.innerHTML = '<div class="watchlist">'+cards+'</div>';
+    }
+  }
+
+  function loadCommodities() {
+    return api('/api/commodities').then(function(data){
+      renderCommodities(data);
+    })['catch'](function(e){ /* 조용히 무시 — 패널만 비움 */ });
+  }
+
+  function runCommoditiesNow() {
+    var btn = $('btnRunCM');
+    if (!btn) return;
+    var orig = btn.textContent;
+    btn.disabled = true; btn.textContent = '실행 중...';
+    // force=1 — 16:00이 아니어도 즉시 매매 실행 (수동 테스트용)
+    fetch('/api/commodities/run?force=1', { method: 'POST' }).then(function(r){ return r.json(); })
+      .then(function(){ toast('원자재 사이클 실행 완료'); return loadCommodities(); })
+      ['catch'](function(e){ toast('원자재 실행 실패: '+e.message); })
+      .then(function(){ btn.disabled = false; btn.textContent = orig; });
+  }
+
   function buildWatchlistCard(q, market) {
     var dayClass = q.dayPct > 0 ? 'pos' : (q.dayPct < 0 ? 'neg' : '');
     var sign = q.dayPct >= 0 ? '+' : '';
@@ -2027,6 +2163,8 @@ button.btn.loading { opacity: 0.5; pointer-events: none; }
         else updateTradesSummaryInto(allTrades || [], 'allTradesTotalCount', 'allTradesWinRate', 'allTradesAvgPnl');
         renderCfgDisplay(state.cfg);
       })['catch'](function(e){ toast('로드 실패: '+e.message); });
+    // [COMMODITY] 원자재 패널은 별도 엔드포인트로 로드
+    loadCommodities();
     // [개선] 로그는 모달 열렸을 때만 fetch (불필요한 폴링 제거)
   }
 
@@ -2386,6 +2524,8 @@ button.btn.loading { opacity: 0.5; pointer-events: none; }
   // [다운로드] 메인 UI 트레이드 기록 CSV 버튼
   $('btnDownloadRecent').addEventListener('click', function(){ downloadTradesCSV(50, 'recent_trades'); });
   $('btnDownloadAll').addEventListener('click', function(){ downloadTradesCSV(10000, 'all_trades'); });
+  var _btnRunCM = $('btnRunCM');
+  if (_btnRunCM) _btnRunCM.addEventListener('click', runCommoditiesNow);
   $('btnSettings').addEventListener('click', openSettings);
   $('btnCancelSettings').addEventListener('click', closeSettings);
   $('btnSaveSettings').addEventListener('click', saveSettings);
