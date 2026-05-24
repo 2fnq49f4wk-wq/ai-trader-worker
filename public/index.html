@@ -1101,8 +1101,10 @@ button.btn.loading { opacity: 0.5; pointer-events: none; }
 <script>
 (function () {
   var REFRESH_MS = 15000;  // [개선] 10s → 15s 폴링 부하 감소
-  var SHARD_REFRESH_MS = 60000;  // [V12] 전 종목 fan-out 갱신 주기 (60s)
-  var shardTimer = null;
+  var PRICE_REFRESH_MS = 60000;  // [V13] 가격 전 종목 fan-out 주기 (60s = 정규장 1분 갱신)
+  var DAILY_REFRESH_MS = 20000;  // [V13] 일봉 라운드로빈 주기 (20s)
+  var priceTimer = null;
+  var dailyTimer = null;
   var LOGS_REFRESH_MS = 7000;  // [개선] 5s → 7s (모달 열린 동안만 동작)
   var timer = null;
   var logsTimer = null;
@@ -2437,41 +2439,89 @@ button.btn.loading { opacity: 0.5; pointer-events: none; }
     ['catch'](function(e) { toast('삭제 실패: ' + e.message); });
   }
 
-  // [V12] 샤드 fan-out — 무료 플랜 50 subrequest/invocation 우회.
-  //   각 샤드 호출이 독립 invocation(각자 50 예산)이므로, 모든 샤드를 "동시에" 던지면
-  //   전 종목이 한 번(≈수 초)에 병렬 갱신된다. 거래 판단은 서버 cron(runTradingCycle)이 담당.
+  // [V13] 샤드 fan-out — 가격/일봉 분리.
+  //   • 가격 샤드: 매 주기 전부 병렬 호출 → 정규장 1분마다 전 종목 가격 갱신
+  //   • 일봉 샤드: 매 주기 일부(라운드로빈)만 → 30분 캐시라 천천히 돌아도 됨
+  //   각 샤드 호출 = 독립 invocation(각자 50 subreq / 6 conn / 10ms CPU 예산).
   var __shardMeta = null;
-  var __shardBusy = false;
+  var __priceBusy = false;
+  var __dailyRr = { us: 0, kr: 0 };
+  var DAILY_SHARDS_PER_TICK = 2;  // 주기당 시장별 일봉 샤드 처리 개수 (라운드로빈)
+
   function loadShardMeta() {
     return api('/api/shard_meta').then(function(m){ __shardMeta = m; return m; })
       ['catch'](function(){ return null; });
   }
-  function refreshAllShards() {
-    if (__shardBusy) return Promise.resolve();   // 직전 fan-out이 안 끝났으면 건너뜀
+
+  // 가격 전용 fan-out — 모든 가격 샤드를 동시에 던진다.
+  function refreshAllPrices() {
+    if (__priceBusy) return Promise.resolve();
     var metaPromise = __shardMeta ? Promise.resolve(__shardMeta) : loadShardMeta();
     return metaPromise.then(function(meta){
       if (!meta) return;
-      __shardBusy = true;
+      __priceBusy = true;
       var jobs = [];
       ['us','kr'].forEach(function(mkt){
-        var n = (meta[mkt] && meta[mkt].shards) || 0;
+        // 장 닫힌 시장은 가격이 안 변하니 건너뛰어 요청 절약
+        if (!isMarketOpenClient(mkt)) return;
+        var n = (meta[mkt] && meta[mkt].priceShards) || 0;
         for (var s = 0; s < n; s++) {
           (function(market, shard){
-            // 각 호출 = 별도 invocation. 동시에 던져 병렬 처리.
             jobs.push(
               fetch('/api/refresh_shard?market=' + market + '&shard=' + shard)
-                .then(function(r){ return r.json(); })
-                ['catch'](function(){ return null; })
+                .then(function(r){ return r.json(); })['catch'](function(){ return null; })
             );
           })(mkt, s);
         }
       });
+      if (jobs.length === 0) { __priceBusy = false; return; }
       return Promise.all(jobs).then(function(){
-        __shardBusy = false;
-        // 갱신된 시세를 화면에 반영
+        __priceBusy = false;
         return refreshAll();
-      })['catch'](function(){ __shardBusy = false; });
+      })['catch'](function(){ __priceBusy = false; });
     });
+  }
+
+  // 일봉 fan-out — 라운드로빈으로 시장별 몇 샤드씩.
+  function refreshDailyRoundRobin() {
+    var metaPromise = __shardMeta ? Promise.resolve(__shardMeta) : loadShardMeta();
+    return metaPromise.then(function(meta){
+      if (!meta) return;
+      var jobs = [];
+      ['us','kr'].forEach(function(mkt){
+        var n = (meta[mkt] && meta[mkt].dailyShards) || 0;
+        if (n === 0) return;
+        for (var k = 0; k < DAILY_SHARDS_PER_TICK; k++) {
+          var shard = __dailyRr[mkt] % n;
+          __dailyRr[mkt] = (__dailyRr[mkt] + 1) % n;
+          (function(market, sh){
+            jobs.push(
+              fetch('/api/refresh_daily_shard?market=' + market + '&shard=' + sh)
+                .then(function(r){ return r.json(); })['catch'](function(){ return null; })
+            );
+          })(mkt, shard);
+        }
+      });
+      if (jobs.length === 0) return;
+      return Promise.all(jobs).then(function(){ return refreshAll(); })['catch'](function(){});
+    });
+  }
+
+  // 클라이언트측 장중 판정 (요청 절약용 — 정확도는 서버가 최종 판단)
+  function isMarketOpenClient(mkt) {
+    var now = new Date();
+    var utcDay = now.getUTCDay();
+    if (utcDay === 0 || utcDay === 6) {
+      // 주말 — 단, KR 금요일밤/US 등 경계는 서버가 처리. 단순화로 주말 스킵.
+    }
+    var utcMin = now.getUTCHours() * 60 + now.getUTCMinutes();
+    if (mkt === 'us') {
+      // 미 정규장 대략 13:30~20:00 UTC (서머타임 ±1h 여유로 13:00~21:00)
+      return utcMin >= 13*60 && utcMin <= 21*60;
+    } else {
+      // 한국 정규장 09:00~15:30 KST = 00:00~06:30 UTC (야후 지연 여유로 ~07:00)
+      return utcMin >= 0 && utcMin <= 7*60;
+    }
   }
 
   function refreshAll() {
@@ -2531,19 +2581,26 @@ button.btn.loading { opacity: 0.5; pointer-events: none; }
     var btn = market === 'us' ? $('btnRefreshUS') : $('btnRefreshKR');
     var originalText = btn.textContent;
     btn.classList.add('loading'); btn.textContent='조회 중...';
-    // [V12] 해당 시장의 모든 샤드를 병렬 호출 (각 호출 = 독립 invocation = 50 예산)
+    // [V13] 해당 시장의 가격 샤드 전부 + 일봉 샤드 전부를 병렬 호출 (각 호출 = 독립 invocation)
     var metaPromise = __shardMeta ? Promise.resolve(__shardMeta) : loadShardMeta();
     metaPromise.then(function(meta){
       if (!meta || !meta[market]) throw new Error('shard meta 없음');
-      var n = meta[market].shards || 0;
       var jobs = [];
       var okSum = 0, failSum = 0;
-      for (var s = 0; s < n; s++) {
+      var pn = meta[market].priceShards || 0;
+      var dn = meta[market].dailyShards || 0;
+      for (var s = 0; s < pn; s++) {
         jobs.push(
           fetch('/api/refresh_shard?market=' + market + '&shard=' + s)
             .then(function(r){ return r.json(); })
             .then(function(d){ if (d) { okSum += (d.ok||0); failSum += (d.fail||0); } })
             ['catch'](function(){})
+        );
+      }
+      for (var k = 0; k < dn; k++) {
+        jobs.push(
+          fetch('/api/refresh_daily_shard?market=' + market + '&shard=' + k)
+            .then(function(r){ return r.json(); })['catch'](function(){})
         );
       }
       return Promise.all(jobs).then(function(){
@@ -2963,15 +3020,20 @@ button.btn.loading { opacity: 0.5; pointer-events: none; }
   });
 
     refreshAll();
-  // [V12] 샤드 메타 로드 후 즉시 1회 전 종목 fan-out 갱신, 이후 주기적 실행
-  loadShardMeta().then(function(){ refreshAllShards(); });
+  // [V13] 샤드 fan-out 시작 — 가격은 매분 전부 병렬, 일봉은 라운드로빈
+  loadShardMeta().then(function(){
+    refreshAllPrices();        // 즉시 가격 1회
+    refreshDailyRoundRobin();  // 즉시 일봉 일부
+  });
   // 자동 RUN NOW 1회
   setTimeout(function() {
     runNow();
   }, 2000);
   timer = setInterval(refreshAll, REFRESH_MS);
-  // [V12] 전 종목 시세는 60초마다 fan-out 으로 한 번에 갱신 (무료 플랜 한도 우회)
-  shardTimer = setInterval(refreshAllShards, SHARD_REFRESH_MS);
+  // [V13] 가격: 60초마다 전 종목 fan-out (정규장 1분 갱신 목표)
+  priceTimer = setInterval(refreshAllPrices, PRICE_REFRESH_MS);
+  // [V13] 일봉: 20초마다 라운드로빈 몇 샤드씩 (수 분 내 전 종목 한 바퀴)
+  dailyTimer = setInterval(refreshDailyRoundRobin, DAILY_REFRESH_MS);
   
   // [V8.6] LLM 함수들을 글로벌 스코프에 노출 (onclick="" 에서 접근 가능하게)
   window.llmRefresh = llmRefresh;
