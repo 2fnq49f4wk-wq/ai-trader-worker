@@ -176,7 +176,7 @@ const DEFAULT_US = [
   "WYNN","MGM","BAX","HSIC","FDS",
   "ARE","TAP","AOS","BLDR","CRL",
   "NCLH","TECH","MOS","POOL","CAG",
-  "CPB","EPAM","SPY","QQQ","IVV",
+  "CPB","EPAM","RKLB","SPY","QQQ","IVV",
   "VOO","VTI","SOXL","SOXS","TQQQ",
   "SQQQ","SMH","TLT","GLD","XLF",
   "XLE","IWM"
@@ -765,6 +765,7 @@ const NAME_MAP = {
   "CAG":"Conagra Brands",
   "CPB":"Campbell's",
   "EPAM":"EPAM Systems",
+  "RKLB":"로켓랩",
   "SPY":"SPDR S&P500",
   "QQQ":"Invesco QQQ",
   "IVV":"iShares S&P500",
@@ -1597,6 +1598,7 @@ const MCAP_RANK = {
   "CAG":500,
   "CPB":501,
   "EPAM":502,
+  "RKLB":502,
   "SPY":503,
   "QQQ":504,
   "IVV":505,
@@ -3161,6 +3163,35 @@ async function ensureSchema(DB) {
       await DB.prepare("CREATE TABLE IF NOT EXISTS positions (symbol TEXT NOT NULL, strategy TEXT NOT NULL DEFAULT 'swing', market TEXT NOT NULL, qty REAL NOT NULL, avg_price REAL NOT NULL, opened_ts INTEGER NOT NULL, meta TEXT, PRIMARY KEY(symbol, strategy))").run();
     } catch (e2) { console.error("schema create fail:", e2.message); }
   }
+  // [V16] 코스닥 종목이 과거 .KS로 저장된 포지션/quote를 .KQ로 교정.
+  //   DEFAULT_KR에 .KQ로 등록된 종목의 6자리 코드를 기준으로, 같은 코드의 .KS 잔재를 옮긴다.
+  try {
+    const migDone = await getState(DB, "kq_migration_v16", null);
+    if (!migDone) {
+      const kqCodes = [];
+      for (const sym of DEFAULT_KR) {
+        if (sym.endsWith(".KQ")) kqCodes.push(sym.slice(0, 6));
+      }
+      for (const code of kqCodes) {
+        const ksSym = code + ".KS", kqSym = code + ".KQ";
+        try {
+          await DB.prepare("UPDATE OR IGNORE positions SET symbol = ? WHERE symbol = ?").bind(kqSym, ksSym).run();
+          await DB.prepare("DELETE FROM positions WHERE symbol = ?").bind(ksSym).run();
+        } catch (e) {}
+        for (const pfx of ["quote:", "daily:"]) {
+          try {
+            const ksRow = await DB.prepare("SELECT v FROM state WHERE k = ?").bind(pfx + ksSym).first();
+            if (ksRow) {
+              await DB.prepare("INSERT INTO state (k, v, updated_ts) VALUES (?, ?, ?) ON CONFLICT(k) DO NOTHING")
+                .bind(pfx + kqSym, ksRow.v, Date.now()).run();
+              await DB.prepare("DELETE FROM state WHERE k = ?").bind(pfx + ksSym).run();
+            }
+          } catch (e) {}
+        }
+      }
+      await setState(DB, "kq_migration_v16", { done: true, ts: Date.now() });
+    }
+  } catch (e) { console.error("KQ migration fail:", e.message); }
 }
 
 async function log(DB, level, symbol, message) {
