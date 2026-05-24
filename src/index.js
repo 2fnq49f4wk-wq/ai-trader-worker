@@ -175,6 +175,17 @@ const DEFAULT_CFG = {
     maxStopPct: 5.0,          // 손절 최대폭 (너무 느슨해서 큰 손실 방지)
     fallbackOnFail: true      // 호출 실패 시 V8.5 그대로 작동
   },
+  // === [V9 매크로] 경제지표 자동 갱신 (Claude + web_search) ===
+  //   매일 07:00 KST에 1회, 미국/한국 핵심 지표 최신 공표치를 검색해 갱신.
+  //   수치만 자동, 발표 일정(다음 발표일)은 프론트 MACRO_SCHEDULE에서 정적 관리.
+  macro: {
+    enabled: true,              // 기본 ON
+    model: "claude-sonnet-4-6", // web_search 지원 모델
+    maxTokens: 4000,
+    timeoutMs: 60000,           // web_search 멀티턴이라 시도당 60초
+    maxRetries: 2,
+    maxSearches: 12             // web_search 도구 호출 상한 (비용/시간 제어)
+  },
   // === [V8.5] 사이클 락 자동 갱신 ===
   cycleLockRefreshAt: 0.5,   // TTL의 50% 경과 시 갱신
   // === [V8] 전략별 활성화 토글 ===
@@ -518,6 +529,15 @@ function isLLMTriggerTime(market) {
   return false;
 }
 
+// [V9 매크로] 경제지표 자동 갱신 트리거 — 매일 아침 07:00 KST 1회.
+//   주말 포함 매일 도는 이유: 발표가 미국 새벽(한국 밤)에 자주 나므로
+//   아침에 한 번 긁으면 전날 발표분까지 모두 반영됨. cron 1분 간격이라 07:00 정각에 매치.
+function isMacroTriggerTime() {
+  const now = new Date();
+  const kst = getKST(now);
+  return kst.totalMin === 420;  // 07:00 KST = 420분
+}
+
 // [V8.6] 장 마감까지 남은 분 — Day 전략 강제 청산용
 // US: 16:00 ET 마감 기준 (DST 자동)
 // KR: 15:45 KST 기준 — 야후 15분 지연 데이터로 거래하므로 거래 윈도우 마감 시각 사용.
@@ -622,6 +642,34 @@ async function collectLLMContext(DB, env, market) {
       : "지수 특이 약세 신호 없음"
   };
 
+  // [V9 매크로] 최근 발표(0~4일 이내) 경제지표만 추려 LLM에 '살짝' 반영용으로 전달.
+  //   released(발표일) 기준. 4일 지난 지표나 발표일 불명 지표는 제외 → 평상시엔 빈 배열.
+  //   국채/국고채 같은 '상시' 시중금리(released만 있고 발표 이벤트성 아님)는 제외.
+  const macroData = await getState(DB, "macro_data", null);
+  const freshMacro = [];
+  if (macroData && macroData[market]) {
+    const EVENT_KEYS = market === "us"
+      ? { fed_rate: "기준금리", cpi: "CPI", core_cpi: "근원CPI", ppi: "PPI", core_pce: "근원PCE", unemployment: "실업률" }
+      : { base_rate: "기준금리", cpi: "CPI", ppi: "PPI" };
+    const todayMs = Date.now();
+    for (const key in EVENT_KEYS) {
+      const item = macroData[market][key];
+      if (!item || !item.released || item.value == null) continue;
+      const relMs = Date.parse(item.released + "T00:00:00Z");
+      if (isNaN(relMs)) continue;
+      const ageDays = Math.floor((todayMs - relMs) / 86400000);
+      // 발표 당일(0) ~ 4일 이내만. 미래 날짜(음수)나 5일 이상 경과는 제외.
+      if (ageDays < 0 || ageDays > 4) continue;
+      freshMacro.push({
+        name: EVENT_KEYS[key],
+        value: String(item.value),
+        asOf: item.asOf || "",
+        released: item.released,
+        daysAgo: ageDays
+      });
+    }
+  }
+
   return {
     market: market,
     date: new Date().toISOString().slice(0, 10),
@@ -643,7 +691,9 @@ async function collectLLMContext(DB, env, market) {
     topSignals: topSignals,
     worstSignals: worstSignals,
     disabledSignals: cfg.disabledSignals || [],
-    enabledStrategies: Object.keys(cfg.strategies || {}).filter(function(s) { return cfg.strategies[s]; })
+    enabledStrategies: Object.keys(cfg.strategies || {}).filter(function(s) { return cfg.strategies[s]; }),
+    // [V9 매크로] 발표 0~4일 이내 지표만. 비어있으면(평상시) LLM은 무시.
+    recentMacro: freshMacro
   };
 }
 
@@ -688,11 +738,17 @@ async function callClaude(apiKey, model, prompt, maxTokens, timeoutMs, retryCfg)
       const res = await fetch(endpoint, {
         method: "POST",
         headers: reqHeaders,
-        body: JSON.stringify({
+        body: JSON.stringify(Object.assign({
           model: usedModel,
           max_tokens: maxTokens || 2000,
           messages: [{ role: "user", content: prompt }]
-        }),
+        },
+        // [V9 매크로] web_search 등 도구 사용 시 tools 배열 전달.
+        //   tools가 있으면 Anthropic 서버가 tool_use↔tool_result 멀티턴을 자동 수행하고
+        //   최종 text 블록만 우리에게 돌려줌. 응답 파싱은 기존과 동일(text 블록 join).
+        (retryCfg.tools ? { tools: retryCfg.tools } : {}),
+        (retryCfg.system ? { system: retryCfg.system } : {})
+        )),
         signal: controller.signal
       });
       clearTimeout(timeoutId);
@@ -813,7 +869,8 @@ function sanitizeInstruction(raw, llmCfg) {
       market_regime: typeof raw.reasoning.market_regime === "string" ? raw.reasoning.market_regime.slice(0, 300) : "",
       performance: typeof raw.reasoning.performance === "string" ? raw.reasoning.performance.slice(0, 300) : "",
       signal_quality: typeof raw.reasoning.signal_quality === "string" ? raw.reasoning.signal_quality.slice(0, 300) : "",
-      symbol_risk: typeof raw.reasoning.symbol_risk === "string" ? raw.reasoning.symbol_risk.slice(0, 300) : ""
+      symbol_risk: typeof raw.reasoning.symbol_risk === "string" ? raw.reasoning.symbol_risk.slice(0, 300) : "",
+      macro_influence: typeof raw.reasoning.macro_influence === "string" ? raw.reasoning.macro_influence.slice(0, 300) : ""
     } : null,
     // [V9.1] confidence — 0~1로 클램프. 없거나 비정상이면 0.5(중립적 확신).
     confidence: isFiniteNum(raw.confidence) ? Math.max(0, Math.min(1, raw.confidence)) : 0.5,
@@ -859,7 +916,14 @@ function buildLLMPrompt(market, context) {
     "   - winRate < 0.40 이고 거래수가 충분(>=20)하면 → 시장 부적합 가능성 → 보수적으로.\n" +
     "3) 신호 품질: worstSignals 중 count>=8 이고 winRate가 낮은 것만 disable 후보로. 표본 작으면 건드리지 말 것.\n" +
     "4) 종목 리스크: positions와 worstTrade를 보고 손실 집중 종목이 있으면 avoid_symbols 후보로.\n" +
-    "5) 종합: 위 1~4를 근거로 sentiment / sizing / stop을 결정. 각 결정은 반드시 데이터 수치를 근거로 들 것.\n\n" +
+    "5) 종합: 위 1~4를 근거로 sentiment / sizing / stop을 결정. 각 결정은 반드시 데이터 수치를 근거로 들 것.\n" +
+    "6) [보조] 최근 경제지표: context.recentMacro는 '최근 4일 이내 발표된' 경제지표만 담겨 있습니다(없으면 빈 배열).\n" +
+    "   - 비어 있으면 이 단계는 건너뛰고 매크로를 일절 언급하지 마세요.\n" +
+    "   - 값이 있으면 '아주 약하게'만 반영합니다. 이것은 보조 신호이며, 위 1~5의 데이터 기반 판단을 뒤집어선 안 됩니다.\n" +
+    "   - 반영은 sizing scale에 ±0.1, stop에 소폭(±0.1~0.2) 정도로 제한. sentiment를 매크로만으로 바꾸지 말 것.\n" +
+    "   - 방향성 예시(절대 규칙 아님, 참고용): CPI·PPI·근원PCE가 시장 기대 대비 '높게(인플레 가속)' 나오면 긴축 우려 → 약하게 보수적(sizing -0.1). 물가가 '낮게(둔화)' 나오면 약하게 우호적(sizing +0.1). 기준금리 인상은 보수적, 인하는 우호적. 실업률 급등은 경기둔화 우려.\n" +
+    "   - 단, recentMacro에는 발표값만 있고 '시장 기대치'는 없으니, 수치 해석이 모호하면 반영하지 말 것(무개입 우선).\n" +
+    "   - daysAgo가 클수록(발표 후 시간 경과) 영향력은 더 작게.\n\n" +
     "# 정량 가이드 (참고 기준 — 맥락에 따라 조정 가능)\n" +
     "- 강한 약세: sizing 0.3~0.5, buy_signals OFF 고려, stop 0.8~1.0\n" +
     "- 약세 주의: sizing 0.5~0.8, stop 1.0~1.2\n" +
@@ -877,7 +941,8 @@ function buildLLMPrompt(market, context) {
     "    \"market_regime\": \"국면 판정 + 근거 수치 (예: worstIdx -1.6% → 강한 약세)\",\n" +
     "    \"performance\": \"최근 성과 진단 (예: 7일 winRate 0.38, day전략 부진)\",\n" +
     "    \"signal_quality\": \"disable 후보와 근거 (없으면 '해당 없음')\",\n" +
-    "    \"symbol_risk\": \"손실 집중 종목 (없으면 '해당 없음')\"\n" +
+    "    \"symbol_risk\": \"손실 집중 종목 (없으면 '해당 없음')\",\n" +
+    "    \"macro_influence\": \"최근 4일내 지표 반영 내용 + 방향 (recentMacro 비었으면 '해당 없음')\"\n" +
     "  },\n" +
     "  \"sentiment\": \"neutral\",\n" +
     "  \"confidence\": 0.6,\n" +
@@ -952,6 +1017,7 @@ async function runLLMDailyAnalysis(env, market, forceRun = false) {
     };
 
     await setState(DB, "llm_daily:" + market, instruction);
+    const macroCnt = (context.recentMacro || []).length;
     await log(DB, "INFO", null,
       "[LLM] " + market + " sentiment=" + sanitized.sentiment +
       " conf=" + sanitized.confidence +
@@ -959,6 +1025,7 @@ async function runLLMDailyAnalysis(env, market, forceRun = false) {
       " sizing=" + sanitized.position_sizing.scale +
       " avoid=" + sanitized.avoid_symbols.length +
       " disable=" + sanitized.disable_signals.length +
+      " macro=" + macroCnt + "건(4일내)" +
       (sanitized.reasoning ? " | regime: " + (sanitized.reasoning.market_regime || "").slice(0, 80) : "")
     );
     return { ok: true, instruction: sanitized };
@@ -973,6 +1040,177 @@ async function getActiveLLMInstruction(DB, market) {
   if (!stored) return null;
   if (!stored.expiresAt || Date.now() > stored.expiresAt) return null;
   return stored.instruction || null;
+}
+
+// ============================================================
+// [V9 매크로] 경제지표 자동 갱신 — Claude + web_search
+//   매일 07:00 KST에 1회. 미국/한국 핵심 지표의 "최신 공표치"를 검색해 채움.
+//   발표 일정(다음 발표일)은 정적이라 프론트의 MACRO_SCHEDULE에서 관리하고,
+//   여기서는 수치(value)와 그 수치의 기준월(asOf)/실제 발표일(released)만 갱신.
+//
+// 정확도 강화 장치 (이 순서로 환각을 억제):
+//   1) web_search 도구 강제 — 학습 기억이 아닌 검색 결과만 쓰도록 system에 못박음
+//   2) 지표별 1차 출처 명시(BLS/BEA/Fed/한국은행/통계청) — 검색 쿼리 품질↑
+//   3) "확신 없으면 null" 규칙 — 추측 금지. 못 찾은 값은 빈칸으로 두고 기존값 유지
+//   4) 출처 URL + 발표일 동반 요구 — 근거 없는 숫자 배제
+//   5) JSON 스키마 강제 + 서버측 sanity 범위 검사(금리 0~20%, 물가 -5~20%)
+//   6) 실패/부분실패 시 기존 저장값 보존 — 절대 빈 화면 안 만듦
+// ============================================================
+const MACRO_INDICATORS = {
+  us: [
+    { key: "fed_rate", name: "기준금리(Fed Funds target range)", source: "Federal Reserve FOMC", range: [0, 20] },
+    { key: "cpi",      name: "CPI 소비자물가 전년동월비(headline, YoY %)", source: "BLS", range: [-5, 25] },
+    { key: "core_cpi", name: "근원 CPI 전년동월비(Core CPI YoY %)", source: "BLS", range: [-5, 25] },
+    { key: "ppi",      name: "PPI 생산자물가 전년동월비(final demand YoY %)", source: "BLS", range: [-10, 30] },
+    { key: "core_pce", name: "근원 PCE 전년동월비(Core PCE YoY %)", source: "BEA", range: [-5, 25] },
+    { key: "unemployment", name: "실업률(Unemployment rate %)", source: "BLS", range: [0, 30] },
+    { key: "ust10y",   name: "미국 국채 10년 금리(10Y Treasury yield %)", source: "U.S. Treasury / market", range: [0, 20] }
+  ],
+  kr: [
+    { key: "base_rate", name: "한국은행 기준금리(%)", source: "한국은행 금융통화위원회", range: [0, 20] },
+    { key: "cpi",       name: "한국 소비자물가 전년동월비(YoY %)", source: "통계청", range: [-5, 25] },
+    { key: "ppi",       name: "한국 생산자물가 전년동월비(YoY %)", source: "한국은행", range: [-10, 30] },
+    { key: "ktb3y",     name: "국고채 3년 금리(%)", source: "금융투자협회/시장", range: [0, 20] },
+    { key: "ktb10y",    name: "국고채 10년 금리(%)", source: "금융투자협회/시장", range: [0, 20] }
+  ]
+};
+
+function buildMacroPrompt() {
+  const todayStr = new Date().toISOString().slice(0, 10);
+  function listFor(arr) {
+    return arr.map(function(i) {
+      return '  - key="' + i.key + '" : ' + i.name + ' (1차 출처: ' + i.source + ')';
+    }).join("\n");
+  }
+  return [
+    "오늘 날짜는 " + todayStr + " (UTC 기준)입니다. 당신은 거시경제 데이터 수집기입니다.",
+    "아래 미국/한국 경제지표 각각의 **가장 최근에 공식 발표된 값**을 web_search로 직접 찾아 채우세요.",
+    "",
+    "[미국]",
+    listFor(MACRO_INDICATORS.us),
+    "",
+    "[한국]",
+    listFor(MACRO_INDICATORS.kr),
+    "",
+    "엄격한 규칙:",
+    "1. 반드시 web_search로 확인한 값만 사용하세요. 당신의 기억/추측으로 채우지 마세요.",
+    "2. 각 지표의 1차 출처(괄호 안 기관) 또는 그 수치를 인용한 신뢰할 수 있는 보도를 우선하세요.",
+    "3. 값을 확신할 수 없으면 그 지표는 value를 null로 두세요. 추측 금지. (null이면 서버가 기존값을 유지합니다)",
+    "4. 금리/수익률은 % 숫자만(예: 4.5). 미국 기준금리는 목표범위 문자열 허용(예: \"3.50-3.75\").",
+    "5. 물가지표는 별도 언급 없으면 전년동월비(YoY) %를 사용하세요.",
+    "6. 각 값마다 그 수치가 가리키는 기준월(asOf, 예: \"2026-04\" 또는 \"4월분\"), 실제 발표일(released, YYYY-MM-DD), 출처 URL(source_url)을 함께 적으세요. 모르면 빈 문자열.",
+    "",
+    "출력은 아래 JSON **하나만**. 코드펜스/설명/머리말 없이 순수 JSON만 출력하세요:",
+    "{",
+    '  "us": { "fed_rate": {"value": "3.50-3.75", "asOf": "", "released": "2026-04-29", "source_url": "..."}, "cpi": {...}, "core_cpi": {...}, "ppi": {...}, "core_pce": {...}, "unemployment": {...}, "ust10y": {...} },',
+    '  "kr": { "base_rate": {...}, "cpi": {...}, "ppi": {...}, "ktb3y": {...}, "ktb10y": {...} }',
+    "}"
+  ].join("\n");
+}
+
+function parseMacroJSON(text) {
+  if (!text) throw new Error("empty");
+  let s = text.trim();
+  // 코드펜스 제거
+  s = s.replace(/```json\s*/gi, "").replace(/```\s*/g, "");
+  // 가장 바깥 중괄호 추출
+  const a = s.indexOf("{");
+  const b = s.lastIndexOf("}");
+  if (a === -1 || b === -1 || b <= a) throw new Error("no json braces");
+  return JSON.parse(s.slice(a, b + 1));
+}
+
+// 값 정제 + 범위 검사. 통과 못하면 null 반환 → 기존값 유지.
+function sanitizeMacroValue(rawVal, range) {
+  if (rawVal === null || rawVal === undefined) return null;
+  let str = String(rawVal).trim();
+  if (!str || /^(n\/?a|unknown|null|모름|미상)$/i.test(str)) return null;
+  // 범위가 문자열(예: "3.50-3.75")이면 첫 숫자로 sanity 체크만
+  const firstNum = parseFloat(str.replace(/[^0-9.\-]/g, ""));
+  if (!isFinite(firstNum)) return null;
+  if (range && (firstNum < range[0] || firstNum > range[1])) return null;
+  return str;
+}
+
+async function runMacroUpdate(env, forceRun = false) {
+  const DB = env.DB;
+  const cfg = migrateCfgToMarkets(Object.assign({}, DEFAULT_CFG, await getState(DB, "cfg", {})));
+  const mCfg = cfg.macro || {};
+
+  if (!mCfg.enabled && !forceRun) {
+    return { ok: false, reason: "disabled" };
+  }
+  if (!env.ANTHROPIC_API_KEY) {
+    await log(DB, "WARN", null, "[MACRO] ANTHROPIC_API_KEY not set");
+    return { ok: false, reason: "no_api_key" };
+  }
+
+  try {
+    await log(DB, "INFO", null, "[MACRO] update start");
+    const prompt = buildMacroPrompt();
+    const system = "당신은 정확성이 생명인 거시경제 데이터 수집기입니다. " +
+      "오직 web_search로 확인된 최신 공식 수치만 보고하고, 확신이 없으면 null을 사용합니다. " +
+      "절대 기억이나 추정으로 숫자를 만들어내지 마세요.";
+
+    const res = await callClaude(
+      env.ANTHROPIC_API_KEY,
+      mCfg.model || "claude-sonnet-4-6",
+      prompt,
+      mCfg.maxTokens || 4000,
+      mCfg.timeoutMs || 60000,   // web_search 멀티턴이라 넉넉히
+      {
+        maxRetries: (typeof mCfg.maxRetries === "number" ? mCfg.maxRetries : 2),
+        baseURL: env.LLM_BASE_URL || (mCfg.baseURL || null),
+        aigToken: env.AI_GATEWAY_TOKEN || null,
+        system: system,
+        // web_search 도구 활성화. max_uses로 검색 횟수 상한(비용/시간 제어).
+        tools: [{ type: "web_search_20250305", name: "web_search", max_uses: (mCfg.maxSearches || 12) }]
+      }
+    );
+
+    let parsed;
+    try {
+      parsed = parseMacroJSON(res.text);
+    } catch (e) {
+      await log(DB, "WARN", null, "[MACRO] parse fail: " + e.message + " raw=" + (res.text || "").slice(0, 160));
+      return { ok: false, reason: "parse_fail", raw: res.text };
+    }
+
+    // 기존 저장값 로드(부분 실패 시 보존용)
+    const prev = await getState(DB, "macro_data", { us: {}, kr: {}, updatedAt: null });
+    const next = { us: {}, kr: {}, updatedAt: Date.now(), source: "claude+web_search" };
+    let filled = 0, kept = 0;
+
+    ["us", "kr"].forEach(function(mkt) {
+      MACRO_INDICATORS[mkt].forEach(function(ind) {
+        const incoming = parsed[mkt] && parsed[mkt][ind.key];
+        const cleanVal = incoming ? sanitizeMacroValue(incoming.value, ind.range) : null;
+        if (cleanVal !== null) {
+          next[mkt][ind.key] = {
+            value: cleanVal,
+            asOf: (incoming.asOf || "").toString().slice(0, 20),
+            released: (incoming.released || "").toString().slice(0, 10),
+            source_url: (incoming.source_url || "").toString().slice(0, 300),
+            fetchedAt: Date.now()
+          };
+          filled++;
+        } else if (prev[mkt] && prev[mkt][ind.key]) {
+          // 새 값 없거나 검증 실패 → 기존값 유지
+          next[mkt][ind.key] = prev[mkt][ind.key];
+          kept++;
+        }
+      });
+    });
+
+    await setState(DB, "macro_data", next);
+    await log(DB, "INFO", null, "[MACRO] update done: filled=" + filled + " kept=" + kept +
+      " usage_in=" + ((res.usage && res.usage.input_tokens) || "?") +
+      " out=" + ((res.usage && res.usage.output_tokens) || "?"));
+    return { ok: true, filled: filled, kept: kept, data: next };
+  } catch (e) {
+    await log(DB, "ERROR", null, "[MACRO] update fail: " + e.message);
+    return { ok: false, reason: "exception", error: e.message };
+  }
 }
 
 async function ensureSchema(DB) {
@@ -2797,6 +3035,13 @@ async function runTradingCycle(env) {
       }
     }
 
+    // [V9 매크로] 경제지표 자동 갱신 — 매일 07:00 KST 1회 (web_search)
+    //   try-catch 격리: 실패해도 매매 사이클은 정상 진행.
+    if (isMacroTriggerTime()) {
+      try { await runMacroUpdate(env); }
+      catch (e) { await log(DB, "ERROR", null, "[MACRO] trigger fail: " + e.message); }
+    }
+
     // [V8.6] 거래 윈도우 기준 — KR은 야후 15분 지연 보정해서 09:15~15:45
     const usOpen = isTradingWindow("us");
     const krOpen = isTradingWindow("kr");
@@ -3708,6 +3953,17 @@ async function handleRequest(request, env) {
       });
     }
     
+    // [V9 매크로] 경제지표 조회 — 저장된 최신 수치 반환
+    if (path === "/api/macro" && request.method === "GET") {
+      const data = await getState(env.DB, "macro_data", null);
+      return Response.json(data || { us: {}, kr: {}, updatedAt: null, empty: true }, { headers: cors });
+    }
+    // [V9 매크로] 경제지표 수동 갱신 트리거 (테스트/즉시갱신용)
+    if (path === "/api/macro/run" && request.method === "POST") {
+      const result = await runMacroUpdate(env, true);
+      return Response.json(result, { headers: cors });
+    }
+
     if (path === "/api/diag") {
       const lock = await getState(env.DB, "lock:cycle", null);
       const lastTick = await getState(env.DB, "last_tick", null);
