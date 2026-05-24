@@ -5783,8 +5783,10 @@ async function runTradingCycle(env) {
       const qpRrKey = "qp_rr:" + market;
       let qpRr = await getState(DB, qpRrKey, 0);
       if (typeof qpRr !== "number" || qpRr < 0) qpRr = 0;
-      // 이번 시장에 가격 폴백으로 허용할 fetch 수 (남은 예산의 60%, 최소 1)
-      const priceBudget = Math.max(1, Math.floor(fetchBudgetLeft() * 0.6));
+      // [V16] v7 batch(crumb)가 작동하면 전 종목이 batch 호출 몇 번으로 채워진다.
+      //   폴백(chart 개별호출)은 v7 누락분에만 쓰되, 남은 예산의 대부분(85%)을 할당해
+      //   매분 최대한 많은 종목을 채운다. 라운드로빈 오프셋으로 누락분이 매분 순환된다.
+      const priceBudget = Math.max(1, Math.floor(fetchBudgetLeft() * 0.85));
       let batchQuotes = {};
       try {
         batchQuotes = await fetchBatchQuotes(tickers, {
