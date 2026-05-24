@@ -4835,7 +4835,7 @@ async function refreshQuotesOnly(env, market) {
 //     • 가격 샤드(PRICE) — 가격만. 종목당 fetch 1개, 지표계산 없음(기존 quote 보존).
 //       정규장 1분 갱신의 주역. 샤드당 30종목, 동시연결 6 맞춰 6개씩 5라운드.
 //     • 일봉 샤드(DAILY) — 일봉+지표. 30분 캐시라 자주 안 돌아도 됨. 샤드당 12종목.
-const PRICE_SHARD_SIZE = 50;  // [V15] v7 batch로 50종목 1호출 → 샤드 수 감소
+const PRICE_SHARD_SIZE = 100; // [V16] v7 batch 50씩 2호출/샤드 → 샤드 수 절반
 const DAILY_SHARD_SIZE = 12;   // 일봉+지표: 종목당 fetch 1~2 → 최대 24 < 45, CPU 여유
 const CONN_LIMIT = 3;          // 무료 플랜 invocation 당 동시 outgoing connection 한도
 
