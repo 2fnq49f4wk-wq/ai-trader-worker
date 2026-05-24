@@ -2453,7 +2453,30 @@ button.btn.loading { opacity: 0.5; pointer-events: none; }
       ['catch'](function(){ return null; });
   }
 
-  // 가격 전용 fan-out — 모든 가격 샤드를 동시에 던진다.
+  // 가격 전용 — 샤드를 한꺼번에 던지면 Yahoo가 워커 IP를 429로 차단한다.
+  //   [V14] 동시 호출 수를 SHARD_CONCURRENCY로 제한해 순차 배치로 처리한다.
+  var SHARD_CONCURRENCY = 2;
+  function runShardPool(jobs, concurrency) {
+    return new Promise(function(resolve){
+      var idx = 0, active = 0, done = 0;
+      if (jobs.length === 0) { resolve(); return; }
+      function next() {
+        while (active < concurrency && idx < jobs.length) {
+          var cur = idx++;
+          active++;
+          jobs[cur]().then(function(){
+            active--; done++;
+            if (done >= jobs.length) resolve(); else next();
+          })['catch'](function(){
+            active--; done++;
+            if (done >= jobs.length) resolve(); else next();
+          });
+        }
+      }
+      next();
+    });
+  }
+
   function refreshAllPrices() {
     if (__priceBusy) return Promise.resolve();
     var metaPromise = __shardMeta ? Promise.resolve(__shardMeta) : loadShardMeta();
@@ -2467,15 +2490,15 @@ button.btn.loading { opacity: 0.5; pointer-events: none; }
         var n = (meta[mkt] && meta[mkt].priceShards) || 0;
         for (var s = 0; s < n; s++) {
           (function(market, shard){
-            jobs.push(
-              fetch('/api/refresh_shard?market=' + market + '&shard=' + shard)
-                .then(function(r){ return r.json(); })['catch'](function(){ return null; })
-            );
+            jobs.push(function(){
+              return fetch('/api/refresh_shard?market=' + market + '&shard=' + shard)
+                .then(function(r){ return r.json(); })['catch'](function(){ return null; });
+            });
           })(mkt, s);
         }
       });
       if (jobs.length === 0) { __priceBusy = false; return; }
-      return Promise.all(jobs).then(function(){
+      return runShardPool(jobs, SHARD_CONCURRENCY).then(function(){
         __priceBusy = false;
         return refreshAll();
       })['catch'](function(){ __priceBusy = false; });
@@ -2590,20 +2613,24 @@ button.btn.loading { opacity: 0.5; pointer-events: none; }
       var pn = meta[market].priceShards || 0;
       var dn = meta[market].dailyShards || 0;
       for (var s = 0; s < pn; s++) {
-        jobs.push(
-          fetch('/api/refresh_shard?market=' + market + '&shard=' + s)
-            .then(function(r){ return r.json(); })
-            .then(function(d){ if (d) { okSum += (d.ok||0); failSum += (d.fail||0); } })
-            ['catch'](function(){})
-        );
+        (function(shard){
+          jobs.push(function(){
+            return fetch('/api/refresh_shard?market=' + market + '&shard=' + shard)
+              .then(function(r){ return r.json(); })
+              .then(function(d){ if (d) { okSum += (d.ok||0); failSum += (d.fail||0); } })
+              ['catch'](function(){});
+          });
+        })(s);
       }
       for (var k = 0; k < dn; k++) {
-        jobs.push(
-          fetch('/api/refresh_daily_shard?market=' + market + '&shard=' + k)
-            .then(function(r){ return r.json(); })['catch'](function(){})
-        );
+        (function(shard){
+          jobs.push(function(){
+            return fetch('/api/refresh_daily_shard?market=' + market + '&shard=' + shard)
+              .then(function(r){ return r.json(); })['catch'](function(){});
+          });
+        })(k);
       }
-      return Promise.all(jobs).then(function(){
+      return runShardPool(jobs, SHARD_CONCURRENCY).then(function(){
         toast(market.toUpperCase() + ' 시세 조회 완료 (성공 ' + okSum + ' / 실패 ' + failSum + ')');
         refreshAll();
       });
