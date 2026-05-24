@@ -325,7 +325,8 @@ button.btn.refresh { color: var(--blue); border-color: var(--blue); }
 button.btn.logs { color: var(--purple); border-color: var(--purple); }
 button.btn.macro { color: var(--orange); border-color: var(--orange); }
 button.btn:active { opacity: 0.6; }
-button.btn.loading { opacity: 0.5; pointer-events: none; }
+button.btn.loading { opacity: 0.6; pointer-events: none; position: relative; color: transparent !important; }
+button.btn.loading::after { content: "조회 중…"; position: absolute; left: 0; right: 0; top: 50%; transform: translateY(-50%); color: var(--blue); font-size: 0.9em; white-space: nowrap; text-align: center; }
 .pos { color: var(--green); font-weight: 700; font-family: 'IBM Plex Mono', 'Courier New', monospace; letter-spacing: 0.3px; }
 .neg { color: var(--red); font-weight: 700; font-family: 'IBM Plex Mono', 'Courier New', monospace; letter-spacing: 0.3px; }
 .right { text-align: right; }
@@ -2603,11 +2604,9 @@ button.btn.loading { opacity: 0.5; pointer-events: none; }
 
   function refreshQuotes(market) {
     var btn = market === 'us' ? $('btnRefreshUS') : $('btnRefreshKR');
-    var originalText = btn.getAttribute('data-label') || btn.textContent;
-    btn.setAttribute('data-label', originalText);
-    btn.classList.add('loading'); btn.textContent='조회 중...';
+    btn.classList.add('loading');
     var restored = false;
-    function restore() { if (restored) return; restored = true; btn.classList.remove('loading'); btn.textContent=originalText; }
+    function restore() { if (restored) return; restored = true; btn.classList.remove('loading'); }
     // 안전장치: 90초 내 무조건 버튼 복구 (멈춤 방지)
     var guard = setTimeout(restore, 90000);
     var metaPromise = __shardMeta ? Promise.resolve(__shardMeta) : loadShardMeta();
