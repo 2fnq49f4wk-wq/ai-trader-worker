@@ -4773,124 +4773,179 @@ async function refreshQuotesOnly(env, market) {
 //   프론트엔드가 모든 샤드를 "동시에" 호출할 때 각 호출이 독립 invocation 으로 떠
 //   각자 50개 예산을 받는다 → 한 번(=1분)에 전 종목이 병렬로 갱신된다.
 //   (Cloudflare 공식 권장 fan-out 패턴: 50개짜리 엔드포인트를 외부에서 N번 호출)
-const SHARD_SIZE = 20;  // 샤드당 종목 수. cold(일봉캐시 없음) 시 종목당 최대 2 fetch(일봉+가격)라 20*2=40<45 예산 안에서 한 호출에 완료.
+// === [V13] 가격/일봉 분리 샤드 — 무료 플랜 제약(50 subreq, CPU 10ms, 동시연결 6) 정밀 대응 ===
+//   교훈: 한 샤드에서 "일봉 fetch + 무거운 지표계산 + 가격 fetch" 를 다 하면
+//         (1) 동시 연결 6개 제한으로 wall-time 이 길어지고
+//         (2) 종목당 2 fetch 라 샤드를 작게 쪼개야 해 샤드 수가 많아지고
+//         (3) JSON 파싱+지표계산이 CPU 를 먹는다.
+//   해결: 역할 분리.
+//     • 가격 샤드(PRICE) — 가격만. 종목당 fetch 1개, 지표계산 없음(기존 quote 보존).
+//       정규장 1분 갱신의 주역. 샤드당 30종목, 동시연결 6 맞춰 6개씩 5라운드.
+//     • 일봉 샤드(DAILY) — 일봉+지표. 30분 캐시라 자주 안 돌아도 됨. 샤드당 12종목.
+const PRICE_SHARD_SIZE = 30;   // 가격 전용: 종목당 fetch 1 → 30 < 45 예산, CPU 거의 0
+const DAILY_SHARD_SIZE = 12;   // 일봉+지표: 종목당 fetch 1~2 → 최대 24 < 45, CPU 여유
+const CONN_LIMIT = 6;          // 무료 플랜 invocation 당 동시 outgoing connection 한도
 
-function getShardTickers(tickers, shard) {
-  const start = shard * SHARD_SIZE;
-  return tickers.slice(start, start + SHARD_SIZE);
+function shardSlice(tickers, shard, size) {
+  const start = shard * size;
+  return tickers.slice(start, start + size);
 }
-function getShardCount(tickers) {
-  return Math.max(1, Math.ceil(tickers.length / SHARD_SIZE));
+function shardCount(tickers, size) {
+  return Math.max(1, Math.ceil(tickers.length / size));
+}
+// 하위호환 (기존 호출부가 있을 수 있어 유지)
+const SHARD_SIZE = PRICE_SHARD_SIZE;
+function getShardTickers(tickers, shard) { return shardSlice(tickers, shard, PRICE_SHARD_SIZE); }
+function getShardCount(tickers) { return shardCount(tickers, PRICE_SHARD_SIZE); }
+
+// 동시연결 한도(6)를 지키며 병렬 실행하는 풀 러너
+async function runPool(items, limit, worker) {
+  const results = new Array(items.length);
+  let idx = 0;
+  async function lane() {
+    while (idx < items.length) {
+      const cur = idx++;
+      try { results[cur] = await worker(items[cur], cur); }
+      catch (e) { results[cur] = null; }
+    }
+  }
+  const lanes = [];
+  for (let i = 0; i < Math.min(limit, items.length); i++) lanes.push(lane());
+  await Promise.all(lanes);
+  return results;
 }
 
-// 한 샤드(종목 ≈40개)를 처리: 가격(v8 chart) + 일봉 캐시 갱신 + 지표 저장.
-//   한 invocation 안에서 호출되므로 fetch 예산(45) 안에서 끝난다.
-async function refreshShard(env, market, shard) {
+// --- 가격 전용 샤드: 가격/등락률만 갱신, 지표는 기존 quote에서 보존 ---
+async function refreshPriceShard(env, market, shard) {
+  const DB = env.DB;
+  resetFetchBudget(45);
+  await ensureSchema(DB);
+  const cfg = migrateCfgToMarkets(Object.assign({}, DEFAULT_CFG, await getState(DB, "cfg", {})));
+  const tickers = market === "us" ? cfg.usTickers : cfg.krTickers;
+  const total = shardCount(tickers, PRICE_SHARD_SIZE);
+  const symbols = shardSlice(tickers, shard, PRICE_SHARD_SIZE);
+  if (symbols.length === 0) return { ok: 0, fail: 0, shard: shard, shardCount: total, done: true };
+
+  // 이 샤드 종목들의 기존 quote만 로드 (지표 보존용)
+  const prevMap = {};
+  for (const sym of symbols) {
+    const q = await getState(DB, "quote:" + sym, null);
+    if (q) prevMap[sym] = q;
+  }
+
+  const nowTs = Date.now();
+  const results = await runPool(symbols, CONN_LIMIT, async function(symbol){
+    if (fetchBudgetLeft() <= 0) return { symbol: symbol, ok: false };
+    try {
+      const q = await fetchQuoteViaChartFallback(symbol);
+      if (!q || q.price == null) return { symbol: symbol, ok: false };
+      return { symbol: symbol, ok: true, price: q.price, prevClose: q.prevClose, dayPct: q.dayPct };
+    } catch (e) { return { symbol: symbol, ok: false }; }
+  });
+
+  const stmts = [];
+  let ok = 0, fail = 0;
+  for (const r of results) {
+    if (r && r.ok) {
+      const prev = prevMap[r.symbol] || {};
+      const merged = Object.assign({}, prev, {
+        market: market, price: r.price, prevClose: r.prevClose, dayPct: r.dayPct, ts: nowTs
+      });
+      stmts.push(
+        DB.prepare("INSERT INTO state (k, v, updated_ts) VALUES (?, ?, ?) ON CONFLICT(k) DO UPDATE SET v=excluded.v, updated_ts=excluded.updated_ts")
+          .bind("quote:" + r.symbol, JSON.stringify(merged), nowTs)
+      );
+      ok++;
+    } else if (r) { fail++; }
+  }
+  for (let i = 0; i < stmts.length; i += 100) {
+    try { await DB.batch(stmts.slice(i, i + 100)); } catch (e) {
+      await log(DB, "WARN", null, "[V13] price shard write fail: " + e.message);
+    }
+  }
+  return { ok: ok, fail: fail, shard: shard, shardCount: total, done: shard >= total - 1 };
+}
+
+// --- 일봉+지표 샤드: 일봉 fetch(캐시 만료 시) + 지표 계산 후 quote에 병합 ---
+async function refreshDailyShard(env, market, shard) {
   const DB = env.DB;
   resetFetchBudget(45);
   await ensureSchema(DB);
   const cfg = migrateCfgToMarkets(Object.assign({}, DEFAULT_CFG, await getState(DB, "cfg", {})));
   const mcfg = getMarketCfg(cfg, market);
-  const tickers = market === "us" ? cfg.usTickers : cfg.krTickers;
-  const shardCount = getShardCount(tickers);
-  const symbols = getShardTickers(tickers, shard);
-  if (symbols.length === 0) return { ok: 0, fail: 0, shard: shard, shardCount: shardCount, done: true };
-
   const cacheMin = mcfg.dailyCacheMinutes || 30;
-  const prevQuoteMap = {};
-  try {
-    const rows = await DB.prepare("SELECT k, v FROM state WHERE k LIKE 'quote:%'").all();
-    for (const r of (rows.results || [])) {
-      try { prevQuoteMap[r.k.slice(6)] = JSON.parse(r.v); } catch (e) {}
-    }
-  } catch (e) {}
+  const tickers = market === "us" ? cfg.usTickers : cfg.krTickers;
+  const total = shardCount(tickers, DAILY_SHARD_SIZE);
+  const symbols = shardSlice(tickers, shard, DAILY_SHARD_SIZE);
+  if (symbols.length === 0) return { ok: 0, fail: 0, shard: shard, shardCount: total, done: true };
 
-  let ok = 0, fail = 0;
-  const quoteStmts = [];
   const nowTs = Date.now();
-
-  // 샤드 내 종목을 10개씩 병렬 처리 (각 종목: 일봉 캐시 hit 시 가격만, miss 시 가격+일봉)
-  const DBATCH = 10;
-  for (let i = 0; i < symbols.length; i += DBATCH) {
-    if (fetchBudgetLeft() <= 0) break;
-    const slice = symbols.slice(i, i + DBATCH);
-    const results = await Promise.all(slice.map(async function(symbol){
-      try {
-        // 1) 일봉 — 캐시 우선
-        let daily = await getState(DB, "daily:" + symbol, null);
-        const dailyFresh = daily && daily.ts && (Date.now() - daily.ts) < cacheMin * 60 * 1000;
-        if (!dailyFresh && fetchBudgetLeft() > 0) {
-          try {
-            const fb = await fetchDailyWithFallback(symbol);
-            if (fb && fb.data) {
-              daily = {
-                closes: fb.data.closes, highs: fb.data.highs, lows: fb.data.lows,
-                volumes: fb.data.volumes, prevClose: fb.data.prevClose, ts: Date.now()
-              };
-              await setState(DB, "daily:" + symbol, daily);
-            }
-          } catch (e) { /* 일봉 실패 시 기존 캐시 유지 */ }
-        }
-        // 2) 가격 — v8 chart (intraday meta)
-        let price = null, prevClose = null;
-        if (fetchBudgetLeft() > 0) {
-          try {
-            const q = await fetchQuoteViaChartFallback(symbol);
-            if (q) { price = q.price; prevClose = q.prevClose; }
-          } catch (e) {}
-        }
-        // 가격을 못 받았으면 일봉 마지막값으로라도 대체
-        if (price == null && daily && daily.closes && daily.closes.length) {
-          price = daily.closes[daily.closes.length - 1];
-          prevClose = daily.prevClose || price;
-        }
-        if (price == null) return { symbol: symbol, ok: false };
-
-        const dayPct = prevClose ? ((price - prevClose) / prevClose) * 100 : 0;
-        const closes = (daily && daily.closes) || [];
-        const highs = (daily && daily.highs) || null;
-        const lows = (daily && daily.lows) || null;
-        const dailyRsi = closes.length >= mcfg.rsiPeriod + 1 ? getRSI(closes, mcfg.rsiPeriod) : null;
-        const dailyMa = closes.length >= mcfg.maPeriod ? getMA(closes, mcfg.maPeriod) : null;
-        const dailyMaShort = closes.length >= mcfg.maShortPeriod ? getMA(closes, mcfg.maShortPeriod) : null;
-        const dailyAtr = closes.length >= mcfg.atrPeriod + 1 ? getATR(closes, mcfg.atrPeriod, highs, lows) : null;
-        const bb = getBollingerBands(closes, mcfg.maPeriod, mcfg.bbStdMult);
-        const return20 = getNDayReturn(closes, 20);
-        const prevQ = prevQuoteMap[symbol] || null;
-        const merged = {
-          market: market, price: price, prevClose: prevClose, dayPct: dayPct,
-          dailyRsi: dailyRsi, rsi: dailyRsi,
-          dailyMa: dailyMa, ma: dailyMa, dailyMaShort: dailyMaShort,
-          dailyAtr: dailyAtr, atr: dailyAtr,
-          bbLower: bb ? bb.lower : (prevQ ? prevQ.bbLower : null),
-          bbUpper: bb ? bb.upper : (prevQ ? prevQ.bbUpper : null),
-          return20: return20 != null ? return20 : (prevQ ? prevQ.return20 : null),
-          ts: nowTs
-        };
-        return { symbol: symbol, ok: true, merged: merged };
-      } catch (e) {
-        return { symbol: symbol, ok: false };
+  const results = await runPool(symbols, CONN_LIMIT, async function(symbol){
+    try {
+      let daily = await getState(DB, "daily:" + symbol, null);
+      const fresh = daily && daily.ts && (Date.now() - daily.ts) < cacheMin * 60 * 1000;
+      if (!fresh && fetchBudgetLeft() > 0) {
+        try {
+          const fb = await fetchDailyWithFallback(symbol);
+          if (fb && fb.data) {
+            daily = {
+              closes: fb.data.closes, highs: fb.data.highs, lows: fb.data.lows,
+              volumes: fb.data.volumes, prevClose: fb.data.prevClose, ts: Date.now()
+            };
+            await setState(DB, "daily:" + symbol, daily);
+          }
+        } catch (e) {}
       }
-    }));
-    for (const r of results) {
-      if (r.ok && r.merged) {
-        quoteStmts.push(
-          DB.prepare("INSERT INTO state (k, v, updated_ts) VALUES (?, ?, ?) ON CONFLICT(k) DO UPDATE SET v=excluded.v, updated_ts=excluded.updated_ts")
-            .bind("quote:" + r.symbol, JSON.stringify(r.merged), nowTs)
-        );
-        ok++;
-      } else {
-        fail++;
-      }
+      if (!daily || !daily.closes || daily.closes.length < 25) return { symbol: symbol, ok: false };
+      const closes = daily.closes, highs = daily.highs || null, lows = daily.lows || null;
+      const indicators = {
+        dailyRsi: closes.length >= mcfg.rsiPeriod + 1 ? getRSI(closes, mcfg.rsiPeriod) : null,
+        dailyMa: closes.length >= mcfg.maPeriod ? getMA(closes, mcfg.maPeriod) : null,
+        dailyMaShort: closes.length >= mcfg.maShortPeriod ? getMA(closes, mcfg.maShortPeriod) : null,
+        dailyAtr: closes.length >= mcfg.atrPeriod + 1 ? getATR(closes, mcfg.atrPeriod, highs, lows) : null
+      };
+      const bb = getBollingerBands(closes, mcfg.maPeriod, mcfg.bbStdMult);
+      const return20 = getNDayReturn(closes, 20);
+      return { symbol: symbol, ok: true, ind: indicators, bb: bb, return20: return20, lastClose: closes[closes.length-1], prevClose: daily.prevClose };
+    } catch (e) { return { symbol: symbol, ok: false }; }
+  });
+
+  const stmts = [];
+  let ok = 0, fail = 0;
+  for (const r of results) {
+    if (r && r.ok) {
+      const prev = await getState(DB, "quote:" + r.symbol, null) || {};
+      // 가격이 아직 없으면 일봉 종가로라도 채움
+      const price = (typeof prev.price === "number" && prev.price > 0) ? prev.price : r.lastClose;
+      const prevClose = (typeof prev.prevClose === "number" && prev.prevClose > 0) ? prev.prevClose : (r.prevClose || price);
+      const dayPct = (typeof prev.dayPct === "number") ? prev.dayPct : (prevClose ? ((price - prevClose) / prevClose) * 100 : 0);
+      const merged = Object.assign({}, prev, {
+        market: market, price: price, prevClose: prevClose, dayPct: dayPct,
+        dailyRsi: r.ind.dailyRsi, rsi: r.ind.dailyRsi,
+        dailyMa: r.ind.dailyMa, ma: r.ind.dailyMa, dailyMaShort: r.ind.dailyMaShort,
+        dailyAtr: r.ind.dailyAtr, atr: r.ind.dailyAtr,
+        bbLower: r.bb ? r.bb.lower : null, bbUpper: r.bb ? r.bb.upper : null,
+        return20: r.return20,
+        ts: (typeof prev.ts === "number") ? prev.ts : nowTs
+      });
+      stmts.push(
+        DB.prepare("INSERT INTO state (k, v, updated_ts) VALUES (?, ?, ?) ON CONFLICT(k) DO UPDATE SET v=excluded.v, updated_ts=excluded.updated_ts")
+          .bind("quote:" + r.symbol, JSON.stringify(merged), nowTs)
+      );
+      ok++;
+    } else if (r) { fail++; }
+  }
+  for (let i = 0; i < stmts.length; i += 100) {
+    try { await DB.batch(stmts.slice(i, i + 100)); } catch (e) {
+      await log(DB, "WARN", null, "[V13] daily shard write fail: " + e.message);
     }
   }
-  // D1 일괄 커밋
-  for (let i = 0; i < quoteStmts.length; i += 100) {
-    try { await DB.batch(quoteStmts.slice(i, i + 100)); } catch (e) {
-      await log(DB, "WARN", null, "[V12] shard quote write fail: " + e.message);
-    }
-  }
-  return { ok: ok, fail: fail, shard: shard, shardCount: shardCount, done: shard >= shardCount - 1 };
+  return { ok: ok, fail: fail, shard: shard, shardCount: total, done: shard >= total - 1 };
+}
+
+// 하위호환: 기존 refreshShard 호출(있다면) → 가격 샤드로 위임
+async function refreshShard(env, market, shard) {
+  return refreshPriceShard(env, market, shard);
 }
 
 // === [개선] AutoTune — 신호별 승률 추적 + Confluence 토글 ===
@@ -6461,22 +6516,40 @@ async function handleRequest(request, env) {
       const result = await refreshQuotesOnly(env, market);
       return Response.json({ ok: true, market: market, ok_count: result.ok, fail_count: result.fail }, { headers: cors });
     }
-    // [V12] 샤드 단위 갱신 — 무료 플랜 50 subrequest 우회. 프론트가 모든 샤드를 병렬 호출.
+    // [V13] 가격 전용 샤드 — 정규장 1분 갱신의 주역. 프론트가 모든 샤드 병렬 호출.
     if (path === "/api/refresh_shard") {
       const market = url.searchParams.get("market") || "us";
       const shard = parseInt(url.searchParams.get("shard") || "0", 10);
       if (market !== "us" && market !== "kr") return Response.json({ error: "invalid market" }, { status: 400, headers: cors });
       if (isNaN(shard) || shard < 0) return Response.json({ error: "invalid shard" }, { status: 400, headers: cors });
-      const result = await refreshShard(env, market, shard);
-      return Response.json(Object.assign({ ok: true, market: market }, result), { headers: cors });
+      const result = await refreshPriceShard(env, market, shard);
+      return Response.json(Object.assign({ ok: true, market: market, kind: "price" }, result), { headers: cors });
     }
-    // [V12] 샤드 메타 — 프론트가 몇 개 샤드를 호출해야 하는지 알기 위함.
+    // [V13] 일봉+지표 샤드 — 저빈도(수 분마다 한 바퀴). 프론트가 라운드로빈 호출.
+    if (path === "/api/refresh_daily_shard") {
+      const market = url.searchParams.get("market") || "us";
+      const shard = parseInt(url.searchParams.get("shard") || "0", 10);
+      if (market !== "us" && market !== "kr") return Response.json({ error: "invalid market" }, { status: 400, headers: cors });
+      if (isNaN(shard) || shard < 0) return Response.json({ error: "invalid shard" }, { status: 400, headers: cors });
+      const result = await refreshDailyShard(env, market, shard);
+      return Response.json(Object.assign({ ok: true, market: market, kind: "daily" }, result), { headers: cors });
+    }
+    // [V13] 샤드 메타 — 프론트가 가격/일봉 샤드 개수를 알기 위함.
     if (path === "/api/shard_meta") {
       const cfg = migrateCfgToMarkets(Object.assign({}, DEFAULT_CFG, await getState(env.DB, "cfg", {})));
       return Response.json({
-        shardSize: SHARD_SIZE,
-        us: { tickers: cfg.usTickers.length, shards: getShardCount(cfg.usTickers) },
-        kr: { tickers: cfg.krTickers.length, shards: getShardCount(cfg.krTickers) }
+        priceShardSize: PRICE_SHARD_SIZE,
+        dailyShardSize: DAILY_SHARD_SIZE,
+        us: {
+          tickers: cfg.usTickers.length,
+          priceShards: shardCount(cfg.usTickers, PRICE_SHARD_SIZE),
+          dailyShards: shardCount(cfg.usTickers, DAILY_SHARD_SIZE)
+        },
+        kr: {
+          tickers: cfg.krTickers.length,
+          priceShards: shardCount(cfg.krTickers, PRICE_SHARD_SIZE),
+          dailyShards: shardCount(cfg.krTickers, DAILY_SHARD_SIZE)
+        }
       }, { headers: cors });
     }
     if (path === "/api/migrate" && request.method === "POST") {
