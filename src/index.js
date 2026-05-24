@@ -101,7 +101,11 @@ const COMMODITIES = [
   { symbol: "CL=F",  name: "WTI 유가 (WTI Crude)", unit: "bbl" },
   { symbol: "BZ=F",  name: "브렌트유 (Brent)",     unit: "bbl" },
   { symbol: "NG=F",  name: "천연가스 (Nat Gas)",   unit: "MMBtu" },
-  { symbol: "ALI=F", name: "알루미늄 (Aluminum)",  unit: "t" }
+  { symbol: "ALI=F", name: "알루미늄 (Aluminum)",  unit: "t" },
+  { symbol: "ZW=F",  name: "미국 소맥 (Wheat)",    unit: "bu" },
+  { symbol: "ZC=F",  name: "미국 옥수수 (Corn)",   unit: "bu" },
+  { symbol: "ZS=F",  name: "미국 대두 (Soybean)",  unit: "bu" },
+  { symbol: "KC=F",  name: "커피 C (Coffee C)",    unit: "lb" }
 ];
 const COMMODITY_SYMBOLS = COMMODITIES.map(function(c){ return c.symbol; });
 const COMMODITY_META = {};
@@ -4194,56 +4198,51 @@ async function handleRequest(request, env) {
     }
 
     // === [HEATMAP] S&P500 Top Gainers/Losers (장 종료 후 대체용) ===
-    //   야후 파이낸스에서 S&P500의 상위/하위 변동 종목을 조회.
-    //   TradingView iframe이 장 종료 후 데이터 안 되길 때의 대체용.
+    //   야후 v7/quote 멀티심볼로 S&P500 주요 대형주 시세를 한 번에 받아
+    //   등락률 기준 상위/하위 10개를 계산. (스크리너 crumb 인증 불필요)
+    //   서브리퀘스트 1~2개만 사용.
     if (path === "/api/heatmap/topmovers" && request.method === "POST") {
       try {
-        const url = "https://query1.finance.yahoo.com/v10/finance/quoteSummary/^GSPC?modules=topMovers";
-        const r = await fetch(url, {
-          headers: { "User-Agent": "Mozilla/5.0" }
-        });
+        // S&P500 시가총액 상위 + 대표 종목들 (섹터별 분산)
+        const SP_SYMBOLS = [
+          "AAPL","MSFT","NVDA","AMZN","GOOGL","GOOG","META","TSLA","AVGO","BRK-B",
+          "LLY","JPM","V","XOM","UNH","MA","COST","HD","PG","JNJ",
+          "ABBV","MRK","WMT","NFLX","CRM","BAC","AMD","KO","PEP","ORCL",
+          "CVX","ADBE","WFC","ACN","MCD","CSCO","INTC","QCOM","TXN","IBM",
+          "DIS","GE","CAT","PFE","GS","NEE","UNP","BA","MU","PLTR"
+        ];
+        // 야후 v7 quote는 심볼을 콤마로 묶어 한 번에 조회 가능
+        const symParam = SP_SYMBOLS.join(",");
+        const url = "https://query1.finance.yahoo.com/v7/finance/quote?symbols=" + encodeURIComponent(symParam);
+        const r = await fetch(url, { headers: { "User-Agent": "Mozilla/5.0", "Accept": "application/json" } });
+        if (!r.ok) throw new Error("HTTP " + r.status);
         const data = await r.json();
-        const movers = {
-          gainers: [],
-          losers: [],
-          timestamp: Date.now()
-        };
-        
-        // 상위 gainers (최대 10개)
-        if (data.quoteSummary && data.quoteSummary.result && data.quoteSummary.result[0] && data.quoteSummary.result[0].topMovers) {
-          const tm = data.quoteSummary.result[0].topMovers;
-          if (tm.mostActive && tm.mostActive.quotes) {
-            movers.gainers = tm.mostActive.quotes.slice(0, 10).map(function(q){
-              return {
-                symbol: q.symbol,
-                price: q.regularMarketPrice || q.preMarketPrice || 0,
-                change: q.regularMarketChange || q.preMarketChange || 0,
-                changePct: q.regularMarketChangePercent || q.preMarketChangePercent || 0
-              };
-            });
-          }
-          if (tm.gainers && tm.gainers.quotes) {
-            movers.gainers = tm.gainers.quotes.slice(0, 10).map(function(q){
-              return {
-                symbol: q.symbol,
-                price: q.regularMarketPrice || q.preMarketPrice || 0,
-                change: q.regularMarketChange || q.preMarketChange || 0,
-                changePct: q.regularMarketChangePercent || q.preMarketChangePercent || 0
-              };
-            });
-          }
-          if (tm.losers && tm.losers.quotes) {
-            movers.losers = tm.losers.quotes.slice(0, 10).map(function(q){
-              return {
-                symbol: q.symbol,
-                price: q.regularMarketPrice || q.preMarketPrice || 0,
-                change: q.regularMarketChange || q.preMarketChange || 0,
-                changePct: q.regularMarketChangePercent || q.preMarketChangePercent || 0
-              };
-            });
-          }
+        const list = (data && data.quoteResponse && data.quoteResponse.result) || [];
+
+        const rows = [];
+        for (const q of list) {
+          const price = (typeof q.regularMarketPrice === "number") ? q.regularMarketPrice : null;
+          let pct = (typeof q.regularMarketChangePercent === "number") ? q.regularMarketChangePercent : null;
+          // 일부 응답은 0~1 비율이 아니라 % 그대로 옴 — 그대로 사용
+          if (price == null || pct == null) continue;
+          rows.push({
+            symbol: q.symbol,
+            price: price,
+            change: (typeof q.regularMarketChange === "number") ? q.regularMarketChange : 0,
+            changePct: pct
+          });
         }
-        return Response.json({ ok: true, movers: movers }, { headers: cors });
+
+        const sortedDesc = rows.slice().sort(function(a,b){ return b.changePct - a.changePct; });
+        const gainers = sortedDesc.slice(0, 10);
+        // 하락: 가장 많이 내린 순. 상승목록과 겹치지 않게 하위에서 추출.
+        const sortedAsc = rows.slice().sort(function(a,b){ return a.changePct - b.changePct; });
+        const losers = sortedAsc.slice(0, 10);
+
+        return Response.json({
+          ok: true,
+          movers: { gainers: gainers, losers: losers, count: rows.length, timestamp: Date.now() }
+        }, { headers: cors });
       } catch (e) {
         return Response.json({ ok: false, error: e.message }, { status: 500, headers: cors });
       }
