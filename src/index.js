@@ -4197,57 +4197,6 @@ async function handleRequest(request, env) {
       return Response.json({ ok: true, data: payload, ts: Date.now() }, { headers: cors });
     }
 
-    // === [HEATMAP] S&P500 Top Gainers/Losers (장 종료 후 대체용) ===
-    //   야후 v7/quote 멀티심볼로 S&P500 주요 대형주 시세를 한 번에 받아
-    //   등락률 기준 상위/하위 10개를 계산. (스크리너 crumb 인증 불필요)
-    //   서브리퀘스트 1~2개만 사용.
-    if (path === "/api/heatmap/topmovers" && request.method === "POST") {
-      try {
-        // S&P500 시가총액 상위 + 대표 종목들 (섹터별 분산)
-        const SP_SYMBOLS = [
-          "AAPL","MSFT","NVDA","AMZN","GOOGL","GOOG","META","TSLA","AVGO","BRK-B",
-          "LLY","JPM","V","XOM","UNH","MA","COST","HD","PG","JNJ",
-          "ABBV","MRK","WMT","NFLX","CRM","BAC","AMD","KO","PEP","ORCL",
-          "CVX","ADBE","WFC","ACN","MCD","CSCO","INTC","QCOM","TXN","IBM",
-          "DIS","GE","CAT","PFE","GS","NEE","UNP","BA","MU","PLTR"
-        ];
-        // 야후 v7 quote는 심볼을 콤마로 묶어 한 번에 조회 가능
-        const symParam = SP_SYMBOLS.join(",");
-        const url = "https://query1.finance.yahoo.com/v7/finance/quote?symbols=" + encodeURIComponent(symParam);
-        const r = await fetch(url, { headers: { "User-Agent": "Mozilla/5.0", "Accept": "application/json" } });
-        if (!r.ok) throw new Error("HTTP " + r.status);
-        const data = await r.json();
-        const list = (data && data.quoteResponse && data.quoteResponse.result) || [];
-
-        const rows = [];
-        for (const q of list) {
-          const price = (typeof q.regularMarketPrice === "number") ? q.regularMarketPrice : null;
-          let pct = (typeof q.regularMarketChangePercent === "number") ? q.regularMarketChangePercent : null;
-          // 일부 응답은 0~1 비율이 아니라 % 그대로 옴 — 그대로 사용
-          if (price == null || pct == null) continue;
-          rows.push({
-            symbol: q.symbol,
-            price: price,
-            change: (typeof q.regularMarketChange === "number") ? q.regularMarketChange : 0,
-            changePct: pct
-          });
-        }
-
-        const sortedDesc = rows.slice().sort(function(a,b){ return b.changePct - a.changePct; });
-        const gainers = sortedDesc.slice(0, 10);
-        // 하락: 가장 많이 내린 순. 상승목록과 겹치지 않게 하위에서 추출.
-        const sortedAsc = rows.slice().sort(function(a,b){ return a.changePct - b.changePct; });
-        const losers = sortedAsc.slice(0, 10);
-
-        return Response.json({
-          ok: true,
-          movers: { gainers: gainers, losers: losers, count: rows.length, timestamp: Date.now() }
-        }, { headers: cors });
-      } catch (e) {
-        return Response.json({ ok: false, error: e.message }, { status: 500, headers: cors });
-      }
-    }
-
     // [신규] 신호별 성과 조회
     if (path === "/api/signal_stats") {
       const stats = await getState(env.DB, "signal_stats", {});
