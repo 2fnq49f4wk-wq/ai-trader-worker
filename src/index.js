@@ -3301,17 +3301,25 @@ function fetchBudgetLeft() { return Math.max(0, __fetchBudget.max - __fetchBudge
 let __yahooHostFlip = 0;
 // === [V15] Yahoo crumb/cookie 캐시 — v7 batch quote 인증용 ===
 let __yahooAuth = { cookie: null, crumb: null, ts: 0 };
-async function getYahooAuth() {
-  // 30분 캐시
+async function getYahooAuth(DB) {
+  // 메모리 캐시 (같은 invocation 내)
   if (__yahooAuth.crumb && (Date.now() - __yahooAuth.ts) < 30 * 60 * 1000) return __yahooAuth;
+  // D1 공유 캐시 (샤드 간 — 별도 invocation이라 메모리 공유 안 됨)
+  if (DB) {
+    try {
+      const shared = await getState(DB, "yahoo_auth", null);
+      if (shared && shared.crumb && (Date.now() - shared.ts) < 30 * 60 * 1000) {
+        __yahooAuth = shared;
+        return __yahooAuth;
+      }
+    } catch (e) {}
+  }
   try {
-    // 1) 쿠키 받기
     const r1 = await fetch("https://fc.yahoo.com/", {
       headers: { "User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.0 Safari/605.1.15" }
     });
     let cookie = r1.headers.get("set-cookie") || "";
     cookie = cookie.split(";")[0];
-    // 2) crumb 받기
     const r2 = await fetch("https://query1.finance.yahoo.com/v1/test/getcrumb", {
       headers: {
         "User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.0 Safari/605.1.15",
@@ -3321,6 +3329,7 @@ async function getYahooAuth() {
     const crumb = (await r2.text()).trim();
     if (crumb && crumb.length < 30 && crumb.indexOf("<") === -1) {
       __yahooAuth = { cookie: cookie, crumb: crumb, ts: Date.now() };
+      if (DB) { try { await setState(DB, "yahoo_auth", __yahooAuth); } catch (e) {} }
     }
   } catch (e) { /* 실패 시 기존값 유지 — v8 폴백이 처리 */ }
   return __yahooAuth;
@@ -3420,7 +3429,7 @@ async function fetchBatchQuotes(symbols, opts) {
   //         넘어가 예산(subrequest)을 아낀다.
   const BATCH = 50;
   let v7Dead = false;
-  const auth = await getYahooAuth();
+  const auth = await getYahooAuth(opts.DB || null);
   for (let i = 0; i < symbols.length; i += BATCH) {
     if (v7Dead) break;
     if (fetchBudgetLeft() <= 0) break;
@@ -4866,7 +4875,7 @@ async function refreshQuotesOnly(env, market) {
 //     • 가격 샤드(PRICE) — 가격만. 종목당 fetch 1개, 지표계산 없음(기존 quote 보존).
 //       정규장 1분 갱신의 주역. 샤드당 30종목, 동시연결 6 맞춰 6개씩 5라운드.
 //     • 일봉 샤드(DAILY) — 일봉+지표. 30분 캐시라 자주 안 돌아도 됨. 샤드당 12종목.
-const PRICE_SHARD_SIZE = 100; // [V16] v7 batch 50씩 2호출/샤드 → 샤드 수 절반
+const PRICE_SHARD_SIZE = 150; // [V17] v7 batch 50씩 3호출/샤드
 const DAILY_SHARD_SIZE = 12;   // 일봉+지표: 종목당 fetch 1~2 → 최대 24 < 45, CPU 여유
 const CONN_LIMIT = 3;          // 무료 플랜 invocation 당 동시 outgoing connection 한도
 
@@ -4919,7 +4928,7 @@ async function refreshPriceShard(env, market, shard) {
 
   const nowTs = Date.now();
   // [V15] v7 batch(crumb) 우선 — 50종목 1호출. 누락분만 chart 폴백.
-  const bq = await fetchBatchQuotes(symbols, { maxFallback: symbols.length });
+  const bq = await fetchBatchQuotes(symbols, { maxFallback: symbols.length, DB: DB });
   const results = symbols.map(function(symbol){
     const q = bq[symbol];
     if (q && q.price != null) return { symbol: symbol, ok: true, price: q.price, prevClose: q.prevClose, dayPct: q.dayPct };
@@ -5822,7 +5831,8 @@ async function runTradingCycle(env) {
       try {
         batchQuotes = await fetchBatchQuotes(tickers, {
           maxFallback: priceBudget,
-          fallbackOffset: qpRr * priceBudget
+          fallbackOffset: qpRr * priceBudget,
+          DB: DB
         });
       } catch (e) {
         await log(DB, "WARN", null, "[V11] batchQuotes fail " + market + ": " + e.message);
