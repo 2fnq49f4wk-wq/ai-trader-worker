@@ -3428,37 +3428,47 @@ async function fetchBatchQuotes(symbols, opts) {
   //         첫 배치가 0건이면 이후 배치도 실패할 게 뻔하므로 즉시 포기하고 v8 폴백으로
   //         넘어가 예산(subrequest)을 아낀다.
   const BATCH = 50;
-  let v7Dead = false;
   const auth = await getYahooAuth(opts.DB || null);
-  for (let i = 0; i < symbols.length; i += BATCH) {
-    if (v7Dead) break;
-    if (fetchBudgetLeft() <= 0) break;
-    const slice = symbols.slice(i, i + BATCH);
-    let url = "https://query1.finance.yahoo.com/v7/finance/quote?symbols=" +
-                slice.map(function(s){ return encodeURIComponent(s); }).join(",");
-    if (auth && auth.crumb) url += "&crumb=" + encodeURIComponent(auth.crumb);
-    let gotAny = false;
-    try {
-      const j = await yahooFetch(url, auth && auth.cookie ? { "Cookie": auth.cookie } : null);
-      const rows = (j && j.quoteResponse && j.quoteResponse.result) || [];
-      for (const row of rows) {
-        const sym = row.symbol;
-        const price = (typeof row.regularMarketPrice === "number" && row.regularMarketPrice > 0)
-          ? row.regularMarketPrice : null;
-        const prevClose = (typeof row.regularMarketPreviousClose === "number" && row.regularMarketPreviousClose > 0)
-          ? row.regularMarketPreviousClose : (typeof row.chartPreviousClose === "number" ? row.chartPreviousClose : null);
-        let dayPct = (typeof row.regularMarketChangePercent === "number") ? row.regularMarketChangePercent : null;
-        if (dayPct == null && price != null && prevClose) dayPct = ((price - prevClose) / prevClose) * 100;
-        if (price != null) {
-          out[sym] = { price: price, prevClose: prevClose || price, dayPct: dayPct != null ? dayPct : 0 };
-          gotAny = true;
-        }
-      }
-    } catch (e) {
-      // v7 배치 실패 — 아래 v8 폴백이 처리
+  function parseV7(j) {
+    let got = 0;
+    const rows = (j && j.quoteResponse && j.quoteResponse.result) || [];
+    for (const row of rows) {
+      const sym = row.symbol;
+      const price = (typeof row.regularMarketPrice === "number" && row.regularMarketPrice > 0)
+        ? row.regularMarketPrice : null;
+      const prevClose = (typeof row.regularMarketPreviousClose === "number" && row.regularMarketPreviousClose > 0)
+        ? row.regularMarketPreviousClose : (typeof row.chartPreviousClose === "number" ? row.chartPreviousClose : null);
+      let dayPct = (typeof row.regularMarketChangePercent === "number") ? row.regularMarketChangePercent : null;
+      if (dayPct == null && price != null && prevClose) dayPct = ((price - prevClose) / prevClose) * 100;
+      if (price != null) { out[sym] = { price: price, prevClose: prevClose || price, dayPct: dayPct != null ? dayPct : 0 }; got++; }
     }
-    // 첫 배치에서 한 건도 못 얻으면 v7 죽은 것으로 보고 나머지 배치 생략
-    if (i === 0 && !gotAny) v7Dead = true;
+    return got;
+  }
+  function v7Url(slice) {
+    let url = "https://query1.finance.yahoo.com/v7/finance/quote?symbols=" +
+              slice.map(function(s){ return encodeURIComponent(s); }).join(",");
+    if (auth && auth.crumb) url += "&crumb=" + encodeURIComponent(auth.crumb);
+    return url;
+  }
+  const v7Headers = auth && auth.cookie ? { "Cookie": auth.cookie } : null;
+  // 슬라이스 목록 구성
+  const slices = [];
+  for (let i = 0; i < symbols.length; i += BATCH) slices.push(symbols.slice(i, i + BATCH));
+  let v7Dead = false;
+  if (slices.length > 0 && fetchBudgetLeft() > 0) {
+    // 1) 첫 배치로 v7 생존 확인
+    let firstGot = 0;
+    try { firstGot = parseV7(await yahooFetch(v7Url(slices[0]), v7Headers)); } catch (e) {}
+    if (firstGot === 0) {
+      v7Dead = true;
+    } else if (slices.length > 1) {
+      // 2) 나머지 배치 병렬 실행 (예산 내)
+      const rest = slices.slice(1).filter(function(){ return fetchBudgetLeft() > 0; });
+      await Promise.all(rest.map(async function(slice){
+        if (fetchBudgetLeft() <= 0) return;
+        try { parseV7(await yahooFetch(v7Url(slice), v7Headers)); } catch (e) {}
+      }));
+    }
   }
 
   // --- 2) v7 으로 채워지지 않은 심볼만 v8 chart 로 폴백 ---
@@ -4919,11 +4929,21 @@ async function refreshPriceShard(env, market, shard) {
   const symbols = shardSlice(tickers, shard, PRICE_SHARD_SIZE);
   if (symbols.length === 0) return { ok: 0, fail: 0, shard: shard, shardCount: total, done: true };
 
-  // 이 샤드 종목들의 기존 quote만 로드 (지표 보존용)
+  // 이 샤드 종목들의 기존 quote만 로드 (지표 보존용) — 단일 쿼리로 일괄 로드
   const prevMap = {};
-  for (const sym of symbols) {
-    const q = await getState(DB, "quote:" + sym, null);
-    if (q) prevMap[sym] = q;
+  try {
+    const keys = symbols.map(function(s){ return "quote:" + s; });
+    const placeholders = keys.map(function(){ return "?"; }).join(",");
+    const stmt = DB.prepare("SELECT k, v FROM state WHERE k IN (" + placeholders + ")");
+    const rows = await stmt.bind.apply(stmt, keys).all();
+    for (const r of (rows.results || [])) {
+      try { prevMap[r.k.slice(6)] = JSON.parse(r.v); } catch (e) {}
+    }
+  } catch (e) {
+    for (const sym of symbols) {
+      const q = await getState(DB, "quote:" + sym, null);
+      if (q) prevMap[sym] = q;
+    }
   }
 
   const nowTs = Date.now();
