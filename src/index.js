@@ -3124,7 +3124,9 @@ async function runMacroUpdate(env, forceRun = false) {
   }
 }
 
+let __schemaReady = false;
 async function ensureSchema(DB) {
+  if (__schemaReady) return;
   try {
     const cols = await DB.prepare("PRAGMA table_info(positions)").all();
     const colNames = (cols.results || []).map(function(c){ return c.name; });
@@ -3192,6 +3194,7 @@ async function ensureSchema(DB) {
       await setState(DB, "kq_migration_v16", { done: true, ts: Date.now() });
     }
   } catch (e) { console.error("KQ migration fail:", e.message); }
+  __schemaReady = true;
 }
 
 async function log(DB, level, symbol, message) {
