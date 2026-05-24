@@ -2624,23 +2624,27 @@ button.btn.loading::after { content: "조회 중…"; position: absolute; left: 
     var metaPromise = __shardMeta ? Promise.resolve(__shardMeta) : loadShardMeta();
     metaPromise.then(function(meta){
       if (!meta || !meta[market]) throw new Error('shard meta 없음');
-      var jobs = [];
-      var okSum = 0, failSum = 0;
+      var okSum = 0, failSum = 0, maxMs = 0;
       var pn = meta[market].priceShards || 0;
-      // [V16] 수동 조회는 가격 샤드만 — 일봉/지표는 서버 cron이 라운드로빈으로 갱신.
-      //   가격만 받으면 호출 수가 1/4로 줄어 훨씬 빠름.
-      for (var s = 0; s < pn; s++) {
-        (function(shard){
-          jobs.push(function(){
-            return fetch('/api/refresh_shard?market=' + market + '&shard=' + shard)
-              .then(function(r){ return r.json(); })
-              .then(function(d){ if (d) { okSum += (d.ok||0); failSum += (d.fail||0); } })
-              ['catch'](function(){});
-          });
-        })(s);
+      if (pn === 0) return;
+      function runShard(shard) {
+        return fetch('/api/refresh_shard?market=' + market + '&shard=' + shard)
+          .then(function(r){ return r.json(); })
+          .then(function(d){ if (d) { okSum += (d.ok||0); failSum += (d.fail||0); if (d.ms && d.ms > maxMs) maxMs = d.ms; } })
+          ['catch'](function(){});
       }
-      return runShardPool(jobs, SHARD_CONCURRENCY).then(function(){
-        toast(market.toUpperCase() + ' 시세 조회 완료 (성공 ' + okSum + ' / 실패 ' + failSum + ')');
+      // [V17] 첫 샤드를 단독 실행 → crumb를 D1에 심은 뒤, 나머지를 병렬 실행.
+      //   (동시에 시작하면 7개 샤드가 각자 crumb를 새로 받아 느려지는 것 방지)
+      var tStart = Date.now();
+      return runShard(0).then(function(){
+        var jobs = [];
+        for (var s = 1; s < pn; s++) {
+          (function(shard){ jobs.push(function(){ return runShard(shard); }); })(s);
+        }
+        return runShardPool(jobs, SHARD_CONCURRENCY);
+      }).then(function(){
+        var wall = ((Date.now() - tStart)/1000).toFixed(1);
+        toast(market.toUpperCase() + ' 조회 완료 (성공 ' + okSum + ' / 실패 ' + failSum + ' · ' + wall + '초)');
         refreshAll();
       });
     })['catch'](function(e){ toast('조회 실패: '+e.message); })
