@@ -4193,6 +4193,62 @@ async function handleRequest(request, env) {
       return Response.json({ ok: true, data: payload, ts: Date.now() }, { headers: cors });
     }
 
+    // === [HEATMAP] S&P500 Top Gainers/Losers (장 종료 후 대체용) ===
+    //   야후 파이낸스에서 S&P500의 상위/하위 변동 종목을 조회.
+    //   TradingView iframe이 장 종료 후 데이터 안 되길 때의 대체용.
+    if (path === "/api/heatmap/topmovers" && request.method === "POST") {
+      try {
+        const url = "https://query1.finance.yahoo.com/v10/finance/quoteSummary/^GSPC?modules=topMovers";
+        const r = await fetch(url, {
+          headers: { "User-Agent": "Mozilla/5.0" }
+        });
+        const data = await r.json();
+        const movers = {
+          gainers: [],
+          losers: [],
+          timestamp: Date.now()
+        };
+        
+        // 상위 gainers (최대 10개)
+        if (data.quoteSummary && data.quoteSummary.result && data.quoteSummary.result[0] && data.quoteSummary.result[0].topMovers) {
+          const tm = data.quoteSummary.result[0].topMovers;
+          if (tm.mostActive && tm.mostActive.quotes) {
+            movers.gainers = tm.mostActive.quotes.slice(0, 10).map(function(q){
+              return {
+                symbol: q.symbol,
+                price: q.regularMarketPrice || q.preMarketPrice || 0,
+                change: q.regularMarketChange || q.preMarketChange || 0,
+                changePct: q.regularMarketChangePercent || q.preMarketChangePercent || 0
+              };
+            });
+          }
+          if (tm.gainers && tm.gainers.quotes) {
+            movers.gainers = tm.gainers.quotes.slice(0, 10).map(function(q){
+              return {
+                symbol: q.symbol,
+                price: q.regularMarketPrice || q.preMarketPrice || 0,
+                change: q.regularMarketChange || q.preMarketChange || 0,
+                changePct: q.regularMarketChangePercent || q.preMarketChangePercent || 0
+              };
+            });
+          }
+          if (tm.losers && tm.losers.quotes) {
+            movers.losers = tm.losers.quotes.slice(0, 10).map(function(q){
+              return {
+                symbol: q.symbol,
+                price: q.regularMarketPrice || q.preMarketPrice || 0,
+                change: q.regularMarketChange || q.preMarketChange || 0,
+                changePct: q.regularMarketChangePercent || q.preMarketChangePercent || 0
+              };
+            });
+          }
+        }
+        return Response.json({ ok: true, movers: movers }, { headers: cors });
+      } catch (e) {
+        return Response.json({ ok: false, error: e.message }, { status: 500, headers: cors });
+      }
+    }
+
     // [신규] 신호별 성과 조회
     if (path === "/api/signal_stats") {
       const stats = await getState(env.DB, "signal_stats", {});
