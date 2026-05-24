@@ -849,23 +849,87 @@ button.btn.loading { opacity: 0.5; pointer-events: none; }
 <!-- S&P 500 히트맵 모달 -->
 <div class="modal" id="heatmapModal" style="padding:0;">
   <div style="width:95%;max-width:1300px;background:var(--panel);border:1px solid var(--border);border-radius:8px;margin:auto;padding:20px;max-height:90vh;overflow-y:auto;box-shadow:0 4px 12px rgba(0,0,0,0.3);">
-    <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:16px;">
+    <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:16px;flex-wrap:wrap;gap:10px;">
       <h2 style="margin:0;color:#ffffff;font-size:18px;letter-spacing:1px;">
-        📊 S&P 500 히트맵 · 실시간 마켓 뷰
+        📊 S&P 500 마켓 뷰
       </h2>
-      <span class="close-x" id="btnCloseHeatmap" style="cursor:pointer;font-size:20px;">✕</span>
+      <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;">
+        <button class="llm-btn" id="btnHeatmapRefresh" style="font-size:11px;">↻ 새로고침</button>
+        <span class="close-x" id="btnCloseHeatmap" style="cursor:pointer;font-size:20px;">✕</span>
+      </div>
     </div>
-    <div style="font-size:11px;color:var(--dim);margin-bottom:12px;padding-bottom:10px;border-bottom:1px solid var(--border);letter-spacing:0.5px;">
-      💡 TradingView 실시간 시장 데이터 | 상자 크기 = 시가총액, 색상 = 등락 (초록↑/빨강↓) | 매매 기준 전 공식 사이트 확인
+    
+    <!-- 탭 선택 -->
+    <div style="display:flex;gap:8px;margin-bottom:12px;border-bottom:1px solid var(--border);padding-bottom:8px;">
+      <button class="llm-btn" id="btnHeatmapTabChart" style="font-size:11px;background:#0ea5e9;border-color:#0ea5e9;color:#fff;">📈 히트맵 (실시간)</button>
+      <button class="llm-btn" id="btnHeatmapTabMovers" style="font-size:11px;">📊 상승/하락 TOP10</button>
+      <span id="heatmapTimestamp" style="font-size:10px;color:var(--dim);margin-left:auto;align-self:center;"></span>
     </div>
-    <iframe 
-      src="https://www.tradingview.com/embed/market-ticker/?symbols=SPY,QQQ,IWM,DJIA"
-      style="border:0;width:100%;height:650px;border-radius:6px;background:#0a0e1a;">
-    </iframe>
-    <div style="font-size:10px;color:var(--faint);margin-top:12px;padding-top:12px;border-top:1px solid var(--border);line-height:1.6;">
-      SPY(S&P500) · QQQ(나스닥100) · IWM(소형주) · DJIA(다우존스) | 
-      데이터 제공: TradingView | 
-      새로고침: 자동(실시간)
+
+    <!-- 히트맵 탭 (TradingView) -->
+    <div id="heatmapChartView">
+      <div style="font-size:11px;color:var(--dim);margin-bottom:12px;padding-bottom:10px;border-bottom:1px solid var(--border);letter-spacing:0.5px;">
+        💡 TradingView 실시간 시장 데이터 | 상자 크기 = 시가총액, 색상 = 등락(초록↑/빨강↓) | 장 중에만 업데이트됨
+      </div>
+      <iframe 
+        src="https://www.tradingview.com/embed/market-ticker/?symbols=SPY,QQQ,IWM,DJIA"
+        style="border:0;width:100%;height:650px;border-radius:6px;background:#0a0e1a;">
+      </iframe>
+      <div style="font-size:10px;color:var(--faint);margin-top:12px;padding-top:12px;border-top:1px solid var(--border);line-height:1.6;">
+        SPY(S&P500) · QQQ(나스닥100) · IWM(소형주) · DJIA(다우존스) | 
+        데이터 제공: TradingView | 
+        새로고침: 자동(실시간, 장 중에만)
+      </div>
+    </div>
+
+    <!-- TOP Gainers/Losers 탭 -->
+    <div id="heatmapMoversView" style="display:none;">
+      <div style="display:grid;grid-template-columns:1fr 1fr;gap:20px;margin-bottom:20px;">
+        <!-- 상승 TOP10 -->
+        <div>
+          <div style="font-size:12px;color:#4ade80;font-weight:bold;margin-bottom:10px;padding-bottom:8px;border-bottom:1px solid rgba(74,222,128,0.3);letter-spacing:1px;">
+            📈 상승 TOP10
+          </div>
+          <div class="table-wrap" style="margin:0;">
+            <table class="table" style="font-size:11px;">
+              <thead>
+                <tr>
+                  <th>종목</th>
+                  <th class="right">현재가</th>
+                  <th class="right">변동</th>
+                </tr>
+              </thead>
+              <tbody id="heatmapGainersBody">
+                <tr><td colspan="3" style="color:var(--dim);text-align:center;padding:20px;">로드 중...</td></tr>
+              </tbody>
+            </table>
+          </div>
+        </div>
+
+        <!-- 하락 TOP10 -->
+        <div>
+          <div style="font-size:12px;color:#f87171;font-weight:bold;margin-bottom:10px;padding-bottom:8px;border-bottom:1px solid rgba(248,113,113,0.3);letter-spacing:1px;">
+            📉 하락 TOP10
+          </div>
+          <div class="table-wrap" style="margin:0;">
+            <table class="table" style="font-size:11px;">
+              <thead>
+                <tr>
+                  <th>종목</th>
+                  <th class="right">현재가</th>
+                  <th class="right">변동</th>
+                </tr>
+              </thead>
+              <tbody id="heatmapLosersBody">
+                <tr><td colspan="3" style="color:var(--dim);text-align:center;padding:20px;">로드 중...</td></tr>
+              </tbody>
+            </table>
+          </div>
+        </div>
+      </div>
+      <div style="font-size:10px;color:var(--faint);padding:12px;background:rgba(248,113,113,0.05);border-radius:4px;line-height:1.6;">
+        📌 야후 파이낸스 실시간 데이터 | 정렬: 변동율 기준 TOP10 | 장 종료 후 업데이트
+      </div>
     </div>
   </div>
 </div>
@@ -2119,9 +2183,89 @@ button.btn.loading { opacity: 0.5; pointer-events: none; }
   // ===== [HEATMAP] S&P 500 히트맵 =====
   function openHeatmap() {
     $('heatmapModal').classList.add('show');
+    heatmapShowChart();  // 기본으로 차트 탭 열기
   }
   function closeHeatmap() {
     $('heatmapModal').classList.remove('show');
+  }
+
+  var heatmapCurrentView = 'chart';  // 'chart' 또는 'movers'
+  function heatmapShowChart() {
+    heatmapCurrentView = 'chart';
+    $('heatmapChartView').style.display = 'block';
+    $('heatmapMoversView').style.display = 'none';
+    $('btnHeatmapTabChart').style.background = '#0ea5e9';
+    $('btnHeatmapTabChart').style.borderColor = '#0ea5e9';
+    $('btnHeatmapTabChart').style.color = '#fff';
+    $('btnHeatmapTabMovers').style.background = 'var(--panel)';
+    $('btnHeatmapTabMovers').style.color = 'var(--text)';
+  }
+
+  function heatmapShowMovers() {
+    heatmapCurrentView = 'movers';
+    $('heatmapChartView').style.display = 'none';
+    $('heatmapMoversView').style.display = 'block';
+    $('btnHeatmapTabChart').style.background = 'var(--panel)';
+    $('btnHeatmapTabChart').style.color = 'var(--text)';
+    $('btnHeatmapTabMovers').style.background = '#0ea5e9';
+    $('btnHeatmapTabMovers').style.borderColor = '#0ea5e9';
+    $('btnHeatmapTabMovers').style.color = '#fff';
+    heatmapLoadMovers();
+  }
+
+  function heatmapLoadMovers() {
+    fetch('/api/heatmap/topmovers', { method: 'POST' })
+      .then(function(r){ return r.json(); })
+      .then(function(res){
+        if (!res.ok || !res.movers) { alert('데이터 로드 실패'); return; }
+        var gainers = res.movers.gainers || [];
+        var losers = res.movers.losers || [];
+        
+        // 상승 테이블
+        var gainerHtml = '';
+        gainers.forEach(function(g){
+          gainerHtml += '<tr>'+
+            '<td><b>'+escapeHtml(g.symbol)+'</b></td>'+
+            '<td class="right">$'+fmtNum(g.price, 2)+'</td>'+
+            '<td class="right pos">+'+fmtNum(g.changePct, 2)+'%</td>'+
+          '</tr>';
+        });
+        $('heatmapGainersBody').innerHTML = gainerHtml || '<tr><td colspan="3" style="color:var(--dim);text-align:center;padding:10px;">데이터 없음</td></tr>';
+
+        // 하락 테이블
+        var loserHtml = '';
+        losers.forEach(function(l){
+          loserHtml += '<tr>'+
+            '<td><b>'+escapeHtml(l.symbol)+'</b></td>'+
+            '<td class="right">$'+fmtNum(l.price, 2)+'</td>'+
+            '<td class="right neg">'+fmtNum(l.changePct, 2)+'%</td>'+
+          '</tr>';
+        });
+        $('heatmapLosersBody').innerHTML = loserHtml || '<tr><td colspan="3" style="color:var(--dim);text-align:center;padding:10px;">데이터 없음</td></tr>';
+
+        // 타임스탬프 갱신
+        var ts = $('heatmapTimestamp');
+        if (ts) ts.textContent = '갱신: ' + fmtFullTime(res.movers.timestamp);
+      })
+      ['catch'](function(e){ alert('로드 실패: ' + e.message); });
+  }
+
+  function heatmapRefresh() {
+    var btn = $('btnHeatmapRefresh');
+    if (btn) { btn.disabled = true; btn.textContent = '갱신 중…'; }
+    
+    if (heatmapCurrentView === 'movers') {
+      // movers 탭에서는 바로 fetch
+      heatmapLoadMovers();
+    } else {
+      // chart 탭에서는 iframe 새로고침 (TradingView 자동 갱신)
+      var iframe = $('heatmapModal').querySelector('iframe');
+      if (iframe) iframe.src = iframe.src;  // 새로고침
+    }
+    
+    setTimeout(function(){
+      if (btn) { btn.disabled = false; btn.textContent = '↻ 새로고침'; }
+    }, 1000);
   }
 
   // ===== [V8.6 Hybrid] LLM Banner =====
@@ -2658,6 +2802,9 @@ button.btn.loading { opacity: 0.5; pointer-events: none; }
   $('btnFxRefresh').addEventListener('click', fxRunNow);
   $('btnHeatmap').addEventListener('click', openHeatmap);
   $('btnCloseHeatmap').addEventListener('click', closeHeatmap);
+  $('btnHeatmapTabChart').addEventListener('click', heatmapShowChart);
+  $('btnHeatmapTabMovers').addEventListener('click', heatmapShowMovers);
+  $('btnHeatmapRefresh').addEventListener('click', heatmapRefresh);
   // [다운로드] 메인 UI 트레이드 기록 CSV 버튼
   $('btnDownloadRecent').addEventListener('click', function(){ downloadTradesCSV(50, 'recent_trades'); });
   $('btnDownloadAll').addEventListener('click', function(){ downloadTradesCSV(10000, 'all_trades'); });
