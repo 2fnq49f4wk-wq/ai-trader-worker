@@ -570,6 +570,7 @@ button.btn.loading { opacity: 0.5; pointer-events: none; }
       <button type="button" class="btn logs" id="btnLogs">LOGS</button>
       <button type="button" class="btn macro" id="btnMacro">경제지표</button>
       <button type="button" class="btn macro" id="btnFx">환율</button>
+      <button type="button" class="btn macro" id="btnHeatmap">📊 S&P히트맵</button>
       <button type="button" class="btn" id="btnSettings">SETTINGS</button>
       <button type="button" class="btn primary" id="btnTick">RUN NOW</button>
     </div>
@@ -841,6 +842,30 @@ button.btn.loading { opacity: 0.5; pointer-events: none; }
     <div class="macro-disclaimer">
       ※ 환율은 야후 파이낸스 실시간 시세 기준으로 매일 06:30(KST) 자동 갱신되며, "↻ 지금 갱신"으로 즉시 조회할 수 있습니다.
       엔/원은 100엔당 원화로 표시합니다(야후 직접 페어가 부정확하면 달러/원 ÷ 달러/엔 으로 환산). 참고용이므로 실거래 전 공식 고시환율을 확인하세요.
+    </div>
+  </div>
+</div>
+
+<!-- S&P 500 히트맵 모달 -->
+<div class="modal" id="heatmapModal" style="padding:0;">
+  <div style="width:95%;max-width:1300px;background:var(--panel);border:1px solid var(--border);border-radius:8px;margin:auto;padding:20px;max-height:90vh;overflow-y:auto;box-shadow:0 4px 12px rgba(0,0,0,0.3);">
+    <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:16px;">
+      <h2 style="margin:0;color:#ffffff;font-size:18px;letter-spacing:1px;">
+        📊 S&P 500 히트맵 · 실시간 마켓 뷰
+      </h2>
+      <span class="close-x" id="btnCloseHeatmap" style="cursor:pointer;font-size:20px;">✕</span>
+    </div>
+    <div style="font-size:11px;color:var(--dim);margin-bottom:12px;padding-bottom:10px;border-bottom:1px solid var(--border);letter-spacing:0.5px;">
+      💡 TradingView 실시간 시장 데이터 | 상자 크기 = 시가총액, 색상 = 등락 (초록↑/빨강↓) | 매매 기준 전 공식 사이트 확인
+    </div>
+    <iframe 
+      src="https://www.tradingview.com/embed/market-ticker/?symbols=SPY,QQQ,IWM,DJIA"
+      style="border:0;width:100%;height:650px;border-radius:6px;background:#0a0e1a;">
+    </iframe>
+    <div style="font-size:10px;color:var(--faint);margin-top:12px;padding-top:12px;border-top:1px solid var(--border);line-height:1.6;">
+      SPY(S&P500) · QQQ(나스닥100) · IWM(소형주) · DJIA(다우존스) | 
+      데이터 제공: TradingView | 
+      새로고침: 자동(실시간)
     </div>
   </div>
 </div>
@@ -2091,6 +2116,14 @@ button.btn.loading { opacity: 0.5; pointer-events: none; }
   }
   var currentFxPairs = null;
 
+  // ===== [HEATMAP] S&P 500 히트맵 =====
+  function openHeatmap() {
+    $('heatmapModal').classList.add('show');
+  }
+  function closeHeatmap() {
+    $('heatmapModal').classList.remove('show');
+  }
+
   // ===== [V8.6 Hybrid] LLM Banner =====
   function renderLLMBanner(llmDaily, cfg) {
     var chip = $('llmStatusChip');
@@ -2623,6 +2656,8 @@ button.btn.loading { opacity: 0.5; pointer-events: none; }
   $('btnFx').addEventListener('click', openFx);
   $('btnCloseFx').addEventListener('click', closeFx);
   $('btnFxRefresh').addEventListener('click', fxRunNow);
+  $('btnHeatmap').addEventListener('click', openHeatmap);
+  $('btnCloseHeatmap').addEventListener('click', closeHeatmap);
   // [다운로드] 메인 UI 트레이드 기록 CSV 버튼
   $('btnDownloadRecent').addEventListener('click', function(){ downloadTradesCSV(50, 'recent_trades'); });
   $('btnDownloadAll').addEventListener('click', function(){ downloadTradesCSV(10000, 'all_trades'); });
@@ -2654,6 +2689,9 @@ button.btn.loading { opacity: 0.5; pointer-events: none; }
   });
   $('fxModal').addEventListener('click', function(e){
     if (e.target === $('fxModal')) closeFx();
+  });
+  $('heatmapModal').addEventListener('click', function(e){
+    if (e.target === $('heatmapModal')) closeHeatmap();
   });
 
   // 로그 검색
