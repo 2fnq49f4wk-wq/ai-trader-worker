@@ -2468,7 +2468,7 @@ button.btn.loading::after { content: "조회 중…"; position: absolute; left: 
 
   // 가격 전용 — 샤드를 한꺼번에 던지면 Yahoo가 워커 IP를 429로 차단한다.
   //   [V14] 동시 호출 수를 SHARD_CONCURRENCY로 제한해 순차 배치로 처리한다.
-  var SHARD_CONCURRENCY = 6;
+  var SHARD_CONCURRENCY = 8;
   function runShardPool(jobs, concurrency) {
     return new Promise(function(resolve){
       var idx = 0, active = 0, done = 0;
