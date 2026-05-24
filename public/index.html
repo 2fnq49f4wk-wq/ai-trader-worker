@@ -1100,7 +1100,7 @@ button.btn.loading { opacity: 0.5; pointer-events: none; }
 
 <script>
 (function () {
-  var REFRESH_MS = 15000;  // [개선] 10s → 15s 폴링 부하 감소
+  var REFRESH_MS = 10000;  // [V16] 가격은 cron이 갱신, 프론트는 state만 10s 폴링
   var PRICE_REFRESH_MS = 60000;  // [V13] 가격 전 종목 fan-out 주기 (60s = 정규장 1분 갱신)
   var DAILY_REFRESH_MS = 20000;  // [V13] 일봉 라운드로빈 주기 (20s)
   var priceTimer = null;
@@ -3054,8 +3054,6 @@ button.btn.loading { opacity: 0.5; pointer-events: none; }
     refreshAll();
   // [V13] 샤드 fan-out 시작 — 가격은 매분 전부 병렬, 일봉은 라운드로빈
   loadShardMeta().then(function(){
-    refreshAllPrices();        // 즉시 가격 1회
-    refreshDailyRoundRobin();  // 즉시 일봉 일부
   });
   // 자동 RUN NOW 1회
   setTimeout(function() {
@@ -3063,9 +3061,9 @@ button.btn.loading { opacity: 0.5; pointer-events: none; }
   }, 2000);
   timer = setInterval(refreshAll, REFRESH_MS);
   // [V13] 가격: 60초마다 전 종목 fan-out (정규장 1분 갱신 목표)
-  priceTimer = setInterval(refreshAllPrices, PRICE_REFRESH_MS);
+  // [V16] 가격 갱신은 서버 cron(매분)이 담당 → 프론트 fan-out 제거. state 폴링만으로 최신값 표시.
   // [V13] 일봉: 20초마다 라운드로빈 몇 샤드씩 (수 분 내 전 종목 한 바퀴)
-  dailyTimer = setInterval(refreshDailyRoundRobin, DAILY_REFRESH_MS);
+  // [V16] 일봉 라운드로빈도 서버 cron이 담당.
   
   // [V8.6] LLM 함수들을 글로벌 스코프에 노출 (onclick="" 에서 접근 가능하게)
   window.llmRefresh = llmRefresh;
