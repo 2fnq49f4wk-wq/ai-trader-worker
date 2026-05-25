@@ -2502,14 +2502,31 @@ function isMacroTriggerTime() {
   return kst.totalMin === 420;  // 07:00 KST = 420분
 }
 
-// [COMMODITY] 원자재 거래 트리거 — 매일 16:00 KST 1회, 평일만.
-//   사용자 요청: "거래도 16시에만". cron 1분 간격이라 16:00 정각에 정확히 매치.
-//   16:00 KST = 960분.
+// [COMMODITY] 원자재 거래 트리거 — 매일 16:00 KST 이후 1회, 평일만.
+//   [V8.9] 기존엔 "정확히 16:00(1분)"에만 true라서 cron 누락/락 경쟁으로 그날 거래를
+//   통째로 놓칠 수 있었음. → "16:00 이후 ~ 17:00 사이" 윈도우로 넓히고, 1일 1회 보장은
+//   호출부에서 cm_last_trade 날짜 비교로 처리.
 function isCommodityTriggerTime() {
   const now = new Date();
   const kst = getKST(now);
   if (kst.day < 1 || kst.day > 5) return false;  // 평일만
-  return kst.totalMin === 960;  // 16:00 KST = 960분
+  // 16:00(960) ~ 17:00(1020) 사이면 트리거 윈도우. 실제 1회 보장은 호출부에서.
+  return kst.totalMin >= 960 && kst.totalMin < 1020;
+}
+
+// [V8.9] 오늘 이미 원자재 거래 사이클을 돌렸는지 확인 (1일 1회 보장).
+async function commodityTradedToday(DB) {
+  const today = localDateStr("kr");
+  if (!today) return false;
+  try {
+    const last = await getState(DB, "cm_last_trade", null);
+    return !!(last && last.date === today);
+  } catch (e) { return false; }
+}
+async function markCommodityTradedToday(DB) {
+  const today = localDateStr("kr");
+  if (!today) return;
+  try { await setState(DB, "cm_last_trade", { date: today, ts: Date.now() }); } catch (e) {}
 }
 
 // [FX] 환율 조회 트리거 — 매일 06:30 KST 1회 (주말 포함, 조회 전용).
@@ -5613,67 +5630,102 @@ async function executeSellCM(DB, symbol, pos, sellQty, price, reason, cfg, cash)
   return { pnlPct: pnlPct };
 }
 
-// 원자재 시세 저장 (quote:SYM 키 재사용 — market="cm" 태그)
-async function saveQuoteCM(DB, symbol, q) {
-  await setState(DB, "quote:" + symbol, {
-    market: "cm", price: q.price, prevClose: q.prevClose, dayPct: q.dayPct,
-    rsi: q.dailyRsi, ma: q.dailyMa, atr: q.dailyAtr,
-    dailyAtr: q.dailyAtr, dailyMa: q.dailyMa, dailyMaShort: q.dailyMaShort,
-    bbLower: q.bbLower, bbUpper: q.bbUpper, return20: q.return20, ts: Date.now()
-  });
+// ============================================================
+// [V8.9 재작성] 원자재 시세 저장/갱신 — 전면 단순화
+//   기존 문제:
+//   1) refreshCommodityQuotes가 json_set ON CONFLICT로 price만 부분갱신했는데,
+//      D1 환경에 따라 조용히 실패하거나 일봉지표 보존 로직과 충돌 → price가 안 바뀜
+//      → CUR=AVG 고정, PnL 항상 +0.00%.
+//   2) saveQuoteCM(전체 덮어쓰기)과 refreshCommodityQuotes(부분 갱신)가 같은 키를
+//      다른 방식으로 써서 일관성이 깨짐.
+//   해결: 단일 saveQuoteCM 헬퍼로 통일. 항상 기존 quote를 읽어 병합 후 "전체 객체"를
+//        다시 setState로 저장(json_set 미사용). 매분 chart fetch를 우선해 선물 시세를
+//        확실히 받는다.
+// ============================================================
+
+// 원자재 시세 저장 — 기존 quote와 병합 후 전체 객체로 저장(json_set 미사용).
+//   partial=true면 가격 관련 필드만 갱신하고 일봉지표(rsi/ma/atr 등)는 기존값 보존.
+async function saveQuoteCM(DB, symbol, q, partial) {
+  let prev = {};
+  try {
+    const existing = await getState(DB, "quote:" + symbol, null);
+    if (existing && typeof existing === "object") prev = existing;
+  } catch (e) {}
+
+  const merged = {
+    market: "cm",
+    // 가격 필드 — 항상 새 값으로 갱신
+    price: (typeof q.price === "number" && q.price > 0) ? q.price : (prev.price != null ? prev.price : null),
+    prevClose: (typeof q.prevClose === "number" && q.prevClose > 0) ? q.prevClose : (prev.prevClose != null ? prev.prevClose : null),
+    dayPct: (typeof q.dayPct === "number") ? q.dayPct : (prev.dayPct != null ? prev.dayPct : null),
+    // 일봉 지표 — partial이면 기존값 보존, 아니면 새 값(없으면 기존값)
+    rsi:          partial ? (prev.rsi ?? null)          : (q.dailyRsi ?? prev.rsi ?? null),
+    ma:           partial ? (prev.ma ?? null)           : (q.dailyMa ?? prev.ma ?? null),
+    atr:          partial ? (prev.atr ?? null)          : (q.dailyAtr ?? prev.atr ?? null),
+    dailyAtr:     partial ? (prev.dailyAtr ?? null)     : (q.dailyAtr ?? prev.dailyAtr ?? null),
+    dailyMa:      partial ? (prev.dailyMa ?? null)      : (q.dailyMa ?? prev.dailyMa ?? null),
+    dailyMaShort: partial ? (prev.dailyMaShort ?? null) : (q.dailyMaShort ?? prev.dailyMaShort ?? null),
+    bbLower:      partial ? (prev.bbLower ?? null)      : (q.bbLower ?? prev.bbLower ?? null),
+    bbUpper:      partial ? (prev.bbUpper ?? null)      : (q.bbUpper ?? prev.bbUpper ?? null),
+    return20:     partial ? (prev.return20 ?? null)     : (q.return20 ?? prev.return20 ?? null),
+    ts: Date.now()
+  };
+  await setState(DB, "quote:" + symbol, merged);
 }
 
-// [V20] 원자재 가격만 매분 갱신 (거래는 16:00에만). 배치 quote로 12종을 한 번에.
-//   기존 quote의 일봉 지표(rsi/ma/atr 등)는 json_set으로 보존.
+// [V8.9] 원자재 가격만 매분 갱신 (거래는 16:00에만).
+//   chart(fetchDailyFull) fetch를 우선 — 선물(=F)은 v7 batch quote에서 누락/0값이 잦다.
+//   v7 batch는 보조로만 쓴다. 일봉 지표는 partial=true로 보존.
 async function refreshCommodityQuotes(env) {
   const DB = env.DB;
-  resetFetchBudget(30);
-  // [FIX V8.7] COMMODITY_SYMBOLS는 이미 심볼 문자열 배열인데 .map(c=>c.symbol)을
-  //   다시 호출해 [undefined,...]가 되던 치명적 버그. 그대로 사용하도록 수정.
+  resetFetchBudget(40);
   const syms = COMMODITY_SYMBOLS;
-  const nowTs = Date.now();
-  const stmts = [];
-  let okCount = 0;
-  // [FIX V8.8] 선물(=F) 심볼은 v7 batch quote에서 누락/0값이 잦아 PnL이 안 움직였음.
-  //   v7 batch를 먼저 시도하되, 폴백 예산을 명시적으로 부여(maxFallback)해서
-  //   v7이 못 받은 심볼은 반드시 chart(fetchDailyFull)로 보강한다.
-  let bq = {};
-  try { bq = await fetchBatchQuotes(syms, { maxFallback: 0, DB: DB }); } catch (e) {}
-  // 2) v7로 못 받은(혹은 가격 0/누락) 심볼은 chart 폴백 — 예산 남는 한 전부 시도
-  for (const sym of syms) {
-    let price = null, prevClose = null, dayPct = null;
-    if (bq[sym] && typeof bq[sym].price === "number" && bq[sym].price > 0) {
-      price = bq[sym].price; prevClose = bq[sym].prevClose; dayPct = bq[sym].dayPct;
-    } else if (fetchBudgetLeft() > 0) {
+  let okCount = 0, failCount = 0;
+
+  // 1) chart fetch 우선 (배치 6개씩 병렬) — 선물 실시간가(regularMarketPrice) 확보
+  const BATCH = 6;
+  for (let i = 0; i < syms.length; i += BATCH) {
+    if (fetchBudgetLeft() <= 0) break;
+    const slice = syms.slice(i, i + BATCH);
+    const results = await Promise.all(slice.map(async function(sym){
       try {
         const d = await fetchDailyFull(sym);
-        if (d && typeof d.price === "number" && d.price > 0) {
-          price = d.price; prevClose = d.prevClose || d.price;
-          dayPct = prevClose ? ((price - prevClose) / prevClose) * 100 : 0;
-        }
-      } catch (e) {}
+        return { sym: sym, d: d };
+      } catch (e) {
+        return { sym: sym, d: null, err: e.message };
+      }
+    }));
+    for (const r of results) {
+      if (r.d && typeof r.d.price === "number" && r.d.price > 0) {
+        const price = r.d.price;
+        const prevClose = (typeof r.d.prevClose === "number" && r.d.prevClose > 0) ? r.d.prevClose : price;
+        const dayPct = prevClose ? ((price - prevClose) / prevClose) * 100 : 0;
+        try {
+          await saveQuoteCM(DB, r.sym, { price: price, prevClose: prevClose, dayPct: dayPct }, true);
+          okCount++;
+        } catch (e) { failCount++; }
+      } else {
+        failCount++;
+      }
     }
-    if (price == null) continue;
-    okCount++;
-    const fresh = { market: "cm", price: price, prevClose: prevClose, dayPct: dayPct, ts: nowTs };
-    stmts.push(
-      DB.prepare(
-        "INSERT INTO state (k, v, updated_ts) VALUES (?1, ?2, ?6) " +
-        "ON CONFLICT(k) DO UPDATE SET v = json_set(v, '$.price', ?3, '$.prevClose', ?4, '$.dayPct', ?5, '$.ts', ?6), updated_ts = ?6"
-      ).bind("quote:" + sym, JSON.stringify(fresh), price, prevClose, dayPct, nowTs)
-    );
   }
-  if (stmts.length > 0) {
-    try { await DB.batch(stmts); } catch (e) { await log(DB, "WARN", null, "[CM] quote write fail: " + e.message); }
-  }
-  await log(DB, "INFO", null, "[CM] refreshCommodityQuotes: " + okCount + "/" + syms.length + " updated");
+
+  await log(DB, "INFO", null, "[CM] refreshCommodityQuotes: " + okCount + "/" + syms.length + " updated" + (failCount ? " (fail=" + failCount + ")" : ""));
+  return { ok: okCount, fail: failCount };
 }
 
 async function runCommodityCycle(env, forceTrade) {
   const DB = env.DB;
   resetFetchBudget(45);  // [V11] subrequest 예산 (원자재 ~12종이라 여유롭지만 명시적 가드)
   const cfg = migrateCfgToMarkets(Object.assign({}, DEFAULT_CFG, await getState(DB, "cfg", {})));
-  const isTradeTime = forceTrade === true ? true : isCommodityTriggerTime();   // 16:00 KST 평일에만 true (force 시 항상)
+  // [V8.9] 거래 시각 판정 — 윈도우(16:00~17:00) 내이면서 forceTrade거나 오늘 미거래일 때만 매매.
+  let isTradeTime = false;
+  if (forceTrade === true) {
+    isTradeTime = true;
+  } else if (isCommodityTriggerTime()) {
+    // 윈도우 안 — 단, 오늘 이미 거래했으면 시세만 갱신
+    isTradeTime = !(await commodityTradedToday(DB));
+  }
   await log(DB, "INFO", null, "[CM] === Commodity cycle (trade=" + (isTradeTime ? (forceTrade ? "FORCED" : "ON 16:00KST") : "quote-only") + ") ===");
 
   const cash = await getState(DB, "cash", { us: cfg.initialCashUS, kr: cfg.initialCashKR, cm: cfg.initialCashCM });
@@ -5683,7 +5735,15 @@ async function runCommodityCycle(env, forceTrade) {
   const swingRules = cfg.swingRules || {};
   let tried = 0, bought = 0, sold = 0, fetchFail = 0;
 
-  // 시세 prefetch (배치)
+  // [V8.9] 거래 시각이 아니면 시세 fetch 자체를 스킵.
+  //   매분 도는 refreshCommodityQuotes가 이미 시세를 갱신하므로, 여기서 또 12종목을
+  //   fetch하면 16:00~17:00 윈도우 동안 매분 중복 fetch가 됨. 거래할 때만 fetch한다.
+  if (!isTradeTime) {
+    await log(DB, "INFO", null, "[CM] quote-only — 시세는 refreshCommodityQuotes가 담당, 사이클 스킵");
+    return;
+  }
+
+  // 시세 prefetch (배치) — 거래 시각에만 실행
   const BATCH = 8;
   const fetched = [];
   for (let i = 0; i < COMMODITY_SYMBOLS.length; i += BATCH) {
@@ -5729,8 +5789,7 @@ async function runCommodityCycle(env, forceTrade) {
         bbLower: bb ? bb.lower : null, bbUpper: bb ? bb.upper : null, return20: return20
       });
 
-      // 거래 시각이 아니면 시세만 갱신하고 매매 스킵
-      if (!isTradeTime) continue;
+      // 일봉 지표 부족 시 매매 평가 스킵 (시세는 위에서 이미 저장됨)
       if (dailyRsi == null) continue;
 
       // === STEP 1: 보유 포지션 매도 평가 (swing 분기) ===
@@ -5821,6 +5880,9 @@ async function runCommodityCycle(env, forceTrade) {
 
   if (isTradeTime) {
     try { await setState(DB, "cash", cash); } catch (e) {}
+    // [V8.9] 오늘 거래 완료 마킹 (forceTrade 제외 — 수동 강제실행은 카운트 안 함).
+    //   윈도우(16:00~17:00) 내에서 cron이 여러 번 돌아도 하루 1회만 매매하도록.
+    if (forceTrade !== true) { try { await markCommodityTradedToday(DB); } catch (e) {} }
   }
   await log(DB, "INFO", null, "[CM] Done: tried=" + tried + " buy=" + bought + " sell=" + sold + " fetchFail=" + fetchFail);
 }
@@ -6768,6 +6830,8 @@ async function handleRequest(request, env) {
       const cash = await getState(env.DB, "cash", { us: cfg.initialCashUS, kr: cfg.initialCashKR, cm: cfg.initialCashCM });
       cash.cm = cfg.initialCashCM;
       await setState(env.DB, "cash", cash);
+      // [V8.9] 오늘 거래 마킹도 해제 → RESET 직후 "지금 실행"으로 바로 재매수 가능.
+      try { await env.DB.prepare("DELETE FROM state WHERE k = ?").bind("cm_last_trade").run(); } catch (e) {}
       await log(env.DB, "INFO", null, "[CM] RESET — 원자재 포지션/거래 초기화, cm현금=" + cfg.initialCashCM);
       return Response.json({ ok: true, cash: { cm: cfg.initialCashCM } }, { headers: cors });
     }
