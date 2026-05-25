@@ -2453,21 +2453,44 @@ function isTradingWindow(market) {
 // KR: 09:00 KST (정규장 시작, 지연 데이터지만 데이터 자체는 이미 수집됨)
 // US: 시장시작 10분 전 = 09:20 ET (DST 자동)
 // 트리거가 cron 사이클 사이에 정확히 들어가도록 ±1분 윈도우 허용.
-function isLLMTriggerTime(market) {
+// [FIX V8.8] 기존엔 "정확히 09:00(1분)"에만 true라서, 그 1분에 사이클 락 경쟁에서
+//   지거나 cron이 미세하게 어긋나면 그날 LLM 분석을 통째로 놓쳤음(자동갱신 실패).
+//   → "트리거 시각 이후 ~ 장중"이면서 "오늘 아직 실행 안 됨"일 때 true가 되도록 변경.
+//   실제 1일 1회 보장은 호출부에서 llm_last_run:<market> 날짜 비교로 처리.
+function isLLMTriggerWindow(market) {
   const now = new Date();
   if (market === "kr") {
     const kst = getKST(now);
     if (kst.day < 1 || kst.day > 5) return false;
-    // 09:00 KST = 540분, 한 사이클(1분) 안에 정확히 매치되도록
-    return kst.totalMin === 540;
+    // 09:00 KST(540) 이후 ~ 15:30 KST(930) 사이 = 정규장 동안 언제든 따라잡기 가능
+    return kst.totalMin >= 540 && kst.totalMin < 930;
   }
   if (market === "us") {
     const et = getUSEt(now);
     if (et.day < 1 || et.day > 5) return false;
-    // 09:20 ET = 560분 (정규장 09:30 시작 10분 전)
-    return et.totalMin === 560;
+    // 09:20 ET(560) 이후 ~ 16:00 ET(960) 사이
+    return et.totalMin >= 560 && et.totalMin < 960;
   }
   return false;
+}
+// 하위호환 — 기존 이름도 윈도우 방식으로 위임
+function isLLMTriggerTime(market) {
+  return isLLMTriggerWindow(market);
+}
+
+// [FIX V8.8] 오늘(현지날짜) 이미 LLM 분석을 돌렸는지 확인.
+async function llmAlreadyRanToday(DB, market) {
+  const today = localDateStr(market);
+  if (!today) return false;
+  try {
+    const last = await getState(DB, "llm_last_run:" + market, null);
+    return !!(last && last.date === today);
+  } catch (e) { return false; }
+}
+async function markLLMRanToday(DB, market) {
+  const today = localDateStr(market);
+  if (!today) return;
+  try { await setState(DB, "llm_last_run:" + market, { date: today, ts: Date.now() }); } catch (e) {}
 }
 
 // [V9 매크로] 경제지표 자동 갱신 트리거 — 매일 아침 07:00 KST 1회.
@@ -3104,6 +3127,18 @@ async function runMacroUpdate(env, forceRun = false) {
     return { ok: false, reason: "no_api_key" };
   }
 
+  // [FIX V8.8] macro 트리거가 runTradingCycle 내부와 scheduled 양쪽에 있어 07:00 정각에
+  //   중복 web_search(비용↑) 가능. 강제실행이 아니면 "오늘 이미 갱신됨"이면 스킵.
+  if (!forceRun) {
+    try {
+      const today = localDateStr("kr");
+      const lastMacro = await getState(DB, "macro_last_run", null);
+      if (lastMacro && lastMacro.date === today) {
+        return { ok: false, reason: "already_ran_today" };
+      }
+    } catch (e) {}
+  }
+
   try {
     await log(DB, "INFO", null, "[MACRO] update start");
     const prompt = buildMacroPrompt();
@@ -3162,6 +3197,8 @@ async function runMacroUpdate(env, forceRun = false) {
     });
 
     await setState(DB, "macro_data", next);
+    // [FIX V8.8] 오늘 갱신 완료 마킹 (중복 실행 방지용).
+    try { await setState(DB, "macro_last_run", { date: localDateStr("kr"), ts: Date.now() }); } catch (e) {}
     await log(DB, "INFO", null, "[MACRO] update done: filled=" + filled + " kept=" + kept +
       " usage_in=" + ((res.usage && res.usage.input_tokens) || "?") +
       " out=" + ((res.usage && res.usage.output_tokens) || "?"));
@@ -5592,19 +5629,20 @@ async function refreshCommodityQuotes(env) {
   const DB = env.DB;
   resetFetchBudget(30);
   // [FIX V8.7] COMMODITY_SYMBOLS는 이미 심볼 문자열 배열인데 .map(c=>c.symbol)을
-  //   다시 호출해 [undefined,...]가 되던 치명적 버그. 이 때문에 시세가 전혀 갱신되지
-  //   않아 CUR=AVG로 고정 → PnL이 항상 +0.00%로 표시됐음. 그대로 사용하도록 수정.
+  //   다시 호출해 [undefined,...]가 되던 치명적 버그. 그대로 사용하도록 수정.
   const syms = COMMODITY_SYMBOLS;
   const nowTs = Date.now();
   const stmts = [];
   let okCount = 0;
-  // 1) v7 batch 시도 (=F 심볼도 v7 quote 지원, chart보다 안정적)
+  // [FIX V8.8] 선물(=F) 심볼은 v7 batch quote에서 누락/0값이 잦아 PnL이 안 움직였음.
+  //   v7 batch를 먼저 시도하되, 폴백 예산을 명시적으로 부여(maxFallback)해서
+  //   v7이 못 받은 심볼은 반드시 chart(fetchDailyFull)로 보강한다.
   let bq = {};
   try { bq = await fetchBatchQuotes(syms, { maxFallback: 0, DB: DB }); } catch (e) {}
-  // 2) v7로 못 받은 심볼만 chart 폴백
+  // 2) v7로 못 받은(혹은 가격 0/누락) 심볼은 chart 폴백 — 예산 남는 한 전부 시도
   for (const sym of syms) {
     let price = null, prevClose = null, dayPct = null;
-    if (bq[sym] && bq[sym].price != null) {
+    if (bq[sym] && typeof bq[sym].price === "number" && bq[sym].price > 0) {
       price = bq[sym].price; prevClose = bq[sym].prevClose; dayPct = bq[sym].dayPct;
     } else if (fetchBudgetLeft() > 0) {
       try {
@@ -5806,7 +5844,11 @@ async function runTradingCycle(env) {
     }
   }
 
-  if (!cfg.enabled) { await log(DB, "INFO", null, "engine disabled"); return; }
+  // [FIX V8.8] 기존엔 cfg.enabled=false면 여기서 통째로 return → 정규장 중에도
+  //   UI 가격이 전혀 갱신되지 않았음(엔진 끄면 차트/가격 멈춤). 가격 갱신은 거래와
+  //   분리되어야 하므로 early return을 제거하고, 거래 단계에서만 enabled를 체크한다.
+  const engineEnabled = !!cfg.enabled;
+  if (!engineEnabled) { await log(DB, "INFO", null, "engine disabled — 가격만 갱신, 거래 스킵"); }
 
   // [신규] Cycle Lock — 동시 실행 차단
   const gotLock = await acquireCycleLock(DB, cfg.cycleLockTTL || 60000);
@@ -5821,18 +5863,26 @@ async function runTradingCycle(env) {
       ? " disabled=[" + cfg.disabledSignals.join(",") + "]" : "";
     await log(DB, "INFO", null, "=== Cycle start (V8.6) strats=[" + enabledStrats + "] conf=" + (cfg.requireConfluence ? "ON" : "OFF") + disabledSigNote + " ===");
     const cycleStartedAt = Date.now();
+    // [FIX V8.8] 엔진 heartbeat — 사이클 시작 직후 기록. 사이클이 중간에 타임아웃/중단돼도
+    //   "엔진이 최근 돌긴 했다"를 추적해 last_tick만으로 '지연'을 오판하지 않도록 한다.
+    try { await setState(DB, "last_heartbeat", Date.now()); } catch (e) {}
 
-    // [V8.6 Hybrid] LLM 일일 분석 트리거 — 시장별 정해진 시각에 1회 호출
-    // KR 09:00 KST, US 09:20 ET (시장 시작 10분 전, DST 자동)
-    // 호출은 try-catch로 격리되어 실패해도 매매 사이클은 정상 진행
+    // [V8.6 Hybrid] LLM 일일 분석 트리거 — 시장별 정해진 시각 "이후" 1회 호출
+    // [FIX V8.8] 정각 1분 의존 → 윈도우 + 오늘 미실행 체크로 변경.
+    //   그날 한 번이라도 사이클이 돌면(락을 잡으면) 반드시 따라잡아 실행한다.
+    //   성공 시에만 markLLMRanToday로 마킹 → 실패하면 다음 사이클에 재시도.
     if (cfg.llmHybrid && cfg.llmHybrid.enabled) {
-      if (isLLMTriggerTime("kr")) {
-        try { await runLLMDailyAnalysis(env, "kr"); }
-        catch (e) { await log(DB, "ERROR", null, "[LLM] kr trigger fail: " + e.message); }
+      if (isLLMTriggerWindow("kr") && !(await llmAlreadyRanToday(DB, "kr"))) {
+        try {
+          const r = await runLLMDailyAnalysis(env, "kr");
+          if (r && r.ok) await markLLMRanToday(DB, "kr");
+        } catch (e) { await log(DB, "ERROR", null, "[LLM] kr trigger fail: " + e.message); }
       }
-      if (isLLMTriggerTime("us")) {
-        try { await runLLMDailyAnalysis(env, "us"); }
-        catch (e) { await log(DB, "ERROR", null, "[LLM] us trigger fail: " + e.message); }
+      if (isLLMTriggerWindow("us") && !(await llmAlreadyRanToday(DB, "us"))) {
+        try {
+          const r = await runLLMDailyAnalysis(env, "us");
+          if (r && r.ok) await markLLMRanToday(DB, "us");
+        } catch (e) { await log(DB, "ERROR", null, "[LLM] us trigger fail: " + e.message); }
       }
     }
 
@@ -5912,8 +5962,9 @@ async function runTradingCycle(env) {
     if (usOpen) marketsForQuotes.push("us");
     if (krOpen) marketsForQuotes.push("kr");
     const marketsToTrade = [];
-    if (usCanTrade) marketsToTrade.push("us");
-    if (krCanTrade) marketsToTrade.push("kr");
+    // [FIX V8.8] 엔진이 꺼져 있으면 거래 대상에서 제외(가격 갱신은 marketsForQuotes로 계속).
+    if (engineEnabled && usCanTrade) marketsToTrade.push("us");
+    if (engineEnabled && krCanTrade) marketsToTrade.push("kr");
 
     for (const market of marketsForQuotes) {
       const mcfg = getMarketCfg(cfg, market);  // [V8.2] 시장별 독립 룰
@@ -6554,6 +6605,7 @@ async function handleRequest(request, env) {
       const posKR = buildPositionViews(positionsKRRaw);
 
       const lastTick = await getState(env.DB, "last_tick", null);
+      const lastHeartbeat = await getState(env.DB, "last_heartbeat", null);
 
       const allSymbols = cfg.usTickers.concat(cfg.krTickers);
       const quotes = [];
@@ -6600,7 +6652,7 @@ async function handleRequest(request, env) {
           usBySymbol: posUS.bySymbol,
           krBySymbol: posKR.bySymbol
         },
-        lastTick: lastTick, cfg: cfg,
+        lastTick: lastTick, lastHeartbeat: lastHeartbeat, cfg: cfg,
         marketStatus: {
           us: isMarketOpen("us") && (await isMarketTradingDay(env.DB, "us")) !== false,
           kr: isMarketOpen("kr") && (await isMarketTradingDay(env.DB, "kr")) !== false
@@ -7064,13 +7116,23 @@ async function handleRequest(request, env) {
     if (path === "/api/diag") {
       const lock = await getState(env.DB, "lock:cycle", null);
       const lastTick = await getState(env.DB, "last_tick", null);
+      const lastHeartbeat = await getState(env.DB, "last_heartbeat", null);
       const cfg = migrateCfgToMarkets(Object.assign({}, DEFAULT_CFG, await getState(env.DB, "cfg", {})));
       const allSymbols = cfg.usTickers.concat(cfg.krTickers);
-      let quoteCount = 0, freshCount = 0;
       const now = Date.now();
+      // [FIX V8.8] 828개 종목을 개별 getState로 읽던 진단을 단일 쿼리 일괄 로드로 변경.
+      //   (기존 방식은 diag 호출 자체가 수백 D1 쿼리라 매우 느렸음.)
+      const quoteMap = {};
+      try {
+        const rows = await env.DB.prepare("SELECT k, v FROM state WHERE k LIKE 'quote:%'").all();
+        for (const r of (rows.results || [])) {
+          try { quoteMap[r.k.slice(6)] = JSON.parse(r.v); } catch (e) {}
+        }
+      } catch (e) {}
+      let quoteCount = 0, freshCount = 0;
       const staleSyms = [];
       for (const sym of allSymbols) {
-        const q = await getState(env.DB, "quote:" + sym, null);
+        const q = quoteMap[sym];
         if (q) {
           quoteCount++;
           if (q.ts && (now - q.ts) < 5 * 60 * 1000) freshCount++;
@@ -7079,16 +7141,31 @@ async function handleRequest(request, env) {
           staleSyms.push({ sym: sym, ageMin: null });
         }
       }
+      // 원자재 quote 신선도도 점검
+      let cmFresh = 0, cmTotal = 0;
+      const cmStale = [];
+      for (const sym of COMMODITY_SYMBOLS) {
+        cmTotal++;
+        const q = quoteMap[sym];
+        if (q && q.ts && (now - q.ts) < 10 * 60 * 1000) cmFresh++;
+        else cmStale.push({ sym: sym, ageMin: (q && q.ts) ? Math.round((now - q.ts) / 60000) : null });
+      }
+      const llmKr = await getState(env.DB, "llm_last_run:kr", null);
+      const llmUs = await getState(env.DB, "llm_last_run:us", null);
       return Response.json({
         now: now,
         lock: lock,
         lockAgeSec: lock && lock.until ? Math.round((lock.until - now) / 1000) : null,
         lastTick: lastTick,
         lastTickAgeMin: lastTick ? Math.round((now - lastTick) / 60000) : null,
+        lastHeartbeat: lastHeartbeat,
+        lastHeartbeatAgeMin: lastHeartbeat ? Math.round((now - lastHeartbeat) / 60000) : null,
         market: { us: isMarketOpen("us"), kr: isMarketOpen("kr") },
         tradingWindow: { us: isTradingWindow("us"), kr: isTradingWindow("kr") },
         usEtOffset: getUSEtOffset(new Date()),  // -4=EDT(서머타임) / -5=EST(겨울)
         quotes: { total: allSymbols.length, stored: quoteCount, freshUnder5min: freshCount },
+        commodities: { total: cmTotal, freshUnder10min: cmFresh, stale: cmStale },
+        llm: { kr: llmKr, us: llmUs },
         staleOrMissing: staleSyms.slice(0, 20),
         cfg: { enabled: cfg.enabled, marketHoursOnly: cfg.marketHoursOnly, cycleLockTTL: cfg.cycleLockTTL }
       }, { headers: cors });
@@ -7102,21 +7179,38 @@ async function handleRequest(request, env) {
 export default {
   async fetch(request, env, ctx) { return handleRequest(request, env); },
   async scheduled(event, env, ctx) {
-    ctx.waitUntil(runTradingCycle(env));
-    // [V20] 원자재 가격은 매분 갱신 (거래는 아래 16:00 트리거에서만).
-    //   기존엔 16:00 하루 1회만 갱신돼 CUR=AVG로 고정 → PnL이 항상 0이던 문제 수정.
-    ctx.waitUntil(refreshCommodityQuotes(env));
-    // [COMMODITY] 16:00 KST 정각에만 원자재 거래 사이클 실행.
-    if (isCommodityTriggerTime()) {
-      ctx.waitUntil(runCommodityCycle(env));
-    }
-    // [FX] 06:30 KST 정각에만 환율 갱신 (조회 전용).
-    if (isFxTriggerTime()) {
-      ctx.waitUntil(runFxUpdate(env));
-    }
-    // [FIX V8.7] 경제지표 자동 갱신 트리거가 누락돼 있어 추가 (매일 07:00 KST).
-    if (isMacroTriggerTime()) {
-      ctx.waitUntil(runMacroUpdate(env));
-    }
+    // [FIX V8.8] 기존엔 runTradingCycle / refreshCommodityQuotes / runCommodityCycle을
+    //   각각 ctx.waitUntil로 "동시" 실행했는데, 이들이 전역 __fetchBudget(yahoo fetch
+    //   예산)을 공유하면서 서로 resetFetchBudget()로 카운터를 덮어쓰고 소진시켜
+    //   가격/원자재 갱신이 산발적으로 실패했음(특히 정규장 1분 갱신).
+    //   → 단일 promise 안에서 "순차" 실행해 각 사이클이 자기 예산을 온전히 쓰게 한다.
+    ctx.waitUntil((async () => {
+      // 1) 주식/지수 가격 갱신 + 거래 (가장 무거움 — 먼저 단독 실행)
+      try { await runTradingCycle(env); }
+      catch (e) { try { await log(env.DB, "ERROR", null, "[SCHED] trading cycle fail: " + e.message); } catch (e2) {} }
+
+      // 2) 원자재 시세 갱신 (매분) — 예산 리셋 후 단독 실행
+      try { await refreshCommodityQuotes(env); }
+      catch (e) { try { await log(env.DB, "ERROR", null, "[SCHED] commodity quote fail: " + e.message); } catch (e2) {} }
+
+      // 3) 원자재 거래 (평일 16:00 KST 정각 ±윈도우)
+      if (isCommodityTriggerTime()) {
+        try { await runCommodityCycle(env); }
+        catch (e) { try { await log(env.DB, "ERROR", null, "[SCHED] commodity cycle fail: " + e.message); } catch (e2) {} }
+      }
+
+      // 4) 환율 갱신 (매일 06:30 KST)
+      if (isFxTriggerTime()) {
+        try { await runFxUpdate(env); }
+        catch (e) { try { await log(env.DB, "ERROR", null, "[SCHED] fx fail: " + e.message); } catch (e2) {} }
+      }
+
+      // 5) 경제지표 갱신 (매일 07:00 KST) — runTradingCycle 내부에도 트리거가 있으나
+      //    엔진 disabled 상태에서도 매크로는 갱신되도록 여기서도 안전하게 한 번 더 보장.
+      if (isMacroTriggerTime()) {
+        try { await runMacroUpdate(env); }
+        catch (e) { try { await log(env.DB, "ERROR", null, "[SCHED] macro fail: " + e.message); } catch (e2) {} }
+      }
+    })());
   }
 };
