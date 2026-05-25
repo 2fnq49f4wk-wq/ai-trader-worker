@@ -2264,7 +2264,10 @@ const MARKET_SCOPED_KEYS = [
   'swingRules', 'dayRules', 'momentumRules', 'meanrevRules',
   'strategySizing',
   // [V8.3] ATR 사이징 & signal stats window도 시장별 학습 대상
-  'atrSizing', 'signalStatsWindow'
+  'atrSizing', 'signalStatsWindow',
+  // [V9.0] 일봉/지표 갱신 주기도 시장별 분리 — 종목 수가 다르므로(미국 518 > 한국 311)
+  //   한국은 더 짧은 주기로 자주 갱신해도 fetch 예산이 남는다.
+  'dailyCacheMinutes'
 ];
 
 // 베이스 cfg + cfg.markets[market] 머지해서 그 시장에서 쓸 cfg 반환.
@@ -2317,6 +2320,16 @@ function migrateCfgToMarkets(cfg) {
           : cfg[k];
       }
     }
+  }
+  // [V9.0] 시장별 일봉 갱신 주기 기본값 — 종목 수에 맞춰 차등.
+  //   미국 518종목: 20분(매분 ~26 일봉 fetch + 가격 11 ≈ 37, 예산45 내 안전)
+  //   한국 311종목: 15분(매분 ~21 일봉 fetch + 가격 7 ≈ 28, 예산45 내 여유)
+  //   사용자가 markets.us/kr.dailyCacheMinutes를 직접 설정했으면 그 값을 존중(== 기본값과 다르면 건드리지 않음).
+  if (cfg.markets.us && (cfg.markets.us.dailyCacheMinutes === undefined || cfg.markets.us.dailyCacheMinutes === 30)) {
+    cfg.markets.us.dailyCacheMinutes = 20;
+  }
+  if (cfg.markets.kr && (cfg.markets.kr.dailyCacheMinutes === undefined || cfg.markets.kr.dailyCacheMinutes === 30)) {
+    cfg.markets.kr.dailyCacheMinutes = 15;
   }
   return cfg;
 }
@@ -2427,6 +2440,23 @@ function isMarketOpen(market) {
   if (market === "kr") {
     const kst = getKST(now);
     return kst.day >= 1 && kst.day <= 5 && kst.totalMin >= 540 && kst.totalMin < 930;
+  }
+  return false;
+}
+
+// [V9.0] 가격 갱신 전용 창 — UI/휴장판정용 isMarketOpen과 분리.
+//   KR은 야후 15분 지연이라 가격 갱신 종료를 15:45(945)까지 늘려, 실제 마지막 15분
+//   (14:45~15:30) 거래의 지연 데이터가 quote/종가에 반영될 시간을 확보한다.
+//   시작은 09:00 그대로(데이터 일찍 받아두는 건 무해). US는 실시간이라 정규장과 동일.
+function isQuoteRefreshWindow(market) {
+  const now = new Date();
+  if (market === "us") {
+    const et = getUSEt(now);
+    return et.day >= 1 && et.day <= 5 && et.totalMin >= 570 && et.totalMin < 960;
+  }
+  if (market === "kr") {
+    const kst = getKST(now);
+    return kst.day >= 1 && kst.day <= 5 && kst.totalMin >= 540 && kst.totalMin < 945;
   }
   return false;
 }
@@ -3420,17 +3450,25 @@ async function getYahooAuth(DB) {
     } catch (e) {}
   }
   try {
+    const ctrlA = new AbortController();
+    const timerA = setTimeout(function(){ try { ctrlA.abort(); } catch (e) {} }, 8000);
     const r1 = await fetch("https://fc.yahoo.com/", {
-      headers: { "User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.0 Safari/605.1.15" }
+      headers: { "User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.0 Safari/605.1.15" },
+      signal: ctrlA.signal
     });
+    clearTimeout(timerA);
     let cookie = r1.headers.get("set-cookie") || "";
     cookie = cookie.split(";")[0];
+    const ctrlB = new AbortController();
+    const timerB = setTimeout(function(){ try { ctrlB.abort(); } catch (e) {} }, 8000);
     const r2 = await fetch("https://query1.finance.yahoo.com/v1/test/getcrumb", {
       headers: {
         "User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.0 Safari/605.1.15",
         "Cookie": cookie
-      }
+      },
+      signal: ctrlB.signal
     });
+    clearTimeout(timerB);
     const crumb = (await r2.text()).trim();
     if (crumb && crumb.length < 30 && crumb.indexOf("<") === -1) {
       __yahooAuth = { cookie: cookie, crumb: crumb, ts: Date.now() };
@@ -3458,10 +3496,16 @@ async function yahooFetch(url, extraHeaders) {
   };
   if (extraHeaders) { for (const k in extraHeaders) headers[k] = extraHeaders[k]; }
   // 429/5xx/네트워크 실패 시 지수 백오프로 최대 3회 재시도
+  // [V9.1] 각 fetch에 8초 타임아웃(AbortController) — 야후가 응답을 안 주고 매달리면
+  //   invocation 전체가 멈춰 사이클 중단·락 잔존(엔진 지연)을 유발하므로 강제로 끊는다.
   let lastErr = null;
   for (let attempt = 0; attempt < 3; attempt++) {
+    let timer = null;
     try {
-      const r = await fetch(u, { headers: headers });
+      const ctrl = new AbortController();
+      timer = setTimeout(function(){ try { ctrl.abort(); } catch (e) {} }, 8000);
+      const r = await fetch(u, { headers: headers, signal: ctrl.signal });
+      clearTimeout(timer); timer = null;
       if (r.ok) return await r.json();
       if (r.status === 429 || r.status >= 500) {
         lastErr = new Error("HTTP " + r.status);
@@ -3470,6 +3514,7 @@ async function yahooFetch(url, extraHeaders) {
       }
       throw new Error("HTTP " + r.status);
     } catch (e) {
+      if (timer) { clearTimeout(timer); timer = null; }
       lastErr = e;
       if (/HTTP 4(0[0-9]|[1-9][0-9])/.test(e.message || "") && !/HTTP 429/.test(e.message || "")) throw e;
       await new Promise(function(res){ setTimeout(res, 250 * Math.pow(2, attempt) + Math.random() * 200); });
@@ -3734,8 +3779,14 @@ async function savePosition(DB, market, symbol, strategy, pos) {
   ).bind(symbol, strategy, market, pos.qty, pos.avg, pos.opened_ts, JSON.stringify(pos.meta || {})).run();
 }
 
-async function deletePosition(DB, symbol, strategy) {
-  await DB.prepare("DELETE FROM positions WHERE symbol = ? AND strategy = ?").bind(symbol, strategy).run();
+async function deletePosition(DB, symbol, strategy, market) {
+  // [V9.1] market이 주어지면 market까지 매칭해 안전 삭제 (미래에 심볼이 겹쳐도 안전).
+  //   인자 없으면 기존 동작(하위호환).
+  if (market) {
+    await DB.prepare("DELETE FROM positions WHERE symbol = ? AND strategy = ? AND market = ?").bind(symbol, strategy, market).run();
+  } else {
+    await DB.prepare("DELETE FROM positions WHERE symbol = ? AND strategy = ?").bind(symbol, strategy).run();
+  }
 }
 
 async function recordTrade(DB, t) {
@@ -4399,10 +4450,23 @@ function evaluateBuyBlocks(price, dayPct, dailyData, cfg, regime, signal, ctx) {
 
 // === [V8] executeBuy — strategy 필드 저장 ===
 async function executeBuy(DB, market, symbol, strategy, qty, price, signal, dailyAtr, cfg, cash, opts) {
+  // [V9.1] 입력 검증 — 비정상 가격/수량으로 인한 유령거래·NaN 방어
+  if (!(typeof price === "number" && isFinite(price) && price > 0)) {
+    await log(DB, "WARN", symbol, "BUY aborted: bad price " + price); return cash;
+  }
+  if (!(typeof qty === "number" && isFinite(qty) && qty > 0)) {
+    await log(DB, "WARN", symbol, "BUY aborted: bad qty " + qty); return cash;
+  }
+  qty = Math.floor(qty);
+  if (qty <= 0) { return cash; }
+
   const feeRate = market === "us" ? cfg.feeUS : cfg.feeKR;
   const gross = price * qty;
   const fee = gross * feeRate;
   const total = gross + fee;
+  if (!(typeof cash[market] === "number" && isFinite(cash[market]))) {
+    await log(DB, "ERROR", symbol, "BUY aborted: cash state invalid"); return cash;
+  }
   if (total > cash[market]) { await log(DB, "WARN", symbol, "BUY aborted: cash short"); return cash; }
 
   // 전략별 손절가 계산 — [V8.6] opts.stopPctOverride 있으면 우선 적용 (LLM 지시)
@@ -4420,33 +4484,55 @@ async function executeBuy(DB, market, symbol, strategy, qty, price, signal, dail
   // 최대 손절폭은 stopPct로 고정
   if (stopPrice > pctStop) stopPrice = pctStop;
 
+  // [V9.1] 동일 종목+전략 기존 포지션이 있으면 "덮어쓰기"가 아니라 평단·수량 합산.
+  //   (호출부 가드가 깨져도 유령손실/수량증발이 생기지 않도록 방어)
+  //   전체 getPositions 대신 해당 1건만 조회해 D1 부하 최소화.
+  let posToSave;
   try {
-    await savePosition(DB, market, symbol, strategy, {
-      qty: qty, avg: price, opened_ts: Date.now(),
-      meta: {
-        strategy: strategy,
-        feePaid: fee,
-        feeRemaining: fee,
-        atrAtEntry: dailyAtr,
-        stopPrice: stopPrice,
-        peakPrice: price,
-        signal: signal.name,
-        signalMembers: signal.members || [signal.name],
-        tp1Done: false,
-        originalQty: qty
+    let prior = null;
+    try {
+      const row = await DB.prepare("SELECT qty, avg_price, opened_ts, meta FROM positions WHERE symbol = ? AND strategy = ? AND market = ?")
+        .bind(symbol, strategy, market).first();
+      if (row && row.qty > 0) {
+        prior = { qty: row.qty, avg: row.avg_price, opened_ts: row.opened_ts, meta: row.meta ? JSON.parse(row.meta) : {} };
       }
-    });
+    } catch (e) { prior = null; }
+    if (prior && prior.qty > 0) {
+      const newQty = prior.qty + qty;
+      const newAvg = ((prior.avg * prior.qty) + (price * qty)) / newQty;
+      const pmeta = prior.meta || {};
+      pmeta.feeRemaining = (typeof pmeta.feeRemaining === "number" ? pmeta.feeRemaining : (pmeta.feePaid || 0)) + fee;
+      pmeta.feePaid = (pmeta.feePaid || 0) + fee;
+      pmeta.originalQty = (pmeta.originalQty || prior.qty) + qty;
+      pmeta.stopPrice = stopPrice;
+      if (pmeta.peakPrice == null || price > pmeta.peakPrice) pmeta.peakPrice = price;
+      posToSave = { qty: newQty, avg: newAvg, opened_ts: prior.opened_ts || Date.now(), meta: pmeta };
+    } else {
+      posToSave = {
+        qty: qty, avg: price, opened_ts: Date.now(),
+        meta: {
+          strategy: strategy, feePaid: fee, feeRemaining: fee,
+          atrAtEntry: dailyAtr, stopPrice: stopPrice, peakPrice: price,
+          signal: signal.name, signalMembers: signal.members || [signal.name],
+          tp1Done: false, originalQty: qty
+        }
+      };
+    }
+    await savePosition(DB, market, symbol, strategy, posToSave);
   } catch (e) {
     await log(DB, "ERROR", symbol, "BUY savePosition fail: " + e.message);
     return cash;
   }
 
   cash[market] -= total;
+  // [V9.1] 거래 기록 + 현금을 한 묶음으로 즉시 저장 — 사이클이 중간에 죽어도
+  //   "거래는 됐는데 현금 미반영"으로 돈이 복제되는 정합성 붕괴를 막는다.
   await recordTrade(DB, {
     ts: Date.now(), market: market, symbol: symbol, side: "BUY",
     qty: qty, price: price,
     reason: "[" + strategy.toUpperCase() + "] " + signal.name + " " + signal.detail
   });
+  try { await setState(DB, "cash", cash); } catch (e) {}
   const stopPctRel = ((stopPrice - price) / price * 100).toFixed(1);
   await log(DB, "TRADE", symbol, "BUY [" + strategy + "] x" + qty + " @" + price.toFixed(2) + " " + signal.name + " " + signal.detail + " stop=" + stopPrice.toFixed(2) + "(" + stopPctRel + "%)");
   return cash;
@@ -4473,17 +4559,32 @@ function getPositionSizeRatio(cfg, strategy, regimeName) {
 
 async function executeSell(DB, market, symbol, pos, sellQty, price, reason, cfg, cash) {
   const strategy = pos.strategy || (pos.meta && pos.meta.strategy) || "swing";
+  // [V9.1] 입력 검증 — 비정상 가격/수량/포지션 방어
+  if (!(typeof price === "number" && isFinite(price) && price > 0)) {
+    await log(DB, "WARN", symbol, "SELL aborted: bad price " + price); return { cash: cash, pnlPct: 0 };
+  }
+  if (!(typeof pos.qty === "number" && pos.qty > 0)) {
+    await log(DB, "WARN", symbol, "SELL aborted: bad pos.qty"); return { cash: cash, pnlPct: 0 };
+  }
+  sellQty = Math.floor(sellQty);
+  if (sellQty <= 0) { return { cash: cash, pnlPct: 0 }; }
+  if (sellQty > pos.qty) sellQty = pos.qty;   // 보유 초과 매도 방지
+
   const feeRate = market === "us" ? cfg.feeUS : cfg.feeKR;
   const gross = price * sellQty;
   const fee = gross * feeRate;
   const sellTax = market === "kr" ? gross * (cfg.krSellTax || 0) : 0;
   const proceeds = gross - fee - sellTax;
+  if (!(typeof cash[market] === "number" && isFinite(cash[market]))) {
+    await log(DB, "ERROR", symbol, "SELL aborted: cash state invalid"); return { cash: cash, pnlPct: 0 };
+  }
   cash[market] += proceeds;
 
   pos.meta = pos.meta || {};
   const feeRemaining = (typeof pos.meta.feeRemaining === "number")
     ? pos.meta.feeRemaining
     : (pos.meta.feePaid || 0);
+  // [V9.1] pos.qty>0은 위에서 보장 — 0나눗셈(NaN) 방어 완료
   const entryFeeForThisSell = feeRemaining * (sellQty / pos.qty);
   const costBasis = pos.avg * sellQty + entryFeeForThisSell;
   const pnl = proceeds - costBasis;
@@ -4499,10 +4600,12 @@ async function executeSell(DB, market, symbol, pos, sellQty, price, reason, cfg,
     pos.meta.feeRemaining = Math.max(0, feeRemaining - entryFeeForThisSell);
     await savePosition(DB, market, symbol, strategy, pos);
   } else {
-    await deletePosition(DB, symbol, strategy);
+    await deletePosition(DB, symbol, strategy, market);
   }
 
+  // [V9.1] 거래 기록 + 현금 즉시 저장 (정합성)
   await recordTrade(DB, { ts: Date.now(), market: market, symbol: symbol, side: "SELL", qty: sellQty, price: price, pnl: pnl, pnl_pct: pnlPct, reason: enrichedReason });
+  try { await setState(DB, "cash", cash); } catch (e) {}
   const taxNote = market === "kr" ? " tax=" + sellTax.toFixed(2) : "";
   await log(DB, "TRADE", symbol, "SELL [" + strategy + "] x" + sellQty + " @" + price.toFixed(2) + " PnL " + pnlPct.toFixed(2) + "% (held " + heldMin + "min, " + reason + ")" + taxNote);
   return { cash: cash, pnlPct: pnlPct };
@@ -5971,8 +6074,10 @@ async function runTradingCycle(env) {
 
     // [V23] 가격 갱신은 거래와 분리 — 정규장 시간이면 휴장/거래윈도우와 무관하게 가격을 갱신한다.
     //   (기존엔 거래윈도우 닫히면 사이클 전체 return → 가격이 안 갱신되던 버그)
-    const usMarketHours = isMarketOpen("us");
-    const krMarketHours = isMarketOpen("kr");
+    // [V9.0] isMarketOpen → isQuoteRefreshWindow: KR은 야후 15분 지연이라 가격 갱신
+    //   종료를 15:45까지 늘려, 마지막 15분 실거래의 지연 종가가 quote에 반영되게 한다.
+    const usMarketHours = isQuoteRefreshWindow("us");
+    const krMarketHours = isQuoteRefreshWindow("kr");
 
     // 거래도 가격갱신도 둘 다 할 게 없으면 스킵
     if (!usCanTrade && !krCanTrade && !usMarketHours && !krMarketHours) {
@@ -6014,7 +6119,10 @@ async function runTradingCycle(env) {
 
     cfg = await autoTune(DB, cfg, regimes);
     const signalStats = await getState(DB, "signal_stats", {});
-    const cash = await getState(DB, "cash", { us: cfg.initialCashUS, kr: cfg.initialCashKR });
+    const cash = await getState(DB, "cash", { us: cfg.initialCashUS, kr: cfg.initialCashKR, cm: cfg.initialCashCM });
+    // [V9.1] executeBuy/Sell이 거래마다 cash 전체를 저장하므로, cm 키가 누락된 옛 상태를
+    //   읽었을 때 원자재 현금이 사라지지 않도록 보강.
+    if (typeof cash.cm !== "number") cash.cm = cfg.initialCashCM;
 
     let tried = 0, bought = 0, sold = 0, skipped = 0, fetchFail = 0;
 
@@ -6079,9 +6187,12 @@ async function runTradingCycle(env) {
       let qpRr = await getState(DB, qpRrKey, 0);
       if (typeof qpRr !== "number" || qpRr < 0) qpRr = 0;
       // [V16] v7 batch(crumb)가 작동하면 전 종목이 batch 호출 몇 번으로 채워진다.
-      //   폴백(chart 개별호출)은 v7 누락분에만 쓰되, 남은 예산의 대부분(85%)을 할당해
-      //   매분 최대한 많은 종목을 채운다. 라운드로빈 오프셋으로 누락분이 매분 순환된다.
-      const priceBudget = Math.max(1, Math.floor(fetchBudgetLeft() * 0.85));
+      //   폴백(chart 개별호출)은 v7 누락분에만 쓴다.
+      // [V9.0] 일봉 갱신 주기를 줄이면(미국20/한국15분) 매분 도는 일봉 종목이 늘어
+      //   일봉 fetch 몫이 커진다. v7이 죽어 가격 폴백이 예산을 다 먹으면 일봉이 굶으므로,
+      //   가격 폴백 비율을 85%→70%로 낮춰 일봉 라운드로빈 몫을 항상 30% 이상 남긴다.
+      //   (v7 정상 시엔 가격이 batch로 끝나 폴백 자체를 거의 안 쓰므로 영향 없음.)
+      const priceBudget = Math.max(1, Math.floor(fetchBudgetLeft() * 0.70));
       let batchQuotes = {};
       try {
         batchQuotes = await fetchBatchQuotes(tickers, {
@@ -6200,9 +6311,12 @@ async function runTradingCycle(env) {
       // --- (3) 평가 대상 fetched 구성 ---
       // 일봉 캐시가 살아있는 종목만 평가(거래). 가격은 batchQuotes에서, 일봉은 캐시/dailyMap에서.
       const fetched = [];
+      let priceAnomalyCount = 0;
       for (const symbol of tickers) {
         const bq = batchQuotes[symbol];
-        if (!bq || !bq.price) continue;
+        if (!bq) continue;
+        // [V9.1] 가격 정합성 — 0/음수/NaN/무한대는 거래 대상에서 제외(가격 표시는 별도).
+        if (!(typeof bq.price === "number" && isFinite(bq.price) && bq.price > 0)) continue;
         // 일봉: 이번에 로드된 것 우선, 없으면 기존 캐시 조회
         let daily = dailyMap[symbol];
         if (daily === undefined) {
@@ -6210,11 +6324,22 @@ async function runTradingCycle(env) {
         }
         // 일봉이 아직 없으면 평가 스킵(가격은 이미 UI에 저장됨)
         if (!daily || !daily.closes || daily.closes.length < 25) continue;
+        // [V9.1] 비정상 폭등/폭락값 방어 — 전일 종가 대비 ±60% 초과면 데이터 오류(분할
+        //   미반영/틱 오류)로 보고 거래 평가에서 제외. 가격 자체는 이미 UI에 저장됨.
+        const refClose = (typeof daily.closes[daily.closes.length - 1] === "number" && daily.closes[daily.closes.length - 1] > 0)
+          ? daily.closes[daily.closes.length - 1] : (bq.prevClose || bq.price);
+        if (refClose > 0) {
+          const devPct = Math.abs((bq.price - refClose) / refClose) * 100;
+          if (devPct > 60) { priceAnomalyCount++; continue; }
+        }
         fetched.push({
           symbol: symbol,
           intra: { symbol: symbol, price: bq.price, prevClose: bq.prevClose, closes: [] },
           daily: daily, intraOk: true, intraErr: null, dailyErr: null
         });
+      }
+      if (priceAnomalyCount > 0) {
+        await log(DB, "WARN", null, "[V9.1] price anomaly skipped[" + market + "]=" + priceAnomalyCount);
       }
       const prefetchMs = Date.now() - prefetchStart;
       await log(DB, "INFO", null, "prefetch[" + market + "] universe=" + tickers.length +
