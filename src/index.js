@@ -5357,11 +5357,18 @@ async function acquireCycleLock(DB, ttl) {
   const lockKey = "lock:cycle";
   const lockValue = JSON.stringify({ until: now + ttl, pid: now });
 
+  // [FIX V8.7] 워커가 사이클 도중 timeout/kill되면 finally가 실행되지 않아
+  //   락이 TTL까지 남고, 그 사이 cron이 계속 skip되어 "엔진 지연"으로 보임.
+  //   1) 정상 만료(until <= now) 락 정리 + 2) 비정상 stale 락(생성 후 5분 경과)도 강제 정리.
+  const STALE_MS = 5 * 60 * 1000;
+
   // 1) 만료된 락은 먼저 정리 (where 조건으로 atomic하게)
   try {
     await DB.prepare(
-      "DELETE FROM state WHERE k = ? AND CAST(json_extract(v, '$.until') AS INTEGER) <= ?"
-    ).bind(lockKey, now).run();
+      "DELETE FROM state WHERE k = ? AND (" +
+      "CAST(json_extract(v, '$.until') AS INTEGER) <= ? OR " +
+      "CAST(json_extract(v, '$.pid') AS INTEGER) <= ?)"
+    ).bind(lockKey, now, now - STALE_MS).run();
   } catch (e) {
     // json_extract 미지원 환경 fallback — 만료 검사 없이 진행
     try {
@@ -5369,7 +5376,7 @@ async function acquireCycleLock(DB, ttl) {
       if (row) {
         let parsed = null;
         try { parsed = JSON.parse(row.v); } catch (e2) {}
-        if (parsed && parsed.until && parsed.until <= now) {
+        if (parsed && ((parsed.until && parsed.until <= now) || (parsed.pid && parsed.pid <= now - STALE_MS))) {
           await DB.prepare("DELETE FROM state WHERE k = ?").bind(lockKey).run();
         }
       }
@@ -5584,7 +5591,10 @@ async function saveQuoteCM(DB, symbol, q) {
 async function refreshCommodityQuotes(env) {
   const DB = env.DB;
   resetFetchBudget(30);
-  const syms = COMMODITY_SYMBOLS.map(function(c){ return c.symbol; });
+  // [FIX V8.7] COMMODITY_SYMBOLS는 이미 심볼 문자열 배열인데 .map(c=>c.symbol)을
+  //   다시 호출해 [undefined,...]가 되던 치명적 버그. 이 때문에 시세가 전혀 갱신되지
+  //   않아 CUR=AVG로 고정 → PnL이 항상 +0.00%로 표시됐음. 그대로 사용하도록 수정.
+  const syms = COMMODITY_SYMBOLS;
   const nowTs = Date.now();
   const stmts = [];
   let okCount = 0;
@@ -7103,6 +7113,10 @@ export default {
     // [FX] 06:30 KST 정각에만 환율 갱신 (조회 전용).
     if (isFxTriggerTime()) {
       ctx.waitUntil(runFxUpdate(env));
+    }
+    // [FIX V8.7] 경제지표 자동 갱신 트리거가 누락돼 있어 추가 (매일 07:00 KST).
+    if (isMacroTriggerTime()) {
+      ctx.waitUntil(runMacroUpdate(env));
     }
   }
 };
