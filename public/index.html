@@ -1225,13 +1225,37 @@ button.btn.loading::after { content: "조회 중…"; position: absolute; left: 
 
   function renderMarketStatus() {
     var status = getMarketStatus();
+    // [FIX V8.7] 서버가 보낸 marketStatus(휴장일 반영)를 우선 적용.
+    //   클라이언트 getMarketStatus()는 시간만 계산해 공휴일을 모르므로, 휴장일에도
+    //   "정규장 OPEN"으로 잘못 표시되던 문제. 서버 판정으로 덮어쓴다.
+    var srv = window.__serverMarketStatus || null;
+    var usHoliday = false, krHoliday = false;
+    if (srv) {
+      // 서버 marketStatus.us === false 인데 시간상 열려있으면 = 휴장일
+      if (srv.us === false && status.us) usHoliday = true;
+      if (srv.kr === false && status.kr) krHoliday = true;
+      // 서버가 닫혔다고 하면 클라이언트 상태도 닫힘으로 동기화
+      if (srv.us === false) { status.us = false; status.usTrading = false; }
+      if (srv.kr === false) { status.kr = false; status.krTrading = false; }
+    }
     var usEl = $('usMarketStatus'), krEl = $('krMarketStatus');
     // US: 정규장 + DST 표시
     var dstLabel = status.usEtOffset === -4 ? ' (EDT)' : ' (EST)';
-    usEl.textContent = status.us ? ('🟢 정규장 OPEN' + dstLabel) : ('🔴 장 종료' + dstLabel);
-    usEl.className = status.us ? 'market-status-open' : 'market-status-closed';
-    // KR: 4가지 상태 (정규장 / 엔진 대기 / 엔진 청산 / 종료)
+    if (usHoliday) {
+      usEl.textContent = '🔴 휴장일' + dstLabel;
+      usEl.className = 'market-status-closed';
+    } else {
+      usEl.textContent = status.us ? ('🟢 정규장 OPEN' + dstLabel) : ('🔴 장 종료' + dstLabel);
+      usEl.className = status.us ? 'market-status-open' : 'market-status-closed';
+    }
+    // KR: 휴장일 / 정규장 / 엔진 대기 / 엔진 청산 / 종료
     var krText;
+    if (krHoliday) {
+      krText = '🔴 휴장일';
+      krEl.textContent = krText;
+      krEl.className = 'market-status-closed';
+      return;
+    }
     if (status.kr && status.krTrading) {
       krText = '🟢 정규장 OPEN';
     } else if (status.kr && !status.krTrading) {
@@ -2589,6 +2613,9 @@ button.btn.loading::after { content: "조회 중…"; position: absolute; left: 
     Promise.all([api('/api/state'), api('/api/trades?limit=50'), api('/api/trades?limit=10000')])
       .then(function(r){
         var state = r[0], trades = r[1], allTrades = r[2];
+        // [FIX V8.7] 서버 marketStatus(휴장일 반영) 저장 후 배너 재렌더.
+        window.__serverMarketStatus = state.marketStatus || null;
+        renderMarketStatus();
         var quotes = state.watchlist || [];
         var indices = state.indices || [];
         currentCfg = state.cfg;
