@@ -5587,37 +5587,38 @@ async function refreshCommodityQuotes(env) {
   const syms = COMMODITY_SYMBOLS.map(function(c){ return c.symbol; });
   const nowTs = Date.now();
   const stmts = [];
-  // =F 선물 심볼은 v7 batch보다 chart 엔드포인트가 안정적 → 개별 chart로 현재가 취득
-  const CB = 8;
-  for (let i = 0; i < syms.length; i += CB) {
-    if (fetchBudgetLeft() <= 0) break;
-    const slice = syms.slice(i, i + CB);
-    const results = await Promise.all(slice.map(async function(sym){
+  let okCount = 0;
+  // 1) v7 batch 시도 (=F 심볼도 v7 quote 지원, chart보다 안정적)
+  let bq = {};
+  try { bq = await fetchBatchQuotes(syms, { maxFallback: 0, DB: DB }); } catch (e) {}
+  // 2) v7로 못 받은 심볼만 chart 폴백
+  for (const sym of syms) {
+    let price = null, prevClose = null, dayPct = null;
+    if (bq[sym] && bq[sym].price != null) {
+      price = bq[sym].price; prevClose = bq[sym].prevClose; dayPct = bq[sym].dayPct;
+    } else if (fetchBudgetLeft() > 0) {
       try {
         const d = await fetchDailyFull(sym);
         if (d && typeof d.price === "number" && d.price > 0) {
-          const prevClose = d.prevClose || d.price;
-          const dayPct = prevClose ? ((d.price - prevClose) / prevClose) * 100 : 0;
-          return { sym: sym, price: d.price, prevClose: prevClose, dayPct: dayPct };
+          price = d.price; prevClose = d.prevClose || d.price;
+          dayPct = prevClose ? ((price - prevClose) / prevClose) * 100 : 0;
         }
       } catch (e) {}
-      return null;
-    }));
-    for (const r of results) {
-      if (!r) continue;
-      const fresh = { market: "cm", price: r.price, prevClose: r.prevClose, dayPct: r.dayPct, ts: nowTs };
-      stmts.push(
-        DB.prepare(
-          "INSERT INTO state (k, v, updated_ts) VALUES (?1, ?2, ?6) " +
-          "ON CONFLICT(k) DO UPDATE SET v = json_set(v, '$.price', ?3, '$.prevClose', ?4, '$.dayPct', ?5, '$.ts', ?6), updated_ts = ?6"
-        ).bind("quote:" + r.sym, JSON.stringify(fresh), r.price, r.prevClose, r.dayPct, nowTs)
-      );
     }
+    if (price == null) continue;
+    okCount++;
+    const fresh = { market: "cm", price: price, prevClose: prevClose, dayPct: dayPct, ts: nowTs };
+    stmts.push(
+      DB.prepare(
+        "INSERT INTO state (k, v, updated_ts) VALUES (?1, ?2, ?6) " +
+        "ON CONFLICT(k) DO UPDATE SET v = json_set(v, '$.price', ?3, '$.prevClose', ?4, '$.dayPct', ?5, '$.ts', ?6), updated_ts = ?6"
+      ).bind("quote:" + sym, JSON.stringify(fresh), price, prevClose, dayPct, nowTs)
+    );
   }
   if (stmts.length > 0) {
     try { await DB.batch(stmts); } catch (e) { await log(DB, "WARN", null, "[CM] quote write fail: " + e.message); }
   }
-  await log(DB, "INFO", null, "[CM] refreshCommodityQuotes: " + stmts.length + "/" + syms.length + " updated");
+  await log(DB, "INFO", null, "[CM] refreshCommodityQuotes: " + okCount + "/" + syms.length + " updated");
 }
 
 async function runCommodityCycle(env, forceTrade) {
@@ -6579,7 +6580,10 @@ async function handleRequest(request, env) {
           krBySymbol: posKR.bySymbol
         },
         lastTick: lastTick, cfg: cfg,
-        marketStatus: { us: isMarketOpen("us"), kr: isMarketOpen("kr") },
+        marketStatus: {
+          us: isMarketOpen("us") && (await isMarketTradingDay(env.DB, "us")) !== false,
+          kr: isMarketOpen("kr") && (await isMarketTradingDay(env.DB, "kr")) !== false
+        },
         tradingWindow: { us: isTradingWindow("us"), kr: isTradingWindow("kr") },
         llmDaily: {
           us: await getState(env.DB, "llm_daily:us", null),
