@@ -5531,6 +5531,32 @@ async function saveQuoteCM(DB, symbol, q) {
   });
 }
 
+// [V20] 원자재 가격만 매분 갱신 (거래는 16:00에만). 배치 quote로 12종을 한 번에.
+//   기존 quote의 일봉 지표(rsi/ma/atr 등)는 json_set으로 보존.
+async function refreshCommodityQuotes(env) {
+  const DB = env.DB;
+  resetFetchBudget(20);
+  const syms = COMMODITY_SYMBOLS.map(function(c){ return c.symbol; });
+  let bq = {};
+  try { bq = await fetchBatchQuotes(syms, { maxFallback: syms.length, DB: DB }); } catch (e) { return; }
+  const nowTs = Date.now();
+  const stmts = [];
+  for (const sym of syms) {
+    const q = bq[sym];
+    if (!q || q.price == null) continue;
+    const fresh = { market: "cm", price: q.price, prevClose: q.prevClose, dayPct: q.dayPct, ts: nowTs };
+    stmts.push(
+      DB.prepare(
+        "INSERT INTO state (k, v, updated_ts) VALUES (?1, ?2, ?6) " +
+        "ON CONFLICT(k) DO UPDATE SET v = json_set(v, '$.price', ?3, '$.prevClose', ?4, '$.dayPct', ?5, '$.ts', ?6), updated_ts = ?6"
+      ).bind("quote:" + sym, JSON.stringify(fresh), q.price, q.prevClose, q.dayPct, nowTs)
+    );
+  }
+  if (stmts.length > 0) {
+    try { await DB.batch(stmts); } catch (e) {}
+  }
+}
+
 async function runCommodityCycle(env, forceTrade) {
   const DB = env.DB;
   resetFetchBudget(45);  // [V11] subrequest 예산 (원자재 ~12종이라 여유롭지만 명시적 가드)
@@ -6978,9 +7004,10 @@ export default {
   async fetch(request, env, ctx) { return handleRequest(request, env); },
   async scheduled(event, env, ctx) {
     ctx.waitUntil(runTradingCycle(env));
-    // [COMMODITY] 16:00 KST 정각에만 원자재 사이클 실행 (cron 매분 호출되지만 트리거 시각에만 동작).
-    //   이렇게 cron에서 직접 분기해야 주식 양시장 마감(16:00 KST엔 둘 다 닫힘) 시
-    //   runTradingCycle이 조기 return 해도 원자재는 정상 실행됨.
+    // [V20] 원자재 가격은 매분 갱신 (거래는 아래 16:00 트리거에서만).
+    //   기존엔 16:00 하루 1회만 갱신돼 CUR=AVG로 고정 → PnL이 항상 0이던 문제 수정.
+    ctx.waitUntil(refreshCommodityQuotes(env));
+    // [COMMODITY] 16:00 KST 정각에만 원자재 거래 사이클 실행.
     if (isCommodityTriggerTime()) {
       ctx.waitUntil(runCommodityCycle(env));
     }
