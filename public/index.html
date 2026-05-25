@@ -452,6 +452,8 @@ button.btn.loading::after { content: "조회 중…"; position: absolute; left: 
 .positions-collapsed .table-wrap { max-height: calc(5 * 38px); overflow: hidden; }
 .positions-collapsed.expanded .table-wrap { max-height: none; }
 .watchlist-toggle-btn { font-size: 10px; color: var(--amber); font-weight: bold; padding: 3px 8px; background: var(--panel); border: 1px solid var(--border); border-radius: 3px; cursor: pointer; font-family: inherit; letter-spacing: 1px; }
+.wl-viewmode-btn { font-size: 10px; color: var(--dim); font-weight: bold; padding: 3px 8px; background: var(--panel); border: 1px solid var(--border); border-radius: 3px; cursor: pointer; font-family: inherit; letter-spacing: 0.5px; }
+.wl-viewmode-btn.active { color: #58a6ff; border-color: #58a6ff; background: rgba(88,166,255,0.12); }
 .watchlist-section { padding: 4px 12px 8px; font-size: 10px; color: var(--amber); font-weight: bold; letter-spacing: 1px; background: rgba(255,215,0,0.05); border-bottom: 1px solid var(--border); }
 .watchlist-section.fav { color: var(--amber); }
 .watchlist-section.all { color: var(--dim); }
@@ -684,7 +686,11 @@ button.btn.loading::after { content: "조회 중…"; position: absolute; left: 
       <div class="panel">
         <div class="panel-header">
           <div class="panel-title">[US] WATCHLIST <span class="wl-count" id="usCount"></span></div>
-          <button type="button" class="watchlist-toggle-btn" id="btnToggleUS">펼치기</button>
+          <div style="display:flex;gap:6px;align-items:center;">
+            <button type="button" class="wl-viewmode-btn active" id="viewMcapUS" data-market="us" data-mode="mcap">시총순</button>
+            <button type="button" class="wl-viewmode-btn" id="viewHeldUS" data-market="us" data-mode="held">보유종목</button>
+            <button type="button" class="watchlist-toggle-btn" id="btnToggleUS">펼치기</button>
+          </div>
         </div>
         <div class="wl-search-wrap">
           <input type="text" class="wl-search" id="searchUS" placeholder="🔍 종목명 또는 심볼 검색 (예: 애플, AAPL)" autocomplete="off">
@@ -694,7 +700,11 @@ button.btn.loading::after { content: "조회 중…"; position: absolute; left: 
       <div class="panel">
         <div class="panel-header">
           <div class="panel-title">[KR] WATCHLIST <span class="wl-count" id="krCount"></span></div>
-          <button type="button" class="watchlist-toggle-btn" id="btnToggleKR">펼치기</button>
+          <div style="display:flex;gap:6px;align-items:center;">
+            <button type="button" class="wl-viewmode-btn active" id="viewMcapKR" data-market="kr" data-mode="mcap">시총순</button>
+            <button type="button" class="wl-viewmode-btn" id="viewHeldKR" data-market="kr" data-mode="held">보유종목</button>
+            <button type="button" class="watchlist-toggle-btn" id="btnToggleKR">펼치기</button>
+          </div>
         </div>
         <div class="wl-search-wrap">
           <input type="text" class="wl-search" id="searchKR" placeholder="🔍 종목명 또는 코드 검색 (예: 삼성전자, 005930)" autocomplete="off">
@@ -1129,6 +1139,8 @@ button.btn.loading::after { content: "조회 중…"; position: absolute; left: 
   var usShowCount = 30;   // 시총순 점진 표시 개수
   var krShowCount = 30;
   var heldMap = { us: {}, kr: {} };  // symbol -> {pnlPct, qty} (보유종목 등락 강조용)
+  var usViewMode = 'mcap';  // [V19] 'mcap'(시총순) | 'held'(보유종목)
+  var krViewMode = 'mcap';
 
   var INDEX_NAMES = {
     '^IXIC': 'NASDAQ', '^DJI': 'DOW JONES', '^GSPC': 'S&P 500',
@@ -1692,18 +1704,27 @@ button.btn.loading::after { content: "조회 중…"; position: absolute; left: 
       return;
     }
 
-    // 일반 모드: 보유 > 즐겨찾기 > 시총순 전체
+    // 일반 모드: 뷰모드 — 'held'면 보유만, 'mcap'이면 즐겨찾기+시총순(보유 위 고정 안 함)
+    var viewMode = market === 'us' ? usViewMode : krViewMode;
     var heldSyms = heldMap[market] || {};
-    var heldList = sorted.filter(function(q){ return heldSyms[q.symbol]; });
-    var favList = sorted.filter(function(q){ return !heldSyms[q.symbol] && favorites.indexOf(q.symbol) >= 0; });
-    var restList = sorted.filter(function(q){ return !heldSyms[q.symbol] && favorites.indexOf(q.symbol) < 0; });
+
+    if (viewMode === 'held') {
+      var heldOnly = sorted.filter(function(q){ return heldSyms[q.symbol]; });
+      var h2 = '<div class="watchlist-section held">\u25c9 \ubcf4\uc720 \uc885\ubaa9 ('+heldOnly.length+')</div>';
+      if (heldOnly.length === 0) {
+        h2 += '<div class="empty">\ubcf4\uc720 \uc911\uc778 \uc885\ubaa9\uc774 \uc5c6\uc2b5\ub2c8\ub2e4</div>';
+      } else {
+        h2 += '<div class="watchlist">'+heldOnly.map(function(q){return buildWatchlistCard(q, market);}).join('')+'</div>';
+      }
+      container.innerHTML = h2;
+      bindFavButtons(container);
+      return;
+    }
+
+    var favList = sorted.filter(function(q){ return favorites.indexOf(q.symbol) >= 0; });
+    var restList = sorted.filter(function(q){ return favorites.indexOf(q.symbol) < 0; });
 
     var html = '';
-    // 보유 종목 (항상 전부 표시)
-    if (heldList.length > 0) {
-      html += '<div class="watchlist-section held">\u25c9 \ubcf4\uc720 \uc885\ubaa9 ('+heldList.length+')</div>';
-      html += '<div class="watchlist">'+heldList.map(function(q){return buildWatchlistCard(q, market);}).join('')+'</div>';
-    }
     // 즐겨찾기 (항상 전부 표시)
     if (favList.length > 0) {
       html += '<div class="watchlist-section fav">\u2605 \uc990\uaca8\ucc3e\uae30 ('+favList.length+')</div>';
@@ -3026,6 +3047,25 @@ button.btn.loading::after { content: "조회 중…"; position: absolute; left: 
   }
   bindSearch('searchUS', 'us');
   bindSearch('searchKR', 'kr');
+
+  // [V19] 시총순/보유종목 뷰 토글
+  function bindViewMode(btnId, market, mode) {
+    var el = $(btnId);
+    if (!el) return;
+    el.addEventListener('click', function(){
+      if (market === 'us') usViewMode = mode; else krViewMode = mode;
+      // 버튼 active 상태 갱신
+      var mc = $(market === 'us' ? 'viewMcapUS' : 'viewMcapKR');
+      var hd = $(market === 'us' ? 'viewHeldUS' : 'viewHeldKR');
+      if (mc) mc.classList.toggle('active', mode === 'mcap');
+      if (hd) hd.classList.toggle('active', mode === 'held');
+      renderWatchlist(window.__lastQuotesArr || []);
+    });
+  }
+  bindViewMode('viewMcapUS', 'us', 'mcap');
+  bindViewMode('viewHeldUS', 'us', 'held');
+  bindViewMode('viewMcapKR', 'kr', 'mcap');
+  bindViewMode('viewHeldKR', 'kr', 'held');
 
   // 모달 배경 클릭으로 닫기
   $('logsModal').addEventListener('click', function(e){
