@@ -2354,7 +2354,10 @@ function getUSEt(now) {
   if (etTotalMin < 0) { etTotalMin += 24 * 60; dayShift = -1; }
   if (etTotalMin >= 24 * 60) { etTotalMin -= 24 * 60; dayShift = 1; }
   let etDay = (now.getUTCDay() + dayShift + 7) % 7;
-  return { totalMin: etTotalMin, day: etDay, offset: offset };
+  // [V22] 현지 날짜 (ET = UTC + offset시간)
+  const etDate = new Date(now.getTime() + offset * 60 * 60 * 1000);
+  return { totalMin: etTotalMin, day: etDay, offset: offset,
+           year: etDate.getUTCFullYear(), month: etDate.getUTCMonth() + 1, date: etDate.getUTCDate() };
 }
 
 // [V8.6] KST 분 단위 시각 + 요일
@@ -2364,12 +2367,57 @@ function getKST(now) {
   let dayShift = 0;
   if (kstTotalMin >= 24 * 60) { kstTotalMin -= 24 * 60; dayShift = 1; }
   let kstDay = (now.getUTCDay() + dayShift) % 7;
-  return { totalMin: kstTotalMin, day: kstDay };
+  // [V22] 현지 날짜 (KST = UTC+9, DST 없음)
+  const kstDate = new Date(now.getTime() + 9 * 60 * 60 * 1000);
+  return { totalMin: kstTotalMin, day: kstDay,
+           year: kstDate.getUTCFullYear(), month: kstDate.getUTCMonth() + 1, date: kstDate.getUTCDate() };
 }
 
 // 실제 거래소 정규장 시간 — 시세 자체가 생성되는 시간
 // US: 09:30~16:00 ET (DST 자동)
 // KR: 09:00~15:30 KST
+// [V22] 휴장일 자동 판정 (A+C 조합) — 하드코딩 공휴일 대신 지수 데이터 신선도로 판정.
+//   A: 장 시작 전/거래 전, 지수(KOSPI/나스닥)의 마지막 거래 시각이 "오늘(현지)"이 아니면 휴장.
+//   판정 결과는 D1에 당일 캐싱(market_open:YYYY-MM-DD)해 반복 fetch 방지.
+//   C(거래 직전 신선도 재확인)는 거래 루프에서 가격 ts로 별도 처리.
+function localDateStr(market) {
+  const now = new Date();
+  const p = market === "us" ? getUSEt(now) : getKST(now);
+  if (p.year == null || p.month == null || p.date == null) return null;
+  return p.year + "-" + String(p.month).padStart(2, "0") + "-" + String(p.date).padStart(2, "0");
+}
+
+// 지수의 마지막 거래시각(epoch초)이 오늘 현지 날짜와 같은지로 개장 판정.
+//   캐시 우선, 없으면 지수 fetch. 반환: true(개장) / false(휴장) / null(판정불가→보수적으로 거래허용 안 함)
+async function isMarketTradingDay(DB, market) {
+  const today = localDateStr(market);
+  if (!today) return null;
+  const cacheKey = "market_open:" + market + ":" + today;
+  try {
+    const cached = await getState(DB, cacheKey, null);
+    if (cached && typeof cached.open === "boolean") return cached.open;
+  } catch (e) {}
+  // 대표 지수로 판정
+  const idxSym = market === "us" ? "^GSPC" : "^KS11";
+  let open = null;
+  try {
+    const j = await yahooFetch("https://query1.finance.yahoo.com/v8/finance/chart/" + encodeURIComponent(idxSym) + "?interval=1d&range=5d");
+    const result = j && j.chart && j.chart.result && j.chart.result[0];
+    const meta = result && result.meta;
+    if (meta && typeof meta.regularMarketTime === "number") {
+      // 마지막 거래시각을 현지 날짜로 변환해 today와 비교
+      const lastDate = new Date(meta.regularMarketTime * 1000);
+      const lp = market === "us" ? getUSEt(lastDate) : getKST(lastDate);
+      const lastStr = lp.year + "-" + String(lp.month).padStart(2, "0") + "-" + String(lp.date).padStart(2, "0");
+      open = (lastStr === today);
+    }
+  } catch (e) { open = null; }
+  if (open !== null) {
+    try { await setState(DB, cacheKey, { open: open, ts: Date.now() }); } catch (e) {}
+  }
+  return open;
+}
+
 function isMarketOpen(market) {
   const now = new Date();
   if (market === "us") {
@@ -5535,22 +5583,36 @@ async function saveQuoteCM(DB, symbol, q) {
 //   기존 quote의 일봉 지표(rsi/ma/atr 등)는 json_set으로 보존.
 async function refreshCommodityQuotes(env) {
   const DB = env.DB;
-  resetFetchBudget(20);
+  resetFetchBudget(30);
   const syms = COMMODITY_SYMBOLS.map(function(c){ return c.symbol; });
-  let bq = {};
-  try { bq = await fetchBatchQuotes(syms, { maxFallback: syms.length, DB: DB }); } catch (e) { return; }
   const nowTs = Date.now();
   const stmts = [];
-  for (const sym of syms) {
-    const q = bq[sym];
-    if (!q || q.price == null) continue;
-    const fresh = { market: "cm", price: q.price, prevClose: q.prevClose, dayPct: q.dayPct, ts: nowTs };
-    stmts.push(
-      DB.prepare(
-        "INSERT INTO state (k, v, updated_ts) VALUES (?1, ?2, ?6) " +
-        "ON CONFLICT(k) DO UPDATE SET v = json_set(v, '$.price', ?3, '$.prevClose', ?4, '$.dayPct', ?5, '$.ts', ?6), updated_ts = ?6"
-      ).bind("quote:" + sym, JSON.stringify(fresh), q.price, q.prevClose, q.dayPct, nowTs)
-    );
+  // =F 선물 심볼은 v7 batch보다 chart 엔드포인트가 안정적 → 개별 chart로 현재가 취득
+  const CB = 8;
+  for (let i = 0; i < syms.length; i += CB) {
+    if (fetchBudgetLeft() <= 0) break;
+    const slice = syms.slice(i, i + CB);
+    const results = await Promise.all(slice.map(async function(sym){
+      try {
+        const d = await fetchDailyFull(sym);
+        if (d && typeof d.price === "number" && d.price > 0) {
+          const prevClose = d.prevClose || d.price;
+          const dayPct = prevClose ? ((d.price - prevClose) / prevClose) * 100 : 0;
+          return { sym: sym, price: d.price, prevClose: prevClose, dayPct: dayPct };
+        }
+      } catch (e) {}
+      return null;
+    }));
+    for (const r of results) {
+      if (!r) continue;
+      const fresh = { market: "cm", price: r.price, prevClose: r.prevClose, dayPct: r.dayPct, ts: nowTs };
+      stmts.push(
+        DB.prepare(
+          "INSERT INTO state (k, v, updated_ts) VALUES (?1, ?2, ?6) " +
+          "ON CONFLICT(k) DO UPDATE SET v = json_set(v, '$.price', ?3, '$.prevClose', ?4, '$.dayPct', ?5, '$.ts', ?6), updated_ts = ?6"
+        ).bind("quote:" + r.sym, JSON.stringify(fresh), r.price, r.prevClose, r.dayPct, nowTs)
+      );
+    }
   }
   if (stmts.length > 0) {
     try { await DB.batch(stmts); } catch (e) {}
@@ -5770,8 +5832,19 @@ async function runTradingCycle(env) {
     }
 
     // [V8.6] 거래 윈도우 기준 — KR은 야후 15분 지연 보정해서 09:15~15:45
-    const usOpen = isTradingWindow("us");
-    const krOpen = isTradingWindow("kr");
+    let usOpen = isTradingWindow("us");
+    let krOpen = isTradingWindow("kr");
+
+    // [V22] 휴장일 자동 판정(A) — 시간상 열려있어도 지수 신선도로 오늘 개장 여부 확인.
+    //   지수 마지막 거래일이 오늘이 아니면 휴장 → 거래 스킵. (공휴일/임시휴장 자동 대응)
+    if (usOpen) {
+      const usTradeDay = await isMarketTradingDay(DB, "us");
+      if (usTradeDay === false) { usOpen = false; await log(DB, "CLOSED", null, "[V22] US 휴장일 감지 — 거래 스킵"); }
+    }
+    if (krOpen) {
+      const krTradeDay = await isMarketTradingDay(DB, "kr");
+      if (krTradeDay === false) { krOpen = false; await log(DB, "CLOSED", null, "[V22] KR 휴장일 감지 — 거래 스킵"); }
+    }
 
     // [V8.1.1] 양 시장 거래 윈도우 둘 다 닫혔으면 사이클 전체 스킵
     if (!usOpen && !krOpen) {
