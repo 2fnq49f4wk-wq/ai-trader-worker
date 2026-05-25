@@ -6756,6 +6756,21 @@ async function handleRequest(request, env) {
       await setState(env.DB, "cfg", current);
       return Response.json({ ok: true, usTickers: DEFAULT_US, krTickers: DEFAULT_KR }, { headers: cors });
     }
+    // [V8.8] 원자재 전용 초기화 — cm 포지션/거래만 삭제하고 cm 현금만 초기금액으로 복원.
+    //   US/KR 자산·거래·로그는 일절 건드리지 않는다. (원자재 패널의 RESET 버튼용)
+    if (path === "/api/reset_commodities" && request.method === "POST") {
+      await ensureSchema(env.DB);
+      const cfg = migrateCfgToMarkets(Object.assign({}, DEFAULT_CFG, await getState(env.DB, "cfg", {})));
+      // cm 포지션/거래만 삭제
+      await env.DB.prepare("DELETE FROM positions WHERE market = ?").bind("cm").run();
+      await env.DB.prepare("DELETE FROM trades WHERE market = ?").bind("cm").run();
+      // cm 현금만 초기금액으로 복원 (us/kr는 그대로 보존)
+      const cash = await getState(env.DB, "cash", { us: cfg.initialCashUS, kr: cfg.initialCashKR, cm: cfg.initialCashCM });
+      cash.cm = cfg.initialCashCM;
+      await setState(env.DB, "cash", cash);
+      await log(env.DB, "INFO", null, "[CM] RESET — 원자재 포지션/거래 초기화, cm현금=" + cfg.initialCashCM);
+      return Response.json({ ok: true, cash: { cm: cfg.initialCashCM } }, { headers: cors });
+    }
     if (path === "/api/cash/add" && request.method === "POST") {
       // 기존 cash에 금액 추가/차감 (포지션, 거래 기록 보존)
       // body: { us?: number, kr?: number }  — 양수=입금, 음수=출금
