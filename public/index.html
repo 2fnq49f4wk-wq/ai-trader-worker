@@ -719,6 +719,7 @@ button.btn.loading::after { content: "조회 중…"; position: absolute; left: 
         <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;">
           <span id="cmTradeInfo" style="font-size:10px;color:var(--dim);letter-spacing:0.5px;">거래: 매일 16:00 KST</span>
           <button type="button" id="btnRunCM" style="font-size:10px;color:#fff;font-weight:bold;padding:5px 10px;background:#f0883e;border:none;border-radius:4px;cursor:pointer;letter-spacing:0.5px;">▶ 지금 실행</button>
+          <button type="button" id="btnResetCM" style="font-size:10px;color:#f85149;font-weight:bold;padding:5px 10px;background:transparent;border:1px solid #f85149;border-radius:4px;cursor:pointer;letter-spacing:0.5px;">↺ 원자재 RESET</button>
         </div>
       </div>
       <div class="summary-grid" style="border-bottom:1px solid var(--border);">
@@ -1665,6 +1666,22 @@ button.btn.loading::after { content: "조회 중…"; position: absolute; left: 
       .then(function(){ toast('원자재 사이클 실행 완료'); return loadCommodities(); })
       ['catch'](function(e){ toast('원자재 실행 실패: '+e.message); })
       .then(function(){ btn.disabled = false; btn.textContent = orig; });
+  }
+
+  // [V8.8] 원자재 전용 초기화 — cm 포지션/거래만 삭제, cm 현금만 복원. US/KR 자산은 보존.
+  function resetCommodities() {
+    if (!confirm('원자재(COMMODITIES) 포지션과 거래 기록만 초기화하고 원자재 현금을 초기금액으로 되돌립니다.\n(US/KR 주식 자산·거래는 그대로 유지됩니다.)\n\n계속하시겠습니까?')) return;
+    var btn = $('btnResetCM');
+    var orig = btn ? btn.textContent : '';
+    if (btn) { btn.disabled = true; btn.textContent = '초기화 중...'; }
+    fetch('/api/reset_commodities', { method: 'POST' }).then(function(r){ return r.json(); })
+      .then(function(res){
+        if (res && res.ok) toast('원자재 초기화 완료');
+        else toast('원자재 초기화 실패');
+        return loadCommodities();
+      })
+      ['catch'](function(e){ toast('원자재 초기화 실패: '+e.message); })
+      .then(function(){ if (btn) { btn.disabled = false; btn.textContent = orig; } });
   }
 
   // [V10] 종목 표시명 — 백엔드 NAME_MAP(q.name) 우선, 없으면 로컬 맵 fallback
@@ -3052,6 +3069,8 @@ button.btn.loading::after { content: "조회 중…"; position: absolute; left: 
   $('btnDownloadAll').addEventListener('click', function(){ downloadTradesCSV(10000, 'all_trades'); });
   var _btnRunCM = $('btnRunCM');
   if (_btnRunCM) _btnRunCM.addEventListener('click', runCommoditiesNow);
+  var _btnResetCM = $('btnResetCM');
+  if (_btnResetCM) _btnResetCM.addEventListener('click', resetCommodities);
   $('btnSettings').addEventListener('click', openSettings);
   $('btnCancelSettings').addEventListener('click', closeSettings);
   $('btnSaveSettings').addEventListener('click', saveSettings);
