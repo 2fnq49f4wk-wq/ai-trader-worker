@@ -5834,25 +5834,33 @@ async function runTradingCycle(env) {
     }
 
     // [V8.6] 거래 윈도우 기준 — KR은 야후 15분 지연 보정해서 09:15~15:45
-    let usOpen = isTradingWindow("us");
-    let krOpen = isTradingWindow("kr");
+    let usCanTrade = isTradingWindow("us");
+    let krCanTrade = isTradingWindow("kr");
 
     // [V22] 휴장일 자동 판정(A) — 시간상 열려있어도 지수 신선도로 오늘 개장 여부 확인.
-    //   지수 마지막 거래일이 오늘이 아니면 휴장 → 거래 스킵. (공휴일/임시휴장 자동 대응)
-    if (usOpen) {
+    if (usCanTrade) {
       const usTradeDay = await isMarketTradingDay(DB, "us");
-      if (usTradeDay === false) { usOpen = false; await log(DB, "CLOSED", null, "[V22] US 휴장일 감지 — 거래 스킵"); }
+      if (usTradeDay === false) { usCanTrade = false; await log(DB, "CLOSED", null, "[V22] US 휴장일 감지 — 거래 스킵(가격은 갱신)"); }
     }
-    if (krOpen) {
+    if (krCanTrade) {
       const krTradeDay = await isMarketTradingDay(DB, "kr");
-      if (krTradeDay === false) { krOpen = false; await log(DB, "CLOSED", null, "[V22] KR 휴장일 감지 — 거래 스킵"); }
+      if (krTradeDay === false) { krCanTrade = false; await log(DB, "CLOSED", null, "[V22] KR 휴장일 감지 — 거래 스킵(가격은 갱신)"); }
     }
 
-    // [V8.1.1] 양 시장 거래 윈도우 둘 다 닫혔으면 사이클 전체 스킵
-    if (!usOpen && !krOpen) {
-      await log(DB, "CLOSED", null, "US & KR 거래 윈도우 외 — 사이클 스킵");
+    // [V23] 가격 갱신은 거래와 분리 — 정규장 시간이면 휴장/거래윈도우와 무관하게 가격을 갱신한다.
+    //   (기존엔 거래윈도우 닫히면 사이클 전체 return → 가격이 안 갱신되던 버그)
+    const usMarketHours = isMarketOpen("us");
+    const krMarketHours = isMarketOpen("kr");
+
+    // 거래도 가격갱신도 둘 다 할 게 없으면 스킵
+    if (!usCanTrade && !krCanTrade && !usMarketHours && !krMarketHours) {
+      await log(DB, "CLOSED", null, "US & KR 장외 — 사이클 스킵");
       return;
     }
+
+    // 가격/일봉 갱신 대상: 정규장 시간인 시장 (거래 불가여도 가격은 갱신)
+    const usOpen = usMarketHours;
+    const krOpen = krMarketHours;
 
     // [V8.1] 지수 fetch — 열린 시장만 (Cloudflare subrequest 한도 절약)
     const indexJobs = [];
@@ -5889,10 +5897,13 @@ async function runTradingCycle(env) {
     let tried = 0, bought = 0, sold = 0, skipped = 0, fetchFail = 0;
 
     // [V8.1.1] 장 열린 시장만 처리 — 마감된 시장은 시세도 fetch 안 함
+    // [V23] 가격 갱신 대상 = 정규장 시간 시장 / 거래 대상 = 거래가능(윈도우+휴장통과) 시장
+    const marketsForQuotes = [];
+    if (usOpen) marketsForQuotes.push("us");
+    if (krOpen) marketsForQuotes.push("kr");
     const marketsToTrade = [];
-    if (usOpen) marketsToTrade.push("us");
-    if (krOpen) marketsToTrade.push("kr");
-    const marketsForQuotes = marketsToTrade.slice();
+    if (usCanTrade) marketsToTrade.push("us");
+    if (krCanTrade) marketsToTrade.push("kr");
 
     for (const market of marketsForQuotes) {
       const mcfg = getMarketCfg(cfg, market);  // [V8.2] 시장별 독립 룰
