@@ -5615,8 +5615,9 @@ async function refreshCommodityQuotes(env) {
     }
   }
   if (stmts.length > 0) {
-    try { await DB.batch(stmts); } catch (e) {}
+    try { await DB.batch(stmts); } catch (e) { await log(DB, "WARN", null, "[CM] quote write fail: " + e.message); }
   }
+  await log(DB, "INFO", null, "[CM] refreshCommodityQuotes: " + stmts.length + "/" + syms.length + " updated");
 }
 
 async function runCommodityCycle(env, forceTrade) {
