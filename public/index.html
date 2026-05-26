@@ -592,6 +592,7 @@ button.btn.loading::after { content: "조회 중…"; position: absolute; left: 
       <button type="button" class="btn macro" id="btnFx">환율</button>
       <button type="button" class="btn macro" id="btnHeatmap">📊 S&P히트맵</button>
       <button type="button" class="btn" id="btnSettings">SETTINGS</button>
+      <button type="button" class="btn" id="btnHolidayRecheck">📅 휴장 재확인</button>
       <button type="button" class="btn primary" id="btnTick">RUN NOW</button>
     </div>
   </div>
@@ -3072,6 +3073,27 @@ button.btn.loading::after { content: "조회 중…"; position: absolute; left: 
   var _btnResetCM = $('btnResetCM');
   if (_btnResetCM) _btnResetCM.addEventListener('click', resetCommodities);
   $('btnSettings').addEventListener('click', openSettings);
+
+  // 휴장 재확인 — 오늘 캐시 삭제 후 LLM 재판정
+  $('btnHolidayRecheck').addEventListener('click', function(){
+    var btn = $('btnHolidayRecheck');
+    var orig = btn.textContent;
+    btn.disabled = true; btn.textContent = '확인 중...';
+    fetch('/api/holiday/recheck', { method: 'POST' })
+      .then(function(r){ return r.json(); })
+      .then(function(d){
+        if (d && d.result) {
+          var us = d.result.us, kr = d.result.kr;
+          var lbl = function(v){ return v === 'OPEN' ? '개장' : (v === 'CLOSED' ? '휴장' : '판정불가'); };
+          toast('휴장 재확인 완료 · US: ' + lbl(us) + ' / KR: ' + lbl(kr));
+          refreshAll();
+        } else {
+          toast('재확인 실패');
+        }
+      })
+      ['catch'](function(e){ toast('재확인 실패: ' + e.message); })
+      .then(function(){ btn.disabled = false; btn.textContent = orig; });
+  });
   $('btnCancelSettings').addEventListener('click', closeSettings);
   $('btnSaveSettings').addEventListener('click', saveSettings);
   $('btnReset').addEventListener('click', resetAll);
