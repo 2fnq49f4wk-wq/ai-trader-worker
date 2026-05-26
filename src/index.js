@@ -2402,29 +2402,48 @@ function localDateStr(market) {
 
 // 지수의 마지막 거래시각(epoch초)이 오늘 현지 날짜와 같은지로 개장 판정.
 //   캐시 우선, 없으면 지수 fetch. 반환: true(개장) / false(휴장) / null(판정불가→보수적으로 거래허용 안 함)
-async function isMarketTradingDay(DB, market) {
+async function isMarketTradingDay(DB, market, env) {
   const today = localDateStr(market);
   if (!today) return null;
   const cacheKey = "market_open:" + market + ":" + today;
+  // 1) 당일 캐시 우선 (하루 1회만 LLM 검색)
   try {
     const cached = await getState(DB, cacheKey, null);
     if (cached && typeof cached.open === "boolean") return cached.open;
   } catch (e) {}
-  // 대표 지수로 판정
-  const idxSym = market === "us" ? "^GSPC" : "^KS11";
+
+  // 2) Claude web_search로 오늘 거래일 여부 판정
+  //    env 없거나 API 키 없으면 판정 불가(null) → 호출부에서 보수적으로 '거래 허용'(거래는 다른 게이트로도 막힘)
+  if (!env || !env.ANTHROPIC_API_KEY) return null;
+  const exchange = market === "us" ? "the U.S. stock market (NYSE/NASDAQ)" : "the South Korean stock market (KRX/KOSPI)";
+  const prompt =
+    "Today's date is " + today + ". Is " + exchange + " OPEN for regular trading today? " +
+    "Consider weekends and public/exchange holidays. Search the web to verify if needed. " +
+    "Answer with ONLY a single word: YES (if open for trading) or NO (if closed). No other text.";
   let open = null;
   try {
-    const j = await yahooFetch("https://query1.finance.yahoo.com/v8/finance/chart/" + encodeURIComponent(idxSym) + "?interval=1d&range=5d");
-    const result = j && j.chart && j.chart.result && j.chart.result[0];
-    const meta = result && result.meta;
-    if (meta && typeof meta.regularMarketTime === "number") {
-      // 마지막 거래시각을 현지 날짜로 변환해 today와 비교
-      const lastDate = new Date(meta.regularMarketTime * 1000);
-      const lp = market === "us" ? getUSEt(lastDate) : getKST(lastDate);
-      const lastStr = lp.year + "-" + String(lp.month).padStart(2, "0") + "-" + String(lp.date).padStart(2, "0");
-      open = (lastStr === today);
-    }
-  } catch (e) { open = null; }
+    const res = await callClaude(
+      env.ANTHROPIC_API_KEY,
+      env.LLM_MODEL || "claude-sonnet-4-6",
+      prompt,
+      300,
+      20000,
+      {
+        baseURL: env.LLM_BASE_URL || null,
+        aigToken: env.AI_GATEWAY_TOKEN || null,
+        maxRetries: 1,
+        tools: [{ type: "web_search_20250305", name: "web_search" }]
+      }
+    );
+    const ans = (res.text || "").trim().toUpperCase();
+    if (ans.indexOf("YES") !== -1 && ans.indexOf("NO") === -1) open = true;
+    else if (ans.indexOf("NO") !== -1) open = false;
+    else open = null;
+    await log(DB, "INFO", null, "[HOLIDAY] " + market.toUpperCase() + " " + today + " trading=" + (open === null ? "UNKNOWN" : (open ? "OPEN" : "CLOSED")) + " (LLM: " + ans.slice(0, 20) + ")");
+  } catch (e) {
+    open = null;
+    await log(DB, "WARN", null, "[HOLIDAY] LLM check fail: " + e.message);
+  }
   if (open !== null) {
     try { await setState(DB, cacheKey, { open: open, ts: Date.now() }); } catch (e) {}
   }
@@ -6064,11 +6083,11 @@ async function runTradingCycle(env) {
 
     // [V22] 휴장일 자동 판정(A) — 시간상 열려있어도 지수 신선도로 오늘 개장 여부 확인.
     if (usCanTrade) {
-      const usTradeDay = await isMarketTradingDay(DB, "us");
+      const usTradeDay = await isMarketTradingDay(DB, "us", env);
       if (usTradeDay === false) { usCanTrade = false; await log(DB, "CLOSED", null, "[V22] US 휴장일 감지 — 거래 스킵(가격은 갱신)"); }
     }
     if (krCanTrade) {
-      const krTradeDay = await isMarketTradingDay(DB, "kr");
+      const krTradeDay = await isMarketTradingDay(DB, "kr", env);
       if (krTradeDay === false) { krCanTrade = false; await log(DB, "CLOSED", null, "[V22] KR 휴장일 감지 — 거래 스킵(가격은 갱신)"); }
     }
 
@@ -6841,8 +6860,8 @@ async function handleRequest(request, env) {
         },
         lastTick: lastTick, lastHeartbeat: lastHeartbeat, cfg: cfg,
         marketStatus: {
-          us: isMarketOpen("us") && (await isMarketTradingDay(env.DB, "us")) !== false,
-          kr: isMarketOpen("kr") && (await isMarketTradingDay(env.DB, "kr")) !== false
+          us: isMarketOpen("us") && (await isMarketTradingDay(env.DB, "us", env)) !== false,
+          kr: isMarketOpen("kr") && (await isMarketTradingDay(env.DB, "kr", env)) !== false
         },
         tradingWindow: { us: isTradingWindow("us"), kr: isTradingWindow("kr") },
         llmDaily: {
