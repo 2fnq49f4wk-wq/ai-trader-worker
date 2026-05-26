@@ -3300,7 +3300,7 @@ async function ensureSchema(DB) {
 
         // 2) 기존 PK가 symbol 단독이라 composite으로 재생성 필요
         // SQLite는 PK 변경 불가 → 테이블 재생성
-        await DB.prepare("CREATE TABLE IF NOT EXISTS positions_new (symbol TEXT NOT NULL, strategy TEXT NOT NULL DEFAULT 'swing', market TEXT NOT NULL, qty REAL NOT NULL, avg_price REAL NOT NULL, opened_ts INTEGER NOT NULL, meta TEXT, PRIMARY KEY(symbol, strategy))").run();
+        await DB.prepare("CREATE TABLE IF NOT EXISTS positions_new (symbol TEXT NOT NULL, strategy TEXT NOT NULL DEFAULT 'swing', market TEXT NOT NULL, qty REAL NOT NULL, avg_price REAL NOT NULL, opened_ts INTEGER NOT NULL, meta TEXT, PRIMARY KEY(symbol, strategy, market))").run();
         await DB.prepare("INSERT OR IGNORE INTO positions_new (symbol, strategy, market, qty, avg_price, opened_ts, meta) SELECT symbol, COALESCE(strategy, 'swing'), market, qty, avg_price, opened_ts, meta FROM positions").run();
         await DB.prepare("DROP TABLE positions").run();
         await DB.prepare("ALTER TABLE positions_new RENAME TO positions").run();
@@ -3313,7 +3313,7 @@ async function ensureSchema(DB) {
   } catch (e) {
     // positions 테이블 자체가 없는 경우 — 새로 생성
     try {
-      await DB.prepare("CREATE TABLE IF NOT EXISTS positions (symbol TEXT NOT NULL, strategy TEXT NOT NULL DEFAULT 'swing', market TEXT NOT NULL, qty REAL NOT NULL, avg_price REAL NOT NULL, opened_ts INTEGER NOT NULL, meta TEXT, PRIMARY KEY(symbol, strategy))").run();
+      await DB.prepare("CREATE TABLE IF NOT EXISTS positions (symbol TEXT NOT NULL, strategy TEXT NOT NULL DEFAULT 'swing', market TEXT NOT NULL, qty REAL NOT NULL, avg_price REAL NOT NULL, opened_ts INTEGER NOT NULL, meta TEXT, PRIMARY KEY(symbol, strategy, market))").run();
     } catch (e2) { console.error("schema create fail:", e2.message); }
   }
   // [V16] 코스닥 종목이 과거 .KS로 저장된 포지션/quote를 .KQ로 교정.
@@ -3792,9 +3792,10 @@ function getStrategiesHeldForSymbol(positions, symbol) {
 }
 
 async function savePosition(DB, market, symbol, strategy, pos) {
+  // [V27] ON CONFLICT(symbol, strategy, market) — market도 포함해 3중 키로 정확한 매칭
   await DB.prepare(
     "INSERT INTO positions (symbol, strategy, market, qty, avg_price, opened_ts, meta) VALUES (?, ?, ?, ?, ?, ?, ?) " +
-    "ON CONFLICT(symbol, strategy) DO UPDATE SET qty=excluded.qty, avg_price=excluded.avg_price, meta=excluded.meta"
+    "ON CONFLICT(symbol, strategy, market) DO UPDATE SET qty=excluded.qty, avg_price=excluded.avg_price, meta=excluded.meta"
   ).bind(symbol, strategy, market, pos.qty, pos.avg, pos.opened_ts, JSON.stringify(pos.meta || {})).run();
 }
 
