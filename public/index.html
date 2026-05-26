@@ -630,6 +630,8 @@ button.btn.loading::after { content: "조회 중…"; position: absolute; left: 
       <button type="button" class="btn macro" id="btnHeatmap">📊 S&P히트맵</button>
       <button type="button" class="btn" id="btnSettings">SETTINGS</button>
       <button type="button" class="btn" id="btnHolidayRecheck">📅 휴장 재확인</button>
+      <button type="button" class="btn" id="btnForceOpen">🟢 강제 개장</button>
+      <button type="button" class="btn" id="btnForceClear">↩️ 자동복귀</button>
       <button type="button" class="btn" id="btnDebug">🔍 진단</button>
       <button type="button" class="btn primary" id="btnTick">RUN NOW</button>
     </div>
@@ -3174,6 +3176,55 @@ button.btn.loading::after { content: "조회 중…"; position: absolute; left: 
         }
       })
       ['catch'](function(e){ toast('재확인 실패: ' + e.message); })
+      .then(function(){ btn.disabled = false; btn.textContent = orig; });
+  });
+
+  // [V24] 강제 개장 — LLM 판정 무시하고 오늘 무조건 거래 허용
+  var _btnForceOpen = $('btnForceOpen');
+  if (_btnForceOpen) _btnForceOpen.addEventListener('click', function(){
+    if (!confirm('오늘 US/KR 시장을 강제로 "개장"으로 설정합니다.\n(LLM 휴장 판정을 무시하고 거래를 허용)\n\n계속하시겠습니까?')) return;
+    var btn = $('btnForceOpen');
+    var orig = btn.textContent;
+    btn.disabled = true; btn.textContent = '설정 중...';
+    fetch('/api/holiday/override', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ market: 'both', open: true })
+    })
+      .then(function(r){ return r.json(); })
+      .then(function(d){
+        if (d && d.ok) {
+          toast('✅ 강제 개장 설정 완료 · 오늘 거래가 허용됩니다');
+          refreshAll();
+        } else {
+          toast('설정 실패');
+        }
+      })
+      ['catch'](function(e){ toast('설정 실패: ' + e.message); })
+      .then(function(){ btn.disabled = false; btn.textContent = orig; });
+  });
+
+  // [V24] 자동복귀 — 오버라이드 해제, LLM 자동판정으로 복귀
+  var _btnForceClear = $('btnForceClear');
+  if (_btnForceClear) _btnForceClear.addEventListener('click', function(){
+    var btn = $('btnForceClear');
+    var orig = btn.textContent;
+    btn.disabled = true; btn.textContent = '해제 중...';
+    fetch('/api/holiday/override', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ market: 'both', open: null })
+    })
+      .then(function(r){ return r.json(); })
+      .then(function(d){
+        if (d && d.ok) {
+          toast('↩️ 오버라이드 해제 · LLM 자동판정으로 복귀');
+          refreshAll();
+        } else {
+          toast('해제 실패');
+        }
+      })
+      ['catch'](function(e){ toast('해제 실패: ' + e.message); })
       .then(function(){ btn.disabled = false; btn.textContent = orig; });
   });
   $('btnCancelSettings').addEventListener('click', closeSettings);
