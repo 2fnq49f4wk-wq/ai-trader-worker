@@ -2252,7 +2252,7 @@ const DEFAULT_CFG = {
   maxPositionsPerSector: 3,    // [V8] 전략별 포지션 가능해서 2→3 완화
   blockInversePair: true,
   // === 사이클 락 ===
-  cycleLockTTL: 60000   // 60s — 사용자 요청으로 복원
+  cycleLockTTL: 90000   // [V31] 90s — US 처리 지연 시 락 만료/이중체결 방지
 };
 
 // === [V8.2] 시장별 독립 학습 — US/KR 따로 학습되는 매매 룰 키 목록 ===
@@ -3811,12 +3811,27 @@ function getStrategiesHeldForSymbol(positions, symbol) {
   return set;
 }
 
-async function savePosition(DB, market, symbol, strategy, pos) {
-  // [V27] ON CONFLICT(symbol, strategy, market) — market도 포함해 3중 키로 정확한 매칭
-  await DB.prepare(
+// [V31] batch 트랜잭션용 statement 빌더 — run()하지 않고 prepared stmt만 반환.
+//   trades(원장)와 positions(상태)를 DB.batch()로 원자적으로 묶기 위함.
+function stmtSavePosition(DB, market, symbol, strategy, pos) {
+  return DB.prepare(
     "INSERT INTO positions (symbol, strategy, market, qty, avg_price, opened_ts, meta) VALUES (?, ?, ?, ?, ?, ?, ?) " +
     "ON CONFLICT(symbol, strategy, market) DO UPDATE SET qty=excluded.qty, avg_price=excluded.avg_price, meta=excluded.meta"
-  ).bind(symbol, strategy, market, pos.qty, pos.avg, pos.opened_ts, JSON.stringify(pos.meta || {})).run();
+  ).bind(symbol, strategy, market, pos.qty, pos.avg, pos.opened_ts, JSON.stringify(pos.meta || {}));
+}
+function stmtDeletePosition(DB, symbol, strategy, market) {
+  if (market) {
+    return DB.prepare("DELETE FROM positions WHERE symbol = ? AND strategy = ? AND market = ?").bind(symbol, strategy, market);
+  }
+  return DB.prepare("DELETE FROM positions WHERE symbol = ? AND strategy = ?").bind(symbol, strategy);
+}
+function stmtRecordTrade(DB, t) {
+  return DB.prepare("INSERT INTO trades (ts, market, symbol, side, qty, price, pnl, pnl_pct, reason) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)")
+    .bind(t.ts, t.market, t.symbol, t.side, t.qty, t.price, t.pnl == null ? null : t.pnl, t.pnl_pct == null ? null : t.pnl_pct, t.reason);
+}
+
+async function savePosition(DB, market, symbol, strategy, pos) {
+  await stmtSavePosition(DB, market, symbol, strategy, pos).run();
 }
 
 async function deletePosition(DB, symbol, strategy, market) {
@@ -4594,27 +4609,21 @@ async function executeBuy(DB, market, symbol, strategy, qty, price, signal, dail
     return cash;
   }
 
-  // [V30] 단일 원장 정합성 — trades(원장)를 먼저 기록. 실패하면 포지션을 만들지 않고 중단.
-  //   trades가 cash 계산의 유일한 근거이므로, 원장 기록 성공이 거래 성립의 기준이다.
+  // [V31] 원자적 트랜잭션 — trades(원장)와 positions(상태)를 DB.batch()로 묶어
+  //   둘 다 성공하거나 둘 다 롤백. "유령 포지션"(돈만 나감)·정합성 붕괴 원천 차단.
   try {
-    await recordTrade(DB, {
+    const stmtTrade = stmtRecordTrade(DB, {
       ts: Date.now(), market: market, symbol: symbol, side: "BUY",
-      qty: qty, price: price,
+      qty: qty, price: price, pnl: null, pnl_pct: null,
       reason: "[" + strategy.toUpperCase() + "] " + signal.name + " " + signal.detail
     });
+    const stmtPos = stmtSavePosition(DB, market, symbol, strategy, posToSave);
+    await DB.batch([stmtTrade, stmtPos]);
   } catch (e) {
-    await log(DB, "ERROR", symbol, "BUY aborted: recordTrade fail (원장 기록 실패, 포지션 미생성): " + e.message);
+    await log(DB, "ERROR", symbol, "BUY transaction aborted (롤백됨, cash·포지션 무변동): " + e.message);
     return cash;
   }
-  // 원장 기록 성공 → 포지션 저장. 포지션 저장이 실패하면 원장에 매수는 있으나 포지션 없음
-  //   = cash는 정확히 차감됨(보수적). 다음 사이클에 audit가 감지 가능.
-  try {
-    await savePosition(DB, market, symbol, strategy, posToSave);
-  } catch (e) {
-    await log(DB, "ERROR", symbol, "BUY savePosition fail (원장은 기록됨, cash 차감 유효): " + e.message);
-  }
-
-  // 인메모리 cash 동기화 (같은 사이클 후속 매수 가드용)
+  // DB 트랜잭션 완전 성공 후에만 인메모리 cash 차감
   if (cash && typeof cash[market] === "number") cash[market] -= total;
   const stopPctRel = ((stopPrice - price) / price * 100).toFixed(1);
   await log(DB, "TRADE", symbol, "BUY [" + strategy + "] x" + qty + " @" + price.toFixed(2) + " " + signal.name + " " + signal.detail + " stop=" + stopPrice.toFixed(2) + "(" + stopPctRel + "%)");
@@ -4679,29 +4688,25 @@ async function executeSell(DB, market, symbol, pos, sellQty, price, reason, cfg,
   const signalMembers = pos.meta.signalMembers || [];
   const enrichedReason = "[" + strategy.toUpperCase() + "] " + reason + " #entry=" + signalMembers.join(",");
 
-  // [V30] 단일 원장 정합성 — 매도는 원장(SELL) 먼저 기록. 실패하면 포지션을 건드리지 않고 중단.
-  //   원장에 매도가 있어야 cash에 매도대금이 반영되므로, 원장 성공이 매도 성립의 기준.
+  // [V31] 원자적 트랜잭션 — 매도 원장과 포지션 변경을 batch로 묶어 둘 다 성공/둘 다 롤백.
+  //   "좀비 포지션"(매도대금은 들어왔는데 포지션이 안 줄어 무한 매도) 원천 차단.
   try {
-    await recordTrade(DB, { ts: Date.now(), market: market, symbol: symbol, side: "SELL", qty: sellQty, price: price, pnl: pnl, pnl_pct: pnlPct, reason: enrichedReason });
-  } catch (e) {
-    await log(DB, "ERROR", symbol, "SELL aborted: recordTrade fail (원장 기록 실패, 포지션 유지): " + e.message);
-    return { cash: cash, pnlPct: 0 };
-  }
-  // 원장 기록 성공 → 포지션 변경. 실패해도 원장에 매도는 있으므로 cash엔 정확히 반영됨(보수적).
-  try {
+    const stmtTrade = stmtRecordTrade(DB, { ts: Date.now(), market: market, symbol: symbol, side: "SELL", qty: sellQty, price: price, pnl: pnl, pnl_pct: pnlPct, reason: enrichedReason });
+    let stmtPos;
     if (sellQty < pos.qty) {
       pos.qty = pos.qty - sellQty;
       pos.meta.tp1Done = true;
       pos.meta.feeRemaining = Math.max(0, feeRemaining - entryFeeForThisSell);
-      await savePosition(DB, market, symbol, strategy, pos);
+      stmtPos = stmtSavePosition(DB, market, symbol, strategy, pos);
     } else {
-      await deletePosition(DB, symbol, strategy, market);
+      stmtPos = stmtDeletePosition(DB, symbol, strategy, market);
     }
+    await DB.batch([stmtTrade, stmtPos]);
   } catch (e) {
-    await log(DB, "ERROR", symbol, "SELL position update fail (원장은 기록됨, cash 반영 유효): " + e.message);
+    await log(DB, "ERROR", symbol, "SELL transaction aborted (롤백됨, cash·포지션 무변동): " + e.message);
+    return { cash: cash, pnlPct: 0 };
   }
-
-  // 인메모리 cash 동기화 (cash는 trades에서 계산)
+  // DB 트랜잭션 완전 성공 후에만 인메모리 cash 반영
   if (cash && typeof cash[market] === "number") cash[market] += proceeds;
   const taxNote = market === "kr" ? " tax=" + sellTax.toFixed(2) : "";
   await log(DB, "TRADE", symbol, "SELL [" + strategy + "] x" + sellQty + " @" + price.toFixed(2) + " PnL " + pnlPct.toFixed(2) + "% (held " + heldMin + "min, " + reason + ")" + taxNote);
@@ -5609,7 +5614,9 @@ async function autoTune(DB, cfg, regimes) {
 async function acquireCycleLock(DB, ttl) {
   const now = Date.now();
   const lockKey = "lock:cycle";
-  const lockValue = JSON.stringify({ until: now + ttl, pid: now });
+  // [V31] 고유 pid — 이중체결 방지용 소유권 식별자 (시각+난수)
+  const myPid = now * 1000 + Math.floor(Math.random() * 1000);
+  const lockValue = JSON.stringify({ until: now + ttl, pid: myPid });
 
   // [FIX V8.7] 워커가 사이클 도중 timeout/kill되면 finally가 실행되지 않아
   //   락이 TTL까지 남고, 그 사이 cron이 계속 skip되어 "엔진 지연"으로 보임.
@@ -5639,13 +5646,26 @@ async function acquireCycleLock(DB, ttl) {
 
   // 2) atomic INSERT — 락이 이미 있으면 실패 (ON CONFLICT 사용 안 함)
   try {
-    const res = await DB.prepare(
+    await DB.prepare(
       "INSERT INTO state (k, v, updated_ts) VALUES (?, ?, ?)"
     ).bind(lockKey, lockValue, now).run();
-    // 성공 시 락 획득
-    return true;
+    return myPid;  // [V31] 성공 시 고유 pid 반환 (소유권 확인용)
   } catch (e) {
-    // UNIQUE constraint 위반 = 다른 인스턴스가 락 보유 중
+    return null;   // UNIQUE 위반 = 다른 인스턴스 보유 중
+  }
+}
+
+// [V31] 락 소유권 확인 — 내 pid가 현재 락의 pid와 같은지. 다르면 다른 워커가 가져간 것.
+//   각 시장 매매 직전에 호출해 "락 만료→새 워커 진입" 시 이중체결을 차단한다.
+async function ownsCycleLock(DB, myPid) {
+  if (myPid == null) return false;
+  try {
+    const row = await DB.prepare("SELECT v FROM state WHERE k = ?").bind("lock:cycle").first();
+    if (!row) return false;
+    let parsed = null;
+    try { parsed = JSON.parse(row.v); } catch (e) { return false; }
+    return parsed && parsed.pid === myPid;
+  } catch (e) {
     return false;
   }
 }
@@ -5658,13 +5678,18 @@ async function releaseCycleLock(DB) {
 
 // [V8.5] 사이클 락 갱신 — 한 시장 처리 후 호출되어 다음 시장 처리 전 TTL 연장.
 // stale 락으로 동시 인스턴스가 진입하는 것을 방지.
-async function refreshCycleLock(DB, ttl) {
+async function refreshCycleLock(DB, ttl, myPid) {
   const now = Date.now();
-  const lockValue = JSON.stringify({ until: now + ttl, pid: now });
+  // [V31] pid 유지하며 TTL만 연장 (소유권 일관성). pid 미전달 시 기존 동작.
   try {
-    await DB.prepare(
-      "UPDATE state SET v = ?, updated_ts = ? WHERE k = ?"
-    ).bind(lockValue, now, "lock:cycle").run();
+    if (myPid != null) {
+      const lockValue = JSON.stringify({ until: now + ttl, pid: myPid });
+      await DB.prepare("UPDATE state SET v = ?, updated_ts = ? WHERE k = ? AND CAST(json_extract(v,'$.pid') AS INTEGER) = ?")
+        .bind(lockValue, now, "lock:cycle", myPid).run();
+    } else {
+      const lockValue = JSON.stringify({ until: now + ttl, pid: now });
+      await DB.prepare("UPDATE state SET v = ?, updated_ts = ? WHERE k = ?").bind(lockValue, now, "lock:cycle").run();
+    }
   } catch (e) {}
 }
 
@@ -5773,8 +5798,9 @@ async function executeBuyCM(DB, symbol, qty, price, signal, dailyAtr, cfg, cash)
   }
   if (stopPrice > pctStop) stopPrice = pctStop;
 
+  // [V31] 원자재도 batch 트랜잭션으로 통일 (주식과 동일 회계 처리)
   try {
-    await savePosition(DB, "cm", symbol, "swing", {
+    const posToSave = {
       qty: qty, avg: price, opened_ts: Date.now(),
       meta: {
         strategy: "swing", feePaid: fee, feeRemaining: fee,
@@ -5782,19 +5808,19 @@ async function executeBuyCM(DB, symbol, qty, price, signal, dailyAtr, cfg, cash)
         signal: signal.name, signalMembers: signal.members || [signal.name],
         tp1Done: false, originalQty: qty
       }
+    };
+    const stmtTrade = stmtRecordTrade(DB, {
+      ts: Date.now(), market: "cm", symbol: symbol, side: "BUY",
+      qty: qty, price: price, pnl: null, pnl_pct: null,
+      reason: "[CM-SWING] " + signal.name + " " + signal.detail
     });
+    const stmtPos = stmtSavePosition(DB, "cm", symbol, "swing", posToSave);
+    await DB.batch([stmtTrade, stmtPos]);
   } catch (e) {
-    await log(DB, "ERROR", symbol, "[CM] BUY savePosition fail: " + e.message);
-    return;
+    await log(DB, "ERROR", symbol, "[CM] BUY transaction aborted (롤백됨): " + e.message);
+    return cash;
   }
-
-  // [V29] 인메모리 cash 동기화 (cash는 trades에서 계산)
   if (cash && typeof cash.cm === "number") cash.cm -= total;
-  await recordTrade(DB, {
-    ts: Date.now(), market: "cm", symbol: symbol, side: "BUY",
-    qty: qty, price: price,
-    reason: "[CM-SWING] " + signal.name + " " + signal.detail
-  });
   const stopPctRel = ((stopPrice - price) / price * 100).toFixed(1);
   await log(DB, "TRADE", symbol, "[CM] BUY x" + qty + " @" + price.toFixed(2) + " " + signal.name + " " + signal.detail + " stop=" + stopPrice.toFixed(2) + "(" + stopPctRel + "%)");
   return cash;
@@ -5817,24 +5843,24 @@ async function executeSellCM(DB, symbol, pos, sellQty, price, reason, cfg, cash)
   const signalMembers = pos.meta.signalMembers || [];
   const enrichedReason = "[CM-SWING] " + reason + " #entry=" + signalMembers.join(",");
 
-  // [V26] 포지션 변경 먼저 — 실패 시 현금 미반영(돈 복제 방지)
+  // [V31] 원자재 매도도 batch 트랜잭션으로 통일 (좀비 포지션 차단, market 명시)
   try {
+    const stmtTrade = stmtRecordTrade(DB, { ts: Date.now(), market: "cm", symbol: symbol, side: "SELL", qty: sellQty, price: price, pnl: pnl, pnl_pct: pnlPct, reason: enrichedReason });
+    let stmtPos;
     if (sellQty < pos.qty) {
       pos.qty = pos.qty - sellQty;
       pos.meta.tp1Done = true;
       pos.meta.feeRemaining = Math.max(0, feeRemaining - entryFeeForThisSell);
-      await savePosition(DB, "cm", symbol, "swing", pos);
+      stmtPos = stmtSavePosition(DB, "cm", symbol, "swing", pos);
     } else {
-      await deletePosition(DB, symbol, "swing");
+      stmtPos = stmtDeletePosition(DB, symbol, "swing", "cm");
     }
+    await DB.batch([stmtTrade, stmtPos]);
   } catch (e) {
-    await log(DB, "ERROR", symbol, "[CM] SELL aborted: position update fail: " + e.message);
+    await log(DB, "ERROR", symbol, "[CM] SELL transaction aborted (롤백됨): " + e.message);
     return { pnlPct: 0, cash: cash };
   }
-
-  // [V29] 인메모리 cash 동기화 (cash는 trades에서 계산)
   if (cash && typeof cash.cm === "number") cash.cm += proceeds;
-  await recordTrade(DB, { ts: Date.now(), market: "cm", symbol: symbol, side: "SELL", qty: sellQty, price: price, pnl: pnl, pnl_pct: pnlPct, reason: enrichedReason });
   await log(DB, "TRADE", symbol, "[CM] SELL x" + sellQty + " @" + price.toFixed(2) + " PnL " + pnlPct.toFixed(2) + "% (held " + heldMin + "min, " + reason + ")");
   return { pnlPct: pnlPct, cash: cash };
 }
@@ -6121,9 +6147,9 @@ async function runTradingCycle(env) {
   const engineEnabled = !!cfg.enabled;
   if (!engineEnabled) { await log(DB, "INFO", null, "engine disabled — 가격만 갱신, 거래 스킵"); }
 
-  // [신규] Cycle Lock — 동시 실행 차단
-  const gotLock = await acquireCycleLock(DB, cfg.cycleLockTTL || 60000);
-  if (!gotLock) {
+  // [신규] Cycle Lock — 동시 실행 차단. [V31] pid로 소유권 추적, TTL 90s로 여유 확보
+  const myLockPid = await acquireCycleLock(DB, cfg.cycleLockTTL || 90000);
+  if (!myLockPid) {
     await log(DB, "INFO", null, "cycle skipped: lock held");
     return;
   }
@@ -6254,7 +6280,16 @@ async function runTradingCycle(env) {
       const positions = await getPositions(DB, market);  // key: "SYM::strategy"
       const feeRate = market === "us" ? mcfg.feeUS : mcfg.feeKR;
       const regime = regimes[market];
-      const canTrade = marketsToTrade.indexOf(market) !== -1;
+      let canTrade = marketsToTrade.indexOf(market) !== -1;
+      // [V31] 매매 직전 락 소유권 재확인 — US 처리가 길어져 락이 만료·탈취됐으면
+      //   이 시장은 거래하지 않는다(다른 워커가 이미 처리 중일 수 있음 → 이중체결 방지).
+      if (canTrade) {
+        const stillOwns = await ownsCycleLock(DB, myLockPid);
+        if (!stillOwns) {
+          canTrade = false;
+          await log(DB, "WARN", null, "[V31] " + market.toUpperCase() + " 매매 스킵: 락 소유권 상실(이중체결 방지)");
+        }
+      }
 
       // [V8] 보유 심볼 집합 + 섹터 카운트 (전략 무관하게 종목 단위 집계)
       const heldSymbols = new Set();
@@ -6869,7 +6904,7 @@ async function runTradingCycle(env) {
       }
 
       // [V8.5] 시장 처리 완료 — 다음 시장 처리 전 락 TTL 갱신 (stale 진입 방지)
-      await refreshCycleLock(DB, cfg.cycleLockTTL || 60000);
+      await refreshCycleLock(DB, cfg.cycleLockTTL || 90000, myLockPid);
     }
 
     try { await setState(DB, "cash", cash); } catch (e) {}
