@@ -4602,7 +4602,9 @@ async function executeSell(DB, market, symbol, pos, sellQty, price, reason, cfg,
   if (!(typeof cash[market] === "number" && isFinite(cash[market]))) {
     await log(DB, "ERROR", symbol, "SELL aborted: cash state invalid"); return { cash: cash, pnlPct: 0 };
   }
-  cash[market] += proceeds;
+  if (!(typeof cash[market] === "number" && isFinite(cash[market]))) {
+    await log(DB, "ERROR", symbol, "SELL aborted: cash state invalid"); return { cash: cash, pnlPct: 0 };
+  }
 
   pos.meta = pos.meta || {};
   const feeRemaining = (typeof pos.meta.feeRemaining === "number")
@@ -4618,14 +4620,24 @@ async function executeSell(DB, market, symbol, pos, sellQty, price, reason, cfg,
   const signalMembers = pos.meta.signalMembers || [];
   const enrichedReason = "[" + strategy.toUpperCase() + "] " + reason + " #entry=" + signalMembers.join(",");
 
-  if (sellQty < pos.qty) {
-    pos.qty = pos.qty - sellQty;
-    pos.meta.tp1Done = true;
-    pos.meta.feeRemaining = Math.max(0, feeRemaining - entryFeeForThisSell);
-    await savePosition(DB, market, symbol, strategy, pos);
-  } else {
-    await deletePosition(DB, symbol, strategy, market);
+  // [V26] 포지션 변경을 먼저 — 실패하면 현금을 건드리지 않고 중단(돈 복제 방지).
+  //   매수와 동일한 "자산 먼저, 현금 나중" 순서로 정합성 통일.
+  try {
+    if (sellQty < pos.qty) {
+      pos.qty = pos.qty - sellQty;
+      pos.meta.tp1Done = true;
+      pos.meta.feeRemaining = Math.max(0, feeRemaining - entryFeeForThisSell);
+      await savePosition(DB, market, symbol, strategy, pos);
+    } else {
+      await deletePosition(DB, symbol, strategy, market);
+    }
+  } catch (e) {
+    await log(DB, "ERROR", symbol, "SELL aborted: position update fail: " + e.message);
+    return { cash: cash, pnlPct: 0 };
   }
+
+  // 포지션 변경 성공 후에만 현금 증가
+  cash[market] += proceeds;
 
   // [V9.1] 거래 기록 + 현금 즉시 저장 (정합성)
   await recordTrade(DB, { ts: Date.now(), market: market, symbol: symbol, side: "SELL", qty: sellQty, price: price, pnl: pnl, pnl_pct: pnlPct, reason: enrichedReason });
@@ -5738,7 +5750,6 @@ async function executeSellCM(DB, symbol, pos, sellQty, price, reason, cfg, cash)
   const gross = price * sellQty;
   const fee = gross * feeRate;
   const proceeds = gross - fee;   // 원자재: 매도세 없음
-  cash.cm += proceeds;
 
   pos.meta = pos.meta || {};
   const feeRemaining = (typeof pos.meta.feeRemaining === "number") ? pos.meta.feeRemaining : (pos.meta.feePaid || 0);
@@ -5750,15 +5761,22 @@ async function executeSellCM(DB, symbol, pos, sellQty, price, reason, cfg, cash)
   const signalMembers = pos.meta.signalMembers || [];
   const enrichedReason = "[CM-SWING] " + reason + " #entry=" + signalMembers.join(",");
 
-  if (sellQty < pos.qty) {
-    pos.qty = pos.qty - sellQty;
-    pos.meta.tp1Done = true;
-    pos.meta.feeRemaining = Math.max(0, feeRemaining - entryFeeForThisSell);
-    await savePosition(DB, "cm", symbol, "swing", pos);
-  } else {
-    await deletePosition(DB, symbol, "swing");
+  // [V26] 포지션 변경 먼저 — 실패 시 현금 미반영(돈 복제 방지)
+  try {
+    if (sellQty < pos.qty) {
+      pos.qty = pos.qty - sellQty;
+      pos.meta.tp1Done = true;
+      pos.meta.feeRemaining = Math.max(0, feeRemaining - entryFeeForThisSell);
+      await savePosition(DB, "cm", symbol, "swing", pos);
+    } else {
+      await deletePosition(DB, symbol, "swing");
+    }
+  } catch (e) {
+    await log(DB, "ERROR", symbol, "[CM] SELL aborted: position update fail: " + e.message);
+    return { pnlPct: 0, cash: cash };
   }
 
+  cash.cm += proceeds;
   await recordTrade(DB, { ts: Date.now(), market: "cm", symbol: symbol, side: "SELL", qty: sellQty, price: price, pnl: pnl, pnl_pct: pnlPct, reason: enrichedReason });
   try { await setState(DB, "cash", cash); } catch (e) {}
   await log(DB, "TRADE", symbol, "[CM] SELL x" + sellQty + " @" + price.toFixed(2) + " PnL " + pnlPct.toFixed(2) + "% (held " + heldMin + "min, " + reason + ")");
@@ -6815,6 +6833,34 @@ async function auditAccounting(DB, market, cash) {
     if (flags.length > 0) {
       await log(DB, "ERROR", null, "[AUDIT] " + market.toUpperCase() + " 회계 이상: " + flags.join(" | ") +
         " (cash=" + Math.round(cashVal) + " invested=" + Math.round(invested) + " positions=" + positions.length + ")");
+      // [V26] 자동 복구 — 중복 포지션만 정리(정상 거래는 보존). 전체 리셋 불필요.
+      if (dups.length > 0) {
+        for (const dupKey of dups) {
+          const parts = dupKey.split("::");
+          const dsym = parts[0], dstrat = parts[1];
+          // 같은 (symbol, strategy) 중복 행 중 1개만 남기고 제거 → 수량 합산본으로 재저장
+          try {
+            const same = positions.filter(function(p){ return p.symbol === dsym && p.strategy === dstrat; });
+            if (same.length > 1) {
+              let totalQty = 0, weightedAvg = 0, earliestTs = null;
+              for (const p of same) {
+                totalQty += (p.qty || 0);
+                weightedAvg += (p.qty || 0) * (p.avg_price || 0);
+                if (earliestTs == null || (p.opened_ts && p.opened_ts < earliestTs)) earliestTs = p.opened_ts;
+              }
+              const avg = totalQty > 0 ? weightedAvg / totalQty : 0;
+              // 기존 중복 행 전부 삭제 후 합산본 1개만 저장
+              await DB.prepare("DELETE FROM positions WHERE symbol = ? AND strategy = ? AND market = ?").bind(dsym, dstrat, market).run();
+              if (totalQty > 0) {
+                await savePosition(DB, market, dsym, dstrat, { qty: totalQty, avg: avg, opened_ts: earliestTs || Date.now(), meta: {} });
+              }
+              await log(DB, "INFO", dsym, "[AUDIT-FIX] 중복 포지션 합산: " + dstrat + " qty=" + totalQty + " avg=" + Math.round(avg));
+            }
+          } catch (e) {
+            await log(DB, "WARN", dsym, "[AUDIT-FIX] 복구 실패: " + e.message);
+          }
+        }
+      }
       return { ok: false, flags: flags, cash: cashVal, invested: invested };
     }
     return { ok: true, cash: cashVal, invested: invested };
