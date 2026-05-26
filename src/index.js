@@ -5260,10 +5260,14 @@ async function refreshPriceShard(env, market, shard) {
       // [V18] 신규 quote 기본값 (해당 키가 없을 때 INSERT)
       const fresh = { market: market, price: r.price, prevClose: r.prevClose, dayPct: r.dayPct, ts: nowTs };
       // ON CONFLICT: 기존 JSON에서 가격 3필드 + ts만 갱신, 일봉 지표(rsi/ma/atr 등)는 보존.
+      // [V33] json_valid 가드 — 기존 v가 깨진 JSON이면 json_set이 실패하므로,
+      //   그 경우 fresh 전체로 덮어써 가격 갱신이 영구 중단되는 것을 방지.
       stmts.push(
         DB.prepare(
           "INSERT INTO state (k, v, updated_ts) VALUES (?1, ?2, ?6) " +
-          "ON CONFLICT(k) DO UPDATE SET v = json_set(v, '$.price', ?3, '$.prevClose', ?4, '$.dayPct', ?5, '$.ts', ?6), updated_ts = ?6"
+          "ON CONFLICT(k) DO UPDATE SET v = CASE WHEN json_valid(v) " +
+          "THEN json_set(v, '$.price', ?3, '$.prevClose', ?4, '$.dayPct', ?5, '$.ts', ?6) " +
+          "ELSE ?2 END, updated_ts = ?6"
         ).bind("quote:" + r.symbol, JSON.stringify(fresh), r.price, r.prevClose, r.dayPct, nowTs)
       );
       ok++;
@@ -6965,18 +6969,38 @@ async function auditAccounting(DB, market, cash) {
             const same = positions.filter(function(p){ return p.symbol === dsym && p.strategy === dstrat; });
             if (same.length > 1) {
               let totalQty = 0, weightedAvg = 0, earliestTs = null;
+              // [V33] meta 상속 — 가장 보수적인 손절가(높은 stop), 최고 peak, 수수료 합산 보존.
+              //   meta를 빈 객체로 덮으면 다음 사이클에 손절 정보 유실 → 오발 청산 사고.
+              let mergedMeta = { strategy: dstrat, tp1Done: false };
+              let feeSum = 0, peakMax = null, stopMax = null, sigMembers = [], origQtySum = 0, atrEntry = null;
               for (const p of same) {
                 totalQty += (p.qty || 0);
                 weightedAvg += (p.qty || 0) * (p.avg_price || 0);
                 if (earliestTs == null || (p.opened_ts && p.opened_ts < earliestTs)) earliestTs = p.opened_ts;
+                let pm = {};
+                try { pm = p.meta ? (typeof p.meta === "string" ? JSON.parse(p.meta) : p.meta) : {}; } catch (e) { pm = {}; }
+                feeSum += (typeof pm.feeRemaining === "number" ? pm.feeRemaining : (pm.feePaid || 0));
+                if (pm.peakPrice != null && (peakMax == null || pm.peakPrice > peakMax)) peakMax = pm.peakPrice;
+                if (pm.stopPrice != null && (stopMax == null || pm.stopPrice > stopMax)) stopMax = pm.stopPrice;
+                if (pm.atrAtEntry != null && atrEntry == null) atrEntry = pm.atrAtEntry;
+                if (Array.isArray(pm.signalMembers)) sigMembers = sigMembers.concat(pm.signalMembers);
+                if (pm.tp1Done) mergedMeta.tp1Done = true;
+                origQtySum += (pm.originalQty || p.qty || 0);
               }
               const avg = totalQty > 0 ? weightedAvg / totalQty : 0;
-              // 기존 중복 행 전부 삭제 후 합산본 1개만 저장
+              mergedMeta.feePaid = feeSum;
+              mergedMeta.feeRemaining = feeSum;
+              if (peakMax != null) mergedMeta.peakPrice = peakMax; else mergedMeta.peakPrice = avg;
+              if (stopMax != null) mergedMeta.stopPrice = stopMax;
+              if (atrEntry != null) mergedMeta.atrAtEntry = atrEntry;
+              mergedMeta.signalMembers = sigMembers.length ? Array.from(new Set(sigMembers)) : [];
+              mergedMeta.signal = mergedMeta.signalMembers[0] || "AUDIT_MERGE";
+              mergedMeta.originalQty = origQtySum || totalQty;
               await DB.prepare("DELETE FROM positions WHERE symbol = ? AND strategy = ? AND market = ?").bind(dsym, dstrat, market).run();
               if (totalQty > 0) {
-                await savePosition(DB, market, dsym, dstrat, { qty: totalQty, avg: avg, opened_ts: earliestTs || Date.now(), meta: {} });
+                await savePosition(DB, market, dsym, dstrat, { qty: totalQty, avg: avg, opened_ts: earliestTs || Date.now(), meta: mergedMeta });
               }
-              await log(DB, "INFO", dsym, "[AUDIT-FIX] 중복 포지션 합산: " + dstrat + " qty=" + totalQty + " avg=" + Math.round(avg));
+              await log(DB, "INFO", dsym, "[AUDIT-FIX] 중복 포지션 합산(meta 상속): " + dstrat + " qty=" + totalQty + " avg=" + Math.round(avg) + " stop=" + (stopMax != null ? Math.round(stopMax) : "?"));
             }
           } catch (e) {
             await log(DB, "WARN", dsym, "[AUDIT-FIX] 복구 실패: " + e.message);
