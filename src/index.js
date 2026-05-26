@@ -6543,14 +6543,20 @@ async function runTradingCycle(env) {
             await log(DB, "INFO", symbol, "CROSS-CONF (" + stratNames + ") x" + crossBonus);
           }
 
-          // [V8.1.5] 한 종목에 여러 전략 동시 진입 시 합산 cap (35%)
-          // 각 전략 신호별로 진입 시도 (V8.1.6 이후엔 보통 1개만)
+          // [V24] 한 종목당 한 사이클 1회만 매수 (다중전략 동시 진입 과집중 방지)
+          //   가장 강한 신호 1개만 채택. 같은 종목이 swing+mom+mr 다 떠도 1번만 산다.
+          let boughtThisSymbol = false;
           for (const sr of stratResults) {
+            if (boughtThisSymbol) break;
             const strategy = sr.strategy;
             const signal = sr.signal;
 
             // 같은 (종목, 전략) 보유중이면 스킵
             if (strategiesHeldNow.has(strategy)) {
+              continue;
+            }
+            // [V24] 이 종목을 이미 보유중이면(어느 전략이든) 추가 매수 차단
+            if (heldSymbols.has(symbol)) {
               continue;
             }
 
@@ -6712,8 +6718,9 @@ async function runTradingCycle(env) {
               // [V8.6 Hybrid] LLM stop_loss_adjustment 적용 (지시 있으면)
               const buyOpts = (llmInstr && llmInstr.stop_loss_adjustment && typeof llmInstr.stop_loss_adjustment.new_pct === "number")
                 ? { stopPctOverride: llmInstr.stop_loss_adjustment.new_pct } : null;
-              await executeBuy(DB, market, symbol, strategy, qty, price, signal, dailyAtr, mcfg, cash, buyOpts);
+              cash = await executeBuy(DB, market, symbol, strategy, qty, price, signal, dailyAtr, mcfg, cash, buyOpts) || cash;
               bought++;
+              boughtThisSymbol = true;
               heldSymbols.add(symbol);
               strategiesHeldNow.add(strategy);
               const sec = SECTOR_MAP[symbol];
@@ -6954,6 +6961,57 @@ async function handleRequest(request, env) {
       await setState(env.DB, "deposits", { us: 0, kr: 0 });
       await log(env.DB, "INFO", null, "RESET");
       return Response.json({ ok: true, cash: { us: cfg.initialCashUS, kr: cfg.initialCashKR, cm: cfg.initialCashCM } }, { headers: cors });
+    }
+    // [V24] 시장별(US/KR) 리셋 — 해당 시장 포지션/거래만 삭제, 현금만 초기금액 복원.
+    if (path === "/api/reset_market" && request.method === "POST") {
+      await ensureSchema(env.DB);
+      const mkt = url.searchParams.get("market");
+      if (mkt !== "us" && mkt !== "kr") {
+        return Response.json({ ok: false, error: "market must be us or kr" }, { status: 400, headers: cors });
+      }
+      const cfg = migrateCfgToMarkets(Object.assign({}, DEFAULT_CFG, await getState(env.DB, "cfg", {})));
+      await env.DB.prepare("DELETE FROM positions WHERE market = ?").bind(mkt).run();
+      await env.DB.prepare("DELETE FROM trades WHERE market = ?").bind(mkt).run();
+      const cash = await getState(env.DB, "cash", { us: cfg.initialCashUS, kr: cfg.initialCashKR, cm: cfg.initialCashCM });
+      const initial = mkt === "us" ? cfg.initialCashUS : cfg.initialCashKR;
+      cash[mkt] = initial;
+      await setState(env.DB, "cash", cash);
+      const deposits = await getState(env.DB, "deposits", { us: 0, kr: 0 });
+      deposits[mkt] = 0;
+      await setState(env.DB, "deposits", deposits);
+      await log(env.DB, "INFO", null, "[V24] RESET market=" + mkt + " cash=" + initial);
+      return Response.json({ ok: true, market: mkt, cash: initial }, { headers: cors });
+    }
+    // [V24] 디버그 진단 — cash/포지션/평가액을 한눈에. 정합성 검증용.
+    if (path === "/api/debug") {
+      await ensureSchema(env.DB);
+      const cash = await getState(env.DB, "cash", {});
+      const out = { cash: cash, markets: {} };
+      for (const mkt of ["us", "kr", "cm"]) {
+        const positions = await getPositions(env.DB, mkt);
+        let invested = 0, count = 0, dupCheck = {};
+        const dups = [];
+        for (const p of positions) {
+          invested += (p.qty || 0) * (p.avg_price || 0);
+          count++;
+          const key = p.symbol + "::" + p.strategy;
+          if (dupCheck[key]) dups.push(key);
+          dupCheck[key] = true;
+        }
+        out.markets[mkt] = {
+          cash: cash[mkt],
+          positionCount: count,
+          invested: Math.round(invested),
+          total: Math.round((cash[mkt] || 0) + invested),
+          duplicatePositions: dups
+        };
+      }
+      // 락 상태도 노출 (겹친 사이클 진단용)
+      try {
+        const lock = await getState(env.DB, "lock:cycle", null);
+        out.cycleLock = lock ? { until: lock.until, expired: lock.until < Date.now() } : null;
+      } catch (e) {}
+      return Response.json(out, { headers: cors });
     }
     if (path === "/api/reset_tickers" && request.method === "POST") {
       const current = migrateCfgToMarkets(Object.assign({}, DEFAULT_CFG, await getState(env.DB, "cfg", {})));
