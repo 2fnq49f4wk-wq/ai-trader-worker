@@ -7116,6 +7116,20 @@ async function handleRequest(request, env) {
       return Response.json({ ok: true, forced: force, ts: Date.now() }, { headers: cors });
     }
 
+    // === [HOLIDAY] 휴장 판정 캐시 재설정 — 오늘 캐시 삭제 후 LLM 재판정 ===
+    if (path === "/api/holiday/recheck" && request.method === "POST") {
+      const DB = env.DB;
+      const out = {};
+      for (const mkt of ["us", "kr"]) {
+        const today = localDateStr(mkt);
+        if (!today) { out[mkt] = "no-date"; continue; }
+        try { await DB.prepare("DELETE FROM state WHERE k = ?").bind("market_open:" + mkt + ":" + today).run(); } catch (e) {}
+        const res = await isMarketTradingDay(DB, mkt, env);
+        out[mkt] = (res === null ? "UNKNOWN" : (res ? "OPEN" : "CLOSED"));
+      }
+      return Response.json({ ok: true, result: out, ts: Date.now() }, { headers: cors });
+    }
+
     // === [FX] 환율 조회 ===
     if (path === "/api/fx") {
       const fx = await getState(env.DB, "fx", null);
