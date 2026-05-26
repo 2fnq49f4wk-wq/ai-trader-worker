@@ -6722,6 +6722,12 @@ async function runTradingCycle(env) {
           // [V24] 한 종목당 한 사이클 1회만 매수 (다중전략 동시 진입 과집중 방지)
           //   가장 강한 신호 1개만 채택. 같은 종목이 swing+mom+mr 다 떠도 1번만 산다.
           let boughtThisSymbol = false;
+          // [V35] 현금 가드 — 해당 시장 가용현금이 0 이하이면 이 종목 매수 평가 자체를 스킵.
+          //   마이너스 현금 상태에서 추가 매수로 더 깊은 마이너스가 되는 것을 원천 차단.
+          if (cash[market] <= 0) {
+            incNobuy("no_cash[" + market + "]");
+            continue;
+          }
           for (const sr of stratResults) {
             if (boughtThisSymbol) break;
             const strategy = sr.strategy;
@@ -6882,7 +6888,8 @@ async function runTradingCycle(env) {
             }
 
             // [V8.1.5] 1주도 못 사는 경우: 잔액 10% 이내면 1주 매수 허용
-            if (qty === 0) {
+            // [V35] 현금이 0 이하이면 절대 1주 매수 금지 (마이너스 현금 방어)
+            if (qty === 0 && cash[market] > 0) {
               const onePrice = price * (1 + feeRate);
               if (onePrice <= cash[market] * 0.10) {
                 qty = 1;
@@ -7531,7 +7538,149 @@ async function handleRequest(request, env) {
       return Response.json({ ok: true, status: out, ts: Date.now() }, { headers: cors });
     }
 
-    // === [FX] 환율 조회 ===
+    // === [V35 현금 진단] 마이너스 현금 원인 분석 ===
+    //   GET /api/cash/diagnose — 시장별 현금, 포지션 평가액, 입금액, 마이너스 여부 점검
+    if (path === "/api/cash/diagnose") {
+      const cfg = migrateCfgToMarkets(Object.assign({}, DEFAULT_CFG, await getState(env.DB, "cfg", {})));
+      const cash = await computeAllCash(env.DB, cfg);
+      const deposits = await getState(env.DB, "deposits", { us: 0, kr: 0, cm: 0 });
+      const out = {};
+      for (const mkt of ["us", "kr"]) {
+        const positions = await getPositions(env.DB, mkt);
+        let invested = 0, posCount = 0;
+        for (const key in positions) {
+          const p = positions[key];
+          invested += (p.qty || 0) * (p.avg || 0);
+          posCount++;
+        }
+        const initial = mkt === "us" ? cfg.initialCashUS : cfg.initialCashKR;
+        const dep = (deposits && typeof deposits[mkt] === "number") ? deposits[mkt] : 0;
+        out[mkt] = {
+          cash: Math.round(cash[mkt] * 100) / 100,
+          isNegative: cash[mkt] < 0,
+          investedAtCost: Math.round(invested * 100) / 100,
+          positionCount: posCount,
+          initialCash: initial,
+          deposits: dep,
+          // 마이너스면 얼마나 초과했는지
+          overspend: cash[mkt] < 0 ? Math.round(-cash[mkt] * 100) / 100 : 0
+        };
+      }
+      return Response.json({ ok: true, diagnose: out, ts: Date.now() }, { headers: cors });
+    }
+
+    // === [V35 현금 추적] 마이너스가 처음 발생한 거래/시각 찾기 ===
+    //   GET /api/cash/trace?market=us — 거래내역을 시간순 재생하며 현금이 처음 0 미만이 된 지점 탐지
+    //   "언제부터 마이너스였는지 모를 때" 정확한 원인 거래를 짚어줌.
+    if (path === "/api/cash/trace") {
+      const cfg = migrateCfgToMarkets(Object.assign({}, DEFAULT_CFG, await getState(env.DB, "cfg", {})));
+      const qMarket = (url.searchParams.get("market") || "both").toLowerCase();
+      const markets = (qMarket === "both") ? ["us", "kr"] : [qMarket];
+      const deposits = await getState(env.DB, "deposits", { us: 0, kr: 0, cm: 0 });
+      const out = {};
+      for (const mkt of markets) {
+        if (mkt !== "us" && mkt !== "kr") { out[mkt] = { error: "invalid-market" }; continue; }
+        const initial = mkt === "us" ? cfg.initialCashUS : cfg.initialCashKR;
+        const feeRate = mkt === "us" ? (cfg.feeUS || 0) : (cfg.feeKR || 0);
+        const sellTaxRate = mkt === "kr" ? (cfg.krSellTax || 0) : 0;
+        const dep = (deposits && typeof deposits[mkt] === "number") ? deposits[mkt] : 0;
+        // 전체 거래 시간순 (rowid ASC = 발생순)
+        const rows = await env.DB.prepare(
+          "SELECT rowid AS rid, ts, symbol, side, qty, price, reason FROM trades WHERE market = ? ORDER BY rowid ASC"
+        ).bind(mkt).all();
+        const list = rows.results || [];
+        let cash = (typeof initial === "number" ? initial : 0) + dep;
+        let firstNegative = null;     // 처음 마이너스가 된 거래
+        let minCash = cash;           // 역대 최저 현금
+        let minCashAt = null;
+        let lowestPoints = [];        // 현금이 음수로 떨어진 거래들 (최대 10개)
+        for (const t of list) {
+          const gross = (t.qty || 0) * (t.price || 0);
+          const before = cash;
+          if (t.side === "BUY") cash -= gross * (1 + feeRate);
+          else if (t.side === "SELL") cash += gross * (1 - feeRate - sellTaxRate);
+          if (cash < minCash) { minCash = cash; minCashAt = t.ts; }
+          if (before >= 0 && cash < 0 && !firstNegative) {
+            firstNegative = {
+              ts: t.ts,
+              date: new Date(t.ts).toLocaleString("ko-KR"),
+              symbol: t.symbol, side: t.side, qty: t.qty, price: t.price,
+              reason: t.reason,
+              cashBefore: Math.round(before * 100) / 100,
+              cashAfter: Math.round(cash * 100) / 100
+            };
+          }
+          if (cash < 0 && lowestPoints.length < 10) {
+            lowestPoints.push({
+              date: new Date(t.ts).toLocaleString("ko-KR"),
+              symbol: t.symbol, side: t.side, qty: t.qty,
+              cashAfter: Math.round(cash * 100) / 100
+            });
+          }
+        }
+        out[mkt] = {
+          totalTrades: list.length,
+          startingCash: Math.round(((typeof initial === "number" ? initial : 0) + dep) * 100) / 100,
+          finalCash: Math.round(cash * 100) / 100,
+          everWentNegative: firstNegative !== null,
+          firstNegative: firstNegative,
+          lowestCash: Math.round(minCash * 100) / 100,
+          lowestCashAt: minCashAt ? new Date(minCashAt).toLocaleString("ko-KR") : null,
+          sampleNegativeTrades: lowestPoints
+        };
+      }
+      return Response.json({ ok: true, trace: out, ts: Date.now() }, { headers: cors });
+    }
+
+    // === [V35 현금 정리] 마이너스 현금 해소 ===
+    //   POST /api/cash/fix-negative { market: "us"|"kr"|"both", method: "deposit"|"reset_ckpt" }
+    //     method=deposit    → 마이너스 금액만큼 입금 보정 (현금을 0으로 맞춤, 가장 안전)
+    //                         실제로 돈을 넣었거나 회계 오류를 바로잡을 때 사용.
+    //     method=reset_ckpt → 현금 체크포인트(cash_ckpt) 캐시를 삭제해 거래내역 전체 재합산
+    //                         (스냅샷 손상으로 현금이 틀어졌을 때 정확히 재계산)
+    if (path === "/api/cash/fix-negative" && request.method === "POST") {
+      const DB = env.DB;
+      let body = {};
+      try { body = await request.json(); } catch (e) {}
+      const market = (body.market || "both").toLowerCase();
+      const method = body.method || "deposit";
+      const markets = (market === "both") ? ["us", "kr"] : [market];
+      const cfg = migrateCfgToMarkets(Object.assign({}, DEFAULT_CFG, await getState(DB, "cfg", {})));
+      const out = {};
+
+      if (method === "reset_ckpt") {
+        // 체크포인트 삭제 → 다음 computeAllCash가 거래내역 전체 재합산
+        for (const mkt of markets) {
+          try { await DB.prepare("DELETE FROM state WHERE k = ?").bind("cash_ckpt:" + mkt).run(); } catch (e) {}
+          out[mkt] = "ckpt_cleared";
+        }
+        const cash = await computeAllCash(DB, cfg);
+        await log(DB, "INFO", null, "[CASH-FIX] 체크포인트 재설정 — 현금 재합산 US:" + Math.round(cash.us) + " KR:" + Math.round(cash.kr));
+        return Response.json({ ok: true, method: method, result: out, cashAfter: cash, ts: Date.now() }, { headers: cors });
+      }
+
+      // method === "deposit": 마이너스만큼 입금 보정
+      const cash = await computeAllCash(DB, cfg);
+      const deposits = await getState(DB, "deposits", { us: 0, kr: 0, cm: 0 });
+      for (const mkt of markets) {
+        if (mkt !== "us" && mkt !== "kr") { out[mkt] = "invalid-market"; continue; }
+        if (cash[mkt] >= 0) { out[mkt] = "already_positive (보정 불필요)"; continue; }
+        const shortfall = -cash[mkt];  // 부족분(양수)
+        // 입금 거래를 추가 — side="DEPOSIT"가 아니라 현금 정합을 위해 deposits에 반영 + 보정 trade
+        // 가장 안전한 방법: deposits 증가 + 동일 금액의 가상 입금 거래로 cash를 0으로
+        const newDep = ((deposits[mkt] || 0) + shortfall);
+        deposits[mkt] = newDep;
+        await setState(DB, "deposits", deposits);
+        // 체크포인트도 무효화해서 재합산 시 입금분이 반영되게 함
+        try { await DB.prepare("DELETE FROM state WHERE k = ?").bind("cash_ckpt:" + mkt).run(); } catch (e) {}
+        // initialCash를 늘리는 방식이 아니라 deposits로 처리하면 vs INITIAL이 왜곡되지 않음.
+        // 단 computeCashFromTrades는 baseCash에 deposits를 더하므로, 재합산하면 cash가 +shortfall 됨 → 0.
+        out[mkt] = "deposited " + Math.round(shortfall * 100) / 100 + " (현금 0으로 보정)";
+        await log(DB, "INFO", null, "[CASH-FIX] " + mkt.toUpperCase() + " 마이너스 보정: +" + Math.round(shortfall) + " 입금 처리 → 현금 0");
+      }
+      const cashAfter = await computeAllCash(DB, cfg);
+      return Response.json({ ok: true, method: method, result: out, cashAfter: cashAfter, ts: Date.now() }, { headers: cors });
+    }
     if (path === "/api/fx") {
       const fx = await getState(env.DB, "fx", null);
       if (!fx) return Response.json({ empty: true, pairs: FX_PAIRS }, { headers: cors });
