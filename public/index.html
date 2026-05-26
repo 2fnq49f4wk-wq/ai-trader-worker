@@ -277,6 +277,39 @@
   text-transform: uppercase;
   text-shadow: none;
 }
+.live-indicator {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  font-size: 10px;
+  font-weight: 500;
+  letter-spacing: 1px;
+  margin-top: 3px;
+  color: var(--dim);
+  transition: color 0.3s;
+}
+.live-dot {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: #888;
+  display: inline-block;
+  transition: background 0.3s, box-shadow 0.3s;
+}
+.live-indicator.live .live-dot {
+  background: #22c55e;
+  box-shadow: 0 0 6px #22c55e;
+  animation: livePulse 2s infinite;
+}
+.live-indicator.live { color: #22c55e; }
+.live-indicator.stale .live-dot { background: #f59e0b; box-shadow: 0 0 6px #f59e0b; }
+.live-indicator.stale { color: #f59e0b; }
+.live-indicator.dead .live-dot { background: #ef4444; }
+.live-indicator.dead { color: #ef4444; }
+@keyframes livePulse {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.4; }
+}
 
 :root {
   --bg: #05070b; --panel: #0c0f1a; --elev: #111520;
@@ -582,6 +615,10 @@ button.btn.loading::after { content: "조회 중…"; position: absolute; left: 
     <div class="lux-text-title">
       <span>LUX-ENGINE V9(beta)</span>
       <span class="lux-powered-by">Powered by BLAUENACHT</span>
+      <span class="live-indicator" id="liveIndicator" title="서버 데이터 갱신 상태">
+        <span class="live-dot" id="liveDot"></span>
+        <span id="liveText">연결 중...</span>
+      </span>
     </div>
   </div>
     <div class="topbar-btns">
@@ -1315,6 +1352,29 @@ button.btn.loading::after { content: "조회 중…"; position: absolute; left: 
     if (sec < 3600) return Math.floor(sec / 60) + '분 전';
     return Math.floor(sec / 3600) + '시간 전';
   }
+
+  // [V33] 라이브 상태 인디케이터 — 프론트가 서버 데이터를 마지막으로 받은 시각 기준.
+  //   초록(LIVE, 30초내) / 주황(지연, 2분내) / 빨강(끊김). 1초마다 갱신.
+  function updateLiveIndicator() {
+    var ind = $('liveIndicator'), txt = $('liveText');
+    if (!ind || !txt) return;
+    var last = window.__lastDataReceived;
+    if (!last) { ind.className = 'live-indicator'; txt.textContent = '연결 중...'; return; }
+    var sec = Math.floor((Date.now() - last) / 1000);
+    ind.classList.remove('live', 'stale', 'dead');
+    if (sec <= 30) {
+      ind.classList.add('live');
+      txt.textContent = 'LIVE · ' + (sec <= 2 ? '방금 갱신' : sec + '초 전');
+    } else if (sec <= 120) {
+      ind.classList.add('stale');
+      txt.textContent = '갱신 지연 · ' + sec + '초 전';
+    } else {
+      ind.classList.add('dead');
+      txt.textContent = '연결 끊김 · ' + fmtAgo(last);
+    }
+  }
+  // 1초마다 경과시간 표시 갱신 (데이터 재요청 아님 — 표시만)
+  setInterval(updateLiveIndicator, 1000);
 
   function escapeHtml(s) {
     return String(s).replace(/[&<>"']/g, function(c){
@@ -2657,6 +2717,10 @@ button.btn.loading::after { content: "조회 중…"; position: absolute; left: 
     Promise.all([api('/api/state'), api('/api/trades?limit=50'), api('/api/trades?limit=10000')])
       .then(function(r){
         var state = r[0], trades = r[1], allTrades = r[2];
+        // [V33] 데이터 수신 성공 — 라이브 인디케이터용 시각 기록
+        window.__lastDataReceived = Date.now();
+        window.__serverLastTick = state.lastTick || null;
+        updateLiveIndicator();
         // [FIX V8.7] 서버 marketStatus(휴장일 반영) 저장 후 배너 재렌더.
         window.__serverMarketStatus = state.marketStatus || null;
         renderMarketStatus();
