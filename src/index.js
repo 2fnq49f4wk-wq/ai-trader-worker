@@ -3291,29 +3291,41 @@ async function ensureSchema(DB) {
       } catch (e) { console.error("alter meta fail:", e.message); }
     }
 
-    // [V8] strategy 컬럼 추가 + composite PK 마이그레이션
+    // [V8] strategy 컬럼 추가
     if (!hasStrategy) {
       try {
-        // 1) strategy 컬럼 추가 (기존 row는 'swing'으로 채움)
         await DB.prepare("ALTER TABLE positions ADD COLUMN strategy TEXT NOT NULL DEFAULT 'swing'").run();
         await log(DB, "INFO", null, "schema migrated: added strategy column (default=swing)");
-
-        // 2) 기존 PK가 symbol 단독이라 composite으로 재생성 필요
-        // SQLite는 PK 변경 불가 → 테이블 재생성
-        await DB.prepare("CREATE TABLE IF NOT EXISTS positions_new (symbol TEXT NOT NULL, strategy TEXT NOT NULL DEFAULT 'swing', market TEXT NOT NULL, qty REAL NOT NULL, avg_price REAL NOT NULL, opened_ts INTEGER NOT NULL, meta TEXT, PRIMARY KEY(symbol, strategy))").run();
-        await DB.prepare("INSERT OR IGNORE INTO positions_new (symbol, strategy, market, qty, avg_price, opened_ts, meta) SELECT symbol, COALESCE(strategy, 'swing'), market, qty, avg_price, opened_ts, meta FROM positions").run();
-        await DB.prepare("DROP TABLE positions").run();
-        await DB.prepare("ALTER TABLE positions_new RENAME TO positions").run();
-        await log(DB, "INFO", null, "schema migrated: composite PK (symbol, strategy)");
       } catch (e) {
-        console.error("composite PK migration fail:", e.message);
-        await log(DB, "WARN", null, "PK migration partial: " + e.message);
+        console.error("add strategy fail:", e.message);
+        await log(DB, "WARN", null, "add strategy partial: " + e.message);
+      }
+    }
+
+    // ★★★ [V10 핵심 수정] PRIMARY KEY에 market 포함 ★★★
+    //   기존 PK (symbol, strategy)는 market을 무시 → savePosition의
+    //   ON CONFLICT(symbol, strategy)가 US/KR 포지션을 서로 덮어쓸 수 있다.
+    //   → 현금은 차감됐는데 포지션이 유실되어 "자산 증발"(KR -99%) 발생.
+    //   PK를 (symbol, strategy, market)로 재생성하여 근본 차단.
+    const pkV10 = await getState(DB, "pk_market_migration_v10", null);
+    if (!pkV10) {
+      try {
+        await DB.prepare("CREATE TABLE IF NOT EXISTS positions_v10 (symbol TEXT NOT NULL, strategy TEXT NOT NULL DEFAULT 'swing', market TEXT NOT NULL, qty REAL NOT NULL, avg_price REAL NOT NULL, opened_ts INTEGER NOT NULL, meta TEXT, PRIMARY KEY(symbol, strategy, market))").run();
+        await DB.prepare("INSERT OR IGNORE INTO positions_v10 (symbol, strategy, market, qty, avg_price, opened_ts, meta) SELECT symbol, COALESCE(strategy, 'swing'), market, qty, avg_price, opened_ts, meta FROM positions").run();
+        await DB.prepare("DROP TABLE positions").run();
+        await DB.prepare("ALTER TABLE positions_v10 RENAME TO positions").run();
+        await setState(DB, "pk_market_migration_v10", { done: true, ts: Date.now() });
+        await log(DB, "INFO", null, "[V10] schema migrated: PRIMARY KEY(symbol, strategy, market) — 회계 충돌 버그 수정");
+      } catch (e) {
+        console.error("[V10] PK market migration fail:", e.message);
+        await log(DB, "WARN", null, "[V10] PK market migration partial: " + e.message);
       }
     }
   } catch (e) {
-    // positions 테이블 자체가 없는 경우 — 새로 생성
+    // positions 테이블 자체가 없는 경우 — 올바른 PK로 새로 생성
     try {
-      await DB.prepare("CREATE TABLE IF NOT EXISTS positions (symbol TEXT NOT NULL, strategy TEXT NOT NULL DEFAULT 'swing', market TEXT NOT NULL, qty REAL NOT NULL, avg_price REAL NOT NULL, opened_ts INTEGER NOT NULL, meta TEXT, PRIMARY KEY(symbol, strategy))").run();
+      await DB.prepare("CREATE TABLE IF NOT EXISTS positions (symbol TEXT NOT NULL, strategy TEXT NOT NULL DEFAULT 'swing', market TEXT NOT NULL, qty REAL NOT NULL, avg_price REAL NOT NULL, opened_ts INTEGER NOT NULL, meta TEXT, PRIMARY KEY(symbol, strategy, market))").run();
+      await setState(DB, "pk_market_migration_v10", { done: true, ts: Date.now() });
     } catch (e2) { console.error("schema create fail:", e2.message); }
   }
   // [V16] 코스닥 종목이 과거 .KS로 저장된 포지션/quote를 .KQ로 교정.
@@ -3792,9 +3804,11 @@ function getStrategiesHeldForSymbol(positions, symbol) {
 }
 
 async function savePosition(DB, market, symbol, strategy, pos) {
+  // [V10 수정] ON CONFLICT 키에 market 포함 → US/KR 포지션 충돌·유실 방지.
+  //   기존 ON CONFLICT(symbol, strategy)는 market을 무시해 회계 붕괴를 일으켰음.
   await DB.prepare(
     "INSERT INTO positions (symbol, strategy, market, qty, avg_price, opened_ts, meta) VALUES (?, ?, ?, ?, ?, ?, ?) " +
-    "ON CONFLICT(symbol, strategy) DO UPDATE SET qty=excluded.qty, avg_price=excluded.avg_price, meta=excluded.meta"
+    "ON CONFLICT(symbol, strategy, market) DO UPDATE SET qty=excluded.qty, avg_price=excluded.avg_price, opened_ts=excluded.opened_ts, meta=excluded.meta"
   ).bind(symbol, strategy, market, pos.qty, pos.avg, pos.opened_ts, JSON.stringify(pos.meta || {})).run();
 }
 
@@ -6810,17 +6824,22 @@ async function runTradingCycle(env) {
 //   투자원금(invested) 대비 비정상(예: 현금이 갑자기 2배↑, 음수 등)을 잡는다.
 async function auditAccounting(DB, market, cash) {
   try {
-    const positions = await getPositions(DB, market);
+    const posMap = await getPositions(DB, market);
+    // [V10] getPositions는 map 반환 → 배열로 변환. 필드명 avg 사용.
+    const positions = Object.keys(posMap).map(function(k){ return posMap[k]; });
     let invested = 0;
     const seen = {};
     const dups = [];
     for (const p of positions) {
-      invested += (p.qty || 0) * (p.avg_price || 0);
-      const k = p.symbol + "::" + p.strategy;
+      const qty = (typeof p.qty === "number" && isFinite(p.qty)) ? p.qty : 0;
+      const avg = (typeof p.avg === "number" && isFinite(p.avg)) ? p.avg : 0;
+      invested += qty * avg;
+      // [V10] 중복 키에 market 포함 (PK와 일치)
+      const k = p.symbol + "::" + p.strategy + "::" + market;
       if (seen[k]) dups.push(k);
       seen[k] = true;
     }
-    const cashVal = (cash && typeof cash[market] === "number") ? cash[market] : 0;
+    const cashVal = (cash && typeof cash[market] === "number" && isFinite(cash[market])) ? cash[market] : 0;
     const flags = [];
     // 1) 음수 현금
     if (cashVal < 0) flags.push("NEG_CASH(" + Math.round(cashVal) + ")");
@@ -6829,13 +6848,17 @@ async function auditAccounting(DB, market, cash) {
     // 3) 투자원금이 비정상적으로 큼 — 초기자본 대비 과투자 (현금 회계 붕괴 징후)
     const initial = market === "us" ? 100000 : (market === "kr" ? 100000000 : 100000);
     const totalAsset = cashVal + invested;
-    if (totalAsset > initial * 2) flags.push("ASSET_INFLATE(total=" + Math.round(totalAsset) + " vs init=" + initial + ")");
+    if (totalAsset > initial * 3) flags.push("ASSET_INFLATE(total=" + Math.round(totalAsset) + " vs init=" + initial + ")");
+    // 3b) [V10] 자산 증발 — 총자산이 초기자본의 5% 미만 (포지션 유실/현금 붕괴 핵심 징후, KR -99% 케이스)
+    if (totalAsset < initial * 0.05) flags.push("ASSET_VANISH(total=" + Math.round(totalAsset) + " vs init=" + initial + ")");
     if (flags.length > 0) {
       await log(DB, "ERROR", null, "[AUDIT] " + market.toUpperCase() + " 회계 이상: " + flags.join(" | ") +
         " (cash=" + Math.round(cashVal) + " invested=" + Math.round(invested) + " positions=" + positions.length + ")");
       // [V26] 자동 복구 — 중복 포지션만 정리(정상 거래는 보존). 전체 리셋 불필요.
       if (dups.length > 0) {
-        for (const dupKey of dups) {
+        const dupSet = {};
+        for (const dk of dups) { const pp = dk.split("::"); dupSet[pp[0] + "::" + pp[1]] = true; }
+        for (const dupKey of Object.keys(dupSet)) {
           const parts = dupKey.split("::");
           const dsym = parts[0], dstrat = parts[1];
           // 같은 (symbol, strategy) 중복 행 중 1개만 남기고 제거 → 수량 합산본으로 재저장
@@ -6845,7 +6868,7 @@ async function auditAccounting(DB, market, cash) {
               let totalQty = 0, weightedAvg = 0, earliestTs = null;
               for (const p of same) {
                 totalQty += (p.qty || 0);
-                weightedAvg += (p.qty || 0) * (p.avg_price || 0);
+                weightedAvg += (p.qty || 0) * (p.avg || 0);
                 if (earliestTs == null || (p.opened_ts && p.opened_ts < earliestTs)) earliestTs = p.opened_ts;
               }
               const avg = totalQty > 0 ? weightedAvg / totalQty : 0;
@@ -6861,9 +6884,9 @@ async function auditAccounting(DB, market, cash) {
           }
         }
       }
-      return { ok: false, flags: flags, cash: cashVal, invested: invested };
+      return { ok: false, flags: flags, cash: cashVal, invested: invested, total: totalAsset };
     }
-    return { ok: true, cash: cashVal, invested: invested };
+    return { ok: true, cash: cashVal, invested: invested, total: totalAsset };
   } catch (e) {
     return { ok: true, error: e.message };
   }
@@ -7082,28 +7105,48 @@ async function handleRequest(request, env) {
       await log(env.DB, "INFO", null, "[V24] RESET market=" + mkt + " cash=" + initial);
       return Response.json({ ok: true, market: mkt, cash: initial }, { headers: cors });
     }
-    // [V24] 디버그 진단 — cash/포지션/평가액을 한눈에. 정합성 검증용.
+    // [V24/V10] 디버그 진단 — cash/포지션/평가액/수익률/정합성 플래그.
     if (path === "/api/debug") {
       await ensureSchema(env.DB);
+      const cfg = migrateCfgToMarkets(Object.assign({}, DEFAULT_CFG, await getState(env.DB, "cfg", {})));
       const cash = await getState(env.DB, "cash", {});
+      const deposits = await getState(env.DB, "deposits", { us: 0, kr: 0 });
       const out = { cash: cash, markets: {} };
       for (const mkt of ["us", "kr", "cm"]) {
-        const positions = await getPositions(env.DB, mkt);
+        const posMap = await getPositions(env.DB, mkt);
+        const positions = Object.keys(posMap).map(function(k){ return posMap[k]; });
         let invested = 0, count = 0, dupCheck = {};
         const dups = [];
         for (const p of positions) {
-          invested += (p.qty || 0) * (p.avg_price || 0);
+          invested += (p.qty || 0) * (p.avg || 0);
           count++;
-          const key = p.symbol + "::" + p.strategy;
+          const key = p.symbol + "::" + p.strategy + "::" + mkt;
           if (dupCheck[key]) dups.push(key);
           dupCheck[key] = true;
         }
+        const cashVal = (typeof cash[mkt] === "number" && isFinite(cash[mkt])) ? cash[mkt] : 0;
+        const total = cashVal + invested;
+        // 시장별 초기자본·수익률
+        const initial = mkt === "us" ? cfg.initialCashUS : (mkt === "kr" ? cfg.initialCashKR : cfg.initialCashCM);
+        const dep = (deposits && typeof deposits[mkt] === "number") ? deposits[mkt] : 0;
+        const baseline = (initial || 0) + dep;
+        const changePct = baseline > 0 ? ((total - baseline) / baseline * 100) : 0;
+        // 정합성 플래그
+        const flags = [];
+        if (cashVal < 0) flags.push("NEG_CASH");
+        if (dups.length > 0) flags.push("DUP_POS");
+        if (initial > 0 && total < initial * 0.05) flags.push("ASSET_VANISH");
+        if (initial > 0 && total > initial * 3) flags.push("ASSET_INFLATE");
         out.markets[mkt] = {
-          cash: cash[mkt],
+          cash: Math.round(cashVal),
           positionCount: count,
           invested: Math.round(invested),
-          total: Math.round((cash[mkt] || 0) + invested),
-          duplicatePositions: dups
+          total: Math.round(total),
+          changePct: parseFloat(changePct.toFixed(2)),
+          baseline: Math.round(baseline),
+          duplicatePositions: dups,
+          healthy: flags.length === 0,
+          flags: flags
         };
       }
       // 락 상태도 노출 (겹친 사이클 진단용)
