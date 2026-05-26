@@ -5711,6 +5711,7 @@ async function executeBuyCM(DB, symbol, qty, price, signal, dailyAtr, cfg, cash)
   }
 
   cash.cm -= total;
+  try { await setState(DB, "cash", cash); } catch (e) {}
   await recordTrade(DB, {
     ts: Date.now(), market: "cm", symbol: symbol, side: "BUY",
     qty: qty, price: price,
@@ -5718,6 +5719,7 @@ async function executeBuyCM(DB, symbol, qty, price, signal, dailyAtr, cfg, cash)
   });
   const stopPctRel = ((stopPrice - price) / price * 100).toFixed(1);
   await log(DB, "TRADE", symbol, "[CM] BUY x" + qty + " @" + price.toFixed(2) + " " + signal.name + " " + signal.detail + " stop=" + stopPrice.toFixed(2) + "(" + stopPctRel + "%)");
+  return cash;
 }
 
 // 원자재 전용 매도 — USD·무세금. 부분/전량 청산 지원.
@@ -5748,8 +5750,9 @@ async function executeSellCM(DB, symbol, pos, sellQty, price, reason, cfg, cash)
   }
 
   await recordTrade(DB, { ts: Date.now(), market: "cm", symbol: symbol, side: "SELL", qty: sellQty, price: price, pnl: pnl, pnl_pct: pnlPct, reason: enrichedReason });
+  try { await setState(DB, "cash", cash); } catch (e) {}
   await log(DB, "TRADE", symbol, "[CM] SELL x" + sellQty + " @" + price.toFixed(2) + " PnL " + pnlPct.toFixed(2) + "% (held " + heldMin + "min, " + reason + ")");
-  return { pnlPct: pnlPct };
+  return { pnlPct: pnlPct, cash: cash };
 }
 
 // ============================================================
