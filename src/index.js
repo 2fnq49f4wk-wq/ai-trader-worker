@@ -6745,7 +6745,9 @@ async function runTradingCycle(env) {
             }
 
             const totalCost = qty * price * (1 + feeRate);
-            if (qty > 0 && totalCost <= cash[market]) {
+            // [V27] 예산 가드 — 부동소수점 오차 여유(1원/1센트) 두고 엄격 차단 + 초과 시도 로깅
+            const epsilon = market === "us" ? 0.01 : 1;
+            if (qty > 0 && totalCost <= cash[market] + epsilon) {
               // [V8.6 Hybrid] LLM stop_loss_adjustment 적용 (지시 있으면)
               const buyOpts = (llmInstr && llmInstr.stop_loss_adjustment && typeof llmInstr.stop_loss_adjustment.new_pct === "number")
                 ? { stopPctOverride: llmInstr.stop_loss_adjustment.new_pct } : null;
@@ -6756,6 +6758,10 @@ async function runTradingCycle(env) {
               strategiesHeldNow.add(strategy);
               const sec = SECTOR_MAP[symbol];
               if (sec) sectorCounts[sec] = (sectorCounts[sec] || 0) + 1;
+            } else if (qty > 0 && totalCost > cash[market] + epsilon) {
+              // 예산 초과 매수 시도 — 차단하고 기록 (회계 붕괴 방지)
+              await log(DB, "ERROR", symbol, "[CRITICAL] 예산초과 매수차단: 필요=" + Math.round(totalCost) + " 가용=" + Math.round(cash[market]) + " (" + strategy + ")");
+              incNobuy("cash_short[" + strategy + "]");
             } else {
               if (qty === 0) {
                 incNobuy("price_too_high[" + strategy + "]");
