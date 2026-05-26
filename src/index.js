@@ -2133,7 +2133,7 @@ const DEFAULT_CFG = {
   },
   // === [V8.3] 신호 통계 신선도 ===
   // signal_stats 누적이 길어지면 옛날 시장 통계가 새 시장에 영향. 최근 N건만 사용.
-  signalStatsWindow: 80,  // 직전 80건 가중 평가 (0 = 무제한, 기존 동작)
+  signalStatsWindow: 200,  // [V34] 80→200: 희귀 신호 통계 추적성↑ (시장 국면 추종 유지)
   // === [V8] Cross-strategy confluence — 같은 종목 + 다른 전략 동시 신호 ===
   crossConfluenceBonus: 1.2,
   // === [V8] 전략별 진입/청산 룰 ===
@@ -3853,15 +3853,34 @@ async function computeCashFromTrades(DB, market, cfg) {
   const sellTaxRate = market === "kr" ? (cfg.krSellTax || 0) : 0;
   const deposits = await getState(DB, "deposits", { us: 0, kr: 0, cm: 0 });
   const dep = (deposits && typeof deposits[market] === "number") ? deposits[market] : 0;
-  let cash = (typeof initial === "number" ? initial : 0) + dep;
-  const rows = await DB.prepare("SELECT side, qty, price FROM trades WHERE market = ?").bind(market).all();
-  for (const t of (rows.results || [])) {
+
+  // [V34] 스냅샷 체크포인트 — trades 전체를 매번 합산하면 거래 누적 시 CPU 타임아웃.
+  //   { cashAfter, lastRowid } 스냅샷을 저장하고, 이후 추가된 trades(rowid > lastRowid)만 합산.
+  //   합산 건수가 임계(500) 넘으면 스냅샷을 전진 저장해 합산량을 항상 작게 유지.
+  const ckptKey = "cash_ckpt:" + market;
+  let ckpt = await getState(DB, ckptKey, null);
+  let baseCash, sinceRowid;
+  if (ckpt && typeof ckpt.cashAfter === "number" && typeof ckpt.lastRowid === "number") {
+    baseCash = ckpt.cashAfter;
+    sinceRowid = ckpt.lastRowid;
+  } else {
+    baseCash = (typeof initial === "number" ? initial : 0) + dep;
+    sinceRowid = 0;
+  }
+
+  const rows = await DB.prepare("SELECT rowid AS rid, side, qty, price FROM trades WHERE market = ? AND rowid > ? ORDER BY rowid ASC").bind(market, sinceRowid).all();
+  const list = rows.results || [];
+  let cash = baseCash;
+  let maxRowid = sinceRowid;
+  for (const t of list) {
     const gross = (t.qty || 0) * (t.price || 0);
-    if (t.side === "BUY") {
-      cash -= gross * (1 + feeRate);
-    } else if (t.side === "SELL") {
-      cash += gross * (1 - feeRate - sellTaxRate);
-    }
+    if (t.side === "BUY") cash -= gross * (1 + feeRate);
+    else if (t.side === "SELL") cash += gross * (1 - feeRate - sellTaxRate);
+    if (t.rid > maxRowid) maxRowid = t.rid;
+  }
+  // 합산 건수가 많아지면 체크포인트 전진 (다음 호출부터 합산량 축소)
+  if (list.length >= 500 && maxRowid > sinceRowid) {
+    try { await setState(DB, ckptKey, { cashAfter: cash, lastRowid: maxRowid, ts: Date.now() }); } catch (e) {}
   }
   return cash;
 }
@@ -7200,6 +7219,7 @@ async function handleRequest(request, env) {
       await ensureSchema(env.DB);
       const cfg = migrateCfgToMarkets(Object.assign({}, DEFAULT_CFG, await getState(env.DB, "cfg", {})));
       await env.DB.prepare("DELETE FROM trades").run();
+      await env.DB.prepare("DELETE FROM state WHERE k LIKE ?").bind("cash_ckpt:%").run();
       await env.DB.prepare("DELETE FROM positions").run();
       await env.DB.prepare("DELETE FROM logs").run();
       await env.DB.prepare("DELETE FROM state WHERE k NOT LIKE 'quote:%' AND k NOT LIKE 'index:%' AND k NOT LIKE 'daily:%'").run();
@@ -7219,6 +7239,7 @@ async function handleRequest(request, env) {
       // [V29] trades 삭제 = cash 자동 초기자본 복원 (단일 원장). positions도 삭제.
       await env.DB.prepare("DELETE FROM positions WHERE market = ?").bind(mkt).run();
       await env.DB.prepare("DELETE FROM trades WHERE market = ?").bind(mkt).run();
+      await env.DB.prepare("DELETE FROM state WHERE k = ?").bind("cash_ckpt:" + mkt).run();
       const deposits = await getState(env.DB, "deposits", { us: 0, kr: 0, cm: 0 });
       deposits[mkt] = 0;
       await setState(env.DB, "deposits", deposits);
@@ -7273,6 +7294,7 @@ async function handleRequest(request, env) {
       // cm 포지션/거래만 삭제
       await env.DB.prepare("DELETE FROM positions WHERE market = ?").bind("cm").run();
       await env.DB.prepare("DELETE FROM trades WHERE market = ?").bind("cm").run();
+      await env.DB.prepare("DELETE FROM state WHERE k = ?").bind("cash_ckpt:cm").run();
       // cm 현금만 초기금액으로 복원 (us/kr는 그대로 보존)
       const cash = await computeAllCash(env.DB, cfg);
       cash.cm = cfg.initialCashCM;
