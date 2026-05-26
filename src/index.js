@@ -5623,33 +5623,34 @@ async function acquireCycleLock(DB, ttl) {
   //   1) 정상 만료(until <= now) 락 정리 + 2) 비정상 stale 락(생성 후 5분 경과)도 강제 정리.
   const STALE_MS = 5 * 60 * 1000;
 
-  // 1) 만료된 락은 먼저 정리 (where 조건으로 atomic하게)
+  // [V32] json_extract 미사용 — updated_ts(=pid=생성시각×1000+rnd) 기반으로 stale 판정.
+  //   1) v.until로 정상 만료 검사(JSON 파싱) + 2) updated_ts로 비정상 stale 강제 정리.
   try {
-    await DB.prepare(
-      "DELETE FROM state WHERE k = ? AND (" +
-      "CAST(json_extract(v, '$.until') AS INTEGER) <= ? OR " +
-      "CAST(json_extract(v, '$.pid') AS INTEGER) <= ?)"
-    ).bind(lockKey, now, now - STALE_MS).run();
-  } catch (e) {
-    // json_extract 미지원 환경 fallback — 만료 검사 없이 진행
-    try {
-      const row = await DB.prepare("SELECT v FROM state WHERE k = ?").bind(lockKey).first();
-      if (row) {
-        let parsed = null;
-        try { parsed = JSON.parse(row.v); } catch (e2) {}
-        if (parsed && ((parsed.until && parsed.until <= now) || (parsed.pid && parsed.pid <= now - STALE_MS))) {
-          await DB.prepare("DELETE FROM state WHERE k = ?").bind(lockKey).run();
-        }
+    const row = await DB.prepare("SELECT v, updated_ts FROM state WHERE k = ?").bind(lockKey).first();
+    if (row) {
+      let expired = false;
+      // pid는 생성시각×1000 기반 → /1000 하면 대략 생성 ms. STALE_MS 경과 시 강제 정리.
+      const createdMs = Math.floor(Number(row.updated_ts) / 1000);
+      if (isFinite(createdMs) && createdMs <= now - STALE_MS) expired = true;
+      if (!expired) {
+        try {
+          const parsed = JSON.parse(row.v);
+          if (parsed && parsed.until && parsed.until <= now) expired = true;
+        } catch (e2) {}
       }
-    } catch (e3) {}
-  }
+      if (expired) {
+        await DB.prepare("DELETE FROM state WHERE k = ? AND updated_ts = ?").bind(lockKey, row.updated_ts).run();
+      }
+    }
+  } catch (e) {}
 
   // 2) atomic INSERT — 락이 이미 있으면 실패 (ON CONFLICT 사용 안 함)
+  //   [V32] updated_ts 컬럼에 myPid를 저장 → 소유권 비교를 json_extract 없이 수행.
   try {
     await DB.prepare(
       "INSERT INTO state (k, v, updated_ts) VALUES (?, ?, ?)"
-    ).bind(lockKey, lockValue, now).run();
-    return myPid;  // [V31] 성공 시 고유 pid 반환 (소유권 확인용)
+    ).bind(lockKey, lockValue, myPid).run();
+    return myPid;  // 성공 시 고유 pid 반환 (소유권 확인용)
   } catch (e) {
     return null;   // UNIQUE 위반 = 다른 인스턴스 보유 중
   }
@@ -5657,38 +5658,42 @@ async function acquireCycleLock(DB, ttl) {
 
 // [V31] 락 소유권 확인 — 내 pid가 현재 락의 pid와 같은지. 다르면 다른 워커가 가져간 것.
 //   각 시장 매매 직전에 호출해 "락 만료→새 워커 진입" 시 이중체결을 차단한다.
+//   [V32] updated_ts 컬럼에 pid를 저장하므로 json_extract 없이 비교 (미지원 환경 크래시 방지).
 async function ownsCycleLock(DB, myPid) {
   if (myPid == null) return false;
   try {
-    const row = await DB.prepare("SELECT v FROM state WHERE k = ?").bind("lock:cycle").first();
+    const row = await DB.prepare("SELECT updated_ts FROM state WHERE k = ?").bind("lock:cycle").first();
     if (!row) return false;
-    let parsed = null;
-    try { parsed = JSON.parse(row.v); } catch (e) { return false; }
-    return parsed && parsed.pid === myPid;
+    return Number(row.updated_ts) === Number(myPid);
   } catch (e) {
     return false;
   }
 }
 
-async function releaseCycleLock(DB) {
+// [V32] 내가 획득한 락일 때만 해제 (pid 검증) — 다른 워커 락을 실수로 지우지 않음.
+async function releaseCycleLock(DB, myPid) {
   try {
-    await DB.prepare("DELETE FROM state WHERE k = ?").bind("lock:cycle").run();
+    if (myPid != null) {
+      await DB.prepare("DELETE FROM state WHERE k = ? AND updated_ts = ?").bind("lock:cycle", myPid).run();
+    } else {
+      await DB.prepare("DELETE FROM state WHERE k = ?").bind("lock:cycle").run();
+    }
   } catch (e) {}
 }
 
 // [V8.5] 사이클 락 갱신 — 한 시장 처리 후 호출되어 다음 시장 처리 전 TTL 연장.
-// stale 락으로 동시 인스턴스가 진입하는 것을 방지.
+// [V32] json_extract 제거 — updated_ts(=pid)로 소유권 검증.
 async function refreshCycleLock(DB, ttl, myPid) {
   const now = Date.now();
-  // [V31] pid 유지하며 TTL만 연장 (소유권 일관성). pid 미전달 시 기존 동작.
   try {
     if (myPid != null) {
       const lockValue = JSON.stringify({ until: now + ttl, pid: myPid });
-      await DB.prepare("UPDATE state SET v = ?, updated_ts = ? WHERE k = ? AND CAST(json_extract(v,'$.pid') AS INTEGER) = ?")
-        .bind(lockValue, now, "lock:cycle", myPid).run();
+      // updated_ts는 pid 유지(소유권 식별자), v의 until만 갱신
+      await DB.prepare("UPDATE state SET v = ? WHERE k = ? AND updated_ts = ?")
+        .bind(lockValue, "lock:cycle", myPid).run();
     } else {
       const lockValue = JSON.stringify({ until: now + ttl, pid: now });
-      await DB.prepare("UPDATE state SET v = ?, updated_ts = ? WHERE k = ?").bind(lockValue, now, "lock:cycle").run();
+      await DB.prepare("UPDATE state SET v = ? WHERE k = ?").bind(lockValue, "lock:cycle").run();
     }
   } catch (e) {}
 }
@@ -6917,7 +6922,7 @@ async function runTradingCycle(env) {
     await log(DB, "INFO", null, "Done: tried=" + tried + " skip=" + skipped + " buy=" + bought + " sell=" + sold + " fetchFail=" + fetchFail + " cycleMs=" + cycleMs);
     try { await DB.prepare("DELETE FROM logs WHERE id NOT IN (SELECT id FROM logs ORDER BY id DESC LIMIT 500)").run(); } catch (e) {}
   } finally {
-    await releaseCycleLock(DB);
+    await releaseCycleLock(DB, myLockPid);
   }
 }
 
