@@ -594,6 +594,8 @@ button.btn.loading::after { content: "조회 중…"; position: absolute; left: 
       <button type="button" class="btn" id="btnSettings">SETTINGS</button>
       <button type="button" class="btn" id="btnHolidayRecheck">📅 휴장 재확인</button>
       <button type="button" class="btn" id="btnDebug">🔍 진단</button>
+      <button type="button" class="btn" id="btnResetUS">♻ US리셋</button>
+      <button type="button" class="btn" id="btnResetKR">♻ KR리셋</button>
       <button type="button" class="btn primary" id="btnTick">RUN NOW</button>
     </div>
   </div>
@@ -985,7 +987,7 @@ button.btn.loading::after { content: "조회 중…"; position: absolute; left: 
       <div class="checkbox-row"><input type="checkbox" id="cfgStratSwing"><label for="cfgStratSwing"><b>SWING</b> (4시간~7일, 풀백/반전)</label></div>
     </div>
     <div class="field-row">
-      <div class="checkbox-row"><input type="checkbox" id="cfgStratDay" disabled><label for="cfgStratDay" style="opacity:0.5;"><b>DAY</b> <span style="color:#f85149;">(폐지됨 — 누적 손실로 비활성화)</span></label></div>
+      <div class="checkbox-row"><input type="checkbox" id="cfgStratDay"><label for="cfgStratDay"><b>DAY</b> (수시간, 갭하락 후 반등)</label></div>
     </div>
     <div class="field-row">
       <div class="checkbox-row"><input type="checkbox" id="cfgStratMomentum"><label for="cfgStratMomentum"><b>MOMENTUM</b> (5~30일, 신고가 돌파/추세)</label></div>
@@ -1100,29 +1102,6 @@ button.btn.loading::after { content: "조회 중…"; position: absolute; left: 
       <div style="font-size:10px; color:var(--faint); margin-top:4px;">
         클릭 시: deposits = (cash + 평가액) − initialCash − 포지션PnL합계 로 계산. 입금/출금으로 vs Initial이 왜곡됐을 때 사용.
       </div>
-    </div>
-
-    <!-- [V10] 시장별 초기화 (상단에서 설정창으로 이동) -->
-    <div style="margin-top:20px; padding:14px; background:rgba(248,81,73,0.06); border:1px solid rgba(248,81,73,0.3); border-radius:6px;">
-      <div style="font-size:12px; font-weight:700; color:#f85149; letter-spacing:0.5px; margin-bottom:10px;">
-        🔴 시장별 초기화 (Advanced)
-      </div>
-      <div style="display:grid; grid-template-columns:1fr 1fr; gap:8px;">
-        <button type="button" class="btn" id="btnResetUS" style="border:1px solid #f85149; color:#f85149; background:transparent;">♻ US 시장 리셋</button>
-        <button type="button" class="btn" id="btnResetKR" style="border:1px solid #f85149; color:#f85149; background:transparent;">♻ KR 시장 리셋</button>
-      </div>
-      <div style="font-size:10px; color:var(--faint); margin-top:8px; line-height:1.5;">
-        해당 시장의 포지션·거래내역 삭제 + 현금 초기금액 복원. 되돌릴 수 없습니다.
-      </div>
-    </div>
-
-    <!-- [V10] 회계 진단 (설정창 내장) -->
-    <div style="margin-top:16px; padding:14px; background:rgba(116,209,28,0.06); border:1px solid rgba(116,209,28,0.3); border-radius:6px;">
-      <div style="font-size:12px; font-weight:700; color:#74d11c; letter-spacing:0.5px; margin-bottom:10px;">
-        🔍 회계 진단 (Diagnostics)
-      </div>
-      <button type="button" class="btn" id="btnAuditInSettings" style="width:100%; border:1px solid #74d11c; color:#74d11c; background:transparent;">시스템 정합성 진단</button>
-      <pre id="auditResultBox" style="display:none; margin-top:10px; padding:10px; background:rgba(0,0,0,0.25); border:1px solid var(--border); border-radius:4px; font-size:11px; color:#cbd5e1; white-space:pre-wrap; max-height:240px; overflow-y:auto; font-family:'IBM Plex Mono',monospace; line-height:1.5;"></pre>
     </div>
 
     <div class="modal-actions">
@@ -1416,59 +1395,25 @@ button.btn.loading::after { content: "조회 중…"; position: absolute; left: 
 
   function calcSummary(market, cash, positions, initialCash, deposits) {
     var symbol = market === 'us' ? '$' : '₩';
-    // [V10] 입력값 정상화 — NaN/undefined 방어
-    if (typeof cash !== 'number' || isNaN(cash)) cash = 0;
-    if (typeof initialCash !== 'number' || isNaN(initialCash)) initialCash = 0;
-    if (typeof deposits !== 'number' || isNaN(deposits)) deposits = 0;
-    // [V8] positions는 array (각 row에 symbol, strategy, qty, avg)
-    var list;
-    if (Array.isArray(positions)) {
-      list = positions;
-    } else if (positions && typeof positions === 'object') {
-      list = Object.keys(positions).map(function(k){
-        var p = positions[k];
-        return { symbol: p.symbol || k, qty: p.qty, avg: p.avg };
-      });
-    } else {
-      list = [];
-    }
     var invested = 0, marketVal = 0;
+    // [V8] positions는 array (각 row에 symbol, strategy, qty, avg)
+    var list = Array.isArray(positions) ? positions : Object.keys(positions).map(function(k){
+      var p = positions[k];
+      return { symbol: p.symbol || k, qty: p.qty, avg: p.avg };
+    });
     list.forEach(function(p) {
-      if (!p) return;
-      var qty = parseFloat(p.qty); if (isNaN(qty)) qty = 0;
-      var avg = parseFloat(p.avg); if (isNaN(avg)) avg = 0;
-      if (qty === 0) return;
-      invested += qty * avg;
+      invested += p.qty * p.avg;
       var q = lastQuotes[p.symbol];
-      var curPrice = (q && typeof q.price === 'number' && !isNaN(q.price)) ? q.price : avg;
-      marketVal += qty * curPrice;
+      var curPrice = q ? q.price : p.avg;
+      marketVal += p.qty * curPrice;
     });
     var total = cash + marketVal;
     // [V8.2.2] 수익률 계산은 입금/출금분 제외 — change = total - (initialCash + 누적입금)
-    var baseline = initialCash + deposits;
+    var deposited = deposits || 0;
+    var baseline = initialCash + deposited;
     var change = total - baseline;
     var changePct = baseline > 0 ? (change / baseline * 100) : 0;
-
-    // [V11] 회계 정합성 검증 — "현금 + 진입원가"는 (초기자본 + 입금)을 초과할 수 없다.
-    //   (매매로는 자산 총량이 안 늘어남. 늘었다면 거래로그-DB 불일치 = 회계 누수)
-    //   초과분이 baseline의 0.5%를 넘으면 수익률이 "가짜 플러스"이므로 플래그.
-    var costBasisTotal = cash + invested;          // 현재 보유 진입원가 + 남은 현금
-    var leak = costBasisTotal - baseline;           // 양수면 장부에 돈이 더 생긴 것(누수)
-    var accountingHealthy = true;
-    if (baseline > 0 && leak > baseline * 0.005) {
-      accountingHealthy = false;
-      console.warn('[calcSummary] ' + market.toUpperCase() +
-        ' 회계 누수 감지: 현금+진입원가(' + Math.round(costBasisTotal) +
-        ') > 초기자본+입금(' + Math.round(baseline) + ') 차이 ' + Math.round(leak) +
-        ' → VS INITIAL(' + changePct.toFixed(2) + '%)은 신뢰 불가. 시장 리셋 권장.');
-    }
-    // [V10] 자산 증발 경고 (KR -99% 케이스 — PK 버그로 포지션 유실 시)
-    if (baseline > 0 && total < baseline * 0.05) {
-      accountingHealthy = false;
-      console.warn('[calcSummary] ' + market.toUpperCase() + ' 자산 증발 의심: total=' +
-        Math.round(total) + ' baseline=' + Math.round(baseline) + ' (' + changePct.toFixed(1) + '%) — 진단 권장');
-    }
-    return { symbol: symbol, cash: cash, invested: invested, marketVal: marketVal, total: total, change: change, changePct: changePct, baseline: baseline, accountingHealthy: accountingHealthy, leak: leak };
+    return { symbol: symbol, cash: cash, invested: invested, marketVal: marketVal, total: total, change: change, changePct: changePct };
   }
 
   function renderSummary(market, s) {
@@ -1480,18 +1425,8 @@ button.btn.loading::after { content: "조회 중…"; position: absolute; left: 
     $('cash'+up).textContent = s.symbol + fmt(s.cash);
     var changeEl = $('change'+up);
     var sign = s.changePct >= 0 ? '+' : '';
-    // [V11] 회계 누수 시 — 수익률 신뢰 불가. 값 옆에 ⚠ 표시 + 회색 처리(가짜 플러스 오인 방지).
-    if (s.accountingHealthy === false) {
-      changeEl.textContent = sign + fmtNum(s.changePct, 2) + '% ⚠';
-      changeEl.className = 'summary-value';
-      changeEl.style.color = '#e3b341';
-      changeEl.title = '회계 불일치 감지 — 거래로그와 DB가 어긋나 수익률을 신뢰할 수 없습니다. 설정창에서 해당 시장을 리셋하세요.';
-    } else {
-      changeEl.textContent = sign + fmtNum(s.changePct, 2) + '%';
-      changeEl.className = 'summary-value ' + (s.changePct > 0 ? 'pos' : (s.changePct < 0 ? 'neg' : ''));
-      changeEl.style.color = '';
-      changeEl.title = '';
-    }
+    changeEl.textContent = sign + fmtNum(s.changePct, 2) + '%';
+    changeEl.className = 'summary-value ' + (s.changePct > 0 ? 'pos' : (s.changePct < 0 ? 'neg' : ''));
   }
 
   // [V8] 전략별 색상 매핑
@@ -1538,19 +1473,15 @@ button.btn.loading::after { content: "조회 중…"; position: absolute; left: 
     fillHeld(listUS, 'us');
     fillHeld(listKR, 'kr');
 
-    // [V8.2.4] 시장별 총 미실현 평가손익 계산 — 헤더에 표시용 (실현손익 아님)
+    // [V8.2.4] 시장별 총 PnL/PnL% 계산 — 헤더에 표시용
     function aggregate(list, marketSym, fmtFn) {
       var costSum = 0, valSum = 0, hasPrice = false;
       list.forEach(function(p){
-        var qty = parseFloat(p.qty); if (isNaN(qty)) qty = 0;
-        var avg = parseFloat(p.avg); if (isNaN(avg)) avg = 0;
-        if (qty === 0 || avg === 0) return;
         var q = lastQuotes[p.symbol];
-        // [V11] 현재가가 유효(양수)할 때만 평가에 반영. 없으면 평단가로 폴백(손익 0 기여).
-        var cur = (q && typeof q.price === 'number' && q.price > 0) ? q.price : avg;
-        if (q && typeof q.price === 'number' && q.price > 0) hasPrice = true;
-        costSum += qty * avg;
-        valSum += qty * cur;
+        if (q) hasPrice = true;
+        var cur = q ? q.price : p.avg;
+        costSum += p.qty * p.avg;
+        valSum += p.qty * cur;
       });
       if (list.length === 0 || costSum === 0) return null;
       var pnl = valSum - costSum;
@@ -1564,10 +1495,8 @@ button.btn.loading::after { content: "조회 중…"; position: absolute; left: 
     var aggUS = aggregate(listUS, '$', function(n){ return fmtNum(n, 2); });
     var aggKR = aggregate(listKR, '₩', fmtCompact);
     var parts = [];
-    // [V11] "평가" 명시 — 실현손익(매도 완료)이 아니라 보유 포지션의 미실현 평가손익임을 명확히.
-    //   가격이 아직 수신되지 않은 시장은 손익을 표시하지 않음(0/오해 방지).
-    if (aggUS && aggUS.hasPrice) parts.push('<span style="color:var(--dim);">US 평가:</span> <span class="'+aggUS.cls+'">'+aggUS.pnlText+' ('+aggUS.pctText+')</span>');
-    if (aggKR && aggKR.hasPrice) parts.push('<span style="color:var(--dim);">KR 평가:</span> <span class="'+aggKR.cls+'">'+aggKR.pnlText+' ('+aggKR.pctText+')</span>');
+    if (aggUS) parts.push('<span style="color:var(--dim);">US:</span> <span class="'+aggUS.cls+'">'+aggUS.pnlText+' ('+aggUS.pctText+')</span>');
+    if (aggKR) parts.push('<span style="color:var(--dim);">KR:</span> <span class="'+aggKR.cls+'">'+aggKR.pnlText+' ('+aggKR.pctText+')</span>');
     if (totalEl) totalEl.innerHTML = parts.length ? parts.join(' &nbsp;·&nbsp; ') : '';
 
     var all = [];
@@ -1577,8 +1506,8 @@ button.btn.loading::after { content: "조회 중…"; position: absolute; left: 
 
     var allWithPnl = all.map(function(row){
       var q = lastQuotes[row.symbol];
-      var curPrice = (q && typeof q.price === 'number' && q.price > 0) ? q.price : null;
-      var pnlPct = (curPrice != null && row.p.avg) ? ((curPrice - row.p.avg) / row.p.avg * 100) : -999;
+      var curPrice = q ? q.price : null;
+      var pnlPct = curPrice != null ? ((curPrice - row.p.avg) / row.p.avg * 100) : -999;
       return {row: row, pnlPct: pnlPct};
     });
     allWithPnl.sort(function(a, b){ return b.pnlPct - a.pnlPct; });
@@ -1592,7 +1521,7 @@ button.btn.loading::after { content: "조회 중…"; position: absolute; left: 
       var row = item.row;
       var p = row.p;
       var q = lastQuotes[row.symbol];
-      var curPrice = (q && typeof q.price === 'number' && q.price > 0) ? q.price : null;
+      var curPrice = q ? q.price : null;
       var cost = p.qty * p.avg;
       var value = curPrice != null ? p.qty * curPrice : null;
       var pnl = value != null ? value - cost : null;
@@ -2086,6 +2015,7 @@ button.btn.loading::after { content: "조회 중…"; position: absolute; left: 
     var strats = cfg.strategies || {};
     var activeStrats = [];
     if (strats.swing !== false) activeStrats.push('SWING');
+    if (strats.day !== false) activeStrats.push('DAY');
     if (strats.momentum !== false) activeStrats.push('MOM');
     if (strats.meanrev !== false) activeStrats.push('MR');
     var stratStr = activeStrats.length ? activeStrats.join('+') : 'NONE';
@@ -2891,10 +2821,10 @@ button.btn.loading::after { content: "조회 중…"; position: absolute; left: 
       initialCashKR: parseFloat($('cfgInitCashKR').value),
       usTickers: parseTickers($('cfgUS').value),
       krTickers: parseTickers($('cfgKR').value),
-      // [V8] 전략 토글 — [V11] day는 폐지되어 항상 false
+      // [V8] 전략 토글
       strategies: {
         swing: $('cfgStratSwing').checked,
-        day: false,
+        day: $('cfgStratDay').checked,
         momentum: $('cfgStratMomentum').checked,
         meanrev: $('cfgStratMeanrev').checked
       },
@@ -3239,54 +3169,22 @@ button.btn.loading::after { content: "조회 중…"; position: absolute; left: 
   bindReset('btnResetUS', 'us');
   bindReset('btnResetKR', 'kr');
 
-  // [V10] 회계 진단 — 정합성 플래그/수익률 표시 (공용 fetch)
-  function fetchDebugLines() {
-    return fetch('/api/debug').then(function(r){ return r.json(); }).then(function(d){
-      var lines = ['=== 회계 진단 ==='];
-      var anyIssue = false;
-      var labels = { us: 'US', kr: 'KR', cm: '원자재' };
+  // 진단 — cash/포지션/평가액/락 상태 표시
+  $('btnDebug') && $('btnDebug').addEventListener('click', function(){
+    fetch('/api/debug').then(function(r){ return r.json(); }).then(function(d){
+      var lines = ['=== 진단 ==='];
       ['us','kr','cm'].forEach(function(m){
         var x = d.markets && d.markets[m];
         if (!x) return;
-        var healthy = x.healthy !== false && (!x.flags || x.flags.length === 0);
-        if (!healthy) anyIssue = true;
-        lines.push('');
-        lines.push('[' + (labels[m] || m.toUpperCase()) + '] ' + (healthy ? '✅ 정상' : '❌ 이상'));
-        lines.push('  현금 ' + (x.cash||0).toLocaleString() +
-          ' / 투자 ' + (x.invested||0).toLocaleString() +
-          ' / 총자산 ' + (x.total||0).toLocaleString());
-        if (typeof x.changePct === 'number') {
-          lines.push('  수익률 ' + (x.changePct>=0?'+':'') + x.changePct.toFixed(2) + '% / 종목 ' + (x.positionCount||0));
-        }
-        if (x.flags && x.flags.length) lines.push('  ⚠️ ' + x.flags.join(', '));
-        if (x.duplicatePositions && x.duplicatePositions.length) lines.push('  중복: ' + x.duplicatePositions.join(', '));
+        lines.push(m.toUpperCase() + ': 현금=' + Math.round(x.cash||0).toLocaleString() +
+          ' / 투자=' + (x.invested||0).toLocaleString() +
+          ' / 평가합=' + (x.total||0).toLocaleString() +
+          ' / 종목=' + x.positionCount +
+          (x.duplicatePositions && x.duplicatePositions.length ? ' / 중복!=' + x.duplicatePositions.join(',') : ''));
       });
-      if (d.cycleLock) lines.push('\n사이클락: ' + (d.cycleLock.expired ? '만료(정상)' : '활성(실행중)'));
-      return { text: lines.join('\n'), anyIssue: anyIssue };
-    });
-  }
-
-  // 상단 진단 버튼 — alert로 표시
-  $('btnDebug') && $('btnDebug').addEventListener('click', function(){
-    fetchDebugLines().then(function(res){ alert(res.text); })
-      ['catch'](function(e){ toast('진단 실패: ' + e.message); });
-  });
-
-  // [V10] 설정창 내장 진단 버튼 — 박스에 표시
-  var _btnAuditSettings = $('btnAuditInSettings');
-  if (_btnAuditSettings) _btnAuditSettings.addEventListener('click', function(){
-    var box = $('auditResultBox');
-    if (!box) return;
-    box.style.display = 'block';
-    box.textContent = '진단 중...';
-    box.style.color = '#cbd5e1';
-    fetchDebugLines().then(function(res){
-      box.textContent = res.text;
-      box.style.color = res.anyIssue ? '#f85149' : '#74d11c';
-    })['catch'](function(e){
-      box.textContent = '진단 실패: ' + e.message;
-      box.style.color = '#f85149';
-    });
+      if (d.cycleLock) lines.push('사이클락: ' + (d.cycleLock.expired ? '만료됨(정상)' : '활성(돌고있음)'));
+      alert(lines.join('\n'));
+    })['catch'](function(e){ toast('진단 실패: ' + e.message); });
   });
 
   // 모달 배경 클릭으로 닫기
