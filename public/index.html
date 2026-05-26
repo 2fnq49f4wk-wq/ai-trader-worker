@@ -1031,6 +1031,13 @@ button.btn.loading::after { content: "조회 중…"; position: absolute; left: 
       <div class="checkbox-row"><input type="checkbox" id="cfgStratMeanrev"><label for="cfgStratMeanrev"><b>MEANREV</b> (1~5일, 극단 과매도 반전)</label></div>
     </div>
 
+    <!-- [V11] Claude LLM Hybrid 토글 -->
+    <div class="section-title" style="margin-top:14px;">CLAUDE LLM HYBRID</div>
+    <div class="field-row">
+      <div class="checkbox-row"><input type="checkbox" id="cfgLlmEnabled"><label for="cfgLlmEnabled"><b>LLM 일일 지시 사용</b> (ANTHROPIC_API_KEY 필요)</label></div>
+    </div>
+    <div class="hint" style="margin-bottom:8px;">켜면 매일 Claude가 시장을 분석해 sizing·손절·매수신호 ON/OFF를 조정합니다. API 키가 없으면 자동으로 기본(V8.5) 로직으로 작동합니다.</div>
+
     <div class="section-title" style="margin-top:14px;">POSITION SIZE (전략별 %, NEUTRAL/BULL/BEAR multiplier)</div>
     <div class="field-row">
       <div class="field"><label>SWING base</label><input type="number" id="cfgSizeSwingBase" min="1" max="100" step="0.5"></div>
@@ -1136,42 +1143,6 @@ button.btn.loading::after { content: "조회 중…"; position: absolute; left: 
       </button>
       <div style="font-size:10px; color:var(--faint); margin-top:4px;">
         클릭 시: deposits = (cash + 평가액) − initialCash − 포지션PnL합계 로 계산. 입금/출금으로 vs Initial이 왜곡됐을 때 사용.
-      </div>
-    </div>
-
-    <div style="border-top:1px solid var(--border); margin-top:16px; padding-top:14px;">
-      <div style="font-size:12px; color:var(--text); margin-bottom:8px; font-weight:600;">📅 휴장일 / 거래 강제 제어</div>
-      <div style="font-size:11px; color:var(--dim); margin-bottom:8px;">
-        현재 판정 — US: <b id="cfgHolidayStatusUS">-</b> · KR: <b id="cfgHolidayStatusKR">-</b>
-      </div>
-      <div style="display:flex; gap:8px; flex-wrap:wrap;">
-        <button type="button" class="btn" id="btnHolidayRecheck2" style="flex:1; min-width:120px;">📅 휴장 재확인</button>
-        <button type="button" class="btn" id="btnForceOpen" style="flex:1; min-width:120px;">🟢 강제 개장</button>
-        <button type="button" class="btn" id="btnForceClear" style="flex:1; min-width:120px;">↩️ 자동복귀</button>
-      </div>
-      <div style="font-size:10px; color:var(--faint); margin-top:4px;">
-        <b>휴장 재확인</b>: 오늘 판정 캐시를 지우고 LLM으로 다시 판정합니다.<br>
-        <b>강제 개장</b>: LLM 판정을 무시하고 오늘 무조건 거래를 허용합니다 (오늘만 적용, 내일 자동 해제).<br>
-        <b>자동복귀</b>: 강제 설정을 해제하고 LLM 자동판정으로 되돌립니다.
-      </div>
-    </div>
-
-    <div style="border-top:1px solid var(--border); margin-top:16px; padding-top:14px;">
-      <div style="font-size:12px; color:var(--text); margin-bottom:8px; font-weight:600;">💰 현금 점검 / 마이너스 정리</div>
-      <div style="font-size:11px; color:var(--dim); margin-bottom:8px;">
-        현재 현금 — US: <b id="cfgCashCheckUS">-</b> · KR: <b id="cfgCashCheckKR">-</b>
-      </div>
-      <div style="display:flex; gap:8px; flex-wrap:wrap;">
-        <button type="button" class="btn" id="btnCashDiagnose" style="flex:1; min-width:120px;">🔍 현금 진단</button>
-        <button type="button" class="btn" id="btnCashTrace" style="flex:1; min-width:120px;">🕐 마이너스 추적</button>
-        <button type="button" class="btn" id="btnCashRecalc" style="flex:1; min-width:120px;">♻ 현금 재계산</button>
-        <button type="button" class="btn" id="btnCashFixNeg" style="flex:1; min-width:120px;">💰 마이너스 보정</button>
-      </div>
-      <div style="font-size:10px; color:var(--faint); margin-top:4px;">
-        <b>현금 진단</b>: 시장별 현금·포지션·입금액을 점검합니다.<br>
-        <b>마이너스 추적</b>: 거래내역을 시간순으로 재생해 현금이 처음 마이너스가 된 거래·시각을 찾습니다.<br>
-        <b>현금 재계산</b>: 체크포인트 캐시를 지우고 거래내역 전체로 현금을 다시 합산합니다 (스냅샷 손상 의심 시).<br>
-        <b>마이너스 보정</b>: 현금이 마이너스일 때 부족분만큼 입금 처리해 0으로 맞춥니다 (vs INITIAL 왜곡 없음).
       </div>
     </div>
 
@@ -2512,7 +2483,7 @@ button.btn.loading::after { content: "조회 중…"; position: absolute; left: 
     if (!enabled) {
       chip.className = 'llm-status-chip off';
       chip.textContent = 'DISABLED';
-      body.innerHTML = 'LLM Hybrid 비활성화. cfg.llmHybrid.enabled=true 설정 후 API 키 등록 필요.';
+      body.innerHTML = 'LLM Hybrid 비활성화됨. SETTINGS → CLAUDE LLM HYBRID에서 켜고 ANTHROPIC_API_KEY를 등록하세요.';
       meta.style.display = 'none';
       headerRight.textContent = '';
       return;
@@ -2876,6 +2847,10 @@ button.btn.loading::after { content: "조회 중…"; position: absolute; left: 
     $('cfgStratMomentum').checked = strats.momentum !== false;
     $('cfgStratMeanrev').checked = strats.meanrev !== false;
 
+    // [V11] LLM Hybrid 토글 현재값
+    var _llm = currentCfg.llmHybrid || {};
+    if ($('cfgLlmEnabled')) $('cfgLlmEnabled').checked = _llm.enabled === true;
+
     // [V8] 전략 사이즈
     var sz = currentCfg.strategySizing || {};
     var dflt = {
@@ -2923,8 +2898,6 @@ button.btn.loading::after { content: "조회 중…"; position: absolute; left: 
     $('cfgFeeKR').value = currentCfg.feeKR;
     $('cfgKrSellTax').value = currentCfg.krSellTax != null ? currentCfg.krSellTax : 0.0018;
     $('settingsModal').classList.add('show');
-    try { refreshHolidayStatus(); } catch (e) {}
-    try { refreshCashCheck(); } catch (e) {}
 }
 
   function closeSettings() { $('settingsModal').classList.remove('show'); }
@@ -2945,6 +2918,10 @@ button.btn.loading::after { content: "조회 중…"; position: absolute; left: 
         momentum: $('cfgStratMomentum').checked,
         meanrev: $('cfgStratMeanrev').checked
       },
+      // [V11] LLM Hybrid — 기존 설정(model/maxTokens 등) 보존하고 enabled만 갱신
+      llmHybrid: Object.assign({}, (currentCfg && currentCfg.llmHybrid) || {}, {
+        enabled: $('cfgLlmEnabled') ? $('cfgLlmEnabled').checked : false
+      }),
       // [V8] 전략 사이즈
       strategySizing: {
         swing:    { base: parseFloat($('cfgSizeSwingBase').value), bullMult: parseFloat($('cfgSizeSwingBull').value), bearMult: parseFloat($('cfgSizeSwingBear').value) },
@@ -3212,253 +3189,6 @@ button.btn.loading::after { content: "조회 중…"; position: absolute; left: 
         }
       })
       ['catch'](function(e){ toast('재확인 실패: ' + e.message); })
-      .then(function(){ btn.disabled = false; btn.textContent = orig; });
-  });
-
-  // [V24] 설정창 내 휴장일 상태 표시 갱신
-  function refreshHolidayStatus() {
-    var elUS = $('cfgHolidayStatusUS'), elKR = $('cfgHolidayStatusKR');
-    if (!elUS || !elKR) return;
-    var fmt = function(s){
-      if (!s) return '-';
-      var eff = s.effective === 'OPEN' ? '개장' : (s.effective === 'CLOSED' ? '휴장' : '판정불가');
-      if (s.override === 'FORCED_OPEN') return '🟢 강제개장';
-      if (s.override === 'FORCED_CLOSED') return '🔴 강제휴장';
-      return eff + (s.inTradingWindow ? '' : ' (장외)');
-    };
-    fetch('/api/holiday/status')
-      .then(function(r){ return r.json(); })
-      .then(function(d){
-        if (d && d.status) {
-          elUS.textContent = fmt(d.status.us);
-          elKR.textContent = fmt(d.status.kr);
-        }
-      })
-      ['catch'](function(){ elUS.textContent = '?'; elKR.textContent = '?'; });
-  }
-
-  // [V24] 설정창 내 휴장 재확인 — 오늘 캐시 삭제 후 LLM 재판정
-  var _btnHolidayRecheck2 = $('btnHolidayRecheck2');
-  if (_btnHolidayRecheck2) _btnHolidayRecheck2.addEventListener('click', function(){
-    var btn = $('btnHolidayRecheck2');
-    var orig = btn.textContent;
-    btn.disabled = true; btn.textContent = '확인 중...';
-    fetch('/api/holiday/recheck', { method: 'POST' })
-      .then(function(r){ return r.json(); })
-      .then(function(d){
-        if (d && d.result) {
-          var us = d.result.us, kr = d.result.kr;
-          var lbl = function(v){ return v === 'OPEN' ? '개장' : (v === 'CLOSED' ? '휴장' : '판정불가'); };
-          toast('휴장 재확인 완료 · US: ' + lbl(us) + ' / KR: ' + lbl(kr));
-          refreshHolidayStatus();
-          refreshAll();
-        } else {
-          toast('재확인 실패');
-        }
-      })
-      ['catch'](function(e){ toast('재확인 실패: ' + e.message); })
-      .then(function(){ btn.disabled = false; btn.textContent = orig; });
-  });
-
-  // [V24] 강제 개장 — LLM 판정 무시하고 오늘 무조건 거래 허용
-  var _btnForceOpen = $('btnForceOpen');
-  if (_btnForceOpen) _btnForceOpen.addEventListener('click', function(){
-    if (!confirm('오늘 US/KR 시장을 강제로 "개장"으로 설정합니다.\n(LLM 휴장 판정을 무시하고 거래를 허용)\n\n계속하시겠습니까?')) return;
-    var btn = $('btnForceOpen');
-    var orig = btn.textContent;
-    btn.disabled = true; btn.textContent = '설정 중...';
-    fetch('/api/holiday/override', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ market: 'both', open: true })
-    })
-      .then(function(r){ return r.json(); })
-      .then(function(d){
-        if (d && d.ok) {
-          toast('✅ 강제 개장 설정 완료 · 오늘 거래가 허용됩니다');
-          refreshHolidayStatus();
-          refreshAll();
-        } else {
-          toast('설정 실패');
-        }
-      })
-      ['catch'](function(e){ toast('설정 실패: ' + e.message); })
-      .then(function(){ btn.disabled = false; btn.textContent = orig; });
-  });
-
-  // [V24] 자동복귀 — 오버라이드 해제, LLM 자동판정으로 복귀
-  var _btnForceClear = $('btnForceClear');
-  if (_btnForceClear) _btnForceClear.addEventListener('click', function(){
-    var btn = $('btnForceClear');
-    var orig = btn.textContent;
-    btn.disabled = true; btn.textContent = '해제 중...';
-    fetch('/api/holiday/override', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ market: 'both', open: null })
-    })
-      .then(function(r){ return r.json(); })
-      .then(function(d){
-        if (d && d.ok) {
-          toast('↩️ 오버라이드 해제 · LLM 자동판정으로 복귀');
-          refreshHolidayStatus();
-          refreshAll();
-        } else {
-          toast('해제 실패');
-        }
-      })
-      ['catch'](function(e){ toast('해제 실패: ' + e.message); })
-      .then(function(){ btn.disabled = false; btn.textContent = orig; });
-  });
-
-  // [V35] 설정창 내 현금 상태 표시 갱신
-  function refreshCashCheck() {
-    var elUS = $('cfgCashCheckUS'), elKR = $('cfgCashCheckKR');
-    if (!elUS || !elKR) return;
-    fetch('/api/cash/diagnose')
-      .then(function(r){
-        if (!r.ok) { throw new Error('no-api'); }
-        return r.json();
-      })
-      .then(function(d){
-        if (d && d.diagnose) {
-          var fu = d.diagnose.us, fk = d.diagnose.kr;
-          var fmt = function(f, cur){
-            if (!f) return '-';
-            var v = (cur === 'us' ? '$' : '₩') + Math.round(f.cash).toLocaleString();
-            return f.isNegative ? ('🔴 ' + v + ' (마이너스!)') : v;
-          };
-          elUS.textContent = fmt(fu, 'us');
-          elKR.textContent = fmt(fk, 'kr');
-        }
-      })
-      ['catch'](function(e){
-        var msg = (e && e.message === 'no-api') ? '백엔드 미배포' : '?';
-        elUS.textContent = msg; elKR.textContent = msg;
-      });
-  }
-
-  // [V35] 현금 진단
-  var _btnCashDiagnose = $('btnCashDiagnose');
-  if (_btnCashDiagnose) _btnCashDiagnose.addEventListener('click', function(){
-    var btn = $('btnCashDiagnose');
-    var orig = btn.textContent;
-    btn.disabled = true; btn.textContent = '진단 중...';
-    fetch('/api/cash/diagnose')
-      .then(function(r){
-        if (!r.ok) { throw new Error('API 없음 (HTTP ' + r.status + ') — 백엔드(index.js)를 배포했는지 확인하세요'); }
-        return r.json();
-      })
-      .then(function(d){
-        if (d && d.diagnose) {
-          var u = d.diagnose.us, k = d.diagnose.kr;
-          var msg = 'US 현금 $' + Math.round(u.cash).toLocaleString() +
-                    ' / 포지션 ' + u.positionCount + '개 (원가 $' + Math.round(u.investedAtCost).toLocaleString() + ')';
-          if (u.isNegative) msg += ' ⚠️ 초과 $' + Math.round(u.overspend).toLocaleString();
-          msg += '\n\nKR 현금 ₩' + Math.round(k.cash).toLocaleString() +
-                 ' / 포지션 ' + k.positionCount + '개';
-          if (k.isNegative) msg += ' ⚠️ 초과 ₩' + Math.round(k.overspend).toLocaleString();
-          alert(msg);
-          refreshCashCheck();
-        } else {
-          alert('진단 실패: 응답 형식 오류');
-        }
-      })
-      ['catch'](function(e){ alert('진단 실패: ' + e.message); })
-      .then(function(){ btn.disabled = false; btn.textContent = orig; });
-  });
-
-  // [V35] 마이너스 추적 — 현금이 처음 마이너스가 된 거래·시각 탐지
-  var _btnCashTrace = $('btnCashTrace');
-  if (_btnCashTrace) _btnCashTrace.addEventListener('click', function(){
-    var btn = $('btnCashTrace');
-    var orig = btn.textContent;
-    btn.disabled = true; btn.textContent = '추적 중...';
-    fetch('/api/cash/trace?market=both')
-      .then(function(r){
-        if (!r.ok) { throw new Error('API 없음 (HTTP ' + r.status + ') — 백엔드(index.js)를 배포했는지 확인하세요'); }
-        return r.json();
-      })
-      .then(function(d){
-        if (d && d.trace) {
-          var lines = [];
-          ['us','kr'].forEach(function(mkt){
-            var t = d.trace[mkt];
-            if (!t) return;
-            var cur = mkt === 'us' ? '$' : '₩';
-            lines.push('[' + mkt.toUpperCase() + '] 거래 ' + t.totalTrades + '건');
-            lines.push('  시작현금 ' + cur + Math.round(t.startingCash).toLocaleString() +
-                       ' → 현재 ' + cur + Math.round(t.finalCash).toLocaleString());
-            if (t.everWentNegative && t.firstNegative) {
-              var f = t.firstNegative;
-              lines.push('  🔴 처음 마이너스 된 거래:');
-              lines.push('    ' + f.date);
-              lines.push('    ' + f.side + ' ' + f.symbol + ' x' + f.qty + ' @' + f.price);
-              lines.push('    현금 ' + cur + Math.round(f.cashBefore).toLocaleString() +
-                         ' → ' + cur + Math.round(f.cashAfter).toLocaleString());
-              lines.push('  최저현금 ' + cur + Math.round(t.lowestCash).toLocaleString() +
-                         ' (' + t.lowestCashAt + ')');
-            } else {
-              lines.push('  ✅ 한 번도 마이너스 안 됨');
-            }
-            lines.push('');
-          });
-          alert(lines.join('\n'));
-        } else {
-          alert('추적 실패: 응답 형식 오류');
-        }
-      })
-      ['catch'](function(e){ alert('추적 실패: ' + e.message); })
-      .then(function(){ btn.disabled = false; btn.textContent = orig; });
-  });
-  var _btnCashRecalc = $('btnCashRecalc');
-  if (_btnCashRecalc) _btnCashRecalc.addEventListener('click', function(){
-    if (!confirm('현금 체크포인트를 지우고 거래내역 전체로 현금을 다시 계산합니다.\n(스냅샷 손상이 의심될 때 사용)\n\n계속하시겠습니까?')) return;
-    var btn = $('btnCashRecalc');
-    var orig = btn.textContent;
-    btn.disabled = true; btn.textContent = '재계산 중...';
-    fetch('/api/cash/fix-negative', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ market: 'both', method: 'reset_ckpt' })
-    })
-      .then(function(r){ return r.json(); })
-      .then(function(d){
-        if (d && d.ok && d.cashAfter) {
-          toast('♻ 재계산 완료 · US $' + Math.round(d.cashAfter.us).toLocaleString() + ' / KR ₩' + Math.round(d.cashAfter.kr).toLocaleString());
-          refreshCashCheck();
-          refreshAll();
-        } else {
-          toast('재계산 실패');
-        }
-      })
-      ['catch'](function(e){ toast('재계산 실패: ' + e.message); })
-      .then(function(){ btn.disabled = false; btn.textContent = orig; });
-  });
-
-  // [V35] 마이너스 보정 — 부족분만큼 입금 처리해 현금 0으로
-  var _btnCashFixNeg = $('btnCashFixNeg');
-  if (_btnCashFixNeg) _btnCashFixNeg.addEventListener('click', function(){
-    if (!confirm('현금이 마이너스인 시장에 부족분만큼 입금 처리하여 현금을 0으로 맞춥니다.\n(vs INITIAL 수익률은 왜곡되지 않습니다)\n\n계속하시겠습니까?')) return;
-    var btn = $('btnCashFixNeg');
-    var orig = btn.textContent;
-    btn.disabled = true; btn.textContent = '보정 중...';
-    fetch('/api/cash/fix-negative', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ market: 'both', method: 'deposit' })
-    })
-      .then(function(r){ return r.json(); })
-      .then(function(d){
-        if (d && d.ok && d.cashAfter) {
-          toast('💰 보정 완료 · US $' + Math.round(d.cashAfter.us).toLocaleString() + ' / KR ₩' + Math.round(d.cashAfter.kr).toLocaleString());
-          refreshCashCheck();
-          refreshAll();
-        } else {
-          toast('보정 실패');
-        }
-      })
-      ['catch'](function(e){ toast('보정 실패: ' + e.message); })
       .then(function(){ btn.disabled = false; btn.textContent = orig; });
   });
   $('btnCancelSettings').addEventListener('click', closeSettings);
