@@ -1396,8 +1396,12 @@ button.btn.loading::after { content: "조회 중…"; position: absolute; left: 
   function calcSummary(market, cash, positions, initialCash, deposits) {
     var symbol = market === 'us' ? '$' : '₩';
     var invested = 0, marketVal = 0;
+    // [V27] 안전성 강화 — positions가 없거나 NaN이면 기본값
+    cash = (typeof cash === 'number' && !isNaN(cash)) ? cash : 0;
+    initialCash = (typeof initialCash === 'number' && !isNaN(initialCash)) ? initialCash : 0;
+    deposits = (typeof deposits === 'number' && !isNaN(deposits)) ? deposits : 0;
     // [V8] positions는 array (각 row에 symbol, strategy, qty, avg)
-    var list = Array.isArray(positions) ? positions : Object.keys(positions).map(function(k){
+    var list = Array.isArray(positions) ? positions : Object.keys(positions || {}).map(function(k){
       var p = positions[k];
       return { symbol: p.symbol || k, qty: p.qty, avg: p.avg };
     });
@@ -1409,8 +1413,7 @@ button.btn.loading::after { content: "조회 중…"; position: absolute; left: 
     });
     var total = cash + marketVal;
     // [V8.2.2] 수익률 계산은 입금/출금분 제외 — change = total - (initialCash + 누적입금)
-    var deposited = deposits || 0;
-    var baseline = initialCash + deposited;
+    var baseline = initialCash + deposits;
     var change = total - baseline;
     var changePct = baseline > 0 ? (change / baseline * 100) : 0;
     return { symbol: symbol, cash: cash, invested: invested, marketVal: marketVal, total: total, change: change, changePct: changePct };
@@ -2661,7 +2664,10 @@ button.btn.loading::after { content: "조회 중…"; position: absolute; left: 
         // [V8] positions는 array — 하위호환으로 object도 허용
         var posUS = (state.positions && state.positions.us) || [];
         var posKR = (state.positions && state.positions.kr) || [];
-        var cash = state.cash || {us:0,kr:0};
+        var cash = state.cash || {us:0,kr:0,cm:0};
+        // [V27] cash.kr이 undefined면 강제로 0 (회계 붕괴 방지)
+        if (typeof cash.kr !== 'number' || isNaN(cash.kr)) cash.kr = 0;
+        if (typeof cash.us !== 'number' || isNaN(cash.us)) cash.us = 0;
         currentCash = cash;
         var deposits = state.deposits || {us:0,kr:0};
         currentDeposits = deposits;
@@ -3169,23 +3175,36 @@ button.btn.loading::after { content: "조회 중…"; position: absolute; left: 
   bindReset('btnResetUS', 'us');
   bindReset('btnResetKR', 'kr');
 
-  // 진단 — cash/포지션/평가액/락 상태 표시
-  $('btnDebug') && $('btnDebug').addEventListener('click', function(){
-    fetch('/api/debug').then(function(r){ return r.json(); }).then(function(d){
-      var lines = ['=== 진단 ==='];
-      ['us','kr','cm'].forEach(function(m){
-        var x = d.markets && d.markets[m];
-        if (!x) return;
-        lines.push(m.toUpperCase() + ': 현금=' + Math.round(x.cash||0).toLocaleString() +
-          ' / 투자=' + (x.invested||0).toLocaleString() +
-          ' / 평가합=' + (x.total||0).toLocaleString() +
-          ' / 종목=' + x.positionCount +
-          (x.duplicatePositions && x.duplicatePositions.length ? ' / 중복!=' + x.duplicatePositions.join(',') : ''));
-      });
-      if (d.cycleLock) lines.push('사이클락: ' + (d.cycleLock.expired ? '만료됨(정상)' : '활성(돌고있음)'));
-      alert(lines.join('\n'));
-    })['catch'](function(e){ toast('진단 실패: ' + e.message); });
-  });
+  // [V27] 진단 — cash/포지션/평가액/락 상태 표시. 버튼 초기화 확실히.
+  (function() {
+    var btn = $('btnDebug');
+    if (!btn) { console.warn('[DEBUG] btnDebug 버튼 못 찾음'); return; }
+    btn.addEventListener('click', function(){
+      toast('진단 중...');
+      fetch('/api/debug')
+        .then(function(r){ 
+          if (!r.ok) throw new Error('HTTP ' + r.status);
+          return r.json(); 
+        })
+        .then(function(d){
+          var lines = ['=== 진단 ==='];
+          if (!d.markets) { toast('진단 실패: markets 없음'); return; }
+          ['us','kr','cm'].forEach(function(m){
+            var x = d.markets[m];
+            if (!x) return;
+            lines.push(m.toUpperCase() + ': 현금=' + Math.round(x.cash||0).toLocaleString() +
+              ' / 투자=' + Math.round(x.invested||0).toLocaleString() +
+              ' / 평가합=' + Math.round(x.total||0).toLocaleString() +
+              ' / 종목=' + x.positionCount +
+              (x.duplicatePositions && x.duplicatePositions.length ? ' / 중복!=' + x.duplicatePositions.join(',') : ''));
+          });
+          if (d.cycleLock) lines.push('사이클락: ' + (d.cycleLock.expired ? '만료됨(정상)' : '활성(돌고있음)'));
+          alert(lines.join('\n'));
+        })
+        .catch(function(e){ toast('진단 실패: ' + e.message); });
+    });
+  })();
+
 
   // 모달 배경 클릭으로 닫기
   $('logsModal').addEventListener('click', function(e){
