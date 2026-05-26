@@ -3829,6 +3829,37 @@ async function deletePosition(DB, symbol, strategy, market) {
   }
 }
 
+// [V29 새 회계 — 단일 원장] cash를 별도 저장하지 않고 trades에서 실시간 계산.
+//   가용현금 = 초기자본 + 입금 − Σ매수금액(수수료포함) + Σ매도대금(수수료·세금차감)
+//   trades 테이블이 유일한 진실. cash와 positions가 구조적으로 어긋날 수 없음.
+async function computeCashFromTrades(DB, market, cfg) {
+  const initial = market === "us" ? cfg.initialCashUS : (market === "kr" ? cfg.initialCashKR : cfg.initialCashCM);
+  const feeRate = market === "us" ? (cfg.feeUS || 0) : (market === "kr" ? (cfg.feeKR || 0) : (cfg.feeUS || 0));
+  const sellTaxRate = market === "kr" ? (cfg.krSellTax || 0) : 0;
+  const deposits = await getState(DB, "deposits", { us: 0, kr: 0, cm: 0 });
+  const dep = (deposits && typeof deposits[market] === "number") ? deposits[market] : 0;
+  let cash = (typeof initial === "number" ? initial : 0) + dep;
+  const rows = await DB.prepare("SELECT side, qty, price FROM trades WHERE market = ?").bind(market).all();
+  for (const t of (rows.results || [])) {
+    const gross = (t.qty || 0) * (t.price || 0);
+    if (t.side === "BUY") {
+      cash -= gross * (1 + feeRate);
+    } else if (t.side === "SELL") {
+      cash += gross * (1 - feeRate - sellTaxRate);
+    }
+  }
+  return cash;
+}
+
+// 전체 시장 cash 객체를 trades에서 재구성
+async function computeAllCash(DB, cfg) {
+  return {
+    us: await computeCashFromTrades(DB, "us", cfg),
+    kr: await computeCashFromTrades(DB, "kr", cfg),
+    cm: await computeCashFromTrades(DB, "cm", cfg)
+  };
+}
+
 async function recordTrade(DB, t) {
   await DB.prepare("INSERT INTO trades (ts, market, symbol, side, qty, price, pnl, pnl_pct, reason) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)")
     .bind(t.ts, t.market, t.symbol, t.side, t.qty, t.price, t.pnl == null ? null : t.pnl, t.pnl_pct == null ? null : t.pnl_pct, t.reason).run();
@@ -4564,20 +4595,13 @@ async function executeBuy(DB, market, symbol, strategy, qty, price, signal, dail
     return cash;
   }
 
-  // [V25 하드가드 B] 차감 후 음수가 되면 거래 자체를 거부 (회계 붕괴 원천 차단)
-  if (cash[market] - total < 0) {
-    await log(DB, "ERROR", symbol, "[GUARD] BUY blocked: would make cash negative (cash=" + cash[market] + " total=" + total + ")");
-    return cash;
-  }
-  cash[market] -= total;
-  // [V9.1] 거래 기록 + 현금을 한 묶음으로 즉시 저장 — 사이클이 중간에 죽어도
-  //   "거래는 됐는데 현금 미반영"으로 돈이 복제되는 정합성 붕괴를 막는다.
+  // [V29] cash는 trades에서 계산 — 여기선 인메모리 cash도 동기화(같은 사이클 후속 매수 가드용)
+  if (cash && typeof cash[market] === "number") cash[market] -= total;
   await recordTrade(DB, {
     ts: Date.now(), market: market, symbol: symbol, side: "BUY",
     qty: qty, price: price,
     reason: "[" + strategy.toUpperCase() + "] " + signal.name + " " + signal.detail
   });
-  try { await setState(DB, "cash", cash); } catch (e) {}
   const stopPctRel = ((stopPrice - price) / price * 100).toFixed(1);
   await log(DB, "TRADE", symbol, "BUY [" + strategy + "] x" + qty + " @" + price.toFixed(2) + " " + signal.name + " " + signal.detail + " stop=" + stopPrice.toFixed(2) + "(" + stopPctRel + "%)");
   return cash;
@@ -4657,12 +4681,10 @@ async function executeSell(DB, market, symbol, pos, sellQty, price, reason, cfg,
     return { cash: cash, pnlPct: 0 };
   }
 
-  // 포지션 변경 성공 후에만 현금 증가
-  cash[market] += proceeds;
+  // [V29] 포지션 변경 성공 후 인메모리 cash 동기화 (cash는 trades에서 계산)
+  if (cash && typeof cash[market] === "number") cash[market] += proceeds;
 
-  // [V9.1] 거래 기록 + 현금 즉시 저장 (정합성)
   await recordTrade(DB, { ts: Date.now(), market: market, symbol: symbol, side: "SELL", qty: sellQty, price: price, pnl: pnl, pnl_pct: pnlPct, reason: enrichedReason });
-  try { await setState(DB, "cash", cash); } catch (e) {}
   const taxNote = market === "kr" ? " tax=" + sellTax.toFixed(2) : "";
   await log(DB, "TRADE", symbol, "SELL [" + strategy + "] x" + sellQty + " @" + price.toFixed(2) + " PnL " + pnlPct.toFixed(2) + "% (held " + heldMin + "min, " + reason + ")" + taxNote);
   return { cash: cash, pnlPct: pnlPct };
@@ -5748,13 +5770,8 @@ async function executeBuyCM(DB, symbol, qty, price, signal, dailyAtr, cfg, cash)
     return;
   }
 
-  // [V25 하드가드 B] 음수 방지
-  if (cash.cm - total < 0) {
-    await log(DB, "ERROR", symbol, "[GUARD] CM BUY blocked: would make cash negative (cash=" + cash.cm + " total=" + total + ")");
-    return cash;
-  }
-  cash.cm -= total;
-  try { await setState(DB, "cash", cash); } catch (e) {}
+  // [V29] 인메모리 cash 동기화 (cash는 trades에서 계산)
+  if (cash && typeof cash.cm === "number") cash.cm -= total;
   await recordTrade(DB, {
     ts: Date.now(), market: "cm", symbol: symbol, side: "BUY",
     qty: qty, price: price,
@@ -5797,9 +5814,9 @@ async function executeSellCM(DB, symbol, pos, sellQty, price, reason, cfg, cash)
     return { pnlPct: 0, cash: cash };
   }
 
-  cash.cm += proceeds;
+  // [V29] 인메모리 cash 동기화 (cash는 trades에서 계산)
+  if (cash && typeof cash.cm === "number") cash.cm += proceeds;
   await recordTrade(DB, { ts: Date.now(), market: "cm", symbol: symbol, side: "SELL", qty: sellQty, price: price, pnl: pnl, pnl_pct: pnlPct, reason: enrichedReason });
-  try { await setState(DB, "cash", cash); } catch (e) {}
   await log(DB, "TRADE", symbol, "[CM] SELL x" + sellQty + " @" + price.toFixed(2) + " PnL " + pnlPct.toFixed(2) + "% (held " + heldMin + "min, " + reason + ")");
   return { pnlPct: pnlPct, cash: cash };
 }
@@ -5902,7 +5919,7 @@ async function runCommodityCycle(env, forceTrade) {
   }
   await log(DB, "INFO", null, "[CM] === Commodity cycle (trade=" + (isTradeTime ? (forceTrade ? "FORCED" : "ON 16:00KST") : "quote-only") + ") ===");
 
-  let cash = await getState(DB, "cash", { us: cfg.initialCashUS, kr: cfg.initialCashKR, cm: cfg.initialCashCM });
+  let cash = await computeAllCash(DB, cfg);
   if (typeof cash.cm !== "number") cash.cm = cfg.initialCashCM;   // 최초 1회 초기화
 
   const positions = await getPositions(DB, "cm");   // key "SYM::swing"
@@ -6190,7 +6207,7 @@ async function runTradingCycle(env) {
 
     cfg = await autoTune(DB, cfg, regimes);
     const signalStats = await getState(DB, "signal_stats", {});
-    let cash = await getState(DB, "cash", { us: cfg.initialCashUS, kr: cfg.initialCashKR, cm: cfg.initialCashCM });
+    let cash = await computeAllCash(DB, cfg);
     // [V9.1] executeBuy/Sell이 거래마다 cash 전체를 저장하므로, cm 키가 누락된 옛 상태를
     //   읽었을 때 원자재 현금이 사라지지 않도록 보강.
     if (typeof cash.cm !== "number") cash.cm = cfg.initialCashCM;
@@ -6930,7 +6947,7 @@ async function handleRequest(request, env) {
     // === [개선] /api/state 통합 응답 ===
     if (path === "/api/state") {
       const cfg = migrateCfgToMarkets(Object.assign({}, DEFAULT_CFG, await getState(env.DB, "cfg", {})));
-      const cash = await getState(env.DB, "cash", { us: cfg.initialCashUS, kr: cfg.initialCashKR });
+      const cash = await computeAllCash(env.DB, cfg);
       const deposits = await getState(env.DB, "deposits", { us: 0, kr: 0 });
       const positionsUSRaw = await getPositions(env.DB, "us");
       const positionsKRRaw = await getPositions(env.DB, "kr");
@@ -7117,22 +7134,21 @@ async function handleRequest(request, env) {
         return Response.json({ ok: false, error: "market must be us or kr" }, { status: 400, headers: cors });
       }
       const cfg = migrateCfgToMarkets(Object.assign({}, DEFAULT_CFG, await getState(env.DB, "cfg", {})));
+      // [V29] trades 삭제 = cash 자동 초기자본 복원 (단일 원장). positions도 삭제.
       await env.DB.prepare("DELETE FROM positions WHERE market = ?").bind(mkt).run();
       await env.DB.prepare("DELETE FROM trades WHERE market = ?").bind(mkt).run();
-      const cash = await getState(env.DB, "cash", { us: cfg.initialCashUS, kr: cfg.initialCashKR, cm: cfg.initialCashCM });
-      const initial = mkt === "us" ? cfg.initialCashUS : cfg.initialCashKR;
-      cash[mkt] = initial;
-      await setState(env.DB, "cash", cash);
-      const deposits = await getState(env.DB, "deposits", { us: 0, kr: 0 });
+      const deposits = await getState(env.DB, "deposits", { us: 0, kr: 0, cm: 0 });
       deposits[mkt] = 0;
       await setState(env.DB, "deposits", deposits);
-      await log(env.DB, "INFO", null, "[V24] RESET market=" + mkt + " cash=" + initial);
+      const initial = mkt === "us" ? cfg.initialCashUS : cfg.initialCashKR;
+      await log(env.DB, "INFO", null, "[V29] RESET market=" + mkt + " (trades+positions cleared) cash=" + initial);
       return Response.json({ ok: true, market: mkt, cash: initial }, { headers: cors });
     }
     // [V24] 디버그 진단 — cash/포지션/평가액을 한눈에. 정합성 검증용.
     if (path === "/api/debug") {
       await ensureSchema(env.DB);
-      const cash = await getState(env.DB, "cash", {});
+      const cfg = migrateCfgToMarkets(Object.assign({}, DEFAULT_CFG, await getState(env.DB, "cfg", {})));
+      const cash = await computeAllCash(env.DB, cfg);
       const out = { cash: cash, markets: {} };
       for (const mkt of ["us", "kr", "cm"]) {
         const positions = await getPositions(env.DB, mkt);
@@ -7176,7 +7192,7 @@ async function handleRequest(request, env) {
       await env.DB.prepare("DELETE FROM positions WHERE market = ?").bind("cm").run();
       await env.DB.prepare("DELETE FROM trades WHERE market = ?").bind("cm").run();
       // cm 현금만 초기금액으로 복원 (us/kr는 그대로 보존)
-      const cash = await getState(env.DB, "cash", { us: cfg.initialCashUS, kr: cfg.initialCashKR, cm: cfg.initialCashCM });
+      const cash = await computeAllCash(env.DB, cfg);
       cash.cm = cfg.initialCashCM;
       await setState(env.DB, "cash", cash);
       // [V8.9] 오늘 거래 마킹도 해제 → RESET 직후 "지금 실행"으로 바로 재매수 가능.
@@ -7190,7 +7206,7 @@ async function handleRequest(request, env) {
       // [V8.2.2] deposits도 누적 기록 → 수익률 계산 시 입금분 차감용
       const body = await request.json();
       const cfg = migrateCfgToMarkets(Object.assign({}, DEFAULT_CFG, await getState(env.DB, "cfg", {})));
-      const cash = await getState(env.DB, "cash", { us: cfg.initialCashUS, kr: cfg.initialCashKR });
+      const cash = await computeAllCash(env.DB, cfg);
       const deposits = await getState(env.DB, "deposits", { us: 0, kr: 0 });
       const addUs = Number(body.us) || 0;
       const addKr = Number(body.kr) || 0;
@@ -7280,7 +7296,7 @@ async function handleRequest(request, env) {
     // === [COMMODITY] 원자재 상태 조회 ===
     if (path === "/api/commodities") {
       const cfg = migrateCfgToMarkets(Object.assign({}, DEFAULT_CFG, await getState(env.DB, "cfg", {})));
-      const cash = await getState(env.DB, "cash", { us: cfg.initialCashUS, kr: cfg.initialCashKR, cm: cfg.initialCashCM });
+      const cash = await computeAllCash(env.DB, cfg);
       const cmCash = (typeof cash.cm === "number") ? cash.cm : cfg.initialCashCM;
       const rawPos = await getPositions(env.DB, "cm");
       const positions = [];
@@ -7481,7 +7497,7 @@ async function handleRequest(request, env) {
       const trades = tradesRes.results || [];
       const logs = logsRes.results || [];
       const cfg = migrateCfgToMarkets(Object.assign({}, DEFAULT_CFG, await getState(env.DB, "cfg", {})));
-      const cash = await getState(env.DB, "cash", { us: cfg.initialCashUS, kr: cfg.initialCashKR });
+      const cash = await computeAllCash(env.DB, cfg);
       const deposits = await getState(env.DB, "deposits", { us: 0, kr: 0 });
       
       // 수익률 계산
