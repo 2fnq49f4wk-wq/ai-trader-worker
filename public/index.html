@@ -593,6 +593,9 @@ button.btn.loading::after { content: "조회 중…"; position: absolute; left: 
       <button type="button" class="btn macro" id="btnHeatmap">📊 S&P히트맵</button>
       <button type="button" class="btn" id="btnSettings">SETTINGS</button>
       <button type="button" class="btn" id="btnHolidayRecheck">📅 휴장 재확인</button>
+      <button type="button" class="btn" id="btnDebug">🔍 진단</button>
+      <button type="button" class="btn" id="btnResetUS">♻ US리셋</button>
+      <button type="button" class="btn" id="btnResetKR">♻ KR리셋</button>
       <button type="button" class="btn primary" id="btnTick">RUN NOW</button>
     </div>
   </div>
@@ -3145,6 +3148,44 @@ button.btn.loading::after { content: "조회 중…"; position: absolute; left: 
   bindViewMode('viewHeldUS', 'us', 'held');
   bindViewMode('viewMcapKR', 'kr', 'mcap');
   bindViewMode('viewHeldKR', 'kr', 'held');
+  // 시장별 리셋 (확인창 필수)
+  function bindReset(btnId, market) {
+    var b = $(btnId);
+    if (!b) return;
+    b.addEventListener('click', function(){
+      var name = market.toUpperCase();
+      if (!confirm(name + ' 시장을 초기화합니다.\n포지션·거래내역 삭제 + 현금 초기금액 복원.\n계속할까요?')) return;
+      b.disabled = true; var o = b.textContent; b.textContent = '리셋 중...';
+      fetch('/api/reset_market?market=' + market, { method: 'POST' })
+        .then(function(r){ return r.json(); })
+        .then(function(d){
+          if (d && d.ok) { toast(name + ' 리셋 완료 (현금 ' + (d.cash||0).toLocaleString() + ')'); refreshAll(); }
+          else { toast('리셋 실패: ' + ((d && d.error) || '?')); }
+        })
+        ['catch'](function(e){ toast('리셋 실패: ' + e.message); })
+        .then(function(){ b.disabled = false; b.textContent = o; });
+    });
+  }
+  bindReset('btnResetUS', 'us');
+  bindReset('btnResetKR', 'kr');
+
+  // 진단 — cash/포지션/평가액/락 상태 표시
+  $('btnDebug') && $('btnDebug').addEventListener('click', function(){
+    fetch('/api/debug').then(function(r){ return r.json(); }).then(function(d){
+      var lines = ['=== 진단 ==='];
+      ['us','kr','cm'].forEach(function(m){
+        var x = d.markets && d.markets[m];
+        if (!x) return;
+        lines.push(m.toUpperCase() + ': 현금=' + Math.round(x.cash||0).toLocaleString() +
+          ' / 투자=' + (x.invested||0).toLocaleString() +
+          ' / 평가합=' + (x.total||0).toLocaleString() +
+          ' / 종목=' + x.positionCount +
+          (x.duplicatePositions && x.duplicatePositions.length ? ' / 중복!=' + x.duplicatePositions.join(',') : ''));
+      });
+      if (d.cycleLock) lines.push('사이클락: ' + (d.cycleLock.expired ? '만료됨(정상)' : '활성(돌고있음)'));
+      alert(lines.join('\n'));
+    })['catch'](function(e){ toast('진단 실패: ' + e.message); });
+  });
 
   // 모달 배경 클릭으로 닫기
   $('logsModal').addEventListener('click', function(e){
