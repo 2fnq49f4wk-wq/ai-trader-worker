@@ -985,7 +985,7 @@ button.btn.loading::after { content: "조회 중…"; position: absolute; left: 
       <div class="checkbox-row"><input type="checkbox" id="cfgStratSwing"><label for="cfgStratSwing"><b>SWING</b> (4시간~7일, 풀백/반전)</label></div>
     </div>
     <div class="field-row">
-      <div class="checkbox-row"><input type="checkbox" id="cfgStratDay"><label for="cfgStratDay"><b>DAY</b> (수시간, 갭하락 후 반등)</label></div>
+      <div class="checkbox-row"><input type="checkbox" id="cfgStratDay" disabled><label for="cfgStratDay" style="opacity:0.5;"><b>DAY</b> <span style="color:#f85149;">(폐지됨 — 누적 손실로 비활성화)</span></label></div>
     </div>
     <div class="field-row">
       <div class="checkbox-row"><input type="checkbox" id="cfgStratMomentum"><label for="cfgStratMomentum"><b>MOMENTUM</b> (5~30일, 신고가 돌파/추세)</label></div>
@@ -1448,12 +1448,27 @@ button.btn.loading::after { content: "조회 중…"; position: absolute; left: 
     var baseline = initialCash + deposits;
     var change = total - baseline;
     var changePct = baseline > 0 ? (change / baseline * 100) : 0;
+
+    // [V11] 회계 정합성 검증 — "현금 + 진입원가"는 (초기자본 + 입금)을 초과할 수 없다.
+    //   (매매로는 자산 총량이 안 늘어남. 늘었다면 거래로그-DB 불일치 = 회계 누수)
+    //   초과분이 baseline의 0.5%를 넘으면 수익률이 "가짜 플러스"이므로 플래그.
+    var costBasisTotal = cash + invested;          // 현재 보유 진입원가 + 남은 현금
+    var leak = costBasisTotal - baseline;           // 양수면 장부에 돈이 더 생긴 것(누수)
+    var accountingHealthy = true;
+    if (baseline > 0 && leak > baseline * 0.005) {
+      accountingHealthy = false;
+      console.warn('[calcSummary] ' + market.toUpperCase() +
+        ' 회계 누수 감지: 현금+진입원가(' + Math.round(costBasisTotal) +
+        ') > 초기자본+입금(' + Math.round(baseline) + ') 차이 ' + Math.round(leak) +
+        ' → VS INITIAL(' + changePct.toFixed(2) + '%)은 신뢰 불가. 시장 리셋 권장.');
+    }
     // [V10] 자산 증발 경고 (KR -99% 케이스 — PK 버그로 포지션 유실 시)
     if (baseline > 0 && total < baseline * 0.05) {
+      accountingHealthy = false;
       console.warn('[calcSummary] ' + market.toUpperCase() + ' 자산 증발 의심: total=' +
         Math.round(total) + ' baseline=' + Math.round(baseline) + ' (' + changePct.toFixed(1) + '%) — 진단 권장');
     }
-    return { symbol: symbol, cash: cash, invested: invested, marketVal: marketVal, total: total, change: change, changePct: changePct, baseline: baseline };
+    return { symbol: symbol, cash: cash, invested: invested, marketVal: marketVal, total: total, change: change, changePct: changePct, baseline: baseline, accountingHealthy: accountingHealthy, leak: leak };
   }
 
   function renderSummary(market, s) {
@@ -1465,8 +1480,18 @@ button.btn.loading::after { content: "조회 중…"; position: absolute; left: 
     $('cash'+up).textContent = s.symbol + fmt(s.cash);
     var changeEl = $('change'+up);
     var sign = s.changePct >= 0 ? '+' : '';
-    changeEl.textContent = sign + fmtNum(s.changePct, 2) + '%';
-    changeEl.className = 'summary-value ' + (s.changePct > 0 ? 'pos' : (s.changePct < 0 ? 'neg' : ''));
+    // [V11] 회계 누수 시 — 수익률 신뢰 불가. 값 옆에 ⚠ 표시 + 회색 처리(가짜 플러스 오인 방지).
+    if (s.accountingHealthy === false) {
+      changeEl.textContent = sign + fmtNum(s.changePct, 2) + '% ⚠';
+      changeEl.className = 'summary-value';
+      changeEl.style.color = '#e3b341';
+      changeEl.title = '회계 불일치 감지 — 거래로그와 DB가 어긋나 수익률을 신뢰할 수 없습니다. 설정창에서 해당 시장을 리셋하세요.';
+    } else {
+      changeEl.textContent = sign + fmtNum(s.changePct, 2) + '%';
+      changeEl.className = 'summary-value ' + (s.changePct > 0 ? 'pos' : (s.changePct < 0 ? 'neg' : ''));
+      changeEl.style.color = '';
+      changeEl.title = '';
+    }
   }
 
   // [V8] 전략별 색상 매핑
@@ -1513,15 +1538,19 @@ button.btn.loading::after { content: "조회 중…"; position: absolute; left: 
     fillHeld(listUS, 'us');
     fillHeld(listKR, 'kr');
 
-    // [V8.2.4] 시장별 총 PnL/PnL% 계산 — 헤더에 표시용
+    // [V8.2.4] 시장별 총 미실현 평가손익 계산 — 헤더에 표시용 (실현손익 아님)
     function aggregate(list, marketSym, fmtFn) {
       var costSum = 0, valSum = 0, hasPrice = false;
       list.forEach(function(p){
+        var qty = parseFloat(p.qty); if (isNaN(qty)) qty = 0;
+        var avg = parseFloat(p.avg); if (isNaN(avg)) avg = 0;
+        if (qty === 0 || avg === 0) return;
         var q = lastQuotes[p.symbol];
-        if (q) hasPrice = true;
-        var cur = q ? q.price : p.avg;
-        costSum += p.qty * p.avg;
-        valSum += p.qty * cur;
+        // [V11] 현재가가 유효(양수)할 때만 평가에 반영. 없으면 평단가로 폴백(손익 0 기여).
+        var cur = (q && typeof q.price === 'number' && q.price > 0) ? q.price : avg;
+        if (q && typeof q.price === 'number' && q.price > 0) hasPrice = true;
+        costSum += qty * avg;
+        valSum += qty * cur;
       });
       if (list.length === 0 || costSum === 0) return null;
       var pnl = valSum - costSum;
@@ -1535,8 +1564,10 @@ button.btn.loading::after { content: "조회 중…"; position: absolute; left: 
     var aggUS = aggregate(listUS, '$', function(n){ return fmtNum(n, 2); });
     var aggKR = aggregate(listKR, '₩', fmtCompact);
     var parts = [];
-    if (aggUS) parts.push('<span style="color:var(--dim);">US:</span> <span class="'+aggUS.cls+'">'+aggUS.pnlText+' ('+aggUS.pctText+')</span>');
-    if (aggKR) parts.push('<span style="color:var(--dim);">KR:</span> <span class="'+aggKR.cls+'">'+aggKR.pnlText+' ('+aggKR.pctText+')</span>');
+    // [V11] "평가" 명시 — 실현손익(매도 완료)이 아니라 보유 포지션의 미실현 평가손익임을 명확히.
+    //   가격이 아직 수신되지 않은 시장은 손익을 표시하지 않음(0/오해 방지).
+    if (aggUS && aggUS.hasPrice) parts.push('<span style="color:var(--dim);">US 평가:</span> <span class="'+aggUS.cls+'">'+aggUS.pnlText+' ('+aggUS.pctText+')</span>');
+    if (aggKR && aggKR.hasPrice) parts.push('<span style="color:var(--dim);">KR 평가:</span> <span class="'+aggKR.cls+'">'+aggKR.pnlText+' ('+aggKR.pctText+')</span>');
     if (totalEl) totalEl.innerHTML = parts.length ? parts.join(' &nbsp;·&nbsp; ') : '';
 
     var all = [];
@@ -1546,8 +1577,8 @@ button.btn.loading::after { content: "조회 중…"; position: absolute; left: 
 
     var allWithPnl = all.map(function(row){
       var q = lastQuotes[row.symbol];
-      var curPrice = q ? q.price : null;
-      var pnlPct = curPrice != null ? ((curPrice - row.p.avg) / row.p.avg * 100) : -999;
+      var curPrice = (q && typeof q.price === 'number' && q.price > 0) ? q.price : null;
+      var pnlPct = (curPrice != null && row.p.avg) ? ((curPrice - row.p.avg) / row.p.avg * 100) : -999;
       return {row: row, pnlPct: pnlPct};
     });
     allWithPnl.sort(function(a, b){ return b.pnlPct - a.pnlPct; });
@@ -1561,7 +1592,7 @@ button.btn.loading::after { content: "조회 중…"; position: absolute; left: 
       var row = item.row;
       var p = row.p;
       var q = lastQuotes[row.symbol];
-      var curPrice = q ? q.price : null;
+      var curPrice = (q && typeof q.price === 'number' && q.price > 0) ? q.price : null;
       var cost = p.qty * p.avg;
       var value = curPrice != null ? p.qty * curPrice : null;
       var pnl = value != null ? value - cost : null;
@@ -2055,7 +2086,6 @@ button.btn.loading::after { content: "조회 중…"; position: absolute; left: 
     var strats = cfg.strategies || {};
     var activeStrats = [];
     if (strats.swing !== false) activeStrats.push('SWING');
-    if (strats.day !== false) activeStrats.push('DAY');
     if (strats.momentum !== false) activeStrats.push('MOM');
     if (strats.meanrev !== false) activeStrats.push('MR');
     var stratStr = activeStrats.length ? activeStrats.join('+') : 'NONE';
@@ -2861,10 +2891,10 @@ button.btn.loading::after { content: "조회 중…"; position: absolute; left: 
       initialCashKR: parseFloat($('cfgInitCashKR').value),
       usTickers: parseTickers($('cfgUS').value),
       krTickers: parseTickers($('cfgKR').value),
-      // [V8] 전략 토글
+      // [V8] 전략 토글 — [V11] day는 폐지되어 항상 false
       strategies: {
         swing: $('cfgStratSwing').checked,
-        day: $('cfgStratDay').checked,
+        day: false,
         momentum: $('cfgStratMomentum').checked,
         meanrev: $('cfgStratMeanrev').checked
       },
