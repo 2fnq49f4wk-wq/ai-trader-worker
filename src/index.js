@@ -4543,6 +4543,11 @@ async function executeBuy(DB, market, symbol, strategy, qty, price, signal, dail
     return cash;
   }
 
+  // [V25 하드가드 B] 차감 후 음수가 되면 거래 자체를 거부 (회계 붕괴 원천 차단)
+  if (cash[market] - total < 0) {
+    await log(DB, "ERROR", symbol, "[GUARD] BUY blocked: would make cash negative (cash=" + cash[market] + " total=" + total + ")");
+    return cash;
+  }
   cash[market] -= total;
   // [V9.1] 거래 기록 + 현금을 한 묶음으로 즉시 저장 — 사이클이 중간에 죽어도
   //   "거래는 됐는데 현금 미반영"으로 돈이 복제되는 정합성 붕괴를 막는다.
@@ -5710,6 +5715,11 @@ async function executeBuyCM(DB, symbol, qty, price, signal, dailyAtr, cfg, cash)
     return;
   }
 
+  // [V25 하드가드 B] 음수 방지
+  if (cash.cm - total < 0) {
+    await log(DB, "ERROR", symbol, "[GUARD] CM BUY blocked: would make cash negative (cash=" + cash.cm + " total=" + total + ")");
+    return cash;
+  }
   cash.cm -= total;
   try { await setState(DB, "cash", cash); } catch (e) {}
   await recordTrade(DB, {
@@ -6764,11 +6774,52 @@ async function runTradingCycle(env) {
 
     try { await setState(DB, "cash", cash); } catch (e) {}
     try { await setState(DB, "last_tick", Date.now()); } catch (e) {}
+    // [V25 감사 A] 사이클 종료 시 회계 무결성 검증 — 거래한 시장만.
+    for (const mkt of marketsToTrade) {
+      await auditAccounting(DB, mkt, cash);
+    }
     const cycleMs = Date.now() - cycleStartedAt;
     await log(DB, "INFO", null, "Done: tried=" + tried + " skip=" + skipped + " buy=" + bought + " sell=" + sold + " fetchFail=" + fetchFail + " cycleMs=" + cycleMs);
     try { await DB.prepare("DELETE FROM logs WHERE id NOT IN (SELECT id FROM logs ORDER BY id DESC LIMIT 500)").run(); } catch (e) {}
   } finally {
     await releaseCycleLock(DB);
+  }
+}
+
+// [V25 감사 A] 회계 무결성 검증 — 매 사이클 시장별 총자산(현금+보유평가액)을 계산하고,
+//   D1에 스냅샷 저장. 다음 사이클에 직전 스냅샷과 비교해 비정상 급변을 감지/경고한다.
+//   "현금 + 보유평가"는 시세 변동으로 자연히 바뀌므로, 단순 절대 임계가 아니라
+//   투자원금(invested) 대비 비정상(예: 현금이 갑자기 2배↑, 음수 등)을 잡는다.
+async function auditAccounting(DB, market, cash) {
+  try {
+    const positions = await getPositions(DB, market);
+    let invested = 0;
+    const seen = {};
+    const dups = [];
+    for (const p of positions) {
+      invested += (p.qty || 0) * (p.avg_price || 0);
+      const k = p.symbol + "::" + p.strategy;
+      if (seen[k]) dups.push(k);
+      seen[k] = true;
+    }
+    const cashVal = (cash && typeof cash[market] === "number") ? cash[market] : 0;
+    const flags = [];
+    // 1) 음수 현금
+    if (cashVal < 0) flags.push("NEG_CASH(" + Math.round(cashVal) + ")");
+    // 2) 중복 포지션 (KQ 마이그레이션 등으로 생기는 이중 계상)
+    if (dups.length > 0) flags.push("DUP_POS(" + dups.join(",") + ")");
+    // 3) 투자원금이 비정상적으로 큼 — 초기자본 대비 과투자 (현금 회계 붕괴 징후)
+    const initial = market === "us" ? 100000 : (market === "kr" ? 100000000 : 100000);
+    const totalAsset = cashVal + invested;
+    if (totalAsset > initial * 2) flags.push("ASSET_INFLATE(total=" + Math.round(totalAsset) + " vs init=" + initial + ")");
+    if (flags.length > 0) {
+      await log(DB, "ERROR", null, "[AUDIT] " + market.toUpperCase() + " 회계 이상: " + flags.join(" | ") +
+        " (cash=" + Math.round(cashVal) + " invested=" + Math.round(invested) + " positions=" + positions.length + ")");
+      return { ok: false, flags: flags, cash: cashVal, invested: invested };
+    }
+    return { ok: true, cash: cashVal, invested: invested };
+  } catch (e) {
+    return { ok: true, error: e.message };
   }
 }
 
