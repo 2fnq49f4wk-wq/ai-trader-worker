@@ -5863,7 +5863,7 @@ async function runCommodityCycle(env, forceTrade) {
   }
   await log(DB, "INFO", null, "[CM] === Commodity cycle (trade=" + (isTradeTime ? (forceTrade ? "FORCED" : "ON 16:00KST") : "quote-only") + ") ===");
 
-  const cash = await getState(DB, "cash", { us: cfg.initialCashUS, kr: cfg.initialCashKR, cm: cfg.initialCashCM });
+  let cash = await getState(DB, "cash", { us: cfg.initialCashUS, kr: cfg.initialCashKR, cm: cfg.initialCashCM });
   if (typeof cash.cm !== "number") cash.cm = cfg.initialCashCM;   // 최초 1회 초기화
 
   const positions = await getPositions(DB, "cm");   // key "SYM::swing"
@@ -6151,7 +6151,7 @@ async function runTradingCycle(env) {
 
     cfg = await autoTune(DB, cfg, regimes);
     const signalStats = await getState(DB, "signal_stats", {});
-    const cash = await getState(DB, "cash", { us: cfg.initialCashUS, kr: cfg.initialCashKR, cm: cfg.initialCashCM });
+    let cash = await getState(DB, "cash", { us: cfg.initialCashUS, kr: cfg.initialCashKR, cm: cfg.initialCashCM });
     // [V9.1] executeBuy/Sell이 거래마다 cash 전체를 저장하므로, cm 키가 누락된 옛 상태를
     //   읽었을 때 원자재 현금이 사라지지 않도록 보강.
     if (typeof cash.cm !== "number") cash.cm = cfg.initialCashCM;
