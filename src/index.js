@@ -1970,11 +1970,7 @@ const FX_PAIRS = [
 ];
 
 // === 전략 식별자 ===
-// [V11] DAY 전략 제거 — 데이터상 DAY는 누적 손실/저승률(최대 손실원)이라 진입에서 완전 배제.
-//   STRATEGIES: 신규 진입(매수 신호 생성)에 쓰이는 활성 전략 목록 → day 제외.
-//   ALL_STRATEGIES: 매도(청산) 평가에 쓰이는 전체 목록 → 기존 day 포지션도 청산되도록 day 포함.
 const STRATEGIES = ["swing", "momentum", "meanrev"];
-const ALL_STRATEGIES = ["swing", "day", "momentum", "meanrev"];
 
 // === [신규] 섹터 매핑 (동시 보유 제한용) ===
 const SECTOR_MAP = {
@@ -2076,7 +2072,7 @@ const DEFAULT_CFG = {
   // === [V8] 전략별 활성화 토글 ===
   strategies: {
     swing: true,
-    day: false,    // [V11] DAY 전략 폐지 — 누적 손실/저승률로 비활성화
+    day: false,
     momentum: true,
     meanrev: true
   },
@@ -2256,11 +2252,7 @@ const DEFAULT_CFG = {
   maxPositionsPerSector: 3,    // [V8] 전략별 포지션 가능해서 2→3 완화
   blockInversePair: true,
   // === 사이클 락 ===
-  cycleLockTTL: 60000,   // 60s — 사용자 요청으로 복원
-  // [V11] 사이클당 시장별 최대 신규 매수 건수 — 한 번에 수백 종목 매수 시
-  //   batch 호출 폭증으로 워커가 timeout/kill되어 회계가 깨지는 것을 방지.
-  //   상한에 걸리면 다음 사이클에서 이어서 매수(분산).
-  maxBuysPerCycle: 8
+  cycleLockTTL: 60000   // 60s — 사용자 요청으로 복원
 };
 
 // === [V8.2] 시장별 독립 학습 — US/KR 따로 학습되는 매매 룰 키 목록 ===
@@ -2306,9 +2298,6 @@ function migrateCfgToMarkets(cfg) {
   }
 
   if (!cfg.markets) cfg.markets = {};
-  // [V11] DAY 전략 폐지 — 저장된 cfg에 day:true가 남아 있어도 항상 강제 비활성화.
-  if (!cfg.strategies || typeof cfg.strategies !== "object") cfg.strategies = {};
-  cfg.strategies.day = false;
   // [V10] 종목 유니버스는 코드(DEFAULT_US/KR)로 관리한다.
   //   기존 D1에 저장된 옛 20종목 리스트가 얕은 병합으로 살아남아 신규 종목이
   //   안 보이는 문제를 막기 위해, 매 로드 시 최신 DEFAULT로 강제 갱신한다.
@@ -3302,41 +3291,29 @@ async function ensureSchema(DB) {
       } catch (e) { console.error("alter meta fail:", e.message); }
     }
 
-    // [V8] strategy 컬럼 추가
+    // [V8] strategy 컬럼 추가 + composite PK 마이그레이션
     if (!hasStrategy) {
       try {
+        // 1) strategy 컬럼 추가 (기존 row는 'swing'으로 채움)
         await DB.prepare("ALTER TABLE positions ADD COLUMN strategy TEXT NOT NULL DEFAULT 'swing'").run();
         await log(DB, "INFO", null, "schema migrated: added strategy column (default=swing)");
-      } catch (e) {
-        console.error("add strategy fail:", e.message);
-        await log(DB, "WARN", null, "add strategy partial: " + e.message);
-      }
-    }
 
-    // ★★★ [V10 핵심 수정] PRIMARY KEY에 market 포함 ★★★
-    //   기존 PK (symbol, strategy)는 market을 무시 → savePosition의
-    //   ON CONFLICT(symbol, strategy)가 US/KR 포지션을 서로 덮어쓸 수 있다.
-    //   → 현금은 차감됐는데 포지션이 유실되어 "자산 증발"(KR -99%) 발생.
-    //   PK를 (symbol, strategy, market)로 재생성하여 근본 차단.
-    const pkV10 = await getState(DB, "pk_market_migration_v10", null);
-    if (!pkV10) {
-      try {
-        await DB.prepare("CREATE TABLE IF NOT EXISTS positions_v10 (symbol TEXT NOT NULL, strategy TEXT NOT NULL DEFAULT 'swing', market TEXT NOT NULL, qty REAL NOT NULL, avg_price REAL NOT NULL, opened_ts INTEGER NOT NULL, meta TEXT, PRIMARY KEY(symbol, strategy, market))").run();
-        await DB.prepare("INSERT OR IGNORE INTO positions_v10 (symbol, strategy, market, qty, avg_price, opened_ts, meta) SELECT symbol, COALESCE(strategy, 'swing'), market, qty, avg_price, opened_ts, meta FROM positions").run();
+        // 2) 기존 PK가 symbol 단독이라 composite으로 재생성 필요
+        // SQLite는 PK 변경 불가 → 테이블 재생성
+        await DB.prepare("CREATE TABLE IF NOT EXISTS positions_new (symbol TEXT NOT NULL, strategy TEXT NOT NULL DEFAULT 'swing', market TEXT NOT NULL, qty REAL NOT NULL, avg_price REAL NOT NULL, opened_ts INTEGER NOT NULL, meta TEXT, PRIMARY KEY(symbol, strategy))").run();
+        await DB.prepare("INSERT OR IGNORE INTO positions_new (symbol, strategy, market, qty, avg_price, opened_ts, meta) SELECT symbol, COALESCE(strategy, 'swing'), market, qty, avg_price, opened_ts, meta FROM positions").run();
         await DB.prepare("DROP TABLE positions").run();
-        await DB.prepare("ALTER TABLE positions_v10 RENAME TO positions").run();
-        await setState(DB, "pk_market_migration_v10", { done: true, ts: Date.now() });
-        await log(DB, "INFO", null, "[V10] schema migrated: PRIMARY KEY(symbol, strategy, market) — 회계 충돌 버그 수정");
+        await DB.prepare("ALTER TABLE positions_new RENAME TO positions").run();
+        await log(DB, "INFO", null, "schema migrated: composite PK (symbol, strategy)");
       } catch (e) {
-        console.error("[V10] PK market migration fail:", e.message);
-        await log(DB, "WARN", null, "[V10] PK market migration partial: " + e.message);
+        console.error("composite PK migration fail:", e.message);
+        await log(DB, "WARN", null, "PK migration partial: " + e.message);
       }
     }
   } catch (e) {
-    // positions 테이블 자체가 없는 경우 — 올바른 PK로 새로 생성
+    // positions 테이블 자체가 없는 경우 — 새로 생성
     try {
-      await DB.prepare("CREATE TABLE IF NOT EXISTS positions (symbol TEXT NOT NULL, strategy TEXT NOT NULL DEFAULT 'swing', market TEXT NOT NULL, qty REAL NOT NULL, avg_price REAL NOT NULL, opened_ts INTEGER NOT NULL, meta TEXT, PRIMARY KEY(symbol, strategy, market))").run();
-      await setState(DB, "pk_market_migration_v10", { done: true, ts: Date.now() });
+      await DB.prepare("CREATE TABLE IF NOT EXISTS positions (symbol TEXT NOT NULL, strategy TEXT NOT NULL DEFAULT 'swing', market TEXT NOT NULL, qty REAL NOT NULL, avg_price REAL NOT NULL, opened_ts INTEGER NOT NULL, meta TEXT, PRIMARY KEY(symbol, strategy))").run();
     } catch (e2) { console.error("schema create fail:", e2.message); }
   }
   // [V16] 코스닥 종목이 과거 .KS로 저장된 포지션/quote를 .KQ로 교정.
@@ -3815,11 +3792,9 @@ function getStrategiesHeldForSymbol(positions, symbol) {
 }
 
 async function savePosition(DB, market, symbol, strategy, pos) {
-  // [V10 수정] ON CONFLICT 키에 market 포함 → US/KR 포지션 충돌·유실 방지.
-  //   기존 ON CONFLICT(symbol, strategy)는 market을 무시해 회계 붕괴를 일으켰음.
   await DB.prepare(
     "INSERT INTO positions (symbol, strategy, market, qty, avg_price, opened_ts, meta) VALUES (?, ?, ?, ?, ?, ?, ?) " +
-    "ON CONFLICT(symbol, strategy, market) DO UPDATE SET qty=excluded.qty, avg_price=excluded.avg_price, opened_ts=excluded.opened_ts, meta=excluded.meta"
+    "ON CONFLICT(symbol, strategy) DO UPDATE SET qty=excluded.qty, avg_price=excluded.avg_price, meta=excluded.meta"
   ).bind(symbol, strategy, market, pos.qty, pos.avg, pos.opened_ts, JSON.stringify(pos.meta || {})).run();
 }
 
@@ -4282,18 +4257,20 @@ function evaluateBuySignals_meanrev(price, dayPct, dailyData, cfg, regime) {
 // [V8.4] regime 인자 추가 — meanrev에 전달
 function evaluateAllStrategies(price, dayPct, dailyData, cfg, signalStats, regime, market, intraday) {
   const results = [];
-  // [V11] day 제거 — STRATEGIES에 day가 없으므로 진입 신호 생성 안 함.
   const evaluators = {
     swing:    evaluateBuySignals_swing,
+    day:      evaluateBuySignals_day,
     momentum: evaluateBuySignals_momentum,
     meanrev:  evaluateBuySignals_meanrev
   };
   for (const stratName of STRATEGIES) {
     if (!cfg.strategies || !cfg.strategies[stratName]) continue;
-    // [V8.4] meanrev만 regime 인자 추가
+    // [V8.4] meanrev만 regime 인자 / [V9] day는 market·intraday 인자 (시장별 차별화)
     let sigs;
     if (stratName === "meanrev") {
       sigs = evaluators[stratName](price, dayPct, dailyData, cfg, regime);
+    } else if (stratName === "day") {
+      sigs = evaluators[stratName](price, dayPct, dailyData, cfg, market, intraday);
     } else {
       sigs = evaluators[stratName](price, dayPct, dailyData, cfg);
     }
@@ -4560,52 +4537,26 @@ async function executeBuy(DB, market, symbol, strategy, qty, price, signal, dail
         }
       };
     }
-    // [V11] 여기선 posToSave만 계산. 실제 저장은 아래 batch에서 현금·거래와 원자적으로 함께.
+    await savePosition(DB, market, symbol, strategy, posToSave);
   } catch (e) {
-    await log(DB, "ERROR", symbol, "BUY posToSave build fail: " + e.message);
+    await log(DB, "ERROR", symbol, "BUY savePosition fail: " + e.message);
     return cash;
   }
-
-  // [V11] 회계 붕괴 차단 — 포지션·현금·거래기록을 하나의 D1 batch로 원자적 커밋.
-  //   기존엔 savePosition(즉시) → cash 차감(메모리) → setState(나중)로 분리돼 있어,
-  //   그 사이 워커가 timeout/kill되면 "포지션은 저장됐는데 현금 미차감" → 다음 사이클이
-  //   줄지 않은 현금으로 또 매수 → 예산 초과(돈 복제)가 발생했음.
-  //   batch는 단일 트랜잭션이므로 셋이 함께 커밋되거나 함께 실패한다.
 
   // [V25 하드가드 B] 차감 후 음수가 되면 거래 자체를 거부 (회계 붕괴 원천 차단)
   if (cash[market] - total < 0) {
     await log(DB, "ERROR", symbol, "[GUARD] BUY blocked: would make cash negative (cash=" + cash[market] + " total=" + total + ")");
     return cash;
   }
-
-  // 차감된 cash 객체를 미리 구성 (저장은 batch에서)
-  const newCash = Object.assign({}, cash);
-  newCash[market] = cash[market] - total;
-
-  try {
-    const posStmt = DB.prepare(
-      "INSERT INTO positions (symbol, strategy, market, qty, avg_price, opened_ts, meta) VALUES (?, ?, ?, ?, ?, ?, ?) " +
-      "ON CONFLICT(symbol, strategy, market) DO UPDATE SET qty=excluded.qty, avg_price=excluded.avg_price, opened_ts=excluded.opened_ts, meta=excluded.meta"
-    ).bind(symbol, strategy, market, posToSave.qty, posToSave.avg, posToSave.opened_ts, JSON.stringify(posToSave.meta || {}));
-
-    const tradeStmt = DB.prepare(
-      "INSERT INTO trades (ts, market, symbol, side, qty, price, pnl, pnl_pct, reason) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)"
-    ).bind(Date.now(), market, symbol, "BUY", qty, price, null, null,
-      "[" + strategy.toUpperCase() + "] " + signal.name + " " + signal.detail);
-
-    const cashStmt = DB.prepare(
-      "INSERT INTO state (k, v, updated_ts) VALUES (?, ?, ?) ON CONFLICT(k) DO UPDATE SET v=excluded.v, updated_ts=excluded.updated_ts"
-    ).bind("cash", JSON.stringify(newCash), Date.now());
-
-    // 원자적 커밋 — 셋 다 성공하거나 셋 다 롤백
-    await DB.batch([posStmt, tradeStmt, cashStmt]);
-  } catch (e) {
-    // batch 실패 = 아무것도 저장 안 됨 → cash 원본 그대로 반환 (정합성 유지)
-    await log(DB, "ERROR", symbol, "BUY batch fail (rolled back): " + e.message);
-    return cash;
-  }
-
-  cash[market] = newCash[market];
+  cash[market] -= total;
+  // [V9.1] 거래 기록 + 현금을 한 묶음으로 즉시 저장 — 사이클이 중간에 죽어도
+  //   "거래는 됐는데 현금 미반영"으로 돈이 복제되는 정합성 붕괴를 막는다.
+  await recordTrade(DB, {
+    ts: Date.now(), market: market, symbol: symbol, side: "BUY",
+    qty: qty, price: price,
+    reason: "[" + strategy.toUpperCase() + "] " + signal.name + " " + signal.detail
+  });
+  try { await setState(DB, "cash", cash); } catch (e) {}
   const stopPctRel = ((stopPrice - price) / price * 100).toFixed(1);
   await log(DB, "TRADE", symbol, "BUY [" + strategy + "] x" + qty + " @" + price.toFixed(2) + " " + signal.name + " " + signal.detail + " stop=" + stopPrice.toFixed(2) + "(" + stopPctRel + "%)");
   return cash;
@@ -4669,47 +4620,28 @@ async function executeSell(DB, market, symbol, pos, sellQty, price, reason, cfg,
   const signalMembers = pos.meta.signalMembers || [];
   const enrichedReason = "[" + strategy.toUpperCase() + "] " + reason + " #entry=" + signalMembers.join(",");
 
-  // [V11] 회계 붕괴 차단 — 포지션 변경·현금 환입·거래기록을 하나의 D1 batch로 원자적 커밋.
-  //   기존엔 포지션 변경(즉시) → 현금 증가(메모리) → setState(나중)로 분리돼 있어,
-  //   그 사이 워커가 죽으면 "포지션은 삭제됐는데 현금 미반영" → 돈 증발이 발생했음.
-  const newCashSell = Object.assign({}, cash);
-  newCashSell[market] = cash[market] + proceeds;
-
+  // [V26] 포지션 변경을 먼저 — 실패하면 현금을 건드리지 않고 중단(돈 복제 방지).
+  //   매수와 동일한 "자산 먼저, 현금 나중" 순서로 정합성 통일.
   try {
-    // 1) 포지션 변경 statement (부분매도=UPDATE / 전량매도=DELETE)
-    let posStmt;
     if (sellQty < pos.qty) {
-      const newQty = pos.qty - sellQty;
-      const newMeta = Object.assign({}, pos.meta, {
-        tp1Done: true,
-        feeRemaining: Math.max(0, feeRemaining - entryFeeForThisSell)
-      });
-      posStmt = DB.prepare(
-        "UPDATE positions SET qty=?, meta=? WHERE symbol=? AND strategy=? AND market=?"
-      ).bind(newQty, JSON.stringify(newMeta), symbol, strategy, market);
+      pos.qty = pos.qty - sellQty;
+      pos.meta.tp1Done = true;
+      pos.meta.feeRemaining = Math.max(0, feeRemaining - entryFeeForThisSell);
+      await savePosition(DB, market, symbol, strategy, pos);
     } else {
-      posStmt = DB.prepare(
-        "DELETE FROM positions WHERE symbol=? AND strategy=? AND market=?"
-      ).bind(symbol, strategy, market);
+      await deletePosition(DB, symbol, strategy, market);
     }
-
-    const tradeStmt = DB.prepare(
-      "INSERT INTO trades (ts, market, symbol, side, qty, price, pnl, pnl_pct, reason) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)"
-    ).bind(Date.now(), market, symbol, "SELL", sellQty, price, pnl, pnlPct, enrichedReason);
-
-    const cashStmt = DB.prepare(
-      "INSERT INTO state (k, v, updated_ts) VALUES (?, ?, ?) ON CONFLICT(k) DO UPDATE SET v=excluded.v, updated_ts=excluded.updated_ts"
-    ).bind("cash", JSON.stringify(newCashSell), Date.now());
-
-    // 원자적 커밋 — 셋 다 성공하거나 셋 다 롤백
-    await DB.batch([posStmt, tradeStmt, cashStmt]);
   } catch (e) {
-    // batch 실패 = 아무것도 저장 안 됨 → cash 원본 그대로 (포지션도 그대로 유지됨)
-    await log(DB, "ERROR", symbol, "SELL batch fail (rolled back): " + e.message);
+    await log(DB, "ERROR", symbol, "SELL aborted: position update fail: " + e.message);
     return { cash: cash, pnlPct: 0 };
   }
 
-  cash[market] = newCashSell[market];
+  // 포지션 변경 성공 후에만 현금 증가
+  cash[market] += proceeds;
+
+  // [V9.1] 거래 기록 + 현금 즉시 저장 (정합성)
+  await recordTrade(DB, { ts: Date.now(), market: market, symbol: symbol, side: "SELL", qty: sellQty, price: price, pnl: pnl, pnl_pct: pnlPct, reason: enrichedReason });
+  try { await setState(DB, "cash", cash); } catch (e) {}
   const taxNote = market === "kr" ? " tax=" + sellTax.toFixed(2) : "";
   await log(DB, "TRADE", symbol, "SELL [" + strategy + "] x" + sellQty + " @" + price.toFixed(2) + " PnL " + pnlPct.toFixed(2) + "% (held " + heldMin + "min, " + reason + ")" + taxNote);
   return { cash: cash, pnlPct: pnlPct };
@@ -5066,8 +4998,7 @@ function backtestStats(trades) {
 
 function backtestStatsByStrategy(trades) {
   const out = {};
-  // [V11] 통계는 ALL_STRATEGIES — 기존 day 거래 성과도 분석/표시 가능하도록.
-  for (const strat of ALL_STRATEGIES) {
+  for (const strat of STRATEGIES) {
     const subset = trades.filter(function(t) { return t.strategy === strat; });
     if (subset.length > 0) out[strat] = backtestStats(subset);
   }
@@ -6118,16 +6049,14 @@ async function runTradingCycle(env) {
   // [V8.1.3] 저장된 cfg에 박힌 잘못된 값 강제 리셋
   // - requireConfluence: 과거 autoTune이 true로 설정했으면 단독 신호 전부 차단됨 → 거래 0
   // - strategies: 비어있거나 누락된 키 있으면 해당 전략 자동 OFF → 거래 0
-  // - [V11] day는 폐지 — 항상 false 강제
   if (cfg.requireConfluence) cfg.requireConfluence = false;
   if (!cfg.strategies || typeof cfg.strategies !== "object") {
     cfg.strategies = { swing: true, day: false, momentum: true, meanrev: true };
   } else {
-    // 누락된 키는 true로 채움 (day 제외)
+    // 누락된 키는 true로 채움
     for (const s of ["swing", "momentum", "meanrev"]) {
       if (cfg.strategies[s] !== false) cfg.strategies[s] = true;
     }
-    cfg.strategies.day = false;  // [V11] day는 무조건 비활성
   }
 
   // [FIX V8.8] 기존엔 cfg.enabled=false면 여기서 통째로 return → 정규장 중에도
@@ -6144,7 +6073,7 @@ async function runTradingCycle(env) {
   }
 
   try {
-    const enabledStrats = ALL_STRATEGIES.filter(function(s){ return cfg.strategies[s]; }).join(",");
+    const enabledStrats = ["swing","momentum","meanrev"].filter(function(s){ return cfg.strategies[s]; }).join(",");
     const disabledSigNote = (cfg.disabledSignals && cfg.disabledSignals.length > 0)
       ? " disabled=[" + cfg.disabledSignals.join(",") + "]" : "";
     await log(DB, "INFO", null, "=== Cycle start (V8.6) strats=[" + enabledStrats + "] conf=" + (cfg.requireConfluence ? "ON" : "OFF") + disabledSigNote + " ===");
@@ -6268,10 +6197,6 @@ async function runTradingCycle(env) {
       // [V8] 보유 심볼 집합 + 섹터 카운트 (전략 무관하게 종목 단위 집계)
       const heldSymbols = new Set();
       const sectorCounts = {};
-      // [V11] 이 시장에서 이번 사이클에 신규 매수한 건수 — 상한 도달 시 추가 매수 중단.
-      let buysThisMarket = 0;
-      const maxBuysThisCycle = (typeof mcfg.maxBuysPerCycle === "number" && mcfg.maxBuysPerCycle > 0)
-        ? mcfg.maxBuysPerCycle : 8;
       for (const key in positions) {
         const sym = positions[key].symbol;
         heldSymbols.add(sym);
@@ -6547,9 +6472,8 @@ async function runTradingCycle(env) {
           if (!canTrade) { skipped++; continue; }
 
           // === [V8] STEP 1: 이 종목에 보유 중인 모든 전략 포지션 매도 평가 ===
-          //   [V11] ALL_STRATEGIES 사용 — day 진입은 막았지만 기존 day 포지션은 청산해야 함.
           const strategiesHeld = getStrategiesHeldForSymbol(positions, symbol);
-          for (const stratName of ALL_STRATEGIES) {
+          for (const stratName of STRATEGIES) {
             if (!strategiesHeld.has(stratName)) continue;
             const posKey = symbol + "::" + stratName;
             const held = positions[posKey];
@@ -6612,18 +6536,25 @@ async function runTradingCycle(env) {
           }
 
           // === [V8] STEP 2: 모든 활성 전략에서 매수 신호 평가 ===
-          // [V11] 이번 사이클 이 시장의 매수 상한 도달 시 신규 매수 중단 (청산은 위 STEP1에서 이미 처리됨)
-          if (buysThisMarket >= maxBuysThisCycle) {
-            incNobuy("cycle_buy_cap");
-            continue;
-          }
           if (!intraOk) {
             incNobuy("intra_fail");
             continue;
           }
           const strategiesHeldNow = getStrategiesHeldForSymbol(positions, symbol);
-          // [V10] 일봉 신호만으로 평가 (분봉 호출 0). [V11] day 전략 폐지로 분봉 재조회 단계 제거.
+          // [V10] 1차 평가 — 분봉 없이 일봉 신호만으로 (호출 0). day 게이트는 데이터부족→통과.
           let stratResults = evaluateAllStrategies(price, dayPct, daily, mcfg, signalStats, regime, market, intra);
+          // [V10] 2단계 깔때기 — US day 매수 신호가 1차에서 나온 경우에만 분봉 1회 조회해 재검증.
+          //   대부분 종목은 1차에서 신호가 없어 분봉 호출 자체가 일어나지 않음 → subrequest 절약.
+          const hasDaySignal = stratResults.some(function(r){ return r.strategy === "day"; });
+          if (hasDaySignal && market === "us" && mcfg.dayRules && mcfg.dayRules.usIntradayGate !== false) {
+            try {
+              const fullIntra = await fetchIntraday(symbol);
+              if (fullIntra && Array.isArray(fullIntra.closes) && fullIntra.closes.length > 0) {
+                // 분봉으로 재평가 — "지금 하락 중"이면 day 신호가 걸러진다.
+                stratResults = evaluateAllStrategies(price, dayPct, daily, mcfg, signalStats, regime, market, fullIntra);
+              }
+            } catch (e) { /* 분봉 실패 시 1차 결과 유지 */ }
+          }
 
           if (stratResults.length === 0) {
             incNobuy("no_signal");
@@ -6818,20 +6749,13 @@ async function runTradingCycle(env) {
               // [V8.6 Hybrid] LLM stop_loss_adjustment 적용 (지시 있으면)
               const buyOpts = (llmInstr && llmInstr.stop_loss_adjustment && typeof llmInstr.stop_loss_adjustment.new_pct === "number")
                 ? { stopPctOverride: llmInstr.stop_loss_adjustment.new_pct } : null;
-              const cashBefore = cash[market];
               cash = await executeBuy(DB, market, symbol, strategy, qty, price, signal, dailyAtr, mcfg, cash, buyOpts) || cash;
-              // [V11] batch 성공(=현금이 실제로 줄었을 때)에만 매수로 집계
-              if (cash[market] < cashBefore) {
-                bought++;
-                buysThisMarket++;
-                boughtThisSymbol = true;
-                heldSymbols.add(symbol);
-                strategiesHeldNow.add(strategy);
-                const sec = SECTOR_MAP[symbol];
-                if (sec) sectorCounts[sec] = (sectorCounts[sec] || 0) + 1;
-                // 상한 도달 시 이 종목의 추가 전략 평가도 중단
-                if (buysThisMarket >= maxBuysThisCycle) break;
-              }
+              bought++;
+              boughtThisSymbol = true;
+              heldSymbols.add(symbol);
+              strategiesHeldNow.add(strategy);
+              const sec = SECTOR_MAP[symbol];
+              if (sec) sectorCounts[sec] = (sectorCounts[sec] || 0) + 1;
             } else {
               if (qty === 0) {
                 incNobuy("price_too_high[" + strategy + "]");
@@ -6886,22 +6810,17 @@ async function runTradingCycle(env) {
 //   투자원금(invested) 대비 비정상(예: 현금이 갑자기 2배↑, 음수 등)을 잡는다.
 async function auditAccounting(DB, market, cash) {
   try {
-    const posMap = await getPositions(DB, market);
-    // [V10] getPositions는 map 반환 → 배열로 변환. 필드명 avg 사용.
-    const positions = Object.keys(posMap).map(function(k){ return posMap[k]; });
+    const positions = await getPositions(DB, market);
     let invested = 0;
     const seen = {};
     const dups = [];
     for (const p of positions) {
-      const qty = (typeof p.qty === "number" && isFinite(p.qty)) ? p.qty : 0;
-      const avg = (typeof p.avg === "number" && isFinite(p.avg)) ? p.avg : 0;
-      invested += qty * avg;
-      // [V10] 중복 키에 market 포함 (PK와 일치)
-      const k = p.symbol + "::" + p.strategy + "::" + market;
+      invested += (p.qty || 0) * (p.avg_price || 0);
+      const k = p.symbol + "::" + p.strategy;
       if (seen[k]) dups.push(k);
       seen[k] = true;
     }
-    const cashVal = (cash && typeof cash[market] === "number" && isFinite(cash[market])) ? cash[market] : 0;
+    const cashVal = (cash && typeof cash[market] === "number") ? cash[market] : 0;
     const flags = [];
     // 1) 음수 현금
     if (cashVal < 0) flags.push("NEG_CASH(" + Math.round(cashVal) + ")");
@@ -6910,17 +6829,13 @@ async function auditAccounting(DB, market, cash) {
     // 3) 투자원금이 비정상적으로 큼 — 초기자본 대비 과투자 (현금 회계 붕괴 징후)
     const initial = market === "us" ? 100000 : (market === "kr" ? 100000000 : 100000);
     const totalAsset = cashVal + invested;
-    if (totalAsset > initial * 3) flags.push("ASSET_INFLATE(total=" + Math.round(totalAsset) + " vs init=" + initial + ")");
-    // 3b) [V10] 자산 증발 — 총자산이 초기자본의 5% 미만 (포지션 유실/현금 붕괴 핵심 징후, KR -99% 케이스)
-    if (totalAsset < initial * 0.05) flags.push("ASSET_VANISH(total=" + Math.round(totalAsset) + " vs init=" + initial + ")");
+    if (totalAsset > initial * 2) flags.push("ASSET_INFLATE(total=" + Math.round(totalAsset) + " vs init=" + initial + ")");
     if (flags.length > 0) {
       await log(DB, "ERROR", null, "[AUDIT] " + market.toUpperCase() + " 회계 이상: " + flags.join(" | ") +
         " (cash=" + Math.round(cashVal) + " invested=" + Math.round(invested) + " positions=" + positions.length + ")");
       // [V26] 자동 복구 — 중복 포지션만 정리(정상 거래는 보존). 전체 리셋 불필요.
       if (dups.length > 0) {
-        const dupSet = {};
-        for (const dk of dups) { const pp = dk.split("::"); dupSet[pp[0] + "::" + pp[1]] = true; }
-        for (const dupKey of Object.keys(dupSet)) {
+        for (const dupKey of dups) {
           const parts = dupKey.split("::");
           const dsym = parts[0], dstrat = parts[1];
           // 같은 (symbol, strategy) 중복 행 중 1개만 남기고 제거 → 수량 합산본으로 재저장
@@ -6930,7 +6845,7 @@ async function auditAccounting(DB, market, cash) {
               let totalQty = 0, weightedAvg = 0, earliestTs = null;
               for (const p of same) {
                 totalQty += (p.qty || 0);
-                weightedAvg += (p.qty || 0) * (p.avg || 0);
+                weightedAvg += (p.qty || 0) * (p.avg_price || 0);
                 if (earliestTs == null || (p.opened_ts && p.opened_ts < earliestTs)) earliestTs = p.opened_ts;
               }
               const avg = totalQty > 0 ? weightedAvg / totalQty : 0;
@@ -6946,9 +6861,9 @@ async function auditAccounting(DB, market, cash) {
           }
         }
       }
-      return { ok: false, flags: flags, cash: cashVal, invested: invested, total: totalAsset };
+      return { ok: false, flags: flags, cash: cashVal, invested: invested };
     }
-    return { ok: true, cash: cashVal, invested: invested, total: totalAsset };
+    return { ok: true, cash: cashVal, invested: invested };
   } catch (e) {
     return { ok: true, error: e.message };
   }
@@ -7167,53 +7082,28 @@ async function handleRequest(request, env) {
       await log(env.DB, "INFO", null, "[V24] RESET market=" + mkt + " cash=" + initial);
       return Response.json({ ok: true, market: mkt, cash: initial }, { headers: cors });
     }
-    // [V24/V10] 디버그 진단 — cash/포지션/평가액/수익률/정합성 플래그.
+    // [V24] 디버그 진단 — cash/포지션/평가액을 한눈에. 정합성 검증용.
     if (path === "/api/debug") {
       await ensureSchema(env.DB);
-      const cfg = migrateCfgToMarkets(Object.assign({}, DEFAULT_CFG, await getState(env.DB, "cfg", {})));
       const cash = await getState(env.DB, "cash", {});
-      const deposits = await getState(env.DB, "deposits", { us: 0, kr: 0 });
       const out = { cash: cash, markets: {} };
       for (const mkt of ["us", "kr", "cm"]) {
-        const posMap = await getPositions(env.DB, mkt);
-        const positions = Object.keys(posMap).map(function(k){ return posMap[k]; });
+        const positions = await getPositions(env.DB, mkt);
         let invested = 0, count = 0, dupCheck = {};
         const dups = [];
         for (const p of positions) {
-          invested += (p.qty || 0) * (p.avg || 0);
+          invested += (p.qty || 0) * (p.avg_price || 0);
           count++;
-          const key = p.symbol + "::" + p.strategy + "::" + mkt;
+          const key = p.symbol + "::" + p.strategy;
           if (dupCheck[key]) dups.push(key);
           dupCheck[key] = true;
         }
-        const cashVal = (typeof cash[mkt] === "number" && isFinite(cash[mkt])) ? cash[mkt] : 0;
-        // [V11] total은 진입원가 기준(현금 + Σqty×avg). 거래로만 움직였다면 baseline 이하여야 정상.
-        const total = cashVal + invested;
-        // 시장별 초기자본·수익률
-        const initial = mkt === "us" ? cfg.initialCashUS : (mkt === "kr" ? cfg.initialCashKR : cfg.initialCashCM);
-        const dep = (deposits && typeof deposits[mkt] === "number") ? deposits[mkt] : 0;
-        const baseline = (initial || 0) + dep;
-        const changePct = baseline > 0 ? ((total - baseline) / baseline * 100) : 0;
-        // [V11] 회계 누수 — 현금+진입원가가 (초기자본+입금)을 초과 = 거래로그/DB 불일치
-        const leak = total - baseline;
-        // 정합성 플래그
-        const flags = [];
-        if (cashVal < 0) flags.push("NEG_CASH");
-        if (dups.length > 0) flags.push("DUP_POS");
-        if (initial > 0 && total < initial * 0.05) flags.push("ASSET_VANISH");
-        if (initial > 0 && total > initial * 3) flags.push("ASSET_INFLATE");
-        if (baseline > 0 && leak > baseline * 0.005) flags.push("LEAK(+" + Math.round(leak) + ")");
         out.markets[mkt] = {
-          cash: Math.round(cashVal),
+          cash: cash[mkt],
           positionCount: count,
           invested: Math.round(invested),
-          total: Math.round(total),
-          changePct: parseFloat(changePct.toFixed(2)),
-          baseline: Math.round(baseline),
-          leak: Math.round(leak),
-          duplicatePositions: dups,
-          healthy: flags.length === 0,
-          flags: flags
+          total: Math.round((cash[mkt] || 0) + invested),
+          duplicatePositions: dups
         };
       }
       // 락 상태도 노출 (겹친 사이클 진단용)
