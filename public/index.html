@@ -594,8 +594,6 @@ button.btn.loading::after { content: "조회 중…"; position: absolute; left: 
       <button type="button" class="btn" id="btnSettings">SETTINGS</button>
       <button type="button" class="btn" id="btnHolidayRecheck">📅 휴장 재확인</button>
       <button type="button" class="btn" id="btnDebug">🔍 진단</button>
-      <button type="button" class="btn" id="btnResetUS">♻ US리셋</button>
-      <button type="button" class="btn" id="btnResetKR">♻ KR리셋</button>
       <button type="button" class="btn primary" id="btnTick">RUN NOW</button>
     </div>
   </div>
@@ -1101,6 +1099,17 @@ button.btn.loading::after { content: "조회 중…"; position: absolute; left: 
       </button>
       <div style="font-size:10px; color:var(--faint); margin-top:4px;">
         클릭 시: deposits = (cash + 평가액) − initialCash − 포지션PnL합계 로 계산. 입금/출금으로 vs Initial이 왜곡됐을 때 사용.
+      </div>
+    </div>
+
+    <div style="border-top:1px solid var(--border); margin-top:16px; padding-top:14px;">
+      <div style="font-size:12px; color:var(--text); margin-bottom:8px; font-weight:600;">시장별 리셋 (해당 시장만 초기화 · 다른 시장 보존)</div>
+      <div style="display:flex; gap:8px;">
+        <button type="button" class="btn" id="btnResetUS">♻ US 리셋</button>
+        <button type="button" class="btn" id="btnResetKR">♻ KR 리셋</button>
+      </div>
+      <div style="font-size:10px; color:var(--faint); margin-top:4px;">
+        해당 시장의 거래내역·포지션을 삭제하고 현금을 초기금액으로 복원합니다. US를 살리고 KR만 초기화하려면 KR 리셋만 누르세요.
       </div>
     </div>
 
