@@ -4589,19 +4589,33 @@ async function executeBuy(DB, market, symbol, strategy, qty, price, signal, dail
         }
       };
     }
-    await savePosition(DB, market, symbol, strategy, posToSave);
   } catch (e) {
-    await log(DB, "ERROR", symbol, "BUY savePosition fail: " + e.message);
+    await log(DB, "ERROR", symbol, "BUY posToSave calc fail: " + e.message);
     return cash;
   }
 
-  // [V29] cash는 trades에서 계산 — 여기선 인메모리 cash도 동기화(같은 사이클 후속 매수 가드용)
+  // [V30] 단일 원장 정합성 — trades(원장)를 먼저 기록. 실패하면 포지션을 만들지 않고 중단.
+  //   trades가 cash 계산의 유일한 근거이므로, 원장 기록 성공이 거래 성립의 기준이다.
+  try {
+    await recordTrade(DB, {
+      ts: Date.now(), market: market, symbol: symbol, side: "BUY",
+      qty: qty, price: price,
+      reason: "[" + strategy.toUpperCase() + "] " + signal.name + " " + signal.detail
+    });
+  } catch (e) {
+    await log(DB, "ERROR", symbol, "BUY aborted: recordTrade fail (원장 기록 실패, 포지션 미생성): " + e.message);
+    return cash;
+  }
+  // 원장 기록 성공 → 포지션 저장. 포지션 저장이 실패하면 원장에 매수는 있으나 포지션 없음
+  //   = cash는 정확히 차감됨(보수적). 다음 사이클에 audit가 감지 가능.
+  try {
+    await savePosition(DB, market, symbol, strategy, posToSave);
+  } catch (e) {
+    await log(DB, "ERROR", symbol, "BUY savePosition fail (원장은 기록됨, cash 차감 유효): " + e.message);
+  }
+
+  // 인메모리 cash 동기화 (같은 사이클 후속 매수 가드용)
   if (cash && typeof cash[market] === "number") cash[market] -= total;
-  await recordTrade(DB, {
-    ts: Date.now(), market: market, symbol: symbol, side: "BUY",
-    qty: qty, price: price,
-    reason: "[" + strategy.toUpperCase() + "] " + signal.name + " " + signal.detail
-  });
   const stopPctRel = ((stopPrice - price) / price * 100).toFixed(1);
   await log(DB, "TRADE", symbol, "BUY [" + strategy + "] x" + qty + " @" + price.toFixed(2) + " " + signal.name + " " + signal.detail + " stop=" + stopPrice.toFixed(2) + "(" + stopPctRel + "%)");
   return cash;
@@ -4665,8 +4679,15 @@ async function executeSell(DB, market, symbol, pos, sellQty, price, reason, cfg,
   const signalMembers = pos.meta.signalMembers || [];
   const enrichedReason = "[" + strategy.toUpperCase() + "] " + reason + " #entry=" + signalMembers.join(",");
 
-  // [V26] 포지션 변경을 먼저 — 실패하면 현금을 건드리지 않고 중단(돈 복제 방지).
-  //   매수와 동일한 "자산 먼저, 현금 나중" 순서로 정합성 통일.
+  // [V30] 단일 원장 정합성 — 매도는 원장(SELL) 먼저 기록. 실패하면 포지션을 건드리지 않고 중단.
+  //   원장에 매도가 있어야 cash에 매도대금이 반영되므로, 원장 성공이 매도 성립의 기준.
+  try {
+    await recordTrade(DB, { ts: Date.now(), market: market, symbol: symbol, side: "SELL", qty: sellQty, price: price, pnl: pnl, pnl_pct: pnlPct, reason: enrichedReason });
+  } catch (e) {
+    await log(DB, "ERROR", symbol, "SELL aborted: recordTrade fail (원장 기록 실패, 포지션 유지): " + e.message);
+    return { cash: cash, pnlPct: 0 };
+  }
+  // 원장 기록 성공 → 포지션 변경. 실패해도 원장에 매도는 있으므로 cash엔 정확히 반영됨(보수적).
   try {
     if (sellQty < pos.qty) {
       pos.qty = pos.qty - sellQty;
@@ -4677,14 +4698,11 @@ async function executeSell(DB, market, symbol, pos, sellQty, price, reason, cfg,
       await deletePosition(DB, symbol, strategy, market);
     }
   } catch (e) {
-    await log(DB, "ERROR", symbol, "SELL aborted: position update fail: " + e.message);
-    return { cash: cash, pnlPct: 0 };
+    await log(DB, "ERROR", symbol, "SELL position update fail (원장은 기록됨, cash 반영 유효): " + e.message);
   }
 
-  // [V29] 포지션 변경 성공 후 인메모리 cash 동기화 (cash는 trades에서 계산)
+  // 인메모리 cash 동기화 (cash는 trades에서 계산)
   if (cash && typeof cash[market] === "number") cash[market] += proceeds;
-
-  await recordTrade(DB, { ts: Date.now(), market: market, symbol: symbol, side: "SELL", qty: sellQty, price: price, pnl: pnl, pnl_pct: pnlPct, reason: enrichedReason });
   const taxNote = market === "kr" ? " tax=" + sellTax.toFixed(2) : "";
   await log(DB, "TRADE", symbol, "SELL [" + strategy + "] x" + sellQty + " @" + price.toFixed(2) + " PnL " + pnlPct.toFixed(2) + "% (held " + heldMin + "min, " + reason + ")" + taxNote);
   return { cash: cash, pnlPct: pnlPct };
