@@ -2405,11 +2405,31 @@ function localDateStr(market) {
 async function isMarketTradingDay(DB, market, env) {
   const today = localDateStr(market);
   if (!today) return null;
+
+  // 0) [V24 수동 오버라이드] 사용자가 강제 지정한 값이 있으면 최우선 적용.
+  //    LLM/캐시 판정과 무관하게 사용자가 "오늘은 무조건 개장/휴장"을 강제할 수 있다.
+  //    설정 방법: POST /api/holiday/override { market, open: true|false }  (해제는 open: null)
+  //    오버라이드는 "오늘 날짜"에만 적용 — 날짜가 바뀌면 자동 무효화되어 LLM 자동판정으로 복귀.
+  try {
+    const ov = await getState(DB, "holiday_override:" + market, null);
+    if (ov && ov.date === today && typeof ov.open === "boolean") {
+      return ov.open;
+    }
+  } catch (e) {}
+
   const cacheKey = "market_open:" + market + ":" + today;
-  // 1) 당일 캐시 우선 (하루 1회만 LLM 검색)
+  // 1) 당일 캐시 — 30분 이내 캐시만 신뢰 (자주 재검증)
+  //    기존엔 하루 종일 캐시해서 수동 갱신 후에도 무시되던 버그 해결
   try {
     const cached = await getState(DB, cacheKey, null);
-    if (cached && typeof cached.open === "boolean") return cached.open;
+    if (cached && typeof cached.open === "boolean") {
+      const cacheAge = Date.now() - (cached.ts || 0);
+      // 30분(1800초) 이내 캐시만 신뢰
+      if (cacheAge < 30 * 60 * 1000) {
+        return cached.open;
+      }
+      // 캐시 만료 → 아래로 진행해서 LLM 재호출
+    }
   } catch (e) {}
 
   // 2) Claude web_search로 오늘 거래일 여부 판정
@@ -7453,6 +7473,62 @@ async function handleRequest(request, env) {
         out[mkt] = (res === null ? "UNKNOWN" : (res ? "OPEN" : "CLOSED"));
       }
       return Response.json({ ok: true, result: out, ts: Date.now() }, { headers: cors });
+    }
+
+    // === [V24 HOLIDAY 수동 오버라이드] 사용자가 개장/휴장을 강제 지정 ===
+    //   body: { market: "us"|"kr"|"both", open: true|false|null }
+    //     open=true  → 오늘 무조건 개장(거래 허용)
+    //     open=false → 오늘 무조건 휴장(거래 차단)
+    //     open=null  → 오버라이드 해제(LLM 자동판정으로 복귀)
+    //   오버라이드는 "오늘 날짜"에만 적용. 날짜가 바뀌면 자동 무효.
+    if (path === "/api/holiday/override" && request.method === "POST") {
+      const DB = env.DB;
+      let body = {};
+      try { body = await request.json(); } catch (e) {}
+      const market = (body.market || "both").toLowerCase();
+      const open = (body.open === true) ? true : (body.open === false) ? false : null;
+      const markets = (market === "both") ? ["us", "kr"] : [market];
+      const out = {};
+      for (const mkt of markets) {
+        if (mkt !== "us" && mkt !== "kr") { out[mkt] = "invalid-market"; continue; }
+        const today = localDateStr(mkt);
+        if (!today) { out[mkt] = "no-date"; continue; }
+        const okey = "holiday_override:" + mkt;
+        if (open === null) {
+          // 해제
+          try { await DB.prepare("DELETE FROM state WHERE k = ?").bind(okey).run(); } catch (e) {}
+          out[mkt] = "CLEARED (LLM 자동판정 복귀)";
+          await log(DB, "INFO", null, "[HOLIDAY-OVERRIDE] " + mkt.toUpperCase() + " 오버라이드 해제 — LLM 자동판정 복귀");
+        } else {
+          // 설정 (오늘 캐시도 함께 갱신해서 즉시 일관성 확보)
+          try { await setState(DB, okey, { date: today, open: open, ts: Date.now() }); } catch (e) {}
+          try { await setState(DB, "market_open:" + mkt + ":" + today, { open: open, ts: Date.now() }); } catch (e) {}
+          out[mkt] = open ? "FORCED OPEN (거래 허용)" : "FORCED CLOSED (거래 차단)";
+          await log(DB, "INFO", null, "[HOLIDAY-OVERRIDE] " + mkt.toUpperCase() + " " + today + " 강제 " + (open ? "개장(거래허용)" : "휴장(거래차단)"));
+        }
+      }
+      return Response.json({ ok: true, result: out, ts: Date.now() }, { headers: cors });
+    }
+
+    // === [V24 HOLIDAY] 현재 오버라이드/판정 상태 조회 ===
+    if (path === "/api/holiday/status") {
+      const DB = env.DB;
+      const out = {};
+      for (const mkt of ["us", "kr"]) {
+        const today = localDateStr(mkt);
+        const ov = await getState(DB, "holiday_override:" + mkt, null);
+        const cache = today ? await getState(DB, "market_open:" + mkt + ":" + today, null) : null;
+        const effective = await isMarketTradingDay(DB, mkt, env);
+        out[mkt] = {
+          today: today,
+          override: (ov && ov.date === today) ? (ov.open ? "FORCED_OPEN" : "FORCED_CLOSED") : "none",
+          cache: cache ? (cache.open ? "OPEN" : "CLOSED") : "none",
+          cacheAgeMin: (cache && cache.ts) ? Math.round((Date.now() - cache.ts) / 60000) : null,
+          inTradingWindow: isTradingWindow(mkt),
+          effective: (effective === null ? "UNKNOWN" : (effective ? "OPEN" : "CLOSED"))
+        };
+      }
+      return Response.json({ ok: true, status: out, ts: Date.now() }, { headers: cors });
     }
 
     // === [FX] 환율 조회 ===
