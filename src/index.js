@@ -3278,6 +3278,26 @@ async function runMacroUpdate(env, forceRun = false) {
 let __schemaReady = false;
 async function ensureSchema(DB) {
   if (__schemaReady) return;
+  // [V28] positions 테이블 PK 강제 점검 — 기존 PK가 (symbol,strategy)면 savePosition의
+  //   ON CONFLICT(symbol,strategy,market)와 안 맞아 D1_ERROR 발생. 한 번만 재생성한다.
+  try {
+    const pkDone = await getState(DB, "pk_migration_v28", null);
+    if (!pkDone) {
+      const sqlRow = await DB.prepare("SELECT sql FROM sqlite_master WHERE type='table' AND name='positions'").first();
+      const sql = sqlRow && sqlRow.sql ? sqlRow.sql : "";
+      if (sql && !/PRIMARY KEY\s*\([^)]*market[^)]*\)/i.test(sql)) {
+        await DB.prepare("DROP TABLE IF EXISTS positions_v28").run();
+        await DB.prepare("CREATE TABLE positions_v28 (symbol TEXT NOT NULL, strategy TEXT NOT NULL DEFAULT 'swing', market TEXT NOT NULL, qty REAL NOT NULL, avg_price REAL NOT NULL, opened_ts INTEGER NOT NULL, meta TEXT, PRIMARY KEY(symbol, strategy, market))").run();
+        await DB.prepare("INSERT OR IGNORE INTO positions_v28 (symbol, strategy, market, qty, avg_price, opened_ts, meta) SELECT symbol, COALESCE(strategy,'swing'), market, qty, avg_price, opened_ts, meta FROM positions").run();
+        await DB.prepare("DROP TABLE positions").run();
+        await DB.prepare("ALTER TABLE positions_v28 RENAME TO positions").run();
+        await log(DB, "INFO", null, "[V28] positions PK 재생성: (symbol, strategy, market)");
+      }
+      await setState(DB, "pk_migration_v28", { done: true, ts: Date.now() });
+    }
+  } catch (e) {
+    console.error("pk_migration_v28 fail:", e.message);
+  }
   try {
     const cols = await DB.prepare("PRAGMA table_info(positions)").all();
     const colNames = (cols.results || []).map(function(c){ return c.name; });
@@ -6175,6 +6195,12 @@ async function runTradingCycle(env) {
     //   읽었을 때 원자재 현금이 사라지지 않도록 보강.
     if (typeof cash.cm !== "number") cash.cm = cfg.initialCashCM;
 
+    // [V28] 강력 예산 가드 — 사이클 시작 시 시장별 가용현금을 스냅샷으로 고정.
+    //   한 사이클에서 누적 매수액이 이 스냅샷을 넘으면 이후 매수 전면 차단.
+    //   savePosition 충돌 등으로 executeBuy의 cash 추적이 깨져도 예산 초과 불가능.
+    const cycleBudget = { us: cash.us, kr: cash.kr, cm: cash.cm };
+    const cycleSpent = { us: 0, kr: 0, cm: 0 };
+
     let tried = 0, bought = 0, sold = 0, skipped = 0, fetchFail = 0;
 
     // [V8.1.1] 장 열린 시장만 처리 — 마감된 시장은 시세도 fetch 안 함
@@ -6748,17 +6774,31 @@ async function runTradingCycle(env) {
             const totalCost = qty * price * (1 + feeRate);
             // [V27] 예산 가드 — 부동소수점 오차 여유(1원/1센트) 두고 엄격 차단 + 초과 시도 로깅
             const epsilon = market === "us" ? 0.01 : 1;
-            if (qty > 0 && totalCost <= cash[market] + epsilon) {
+            // [V28] 사이클 누적 예산 가드 — 이번 매수로 누적 지출이 시작 현금을 넘으면 차단.
+            const wouldSpend = cycleSpent[market] + totalCost;
+            if (qty > 0 && wouldSpend > cycleBudget[market] + epsilon) {
+              await log(DB, "ERROR", symbol, "[CRITICAL] 사이클예산초과 차단: 누적지출=" + Math.round(wouldSpend) + " 한도=" + Math.round(cycleBudget[market]) + " (" + strategy + ")");
+              incNobuy("cycle_budget[" + strategy + "]");
+            } else if (qty > 0 && totalCost <= cash[market] + epsilon) {
               // [V8.6 Hybrid] LLM stop_loss_adjustment 적용 (지시 있으면)
               const buyOpts = (llmInstr && llmInstr.stop_loss_adjustment && typeof llmInstr.stop_loss_adjustment.new_pct === "number")
                 ? { stopPctOverride: llmInstr.stop_loss_adjustment.new_pct } : null;
+              const cashBefore = cash[market];
               cash = await executeBuy(DB, market, symbol, strategy, qty, price, signal, dailyAtr, mcfg, cash, buyOpts) || cash;
-              bought++;
-              boughtThisSymbol = true;
-              heldSymbols.add(symbol);
-              strategiesHeldNow.add(strategy);
-              const sec = SECTOR_MAP[symbol];
-              if (sec) sectorCounts[sec] = (sectorCounts[sec] || 0) + 1;
+              // [V28] executeBuy가 실제로 cash를 차감했을 때만 매수 성공으로 카운트.
+              //   savePosition 충돌 등으로 차감이 안 됐으면(=실패) spent/held 갱신 안 함.
+              const actuallySpent = cashBefore - cash[market];
+              if (actuallySpent > epsilon) {
+                cycleSpent[market] += actuallySpent;
+                bought++;
+                boughtThisSymbol = true;
+                heldSymbols.add(symbol);
+                strategiesHeldNow.add(strategy);
+                const sec = SECTOR_MAP[symbol];
+                if (sec) sectorCounts[sec] = (sectorCounts[sec] || 0) + 1;
+              } else {
+                incNobuy("buy_failed[" + strategy + "]");
+              }
             } else if (qty > 0 && totalCost > cash[market] + epsilon) {
               // 예산 초과 매수 시도 — 차단하고 기록 (회계 붕괴 방지)
               await log(DB, "ERROR", symbol, "[CRITICAL] 예산초과 매수차단: 필요=" + Math.round(totalCost) + " 가용=" + Math.round(cash[market]) + " (" + strategy + ")");
