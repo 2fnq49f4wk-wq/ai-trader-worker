@@ -7111,7 +7111,7 @@ async function handleRequest(request, env) {
           usBySymbol: posUS.bySymbol,
           krBySymbol: posKR.bySymbol
         },
-        lastTick: lastTick, lastHeartbeat: lastHeartbeat, cfg: cfg,
+        lastTick: lastTick, lastHeartbeat: lastHeartbeat, serverTime: Date.now(), cfg: cfg,
         marketStatus: {
           us: isMarketOpen("us") && (await isMarketTradingDay(env.DB, "us", env)) !== false,
           kr: isMarketOpen("kr") && (await isMarketTradingDay(env.DB, "kr", env)) !== false
