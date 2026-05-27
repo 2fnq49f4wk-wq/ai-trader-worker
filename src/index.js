@@ -2023,20 +2023,14 @@ const DEFAULT_CFG = {
   //   signal.weight는 riskPerTrade에 곱해 강한 신호일수록 리스크 더 가져감.
   riskBasedSizing: {
     enabled: true,
-    // [V9.4] 0.6→0.8 / [V9.5] 0.8→1.0 추가 상향: 현금 활용도 더 끌어올림.
-    //   maxRisk는 1.2 유지 — 가장 공격적 거래도 한 거래 손실 자산 1.2%로 묶임.
-    //   결과: 기본 신호 거래 KR ₩1116만→₩1395만, 한 거래 손절시 손실 자산 0.8%→1.0%.
-    riskPerTrade: 1.0,       // cash의 1.0% 손실 허용
-    minRisk: 0.3,            // 약한 신호 floor
-    maxRisk: 1.2,            // 강한 신호 + crossConf 시 cap (유지 — 안전선)
-    fallbackToLegacy: false, // 리스크 사이징 실패 시 legacy 사용 여부
-    // [V9.6] 전략별 오버라이드. 지정 전략은 아래 값을, 미지정은 위 공통값 사용.
-    //   momentum: 손절폭이 8%로 넓어 공통 floor(0.3%)면 약신호·고변동 시 거래금액이
-    //   500만 밑으로 떨어짐. minRisk를 0.65%로 올려 최악 조건(stop 12.8%)에서도
-    //   ~500만 확보. riskPerTrade/maxRisk도 함께 올려 손익비 일관성 유지.
-    //   ※ 트레이드오프: momentum 한 거래 최대 손실한도가 자산의 1.2%→1.4%로 소폭 증가.
+    // [V9.6] 1.0→0.8: 더 보수적 사이징으로 손실 최소화
+    riskPerTrade: 0.8,       // cash의 0.8% 손실 허용 (기존 1.0%)
+    minRisk: 0.25,           // [V9.6] 0.3→0.25 (더 보수적 floor)
+    maxRisk: 1.0,            // [V9.6] 1.2→1.0 (더 타이트한 cap)
+    fallbackToLegacy: false,
+    // [V9.6] 전략별 오버라이드
     byStrategy: {
-      momentum: { riskPerTrade: 1.2, minRisk: 0.65, maxRisk: 1.4 }
+      momentum: { riskPerTrade: 1.0, minRisk: 0.55, maxRisk: 1.2 }  // [V9.6] 보수화
     }
   },
   // === [V8.5] disabled signal 재평가 ===
@@ -2138,17 +2132,16 @@ const DEFAULT_CFG = {
   crossConfluenceBonus: 1.2,
   // === [V8] 전략별 진입/청산 룰 ===
   swingRules: {
-    minHoldHours: 3,           // [V8.1.4] 4→3 (조금 더 빠른 회전)
+    minHoldHours: 3,           
     timeStopDays: 3,
     timeStopMaxDays: 7,
-    trailStartPct: 3.0,
-    trailDropPct: 4.0,
-    tp1: 3.5, tp2: 10.0,       // [V8.1.4] 4.0/11.0 → 3.5/10.0 (조금 더 자주 익절)
-    stopLossPct: 5.0,
-    atrStopMult: 2.0,
-    // [V8.3] Break-even stop — 수익 +breakEvenAt% 도달 시 손절가를 진입가+breakEvenLock%로 올림
-    breakEvenAt: 2.0,
-    breakEvenLock: 0.3
+    trailStartPct: 2.5,        // [V9.6] 3.0→2.5 (더 빨리 트레일링 시작)
+    trailDropPct: 2.5,         // [V9.6] 4.0→2.5 (트레일링 타이트 — 이익 보호)
+    tp1: 2.8, tp2: 8.5,        // [V9.6] 3.5/10.0→2.8/8.5 (더 자주 익절, 확실한 수익만)
+    stopLossPct: 4.0,          // [V9.6] 5.0→4.0 (손절 타이트, 손실 최소화)
+    atrStopMult: 1.8,          // [V9.6] 2.0→1.8 (ATR 손절 더 엄격)
+    breakEvenAt: 1.5,          // [V9.6] 2.0→1.5 (더 빨리 본전보호)
+    breakEvenLock: 0.2         // 변경 없음
   },
   dayRules: {
     // [V9] 시장별 차별화 파라미터
@@ -2199,45 +2192,43 @@ const DEFAULT_CFG = {
     minConfirmWeight: 0.9              // weight 0.9 미만 약한 단독신호 보류(GAP_DOWN 0.95는 유지)
   },
   momentumRules: {
-    breakoutDays: 10,          // [V8.1.7] 15→10 (더 자주 돌파 진입)
-    volMult: 1.15,             // [V8.1.7] 1.3→1.15
-    rsiMin: 50, rsiMax: 80,    // [V8.1.7] 52~78 → 50~80
-    minHoldDays: 1,            // [V8.1.7] 2→1
-    timeStopMaxDays: 30,
-    trailStartPct: 4.0,        // [V8.1.7] 5→4
-    trailDropPct: 6.0,         // [V8.1.7] 7→6
-    stopLossPct: 8.0,
-    atrStopMult: 3.0,
-    // [V8.3] Break-even + 분할익절
-    breakEvenAt: 3.0,
-    breakEvenLock: 0.5,
-    tp1: 5.0                   // +5% 도달 시 1/3 익절
+    breakoutDays: 8,           // [V9.6] 10→8 (더 짧은 기간, 최근 모멘텀 중심)
+    volMult: 1.10,             // [V9.6] 1.15→1.10 (거래량 필터 강화)
+    rsiMin: 55, rsiMax: 75,    // [V9.6] 50~80→55~75 (극단값 회피, 확실한 구간만)
+    minHoldDays: 1,            
+    timeStopMaxDays: 20,       // [V9.6] 30→20 (더 빨리 포기, 모멘텀 소실 방지)
+    trailStartPct: 3.0,        // [V9.6] 4.0→3.0 (빨리 익절)
+    trailDropPct: 4.0,         // [V9.6] 6.0→4.0 (더 타이트한 트레일링)
+    stopLossPct: 6.5,          // [V9.6] 8.0→6.5 (손절 타이트)
+    atrStopMult: 2.5,          // [V9.6] 3.0→2.5
+    breakEvenAt: 2.5,          // [V9.6] 3.0→2.5 (더 빨리 본전 보호)
+    breakEvenLock: 0.3,        // [V9.6] 0.5→0.3
+    tp1: 4.0                   // 변경 없음 (첫 익절 지점)
   },
   meanrevRules: {
-    zScoreThreshold: -1.3,     // [V8.1.7] -1.7→-1.3 (더 빈번)
-    rsiMax: 35,                // [V8.1.7] 30→35
+    zScoreThreshold: -1.5,     // [V9.6] -1.3→-1.5 (더 극단적 저가만)
+    rsiMax: 30,                // [V9.6] 35→30 (더 과매도만 진입)
     minHoldHours: 2,
-    timeStopMaxDays: 5,
+    timeStopMaxDays: 4,        // [V9.6] 5→4 (더 빨리 포기)
     tp: 999,
-    stopLossPct: 4.0,          // [V8.1.7] 3.5→4.0
+    stopLossPct: 3.5,          // [V9.6] 4.0→3.5 (손절 타이트)
     // [V8.3] MEANREV trailing — MA20 닿기 전 갑작스런 하락에 보호
-    trailStartPct: 2.5,
-    trailDropPct: 1.8,
-    breakEvenAt: 1.5,
-    breakEvenLock: 0.2,
+    trailStartPct: 2.0,        // [V9.6] 2.5→2.0 (빨리 트레일링)
+    trailDropPct: 1.5,         // [V9.6] 1.8→1.5 (타이트 트레일링)
+    breakEvenAt: 1.2,          // [V9.6] 1.5→1.2 (빨리 본전 보호)
+    breakEvenLock: 0.15,       // [V9.6] 0.2→0.15
     // [V8.3] MR 진입 조건 강화 — RSI 상승 전환 요구
-    requireRsiUptick: true,    // 어제 RSI < 오늘 RSI 일 때만 진입 (catch-falling-knife 방지)
+    requireRsiUptick: true,    // 유지 (catch-falling-knife 방지)
     // [V8.4] BEAR 한정 강화 — 약세장에서 reversion 매수는 매우 위험
-    //        z-score 더 극단 & RSI 더 낮음 만 진입 허용
-    bearZScoreThreshold: -2.0,
-    bearRsiMax: 25
+    bearZScoreThreshold: -2.2, // [V9.6] -2.0→-2.2 (약세장 더 극단적)
+    bearRsiMax: 22             // [V9.6] 25→22 (약세장 더 낮음)
   },
   // === Confluence (전략 내부) ===
   // [V8.1.3] 강제 OFF — 멀티 전략판이라 cross-strategy confluence로 충분.
   // autoTune이 켜는 로직도 V8.1.3에서 비활성화함.
   requireConfluence: false,
-  soloSignalWeight: 0.7,       // [V8.4] 1.0 → 0.7 (단독 신호 30% 감점)
-  confluenceBonus: 1.3,
+  soloSignalWeight: 0.55,      // [V9.6] 0.7→0.55 (단독 신호 45% 감점 — 확실한 것만)
+  confluenceBonus: 1.4,        // [V9.6] 1.3→1.4 (다중 신호 보상 강화)
   allowMixedConfluence: true,
   mixedConfluencePenalty: 0.8,
   // [V8.4] 거래비용(왕복) — TP 판단 시 차감
@@ -4449,16 +4440,20 @@ function resolveSignals(signals, cfg, signalStats, stratName) {
     let perfMult = 1.0;
     if (signalStats && signalStats[s.name]) {
       const st = signalStats[s.name];
-      // [수정] 최소 표본 5 → 20으로 상향, Bayesian shrinkage 적용
-      // posterior ≈ (wins+α) / (count+α+β), α=β=10 → 사전 50% 가정에 평균 회귀
-      // [V8.3] weightedWinRate 있으면 우선 사용 — 최근 거래에 가중 부여
+      // [V9.6] 신호 필터 강화: 최소 표본 20 + 승률 기반 필터
+      // 표본 20 이상일 때: 승률 <35% 신호는 0.5배 감점 (약한 신호 억제)
       if (st.count >= 20) {
         const rate = st.weightedWinRate != null ? st.weightedWinRate
           : ((st.wins + 10) / (st.count + 20));
         const shrunkRate = (st.weightedWinRate != null)
           ? (st.weightedWins + 10) / (st.weightedCount + 20)
           : rate;
-        perfMult = Math.max(0.7, Math.min(1.3, 0.4 + shrunkRate * 1.2));
+        // [V9.6] 승률 35% 미만 신호는 0.5배 페널티 추가
+        const lowWinRatePenalty = shrunkRate < 0.35 ? 0.5 : 1.0;
+        // [V9.6] 손절 빈도 페널티 — 손절률 >60%는 신뢰성 낮음 (0.6배)
+        const stopRate = st.count > 0 ? (st.stops || 0) / st.count : 0;
+        const highStopPenalty = stopRate > 0.6 ? 0.6 : 1.0;
+        perfMult = Math.max(0.5, Math.min(1.3, (0.4 + shrunkRate * 1.2) * lowWinRatePenalty * highStopPenalty));
       }
     }
     totalW += s.weight * perfMult;
@@ -5428,20 +5423,28 @@ async function autoTune(DB, cfg, regimes) {
       const memberShare = members.length > 0 ? (1 / members.length) : 1;
       for (const sigName of members) {
         // 1) signal-only
-        if (!signalStats[sigName]) signalStats[sigName] = { wins: 0, count: 0, totalPnl: 0, weightedWins: 0, weightedCount: 0 };
+        if (!signalStats[sigName]) signalStats[sigName] = { wins: 0, count: 0, totalPnl: 0, weightedWins: 0, weightedCount: 0, stops: 0 };
         signalStats[sigName].count++;
         signalStats[sigName].totalPnl += (t.pnl_pct || 0) * memberShare;
         signalStats[sigName].weightedCount += recencyWeight;
+        // [V9.6] 손절 추적 — reason에 STOP 포함 시 손절로 카운팅
+        if (reason && reason.indexOf("STOP") !== -1) {
+          signalStats[sigName].stops++;
+        }
         if (t.pnl_pct > 0) {
           signalStats[sigName].wins++;
           signalStats[sigName].weightedWins += recencyWeight;
         }
         // 2) [V8.5] strategy:signal
         const sKey = stratKey + ":" + sigName;
-        if (!signalStatsByStrat[sKey]) signalStatsByStrat[sKey] = { wins: 0, count: 0, totalPnl: 0, weightedWins: 0, weightedCount: 0 };
+        if (!signalStatsByStrat[sKey]) signalStatsByStrat[sKey] = { wins: 0, count: 0, totalPnl: 0, weightedWins: 0, weightedCount: 0, stops: 0 };
         signalStatsByStrat[sKey].count++;
         signalStatsByStrat[sKey].totalPnl += (t.pnl_pct || 0) * memberShare;
         signalStatsByStrat[sKey].weightedCount += recencyWeight;
+        // [V9.6] 손절 추적
+        if (reason && reason.indexOf("STOP") !== -1) {
+          signalStatsByStrat[sKey].stops++;
+        }
         if (t.pnl_pct > 0) {
           signalStatsByStrat[sKey].wins++;
           signalStatsByStrat[sKey].weightedWins += recencyWeight;
