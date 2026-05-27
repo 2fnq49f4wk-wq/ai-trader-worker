@@ -3276,17 +3276,24 @@ button.btn.loading::after { content: "조회 중…"; position: absolute; left: 
         })
         .then(function(d){
           var lines = ['=== 진단 ==='];
-          if (!d.markets) { toast('진단 실패: markets 없음'); return; }
-          ['us','kr','cm'].forEach(function(m){
-            var x = d.markets[m];
-            if (!x) return;
-            lines.push(m.toUpperCase() + ': 현금=' + Math.round(x.cash||0).toLocaleString() +
-              ' / 투자=' + Math.round(x.invested||0).toLocaleString() +
-              ' / 평가합=' + Math.round(x.total||0).toLocaleString() +
-              ' / 종목=' + x.positionCount +
-              (x.duplicatePositions && x.duplicatePositions.length ? ' / 중복!=' + x.duplicatePositions.join(',') : ''));
-          });
-          if (d.cycleLock) lines.push('사이클락: ' + (d.cycleLock.expired ? '만료됨(정상)' : '활성(돌고있음)'));
+          if (d.market) {
+            lines.push('마켓 상태: US=' + (d.market.us ? '개장' : '휴장') + ' / KR=' + (d.market.kr ? '개장' : '휴장'));
+          }
+          if (d.tradingWindow) {
+            lines.push('거래 윈도우: US=' + (d.tradingWindow.us ? 'YES' : 'NO') + ' / KR=' + (d.tradingWindow.kr ? 'YES' : 'NO'));
+          }
+          if (d.lastTickAgeMin !== null) {
+            lines.push('마지막 틱: ' + d.lastTickAgeMin + '분 전');
+          }
+          if (d.quotes) {
+            lines.push('시세 저장: ' + d.quotes.stored + '/' + d.quotes.total + ' (5분내 신선: ' + d.quotes.freshUnder5min + ')');
+          }
+          if (d.lock) {
+            lines.push('사이클락: ' + (d.lockAgeSec !== null ? d.lockAgeSec + '초 남음' : '없음'));
+          }
+          if (d.llm && (d.llm.kr || d.llm.us)) {
+            lines.push('LLM 마지막 실행: KR=' + (d.llm.kr || '?') + ' / US=' + (d.llm.us || '?'));
+          }
           alert(lines.join('\n'));
         })
         .catch(function(e){ toast('진단 실패: ' + e.message); });
