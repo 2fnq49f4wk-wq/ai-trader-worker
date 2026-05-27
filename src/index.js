@@ -7186,7 +7186,7 @@ async function handleRequest(request, env) {
     }
     if (path === "/api/logs") {
       const limit = parseInt(url.searchParams.get("limit") || "200", 10);
-      const res = await env.DB.prepare("SELECT * FROM logs ORDER BY id DESC LIMIT ?").bind(limit).all();
+      const res = await env.DB.prepare("SELECT id, ts, level, symbol, message AS msg FROM logs ORDER BY id DESC LIMIT ?").bind(limit).all();
       return Response.json(res.results, { headers: cors });
     }
     if (path === "/api/cfg" && request.method === "GET") {
