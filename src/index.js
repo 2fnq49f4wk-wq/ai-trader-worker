@@ -2043,7 +2043,7 @@ const DEFAULT_CFG = {
   signalReviewDays: 30,      // 비활성화 후 N일 경과 시 재활성화 후보
   // === [V8.6 Hybrid] Claude LLM 일일 지시 ===
   llmHybrid: {
-    enabled: true,            // [V11] 기본 ON — API 키만 등록되면 작동 (키 없으면 자동으로 V8.5 폴백)
+    enabled: false,           // 기본 OFF — 사용자가 명시적으로 켜야 작동
     model: "claude-sonnet-4-6", // [V8.7] 유효 모델 ID (구 'claude-opus-4-5'는 존재하지 않아 404 발생)
     maxTokens: 3000,          // [V9.1] 2000→3000 (reasoning 단계적 추론 공간 확보)
     confidenceWeighting: true, // [V9.1] LLM confidence로 sizing 개입 강도 조절 (낮으면 보수적)
@@ -2295,12 +2295,6 @@ function migrateCfgToMarkets(cfg) {
     }
     if (typeof cfg.llmHybrid.maxRetries !== "number") cfg.llmHybrid.maxRetries = 2;
     if (typeof cfg.llmHybrid.timeoutMs !== "number") cfg.llmHybrid.timeoutMs = 20000;
-    // [V11] LLM 기본 ON 전환 — 저장된 cfg에 옛 기본값(false)이 박혀 있으면 한 번만 켜준다.
-    //   llmEnabledMigratedV11 플래그로 1회 적용 → 이후 사용자가 끄면 그 선택을 존중.
-    if (cfg.llmHybrid.enabled !== true && !cfg.llmEnabledMigratedV11) {
-      cfg.llmHybrid.enabled = true;
-      cfg.llmEnabledMigratedV11 = true;
-    }
   }
 
   if (!cfg.markets) cfg.markets = {};
@@ -4735,7 +4729,8 @@ async function executeSell(DB, market, symbol, pos, sellQty, price, reason, cfg,
   if (cash && typeof cash[market] === "number") cash[market] += proceeds;
   const taxNote = market === "kr" ? " tax=" + sellTax.toFixed(2) : "";
   await log(DB, "TRADE", symbol, "SELL [" + strategy + "] x" + sellQty + " @" + price.toFixed(2) + " PnL " + pnlPct.toFixed(2) + "% (held " + heldMin + "min, " + reason + ")" + taxNote);
-  return { cash: cash, pnlPct: pnlPct };
+  // [V34] proceeds 추가 반환 — 호출부에서 cycleSpent 복원용
+  return { cash: cash, pnlPct: pnlPct, proceeds: proceeds, market: market };
 }
 
 // === [V8] 매도 평가 — 보유 포지션의 strategy에 따라 분기 ===
@@ -5896,7 +5891,8 @@ async function executeSellCM(DB, symbol, pos, sellQty, price, reason, cfg, cash)
   }
   if (cash && typeof cash.cm === "number") cash.cm += proceeds;
   await log(DB, "TRADE", symbol, "[CM] SELL x" + sellQty + " @" + price.toFixed(2) + " PnL " + pnlPct.toFixed(2) + "% (held " + heldMin + "min, " + reason + ")");
-  return { pnlPct: pnlPct, cash: cash };
+  // [V34] proceeds 추가 반환 — 호출부에서 cycleSpent 복원용
+  return { pnlPct: pnlPct, cash: cash, proceeds: proceeds, market: "cm" };
 }
 
 // ============================================================
@@ -6092,8 +6088,13 @@ async function runCommodityCycle(env, forceTrade) {
         if (sellDecision.minHoldLock) {
           // 최소 보유시간 미달 — 보류
         } else if (sellDecision.sell) {
-          await executeSellCM(DB, symbol, held, sellDecision.sellQty, price, sellDecision.reason, cfg, cash);
+          const cmSellResult = await executeSellCM(DB, symbol, held, sellDecision.sellQty, price, sellDecision.reason, cfg, cash);
           sold++;
+          // [V34] 원자재 매도 성공 시 cycleSpent 복원 — 다음 매수에 예산 다시 사용 가능
+          if (cmSellResult && cmSellResult.proceeds && typeof cmSellResult.proceeds === "number" && cmSellResult.proceeds > 0) {
+            cycleSpent["cm"] = Math.max(0, cycleSpent["cm"] - cmSellResult.proceeds);
+            await log(DB, "DEBUG", symbol, "[CM-BUDGET] 매도대금 복원: proceeds=" + Math.round(cmSellResult.proceeds) + " cycleSpent[cm]=" + Math.round(cycleSpent["cm"]));
+          }
           if (sellDecision.sellQty >= held.qty) delete positions[posKey];
         }
       }
@@ -6652,8 +6653,13 @@ async function runTradingCycle(env) {
               continue;
             }
             if (sellDecision.sell) {
-              await executeSell(DB, market, symbol, held, sellDecision.sellQty, price, sellDecision.reason, mcfg, cash);
+              const sellResult = await executeSell(DB, market, symbol, held, sellDecision.sellQty, price, sellDecision.reason, mcfg, cash);
               sold++;
+              // [V34] 매도 성공 시 cycleSpent 복원 — 다음 매수에 예산 다시 사용 가능
+              if (sellResult && sellResult.proceeds && typeof sellResult.proceeds === "number" && sellResult.proceeds > 0) {
+                cycleSpent[market] = Math.max(0, cycleSpent[market] - sellResult.proceeds);
+                await log(DB, "DEBUG", symbol, "[BUDGET] 매도대금 복원: proceeds=" + Math.round(sellResult.proceeds) + " cycleSpent[" + market + "]=" + Math.round(cycleSpent[market]));
+              }
               // 전량 매도 시 카운트 갱신 — 같은 종목 다른 전략 남아 있는지 확인
               const stillHeld = Object.keys(positions).some(function(k){
                 return positions[k].symbol === symbol && k !== posKey;
