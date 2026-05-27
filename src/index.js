@@ -2066,7 +2066,7 @@ const DEFAULT_CFG = {
   // === [V8] 전략별 활성화 토글 ===
   strategies: {
     swing: true,
-    day: false,
+    day: false,       // [V9.6.1] 분봉 데이터 없어서 비활성화 (현재 일봉+현재가만 수집)
     momentum: true,
     meanrev: true
   },
@@ -2074,31 +2074,19 @@ const DEFAULT_CFG = {
   // [V8.1.9] base = 가용현금 대비 비율 (계산식이 cash[market] 기준으로 변경됨).
   //          한 거래 목표금액 KR ₩100~300만 / US $1~3k 범위로 클램프됨 (아래 sizingTargets).
   strategySizing: {
-    // [V9] LLM 분석 반영: 현재 NEUTRAL 국면에서 day winRate 0%/avgPnl -20%, momentum 신뢰도 급락, swing만 우수.
-    //   neutralMult 추가 — BULL/BEAR가 아닌 중립 횡보장에서의 전략별 사이즈 배수.
-    //   day/momentum은 추세가 명확할 때만 작동 → 중립장에선 대폭 축소. swing은 중립장에서도 안정 → 유지.
-    // [V9.1] day 사이즈 추가 감축: base 25→15 (전 국면 40%↓).
-    //   거래는 유지하되 금액만 축소 — 손익비(3.3:1)가 좋아 거래차단은 역효과였으므로 사이즈로만 리스크 관리.
-    //   결과 실효비중: BULL 22.5% / NEUTRAL 6% / BEAR 15% (전 전략 중 최소 수준).
-    //   US 분봉게이트·KR 스윙전환의 효과 검증용 표본은 계속 수집됨.
-    day:      { base: 15, bullMult: 1.5, bearMult: 1.0, neutralMult: 0.4 },
+    day:      { base: 8, bullMult: 1.2, bearMult: 0.5, neutralMult: 0.3 },  // [V9.6] 15→8 (40% 감축)
     // [V9.2] meanrev 소폭 상향: base 25→27. 사용자 요청 반영하되 표본 1건뿐이라 최소폭만.
     meanrev:  { base: 27, bullMult: 1.2, bearMult: 1.4, neutralMult: 1.0 },
     // [V9.2] swing 소폭 상향: base 30→33. 사용자 요청(승률 우수 시 베팅 확대) 반영하되,
     //   표본 15건·전부 우상향장이라는 한계 고려해 +10%만.
     //   [V9.3] bearMult 0.8→0.6: base를 키운 만큼 하락장 쏠림 방어 강화.
-    //     이 사이즈 축소는 LLM과 무관하게 작동(코드 레벨) → LLM이 죽어도 하락장 swing 리스크 억제.
-    //     실효 BEAR 비중 = 33×0.6 = 19.8%로, 상향 전(30×0.8=24%)보다 오히려 보수적.
     swing:    { base: 33, bullMult: 1.4, bearMult: 0.6, neutralMult: 1.0 },
     momentum: { base: 28, bullMult: 1.5, bearMult: 0.6, neutralMult: 0.4 }
   },
   // === [V8.1.9] 한 거래당 목표 금액 클램프 (시장별) ===
-  // budget이 minBudget 미만이면 minBudget으로 끌어올리고, maxBudget 넘으면 잘라냄.
-  // cash[market] 부족하면 cash 한도 내에서 최대한 채움.
-  // [V9.4] day의 기본 폴백값(전략별 오버라이드 없을 때 사용).
   sizingTargets: {
-    kr: { minBudget: 1000000, maxBudget: 3000000 },  // ₩100만 ~ ₩300만 (day 기준)
-    us: { minBudget: 1000,    maxBudget: 3000    }   // $1k ~ $3k (day 기준)
+    kr: { minBudget: 500000, maxBudget: 1500000 },  // [V9.6] ₩100만~300만 → ₩50만~150만 (DAY 극도 축소)
+    us: { minBudget: 500,    maxBudget: 1500    }   // [V9.6] $1k~3k → $500~1.5k
   },
   // [V9.4] 전략별 한 거래 최대금액 오버라이드 — 현금 활용도↑, 좋은 신호에 크게 베팅.
   //   day는 약전략이라 캡 유지(위 sizingTargets 사용). 나머지는 자산 비중 기준으로 상향.
@@ -2144,52 +2132,49 @@ const DEFAULT_CFG = {
     breakEvenLock: 0.2         // 변경 없음
   },
   dayRules: {
-    // [V9] 시장별 차별화 파라미터
-    usIntradayGate: true,       // US: 분봉 일중 모멘텀 게이트 ON (단타 진입 타이밍)
-    krSwingMinHoldHours: 3,     // KR: 짧은 스윙 최소 보유 3시간
-    krSwingMaxHoldDays: 4,      // KR: 최대 보유 4일 (당일청산 강요 안 함)
-    minHoldMinutes: 10,
-    maxHoldHours: 8,
-    forceCloseBeforeMinClose: 30,
-    // [V8.6 데이터근거] DAY-EOD 강제마감이 청산의 48%, 승률 25%, 누적 -24.8만 = 최대 손실원.
-    //   원인: 방향 안 나온 포지션을 마감까지 끌다 손실 확정. 대책 ↓
-    //   (1) softTimeStop: 진입 후 N분 지나도 +threshold 못 넘으면 미세익절/본전 청산
-    softTimeStopMinutes: 90,        // 90분 경과 후
-    softTimeStopMinPnl: 0.15,       // PnL이 +0.15% 미만이면(=방향 안 남) 청산
-    //   [V8.6.1] KR은 EOD 손실 -53만의 진원지(US는 -76원). KR 한정 더 공격적 타임스톱.
-    softTimeStopMinutesKR: 50,      // KR은 50분으로 단축 — 질질 끌다 손실확정 방지
-    softTimeStopMinPnlKR: 0.25,     // 비용(0.21%) 고려 +0.25% 못 넘으면 정리
-    //   (2) EOD를 더 일찍 — 마감 직전 급락에 끌려나오기 전에 정리
-    eodProfitTakeBeforeMin: 45,     // 마감 45분 전, 수익(+)이면 미리 확정
-    // [V8.4] 손익비 1:1 → 1:2.5+ 재설계
-    tp: 4.0,                   // 2.5 → 4.0 (TP2 더 멀리)
-    stopLossPct: 0.85,         // [V8.6.1] 1.0→0.85: 실측 HARD-STOP 평균이 -1.35%로 설정 초과(갭/슬리피지).
-                               //   타이트하게 잡아 실제 체결 손실을 ~-1.1%로 억제. 손익비(승+2%) 유지.
-    // [V8.5] trailing을 tp1(2.0) 이후로 늦춤 — 분할익절 잔량 보호
-    trailStartPct: 2.5,        // V8.4 2.0 → 2.5 (tp1=2.0 이후 발동)
-    trailDropPct: 0.8,         // V8.4 1.5 → 0.8 (잔량은 타이트하게 따라감)
-    // [V8.4] Break-even 너무 빠르게 발동되던 문제 해결
-    breakEvenAt: 2.0,          // 1.0 → 2.0 (노이즈로 본전청산 방지)
-    breakEvenLock: 0.2,        // 0.1 → 0.2
-    // [V8.4] TP1 분할익절 — 절반 청산 임계 상향
-    tp1: 2.0,                  // 1.5 → 2.0
-    // [V9.5 진입강화] 진입 범위만 보수화 — "확실할 때만 매수". 리스크/청산 파라미터는 미변경.
-    dayDropMin: -5.0,                  // [V9.5] -8.0→-5.0: 너무 깊은 낙폭(칼날잡기) 차단
-    dayDropMax: 0.5,                   // [V9.5] 1.5→0.5: 갭하락 매수는 진짜 하락일 때만
-    rsiMaxForGap: 55,                  // [V9.5] 65→55: 과매수 구간 갭매수 금지
-    rsiMaxForBounce: 60,               // [V9.5] 70→60: 반등매수도 RSI 낮을 때만
-    bounceYestMin: -1.2,               // [V9.5] -0.5→-1.2: 어제 확실히 빠진 종목만 반등 노림
-    openDriveMinPct: 1.0,              // [V9.5] 0.5→1.0: 약한 갭상승 추격 금지
-    openDriveMaxPct: 4.0,              // [V9.5] 6.0→4.0: 과열 갭상승 추격 금지
-    vwapPullMinPct: -1.0,              // [V9.5] -1.5→-1.0
-    vwapPullMaxPct: 2.5,               // [V9.5] 3.5→2.5
-    momoRsiMin: 58,                    // [V9.5] 55→58
-    momoRsiMax: 74,                    // [V9.5] 80→74: 고RSI 추격 금지
-    dipMinPct: -3.0,                   // [V9.5] -5.0→-3.0: 얕은 눌림만(깊은 눌림=추세훼손)
-    dipMaxPct: -0.3,                   // [V9.5] -0.1→-0.3: 진짜 눌림만
-    // [V9.5 진입강화] 신호 정제 게이트 (진입 단계만 영향)
-    maxSignalsKept: 1,                 // 신호 여러 개면 가장 강한 1개만 채택(확신 매수)
-    minConfirmWeight: 0.9              // weight 0.9 미만 약한 단독신호 보류(GAP_DOWN 0.95는 유지)
+    // [V9.6 보수화] DAY 전략은 승률 최악(25%), 시간손실 최다(48%)
+    // 거래량은 매우 제한적으로, 손절/익절은 극도로 타이트하게
+    usIntradayGate: true,       
+    krSwingMinHoldHours: 3,     
+    krSwingMaxHoldDays: 4,      
+    minHoldMinutes: 15,         // [V9.6] 10→15 (최소 보유 늘림)
+    maxHoldHours: 4,            // [V9.6] 8→4 (하루 중 절반만, 오후 리스크 회피)
+    forceCloseBeforeMinClose: 20, // [V9.6] 30→20 (마감 훨씬 일찍)
+    // [V9.6 타임스톱 강화] 수익 못 나면 빨리 포기
+    softTimeStopMinutes: 45,        // [V9.6] 90→45 (1시간도 안 됨)
+    softTimeStopMinPnl: 0.5,        // [V9.6] 0.15→0.5 (+0.5% 못 넘으면 정리)
+    softTimeStopMinutesKR: 30,      // [V9.6] 50→30 (KR 극도로 빠르게)
+    softTimeStopMinPnlKR: 0.6,      // [V9.6] 0.25→0.6 (KR도 +0.6% 기준)
+    // [V9.6] 조기 익절 강화 — 수익나면 빨리 확정
+    eodProfitTakeBeforeMin: 30,     // [V9.6] 45→30 (마감 30분 전)
+    // [V9.6] 손익비 강화 — 손절 매우 타이트, 익절 빠르게
+    tp: 2.5,                   // [V9.6] 4.0→2.5 (작은 수익도 빨리 확정)
+    stopLossPct: 0.6,         // [V9.6] 0.85→0.6 (극도로 타이트)
+    // [V9.6] 트레일링 중단 — 너무 리스크 커서 제거 거의 함
+    trailStartPct: 1.5,        // [V9.6] 2.5→1.5 (매우 빨리)
+    trailDropPct: 0.4,         // [V9.6] 0.8→0.4 (극도로 타이트)
+    // [V9.6] Break-even 빨리
+    breakEvenAt: 1.0,          // [V9.6] 2.0→1.0 (1% 수익에서 즉시)
+    breakEvenLock: 0.1,        // [V9.6] 0.2→0.1
+    // [V9.6] TP1 분할익절 — 반은 매우 빨리 청산
+    tp1: 1.0,                  // [V9.6] 2.0→1.0 (+1%에서 절반 청산)
+    // [V9.6 진입 극도 보수화] 매우 확실한 신호만
+    dayDropMin: -2.0,                  // [V9.6] -5.0→-2.0 (얕은 하락만)
+    dayDropMax: 0.2,                   // [V9.6] 0.5→0.2 (거의 갭 차단)
+    rsiMaxForGap: 45,                  // [V9.6] 55→45 (매수 구간 극소)
+    rsiMaxForBounce: 45,               // [V9.6] 60→45 (반등도 매우 낮은 RSI만)
+    bounceYestMin: -2.0,               // [V9.6] -1.2→-2.0 (어제 큰폭 하락만)
+    openDriveMinPct: 2.0,              // [V9.6] 1.0→2.0 (강한 갭상승만)
+    openDriveMaxPct: 3.0,              // [V9.6] 4.0→3.0 (과열은 피함)
+    vwapPullMinPct: -0.5,              // [V9.6] -1.0→-0.5 (매우 얕은 눌림)
+    vwapPullMaxPct: 1.5,               // [V9.6] 2.5→1.5
+    momoRsiMin: 60,                    // [V9.6] 58→60 (높은 RSI만)
+    momoRsiMax: 70,                    // [V9.6] 74→70 (70 이상 회피)
+    dipMinPct: -1.5,                   // [V9.6] -3.0→-1.5 (아주 얕은 눌림)
+    dipMaxPct: -0.2,                   // [V9.6] -0.3→-0.2 (극미한 눌림)
+    // [V9.6] 신호 필터 극도 강화 — 가장 강한 신호만
+    maxSignalsKept: 1,                 // 유지 (1개만)
+    minConfirmWeight: 1.0              // [V9.6] 0.9→1.0 (weight 1.0 이상만!)
   },
   momentumRules: {
     breakoutDays: 8,           // [V9.6] 10→8 (더 짧은 기간, 최근 모멘텀 중심)
@@ -4028,44 +4013,44 @@ function evaluateBuySignals_swing(price, dayPct, dailyData, cfg) {
   const isGreenCandle = today > yesterday;
   const signals = [];
 
-  // SW_RSI_REV: RSI 임계 더 완화
-  const rsiRevThr = (cfg.rsiBuy || 35) + 10;  // [V8.1.7] +5→+10
-  if (dailyRsi < rsiRevThr && dailyRsiPrev != null && dailyRsi > dailyRsiPrev) {
+  // SW_RSI_REV: [V9.6] RSI 더 낮을 때만 진입 (과매도 더 극단적)
+  const rsiRevThr = (cfg.rsiBuy || 35) + 5;  // [V9.6] +10→+5 (40 이하만)
+  if (dailyRsi < rsiRevThr && dailyRsiPrev != null && dailyRsi > dailyRsiPrev && dailyRsi < 38) {  // [V9.6] <38 추가
     const maGap = ((price - ma20) / ma20) * 100;
-    if (maGap >= -15) {  // [V8.1.7] -12→-15
-      signals.push({ name: "SW_RSI_REV", weight: 1.0, type: "COUNTER", detail: "RSI " + dailyRsi.toFixed(1) + " (prev " + dailyRsiPrev.toFixed(1) + ")" });
+    if (maGap >= -12 && maGap <= 3) {  // [V9.6] -15~inf → -12~3 (더 타이트)
+      signals.push({ name: "SW_RSI_REV", weight: 0.9, type: "COUNTER", detail: "RSI " + dailyRsi.toFixed(1) + " (prev " + dailyRsiPrev.toFixed(1) + ")" });
     }
   }
-  // SW_GOLDEN: RSI 범위 더 넓힘
-  if (ma5 != null && ma5 > ma20 && dailyRsi >= 35 && dailyRsi <= 68) {  // [V8.1.7] 38~62 → 35~68
+  // SW_GOLDEN: [V9.6] RSI 범위 축소, weight 감소
+  if (ma5 != null && ma5 > ma20 && dailyRsi >= 45 && dailyRsi <= 65) {  // [V9.6] 35~68 → 45~65 (상향/상향)
     const ma5Gap = ((price - ma5) / ma5) * 100;
-    if (ma5Gap >= -5 && ma5Gap <= 4) {  // [V8.1.7] 더 완화
-      signals.push({ name: "SW_GOLDEN", weight: 1.2, type: "TREND", detail: "MA5>MA20 gap " + ma5Gap.toFixed(1) + "%" });
+    if (ma5Gap >= -2 && ma5Gap <= 2) {  // [V9.6] -5~4 → -2~2 (더 타이트)
+      signals.push({ name: "SW_GOLDEN", weight: 1.0, type: "TREND", detail: "MA5>MA20 gap " + ma5Gap.toFixed(1) + "%" });
     }
   }
-  // SW_BB_LOW
-  if (bb != null && price <= bb.lower && dailyRsi < 52 && isGreenCandle) {  // [V8.1.7] 48→52
-    signals.push({ name: "SW_BB_LOW", weight: 1.0, type: "COUNTER", detail: "BB lower " + bb.lower.toFixed(2) });
+  // SW_BB_LOW: [V9.6] RSI 최대값 낮춤
+  if (bb != null && price <= bb.lower && dailyRsi < 45 && isGreenCandle && dailyRsi > 25) {  // [V9.6] <52→<45, 최소 25
+    signals.push({ name: "SW_BB_LOW", weight: 0.9, type: "COUNTER", detail: "BB lower " + bb.lower.toFixed(2) });
   }
-  // SW_VOL_SPK
-  if (volumes.length >= 20 && isGreenCandle && dailyRsi >= 40 && dailyRsi <= 72) {  // [V8.1.7] 42~68 → 40~72
+  // SW_VOL_SPK: [V9.6] RSI 범위 축소
+  if (volumes.length >= 20 && isGreenCandle && dailyRsi >= 50 && dailyRsi <= 65) {  // [V9.6] 40~72 → 50~65
     const todayVol = volumes[volumes.length - 1];
     let avgVol = 0;
     for (let i = volumes.length - 21; i < volumes.length - 1; i++) avgVol += volumes[i];
     avgVol /= 20;
-    if (todayVol >= avgVol * (cfg.volSpikeMult * 0.85)) {  // [V8.1.7] 임계 15% 낮춤
-      signals.push({ name: "SW_VOL_SPK", weight: 1.1, type: "TREND", detail: "vol x" + (todayVol/avgVol).toFixed(1) });
+    if (todayVol >= avgVol * cfg.volSpikeMult) {  // [V9.6] 0.85배 제거 (엄격화)
+      signals.push({ name: "SW_VOL_SPK", weight: 1.0, type: "TREND", detail: "vol x" + (todayVol/avgVol).toFixed(1) });
     }
   }
 
-  // SW_PULLBACK: 추세 위 가벼운 눌림 후 회복
+  // SW_PULLBACK: [V9.6] RSI 범위 축소
   const ma50sw = getMA(closes, 50);
-  if (ma50sw != null && ma20 > ma50sw && isGreenCandle && dailyRsi >= 42 && dailyRsi <= 65) {  // [V8.1.7] 45~62 → 42~65
+  if (ma50sw != null && ma20 > ma50sw && isGreenCandle && dailyRsi >= 50 && dailyRsi <= 62) {  // [V9.6] 42~65 → 50~62
     const ma20Gap = ((price - ma20) / ma20) * 100;
-    if (ma20Gap >= -1 && ma20Gap <= 8) {  // [V8.1.7] 0~6 → -1~8
+    if (ma20Gap >= 0 && ma20Gap <= 5) {  // [V9.6] -1~8 → 0~5 (더 타이트)
       signals.push({
         name: "SW_PULLBACK",
-        weight: 1.0, type: "TREND",
+        weight: 0.95, type: "TREND",
         detail: "MA20+" + ma20Gap.toFixed(1) + "% RSI " + dailyRsi.toFixed(0)
       });
     }
@@ -4098,121 +4083,74 @@ function evaluateBuySignals_day(price, dayPct, dailyData, cfg, market, intraday)
   const rsiGapLimit = rules.rsiMaxForGap != null ? rules.rsiMaxForGap : 55;
   const rsiBounceLimit = rules.rsiMaxForBounce != null ? rules.rsiMaxForBounce : 60;
 
-  // DAY1: 갭하락 매수 — 더 넓은 범위 + RSI 완화 + MA20 -12% 이내
-  if (dayPct >= rules.dayDropMin && dayPct <= rules.dayDropMax) {
-    if (dailyRsi < rsiGapLimit) {
+  // DAY1: [V9.6] 갭하락 매수 — 매우 제한적
+  if (dayPct >= rules.dayDropMin && dayPct <= rules.dayDropMax) {  // -2.0~0.2%
+    if (dailyRsi < rsiGapLimit) {  // RSI < 45
       const maGap = ((price - ma20) / ma20) * 100;
-      // [V9.5 진입강화] -8%→-5%: 추세 대비 너무 깊이 빠진 종목은 반등 아닌 추세붕괴 확률↑
-      if (maGap >= -5) {
+      // [V9.6] -5%→-3%: 극도로 타이트
+      if (maGap >= -3 && maGap <= 1) {  // [V9.6] 매우 타이트한 범위
         signals.push({
           name: "DY_GAP_DOWN",
-          weight: 0.95, type: "COUNTER",
+          weight: 0.8, type: "COUNTER",  // [V9.6] 0.95→0.8 (약신호)
           detail: "day " + dayPct.toFixed(1) + "% RSI " + dailyRsi.toFixed(1)
         });
       }
     }
   }
 
-  // DAY2: 강한 일중 반등 — 어제 음봉 후 오늘 양봉
-  // [V9.6 데이터근거] DY_BOUNCE: 청산표본 31건 승률 0%, 누적 -6.23% → day 최대 손실원.
-  //   "어제 빠진 종목이 오늘 양봉이면 반등"이라는 가정이 실거래에선 데드캣 바운스에
-  //   걸려 전부 손절. DY_OPEN_DRIVE/DY_DIP_BUY가 더 나은 진입을 제공하므로 영구 비활성화.
+  // DAY2: [V9.6] BOUNCE 완전 비활성화 (승률 0% → 영구 금지)
   const BOUNCE_ENABLED = false;
-  if (BOUNCE_ENABLED && closes.length >= 3) {
-    const yest = closes[closes.length - 2];
-    const dayBefore = closes[closes.length - 3];
-    const yestPct = ((yest - dayBefore) / dayBefore) * 100;
-    const yestThr = rules.bounceYestMin != null ? rules.bounceYestMin : -1.0;
-    if (yestPct < yestThr && dayPct > 0 && dailyRsi >= 25 && dailyRsi <= rsiBounceLimit) {
-      signals.push({
-        name: "DY_BOUNCE",
-        weight: 1.1, type: "COUNTER",
-        detail: "yest " + yestPct.toFixed(1) + "% today +" + dayPct.toFixed(1) + "%"
-      });
-    }
-  }
 
-  // [V8.1] DAY3: VWAP_PULL — 추세 위 가벼운 눌림
-  const vwapMin = rules.vwapPullMinPct != null ? rules.vwapPullMinPct : -0.5;
-  const vwapMax = rules.vwapPullMaxPct != null ? rules.vwapPullMaxPct : 2.5;
-  // [V8.6 데이터근거] DY_VWAP_PULL: 청산표본 11건 승률 18%, 누적 -3.6만 → 비활성화.
-  //   추세 위 얕은 눌림 컨셉이지만 실거래에선 DIP_BUY와 중복되며 더 나쁜 성과.
+  // DAY3: [V9.6] VWAP_PULL 완전 비활성화 (승률 18% → 영구 금지)
   const VWAP_PULL_ENABLED = false;
-  if (VWAP_PULL_ENABLED && ma5 != null && ma5 > ma20 && price > ma5
-      && dayPct >= vwapMin && dayPct <= vwapMax
-      && dailyRsi >= 48 && dailyRsi <= 68) {
-    signals.push({
-      name: "DY_VWAP_PULL",
-      weight: 1.05, type: "TREND",
-      detail: "trend ma5>ma20 day " + dayPct.toFixed(1) + "% RSI " + dailyRsi.toFixed(1)
-    });
-  }
 
-  // [V8.1] DAY4: OPEN_DRIVE — 갭상승 추격
-  const odMin = rules.openDriveMinPct != null ? rules.openDriveMinPct : 1.0;
-  const odMax = rules.openDriveMaxPct != null ? rules.openDriveMaxPct : 5.0;
+  // DAY4: [V9.6] OPEN_DRIVE — 매우 강한 갭상승만
+  const odMin = rules.openDriveMinPct != null ? rules.openDriveMinPct : 2.0;  // 2.0%
+  const odMax = rules.openDriveMaxPct != null ? rules.openDriveMaxPct : 3.0;  // 3.0%
   if (dayPct >= odMin && dayPct <= odMax
-      && dailyRsi >= 52 && dailyRsi <= 72  // [V8.1] 55~70 → 52~72
+      && dailyRsi >= 55 && dailyRsi <= 68  // [V9.6] 52~72 → 55~68
       && price > ma20) {
     signals.push({
       name: "DY_OPEN_DRIVE",
-      weight: 1.1, type: "TREND",
+      weight: 1.0, type: "TREND",  // [V9.6] 1.1→1.0
       detail: "gap up " + dayPct.toFixed(1) + "% RSI " + dailyRsi.toFixed(1)
     });
   }
 
-  // [V8.1 신규] DAY5: DY_MOMO — 강세 모멘텀 단순 추종
-  // 강한 RSI (60~75) + 가격이 ma5/ma20 위 + 보합~상승 → 강세 지속 진입
-  const momoRsiMin = rules.momoRsiMin != null ? rules.momoRsiMin : 60;
-  const momoRsiMax = rules.momoRsiMax != null ? rules.momoRsiMax : 75;
-  // [V8.6 데이터근거] DY_MOMO: 청산표본 10건 승률 20%, 평균 -1.0%, 누적 -3.6만 → 비활성화.
-  //   고RSI 추격이 일봉 기준에선 고점매수가 되어 손절로 직행. OPEN_DRIVE가 같은 역할을 더 잘함.
+  // DAY5: [V9.6] MOMO 완전 비활성화 (승률 20% → 영구 금지)
   const MOMO_ENABLED = false;
-  if (MOMO_ENABLED && dailyRsi >= momoRsiMin && dailyRsi <= momoRsiMax
-      && ma5 != null && price > ma5 && ma5 > ma20
-      && dayPct >= -1.0 && dayPct <= 3.0) {
-    signals.push({
-      name: "DY_MOMO",
-      weight: 1.05, type: "TREND",
-      detail: "momo RSI " + dailyRsi.toFixed(1) + " day " + dayPct.toFixed(1) + "%"
-    });
-  }
 
-  // [V8.1 신규] DAY6: DY_DIP_BUY — 강세장 얕은 눌림 단타
-  // ma5 > ma20 추세 위에서 -0.3% ~ -3% 일시적 눌림 → 반등 노림
-  const dipMin = rules.dipMinPct != null ? rules.dipMinPct : -3.5;
-  const dipMax = rules.dipMaxPct != null ? rules.dipMaxPct : -0.2;
+  // DAY6: [V9.6] DIP_BUY — 매우 제한적
+  const dipMin = rules.dipMinPct != null ? rules.dipMinPct : -1.5;  // -1.5%
+  const dipMax = rules.dipMaxPct != null ? rules.dipMaxPct : -0.2;  // -0.2%
   if (ma5 != null && ma5 > ma20 && price > ma20
       && dayPct >= dipMin && dayPct <= dipMax
-      && dailyRsi >= 38 && dailyRsi <= 68) {
+      && dailyRsi >= 50 && dailyRsi <= 65) {  // [V9.6] 38~68 → 50~65
     signals.push({
       name: "DY_DIP_BUY",
-      weight: 1.1, type: "COUNTER",
+      weight: 0.95, type: "COUNTER",  // [V9.6] 1.1→0.95
       detail: "dip " + dayPct.toFixed(1) + "% in uptrend RSI " + dailyRsi.toFixed(1)
     });
   }
 
-  // [V8.4] DAY7: DY_RANGE — 기존 catch-all (RSI 30~75, dayPct -5~+3) 제거.
-  // 정규분포상 약 60~70% 종목이 항상 충족 → 사실상 랜덤 매수 → 승률 50% 수렴 원인.
-  // 대체: 추세 정렬 강제 + RSI 중립 좁힘 + 변동 작을 때만 (확신 있는 안전망)
+  // DAY7: [V9.6] RANGE — 매우 극한 조건만 (안전망만)
   if (ma5 != null && ma5 > ma20 && price > ma5
-      && dailyRsi >= 45 && dailyRsi <= 65
-      && dayPct >= -2.0 && dayPct <= 1.5) {
+      && dailyRsi >= 50 && dailyRsi <= 60  // [V9.6] 45~65 → 50~60 (매우 좁음)
+      && dayPct >= -1.0 && dayPct <= 0.5) {  // [V9.6] -2.0~1.5 → -1.0~0.5
     if (signals.length === 0) {
       signals.push({
         name: "DY_RANGE",
-        weight: 0.85,
+        weight: 0.7,  // [V9.6] 0.85→0.7 (매우 약신호)
         type: "TREND",
         detail: "trend+range day " + dayPct.toFixed(1) + "% RSI " + dailyRsi.toFixed(1)
       });
     }
   }
 
-  // [V9.5 진입강화] 신호 정제: (a) weight 게이트로 약한 단독신호 제거,
-  //   (b) 신호 여러 개면 가장 강한 maxSignalsKept(기본1)개만 — 확신 있는 진입으로 제한.
-  const minW = rules.minConfirmWeight != null ? rules.minConfirmWeight : 0;
+  // [V9.6] 신호 정제: weight 1.0 이상만 (매우 엄격)
+  const minW = rules.minConfirmWeight != null ? rules.minConfirmWeight : 1.0;  // 1.0 필수
   let filtered = signals.filter(function(s) { return (s.weight || 0) >= minW; });
-  const keepN = rules.maxSignalsKept != null ? rules.maxSignalsKept : 2;
+  const keepN = rules.maxSignalsKept != null ? rules.maxSignalsKept : 1;
   if (filtered.length > keepN) {
     filtered.sort(function(a, b) { return (b.weight || 0) - (a.weight || 0); });
     return filtered.slice(0, keepN);
@@ -4232,10 +4170,10 @@ function evaluateBuySignals_momentum(price, dayPct, dailyData, cfg) {
 
   const signals = [];
 
-  // MOM1: 20일 신고가 돌파 + 거래량 1.5배 + 추세 정렬
+  // MOM1: [V9.6] 돌파 조건 강화 — 거래량 기준 상향, RSI 범위 축소
   const high20 = getNDayHigh(closes, rules.breakoutDays);
   const trendAligned = ma20 > ma50 && price > ma20;
-  const rsiInBand = dailyRsi >= rules.rsiMin && dailyRsi <= rules.rsiMax;
+  const rsiInBand = dailyRsi >= rules.rsiMin && dailyRsi <= rules.rsiMax;  // 55~75
 
   if (high20 != null && price > high20 && trendAligned && rsiInBand) {
     if (volumes.length >= 20) {
@@ -4243,31 +4181,26 @@ function evaluateBuySignals_momentum(price, dayPct, dailyData, cfg) {
       let avgVol = 0;
       for (let i = volumes.length - 21; i < volumes.length - 1; i++) avgVol += volumes[i];
       avgVol /= 20;
-      if (todayVol >= avgVol * rules.volMult) {
+      // [V9.6] 거래량 기준 1.10 → 1.25 (더 강한 거래량만)
+      if (todayVol >= avgVol * 1.25) {
         signals.push({
           name: "MO_BREAKOUT",
-          weight: 1.3, type: "TREND",
+          weight: 1.2, type: "TREND",  // [V9.6] 1.3→1.2
           detail: "BO " + high20.toFixed(2) + " vol x" + (todayVol/avgVol).toFixed(1) + " RSI " + dailyRsi.toFixed(0)
         });
       }
-    } else {
-      signals.push({
-        name: "MO_BREAKOUT",
-        weight: 1.0, type: "TREND",
-        detail: "BO " + high20.toFixed(2) + " (no vol)"
-      });
     }
   }
 
-  // MOM2: 강한 추세 진행 — [V9] 추격 상단 축소.
-  //   기존 ma20 대비 +10%까지 추격은 중립장에서 이미 오른 고점을 사는 꼴(momentum 손실 원인).
-  //   추세 진행 중 '얕은 눌림'만 잡도록 +10%→+5%로 제한, RSI 상단도 75→70으로 과열 회피.
-  if (trendAligned && dailyRsi >= 50 && dailyRsi <= 70) {
+  // MOM2: [V9.6] 추세 진행 — 더 엄격한 조건
+  // RSI 상향: 50~70 → 55~68 (과열 더 강력 차단)
+  // 가격 상한: +5% → +3% (이미 오른 종목 회피)
+  if (trendAligned && dailyRsi >= 55 && dailyRsi <= 68) {
     const ma20Gap = ((price - ma20) / ma20) * 100;
-    if (ma20Gap >= -1 && ma20Gap <= 5) {
+    if (ma20Gap >= 0 && ma20Gap <= 3) {  // [V9.6] -1~5 → 0~3
       signals.push({
         name: "MO_TREND_PB",
-        weight: 1.1, type: "TREND",
+        weight: 1.0, type: "TREND",  // [V9.6] 1.1→1.0
         detail: "MA20+" + ma20Gap.toFixed(1) + "% RSI " + dailyRsi.toFixed(0)
       });
     }
@@ -4285,7 +4218,6 @@ function evaluateBuySignals_meanrev(price, dayPct, dailyData, cfg, regime) {
   if (dailyRsi == null) return [];
 
   // [V8.3] RSI 상승 전환 확인 — catch-falling-knife 방지
-  //   어제 RSI < 오늘 RSI 이어야 진입 (모멘텀이 둔화/반전되는 시점만)
   const dailyRsiPrev = getRSI(closes.slice(0, -1), cfg.rsiPeriod);
   const rsiUptick = (dailyRsiPrev != null && dailyRsi > dailyRsiPrev);
   if (rules.requireRsiUptick && !rsiUptick) return [];
@@ -4305,31 +4237,34 @@ function evaluateBuySignals_meanrev(price, dayPct, dailyData, cfg, regime) {
   const uptickNote = rsiUptick ? " up" : "";
   const bearNote = isBear ? " BEAR" : "";
 
-  // MR1: zThr 이하 + RSI < rsiMax + 양봉 (반전 시작)
-  if (z != null && z <= zThr && dailyRsi < rsiMax && isGreenCandle) {
+  // MR1: [V9.6] z-score + RSI 더 극단적
+  // z <= -1.5 (기존 -1.5) + RSI < 28 (기존 30)
+  if (z != null && z <= zThr && dailyRsi < rsiMax && isGreenCandle && dailyRsi < 28) {  // [V9.6] RSI <28 추가
     signals.push({
       name: "MR_OVERSOLD",
-      weight: 1.2, type: "COUNTER",
+      weight: 1.1, type: "COUNTER",  // [V9.6] 1.2→1.1
       detail: "z=" + z.toFixed(2) + " RSI " + dailyRsi.toFixed(1) + uptickNote + bearNote
     });
   }
 
-  // MR2: 극단 RSI — BEAR면 더 낮은 RSI 요구
-  const extremeRsi = isBear ? 22 : 30;
-  if (dailyRsi < extremeRsi && isGreenCandle) {
+  // MR2: [V9.6] 극단 RSI — 기준 더 낮춤
+  // NEUTRAL: RSI < 25 (기존 30) / BEAR: RSI < 20 (기존 22)
+  const extremeRsi = isBear ? 20 : 25;  // [V9.6] 30→25, 22→20
+  if (dailyRsi < extremeRsi && isGreenCandle && rsiUptick) {  // [V9.6] rsiUptick 필수
     signals.push({
       name: "MR_EXTREME_RSI",
-      weight: 1.1, type: "COUNTER",
+      weight: 1.0, type: "COUNTER",  // [V9.6] 1.1→1.0
       detail: "RSI " + dailyRsi.toFixed(1) + " green" + uptickNote + bearNote
     });
   }
 
-  // MR3: 큰 하락 후 반등 — BEAR 시 비활성화 (위험)
-  if (!isBear && z != null && z <= -1.0 && dailyRsi < 42 && isGreenCandle) {
+  // MR3: [V9.6] 큰 하락 후 반등 — 조건 강화
+  // z <= -1.2 (기존 -1.0) + RSI < 35 (기존 42) + BULL/NEUTRAL만 + rsiUptick 필수
+  if (!isBear && z != null && z <= -1.2 && dailyRsi < 35 && isGreenCandle && rsiUptick) {  // [V9.6]
     if (!signals.some(function(s){ return s.name === "MR_OVERSOLD"; })) {
       signals.push({
         name: "MR_DEEP_DROP",
-        weight: 1.0, type: "COUNTER",
+        weight: 0.95, type: "COUNTER",  // [V9.6] 1.0→0.95
         detail: "z=" + z.toFixed(2) + " RSI " + dailyRsi.toFixed(1) + " bouncing" + uptickNote
       });
     }
