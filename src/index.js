@@ -4013,44 +4013,45 @@ function evaluateBuySignals_swing(price, dayPct, dailyData, cfg) {
   const isGreenCandle = today > yesterday;
   const signals = [];
 
-  // SW_RSI_REV: [V9.6] RSI 더 낮을 때만 진입 (과매도 더 극단적)
-  const rsiRevThr = (cfg.rsiBuy || 35) + 5;  // [V9.6] +10→+5 (40 이하만)
-  if (dailyRsi < rsiRevThr && dailyRsiPrev != null && dailyRsi > dailyRsiPrev && dailyRsi < 38) {  // [V9.6] <38 추가
+  // SW_RSI_REV: [V9.6.2] RSI 극단적으로 낮을 때만
+  // RSI < 30 이고 RSI 상승중 + MA gap 타이트
+  const rsiRevThr = 30;  // [V9.6.2] 엄격화
+  if (dailyRsi < rsiRevThr && dailyRsiPrev != null && dailyRsi > dailyRsiPrev) {
     const maGap = ((price - ma20) / ma20) * 100;
-    if (maGap >= -12 && maGap <= 3) {  // [V9.6] -15~inf → -12~3 (더 타이트)
-      signals.push({ name: "SW_RSI_REV", weight: 0.9, type: "COUNTER", detail: "RSI " + dailyRsi.toFixed(1) + " (prev " + dailyRsiPrev.toFixed(1) + ")" });
+    if (maGap >= -8 && maGap <= 1) {  // [V9.6.2] -12~3 → -8~1 (매우 타이트)
+      signals.push({ name: "SW_RSI_REV", weight: 0.8, type: "COUNTER", detail: "RSI " + dailyRsi.toFixed(1) + " (prev " + dailyRsiPrev.toFixed(1) + ")" });
     }
   }
-  // SW_GOLDEN: [V9.6] RSI 범위 축소, weight 감소
-  if (ma5 != null && ma5 > ma20 && dailyRsi >= 45 && dailyRsi <= 65) {  // [V9.6] 35~68 → 45~65 (상향/상향)
+  // SW_GOLDEN: [V9.6.2] 조건 극도 강화
+  if (ma5 != null && ma5 > ma20 && dailyRsi >= 48 && dailyRsi <= 60) {  // [V9.6.2] 45~65 → 48~60
     const ma5Gap = ((price - ma5) / ma5) * 100;
-    if (ma5Gap >= -2 && ma5Gap <= 2) {  // [V9.6] -5~4 → -2~2 (더 타이트)
-      signals.push({ name: "SW_GOLDEN", weight: 1.0, type: "TREND", detail: "MA5>MA20 gap " + ma5Gap.toFixed(1) + "%" });
+    if (ma5Gap >= -1 && ma5Gap <= 1) {  // [V9.6.2] -2~2 → -1~1 (극도 타이트)
+      signals.push({ name: "SW_GOLDEN", weight: 0.85, type: "TREND", detail: "MA5>MA20 gap " + ma5Gap.toFixed(1) + "%" });
     }
   }
-  // SW_BB_LOW: [V9.6] RSI 최대값 낮춤
-  if (bb != null && price <= bb.lower && dailyRsi < 45 && isGreenCandle && dailyRsi > 25) {  // [V9.6] <52→<45, 최소 25
-    signals.push({ name: "SW_BB_LOW", weight: 0.9, type: "COUNTER", detail: "BB lower " + bb.lower.toFixed(2) });
+  // SW_BB_LOW: [V9.6.2] RSI 극단화
+  if (bb != null && price <= bb.lower && dailyRsi < 32 && isGreenCandle && dailyRsi > 20) {  // [V9.6.2] <45 → <32
+    signals.push({ name: "SW_BB_LOW", weight: 0.8, type: "COUNTER", detail: "BB lower " + bb.lower.toFixed(2) });
   }
-  // SW_VOL_SPK: [V9.6] RSI 범위 축소
-  if (volumes.length >= 20 && isGreenCandle && dailyRsi >= 50 && dailyRsi <= 65) {  // [V9.6] 40~72 → 50~65
+  // SW_VOL_SPK: [V9.6.2] 거래량 기준 극상향 + RSI 좁힘
+  if (volumes.length >= 20 && isGreenCandle && dailyRsi >= 52 && dailyRsi <= 62) {  // [V9.6.2] 50~65 → 52~62
     const todayVol = volumes[volumes.length - 1];
     let avgVol = 0;
     for (let i = volumes.length - 21; i < volumes.length - 1; i++) avgVol += volumes[i];
     avgVol /= 20;
-    if (todayVol >= avgVol * cfg.volSpikeMult) {  // [V9.6] 0.85배 제거 (엄격화)
-      signals.push({ name: "SW_VOL_SPK", weight: 1.0, type: "TREND", detail: "vol x" + (todayVol/avgVol).toFixed(1) });
+    if (todayVol >= avgVol * 1.8) {  // [V9.6.2] cfg.volSpikeMult(1.5) → 1.8 (극상향)
+      signals.push({ name: "SW_VOL_SPK", weight: 0.9, type: "TREND", detail: "vol x" + (todayVol/avgVol).toFixed(1) });
     }
   }
 
-  // SW_PULLBACK: [V9.6] RSI 범위 축소
+  // SW_PULLBACK: [V9.6.2] 조건 극도 강화
   const ma50sw = getMA(closes, 50);
-  if (ma50sw != null && ma20 > ma50sw && isGreenCandle && dailyRsi >= 50 && dailyRsi <= 62) {  // [V9.6] 42~65 → 50~62
+  if (ma50sw != null && ma20 > ma50sw && isGreenCandle && dailyRsi >= 52 && dailyRsi <= 60) {  // [V9.6.2] 50~62 → 52~60
     const ma20Gap = ((price - ma20) / ma20) * 100;
-    if (ma20Gap >= 0 && ma20Gap <= 5) {  // [V9.6] -1~8 → 0~5 (더 타이트)
+    if (ma20Gap >= 0 && ma20Gap <= 2) {  // [V9.6.2] 0~5 → 0~2 (극도 타이트)
       signals.push({
         name: "SW_PULLBACK",
-        weight: 0.95, type: "TREND",
+        weight: 0.85, type: "TREND",
         detail: "MA20+" + ma20Gap.toFixed(1) + "% RSI " + dailyRsi.toFixed(0)
       });
     }
@@ -4170,7 +4171,7 @@ function evaluateBuySignals_momentum(price, dayPct, dailyData, cfg) {
 
   const signals = [];
 
-  // MOM1: [V9.6] 돌파 조건 강화 — 거래량 기준 상향, RSI 범위 축소
+  // MOM1: [V9.6.2] 돌파 조건 극도 강화 — 높은 거래량 + 강한 RSI만
   const high20 = getNDayHigh(closes, rules.breakoutDays);
   const trendAligned = ma20 > ma50 && price > ma20;
   const rsiInBand = dailyRsi >= rules.rsiMin && dailyRsi <= rules.rsiMax;  // 55~75
@@ -4181,26 +4182,26 @@ function evaluateBuySignals_momentum(price, dayPct, dailyData, cfg) {
       let avgVol = 0;
       for (let i = volumes.length - 21; i < volumes.length - 1; i++) avgVol += volumes[i];
       avgVol /= 20;
-      // [V9.6] 거래량 기준 1.10 → 1.25 (더 강한 거래량만)
-      if (todayVol >= avgVol * 1.25) {
+      // [V9.6.2] 거래량 기준 1.25 → 1.45 (극상향)
+      if (todayVol >= avgVol * 1.45) {
         signals.push({
           name: "MO_BREAKOUT",
-          weight: 1.2, type: "TREND",  // [V9.6] 1.3→1.2
+          weight: 1.1, type: "TREND",  // [V9.6.2] 1.2→1.1
           detail: "BO " + high20.toFixed(2) + " vol x" + (todayVol/avgVol).toFixed(1) + " RSI " + dailyRsi.toFixed(0)
         });
       }
     }
   }
 
-  // MOM2: [V9.6] 추세 진행 — 더 엄격한 조건
-  // RSI 상향: 50~70 → 55~68 (과열 더 강력 차단)
-  // 가격 상한: +5% → +3% (이미 오른 종목 회피)
-  if (trendAligned && dailyRsi >= 55 && dailyRsi <= 68) {
+  // MOM2: [V9.6.2] 추세 진행 — 극단적 조건
+  // RSI 상향: 55~68 → 58~68 (높은 강도만)
+  // 가격 상한: 0~3% → 0~1.5% (거의 안 들어옴)
+  if (trendAligned && dailyRsi >= 58 && dailyRsi <= 68) {  // [V9.6.2] 55~68 → 58~68
     const ma20Gap = ((price - ma20) / ma20) * 100;
-    if (ma20Gap >= 0 && ma20Gap <= 3) {  // [V9.6] -1~5 → 0~3
+    if (ma20Gap >= 0 && ma20Gap <= 1.5) {  // [V9.6.2] 0~3 → 0~1.5
       signals.push({
         name: "MO_TREND_PB",
-        weight: 1.0, type: "TREND",  // [V9.6] 1.1→1.0
+        weight: 0.95, type: "TREND",  // [V9.6.2] 1.0→0.95
         detail: "MA20+" + ma20Gap.toFixed(1) + "% RSI " + dailyRsi.toFixed(0)
       });
     }
@@ -4217,12 +4218,10 @@ function evaluateBuySignals_meanrev(price, dayPct, dailyData, cfg, regime) {
   const dailyRsi = getRSI(closes, cfg.rsiPeriod);
   if (dailyRsi == null) return [];
 
-  // [V8.3] RSI 상승 전환 확인 — catch-falling-knife 방지
   const dailyRsiPrev = getRSI(closes.slice(0, -1), cfg.rsiPeriod);
   const rsiUptick = (dailyRsiPrev != null && dailyRsi > dailyRsiPrev);
   if (rules.requireRsiUptick && !rsiUptick) return [];
 
-  // [V8.4] BEAR 시 임계 강화
   const isBear = regime && regime.regime === "BEAR";
   const zThr = isBear && rules.bearZScoreThreshold != null
     ? rules.bearZScoreThreshold : rules.zScoreThreshold;
@@ -4237,34 +4236,34 @@ function evaluateBuySignals_meanrev(price, dayPct, dailyData, cfg, regime) {
   const uptickNote = rsiUptick ? " up" : "";
   const bearNote = isBear ? " BEAR" : "";
 
-  // MR1: [V9.6] z-score + RSI 더 극단적
-  // z <= -1.5 (기존 -1.5) + RSI < 28 (기존 30)
-  if (z != null && z <= zThr && dailyRsi < rsiMax && isGreenCandle && dailyRsi < 28) {  // [V9.6] RSI <28 추가
+  // MR1: [V9.6.2] z-score + RSI 극단적
+  // z <= -1.8 (기존 -1.5) + RSI < 25 (기존 28) + rsiUptick 필수
+  if (z != null && z <= -1.8 && dailyRsi < 25 && isGreenCandle && rsiUptick) {  // [V9.6.2]
     signals.push({
       name: "MR_OVERSOLD",
-      weight: 1.1, type: "COUNTER",  // [V9.6] 1.2→1.1
+      weight: 1.0, type: "COUNTER",  // [V9.6.2] 1.1→1.0
       detail: "z=" + z.toFixed(2) + " RSI " + dailyRsi.toFixed(1) + uptickNote + bearNote
     });
   }
 
-  // MR2: [V9.6] 극단 RSI — 기준 더 낮춤
-  // NEUTRAL: RSI < 25 (기존 30) / BEAR: RSI < 20 (기존 22)
-  const extremeRsi = isBear ? 20 : 25;  // [V9.6] 30→25, 22→20
-  if (dailyRsi < extremeRsi && isGreenCandle && rsiUptick) {  // [V9.6] rsiUptick 필수
+  // MR2: [V9.6.2] 극단 RSI — 기준 극저
+  // NEUTRAL: RSI < 22 (기존 25) / BEAR: RSI < 18 (기존 20)
+  const extremeRsi = isBear ? 18 : 22;  // [V9.6.2] 25→22, 20→18
+  if (dailyRsi < extremeRsi && isGreenCandle && rsiUptick) {
     signals.push({
       name: "MR_EXTREME_RSI",
-      weight: 1.0, type: "COUNTER",  // [V9.6] 1.1→1.0
+      weight: 0.95, type: "COUNTER",  // [V9.6.2] 1.0→0.95
       detail: "RSI " + dailyRsi.toFixed(1) + " green" + uptickNote + bearNote
     });
   }
 
-  // MR3: [V9.6] 큰 하락 후 반등 — 조건 강화
-  // z <= -1.2 (기존 -1.0) + RSI < 35 (기존 42) + BULL/NEUTRAL만 + rsiUptick 필수
-  if (!isBear && z != null && z <= -1.2 && dailyRsi < 35 && isGreenCandle && rsiUptick) {  // [V9.6]
+  // MR3: [V9.6.2] 큰 하락 후 반등 — 극도 강화
+  // z <= -1.5 (기존 -1.2) + RSI < 30 (기존 35) + BULL/NEUTRAL만 + rsiUptick 필수
+  if (!isBear && z != null && z <= -1.5 && dailyRsi < 30 && isGreenCandle && rsiUptick) {  // [V9.6.2]
     if (!signals.some(function(s){ return s.name === "MR_OVERSOLD"; })) {
       signals.push({
         name: "MR_DEEP_DROP",
-        weight: 0.95, type: "COUNTER",  // [V9.6] 1.0→0.95
+        weight: 0.9, type: "COUNTER",  // [V9.6.2] 0.95→0.9
         detail: "z=" + z.toFixed(2) + " RSI " + dailyRsi.toFixed(1) + " bouncing" + uptickNote
       });
     }
