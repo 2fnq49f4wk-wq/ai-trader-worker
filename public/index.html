@@ -955,9 +955,12 @@ button.btn.loading::after { content: "조회 중…"; position: absolute; left: 
 <!-- LOGS 모달 -->
 <div class="modal" id="logsModal">
   <div class="modal-logs">
-    <h2>
+    <h2 style="display:flex; justify-content:space-between; align-items:center;">
       <span>📋 ENGINE LOGS</span>
-      <span class="close-x" id="btnCloseLogs">✕</span>
+      <div style="display:flex; gap:10px; align-items:center;">
+        <button type="button" id="btnDownloadLogs" style="font-size:11px; color:#fff; font-weight:bold; padding:5px 10px; background:#0ea5e9; border:none; border-radius:4px; cursor:pointer;">📥 로그 CSV</button>
+        <span class="close-x" id="btnCloseLogs">✕</span>
+      </div>
     </h2>
     <div class="logs-toolbar">
       <input type="text" class="logs-search" id="logsSearch" placeholder="검색 (심볼/메시지/RSI 등)...">
@@ -2010,6 +2013,33 @@ button.btn.loading::after { content: "조회 중…"; position: absolute; left: 
       downloadCSV(csv, fn);
       toast(trades.length + '건 다운로드 완료');
     })['catch'](function(e){ toast('다운로드 실패: ' + e.message); });
+  }
+
+  // [신규] 로그 CSV 다운로드
+  function logsToCSV(logs) {
+    var header = ['시간', '레벨', '종목', '메시지'];
+    var lines = [header.join(',')];
+    logs.forEach(function(l) {
+      var row = [
+        csvCell(fmtFullTime(l.ts)),
+        csvCell(l.level || 'INFO'),
+        csvCell(l.symbol || '-'),
+        csvCell(l.msg || '')
+      ];
+      lines.push(row.join(','));
+    });
+    return lines.join('\r\n');
+  }
+
+  function downloadLogsCSV() {
+    api('/api/logs?limit=10000').then(function(logs){
+      logs = logs || [];
+      if (logs.length === 0) { toast('다운로드할 로그가 없습니다'); return; }
+      var csv = logsToCSV(logs);
+      var fn = 'engine_logs_' + new Date().toISOString().slice(0, 10) + '.csv';
+      downloadCSV(csv, fn);
+      toast(logs.length + '건 로그 다운로드 완료');
+    })['catch'](function(e){ toast('로그 다운로드 실패: ' + e.message); });
   }
 
   function renderTradesInto(trades, boxId, totalId, winId, avgId, sliceLimit) {
@@ -3165,6 +3195,8 @@ button.btn.loading::after { content: "조회 중…"; position: absolute; left: 
   // [다운로드] 메인 UI 트레이드 기록 CSV 버튼
   $('btnDownloadRecent').addEventListener('click', function(){ downloadTradesCSV(50, 'recent_trades'); });
   $('btnDownloadAll').addEventListener('click', function(){ downloadTradesCSV(10000, 'all_trades'); });
+  var _btnDownloadLogs = $('btnDownloadLogs');
+  if (_btnDownloadLogs) _btnDownloadLogs.addEventListener('click', downloadLogsCSV);
   var _btnRunCM = $('btnRunCM');
   if (_btnRunCM) _btnRunCM.addEventListener('click', runCommoditiesNow);
   var _btnResetCM = $('btnResetCM');
