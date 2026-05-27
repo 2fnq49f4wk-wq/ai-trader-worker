@@ -2024,7 +2024,7 @@ button.btn.loading::after { content: "조회 중…"; position: absolute; left: 
         csvCell(fmtFullTime(l.ts)),
         csvCell(l.level || 'INFO'),
         csvCell(l.symbol || '-'),
-        csvCell(l.msg || '')
+        csvCell(l.message || '')  // message 필드 사용
       ];
       lines.push(row.join(','));
     });
