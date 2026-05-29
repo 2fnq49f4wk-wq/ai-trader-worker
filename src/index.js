@@ -2618,19 +2618,31 @@ async function collectLLMContext(DB, env, market) {
   const cashState = await getState(DB, "cash", {});
 
   const signalStats = await getState(DB, "signal_stats", {});
+  const _slimSig = function(s) {
+    return {
+      name: s.name, count: s.count,
+      wr: +((s.weightedWinRate || 0)).toFixed(2),
+      exp: s.expectancy != null ? +s.expectancy.toFixed(2) : null,
+      stopRate: s.stopRate != null ? +s.stopRate.toFixed(2) : null,
+      avgPnl: +((s.avgPnl || 0)).toFixed(2)
+    };
+  };
   const topSignals = Object.keys(signalStats)
     .map(function(k) { return Object.assign({ name: k }, signalStats[k]); })
     .filter(function(s) { return s.count >= 5; })
-    .sort(function(a, b) { return (b.weightedWinRate || 0) - (a.weightedWinRate || 0); })
-    .slice(0, 15);
+    .sort(function(a, b) { return (b.expectancy != null ? b.expectancy : 0) - (a.expectancy != null ? a.expectancy : 0); })
+    .slice(0, 12)
+    .map(_slimSig);
 
   // [V9] 손실 집중 신호 — 하위 성과 신호도 LLM에 보여줘 disable 판단을 도움.
-  //   (기존엔 top만 보여줘서 "뭘 꺼야 할지" 근거가 부족했음)
+  //   [V9.7] expectancy(기대값)·stopRate를 함께 노출해 "승률만 낮은 신호"와 "기대값까지 음수인
+  //   신호"를 LLM이 구분하게 함. 동시에 필드를 핵심만 추려 입력 토큰 절감.
   const worstSignals = Object.keys(signalStats)
     .map(function(k) { return Object.assign({ name: k }, signalStats[k]); })
     .filter(function(s) { return s.count >= 5; })
-    .sort(function(a, b) { return (a.weightedWinRate || 0) - (b.weightedWinRate || 0); })
-    .slice(0, 8);
+    .sort(function(a, b) { return (a.expectancy != null ? a.expectancy : 0) - (b.expectancy != null ? b.expectancy : 0); })
+    .slice(0, 8)
+    .map(_slimSig);
 
   // [V9] 전략별 7일 성과 — 5/20 같은 동반손실 패턴을 LLM이 인지하도록.
   const byStrategy = {};
@@ -2951,7 +2963,7 @@ function buildLLMPrompt(market, context, opts) {
     "   - worstIndexChangePct <= -1.5% → 강한 약세 신호 / -1.0%~-1.5% → 약세 주의 / +0.5% 이상 광범위 상승 → 강세\n" +
     "2) 최근 성과 진단: last7days.winRate와 avgPnl, strategyPerf7d를 보고 시스템이 현재 시장에 맞는지 평가.\n" +
     "   - winRate < 0.40 이고 거래수가 충분(>=20)하면 → 시장 부적합 가능성 → 보수적으로.\n" +
-    "3) 신호 품질: worstSignals 중 count>=8 이고 winRate가 낮은 것만 disable 후보로. 표본 작으면 건드리지 말 것.\n" +
+    "3) 신호 품질: worstSignals 중 count>=8 이고 exp(기대값)<0 인 것만 disable 후보로. exp는 1거래당 기대 손익%이며, 음수면 장기적으로 잃는 신호다. wr(승률)만 낮고 exp>0이면 손익비가 좋은 것이니 끄지 말 것. stopRate가 높으면(>0.5) 손절로 자주 끝나는 신호다. 표본 작으면(count<8) 건드리지 말 것.\n" +
     "4) 종목 리스크: positions와 worstTrade를 보고 손실 집중 종목이 있으면 avoid_symbols 후보로.\n" +
     "5) 종합: 위 1~4를 근거로 sentiment / sizing / stop을 결정. 각 결정은 반드시 데이터 수치를 근거로 들 것.\n" +
     "6) [보조] 최근 경제지표: context.recentMacro는 '최근 4일 이내 발표된' 경제지표만 담겨 있습니다(없으면 빈 배열).\n" +
@@ -5399,7 +5411,7 @@ async function autoTune(DB, cfg, regimes) {
       const memberShare = members.length > 0 ? (1 / members.length) : 1;
       for (const sigName of members) {
         // 1) signal-only
-        if (!signalStats[sigName]) signalStats[sigName] = { wins: 0, count: 0, totalPnl: 0, weightedWins: 0, weightedCount: 0, stops: 0 };
+        if (!signalStats[sigName]) signalStats[sigName] = { wins: 0, count: 0, totalPnl: 0, weightedWins: 0, weightedCount: 0, stops: 0, winSum: 0, lossSum: 0 };
         signalStats[sigName].count++;
         signalStats[sigName].totalPnl += (t.pnl_pct || 0) * memberShare;
         signalStats[sigName].weightedCount += recencyWeight;
@@ -5410,6 +5422,9 @@ async function autoTune(DB, cfg, regimes) {
         if (t.pnl_pct > 0) {
           signalStats[sigName].wins++;
           signalStats[sigName].weightedWins += recencyWeight;
+          signalStats[sigName].winSum += (t.pnl_pct || 0);   // [V9.7] 승리 PnL 누적(손익비용)
+        } else {
+          signalStats[sigName].lossSum += (t.pnl_pct || 0);  // [V9.7] 손실 PnL 누적(음수)
         }
         // 2) [V8.5] strategy:signal
         const sKey = stratKey + ":" + sigName;
@@ -5428,10 +5443,18 @@ async function autoTune(DB, cfg, regimes) {
       }
     }
     for (const k in signalStats) {
-      signalStats[k].winRate = signalStats[k].count > 0 ? signalStats[k].wins / signalStats[k].count : 0;
-      signalStats[k].avgPnl = signalStats[k].count > 0 ? signalStats[k].totalPnl / signalStats[k].count : 0;
-      signalStats[k].weightedWinRate = signalStats[k].weightedCount > 0
-        ? signalStats[k].weightedWins / signalStats[k].weightedCount : signalStats[k].winRate;
+      const s = signalStats[k];
+      s.winRate = s.count > 0 ? s.wins / s.count : 0;
+      s.avgPnl = s.count > 0 ? s.totalPnl / s.count : 0;
+      s.weightedWinRate = s.weightedCount > 0
+        ? s.weightedWins / s.weightedCount : s.winRate;
+      // [V9.7] 손익비/기대값 통계 — avgWin·avgLoss·expectancy. 승률만으론 못 잡는
+      //   "승률 낮지만 손익비 좋은 신호"와 "승률 높지만 큰 손실로 갉아먹는 신호"를 구분.
+      s.avgWin = s.winSum != null && s.wins > 0 ? s.winSum / s.wins : 0;
+      s.avgLoss = s.lossSum != null && (s.count - s.wins) > 0 ? s.lossSum / (s.count - s.wins) : 0;
+      s.stopRate = s.count > 0 ? (s.stops || 0) / s.count : 0;
+      // expectancy = WR×avgWin + (1-WR)×avgLoss  (avgLoss는 음수)
+      s.expectancy = s.winRate * s.avgWin + (1 - s.winRate) * s.avgLoss;
     }
     for (const k in signalStatsByStrat) {
       const s = signalStatsByStrat[k];
@@ -5457,25 +5480,43 @@ async function autoTune(DB, cfg, regimes) {
     const reviewMs = (cfg.signalReviewDays || 30) * 24 * 3600 * 1000;
     const nowTs = Date.now();
     // 1) 신규 비활성화
+    //   [V9.7] 기준 강화 — 기존 (WR<40% & avgPnL<0) AND 조건은 둔감해서 SW_RSI_REV 같은
+    //   명백한 손실 신호(26건 WR31% avgPnL-2.49)도 살아남았다. 아래 셋 중 하나라도 걸리면 비활성화:
+    //     (a) 기존: WR<40% & avgPnL<0   (b) expectancy<0 (손익비 반영 기대값 음수)
+    //     (c) 손절률>55% & avgPnL<0     — 손절로 자주 끝나면서 평균도 마이너스
     for (const sigName in signalStats) {
       const s = signalStats[sigName];
-      if (s.count >= 20 && s.weightedWinRate < 0.40 && s.avgPnl < 0) {
+      if (s.count < 20) continue;
+      const condA = s.weightedWinRate < 0.40 && s.avgPnl < 0;
+      const condB = s.expectancy < 0 && s.count >= 25;        // 기대값 음수(표본 약간 더 요구)
+      const condC = s.stopRate > 0.55 && s.avgPnl < 0;        // 손절 빈발 + 평균 손실
+      if (condA || condB || condC) {
         if (newCfg.disabledSignals.indexOf(sigName) === -1) {
           newCfg.disabledSignals.push(sigName);
           newCfg.disabledSignalsAt[sigName] = nowTs;
-          newlyDisabled.push(sigName);
+          newlyDisabled.push(sigName + "(" + (condA?"WR":condB?"EXP":"STOP") + ")");
         }
       }
     }
-    // 2) 재활성화 — 비활성화 후 reviewDays 경과 + 최근 표본 회복 시
+    // 2) 재활성화 — 비활성화 후 reviewDays 경과 + [V9.7] 성과 실제 회복 확인.
+    //   기존엔 시간만 지나면 무조건 풀어 나쁜 신호가 30일마다 부활했다. 이제 재평가 시점의
+    //   누적 통계로 expectancy>0(또는 표본 부족으로 판단불가)일 때만 해제하고,
+    //   여전히 나쁘면 비활성 유지하되 타이머만 리셋(다음 주기에 재심사).
     const reactivated = [];
     const stillDisabled = [];
     for (const sigName of newCfg.disabledSignals) {
       const disabledAt = newCfg.disabledSignalsAt[sigName] || 0;
       if (nowTs - disabledAt >= reviewMs) {
-        // 재평가 — 누적 표본은 이미 위에서 계산됨. 단순히 풀어줌(다시 트래킹).
-        reactivated.push(sigName);
-        delete newCfg.disabledSignalsAt[sigName];
+        const s = signalStats[sigName];
+        const recovered = !s || s.count < 20 || (s.expectancy > 0 && s.weightedWinRate >= 0.40);
+        if (recovered) {
+          reactivated.push(sigName);
+          delete newCfg.disabledSignalsAt[sigName];
+        } else {
+          // 아직 나쁨 → 비활성 유지, 타이머 리셋해 다음 reviewDays 후 재심사
+          newCfg.disabledSignalsAt[sigName] = nowTs;
+          stillDisabled.push(sigName);
+        }
       } else {
         stillDisabled.push(sigName);
       }
