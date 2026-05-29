@@ -2038,8 +2038,11 @@ const DEFAULT_CFG = {
   // === [V8.6 Hybrid] Claude LLM 일일 지시 ===
   llmHybrid: {
     enabled: true,            // [V11] 기본 ON — API 키만 등록되면 작동 (키 없으면 자동으로 V8.5 폴백)
-    model: "claude-sonnet-4-6", // [V8.7] 유효 모델 ID (구 'claude-opus-4-5'는 존재하지 않아 404 발생)
-    maxTokens: 3000,          // [V9.1] 2000→3000 (reasoning 단계적 추론 공간 확보)
+    model: "claude-haiku-4-5", // [V9.7] sonnet→haiku. 구조화 컨텍스트→정해진 스키마 JSON 판정엔 haiku로 충분. 토큰 단가·지연 대폭 절감
+    maxTokens: 1200,          // [V9.7] 3000→1200. reasoning 축소(아래 includeReasoning=false) 후 실측 출력 800~1000토큰이면 충분
+    includeReasoning: false,  // [V9.7] reasoning 5필드(거래 로직 미사용·로깅용) 출력 생략 → 출력 토큰 절반↓. 사후검증은 summary 한 줄로 충분
+    compactContext: true,     // [V9.7] 프롬프트 컨텍스트를 압축 JSON(들여쓰기 제거)으로 전송 → 입력 토큰 20~30%↓
+    skipIfQuietPct: 0.5,      // [V9.7] 전일 대비 worst 지수변동 절댓값이 이 값 미만이면 LLM 호출 스킵, 직전 지시 재사용(만료 전). 0으로 두면 항상 호출
     confidenceWeighting: true, // [V9.1] LLM confidence로 sizing 개입 강도 조절 (낮으면 보수적)
     timeoutMs: 20000,         // [V8.7] 시도당 20초 (재시도 포함 총량이 cron 60초/lock TTL 내에 들도록)
     maxRetries: 2,            // [V8.7] 재시도 2회 → 최악 ~63초, 정상 응답(5~10초)엔 영향 없음
@@ -2933,12 +2936,16 @@ function sanitizeInstruction(raw, llmCfg) {
   return sane;
 }
 
-function buildLLMPrompt(market, context) {
+function buildLLMPrompt(market, context, opts) {
+  opts = opts || {};
+  const compact = opts.compactContext === true;
+  const includeReasoning = opts.includeReasoning !== false;  // 기본 true(기존 동작)
   const marketLabel = market === "us" ? "미국 (US)" : "한국 (KR)";
+  const ctxJson = compact ? JSON.stringify(context) : JSON.stringify(context, null, 2);
   return "당신은 LUX-engine 트레이딩 시스템의 일일 시장 리스크 분석가입니다.\n" +
     "역할: 종목을 직접 고르지 않습니다. 오늘 " + marketLabel + " 시장의 '리스크 환경'을 평가해,\n" +
     "알고리즘이 쓸 거시 거래 지시(sizing/신호 on-off/회피종목)를 JSON으로 출력합니다.\n\n" +
-    "# 컨텍스트\n```json\n" + JSON.stringify(context, null, 2) + "\n```\n\n" +
+    "# 컨텍스트\n```json\n" + ctxJson + "\n```\n\n" +
     "# 분석 절차 (반드시 이 순서로 사고할 것)\n" +
     "1) 시장 국면: marketSnapshot(avg/worstIndexChangePct)과 indices를 보고 강세/중립/약세 판정.\n" +
     "   - worstIndexChangePct <= -1.5% → 강한 약세 신호 / -1.0%~-1.5% → 약세 주의 / +0.5% 이상 광범위 상승 → 강세\n" +
@@ -2964,17 +2971,22 @@ function buildLLMPrompt(market, context) {
     "- 표본이 작으면(거래수 적음, count 낮음) 단정하지 말고 neutral·sizing 1.0 유지.\n" +
     "- 한두 건의 우연한 손실로 신호·전략을 끄지 말 것.\n" +
     "- 불확실하면 confidence를 낮추고 보수적으로. 과잉 개입보다 무개입이 안전.\n\n" +
-    "# 출력 형식 (JSON만, 코드블록·머리말 금지)\n" +
-    "reasoning 필드에 위 1~5단계 사고를 간결히 적고, 그 결론을 나머지 필드에 반영하세요.\n" +
-    "{\n" +
-    "  \"reasoning\": {\n" +
-    "    \"market_regime\": \"국면 판정 + 근거 수치 (예: worstIdx -1.6% → 강한 약세)\",\n" +
-    "    \"performance\": \"최근 성과 진단 (예: 7일 winRate 0.38, day전략 부진)\",\n" +
-    "    \"signal_quality\": \"disable 후보와 근거 (없으면 '해당 없음')\",\n" +
-    "    \"symbol_risk\": \"손실 집중 종목 (없으면 '해당 없음')\",\n" +
-    "    \"macro_influence\": \"최근 4일내 지표 반영 내용 + 방향 (recentMacro 비었으면 '해당 없음')\"\n" +
-    "  },\n" +
-    "  \"sentiment\": \"neutral\",\n" +
+    (includeReasoning
+      ? ("# 출력 형식 (JSON만, 코드블록·머리말 금지)\n" +
+         "reasoning 필드에 위 1~5단계 사고를 간결히 적고, 그 결론을 나머지 필드에 반영하세요.\n" +
+         "{\n" +
+         "  \"reasoning\": {\n" +
+         "    \"market_regime\": \"국면 판정 + 근거 수치 (예: worstIdx -1.6% → 강한 약세)\",\n" +
+         "    \"performance\": \"최근 성과 진단 (예: 7일 winRate 0.38, day전략 부진)\",\n" +
+         "    \"signal_quality\": \"disable 후보와 근거 (없으면 '해당 없음')\",\n" +
+         "    \"symbol_risk\": \"손실 집중 종목 (없으면 '해당 없음')\",\n" +
+         "    \"macro_influence\": \"최근 4일내 지표 반영 내용 + 방향 (recentMacro 비었으면 '해당 없음')\"\n" +
+         "  },\n" +
+         "  \"sentiment\": \"neutral\",\n")
+      : ("# 출력 형식 (JSON만, 코드블록·머리말 금지)\n" +
+         "위 1~5단계를 머릿속으로 판단하되, 출력은 아래 필드만. reasoning은 출력하지 마세요.\n" +
+         "{\n" +
+         "  \"sentiment\": \"neutral\",\n")) +
     "  \"confidence\": 0.6,\n" +
     "  \"summary\": \"한두 문장 핵심 판단 + 근거 수치\",\n" +
     "  \"buy_signals\": { \"enabled\": true },\n" +
@@ -3011,13 +3023,32 @@ async function runLLMDailyAnalysis(env, market, forceRun = false) {
   try {
     await log(DB, "INFO", null, "[LLM] daily analysis start: " + market);
     const context = await collectLLMContext(DB, env, market);
-    const prompt = buildLLMPrompt(market, context);
+
+    // [V9.7] 한산한 시장 스킵 게이트 — 전일 대비 worst 지수변동 절댓값이 skipIfQuietPct 미만이고,
+    //   직전 지시가 아직 유효(만료 전)하면 LLM 호출 자체를 생략하고 기존 지시를 재사용한다.
+    //   forceRun이면 항상 호출. skipIfQuietPct<=0 이면 게이트 비활성.
+    const quietThr = (typeof llmCfg.skipIfQuietPct === "number") ? llmCfg.skipIfQuietPct : 0;
+    if (!forceRun && quietThr > 0) {
+      const worst = context.marketSnapshot && context.marketSnapshot.worstIndexChangePct;
+      if (typeof worst === "number" && Math.abs(worst) < quietThr) {
+        const prev = await getState(DB, "llm_daily:" + market, null);
+        if (prev && prev.expiresAt && prev.expiresAt > Date.now()) {
+          await log(DB, "INFO", null, "[LLM] " + market + " quiet skip (worst " + worst.toFixed(2) + "% < " + quietThr + "%), reuse prior instruction");
+          return { ok: true, reason: "quiet_skip", reused: true, instruction: prev.instruction };
+        }
+      }
+    }
+
+    const prompt = buildLLMPrompt(market, context, {
+      compactContext: llmCfg.compactContext === true,
+      includeReasoning: llmCfg.includeReasoning !== false
+    });
 
     const res = await callClaude(
       env.ANTHROPIC_API_KEY,
-      llmCfg.model || "claude-sonnet-4-6",
+      llmCfg.model || "claude-haiku-4-5",
       prompt,
-      llmCfg.maxTokens || 2000,
+      llmCfg.maxTokens || 1200,
       llmCfg.timeoutMs || 25000,
       {
         maxRetries: (typeof llmCfg.maxRetries === "number" ? llmCfg.maxRetries : 2),
