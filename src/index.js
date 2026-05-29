@@ -4013,13 +4013,14 @@ function evaluateBuySignals_swing(price, dayPct, dailyData, cfg) {
   const isGreenCandle = today > yesterday;
   const signals = [];
 
-  // SW_RSI_REV: [V9.6.2] RSI 극단적으로 낮을 때만
-  // RSI < 30 이고 RSI 상승중 + MA gap 타이트
-  const rsiRevThr = 30;  // [V9.6.2] 엄격화
+  // SW_RSI_REV: [V9.7] 단독 진입 금지 — 실거래 26건 win 31% 총 -64.7 (최악의 칼날잡기).
+  //   하락추세 RSI 반등만으론 대부분 -5% 하드스톱. soloBlock=true로 단독 진입 차단,
+  //   추세 신호(SW_GOLDEN/SW_PULLBACK)와 동반될 때만 "확인 가산점"으로 사용.
+  const rsiRevThr = 28;  // [V9.7] 30→28
   if (dailyRsi < rsiRevThr && dailyRsiPrev != null && dailyRsi > dailyRsiPrev) {
     const maGap = ((price - ma20) / ma20) * 100;
-    if (maGap >= -8 && maGap <= 1) {  // [V9.6.2] -12~3 → -8~1 (매우 타이트)
-      signals.push({ name: "SW_RSI_REV", weight: 0.8, type: "COUNTER", detail: "RSI " + dailyRsi.toFixed(1) + " (prev " + dailyRsiPrev.toFixed(1) + ")" });
+    if (maGap >= -6 && maGap <= 0) {  // [V9.7] -8~1 → -6~0
+      signals.push({ name: "SW_RSI_REV", weight: 0.4, type: "COUNTER", soloBlock: true, detail: "RSI " + dailyRsi.toFixed(1) + " (prev " + dailyRsiPrev.toFixed(1) + ")" });
     }
   }
   // SW_GOLDEN: [V9.6.2] 조건 극도 강화
@@ -4193,15 +4194,16 @@ function evaluateBuySignals_momentum(price, dayPct, dailyData, cfg) {
     }
   }
 
-  // MOM2: [V9.6.2] 추세 진행 — 극단적 조건
-  // RSI 상향: 55~68 → 58~68 (높은 강도만)
-  // 가격 상한: 0~3% → 0~1.5% (거의 안 들어옴)
-  if (trendAligned && dailyRsi >= 58 && dailyRsi <= 68) {  // [V9.6.2] 55~68 → 58~68
+  // MOM2: [V9.7] MO_TREND_PB 비활성화 — 실거래 7건 win 0% 총 -21.
+  //   돌파 확인 없이 "추세 중 얕은 눌림"만으로 진입해 추세 둔화 구간에 그대로 물림.
+  //   돌파(MO_BREAKOUT)만 유지. 재활성화하려면 거래량/신고가 확인을 반드시 추가할 것.
+  const MO_TREND_PB_ENABLED = false;
+  if (MO_TREND_PB_ENABLED && trendAligned && dailyRsi >= 58 && dailyRsi <= 68) {
     const ma20Gap = ((price - ma20) / ma20) * 100;
-    if (ma20Gap >= 0 && ma20Gap <= 1.5) {  // [V9.6.2] 0~3 → 0~1.5
+    if (ma20Gap >= 0 && ma20Gap <= 1.5) {
       signals.push({
         name: "MO_TREND_PB",
-        weight: 0.95, type: "TREND",  // [V9.6.2] 1.0→0.95
+        weight: 0.95, type: "TREND",
         detail: "MA20+" + ma20Gap.toFixed(1) + "% RSI " + dailyRsi.toFixed(0)
       });
     }
@@ -4337,6 +4339,8 @@ function resolveSignals(signals, cfg, signalStats, stratName) {
     });
     if (signals.length === 0) return null;
   }
+  // [V9.7] soloBlock 신호(예: SW_RSI_REV)는 단독 진입 금지 — 다른 신호 동반 시에만 확인용.
+  if (signals.length === 1 && signals[0].soloBlock) return null;
   if (signals.length === 1) {
     if (cfg.requireConfluence) return null;
     const s = signals[0];
@@ -4626,9 +4630,6 @@ async function executeSell(DB, market, symbol, pos, sellQty, price, reason, cfg,
   if (!(typeof cash[market] === "number" && isFinite(cash[market]))) {
     await log(DB, "ERROR", symbol, "SELL aborted: cash state invalid"); return { cash: cash, pnlPct: 0 };
   }
-  if (!(typeof cash[market] === "number" && isFinite(cash[market]))) {
-    await log(DB, "ERROR", symbol, "SELL aborted: cash state invalid"); return { cash: cash, pnlPct: 0 };
-  }
 
   pos.meta = pos.meta || {};
   const feeRemaining = (typeof pos.meta.feeRemaining === "number")
@@ -4653,6 +4654,16 @@ async function executeSell(DB, market, symbol, pos, sellQty, price, reason, cfg,
       pos.qty = pos.qty - sellQty;
       pos.meta.tp1Done = true;
       pos.meta.feeRemaining = Math.max(0, feeRemaining - entryFeeForThisSell);
+      // [V9.7] TP1 부분익절 직후, 남은 런너의 손절을 본전+lock으로 즉시 상향.
+      //   실거래상 TP1-HALF는 100% 익절이지만, 남은 절반이 손절로 되돌아가 라운드트립하는
+      //   사례를 차단. 이미 breakEvenLocked면 더 내리지 않음(Math.max).
+      try {
+        const beRules = getStrategyRules(cfg, strategy);
+        const beLock = (beRules.breakEvenLock || 0) / 100;
+        const beStop = pos.avg * (1 + beLock);
+        if (pos.meta.stopPrice == null || pos.meta.stopPrice < beStop) pos.meta.stopPrice = beStop;
+        pos.meta.breakEvenLocked = true;
+      } catch (e) {}
       stmtPos = stmtSavePosition(DB, market, symbol, strategy, pos);
     } else {
       stmtPos = stmtDeletePosition(DB, symbol, strategy, market);
