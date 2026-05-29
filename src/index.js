@@ -6441,18 +6441,34 @@ async function runTradingCycle(env) {
 
       // --- (3) 평가 대상 fetched 구성 ---
       // 일봉 캐시가 살아있는 종목만 평가(거래). 가격은 batchQuotes에서, 일봉은 캐시/dailyMap에서.
+      // [V9.7 최적화] dailyMap 에 없는 종목의 일봉을 종목별로 순차 await getState 하던 것을
+      //   먼저 한 번에 묶어(Promise.all) 병렬 조회한 뒤 루프에서는 동기 접근만 한다.
       const fetched = [];
       let priceAnomalyCount = 0;
+      const missingDaily = [];
+      for (const symbol of tickers) {
+        const bq = batchQuotes[symbol];
+        if (!bq) continue;
+        if (!(typeof bq.price === "number" && isFinite(bq.price) && bq.price > 0)) continue;
+        if (dailyMap[symbol] === undefined) missingDaily.push(symbol);
+      }
+      if (missingDaily.length > 0) {
+        const MBATCH = 20;
+        for (let i = 0; i < missingDaily.length; i += MBATCH) {
+          const slice = missingDaily.slice(i, i + MBATCH);
+          const rows = await Promise.all(slice.map(function(sym){
+            return getState(DB, "daily:" + sym, null).then(function(d){ return { sym: sym, d: d }; });
+          }));
+          for (const r of rows) dailyMap[r.sym] = r.d;
+        }
+      }
       for (const symbol of tickers) {
         const bq = batchQuotes[symbol];
         if (!bq) continue;
         // [V9.1] 가격 정합성 — 0/음수/NaN/무한대는 거래 대상에서 제외(가격 표시는 별도).
         if (!(typeof bq.price === "number" && isFinite(bq.price) && bq.price > 0)) continue;
-        // 일봉: 이번에 로드된 것 우선, 없으면 기존 캐시 조회
-        let daily = dailyMap[symbol];
-        if (daily === undefined) {
-          daily = await getState(DB, "daily:" + symbol, null);
-        }
+        // 일봉: dailyMap 에서 동기 조회 (위에서 결측분까지 모두 채워둠).
+        const daily = dailyMap[symbol];
         // 일봉이 아직 없으면 평가 스킵(가격은 이미 UI에 저장됨)
         if (!daily || !daily.closes || daily.closes.length < 25) continue;
         // [V9.1] 비정상 폭등/폭락값 방어 — 전일 종가 대비 ±60% 초과면 데이터 오류(분할
@@ -6561,6 +6577,10 @@ async function runTradingCycle(env) {
             if (!held) continue;
 
             // peak / stop 갱신
+            // [V9.7 최적화] 기존엔 stop·peak·break-even 변경 시마다 각각 await savePosition()을
+            //   호출해 보유종목 1개당 최대 3회 D1 write 가 발생했다. meta 는 같은 객체를 in-place
+            //   수정하므로 모든 변경을 모은 뒤 dirty 일 때 단 1회만 저장한다 (사이클 지연·D1 부하 감소).
+            let posDirty = false;
             // [V8.5 BUG FIX] breakEvenLocked이면 safeStop으로 끌어내리지 않음 —
             // 기존 코드는 break-even으로 진입가 위로 올라간 stop을 매 사이클 진입가-stopPct%로 되돌렸음.
             if (held.meta && held.meta.stopPrice != null && !held.meta.breakEvenLocked) {
@@ -6568,18 +6588,19 @@ async function runTradingCycle(env) {
               const safeStop = held.avg * (1 - stopPct / 100);
               if (held.meta.stopPrice > safeStop) {
                 held.meta.stopPrice = safeStop;
-                try { await savePosition(DB, market, symbol, stratName, held); } catch (e) {}
+                posDirty = true;
               }
             }
             if (held.meta && held.meta.peakPrice != null && price > held.meta.peakPrice) {
               held.meta.peakPrice = price;
-              try { await savePosition(DB, market, symbol, stratName, held); } catch (e) {}
+              posDirty = true;
             }
 
             // [V8.3] Break-even stop — 수익 +breakEvenAt% 도달 시 stopPrice를 진입가 + breakEvenLock%로 끌어올림.
             // 한 번 설정되면 더 내려가지 않음 (수익 → 본전 전환 방지).
             // ATR-STOP 분기에서 사용되므로 stopPrice를 직접 조작.
             const breakRules = getStrategyRules(mcfg, stratName);
+            let beJustLocked = false, beLockedPnl = 0, beLockedStop = 0;
             if (held.meta && breakRules.breakEvenAt != null && !held.meta.breakEvenLocked) {
               const curPnl = ((price - held.avg) / held.avg) * 100;
               if (curPnl >= breakRules.breakEvenAt) {
@@ -6588,9 +6609,15 @@ async function runTradingCycle(env) {
                   held.meta.stopPrice = newStop;
                 }
                 held.meta.breakEvenLocked = true;
-                try { await savePosition(DB, market, symbol, stratName, held); } catch (e) {}
-                await log(DB, "INFO", symbol, "BREAK-EVEN locked [" + stratName + "] at +" + curPnl.toFixed(2) + "% stop=" + newStop.toFixed(2));
+                posDirty = true;
+                beJustLocked = true; beLockedPnl = curPnl; beLockedStop = newStop;
               }
+            }
+            if (posDirty) {
+              try { await savePosition(DB, market, symbol, stratName, held); } catch (e) {}
+            }
+            if (beJustLocked) {
+              await log(DB, "INFO", symbol, "BREAK-EVEN locked [" + stratName + "] at +" + beLockedPnl.toFixed(2) + "% stop=" + beLockedStop.toFixed(2));
             }
 
             // 매도 판단
