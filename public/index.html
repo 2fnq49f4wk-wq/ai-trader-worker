@@ -3,780 +3,951 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>LUX-engine V9(beta)</title>
+<title>LUX-ENGINE V9</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-<link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600;700&family=Georgia:wght@400;700&family=Pinyon+Script&family=Cormorant+Garamond:ital,wght@1,500&display=swap" rel="stylesheet">
+<link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600;700&family=Pinyon+Script&display=swap" rel="stylesheet">
 <style>
-
-
-/* ===== LUX-ENGINE V9 인트로 애니메이션 (SpaceX 스타일) ===== */
-#lux-intro-overlay {
-  position: fixed;
-  top: 0;
-  left: 0;
-  width: 100vw;
-  height: 100vh;
-  background-color: #090c12;
-  z-index: 99999;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  transition: opacity 1.2s cubic-bezier(0.4, 0, 0.2, 1);
-  pointer-events: auto;
-  overflow: hidden;
+/* LUX-ENGINE · 완전 새 UI */
+:root{
+  --bg:#080808; --s1:#0f0f0f; --s2:#171717; --s3:#1f1f1f;
+  --bd:#282828; --bd2:#1c1c1c;
+  --t1:#f0f0f0; --t2:#888; --t3:#444;
+  --pos:#00e676; --neg:#ff1744; --acc:#fff;
+  /* compat */
+  --panel:#0f0f0f; --elev:#171717; --border:#282828;
+  --text:#f0f0f0; --dim:#888; --faint:#444;
+  --amber:#ffc107; --green:#00e676; --red:#ff1744;
+  --blue:#4488ff; --orange:#ff6d00; --purple:#bb86fc;
+}
+*,*::before,*::after{margin:0;padding:0;box-sizing:border-box;-webkit-tap-highlight-color:transparent;}
+html,body{height:100%;}
+body{
+  background:var(--bg); color:var(--t1);
+  font-family:'Helvetica Neue','Segoe UI',Arial,sans-serif;
+  font-size:12px; line-height:1.5;
+  -webkit-font-smoothing:antialiased;
 }
 
-/* 중앙 상단에서 아래로 은은하게 비치는 광원 (SpaceX 발사 영상 느낌) */
-#lux-intro-overlay::before {
-  content: "";
-  position: absolute;
-  top: -20%;
-  left: 50%;
-  transform: translateX(-50%);
-  width: 140%;
-  height: 80%;
-  background: radial-gradient(ellipse at center top, rgba(255,255,255,0.06) 0%, transparent 60%);
-  pointer-events: none;
-  opacity: 0;
-  animation: skyGlow 3.5s ease-out forwards;
+/* ── 인트로 (유지) ── */
+#lux-intro-overlay{
+  position:fixed;top:0;left:0;width:100vw;height:100vh;
+  background-color:#090c12;z-index:99999;
+  display:flex;align-items:center;justify-content:center;
+  transition:opacity 1.2s cubic-bezier(0.4,0,0.2,1);
+  pointer-events:auto;overflow:hidden;
 }
-
-@keyframes skyGlow {
-  0% { opacity: 0; }
-  40% { opacity: 1; }
-  100% { opacity: 0.5; }
+#lux-intro-overlay::before{
+  content:'';position:absolute;top:-20%;left:50%;
+  transform:translateX(-50%);width:140%;height:80%;
+  background:radial-gradient(ellipse at center top,rgba(255,255,255,0.06) 0%,transparent 60%);
+  pointer-events:none;opacity:0;animation:skyGlow 3.5s ease-out forwards;
 }
-
-.intro-center-box {
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  gap: 18px;
-  position: relative;
-  z-index: 2;
+@keyframes skyGlow{0%{opacity:0;}40%{opacity:1;}100%{opacity:0.5;}}
+.intro-center-box{
+  display:flex;flex-direction:column;align-items:center;
+  gap:18px;position:relative;z-index:2;
 }
-
-/* SpaceX 스타일에서는 별도 로고 그래픽 대신 타이포그래피 중심.
-   기존 별 로고는 가늘게 페이드인되는 미니멀 형태로 유지 */
-.intro-star-logo {
-  position: relative;
-  width: 64px;
-  height: 64px;
-  opacity: 0;
-  transform: scale(0.85);
-  animation: introLogoFade 1.6s cubic-bezier(0.25, 0.1, 0.25, 1) forwards 0.2s;
+.intro-star-logo{
+  position:relative;width:64px;height:64px;
+  opacity:0;transform:scale(0.85);
+  animation:introLogoFade 1.6s cubic-bezier(0.25,0.1,0.25,1) forwards 0.2s;
 }
-
-.intro-star-logo::before {
-  content: "";
-  position: absolute;
-  width: 100%;
-  height: 100%;
-  background: conic-gradient(
+.intro-star-logo::before{
+  content:'';position:absolute;width:100%;height:100%;
+  background:conic-gradient(
     from 0deg,
-    #ffffff 0deg 22.5deg, #d0d0d0 22.5deg 45deg,
-    #ffffff 45deg 67.5deg, #c8c8c8 67.5deg 90deg,
-    #ffffff 90deg 112.5deg, #d0d0d0 112.5deg 135deg,
-    #ffffff 135deg 157.5deg, #c8c8c8 157.5deg 180deg,
-    #ffffff 180deg 202.5deg, #d0d0d0 202.5deg 225deg,
-    #ffffff 225deg 247.5deg, #c8c8c8 247.5deg 270deg,
-    #ffffff 270deg 292.5deg, #d0d0d0 292.5deg 315deg,
-    #ffffff 315deg 337.5deg, #c8c8c8 337.5deg 360deg
+    #ffffff 0deg 22.5deg,#d0d0d0 22.5deg 45deg,
+    #ffffff 45deg 67.5deg,#c8c8c8 67.5deg 90deg,
+    #ffffff 90deg 112.5deg,#d0d0d0 112.5deg 135deg,
+    #ffffff 135deg 157.5deg,#c8c8c8 157.5deg 180deg,
+    #ffffff 180deg 202.5deg,#d0d0d0 202.5deg 225deg,
+    #ffffff 225deg 247.5deg,#c8c8c8 247.5deg 270deg,
+    #ffffff 270deg 292.5deg,#d0d0d0 292.5deg 315deg,
+    #ffffff 315deg 337.5deg,#c8c8c8 337.5deg 360deg
   );
-  clip-path: polygon(
-    50% 0%, 62% 38%, 100% 50%, 62% 62%, 
-    50% 100%, 38% 62%, 0% 50%, 38% 38%
-  );
+  clip-path:polygon(50% 0%,62% 38%,100% 50%,62% 62%,50% 100%,38% 62%,0% 50%,38% 38%);
 }
-
-.intro-star-logo::after {
-  content: "";
-  position: absolute;
-  width: 72%;
-  height: 72%;
-  top: 14%;
-  left: 14%;
-  background: conic-gradient(
+.intro-star-logo::after{
+  content:'';position:absolute;width:72%;height:72%;top:14%;left:14%;
+  background:conic-gradient(
     from 22.5deg,
-    #ffffff 0deg 22.5deg, #9a9a9a 22.5deg 45deg,
-    #ffffff 45deg 67.5deg, #8a8a8a 67.5deg 90deg,
-    #ffffff 90deg 112.5deg, #9a9a9a 112.5deg 135deg,
-    #ffffff 135deg 157.5deg, #8a8a8a 157.5deg 180deg,
-    #ffffff 180deg 202.5deg, #9a9a9a 202.5deg 225deg,
-    #ffffff 225deg 247.5deg, #8a8a8a 247.5deg 270deg,
-    #ffffff 270deg 292.5deg, #9a9a9a 292.5deg 315deg,
-    #ffffff 315deg 337.5deg, #8a8a8a 337.5deg 360deg
+    #ffffff 0deg 22.5deg,#9a9a9a 22.5deg 45deg,
+    #ffffff 45deg 67.5deg,#8a8a8a 67.5deg 90deg,
+    #ffffff 90deg 112.5deg,#9a9a9a 112.5deg 135deg,
+    #ffffff 135deg 157.5deg,#8a8a8a 157.5deg 180deg,
+    #ffffff 180deg 202.5deg,#9a9a9a 202.5deg 225deg,
+    #ffffff 225deg 247.5deg,#8a8a8a 247.5deg 270deg,
+    #ffffff 270deg 292.5deg,#9a9a9a 292.5deg 315deg,
+    #ffffff 315deg 337.5deg,#8a8a8a 337.5deg 360deg
   );
-  clip-path: polygon(
-    50% 0%, 62% 38%, 100% 50%, 62% 62%, 
-    50% 100%, 38% 62%, 0% 50%, 38% 38%
-  );
-  transform: rotate(45deg);
+  clip-path:polygon(50% 0%,62% 38%,100% 50%,62% 62%,50% 100%,38% 62%,0% 50%,38% 38%);
+  transform:rotate(45deg);
+}
+@keyframes introLogoFade{
+  0%{opacity:0;transform:scale(0.85);}
+  100%{opacity:1;transform:scale(1);}
+}
+.intro-text-box{text-align:center;}
+.intro-title{
+  font-family:'Helvetica Neue','Segoe UI',Arial,sans-serif;
+  font-size:30px;font-weight:300;color:#ffffff;
+  letter-spacing:8px;text-transform:uppercase;
+  margin-bottom:10px;text-indent:8px;
+  opacity:0;filter:blur(8px);
+  animation:spacexTitleIn 2s cubic-bezier(0.16,1,0.3,1) forwards 0.5s;
+}
+.intro-subtitle{
+  font-family:'Helvetica Neue','Segoe UI',Arial,sans-serif;
+  font-size:11px;font-weight:300;color:#888888;
+  letter-spacing:5px;text-transform:uppercase;text-indent:5px;
+  opacity:0;animation:spacexSubIn 1.6s ease-out forwards 1.3s;
+}
+@keyframes spacexTitleIn{
+  0%{opacity:0;filter:blur(8px);letter-spacing:18px;}
+  60%{opacity:1;filter:blur(0px);}
+  100%{opacity:1;filter:blur(0px);letter-spacing:8px;}
+}
+@keyframes spacexSubIn{0%{opacity:0;letter-spacing:10px;}100%{opacity:1;letter-spacing:5px;}}
 }
 
-@keyframes introLogoFade {
-  0% { opacity: 0; transform: scale(0.85); }
-  100% { opacity: 1; transform: scale(1); }
+/* ── 셸 레이아웃 ── */
+.shell{display:flex;height:100vh;overflow:hidden;}
+
+/* ── 사이드바 ── */
+.sidebar{
+  width:220px;flex-shrink:0;
+  background:var(--s1);
+  border-right:1px solid var(--bd);
+  display:flex;flex-direction:column;
+  overflow-y:auto;overflow-x:hidden;
+  position:relative;z-index:10;
 }
+.sidebar::-webkit-scrollbar{width:0;}
 
-/* SpaceX 스타일 타이포그래피 박스 */
-.intro-text-box {
-  text-align: center;
+.sb-brand{
+  padding:18px 16px 14px;
+  border-bottom:1px solid var(--bd);
 }
-
-/* 가늘고 넓은 자간의 미니멀 대문자 타이틀 — SpaceX 로고 타입 느낌 */
-.intro-title {
-  font-family: 'Helvetica Neue', 'Segoe UI', Arial, sans-serif;
-  font-size: 30px;
-  font-weight: 300;
-  color: #ffffff;
-  letter-spacing: 8px;
-  text-transform: uppercase;
-  margin-bottom: 10px;
-  text-indent: 8px; /* 자간 보정으로 시각적 중앙 정렬 */
-  /* 글자가 한 글자씩 좌우 블러에서 또렷하게 모이는 효과 */
-  opacity: 0;
-  filter: blur(8px);
-  animation: spacexTitleIn 2s cubic-bezier(0.16, 1, 0.3, 1) forwards 0.5s;
+.sb-brand-logo{
+  position:relative;display:inline-block;width:20px;height:20px;
+  vertical-align:middle;margin-right:8px;flex-shrink:0;
+  filter:drop-shadow(0 0 6px rgba(255,255,255,0.3));
+  animation:opticalGlimmer 3s ease-in-out infinite;
 }
-
-/* 얇은 구분선 + 서브타이틀 */
-.intro-subtitle {
-  font-family: 'Helvetica Neue', 'Segoe UI', Arial, sans-serif;
-  font-size: 11px;
-  font-weight: 300;
-  color: #888888;
-  letter-spacing: 5px;
-  text-transform: uppercase;
-  text-indent: 5px;
-  opacity: 0;
-  animation: spacexSubIn 1.6s ease-out forwards 1.3s;
+@keyframes opticalGlimmer{
+  0%,100%{filter:drop-shadow(0 0 5px rgba(255,255,255,0.2));}
+  50%{filter:drop-shadow(0 0 10px rgba(255,255,255,0.45));}
 }
-
-@keyframes spacexTitleIn {
-  0% {
-    opacity: 0;
-    filter: blur(8px);
-    letter-spacing: 18px;
-  }
-  60% {
-    opacity: 1;
-    filter: blur(0px);
-  }
-  100% {
-    opacity: 1;
-    filter: blur(0px);
-    letter-spacing: 8px;
-  }
-}
-
-@keyframes spacexSubIn {
-  0% { opacity: 0; letter-spacing: 10px; }
-  100% { opacity: 1; letter-spacing: 5px; }
-}
-
-
-
-/* ============ OPTICAL EFFECTS ============ */
-
-/* 광학 반사/글리머 효과 */
-@keyframes opticalGlimmer {
-  0%, 100% { 
-    filter: drop-shadow(0 0 8px rgba(255, 255, 255, 0.35));
-  }
-  50% { 
-    filter: drop-shadow(0 0 15px rgba(255, 255, 255, 0.6)) drop-shadow(1px 1px 5px rgba(200, 200, 200, 0.25));
-  }
-}
-
-
-/* LUX-ENGINE V8 전용 정밀 메탈릭 & 스타 로고 스타일 */
-.brand-container {
-  display: flex;
-  align-items: center;
-  gap: 14px;
-}
-
-/* 2번째 사진 스타일의 미니멀 입체 실버 별 로고 (CSS Art) */
-.lux-star-logo {
-  position: relative;
-  width: 32px;
-  height: 32px;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  filter: drop-shadow(0 0 8px rgba(255, 255, 255, 0.35)); /* 별 중심부 은은한 흰색 광원 효과 */
-  animation: opticalGlimmer 3s ease-in-out infinite;
-}
-
-.lux-star-logo::before {
-  content: "";
-  position: absolute;
-  width: 100%;
-  height: 100%;
-  background: conic-gradient(
+.sb-brand-logo::before{
+  content:'';position:absolute;width:100%;height:100%;
+  background:conic-gradient(
     from 0deg,
-    #ffffff 0deg 22.5deg, #8b949e 22.5deg 45deg,
-    #ffffff 45deg 67.5deg, #6e7681 67.5deg 90deg,
-    #ffffff 90deg 112.5deg, #8b949e 112.5deg 135deg,
-    #ffffff 135deg 157.5deg, #6e7681 157.5deg 180deg,
-    #ffffff 180deg 202.5deg, #8b949e 202.5deg 225deg,
-    #ffffff 225deg 247.5deg, #6e7681 247.5deg 270deg,
-    #ffffff 270deg 292.5deg, #8b949e 292.5deg 315deg,
-    #ffffff 315deg 337.5deg, #6e7681 337.5deg 360deg
+    #ffffff 0deg 22.5deg,#8b949e 22.5deg 45deg,
+    #ffffff 45deg 67.5deg,#6e7681 67.5deg 90deg,
+    #ffffff 90deg 112.5deg,#8b949e 112.5deg 135deg,
+    #ffffff 135deg 157.5deg,#6e7681 157.5deg 180deg,
+    #ffffff 180deg 202.5deg,#8b949e 202.5deg 225deg,
+    #ffffff 225deg 247.5deg,#6e7681 247.5deg 270deg,
+    #ffffff 270deg 292.5deg,#8b949e 292.5deg 315deg,
+    #ffffff 315deg 337.5deg,#6e7681 337.5deg 360deg
   );
-  clip-path: polygon(
-    50% 0%, 62% 38%, 100% 50%, 62% 62%, 
-    50% 100%, 38% 62%, 0% 50%, 38% 38%
-  );
+  clip-path:polygon(50% 0%,62% 38%,100% 50%,62% 62%,50% 100%,38% 62%,0% 50%,38% 38%);
 }
-
-.lux-star-logo::after {
-  content: "";
-  position: absolute;
-  width: 72%;
-  height: 72%;
-  background: conic-gradient(
+.sb-brand-logo::after{
+  content:'';position:absolute;width:72%;height:72%;
+  background:conic-gradient(
     from 22.5deg,
-    #ffffff 0deg 22.5deg, #4d5259 22.5deg 45deg,
-    #ffffff 45deg 67.5deg, #3a3f44 67.5deg 90deg,
-    #ffffff 90deg 112.5deg, #4d5259 112.5deg 135deg,
-    #ffffff 135deg 157.5deg, #3a3f44 157.5deg 180deg,
-    #ffffff 180deg 202.5deg, #4d5259 202.5deg 225deg,
-    #ffffff 225deg 247.5deg, #3a3f44 247.5deg 270deg,
-    #ffffff 270deg 292.5deg, #4d5259 292.5deg 315deg,
-    #ffffff 315deg 337.5deg, #3a3f44 337.5deg 360deg
+    #ffffff 0deg 22.5deg,#4d5259 22.5deg 45deg,
+    #ffffff 45deg 67.5deg,#3a3f44 67.5deg 90deg,
+    #ffffff 90deg 112.5deg,#4d5259 112.5deg 135deg,
+    #ffffff 135deg 157.5deg,#3a3f44 157.5deg 180deg,
+    #ffffff 180deg 202.5deg,#4d5259 202.5deg 225deg,
+    #ffffff 225deg 247.5deg,#3a3f44 247.5deg 270deg,
+    #ffffff 270deg 292.5deg,#4d5259 292.5deg 315deg,
+    #ffffff 315deg 337.5deg,#3a3f44 337.5deg 360deg
   );
-  clip-path: polygon(
-    50% 0%, 62% 38%, 100% 50%, 62% 62%, 
-    50% 100%, 38% 62%, 0% 50%, 38% 38%
-  );
-  transform: rotate(45deg);
+  clip-path:polygon(50% 0%,62% 38%,100% 50%,62% 62%,50% 100%,38% 62%,0% 50%,38% 38%);
+  transform:rotate(45deg);
+}
+.sb-brand-name{font-size:13px;font-weight:700;color:#fff;letter-spacing:2px;text-transform:uppercase;}
+.sb-brand-sub{font-size:9px;color:var(--t3);letter-spacing:1.5px;margin-top:2px;}
+
+/* 사이드바 상태 */
+.sb-status{
+  padding:10px 16px;border-bottom:1px solid var(--bd);
+  display:flex;flex-direction:column;gap:6px;
+}
+.sb-engine{
+  display:flex;align-items:center;gap:6px;
+  font-size:10px;color:var(--t2);
+}
+.sb-market{
+  font-size:10px;color:var(--t2);
+  display:flex;flex-direction:column;gap:2px;
+}
+.sb-market-row{display:flex;align-items:center;gap:5px;}
+.sb-market-row b{color:var(--t1);font-weight:600;}
+.market-status-open{color:var(--pos)!important;}
+.market-status-closed{color:var(--neg)!important;}
+.sb-live{
+  display:flex;align-items:center;gap:5px;
+  font-size:10px;color:var(--t3);
 }
 
-/* 1번째 사진 스타일의 파란 네온이 빠진 선명한 실버 메탈릭 텍스트 */
-.lux-text-title {
-  font-family: 'Helvetica Neue', 'Segoe UI', Arial, sans-serif;
-  font-size: 20px;
-  font-weight: 300;
-  color: #ffffff;
-  letter-spacing: 4px;
-  text-transform: uppercase;
-  text-shadow: 0px 0px 4px rgba(255, 255, 255, 0.2);
-  display: flex;
-  align-items: baseline;
-  gap: 10px;
+/* 라이브 인디케이터 */
+.live-indicator{display:inline-flex;align-items:center;gap:5px;font-size:10px;color:var(--t3);transition:color .25s;}
+.live-dot{width:5px;height:5px;border-radius:50%;background:var(--t3);flex-shrink:0;transition:all .25s;}
+.live-indicator.live .live-dot{background:var(--pos);box-shadow:0 0 6px rgba(0,230,118,.7);animation:livePulse 2s ease-in-out infinite;}
+.live-indicator.live{color:var(--pos);}
+.live-indicator.stale .live-dot{background:var(--amber);}
+.live-indicator.stale{color:var(--amber);}
+.live-indicator.dead .live-dot{background:var(--neg);}
+.live-indicator.dead{color:var(--neg);}
+@keyframes livePulse{0%,100%{box-shadow:0 0 3px rgba(0,230,118,.4);}50%{box-shadow:0 0 10px rgba(0,230,118,.9);}}
+
+/* 점 */
+.dot{width:6px;height:6px;border-radius:50%;display:inline-block;flex-shrink:0;}
+.dot.alive{background:var(--pos);box-shadow:0 0 5px rgba(0,230,118,.6);animation:dotBlink 2s ease-in-out infinite;}
+.dot.stale{background:var(--amber);}
+.dot.unknown,.dot.closed{background:var(--t3);}
+@keyframes dotBlink{0%,100%{opacity:1;}50%{opacity:.4;}}
+@keyframes pulse{0%,100%{opacity:1;}50%{opacity:.4;}}
+
+/* 네비게이션 메뉴 */
+.sb-nav{flex:1;padding:8px 0;}
+.nav-item{font-family:'Helvetica Neue','Segoe UI',Arial,sans-serif;
+  display:flex;align-items:center;gap:10px;
+  padding:10px 16px;cursor:pointer;
+  font-size:11px;color:var(--t2);letter-spacing:.8px;text-transform:uppercase;
+  border-left:2px solid transparent;
+  transition:all .12s;user-select:none;
+}
+.nav-item:hover{color:var(--t1);background:var(--s2);}
+.nav-item.active{color:#fff;border-left-color:#fff;background:var(--s2);}
+.nav-item-icon{font-size:12px;width:16px;text-align:center;flex-shrink:0;}
+.nav-item-label{font-size:11px;font-weight:500;}
+
+/* 사이드바 액션 */
+.sb-actions{
+  padding:12px;border-top:1px solid var(--bd);
+  display:flex;flex-direction:column;gap:6px;
+}
+.sb-run-btn{font-family:'Helvetica Neue','Segoe UI',Arial,sans-serif !important;
+  padding:10px;background:#fff;color:#000;border:none;
+  font-family:'IBM Plex Mono',monospace;font-size:11px;font-weight:700;
+  cursor:pointer;letter-spacing:1.5px;text-transform:uppercase;
+  transition:all .12s;
+}
+.sb-run-btn:hover{background:#ddd;}
+.sb-run-btn:active{opacity:.7;}
+.sb-btn-row{display:flex;gap:4px;}
+.sb-btn{font-family:'Helvetica Neue','Segoe UI',Arial,sans-serif !important;
+  flex:1;padding:7px 4px;background:transparent;border:1px solid var(--bd);
+  color:var(--t2);font-family:'IBM Plex Mono',monospace;font-size:10px;
+  cursor:pointer;letter-spacing:.5px;text-transform:uppercase;
+  transition:all .12s;text-align:center;
+}
+.sb-btn:hover{border-color:var(--t2);color:var(--t1);}
+.sb-pnl{
+  font-size:11px;color:var(--t2);text-align:center;
+  padding:4px 0;font-variant-numeric:tabular-nums;
 }
 
-.lux-powered-by {
-  font-size: 10px;
-  color: var(--dim);
-  font-weight: 300;
-  letter-spacing: 3px;
-  text-transform: uppercase;
-  text-shadow: none;
+/* ── 콘텐츠 영역 ── */
+.content{
+  flex:1;overflow-y:auto;overflow-x:hidden;
+  background:var(--bg);
 }
-.live-indicator {
-  display: inline-flex;
-  align-items: center;
-  gap: 5px;
-  font-size: 10px;
-  font-weight: 500;
-  letter-spacing: 1px;
-  margin-top: 3px;
-  color: var(--dim);
-  transition: color 0.3s;
+.content::-webkit-scrollbar{width:4px;}
+.content::-webkit-scrollbar-track{background:transparent;}
+.content::-webkit-scrollbar-thumb{background:var(--bd);border-radius:0;}
+
+/* ── 페이지 ── */
+.page{display:none;}
+.page.active{display:block;}
+
+/* 페이지 공통 헤더 */
+.page-header{
+  padding:20px 28px 16px;
+  border-bottom:1px solid var(--bd);
+  display:flex;justify-content:space-between;align-items:center;
+  gap:10px;flex-wrap:wrap;
+  position:sticky;top:0;z-index:5;
+  background:var(--bg);
 }
-.live-dot {
-  width: 7px;
-  height: 7px;
-  border-radius: 50%;
-  background: #888;
-  display: inline-block;
-  transition: background 0.3s, box-shadow 0.3s;
+.page-title{
+  font-size:14px;font-weight:700;color:#fff;
+  letter-spacing:2px;text-transform:uppercase;
 }
-.live-indicator.live .live-dot {
-  background: #22c55e;
-  box-shadow: 0 0 6px #22c55e;
-  animation: livePulse 2s infinite;
+.page-actions{display:flex;gap:6px;flex-wrap:wrap;align-items:center;}
+
+/* 페이지 내용 */
+.page-body{padding:20px 28px;}
+
+/* ── 버튼 공통 ── */
+button.btn{font-family:'Helvetica Neue','Segoe UI',Arial,sans-serif !important;
+  padding:6px 12px;background:transparent;border:1px solid var(--bd);
+  color:var(--t2);font-family:'IBM Plex Mono',monospace;
+  font-size:10px;font-weight:600;cursor:pointer;outline:none;
+  letter-spacing:.8px;text-transform:uppercase;white-space:nowrap;
+  transition:all .12s;
 }
-.live-indicator.live { color: #22c55e; }
-.live-indicator.stale .live-dot { background: #f59e0b; box-shadow: 0 0 6px #f59e0b; }
-.live-indicator.stale { color: #f59e0b; }
-.live-indicator.dead .live-dot { background: #ef4444; }
-.live-indicator.dead { color: #ef4444; }
-@keyframes livePulse {
-  0%, 100% { opacity: 1; }
-  50% { opacity: 0.4; }
+button.btn:hover{border-color:var(--t1);color:var(--t1);}
+button.btn.primary{background:#fff;color:#000;border-color:#fff;font-weight:700;}
+button.btn.primary:hover{background:#ddd;border-color:#ddd;}
+button.btn.danger{color:var(--neg);border-color:rgba(255,23,68,.3);}
+button.btn.danger:hover{border-color:var(--neg);background:rgba(255,23,68,.08);}
+button.btn.refresh{color:var(--t1);border-color:var(--bd);}
+button.btn.logs{color:var(--purple);border-color:rgba(187,134,252,.3);}
+button.btn.macro{color:var(--amber);border-color:rgba(255,193,7,.3);}
+button.btn:active{opacity:.6;}
+button.btn.loading{opacity:.5;pointer-events:none;position:relative;color:transparent!important;}
+button.btn.loading::after{content:'조회 중…';position:absolute;inset:0;display:flex;align-items:center;justify-content:center;color:var(--t2);font-size:.9em;}
+
+/* ── 색상 유틸 ── */
+.pos{color:var(--pos)!important;font-weight:700;}
+.neg{color:var(--neg)!important;font-weight:700;}
+.right{text-align:right;}
+.trade-buy{color:var(--pos);font-weight:700;}
+.trade-sell{color:var(--neg);font-weight:700;}
+
+/* ── 마켓 배지 ── */
+.market-badge{
+  display:inline-block;padding:1px 5px;font-size:9px;font-weight:700;
+  border:1px solid var(--bd);color:var(--t2);letter-spacing:.5px;
 }
 
-:root {
-  --bg: #05070b; --panel: #0c0f1a; --elev: #111520;
-  --border: #1a1f2e; --text: #f0f0f0; --dim: #8a8a8a; --faint: #5a5a5a;
-  --amber: #a0a0a0; --green: #3fb950; --red: #f85149; --blue: #58a6ff;
-  --orange: #f0883e; --purple: #bc8cff;
+/* ── DASHBOARD 페이지 ── */
+
+/* LLM 배너 */
+.llm-banner{
+  border-bottom:1px solid var(--bd);border-left:2px solid #fff;
+  padding:10px 28px;font-size:11px;line-height:1.6;background:var(--bg);
 }
-* { margin: 0; padding: 0; box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
-body { background: var(--bg); color: var(--text); font-family: 'Helvetica Neue', 'Segoe UI', Arial, sans-serif; font-weight: 300; font-size: 14px; line-height: 1.5; -webkit-font-smoothing: antialiased; -moz-osx-font-smoothing: grayscale; }
-.app { display: flex; flex-direction: column; min-height: 100vh; }
-.topbar { display: flex; justify-content: space-between; align-items: center; padding: 14px 16px; gap: 10px; border-bottom: 2px solid var(--amber); background: var(--panel); position: sticky; top: 0; z-index: 100; flex-wrap: wrap; }
-.brand { font-size: 18px; color: var(--amber); font-weight: bold; letter-spacing: 2px; text-shadow: 0 0 10px rgba(255,215,0,0.3); }
-.topbar-btns { display: flex; gap: 6px; flex-wrap: wrap; }
-.main { flex: 1; padding: 14px; display: flex; flex-direction: column; gap: 14px; }
-.panel { background: var(--panel); border: 1px solid var(--border); border-radius: 6px; overflow: hidden; }
-.panel-header { padding: 12px 14px; border-bottom: 1px solid var(--border); background: var(--elev); display: flex; justify-content: space-between; align-items: center; gap: 10px; flex-wrap: wrap; }
-.panel-title { font-size: 13px; color: #ffffff; letter-spacing: 1.5px; font-weight: 700; text-shadow: 0 0 10px rgba(255,255,255,0.6), 0 0 20px rgba(88,166,255,0.3); }
-.grid-2 { display: grid; gap: 14px; grid-template-columns: 1fr; }
-@media (min-width: 768px) { .grid-2 { grid-template-columns: 1fr 1fr; } }
-
-.indices-row { display: grid; gap: 2px; background: var(--border); }
-.idx-card { background: var(--panel); padding: 12px 14px; }
-.idx-name { font-size: 11px; color: #ffffff; font-weight: bold; letter-spacing: 1px; text-shadow: 0 0 8px rgba(255,255,255,0.5), 0 0 15px rgba(88,166,255,0.25); }
-.idx-price { font-size: 17px; font-weight: 700; margin-top: 4px; font-family: 'IBM Plex Mono', 'Courier New', monospace; letter-spacing: 0.5px; }
-.idx-bottom { display: flex; justify-content: space-between; align-items: center; margin-top: 4px; gap: 8px; }
-.idx-day { font-size: 12px; font-weight: bold; font-family: 'IBM Plex Mono', 'Courier New', monospace; letter-spacing: 0.3px; }
-.idx-spark { flex: 1; height: 28px; }
-
-.summary-grid { display: grid; grid-template-columns: repeat(2, 1fr); gap: 2px; background: var(--border); }
-@media (min-width: 768px) { .summary-grid { grid-template-columns: repeat(4, 1fr); } }
-.summary-item { background: var(--panel); padding: 14px 12px; min-width: 0; }
-.summary-label { font-size: 10px; color: #ffffff; text-transform: uppercase; font-weight: bold; letter-spacing: 1px; text-shadow: 0 0 8px rgba(255,255,255,0.5), 0 0 15px rgba(88,166,255,0.25); }
-.summary-value { font-size: 14px; font-weight: 700; margin-top: 4px; color: var(--text); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; font-family: 'IBM Plex Mono', 'Courier New', monospace; letter-spacing: 0.5px; }
-
-.table-wrap { overflow-x: auto; }
-.table { width: 100%; border-collapse: collapse; font-size: 12px; }
-.table th { padding: 10px 12px; text-align: left; color: #ffffff; font-size: 10px; letter-spacing: 1px; border-bottom: 1px solid var(--border); background: var(--elev); white-space: nowrap; text-shadow: 0 0 8px rgba(255,255,255,0.5), 0 0 12px rgba(88,166,255,0.2); }
-.table td { padding: 10px 12px; border-bottom: 1px solid var(--border); white-space: nowrap; text-align: left; font-family: 'IBM Plex Mono', 'Courier New', monospace; letter-spacing: 0.3px; }
-.table tbody tr:hover { background: rgba(88,166,255,0.05); }
-button.btn { padding: 9px 13px; background: var(--panel); border: 1px solid var(--border); color: var(--text); font-family: inherit; font-size: 11px; cursor: pointer; outline: none; border-radius: 4px; font-weight: bold; transition: all 0.15s; letter-spacing: 1px; }
-button.btn:hover { background: var(--elev); }
-button.btn.primary { background: #ffffff; color: #05070b; border-color: #ffffff; font-weight: 700; text-shadow: 0 0 0 rgba(255,255,255,0); box-shadow: 0 0 15px rgba(255,255,255,0.6), 0 0 25px rgba(88,166,255,0.4), inset 0 0 10px rgba(255,255,255,0.3); }
-button.btn.primary:hover { background: #e8f0f8; box-shadow: 0 0 20px rgba(255,255,255,0.8), 0 0 35px rgba(88,166,255,0.6), inset 0 0 15px rgba(255,255,255,0.4); }
-button.btn.danger { color: var(--red); border-color: var(--red); }
-button.btn.refresh { color: var(--blue); border-color: var(--blue); min-width: 110px; box-sizing: border-box; overflow: hidden; }
-button.btn.logs { color: var(--purple); border-color: var(--purple); }
-button.btn.macro { color: var(--orange); border-color: var(--orange); }
-button.btn:active { opacity: 0.6; }
-button.btn.loading { opacity: 0.6; pointer-events: none; position: relative; color: transparent !important; }
-button.btn.loading::after { content: "조회 중…"; position: absolute; left: 0; right: 0; top: 50%; transform: translateY(-50%); color: var(--blue); font-size: 0.9em; white-space: nowrap; text-align: center; }
-.pos { color: var(--green); font-weight: 700; font-family: 'IBM Plex Mono', 'Courier New', monospace; letter-spacing: 0.3px; }
-.neg { color: var(--red); font-weight: 700; font-family: 'IBM Plex Mono', 'Courier New', monospace; letter-spacing: 0.3px; }
-.right { text-align: right; }
-.engine-status { display: flex; align-items: center; gap: 8px; font-size: 11px; padding: 8px 14px; background: var(--elev); border-bottom: 1px solid var(--border); font-weight: 700; flex-wrap: wrap; text-shadow: 0 0 8px rgba(255,255,255,0.4); font-family: 'IBM Plex Mono', 'Courier New', monospace; letter-spacing: 0.3px; }
-.dot { width: 8px; height: 8px; border-radius: 50%; display: inline-block; }
-.dot.alive { background: var(--green); box-shadow: 0 0 6px var(--green); animation: pulse 2s infinite; }
-.dot.stale { background: var(--red); }
-.dot.unknown { background: var(--faint); }
-.dot.closed { background: var(--red); }
-@keyframes pulse { 0%,100%{opacity:1} 50%{opacity:0.5} }
-.empty { padding: 20px; text-align: center; color: var(--faint); font-size: 12px; }
-.toast { position: fixed; bottom: 20px; left: 50%; transform: translateX(-50%); background: var(--panel); border: 1px solid var(--amber); padding: 12px 20px; border-radius: 4px; color: var(--amber); font-weight: bold; z-index: 9999; display: none; }
-.toast.show { display: block; }
-.market-badge { display: inline-block; padding: 2px 6px; font-size: 9px; border-radius: 3px; background: var(--elev); border: 1px solid var(--border); color: #ffffff; margin-right: 6px; letter-spacing: 1px; text-shadow: 0 0 6px rgba(255,255,255,0.4); }
-.trade-buy { color: var(--green); font-weight: bold; }
-.trade-sell { color: var(--red); font-weight: bold; }
-.log-line { padding: 6px 8px; border-left: 3px solid var(--faint); margin-bottom: 4px; color: var(--dim); word-break: break-all; line-height: 1.5; background: rgba(255,255,255,0.02); }
-.log-line.INFO { border-color: var(--blue); color: var(--blue); }
-.log-line.TRADE { border-color: var(--amber); color: var(--amber); font-weight: bold; }
-.log-line.TUNE { border-color: var(--green); color: var(--green); font-weight: bold; }
-.log-line.ERROR { border-color: var(--red); color: var(--red); }
-.log-line.WARN { border-color: var(--orange); color: var(--orange); }
-.log-line.SKIP { border-color: var(--faint); color: var(--faint); }
-.log-line.NOBUY { border-color: var(--purple); color: var(--purple); }
-.log-line.CLOSED { border-color: var(--red); color: var(--red); }
-.log-ts { color: var(--faint); margin-right: 6px; }
-.log-level { display: inline-block; min-width: 50px; font-weight: bold; margin-right: 6px; }
-.log-symbol { color: var(--text); font-weight: bold; margin-right: 6px; }
-.log-filter { display: flex; gap: 4px; flex-wrap: wrap; }
-.log-filter button { padding: 4px 8px; font-size: 9px; background: var(--panel); border: 1px solid var(--border); color: var(--dim); border-radius: 3px; cursor: pointer; font-family: inherit; letter-spacing: 1px; }
-.log-filter button.active { background: var(--amber); color: var(--bg); border-color: var(--amber); font-weight: bold; }
-.modal { display: none; position: fixed; inset: 0; background: rgba(0,0,0,0.85); z-index: 9000; padding: 20px; overflow-y: auto; }
-.modal.show { display: block; }
-.modal-content { max-width: 700px; margin: 0 auto; background: var(--panel); border: 1px solid var(--amber); border-radius: 6px; padding: 24px; }
-.modal-content h2 { color: #ffffff; margin-bottom: 18px; font-size: 18px; letter-spacing: 1.5px; text-shadow: 0 0 12px rgba(255,255,255,0.6), 0 0 20px rgba(88,166,255,0.3); }
-.modal-logs { max-width: 1000px; margin: 0 auto; background: var(--panel); border: 1px solid var(--purple); border-radius: 6px; padding: 20px; }
-.modal-logs h2 { color: #ffffff; margin-bottom: 14px; font-size: 18px; letter-spacing: 1.5px; display: flex; justify-content: space-between; align-items: center; gap: 10px; flex-wrap: wrap; text-shadow: 0 0 12px rgba(255,255,255,0.6), 0 0 20px rgba(188,140,255,0.3); }
-.modal-logs h2 .close-x { font-size: 24px; cursor: pointer; color: var(--dim); line-height: 1; user-select: none; padding: 0 8px; }
-.modal-logs h2 .close-x:hover { color: var(--red); }
-.logs-toolbar { display: flex; gap: 8px; align-items: center; margin-bottom: 12px; flex-wrap: wrap; }
-.logs-search { flex: 1; min-width: 180px; padding: 8px 11px; background: var(--bg); border: 1px solid var(--border); color: var(--text); font-family: inherit; font-size: 12px; border-radius: 4px; outline: none; }
-.logs-search:focus { border-color: var(--purple); }
-.logs-info { font-size: 10px; color: var(--faint); white-space: nowrap; }
-.log-box-modal { max-height: 70vh; overflow-y: auto; background: #000; padding: 10px; font-size: 11px; border-radius: 4px; border: 1px solid var(--border); }
-.field { margin-bottom: 14px; }
-.field label { display: block; font-size: 11px; color: #ffffff; margin-bottom: 4px; font-weight: bold; letter-spacing: 0.5px; text-shadow: 0 0 8px rgba(255,255,255,0.5); }
-.field input, .field textarea { width: 100%; padding: 9px 11px; background: var(--bg); border: 1px solid var(--border); color: var(--text); font-family: inherit; font-size: 13px; border-radius: 4px; outline: none; }
-.field input:focus, .field textarea:focus { border-color: var(--amber); }
-.field textarea { min-height: 80px; resize: vertical; }
-.field-row { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 8px; }
-.field-row-2 { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
-.section-divider { border-top: 1px solid var(--border); margin: 18px 0 14px; padding-top: 4px; }
-.section-title { font-size: 12px; color: #ffffff; letter-spacing: 1.5px; font-weight: bold; margin-bottom: 12px; text-shadow: 0 0 10px rgba(255,255,255,0.5), 0 0 15px rgba(88,166,255,0.25); }
-.modal-actions { display: flex; gap: 8px; margin-top: 18px; flex-wrap: wrap; }
-.modal-actions button { flex: 1; padding: 11px; min-width: 100px; }
-.watchlist { display: grid; grid-template-columns: repeat(auto-fill, minmax(160px, 1fr)); gap: 6px; padding: 10px; }
-.wl-card { background: var(--elev); border: 1px solid var(--border); border-radius: 4px; padding: 8px 10px; position: relative; }
-.wl-sym { font-size: 11px; color: #ffffff; font-weight: bold; letter-spacing: 0.5px; padding-right: 18px; text-shadow: 0 0 10px rgba(255,255,255,0.6), 0 0 15px rgba(88,166,255,0.3); }
-.wl-name { font-size: 9px; color: #ffffff; margin-top: 1px; text-shadow: 0 0 8px rgba(255,255,255,0.4); }
-.wl-price { font-size: 15px; font-weight: bold; margin-top: 2px; font-family: 'IBM Plex Mono', 'Courier New', monospace; letter-spacing: 0.3px; }
-.wl-day { font-size: 10px; margin-top: 2px; font-family: 'IBM Plex Mono', 'Courier New', monospace; letter-spacing: 0.2px; }
-.wl-meta { font-size: 9px; color: var(--faint); margin-top: 2px; font-family: 'IBM Plex Mono', 'Courier New', monospace; letter-spacing: 0.2px; }
-.wl-fav { position: absolute; top: 6px; right: 6px; cursor: pointer; font-size: 14px; line-height: 1; user-select: none; color: var(--faint); transition: all 0.15s; }
-.wl-fav:hover { transform: scale(1.2); }
-.wl-fav.active { color: var(--amber); text-shadow: 0 0 4px rgba(255,215,0,0.6); }
-/* [V10] 검색창 */
-.wl-search-wrap { padding: 8px 10px 4px; }
-.wl-search { width: 100%; box-sizing: border-box; background: var(--panel); border: 1px solid var(--border); border-radius: 4px; color: #e6edf3; font-family: inherit; font-size: 12px; padding: 7px 10px; letter-spacing: 0.3px; outline: none; transition: border-color 0.15s, box-shadow 0.15s; }
-.wl-search:focus { border-color: var(--accent, #58a6ff); box-shadow: 0 0 0 2px rgba(88,166,255,0.15); }
-.wl-search::placeholder { color: var(--faint); }
-/* [V10] 카운트 배지 */
-.wl-count { font-size: 10px; color: var(--dim); font-weight: 500; letter-spacing: 0.5px; margin-left: 6px; }
-/* [V10] 보유 종목 카드 강조 */
-.watchlist-section.held { color: #3fb950; background: rgba(63,185,80,0.08); }
-.wl-card.held { border-color: rgba(63,185,80,0.5); box-shadow: 0 0 0 1px rgba(63,185,80,0.2) inset; }
-.wl-held-badge { display: inline-block; font-size: 8px; font-weight: bold; color: #3fb950; border: 1px solid rgba(63,185,80,0.5); border-radius: 3px; padding: 0 3px; margin-left: 4px; vertical-align: middle; letter-spacing: 0.3px; }
-.wl-pnl { font-size: 9px; margin-top: 1px; font-family: 'IBM Plex Mono', monospace; }
-.wl-pnl.pos { color: #3fb950; }
-.wl-pnl.neg { color: #f85149; }
-.wl-etf-badge { display: inline-block; font-size: 8px; color: var(--amber); border: 1px solid rgba(255,215,0,0.4); border-radius: 3px; padding: 0 3px; margin-left: 4px; vertical-align: middle; letter-spacing: 0.3px; }
-.wl-loadmore { text-align: center; padding: 8px; margin: 4px 10px; background: var(--panel); border: 1px solid var(--border); border-radius: 4px; cursor: pointer; font-size: 11px; color: var(--dim); letter-spacing: 0.5px; font-family: inherit; }
-.wl-loadmore:hover { color: #e6edf3; border-color: var(--accent, #58a6ff); }
-.tune-banner { padding: 10px 14px; background: rgba(63,185,80,0.08); border-left: 3px solid var(--green); color: var(--green); font-size: 11px; line-height: 1.6; }
-.tune-banner b { color: var(--amber); }
-.market-status-banner { padding: 8px 14px; background: rgba(240,136,62,0.08); border-left: 3px solid var(--orange); color: var(--orange); font-size: 11px; line-height: 1.6; display: flex; gap: 16px; flex-wrap: wrap; }
-.market-status-banner b { color: var(--text); }
-.market-status-open { color: var(--green) !important; }
-.market-status-closed { color: var(--red) !important; }
-
-/* [V8.6 Hybrid] LLM Banner */
-.llm-banner { padding: 10px 14px; background: rgba(56,189,248,0.08); border-left: 3px solid #38bdf8; color: #38bdf8; font-size: 11px; line-height: 1.6; }
-.llm-banner-header { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
-.llm-banner-title { font-weight: 700; font-size: 11px; letter-spacing: 0.5px; }
-.llm-status-chip { font-size: 10px; padding: 2px 6px; border-radius: 3px; font-weight: 600; }
-.llm-status-chip.on { background: rgba(63,185,80,0.2); color: var(--green); }
-.llm-status-chip.off { background: rgba(248,81,73,0.2); color: var(--red); }
-.llm-status-chip.bullish { background: rgba(63,185,80,0.2); color: var(--green); }
-.llm-status-chip.bearish { background: rgba(248,81,73,0.2); color: var(--red); }
-.llm-status-chip.neutral { background: rgba(148,163,184,0.2); color: #94a3b8; }
-.llm-banner-body { margin-top: 6px; color: #cbd5e1; font-size: 11px; }
-.llm-meta { display: flex; gap: 12px; flex-wrap: wrap; margin-top: 6px; font-size: 10px; color: #94a3b8; }
-.llm-meta b { color: #cbd5e1; }
-.llm-actions { display: flex; gap: 6px; margin-top: 8px; flex-wrap: wrap; }
-.llm-btn { font-size: 10px; padding: 4px 10px; background: rgba(56,189,248,0.15); border: 1px solid #38bdf8; color: #38bdf8; border-radius: 3px; cursor: pointer; font-family: 'IBM Plex Mono', monospace; }
-.llm-btn:hover { background: rgba(56,189,248,0.25); }
-.llm-btn.danger { background: rgba(248,81,73,0.15); border-color: var(--red); color: var(--red); }
-.llm-btn.danger:hover { background: rgba(248,81,73,0.25); }
-.cfg-display { display: flex; gap: 14px; font-size: 11px; color: var(--dim); flex-wrap: wrap; }
-.cfg-display b { color: #ffffff; font-weight: 700; font-family: 'IBM Plex Mono', 'Courier New', monospace; letter-spacing: 0.3px; font-size: 12px; }
-.checkbox-row { display: flex; align-items: center; gap: 10px; margin-bottom: 14px; }
-.checkbox-row input[type="checkbox"] { width: 20px; height: 20px; }
-.checkbox-row label { font-size: 13px; color: var(--text); font-weight: bold; }
-.hint { font-size: 10px; color: var(--faint); margin-top: 4px; }
-.trades-toggle { display: flex; justify-content: space-between; align-items: center; padding: 10px 14px; background: var(--elev); border-bottom: 1px solid var(--border); cursor: pointer; }
-.trades-toggle:hover { background: rgba(255,215,0,0.05); }
-.trades-toggle-btn { font-size: 11px; color: var(--amber); font-weight: bold; padding: 4px 8px; background: var(--panel); border: 1px solid var(--border); border-radius: 3px; cursor: pointer; }
-.trades-summary { display: flex; gap: 16px; font-size: 11px; color: var(--dim); }
-.trades-summary-item { display: flex; flex-direction: column; }
-.trades-summary-label { font-size: 9px; color: var(--faint); margin-bottom: 2px; }
-.trades-summary-value { font-weight: 700; color: #ffffff; font-family: 'IBM Plex Mono', 'Courier New', monospace; font-size: 13px; letter-spacing: 0.5px; }
-.trades-table { display: none; }
-.trades-table.show { display: block; }
-.positions-collapsed .table-wrap { max-height: calc(5 * 38px); overflow: hidden; }
-.positions-collapsed.expanded .table-wrap { max-height: none; }
-.watchlist-toggle-btn { font-size: 10px; color: var(--amber); font-weight: bold; padding: 3px 8px; background: var(--panel); border: 1px solid var(--border); border-radius: 3px; cursor: pointer; font-family: inherit; letter-spacing: 1px; }
-.wl-viewmode-btn { font-size: 10px; color: var(--dim); font-weight: bold; padding: 3px 8px; background: var(--panel); border: 1px solid var(--border); border-radius: 3px; cursor: pointer; font-family: inherit; letter-spacing: 0.5px; }
-.wl-viewmode-btn.active { color: #58a6ff; border-color: #58a6ff; background: rgba(88,166,255,0.12); }
-.watchlist-section { padding: 4px 12px 8px; font-size: 10px; color: var(--amber); font-weight: bold; letter-spacing: 1px; background: rgba(255,215,0,0.05); border-bottom: 1px solid var(--border); }
-.watchlist-section.fav { color: var(--amber); }
-.watchlist-section.all { color: var(--dim); }
-
-/* ── Epigraph above SETTINGS ── */
-.settings-epigraph {
-  text-align: center;
-  margin: -2px 0 14px;
-  padding: 0 10px;
-  line-height: 1.3;
+.llm-banner-header{display:flex;align-items:center;gap:8px;flex-wrap:wrap;}
+.llm-banner-title{font-weight:700;color:#fff;letter-spacing:.5px;text-transform:uppercase;}
+.llm-status-chip{font-size:9px;padding:1px 7px;border:1px solid;font-weight:700;letter-spacing:.5px;}
+.llm-status-chip.on,.llm-status-chip.bullish{border-color:var(--pos);color:var(--pos);}
+.llm-status-chip.off,.llm-status-chip.bearish{border-color:var(--neg);color:var(--neg);}
+.llm-status-chip.neutral{border-color:var(--t3);color:var(--t3);}
+.llm-banner-body{margin-top:3px;color:var(--t2);}
+.llm-meta{display:flex;gap:12px;flex-wrap:wrap;margin-top:3px;font-size:10px;color:var(--t3);}
+.llm-meta b{color:var(--t2);}
+.llm-actions{display:flex;gap:3px;margin-top:6px;flex-wrap:wrap;}
+.llm-btn{
+  font-size:10px;padding:3px 9px;background:transparent;border:1px solid var(--bd);
+  color:var(--t2);cursor:pointer;font-family:'IBM Plex Mono',monospace;
+  transition:all .1s;letter-spacing:.3px;
 }
-.settings-epigraph .verse {
-  font-family: 'Pinyon Script', cursive;
-  font-size: 14px;
-  font-weight: 400;
-  color: #20262e;
-  letter-spacing: 0.2px;
-  display: block;
-  opacity: 0.55;
+.llm-btn:hover{border-color:var(--t1);color:var(--t1);}
+.llm-btn.danger{color:var(--neg);border-color:rgba(255,23,68,.3);}
+.llm-btn.danger:hover{border-color:var(--neg);}
+
+/* 오토튠 */
+.tune-banner{
+  padding:7px 28px;border-bottom:1px solid var(--bd);border-left:2px solid var(--pos);
+  color:var(--t2);font-size:11px;line-height:1.6;background:var(--bg);
+}
+.tune-banner b{color:#fff;}
+
+/* 대시보드 그리드 */
+.dash-grid{
+  display:grid;
+  grid-template-columns:1fr 1fr;
+  gap:0;
+}
+@media(max-width:900px){.dash-grid{grid-template-columns:1fr;}}
+
+/* 대시보드 블록 */
+.dash-block{
+  padding:24px 28px;
+  border-bottom:1px solid var(--bd);
+  border-right:1px solid var(--bd);
+}
+.dash-block:nth-child(even){border-right:none;}
+.dash-block-label{
+  font-size:9px;font-weight:700;color:var(--t3);
+  letter-spacing:1.5px;text-transform:uppercase;
+  margin-bottom:12px;
 }
 
-/* 별 아이콘 (로고 별 모양) */
-.star-icon {
-  display: inline-block;
-  width: 13px;
-  height: 13px;
-  vertical-align: -1px;
-  margin-right: 4px;
-  background: linear-gradient(135deg, #ffffff, #c8c8c8);
-  clip-path: polygon(50% 0%, 62% 38%, 100% 50%, 62% 62%, 50% 100%, 38% 62%, 0% 50%, 38% 38%);
+/* 포트폴리오 수치 */
+.port-total{
+  font-size:28px;font-weight:700;color:#fff;
+  font-variant-numeric:tabular-nums;letter-spacing:-1px;line-height:1.1;
+}
+.port-pnl{
+  font-size:13px;font-weight:600;margin-top:4px;
+  font-variant-numeric:tabular-nums;
+}
+.port-meta{
+  display:flex;gap:24px;margin-top:12px;
+  border-top:1px solid var(--bd2);padding-top:12px;
+}
+.port-meta-item{display:flex;flex-direction:column;gap:2px;}
+.port-meta-label{font-size:9px;color:var(--t3);letter-spacing:1px;text-transform:uppercase;}
+.port-meta-value{font-size:12px;font-weight:600;color:var(--t1);font-variant-numeric:tabular-nums;}
+.cfg-display{
+  display:flex;gap:8px;font-size:10px;color:var(--t3);
+  flex-wrap:wrap;margin-top:8px;
+}
+.cfg-display b{color:var(--t2);font-weight:600;}
+
+/* 지수 */
+.indices-row{
+  display:flex!important;flex-direction:row!important;
+  flex-wrap:wrap;gap:2px;background:transparent;
+}
+.idx-card{
+  flex:1;min-width:110px;
+  padding:12px 14px;border:1px solid var(--bd);
+  transition:background .1s;cursor:default;
+}
+.idx-card:hover{background:var(--s2);}
+.idx-name{font-size:9px;color:var(--t3);letter-spacing:.8px;text-transform:uppercase;}
+.idx-price{font-size:16px;font-weight:700;margin-top:3px;color:#fff;font-variant-numeric:tabular-nums;letter-spacing:-.5px;}
+.idx-bottom{display:flex;justify-content:space-between;align-items:center;margin-top:4px;gap:4px;}
+.idx-day{font-size:11px;font-weight:700;font-variant-numeric:tabular-nums;}
+.idx-spark{flex:1;height:22px;opacity:.5;}
+
+/* ── POSITIONS 페이지 ── */
+.pos-header-bar{
+  display:flex;justify-content:space-between;align-items:center;
+  padding:14px 28px;border-bottom:1px solid var(--bd);
+  background:var(--bg);
+}
+.pos-pnl-bar{
+  font-size:12px;font-weight:600;font-variant-numeric:tabular-nums;
 }
 
-/* ─────────── 경제지표 (MACRO) 모달 ─────────── */
-.modal-macro {
-  max-width: 920px; margin: 0 auto;
-  background: var(--panel); border: 1px solid var(--orange);
-  border-radius: 6px; padding: 22px;
+/* ── 테이블 공통 ── */
+.table-wrap{overflow-x:auto;-webkit-overflow-scrolling:touch;}
+.table{width:100%;border-collapse:collapse;font-size:11px;}
+.table th{
+  position:sticky;top:0;z-index:1;
+  padding:9px 14px;text-align:left;
+  font-size:9px;font-weight:700;color:var(--t3);
+  text-transform:uppercase;letter-spacing:1px;
+  background:var(--s1);border-bottom:1px solid var(--bd);
+  white-space:nowrap;
 }
-.modal-macro h2 {
-  color: #ffffff; margin-bottom: 4px; font-size: 18px; letter-spacing: 1.5px;
-  display: flex; justify-content: space-between; align-items: center; gap: 10px;
-  text-shadow: 0 0 12px rgba(255,255,255,0.6), 0 0 20px rgba(240,136,62,0.3);
+.table td{
+  padding:9px 14px;border-bottom:1px solid var(--bd2);
+  font-variant-numeric:tabular-nums;color:var(--t2);white-space:nowrap;
 }
-.modal-macro h2 .close-x { font-size: 24px; cursor: pointer; color: var(--dim); line-height: 1; user-select: none; padding: 0 8px; }
-.modal-macro h2 .close-x:hover { color: var(--red); }
-.macro-sub { color: var(--dim); font-size: 11px; margin-bottom: 16px; font-family: 'IBM Plex Mono','Courier New',monospace; letter-spacing: 0.3px; }
-.macro-sub b { color: var(--orange); }
+.table tbody tr{transition:background .08s;}
+.table tbody tr:hover{background:var(--s2);}
+.table tbody tr:last-child td{border-bottom:none;}
 
-/* 다음 발표 하이라이트 카드 */
-.macro-next { 
-  display: flex; gap: 10px; flex-wrap: wrap; margin-bottom: 18px;
-}
-.macro-next-card {
-  flex: 1; min-width: 150px;
-  background: linear-gradient(135deg, rgba(240,136,62,0.08), rgba(88,166,255,0.04));
-  border: 1px solid var(--border); border-left: 3px solid var(--orange);
-  border-radius: 5px; padding: 12px 14px;
-}
-.macro-next-card .lbl { font-size: 9px; color: var(--dim); letter-spacing: 1.2px; text-transform: uppercase; margin-bottom: 6px; }
-.macro-next-card .nm { font-size: 13px; color: var(--text); font-weight: 700; margin-bottom: 4px; }
-.macro-next-card .dt { font-size: 11px; color: #cbd5e1; font-family: 'IBM Plex Mono','Courier New',monospace; }
-.macro-next-card .dday { 
-  display: inline-block; margin-top: 7px; font-size: 11px; font-weight: 700;
-  font-family: 'IBM Plex Mono','Courier New',monospace; padding: 2px 8px; border-radius: 3px;
-  background: rgba(240,136,62,0.15); color: var(--orange); letter-spacing: 0.5px;
-}
-.macro-next-card .dday.soon { background: rgba(248,81,73,0.18); color: var(--red); animation: pulse 2s infinite; }
-.macro-next-card .dday.today { background: var(--red); color: #fff; }
+/* 포지션 */
+.positions-collapsed .table-wrap{max-height:calc(5*38px);overflow:hidden;}
+.positions-collapsed.expanded .table-wrap{max-height:none;}
 
-/* 시장 섹션 헤더 */
-.macro-mkt-head {
-  display: flex; align-items: center; gap: 8px; margin: 18px 0 8px;
-  font-size: 13px; font-weight: 700; letter-spacing: 1px; color: #fff;
-  padding-bottom: 6px; border-bottom: 1px solid var(--border);
-  text-shadow: 0 0 8px rgba(255,255,255,0.3);
+/* ── WATCHLIST 페이지 ── */
+.wl-layout{display:grid;grid-template-columns:1fr 1fr;gap:0;height:calc(100vh - 61px);overflow:hidden;}
+@media(max-width:768px){.wl-layout{grid-template-columns:1fr;}}
+.wl-pane{display:flex;flex-direction:column;border-right:1px solid var(--bd);overflow:hidden;}
+.wl-pane:last-child{border-right:none;}
+.wl-pane-header{
+  padding:12px 16px;border-bottom:1px solid var(--bd);
+  display:flex;justify-content:space-between;align-items:center;
+  gap:8px;flex-wrap:wrap;flex-shrink:0;background:var(--s1);
 }
-.macro-mkt-head .flag { font-size: 16px; }
+.wl-pane-title{font-size:10px;font-weight:700;color:#fff;letter-spacing:1.5px;text-transform:uppercase;}
+.wl-pane-actions{display:flex;gap:4px;align-items:center;}
+.wl-search-wrap{padding:8px 12px;border-bottom:1px solid var(--bd2);flex-shrink:0;}
+.wl-search{
+  width:100%;background:var(--s1);border:1px solid var(--bd);
+  color:var(--t1);font-family:'Helvetica Neue','Segoe UI',Arial,sans-serif;font-size:12px;
+  padding:7px 10px;outline:none;transition:border-color .12s;
+}
+.wl-search:focus{border-color:#fff;}
+.wl-search::placeholder{color:var(--t3);}
+.wl-count{font-size:10px;color:var(--t3);margin-left:4px;}
+.wl-list-wrap{flex:1;overflow-y:auto;}
+.wl-list-wrap::-webkit-scrollbar{width:3px;}
+.wl-list-wrap::-webkit-scrollbar-thumb{background:var(--bd);}
 
-/* 지표 테이블 */
-.macro-table-wrap { overflow-x: auto; margin-bottom: 6px; }
-.macro-table { width: 100%; border-collapse: collapse; font-size: 12px; }
-.macro-table th {
-  padding: 9px 10px; text-align: left; color: #fff; font-size: 9px;
-  letter-spacing: 1px; border-bottom: 1px solid var(--border); background: var(--elev);
-  white-space: nowrap; text-shadow: 0 0 8px rgba(255,255,255,0.4);
+.watchlist{display:flex;flex-direction:column;}
+.wl-card{
+  display:grid;grid-template-columns:1fr auto;
+  grid-template-rows:auto auto;column-gap:12px;row-gap:1px;
+  padding:10px 14px;border-bottom:1px solid var(--bd2);
+  position:relative;cursor:default;transition:background .08s;
 }
-.macro-table th.r, .macro-table td.r { text-align: right; }
-.macro-table td {
-  padding: 9px 10px; border-bottom: 1px solid var(--border); white-space: nowrap;
-  font-family: 'IBM Plex Mono','Courier New',monospace; letter-spacing: 0.3px;
+.wl-card:hover{background:var(--s2);}
+.wl-card.held{border-left:2px solid var(--pos);}
+.wl-card:last-child{border-bottom:none;}
+.wl-sym{grid-column:1;grid-row:1;font-size:12px;font-weight:700;color:#fff;padding-right:18px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
+.wl-name{grid-column:1;grid-row:2;font-size:10px;color:var(--t3);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
+.wl-price{grid-column:2;grid-row:1;font-size:13px;font-weight:700;color:#fff;font-variant-numeric:tabular-nums;text-align:right;white-space:nowrap;}
+.wl-day{grid-column:2;grid-row:2;font-size:11px;font-weight:700;font-variant-numeric:tabular-nums;text-align:right;white-space:nowrap;}
+.wl-meta{display:none;}
+.wl-pnl{grid-column:2;grid-row:3;font-size:10px;text-align:right;font-variant-numeric:tabular-nums;}
+.wl-pnl.pos{color:var(--pos);}
+.wl-pnl.neg{color:var(--neg);}
+.wl-fav{position:absolute;top:10px;right:8px;cursor:pointer;font-size:11px;color:var(--s3);transition:color .1s;user-select:none;}
+.wl-fav:hover{color:var(--t3);}
+.wl-fav.active{color:var(--amber);}
+.wl-held-badge{display:inline-block;font-size:8px;font-weight:700;color:var(--pos);border:1px solid rgba(0,230,118,.3);padding:0 3px;margin-left:3px;vertical-align:middle;}
+.wl-etf-badge{display:inline-block;font-size:8px;font-weight:700;color:var(--amber);border:1px solid rgba(255,193,7,.3);padding:0 3px;margin-left:3px;vertical-align:middle;}
+.wl-loadmore{text-align:center;padding:10px;background:transparent;border:none;border-top:1px solid var(--bd2);cursor:pointer;font-size:11px;color:var(--t2);font-family:'IBM Plex Mono',monospace;width:100%;transition:color .1s;}
+.wl-loadmore:hover{color:#fff;}
+.watchlist-section{padding:5px 14px;font-size:9px;font-weight:700;color:var(--t3);background:var(--s1);border-bottom:1px solid var(--bd2);text-transform:uppercase;letter-spacing:1px;}
+.watchlist-section.fav{color:var(--amber);}
+.watchlist-section.all{color:var(--t3);}
+.watchlist-section.held{color:var(--pos);}
+.watchlist-toggle-btn{font-size:9px;font-weight:700;padding:3px 8px;background:transparent;border:1px solid var(--bd);cursor:pointer;color:var(--t2);font-family:'IBM Plex Mono',monospace;letter-spacing:.5px;text-transform:uppercase;transition:all .1s;}
+.watchlist-toggle-btn:hover{border-color:var(--t1);color:var(--t1);}
+.wl-viewmode-btn{font-size:9px;font-weight:700;padding:3px 8px;background:transparent;border:1px solid var(--bd2);cursor:pointer;color:var(--t3);font-family:'IBM Plex Mono',monospace;transition:all .1s;}
+.wl-viewmode-btn:hover{color:var(--t2);border-color:var(--bd);}
+.wl-viewmode-btn.active{color:#fff;border-color:#fff;}
+
+/* ── COMMODITIES ── */
+.cm-summary-bar{
+  display:flex;gap:0;border-bottom:1px solid var(--bd);
 }
-.macro-table tbody tr:hover { background: rgba(240,136,62,0.05); }
-.macro-table .ind-name { font-family: 'Helvetica Neue', Arial, sans-serif; font-weight: 600; color: var(--text); }
-.macro-table .ind-name small { display: block; font-weight: 400; color: var(--faint); font-size: 10px; letter-spacing: 0; margin-top: 1px; }
-.macro-table .val { color: #fff; font-weight: 700; font-size: 13px; }
-.macro-table .val .unit { font-size: 10px; color: var(--dim); font-weight: 400; margin-left: 2px; }
-.macro-table .relday { color: var(--dim); font-size: 11px; }
-.macro-table .nextday { color: #cbd5e1; }
-.macro-table .dd { font-weight: 700; }
-.macro-table .dd.soon { color: var(--orange); }
-.macro-table .dd.today { color: var(--red); }
-.macro-table .dd.far { color: var(--faint); }
-.macro-disclaimer {
-  margin-top: 14px; padding: 10px 12px; background: var(--elev);
-  border-radius: 4px; border: 1px solid var(--border);
-  font-size: 10px; color: var(--dim); line-height: 1.6;
+.cm-stat{
+  flex:1;padding:14px 20px;border-right:1px solid var(--bd);
 }
+.cm-stat:last-child{border-right:none;}
+.summary-label{font-size:9px;font-weight:700;color:var(--t3);text-transform:uppercase;letter-spacing:1px;}
+.summary-value{font-size:15px;font-weight:700;color:#fff;font-variant-numeric:tabular-nums;margin-top:3px;white-space:nowrap;}
+.cm-section-label{padding:7px 20px;font-size:9px;font-weight:700;color:var(--t2);text-transform:uppercase;letter-spacing:1.2px;background:var(--s1);border-bottom:1px solid var(--bd);}
+
+/* ── TRADES ── */
+.trades-toggle{
+  display:flex;justify-content:space-between;align-items:center;
+  padding:12px 28px;border-bottom:1px solid var(--bd);cursor:pointer;
+  transition:background .1s;
+}
+.trades-toggle:hover{background:var(--s2);}
+.trades-toggle-btn{font-size:9px;font-weight:700;padding:3px 8px;background:transparent;border:1px solid var(--bd);cursor:pointer;color:var(--t2);font-family:'IBM Plex Mono',monospace;text-transform:uppercase;letter-spacing:.5px;transition:all .1s;}
+.trades-toggle-btn:hover{border-color:#fff;color:#fff;}
+.trades-summary{display:flex;gap:24px;}
+.trades-summary-item{display:flex;flex-direction:column;gap:1px;}
+.trades-summary-label{font-size:9px;font-weight:700;color:var(--t3);text-transform:uppercase;letter-spacing:.8px;}
+.trades-summary-value{font-size:14px;font-weight:700;color:#fff;font-variant-numeric:tabular-nums;}
+.trades-table{display:none;}
+.trades-table.show{display:block;}
+
+/* ── 토스트 ── */
+.toast{
+  position:fixed;bottom:24px;left:50%;transform:translateX(-50%);
+  background:var(--s2);border:1px solid var(--bd);padding:9px 18px;
+  color:#fff;font-weight:600;font-size:11px;z-index:9999;display:none;
+  box-shadow:0 4px 20px rgba(0,0,0,.6);white-space:nowrap;letter-spacing:.3px;
+}
+.toast.show{display:block;animation:toastIn .15s ease;}
+@keyframes toastIn{from{opacity:0;transform:translateX(-50%) translateY(5px);}to{opacity:1;transform:translateX(-50%) translateY(0);}}
+
+/* ── 빈 상태 ── */
+.empty{padding:28px 20px;text-align:center;color:var(--t3);font-size:11px;}
+
+/* ── 모달 (로그, 설정, 매크로 등) ── */
+.modal{
+  display:none;position:fixed;inset:0;
+  background:rgba(0,0,0,.88);z-index:9000;
+  padding:20px;overflow-y:auto;
+}
+.modal.show{display:block;}
+.modal-content{
+  max-width:720px;margin:0 auto;background:var(--s1);
+  border:1px solid var(--bd);padding:28px;
+  box-shadow:0 20px 60px rgba(0,0,0,.8);
+}
+.modal-content h2{color:#fff;margin-bottom:18px;font-size:14px;font-weight:700;letter-spacing:1.5px;text-transform:uppercase;}
+.modal-logs{
+  max-width:1000px;margin:0 auto;background:var(--s1);
+  border:1px solid var(--bd);padding:24px;
+  box-shadow:0 20px 60px rgba(0,0,0,.8);
+}
+.modal-logs h2{
+  color:#fff;margin-bottom:12px;font-size:14px;font-weight:700;
+  display:flex;justify-content:space-between;align-items:center;
+  gap:10px;flex-wrap:wrap;letter-spacing:1.5px;text-transform:uppercase;
+}
+.modal-logs h2 .close-x,.modal-macro h2 .close-x{
+  font-size:18px;cursor:pointer;color:var(--t2);transition:color .1s;
+  padding:0 4px;user-select:none;line-height:1;
+}
+.modal-logs h2 .close-x:hover,.modal-macro h2 .close-x:hover{color:var(--neg);}
+.logs-toolbar{display:flex;gap:8px;margin-bottom:10px;flex-wrap:wrap;align-items:center;}
+.logs-search{
+  flex:1;min-width:160px;padding:7px 10px;
+  background:var(--bg);border:1px solid var(--bd);
+  color:#fff;font-family:'IBM Plex Mono',monospace;font-size:11px;
+  outline:none;transition:border-color .1s;
+}
+.logs-search:focus{border-color:#fff;}
+.logs-info{font-size:10px;color:var(--t3);white-space:nowrap;}
+.log-box-modal{max-height:65vh;overflow-y:auto;background:#000;padding:10px;border:1px solid var(--bd);}
+
+/* 로그 라인 */
+.log-line{padding:3px 8px;border-left:2px solid var(--bd2);margin-bottom:1px;color:var(--t3);word-break:break-word;line-height:1.4;font-size:11px;}
+.log-line.INFO{border-color:var(--blue);color:#6699ff;}
+.log-line.TRADE{border-color:var(--amber);color:var(--amber);font-weight:600;}
+.log-line.TUNE{border-color:var(--pos);color:var(--pos);font-weight:600;}
+.log-line.ERROR{border-color:var(--neg);color:var(--neg);}
+.log-line.WARN{border-color:var(--orange);color:var(--orange);}
+.log-line.SKIP{border-color:var(--t3);color:var(--t3);}
+.log-line.NOBUY{border-color:var(--purple);color:var(--purple);}
+.log-line.CLOSED{border-color:var(--neg);color:var(--neg);}
+.log-ts{color:var(--t3);margin-right:6px;}
+.log-level{display:inline-block;min-width:52px;font-weight:700;margin-right:6px;}
+.log-symbol{color:var(--t1);font-weight:700;margin-right:6px;}
+.log-filter{display:flex;gap:3px;flex-wrap:wrap;}
+.log-filter button{padding:2px 7px;font-size:9px;background:transparent;border:1px solid var(--bd);color:var(--t3);cursor:pointer;font-weight:600;letter-spacing:.5px;font-family:'IBM Plex Mono',monospace;transition:all .1s;}
+.log-filter button:hover{border-color:var(--t1);color:var(--t1);}
+.log-filter button.active{border-color:#fff;color:#fff;}
+
+/* 설정 폼 */
+.field{margin-bottom:10px;}
+.field label{display:block;font-size:9px;font-weight:700;color:var(--t3);letter-spacing:.8px;text-transform:uppercase;margin-bottom:4px;}
+.field input,.field textarea{
+  width:100%;padding:8px 11px;
+  background:var(--s2);border:1px solid var(--bd);
+  color:var(--t1);font-family:'Helvetica Neue','Segoe UI',Arial,sans-serif;font-size:12px;
+  outline:none;transition:border-color .12s;border-radius:0;
+}
+.field input:focus,.field textarea:focus{border-color:#fff;}
+.field textarea{min-height:65px;resize:vertical;}
+.field-row{display:grid;grid-template-columns:1fr 1fr 1fr;gap:8px;}
+.field-row-2{display:grid;grid-template-columns:1fr 1fr;gap:8px;}
+.section-divider{border-top:1px solid var(--bd);margin:14px 0 10px;}
+.section-title{font-size:9px;font-weight:700;letter-spacing:1.2px;text-transform:uppercase;color:var(--t3);margin-bottom:8px;}
+.modal-actions{display:flex;gap:6px;margin-top:18px;flex-wrap:wrap;}
+.modal-actions button{flex:1;padding:10px;min-width:80px;}
+.checkbox-row{display:flex;align-items:center;gap:8px;margin-bottom:8px;}
+.checkbox-row input[type="checkbox"]{width:14px;height:14px;accent-color:#fff;cursor:pointer;}
+.checkbox-row label{font-size:11px;color:var(--t1);cursor:pointer;}
+.hint{font-size:10px;color:var(--t3);margin-top:3px;line-height:1.5;}
+.settings-epigraph{text-align:center;margin:0 0 14px;padding:0 10px;}
+.settings-epigraph .verse{font-family:'Georgia',serif;font-size:12px;color:var(--t3);display:block;font-style:italic;}
+
+/* 매크로 모달 */
+.modal-macro{
+  max-width:940px;margin:0 auto;background:var(--s1);
+  border:1px solid var(--bd);padding:24px;
+  box-shadow:0 20px 60px rgba(0,0,0,.8);
+}
+.modal-macro h2{color:#fff;margin-bottom:4px;font-size:14px;font-weight:700;display:flex;justify-content:space-between;align-items:center;gap:10px;letter-spacing:1.5px;text-transform:uppercase;}
+.macro-sub{color:var(--t2);font-size:10px;margin-bottom:14px;}
+.macro-sub b{color:var(--amber);}
+.macro-next{display:flex;gap:8px;flex-wrap:wrap;margin-bottom:16px;}
+.macro-next-card{flex:1;min-width:130px;background:var(--bg);border:1px solid var(--bd);border-left:2px solid var(--amber);padding:10px 12px;}
+.macro-next-card .lbl{font-size:9px;color:var(--t3);letter-spacing:.8px;text-transform:uppercase;margin-bottom:3px;font-weight:700;}
+.macro-next-card .nm{font-size:12px;color:#fff;font-weight:700;margin-bottom:2px;}
+.macro-next-card .dt{font-size:10px;color:var(--t2);}
+.macro-next-card .dday{display:inline-block;margin-top:4px;font-size:10px;font-weight:700;padding:1px 6px;background:rgba(255,193,7,.08);color:var(--amber);border:1px solid rgba(255,193,7,.2);}
+.macro-next-card .dday.soon{background:rgba(255,23,68,.1);color:var(--neg);border-color:rgba(255,23,68,.2);animation:dotBlink 2s infinite;}
+.macro-next-card .dday.today{background:var(--neg);color:#000;border-color:var(--neg);}
+.macro-mkt-head{display:flex;align-items:center;gap:8px;margin:16px 0 7px;font-size:10px;font-weight:700;letter-spacing:1.2px;text-transform:uppercase;color:var(--t2);padding-bottom:5px;border-bottom:1px solid var(--bd);}
+.macro-mkt-head .flag{font-size:13px;}
+.macro-table-wrap{overflow-x:auto;margin-bottom:4px;}
+.macro-table{width:100%;border-collapse:collapse;font-size:11px;}
+.macro-table th{padding:7px 10px;text-align:left;color:var(--t3);font-size:9px;font-weight:700;letter-spacing:1px;text-transform:uppercase;border-bottom:1px solid var(--bd);background:var(--bg);white-space:nowrap;}
+.macro-table th.r,.macro-table td.r{text-align:right;}
+.macro-table td{padding:7px 10px;border-bottom:1px solid var(--bd2);white-space:nowrap;font-variant-numeric:tabular-nums;color:var(--t2);}
+.macro-table tbody tr:hover{background:var(--s2);}
+.macro-table .ind-name{font-weight:600;color:#fff;}
+.macro-table .ind-name small{display:block;font-weight:400;color:var(--t3);font-size:9px;margin-top:1px;}
+.macro-table .val{color:#fff;font-weight:700;font-size:13px;}
+.macro-table .val .unit{font-size:9px;color:var(--t3);font-weight:400;margin-left:2px;}
+.macro-table .relday{color:var(--t3);font-size:9px;}
+.macro-table .nextday{color:var(--t2);}
+.macro-table .dd.soon{color:var(--amber);font-weight:700;}
+.macro-table .dd.today{color:var(--neg);font-weight:700;}
+.macro-table .dd.far{color:var(--t3);}
+.macro-disclaimer{margin-top:12px;padding:10px 12px;background:var(--bg);border:1px solid var(--bd);font-size:10px;color:var(--t3);line-height:1.6;}
+
+/* 별 아이콘 */
+.star-icon{display:inline-block;width:10px;height:10px;vertical-align:-1px;margin-right:3px;background:#fff;clip-path:polygon(50% 0%,62% 38%,100% 50%,62% 62%,50% 100%,38% 62%,0% 50%,38% 38%);}
+
+/* 스크롤바 */
+::-webkit-scrollbar{width:4px;height:4px;}
+::-webkit-scrollbar-track{background:transparent;}
+::-webkit-scrollbar-thumb{background:var(--bd);}
+::-webkit-scrollbar-thumb:hover{background:var(--t3);}
+
+/* 반응형 */
+@media(max-width:767px){
+  .shell{flex-direction:column;}
+  .sidebar{width:100%;border-right:none;border-bottom:1px solid var(--bd);}
+  .sb-nav{display:flex;overflow-x:auto;padding:0;}
+  .nav-item{font-family:'Helvetica Neue','Segoe UI',Arial,sans-serif;flex-shrink:0;border-left:none;border-bottom:2px solid transparent;padding:10px 14px;}
+  .nav-item.active{border-bottom-color:#fff;border-left-color:transparent;}
+  .content{flex:1;}
+  .wl-layout{grid-template-columns:1fr;}
+  .field-row,.field-row-2{grid-template-columns:1fr;}
+  .dash-grid{grid-template-columns:1fr;}
+}
+
 </style>
 </head>
 <body>
 
+<!-- ══ 인트로 (유지) ══ -->
 <div id="lux-intro-overlay">
   <div class="intro-center-box">
     <div class="intro-star-logo"></div>
     <div class="intro-text-box">
-      <div class="intro-title">LUX-ENGINE V9(beta)</div>
+      <div class="intro-title">LUX-ENGINE</div>
       <div class="intro-subtitle">Powered by BLAUENACHT</div>
     </div>
   </div>
 </div>
 
-<div class="app">
-  <div class="topbar">
-    <div class="brand-container">
-    <div class="lux-star-logo"></div>
-    <div class="lux-text-title">
-      <span>LUX-ENGINE V9(beta)</span>
-      <span class="lux-powered-by">Powered by BLAUENACHT</span>
-      <span class="live-indicator" id="liveIndicator" title="서버 데이터 갱신 상태">
-        <span class="live-dot" id="liveDot"></span>
-        <span id="liveText">연결 중...</span>
-      </span>
+<!-- ══ 셸 ══ -->
+<div class="shell">
+
+  <!-- ── 사이드바 ── -->
+  <nav class="sidebar">
+
+    <!-- 브랜드 -->
+    <div class="sb-brand">
+      <span class="sb-brand-logo"></span>
+      <span class="sb-brand-name">LUX-ENGINE</span>
+      <div class="sb-brand-sub">V9 BETA · BLAUENACHT</div>
     </div>
-  </div>
-    <div class="topbar-btns">
-      <button type="button" class="btn refresh" id="btnRefreshUS">US 시세조회</button>
-      <button type="button" class="btn refresh" id="btnRefreshKR">KR 시세조회</button>
-      <button type="button" class="btn logs" id="btnLogs">LOGS</button>
-      <button type="button" class="btn macro" id="btnMacro">경제지표</button>
-      <button type="button" class="btn macro" id="btnFx">환율</button>
-      <button type="button" class="btn macro" id="btnHeatmap">📊 S&P히트맵</button>
-      <button type="button" class="btn" id="btnSettings">SETTINGS</button>
-      <button type="button" class="btn" id="btnHolidayRecheck">📅 휴장 재확인</button>
-      <button type="button" class="btn" id="btnDebug">🔍 진단</button>
-      <button type="button" class="btn primary" id="btnTick">RUN NOW</button>
-    </div>
-  </div>
 
-  <div class="engine-status">
-    <span class="dot unknown" id="engineDot"></span>
-    <span id="engineText">엔진 상태 확인 중...</span>
-  </div>
-
-  <div class="market-status-banner" id="marketStatusBanner">
-    <span>🇺🇸 US: <b id="usMarketStatus">확인 중...</b></span>
-    <span>🇰🇷 KR: <b id="krMarketStatus">확인 중...</b></span>
-  </div>
-
-  <!-- [V8.6 Hybrid] LLM 일일 지시 배너 -->
-  <div class="llm-banner" id="llmBanner">
-    <div class="llm-banner-header">
-      <span class="llm-banner-title"><span class="star-icon"></span>CLAUDE LLM HYBRID</span>
-      <span class="llm-status-chip" id="llmStatusChip">CHECKING...</span>
-      <span id="llmHeaderRight" style="margin-left: auto; font-size: 10px; color: #94a3b8;"></span>
-    </div>
-    <div class="llm-banner-body" id="llmBannerBody">상태 확인 중...</div>
-    <div class="llm-meta" id="llmMeta" style="display:none;"></div>
-    <div class="llm-actions">
-      <button class="llm-btn" onclick="llmRefresh()">↻ 새로고침</button>
-      <button class="llm-btn" onclick="llmRun('us')">▶ US 분석 실행</button>
-      <button class="llm-btn" onclick="llmRun('kr')">▶ KR 분석 실행</button>
-      <button class="llm-btn" onclick="llmViewDetail()">📋 상세 보기</button>
-      <button class="llm-btn danger" onclick="llmClear()">✕ 지시 삭제</button>
-    </div>
-  </div>
-
-  <div id="tuneBanner" class="tune-banner" style="display:none;">
-    <b><span class="star-icon"></span>AUTO-TUNE:</b> <span id="tuneText"></span>
-  </div>
-
-  <div class="main">
-
-    <div class="grid-2">
-      <div class="panel">
-        <div class="panel-header"><div class="panel-title">[US] INDICES</div></div>
-        <div class="indices-row" id="indicesUS" style="grid-template-columns: 1fr 1fr 1fr;">
-          <div class="empty">대기 중...</div>
-        </div>
+    <!-- 상태 표시 -->
+    <div class="sb-status">
+      <div class="sb-engine">
+        <span class="dot unknown" id="engineDot"></span>
+        <span id="engineText" style="font-size:10px;">확인 중...</span>
       </div>
-      <div class="panel">
-        <div class="panel-header"><div class="panel-title">[KR] INDICES</div></div>
-        <div class="indices-row" id="indicesKR" style="grid-template-columns: 1fr 1fr;">
-          <div class="empty">대기 중...</div>
-        </div>
+      <div class="sb-market" id="marketStatusBanner">
+        <div class="sb-market-row">🇺🇸 <b id="usMarketStatus">—</b></div>
+        <div class="sb-market-row">🇰🇷 <b id="krMarketStatus">—</b></div>
+      </div>
+      <div class="sb-live">
+        <span class="live-indicator" id="liveIndicator">
+          <span class="live-dot" id="liveDot"></span>
+          <span id="liveText">연결 중...</span>
+        </span>
+      </div>
+      <div class="sb-pnl" id="positionsTotalPnl"></div>
+    </div>
+
+    <!-- 네비게이션 -->
+    <div class="sb-nav">
+      <div class="nav-item" data-page="dashboard">
+        <span class="nav-item-icon">◈</span>
+        <span class="nav-item-label">DASHBOARD</span>
+      </div>
+      <div class="nav-item" data-page="positions">
+        <span class="nav-item-icon">◉</span>
+        <span class="nav-item-label">POSITIONS</span>
+      </div>
+      <div class="nav-item" data-page="watchlist">
+        <span class="nav-item-icon">◎</span>
+        <span class="nav-item-label">WATCHLIST</span>
+      </div>
+      <div class="nav-item" data-page="commodities">
+        <span class="nav-item-icon">⬡</span>
+        <span class="nav-item-label">COMMODITIES</span>
+      </div>
+      <div class="nav-item" data-page="trades">
+        <span class="nav-item-icon">◷</span>
+        <span class="nav-item-label">TRADES</span>
       </div>
     </div>
 
-    <div class="grid-2">
-      <div class="panel">
-        <div class="panel-header">
-          <div class="panel-title">[US] PORTFOLIO</div>
+    <!-- 액션 버튼 -->
+    <div class="sb-actions">
+      <button type="button" class="sb-run-btn btn primary" id="btnTick">▶ RUN NOW</button>
+      <div class="sb-btn-row">
+        <button type="button" class="sb-btn btn refresh" id="btnRefreshUS">US</button>
+        <button type="button" class="sb-btn btn refresh" id="btnRefreshKR">KR</button>
+        <button type="button" class="sb-btn btn logs" id="btnLogs">LOG</button>
+      </div>
+      <div class="sb-btn-row">
+        <button type="button" class="sb-btn btn macro" id="btnMacro">지표</button>
+        <button type="button" class="sb-btn btn macro" id="btnFx">환율</button>
+        <button type="button" class="sb-btn btn macro" id="btnHeatmap">MAP</button>
+      </div>
+      <div class="sb-btn-row">
+        <button type="button" class="sb-btn btn" id="btnSettings">SETTINGS</button>
+        <button type="button" class="sb-btn btn" id="btnHolidayRecheck">휴장</button>
+        <button type="button" class="sb-btn btn" id="btnDebug">진단</button>
+      </div>
+    </div>
+  </nav>
+
+  <!-- ── 콘텐츠 ── -->
+  <main class="content">
+
+    <!-- ══ PAGE: DASHBOARD ══ -->
+    <div class="page" id="page-dashboard">
+
+      <!-- LLM 배너 -->
+      <div class="llm-banner" id="llmBanner">
+        <div class="llm-banner-header">
+          <span class="llm-banner-title"><span class="star-icon"></span>CLAUDE LLM HYBRID</span>
+          <span class="llm-status-chip" id="llmStatusChip">CHECKING...</span>
+          <span id="llmHeaderRight" style="margin-left:auto;font-size:10px;color:var(--t3);"></span>
+        </div>
+        <div class="llm-banner-body" id="llmBannerBody">상태 확인 중...</div>
+        <div class="llm-meta" id="llmMeta" style="display:none;"></div>
+        <div class="llm-actions">
+          <button class="llm-btn" onclick="llmRefresh()">↻ 새로고침</button>
+          <button class="llm-btn" onclick="llmRun('us')">▶ US 분석</button>
+          <button class="llm-btn" onclick="llmRun('kr')">▶ KR 분석</button>
+          <button class="llm-btn" onclick="llmViewDetail()">상세</button>
+          <button class="llm-btn danger" onclick="llmClear()">✕ 삭제</button>
+        </div>
+      </div>
+
+      <!-- 오토튠 배너 -->
+      <div id="tuneBanner" class="tune-banner" style="display:none;">
+        <b><span class="star-icon"></span>AUTO-TUNE:</b> <span id="tuneText"></span>
+      </div>
+
+      <!-- 포트폴리오 + 지수 그리드 -->
+      <div class="dash-grid">
+
+        <!-- US PORTFOLIO -->
+        <div class="dash-block">
+          <div class="dash-block-label">🇺🇸 US PORTFOLIO</div>
+          <div class="port-total" id="totalUS">—</div>
+          <div class="port-pnl" id="changeUS">—</div>
+          <div class="port-meta">
+            <div class="port-meta-item">
+              <span class="port-meta-label">투자금</span>
+              <span class="port-meta-value" id="investedUS">—</span>
+            </div>
+            <div class="port-meta-item">
+              <span class="port-meta-label">현금</span>
+              <span class="port-meta-value" id="cashUS">—</span>
+            </div>
+          </div>
           <div class="cfg-display" id="cfgDisplayUS"></div>
         </div>
-        <div class="summary-grid">
-          <div class="summary-item"><div class="summary-label">TOTAL</div><div class="summary-value" id="totalUS">-</div></div>
-          <div class="summary-item"><div class="summary-label">INVESTED</div><div class="summary-value" id="investedUS">-</div></div>
-          <div class="summary-item"><div class="summary-label">CASH</div><div class="summary-value" id="cashUS">-</div></div>
-          <div class="summary-item"><div class="summary-label">vs INITIAL</div><div class="summary-value" id="changeUS">-</div></div>
-        </div>
-      </div>
-      <div class="panel">
-        <div class="panel-header">
-          <div class="panel-title">[KR] PORTFOLIO</div>
+
+        <!-- KR PORTFOLIO -->
+        <div class="dash-block">
+          <div class="dash-block-label">🇰🇷 KR PORTFOLIO</div>
+          <div class="port-total" id="totalKR">—</div>
+          <div class="port-pnl" id="changeKR">—</div>
+          <div class="port-meta">
+            <div class="port-meta-item">
+              <span class="port-meta-label">투자금</span>
+              <span class="port-meta-value" id="investedKR">—</span>
+            </div>
+            <div class="port-meta-item">
+              <span class="port-meta-label">현금</span>
+              <span class="port-meta-value" id="cashKR">—</span>
+            </div>
+          </div>
           <div class="cfg-display" id="cfgDisplayKR"></div>
         </div>
-        <div class="summary-grid">
-          <div class="summary-item"><div class="summary-label">TOTAL</div><div class="summary-value" id="totalKR">-</div></div>
-          <div class="summary-item"><div class="summary-label">INVESTED</div><div class="summary-value" id="investedKR">-</div></div>
-          <div class="summary-item"><div class="summary-label">CASH</div><div class="summary-value" id="cashKR">-</div></div>
-          <div class="summary-item"><div class="summary-label">vs INITIAL</div><div class="summary-value" id="changeKR">-</div></div>
-        </div>
-      </div>
-    </div>
 
-    <div class="panel">
-      <div class="panel-header">
-        <div class="panel-title">CURRENT POSITIONS
-          <span id="positionsTotalPnl" style="margin-left:14px;font-size:12px;font-weight:500;letter-spacing:0.5px;"></span>
-        </div>
-        <button type="button" class="watchlist-toggle-btn" id="positionsToggleBtn">펼치기</button>
-      </div>
-      <div id="positionsBox" class="positions-collapsed"><div class="empty">No positions yet</div></div>
-    </div>
-
-    <div class="grid-2">
-      <div class="panel">
-        <div class="panel-header">
-          <div class="panel-title">[US] WATCHLIST <span class="wl-count" id="usCount"></span></div>
-          <div style="display:flex;gap:6px;align-items:center;">
-            <button type="button" class="wl-viewmode-btn active" id="viewMcapUS" data-market="us" data-mode="mcap">시총순</button>
-            <button type="button" class="wl-viewmode-btn" id="viewHeldUS" data-market="us" data-mode="held">보유종목</button>
-            <button type="button" class="watchlist-toggle-btn" id="btnToggleUS">펼치기</button>
+        <!-- US INDICES -->
+        <div class="dash-block">
+          <div class="dash-block-label">🇺🇸 US INDICES</div>
+          <div class="indices-row" id="indicesUS" style="grid-template-columns:1fr 1fr 1fr;">
+            <div class="empty">대기 중...</div>
           </div>
         </div>
-        <div class="wl-search-wrap">
-          <input type="text" class="wl-search" id="searchUS" placeholder="🔍 종목명 또는 심볼 검색 (예: 애플, AAPL)" autocomplete="off">
-        </div>
-        <div id="watchlistUSContainer"></div>
-      </div>
-      <div class="panel">
-        <div class="panel-header">
-          <div class="panel-title">[KR] WATCHLIST <span class="wl-count" id="krCount"></span></div>
-          <div style="display:flex;gap:6px;align-items:center;">
-            <button type="button" class="wl-viewmode-btn active" id="viewMcapKR" data-market="kr" data-mode="mcap">시총순</button>
-            <button type="button" class="wl-viewmode-btn" id="viewHeldKR" data-market="kr" data-mode="held">보유종목</button>
-            <button type="button" class="watchlist-toggle-btn" id="btnToggleKR">펼치기</button>
+
+        <!-- KR INDICES -->
+        <div class="dash-block">
+          <div class="dash-block-label">🇰🇷 KR INDICES</div>
+          <div class="indices-row" id="indicesKR" style="grid-template-columns:1fr 1fr;">
+            <div class="empty">대기 중...</div>
           </div>
         </div>
-        <div class="wl-search-wrap">
-          <input type="text" class="wl-search" id="searchKR" placeholder="🔍 종목명 또는 코드 검색 (예: 삼성전자, 005930)" autocomplete="off">
-        </div>
-        <div id="watchlistKRContainer"></div>
+
+      </div>
+    </div><!-- /dashboard -->
+
+    <!-- ══ PAGE: POSITIONS ══ -->
+    <div class="page" id="page-positions">
+      <div class="page-header">
+        <span class="page-title">CURRENT POSITIONS</span>
+        <button type="button" class="btn watchlist-toggle-btn" id="positionsToggleBtn">펼치기</button>
+      </div>
+      <div id="positionsBox" class="positions-collapsed">
+        <div class="empty">No positions yet</div>
       </div>
     </div>
 
-    <div class="panel" id="commoditiesPanel" style="border:1px solid var(--orange);">
-      <div class="panel-header" style="background:rgba(240,136,62,0.08);">
-        <div class="panel-title" style="color:#f0883e;text-shadow:0 0 10px rgba(240,136,62,0.6);">⛏ COMMODITIES · 원자재 (USD)</div>
-        <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;">
-          <span id="cmTradeInfo" style="font-size:10px;color:var(--dim);letter-spacing:0.5px;">거래: 매일 16:00 KST</span>
-          <button type="button" id="btnRunCM" style="font-size:10px;color:#fff;font-weight:bold;padding:5px 10px;background:#f0883e;border:none;border-radius:4px;cursor:pointer;letter-spacing:0.5px;">▶ 지금 실행</button>
-          <button type="button" id="btnResetCM" style="font-size:10px;color:#f85149;font-weight:bold;padding:5px 10px;background:transparent;border:1px solid #f85149;border-radius:4px;cursor:pointer;letter-spacing:0.5px;">↺ 원자재 RESET</button>
+    <!-- ══ PAGE: WATCHLIST ══ -->
+    <div class="page" id="page-watchlist">
+      <div class="wl-layout">
+
+        <!-- US -->
+        <div class="wl-pane">
+          <div class="wl-pane-header">
+            <div class="wl-pane-title">[US] WATCHLIST <span class="wl-count" id="usCount"></span></div>
+            <div class="wl-pane-actions">
+              <button type="button" class="wl-viewmode-btn active" id="viewMcapUS" data-market="us" data-mode="mcap">시총순</button>
+              <button type="button" class="wl-viewmode-btn" id="viewHeldUS" data-market="us" data-mode="held">보유</button>
+              <button type="button" class="watchlist-toggle-btn" id="btnToggleUS">펼치기</button>
+            </div>
+          </div>
+          <div class="wl-search-wrap">
+            <input type="text" class="wl-search" id="searchUS" placeholder="종목명 또는 심볼 검색" autocomplete="off">
+          </div>
+          <div class="wl-list-wrap">
+            <div id="watchlistUSContainer"></div>
+          </div>
+        </div>
+
+        <!-- KR -->
+        <div class="wl-pane">
+          <div class="wl-pane-header">
+            <div class="wl-pane-title">[KR] WATCHLIST <span class="wl-count" id="krCount"></span></div>
+            <div class="wl-pane-actions">
+              <button type="button" class="wl-viewmode-btn active" id="viewMcapKR" data-market="kr" data-mode="mcap">시총순</button>
+              <button type="button" class="wl-viewmode-btn" id="viewHeldKR" data-market="kr" data-mode="held">보유</button>
+              <button type="button" class="watchlist-toggle-btn" id="btnToggleKR">펼치기</button>
+            </div>
+          </div>
+          <div class="wl-search-wrap">
+            <input type="text" class="wl-search" id="searchKR" placeholder="종목명 또는 코드 검색" autocomplete="off">
+          </div>
+          <div class="wl-list-wrap">
+            <div id="watchlistKRContainer"></div>
+          </div>
+        </div>
+
+      </div>
+    </div><!-- /watchlist -->
+
+    <!-- ══ PAGE: COMMODITIES ══ -->
+    <div class="page" id="page-commodities">
+      <div class="page-header">
+        <span class="page-title">⛏ COMMODITIES · 원자재</span>
+        <div class="page-actions">
+          <span id="cmTradeInfo" style="font-size:10px;color:var(--t3);">거래: 매일 16:00 KST</span>
+          <button type="button" id="btnRunCM" class="btn">▶ 지금 실행</button>
+          <button type="button" id="btnResetCM" class="btn danger">↺ RESET</button>
         </div>
       </div>
-      <div class="summary-grid" style="border-bottom:1px solid var(--border);">
-        <div class="summary-item"><div class="summary-label">TOTAL</div><div class="summary-value" id="totalCM">-</div></div>
-        <div class="summary-item"><div class="summary-label">INVESTED</div><div class="summary-value" id="investedCM">-</div></div>
-        <div class="summary-item"><div class="summary-label">CASH</div><div class="summary-value" id="cashCM">-</div></div>
-        <div class="summary-item"><div class="summary-label">vs INITIAL</div><div class="summary-value" id="changeCM">-</div></div>
+      <div id="commoditiesPanel">
+        <div class="cm-summary-bar">
+          <div class="cm-stat"><div class="summary-label">TOTAL</div><div class="summary-value" id="totalCM">-</div></div>
+          <div class="cm-stat"><div class="summary-label">INVESTED</div><div class="summary-value" id="investedCM">-</div></div>
+          <div class="cm-stat"><div class="summary-label">CASH</div><div class="summary-value" id="cashCM">-</div></div>
+          <div class="cm-stat"><div class="summary-label">vs INITIAL</div><div class="summary-value" id="changeCM">-</div></div>
+        </div>
+        <div class="cm-section-label">POSITIONS</div>
+        <div id="cmPositionsBox"><div class="empty">No commodity positions yet</div></div>
+        <div class="cm-section-label">WATCHLIST</div>
+        <div id="cmWatchlistBox"><div class="empty">대기 중...</div></div>
       </div>
-      <div style="padding:6px 12px;font-size:10px;color:var(--orange);font-weight:bold;letter-spacing:1px;background:rgba(240,136,62,0.05);border-bottom:1px solid var(--border);">POSITIONS</div>
-      <div id="cmPositionsBox"><div class="empty">No commodity positions yet</div></div>
-      <div style="padding:6px 12px;font-size:10px;color:var(--dim);font-weight:bold;letter-spacing:1px;background:rgba(240,136,62,0.05);border-bottom:1px solid var(--border);border-top:1px solid var(--border);">WATCHLIST</div>
-      <div id="cmWatchlistBox"><div class="empty">대기 중...</div></div>
-    </div>
+    </div><!-- /commodities -->
 
-    <div class="panel">
-      <div class="panel-header" style="display:flex; justify-content:space-between; align-items:center;">
-        <div class="panel-title">RECENT TRADES</div>
-        <button type="button" id="btnDownloadRecent" style="font-size:11px; color:#fff; font-weight:bold; padding:5px 10px; background:#0ea5e9; border:none; border-radius:4px; cursor:pointer;">📥 CSV 다운로드</button>
+    <!-- ══ PAGE: TRADES ══ -->
+    <div class="page" id="page-trades">
+
+      <!-- RECENT TRADES -->
+      <div class="page-header">
+        <span class="page-title">RECENT TRADES</span>
+        <button type="button" id="btnDownloadRecent" class="btn">📥 CSV</button>
       </div>
       <div class="trades-toggle" id="tradesToggle">
         <div class="trades-summary" id="tradesSummary">
@@ -798,12 +969,11 @@ button.btn.loading::after { content: "조회 중…"; position: absolute; left: 
       <div class="trades-table" id="tradesTableBox">
         <div id="tradesBox"><div class="empty">No trades yet</div></div>
       </div>
-    </div>
 
-    <div class="panel">
-      <div class="panel-header" style="display:flex; justify-content:space-between; align-items:center;">
-        <div class="panel-title">ALL TRADE HISTORY</div>
-        <button type="button" id="btnDownloadAll" style="font-size:11px; color:#fff; font-weight:bold; padding:5px 10px; background:#10b981; border:none; border-radius:4px; cursor:pointer;">📥 전체 CSV 다운로드</button>
+      <!-- ALL TRADE HISTORY -->
+      <div class="page-header" style="margin-top:32px;">
+        <span class="page-title">ALL TRADE HISTORY</span>
+        <button type="button" id="btnDownloadAll" class="btn">📥 전체 CSV</button>
       </div>
       <div class="trades-toggle" id="allTradesToggle">
         <div class="trades-summary" id="allTradesSummary">
@@ -825,140 +995,95 @@ button.btn.loading::after { content: "조회 중…"; position: absolute; left: 
       <div class="trades-table" id="allTradesTableBox">
         <div id="allTradesBox"><div class="empty">No trades yet</div></div>
       </div>
-    </div>
 
-  </div>
-</div>
+    </div><!-- /trades -->
 
-<!-- 경제지표 (MACRO) 모달 -->
+  </main><!-- /content -->
+</div><!-- /shell -->
+
+<!-- ══ 경제지표 모달 ══ -->
 <div class="modal" id="macroModal">
   <div class="modal-macro">
     <h2>
       <span>📊 주요 경제지표</span>
       <span class="close-x" id="btnCloseMacro">✕</span>
     </h2>
-    <div class="macro-sub">미국 &amp; 한국 핵심 매크로 지표 · 발표일 / 다음 발표일 자동 D-day 계산 · 기준일 <b id="macroToday">—</b></div>
-    <div style="display:flex; align-items:center; justify-content:space-between; gap:10px; flex-wrap:wrap; margin-bottom:14px;">
-      <span id="macroStamp" style="font-size:10px; font-family:'IBM Plex Mono',monospace; color:var(--dim);">—</span>
-      <button class="llm-btn" id="btnMacroRefresh" style="font-size:11px;">↻ 지금 갱신</button>
+    <div class="macro-sub">미국 &amp; 한국 핵심 매크로 · 기준일 <b id="macroToday">—</b></div>
+    <div style="display:flex;align-items:center;justify-content:space-between;gap:10px;flex-wrap:wrap;margin-bottom:14px;">
+      <span id="macroStamp" style="font-size:10px;color:var(--t3);">—</span>
+      <button class="llm-btn" id="btnMacroRefresh">↻ 지금 갱신</button>
     </div>
-
-    <!-- 다음 발표 임박 카드 (JS가 채움) -->
     <div class="macro-next" id="macroNext"></div>
-
-    <!-- 미국 -->
     <div class="macro-mkt-head"><span class="flag">🇺🇸</span> 미국 (US)</div>
     <div class="macro-table-wrap">
       <table class="macro-table">
-        <thead>
-          <tr>
-            <th>지표</th>
-            <th class="r">최근치</th>
-            <th>최근 발표일</th>
-            <th>다음 발표일</th>
-            <th class="r">D-day</th>
-          </tr>
-        </thead>
+        <thead><tr><th>지표</th><th class="r">최근치</th><th>최근 발표일</th><th>다음 발표일</th><th class="r">D-day</th></tr></thead>
         <tbody id="macroUsBody"></tbody>
       </table>
     </div>
-
-    <!-- 한국 -->
     <div class="macro-mkt-head"><span class="flag">🇰🇷</span> 한국 (KR)</div>
     <div class="macro-table-wrap">
       <table class="macro-table">
-        <thead>
-          <tr>
-            <th>지표</th>
-            <th class="r">최근치</th>
-            <th>최근 발표일</th>
-            <th>다음 발표일</th>
-            <th class="r">D-day</th>
-          </tr>
-        </thead>
+        <thead><tr><th>지표</th><th class="r">최근치</th><th>최근 발표일</th><th>다음 발표일</th><th class="r">D-day</th></tr></thead>
         <tbody id="macroKrBody"></tbody>
       </table>
     </div>
-
-    <div class="macro-disclaimer">
-      ※ <b>수치</b>는 매일 07:00(KST) Claude가 web_search로 공식 출처(BLS·BEA·연준·한국은행·통계청 등)를 조회해 자동 갱신합니다.
-      검색으로 확인되지 않은 값은 직전 값을 유지하며, ↗ 아이콘으로 출처를 열 수 있습니다.
-      <b>발표 일정</b>은 공식 캘린더 기준으로 코드에 관리되며 D-day는 기준일 대비 자동 계산됩니다.
-      자동 수집 값은 참고용이므로 매매 등 중요한 판단 전에는 공식 사이트에서 최종 확인하세요.
-    </div>
+    <div class="macro-disclaimer">※ 수치는 매일 07:00(KST) 자동 갱신됩니다. 참고용이므로 공식 사이트에서 확인하세요.</div>
   </div>
 </div>
 
-<!-- 환율 모달 -->
+<!-- ══ 환율 모달 ══ -->
 <div class="modal" id="fxModal">
   <div class="modal-macro">
     <h2>
       <span>💱 환율</span>
       <span class="close-x" id="btnCloseFx">✕</span>
     </h2>
-    <div class="macro-sub">주요 통화 환율 · 달러 인덱스 · 매일 06:30(KST) 야후 파이낸스 자동 갱신</div>
-    <div style="display:flex; align-items:center; justify-content:space-between; gap:10px; flex-wrap:wrap; margin-bottom:14px;">
-      <span id="fxStamp" style="font-size:10px; font-family:'IBM Plex Mono',monospace; color:var(--dim);">—</span>
-      <button class="llm-btn" id="btnFxRefresh" style="font-size:11px;">↻ 지금 갱신</button>
+    <div class="macro-sub">주요 통화 환율 · 매일 06:30(KST) 자동 갱신</div>
+    <div style="display:flex;align-items:center;justify-content:space-between;gap:10px;flex-wrap:wrap;margin-bottom:14px;">
+      <span id="fxStamp" style="font-size:10px;color:var(--t3);">—</span>
+      <button class="llm-btn" id="btnFxRefresh">↻ 지금 갱신</button>
     </div>
     <div class="macro-table-wrap">
       <table class="macro-table">
-        <thead>
-          <tr>
-            <th>통화쌍</th>
-            <th class="r">현재가</th>
-            <th class="r">전일대비</th>
-          </tr>
-        </thead>
+        <thead><tr><th>통화쌍</th><th class="r">현재가</th><th class="r">전일대비</th></tr></thead>
         <tbody id="fxBody"></tbody>
       </table>
     </div>
-    <div class="macro-disclaimer">
-      ※ 환율은 야후 파이낸스 실시간 시세 기준으로 매일 06:30(KST) 자동 갱신되며, "↻ 지금 갱신"으로 즉시 조회할 수 있습니다.
-      엔/원은 100엔당 원화로 표시합니다(야후 직접 페어가 부정확하면 달러/원 ÷ 달러/엔 으로 환산). 참고용이므로 실거래 전 공식 고시환율을 확인하세요.
-    </div>
+    <div class="macro-disclaimer">※ 야후 파이낸스 기준. 실거래 전 공식 고시환율을 확인하세요.</div>
   </div>
 </div>
 
-<!-- S&P 500 히트맵 모달 -->
+<!-- ══ 히트맵 모달 ══ -->
 <div class="modal" id="heatmapModal" style="padding:0;">
-  <div style="width:95%;max-width:1300px;background:var(--panel);border:1px solid var(--border);border-radius:8px;margin:auto;padding:20px;max-height:90vh;overflow-y:auto;box-shadow:0 4px 12px rgba(0,0,0,0.3);">
+  <div style="width:95%;max-width:1300px;background:var(--s1);border:1px solid var(--bd);margin:auto;padding:20px;max-height:90vh;overflow-y:auto;">
     <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:16px;flex-wrap:wrap;gap:10px;">
-      <h2 style="margin:0;color:#ffffff;font-size:18px;letter-spacing:1px;">
-        📊 S&P 500 마켓 뷰
-      </h2>
-      <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;">
-        <button class="llm-btn" id="btnHeatmapRefresh" style="font-size:11px;">↻ 새로고침</button>
-        <span class="close-x" id="btnCloseHeatmap" style="cursor:pointer;font-size:20px;">✕</span>
+      <h2 style="margin:0;color:#fff;font-size:14px;font-weight:700;letter-spacing:1.5px;text-transform:uppercase;">📊 S&P 500 MARKET VIEW</h2>
+      <div style="display:flex;gap:8px;align-items:center;">
+        <button class="llm-btn" id="btnHeatmapRefresh">↻ 새로고침</button>
+        <span id="btnCloseHeatmap" style="cursor:pointer;font-size:18px;color:var(--t2);">✕</span>
       </div>
     </div>
-    
-    <!-- 히트맵 탭 (TradingView Stock Heatmap 위젯) -->
     <div id="heatmapChartView">
-      <div style="font-size:11px;color:var(--dim);margin-bottom:12px;padding-bottom:10px;border-bottom:1px solid var(--border);letter-spacing:0.5px;">
-        💡 S&P 500 히트맵 | 상자 크기 = 시가총액, 색상 = 등락(초록↑/빨강↓) | 섹터별 그룹 · 장 중 실시간 갱신
+      <div style="font-size:10px;color:var(--t3);margin-bottom:12px;padding-bottom:10px;border-bottom:1px solid var(--bd);">
+        S&P 500 히트맵 · 상자 크기 = 시가총액, 색상 = 등락 · 섹터별 그룹
       </div>
-      <div id="tvHeatmapContainer" style="width:100%;height:650px;border-radius:6px;background:#0a0e1a;overflow:hidden;">
+      <div id="tvHeatmapContainer" style="width:100%;height:650px;background:#000;overflow:hidden;">
         <div class="tradingview-widget-container" style="height:100%;width:100%;">
           <div class="tradingview-widget-container__widget" style="height:100%;width:100%;"></div>
         </div>
       </div>
-      <div style="font-size:10px;color:var(--faint);margin-top:12px;padding-top:12px;border-top:1px solid var(--border);line-height:1.6;">
-        S&P 500 (SPX500) 시가총액 상위 종목 · 섹터별 분류 | 
-        데이터 제공: TradingView | 
-        장 종료 후엔 마지막 거래 기준 표시 (실시간 갱신은 장 중에만)
-      </div>
     </div>
   </div>
 </div>
 
-<!-- LOGS 모달 -->
+<!-- ══ 로그 모달 ══ -->
 <div class="modal" id="logsModal">
   <div class="modal-logs">
-    <h2 style="display:flex; justify-content:space-between; align-items:center;">
-      <span>📋 ENGINE LOGS</span>
-      <div style="display:flex; gap:10px; align-items:center;">
-        <button type="button" id="btnDownloadLogs" style="font-size:11px; color:#fff; font-weight:bold; padding:5px 10px; background:#0ea5e9; border:none; border-radius:4px; cursor:pointer;">📥 로그 CSV</button>
+    <h2>
+      <span>ENGINE LOGS</span>
+      <div style="display:flex;gap:10px;align-items:center;">
+        <button type="button" id="btnDownloadLogs" class="btn">📥 CSV</button>
         <span class="close-x" id="btnCloseLogs">✕</span>
       </div>
     </h2>
@@ -966,7 +1091,7 @@ button.btn.loading::after { content: "조회 중…"; position: absolute; left: 
       <input type="text" class="logs-search" id="logsSearch" placeholder="검색 (심볼/메시지/RSI 등)...">
       <span class="logs-info" id="logsInfo">0 / 0</span>
     </div>
-    <div class="log-filter" style="margin-bottom: 12px;">
+    <div class="log-filter" style="margin-bottom:10px;">
       <button data-filter="ALL" class="active">ALL</button>
       <button data-filter="TRADE">TRADE</button>
       <button data-filter="TUNE">TUNE</button>
@@ -981,67 +1106,36 @@ button.btn.loading::after { content: "조회 중…"; position: absolute; left: 
   </div>
 </div>
 
-<!-- SETTINGS 모달 -->
+<!-- ══ SETTINGS 모달 ══ -->
 <div class="modal" id="settingsModal">
   <div class="modal-content">
     <div class="settings-epigraph">
-      <span class="verse">Im stillen Liebestraum verglüht die blaue Nacht<br>für die Wintertulpen zur glühenden Morgenröte.</span>
+      <span class="verse">Im stillen Liebestraum verglüht die blaue Nacht — für die Wintertulpen zur glühenden Morgenröte.</span>
     </div>
-    <h2>⚙ SETTINGS</h2>
-
-    <div class="checkbox-row">
-      <input type="checkbox" id="cfgAutoTune">
-      <label for="cfgAutoTune">AUTO-TUNE 활성화 (엔진이 스스로 파라미터 조정)</label>
-    </div>
-
-    <div class="checkbox-row">
-      <input type="checkbox" id="cfgMarketHoursOnly">
-      <label for="cfgMarketHoursOnly">정규장 시간에만 거래 (권장)</label>
-    </div>
-
-    <div class="section-title">초기 자본금 (RESET 시 적용)</div>
+    <h2>SETTINGS</h2>
+    <div class="checkbox-row"><input type="checkbox" id="cfgAutoTune"><label for="cfgAutoTune">AUTO-TUNE 활성화</label></div>
+    <div class="checkbox-row"><input type="checkbox" id="cfgMarketHoursOnly"><label for="cfgMarketHoursOnly">정규장 시간에만 거래 (권장)</label></div>
+    <div class="section-title" style="margin-top:10px;">초기 자본금</div>
     <div class="field-row-2">
       <div class="field"><label>US 초기자금 ($)</label><input type="number" id="cfgInitCashUS" min="1000" step="1000"></div>
       <div class="field"><label>KR 초기자금 (₩)</label><input type="number" id="cfgInitCashKR" min="100000" step="100000"></div>
     </div>
     <div class="hint">※ 자본금은 SETTINGS 저장 후 RESET ALL DATA를 눌러야 적용됩니다.</div>
-
     <div class="section-divider"></div>
     <div class="section-title">TICKERS</div>
-    <div class="field">
-      <label>US TICKERS (콤마 구분)</label>
-      <textarea id="cfgUS"></textarea>
-    </div>
-    <div class="field">
-      <label>KR TICKERS (예: 005930.KS)</label>
-      <textarea id="cfgKR"></textarea>
-    </div>
+    <div class="field"><label>US TICKERS (콤마 구분)</label><textarea id="cfgUS"></textarea></div>
+    <div class="field"><label>KR TICKERS (예: 005930.KS)</label><textarea id="cfgKR"></textarea></div>
     <button type="button" class="btn" id="btnResetTickers" style="margin-bottom:10px;">티커 기본값으로 복원</button>
-
     <div class="section-divider"></div>
-    <div class="section-title">STRATEGIES (V9(beta) 멀티 전략)</div>
-    <div class="hint" style="margin-bottom:8px;">활성 전략을 켜고 끄세요. 같은 종목이라도 다른 전략이면 별도 포지션이 생성됩니다.</div>
-    <div class="field-row">
-      <div class="checkbox-row"><input type="checkbox" id="cfgStratSwing"><label for="cfgStratSwing"><b>SWING</b> (4시간~7일, 풀백/반전)</label></div>
-    </div>
-    <div class="field-row">
-      <div class="checkbox-row"><input type="checkbox" id="cfgStratDay"><label for="cfgStratDay"><b>DAY</b> (수시간, 갭하락 후 반등)</label></div>
-    </div>
-    <div class="field-row">
-      <div class="checkbox-row"><input type="checkbox" id="cfgStratMomentum"><label for="cfgStratMomentum"><b>MOMENTUM</b> (5~30일, 신고가 돌파/추세)</label></div>
-    </div>
-    <div class="field-row">
-      <div class="checkbox-row"><input type="checkbox" id="cfgStratMeanrev"><label for="cfgStratMeanrev"><b>MEANREV</b> (1~5일, 극단 과매도 반전)</label></div>
-    </div>
-
-    <!-- [V11] Claude LLM Hybrid 토글 -->
-    <div class="section-title" style="margin-top:14px;">CLAUDE LLM HYBRID</div>
-    <div class="field-row">
-      <div class="checkbox-row"><input type="checkbox" id="cfgLlmEnabled"><label for="cfgLlmEnabled"><b>LLM 일일 지시 사용</b> (ANTHROPIC_API_KEY 필요)</label></div>
-    </div>
-    <div class="hint" style="margin-bottom:8px;">켜면 매일 Claude가 시장을 분석해 sizing·손절·매수신호 ON/OFF를 조정합니다. API 키가 없으면 자동으로 기본(V8.5) 로직으로 작동합니다.</div>
-
-    <div class="section-title" style="margin-top:14px;">POSITION SIZE (전략별 %, NEUTRAL/BULL/BEAR multiplier)</div>
+    <div class="section-title">STRATEGIES</div>
+    <div class="checkbox-row"><input type="checkbox" id="cfgStratSwing"><label for="cfgStratSwing"><b>SWING</b> (4시간~7일)</label></div>
+    <div class="checkbox-row"><input type="checkbox" id="cfgStratDay"><label for="cfgStratDay"><b>DAY</b> (수시간)</label></div>
+    <div class="checkbox-row"><input type="checkbox" id="cfgStratMomentum"><label for="cfgStratMomentum"><b>MOMENTUM</b> (5~30일)</label></div>
+    <div class="checkbox-row"><input type="checkbox" id="cfgStratMeanrev"><label for="cfgStratMeanrev"><b>MEANREV</b> (1~5일)</label></div>
+    <div class="section-title" style="margin-top:12px;">CLAUDE LLM HYBRID</div>
+    <div class="checkbox-row"><input type="checkbox" id="cfgLlmEnabled"><label for="cfgLlmEnabled"><b>LLM 일일 지시 사용</b></label></div>
+    <div class="hint" style="margin-bottom:8px;">켜면 매일 Claude가 시장을 분석해 sizing·손절·매수신호 ON/OFF를 조정합니다.</div>
+    <div class="section-title" style="margin-top:12px;">POSITION SIZE</div>
     <div class="field-row">
       <div class="field"><label>SWING base</label><input type="number" id="cfgSizeSwingBase" min="1" max="100" step="0.5"></div>
       <div class="field"><label>SWING ×BULL</label><input type="number" id="cfgSizeSwingBull" min="0" max="3" step="0.1"></div>
@@ -1063,18 +1157,17 @@ button.btn.loading::after { content: "조회 중…"; position: absolute; left: 
       <div class="field"><label>MR ×BEAR</label><input type="number" id="cfgSizeMrBear" min="0" max="3" step="0.1"></div>
     </div>
     <div class="field-row">
-      <div class="field"><label>Cross-strategy 보너스 (동시 신호 시 가중치)</label><input type="number" id="cfgCrossConf" min="1" max="3" step="0.1"></div>
+      <div class="field"><label>Cross-strategy 보너스</label><input type="number" id="cfgCrossConf" min="1" max="3" step="0.1"></div>
     </div>
-
     <div class="section-divider"></div>
-    <div class="section-title">SWING RULES (스윙 매매 룰)</div>
+    <div class="section-title">SWING RULES</div>
     <div class="field-row">
       <div class="field"><label>StopLoss %</label><input type="number" id="cfgStopLoss" min="0.5" max="50" step="0.5"></div>
-      <div class="field"><label>TakeProfit1 % (절반매도)</label><input type="number" id="cfgTakeProfit1" min="0.5" max="50" step="0.5"></div>
-      <div class="field"><label>TakeProfit2 % (전량매도)</label><input type="number" id="cfgTakeProfit2" min="0.5" max="50" step="0.5"></div>
+      <div class="field"><label>TakeProfit1 %</label><input type="number" id="cfgTakeProfit1" min="0.5" max="50" step="0.5"></div>
+      <div class="field"><label>TakeProfit2 %</label><input type="number" id="cfgTakeProfit2" min="0.5" max="50" step="0.5"></div>
     </div>
     <div class="field-row">
-      <div class="field"><label>Min Hold (hours)</label><input type="number" id="cfgMinHoldHours" min="0" max="48" step="0.5"></div>
+      <div class="field"><label>Min Hold (hrs)</label><input type="number" id="cfgMinHoldHours" min="0" max="48" step="0.5"></div>
       <div class="field"><label>Time Stop (days)</label><input type="number" id="cfgTimeStopDays" min="1" max="30"></div>
       <div class="field"><label>Time Max (days)</label><input type="number" id="cfgTimeStopMaxDays" min="1" max="60"></div>
     </div>
@@ -1083,9 +1176,8 @@ button.btn.loading::after { content: "조회 중…"; position: absolute; left: 
       <div class="field"><label>Trail Drop %</label><input type="number" id="cfgTrailDropPct" min="0.5" max="20" step="0.5"></div>
       <div class="field"><label>ATR Stop x</label><input type="number" id="cfgAtrStopMult" min="0.5" max="6" step="0.1"></div>
     </div>
-
     <div class="section-divider"></div>
-    <div class="section-title">COMMON STRATEGY (공통 지표)</div>
+    <div class="section-title">COMMON</div>
     <div class="field-row">
       <div class="field"><label>RSI Buy</label><input type="number" id="cfgRsiBuy" min="1" max="99"></div>
       <div class="field"><label>RSI Sell</label><input type="number" id="cfgRsiSell" min="1" max="99"></div>
@@ -1096,7 +1188,6 @@ button.btn.loading::after { content: "조회 중…"; position: absolute; left: 
       <div class="field"><label>Market Crash %</label><input type="number" id="cfgMarketCrashPct" max="0" step="0.5"></div>
       <div class="field"><label>MA Period</label><input type="number" id="cfgMaPeriod" min="2" max="120"></div>
     </div>
-
     <div class="section-divider"></div>
     <div class="section-title">ATR / BB</div>
     <div class="field-row">
@@ -1104,7 +1195,6 @@ button.btn.loading::after { content: "조회 중…"; position: absolute; left: 
       <div class="field"><label>BB Std x</label><input type="number" id="cfgBbStdMult" min="0.5" max="4" step="0.1"></div>
       <div class="field"><label>Cache (min)</label><input type="number" id="cfgDailyCacheMinutes" min="1" max="120"></div>
     </div>
-
     <div class="section-divider"></div>
     <div class="section-title">FEES</div>
     <div class="field-row">
@@ -1112,54 +1202,32 @@ button.btn.loading::after { content: "조회 중…"; position: absolute; left: 
       <div class="field"><label>KR Fee</label><input type="number" id="cfgFeeKR" min="0" max="0.05" step="0.00001"></div>
       <div class="field"><label>KR Sell Tax</label><input type="number" id="cfgKrSellTax" min="0" max="0.05" step="0.0001"></div>
     </div>
-
-    <div class="section-title">CASH MANAGEMENT (현금 입출금)</div>
-    <div style="font-size:11px; color:var(--dim); margin-bottom:8px;">
+    <div class="section-title">CASH MANAGEMENT</div>
+    <div style="font-size:11px;color:var(--t2);margin-bottom:8px;">
       현재 cash: <b id="cfgCurrentCashUS">-</b> · <b id="cfgCurrentCashKR">-</b>
-      <span style="color:var(--faint); margin-left:8px;">(음수 입력 시 출금)</span>
     </div>
     <div class="field-row">
-      <div class="field"><label>US 추가 ($)</label><input type="number" id="cfgAddCashUS" step="100" placeholder="예: 90000"></div>
-      <div class="field"><label>KR 추가 (₩)</label><input type="number" id="cfgAddCashKR" step="100000" placeholder="예: 90000000"></div>
-      <div class="field" style="display:flex; align-items:flex-end;">
-        <button type="button" class="btn primary" id="btnAddCash" style="width:100%;">CASH 추가</button>
-      </div>
+      <div class="field"><label>US 추가 ($)</label><input type="number" id="cfgAddCashUS" step="100"></div>
+      <div class="field"><label>KR 추가 (₩)</label><input type="number" id="cfgAddCashKR" step="100000"></div>
+      <div class="field" style="display:flex;align-items:flex-end;"><button type="button" class="btn primary" id="btnAddCash" style="width:100%;">CASH 추가</button></div>
     </div>
-
-    <div style="font-size:11px; color:var(--dim); margin-top:14px; margin-bottom:6px;">
-      <b>vs INITIAL 보정</b> — 누적 입금액 직접 설정 (수익률 계산에서 제외할 금액)
-    </div>
-    <div style="font-size:11px; color:var(--faint); margin-bottom:8px;">
-      현재 deposits: <b id="cfgCurrentDepositsUS">-</b> · <b id="cfgCurrentDepositsKR">-</b>
-      <span style="margin-left:8px;">코드 변경 이전에 추가한 금액을 여기 넣으면 vs INITIAL이 정확해집니다</span>
-    </div>
+    <div style="font-size:11px;color:var(--t2);margin-top:12px;margin-bottom:4px;"><b>vs INITIAL 보정</b></div>
+    <div style="font-size:11px;color:var(--t3);margin-bottom:8px;">deposits: <b id="cfgCurrentDepositsUS">-</b> · <b id="cfgCurrentDepositsKR">-</b></div>
     <div class="field-row">
-      <div class="field"><label>US deposits ($)</label><input type="number" id="cfgSetDepositsUS" step="100" placeholder="누적 입금액"></div>
-      <div class="field"><label>KR deposits (₩)</label><input type="number" id="cfgSetDepositsKR" step="100000" placeholder="누적 입금액"></div>
-      <div class="field" style="display:flex; align-items:flex-end;">
-        <button type="button" class="btn" id="btnSetDeposits" style="width:100%;">DEPOSITS 설정</button>
-      </div>
+      <div class="field"><label>US deposits ($)</label><input type="number" id="cfgSetDepositsUS" step="100"></div>
+      <div class="field"><label>KR deposits (₩)</label><input type="number" id="cfgSetDepositsKR" step="100000"></div>
+      <div class="field" style="display:flex;align-items:flex-end;"><button type="button" class="btn" id="btnSetDeposits" style="width:100%;">설정</button></div>
     </div>
     <div style="margin-top:8px;">
-      <button type="button" class="btn" id="btnAutoFixDeposits" style="width:100%; font-size:11px;">
-        🔧 vs INITIAL을 현재 포지션 PnL과 일치시키기 (자동 보정)
-      </button>
-      <div style="font-size:10px; color:var(--faint); margin-top:4px;">
-        클릭 시: deposits = (cash + 평가액) − initialCash − 포지션PnL합계 로 계산. 입금/출금으로 vs Initial이 왜곡됐을 때 사용.
-      </div>
+      <button type="button" class="btn" id="btnAutoFixDeposits" style="width:100%;font-size:10px;">🔧 vs INITIAL 자동 보정</button>
     </div>
-
-    <div style="border-top:1px solid var(--border); margin-top:16px; padding-top:14px;">
-      <div style="font-size:12px; color:var(--text); margin-bottom:8px; font-weight:600;">시장별 리셋 (해당 시장만 초기화 · 다른 시장 보존)</div>
-      <div style="display:flex; gap:8px;">
+    <div style="border-top:1px solid var(--bd);margin-top:16px;padding-top:14px;">
+      <div style="font-size:11px;color:var(--t1);margin-bottom:8px;font-weight:700;">시장별 리셋</div>
+      <div style="display:flex;gap:8px;">
         <button type="button" class="btn" id="btnResetUS">♻ US 리셋</button>
         <button type="button" class="btn" id="btnResetKR">♻ KR 리셋</button>
       </div>
-      <div style="font-size:10px; color:var(--faint); margin-top:4px;">
-        해당 시장의 거래내역·포지션을 삭제하고 현금을 초기금액으로 복원합니다. US를 살리고 KR만 초기화하려면 KR 리셋만 누르세요.
-      </div>
     </div>
-
     <div class="modal-actions">
       <button type="button" class="btn danger" id="btnReset">RESET ALL DATA</button>
       <button type="button" class="btn" id="btnCancelSettings">CANCEL</button>
@@ -3400,5 +3468,26 @@ window.addEventListener('DOMContentLoaded', () => {
   }, 4200); // SpaceX 스타일: 타이포 완성 후 잠시 머물렀다 부드럽게 페이드아웃
 });
 </script>
+
+<script>
+// LUX-ENGINE 페이지 전환 (원본 JS와 독립 동작)
+(function(){
+  function showPage(id){
+    document.querySelectorAll('.page').forEach(function(p){p.classList.remove('active');});
+    document.querySelectorAll('.nav-item').forEach(function(n){n.classList.remove('active');});
+    var pg=document.getElementById('page-'+id);
+    if(pg) pg.classList.add('active');
+    var ni=document.querySelector('[data-page="'+id+'"]');
+    if(ni) ni.classList.add('active');
+    try{localStorage.setItem('luxPage',id);}catch(e){}
+  }
+  document.querySelectorAll('.nav-item').forEach(function(item){
+    item.addEventListener('click',function(){showPage(this.getAttribute('data-page'));});
+  });
+  try{showPage(localStorage.getItem('luxPage')||'dashboard');}catch(e){showPage('dashboard');}
+})();
+</script>
+
+
 </body>
 </html>
