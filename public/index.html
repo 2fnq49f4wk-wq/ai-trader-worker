@@ -109,7 +109,6 @@ body{
   100%{opacity:1;filter:blur(0px);letter-spacing:8px;}
 }
 @keyframes spacexSubIn{0%{opacity:0;letter-spacing:10px;}100%{opacity:1;letter-spacing:5px;}}
-}
 
 /* ── 셸 레이아웃 ── */
 .shell{display:flex;height:100vh;height:100dvh;overflow:hidden;}
@@ -155,7 +154,7 @@ body{
   clip-path:polygon(50% 0%,62% 38%,100% 50%,62% 62%,50% 100%,38% 62%,0% 50%,38% 38%);
 }
 .sb-brand-logo::after{
-  content:'';position:absolute;width:72%;height:72%;
+  content:'';position:absolute;width:72%;height:72%;top:14%;left:14%;
   background:conic-gradient(
     from 22.5deg,
     #ffffff 0deg 22.5deg,#4d5259 22.5deg 45deg,
@@ -754,8 +753,8 @@ button.btn.loading::after{content:'조회 중…';position:absolute;inset:0;disp
   .content-topbar{grid-template-columns:1fr 1fr;}
 }
 
-/* ── iPad 최적화 (가로 1024~1366 / 세로 768~834) ── */
-@media (min-width:768px) and (max-width:1366px){
+/* ── iPad 최적화 (가로 1024~1440 / 세로 768~834) ── */
+@media (min-width:768px) and (max-width:1440px){
   .sidebar{width:240px;}
   /* 터치 타깃 확대 */
   .nav-item{padding:13px 18px;font-size:12px;}
@@ -782,7 +781,7 @@ button.btn.loading::after{content:'조회 중…';position:absolute;inset:0;disp
 }
 
 /* iPad 가로: 정보바 4열 유지, 대시보드 2열 */
-@media (min-width:1024px) and (max-width:1366px) and (orientation:landscape){
+@media (min-width:1024px) and (max-width:1440px) and (orientation:landscape){
   .content-topbar{grid-template-columns:1fr 1fr 1fr 1fr;}
   .dash-grid{grid-template-columns:1fr 1fr;}
 }
