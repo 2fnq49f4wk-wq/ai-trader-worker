@@ -445,7 +445,7 @@ button.btn.loading::after{content:'조회 중…';position:absolute;inset:0;disp
 .positions-collapsed.expanded .table-wrap{max-height:none;}
 
 /* ── WATCHLIST 페이지 ── */
-.wl-layout{display:grid;grid-template-columns:1fr 1fr;gap:0;height:calc(100vh - 61px);overflow:hidden;}
+.wl-layout{display:grid;grid-template-columns:1fr 1fr;gap:0;height:100%;overflow:hidden;}
 @media(max-width:768px){.wl-layout{grid-template-columns:1fr;}}
 .wl-pane{display:flex;flex-direction:column;border-right:1px solid var(--bd);overflow:hidden;}
 .wl-pane:last-child{border-right:none;}
@@ -671,7 +671,57 @@ button.btn.loading::after{content:'조회 중…';position:absolute;inset:0;disp
 ::-webkit-scrollbar-thumb{background:var(--bd);}
 ::-webkit-scrollbar-thumb:hover{background:var(--t3);}
 
+/* ── 우측 상단 고정 정보 바 ── */
+.content-topbar{
+  display:grid;
+  grid-template-columns:1fr 1fr 1fr 1fr;
+  gap:0;
+  border-bottom:2px solid var(--bd);
+  position:sticky;
+  top:0;z-index:20;
+  background:var(--s1);
+  flex-shrink:0;
+}
+.topbar-block{
+  padding:12px 18px;
+  border-right:1px solid var(--bd);
+}
+.topbar-block:last-child{border-right:none;}
+.topbar-label{
+  font-size:9px;font-weight:700;color:var(--t3);
+  text-transform:uppercase;letter-spacing:1.2px;
+  margin-bottom:4px;
+}
+.topbar-value{
+  font-size:17px;font-weight:700;color:#fff;
+  font-variant-numeric:tabular-nums;
+  white-space:nowrap;overflow:hidden;text-overflow:ellipsis;
+}
+.topbar-sub{
+  font-size:11px;font-weight:600;margin-top:2px;
+  font-variant-numeric:tabular-nums;color:var(--t2);
+}
+.topbar-sub.pos{color:var(--pos)!important;}
+.topbar-sub.neg{color:var(--neg)!important;}
+
+/* content 안을 flex column 으로 — topbar + 페이지 순서 */
+.content{
+  display:flex!important;
+  flex-direction:column!important;
+  overflow-y:hidden!important;
+}
+.page.active{
+  flex:1;
+  min-height:0;
+  overflow-y:auto;
+}
+.page.active::-webkit-scrollbar{width:4px;}
+.page.active::-webkit-scrollbar-thumb{background:var(--bd);}
+
 /* 반응형 */
+@media(max-width:900px){
+  .content-topbar{grid-template-columns:1fr 1fr;}
+}
 @media(max-width:767px){
   .shell{flex-direction:column;}
   .sidebar{width:100%;border-right:none;border-bottom:1px solid var(--bd);}
@@ -682,6 +732,7 @@ button.btn.loading::after{content:'조회 중…';position:absolute;inset:0;disp
   .wl-layout{grid-template-columns:1fr;}
   .field-row,.field-row-2{grid-template-columns:1fr;}
   .dash-grid{grid-template-columns:1fr;}
+  .content-topbar{grid-template-columns:1fr 1fr;}
 }
 
 </style>
@@ -778,6 +829,30 @@ button.btn.loading::after{content:'조회 중…';position:absolute;inset:0;disp
 
   <!-- ── 콘텐츠 ── -->
   <main class="content">
+
+    <!-- ══ 우측 상단 고정 정보 바 ══ -->
+    <div class="content-topbar" id="contentTopbar">
+      <div class="topbar-block">
+        <div class="topbar-label">🇺🇸 US PORTFOLIO</div>
+        <div class="topbar-value" id="topbarTotalUS">—</div>
+        <div class="topbar-sub" id="topbarChangeUS">—</div>
+      </div>
+      <div class="topbar-block">
+        <div class="topbar-label">🇰🇷 KR PORTFOLIO</div>
+        <div class="topbar-value" id="topbarTotalKR">—</div>
+        <div class="topbar-sub" id="topbarChangeKR">—</div>
+      </div>
+      <div class="topbar-block">
+        <div class="topbar-label">시장 상태</div>
+        <div class="topbar-value" style="font-size:13px;line-height:1.5;" id="topbarMarketUS">🇺🇸 —</div>
+        <div class="topbar-sub" id="topbarMarketKR">🇰🇷 —</div>
+      </div>
+      <div class="topbar-block">
+        <div class="topbar-label">엔진 / 연결</div>
+        <div class="topbar-value" style="font-size:12px;line-height:1.5;" id="topbarLiveStatus">연결 중...</div>
+        <div class="topbar-sub" id="topbarEngineStatus">대기 중</div>
+      </div>
+    </div>
 
     <!-- ══ PAGE: DASHBOARD ══ -->
     <div class="page" id="page-dashboard">
@@ -1396,6 +1471,16 @@ button.btn.loading::after{content:'조회 중…';position:absolute;inset:0;disp
     }
     krEl.textContent = krText;
     krEl.className = (status.kr || status.krTrading) ? 'market-status-open' : 'market-status-closed';
+    // 상단 바 시장 상태 업데이트
+    var tbUS = $('topbarMarketUS'), tbKR = $('topbarMarketKR');
+    if (tbUS) {
+      tbUS.textContent = usHoliday ? ('🇺🇸 🔴 휴장일' + dstLabel) : (status.us ? ('🇺🇸 🟢 OPEN' + dstLabel) : ('🇺🇸 🔴 종료' + dstLabel));
+      tbUS.style.color = status.us ? 'var(--pos)' : 'var(--neg)';
+    }
+    if (tbKR) {
+      tbKR.textContent = '🇰🇷 ' + (krHoliday ? '🔴 휴장일' : (status.kr ? '🟢 OPEN' : '🔴 종료'));
+      tbKR.style.color = (status.kr || status.krTrading) ? 'var(--pos)' : 'var(--neg)';
+    }
   }
 
   function fmtNum(n, dec) {
@@ -1435,20 +1520,28 @@ button.btn.loading::after{content:'조회 중…';position:absolute;inset:0;disp
   //   초록(LIVE, 30초내) / 주황(지연, 2분내) / 빨강(끊김). 1초마다 갱신.
   function updateLiveIndicator() {
     var ind = $('liveIndicator'), txt = $('liveText');
+    var tbLive = $('topbarLiveStatus');
     if (!ind || !txt) return;
     var last = window.__lastDataReceived;
-    if (!last) { ind.className = 'live-indicator'; txt.textContent = '연결 중...'; return; }
+    if (!last) {
+      ind.className = 'live-indicator'; txt.textContent = '연결 중...';
+      if (tbLive) { tbLive.textContent = '● 연결 중...'; tbLive.style.color = 'var(--t3)'; }
+      return;
+    }
     var sec = Math.floor((Date.now() - last) / 1000);
     ind.classList.remove('live', 'stale', 'dead');
     if (sec <= 30) {
       ind.classList.add('live');
       txt.textContent = 'LIVE · ' + (sec <= 2 ? '방금 갱신' : sec + '초 전');
+      if (tbLive) { tbLive.textContent = '● LIVE · ' + (sec <= 2 ? '방금 갱신' : sec + '초 전'); tbLive.style.color = 'var(--pos)'; }
     } else if (sec <= 120) {
       ind.classList.add('stale');
       txt.textContent = '갱신 지연 · ' + sec + '초 전';
+      if (tbLive) { tbLive.textContent = '● 지연 · ' + sec + '초 전'; tbLive.style.color = 'var(--amber)'; }
     } else {
       ind.classList.add('dead');
       txt.textContent = '연결 끊김 · ' + fmtAgo(last);
+      if (tbLive) { tbLive.textContent = '● 끊김 · ' + fmtAgo(last); tbLive.style.color = 'var(--neg)'; }
     }
   }
   // 1초마다 경과시간 표시 갱신 (데이터 재요청 아님 — 표시만)
@@ -1492,6 +1585,7 @@ button.btn.loading::after{content:'조회 중…';position:absolute;inset:0;disp
 
   function renderEngine(lastTick, lastHeartbeat) {
     var dot = $('engineDot'), txt = $('engineText');
+    var tbEng = $('topbarEngineStatus');
     var status = getMarketStatus();
     // [FIX V8.8] 휴장일이면(서버 marketStatus 기준) 거래 대기로 표시.
     var srv = window.__serverMarketStatus || null;
@@ -1503,25 +1597,28 @@ button.btn.loading::after{content:'조회 중…';position:absolute;inset:0;disp
     if (!usWin && !krWin) {
       dot.className='dot closed';
       txt.textContent='거래 윈도우 외 · 거래 대기 중 (시세조회 버튼으로 종가 확인 가능)';
+      if (tbEng) tbEng.textContent = '거래 윈도우 외';
       return;
     }
-    // [FIX V8.8] lastTick(사이클 완주 시각)과 lastHeartbeat(사이클 시작 시각) 중
-    //   더 최근값으로 판정. 사이클이 무거워 끝까지 못 가도 heartbeat가 최근이면
-    //   "엔진은 돌고 있다"로 본다. 둘 다 없으면 미확인.
+    // [FIX V8.8] lastTick(사이클 완주 시각)과 lastHeartbeat(사이클 시각) 중
+    //   더 최근값으로 판정.
     var ref = Math.max(lastTick || 0, lastHeartbeat || 0);
     if (!ref) {
       dot.className='dot unknown';
       txt.textContent='엔진 상태 미확인 (RUN NOW를 한번 누르세요)';
+      if (tbEng) tbEng.textContent = '상태 미확인';
       return;
     }
     var age = Date.now() - ref;
-    // cron 1분 주기 + 여유 → 150초까지는 정상으로 본다(기존 90초는 무거운 사이클에서 과민).
+    // cron 1분 주기 + 여유 → 150초까지는 정상으로 본다.
     if (age < 150*1000) {
       dot.className='dot alive';
       txt.textContent='엔진 자동 작동 중 · 마지막 실행: '+fmtAgo(ref);
+      if (tbEng) tbEng.textContent = '▶ 작동 중 · ' + fmtAgo(ref);
     } else {
       dot.className='dot stale';
       txt.textContent='엔진 지연 · 마지막 실행: '+fmtAgo(ref);
+      if (tbEng) tbEng.textContent = '⚠ 지연 · ' + fmtAgo(ref);
     }
   }
 
@@ -1577,6 +1674,14 @@ button.btn.loading::after{content:'조회 중…';position:absolute;inset:0;disp
     var sign = s.changePct >= 0 ? '+' : '';
     changeEl.textContent = sign + fmtNum(s.changePct, 2) + '%';
     changeEl.className = 'summary-value ' + (s.changePct > 0 ? 'pos' : (s.changePct < 0 ? 'neg' : ''));
+    // 상단 바 업데이트
+    var tbTotal = $('topbarTotal'+up);
+    var tbChange = $('topbarChange'+up);
+    if (tbTotal) tbTotal.textContent = s.symbol + fmt(s.total);
+    if (tbChange) {
+      tbChange.textContent = sign + fmtNum(s.changePct, 2) + '%';
+      tbChange.className = 'topbar-sub ' + (s.changePct > 0 ? 'pos' : (s.changePct < 0 ? 'neg' : ''));
+    }
   }
 
   // [V8] 전략별 색상 매핑
@@ -2016,10 +2121,24 @@ button.btn.loading::after{content:'조회 중…';position:absolute;inset:0;disp
 
   function renderTrades(trades) {
     renderTradesInto(trades, 'tradesBox', 'tradesTotalCount', 'tradesWinRate', 'tradesAvgPnl', 50);
+    // 거래 내역이 있으면 자동 펼치기
+    if (trades && trades.length > 0 && !tradesExpanded) {
+      var tableBox = $('tradesTableBox'), btn = $('tradesToggleBtn');
+      tradesExpanded = true;
+      if (tableBox) tableBox.classList.add('show');
+      if (btn) btn.textContent = '접기';
+    }
   }
 
   function renderAllTrades(trades) {
     renderTradesInto(trades, 'allTradesBox', 'allTradesTotalCount', 'allTradesWinRate', 'allTradesAvgPnl', null);
+    // 전체 거래 내역이 있으면 자동 펼치기
+    if (trades && trades.length > 0 && !allTradesExpanded) {
+      var tableBox = $('allTradesTableBox'), btn = $('allTradesToggleBtn');
+      allTradesExpanded = true;
+      if (tableBox) tableBox.classList.add('show');
+      if (btn) btn.textContent = '접기';
+    }
   }
 
   // [다운로드] 메인 UI의 트레이드 기록을 CSV로 다운로드
@@ -3480,6 +3599,8 @@ window.addEventListener('DOMContentLoaded', () => {
     var ni=document.querySelector('[data-page="'+id+'"]');
     if(ni) ni.classList.add('active');
     try{localStorage.setItem('luxPage',id);}catch(e){}
+    // 페이지 전환 시 스크롤 상단으로 초기화
+    if(pg) pg.scrollTop = 0;
   }
   document.querySelectorAll('.nav-item').forEach(function(item){
     item.addEventListener('click',function(){showPage(this.getAttribute('data-page'));});
