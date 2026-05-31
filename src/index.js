@@ -2072,6 +2072,49 @@ const DEFAULT_CFG = {
   },
   // === [V8.5] disabled signal 재평가 ===
   signalReviewDays: 30,      // 비활성화 후 N일 경과 시 재활성화 후보
+  // === [V13] autoTune 강화 설정 ===
+  //   기존 autoTune(RSI/stop/TP/swingSize 시장별 조정)에 얹는 상위 제어 레이어.
+  autoTuneV13: {
+    enabled: true,
+    // (A) 긴급 가드레일 — 10건 정기튠을 기다리지 않고, 최근 짧은 윈도우가 급격히 나빠지면 즉시 보수화.
+    panicTune: {
+      enabled: true,
+      window: 6,             // 최근 매도 N건
+      lossThresh: 5,         // 그중 손실 N건 이상이면
+      stopTightenStep: 0.5,  // stopLoss 즉시 -0.5%p (floor까지)
+      sizeScaleStep: 0.85    // swing base 사이즈 ×0.85
+    },
+    // (B) regime 전환 즉시 재튠 — BULL↔BEAR 바뀌면 10건 대기 없이 1회 튠 허용.
+    regimeShiftRetune: true,
+    // (C) strategy별 사이즈 자동 조정 — momentum/meanrev도 성과로 base 조정.
+    perStrategySizing: {
+      enabled: true,
+      minTrades: 12,
+      goodWR: 0.55, goodPnl: 1.5, upStep: 1,   // 성과 좋으면 base +1
+      badWR: 0.38, badPnl: -0.8, downStep: 1,  // 나쁘면 base -1
+      baseMin: 8, baseMax: 35
+    },
+    // (D) strategy 자동 비활성화 — 한 전략이 표본 충분 & expectancy 크게 음수면 끔(재평가까지).
+    strategyAutoDisable: {
+      enabled: true,
+      minTrades: 25,
+      expectancyOff: -0.5,   // 기대값 이 값 미만이면 OFF 후보
+      winRateOff: 0.33,
+      reviewDays: 21         // N일 후 재평가
+    },
+    // (E) 드로다운 연동 리스크 — equity 고점 낙폭에 따라 riskPerTrade 동적 축소.
+    drawdownRisk: {
+      enabled: true,
+      ddTrigger: 8,          // 고점 대비 -8%부터
+      riskFloor: 0.4,        // riskPerTrade 최저 (이 값까지 축소)
+      perPctRiskCut: 0.04    // 낙폭 1%p당 riskPerTrade -0.04 (8% 초과분에 비례)
+    },
+    // (F) 변경폭 클램프 & 진동 방지 — 한 파라미터가 한 번에 과하게 안 움직이고, 같은 키를 너무 자주 안 뒤집음.
+    clamp: {
+      maxStopStep: 1.0,      // stopLoss 1회 변경 상한(%p)
+      oscillationCooldownTunes: 2  // 같은 키 반대방향 변경은 N회 튠 경과 후만
+    }
+  },
   // === [V8.6 Hybrid] Claude LLM 일일 지시 ===
   llmHybrid: {
     enabled: true,            // [V11] 기본 ON — API 키만 등록되면 작동 (키 없으면 자동으로 V8.5 폴백)
@@ -2319,7 +2362,24 @@ function migrateCfgToMarkets(cfg) {
     }
   }
 
-  if (!cfg.markets) cfg.markets = {};
+  // [V13] autoTuneV13 누락 보강 — 저장된 옛 cfg 호환(섹션 단위로 채움).
+  if (!cfg.autoTuneV13 || typeof cfg.autoTuneV13 !== "object") {
+    cfg.autoTuneV13 = JSON.parse(JSON.stringify(DEFAULT_CFG.autoTuneV13));
+  } else {
+    const d = DEFAULT_CFG.autoTuneV13;
+    if (cfg.autoTuneV13.enabled === undefined) cfg.autoTuneV13.enabled = d.enabled;
+    if (cfg.autoTuneV13.regimeShiftRetune === undefined) cfg.autoTuneV13.regimeShiftRetune = d.regimeShiftRetune;
+    for (const sec of ["panicTune", "perStrategySizing", "strategyAutoDisable", "drawdownRisk", "clamp"]) {
+      if (!cfg.autoTuneV13[sec] || typeof cfg.autoTuneV13[sec] !== "object") {
+        cfg.autoTuneV13[sec] = JSON.parse(JSON.stringify(d[sec]));
+      } else {
+        for (const k in d[sec]) {
+          if (cfg.autoTuneV13[sec][k] === undefined) cfg.autoTuneV13[sec][k] = d[sec][k];
+        }
+      }
+    }
+  }
+
 
   // [V12] crashSurvival 누락 보강 — DB에 저장된 옛 cfg가 얕은 병합으로
   //   DEFAULT_CFG.crashSurvival를 덮어 누락시키는 것을 방지. 통째로 없으면 기본값 주입,
@@ -4760,8 +4820,27 @@ async function executeBuy(DB, market, symbol, strategy, qty, price, signal, dail
       pmeta.feeRemaining = (typeof pmeta.feeRemaining === "number" ? pmeta.feeRemaining : (pmeta.feePaid || 0)) + fee;
       pmeta.feePaid = (pmeta.feePaid || 0) + fee;
       pmeta.originalQty = (pmeta.originalQty || prior.qty) + qty;
-      pmeta.stopPrice = stopPrice;
+      // [V14 결함수정] 추가매수(불타기) 시 손절가를 새 진입가 기준으로 무조건 덮어쓰면
+      //   ① 이미 break-even으로 끌어올린 보호선이 풀리고
+      //   ② 추가가가 낮으면 손절선이 평단보다 한참 아래로 내려가 손실을 방치한다.
+      //   → 신규 계산 stopPrice와 기존 stopPrice 중 "더 보수적(높은) 쪽"을 채택하고,
+      //     breakEvenLocked 였으면 절대 내리지 않는다(락 유지).
+      const priorStop = (typeof pmeta.stopPrice === "number") ? pmeta.stopPrice : null;
+      if (pmeta.breakEvenLocked) {
+        // 본전 락 상태: 새 평단 기준 본전선과 기존 stop 중 높은 쪽으로만 유지/상향
+        const beFloor = newAvg;  // 최소한 평단(본전) 이상 방어
+        let keepStop = priorStop != null ? priorStop : stopPrice;
+        if (keepStop < beFloor && stopPrice >= beFloor) keepStop = stopPrice;
+        pmeta.stopPrice = Math.max(keepStop, priorStop != null ? priorStop : keepStop);
+      } else if (priorStop != null) {
+        // 일반 상태: 새 stop과 기존 stop 중 높은(타이트한) 쪽
+        pmeta.stopPrice = Math.max(priorStop, stopPrice);
+      } else {
+        pmeta.stopPrice = stopPrice;
+      }
       if (pmeta.peakPrice == null || price > pmeta.peakPrice) pmeta.peakPrice = price;
+      // [V14] peakPrice 안전 초기화 — null 이면 평단/현재가 중 높은 값으로 채워 트레일 작동 보장
+      if (pmeta.peakPrice == null) pmeta.peakPrice = Math.max(newAvg, price);
       posToSave = { qty: newQty, avg: newAvg, opened_ts: prior.opened_ts || Date.now(), meta: pmeta };
     } else {
       posToSave = {
@@ -5716,21 +5795,71 @@ async function autoTune(DB, cfg, regimes) {
 
       // 시장별 튠 상태 — 10건마다만 재조정
       const tuneKey = "autotune_state_" + market;
-      const tuneState = await getState(DB, tuneKey, { lastTunedAt: 0, tradeCountAtLastTune: 0 });
+      const tuneState = await getState(DB, tuneKey, { lastTunedAt: 0, tradeCountAtLastTune: 0, lastRegime: null, tuneSeq: 0, lastDir: {} });
+      if (typeof tuneState.tuneSeq !== "number") tuneState.tuneSeq = 0;
+      if (!tuneState.lastDir) tuneState.lastDir = {};
       const totalRes = await DB.prepare("SELECT COUNT(*) as c FROM trades WHERE side = ? AND market = ?")
         .bind("SELL", market).first();
       const sellCount = (totalRes && totalRes.c) || 0;
-      if (sellCount - tuneState.tradeCountAtLastTune < 10) continue;
 
       const wins = mtSells.filter(function(t){ return t.pnl_pct > 0; });
       const winRate = wins.length / mtSells.length;
       const avgPnl = mtSells.reduce(function(a,t){ return a + (t.pnl_pct || 0); }, 0) / mtSells.length;
       const regime = (regimes[market] && regimes[market].regime) || "NEUTRAL";
+      const v13 = cfg.autoTuneV13 || {};
+
+      // [V13] 정기 튠 게이트 우회 조건:
+      //   (1) regime 전환(BULL↔BEAR) 발생 → 즉시 1회 재튠
+      //   (2) 긴급 가드레일 — 최근 짧은 윈도우 손실 폭증
+      const regimeShifted = v13.enabled && v13.regimeShiftRetune
+        && tuneState.lastRegime && tuneState.lastRegime !== regime
+        && (regime === "BEAR" || tuneState.lastRegime === "BEAR");
+      let panicTrigger = false;
+      if (v13.enabled && v13.panicTune && v13.panicTune.enabled) {
+        const pw = mtSells.slice(0, v13.panicTune.window);
+        if (pw.length >= v13.panicTune.window) {
+          const pl = pw.filter(function(t){ return (t.pnl_pct || 0) <= 0; }).length;
+          if (pl >= v13.panicTune.lossThresh) panicTrigger = true;
+        }
+      }
+      const dueRegular = (sellCount - tuneState.tradeCountAtLastTune >= 10);
+      if (!dueRegular && !regimeShifted && !panicTrigger) continue;
 
       // 시장 cfg 머지된 현재 값 (베이스 폴백 포함)
       const curMcfg = getMarketCfg(cfg, market);
       const mChanges = [];
       const mNew = newCfg.markets[market];
+
+      // [V13] 진동 방지 — 같은 키를 직전과 반대방향으로 너무 자주 못 바꾸게.
+      const clampCfg = v13.clamp || { maxStopStep: 1.0, oscillationCooldownTunes: 2 };
+      function dirAllowed(key, dir) {
+        const last = tuneState.lastDir[key];
+        if (!last) return true;
+        if (last.dir === dir) return true;
+        return (tuneState.tuneSeq - last.seq) >= (clampCfg.oscillationCooldownTunes || 2);
+      }
+      function recordDir(key, dir) { tuneState.lastDir[key] = { dir: dir, seq: tuneState.tuneSeq + 1 }; }
+
+      // [V13-A] 긴급 가드레일 — 정기 튠보다 먼저, 손절·사이즈 즉시 보수화.
+      if (panicTrigger) {
+        const pt = v13.panicTune;
+        const curStop = curMcfg.stopLoss;
+        const nextStop = Math.max(2.0, +(curStop - pt.stopTightenStep).toFixed(2));
+        if (nextStop !== curStop && dirAllowed("stopLoss", -1)) {
+          mNew.stopLoss = nextStop; mChanges.push("PANIC-STOP " + curStop + "->" + nextStop); recordDir("stopLoss", -1);
+        }
+        const cs2 = curMcfg.strategySizing || {};
+        const curB = (cs2.swing && cs2.swing.base) != null ? cs2.swing.base : curMcfg.posSize;
+        if (curB != null) {
+          const nb = Math.max(8, Math.round(curB * pt.sizeScaleStep));
+          if (nb !== curB) {
+            const bs = mNew.strategySizing || JSON.parse(JSON.stringify(cs2));
+            if (!bs.swing) bs.swing = { base: curB, bullMult: 1.0, bearMult: 1.0 };
+            bs.swing.base = nb; mNew.strategySizing = bs; mNew.posSize = nb;
+            mChanges.push("PANIC-SIZE " + curB + "->" + nb);
+          }
+        }
+      }
 
       // RSI 조정 — 시장별 regime + 시장별 성과 기준
       if (regime === "BEAR" && avgPnl < 0) {
@@ -5742,13 +5871,19 @@ async function autoTune(DB, cfg, regimes) {
       }
 
       // [V8.2] 시장별 stopLoss 조정 — 시장 성과 나쁘면 손절 더 타이트
-      if (winRate < 0.40 && avgPnl < -1.0) {
-        const next = Math.max(2.0, +(curMcfg.stopLoss - 0.5).toFixed(2));
-        if (next !== curMcfg.stopLoss) { mNew.stopLoss = next; mChanges.push("STOP " + curMcfg.stopLoss + "->" + next); }
-      } else if (winRate > 0.55 && avgPnl > 1.5) {
-        // 잘 되면 살짝 여유 (조기 손절 방지)
-        const next = Math.min(8.0, +(curMcfg.stopLoss + 0.3).toFixed(2));
-        if (next !== curMcfg.stopLoss) { mNew.stopLoss = next; mChanges.push("STOP " + curMcfg.stopLoss + "->" + next); }
+      //   [V13] panicTune이 이미 stopLoss를 건드렸으면 중복 조정 안 함. 변경폭은 maxStopStep로 클램프, 진동 방지.
+      const stopBase = curMcfg.stopLoss;
+      if (mNew.stopLoss === undefined) {
+        const maxStep = clampCfg.maxStopStep || 1.0;
+        if (winRate < 0.40 && avgPnl < -1.0) {
+          let next = Math.max(2.0, +(stopBase - 0.5).toFixed(2));
+          next = Math.max(+(stopBase - maxStep).toFixed(2), next);
+          if (next !== stopBase && dirAllowed("stopLoss", -1)) { mNew.stopLoss = next; mChanges.push("STOP " + stopBase + "->" + next); recordDir("stopLoss", -1); }
+        } else if (winRate > 0.55 && avgPnl > 1.5) {
+          let next = Math.min(8.0, +(stopBase + 0.3).toFixed(2));
+          next = Math.min(+(stopBase + maxStep).toFixed(2), next);
+          if (next !== stopBase && dirAllowed("stopLoss", 1)) { mNew.stopLoss = next; mChanges.push("STOP " + stopBase + "->" + next); recordDir("stopLoss", 1); }
+        }
       }
 
       // [V8.2.1] rsiSell 조정 — 평균 PnL이 좋으면 더 늦게 익절(욕심), 나쁘면 빠르게
@@ -5810,12 +5945,120 @@ async function autoTune(DB, cfg, regimes) {
         }
       }
 
+      // [V13-C] strategy별(momentum/meanrev) 사이즈 자동 조정 — strategy:signal 통계로 성과 집계.
+      const psCfg = v13.perStrategySizing;
+      if (psCfg && psCfg.enabled) {
+        // 이 시장의 strategy별 성과를 mtSells에서 reason의 [STRATEGY] 토큰으로 집계.
+        const stratAgg = {};
+        for (const t of mtSells) {
+          const sm = (t.reason || "").match(/^\[([A-Z]+)\]/);
+          const st = sm ? sm[1].toLowerCase() : null;
+          if (!st) continue;
+          if (!stratAgg[st]) stratAgg[st] = { n: 0, w: 0, sum: 0 };
+          stratAgg[st].n++; stratAgg[st].sum += (t.pnl_pct || 0);
+          if ((t.pnl_pct || 0) > 0) stratAgg[st].w++;
+        }
+        for (const st of ["momentum", "meanrev"]) {
+          const a = stratAgg[st];
+          if (!a || a.n < psCfg.minTrades) continue;
+          const wr = a.w / a.n, ap = a.sum / a.n;
+          const sizingObj = mNew.strategySizing || JSON.parse(JSON.stringify(curMcfg.strategySizing || {}));
+          const cur = (sizingObj[st] && sizingObj[st].base) != null ? sizingObj[st].base
+                    : (curMcfg.strategySizing && curMcfg.strategySizing[st] && curMcfg.strategySizing[st].base) != null ? curMcfg.strategySizing[st].base : null;
+          if (cur == null) continue;
+          let nb = null;
+          if (wr >= psCfg.goodWR && ap >= psCfg.goodPnl) nb = Math.min(psCfg.baseMax, cur + psCfg.upStep);
+          else if (wr <= psCfg.badWR && ap <= psCfg.badPnl) nb = Math.max(psCfg.baseMin, cur - psCfg.downStep);
+          if (nb !== null && nb !== cur) {
+            if (!sizingObj[st]) sizingObj[st] = { base: cur, bullMult: 1.0, bearMult: 1.0 };
+            sizingObj[st].base = nb;
+            mNew.strategySizing = sizingObj;
+            mChanges.push(st.toUpperCase().slice(0,3) + "SIZE " + cur + "->" + nb);
+          }
+        }
+      }
+
+      // [V13-E] 드로다운 연동 riskPerTrade 축소 — equity 고점 낙폭이 클수록 거래당 리스크↓.
+      const ddrCfg = v13.drawdownRisk;
+      if (ddrCfg && ddrCfg.enabled) {
+        const peak = await getState(DB, "equity_peak:" + market, null);
+        if (typeof peak === "number" && peak > 0) {
+          // 현 equity는 정확치 않아도 되니, 직전 사이클 저장값 대신 보수적으로 cash+미실현 근사 생략 →
+          //   여기서는 peak 대비 "직전 저장된 현재가 기반 추정"을 쓸 수 없으므로 ddPct는 메인 루프 로그를 참고.
+          //   대신 trades 기반 최근 손실 누적으로 근사 트리거: 최근 10건 합이 음수이고 클수록 강하게.
+          const recentSum = mtSells.slice(0, 10).reduce(function(s,t){ return s + (t.pnl_pct || 0); }, 0);
+          const approxDd = recentSum < 0 ? Math.min(30, -recentSum) : 0;  // 최근 10건 누적손실%를 드로다운 근사
+          if (approxDd >= ddrCfg.ddTrigger) {
+            const rb = (curMcfg.riskBasedSizing && curMcfg.riskBasedSizing.riskPerTrade) || (cfg.riskBasedSizing && cfg.riskBasedSizing.riskPerTrade) || 0.8;
+            const cut = (approxDd - ddrCfg.ddTrigger) * ddrCfg.perPctRiskCut;
+            const nr = Math.max(ddrCfg.riskFloor, +(rb - cut).toFixed(2));
+            if (nr < rb) {
+              const rbObj = mNew.riskBasedSizing || JSON.parse(JSON.stringify(curMcfg.riskBasedSizing || cfg.riskBasedSizing || {}));
+              rbObj.riskPerTrade = nr;
+              mNew.riskBasedSizing = rbObj;
+              mChanges.push("DDRISK " + rb + "->" + nr + "(dd~" + approxDd.toFixed(1) + "%)");
+            }
+          }
+        }
+      }
+
       if (mChanges.length > 0) {
-        await setState(DB, tuneKey, { lastTunedAt: Date.now(), tradeCountAtLastTune: sellCount });
-        await log(DB, "TUNE", null, "[" + market.toUpperCase() + "/" + regime + "] WR=" + (winRate*100).toFixed(0) + "% PnL=" + avgPnl.toFixed(2) + "% -> " + mChanges.join(", "));
+        await setState(DB, tuneKey, {
+          lastTunedAt: Date.now(), tradeCountAtLastTune: sellCount,
+          lastRegime: regime, tuneSeq: tuneState.tuneSeq + 1, lastDir: tuneState.lastDir
+        });
+        const tag = panicTrigger ? "PANIC" : regimeShifted ? "REGIME-SHIFT" : "REG";
+        await log(DB, "TUNE", null, "[" + market.toUpperCase() + "/" + regime + "/" + tag + "] WR=" + (winRate*100).toFixed(0) + "% PnL=" + avgPnl.toFixed(2) + "% -> " + mChanges.join(", "));
         anyChange = true;
         allChanges.push(market.toUpperCase() + ":" + mChanges.join(","));
+      } else if (regimeShifted) {
+        // 변경 없어도 regime 기록은 갱신(다음 사이클 중복 트리거 방지)
+        await setState(DB, tuneKey, Object.assign({}, tuneState, { lastRegime: regime }));
       }
+    }
+
+    // [V13-D] strategy 자동 비활성화 — 한 전략의 누적 성과가 명백히 나쁘면 끔(재평가까지).
+    //   signalStatsByStrat(strategy:signal)를 strategy 단위로 합산해 expectancy/WR로 판단.
+    //   swing은 핵심 전략이라 보호(자동 OFF 대상에서 제외) — momentum/meanrev/day만.
+    const sadCfg = (cfg.autoTuneV13 && cfg.autoTuneV13.strategyAutoDisable) || null;
+    if (sadCfg && sadCfg.enabled) {
+      if (!newCfg.strategies) newCfg.strategies = JSON.parse(JSON.stringify(cfg.strategies || {}));
+      if (!newCfg.strategyDisabledAt) newCfg.strategyDisabledAt = Object.assign({}, cfg.strategyDisabledAt || {});
+      const stratRollup = {};
+      for (const sKey in signalStatsByStrat) {
+        const st = sKey.split(":")[0];
+        if (!st || st === "unknown") continue;
+        const s = signalStatsByStrat[sKey];
+        if (!stratRollup[st]) stratRollup[st] = { count: 0, wins: 0, totalPnl: 0 };
+        stratRollup[st].count += s.count;
+        stratRollup[st].wins += s.wins;
+        stratRollup[st].totalPnl += s.totalPnl;
+      }
+      const reviewMs2 = (sadCfg.reviewDays || 21) * 24 * 3600 * 1000;
+      const stratDisabledNow = [], stratReenabledNow = [];
+      for (const st of ["momentum", "meanrev", "day"]) {
+        const r = stratRollup[st];
+        // 비활성 중이면 재평가
+        if (newCfg.strategies[st] === false && newCfg.strategyDisabledAt[st]) {
+          if (nowTs - newCfg.strategyDisabledAt[st] >= reviewMs2) {
+            const ok = !r || r.count < sadCfg.minTrades || ((r.totalPnl / r.count) > 0 && (r.wins / r.count) >= sadCfg.winRateOff);
+            if (ok) { newCfg.strategies[st] = true; delete newCfg.strategyDisabledAt[st]; stratReenabledNow.push(st); }
+            else { newCfg.strategyDisabledAt[st] = nowTs; }
+          }
+          continue;
+        }
+        // 활성 중이면 비활성 판단
+        if (newCfg.strategies[st] !== false && r && r.count >= sadCfg.minTrades) {
+          const wr = r.wins / r.count, exp = r.totalPnl / r.count;
+          if (exp <= sadCfg.expectancyOff && wr <= sadCfg.winRateOff) {
+            newCfg.strategies[st] = false;
+            newCfg.strategyDisabledAt[st] = nowTs;
+            stratDisabledNow.push(st + "(exp" + exp.toFixed(2) + "/WR" + (wr*100).toFixed(0) + ")");
+          }
+        }
+      }
+      if (stratDisabledNow.length > 0) { allChanges.push("STRAT-OFF " + stratDisabledNow.join(",")); anyChange = true; await log(DB, "TUNE", null, "[V13] strategy auto-disabled: " + stratDisabledNow.join(", ")); }
+      if (stratReenabledNow.length > 0) { allChanges.push("STRAT-ON " + stratReenabledNow.join(",")); anyChange = true; await log(DB, "TUNE", null, "[V13] strategy re-enabled: " + stratReenabledNow.join(", ")); }
     }
 
     // [V8.1.3] requireConfluence 강제 OFF — 시장 무관 공통
@@ -6272,6 +6515,9 @@ async function runCommodityCycle(env, forceTrade) {
         }
         if (held.meta && held.meta.peakPrice != null && price > held.meta.peakPrice) {
           held.meta.peakPrice = price;
+          try { await savePosition(DB, "cm", symbol, "swing", held); } catch (e) {}
+        } else if (held.meta && held.meta.peakPrice == null) {
+          held.meta.peakPrice = Math.max(held.avg, price);
           try { await savePosition(DB, "cm", symbol, "swing", held); } catch (e) {}
         }
         if (held.meta && swingRules.breakEvenAt != null && !held.meta.breakEvenLocked) {
@@ -6869,6 +7115,11 @@ async function runTradingCycle(env) {
             }
             if (held.meta && held.meta.peakPrice != null && price > held.meta.peakPrice) {
               held.meta.peakPrice = price;
+              posDirty = true;
+            } else if (held.meta && held.meta.peakPrice == null) {
+              // [V14] peakPrice 누락(옛 포지션/마이그레이션 결손) — 평단·현재가 중 높은 값으로 초기화.
+              //   null로 방치되면 evaluateSell이 pos.avg로 폴백해 트레일이 진입가에 고정된다.
+              held.meta.peakPrice = Math.max(held.avg, price);
               posDirty = true;
             }
 
