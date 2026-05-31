@@ -2033,6 +2033,43 @@ const DEFAULT_CFG = {
       momentum: { riskPerTrade: 1.0, minRisk: 0.55, maxRisk: 1.2 }  // [V9.6] 보수화
     }
   },
+  // === [V12] 폭락장 생존 (Crash Survival) — 포트폴리오 차원 방어 레이어 ===
+  //   기존 방어는 모두 "개별 종목 매수 시점 필터"(MARKET_CRASH/FALLING_KNIFE/VOL_SPIKE).
+  //   여기서는 그 위에 4개의 계좌 전체 차원 가드를 얹는다. 모두 cfg로 끄고 켤 수 있다.
+  crashSurvival: {
+    enabled: true,
+    // (1) 포트폴리오 드로다운 서킷브레이커 — equity 고점 대비 낙폭 단계별 대응.
+    //   l1: 신규매수 사이즈 축소, l2: 신규매수 전면중단, l3: 트레일링 강제 타이트닝.
+    drawdown: {
+      enabled: true,
+      l1Pct: 6,    // 고점 대비 -6% → 신규 진입 사이즈 ×l1SizeScale
+      l2Pct: 12,   // 고점 대비 -12% → 신규 진입 전면 중단(보유는 유지·관리)
+      l3Pct: 18,   // 고점 대비 -18% → 트레일링 드롭폭 강제 축소(이익 방어 극대화)
+      l1SizeScale: 0.5,
+      l3TrailDropScale: 0.5,   // trailDropPct를 절반으로(피크 근처에서 빨리 청산)
+      recoverPct: 4            // 고점 대비 낙폭이 이 값 이내로 회복되면 게이트 해제
+    },
+    // (2) 연속 손실 쿨다운 — 최근 거래에서 손절이 몰리면 잠시 신규매수 중단.
+    lossStreak: {
+      enabled: true,
+      lookbackTrades: 12,      // 최근 매도 N건 검사(시장별)
+      maxLosses: 7,            // 그중 손실이 이 수 이상이면
+      pauseMinutes: 90         // N분간 신규매수 중단(시장별)
+    },
+    // (3) 패닉 게이트 — 지수 동시 급락(당일) 시 전 신규진입 차단.
+    //   worstDayPct는 가장 약한 지수 1개라 노이즈가 있어, "평균 지수 낙폭"으로 판단.
+    panic: {
+      enabled: true,
+      avgDropPct: -2.5,        // 지수 평균 당일 낙폭이 이 값 이하면 패닉
+      requireBear: false       // true면 레짐 BEAR일 때만 패닉 게이트 적용
+    },
+    // (4) 폭락 디리스킹 — 패닉/딥드로다운 중에는 보유 포지션 손절·트레일을 자동 타이트닝.
+    deRisk: {
+      enabled: true,
+      hardStopScale: 0.7,      // 하드스톱 폭을 70%로 축소(더 빨리 손절)
+      trailDropScale: 0.6      // 트레일 드롭폭 60%로 축소
+    }
+  },
   // === [V8.5] disabled signal 재평가 ===
   signalReviewDays: 30,      // 비활성화 후 N일 경과 시 재활성화 후보
   // === [V8.6 Hybrid] Claude LLM 일일 지시 ===
@@ -2283,6 +2320,26 @@ function migrateCfgToMarkets(cfg) {
   }
 
   if (!cfg.markets) cfg.markets = {};
+
+  // [V12] crashSurvival 누락 보강 — DB에 저장된 옛 cfg가 얕은 병합으로
+  //   DEFAULT_CFG.crashSurvival를 덮어 누락시키는 것을 방지. 통째로 없으면 기본값 주입,
+  //   하위 섹션만 빠졌으면 그 섹션만 채움(사용자 변경값은 보존).
+  if (!cfg.crashSurvival || typeof cfg.crashSurvival !== "object") {
+    cfg.crashSurvival = JSON.parse(JSON.stringify(DEFAULT_CFG.crashSurvival));
+  } else {
+    const d = DEFAULT_CFG.crashSurvival;
+    if (cfg.crashSurvival.enabled === undefined) cfg.crashSurvival.enabled = d.enabled;
+    for (const sec of ["drawdown", "lossStreak", "panic", "deRisk"]) {
+      if (!cfg.crashSurvival[sec] || typeof cfg.crashSurvival[sec] !== "object") {
+        cfg.crashSurvival[sec] = JSON.parse(JSON.stringify(d[sec]));
+      } else {
+        for (const k in d[sec]) {
+          if (cfg.crashSurvival[sec][k] === undefined) cfg.crashSurvival[sec][k] = d[sec][k];
+        }
+      }
+    }
+  }
+
   // [V10] 종목 유니버스는 코드(DEFAULT_US/KR)로 관리한다.
   //   기존 D1에 저장된 옛 20종목 리스트가 얕은 병합으로 살아남아 신규 종목이
   //   안 보이는 문제를 막기 위해, 매 로드 시 최신 DEFAULT로 강제 갱신한다.
@@ -3960,6 +4017,116 @@ async function analyzeMarketRegime(DB, market) {
   return { regime: regime, avgDayPct: avgDayPct, worstDayPct: worstDayPct, aboveMa: aboveMa, belowMa: belowMa, idxReturn20: avgIdxReturn };
 }
 
+// ============================================================
+// [V12] 폭락장 생존 (Crash Survival) — 포트폴리오 차원 방어
+// ============================================================
+
+// 시장별 총자산(현금 + 보유 평가액) 계산. quote: 캐시 가격 사용(이미 매분 갱신됨).
+async function computeMarketEquity(DB, market, cash, positions) {
+  let equity = (typeof cash === "number") ? cash : 0;
+  for (const key in positions) {
+    const p = positions[key];
+    const q = await getState(DB, "quote:" + p.symbol, null);
+    const px = (q && q.price > 0) ? q.price : p.avg;
+    equity += p.qty * px;
+  }
+  return equity;
+}
+
+// equity 고점 추적 + 현재 낙폭(%) 반환. 신고점이면 peak 갱신.
+async function updateEquityPeak(DB, market, equity) {
+  const key = "equity_peak:" + market;
+  let peak = await getState(DB, key, null);
+  if (typeof peak !== "number" || peak <= 0 || equity > peak) {
+    peak = equity;
+    await setState(DB, key, peak);
+  }
+  const ddPct = peak > 0 ? ((peak - equity) / peak) * 100 : 0;
+  return { peak: peak, ddPct: ddPct };
+}
+
+// 드로다운 단계 판정: 0(정상)/1/2/3.
+function drawdownLevel(ddPct, ddCfg) {
+  if (!ddCfg || !ddCfg.enabled) return 0;
+  if (ddPct >= ddCfg.l3Pct) return 3;
+  if (ddPct >= ddCfg.l2Pct) return 2;
+  if (ddPct >= ddCfg.l1Pct) return 1;
+  return 0;
+}
+
+// 최근 매도 N건 중 손실 비중으로 연속손실 쿨다운 여부 판정.
+async function checkLossStreak(DB, market, lsCfg) {
+  if (!lsCfg || !lsCfg.enabled) return { paused: false };
+  // 쿨다운 진행 중이면 만료까지 차단
+  const untilKey = "loss_cooldown_until:" + market;
+  const until = await getState(DB, untilKey, 0);
+  if (typeof until === "number" && Date.now() < until) {
+    return { paused: true, until: until, reason: "active" };
+  }
+  let rows;
+  try {
+    rows = await DB.prepare(
+      "SELECT pnl_pct FROM trades WHERE market = ? AND side = 'SELL' ORDER BY ts DESC LIMIT ?"
+    ).bind(market, lsCfg.lookbackTrades).all();
+  } catch (e) { return { paused: false }; }
+  const sells = (rows && rows.results) ? rows.results : [];
+  if (sells.length < lsCfg.lookbackTrades) return { paused: false };
+  let losses = 0;
+  for (const t of sells) { if ((t.pnl_pct || 0) <= 0) losses++; }
+  if (losses >= lsCfg.maxLosses) {
+    const newUntil = Date.now() + lsCfg.pauseMinutes * 60000;
+    await setState(DB, untilKey, newUntil);
+    return { paused: true, until: newUntil, losses: losses, reason: "trigger" };
+  }
+  return { paused: false, losses: losses };
+}
+
+// 패닉(지수 동시 급락) 판정.
+function isPanic(regime, panicCfg) {
+  if (!panicCfg || !panicCfg.enabled || !regime) return false;
+  if (panicCfg.requireBear && regime.regime !== "BEAR") return false;
+  return typeof regime.avgDayPct === "number" && regime.avgDayPct <= panicCfg.avgDropPct;
+}
+
+// 시장별 폭락 방어 상태를 한 번에 계산해 반환(사이클 1회).
+//   gate.blockNew: 신규매수 전면 차단 여부
+//   gate.sizeScale: 신규매수 사이즈 배수(드로다운 L1 등)
+//   gate.deRisk: 보유 포지션 손절/트레일 타이트닝 적용 여부
+async function computeCrashGate(DB, market, cfg, regime, cash, positions) {
+  const cs = cfg.crashSurvival;
+  const gate = { blockNew: false, sizeScale: 1, deRisk: false, ddLevel: 0, ddPct: 0, reasons: [] };
+  if (!cs || !cs.enabled) return gate;
+
+  // (1) 드로다운
+  const equity = await computeMarketEquity(DB, market, cash, positions);
+  const { peak, ddPct } = await updateEquityPeak(DB, market, equity);
+  gate.ddPct = ddPct;
+  const lvl = drawdownLevel(ddPct, cs.drawdown);
+  gate.ddLevel = lvl;
+  if (lvl >= 1 && ddPct > cs.drawdown.recoverPct) {
+    if (lvl >= 2) { gate.blockNew = true; gate.reasons.push("DD_L" + lvl + " " + ddPct.toFixed(1) + "%"); }
+    else { gate.sizeScale *= cs.drawdown.l1SizeScale; gate.reasons.push("DD_L1 " + ddPct.toFixed(1) + "%"); }
+    if (lvl >= 3) gate.deRisk = true;
+  }
+
+  // (2) 연속손실 쿨다운
+  const ls = await checkLossStreak(DB, market, cs.lossStreak);
+  if (ls.paused) { gate.blockNew = true; gate.reasons.push("LOSS_STREAK"); }
+
+  // (3) 패닉 게이트
+  if (isPanic(regime, cs.panic)) {
+    gate.blockNew = true;
+    gate.deRisk = true;
+    gate.reasons.push("PANIC avg=" + (regime.avgDayPct || 0).toFixed(2) + "%");
+  }
+
+  // (4) 디리스킹은 패닉/딥드로다운에서 on
+  if (cs.deRisk && cs.deRisk.enabled && (gate.deRisk || lvl >= 3)) gate.deRisk = true;
+  else if (!gate.deRisk) gate.deRisk = false;
+
+  return gate;
+}
+
 async function fetchIndexDaily(symbol) {
   const j = await yahooFetch("https://query1.finance.yahoo.com/v8/finance/chart/" + encodeURIComponent(symbol) + "?interval=1d&range=3mo");
   const result = j && j.chart && j.chart.result && j.chart.result[0];
@@ -4726,7 +4893,7 @@ async function executeSell(DB, market, symbol, pos, sellQty, price, reason, cfg,
 // === [V8] 매도 평가 — 보유 포지션의 strategy에 따라 분기 ===
 // 반환: { sell: true/false, sellQty, reason } 또는 null
 // [V8.1] market 인자 추가 — Day 전략 장 마감 강제청산용
-function evaluateSell(pos, price, daily, dailyRsi, dailyMa, dailyMaShort, cfg, marketOpenForThis, market) {
+function evaluateSell(pos, price, daily, dailyRsi, dailyMa, dailyMaShort, cfg, marketOpenForThis, market, deRiskOpts) {
   const strategy = pos.strategy || (pos.meta && pos.meta.strategy) || "swing";
   const pnlRate = ((price - pos.avg) / pos.avg) * 100;
   const peakPrice = pos.meta && pos.meta.peakPrice ? pos.meta.peakPrice : pos.avg;
@@ -4736,11 +4903,16 @@ function evaluateSell(pos, price, daily, dailyRsi, dailyMa, dailyMaShort, cfg, m
   const heldDays = heldHours / 24;
   const tp1Done = pos.meta && pos.meta.tp1Done;
 
-  // 공통: 하드 스톱 (전략별 stopLossPct 적용)
+  // [V12] 폭락 디리스킹 — 패닉/딥드로다운 중에는 손절·트레일을 타이트닝.
+  const dr = (deRiskOpts && deRiskOpts.active && cfg.crashSurvival && cfg.crashSurvival.deRisk) ? cfg.crashSurvival.deRisk : null;
+  const hardStopScale = dr ? (dr.hardStopScale || 1) : 1;
+  const trailDropScale = dr ? (dr.trailDropScale || 1) : 1;
+
+  // 공통: 하드 스톱 (전략별 stopLossPct 적용 · 디리스킹 시 폭 축소)
   const rules = getStrategyRules(cfg, strategy);
-  const stopPct = rules.stopLossPct || cfg.stopLoss;
+  const stopPct = (rules.stopLossPct || cfg.stopLoss) * hardStopScale;
   if (pnlRate <= -stopPct) {
-    return { sell: true, sellQty: pos.qty, reason: "HARD-STOP " + pnlRate.toFixed(2) + "%" };
+    return { sell: true, sellQty: pos.qty, reason: "HARD-STOP " + pnlRate.toFixed(2) + "%" + (dr ? " (DERISK)" : "") };
   }
   // 공통: ATR-STOP (진입 시 계산된 stopPrice + [V8.3] break-even으로 올라간 stopPrice 포함)
   if (pos.meta && pos.meta.stopPrice != null && price <= pos.meta.stopPrice) {
@@ -4751,11 +4923,13 @@ function evaluateSell(pos, price, daily, dailyRsi, dailyMa, dailyMaShort, cfg, m
   // [V8.3] 공통: Trailing stop — 모든 전략에 적용.
   //   trailStartPct 도달 후 피크에서 trailDropPct 이상 하락하면 청산.
   //   기존엔 swing/momentum만 했지만 day/meanrev도 보호 가치 있음.
+  //   [V12] 디리스킹 시 trailDropPct 축소 → 피크 근처에서 더 빨리 이익 확정.
   if (rules.trailStartPct != null && rules.trailDropPct != null
       && peakPnlPct >= rules.trailStartPct && pnlRate < peakPnlPct) {
-    const trailStop = peakPrice * (1 - rules.trailDropPct / 100);
+    const effTrailDrop = rules.trailDropPct * trailDropScale;
+    const trailStop = peakPrice * (1 - effTrailDrop / 100);
     if (price <= trailStop) {
-      return { sell: true, sellQty: pos.qty, reason: "TRAIL[" + strategy + "] peak=" + peakPrice.toFixed(2) + " " + pnlRate.toFixed(2) + "% (from +" + peakPnlPct.toFixed(2) + "%)" };
+      return { sell: true, sellQty: pos.qty, reason: "TRAIL[" + strategy + "] peak=" + peakPrice.toFixed(2) + " " + pnlRate.toFixed(2) + "% (from +" + peakPnlPct.toFixed(2) + "%)" + (dr ? " (DERISK)" : "") };
     }
   }
 
@@ -6369,6 +6543,36 @@ async function runTradingCycle(env) {
         portfolioValue += p.qty * lastPrice;
       }
 
+      // [V12] === 폭락장 생존 게이트 (시장별 1회 계산) ===
+      //   portfolioValue(=equity)로 고점 추적 → 드로다운/연속손실/패닉을 종합.
+      //   gate.blockNew(신규매수 차단), gate.sizeScale(사이즈 축소),
+      //   gate.deRisk(보유 손절·트레일 타이트닝)로 아래 매도/매수 루프에 작용.
+      let crashGate = { blockNew: false, sizeScale: 1, deRisk: false, ddLevel: 0, ddPct: 0, reasons: [] };
+      try {
+        // equity 고점 갱신엔 방금 구한 portfolioValue를 그대로 사용(중복 fetch 회피).
+        const peakInfo = await updateEquityPeak(DB, market, portfolioValue);
+        crashGate.ddPct = peakInfo.ddPct;
+        const cs = mcfg.crashSurvival;
+        if (cs && cs.enabled) {
+          const lvl = drawdownLevel(peakInfo.ddPct, cs.drawdown);
+          crashGate.ddLevel = lvl;
+          if (lvl >= 1 && peakInfo.ddPct > cs.drawdown.recoverPct) {
+            if (lvl >= 2) { crashGate.blockNew = true; crashGate.reasons.push("DD_L" + lvl + " " + peakInfo.ddPct.toFixed(1) + "%"); }
+            else { crashGate.sizeScale *= cs.drawdown.l1SizeScale; crashGate.reasons.push("DD_L1 " + peakInfo.ddPct.toFixed(1) + "%"); }
+            if (lvl >= 3) crashGate.deRisk = true;
+          }
+          const ls = await checkLossStreak(DB, market, cs.lossStreak);
+          if (ls.paused) { crashGate.blockNew = true; crashGate.reasons.push("LOSS_STREAK" + (ls.losses != null ? "(" + ls.losses + ")" : "")); }
+          if (isPanic(regime, cs.panic)) { crashGate.blockNew = true; crashGate.deRisk = true; crashGate.reasons.push("PANIC avg=" + (regime.avgDayPct || 0).toFixed(2) + "%"); }
+        }
+        if (crashGate.reasons.length > 0) {
+          await log(DB, "INFO", null, "[V12 CRASH-GATE " + market.toUpperCase() + "] dd=" + crashGate.ddPct.toFixed(1) + "% L" + crashGate.ddLevel + (crashGate.blockNew ? " BLOCK-NEW" : (crashGate.sizeScale < 1 ? " size×" + crashGate.sizeScale : "")) + (crashGate.deRisk ? " DE-RISK" : "") + " · " + crashGate.reasons.join(", "));
+        }
+      } catch (e) {
+        await log(DB, "WARN", null, "[V12] crashGate fail " + market + ": " + e.message);
+      }
+      const deRiskOpts = { active: crashGate.deRisk };
+
       // [V10] === PREFETCH 단계 (대규모 종목 — 가격 배치 + 일봉 라운드로빈) ===
       //   종목이 수백 개로 늘어 기존 "전 종목 매분 fetchIntraday" 방식은
       //   Cloudflare subrequest 한도(50/invocation)를 초과하므로 아래로 분리:
@@ -6692,8 +6896,8 @@ async function runTradingCycle(env) {
               await log(DB, "INFO", symbol, "BREAK-EVEN locked [" + stratName + "] at +" + beLockedPnl.toFixed(2) + "% stop=" + beLockedStop.toFixed(2));
             }
 
-            // 매도 판단
-            const sellDecision = evaluateSell(held, price, daily, dailyRsi, dailyMa, dailyMaShort, mcfg, canTrade, market);
+            // 매도 판단 ([V12] crashGate.deRisk → 손절·트레일 타이트닝)
+            const sellDecision = evaluateSell(held, price, daily, dailyRsi, dailyMa, dailyMaShort, mcfg, canTrade, market, deRiskOpts);
             if (sellDecision.minHoldLock) {
               const heldHours = held.opened_ts ? (Date.now() - held.opened_ts) / 3600000 : 0;
               const pnlRate = ((price - held.avg) / held.avg) * 100;
@@ -6778,6 +6982,12 @@ async function runTradingCycle(env) {
               sectorCounts: sectorCounts,
               strategiesHeld: strategiesHeldNow
             };
+            // [V12] 폭락장 생존 게이트 — 신규매수 전면 차단(드로다운 L2+/연속손실/패닉)
+            if (crashGate.blockNew) {
+              incBlock("CRASH_GATE[" + strategy + "]");
+              continue;
+            }
+
             const blockReason = evaluateBuyBlocks(price, dayPct, daily, mcfg, regime, signal, ctx);
             if (blockReason) {
               incBlock(blockReason.split(" ")[0] + "[" + strategy + "]");
@@ -6810,6 +7020,11 @@ async function runTradingCycle(env) {
             }
 
             let baseRatio = getPositionSizeRatio(mcfg, strategy, regime.regime);
+
+            // [V12] 드로다운 L1 — 신규 진입 사이즈 축소(blockNew는 위에서 이미 차단됨)
+            if (crashGate.sizeScale && crashGate.sizeScale < 1) {
+              baseRatio *= crashGate.sizeScale;
+            }
 
             // [V9.2 데이터근거] day 전략 신호강도 차등 사이징.
             //   과거 247건: 신호 2개 조합=승률 61%/+1.14%(우수), 단독=37%, 3개+=손실(→2개로 정제됨).
