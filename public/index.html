@@ -256,7 +256,8 @@ body{
 
 /* ── 콘텐츠 영역 ── */
 .content{
-  flex:1;overflow-y:auto;overflow-x:hidden;
+  flex:1 1 0%;min-width:0;
+  overflow-y:auto;overflow-x:hidden;
   background:var(--bg);
 }
 .content::-webkit-scrollbar{width:4px;}
@@ -728,6 +729,8 @@ button.btn.loading::after{content:'조회 중…';position:absolute;inset:0;disp
 .content{
   display:flex!important;
   flex-direction:column!important;
+  flex:1 1 0%!important;
+  min-width:0!important;
   overflow:hidden!important;
   min-height:0;
 }
