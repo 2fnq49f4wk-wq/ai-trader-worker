@@ -680,8 +680,6 @@ button.btn.loading::after{content:'조회 중…';position:absolute;inset:0;disp
   position:sticky;
   top:0;z-index:20;
   background:var(--s1);
-  flex-shrink:0;
-  order:-1;
   width:100%;
 }
 .topbar-block{
@@ -726,16 +724,15 @@ button.btn.loading::after{content:'조회 중…';position:absolute;inset:0;disp
 .pos-pnl-summary .pps-value.neg{color:var(--neg);}
 .pos-pnl-summary .pps-pct{font-size:12px;font-weight:600;margin-left:6px;}
 
-/* content 안을 flex column 으로 — topbar + 페이지 순서 */
+/* content — 단순 세로 스크롤 컨테이너 (정보바는 sticky 로 상단 고정) */
 .content{
-  display:flex!important;
-  flex-direction:column!important;
-  overflow-y:hidden!important;
+  display:block!important;
+  overflow-y:auto!important;
+  overflow-x:hidden!important;
 }
 .page.active{
-  flex:1;
+  display:block;
   min-height:0;
-  overflow-y:auto;
 }
 .page.active::-webkit-scrollbar{width:4px;}
 .page.active::-webkit-scrollbar-thumb{background:var(--bd);}
@@ -750,7 +747,6 @@ button.btn.loading::after{content:'조회 중…';position:absolute;inset:0;disp
   .sb-nav{display:flex;overflow-x:auto;padding:0;}
   .nav-item{font-family:'Helvetica Neue','Segoe UI',Arial,sans-serif;flex-shrink:0;border-left:none;border-bottom:2px solid transparent;padding:10px 14px;}
   .nav-item.active{border-bottom-color:#fff;border-left-color:transparent;}
-  .content{flex:1;}
   .wl-layout{grid-template-columns:1fr;}
   .field-row,.field-row-2{grid-template-columns:1fr;}
   .dash-grid{grid-template-columns:1fr;}
