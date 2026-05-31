@@ -112,7 +112,7 @@ body{
 }
 
 /* ── 셸 레이아웃 ── */
-.shell{display:flex;height:100vh;overflow:hidden;}
+.shell{display:flex;height:100vh;height:100dvh;overflow:hidden;}
 
 /* ── 사이드바 ── */
 .sidebar{
@@ -671,34 +671,34 @@ button.btn.loading::after{content:'조회 중…';position:absolute;inset:0;disp
 ::-webkit-scrollbar-thumb{background:var(--bd);}
 ::-webkit-scrollbar-thumb:hover{background:var(--t3);}
 
-/* ── 우측 상단 고정 정보 바 ── */
+/* ── 우측 상단 고정 정보 바 (콘텐츠 영역 최상단 고정 헤더) ── */
 .content-topbar{
   display:grid;
   grid-template-columns:1fr 1fr 1fr 1fr;
   gap:0;
   border-bottom:2px solid var(--bd);
-  position:sticky;
-  top:0;z-index:20;
   background:var(--s1);
   width:100%;
+  flex:0 0 auto;
 }
 .topbar-block{
-  padding:12px 18px;
+  padding:14px 20px;
   border-right:1px solid var(--bd);
+  min-width:0;
 }
 .topbar-block:last-child{border-right:none;}
 .topbar-label{
-  font-size:9px;font-weight:700;color:var(--t3);
+  font-size:10px;font-weight:700;color:var(--t3);
   text-transform:uppercase;letter-spacing:1.2px;
-  margin-bottom:4px;
+  margin-bottom:5px;
 }
 .topbar-value{
-  font-size:17px;font-weight:700;color:#fff;
+  font-size:19px;font-weight:700;color:#fff;
   font-variant-numeric:tabular-nums;
   white-space:nowrap;overflow:hidden;text-overflow:ellipsis;
 }
 .topbar-sub{
-  font-size:11px;font-weight:600;margin-top:2px;
+  font-size:12px;font-weight:600;margin-top:3px;
   font-variant-numeric:tabular-nums;color:var(--t2);
 }
 .topbar-sub.pos{color:var(--pos)!important;}
@@ -724,23 +724,66 @@ button.btn.loading::after{content:'조회 중…';position:absolute;inset:0;disp
 .pos-pnl-summary .pps-value.neg{color:var(--neg);}
 .pos-pnl-summary .pps-pct{font-size:12px;font-weight:600;margin-left:6px;}
 
-/* content — 단순 세로 스크롤 컨테이너 (정보바는 sticky 로 상단 고정) */
+/* content — flex column: 정보바(고정) + 페이지(스크롤) */
 .content{
-  display:block!important;
-  overflow-y:auto!important;
-  overflow-x:hidden!important;
-}
-.page.active{
-  display:block;
+  display:flex!important;
+  flex-direction:column!important;
+  overflow:hidden!important;
   min-height:0;
 }
-.page.active::-webkit-scrollbar{width:4px;}
+.page{display:none;}
+.page.active{
+  display:flex;
+  flex-direction:column;
+  flex:1 1 auto;
+  min-height:0;
+  overflow-y:auto;
+  overflow-x:hidden;
+}
+.page.active::-webkit-scrollbar{width:5px;}
 .page.active::-webkit-scrollbar-thumb{background:var(--bd);}
+
+/* 빈 상태가 화면을 다 먹지 않도록 — 정보바 바로 아래에 표시 */
+.page.active > .empty:only-child{padding:48px 28px;}
 
 /* 반응형 */
 @media(max-width:900px){
   .content-topbar{grid-template-columns:1fr 1fr;}
 }
+
+/* ── iPad 최적화 (가로 1024~1366 / 세로 768~834) ── */
+@media (min-width:768px) and (max-width:1366px){
+  .sidebar{width:240px;}
+  /* 터치 타깃 확대 */
+  .nav-item{padding:13px 18px;font-size:12px;}
+  .nav-item-icon{font-size:13px;}
+  .sb-run-btn{padding:13px;font-size:12px;}
+  .sb-btn{padding:10px 4px;font-size:11px;}
+  button.btn{padding:8px 14px;font-size:11px;}
+  .llm-btn{padding:6px 12px;font-size:11px;}
+  /* 정보바 가독성 */
+  .topbar-value{font-size:18px;}
+  .topbar-block{padding:14px 18px;}
+  /* 페이지 본문 여백 */
+  .page-body{padding:22px 28px;}
+  .page-header{padding:20px 28px 16px;}
+  /* 테이블 셀 터치/가독 */
+  .table td,.table th{padding:11px 10px;}
+}
+
+/* iPad 세로: 정보바 2열, 사이드바 약간 축소 */
+@media (min-width:768px) and (max-width:834px) and (orientation:portrait){
+  .sidebar{width:200px;}
+  .content-topbar{grid-template-columns:1fr 1fr;}
+  .dash-grid{grid-template-columns:1fr;}
+}
+
+/* iPad 가로: 정보바 4열 유지, 대시보드 2열 */
+@media (min-width:1024px) and (max-width:1366px) and (orientation:landscape){
+  .content-topbar{grid-template-columns:1fr 1fr 1fr 1fr;}
+  .dash-grid{grid-template-columns:1fr 1fr;}
+}
+
 @media(max-width:767px){
   .shell{flex-direction:column;}
   .sidebar{width:100%;border-right:none;border-bottom:1px solid var(--bd);}
