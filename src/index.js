@@ -2023,15 +2023,27 @@ const DEFAULT_CFG = {
   //   signal.weight는 riskPerTrade에 곱해 강한 신호일수록 리스크 더 가져감.
   riskBasedSizing: {
     enabled: true,
-    // [V9.6] 1.0→0.8: 더 보수적 사이징으로 손실 최소화
-    riskPerTrade: 0.8,       // cash의 0.8% 손실 허용 (기존 1.0%)
-    minRisk: 0.25,           // [V9.6] 0.3→0.25 (더 보수적 floor)
-    maxRisk: 1.0,            // [V9.6] 1.2→1.0 (더 타이트한 cap)
+    // [V15] 0.8→1.6: 집중투자 전환. 종목당 budget = cash×riskPct/stopDist 이므로
+    //   stop 4% 기준 riskPct 1.6이면 종목당 현금의 ~40% 이론치 → 포트비중 캡(아래)으로 상한 관리.
+    riskPerTrade: 1.6,
+    minRisk: 0.8,            // [V15] 0.25→0.8: weak signal도 floor가 받쳐 잘게 쪼개지지 않음
+    maxRisk: 2.2,            // [V15] 1.0→2.2: strong signal은 크게
     fallbackToLegacy: false,
-    // [V9.6] 전략별 오버라이드
     byStrategy: {
-      momentum: { riskPerTrade: 1.0, minRisk: 0.55, maxRisk: 1.2 }  // [V9.6] 보수화
+      momentum: { riskPerTrade: 1.8, minRisk: 0.9, maxRisk: 2.4 }  // [V15] 모멘텀 돌파는 더 공격적
     }
+  },
+  // === [V15] 포트폴리오 비중 기반 사이징 — 집중투자 + 현금 적극 소진 ===
+  //   기존 riskBasedSizing은 budget을 "현금" 기준으로만 잡아, signal.weight가 낮으면
+  //   floor(0.25%)로 떨어져 포트의 3~4%로 잘게 쪼개졌다(현금 66% 방치).
+  //   여기서는 "포트폴리오 총액" 기준으로 종목당 목표/상한 비중을 강제한다.
+  portfolioSizing: {
+    enabled: true,
+    minPortfolioPct: 7,    // 종목당 최소 포트의 7% (이보다 작게 계산되면 끌어올림)
+    maxPortfolioPct: 13,   // 종목당 최대 포트의 13% (과집중 방지 상한)
+    cashReservePct: 12,    // 현금을 포트의 12%까지 소진 허용 → cashCap 동적 산정
+    // day 전략은 회전이 빨라 비중 절반만 — 약전략 과집중 방지
+    dayScale: 0.5
   },
   // === [V12] 폭락장 생존 (Crash Survival) — 포트폴리오 차원 방어 레이어 ===
   //   기존 방어는 모두 "개별 종목 매수 시점 필터"(MARKET_CRASH/FALLING_KNIFE/VOL_SPIKE).
@@ -2380,6 +2392,15 @@ function migrateCfgToMarkets(cfg) {
     }
   }
 
+
+  // [V15] portfolioSizing 누락 보강 — 저장된 옛 cfg 호환.
+  if (!cfg.portfolioSizing || typeof cfg.portfolioSizing !== "object") {
+    cfg.portfolioSizing = JSON.parse(JSON.stringify(DEFAULT_CFG.portfolioSizing));
+  } else {
+    for (const k in DEFAULT_CFG.portfolioSizing) {
+      if (cfg.portfolioSizing[k] === undefined) cfg.portfolioSizing[k] = DEFAULT_CFG.portfolioSizing[k];
+    }
+  }
 
   // [V12] crashSurvival 누락 보강 — DB에 저장된 옛 cfg가 얕은 병합으로
   //   DEFAULT_CFG.crashSurvival를 덮어 누락시키는 것을 방지. 통째로 없으면 기본값 주입,
@@ -2796,6 +2817,10 @@ async function collectLLMContext(DB, env, market) {
     }
   }
   // [V9] 시장 상태 요약 — LLM이 "오늘 약세인가"를 명확히 보도록 단순화한 신호 제공
+  // [V16] 시장 추세(지수 20일 수익률) — 손실 원인 구분에 사용.
+  let regimeForCtx = null;
+  try { regimeForCtx = await analyzeMarketRegime(DB, market); } catch (e) { regimeForCtx = null; }
+
   const marketSnapshot = {
     avgIndexChangePct: idxCnt > 0 ? +(sumIdxPct / idxCnt).toFixed(2) : null,
     worstIndexChangePct: worstIdxPct !== null ? +worstIdxPct.toFixed(2) : null,
@@ -2847,7 +2872,15 @@ async function collectLLMContext(DB, env, market) {
       avgPnl: sells.length > 0 ? (totalPnl / sells.length) : 0,
       totalPnl: totalPnl,
       bestTrade: wins.length > 0 ? wins.reduce(function(a, b) { return a.pnl_pct > b.pnl_pct ? a : b; }) : null,
-      worstTrade: losses.length > 0 ? losses.reduce(function(a, b) { return a.pnl_pct < b.pnl_pct ? a : b; }) : null
+      worstTrade: losses.length > 0 ? losses.reduce(function(a, b) { return a.pnl_pct < b.pnl_pct ? a : b; }) : null,
+      // [V16] 손실 원인 구분용 — 시장(지수 20일 추세)이 약했는지. LLM이 '시장 탓 손실 vs 시스템 결함'을 판별하는 근거.
+      marketTrendIdx20: (regimeForCtx && regimeForCtx.idxReturn20 != null) ? +regimeForCtx.idxReturn20.toFixed(1) : null,
+      lossLikelyMarketDriven: !!(regimeForCtx && regimeForCtx.idxReturn20 != null && regimeForCtx.idxReturn20 < 0 && totalPnl < 0),
+      lossDiagnosisHint: (regimeForCtx && regimeForCtx.idxReturn20 != null)
+        ? (regimeForCtx.idxReturn20 < 0
+            ? "시장(지수 20일) 약세 — 최근 손실은 시장 하락 영향일 가능성. sizing 축소 자제."
+            : "시장(지수 20일) 강세/횡보 — 시스템 성과를 시장과 분리해 평가 가능.")
+        : "시장 추세 데이터 부족 — 손익만으로 시스템 부진 단정 금지."
     },
     strategyPerf7d: strategyPerf,
     topSignals: topSignals,
@@ -3018,7 +3051,7 @@ function parseLLMInstruction(text) {
   return JSON.parse(clean.slice(start, end + 1));
 }
 
-function sanitizeInstruction(raw, llmCfg) {
+function sanitizeInstruction(raw, llmCfg, context) {
   // [V9] raw가 객체가 아니거나 null이면 안전한 기본값 반환 (방어)
   if (!raw || typeof raw !== "object") raw = {};
   // [V9] 유한한 숫자인지 검사 헬퍼 — NaN/Infinity 차단
@@ -3054,6 +3087,11 @@ function sanitizeInstruction(raw, llmCfg) {
       const c = sane.confidence;
       s = s * c + 1.0 * (1 - c);
     }
+    // [V16] 시장 하락발 손실 보호 — 손실 원인이 '시장 탓'으로 판정되면(lossLikelyMarketDriven)
+    //   LLM의 sizing 축소(s<1)를 1.0 쪽으로 절반 완충한다. 폭락장 손실로 투자를 줄이는 것을 방지.
+    if (context && context.last7days && context.last7days.lossLikelyMarketDriven && s < 1.0) {
+      s = s + (1.0 - s) * 0.5;
+    }
     sane.position_sizing.scale = +s.toFixed(3);
   }
   if (raw.stop_loss_adjustment && isFiniteNum(raw.stop_loss_adjustment.new_pct)) {
@@ -3078,8 +3116,13 @@ function buildLLMPrompt(market, context, opts) {
     "# 분석 절차 (반드시 이 순서로 사고할 것)\n" +
     "1) 시장 국면: marketSnapshot(avg/worstIndexChangePct)과 indices를 보고 강세/중립/약세 판정.\n" +
     "   - worstIndexChangePct <= -1.5% → 강한 약세 신호 / -1.0%~-1.5% → 약세 주의 / +0.5% 이상 광범위 상승 → 강세\n" +
-    "2) 최근 성과 진단: last7days.winRate와 avgPnl, strategyPerf7d를 보고 시스템이 현재 시장에 맞는지 평가.\n" +
-    "   - winRate < 0.40 이고 거래수가 충분(>=20)하면 → 시장 부적합 가능성 → 보수적으로.\n" +
+    "2) 최근 성과 진단: last7days.winRate와 avgPnl, strategyPerf7d를 보고 평가하되, **손실의 원인을 반드시 구분**할 것.\n" +
+    "   - ★중요★ 최근 7일 손실이 '시장 전반의 하락(폭락·조정)'에서 비롯됐다면 이는 시스템 결함이 아니다. 이 경우 sizing을 줄이지 말 것.\n" +
+    "     판단법: 같은 기간 indices/idxReturn20이 마이너스이거나 큰 폭으로 빠졌으면 → 손실은 시장 탓 → 시스템은 정상 → sizing 유지(1.0).\n" +
+    "     반대로 시장(indices)은 강세/횡보인데 시스템만 손실이면 → 진짜 시스템 부적합 → 그때만 보수적.\n" +
+    "   - winRate가 낮아도 손익비(avgWin/avgLoss, exp)가 양호하거나 큰 승자(TP2)가 있으면 정상 작동으로 본다. 이 시스템은 저승률·고손익비 구조다.\n" +
+    "   - 시장 하락이 이미 끝나고 회복(indices가 다시 +)되는 국면이면 오히려 sizing을 정상~약간 공격적으로(과거 손실에 갇히지 말 것).\n" +
+    "   - 단순히 'winRate < 0.40'이라는 이유만으로 sizing을 줄이는 것은 금지. 시장 원인을 배제한 뒤에만 판단.\n" +
     "3) 신호 품질: worstSignals 중 count>=8 이고 exp(기대값)<0 인 것만 disable 후보로. exp는 1거래당 기대 손익%이며, 음수면 장기적으로 잃는 신호다. wr(승률)만 낮고 exp>0이면 손익비가 좋은 것이니 끄지 말 것. stopRate가 높으면(>0.5) 손절로 자주 끝나는 신호다. 표본 작으면(count<8) 건드리지 말 것.\n" +
     "4) 종목 리스크: positions와 worstTrade를 보고 손실 집중 종목이 있으면 avoid_symbols 후보로.\n" +
     "5) 종합: 위 1~4를 근거로 sentiment / sizing / stop을 결정. 각 결정은 반드시 데이터 수치를 근거로 들 것.\n" +
@@ -3099,6 +3142,8 @@ function buildLLMPrompt(market, context, opts) {
     "- 모든 결론은 컨텍스트의 '구체적 수치'에 근거할 것. 데이터에 없는 외부 뉴스·예측을 지어내지 말 것.\n" +
     "- 표본이 작으면(거래수 적음, count 낮음) 단정하지 말고 neutral·sizing 1.0 유지.\n" +
     "- 한두 건의 우연한 손실로 신호·전략을 끄지 말 것.\n" +
+    "- ★시장 하락(폭락·조정)에서 난 손실로 sizing을 줄이지 말 것★. 시장이 빠지면 어느 시스템이든 손실이며, 이는 엔진 성능 저하가 아니다. sizing 축소는 '시장은 멀쩡한데 시스템만 지는' 명백한 경우로 한정한다.\n" +
+    "- 손실 원인이 모호하면 sizing은 1.0(중립)을 기본값으로 둘 것. 확신 없는 축소 금지.\n" +
     "- 불확실하면 confidence를 낮추고 보수적으로. 과잉 개입보다 무개입이 안전.\n\n" +
     (includeReasoning
       ? ("# 출력 형식 (JSON만, 코드블록·머리말 금지)\n" +
@@ -3196,7 +3241,7 @@ async function runLLMDailyAnalysis(env, market, forceRun = false) {
       return { ok: false, reason: "parse_fail", raw: res.text };
     }
 
-    const sanitized = sanitizeInstruction(raw, llmCfg);
+    const sanitized = sanitizeInstruction(raw, llmCfg, context);
     const instruction = {
       market: market,
       generatedAt: Date.now(),
@@ -7322,7 +7367,28 @@ async function runTradingCycle(env) {
             const targets = (byStrat && byStrat[market])
               || (mcfg.sizingTargets && mcfg.sizingTargets[market])
               || { minBudget: 0, maxBudget: Infinity };
-            const cashCap = cash[market] * 0.85;
+
+            // [V15] 포트폴리오 비중 기반 사이징 파라미터.
+            //   - cashCap: 현금을 포트의 cashReservePct%까지 소진(현금 방치 방지).
+            //   - portMin/portMax: 종목당 포트 비중 하한/상한(집중 + 과집중 통제).
+            const psz = mcfg.portfolioSizing || {};
+            const pszOn = psz.enabled !== false;
+            let cashCap;
+            if (pszOn && typeof portfolioValue === "number" && portfolioValue > 0) {
+              const reserve = portfolioValue * ((psz.cashReservePct != null ? psz.cashReservePct : 12) / 100);
+              // 이번 매수에 쓸 수 있는 현금 = 현재현금 - 남겨둘 현금. 음수면 0.
+              cashCap = Math.max(0, cash[market] - reserve);
+              // 단, 한 번에 현금 전부를 한 종목에 쏟지 않도록 현금의 92% 안전선도 병행.
+              cashCap = Math.min(cashCap, cash[market] * 0.92);
+            } else {
+              cashCap = cash[market] * 0.85;
+            }
+            const dayScale = (strategy === "day" && psz.dayScale != null) ? psz.dayScale : 1;
+            const portMin = (pszOn && typeof portfolioValue === "number" && portfolioValue > 0)
+              ? portfolioValue * ((psz.minPortfolioPct != null ? psz.minPortfolioPct : 7) / 100) * dayScale : 0;
+            const portMax = (pszOn && typeof portfolioValue === "number" && portfolioValue > 0)
+              ? portfolioValue * ((psz.maxPortfolioPct != null ? psz.maxPortfolioPct : 13) / 100) * dayScale : Infinity;
+
             let budget;
             const rbs = mcfg.riskBasedSizing || {};
             const useRiskSizing = rbs.enabled !== false;
@@ -7338,7 +7404,6 @@ async function runTradingCycle(env) {
               }
               // 신호 강도를 riskPerTrade에 반영 (cap·floor 적용)
               const sigStrength = signal.weight * crossBonus;
-              // [V9.6] 전략별 오버라이드 우선 — 없으면 공통값.
               const rbsOv = (rbs.byStrategy && rbs.byStrategy[strategy]) || {};
               const riskBase = rbsOv.riskPerTrade != null ? rbsOv.riskPerTrade
                              : (rbs.riskPerTrade != null ? rbs.riskPerTrade : 0.6);
@@ -7349,11 +7414,16 @@ async function runTradingCycle(env) {
               let riskPct = riskBase * sigStrength;
               if (riskPct < minR) riskPct = minR;
               if (riskPct > maxR) riskPct = maxR;
-              // budget 계산 — riskPct%로 stopDistPct% 거리 손실 시 정확히 cash×riskPct% 손실
               const rawBudget = cash[market] * (riskPct / 100) / (stopDistPct / 100);
               budget = Math.min(rawBudget, targets.maxBudget, cashCap);
-              // minBudget 보장 (기존 로직 유지)
-              if (budget < targets.minBudget && cash[market] >= targets.minBudget * 1.1) {
+              // [V15] 포트 비중 하한 보장 — 잘게 쪼개짐 방지. 현금이 충분할 때만.
+              if (pszOn && budget < portMin && cashCap >= portMin) {
+                budget = Math.min(portMin, targets.maxBudget, cashCap);
+              }
+              // [V15] 포트 비중 상한 — 과집중 방지.
+              if (pszOn && budget > portMax) budget = portMax;
+              // (구) minBudget 보장 — 포트사이징 OFF일 때만 적용
+              if (!pszOn && budget < targets.minBudget && cash[market] >= targets.minBudget * 1.1) {
                 budget = Math.min(targets.minBudget, cashCap);
               }
             } else {
@@ -7361,7 +7431,9 @@ async function runTradingCycle(env) {
               const adjustedRatio = baseRatio * signal.weight * crossBonus * atrMult;
               const rawBudget = cash[market] * adjustedRatio;
               budget = Math.min(rawBudget, targets.maxBudget, cashCap);
-              if (budget < targets.minBudget && cash[market] >= targets.minBudget * 1.1) {
+              if (pszOn && budget < portMin && cashCap >= portMin) budget = Math.min(portMin, targets.maxBudget, cashCap);
+              if (pszOn && budget > portMax) budget = portMax;
+              if (!pszOn && budget < targets.minBudget && cash[market] >= targets.minBudget * 1.1) {
                 budget = Math.min(targets.minBudget, cashCap);
               }
             }
@@ -7369,6 +7441,11 @@ async function runTradingCycle(env) {
             // [V8.6 Hybrid] LLM 사이징 스케일 적용 — cashCap 한도 내에서
             if (llmInstr && llmInstr.position_sizing && typeof llmInstr.position_sizing.scale === "number") {
               budget = Math.min(budget * llmInstr.position_sizing.scale, cashCap);
+              // [V15] LLM 축소 후에도 집중투자 하한 유지 — portMin의 80%선 아래로는 안 떨어뜨림
+              //   (LLM 리스크오프는 존중하되, 과거처럼 포트 3~4%로 잘게 쪼개지는 것 방지).
+              if (pszOn && portMin > 0 && budget < portMin * 0.8 && cashCap >= portMin * 0.8) {
+                budget = Math.min(portMin * 0.8, cashCap);
+              }
             }
 
             let qty = Math.floor(budget / (price * (1 + feeRate)));
