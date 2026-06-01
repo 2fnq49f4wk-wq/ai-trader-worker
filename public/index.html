@@ -4,6 +4,10 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>LUX-ENGINE V9</title>
+<script>
+// 테마 선반영(깜빡임 방지) — 저장값 없으면 기본 다크
+try{var __t=localStorage.getItem('luxTheme');if(__t==='light')document.documentElement.setAttribute('data-theme','light');}catch(e){}
+</script>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600;700&family=Pinyon+Script&display=swap" rel="stylesheet">
@@ -798,6 +802,39 @@ button.btn.loading::after{content:'조회 중…';position:absolute;inset:0;disp
   .content-topbar{grid-template-columns:1fr 1fr;}
 }
 
+/* ────────────────────────────────────────────────
+   라이트 모드 (색상 반전 방식)
+   - 다크모드가 기본. html[data-theme="light"]에서만 전체 반전 → 배경 흰색.
+   - invert(1)로 명암 뒤집고 hue-rotate(180deg)로 색상(녹/적/청)은 원래 계열 유지.
+   - 좌상단 로고 영역(.sb-brand)·인트로·이미지/차트는 다시 반전해 원래 색(검정 배경) 유지.
+   ──────────────────────────────────────────────── */
+html[data-theme="light"]{
+  filter:invert(1) hue-rotate(180deg);
+  background:#fff;
+}
+/* 반전 되돌리기(원래 색 유지) — 로고/인트로/이미지/차트/iframe */
+html[data-theme="light"] .sb-brand,
+html[data-theme="light"] #lux-intro-overlay,
+html[data-theme="light"] img,
+html[data-theme="light"] video,
+html[data-theme="light"] iframe,
+html[data-theme="light"] canvas{
+  filter:invert(1) hue-rotate(180deg);
+}
+/* 로고 영역은 투명 배경이라 확실히 검정 바탕을 깔아 흰 로고/글씨가 보이게 함 */
+html[data-theme="light"] .sb-brand{
+  background:#0d0d0d;
+}
+/* 테마 토글 버튼 */
+.sb-theme-btn{
+  width:100%;margin-top:6px;
+  background:var(--s2);color:var(--t1);
+  border:1px solid var(--bd);border-radius:8px;
+  padding:9px;font-size:11px;font-weight:600;letter-spacing:1px;
+  cursor:pointer;transition:background .15s,border-color .15s;
+}
+.sb-theme-btn:hover{background:var(--s3);border-color:var(--t3);}
+
 </style>
 </head>
 <body>
@@ -887,6 +924,7 @@ button.btn.loading::after{content:'조회 중…';position:absolute;inset:0;disp
         <button type="button" class="sb-btn btn" id="btnHolidayRecheck">휴장</button>
         <button type="button" class="sb-btn btn" id="btnDebug">진단</button>
       </div>
+      <button type="button" class="sb-theme-btn" id="btnTheme">🌙 DARK</button>
     </div>
   </nav>
 
@@ -3687,6 +3725,24 @@ window.addEventListener('DOMContentLoaded', () => {
     item.addEventListener('click',function(){showPage(this.getAttribute('data-page'));});
   });
   try{showPage(localStorage.getItem('luxPage')||'dashboard');}catch(e){showPage('dashboard');}
+
+  // ── 테마 토글 (다크 ↔ 라이트 색반전) ──
+  function applyThemeLabel(){
+    var btn=document.getElementById('btnTheme');
+    if(!btn) return;
+    var light=document.documentElement.getAttribute('data-theme')==='light';
+    btn.textContent = light ? '☀ LIGHT' : '🌙 DARK';
+  }
+  function toggleTheme(){
+    var root=document.documentElement;
+    var light=root.getAttribute('data-theme')==='light';
+    if(light){ root.removeAttribute('data-theme'); try{localStorage.setItem('luxTheme','dark');}catch(e){} }
+    else { root.setAttribute('data-theme','light'); try{localStorage.setItem('luxTheme','light');}catch(e){} }
+    applyThemeLabel();
+  }
+  var __tb=document.getElementById('btnTheme');
+  if(__tb) __tb.addEventListener('click',toggleTheme);
+  applyThemeLabel();
 })();
 </script>
 
