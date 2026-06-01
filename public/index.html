@@ -806,10 +806,11 @@ button.btn.loading::after{content:'조회 중…';position:absolute;inset:0;disp
    라이트 모드 (색상 반전 방식)
    - 다크모드가 기본. html[data-theme="light"]에서만 전체 반전 → 배경 흰색.
    - invert(1)로 명암 뒤집고 hue-rotate(180deg)로 색상(녹/적/청)은 원래 계열 유지.
+   - saturate(1.4)로 색감을 좀 더 진하게 해서 핑크/핑크한 느낌 개선.
    - 좌상단 로고 영역(.sb-brand)·인트로·이미지/차트는 다시 반전해 원래 색(검정 배경) 유지.
    ──────────────────────────────────────────────── */
 html[data-theme="light"]{
-  filter:invert(1) hue-rotate(180deg);
+  filter:invert(1) hue-rotate(180deg) saturate(1.4);
   background:#fff;
 }
 /* 반전 되돌리기(원래 색 유지) — 로고/인트로/이미지/차트/iframe */
