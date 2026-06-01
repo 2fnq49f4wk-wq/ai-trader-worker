@@ -2064,9 +2064,9 @@ const DEFAULT_CFG = {
     // (2) 연속 손실 쿨다운 — 최근 거래에서 손절이 몰리면 잠시 신규매수 중단.
     lossStreak: {
       enabled: true,
-      lookbackTrades: 12,      // 최근 매도 N건 검사(시장별)
-      maxLosses: 7,            // 그중 손실이 이 수 이상이면
-      pauseMinutes: 90         // N분간 신규매수 중단(시장별)
+      lookbackTrades: 15,      // [V9.8] 12→15 (창을 넓혀 단발 클러스터의 비중을 낮춤)
+      maxLosses: 10,           // [V9.8] 7→10 (한 번의 손절 묶음으로 쉽게 안 켜지게)
+      pauseMinutes: 45         // [V9.8] 90→45 (전면 차단 승격 시에도 봉쇄 시간 단축)
     },
     // (3) 패닉 게이트 — 지수 동시 급락(당일) 시 전 신규진입 차단.
     //   worstDayPct는 가장 약한 지수 1개라 노이즈가 있어, "평균 지수 낙폭"으로 판단.
@@ -2136,8 +2136,8 @@ const DEFAULT_CFG = {
     compactContext: true,     // [V9.7] 프롬프트 컨텍스트를 압축 JSON(들여쓰기 제거)으로 전송 → 입력 토큰 20~30%↓
     skipIfQuietPct: 0.5,      // [V9.7] 전일 대비 worst 지수변동 절댓값이 이 값 미만이면 LLM 호출 스킵, 직전 지시 재사용(만료 전). 0으로 두면 항상 호출
     confidenceWeighting: true, // [V9.1] LLM confidence로 sizing 개입 강도 조절 (낮으면 보수적)
-    timeoutMs: 20000,         // [V8.7] 시도당 20초 (재시도 포함 총량이 cron 60초/lock TTL 내에 들도록)
-    maxRetries: 2,            // [V8.7] 재시도 2회 → 최악 ~63초, 정상 응답(5~10초)엔 영향 없음
+    timeoutMs: 30000,         // [V9.8] 20→30s. 20s에서 3회 연속 타임아웃 빈발(엣지→Anthropic 지연). 시도당 여유 확대.
+    maxRetries: 1,            // [V9.8] 2→1. 최악 ~60s(30×2)로 묶고, 선차감 쿨다운(15분)이 매분 폭주를 차단.
     expiryHours: 18,          // 지시 유효 시간 — 18시간 지나면 무시 (다음날 지시 누락 시 안전)
     minSizingScale: 0.3,      // Claude가 너무 작은 사이즈 요청해도 이 값까지만
     maxSizingScale: 1.5,      // 너무 큰 사이즈 요청 차단
@@ -2274,7 +2274,7 @@ const DEFAULT_CFG = {
   momentumRules: {
     breakoutDays: 8,           // [V9.6] 10→8 (더 짧은 기간, 최근 모멘텀 중심)
     volMult: 1.10,             // [V9.6] 1.15→1.10 (거래량 필터 강화)
-    rsiMin: 55, rsiMax: 75,    // [V9.6] 50~80→55~75 (극단값 회피, 확실한 구간만)
+    rsiMin: 52, rsiMax: 78,    // [V9.8] 55~75→52~78 (과보수화 완화)
     minHoldDays: 1,            
     timeStopMaxDays: 20,       // [V9.6] 30→20 (더 빨리 포기, 모멘텀 소실 방지)
     trailStartPct: 3.0,        // [V9.6] 4.0→3.0 (빨리 익절)
@@ -2286,8 +2286,8 @@ const DEFAULT_CFG = {
     tp1: 4.0                   // 변경 없음 (첫 익절 지점)
   },
   meanrevRules: {
-    zScoreThreshold: -1.5,     // [V9.6] -1.3→-1.5 (더 극단적 저가만)
-    rsiMax: 30,                // [V9.6] 35→30 (더 과매도만 진입)
+    zScoreThreshold: -1.4,     // [V9.8] -1.5→-1.4 (과보수화 완화)
+    rsiMax: 33,                // [V9.8] 30→33
     minHoldHours: 2,
     timeStopMaxDays: 4,        // [V9.6] 5→4 (더 빨리 포기)
     tp: 999,
@@ -2300,14 +2300,14 @@ const DEFAULT_CFG = {
     // [V8.3] MR 진입 조건 강화 — RSI 상승 전환 요구
     requireRsiUptick: true,    // 유지 (catch-falling-knife 방지)
     // [V8.4] BEAR 한정 강화 — 약세장에서 reversion 매수는 매우 위험
-    bearZScoreThreshold: -2.2, // [V9.6] -2.0→-2.2 (약세장 더 극단적)
-    bearRsiMax: 22             // [V9.6] 25→22 (약세장 더 낮음)
+    bearZScoreThreshold: -2.0, // [V9.8] -2.2→-2.0
+    bearRsiMax: 25             // [V9.8] 22→25
   },
   // === Confluence (전략 내부) ===
   // [V8.1.3] 강제 OFF — 멀티 전략판이라 cross-strategy confluence로 충분.
   // autoTune이 켜는 로직도 V8.1.3에서 비활성화함.
   requireConfluence: false,
-  soloSignalWeight: 0.55,      // [V9.6] 0.7→0.55 (단독 신호 45% 감점 — 확실한 것만)
+  soloSignalWeight: 0.7,       // [V9.8] 0.55→0.7 (단독 신호 45%감점은 과함 — 거래가 사실상 못 나옴)
   confluenceBonus: 1.4,        // [V9.6] 1.3→1.4 (다중 신호 보상 강화)
   allowMixedConfluence: true,
   mixedConfluencePenalty: 0.8,
@@ -4247,9 +4247,13 @@ async function computeCrashGate(DB, market, cfg, regime, cash, positions) {
     if (lvl >= 3) gate.deRisk = true;
   }
 
-  // (2) 연속손실 쿨다운
+  // (2) 연속손실 쿨다운 — [V9.8] 실제 스트레스 동반 시에만 전면 차단, 아니면 사이즈 축소
   const ls = await checkLossStreak(DB, market, cs.lossStreak);
-  if (ls.paused) { gate.blockNew = true; gate.reasons.push("LOSS_STREAK"); }
+  if (ls.paused) {
+    const realStress = (lvl >= 1) || isPanic(regime, cs.panic);
+    if (realStress) { gate.blockNew = true; gate.reasons.push("LOSS_STREAK"); }
+    else { gate.sizeScale *= 0.5; gate.reasons.push("LOSS_STREAK→size×0.5"); }
+  }
 
   // (3) 패닉 게이트
   if (isPanic(regime, cs.panic)) {
@@ -4371,33 +4375,33 @@ function evaluateBuySignals_swing(price, dayPct, dailyData, cfg) {
       signals.push({ name: "SW_RSI_REV", weight: 0.4, type: "COUNTER", soloBlock: true, detail: "RSI " + dailyRsi.toFixed(1) + " (prev " + dailyRsiPrev.toFixed(1) + ")" });
     }
   }
-  // SW_GOLDEN: [V9.6.2] 조건 극도 강화
-  if (ma5 != null && ma5 > ma20 && dailyRsi >= 48 && dailyRsi <= 60) {  // [V9.6.2] 45~65 → 48~60
+  // SW_GOLDEN: [V9.8] 과보수화 완화 — 48~60→45~63, gap ±1→±1.5
+  if (ma5 != null && ma5 > ma20 && dailyRsi >= 45 && dailyRsi <= 63) {
     const ma5Gap = ((price - ma5) / ma5) * 100;
-    if (ma5Gap >= -1 && ma5Gap <= 1) {  // [V9.6.2] -2~2 → -1~1 (극도 타이트)
+    if (ma5Gap >= -1.5 && ma5Gap <= 1.5) {
       signals.push({ name: "SW_GOLDEN", weight: 0.85, type: "TREND", detail: "MA5>MA20 gap " + ma5Gap.toFixed(1) + "%" });
     }
   }
-  // SW_BB_LOW: [V9.6.2] RSI 극단화
-  if (bb != null && price <= bb.lower && dailyRsi < 32 && isGreenCandle && dailyRsi > 20) {  // [V9.6.2] <45 → <32
+  // SW_BB_LOW: [V9.8] RSI<32→<38 (밴드하단 반등 진입 폭 회복)
+  if (bb != null && price <= bb.lower && dailyRsi < 38 && isGreenCandle && dailyRsi > 20) {
     signals.push({ name: "SW_BB_LOW", weight: 0.8, type: "COUNTER", detail: "BB lower " + bb.lower.toFixed(2) });
   }
-  // SW_VOL_SPK: [V9.6.2] 거래량 기준 극상향 + RSI 좁힘
-  if (volumes.length >= 20 && isGreenCandle && dailyRsi >= 52 && dailyRsi <= 62) {  // [V9.6.2] 50~65 → 52~62
+  // SW_VOL_SPK: [V9.8] RSI 52~62→50~64, vol ×1.8→×1.5
+  if (volumes.length >= 20 && isGreenCandle && dailyRsi >= 50 && dailyRsi <= 64) {
     const todayVol = volumes[volumes.length - 1];
     let avgVol = 0;
     for (let i = volumes.length - 21; i < volumes.length - 1; i++) avgVol += volumes[i];
     avgVol /= 20;
-    if (todayVol >= avgVol * 1.8) {  // [V9.6.2] cfg.volSpikeMult(1.5) → 1.8 (극상향)
+    if (todayVol >= avgVol * 1.5) {
       signals.push({ name: "SW_VOL_SPK", weight: 0.9, type: "TREND", detail: "vol x" + (todayVol/avgVol).toFixed(1) });
     }
   }
 
-  // SW_PULLBACK: [V9.6.2] 조건 극도 강화
+  // SW_PULLBACK: [V9.8] RSI 52~60→50~63, ma20Gap 0~2→0~3
   const ma50sw = getMA(closes, 50);
-  if (ma50sw != null && ma20 > ma50sw && isGreenCandle && dailyRsi >= 52 && dailyRsi <= 60) {  // [V9.6.2] 50~62 → 52~60
+  if (ma50sw != null && ma20 > ma50sw && isGreenCandle && dailyRsi >= 50 && dailyRsi <= 63) {
     const ma20Gap = ((price - ma20) / ma20) * 100;
-    if (ma20Gap >= 0 && ma20Gap <= 2) {  // [V9.6.2] 0~5 → 0~2 (극도 타이트)
+    if (ma20Gap >= 0 && ma20Gap <= 3) {
       signals.push({
         name: "SW_PULLBACK",
         weight: 0.85, type: "TREND",
@@ -4523,7 +4527,10 @@ function evaluateBuySignals_momentum(price, dayPct, dailyData, cfg) {
   // MOM1: [V9.6.2] 돌파 조건 극도 강화 — 높은 거래량 + 강한 RSI만
   const high20 = getNDayHigh(closes, rules.breakoutDays);
   const trendAligned = ma20 > ma50 && price > ma20;
-  const rsiInBand = dailyRsi >= rules.rsiMin && dailyRsi <= rules.rsiMax;  // 55~75
+  // [V9.8] 저장된 cfg가 55~75로 좁아도 최소 52~78까지 넓혀 적용(과보수화 완화).
+  const moRsiMin = Math.min(rules.rsiMin != null ? rules.rsiMin : 55, 52);
+  const moRsiMax = Math.max(rules.rsiMax != null ? rules.rsiMax : 75, 78);
+  const rsiInBand = dailyRsi >= moRsiMin && dailyRsi <= moRsiMax;
 
   if (high20 != null && price > high20 && trendAligned && rsiInBand) {
     if (volumes.length >= 20) {
@@ -4531,11 +4538,11 @@ function evaluateBuySignals_momentum(price, dayPct, dailyData, cfg) {
       let avgVol = 0;
       for (let i = volumes.length - 21; i < volumes.length - 1; i++) avgVol += volumes[i];
       avgVol /= 20;
-      // [V9.6.2] 거래량 기준 1.25 → 1.45 (극상향)
-      if (todayVol >= avgVol * 1.45) {
+      // [V9.8] 거래량 기준 1.45 → 1.25 (확실한 돌파는 잡되 문턱 완화)
+      if (todayVol >= avgVol * 1.25) {
         signals.push({
           name: "MO_BREAKOUT",
-          weight: 1.1, type: "TREND",  // [V9.6.2] 1.2→1.1
+          weight: 1.1, type: "TREND",
           detail: "BO " + high20.toFixed(2) + " vol x" + (todayVol/avgVol).toFixed(1) + " RSI " + dailyRsi.toFixed(0)
         });
       }
@@ -4586,30 +4593,27 @@ function evaluateBuySignals_meanrev(price, dayPct, dailyData, cfg, regime) {
   const uptickNote = rsiUptick ? " up" : "";
   const bearNote = isBear ? " BEAR" : "";
 
-  // MR1: [V9.6.2] z-score + RSI 극단적
-  // z <= -1.8 (기존 -1.5) + RSI < 25 (기존 28) + rsiUptick 필수
-  if (z != null && z <= -1.8 && dailyRsi < 25 && isGreenCandle && rsiUptick) {  // [V9.6.2]
+  // MR1: [V9.8] z<=-1.8 & RSI<25 → z<=-1.6 & RSI<28 (과보수화 완화, uptick 필수 유지)
+  if (z != null && z <= -1.6 && dailyRsi < 28 && isGreenCandle && rsiUptick) {
     signals.push({
       name: "MR_OVERSOLD",
-      weight: 1.0, type: "COUNTER",  // [V9.6.2] 1.1→1.0
+      weight: 1.0, type: "COUNTER",
       detail: "z=" + z.toFixed(2) + " RSI " + dailyRsi.toFixed(1) + uptickNote + bearNote
     });
   }
 
-  // MR2: [V9.6.2] 극단 RSI — 기준 극저
-  // NEUTRAL: RSI < 22 (기존 25) / BEAR: RSI < 18 (기존 20)
-  const extremeRsi = isBear ? 18 : 22;  // [V9.6.2] 25→22, 20→18
+  // MR2: [V9.8] 극단 RSI — NEUTRAL 22→25 / BEAR 18→20
+  const extremeRsi = isBear ? 20 : 25;
   if (dailyRsi < extremeRsi && isGreenCandle && rsiUptick) {
     signals.push({
       name: "MR_EXTREME_RSI",
-      weight: 0.95, type: "COUNTER",  // [V9.6.2] 1.0→0.95
+      weight: 0.95, type: "COUNTER",
       detail: "RSI " + dailyRsi.toFixed(1) + " green" + uptickNote + bearNote
     });
   }
 
-  // MR3: [V9.6.2] 큰 하락 후 반등 — 극도 강화
-  // z <= -1.5 (기존 -1.2) + RSI < 30 (기존 35) + BULL/NEUTRAL만 + rsiUptick 필수
-  if (!isBear && z != null && z <= -1.5 && dailyRsi < 30 && isGreenCandle && rsiUptick) {  // [V9.6.2]
+  // MR3: [V9.8] z<=-1.5 & RSI<30 → z<=-1.4 & RSI<33 (BULL/NEUTRAL만 + uptick 필수)
+  if (!isBear && z != null && z <= -1.4 && dailyRsi < 33 && isGreenCandle && rsiUptick) {
     if (!signals.some(function(s){ return s.name === "MR_OVERSOLD"; })) {
       signals.push({
         name: "MR_DEEP_DROP",
@@ -6872,7 +6876,21 @@ async function runTradingCycle(env) {
             if (lvl >= 3) crashGate.deRisk = true;
           }
           const ls = await checkLossStreak(DB, market, cs.lossStreak);
-          if (ls.paused) { crashGate.blockNew = true; crashGate.reasons.push("LOSS_STREAK" + (ls.losses != null ? "(" + ls.losses + ")" : "")); }
+          if (ls.paused) {
+            // [V9.8] 연속손실'만'으로는 신규매수를 전면 차단하지 않는다.
+            //   한 사이클에 손절이 몰리면(예: 트레일/하드스톱 동시 발동 20건) 계좌 낙폭이 0%여도
+            //   직전 매도 N건이 손실로 채워져 LOSS_STREAK이 켜지고, 90분간 회복장 진입을 통째로 놓쳤다.
+            //   → 실제 스트레스(드로다운 L1+ 또는 패닉)가 동반될 때만 전면 차단(BLOCK-NEW),
+            //     아니면 사이즈 절반으로 보수화하되 거래는 계속 허용.
+            const realStress = (crashGate.ddLevel >= 1) || isPanic(regime, cs.panic);
+            if (realStress) {
+              crashGate.blockNew = true;
+              crashGate.reasons.push("LOSS_STREAK" + (ls.losses != null ? "(" + ls.losses + ")" : ""));
+            } else {
+              crashGate.sizeScale *= 0.5;
+              crashGate.reasons.push("LOSS_STREAK" + (ls.losses != null ? "(" + ls.losses + ")" : "") + "→size×0.5");
+            }
+          }
           if (isPanic(regime, cs.panic)) { crashGate.blockNew = true; crashGate.deRisk = true; crashGate.reasons.push("PANIC avg=" + (regime.avgDayPct || 0).toFixed(2) + "%"); }
         }
         if (crashGate.reasons.length > 0) {
@@ -8369,18 +8387,27 @@ export default {
       //   시간/subrequest 예산 경쟁에 밀려 타임아웃났다(회귀 반복). 여기서 깨끗한 예산으로
       //   먼저 끝내고, 그 다음에 무거운 거래 사이클을 돌린다. 실패해도 거래는 정상 진행.
       try {
+        // [V9.8] LLM 외부 API fetch는 깨끗한 subrequest 예산에서 시작해야 한다.
+        //   __fetchBudget는 모듈 전역이라 warm isolate에선 직전 invocation의 거래 사이클이
+        //   남긴 used(최대 45)가 그대로 이월돼 collectLLMContext의 budgetedFetch가 굶는다.
+        //   여기서 리셋해 컨텍스트 수집·LLM 호출이 예산 경쟁 없이 돈다.
+        try { resetFetchBudget(45); } catch (e0) {}
         const _cfg = migrateCfgToMarkets(Object.assign({}, DEFAULT_CFG, await getState(env.DB, "cfg", {})));
         if (_cfg.llmHybrid && _cfg.llmHybrid.enabled) {
           const cdMin = _cfg.llmHybrid.failCooldownMin || 15;
+          // [V9.8] 선(先)차감 쿨다운: 호출 시작 전에 실패 쿨다운을 먼저 찍는다.
+          //   LLM fetch가 매달려 invocation이 통째로 죽으면(markLLMFailed 도달 못함) 다음 cron이
+          //   곧장 재시도해 매분 60s씩 폭주했다(로그에 2분 간격 타임아웃 반복). 미리 찍어두면
+          //   최악의 경우에도 cdMin 동안은 재시도 안 함. 성공하면 ranToday 마킹이 우선해 더는 호출 안 함.
           if (isLLMTriggerWindow("kr") && !(await llmAlreadyRanToday(env.DB, "kr")) && !(await llmInFailCooldown(env.DB, "kr"))) {
+            await markLLMFailed(env.DB, "kr", cdMin);
             const r = await runLLMDailyAnalysis(env, "kr");
             if (r && r.ok) await markLLMRanToday(env.DB, "kr");
-            else await markLLMFailed(env.DB, "kr", cdMin);
           }
           if (isLLMTriggerWindow("us") && !(await llmAlreadyRanToday(env.DB, "us")) && !(await llmInFailCooldown(env.DB, "us"))) {
+            await markLLMFailed(env.DB, "us", cdMin);
             const r = await runLLMDailyAnalysis(env, "us");
             if (r && r.ok) await markLLMRanToday(env.DB, "us");
-            else await markLLMFailed(env.DB, "us", cdMin);
           }
         }
       } catch (e) { try { await log(env.DB, "ERROR", null, "[SCHED] LLM analysis fail: " + e.message); } catch (e2) {} }
