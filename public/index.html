@@ -173,7 +173,7 @@ body{
   clip-path:polygon(50% 0%,62% 38%,100% 50%,62% 62%,50% 100%,38% 62%,0% 50%,38% 38%);
   transform:rotate(45deg);
 }
-.sb-brand-name{font-size:13px;font-weight:700;color:#fff;letter-spacing:2px;text-transform:uppercase;}
+.sb-brand-name{font-size:13px;font-weight:700;color:var(--acc);letter-spacing:2px;text-transform:uppercase;}
 .sb-brand-sub{font-size:9px;color:var(--t3);letter-spacing:1.5px;margin-top:2px;}
 
 /* 사이드바 상태 */
@@ -227,7 +227,7 @@ body{
   transition:all .12s;user-select:none;
 }
 .nav-item:hover{color:var(--t1);background:var(--s2);}
-.nav-item.active{color:#fff;border-left-color:#fff;background:var(--s2);}
+.nav-item.active{color:var(--acc);border-left-color:var(--acc);background:var(--s2);}
 .nav-item-icon{font-size:12px;width:16px;text-align:center;flex-shrink:0;}
 .nav-item-label{font-size:11px;font-weight:500;}
 
@@ -237,7 +237,7 @@ body{
   display:flex;flex-direction:column;gap:6px;
 }
 .sb-run-btn{font-family:'Helvetica Neue','Segoe UI',Arial,sans-serif !important;
-  padding:10px;background:#fff;color:#000;border:none;
+  padding:10px;background:var(--acc);color:var(--bg);border:none;
   font-family:'IBM Plex Mono',monospace;font-size:11px;font-weight:700;
   cursor:pointer;letter-spacing:1.5px;text-transform:uppercase;
   transition:all .12s;
@@ -281,7 +281,7 @@ body{
   background:var(--bg);
 }
 .page-title{
-  font-size:14px;font-weight:700;color:#fff;
+  font-size:14px;font-weight:700;color:var(--acc);
   letter-spacing:2px;text-transform:uppercase;
 }
 .page-actions{display:flex;gap:6px;flex-wrap:wrap;align-items:center;}
@@ -298,7 +298,7 @@ button.btn{font-family:'Helvetica Neue','Segoe UI',Arial,sans-serif !important;
   transition:all .12s;
 }
 button.btn:hover{border-color:var(--t1);color:var(--t1);}
-button.btn.primary{background:#fff;color:#000;border-color:#fff;font-weight:700;}
+button.btn.primary{background:var(--acc);color:var(--bg);border-color:var(--acc);font-weight:700;}
 button.btn.primary:hover{background:#ddd;border-color:#ddd;}
 button.btn.danger{color:var(--neg);border-color:rgba(255,23,68,.3);}
 button.btn.danger:hover{border-color:var(--neg);background:rgba(255,23,68,.08);}
@@ -330,7 +330,7 @@ button.btn.loading::after{content:'조회 중…';position:absolute;inset:0;disp
   padding:10px 28px;font-size:11px;line-height:1.6;background:var(--bg);
 }
 .llm-banner-header{display:flex;align-items:center;gap:8px;flex-wrap:wrap;}
-.llm-banner-title{font-weight:700;color:#fff;letter-spacing:.5px;text-transform:uppercase;}
+.llm-banner-title{font-weight:700;color:var(--acc);letter-spacing:.5px;text-transform:uppercase;}
 .llm-status-chip{font-size:9px;padding:1px 7px;border:1px solid;font-weight:700;letter-spacing:.5px;}
 .llm-status-chip.on,.llm-status-chip.bullish{border-color:var(--pos);color:var(--pos);}
 .llm-status-chip.off,.llm-status-chip.bearish{border-color:var(--neg);color:var(--neg);}
@@ -353,7 +353,7 @@ button.btn.loading::after{content:'조회 중…';position:absolute;inset:0;disp
   padding:7px 28px;border-bottom:1px solid var(--bd);border-left:2px solid var(--pos);
   color:var(--t2);font-size:11px;line-height:1.6;background:var(--bg);
 }
-.tune-banner b{color:#fff;}
+.tune-banner b{color:var(--acc);}
 
 /* 대시보드 그리드 */
 .dash-grid{
@@ -378,7 +378,7 @@ button.btn.loading::after{content:'조회 중…';position:absolute;inset:0;disp
 
 /* 포트폴리오 수치 */
 .port-total{
-  font-size:28px;font-weight:700;color:#fff;
+  font-size:28px;font-weight:700;color:var(--acc);
   font-variant-numeric:tabular-nums;letter-spacing:-1px;line-height:1.1;
 }
 .port-pnl{
@@ -410,7 +410,7 @@ button.btn.loading::after{content:'조회 중…';position:absolute;inset:0;disp
 }
 .idx-card:hover{background:var(--s2);}
 .idx-name{font-size:9px;color:var(--t3);letter-spacing:.8px;text-transform:uppercase;}
-.idx-price{font-size:16px;font-weight:700;margin-top:3px;color:#fff;font-variant-numeric:tabular-nums;letter-spacing:-.5px;}
+.idx-price{font-size:16px;font-weight:700;margin-top:3px;color:var(--acc);font-variant-numeric:tabular-nums;letter-spacing:-.5px;}
 .idx-bottom{display:flex;justify-content:space-between;align-items:center;margin-top:4px;gap:4px;}
 .idx-day{font-size:11px;font-weight:700;font-variant-numeric:tabular-nums;}
 .idx-spark{flex:1;height:22px;opacity:.5;}
@@ -458,7 +458,7 @@ button.btn.loading::after{content:'조회 중…';position:absolute;inset:0;disp
   display:flex;justify-content:space-between;align-items:center;
   gap:8px;flex-wrap:wrap;flex-shrink:0;background:var(--s1);
 }
-.wl-pane-title{font-size:10px;font-weight:700;color:#fff;letter-spacing:1.5px;text-transform:uppercase;}
+.wl-pane-title{font-size:10px;font-weight:700;color:var(--acc);letter-spacing:1.5px;text-transform:uppercase;}
 .wl-pane-actions{display:flex;gap:4px;align-items:center;}
 .wl-search-wrap{padding:8px 12px;border-bottom:1px solid var(--bd2);flex-shrink:0;}
 .wl-search{
@@ -466,7 +466,7 @@ button.btn.loading::after{content:'조회 중…';position:absolute;inset:0;disp
   color:var(--t1);font-family:'Helvetica Neue','Segoe UI',Arial,sans-serif;font-size:12px;
   padding:7px 10px;outline:none;transition:border-color .12s;
 }
-.wl-search:focus{border-color:#fff;}
+.wl-search:focus{border-color:var(--acc);}
 .wl-search::placeholder{color:var(--t3);}
 .wl-count{font-size:10px;color:var(--t3);margin-left:4px;}
 .wl-list-wrap{flex:1;overflow-y:auto;}
@@ -483,9 +483,9 @@ button.btn.loading::after{content:'조회 중…';position:absolute;inset:0;disp
 .wl-card:hover{background:var(--s2);}
 .wl-card.held{border-left:2px solid var(--pos);}
 .wl-card:last-child{border-bottom:none;}
-.wl-sym{grid-column:1;grid-row:1;font-size:12px;font-weight:700;color:#fff;padding-right:18px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
+.wl-sym{grid-column:1;grid-row:1;font-size:12px;font-weight:700;color:var(--acc);padding-right:18px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
 .wl-name{grid-column:1;grid-row:2;font-size:10px;color:var(--t3);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
-.wl-price{grid-column:2;grid-row:1;font-size:13px;font-weight:700;color:#fff;font-variant-numeric:tabular-nums;text-align:right;white-space:nowrap;}
+.wl-price{grid-column:2;grid-row:1;font-size:13px;font-weight:700;color:var(--acc);font-variant-numeric:tabular-nums;text-align:right;white-space:nowrap;}
 .wl-day{grid-column:2;grid-row:2;font-size:11px;font-weight:700;font-variant-numeric:tabular-nums;text-align:right;white-space:nowrap;}
 .wl-meta{display:none;}
 .wl-pnl{grid-column:2;grid-row:3;font-size:10px;text-align:right;font-variant-numeric:tabular-nums;}
@@ -497,7 +497,7 @@ button.btn.loading::after{content:'조회 중…';position:absolute;inset:0;disp
 .wl-held-badge{display:inline-block;font-size:8px;font-weight:700;color:var(--pos);border:1px solid rgba(0,230,118,.3);padding:0 3px;margin-left:3px;vertical-align:middle;}
 .wl-etf-badge{display:inline-block;font-size:8px;font-weight:700;color:var(--amber);border:1px solid rgba(255,193,7,.3);padding:0 3px;margin-left:3px;vertical-align:middle;}
 .wl-loadmore{text-align:center;padding:10px;background:transparent;border:none;border-top:1px solid var(--bd2);cursor:pointer;font-size:11px;color:var(--t2);font-family:'IBM Plex Mono',monospace;width:100%;transition:color .1s;}
-.wl-loadmore:hover{color:#fff;}
+.wl-loadmore:hover{color:var(--acc);}
 .watchlist-section{padding:5px 14px;font-size:9px;font-weight:700;color:var(--t3);background:var(--s1);border-bottom:1px solid var(--bd2);text-transform:uppercase;letter-spacing:1px;}
 .watchlist-section.fav{color:var(--amber);}
 .watchlist-section.all{color:var(--t3);}
@@ -506,7 +506,7 @@ button.btn.loading::after{content:'조회 중…';position:absolute;inset:0;disp
 .watchlist-toggle-btn:hover{border-color:var(--t1);color:var(--t1);}
 .wl-viewmode-btn{font-size:9px;font-weight:700;padding:3px 8px;background:transparent;border:1px solid var(--bd2);cursor:pointer;color:var(--t3);font-family:'IBM Plex Mono',monospace;transition:all .1s;}
 .wl-viewmode-btn:hover{color:var(--t2);border-color:var(--bd);}
-.wl-viewmode-btn.active{color:#fff;border-color:#fff;}
+.wl-viewmode-btn.active{color:var(--acc);border-color:var(--acc);}
 
 /* ── COMMODITIES ── */
 .cm-summary-bar{
@@ -517,7 +517,7 @@ button.btn.loading::after{content:'조회 중…';position:absolute;inset:0;disp
 }
 .cm-stat:last-child{border-right:none;}
 .summary-label{font-size:9px;font-weight:700;color:var(--t3);text-transform:uppercase;letter-spacing:1px;}
-.summary-value{font-size:15px;font-weight:700;color:#fff;font-variant-numeric:tabular-nums;margin-top:3px;white-space:nowrap;}
+.summary-value{font-size:15px;font-weight:700;color:var(--acc);font-variant-numeric:tabular-nums;margin-top:3px;white-space:nowrap;}
 .cm-section-label{padding:7px 20px;font-size:9px;font-weight:700;color:var(--t2);text-transform:uppercase;letter-spacing:1.2px;background:var(--s1);border-bottom:1px solid var(--bd);}
 
 /* ── TRADES ── */
@@ -528,11 +528,11 @@ button.btn.loading::after{content:'조회 중…';position:absolute;inset:0;disp
 }
 .trades-toggle:hover{background:var(--s2);}
 .trades-toggle-btn{font-size:9px;font-weight:700;padding:3px 8px;background:transparent;border:1px solid var(--bd);cursor:pointer;color:var(--t2);font-family:'IBM Plex Mono',monospace;text-transform:uppercase;letter-spacing:.5px;transition:all .1s;}
-.trades-toggle-btn:hover{border-color:#fff;color:#fff;}
+.trades-toggle-btn:hover{border-color:var(--acc);color:var(--acc);}
 .trades-summary{display:flex;gap:24px;}
 .trades-summary-item{display:flex;flex-direction:column;gap:1px;}
 .trades-summary-label{font-size:9px;font-weight:700;color:var(--t3);text-transform:uppercase;letter-spacing:.8px;}
-.trades-summary-value{font-size:14px;font-weight:700;color:#fff;font-variant-numeric:tabular-nums;}
+.trades-summary-value{font-size:14px;font-weight:700;color:var(--acc);font-variant-numeric:tabular-nums;}
 .trades-table{display:none;}
 .trades-table.show{display:block;}
 
@@ -540,7 +540,7 @@ button.btn.loading::after{content:'조회 중…';position:absolute;inset:0;disp
 .toast{
   position:fixed;bottom:24px;left:50%;transform:translateX(-50%);
   background:var(--s2);border:1px solid var(--bd);padding:9px 18px;
-  color:#fff;font-weight:600;font-size:11px;z-index:9999;display:none;
+  color:var(--acc);font-weight:600;font-size:11px;z-index:9999;display:none;
   box-shadow:0 4px 20px rgba(0,0,0,.6);white-space:nowrap;letter-spacing:.3px;
 }
 .toast.show{display:block;animation:toastIn .15s ease;}
@@ -561,14 +561,14 @@ button.btn.loading::after{content:'조회 중…';position:absolute;inset:0;disp
   border:1px solid var(--bd);padding:28px;
   box-shadow:0 20px 60px rgba(0,0,0,.8);
 }
-.modal-content h2{color:#fff;margin-bottom:18px;font-size:14px;font-weight:700;letter-spacing:1.5px;text-transform:uppercase;}
+.modal-content h2{color:var(--acc);margin-bottom:18px;font-size:14px;font-weight:700;letter-spacing:1.5px;text-transform:uppercase;}
 .modal-logs{
   max-width:1000px;margin:0 auto;background:var(--s1);
   border:1px solid var(--bd);padding:24px;
   box-shadow:0 20px 60px rgba(0,0,0,.8);
 }
 .modal-logs h2{
-  color:#fff;margin-bottom:12px;font-size:14px;font-weight:700;
+  color:var(--acc);margin-bottom:12px;font-size:14px;font-weight:700;
   display:flex;justify-content:space-between;align-items:center;
   gap:10px;flex-wrap:wrap;letter-spacing:1.5px;text-transform:uppercase;
 }
@@ -581,10 +581,10 @@ button.btn.loading::after{content:'조회 중…';position:absolute;inset:0;disp
 .logs-search{
   flex:1;min-width:160px;padding:7px 10px;
   background:var(--bg);border:1px solid var(--bd);
-  color:#fff;font-family:'IBM Plex Mono',monospace;font-size:11px;
+  color:var(--acc);font-family:'IBM Plex Mono',monospace;font-size:11px;
   outline:none;transition:border-color .1s;
 }
-.logs-search:focus{border-color:#fff;}
+.logs-search:focus{border-color:var(--acc);}
 .logs-info{font-size:10px;color:var(--t3);white-space:nowrap;}
 .log-box-modal{max-height:65vh;overflow-y:auto;background:#000;padding:10px;border:1px solid var(--bd);}
 
@@ -604,7 +604,7 @@ button.btn.loading::after{content:'조회 중…';position:absolute;inset:0;disp
 .log-filter{display:flex;gap:3px;flex-wrap:wrap;}
 .log-filter button{padding:2px 7px;font-size:9px;background:transparent;border:1px solid var(--bd);color:var(--t3);cursor:pointer;font-weight:600;letter-spacing:.5px;font-family:'IBM Plex Mono',monospace;transition:all .1s;}
 .log-filter button:hover{border-color:var(--t1);color:var(--t1);}
-.log-filter button.active{border-color:#fff;color:#fff;}
+.log-filter button.active{border-color:var(--acc);color:var(--acc);}
 
 /* 설정 폼 */
 .field{margin-bottom:10px;}
@@ -615,7 +615,7 @@ button.btn.loading::after{content:'조회 중…';position:absolute;inset:0;disp
   color:var(--t1);font-family:'Helvetica Neue','Segoe UI',Arial,sans-serif;font-size:12px;
   outline:none;transition:border-color .12s;border-radius:0;
 }
-.field input:focus,.field textarea:focus{border-color:#fff;}
+.field input:focus,.field textarea:focus{border-color:var(--acc);}
 .field textarea{min-height:65px;resize:vertical;}
 .field-row{display:grid;grid-template-columns:1fr 1fr 1fr;gap:8px;}
 .field-row-2{display:grid;grid-template-columns:1fr 1fr;gap:8px;}
@@ -624,7 +624,7 @@ button.btn.loading::after{content:'조회 중…';position:absolute;inset:0;disp
 .modal-actions{display:flex;gap:6px;margin-top:18px;flex-wrap:wrap;}
 .modal-actions button{flex:1;padding:10px;min-width:80px;}
 .checkbox-row{display:flex;align-items:center;gap:8px;margin-bottom:8px;}
-.checkbox-row input[type="checkbox"]{width:14px;height:14px;accent-color:#fff;cursor:pointer;}
+.checkbox-row input[type="checkbox"]{width:14px;height:14px;accent-color:var(--acc);cursor:pointer;}
 .checkbox-row label{font-size:11px;color:var(--t1);cursor:pointer;}
 .hint{font-size:10px;color:var(--t3);margin-top:3px;line-height:1.5;}
 .settings-epigraph{text-align:center;margin:0 0 14px;padding:0 10px;}
@@ -636,13 +636,13 @@ button.btn.loading::after{content:'조회 중…';position:absolute;inset:0;disp
   border:1px solid var(--bd);padding:24px;
   box-shadow:0 20px 60px rgba(0,0,0,.8);
 }
-.modal-macro h2{color:#fff;margin-bottom:4px;font-size:14px;font-weight:700;display:flex;justify-content:space-between;align-items:center;gap:10px;letter-spacing:1.5px;text-transform:uppercase;}
+.modal-macro h2{color:var(--acc);margin-bottom:4px;font-size:14px;font-weight:700;display:flex;justify-content:space-between;align-items:center;gap:10px;letter-spacing:1.5px;text-transform:uppercase;}
 .macro-sub{color:var(--t2);font-size:10px;margin-bottom:14px;}
 .macro-sub b{color:var(--amber);}
 .macro-next{display:flex;gap:8px;flex-wrap:wrap;margin-bottom:16px;}
 .macro-next-card{flex:1;min-width:130px;background:var(--bg);border:1px solid var(--bd);border-left:2px solid var(--amber);padding:10px 12px;}
 .macro-next-card .lbl{font-size:9px;color:var(--t3);letter-spacing:.8px;text-transform:uppercase;margin-bottom:3px;font-weight:700;}
-.macro-next-card .nm{font-size:12px;color:#fff;font-weight:700;margin-bottom:2px;}
+.macro-next-card .nm{font-size:12px;color:var(--acc);font-weight:700;margin-bottom:2px;}
 .macro-next-card .dt{font-size:10px;color:var(--t2);}
 .macro-next-card .dday{display:inline-block;margin-top:4px;font-size:10px;font-weight:700;padding:1px 6px;background:rgba(255,193,7,.08);color:var(--amber);border:1px solid rgba(255,193,7,.2);}
 .macro-next-card .dday.soon{background:rgba(255,23,68,.1);color:var(--neg);border-color:rgba(255,23,68,.2);animation:dotBlink 2s infinite;}
@@ -655,9 +655,9 @@ button.btn.loading::after{content:'조회 중…';position:absolute;inset:0;disp
 .macro-table th.r,.macro-table td.r{text-align:right;}
 .macro-table td{padding:7px 10px;border-bottom:1px solid var(--bd2);white-space:nowrap;font-variant-numeric:tabular-nums;color:var(--t2);}
 .macro-table tbody tr:hover{background:var(--s2);}
-.macro-table .ind-name{font-weight:600;color:#fff;}
+.macro-table .ind-name{font-weight:600;color:var(--acc);}
 .macro-table .ind-name small{display:block;font-weight:400;color:var(--t3);font-size:9px;margin-top:1px;}
-.macro-table .val{color:#fff;font-weight:700;font-size:13px;}
+.macro-table .val{color:var(--acc);font-weight:700;font-size:13px;}
 .macro-table .val .unit{font-size:9px;color:var(--t3);font-weight:400;margin-left:2px;}
 .macro-table .relday{color:var(--t3);font-size:9px;}
 .macro-table .nextday{color:var(--t2);}
@@ -667,7 +667,7 @@ button.btn.loading::after{content:'조회 중…';position:absolute;inset:0;disp
 .macro-disclaimer{margin-top:12px;padding:10px 12px;background:var(--bg);border:1px solid var(--bd);font-size:10px;color:var(--t3);line-height:1.6;}
 
 /* 별 아이콘 */
-.star-icon{display:inline-block;width:10px;height:10px;vertical-align:-1px;margin-right:3px;background:#fff;clip-path:polygon(50% 0%,62% 38%,100% 50%,62% 62%,50% 100%,38% 62%,0% 50%,38% 38%);}
+.star-icon{display:inline-block;width:10px;height:10px;vertical-align:-1px;margin-right:3px;background:var(--acc);clip-path:polygon(50% 0%,62% 38%,100% 50%,62% 62%,50% 100%,38% 62%,0% 50%,38% 38%);}
 
 /* 스크롤바 */
 ::-webkit-scrollbar{width:4px;height:4px;}
@@ -697,7 +697,7 @@ button.btn.loading::after{content:'조회 중…';position:absolute;inset:0;disp
   margin-bottom:5px;
 }
 .topbar-value{
-  font-size:19px;font-weight:700;color:#fff;
+  font-size:19px;font-weight:700;color:var(--acc);
   font-variant-numeric:tabular-nums;
   white-space:nowrap;overflow:hidden;text-overflow:ellipsis;
 }
@@ -721,7 +721,7 @@ button.btn.loading::after{content:'조회 중…';position:absolute;inset:0;disp
   letter-spacing:1.2px;text-transform:uppercase;
 }
 .pos-pnl-summary .pps-value{
-  font-size:18px;font-weight:700;color:#fff;
+  font-size:18px;font-weight:700;color:var(--acc);
   font-variant-numeric:tabular-nums;
 }
 .pos-pnl-summary .pps-value.pos{color:var(--pos);}
@@ -795,7 +795,7 @@ button.btn.loading::after{content:'조회 중…';position:absolute;inset:0;disp
   .sidebar{width:100%;border-right:none;border-bottom:1px solid var(--bd);}
   .sb-nav{display:flex;overflow-x:auto;padding:0;}
   .nav-item{font-family:'Helvetica Neue','Segoe UI',Arial,sans-serif;flex-shrink:0;border-left:none;border-bottom:2px solid transparent;padding:10px 14px;}
-  .nav-item.active{border-bottom-color:#fff;border-left-color:transparent;}
+  .nav-item.active{border-bottom-color:var(--acc);border-left-color:transparent;}
   .wl-layout{grid-template-columns:1fr;}
   .field-row,.field-row-2{grid-template-columns:1fr;}
   .dash-grid{grid-template-columns:1fr;}
@@ -803,29 +803,27 @@ button.btn.loading::after{content:'조회 중…';position:absolute;inset:0;disp
 }
 
 /* ────────────────────────────────────────────────
-   라이트 모드 (색상 반전 방식)
-   - 다크모드가 기본. html[data-theme="light"]에서만 전체 반전 → 배경 흰색.
-   - invert(1)로 명암 뒤집고 hue-rotate(180deg)로 색상(녹/적/청)은 원래 계열 유지.
-   - saturate(1.4)로 색감을 좀 더 진하게 해서 핑크/핑크한 느낌 개선.
-   - 좌상단 로고 영역(.sb-brand)·인트로·이미지/차트는 다시 반전해 원래 색(검정 배경) 유지.
+   라이트 모드 (정식 팔레트) — invert 반전 방식 폐기.
+   CSS 변수만 흰배경용으로 교체 → 손익 녹/적색을 흰 배경에 어울리는 진한 색으로 직접 지정.
+   (반전 방식은 손익색이 핑크/연빨강으로 떠서 폐기)
+   하드코딩 흰색 텍스트는 var(--acc)로 바꿔 라이트에서 자동으로 짙은색이 됨.
+   좌상단 로고(.sb-brand)는 검정 배경 유지.
    ──────────────────────────────────────────────── */
 html[data-theme="light"]{
-  filter:invert(1) hue-rotate(180deg) saturate(1.4);
+  --bg:#ffffff; --s1:#f6f6f7; --s2:#eeeef0; --s3:#e4e4e7;
+  --bd:#d9d9de; --bd2:#ebebef;
+  --t1:#1a1a1a; --t2:#5a5a5a; --t3:#9a9aa0; --acc:#1a1a1a;
+  --panel:#f6f6f7; --elev:#eeeef0; --border:#d9d9de;
+  --text:#1a1a1a; --dim:#5a5a5a; --faint:#9a9aa0;
+  --pos:#0a8f3c; --green:#0a8f3c;
+  --neg:#d11f3a; --red:#d11f3a;
+  --amber:#a96b00; --blue:#1565c0; --orange:#d84315; --purple:#7b1fa2;
   background:#fff;
 }
-/* 반전 되돌리기(원래 색 유지) — 로고/인트로/이미지/차트/iframe */
-html[data-theme="light"] .sb-brand,
-html[data-theme="light"] #lux-intro-overlay,
-html[data-theme="light"] img,
-html[data-theme="light"] video,
-html[data-theme="light"] iframe,
-html[data-theme="light"] canvas{
-  filter:invert(1) hue-rotate(180deg);
-}
-/* 로고 영역은 투명 배경이라 확실히 검정 바탕을 깔아 흰 로고/글씨가 보이게 함 */
-html[data-theme="light"] .sb-brand{
-  background:#0d0d0d;
-}
+/* 좌상단 로고 영역은 라이트에서도 검정 박스 유지 */
+html[data-theme="light"] .sb-brand{ background:#0d0d0d; }
+html[data-theme="light"] .sb-brand-name{ color:var(--acc); }
+html[data-theme="light"] .sb-brand-sub{ color:#888; }
 /* 테마 토글 버튼 */
 .sb-theme-btn{
   width:100%;margin-top:6px;
@@ -1236,7 +1234,7 @@ html[data-theme="light"] .sb-brand{
 <div class="modal" id="heatmapModal" style="padding:0;">
   <div style="width:95%;max-width:1300px;background:var(--s1);border:1px solid var(--bd);margin:auto;padding:20px;max-height:90vh;overflow-y:auto;">
     <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:16px;flex-wrap:wrap;gap:10px;">
-      <h2 style="margin:0;color:#fff;font-size:14px;font-weight:700;letter-spacing:1.5px;text-transform:uppercase;">📊 S&P 500 MARKET VIEW</h2>
+      <h2 style="margin:0;color:var(--acc);font-size:14px;font-weight:700;letter-spacing:1.5px;text-transform:uppercase;">📊 S&P 500 MARKET VIEW</h2>
       <div style="display:flex;gap:8px;align-items:center;">
         <button class="llm-btn" id="btnHeatmapRefresh">↻ 새로고침</button>
         <span id="btnCloseHeatmap" style="cursor:pointer;font-size:18px;color:var(--t2);">✕</span>
