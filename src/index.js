@@ -2817,9 +2817,28 @@ async function collectLLMContext(DB, env, market) {
     }
   }
   // [V9] 시장 상태 요약 — LLM이 "오늘 약세인가"를 명확히 보도록 단순화한 신호 제공
-  // [V16] 시장 추세(지수 20일 수익률) — 손실 원인 구분에 사용.
-  let regimeForCtx = null;
-  try { regimeForCtx = await analyzeMarketRegime(DB, market); } catch (e) { regimeForCtx = null; }
+  // [V16→V18 HOTFIX] 손실 원인 구분용 시장 추세.
+  //   ★중요★ 여기서 analyzeMarketRegime()을 호출하면 지수 일봉을 네트워크 fetch 해서
+  //   이미 무거운 사이클(100s+)에 부하를 더해 LLM 호출이 20s 타임아웃에 걸렸다(V16 회귀).
+  //   → 절대 fetch 하지 않는다. 이미 캐시된 지수 일봉(daily:INDEX)만 getState로 읽어
+  //     20일 수익률을 계산하고, 없으면 당일 지수 변동(worstIdxPct)으로 폴백한다.
+  let idxReturn20 = null;
+  try {
+    let sumRet = 0, nRet = 0;
+    for (const idx of indices) {
+      const d = await getState(DB, "daily:" + idx, null);  // 읽기만, fetch 없음
+      if (d && Array.isArray(d.closes) && d.closes.length >= 21) {
+        const c = d.closes;
+        const last = c[c.length - 1], prev20 = c[c.length - 21];
+        if (last > 0 && prev20 > 0) { sumRet += ((last - prev20) / prev20) * 100; nRet++; }
+      }
+    }
+    if (nRet > 0) idxReturn20 = sumRet / nRet;
+  } catch (e) { idxReturn20 = null; }
+  // 20일 추세를 못 구하면 당일 평균 지수변동으로 근사(약하게).
+  const trendProxy = (idxReturn20 != null) ? idxReturn20
+                   : (idxCnt > 0 ? (sumIdxPct / idxCnt) : null);
+  const regimeForCtx = { idxReturn20: trendProxy };
 
   const marketSnapshot = {
     avgIndexChangePct: idxCnt > 0 ? +(sumIdxPct / idxCnt).toFixed(2) : null,
