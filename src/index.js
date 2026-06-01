@@ -2136,8 +2136,8 @@ const DEFAULT_CFG = {
     compactContext: true,     // [V9.7] 프롬프트 컨텍스트를 압축 JSON(들여쓰기 제거)으로 전송 → 입력 토큰 20~30%↓
     skipIfQuietPct: 0.5,      // [V9.7] 전일 대비 worst 지수변동 절댓값이 이 값 미만이면 LLM 호출 스킵, 직전 지시 재사용(만료 전). 0으로 두면 항상 호출
     confidenceWeighting: true, // [V9.1] LLM confidence로 sizing 개입 강도 조절 (낮으면 보수적)
-    timeoutMs: 30000,         // [V9.8] 20→30s. 20s에서 3회 연속 타임아웃 빈발(엣지→Anthropic 지연). 시도당 여유 확대.
-    maxRetries: 1,            // [V9.8] 2→1. 최악 ~60s(30×2)로 묶고, 선차감 쿨다운(15분)이 매분 폭주를 차단.
+    timeoutMs: 75000,         // [V9.9] 30→75s. 이 엣지 경로에서 응답이 40~60s까지 늘어져 짧은 타임아웃은 완주 못함. 코드(Math.max 75s)에서 강제하므로 stored cfg 무관.
+    maxRetries: 1,            // [V9.9] 1회만. 긴 타임아웃 1회로 완주가 핵심(재시도가 오히려 성공 직전 호출을 끊었음).
     expiryHours: 18,          // 지시 유효 시간 — 18시간 지나면 무시 (다음날 지시 누락 시 안전)
     minSizingScale: 0.3,      // Claude가 너무 작은 사이즈 요청해도 이 값까지만
     maxSizingScale: 1.5,      // 너무 큰 사이즈 요청 차단
@@ -3251,14 +3251,22 @@ async function runLLMDailyAnalysis(env, market, forceRun = false) {
       includeReasoning: llmCfg.includeReasoning !== false
     });
 
+    // [V9.9] ★핵심 수정★ — 타임아웃/재시도를 코드에서 강제(저장된 D1 cfg 무시).
+    //   로그 분석 결과: Anthropic 응답이 이 엣지 경로에서 40~60초까지 늘어지는데,
+    //   기존엔 20s×3회로 "성공 직전의 호출을 매번 중단→재시작"해 영원히 못 끝냈다
+    //   (10:25엔 52초 걸려 겨우 성공, 그 뒤론 60초 예산 초과로 전부 타임아웃).
+    //   → 한 번에 충분히 긴 타임아웃(≥75s)으로 1회 호출이 완주하게 한다.
+    //   stored cfg.llmHybrid.timeoutMs(=20000)가 남아 있어도 Math.max로 무력화.
+    const effTimeout = Math.max((typeof llmCfg.timeoutMs === "number" ? llmCfg.timeoutMs : 0), 75000);
+    const effRetries = Math.min((typeof llmCfg.maxRetries === "number" ? llmCfg.maxRetries : 1), 1);
     const res = await callClaude(
       env.ANTHROPIC_API_KEY,
       llmCfg.model || "claude-haiku-4-5",
       prompt,
       llmCfg.maxTokens || 1200,
-      llmCfg.timeoutMs || 25000,
+      effTimeout,
       {
-        maxRetries: (typeof llmCfg.maxRetries === "number" ? llmCfg.maxRetries : 2),
+        maxRetries: effRetries,
         // [V8.8] 환경변수로 우회 엔드포인트 지정 가능. 없으면 Anthropic 직통.
         baseURL: env.LLM_BASE_URL || (llmCfg.baseURL || null),
         // [V8.8.1] AI Gateway 'Authenticated Gateway' ON일 때 필요한 토큰. 없으면 헤더 미첨부.
