@@ -2366,6 +2366,7 @@ function migrateCfgToMarkets(cfg) {
     }
     if (typeof cfg.llmHybrid.maxRetries !== "number") cfg.llmHybrid.maxRetries = 2;
     if (typeof cfg.llmHybrid.timeoutMs !== "number") cfg.llmHybrid.timeoutMs = 20000;
+    if (typeof cfg.llmHybrid.failCooldownMin !== "number") cfg.llmHybrid.failCooldownMin = 15;
     // [V11] LLM 기본 ON 전환 — 저장된 cfg에 옛 기본값(false)이 박혀 있으면 한 번만 켜준다.
     //   llmEnabledMigratedV11 플래그로 1회 적용 → 이후 사용자가 끄면 그 선택을 존중.
     if (cfg.llmHybrid.enabled !== true && !cfg.llmEnabledMigratedV11) {
@@ -2663,6 +2664,19 @@ async function markLLMRanToday(DB, market) {
   const today = localDateStr(market);
   if (!today) return;
   try { await setState(DB, "llm_last_run:" + market, { date: today, ts: Date.now() }); } catch (e) {}
+}
+
+// [V19] LLM 실패 쿨다운 — 성공 마킹(llmAlreadyRanToday)이 안 되는 실패 상황에서
+//   매분 재시도가 거래 사이클 앞에서 최대 60s씩 잡아먹는 폭주를 막는다.
+//   실패하면 시각을 기록하고, cooldownMin 이내엔 LLM 호출 자체를 건너뛴다.
+async function llmInFailCooldown(DB, market, cooldownMin) {
+  try {
+    const f = await getState(DB, "llm_fail_until:" + market, null);
+    return !!(f && typeof f === "number" && Date.now() < f);
+  } catch (e) { return false; }
+}
+async function markLLMFailed(DB, market, cooldownMin) {
+  try { await setState(DB, "llm_fail_until:" + market, Date.now() + (cooldownMin || 15) * 60000); } catch (e) {}
 }
 
 // [V9 매크로] 경제지표 자동 갱신 트리거 — 매일 아침 07:00 KST 1회.
@@ -6704,24 +6718,10 @@ async function runTradingCycle(env) {
     //   "엔진이 최근 돌긴 했다"를 추적해 last_tick만으로 '지연'을 오판하지 않도록 한다.
     try { await setState(DB, "last_heartbeat", Date.now()); } catch (e) {}
 
-    // [V8.6 Hybrid] LLM 일일 분석 트리거 — 시장별 정해진 시각 "이후" 1회 호출
-    // [FIX V8.8] 정각 1분 의존 → 윈도우 + 오늘 미실행 체크로 변경.
-    //   그날 한 번이라도 사이클이 돌면(락을 잡으면) 반드시 따라잡아 실행한다.
-    //   성공 시에만 markLLMRanToday로 마킹 → 실패하면 다음 사이클에 재시도.
-    if (cfg.llmHybrid && cfg.llmHybrid.enabled) {
-      if (isLLMTriggerWindow("kr") && !(await llmAlreadyRanToday(DB, "kr"))) {
-        try {
-          const r = await runLLMDailyAnalysis(env, "kr");
-          if (r && r.ok) await markLLMRanToday(DB, "kr");
-        } catch (e) { await log(DB, "ERROR", null, "[LLM] kr trigger fail: " + e.message); }
-      }
-      if (isLLMTriggerWindow("us") && !(await llmAlreadyRanToday(DB, "us"))) {
-        try {
-          const r = await runLLMDailyAnalysis(env, "us");
-          if (r && r.ok) await markLLMRanToday(DB, "us");
-        } catch (e) { await log(DB, "ERROR", null, "[LLM] us trigger fail: " + e.message); }
-      }
-    }
+    // [V19] LLM 일일 분석은 거래 사이클에서 분리됨 — scheduled()에서 거래 전에 단독 실행.
+    //   기존엔 여기(사이클 내부)서 await 호출했는데, 293종목 평가로 사이클이 115초까지 늘어진
+    //   같은 invocation 안에서 LLM 외부 API fetch(20s)가 시간/예산 경쟁에 밀려 타임아웃났다.
+    //   → runLLMDailyAnalysis를 scheduled에서 깨끗한 예산으로 먼저 돌린다(아래 export default 참고).
 
     // [V9 매크로] 경제지표 자동 갱신 — 매일 07:00 KST 1회 (web_search)
     //   try-catch 격리: 실패해도 매매 사이클은 정상 진행.
@@ -8364,7 +8364,28 @@ export default {
     //   가격/원자재 갱신이 산발적으로 실패했음(특히 정규장 1분 갱신).
     //   → 단일 promise 안에서 "순차" 실행해 각 사이클이 자기 예산을 온전히 쓰게 한다.
     ctx.waitUntil((async () => {
-      // 1) 주식/지수 가격 갱신 + 거래 (가장 무거움 — 먼저 단독 실행)
+      // [V19] 0) LLM 일일 분석 — 거래 사이클보다 "먼저, 단독" 실행.
+      //   293종목 거래 사이클(115s)과 같은 invocation에서 돌리면 LLM 외부 API fetch가
+      //   시간/subrequest 예산 경쟁에 밀려 타임아웃났다(회귀 반복). 여기서 깨끗한 예산으로
+      //   먼저 끝내고, 그 다음에 무거운 거래 사이클을 돌린다. 실패해도 거래는 정상 진행.
+      try {
+        const _cfg = migrateCfgToMarkets(Object.assign({}, DEFAULT_CFG, await getState(env.DB, "cfg", {})));
+        if (_cfg.llmHybrid && _cfg.llmHybrid.enabled) {
+          const cdMin = _cfg.llmHybrid.failCooldownMin || 15;
+          if (isLLMTriggerWindow("kr") && !(await llmAlreadyRanToday(env.DB, "kr")) && !(await llmInFailCooldown(env.DB, "kr"))) {
+            const r = await runLLMDailyAnalysis(env, "kr");
+            if (r && r.ok) await markLLMRanToday(env.DB, "kr");
+            else await markLLMFailed(env.DB, "kr", cdMin);
+          }
+          if (isLLMTriggerWindow("us") && !(await llmAlreadyRanToday(env.DB, "us")) && !(await llmInFailCooldown(env.DB, "us"))) {
+            const r = await runLLMDailyAnalysis(env, "us");
+            if (r && r.ok) await markLLMRanToday(env.DB, "us");
+            else await markLLMFailed(env.DB, "us", cdMin);
+          }
+        }
+      } catch (e) { try { await log(env.DB, "ERROR", null, "[SCHED] LLM analysis fail: " + e.message); } catch (e2) {} }
+
+      // 1) 주식/지수 가격 갱신 + 거래 (가장 무거움)
       try { await runTradingCycle(env); }
       catch (e) { try { await log(env.DB, "ERROR", null, "[SCHED] trading cycle fail: " + e.message); } catch (e2) {} }
 
