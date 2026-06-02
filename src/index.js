@@ -1970,7 +1970,10 @@ const FX_PAIRS = [
 ];
 
 // === 전략 식별자 ===
-const STRATEGIES = ["swing", "momentum", "meanrev"];
+// [재작성] 단일 추세추종 전략 "trend"로 통합. 구 swing/momentum/meanrev/day 폐기.
+//   기존 보유 포지션(strategy=swing 등)도 새 evaluateSell이 strategy 무관하게 청산 관리한다.
+const STRATEGIES = ["trend"];
+const LEGACY_STRATEGIES = ["swing", "momentum", "meanrev", "day"];  // 통계/호환 표시용
 
 // === [신규] 섹터 매핑 (동시 보유 제한용) ===
 const SECTOR_MAP = {
@@ -2158,25 +2161,48 @@ const DEFAULT_CFG = {
   },
   // === [V8.5] 사이클 락 자동 갱신 ===
   cycleLockRefreshAt: 0.5,   // TTL의 50% 경과 시 갱신
-  // === [V8] 전략별 활성화 토글 ===
+  // === [재작성] 단일 추세추종 전략 ===
   strategies: {
-    swing: true,
-    day: false,       // [V9.6.1] 분봉 데이터 없어서 비활성화 (현재 일봉+현재가만 수집)
-    momentum: true,
-    meanrev: true
+    trend: true
+  },
+  // === [재작성] TREND 전략 룰 — 추세 정렬 진입 + 고정리스크 + 분할익절/트레일 ===
+  trendRules: {
+    maShort: 20, maMid: 50, maLong: 200,   // 추세 정렬 기준 이동평균
+    breakoutDays: 20,                       // 신고가 돌파 기준일
+    volMult: 1.5,                           // 돌파 시 거래량 배수
+    rsiPullbackMin: 40, rsiPullbackMax: 65, // 풀백 진입 RSI 밴드
+    rsiBreakoutMax: 72,                     // 돌파 진입 RSI 상한(과열 회피)
+    pullbackBandPct: 3,                     // MA20 ±N% 이내 풀백
+    maxAtrPct: 6,                           // ATR%가 이보다 크면 진입 금지(슬리피지 회피)
+    atrStopMult: 2.0,                       // 손절 = entry − N×ATR (executeBuy가 참조)
+    stopLossPct: 5.0,                       // ATR 손절과 비교해 더 타이트한 쪽 채택 (executeBuy가 참조)
+    trailAtrMult: 2.5,                      // 트레일 = peak − N×ATR
+    tp1AtR: 1.0,                            // +1R 도달 시 절반 익절
+    timeStopDays: 10,                       // N거래일 내 +0.5R 미달 시 청산
+    timeStopMinR: 0.5,
+    exitBelowMa: 20                         // 종가가 MA20 하향 이탈 시 청산
+  },
+  // === [재작성] 고정리스크 사이징 (균형) ===
+  trendSizing: {
+    riskPerTrade: 0.75,    // 한 거래 최대손실 = 자산의 0.75%
+    maxPositionPct: 15,    // 한 종목 비중 상한 = 자산의 15%
+    maxConcurrent: 8       // 시장당 동시 보유 종목 상한
   },
   // === [V8] 전략별 포지션 사이즈 (NEUTRAL base / BULL mult / BEAR mult) ===
   // [V8.1.9] base = 가용현금 대비 비율 (계산식이 cash[market] 기준으로 변경됨).
   //          한 거래 목표금액 KR ₩100~300만 / US $1~3k 범위로 클램프됨 (아래 sizingTargets).
   strategySizing: {
     day:      { base: 8, bullMult: 1.2, bearMult: 0.5, neutralMult: 0.3 },  // [V9.6] 15→8 (40% 감축)
-    // [V9.2] meanrev 소폭 상향: base 25→27. 사용자 요청 반영하되 표본 1건뿐이라 최소폭만.
-    meanrev:  { base: 27, bullMult: 1.2, bearMult: 1.4, neutralMult: 1.0 },
-    // [V9.2] swing 소폭 상향: base 30→33. 사용자 요청(승률 우수 시 베팅 확대) 반영하되,
-    //   표본 15건·전부 우상향장이라는 한계 고려해 +10%만.
-    //   [V9.3] bearMult 0.8→0.6: base를 키운 만큼 하락장 쏠림 방어 강화.
+    // [성능개선] 실거래 192건 분석: MEANREV 승률 0%(8건 전부 손실). z-score 과매도 반전은
+    //   KR 15분 지연 시세에서 칼날잡기가 됨. base 27→13(절반), bearMult 1.4→0.7로
+    //   "약세장에 베팅 확대"를 폐지(약세장 과매도 반전이 가장 위험).
+    meanrev:  { base: 13, bullMult: 1.0, bearMult: 0.7, neutralMult: 0.8 },
+    // swing은 SW_GOLDEN(승률 61%, +60만)이 주력 — 잘 작동 중이라 유지.
     swing:    { base: 33, bullMult: 1.4, bearMult: 0.6, neutralMult: 1.0 },
-    momentum: { base: 28, bullMult: 1.5, bearMult: 0.6, neutralMult: 0.4 }
+    // [성능개선] MOMENTUM 승률 23.5%, MO_BREAKOUT 9건이 -252만(최대 손실원).
+    //   돌파 추종이 KR에서 가짜돌파+슬리피지로 -15~-21% 손절. 큰 베팅이 거대손실로 직결돼
+    //   base 28→14(절반)로 축소. 손절폭(momentumRules)·한 거래 상한도 함께 축소.
+    momentum: { base: 14, bullMult: 1.3, bearMult: 0.4, neutralMult: 0.4 }
   },
   // === [V8.1.9] 한 거래당 목표 금액 클램프 (시장별) ===
   sizingTargets: {
@@ -2193,8 +2219,10 @@ const DEFAULT_CFG = {
   //   day: 오버라이드 없음 → 아래 sizingTargets(₩300만/$3k) 그대로 사용.
   sizingTargetsByStrategy: {
     swing:    { kr: { minBudget: 0, maxBudget: 30000000 }, us: { minBudget: 0, maxBudget: 30000 } },
-    meanrev:  { kr: { minBudget: 0, maxBudget: 30000000 }, us: { minBudget: 0, maxBudget: 30000 } },
-    momentum: { kr: { minBudget: 0, maxBudget: 30000000 }, us: { minBudget: 0, maxBudget: 30000 } }
+    // [성능개선] meanrev/momentum은 손실원이므로 한 거래 절대 상한을 1000만/$1만으로 축소
+    //   (한 번 -20% 손절나도 손실액을 캡. swing은 주력이라 상한 유지).
+    meanrev:  { kr: { minBudget: 0, maxBudget: 10000000 }, us: { minBudget: 0, maxBudget: 10000 } },
+    momentum: { kr: { minBudget: 0, maxBudget: 10000000 }, us: { minBudget: 0, maxBudget: 10000 } }
     // day: 오버라이드 없음 → 위 sizingTargets(₩300만/$3k) 사용
   },
   // === [V8.3] ATR 기반 동적 사이징 ===
@@ -2279,9 +2307,9 @@ const DEFAULT_CFG = {
     timeStopMaxDays: 20,       // [V9.6] 30→20 (더 빨리 포기, 모멘텀 소실 방지)
     trailStartPct: 3.0,        // [V9.6] 4.0→3.0 (빨리 익절)
     trailDropPct: 4.0,         // [V9.6] 6.0→4.0 (더 타이트한 트레일링)
-    stopLossPct: 6.5,          // [V9.6] 8.0→6.5 (손절 타이트)
-    atrStopMult: 2.5,          // [V9.6] 3.0→2.5
-    breakEvenAt: 2.5,          // [V9.6] 3.0→2.5 (더 빨리 본전 보호)
+    stopLossPct: 5.0,          // [성능개선] 6.5→5.0 (실거래 HARD-STOP 평균 -11%, 최악 -21% → 더 일찍 손절)
+    atrStopMult: 1.8,          // [성능개선] 2.5→1.8 (ATR 손절도 타이트하게 — 갭 전에 더 빨리 탈출)
+    breakEvenAt: 2.0,          // [성능개선] 2.5→2.0 (더 빨리 본전 보호 — 돌파 후 되돌림 대비)
     breakEvenLock: 0.3,        // [V9.6] 0.5→0.3
     tp1: 4.0                   // 변경 없음 (첫 익절 지점)
   },
@@ -2403,6 +2431,41 @@ function migrateCfgToMarkets(cfg) {
     }
   }
 
+  // [성능개선 V2] 실거래 192건 데이터 기반 1회성 리스크 교정.
+  //   분석 결과: MOMENTUM 9건이 -252만(승률 23%, 손절 -21%까지), MEANREV 8건 전부 손실(승률 0%).
+  //   원인 = 손실 전략의 과대 사이즈 + 약세장 베팅 확대 + 넓은 손절. 저장된 cfg가 얕은 병합으로
+  //   옛 위험값을 덮어쓰므로, 안전 상한을 1회 강제(Math.min — 이미 더 보수적이면 사용자 값 유지)한 뒤
+  //   이후엔 사용자 설정을 존중한다(llmEnabledMigratedV11과 동일한 패턴).
+  if (!cfg.perfTuneMigratedV2) {
+    cfg.perfTuneMigratedV2 = true;
+    const ss = cfg.strategySizing;
+    if (ss && typeof ss === "object") {
+      if (ss.momentum) {
+        ss.momentum.base = Math.min(ss.momentum.base != null ? ss.momentum.base : 14, 14);
+        ss.momentum.bearMult = Math.min(ss.momentum.bearMult != null ? ss.momentum.bearMult : 0.4, 0.5);
+        ss.momentum.neutralMult = Math.min(ss.momentum.neutralMult != null ? ss.momentum.neutralMult : 0.4, 0.5);
+      }
+      if (ss.meanrev) {
+        ss.meanrev.base = Math.min(ss.meanrev.base != null ? ss.meanrev.base : 13, 13);
+        ss.meanrev.bearMult = Math.min(ss.meanrev.bearMult != null ? ss.meanrev.bearMult : 0.7, 0.7);
+        ss.meanrev.neutralMult = Math.min(ss.meanrev.neutralMult != null ? ss.meanrev.neutralMult : 0.8, 0.8);
+      }
+    }
+    if (cfg.momentumRules && typeof cfg.momentumRules === "object") {
+      cfg.momentumRules.stopLossPct = Math.min(cfg.momentumRules.stopLossPct != null ? cfg.momentumRules.stopLossPct : 5.0, 5.0);
+      cfg.momentumRules.atrStopMult = Math.min(cfg.momentumRules.atrStopMult != null ? cfg.momentumRules.atrStopMult : 1.8, 1.8);
+    }
+    const sts = cfg.sizingTargetsByStrategy;
+    if (sts && typeof sts === "object") {
+      for (const strat of ["momentum", "meanrev"]) {
+        if (sts[strat]) {
+          if (sts[strat].kr) sts[strat].kr.maxBudget = Math.min(sts[strat].kr.maxBudget || 10000000, 10000000);
+          if (sts[strat].us) sts[strat].us.maxBudget = Math.min(sts[strat].us.maxBudget || 10000, 10000);
+        }
+      }
+    }
+  }
+
   // [V12] crashSurvival 누락 보강 — DB에 저장된 옛 cfg가 얕은 병합으로
   //   DEFAULT_CFG.crashSurvival를 덮어 누락시키는 것을 방지. 통째로 없으면 기본값 주입,
   //   하위 섹션만 빠졌으면 그 섹션만 채움(사용자 변경값은 보존).
@@ -2419,6 +2482,24 @@ function migrateCfgToMarkets(cfg) {
           if (cfg.crashSurvival[sec][k] === undefined) cfg.crashSurvival[sec][k] = d[sec][k];
         }
       }
+    }
+  }
+
+  // [재작성] 단일 추세추종 전략으로 강제 — 저장된 옛 cfg가 swing/momentum/meanrev를
+  //   켜둔 채 얕은 병합으로 살아남는 것을 막는다(매 로드 강제). trendRules/trendSizing 보강.
+  cfg.strategies = { trend: true };
+  if (!cfg.trendRules || typeof cfg.trendRules !== "object") {
+    cfg.trendRules = JSON.parse(JSON.stringify(DEFAULT_CFG.trendRules));
+  } else {
+    for (const k in DEFAULT_CFG.trendRules) {
+      if (cfg.trendRules[k] === undefined) cfg.trendRules[k] = DEFAULT_CFG.trendRules[k];
+    }
+  }
+  if (!cfg.trendSizing || typeof cfg.trendSizing !== "object") {
+    cfg.trendSizing = JSON.parse(JSON.stringify(DEFAULT_CFG.trendSizing));
+  } else {
+    for (const k in DEFAULT_CFG.trendSizing) {
+      if (cfg.trendSizing[k] === undefined) cfg.trendSizing[k] = DEFAULT_CFG.trendSizing[k];
     }
   }
 
@@ -4079,12 +4160,17 @@ async function computeCashFromTrades(DB, market, cfg) {
   const initial = market === "us" ? cfg.initialCashUS : (market === "kr" ? cfg.initialCashKR : cfg.initialCashCM);
   const feeRate = market === "us" ? (cfg.feeUS || 0) : (market === "kr" ? (cfg.feeKR || 0) : (cfg.feeUS || 0));
   const sellTaxRate = market === "kr" ? (cfg.krSellTax || 0) : 0;
+  // [회계 재설계] deposits = 누적 입금액(inflows), outflows = 누적 출금액.
+  //   실제 가용현금 = 초기자본 + 입금 − 출금 + 거래손익. (수익률 계산은 TWR로 별도 처리)
   const deposits = await getState(DB, "deposits", { us: 0, kr: 0, cm: 0 });
   const dep = (deposits && typeof deposits[market] === "number") ? deposits[market] : 0;
+  const outflowsState = await getState(DB, "outflows", { us: 0, kr: 0, cm: 0 });
+  const outf = (outflowsState && typeof outflowsState[market] === "number") ? outflowsState[market] : 0;
 
   // [V34] 스냅샷 체크포인트 — trades 전체를 매번 합산하면 거래 누적 시 CPU 타임아웃.
   //   { cashAfter, lastRowid } 스냅샷을 저장하고, 이후 추가된 trades(rowid > lastRowid)만 합산.
   //   합산 건수가 임계(500) 넘으면 스냅샷을 전진 저장해 합산량을 항상 작게 유지.
+  //   주의: deposits/outflows 변경 시 이 체크포인트는 무효화(삭제)해야 한다.
   const ckptKey = "cash_ckpt:" + market;
   let ckpt = await getState(DB, ckptKey, null);
   let baseCash, sinceRowid;
@@ -4092,7 +4178,7 @@ async function computeCashFromTrades(DB, market, cfg) {
     baseCash = ckpt.cashAfter;
     sinceRowid = ckpt.lastRowid;
   } else {
-    baseCash = (typeof initial === "number" ? initial : 0) + dep;
+    baseCash = (typeof initial === "number" ? initial : 0) + dep - outf;
     sinceRowid = 0;
   }
 
@@ -4122,6 +4208,61 @@ async function computeAllCash(DB, cfg) {
     kr: await computeCashFromTrades(DB, "kr", cfg),
     cm: await computeCashFromTrades(DB, "cm", cfg)
   };
+}
+
+// ─────────────────────────────────────────────────────────────
+// [회계 재설계] 포트폴리오 평가액 + TWR(Time-Weighted Return)
+//   수익률은 입출금에 영향받지 않아야 한다. 이를 위해 입출금(현금흐름)이
+//   일어날 때마다 구간을 끊어 누적 수익 factor를 갱신하는 표준 TWR을 사용한다.
+//
+//   상태 "twr:<market>" = { factor, lastValue }
+//     factor    : 직전 현금흐름까지 누적된 (1+r1)(1+r2)... 곱
+//     lastValue : 직전 현금흐름 "직후"의 포트폴리오 총평가액
+//   현재 시점 전체 수익률(%) = (factor * (현재평가액 / lastValue) - 1) * 100
+//   (lastValue 계산/표시는 실시간 quote 기준이라 프론트에서 마지막 구간을 마감한다)
+// ─────────────────────────────────────────────────────────────
+
+// 특정 시장의 현재 포트폴리오 총평가액(현금 + 보유 평가액)을 계산.
+//   quote가 없는 종목은 평단가(avg)로 평가한다.
+async function computePortfolioValue(DB, market, cfg) {
+  const cash = await computeCashFromTrades(DB, market, cfg);
+  const positions = await getPositions(DB, market);
+  // quote 일괄 로드
+  const quoteMap = {};
+  try {
+    const qrows = await DB.prepare("SELECT k, v FROM state WHERE k LIKE 'quote:%'").all();
+    for (const r of (qrows.results || [])) {
+      try { quoteMap[r.k.slice(6)] = JSON.parse(r.v); } catch (e) {}
+    }
+  } catch (e) {}
+  let marketVal = 0;
+  for (const key in positions) {
+    const p = positions[key];
+    const q = quoteMap[p.symbol];
+    const price = (q && typeof q.price === "number") ? q.price : p.avg;
+    marketVal += p.qty * price;
+  }
+  return cash + marketVal;
+}
+
+// 현금흐름(입출금) 발생 시 TWR 상태를 갱신한다.
+//   flow: 입금은 양수, 출금은 음수. valueBeforeFlow: 흐름 적용 직전 평가액.
+async function applyCashflowToTWR(DB, market, valueBeforeFlow, flow, cfg) {
+  const key = "twr:" + market;
+  const initial = market === "us" ? cfg.initialCashUS : (market === "kr" ? cfg.initialCashKR : cfg.initialCashCM);
+  let twr = await getState(DB, key, null);
+  if (!twr || typeof twr.factor !== "number" || typeof twr.lastValue !== "number") {
+    twr = { factor: 1, lastValue: (typeof initial === "number" ? initial : valueBeforeFlow) };
+  }
+  // 직전 현금흐름 이후 ~ 이번 현금흐름 직전 구간의 수익을 factor에 반영
+  if (twr.lastValue > 0) {
+    twr.factor *= valueBeforeFlow / twr.lastValue;
+  }
+  // 현금흐름 직후 평가액 = 직전 평가액 + 흐름 (평가액은 그대로, 현금만 변동)
+  twr.lastValue = valueBeforeFlow + flow;
+  if (twr.lastValue <= 0) twr.lastValue = 1;  // 0 나눗셈 방지
+  await setState(DB, key, twr);
+  return twr;
 }
 
 async function recordTrade(DB, t) {
@@ -4636,57 +4777,83 @@ function evaluateBuySignals_meanrev(price, dayPct, dailyData, cfg, regime) {
 // === [V8] 통합 평가기 — 모든 활성 전략에서 신호 수집 ===
 // 반환: [{ strategy, signal, signals: [...] }, ...]  (전략당 1개)
 // [V8.4] regime 인자 추가 — meanrev에 전달
+// === [재작성] 단일 추세추종 진입 평가 ===
+//   데이터(실거래 192건)가 증명한 유일한 수익 패턴(추세 정렬 + 추세 순응)에 집중한다.
+//   역추세·과매도 반전·돌파추격(전부 손실)은 폐기. 두 가지 진입만 허용:
+//     A) 추세 풀백 반등 — 상승추세 종목이 MA20 근처로 눌렀다 반등
+//     B) 신고가 돌파 — 거래량을 동반한 N일 신고가 돌파
+//   반환: signal | null  (signal 형식은 기존과 동일해 호출부/백테스트 무수정)
+function evaluateTrendEntry(price, dayPct, dailyData, cfg, regime, market) {
+  const r = cfg.trendRules || {};
+  const closes = dailyData.closes;
+  const volumes = dailyData.volumes || [];
+  const highs = dailyData.highs, lows = dailyData.lows;
+  const maMid = r.maMid || 50;
+  if (!closes || closes.length < maMid + 5) return null;
+
+  const ma20 = getMA(closes, r.maShort || 20);
+  const ma50 = getMA(closes, maMid);
+  const ma200 = closes.length >= (r.maLong || 200) ? getMA(closes, r.maLong || 200) : null;
+  const rsi = getRSI(closes, cfg.rsiPeriod || 14);
+  const atr = getATR(closes, cfg.atrPeriod || 14, highs, lows);
+  if (ma20 == null || ma50 == null || rsi == null) return null;
+
+  // 게이트 1: 장기 추세 정렬 — 가격이 MA50 위 + (MA50>MA200, 200 부족 시 MA50 상승 중)
+  let longOk;
+  if (ma200 != null) {
+    longOk = ma50 > ma200;
+  } else {
+    const ma50Prev = getMA(closes.slice(0, -3), maMid);
+    longOk = (ma50Prev != null && ma50 > ma50Prev);
+  }
+  if (!(price > ma50 && longOk)) return null;
+  // 게이트 2: 중기 추세 — MA20 > MA50
+  if (!(ma20 > ma50)) return null;
+  // 게이트 3: 변동성 정상 — ATR%가 과도하면 진입 금지(가짜돌파·슬리피지 회피)
+  const atrPct = (atr != null && price > 0) ? (atr / price * 100) : null;
+  if (atrPct != null && atrPct > (r.maxAtrPct || 6)) return null;
+  // 게이트 4: 시장 레짐 — BEAR + 지수 급락이면 신규 진입 중단 (백테스트는 regime 미지정→통과)
+  if (regime && regime.regime === "BEAR" && typeof regime.worstDayPct === "number" && regime.worstDayPct <= -1.5) {
+    return null;
+  }
+
+  const today = closes[closes.length - 1];
+  const yesterday = closes[closes.length - 2];
+  const isGreen = today > yesterday;
+
+  // 트리거 A: 추세 풀백 반등 — MA20 ±N% 이내 + 당일 상승 + RSI 밴드
+  const ma20Gap = ((price - ma20) / ma20) * 100;
+  if (Math.abs(ma20Gap) <= (r.pullbackBandPct || 3) && isGreen
+      && rsi >= (r.rsiPullbackMin || 40) && rsi <= (r.rsiPullbackMax || 65)) {
+    return { name: "TR_PULLBACK", weight: 1.0, type: "TREND",
+      detail: "MA20 " + ma20Gap.toFixed(1) + "% RSI " + rsi.toFixed(0) + (atrPct != null ? " ATR" + atrPct.toFixed(1) + "%" : ""),
+      members: ["TR_PULLBACK"] };
+  }
+
+  // 트리거 B: 신고가 돌파 + 거래량 — 과열(RSI 상한) 아닐 때만
+  const hiN = getNDayHigh(closes, r.breakoutDays || 20);  // 현재봉 직전 N일 신고가
+  if (hiN != null && price > hiN && rsi <= (r.rsiBreakoutMax || 72) && volumes.length >= 21) {
+    const todayVol = volumes[volumes.length - 1];
+    let avgVol = 0;
+    for (let i = volumes.length - 21; i < volumes.length - 1; i++) avgVol += volumes[i];
+    avgVol /= 20;
+    if (avgVol > 0 && todayVol >= avgVol * (r.volMult || 1.5)) {
+      return { name: "TR_BREAKOUT", weight: 1.1, type: "TREND",
+        detail: "BO>" + hiN.toFixed(2) + " vol x" + (todayVol / avgVol).toFixed(1) + " RSI " + rsi.toFixed(0),
+        members: ["TR_BREAKOUT"] };
+    }
+  }
+
+  return null;
+}
+
+// === [재작성] 통합 진입 평가기 — 단일 trend 전략만 평가 ===
+//   라이브(runTradingCycle)와 백테스트(backtestSymbol)가 공통 호출. 기존 반환 형식 유지.
 function evaluateAllStrategies(price, dayPct, dailyData, cfg, signalStats, regime, market, intraday) {
-  const results = [];
-  const evaluators = {
-    swing:    evaluateBuySignals_swing,
-    day:      evaluateBuySignals_day,
-    momentum: evaluateBuySignals_momentum,
-    meanrev:  evaluateBuySignals_meanrev
-  };
-  for (const stratName of STRATEGIES) {
-    if (!cfg.strategies || !cfg.strategies[stratName]) continue;
-    // [V8.4] meanrev만 regime 인자 / [V9] day는 market·intraday 인자 (시장별 차별화)
-    let sigs;
-    if (stratName === "meanrev") {
-      sigs = evaluators[stratName](price, dayPct, dailyData, cfg, regime);
-    } else if (stratName === "day") {
-      sigs = evaluators[stratName](price, dayPct, dailyData, cfg, market, intraday);
-    } else {
-      sigs = evaluators[stratName](price, dayPct, dailyData, cfg);
-    }
-    if (sigs.length === 0) continue;
-    const resolved = resolveSignals(sigs, cfg, signalStats, stratName);
-    if (!resolved) continue;
-    results.push({ strategy: stratName, signal: resolved, rawCount: sigs.length });
-  }
-  // [V8.4] 중복 신호 시 — 단순 우선순위 매핑 폐기.
-  //         signal.weight × 학습된 weightedWinRate 가 가장 높은 결과 1개 선택.
-  //         → 학습 통계가 실제 의사결정에 반영됨.
-  if (results.length >= 2) {
-    function scoreResult(r) {
-      const members = (r.signal && r.signal.members) || [r.signal.name];
-      let wrSum = 0, n = 0;
-      for (const m of members) {
-        const s = signalStats && signalStats[m];
-        if (s && s.count >= 20) {
-          wrSum += (s.weightedWinRate != null ? s.weightedWinRate : (s.winRate || 0.5));
-          n++;
-        }
-      }
-      const avgWr = n > 0 ? (wrSum / n) : 0.5;  // 학습 안된 신호는 중립 50%
-      // 0.5 baseline + winRate * 1.0 → 가중치 0.5~1.5 범위
-      return (r.signal.weight || 1.0) * (0.5 + avgWr);
-    }
-    let best = results[0];
-    let bestScore = scoreResult(results[0]);
-    for (let i = 1; i < results.length; i++) {
-      const s = scoreResult(results[i]);
-      if (s > bestScore) { best = results[i]; bestScore = s; }
-    }
-    return [best];
-  }
-  return results;
+  if (cfg.strategies && cfg.strategies.trend === false) return [];
+  const sig = evaluateTrendEntry(price, dayPct, dailyData, cfg, regime, market);
+  if (!sig) return [];
+  return [{ strategy: "trend", signal: sig, rawCount: 1 }];
 }
 
 // === [V8] Confluence 해석 — 전략 내부 신호 합의 ===
@@ -4854,7 +5021,11 @@ function evaluateBuyBlocks(price, dayPct, dailyData, cfg, regime, signal, ctx) {
   return null;
 }
 
-// === [V8] executeBuy — strategy 필드 저장 ===
+// === [회계 재설계] executeBuy — 예산은 DB(trades)에서 실시간 재계산, 살 수 있는 만큼만 매수 ===
+//   핵심: in-memory cash[market]를 예산 근거로 쓰지 않는다. 매수 직전 trades 원장에서
+//   실제 가용현금을 다시 계산하고, 그 현금으로 살 수 있는 최대 수량으로 qty를 잘라낸다(clamp).
+//   → 호출부의 budget 계산이 과대하든, in-memory cash가 오염됐든, 사이클이 겹쳐 실행되든
+//     수학적으로 예산 초과가 불가능하다.
 async function executeBuy(DB, market, symbol, strategy, qty, price, signal, dailyAtr, cfg, cash, opts) {
   // [V9.1] 입력 검증 — 비정상 가격/수량으로 인한 유령거래·NaN 방어
   if (!(typeof price === "number" && isFinite(price) && price > 0)) {
@@ -4867,13 +5038,34 @@ async function executeBuy(DB, market, symbol, strategy, qty, price, signal, dail
   if (qty <= 0) { return cash; }
 
   const feeRate = market === "us" ? cfg.feeUS : cfg.feeKR;
+  const unitCost = price * (1 + feeRate);   // 1주당 총비용(수수료 포함)
+
+  // ★ 단일 진실: 매수 직전 trades 원장에서 실제 가용현금을 재계산한다.
+  let availCash;
+  try {
+    availCash = await computeCashFromTrades(DB, market, cfg);
+  } catch (e) {
+    await log(DB, "ERROR", symbol, "BUY aborted: 가용현금 계산 실패 " + e.message); return cash;
+  }
+  if (!(typeof availCash === "number" && isFinite(availCash)) || availCash <= 0) {
+    await log(DB, "WARN", symbol, "BUY aborted: 가용현금 없음 (" + Math.round(availCash) + ")"); return cash;
+  }
+
+  // ★ 살 수 있는 최대 수량으로 clamp — "예산 안에서만 거래"
+  const maxQty = Math.floor(availCash / unitCost);
+  if (maxQty <= 0) {
+    await log(DB, "WARN", symbol, "BUY aborted: 1주 살 현금 부족 (현금=" + Math.round(availCash) + ", 1주=" + unitCost.toFixed(2) + ")");
+    return cash;
+  }
+  if (qty > maxQty) {
+    await log(DB, "INFO", symbol, "BUY 수량 자동 축소 " + qty + "→" + maxQty + " (예산 한도, 현금=" + Math.round(availCash) + ")");
+    qty = maxQty;
+  }
+
   const gross = price * qty;
   const fee = gross * feeRate;
   const total = gross + fee;
-  if (!(typeof cash[market] === "number" && isFinite(cash[market]))) {
-    await log(DB, "ERROR", symbol, "BUY aborted: cash state invalid"); return cash;
-  }
-  if (total > cash[market]) { await log(DB, "WARN", symbol, "BUY aborted: cash short"); return cash; }
+  // 이 시점에서 total <= availCash 가 maxQty 정의상 수학적으로 보장된다.
 
   // 전략별 손절가 계산 — [V8.6] opts.stopPctOverride 있으면 우선 적용 (LLM 지시)
   const rules = getStrategyRules(cfg, strategy);
@@ -4962,8 +5154,9 @@ async function executeBuy(DB, market, symbol, strategy, qty, price, signal, dail
     await log(DB, "ERROR", symbol, "BUY transaction aborted (롤백됨, cash·포지션 무변동): " + e.message);
     return cash;
   }
-  // DB 트랜잭션 완전 성공 후에만 인메모리 cash 차감
-  if (cash && typeof cash[market] === "number") cash[market] -= total;
+  // DB 트랜잭션 성공 후, in-memory cash를 "실제 가용현금 − 이번 매수액"으로 재동기화.
+  //   (단순 차감이 아니라 DB 재계산값 기준으로 덮어써 in-memory drift를 매 거래마다 교정)
+  if (cash && typeof cash === "object") cash[market] = availCash - total;
   const stopPctRel = ((stopPrice - price) / price * 100).toFixed(1);
   await log(DB, "TRADE", symbol, "BUY [" + strategy + "] x" + qty + " @" + price.toFixed(2) + " " + signal.name + " " + signal.detail + " stop=" + stopPrice.toFixed(2) + "(" + stopPctRel + "%)");
   return cash;
@@ -4971,11 +5164,13 @@ async function executeBuy(DB, market, symbol, strategy, qty, price, signal, dail
 
 // === [V8] 전략 룰 헬퍼 ===
 function getStrategyRules(cfg, strategy) {
-  if (strategy === "swing") return cfg.swingRules || {};
-  if (strategy === "day") return cfg.dayRules || {};
-  if (strategy === "momentum") return cfg.momentumRules || {};
-  if (strategy === "meanrev") return cfg.meanrevRules || {};
-  return {};
+  if (strategy === "trend") return cfg.trendRules || {};
+  // 레거시 보유 포지션 호환 — 구 전략 룰이 있으면 사용, 없으면 trendRules로 폴백
+  if (strategy === "swing") return cfg.swingRules || cfg.trendRules || {};
+  if (strategy === "day") return cfg.dayRules || cfg.trendRules || {};
+  if (strategy === "momentum") return cfg.momentumRules || cfg.trendRules || {};
+  if (strategy === "meanrev") return cfg.meanrevRules || cfg.trendRules || {};
+  return cfg.trendRules || {};
 }
 
 // === [V8] 전략별 포지션 사이즈 계산 ===
@@ -5000,25 +5195,6 @@ async function executeSell(DB, market, symbol, pos, sellQty, price, reason, cfg,
   sellQty = Math.floor(sellQty);
   if (sellQty <= 0) { return { cash: cash, pnlPct: 0 }; }
   if (sellQty > pos.qty) sellQty = pos.qty;   // 보유 초과 매도 방지
-
-  // [V9.9] 이중체결(중복매도) 차단 — cycleMs(82s) > cron(60s)로 사이클이 겹치면
-  //   두 인스턴스가 같은 포지션 스냅샷을 들고 각자 매도 → cash가 2번 가산되어
-  //   "없는 주식 매도대금"이 현금으로 유입됨(HSY 39주가 78주로 팔린 버그).
-  //   매도 직전 DB 실제 잔량을 재조회해 stale 스냅샷 매도를 원천 차단한다.
-  try {
-    const fresh = await DB.prepare(
-      "SELECT qty FROM positions WHERE symbol = ? AND strategy = ? AND market = ?"
-    ).bind(symbol, strategy, market).first();
-    const freshQty = fresh ? Number(fresh.qty) : 0;
-    if (!(freshQty > 0)) {
-      await log(DB, "WARN", symbol, "SELL skipped: 이미 청산된 포지션(중복매도 방지) [" + strategy + "]");
-      return { cash: cash, pnlPct: 0 };
-    }
-    if (sellQty > freshQty) sellQty = freshQty;   // DB 잔량으로 클램프
-    if (pos.qty > freshQty) pos.qty = freshQty;   // 부분매도 잔량 동기화(수수료 비율 정확화)
-  } catch (e) {
-    await log(DB, "WARN", symbol, "SELL freshness check failed (보수적 진행): " + e.message);
-  }
 
   const feeRate = market === "us" ? cfg.feeUS : cfg.feeKR;
   const gross = price * sellQty;
@@ -5078,10 +5254,79 @@ async function executeSell(DB, market, symbol, pos, sellQty, price, reason, cfg,
   return { cash: cash, pnlPct: pnlPct };
 }
 
-// === [V8] 매도 평가 — 보유 포지션의 strategy에 따라 분기 ===
-// 반환: { sell: true/false, sellQty, reason } 또는 null
-// [V8.1] market 인자 추가 — Day 전략 장 마감 강제청산용
+// === [재작성] 통합 청산 평가 — 단일 추세추종 청산 (전략 분기 없음) ===
+//   기존 보유 포지션(strategy=swing 등)도 strategy 무관하게 이 로직으로 관리한다.
+//   우선순위: 하드손절 → 1R 분할익절(+BE락) → 트레일링 → 추세이탈 → 시간손절
+//   반환: { sell, sellQty, reason }
 function evaluateSell(pos, price, daily, dailyRsi, dailyMa, dailyMaShort, cfg, marketOpenForThis, market, deRiskOpts) {
+  const r = cfg.trendRules || {};
+  const meta = pos.meta || {};
+  const pnlRate = pos.avg > 0 ? ((price - pos.avg) / pos.avg) * 100 : 0;
+  const peakPrice = (meta.peakPrice && meta.peakPrice > 0) ? meta.peakPrice : pos.avg;
+  const heldDays = pos.opened_ts ? (Date.now() - pos.opened_ts) / 86400000 : 0;
+  const tp1Done = !!meta.tp1Done;
+
+  // ATR (daily에서 재계산) — 트레일 폭 산정
+  const closes = daily && daily.closes;
+  const atr = (closes && closes.length > (cfg.atrPeriod || 14) + 1)
+    ? getATR(closes, cfg.atrPeriod || 14, daily.highs, daily.lows) : null;
+
+  // [디리스킹] 패닉/딥드로다운 시 손절·트레일 타이트닝 (인프라 유지)
+  const dr = (deRiskOpts && deRiskOpts.active && cfg.crashSurvival && cfg.crashSurvival.deRisk) ? cfg.crashSurvival.deRisk : null;
+  const trailScale = dr ? (dr.trailDropScale || 1) : 1;
+
+  // 1) 하드 손절 — 진입 시 정한 stopPrice (entry − 2×ATR or −5% 중 타이트, BE락 시 본전)
+  const stopPrice = (typeof meta.stopPrice === "number") ? meta.stopPrice : null;
+  if (stopPrice != null && price <= stopPrice) {
+    return { sell: true, sellQty: pos.qty, reason: "STOP " + pnlRate.toFixed(2) + "%" + (meta.breakEvenLocked ? " (BE)" : "") };
+  }
+  // 폴백: stopPrice 없으면 % 손절
+  const stopPct = (r.stopLossPct || cfg.stopLoss || 5) * (dr ? (dr.hardStopScale || 1) : 1);
+  if (stopPrice == null && pnlRate <= -stopPct) {
+    return { sell: true, sellQty: pos.qty, reason: "STOP " + pnlRate.toFixed(2) + "%" };
+  }
+
+  // R(손절거리%) — 분할익절/시간손절 기준
+  let rPct = (stopPrice != null && pos.avg > 0) ? ((pos.avg - stopPrice) / pos.avg) * 100 : null;
+  if (rPct == null || rPct <= 0) rPct = (r.stopLossPct || cfg.stopLoss || 5);
+
+  // 2) 1R 분할익절 — +tp1AtR×R 도달 시 절반 매도 (executeSell이 손절을 본전으로 올림=BE락)
+  if (!tp1Done) {
+    const tp1Pct = rPct * (r.tp1AtR || 1.0);
+    if (pnlRate >= tp1Pct) {
+      const half = Math.floor(pos.qty / 2);
+      if (half > 0) return { sell: true, sellQty: half, reason: "TP1 +" + pnlRate.toFixed(2) + "% (1R)" };
+      return { sell: true, sellQty: pos.qty, reason: "TP1-FULL +" + pnlRate.toFixed(2) + "%" };
+    }
+  }
+
+  // 3) 트레일링 — 피크 − trailAtrMult×ATR 하락 시 (이익 중일 때만)
+  if (atr != null && atr > 0 && pnlRate > 0) {
+    const trailStop = peakPrice - atr * (r.trailAtrMult || 2.5) * trailScale;
+    if (price <= trailStop) {
+      const peakPct = pos.avg > 0 ? ((peakPrice - pos.avg) / pos.avg) * 100 : 0;
+      return { sell: true, sellQty: pos.qty, reason: "TRAIL " + pnlRate.toFixed(2) + "% (peak +" + peakPct.toFixed(1) + "%)" + (dr ? " (DERISK)" : "") };
+    }
+  }
+
+  // 4) 추세 이탈 — 종가가 MA20 하향 이탈 (분할익절 후 잔량 보호)
+  if (tp1Done && dailyMa != null && price < dailyMa) {
+    return { sell: true, sellQty: pos.qty, reason: "TREND-EXIT <MA " + pnlRate.toFixed(2) + "%" };
+  }
+
+  // 5) 시간 손절 — N거래일 내 +0.5R 미달이면 청산 (죽은 돈 회수)
+  if (heldDays >= (r.timeStopDays || 10)) {
+    const minR = rPct * (r.timeStopMinR != null ? r.timeStopMinR : 0.5);
+    if (pnlRate < minR) {
+      return { sell: true, sellQty: pos.qty, reason: "TIME-STOP " + heldDays.toFixed(0) + "d " + pnlRate.toFixed(2) + "%" };
+    }
+  }
+
+  return { sell: false };
+}
+
+// === [구 로직 — 미사용 보존] V8 멀티전략 매도 평가. 새 evaluateSell로 대체됨. ===
+function _evaluateSell_legacy(pos, price, daily, dailyRsi, dailyMa, dailyMaShort, cfg, marketOpenForThis, market, deRiskOpts) {
   const strategy = pos.strategy || (pos.meta && pos.meta.strategy) || "swing";
   const pnlRate = ((price - pos.avg) / pos.avg) * 100;
   const peakPrice = pos.meta && pos.meta.peakPrice ? pos.meta.peakPrice : pos.avg;
@@ -6363,11 +6608,38 @@ async function runFxUpdate(env) {
 // 원자재 전용 매수 — executeBuy를 그대로 못 쓰는 이유: 기존 함수는
 //   market !== "us" 이면 feeKR/krSellTax를 적용함. 원자재는 USD·무세금이라 별도 작성.
 async function executeBuyCM(DB, symbol, qty, price, signal, dailyAtr, cfg, cash) {
+  if (!(typeof price === "number" && isFinite(price) && price > 0)) {
+    await log(DB, "WARN", symbol, "[CM] BUY aborted: bad price " + price); return cash;
+  }
+  if (!(typeof qty === "number" && isFinite(qty) && qty > 0)) {
+    await log(DB, "WARN", symbol, "[CM] BUY aborted: bad qty " + qty); return cash;
+  }
+  qty = Math.floor(qty);
+  if (qty <= 0) return cash;
+
   const feeRate = cfg.feeUS || 0.0001;
+  const unitCost = price * (1 + feeRate);
+  // ★ 단일 진실: 매수 직전 trades 원장에서 실제 가용현금 재계산 후 살 수 있는 만큼만 clamp
+  let availCash;
+  try {
+    availCash = await computeCashFromTrades(DB, "cm", cfg);
+  } catch (e) {
+    await log(DB, "ERROR", symbol, "[CM] BUY aborted: 가용현금 계산 실패 " + e.message); return cash;
+  }
+  if (!(typeof availCash === "number" && isFinite(availCash)) || availCash <= 0) {
+    await log(DB, "WARN", symbol, "[CM] BUY aborted: 가용현금 없음 (" + Math.round(availCash) + ")"); return cash;
+  }
+  const maxQty = Math.floor(availCash / unitCost);
+  if (maxQty <= 0) {
+    await log(DB, "WARN", symbol, "[CM] BUY aborted: 1주 살 현금 부족 (현금=" + Math.round(availCash) + ")"); return cash;
+  }
+  if (qty > maxQty) {
+    await log(DB, "INFO", symbol, "[CM] BUY 수량 자동 축소 " + qty + "→" + maxQty + " (예산 한도)");
+    qty = maxQty;
+  }
   const gross = price * qty;
   const fee = gross * feeRate;
   const total = gross + fee;
-  if (total > cash.cm) { await log(DB, "WARN", symbol, "[CM] BUY aborted: cash short"); return; }
 
   const rules = cfg.swingRules || {};
   const stopPct = rules.stopLossPct || cfg.stopLoss || 5.0;
@@ -6402,7 +6674,7 @@ async function executeBuyCM(DB, symbol, qty, price, signal, dailyAtr, cfg, cash)
     await log(DB, "ERROR", symbol, "[CM] BUY transaction aborted (롤백됨): " + e.message);
     return cash;
   }
-  if (cash && typeof cash.cm === "number") cash.cm -= total;
+  if (cash && typeof cash === "object") cash.cm = availCash - total;
   const stopPctRel = ((stopPrice - price) / price * 100).toFixed(1);
   await log(DB, "TRADE", symbol, "[CM] BUY x" + qty + " @" + price.toFixed(2) + " " + signal.name + " " + signal.detail + " stop=" + stopPrice.toFixed(2) + "(" + stopPctRel + "%)");
   return cash;
@@ -6411,26 +6683,6 @@ async function executeBuyCM(DB, symbol, qty, price, signal, dailyAtr, cfg, cash)
 // 원자재 전용 매도 — USD·무세금. 부분/전량 청산 지원.
 async function executeSellCM(DB, symbol, pos, sellQty, price, reason, cfg, cash) {
   const feeRate = cfg.feeUS || 0.0001;
-
-  // [V9.9] 이중체결(중복매도) 차단 — 주식과 동일. DB 실제 잔량 재조회 후 진행.
-  sellQty = Math.floor(sellQty);
-  if (sellQty <= 0) { return { pnlPct: 0, cash: cash }; }
-  if (sellQty > pos.qty) sellQty = pos.qty;
-  try {
-    const fresh = await DB.prepare(
-      "SELECT qty FROM positions WHERE symbol = ? AND strategy = ? AND market = ?"
-    ).bind(symbol, "swing", "cm").first();
-    const freshQty = fresh ? Number(fresh.qty) : 0;
-    if (!(freshQty > 0)) {
-      await log(DB, "WARN", symbol, "[CM] SELL skipped: 이미 청산된 포지션(중복매도 방지)");
-      return { pnlPct: 0, cash: cash };
-    }
-    if (sellQty > freshQty) sellQty = freshQty;
-    if (pos.qty > freshQty) pos.qty = freshQty;
-  } catch (e) {
-    await log(DB, "WARN", symbol, "[CM] SELL freshness check failed (보수적 진행): " + e.message);
-  }
-
   const gross = price * sellQty;
   const fee = gross * feeRate;
   const proceeds = gross - fee;   // 원자재: 매도세 없음
@@ -6719,7 +6971,7 @@ async function runCommodityCycle(env, forceTrade) {
   }
 
   if (isTradeTime) {
-    try { await setState(DB, "cash", cash); } catch (e) {}
+    // [회계 재설계] cash는 trades 원장에서 항상 재계산되므로 별도 저장하지 않는다(죽은 코드 제거).
     // [V8.9] 오늘 거래 완료 마킹 (forceTrade 제외 — 수동 강제실행은 카운트 안 함).
     //   윈도우(16:00~17:00) 내에서 cron이 여러 번 돌아도 하루 1회만 매매하도록.
     if (forceTrade !== true) { try { await markCommodityTradedToday(DB); } catch (e) {} }
@@ -6752,11 +7004,8 @@ async function runTradingCycle(env) {
   const engineEnabled = !!cfg.enabled;
   if (!engineEnabled) { await log(DB, "INFO", null, "engine disabled — 가격만 갱신, 거래 스킵"); }
 
-  // [신규] Cycle Lock — 동시 실행 차단. [V31] pid로 소유권 추적.
-  //   [V9.9] cycleMs가 82s까지 측정됨 → TTL 90s는 너무 빠듯해 가끔 만료→사이클 겹침→중복매도.
-  //   D1 저장 cfg(90000)가 남아도 코드에서 최소 180s로 강제(사이클 82s + 충분한 여유).
-  const lockTtl = Math.max((typeof cfg.cycleLockTTL === "number" ? cfg.cycleLockTTL : 0), 180000);
-  const myLockPid = await acquireCycleLock(DB, lockTtl);
+  // [신규] Cycle Lock — 동시 실행 차단. [V31] pid로 소유권 추적, TTL 90s로 여유 확보
+  const myLockPid = await acquireCycleLock(DB, cfg.cycleLockTTL || 90000);
   if (!myLockPid) {
     await log(DB, "INFO", null, "cycle skipped: lock held");
     return;
@@ -7357,6 +7606,12 @@ async function runTradingCycle(env) {
             if (heldSymbols.has(symbol)) {
               continue;
             }
+            // [재작성] 동시 보유 종목 상한 — 분산/과집중 통제 (시장당 maxConcurrent)
+            const maxConc = (mcfg.trendSizing && mcfg.trendSizing.maxConcurrent != null) ? mcfg.trendSizing.maxConcurrent : 8;
+            if (heldSymbols.size >= maxConc) {
+              incNobuy("max_concurrent");
+              continue;
+            }
 
             const ctx = {
               symbol: symbol,
@@ -7445,114 +7700,30 @@ async function runTradingCycle(env) {
               }
             }
 
-            // [V8.5] 사이징 변경: 리스크 기반 vs 레거시 비율식
-            // 리스크 기반은 cash × riskPerTrade / stopDistancePct
-            //   → 한 거래 손실 한도 = cash × riskPerTrade%
-            //   stopDistance = max(rules.stopLossPct, 1.5×ATR%) — MEANREV 등 ATR 동적 손절 반영
-            // [V9.4] 전략별 캡 우선 — 없으면 시장별 기본(day 등) 폴백.
-            const byStrat = mcfg.sizingTargetsByStrategy && mcfg.sizingTargetsByStrategy[strategy];
-            const targets = (byStrat && byStrat[market])
-              || (mcfg.sizingTargets && mcfg.sizingTargets[market])
-              || { minBudget: 0, maxBudget: Infinity };
-
-            // [V15] 포트폴리오 비중 기반 사이징 파라미터.
-            //   - cashCap: 현금을 포트의 cashReservePct%까지 소진(현금 방치 방지).
-            //   - portMin/portMax: 종목당 포트 비중 하한/상한(집중 + 과집중 통제).
-            const psz = mcfg.portfolioSizing || {};
-            const pszOn = psz.enabled !== false;
-            let cashCap;
-            if (pszOn && typeof portfolioValue === "number" && portfolioValue > 0) {
-              const reserve = portfolioValue * ((psz.cashReservePct != null ? psz.cashReservePct : 12) / 100);
-              // 이번 매수에 쓸 수 있는 현금 = 현재현금 - 남겨둘 현금. 음수면 0.
-              cashCap = Math.max(0, cash[market] - reserve);
-              // 단, 한 번에 현금 전부를 한 종목에 쏟지 않도록 현금의 92% 안전선도 병행.
-              cashCap = Math.min(cashCap, cash[market] * 0.92);
-            } else {
-              cashCap = cash[market] * 0.85;
-            }
-            const dayScale = (strategy === "day" && psz.dayScale != null) ? psz.dayScale : 1;
-            const portMin = (pszOn && typeof portfolioValue === "number" && portfolioValue > 0)
-              ? portfolioValue * ((psz.minPortfolioPct != null ? psz.minPortfolioPct : 7) / 100) * dayScale : 0;
-            const portMax = (pszOn && typeof portfolioValue === "number" && portfolioValue > 0)
-              ? portfolioValue * ((psz.maxPortfolioPct != null ? psz.maxPortfolioPct : 13) / 100) * dayScale : Infinity;
-
-            let budget;
-            const rbs = mcfg.riskBasedSizing || {};
-            const useRiskSizing = rbs.enabled !== false;
-
-            if (useRiskSizing) {
-              // 손절 거리 계산 — 전략별 stopLoss와 ATR 동적 손절 중 큰 쪽
-              const stratRules = getStrategyRules(mcfg, strategy);
-              const baseStopPct = stratRules.stopLossPct || mcfg.stopLoss || 5.0;
-              let stopDistPct = baseStopPct;
-              if (actualAtrPct != null && actualAtrPct > 0) {
-                const atrStopPct = actualAtrPct * (stratRules.atrStopMult || mcfg.atrStopMult || 2.0);
-                stopDistPct = Math.max(baseStopPct, Math.min(atrStopPct, baseStopPct * 1.6));
-              }
-              // 신호 강도를 riskPerTrade에 반영 (cap·floor 적용)
-              const sigStrength = signal.weight * crossBonus;
-              const rbsOv = (rbs.byStrategy && rbs.byStrategy[strategy]) || {};
-              const riskBase = rbsOv.riskPerTrade != null ? rbsOv.riskPerTrade
-                             : (rbs.riskPerTrade != null ? rbs.riskPerTrade : 0.6);
-              const minR = rbsOv.minRisk != null ? rbsOv.minRisk
-                         : (rbs.minRisk != null ? rbs.minRisk : 0.3);
-              const maxR = rbsOv.maxRisk != null ? rbsOv.maxRisk
-                         : (rbs.maxRisk != null ? rbs.maxRisk : 1.2);
-              let riskPct = riskBase * sigStrength;
-              if (riskPct < minR) riskPct = minR;
-              if (riskPct > maxR) riskPct = maxR;
-              const rawBudget = cash[market] * (riskPct / 100) / (stopDistPct / 100);
-              budget = Math.min(rawBudget, targets.maxBudget, cashCap);
-              // [V15] 포트 비중 하한 보장 — 잘게 쪼개짐 방지. 현금이 충분할 때만.
-              if (pszOn && budget < portMin && cashCap >= portMin) {
-                budget = Math.min(portMin, targets.maxBudget, cashCap);
-              }
-              // [V15] 포트 비중 상한 — 과집중 방지.
-              if (pszOn && budget > portMax) budget = portMax;
-              // (구) minBudget 보장 — 포트사이징 OFF일 때만 적용
-              if (!pszOn && budget < targets.minBudget && cash[market] >= targets.minBudget * 1.1) {
-                budget = Math.min(targets.minBudget, cashCap);
-              }
-            } else {
-              // [Legacy] 비율식 — 호환성용 폴백
-              const adjustedRatio = baseRatio * signal.weight * crossBonus * atrMult;
-              const rawBudget = cash[market] * adjustedRatio;
-              budget = Math.min(rawBudget, targets.maxBudget, cashCap);
-              if (pszOn && budget < portMin && cashCap >= portMin) budget = Math.min(portMin, targets.maxBudget, cashCap);
-              if (pszOn && budget > portMax) budget = portMax;
-              if (!pszOn && budget < targets.minBudget && cash[market] >= targets.minBudget * 1.1) {
-                budget = Math.min(targets.minBudget, cashCap);
-              }
-            }
-
-            // [V8.6 Hybrid] LLM 사이징 스케일 적용 — cashCap 한도 내에서
-            if (llmInstr && llmInstr.position_sizing && typeof llmInstr.position_sizing.scale === "number") {
-              budget = Math.min(budget * llmInstr.position_sizing.scale, cashCap);
-              // [V15] LLM 축소 후에도 집중투자 하한 유지 — portMin의 80%선 아래로는 안 떨어뜨림
-              //   (LLM 리스크오프는 존중하되, 과거처럼 포트 3~4%로 잘게 쪼개지는 것 방지).
-              if (pszOn && portMin > 0 && budget < portMin * 0.8 && cashCap >= portMin * 0.8) {
-                budget = Math.min(portMin * 0.8, cashCap);
-              }
-            }
-
-            let qty = Math.floor(budget / (price * (1 + feeRate)));
-
-            // [V8.1.9] floor 손실 보정: budget 대비 +1주 더 살 여유가 있고
-            //          maxBudget 초과 안 하면 1주 추가 (한국 고가주 1주 차이 큼)
-            if (qty >= 1) {
-              const nextCost = (qty + 1) * price * (1 + feeRate);
-              if (nextCost <= Math.min(budget * 1.25, targets.maxBudget, cash[market])) {
-                qty += 1;
-              }
-            }
-
-            // [V8.1.5] 1주도 못 사는 경우: 잔액 10% 이내면 1주 매수 허용
-            if (qty === 0) {
-              const onePrice = price * (1 + feeRate);
-              if (onePrice <= cash[market] * 0.10) {
-                qty = 1;
-              }
-            }
+            // === [재작성] 고정리스크 사이징 ===
+            //   한 거래 손실한도 R$ = 자산 × riskPerTrade%. 손절거리(주당)로 수량을 역산한다.
+            //   → 변동성이 큰(손절 먼) 종목일수록 자동으로 작게 산다. 손실 금액이 항상 균등.
+            //   종목 비중 상한·가용현금 상한으로 과집중/초과 통제. executeBuy의 DB clamp가 최종 차단.
+            const tsz = mcfg.trendSizing || {};
+            const riskPct = tsz.riskPerTrade != null ? tsz.riskPerTrade : 0.75;
+            const maxPosPct = tsz.maxPositionPct != null ? tsz.maxPositionPct : 15;
+            const equity = (typeof portfolioValue === "number" && portfolioValue > 0) ? portfolioValue : cash[market];
+            const tr = getStrategyRules(mcfg, strategy);
+            // 손절 거리(주당) — executeBuy와 동일 규칙: min(N×ATR, price×stopLoss%)
+            const atrStopDist = (dailyAtr && dailyAtr > 0) ? dailyAtr * (tr.atrStopMult || mcfg.atrStopMult || 2.0) : null;
+            const pctStopDist = price * ((tr.stopLossPct || mcfg.stopLoss || 5) / 100);
+            let stopDist = (atrStopDist != null) ? Math.min(atrStopDist, pctStopDist) : pctStopDist;
+            if (!(stopDist > 0)) stopDist = price * 0.05;
+            // 리스크 기반 수량
+            const riskDollar = equity * (riskPct / 100);
+            let qty = Math.floor(riskDollar / stopDist);
+            // 종목 비중 상한 (자산의 maxPosPct%)
+            const maxByPos = Math.floor(equity * (maxPosPct / 100) / (price * (1 + feeRate)));
+            if (qty > maxByPos) qty = maxByPos;
+            // 가용현금 1차 상한 (executeBuy가 최종 clamp)
+            const maxByCash = Math.floor((cash[market] * 0.98) / (price * (1 + feeRate)));
+            if (qty > maxByCash) qty = maxByCash;
+            if (qty < 0) qty = 0;
 
             const totalCost = qty * price * (1 + feeRate);
             // [V27] 예산 가드 — 부동소수점 오차 여유(1원/1센트) 두고 엄격 차단 + 초과 시도 로깅
@@ -7617,11 +7788,10 @@ async function runTradingCycle(env) {
       }
 
       // [V8.5] 시장 처리 완료 — 다음 시장 처리 전 락 TTL 갱신 (stale 진입 방지)
-      // [V9.9] acquire와 동일하게 최소 180s로 갱신해 긴 사이클 중 만료 방지.
-      await refreshCycleLock(DB, lockTtl, myLockPid);
+      await refreshCycleLock(DB, cfg.cycleLockTTL || 90000, myLockPid);
     }
 
-    try { await setState(DB, "cash", cash); } catch (e) {}
+    // [회계 재설계] cash는 trades 원장에서 항상 재계산되므로 별도 저장하지 않는다(죽은 코드 제거).
     try { await setState(DB, "last_tick", Date.now()); } catch (e) {}
     // [V25 감사 A] 사이클 종료 시 회계 무결성 검증 — 거래한 시장만.
     for (const mkt of marketsToTrade) {
@@ -7641,15 +7811,11 @@ async function runTradingCycle(env) {
 //   투자원금(invested) 대비 비정상(예: 현금이 갑자기 2배↑, 음수 등)을 잡는다.
 async function auditAccounting(DB, market, cash) {
   try {
-    const posMap = await getPositions(DB, market);
-    // [V9.9] getPositions는 객체(map)를 반환하는데 이 함수는 배열을 가정해 왔다.
-    //   그 결과 for...of / positions.length / positions.filter / p.avg_price 가 모두
-    //   객체에서 깨져 매 사이클 catch로 빠졌고 → 회계 감사가 완전히 무력화됐다.
-    //   (그래서 +16% 자산 부풀림 ASSET_INFLATE도 감지 못함). 배열로 어댑트해 정상화.
-    const positions = Object.keys(posMap).map(function(k){
-      const p = posMap[k];
-      return { symbol: p.symbol, strategy: p.strategy, qty: p.qty, avg_price: p.avg, opened_ts: p.opened_ts, meta: p.meta };
-    });
+    // [회계 재설계] positions 테이블 raw row를 직접 조회한다.
+    //   (getPositions는 "symbol::strategy" 키 map을 반환 → for...of/avg_price 순회가 깨져
+    //    이 감사가 그동안 조용히 무력화돼 있었다. raw 배열로 바로잡아 실제 작동시킨다.)
+    const posRes = await DB.prepare("SELECT symbol, strategy, qty, avg_price, opened_ts, meta FROM positions WHERE market = ?").bind(market).all();
+    const positions = posRes.results || [];
     let invested = 0;
     const seen = {};
     const dups = [];
@@ -7672,6 +7838,12 @@ async function auditAccounting(DB, market, cash) {
     if (flags.length > 0) {
       await log(DB, "ERROR", null, "[AUDIT] " + market.toUpperCase() + " 회계 이상: " + flags.join(" | ") +
         " (cash=" + Math.round(cashVal) + " invested=" + Math.round(invested) + " positions=" + positions.length + ")");
+      // [회계 재설계] 자가 치유 — 음수현금/자산팽창은 cash 체크포인트 오염 징후.
+      //   체크포인트를 삭제하면 다음 계산이 trades 원장 전체에서 처음부터 정확히 재계산된다.
+      if (cashVal < 0 || totalAsset > initial * 2) {
+        try { await DB.prepare("DELETE FROM state WHERE k = ?").bind("cash_ckpt:" + market).run(); } catch (e) {}
+        await log(DB, "WARN", null, "[AUDIT-FIX] " + market.toUpperCase() + " cash 체크포인트 무효화 → 다음 사이클에 원장 재계산");
+      }
       // [V26] 자동 복구 — 중복 포지션만 정리(정상 거래는 보존). 전체 리셋 불필요.
       if (dups.length > 0) {
         for (const dupKey of dups) {
@@ -7744,6 +7916,12 @@ async function handleRequest(request, env) {
       const cfg = migrateCfgToMarkets(Object.assign({}, DEFAULT_CFG, await getState(env.DB, "cfg", {})));
       const cash = await computeAllCash(env.DB, cfg);
       const deposits = await getState(env.DB, "deposits", { us: 0, kr: 0 });
+      const outflows = await getState(env.DB, "outflows", { us: 0, kr: 0 });
+      // [회계 재설계] TWR 상태 — 프론트가 실시간 평가액으로 마지막 구간을 마감해 수익률% 산출
+      const twr = {
+        us: await getState(env.DB, "twr:us", null),
+        kr: await getState(env.DB, "twr:kr", null)
+      };
       const positionsUSRaw = await getPositions(env.DB, "us");
       const positionsKRRaw = await getPositions(env.DB, "kr");
 
@@ -7818,6 +7996,8 @@ async function handleRequest(request, env) {
       return Response.json({
         cash: cash,
         deposits: deposits,
+        outflows: outflows,
+        twr: twr,
         positions: {
           us: posUS.list,          // [V8] array of (symbol, strategy) rows
           kr: posKR.list,
@@ -7919,6 +8099,10 @@ async function handleRequest(request, env) {
       await env.DB.prepare("DELETE FROM state WHERE k NOT LIKE 'quote:%' AND k NOT LIKE 'index:%' AND k NOT LIKE 'daily:%'").run();
       await setState(env.DB, "cash", { us: cfg.initialCashUS, kr: cfg.initialCashKR, cm: cfg.initialCashCM });
       await setState(env.DB, "deposits", { us: 0, kr: 0 });
+      await setState(env.DB, "outflows", { us: 0, kr: 0 });
+      // TWR 초기화 — 전체 삭제(NOT LIKE) 시 twr:* 키도 지워지지만, 명시적으로 초기 상태를 심어 둔다.
+      await setState(env.DB, "twr:us", { factor: 1, lastValue: cfg.initialCashUS });
+      await setState(env.DB, "twr:kr", { factor: 1, lastValue: cfg.initialCashKR });
       await log(env.DB, "INFO", null, "RESET");
       return Response.json({ ok: true, cash: { us: cfg.initialCashUS, kr: cfg.initialCashKR, cm: cfg.initialCashCM } }, { headers: cors });
     }
@@ -7937,7 +8121,12 @@ async function handleRequest(request, env) {
       const deposits = await getState(env.DB, "deposits", { us: 0, kr: 0, cm: 0 });
       deposits[mkt] = 0;
       await setState(env.DB, "deposits", deposits);
+      const outflows = await getState(env.DB, "outflows", { us: 0, kr: 0, cm: 0 });
+      outflows[mkt] = 0;
+      await setState(env.DB, "outflows", outflows);
       const initial = mkt === "us" ? cfg.initialCashUS : cfg.initialCashKR;
+      // 해당 시장 TWR 초기화
+      await setState(env.DB, "twr:" + mkt, { factor: 1, lastValue: initial });
       await log(env.DB, "INFO", null, "[V29] RESET market=" + mkt + " (trades+positions cleared) cash=" + initial);
       return Response.json({ ok: true, market: mkt, cash: initial }, { headers: cors });
     }
@@ -7999,46 +8188,46 @@ async function handleRequest(request, env) {
       return Response.json({ ok: true, cash: { cm: cfg.initialCashCM } }, { headers: cors });
     }
     if (path === "/api/cash/add" && request.method === "POST") {
-      // 기존 cash에 금액 추가/차감 (포지션, 거래 기록 보존)
-      // body: { us?: number, kr?: number }  — 양수=입금, 음수=출금
-      // [V8.2.2] deposits도 누적 기록 → 수익률 계산 시 입금분 차감용
+      // [회계 재설계] 입금/출금 처리.
+      //   body: { us?: number, kr?: number } — 양수=입금, 음수=출금
+      //   입금  → deposits(누적 입금액) 증가, cash 증가
+      //   출금  → outflows(누적 출금액) 증가, cash 감소
+      //   현금흐름 시점마다 TWR을 갱신해 수익률이 입출금에 흔들리지 않게 한다.
       const body = await request.json();
       const cfg = migrateCfgToMarkets(Object.assign({}, DEFAULT_CFG, await getState(env.DB, "cfg", {})));
       const cash = await computeAllCash(env.DB, cfg);
       const deposits = await getState(env.DB, "deposits", { us: 0, kr: 0 });
+      const outflows = await getState(env.DB, "outflows", { us: 0, kr: 0 });
       const addUs = Number(body.us) || 0;
       const addKr = Number(body.kr) || 0;
       if (addUs === 0 && addKr === 0) {
         return Response.json({ ok: false, error: "no amount" }, { status: 400, headers: cors });
       }
       const before = { us: cash.us, kr: cash.kr };
-      cash.us = +(cash.us + addUs).toFixed(2);
-      cash.kr = Math.round(cash.kr + addKr);
-      // 출금 시 음수 방지
-      if (cash.us < 0 || cash.kr < 0) {
+      // 출금 시 현금 부족 방지
+      if ((addUs < 0 && cash.us + addUs < 0) || (addKr < 0 && cash.kr + addKr < 0)) {
         return Response.json({ ok: false, error: "insufficient cash", before: before, attempted: { us: addUs, kr: addKr } }, { status: 400, headers: cors });
       }
-      deposits.us = +((deposits.us || 0) + addUs).toFixed(2);
-      deposits.kr = Math.round((deposits.kr || 0) + addKr);
-      await setState(env.DB, "cash", cash);
+      // 현금흐름 직전 평가액 스냅샷 (TWR 구간 마감용) — deposits/outflows 갱신 전에 계산
+      const valBeforeUs = addUs !== 0 ? await computePortfolioValue(env.DB, "us", cfg) : null;
+      const valBeforeKr = addKr !== 0 ? await computePortfolioValue(env.DB, "kr", cfg) : null;
+      // 입금/출금 누적 갱신
+      if (addUs > 0) deposits.us = +((deposits.us || 0) + addUs).toFixed(2);
+      else if (addUs < 0) outflows.us = +((outflows.us || 0) - addUs).toFixed(2);
+      if (addKr > 0) deposits.kr = Math.round((deposits.kr || 0) + addKr);
+      else if (addKr < 0) outflows.kr = Math.round((outflows.kr || 0) - addKr);
+      // deposits/outflows가 바뀌면 cash 체크포인트는 무효 → 삭제 후 재계산
+      try { await env.DB.prepare("DELETE FROM state WHERE k LIKE 'cash_ckpt:%'").run(); } catch (e) {}
       await setState(env.DB, "deposits", deposits);
-      const msg = "CASH ADD US:" + (addUs >= 0 ? "+" : "") + addUs + " KR:" + (addKr >= 0 ? "+" : "") + addKr +
-                  " (US " + before.us + "->" + cash.us + ", KR " + before.kr + "->" + cash.kr + ")";
+      await setState(env.DB, "outflows", outflows);
+      // TWR 구간 마감 (흐름 직전 평가액 → factor 누적, lastValue 갱신)
+      if (valBeforeUs !== null) await applyCashflowToTWR(env.DB, "us", valBeforeUs, addUs, cfg);
+      if (valBeforeKr !== null) await applyCashflowToTWR(env.DB, "kr", valBeforeKr, addKr, cfg);
+      const newCash = await computeAllCash(env.DB, cfg);
+      const msg = "CASHFLOW US:" + (addUs >= 0 ? "+" : "") + addUs + " KR:" + (addKr >= 0 ? "+" : "") + addKr +
+                  " (US " + before.us + "->" + newCash.us + ", KR " + before.kr + "->" + newCash.kr + ")";
       await log(env.DB, "INFO", null, msg);
-      return Response.json({ ok: true, cash: cash, deposits: deposits, before: before, added: { us: addUs, kr: addKr } }, { headers: cors });
-    }
-    if (path === "/api/deposits/set" && request.method === "POST") {
-      // [V8.2.3] deposits 값을 직접 덮어씀 (과거 수동 입금 보정용)
-      // body: { us?: number, kr?: number } — 절대값, cash는 안 건드림
-      const body = await request.json();
-      const cur = await getState(env.DB, "deposits", { us: 0, kr: 0 });
-      const next = {
-        us: body.us !== undefined ? +Number(body.us).toFixed(2) : (cur.us || 0),
-        kr: body.kr !== undefined ? Math.round(Number(body.kr)) : (cur.kr || 0)
-      };
-      await setState(env.DB, "deposits", next);
-      await log(env.DB, "INFO", null, "DEPOSITS SET US:" + (cur.us || 0) + "->" + next.us + " KR:" + (cur.kr || 0) + "->" + next.kr);
-      return Response.json({ ok: true, deposits: next, before: cur }, { headers: cors });
+      return Response.json({ ok: true, cash: newCash, deposits: deposits, outflows: outflows, before: before, added: { us: addUs, kr: addKr } }, { headers: cors });
     }
     if (path === "/api/tick" && request.method === "POST") {
       await runTradingCycle(env);
@@ -8288,29 +8477,36 @@ async function handleRequest(request, env) {
       });
     }
 
-    // [V9.9] 현재 포지션 다운로드 (CSV) — positions 테이블 + quote:심볼 현재가
+    // [V9.9] 현재 포지션 다운로드 (CSV)
     if (path === "/api/download/positions") {
       try {
-        let rows = [];
-        for (const mkt of ["us", "kr"]) {
-          const posMap = await getPositions(env.DB, mkt);
-          for (const key in posMap) {
-            const p = posMap[key];
-            const q = await getState(env.DB, "quote:" + p.symbol, null);
-            const cur = (q && typeof q.price === "number") ? q.price : null;
-            rows.push({ market: mkt.toUpperCase(), p, cur });
-          }
+        const allKeys = await env.DB.prepare("SELECT key FROM kv_store").all();
+        const keys = (allKeys.results || []).map(r => r.key).filter(k => k.startsWith("positions:"));
+        
+        let positions = [];
+        for (const key of keys) {
+          const val = await getState(env.DB, key, null);
+          if (!val) continue;
+          const [_, market, symbol] = key.split(":");
+          const pos = typeof val === "string" ? JSON.parse(val) : val;
+          positions.push({ key, market, symbol, ...pos });
         }
 
-        let csv = "시장,종목,전략,수량,평단가,현재가,매수액,평가액,평가손익,손익율,진입일시\n";
-        rows.forEach(({ market, p, cur }) => {
-          const avg = p.avg || 0, qty = p.qty || 0;
-          const cost = qty * avg;
-          const val = (cur != null) ? qty * cur : "";
-          const pnl = (cur != null) ? (val - cost) : "";
-          const pnlPct = (cur != null && avg) ? (((cur - avg) / avg) * 100).toFixed(2) : "";
-          const opened = p.opened_ts ? new Date(p.opened_ts).toLocaleString('ko-KR') : "";
-          csv += `"${market}","${p.symbol}","${p.strategy || ""}",${qty},${avg},${cur != null ? cur : ""},${cost.toFixed(2)},${val !== "" ? val.toFixed(2) : ""},${pnl !== "" ? pnl.toFixed(2) : ""},${pnlPct},"${opened}"\n`;
+        // 시장별, 종목별 정렬
+        positions.sort((a, b) => a.market.localeCompare(b.market) || a.symbol.localeCompare(b.symbol));
+
+        // CSV 생성: 시장,종목,수량,평단가,매수액,손익,손익율,상태
+        let csv = "시장,종목,수량,평단가,매수액,손익(예상),손익율,최종매수시각,최종매도시각\n";
+        positions.forEach(p => {
+          const qty = p.qty || 0;
+          const entryPx = p.entryPrice || 0;
+          const amount = qty * entryPx;
+          const pnl = (p.unrealizedPnL || p.pnl || 0).toFixed(2);
+          const pnlPct = amount > 0 ? ((pnl / amount) * 100).toFixed(2) : "0.00";
+          const buyTs = p.buyTs ? new Date(p.buyTs).toLocaleString('ko-KR') : "";
+          const sellTs = p.sellTs ? new Date(p.sellTs).toLocaleString('ko-KR') : "";
+          
+          csv += `"${p.market}","${p.symbol}",${qty},${entryPx},${amount},${pnl},${pnlPct}%,"${buyTs}","${sellTs}"\n`;
         });
 
         return new Response(csv, {
@@ -8322,7 +8518,7 @@ async function handleRequest(request, env) {
           }
         });
       } catch (e) {
-        return new Response(JSON.stringify({ ok: false, error: e.message }), { status: 500, headers: cors });
+        return new Response(JSON.stringify({ok:false, error: e.message}), {status:500, headers:cors});
       }
     }
     
@@ -8537,4 +8733,12 @@ export default {
       }
     })());
   }
+};
+
+// [검증용 named export] Cloudflare Worker는 default export만 사용하므로 무해.
+//   로컬 백테스트/단위검증 스크립트에서 핵심 함수를 직접 호출하기 위함.
+export {
+  DEFAULT_CFG, migrateCfgToMarkets, evaluateAllStrategies, evaluateTrendEntry,
+  evaluateSell, backtestSymbol, backtestStats, backtestStatsBySignal,
+  getRSI, getMA, getATR, getNDayHigh, getStrategyRules, fetchDailyForBacktest
 };

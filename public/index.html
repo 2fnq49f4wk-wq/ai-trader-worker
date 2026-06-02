@@ -1087,7 +1087,6 @@ html[data-theme="light"] .sb-brand-sub{ color:#888; }
     <div class="page" id="page-positions">
       <div class="page-header">
         <span class="page-title">CURRENT POSITIONS</span>
-        <button type="button" id="btnDownloadPositions" class="btn">📥 CSV</button>
         <button type="button" class="btn watchlist-toggle-btn" id="positionsToggleBtn">펼치기</button>
       </div>
       <div class="pos-pnl-summary" id="posPnlSummary"></div>
@@ -1169,7 +1168,6 @@ html[data-theme="light"] .sb-brand-sub{ color:#888; }
       <!-- RECENT TRADES -->
       <div class="page-header">
         <span class="page-title">RECENT TRADES</span>
-        <button type="button" id="btnDownloadRecent" class="btn">📥 CSV</button>
       </div>
       <div class="trades-toggle" id="tradesToggle">
         <div class="trades-summary" id="tradesSummary">
@@ -1195,7 +1193,6 @@ html[data-theme="light"] .sb-brand-sub{ color:#888; }
       <!-- ALL TRADE HISTORY -->
       <div class="page-header" style="margin-top:32px;">
         <span class="page-title">ALL TRADE HISTORY</span>
-        <button type="button" id="btnDownloadAll" class="btn">📥 전체 CSV</button>
       </div>
       <div class="trades-toggle" id="allTradesToggle">
         <div class="trades-summary" id="allTradesSummary">
@@ -1349,11 +1346,12 @@ html[data-theme="light"] .sb-brand-sub{ color:#888; }
     <div class="field"><label>KR TICKERS (예: 005930.KS)</label><textarea id="cfgKR"></textarea></div>
     <button type="button" class="btn" id="btnResetTickers" style="margin-bottom:10px;">티커 기본값으로 복원</button>
     <div class="section-divider"></div>
-    <div class="section-title">STRATEGIES</div>
-    <div class="checkbox-row"><input type="checkbox" id="cfgStratSwing"><label for="cfgStratSwing"><b>SWING</b> (4시간~7일)</label></div>
-    <div class="checkbox-row"><input type="checkbox" id="cfgStratDay"><label for="cfgStratDay"><b>DAY</b> (수시간)</label></div>
-    <div class="checkbox-row"><input type="checkbox" id="cfgStratMomentum"><label for="cfgStratMomentum"><b>MOMENTUM</b> (5~30일)</label></div>
-    <div class="checkbox-row"><input type="checkbox" id="cfgStratMeanrev"><label for="cfgStratMeanrev"><b>MEANREV</b> (1~5일)</label></div>
+    <div class="section-title">STRATEGY</div>
+    <div class="hint" style="margin-bottom:8px;line-height:1.6;">
+      <b>TREND (추세추종)</b> 단일 전략으로 운용됩니다.<br>
+      추세 정렬(MA20&gt;MA50&gt;MA200) 종목의 풀백 반등·신고가 돌파에서만 진입하고,
+      ATR 기반 손절·1R 분할익절·트레일링으로 관리합니다. 한 거래 리스크 0.75%, 동시보유 8종목.
+    </div>
     <div class="section-title" style="margin-top:12px;">CLAUDE LLM HYBRID</div>
     <div class="checkbox-row"><input type="checkbox" id="cfgLlmEnabled"><label for="cfgLlmEnabled"><b>LLM 일일 지시 사용</b></label></div>
     <div class="hint" style="margin-bottom:8px;">켜면 매일 Claude가 시장을 분석해 sizing·손절·매수신호 ON/OFF를 조정합니다.</div>
@@ -1424,25 +1422,32 @@ html[data-theme="light"] .sb-brand-sub{ color:#888; }
       <div class="field"><label>KR Fee</label><input type="number" id="cfgFeeKR" min="0" max="0.05" step="0.00001"></div>
       <div class="field"><label>KR Sell Tax</label><input type="number" id="cfgKrSellTax" min="0" max="0.05" step="0.0001"></div>
     </div>
-    <div class="section-title">CASH MANAGEMENT</div>
+    <div class="section-title">CASH MANAGEMENT (입출금)</div>
     <div style="font-size:11px;color:var(--t2);margin-bottom:8px;">
       현재 cash: <b id="cfgCurrentCashUS">-</b> · <b id="cfgCurrentCashKR">-</b>
     </div>
     <div class="field-row">
-      <div class="field"><label>US 추가 ($)</label><input type="number" id="cfgAddCashUS" step="100"></div>
-      <div class="field"><label>KR 추가 (₩)</label><input type="number" id="cfgAddCashKR" step="100000"></div>
-      <div class="field" style="display:flex;align-items:flex-end;"><button type="button" class="btn primary" id="btnAddCash" style="width:100%;">CASH 추가</button></div>
+      <div class="field"><label>US 입출금 ($)</label><input type="number" id="cfgAddCashUS" step="100" placeholder="입금 +, 출금 −"></div>
+      <div class="field"><label>KR 입출금 (₩)</label><input type="number" id="cfgAddCashKR" step="100000" placeholder="입금 +, 출금 −"></div>
+      <div class="field" style="display:flex;align-items:flex-end;"><button type="button" class="btn primary" id="btnAddCash" style="width:100%;">입출금 적용</button></div>
     </div>
-    <div style="font-size:11px;color:var(--t2);margin-top:12px;margin-bottom:4px;"><b>vs INITIAL 보정</b></div>
-    <div style="font-size:11px;color:var(--t3);margin-bottom:8px;">deposits: <b id="cfgCurrentDepositsUS">-</b> · <b id="cfgCurrentDepositsKR">-</b></div>
-    <div class="field-row">
-      <div class="field"><label>US deposits ($)</label><input type="number" id="cfgSetDepositsUS" step="100"></div>
-      <div class="field"><label>KR deposits (₩)</label><input type="number" id="cfgSetDepositsKR" step="100000"></div>
-      <div class="field" style="display:flex;align-items:flex-end;"><button type="button" class="btn" id="btnSetDeposits" style="width:100%;">설정</button></div>
+    <div style="font-size:10px;color:var(--t3);margin-top:4px;line-height:1.6;">
+      양수=입금, 음수=출금. 입출금은 <b>수익률(vs INITIAL)에 영향을 주지 않습니다</b> — 수익률은 시간가중수익률(TWR)로 계산되어 입출금 시점마다 구간이 분리됩니다.
     </div>
-    <div style="margin-top:8px;">
-      <button type="button" class="btn" id="btnAutoFixDeposits" style="width:100%;font-size:10px;">🔧 vs INITIAL 자동 보정</button>
+    <div style="font-size:10px;color:var(--t3);margin-top:8px;">
+      누적 입금: <b id="cfgCurrentDepositsUS">-</b> · <b id="cfgCurrentDepositsKR">-</b><br>
+      누적 출금: <b id="cfgCurrentOutflowsUS">-</b> · <b id="cfgCurrentOutflowsKR">-</b>
     </div>
+
+    <div class="section-divider"></div>
+    <div class="section-title">데이터 다운로드</div>
+    <div style="font-size:10px;color:var(--t3);margin-bottom:10px;">거래내역·포지션을 CSV 파일로 내려받습니다.</div>
+    <div style="display:flex;gap:8px;flex-wrap:wrap;">
+      <button type="button" class="btn" id="btnDownloadAll" style="flex:1;min-width:120px;">📥 전체 데이터</button>
+      <button type="button" class="btn" id="btnDownloadRecent" style="flex:1;min-width:120px;">📥 최근 거래내역</button>
+      <button type="button" class="btn" id="btnDownloadPositions" style="flex:1;min-width:120px;">📥 현재 포지션</button>
+    </div>
+
     <div style="border-top:1px solid var(--bd);margin-top:16px;padding-top:14px;">
       <div style="font-size:11px;color:var(--t1);margin-bottom:8px;font-weight:700;">시장별 리셋</div>
       <div style="display:flex;gap:8px;">
@@ -1476,6 +1481,8 @@ html[data-theme="light"] .sb-brand-sub{ color:#888; }
   var currentCfg = null;
   var currentCash = { us: 0, kr: 0 };
   var currentDeposits = { us: 0, kr: 0 };
+  var currentOutflows = { us: 0, kr: 0 };
+  var currentTwr = { us: null, kr: null };
   var lastQuotes = {};
   var tradesExpanded = false;
   var allTradesExpanded = false;
@@ -1784,13 +1791,18 @@ html[data-theme="light"] .sb-brand-sub{ color:#888; }
     boxKR.innerHTML = kr.length ? kr.map(card).join('') : '<div class="empty">대기 중...</div>';
   }
 
-  function calcSummary(market, cash, positions, initialCash, deposits) {
+  // [회계 재설계] 수익률은 TWR(시간가중수익률)로 계산한다.
+  //   서버가 내려준 twr = { factor, lastValue } 로 마지막 구간을 실시간 평가액으로 마감:
+  //     전체수익률(%) = (factor * (현재평가액 / lastValue) - 1) * 100
+  //   입출금(현금흐름)은 서버에서 구간 분리되어 factor에 반영되므로 수익률을 왜곡하지 않는다.
+  //   twr 상태가 없으면(구버전/초기) initialCash 기준 단순 수익률로 폴백한다.
+  function calcSummary(market, cash, positions, initialCash, twr, deposits, outflows) {
     var symbol = market === 'us' ? '$' : '₩';
     var invested = 0, marketVal = 0;
-    // [V27] 안전성 강화 — positions가 없거나 NaN이면 기본값
     cash = (typeof cash === 'number' && !isNaN(cash)) ? cash : 0;
     initialCash = (typeof initialCash === 'number' && !isNaN(initialCash)) ? initialCash : 0;
     deposits = (typeof deposits === 'number' && !isNaN(deposits)) ? deposits : 0;
+    outflows = (typeof outflows === 'number' && !isNaN(outflows)) ? outflows : 0;
     // [V8] positions는 array (각 row에 symbol, strategy, qty, avg)
     var list = Array.isArray(positions) ? positions : Object.keys(positions || {}).map(function(k){
       var p = positions[k];
@@ -1803,10 +1815,18 @@ html[data-theme="light"] .sb-brand-sub{ color:#888; }
       marketVal += p.qty * curPrice;
     });
     var total = cash + marketVal;
-    // [V8.2.2] 수익률 계산은 입금/출금분 제외 — change = total - (initialCash + 누적입금)
-    var baseline = initialCash + deposits;
-    var change = total - baseline;
-    var changePct = baseline > 0 ? (change / baseline * 100) : 0;
+    var changePct, change;
+    if (twr && typeof twr.factor === 'number' && typeof twr.lastValue === 'number' && twr.lastValue > 0) {
+      // 정상 경로: 시간가중수익률(TWR)
+      changePct = (twr.factor * (total / twr.lastValue) - 1) * 100;
+      change = total * (changePct / (100 + changePct));  // 표시용 손익액 근사
+    } else {
+      // 폴백(twr 미생성): net-contribution 방식 — 입출금 영향 제거
+      //   순손익 = (현재가치 + 누적출금) - (초기자본 + 누적입금)
+      var baseline = initialCash + deposits;
+      change = (total + outflows) - baseline;
+      changePct = baseline > 0 ? (change / baseline * 100) : 0;
+    }
     return { symbol: symbol, cash: cash, invested: invested, marketVal: marketVal, total: total, change: change, changePct: changePct };
   }
 
@@ -2393,21 +2413,25 @@ html[data-theme="light"] .sb-brand-sub{ color:#888; }
     })['catch'](function(e){ toast('로그 다운로드 실패: ' + e.message); });
   }
 
-  // [V9.9] 현재 포지션 CSV 다운로드 — /api/state 의 positions.us/kr + lastQuotes(현재가) 사용
-  function positionsToCSV(rows) {
-    var csv = "시장,종목,전략,수량,평단가,현재가,매수액,평가액,평가손익,손익율,진입일시\n";
-    rows.forEach(function(r){
-      var p = r.p, market = r.market, cur = r.cur;
-      var avg = p.avg || 0, qty = p.qty || 0;
+  // [회계 재설계] 현재 포지션 CSV 다운로드 — /api/state의 실제 포지션 구조 기반.
+  //   각 row: { market, symbol, strategy, qty, avg, opened_ts } + 실시간 현재가로 손익 계산.
+  function positionsToCSV(positions) {
+    var csv = "시장,종목,전략,수량,평단가,현재가,매수액,평가액,손익,손익율(%),보유시작\n";
+    positions.forEach(function(pos){
+      var market = (pos.market || "").toUpperCase();
+      var symbol = pos.symbol || "";
+      var strategy = pos.strategy || "";
+      var qty = pos.qty || 0;
+      var avg = pos.avg || 0;
+      var q = lastQuotes[symbol];
+      var cur = (q && typeof q.price === 'number') ? q.price : avg;
       var cost = qty * avg;
-      var val = (cur != null) ? qty * cur : "";
-      var pnl = (cur != null) ? (val - cost) : "";
-      var pnlPct = (cur != null && avg) ? (((cur - avg) / avg) * 100).toFixed(2) : "";
-      var opened = p.opened_ts ? new Date(p.opened_ts).toLocaleString('ko-KR') : "";
-      csv += '"' + market + '","' + (p.symbol||'') + '","' + (p.strategy||'') + '",'
-           + qty + ',' + avg + ',' + (cur != null ? cur : '') + ','
-           + cost.toFixed(2) + ',' + (val !== "" ? val.toFixed(2) : '') + ','
-           + (pnl !== "" ? pnl.toFixed(2) : '') + ',' + pnlPct + ',"' + opened + '"\n';
+      var value = qty * cur;
+      var pnl = value - cost;
+      var pnlPct = cost > 0 ? (pnl / cost * 100) : 0;
+      var opened = pos.opened_ts ? new Date(pos.opened_ts).toLocaleString('ko-KR') : "";
+      csv += '"' + market + '","' + symbol + '","' + strategy + '",' + qty + ',' + avg + ',' + cur + ',' +
+             cost.toFixed(2) + ',' + value.toFixed(2) + ',' + pnl.toFixed(2) + ',' + pnlPct.toFixed(2) + ',"' + opened + '"\n';
     });
     return csv;
   }
@@ -2416,21 +2440,14 @@ html[data-theme="light"] .sb-brand-sub{ color:#888; }
     api('/api/state').then(function(state){
       var posUS = (state.positions && state.positions.us) || [];
       var posKR = (state.positions && state.positions.kr) || [];
-      var rows = [];
-      function add(list, mkt){
-        list.forEach(function(p){
-          var q = (typeof lastQuotes !== 'undefined') ? lastQuotes[p.symbol] : null;
-          var cur = (q && typeof q.price === 'number') ? q.price : null;
-          rows.push({ market: mkt, p: p, cur: cur });
-        });
-      }
-      add(posUS, 'US');
-      add(posKR, 'KR');
-      if (rows.length === 0) { toast('현재 보유 포지션이 없습니다'); return; }
-      var csv = positionsToCSV(rows);
+      var all = [];
+      posUS.forEach(function(p){ all.push(Object.assign({ market: 'us' }, p)); });
+      posKR.forEach(function(p){ all.push(Object.assign({ market: 'kr' }, p)); });
+      if (all.length === 0) { toast('현재 보유 포지션이 없습니다'); return; }
+      var csv = positionsToCSV(all);
       var fn = 'positions_' + new Date().toISOString().slice(0, 10) + '.csv';
       downloadCSV(csv, fn);
-      toast(rows.length + '개 포지션 다운로드 완료');
+      toast(all.length + '개 포지션 다운로드 완료');
     })['catch'](function(e){ toast('포지션 다운로드 실패: ' + e.message); });
   }
 
@@ -3172,11 +3189,15 @@ html[data-theme="light"] .sb-brand-sub{ color:#888; }
         if (typeof cash.us !== 'number' || isNaN(cash.us)) cash.us = 0;
         currentCash = cash;
         var deposits = state.deposits || {us:0,kr:0};
+        var outflows = state.outflows || {us:0,kr:0};
+        var twr = state.twr || {us:null,kr:null};
         currentDeposits = deposits;
+        currentOutflows = outflows;
+        currentTwr = twr;
         var initUS = (state.cfg && state.cfg.initialCashUS) || 0;
         var initKR = (state.cfg && state.cfg.initialCashKR) || 0;
-        renderSummary('us', calcSummary('us', cash.us, posUS, initUS, deposits.us));
-        renderSummary('kr', calcSummary('kr', cash.kr, posKR, initKR, deposits.kr));
+        renderSummary('us', calcSummary('us', cash.us, posUS, initUS, twr.us, deposits.us, outflows.us));
+        renderSummary('kr', calcSummary('kr', cash.kr, posKR, initKR, twr.kr, deposits.kr, outflows.kr));
         renderPositions(posUS, posKR);   // heldMap 갱신 — watchlist보다 먼저
         renderWatchlist(quotes);          // heldMap 반영된 상태로 카드 렌더
         renderEngine(state.lastTick, state.lastHeartbeat);
@@ -3254,20 +3275,15 @@ html[data-theme="light"] .sb-brand-sub{ color:#888; }
     $('cfgCurrentCashKR').textContent = '₩' + fmtCompact(currentCash.kr);
     $('cfgAddCashUS').value = '';
     $('cfgAddCashKR').value = '';
-    // [V8.2.3] 현재 deposits 표시 + 입력칸에 현재값 prefill
+    // [회계 재설계] 누적 입금/출금 현황 표시 (읽기 전용)
     $('cfgCurrentDepositsUS').textContent = '$' + fmtNum(currentDeposits.us, 2);
     $('cfgCurrentDepositsKR').textContent = '₩' + fmtCompact(currentDeposits.kr);
-    $('cfgSetDepositsUS').value = currentDeposits.us || '';
-    $('cfgSetDepositsKR').value = currentDeposits.kr || '';
+    $('cfgCurrentOutflowsUS').textContent = '$' + fmtNum(currentOutflows.us, 2);
+    $('cfgCurrentOutflowsKR').textContent = '₩' + fmtCompact(currentOutflows.kr);
     $('cfgUS').value = (currentCfg.usTickers||[]).join(', ');
     $('cfgKR').value = (currentCfg.krTickers||[]).join(', ');
 
-    // [V8] 전략 토글
-    var strats = currentCfg.strategies || { swing:true, day:true, momentum:true, meanrev:true };
-    $('cfgStratSwing').checked = strats.swing !== false;
-    $('cfgStratDay').checked = strats.day !== false;
-    $('cfgStratMomentum').checked = strats.momentum !== false;
-    $('cfgStratMeanrev').checked = strats.meanrev !== false;
+    // [재작성] 단일 TREND 전략 — 전략 토글 UI 제거됨 (백엔드가 strategies={trend:true} 강제)
 
     // [V11] LLM Hybrid 토글 현재값
     var _llm = currentCfg.llmHybrid || {};
@@ -3333,13 +3349,8 @@ html[data-theme="light"] .sb-brand-sub{ color:#888; }
       initialCashKR: parseFloat($('cfgInitCashKR').value),
       usTickers: parseTickers($('cfgUS').value),
       krTickers: parseTickers($('cfgKR').value),
-      // [V8] 전략 토글
-      strategies: {
-        swing: $('cfgStratSwing').checked,
-        day: $('cfgStratDay').checked,
-        momentum: $('cfgStratMomentum').checked,
-        meanrev: $('cfgStratMeanrev').checked
-      },
+      // [재작성] 단일 TREND 전략 (백엔드 migrate가 어차피 강제하지만 명시 저장)
+      strategies: { trend: true },
       // [V11] LLM Hybrid — 기존 설정(model/maxTokens 등) 보존하고 enabled만 갱신
       llmHybrid: Object.assign({}, (currentCfg && currentCfg.llmHybrid) || {}, {
         enabled: $('cfgLlmEnabled') ? $('cfgLlmEnabled').checked : false
@@ -3394,124 +3405,6 @@ html[data-theme="light"] .sb-brand-sub{ color:#888; }
       ['catch'](function(e){ toast('저장 실패: '+e.message); });
   }
 
-  function setDeposits() {
-    var usRaw = $('cfgSetDepositsUS').value;
-    var krRaw = $('cfgSetDepositsKR').value;
-    if (usRaw === '' && krRaw === '') { toast('값을 입력하세요'); return; }
-    var body = {};
-    if (usRaw !== '') {
-      var us = parseFloat(usRaw);
-      if (isNaN(us) || us < 0) { toast('US 값이 잘못됨 (0 이상)'); return; }
-      body.us = us;
-    }
-    if (krRaw !== '') {
-      var kr = parseFloat(krRaw);
-      if (isNaN(kr) || kr < 0) { toast('KR 값이 잘못됨 (0 이상)'); return; }
-      body.kr = kr;
-    }
-    var msg = '누적 입금액(deposits)을 다음으로 설정:\n';
-    if (body.us !== undefined) msg += '  US: $' + body.us.toLocaleString() + '\n';
-    if (body.kr !== undefined) msg += '  KR: ₩' + body.kr.toLocaleString() + '\n';
-    msg += '(cash는 안 바뀝니다 — vs INITIAL 계산만 보정됨)\n진행할까요?';
-    if (!confirm(msg)) return;
-    fetch('/api/deposits/set', {
-      method:'POST',
-      headers:{'Content-Type':'application/json'},
-      body: JSON.stringify(body)
-    }).then(function(r){ return r.json().then(function(d){ return { ok: r.ok, data: d }; }); })
-      .then(function(res){
-        if (!res.ok || !res.data.ok) { toast('실패: ' + (res.data.error || 'unknown')); return; }
-        toast('deposits 설정 완료');
-        currentDeposits = res.data.deposits;
-        $('cfgCurrentDepositsUS').textContent = '$' + fmtNum(currentDeposits.us, 2);
-        $('cfgCurrentDepositsKR').textContent = '₩' + fmtCompact(currentDeposits.kr);
-        refreshAll();
-      })['catch'](function(e){ toast('실패: ' + e.message); });
-  }
-
-  // [V8.2.4] vs Initial 수익률 자동 보정
-  // 목표: vs Initial 수익률 = 현재 포지션 PnL 합계% 가 되도록 deposits를 역산.
-  //   total = cash + marketVal
-  //   목표: total - (initialCash + deposits) == positionPnL
-  //   ∴ deposits = total - initialCash - positionPnL
-  function autoFixDeposits() {
-    if (!currentCash || !currentCfg) { toast('데이터 로딩 중...'); return; }
-    // 최신 state로 한 번 더 fetch (포지션과 quote 최신화)
-    fetch('/api/state').then(function(r){ return r.json(); }).then(function(state){
-      var cfg = state.cfg || {};
-      var cash = state.cash || {us:0, kr:0};
-      var positions = state.positions || {us:[], kr:[]};
-      var quotes = state.watchlist || [];
-      var quoteMap = {};
-      quotes.forEach(function(q){ quoteMap[q.symbol] = q; });
-
-      function calcForMarket(market) {
-        var list = positions[market] || [];
-        var cost = 0, marketVal = 0, hasQuote = false;
-        list.forEach(function(p){
-          var q = quoteMap[p.symbol];
-          if (q) hasQuote = true;
-          var price = q ? q.price : p.avg;
-          cost += p.qty * p.avg;
-          marketVal += p.qty * price;
-        });
-        var positionPnL = marketVal - cost;
-        var total = cash[market] + marketVal;
-        var initialCash = market === 'us' ? (cfg.initialCashUS || 0) : (cfg.initialCashKR || 0);
-        var newDeposits = total - initialCash - positionPnL;
-        return {
-          total: total, initialCash: initialCash, positionPnL: positionPnL,
-          marketVal: marketVal, newDeposits: newDeposits, hasQuote: hasQuote, posCount: list.length
-        };
-      }
-      var us = calcForMarket('us');
-      var kr = calcForMarket('kr');
-
-      var sym = function(m){ return m === 'us' ? '$' : '₩'; };
-      var fmt = function(m, n){ return m === 'us' ? fmtNum(n, 2) : fmtCompact(n); };
-      var msg = 'vs Initial 수익률을 현재 포지션 PnL%로 맞춥니다.\n\n';
-      msg += '[US]\n';
-      msg += '  total: $' + fmt('us', us.total) + '\n';
-      msg += '  initialCash: $' + fmt('us', us.initialCash) + '\n';
-      msg += '  포지션 PnL: ' + (us.positionPnL >= 0 ? '+$' : '-$') + fmt('us', Math.abs(us.positionPnL)) + '\n';
-      msg += '  → 새 deposits: $' + fmt('us', us.newDeposits) + '\n\n';
-      msg += '[KR]\n';
-      msg += '  total: ₩' + fmt('kr', kr.total) + '\n';
-      msg += '  initialCash: ₩' + fmt('kr', kr.initialCash) + '\n';
-      msg += '  포지션 PnL: ' + (kr.positionPnL >= 0 ? '+₩' : '-₩') + fmt('kr', Math.abs(kr.positionPnL)) + '\n';
-      msg += '  → 새 deposits: ₩' + fmt('kr', kr.newDeposits) + '\n\n';
-      msg += '진행할까요? (cash는 안 바뀝니다)';
-
-      // 새 deposits가 음수면 막음 (논리적으로 입금액이 음수가 될 수 없음)
-      if (us.newDeposits < 0 || kr.newDeposits < 0) {
-        toast('새 deposits가 음수가 되어 진행 불가 — initialCash 설정을 확인하세요');
-        console.warn('autoFixDeposits: negative deposits', { us: us, kr: kr });
-        return;
-      }
-      if (!confirm(msg)) return;
-
-      var body = {
-        us: +us.newDeposits.toFixed(2),
-        kr: Math.round(kr.newDeposits)
-      };
-      fetch('/api/deposits/set', {
-        method:'POST',
-        headers:{'Content-Type':'application/json'},
-        body: JSON.stringify(body)
-      }).then(function(r){ return r.json().then(function(d){ return { ok: r.ok, data: d }; }); })
-        .then(function(res){
-          if (!res.ok || !res.data.ok) { toast('실패: ' + (res.data.error || 'unknown')); return; }
-          toast('자동 보정 완료 · vs Initial이 포지션 PnL과 일치합니다');
-          currentDeposits = res.data.deposits;
-          $('cfgCurrentDepositsUS').textContent = '$' + fmtNum(currentDeposits.us, 2);
-          $('cfgCurrentDepositsKR').textContent = '₩' + fmtCompact(currentDeposits.kr);
-          $('cfgSetDepositsUS').value = currentDeposits.us || '';
-          $('cfgSetDepositsKR').value = currentDeposits.kr || '';
-          refreshAll();
-        })['catch'](function(e){ toast('실패: ' + e.message); });
-    })['catch'](function(e){ toast('state 로드 실패: ' + e.message); });
-  }
-
   function resetAll() {
     if (!confirm('정말 모든 거래/포지션/로그를 초기화하시겠습니까?')) return;
     fetch('/api/reset', {method:'POST'}).then(function(r){return r.json();})
@@ -3527,10 +3420,10 @@ html[data-theme="light"] .sb-brand-sub{ color:#888; }
     if (isNaN(us)) us = 0;
     if (isNaN(kr)) kr = 0;
     if (us === 0 && kr === 0) { toast('US 또는 KR 금액을 입력하세요'); return; }
-    var msg = '현금 변경:\n';
-    if (us !== 0) msg += '  US: ' + (us >= 0 ? '+$' : '-$') + Math.abs(us).toLocaleString() + '\n';
-    if (kr !== 0) msg += '  KR: ' + (kr >= 0 ? '+₩' : '-₩') + Math.abs(kr).toLocaleString() + '\n';
-    msg += '진행할까요?';
+    var msg = '입출금:\n';
+    if (us !== 0) msg += '  US: ' + (us >= 0 ? '입금 +$' : '출금 -$') + Math.abs(us).toLocaleString() + '\n';
+    if (kr !== 0) msg += '  KR: ' + (kr >= 0 ? '입금 +₩' : '출금 -₩') + Math.abs(kr).toLocaleString() + '\n';
+    msg += '\n수익률(vs INITIAL)에는 영향을 주지 않습니다.\n진행할까요?';
     if (!confirm(msg)) return;
     fetch('/api/cash/add', {
       method:'POST',
@@ -3542,10 +3435,16 @@ html[data-theme="light"] .sb-brand-sub{ color:#888; }
           toast('실패: ' + (res.data.error || 'unknown'));
           return;
         }
-        toast('현금 추가 완료');
+        toast('입출금 적용 완료');
         currentCash = res.data.cash;
+        if (res.data.deposits) currentDeposits = res.data.deposits;
+        if (res.data.outflows) currentOutflows = res.data.outflows;
         $('cfgCurrentCashUS').textContent = '$' + fmtNum(currentCash.us, 2);
         $('cfgCurrentCashKR').textContent = '₩' + fmtCompact(currentCash.kr);
+        $('cfgCurrentDepositsUS').textContent = '$' + fmtNum(currentDeposits.us, 2);
+        $('cfgCurrentDepositsKR').textContent = '₩' + fmtCompact(currentDeposits.kr);
+        $('cfgCurrentOutflowsUS').textContent = '$' + fmtNum(currentOutflows.us, 2);
+        $('cfgCurrentOutflowsKR').textContent = '₩' + fmtCompact(currentOutflows.kr);
         $('cfgAddCashUS').value = '';
         $('cfgAddCashKR').value = '';
         refreshAll();
@@ -3621,8 +3520,6 @@ html[data-theme="light"] .sb-brand-sub{ color:#888; }
   $('btnSaveSettings').addEventListener('click', saveSettings);
   $('btnReset').addEventListener('click', resetAll);
   $('btnAddCash').addEventListener('click', addCash);
-  $('btnSetDeposits').addEventListener('click', setDeposits);
-  $('btnAutoFixDeposits').addEventListener('click', autoFixDeposits);
   $('btnResetTickers').addEventListener('click', resetTickers);
   $('tradesToggle').addEventListener('click', toggleTrades);
   $('allTradesToggle').addEventListener('click', toggleAllTrades);
