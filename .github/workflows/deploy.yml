@@ -16,3 +16,6 @@ jobs:
         with:
           apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           accountId: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          # wrangler 버전 고정 — 기본 3.90.0은 미래 compatibility_date(2026-05-18)를
+          # 처리 못해 배포 실패. 로컬에서 배포 성공한 4.x로 맞춘다.
+          wranglerVersion: "4.42.5"
