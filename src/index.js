@@ -5001,6 +5001,25 @@ async function executeSell(DB, market, symbol, pos, sellQty, price, reason, cfg,
   if (sellQty <= 0) { return { cash: cash, pnlPct: 0 }; }
   if (sellQty > pos.qty) sellQty = pos.qty;   // 보유 초과 매도 방지
 
+  // [V9.9] 이중체결(중복매도) 차단 — cycleMs(82s) > cron(60s)로 사이클이 겹치면
+  //   두 인스턴스가 같은 포지션 스냅샷을 들고 각자 매도 → cash가 2번 가산되어
+  //   "없는 주식 매도대금"이 현금으로 유입됨(HSY 39주가 78주로 팔린 버그).
+  //   매도 직전 DB 실제 잔량을 재조회해 stale 스냅샷 매도를 원천 차단한다.
+  try {
+    const fresh = await DB.prepare(
+      "SELECT qty FROM positions WHERE symbol = ? AND strategy = ? AND market = ?"
+    ).bind(symbol, strategy, market).first();
+    const freshQty = fresh ? Number(fresh.qty) : 0;
+    if (!(freshQty > 0)) {
+      await log(DB, "WARN", symbol, "SELL skipped: 이미 청산된 포지션(중복매도 방지) [" + strategy + "]");
+      return { cash: cash, pnlPct: 0 };
+    }
+    if (sellQty > freshQty) sellQty = freshQty;   // DB 잔량으로 클램프
+    if (pos.qty > freshQty) pos.qty = freshQty;   // 부분매도 잔량 동기화(수수료 비율 정확화)
+  } catch (e) {
+    await log(DB, "WARN", symbol, "SELL freshness check failed (보수적 진행): " + e.message);
+  }
+
   const feeRate = market === "us" ? cfg.feeUS : cfg.feeKR;
   const gross = price * sellQty;
   const fee = gross * feeRate;
@@ -6392,6 +6411,26 @@ async function executeBuyCM(DB, symbol, qty, price, signal, dailyAtr, cfg, cash)
 // 원자재 전용 매도 — USD·무세금. 부분/전량 청산 지원.
 async function executeSellCM(DB, symbol, pos, sellQty, price, reason, cfg, cash) {
   const feeRate = cfg.feeUS || 0.0001;
+
+  // [V9.9] 이중체결(중복매도) 차단 — 주식과 동일. DB 실제 잔량 재조회 후 진행.
+  sellQty = Math.floor(sellQty);
+  if (sellQty <= 0) { return { pnlPct: 0, cash: cash }; }
+  if (sellQty > pos.qty) sellQty = pos.qty;
+  try {
+    const fresh = await DB.prepare(
+      "SELECT qty FROM positions WHERE symbol = ? AND strategy = ? AND market = ?"
+    ).bind(symbol, "swing", "cm").first();
+    const freshQty = fresh ? Number(fresh.qty) : 0;
+    if (!(freshQty > 0)) {
+      await log(DB, "WARN", symbol, "[CM] SELL skipped: 이미 청산된 포지션(중복매도 방지)");
+      return { pnlPct: 0, cash: cash };
+    }
+    if (sellQty > freshQty) sellQty = freshQty;
+    if (pos.qty > freshQty) pos.qty = freshQty;
+  } catch (e) {
+    await log(DB, "WARN", symbol, "[CM] SELL freshness check failed (보수적 진행): " + e.message);
+  }
+
   const gross = price * sellQty;
   const fee = gross * feeRate;
   const proceeds = gross - fee;   // 원자재: 매도세 없음
@@ -6713,8 +6752,11 @@ async function runTradingCycle(env) {
   const engineEnabled = !!cfg.enabled;
   if (!engineEnabled) { await log(DB, "INFO", null, "engine disabled — 가격만 갱신, 거래 스킵"); }
 
-  // [신규] Cycle Lock — 동시 실행 차단. [V31] pid로 소유권 추적, TTL 90s로 여유 확보
-  const myLockPid = await acquireCycleLock(DB, cfg.cycleLockTTL || 90000);
+  // [신규] Cycle Lock — 동시 실행 차단. [V31] pid로 소유권 추적.
+  //   [V9.9] cycleMs가 82s까지 측정됨 → TTL 90s는 너무 빠듯해 가끔 만료→사이클 겹침→중복매도.
+  //   D1 저장 cfg(90000)가 남아도 코드에서 최소 180s로 강제(사이클 82s + 충분한 여유).
+  const lockTtl = Math.max((typeof cfg.cycleLockTTL === "number" ? cfg.cycleLockTTL : 0), 180000);
+  const myLockPid = await acquireCycleLock(DB, lockTtl);
   if (!myLockPid) {
     await log(DB, "INFO", null, "cycle skipped: lock held");
     return;
@@ -7575,7 +7617,8 @@ async function runTradingCycle(env) {
       }
 
       // [V8.5] 시장 처리 완료 — 다음 시장 처리 전 락 TTL 갱신 (stale 진입 방지)
-      await refreshCycleLock(DB, cfg.cycleLockTTL || 90000, myLockPid);
+      // [V9.9] acquire와 동일하게 최소 180s로 갱신해 긴 사이클 중 만료 방지.
+      await refreshCycleLock(DB, lockTtl, myLockPid);
     }
 
     try { await setState(DB, "cash", cash); } catch (e) {}
@@ -7598,7 +7641,15 @@ async function runTradingCycle(env) {
 //   투자원금(invested) 대비 비정상(예: 현금이 갑자기 2배↑, 음수 등)을 잡는다.
 async function auditAccounting(DB, market, cash) {
   try {
-    const positions = await getPositions(DB, market);
+    const posMap = await getPositions(DB, market);
+    // [V9.9] getPositions는 객체(map)를 반환하는데 이 함수는 배열을 가정해 왔다.
+    //   그 결과 for...of / positions.length / positions.filter / p.avg_price 가 모두
+    //   객체에서 깨져 매 사이클 catch로 빠졌고 → 회계 감사가 완전히 무력화됐다.
+    //   (그래서 +16% 자산 부풀림 ASSET_INFLATE도 감지 못함). 배열로 어댑트해 정상화.
+    const positions = Object.keys(posMap).map(function(k){
+      const p = posMap[k];
+      return { symbol: p.symbol, strategy: p.strategy, qty: p.qty, avg_price: p.avg, opened_ts: p.opened_ts, meta: p.meta };
+    });
     let invested = 0;
     const seen = {};
     const dups = [];
