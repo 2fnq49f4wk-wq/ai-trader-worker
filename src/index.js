@@ -8236,6 +8236,51 @@ async function handleRequest(request, env) {
         }
       });
     }
+
+    // [V9.9] 현재 포지션 다운로드 (CSV)
+    if (path === "/api/download/positions") {
+      try {
+        const allKeys = await env.DB.prepare("SELECT key FROM kv_store").all();
+        const keys = (allKeys.results || []).map(r => r.key).filter(k => k.startsWith("positions:"));
+        
+        let positions = [];
+        for (const key of keys) {
+          const val = await getState(env.DB, key, null);
+          if (!val) continue;
+          const [_, market, symbol] = key.split(":");
+          const pos = typeof val === "string" ? JSON.parse(val) : val;
+          positions.push({ key, market, symbol, ...pos });
+        }
+
+        // 시장별, 종목별 정렬
+        positions.sort((a, b) => a.market.localeCompare(b.market) || a.symbol.localeCompare(b.symbol));
+
+        // CSV 생성: 시장,종목,수량,평단가,매수액,손익,손익율,상태
+        let csv = "시장,종목,수량,평단가,매수액,손익(예상),손익율,최종매수시각,최종매도시각\n";
+        positions.forEach(p => {
+          const qty = p.qty || 0;
+          const entryPx = p.entryPrice || 0;
+          const amount = qty * entryPx;
+          const pnl = (p.unrealizedPnL || p.pnl || 0).toFixed(2);
+          const pnlPct = amount > 0 ? ((pnl / amount) * 100).toFixed(2) : "0.00";
+          const buyTs = p.buyTs ? new Date(p.buyTs).toLocaleString('ko-KR') : "";
+          const sellTs = p.sellTs ? new Date(p.sellTs).toLocaleString('ko-KR') : "";
+          
+          csv += `"${p.market}","${p.symbol}",${qty},${entryPx},${amount},${pnl},${pnlPct}%,"${buyTs}","${sellTs}"\n`;
+        });
+
+        return new Response(csv, {
+          status: 200,
+          headers: {
+            "Content-Type": "text/csv; charset=utf-8",
+            "Content-Disposition": `attachment; filename="positions_${new Date().toISOString().split('T')[0]}.csv"`,
+            ...cors
+          }
+        });
+      } catch (e) {
+        return new Response(JSON.stringify({ok:false, error: e.message}), {status:500, headers:cors});
+      }
+    }
     
     // [신규] 통합 다운로드 (거래 + 로그 + 요약)
     if (path === "/api/download/report") {
