@@ -791,15 +791,60 @@ button.btn.loading::after{content:'조회 중…';position:absolute;inset:0;disp
 }
 
 @media(max-width:767px){
-  .shell{flex-direction:column;}
-  .sidebar{width:100%;border-right:none;border-bottom:1px solid var(--bd);}
-  .sb-nav{display:flex;overflow-x:auto;padding:0;}
+  /* 가로 넘침(화면 잘림) 차단 */
+  html,body{overflow-x:hidden;max-width:100vw;}
+  .shell{flex-direction:column;height:100dvh;overflow:hidden;max-width:100vw;}
+
+  /* 사이드바 → 컴팩트 상단바 (본문 공간 확보) */
+  .sidebar{
+    width:100%;flex:0 0 auto;max-height:none;
+    border-right:none;border-bottom:1px solid var(--bd);
+    overflow:visible;
+  }
+  .sb-brand{padding:8px 12px;}            /* 로고 박스 유지 */
+  .sb-brand-sub{display:none;}            /* 서브텍스트 숨겨 높이 절약 */
+
+  /* 상태: 가로 한 줄로 */
+  .sb-status{display:flex;flex-wrap:wrap;align-items:center;gap:4px 12px;padding:6px 12px;}
+  .sb-market{display:flex;gap:12px;}
+  .sb-market-row{display:inline-flex;}
+  .sb-pnl{margin-left:auto;text-align:right;}
+
+  /* 네비: 가로 스크롤 */
+  .sb-nav{display:flex;overflow-x:auto;padding:0;flex:0 0 auto;}
+  .sb-nav::-webkit-scrollbar{height:0;}
   .nav-item{font-family:'Helvetica Neue','Segoe UI',Arial,sans-serif;flex-shrink:0;border-left:none;border-bottom:2px solid transparent;padding:10px 14px;}
   .nav-item.active{border-bottom-color:var(--acc);border-left-color:transparent;}
+
+  /* 액션 버튼: 세로 스택 → 가로 스크롤 한 줄 */
+  .sb-actions{flex-direction:row;flex-wrap:nowrap;align-items:stretch;gap:8px;overflow-x:auto;padding:8px 12px;}
+  .sb-actions::-webkit-scrollbar{height:0;}
+  .sb-actions > *{flex:0 0 auto;}
+  .sb-run-btn{width:auto;padding:9px 16px;}
+  .sb-btn{width:auto;padding:9px 12px;white-space:nowrap;}
+  .sb-theme-btn{width:auto;margin-top:0;padding:9px 12px;white-space:nowrap;}
+
+  /* 본문: 남은 높이 채우고 내부 스크롤 */
+  .content{flex:1 1 0%;min-height:0;}
+  .page-body{padding:14px 14px;}
+  .page-header{padding:14px 14px 10px;}
+
+  /* 정보바·그리드 축소 */
+  .content-topbar{grid-template-columns:1fr 1fr;}
+  .topbar-block{padding:10px 12px;}
+  .topbar-value{font-size:16px;}
   .wl-layout{grid-template-columns:1fr;}
   .field-row,.field-row-2{grid-template-columns:1fr;}
   .dash-grid{grid-template-columns:1fr;}
-  .content-topbar{grid-template-columns:1fr 1fr;}
+
+  /* 표는 가로 스크롤 */
+  .table-wrap{overflow-x:auto;-webkit-overflow-scrolling:touch;}
+}
+
+/* 아주 좁은 폰(≤430px): 정보바도 1열로 */
+@media(max-width:430px){
+  .content-topbar{grid-template-columns:1fr;}
+  .topbar-value{font-size:18px;}
 }
 
 /* ────────────────────────────────────────────────
@@ -822,7 +867,7 @@ html[data-theme="light"]{
 }
 /* 좌상단 로고 영역은 라이트에서도 검정 박스 유지 */
 html[data-theme="light"] .sb-brand{ background:#0d0d0d; }
-html[data-theme="light"] .sb-brand-name{ color:var(--acc); }
+html[data-theme="light"] .sb-brand-name{ color:#fff; }
 html[data-theme="light"] .sb-brand-sub{ color:#888; }
 /* 테마 토글 버튼 */
 .sb-theme-btn{
