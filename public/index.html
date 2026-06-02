@@ -1087,6 +1087,7 @@ html[data-theme="light"] .sb-brand-sub{ color:#888; }
     <div class="page" id="page-positions">
       <div class="page-header">
         <span class="page-title">CURRENT POSITIONS</span>
+        <button type="button" id="btnDownloadPositions" class="btn">📥 CSV</button>
         <button type="button" class="btn watchlist-toggle-btn" id="positionsToggleBtn">펼치기</button>
       </div>
       <div class="pos-pnl-summary" id="posPnlSummary"></div>
@@ -2392,6 +2393,35 @@ html[data-theme="light"] .sb-brand-sub{ color:#888; }
     })['catch'](function(e){ toast('로그 다운로드 실패: ' + e.message); });
   }
 
+  // [V9.9] 현재 포지션 CSV 다운로드
+  function positionsToCSV(positions) {
+    let csv = "시장,종목,수량,평단가,매수액,손익(예상),손익율,최종매수시각,최종매도시각\n";
+    positions.forEach(function(pos){
+      var market = pos.market || "";
+      var symbol = pos.symbol || "";
+      var qty = pos.qty || 0;
+      var entryPx = pos.entryPrice || 0;
+      var amount = (qty * entryPx).toFixed(2);
+      var pnl = (pos.unrealizedPnL || pos.pnl || 0).toFixed(2);
+      var pnlPct = amount > 0 ? ((pnl / amount) * 100).toFixed(2) : "0.00";
+      var buyTs = pos.buyTs ? new Date(pos.buyTs).toLocaleString('ko-KR') : "";
+      var sellTs = pos.sellTs ? new Date(pos.sellTs).toLocaleString('ko-KR') : "";
+      csv += "\"" + market + "\",\"" + symbol + "\"," + qty + "," + entryPx + "," + amount + "," + pnl + "," + pnlPct + "%,\"" + buyTs + "\",\"" + sellTs + "\"\n";
+    });
+    return csv;
+  }
+
+  function downloadPositionsCSV() {
+    api('/api/positions').then(function(d){
+      var positions = d.positions || [];
+      if (positions.length === 0) { toast('현재 보유 포지션이 없습니다'); return; }
+      var csv = positionsToCSV(positions);
+      var fn = 'positions_' + new Date().toISOString().slice(0, 10) + '.csv';
+      downloadCSV(csv, fn);
+      toast(positions.length + '개 포지션 다운로드 완료');
+    })['catch'](function(e){ toast('포지션 다운로드 실패: ' + e.message); });
+  }
+
   function renderTradesInto(trades, boxId, totalId, winId, avgId, sliceLimit) {
     var box = $(boxId);
     if (!trades || trades.length === 0) { box.innerHTML='<div class="empty">No trades yet</div>'; updateTradesSummaryInto([], totalId, winId, avgId); return; }
@@ -3547,6 +3577,8 @@ html[data-theme="light"] .sb-brand-sub{ color:#888; }
   $('btnDownloadAll').addEventListener('click', function(){ downloadTradesCSV(10000, 'all_trades'); });
   var _btnDownloadLogs = $('btnDownloadLogs');
   if (_btnDownloadLogs) _btnDownloadLogs.addEventListener('click', downloadLogsCSV);
+  var _btnDownloadPos = $('btnDownloadPositions');
+  if (_btnDownloadPos) _btnDownloadPos.addEventListener('click', downloadPositionsCSV);
   var _btnRunCM = $('btnRunCM');
   if (_btnRunCM) _btnRunCM.addEventListener('click', runCommoditiesNow);
   var _btnResetCM = $('btnResetCM');
