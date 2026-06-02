@@ -2393,32 +2393,44 @@ html[data-theme="light"] .sb-brand-sub{ color:#888; }
     })['catch'](function(e){ toast('로그 다운로드 실패: ' + e.message); });
   }
 
-  // [V9.9] 현재 포지션 CSV 다운로드
-  function positionsToCSV(positions) {
-    let csv = "시장,종목,수량,평단가,매수액,손익(예상),손익율,최종매수시각,최종매도시각\n";
-    positions.forEach(function(pos){
-      var market = pos.market || "";
-      var symbol = pos.symbol || "";
-      var qty = pos.qty || 0;
-      var entryPx = pos.entryPrice || 0;
-      var amount = (qty * entryPx).toFixed(2);
-      var pnl = (pos.unrealizedPnL || pos.pnl || 0).toFixed(2);
-      var pnlPct = amount > 0 ? ((pnl / amount) * 100).toFixed(2) : "0.00";
-      var buyTs = pos.buyTs ? new Date(pos.buyTs).toLocaleString('ko-KR') : "";
-      var sellTs = pos.sellTs ? new Date(pos.sellTs).toLocaleString('ko-KR') : "";
-      csv += "\"" + market + "\",\"" + symbol + "\"," + qty + "," + entryPx + "," + amount + "," + pnl + "," + pnlPct + "%,\"" + buyTs + "\",\"" + sellTs + "\"\n";
+  // [V9.9] 현재 포지션 CSV 다운로드 — /api/state 의 positions.us/kr + lastQuotes(현재가) 사용
+  function positionsToCSV(rows) {
+    var csv = "시장,종목,전략,수량,평단가,현재가,매수액,평가액,평가손익,손익율,진입일시\n";
+    rows.forEach(function(r){
+      var p = r.p, market = r.market, cur = r.cur;
+      var avg = p.avg || 0, qty = p.qty || 0;
+      var cost = qty * avg;
+      var val = (cur != null) ? qty * cur : "";
+      var pnl = (cur != null) ? (val - cost) : "";
+      var pnlPct = (cur != null && avg) ? (((cur - avg) / avg) * 100).toFixed(2) : "";
+      var opened = p.opened_ts ? new Date(p.opened_ts).toLocaleString('ko-KR') : "";
+      csv += '"' + market + '","' + (p.symbol||'') + '","' + (p.strategy||'') + '",'
+           + qty + ',' + avg + ',' + (cur != null ? cur : '') + ','
+           + cost.toFixed(2) + ',' + (val !== "" ? val.toFixed(2) : '') + ','
+           + (pnl !== "" ? pnl.toFixed(2) : '') + ',' + pnlPct + ',"' + opened + '"\n';
     });
     return csv;
   }
 
   function downloadPositionsCSV() {
-    api('/api/positions').then(function(d){
-      var positions = d.positions || [];
-      if (positions.length === 0) { toast('현재 보유 포지션이 없습니다'); return; }
-      var csv = positionsToCSV(positions);
+    api('/api/state').then(function(state){
+      var posUS = (state.positions && state.positions.us) || [];
+      var posKR = (state.positions && state.positions.kr) || [];
+      var rows = [];
+      function add(list, mkt){
+        list.forEach(function(p){
+          var q = (typeof lastQuotes !== 'undefined') ? lastQuotes[p.symbol] : null;
+          var cur = (q && typeof q.price === 'number') ? q.price : null;
+          rows.push({ market: mkt, p: p, cur: cur });
+        });
+      }
+      add(posUS, 'US');
+      add(posKR, 'KR');
+      if (rows.length === 0) { toast('현재 보유 포지션이 없습니다'); return; }
+      var csv = positionsToCSV(rows);
       var fn = 'positions_' + new Date().toISOString().slice(0, 10) + '.csv';
       downloadCSV(csv, fn);
-      toast(positions.length + '개 포지션 다운로드 완료');
+      toast(rows.length + '개 포지션 다운로드 완료');
     })['catch'](function(e){ toast('포지션 다운로드 실패: ' + e.message); });
   }
 
