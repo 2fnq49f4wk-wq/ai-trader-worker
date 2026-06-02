@@ -8237,36 +8237,29 @@ async function handleRequest(request, env) {
       });
     }
 
-    // [V9.9] 현재 포지션 다운로드 (CSV)
+    // [V9.9] 현재 포지션 다운로드 (CSV) — positions 테이블 + quote:심볼 현재가
     if (path === "/api/download/positions") {
       try {
-        const allKeys = await env.DB.prepare("SELECT key FROM kv_store").all();
-        const keys = (allKeys.results || []).map(r => r.key).filter(k => k.startsWith("positions:"));
-        
-        let positions = [];
-        for (const key of keys) {
-          const val = await getState(env.DB, key, null);
-          if (!val) continue;
-          const [_, market, symbol] = key.split(":");
-          const pos = typeof val === "string" ? JSON.parse(val) : val;
-          positions.push({ key, market, symbol, ...pos });
+        let rows = [];
+        for (const mkt of ["us", "kr"]) {
+          const posMap = await getPositions(env.DB, mkt);
+          for (const key in posMap) {
+            const p = posMap[key];
+            const q = await getState(env.DB, "quote:" + p.symbol, null);
+            const cur = (q && typeof q.price === "number") ? q.price : null;
+            rows.push({ market: mkt.toUpperCase(), p, cur });
+          }
         }
 
-        // 시장별, 종목별 정렬
-        positions.sort((a, b) => a.market.localeCompare(b.market) || a.symbol.localeCompare(b.symbol));
-
-        // CSV 생성: 시장,종목,수량,평단가,매수액,손익,손익율,상태
-        let csv = "시장,종목,수량,평단가,매수액,손익(예상),손익율,최종매수시각,최종매도시각\n";
-        positions.forEach(p => {
-          const qty = p.qty || 0;
-          const entryPx = p.entryPrice || 0;
-          const amount = qty * entryPx;
-          const pnl = (p.unrealizedPnL || p.pnl || 0).toFixed(2);
-          const pnlPct = amount > 0 ? ((pnl / amount) * 100).toFixed(2) : "0.00";
-          const buyTs = p.buyTs ? new Date(p.buyTs).toLocaleString('ko-KR') : "";
-          const sellTs = p.sellTs ? new Date(p.sellTs).toLocaleString('ko-KR') : "";
-          
-          csv += `"${p.market}","${p.symbol}",${qty},${entryPx},${amount},${pnl},${pnlPct}%,"${buyTs}","${sellTs}"\n`;
+        let csv = "시장,종목,전략,수량,평단가,현재가,매수액,평가액,평가손익,손익율,진입일시\n";
+        rows.forEach(({ market, p, cur }) => {
+          const avg = p.avg || 0, qty = p.qty || 0;
+          const cost = qty * avg;
+          const val = (cur != null) ? qty * cur : "";
+          const pnl = (cur != null) ? (val - cost) : "";
+          const pnlPct = (cur != null && avg) ? (((cur - avg) / avg) * 100).toFixed(2) : "";
+          const opened = p.opened_ts ? new Date(p.opened_ts).toLocaleString('ko-KR') : "";
+          csv += `"${market}","${p.symbol}","${p.strategy || ""}",${qty},${avg},${cur != null ? cur : ""},${cost.toFixed(2)},${val !== "" ? val.toFixed(2) : ""},${pnl !== "" ? pnl.toFixed(2) : ""},${pnlPct},"${opened}"\n`;
         });
 
         return new Response(csv, {
@@ -8278,7 +8271,7 @@ async function handleRequest(request, env) {
           }
         });
       } catch (e) {
-        return new Response(JSON.stringify({ok:false, error: e.message}), {status:500, headers:cors});
+        return new Response(JSON.stringify({ ok: false, error: e.message }), { status: 500, headers: cors });
       }
     }
     
