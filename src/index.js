@@ -4810,20 +4810,19 @@ function evaluateAllStrategies(price, dayPct, dailyData, cfg, signalStats, regim
   const sig = evaluateTrendEntry(price, dayPct, dailyData, cfg, regime, market);
   if (!sig) return [];
 
-  // [Vision AI] 예측이 있으면 signal.weight를 조정
-  //   DOWN 고신뢰(≥70%) → 신호 억제 (weight × 0.3)
-  //   UP   고신뢰(≥65%) → 신호 강화 (weight × 1.25, 최대 2.0)
+  // [Vision AI] 예측 결과를 실제 거래에 직접 반영
+  //   DOWN 고신뢰(≥70%) → 매수 신호 완전 차단 (return [])
+  //   UP   고신뢰(≥65%) → visionBoost=1.25 설정 → riskPct에 곱해 포지션 크기 25% 증가
   if (visionPreds && dailyData && dailyData.symbol) {
     const vp = visionPreds[dailyData.symbol];
     const va = cfg.visionAI || {};
-    const confMin = va.confMin || 0.6;
-    if (vp && vp.conf >= confMin) {
-      const baseWeight = sig.weight || 1.0;
+    if (va.enabled && vp && vp.conf >= (va.confMin || 0.6)) {
       if (vp.pred === "down" && vp.conf >= 0.70) {
-        sig.weight = Math.max(0.1, baseWeight * 0.3);
-        sig.visionNote = "VISION_DOWN " + Math.round(vp.conf * 100) + "%";
+        // 하락 고신뢰 → 매수 차단
+        return [];
       } else if (vp.pred === "up" && vp.conf >= 0.65) {
-        sig.weight = Math.min(2.0, baseWeight * 1.25);
+        // 상승 고신뢰 → 포지션 크기 부스트
+        sig.visionBoost = 1.25;
         sig.visionNote = "VISION_UP " + Math.round(vp.conf * 100) + "%";
       }
     }
@@ -7515,7 +7514,8 @@ async function runTradingCycle(env) {
             //   → 변동성이 큰(손절 먼) 종목일수록 자동으로 작게 산다. 손실 금액이 항상 균등.
             //   종목 비중 상한·가용현금 상한으로 과집중/초과 통제. executeBuy의 DB clamp가 최종 차단.
             const tsz = getTrendSizing(mcfg, market);
-            const riskPct = tsz.riskPerTrade != null ? tsz.riskPerTrade : 0.75;
+            // [Vision AI] UP 고신뢰 신호면 포지션 크기 부스트 (visionBoost=1.25)
+            const riskPct = (tsz.riskPerTrade != null ? tsz.riskPerTrade : 0.75) * (signal.visionBoost || 1.0);
             const maxPosPct = tsz.maxPositionPct != null ? tsz.maxPositionPct : 15;
             const equity = (typeof portfolioValue === "number" && portfolioValue > 0) ? portfolioValue : cash[market];
             const tr = getStrategyRules(mcfg, strategy, market);
