@@ -2314,13 +2314,13 @@ const DEFAULT_CFG = {
   trendSizing: {
     riskPerTrade: 0.75,    // 한 거래 최대손실 = 자산의 0.75%
     maxPositionPct: 15,    // 한 종목 비중 상한 = 자산의 15%
-    maxConcurrent: 8       // 시장당 동시 보유 종목 상한
+    maxConcurrent: 12      // [확대] 8→12 동시 보유 종목 상한 (거래·데이터 축적↑, 분산도 개선)
   },
   // === [KR 분리] 고정리스크 사이징 — KR 전용 오버라이드 ===
   trendSizingKR: {
     riskPerTrade: 0.6,     // 0.75→0.6 (KR 리스크 축소)
     maxPositionPct: 12,    // 15→12
-    maxConcurrent: 6       // 8→6 (과집중 더 통제)
+    maxConcurrent: 9       // [확대] 6→9 (거래·데이터 축적↑, KR은 US보다 보수적 유지)
   },
   // === [섹터그룹] 6개 그룹별 성과 가중치 — autoTune이 자동 조정 ===
   //   진입 사이즈 = 자산×Risk%×confidence×그룹가중치. 사이즈만 조절(악화 방어).
@@ -2667,6 +2667,8 @@ function migrateCfgToMarkets(cfg) {
       if (cfg.trendSizing[k] === undefined) cfg.trendSizing[k] = DEFAULT_CFG.trendSizing[k];
     }
   }
+  // [거래확대] 옛 동시보유 기본값(US 8)만 새 값으로 갱신 (커스텀 보존)
+  if (cfg.trendSizing && cfg.trendSizing.maxConcurrent === 8) cfg.trendSizing.maxConcurrent = 12;
   // [KR 분리] KR 전용 오버라이드 보강 (정의 키만 유지, 누락은 DEFAULT)
   if (!cfg.trendRulesKR || typeof cfg.trendRulesKR !== "object") {
     cfg.trendRulesKR = JSON.parse(JSON.stringify(DEFAULT_CFG.trendRulesKR));
@@ -2682,6 +2684,8 @@ function migrateCfgToMarkets(cfg) {
       if (cfg.trendSizingKR[k] === undefined) cfg.trendSizingKR[k] = DEFAULT_CFG.trendSizingKR[k];
     }
   }
+  // [거래확대] 옛 KR 동시보유 기본값(6)만 새 값으로 갱신 (커스텀 보존)
+  if (cfg.trendSizingKR && cfg.trendSizingKR.maxConcurrent === 6) cfg.trendSizingKR.maxConcurrent = 9;
 
   // [V10] 종목 유니버스는 코드(DEFAULT_US/KR)로 관리한다.
   //   기존 D1에 저장된 옛 20종목 리스트가 얕은 병합으로 살아남아 신규 종목이
@@ -4866,7 +4870,14 @@ function evaluateAllStrategies(price, dayPct, dailyData, cfg, signalStats, regim
     const trust = (prec == null) ? 1 : (prec < 0.5 ? 0 : Math.min(1, (prec - 0.45) / 0.2));
     if (va.enabled && vp && vp.conf >= (va.confMin || 0.6) && trust > 0) {
       if (vp.pred === "down" && vp.conf >= 0.70 && trust >= 0.5) {
-        return []; // 적중률이 믿을 만할 때만 차단
+        // [데이터 축적] 적중률이 충분히 검증(precision≥55%)됐을 때만 완전 차단.
+        //   미검증/표본부족 단계에선 차단 대신 사이즈만 대폭 축소 → 거래·학습 데이터는 계속 쌓음.
+        if (prec != null && prec >= 0.55) {
+          return [];
+        } else {
+          sig.visionBoost = (sig.visionBoost || 1.0) * 0.4;
+          sig.visionNote = "VISION_DOWN " + Math.round(vp.conf * 100) + "% 축소(미검증)";
+        }
       } else if (vp.pred === "up" && vp.conf >= 0.65) {
         const base = vp.conf >= 0.90 ? 1.50 : vp.conf >= 0.80 ? 1.35 : vp.conf >= 0.70 ? 1.20 : 1.10;
         const boost = 1 + (base - 1) * trust; // 적중률에 비례
