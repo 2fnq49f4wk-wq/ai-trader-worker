@@ -8546,6 +8546,197 @@ async function handleRequest(request, env) {
   }
 }
 
+// ══════════════════════════════════════════════════════════════════════════
+// VISION AI BACKEND — Canvas 없이 순수 JS로 BMP 차트 생성 → Roboflow 예측
+// ══════════════════════════════════════════════════════════════════════════
+
+// 종가 배열로 픽셀 버퍼(RGB, top-to-bottom) 생성
+function drawChartPixels(closes, width, height) {
+  const buf = new Uint8Array(width * height * 3).fill(8); // 어두운 배경 #080808
+  if (!closes || closes.length < 5) return buf;
+
+  const n = Math.min(closes.length, 60);
+  const data = closes.slice(-n);
+  const minV = Math.min(...data);
+  const maxV = Math.max(...data);
+  const range = maxV - minV || minV * 0.01 || 1;
+  const pad = Math.round(width * 0.06);
+  const w = width - pad * 2;
+  const h = height - pad * 2;
+
+  function setPixel(x, y, r, g, b) {
+    x = Math.round(x); y = Math.round(y);
+    if (x < 0 || x >= width || y < 0 || y >= height) return;
+    const i = (y * width + x) * 3;
+    buf[i] = r; buf[i + 1] = g; buf[i + 2] = b;
+  }
+
+  function drawLine(x0, y0, x1, y1, r, g, b) {
+    x0 = Math.round(x0); y0 = Math.round(y0);
+    x1 = Math.round(x1); y1 = Math.round(y1);
+    const dx = Math.abs(x1 - x0), dy = Math.abs(y1 - y0);
+    const sx = x0 < x1 ? 1 : -1, sy = y0 < y1 ? 1 : -1;
+    let err = dx - dy;
+    for (let steps = 0; steps < 1000; steps++) {
+      setPixel(x0, y0, r, g, b);
+      if (x0 === x1 && y0 === y1) break;
+      const e2 = 2 * err;
+      if (e2 > -dy) { err -= dy; x0 += sx; }
+      if (e2 < dx)  { err += dx; y0 += sy; }
+    }
+  }
+
+  const px = i => pad + (i / (data.length - 1)) * w;
+  const py = v => pad + h - ((v - minV) / range) * h;
+
+  // 그리드 (어두운 회색)
+  for (let g = 1; g <= 3; g++) {
+    const gy = Math.round(pad + (h / 4) * g);
+    for (let x = pad; x < pad + w; x++) setPixel(x, gy, 30, 30, 30);
+  }
+
+  const isUp = data[data.length - 1] >= data[0];
+  const [lr, lg, lb] = isUp ? [0, 230, 118] : [255, 23, 68];
+
+  // 가격선
+  for (let i = 1; i < data.length; i++) {
+    drawLine(px(i - 1), py(data[i - 1]), px(i), py(data[i]), lr, lg, lb);
+  }
+
+  // MA20 (황색)
+  if (data.length >= 20) {
+    let prevMx = null, prevMy = null;
+    for (let i = 19; i < data.length; i++) {
+      let sum = 0;
+      for (let j = i - 19; j <= i; j++) sum += data[j];
+      const ma = sum / 20;
+      const mx = px(i), my = py(ma);
+      if (prevMx !== null) drawLine(prevMx, prevMy, mx, my, 255, 193, 7);
+      prevMx = mx; prevMy = my;
+    }
+  }
+
+  return buf;
+}
+
+// RGB 픽셀 버퍼 → BMP 바이너리 (Canvas 불필요)
+function pixelsToBMP(pixels, width, height) {
+  const rowSize = Math.ceil(width * 3 / 4) * 4; // 4바이트 정렬
+  const pixelDataSize = rowSize * height;
+  const fileSize = 54 + pixelDataSize;
+  const buf = new Uint8Array(fileSize);
+  const view = new DataView(buf.buffer);
+
+  // 파일 헤더
+  buf[0] = 0x42; buf[1] = 0x4D;
+  view.setUint32(2, fileSize, true);
+  view.setUint32(10, 54, true);
+
+  // DIB 헤더
+  view.setUint32(14, 40, true);
+  view.setInt32(18, width, true);
+  view.setInt32(22, height, true);
+  view.setUint16(26, 1, true);
+  view.setUint16(28, 24, true);
+  view.setUint32(34, pixelDataSize, true);
+
+  // 픽셀 데이터 (BMP는 아래→위, BGR)
+  for (let y = 0; y < height; y++) {
+    const bmpRow = height - 1 - y;
+    for (let x = 0; x < width; x++) {
+      const src = (y * width + x) * 3;
+      const dst = 54 + bmpRow * rowSize + x * 3;
+      buf[dst] = pixels[src + 2]; buf[dst + 1] = pixels[src + 1]; buf[dst + 2] = pixels[src];
+    }
+  }
+  return buf;
+}
+
+// Uint8Array → base64 (btoa는 Workers에서 지원)
+function uint8ToBase64(bytes) {
+  let b = '';
+  for (let i = 0; i < bytes.length; i++) b += String.fromCharCode(bytes[i]);
+  return btoa(b);
+}
+
+// 백엔드 Vision 스캔 — 매 cron 호출마다 최대 5개 종목 처리 (rate limit 안전)
+async function runVisionScanBackend(env) {
+  const DB = env.DB;
+  const cfg = migrateCfgToMarkets(Object.assign({}, DEFAULT_CFG, await getState(DB, "cfg", {})));
+  const va = cfg.visionAI || {};
+  if (!va.enabled || !va.rfApiKey) return;
+
+  const apiKey = va.rfApiKey;
+  const version = va.rfVersion || 7;
+  const RF_PROJECT = "stock-updown-classifier";
+  const MAX_AGE = 24 * 60 * 60 * 1000;   // 24시간 캐시
+  const MAX_PER_RUN = 5;                  // cron 1회당 최대 5개 (Roboflow rate limit 안전)
+  const DELAY_MS = 400;                   // 요청 간 400ms 간격
+
+  const allSymbols = [...(cfg.usTickers || []), ...(cfg.krTickers || [])];
+  if (allSymbols.length === 0) return;
+
+  const existing = await getState(DB, "vision_predictions", {});
+  const now = Date.now();
+
+  // 24시간 이상 된 종목만 대상으로
+  const toScan = allSymbols.filter(sym => {
+    const p = existing[sym];
+    return !p || (now - (p.ts || 0)) > MAX_AGE;
+  });
+  if (toScan.length === 0) return;
+
+  const batch = toScan.slice(0, MAX_PER_RUN);
+  const results = Object.assign({}, existing);
+  let scanned = 0;
+
+  for (const symbol of batch) {
+    try {
+      const daily = await getState(DB, "daily:" + symbol.toUpperCase(), null);
+      if (!daily || !daily.closes || daily.closes.length < 10) continue;
+
+      const pixels = drawChartPixels(daily.closes, 224, 224);
+      const bmp = pixelsToBMP(pixels, 224, 224);
+      const b64 = uint8ToBase64(bmp);
+
+      const resp = await fetch(
+        `https://classify.roboflow.com/${RF_PROJECT}/${version}?api_key=${apiKey}`,
+        { method: "POST", headers: { "Content-Type": "application/x-www-form-urlencoded" }, body: b64 }
+      );
+
+      if (resp.status === 429) {
+        // Rate limit 도달 → 즉시 중단, 다음 cron에서 재개
+        await log(DB, "WARN", null, "[VISION] Roboflow rate limit, 중단 (다음 cron에서 재개)");
+        break;
+      }
+      if (!resp.ok) continue;
+
+      const data = await resp.json();
+      const preds = data.predictions || {};
+      const upC   = (preds["up"]   && preds["up"].confidence)   || 0;
+      const downC = (preds["down"] && preds["down"].confidence) || 0;
+      results[symbol] = {
+        pred: upC >= downC ? "up" : "down",
+        conf: Math.max(upC, downC),
+        upConf: upC, downConf: downC, ts: now
+      };
+      scanned++;
+
+      // 요청 간격 (rate limit 방지)
+      await new Promise(r => setTimeout(r, DELAY_MS));
+
+    } catch (e) {
+      // 개별 종목 실패는 무시하고 계속
+      continue;
+    }
+  }
+
+  if (scanned > 0) {
+    await setState(DB, "vision_predictions", results);
+    await log(DB, "INFO", null, `[VISION] 백엔드 스캔 완료: ${scanned}개 / 잔여: ${Math.max(0, toScan.length - MAX_PER_RUN)}개`);
+  }
+}
+
 export default {
   async fetch(request, env, ctx) { return handleRequest(request, env); },
   async scheduled(event, env, ctx) {
@@ -8611,6 +8802,11 @@ export default {
         try { await runMacroUpdate(env); }
         catch (e) { try { await log(env.DB, "ERROR", null, "[SCHED] macro fail: " + e.message); } catch (e2) {} }
       }
+
+      // 6) Vision AI 백엔드 스캔 — 매 cron에서 5개씩 처리 (24h 캐시, rate limit 안전)
+      //    브라우저 없이도 차트 예측 결과가 항상 최신 상태 유지됨.
+      try { await runVisionScanBackend(env); }
+      catch (e) { try { await log(env.DB, "ERROR", null, "[SCHED] vision scan fail: " + e.message); } catch (e2) {} }
     })());
   }
 };
