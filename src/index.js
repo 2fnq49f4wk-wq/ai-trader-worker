@@ -2114,7 +2114,9 @@ const DEFAULT_CFG = {
   atrPeriod: 14, atrStopMult: 2.0,
   bbStdMult: 2.0,
   volSpikeMult: 1.5,
-  dailyCacheMinutes: 30,   // [V8.1.1] 10→30 — Cloudflare subrequest 절약
+  dailyCacheMinutes: 180,  // [거래확대] 일봉은 하루단위 데이터 → 30→180분. 캐시 길게 유지해
+                           //   한 번 받은 종목이 오래 "평가 대상"으로 남아 커버리지 폭증(현재가는 별도 실시간).
+  maxDailyRefreshPerCycle: 20, // [거래확대] 사이클당 일봉 fetch 12→20 (fetch budget 내)
   initialCashUS: 100000, initialCashKR: 100000000,
   initialCashCM: 100000,   // [COMMODITY] 원자재 초기 보유 금액 $100,000 (USD)
   enabled: true,
@@ -2736,15 +2738,15 @@ function migrateCfgToMarkets(cfg) {
       }
     }
   }
-  // [V9.0] 시장별 일봉 갱신 주기 기본값 — 종목 수에 맞춰 차등.
-  //   미국 518종목: 20분(매분 ~26 일봉 fetch + 가격 11 ≈ 37, 예산45 내 안전)
-  //   한국 311종목: 15분(매분 ~21 일봉 fetch + 가격 7 ≈ 28, 예산45 내 여유)
-  //   사용자가 markets.us/kr.dailyCacheMinutes를 직접 설정했으면 그 값을 존중(== 기본값과 다르면 건드리지 않음).
-  if (cfg.markets.us && (cfg.markets.us.dailyCacheMinutes === undefined || cfg.markets.us.dailyCacheMinutes === 30)) {
-    cfg.markets.us.dailyCacheMinutes = 20;
+  // [거래확대] 일봉 캐시를 길게(180분) → 한 번 받은 종목이 오래 평가 대상으로 남아
+  //   829종목 대부분이 항상 평가됨(기존 20/15분은 만료가 빨라 ~25종목만 평가되던 병목).
+  //   일봉은 하루단위라 장중 180분 캐시 무방(MA/RSI는 천천히 변하고, 현재가는 별도 실시간 반영).
+  //   옛 기본값(30/20/15)만 갱신, 사용자 커스텀은 보존.
+  if (cfg.markets.us && [undefined, 30, 20].indexOf(cfg.markets.us.dailyCacheMinutes) !== -1) {
+    cfg.markets.us.dailyCacheMinutes = 180;
   }
-  if (cfg.markets.kr && (cfg.markets.kr.dailyCacheMinutes === undefined || cfg.markets.kr.dailyCacheMinutes === 30)) {
-    cfg.markets.kr.dailyCacheMinutes = 15;
+  if (cfg.markets.kr && [undefined, 30, 15].indexOf(cfg.markets.kr.dailyCacheMinutes) !== -1) {
+    cfg.markets.kr.dailyCacheMinutes = 180;
   }
   return cfg;
 }
@@ -4952,7 +4954,10 @@ function evaluateBuyBlocks(price, dayPct, dailyData, cfg, regime, signal, ctx) {
 
   // PERSISTENT_DOWN — MEANREV/DAY 면제 (단타는 5일 패턴 무관, 갭하락 반등 노림)
   // [V8.1.5] day 면제 — 7건 차단되던 KR 약세장에서도 단타 진입 가능
-  if (strategy !== "meanrev" && strategy !== "day") {
+  // [모순수정] trend 면제 — 추세 풀백 진입은 "며칠 하락 후 MA20 반등"이 본질이라
+  //   PERSISTENT_DOWN(5일중4일 하락)과 정면충돌해 정상 풀백 신호가 막혔음.
+  //   trend는 이미 MA20>MA50>MA200 정렬(상승추세)을 게이트로 보장하므로 안전.
+  if (strategy !== "meanrev" && strategy !== "day" && strategy !== "trend") {
     const downDays = countDownDays(closes, 5);
     if (downDays >= 4) return "PERSISTENT_DOWN " + downDays + "/5";
   }
@@ -7155,14 +7160,17 @@ async function runTradingCycle(env) {
       }
 
       // --- (2) 일봉 라운드로빈 갱신 대상 선정 ---
-      // 30분 캐시 / 1분 cron 이므로 전 종목을 30조각으로 나눠 매분 1/30씩 갱신.
-      // 보유 종목은 차례와 무관하게 항상 일봉 최신 유지(매도 판단 정확도).
-      const cacheMin = mcfg.dailyCacheMinutes || 30;
-      const sliceCount = Math.max(1, cacheMin); // 보통 30
+      // [거래확대] 라운드로빈 슬라이스를 "캐시시간"이 아니라 "사이클당 fetch 능력"에 묶는다.
+      //   기존엔 sliceCount=cacheMin이라 캐시를 늘리면 라운드로빈이 느려지는 모순이 있었음.
+      //   이제 매 사이클 maxDailyPerCycle 종목씩 갱신 → 전 종목 한 바퀴 = ceil(N/maxDaily) 사이클(~42분).
+      //   캐시 180분이라 한 번 받은 종목은 여러 바퀴 동안 평가 대상으로 유지 → 커버리지 폭증.
+      const cacheMin = mcfg.dailyCacheMinutes || 180;
+      const maxDailyPerCycle = (typeof cfg.maxDailyRefreshPerCycle === "number") ? cfg.maxDailyRefreshPerCycle : 20;
+      const sliceCount = Math.max(1, Math.ceil(tickers.length / maxDailyPerCycle));
       const rrKey = "rr_idx:" + market;
       let rrIdx = await getState(DB, rrKey, 0);
       if (typeof rrIdx !== "number" || rrIdx < 0) rrIdx = 0;
-      const perCycle = Math.ceil(tickers.length / sliceCount);
+      const perCycle = maxDailyPerCycle;
       const rrStart = (rrIdx % sliceCount) * perCycle;
       const rrSymbols = tickers.slice(rrStart, rrStart + perCycle);
       await setState(DB, rrKey, (rrIdx + 1) % sliceCount);
@@ -7176,9 +7184,8 @@ async function runTradingCycle(env) {
       //         예산을 넘는 종목은 이번 사이클 캐시값(있으면)으로 평가하고 다음 라운드로빈에 맡긴다.
       //         yahooFetch 의 예산 가드가 최종 방어선이라, 여기서 미리 끊어 ERROR 로그를 막는다.
       const DBATCH = 10;
-      // [긴급수정] 일봉 fetch를 사이클당 N개로 제한 → prefetch가 느려져 평가 시간을 잡아먹는 것 방지.
-      //   나머지는 다음 사이클에서 갱신(라운드로빈). 30분 캐시라 며칠치 천천히 갱신해도 무방.
-      const maxDailyPerCycle = (typeof cfg.maxDailyRefreshPerCycle === "number") ? cfg.maxDailyRefreshPerCycle : 12;
+      // 일봉 fetch는 위에서 정한 maxDailyPerCycle(라운드로빈 슬라이스와 동일)로 제한.
+      //   캐시 히트는 fetch 0이라, 실제 fetch는 만료/미존재 종목만 발생.
       const dailyTargetArr = Array.from(dailyTargets).slice(0, maxDailyPerCycle);
       const dailyMap = {};   // symbol -> daily data (이번에 갱신/캐시 로드된 것)
       for (let i = 0; i < dailyTargetArr.length; i += DBATCH) {
@@ -7234,14 +7241,28 @@ async function runTradingCycle(env) {
         if (!(typeof bq.price === "number" && isFinite(bq.price) && bq.price > 0)) continue;
         if (dailyMap[symbol] === undefined) missingDaily.push(symbol);
       }
+      // [거래확대 최적화] 평가 대상 일봉을 단일 쿼리로 일괄 로드 (개별 getState 수백회 → 1회).
+      //   평가 커버리지가 25→수백으로 늘어도 사이클이 느려지지 않게(락 스킵 방지).
       if (missingDaily.length > 0) {
-        const MBATCH = 20;
-        for (let i = 0; i < missingDaily.length; i += MBATCH) {
-          const slice = missingDaily.slice(i, i + MBATCH);
-          const rows = await Promise.all(slice.map(function(sym){
-            return getState(DB, "daily:" + sym, null).then(function(d){ return { sym: sym, d: d }; });
-          }));
-          for (const r of rows) dailyMap[r.sym] = r.d;
+        try {
+          const drows = await DB.prepare("SELECT k, v FROM state WHERE k LIKE 'daily:%'").all();
+          const allDaily = {};
+          for (const r of (drows.results || [])) {
+            try { allDaily[r.k.slice(6)] = JSON.parse(r.v); } catch (e) {}
+          }
+          for (const sym of missingDaily) {
+            if (dailyMap[sym] === undefined) dailyMap[sym] = allDaily[sym] || null;
+          }
+        } catch (e) {
+          // 폴백: 개별 배치 조회
+          const MBATCH = 20;
+          for (let i = 0; i < missingDaily.length; i += MBATCH) {
+            const slice = missingDaily.slice(i, i + MBATCH);
+            const rows = await Promise.all(slice.map(function(sym){
+              return getState(DB, "daily:" + sym, null).then(function(d){ return { sym: sym, d: d }; });
+            }));
+            for (const r of rows) dailyMap[r.sym] = r.d;
+          }
         }
       }
       for (const symbol of tickers) {
