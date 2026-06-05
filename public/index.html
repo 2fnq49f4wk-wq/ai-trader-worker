@@ -3672,25 +3672,20 @@ html[data-theme="light"] .sb-brand-sub{ color:#888; }
 
   function closeSettings() { $('settingsModal').classList.remove('show'); }
 
-  // Vision AI 월 예산 미리보기 계산
+  // Vision AI 월 예산 미리보기 계산 (백엔드 로직과 동일)
   function updateVisionBudgetPreview() {
     var el = $('visionBudgetPreview');
     if (!el) return;
     var budget = parseInt(($('cfgVisionMonthlyBudget') || {}).value || '10000', 10) || 10000;
     var totalSymbols = (currentCfg && currentCfg.usTickers ? currentCfg.usTickers.length : 518)
                      + (currentCfg && currentCfg.krTickers ? currentCfg.krTickers.length : 311);
-    var TRADING_DAYS = 22;
-    var dailyBudget  = Math.floor(budget / TRADING_DAYS);
-    var heldMax      = 16; // maxConcurrent × 2시장
-    var heldCalls    = heldMax * 3;          // 보유: 3타임프레임
-    var otherDaily   = Math.max(0, dailyBudget - heldCalls); // 나머지 예산
-    var otherSymbols = Math.max(1, totalSymbols - heldMax);
-    var cycleDays    = otherSymbols > otherDaily
-      ? Math.ceil(otherSymbols / Math.max(1, otherDaily)).toFixed(1)
-      : '1';
-    el.textContent = '일일 ' + dailyBudget + '콜 | 비보유 ' + Math.min(otherDaily, otherSymbols)
-      + '종목/일 | 전체순환 ' + cycleDays + '일';
-    el.style.color = budget < 1000 ? 'var(--amber)' : 'var(--pos)';
+    var TRADING_DAYS = 22, SAFETY = 0.85;
+    var dailyBudget  = Math.floor(budget / TRADING_DAYS * SAFETY); // 안전마진 15%
+    var monthlyEst   = Math.round(dailyBudget * TRADING_DAYS);
+    var cycleDays    = (totalSymbols / Math.max(1, dailyBudget)).toFixed(1);
+    el.textContent = '일일 ' + dailyBudget + '콜 | 전체 ' + totalSymbols
+      + '종목 ' + cycleDays + '일 순환 | 월 ~' + monthlyEst + '콜';
+    el.style.color = monthlyEst > budget ? 'var(--neg)' : (budget < 1000 ? 'var(--amber)' : 'var(--pos)');
   }
 
   function saveSettings() {

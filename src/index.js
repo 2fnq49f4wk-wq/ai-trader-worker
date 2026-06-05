@@ -8685,31 +8685,36 @@ function uint8ToBase64(bytes) {
 
 // ── Vision AI 백엔드 스캔 ──────────────────────────────────────────────────
 //
-//  [한도 설계] Roboflow 월 한도(기본 10,000콜)에 맞춘 2-tier 스마트 스캔
+//  [설계 원칙]
+//   1) 거래를 절대 막지 않는다
+//       · 3분에 1번만 실행(분%3===0) → cron 2/3는 순수 거래만, subrequest 충돌 회피
+//       · cron당 최대 4 API 호출(subrequest 소량) → 거래 사이클(fetch budget) 침범 안 함
+//       · 전체 try/catch 격리 → Vision 실패해도 거래에 영향 0
+//       · 거래 사이클(scheduled 2번)이 끝난 뒤에만 호출(아래 export default 참고)
 //
-//  Tier 1 — 보유 포지션 (최대 16종목)
-//    · 3 타임프레임(20/40/60일) 앙상블, 8시간 캐시
-//    · 하루 최대: 16 × 3 = 48콜
-//    · 월 최대:   16 × 3 × 22일 = 1,056콜
+//   2) 거래 발생 시 콜 폭증 방지
+//       · 보유 종목도 단일 60일 TF (청산용 DOWN 감지엔 충분) → 매수해도 종목당 1콜
+//       · 매수 직후 GRACE(12h)는 재스캔 스킵 — 방금 UP신호로 샀으니 곧 DOWN 안 뜸
 //
-//  Tier 2 — 비보유 종목 (나머지 전체)
-//    · 1 타임프레임(60일), 순환 스캔
-//    · 일일 잔여 예산으로 최대한 처리 (일일예산 - Tier1 소모)
-//    · 예) 10,000/월 → 하루 454콜 - 48 = 406종목/일 → 2일 주기 전체 순환
+//   3) Roboflow 무료 Public 플랜(월 10,000콜) 한도 엄수
+//       · 일일예산 = 월한도 ÷ 22일 × 0.85(안전마진 15%)
+//       · 보유 종목 예산 먼저 확보 → 남는 예산으로 비보유 순환
+//       · 일일 사용량 DB 추적, 초과 시 당일 중단 / 주말(UTC 토·일) 완전 스킵
+//       · 429 응답 → 즉시 중단, 다음 가능 cron에서 재개
 //
-//  주말(UTC 토·일) 완전 스킵
-//  일일 사용량 DB 추적 → 예산 초과 시 그날 스캔 중단
-//  429 응답 시 즉시 중단 → 다음 cron 재개
-//  cron 1회 최대 5종목 처리 (벽시계 ~3초, Worker 안전)
+//  [정밀도 보강] 비보유는 1TF 1차 스크리닝이지만, UP 강신호 종목은 매수되어
+//   보유로 승격되면 자동으로 더 자주(6h) 재검증된다. 청산 신뢰도는 그대로 유지.
 //
 // ────────────────────────────────────────────────────────────────────────────
 async function runVisionScanBackend(env) {
   const DB = env.DB;
   const now = Date.now();
+  const nowD = new Date(now);
 
-  // ── 주말 스킵 (UTC 기준) ──
-  const utcDay = new Date(now).getUTCDay(); // 0=일, 6=토
+  // ── (1) 거래 보호: 주말 스킵 + 3분에 1번만 ──
+  const utcDay = nowD.getUTCDay();          // 0=일, 6=토
   if (utcDay === 0 || utcDay === 6) return;
+  if (nowD.getUTCMinutes() % 3 !== 0) return; // 거래 cron 2/3는 방해하지 않음
 
   const cfg = migrateCfgToMarkets(Object.assign({}, DEFAULT_CFG, await getState(DB, "cfg", {})));
   const va = cfg.visionAI || {};
@@ -8719,47 +8724,60 @@ async function runVisionScanBackend(env) {
   const version = va.rfVersion || 7;
   const RF_PROJECT = "stock-updown-classifier";
 
-  // ── 예산 설정 ──
-  const MONTHLY_BUDGET  = va.monthlyBudget  || 10000; // Settings에서 조정 가능
-  const TRADING_DAYS    = 22;
-  const DAILY_BUDGET    = Math.floor(MONTHLY_BUDGET / TRADING_DAYS);
-  const MAX_PER_CRON    = 5;    // cron 1회 최대 종목 수 (벽시계 제한)
-  const DELAY_MS        = 350;  // 요청 간 간격 (초당 ~2.8콜, Roboflow 안전)
+  // ── 예산 설정 (무료 Public = 월 10,000콜) ──
+  const MONTHLY_BUDGET = va.monthlyBudget || 10000;
+  const TRADING_DAYS   = 22;
+  const SAFETY         = 0.85;  // 안전마진 15% (한도 직전 여유)
+  const DAILY_BUDGET   = Math.floor(MONTHLY_BUDGET / TRADING_DAYS * SAFETY);
+  const MAX_PER_CRON   = 4;     // cron당 최대 콜 (subrequest 소량 → 거래 안전)
+  const DELAY_MS       = 300;   // 요청 간격 (초당 ~3콜)
+  const GRACE_MS       = 12 * 3600000; // 매수 직후 12h 재스캔 유예
 
-  // ── 일일 사용량 추적 ──
-  const todayKey   = "vision_usage:" + new Date(now).toISOString().slice(0, 10);
-  let todayUsage   = (await getState(DB, todayKey, 0)) || 0;
+  // ── 일일 사용량 추적 (날짜 바뀌면 자동 리셋) ──
+  const todayKey = "vision_usage:" + nowD.toISOString().slice(0, 10);
+  const todayUsage = (await getState(DB, todayKey, 0)) || 0;
   if (todayUsage >= DAILY_BUDGET) return; // 오늘 예산 소진
 
-  // ── 보유 종목 조회 (Tier 1) ──
-  let heldSymbols = new Set();
+  // ── 보유 종목 + 매수시각 조회 (grace 판정용) ──
+  const heldOpened = {}; // symbol -> opened_ts
   try {
-    const rows = await DB.prepare("SELECT DISTINCT symbol FROM positions").all();
-    for (const r of (rows.results || [])) heldSymbols.add(r.symbol);
+    const rows = await DB.prepare("SELECT symbol, opened_ts FROM positions").all();
+    for (const r of (rows.results || [])) {
+      // 같은 종목 여러 전략이면 가장 최근 매수시각 사용
+      heldOpened[r.symbol] = Math.max(heldOpened[r.symbol] || 0, r.opened_ts || 0);
+    }
   } catch (e) {}
+  const isHeld = sym => Object.prototype.hasOwnProperty.call(heldOpened, sym);
 
-  const HELD_TF    = [20, 40, 60]; // 3 타임프레임 앙상블
-  const OTHER_TF   = [60];         // 1 타임프레임
-  const HELD_AGE   = 8  * 3600000; // 8시간 캐시
-  const OTHER_AGE  = Math.max(24, Math.ceil(
-    (cfg.usTickers || []).concat(cfg.krTickers || []).filter(s => !heldSymbols.has(s)).length
-    / Math.max(1, DAILY_BUDGET - heldSymbols.size * HELD_TF.length)
-  )) * 3600000;                    // 자동 계산된 순환 주기
+  const SINGLE_TF = 60;            // 단일 타임프레임 (보유·비보유 공통)
+  const HELD_AGE  = 6  * 3600000;  // 보유: 6시간마다 재스캔 (청산 모니터링)
+  const heldCount = Object.keys(heldOpened).length;
 
   const allSymbols = [...(cfg.usTickers || []), ...(cfg.krTickers || [])];
-  const existing   = await getState(DB, "vision_predictions", {});
+  const otherCount = Math.max(1, allSymbols.length - heldCount);
 
-  // ── 우선순위 큐: Tier1(보유) 먼저, 그 다음 가장 오래된 순 ──
+  // 비보유 순환 주기: 남는 일일예산으로 전체를 며칠에 한 바퀴 돌지 자동 계산
+  const dailyForOthers = Math.max(1, DAILY_BUDGET - heldCount); // 보유 몫 제외
+  const OTHER_AGE = Math.max(24, Math.ceil(otherCount / dailyForOthers) * 24) * 3600000;
+
+  const existing = await getState(DB, "vision_predictions", {});
+
+  // ── 우선순위 큐 ──
+  //   보유(grace 지난 것) 먼저 → 그 다음 가장 오래된 비보유
   const toScan = allSymbols
     .filter(sym => {
       const p = existing[sym];
       const age = p ? now - (p.ts || 0) : Infinity;
-      return age > (heldSymbols.has(sym) ? HELD_AGE : OTHER_AGE);
+      if (isHeld(sym)) {
+        // 매수 직후 grace 기간이면 스킵 (폭증 방지)
+        if (now - heldOpened[sym] < GRACE_MS) return false;
+        return age > HELD_AGE;
+      }
+      return age > OTHER_AGE;
     })
     .sort((a, b) => {
-      const aT = heldSymbols.has(a) ? 0 : 1;
-      const bT = heldSymbols.has(b) ? 0 : 1;
-      if (aT !== bT) return aT - bT;
+      const aH = isHeld(a) ? 0 : 1, bH = isHeld(b) ? 0 : 1;
+      if (aH !== bH) return aH - bH; // 보유 우선
       const aAge = existing[a] ? now - (existing[a].ts || 0) : Infinity;
       const bAge = existing[b] ? now - (existing[b].ts || 0) : Infinity;
       return bAge - aAge; // 오래된 것 먼저
@@ -8768,8 +8786,8 @@ async function runVisionScanBackend(env) {
   if (toScan.length === 0) return;
 
   // ── Roboflow 단일 예측 호출 ──
-  async function rfCall(closes, window) {
-    const pixels = drawChartPixels(closes.slice(-window), 224, 224);
+  async function rfCall(closes) {
+    const pixels = drawChartPixels(closes.slice(-SINGLE_TF), 224, 224);
     const bmp    = pixelsToBMP(pixels, 224, 224);
     const b64    = uint8ToBase64(bmp);
     const resp   = await fetch(
@@ -8782,10 +8800,10 @@ async function runVisionScanBackend(env) {
     const p = d.predictions || {};
     const upC   = (p["up"]   && p["up"].confidence)   || 0;
     const downC = (p["down"] && p["down"].confidence) || 0;
-    return { pred: upC >= downC ? "up" : "down", upConf: upC, downConf: downC };
+    return { pred: upC >= downC ? "up" : "down", upConf: upC, downConf: downC, conf: Math.max(upC, downC) };
   }
 
-  const batch  = toScan.slice(0, MAX_PER_CRON);
+  const batch   = toScan.slice(0, MAX_PER_CRON);
   const results = Object.assign({}, existing);
   let scanned = 0, callsUsed = 0;
   let rateLimited = false;
@@ -8793,63 +8811,44 @@ async function runVisionScanBackend(env) {
   for (const symbol of batch) {
     if (rateLimited) break;
     if (todayUsage + callsUsed >= DAILY_BUDGET) break;
-
     try {
       const daily = await getState(DB, "daily:" + symbol.toUpperCase(), null);
       if (!daily || !daily.closes || daily.closes.length < 20) continue;
 
-      const isHeld   = heldSymbols.has(symbol);
-      const tfs      = isHeld ? HELD_TF : OTHER_TF;
-      const frames   = {};
+      await new Promise(r => setTimeout(r, DELAY_MS));
+      const r = await rfCall(daily.closes);
+      callsUsed++;
+      if (!r) continue;
+      if (r.rateLimited) { rateLimited = true; break; }
 
-      for (const tf of tfs) {
-        if (todayUsage + callsUsed >= DAILY_BUDGET) break;
-        if (daily.closes.length < tf) continue;
-        await new Promise(r => setTimeout(r, DELAY_MS));
-        const r = await rfCall(daily.closes, tf);
-        callsUsed++;
-        if (!r) continue;
-        if (r.rateLimited) { rateLimited = true; break; }
-        frames[tf] = r;
+      // [EMA 평활] 기존 예측과 지수가중 혼합 → 단발 노이즈 완화 (정밀도 보강)
+      const prev = existing[symbol];
+      let conf = r.conf;
+      if (prev && prev.pred === r.pred && typeof prev.conf === "number") {
+        conf = Math.min(0.99, prev.conf * 0.4 + r.conf * 0.6); // 같은 방향이면 신뢰 보강
       }
-      if (rateLimited) break;
-
-      const fVals = Object.values(frames);
-      if (fVals.length === 0) continue;
-
-      // 다수결 투표 + 만장일치 신뢰도 보너스
-      const upVotes    = fVals.filter(f => f.pred === "up").length;
-      const finalPred  = upVotes >= fVals.length - upVotes ? "up" : "down";
-      const matched    = fVals.filter(f => f.pred === finalPred);
-      const avgConf    = matched.reduce((s, f) => s + Math.max(f.upConf, f.downConf), 0) / matched.length;
-      const bonus      = matched.length === tfs.length ? 0.05 : 0; // 만장일치 +5%
-      const finalConf  = Math.min(0.99, avgConf + bonus);
 
       results[symbol] = {
-        pred:     finalPred,
-        conf:     finalConf,
-        upConf:   fVals.reduce((s, f) => s + f.upConf,   0) / fVals.length,
-        downConf: fVals.reduce((s, f) => s + f.downConf, 0) / fVals.length,
-        votes:    { up: upVotes, down: fVals.length - upVotes, total: fVals.length },
-        tier:     isHeld ? 1 : 2,
-        ts:       now
+        pred: r.pred, conf: conf,
+        upConf: r.upConf, downConf: r.downConf,
+        tier: isHeld(symbol) ? 1 : 2,
+        ts: now
       };
       scanned++;
-
     } catch (e) { continue; }
   }
 
-  // ── 일일 사용량 저장 (TTL 48h) ──
+  // ── 사용량/결과 저장 ──
   if (callsUsed > 0) {
     await setState(DB, todayKey, todayUsage + callsUsed);
     await setState(DB, "vision_predictions", results);
-    const budgetPct = Math.round((todayUsage + callsUsed) / DAILY_BUDGET * 100);
+    const pct = Math.round((todayUsage + callsUsed) / DAILY_BUDGET * 100);
     await log(DB, "INFO", null,
-      `[VISION] ${scanned}종목 스캔 (${callsUsed}콜) | 일일예산: ${todayUsage + callsUsed}/${DAILY_BUDGET} (${budgetPct}%) | 잔여: ${toScan.length - scanned}종목`
+      `[VISION] ${scanned}종목 (${callsUsed}콜) | 일일 ${todayUsage + callsUsed}/${DAILY_BUDGET} (${pct}%) | 큐 ${toScan.length - scanned}종목 | 보유 ${heldCount}`
     );
   }
   if (rateLimited) {
-    await log(DB, "WARN", null, "[VISION] Roboflow 429 rate limit — 다음 cron에서 재개");
+    await log(DB, "WARN", null, "[VISION] Roboflow 429 — 다음 cron 재개");
   }
 }
 
