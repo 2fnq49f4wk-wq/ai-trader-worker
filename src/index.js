@@ -4811,19 +4811,18 @@ function evaluateAllStrategies(price, dayPct, dailyData, cfg, signalStats, regim
   if (!sig) return [];
 
   // [Vision AI] 예측 결과를 실제 거래에 직접 반영
-  //   DOWN 고신뢰(≥70%) → 매수 신호 완전 차단 (return [])
-  //   UP   고신뢰(≥65%) → visionBoost=1.25 설정 → riskPct에 곱해 포지션 크기 25% 증가
+  //   DOWN ≥70% → 매수 신호 완전 차단
+  //   UP  ≥65% → 신뢰도 비례 포지션 부스트 (65%→×1.10, 70%→×1.20, 80%→×1.35, 90%→×1.50)
   if (visionPreds && dailyData && dailyData.symbol) {
     const vp = visionPreds[dailyData.symbol];
     const va = cfg.visionAI || {};
     if (va.enabled && vp && vp.conf >= (va.confMin || 0.6)) {
       if (vp.pred === "down" && vp.conf >= 0.70) {
-        // 하락 고신뢰 → 매수 차단
         return [];
       } else if (vp.pred === "up" && vp.conf >= 0.65) {
-        // 상승 고신뢰 → 포지션 크기 부스트
-        sig.visionBoost = 1.25;
-        sig.visionNote = "VISION_UP " + Math.round(vp.conf * 100) + "%";
+        const boost = vp.conf >= 0.90 ? 1.50 : vp.conf >= 0.80 ? 1.35 : vp.conf >= 0.70 ? 1.20 : 1.10;
+        sig.visionBoost = boost;
+        sig.visionNote = "VISION_UP " + Math.round(vp.conf * 100) + "% ×" + boost;
       }
     }
   }
@@ -7329,6 +7328,31 @@ async function runTradingCycle(env) {
               await log(DB, "INFO", symbol, "BREAK-EVEN locked [" + stratName + "] at +" + beLockedPnl.toFixed(2) + "% stop=" + beLockedStop.toFixed(2));
             }
 
+            // [Vision AI] DOWN 고신뢰 보유 포지션 조기 청산
+            //   ≥90% → 즉시 전량 청산 (손익 무관)
+            //   ≥80% → 이익 중이면 즉시 이익 실현 (손실 중이면 기존 손절 로직에 맡김)
+            {
+              const _vp = visionPreds && visionPreds[symbol];
+              const _va = mcfg.visionAI || {};
+              if (_va.enabled && _vp && _vp.pred === "down") {
+                const _vc = _vp.conf;
+                const _pnl = held.avg > 0 ? ((price - held.avg) / held.avg) * 100 : 0;
+                if (_vc >= 0.90) {
+                  await executeSell(DB, market, symbol, held, held.qty, price, "VISION_EXIT " + Math.round(_vc * 100) + "%", mcfg, cash);
+                  sold++;
+                  const _sk = Object.keys(positions).some(k => positions[k].symbol === symbol && k !== posKey);
+                  if (!_sk) { heldSymbols.delete(symbol); const _sc = SECTOR_MAP[symbol]; if (_sc && sectorCounts[_sc]) sectorCounts[_sc]--; }
+                  continue;
+                } else if (_vc >= 0.80 && _pnl > 0) {
+                  await executeSell(DB, market, symbol, held, held.qty, price, "VISION_PROFIT_LOCK " + Math.round(_vc * 100) + "% +" + _pnl.toFixed(1) + "%", mcfg, cash);
+                  sold++;
+                  const _sk = Object.keys(positions).some(k => positions[k].symbol === symbol && k !== posKey);
+                  if (!_sk) { heldSymbols.delete(symbol); const _sc = SECTOR_MAP[symbol]; if (_sc && sectorCounts[_sc]) sectorCounts[_sc]--; }
+                  continue;
+                }
+              }
+            }
+
             // 매도 판단 ([V12] crashGate.deRisk → 손절·트레일 타이트닝)
             const sellDecision = evaluateSell(held, price, daily, dailyRsi, dailyMa, dailyMaShort, mcfg, canTrade, market, deRiskOpts);
             if (sellDecision.minHoldLock) {
@@ -8659,7 +8683,9 @@ function uint8ToBase64(bytes) {
   return btoa(b);
 }
 
-// 백엔드 Vision 스캔 — 매 cron 호출마다 최대 5개 종목 처리 (rate limit 안전)
+// 백엔드 Vision 스캔 — 다중 타임프레임 앙상블 (20/40/60일 3-way 투표)
+//   cron 1회당 3개 종목 × 3 타임프레임 = 9 API 호출 (rate limit 안전)
+//   24시간 캐시, 429 즉시 중단 후 다음 cron 재개
 async function runVisionScanBackend(env) {
   const DB = env.DB;
   const cfg = migrateCfgToMarkets(Object.assign({}, DEFAULT_CFG, await getState(DB, "cfg", {})));
@@ -8669,9 +8695,10 @@ async function runVisionScanBackend(env) {
   const apiKey = va.rfApiKey;
   const version = va.rfVersion || 7;
   const RF_PROJECT = "stock-updown-classifier";
-  const MAX_AGE = 24 * 60 * 60 * 1000;   // 24시간 캐시
-  const MAX_PER_RUN = 5;                  // cron 1회당 최대 5개 (Roboflow rate limit 안전)
-  const DELAY_MS = 400;                   // 요청 간 400ms 간격
+  const MAX_AGE = 24 * 60 * 60 * 1000;
+  const MAX_PER_RUN = 3;      // 종목 3개 × 3 타임프레임 = 9 API 호출/cron
+  const DELAY_MS = 350;       // 요청 간 350ms (초당 ~2.8개, Roboflow 안전)
+  const TIMEFRAMES = [20, 40, 60]; // 단기/중기/장기 차트
 
   const allSymbols = [...(cfg.usTickers || []), ...(cfg.krTickers || [])];
   if (allSymbols.length === 0) return;
@@ -8679,61 +8706,88 @@ async function runVisionScanBackend(env) {
   const existing = await getState(DB, "vision_predictions", {});
   const now = Date.now();
 
-  // 24시간 이상 된 종목만 대상으로
   const toScan = allSymbols.filter(sym => {
     const p = existing[sym];
     return !p || (now - (p.ts || 0)) > MAX_AGE;
   });
   if (toScan.length === 0) return;
 
+  // Roboflow 단일 예측 호출 (429 → null 반환)
+  async function rfCall(closes, window) {
+    const pixels = drawChartPixels(closes.slice(-window), 224, 224);
+    const bmp = pixelsToBMP(pixels, 224, 224);
+    const b64 = uint8ToBase64(bmp);
+    const resp = await fetch(
+      `https://classify.roboflow.com/${RF_PROJECT}/${version}?api_key=${apiKey}`,
+      { method: "POST", headers: { "Content-Type": "application/x-www-form-urlencoded" }, body: b64 }
+    );
+    if (resp.status === 429) return { rateLimited: true };
+    if (!resp.ok) return null;
+    const data = await resp.json();
+    const preds = data.predictions || {};
+    const upC   = (preds["up"]   && preds["up"].confidence)   || 0;
+    const downC = (preds["down"] && preds["down"].confidence) || 0;
+    return { pred: upC >= downC ? "up" : "down", upConf: upC, downConf: downC };
+  }
+
   const batch = toScan.slice(0, MAX_PER_RUN);
   const results = Object.assign({}, existing);
   let scanned = 0;
+  let rateLimited = false;
 
   for (const symbol of batch) {
+    if (rateLimited) break;
     try {
       const daily = await getState(DB, "daily:" + symbol.toUpperCase(), null);
-      if (!daily || !daily.closes || daily.closes.length < 10) continue;
+      if (!daily || !daily.closes || daily.closes.length < 20) continue;
 
-      const pixels = drawChartPixels(daily.closes, 224, 224);
-      const bmp = pixelsToBMP(pixels, 224, 224);
-      const b64 = uint8ToBase64(bmp);
-
-      const resp = await fetch(
-        `https://classify.roboflow.com/${RF_PROJECT}/${version}?api_key=${apiKey}`,
-        { method: "POST", headers: { "Content-Type": "application/x-www-form-urlencoded" }, body: b64 }
-      );
-
-      if (resp.status === 429) {
-        // Rate limit 도달 → 즉시 중단, 다음 cron에서 재개
-        await log(DB, "WARN", null, "[VISION] Roboflow rate limit, 중단 (다음 cron에서 재개)");
-        break;
+      // 3개 타임프레임 순차 호출
+      const frames = {};
+      for (const tf of TIMEFRAMES) {
+        if (daily.closes.length < tf) continue;
+        await new Promise(r => setTimeout(r, DELAY_MS));
+        const r = await rfCall(daily.closes, tf);
+        if (!r) continue;
+        if (r.rateLimited) { rateLimited = true; break; }
+        frames[tf] = r;
       }
-      if (!resp.ok) continue;
+      if (rateLimited) break;
 
-      const data = await resp.json();
-      const preds = data.predictions || {};
-      const upC   = (preds["up"]   && preds["up"].confidence)   || 0;
-      const downC = (preds["down"] && preds["down"].confidence) || 0;
+      const frameVals = Object.values(frames);
+      if (frameVals.length === 0) continue;
+
+      // 다수결 투표 (2/3 또는 3/3 일치)
+      const upVotes   = frameVals.filter(f => f.pred === "up").length;
+      const downVotes = frameVals.filter(f => f.pred === "down").length;
+      const finalPred = upVotes >= downVotes ? "up" : "down";
+      const matchedFrames = frameVals.filter(f => f.pred === finalPred);
+
+      // 일치한 프레임의 신뢰도 평균 + 만장일치 보너스
+      const avgConf = matchedFrames.reduce((s, f) => s + Math.max(f.upConf, f.downConf), 0) / matchedFrames.length;
+      const unanimousBonus = matchedFrames.length === TIMEFRAMES.length ? 0.05 : 0;
+      const finalConf = Math.min(0.99, avgConf + unanimousBonus);
+
+      const avgUp   = frameVals.reduce((s, f) => s + f.upConf, 0)   / frameVals.length;
+      const avgDown = frameVals.reduce((s, f) => s + f.downConf, 0) / frameVals.length;
+
       results[symbol] = {
-        pred: upC >= downC ? "up" : "down",
-        conf: Math.max(upC, downC),
-        upConf: upC, downConf: downC, ts: now
+        pred: finalPred, conf: finalConf,
+        upConf: avgUp, downConf: avgDown,
+        votes: { up: upVotes, down: downVotes, total: frameVals.length },
+        ts: now
       };
       scanned++;
 
-      // 요청 간격 (rate limit 방지)
-      await new Promise(r => setTimeout(r, DELAY_MS));
-
-    } catch (e) {
-      // 개별 종목 실패는 무시하고 계속
-      continue;
-    }
+    } catch (e) { continue; }
   }
 
+  if (rateLimited) {
+    await log(DB, "WARN", null, "[VISION] Roboflow rate limit 도달, 다음 cron에서 재개");
+  }
   if (scanned > 0) {
     await setState(DB, "vision_predictions", results);
-    await log(DB, "INFO", null, `[VISION] 백엔드 스캔 완료: ${scanned}개 / 잔여: ${Math.max(0, toScan.length - MAX_PER_RUN)}개`);
+    const remaining = Math.max(0, toScan.length - MAX_PER_RUN);
+    await log(DB, "INFO", null, `[VISION] 앙상블 스캔 완료: ${scanned}개 / 잔여: ${remaining}개`);
   }
 }
 
