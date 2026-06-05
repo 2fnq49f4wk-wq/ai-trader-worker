@@ -2263,6 +2263,13 @@ const DEFAULT_CFG = {
     maxRetries: 2,
     maxSearches: 12             // web_search 도구 호출 상한 (비용/시간 제어)
   },
+  // === [SEC] EDGAR 공시 기반 보수적 거래 필터 (미국 종목 한정, 무료 API) ===
+  //   최근 8-K(material event)/어닝 직후 종목은 신규 진입 사이즈를 축소(secCautionScale).
+  //   장외(UTC 08:00~08:30)에만 fetch → 거래 fetch와 분리.
+  secFilings: {
+    enabled: true,
+    cautionScale: 0.5   // material 공시 직후 진입 사이즈 배수 (0.5 = 절반)
+  },
   // === [V8.5] 사이클 락 자동 갱신 ===
   cycleLockRefreshAt: 0.5,   // TTL의 50% 경과 시 갱신
   // === [재작성] 단일 추세추종 전략 ===
@@ -2791,6 +2798,19 @@ async function isMarketTradingDay(DB, market, env) {
     if (cached && typeof cached.open === "boolean") return cached.open;
   } catch (e) {}
 
+  // [비용절감] 1.5) 주말은 LLM 없이 코드로 즉시 휴장 판정 (주 2일 LLM 호출 제거)
+  try {
+    const now = new Date();
+    const p = market === "us" ? getUSEt(now) : getKST(now);
+    if (p && p.year != null && p.month != null && p.date != null) {
+      const dow = new Date(Date.UTC(p.year, p.month - 1, p.date)).getUTCDay(); // 0=일,6=토
+      if (dow === 0 || dow === 6) {
+        try { await setState(DB, cacheKey, { open: false, ts: Date.now(), src: "weekend" }); } catch (e2) {}
+        return false;
+      }
+    }
+  } catch (e) {}
+
   // 2) Claude web_search로 오늘 거래일 여부 판정
   //    env 없거나 API 키 없으면 판정 불가(null) → 호출부에서 보수적으로 '거래 허용'(거래는 다른 게이트로도 막힘)
   if (!env || !env.ANTHROPIC_API_KEY) return null;
@@ -2803,7 +2823,7 @@ async function isMarketTradingDay(DB, market, env) {
   try {
     const res = await callClaude(
       env.ANTHROPIC_API_KEY,
-      env.LLM_MODEL || "claude-sonnet-4-6",
+      env.HOLIDAY_MODEL || "claude-haiku-4-5", // [비용절감] 단순 YES/NO 판정 → sonnet→haiku (단가 ~8배↓)
       prompt,
       300,
       20000,
@@ -2811,7 +2831,7 @@ async function isMarketTradingDay(DB, market, env) {
         baseURL: env.LLM_BASE_URL || null,
         aigToken: env.AI_GATEWAY_TOKEN || null,
         maxRetries: 1,
-        tools: [{ type: "web_search_20250305", name: "web_search" }]
+        tools: [{ type: "web_search_20250305", name: "web_search", max_uses: 3 }] // [비용절감] 검색 횟수 상한
       }
     );
     const ans = (res.text || "").trim().toUpperCase();
@@ -3679,6 +3699,11 @@ async function runMacroUpdate(env, forceRun = false) {
   // [FIX V8.8] macro 트리거가 runTradingCycle 내부와 scheduled 양쪽에 있어 07:00 정각에
   //   중복 web_search(비용↑) 가능. 강제실행이 아니면 "오늘 이미 갱신됨"이면 스킵.
   if (!forceRun) {
+    // [비용절감] 주말 스킵 — 경제지표는 주말 미발표 (주 2회 sonnet+web_search 호출 제거)
+    try {
+      const dow = new Date().getUTCDay();
+      if (dow === 0 || dow === 6) return { ok: false, reason: "weekend" };
+    } catch (e) {}
     try {
       const today = localDateStr("kr");
       const lastMacro = await getState(DB, "macro_last_run", null);
@@ -4805,7 +4830,7 @@ function evaluateTrendEntry(price, dayPct, dailyData, cfg, regime, market) {
 
 // === [재작성] 통합 진입 평가기 — 단일 trend 전략만 평가 ===
 //   라이브(runTradingCycle)와 백테스트(backtestSymbol)가 공통 호출. 기존 반환 형식 유지.
-function evaluateAllStrategies(price, dayPct, dailyData, cfg, signalStats, regime, market, intraday, visionPreds) {
+function evaluateAllStrategies(price, dayPct, dailyData, cfg, signalStats, regime, market, intraday, visionPreds, secData) {
   if (cfg.strategies && cfg.strategies.trend === false) return [];
   const sig = evaluateTrendEntry(price, dayPct, dailyData, cfg, regime, market);
   if (!sig) return [];
@@ -4830,6 +4855,17 @@ function evaluateAllStrategies(price, dayPct, dailyData, cfg, signalStats, regim
         sig.visionBoost = boost;
         sig.visionNote = "VISION_UP " + Math.round(vp.conf * 100) + "% ×" + boost.toFixed(2) + (prec != null ? " p" + Math.round(prec * 100) : "");
       }
+    }
+  }
+
+  // [SEC 공시] 미국 종목 한정 — 최근 8-K/어닝 직후면 진입 사이즈 보수화 (변동성 회피)
+  if (secData && market === "us" && dailyData && dailyData.symbol) {
+    const sd = secData[dailyData.symbol];
+    if (sd && sd.caution) {
+      const sc = cfg.secFilings || {};
+      const scale = (typeof sc.cautionScale === "number") ? sc.cautionScale : 0.5;
+      sig.visionBoost = (sig.visionBoost || 1.0) * scale; // riskPct에 곱해져 사이즈 축소
+      sig.secNote = "SEC_CAUTION " + (sd.reason || "");
     }
   }
 
@@ -6871,6 +6907,7 @@ async function runTradingCycle(env) {
     cfg = await autoTune(DB, cfg, regimes);
     const signalStats = await getState(DB, "signal_stats", {});
     const visionPreds = await getState(DB, "vision_predictions", {});  // [Vision AI]
+    const secData = await getState(DB, "sec_filings", {});  // [SEC 공시] 미국 종목 보수화
     let cash = await computeAllCash(DB, cfg);
     // [V9.1] executeBuy/Sell이 거래마다 cash 전체를 저장하므로, cm 키가 누락된 옛 상태를
     //   읽었을 때 원자재 현금이 사라지지 않도록 보강.
@@ -7394,7 +7431,7 @@ async function runTradingCycle(env) {
           const strategiesHeldNow = getStrategiesHeldForSymbol(positions, symbol);
           // [V10] 1차 평가 — 분봉 없이 일봉 신호만으로 (호출 0). day 게이트는 데이터부족→통과.
           if (daily) daily.symbol = symbol;  // [Vision AI] symbol을 daily에 주입
-          let stratResults = evaluateAllStrategies(price, dayPct, daily, mcfg, signalStats, regime, market, intra, visionPreds);
+          let stratResults = evaluateAllStrategies(price, dayPct, daily, mcfg, signalStats, regime, market, intra, visionPreds, secData);
           // [V10] 2단계 깔때기 — US day 매수 신호가 1차에서 나온 경우에만 분봉 1회 조회해 재검증.
           //   대부분 종목은 1차에서 신호가 없어 분봉 호출 자체가 일어나지 않음 → subrequest 절약.
           const hasDaySignal = stratResults.some(function(r){ return r.strategy === "day"; });
@@ -7403,7 +7440,7 @@ async function runTradingCycle(env) {
               const fullIntra = await fetchIntraday(symbol);
               if (fullIntra && Array.isArray(fullIntra.closes) && fullIntra.closes.length > 0) {
                 // 분봉으로 재평가 — "지금 하락 중"이면 day 신호가 걸러진다.
-                stratResults = evaluateAllStrategies(price, dayPct, daily, mcfg, signalStats, regime, market, fullIntra, visionPreds);
+                stratResults = evaluateAllStrategies(price, dayPct, daily, mcfg, signalStats, regime, market, fullIntra, visionPreds, secData);
               }
             } catch (e) { /* 분봉 실패 시 1차 결과 유지 */ }
           }
@@ -8695,6 +8732,106 @@ function uint8ToBase64(bytes) {
   return btoa(b);
 }
 
+// ── SEC EDGAR 공시 스캔 ─────────────────────────────────────────────────────
+//
+//  [목적] 미국 종목의 최근 material 공시를 거래에 보수적으로 반영.
+//    · 8-K(수시공시: 실적/M&A/경영진변동 등) 최근 2거래일 내 → 변동성·갭 리스크 큼
+//      → 신규 진입 사이즈 0.5x로 보수화 (추세전략은 안정적 추세를 노리므로 이벤트 직후 회피)
+//    · 10-Q/10-K(분기/연간 실적) 최근 1거래일 내 → 어닝 직후 → 동일 보수화
+//
+//  [무료/안전] SEC EDGAR API는 무료·무인증. User-Agent 헤더만 필수, 10req/s 제한.
+//    · CIK 매핑(company_tickers.json)은 주 1회만 fetch → 캐시
+//    · 실시간 불필요 → 거래 fetch와 안 겹치게 "미국 프리마켓 직전"(UTC 08:00~08:30, 분%5)만 실행
+//    · cron당 최대 8종목, 24h 캐시 → subrequest 소량
+//
+// ────────────────────────────────────────────────────────────────────────────
+async function fetchSecFilings(env) {
+  const DB = env.DB;
+  const now = Date.now();
+  const nowD = new Date(now);
+  const cfg = migrateCfgToMarkets(Object.assign({}, DEFAULT_CFG, await getState(DB, "cfg", {})));
+  const sc = cfg.secFilings || {};
+  if (sc.enabled === false) return;
+
+  // 주말 스킵
+  const dow = nowD.getUTCDay();
+  if (dow === 0 || dow === 6) return;
+  // 미국 프리마켓 직전(UTC 08:00~08:30)에만, 5분 간격 → 거래/타 fetch와 분리
+  const utcMin = nowD.getUTCHours() * 60 + nowD.getUTCMinutes();
+  if (utcMin < 480 || utcMin > 510) return;  // 08:00~08:30 UTC
+  if (nowD.getUTCMinutes() % 5 !== 0) return;
+
+  const UA = "LUX-ENGINE/1.0 (contact: yryeolove@gmail.com)";
+
+  // CIK 매핑 (주 1회 캐시)
+  let cikMap = await getState(DB, "sec_cik_map", null);
+  if (!cikMap || !cikMap.map || (now - (cikMap.ts || 0)) > 7 * 86400000) {
+    try {
+      const r = await fetch("https://www.sec.gov/files/company_tickers.json", { headers: { "User-Agent": UA } });
+      if (r.ok) {
+        const data = await r.json();
+        const map = {};
+        Object.keys(data).forEach(function(k){
+          const c = data[k];
+          if (c && c.ticker) map[c.ticker.toUpperCase()] = String(c.cik_str).padStart(10, "0");
+        });
+        cikMap = { map: map, ts: now };
+        await setState(DB, "sec_cik_map", cikMap);
+        await log(DB, "INFO", null, "[SEC] CIK 매핑 갱신: " + Object.keys(map).length + "종목");
+      }
+    } catch (e) {}
+    if (!cikMap || !cikMap.map) return;
+  }
+
+  // 대상: 미국 티커만 (KR은 .KS/.KQ 제외)
+  const usTickers = (cfg.usTickers || []).filter(function(s){ return s.indexOf(".") === -1; });
+  const existing = await getState(DB, "sec_filings", {});
+  const MAX_AGE = 24 * 3600000;
+  const toScan = usTickers.filter(function(sym){
+    const p = existing[sym];
+    return (!p || (now - (p.ts || 0)) > MAX_AGE) && cikMap.map[sym.toUpperCase()];
+  });
+  if (toScan.length === 0) return;
+
+  const batch = toScan.slice(0, 8);  // cron당 8종목
+  const results = Object.assign({}, existing);
+  let scanned = 0;
+
+  for (const sym of batch) {
+    const cik = cikMap.map[sym.toUpperCase()];
+    if (!cik) continue;
+    try {
+      await new Promise(function(r){ setTimeout(r, 150); }); // 10req/s 안전
+      const r = await fetch("https://data.sec.gov/submissions/CIK" + cik + ".json", { headers: { "User-Agent": UA } });
+      if (!r.ok) continue;
+      const d = await r.json();
+      const recent = (d.filings && d.filings.recent) || {};
+      const forms = recent.form || [];
+      const dates = recent.filingDate || [];
+      // 최근 공시들 중 8-K/10-Q/10-K 찾기
+      let recent8K = null, recentEarnings = null;
+      for (let i = 0; i < Math.min(forms.length, 20); i++) {
+        const f = forms[i], fd = dates[i];
+        if (!fd) continue;
+        const ageDays = (now - new Date(fd + "T00:00:00Z").getTime()) / 86400000;
+        if (f === "8-K" && recent8K == null && ageDays <= 3) recent8K = fd;
+        if ((f === "10-Q" || f === "10-K") && recentEarnings == null && ageDays <= 2) recentEarnings = fd;
+      }
+      let caution = false, reason = "";
+      if (recentEarnings) { caution = true; reason = "EARNINGS " + recentEarnings; }
+      else if (recent8K) { caution = true; reason = "8-K " + recent8K; }
+      results[sym] = { caution: caution, reason: reason, ts: now };
+      scanned++;
+    } catch (e) { continue; }
+  }
+
+  if (scanned > 0) {
+    await setState(DB, "sec_filings", results);
+    const cautionCount = Object.keys(results).filter(function(k){ return results[k].caution; }).length;
+    await log(DB, "INFO", null, "[SEC] " + scanned + "종목 스캔 | 주의 " + cautionCount + "종목 | 큐 " + (toScan.length - scanned));
+  }
+}
+
 // ── Vision AI 백엔드 스캔 ──────────────────────────────────────────────────
 //
 //  [설계 원칙]
@@ -8733,6 +8870,11 @@ async function runVisionScanBackend(env) {
   // [한도 보호] 무거운 외부 fetch가 몰리는 트리거 시각(원자재청산·환율·지표 갱신)엔
   //   Vision을 양보 → 같은 invocation의 Cloudflare subrequest 피크 회피. 다음 cron(3분 후) 재개.
   if (isCommodityTriggerTime() || isFxTriggerTime() || isMacroTriggerTime()) return;
+  // [fetch 분산] SEC 스캔 시간대(UTC 08:00~08:30)도 양보 → 외부 fetch 완전 분리
+  {
+    const _um = nowD.getUTCHours() * 60 + nowD.getUTCMinutes();
+    if (_um >= 480 && _um <= 510) return;
+  }
 
   const cfg = migrateCfgToMarkets(Object.assign({}, DEFAULT_CFG, await getState(DB, "cfg", {})));
   const va = cfg.visionAI || {};
@@ -9016,6 +9158,11 @@ export default {
       //    브라우저 없이도 차트 예측 결과가 항상 최신 상태 유지됨.
       try { await runVisionScanBackend(env); }
       catch (e) { try { await log(env.DB, "ERROR", null, "[SCHED] vision scan fail: " + e.message); } catch (e2) {} }
+
+      // 7) SEC EDGAR 공시 스캔 — 미국 프리마켓 직전(UTC 08:00~08:30)에만, 거래 fetch와 분리
+      //    최근 8-K/어닝 직후 미국 종목의 신규 진입을 보수화 (변동성 회피)
+      try { await fetchSecFilings(env); }
+      catch (e) { try { await log(env.DB, "ERROR", null, "[SCHED] sec fetch fail: " + e.message); } catch (e2) {} }
     })());
   }
 };
