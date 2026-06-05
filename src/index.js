@@ -8683,111 +8683,173 @@ function uint8ToBase64(bytes) {
   return btoa(b);
 }
 
-// 백엔드 Vision 스캔 — 다중 타임프레임 앙상블 (20/40/60일 3-way 투표)
-//   cron 1회당 3개 종목 × 3 타임프레임 = 9 API 호출 (rate limit 안전)
-//   24시간 캐시, 429 즉시 중단 후 다음 cron 재개
+// ── Vision AI 백엔드 스캔 ──────────────────────────────────────────────────
+//
+//  [한도 설계] Roboflow 월 한도(기본 10,000콜)에 맞춘 2-tier 스마트 스캔
+//
+//  Tier 1 — 보유 포지션 (최대 16종목)
+//    · 3 타임프레임(20/40/60일) 앙상블, 8시간 캐시
+//    · 하루 최대: 16 × 3 = 48콜
+//    · 월 최대:   16 × 3 × 22일 = 1,056콜
+//
+//  Tier 2 — 비보유 종목 (나머지 전체)
+//    · 1 타임프레임(60일), 순환 스캔
+//    · 일일 잔여 예산으로 최대한 처리 (일일예산 - Tier1 소모)
+//    · 예) 10,000/월 → 하루 454콜 - 48 = 406종목/일 → 2일 주기 전체 순환
+//
+//  주말(UTC 토·일) 완전 스킵
+//  일일 사용량 DB 추적 → 예산 초과 시 그날 스캔 중단
+//  429 응답 시 즉시 중단 → 다음 cron 재개
+//  cron 1회 최대 5종목 처리 (벽시계 ~3초, Worker 안전)
+//
+// ────────────────────────────────────────────────────────────────────────────
 async function runVisionScanBackend(env) {
   const DB = env.DB;
+  const now = Date.now();
+
+  // ── 주말 스킵 (UTC 기준) ──
+  const utcDay = new Date(now).getUTCDay(); // 0=일, 6=토
+  if (utcDay === 0 || utcDay === 6) return;
+
   const cfg = migrateCfgToMarkets(Object.assign({}, DEFAULT_CFG, await getState(DB, "cfg", {})));
   const va = cfg.visionAI || {};
   if (!va.enabled || !va.rfApiKey) return;
 
-  const apiKey = va.rfApiKey;
+  const apiKey  = va.rfApiKey;
   const version = va.rfVersion || 7;
   const RF_PROJECT = "stock-updown-classifier";
-  const MAX_AGE = 24 * 60 * 60 * 1000;
-  const MAX_PER_RUN = 3;      // 종목 3개 × 3 타임프레임 = 9 API 호출/cron
-  const DELAY_MS = 350;       // 요청 간 350ms (초당 ~2.8개, Roboflow 안전)
-  const TIMEFRAMES = [20, 40, 60]; // 단기/중기/장기 차트
+
+  // ── 예산 설정 ──
+  const MONTHLY_BUDGET  = va.monthlyBudget  || 10000; // Settings에서 조정 가능
+  const TRADING_DAYS    = 22;
+  const DAILY_BUDGET    = Math.floor(MONTHLY_BUDGET / TRADING_DAYS);
+  const MAX_PER_CRON    = 5;    // cron 1회 최대 종목 수 (벽시계 제한)
+  const DELAY_MS        = 350;  // 요청 간 간격 (초당 ~2.8콜, Roboflow 안전)
+
+  // ── 일일 사용량 추적 ──
+  const todayKey   = "vision_usage:" + new Date(now).toISOString().slice(0, 10);
+  let todayUsage   = (await getState(DB, todayKey, 0)) || 0;
+  if (todayUsage >= DAILY_BUDGET) return; // 오늘 예산 소진
+
+  // ── 보유 종목 조회 (Tier 1) ──
+  let heldSymbols = new Set();
+  try {
+    const rows = await DB.prepare("SELECT DISTINCT symbol FROM positions").all();
+    for (const r of (rows.results || [])) heldSymbols.add(r.symbol);
+  } catch (e) {}
+
+  const HELD_TF    = [20, 40, 60]; // 3 타임프레임 앙상블
+  const OTHER_TF   = [60];         // 1 타임프레임
+  const HELD_AGE   = 8  * 3600000; // 8시간 캐시
+  const OTHER_AGE  = Math.max(24, Math.ceil(
+    (cfg.usTickers || []).concat(cfg.krTickers || []).filter(s => !heldSymbols.has(s)).length
+    / Math.max(1, DAILY_BUDGET - heldSymbols.size * HELD_TF.length)
+  )) * 3600000;                    // 자동 계산된 순환 주기
 
   const allSymbols = [...(cfg.usTickers || []), ...(cfg.krTickers || [])];
-  if (allSymbols.length === 0) return;
+  const existing   = await getState(DB, "vision_predictions", {});
 
-  const existing = await getState(DB, "vision_predictions", {});
-  const now = Date.now();
+  // ── 우선순위 큐: Tier1(보유) 먼저, 그 다음 가장 오래된 순 ──
+  const toScan = allSymbols
+    .filter(sym => {
+      const p = existing[sym];
+      const age = p ? now - (p.ts || 0) : Infinity;
+      return age > (heldSymbols.has(sym) ? HELD_AGE : OTHER_AGE);
+    })
+    .sort((a, b) => {
+      const aT = heldSymbols.has(a) ? 0 : 1;
+      const bT = heldSymbols.has(b) ? 0 : 1;
+      if (aT !== bT) return aT - bT;
+      const aAge = existing[a] ? now - (existing[a].ts || 0) : Infinity;
+      const bAge = existing[b] ? now - (existing[b].ts || 0) : Infinity;
+      return bAge - aAge; // 오래된 것 먼저
+    });
 
-  const toScan = allSymbols.filter(sym => {
-    const p = existing[sym];
-    return !p || (now - (p.ts || 0)) > MAX_AGE;
-  });
   if (toScan.length === 0) return;
 
-  // Roboflow 단일 예측 호출 (429 → null 반환)
+  // ── Roboflow 단일 예측 호출 ──
   async function rfCall(closes, window) {
     const pixels = drawChartPixels(closes.slice(-window), 224, 224);
-    const bmp = pixelsToBMP(pixels, 224, 224);
-    const b64 = uint8ToBase64(bmp);
-    const resp = await fetch(
+    const bmp    = pixelsToBMP(pixels, 224, 224);
+    const b64    = uint8ToBase64(bmp);
+    const resp   = await fetch(
       `https://classify.roboflow.com/${RF_PROJECT}/${version}?api_key=${apiKey}`,
       { method: "POST", headers: { "Content-Type": "application/x-www-form-urlencoded" }, body: b64 }
     );
     if (resp.status === 429) return { rateLimited: true };
     if (!resp.ok) return null;
-    const data = await resp.json();
-    const preds = data.predictions || {};
-    const upC   = (preds["up"]   && preds["up"].confidence)   || 0;
-    const downC = (preds["down"] && preds["down"].confidence) || 0;
+    const d = await resp.json();
+    const p = d.predictions || {};
+    const upC   = (p["up"]   && p["up"].confidence)   || 0;
+    const downC = (p["down"] && p["down"].confidence) || 0;
     return { pred: upC >= downC ? "up" : "down", upConf: upC, downConf: downC };
   }
 
-  const batch = toScan.slice(0, MAX_PER_RUN);
+  const batch  = toScan.slice(0, MAX_PER_CRON);
   const results = Object.assign({}, existing);
-  let scanned = 0;
+  let scanned = 0, callsUsed = 0;
   let rateLimited = false;
 
   for (const symbol of batch) {
     if (rateLimited) break;
+    if (todayUsage + callsUsed >= DAILY_BUDGET) break;
+
     try {
       const daily = await getState(DB, "daily:" + symbol.toUpperCase(), null);
       if (!daily || !daily.closes || daily.closes.length < 20) continue;
 
-      // 3개 타임프레임 순차 호출
-      const frames = {};
-      for (const tf of TIMEFRAMES) {
+      const isHeld   = heldSymbols.has(symbol);
+      const tfs      = isHeld ? HELD_TF : OTHER_TF;
+      const frames   = {};
+
+      for (const tf of tfs) {
+        if (todayUsage + callsUsed >= DAILY_BUDGET) break;
         if (daily.closes.length < tf) continue;
         await new Promise(r => setTimeout(r, DELAY_MS));
         const r = await rfCall(daily.closes, tf);
+        callsUsed++;
         if (!r) continue;
         if (r.rateLimited) { rateLimited = true; break; }
         frames[tf] = r;
       }
       if (rateLimited) break;
 
-      const frameVals = Object.values(frames);
-      if (frameVals.length === 0) continue;
+      const fVals = Object.values(frames);
+      if (fVals.length === 0) continue;
 
-      // 다수결 투표 (2/3 또는 3/3 일치)
-      const upVotes   = frameVals.filter(f => f.pred === "up").length;
-      const downVotes = frameVals.filter(f => f.pred === "down").length;
-      const finalPred = upVotes >= downVotes ? "up" : "down";
-      const matchedFrames = frameVals.filter(f => f.pred === finalPred);
-
-      // 일치한 프레임의 신뢰도 평균 + 만장일치 보너스
-      const avgConf = matchedFrames.reduce((s, f) => s + Math.max(f.upConf, f.downConf), 0) / matchedFrames.length;
-      const unanimousBonus = matchedFrames.length === TIMEFRAMES.length ? 0.05 : 0;
-      const finalConf = Math.min(0.99, avgConf + unanimousBonus);
-
-      const avgUp   = frameVals.reduce((s, f) => s + f.upConf, 0)   / frameVals.length;
-      const avgDown = frameVals.reduce((s, f) => s + f.downConf, 0) / frameVals.length;
+      // 다수결 투표 + 만장일치 신뢰도 보너스
+      const upVotes    = fVals.filter(f => f.pred === "up").length;
+      const finalPred  = upVotes >= fVals.length - upVotes ? "up" : "down";
+      const matched    = fVals.filter(f => f.pred === finalPred);
+      const avgConf    = matched.reduce((s, f) => s + Math.max(f.upConf, f.downConf), 0) / matched.length;
+      const bonus      = matched.length === tfs.length ? 0.05 : 0; // 만장일치 +5%
+      const finalConf  = Math.min(0.99, avgConf + bonus);
 
       results[symbol] = {
-        pred: finalPred, conf: finalConf,
-        upConf: avgUp, downConf: avgDown,
-        votes: { up: upVotes, down: downVotes, total: frameVals.length },
-        ts: now
+        pred:     finalPred,
+        conf:     finalConf,
+        upConf:   fVals.reduce((s, f) => s + f.upConf,   0) / fVals.length,
+        downConf: fVals.reduce((s, f) => s + f.downConf, 0) / fVals.length,
+        votes:    { up: upVotes, down: fVals.length - upVotes, total: fVals.length },
+        tier:     isHeld ? 1 : 2,
+        ts:       now
       };
       scanned++;
 
     } catch (e) { continue; }
   }
 
-  if (rateLimited) {
-    await log(DB, "WARN", null, "[VISION] Roboflow rate limit 도달, 다음 cron에서 재개");
-  }
-  if (scanned > 0) {
+  // ── 일일 사용량 저장 (TTL 48h) ──
+  if (callsUsed > 0) {
+    await setState(DB, todayKey, todayUsage + callsUsed);
     await setState(DB, "vision_predictions", results);
-    const remaining = Math.max(0, toScan.length - MAX_PER_RUN);
-    await log(DB, "INFO", null, `[VISION] 앙상블 스캔 완료: ${scanned}개 / 잔여: ${remaining}개`);
+    const budgetPct = Math.round((todayUsage + callsUsed) / DAILY_BUDGET * 100);
+    await log(DB, "INFO", null,
+      `[VISION] ${scanned}종목 스캔 (${callsUsed}콜) | 일일예산: ${todayUsage + callsUsed}/${DAILY_BUDGET} (${budgetPct}%) | 잔여: ${toScan.length - scanned}종목`
+    );
+  }
+  if (rateLimited) {
+    await log(DB, "WARN", null, "[VISION] Roboflow 429 rate limit — 다음 cron에서 재개");
   }
 }
 

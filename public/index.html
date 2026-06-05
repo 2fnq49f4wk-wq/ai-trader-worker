@@ -1458,12 +1458,20 @@ html[data-theme="light"] .sb-brand-sub{ color:#888; }
     </div>
     <div class="section-title" style="margin-top:12px;">VISION AI (Roboflow 차트 예측)</div>
     <div class="checkbox-row"><input type="checkbox" id="cfgVisionEnabled"><label for="cfgVisionEnabled"><b>Vision AI 활성화</b></label></div>
-    <div class="hint" style="margin-bottom:8px;">켜면 AI VISION 페이지에서 차트 이미지를 분석해 상승/하락을 예측합니다.</div>
+    <div class="hint" style="margin-bottom:8px;">백엔드가 차트를 자동 분석해 매수 신호 강화·차단·보유 포지션 조기 청산에 직접 활용합니다. 주말 스킵. 일일 예산 자동 분배.</div>
     <div class="field-row-2">
       <div class="field"><label>Roboflow API Key</label><input type="text" id="cfgRfApiKey" placeholder="API Key 입력" autocomplete="off"></div>
       <div class="field"><label>Model Version</label><input type="number" id="cfgRfVersion" value="7" min="1" max="99" step="1"></div>
     </div>
-    <div class="field"><label>Vision 신뢰도 최소 (이 이상만 BADGE 표시)</label><input type="number" id="cfgVisionConfMin" value="0.60" min="0.50" max="0.99" step="0.05"></div>
+    <div class="field-row-2">
+      <div class="field"><label>Vision 신뢰도 최소</label><input type="number" id="cfgVisionConfMin" value="0.60" min="0.50" max="0.99" step="0.05"></div>
+      <div class="field"><label>월 API 한도 (Roboflow 플랜)</label><input type="number" id="cfgVisionMonthlyBudget" value="10000" min="100" max="100000" step="100"></div>
+    </div>
+    <div class="hint" style="margin-bottom:4px;">
+      📊 <b>한도 자동 분배:</b> 월한도 ÷ 22일 = 일일예산 |
+      보유종목(3타임프레임·8h캐시) → 나머지(1타임프레임·순환) |
+      <span id="visionBudgetPreview" style="color:var(--pos);">계산 중...</span>
+    </div>
     <div class="section-divider"></div>
     <div class="section-title" style="margin-top:12px;">CLAUDE LLM HYBRID</div>
     <div class="checkbox-row"><input type="checkbox" id="cfgLlmEnabled"><label for="cfgLlmEnabled"><b>LLM 일일 지시 사용</b></label></div>
@@ -3493,6 +3501,8 @@ html[data-theme="light"] .sb-brand-sub{ color:#888; }
     if ($('cfgRfApiKey')) $('cfgRfApiKey').value = _va.rfApiKey || '';
     if ($('cfgRfVersion')) $('cfgRfVersion').value = _va.rfVersion || 7;
     if ($('cfgVisionConfMin')) $('cfgVisionConfMin').value = _va.confMin || 0.6;
+    if ($('cfgVisionMonthlyBudget')) $('cfgVisionMonthlyBudget').value = _va.monthlyBudget || 10000;
+    updateVisionBudgetPreview();
 
     // [V11] LLM Hybrid 토글 현재값
     var _llm = currentCfg.llmHybrid || {};
@@ -3662,6 +3672,27 @@ html[data-theme="light"] .sb-brand-sub{ color:#888; }
 
   function closeSettings() { $('settingsModal').classList.remove('show'); }
 
+  // Vision AI 월 예산 미리보기 계산
+  function updateVisionBudgetPreview() {
+    var el = $('visionBudgetPreview');
+    if (!el) return;
+    var budget = parseInt(($('cfgVisionMonthlyBudget') || {}).value || '10000', 10) || 10000;
+    var totalSymbols = (currentCfg && currentCfg.usTickers ? currentCfg.usTickers.length : 518)
+                     + (currentCfg && currentCfg.krTickers ? currentCfg.krTickers.length : 311);
+    var TRADING_DAYS = 22;
+    var dailyBudget  = Math.floor(budget / TRADING_DAYS);
+    var heldMax      = 16; // maxConcurrent × 2시장
+    var heldCalls    = heldMax * 3;          // 보유: 3타임프레임
+    var otherDaily   = Math.max(0, dailyBudget - heldCalls); // 나머지 예산
+    var otherSymbols = Math.max(1, totalSymbols - heldMax);
+    var cycleDays    = otherSymbols > otherDaily
+      ? Math.ceil(otherSymbols / Math.max(1, otherDaily)).toFixed(1)
+      : '1';
+    el.textContent = '일일 ' + dailyBudget + '콜 | 비보유 ' + Math.min(otherDaily, otherSymbols)
+      + '종목/일 | 전체순환 ' + cycleDays + '일';
+    el.style.color = budget < 1000 ? 'var(--amber)' : 'var(--pos)';
+  }
+
   function saveSettings() {
     function parseTickers(s) { return s.split(/[,\s]+/).map(function(x){return x.trim();}).filter(Boolean); }
     var body = {
@@ -3678,7 +3709,8 @@ html[data-theme="light"] .sb-brand-sub{ color:#888; }
         enabled: $('cfgVisionEnabled') ? $('cfgVisionEnabled').checked : false,
         rfApiKey: $('cfgRfApiKey') ? $('cfgRfApiKey').value.trim() : '',
         rfVersion: parseInt($('cfgRfVersion') ? $('cfgRfVersion').value : '7', 10) || 7,
-        confMin: parseFloat($('cfgVisionConfMin') ? $('cfgVisionConfMin').value : '0.6') || 0.6
+        confMin: parseFloat($('cfgVisionConfMin') ? $('cfgVisionConfMin').value : '0.6') || 0.6,
+        monthlyBudget: parseInt($('cfgVisionMonthlyBudget') ? $('cfgVisionMonthlyBudget').value : '10000', 10) || 10000
       },
       // [V11] LLM Hybrid — 기존 설정(model/maxTokens 등) 보존하고 enabled만 갱신
       llmHybrid: Object.assign({}, (currentCfg && currentCfg.llmHybrid) || {}, {
@@ -3905,6 +3937,9 @@ html[data-theme="light"] .sb-brand-sub{ color:#888; }
   });
   $('btnCancelSettings').addEventListener('click', closeSettings);
   $('btnSaveSettings').addEventListener('click', saveSettings);
+  // Vision 예산 미리보기 실시간 업데이트
+  var _vbEl = $('cfgVisionMonthlyBudget');
+  if (_vbEl) _vbEl.addEventListener('input', updateVisionBudgetPreview);
   $('btnReset').addEventListener('click', resetAll);
   $('btnAddCash').addEventListener('click', addCash);
   $('btnResetTickers').addEventListener('click', resetTickers);
