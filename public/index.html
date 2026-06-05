@@ -4314,7 +4314,7 @@ window.addEventListener('DOMContentLoaded', () => {
     var grid = $('visionGrid');
     if (!grid) return;
 
-    var keys = Object.keys(visionResults);
+    var keys = Object.keys(visionResults).filter(function(k){ return k.indexOf('__') !== 0; });
     if (keys.length === 0) {
       grid.innerHTML = '<div class="vision-empty"><b>AI VISION</b>이 아직 실행되지 않았습니다.<br>Settings에서 Roboflow API Key를 입력한 후<br><b>▶ 전체 스캔</b>을 눌러 차트 예측을 시작하세요.<br><br><span style="font-size:10px;color:var(--t3);">모델: ' + RF_PROJECT + ' · Roboflow Hosted Inference</span></div>';
       if ($('visionSummaryRow')) $('visionSummaryRow').style.display = 'none';
@@ -4437,7 +4437,7 @@ window.addEventListener('DOMContentLoaded', () => {
     var va = (currentCfg && currentCfg.visionAI) || {};
     if (!va.enabled || !va.rfApiKey) return;
     // 마지막 스캔이 30분 이내면 스킵
-    var keys = Object.keys(visionResults);
+    var keys = Object.keys(visionResults).filter(function(k){ return k.indexOf('__') !== 0; });
     if (keys.length > 0) {
       var maxTs = keys.reduce(function(m, k){ return Math.max(m, visionResults[k].ts || 0); }, 0);
       if (Date.now() - maxTs < 30 * 60 * 1000) return;

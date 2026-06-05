@@ -4810,19 +4810,25 @@ function evaluateAllStrategies(price, dayPct, dailyData, cfg, signalStats, regim
   const sig = evaluateTrendEntry(price, dayPct, dailyData, cfg, regime, market);
   if (!sig) return [];
 
-  // [Vision AI] 예측 결과를 실제 거래에 직접 반영
+  // [Vision AI] 예측 결과를 실제 거래에 직접 반영 (적중률 자기보정 포함)
   //   DOWN ≥70% → 매수 신호 완전 차단
-  //   UP  ≥65% → 신뢰도 비례 포지션 부스트 (65%→×1.10, 70%→×1.20, 80%→×1.35, 90%→×1.50)
+  //   UP  ≥65% → 신뢰도 비례 포지션 부스트 (65%→×1.10 ~ 90%→×1.50)
+  //   [성능 B] 롤링 적중률(precision)로 영향 강도 자동 스케일:
+  //     precision<50% → Vision 무력화(trust=0), 50~65% 선형, 65%+ 완전 적용
   if (visionPreds && dailyData && dailyData.symbol) {
     const vp = visionPreds[dailyData.symbol];
     const va = cfg.visionAI || {};
-    if (va.enabled && vp && vp.conf >= (va.confMin || 0.6)) {
-      if (vp.pred === "down" && vp.conf >= 0.70) {
-        return [];
+    const accObj = visionPreds.__accuracy;
+    const prec = (accObj && accObj.total >= 20) ? accObj.precision : null;
+    const trust = (prec == null) ? 1 : (prec < 0.5 ? 0 : Math.min(1, (prec - 0.45) / 0.2));
+    if (va.enabled && vp && vp.conf >= (va.confMin || 0.6) && trust > 0) {
+      if (vp.pred === "down" && vp.conf >= 0.70 && trust >= 0.5) {
+        return []; // 적중률이 믿을 만할 때만 차단
       } else if (vp.pred === "up" && vp.conf >= 0.65) {
-        const boost = vp.conf >= 0.90 ? 1.50 : vp.conf >= 0.80 ? 1.35 : vp.conf >= 0.70 ? 1.20 : 1.10;
+        const base = vp.conf >= 0.90 ? 1.50 : vp.conf >= 0.80 ? 1.35 : vp.conf >= 0.70 ? 1.20 : 1.10;
+        const boost = 1 + (base - 1) * trust; // 적중률에 비례
         sig.visionBoost = boost;
-        sig.visionNote = "VISION_UP " + Math.round(vp.conf * 100) + "% ×" + boost;
+        sig.visionNote = "VISION_UP " + Math.round(vp.conf * 100) + "% ×" + boost.toFixed(2) + (prec != null ? " p" + Math.round(prec * 100) : "");
       }
     }
   }
@@ -7328,13 +7334,17 @@ async function runTradingCycle(env) {
               await log(DB, "INFO", symbol, "BREAK-EVEN locked [" + stratName + "] at +" + beLockedPnl.toFixed(2) + "% stop=" + beLockedStop.toFixed(2));
             }
 
-            // [Vision AI] DOWN 고신뢰 보유 포지션 조기 청산
+            // [Vision AI] DOWN 고신뢰 보유 포지션 조기 청산 (적중률 게이팅)
             //   ≥90% → 즉시 전량 청산 (손익 무관)
             //   ≥80% → 이익 중이면 즉시 이익 실현 (손실 중이면 기존 손절 로직에 맡김)
+            //   [성능 B] 적중률 50% 미만이면 조기 청산 안 함 (오신호로 인한 손절 방지)
             {
               const _vp = visionPreds && visionPreds[symbol];
               const _va = mcfg.visionAI || {};
-              if (_va.enabled && _vp && _vp.pred === "down") {
+              const _acc = visionPreds && visionPreds.__accuracy;
+              const _prec = (_acc && _acc.total >= 20) ? _acc.precision : null;
+              const _trusted = (_prec == null) || (_prec >= 0.5);
+              if (_trusted && _va.enabled && _vp && _vp.pred === "down") {
                 const _vc = _vp.conf;
                 const _pnl = held.avg > 0 ? ((price - held.avg) / held.avg) * 100 : 0;
                 if (_vc >= 0.90) {
@@ -8595,14 +8605,16 @@ function drawChartPixels(closes, width, height) {
     buf[i] = r; buf[i + 1] = g; buf[i + 2] = b;
   }
 
-  function drawLine(x0, y0, x1, y1, r, g, b) {
+  // thick: 선 두께(세로 오프셋). 가격선은 굵게 → 모델 인식률↑
+  function drawLine(x0, y0, x1, y1, r, g, b, thick) {
     x0 = Math.round(x0); y0 = Math.round(y0);
     x1 = Math.round(x1); y1 = Math.round(y1);
     const dx = Math.abs(x1 - x0), dy = Math.abs(y1 - y0);
     const sx = x0 < x1 ? 1 : -1, sy = y0 < y1 ? 1 : -1;
     let err = dx - dy;
+    const t = thick ? Math.floor(thick / 2) : 0;
     for (let steps = 0; steps < 1000; steps++) {
-      setPixel(x0, y0, r, g, b);
+      for (let o = -t; o <= t; o++) setPixel(x0, y0 + o, r, g, b);
       if (x0 === x1 && y0 === y1) break;
       const e2 = 2 * err;
       if (e2 > -dy) { err -= dy; x0 += sx; }
@@ -8622,9 +8634,9 @@ function drawChartPixels(closes, width, height) {
   const isUp = data[data.length - 1] >= data[0];
   const [lr, lg, lb] = isUp ? [0, 230, 118] : [255, 23, 68];
 
-  // 가격선
+  // 가격선 (3px 굵기 — 모델 입력 선명도 향상)
   for (let i = 1; i < data.length; i++) {
-    drawLine(px(i - 1), py(data[i - 1]), px(i), py(data[i]), lr, lg, lb);
+    drawLine(px(i - 1), py(data[i - 1]), px(i), py(data[i]), lr, lg, lb, 3);
   }
 
   // MA20 (황색)
@@ -8635,7 +8647,7 @@ function drawChartPixels(closes, width, height) {
       for (let j = i - 19; j <= i; j++) sum += data[j];
       const ma = sum / 20;
       const mx = px(i), my = py(ma);
-      if (prevMx !== null) drawLine(prevMx, prevMy, mx, my, 255, 193, 7);
+      if (prevMx !== null) drawLine(prevMx, prevMy, mx, my, 255, 193, 7, 2);
       prevMx = mx; prevMy = my;
     }
   }
@@ -8687,23 +8699,25 @@ function uint8ToBase64(bytes) {
 //
 //  [설계 원칙]
 //   1) 거래를 절대 막지 않는다
-//       · 3분에 1번만 실행(분%3===0) → cron 2/3는 순수 거래만, subrequest 충돌 회피
-//       · cron당 최대 4 API 호출(subrequest 소량) → 거래 사이클(fetch budget) 침범 안 함
-//       · 전체 try/catch 격리 → Vision 실패해도 거래에 영향 0
-//       · 거래 사이클(scheduled 2번)이 끝난 뒤에만 호출(아래 export default 참고)
+//       · 3분에 1번만 실행 → cron 2/3는 순수 거래, subrequest 충돌 회피
+//       · cron당 최대 6 API 호출 → 거래 fetch budget 침범 안 함
+//       · 전체 try/catch 격리 → Vision 실패해도 거래 영향 0
 //
 //   2) 거래 발생 시 콜 폭증 방지
-//       · 보유 종목도 단일 60일 TF (청산용 DOWN 감지엔 충분) → 매수해도 종목당 1콜
-//       · 매수 직후 GRACE(12h)는 재스캔 스킵 — 방금 UP신호로 샀으니 곧 DOWN 안 뜸
+//       · 예산 cap으로 보유 0~16개 무관 월 콜수 일정
+//       · 매수 직후 GRACE(12h)는 재스캔 스킵
 //
-//   3) Roboflow 무료 Public 플랜(월 10,000콜) 한도 엄수
-//       · 일일예산 = 월한도 ÷ 22일 × 0.85(안전마진 15%)
-//       · 보유 종목 예산 먼저 확보 → 남는 예산으로 비보유 순환
-//       · 일일 사용량 DB 추적, 초과 시 당일 중단 / 주말(UTC 토·일) 완전 스킵
-//       · 429 응답 → 즉시 중단, 다음 가능 cron에서 재개
+//   3) Roboflow 무료 Public(월 10,000콜) 한도 엄수
+//       · 일일예산 = 월한도 ÷ 22 × 0.85, 일일 사용량 DB 추적, 주말 스킵, 429 즉시 중단
 //
-//  [정밀도 보강] 비보유는 1TF 1차 스크리닝이지만, UP 강신호 종목은 매수되어
-//   보유로 승격되면 자동으로 더 자주(6h) 재검증된다. 청산 신뢰도는 그대로 유지.
+//  [성능 강화]
+//   A) 거래 후보 우선 — 추세 정렬(MA20>MA50>MA200) 종목 = 실제 매수 후보.
+//      이들을 최우선 + 3TF(20/40/60) 앙상블로 정밀 예측. 비추세는 trend 전략이
+//      어차피 거르므로 1TF 저빈도. → 예산을 "거래에 실제 쓰이는 종목"에 집중.
+//   B) 적중률 자기보정 — 예측 시점 종가를 기록, 재스캔 때 실제 등락과 대조해
+//      롤링 적중률(precision)을 누적. evaluateAllStrategies가 이 값을 읽어
+//      적중률 낮으면 Vision 영향을 자동 축소(50% 미만이면 무력화).
+//   C) 입력 품질 — 차트 가격선 3px·MA 2px 굵기로 모델 인식률↑ (EMA 평활 병행)
 //
 // ────────────────────────────────────────────────────────────────────────────
 async function runVisionScanBackend(env) {
@@ -8712,9 +8726,9 @@ async function runVisionScanBackend(env) {
   const nowD = new Date(now);
 
   // ── (1) 거래 보호: 주말 스킵 + 3분에 1번만 ──
-  const utcDay = nowD.getUTCDay();          // 0=일, 6=토
+  const utcDay = nowD.getUTCDay();
   if (utcDay === 0 || utcDay === 6) return;
-  if (nowD.getUTCMinutes() % 3 !== 0) return; // 거래 cron 2/3는 방해하지 않음
+  if (nowD.getUTCMinutes() % 3 !== 0) return;
 
   const cfg = migrateCfgToMarkets(Object.assign({}, DEFAULT_CFG, await getState(DB, "cfg", {})));
   const va = cfg.visionAI || {};
@@ -8724,70 +8738,107 @@ async function runVisionScanBackend(env) {
   const version = va.rfVersion || 7;
   const RF_PROJECT = "stock-updown-classifier";
 
-  // ── 예산 설정 (무료 Public = 월 10,000콜) ──
+  // ── 예산 설정 ──
   const MONTHLY_BUDGET = va.monthlyBudget || 10000;
-  const TRADING_DAYS   = 22;
-  const SAFETY         = 0.85;  // 안전마진 15% (한도 직전 여유)
-  const DAILY_BUDGET   = Math.floor(MONTHLY_BUDGET / TRADING_DAYS * SAFETY);
-  const MAX_PER_CRON   = 4;     // cron당 최대 콜 (subrequest 소량 → 거래 안전)
-  const DELAY_MS       = 300;   // 요청 간격 (초당 ~3콜)
-  const GRACE_MS       = 12 * 3600000; // 매수 직후 12h 재스캔 유예
+  const SAFETY         = 0.85;
+  const DAILY_BUDGET   = Math.floor(MONTHLY_BUDGET / 22 * SAFETY);
+  const MAX_CALLS_CRON = 6;     // cron당 최대 콜 (3TF면 2종목, 1TF면 6종목)
+  const DELAY_MS       = 300;
+  const GRACE_MS       = 12 * 3600000;
 
-  // ── 일일 사용량 추적 (날짜 바뀌면 자동 리셋) ──
   const todayKey = "vision_usage:" + nowD.toISOString().slice(0, 10);
   const todayUsage = (await getState(DB, todayKey, 0)) || 0;
-  if (todayUsage >= DAILY_BUDGET) return; // 오늘 예산 소진
+  if (todayUsage >= DAILY_BUDGET) return;
 
-  // ── 보유 종목 + 매수시각 조회 (grace 판정용) ──
-  const heldOpened = {}; // symbol -> opened_ts
+  // ── 보유 종목 + 매수시각 ──
+  const heldOpened = {};
   try {
     const rows = await DB.prepare("SELECT symbol, opened_ts FROM positions").all();
     for (const r of (rows.results || [])) {
-      // 같은 종목 여러 전략이면 가장 최근 매수시각 사용
       heldOpened[r.symbol] = Math.max(heldOpened[r.symbol] || 0, r.opened_ts || 0);
     }
   } catch (e) {}
   const isHeld = sym => Object.prototype.hasOwnProperty.call(heldOpened, sym);
-
-  const SINGLE_TF = 60;            // 단일 타임프레임 (보유·비보유 공통)
-  const HELD_AGE  = 6  * 3600000;  // 보유: 6시간마다 재스캔 (청산 모니터링)
   const heldCount = Object.keys(heldOpened).length;
 
+  // ── [성능 A] 추세 정렬 판정 — 거래 후보 식별 ──
+  //   MA20 > MA50 > MA200 정렬 = trend 전략의 매수 후보. 이들에 예산 집중.
+  function isTrendCandidate(daily) {
+    if (!daily || !daily.closes || daily.closes.length < 50) return false;
+    const c = daily.closes;
+    const ma20 = getMA(c, 20), ma50 = getMA(c, 50);
+    if (ma20 == null || ma50 == null) return false;
+    const ma200 = c.length >= 200 ? getMA(c, 200) : null;
+    return ma200 != null ? (ma20 > ma50 && ma50 > ma200) : (ma20 > ma50);
+  }
+
+  const HELD_AGE   = 6  * 3600000;  // 보유: 6h
+  const CAND_AGE   = 12 * 3600000;  // 추세후보: 12h (3TF라 콜 많음)
+  const FLAT_AGE   = 72 * 3600000;  // 비추세: 72h (거래 안 쓰니 저빈도)
+
   const allSymbols = [...(cfg.usTickers || []), ...(cfg.krTickers || [])];
-  const otherCount = Math.max(1, allSymbols.length - heldCount);
-
-  // 비보유 순환 주기: 남는 일일예산으로 전체를 며칠에 한 바퀴 돌지 자동 계산
-  const dailyForOthers = Math.max(1, DAILY_BUDGET - heldCount); // 보유 몫 제외
-  const OTHER_AGE = Math.max(24, Math.ceil(otherCount / dailyForOthers) * 24) * 3600000;
-
   const existing = await getState(DB, "vision_predictions", {});
 
-  // ── 우선순위 큐 ──
-  //   보유(grace 지난 것) 먼저 → 그 다음 가장 오래된 비보유
-  const toScan = allSymbols
-    .filter(sym => {
-      const p = existing[sym];
-      const age = p ? now - (p.ts || 0) : Infinity;
-      if (isHeld(sym)) {
-        // 매수 직후 grace 기간이면 스킵 (폭증 방지)
-        if (now - heldOpened[sym] < GRACE_MS) return false;
-        return age > HELD_AGE;
+  // daily 캐시(우선순위 판정에 재사용 → 추가 쿼리 없음)
+  const dailyCache = {};
+  async function getDaily(sym) {
+    if (dailyCache[sym] !== undefined) return dailyCache[sym];
+    const d = await getState(DB, "daily:" + sym.toUpperCase(), null);
+    dailyCache[sym] = d;
+    return d;
+  }
+
+  // ── 우선순위 큐 구성 (보유 → 추세후보 → 비추세, 각 그룹 내 오래된 순) ──
+  //   판정에 daily가 필요하나 829개 전부 읽으면 느림 → 후보군만 단계적 평가.
+  //   1차: age 필터(메타만) → 2차: 통과분만 daily 읽어 추세 판정.
+  const aged = allSymbols.filter(sym => {
+    const p = existing[sym];
+    const age = p ? now - (p.ts || 0) : Infinity;
+    if (isHeld(sym)) {
+      if (now - heldOpened[sym] < GRACE_MS) return false;
+      return age > HELD_AGE;
+    }
+    // 비보유는 일단 가장 짧은 후보 주기 기준으로 통과시키고 2차에서 세분
+    return age > CAND_AGE;
+  });
+  if (aged.length === 0) return;
+
+  // aged 정렬: 보유 먼저 → 오래된 순 (제한된 평가 횟수 안에서 중요 종목 우선)
+  aged.sort((a, b) => {
+    const aH = isHeld(a) ? 0 : 1, bH = isHeld(b) ? 0 : 1;
+    if (aH !== bH) return aH - bH;
+    const aAge = existing[a] ? now - (existing[a].ts || 0) : Infinity;
+    const bAge = existing[b] ? now - (existing[b].ts || 0) : Infinity;
+    return bAge - aAge;
+  });
+
+  // 2차: 그룹/우선순위 계산 (daily 읽기를 MAX_EVAL로 제한 → D1 부하 제어)
+  const scored = [];
+  let evalCount = 0;
+  const MAX_EVAL = 80;
+  for (const sym of aged) {
+    if (scored.length >= 40) break;
+    if (evalCount >= MAX_EVAL) break;
+    const p = existing[sym];
+    const age = p ? now - (p.ts || 0) : Infinity;
+    let group, tf;
+    if (isHeld(sym)) { group = 0; tf = [20, 40, 60]; }       // 보유: 청산 정밀
+    else {
+      const d = await getDaily(sym); evalCount++;
+      if (isTrendCandidate(d)) { group = 1; tf = [20, 40, 60]; } // 거래 후보: 정밀
+      else {
+        if (age <= FLAT_AGE) continue;                        // 비추세: 저빈도
+        group = 2; tf = [60];
       }
-      return age > OTHER_AGE;
-    })
-    .sort((a, b) => {
-      const aH = isHeld(a) ? 0 : 1, bH = isHeld(b) ? 0 : 1;
-      if (aH !== bH) return aH - bH; // 보유 우선
-      const aAge = existing[a] ? now - (existing[a].ts || 0) : Infinity;
-      const bAge = existing[b] ? now - (existing[b].ts || 0) : Infinity;
-      return bAge - aAge; // 오래된 것 먼저
-    });
+    }
+    scored.push({ sym, group, tf, age });
+  }
+  if (scored.length === 0) return;
+  scored.sort((a, b) => a.group - b.group || b.age - a.age);
 
-  if (toScan.length === 0) return;
-
-  // ── Roboflow 단일 예측 호출 ──
-  async function rfCall(closes) {
-    const pixels = drawChartPixels(closes.slice(-SINGLE_TF), 224, 224);
+  // ── Roboflow 호출 ──
+  async function rfCall(closes, win) {
+    const pixels = drawChartPixels(closes.slice(-win), 224, 224);
     const bmp    = pixelsToBMP(pixels, 224, 224);
     const b64    = uint8ToBase64(bmp);
     const resp   = await fetch(
@@ -8800,51 +8851,90 @@ async function runVisionScanBackend(env) {
     const p = d.predictions || {};
     const upC   = (p["up"]   && p["up"].confidence)   || 0;
     const downC = (p["down"] && p["down"].confidence) || 0;
-    return { pred: upC >= downC ? "up" : "down", upConf: upC, downConf: downC, conf: Math.max(upC, downC) };
+    return { pred: upC >= downC ? "up" : "down", upConf: upC, downConf: downC };
   }
 
-  const batch   = toScan.slice(0, MAX_PER_CRON);
   const results = Object.assign({}, existing);
-  let scanned = 0, callsUsed = 0;
-  let rateLimited = false;
+  let scanned = 0, callsUsed = 0, rateLimited = false;
 
-  for (const symbol of batch) {
+  // ── [성능 B] 적중률 통계 로드 ──
+  const acc = (await getState(DB, "vision_accuracy", null)) || { hits: 0, total: 0 };
+
+  for (const item of scored) {
     if (rateLimited) break;
     if (todayUsage + callsUsed >= DAILY_BUDGET) break;
+    if (callsUsed >= MAX_CALLS_CRON) break;
     try {
-      const daily = await getState(DB, "daily:" + symbol.toUpperCase(), null);
+      const daily = await getDaily(item.sym);
       if (!daily || !daily.closes || daily.closes.length < 20) continue;
+      const lastClose = daily.closes[daily.closes.length - 1];
 
-      await new Promise(r => setTimeout(r, DELAY_MS));
-      const r = await rfCall(daily.closes);
-      callsUsed++;
-      if (!r) continue;
-      if (r.rateLimited) { rateLimited = true; break; }
-
-      // [EMA 평활] 기존 예측과 지수가중 혼합 → 단발 노이즈 완화 (정밀도 보강)
-      const prev = existing[symbol];
-      let conf = r.conf;
-      if (prev && prev.pred === r.pred && typeof prev.conf === "number") {
-        conf = Math.min(0.99, prev.conf * 0.4 + r.conf * 0.6); // 같은 방향이면 신뢰 보강
+      // [성능 B] 직전 예측 적중 검증 (재스캔 시점에 실제 등락과 대조)
+      const prev = existing[item.sym];
+      if (prev && typeof prev.predClose === "number" && prev.predClose > 0) {
+        const moved = lastClose - prev.predClose;
+        if (Math.abs(moved / prev.predClose) > 0.001) { // 0.1% 이상 움직였을 때만 채점
+          const hit = (prev.pred === "up" && moved > 0) || (prev.pred === "down" && moved < 0);
+          acc.total += 1;
+          if (hit) acc.hits += 1;
+          // 롤링 윈도우: 표본 과다 시 감쇠(최근 가중)
+          if (acc.total > 500) { acc.hits *= 0.9; acc.total *= 0.9; }
+        }
       }
 
-      results[symbol] = {
-        pred: r.pred, conf: conf,
-        upConf: r.upConf, downConf: r.downConf,
-        tier: isHeld(symbol) ? 1 : 2,
+      // 멀티프레임 앙상블 호출
+      const frames = [];
+      for (const win of item.tf) {
+        if (todayUsage + callsUsed >= DAILY_BUDGET) break;
+        if (callsUsed >= MAX_CALLS_CRON) break;
+        if (daily.closes.length < win) continue;
+        await new Promise(r => setTimeout(r, DELAY_MS));
+        const r = await rfCall(daily.closes, win);
+        callsUsed++;
+        if (!r) continue;
+        if (r.rateLimited) { rateLimited = true; break; }
+        frames.push(r);
+      }
+      if (frames.length === 0) continue;
+
+      const upVotes   = frames.filter(f => f.pred === "up").length;
+      const finalPred = upVotes >= frames.length - upVotes ? "up" : "down";
+      const matched   = frames.filter(f => f.pred === finalPred);
+      let conf = matched.reduce((s, f) => s + Math.max(f.upConf, f.downConf), 0) / matched.length;
+      if (matched.length === item.tf.length && item.tf.length > 1) conf = Math.min(0.99, conf + 0.05); // 만장일치 보너스
+
+      // [EMA 평활] 같은 방향 직전 예측과 혼합
+      if (prev && prev.pred === finalPred && typeof prev.conf === "number") {
+        conf = Math.min(0.99, prev.conf * 0.4 + conf * 0.6);
+      }
+
+      results[item.sym] = {
+        pred: finalPred, conf: conf,
+        upConf:   frames.reduce((s, f) => s + f.upConf,   0) / frames.length,
+        downConf: frames.reduce((s, f) => s + f.downConf, 0) / frames.length,
+        votes: { up: upVotes, down: frames.length - upVotes, total: frames.length },
+        tier: item.group === 0 ? 1 : 2,
+        predClose: lastClose,   // [성능 B] 다음 채점용
         ts: now
       };
       scanned++;
     } catch (e) { continue; }
   }
 
-  // ── 사용량/결과 저장 ──
+  // ── 저장 ──
   if (callsUsed > 0) {
+    // [성능 B] 적중률 메타를 예측 객체에 동봉 → 거래 사이클이 함께 로드
+    results.__accuracy = {
+      hits: acc.hits, total: acc.total,
+      precision: acc.total > 0 ? acc.hits / acc.total : null
+    };
+    await setState(DB, "vision_accuracy", { hits: acc.hits, total: acc.total });
     await setState(DB, todayKey, todayUsage + callsUsed);
     await setState(DB, "vision_predictions", results);
     const pct = Math.round((todayUsage + callsUsed) / DAILY_BUDGET * 100);
+    const precStr = acc.total > 20 ? ` | 적중률 ${Math.round(acc.hits / acc.total * 100)}%(n=${Math.round(acc.total)})` : "";
     await log(DB, "INFO", null,
-      `[VISION] ${scanned}종목 (${callsUsed}콜) | 일일 ${todayUsage + callsUsed}/${DAILY_BUDGET} (${pct}%) | 큐 ${toScan.length - scanned}종목 | 보유 ${heldCount}`
+      `[VISION] ${scanned}종목 (${callsUsed}콜) | 일일 ${todayUsage + callsUsed}/${DAILY_BUDGET} (${pct}%) | 보유 ${heldCount}${precStr}`
     );
   }
   if (rateLimited) {
