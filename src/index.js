@@ -2280,10 +2280,10 @@ const DEFAULT_CFG = {
   trendRules: {
     maShort: 20, maMid: 50, maLong: 200,   // 추세 정렬 기준 이동평균
     breakoutDays: 20,                       // 신고가 돌파 기준일
-    volMult: 1.5,                           // 돌파 시 거래량 배수
-    rsiPullbackMin: 40, rsiPullbackMax: 65, // 풀백 진입 RSI 밴드
-    rsiBreakoutMax: 72,                     // 돌파 진입 RSI 상한(과열 회피)
-    pullbackBandPct: 3,                     // MA20 ±N% 이내 풀백
+    volMult: 1.35,                          // [완화] 1.5→1.35 돌파 거래량 배수 (진입·데이터 축적↑)
+    rsiPullbackMin: 37, rsiPullbackMax: 68, // [완화] 40~65→37~68 풀백 RSI 밴드 확대
+    rsiBreakoutMax: 75,                     // [완화] 72→75 돌파 RSI 상한
+    pullbackBandPct: 4,                     // [완화] 3→4 MA20 ±N% 풀백 밴드 확대
     maxAtrPct: 6,                           // ATR%가 이보다 크면 진입 금지(슬리피지 회피)
     atrStopMult: 2.0,                       // 손절 = entry − N×ATR (executeBuy가 참조)
     stopLossPct: 5.0,                       // ATR 손절과 비교해 더 타이트한 쪽 채택 (executeBuy가 참조)
@@ -2649,6 +2649,16 @@ function migrateCfgToMarkets(cfg) {
     for (const k in DEFAULT_CFG.trendRules) {
       if (cfg.trendRules[k] === undefined) cfg.trendRules[k] = DEFAULT_CFG.trendRules[k];
     }
+  }
+  // [거래확대] 옛 좁은 기본값(사용자가 안 건드린 값)만 새 완화 기본값으로 갱신.
+  //   정확히 옛 기본값일 때만 → 사용자 커스텀 설정은 보존. idempotent(이미 완화값이면 무변경).
+  if (cfg.trendRules && typeof cfg.trendRules === "object") {
+    const _tr = cfg.trendRules;
+    if (_tr.pullbackBandPct === 3)  _tr.pullbackBandPct = 4;
+    if (_tr.rsiPullbackMin === 40)  _tr.rsiPullbackMin = 37;
+    if (_tr.rsiPullbackMax === 65)  _tr.rsiPullbackMax = 68;
+    if (_tr.volMult === 1.5)        _tr.volMult = 1.35;
+    if (_tr.rsiBreakoutMax === 72)  _tr.rsiBreakoutMax = 75;
   }
   if (!cfg.trendSizing || typeof cfg.trendSizing !== "object") {
     cfg.trendSizing = JSON.parse(JSON.stringify(DEFAULT_CFG.trendSizing));
@@ -4800,23 +4810,31 @@ function evaluateTrendEntry(price, dayPct, dailyData, cfg, regime, market) {
   const yesterday = closes[closes.length - 2];
   const isGreen = today > yesterday;
 
+  // [ETF 완화] 시장 ETF는 변동성이 낮아 일반 기준(밴드·RSI·거래량)에 자주 미달 →
+  //   추세정렬된 ETF는 더 넓은 밴드/RSI, 거래량 사실상 면제로 진입 기회 확보.
+  const isEtf = dailyData.symbol && ETF_SYMBOLS.has(dailyData.symbol);
+
   // 트리거 A: 추세 풀백 반등 — MA20 ±N% 이내 + 당일 상승 + RSI 밴드
   const ma20Gap = ((price - ma20) / ma20) * 100;
-  if (Math.abs(ma20Gap) <= (r.pullbackBandPct || 3) && isGreen
-      && rsi >= (r.rsiPullbackMin || 40) && rsi <= (r.rsiPullbackMax || 65)) {
+  const pbBand   = isEtf ? 5  : (r.pullbackBandPct || 4);
+  const pbRsiMin = isEtf ? 30 : (r.rsiPullbackMin || 37);
+  const pbRsiMax = isEtf ? 72 : (r.rsiPullbackMax || 68);
+  if (Math.abs(ma20Gap) <= pbBand && isGreen && rsi >= pbRsiMin && rsi <= pbRsiMax) {
     return { name: "TR_PULLBACK", weight: 1.0, type: "TREND", confidence: confidence,
-      detail: "MA20 " + ma20Gap.toFixed(1) + "% RSI " + rsi.toFixed(0) + (atrPct != null ? " ATR" + atrPct.toFixed(1) + "%" : "") + confStr,
+      detail: "MA20 " + ma20Gap.toFixed(1) + "% RSI " + rsi.toFixed(0) + (atrPct != null ? " ATR" + atrPct.toFixed(1) + "%" : "") + confStr + (isEtf ? " ETF" : ""),
       members: ["TR_PULLBACK"] };
   }
 
   // 트리거 B: 신고가 돌파 + 거래량 — 과열(RSI 상한) 아닐 때만
+  const boRsiMax = isEtf ? 78 : (r.rsiBreakoutMax || 75);
   const hiN = getNDayHigh(closes, r.breakoutDays || 20);  // 현재봉 직전 N일 신고가
-  if (hiN != null && price > hiN && rsi <= (r.rsiBreakoutMax || 72) && volumes.length >= 21) {
+  if (hiN != null && price > hiN && rsi <= boRsiMax && volumes.length >= 21) {
     const todayVol = volumes[volumes.length - 1];
     let avgVol = 0;
     for (let i = volumes.length - 21; i < volumes.length - 1; i++) avgVol += volumes[i];
     avgVol /= 20;
-    if (avgVol > 0 && todayVol >= avgVol * (r.volMult || 1.5)) {
+    const volReq = isEtf ? 1.05 : (r.volMult || 1.35);
+    if (avgVol > 0 && todayVol >= avgVol * volReq) {
       // 돌파는 거래량·신고가 확인이 더해진 강신호 → confidence 소폭 가산(상한 1.0)
       const boConf = Math.min(1.0, confidence + 0.15);
       return { name: "TR_BREAKOUT", weight: 1.1, type: "TREND", confidence: boConf,
@@ -4918,8 +4936,11 @@ function evaluateBuyBlocks(price, dayPct, dailyData, cfg, regime, signal, ctx) {
   }
 
   // RS 필터 — COUNTER 성격 전략(DAY/MEANREV)과 isCounterTrend 신호는 면제
+  // [ETF 면제] 시장 ETF(SPY/QQQ 등)는 지수 자체라 "지수 대비 아웃퍼폼"이 구조적으로
+  //   불가능 → RS 필터에 항상 걸려 매수가 막혔음. ETF는 RS 필터에서 제외.
+  const _isEtfRS = ctx && ctx.symbol && ETF_SYMBOLS.has(ctx.symbol);
   if (cfg.rsFilterEnabled && strategy !== "day" && strategy !== "meanrev"
-      && !signal.isCounterTrend && regime.idxReturn20 != null) {
+      && !signal.isCounterTrend && !_isEtfRS && regime.idxReturn20 != null) {
     const stockRet = getNDayReturn(closes, cfg.rsLookbackDays);
     if (stockRet != null) {
       const relPerf = stockRet - regime.idxReturn20;
