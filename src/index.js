@@ -2270,6 +2270,14 @@ const DEFAULT_CFG = {
     enabled: true,
     cautionScale: 0.5   // material 공시 직후 진입 사이즈 배수 (0.5 = 절반)
   },
+  // === [Vision AI] Roboflow 차트예측 — 백엔드/거래 기본값 (프론트도 동일 키 저장) ===
+  visionAI: {
+    enabled: true,
+    rfApiKey: "WLMMRNV8GDpmbjEcrFar",
+    rfVersion: 7,
+    confMin: 0.6,
+    monthlyBudget: 10000   // 무료 Public 플랜 월 한도
+  },
   // === [V8.5] 사이클 락 자동 갱신 ===
   cycleLockRefreshAt: 0.5,   // TTL의 50% 경과 시 갱신
   // === [재작성] 단일 추세추종 전략 ===
@@ -2686,6 +2694,22 @@ function migrateCfgToMarkets(cfg) {
   }
   // [거래확대] 옛 KR 동시보유 기본값(6)만 새 값으로 갱신 (커스텀 보존)
   if (cfg.trendSizingKR && cfg.trendSizingKR.maxConcurrent === 6) cfg.trendSizingKR.maxConcurrent = 9;
+
+  // [Vision/SEC 보강] 부분 저장된 경우 누락 키를 DEFAULT로 채움 (얕은병합 한계 보완)
+  if (!cfg.visionAI || typeof cfg.visionAI !== "object") {
+    cfg.visionAI = JSON.parse(JSON.stringify(DEFAULT_CFG.visionAI));
+  } else {
+    for (const k in DEFAULT_CFG.visionAI) {
+      if (cfg.visionAI[k] === undefined) cfg.visionAI[k] = DEFAULT_CFG.visionAI[k];
+    }
+  }
+  if (!cfg.secFilings || typeof cfg.secFilings !== "object") {
+    cfg.secFilings = JSON.parse(JSON.stringify(DEFAULT_CFG.secFilings));
+  } else {
+    for (const k in DEFAULT_CFG.secFilings) {
+      if (cfg.secFilings[k] === undefined) cfg.secFilings[k] = DEFAULT_CFG.secFilings[k];
+    }
+  }
 
   // [V10] 종목 유니버스는 코드(DEFAULT_US/KR)로 관리한다.
   //   기존 D1에 저장된 옛 20종목 리스트가 얕은 병합으로 살아남아 신규 종목이
