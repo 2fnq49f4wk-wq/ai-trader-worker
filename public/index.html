@@ -3386,8 +3386,8 @@ html[data-theme="light"] .sb-brand-sub{ color:#888; }
         lastQuotes = {};
         quotes.forEach(function(q){ lastQuotes[q.symbol] = q; });
         window.__lastQuotesArr = quotes;
-        // ── Vision AI 자동 스캔 (데이터 로드 후 5초 뒤) ──
-        setTimeout(function(){ if (window._visionAutoScan) window._visionAutoScan(); }, 5000);
+        // ── Vision AI: 백엔드 예측을 표시용으로 머지 (프론트 직접 스캔 안 함) ──
+        if (state.visionPredictions && window._visionApplyBackend) window._visionApplyBackend(state.visionPredictions);
         // [V8] positions는 array — 하위호환으로 object도 허용
         var posUS = (state.positions && state.positions.us) || [];
         var posKR = (state.positions && state.positions.kr) || [];
@@ -4263,50 +4263,37 @@ window.addEventListener('DOMContentLoaded', () => {
     } catch(e) {}
   }
 
-  // 전체 스캔
+  // [한도 보호] 전체 스캔 = 백엔드 예측 새로고침
+  //   프론트는 더 이상 Roboflow를 직접 호출하지 않는다. 백엔드(beta v1.js)가
+  //   일일예산 추적 하에 전담 스캔하므로, 프론트가 별도로 호출하면 같은 Roboflow
+  //   한도를 이중 소모해 터질 수 있다. 따라서 버튼은 백엔드 결과를 불러와 표시만 한다.
   async function runVisionScanAll() {
     if (visionScanning) return;
-    var va = (currentCfg && currentCfg.visionAI) || {};
-    var apiKey = va.rfApiKey || '';
-    if (!apiKey) {
-      showToast('Settings에서 Roboflow API Key를 먼저 입력하세요');
-      showPage('settings');
-      return;
-    }
-
     visionScanning = true;
-    var allSymbols = [];
-    if (window.__lastQuotesArr) {
-      window.__lastQuotesArr.forEach(function(q) { allSymbols.push(q.symbol); });
-    }
-    if (allSymbols.length === 0) { visionScanning = false; return; }
-
-    var done = 0;
     var prog = $('visionScanProgress');
     var stat = $('visionScanStatus');
-    if (stat) stat.textContent = '스캔 중...';
-
-    for (var i = 0; i < allSymbols.length; i++) {
-      var sym = allSymbols[i];
-      if (prog) prog.textContent = sym + '  ' + (done + 1) + ' / ' + allSymbols.length;
-      await visionScanOne(sym);
-      done++;
-      renderVisionPage();
-    }
-
-    visionScanning = false;
     if (prog) prog.textContent = '';
-    if (stat) stat.textContent = '완료 · ' + done + '개 스캔';
-    renderVisionPage();
-
-    // ── 스캔 결과를 백엔드에 저장 → 트레이딩 사이클에서 직접 활용 ──
+    if (stat) stat.textContent = '백엔드 예측 불러오는 중...';
     try {
-      fetch('/api/vision', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(visionResults)
-      });
-    } catch(e) {}
+      var r = await fetch('/api/state');
+      var s = await r.json();
+      if (s && s.visionPredictions) {
+        Object.keys(s.visionPredictions).forEach(function(k){
+          if (k.indexOf('__') === 0) return;          // __accuracy 등 메타 제외
+          visionResults[k] = s.visionPredictions[k];
+        });
+        try { localStorage.setItem('visionResults', JSON.stringify(visionResults)); } catch(e) {}
+      }
+      var cnt = Object.keys(visionResults).filter(function(k){ return k.indexOf('__') !== 0; }).length;
+      var acc = s && s.visionPredictions && s.visionPredictions.__accuracy;
+      var accStr = (acc && acc.total >= 20) ? ' · 적중률 ' + Math.round(acc.precision * 100) + '%' : '';
+      if (stat) stat.textContent = '백엔드 예측 ' + cnt + '종목 반영' + accStr;
+    } catch(e) {
+      if (stat) stat.textContent = '불러오기 실패';
+    }
+    visionScanning = false;
+    renderVisionPage();
+    applyVisionBadges();
   }
 
   // Vision 페이지 렌더링
@@ -4432,21 +4419,19 @@ window.addEventListener('DOMContentLoaded', () => {
   // 초기 렌더 (이미 결과 있을 경우)
   if (Object.keys(visionResults).length > 0) renderVisionPage();
 
-  // ── Vision AI 자동화: 외부에서 호출 가능하게 노출 ──
-  window._visionAutoScan = function() {
-    var va = (currentCfg && currentCfg.visionAI) || {};
-    if (!va.enabled || !va.rfApiKey) return;
-    // 마지막 스캔이 30분 이내면 스킵
-    var keys = Object.keys(visionResults).filter(function(k){ return k.indexOf('__') !== 0; });
-    if (keys.length > 0) {
-      var maxTs = keys.reduce(function(m, k){ return Math.max(m, visionResults[k].ts || 0); }, 0);
-      if (Date.now() - maxTs < 30 * 60 * 1000) return;
-    }
-    runVisionScanAll();
+  // ── Vision AI: 백엔드 예측을 표시용으로 머지 (프론트는 Roboflow 직접 호출 안 함) ──
+  //   [한도 보호] 스캔은 백엔드 cron이 일일예산 추적 하에 전담. 프론트는 결과만 반영.
+  window._visionApplyBackend = function(preds) {
+    if (!preds) return;
+    Object.keys(preds).forEach(function(k){
+      if (k.indexOf('__') === 0) return;            // __accuracy 등 메타 제외
+      visionResults[k] = preds[k];
+    });
+    try { localStorage.setItem('visionResults', JSON.stringify(visionResults)); } catch(e) {}
+    renderVisionPage();
+    applyVisionBadges();
   };
-
-  // 60분마다 자동 재스캔
-  setInterval(function() { if (window._visionAutoScan) window._visionAutoScan(); }, 60 * 60 * 1000);
+  // (구) 프론트 60분 자동 스캔 제거 — 백엔드가 전담하므로 이중 호출 없음
 
   // ── 테마 토글 (다크 ↔ 라이트 색반전) ──
   function applyThemeLabel(){

@@ -8730,6 +8730,10 @@ async function runVisionScanBackend(env) {
   if (utcDay === 0 || utcDay === 6) return;
   if (nowD.getUTCMinutes() % 3 !== 0) return;
 
+  // [한도 보호] 무거운 외부 fetch가 몰리는 트리거 시각(원자재청산·환율·지표 갱신)엔
+  //   Vision을 양보 → 같은 invocation의 Cloudflare subrequest 피크 회피. 다음 cron(3분 후) 재개.
+  if (isCommodityTriggerTime() || isFxTriggerTime() || isMacroTriggerTime()) return;
+
   const cfg = migrateCfgToMarkets(Object.assign({}, DEFAULT_CFG, await getState(DB, "cfg", {})));
   const va = cfg.visionAI || {};
   if (!va.enabled || !va.rfApiKey) return;
