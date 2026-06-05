@@ -858,16 +858,34 @@ button.btn.loading::after{content:'조회 중…';position:absolute;inset:0;disp
    좌상단 로고(.sb-brand)는 검정 배경 유지.
    ──────────────────────────────────────────────── */
 html[data-theme="light"]{
-  --bg:#ffffff; --s1:#f6f6f7; --s2:#eeeef0; --s3:#e4e4e7;
-  --bd:#d9d9de; --bd2:#ebebef;
-  --t1:#1a1a1a; --t2:#5a5a5a; --t3:#9a9aa0; --acc:#1a1a1a;
-  --panel:#f6f6f7; --elev:#eeeef0; --border:#d9d9de;
-  --text:#1a1a1a; --dim:#5a5a5a; --faint:#9a9aa0;
+  --bg:#ffffff; --s1:#f4f4f6; --s2:#e9e9ed; --s3:#dcdce1;
+  --bd:#cfcfd6; --bd2:#e4e4ea;
+  /* [가독성] t2/t3 대비 강화 — 흰 배경에서 WCAG AA 충족 */
+  --t1:#15151a; --t2:#3f3f47; --t3:#65656f; --acc:#15151a;
+  --panel:#f4f4f6; --elev:#e9e9ed; --border:#cfcfd6;
+  --text:#15151a; --dim:#3f3f47; --faint:#65656f;
   --pos:#0a8f3c; --green:#0a8f3c;
   --neg:#d11f3a; --red:#d11f3a;
-  --amber:#a96b00; --blue:#1565c0; --orange:#d84315; --purple:#7b1fa2;
+  --amber:#9a5d00; --blue:#1456ad; --orange:#c63d11; --purple:#6c1a93;
   background:#fff;
 }
+/* [라이트 가독성 보강] 어두운 배경 전용으로 박힌 밝은 텍스트를 라이트에서 진하게 */
+html[data-theme="light"] .port-total,
+html[data-theme="light"] .topbar-value,
+html[data-theme="light"] .summary-value,
+html[data-theme="light"] .idx-price,
+html[data-theme="light"] .wl-sym,
+html[data-theme="light"] .wl-price,
+html[data-theme="light"] .vision-card-sym,
+html[data-theme="light"] .pps-value,
+html[data-theme="light"] .trades-summary-value,
+html[data-theme="light"] .macro-table .val{ color:var(--acc); }
+/* 인라인 흰색/회색이 박힌 동적 요소가 흰 배경에 묻히는 것 방지 */
+html[data-theme="light"] [style*="color:#fff"],
+html[data-theme="light"] [style*="color:#ffffff"],
+html[data-theme="light"] [style*="color:white"]{ color:var(--acc) !important; }
+html[data-theme="light"] [style*="color:#f0f0f0"],
+html[data-theme="light"] [style*="color:#eee"]{ color:var(--t1) !important; }
 /* 좌상단 로고 영역은 라이트에서도 검정 박스 유지 */
 html[data-theme="light"] .sb-brand{ background:#0d0d0d; }
 html[data-theme="light"] .sb-brand-name{ color:#fff; }
@@ -921,6 +939,22 @@ html[data-theme="light"] .sb-brand-sub{ color:#888; }
 .vision-summary-item{display:flex;flex-direction:column;gap:2px;}
 .vision-summary-label{font-size:9px;font-weight:700;color:var(--t3);text-transform:uppercase;letter-spacing:1px;}
 .vision-summary-value{font-size:16px;font-weight:700;font-variant-numeric:tabular-nums;}
+
+/* ── POSITIONS 미국/한국 카드 분리 ── */
+.pos-market-card{margin:0 0 4px;border-bottom:1px solid var(--bd);}
+.pos-market-card:last-child{border-bottom:none;}
+.pos-market-head{
+  display:flex;align-items:center;gap:6px;
+  padding:12px 20px 10px;font-size:11px;font-weight:700;
+  color:var(--acc);letter-spacing:1px;text-transform:uppercase;
+  background:var(--s1);border-bottom:1px solid var(--bd);
+  position:sticky;top:0;z-index:2;
+}
+.pos-market-count{
+  display:inline-flex;align-items:center;justify-content:center;
+  min-width:18px;height:16px;padding:0 5px;font-size:10px;font-weight:700;
+  background:var(--s3);color:var(--t2);border-radius:8px;letter-spacing:0;
+}
 
 </style>
 </head>
@@ -1011,9 +1045,7 @@ html[data-theme="light"] .sb-brand-sub{ color:#888; }
         <button type="button" class="sb-btn btn macro" id="btnHeatmap">MAP</button>
       </div>
       <div class="sb-btn-row">
-        <button type="button" class="sb-btn btn" id="btnSettings">SETTINGS</button>
-        <button type="button" class="sb-btn btn" id="btnHolidayRecheck">휴장</button>
-        <button type="button" class="sb-btn btn" id="btnDebug">진단</button>
+        <button type="button" class="sb-btn btn" id="btnSettings" style="flex:1;">⚙ SETTINGS</button>
       </div>
       <button type="button" class="sb-theme-btn" id="btnTheme">🌙 DARK</button>
     </div>
@@ -1633,6 +1665,14 @@ html[data-theme="light"] .sb-brand-sub{ color:#888; }
     </div>
 
     <div style="border-top:1px solid var(--bd);margin-top:16px;padding-top:14px;">
+      <div style="font-size:11px;color:var(--t1);margin-bottom:8px;font-weight:700;">시스템 도구</div>
+      <div style="display:flex;gap:8px;flex-wrap:wrap;">
+        <button type="button" class="btn" id="btnDownloadLogsSettings">📥 ENGINE-LOG CSV</button>
+        <button type="button" class="btn" id="btnHolidayRecheck">📅 휴장 확인</button>
+        <button type="button" class="btn" id="btnDebug">🔧 진단</button>
+      </div>
+    </div>
+    <div style="border-top:1px solid var(--bd);margin-top:16px;padding-top:14px;">
       <div style="font-size:11px;color:var(--t1);margin-bottom:8px;font-weight:700;">시장별 리셋</div>
       <div style="display:flex;gap:8px;">
         <button type="button" class="btn" id="btnResetUS">♻ US 리셋</button>
@@ -2139,61 +2179,67 @@ html[data-theme="light"] .sb-brand-sub{ color:#888; }
       ppsEl.innerHTML = ppsParts.join('');
     }
 
-    var all = [];
-    listUS.forEach(function(p){ all.push({ market:'US', symbol:p.symbol, p:p }); });
-    listKR.forEach(function(p){ all.push({ market:'KR', symbol:p.symbol, p:p }); });
-    if (all.length === 0) { box.innerHTML='<div class="empty">No positions yet</div>'; return; }
-
-    var allWithPnl = all.map(function(row){
-      var q = lastQuotes[row.symbol];
-      var curPrice = q ? q.price : null;
-      var pnlPct = curPrice != null ? ((curPrice - row.p.avg) / row.p.avg * 100) : -999;
-      return {row: row, pnlPct: pnlPct};
-    });
-    allWithPnl.sort(function(a, b){ return b.pnlPct - a.pnlPct; });
-
-    var html = '<div class="table-wrap"><table class="table"><thead><tr>'+
-      '<th>MKT</th><th>SYMBOL</th><th>STRATEGY</th><th>REASON</th>'+
-      '<th class="right">QTY</th><th class="right">AVG</th><th class="right">CUR</th>'+
-      '<th class="right">VALUE</th><th class="right">PnL</th><th class="right">PnL%</th>'+
-      '<th class="right">OPENED</th></tr></thead><tbody>';
-    allWithPnl.forEach(function(item){
-      var row = item.row;
-      var p = row.p;
-      var q = lastQuotes[row.symbol];
-      var curPrice = q ? q.price : null;
-      var cost = p.qty * p.avg;
-      var value = curPrice != null ? p.qty * curPrice : null;
-      var pnl = value != null ? value - cost : null;
-      var pnlPct = curPrice != null ? ((curPrice - p.avg) / p.avg * 100) : null;
-      var pnlClass = pnlPct == null ? '' : (pnlPct >= 0 ? 'pos' : 'neg');
-      var sign = pnlPct != null && pnlPct >= 0 ? '+' : '';
-      var pnlPctText = pnlPct != null ? sign + pnlPct.toFixed(2) + '%' : '-';
-      var curText = curPrice != null ? fmtNum(curPrice) : '-';
-      var sym = row.market === 'US' ? '$' : '₩';
-      var fmtMoney = row.market === 'KR' ? fmtCompact : function(n){return fmtNum(n,2);};
-      var valueText = value != null ? sym + fmtMoney(value) : '-';
-      var pnlText = pnl != null ? (pnl >= 0 ? '+' : '-') + sym + fmtMoney(Math.abs(pnl)) : '-';
-      var name = row.market === 'KR' ? krLabel(row.symbol) : usLabel(row.symbol);
-      var label = name ? '<b>'+escapeHtml(row.symbol)+'</b> <span style="color:var(--dim);font-size:10px;">'+escapeHtml(name)+'</span>' : '<b>'+escapeHtml(row.symbol)+'</b>';
-      var stratCell = strategyBadge(p.strategy || 'swing');
-      var reason = p.entrySignal || (p.meta && p.meta.signal) || '-';
-      var reasonCell = '<span style="font-size:10px;color:var(--dim);">'+escapeHtml(reason)+'</span>';
-      html += '<tr>'+
-        '<td><span class="market-badge">'+row.market+'</span></td>'+
-        '<td>'+label+'</td>'+
-        '<td>'+stratCell+'</td>'+
-        '<td>'+reasonCell+'</td>'+
-        '<td class="right">'+fmtNum(p.qty)+'</td>'+
-        '<td class="right">'+fmtNum(p.avg)+'</td>'+
-        '<td class="right">'+curText+'</td>'+
-        '<td class="right">'+valueText+'</td>'+
-        '<td class="right '+pnlClass+'">'+pnlText+'</td>'+
-        '<td class="right '+pnlClass+'">'+pnlPctText+'</td>'+
-        '<td class="right">'+fmtAgo(p.opened_ts)+'</td>'+
-      '</tr>';
-    });
-    box.innerHTML = html + '</tbody></table></div>';
+    // [카드분리] 미국/한국을 각각 별도 카드로 렌더 (aggUS/aggKR는 위에서 계산됨)
+    function buildPosTable(list, market) {
+      if (!list || list.length === 0) return '';
+      var withPnl = list.map(function(p){
+        var q = lastQuotes[p.symbol];
+        var curPrice = q ? q.price : null;
+        var pnlPct = curPrice != null ? ((curPrice - p.avg) / p.avg * 100) : -999;
+        return { p: p, pnlPct: pnlPct };
+      });
+      withPnl.sort(function(a, b){ return b.pnlPct - a.pnlPct; });
+      var sym = market === 'US' ? '$' : '₩';
+      var fmtMoney = market === 'KR' ? fmtCompact : function(n){ return fmtNum(n, 2); };
+      var agg = market === 'US' ? aggUS : aggKR;
+      var flag = market === 'US' ? '🇺🇸' : '🇰🇷';
+      var aggHtml = agg ? ' <span class="'+agg.cls+'" style="font-size:12px;font-weight:700;margin-left:8px;">'+agg.pnlText+' ('+agg.pctText+')</span>' : '';
+      var html = '<div class="pos-market-card">';
+      html += '<div class="pos-market-head">'+flag+' '+market+' POSITIONS <span class="pos-market-count">'+list.length+'</span>'+aggHtml+'</div>';
+      html += '<div class="table-wrap"><table class="table"><thead><tr>'+
+        '<th>SYMBOL</th><th>STRATEGY</th><th>REASON</th>'+
+        '<th class="right">QTY</th><th class="right">AVG</th><th class="right">CUR</th>'+
+        '<th class="right">VALUE</th><th class="right">PnL</th><th class="right">PnL%</th>'+
+        '<th class="right">OPENED</th></tr></thead><tbody>';
+      withPnl.forEach(function(item){
+        var p = item.p;
+        var q = lastQuotes[p.symbol];
+        var curPrice = q ? q.price : null;
+        var cost = p.qty * p.avg;
+        var value = curPrice != null ? p.qty * curPrice : null;
+        var pnl = value != null ? value - cost : null;
+        var pnlPct = curPrice != null ? ((curPrice - p.avg) / p.avg * 100) : null;
+        var pnlClass = pnlPct == null ? '' : (pnlPct >= 0 ? 'pos' : 'neg');
+        var signp = pnlPct != null && pnlPct >= 0 ? '+' : '';
+        var pnlPctText = pnlPct != null ? signp + pnlPct.toFixed(2) + '%' : '-';
+        var curText = curPrice != null ? fmtNum(curPrice) : '-';
+        var valueText = value != null ? sym + fmtMoney(value) : '-';
+        var pnlText = pnl != null ? (pnl >= 0 ? '+' : '-') + sym + fmtMoney(Math.abs(pnl)) : '-';
+        var name = market === 'KR' ? krLabel(p.symbol) : usLabel(p.symbol);
+        var label = name ? '<b>'+escapeHtml(p.symbol)+'</b> <span style="color:var(--dim);font-size:10px;">'+escapeHtml(name)+'</span>' : '<b>'+escapeHtml(p.symbol)+'</b>';
+        var stratCell = strategyBadge(p.strategy || 'swing');
+        var reason = p.entrySignal || (p.meta && p.meta.signal) || '-';
+        var reasonCell = '<span style="font-size:10px;color:var(--dim);">'+escapeHtml(reason)+'</span>';
+        html += '<tr>'+
+          '<td>'+label+'</td>'+
+          '<td>'+stratCell+'</td>'+
+          '<td>'+reasonCell+'</td>'+
+          '<td class="right">'+fmtNum(p.qty)+'</td>'+
+          '<td class="right">'+fmtNum(p.avg)+'</td>'+
+          '<td class="right">'+curText+'</td>'+
+          '<td class="right">'+valueText+'</td>'+
+          '<td class="right '+pnlClass+'">'+pnlText+'</td>'+
+          '<td class="right '+pnlClass+'">'+pnlPctText+'</td>'+
+          '<td class="right">'+fmtAgo(p.opened_ts)+'</td>'+
+        '</tr>';
+      });
+      html += '</tbody></table></div></div>';
+      return html;
+    }
+    var htmlUS = buildPosTable(listUS, 'US');
+    var htmlKR = buildPosTable(listKR, 'KR');
+    if (!htmlUS && !htmlKR) { box.innerHTML = '<div class="empty">No positions yet</div>'; return; }
+    box.innerHTML = htmlUS + htmlKR;
   }
 
   // === [COMMODITY] 원자재 렌더링 ===
@@ -2724,6 +2770,12 @@ html[data-theme="light"] .sb-brand-sub{ color:#888; }
     var m = (cfg.markets && cfg.markets[market]) || {};
     var keys = ['rsiBuy','rsiSell','rsiPeriod','stopLoss','takeProfit1','takeProfit2','posSize','swingRules','dayRules','momentumRules','meanrevRules','strategySizing'];
     keys.forEach(function(k){ if (m[k] !== undefined) out[k] = m[k]; });
+    // [연동수정] KR은 독립 trendRulesKR/trendSizingKR을 사용 → 대시보드 표시도 KR 값으로 매핑
+    //   (기존엔 buildCfgHtml이 항상 최상위 trendRules(US값)를 읽어 KR 대시보드가 US 설정을 표시)
+    if (market === 'kr') {
+      if (cfg.trendRulesKR)  out.trendRules  = cfg.trendRulesKR;
+      if (cfg.trendSizingKR) out.trendSizing = cfg.trendSizingKR;
+    }
     return out;
   }
 
@@ -3902,6 +3954,8 @@ html[data-theme="light"] .sb-brand-sub{ color:#888; }
   var _btKR=$('btnBacktestKR'); if(_btKR) _btKR.addEventListener('click', function(){ runBacktestUI('kr'); });
   var _btnDownloadLogs = $('btnDownloadLogs');
   if (_btnDownloadLogs) _btnDownloadLogs.addEventListener('click', downloadLogsCSV);
+  var _btnDownloadLogsSettings = $('btnDownloadLogsSettings');
+  if (_btnDownloadLogsSettings) _btnDownloadLogsSettings.addEventListener('click', downloadLogsCSV);
   var _btnDownloadPos = $('btnDownloadPositions');
   if (_btnDownloadPos) _btnDownloadPos.addEventListener('click', downloadPositionsCSV);
   var _btnRunCM = $('btnRunCM');
