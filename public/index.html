@@ -14,9 +14,9 @@ try{var __t=localStorage.getItem('luxTheme');if(__t==='light')document.documentE
 <style>
 /* LUX-ENGINE · 완전 새 UI */
 :root{
-  --bg:#080808; --s1:#0f0f0f; --s2:#171717; --s3:#1f1f1f;
-  --bd:#282828; --bd2:#1c1c1c;
-  --t1:#f0f0f0; --t2:#888; --t3:#444;
+  --bg:#0e0e0e; --s1:#171717; --s2:#1f1f1f; --s3:#272727;
+  --bd:#363636; --bd2:#232323;
+  --t1:#f6f6f6; --t2:#b4b4b4; --t3:#828282;
   --pos:#00e676; --neg:#ff1744; --acc:#fff;
   /* compat */
   --panel:#0f0f0f; --elev:#171717; --border:#282828;
@@ -312,7 +312,7 @@ button.btn.loading::after{content:'조회 중…';position:absolute;inset:0;disp
 /* ── 색상 유틸 ── */
 .pos{color:var(--pos)!important;font-weight:700;}
 .neg{color:var(--neg)!important;font-weight:700;}
-.right{text-align:right;}
+.right{text-align:left;}  /* [요청] 표 숫자(QTY/AVG/PnL 등) 좌측 정렬 — 헤더·데이터 모두 */
 .trade-buy{color:var(--pos);font-weight:700;}
 .trade-sell{color:var(--neg);font-weight:700;}
 
@@ -591,6 +591,9 @@ button.btn.loading::after{content:'조회 중…';position:absolute;inset:0;disp
 /* 로그 라인 */
 .log-line{padding:3px 8px;border-left:2px solid var(--bd2);margin-bottom:1px;color:var(--t3);word-break:break-word;line-height:1.4;font-size:11px;}
 .log-line.INFO{border-color:var(--blue);color:#6699ff;}
+.log-line.SIGNAL{border-color:#ffffff44;color:#ffffff;}
+.log-line.BUY{border-color:var(--green);color:var(--green);}
+.log-line.SELL{border-color:var(--neg);color:var(--neg);}
 .log-line.TRADE{border-color:var(--amber);color:var(--amber);font-weight:600;}
 .log-line.TUNE{border-color:var(--pos);color:var(--pos);font-weight:600;}
 .log-line.ERROR{border-color:var(--neg);color:var(--neg);}
@@ -879,6 +882,46 @@ html[data-theme="light"] .sb-brand-sub{ color:#888; }
 }
 .sb-theme-btn:hover{background:var(--s3);border-color:var(--t3);}
 
+/* ENGINE STATS 막대그래프 */
+.stab-bar{display:flex;gap:0;margin-bottom:10px;border-bottom:1px solid var(--border);}
+.stab-btn{padding:7px 20px;font-size:11px;font-weight:700;letter-spacing:1px;cursor:pointer;background:none;border:none;color:var(--t3);border-bottom:2px solid transparent;margin-bottom:-1px;font-family:inherit;}
+.stab-btn.active{color:var(--acc);border-bottom-color:var(--acc);}
+.stab-btn:hover{color:var(--t1);}
+.estat-legend{display:flex;gap:14px;font-size:10px;color:var(--t2);margin:4px 0 8px;letter-spacing:.5px;}
+.estat-legend span{display:inline-flex;align-items:center;gap:5px;}
+.estat-dot{width:8px;height:8px;border-radius:2px;display:inline-block;}
+.estat-chart{display:flex;align-items:flex-end;gap:10px;height:120px;padding:8px 4px 0;background:var(--s1);border:1px solid var(--border);border-radius:6px;overflow-x:auto;}
+.estat-day{display:flex;flex-direction:column;align-items:center;gap:4px;min-width:46px;flex:1;}
+.estat-bars{display:flex;align-items:flex-end;gap:3px;height:96px;width:100%;justify-content:center;}
+.estat-bar{width:9px;border-radius:2px 2px 0 0;min-height:2px;transition:height .2s;position:relative;}
+.estat-bar span{position:absolute;top:-13px;left:50%;transform:translateX(-50%);font-size:9px;color:var(--t2);font-variant-numeric:tabular-nums;white-space:nowrap;}
+.estat-xlabel{font-size:9px;color:var(--t3);font-variant-numeric:tabular-nums;letter-spacing:-.2px;}
+.estat-day.today .estat-xlabel{color:var(--acc);font-weight:700;}
+.estat-chart .empty{color:var(--t3);font-size:11px;align-self:center;margin:auto;}
+
+/* ── VISION AI ── */
+.vision-badge{display:inline-flex;align-items:center;gap:3px;padding:1px 6px;font-size:9px;font-weight:700;border:1px solid;letter-spacing:.5px;vertical-align:middle;}
+.vision-up{border-color:rgba(0,230,118,.4);color:var(--pos);background:rgba(0,230,118,.05);}
+.vision-down{border-color:rgba(255,23,68,.4);color:var(--neg);background:rgba(255,23,68,.05);}
+.vision-neutral{border-color:var(--bd);color:var(--t3);}
+.vision-loading{border-color:rgba(68,136,255,.4);color:var(--blue);animation:pulse 1.5s infinite;}
+.vision-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(200px,1fr));gap:10px;padding:16px 20px;}
+.vision-card{border:1px solid var(--bd);background:var(--s1);transition:background .1s;overflow:hidden;}
+.vision-card:hover{background:var(--s2);}
+.vision-card-top{display:flex;justify-content:space-between;align-items:center;padding:10px 12px 6px;}
+.vision-card-sym{font-size:13px;font-weight:700;color:var(--acc);}
+.vision-card-conf{font-size:10px;color:var(--t3);}
+.vision-canvas-wrap{background:#000;display:block;width:100%;line-height:0;}
+.vision-card-bottom{padding:6px 12px 10px;display:flex;justify-content:space-between;align-items:center;}
+.vision-card-ts{font-size:9px;color:var(--t3);}
+.vision-scan-bar{display:flex;align-items:center;gap:8px;padding:10px 20px;border-bottom:1px solid var(--bd);flex-wrap:wrap;background:var(--s1);}
+.vision-scan-status{font-size:10px;color:var(--t3);margin-left:auto;}
+.vision-empty{padding:40px 20px;text-align:center;color:var(--t3);font-size:11px;line-height:1.8;}
+.vision-summary-row{display:flex;gap:20px;flex-wrap:wrap;padding:12px 20px;border-bottom:1px solid var(--bd);background:var(--s1);}
+.vision-summary-item{display:flex;flex-direction:column;gap:2px;}
+.vision-summary-label{font-size:9px;font-weight:700;color:var(--t3);text-transform:uppercase;letter-spacing:1px;}
+.vision-summary-value{font-size:16px;font-weight:700;font-variant-numeric:tabular-nums;}
+
 </style>
 </head>
 <body>
@@ -947,6 +990,10 @@ html[data-theme="light"] .sb-brand-sub{ color:#888; }
       <div class="nav-item" data-page="trades">
         <span class="nav-item-icon">◷</span>
         <span class="nav-item-label">TRADES</span>
+      </div>
+      <div class="nav-item" data-page="vision">
+        <span class="nav-item-icon">◑</span>
+        <span class="nav-item-label">AI VISION</span>
       </div>
     </div>
 
@@ -1217,6 +1264,52 @@ html[data-theme="light"] .sb-brand-sub{ color:#888; }
 
     </div><!-- /trades -->
 
+    <!-- ══ PAGE: AI VISION ══ -->
+    <div class="page" id="page-vision">
+      <div class="page-header">
+        <span class="page-title">◑ AI VISION · 차트 예측</span>
+        <div class="page-actions">
+          <span id="visionModelInfo" style="font-size:10px;color:var(--t3);">stock-updown-classifier</span>
+          <button type="button" class="btn" id="btnVisionScanAll">▶ 전체 스캔</button>
+          <button type="button" class="btn" id="btnVisionClear">✕ 초기화</button>
+        </div>
+      </div>
+      <!-- 스캔 상태 바 -->
+      <div class="vision-scan-bar">
+        <span id="visionScanLabel" style="font-size:11px;color:var(--t2);font-weight:600;">Roboflow Vision AI</span>
+        <span id="visionScanProgress" class="vision-progress"></span>
+        <span id="visionScanStatus" class="vision-scan-status">API Key를 Settings에서 설정하세요</span>
+      </div>
+      <!-- 요약 -->
+      <div class="vision-summary-row" id="visionSummaryRow" style="display:none;">
+        <div class="vision-summary-item">
+          <div class="vision-summary-label">전체</div>
+          <div class="vision-summary-value" id="visionTotalCount">0</div>
+        </div>
+        <div class="vision-summary-item">
+          <div class="vision-summary-label">상승 예측</div>
+          <div class="vision-summary-value pos" id="visionUpCount">0</div>
+        </div>
+        <div class="vision-summary-item">
+          <div class="vision-summary-label">하락 예측</div>
+          <div class="vision-summary-value neg" id="visionDownCount">0</div>
+        </div>
+        <div class="vision-summary-item">
+          <div class="vision-summary-label">평균 신뢰도</div>
+          <div class="vision-summary-value" id="visionAvgConf">—</div>
+        </div>
+      </div>
+      <!-- 예측 그리드 -->
+      <div id="visionGrid">
+        <div class="vision-empty">
+          <b>AI VISION</b>이 아직 실행되지 않았습니다.<br>
+          Settings에서 Roboflow API Key를 입력한 후<br>
+          <b>▶ 전체 스캔</b>을 눌러 차트 예측을 시작하세요.<br><br>
+          <span style="font-size:10px;color:var(--t3);">모델: stock-updown-classifier · Roboflow Hosted Inference</span>
+        </div>
+      </div>
+    </div><!-- /vision -->
+
   </main><!-- /content -->
 </div><!-- /shell -->
 
@@ -1316,6 +1409,9 @@ html[data-theme="light"] .sb-brand-sub{ color:#888; }
       <button data-filter="TUNE">TUNE</button>
       <button data-filter="ERROR">ERROR</button>
       <button data-filter="WARN">WARN</button>
+      <button data-filter="BUY">BUY</button>
+      <button data-filter="SELL">SELL</button>
+      <button data-filter="SIGNAL">SIGNAL</button>
       <button data-filter="NOBUY">NOBUY</button>
       <button data-filter="SKIP">SKIP</button>
       <button data-filter="CLOSED">CLOSED</button>
@@ -1332,6 +1428,14 @@ html[data-theme="light"] .sb-brand-sub{ color:#888; }
       <span class="verse">Im stillen Liebestraum verglüht die blaue Nacht — für die Wintertulpen zur glühenden Morgenröte.</span>
     </div>
     <h2>SETTINGS</h2>
+    <div class="section-title" style="margin-top:4px;">ENGINE STATS <span style="color:var(--t3);font-weight:400;">· 매일 KST 05:00 리셋</span></div>
+    <div class="estat-legend">
+      <span><i class="estat-dot" style="background:var(--amber);"></i>매수신호</span>
+      <span><i class="estat-dot" style="background:var(--green);"></i>거래</span>
+      <span><i class="estat-dot" style="background:var(--red);"></i>에러</span>
+    </div>
+    <div class="estat-chart" id="engineStatsBox"><div class="empty">로딩 중…</div></div>
+    <div class="section-divider"></div>
     <div class="checkbox-row"><input type="checkbox" id="cfgAutoTune"><label for="cfgAutoTune">AUTO-TUNE 활성화</label></div>
     <div class="checkbox-row"><input type="checkbox" id="cfgMarketHoursOnly"><label for="cfgMarketHoursOnly">정규장 시간에만 거래 (권장)</label></div>
     <div class="section-title" style="margin-top:10px;">초기 자본금</div>
@@ -1352,49 +1456,101 @@ html[data-theme="light"] .sb-brand-sub{ color:#888; }
       추세 정렬(MA20&gt;MA50&gt;MA200) 종목의 풀백 반등·신고가 돌파에서만 진입하고,
       ATR 기반 손절·1R 분할익절·트레일링으로 관리합니다. 한 거래 리스크 0.75%, 동시보유 8종목.
     </div>
+    <div class="section-title" style="margin-top:12px;">VISION AI (Roboflow 차트 예측)</div>
+    <div class="checkbox-row"><input type="checkbox" id="cfgVisionEnabled"><label for="cfgVisionEnabled"><b>Vision AI 활성화</b></label></div>
+    <div class="hint" style="margin-bottom:8px;">켜면 AI VISION 페이지에서 차트 이미지를 분석해 상승/하락을 예측합니다.</div>
+    <div class="field-row-2">
+      <div class="field"><label>Roboflow API Key</label><input type="text" id="cfgRfApiKey" placeholder="API Key 입력" autocomplete="off"></div>
+      <div class="field"><label>Model Version</label><input type="number" id="cfgRfVersion" value="7" min="1" max="99" step="1"></div>
+    </div>
+    <div class="field"><label>Vision 신뢰도 최소 (이 이상만 BADGE 표시)</label><input type="number" id="cfgVisionConfMin" value="0.60" min="0.50" max="0.99" step="0.05"></div>
+    <div class="section-divider"></div>
     <div class="section-title" style="margin-top:12px;">CLAUDE LLM HYBRID</div>
     <div class="checkbox-row"><input type="checkbox" id="cfgLlmEnabled"><label for="cfgLlmEnabled"><b>LLM 일일 지시 사용</b></label></div>
     <div class="hint" style="margin-bottom:8px;">켜면 매일 Claude가 시장을 분석해 sizing·손절·매수신호 ON/OFF를 조정합니다.</div>
-    <div class="section-title" style="margin-top:12px;">POSITION SIZE</div>
-    <div class="field-row">
-      <div class="field"><label>SWING base</label><input type="number" id="cfgSizeSwingBase" min="1" max="100" step="0.5"></div>
-      <div class="field"><label>SWING ×BULL</label><input type="number" id="cfgSizeSwingBull" min="0" max="3" step="0.1"></div>
-      <div class="field"><label>SWING ×BEAR</label><input type="number" id="cfgSizeSwingBear" min="0" max="3" step="0.1"></div>
+    <div class="section-title" style="margin-top:12px;">TREND STRATEGY</div>
+    <!-- US / KR 탭 -->
+    <div class="stab-bar">
+      <button type="button" class="stab-btn active" id="stratTabBtnUS" onclick="switchStratTab('us')">🇺🇸 US</button>
+      <button type="button" class="stab-btn" id="stratTabBtnKR" onclick="switchStratTab('kr')">🇰🇷 KR</button>
     </div>
-    <div class="field-row">
-      <div class="field"><label>DAY base</label><input type="number" id="cfgSizeDayBase" min="1" max="100" step="0.5"></div>
-      <div class="field"><label>DAY ×BULL</label><input type="number" id="cfgSizeDayBull" min="0" max="3" step="0.1"></div>
-      <div class="field"><label>DAY ×BEAR</label><input type="number" id="cfgSizeDayBear" min="0" max="3" step="0.1"></div>
+    <!-- US 탭 -->
+    <div id="stratTabUS">
+      <div class="section-title" style="font-size:10px;color:var(--t2);">SIZING (고정리스크)</div>
+      <div class="field-row">
+        <div class="field"><label>Risk/Trade %</label><input type="number" id="cfgTrendRisk" min="0.1" max="5" step="0.05"></div>
+        <div class="field"><label>Max Position %</label><input type="number" id="cfgTrendMaxPos" min="1" max="100" step="1"></div>
+        <div class="field"><label>Max 동시보유</label><input type="number" id="cfgTrendMaxConc" min="1" max="30" step="1"></div>
+      </div>
+      <div class="hint" style="margin:-2px 0 8px;">한 거래 최대손실 = 자산 × Risk%. 손절거리로 수량을 역산해 변동성에 맞춰 자동 조절.</div>
+      <div class="section-title" style="margin-top:8px;font-size:10px;color:var(--t2);">RULES</div>
+      <div class="field-row">
+        <div class="field"><label>StopLoss %</label><input type="number" id="cfgTrendStopPct" min="1" max="20" step="0.5"></div>
+        <div class="field"><label>ATR Stop ×</label><input type="number" id="cfgTrendAtrStop" min="0.5" max="6" step="0.1"></div>
+        <div class="field"><label>Trail ATR ×</label><input type="number" id="cfgTrendTrail" min="0.5" max="8" step="0.1"></div>
+      </div>
+      <div class="field-row">
+        <div class="field"><label>TP1 (×R)</label><input type="number" id="cfgTrendTp1R" min="0.5" max="5" step="0.1"></div>
+        <div class="field"><label>Time Stop (days)</label><input type="number" id="cfgTrendTimeStop" min="3" max="60" step="1"></div>
+        <div class="field"><label>Breakout (days)</label><input type="number" id="cfgTrendBreakout" min="5" max="60" step="1"></div>
+      </div>
+      <div class="field-row">
+        <div class="field"><label>Vol Mult ×</label><input type="number" id="cfgTrendVolMult" min="1" max="4" step="0.1"></div>
+        <div class="field"><label>RSI Pull Min</label><input type="number" id="cfgTrendRsiMin" min="20" max="60" step="1"></div>
+        <div class="field"><label>RSI Pull Max</label><input type="number" id="cfgTrendRsiMax" min="40" max="80" step="1"></div>
+      </div>
+      <div class="field-row">
+        <div class="field"><label>Max ATR %</label><input type="number" id="cfgTrendMaxAtr" min="2" max="15" step="0.5"></div>
+        <div class="field"><label>RSI Breakout Max</label><input type="number" id="cfgTrendRsiBreakout" min="50" max="90" step="1"></div>
+        <div class="field"><label>Conf Min</label><input type="number" id="cfgTrendConfMin" min="0.2" max="1" step="0.05"></div>
+      </div>
     </div>
-    <div class="field-row">
-      <div class="field"><label>MOM base</label><input type="number" id="cfgSizeMomBase" min="1" max="100" step="0.5"></div>
-      <div class="field"><label>MOM ×BULL</label><input type="number" id="cfgSizeMomBull" min="0" max="3" step="0.1"></div>
-      <div class="field"><label>MOM ×BEAR</label><input type="number" id="cfgSizeMomBear" min="0" max="3" step="0.1"></div>
-    </div>
-    <div class="field-row">
-      <div class="field"><label>MR base</label><input type="number" id="cfgSizeMrBase" min="1" max="100" step="0.5"></div>
-      <div class="field"><label>MR ×BULL</label><input type="number" id="cfgSizeMrBull" min="0" max="3" step="0.1"></div>
-      <div class="field"><label>MR ×BEAR</label><input type="number" id="cfgSizeMrBear" min="0" max="3" step="0.1"></div>
-    </div>
-    <div class="field-row">
-      <div class="field"><label>Cross-strategy 보너스</label><input type="number" id="cfgCrossConf" min="1" max="3" step="0.1"></div>
+    <!-- KR 탭 -->
+    <div id="stratTabKR" style="display:none;">
+      <div class="hint" style="margin-bottom:6px;color:var(--amber);">KR 독립 설정 — 15분 지연 시세·거래세 기준</div>
+      <div class="section-title" style="font-size:10px;color:var(--t2);">SIZING</div>
+      <div class="field-row">
+        <div class="field"><label>Risk/Trade %</label><input type="number" id="cfgKrRisk" min="0.1" max="5" step="0.05"></div>
+        <div class="field"><label>Max Position %</label><input type="number" id="cfgKrMaxPos" min="1" max="100" step="1"></div>
+        <div class="field"><label>Max 동시보유</label><input type="number" id="cfgKrMaxConc" min="1" max="30" step="1"></div>
+      </div>
+      <div class="section-title" style="margin-top:8px;font-size:10px;color:var(--t2);">RULES</div>
+      <div class="field-row">
+        <div class="field"><label>StopLoss %</label><input type="number" id="cfgKrStopPct" min="1" max="20" step="0.5"></div>
+        <div class="field"><label>ATR Stop ×</label><input type="number" id="cfgKrAtrStop" min="0.5" max="6" step="0.1"></div>
+        <div class="field"><label>Trail ATR ×</label><input type="number" id="cfgKrTrail" min="0.5" max="8" step="0.1"></div>
+      </div>
+      <div class="field-row">
+        <div class="field"><label>TP1 (×R)</label><input type="number" id="cfgKrTp1R" min="0.5" max="5" step="0.1"></div>
+        <div class="field"><label>Time Stop (days)</label><input type="number" id="cfgKrTimeStop" min="3" max="60" step="1"></div>
+        <div class="field"><label>Breakout (days)</label><input type="number" id="cfgKrBreakout" min="5" max="60" step="1"></div>
+      </div>
+      <div class="field-row">
+        <div class="field"><label>Vol Mult ×</label><input type="number" id="cfgKrVolMult" min="1" max="4" step="0.1"></div>
+        <div class="field"><label>RSI Pull Min</label><input type="number" id="cfgKrRsiMin" min="20" max="60" step="1"></div>
+        <div class="field"><label>RSI Pull Max</label><input type="number" id="cfgKrRsiMax" min="40" max="80" step="1"></div>
+      </div>
+      <div class="field-row">
+        <div class="field"><label>Max ATR %</label><input type="number" id="cfgKrMaxAtr" min="2" max="15" step="0.5"></div>
+        <div class="field"><label>RSI Breakout Max</label><input type="number" id="cfgKrRsiBreakout" min="50" max="90" step="1"></div>
+        <div class="field"><label>Conf Min</label><input type="number" id="cfgKrConfMin" min="0.2" max="1" step="0.05"></div>
+      </div>
     </div>
     <div class="section-divider"></div>
-    <div class="section-title">SWING RULES</div>
+    <div class="section-title">CRASH GATE <span style="color:var(--t3);font-weight:400;font-size:10px;">패닉·드로다운·연속손실 방어</span></div>
+    <div class="section-title" style="margin-top:6px;font-size:10px;color:var(--t2);">패닉 게이트 (지수 급락 시)</div>
     <div class="field-row">
-      <div class="field"><label>StopLoss %</label><input type="number" id="cfgStopLoss" min="0.5" max="50" step="0.5"></div>
-      <div class="field"><label>TakeProfit1 %</label><input type="number" id="cfgTakeProfit1" min="0.5" max="50" step="0.5"></div>
-      <div class="field"><label>TakeProfit2 %</label><input type="number" id="cfgTakeProfit2" min="0.5" max="50" step="0.5"></div>
+      <div class="field"><label>Panic 임계 %</label><input type="number" id="cfgPanicAvgDrop" max="0" step="0.5"><span class="hint" style="font-size:9px;">지수 평균 낙폭 이하 시 발동</span></div>
+      <div class="field"><label>Panic 사이즈 배율</label><input type="number" id="cfgPanicSizeScale" min="0" max="1" step="0.05"><span class="hint" style="font-size:9px;">0=차단 · 1=정상 · 0.4=40%</span></div>
+      <div class="field" style="display:flex;align-items:center;gap:6px;padding-top:18px;">
+        <input type="checkbox" id="cfgPanicEnabled"><label for="cfgPanicEnabled" style="font-size:11px;">패닉 게이트 ON</label>
+      </div>
     </div>
+    <div class="section-title" style="margin-top:6px;font-size:10px;color:var(--t2);">드로다운 서킷브레이커</div>
     <div class="field-row">
-      <div class="field"><label>Min Hold (hrs)</label><input type="number" id="cfgMinHoldHours" min="0" max="48" step="0.5"></div>
-      <div class="field"><label>Time Stop (days)</label><input type="number" id="cfgTimeStopDays" min="1" max="30"></div>
-      <div class="field"><label>Time Max (days)</label><input type="number" id="cfgTimeStopMaxDays" min="1" max="60"></div>
-    </div>
-    <div class="field-row">
-      <div class="field"><label>Trail Start %</label><input type="number" id="cfgTrailStartPct" min="0.5" max="20" step="0.5"></div>
-      <div class="field"><label>Trail Drop %</label><input type="number" id="cfgTrailDropPct" min="0.5" max="20" step="0.5"></div>
-      <div class="field"><label>ATR Stop x</label><input type="number" id="cfgAtrStopMult" min="0.5" max="6" step="0.1"></div>
+      <div class="field"><label>L1 기준 % (사이즈 축소)</label><input type="number" id="cfgDdL1" min="1" max="30" step="1"></div>
+      <div class="field"><label>L2 기준 % (매수 중단)</label><input type="number" id="cfgDdL2" min="1" max="40" step="1"></div>
+      <div class="field"><label>L1 사이즈 배율</label><input type="number" id="cfgDdL1Scale" min="0.1" max="1" step="0.05"></div>
     </div>
     <div class="section-divider"></div>
     <div class="section-title">COMMON</div>
@@ -1414,6 +1570,10 @@ html[data-theme="light"] .sb-brand-sub{ color:#888; }
       <div class="field"><label>ATR Period</label><input type="number" id="cfgAtrPeriod" min="2" max="60"></div>
       <div class="field"><label>BB Std x</label><input type="number" id="cfgBbStdMult" min="0.5" max="4" step="0.1"></div>
       <div class="field"><label>Cache (min)</label><input type="number" id="cfgDailyCacheMinutes" min="1" max="120"></div>
+    </div>
+    <div class="field-row">
+      <div class="field"><label>Eval Budget (ms)</label><input type="number" id="cfgEvalBudgetMs" min="5000" max="25000" step="1000"><span class="hint" style="font-size:9px;">종목 평가 시간 한도 (기본 18000)</span></div>
+      <div class="field"><label>Cycle Hard Cap (ms)</label><input type="number" id="cfgCycleHardCapMs" min="15000" max="55000" step="1000"><span class="hint" style="font-size:9px;">사이클 전체 한도 (기본 28000)</span></div>
     </div>
     <div class="section-divider"></div>
     <div class="section-title">FEES</div>
@@ -1439,6 +1599,22 @@ html[data-theme="light"] .sb-brand-sub{ color:#888; }
       누적 출금: <b id="cfgCurrentOutflowsUS">-</b> · <b id="cfgCurrentOutflowsKR">-</b>
     </div>
 
+    <div class="section-divider"></div>
+    <div class="section-title">섹터 그룹 가중치 (autoTune)</div>
+    <div style="font-size:10px;color:var(--t3);margin-bottom:8px;">6개 그룹별 성과로 베팅 크기를 자동 차등합니다. 잘 되는 그룹↑·안 되는 그룹↓ (그룹 거래 8건+ 부터 반영, 적으면 ×1.0 중립).</div>
+    <div id="sectorGroupsBox" style="font-size:11px;margin-bottom:6px;"></div>
+    <div class="section-divider"></div>
+    <div class="section-title">신호 타입 가중치 (autoTune)</div>
+    <div style="font-size:10px;color:var(--t3);margin-bottom:8px;">진입신호 종류별(돌파/풀백) 성과로 베팅 크기 차등. 데이터상 돌파(BREAKOUT)가 풀백(PULLBACK)보다 수익성↑ (거래 10건+ 부터 반영).</div>
+    <div id="signalTypesBox" style="font-size:11px;margin-bottom:6px;"></div>
+    <div class="section-divider"></div>
+    <div class="section-title">백테스트 (2년 과거데이터)</div>
+    <div style="font-size:10px;color:var(--t3);margin-bottom:10px;">현재 TREND 설정을 과거 2년에 적용해 성과를 검증합니다. (수십 초 소요)</div>
+    <div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:8px;">
+      <button type="button" class="btn" id="btnBacktestUS" style="flex:1;min-width:100px;">▶ US 백테스트</button>
+      <button type="button" class="btn" id="btnBacktestKR" style="flex:1;min-width:100px;">▶ KR 백테스트</button>
+    </div>
+    <div id="backtestResult" style="font-size:11px;color:var(--t2);background:var(--bg2);border:1px solid var(--bd);border-radius:6px;padding:10px;line-height:1.7;display:none;"></div>
     <div class="section-divider"></div>
     <div class="section-title">데이터 다운로드</div>
     <div style="font-size:10px;color:var(--t3);margin-bottom:10px;">거래내역·포지션을 CSV 파일로 내려받습니다.</div>
@@ -1479,6 +1655,8 @@ html[data-theme="light"] .sb-brand-sub{ color:#888; }
   var logFilter = 'ALL';
   var logSearchText = '';
   var currentCfg = null;
+  var currentSectorGroups = { stats: {}, weights: {} };  // [섹터그룹] 그룹별 성과·가중치
+  var currentSignalTypes = { stats: {}, weights: {} };   // [신호타입] 신호별 성과·가중치
   var currentCash = { us: 0, kr: 0 };
   var currentDeposits = { us: 0, kr: 0 };
   var currentOutflows = { us: 0, kr: 0 };
@@ -1491,6 +1669,10 @@ html[data-theme="light"] .sb-brand-sub{ color:#888; }
   var usFavorites = [];
   var krFavorites = [];
   var logsModalOpen = false;
+  // Vision AI 상태
+  var visionResults = {};     // {symbol: {pred:'up'|'down', conf, upConf, downConf, ts}}
+  var visionScanning = false;
+  var visionScanQueue = [];
   // [V10] 대규모 종목 UI 상태
   var usSearch = '';
   var krSearch = '';
@@ -1638,12 +1820,12 @@ html[data-theme="light"] .sb-brand-sub{ color:#888; }
   }
 
   function fmtNum(n, dec) {
-    if (typeof n !== 'number' || isNaN(n)) return '-';
+    if (typeof n !== 'number' || !isFinite(n)) return '-';  // [버그수정] Infinity도 차단
     return n.toLocaleString(undefined, { maximumFractionDigits: dec != null ? dec : 2 });
   }
 
   function fmtCompact(n) {
-    if (typeof n !== 'number' || isNaN(n)) return '-';
+    if (typeof n !== 'number' || !isFinite(n)) return '-';  // [버그수정] Infinity도 차단
     var abs = Math.abs(n);
     if (abs >= 1e8) return (n/1e8).toFixed(2) + '억';
     if (abs >= 1e4) return (n/1e4).toFixed(1) + '만';
@@ -1809,17 +1991,23 @@ html[data-theme="light"] .sb-brand-sub{ color:#888; }
       return { symbol: p.symbol || k, qty: p.qty, avg: p.avg };
     });
     list.forEach(function(p) {
-      invested += p.qty * p.avg;
+      var qty = isFinite(p.qty) ? p.qty : 0;
+      var avg = isFinite(p.avg) ? p.avg : 0;
+      invested += qty * avg;
       var q = lastQuotes[p.symbol];
-      var curPrice = q ? q.price : p.avg;
-      marketVal += p.qty * curPrice;
+      // [버그수정] 시세가 0/null/비정상이면 평단가로 폴백 (평가액 왜곡 방지)
+      var curPrice = (q && isFinite(q.price) && q.price > 0) ? q.price : avg;
+      marketVal += qty * curPrice;
     });
     var total = cash + marketVal;
     var changePct, change;
-    if (twr && typeof twr.factor === 'number' && typeof twr.lastValue === 'number' && twr.lastValue > 0) {
+    // [버그수정] isFinite로 NaN/Infinity까지 차단 (typeof 'number'는 NaN도 통과)
+    if (twr && isFinite(twr.factor) && isFinite(twr.lastValue) && twr.lastValue > 0) {
       // 정상 경로: 시간가중수익률(TWR)
       changePct = (twr.factor * (total / twr.lastValue) - 1) * 100;
-      change = total * (changePct / (100 + changePct));  // 표시용 손익액 근사
+      // [버그수정] changePct=-100%(전액손실)이면 (100+changePct)=0 → 0나눗셈 방어
+      var denom = 100 + changePct;
+      change = (Math.abs(denom) > 0.0001) ? total * (changePct / denom) : 0;
     } else {
       // 폴백(twr 미생성): net-contribution 방식 — 입출금 영향 제거
       //   순손익 = (현재가치 + 누적출금) - (초기자본 + 누적입금)
@@ -1827,6 +2015,9 @@ html[data-theme="light"] .sb-brand-sub{ color:#888; }
       change = (total + outflows) - baseline;
       changePct = baseline > 0 ? (change / baseline * 100) : 0;
     }
+    // [버그수정] 최종 NaN/Infinity 방어 — 화면에 "NaN%" 표시 차단
+    if (!isFinite(changePct)) changePct = 0;
+    if (!isFinite(change)) change = 0;
     return { symbol: symbol, cash: cash, invested: invested, marketVal: marketVal, total: total, change: change, changePct: changePct };
   }
 
@@ -1851,12 +2042,13 @@ html[data-theme="light"] .sb-brand-sub{ color:#888; }
     }
   }
 
-  // [V8] 전략별 색상 매핑
+  // [재작성] 전략별 색상 매핑 — TREND 단일. 구 전략은 레거시 포지션 호환용 유지.
   var STRATEGY_COLORS = {
-    swing:    { bg: 'rgba(56, 189, 248, 0.15)', fg: '#38bdf8', label: 'SWING' },
-    day:      { bg: 'rgba(251, 146, 60, 0.15)', fg: '#fb923c', label: 'DAY' },
-    momentum: { bg: 'rgba(168, 85, 247, 0.15)', fg: '#a855f7', label: 'MOM' },
-    meanrev:  { bg: 'rgba(74, 222, 128, 0.15)', fg: '#4ade80', label: 'MR' }
+    trend:    { bg: 'rgba(56, 189, 248, 0.18)', fg: '#38bdf8', label: 'TREND' },
+    swing:    { bg: 'rgba(100, 116, 139, 0.15)', fg: '#94a3b8', label: 'SWING' },
+    day:      { bg: 'rgba(100, 116, 139, 0.15)', fg: '#94a3b8', label: 'DAY' },
+    momentum: { bg: 'rgba(100, 116, 139, 0.15)', fg: '#94a3b8', label: 'MOM' },
+    meanrev:  { bg: 'rgba(100, 116, 139, 0.15)', fg: '#94a3b8', label: 'MR' }
   };
   function strategyBadge(strat) {
     var s = STRATEGY_COLORS[strat] || { bg: 'rgba(148,163,184,0.15)', fg: '#94a3b8', label: (strat||'?').toUpperCase() };
@@ -1881,7 +2073,7 @@ html[data-theme="light"] .sb-brand-sub{ color:#888; }
     function fillHeld(list, mkt) {
       list.forEach(function(p){
         var q = lastQuotes[p.symbol];
-        var cur = q ? q.price : null;
+        var cur = (q && isFinite(q.price) && q.price > 0) ? q.price : null;  // [버그수정] 비정상 시세 차단
         var pnlPct = (cur != null && p.avg) ? ((cur - p.avg) / p.avg * 100) : null;
         var existing = heldMap[mkt][p.symbol];
         // 같은 종목 여러 전략 보유 시 수량 합산, 손익은 평균단가 기준 재계산이 복잡하므로 대표값 사용
@@ -1900,8 +2092,9 @@ html[data-theme="light"] .sb-brand-sub{ color:#888; }
       var costSum = 0, valSum = 0, hasPrice = false;
       list.forEach(function(p){
         var q = lastQuotes[p.symbol];
-        if (q) hasPrice = true;
-        var cur = q ? q.price : p.avg;
+        var validPrice = (q && isFinite(q.price) && q.price > 0);  // [버그수정] 비정상 시세 차단
+        if (validPrice) hasPrice = true;
+        var cur = validPrice ? q.price : p.avg;
         costSum += p.qty * p.avg;
         valSum += p.qty * cur;
       });
@@ -2527,18 +2720,15 @@ html[data-theme="light"] .sb-brand-sub{ color:#888; }
   }
 
   function buildCfgHtml(cfg) {
-    var tp1 = (cfg.swingRules && cfg.swingRules.tp1) != null ? cfg.swingRules.tp1 : (cfg.takeProfit1 != null ? cfg.takeProfit1 : cfg.takeProfit);
-    var tp2 = (cfg.swingRules && cfg.swingRules.tp2) != null ? cfg.swingRules.tp2 : (cfg.takeProfit2 != null ? cfg.takeProfit2 : '-');
-    var sl = (cfg.swingRules && cfg.swingRules.stopLossPct) != null ? cfg.swingRules.stopLossPct : cfg.stopLoss;
-    var strats = cfg.strategies || {};
-    var activeStrats = [];
-    if (strats.swing !== false) activeStrats.push('SWING');
-    if (strats.day !== false) activeStrats.push('DAY');
-    if (strats.momentum !== false) activeStrats.push('MOM');
-    if (strats.meanrev !== false) activeStrats.push('MR');
-    var stratStr = activeStrats.length ? activeStrats.join('+') : 'NONE';
-    var swingBase = (cfg.strategySizing && cfg.strategySizing.swing && cfg.strategySizing.swing.base) || cfg.posSize || 12;
-    return 'Strategies/<b>'+stratStr+'</b> · RSI Buy/<b>'+cfg.rsiBuy+'</b>/Sell/<b>'+cfg.rsiSell+'</b> · Stop/<b>'+sl+'%</b> · TP1/<b>'+tp1+'%</b> · TP2/<b>'+tp2+'%</b> · SwingSize/<b>'+swingBase+'%</b>';
+    // [재작성] TREND 단일 전략 기준 표시
+    var tr = cfg.trendRules || {};
+    var tsz = cfg.trendSizing || {};
+    var sl = tr.stopLossPct != null ? tr.stopLossPct : (cfg.stopLoss != null ? cfg.stopLoss : 5);
+    var risk = tsz.riskPerTrade != null ? tsz.riskPerTrade : 0.75;
+    var conc = tsz.maxConcurrent != null ? tsz.maxConcurrent : 8;
+    var trail = tr.trailAtrMult != null ? tr.trailAtrMult : 2.5;
+    var atrStop = tr.atrStopMult != null ? tr.atrStopMult : 2.0;
+    return 'Strategy/<b>TREND</b> · Risk/<b>'+risk+'%</b> · 동시/<b>'+conc+'</b> · Stop/<b>'+sl+'%(ATR×'+atrStop+')</b> · Trail/<b>ATR×'+trail+'</b> · RSI/<b>'+cfg.rsiBuy+'/'+cfg.rsiSell+'</b>';
   }
 
   function renderCfgDisplay(cfg) {
@@ -3173,6 +3363,14 @@ html[data-theme="light"] .sb-brand-sub{ color:#888; }
         var quotes = state.watchlist || [];
         var indices = state.indices || [];
         currentCfg = state.cfg;
+        // ── Vision AI 자동 설정: API 키가 없으면 기본값 주입 ──
+        if (!currentCfg.visionAI) currentCfg.visionAI = {};
+        if (!currentCfg.visionAI.rfApiKey) {
+          currentCfg.visionAI.rfApiKey = 'WLMMRNV8GDpmbjEcrFar';
+          currentCfg.visionAI.enabled = true;
+          currentCfg.visionAI.rfVersion = currentCfg.visionAI.rfVersion || 7;
+          currentCfg.visionAI.confMin = currentCfg.visionAI.confMin || 0.6;
+        }
         usFavorites = (state.cfg && state.cfg.usFavorites) || [];
         krFavorites = (state.cfg && state.cfg.krFavorites) || [];
         renderIndices(indices);
@@ -3180,6 +3378,8 @@ html[data-theme="light"] .sb-brand-sub{ color:#888; }
         lastQuotes = {};
         quotes.forEach(function(q){ lastQuotes[q.symbol] = q; });
         window.__lastQuotesArr = quotes;
+        // ── Vision AI 자동 스캔 (데이터 로드 후 5초 뒤) ──
+        setTimeout(function(){ if (window._visionAutoScan) window._visionAutoScan(); }, 5000);
         // [V8] positions는 array — 하위호환으로 object도 허용
         var posUS = (state.positions && state.positions.us) || [];
         var posKR = (state.positions && state.positions.kr) || [];
@@ -3194,6 +3394,8 @@ html[data-theme="light"] .sb-brand-sub{ color:#888; }
         currentDeposits = deposits;
         currentOutflows = outflows;
         currentTwr = twr;
+        if (state.sectorGroups) currentSectorGroups = state.sectorGroups;  // [섹터그룹]
+        if (state.signalTypes) currentSignalTypes = state.signalTypes;     // [신호타입]
         var initUS = (state.cfg && state.cfg.initialCashUS) || 0;
         var initKR = (state.cfg && state.cfg.initialCashKR) || 0;
         renderSummary('us', calcSummary('us', cash.us, posUS, initUS, twr.us, deposits.us, outflows.us));
@@ -3285,58 +3487,178 @@ html[data-theme="light"] .sb-brand-sub{ color:#888; }
 
     // [재작성] 단일 TREND 전략 — 전략 토글 UI 제거됨 (백엔드가 strategies={trend:true} 강제)
 
+    // Vision AI 현재값
+    var _va = currentCfg.visionAI || {};
+    if ($('cfgVisionEnabled')) $('cfgVisionEnabled').checked = _va.enabled === true;
+    if ($('cfgRfApiKey')) $('cfgRfApiKey').value = _va.rfApiKey || '';
+    if ($('cfgRfVersion')) $('cfgRfVersion').value = _va.rfVersion || 7;
+    if ($('cfgVisionConfMin')) $('cfgVisionConfMin').value = _va.confMin || 0.6;
+
     // [V11] LLM Hybrid 토글 현재값
     var _llm = currentCfg.llmHybrid || {};
     if ($('cfgLlmEnabled')) $('cfgLlmEnabled').checked = _llm.enabled === true;
 
-    // [V8] 전략 사이즈
-    var sz = currentCfg.strategySizing || {};
-    var dflt = {
-      swing:    { base: 12, bullMult: 1.5, bearMult: 0.6 },
-      day:      { base:  6, bullMult: 1.0, bearMult: 0.7 },
-      momentum: { base: 18, bullMult: 1.5, bearMult: 0.5 },
-      meanrev:  { base:  9, bullMult: 0.7, bearMult: 1.3 }
-    };
-    function loadSizing(name, idBase, idBull, idBear) {
-      var s = sz[name] || dflt[name];
-      $(idBase).value = s.base;
-      $(idBull).value = s.bullMult;
-      $(idBear).value = s.bearMult;
-    }
-    loadSizing('swing',    'cfgSizeSwingBase', 'cfgSizeSwingBull', 'cfgSizeSwingBear');
-    loadSizing('day',      'cfgSizeDayBase',   'cfgSizeDayBull',   'cfgSizeDayBear');
-    loadSizing('momentum', 'cfgSizeMomBase',   'cfgSizeMomBull',   'cfgSizeMomBear');
-    loadSizing('meanrev',  'cfgSizeMrBase',    'cfgSizeMrBull',    'cfgSizeMrBear');
-    $('cfgCrossConf').value = currentCfg.crossConfluenceBonus != null ? currentCfg.crossConfluenceBonus : 1.2;
+    // [재작성] TREND 사이징 (고정리스크)
+    var tsz = currentCfg.trendSizing || {};
+    $('cfgTrendRisk').value = tsz.riskPerTrade != null ? tsz.riskPerTrade : 0.75;
+    $('cfgTrendMaxPos').value = tsz.maxPositionPct != null ? tsz.maxPositionPct : 15;
+    $('cfgTrendMaxConc').value = tsz.maxConcurrent != null ? tsz.maxConcurrent : 8;
 
     // 공통 지표
     $('cfgRsiBuy').value = currentCfg.rsiBuy;
     $('cfgRsiSell').value = currentCfg.rsiSell;
     $('cfgRsiPeriod').value = currentCfg.rsiPeriod;
 
-    // SWING 룰 (swingRules에서 우선, 없으면 cfg 최상위에서)
-    var sw = currentCfg.swingRules || {};
-    $('cfgStopLoss').value = sw.stopLossPct != null ? sw.stopLossPct : (currentCfg.stopLoss != null ? currentCfg.stopLoss : 5);
-    $('cfgTakeProfit1').value = sw.tp1 != null ? sw.tp1 : (currentCfg.takeProfit1 != null ? currentCfg.takeProfit1 : 4);
-    $('cfgTakeProfit2').value = sw.tp2 != null ? sw.tp2 : (currentCfg.takeProfit2 != null ? currentCfg.takeProfit2 : 11);
-    $('cfgMinHoldHours').value = sw.minHoldHours != null ? sw.minHoldHours : (currentCfg.minHoldHours != null ? currentCfg.minHoldHours : 4);
-    $('cfgTimeStopDays').value = sw.timeStopDays != null ? sw.timeStopDays : (currentCfg.timeStopDays != null ? currentCfg.timeStopDays : 3);
-    $('cfgTimeStopMaxDays').value = sw.timeStopMaxDays != null ? sw.timeStopMaxDays : (currentCfg.timeStopMaxDays != null ? currentCfg.timeStopMaxDays : 7);
-    $('cfgTrailStartPct').value = sw.trailStartPct != null ? sw.trailStartPct : (currentCfg.trailStartPct != null ? currentCfg.trailStartPct : 3);
-    $('cfgTrailDropPct').value = sw.trailDropPct != null ? sw.trailDropPct : (currentCfg.trailDropPct != null ? currentCfg.trailDropPct : 4);
-    $('cfgAtrStopMult').value = sw.atrStopMult != null ? sw.atrStopMult : (currentCfg.atrStopMult != null ? currentCfg.atrStopMult : 2.0);
+    // [재작성] TREND 룰
+    var tr = currentCfg.trendRules || {};
+    $('cfgTrendStopPct').value = tr.stopLossPct != null ? tr.stopLossPct : 5;
+    $('cfgTrendAtrStop').value = tr.atrStopMult != null ? tr.atrStopMult : 2.0;
+    $('cfgTrendTrail').value = tr.trailAtrMult != null ? tr.trailAtrMult : 2.5;
+    $('cfgTrendTp1R').value = tr.tp1AtR != null ? tr.tp1AtR : 1.0;
+    $('cfgTrendTimeStop').value = tr.timeStopDays != null ? tr.timeStopDays : 10;
+    $('cfgTrendBreakout').value = tr.breakoutDays != null ? tr.breakoutDays : 20;
+    $('cfgTrendVolMult').value = tr.volMult != null ? tr.volMult : 1.5;
+    $('cfgTrendRsiMin').value = tr.rsiPullbackMin != null ? tr.rsiPullbackMin : 40;
+    $('cfgTrendRsiMax').value = tr.rsiPullbackMax != null ? tr.rsiPullbackMax : 65;
+    $('cfgTrendMaxAtr').value = tr.maxAtrPct != null ? tr.maxAtrPct : 6;
+    $('cfgTrendConfMin').value = tr.confMin != null ? tr.confMin : 0.5;
+
+    // [KR 분리] KR 전용 오버라이드 필드 로드 (누락 키는 US merge값으로)
+    var trKR = currentCfg.trendRulesKR || {};
+    var tszKR = currentCfg.trendSizingKR || {};
+    $('cfgKrStopPct').value  = trKR.stopLossPct  != null ? trKR.stopLossPct  : (tr.stopLossPct  || 4.0);
+    $('cfgKrAtrStop').value  = trKR.atrStopMult  != null ? trKR.atrStopMult  : (tr.atrStopMult  || 1.7);
+    $('cfgKrTrail').value    = trKR.trailAtrMult != null ? trKR.trailAtrMult : (tr.trailAtrMult || 2.0);
+    $('cfgKrTp1R').value     = trKR.tp1AtR       != null ? trKR.tp1AtR       : (tr.tp1AtR       || 1.0);
+    $('cfgKrTimeStop').value = trKR.timeStopDays != null ? trKR.timeStopDays : (tr.timeStopDays || 7);
+    $('cfgKrBreakout').value = trKR.breakoutDays != null ? trKR.breakoutDays : (tr.breakoutDays || 20);
+    $('cfgKrVolMult').value  = trKR.volMult      != null ? trKR.volMult      : (tr.volMult      || 1.5);
+    $('cfgKrRsiMin').value   = trKR.rsiPullbackMin != null ? trKR.rsiPullbackMin : (tr.rsiPullbackMin || 40);
+    $('cfgKrRsiMax').value   = trKR.rsiPullbackMax != null ? trKR.rsiPullbackMax : (tr.rsiPullbackMax || 65);
+    $('cfgKrMaxAtr').value   = trKR.maxAtrPct    != null ? trKR.maxAtrPct    : (tr.maxAtrPct    || 5);
+    $('cfgKrRsiBreakout').value = trKR.rsiBreakoutMax != null ? trKR.rsiBreakoutMax : 68;
+    $('cfgKrConfMin').value  = trKR.confMin      != null ? trKR.confMin      : (tr.confMin      || 0.5);
+    $('cfgKrRisk').value    = tszKR.riskPerTrade   != null ? tszKR.riskPerTrade   : 0.6;
+    $('cfgKrMaxPos').value  = tszKR.maxPositionPct != null ? tszKR.maxPositionPct : 12;
+    $('cfgKrMaxConc').value = tszKR.maxConcurrent  != null ? tszKR.maxConcurrent  : 6;
+    // US 탭에 rsiBreakoutMax 로드
+    if ($('cfgTrendRsiBreakout')) $('cfgTrendRsiBreakout').value = tr.rsiBreakoutMax != null ? tr.rsiBreakoutMax : 72;
+
+    // [CRASH GATE] 패닉·드로다운 필드 로드
+    var cs = currentCfg.crashSurvival || {};
+    var cpanic = cs.panic || {};
+    var cdd = cs.drawdown || {};
+    $('cfgPanicEnabled').checked = cpanic.enabled !== false;
+    $('cfgPanicAvgDrop').value   = cpanic.avgDropPct   != null ? cpanic.avgDropPct   : -4.0;
+    $('cfgPanicSizeScale').value = cpanic.panicSizeScale != null ? cpanic.panicSizeScale : 0.4;
+    $('cfgDdL1').value      = cdd.l1Pct      != null ? cdd.l1Pct      : 6;
+    $('cfgDdL2').value      = cdd.l2Pct      != null ? cdd.l2Pct      : 12;
+    $('cfgDdL1Scale').value = cdd.l1SizeScale != null ? cdd.l1SizeScale : 0.5;
 
     $('cfgMaxDailyDrop').value = currentCfg.maxDailyDrop != null ? currentCfg.maxDailyDrop : 5;
-    $('cfgMarketCrashPct').value = currentCfg.marketCrashPct != null ? currentCfg.marketCrashPct : -2;
+    $('cfgMarketCrashPct').value = currentCfg.marketCrashPct != null ? currentCfg.marketCrashPct : -4;
     $('cfgMaPeriod').value = currentCfg.maPeriod;
     $('cfgAtrPeriod').value = currentCfg.atrPeriod;
     $('cfgBbStdMult').value = currentCfg.bbStdMult != null ? currentCfg.bbStdMult : 2.0;
     $('cfgDailyCacheMinutes').value = currentCfg.dailyCacheMinutes != null ? currentCfg.dailyCacheMinutes : 10;
+    $('cfgEvalBudgetMs').value = currentCfg.evalBudgetMs != null ? currentCfg.evalBudgetMs : 18000;
+    $('cfgCycleHardCapMs').value = currentCfg.cycleHardCapMs != null ? currentCfg.cycleHardCapMs : 28000;
     $('cfgFeeUS').value = currentCfg.feeUS;
     $('cfgFeeKR').value = currentCfg.feeKR;
     $('cfgKrSellTax').value = currentCfg.krSellTax != null ? currentCfg.krSellTax : 0.0018;
+    renderSectorGroups();  // [섹터그룹] 그룹별 가중치·성과 표시
+    renderSignalTypes();   // [신호타입] 신호별 가중치·성과 표시
+    renderEngineStats();   // [통계] 일별 신호·거래·에러 막대그래프
     $('settingsModal').classList.add('show');
+    window.switchStratTab('us');
 }
+
+  // [섹터그룹] 6개 그룹의 현재 가중치·성과를 막대로 표시
+  function renderSectorGroups() {
+    var box = $('sectorGroupsBox'); if (!box) return;
+    var sg = currentSectorGroups || { stats: {}, weights: {} };
+    var groups = ['TECH','FINANCE','HEALTH','CONSUMER','INDUSTRIAL','RESOURCES','OTHER'];
+    var html = '';
+    groups.forEach(function(g){
+      var st = (sg.stats || {})[g] || { trades: 0, wins: 0, sumPnlPct: 0 };
+      var w = (sg.weights || {})[g] != null ? (sg.weights || {})[g] : 1.0;
+      var wr = st.trades > 0 ? Math.round(st.wins / st.trades * 100) : 0;
+      var avg = st.trades > 0 ? (st.sumPnlPct / st.trades) : 0;
+      var wColor = w > 1.02 ? '#4ade80' : (w < 0.98 ? '#f87171' : 'var(--t2)');
+      var barW = Math.max(0, Math.min(100, Math.round((w - 0.6) / 0.7 * 100)));
+      html += '<div style="display:flex;align-items:center;gap:8px;margin-bottom:4px;">'
+        + '<span style="width:78px;color:var(--t1);font-weight:600;">' + g + '</span>'
+        + '<div style="flex:1;height:6px;background:var(--bg2);border-radius:3px;overflow:hidden;"><div style="width:' + barW + '%;height:100%;background:' + wColor + ';"></div></div>'
+        + '<span style="width:42px;text-align:right;color:' + wColor + ';font-weight:600;">×' + w.toFixed(2) + '</span>'
+        + '<span style="width:96px;text-align:right;color:var(--t3);">' + st.trades + '건 ' + wr + '% ' + (avg >= 0 ? '+' : '') + avg.toFixed(1) + '%</span>'
+        + '</div>';
+    });
+    box.innerHTML = html;
+  }
+
+  // [신호타입] 돌파/풀백 신호별 현재 가중치·성과를 막대로 표시
+  function renderSignalTypes() {
+    var box = $('signalTypesBox'); if (!box) return;
+    var sig = currentSignalTypes || { stats: {}, weights: {} };
+    var types = [{ k: 'TR_BREAKOUT', label: 'BREAKOUT (돌파)' }, { k: 'TR_PULLBACK', label: 'PULLBACK (풀백)' }];
+    var html = '';
+    types.forEach(function(t){
+      var s = (sig.stats || {})[t.k] || { trades: 0, wins: 0, sumPnlPct: 0 };
+      var w = (sig.weights || {})[t.k] != null ? (sig.weights || {})[t.k] : 1.0;
+      var wr = s.trades > 0 ? Math.round(s.wins / s.trades * 100) : 0;
+      var avg = s.trades > 0 ? (s.sumPnlPct / s.trades) : 0;
+      var wColor = w > 1.02 ? '#4ade80' : (w < 0.98 ? '#f87171' : 'var(--t2)');
+      var barW = Math.max(0, Math.min(100, Math.round((w - 0.7) / 0.6 * 100)));
+      html += '<div style="display:flex;align-items:center;gap:8px;margin-bottom:4px;">'
+        + '<span style="width:130px;color:var(--t1);font-weight:600;">' + t.label + '</span>'
+        + '<div style="flex:1;height:6px;background:var(--bg2);border-radius:3px;overflow:hidden;"><div style="width:' + barW + '%;height:100%;background:' + wColor + ';"></div></div>'
+        + '<span style="width:42px;text-align:right;color:' + wColor + ';font-weight:600;">×' + w.toFixed(2) + '</span>'
+        + '<span style="width:96px;text-align:right;color:var(--t3);">' + s.trades + '건 ' + wr + '% ' + (avg >= 0 ? '+' : '') + avg.toFixed(1) + '%</span>'
+        + '</div>';
+    });
+    box.innerHTML = html;
+  }
+
+  window.switchStratTab = function switchStratTab(tab) {
+    $('stratTabUS').style.display = tab === 'us' ? '' : 'none';
+    $('stratTabKR').style.display = tab === 'kr' ? '' : 'none';
+    $('stratTabBtnUS').classList.toggle('active', tab === 'us');
+    $('stratTabBtnKR').classList.toggle('active', tab === 'kr');
+  }
+
+  function renderEngineStats() {
+    var box = $('engineStatsBox'); if (!box) return;
+    box.innerHTML = '<div class="empty">로딩 중…</div>';
+    api('/api/daily-stats?days=7').then(function(d){
+      var stats = (d && d.stats) || [];
+      var today = d && d.today;
+      if (!stats.length) { box.innerHTML = '<div class="empty">데이터 없음 — 사이클 실행 후 표시됩니다</div>'; return; }
+      var maxV = 1;
+      stats.forEach(function(s){ maxV = Math.max(maxV, s.signals||0, s.trades||0, s.errors||0); });
+      var H = 72;
+      function bar(v, color){
+        var h = Math.max(3, Math.round((v||0) / maxV * H));
+        return '<div style="display:flex;flex-direction:column;align-items:center;gap:2px;">'
+          + '<span style="font-size:9px;color:var(--t2);font-variant-numeric:tabular-nums;min-height:12px;">' + (v||0) + '</span>'
+          + '<div style="width:9px;height:' + h + 'px;background:' + color + ';border-radius:2px 2px 0 0;"></div>'
+          + '</div>';
+      }
+      var html = '';
+      stats.forEach(function(s){
+        var mmdd = (s.day_key || '').slice(5).replace('-', '/');
+        var isToday = s.day_key === today;
+        html += '<div class="estat-day' + (isToday ? ' today' : '') + '">'
+          + '<div class="estat-bars" style="align-items:flex-end;">'
+          + bar(s.signals, 'var(--amber)')
+          + bar(s.trades,  'var(--green)')
+          + bar(s.errors,  'var(--red)')
+          + '</div>'
+          + '<div class="estat-xlabel">' + mmdd + '</div>'
+          + '</div>';
+      });
+      box.innerHTML = html;
+    })['catch'](function(){ box.innerHTML = '<div class="empty">불러오기 실패</div>'; });
+  }
 
   function closeSettings() { $('settingsModal').classList.remove('show'); }
 
@@ -3351,18 +3673,23 @@ html[data-theme="light"] .sb-brand-sub{ color:#888; }
       krTickers: parseTickers($('cfgKR').value),
       // [재작성] 단일 TREND 전략 (백엔드 migrate가 어차피 강제하지만 명시 저장)
       strategies: { trend: true },
+      // Vision AI
+      visionAI: {
+        enabled: $('cfgVisionEnabled') ? $('cfgVisionEnabled').checked : false,
+        rfApiKey: $('cfgRfApiKey') ? $('cfgRfApiKey').value.trim() : '',
+        rfVersion: parseInt($('cfgRfVersion') ? $('cfgRfVersion').value : '7', 10) || 7,
+        confMin: parseFloat($('cfgVisionConfMin') ? $('cfgVisionConfMin').value : '0.6') || 0.6
+      },
       // [V11] LLM Hybrid — 기존 설정(model/maxTokens 등) 보존하고 enabled만 갱신
       llmHybrid: Object.assign({}, (currentCfg && currentCfg.llmHybrid) || {}, {
         enabled: $('cfgLlmEnabled') ? $('cfgLlmEnabled').checked : false
       }),
-      // [V8] 전략 사이즈
-      strategySizing: {
-        swing:    { base: parseFloat($('cfgSizeSwingBase').value), bullMult: parseFloat($('cfgSizeSwingBull').value), bearMult: parseFloat($('cfgSizeSwingBear').value) },
-        day:      { base: parseFloat($('cfgSizeDayBase').value),   bullMult: parseFloat($('cfgSizeDayBull').value),   bearMult: parseFloat($('cfgSizeDayBear').value) },
-        momentum: { base: parseFloat($('cfgSizeMomBase').value),   bullMult: parseFloat($('cfgSizeMomBull').value),   bearMult: parseFloat($('cfgSizeMomBear').value) },
-        meanrev:  { base: parseFloat($('cfgSizeMrBase').value),    bullMult: parseFloat($('cfgSizeMrBull').value),    bearMult: parseFloat($('cfgSizeMrBear').value) }
+      // [재작성] TREND 사이징 (고정리스크)
+      trendSizing: {
+        riskPerTrade: parseFloat($('cfgTrendRisk').value),
+        maxPositionPct: parseFloat($('cfgTrendMaxPos').value),
+        maxConcurrent: parseInt($('cfgTrendMaxConc').value, 10)
       },
-      crossConfluenceBonus: parseFloat($('cfgCrossConf').value),
       // 공통 지표
       rsiBuy: parseFloat($('cfgRsiBuy').value),
       rsiSell: parseFloat($('cfgRsiSell').value),
@@ -3373,31 +3700,63 @@ html[data-theme="light"] .sb-brand-sub{ color:#888; }
       atrPeriod: parseInt($('cfgAtrPeriod').value, 10),
       bbStdMult: parseFloat($('cfgBbStdMult').value),
       dailyCacheMinutes: parseInt($('cfgDailyCacheMinutes').value, 10),
+      evalBudgetMs: parseInt($('cfgEvalBudgetMs').value, 10),
+      cycleHardCapMs: parseInt($('cfgCycleHardCapMs').value, 10),
       feeUS: parseFloat($('cfgFeeUS').value),
       feeKR: parseFloat($('cfgFeeKR').value),
       krSellTax: parseFloat($('cfgKrSellTax').value),
-      // [V8] swingRules (개별 룰 객체)
-      swingRules: {
-        stopLossPct: parseFloat($('cfgStopLoss').value),
-        tp1: parseFloat($('cfgTakeProfit1').value),
-        tp2: parseFloat($('cfgTakeProfit2').value),
-        minHoldHours: parseFloat($('cfgMinHoldHours').value),
-        timeStopDays: parseInt($('cfgTimeStopDays').value, 10),
-        timeStopMaxDays: parseInt($('cfgTimeStopMaxDays').value, 10),
-        trailStartPct: parseFloat($('cfgTrailStartPct').value),
-        trailDropPct: parseFloat($('cfgTrailDropPct').value),
-        atrStopMult: parseFloat($('cfgAtrStopMult').value)
+      // [재작성] TREND 룰 (누락 키는 백엔드 migrate가 기본값 보강)
+      trendRules: {
+        stopLossPct: parseFloat($('cfgTrendStopPct').value),
+        atrStopMult: parseFloat($('cfgTrendAtrStop').value),
+        trailAtrMult: parseFloat($('cfgTrendTrail').value),
+        tp1AtR: parseFloat($('cfgTrendTp1R').value),
+        timeStopDays: parseInt($('cfgTrendTimeStop').value, 10),
+        breakoutDays: parseInt($('cfgTrendBreakout').value, 10),
+        volMult: parseFloat($('cfgTrendVolMult').value),
+        rsiPullbackMin: parseFloat($('cfgTrendRsiMin').value),
+        rsiPullbackMax: parseFloat($('cfgTrendRsiMax').value),
+        maxAtrPct: parseFloat($('cfgTrendMaxAtr').value),
+        rsiBreakoutMax: parseFloat($('cfgTrendRsiBreakout').value),
+        confMin: parseFloat($('cfgTrendConfMin').value)
       },
-      // 하위 호환 — 옛 백엔드 필드도 함께 전송
-      stopLoss: parseFloat($('cfgStopLoss').value),
-      takeProfit1: parseFloat($('cfgTakeProfit1').value),
-      takeProfit2: parseFloat($('cfgTakeProfit2').value),
-      minHoldHours: parseFloat($('cfgMinHoldHours').value),
-      timeStopDays: parseInt($('cfgTimeStopDays').value, 10),
-      timeStopMaxDays: parseInt($('cfgTimeStopMaxDays').value, 10),
-      atrStopMult: parseFloat($('cfgAtrStopMult').value),
-      trailStartPct: parseFloat($('cfgTrailStartPct').value),
-      trailDropPct: parseFloat($('cfgTrailDropPct').value)
+      // [KR 분리] KR 탭 전체 독립 설정
+      trendRulesKR: {
+        stopLossPct:    parseFloat($('cfgKrStopPct').value),
+        atrStopMult:    parseFloat($('cfgKrAtrStop').value),
+        trailAtrMult:   parseFloat($('cfgKrTrail').value),
+        tp1AtR:         parseFloat($('cfgKrTp1R').value),
+        timeStopDays:   parseInt($('cfgKrTimeStop').value, 10),
+        breakoutDays:   parseInt($('cfgKrBreakout').value, 10),
+        volMult:        parseFloat($('cfgKrVolMult').value),
+        rsiPullbackMin: parseFloat($('cfgKrRsiMin').value),
+        rsiPullbackMax: parseFloat($('cfgKrRsiMax').value),
+        maxAtrPct:      parseFloat($('cfgKrMaxAtr').value),
+        rsiBreakoutMax: parseFloat($('cfgKrRsiBreakout').value),
+        confMin:        parseFloat($('cfgKrConfMin').value)
+      },
+      trendSizingKR: {
+        riskPerTrade:   parseFloat($('cfgKrRisk').value),
+        maxPositionPct: parseFloat($('cfgKrMaxPos').value),
+        maxConcurrent:  parseInt($('cfgKrMaxConc').value, 10)
+      },
+      // [CRASH GATE]
+      crashSurvival: Object.assign({}, (currentCfg && currentCfg.crashSurvival) || {}, {
+        panic: {
+          enabled:        $('cfgPanicEnabled').checked,
+          avgDropPct:     parseFloat($('cfgPanicAvgDrop').value),
+          panicSizeScale: parseFloat($('cfgPanicSizeScale').value),
+          requireBear:    !!((currentCfg.crashSurvival || {}).panic || {}).requireBear
+        },
+        drawdown: Object.assign({}, ((currentCfg.crashSurvival || {}).drawdown) || {}, {
+          l1Pct:       parseFloat($('cfgDdL1').value),
+          l2Pct:       parseFloat($('cfgDdL2').value),
+          l1SizeScale: parseFloat($('cfgDdL1Scale').value)
+        })
+      }),
+      // 하위 호환 — executeBuy 폴백용 cfg.stopLoss / cfg.atrStopMult
+      stopLoss: parseFloat($('cfgTrendStopPct').value),
+      atrStopMult: parseFloat($('cfgTrendAtrStop').value)
     };
     fetch('/api/cfg', { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify(body) })
       .then(function(r){return r.json();})
@@ -3486,6 +3845,34 @@ html[data-theme="light"] .sb-brand-sub{ color:#888; }
   // [다운로드] 메인 UI 트레이드 기록 CSV 버튼
   $('btnDownloadRecent').addEventListener('click', function(){ downloadTradesCSV(50, 'recent_trades'); });
   $('btnDownloadAll').addEventListener('click', function(){ downloadTradesCSV(10000, 'all_trades'); });
+  // [신규] 백테스트 패널 — 현재 TREND 설정을 과거 2년에 적용해 성과 검증
+  function runBacktestUI(market){
+    var rd = $('backtestResult');
+    var btn = $(market==='us' ? 'btnBacktestUS' : 'btnBacktestKR');
+    if(!rd) return;
+    rd.style.display='block';
+    rd.innerHTML='⏳ '+market.toUpperCase()+' 백테스트 실행 중... (수십 초 소요, 기다려주세요)';
+    if(btn) btn.disabled=true;
+    fetch('/api/backtest?market='+market+'&range=2y&maxSymbols=12')
+      .then(function(r){ return r.json(); })
+      .then(function(d){
+        var o=d.overall||{}, ex=d.byExit||{};
+        var symN=(d.config&&d.config.symbols&&d.config.symbols.length)||0;
+        var wColor=(o.winRate>=50)?'#4ade80':'#f87171';
+        var pfColor=(o.profitFactor>=1)?'#4ade80':'#f87171';
+        var html='<b style="color:var(--acc);">'+market.toUpperCase()+' · 종목 '+symN+'개 · 최근 2년</b><br>';
+        html+='거래 <b>'+(o.trades||0)+'</b>건 · 승률 <b style="color:'+wColor+';">'+(o.winRate||0)+'%</b> · PF <b style="color:'+pfColor+';">'+(o.profitFactor||0)+'</b> · 기대값 <b>'+(o.expectancy||0)+'</b><br>';
+        html+='<span style="color:var(--t3);">평균이익</span> +'+(o.avgWinPct||0)+'% / <span style="color:var(--t3);">평균손실</span> '+(o.avgLossPct||0)+'% · payoff '+(o.payoffRatio||0)+'<br>';
+        var exits=Object.keys(ex).sort(function(a,b){return ex[b].trades-ex[a].trades;});
+        if(exits.length){
+          html+='<span style="color:var(--t3);">청산: </span>'+exits.map(function(k){return k+' '+ex[k].trades+'건('+ex[k].winRate+'%)';}).join(' · ');
+        }
+        rd.innerHTML=html;
+        if(btn) btn.disabled=false;
+      })['catch'](function(e){ rd.innerHTML='❌ 백테스트 실패: '+e.message; if(btn) btn.disabled=false; });
+  }
+  var _btUS=$('btnBacktestUS'); if(_btUS) _btUS.addEventListener('click', function(){ runBacktestUI('us'); });
+  var _btKR=$('btnBacktestKR'); if(_btKR) _btKR.addEventListener('click', function(){ runBacktestUI('kr'); });
   var _btnDownloadLogs = $('btnDownloadLogs');
   if (_btnDownloadLogs) _btnDownloadLogs.addEventListener('click', downloadLogsCSV);
   var _btnDownloadPos = $('btnDownloadPositions');
@@ -3710,6 +4097,326 @@ window.addEventListener('DOMContentLoaded', () => {
     item.addEventListener('click',function(){showPage(this.getAttribute('data-page'));});
   });
   try{showPage(localStorage.getItem('luxPage')||'dashboard');}catch(e){showPage('dashboard');}
+
+  // ══════════════════════════════════════════════
+  // VISION AI MODULE — Roboflow Chart Prediction
+  // ══════════════════════════════════════════════
+  var RF_PROJECT = 'stock-updown-classifier';
+
+  // localStorage에서 이전 결과 복원
+  try {
+    var _savedVision = localStorage.getItem('visionResults');
+    if (_savedVision) visionResults = JSON.parse(_savedVision);
+  } catch(e) {}
+
+  // 차트 이미지를 Canvas에 그려 base64로 반환
+  function drawVisionCanvas(closes, size) {
+    var canvas = document.createElement('canvas');
+    canvas.width = size; canvas.height = size;
+    var ctx = canvas.getContext('2d');
+
+    // 배경
+    ctx.fillStyle = '#080808';
+    ctx.fillRect(0, 0, size, size);
+    if (!closes || closes.length < 5) return canvas;
+
+    var n = Math.min(closes.length, 60);
+    var data = closes.slice(-n);
+    var minV = Math.min.apply(null, data);
+    var maxV = Math.max.apply(null, data);
+    var range = maxV - minV || minV * 0.01 || 1;
+
+    var pad = Math.round(size * 0.06);
+    var w = size - pad * 2;
+    var h = size - pad * 2;
+
+    // 그리드
+    ctx.strokeStyle = '#1e1e1e';
+    ctx.lineWidth = 0.8;
+    for (var g = 1; g <= 3; g++) {
+      var gy = pad + (h / 4) * g;
+      ctx.beginPath(); ctx.moveTo(pad, gy); ctx.lineTo(size - pad, gy); ctx.stroke();
+    }
+
+    var isUp = data[data.length - 1] >= data[0];
+    var lineColor = isUp ? '#00e676' : '#ff1744';
+    var fillColor = isUp ? 'rgba(0,230,118,0.07)' : 'rgba(255,23,68,0.07)';
+
+    function px(i) { return pad + (i / (data.length - 1)) * w; }
+    function py(v) { return pad + h - ((v - minV) / range) * h; }
+
+    // 면적 채우기
+    ctx.beginPath();
+    ctx.moveTo(px(0), py(data[0]));
+    for (var i = 1; i < data.length; i++) ctx.lineTo(px(i), py(data[i]));
+    ctx.lineTo(px(data.length - 1), pad + h);
+    ctx.lineTo(pad, pad + h);
+    ctx.closePath();
+    ctx.fillStyle = fillColor;
+    ctx.fill();
+
+    // 가격선
+    ctx.beginPath();
+    ctx.moveTo(px(0), py(data[0]));
+    for (var i = 1; i < data.length; i++) ctx.lineTo(px(i), py(data[i]));
+    ctx.strokeStyle = lineColor;
+    ctx.lineWidth = 1.8;
+    ctx.shadowColor = lineColor;
+    ctx.shadowBlur = 5;
+    ctx.stroke();
+    ctx.shadowBlur = 0;
+
+    // MA20 선
+    if (data.length >= 20) {
+      ctx.beginPath();
+      var maStarted = false;
+      for (var i = 0; i < data.length; i++) {
+        if (i < 19) continue;
+        var sum = 0;
+        for (var j = i - 19; j <= i; j++) sum += data[j];
+        var ma = sum / 20;
+        var mx = px(i), my = py(ma);
+        if (!maStarted) { ctx.moveTo(mx, my); maStarted = true; }
+        else ctx.lineTo(mx, my);
+      }
+      ctx.strokeStyle = 'rgba(255,193,7,0.55)';
+      ctx.lineWidth = 1;
+      ctx.stroke();
+    }
+
+    return canvas;
+  }
+
+  // Roboflow Hosted Inference API 호출
+  async function rfPredict(symbol, closes) {
+    var va = (currentCfg && currentCfg.visionAI) || {};
+    var apiKey = va.rfApiKey || '';
+    var ver = va.rfVersion || 7;
+    if (!apiKey) return null;
+
+    try {
+      var canvas = drawVisionCanvas(closes, 224);
+      var b64 = canvas.toDataURL('image/jpeg', 0.92).split(',')[1];
+      var url = 'https://classify.roboflow.com/' + RF_PROJECT + '/' + ver + '?api_key=' + apiKey;
+      var r = await fetch(url, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+        body: b64
+      });
+      if (!r.ok) return null;
+      var data = await r.json();
+      var preds = data.predictions || {};
+      var upC = (preds['up'] && preds['up'].confidence) || 0;
+      var downC = (preds['down'] && preds['down'].confidence) || 0;
+      var pred = upC >= downC ? 'up' : 'down';
+      var conf = Math.max(upC, downC);
+      return { pred: pred, conf: conf, upConf: upC, downConf: downC, ts: Date.now() };
+    } catch(e) {
+      return null;
+    }
+  }
+
+  // 단일 티커 스캔
+  async function visionScanOne(symbol) {
+    // 백엔드에서 일봉 데이터 가져오기
+    try {
+      var r = await fetch('/api/daily?symbol=' + encodeURIComponent(symbol));
+      if (!r.ok) return;
+      var daily = await r.json();
+      if (!daily || !daily.closes || daily.closes.length < 10) return;
+      var result = await rfPredict(symbol, daily.closes);
+      if (result) {
+        visionResults[symbol] = result;
+        try { localStorage.setItem('visionResults', JSON.stringify(visionResults)); } catch(e) {}
+        renderVisionPage();
+      }
+    } catch(e) {}
+  }
+
+  // 전체 스캔
+  async function runVisionScanAll() {
+    if (visionScanning) return;
+    var va = (currentCfg && currentCfg.visionAI) || {};
+    var apiKey = va.rfApiKey || '';
+    if (!apiKey) {
+      showToast('Settings에서 Roboflow API Key를 먼저 입력하세요');
+      showPage('settings');
+      return;
+    }
+
+    visionScanning = true;
+    var allSymbols = [];
+    if (window.__lastQuotesArr) {
+      window.__lastQuotesArr.forEach(function(q) { allSymbols.push(q.symbol); });
+    }
+    if (allSymbols.length === 0) { visionScanning = false; return; }
+
+    var done = 0;
+    var prog = $('visionScanProgress');
+    var stat = $('visionScanStatus');
+    if (stat) stat.textContent = '스캔 중...';
+
+    for (var i = 0; i < allSymbols.length; i++) {
+      var sym = allSymbols[i];
+      if (prog) prog.textContent = sym + '  ' + (done + 1) + ' / ' + allSymbols.length;
+      await visionScanOne(sym);
+      done++;
+      renderVisionPage();
+    }
+
+    visionScanning = false;
+    if (prog) prog.textContent = '';
+    if (stat) stat.textContent = '완료 · ' + done + '개 스캔';
+    renderVisionPage();
+
+    // ── 스캔 결과를 백엔드에 저장 → 트레이딩 사이클에서 직접 활용 ──
+    try {
+      fetch('/api/vision', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(visionResults)
+      });
+    } catch(e) {}
+  }
+
+  // Vision 페이지 렌더링
+  function renderVisionPage() {
+    var grid = $('visionGrid');
+    if (!grid) return;
+
+    var keys = Object.keys(visionResults);
+    if (keys.length === 0) {
+      grid.innerHTML = '<div class="vision-empty"><b>AI VISION</b>이 아직 실행되지 않았습니다.<br>Settings에서 Roboflow API Key를 입력한 후<br><b>▶ 전체 스캔</b>을 눌러 차트 예측을 시작하세요.<br><br><span style="font-size:10px;color:var(--t3);">모델: ' + RF_PROJECT + ' · Roboflow Hosted Inference</span></div>';
+      if ($('visionSummaryRow')) $('visionSummaryRow').style.display = 'none';
+      return;
+    }
+
+    var upList = [], downList = [];
+    var totalConf = 0;
+    keys.forEach(function(sym) {
+      var r = visionResults[sym];
+      if (r.pred === 'up') upList.push(sym); else downList.push(sym);
+      totalConf += r.conf;
+    });
+
+    // 요약
+    if ($('visionSummaryRow')) $('visionSummaryRow').style.display = '';
+    if ($('visionTotalCount')) $('visionTotalCount').textContent = keys.length;
+    if ($('visionUpCount')) $('visionUpCount').textContent = upList.length;
+    if ($('visionDownCount')) $('visionDownCount').textContent = downList.length;
+    if ($('visionAvgConf')) $('visionAvgConf').textContent = (totalConf / keys.length * 100).toFixed(0) + '%';
+
+    // 카드 그리드 — 상승 먼저, 내림차순 confidence
+    var sorted = keys.slice().sort(function(a, b) {
+      var ra = visionResults[a], rb = visionResults[b];
+      if (ra.pred !== rb.pred) return ra.pred === 'up' ? -1 : 1;
+      return rb.conf - ra.conf;
+    });
+
+    var html = '<div class="vision-grid">';
+    sorted.forEach(function(sym) {
+      var r = visionResults[sym];
+      var isUp = r.pred === 'up';
+      var confPct = (r.conf * 100).toFixed(1) + '%';
+      var tsStr = r.ts ? new Date(r.ts).toLocaleTimeString('ko-KR', {hour:'2-digit',minute:'2-digit'}) : '';
+      var badgeCls = isUp ? 'vision-up' : 'vision-down';
+      var label = isUp ? '▲ UP' : '▼ DOWN';
+      var confBar = Math.round(r.conf * 100);
+      html += '<div class="vision-card">';
+      html += '<div class="vision-card-top">';
+      html += '<span class="vision-card-sym">' + sym + '</span>';
+      html += '<span class="vision-badge ' + badgeCls + '">' + label + '</span>';
+      html += '</div>';
+      // 차트 캔버스를 데이터 URL로 임베드
+      html += '<div class="vision-canvas-wrap" id="vcanvas_' + sym + '"></div>';
+      html += '<div class="vision-card-bottom">';
+      html += '<span style="font-size:10px;color:var(--t2);">신뢰도 <b>' + confPct + '</b> &nbsp; UP ' + (r.upConf*100).toFixed(0) + '% / DN ' + (r.downConf*100).toFixed(0) + '%</span>';
+      html += '<span class="vision-card-ts">' + tsStr + '</span>';
+      html += '</div></div>';
+    });
+    html += '</div>';
+    grid.innerHTML = html;
+
+    // 차트 이미지 삽입 (백엔드 데이터 있을 때)
+    sorted.forEach(function(sym) {
+      var wrap = document.getElementById('vcanvas_' + sym);
+      if (!wrap) return;
+      try {
+        fetch('/api/daily?symbol=' + encodeURIComponent(sym))
+          .then(function(r){ return r.ok ? r.json() : null; })
+          .then(function(daily) {
+            if (!daily || !daily.closes) return;
+            var cv = drawVisionCanvas(daily.closes, 200);
+            cv.style.width = '100%';
+            cv.style.height = 'auto';
+            wrap.appendChild(cv);
+          })['catch'](function(){});
+      } catch(e) {}
+    });
+  }
+
+  // Watchlist 카드에 Vision badge 추가 (렌더 후 호출)
+  function applyVisionBadges() {
+    var va = (currentCfg && currentCfg.visionAI) || {};
+    var confMin = va.confMin || 0.6;
+    if (!va.enabled) return;
+    document.querySelectorAll('.wl-card').forEach(function(card) {
+      var sym = card.querySelector('.wl-sym');
+      if (!sym) return;
+      var symbol = sym.textContent.replace(/\s.*/, '').trim();
+      var r = visionResults[symbol];
+      if (!r || r.conf < confMin) return;
+      // 이미 badge가 있으면 스킵
+      if (card.querySelector('.vision-badge')) return;
+      var badge = document.createElement('span');
+      badge.className = 'vision-badge ' + (r.pred === 'up' ? 'vision-up' : 'vision-down');
+      badge.title = '신뢰도 ' + (r.conf * 100).toFixed(0) + '%';
+      badge.textContent = r.pred === 'up' ? '▲' : '▼';
+      sym.appendChild(badge);
+    });
+  }
+
+  // 버튼 이벤트
+  var _bvsa = $('btnVisionScanAll');
+  if (_bvsa) _bvsa.addEventListener('click', function() { runVisionScanAll(); });
+
+  var _bvc = $('btnVisionClear');
+  if (_bvc) _bvc.addEventListener('click', function() {
+    visionResults = {};
+    try { localStorage.removeItem('visionResults'); } catch(e) {}
+    renderVisionPage();
+    showToast('Vision 결과 초기화됨');
+  });
+
+  // AI VISION 페이지 진입 시 렌더
+  var _origShowPage = showPage;  // showPage는 위에서 이미 정의됨
+  // 페이지 변경 감지 — 나브 클릭 후 vision 페이지면 렌더
+  document.querySelectorAll('.nav-item').forEach(function(item) {
+    item.addEventListener('click', function() {
+      if (this.getAttribute('data-page') === 'vision') {
+        setTimeout(function() { renderVisionPage(); }, 50);
+      }
+    });
+  });
+
+  // 초기 렌더 (이미 결과 있을 경우)
+  if (Object.keys(visionResults).length > 0) renderVisionPage();
+
+  // ── Vision AI 자동화: 외부에서 호출 가능하게 노출 ──
+  window._visionAutoScan = function() {
+    var va = (currentCfg && currentCfg.visionAI) || {};
+    if (!va.enabled || !va.rfApiKey) return;
+    // 마지막 스캔이 30분 이내면 스킵
+    var keys = Object.keys(visionResults);
+    if (keys.length > 0) {
+      var maxTs = keys.reduce(function(m, k){ return Math.max(m, visionResults[k].ts || 0); }, 0);
+      if (Date.now() - maxTs < 30 * 60 * 1000) return;
+    }
+    runVisionScanAll();
+  };
+
+  // 60분마다 자동 재스캔
+  setInterval(function() { if (window._visionAutoScan) window._visionAutoScan(); }, 60 * 60 * 1000);
 
   // ── 테마 토글 (다크 ↔ 라이트 색반전) ──
   function applyThemeLabel(){
