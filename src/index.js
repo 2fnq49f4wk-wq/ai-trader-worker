@@ -2270,7 +2270,9 @@ const DEFAULT_CFG = {
   //   장외(UTC 08:00~08:30)에만 fetch → 거래 fetch와 분리.
   secFilings: {
     enabled: true,
-    cautionScale: 0.5   // material 공시 직후 진입 사이즈 배수 (0.5 = 절반)
+    cautionScale: 0.5,        // 악재(공시후 하락) 시 진입 사이즈 배수 (0.5 = 절반)
+    positiveThreshold: 2.0,   // 공시후 +2%↑ → 호재로 보고 보수화 안 함(정상 진입)
+    negativeThreshold: -2.0   // 공시후 -2%↓ → 악재로 보고 축소
   },
   // === [Vision AI] Roboflow 차트예측 — 백엔드/거래 기본값 (프론트도 동일 키 저장) ===
   visionAI: {
@@ -2826,8 +2828,30 @@ function localDateStr(market) {
   return p.year + "-" + String(p.month).padStart(2, "0") + "-" + String(p.date).padStart(2, "0");
 }
 
-// 지수의 마지막 거래시각(epoch초)이 오늘 현지 날짜와 같은지로 개장 판정.
-//   캐시 우선, 없으면 지수 fetch. 반환: true(개장) / false(휴장) / null(판정불가→보수적으로 거래허용 안 함)
+// [Claude 제거] 증시 휴장일 하드코딩 테이블 — 공휴일은 사전 확정 정보라 LLM/web_search 불필요.
+//   주말은 코드로, 공휴일은 이 테이블로 즉시 판정(지연 0). 테이블 커버 연도(2026~2027) 밖은
+//   주말만 체크하고 개장 가정(휴장이어도 시세 stale로 거래 게이트가 자연 차단). 매년 갱신 권장.
+//   출처: NYSE 2026/2027 공식 캘린더, KRX 2026 휴장일.
+const MARKET_HOLIDAYS = {
+  us: new Set([
+    // 2026
+    "2026-01-01","2026-01-19","2026-02-16","2026-04-03","2026-05-25",
+    "2026-06-19","2026-07-03","2026-09-07","2026-11-26","2026-12-25",
+    // 2027
+    "2027-01-01","2027-01-18","2027-02-15","2027-03-26","2027-05-31",
+    "2027-06-18","2027-07-02","2027-09-06","2027-11-25","2027-12-27"
+  ]),
+  kr: new Set([
+    // 2026 (설날 2/16-18, 추석 9/24-25 포함)
+    "2026-01-01","2026-02-16","2026-02-17","2026-02-18","2026-03-02",
+    "2026-05-01","2026-05-05","2026-05-25","2026-08-17","2026-09-24",
+    "2026-09-25","2026-10-05","2026-10-09","2026-12-25"
+  ])
+};
+const HOLIDAY_TABLE_YEARS = new Set([2026, 2027]); // 테이블이 커버하는 연도(US 기준; KR은 2026)
+
+// 거래일 판정 — 캐시 → 주말 → 공휴일 테이블 (Claude 불필요).
+//   반환: true(개장) / false(휴장) / null(판정불가)
 async function isMarketTradingDay(DB, market, env) {
   const today = localDateStr(market);
   if (!today) return null;
@@ -2851,41 +2875,22 @@ async function isMarketTradingDay(DB, market, env) {
     }
   } catch (e) {}
 
-  // 2) Claude web_search로 오늘 거래일 여부 판정
-  //    env 없거나 API 키 없으면 판정 불가(null) → 호출부에서 보수적으로 '거래 허용'(거래는 다른 게이트로도 막힘)
-  if (!env || !env.ANTHROPIC_API_KEY) return null;
-  const exchange = market === "us" ? "the U.S. stock market (NYSE/NASDAQ)" : "the South Korean stock market (KRX/KOSPI)";
-  const prompt =
-    "Today's date is " + today + ". Is " + exchange + " OPEN for regular trading today? " +
-    "Consider weekends and public/exchange holidays. Search the web to verify if needed. " +
-    "Answer with ONLY a single word: YES (if open for trading) or NO (if closed). No other text.";
-  let open = null;
-  try {
-    const res = await callClaude(
-      env.ANTHROPIC_API_KEY,
-      env.HOLIDAY_MODEL || "claude-haiku-4-5", // [비용절감] 단순 YES/NO 판정 → sonnet→haiku (단가 ~8배↓)
-      prompt,
-      300,
-      20000,
-      {
-        baseURL: env.LLM_BASE_URL || null,
-        aigToken: env.AI_GATEWAY_TOKEN || null,
-        maxRetries: 1,
-        tools: [{ type: "web_search_20250305", name: "web_search", max_uses: 3 }] // [비용절감] 검색 횟수 상한
-      }
-    );
-    const ans = (res.text || "").trim().toUpperCase();
-    if (ans.indexOf("YES") !== -1 && ans.indexOf("NO") === -1) open = true;
-    else if (ans.indexOf("NO") !== -1) open = false;
-    else open = null;
-    await log(DB, "INFO", null, "[HOLIDAY] " + market.toUpperCase() + " " + today + " trading=" + (open === null ? "UNKNOWN" : (open ? "OPEN" : "CLOSED")) + " (LLM: " + ans.slice(0, 20) + ")");
-  } catch (e) {
-    open = null;
-    await log(DB, "WARN", null, "[HOLIDAY] LLM check fail: " + e.message);
+  // 2) [Claude 제거] 공휴일 하드코딩 테이블로 즉시 판정 (web_search 불필요, 지연 0)
+  let open;
+  const set = MARKET_HOLIDAYS[market];
+  const yr = parseInt(today.slice(0, 4), 10);
+  if (set && set.has(today)) {
+    open = false; // 공휴일 → 휴장
+  } else if ((market === "us" && HOLIDAY_TABLE_YEARS.has(yr)) || (market === "kr" && yr === 2026)) {
+    open = true;  // 테이블 커버 연도의 평일·비공휴일 → 개장
+  } else {
+    // 테이블 미커버 연도(만료): 주말은 위에서 이미 처리됨 → 평일은 개장 가정.
+    //   혹시 공휴일이어도 시세 stale로 거래 게이트가 자연 차단(안전). 갱신 필요 시 경고.
+    open = true;
+    try { await log(DB, "WARN", null, "[HOLIDAY] " + market.toUpperCase() + " " + today + " 공휴일 테이블 미커버 연도 — 개장 가정(테이블 갱신 권장)"); } catch (e) {}
   }
-  if (open !== null) {
-    try { await setState(DB, cacheKey, { open: open, ts: Date.now() }); } catch (e) {}
-  }
+  try { await setState(DB, cacheKey, { open: open, ts: Date.now(), src: "table" }); } catch (e) {}
+  await log(DB, "INFO", null, "[HOLIDAY] " + market.toUpperCase() + " " + today + " trading=" + (open ? "OPEN" : "CLOSED") + " (table)");
   return open;
 }
 
@@ -4880,7 +4885,34 @@ function evaluateTrendEntry(price, dayPct, dailyData, cfg, regime, market) {
 //   라이브(runTradingCycle)와 백테스트(backtestSymbol)가 공통 호출. 기존 반환 형식 유지.
 function evaluateAllStrategies(price, dayPct, dailyData, cfg, signalStats, regime, market, intraday, visionPreds, secData) {
   if (cfg.strategies && cfg.strategies.trend === false) return [];
-  const sig = evaluateTrendEntry(price, dayPct, dailyData, cfg, regime, market);
+  let sig = evaluateTrendEntry(price, dayPct, dailyData, cfg, regime, market);
+
+  // [Vision 강화 — 진입 보조] 트렌드 트리거(풀백/돌파)가 미충족이어도,
+  //   추세 정렬(MA20>MA50>MA200, price>MA50) + Vision UP 고신뢰(≥78%) + 적중률 신뢰 시
+  //   "작은 사이즈"로 진입한다(confidence 0.5). Vision을 보조 진입신호로 직접 활용 → 거래·데이터↑.
+  //   (적중률 미검증/낮으면 trust로 자동 차단되어 무분별 진입 방지)
+  if (!sig && visionPreds && dailyData && dailyData.symbol) {
+    const vp = visionPreds[dailyData.symbol];
+    const va = cfg.visionAI || {};
+    const acc = visionPreds.__accuracy;
+    const prc = (acc && acc.total >= 20) ? acc.precision : null;
+    const tr2 = (prc == null) ? 1 : (prc < 0.5 ? 0 : Math.min(1, (prc - 0.45) / 0.2));
+    if (va.enabled && vp && vp.pred === "up" && vp.conf >= 0.78 && tr2 >= 0.5) {
+      const c = dailyData.closes;
+      if (c && c.length >= 50) {
+        const ma20v = getMA(c, 20), ma50v = getMA(c, 50);
+        const ma200v = c.length >= 200 ? getMA(c, 200) : null;
+        const aligned = ma20v != null && ma50v != null && ma20v > ma50v && price > ma50v && (ma200v == null || ma50v > ma200v);
+        // 변동성 정상 + 과열 아님(RSI<=72)일 때만
+        const rsiv = getRSI(c, cfg.rsiPeriod || 14);
+        if (aligned && rsiv != null && rsiv <= 72) {
+          sig = { name: "TR_VISION_UP", weight: 0.8, type: "TREND", confidence: 0.5,
+            detail: "VISION_UP " + Math.round(vp.conf * 100) + "% 추세정렬 보조진입 RSI" + rsiv.toFixed(0),
+            members: ["TR_VISION_UP"] };
+        }
+      }
+    }
+  }
   if (!sig) return [];
 
   // [Vision AI] 예측 결과를 실제 거래에 직접 반영 (적중률 자기보정 포함)
@@ -4913,14 +4945,23 @@ function evaluateAllStrategies(price, dayPct, dailyData, cfg, signalStats, regim
     }
   }
 
-  // [SEC 공시] 미국 종목 한정 — 최근 8-K/어닝 직후면 진입 사이즈 보수화 (변동성 회피)
+  // [SEC 공시] 미국 종목 한정 — 무조건 보수화 X, 공시 후 주가 반응으로 호재/악재 판단.
+  //   긍정 공시(상승 반영)는 보수화하지 않음. 악재(하락)만 축소. 불확실(중립/미상)은 약하게.
   if (secData && market === "us" && dailyData && dailyData.symbol) {
     const sd = secData[dailyData.symbol];
-    if (sd && sd.caution) {
+    if (sd && sd.caution && sd.filingType) {
       const sc = cfg.secFilings || {};
-      const scale = (typeof sc.cautionScale === "number") ? sc.cautionScale : 0.5;
-      sig.visionBoost = (sig.visionBoost || 1.0) * scale; // riskPct에 곱해져 사이즈 축소
-      sig.secNote = "SEC_CAUTION " + (sd.reason || "");
+      const negScale = (typeof sc.cautionScale === "number") ? sc.cautionScale : 0.5;
+      const upThr = (typeof sc.positiveThreshold === "number") ? sc.positiveThreshold : 2.0;
+      const dnThr = (typeof sc.negativeThreshold === "number") ? sc.negativeThreshold : -2.0;
+      const pr = sd.postReturn;
+      let scale = 1.0, tag = "";
+      if (pr == null)      { scale = 0.85; tag = "UNKNOWN"; }          // 가격반응 미상 → 약한 축소
+      else if (pr >= upThr){ scale = 1.0;  tag = "POSITIVE +" + pr.toFixed(1) + "%"; } // 호재 → 정상 진입
+      else if (pr <= dnThr){ scale = negScale; tag = "NEGATIVE " + pr.toFixed(1) + "%"; } // 악재 → 축소
+      else                 { scale = 0.85; tag = "NEUTRAL " + pr.toFixed(1) + "%"; }      // 중립 → 약한 축소
+      if (scale < 1.0) sig.visionBoost = (sig.visionBoost || 1.0) * scale;
+      sig.secNote = "SEC_" + sd.filingType + " " + tag;
     }
   }
 
@@ -8908,10 +8949,23 @@ async function fetchSecFilings(env) {
         if (f === "8-K" && recent8K == null && ageDays <= 3) recent8K = fd;
         if ((f === "10-Q" || f === "10-K") && recentEarnings == null && ageDays <= 2) recentEarnings = fd;
       }
-      let caution = false, reason = "";
-      if (recentEarnings) { caution = true; reason = "EARNINGS " + recentEarnings; }
-      else if (recent8K) { caution = true; reason = "8-K " + recent8K; }
-      results[sym] = { caution: caution, reason: reason, ts: now };
+      const filingType = recentEarnings ? "EARNINGS" : (recent8K ? "8-K" : null);
+      const filingDate = recentEarnings || recent8K || null;
+      if (!filingType) { results[sym] = { caution: false, ts: now }; scanned++; continue; }
+
+      // [방향성] 무조건 보수화하지 않는다 — 공시 후 주가 반응으로 호재/악재 판단(Claude 불필요).
+      //   공시 시점 종가 대비 현재 종가 변화율(postReturn)을 계산.
+      //   상승=시장이 호재로 반영 → 보수화 안 함 / 하락=악재 → 축소 / 중립=불확실 → 약하게.
+      const daily = await getState(DB, "daily:" + sym.toUpperCase(), null);
+      let postReturn = null;
+      if (daily && daily.closes && daily.closes.length > 5) {
+        const ageCal = Math.round((now - new Date(filingDate + "T00:00:00Z").getTime()) / 86400000);
+        const ageTd = Math.max(1, Math.round(ageCal * 5 / 7)); // 거래일 근사(주말 제외)
+        const c = daily.closes;
+        const before = c[c.length - 1 - ageTd];
+        if (before > 0) postReturn = (c[c.length - 1] - before) / before * 100;
+      }
+      results[sym] = { caution: true, filingType: filingType, filingDate: filingDate, postReturn: postReturn, ts: now };
       scanned++;
     } catch (e) { continue; }
   }
