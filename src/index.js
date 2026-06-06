@@ -2271,8 +2271,9 @@ const DEFAULT_CFG = {
   secFilings: {
     enabled: true,
     cautionScale: 0.5,        // 악재(공시후 하락) 시 진입 사이즈 배수 (0.5 = 절반)
-    positiveThreshold: 2.0,   // 공시후 +2%↑ → 호재로 보고 보수화 안 함(정상 진입)
-    negativeThreshold: -2.0   // 공시후 -2%↓ → 악재로 보고 축소
+    positiveThreshold: 2.0,   // 공시후 +2%↑ → 호재로 보고 진입 강화(부스트 시작)
+    negativeThreshold: -2.0,  // 공시후 -2%↓ → 악재로 보고 축소
+    positiveBoostMax: 1.2     // 호재 부스트 상한 (postReturn 비례, 최대 ×1.2)
   },
   // === [Vision AI] Roboflow 차트예측 — 백엔드/거래 기본값 (프론트도 동일 키 저장) ===
   visionAI: {
@@ -2828,27 +2829,95 @@ function localDateStr(market) {
   return p.year + "-" + String(p.month).padStart(2, "0") + "-" + String(p.date).padStart(2, "0");
 }
 
-// [Claude 제거] 증시 휴장일 하드코딩 테이블 — 공휴일은 사전 확정 정보라 LLM/web_search 불필요.
-//   주말은 코드로, 공휴일은 이 테이블로 즉시 판정(지연 0). 테이블 커버 연도(2026~2027) 밖은
-//   주말만 체크하고 개장 가정(휴장이어도 시세 stale로 거래 게이트가 자연 차단). 매년 갱신 권장.
-//   출처: NYSE 2026/2027 공식 캘린더, KRX 2026 휴장일.
-const MARKET_HOLIDAYS = {
-  us: new Set([
-    // 2026
-    "2026-01-01","2026-01-19","2026-02-16","2026-04-03","2026-05-25",
-    "2026-06-19","2026-07-03","2026-09-07","2026-11-26","2026-12-25",
-    // 2027
-    "2027-01-01","2027-01-18","2027-02-15","2027-03-26","2027-05-31",
-    "2027-06-18","2027-07-02","2027-09-06","2027-11-25","2027-12-27"
-  ]),
-  kr: new Set([
-    // 2026 (설날 2/16-18, 추석 9/24-25 포함)
-    "2026-01-01","2026-02-16","2026-02-17","2026-02-18","2026-03-02",
-    "2026-05-01","2026-05-05","2026-05-25","2026-08-17","2026-09-24",
-    "2026-09-25","2026-10-05","2026-10-09","2026-12-25"
-  ])
+// [Claude 제거 + 영구 자동] 증시 휴장일을 규칙으로 동적 계산 — LLM/web_search/연도별 하드코딩 불필요.
+//   미국: NYSE 규칙(고정공휴일 + N번째 요일 + 부활절 Computus)으로 어느 연도든 정확 계산.
+//   한국: 양력 고정공휴일은 규칙 계산, 음력(설날/추석/석가탄신일)은 테이블(천문연구원 기준).
+//         음력 테이블 미커버 연도는 양력 공휴일만 적용 + 지수 데이터 폴백(거래 시점 자연 보정).
+
+// 그 달의 n번째 weekday(0=일~6=토) 날짜 반환
+function _nthWeekday(year, month, weekday, n) {
+  const first = new Date(Date.UTC(year, month - 1, 1)).getUTCDay();
+  return 1 + ((weekday - first + 7) % 7) + (n - 1) * 7;
+}
+// 그 달의 마지막 weekday 날짜 반환
+function _lastWeekday(year, month, weekday) {
+  const last = new Date(Date.UTC(year, month, 0)).getUTCDate();
+  const lastDow = new Date(Date.UTC(year, month - 1, last)).getUTCDay();
+  return last - ((lastDow - weekday + 7) % 7);
+}
+// 부활절(그레고리력 Computus) → {month, day}
+function _easterSunday(year) {
+  const a = year % 19, b = Math.floor(year / 100), c = year % 100;
+  const d = Math.floor(b / 4), e = b % 4, f = Math.floor((b + 8) / 25);
+  const g = Math.floor((b - f + 1) / 3), h = (19 * a + b - d - g + 15) % 30;
+  const i = Math.floor(c / 4), k = c % 4, l = (32 + 2 * e + 2 * i - h - k) % 7;
+  const m = Math.floor((a + 11 * h + 22 * l) / 451);
+  const month = Math.floor((h + l - 7 * m + 114) / 31), day = ((h + l - 7 * m + 114) % 31) + 1;
+  return { month, day };
+}
+function _ymd(year, month, day) {
+  // month/day가 범위를 벗어나면(±조정) Date로 정규화
+  const dt = new Date(Date.UTC(year, month - 1, day));
+  return dt.getUTCFullYear() + "-" + String(dt.getUTCMonth() + 1).padStart(2, "0") + "-" + String(dt.getUTCDate()).padStart(2, "0");
+}
+// NYSE 토→금, 일→월 관측 규칙
+function _usObserved(year, month, day) {
+  const dow = new Date(Date.UTC(year, month - 1, day)).getUTCDay();
+  if (dow === 6) return _ymd(year, month, day - 1);
+  if (dow === 0) return _ymd(year, month, day + 1);
+  return _ymd(year, month, day);
+}
+function _usHolidaySet(year) {
+  const s = new Set();
+  s.add(_usObserved(year, 1, 1));                       // 신정
+  s.add(_ymd(year, 1, _nthWeekday(year, 1, 1, 3)));     // MLK (1월 셋째 월)
+  s.add(_ymd(year, 2, _nthWeekday(year, 2, 1, 3)));     // Presidents (2월 셋째 월)
+  const e = _easterSunday(year);                         // Good Friday = 부활절 - 2일
+  s.add(_ymd(year, e.month, e.day - 2));
+  s.add(_ymd(year, 5, _lastWeekday(year, 5, 1)));        // Memorial (5월 마지막 월)
+  s.add(_usObserved(year, 6, 19));                       // Juneteenth
+  s.add(_usObserved(year, 7, 4));                        // 독립기념일
+  s.add(_ymd(year, 9, _nthWeekday(year, 9, 1, 1)));      // Labor (9월 첫째 월)
+  s.add(_ymd(year, 11, _nthWeekday(year, 11, 4, 4)));    // Thanksgiving (11월 넷째 목)
+  s.add(_usObserved(year, 12, 25));                      // 크리스마스
+  return s;
+}
+// 한국 음력 공휴일 테이블 (양력 환산, 천문연 기준) — 설날3일·추석3일·석가탄신일
+//   미커버 연도는 양력 공휴일만 + 지수 폴백.
+const KR_LUNAR_HOLIDAYS = {
+  2026: ["2026-02-16","2026-02-17","2026-02-18","2026-05-24","2026-09-24","2026-09-25","2026-09-26"],
+  2027: ["2027-02-06","2027-02-07","2027-02-08","2027-05-13","2027-09-14","2027-09-15","2027-09-16"],
+  2028: ["2028-01-26","2028-01-27","2028-01-28","2028-05-02","2028-10-02","2028-10-03","2028-10-04"],
+  2029: ["2029-02-12","2029-02-13","2029-02-14","2029-05-20","2029-09-21","2029-09-22","2029-09-23"],
+  2030: ["2030-02-02","2030-02-03","2030-02-04","2030-05-09","2030-09-11","2030-09-12","2030-09-13"]
 };
-const HOLIDAY_TABLE_YEARS = new Set([2026, 2027]); // 테이블이 커버하는 연도(US 기준; KR은 2026)
+function _krHolidaySet(year) {
+  const s = new Set();
+  // 양력 고정 공휴일 (대체공휴일 단순화 — 핵심일만)
+  s.add(_ymd(year, 1, 1));    // 신정
+  s.add(_ymd(year, 3, 1));    // 삼일절
+  s.add(_ymd(year, 5, 5));    // 어린이날
+  s.add(_ymd(year, 6, 6));    // 현충일
+  s.add(_ymd(year, 8, 15));   // 광복절
+  s.add(_ymd(year, 10, 3));   // 개천절
+  s.add(_ymd(year, 10, 9));   // 한글날
+  s.add(_ymd(year, 12, 25));  // 성탄절
+  s.add(_ymd(year, 5, 1));    // 근로자의 날(증시 휴장)
+  const lunar = KR_LUNAR_HOLIDAYS[year];
+  if (lunar) lunar.forEach(function(d){ s.add(d); });
+  return s;
+}
+// 연도별 휴장 Set 캐시 (계산 결과 재사용)
+const _holidayCache = { us: {}, kr: {} };
+function getHolidaySet(market, year) {
+  const c = _holidayCache[market];
+  if (c[year]) return c[year];
+  const s = market === "us" ? _usHolidaySet(year) : _krHolidaySet(year);
+  c[year] = s;
+  return s;
+}
+// 한국 음력 테이블이 커버하는 연도인지(미커버면 양력만 → 지수 폴백 권장)
+function _krLunarCovered(year) { return !!KR_LUNAR_HOLIDAYS[year]; }
 
 // 거래일 판정 — 캐시 → 주말 → 공휴일 테이블 (Claude 불필요).
 //   반환: true(개장) / false(휴장) / null(판정불가)
@@ -2875,23 +2944,36 @@ async function isMarketTradingDay(DB, market, env) {
     }
   } catch (e) {}
 
-  // 2) [Claude 제거] 공휴일 하드코딩 테이블로 즉시 판정 (web_search 불필요, 지연 0)
-  let open;
-  const set = MARKET_HOLIDAYS[market];
+  // 2) [규칙 기반 자동] 공휴일을 연도별 규칙으로 계산해 즉시 판정 (web_search 불필요, 지연 0)
   const yr = parseInt(today.slice(0, 4), 10);
-  if (set && set.has(today)) {
+  let open;
+  if (getHolidaySet(market, yr).has(today)) {
     open = false; // 공휴일 → 휴장
-  } else if ((market === "us" && HOLIDAY_TABLE_YEARS.has(yr)) || (market === "kr" && yr === 2026)) {
-    open = true;  // 테이블 커버 연도의 평일·비공휴일 → 개장
+  } else if (market === "kr" && !_krLunarCovered(yr)) {
+    // 한국 음력 테이블 미커버 연도: 양력 공휴일은 위에서 계산됨. 음력(설날/추석) 누락 가능 →
+    //   지수(KOSPI) 마지막 거래일이 오늘이 아니면 휴장으로 본다(거래 데이터 폴백). 데이터 없으면 개장 가정.
+    open = await _indexFreshOpen(DB, market, today);
+    try { await log(DB, "WARN", null, "[HOLIDAY] KR " + today + " 음력테이블 미커버 — 지수폴백 판정=" + (open ? "OPEN" : "CLOSED") + " (테이블 갱신 권장)"); } catch (e) {}
   } else {
-    // 테이블 미커버 연도(만료): 주말은 위에서 이미 처리됨 → 평일은 개장 가정.
-    //   혹시 공휴일이어도 시세 stale로 거래 게이트가 자연 차단(안전). 갱신 필요 시 경고.
-    open = true;
-    try { await log(DB, "WARN", null, "[HOLIDAY] " + market.toUpperCase() + " " + today + " 공휴일 테이블 미커버 연도 — 개장 가정(테이블 갱신 권장)"); } catch (e) {}
+    open = true; // 규칙상 평일·비공휴일 → 개장
   }
-  try { await setState(DB, cacheKey, { open: open, ts: Date.now(), src: "table" }); } catch (e) {}
-  await log(DB, "INFO", null, "[HOLIDAY] " + market.toUpperCase() + " " + today + " trading=" + (open ? "OPEN" : "CLOSED") + " (table)");
+  try { await setState(DB, cacheKey, { open: open, ts: Date.now(), src: "rule" }); } catch (e) {}
+  await log(DB, "INFO", null, "[HOLIDAY] " + market.toUpperCase() + " " + today + " trading=" + (open ? "OPEN" : "CLOSED") + " (rule)");
   return open;
+}
+
+// 지수 일봉의 마지막 거래일이 오늘(현지)과 같으면 개장으로 판정 — 음력테이블 만료 시 폴백.
+//   장 시작 전이라 오늘 데이터가 없으면 판정 불가 → 보수적으로 개장 가정(시세 stale로 자연 차단).
+async function _indexFreshOpen(DB, market, today) {
+  try {
+    const idxSym = market === "us" ? "^IXIC" : "^KS11";
+    const idx = await getState(DB, "daily:" + idxSym, null);
+    if (idx && Array.isArray(idx.dates) && idx.dates.length > 0) {
+      const lastDate = idx.dates[idx.dates.length - 1];
+      if (typeof lastDate === "string") return lastDate.slice(0, 10) === today;
+    }
+  } catch (e) {}
+  return true; // 데이터 없으면 개장 가정
 }
 
 function isMarketOpen(market) {
@@ -4955,12 +5037,16 @@ function evaluateAllStrategies(price, dayPct, dailyData, cfg, signalStats, regim
       const upThr = (typeof sc.positiveThreshold === "number") ? sc.positiveThreshold : 2.0;
       const dnThr = (typeof sc.negativeThreshold === "number") ? sc.negativeThreshold : -2.0;
       const pr = sd.postReturn;
+      const upBoostMax = (typeof sc.positiveBoostMax === "number") ? sc.positiveBoostMax : 1.2;
       let scale = 1.0, tag = "";
       if (pr == null)      { scale = 0.85; tag = "UNKNOWN"; }          // 가격반응 미상 → 약한 축소
-      else if (pr >= upThr){ scale = 1.0;  tag = "POSITIVE +" + pr.toFixed(1) + "%"; } // 호재 → 정상 진입
+      else if (pr >= upThr){ // [강화] 호재 → postReturn 비례 부스트 (진입 강화)
+        scale = Math.min(upBoostMax, 1.0 + (pr - upThr) * 0.02);       // +2%→1.0, +12%→1.2(상한)
+        tag = "POSITIVE +" + pr.toFixed(1) + "% ×" + scale.toFixed(2);
+      }
       else if (pr <= dnThr){ scale = negScale; tag = "NEGATIVE " + pr.toFixed(1) + "%"; } // 악재 → 축소
       else                 { scale = 0.85; tag = "NEUTRAL " + pr.toFixed(1) + "%"; }      // 중립 → 약한 축소
-      if (scale < 1.0) sig.visionBoost = (sig.visionBoost || 1.0) * scale;
+      if (scale !== 1.0) sig.visionBoost = (sig.visionBoost || 1.0) * scale; // 부스트/축소 모두 반영
       sig.secNote = "SEC_" + sd.filingType + " " + tag;
     }
   }
@@ -5335,7 +5421,7 @@ async function executeSell(DB, market, symbol, pos, sellQty, price, reason, cfg,
 //   기존 보유 포지션(strategy=swing 등)도 strategy 무관하게 이 로직으로 관리한다.
 //   우선순위: 하드손절 → 1R 분할익절(+BE락) → 트레일링 → 추세이탈 → 시간손절
 //   반환: { sell, sellQty, reason }
-function evaluateSell(pos, price, daily, dailyRsi, dailyMa, dailyMaShort, cfg, marketOpenForThis, market, deRiskOpts) {
+function evaluateSell(pos, price, daily, dailyRsi, dailyMa, dailyMaShort, cfg, marketOpenForThis, market, deRiskOpts, visionHint) {
   const r = getTrendRules(cfg, market);
   const meta = pos.meta || {};
   const pnlRate = pos.avg > 0 ? ((price - pos.avg) / pos.avg) * 100 : 0;
@@ -5350,7 +5436,13 @@ function evaluateSell(pos, price, daily, dailyRsi, dailyMa, dailyMaShort, cfg, m
 
   // [디리스킹] 패닉/딥드로다운 시 손절·트레일 타이트닝 (인프라 유지)
   const dr = (deRiskOpts && deRiskOpts.active && cfg.crashSurvival && cfg.crashSurvival.deRisk) ? cfg.crashSurvival.deRisk : null;
-  const trailScale = dr ? (dr.trailDropScale || 1) : 1;
+  let trailScale = dr ? (dr.trailDropScale || 1) : 1;
+  // [Vision 활용] 보유 종목 예측으로 트레일 폭 동적 조정 (추가 fetch 없이 기존 예측 사용).
+  //   UP 고신뢰 → 트레일 느슨(추세 지속 신뢰 → 수익 더 키움) / DOWN → 타이트(이익 조기 보호).
+  if (visionHint && typeof visionHint.conf === "number" && visionHint.conf >= 0.65) {
+    if (visionHint.pred === "up")        trailScale *= 1.3;
+    else if (visionHint.pred === "down") trailScale *= 0.7;
+  }
 
   // 1) 하드 손절 — 진입 시 정한 stopPrice (entry − 2×ATR or −5% 중 타이트, BE락 시 본전)
   const stopPrice = (typeof meta.stopPrice === "number") ? meta.stopPrice : null;
@@ -7528,7 +7620,8 @@ async function runTradingCycle(env) {
             }
 
             // 매도 판단 ([V12] crashGate.deRisk → 손절·트레일 타이트닝)
-            const sellDecision = evaluateSell(held, price, daily, dailyRsi, dailyMa, dailyMaShort, mcfg, canTrade, market, deRiskOpts);
+            const _vHint = (visionPreds && visionPreds[symbol]) ? visionPreds[symbol] : null; // [Vision] 트레일 동적 조정용
+            const sellDecision = evaluateSell(held, price, daily, dailyRsi, dailyMa, dailyMaShort, mcfg, canTrade, market, deRiskOpts, _vHint);
             if (sellDecision.minHoldLock) {
               const heldHours = held.opened_ts ? (Date.now() - held.opened_ts) / 3600000 : 0;
               const pnlRate = ((price - held.avg) / held.avg) * 100;
