@@ -7330,6 +7330,9 @@ async function runTradingCycle(env) {
       if (!(typeof evalOffset === "number" && evalOffset >= 0 && evalOffset < fetched.length)) evalOffset = 0;
       const orderedEval = evalOffset > 0 ? fetched.slice(evalOffset).concat(fetched.slice(0, evalOffset)) : fetched;
       let evalProcessed = 0, evalTimedOut = false;
+      // [성능] 평가 중 quote 지표 갱신을 종목당 D1 write(saveQuote) 대신 batch로 모아
+      //   루프 끝에 일괄 커밋 → 종목당 ~419ms였던 평가 속도를 ms 단위로 단축(커버리지 확대 가능).
+      const evalQuoteStmts = [];
       for (const item of orderedEval) {
         if (Date.now() - evalStartedAt > evalBudgetMs || Date.now() - cycleStartedAt > hardCapMs) {
           evalTimedOut = true;
@@ -7381,12 +7384,18 @@ async function runTradingCycle(env) {
           const bb = getBollingerBands(closes, mcfg.maPeriod, mcfg.bbStdMult);
           const return20 = getNDayReturn(closes, 20);
 
-          await saveQuote(DB, symbol, market, {
-            price: price, prevClose: prevClose, dayPct: dayPct,
-            dailyRsi: dailyRsi, dailyMa: dailyMa, dailyMaShort: dailyMaShort, dailyAtr: dailyAtr,
-            bbLower: bb ? bb.lower : null, bbUpper: bb ? bb.upper : null,
-            return20: return20
-          });
+          // [성능] saveQuote(개별 D1 write) → batch 수집 (루프 끝에 일괄 커밋)
+          const _qts = Date.now();
+          evalQuoteStmts.push(
+            DB.prepare("INSERT INTO state (k, v, updated_ts) VALUES (?, ?, ?) ON CONFLICT(k) DO UPDATE SET v=excluded.v, updated_ts=excluded.updated_ts")
+              .bind("quote:" + symbol, JSON.stringify({
+                market: market, price: price, prevClose: prevClose, dayPct: dayPct,
+                rsi: dailyRsi, ma: dailyMa, atr: dailyAtr,
+                dailyAtr: dailyAtr, dailyMa: dailyMa, dailyMaShort: dailyMaShort,
+                bbLower: bb ? bb.lower : null, bbUpper: bb ? bb.upper : null,
+                return20: return20, ts: _qts
+              }), _qts)
+          );
 
           if (dailyRsi == null) { skipped++; continue; }
           if (!canTrade) { skipped++; continue; }
@@ -7738,6 +7747,11 @@ async function runTradingCycle(env) {
         } catch (e) {
           await log(DB, "ERROR", symbol, e.message);
         }
+      }
+      // [성능] 평가 중 모은 quote 지표 갱신을 일괄 커밋(100개씩) — 종목당 D1 write 제거 효과
+      for (let i = 0; i < evalQuoteStmts.length; i += 100) {
+        try { await DB.batch(evalQuoteStmts.slice(i, i + 100)); }
+        catch (e) { await log(DB, "WARN", null, "[성능] eval quote batch fail: " + e.message); }
       }
       // [TIME-CAP] 전 종목 평가를 시간 내 완료했으면 라운드로빈 오프셋 리셋
       if (!evalTimedOut) { try { await setState(DB, "eval_offset:" + market, 0); } catch (e) {} }
