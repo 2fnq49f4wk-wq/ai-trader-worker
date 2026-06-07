@@ -2403,6 +2403,8 @@ const DEFAULT_CFG = {
     stopLossPct: 5.0,                       // ATR 손절과 비교해 더 타이트한 쪽 채택 (executeBuy가 참조)
     trailAtrMult: 2.5,                      // 트레일 = peak − N×ATR
     tp1AtR: 1.0,                            // +1R 도달 시 절반 익절
+    tp2AtR: 2.0,                            // +2R 도달 시 잔량 절반 추가 익절 (0 = 비활성)
+    reEntryCooldownHours: 24,               // 손절 손실 전량청산 후 재진입 차단 시간 (0 = 비활성)
     timeStopDays: 10,                       // N거래일 내 +0.5R 미달 시 청산
     timeStopMinR: 0.5,
     exitBelowMa: 20,                        // 종가가 MA20 하향 이탈 시 청산
@@ -5349,6 +5351,8 @@ function evaluateBuyBlocks(price, dayPct, dailyData, cfg, regime, signal, ctx) {
   const closes = dailyData.closes;
   if (!closes || closes.length < 25) return "INSUFFICIENT_DATA";
   const strategy = ctx && ctx.strategy ? ctx.strategy : "trend";
+  // [재진입 쿨다운] 손절 손실 후 설정 시간 동안 재진입 차단
+  if (ctx && ctx.symbol && ctx.cooldowns && ctx.cooldowns.has(ctx.symbol)) return "REENTRY_COOLDOWN";
   // [패닉 헤지] 인버스 ETF는 시장 붕괴/약세 차단에서 제외 — 하락장이 인버스엔 호재.
   const isInverse = ctx && ctx.symbol && INVERSE_ETF.has(ctx.symbol);
 
@@ -5631,6 +5635,7 @@ async function executeSell(DB, market, symbol, pos, sellQty, price, reason, cfg,
     if (sellQty < pos.qty) {
       pos.qty = pos.qty - sellQty;
       pos.meta.tp1Done = true;
+      if (reason && reason.startsWith("TP2")) pos.meta.tp2Done = true;
       pos.meta.feeRemaining = Math.max(0, feeRemaining - entryFeeForThisSell);
       // [V9.7] TP1 부분익절 직후, 남은 런너의 손절을 본전+lock으로 즉시 상향.
       //   실거래상 TP1-HALF는 100% 익절이지만, 남은 절반이 손절로 되돌아가 라운드트립하는
@@ -5655,6 +5660,13 @@ async function executeSell(DB, market, symbol, pos, sellQty, price, reason, cfg,
   if (cash && typeof cash[market] === "number") cash[market] += proceeds;
   const taxNote = market === "kr" ? " tax=" + sellTax.toFixed(2) : "";
   await log(DB, "SELL", symbol, "SELL [" + strategy + "] x" + sellQty + " @" + price.toFixed(2) + " PnL " + pnlPct.toFixed(2) + "% (held " + heldMin + "min, " + reason + ")" + taxNote);
+  // [재진입 쿨다운] 손절 손실 전량청산 → 설정된 시간 동안 재진입 차단
+  if (fullClose && reason && reason.startsWith("STOP") && pnlPct < 0) {
+    try {
+      const cdH = getTrendRules(cfg, market).reEntryCooldownHours;
+      if (typeof cdH === "number" && cdH > 0) await setState(DB, "cooldown:" + symbol, { until: Date.now() + cdH * 3600000 });
+    } catch (e) {}
+  }
   // [섹터그룹·신호타입] 전량청산 시 성과 누적 (autoTune이 가중치 계산에 사용)
   try {
     if (fullClose) {
@@ -5684,7 +5696,7 @@ async function executeSell(DB, market, symbol, pos, sellQty, price, reason, cfg,
 
 // === [재작성] 통합 청산 평가 — 단일 추세추종 청산 (전략 분기 없음) ===
 //   기존 보유 포지션(strategy=swing 등)도 strategy 무관하게 이 로직으로 관리한다.
-//   우선순위: 하드손절 → 1R 분할익절(+BE락) → 트레일링 → 추세이탈 → 시간손절
+//   우선순위: 하드손절 → 1R 분할익절(+BE락) → 2R 분할익절 → 트레일링 → 추세이탈 → 시간손절
 //   반환: { sell, sellQty, reason }
 function evaluateSell(pos, price, daily, dailyRsi, dailyMa, dailyMaShort, cfg, marketOpenForThis, market, deRiskOpts, visionHint) {
   const r = getTrendRules(cfg, market);
@@ -5736,6 +5748,20 @@ function evaluateSell(pos, price, daily, dailyRsi, dailyMa, dailyMaShort, cfg, m
       const half = Math.floor(pos.qty / 2);
       if (half > 0) return { sell: true, sellQty: half, reason: "TP1 +" + pnlRate.toFixed(2) + "% (1R)" };
       return { sell: true, sellQty: pos.qty, reason: "TP1-FULL +" + pnlRate.toFixed(2) + "%" };
+    }
+  }
+
+  // 2b) 2R 분할익절 — TP1 이후 +tp2AtR×R 도달 시 잔량의 절반 추가 매도 (트렌드 지속 수익 극대화)
+  //   tp2AtR=0 으로 설정하면 비활성. 레버리지는 동일하게 ×0.7 적용.
+  const tp2Done = !!meta.tp2Done;
+  if (tp1Done && !tp2Done) {
+    const tp2R = r.tp2AtR != null ? r.tp2AtR : 2.0;
+    if (tp2R > 0) {
+      const tp2Pct = rPct * tp2R * (isLevETF ? 0.7 : 1.0);
+      if (pnlRate >= tp2Pct) {
+        const half = Math.floor(pos.qty / 2);
+        if (half > 0) return { sell: true, sellQty: half, reason: "TP2 +" + pnlRate.toFixed(2) + "% (2R)" };
+      }
     }
   }
 
@@ -7788,6 +7814,18 @@ async function runTradingCycle(env) {
       // [V8.6 Hybrid] 시장별 LLM 일일 지시 로드 — 없거나 만료면 null (V8.5 동작)
       const llmInstr = (cfg.llmHybrid && cfg.llmHybrid.enabled)
         ? await getActiveLLMInstruction(DB, market) : null;
+      // [재진입 쿨다운] 손절 손실 후 재진입이 차단된 종목 목록 일괄 로드
+      const activeCooldowns = new Set();
+      try {
+        const cdRows = await DB.prepare("SELECT k, v FROM state WHERE k LIKE 'cooldown:%'").all();
+        const _now = Date.now();
+        for (const r of (cdRows.results || [])) {
+          try {
+            const v = JSON.parse(r.v);
+            if (v.until && _now < v.until) activeCooldowns.add(r.k.slice(9));
+          } catch (e) {}
+        }
+      } catch (e) {}
       if (llmInstr) {
         await log(DB, "INFO", null,
           "[LLM] " + market + " active: sentiment=" + llmInstr.sentiment +
@@ -8054,7 +8092,8 @@ async function runTradingCycle(env) {
               strategy: strategy,
               heldSymbols: heldSymbols,
               sectorCounts: sectorCounts,
-              strategiesHeld: strategiesHeldNow
+              strategiesHeld: strategiesHeldNow,
+              cooldowns: activeCooldowns
             };
             // [V12] 폭락장 생존 게이트 — 신규매수 전면 차단(드로다운 L2+/연속손실/패닉)
             //   [패닉 헤지] 인버스 ETF는 면제 — 패닉장에서 인버스로 수익·헤지를 노린다.
