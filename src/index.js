@@ -1993,6 +1993,14 @@ const INVERSE_PAIRS = {
   "UPRO":"SPXU","SPXU":"UPRO"
 };
 
+// [패닉 헤지] 인버스 ETF — 시장 하락 시 상승(수익). 시장 패닉/BEAR 차단에서 제외하고,
+//   패닉장에서 오히려 진입을 허용·부스트해 하락장 수익·헤지를 노린다.
+//   (인버스도 자체 추세정렬 게이트를 따르므로, 시장이 실제 하락추세일 때만 진입)
+const INVERSE_ETF = new Set([
+  "SOXS", "SQQQ", "SPXU", "SH", "PSQ", "SDS", "SDOW", "DOG", "RWM", "TZA", "FAZ", // 미국 인버스
+  "252670.KS", "251340.KS", "114800.KS"  // 한국 인버스(KODEX 인버스·코스닥인버스·인버스2X)
+]);
+
 // === [섹터그룹] 19개 세부섹터를 6개 그룹으로 묶어 전문화. 주요 종목만 매핑(나머지는 OTHER=중립).
 //   그룹별 성과를 누적해 베팅 크기를 차등(confidence처럼 사이즈만 조절 → 악화 방어).
 //   미매핑 종목은 거래 정상, 차등만 없음. cfg.sectorGroupMapAdd로 확장 가능.
@@ -2332,6 +2340,8 @@ const DEFAULT_CFG = {
   // [포트폴리오 히트] 보유 포지션 총 미실현 리스크 한도(%) — 계좌 전체 리스크 상한.
   //   초과 시 신규 진입 차단, 80% 근접 시 사이즈 축소. (개별 0.75% × 12종목 = 9% 노출 통제)
   maxPortfolioHeat: 8.0,
+  // [패닉 헤지] 인버스 ETF가 시장 약세/패닉에 진입할 때 사이즈 부스트 배수 (하락장 수익·헤지)
+  inversePanicBoost: 1.3,
   // === [KR 분리] 고정리스크 사이징 — KR 전용 오버라이드 ===
   trendSizingKR: {
     riskPerTrade: 0.6,     // 0.75→0.6 (KR 리스크 축소)
@@ -4995,7 +5005,9 @@ function evaluateTrendEntry(price, dayPct, dailyData, cfg, regime, market) {
   const atrPct = (atr != null && price > 0) ? (atr / price * 100) : null;
   if (atrPct != null && atrPct > (r.maxAtrPct || 6)) return null;
   // 게이트 4: 시장 레짐 — BEAR + 지수 급락이면 신규 진입 중단 (백테스트는 regime 미지정→통과)
-  if (regime && regime.regime === "BEAR" && typeof regime.worstDayPct === "number" && regime.worstDayPct <= -1.5) {
+  //   [패닉 헤지] 인버스 ETF는 면제 — 시장이 하락(BEAR)이면 인버스는 상승추세라 진입해야 수익.
+  const _isInv = dailyData.symbol && INVERSE_ETF.has(dailyData.symbol);
+  if (!_isInv && regime && regime.regime === "BEAR" && typeof regime.worstDayPct === "number" && regime.worstDayPct <= -1.5) {
     return null;
   }
 
@@ -5191,10 +5203,12 @@ function evaluateBuyBlocks(price, dayPct, dailyData, cfg, regime, signal, ctx) {
   const closes = dailyData.closes;
   if (!closes || closes.length < 25) return "INSUFFICIENT_DATA";
   const strategy = ctx && ctx.strategy ? ctx.strategy : "swing";
+  // [패닉 헤지] 인버스 ETF는 시장 붕괴/약세 차단에서 제외 — 하락장이 인버스엔 호재.
+  const isInverse = ctx && ctx.symbol && INVERSE_ETF.has(ctx.symbol);
 
-  // 시장 붕괴는 모든 전략 차단 (단 MEANREV는 worst 임계값 더 깊게 허용)
+  // 시장 붕괴는 모든 전략 차단 (단 MEANREV는 worst 임계값 더 깊게 허용, 인버스는 면제)
   const crashThreshold = (strategy === "meanrev") ? cfg.marketCrashPct - 1.0 : cfg.marketCrashPct;
-  if (regime.worstDayPct <= crashThreshold) return "MARKET_CRASH " + regime.worstDayPct.toFixed(2) + "%";
+  if (!isInverse && regime.worstDayPct <= crashThreshold) return "MARKET_CRASH " + regime.worstDayPct.toFixed(2) + "%";
 
   // FALLING_KNIFE — DAY/MEANREV는 더 깊은 하락도 OK (반등 노림)
   const knifeLimit = (strategy === "day" || strategy === "meanrev") ? cfg.maxDailyDrop + 2.0 : cfg.maxDailyDrop;
@@ -5228,8 +5242,8 @@ function evaluateBuyBlocks(price, dayPct, dailyData, cfg, regime, signal, ctx) {
     return "VOLATILITY_SPIKE ATR14=" + atr14.toFixed(2) + " ATR30=" + atr30.toFixed(2);
   }
 
-  // BEAR_WEAK — MEANREV는 면제 (약세장 과매도 매수)
-  if (strategy !== "meanrev" && regime.regime === "BEAR" && regime.worstDayPct <= -1.5) {
+  // BEAR_WEAK — MEANREV는 면제 (약세장 과매도 매수), 인버스도 면제 (약세장이 호재)
+  if (strategy !== "meanrev" && !isInverse && regime.regime === "BEAR" && regime.worstDayPct <= -1.5) {
     return "BEAR_WEAK worst=" + regime.worstDayPct.toFixed(2) + "%";
   }
 
@@ -7921,7 +7935,9 @@ async function runTradingCycle(env) {
               strategiesHeld: strategiesHeldNow
             };
             // [V12] 폭락장 생존 게이트 — 신규매수 전면 차단(드로다운 L2+/연속손실/패닉)
-            if (crashGate.blockNew) {
+            //   [패닉 헤지] 인버스 ETF는 면제 — 패닉장에서 인버스로 수익·헤지를 노린다.
+            const _symInverse = INVERSE_ETF.has(symbol);
+            if (crashGate.blockNew && !_symInverse) {
               incBlock("CRASH_GATE[" + strategy + "]");
               continue;
             }
@@ -7960,8 +7976,13 @@ async function runTradingCycle(env) {
             let baseRatio = getPositionSizeRatio(mcfg, strategy, regime.regime);
 
             // [V12] 드로다운 L1 — 신규 진입 사이즈 축소(blockNew는 위에서 이미 차단됨)
-            if (crashGate.sizeScale && crashGate.sizeScale < 1) {
+            //   [패닉 헤지] 인버스 ETF는 패닉 축소(VIX/Breadth/드로다운)를 면제 — 패닉이 호재.
+            if (crashGate.sizeScale && crashGate.sizeScale < 1 && !_symInverse) {
               baseRatio *= crashGate.sizeScale;
+            }
+            // [패닉 헤지] 인버스 + 시장 약세/패닉이면 진입 부스트 (하락장 수익·헤지)
+            if (_symInverse && regime && (regime.regime === "BEAR" || (typeof regime.worstDayPct === "number" && regime.worstDayPct <= -1.0))) {
+              baseRatio *= (mcfg.inversePanicBoost || 1.3);
             }
 
             // [V9.2 데이터근거] day 전략 신호강도 차등 사이징.
