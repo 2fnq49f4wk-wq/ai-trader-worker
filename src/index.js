@@ -245,7 +245,10 @@ const DEFAULT_KR = [
   "042000.KS","069500.KS","122630.KS","252670.KS","102110.KS",
   "233740.KS","251340.KS","114800.KS","229200.KS","091160.KS",
   "305720.KS","371460.KS","360750.KS","133690.KS","379800.KS",
-  "117460.KS"
+  "117460.KS",
+  // [추가 ETF] TIGER 미국우주테크(0183J0, 2026.04 상장), TIGER K방산&우주(463250)
+  //   주의: 0183J0은 영문 포함 코드 — 시스템은 .KS 접미사로 시장판정·문자열키 처리라 안전.
+  "0183J0.KS","463250.KS"
 ];
 
 // ETF 심볼 셋 (레버리지 ETF 리스크 처리용)
@@ -256,6 +259,7 @@ const ETF_SYMBOLS = new Set([
   "069500.KS","122630.KS","252670.KS","102110.KS","233740.KS",
   "251340.KS","114800.KS","229200.KS","091160.KS","305720.KS",
   "371460.KS","360750.KS","133690.KS","379800.KS","117460.KS",
+  "0183J0.KS","463250.KS",  // [추가] TIGER 미국우주테크 · K방산&우주
 ]);
 
 // 레버리지/인버스 ETF (일일 변동성 2~3배 — ATR 사이징 자동 축소 대상)
@@ -1091,7 +1095,9 @@ const NAME_MAP = {
   "360750.KS":"TIGER 미국S&P500",
   "133690.KS":"TIGER 미국나스닥100",
   "379800.KS":"KODEX 미국S&P500",
-  "117460.KS":"KODEX 에너지화학"
+  "117460.KS":"KODEX 에너지화학",
+  "0183J0.KS":"TIGER 미국우주테크",
+  "463250.KS":"TIGER K방산&우주"
 };
 
 // 시가총액 순위 (UI 시총순 정렬용 — 값이 작을수록 대형주)
@@ -1924,7 +1930,9 @@ const MCAP_RANK = {
   "360750.KS":308,
   "133690.KS":309,
   "379800.KS":310,
-  "117460.KS":311
+  "117460.KS":311,
+  "0183J0.KS":312,
+  "463250.KS":313
 };
 
 const US_INDICES = ["^IXIC", "^DJI", "^GSPC"];
@@ -7236,16 +7244,24 @@ async function runTradingCycle(env) {
             .catch(function(e){ return log(DB, "WARN", idx, "index fetch fail: " + e.message); })
         );
       }
-      // [VIX 변동성 레짐] 글로벌 공포지수 — 미국장 시간에만 갱신(한국장은 저장값 재사용).
-      indexJobs.push(
-        fetchIndexDaily("^VIX")
-          .then(function(d){
-            if (d && d.closes && d.closes.length) {
-              return setState(DB, "vix", { value: d.closes[d.closes.length - 1], ts: Date.now() });
-            }
-          })
-          .catch(function(e){ return log(DB, "WARN", "^VIX", "vix fetch fail: " + e.message); })
-      );
+      // [VIX 변동성 레짐] 글로벌 공포지수 — 미국장 시간 + 5분마다만 갱신(천천히 변함 → fetch 절약).
+      //   읽기(crashGate)는 매 사이클 저장값 사용. 저장이 10분 이상 오래됐으면 분 무관 갱신(신선도 보장).
+      {
+        const _nowMin = new Date().getUTCMinutes();
+        const _vixPrev = await getState(DB, "vix", null);
+        const _vixStale = !_vixPrev || !_vixPrev.ts || (Date.now() - _vixPrev.ts) > 10 * 60 * 1000;
+        if (_nowMin % 5 === 0 || _vixStale) {
+          indexJobs.push(
+            fetchIndexDaily("^VIX")
+              .then(function(d){
+                if (d && d.closes && d.closes.length) {
+                  return setState(DB, "vix", { value: d.closes[d.closes.length - 1], ts: Date.now() });
+                }
+              })
+              .catch(function(e){ return log(DB, "WARN", "^VIX", "vix fetch fail: " + e.message); })
+          );
+        }
+      }
     }
     if (krOpen) {
       for (const idx of KR_INDICES) {
