@@ -4881,6 +4881,44 @@ function evaluateBuySignals_swing(price, dayPct, dailyData, cfg) {
 //     A) 추세 풀백 반등 — 상승추세 종목이 MA20 근처로 눌렀다 반등
 //     B) 신고가 돌파 — 거래량을 동반한 N일 신고가 돌파
 //   반환: signal | null  (signal 형식은 기존과 동일해 호출부/백테스트 무수정)
+// [다중 팩터 알파] 모멘텀 + 상대강도(RS) + 거래량 추세(OBV)로 종목 "품질" 점수(0~1).
+//   추세정렬 게이트를 통과한 종목 중에서도 더 강한 종목을 가려내 사이즈를 차등한다.
+//   추가 fetch 0 — 기존 일봉(closes/volumes) + 지수 레짐(idxReturn20)만 사용.
+function computeAlphaQuality(dailyData, regime) {
+  const closes = dailyData.closes, volumes = dailyData.volumes;
+  if (!closes || closes.length < 60) return null;
+  let score = 0.5; const factors = [];
+
+  // 1) 절대 모멘텀 — 60일 수익률
+  const ret60 = getNDayReturn(closes, 60);
+  if (ret60 != null) {
+    if (ret60 >= 15)      { score += 0.15; factors.push("MOM+"); }
+    else if (ret60 <= 0)  { score -= 0.15; factors.push("MOM-"); }
+  }
+  // 2) 상대강도(RS) — 종목 20일 수익률 vs 지수 20일
+  const ret20 = getNDayReturn(closes, 20);
+  if (ret20 != null && regime && typeof regime.idxReturn20 === "number") {
+    const rs = ret20 - regime.idxReturn20;
+    if (rs >= 5)       { score += 0.2; factors.push("RS+"); }
+    else if (rs <= -3) { score -= 0.2; factors.push("RS-"); }
+  }
+  // 3) 거래량 추세(OBV 방향) — 최근 20일 매집/분산
+  if (volumes && volumes.length >= 21 && closes.length >= 21) {
+    let obv = 0;
+    const n = closes.length;
+    for (let i = n - 20; i < n; i++) {
+      if (i < 1) continue;
+      const dir = closes[i] > closes[i - 1] ? 1 : (closes[i] < closes[i - 1] ? -1 : 0);
+      obv += dir * (volumes[i] || 0);
+    }
+    if (obv > 0)      { score += 0.1; factors.push("OBV+"); }
+    else if (obv < 0) { score -= 0.1; factors.push("OBV-"); }
+  }
+
+  score = Math.max(0, Math.min(1, score));
+  return { score: score, factors: factors };
+}
+
 function evaluateTrendEntry(price, dayPct, dailyData, cfg, regime, market) {
   const r = getTrendRules(cfg, market);
   const closes = dailyData.closes;
@@ -5060,6 +5098,27 @@ function evaluateAllStrategies(price, dayPct, dailyData, cfg, signalStats, regim
       sig.secNote = "SEC_" + sd.filingType + " " + tag;
     }
   }
+
+  // [다중 팩터 알파] 모멘텀+RS+거래량 품질로 사이즈 차등 — 강한 종목 더 크게, 약한 종목 작게.
+  //   추세정렬 게이트를 통과한 종목 중에서도 "진짜 강한 추세"를 가려내 자본 효율↑ (추가 fetch 0).
+  {
+    const aq = computeAlphaQuality(dailyData, regime);
+    if (aq) {
+      let qBoost = 1.0;
+      if (aq.score >= 0.78)      qBoost = 1.15;  // 고품질: 강모멘텀+RS우위+매집
+      else if (aq.score >= 0.62) qBoost = 1.07;
+      else if (aq.score <= 0.30) qBoost = 0.78;  // 저품질: 약세+분산 → 보수화
+      else if (aq.score <= 0.42) qBoost = 0.90;
+      if (qBoost !== 1.0) {
+        sig.visionBoost = (sig.visionBoost || 1.0) * qBoost;
+        sig.alphaNote = "ALPHA " + aq.score.toFixed(2) + "×" + qBoost + (aq.factors.length ? " " + aq.factors.join(",") : "");
+      }
+    }
+  }
+
+  // [안전장치] 여러 부스트(vision×sec×alpha) 누적이 극단값이 되지 않게 상하한 clamp.
+  //   (최종 사이즈는 maxPositionPct·가용현금으로 한 번 더 제한됨)
+  if (sig.visionBoost) sig.visionBoost = Math.min(2.0, Math.max(0.2, sig.visionBoost));
 
   return [{ strategy: "trend", signal: sig, rawCount: 1 }];
 }
