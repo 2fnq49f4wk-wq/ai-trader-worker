@@ -2223,7 +2223,18 @@ const DEFAULT_CFG = {
     monthlyRequests: 10000000,  // Paid 포함량
     monthlyCpuMs: 30000000,     // Paid 포함량
     shutdownAt: 0.90,
-    warnAt: 0.70
+    warnAt: 0.70,
+    cpuCalibration: 0.10        // CPU 추정 보정 (대시보드 실측 대비 조정)
+  },
+  // [실시간] 분(分) 내 빠른 포지션 감시 — 한 invocation에서 sleep 서브틱으로 보유 포지션의
+  //   손절/트레일/익절을 ~10초 간격 재점검. 추가 cron/DO/외부피드 없이 반응속도 1분→~10초.
+  //   sleep은 CPU 비소모 → 비용 영향 최소. subrequest는 서브틱당 시장별 1배치(≤50종목).
+  fastWatch: {
+    enabled: true,
+    ticks: 3,             // invocation당 최대 서브틱 수
+    intervalMs: 9000,     // 서브틱 간격(~9초)
+    maxSymbols: 50,       // 폴링 대상 상한 (1 배치=1 subrequest)
+    maxElapsedMs: 52000   // invocation 총 경과 상한 (다음 cron과 겹침 방지)
   },
   // [분봉] 진입 직전 장중 타이밍 확인 — 후보 종목에만 분봉 1회 조회(전 종목 X)
   //   장중 급락 칼날잡기·VWAP 추격매수를 차단해 진입 품질 향상. fetch는 maxPerCycle로 통제.
@@ -4318,8 +4329,15 @@ const USAGE_LIMITS_DEFAULT = {
   monthlyRequests: 10000000,  // Paid 포함 요청 수
   monthlyCpuMs: 30000000,     // Paid 포함 CPU ms
   shutdownAt: 0.90,         // 90% 도달 시 자동 셧다운 (예: 9.0M 요청)
-  warnAt: 0.70              // 70% 도달 시 WARN 로그
+  warnAt: 0.70,             // 70% 도달 시 WARN 로그
+  // [정확도] Workers는 런타임 CPU측정 API가 없다. invocation의 "비(非)sleep 경과시간"은
+  //   대부분 fetch/D1 I/O 대기라 실제 CPU보다 훨씬 크다 → 그 일부만 CPU로 추정(보수적).
+  //   실제 CPU는 Cloudflare 대시보드에서 확인하고 이 값을 보정하면 셧다운이 정확해진다.
+  cpuCalibration: 0.10
 };
+// [실시간] sleep 누적 — invocation 내 서브틱 대기는 CPU를 쓰지 않으므로 usage 계산에서 제외.
+let __sleepAccumMs = 0;
+function _sleep(ms) { __sleepAccumMs += ms; return new Promise(function(res){ setTimeout(res, ms); }); }
 function _usageMonthKey(d) {
   const dt = d || new Date();
   return dt.getUTCFullYear() * 100 + (dt.getUTCMonth() + 1);
@@ -4383,9 +4401,11 @@ async function isUsageShutdown(DB, cfg) {
   } catch (e) { return false; }
 }
 // 매 invocation 끝(또는 끝부분)에서 호출 — 누적 추적.
-async function tickUsage(DB, startedAt, extraSubreqs) {
-  const elapsed = Math.max(1, Date.now() - (startedAt || Date.now()));
-  return recordUsage(DB, 1, elapsed, extraSubreqs || 0);
+//   cpuMs는 (전체경과 − sleep) × cpuCalibration 으로 추정(I/O 대기를 CPU로 과대계상하지 않게).
+async function tickUsage(DB, startedAt, calibration, extraSubreqs) {
+  const wallActive = Math.max(1, (Date.now() - (startedAt || Date.now())) - __sleepAccumMs);
+  const calib = (typeof calibration === "number" && calibration > 0) ? calibration : 0.10;
+  return recordUsage(DB, 1, Math.round(wallActive * calib), extraSubreqs || 0);
 }
 
 let __yahooHostFlip = 0;
@@ -8079,8 +8099,8 @@ async function runTradingCycle(env) {
       //   (이전 cycleStartedAt 기준은 prefetch 18초가 18초 가드를 다 써 평가 0종목 → 거래 마비)
       //   동시에 전체 사이클 상한(hardCap)으로 Cloudflare invocation 초과(마비) 방지.
       const evalStartedAt = Date.now();
-      const evalBudgetMs = (typeof cfg.evalBudgetMs === "number") ? cfg.evalBudgetMs : 22000;   // [PAID] 평가 시간 여유
-      const hardCapMs = (typeof cfg.cycleHardCapMs === "number") ? cfg.cycleHardCapMs : 45000;  // [PAID] 사이클 상한 (Paid CPU 한도 내)
+      const evalBudgetMs = (typeof cfg.evalBudgetMs === "number") ? cfg.evalBudgetMs : 16000;   // [실시간] heavy 평가 cap 축소 → fastWatch 시간 확보(라운드로빈으로 커버리지 유지)
+      const hardCapMs = (typeof cfg.cycleHardCapMs === "number") ? cfg.cycleHardCapMs : 22000;  // [실시간] heavy 사이클 상한 22s → 분(分) 내 fastWatch 서브틱 여유
       let evalOffset = await getState(DB, "eval_offset:" + market, 0);
       if (!(typeof evalOffset === "number" && evalOffset >= 0 && evalOffset < fetched.length)) evalOffset = 0;
       const orderedEval = evalOffset > 0 ? fetched.slice(evalOffset).concat(fetched.slice(0, evalOffset)) : fetched;
@@ -8510,6 +8530,8 @@ async function runTradingCycle(env) {
       await auditAccounting(DB, mkt, cash);
     }
     const cycleMs = Date.now() - cycleStartedAt;
+    // [실시간] fastWatch가 쓸 거래가능 시장 목록 기록 — 휴장/엔진OFF/윈도우 판정 재사용.
+    try { await setState(DB, "fastwatch:markets", { list: marketsToTrade, ts: Date.now() }); } catch (e) {}
     await log(DB, "INFO", null, "Done: tried=" + tried + " skip=" + skipped + " buy=" + bought + " sell=" + sold + " fetchFail=" + fetchFail + " minBars=" + minuteFetchUsed + " cycleMs=" + cycleMs);
     try { await DB.prepare("DELETE FROM logs WHERE id NOT IN (SELECT id FROM logs ORDER BY id DESC LIMIT 500)").run(); } catch (e) {}
     // [통계] 일별 엔진 통계 누적 (KST 05:00 리셋). 신호=signalCount, 거래=buy+sell, 에러=직전 집계 이후 누적분.
@@ -8525,6 +8547,127 @@ async function runTradingCycle(env) {
     } catch (e) { console.error("daily_stats upsert fail:", e.message); }
   } finally {
     await releaseCycleLock(DB, myLockPid);
+  }
+}
+
+// ═══════════════════════════════════════════════════════════════════════
+// [실시간] runFastWatch — 분(分) 내 빠른 포지션 감시 (sleep 서브틱)
+// ───────────────────────────────────────────────────────────────────────
+// 한 invocation 안에서 _sleep으로 ~9초 간격 서브틱을 돌려, 보유 포지션의
+// 손절/트레일/익절(evaluateSell)을 1분 주기 대신 ~10초 주기로 점검한다.
+// 전 종목 스캔이 아니라 "보유 포지션"만 → subrequest 최소. sleep은 CPU 비소모.
+// cronStart 기준 maxElapsedMs를 넘지 않게 자율 종료(다음 cron과 겹침 방지).
+async function runFastWatch(env, cronStart) {
+  const DB = env.DB;
+  try {
+    const cfg = migrateCfgToMarkets(Object.assign({}, DEFAULT_CFG, await getState(DB, "cfg", {})));
+    const fw = cfg.fastWatch || DEFAULT_CFG.fastWatch;
+    if (!fw || fw.enabled === false) return;
+    if (!cfg.enabled) return;                     // 엔진 OFF면 감시 안 함
+    if (await isUsageShutdown(DB, cfg)) return;   // 사용량 셧다운 중이면 중지
+
+    // 직전 거래 사이클이 판정한 "거래가능 시장"만 (휴장/엔진/윈도우 로직 재사용, 90s 신선도)
+    const fwm = await getState(DB, "fastwatch:markets", null);
+    if (!fwm || !fwm.ts || (Date.now() - fwm.ts) > 90000 || !Array.isArray(fwm.list) || fwm.list.length === 0) return;
+    const markets = fwm.list.filter(function(m){ return m === "us" || m === "kr"; });
+    if (markets.length === 0) return;
+
+    const maxElapsed = fw.maxElapsedMs || 52000;
+    const interval = fw.intervalMs || 9000;
+    const ticks = fw.ticks || 3;
+    // 시간이 한 번의 (대기+처리)도 못 낼 만큼 적으면 시작 안 함
+    if ((Date.now() - cronStart) + interval > maxElapsed) return;
+
+    resetFetchBudget(100);  // fastWatch 전용 깨끗한 subrequest 예산
+    const visionPreds = await getState(DB, "vision_predictions", {});
+    const vixState = await getState(DB, "vix", null);
+    const vixVal = (vixState && typeof vixState.value === "number" && vixState.value > 0) ? vixState.value : 0;
+    const deRiskOpts = { active: false, vixValue: vixVal };
+    const cash = await computeAllCash(DB, cfg);
+
+    // 시장별 보유 포지션 + 캐시 일봉 사전 로드 (틱마다 재로드 안 함)
+    const ctxByMarket = {};
+    for (const market of markets) {
+      const positions = await getPositions(DB, market);
+      if (Object.keys(positions).length === 0) continue;
+      const mcfg = getMarketCfg(cfg, market);
+      const dailyMap = {};
+      try {
+        const drows = await DB.prepare("SELECT k, v FROM state WHERE k LIKE 'daily:%'").all();
+        for (const r of (drows.results || [])) { try { dailyMap[r.k.slice(6)] = JSON.parse(r.v); } catch (e) {} }
+      } catch (e) {}
+      ctxByMarket[market] = { positions: positions, mcfg: mcfg, dailyMap: dailyMap };
+    }
+    const activeMarkets = Object.keys(ctxByMarket);
+    if (activeMarkets.length === 0) return;  // 보유 포지션 없음 → 감시 불필요
+
+    let fastSells = 0, ticksDone = 0;
+    for (let t = 0; t < ticks; t++) {
+      if ((Date.now() - cronStart) + interval > maxElapsed) break;  // 다음 서브틱이 예산 초과면 종료
+      await _sleep(interval);
+      ticksDone++;
+      for (const market of activeMarkets) {
+        const c = ctxByMarket[market];
+        const mcfg = c.mcfg;
+        const uniq = Array.from(new Set(Object.keys(c.positions).map(function(k){ return c.positions[k].symbol; }))).slice(0, fw.maxSymbols || 50);
+        if (uniq.length === 0) continue;
+        if (fetchBudgetLeft() <= 2) break;
+        let quotes = {};
+        try { quotes = await fetchBatchQuotes(uniq, { maxFallback: uniq.length, DB: DB }); }
+        catch (e) { continue; }
+        for (const posKey of Object.keys(c.positions)) {
+          const held = c.positions[posKey];
+          if (!held || held.qty <= 0) continue;
+          const q = quotes[held.symbol];
+          if (!q || !(typeof q.price === "number" && q.price > 0)) continue;
+          const price = q.price;
+          const stratName = held.strategy || "trend";
+          const daily = c.dailyMap[held.symbol];
+          if (!daily || !daily.closes || daily.closes.length < 25) continue;
+          const closes = daily.closes;
+          const dailyRsi = closes.length >= mcfg.rsiPeriod + 1 ? getRSI(closes, mcfg.rsiPeriod) : null;
+          const dailyMa = closes.length >= mcfg.maPeriod ? getMA(closes, mcfg.maPeriod) : null;
+          const dailyMaShort = closes.length >= mcfg.maShortPeriod ? getMA(closes, mcfg.maShortPeriod) : null;
+          // peak/stop/break-even 갱신 (메인 루프와 동일 규칙)
+          let posDirty = false;
+          if (held.meta && held.meta.stopPrice != null && !held.meta.breakEvenLocked) {
+            const stopPct = (getStrategyRules(mcfg, stratName, market).stopLossPct || mcfg.stopLoss);
+            const safeStop = held.avg * (1 - stopPct / 100);
+            if (held.meta.stopPrice > safeStop) { held.meta.stopPrice = safeStop; posDirty = true; }
+          }
+          if (held.meta && held.meta.peakPrice != null && price > held.meta.peakPrice) { held.meta.peakPrice = price; posDirty = true; }
+          else if (held.meta && held.meta.peakPrice == null) { held.meta.peakPrice = Math.max(held.avg, price); posDirty = true; }
+          const breakRules = getStrategyRules(mcfg, stratName, market);
+          if (held.meta && breakRules.breakEvenAt != null && !held.meta.breakEvenLocked) {
+            const curPnl = ((price - held.avg) / held.avg) * 100;
+            if (curPnl >= breakRules.breakEvenAt) {
+              const newStop = held.avg * (1 + (breakRules.breakEvenLock || 0) / 100);
+              if (held.meta.stopPrice == null || held.meta.stopPrice < newStop) held.meta.stopPrice = newStop;
+              held.meta.breakEvenLocked = true; posDirty = true;
+            }
+          }
+          const _vHint = visionPreds && visionPreds[held.symbol] ? visionPreds[held.symbol] : null;
+          const sellDecision = evaluateSell(held, price, daily, dailyRsi, dailyMa, dailyMaShort, mcfg, true, market, deRiskOpts, _vHint);
+          if (sellDecision.sell) {
+            try {
+              // 원본 reason 그대로 전달 — executeSell의 TP1/TP2/STOP·쿨다운 판정이 reason 접두에 의존.
+              const wasFull = sellDecision.sellQty >= held.qty;
+              await executeSell(DB, market, held.symbol, held, sellDecision.sellQty, price, sellDecision.reason, mcfg, cash);
+              fastSells++;
+              await log(DB, "INFO", held.symbol, "[FAST] " + sellDecision.reason);
+              if (wasFull) delete c.positions[posKey];  // 부분매도는 executeSell이 held.qty를 in-place 감소
+            } catch (e) { try { await log(DB, "ERROR", held.symbol, "[FAST] sell fail: " + e.message); } catch (e2) {} }
+          } else if (posDirty) {
+            try { await savePosition(DB, market, held.symbol, stratName, held); } catch (e) {}
+          }
+        }
+      }
+    }
+    if (ticksDone > 0) {
+      await log(DB, "INFO", null, "[FAST] watch ticks=" + ticksDone + " sells=" + fastSells + " mkts=" + activeMarkets.join(","));
+    }
+  } catch (e) {
+    try { await log(DB, "ERROR", null, "[FAST] watch fail: " + e.message); } catch (e2) {}
   }
 }
 
@@ -9959,13 +10102,16 @@ export default {
     //   가격/원자재 갱신이 산발적으로 실패했음(특히 정규장 1분 갱신).
     //   → 단일 promise 안에서 "순차" 실행해 각 사이클이 자기 예산을 온전히 쓰게 한다.
     const __cronStart = Date.now();
+    __sleepAccumMs = 0;  // [실시간] invocation 시작마다 sleep 누적 초기화
+    let __usageCalib = USAGE_LIMITS_DEFAULT.cpuCalibration;
     ctx.waitUntil((async () => {
       // [PAID 가드] Workers Paid 한도 90% 도달 시 모든 작업 차단 (초과 과금 방지)
       try {
         const _gcfg = migrateCfgToMarkets(Object.assign({}, DEFAULT_CFG, await getState(env.DB, "cfg", {})));
+        if (_gcfg.usageLimits && typeof _gcfg.usageLimits.cpuCalibration === "number") __usageCalib = _gcfg.usageLimits.cpuCalibration;
         if (await isUsageShutdown(env.DB, _gcfg)) {
           // 사용량 누적은 계속 — 셧다운 상태에도 cron 자체는 카운트
-          try { await tickUsage(env.DB, __cronStart, 0); } catch (e) {}
+          try { await tickUsage(env.DB, __cronStart, __usageCalib, 0); } catch (e) {}
           return;
         }
       } catch (e) {}
@@ -10037,8 +10183,12 @@ export default {
       try { await fetchSecFilings(env); }
       catch (e) { try { await log(env.DB, "ERROR", null, "[SCHED] sec fetch fail: " + e.message); } catch (e2) {} }
 
-      // [PAID 가드] 이번 invocation 사용량 누적 — request 1건 + 소요 ms 누적
-      try { await tickUsage(env.DB, __cronStart, __fetchBudget.used || 0); } catch (e) {}
+      // 8) [실시간] 분(分) 내 빠른 포지션 감시 — 남은 시간만큼 sleep 서브틱으로 손절/익절 점검
+      try { await runFastWatch(env, __cronStart); }
+      catch (e) { try { await log(env.DB, "ERROR", null, "[SCHED] fast watch fail: " + e.message); } catch (e2) {} }
+
+      // [PAID 가드] 이번 invocation 사용량 누적 — request 1건 + (비sleep경과×보정) CPU 추정
+      try { await tickUsage(env.DB, __cronStart, __usageCalib, __fetchBudget.used || 0); } catch (e) {}
     })());
   }
 };
