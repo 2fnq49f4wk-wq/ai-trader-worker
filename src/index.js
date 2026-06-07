@@ -2882,29 +2882,34 @@ function _usHolidaySet(year) {
   s.add(_usObserved(year, 12, 25));                      // 크리스마스
   return s;
 }
-// 한국 음력 공휴일 테이블 (양력 환산, 천문연 기준) — 설날3일·추석3일·석가탄신일
-//   미커버 연도는 양력 공휴일만 + 지수 폴백.
-const KR_LUNAR_HOLIDAYS = {
-  2026: ["2026-02-16","2026-02-17","2026-02-18","2026-05-24","2026-09-24","2026-09-25","2026-09-26"],
-  2027: ["2027-02-06","2027-02-07","2027-02-08","2027-05-13","2027-09-14","2027-09-15","2027-09-16"],
-  2028: ["2028-01-26","2028-01-27","2028-01-28","2028-05-02","2028-10-02","2028-10-03","2028-10-04"],
-  2029: ["2029-02-12","2029-02-13","2029-02-14","2029-05-20","2029-09-21","2029-09-22","2029-09-23"],
-  2030: ["2030-02-02","2030-02-03","2030-02-04","2030-05-09","2030-09-11","2030-09-12","2030-09-13"]
-};
+// 한국 양력 공휴일 + 대체공휴일 규칙 계산.
+//   음력 명절(설날/추석/석가탄신일)은 양력 변환이 해마다 달라 하드코딩이 부정확(전날·대체 누락) →
+//   음력은 테이블 대신 "지수(KOSPI) 실제 거래일" 폴백으로 정확 판정(_indexFreshOpen, 장중 호출).
 function _krHolidaySet(year) {
   const s = new Set();
-  // 양력 고정 공휴일 (대체공휴일 단순화 — 핵심일만)
-  s.add(_ymd(year, 1, 1));    // 신정
-  s.add(_ymd(year, 3, 1));    // 삼일절
-  s.add(_ymd(year, 5, 5));    // 어린이날
-  s.add(_ymd(year, 6, 6));    // 현충일
-  s.add(_ymd(year, 8, 15));   // 광복절
-  s.add(_ymd(year, 10, 3));   // 개천절
-  s.add(_ymd(year, 10, 9));   // 한글날
-  s.add(_ymd(year, 12, 25));  // 성탄절
-  s.add(_ymd(year, 5, 1));    // 근로자의 날(증시 휴장)
-  const lunar = KR_LUNAR_HOLIDAYS[year];
-  if (lunar) lunar.forEach(function(d){ s.add(d); });
+  const subst = []; // 대체공휴일 대상(주말 겹치면 다음 평일로 대체 — 한국 법정규칙)
+  function add(m, d, canSubst) { s.add(_ymd(year, m, d)); if (canSubst) subst.push([m, d]); }
+  add(1, 1, false);   // 신정 (대체 없음)
+  add(3, 1, true);    // 삼일절
+  add(5, 5, true);    // 어린이날
+  add(6, 6, false);   // 현충일 (대체 없음)
+  add(8, 15, true);   // 광복절
+  add(10, 3, true);   // 개천절
+  add(10, 9, true);   // 한글날
+  add(12, 25, true);  // 성탄절
+  s.add(_ymd(year, 5, 1)); // 근로자의 날 (증시 휴장, 대체 없음)
+  // 대체공휴일: 대상 공휴일이 토/일이면 다음 비공휴일 평일을 휴장 추가
+  subst.forEach(function(md){
+    const dow = new Date(Date.UTC(year, md[0] - 1, md[1])).getUTCDay();
+    if (dow === 0 || dow === 6) {
+      const nd = new Date(Date.UTC(year, md[0] - 1, md[1]));
+      let guard = 0;
+      do { nd.setUTCDate(nd.getUTCDate() + 1); guard++; }
+      while ((nd.getUTCDay() === 0 || nd.getUTCDay() === 6 ||
+              s.has(_ymd(nd.getUTCFullYear(), nd.getUTCMonth() + 1, nd.getUTCDate()))) && guard < 12);
+      s.add(_ymd(nd.getUTCFullYear(), nd.getUTCMonth() + 1, nd.getUTCDate()));
+    }
+  });
   return s;
 }
 // 연도별 휴장 Set 캐시 (계산 결과 재사용)
@@ -2916,8 +2921,6 @@ function getHolidaySet(market, year) {
   c[year] = s;
   return s;
 }
-// 한국 음력 테이블이 커버하는 연도인지(미커버면 양력만 → 지수 폴백 권장)
-function _krLunarCovered(year) { return !!KR_LUNAR_HOLIDAYS[year]; }
 
 // 거래일 판정 — 캐시 → 주말 → 공휴일 테이블 (Claude 불필요).
 //   반환: true(개장) / false(휴장) / null(판정불가)
@@ -2946,31 +2949,37 @@ async function isMarketTradingDay(DB, market, env) {
 
   // 2) [규칙 기반 자동] 공휴일을 연도별 규칙으로 계산해 즉시 판정 (web_search 불필요, 지연 0)
   const yr = parseInt(today.slice(0, 4), 10);
-  let open;
+  let open, src;
   if (getHolidaySet(market, yr).has(today)) {
-    open = false; // 공휴일 → 휴장
-  } else if (market === "kr" && !_krLunarCovered(yr)) {
-    // 한국 음력 테이블 미커버 연도: 양력 공휴일은 위에서 계산됨. 음력(설날/추석) 누락 가능 →
-    //   지수(KOSPI) 마지막 거래일이 오늘이 아니면 휴장으로 본다(거래 데이터 폴백). 데이터 없으면 개장 가정.
+    open = false; src = "rule-holiday"; // 테이블/규칙상 공휴일 → 휴장 (확정)
+  } else if (market === "kr") {
+    // 한국: 음력은 대체공휴일·임시공휴일 등으로 테이블이 불완전할 수 있음 →
+    //   테이블에 없어도 지수(KOSPI) 마지막 거래일로 재확인(실제 거래 데이터가 정답).
+    //   지수가 오늘 거래됨 → 개장 / 아니면 휴장. 데이터 없으면 개장 가정(시세 stale로 자연 차단).
     open = await _indexFreshOpen(DB, market, today);
-    try { await log(DB, "WARN", null, "[HOLIDAY] KR " + today + " 음력테이블 미커버 — 지수폴백 판정=" + (open ? "OPEN" : "CLOSED") + " (테이블 갱신 권장)"); } catch (e) {}
+    src = "rule+index";
   } else {
-    open = true; // 규칙상 평일·비공휴일 → 개장
+    open = true; src = "rule"; // 미국은 규칙이 결정론적으로 완전 → 평일·비공휴일은 개장
   }
-  try { await setState(DB, cacheKey, { open: open, ts: Date.now(), src: "rule" }); } catch (e) {}
-  await log(DB, "INFO", null, "[HOLIDAY] " + market.toUpperCase() + " " + today + " trading=" + (open ? "OPEN" : "CLOSED") + " (rule)");
+  try { await setState(DB, cacheKey, { open: open, ts: Date.now(), src: src }); } catch (e) {}
+  await log(DB, "INFO", null, "[HOLIDAY] " + market.toUpperCase() + " " + today + " trading=" + (open ? "OPEN" : "CLOSED") + " (" + src + ")");
   return open;
 }
 
-// 지수 일봉의 마지막 거래일이 오늘(현지)과 같으면 개장으로 판정 — 음력테이블 만료 시 폴백.
-//   장 시작 전이라 오늘 데이터가 없으면 판정 불가 → 보수적으로 개장 가정(시세 stale로 자연 차단).
+// 지수의 마지막 거래일이 오늘(현지)과 같으면 개장으로 판정 — 음력 대체/임시공휴일 보정.
+//   장중 호출이므로 개장일이면 당일 봉이 있고, 휴장일이면 마지막 거래가 어제 → 정확.
+//   데이터 없거나 장 시작 전이면 개장 가정(시세 stale로 거래 게이트가 자연 차단).
 async function _indexFreshOpen(DB, market, today) {
   try {
     const idxSym = market === "us" ? "^IXIC" : "^KS11";
-    const idx = await getState(DB, "daily:" + idxSym, null);
-    if (idx && Array.isArray(idx.dates) && idx.dates.length > 0) {
-      const lastDate = idx.dates[idx.dates.length - 1];
-      if (typeof lastDate === "string") return lastDate.slice(0, 10) === today;
+    const idx = await getState(DB, "index:" + idxSym, null);
+    if (idx && typeof idx.marketTime === "number" && idx.marketTime > 0) {
+      const dt = new Date(idx.marketTime * 1000);
+      const p = market === "us" ? getUSEt(dt) : getKST(dt);
+      if (p && p.year != null) {
+        const idxDate = p.year + "-" + String(p.month).padStart(2, "0") + "-" + String(p.date).padStart(2, "0");
+        return idxDate === today;
+      }
     }
   } catch (e) {}
   return true; // 데이터 없으면 개장 가정
@@ -4761,14 +4770,15 @@ async function fetchIndexDaily(symbol) {
   const closes = filterNulls(raw);
   const price = (typeof meta.regularMarketPrice === "number" && meta.regularMarketPrice > 0) ? meta.regularMarketPrice : closes[closes.length - 1];
   const prevClose = closes.length >= 2 ? closes[closes.length - 2] : price;
-  return { price: price, prevClose: prevClose, history: closes };
+  // [휴장 폴백] 마지막 거래 시각(epoch sec) — 지수의 실제 마지막 거래일로 휴장 보정에 사용.
+  return { price: price, prevClose: prevClose, history: closes, marketTime: (typeof meta.regularMarketTime === "number" ? meta.regularMarketTime : null) };
 }
 
 async function saveIndex(DB, symbol, region, data) {
   const dayPct = data.prevClose ? ((data.price - data.prevClose) / data.prevClose) * 100 : 0;
   await setState(DB, "index:" + symbol, {
     region: region, price: data.price, prevClose: data.prevClose,
-    dayPct: dayPct, history: data.history.slice(-60), ts: Date.now()
+    dayPct: dayPct, history: data.history.slice(-60), marketTime: data.marketTime || null, ts: Date.now()
   });
 }
 
@@ -7080,6 +7090,16 @@ async function runTradingCycle(env) {
             .catch(function(e){ return log(DB, "WARN", idx, "index fetch fail: " + e.message); })
         );
       }
+      // [VIX 변동성 레짐] 글로벌 공포지수 — 미국장 시간에만 갱신(한국장은 저장값 재사용).
+      indexJobs.push(
+        fetchIndexDaily("^VIX")
+          .then(function(d){
+            if (d && d.closes && d.closes.length) {
+              return setState(DB, "vix", { value: d.closes[d.closes.length - 1], ts: Date.now() });
+            }
+          })
+          .catch(function(e){ return log(DB, "WARN", "^VIX", "vix fetch fail: " + e.message); })
+      );
     }
     if (krOpen) {
       for (const idx of KR_INDICES) {
@@ -7212,6 +7232,36 @@ async function runTradingCycle(env) {
       } catch (e) {
         await log(DB, "WARN", null, "[V12] crashGate fail " + market + ": " + e.message);
       }
+
+      // [VIX 변동성 레짐] 글로벌 공포지수로 시장 전체 진입 사이즈 자동 조절 (외부 데이터 활용).
+      //   고변동(불안) → 축소(손실 방어), 저변동(안정) → 약한 부스트(기회). crashGate.sizeScale에 통합.
+      try {
+        const vix = await getState(DB, "vix", null);
+        if (vix && typeof vix.value === "number" && vix.value > 0) {
+          let vScale = 1.0, vNote = "";
+          if (vix.value >= 35)      { vScale = 0.4; vNote = "EXTREME"; }
+          else if (vix.value >= 28) { vScale = 0.6; vNote = "HIGH"; }
+          else if (vix.value >= 22) { vScale = 0.8; vNote = "ELEVATED"; }
+          else if (vix.value < 14)  { vScale = 1.05; vNote = "CALM"; }
+          if (vScale !== 1.0) {
+            crashGate.sizeScale *= vScale;
+            crashGate.reasons.push("VIX" + vix.value.toFixed(1) + "(" + vNote + ")×" + vScale);
+          }
+          // VIX 초고변동(≥40)이면 신규 진입 전면 차단 (시장 패닉 보호)
+          if (vix.value >= 40) { crashGate.blockNew = true; crashGate.reasons.push("VIX_PANIC " + vix.value.toFixed(1)); }
+        }
+      } catch (e) {}
+
+      // [시장 폭(Breadth)] 직전 사이클의 상승종목 비율로 시장 건강도 반영 (추가 fetch 0).
+      //   광범위 약세(상승<30%)면 신규 진입 보수화 → 추세전략의 휩쏘 회피.
+      try {
+        const br = await getState(DB, "breadth:" + market, null);
+        if (br && typeof br.upRatio === "number" && br.total >= 30) {
+          if (br.upRatio < 0.30)      { crashGate.sizeScale *= 0.7; crashGate.reasons.push("BREADTH_WEAK " + Math.round(br.upRatio * 100) + "%"); }
+          else if (br.upRatio < 0.40) { crashGate.sizeScale *= 0.85; crashGate.reasons.push("BREADTH_SOFT " + Math.round(br.upRatio * 100) + "%"); }
+        }
+      } catch (e) {}
+
       const deRiskOpts = { active: crashGate.deRisk };
 
       // [V10] === PREFETCH 단계 (대규모 종목 — 가격 배치 + 일봉 라운드로빈) ===
@@ -7267,9 +7317,15 @@ async function runTradingCycle(env) {
       //   D1 batch로 한 번에 커밋한다.
       const quoteStmts = [];
       const nowTs = Date.now();
+      let brUp = 0, brTotal = 0;  // [시장 폭] 상승종목 비율 집계 (추가 fetch 0)
       for (const sym of tickers) {
         const bq = batchQuotes[sym];
         if (!bq) continue;
+        // 시장 폭 카운트 (당일 등락 기준)
+        if (typeof bq.price === "number" && typeof bq.prevClose === "number" && bq.prevClose > 0) {
+          brTotal++;
+          if (bq.price > bq.prevClose) brUp++;
+        }
         const prevQ = prevQuoteMap[sym] || null;
         const merged = {
           market: market, price: bq.price, prevClose: bq.prevClose, dayPct: bq.dayPct,
@@ -7290,6 +7346,10 @@ async function runTradingCycle(env) {
         try { await DB.batch(quoteStmts.slice(i, i + 100)); } catch (e) {
           await log(DB, "WARN", null, "[V10] quote batch write fail: " + e.message);
         }
+      }
+      // [시장 폭] 다음 사이클 게이트용으로 저장 (상승종목 비율)
+      if (brTotal >= 30) {
+        try { await setState(DB, "breadth:" + market, { upRatio: brUp / brTotal, up: brUp, total: brTotal, ts: nowTs }); } catch (e) {}
       }
 
       // --- (2) 일봉 라운드로빈 갱신 대상 선정 ---
