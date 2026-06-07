@@ -4072,6 +4072,49 @@ function getATR(closes, p, highs, lows) {
   return s / p;
 }
 
+// [추세 강도] ADX(Average Directional Index) — Wilder 표준.
+//   추세의 "방향성/강도"를 0~100으로. 높으면 강추세, 낮으면 횡보(추세전략 휩쏘 위험).
+//   추가 fetch 0 — 기존 일봉(highs/lows/closes)만 사용.
+function getADX(highs, lows, closes, period) {
+  period = period || 14;
+  if (!Array.isArray(highs) || !Array.isArray(lows) || !Array.isArray(closes)) return null;
+  const n = closes.length;
+  if (n < period * 2 + 1 || highs.length !== n || lows.length !== n) return null;
+  const tr = [], plusDM = [], minusDM = [];
+  for (let i = 1; i < n; i++) {
+    if (typeof highs[i] !== "number" || typeof lows[i] !== "number" || highs[i] <= 0 || lows[i] <= 0) return null;
+    tr.push(Math.max(highs[i] - lows[i], Math.abs(highs[i] - closes[i - 1]), Math.abs(lows[i] - closes[i - 1])));
+    const up = highs[i] - highs[i - 1], down = lows[i - 1] - lows[i];
+    plusDM.push(up > down && up > 0 ? up : 0);
+    minusDM.push(down > up && down > 0 ? down : 0);
+  }
+  // Wilder smoothing (초기 합 → 이후 s - s/period + new)
+  function wilder(arr) {
+    if (arr.length < period) return null;
+    let s = 0;
+    for (let i = 0; i < period; i++) s += arr[i];
+    const out = [s];
+    for (let i = period; i < arr.length; i++) { s = s - s / period + arr[i]; out.push(s); }
+    return out;
+  }
+  const trS = wilder(tr), pS = wilder(plusDM), mS = wilder(minusDM);
+  if (!trS || !pS || !mS) return null;
+  const dx = [];
+  for (let i = 0; i < trS.length; i++) {
+    if (trS[i] === 0) { dx.push(0); continue; }
+    const pDI = 100 * pS[i] / trS[i], mDI = 100 * mS[i] / trS[i];
+    const sum = pDI + mDI;
+    dx.push(sum > 0 ? 100 * Math.abs(pDI - mDI) / sum : 0);
+  }
+  if (dx.length < period) return null;
+  // ADX = DX의 Wilder 평활
+  let adx = 0;
+  for (let i = 0; i < period; i++) adx += dx[i];
+  adx /= period;
+  for (let i = period; i < dx.length; i++) adx = (adx * (period - 1) + dx[i]) / period;
+  return adx;
+}
+
 function getBollingerBands(h, p, mult) {
   p = p || 20; mult = mult || 2.0;
   if (!Array.isArray(h) || h.length < p) return null;
@@ -5112,6 +5155,22 @@ function evaluateAllStrategies(price, dayPct, dailyData, cfg, signalStats, regim
       if (qBoost !== 1.0) {
         sig.visionBoost = (sig.visionBoost || 1.0) * qBoost;
         sig.alphaNote = "ALPHA " + aq.score.toFixed(2) + "×" + qBoost + (aq.factors.length ? " " + aq.factors.join(",") : "");
+      }
+    }
+  }
+
+  // [추세 강도 ADX] 추세전략은 추세장에서 강하고 횡보장에서 휩쏘로 손실 → ADX로 사이즈 차등.
+  //   ADX<18 횡보 → 축소(휩쏘 회피), ADX≥30 강추세 → 부스트. (추가 fetch 0)
+  {
+    const adx = getADX(dailyData.highs, dailyData.lows, dailyData.closes, 14);
+    if (adx != null) {
+      let aScale = 1.0;
+      if (adx < 18)       aScale = 0.7;   // 횡보 — 추세전략 불리
+      else if (adx < 22)  aScale = 0.88;
+      else if (adx >= 30) aScale = 1.10;  // 강추세 — 추세전략 유리
+      if (aScale !== 1.0) {
+        sig.visionBoost = (sig.visionBoost || 1.0) * aScale;
+        sig.adxNote = "ADX " + adx.toFixed(0) + "×" + aScale;
       }
     }
   }
