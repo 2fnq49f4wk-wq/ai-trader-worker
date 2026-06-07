@@ -2215,9 +2215,8 @@ const DEFAULT_CFG = {
   atrPeriod: 14, atrStopMult: 2.0,
   bbStdMult: 2.0,
   volSpikeMult: 1.5,
-  dailyCacheMinutes: 180,  // [거래확대] 일봉은 하루단위 데이터 → 30→180분. 캐시 길게 유지해
-                           //   한 번 받은 종목이 오래 "평가 대상"으로 남아 커버리지 폭증(현재가는 별도 실시간).
-  maxDailyRefreshPerCycle: 20, // [거래확대] 사이클당 일봉 fetch 12→20 (fetch budget 내)
+  dailyCacheMinutes: 90,   // [데이터개선] 180→90분. maxDailyRefreshPerCycle=60으로 15분 전순환 → 캐시 90분이면 사이클 6회 커버
+  maxDailyRefreshPerCycle: 60, // [데이터개선] 20→60: 순환주기 43분→15분 (fetch budget 600으로 여유)
   initialCashUS: 100000, initialCashKR: 100000000,
   initialCashCM: 100000,   // [COMMODITY] 원자재 초기 보유 금액 $100,000 (USD)
   enabled: true,
@@ -2868,11 +2867,11 @@ function migrateCfgToMarkets(cfg) {
   //   829종목 대부분이 항상 평가됨(기존 20/15분은 만료가 빨라 ~25종목만 평가되던 병목).
   //   일봉은 하루단위라 장중 180분 캐시 무방(MA/RSI는 천천히 변하고, 현재가는 별도 실시간 반영).
   //   옛 기본값(30/20/15)만 갱신, 사용자 커스텀은 보존.
-  if (cfg.markets.us && [undefined, 30, 20].indexOf(cfg.markets.us.dailyCacheMinutes) !== -1) {
-    cfg.markets.us.dailyCacheMinutes = 180;
+  if (cfg.markets.us && [undefined, 30, 20, 180].indexOf(cfg.markets.us.dailyCacheMinutes) !== -1) {
+    cfg.markets.us.dailyCacheMinutes = 90;
   }
-  if (cfg.markets.kr && [undefined, 30, 15].indexOf(cfg.markets.kr.dailyCacheMinutes) !== -1) {
-    cfg.markets.kr.dailyCacheMinutes = 180;
+  if (cfg.markets.kr && [undefined, 30, 15, 180].indexOf(cfg.markets.kr.dailyCacheMinutes) !== -1) {
+    cfg.markets.kr.dailyCacheMinutes = 90;
   }
   return cfg;
 }
@@ -4283,9 +4282,9 @@ function filterNulls(rawArr) {
 //   → 한 invocation 동안 yahooFetch 호출 수를 카운트하고, 예산을 넘으면 실제 fetch 를
 //     하지 않고 즉시 throw 해서(=조용히 스킵) 한도 폭발을 막는다. 남은 종목은 다음
 //     사이클 라운드로빈으로 처리된다.
-let __fetchBudget = { used: 0, max: 45 };  // 50 중 여유 5개는 D1/기타용으로 남김
+let __fetchBudget = { used: 0, max: 600 };  // Workers Paid 1000 한도; 함수별로 resetFetchBudget으로 재설정
 function resetFetchBudget(max) {
-  __fetchBudget = { used: 0, max: (typeof max === "number" && max > 0) ? max : 45 };
+  __fetchBudget = { used: 0, max: (typeof max === "number" && max > 0) ? max : 600 };
 }
 function fetchBudgetLeft() { return Math.max(0, __fetchBudget.max - __fetchBudget.used); }
 
@@ -6081,7 +6080,7 @@ async function runBacktest(env, opts) {
 
 async function refreshQuotesOnly(env, market) {
   const DB = env.DB;
-  resetFetchBudget(45);  // [V11] subrequest 예산
+  resetFetchBudget(200);  // [데이터개선] 가격 batch ~18콜 + 지표계산 여유
   await ensureSchema(DB);
   const cfg = migrateCfgToMarkets(Object.assign({}, DEFAULT_CFG, await getState(DB, "cfg", {})));
   await log(DB, "INFO", null, "=== Manual quote refresh: " + market.toUpperCase() + " ===");
@@ -6195,7 +6194,7 @@ async function runPool(items, limit, worker) {
 async function refreshPriceShard(env, market, shard) {
   const DB = env.DB;
   const t0 = Date.now();
-  resetFetchBudget(45);
+  resetFetchBudget(200);  // [데이터개선] 가격 shard 별 충분한 예산
   await ensureSchema(DB);
   const cfg = migrateCfgToMarkets(Object.assign({}, DEFAULT_CFG, await getState(DB, "cfg", {})));
   const tickers = market === "us" ? cfg.usTickers : cfg.krTickers;
@@ -6255,7 +6254,7 @@ async function refreshPriceShard(env, market, shard) {
 // --- 일봉+지표 샤드: 일봉 fetch(캐시 만료 시) + 지표 계산 후 quote에 병합 ---
 async function refreshDailyShard(env, market, shard) {
   const DB = env.DB;
-  resetFetchBudget(45);
+  resetFetchBudget(300);  // [데이터개선] 일봉 shard 당 최대 60 fetch × 여유
   await ensureSchema(DB);
   const cfg = migrateCfgToMarkets(Object.assign({}, DEFAULT_CFG, await getState(DB, "cfg", {})));
   const mcfg = getMarketCfg(cfg, market);
@@ -6876,7 +6875,7 @@ async function refreshCycleLock(DB, ttl, myPid) {
 // ============================================================
 async function runFxUpdate(env) {
   const DB = env.DB;
-  resetFetchBudget(45);  // [V11] subrequest 예산 (환율 ~10쌍)
+  resetFetchBudget(100);  // [데이터개선] FX ~10쌍 + 여유
   await log(DB, "INFO", null, "[FX] === 환율 갱신 시작 ===");
   const out = {};
   let ok = 0, fail = 0;
@@ -7113,7 +7112,7 @@ async function saveQuoteCM(DB, symbol, q, partial) {
 //   v7 batch는 보조로만 쓴다. 일봉 지표는 partial=true로 보존.
 async function refreshCommodityQuotes(env) {
   const DB = env.DB;
-  resetFetchBudget(40);
+  resetFetchBudget(100);  // [데이터개선] 원자재 ~12종 + 여유
   const syms = COMMODITY_SYMBOLS;
   let okCount = 0, failCount = 0;
 
@@ -7151,7 +7150,7 @@ async function refreshCommodityQuotes(env) {
 
 async function runCommodityCycle(env, forceTrade) {
   const DB = env.DB;
-  resetFetchBudget(45);  // [V11] subrequest 예산 (원자재 ~12종이라 여유롭지만 명시적 가드)
+  resetFetchBudget(100);  // [데이터개선] 원자재 cycle 여유
   const cfg = migrateCfgToMarkets(Object.assign({}, DEFAULT_CFG, await getState(DB, "cfg", {})));
   // [V8.9] 거래 시각 판정 — 윈도우(16:00~17:00) 내이면서 forceTrade거나 오늘 미거래일 때만 매매.
   let isTradeTime = false;
@@ -7327,7 +7326,7 @@ async function runCommodityCycle(env, forceTrade) {
 
 async function runTradingCycle(env) {
   const DB = env.DB;
-  resetFetchBudget(45);  // [V11] invocation 당 외부 fetch 예산 초기화 (subrequest 한도 가드)
+  resetFetchBudget(600);  // [데이터개선] Workers Paid 1000 한도의 60% — 가격18+일봉60+기타 후 여유 충분
   await ensureSchema(DB);
   let cfg = migrateCfgToMarkets(Object.assign({}, DEFAULT_CFG, await getState(DB, "cfg", {})));
 
@@ -7753,7 +7752,7 @@ async function runTradingCycle(env) {
       //   [V11] 캐시 히트는 fetch 0 — 만료/미존재 종목만 "남은 예산"만큼 실제 fetch 하고,
       //         예산을 넘는 종목은 이번 사이클 캐시값(있으면)으로 평가하고 다음 라운드로빈에 맡긴다.
       //         yahooFetch 의 예산 가드가 최종 방어선이라, 여기서 미리 끊어 ERROR 로그를 막는다.
-      const DBATCH = 10;
+      const DBATCH = 20;  // [데이터개선] 10→20: 병렬 일봉 fetch 확대
       // 일봉 fetch는 위에서 정한 maxDailyPerCycle(라운드로빈 슬라이스와 동일)로 제한.
       //   캐시 히트는 fetch 0이라, 실제 fetch는 만료/미존재 종목만 발생.
       const dailyTargetArr = Array.from(dailyTargets).slice(0, maxDailyPerCycle);
@@ -7906,8 +7905,8 @@ async function runTradingCycle(env) {
       //   (이전 cycleStartedAt 기준은 prefetch 18초가 18초 가드를 다 써 평가 0종목 → 거래 마비)
       //   동시에 전체 사이클 상한(hardCap)으로 Cloudflare invocation 초과(마비) 방지.
       const evalStartedAt = Date.now();
-      const evalBudgetMs = (typeof cfg.evalBudgetMs === "number") ? cfg.evalBudgetMs : 18000;
-      const hardCapMs = (typeof cfg.cycleHardCapMs === "number") ? cfg.cycleHardCapMs : 28000;
+      const evalBudgetMs = (typeof cfg.evalBudgetMs === "number") ? cfg.evalBudgetMs : 20000;   // [데이터개선] 18→20s
+      const hardCapMs = (typeof cfg.cycleHardCapMs === "number") ? cfg.cycleHardCapMs : 40000;  // [데이터개선] 28→40s (DBATCH 확대 대응)
       let evalOffset = await getState(DB, "eval_offset:" + market, 0);
       if (!(typeof evalOffset === "number" && evalOffset >= 0 && evalOffset < fetched.length)) evalOffset = 0;
       const orderedEval = evalOffset > 0 ? fetched.slice(evalOffset).concat(fetched.slice(0, evalOffset)) : fetched;
@@ -9747,7 +9746,7 @@ export default {
         //   __fetchBudget는 모듈 전역이라 warm isolate에선 직전 invocation의 거래 사이클이
         //   남긴 used(최대 45)가 그대로 이월돼 collectLLMContext의 budgetedFetch가 굶는다.
         //   여기서 리셋해 컨텍스트 수집·LLM 호출이 예산 경쟁 없이 돈다.
-        try { resetFetchBudget(45); } catch (e0) {}
+        try { resetFetchBudget(300); } catch (e0) {}  // [데이터개선] LLM context 수집용 예산
         const _cfg = migrateCfgToMarkets(Object.assign({}, DEFAULT_CFG, await getState(env.DB, "cfg", {})));
         if (_cfg.llmHybrid && _cfg.llmHybrid.enabled) {
           const cdMin = _cfg.llmHybrid.failCooldownMin || 15;
