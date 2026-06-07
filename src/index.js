@@ -5178,14 +5178,18 @@ function evaluateAllStrategies(price, dayPct, dailyData, cfg, signalStats, regim
   //   ADX<18 횡보 → 축소(휩쏘 회피), ADX≥30 강추세 → 부스트. (추가 fetch 0)
   {
     const adx = getADX(dailyData.highs, dailyData.lows, dailyData.closes, 14);
+    const isLevETF2 = dailyData.symbol && LEVERAGED_ETF.has(dailyData.symbol);
     if (adx != null) {
       let aScale = 1.0;
       if (adx < 18)       aScale = 0.7;   // 횡보 — 추세전략 불리
       else if (adx < 22)  aScale = 0.88;
       else if (adx >= 30) aScale = 1.10;  // 강추세 — 추세전략 유리
+      // [레버리지/인버스 강화] 3배 ETF는 횡보·약추세에서 decay 손실이 치명적 →
+      //   강추세(ADX≥25)가 아니면 추가 억제(×0.65). 강추세에서만 레버리지의 증폭을 활용.
+      if (isLevETF2 && adx < 25) aScale *= 0.65;
       if (aScale !== 1.0) {
         sig.visionBoost = (sig.visionBoost || 1.0) * aScale;
-        sig.adxNote = "ADX " + adx.toFixed(0) + "×" + aScale;
+        sig.adxNote = "ADX " + adx.toFixed(0) + "×" + aScale.toFixed(2) + (isLevETF2 ? " LEV" : "");
       }
     }
   }
@@ -5588,6 +5592,10 @@ function evaluateSell(pos, price, daily, dailyRsi, dailyMa, dailyMaShort, cfg, m
     if (visionHint.pred === "up")        trailScale *= 1.3;
     else if (visionHint.pred === "down") trailScale *= 0.7;
   }
+  // [레버리지/인버스 특화] 3배 ETF는 변동성·decay(시간가치 손실)가 커 빠른 이익 보호가 핵심.
+  //   트레일을 타이트(×0.65)하게 → 큰 변동을 빠르게 확정, 되돌림에 이익 반납 방지.
+  const isLevETF = pos.symbol && LEVERAGED_ETF.has(pos.symbol);
+  if (isLevETF) trailScale *= 0.65;
 
   // 1) 하드 손절 — 진입 시 정한 stopPrice (entry − 2×ATR or −5% 중 타이트, BE락 시 본전)
   const stopPrice = (typeof meta.stopPrice === "number") ? meta.stopPrice : null;
@@ -5605,8 +5613,9 @@ function evaluateSell(pos, price, daily, dailyRsi, dailyMa, dailyMaShort, cfg, m
   if (rPct == null || rPct <= 0) rPct = (r.stopLossPct || cfg.stopLoss || 5);
 
   // 2) 1R 분할익절 — +tp1AtR×R 도달 시 절반 매도 (executeSell이 손절을 본전으로 올림=BE락)
+  //   [레버리지/인버스] 변동성이 커 이익이 빠르게 났다 사라짐 → 더 빠른 R(×0.7)에 절반 확정.
   if (!tp1Done) {
-    const tp1Pct = rPct * (r.tp1AtR || 1.0);
+    const tp1Pct = rPct * (r.tp1AtR || 1.0) * (isLevETF ? 0.7 : 1.0);
     if (pnlRate >= tp1Pct) {
       const half = Math.floor(pos.qty / 2);
       if (half > 0) return { sell: true, sellQty: half, reason: "TP1 +" + pnlRate.toFixed(2) + "% (1R)" };
@@ -5629,10 +5638,12 @@ function evaluateSell(pos, price, daily, dailyRsi, dailyMa, dailyMaShort, cfg, m
   }
 
   // 5) 시간 손절 — N거래일 내 +0.5R 미달이면 청산 (죽은 돈 회수)
-  if (heldDays >= (r.timeStopDays || 10)) {
+  //   [레버리지/인버스] decay(시간가치 손실) 회피 → 보유기간 상한을 절반으로 (장기 보유 금지).
+  const timeStopD = isLevETF ? Math.max(3, Math.ceil((r.timeStopDays || 10) * 0.5)) : (r.timeStopDays || 10);
+  if (heldDays >= timeStopD) {
     const minR = rPct * (r.timeStopMinR != null ? r.timeStopMinR : 0.5);
     if (pnlRate < minR) {
-      return { sell: true, sellQty: pos.qty, reason: "TIME-STOP " + heldDays.toFixed(0) + "d " + pnlRate.toFixed(2) + "%" };
+      return { sell: true, sellQty: pos.qty, reason: "TIME-STOP " + heldDays.toFixed(0) + "d " + pnlRate.toFixed(2) + "%" + (isLevETF ? " (LEV)" : "") };
     }
   }
 
