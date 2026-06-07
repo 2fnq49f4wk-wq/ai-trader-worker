@@ -2413,7 +2413,11 @@ const DEFAULT_CFG = {
     confEnabled: true,
     confStrongPct: 4.0,                     // 추세강도(MA정렬 합산%) ≥ 이면 confidence 1.0(그대로)
     confWeakPct: 1.5,                       // ≤ 이면 confMin까지 축소
-    confMin: 0.5                            // confidence 하한(리스크 축소 최대폭 = 절반)
+    confMin: 0.5,                           // confidence 하한(리스크 축소 최대폭 = 절반)
+    // === 분산 매도 감지 (거래량 급증+하락 → 기관 분산 차단) ===
+    distDetectEnabled: true,
+    distDetectVolMult: 2.5,                 // 20일 평균 대비 거래량 배수 (이 이상 + 하락 → 차단)
+    distDetectMinDrop: 0.5                  // 최소 하락폭 % (노이즈 제거)
   },
   // === [KR 분리] TREND 룰 — KR 시장 전용 오버라이드 ===
   //   여기 정의한 키만 trendRules(US 기본값)를 덮어쓴다. 누락 키는 US값 상속.
@@ -2425,6 +2429,17 @@ const DEFAULT_CFG = {
     maxAtrPct: 5,                           // 6→5 (고변동 종목 회피)
     rsiBreakoutMax: 68,                     // 72→68 (과열 진입 더 차단)
     timeStopDays: 7                         // 10→7 (지연시세, 빨리 정리)
+  },
+  // === 에퀴티 커브 필터 — 시스템 성능 저하 시 사이즈 자동 축소 ===
+  //   최근 N건 청산 PnL 합계가 음수 → crashGate.sizeScale 추가 축소.
+  //   시장 하락(VIX/Breadth)과 독립적인 "시스템 성능 지표" 기반 보호.
+  equityCurveFilter: {
+    enabled: true,
+    lookback: 15,       // 최근 N건 청산 거래
+    threshold1: -5.0,   // PnL 합계 ≤ -5% → scale1 적용 (심각)
+    scale1: 0.65,
+    threshold2: -2.5,   // PnL 합계 ≤ -2.5% → scale2 적용 (경고)
+    scale2: 0.80
   },
   // === [재작성] 고정리스크 사이징 (균형) ===
   trendSizing: {
@@ -5368,6 +5383,22 @@ function evaluateBuyBlocks(price, dayPct, dailyData, cfg, regime, signal, ctx) {
     return "VOLATILITY_SPIKE ATR14=" + atr14.toFixed(2) + " ATR30=" + atr30.toFixed(2);
   }
 
+  // 대량거래+하락 = 기관 분산 매도 신호 — 신규 진입 차단 (ETF·인버스 면제)
+  //   거래량이 20일 평균의 N배 이상이면서 당일 하락이면 기관 출구 가능성 높음.
+  const _tr = cfg.trendRules || {};
+  if (!isInverse && !(ctx && ctx.symbol && ETF_SYMBOLS.has(ctx.symbol)) && _tr.distDetectEnabled !== false) {
+    const vols = dailyData.volumes;
+    if (vols && vols.length >= 21) {
+      const todayVol = vols[vols.length - 1];
+      const avgVol20 = vols.slice(-21, -1).reduce(function(a, b) { return a + b; }, 0) / 20;
+      const dMult = _tr.distDetectVolMult || 2.5;
+      const dDrop = _tr.distDetectMinDrop || 0.5;
+      if (todayVol > 0 && avgVol20 > 0 && todayVol > avgVol20 * dMult && dayPct <= -dDrop) {
+        return "DIST_SELLING vol×" + (todayVol / avgVol20).toFixed(1) + " d" + dayPct.toFixed(1) + "%";
+      }
+    }
+  }
+
   // BEAR_WEAK — 인버스는 면제 (약세장이 호재)
   if (!isInverse && regime.regime === "BEAR" && regime.worstDayPct <= -1.5) {
     return "BEAR_WEAK worst=" + regime.worstDayPct.toFixed(2) + "%";
@@ -5720,6 +5751,12 @@ function evaluateSell(pos, price, daily, dailyRsi, dailyMa, dailyMaShort, cfg, m
     if (visionHint.pred === "up")        trailScale *= 1.3;
     else if (visionHint.pred === "down") trailScale *= 0.7;
   }
+  // [VIX 적응 트레일] 고변동(VIX↑) → 트레일 넓게(노이즈 손절 방지), 저변동(VIX↓) → 좁게(이익 보호)
+  //   VIX 28+ : 시장 불안 → 작은 되돌림에 청산되지 않도록 여유 확대
+  //   VIX 14미만: 안정장 → 트레일 타이트하게 유지해 이익 최대 보존
+  const _vix = deRiskOpts && deRiskOpts.vixValue ? deRiskOpts.vixValue : 0;
+  if (_vix >= 28)              trailScale *= 1.20;
+  else if (_vix > 0 && _vix < 14) trailScale *= 0.85;
   // [레버리지/인버스 특화] 3배 ETF는 변동성·decay(시간가치 손실)가 커 빠른 이익 보호가 핵심.
   //   트레일을 타이트(×0.65)하게 → 큰 변동을 빠르게 확정, 되돌림에 이익 반납 방지.
   const isLevETF = pos.symbol && LEVERAGED_ETF.has(pos.symbol);
@@ -7544,6 +7581,7 @@ async function runTradingCycle(env) {
           else if (vix.value >= 28) { vScale = 0.6; vNote = "HIGH"; }
           else if (vix.value >= 22) { vScale = 0.8; vNote = "ELEVATED"; }
           else if (vix.value < 14)  { vScale = 1.05; vNote = "CALM"; }
+          crashGate.vixValue = vix.value;   // [VIX 트레일] 트레일폭 동적 조정에 사용
           if (vScale !== 1.0) {
             crashGate.sizeScale *= vScale;
             crashGate.reasons.push("VIX" + vix.value.toFixed(1) + "(" + vNote + ")×" + vScale);
@@ -7577,7 +7615,32 @@ async function runTradingCycle(env) {
         }
       }
 
-      const deRiskOpts = { active: crashGate.deRisk };
+      // [에퀴티 커브 필터] 최근 청산거래 PnL 합계가 음수이면 사이즈 추가 축소.
+      //   VIX/Breadth와 독립 — 시장이 아니라 "이 시스템의 최근 성과"로 보호.
+      try {
+        const _ecf = mcfg.equityCurveFilter || DEFAULT_CFG.equityCurveFilter;
+        if (_ecf && _ecf.enabled !== false) {
+          const _lb = _ecf.lookback || 15;
+          const _ecRows = await DB.prepare(
+            "SELECT pnl_pct FROM trades WHERE market = ? AND side = 'SELL' ORDER BY ts DESC LIMIT ?"
+          ).bind(market, _lb).all();
+          const _ecTrades = (_ecRows && _ecRows.results) ? _ecRows.results : [];
+          if (_ecTrades.length >= Math.ceil(_lb / 2)) {   // 최소 절반이상 데이터 있을 때만 적용
+            const _ecSum = _ecTrades.reduce(function(s, t) { return s + (t.pnl_pct || 0); }, 0);
+            if (_ecSum <= (_ecf.threshold1 || -5.0)) {
+              const _s1 = _ecf.scale1 || 0.65;
+              crashGate.sizeScale *= _s1;
+              crashGate.reasons.push("ECF↓↓ sum=" + _ecSum.toFixed(1) + "%×" + _s1);
+            } else if (_ecSum <= (_ecf.threshold2 || -2.5)) {
+              const _s2 = _ecf.scale2 || 0.80;
+              crashGate.sizeScale *= _s2;
+              crashGate.reasons.push("ECF↓ sum=" + _ecSum.toFixed(1) + "%×" + _s2);
+            }
+          }
+        }
+      } catch (e) {}
+
+      const deRiskOpts = { active: crashGate.deRisk, vixValue: crashGate.vixValue || 0 };
 
       // [V10] === PREFETCH 단계 (대규모 종목 — 가격 배치 + 일봉 라운드로빈) ===
       //   종목이 수백 개로 늘어 기존 "전 종목 매분 fetchIntraday" 방식은
