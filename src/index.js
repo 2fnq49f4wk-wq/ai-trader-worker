@@ -316,7 +316,7 @@ const ETF_TYPE = {
   // 해외 국가
   "192090.KS":"country",
   // 기타 한국 ETF
-  "091160.KS":"sector","117460.KS":"sector"
+  "117460.KS":"sector"
 };
 function getEtfType(sym) {
   if (!sym) return null;
