@@ -2215,8 +2215,16 @@ const DEFAULT_CFG = {
   atrPeriod: 14, atrStopMult: 2.0,
   bbStdMult: 2.0,
   volSpikeMult: 1.5,
-  dailyCacheMinutes: 90,   // [데이터개선] 180→90분. 34분 전순환이므로 90분 캐시로 최신성 2배 향상
-  maxDailyRefreshPerCycle: 30, // [데이터개선] 20→30: 순환주기 43분→34분 (무료 50 subreq 내 안전, 정상 사이클 실제 fetch ~10개)
+  dailyCacheMinutes: 90,   // [PAID] 90분 캐시. 60종목/사이클 × 15분 전순환과 균형
+  maxDailyRefreshPerCycle: 60, // [PAID] 사이클당 60종목 → 854종목 전순환 ~15분 (Paid 1000 subreq 내 여유)
+  // [PAID 가드] Workers Paid 한도 초과 과금 방지 — 90% 도달 시 자동 셧다운
+  usageLimits: {
+    enabled: true,
+    monthlyRequests: 10000000,  // Paid 포함량
+    monthlyCpuMs: 30000000,     // Paid 포함량
+    shutdownAt: 0.90,
+    warnAt: 0.70
+  },
   initialCashUS: 100000, initialCashKR: 100000000,
   initialCashCM: 100000,   // [COMMODITY] 원자재 초기 보유 금액 $100,000 (USD)
   enabled: true,
@@ -4282,11 +4290,94 @@ function filterNulls(rawArr) {
 //   → 한 invocation 동안 yahooFetch 호출 수를 카운트하고, 예산을 넘으면 실제 fetch 를
 //     하지 않고 즉시 throw 해서(=조용히 스킵) 한도 폭발을 막는다. 남은 종목은 다음
 //     사이클 라운드로빈으로 처리된다.
-let __fetchBudget = { used: 0, max: 45 };  // 무료 플랜 50 하드캡 — D1/기타용 5 여유
+let __fetchBudget = { used: 0, max: 600 };  // [PAID] Workers Paid 1000 한도의 60%
 function resetFetchBudget(max) {
-  __fetchBudget = { used: 0, max: (typeof max === "number" && max > 0) ? max : 45 };
+  __fetchBudget = { used: 0, max: (typeof max === "number" && max > 0) ? max : 600 };
 }
 function fetchBudgetLeft() { return Math.max(0, __fetchBudget.max - __fetchBudget.used); }
+
+// ═══════════════════════════════════════════════════════════════════════
+// [PAID 가드] Workers Paid 한도 자동 셧다운 — 초과 과금 방지
+// ───────────────────────────────────────────────────────────────────────
+// Workers Paid ($5/월) 포함량:
+//   • Requests: 10,000,000 / month  (초과 시 $0.30/M)
+//   • CPU time: 30,000,000 ms / month  (초과 시 $0.02/M)
+// 둘 중 하나가 USAGE_LIMITS.shutdownAt(기본 90%) 이상이면 enabled=false 자동 차단.
+// 매월 1일 자동 리셋(yyyymm 키). cfg.usageLimits 로 사용자가 임계값 조정 가능.
+const USAGE_LIMITS_DEFAULT = {
+  enabled: true,            // 사용량 셧다운 활성 (false면 무제한)
+  monthlyRequests: 10000000,  // Paid 포함 요청 수
+  monthlyCpuMs: 30000000,     // Paid 포함 CPU ms
+  shutdownAt: 0.90,         // 90% 도달 시 자동 셧다운 (예: 9.0M 요청)
+  warnAt: 0.70              // 70% 도달 시 WARN 로그
+};
+function _usageMonthKey(d) {
+  const dt = d || new Date();
+  return dt.getUTCFullYear() * 100 + (dt.getUTCMonth() + 1);
+}
+async function getUsageState(DB) {
+  // state 키: usage:yyyymm = { requests, cpuMs, subreqs, lastShutdown, lastWarn }
+  const mk = _usageMonthKey();
+  try {
+    const v = await getState(DB, "usage:" + mk, null);
+    if (v && typeof v === "object") return { mk: mk, data: v };
+  } catch (e) {}
+  return { mk: mk, data: { requests: 0, cpuMs: 0, subreqs: 0, lastShutdown: 0, lastWarn: 0 } };
+}
+async function recordUsage(DB, deltaReq, deltaCpuMs, deltaSubreqs) {
+  try {
+    const u = await getUsageState(DB);
+    u.data.requests = (u.data.requests || 0) + (deltaReq || 0);
+    u.data.cpuMs = (u.data.cpuMs || 0) + (deltaCpuMs || 0);
+    u.data.subreqs = (u.data.subreqs || 0) + (deltaSubreqs || 0);
+    await setState(DB, "usage:" + u.mk, u.data);
+    return u.data;
+  } catch (e) { return null; }
+}
+// 사이클 진입 전 호출: true 반환 시 즉시 스킵해야 함(셧다운 상태).
+async function isUsageShutdown(DB, cfg) {
+  try {
+    const lim = Object.assign({}, USAGE_LIMITS_DEFAULT, (cfg && cfg.usageLimits) || {});
+    if (lim.enabled === false) return false;
+    const u = await getUsageState(DB);
+    const reqRatio = (u.data.requests || 0) / Math.max(1, lim.monthlyRequests);
+    const cpuRatio = (u.data.cpuMs || 0) / Math.max(1, lim.monthlyCpuMs);
+    const worst = Math.max(reqRatio, cpuRatio);
+    if (worst >= lim.shutdownAt) {
+      // 셧다운 로그는 한 시간에 한 번만 (DB 부담 방지)
+      const now = Date.now();
+      if (!u.data.lastShutdown || (now - u.data.lastShutdown) > 3600000) {
+        u.data.lastShutdown = now;
+        try { await setState(DB, "usage:" + u.mk, u.data); } catch (e) {}
+        try {
+          await log(DB, "ERROR", null,
+            "[USAGE SHUTDOWN] " + (worst * 100).toFixed(1) + "% 도달 (req=" +
+            (reqRatio * 100).toFixed(1) + "%, cpu=" + (cpuRatio * 100).toFixed(1) +
+            "%) — 다음달 1일까지 모든 사이클 차단. 임계값은 cfg.usageLimits로 조정.");
+        } catch (e) {}
+      }
+      return true;
+    }
+    if (worst >= lim.warnAt) {
+      const now = Date.now();
+      if (!u.data.lastWarn || (now - u.data.lastWarn) > 6 * 3600000) {
+        u.data.lastWarn = now;
+        try { await setState(DB, "usage:" + u.mk, u.data); } catch (e) {}
+        try {
+          await log(DB, "WARN", null,
+            "[USAGE WARN] " + (worst * 100).toFixed(1) + "% 도달 — 셧다운 임계 " +
+            (lim.shutdownAt * 100).toFixed(0) + "% 근접");
+        } catch (e) {}
+      }
+    }
+    return false;
+  } catch (e) { return false; }
+}
+// 매 invocation 끝(또는 끝부분)에서 호출 — 누적 추적.
+async function tickUsage(DB, startedAt, extraSubreqs) {
+  const elapsed = Math.max(1, Date.now() - (startedAt || Date.now()));
+  return recordUsage(DB, 1, elapsed, extraSubreqs || 0);
+}
 
 let __yahooHostFlip = 0;
 // === [V15] Yahoo crumb/cookie 캐시 — v7 batch quote 인증용 ===
@@ -6080,7 +6171,7 @@ async function runBacktest(env, opts) {
 
 async function refreshQuotesOnly(env, market) {
   const DB = env.DB;
-  resetFetchBudget(45);  // 무료 플랜 50 하드캡
+  resetFetchBudget(200);  // [PAID] 가격 batch 18콜 + 여유
   await ensureSchema(DB);
   const cfg = migrateCfgToMarkets(Object.assign({}, DEFAULT_CFG, await getState(DB, "cfg", {})));
   await log(DB, "INFO", null, "=== Manual quote refresh: " + market.toUpperCase() + " ===");
@@ -6194,7 +6285,7 @@ async function runPool(items, limit, worker) {
 async function refreshPriceShard(env, market, shard) {
   const DB = env.DB;
   const t0 = Date.now();
-  resetFetchBudget(45);  // 무료 플랜 50 하드캡
+  resetFetchBudget(200);  // [PAID] 가격 shard 여유
   await ensureSchema(DB);
   const cfg = migrateCfgToMarkets(Object.assign({}, DEFAULT_CFG, await getState(DB, "cfg", {})));
   const tickers = market === "us" ? cfg.usTickers : cfg.krTickers;
@@ -6254,7 +6345,7 @@ async function refreshPriceShard(env, market, shard) {
 // --- 일봉+지표 샤드: 일봉 fetch(캐시 만료 시) + 지표 계산 후 quote에 병합 ---
 async function refreshDailyShard(env, market, shard) {
   const DB = env.DB;
-  resetFetchBudget(45);  // 무료 플랜 50 하드캡
+  resetFetchBudget(300);  // [PAID] 일봉 shard 최대 60 fetch × 여유
   await ensureSchema(DB);
   const cfg = migrateCfgToMarkets(Object.assign({}, DEFAULT_CFG, await getState(DB, "cfg", {})));
   const mcfg = getMarketCfg(cfg, market);
@@ -6875,7 +6966,7 @@ async function refreshCycleLock(DB, ttl, myPid) {
 // ============================================================
 async function runFxUpdate(env) {
   const DB = env.DB;
-  resetFetchBudget(45);  // 무료 플랜 50 하드캡 (FX ~10쌍)
+  resetFetchBudget(100);  // [PAID] FX ~10쌍 + 여유
   await log(DB, "INFO", null, "[FX] === 환율 갱신 시작 ===");
   const out = {};
   let ok = 0, fail = 0;
@@ -7112,7 +7203,7 @@ async function saveQuoteCM(DB, symbol, q, partial) {
 //   v7 batch는 보조로만 쓴다. 일봉 지표는 partial=true로 보존.
 async function refreshCommodityQuotes(env) {
   const DB = env.DB;
-  resetFetchBudget(40);  // 무료 플랜 50 하드캡 (원자재 ~12종)
+  resetFetchBudget(100);  // [PAID] 원자재 ~12종 + 여유
   const syms = COMMODITY_SYMBOLS;
   let okCount = 0, failCount = 0;
 
@@ -7150,7 +7241,7 @@ async function refreshCommodityQuotes(env) {
 
 async function runCommodityCycle(env, forceTrade) {
   const DB = env.DB;
-  resetFetchBudget(45);  // 무료 플랜 50 하드캡
+  resetFetchBudget(100);  // [PAID] 원자재 cycle 여유
   const cfg = migrateCfgToMarkets(Object.assign({}, DEFAULT_CFG, await getState(DB, "cfg", {})));
   // [V8.9] 거래 시각 판정 — 윈도우(16:00~17:00) 내이면서 forceTrade거나 오늘 미거래일 때만 매매.
   let isTradeTime = false;
@@ -7326,7 +7417,7 @@ async function runCommodityCycle(env, forceTrade) {
 
 async function runTradingCycle(env) {
   const DB = env.DB;
-  resetFetchBudget(45);  // 무료 플랜 50 하드캡 — 가격18+인덱스8+일봉~10+여유 5
+  resetFetchBudget(600);  // [PAID] 가격18+인덱스8+일봉60+vision/sec/매크로+여유
   await ensureSchema(DB);
   let cfg = migrateCfgToMarkets(Object.assign({}, DEFAULT_CFG, await getState(DB, "cfg", {})));
 
@@ -7905,8 +7996,8 @@ async function runTradingCycle(env) {
       //   (이전 cycleStartedAt 기준은 prefetch 18초가 18초 가드를 다 써 평가 0종목 → 거래 마비)
       //   동시에 전체 사이클 상한(hardCap)으로 Cloudflare invocation 초과(마비) 방지.
       const evalStartedAt = Date.now();
-      const evalBudgetMs = (typeof cfg.evalBudgetMs === "number") ? cfg.evalBudgetMs : 20000;   // [데이터개선] 18→20s
-      const hardCapMs = (typeof cfg.cycleHardCapMs === "number") ? cfg.cycleHardCapMs : 40000;  // [데이터개선] 28→40s (DBATCH 확대 대응)
+      const evalBudgetMs = (typeof cfg.evalBudgetMs === "number") ? cfg.evalBudgetMs : 22000;   // [PAID] 평가 시간 여유
+      const hardCapMs = (typeof cfg.cycleHardCapMs === "number") ? cfg.cycleHardCapMs : 45000;  // [PAID] 사이클 상한 (Paid CPU 한도 내)
       let evalOffset = await getState(DB, "eval_offset:" + market, 0);
       if (!(typeof evalOffset === "number" && evalOffset >= 0 && evalOffset < fetched.length)) evalOffset = 0;
       const orderedEval = evalOffset > 0 ? fetched.slice(evalOffset).concat(fetched.slice(0, evalOffset)) : fetched;
@@ -9181,6 +9272,38 @@ async function handleRequest(request, env) {
       return Response.json(result, { headers: cors });
     }
 
+    if (path === "/api/usage") {
+      // [PAID 가드] 월 사용량 현황 — Workers Paid 한도 대비 비율
+      const cfg = migrateCfgToMarkets(Object.assign({}, DEFAULT_CFG, await getState(env.DB, "cfg", {})));
+      const lim = Object.assign({}, USAGE_LIMITS_DEFAULT, cfg.usageLimits || {});
+      const u = await getUsageState(env.DB);
+      const reqRatio = (u.data.requests || 0) / Math.max(1, lim.monthlyRequests);
+      const cpuRatio = (u.data.cpuMs || 0) / Math.max(1, lim.monthlyCpuMs);
+      const worst = Math.max(reqRatio, cpuRatio);
+      return Response.json({
+        monthKey: u.mk,
+        usage: u.data,
+        limits: lim,
+        ratios: {
+          requests: +(reqRatio * 100).toFixed(2),
+          cpuMs: +(cpuRatio * 100).toFixed(2),
+          worst: +(worst * 100).toFixed(2)
+        },
+        shutdown: worst >= lim.shutdownAt,
+        warn: worst >= lim.warnAt && worst < lim.shutdownAt,
+        note: "셧다운 임계 " + (lim.shutdownAt * 100).toFixed(0) + "% / 경고 " +
+              (lim.warnAt * 100).toFixed(0) + "%. cfg.usageLimits로 조정 가능."
+      }, { headers: cors });
+    }
+
+    if (path === "/api/usage/reset") {
+      // [관리] 월 사용량 강제 리셋 (테스트/오작동 복구용) — POST 권장이지만 GET 허용
+      const u = await getUsageState(env.DB);
+      const cleared = { requests: 0, cpuMs: 0, subreqs: 0, lastShutdown: 0, lastWarn: 0 };
+      await setState(env.DB, "usage:" + u.mk, cleared);
+      return Response.json({ ok: true, monthKey: u.mk, cleared: cleared }, { headers: cors });
+    }
+
     if (path === "/api/diag") {
       const lock = await getState(env.DB, "lock:cycle", null);
       const lastTick = await getState(env.DB, "last_tick", null);
@@ -9736,7 +9859,18 @@ export default {
     //   예산)을 공유하면서 서로 resetFetchBudget()로 카운터를 덮어쓰고 소진시켜
     //   가격/원자재 갱신이 산발적으로 실패했음(특히 정규장 1분 갱신).
     //   → 단일 promise 안에서 "순차" 실행해 각 사이클이 자기 예산을 온전히 쓰게 한다.
+    const __cronStart = Date.now();
     ctx.waitUntil((async () => {
+      // [PAID 가드] Workers Paid 한도 90% 도달 시 모든 작업 차단 (초과 과금 방지)
+      try {
+        const _gcfg = migrateCfgToMarkets(Object.assign({}, DEFAULT_CFG, await getState(env.DB, "cfg", {})));
+        if (await isUsageShutdown(env.DB, _gcfg)) {
+          // 사용량 누적은 계속 — 셧다운 상태에도 cron 자체는 카운트
+          try { await tickUsage(env.DB, __cronStart, 0); } catch (e) {}
+          return;
+        }
+      } catch (e) {}
+
       // [V19] 0) LLM 일일 분석 — 거래 사이클보다 "먼저, 단독" 실행.
       //   293종목 거래 사이클(115s)과 같은 invocation에서 돌리면 LLM 외부 API fetch가
       //   시간/subrequest 예산 경쟁에 밀려 타임아웃났다(회귀 반복). 여기서 깨끗한 예산으로
@@ -9746,7 +9880,7 @@ export default {
         //   __fetchBudget는 모듈 전역이라 warm isolate에선 직전 invocation의 거래 사이클이
         //   남긴 used(최대 45)가 그대로 이월돼 collectLLMContext의 budgetedFetch가 굶는다.
         //   여기서 리셋해 컨텍스트 수집·LLM 호출이 예산 경쟁 없이 돈다.
-        try { resetFetchBudget(45); } catch (e0) {}  // 무료 플랜 50 하드캡 — LLM context 수집용
+        try { resetFetchBudget(300); } catch (e0) {}  // [PAID] LLM context 수집용
         const _cfg = migrateCfgToMarkets(Object.assign({}, DEFAULT_CFG, await getState(env.DB, "cfg", {})));
         if (_cfg.llmHybrid && _cfg.llmHybrid.enabled) {
           const cdMin = _cfg.llmHybrid.failCooldownMin || 15;
@@ -9803,6 +9937,9 @@ export default {
       //    최근 8-K/어닝 직후 미국 종목의 신규 진입을 보수화 (변동성 회피)
       try { await fetchSecFilings(env); }
       catch (e) { try { await log(env.DB, "ERROR", null, "[SCHED] sec fetch fail: " + e.message); } catch (e2) {} }
+
+      // [PAID 가드] 이번 invocation 사용량 누적 — request 1건 + 소요 ms 누적
+      try { await tickUsage(env.DB, __cronStart, __fetchBudget.used || 0); } catch (e) {}
     })());
   }
 };
