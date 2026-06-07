@@ -2329,6 +2329,9 @@ const DEFAULT_CFG = {
     maxPositionPct: 15,    // 한 종목 비중 상한 = 자산의 15%
     maxConcurrent: 12      // [확대] 8→12 동시 보유 종목 상한 (거래·데이터 축적↑, 분산도 개선)
   },
+  // [포트폴리오 히트] 보유 포지션 총 미실현 리스크 한도(%) — 계좌 전체 리스크 상한.
+  //   초과 시 신규 진입 차단, 80% 근접 시 사이즈 축소. (개별 0.75% × 12종목 = 9% 노출 통제)
+  maxPortfolioHeat: 8.0,
   // === [KR 분리] 고정리스크 사이징 — KR 전용 오버라이드 ===
   trendSizingKR: {
     riskPerTrade: 0.6,     // 0.75→0.6 (KR 리스크 축소)
@@ -7296,12 +7299,17 @@ async function runTradingCycle(env) {
       // [V8.1.6] 총자산 = 현금 + 보유 포지션 평가액 (최근 quote 기준)
       // 이전엔 cash[market]만 사용해서 매수할수록 사이즈 작아짐
       let portfolioValue = cash[market];
+      let portfolioRiskDollar = 0;  // [포트폴리오 히트] 보유 포지션들의 총 미실현 리스크(현재가-손절가)
       for (const key in positions) {
         const p = positions[key];
         const lastQuote = await getState(DB, "quote:" + p.symbol, null);
         const lastPrice = (lastQuote && lastQuote.price) ? lastQuote.price : p.avg;
         portfolioValue += p.qty * lastPrice;
+        // 손절가 위면 (현재가-손절가)×수량 = 손절까지의 리스크. break-even 락이면 0(이익 확정).
+        const stop = (p.meta && typeof p.meta.stopPrice === "number") ? p.meta.stopPrice : null;
+        if (stop != null && lastPrice > stop) portfolioRiskDollar += (lastPrice - stop) * p.qty;
       }
+      const portfolioHeatPct = portfolioValue > 0 ? (portfolioRiskDollar / portfolioValue) * 100 : 0;
 
       // [V12] === 폭락장 생존 게이트 (시장별 1회 계산) ===
       //   portfolioValue(=equity)로 고점 추적 → 드로다운/연속손실/패닉을 종합.
@@ -7379,6 +7387,20 @@ async function runTradingCycle(env) {
           else if (br.upRatio < 0.40) { crashGate.sizeScale *= 0.85; crashGate.reasons.push("BREADTH_SOFT " + Math.round(br.upRatio * 100) + "%"); }
         }
       } catch (e) {}
+
+      // [포트폴리오 히트] 보유 포지션들의 총 미실현 리스크(%) 한도 — 계좌 전체 리스크 통제.
+      //   개별 종목 리스크(0.75%)는 작아도 12종목이면 합산 9%+ → 시장 급락 시 동시 손실.
+      //   총 히트가 한도 초과면 신규 진입 차단, 근접하면 사이즈 축소(분산 강제).
+      {
+        const maxHeat = (typeof mcfg.maxPortfolioHeat === "number") ? mcfg.maxPortfolioHeat : 8.0;
+        if (portfolioHeatPct >= maxHeat) {
+          crashGate.blockNew = true;
+          crashGate.reasons.push("HEAT_MAX " + portfolioHeatPct.toFixed(1) + "%≥" + maxHeat + "%");
+        } else if (portfolioHeatPct >= maxHeat * 0.8) {
+          crashGate.sizeScale *= 0.6;
+          crashGate.reasons.push("HEAT_HIGH " + portfolioHeatPct.toFixed(1) + "%");
+        }
+      }
 
       const deRiskOpts = { active: crashGate.deRisk };
 
