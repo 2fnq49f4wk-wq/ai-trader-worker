@@ -2215,8 +2215,8 @@ const DEFAULT_CFG = {
   atrPeriod: 14, atrStopMult: 2.0,
   bbStdMult: 2.0,
   volSpikeMult: 1.5,
-  dailyCacheMinutes: 90,   // [데이터개선] 180→90분. maxDailyRefreshPerCycle=60으로 15분 전순환 → 캐시 90분이면 사이클 6회 커버
-  maxDailyRefreshPerCycle: 60, // [데이터개선] 20→60: 순환주기 43분→15분 (fetch budget 600으로 여유)
+  dailyCacheMinutes: 90,   // [데이터개선] 180→90분. 34분 전순환이므로 90분 캐시로 최신성 2배 향상
+  maxDailyRefreshPerCycle: 30, // [데이터개선] 20→30: 순환주기 43분→34분 (무료 50 subreq 내 안전, 정상 사이클 실제 fetch ~10개)
   initialCashUS: 100000, initialCashKR: 100000000,
   initialCashCM: 100000,   // [COMMODITY] 원자재 초기 보유 금액 $100,000 (USD)
   enabled: true,
@@ -4282,9 +4282,9 @@ function filterNulls(rawArr) {
 //   → 한 invocation 동안 yahooFetch 호출 수를 카운트하고, 예산을 넘으면 실제 fetch 를
 //     하지 않고 즉시 throw 해서(=조용히 스킵) 한도 폭발을 막는다. 남은 종목은 다음
 //     사이클 라운드로빈으로 처리된다.
-let __fetchBudget = { used: 0, max: 600 };  // Workers Paid 1000 한도; 함수별로 resetFetchBudget으로 재설정
+let __fetchBudget = { used: 0, max: 45 };  // 무료 플랜 50 하드캡 — D1/기타용 5 여유
 function resetFetchBudget(max) {
-  __fetchBudget = { used: 0, max: (typeof max === "number" && max > 0) ? max : 600 };
+  __fetchBudget = { used: 0, max: (typeof max === "number" && max > 0) ? max : 45 };
 }
 function fetchBudgetLeft() { return Math.max(0, __fetchBudget.max - __fetchBudget.used); }
 
@@ -6080,7 +6080,7 @@ async function runBacktest(env, opts) {
 
 async function refreshQuotesOnly(env, market) {
   const DB = env.DB;
-  resetFetchBudget(200);  // [데이터개선] 가격 batch ~18콜 + 지표계산 여유
+  resetFetchBudget(45);  // 무료 플랜 50 하드캡
   await ensureSchema(DB);
   const cfg = migrateCfgToMarkets(Object.assign({}, DEFAULT_CFG, await getState(DB, "cfg", {})));
   await log(DB, "INFO", null, "=== Manual quote refresh: " + market.toUpperCase() + " ===");
@@ -6194,7 +6194,7 @@ async function runPool(items, limit, worker) {
 async function refreshPriceShard(env, market, shard) {
   const DB = env.DB;
   const t0 = Date.now();
-  resetFetchBudget(200);  // [데이터개선] 가격 shard 별 충분한 예산
+  resetFetchBudget(45);  // 무료 플랜 50 하드캡
   await ensureSchema(DB);
   const cfg = migrateCfgToMarkets(Object.assign({}, DEFAULT_CFG, await getState(DB, "cfg", {})));
   const tickers = market === "us" ? cfg.usTickers : cfg.krTickers;
@@ -6254,7 +6254,7 @@ async function refreshPriceShard(env, market, shard) {
 // --- 일봉+지표 샤드: 일봉 fetch(캐시 만료 시) + 지표 계산 후 quote에 병합 ---
 async function refreshDailyShard(env, market, shard) {
   const DB = env.DB;
-  resetFetchBudget(300);  // [데이터개선] 일봉 shard 당 최대 60 fetch × 여유
+  resetFetchBudget(45);  // 무료 플랜 50 하드캡
   await ensureSchema(DB);
   const cfg = migrateCfgToMarkets(Object.assign({}, DEFAULT_CFG, await getState(DB, "cfg", {})));
   const mcfg = getMarketCfg(cfg, market);
@@ -6875,7 +6875,7 @@ async function refreshCycleLock(DB, ttl, myPid) {
 // ============================================================
 async function runFxUpdate(env) {
   const DB = env.DB;
-  resetFetchBudget(100);  // [데이터개선] FX ~10쌍 + 여유
+  resetFetchBudget(45);  // 무료 플랜 50 하드캡 (FX ~10쌍)
   await log(DB, "INFO", null, "[FX] === 환율 갱신 시작 ===");
   const out = {};
   let ok = 0, fail = 0;
@@ -7112,7 +7112,7 @@ async function saveQuoteCM(DB, symbol, q, partial) {
 //   v7 batch는 보조로만 쓴다. 일봉 지표는 partial=true로 보존.
 async function refreshCommodityQuotes(env) {
   const DB = env.DB;
-  resetFetchBudget(100);  // [데이터개선] 원자재 ~12종 + 여유
+  resetFetchBudget(40);  // 무료 플랜 50 하드캡 (원자재 ~12종)
   const syms = COMMODITY_SYMBOLS;
   let okCount = 0, failCount = 0;
 
@@ -7150,7 +7150,7 @@ async function refreshCommodityQuotes(env) {
 
 async function runCommodityCycle(env, forceTrade) {
   const DB = env.DB;
-  resetFetchBudget(100);  // [데이터개선] 원자재 cycle 여유
+  resetFetchBudget(45);  // 무료 플랜 50 하드캡
   const cfg = migrateCfgToMarkets(Object.assign({}, DEFAULT_CFG, await getState(DB, "cfg", {})));
   // [V8.9] 거래 시각 판정 — 윈도우(16:00~17:00) 내이면서 forceTrade거나 오늘 미거래일 때만 매매.
   let isTradeTime = false;
@@ -7326,7 +7326,7 @@ async function runCommodityCycle(env, forceTrade) {
 
 async function runTradingCycle(env) {
   const DB = env.DB;
-  resetFetchBudget(600);  // [데이터개선] Workers Paid 1000 한도의 60% — 가격18+일봉60+기타 후 여유 충분
+  resetFetchBudget(45);  // 무료 플랜 50 하드캡 — 가격18+인덱스8+일봉~10+여유 5
   await ensureSchema(DB);
   let cfg = migrateCfgToMarkets(Object.assign({}, DEFAULT_CFG, await getState(DB, "cfg", {})));
 
@@ -9746,7 +9746,7 @@ export default {
         //   __fetchBudget는 모듈 전역이라 warm isolate에선 직전 invocation의 거래 사이클이
         //   남긴 used(최대 45)가 그대로 이월돼 collectLLMContext의 budgetedFetch가 굶는다.
         //   여기서 리셋해 컨텍스트 수집·LLM 호출이 예산 경쟁 없이 돈다.
-        try { resetFetchBudget(300); } catch (e0) {}  // [데이터개선] LLM context 수집용 예산
+        try { resetFetchBudget(45); } catch (e0) {}  // 무료 플랜 50 하드캡 — LLM context 수집용
         const _cfg = migrateCfgToMarkets(Object.assign({}, DEFAULT_CFG, await getState(env.DB, "cfg", {})));
         if (_cfg.llmHybrid && _cfg.llmHybrid.enabled) {
           const cdMin = _cfg.llmHybrid.failCooldownMin || 15;
