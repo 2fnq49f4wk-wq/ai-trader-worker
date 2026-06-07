@@ -2225,6 +2225,15 @@ const DEFAULT_CFG = {
     shutdownAt: 0.90,
     warnAt: 0.70
   },
+  // [분봉] 진입 직전 장중 타이밍 확인 — 후보 종목에만 분봉 1회 조회(전 종목 X)
+  //   장중 급락 칼날잡기·VWAP 추격매수를 차단해 진입 품질 향상. fetch는 maxPerCycle로 통제.
+  intradayConfirm: {
+    enabled: true,
+    interval: "5m",        // 5분봉 (1m은 노이즈↑)
+    momMin: -1.5,          // 최근 3봉(15분) 수익률 ≤ -1.5%면 진입 차단
+    vwapMaxPct: 3.5,       // 가격이 VWAP보다 +3.5% 초과면 추격으로 보고 차단
+    maxPerCycle: 40        // invocation당 분봉 조회 상한 (subrequest 통제)
+  },
   initialCashUS: 100000, initialCashKR: 100000000,
   initialCashCM: 100000,   // [COMMODITY] 원자재 초기 보유 금액 $100,000 (USD)
   enabled: true,
@@ -4627,6 +4636,79 @@ async function fetchIntraday(symbol) {
   const price = (typeof meta.regularMarketPrice === "number" && meta.regularMarketPrice > 0) ? meta.regularMarketPrice : (closes.length ? closes[closes.length - 1] : null);
   const prevClose = (typeof meta.chartPreviousClose === "number" && meta.chartPreviousClose > 0) ? meta.chartPreviousClose : (meta.previousClose || (closes.length ? closes[0] : price));
   return { symbol: symbol, price: price, prevClose: prevClose, closes: closes };
+}
+
+// ═══════════════════════════════════════════════════════════════════════
+// [분봉] 진입 타이밍 확인용 분봉(intraday minute candle) 조회
+// ───────────────────────────────────────────────────────────────────────
+// 전 종목이 아니라 "진입 후보 종목"에만 선택적으로 호출(호출 1회/종목)한다.
+// 5분봉이 기본 — 1분봉은 노이즈가 크고, 5분봉이 장중 추세/되돌림 판단에 적합.
+// 반환: VWAP, 최근 모멘텀(마지막 N봉 수익률), 당일 고/저, OHLCV 배열.
+async function fetchMinuteBars(symbol, opts) {
+  const interval = (opts && opts.interval) || "5m";
+  const range = (opts && opts.range) || "1d";
+  const j = await yahooFetch("https://query1.finance.yahoo.com/v8/finance/chart/" +
+    encodeURIComponent(symbol) + "?interval=" + interval + "&range=" + range);
+  const result = j && j.chart && j.chart.result && j.chart.result[0];
+  if (!result) throw new Error("no minute data");
+  const meta = result.meta || {};
+  const q = (result.indicators && result.indicators.quote && result.indicators.quote[0]) || {};
+  const tarr = result.timestamp || [];
+  const rc = q.close || [], rh = q.high || [], rl = q.low || [], rv = q.volume || [];
+  const closes = [], highs = [], lows = [], volumes = [], times = [];
+  for (let i = 0; i < rc.length; i++) {
+    const c = rc[i];
+    if (typeof c !== "number" || isNaN(c) || c <= 0) continue;
+    closes.push(c);
+    highs.push((typeof rh[i] === "number" && rh[i] > 0) ? rh[i] : c);
+    lows.push((typeof rl[i] === "number" && rl[i] > 0) ? rl[i] : c);
+    volumes.push((typeof rv[i] === "number" && rv[i] > 0) ? rv[i] : 0);
+    times.push(tarr[i] || 0);
+  }
+  if (closes.length === 0) throw new Error("no minute close");
+  const price = (typeof meta.regularMarketPrice === "number" && meta.regularMarketPrice > 0)
+    ? meta.regularMarketPrice : closes[closes.length - 1];
+  // VWAP — 일반적가격(H+L+C)/3 × 거래량 누적
+  let pv = 0, vv = 0;
+  for (let i = 0; i < closes.length; i++) {
+    const tp = (highs[i] + lows[i] + closes[i]) / 3;
+    pv += tp * volumes[i]; vv += volumes[i];
+  }
+  const vwap = vv > 0 ? pv / vv : null;
+  // 최근 모멘텀 — 마지막 N봉(기본 3봉=15분) 수익률
+  const n = Math.min(3, closes.length - 1);
+  const recentMom = n > 0
+    ? ((closes[closes.length - 1] - closes[closes.length - 1 - n]) / closes[closes.length - 1 - n]) * 100
+    : 0;
+  const dayHigh = Math.max.apply(null, highs);
+  const dayLow = Math.min.apply(null, lows);
+  return {
+    symbol: symbol, interval: interval, price: price, vwap: vwap,
+    recentMom: recentMom, dayHigh: dayHigh, dayLow: dayLow,
+    closes: closes, highs: highs, lows: lows, volumes: volumes, times: times
+  };
+}
+
+// [분봉] 진입 직전 장중 타이밍 확인 — 분봉 데이터로 추격/급락 진입을 차단.
+//   mb 없으면(조회 실패/예산초과) 통과(기존 동작 보존, 분봉은 보조 게이트일 뿐).
+//   반환: { ok:true } 또는 { ok:false, reason }
+function confirmIntradayEntry(mb, price, rules) {
+  if (!mb) return { ok: true };
+  const r = rules || {};
+  // 1) 장중 급락 진입 금지 — 최근 분봉 모멘텀이 임계 이하면 칼날잡기로 보고 차단
+  const momMin = (r.momMin != null) ? r.momMin : -1.5;
+  if (typeof mb.recentMom === "number" && mb.recentMom <= momMin) {
+    return { ok: false, reason: "INTRADAY_DUMP " + mb.recentMom.toFixed(2) + "%" };
+  }
+  // 2) VWAP 과열 — 가격이 당일 VWAP보다 과도하게 높으면 추격매수로 보고 차단
+  const vwapMaxPct = (r.vwapMaxPct != null) ? r.vwapMaxPct : 3.5;
+  if (mb.vwap && mb.vwap > 0 && price > 0) {
+    const aboveVwap = ((price - mb.vwap) / mb.vwap) * 100;
+    if (aboveVwap > vwapMaxPct) {
+      return { ok: false, reason: "VWAP_CHASE +" + aboveVwap.toFixed(2) + "%" };
+    }
+  }
+  return { ok: true };
 }
 
 async function fetchDailyFull(symbol) {
@@ -7558,6 +7640,7 @@ async function runTradingCycle(env) {
 
     let tried = 0, bought = 0, sold = 0, skipped = 0, fetchFail = 0;
     let signalCount = 0;   // [통계] 이번 사이클 발생 매수신호 수
+    let minuteFetchUsed = 0;  // [분봉] 이번 invocation 분봉 조회 횟수 (subrequest 캡 통제)
 
     // [V8.1.1] 장 열린 시장만 처리 — 마감된 시장은 시세도 fetch 안 함
     // [V23] 가격 갱신 대상 = 정규장 시간 시장 / 거래 대상 = 거래가능(윈도우+휴장통과) 시장
@@ -8340,6 +8423,22 @@ async function runTradingCycle(env) {
               await log(DB, "ERROR", symbol, "[CRITICAL] 사이클예산초과 차단: 누적지출=" + Math.round(wouldSpend) + " 한도=" + Math.round(cycleBudget[market]) + " (" + strategy + ")");
               incNobuy("cycle_budget[" + strategy + "]");
             } else if (qty > 0 && totalCost <= cash[market] + epsilon) {
+              // [분봉] 진입 직전 장중 타이밍 확인 — 확정 후보에만 분봉 1회 조회.
+              //   장중 급락(칼날)·VWAP 추격 진입을 차단. 조회 실패/예산초과 시 통과(기존 동작 보존).
+              //   maxPerCycle 캡으로 subrequest 통제, 장중·정규장에서만 의미있어 canTrade일 때만.
+              const _ic = mcfg.intradayConfirm || DEFAULT_CFG.intradayConfirm;
+              if (_ic && _ic.enabled !== false && minuteFetchUsed < (_ic.maxPerCycle || 40) && fetchBudgetLeft() > 5) {
+                try {
+                  minuteFetchUsed++;
+                  const _mb = await fetchMinuteBars(symbol, { interval: _ic.interval || "5m" });
+                  const _conf = confirmIntradayEntry(_mb, price, _ic);
+                  if (!_conf.ok) {
+                    incBlock(_conf.reason.split(" ")[0] + "[" + strategy + "]");
+                    await log(DB, "INFO", symbol, "INTRADAY BLOCK [" + strategy + "] " + _conf.reason);
+                    break;  // 장중 타이밍 불리 → 이 종목은 이번 사이클 진입 보류(다른 신호도 스킵)
+                  }
+                } catch (e) { /* 분봉 조회 실패는 무시 — 일봉 신호로 진입 진행 */ }
+              }
               // [V8.6 Hybrid] LLM stop_loss_adjustment 적용 (지시 있으면)
               const buyOpts = (llmInstr && llmInstr.stop_loss_adjustment && typeof llmInstr.stop_loss_adjustment.new_pct === "number")
                 ? { stopPctOverride: llmInstr.stop_loss_adjustment.new_pct } : null;
@@ -8411,7 +8510,7 @@ async function runTradingCycle(env) {
       await auditAccounting(DB, mkt, cash);
     }
     const cycleMs = Date.now() - cycleStartedAt;
-    await log(DB, "INFO", null, "Done: tried=" + tried + " skip=" + skipped + " buy=" + bought + " sell=" + sold + " fetchFail=" + fetchFail + " cycleMs=" + cycleMs);
+    await log(DB, "INFO", null, "Done: tried=" + tried + " skip=" + skipped + " buy=" + bought + " sell=" + sold + " fetchFail=" + fetchFail + " minBars=" + minuteFetchUsed + " cycleMs=" + cycleMs);
     try { await DB.prepare("DELETE FROM logs WHERE id NOT IN (SELECT id FROM logs ORDER BY id DESC LIMIT 500)").run(); } catch (e) {}
     // [통계] 일별 엔진 통계 누적 (KST 05:00 리셋). 신호=signalCount, 거래=buy+sell, 에러=직전 집계 이후 누적분.
     try {
@@ -9949,5 +10048,6 @@ export default {
 export {
   DEFAULT_CFG, migrateCfgToMarkets, evaluateAllStrategies, evaluateTrendEntry,
   evaluateSell, backtestSymbol, backtestStats, backtestStatsBySignal,
-  getRSI, getMA, getATR, getNDayHigh, getStrategyRules, fetchDailyForBacktest
+  getRSI, getMA, getATR, getNDayHigh, getStrategyRules, fetchDailyForBacktest,
+  fetchMinuteBars, confirmIntradayEntry
 };
