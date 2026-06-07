@@ -278,6 +278,42 @@ const ETF_SYMBOLS = new Set([
 // 레버리지/인버스 ETF (일일 변동성 2~3배 — ATR 사이징 자동 축소 대상)
 const LEVERAGED_ETF = new Set(["SOXL","SOXS","TQQQ","SQQQ","122630.KS","252670.KS","233740.KS","251340.KS","114800.KS"]);
 
+// ── [ETF 세분화 전략] ETF 유형 분류 — 바스켓이라 개별주와 구조가 다르므로 유형별 차등 전략 ──
+//   index(시장지수): 변동성 낮음·시장폭 중요 / sector(섹터): 로테이션·RS 중요
+//   theme(테마): 강한 모멘텀 / commodity(원자재): 추세 명확·돌파 우대
+//   bond(채권): 저변동·금리역방향 / leverage·inverse: 별도 처리 / country/us_index: 해외·미국추종
+const ETF_TYPE = {
+  // 시장 지수
+  "SPY":"index","QQQ":"index","IVV":"index","VOO":"index","VTI":"index","IWM":"index","DIA":"index",
+  "069500.KS":"index","102110.KS":"index","229200.KS":"index","232080.KS":"index",
+  // 섹터 (로테이션)
+  "XLK":"sector","XLV":"sector","XLY":"sector","XLI":"sector","XLP":"sector","XLU":"sector",
+  "XLB":"sector","XLC":"sector","XLRE":"sector","XLF":"sector","XLE":"sector",
+  "091160.KS":"sector","091170.KS":"sector","305720.KS":"sector","305540.KS":"sector","329200.KS":"sector",
+  // 테마 (모멘텀)
+  "SOXX":"theme","SMH":"theme","IBB":"theme","371460.KS":"theme",
+  "381180.KS":"theme","381170.KS":"theme","0183J0.KS":"theme","463250.KS":"theme",
+  // 레버리지 (롱)
+  "SOXL":"leverage","TQQQ":"leverage","122630.KS":"leverage","233740.KS":"leverage",
+  // 인버스
+  "SOXS":"inverse","SQQQ":"inverse","252670.KS":"inverse","251340.KS":"inverse","114800.KS":"inverse",
+  // 원자재
+  "GLD":"commodity","132030.KS":"commodity","130680.KS":"commodity",
+  // 채권
+  "TLT":"bond",
+  // 한국상장 미국지수 추종
+  "360750.KS":"us_index","133690.KS":"us_index","379800.KS":"us_index","379810.KS":"us_index","441680.KS":"us_index",
+  // 해외 국가
+  "192090.KS":"country",
+  // 기타 한국 ETF
+  "091160.KS":"sector","117460.KS":"sector"
+};
+function getEtfType(sym) {
+  if (!sym) return null;
+  if (ETF_TYPE[sym]) return ETF_TYPE[sym];
+  return ETF_SYMBOLS.has(sym) ? "other" : null;  // 분류 안 된 ETF는 "other"
+}
+
 // 종목 한글/영문 이름 맵 (UI 표시용)
 const NAME_MAP = {
   "NVDA":"NVIDIA",
@@ -5178,7 +5214,8 @@ function evaluateAllStrategies(price, dayPct, dailyData, cfg, signalStats, regim
 
   // [SEC 공시] 미국 종목 한정 — 무조건 보수화 X, 공시 후 주가 반응으로 호재/악재 판단.
   //   긍정 공시(상승 반영)는 보수화하지 않음. 악재(하락)만 축소. 불확실(중립/미상)은 약하게.
-  if (secData && market === "us" && dailyData && dailyData.symbol) {
+  //   [ETF 세분화] ETF는 바스켓이라 개별 기업 공시 영향이 분산됨 → SEC 보수화 면제.
+  if (secData && market === "us" && dailyData && dailyData.symbol && !getEtfType(dailyData.symbol)) {
     const sd = secData[dailyData.symbol];
     if (sd && sd.caution && sd.filingType) {
       const sc = cfg.secFilings || {};
@@ -5237,7 +5274,48 @@ function evaluateAllStrategies(price, dayPct, dailyData, cfg, signalStats, regim
     }
   }
 
-  // [안전장치] 여러 부스트(vision×sec×alpha) 누적이 극단값이 되지 않게 상하한 clamp.
+  // ── [ETF 세분화 전략] ETF 유형별 차등 — 바스켓 구조 특성 반영 (추가 fetch 0) ──
+  {
+    const etfType = getEtfType(dailyData.symbol);
+    if (etfType) {
+      const closes = dailyData.closes;
+      // 종목 20일 vs 지수 20일 상대강도(RS)
+      const ret20 = getNDayReturn(closes, 20);
+      const rs = (ret20 != null && regime && typeof regime.idxReturn20 === "number") ? (ret20 - regime.idxReturn20) : null;
+      let eScale = 1.0, eNote = etfType;
+      switch (etfType) {
+        case "sector":
+        case "theme":
+          // 섹터 로테이션 / 테마 모멘텀 — 시장 대비 강한 ETF에 집중(강↑·약↓)
+          if (rs != null) { if (rs >= 4) eScale = 1.12; else if (rs <= -3) eScale = 0.82; }
+          break;
+        case "commodity":
+          // 원자재 — 추세가 매우 명확 → 돌파 신호 우대, 강추세 가점
+          if (sig.name === "TR_BREAKOUT") eScale = 1.12;
+          if (rs != null && rs >= 3) eScale *= 1.05;
+          break;
+        case "bond":
+          // 채권 — 저변동·금리 역방향, 추세전략엔 약함 → 보수적
+          eScale = 0.8;
+          break;
+        case "country":
+        case "us_index":
+          // 해외/미국추종 — 환·시차 노이즈 → 약간 보수
+          eScale = 0.92;
+          break;
+        case "index":
+          // 시장지수 — 안정적, 시장폭(crashGate breadth)이 이미 반영 → 그대로
+          break;
+        // leverage/inverse/other는 기존 전용 로직(ADX·패닉헤지·decay)에서 처리
+      }
+      if (eScale !== 1.0) {
+        sig.visionBoost = (sig.visionBoost || 1.0) * eScale;
+        sig.etfNote = "ETF:" + eNote + "×" + eScale.toFixed(2) + (rs != null ? " RS" + rs.toFixed(1) : "");
+      }
+    }
+  }
+
+  // [안전장치] 여러 부스트(vision×sec×alpha×etf) 누적이 극단값이 되지 않게 상하한 clamp.
   //   (최종 사이즈는 maxPositionPct·가용현금으로 한 번 더 제한됨)
   if (sig.visionBoost) sig.visionBoost = Math.min(2.0, Math.max(0.2, sig.visionBoost));
 
