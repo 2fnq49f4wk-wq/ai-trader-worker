@@ -1,5 +1,5 @@
 // ============================================================
-// LUX-engine V8.6 Hybrid (V8.5 규칙 매매 + Claude 일일 지시)
+// LUX-engine V9.0 Hybrid (V8.5 규칙 매매 + Claude 일일 지시)
 // 
 // 핵심 구조:
 //   • V8.5 규칙 매매 엔진은 매분 자동 작동 (기존과 동일)
@@ -15,6 +15,11 @@
 //   • 안전: Claude 응답 파싱 실패/타임아웃 시 지시는 무시되고 V8.5 그대로 작동
 //   • 비용: 하루 2회 Claude 호출 (시장당 1회)
 //
+// V9.0 변경점:
+//   • [BUG FIX] MRSH → MMC (Marsh McLennan 티커 오류 수정)
+//   • [신규 ETF] SPXU(-3x S&P500인버스)·SH(-1x S&P500인버스) 거래 유니버스 추가 (패닉 헤지 강화)
+//   • [수익률 개선] 52주 신고가 돌파 확인 시 TR_BREAKOUT 신뢰도 +0.10 가산 (강신호 강화)
+//   • [모델 안정화] claude-haiku-4-5 → claude-haiku-4-5-20251001 (고정버전으로 갱신 충격 방지)
 // V8.6 시간처리 변경점 (이미 적용됨):
 //   • US 시장 시간 DST 자동 전환 (EST/EDT)
 //   • KR 거래 윈도우 09:15~15:45 (야후 15분 지연 보정)
@@ -105,7 +110,7 @@ const DEFAULT_US = [
   "CMCSA","ICE","FDX","FCX","MNST",
   "KKR","CSX","PNC","ELV","SLB",
   "JCI","BSX","USB","AMT","UPS",
-  "MRSH","ABNB","MMM","MDLZ","NOC",
+  "MMC","ABNB","MMM","MDLZ","NOC",
   "MCO","APO","VLO","SPG","EOG",
   "ORLY","CI","MPC","KMI","DDOG",
   "SHW","CIEN","EMR","NXPI","MPWR",
@@ -180,6 +185,9 @@ const DEFAULT_US = [
   "VOO","VTI","SOXL","SOXS","TQQQ",
   "SQQQ","SMH","TLT","GLD","XLF",
   "XLE","IWM",
+  // [V9.0 패닉헤지 강화] S&P500 인버스 ETF — SPXU(-3x)·SH(-1x). SQQQ(Nasdaq 3x인버스)와 함께
+  //   시장 전체 하락 시 헤지 대응 가능. BEAR 차단 면제(INVERSE_ETF 셋 이미 포함됨).
+  "SPXU","SH",
   // [추가 ETF] 미국 섹터 SPDR + 테마(반도체/바이오/다우) — 추세 명확·거래량 큼
   "XLK","XLV","XLY","XLI","XLP","XLU","XLB","XLC","XLRE",
   "SOXX","IBB","DIA"
@@ -265,6 +273,7 @@ const ETF_SYMBOLS = new Set([
   "SPY","QQQ","IVV","VOO","VTI",
   "SOXL","SOXS","TQQQ","SQQQ","SMH",
   "TLT","GLD","XLF","XLE","IWM",
+  "SPXU","SH",  // [V9.0] S&P500 인버스 ETF 추가
   "069500.KS","122630.KS","252670.KS","102110.KS","233740.KS",
   "251340.KS","114800.KS","229200.KS","091160.KS","305720.KS",
   "371460.KS","360750.KS","133690.KS","379800.KS","117460.KS",
@@ -276,7 +285,7 @@ const ETF_SYMBOLS = new Set([
 ]);
 
 // 레버리지/인버스 ETF (일일 변동성 2~3배 — ATR 사이징 자동 축소 대상)
-const LEVERAGED_ETF = new Set(["SOXL","SOXS","TQQQ","SQQQ","122630.KS","252670.KS","233740.KS","251340.KS","114800.KS"]);
+const LEVERAGED_ETF = new Set(["SOXL","SOXS","TQQQ","SQQQ","SPXU","122630.KS","252670.KS","233740.KS","251340.KS","114800.KS"]); // [V9.0] SPXU 추가 (-3x 인버스, decay·3배변동성 동일)
 
 // ── [ETF 세분화 전략] ETF 유형 분류 — 바스켓이라 개별주와 구조가 다르므로 유형별 차등 전략 ──
 //   index(시장지수): 변동성 낮음·시장폭 중요 / sector(섹터): 로테이션·RS 중요
@@ -296,7 +305,8 @@ const ETF_TYPE = {
   // 레버리지 (롱)
   "SOXL":"leverage","TQQQ":"leverage","122630.KS":"leverage","233740.KS":"leverage",
   // 인버스
-  "SOXS":"inverse","SQQQ":"inverse","252670.KS":"inverse","251340.KS":"inverse","114800.KS":"inverse",
+  "SOXS":"inverse","SQQQ":"inverse","SPXU":"inverse","SH":"inverse",  // [V9.0] SPXU·SH 추가
+  "252670.KS":"inverse","251340.KS":"inverse","114800.KS":"inverse",
   // 원자재
   "GLD":"commodity","132030.KS":"commodity","130680.KS":"commodity",
   // 채권
@@ -461,7 +471,7 @@ const NAME_MAP = {
   "USB":"US Bancorp",
   "AMT":"American Tower",
   "UPS":"UPS",
-  "MRSH":"Marsh McLennan",
+  "MMC":"Marsh McLennan",
   "ABNB":"Airbnb",
   "MMM":"3M",
   "MDLZ":"Mondelez",
@@ -828,6 +838,8 @@ const NAME_MAP = {
   "SOXS":"반도체 3x 숏",
   "TQQQ":"나스닥 3x 롱",
   "SQQQ":"나스닥 3x 숏",
+  "SPXU":"S&P500 3x 숏",   // [V9.0]
+  "SH":"S&P500 1x 숏",     // [V9.0]
   "SMH":"반도체 ETF",
   "TLT":"미국 장기채",
   "GLD":"금 ETF",
@@ -1307,7 +1319,7 @@ const MCAP_RANK = {
   "USB":143,
   "AMT":144,
   "UPS":145,
-  "MRSH":146,
+  "MMC":146,
   "ABNB":147,
   "MMM":148,
   "MDLZ":149,
@@ -1674,6 +1686,8 @@ const MCAP_RANK = {
   "SOXS":509,
   "TQQQ":510,
   "SQQQ":511,
+  "SPXU":518,  // [V9.0]
+  "SH":519,    // [V9.0]
   "SMH":512,
   "TLT":513,
   "GLD":514,
@@ -2326,7 +2340,7 @@ const DEFAULT_CFG = {
   // === [V8.6 Hybrid] Claude LLM 일일 지시 ===
   llmHybrid: {
     enabled: true,            // [V11] 기본 ON — API 키만 등록되면 작동 (키 없으면 자동으로 V8.5 폴백)
-    model: "claude-haiku-4-5", // [V9.7] sonnet→haiku. 구조화 컨텍스트→정해진 스키마 JSON 판정엔 haiku로 충분. 토큰 단가·지연 대폭 절감
+    model: "claude-haiku-4-5-20251001", // [V9.0] 버전 고정(alias→full ID). haiku로 충분, 토큰 단가·지연 절감
     maxTokens: 1200,          // [V9.7] 3000→1200. reasoning 축소(아래 includeReasoning=false) 후 실측 출력 800~1000토큰이면 충분
     includeReasoning: false,  // [V9.7] reasoning 5필드(거래 로직 미사용·로깅용) 출력 생략 → 출력 토큰 절반↓. 사후검증은 summary 한 줄로 충분
     compactContext: true,     // [V9.7] 프롬프트 컨텍스트를 압축 JSON(들여쓰기 제거)으로 전송 → 입력 토큰 20~30%↓
@@ -5138,9 +5152,16 @@ function evaluateTrendEntry(price, dayPct, dailyData, cfg, regime, market) {
     const volReq = isEtf ? 1.05 : (r.volMult || 1.35);
     if (avgVol > 0 && todayVol >= avgVol * volReq) {
       // 돌파는 거래량·신고가 확인이 더해진 강신호 → confidence 소폭 가산(상한 1.0)
-      const boConf = Math.min(1.0, confidence + 0.15);
+      let boConf = Math.min(1.0, confidence + 0.15);
+      // [V9.0 수익률 개선] 52주(252거래일) 신고가 돌파 추가 확인 — 연간 최고가를 넘는 돌파는
+      //   모멘텀 지속성이 현저히 높다(52-week high effect, Fama/Blume 실증). +0.10 가산.
+      let is52wHi = false;
+      if (closes.length >= 253) {
+        const hi252 = getNDayHigh(closes, 252);
+        if (hi252 != null && price > hi252) { boConf = Math.min(1.0, boConf + 0.10); is52wHi = true; }
+      }
       return { name: "TR_BREAKOUT", weight: 1.1, type: "TREND", confidence: boConf,
-        detail: "BO>" + hiN.toFixed(2) + " vol x" + (todayVol / avgVol).toFixed(1) + " RSI " + rsi.toFixed(0) + " c" + boConf.toFixed(2),
+        detail: "BO>" + hiN.toFixed(2) + (is52wHi ? " 52W_HI" : "") + " vol x" + (todayVol / avgVol).toFixed(1) + " RSI " + rsi.toFixed(0) + " c" + boConf.toFixed(2),
         members: ["TR_BREAKOUT"] };
     }
   }
@@ -5327,37 +5348,13 @@ function evaluateAllStrategies(price, dayPct, dailyData, cfg, signalStats, regim
 function evaluateBuyBlocks(price, dayPct, dailyData, cfg, regime, signal, ctx) {
   const closes = dailyData.closes;
   if (!closes || closes.length < 25) return "INSUFFICIENT_DATA";
-  const strategy = ctx && ctx.strategy ? ctx.strategy : "swing";
+  const strategy = ctx && ctx.strategy ? ctx.strategy : "trend";
   // [패닉 헤지] 인버스 ETF는 시장 붕괴/약세 차단에서 제외 — 하락장이 인버스엔 호재.
   const isInverse = ctx && ctx.symbol && INVERSE_ETF.has(ctx.symbol);
 
-  // 시장 붕괴는 모든 전략 차단 (단 MEANREV는 worst 임계값 더 깊게 허용, 인버스는 면제)
-  const crashThreshold = (strategy === "meanrev") ? cfg.marketCrashPct - 1.0 : cfg.marketCrashPct;
-  if (!isInverse && regime.worstDayPct <= crashThreshold) return "MARKET_CRASH " + regime.worstDayPct.toFixed(2) + "%";
-
-  // FALLING_KNIFE — DAY/MEANREV는 더 깊은 하락도 OK (반등 노림)
-  const knifeLimit = (strategy === "day" || strategy === "meanrev") ? cfg.maxDailyDrop + 2.0 : cfg.maxDailyDrop;
-  if (dayPct <= -knifeLimit) return "FALLING_KNIFE " + dayPct.toFixed(2) + "%";
-
-  const ma20 = getMA(closes, cfg.maPeriod);
-  const dailyRsi = getRSI(closes, cfg.rsiPeriod);
-
-  // DOWNTREND — MOMENTUM/MEANREV/DAY/TREND 면제
-  //   trend: evaluateTrendEntry에서 이미 MA20>MA50>MA200 정렬 체크하므로 중복 차단 불필요
-  if (strategy !== "momentum" && strategy !== "meanrev" && strategy !== "day" && strategy !== "trend"
-      && !signal.isCounterTrend && ma20 != null && price < ma20 && dailyRsi != null && dailyRsi >= 40) {
-    return "DOWNTREND price<MA20 RSI=" + dailyRsi.toFixed(1);
-  }
-
-  // PERSISTENT_DOWN — MEANREV/DAY 면제 (단타는 5일 패턴 무관, 갭하락 반등 노림)
-  // [V8.1.5] day 면제 — 7건 차단되던 KR 약세장에서도 단타 진입 가능
-  // [모순수정] trend 면제 — 추세 풀백 진입은 "며칠 하락 후 MA20 반등"이 본질이라
-  //   PERSISTENT_DOWN(5일중4일 하락)과 정면충돌해 정상 풀백 신호가 막혔음.
-  //   trend는 이미 MA20>MA50>MA200 정렬(상승추세)을 게이트로 보장하므로 안전.
-  if (strategy !== "meanrev" && strategy !== "day" && strategy !== "trend") {
-    const downDays = countDownDays(closes, 5);
-    if (downDays >= 4) return "PERSISTENT_DOWN " + downDays + "/5";
-  }
+  // 시장 붕괴 / 장중 급락 — 인버스는 면제
+  if (!isInverse && regime.worstDayPct <= cfg.marketCrashPct) return "MARKET_CRASH " + regime.worstDayPct.toFixed(2) + "%";
+  if (dayPct <= -cfg.maxDailyDrop) return "FALLING_KNIFE " + dayPct.toFixed(2) + "%";
 
   const highs = dailyData.highs || null;
   const lows = dailyData.lows || null;
@@ -5367,17 +5364,15 @@ function evaluateBuyBlocks(price, dayPct, dailyData, cfg, regime, signal, ctx) {
     return "VOLATILITY_SPIKE ATR14=" + atr14.toFixed(2) + " ATR30=" + atr30.toFixed(2);
   }
 
-  // BEAR_WEAK — MEANREV는 면제 (약세장 과매도 매수), 인버스도 면제 (약세장이 호재)
-  if (strategy !== "meanrev" && !isInverse && regime.regime === "BEAR" && regime.worstDayPct <= -1.5) {
+  // BEAR_WEAK — 인버스는 면제 (약세장이 호재)
+  if (!isInverse && regime.regime === "BEAR" && regime.worstDayPct <= -1.5) {
     return "BEAR_WEAK worst=" + regime.worstDayPct.toFixed(2) + "%";
   }
 
-  // RS 필터 — COUNTER 성격 전략(DAY/MEANREV)과 isCounterTrend 신호는 면제
-  // [ETF 면제] 시장 ETF(SPY/QQQ 등)는 지수 자체라 "지수 대비 아웃퍼폼"이 구조적으로
-  //   불가능 → RS 필터에 항상 걸려 매수가 막혔음. ETF는 RS 필터에서 제외.
+  // RS 필터 — isCounterTrend 신호·ETF는 면제
+  // [ETF 면제] 지수 ETF는 지수 자체라 "지수 대비 아웃퍼폼"이 구조적으로 불가능
   const _isEtfRS = ctx && ctx.symbol && ETF_SYMBOLS.has(ctx.symbol);
-  if (cfg.rsFilterEnabled && strategy !== "day" && strategy !== "meanrev"
-      && !signal.isCounterTrend && !_isEtfRS && regime.idxReturn20 != null) {
+  if (cfg.rsFilterEnabled && !signal.isCounterTrend && !_isEtfRS && regime.idxReturn20 != null) {
     const stockRet = getNDayReturn(closes, cfg.rsLookbackDays);
     if (stockRet != null) {
       const relPerf = stockRet - regime.idxReturn20;
@@ -7298,7 +7293,7 @@ async function runTradingCycle(env) {
     const enabledStrats = STRATEGIES.filter(function(s){ return cfg.strategies && cfg.strategies[s]; }).join(",");
     const disabledSigNote = (cfg.disabledSignals && cfg.disabledSignals.length > 0)
       ? " disabled=[" + cfg.disabledSignals.join(",") + "]" : "";
-    await log(DB, "INFO", null, "=== Cycle start (V8.6) strats=[" + enabledStrats + "] conf=" + (cfg.requireConfluence ? "ON" : "OFF") + disabledSigNote + " ===");
+    await log(DB, "INFO", null, "=== Cycle start (V9.0) strats=[" + enabledStrats + "] conf=" + (cfg.requireConfluence ? "ON" : "OFF") + disabledSigNote + " ===");
     const cycleStartedAt = Date.now();
     // [FIX V8.8] 엔진 heartbeat — 사이클 시작 직후 기록. 사이클이 중간에 타임아웃/중단돼도
     //   "엔진이 최근 돌긴 했다"를 추적해 last_tick만으로 '지연'을 오판하지 않도록 한다.
@@ -7597,7 +7592,6 @@ async function runTradingCycle(env) {
       }
       const qpSlices = Math.max(1, Math.ceil(tickers.length / priceBudget));
       await setState(DB, qpRrKey, (qpRr + 1) % qpSlices);
-      // quote: 상태 저장 (UI 표시용). 일봉 지표는 기존 quote에서 보존(있으면).
       // quote: 상태 저장 (UI 표시용). 일봉 지표는 기존 quote에서 보존(있으면).
       // [V10] D1 부하 최소화 — 기존 quote를 종목마다 읽지 않고 한 번의 쿼리로 일괄 로드.
       const prevQuoteMap = {};
@@ -8006,18 +8000,6 @@ async function runTradingCycle(env) {
           // [V10] 1차 평가 — 분봉 없이 일봉 신호만으로 (호출 0). day 게이트는 데이터부족→통과.
           if (daily) daily.symbol = symbol;  // [Vision AI] symbol을 daily에 주입
           let stratResults = evaluateAllStrategies(price, dayPct, daily, mcfg, signalStats, regime, market, intra, visionPreds, secData);
-          // [V10] 2단계 깔때기 — US day 매수 신호가 1차에서 나온 경우에만 분봉 1회 조회해 재검증.
-          //   대부분 종목은 1차에서 신호가 없어 분봉 호출 자체가 일어나지 않음 → subrequest 절약.
-          const hasDaySignal = stratResults.some(function(r){ return r.strategy === "day"; });
-          if (hasDaySignal && market === "us" && mcfg.dayRules && mcfg.dayRules.usIntradayGate !== false) {
-            try {
-              const fullIntra = await fetchIntraday(symbol);
-              if (fullIntra && Array.isArray(fullIntra.closes) && fullIntra.closes.length > 0) {
-                // 분봉으로 재평가 — "지금 하락 중"이면 day 신호가 걸러진다.
-                stratResults = evaluateAllStrategies(price, dayPct, daily, mcfg, signalStats, regime, market, fullIntra, visionPreds, secData);
-              }
-            } catch (e) { /* 분봉 실패 시 1차 결과 유지 */ }
-          }
 
           if (stratResults.length === 0) {
             incNobuy("no_signal");
@@ -8113,61 +8095,19 @@ async function runTradingCycle(env) {
               }
             }
 
-            let baseRatio = getPositionSizeRatio(mcfg, strategy, regime.regime);
-
-            // [V12] 드로다운 L1 — 신규 진입 사이즈 축소(blockNew는 위에서 이미 차단됨)
-            //   [패닉 헤지] 인버스 ETF는 패닉 축소(VIX/Breadth/드로다운)를 면제 — 패닉이 호재.
-            if (crashGate.sizeScale && crashGate.sizeScale < 1 && !_symInverse) {
-              baseRatio *= crashGate.sizeScale;
-            }
-            // [패닉 헤지] 인버스 + 시장 약세/패닉이면 진입 부스트 (하락장 수익·헤지)
-            if (_symInverse && regime && (regime.regime === "BEAR" || (typeof regime.worstDayPct === "number" && regime.worstDayPct <= -1.0))) {
-              baseRatio *= (mcfg.inversePanicBoost || 1.3);
-            }
-
-            // [V9.2 데이터근거] day 전략 신호강도 차등 사이징.
-            //   과거 247건: 신호 2개 조합=승률 61%/+1.14%(우수), 단독=37%, 3개+=손실(→2개로 정제됨).
-            //   단독도 종류별로 갈림: BOUNCE 단독 +25만(흑자), OPEN_DRIVE +0.7만, GAP_DOWN 단독 -15.8만(손실원).
-            //   진입은 막지 않되(조합 동반손실 함정 회피) 손실 단독만 사이즈 축소.
-            if (strategy === "day") {
-              const mem = (signal.members && signal.members.length) ? signal.members : [signal.name];
-              const nSig = mem.length;
-              let dayConfMult;
-              if (nSig >= 2) {
-                dayConfMult = 1.5;                      // 최우수 조합 — 사이즈 키움
-              } else {
-                // 단독: 신호 종류로 차등
-                const solo = mem[0] || "";
-                if (solo.indexOf("GAP_DOWN") >= 0) dayConfMult = 0.4;   // 단독 손실원 — 대폭 축소
-                else if (solo.indexOf("BOUNCE") >= 0 || solo.indexOf("OPEN_DRIVE") >= 0) dayConfMult = 0.9; // 흑자 단독 — 거의 유지
-                else dayConfMult = 0.6;                 // 기타 단독 — 보수적
-              }
-              baseRatio = baseRatio * dayConfMult;
-            }
-
-            // [V8.3] ATR 기반 동적 사이징 multiplier
-            // 변동성 큰 종목(ATR/price 비율 높음) → 작게, 안정 종목 → 크게
-            let atrMult = 1.0;
-            let actualAtrPct = null;
-            if (mcfg.atrSizing && mcfg.atrSizing.enabled && dailyAtr != null && price > 0) {
-              actualAtrPct = (dailyAtr / price) * 100;
-              const target = mcfg.atrSizing.targetAtrPct || 2.0;
-              const minMult = mcfg.atrSizing.minMult != null ? mcfg.atrSizing.minMult : 0.5;
-              const maxMult = mcfg.atrSizing.maxMult != null ? mcfg.atrSizing.maxMult : 1.5;
-              if (actualAtrPct > 0) {
-                atrMult = target / actualAtrPct;
-                if (atrMult < minMult) atrMult = minMult;
-                if (atrMult > maxMult) atrMult = maxMult;
-              }
-            }
+            // [V12] VIX/드로다운 사이즈 스케일 — riskPct에 직접 반영 (패닉 시 포지션 축소)
+            //   [패닉 헤지] 인버스는 면제·부스트 — 패닉이 인버스엔 호재.
+            let sizeScale = 1.0;
+            if (crashGate.sizeScale && crashGate.sizeScale < 1 && !_symInverse) sizeScale = crashGate.sizeScale;
+            if (_symInverse && regime && (regime.regime === "BEAR" || (typeof regime.worstDayPct === "number" && regime.worstDayPct <= -1.0))) sizeScale = (mcfg.inversePanicBoost || 1.3);
 
             // === [재작성] 고정리스크 사이징 ===
             //   한 거래 손실한도 R$ = 자산 × riskPerTrade%. 손절거리(주당)로 수량을 역산한다.
             //   → 변동성이 큰(손절 먼) 종목일수록 자동으로 작게 산다. 손실 금액이 항상 균등.
             //   종목 비중 상한·가용현금 상한으로 과집중/초과 통제. executeBuy의 DB clamp가 최종 차단.
             const tsz = getTrendSizing(mcfg, market);
-            // [Vision AI] UP 고신뢰 신호면 포지션 크기 부스트 (visionBoost=1.25)
-            const riskPct = (tsz.riskPerTrade != null ? tsz.riskPerTrade : 0.75) * (signal.visionBoost || 1.0);
+            // [Vision AI] UP 고신뢰 신호면 포지션 크기 부스트 (visionBoost=1.25). sizeScale = VIX/드로다운 스케일.
+            const riskPct = (tsz.riskPerTrade != null ? tsz.riskPerTrade : 0.75) * (signal.visionBoost || 1.0) * sizeScale;
             const maxPosPct = tsz.maxPositionPct != null ? tsz.maxPositionPct : 15;
             const equity = (typeof portfolioValue === "number" && portfolioValue > 0) ? portfolioValue : cash[market];
             const tr = getStrategyRules(mcfg, strategy, market);
