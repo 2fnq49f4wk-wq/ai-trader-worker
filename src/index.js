@@ -2413,6 +2413,19 @@ const DEFAULT_CFG = {
     confMin: 0.6,
     monthlyBudget: 10000   // 무료 Public 플랜 월 한도
   },
+  // === [신규·인터마켓] 시장 컨텍스트 (risk-on/off) — 외부 자산으로 위험선호 측정 ===
+  //   HYG(신용)·BTC(위험심리)·UUP(달러)·^VIX9D(공포)·TLT(안전자산)를 1 batch quote로 수집.
+  //   [예산 안전] 캐시(refreshMinutes) + 월 사용량 enrichMaxUsageRatio(코어 셧다운보다 낮음) 초과 시
+  //   enrichment 자동 중단 → 한도 여유분 항상 보장. risk-off면 신규매수 축소, risk-on이면 소폭 확대.
+  marketContext: {
+    enabled: true,
+    symbols: ["HYG", "BTC-USD", "UUP", "^VIX9D", "TLT"],
+    refreshMinutes: 12,
+    enrichMaxUsageRatio: 0.75,
+    minBudgetReserve: 8,
+    riskOffScale: 0.6,
+    riskOnBoost: 1.12
+  },
   // === [V8.5] 사이클 락 자동 갱신 ===
   cycleLockRefreshAt: 0.5,   // TTL의 50% 경과 시 갱신
   // === 전략 활성화 ===
@@ -4734,6 +4747,83 @@ async function fetchBatchQuotes(symbols, opts) {
   }
 
   return out;
+}
+
+// ============================================================
+// [신규·인터마켓] 시장 컨텍스트 — 외부 위험선호(risk-on/off) 신호를 1 subrequest로 수집
+// ============================================================
+//   주식 외 자산의 움직임은 주식 방향의 선행/동행 신호다(인터마켓 분석):
+//     • HYG (하이일드 회사채): 신용 스트레스. 급락=위험회피(주식 선행 악재)
+//     • BTC-USD: 위험선호 심리 (상승=risk-on)
+//     • UUP (달러): 강세=주식·원자재 역풍
+//     • ^VIX9D: 단기 공포지수 (급등=위험회피)
+//     • TLT (장기국채): 급등=안전자산 도피(위험회피)
+//   [예산 안전] 여러 심볼을 1 batch quote(=1 subrequest)로만 수집 + 캐시(refreshMinutes)로
+//   호출 최소화. 게다가 월 사용량이 enrichMaxUsageRatio(코어 셧다운보다 낮은 임계)를 넘으면
+//   "코어 거래 보호"를 위해 enrichment를 먼저 중단 → 한도 여유분을 항상 남긴다.
+const MARKET_CONTEXT_DEFAULT = {
+  enabled: true,
+  symbols: ["HYG", "BTC-USD", "UUP", "^VIX9D", "TLT"],
+  refreshMinutes: 12,          // 캐시 주기(분) — 이 주기 내엔 재fetch 안 함
+  enrichMaxUsageRatio: 0.75,   // [여유분 보장] 월 사용량 75% 넘으면 enrichment 중단(코어 거래 우선)
+  minBudgetReserve: 8,         // invocation subrequest 잔여가 이 미만이면 스킵(코어용 예비)
+  riskOffScale: 0.6,           // 강한 risk-off 시 신규매수 사이즈 하한 배수
+  riskOnBoost: 1.12            // 강한 risk-on 시 사이즈 상한 부스트(과하지 않게)
+};
+function _clamp(v, lo, hi) { return Math.max(lo, Math.min(hi, v)); }
+// 위험선호 점수(-1 위험회피 ~ +1 위험선호) 산정 — 보수적 가중치.
+function _computeRiskScore(q) {
+  let s = 0;
+  const d = function(sym){ return (q[sym] && typeof q[sym].dayPct === "number") ? q[sym].dayPct : 0; };
+  s += _clamp(d("HYG") * 0.5, -0.40, 0.40);    // 신용(가장 중요)
+  s += _clamp(d("BTC-USD") * 0.04, -0.25, 0.25); // 위험심리
+  s -= _clamp(d("UUP") * 0.20, -0.20, 0.20);    // 달러강세=역풍
+  s -= _clamp(d("^VIX9D") * 0.025, -0.30, 0.30); // 공포
+  s -= _clamp(d("TLT") * 0.08, -0.15, 0.15);    // 안전자산 도피
+  return _clamp(s, -1, 1);
+}
+// 시장 컨텍스트 갱신(예산 가드 포함). 반환: {riskScore, regime, sizeScale, ts, detail} 또는 캐시/null.
+async function updateMarketContext(DB, cfg) {
+  const mc = Object.assign({}, MARKET_CONTEXT_DEFAULT, (cfg && cfg.marketContext) || {});
+  if (mc.enabled === false) return null;
+  let cached = null;
+  try { cached = await getState(DB, "mkt_context", null); } catch (e) {}
+  // 1) 캐시 신선하면 그대로 사용 (fetch 0)
+  if (cached && cached.ts && (Date.now() - cached.ts) < (mc.refreshMinutes || 12) * 60000) return cached;
+  // 2) [여유분 보장] 월 사용량이 enrich 임계 초과면 enrichment 중단 — 만료 캐시라도 반환(코어 보호)
+  try {
+    const u = await getUsageState(DB);
+    const lim = Object.assign({}, USAGE_LIMITS_DEFAULT, (cfg && cfg.usageLimits) || {});
+    const ratio = Math.max((u.data.requests || 0) / Math.max(1, lim.monthlyRequests),
+                           (u.data.cpuMs || 0) / Math.max(1, lim.monthlyCpuMs));
+    if (ratio >= (mc.enrichMaxUsageRatio != null ? mc.enrichMaxUsageRatio : 0.75)) return cached;
+  } catch (e) {}
+  // 3) invocation subrequest 잔여 예산이 부족하면 코어용으로 양보
+  if (fetchBudgetLeft() < (mc.minBudgetReserve || 8)) return cached;
+  // 4) 1 batch quote(=1 subrequest)로 수집
+  let q;
+  try { q = await fetchBatchQuotes(mc.symbols, { DB: DB }); } catch (e) { return cached; }
+  if (!q || Object.keys(q).length < 2) return cached;  // 데이터 부족 시 캐시 유지
+  const riskScore = _computeRiskScore(q);
+  const offScale = mc.riskOffScale || 0.6;
+  const onBoost = mc.riskOnBoost || 1.12;
+  let regime = "neutral", sizeScale = 1.0;
+  if (riskScore <= -0.4) {              // 강한 위험회피 → 하한
+    regime = "risk_off"; sizeScale = offScale;
+  } else if (riskScore < -0.15) {       // 주의 → -0.15~-0.4 구간을 1.0~offScale로 선형 축소
+    regime = "caution";
+    sizeScale = 1 - (1 - offScale) * ((-0.15 - riskScore) / 0.25);
+  } else if (riskScore >= 0.4) {        // 강한 위험선호 → 상한 부스트
+    regime = "risk_on"; sizeScale = onBoost;
+  } else if (riskScore > 0.15) {        // 완만한 위험선호 → 0.15~0.4를 1.0~onBoost로 선형 확대
+    regime = "mild_on";
+    sizeScale = 1 + (onBoost - 1) * ((riskScore - 0.15) / 0.25);
+  }
+  const detail = mc.symbols.map(function(s){ return s + (q[s] ? (q[s].dayPct >= 0 ? "+" : "") + q[s].dayPct.toFixed(1) : "?"); }).join(" ");
+  const ctx = { riskScore: riskScore, regime: regime, sizeScale: _clamp(sizeScale, 0.5, 1.2), ts: Date.now(), detail: detail };
+  try { await setState(DB, "mkt_context", ctx); } catch (e) {}
+  try { await log(DB, "INFO", null, "[MKT-CTX] " + regime + " score=" + riskScore.toFixed(2) + " size×" + ctx.sizeScale.toFixed(2) + " · " + detail); } catch (e) {}
+  return ctx;
 }
 
 // === [V10] 한국 종목 일봉 fetch — .KS 실패 시 .KQ 자동 재시도 ===
@@ -8126,6 +8216,13 @@ async function runTradingCycle(env) {
     if (engineEnabled && usCanTrade) marketsToTrade.push("us");
     if (engineEnabled && krCanTrade) marketsToTrade.push("kr");
 
+    // [신규·인터마켓] 시장 컨텍스트(risk-on/off) 1회 갱신 — 거래할 시장이 있을 때만(불필요 fetch 방지).
+    //   예산 가드 내장(캐시·enrich 임계·subreq 예비). 결과 sizeScale을 신규매수 사이징에 반영.
+    let mktCtx = null;
+    if (marketsToTrade.length > 0) {
+      try { mktCtx = await updateMarketContext(DB, cfg); } catch (e) {}
+    }
+
     for (const market of marketsForQuotes) {
       const mcfg = getMarketCfg(cfg, market);  // [V8.2] 시장별 독립 룰
       const tickers = market === "us" ? mcfg.usTickers : mcfg.krTickers;
@@ -8893,6 +8990,11 @@ async function runTradingCycle(env) {
               if (sizeScale < _floor) sizeScale = _floor;
             }
             if (_symInverse && regime && (regime.regime === "BEAR" || (typeof regime.worstDayPct === "number" && regime.worstDayPct <= -1.0))) sizeScale = (mcfg.inversePanicBoost || 1.3);
+            // [신규·인터마켓] 시장 컨텍스트(risk-on/off) 반영 — risk-off면 축소, risk-on이면 소폭 확대.
+            //   인버스 ETF는 risk-off가 호재라 면제(이미 부스트됨). 곱연산이라 크래시/패닉 축소와 안전하게 결합.
+            if (mktCtx && typeof mktCtx.sizeScale === "number" && !_symInverse) {
+              sizeScale *= mktCtx.sizeScale;
+            }
 
             // === [재작성] 고정리스크 사이징 ===
             //   한 거래 손실한도 R$ = 자산 × riskPerTrade%. 손절거리(주당)로 수량을 역산한다.
@@ -10142,6 +10244,24 @@ async function handleRequest(request, env) {
       }
       const llmKr = await getState(env.DB, "llm_last_run:kr", null);
       const llmUs = await getState(env.DB, "llm_last_run:us", null);
+      // [신규] 시장 컨텍스트 + 월간 사용량(여유분 모니터링)
+      const mktCtxDiag = await getState(env.DB, "mkt_context", null);
+      let usageDiag = null;
+      try {
+        const u = await getUsageState(env.DB);
+        const lim = Object.assign({}, USAGE_LIMITS_DEFAULT, cfg.usageLimits || {});
+        const reqR = (u.data.requests || 0) / Math.max(1, lim.monthlyRequests);
+        const cpuR = (u.data.cpuMs || 0) / Math.max(1, lim.monthlyCpuMs);
+        usageDiag = {
+          monthKey: u.mk,
+          requests: u.data.requests || 0, cpuMs: u.data.cpuMs || 0,
+          reqPct: +(reqR * 100).toFixed(2), cpuPct: +(cpuR * 100).toFixed(2),
+          worstPct: +(Math.max(reqR, cpuR) * 100).toFixed(2),
+          shutdownAtPct: (lim.shutdownAt || 0.9) * 100,
+          enrichStopAtPct: ((cfg.marketContext && cfg.marketContext.enrichMaxUsageRatio) || 0.75) * 100,
+          headroomPct: +((((lim.shutdownAt || 0.9)) - Math.max(reqR, cpuR)) * 100).toFixed(2)
+        };
+      } catch (e) {}
       return Response.json({
         now: now,
         lock: lock,
@@ -10156,6 +10276,8 @@ async function handleRequest(request, env) {
         quotes: { total: allSymbols.length, stored: quoteCount, freshUnder5min: freshCount },
         commodities: { total: cmTotal, freshUnder10min: cmFresh, stale: cmStale },
         llm: { kr: llmKr, us: llmUs },
+        marketContext: mktCtxDiag,
+        usage: usageDiag,
         staleOrMissing: staleSyms.slice(0, 20),
         cfg: { enabled: cfg.enabled, marketHoursOnly: cfg.marketHoursOnly, cycleLockTTL: cfg.cycleLockTTL }
       }, { headers: cors });
