@@ -4910,7 +4910,7 @@ async function updateSectorNewsSentiment(DB, cfg) {
   } catch(e) {}
   const groups = Object.keys(SECTOR_NEWS_REP);
   if (fetchBudgetLeft() < (sc.minBudgetReserve || 8) + groups.length) return cached;
-  const scores = {};
+  const scores = {}, headlines = {};
   for (const grp of groups) {
     if (fetchBudgetLeft() < (sc.minBudgetReserve || 8) + 1) break;
     const url = "https://feeds.finance.yahoo.com/rss/2.0/headline?s=" + SECTOR_NEWS_REP[grp] + "&lang=en-US&region=US";
@@ -4918,9 +4918,25 @@ async function updateSectorNewsSentiment(DB, cfg) {
       const resp = await fetch(url, { headers: { "User-Agent": "Mozilla/5.0 (compatible)" } });
       if (!resp.ok) continue;
       const xml = await resp.text();
-      const matches = [...xml.matchAll(/<title>(?:<!\[CDATA\[)?([\s\S]*?)(?:\]\]>)?<\/title>/g)].map(m => m[1].trim()).filter(Boolean);
-      const headlines = matches.slice(1, 20);
-      if (headlines.length > 0) scores[grp] = _scoreHeadlines(headlines);
+      // 제목 + 링크 + 발행시각 함께 추출
+      const items = [];
+      const itemBlocks = xml.split(/<item[\s>]/);
+      for (const block of itemBlocks.slice(1)) {
+        const titleM = block.match(/<title>(?:<!\[CDATA\[)?([\s\S]*?)(?:\]\]>)?<\/title>/);
+        const linkM  = block.match(/<link>([\s\S]*?)<\/link>/);
+        const pubM   = block.match(/<pubDate>([\s\S]*?)<\/pubDate>/);
+        const title  = titleM ? titleM[1].trim() : null;
+        if (title) items.push({
+          title: title,
+          link:  linkM  ? linkM[1].trim()  : null,
+          pub:   pubM   ? pubM[1].trim()   : null
+        });
+        if (items.length >= 10) break;
+      }
+      if (items.length > 0) {
+        headlines[grp] = items;
+        scores[grp] = _scoreHeadlines(items.map(function(i){ return i.title; }));
+      }
     } catch(e) {}
   }
   const posMax = sc.posScaleMax || 1.08, negMin = sc.negScaleMin || 0.88;
@@ -4929,7 +4945,7 @@ async function updateSectorNewsSentiment(DB, cfg) {
     const s = typeof scores[grp] === "number" ? scores[grp] : 0;
     scales[grp] = s >= 0 ? (1 + s * (posMax - 1)) : (1 + s * (1 - negMin));
   }
-  const result = { scales, scores, ts: Date.now() };
+  const result = { scales, scores, headlines, ts: Date.now() };
   try { await setState(DB, "sector_news_sentiment", result); } catch(e) {}
   const detail = groups.map(g => g + (scores[g] != null ? (scores[g]>=0?"+":"")+scores[g].toFixed(2) : "=?")).join(" ");
   try { await log(DB, "INFO", null, "[SECTOR-NEWS] " + detail); } catch(e) {}
@@ -10267,6 +10283,16 @@ async function handleRequest(request, env) {
       return Response.json({ ok: true, data: payload, ts: Date.now() }, { headers: cors });
     }
 
+    // === [NEWS] 섹터 뉴스 헤드라인 조회 ===
+    if (path === "/api/news") {
+      const cfg = migrateCfgToMarkets(Object.assign({}, DEFAULT_CFG, await getState(env.DB, "cfg", {})));
+      let cached = await getState(env.DB, "sector_news_sentiment", null);
+      if (url.searchParams.get("force") === "1" || !cached) {
+        resetFetchBudget(80);
+        cached = await updateSectorNewsSentiment(env.DB, cfg);
+      }
+      return Response.json(cached || { empty: true }, { headers: cors });
+    }
     // [신규] 신호별 성과 조회
     if (path === "/api/signal_stats") {
       const stats = await getState(env.DB, "signal_stats", {});

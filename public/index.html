@@ -527,6 +527,34 @@ button.btn.loading::after{content:'조회 중…';position:absolute;inset:0;disp
 .alt-row .dp{font-variant-numeric:tabular-nums;font-weight:700;text-align:right;min-width:60px;white-space:nowrap;}
 .alt-empty{padding:12px 14px;color:var(--t3);font-size:10px;text-align:center;}
 
+/* ── 원자재 소형 카드 ── */
+.cm-watch-card{background:var(--s1);border:1px solid var(--bd);border-radius:5px;padding:10px 12px;display:flex;flex-direction:column;gap:3px;}
+.cm-watch-sym{font-size:10px;font-weight:700;color:var(--acc);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
+.cm-watch-name{font-size:9px;color:var(--t3);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
+.cm-watch-price{font-size:15px;font-weight:700;color:var(--t1);font-variant-numeric:tabular-nums;margin-top:2px;}
+.cm-watch-day{font-size:11px;font-weight:700;font-variant-numeric:tabular-nums;}
+.cm-watch-meta{font-size:9px;color:var(--t3);margin-top:2px;}
+
+/* ── NEWS 페이지 ── */
+.news-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(340px,1fr));gap:16px;}
+.news-sector{background:var(--s1);border:1px solid var(--bd);border-radius:6px;overflow:hidden;}
+.news-sector-head{display:flex;align-items:center;gap:8px;padding:10px 14px;border-bottom:1px solid var(--bd);background:var(--bg);}
+.news-sector-name{font-size:11px;font-weight:700;letter-spacing:.8px;text-transform:uppercase;color:var(--t1);}
+.news-sector-chip{margin-left:auto;font-size:10px;font-weight:700;padding:2px 7px;border:1px solid;border-radius:3px;}
+.news-sector-chip.pos{color:var(--pos);border-color:rgba(0,230,118,.3);}
+.news-sector-chip.neg{color:var(--neg);border-color:rgba(255,23,68,.3);}
+.news-sector-chip.neu{color:var(--t3);border-color:var(--bd);}
+.news-item{padding:9px 14px;border-bottom:1px solid var(--bd2);display:flex;gap:8px;align-items:flex-start;}
+.news-item:last-child{border-bottom:none;}
+.news-dot{flex-shrink:0;width:5px;height:5px;border-radius:50%;margin-top:6px;}
+.news-dot.pos{background:var(--pos);}
+.news-dot.neg{background:var(--neg);}
+.news-dot.neu{background:var(--t3);}
+.news-title{font-size:11px;color:var(--t1);line-height:1.5;cursor:pointer;transition:color .1s;}
+.news-title:hover{color:var(--acc);}
+.news-pub{font-size:9px;color:var(--t3);margin-top:2px;}
+.news-empty{padding:14px;color:var(--t3);font-size:10px;text-align:center;}
+
 /* ── TRADES ── */
 .trades-toggle{
   display:flex;justify-content:space-between;align-items:center;
@@ -1032,6 +1060,10 @@ html[data-theme="light"] .sb-brand-sub{ color:#888; }
         <span class="nav-item-icon">◈</span>
         <span class="nav-item-label">BONDS</span>
       </div>
+      <div class="nav-item" data-page="news">
+        <span class="nav-item-icon">📰</span>
+        <span class="nav-item-label">NEWS</span>
+      </div>
       <div class="nav-item" data-page="trades">
         <span class="nav-item-icon">◷</span>
         <span class="nav-item-label">TRADES</span>
@@ -1283,9 +1315,14 @@ html[data-theme="light"] .sb-brand-sub{ color:#888; }
           <button type="button" id="btnResetCM" class="btn danger">↺ RESET</button>
         </div>
       </div>
-      <div class="alt-grid" style="grid-template-columns:1fr;max-width:560px;">
-        <div class="alt-panel" id="cmPanel"><div class="alt-empty">대기 중...</div></div>
-      </div>
+      <!-- 요약 바 -->
+      <div id="cmSummaryBar" style="display:flex;gap:0;border-bottom:1px solid var(--bd);"></div>
+      <!-- 포지션 -->
+      <div class="cm-section-label">POSITIONS</div>
+      <div id="cmPositionsBox2"><div class="empty">No commodity positions yet</div></div>
+      <!-- 워치리스트 카드 그리드 -->
+      <div class="cm-section-label">WATCHLIST</div>
+      <div id="cmWatchGrid" style="display:grid;grid-template-columns:repeat(auto-fill,minmax(150px,1fr));gap:10px;padding:14px 20px;"></div>
     </div><!-- /commodities -->
 
     <!-- ══ PAGE: BONDS ══ -->
@@ -1306,6 +1343,20 @@ html[data-theme="light"] .sb-brand-sub{ color:#888; }
         <div class="alt-panel" id="bdkrPanel"><div class="alt-empty">대기 중...</div></div>
       </div>
     </div><!-- /bonds -->
+
+    <!-- ══ PAGE: NEWS ══ -->
+    <div class="page" id="page-news">
+      <div class="page-header">
+        <span class="page-title">📰 NEWS · 섹터 뉴스</span>
+        <div class="page-actions">
+          <span id="newsStamp" style="font-size:10px;color:var(--t3);"></span>
+          <button type="button" id="btnRefreshNews" class="btn">↻ 새로고침</button>
+        </div>
+      </div>
+      <div id="newsBody" style="padding:14px 20px;">
+        <div class="empty">뉴스 불러오는 중...</div>
+      </div>
+    </div><!-- /news -->
 
     <!-- ══ PAGE: TRADES ══ -->
     <div class="page" id="page-trades">
@@ -2307,18 +2358,172 @@ html[data-theme="light"] .sb-brand-sub{ color:#888; }
     box.innerHTML = htmlUS + htmlKR;
   }
 
+  // === [NEWS] 섹터 뉴스 렌더링 ===
+  var _newsData = null;
+
+  function renderNews(data) {
+    var body = $('newsBody');
+    var stamp = $('newsStamp');
+    if (!body) return;
+    _newsData = data;
+
+    if (!data || data.empty || !data.headlines) {
+      body.innerHTML = '<div class="news-empty">뉴스 데이터가 없습니다. 미국 장중에 자동 수집됩니다.<br><br>' +
+        '<button class="btn" onclick="refreshNews()">↻ 지금 수집</button></div>';
+      return;
+    }
+
+    if (stamp) {
+      var age = data.ts ? Math.round((Date.now() - data.ts) / 60000) : null;
+      stamp.textContent = age != null ? age + '분 전 수집' : '';
+    }
+
+    var groups = ['TECH','FINANCE','HEALTH','CONSUMER','INDUSTRIAL','RESOURCES'];
+    var groupLabel = { TECH:'기술', FINANCE:'금융', HEALTH:'헬스케어', CONSUMER:'소비재', INDUSTRIAL:'산업재', RESOURCES:'에너지·원자재' };
+
+    var html = '<div class="news-grid">';
+    groups.forEach(function(grp) {
+      var items = (data.headlines && data.headlines[grp]) || [];
+      var score = data.scores && typeof data.scores[grp] === 'number' ? data.scores[grp] : null;
+      var scale = data.scales && data.scales[grp];
+      var chipCls = score == null ? 'neu' : score > 0.05 ? 'pos' : score < -0.05 ? 'neg' : 'neu';
+      var chipTxt = score == null ? '—' : (score >= 0 ? '+' : '') + score.toFixed(2) + (scale != null ? ' ×' + scale.toFixed(2) : '');
+
+      html += '<div class="news-sector">' +
+        '<div class="news-sector-head">' +
+          '<span class="news-sector-name">' + grp + ' <small style="font-size:9px;color:var(--t3);font-weight:400;">' + (groupLabel[grp]||'') + '</small></span>' +
+          '<span class="news-sector-chip ' + chipCls + '">' + chipTxt + '</span>' +
+        '</div>';
+
+      if (items.length === 0) {
+        html += '<div class="news-empty">수집된 뉴스 없음</div>';
+      } else {
+        items.forEach(function(item) {
+          var title = item.title || '';
+          var link  = item.link  || '#';
+          var pub   = item.pub   ? _fmtPubDate(item.pub) : '';
+          // 긍정/부정 키워드로 점 색 결정
+          var low = title.toLowerCase();
+          var isPos = ['beat','upgrade','surge','rally','strong','growth','record','profit','soar','rebound'].some(function(w){ return low.includes(w); });
+          var isNeg = ['miss','downgrade','crash','layoff','loss','warning','recall','decline','tumble','fraud'].some(function(w){ return low.includes(w); });
+          var dotCls = isPos ? 'pos' : isNeg ? 'neg' : 'neu';
+          html += '<div class="news-item">' +
+            '<span class="news-dot ' + dotCls + '"></span>' +
+            '<div>' +
+              '<div class="news-title" onclick="window.open(\'' + escapeAttr(link) + '\',\'_blank\')">' + escapeHtml(title) + '</div>' +
+              (pub ? '<div class="news-pub">' + pub + '</div>' : '') +
+            '</div>' +
+          '</div>';
+        });
+      }
+      html += '</div>';
+    });
+    html += '</div>';
+    body.innerHTML = html;
+  }
+
+  function _fmtPubDate(str) {
+    try {
+      var d = new Date(str);
+      if (isNaN(d.getTime())) return str;
+      return d.toLocaleString('ko-KR', { month:'numeric', day:'numeric', hour:'2-digit', minute:'2-digit' });
+    } catch(e) { return str; }
+  }
+
+  function escapeAttr(s) {
+    return (s||'').replace(/'/g, '%27').replace(/"/g, '&quot;');
+  }
+
+  function loadNews() {
+    return api('/api/news').then(function(data){ renderNews(data); })
+      ['catch'](function(e){ var b=$('newsBody'); if(b) b.innerHTML='<div class="news-empty">뉴스 로드 실패: '+escapeHtml(e.message)+'</div>'; });
+  }
+
+  function refreshNews() {
+    var btn = $('btnRefreshNews');
+    if (btn) { btn.disabled = true; btn.textContent = '수집 중...'; }
+    api('/api/news?force=1').then(function(data){
+      renderNews(data);
+      toast('뉴스 수집 완료');
+    })['catch'](function(e){ toast('뉴스 수집 실패: '+e.message); })
+    .then(function(){ if(btn){ btn.disabled=false; btn.textContent='↻ 새로고침'; } });
+  }
+
   // === [COMMODITY] 원자재 렌더링 ===
   var cmQuotes = {};   // symbol -> quote (USD)
   function renderCommodities(data) {
     if (!data) return;
-    // 시세 맵 갱신(다른 곳에서 참조)
     cmQuotes = {};
-    (data.watchlist || []).forEach(function(q){ if (q && q.symbol) cmQuotes[q.symbol] = q; });
+    var watchlist = data.watchlist || [];
+    var positions = data.positions || [];
+    watchlist.forEach(function(q){ if (q && q.symbol) cmQuotes[q.symbol] = q; });
+
     // 거래 시각 안내
     var info = $('cmTradeInfo');
-    if (info) info.textContent = '실시간(장중)' + (data.isTradeTimeNow ? ' · 🟢 지금 거래시간' : '');
-    // 컴팩트 패널로 렌더(국채와 동일 레이아웃)
-    renderAltPanel(data, 'cmPanel', 'usd', '⛏', 'COMMODITIES', 'USD · 원자재 실시간');
+    if (info) info.textContent = '실시간(장중)' + (data.isTradeTimeNow ? ' · 🟢 거래시간' : '');
+
+    // 요약 바
+    var cash = typeof data.cash === 'number' ? data.cash : 0;
+    var initial = data.initialCash || 100000;
+    var invested = 0;
+    positions.forEach(function(p){ var q=cmQuotes[p.symbol]; invested += p.qty * (q&&q.price||p.avg); });
+    var total = cash + invested;
+    var chgPct = initial > 0 ? (total - initial) / initial * 100 : 0;
+    var chgCls = chgPct > 0 ? 'pos' : chgPct < 0 ? 'neg' : '';
+    var bar = $('cmSummaryBar');
+    if (bar) bar.innerHTML =
+      '<div class="cm-stat"><div class="summary-label">TOTAL</div><div class="summary-value">$'+fmtNum(total,2)+'</div></div>'+
+      '<div class="cm-stat"><div class="summary-label">INVESTED</div><div class="summary-value">$'+fmtNum(invested,2)+'</div></div>'+
+      '<div class="cm-stat"><div class="summary-label">CASH</div><div class="summary-value">$'+fmtNum(cash,2)+'</div></div>'+
+      '<div class="cm-stat"><div class="summary-label">vs INITIAL</div><div class="summary-value '+chgCls+'">'+(chgPct>=0?'+':'')+fmtNum(chgPct,2)+'%</div></div>';
+
+    // 포지션
+    var posBox = $('cmPositionsBox2');
+    if (posBox) {
+      if (positions.length === 0) {
+        posBox.innerHTML = '<div class="empty">No commodity positions yet</div>';
+      } else {
+        var rows = positions.map(function(p){
+          var q=cmQuotes[p.symbol]; var cur=q&&q.price||null;
+          var pnlPct = cur!=null ? (cur-p.avg)/p.avg*100 : -999;
+          return {p:p,cur:cur,pnlPct:pnlPct};
+        }).sort(function(a,b){ return b.pnlPct-a.pnlPct; });
+        var html='<div class="table-wrap"><table class="table"><thead><tr>'+
+          '<th>COMMODITY</th><th class="right">AVG</th><th class="right">CUR</th>'+
+          '<th class="right">PnL%</th><th class="right">OPENED</th></tr></thead><tbody>';
+        rows.forEach(function(r){
+          var pc = r.pnlPct===-999?'':r.pnlPct>=0?'pos':'neg';
+          html+='<tr>'+
+            '<td><b>'+escapeHtml(r.p.name||r.p.symbol)+'</b></td>'+
+            '<td class="right">$'+fmtNum(r.p.avg,2)+'</td>'+
+            '<td class="right">'+(r.cur?'$'+fmtNum(r.cur,2):'-')+'</td>'+
+            '<td class="right '+pc+'">'+(r.pnlPct!==-999?(r.pnlPct>=0?'+':'')+fmtNum(r.pnlPct,2)+'%':'-')+'</td>'+
+            '<td class="right">'+fmtAgo(r.p.opened_ts)+'</td></tr>';
+        });
+        posBox.innerHTML = html+'</tbody></table></div>';
+      }
+    }
+
+    // 워치리스트 소형 카드 그리드
+    var grid = $('cmWatchGrid');
+    if (grid) {
+      if (watchlist.length === 0) {
+        grid.innerHTML = '<div class="empty">대기 중...</div>';
+      } else {
+        grid.innerHTML = watchlist.map(function(q){
+          var hasPrice = typeof q.price === 'number';
+          var dc = q.dayPct > 0 ? 'pos' : q.dayPct < 0 ? 'neg' : '';
+          var sign = q.dayPct >= 0 ? '+' : '';
+          return '<div class="cm-watch-card">'+
+            '<div class="cm-watch-sym">'+escapeHtml(q.name||q.symbol)+'</div>'+
+            '<div class="cm-watch-name">'+escapeHtml(q.symbol)+(q.unit?' · '+escapeHtml(q.unit):'')+'</div>'+
+            '<div class="cm-watch-price">'+(hasPrice?'$'+fmtNum(q.price,2):'-')+'</div>'+
+            '<div class="cm-watch-day '+dc+'">'+(typeof q.dayPct==='number'?sign+fmtNum(q.dayPct,2)+'%':'-')+'</div>'+
+            '<div class="cm-watch-meta">RSI '+(q.rsi!=null?q.rsi.toFixed(1):'-')+'</div>'+
+            '</div>';
+        }).join('');
+      }
+    }
   }
 
   function loadCommodities() {
@@ -3639,6 +3844,8 @@ html[data-theme="light"] .sb-brand-sub{ color:#888; }
     loadCommodities();
     // [BONDS] 국채 패널 로드
     loadBonds();
+    // [NEWS] 뉴스 로드
+    loadNews();
     // [MARKET INTEL] risk-on/off + 섹터뉴스 대시보드 카드
     fetch('/api/diag').then(function(r){ return r.json(); }).then(function(d){ renderMarketIntel(d); })['catch'](function(){});
     // [개선] 로그는 모달 열렸을 때만 fetch (불필요한 폴링 제거)
@@ -4428,6 +4635,7 @@ window.addEventListener('DOMContentLoaded', () => {
   document.querySelectorAll('.nav-item').forEach(function(item){
     item.addEventListener('click',function(){showPage(this.getAttribute('data-page'));});
   });
+  var _btnNews = $('btnRefreshNews'); if (_btnNews) _btnNews.addEventListener('click', refreshNews);
   var _btnBDUS = $('btnRunBDUS'); if (_btnBDUS) _btnBDUS.addEventListener('click', function(){ runBondNow('bdus','btnRunBDUS'); });
   var _btnBDKR = $('btnRunBDKR'); if (_btnBDKR) _btnBDKR.addEventListener('click', function(){ runBondNow('bdkr','btnRunBDKR'); });
   try{showPage(localStorage.getItem('luxPage')||'dashboard');}catch(e){showPage('dashboard');}
