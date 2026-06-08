@@ -2456,6 +2456,33 @@ const DEFAULT_CFG = {
     maxPositionPct: 6,       // 포트의 최대 6%
     riskPerTrade: 0.5        // 손실 리스크 = 포트의 0.5%
   },
+  // === [SCALP-PANIC] 패닉/베어장 전용 단타 룰 — "패닉 때도 단타로 번다" ===
+  //   평시 scalp는 상승추세 종목만 노려 패닉장엔 신호가 0이 된다.
+  //   패닉/베어(isPanic 또는 BEAR+지수급락)일 때만 아래 두 진입을 추가로 허용:
+  //     (A) 인버스 ETF 모멘텀 — 시장하락=인버스상승. 추격문턱을 낮춰 하락장 수익을 적극 포착.
+  //     (B) 캡출레이션 바운스 — 투매로 급락한 일반 종목의 V자 반등을 아주 짧게(타이트 손절) 먹는다.
+  //   청산은 표준 scalpRules(빠른 손절·TP1 본전락·트레일·타임스톱)를 그대로 재사용한다.
+  scalpPanicRules: {
+    enabled: true,
+    // 패닉 중 scalp 사이즈가 crashGate(×0.4)에 과도히 눌리지 않게 하한을 둔다(리스크 자체가 작음).
+    sizeScaleFloor: 0.6,
+    // (A) 인버스 ETF — 하락장 추세추종 단타
+    inverse: {
+      momEntry: 0.25,        // 분봉 모멘텀 진입 문턱(평시 0.4 대비 완화 — 하락장 추종 적극화)
+      vwapBand: 1.5,         // VWAP ±1.5% 이내(추세 추종이라 평시보다 넓게)
+      confidence: 0.8
+    },
+    // (B) 캡출레이션 바운스 — 투매 후 강반등 단타(일반 종목)
+    capitulation: {
+      enabled: true,
+      dayDropMax: -3.0,      // 당일 -3%↓ 급락 종목만 대상(낙폭 큰 종목의 되돌림)
+      vwapBelowMin: -3.0,    // VWAP 대비 -3%~0% 아래로 이탈한 구간에서
+      bounceMinPct: 0.6,     // 직전 분봉 +0.6%↑ 강반등(데드캣 약반등 배제)
+      twoBarConfirm: true,   // 직전 2봉이 무너지지 않음(1봉 페이크 반등 회피 → 승률↑)
+      minRelVol: 1.5,        // 분봉 거래량 1.5배↑(투매→매수유입 확인, 핵심)
+      confidence: 0.75
+    }
+  },
   // === [재작성] TREND 전략 룰 — 추세 정렬 진입 + 고정리스크 + 분할익절/트레일 ===
   trendRules: {
     maShort: 20, maMid: 50, maLong: 200,   // 추세 정렬 기준 이동평균
@@ -2483,7 +2510,19 @@ const DEFAULT_CFG = {
     // === 분산 매도 감지 (거래량 급증+하락 → 기관 분산 차단) ===
     distDetectEnabled: true,
     distDetectVolMult: 2.5,                 // 20일 평균 대비 거래량 배수 (이 이상 + 하락 → 차단)
-    distDetectMinDrop: 0.5                  // 최소 하락폭 % (노이즈 제거)
+    distDetectMinDrop: 0.5,                 // 최소 하락폭 % (노이즈 제거)
+    // === [신규 전략 C] TR_SQUEEZE — 변동성 수축(스퀴즈) 해소 돌파 ===
+    squeezeEnabled: true,
+    squeezeBbMult: 2.0,                     // 볼린저밴드 표준편차 배수
+    squeezeKcMult: 1.5,                     // 켈트너채널 ATR 배수 (BB가 이 안에 갇히면 스퀴즈)
+    squeezeVolMult: 1.3,                    // 해소 돌파 시 거래량 배수
+    // === [신규 전략 D] TR_RS_LEADER — 상대강도 리더 풀백 (모멘텀 팩터) ===
+    rsLeaderEnabled: true,
+    rsLeaderRsMin: 5,                       // 지수 대비 20일 초과수익(%p) 하한 — 주도주 선별
+    rsLeaderMomMin: 10,                     // 절대 60일 모멘텀(%) 하한
+    rsLeaderPbBand: 3,                      // MA10 ±N% 풀백 밴드(얕은 눌림목)
+    rsLeaderRsiMin: 45,
+    rsLeaderRsiMax: 78                      // 리더는 과열 허용폭 넓게(강모멘텀 지속)
   },
   // === [KR 분리] TREND 룰 — KR 시장 전용 오버라이드 ===
   //   여기 정의한 키만 trendRules(US 기본값)를 덮어쓴다. 누락 키는 US값 상속.
@@ -4787,7 +4826,10 @@ function confirmIntradayEntry(mb, price, rules) {
 }
 
 async function fetchDailyFull(symbol) {
-  const j = await yahooFetch("https://query1.finance.yahoo.com/v8/finance/chart/" + encodeURIComponent(symbol) + "?interval=1d&range=3mo");
+  // [강화] range 3mo→1y: MA200 장기추세 필터·52주 신고가·60일 모멘텀(computeAlphaQuality)을 실제로 활성화.
+  //   지표는 모두 last-N 윈도우만 쓰므로 MA20/50·RSI·ATR 결과는 불변, MA200/52w/장기모멘텀만 새로 가능.
+  //   일봉은 DB 캐시(cacheMin)라 fetch 빈도 영향 작음.
+  const j = await yahooFetch("https://query1.finance.yahoo.com/v8/finance/chart/" + encodeURIComponent(symbol) + "?interval=1d&range=1y");
   const result = j && j.chart && j.chart.result && j.chart.result[0];
   if (!result) throw new Error("no daily data");
   const meta = result.meta || {};
@@ -5291,11 +5333,78 @@ function evaluateBuySignals_swing(price, dayPct, dailyData, cfg) {
 //   분봉 진입 신호:
 //     SC_VWAP_CROSS: 가격이 VWAP 근접(±1%) + 상승 모멘텀 → VWAP 지지 진입
 //     SC_MOMENTUM:   분봉 모멘텀 강함(≥0.5%) + VWAP 하향 이탈 아님 → 추세 타기
-function evaluateScalpEntry(mb, dailyData, cfg, market) {
+function evaluateScalpEntry(mb, dailyData, cfg, market, regime) {
   if (!mb || !mb.vwap || !mb.closes || mb.closes.length < 6) return null;
   const sr = Object.assign({}, (cfg && cfg.scalpRules) || DEFAULT_CFG.scalpRules || {});
   const closes = dailyData && dailyData.closes;
   if (!closes || closes.length < 55) return null;
+
+  // ── 분봉 상대거래량 헬퍼 (게이트5/패닉 공용) ──
+  const _relVol = function(mult) {
+    if (!mult || !mb.volumes || mb.volumes.length < 11) return true;
+    const vN = mb.volumes.length;
+    const recentVol = mb.volumes[vN - 1] + mb.volumes[vN - 2];
+    let avg = 0, cnt = 0;
+    for (let i = Math.max(0, vN - 11); i < vN - 1; i++) { avg += mb.volumes[i]; cnt++; }
+    avg = cnt > 0 ? (avg / cnt) * 2 : 0;
+    return !(avg > 0 && recentVol < avg * mult);
+  };
+
+  // ══ [SCALP-PANIC] 패닉/베어장 전용 진입 — 평시 게이트가 다 막는 구간에서 수익 포착 ══
+  //   여기서 신호가 잡히면 즉시 return(평시 게이트로 내려가지 않음). 안 잡히면 평시 로직 계속.
+  const _csPanic = cfg && cfg.crashSurvival && cfg.crashSurvival.panic;
+  const _panicOn = (typeof isPanic === "function") ? isPanic(regime, _csPanic) : false;
+  const _bearStress = regime && regime.regime === "BEAR" &&
+    typeof regime.worstDayPct === "number" && regime.worstDayPct <= -1.0;
+  const _stressed = _panicOn || _bearStress;
+  const spr = Object.assign({}, (cfg && cfg.scalpPanicRules) || DEFAULT_CFG.scalpPanicRules || {});
+  if (_stressed && spr.enabled !== false) {
+    const _isInv = dailyData.symbol && (typeof INVERSE_ETF !== "undefined") && INVERSE_ETF.has(dailyData.symbol);
+    const _price = mb.price, _vwap = mb.vwap;
+    const _aboveVwap = _vwap > 0 ? ((_price - _vwap) / _vwap) * 100 : 0;
+    const _mom = mb.recentMom || 0;
+    const _mc = mb.closes;
+    const _lastBar = _mc.length >= 2 ? ((_mc[_mc.length - 1] - _mc[_mc.length - 2]) / _mc[_mc.length - 2]) * 100 : 0;
+    const _prevBar = _mc.length >= 3 ? ((_mc[_mc.length - 2] - _mc[_mc.length - 3]) / _mc[_mc.length - 3]) * 100 : 0;
+
+    // (A) 인버스 ETF — 시장하락=인버스상승. 자체 상승추세(MA20>MA50)에서 모멘텀 추종 단타.
+    if (_isInv) {
+      const ma20i = getMA(closes, sr.maFastPeriod || 20);
+      const ma50i = getMA(closes, sr.maSlowPeriod || 50);
+      const inv = spr.inverse || {};
+      if (ma20i != null && ma50i != null && ma20i > ma50i &&
+          Math.abs(_aboveVwap) <= (inv.vwapBand != null ? inv.vwapBand : 1.5) &&
+          _mom >= (inv.momEntry != null ? inv.momEntry : 0.25)) {
+        return {
+          name: "SC_PANIC_INV", weight: 0.9, type: "SCALP",
+          confidence: inv.confidence != null ? inv.confidence : 0.8,
+          detail: "INV mom " + _mom.toFixed(2) + "% vwap" + _aboveVwap.toFixed(2) + "%",
+          members: ["SC_PANIC_INV"], isPanicScalp: true
+        };
+      }
+    } else {
+      // (B) 캡출레이션 바운스 — 투매로 급락한 종목의 강한 V자 반등을 짧게 먹는다.
+      const cap = spr.capitulation || {};
+      if (cap.enabled !== false && dailyData.prevClose && dailyData.prevClose > 0) {
+        const dayMom = ((_price - dailyData.prevClose) / dailyData.prevClose) * 100;
+        const vwapBelow = cap.vwapBelowMin != null ? cap.vwapBelowMin : -3.0;
+        const bounceMin = cap.bounceMinPct != null ? cap.bounceMinPct : 0.6;
+        const twoBarOk = cap.twoBarConfirm === false ? true : (_lastBar > 0 && _prevBar >= -0.1);
+        if (dayMom <= (cap.dayDropMax != null ? cap.dayDropMax : -3.0) &&  // 당일 급락 종목
+            _aboveVwap <= 0 && _aboveVwap >= vwapBelow &&                   // VWAP 아래 이탈 구간
+            _lastBar >= bounceMin && twoBarOk &&                           // 강반등 + 2봉 확인
+            _relVol(cap.minRelVol)) {                                      // 매수유입 거래량
+          return {
+            name: "SC_PANIC_BOUNCE", weight: 0.8, type: "SCALP",
+            confidence: cap.confidence != null ? cap.confidence : 0.75,
+            detail: "BOUNCE day" + dayMom.toFixed(1) + "% vwap" + _aboveVwap.toFixed(2) + "% +" + _lastBar.toFixed(2) + "%",
+            members: ["SC_PANIC_BOUNCE"], isPanicScalp: true
+          };
+        }
+      }
+    }
+    // 패닉 전용 진입 미체결 → 평시 게이트로 계속(인버스 등 일부는 평시 로직도 통과 가능)
+  }
 
   // ── 게이트 1: 일봉 추세 정렬 ──
   const ma20 = getMA(closes, sr.maFastPeriod || 20);
@@ -5527,13 +5636,77 @@ function evaluateTrendEntry(price, dayPct, dailyData, cfg, regime, market) {
       // [V9.0 수익률 개선] 52주(252거래일) 신고가 돌파 추가 확인 — 연간 최고가를 넘는 돌파는
       //   모멘텀 지속성이 현저히 높다(52-week high effect, Fama/Blume 실증). +0.10 가산.
       let is52wHi = false;
-      if (closes.length >= 253) {
-        const hi252 = getNDayHigh(closes, 252);
+      if (closes.length >= 200) {
+        const look52 = Math.min(252, closes.length - 1);  // 1y(~252봉)에서도 동작
+        const hi252 = getNDayHigh(closes, look52);
         if (hi252 != null && price > hi252) { boConf = Math.min(1.0, boConf + 0.10); is52wHi = true; }
       }
       return { name: "TR_BREAKOUT", weight: 1.1, type: "TREND", confidence: boConf,
         detail: "BO>" + hiN.toFixed(2) + (is52wHi ? " 52W_HI" : "") + " vol x" + (todayVol / avgVol).toFixed(1) + " RSI " + rsi.toFixed(0) + " c" + boConf.toFixed(2),
         members: ["TR_BREAKOUT"] };
+    }
+  }
+
+  // ══ 트리거 C: TR_SQUEEZE — 변동성 수축(스퀴즈) 해소 돌파 (VCP / TTM Squeeze) ══
+  //   볼린저밴드(20,2σ)가 켈트너채널(20,kc×ATR) 안에 갇혀 있던(=변동성 극저) 종목이
+  //   밴드 확장과 함께 직전 상단을 돌파할 때 진입. 저변동 코일→고변동 팽창은 강한 모멘텀 시발점.
+  //   풀백/돌파 미충족 시에만 평가되므로 순수 추가 진입(기존 동작 불변). 추세정렬 게이트는 위에서 통과.
+  if (r.squeezeEnabled !== false && closes.length >= 25 && atr != null) {
+    const bbMult = r.squeezeBbMult || 2.0;
+    const kcMult = r.squeezeKcMult || 1.5;
+    // 직전 봉 기준 스퀴즈 상태 — BB가 KC 안에 완전히 갇혔는가
+    const prevC = closes.slice(0, -1);
+    const bbPrev = getBollingerBands(prevC, 20, bbMult);
+    const ma20Prev = getMA(prevC, 20);
+    const atrPrev = getATR(prevC, cfg.atrPeriod || 14, highs ? highs.slice(0, -1) : null, lows ? lows.slice(0, -1) : null);
+    if (bbPrev != null && ma20Prev != null && atrPrev != null && atrPrev > 0) {
+      const kcUpPrev = ma20Prev + kcMult * atrPrev;
+      const kcLoPrev = ma20Prev - kcMult * atrPrev;
+      const wasSqueezed = bbPrev.upper < kcUpPrev && bbPrev.lower > kcLoPrev;
+      // 현재 밴드 확장(스퀴즈 해소) + 직전 상단 돌파 + 당일 상승 + 거래량
+      if (wasSqueezed && isGreen && price > bbPrev.upper && volumes.length >= 21) {
+        const todayVol = volumes[volumes.length - 1];
+        let avgVol = 0;
+        for (let i = volumes.length - 21; i < volumes.length - 1; i++) avgVol += volumes[i];
+        avgVol /= 20;
+        const volReq = isEtf ? 1.05 : (r.squeezeVolMult || 1.3);
+        if (avgVol > 0 && todayVol >= avgVol * volReq && rsi <= (r.rsiBreakoutMax || 75)) {
+          const sqConf = Math.min(1.0, confidence + 0.15);  // 코일 해소는 강신호 → 가산
+          return { name: "TR_SQUEEZE", weight: 1.1, type: "TREND", confidence: sqConf,
+            detail: "SQZ>" + bbPrev.upper.toFixed(2) + " vol x" + (todayVol / avgVol).toFixed(1) + " RSI " + rsi.toFixed(0) + " c" + sqConf.toFixed(2),
+            members: ["TR_SQUEEZE"] };
+        }
+      }
+    }
+  }
+
+  // ══ 트리거 D: TR_RS_LEADER — 상대강도 리더 풀백 (cross-sectional momentum) ══
+  //   지수 대비 강한 상대강도(RS) + 절대 모멘텀을 가진 "주도주"가 빠른MA(MA10)로 얕게 눌렸다 반등할 때 진입.
+  //   TR_PULLBACK(MA20·RSI≤68)이 놓치는, 강하게 달리는 리더의 첫 눌림목을 포착(모멘텀 팩터 실증 우위).
+  //   데이터: 일봉 closes + 지수 20일수익률(regime)만 사용 — 추가 fetch 0.
+  if (r.rsLeaderEnabled !== false && regime && typeof regime.idxReturn20 === "number" && closes.length >= 65) {
+    const ret20 = getNDayReturn(closes, 20);
+    const ret60 = getNDayReturn(closes, 60);
+    const rsMin = r.rsLeaderRsMin != null ? r.rsLeaderRsMin : 5;     // 지수 대비 20일 초과수익 ≥5%p
+    const momMin = r.rsLeaderMomMin != null ? r.rsLeaderMomMin : 10; // 절대 60일 모멘텀 ≥10%
+    if (ret20 != null && ret60 != null) {
+      const rs = ret20 - regime.idxReturn20;
+      if (rs >= rsMin && ret60 >= momMin) {
+        const ma10 = getMA(closes, 10);
+        if (ma10 != null) {
+          const ma10Gap = ((price - ma10) / ma10) * 100;
+          const pbBand = r.rsLeaderPbBand != null ? r.rsLeaderPbBand : 3;  // MA10 ±3% 이내
+          const rsiLo = r.rsLeaderRsiMin != null ? r.rsLeaderRsiMin : 45;
+          const rsiHi = r.rsLeaderRsiMax != null ? r.rsLeaderRsiMax : 78;  // 리더는 과열 허용폭 넓게
+          if (Math.abs(ma10Gap) <= pbBand && isGreen && rsi >= rsiLo && rsi <= rsiHi) {
+            // 리더십 강도(RS)로 confidence 가산 — 강한 주도주일수록 크게
+            const ldConf = Math.min(1.0, Math.max(confidence, 0.7) + Math.min(0.2, (rs - rsMin) * 0.01));
+            return { name: "TR_RS_LEADER", weight: 1.05, type: "TREND", confidence: ldConf,
+              detail: "RS+" + rs.toFixed(1) + "%p mom" + ret60.toFixed(0) + "% MA10" + ma10Gap.toFixed(1) + "% RSI" + rsi.toFixed(0) + " c" + ldConf.toFixed(2),
+              members: ["TR_RS_LEADER"] };
+          }
+        }
+      }
     }
   }
 
@@ -5724,23 +5897,28 @@ function evaluateBuyBlocks(price, dayPct, dailyData, cfg, regime, signal, ctx) {
   if (ctx && ctx.symbol && ctx.cooldowns && ctx.cooldowns.has(ctx.symbol)) return "REENTRY_COOLDOWN";
   // [패닉 헤지] 인버스 ETF는 시장 붕괴/약세 차단에서 제외 — 하락장이 인버스엔 호재.
   const isInverse = ctx && ctx.symbol && INVERSE_ETF.has(ctx.symbol);
+  // [SCALP-PANIC] 패닉 단타(캡출레이션 바운스/인버스 모멘텀)는 "급락을 의도적으로 산다"는 전략이라
+  //   폭락·칼날·약세·분산·변동성 게이트를 면제한다. 리스크는 0.4~0.5%로 작고, 손절 1.2%·반등확인·
+  //   거래량확인으로 자체 방어한다. 평시 trend/scalp 진입에는 영향 없음(isPanicScalp 신호 한정).
+  const isPanicScalp = signal && signal.isPanicScalp === true;
+  const _exemptCrash = isInverse || isPanicScalp;
 
-  // 시장 붕괴 / 장중 급락 — 인버스는 면제
-  if (!isInverse && regime.worstDayPct <= cfg.marketCrashPct) return "MARKET_CRASH " + regime.worstDayPct.toFixed(2) + "%";
-  if (dayPct <= -cfg.maxDailyDrop) return "FALLING_KNIFE " + dayPct.toFixed(2) + "%";
+  // 시장 붕괴 / 장중 급락 — 인버스·패닉단타는 면제
+  if (!_exemptCrash && regime.worstDayPct <= cfg.marketCrashPct) return "MARKET_CRASH " + regime.worstDayPct.toFixed(2) + "%";
+  if (!isPanicScalp && dayPct <= -cfg.maxDailyDrop) return "FALLING_KNIFE " + dayPct.toFixed(2) + "%";
 
   const highs = dailyData.highs || null;
   const lows = dailyData.lows || null;
   const atr14 = getATR(closes, cfg.atrPeriod, highs, lows);
   const atr30 = getATR(closes, 30, highs, lows);
-  if (atr14 != null && atr30 != null && atr14 > atr30 * 2.0) {
+  if (!isPanicScalp && atr14 != null && atr30 != null && atr14 > atr30 * 2.0) {
     return "VOLATILITY_SPIKE ATR14=" + atr14.toFixed(2) + " ATR30=" + atr30.toFixed(2);
   }
 
   // 대량거래+하락 = 기관 분산 매도 신호 — 신규 진입 차단 (ETF·인버스 면제)
   //   거래량이 20일 평균의 N배 이상이면서 당일 하락이면 기관 출구 가능성 높음.
   const _tr = cfg.trendRules || {};
-  if (!isInverse && !(ctx && ctx.symbol && ETF_SYMBOLS.has(ctx.symbol)) && _tr.distDetectEnabled !== false) {
+  if (!isInverse && !isPanicScalp && !(ctx && ctx.symbol && ETF_SYMBOLS.has(ctx.symbol)) && _tr.distDetectEnabled !== false) {
     const vols = dailyData.volumes;
     if (vols && vols.length >= 21) {
       const todayVol = vols[vols.length - 1];
@@ -5753,15 +5931,15 @@ function evaluateBuyBlocks(price, dayPct, dailyData, cfg, regime, signal, ctx) {
     }
   }
 
-  // BEAR_WEAK — 인버스는 면제 (약세장이 호재)
-  if (!isInverse && regime.regime === "BEAR" && regime.worstDayPct <= -1.5) {
+  // BEAR_WEAK — 인버스·패닉단타는 면제 (약세장이 호재 / 약세장 반등을 노림)
+  if (!_exemptCrash && regime.regime === "BEAR" && regime.worstDayPct <= -1.5) {
     return "BEAR_WEAK worst=" + regime.worstDayPct.toFixed(2) + "%";
   }
 
   // RS 필터 — isCounterTrend 신호·ETF는 면제
   // [ETF 면제] 지수 ETF는 지수 자체라 "지수 대비 아웃퍼폼"이 구조적으로 불가능
   const _isEtfRS = ctx && ctx.symbol && ETF_SYMBOLS.has(ctx.symbol);
-  if (cfg.rsFilterEnabled && !signal.isCounterTrend && !_isEtfRS && regime.idxReturn20 != null) {
+  if (cfg.rsFilterEnabled && !signal.isCounterTrend && !isPanicScalp && !_isEtfRS && regime.idxReturn20 != null) {
     const stockRet = getNDayReturn(closes, cfg.rsLookbackDays);
     if (stockRet != null) {
       const relPerf = stockRet - regime.idxReturn20;
@@ -8515,14 +8693,23 @@ async function runTradingCycle(env) {
 
           // === [SCALP] 분봉 단타 전략 평가 ===
           //   scalp 활성화 + trend 신호 없을 때만 평가 (같은 종목 중복진입 방지)
+          //   [SCALP-PANIC] 단타 토글이 꺼져 있어도 패닉/베어장에서는 자동 작동 — "패닉 때도 단타로 번다".
           //   분봉 fetch: 1m봉 (단타는 더 세밀한 봉 필요)
-          if (mcfg.strategies && mcfg.strategies.scalp && stratResults.length === 0 && !strategiesHeldNow.has("scalp")) {
+          const _scalpOn = mcfg.strategies && mcfg.strategies.scalp;
+          const _panicScalpOn = (function(){
+            const sp = mcfg.scalpPanicRules || DEFAULT_CFG.scalpPanicRules || {};
+            if (sp.enabled === false) return false;
+            const cp = mcfg.crashSurvival && mcfg.crashSurvival.panic;
+            const bear = regime && regime.regime === "BEAR" && typeof regime.worstDayPct === "number" && regime.worstDayPct <= -1.0;
+            return ((typeof isPanic === "function") ? isPanic(regime, cp) : false) || bear;
+          })();
+          if ((_scalpOn || _panicScalpOn) && stratResults.length === 0 && !strategiesHeldNow.has("scalp")) {
             const _scalpIc = mcfg.intradayConfirm || DEFAULT_CFG.intradayConfirm;
             if (minuteFetchUsed < ((_scalpIc && _scalpIc.maxPerCycle) || 60) && fetchBudgetLeft() > 5) {
               try {
                 minuteFetchUsed++;
                 const _scalpMb = await fetchMinuteBars(symbol, { interval: "1m", range: "1d" });
-                const _scalpSig = evaluateScalpEntry(_scalpMb, daily, mcfg, market);
+                const _scalpSig = evaluateScalpEntry(_scalpMb, daily, mcfg, market, regime);
                 if (_scalpSig && !strategiesHeldNow.has("scalp") && !heldSymbols.has(symbol)) {
                   stratResults = [{ strategy: "scalp", signal: _scalpSig, rawCount: 1 }];
                 }
@@ -8589,7 +8776,9 @@ async function runTradingCycle(env) {
             // [V12] 폭락장 생존 게이트 — 신규매수 전면 차단(드로다운 L2+/연속손실/패닉)
             //   [패닉 헤지] 인버스 ETF는 면제 — 패닉장에서 인버스로 수익·헤지를 노린다.
             const _symInverse = INVERSE_ETF.has(symbol);
-            if (crashGate.blockNew && !_symInverse) {
+            // [SCALP-PANIC] 패닉 단타 신호는 전면차단(DD_L2/연속손실)도 면제 — 리스크 작고 회전 빨라 패닉장 수익 기회 유지.
+            const _isPanicScalpSig = signal && signal.isPanicScalp === true;
+            if (crashGate.blockNew && !_symInverse && !_isPanicScalpSig) {
               incBlock("CRASH_GATE[" + strategy + "]");
               continue;
             }
@@ -8629,6 +8818,12 @@ async function runTradingCycle(env) {
             //   [패닉 헤지] 인버스는 면제·부스트 — 패닉이 인버스엔 호재.
             let sizeScale = 1.0;
             if (crashGate.sizeScale && crashGate.sizeScale < 1 && !_symInverse) sizeScale = crashGate.sizeScale;
+            // [SCALP-PANIC] 패닉 중 단타는 crashGate(×0.4)에 과도히 눌리지 않게 하한 적용 (리스크 자체가 0.5%로 작음 → 패닉장 수익 기회 보존)
+            if (strategy === "scalp" && !_symInverse) {
+              const _spr = mcfg.scalpPanicRules || DEFAULT_CFG.scalpPanicRules || {};
+              const _floor = _spr.sizeScaleFloor != null ? _spr.sizeScaleFloor : 0.6;
+              if (sizeScale < _floor) sizeScale = _floor;
+            }
             if (_symInverse && regime && (regime.regime === "BEAR" || (typeof regime.worstDayPct === "number" && regime.worstDayPct <= -1.0))) sizeScale = (mcfg.inversePanicBoost || 1.3);
 
             // === [재작성] 고정리스크 사이징 ===
