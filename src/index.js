@@ -2045,6 +2045,27 @@ const COMMODITY_SYMBOLS = COMMODITIES.map(function(c){ return c.symbol; });
 const COMMODITY_META = {};
 for (const c of COMMODITIES) COMMODITY_META[c.symbol] = c;
 
+// === [신규] 국채(Treasury/Bond) — 원자재처럼 별도 슬리브, 실시간 거래. 미국+한국만. ===
+//   통화가 달라 계좌를 분리: bdus(USD, 무세금) / bdkr(KRW, 증권거래세). 전부 ETF(매매 가능).
+//   거래시간: bdus=미국장, bdkr=한국장. 주식 swing 전략 신호/매도 로직 재사용.
+const BONDS_US = [
+  { symbol: "TLT",  name: "미국 장기국채 20년+ (TLT)" },
+  { symbol: "IEF",  name: "미국 중기국채 7-10년 (IEF)" },
+  { symbol: "SHY",  name: "미국 단기국채 1-3년 (SHY)" },
+  { symbol: "GOVT", name: "미국 종합국채 (GOVT)" }
+];
+const BONDS_KR = [
+  { symbol: "148070.KS", name: "KOSEF 국고채10년" },
+  { symbol: "114260.KS", name: "KODEX 국고채3년" },
+  { symbol: "152380.KS", name: "KODEX 국채선물10년" }
+];
+const BONDS = BONDS_US.concat(BONDS_KR);
+const BOND_US_SYMBOLS = BONDS_US.map(function(b){ return b.symbol; });
+const BOND_KR_SYMBOLS = BONDS_KR.map(function(b){ return b.symbol; });
+const BOND_SYMBOLS = BONDS.map(function(b){ return b.symbol; });
+const BOND_META = {};
+for (const b of BONDS) BOND_META[b.symbol] = b;
+
 // === [FX] 환율 조회 대상 ===
 //   야후 파이낸스 환율 심볼. 매일 06:30 KST 1회 갱신 (조회 전용 — 매매 없음).
 //   "XXXKRW=X" = 1 XXX당 원화. "KRW=X" = 1달러당 원화. "JPY=X" = 1달러당 엔.
@@ -2249,6 +2270,10 @@ const DEFAULT_CFG = {
   },
   initialCashUS: 100000, initialCashKR: 100000000,
   initialCashCM: 100000,   // [COMMODITY] 원자재 초기 보유 금액 $100,000 (USD)
+  initialCashBDUS: 100000,    // [BOND] 미국 국채 슬리브 초기금액 $100,000 (USD)
+  initialCashBDKR: 100000000, // [BOND] 한국 국채 슬리브 초기금액 ₩100,000,000 (KRW)
+  altRealtime: true,          // [BOND/CM] 원자재·국채 실시간 거래(매 사이클). false면 비활성
+  altEnrichMaxUsageRatio: 0.82, // [예산] 월 사용량 이 비율 초과 시 alt 슬리브(원자재·국채)는 주식보다 먼저 양보
   enabled: true,
   autoTune: true,
   marketHoursOnly: true,
@@ -5070,9 +5095,12 @@ async function deletePosition(DB, symbol, strategy, market) {
 //   가용현금 = 초기자본 + 입금 − Σ매수금액(수수료포함) + Σ매도대금(수수료·세금차감)
 //   trades 테이블이 유일한 진실. cash와 positions가 구조적으로 어긋날 수 없음.
 async function computeCashFromTrades(DB, market, cfg) {
-  const initial = market === "us" ? cfg.initialCashUS : (market === "kr" ? cfg.initialCashKR : cfg.initialCashCM);
-  const feeRate = market === "us" ? (cfg.feeUS || 0) : (market === "kr" ? (cfg.feeKR || 0) : (cfg.feeUS || 0));
-  const sellTaxRate = market === "kr" ? (cfg.krSellTax || 0) : 0;
+  // [BOND] 통화별 슬리브 추가: cm·bdus=USD(무세금), bdkr=KRW(거래세). 기존 us/kr/cm 동작 불변.
+  const _initMap = { us: cfg.initialCashUS, kr: cfg.initialCashKR, cm: cfg.initialCashCM, bdus: cfg.initialCashBDUS, bdkr: cfg.initialCashBDKR };
+  const initial = (_initMap[market] != null) ? _initMap[market] : cfg.initialCashCM;
+  const _isKRW = (market === "kr" || market === "bdkr");
+  const feeRate = _isKRW ? (cfg.feeKR || 0) : (cfg.feeUS || 0);
+  const sellTaxRate = _isKRW ? (cfg.krSellTax || 0) : 0;
   // [회계 재설계] deposits = 누적 입금액(inflows), outflows = 누적 출금액.
   //   실제 가용현금 = 초기자본 + 입금 − 출금 + 거래손익. (수익률 계산은 TWR로 별도 처리)
   const deposits = await getState(DB, "deposits", { us: 0, kr: 0, cm: 0 });
@@ -5119,7 +5147,9 @@ async function computeAllCash(DB, cfg) {
   return {
     us: await computeCashFromTrades(DB, "us", cfg),
     kr: await computeCashFromTrades(DB, "kr", cfg),
-    cm: await computeCashFromTrades(DB, "cm", cfg)
+    cm: await computeCashFromTrades(DB, "cm", cfg),
+    bdus: await computeCashFromTrades(DB, "bdus", cfg),
+    bdkr: await computeCashFromTrades(DB, "bdkr", cfg)
   };
 }
 
@@ -8061,6 +8091,187 @@ async function runCommodityCycle(env, forceTrade) {
   await log(DB, "INFO", null, "[CM] Done: tried=" + tried + " buy=" + bought + " sell=" + sold + " fetchFail=" + fetchFail);
 }
 
+// ============================================================
+// [신규] 일반화 alt-슬리브 실시간 엔진 — 원자재(cm)·미국국채(bdus)·한국국채(bdkr) 공용
+//   원자재 모듈을 일반화: 통화/수수료/거래세/거래시간만 슬리브별로 다르고 로직은 동일.
+//   실시간: 매 cron 사이클에 해당 시장 장중이면 시세갱신+swing 매매(주식과 동일 빈도).
+//   주식 로직과 완전 분리(별도 cash/positions/trades market 키). 예산 가드는 호출부(scheduled)에서.
+// ============================================================
+function _altSleeve(key, cfg) {
+  if (key === "cm")   return { key: "cm",   label: "CM",   syms: COMMODITY_SYMBOLS, meta: COMMODITY_META, isKRW: false, hoursAny: true };
+  if (key === "bdus") return { key: "bdus", label: "BDUS", syms: BOND_US_SYMBOLS,   meta: BOND_META,      isKRW: false, hoursMarket: "us" };
+  if (key === "bdkr") return { key: "bdkr", label: "BDKR", syms: BOND_KR_SYMBOLS,   meta: BOND_META,      isKRW: true,  hoursMarket: "kr" };
+  return null;
+}
+// 슬리브 거래 시간 판정: cm=미국 또는 한국 장중(선물 유동성), bdus=미국장, bdkr=한국장.
+function _altTradeWindow(sleeve) {
+  if (sleeve.hoursAny) return isTradingWindow("us") || isTradingWindow("kr");
+  return isTradingWindow(sleeve.hoursMarket);
+}
+// 시세 저장 — saveQuoteCM 일반화(market 키만 다름).
+async function saveQuoteAlt(DB, market, q, partial) {
+  let prev = {};
+  try { const e = await getState(DB, "quote:" + q.symbol, null); if (e && typeof e === "object") prev = e; } catch (e) {}
+  const merged = {
+    market: market,
+    price: (typeof q.price === "number" && q.price > 0) ? q.price : (prev.price != null ? prev.price : null),
+    prevClose: (typeof q.prevClose === "number" && q.prevClose > 0) ? q.prevClose : (prev.prevClose != null ? prev.prevClose : null),
+    dayPct: (typeof q.dayPct === "number") ? q.dayPct : (prev.dayPct != null ? prev.dayPct : null),
+    rsi:          partial ? (prev.rsi ?? null)          : (q.dailyRsi ?? prev.rsi ?? null),
+    ma:           partial ? (prev.ma ?? null)           : (q.dailyMa ?? prev.ma ?? null),
+    atr:          partial ? (prev.atr ?? null)          : (q.dailyAtr ?? prev.atr ?? null),
+    dailyAtr:     partial ? (prev.dailyAtr ?? null)     : (q.dailyAtr ?? prev.dailyAtr ?? null),
+    dailyMa:      partial ? (prev.dailyMa ?? null)      : (q.dailyMa ?? prev.dailyMa ?? null),
+    dailyMaShort: partial ? (prev.dailyMaShort ?? null) : (q.dailyMaShort ?? prev.dailyMaShort ?? null),
+    bbLower:      partial ? (prev.bbLower ?? null)      : (q.bbLower ?? prev.bbLower ?? null),
+    bbUpper:      partial ? (prev.bbUpper ?? null)      : (q.bbUpper ?? prev.bbUpper ?? null),
+    return20:     partial ? (prev.return20 ?? null)     : (q.return20 ?? prev.return20 ?? null),
+    ts: Date.now()
+  };
+  await setState(DB, "quote:" + q.symbol, merged);
+}
+// 매수 — executeBuyCM 일반화(통화/수수료 슬리브별).
+async function executeBuyAlt(DB, sleeve, symbol, qty, price, signal, dailyAtr, cfg, cash) {
+  const mk = sleeve.key;
+  if (!(typeof price === "number" && isFinite(price) && price > 0)) { await log(DB, "WARN", symbol, "[" + sleeve.label + "] BUY bad price"); return cash; }
+  if (!(typeof qty === "number" && isFinite(qty) && qty > 0)) return cash;
+  qty = Math.floor(qty); if (qty <= 0) return cash;
+  const feeRate = sleeve.isKRW ? (cfg.feeKR || 0) : (cfg.feeUS || 0.0001);
+  const unitCost = price * (1 + feeRate);
+  let availCash;
+  try { availCash = await computeCashFromTrades(DB, mk, cfg); }
+  catch (e) { await log(DB, "ERROR", symbol, "[" + sleeve.label + "] BUY 현금계산 실패 " + e.message); return cash; }
+  if (!(typeof availCash === "number" && isFinite(availCash)) || availCash <= 0) return cash;
+  const maxQty = Math.floor(availCash / unitCost);
+  if (maxQty <= 0) return cash;
+  if (qty > maxQty) qty = maxQty;
+  const gross = price * qty, fee = gross * feeRate, total = gross + fee;
+  const rules = cfg.swingRules || {};
+  const stopPct = rules.stopLossPct || cfg.stopLoss || 5.0;
+  const atrMult = rules.atrStopMult || cfg.atrStopMult || 2.0;
+  const pctStop = price * (1 - stopPct / 100);
+  let stopPrice = pctStop;
+  if (dailyAtr) { const atrStop = price - dailyAtr * atrMult; stopPrice = Math.min(atrStop, pctStop); }
+  if (stopPrice > pctStop) stopPrice = pctStop;
+  try {
+    const posToSave = { qty: qty, avg: price, opened_ts: Date.now(), meta: { strategy: "swing", feePaid: fee, feeRemaining: fee, atrAtEntry: dailyAtr, stopPrice: stopPrice, peakPrice: price, signal: signal.name, signalMembers: signal.members || [signal.name], tp1Done: false, originalQty: qty } };
+    const stmtTrade = stmtRecordTrade(DB, { ts: Date.now(), market: mk, symbol: symbol, side: "BUY", qty: qty, price: price, pnl: null, pnl_pct: null, reason: "[" + sleeve.label + "-SWING] " + signal.name + " " + signal.detail });
+    const stmtPos = stmtSavePosition(DB, mk, symbol, "swing", posToSave);
+    await DB.batch([stmtTrade, stmtPos]);
+  } catch (e) { await log(DB, "ERROR", symbol, "[" + sleeve.label + "] BUY 롤백: " + e.message); return cash; }
+  if (cash && typeof cash === "object") cash[mk] = availCash - total;
+  await log(DB, "TRADE", symbol, "[" + sleeve.label + "] BUY x" + qty + " @" + price.toFixed(2) + " " + signal.name + " " + signal.detail + " stop=" + stopPrice.toFixed(2));
+  return cash;
+}
+// 매도 — executeSellCM 일반화(KR 슬리브는 거래세 차감).
+async function executeSellAlt(DB, sleeve, symbol, pos, sellQty, price, reason, cfg, cash) {
+  const mk = sleeve.key;
+  const feeRate = sleeve.isKRW ? (cfg.feeKR || 0) : (cfg.feeUS || 0.0001);
+  const sellTax = sleeve.isKRW ? (cfg.krSellTax || 0) : 0;
+  const gross = price * sellQty, fee = gross * feeRate;
+  const proceeds = gross - fee - gross * sellTax;
+  pos.meta = pos.meta || {};
+  const feeRemaining = (typeof pos.meta.feeRemaining === "number") ? pos.meta.feeRemaining : (pos.meta.feePaid || 0);
+  const entryFeeForThisSell = feeRemaining * (sellQty / pos.qty);
+  const costBasis = pos.avg * sellQty + entryFeeForThisSell;
+  const pnl = proceeds - costBasis;
+  const pnlPct = costBasis > 0 ? (pnl / costBasis * 100) : 0;
+  const heldMin = pos.opened_ts ? Math.floor((Date.now() - pos.opened_ts) / 60000) : 0;
+  const enrichedReason = "[" + sleeve.label + "-SWING] " + reason + " #entry=" + (pos.meta.signalMembers || []).join(",");
+  try {
+    const stmtTrade = stmtRecordTrade(DB, { ts: Date.now(), market: mk, symbol: symbol, side: "SELL", qty: sellQty, price: price, pnl: pnl, pnl_pct: pnlPct, reason: enrichedReason });
+    let stmtPos;
+    if (sellQty < pos.qty) { pos.qty = pos.qty - sellQty; pos.meta.tp1Done = true; pos.meta.feeRemaining = Math.max(0, feeRemaining - entryFeeForThisSell); stmtPos = stmtSavePosition(DB, mk, symbol, "swing", pos); }
+    else { stmtPos = stmtDeletePosition(DB, symbol, "swing", mk); }
+    await DB.batch([stmtTrade, stmtPos]);
+  } catch (e) { await log(DB, "ERROR", symbol, "[" + sleeve.label + "] SELL 롤백: " + e.message); return { pnlPct: 0, cash: cash }; }
+  if (cash && typeof cash[mk] === "number") cash[mk] += proceeds;
+  await log(DB, "TRADE", symbol, "[" + sleeve.label + "] SELL x" + sellQty + " @" + price.toFixed(2) + " PnL " + pnlPct.toFixed(2) + "% (held " + heldMin + "min, " + reason + ")");
+  return { pnlPct: pnlPct, cash: cash };
+}
+// 실시간 슬리브 사이클 — 시세 fetch+저장+swing 매매. 거래시간 아니면 스킵.
+async function runAltSleeveCycle(env, key) {
+  const DB = env.DB;
+  const cfg = migrateCfgToMarkets(Object.assign({}, DEFAULT_CFG, await getState(DB, "cfg", {})));
+  const sleeve = _altSleeve(key, cfg);
+  if (!sleeve) return;
+  if (cfg.altRealtime === false) return;
+  if (!_altTradeWindow(sleeve)) return;            // 해당 시장 장중에만
+  resetFetchBudget(120);
+  let cash = await computeAllCash(DB, cfg);
+  if (typeof cash[key] !== "number") cash[key] = (key === "bdkr") ? cfg.initialCashBDKR : (key === "bdus" ? cfg.initialCashBDUS : cfg.initialCashCM);
+  const positions = await getPositions(DB, key);
+  const swingRules = cfg.swingRules || {};
+  let tried = 0, bought = 0, sold = 0, fetchFail = 0;
+  const BATCH = 6;
+  const fetched = [];
+  for (let i = 0; i < sleeve.syms.length; i += BATCH) {
+    if (fetchBudgetLeft() <= 0) break;
+    const slice = sleeve.syms.slice(i, i + BATCH);
+    const results = await Promise.all(slice.map(async function(symbol){
+      try { return { symbol: symbol, daily: await fetchDailyWithFallback(symbol) }; }
+      catch (e) { return { symbol: symbol, daily: null, err: e.message }; }
+    }));
+    for (const r of results) fetched.push(r);
+  }
+  for (const item of fetched) {
+    const symbol = item.symbol; tried++;
+    try {
+      const dd = item.daily && item.daily.data ? item.daily.data : item.daily;
+      if (!dd || !dd.closes) { fetchFail++; continue; }
+      const closes = dd.closes, highs = dd.highs || null, lows = dd.lows || null;
+      const price = dd.price, prevClose = dd.prevClose || price;
+      const dayPct = prevClose ? ((price - prevClose) / prevClose) * 100 : 0;
+      const dailyRsi = closes.length >= cfg.rsiPeriod + 1 ? getRSI(closes, cfg.rsiPeriod) : null;
+      const dailyMa = closes.length >= cfg.maPeriod ? getMA(closes, cfg.maPeriod) : null;
+      const dailyMaShort = closes.length >= cfg.maShortPeriod ? getMA(closes, cfg.maShortPeriod) : null;
+      const dailyAtr = closes.length >= cfg.atrPeriod + 1 ? getATR(closes, cfg.atrPeriod, highs, lows) : null;
+      const bb = getBollingerBands(closes, cfg.maPeriod, cfg.bbStdMult);
+      const return20 = getNDayReturn(closes, 20);
+      await saveQuoteAlt(DB, key, { symbol: symbol, price: price, prevClose: prevClose, dayPct: dayPct, dailyRsi: dailyRsi, dailyMa: dailyMa, dailyMaShort: dailyMaShort, dailyAtr: dailyAtr, bbLower: bb ? bb.lower : null, bbUpper: bb ? bb.upper : null, return20: return20 });
+      if (dailyRsi == null) continue;
+      const posKey = symbol + "::swing";
+      const held = positions[posKey];
+      if (held) {
+        if (held.meta && held.meta.peakPrice != null && price > held.meta.peakPrice) { held.meta.peakPrice = price; try { await savePosition(DB, key, symbol, "swing", held); } catch (e) {} }
+        else if (held.meta && held.meta.peakPrice == null) { held.meta.peakPrice = Math.max(held.avg, price); try { await savePosition(DB, key, symbol, "swing", held); } catch (e) {} }
+        const sellDecision = evaluateSell(held, price, dd, dailyRsi, dailyMa, dailyMaShort, cfg, true, key);
+        if (sellDecision.sell) {
+          await executeSellAlt(DB, sleeve, symbol, held, sellDecision.sellQty, price, sellDecision.reason, cfg, cash);
+          sold++;
+          if (sellDecision.sellQty >= held.qty) delete positions[posKey];
+        }
+      }
+      if (positions[posKey]) continue;
+      const signals = evaluateBuySignals_swing(price, dayPct, dd, cfg);
+      if (!signals || signals.length === 0) continue;
+      let best = signals[0];
+      for (const s of signals) if ((s.weight || 0) > (best.weight || 0)) best = s;
+      let actualAtrPct = (dailyAtr != null && price > 0) ? (dailyAtr / price) * 100 : null;
+      const baseStopPct = swingRules.stopLossPct || cfg.stopLoss || 5.0;
+      let stopDistPct = baseStopPct;
+      if (actualAtrPct != null && actualAtrPct > 0) { const atrStopPct = actualAtrPct * (swingRules.atrStopMult || cfg.atrStopMult || 2.0); stopDistPct = Math.max(baseStopPct, Math.min(atrStopPct, baseStopPct * 1.6)); }
+      const rbs = cfg.riskBasedSizing || {};
+      let riskPct = (rbs.riskPerTrade != null ? rbs.riskPerTrade : 0.6) * (best.weight || 1.0);
+      riskPct = Math.max(rbs.minRisk != null ? rbs.minRisk : 0.3, Math.min(rbs.maxRisk != null ? rbs.maxRisk : 1.2, riskPct));
+      const cashCap = cash[key] * 0.85;
+      const maxBudget = cash[key] * 0.25;
+      const rawBudget = cash[key] * (riskPct / 100) / (stopDistPct / 100);
+      let budget = Math.min(rawBudget, maxBudget, cashCap);
+      const feeRate = sleeve.isKRW ? (cfg.feeKR || 0) : (cfg.feeUS || 0.0001);
+      let qty = Math.floor(budget / (price * (1 + feeRate)));
+      if (qty === 0) { const onePrice = price * (1 + feeRate); if (onePrice <= cash[key] * 0.10) qty = 1; }
+      const totalCost = qty * price * (1 + feeRate);
+      if (qty > 0 && totalCost <= cash[key]) {
+        await executeBuyAlt(DB, sleeve, symbol, qty, price, best, dailyAtr, cfg, cash);
+        bought++;
+        positions[posKey] = { symbol: symbol, strategy: "swing", qty: qty, avg: price, opened_ts: Date.now(), meta: {} };
+      }
+    } catch (e) { await log(DB, "ERROR", symbol, "[" + sleeve.label + "] " + e.message); }
+  }
+  if (bought || sold) await log(DB, "INFO", null, "[" + sleeve.label + "] RT cycle: tried=" + tried + " buy=" + bought + " sell=" + sold + (fetchFail ? " fail=" + fetchFail : ""));
+}
+
 async function runTradingCycle(env) {
   const DB = env.DB;
   resetFetchBudget(850);  // [PAID] Paid 1000 한도의 85% — 가격+일봉+분봉+LLM+여유
@@ -9860,6 +10071,34 @@ async function handleRequest(request, env) {
       }, { headers: cors });
     }
 
+    // === [BOND] 국채 슬리브 조회 — 미국(bdus)+한국(bdkr) ===
+    if (path === "/api/bonds") {
+      const cfg = migrateCfgToMarkets(Object.assign({}, DEFAULT_CFG, await getState(env.DB, "cfg", {})));
+      const cash = await computeAllCash(env.DB, cfg);
+      const out = { us: { cash: (typeof cash.bdus === "number" ? cash.bdus : cfg.initialCashBDUS), initialCash: cfg.initialCashBDUS, positions: [], watchlist: [] },
+                    kr: { cash: (typeof cash.bdkr === "number" ? cash.bdkr : cfg.initialCashBDKR), initialCash: cfg.initialCashBDKR, positions: [], watchlist: [] } };
+      const groups = [{ k: "bdus", list: BONDS_US, side: out.us }, { k: "bdkr", list: BONDS_KR, side: out.kr }];
+      for (const g of groups) {
+        const rawPos = await getPositions(env.DB, g.k);
+        for (const key in rawPos) {
+          const p = rawPos[key];
+          g.side.positions.push({ symbol: p.symbol, name: (BOND_META[p.symbol] && BOND_META[p.symbol].name) || p.symbol, qty: p.qty, avg: p.avg, opened_ts: p.opened_ts, meta: p.meta || {}, stopPrice: (p.meta && p.meta.stopPrice) || null, peakPrice: (p.meta && p.meta.peakPrice) || null });
+        }
+        for (const b of g.list) {
+          const q = await getState(env.DB, "quote:" + b.symbol, null);
+          g.side.watchlist.push(q ? Object.assign({ symbol: b.symbol, name: b.name }, q) : { symbol: b.symbol, name: b.name });
+        }
+      }
+      return Response.json({ realtime: cfg.altRealtime !== false, tradeTime: "실시간(장중)", us: out.us, kr: out.kr, symbols: { us: BONDS_US, kr: BONDS_KR } }, { headers: cors });
+    }
+
+    // === [BOND] 국채 슬리브 수동 실행 (테스트) — ?key=bdus|bdkr|cm ===
+    if (path === "/api/bonds/run" && request.method === "POST") {
+      const k = url.searchParams.get("key") || "bdus";
+      await runAltSleeveCycle(env, k);
+      return Response.json({ ok: true, key: k, ts: Date.now() }, { headers: cors });
+    }
+
     // === [COMMODITY] 원자재 사이클 수동 실행 ===
     //   ?force=1 이면 16:00 KST가 아니어도 매매까지 강제 실행 (테스트용).
     //   force 없으면 시세만 갱신(트리거 시각이 아니므로 매매 스킵).
@@ -10829,15 +11068,32 @@ export default {
       try { await runTradingCycle(env); }
       catch (e) { try { await log(env.DB, "ERROR", null, "[SCHED] trading cycle fail: " + e.message); } catch (e2) {} }
 
-      // 2) 원자재 시세 갱신 (매분) — 예산 리셋 후 단독 실행
-      try { await refreshCommodityQuotes(env); }
-      catch (e) { try { await log(env.DB, "ERROR", null, "[SCHED] commodity quote fail: " + e.message); } catch (e2) {} }
-
-      // 3) 원자재 거래 (평일 16:00 KST 정각 ±윈도우)
-      if (isCommodityTriggerTime()) {
-        try { await runCommodityCycle(env); }
-        catch (e) { try { await log(env.DB, "ERROR", null, "[SCHED] commodity cycle fail: " + e.message); } catch (e2) {} }
-      }
+      // 2+3) [신규] alt 슬리브 실시간 거래 — 원자재(cm)·미국국채(bdus)·한국국채(bdkr)
+      //   기존 "매분 시세갱신 + 16:00 1회 거래"를 실시간(매 사이클 장중 매매)으로 통합.
+      //   [예산 안전] 월 사용량이 altEnrichMaxUsageRatio(코어 셧다운 0.90보다 낮음) 초과 시
+      //   alt 슬리브는 주식(코어)보다 먼저 양보해 한도 여유분을 항상 보장.
+      try {
+        const _acfg = migrateCfgToMarkets(Object.assign({}, DEFAULT_CFG, await getState(env.DB, "cfg", {})));
+        let _altOk = true;
+        if (_acfg.altRealtime === false) _altOk = false;
+        if (_altOk) {
+          try {
+            const u = await getUsageState(env.DB);
+            const lim = Object.assign({}, USAGE_LIMITS_DEFAULT, _acfg.usageLimits || {});
+            const ratio = Math.max((u.data.requests || 0) / Math.max(1, lim.monthlyRequests), (u.data.cpuMs || 0) / Math.max(1, lim.monthlyCpuMs));
+            if (ratio >= (_acfg.altEnrichMaxUsageRatio != null ? _acfg.altEnrichMaxUsageRatio : 0.82)) {
+              _altOk = false;
+              await log(env.DB, "WARN", null, "[ALT] 월 사용량 " + (ratio * 100).toFixed(1) + "% — alt 슬리브(원자재·국채) 양보(코어 거래 우선)");
+            }
+          } catch (e) {}
+        }
+        if (_altOk) {
+          for (const _k of ["cm", "bdus", "bdkr"]) {
+            try { await runAltSleeveCycle(env, _k); }
+            catch (e) { try { await log(env.DB, "ERROR", null, "[SCHED] alt " + _k + " fail: " + e.message); } catch (e2) {} }
+          }
+        }
+      } catch (e) { try { await log(env.DB, "ERROR", null, "[SCHED] alt sleeves fail: " + e.message); } catch (e2) {} }
 
       // 4) 환율 갱신 (매일 06:30 KST)
       if (isFxTriggerTime()) {
