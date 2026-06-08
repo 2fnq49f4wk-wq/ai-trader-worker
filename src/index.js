@@ -5689,7 +5689,7 @@ function evaluateTrendEntry(price, dayPct, dailyData, cfg, regime, market) {
         const hi252 = getNDayHigh(closes, look52);
         if (hi252 != null && price > hi252) { boConf = Math.min(1.0, boConf + 0.10); is52wHi = true; }
       }
-      return { name: "TR_BREAKOUT", weight: 1.1, type: "TREND", confidence: boConf,
+      return { name: "TR_BREAKOUT", weight: 1.25, type: "TREND", confidence: boConf,  // [데이터강화] 백테스트상 건당수익 풀백의 2배(+15.9%vs+7.5%) → 비중 상향 1.1→1.25
         detail: "BO>" + hiN.toFixed(2) + (is52wHi ? " 52W_HI" : "") + " vol x" + (todayVol / avgVol).toFixed(1) + " RSI " + rsi.toFixed(0) + " c" + boConf.toFixed(2),
         members: ["TR_BREAKOUT"] };
     }
@@ -5720,7 +5720,7 @@ function evaluateTrendEntry(price, dayPct, dailyData, cfg, regime, market) {
         const volReq = isEtf ? 1.05 : (r.squeezeVolMult || 1.3);
         if (avgVol > 0 && todayVol >= avgVol * volReq && rsi <= (r.rsiBreakoutMax || 75)) {
           const sqConf = Math.min(1.0, confidence + 0.15);  // 코일 해소는 강신호 → 가산
-          return { name: "TR_SQUEEZE", weight: 1.1, type: "TREND", confidence: sqConf,
+          return { name: "TR_SQUEEZE", weight: 1.2, type: "TREND", confidence: sqConf,  // [데이터강화] 돌파류(고수익) → 비중 상향 1.1→1.2
             detail: "SQZ>" + bbPrev.upper.toFixed(2) + " vol x" + (todayVol / avgVol).toFixed(1) + " RSI " + rsi.toFixed(0) + " c" + sqConf.toFixed(2),
             members: ["TR_SQUEEZE"] };
         }
