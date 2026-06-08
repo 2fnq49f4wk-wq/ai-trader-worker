@@ -2628,6 +2628,16 @@ const DEFAULT_CFG = {
   },
   // 다층 가중치(confidence×그룹×신호) 곱이 너무 작아져 거래 누락되는 것 방지 — 전체 하한
   weightFloor: 0.3,
+  // === [섹터 뉴스] Yahoo Finance RSS 무료 뉴스 → 키워드 감성 → 섹터 사이즈 조정 ===
+  //   LLM 없이 무료. 6그룹 × 1 subreq = 최대 6 subreq/사이클. refreshHours 캐시로 일 1~2회.
+  sectorNews: {
+    enabled: true,
+    refreshHours: 6,           // 캐시 TTL (시간)
+    enrichMaxUsageRatio: 0.82, // 월 사용량 이 비율 초과 시 중단 (alt 슬리브와 동일)
+    minBudgetReserve: 8,       // invocation subreq 잔여 최소 예비
+    posScaleMax: 1.08,         // 매우 긍정 뉴스 → 최대 사이즈 부스트
+    negScaleMin: 0.88          // 매우 부정 뉴스 → 최소 사이즈 축소
+  },
   // === [V8] 전략별 포지션 사이즈 (NEUTRAL base / BULL mult / BEAR mult) ===
   // [V8.1.9] base = 가용현금 대비 비율 (계산식이 cash[market] 기준으로 변경됨).
   //          한 거래 목표금액 KR ₩100~300만 / US $1~3k 범위로 클램프됨 (아래 sizingTargets).
@@ -4849,6 +4859,70 @@ async function updateMarketContext(DB, cfg) {
   try { await setState(DB, "mkt_context", ctx); } catch (e) {}
   try { await log(DB, "INFO", null, "[MKT-CTX] " + regime + " score=" + riskScore.toFixed(2) + " size×" + ctx.sizeScale.toFixed(2) + " · " + detail); } catch (e) {}
   return ctx;
+}
+
+// === [섹터 뉴스] Yahoo Finance RSS 무료 뉴스 감성 분석 ===
+// API 키 불필요. 6개 섹터 그룹별 대표 티커 RSS 1 subreq/그룹. 키워드 감성 → sizeScale 조정.
+const SECTOR_NEWS_REP = {
+  TECH:       "NVDA,AAPL,MSFT,GOOGL,META",
+  FINANCE:    "JPM,GS,BAC,BRK-B,V",
+  HEALTH:     "LLY,JNJ,UNH,PFE,ISRG",
+  CONSUMER:   "AMZN,TSLA,WMT,KO,DIS",
+  INDUSTRIAL: "CAT,GE,RTX,BA,LMT",
+  RESOURCES:  "XOM,CVX,NEE,FCX,LIN"
+};
+const _NEWS_POS = ["beat","upgrade","strong","growth","record","bullish","surge","rally","above","exceed","profit","buyback","raise","outperform","positive","robust","momentum","rebound","recovery","boom","soar"];
+const _NEWS_NEG = ["miss","downgrade","cut","loss","warning","weak","bearish","crash","layoff","recall","concern","decline","drop","fell","tumble","below","disappoint","risk","lawsuit","probe","halt","fraud","slump"];
+
+function _scoreHeadlines(titles) {
+  let pos = 0, neg = 0;
+  for (const t of titles) {
+    const low = t.toLowerCase();
+    for (const w of _NEWS_POS) if (low.includes(w)) pos++;
+    for (const w of _NEWS_NEG) if (low.includes(w)) neg++;
+  }
+  const total = Math.max(titles.length, 1);
+  return _clamp((pos - neg) / (pos + neg + total * 0.3), -1, 1);
+}
+
+async function updateSectorNewsSentiment(DB, cfg) {
+  const sc = Object.assign({ enabled:true, refreshHours:6, enrichMaxUsageRatio:0.82, minBudgetReserve:8, posScaleMax:1.08, negScaleMin:0.88 }, (cfg && cfg.sectorNews) || {});
+  if (sc.enabled === false) return null;
+  let cached = null;
+  try { cached = await getState(DB, "sector_news_sentiment", null); } catch(e) {}
+  if (cached && cached.ts && (Date.now() - cached.ts) < (sc.refreshHours || 6) * 3600000) return cached;
+  try {
+    const u = await getUsageState(DB);
+    const lim = Object.assign({}, USAGE_LIMITS_DEFAULT, (cfg && cfg.usageLimits) || {});
+    const ratio = Math.max((u.data.requests||0)/Math.max(1,lim.monthlyRequests), (u.data.cpuMs||0)/Math.max(1,lim.monthlyCpuMs));
+    if (ratio >= sc.enrichMaxUsageRatio) return cached;
+  } catch(e) {}
+  const groups = Object.keys(SECTOR_NEWS_REP);
+  if (fetchBudgetLeft() < (sc.minBudgetReserve || 8) + groups.length) return cached;
+  const scores = {};
+  for (const grp of groups) {
+    if (fetchBudgetLeft() < (sc.minBudgetReserve || 8) + 1) break;
+    const url = "https://feeds.finance.yahoo.com/rss/2.0/headline?s=" + SECTOR_NEWS_REP[grp] + "&lang=en-US&region=US";
+    try {
+      const resp = await fetch(url, { headers: { "User-Agent": "Mozilla/5.0 (compatible)" } });
+      if (!resp.ok) continue;
+      const xml = await resp.text();
+      const matches = [...xml.matchAll(/<title>(?:<!\[CDATA\[)?([\s\S]*?)(?:\]\]>)?<\/title>/g)].map(m => m[1].trim()).filter(Boolean);
+      const headlines = matches.slice(1, 20);
+      if (headlines.length > 0) scores[grp] = _scoreHeadlines(headlines);
+    } catch(e) {}
+  }
+  const posMax = sc.posScaleMax || 1.08, negMin = sc.negScaleMin || 0.88;
+  const scales = {};
+  for (const grp of groups) {
+    const s = typeof scores[grp] === "number" ? scores[grp] : 0;
+    scales[grp] = s >= 0 ? (1 + s * (posMax - 1)) : (1 + s * (1 - negMin));
+  }
+  const result = { scales, scores, ts: Date.now() };
+  try { await setState(DB, "sector_news_sentiment", result); } catch(e) {}
+  const detail = groups.map(g => g + (scores[g] != null ? (scores[g]>=0?"+":"")+scores[g].toFixed(2) : "=?")).join(" ");
+  try { await log(DB, "INFO", null, "[SECTOR-NEWS] " + detail); } catch(e) {}
+  return result;
 }
 
 // === [V10] 한국 종목 일봉 fetch — .KS 실패 시 .KQ 자동 재시도 ===
@@ -8433,6 +8507,11 @@ async function runTradingCycle(env) {
     if (marketsToTrade.length > 0) {
       try { mktCtx = await updateMarketContext(DB, cfg); } catch (e) {}
     }
+    // [섹터 뉴스] Yahoo Finance RSS 무료 감성 분석 — 6그룹 × 1 subreq, 6h 캐시. LLM 불필요.
+    let sectorSentiment = null;
+    if (marketsToTrade.length > 0) {
+      try { sectorSentiment = await updateSectorNewsSentiment(DB, cfg); } catch (e) {}
+    }
 
     for (const market of marketsForQuotes) {
       const mcfg = getMarketCfg(cfg, market);  // [V8.2] 시장별 독립 룰
@@ -9205,6 +9284,12 @@ async function runTradingCycle(env) {
             //   인버스 ETF는 risk-off가 호재라 면제(이미 부스트됨). 곱연산이라 크래시/패닉 축소와 안전하게 결합.
             if (mktCtx && typeof mktCtx.sizeScale === "number" && !_symInverse) {
               sizeScale *= mktCtx.sizeScale;
+            }
+            // [섹터 뉴스] 섹터별 뉴스 감성에 따라 사이즈 소폭 조정 — 인버스 ETF 면제
+            if (sectorSentiment && sectorSentiment.scales && !_symInverse) {
+              const _newsGrp = getSectorGroup(symbol, mcfg);
+              const _newsScale = sectorSentiment.scales[_newsGrp];
+              if (typeof _newsScale === "number") sizeScale *= _newsScale;
             }
 
             // === [재작성] 고정리스크 사이징 ===
@@ -10485,6 +10570,7 @@ async function handleRequest(request, env) {
       const llmUs = await getState(env.DB, "llm_last_run:us", null);
       // [신규] 시장 컨텍스트 + 월간 사용량(여유분 모니터링)
       const mktCtxDiag = await getState(env.DB, "mkt_context", null);
+      const sectorNewsDiag = await getState(env.DB, "sector_news_sentiment", null);
       let usageDiag = null;
       try {
         const u = await getUsageState(env.DB);
@@ -10516,6 +10602,7 @@ async function handleRequest(request, env) {
         commodities: { total: cmTotal, freshUnder10min: cmFresh, stale: cmStale },
         llm: { kr: llmKr, us: llmUs },
         marketContext: mktCtxDiag,
+        sectorNews: sectorNewsDiag ? { ts: sectorNewsDiag.ts, ageMin: Math.round((Date.now()-sectorNewsDiag.ts)/60000), scores: sectorNewsDiag.scores, scales: sectorNewsDiag.scales } : null,
         usage: usageDiag,
         staleOrMissing: staleSyms.slice(0, 20),
         cfg: { enabled: cfg.enabled, marketHoursOnly: cfg.marketHoursOnly, cycleLockTTL: cfg.cycleLockTTL }
