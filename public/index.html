@@ -4,13 +4,14 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>LUX-ENGINE V9</title>
+<link rel="icon" type="image/svg+xml" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'%3E%3Crect width='100' height='100' fill='%23000'/%3E%3Cpath fill='%23fff' d='M50 8 L53 41.7 L70.7 29.3 L58.3 47 L92 50 L58.3 53 L70.7 70.7 L53 58.3 L50 92 L47 58.3 L29.3 70.7 L41.7 53 L8 50 L41.7 47 L29.3 29.3 L47 41.7 Z'/%3E%3Cpath fill='%23b6bcc6' d='M50 50 L50 8 L53 41.7 Z M50 50 L70.7 29.3 L58.3 47 Z M50 50 L92 50 L58.3 53 Z M50 50 L70.7 70.7 L53 58.3 Z M50 50 L50 92 L47 58.3 Z M50 50 L29.3 70.7 L41.7 53 Z M50 50 L8 50 L41.7 47 Z M50 50 L29.3 29.3 L47 41.7 Z'/%3E%3C/svg%3E">
 <script>
 // 테마 선반영(깜빡임 방지) — 저장값 없으면 기본 다크
 try{var __t=localStorage.getItem('luxTheme');if(__t==='light')document.documentElement.setAttribute('data-theme','light');}catch(e){}
 </script>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-<link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600;700&family=Pinyon+Script&display=swap" rel="stylesheet">
+<link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600;700&family=Pinyon+Script&family=UnifrakturCook:wght@700&display=swap" rel="stylesheet">
 <style>
 /* LUX-ENGINE · 완전 새 UI */
 :root{
@@ -53,44 +54,26 @@ body{
   gap:18px;position:relative;z-index:2;
 }
 .intro-star-logo{
-  position:relative;width:64px;height:64px;
+  position:relative;width:72px;height:72px;
   opacity:0;transform:scale(0.85);
   animation:introLogoFade 1.6s cubic-bezier(0.25,0.1,0.25,1) forwards 0.2s;
 }
-.intro-star-logo::before{
-  content:'';position:absolute;width:100%;height:100%;
-  background:conic-gradient(
-    from 0deg,
-    #ffffff 0deg 22.5deg,#d0d0d0 22.5deg 45deg,
-    #ffffff 45deg 67.5deg,#c8c8c8 67.5deg 90deg,
-    #ffffff 90deg 112.5deg,#d0d0d0 112.5deg 135deg,
-    #ffffff 135deg 157.5deg,#c8c8c8 157.5deg 180deg,
-    #ffffff 180deg 202.5deg,#d0d0d0 202.5deg 225deg,
-    #ffffff 225deg 247.5deg,#c8c8c8 247.5deg 270deg,
-    #ffffff 270deg 292.5deg,#d0d0d0 292.5deg 315deg,
-    #ffffff 315deg 337.5deg,#c8c8c8 337.5deg 360deg
-  );
-  clip-path:polygon(50% 0%,62% 38%,100% 50%,62% 62%,50% 100%,38% 62%,0% 50%,38% 38%);
-}
-.intro-star-logo::after{
-  content:'';position:absolute;width:72%;height:72%;top:14%;left:14%;
-  background:conic-gradient(
-    from 22.5deg,
-    #ffffff 0deg 22.5deg,#9a9a9a 22.5deg 45deg,
-    #ffffff 45deg 67.5deg,#8a8a8a 67.5deg 90deg,
-    #ffffff 90deg 112.5deg,#9a9a9a 112.5deg 135deg,
-    #ffffff 135deg 157.5deg,#8a8a8a 157.5deg 180deg,
-    #ffffff 180deg 202.5deg,#9a9a9a 202.5deg 225deg,
-    #ffffff 225deg 247.5deg,#8a8a8a 247.5deg 270deg,
-    #ffffff 270deg 292.5deg,#9a9a9a 292.5deg 315deg,
-    #ffffff 315deg 337.5deg,#8a8a8a 337.5deg 360deg
-  );
-  clip-path:polygon(50% 0%,62% 38%,100% 50%,62% 62%,50% 100%,38% 62%,0% 50%,38% 38%);
-  transform:rotate(45deg);
+.intro-star-logo .lux-star-svg{
+  width:100%;height:100%;display:block;
+  filter:drop-shadow(0 0 14px rgba(255,255,255,0.35));
 }
 @keyframes introLogoFade{
   0%{opacity:0;transform:scale(0.85);}
   100%{opacity:1;transform:scale(1);}
+}
+/* ── LUX 컴퍼스 스타 로고 (벡터/SVG, 비트맵 아님) ── */
+.lux-star-svg{display:block;}
+.lux-star-svg .lux-star-base{fill:#ffffff;}
+.lux-star-svg .lux-star-facet{fill:#b6bcc6;}
+/* ── 블랙레터(고딕) 표기 — Blauenacht ── */
+.blackletter{
+  font-family:'UnifrakturCook','UnifrakturMaguntia',serif;
+  font-weight:700;text-transform:none;letter-spacing:0.5px;
 }
 .intro-text-box{text-align:center;}
 .intro-title{
@@ -142,37 +125,7 @@ body{
   0%,100%{filter:drop-shadow(0 0 5px rgba(255,255,255,0.2));}
   50%{filter:drop-shadow(0 0 10px rgba(255,255,255,0.45));}
 }
-.sb-brand-logo::before{
-  content:'';position:absolute;width:100%;height:100%;
-  background:conic-gradient(
-    from 0deg,
-    #ffffff 0deg 22.5deg,#8b949e 22.5deg 45deg,
-    #ffffff 45deg 67.5deg,#6e7681 67.5deg 90deg,
-    #ffffff 90deg 112.5deg,#8b949e 112.5deg 135deg,
-    #ffffff 135deg 157.5deg,#6e7681 157.5deg 180deg,
-    #ffffff 180deg 202.5deg,#8b949e 202.5deg 225deg,
-    #ffffff 225deg 247.5deg,#6e7681 247.5deg 270deg,
-    #ffffff 270deg 292.5deg,#8b949e 292.5deg 315deg,
-    #ffffff 315deg 337.5deg,#6e7681 337.5deg 360deg
-  );
-  clip-path:polygon(50% 0%,62% 38%,100% 50%,62% 62%,50% 100%,38% 62%,0% 50%,38% 38%);
-}
-.sb-brand-logo::after{
-  content:'';position:absolute;width:72%;height:72%;top:14%;left:14%;
-  background:conic-gradient(
-    from 22.5deg,
-    #ffffff 0deg 22.5deg,#4d5259 22.5deg 45deg,
-    #ffffff 45deg 67.5deg,#3a3f44 67.5deg 90deg,
-    #ffffff 90deg 112.5deg,#4d5259 112.5deg 135deg,
-    #ffffff 135deg 157.5deg,#3a3f44 157.5deg 180deg,
-    #ffffff 180deg 202.5deg,#4d5259 202.5deg 225deg,
-    #ffffff 225deg 247.5deg,#3a3f44 247.5deg 270deg,
-    #ffffff 270deg 292.5deg,#4d5259 292.5deg 315deg,
-    #ffffff 315deg 337.5deg,#3a3f44 337.5deg 360deg
-  );
-  clip-path:polygon(50% 0%,62% 38%,100% 50%,62% 62%,50% 100%,38% 62%,0% 50%,38% 38%);
-  transform:rotate(45deg);
-}
+.sb-brand-logo .lux-star-svg{width:100%;height:100%;}
 .sb-brand-name{font-size:13px;font-weight:700;color:var(--acc);letter-spacing:2px;text-transform:uppercase;}
 .sb-brand-sub{font-size:9px;color:var(--t3);letter-spacing:1.5px;margin-top:2px;}
 
@@ -548,6 +501,31 @@ button.btn.loading::after{content:'조회 중…';position:absolute;inset:0;disp
 .summary-label{font-size:9px;font-weight:700;color:var(--t3);text-transform:uppercase;letter-spacing:1px;}
 .summary-value{font-size:15px;font-weight:700;color:var(--acc);font-variant-numeric:tabular-nums;margin-top:3px;white-space:nowrap;}
 .cm-section-label{padding:7px 20px;font-size:9px;font-weight:700;color:var(--t2);text-transform:uppercase;letter-spacing:1.2px;background:var(--s1);border-bottom:1px solid var(--bd);}
+
+/* ── ALT 자산(원자재·국채) 한눈 레이아웃 ── */
+.alt-grid{display:grid;grid-template-columns:1fr 1fr;gap:14px;padding:14px 20px;}
+@media(max-width:880px){.alt-grid{grid-template-columns:1fr;}}
+.alt-panel{background:var(--s1);border:1px solid var(--bd);border-radius:6px;overflow:hidden;display:flex;flex-direction:column;}
+.alt-phead{display:flex;align-items:center;gap:8px;padding:10px 14px;border-bottom:1px solid var(--bd);background:var(--bg);}
+.alt-phead .flag{font-size:15px;line-height:1;}
+.alt-phead .ttl{font-size:11px;font-weight:700;letter-spacing:.5px;color:var(--t1);text-transform:uppercase;}
+.alt-phead .ttl small{display:block;font-size:8px;color:var(--t3);letter-spacing:.5px;margin-top:1px;}
+.alt-phead .chg{margin-left:auto;font-size:14px;font-weight:700;font-variant-numeric:tabular-nums;}
+.alt-stats{display:flex;border-bottom:1px solid var(--bd);}
+.alt-stat{flex:1;padding:8px 12px;border-right:1px solid var(--bd);}
+.alt-stat:last-child{border-right:none;}
+.alt-stat .l{font-size:8px;font-weight:700;color:var(--t3);text-transform:uppercase;letter-spacing:.8px;}
+.alt-stat .v{font-size:13px;font-weight:700;color:var(--acc);font-variant-numeric:tabular-nums;margin-top:2px;white-space:nowrap;}
+.alt-sub{padding:5px 14px;font-size:8px;font-weight:700;color:var(--t3);text-transform:uppercase;letter-spacing:1px;background:var(--bg);border-bottom:1px solid var(--bd2);}
+.alt-row{display:grid;grid-template-columns:1fr auto auto;gap:10px;align-items:center;padding:7px 14px;border-bottom:1px solid var(--bd2);font-size:11px;}
+.alt-row:last-child{border-bottom:none;}
+.alt-row.head{font-size:8px;color:var(--t3);text-transform:uppercase;letter-spacing:.5px;background:var(--bg);font-weight:700;}
+.alt-row .nm{overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
+.alt-row .nm b{color:var(--t1);font-weight:600;}
+.alt-row .nm span{color:var(--t3);font-size:9px;margin-left:4px;}
+.alt-row .px{font-variant-numeric:tabular-nums;color:var(--t1);font-weight:600;text-align:right;white-space:nowrap;}
+.alt-row .dp{font-variant-numeric:tabular-nums;font-weight:700;text-align:right;min-width:60px;white-space:nowrap;}
+.alt-empty{padding:12px 14px;color:var(--t3);font-size:10px;text-align:center;}
 
 /* ── TRADES ── */
 .trades-toggle{
@@ -992,10 +970,10 @@ html[data-theme="light"] .sb-brand-sub{ color:#888; }
 <!-- ══ 인트로 (유지) ══ -->
 <div id="lux-intro-overlay">
   <div class="intro-center-box">
-    <div class="intro-star-logo"></div>
+    <div class="intro-star-logo"><svg class="lux-star-svg" viewBox="0 0 100 100" xmlns="http://www.w3.org/2000/svg" aria-hidden="true"><path class="lux-star-base" d="M50 2 L53.44 41.68 L73.33 26.67 L58.32 46.56 L98 50 L58.32 53.44 L73.33 73.33 L53.44 58.32 L50 98 L46.56 58.32 L26.67 73.33 L41.68 53.44 L2 50 L41.68 46.56 L26.67 26.67 L46.56 41.68 Z"/><path class="lux-star-facet" d="M50 50 L50 2 L53.44 41.68 Z M50 50 L73.33 26.67 L58.32 46.56 Z M50 50 L98 50 L58.32 53.44 Z M50 50 L73.33 73.33 L53.44 58.32 Z M50 50 L50 98 L46.56 58.32 Z M50 50 L26.67 73.33 L41.68 53.44 Z M50 50 L2 50 L41.68 46.56 Z M50 50 L26.67 26.67 L46.56 41.68 Z"/></svg></div>
     <div class="intro-text-box">
       <div class="intro-title">LUX-ENGINE</div>
-      <div class="intro-subtitle">Powered by BLAUENACHT</div>
+      <div class="intro-subtitle">Powered by <span class="blackletter">Blauenacht</span></div>
     </div>
   </div>
 </div>
@@ -1008,9 +986,9 @@ html[data-theme="light"] .sb-brand-sub{ color:#888; }
 
     <!-- 브랜드 -->
     <div class="sb-brand">
-      <span class="sb-brand-logo"></span>
+      <span class="sb-brand-logo"><svg class="lux-star-svg" viewBox="0 0 100 100" xmlns="http://www.w3.org/2000/svg" aria-hidden="true"><path class="lux-star-base" d="M50 2 L53.44 41.68 L73.33 26.67 L58.32 46.56 L98 50 L58.32 53.44 L73.33 73.33 L53.44 58.32 L50 98 L46.56 58.32 L26.67 73.33 L41.68 53.44 L2 50 L41.68 46.56 L26.67 26.67 L46.56 41.68 Z"/><path class="lux-star-facet" d="M50 50 L50 2 L53.44 41.68 Z M50 50 L73.33 26.67 L58.32 46.56 Z M50 50 L98 50 L58.32 53.44 Z M50 50 L73.33 73.33 L53.44 58.32 Z M50 50 L50 98 L46.56 58.32 Z M50 50 L26.67 73.33 L41.68 53.44 Z M50 50 L2 50 L41.68 46.56 Z M50 50 L26.67 26.67 L46.56 41.68 Z"/></svg></span>
       <span class="sb-brand-name">LUX-ENGINE</span>
-      <div class="sb-brand-sub">V9 BETA · BLAUENACHT</div>
+      <div class="sb-brand-sub">V9 BETA · <span class="blackletter" style="font-size:12px;">Blauenacht</span></div>
     </div>
 
     <!-- 상태 표시 -->
@@ -1305,17 +1283,8 @@ html[data-theme="light"] .sb-brand-sub{ color:#888; }
           <button type="button" id="btnResetCM" class="btn danger">↺ RESET</button>
         </div>
       </div>
-      <div id="commoditiesPanel">
-        <div class="cm-summary-bar">
-          <div class="cm-stat"><div class="summary-label">TOTAL</div><div class="summary-value" id="totalCM">-</div></div>
-          <div class="cm-stat"><div class="summary-label">INVESTED</div><div class="summary-value" id="investedCM">-</div></div>
-          <div class="cm-stat"><div class="summary-label">CASH</div><div class="summary-value" id="cashCM">-</div></div>
-          <div class="cm-stat"><div class="summary-label">vs INITIAL</div><div class="summary-value" id="changeCM">-</div></div>
-        </div>
-        <div class="cm-section-label">POSITIONS</div>
-        <div id="cmPositionsBox"><div class="empty">No commodity positions yet</div></div>
-        <div class="cm-section-label">WATCHLIST</div>
-        <div id="cmWatchlistBox"><div class="empty">대기 중...</div></div>
+      <div class="alt-grid" style="grid-template-columns:1fr;max-width:560px;">
+        <div class="alt-panel" id="cmPanel"><div class="alt-empty">대기 중...</div></div>
       </div>
     </div><!-- /commodities -->
 
@@ -1331,30 +1300,11 @@ html[data-theme="light"] .sb-brand-sub{ color:#888; }
       <!-- 국채 금리 -->
       <div class="cm-section-label">📈 US TREASURY YIELDS · 미국 국채 금리</div>
       <div class="yield-row" id="bondYieldRow"><div class="empty">금리 대기 중...</div></div>
-      <!-- US 국채 -->
-      <div class="cm-section-label">🇺🇸 US BONDS (USD)</div>
-      <div class="cm-summary-bar">
-        <div class="cm-stat"><div class="summary-label">TOTAL</div><div class="summary-value" id="totalBDUS">-</div></div>
-        <div class="cm-stat"><div class="summary-label">INVESTED</div><div class="summary-value" id="investedBDUS">-</div></div>
-        <div class="cm-stat"><div class="summary-label">CASH</div><div class="summary-value" id="cashBDUS">-</div></div>
-        <div class="cm-stat"><div class="summary-label">vs INITIAL</div><div class="summary-value" id="changeBDUS">-</div></div>
+      <!-- US | KR 2열 패널 -->
+      <div class="alt-grid">
+        <div class="alt-panel" id="bdusPanel"><div class="alt-empty">대기 중...</div></div>
+        <div class="alt-panel" id="bdkrPanel"><div class="alt-empty">대기 중...</div></div>
       </div>
-      <div class="cm-section-label">POSITIONS</div>
-      <div id="bdusPositionsBox"><div class="empty">No US bond positions yet</div></div>
-      <div class="cm-section-label">WATCHLIST</div>
-      <div id="bdusWatchlistBox"><div class="empty">대기 중...</div></div>
-      <!-- KR 국채 -->
-      <div class="cm-section-label" style="margin-top:24px;">🇰🇷 KR BONDS (KRW)</div>
-      <div class="cm-summary-bar">
-        <div class="cm-stat"><div class="summary-label">TOTAL</div><div class="summary-value" id="totalBDKR">-</div></div>
-        <div class="cm-stat"><div class="summary-label">INVESTED</div><div class="summary-value" id="investedBDKR">-</div></div>
-        <div class="cm-stat"><div class="summary-label">CASH</div><div class="summary-value" id="cashBDKR">-</div></div>
-        <div class="cm-stat"><div class="summary-label">vs INITIAL</div><div class="summary-value" id="changeBDKR">-</div></div>
-      </div>
-      <div class="cm-section-label">POSITIONS</div>
-      <div id="bdkrPositionsBox"><div class="empty">No KR bond positions yet</div></div>
-      <div class="cm-section-label">WATCHLIST</div>
-      <div id="bdkrWatchlistBox"><div class="empty">대기 중...</div></div>
     </div><!-- /bonds -->
 
     <!-- ══ PAGE: TRADES ══ -->
@@ -2361,98 +2311,14 @@ html[data-theme="light"] .sb-brand-sub{ color:#888; }
   var cmQuotes = {};   // symbol -> quote (USD)
   function renderCommodities(data) {
     if (!data) return;
-    var cash = (typeof data.cash === 'number') ? data.cash : 0;
-    var initial = data.initialCash || 100000;
-    var positions = data.positions || [];
-    var watchlist = data.watchlist || [];
-
-    // 시세 맵 갱신
+    // 시세 맵 갱신(다른 곳에서 참조)
     cmQuotes = {};
-    watchlist.forEach(function(q){ if (q && q.symbol) cmQuotes[q.symbol] = q; });
-
+    (data.watchlist || []).forEach(function(q){ if (q && q.symbol) cmQuotes[q.symbol] = q; });
     // 거래 시각 안내
     var info = $('cmTradeInfo');
-    if (info) info.textContent = '거래: 매일 16:00 KST' + (data.isTradeTimeNow ? ' · 🟢 지금 거래시간' : '');
-
-    // 평가액 / 요약
-    var invested = 0;
-    positions.forEach(function(p){
-      var q = cmQuotes[p.symbol];
-      var cur = (q && typeof q.price === 'number') ? q.price : p.avg;
-      invested += p.qty * cur;
-    });
-    var total = cash + invested;
-    var changePct = initial > 0 ? ((total - initial) / initial * 100) : 0;
-    $('totalCM').textContent = '$' + fmtNum(total, 2);
-    $('investedCM').textContent = '$' + fmtNum(invested, 2);
-    $('cashCM').textContent = '$' + fmtNum(cash, 2);
-    var chEl = $('changeCM');
-    chEl.textContent = (changePct >= 0 ? '+' : '') + fmtNum(changePct, 2) + '%';
-    chEl.className = 'summary-value ' + (changePct > 0 ? 'pos' : (changePct < 0 ? 'neg' : ''));
-
-    // 포지션 테이블
-    var posBox = $('cmPositionsBox');
-    if (positions.length === 0) {
-      posBox.innerHTML = '<div class="empty">No commodity positions yet</div>';
-    } else {
-      var rows = positions.map(function(p){
-        var q = cmQuotes[p.symbol];
-        var curPrice = (q && typeof q.price === 'number') ? q.price : null;
-        var cost = p.qty * p.avg;
-        var value = curPrice != null ? p.qty * curPrice : null;
-        var pnl = value != null ? value - cost : null;
-        var pnlPct = curPrice != null ? ((curPrice - p.avg) / p.avg * 100) : null;
-        return { p: p, curPrice: curPrice, value: value, pnl: pnl, pnlPct: pnlPct != null ? pnlPct : -999 };
-      });
-      rows.sort(function(a, b){ return b.pnlPct - a.pnlPct; });
-      var html = '<div class="table-wrap"><table class="table"><thead><tr>'+
-        '<th>COMMODITY</th><th>REASON</th>'+
-        '<th class="right">QTY</th><th class="right">AVG</th><th class="right">CUR</th>'+
-        '<th class="right">VALUE</th><th class="right">PnL</th><th class="right">PnL%</th>'+
-        '<th class="right">OPENED</th></tr></thead><tbody>';
-      rows.forEach(function(r){
-        var p = r.p;
-        var pnlClass = r.pnlPct === -999 ? '' : (r.pnlPct >= 0 ? 'pos' : 'neg');
-        var pctText = r.pnlPct === -999 ? '-' : (r.pnlPct >= 0 ? '+' : '') + r.pnlPct.toFixed(2) + '%';
-        var curText = r.curPrice != null ? '$' + fmtNum(r.curPrice, 2) : '-';
-        var valueText = r.value != null ? '$' + fmtNum(r.value, 2) : '-';
-        var pnlText = r.pnl != null ? (r.pnl >= 0 ? '+$' : '-$') + fmtNum(Math.abs(r.pnl), 2) : '-';
-        var reason = p.entrySignal || (p.meta && p.meta.signal) || '-';
-        var label = '<b>'+escapeHtml(p.name || p.symbol)+'</b> <span style="color:var(--dim);font-size:10px;">'+escapeHtml(p.symbol)+'</span>';
-        html += '<tr>'+
-          '<td>'+label+'</td>'+
-          '<td><span style="font-size:10px;color:var(--dim);">'+escapeHtml(reason)+'</span></td>'+
-          '<td class="right">'+fmtNum(p.qty)+'</td>'+
-          '<td class="right">$'+fmtNum(p.avg, 2)+'</td>'+
-          '<td class="right">'+curText+'</td>'+
-          '<td class="right">'+valueText+'</td>'+
-          '<td class="right '+pnlClass+'">'+pnlText+'</td>'+
-          '<td class="right '+pnlClass+'">'+pctText+'</td>'+
-          '<td class="right">'+fmtAgo(p.opened_ts)+'</td>'+
-        '</tr>';
-      });
-      posBox.innerHTML = html + '</tbody></table></div>';
-    }
-
-    // 워치리스트 (카드)
-    var wlBox = $('cmWatchlistBox');
-    if (watchlist.length === 0) {
-      wlBox.innerHTML = '<div class="empty">대기 중...</div>';
-    } else {
-      var cards = watchlist.map(function(q){
-        var hasPrice = typeof q.price === 'number';
-        var dayClass = (q.dayPct > 0) ? 'pos' : (q.dayPct < 0 ? 'neg' : '');
-        var sign = (q.dayPct >= 0) ? '+' : '';
-        return '<div class="wl-card">'+
-          '<div class="wl-sym">'+escapeHtml(q.name || q.symbol)+'</div>'+
-          '<div class="wl-name">'+escapeHtml(q.symbol)+(q.unit ? ' · '+escapeHtml(q.unit) : '')+'</div>'+
-          '<div class="wl-price">'+(hasPrice ? '$'+fmtNum(q.price, 2) : '-')+'</div>'+
-          '<div class="wl-day '+dayClass+'">'+(typeof q.dayPct === 'number' ? sign+fmtNum(q.dayPct,2)+'%' : '-')+'</div>'+
-          '<div class="wl-meta">RSI '+(q.rsi!=null?q.rsi.toFixed(1):'-')+' · '+(q.ts?fmtAgo(q.ts):'-')+'</div>'+
-          '</div>';
-      }).join('');
-      wlBox.innerHTML = '<div class="watchlist">'+cards+'</div>';
-    }
+    if (info) info.textContent = '실시간(장중)' + (data.isTradeTimeNow ? ' · 🟢 지금 거래시간' : '');
+    // 컴팩트 패널로 렌더(국채와 동일 레이아웃)
+    renderAltPanel(data, 'cmPanel', 'usd', '⛏', 'COMMODITIES', 'USD · 원자재 실시간');
   }
 
   function loadCommodities() {
@@ -2547,93 +2413,80 @@ html[data-theme="light"] .sb-brand-sub{ color:#888; }
     el.appendChild(span);
   }
 
-  // === [BONDS] 국채 렌더링 ===
-  function renderBondSleeve(sleeve, prefix, currency) {
+  // === [BONDS] 국채 렌더링 — 컴팩트 패널(한눈에) ===
+  function renderAltPanel(sleeve, panelId, currency, flag, title, sub) {
+    var el = $(panelId);
+    if (!el) return;
     var isKRW = currency === 'krw';
     var fmt = function(v){ return isKRW ? '₩' + fmtNum(v, 0) : '$' + fmtNum(v, 2); };
+    var fmtK = function(v){ // 큰 금액 축약 (요약칩용)
+      if (isKRW) { return v >= 1e8 ? '₩'+fmtNum(v/1e8,2)+'억' : v >= 1e4 ? '₩'+fmtNum(v/1e4,0)+'만' : '₩'+fmtNum(v,0); }
+      return v >= 1000 ? '$'+fmtNum(v/1000,1)+'k' : '$'+fmtNum(v,0);
+    };
     var cash = typeof sleeve.cash === 'number' ? sleeve.cash : 0;
     var initial = sleeve.initialCash || (isKRW ? 100000000 : 100000);
     var positions = sleeve.positions || [];
     var watchlist = sleeve.watchlist || [];
-    // quotes map
     var qmap = {};
     watchlist.forEach(function(q){ if (q && q.symbol) qmap[q.symbol] = q; });
-    // summary
     var invested = 0;
-    positions.forEach(function(p){
-      var q = qmap[p.symbol];
-      var cur = q && typeof q.price === 'number' ? q.price : p.avg;
-      invested += p.qty * cur;
-    });
+    positions.forEach(function(p){ var q = qmap[p.symbol]; var cur = q && typeof q.price === 'number' ? q.price : p.avg; invested += p.qty * cur; });
     var total = cash + invested;
     var chgPct = initial > 0 ? (total - initial) / initial * 100 : 0;
-    $('total' + prefix).textContent = fmt(total);
-    $('invested' + prefix).textContent = fmt(invested);
-    $('cash' + prefix).textContent = fmt(cash);
-    var chEl = $('change' + prefix);
-    chEl.textContent = (chgPct >= 0 ? '+' : '') + fmtNum(chgPct, 2) + '%';
-    chEl.className = 'summary-value ' + (chgPct > 0 ? 'pos' : chgPct < 0 ? 'neg' : '');
-    // positions
-    var posBox = $(prefix.toLowerCase() + 'PositionsBox');
+    var chgCls = chgPct > 0 ? 'pos' : chgPct < 0 ? 'neg' : '';
+    // 포지션 행
+    var posRows;
     if (positions.length === 0) {
-      posBox.innerHTML = '<div class="empty">No ' + (isKRW ? 'KR' : 'US') + ' bond positions yet</div>';
+      posRows = '<div class="alt-empty">보유 없음</div>';
     } else {
-      var rows = positions.map(function(p){
+      var prows = positions.map(function(p){
         var q = qmap[p.symbol];
         var cur = q && typeof q.price === 'number' ? q.price : null;
-        var val = cur != null ? p.qty * cur : null;
-        var pnl = val != null ? val - p.qty * p.avg : null;
-        var pnlPct = cur != null ? (cur - p.avg) / p.avg * 100 : -999;
-        return { p: p, cur: cur, val: val, pnl: pnl, pnlPct: pnlPct };
-      });
-      rows.sort(function(a, b){ return b.pnlPct - a.pnlPct; });
-      var html = '<div class="table-wrap"><table class="table"><thead><tr>'+
-        '<th>BOND</th><th>SIGNAL</th>'+
-        '<th class="right">QTY</th><th class="right">AVG</th><th class="right">CUR</th>'+
-        '<th class="right">VALUE</th><th class="right">PnL</th><th class="right">PnL%</th>'+
-        '<th class="right">OPENED</th></tr></thead><tbody>';
-      rows.forEach(function(r){
-        var p = r.p;
-        var pc = r.pnlPct === -999 ? '' : r.pnlPct >= 0 ? 'pos' : 'neg';
-        html += '<tr>'+
-          '<td><b>'+escapeHtml(p.name||p.symbol)+'</b> <span style="color:var(--dim);font-size:10px;">'+escapeHtml(p.symbol)+'</span></td>'+
-          '<td><span style="font-size:10px;color:var(--dim);">'+escapeHtml(p.entrySignal||(p.meta&&p.meta.signal)||'-')+'</span></td>'+
-          '<td class="right">'+fmtNum(p.qty)+'</td>'+
-          '<td class="right">'+fmt(p.avg)+'</td>'+
-          '<td class="right">'+(r.cur!=null?fmt(r.cur):'-')+'</td>'+
-          '<td class="right">'+(r.val!=null?fmt(r.val):'-')+'</td>'+
-          '<td class="right '+pc+'">'+(r.pnl!=null?(r.pnl>=0?'+':'-')+fmt(Math.abs(r.pnl)).replace('$','$').replace('₩','₩'):'-')+'</td>'+
-          '<td class="right '+pc+'">'+(r.pnlPct!==-999?(r.pnlPct>=0?'+':'')+fmtNum(r.pnlPct,2)+'%':'-')+'</td>'+
-          '<td class="right">'+fmtAgo(p.opened_ts)+'</td>'+
-        '</tr>';
-      });
-      posBox.innerHTML = html + '</tbody></table></div>';
+        var pnlPct = cur != null ? (cur - p.avg) / p.avg * 100 : null;
+        return { p:p, cur:cur, pnlPct: pnlPct == null ? -999 : pnlPct };
+      }).sort(function(a,b){ return b.pnlPct - a.pnlPct; });
+      posRows = prows.map(function(r){
+        var p = r.p, pc = r.pnlPct === -999 ? '' : r.pnlPct >= 0 ? 'pos' : 'neg';
+        return '<div class="alt-row">'+
+          '<div class="nm"><b>'+escapeHtml(p.name||p.symbol)+'</b><span>×'+fmtNum(p.qty)+'</span></div>'+
+          '<div class="px">'+(r.cur!=null?fmt(r.cur):'-')+'</div>'+
+          '<div class="dp '+pc+'">'+(r.pnlPct!==-999?(r.pnlPct>=0?'+':'')+fmtNum(r.pnlPct,2)+'%':'-')+'</div>'+
+          '</div>';
+      }).join('');
     }
-    // watchlist cards
-    var wlBox = $(prefix.toLowerCase() + 'WatchlistBox');
+    // 워치 행
+    var wlRows;
     if (watchlist.length === 0) {
-      wlBox.innerHTML = '<div class="empty">대기 중...</div>';
+      wlRows = '<div class="alt-empty">대기 중...</div>';
     } else {
-      var cards = watchlist.map(function(q){
+      wlRows = watchlist.map(function(q){
         var hasPrice = typeof q.price === 'number';
         var dc = q.dayPct > 0 ? 'pos' : q.dayPct < 0 ? 'neg' : '';
         var sign = q.dayPct >= 0 ? '+' : '';
-        return '<div class="wl-card">'+
-          '<div class="wl-sym">'+escapeHtml(q.name||q.symbol)+'</div>'+
-          '<div class="wl-name">'+escapeHtml(q.symbol)+'</div>'+
-          '<div class="wl-price">'+(hasPrice ? fmt(q.price) : '-')+'</div>'+
-          '<div class="wl-day '+dc+'">'+(typeof q.dayPct==='number'?sign+fmtNum(q.dayPct,2)+'%':'-')+'</div>'+
-          '<div class="wl-meta">RSI '+(q.rsi!=null?q.rsi.toFixed(1):'-')+' · '+(q.ts?fmtAgo(q.ts):'-')+'</div>'+
+        return '<div class="alt-row">'+
+          '<div class="nm"><b>'+escapeHtml(q.name||q.symbol)+'</b><span>'+escapeHtml(q.symbol)+'</span></div>'+
+          '<div class="px">'+(hasPrice ? fmt(q.price) : '-')+'</div>'+
+          '<div class="dp '+dc+'">'+(typeof q.dayPct==='number'?sign+fmtNum(q.dayPct,2)+'%':'-')+'</div>'+
           '</div>';
       }).join('');
-      wlBox.innerHTML = '<div class="watchlist">'+cards+'</div>';
     }
+    el.innerHTML =
+      '<div class="alt-phead"><span class="flag">'+flag+'</span>'+
+        '<span class="ttl">'+title+'<small>'+sub+'</small></span>'+
+        '<span class="chg '+chgCls+'">'+(chgPct>=0?'+':'')+fmtNum(chgPct,2)+'%</span></div>'+
+      '<div class="alt-stats">'+
+        '<div class="alt-stat"><div class="l">평가액</div><div class="v">'+fmtK(total)+'</div></div>'+
+        '<div class="alt-stat"><div class="l">투자금</div><div class="v">'+fmtK(invested)+'</div></div>'+
+        '<div class="alt-stat"><div class="l">현금</div><div class="v">'+fmtK(cash)+'</div></div>'+
+      '</div>'+
+      '<div class="alt-sub">보유 '+positions.length+'</div>'+ posRows +
+      '<div class="alt-sub">워치리스트</div>'+ wlRows;
   }
 
   function renderBonds(data) {
     if (!data) return;
-    if (data.us) renderBondSleeve(data.us, 'BDUS', 'usd');
-    if (data.kr) renderBondSleeve(data.kr, 'BDKR', 'krw');
+    if (data.us) renderAltPanel(data.us, 'bdusPanel', 'usd', '🇺🇸', 'US BONDS', 'USD · 미국 국채 ETF');
+    if (data.kr) renderAltPanel(data.kr, 'bdkrPanel', 'krw', '🇰🇷', 'KR BONDS', 'KRW · 한국 국고채 ETF');
     // 국채 금리 카드
     var yrow = $('bondYieldRow');
     if (yrow && data.yields && data.yields.length) {
