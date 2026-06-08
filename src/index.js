@@ -2066,6 +2066,17 @@ const BOND_SYMBOLS = BONDS.map(function(b){ return b.symbol; });
 const BOND_META = {};
 for (const b of BONDS) BOND_META[b.symbol] = b;
 
+// === [신규] 국채 금리(Treasury Yield) — 야후 지수 심볼(값=연수익률%). 조회 전용(매매 X). ===
+//   ^IRX(13주=3개월)·^FVX(5년)·^TNX(10년)·^TYX(30년). 전 세계 금리 벤치마크.
+//   한국 국고채 금리는 야후 직접 심볼이 부정확해 미국 금리만 표시(글로벌 기준).
+const TREASURY_YIELDS = [
+  { symbol: "^IRX", label: "3M",  name: "미국 3개월" },
+  { symbol: "^FVX", label: "5Y",  name: "미국 5년" },
+  { symbol: "^TNX", label: "10Y", name: "미국 10년" },
+  { symbol: "^TYX", label: "30Y", name: "미국 30년" }
+];
+const TREASURY_YIELD_SYMBOLS = TREASURY_YIELDS.map(function(y){ return y.symbol; });
+
 // === [FX] 환율 조회 대상 ===
 //   야후 파이낸스 환율 심볼. 매일 06:30 KST 1회 갱신 (조회 전용 — 매매 없음).
 //   "XXXKRW=X" = 1 XXX당 원화. "KRW=X" = 1달러당 원화. "JPY=X" = 1달러당 엔.
@@ -10156,10 +10167,35 @@ async function handleRequest(request, env) {
       }, { headers: cors });
     }
 
-    // === [BOND] 국채 슬리브 조회 — 미국(bdus)+한국(bdkr) ===
+    // === [BOND] 국채 슬리브 조회 — 미국(bdus)+한국(bdkr) + 금리 ===
     if (path === "/api/bonds") {
       const cfg = migrateCfgToMarkets(Object.assign({}, DEFAULT_CFG, await getState(env.DB, "cfg", {})));
       const cash = await computeAllCash(env.DB, cfg);
+      // [FIX] 장 마감 중엔 runAltSleeveCycle이 시세를 안 받아 watchlist가 빔(TLT만 marketContext가 채움).
+      //   저장된 quote 중 누락/오래된(15분+) 게 있으면 온디맨드 1배치로 보충(예산 안전: 캐시 5분).
+      let onDemand = {};
+      try {
+        const cacheTs = await getState(env.DB, "bonds_quote_fetch_ts", 0);
+        const stale = !cacheTs || (Date.now() - cacheTs) > 5 * 60 * 1000;
+        // 누락 quote 점검
+        let anyMissing = false;
+        for (const s of BOND_SYMBOLS) { const q = await getState(env.DB, "quote:" + s, null); if (!q || q.price == null) { anyMissing = true; break; } }
+        if (stale || anyMissing) {
+          resetFetchBudget(40);
+          const u = await getUsageState(env.DB);
+          const lim = Object.assign({}, USAGE_LIMITS_DEFAULT, cfg.usageLimits || {});
+          const ratio = Math.max((u.data.requests||0)/Math.max(1,lim.monthlyRequests), (u.data.cpuMs||0)/Math.max(1,lim.monthlyCpuMs));
+          if (ratio < (cfg.altEnrichMaxUsageRatio != null ? cfg.altEnrichMaxUsageRatio : 0.82)) {
+            onDemand = await fetchBatchQuotes(BOND_SYMBOLS.concat(TREASURY_YIELD_SYMBOLS), { maxFallback: BOND_SYMBOLS.length + TREASURY_YIELD_SYMBOLS.length, DB: env.DB });
+            // 보충된 국채 시세는 quote 저장(다음 사이클·매매에서 재사용)
+            for (const s of BOND_SYMBOLS) {
+              const q = onDemand[s];
+              if (q && q.price != null) await saveQuoteAlt(env.DB, (BOND_KR_SYMBOLS.indexOf(s) >= 0 ? "bdkr" : "bdus"), { symbol: s, price: q.price, prevClose: q.prevClose, dayPct: q.dayPct }, true);
+            }
+            await setState(env.DB, "bonds_quote_fetch_ts", Date.now());
+          }
+        }
+      } catch (e) {}
       const out = { us: { cash: (typeof cash.bdus === "number" ? cash.bdus : cfg.initialCashBDUS), initialCash: cfg.initialCashBDUS, positions: [], watchlist: [] },
                     kr: { cash: (typeof cash.bdkr === "number" ? cash.bdkr : cfg.initialCashBDKR), initialCash: cfg.initialCashBDKR, positions: [], watchlist: [] } };
       const groups = [{ k: "bdus", list: BONDS_US, side: out.us }, { k: "bdkr", list: BONDS_KR, side: out.kr }];
@@ -10170,11 +10206,21 @@ async function handleRequest(request, env) {
           g.side.positions.push({ symbol: p.symbol, name: (BOND_META[p.symbol] && BOND_META[p.symbol].name) || p.symbol, qty: p.qty, avg: p.avg, opened_ts: p.opened_ts, meta: p.meta || {}, stopPrice: (p.meta && p.meta.stopPrice) || null, peakPrice: (p.meta && p.meta.peakPrice) || null });
         }
         for (const b of g.list) {
-          const q = await getState(env.DB, "quote:" + b.symbol, null);
+          let q = await getState(env.DB, "quote:" + b.symbol, null);
+          // 온디맨드로 막 받은 값이 있으면 우선 반영(저장 누락 대비)
+          if ((!q || q.price == null) && onDemand[b.symbol]) q = Object.assign({ ts: Date.now() }, onDemand[b.symbol]);
           g.side.watchlist.push(q ? Object.assign({ symbol: b.symbol, name: b.name }, q) : { symbol: b.symbol, name: b.name });
         }
       }
-      return Response.json({ realtime: cfg.altRealtime !== false, tradeTime: "실시간(장중)", us: out.us, kr: out.kr, symbols: { us: BONDS_US, kr: BONDS_KR } }, { headers: cors });
+      // 국채 금리 — 온디맨드 우선, 없으면 캐시
+      const yields = [];
+      for (const y of TREASURY_YIELDS) {
+        let q = onDemand[y.symbol];
+        if (!q || q.price == null) { try { q = await getState(env.DB, "quote:" + y.symbol, null); } catch (e) {} }
+        else { try { await setState(env.DB, "quote:" + y.symbol, Object.assign({ ts: Date.now() }, q)); } catch (e) {} }
+        yields.push({ symbol: y.symbol, label: y.label, name: y.name, rate: (q && q.price != null) ? q.price : null, dayPct: (q && typeof q.dayPct === "number") ? q.dayPct : null, prevClose: (q && q.prevClose != null) ? q.prevClose : null });
+      }
+      return Response.json({ realtime: cfg.altRealtime !== false, tradeTime: "실시간(장중)", us: out.us, kr: out.kr, yields: yields, symbols: { us: BONDS_US, kr: BONDS_KR } }, { headers: cors });
     }
 
     // === [BOND] 국채 슬리브 수동 실행 (테스트) — ?key=bdus|bdkr|cm ===

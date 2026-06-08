@@ -335,6 +335,15 @@ button.btn.loading::after{content:'조회 중…';position:absolute;inset:0;disp
 .intel-sector-item.neg{border-left-color:var(--neg);}
 .intel-sector-name{color:var(--t3);font-weight:700;letter-spacing:.5px;}
 .intel-sector-val{color:var(--t1);}
+/* ── 국채 금리 ── */
+.yield-row{display:grid;grid-template-columns:repeat(4,1fr);gap:8px;padding:12px 20px;}
+.yield-card{background:var(--s1);border:1px solid var(--bd);border-left:2px solid var(--acc);padding:10px 12px;}
+.yield-label{font-size:9px;color:var(--t3);font-weight:700;letter-spacing:1px;text-transform:uppercase;}
+.yield-name{font-size:9px;color:var(--t3);margin-bottom:4px;}
+.yield-rate{font-size:18px;font-weight:700;color:var(--t1);font-variant-numeric:tabular-nums;}
+.yield-chg{font-size:10px;margin-top:2px;font-variant-numeric:tabular-nums;}
+@media(max-width:700px){.yield-row{grid-template-columns:1fr 1fr;}}
+
 /* ── ALT ASSETS 미니카드 ── */
 .alt-asset-row{display:flex;flex-direction:column;gap:5px;margin-top:4px;}
 .alt-asset-item{display:flex;justify-content:space-between;align-items:center;font-size:10px;padding:4px 6px;background:var(--s1);border-left:2px solid var(--bd);}
@@ -1319,6 +1328,9 @@ html[data-theme="light"] .sb-brand-sub{ color:#888; }
           <button type="button" id="btnRunBDKR" class="btn">▶ KR 실행</button>
         </div>
       </div>
+      <!-- 국채 금리 -->
+      <div class="cm-section-label">📈 US TREASURY YIELDS · 미국 국채 금리</div>
+      <div class="yield-row" id="bondYieldRow"><div class="empty">금리 대기 중...</div></div>
       <!-- US 국채 -->
       <div class="cm-section-label">🇺🇸 US BONDS (USD)</div>
       <div class="cm-summary-bar">
@@ -1531,7 +1543,6 @@ html[data-theme="light"] .sb-brand-sub{ color:#888; }
     <h2>
       <span>ENGINE LOGS</span>
       <div style="display:flex;gap:10px;align-items:center;">
-        <button type="button" id="btnDownloadLogs" class="btn">📥 CSV</button>
         <span class="close-x" id="btnCloseLogs">✕</span>
       </div>
     </h2>
@@ -2623,6 +2634,21 @@ html[data-theme="light"] .sb-brand-sub{ color:#888; }
     if (!data) return;
     if (data.us) renderBondSleeve(data.us, 'BDUS', 'usd');
     if (data.kr) renderBondSleeve(data.kr, 'BDKR', 'krw');
+    // 국채 금리 카드
+    var yrow = $('bondYieldRow');
+    if (yrow && data.yields && data.yields.length) {
+      yrow.innerHTML = data.yields.map(function(y){
+        var hasRate = typeof y.rate === 'number';
+        var chgClass = y.dayPct > 0 ? 'pos' : y.dayPct < 0 ? 'neg' : '';
+        var chgSign = y.dayPct >= 0 ? '+' : '';
+        return '<div class="yield-card">'+
+          '<div class="yield-label">'+escapeHtml(y.label)+'</div>'+
+          '<div class="yield-name">'+escapeHtml(y.name)+'</div>'+
+          '<div class="yield-rate">'+(hasRate ? y.rate.toFixed(2)+'%' : '-')+'</div>'+
+          '<div class="yield-chg '+chgClass+'">'+(typeof y.dayPct==='number' ? chgSign+y.dayPct.toFixed(2)+'%' : '')+'</div>'+
+          '</div>';
+      }).join('');
+    }
   }
 
   function loadBonds() {
@@ -4308,8 +4334,6 @@ html[data-theme="light"] .sb-brand-sub{ color:#888; }
   }
   var _btUS=$('btnBacktestUS'); if(_btUS) _btUS.addEventListener('click', function(){ runBacktestUI('us'); });
   var _btKR=$('btnBacktestKR'); if(_btKR) _btKR.addEventListener('click', function(){ runBacktestUI('kr'); });
-  var _btnDownloadLogs = $('btnDownloadLogs');
-  if (_btnDownloadLogs) _btnDownloadLogs.addEventListener('click', downloadLogsCSV);
   var _btnDownloadLogsSettings = $('btnDownloadLogsSettings');
   if (_btnDownloadLogsSettings) _btnDownloadLogsSettings.addEventListener('click', downloadLogsCSV);
   var _btnDownloadPos = $('btnDownloadPositions');
