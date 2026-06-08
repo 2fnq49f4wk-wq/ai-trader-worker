@@ -2468,7 +2468,7 @@ const DEFAULT_CFG = {
   //   scalp: 분봉 기반 단타 전략 (기본 OFF — 설정에서 활성화)
   strategies: {
     trend: true,
-    scalp: false   // 분봉 단타: cfg에서 true로 켜면 활성화
+    scalp: true    // [V49] 분봉 단타 활성화 (US 전용 — scalpRules.usOnly=true)
   },
   // === [SCALP] 단타 전략 룰 — 분봉 기반 장중 단타 ===
   //   추세추종(일봉)과 완전 분리: 진입·관리·청산 모두 분봉 기준.
@@ -2810,6 +2810,7 @@ const DEFAULT_CFG = {
   rsMinOutperform: -2.0,
   // === 섹터 / 페어 제한 ===
   maxPositionsPerSector: 3,    // [V8] 전략별 포지션 가능해서 2→3 완화
+  maxEtfPositions: 4,          // [V49] 롱 ETF 동시보유 상한 — 추세전략의 ETF 과집중(7:1) 통제 (인버스/패닉헤지·패닉단타 면제)
   blockInversePair: true,
   // === 사이클 락 ===
   cycleLockTTL: 90000   // [V31] 90s — US 처리 지연 시 락 만료/이중체결 방지
@@ -6226,6 +6227,16 @@ function evaluateBuyBlocks(price, dayPct, dailyData, cfg, regime, signal, ctx) {
     }
   }
 
+  // [V49] 롱 ETF 과집중 차단 — 인버스/패닉헤지·패닉단타는 면제(하락장 헤지 유지)
+  if (cfg.maxEtfPositions && ctx && typeof ctx.longEtfCount === "number") {
+    const _isInv = INVERSE_ETF.has(ctx.symbol) || LEVERAGED_ETF.has(ctx.symbol);
+    const _isLongEtf = ETF_SYMBOLS.has(ctx.symbol) && !_isInv;
+    const _panicScalp = signal && signal.isPanicScalp === true;
+    if (_isLongEtf && !_panicScalp && ctx.longEtfCount >= cfg.maxEtfPositions) {
+      return "ETF_FULL (" + ctx.longEtfCount + "/" + cfg.maxEtfPositions + ")";
+    }
+  }
+
   // 섹터 동시 보유 제한 (전략 무관 — 전략별 포지션 있어도 같은 섹터 카운트)
   if (cfg.maxPositionsPerSector && ctx && ctx.sectorCounts) {
     const sec = SECTOR_MAP[ctx.symbol];
@@ -8568,6 +8579,11 @@ async function runTradingCycle(env) {
         const sec = SECTOR_MAP[sym];
         if (sec) sectorCounts[sec] = (sectorCounts[sec] || 0) + 1;
       }
+      // [V49] 롱 ETF 보유 수 — 인버스/레버리지(헤지)는 제외
+      let longEtfCount = 0;
+      for (const sym of heldSymbols) {
+        if (ETF_SYMBOLS.has(sym) && !INVERSE_ETF.has(sym) && !LEVERAGED_ETF.has(sym)) longEtfCount++;
+      }
 
       // [V8.1.6] 총자산 = 현금 + 보유 포지션 평가액 (최근 quote 기준)
       // 이전엔 cash[market]만 사용해서 매수할수록 사이즈 작아짐
@@ -8976,6 +8992,12 @@ async function runTradingCycle(env) {
       // [성능] 평가 중 quote 지표 갱신을 종목당 D1 write(saveQuote) 대신 batch로 모아
       //   루프 끝에 일괄 커밋 → 종목당 ~419ms였던 평가 속도를 ms 단위로 단축(커버리지 확대 가능).
       const evalQuoteStmts = [];
+      // [V49] 신호 폭주 수정 — 같은 (종목·신호명)이 매 사이클 재발생해 signalCount/SIGNAL 로그가
+      //   하루 수천 건으로 불어나던 문제. 거래일 단위로 종목·신호당 1회만 집계·기록한다.
+      const _sigDayKey = kstTradingDayKey(new Date());
+      let _sigSeen = await getState(DB, "sigseen:" + market, null);
+      if (!_sigSeen || _sigSeen.day !== _sigDayKey || typeof _sigSeen.seen !== "object") _sigSeen = { day: _sigDayKey, seen: {} };
+      let _sigSeenDirty = false;
       for (const item of orderedEval) {
         if (Date.now() - evalStartedAt > evalBudgetMs || Date.now() - cycleStartedAt > hardCapMs) {
           evalTimedOut = true;
@@ -9209,12 +9231,16 @@ async function runTradingCycle(env) {
             }
             continue;
           }
-          signalCount += stratResults.length;   // [통계] 발생 매수신호 누적
-          // [신호 로그] 발생 신호를 로그에 기록 (종목 + 전략 + 신호명)
+          // [V49] 신규 신호만 집계·기록 (거래일 내 (종목·신호) 중복 폭주 차단)
+          let _newSig = 0;
           for (const _sr of stratResults) {
             const _sig = _sr.signal;
+            const _sk = symbol + "|" + (_sig && _sig.name ? _sig.name : "?");
+            if (_sigSeen.seen[_sk]) continue;
+            _sigSeen.seen[_sk] = 1; _sigSeenDirty = true; _newSig++;
             await log(DB, "SIGNAL", symbol, "SIGNAL[" + market.toUpperCase() + "] " + _sr.strategy + " " + (_sig && _sig.name ? _sig.name : "?") + " w=" + (_sig && _sig.weight ? _sig.weight.toFixed(2) : "?") + " RSI=" + (dailyRsi != null ? dailyRsi.toFixed(1) : "?") + " d=" + dayPct.toFixed(1) + "%");
           }
+          signalCount += _newSig;   // [통계] 신규 신호만 일일 통계 누적
 
           // Cross-strategy confluence: 2개 이상 전략이 동시 신호면 보너스
           const crossBonus = (stratResults.length >= 2) ? (mcfg.crossConfluenceBonus || 1.0) : 1.0;
@@ -9252,6 +9278,7 @@ async function runTradingCycle(env) {
               strategy: strategy,
               heldSymbols: heldSymbols,
               sectorCounts: sectorCounts,
+              longEtfCount: longEtfCount,
               strategiesHeld: strategiesHeldNow,
               cooldowns: activeCooldowns
             };
@@ -9407,6 +9434,7 @@ async function runTradingCycle(env) {
                 strategiesHeldNow.add(strategy);
                 const sec = SECTOR_MAP[symbol];
                 if (sec) sectorCounts[sec] = (sectorCounts[sec] || 0) + 1;
+                if (ETF_SYMBOLS.has(symbol) && !INVERSE_ETF.has(symbol) && !LEVERAGED_ETF.has(symbol)) longEtfCount++;
               } else {
                 incNobuy("buy_failed[" + strategy + "]");
               }
@@ -9433,6 +9461,8 @@ async function runTradingCycle(env) {
       }
       // [TIME-CAP] 전 종목 평가를 시간 내 완료했으면 라운드로빈 오프셋 리셋
       if (!evalTimedOut) { try { await setState(DB, "eval_offset:" + market, 0); } catch (e) {} }
+      // [V49] 신호 dedup 맵 저장 (변경 시에만)
+      if (_sigSeenDirty) { try { await setState(DB, "sigseen:" + market, _sigSeen); } catch (e) {} }
 
       // [V8.1.2] 시장당 NOBUY / BLOCK / 샘플 요약
       const nbKeys = Object.keys(nobuyCounts);
