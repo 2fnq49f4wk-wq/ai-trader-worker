@@ -2522,7 +2522,11 @@ const DEFAULT_CFG = {
     rsLeaderMomMin: 10,                     // 절대 60일 모멘텀(%) 하한
     rsLeaderPbBand: 3,                      // MA10 ±N% 풀백 밴드(얕은 눌림목)
     rsLeaderRsiMin: 45,
-    rsLeaderRsiMax: 78                      // 리더는 과열 허용폭 넓게(강모멘텀 지속)
+    rsLeaderRsiMax: 78,                     // 리더는 과열 허용폭 넓게(강모멘텀 지속)
+    // === [강화] 승자 장기보유 — 깊은 수익 구간 트레일 확대(상방만, 손절폭 불변) ===
+    runnerWidenEnabled: true,
+    runnerR1: 3, runnerWiden1: 1.25,        // +3R↑ → 트레일 ×1.25
+    runnerR2: 5, runnerWiden2: 1.5          // +5R↑ → 트레일 ×1.5 (큰 추세 끝까지)
   },
   // === [KR 분리] TREND 룰 — KR 시장 전용 오버라이드 ===
   //   여기 정의한 키만 trendRules(US 기본값)를 덮어쓴다. 누락 키는 US값 상속.
@@ -5543,6 +5547,26 @@ function computeAlphaQuality(dailyData, regime) {
     if (obv > 0)      { score += 0.1; factors.push("OBV+"); }
     else if (obv < 0) { score -= 0.1; factors.push("OBV-"); }
   }
+  // 4) [강화·1y] 장기 모멘텀 지속성 — 120일 수익률. 긴 추세일수록 모멘텀 팩터 신뢰↑(과최적화 방지로 작게 ±0.1)
+  if (closes.length >= 121) {
+    const ret120 = getNDayReturn(closes, 120);
+    if (ret120 != null) {
+      if (ret120 >= 25)     { score += 0.1; factors.push("LMOM+"); }
+      else if (ret120 <= 0) { score -= 0.1; factors.push("LMOM-"); }
+    }
+  }
+  // 5) [강화·1y] 52주 신고가 근접도 — 연중 최고가의 N% 이내면 주도주(52w-high effect). 멀면 약세 잔존.
+  if (closes.length >= 200) {
+    const look = Math.min(252, closes.length - 1);
+    const hi = getNDayHigh(closes, look);
+    const last = closes[closes.length - 1];
+    if (hi != null && hi > 0) {
+      const offHigh = ((hi - last) / hi) * 100;   // 고점 대비 하락폭(%)
+      if (offHigh <= 5)        { score += 0.15; factors.push("52WH+"); }   // 신고가 부근 = 강한 주도주
+      else if (offHigh <= 15)  { score += 0.07; factors.push("52WH"); }
+      else if (offHigh >= 40)  { score -= 0.12; factors.push("52WL-"); }   // 고점서 40%↓ = 약세 잔존
+    }
+  }
 
   score = Math.max(0, Math.min(1, score));
   return { score: score, factors: factors };
@@ -6388,6 +6412,16 @@ function evaluateSell(pos, price, daily, dailyRsi, dailyMa, dailyMaShort, cfg, m
         if (half > 0) return { sell: true, sellQty: half, reason: "TP2 +" + pnlRate.toFixed(2) + "% (2R)" };
       }
     }
+  }
+
+  // [강화·승자보유] 수익이 깊을수록(R배수 큼) 트레일을 넓혀 큰 추세를 끝까지 태운다.
+  //   이미 충분히 번 포지션에만 적용 → 손절폭은 절대 안 넓어짐(상방만 확대). 추세추종의 핵심 알파(팻테일).
+  if (r.runnerWidenEnabled !== false && rPct > 0 && pnlRate > 0) {
+    const rMult = pnlRate / rPct;   // 현재 수익이 손절거리의 몇 배(R)인가
+    const t1 = r.runnerR1 != null ? r.runnerR1 : 3;   // +3R↑
+    const t2 = r.runnerR2 != null ? r.runnerR2 : 5;   // +5R↑
+    if (rMult >= t2)      trailScale *= (r.runnerWiden2 != null ? r.runnerWiden2 : 1.5);
+    else if (rMult >= t1) trailScale *= (r.runnerWiden1 != null ? r.runnerWiden1 : 1.25);
   }
 
   // 3) 트레일링 — 피크 − trailAtrMult×ATR 하락 시 (이익 중일 때만)
