@@ -322,6 +322,26 @@ button.btn.loading::after{content:'조회 중…';position:absolute;inset:0;disp
   border:1px solid var(--bd);color:var(--t2);letter-spacing:.5px;
 }
 
+/* ── MARKET INTEL 카드 ── */
+.intel-row{display:flex;gap:6px;flex-wrap:wrap;margin-top:4px;}
+.intel-chip{font-size:9px;padding:2px 7px;border:1px solid;font-weight:700;letter-spacing:.5px;text-transform:uppercase;}
+.intel-chip.risk-on{border-color:var(--pos);color:var(--pos);}
+.intel-chip.risk-off{border-color:var(--neg);color:var(--neg);}
+.intel-chip.caution{border-color:var(--amber);color:var(--amber);}
+.intel-chip.neutral,.intel-chip.mild-on{border-color:var(--t3);color:var(--t3);}
+.intel-sector-grid{display:grid;grid-template-columns:repeat(3,1fr);gap:3px;margin-top:6px;}
+.intel-sector-item{font-size:9px;padding:3px 5px;background:var(--s1);border-left:2px solid var(--bd);}
+.intel-sector-item.pos{border-left-color:var(--pos);}
+.intel-sector-item.neg{border-left-color:var(--neg);}
+.intel-sector-name{color:var(--t3);font-weight:700;letter-spacing:.5px;}
+.intel-sector-val{color:var(--t1);}
+/* ── ALT ASSETS 미니카드 ── */
+.alt-asset-row{display:flex;flex-direction:column;gap:5px;margin-top:4px;}
+.alt-asset-item{display:flex;justify-content:space-between;align-items:center;font-size:10px;padding:4px 6px;background:var(--s1);border-left:2px solid var(--bd);}
+.alt-asset-label{color:var(--t3);font-weight:700;letter-spacing:.4px;}
+.alt-asset-value{color:var(--t1);font-variant-numeric:tabular-nums;}
+.alt-asset-chg{font-size:9px;margin-left:5px;}
+
 /* ── DASHBOARD 페이지 ── */
 
 /* LLM 배너 */
@@ -1173,6 +1193,38 @@ html[data-theme="light"] .sb-brand-sub{ color:#888; }
           <div class="dash-block-label">🇰🇷 KR INDICES</div>
           <div class="indices-row" id="indicesKR" style="grid-template-columns:1fr 1fr;">
             <div class="empty">대기 중...</div>
+          </div>
+        </div>
+
+        <!-- MARKET INTEL (risk-on/off + 섹터 뉴스) -->
+        <div class="dash-block">
+          <div class="dash-block-label">◈ MARKET INTEL</div>
+          <div class="intel-row">
+            <span class="intel-chip neutral" id="intelRegimeChip">—</span>
+            <span style="font-size:10px;color:var(--t3);" id="intelRiskScore">loading...</span>
+          </div>
+          <div style="font-size:9px;color:var(--t3);margin-top:4px;" id="intelDetail"></div>
+          <div class="intel-sector-grid" id="intelSectorGrid">
+            <div style="grid-column:1/-1;font-size:9px;color:var(--t3);">섹터 뉴스 대기 중...</div>
+          </div>
+        </div>
+
+        <!-- ALT ASSETS (원자재·국채 요약) -->
+        <div class="dash-block">
+          <div class="dash-block-label">⬡ ALT ASSETS</div>
+          <div class="alt-asset-row">
+            <div class="alt-asset-item" id="altCM">
+              <span class="alt-asset-label">⛏ COMMODITIES</span>
+              <span class="alt-asset-value" id="altCMVal">—</span>
+            </div>
+            <div class="alt-asset-item" id="altBDUS">
+              <span class="alt-asset-label">🇺🇸 US BONDS</span>
+              <span class="alt-asset-value" id="altBDUSVal">—</span>
+            </div>
+            <div class="alt-asset-item" id="altBDKR">
+              <span class="alt-asset-label">🇰🇷 KR BONDS</span>
+              <span class="alt-asset-value" id="altBDKRVal">—</span>
+            </div>
           </div>
         </div>
 
@@ -2395,6 +2447,17 @@ html[data-theme="light"] .sb-brand-sub{ color:#888; }
   function loadCommodities() {
     return api('/api/commodities').then(function(data){
       renderCommodities(data);
+      // ALT ASSETS 대시보드 미니카드 갱신
+      if (data) {
+        var cash = typeof data.cash === 'number' ? data.cash : 0;
+        var invested = 0;
+        var qmap = {};
+        (data.watchlist||[]).forEach(function(q){ if(q&&q.symbol) qmap[q.symbol]=q; });
+        (data.positions||[]).forEach(function(p){ var q=qmap[p.symbol]; invested += p.qty * ((q&&q.price)||p.avg); });
+        var total = cash + invested;
+        var init = data.initialCash || 100000;
+        updateAltAssetCard('altCMVal', '$' + fmtNum(total, 0), init > 0 ? (total-init)/init*100 : 0);
+      }
     })['catch'](function(e){ /* 조용히 무시 — 패널만 비움 */ });
   }
 
@@ -2424,6 +2487,53 @@ html[data-theme="light"] .sb-brand-sub{ color:#888; }
       })
       ['catch'](function(e){ toast('원자재 초기화 실패: '+e.message); })
       .then(function(){ if (btn) { btn.disabled = false; btn.textContent = orig; } });
+  }
+
+  // === [MARKET INTEL] 대시보드 마켓컨텍스트 + 섹터뉴스 카드 ===
+  function renderMarketIntel(d) {
+    if (!d) return;
+    var mc = d.marketContext;
+    var sn = d.sectorNews;
+    // 리스크 레짐 칩
+    var chip = $('intelRegimeChip');
+    var scoreEl = $('intelRiskScore');
+    var detailEl = $('intelDetail');
+    if (chip && mc) {
+      var regime = mc.regime || 'neutral';
+      var chipClass = 'intel-chip ' + regime.replace('_', '-');
+      var label = { risk_on:'RISK ON', risk_off:'RISK OFF', caution:'CAUTION', mild_on:'MILD ON', neutral:'NEUTRAL' }[regime] || regime.toUpperCase();
+      chip.className = chipClass;
+      chip.textContent = label;
+      if (scoreEl) scoreEl.textContent = 'score ' + (mc.riskScore != null ? (mc.riskScore >= 0 ? '+' : '') + mc.riskScore.toFixed(2) : '?') + ' · size×' + (mc.sizeScale != null ? mc.sizeScale.toFixed(2) : '?');
+      if (detailEl) detailEl.textContent = mc.detail || '';
+    }
+    // 섹터 뉴스 그리드
+    var grid = $('intelSectorGrid');
+    if (grid && sn && sn.scores) {
+      var groups = ['TECH','FINANCE','HEALTH','CONSUMER','INDUSTRIAL','RESOURCES'];
+      grid.innerHTML = groups.map(function(g) {
+        var sc = sn.scores[g];
+        var scale = sn.scales && sn.scales[g];
+        var hasData = typeof sc === 'number';
+        var cls = !hasData ? '' : sc > 0.05 ? 'pos' : sc < -0.05 ? 'neg' : '';
+        var valText = hasData ? (sc >= 0 ? '+' : '') + sc.toFixed(2) : '—';
+        var scaleText = (scale != null && hasData) ? ' ×' + scale.toFixed(2) : '';
+        return '<div class="intel-sector-item ' + cls + '"><div class="intel-sector-name">' + g + '</div><div class="intel-sector-val">' + valText + scaleText + '</div></div>';
+      }).join('');
+    }
+  }
+
+  // ALT ASSETS 미니카드 업데이트 헬퍼
+  function updateAltAssetCard(id, valText, chgPct) {
+    var el = $(id);
+    if (!el) return;
+    var chgClass = chgPct > 0 ? 'pos' : chgPct < 0 ? 'neg' : '';
+    var chgSign = chgPct >= 0 ? '+' : '';
+    el.textContent = valText + ' ';
+    var span = document.createElement('span');
+    span.className = 'alt-asset-chg ' + chgClass;
+    span.textContent = chgSign + chgPct.toFixed(2) + '%';
+    el.appendChild(span);
   }
 
   // === [BONDS] 국채 렌더링 ===
@@ -2516,8 +2626,25 @@ html[data-theme="light"] .sb-brand-sub{ color:#888; }
   }
 
   function loadBonds() {
-    return api('/api/bonds').then(function(data){ renderBonds(data); })
-      ['catch'](function(){});
+    return api('/api/bonds').then(function(data){
+      renderBonds(data);
+      // ALT ASSETS 대시보드 미니카드 갱신
+      if (data) {
+        function altTotal(sleeve, isKRW) {
+          if (!sleeve) return null;
+          var cash = typeof sleeve.cash === 'number' ? sleeve.cash : 0;
+          var invested = 0;
+          var qmap = {};
+          (sleeve.watchlist||[]).forEach(function(q){ if(q&&q.symbol) qmap[q.symbol]=q; });
+          (sleeve.positions||[]).forEach(function(p){ var q=qmap[p.symbol]; invested += p.qty * ((q&&q.price)||p.avg); });
+          return { total: cash+invested, init: sleeve.initialCash || (isKRW?100000000:100000) };
+        }
+        var us = altTotal(data.us, false);
+        var kr = altTotal(data.kr, true);
+        if (us) updateAltAssetCard('altBDUSVal', '$'+fmtNum(us.total,0), us.init>0?(us.total-us.init)/us.init*100:0);
+        if (kr) updateAltAssetCard('altBDKRVal', '₩'+fmtNum(kr.total,0), kr.init>0?(kr.total-kr.init)/kr.init*100:0);
+      }
+    })['catch'](function(){});
   }
 
   function runBondNow(key, btnId) {
@@ -3633,6 +3760,8 @@ html[data-theme="light"] .sb-brand-sub{ color:#888; }
     loadCommodities();
     // [BONDS] 국채 패널 로드
     loadBonds();
+    // [MARKET INTEL] risk-on/off + 섹터뉴스 대시보드 카드
+    fetch('/api/diag').then(function(r){ return r.json(); }).then(function(d){ renderMarketIntel(d); })['catch'](function(){});
     // [개선] 로그는 모달 열렸을 때만 fetch (불필요한 폴링 제거)
   }
 
@@ -4314,6 +4443,21 @@ html[data-theme="light"] .sb-brand-sub{ color:#888; }
           }
           if (d.llm && (d.llm.kr || d.llm.us)) {
             lines.push('LLM 마지막 실행: KR=' + (d.llm.kr || '?') + ' / US=' + (d.llm.us || '?'));
+          }
+          if (d.marketContext) {
+            var mc = d.marketContext;
+            var ageMin = mc.ts ? Math.round((Date.now()-mc.ts)/60000) : '?';
+            lines.push('마켓컨텍스트: ' + (mc.regime||'?').toUpperCase() + ' score=' + (mc.riskScore!=null?(mc.riskScore>=0?'+':'')+mc.riskScore.toFixed(2):'?') + ' size×' + (mc.sizeScale!=null?mc.sizeScale.toFixed(2):'?') + ' (' + ageMin + '분전)');
+            if (mc.detail) lines.push('  ' + mc.detail);
+          }
+          if (d.sectorNews && d.sectorNews.scores) {
+            var sn = d.sectorNews;
+            var ageSnMin = sn.ts ? Math.round((Date.now()-sn.ts)/60000) : '?';
+            var scoreStr = Object.keys(sn.scores).map(function(g){ var s=sn.scores[g]; return g+':'+(s>=0?'+':'')+s.toFixed(2); }).join(' ');
+            lines.push('섹터뉴스: ' + scoreStr + ' (' + ageSnMin + '분전)');
+          }
+          if (d.usage) {
+            lines.push('CF사용량: ' + d.usage.worstPct + '% (여유:' + d.usage.headroomPct + '%p)');
           }
           alert(lines.join('\n'));
         })
