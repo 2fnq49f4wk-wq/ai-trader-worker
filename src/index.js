@@ -9805,6 +9805,8 @@ async function handleRequest(request, env) {
           us: await getState(env.DB, "llm_daily:us", null),
           kr: await getState(env.DB, "llm_daily:kr", null)
         },
+        marketContext: await getState(env.DB, "mkt_context", null),
+        sectorNews: await getState(env.DB, "sector_news_sentiment", null),
         watchlist: quotes,
         indices: indices,
         signalStats: signalStats,
