@@ -2454,7 +2454,9 @@ const DEFAULT_CFG = {
     timeStopMinPnl: 0.4,     // [강화] 0.3→0.4
     // 포지션 크기
     maxPositionPct: 6,       // 포트의 최대 6%
-    riskPerTrade: 0.5        // 손실 리스크 = 포트의 0.5%
+    riskPerTrade: 0.5,       // 손실 리스크 = 포트의 0.5%
+    // [데이터적합] 단타 US 전용 — KR 야후 1분봉은 15분 지연이라 분봉 단타 타이밍 불가. false면 KR도 허용.
+    usOnly: true
   },
   // === [SCALP-PANIC] 패닉/베어장 전용 단타 룰 — "패닉 때도 단타로 번다" ===
   //   평시 scalp는 상승추세 종목만 노려 패닉장엔 신호가 0이 된다.
@@ -3385,6 +3387,26 @@ function marketMinutesUntilClose(market) {
     // 거래 윈도우: 09:15~15:45
     if (kst.totalMin < 555 || kst.totalMin >= 945) return null;
     return 945 - kst.totalMin;  // 15:45 KST (거래 윈도우 종료)
+  }
+  return null;
+}
+
+// [강화·데이터적합] 현재 거래 세션의 경과 비율(0~1) — 장중 형성 중인 당일봉의
+//   "부분 거래량"을 풀데이(full-day) 기준으로 환산하는 데 사용. 윈도우 밖이면 null(=완성봉으로 취급).
+//   US 09:30~16:00(390분), KR 거래윈도우 09:15~15:45(390분).
+function sessionElapsedFraction(market) {
+  const now = new Date();
+  if (market === "us") {
+    const et = getUSEt(now);
+    if (et.day < 1 || et.day > 5) return null;
+    if (et.totalMin < 570 || et.totalMin >= 960) return null;
+    return Math.max(0, Math.min(1, (et.totalMin - 570) / 390));
+  }
+  if (market === "kr") {
+    const kst = getKST(now);
+    if (kst.day < 1 || kst.day > 5) return null;
+    if (kst.totalMin < 555 || kst.totalMin >= 945) return null;
+    return Math.max(0, Math.min(1, (kst.totalMin - 555) / 390));
   }
   return null;
 }
@@ -5648,8 +5670,10 @@ function evaluateTrendEntry(price, dayPct, dailyData, cfg, regime, market) {
   // 트리거 B: 신고가 돌파 + 거래량 — 과열(RSI 상한) 아닐 때만
   const boRsiMax = isEtf ? 78 : (r.rsiBreakoutMax || 75);
   const hiN = getNDayHigh(closes, r.breakoutDays || 20);  // 현재봉 직전 N일 신고가
+  // [강화·데이터적합] 장중 형성 중인 당일봉 거래량을 풀데이 기준으로 환산(volPaceMult). 백테스트(완성봉)는 1.
+  const _volPace = (dailyData.volPaceMult && dailyData.volPaceMult > 1) ? dailyData.volPaceMult : 1;
   if (hiN != null && price > hiN && rsi <= boRsiMax && volumes.length >= 21) {
-    const todayVol = volumes[volumes.length - 1];
+    const todayVol = volumes[volumes.length - 1] * _volPace;
     let avgVol = 0;
     for (let i = volumes.length - 21; i < volumes.length - 1; i++) avgVol += volumes[i];
     avgVol /= 20;
@@ -5689,7 +5713,7 @@ function evaluateTrendEntry(price, dayPct, dailyData, cfg, regime, market) {
       const wasSqueezed = bbPrev.upper < kcUpPrev && bbPrev.lower > kcLoPrev;
       // 현재 밴드 확장(스퀴즈 해소) + 직전 상단 돌파 + 당일 상승 + 거래량
       if (wasSqueezed && isGreen && price > bbPrev.upper && volumes.length >= 21) {
-        const todayVol = volumes[volumes.length - 1];
+        const todayVol = volumes[volumes.length - 1] * _volPace;
         let avgVol = 0;
         for (let i = volumes.length - 21; i < volumes.length - 1; i++) avgVol += volumes[i];
         avgVol /= 20;
@@ -8722,7 +8746,13 @@ async function runTradingCycle(env) {
           }
           const strategiesHeldNow = getStrategiesHeldForSymbol(positions, symbol);
           // [V10] 1차 평가 — 분봉 없이 일봉 신호만으로 (호출 0). day 게이트는 데이터부족→통과.
-          if (daily) daily.symbol = symbol;  // [Vision AI] symbol을 daily에 주입
+          if (daily) {
+            daily.symbol = symbol;  // [Vision AI] symbol을 daily에 주입
+            // [강화·데이터적합] 장중 형성 중인 당일봉 거래량을 풀데이 기준으로 환산할 배수.
+            //   경과율 하한 0.4(최대 2.5x)로 장 초반 노이즈 폭주 방지, 후반부·마감엔 ~1배. 백테스트는 미설정→1배.
+            const _ef = sessionElapsedFraction(market);
+            daily.volPaceMult = (_ef != null && _ef > 0 && _ef < 0.95) ? Math.min(2.5, 1 / Math.max(0.4, _ef)) : 1;
+          }
           let stratResults = evaluateAllStrategies(price, dayPct, daily, mcfg, signalStats, regime, market, intra, visionPreds, secData);
 
           // === [SCALP] 분봉 단타 전략 평가 ===
@@ -8737,7 +8767,11 @@ async function runTradingCycle(env) {
             const bear = regime && regime.regime === "BEAR" && typeof regime.worstDayPct === "number" && regime.worstDayPct <= -1.0;
             return ((typeof isPanic === "function") ? isPanic(regime, cp) : false) || bear;
           })();
-          if ((_scalpOn || _panicScalpOn) && stratResults.length === 0 && !strategiesHeldNow.has("scalp")) {
+          // [강화·데이터적합] 단타는 US 전용 — KR은 야후 1분봉이 15분 지연이라 분봉 단타 타이밍이 구조적으로 깨짐.
+          //   (일봉/스윙은 거래윈도우 시프트로 데이터-가격 일치가 보장되지만, 분봉 단타는 시프트로도 못 고침)
+          const _srUsOnly = (mcfg.scalpRules && mcfg.scalpRules.usOnly !== undefined) ? mcfg.scalpRules.usOnly : true;
+          const _scalpMarketOk = (!_srUsOnly) || market === "us";
+          if (_scalpMarketOk && (_scalpOn || _panicScalpOn) && stratResults.length === 0 && !strategiesHeldNow.has("scalp")) {
             const _scalpIc = mcfg.intradayConfirm || DEFAULT_CFG.intradayConfirm;
             if (minuteFetchUsed < ((_scalpIc && _scalpIc.maxPerCycle) || 60) && fetchBudgetLeft() > 5) {
               try {
