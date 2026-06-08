@@ -2065,7 +2065,7 @@ const FX_PAIRS = [
 // === 전략 식별자 ===
 // [재작성] 단일 추세추종 전략 "trend"로 통합. 구 swing/momentum/meanrev/day 폐기.
 //   기존 보유 포지션(strategy=swing 등)도 새 evaluateSell이 strategy 무관하게 청산 관리한다.
-const STRATEGIES = ["trend"];
+const STRATEGIES = ["trend", "scalp"];  // scalp: 분봉 단타 (cfg.strategies.scalp=true 시 활성)
 const LEGACY_STRATEGIES = ["swing", "momentum", "meanrev", "day"];  // 통계/호환 표시용
 
 // === [신규] 섹터 매핑 (동시 보유 제한용) ===
@@ -2215,15 +2215,15 @@ const DEFAULT_CFG = {
   atrPeriod: 14, atrStopMult: 2.0,
   bbStdMult: 2.0,
   volSpikeMult: 1.5,
-  dailyCacheMinutes: 90,   // [PAID] 90분 캐시. 60종목/사이클 × 15분 전순환과 균형
-  maxDailyRefreshPerCycle: 60, // [PAID] 사이클당 60종목 → 854종목 전순환 ~15분 (Paid 1000 subreq 내 여유)
-  // [PAID 가드] Workers Paid 한도 초과 과금 방지 — 90% 도달 시 자동 셧다운
+  dailyCacheMinutes: 75,   // [PAID] 75분 캐시. Paid 1000 subreq 여유 활용해 더 자주 갱신
+  maxDailyRefreshPerCycle: 75, // [PAID] 사이클당 75종목 → 854종목 전순환 ~12분 (Paid 여유 활용)
+  // [PAID 가드] Workers Paid 한도 초과 과금 방지 — 85% 도달 시 자동 셧다운 (15% 버퍼)
   usageLimits: {
     enabled: true,
-    monthlyRequests: 10000000,  // Paid 포함량
+    monthlyRequests: 10000000,  // Paid 포함량 ($5/month)
     monthlyCpuMs: 30000000,     // Paid 포함량
-    shutdownAt: 0.90,
-    warnAt: 0.70,
+    shutdownAt: 0.85,           // [강화] 0.90→0.85: 추가과금 방지 버퍼 확대
+    warnAt: 0.65,               // [강화] 0.70→0.65: 조기 경보
     cpuCalibration: 0.10        // CPU 추정 보정 (대시보드 실측 대비 조정)
   },
   // [실시간] 분(分) 내 빠른 포지션 감시 — 한 invocation에서 sleep 서브틱으로 보유 포지션의
@@ -2243,7 +2243,9 @@ const DEFAULT_CFG = {
     interval: "5m",        // 5분봉 (1m은 노이즈↑)
     momMin: -1.5,          // 최근 3봉(15분) 수익률 ≤ -1.5%면 진입 차단
     vwapMaxPct: 3.5,       // 가격이 VWAP보다 +3.5% 초과면 추격으로 보고 차단
-    maxPerCycle: 40        // invocation당 분봉 조회 상한 (subrequest 통제)
+    vwapBoostPct: 0.5,     // 가격이 VWAP ±0.5% 이내: 최적 진입대 → confidence boost
+    momBoostMin: 0.8,      // recentMom ≥ 0.8%: 분봉 상승추세 확인 → 진입 강화
+    maxPerCycle: 60        // [PAID] 0.90→60: Paid subreq 여유 활용해 더 많은 분봉 확인
   },
   initialCashUS: 100000, initialCashKR: 100000000,
   initialCashCM: 100000,   // [COMMODITY] 원자재 초기 보유 금액 $100,000 (USD)
@@ -2413,9 +2415,46 @@ const DEFAULT_CFG = {
   },
   // === [V8.5] 사이클 락 자동 갱신 ===
   cycleLockRefreshAt: 0.5,   // TTL의 50% 경과 시 갱신
-  // === [재작성] 단일 추세추종 전략 ===
+  // === 전략 활성화 ===
+  //   scalp: 분봉 기반 단타 전략 (기본 OFF — 설정에서 활성화)
   strategies: {
-    trend: true
+    trend: true,
+    scalp: false   // 분봉 단타: cfg에서 true로 켜면 활성화
+  },
+  // === [SCALP] 단타 전략 룰 — 분봉 기반 장중 단타 ===
+  //   추세추종(일봉)과 완전 분리: 진입·관리·청산 모두 분봉 기준.
+  //   일봉: MA20>MA50 (약 추세 확인) + 일봉 과열 아님(RSI≤72)
+  //   분봉: VWAP 돌파 진입 또는 장중 눌림목 반등
+  scalpRules: {
+    // 일봉 추세 조건 (느슨 — 단타는 추세 방향만 맞으면 됨)
+    rsiMax: 70,              // [강화] 72→70 일봉 RSI 상한 (과열 진입 더 차단 → 승률↑)
+    rsiMin: 42,              // [신규] 일봉 RSI 하한 — 약세 종목 단타 차단(추세 동행만)
+    maFastPeriod: 20,        // 일봉 MA20 > MA50 추세 확인
+    maSlowPeriod: 50,
+    // [신규] 품질 게이트 — 승률 개선의 핵심
+    requirePriceAboveMaFast: true,  // 일봉 종가가 MA20 위일 때만 (추세 상단)
+    minDayMomPct: -1.0,      // 당일 등락률이 이보다 낮으면(급락) 단타 차단(칼날 회피)
+    adxMin: 20,              // [신규] 일봉 ADX≥20 — 추세장에서만 단타(횡보 휩쏘 회피)
+    minRelVol: 1.2,          // [신규] 분봉 최근 거래량이 평균의 1.2배↑ (유동성·관심 확인)
+    // 분봉 진입 조건
+    vwapBand: 0.8,           // [강화] 1.0→0.8 VWAP 더 가까이서만 진입(추격 비용↓)
+    momEntry: 0.4,           // [강화] 0.3→0.4 분봉 모멘텀 더 확실할 때만
+    momStrong: 1.5,          // recentMom ≥ 1.5%: 강한 모멘텀 → 더 작은 포지션(추격 방지)
+    pullbackEnabled: true,   // [신규] VWAP 눌림목 반등 진입 — 추격 대신 되돌림에서 진입(수익률↑)
+    pullbackVwapMin: -1.2,   // VWAP −1.2%까지 눌렸다가
+    pullbackBounce: 0.25,    // 직전 분봉 대비 +0.25% 반등 시 진입
+    // 청산 조건 (빠른 손절·익절 + 분할익절·본전락)
+    stopLossPct: 1.2,        // [강화] 1.5→1.2 손절 타이트(손실폭↓ → 손익비 개선)
+    tp1Pct: 1.2,             // [신규] +1.2% 도달 시 절반 익절 + 손절 본전 이동(BE락)
+    takeProfit: 2.5,         // [강화] 2.0→2.5 잔량 최종 익절(추세 지속 수익 극대화)
+    trailActivatePct: 1.2,   // [신규] +1.2% 이상에서만 트레일 작동(조기 청산 방지)
+    trailPct: 0.7,           // [강화] 1.0→0.7 트레일 타이트(이익 보호 강화)
+    breakEvenLock: 0.1,      // [신규] TP1 후 손절을 본전+0.1%로 → 무손실 런너 (executeSell이 참조)
+    timeStopMinutes: 40,     // [강화] 45→40 더 빠른 죽은돈 회수
+    timeStopMinPnl: 0.4,     // [강화] 0.3→0.4
+    // 포지션 크기
+    maxPositionPct: 6,       // 포트의 최대 6%
+    riskPerTrade: 0.5        // 손실 리스크 = 포트의 0.5%
   },
   // === [재작성] TREND 전략 룰 — 추세 정렬 진입 + 고정리스크 + 분할익절/트레일 ===
   trendRules: {
@@ -2805,7 +2844,7 @@ function migrateCfgToMarkets(cfg) {
 
   // [재작성] 단일 추세추종 전략으로 강제 — 저장된 옛 cfg가 swing/momentum/meanrev를
   //   켜둔 채 얕은 병합으로 살아남는 것을 막는다(매 로드 강제). trendRules/trendSizing 보강.
-  cfg.strategies = { trend: true };
+  cfg.strategies = Object.assign({ trend: true }, cfg.strategies || {}, { trend: true });
   if (!cfg.trendRules || typeof cfg.trendRules !== "object") {
     cfg.trendRules = JSON.parse(JSON.stringify(DEFAULT_CFG.trendRules));
   } else {
@@ -4310,7 +4349,7 @@ function filterNulls(rawArr) {
 //   → 한 invocation 동안 yahooFetch 호출 수를 카운트하고, 예산을 넘으면 실제 fetch 를
 //     하지 않고 즉시 throw 해서(=조용히 스킵) 한도 폭발을 막는다. 남은 종목은 다음
 //     사이클 라운드로빈으로 처리된다.
-let __fetchBudget = { used: 0, max: 600 };  // [PAID] Workers Paid 1000 한도의 60%
+let __fetchBudget = { used: 0, max: 850 };  // [PAID] Workers Paid 1000 한도의 85%
 function resetFetchBudget(max) {
   __fetchBudget = { used: 0, max: (typeof max === "number" && max > 0) ? max : 600 };
 }
@@ -4364,6 +4403,11 @@ async function recordUsage(DB, deltaReq, deltaCpuMs, deltaSubreqs) {
 // 사이클 진입 전 호출: true 반환 시 즉시 스킵해야 함(셧다운 상태).
 async function isUsageShutdown(DB, cfg) {
   try {
+    // [강제 락] 관리자가 수동으로 엔진을 잠근 경우 즉시 차단 (추가과금 원천 차단)
+    if (cfg && cfg.forceLock === true) {
+      try { await log(DB, "WARN", null, "[FORCE LOCK] 관리자 강제 락 활성 — 모든 사이클 차단"); } catch (e) {}
+      return true;
+    }
     const lim = Object.assign({}, USAGE_LIMITS_DEFAULT, (cfg && cfg.usageLimits) || {});
     if (lim.enabled === false) return false;
     const u = await getUsageState(DB);
@@ -4711,7 +4755,8 @@ async function fetchMinuteBars(symbol, opts) {
 
 // [분봉] 진입 직전 장중 타이밍 확인 — 분봉 데이터로 추격/급락 진입을 차단.
 //   mb 없으면(조회 실패/예산초과) 통과(기존 동작 보존, 분봉은 보조 게이트일 뿐).
-//   반환: { ok:true } 또는 { ok:false, reason }
+//   반환: { ok:true, confidenceBoost? } 또는 { ok:false, reason }
+//   [강화] VWAP 근접 + 상승 모멘텀 시 confidenceBoost(0~0.15) 추가 — 최적 타이밍 보상.
 function confirmIntradayEntry(mb, price, rules) {
   if (!mb) return { ok: true };
   const r = rules || {};
@@ -4722,13 +4767,23 @@ function confirmIntradayEntry(mb, price, rules) {
   }
   // 2) VWAP 과열 — 가격이 당일 VWAP보다 과도하게 높으면 추격매수로 보고 차단
   const vwapMaxPct = (r.vwapMaxPct != null) ? r.vwapMaxPct : 3.5;
+  let aboveVwap = null;
   if (mb.vwap && mb.vwap > 0 && price > 0) {
-    const aboveVwap = ((price - mb.vwap) / mb.vwap) * 100;
+    aboveVwap = ((price - mb.vwap) / mb.vwap) * 100;
     if (aboveVwap > vwapMaxPct) {
       return { ok: false, reason: "VWAP_CHASE +" + aboveVwap.toFixed(2) + "%" };
     }
   }
-  return { ok: true };
+  // 3) [강화] VWAP 근접 + 상승 모멘텀 → 최적 진입 타이밍 → confidence boost
+  //    VWAP ±vwapBoostPct% 이내 + recentMom ≥ momBoostMin% → 진입 신뢰도 상향
+  let confidenceBoost = 0;
+  const vwapBoostPct = (r.vwapBoostPct != null) ? r.vwapBoostPct : 0.5;
+  const momBoostMin = (r.momBoostMin != null) ? r.momBoostMin : 0.8;
+  if (aboveVwap != null && Math.abs(aboveVwap) <= vwapBoostPct && typeof mb.recentMom === "number" && mb.recentMom >= momBoostMin) {
+    // VWAP 지지 + 상승 모멘텀: 최적 진입 → sizeBoost 부여
+    confidenceBoost = Math.min(0.15, mb.recentMom * 0.05);  // mom 1% = +0.05 boost (최대 0.15)
+  }
+  return { ok: true, confidenceBoost: confidenceBoost };
 }
 
 async function fetchDailyFull(symbol) {
@@ -5230,6 +5285,113 @@ function evaluateBuySignals_swing(price, dayPct, dailyData, cfg) {
 
 
 
+// === [SCALP] 분봉 기반 단타 진입 평가 ===
+//   분봉(mb)이 없으면 null 반환 — 분봉 fetch 실패 시 단타 스킵(기존 trend는 영향없음).
+//   일봉 추세 확인(약): MA20>MA50 + price>MA20 + RSI≤72
+//   분봉 진입 신호:
+//     SC_VWAP_CROSS: 가격이 VWAP 근접(±1%) + 상승 모멘텀 → VWAP 지지 진입
+//     SC_MOMENTUM:   분봉 모멘텀 강함(≥0.5%) + VWAP 하향 이탈 아님 → 추세 타기
+function evaluateScalpEntry(mb, dailyData, cfg, market) {
+  if (!mb || !mb.vwap || !mb.closes || mb.closes.length < 6) return null;
+  const sr = Object.assign({}, (cfg && cfg.scalpRules) || DEFAULT_CFG.scalpRules || {});
+  const closes = dailyData && dailyData.closes;
+  if (!closes || closes.length < 55) return null;
+
+  // ── 게이트 1: 일봉 추세 정렬 ──
+  const ma20 = getMA(closes, sr.maFastPeriod || 20);
+  const ma50 = getMA(closes, sr.maSlowPeriod || 50);
+  if (ma20 == null || ma50 == null) return null;
+  if (!(ma20 > ma50)) return null;  // 추세 방향 아니면 진입 차단
+  // [강화] 일봉 종가가 MA20 위 — 추세 상단에서만 단타 (눌림 깊은 종목 회피)
+  const dayClose = closes[closes.length - 1];
+  if (sr.requirePriceAboveMaFast !== false && !(dayClose > ma20)) return null;
+
+  // ── 게이트 2: 일봉 RSI 밴드 — 과열·약세 양쪽 차단 ──
+  const rsi = getRSI(closes, (cfg && cfg.rsiPeriod) || 14);
+  if (rsi != null) {
+    if (rsi > (sr.rsiMax || 70)) return null;
+    if (rsi < (sr.rsiMin != null ? sr.rsiMin : 42)) return null;
+  }
+
+  // ── 게이트 3: ADX 추세 강도 — 횡보장 휩쏘 회피 (승률 핵심) ──
+  if (sr.adxMin && dailyData.highs && dailyData.lows) {
+    const adx = getADX(dailyData.highs, dailyData.lows, closes, 14);
+    if (adx != null && adx < sr.adxMin) return null;
+  }
+
+  // ── 게이트 4: 당일 급락 회피 (칼날잡기 차단) ──
+  if (sr.minDayMomPct != null && dailyData.prevClose && dailyData.prevClose > 0) {
+    const dayMom = ((mb.price - dailyData.prevClose) / dailyData.prevClose) * 100;
+    if (dayMom < sr.minDayMomPct) return null;
+  }
+
+  // ── 게이트 5: 분봉 상대거래량 — 유동성·관심 확인 ──
+  if (sr.minRelVol && mb.volumes && mb.volumes.length >= 11) {
+    const vN = mb.volumes.length;
+    const recentVol = mb.volumes[vN - 1] + mb.volumes[vN - 2];
+    let avgVol = 0, cnt = 0;
+    for (let i = Math.max(0, vN - 11); i < vN - 1; i++) { avgVol += mb.volumes[i]; cnt++; }
+    avgVol = cnt > 0 ? (avgVol / cnt) * 2 : 0;  // 2봉 합과 비교 위해 ×2
+    if (avgVol > 0 && recentVol < avgVol * sr.minRelVol) return null;
+  }
+
+  const price = mb.price;
+  const vwap = mb.vwap;
+  const recentMom = mb.recentMom || 0;
+  const aboveVwap = vwap > 0 ? ((price - vwap) / vwap) * 100 : 0;
+  const vwapBand = sr.vwapBand || 0.8;
+  const momEntry = sr.momEntry || 0.4;
+  const momStrong = sr.momStrong || 1.5;
+
+  // 분봉 단기 반등 측정 (직전봉 대비)
+  const mc = mb.closes;
+  const lastBarChg = mc.length >= 2 ? ((mc[mc.length - 1] - mc[mc.length - 2]) / mc[mc.length - 2]) * 100 : 0;
+
+  // ── 진입 A (최우선): VWAP 눌림목 반등 — 추격 대신 되돌림 진입(손익비 최상) ──
+  //   가격이 VWAP 아래로 눌렸다가(−pullbackVwapMin~0) 직전봉 반등(+pullbackBounce%) 시
+  if (sr.pullbackEnabled !== false) {
+    const pbMin = sr.pullbackVwapMin != null ? sr.pullbackVwapMin : -1.2;
+    const pbBounce = sr.pullbackBounce != null ? sr.pullbackBounce : 0.25;
+    if (aboveVwap <= 0 && aboveVwap >= pbMin && lastBarChg >= pbBounce) {
+      return {
+        name: "SC_PULLBACK",
+        weight: 0.9,
+        type: "SCALP",
+        confidence: 0.9,  // 눌림목은 진입가 우위 → 높은 신뢰도
+        detail: "PB vwap" + aboveVwap.toFixed(2) + "% bounce+" + lastBarChg.toFixed(2) + "% c0.90",
+        members: ["SC_PULLBACK"]
+      };
+    }
+  }
+
+  // ── 진입 B: VWAP 근접 + 상승 모멘텀 (VWAP 지지 진입) ──
+  if (Math.abs(aboveVwap) <= vwapBand && recentMom >= momEntry) {
+    const conf = recentMom >= momStrong ? 0.65 : 0.85;  // 강모멘텀(추격)은 작게
+    return {
+      name: "SC_VWAP",
+      weight: 0.8,
+      type: "SCALP",
+      confidence: conf,
+      detail: "VWAP " + aboveVwap.toFixed(2) + "% mom " + recentMom.toFixed(2) + "% c" + conf.toFixed(2),
+      members: ["SC_VWAP"]
+    };
+  }
+
+  // ── 진입 C: 강한 분봉 모멘텀 + VWAP 살짝 위 (추세 지속) ──
+  if (aboveVwap >= 0 && aboveVwap <= 1.5 && recentMom >= momStrong) {
+    return {
+      name: "SC_MOMENTUM",
+      weight: 0.75,
+      type: "SCALP",
+      confidence: 0.7,
+      detail: "MOM " + recentMom.toFixed(2) + "% vwap+" + aboveVwap.toFixed(2) + "% c0.70",
+      members: ["SC_MOMENTUM"]
+    };
+  }
+
+  return null;
+}
+
 // === [V8] 통합 평가기 — 모든 활성 전략에서 신호 수집 ===
 // 반환: [{ strategy, signal, signals: [...] }, ...]  (전략당 1개)
 // [V8.4] regime 인자 추가 — meanrev에 전달
@@ -5690,7 +5852,8 @@ async function executeBuy(DB, market, symbol, strategy, qty, price, signal, dail
 
   const pctStop = price * (1 - stopPct / 100);
   let stopPrice = pctStop;
-  if (dailyAtr) {
+  // [SCALP] 단타는 ATR 손절(보통 더 넓음)을 쓰지 않고 고정 % 손절만 사용 — 타이트한 리스크 유지.
+  if (dailyAtr && strategy !== "scalp") {
     const atrStop = price - dailyAtr * atrMult;
     stopPrice = Math.min(atrStop, pctStop);
   }
@@ -5793,6 +5956,8 @@ function getTrendSizing(cfg, market) {
 function getStrategyRules(cfg, strategy, market) {
   if (strategy === "trend") return getTrendRules(cfg, market);
   const trBase = getTrendRules(cfg, market);
+  // 단타 전략 — scalpRules 전용 룰 사용
+  if (strategy === "scalp") return Object.assign({}, trBase, cfg.scalpRules || DEFAULT_CFG.scalpRules || {});
   // 레거시 보유 포지션 호환 — 구 전략 룰이 있으면 사용, 없으면 trend(market별)로 폴백
   if (strategy === "swing") return cfg.swingRules || trBase;
   if (strategy === "day") return cfg.dayRules || trBase;
@@ -5922,6 +6087,59 @@ async function executeSell(DB, market, symbol, pos, sellQty, price, reason, cfg,
 //   우선순위: 하드손절 → 1R 분할익절(+BE락) → 2R 분할익절 → 트레일링 → 추세이탈 → 시간손절
 //   반환: { sell, sellQty, reason }
 function evaluateSell(pos, price, daily, dailyRsi, dailyMa, dailyMaShort, cfg, marketOpenForThis, market, deRiskOpts, visionHint) {
+  const strategyName = pos.strategy || (pos.meta && pos.meta.strategy) || "trend";
+
+  // === [SCALP] 단타 전략 전용 청산 — 빠른 손절 / 분할익절+본전락 / 트레일 / 타임스톱 ===
+  if (strategyName === "scalp") {
+    const sr = Object.assign({}, cfg.scalpRules || DEFAULT_CFG.scalpRules || {});
+    const meta2 = pos.meta || {};
+    const pnlPct = pos.avg > 0 ? ((price - pos.avg) / pos.avg) * 100 : 0;
+    const heldMin = pos.opened_ts ? Math.floor((Date.now() - pos.opened_ts) / 60000) : 0;
+    const peakP = (meta2.peakPrice && meta2.peakPrice > 0) ? meta2.peakPrice : pos.avg;
+    const tp1Done = !!meta2.tp1Done;
+
+    // 1) 하드 손절 (stopPrice 우선 — TP1 후 본전락으로 상향됨)
+    const sprice = (typeof meta2.stopPrice === "number") ? meta2.stopPrice : null;
+    if (sprice != null && price <= sprice) {
+      return { sell: true, sellQty: pos.qty, reason: "SCALP-STOP " + pnlPct.toFixed(2) + "%" + (meta2.breakEvenLocked ? " (BE)" : "") };
+    }
+    const slPct = sr.stopLossPct || 1.2;
+    if (sprice == null && pnlPct <= -slPct) {
+      return { sell: true, sellQty: pos.qty, reason: "SCALP-STOP " + pnlPct.toFixed(2) + "%" };
+    }
+
+    // 2) TP1 분할익절 — +tp1Pct 도달 시 절반 익절(executeSell이 손절을 본전으로 올림=BE락)
+    const tp1Pct = sr.tp1Pct != null ? sr.tp1Pct : 1.2;
+    if (!tp1Done && tp1Pct > 0 && pnlPct >= tp1Pct) {
+      const half = Math.floor(pos.qty / 2);
+      if (half > 0) return { sell: true, sellQty: half, reason: "SCALP-TP1 +" + pnlPct.toFixed(2) + "%" };
+      return { sell: true, sellQty: pos.qty, reason: "SCALP-TP1-FULL +" + pnlPct.toFixed(2) + "%" };
+    }
+
+    // 3) 최종 익절 — 잔량 takeProfit 도달
+    const tpPct = sr.takeProfit || 2.5;
+    if (pnlPct >= tpPct) return { sell: true, sellQty: pos.qty, reason: "SCALP-TP +" + pnlPct.toFixed(2) + "%" };
+
+    // 4) 트레일 — trailActivatePct 이상 수익에서만 작동(조기 청산 방지)
+    const trailActivate = sr.trailActivatePct != null ? sr.trailActivatePct : 1.2;
+    const trailPct = sr.trailPct || 0.7;
+    if (pnlPct >= trailActivate) {
+      const trailStop = peakP * (1 - trailPct / 100);
+      if (price <= trailStop) {
+        const peakPct = pos.avg > 0 ? ((peakP - pos.avg) / pos.avg) * 100 : 0;
+        return { sell: true, sellQty: pos.qty, reason: "SCALP-TRAIL +" + pnlPct.toFixed(2) + "% (peak +" + peakPct.toFixed(1) + "%)" };
+      }
+    }
+
+    // 5) 타임스톱 — N분 내 목표 미달 시 청산(죽은돈 회수). TP1 후 런너는 면제(추세 지속 기대).
+    const tsMin = sr.timeStopMinutes || 40;
+    const tsMinPnl = sr.timeStopMinPnl != null ? sr.timeStopMinPnl : 0.4;
+    if (!tp1Done && heldMin >= tsMin && pnlPct < tsMinPnl) {
+      return { sell: true, sellQty: pos.qty, reason: "SCALP-TIME " + heldMin + "min " + pnlPct.toFixed(2) + "%" };
+    }
+    return { sell: false };
+  }
+
   const r = getTrendRules(cfg, market);
   const meta = pos.meta || {};
   const pnlRate = pos.avg > 0 ? ((price - pos.avg) / pos.avg) * 100 : 0;
@@ -6077,9 +6295,9 @@ function backtestSymbol(fullData, cfg, market, opts) {
   const n = fullData.closes.length;
   if (n < warmup + 5) return { trades: [], skipped: "too_short" };
 
-  // day 전략 제외 (분봉 전략)
+  // day/scalp 전략 제외 (분봉 전략 — 일봉 백테스트에서 정직성 유지)
   const cfgBt = JSON.parse(JSON.stringify(cfg));
-  if (cfgBt.strategies) cfgBt.strategies.day = false;
+  if (cfgBt.strategies) { cfgBt.strategies.day = false; cfgBt.strategies.scalp = false; }
 
   const signalStats = {};
   const regime = { name: "NEUTRAL" };
@@ -7519,14 +7737,14 @@ async function runCommodityCycle(env, forceTrade) {
 
 async function runTradingCycle(env) {
   const DB = env.DB;
-  resetFetchBudget(600);  // [PAID] 가격18+인덱스8+일봉60+vision/sec/매크로+여유
+  resetFetchBudget(850);  // [PAID] Paid 1000 한도의 85% — 가격+일봉+분봉+LLM+여유
   await ensureSchema(DB);
   let cfg = migrateCfgToMarkets(Object.assign({}, DEFAULT_CFG, await getState(DB, "cfg", {})));
 
   // [V8.1.3] 저장된 cfg에 박힌 잘못된 값 강제 리셋
   if (cfg.requireConfluence) cfg.requireConfluence = false;
   // [재작성] 단일 trend 전략 강제 (migrate도 하지만 사이클에서도 명시)
-  cfg.strategies = { trend: true };
+  cfg.strategies = Object.assign({ trend: true }, cfg.strategies || {}, { trend: true });
   // [섹터그룹·신호타입 autoTune] 누적 청산통계로 가중치를 재계산해 cfg에 주입 (매 사이클)
   await applySectorGroupWeights(DB, cfg);
   await applySignalTypeWeights(DB, cfg);
@@ -8295,6 +8513,23 @@ async function runTradingCycle(env) {
           if (daily) daily.symbol = symbol;  // [Vision AI] symbol을 daily에 주입
           let stratResults = evaluateAllStrategies(price, dayPct, daily, mcfg, signalStats, regime, market, intra, visionPreds, secData);
 
+          // === [SCALP] 분봉 단타 전략 평가 ===
+          //   scalp 활성화 + trend 신호 없을 때만 평가 (같은 종목 중복진입 방지)
+          //   분봉 fetch: 1m봉 (단타는 더 세밀한 봉 필요)
+          if (mcfg.strategies && mcfg.strategies.scalp && stratResults.length === 0 && !strategiesHeldNow.has("scalp")) {
+            const _scalpIc = mcfg.intradayConfirm || DEFAULT_CFG.intradayConfirm;
+            if (minuteFetchUsed < ((_scalpIc && _scalpIc.maxPerCycle) || 60) && fetchBudgetLeft() > 5) {
+              try {
+                minuteFetchUsed++;
+                const _scalpMb = await fetchMinuteBars(symbol, { interval: "1m", range: "1d" });
+                const _scalpSig = evaluateScalpEntry(_scalpMb, daily, mcfg, market);
+                if (_scalpSig && !strategiesHeldNow.has("scalp") && !heldSymbols.has(symbol)) {
+                  stratResults = [{ strategy: "scalp", signal: _scalpSig, rawCount: 1 }];
+                }
+              } catch (e) { /* 분봉 조회 실패 → scalp 스킵, trend 신호도 없으면 그냥 패스 */ }
+            }
+          }
+
           if (stratResults.length === 0) {
             incNobuy("no_signal");
             // [V8.1.2] 진단: 처음 5개 종목의 상태를 샘플로 수집
@@ -8401,9 +8636,12 @@ async function runTradingCycle(env) {
             //   → 변동성이 큰(손절 먼) 종목일수록 자동으로 작게 산다. 손실 금액이 항상 균등.
             //   종목 비중 상한·가용현금 상한으로 과집중/초과 통제. executeBuy의 DB clamp가 최종 차단.
             const tsz = getTrendSizing(mcfg, market);
+            // [SCALP] 단타는 전용 사이징(작은 리스크·비중) 사용 — 회전 빠르고 손실 누적 방지.
+            const _scalpSz = (strategy === "scalp") ? Object.assign({}, mcfg.scalpRules || DEFAULT_CFG.scalpRules || {}) : null;
             // [Vision AI] UP 고신뢰 신호면 포지션 크기 부스트 (visionBoost=1.25). sizeScale = VIX/드로다운 스케일.
-            const riskPct = (tsz.riskPerTrade != null ? tsz.riskPerTrade : 0.75) * (signal.visionBoost || 1.0) * sizeScale;
-            const maxPosPct = tsz.maxPositionPct != null ? tsz.maxPositionPct : 15;
+            const _baseRisk = _scalpSz ? (_scalpSz.riskPerTrade != null ? _scalpSz.riskPerTrade : 0.5) : (tsz.riskPerTrade != null ? tsz.riskPerTrade : 0.75);
+            const riskPct = _baseRisk * (signal.visionBoost || 1.0) * sizeScale;
+            const maxPosPct = _scalpSz ? (_scalpSz.maxPositionPct != null ? _scalpSz.maxPositionPct : 6) : (tsz.maxPositionPct != null ? tsz.maxPositionPct : 15);
             const equity = (typeof portfolioValue === "number" && portfolioValue > 0) ? portfolioValue : cash[market];
             const tr = getStrategyRules(mcfg, strategy, market);
             // 손절 거리(주당) — executeBuy와 동일 규칙: min(N×ATR, price×stopLoss%)
@@ -8447,7 +8685,8 @@ async function runTradingCycle(env) {
               //   장중 급락(칼날)·VWAP 추격 진입을 차단. 조회 실패/예산초과 시 통과(기존 동작 보존).
               //   maxPerCycle 캡으로 subrequest 통제, 장중·정규장에서만 의미있어 canTrade일 때만.
               const _ic = mcfg.intradayConfirm || DEFAULT_CFG.intradayConfirm;
-              if (_ic && _ic.enabled !== false && minuteFetchUsed < (_ic.maxPerCycle || 40) && fetchBudgetLeft() > 5) {
+              // [SCALP] 단타는 진입 시 이미 1분봉을 평가했으므로 이 5분봉 추가 게이트는 건너뜀(중복 fetch 방지).
+              if (strategy !== "scalp" && _ic && _ic.enabled !== false && minuteFetchUsed < (_ic.maxPerCycle || 60) && fetchBudgetLeft() > 5) {
                 try {
                   minuteFetchUsed++;
                   const _mb = await fetchMinuteBars(symbol, { interval: _ic.interval || "5m" });
@@ -8456,6 +8695,11 @@ async function runTradingCycle(env) {
                     incBlock(_conf.reason.split(" ")[0] + "[" + strategy + "]");
                     await log(DB, "INFO", symbol, "INTRADAY BLOCK [" + strategy + "] " + _conf.reason);
                     break;  // 장중 타이밍 불리 → 이 종목은 이번 사이클 진입 보류(다른 신호도 스킵)
+                  }
+                  // [강화] VWAP 근접 + 상승 모멘텀 최적 타이밍 → signal confidence 부스트
+                  if (_conf.confidenceBoost && _conf.confidenceBoost > 0 && signal) {
+                    signal.visionBoost = (signal.visionBoost || 1.0) * (1 + _conf.confidenceBoost);
+                    if (!signal.intradayNote) signal.intradayNote = "VWAP_OPT +" + (_conf.confidenceBoost * 100).toFixed(0) + "%";
                   }
                 } catch (e) { /* 분봉 조회 실패는 무시 — 일봉 신호로 진입 진행 */ }
               }
@@ -8893,7 +9137,18 @@ async function handleRequest(request, env) {
         indices: indices,
         signalStats: signalStats,
         strategies: STRATEGIES,   // [V8]
-        visionPredictions: await getState(env.DB, "vision_predictions", {})
+        visionPredictions: await getState(env.DB, "vision_predictions", {}),
+        // [강제 락 & 사용량] UI 표시용
+        forceLock: !!cfg.forceLock,
+        usageState: await (async () => {
+          try {
+            const us = await getUsageState(env.DB);
+            const lim = Object.assign({}, USAGE_LIMITS_DEFAULT, (cfg.usageLimits || {}));
+            const rr = (us.data.requests || 0) / Math.max(1, lim.monthlyRequests);
+            const cr = (us.data.cpuMs || 0) / Math.max(1, lim.monthlyCpuMs);
+            return { data: us.data, reqPct: (rr*100).toFixed(1), cpuPct: (cr*100).toFixed(1), worstPct: (Math.max(rr,cr)*100).toFixed(1), shutdownAt: lim.shutdownAt, warnAt: lim.warnAt };
+          } catch(e) { return null; }
+        })()
       }, { headers: cors });
     }
 
@@ -8966,6 +9221,45 @@ async function handleRequest(request, env) {
       await setState(env.DB, "cfg", next);
       await log(env.DB, "INFO", null, "cfg updated manually");
       return Response.json({ ok: true, cfg: next }, { headers: cors });
+    }
+    // === [강제 락] 월 한도 초과 방지 강제 락/해제 API ===
+    //   웹 추가결제 방지: 락 걸면 cron invocation이 즉시 차단됨 (isUsageShutdown 체크)
+    //   POST /api/force-lock  → 엔진 전체 강제 차단
+    //   POST /api/force-unlock → 강제 차단 해제
+    if (path === "/api/force-lock" && request.method === "POST") {
+      const cur = migrateCfgToMarkets(Object.assign({}, DEFAULT_CFG, await getState(env.DB, "cfg", {})));
+      cur.forceLock = true;
+      await setState(env.DB, "cfg", cur);
+      const ts = new Date().toISOString();
+      await setState(env.DB, "force_lock_ts", ts);
+      await log(env.DB, "WARN", null, "[FORCE LOCK] 강제 락 ON — 모든 cron 사이클 차단 at " + ts);
+      return Response.json({ ok: true, forceLock: true, lockedAt: ts }, { headers: cors });
+    }
+    if (path === "/api/force-unlock" && request.method === "POST") {
+      const cur = migrateCfgToMarkets(Object.assign({}, DEFAULT_CFG, await getState(env.DB, "cfg", {})));
+      cur.forceLock = false;
+      await setState(env.DB, "cfg", cur);
+      await log(env.DB, "INFO", null, "[FORCE LOCK] 강제 락 OFF — 정상 운영 재개");
+      return Response.json({ ok: true, forceLock: false }, { headers: cors });
+    }
+    // 사용량 상태 조회 (UI 표시용)
+    if (path === "/api/usage" && request.method === "GET") {
+      const cfg = migrateCfgToMarkets(Object.assign({}, DEFAULT_CFG, await getState(env.DB, "cfg", {})));
+      const usageState = await getUsageState(env.DB);
+      const lim = Object.assign({}, USAGE_LIMITS_DEFAULT, (cfg.usageLimits || {}));
+      const reqRatio = (usageState.data.requests || 0) / Math.max(1, lim.monthlyRequests);
+      const cpuRatio = (usageState.data.cpuMs || 0) / Math.max(1, lim.monthlyCpuMs);
+      const lockTs = await getState(env.DB, "force_lock_ts", null);
+      return Response.json({
+        ok: true,
+        forceLock: !!cfg.forceLock,
+        lockedAt: lockTs,
+        usage: usageState.data,
+        limits: lim,
+        ratios: { requests: reqRatio, cpu: cpuRatio, worst: Math.max(reqRatio, cpuRatio) },
+        pct: { requests: (reqRatio * 100).toFixed(1), cpu: (cpuRatio * 100).toFixed(1), worst: (Math.max(reqRatio, cpuRatio) * 100).toFixed(1) },
+        status: cfg.forceLock ? "FORCE_LOCKED" : (Math.max(reqRatio, cpuRatio) >= lim.shutdownAt ? "SHUTDOWN" : Math.max(reqRatio, cpuRatio) >= lim.warnAt ? "WARNING" : "OK")
+      }, { headers: cors });
     }
     if (path === "/api/favorites" && request.method === "POST") {
       const body = await request.json();
@@ -10125,7 +10419,7 @@ export default {
         //   __fetchBudget는 모듈 전역이라 warm isolate에선 직전 invocation의 거래 사이클이
         //   남긴 used(최대 45)가 그대로 이월돼 collectLLMContext의 budgetedFetch가 굶는다.
         //   여기서 리셋해 컨텍스트 수집·LLM 호출이 예산 경쟁 없이 돈다.
-        try { resetFetchBudget(300); } catch (e0) {}  // [PAID] LLM context 수집용
+        try { resetFetchBudget(400); } catch (e0) {}  // [PAID] LLM context 수집용 (Paid 여유 활용)
         const _cfg = migrateCfgToMarkets(Object.assign({}, DEFAULT_CFG, await getState(env.DB, "cfg", {})));
         if (_cfg.llmHybrid && _cfg.llmHybrid.enabled) {
           const cdMin = _cfg.llmHybrid.failCooldownMin || 15;

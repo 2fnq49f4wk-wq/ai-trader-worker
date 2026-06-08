@@ -1099,6 +1099,19 @@ html[data-theme="light"] .sb-brand-sub{ color:#888; }
         </div>
       </div>
 
+      <!-- Cloudflare 사용량 + 강제 락 배너 -->
+      <div id="usageBanner" style="border-bottom:1px solid var(--bd);border-left:2px solid var(--amber);padding:10px 28px;font-size:11px;line-height:1.6;background:var(--bg);display:none;">
+        <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;">
+          <span style="font-weight:700;color:var(--amber);letter-spacing:.5px;text-transform:uppercase;">☁ CLOUDFLARE USAGE</span>
+          <span id="usageLockChip" style="font-size:9px;padding:1px 7px;border:1px solid;font-weight:700;letter-spacing:.5px;display:none;"></span>
+          <span id="usageStatusChip" style="font-size:9px;padding:1px 7px;border:1px solid;font-weight:700;letter-spacing:.5px;border-color:var(--t3);color:var(--t3);">—</span>
+          <span style="margin-left:auto;display:flex;gap:6px;align-items:center;">
+            <button onclick="toggleForceLock()" id="btnForceLock" style="font-size:10px;padding:3px 10px;background:transparent;border:1px solid rgba(255,193,7,.4);color:var(--amber);cursor:pointer;font-family:inherit;font-weight:700;letter-spacing:.5px;transition:all .1s;" onmouseover="this.style.borderColor='var(--amber)'" onmouseout="this.style.borderColor='rgba(255,193,7,.4)'">🔒 FORCE LOCK</button>
+          </span>
+        </div>
+        <div id="usageBody" style="margin-top:4px;color:var(--t2);display:flex;gap:16px;flex-wrap:wrap;font-size:10px;font-variant-numeric:tabular-nums;"></div>
+      </div>
+
       <!-- 오토튠 배너 -->
       <div id="tuneBanner" class="tune-banner" style="display:none;">
         <b><span class="star-icon"></span>AUTO-TUNE:</b> <span id="tuneText"></span>
@@ -1484,10 +1497,10 @@ html[data-theme="light"] .sb-brand-sub{ color:#888; }
     <div class="section-divider"></div>
     <div class="section-title">STRATEGY</div>
     <div class="hint" style="margin-bottom:8px;line-height:1.6;">
-      <b>TREND (추세추종)</b> 단일 전략으로 운용됩니다.<br>
-      추세 정렬(MA20&gt;MA50&gt;MA200) 종목의 풀백 반등·신고가 돌파에서만 진입하고,
-      ATR 기반 손절·1R 분할익절·트레일링으로 관리합니다. 한 거래 리스크 0.75%, 동시보유 8종목.
+      <b>TREND (추세추종)</b> — 항상 활성. 추세 정렬(MA20&gt;MA50&gt;MA200) 종목의 풀백 반등·신고가 돌파 진입, ATR 손절·분할익절·트레일링 관리. 한 거래 리스크 0.75%.
     </div>
+    <div class="checkbox-row"><input type="checkbox" id="cfgScalpEnabled"><label for="cfgScalpEnabled"><b>SCALP 단타 전략 활성화</b> — 분봉 기반 장중 단타 (VWAP 근접 진입, 1.5% 손절, 2% 익절, 45분 타임스톱)</label></div>
+    <div class="hint" style="margin-bottom:4px;">단타 전략은 TREND와 독립 운용됩니다. TREND 신호 없는 종목에 한해 분봉(1분봉) 데이터로 진입 신호를 평가합니다.<br>※ 분봉 fetch 증가로 subrequest 소비가 늘어납니다 (최대 +60/사이클). 유료 플랜 권장.</div>
     <div class="section-title" style="margin-top:12px;">VISION AI (Roboflow 차트 예측)</div>
     <div class="checkbox-row"><input type="checkbox" id="cfgVisionEnabled"><label for="cfgVisionEnabled"><b>Vision AI 활성화</b></label></div>
     <div class="hint" style="margin-bottom:8px;">백엔드가 차트를 자동 분석해 매수 신호 강화·차단·보유 포지션 조기 청산에 직접 활용합니다. 주말 스킵. 일일 예산 자동 분배.</div>
@@ -3466,6 +3479,7 @@ html[data-theme="light"] .sb-brand-sub{ color:#888; }
         renderTrades(trades);
         // [V8.6 Hybrid] LLM 배너 렌더링
         renderLLMBanner(state.llmDaily, state.cfg);
+        renderUsageBanner(state.usageState, state.forceLock, state.cfg);
         // ALL TRADE HISTORY — 요약은 항상 갱신, 테이블은 펼쳐졌을 때만
         if (allTradesExpanded) renderAllTrades(allTrades || []);
         else updateTradesSummaryInto(allTrades || [], 'allTradesTotalCount', 'allTradesWinRate', 'allTradesAvgPnl');
@@ -3474,6 +3488,67 @@ html[data-theme="light"] .sb-brand-sub{ color:#888; }
     // [COMMODITY] 원자재 패널은 별도 엔드포인트로 로드
     loadCommodities();
     // [개선] 로그는 모달 열렸을 때만 fetch (불필요한 폴링 제거)
+  }
+
+  // === [강제 락 & 사용량] ===
+  var _forceLockActive = false;
+  function renderUsageBanner(usageState, forceLock, cfg) {
+    var banner = $('usageBanner');
+    var lockChip = $('usageLockChip');
+    var statusChip = $('usageStatusChip');
+    var body = $('usageBody');
+    var btn = $('btnForceLock');
+    if (!banner) return;
+    _forceLockActive = !!forceLock;
+    banner.style.display = 'block';
+    // 강제 락 칩
+    if (forceLock) {
+      lockChip.style.display = 'inline';
+      lockChip.textContent = '🔒 FORCE LOCKED';
+      lockChip.style.borderColor = 'var(--neg)'; lockChip.style.color = 'var(--neg)';
+      banner.style.borderLeftColor = 'var(--neg)';
+      btn.textContent = '🔓 UNLOCK';
+      btn.style.borderColor = 'rgba(255,23,68,.4)'; btn.style.color = 'var(--neg)';
+    } else {
+      lockChip.style.display = 'none';
+      banner.style.borderLeftColor = 'var(--amber)';
+      btn.textContent = '🔒 FORCE LOCK';
+      btn.style.borderColor = 'rgba(255,193,7,.4)'; btn.style.color = 'var(--amber)';
+    }
+    if (!usageState) { statusChip.textContent = '—'; body.innerHTML = ''; return; }
+    var worst = parseFloat(usageState.worstPct) || 0;
+    var shutAt = (usageState.shutdownAt || 0.85) * 100;
+    var warnAt = (usageState.warnAt || 0.65) * 100;
+    var status = forceLock ? 'FORCE_LOCK' : (worst >= shutAt ? 'SHUTDOWN' : worst >= warnAt ? 'WARNING' : 'OK');
+    var colors = { OK:'var(--pos)', WARNING:'var(--amber)', SHUTDOWN:'var(--neg)', FORCE_LOCK:'var(--neg)' };
+    statusChip.textContent = status;
+    statusChip.style.borderColor = colors[status] || 'var(--t3)';
+    statusChip.style.color = colors[status] || 'var(--t3)';
+    // 바 렌더링
+    function bar(pct, color) {
+      var w = Math.min(100, parseFloat(pct) || 0);
+      return '<div style="width:80px;height:4px;background:var(--bd);display:inline-block;vertical-align:middle;margin-left:4px;"><div style="width:'+w+'%;height:100%;background:'+color+';"></div></div>';
+    }
+    var reqPct = usageState.reqPct || '0';
+    var cpuPct = usageState.cpuPct || '0';
+    var barColor = worst >= shutAt ? 'var(--neg)' : worst >= warnAt ? 'var(--amber)' : 'var(--pos)';
+    body.innerHTML =
+      '<span>Requests: <b>'+reqPct+'%</b>'+bar(reqPct, barColor)+'</span>' +
+      '<span>CPU: <b>'+cpuPct+'%</b>'+bar(cpuPct, barColor)+'</span>' +
+      '<span style="color:var(--t3);">셧다운: '+shutAt+'% | 경보: '+warnAt+'%</span>';
+  }
+
+  function toggleForceLock() {
+    var isLocked = _forceLockActive;
+    var msg = isLocked ? '강제 락을 해제합니까? (엔진 재개)' : '강제 락을 걸겠습니까?\n월 한도 초과 방지를 위해 모든 cron 사이클이 즉시 차단됩니다.';
+    if (!confirm(msg)) return;
+    var endpoint = isLocked ? '/api/force-unlock' : '/api/force-lock';
+    fetch(endpoint, { method: 'POST' })
+      .then(function(r) { return r.json(); })
+      .then(function(d) {
+        toast(d.forceLock ? '🔒 강제 락 ON — 모든 사이클 차단됨' : '🔓 강제 락 해제 — 정상 운영 재개');
+        refreshAll();
+      })['catch'](function(e) { toast('실패: ' + e.message); });
   }
 
   function runNow() {
@@ -3545,7 +3620,8 @@ html[data-theme="light"] .sb-brand-sub{ color:#888; }
     $('cfgUS').value = (currentCfg.usTickers||[]).join(', ');
     $('cfgKR').value = (currentCfg.krTickers||[]).join(', ');
 
-    // [재작성] 단일 TREND 전략 — 전략 토글 UI 제거됨 (백엔드가 strategies={trend:true} 강제)
+    // SCALP 단타 전략 토글
+    if ($('cfgScalpEnabled')) $('cfgScalpEnabled').checked = !!(currentCfg.strategies && currentCfg.strategies.scalp);
 
     // Vision AI 현재값
     var _va = currentCfg.visionAI || {};
@@ -3835,7 +3911,12 @@ html[data-theme="light"] .sb-brand-sub{ color:#888; }
       }),
       // 하위 호환 — executeBuy 폴백용 cfg.stopLoss / cfg.atrStopMult
       stopLoss: parseFloat($('cfgTrendStopPct').value),
-      atrStopMult: parseFloat($('cfgTrendAtrStop').value)
+      atrStopMult: parseFloat($('cfgTrendAtrStop').value),
+      // [SCALP] 단타 전략 활성화 여부
+      strategies: Object.assign({}, (currentCfg && currentCfg.strategies) || {}, {
+        trend: true,
+        scalp: !!($('cfgScalpEnabled') && $('cfgScalpEnabled').checked)
+      })
     };
     fetch('/api/cfg', { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify(body) })
       .then(function(r){return r.json();})
