@@ -1598,6 +1598,7 @@ html[data-theme="light"] .sb-brand-sub{ color:#888; }
     <div class="field"><label>KR TICKERS (예: 005930.KS)</label><textarea id="cfgKR"></textarea></div>
     <button type="button" class="btn" id="btnResetTickers" style="margin-bottom:10px;">티커 기본값으로 복원</button>
     <div class="section-divider"></div>
+    <div class="section-divider"></div>
     <div class="section-title">STRATEGY</div>
     <div class="hint" style="margin-bottom:8px;line-height:1.6;">
       <b>TREND (추세추종)</b> — 항상 활성. 추세 정렬(MA20&gt;MA50&gt;MA200) 종목의 풀백 반등·신고가 돌파 진입, ATR 손절·분할익절·트레일링 관리. 한 거래 리스크 0.75%.
@@ -3197,6 +3198,7 @@ html[data-theme="light"] .sb-brand-sub{ color:#888; }
     })['catch'](function(){});
   }
 
+  function openLogs() {
   function openLogs() {
     logsModalOpen = true;
     $('logsModal').classList.add('show');
