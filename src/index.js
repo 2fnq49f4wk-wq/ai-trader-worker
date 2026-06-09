@@ -2470,6 +2470,9 @@ const DEFAULT_CFG = {
     trend: true,
     scalp: true   // [V50] 분봉 단타 활성화 (KR 포함 — scalpRules.usOnly=false)
   },
+  // [V51] 전략별 사이클 예산 분리 — trend/scalp가 같은 현금풀을 두고 경쟁해 단타가 굶던 문제 해결.
+  //   각 시장 가용현금을 비율로 쪼개 전략별 독립 예산으로 사용. 대시보드 슬라이더로 조절.
+  strategyBudgetSplit: { trend: 0.5, scalp: 0.5 },
   // === [SCALP] 단타 전략 룰 — 분봉 기반 장중 단타 ===
   //   추세추종(일봉)과 완전 분리: 진입·관리·청산 모두 분봉 기준.
   //   일봉: MA20>MA50 (약 추세 확인) + 일봉 과열 아님(RSI≤72)
@@ -2495,7 +2498,7 @@ const DEFAULT_CFG = {
     // 청산 조건 (빠른 손절·익절 + 분할익절·본전락)
     stopLossPct: 1.2,        // [강화] 1.5→1.2 손절 타이트(손실폭↓ → 손익비 개선)
     tp1Pct: 1.2,             // [신규] +1.2% 도달 시 절반 익절 + 손절 본전 이동(BE락)
-    takeProfit: 2.5,         // [강화] 2.0→2.5 잔량 최종 익절(추세 지속 수익 극대화)
+    takeProfit: 3.0,         // [V51강화] 2.5→3.0 잔량 최종 익절(추세 지속 수익 극대화)
     trailActivatePct: 1.2,   // [신규] +1.2% 이상에서만 트레일 작동(조기 청산 방지)
     trailPct: 0.7,           // [강화] 1.0→0.7 트레일 타이트(이익 보호 강화)
     breakEvenLock: 0.1,      // [신규] TP1 후 손절을 본전+0.1%로 → 무손실 런너 (executeSell이 참조)
@@ -2527,7 +2530,7 @@ const DEFAULT_CFG = {
     // (B) 캡출레이션 바운스 — 투매 후 강반등 단타(일반 종목)
     capitulation: {
       enabled: true,
-      dayDropMax: -3.0,      // 당일 -3%↓ 급락 종목만 대상(낙폭 큰 종목의 되돌림)
+      dayDropMax: -1.5,      // [V51완화] -3.0→-1.5 당일 급락 문턱(BEAR 약조정·반등 종목도 바운스 단타)
       vwapBelowMin: -3.0,    // VWAP 대비 -3%~0% 아래로 이탈한 구간에서
       bounceMinPct: 0.6,     // 직전 분봉 +0.6%↑ 강반등(데드캣 약반등 배제)
       twoBarConfirm: true,   // 직전 2봉이 무너지지 않음(1봉 페이크 반등 회피 → 승률↑)
@@ -2548,11 +2551,12 @@ const DEFAULT_CFG = {
     atrStopMult: 2.0,                       // 손절 = entry − N×ATR (executeBuy가 참조)
     stopLossPct: 5.0,                       // ATR 손절과 비교해 더 타이트한 쪽 채택 (executeBuy가 참조)
     trailAtrMult: 2.5,                      // 트레일 = peak − N×ATR
-    tp1AtR: 1.0,                            // +1R 도달 시 절반 익절
+    tp1AtR: 1.0,                            // +1R 도달 시 분할익절
+    tp1SellFrac: 0.4,                       // [V51] +1R 익절 비율 (0.4=40%만 익절, 60%는 트레일 추종)
     tp2AtR: 2.0,                            // +2R 도달 시 잔량 절반 추가 익절 (0 = 비활성)
     reEntryCooldownHours: 24,               // 손절 손실 전량청산 후 재진입 차단 시간 (0 = 비활성)
     timeStopDays: 10,                       // N거래일 내 +0.5R 미달 시 청산
-    timeStopMinR: 0.5,
+    timeStopMinR: 0.35,                     // [V51완화] 0.5→0.35 성급한 횡보청산 완화(추세 발현 여유)
     exitBelowMa: 20,                        // 종가가 MA20 하향 이탈 시 청산
     // [확실성] 추세 강도 기반 신호 confidence — 불확실(약추세) 진입은 리스크를 줄인다.
     //   사이즈를 줄이는 방향으로만 작동 → 기존보다 더 크게 베팅하는 일이 없어 악화 불가.
@@ -2966,9 +2970,28 @@ function migrateCfgToMarkets(cfg) {
     if (_sc.minRelVol === 1.2)     _sc.minRelVol = 1.1;
     if (_sc.rsiMin === 42)         _sc.rsiMin = 38;
     if (_sc.minDayMomPct === -1.0) _sc.minDayMomPct = -1.5;
+    if (_sc.takeProfit === 2.5)    _sc.takeProfit = 3.0;   // [V51] 잔량 최종익절 상향
   }
   if (!cfg.scalpPanicRules || typeof cfg.scalpPanicRules !== "object") {
     cfg.scalpPanicRules = JSON.parse(JSON.stringify(DEFAULT_CFG.scalpPanicRules));
+  } else {
+    for (const k in DEFAULT_CFG.scalpPanicRules) {
+      if (cfg.scalpPanicRules[k] === undefined) cfg.scalpPanicRules[k] = JSON.parse(JSON.stringify(DEFAULT_CFG.scalpPanicRules[k]));
+    }
+    // 중첩 capitulation 누락키 보강 + 옛 기본값만 완화 (커스텀 보존)
+    if (cfg.scalpPanicRules.capitulation && typeof cfg.scalpPanicRules.capitulation === "object") {
+      const _cap = cfg.scalpPanicRules.capitulation;
+      for (const k in DEFAULT_CFG.scalpPanicRules.capitulation) {
+        if (_cap[k] === undefined) _cap[k] = DEFAULT_CFG.scalpPanicRules.capitulation[k];
+      }
+      if (_cap.dayDropMax === -3.0) _cap.dayDropMax = -1.5;
+    }
+    if (cfg.scalpPanicRules.inverse && typeof cfg.scalpPanicRules.inverse === "object") {
+      const _inv = cfg.scalpPanicRules.inverse;
+      for (const k in DEFAULT_CFG.scalpPanicRules.inverse) {
+        if (_inv[k] === undefined) _inv[k] = DEFAULT_CFG.scalpPanicRules.inverse[k];
+      }
+    }
   }
   if (!cfg.trendRules || typeof cfg.trendRules !== "object") {
     cfg.trendRules = JSON.parse(JSON.stringify(DEFAULT_CFG.trendRules));
@@ -2993,6 +3016,9 @@ function migrateCfgToMarkets(cfg) {
     if (_tr.volMult === 1.35)       _tr.volMult = 1.25;
     if (_tr.rsiBreakoutMax === 75)  _tr.rsiBreakoutMax = 77;
     if (_tr.bearBlockWorstPct === undefined || _tr.bearBlockWorstPct === -1.5) _tr.bearBlockWorstPct = -2.5;
+    // [V51] 손익비 개선: 옛 기본값만 갱신
+    if (_tr.timeStopMinR === 0.5) _tr.timeStopMinR = 0.35;
+    if (_tr.tp1SellFrac === undefined) _tr.tp1SellFrac = 0.4;
   }
   if (!cfg.trendSizing || typeof cfg.trendSizing !== "object") {
     cfg.trendSizing = JSON.parse(JSON.stringify(DEFAULT_CFG.trendSizing));
@@ -3253,12 +3279,11 @@ async function isMarketTradingDay(DB, market, env) {
   try {
     const cached = await getState(DB, cacheKey, null);
     if (cached && typeof cached.open === "boolean") {
-      // [FIX] KR 지수기반 휴장 오판 복구: 장중인데 index 판정으로 false가 캐시됐으면
-      //   무시하고 재확인(야후 지연으로 장초반 stale → 종일 차단되던 버그). 진짜 공휴일/주말은
-      //   src가 rule-holiday/weekend라 그대로 캐시 유지.
-      if (!(cached.open === false && cached.src === "rule+index" && market === "kr" && isMarketOpen("kr"))) {
-        return cached.open;
-      }
+      // [FIX2] KR 휴장(false) 캐시는 신뢰하지 않고 항상 재판정한다.
+      //   진짜 주말/공휴일이면 아래 규칙이 다시 false를 주므로 안전하고,
+      //   야후 지연발 장초반 오판이 캐시에 고착돼 종일 KR 거래가 막히던 문제만 제거된다.
+      const _krFalseCache = (market === "kr" && cached.open === false);
+      if (!_krFalseCache) return cached.open;
     }
   } catch (e) {}
 
@@ -5643,8 +5668,10 @@ function evaluateScalpEntry(mb, dailyData, cfg, market, regime) {
   //   여기서 신호가 잡히면 즉시 return(평시 게이트로 내려가지 않음). 안 잡히면 평시 로직 계속.
   const _csPanic = cfg && cfg.crashSurvival && cfg.crashSurvival.panic;
   const _panicOn = (typeof isPanic === "function") ? isPanic(regime, _csPanic) : false;
-  const _bearStress = regime && regime.regime === "BEAR" &&
-    typeof regime.worstDayPct === "number" && regime.worstDayPct <= -1.0;
+  // [V51] BEAR 추세면 당일 등락 무관하게 패닉 단타 경로 활성화.
+  //   (기존 worst≤-1.0% 조건은 "하락추세 + 당일 반등" 구간에서 평시·패닉 단타가 둘 다 꺼지는
+  //    사각지대를 만들어 단타 신호가 0이 됐다. 인버스/캡출 진입은 각자 자체 조건으로 방향 검증함.)
+  const _bearStress = regime && regime.regime === "BEAR";
   const _stressed = _panicOn || _bearStress;
   const spr = Object.assign({}, (cfg && cfg.scalpPanicRules) || DEFAULT_CFG.scalpPanicRules || {});
   if (_stressed && spr.enabled !== false) {
@@ -6682,7 +6709,10 @@ function evaluateSell(pos, price, daily, dailyRsi, dailyMa, dailyMaShort, cfg, m
   if (!tp1Done) {
     const tp1Pct = rPct * (r.tp1AtR || 1.0) * (isLevETF ? 0.7 : 1.0);
     if (pnlRate >= tp1Pct) {
-      const half = Math.floor(pos.qty / 2);
+      // [V51] 익절 비율 파라미터화 — 절반(0.5)은 추세 초입에 너무 많이 덜어내 평균수익을 깎았다.
+      //   기본 0.4로 줄여 잔량(60%)을 트레일로 더 길게 추종 → 손익비 개선(손절은 불변).
+      const _f = (typeof r.tp1SellFrac === "number" && r.tp1SellFrac > 0 && r.tp1SellFrac < 1) ? r.tp1SellFrac : 0.4;
+      const half = Math.floor(pos.qty * _f);
       if (half > 0) return { sell: true, sellQty: half, reason: "TP1 +" + pnlRate.toFixed(2) + "% (1R)" };
       return { sell: true, sellQty: pos.qty, reason: "TP1-FULL +" + pnlRate.toFixed(2) + "%" };
     }
@@ -8554,8 +8584,25 @@ async function runTradingCycle(env) {
     // [V28] 강력 예산 가드 — 사이클 시작 시 시장별 가용현금을 스냅샷으로 고정.
     //   한 사이클에서 누적 매수액이 이 스냅샷을 넘으면 이후 매수 전면 차단.
     //   savePosition 충돌 등으로 executeBuy의 cash 추적이 깨져도 예산 초과 불가능.
-    const cycleBudget = { us: cash.us, kr: cash.kr, cm: cash.cm };
-    const cycleSpent = { us: 0, kr: 0, cm: 0 };
+    // [V51] 전략별 예산 분리 — 가용현금을 split 비율로 쪼개 trend/scalp 독립 예산 운용.
+    //   (기존엔 공용 풀이라 먼저 도는 trend가 다 써버려 scalp가 굶었다.)
+    const _split = (cfg.strategyBudgetSplit && typeof cfg.strategyBudgetSplit === "object") ? cfg.strategyBudgetSplit : { trend: 0.5, scalp: 0.5 };
+    const _trW = (typeof _split.trend === "number" && _split.trend >= 0) ? _split.trend : 0.5;
+    const _scW = (typeof _split.scalp === "number" && _split.scalp >= 0) ? _split.scalp : 0.5;
+    const _sum = (_trW + _scW) > 0 ? (_trW + _scW) : 1;
+    const _trFrac = _trW / _sum, _scFrac = _scW / _sum;
+    const cycleBudget = {
+      us: { trend: cash.us * _trFrac, scalp: cash.us * _scFrac },
+      kr: { trend: cash.kr * _trFrac, scalp: cash.kr * _scFrac },
+      cm: cash.cm
+    };
+    const cycleSpent = {
+      us: { trend: 0, scalp: 0 },
+      kr: { trend: 0, scalp: 0 },
+      cm: 0
+    };
+    // 전략→예산버킷 매핑 (scalp만 scalp버킷, 그 외 전부 trend버킷)
+    const _bkt = function (strat) { return strat === "scalp" ? "scalp" : "trend"; };
 
     let tried = 0, bought = 0, sold = 0, skipped = 0, fetchFail = 0;
     let signalCount = 0;   // [통계] 이번 사이클 발생 매수신호 수
@@ -9406,11 +9453,14 @@ async function runTradingCycle(env) {
             const totalCost = qty * price * (1 + feeRate);
             // [V27] 예산 가드 — 부동소수점 오차 여유(1원/1센트) 두고 엄격 차단 + 초과 시도 로깅
             const epsilon = market === "us" ? 0.01 : 1;
-            // [V28] 사이클 누적 예산 가드 — 이번 매수로 누적 지출이 시작 현금을 넘으면 차단.
-            const wouldSpend = cycleSpent[market] + totalCost;
-            if (qty > 0 && wouldSpend > cycleBudget[market] + epsilon) {
-              await log(DB, "ERROR", symbol, "[CRITICAL] 사이클예산초과 차단: 누적지출=" + Math.round(wouldSpend) + " 한도=" + Math.round(cycleBudget[market]) + " (" + strategy + ")");
-              incNobuy("cycle_budget[" + strategy + "]");
+            // [V51] 전략별 예산 가드 — 해당 전략 버킷 한도 내에서만 매수.
+            const _bk = _bkt(strategy);
+            const _budgetCap = (market === "cm") ? cycleBudget.cm : cycleBudget[market][_bk];
+            const _spentSoFar = (market === "cm") ? cycleSpent.cm : cycleSpent[market][_bk];
+            const wouldSpend = _spentSoFar + totalCost;
+            if (qty > 0 && wouldSpend > _budgetCap + epsilon) {
+              await log(DB, "INFO", symbol, "[예산] " + market.toUpperCase() + " " + _bk + "버킷 한도 도달: 누적=" + Math.round(_spentSoFar) + "+" + Math.round(totalCost) + " > " + Math.round(_budgetCap) + " (" + strategy + ")");
+              incNobuy("budget_" + _bk);
             } else if (qty > 0 && totalCost <= cash[market] + epsilon) {
               // [분봉] 진입 직전 장중 타이밍 확인 — 확정 후보에만 분봉 1회 조회.
               //   장중 급락(칼날)·VWAP 추격 진입을 차단. 조회 실패/예산초과 시 통과(기존 동작 보존).
@@ -9443,7 +9493,8 @@ async function runTradingCycle(env) {
               //   savePosition 충돌 등으로 차감이 안 됐으면(=실패) spent/held 갱신 안 함.
               const actuallySpent = cashBefore - cash[market];
               if (actuallySpent > epsilon) {
-                cycleSpent[market] += actuallySpent;
+                if (market === "cm") cycleSpent.cm += actuallySpent;
+                else cycleSpent[market][_bk] += actuallySpent;
                 bought++;
                 boughtThisSymbol = true;
                 heldSymbols.add(symbol);
