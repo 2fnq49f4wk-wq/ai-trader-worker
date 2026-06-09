@@ -2468,7 +2468,7 @@ const DEFAULT_CFG = {
   //   scalp: 분봉 기반 단타 전략 (기본 OFF — 설정에서 활성화)
   strategies: {
     trend: true,
-    scalp: false   // 분봉 단타: cfg에서 true로 켜면 활성화
+    scalp: true   // [V50] 분봉 단타 활성화 (KR 포함 — scalpRules.usOnly=false)
   },
   // === [SCALP] 단타 전략 룰 — 분봉 기반 장중 단타 ===
   //   추세추종(일봉)과 완전 분리: 진입·관리·청산 모두 분봉 기준.
@@ -2477,14 +2477,14 @@ const DEFAULT_CFG = {
   scalpRules: {
     // 일봉 추세 조건 (느슨 — 단타는 추세 방향만 맞으면 됨)
     rsiMax: 70,              // [강화] 72→70 일봉 RSI 상한 (과열 진입 더 차단 → 승률↑)
-    rsiMin: 42,              // [신규] 일봉 RSI 하한 — 약세 종목 단타 차단(추세 동행만)
+    rsiMin: 38,              // [V50완화] 42→38 일봉 RSI 하한
     maFastPeriod: 20,        // 일봉 MA20 > MA50 추세 확인
     maSlowPeriod: 50,
     // [신규] 품질 게이트 — 승률 개선의 핵심
     requirePriceAboveMaFast: true,  // 일봉 종가가 MA20 위일 때만 (추세 상단)
-    minDayMomPct: -1.0,      // 당일 등락률이 이보다 낮으면(급락) 단타 차단(칼날 회피)
-    adxMin: 20,              // [신규] 일봉 ADX≥20 — 추세장에서만 단타(횡보 휩쏘 회피)
-    minRelVol: 1.2,          // [신규] 분봉 최근 거래량이 평균의 1.2배↑ (유동성·관심 확인)
+    minDayMomPct: -1.5,      // [V50완화] -1.0→-1.5 당일 급락 차단 문턱
+    adxMin: 15,              // [V50완화] 20→15 추세 강도 문턱 (신호 증가)
+    minRelVol: 1.1,          // [V50완화] 1.2→1.1 분봉 상대거래량 문턱
     // 분봉 진입 조건
     vwapBand: 0.8,           // [강화] 1.0→0.8 VWAP 더 가까이서만 진입(추격 비용↓)
     momEntry: 0.4,           // [강화] 0.3→0.4 분봉 모멘텀 더 확실할 때만
@@ -2504,8 +2504,9 @@ const DEFAULT_CFG = {
     // 포지션 크기
     maxPositionPct: 6,       // 포트의 최대 6%
     riskPerTrade: 0.5,       // 손실 리스크 = 포트의 0.5%
-    // [데이터적합] 단타 US 전용 — KR 야후 1분봉은 15분 지연이라 분봉 단타 타이밍 불가. false면 KR도 허용.
-    usOnly: true
+    // [V50] 단타 KR 허용 — 야후 1분봉 15분 지연 있으나, 패닉장 인버스/캡출 단타 작동 위해 개방.
+    //   지연 영향이 큰 건 일반 모멘텀 추격이고, 인버스 추세추종은 지연 영향이 작다.
+    usOnly: false
   },
   // === [SCALP-PANIC] 패닉/베어장 전용 단타 룰 — "패닉 때도 단타로 번다" ===
   //   평시 scalp는 상승추세 종목만 노려 패닉장엔 신호가 0이 된다.
@@ -2538,10 +2539,11 @@ const DEFAULT_CFG = {
   trendRules: {
     maShort: 20, maMid: 50, maLong: 200,   // 추세 정렬 기준 이동평균
     breakoutDays: 20,                       // 신고가 돌파 기준일
-    volMult: 1.35,                          // [완화] 1.5→1.35 돌파 거래량 배수 (진입·데이터 축적↑)
-    rsiPullbackMin: 37, rsiPullbackMax: 68, // [완화] 40~65→37~68 풀백 RSI 밴드 확대
-    rsiBreakoutMax: 75,                     // [완화] 72→75 돌파 RSI 상한
-    pullbackBandPct: 4,                     // [완화] 3→4 MA20 ±N% 풀백 밴드 확대
+    volMult: 1.25,                          // [V50완화] 1.35→1.25 돌파 거래량 배수
+    rsiPullbackMin: 35, rsiPullbackMax: 70, // [V50완화] 37~68→35~70 풀백 RSI 밴드 확대
+    rsiBreakoutMax: 77,                     // [V50완화] 75→77 돌파 RSI 상한
+    pullbackBandPct: 5,                     // [V50완화] 4→5 MA20 ±N% 풀백 밴드 확대
+    bearBlockWorstPct: -2.5,                // [V50] BEAR 신규진입 차단 임계 — 지수 당일 worst가 이보다 낮을 때만 차단(인버스 면제). 기존 하드코딩 -1.5에서 완화.
     maxAtrPct: 6,                           // ATR%가 이보다 크면 진입 금지(슬리피지 회피)
     atrStopMult: 2.0,                       // 손절 = entry − N×ATR (executeBuy가 참조)
     stopLossPct: 5.0,                       // ATR 손절과 비교해 더 타이트한 쪽 채택 (executeBuy가 참조)
@@ -2948,7 +2950,26 @@ function migrateCfgToMarkets(cfg) {
 
   // [재작성] 단일 추세추종 전략으로 강제 — 저장된 옛 cfg가 swing/momentum/meanrev를
   //   켜둔 채 얕은 병합으로 살아남는 것을 막는다(매 로드 강제). trendRules/trendSizing 보강.
-  cfg.strategies = Object.assign({ trend: true }, cfg.strategies || {}, { trend: true });
+  cfg.strategies = Object.assign({ trend: true, scalp: true }, cfg.strategies || {}, { trend: true });
+  // [V50] 단타 강제 활성화 — 옛 cfg에 저장된 scalp:false를 무력화(요청: 단타 작동).
+  cfg.strategies.scalp = true;
+  // [V50] scalpRules 누락키 보강 + 옛 기본값만 완화값으로 갱신 (기존엔 보강 블록이 없어 새 설정 미반영이었음)
+  if (!cfg.scalpRules || typeof cfg.scalpRules !== "object") {
+    cfg.scalpRules = JSON.parse(JSON.stringify(DEFAULT_CFG.scalpRules));
+  } else {
+    for (const k in DEFAULT_CFG.scalpRules) {
+      if (cfg.scalpRules[k] === undefined) cfg.scalpRules[k] = DEFAULT_CFG.scalpRules[k];
+    }
+    const _sc = cfg.scalpRules;
+    if (_sc.usOnly === true)       _sc.usOnly = false;   // KR 단타 개방
+    if (_sc.adxMin === 20)         _sc.adxMin = 15;
+    if (_sc.minRelVol === 1.2)     _sc.minRelVol = 1.1;
+    if (_sc.rsiMin === 42)         _sc.rsiMin = 38;
+    if (_sc.minDayMomPct === -1.0) _sc.minDayMomPct = -1.5;
+  }
+  if (!cfg.scalpPanicRules || typeof cfg.scalpPanicRules !== "object") {
+    cfg.scalpPanicRules = JSON.parse(JSON.stringify(DEFAULT_CFG.scalpPanicRules));
+  }
   if (!cfg.trendRules || typeof cfg.trendRules !== "object") {
     cfg.trendRules = JSON.parse(JSON.stringify(DEFAULT_CFG.trendRules));
   } else {
@@ -2965,6 +2986,13 @@ function migrateCfgToMarkets(cfg) {
     if (_tr.rsiPullbackMax === 65)  _tr.rsiPullbackMax = 68;
     if (_tr.volMult === 1.5)        _tr.volMult = 1.35;
     if (_tr.rsiBreakoutMax === 72)  _tr.rsiBreakoutMax = 75;
+    // [V50 거래확대] 옛 기본값만 새 완화값으로 (커스텀 보존, idempotent)
+    if (_tr.pullbackBandPct === 4)  _tr.pullbackBandPct = 5;
+    if (_tr.rsiPullbackMin === 37)  _tr.rsiPullbackMin = 35;
+    if (_tr.rsiPullbackMax === 68)  _tr.rsiPullbackMax = 70;
+    if (_tr.volMult === 1.35)       _tr.volMult = 1.25;
+    if (_tr.rsiBreakoutMax === 75)  _tr.rsiBreakoutMax = 77;
+    if (_tr.bearBlockWorstPct === undefined || _tr.bearBlockWorstPct === -1.5) _tr.bearBlockWorstPct = -2.5;
   }
   if (!cfg.trendSizing || typeof cfg.trendSizing !== "object") {
     cfg.trendSizing = JSON.parse(JSON.stringify(DEFAULT_CFG.trendSizing));
@@ -5861,7 +5889,8 @@ function evaluateTrendEntry(price, dayPct, dailyData, cfg, regime, market) {
   // 게이트 4: 시장 레짐 — BEAR + 지수 급락이면 신규 진입 중단 (백테스트는 regime 미지정→통과)
   //   [패닉 헤지] 인버스 ETF는 면제 — 시장이 하락(BEAR)이면 인버스는 상승추세라 진입해야 수익.
   const _isInv = dailyData.symbol && INVERSE_ETF.has(dailyData.symbol);
-  if (!_isInv && regime && regime.regime === "BEAR" && typeof regime.worstDayPct === "number" && regime.worstDayPct <= -1.5) {
+  const _bearBlock = (r.bearBlockWorstPct != null) ? r.bearBlockWorstPct : -1.5;
+  if (!_isInv && regime && regime.regime === "BEAR" && typeof regime.worstDayPct === "number" && regime.worstDayPct <= _bearBlock) {
     return null;
   }
 
@@ -8397,7 +8426,7 @@ async function runTradingCycle(env) {
   if (cfg.requireConfluence) cfg.requireConfluence = false;
   // [재작성] 단일 trend 전략 강제 (migrate도 하지만 사이클에서도 명시)
   cfg.strategies = Object.assign({ trend: true }, cfg.strategies || {}, { trend: true });
-  // [섹터그룹·신호타입 autoTune] 누적 청산통계로 가중치를 재계산해 cfg에 주입 (매 사이클)
+  cfg.strategies.scalp = true;  // [V50] 단타 활성 보장
   await applySectorGroupWeights(DB, cfg);
   await applySignalTypeWeights(DB, cfg);
 
