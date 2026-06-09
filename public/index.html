@@ -1635,6 +1635,18 @@ html[data-theme="light"] .sb-brand-sub{ color:#888; }
     </div>
     <div class="checkbox-row"><input type="checkbox" id="cfgScalpEnabled"><label for="cfgScalpEnabled"><b>SCALP 단타 전략 활성화</b> — 분봉 기반 장중 단타 (VWAP 근접 진입, 1.5% 손절, 2% 익절, 45분 타임스톱)</label></div>
     <div class="hint" style="margin-bottom:4px;">단타 전략은 TREND와 독립 운용됩니다. TREND 신호 없는 종목에 한해 분봉(1분봉) 데이터로 진입 신호를 평가합니다.<br>※ 분봉 fetch 증가로 subrequest 소비가 늘어납니다 (최대 +60/사이클). 유료 플랜 권장.</div>
+    <div class="budget-split-box" style="margin:10px 0;padding:12px 14px;background:var(--s1);border:1px solid var(--bd);border-radius:8px;">
+      <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px;">
+        <b style="font-size:12px;">전략별 예산 비중</b>
+        <span style="font-size:11px;color:var(--t3);">시장별 가용현금을 두 전략에 나눠 배정</span>
+      </div>
+      <div style="display:flex;justify-content:space-between;font-size:11px;font-weight:700;margin-bottom:4px;">
+        <span style="color:var(--acc);">TREND <span id="budgetTrendPct">50</span>%</span>
+        <span style="color:var(--amber);">SCALP <span id="budgetScalpPct">50</span>%</span>
+      </div>
+      <input type="range" id="cfgBudgetSplit" min="0" max="100" step="5" value="50" style="width:100%;cursor:pointer;accent-color:var(--acc);">
+      <div class="hint" style="margin-top:6px;">단타 신호가 적으면 SCALP 예산이 남을 수 있습니다(미사용분은 다음 사이클로 이월). 단타를 늘리려면 SCALP 비중을 올리세요.</div>
+    </div>
     <div class="section-title" style="margin-top:12px;">VISION AI (Roboflow 차트 예측)</div>
     <div class="checkbox-row"><input type="checkbox" id="cfgVisionEnabled"><label for="cfgVisionEnabled"><b>Vision AI 활성화</b></label></div>
     <div class="hint" style="margin-bottom:8px;">백엔드가 차트를 자동 분석해 매수 신호 강화·차단·보유 포지션 조기 청산에 직접 활용합니다. 주말 스킵. 일일 예산 자동 분배.</div>
@@ -4062,6 +4074,17 @@ html[data-theme="light"] .sb-brand-sub{ color:#888; }
 
     // SCALP 단타 전략 토글
     if ($('cfgScalpEnabled')) $('cfgScalpEnabled').checked = !!(currentCfg.strategies && currentCfg.strategies.scalp);
+    // [V51] 전략 예산 비중 슬라이더
+    if ($('cfgBudgetSplit')) {
+      var _bs = currentCfg.strategyBudgetSplit || { trend: 0.5, scalp: 0.5 };
+      var _tw = (typeof _bs.trend === 'number') ? _bs.trend : 0.5;
+      var _sw = (typeof _bs.scalp === 'number') ? _bs.scalp : 0.5;
+      var _tot = (_tw + _sw) > 0 ? (_tw + _sw) : 1;
+      var _trPct = Math.round((_tw / _tot) * 100);
+      $('cfgBudgetSplit').value = _trPct;
+      if ($('budgetTrendPct')) $('budgetTrendPct').textContent = _trPct;
+      if ($('budgetScalpPct')) $('budgetScalpPct').textContent = 100 - _trPct;
+    }
 
     // Vision AI 현재값
     var _va = currentCfg.visionAI || {};
@@ -4356,7 +4379,13 @@ html[data-theme="light"] .sb-brand-sub{ color:#888; }
       strategies: Object.assign({}, (currentCfg && currentCfg.strategies) || {}, {
         trend: true,
         scalp: !!($('cfgScalpEnabled') && $('cfgScalpEnabled').checked)
-      })
+      }),
+      // [V51] 전략별 예산 비중 (슬라이더, 합=1로 정규화)
+      strategyBudgetSplit: (function(){
+        var p = $('cfgBudgetSplit') ? parseInt($('cfgBudgetSplit').value, 10) : 50;
+        if (isNaN(p)) p = 50;
+        return { trend: p / 100, scalp: (100 - p) / 100 };
+      })()
     };
     fetch('/api/cfg', { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify(body) })
       .then(function(r){return r.json();})
@@ -4687,6 +4716,14 @@ html[data-theme="light"] .sb-brand-sub{ color:#888; }
   $('settingsModal').addEventListener('click', function(e){
     if (e.target === $('settingsModal')) closeSettings();
   });
+  // [V51] 예산 비중 슬라이더 실시간 라벨
+  if ($('cfgBudgetSplit')) {
+    $('cfgBudgetSplit').addEventListener('input', function(){
+      var p = parseInt(this.value, 10); if (isNaN(p)) p = 50;
+      if ($('budgetTrendPct')) $('budgetTrendPct').textContent = p;
+      if ($('budgetScalpPct')) $('budgetScalpPct').textContent = 100 - p;
+    });
+  }
   $('macroModal').addEventListener('click', function(e){
     if (e.target === $('macroModal')) closeMacro();
   });
