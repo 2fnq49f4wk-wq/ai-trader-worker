@@ -991,6 +991,25 @@ html[data-theme="light"] .sb-brand-sub{ color:#888; }
   background:var(--s3);color:var(--t2);border-radius:8px;letter-spacing:0;
 }
 
+/* ═══ [V56] UI 개선 ═══ */
+.wl-dir-btn,.wl-sortchg-btn{font-size:9px;font-weight:700;padding:3px 8px;background:transparent;border:1px solid var(--bd2);cursor:pointer;color:var(--t3);font-family:'IBM Plex Mono',monospace;transition:all .1s;border-radius:3px;}
+.wl-dir-btn:hover,.wl-sortchg-btn:hover{color:var(--t1);border-color:var(--bd);}
+#dirUpUS.active,#dirUpKR.active{color:var(--pos);border-color:var(--pos);}
+#dirDownUS.active,#dirDownKR.active{color:var(--neg);border-color:var(--neg);}
+.wl-sortchg-btn.active{color:var(--acc);border-color:var(--acc);}
+.trades-filters{display:flex;gap:8px;padding:10px 28px;border-bottom:1px solid var(--bd);background:var(--bg);flex-wrap:wrap;}
+.trade-filter-btn{padding:5px 12px;background:transparent;border:1px solid var(--bd);border-radius:4px;font-size:10px;font-weight:700;color:var(--t2);font-family:'IBM Plex Mono',monospace;letter-spacing:.5px;cursor:pointer;transition:all .12s;}
+.trade-filter-btn:hover{border-color:var(--t1);color:var(--t1);}
+.trade-filter-btn.active{background:var(--acc);color:var(--bg);border-color:var(--acc);}
+.market-badge.mkt-commodity{background:rgba(255,193,7,.15);color:var(--amber);border:1px solid rgba(255,193,7,.35);}
+.market-badge.mkt-bonds{background:rgba(68,136,255,.15);color:var(--blue);border:1px solid rgba(68,136,255,.35);}
+.market-badge.mkt-stocks{background:rgba(0,230,118,.13);color:var(--pos);border:1px solid rgba(0,230,118,.30);}
+.cm-watch-card{transition:all .15s;}
+.cm-watch-card:hover{background:var(--s2);transform:translateY(-1px);box-shadow:0 6px 18px rgba(0,0,0,.4);}
+.alt-row{transition:background .1s;}
+.alt-row:hover:not(.head){background:var(--s2);}
+.intel-sector-item{transition:background .1s;}
+.intel-sector-item:hover{background:var(--s2);}
 </style>
 </head>
 <body>
@@ -1273,6 +1292,9 @@ html[data-theme="light"] .sb-brand-sub{ color:#888; }
             <div class="wl-pane-actions">
               <button type="button" class="wl-viewmode-btn active" id="viewMcapUS" data-market="us" data-mode="mcap">시총순</button>
               <button type="button" class="wl-viewmode-btn" id="viewHeldUS" data-market="us" data-mode="held">보유</button>
+              <button type="button" class="wl-dir-btn" id="dirUpUS" data-market="us" data-dir="up">▲상승</button>
+              <button type="button" class="wl-dir-btn" id="dirDownUS" data-market="us" data-dir="down">▼하강</button>
+              <button type="button" class="wl-sortchg-btn" id="sortChgUS" data-market="us">등락률순</button>
               <button type="button" class="watchlist-toggle-btn" id="btnToggleUS">펼치기</button>
             </div>
           </div>
@@ -1291,6 +1313,9 @@ html[data-theme="light"] .sb-brand-sub{ color:#888; }
             <div class="wl-pane-actions">
               <button type="button" class="wl-viewmode-btn active" id="viewMcapKR" data-market="kr" data-mode="mcap">시총순</button>
               <button type="button" class="wl-viewmode-btn" id="viewHeldKR" data-market="kr" data-mode="held">보유</button>
+              <button type="button" class="wl-dir-btn" id="dirUpKR" data-market="kr" data-dir="up">▲상승</button>
+              <button type="button" class="wl-dir-btn" id="dirDownKR" data-market="kr" data-dir="down">▼하강</button>
+              <button type="button" class="wl-sortchg-btn" id="sortChgKR" data-market="kr">등락률순</button>
               <button type="button" class="watchlist-toggle-btn" id="btnToggleKR">펼치기</button>
             </div>
           </div>
@@ -1322,7 +1347,7 @@ html[data-theme="light"] .sb-brand-sub{ color:#888; }
       <div id="cmPositionsBox2"><div class="empty">No commodity positions yet</div></div>
       <!-- 워치리스트 카드 그리드 -->
       <div class="cm-section-label">WATCHLIST</div>
-      <div id="cmWatchGrid" style="display:grid;grid-template-columns:repeat(auto-fill,minmax(150px,1fr));gap:10px;padding:14px 20px;"></div>
+      <div id="cmWatchGrid" style="display:grid;grid-template-columns:repeat(auto-fill,minmax(160px,1fr));gap:12px;padding:14px 20px;"></div>
     </div><!-- /commodities -->
 
     <!-- ══ PAGE: BONDS ══ -->
@@ -1364,6 +1389,12 @@ html[data-theme="light"] .sb-brand-sub{ color:#888; }
       <!-- RECENT TRADES -->
       <div class="page-header">
         <span class="page-title">RECENT TRADES</span>
+      </div>
+      <div class="trades-filters">
+        <button type="button" class="trade-filter-btn active" data-filter="all">모두</button>
+        <button type="button" class="trade-filter-btn" data-filter="stocks">📈주식</button>
+        <button type="button" class="trade-filter-btn" data-filter="commodity">⛏원자재</button>
+        <button type="button" class="trade-filter-btn" data-filter="bonds">◈채권</button>
       </div>
       <div class="trades-toggle" id="tradesToggle">
         <div class="trades-summary" id="tradesSummary">
@@ -1845,6 +1876,10 @@ html[data-theme="light"] .sb-brand-sub{ color:#888; }
   var heldMap = { us: {}, kr: {} };  // symbol -> {pnlPct, qty} (보유종목 등락 강조용)
   var usViewMode = 'mcap';  // [V19] 'mcap'(시총순) | 'held'(보유종목)
   var krViewMode = 'mcap';
+  // [V56] 워치리스트 방향필터/정렬, 거래 자산필터
+  var usWlDir = 'all', krWlDir = 'all';
+  var usWlSort = 'mcap', krWlSort = 'mcap';
+  var tradeFilter = 'all';
 
   var INDEX_NAMES = {
     '^IXIC': 'NASDAQ', '^DJI': 'DOW JONES', '^GSPC': 'S&P 500',
@@ -2834,6 +2869,31 @@ html[data-theme="light"] .sb-brand-sub{ color:#888; }
     var favList = sorted.filter(function(q){ return favorites.indexOf(q.symbol) >= 0; });
     var restList = sorted.filter(function(q){ return favorites.indexOf(q.symbol) < 0; });
 
+    // [V56] 등락 방향 필터 / 등락률 정렬
+    var wlDir = market === 'us' ? usWlDir : krWlDir;
+    var wlSort = market === 'us' ? usWlSort : krWlSort;
+    if (wlDir !== 'all' || wlSort === 'change') {
+      var filtered = sorted.filter(function(q){
+        if (typeof q.dayPct !== 'number') return false;
+        if (wlDir === 'up') return q.dayPct >= 0;
+        if (wlDir === 'down') return q.dayPct < 0;
+        return true;
+      });
+      filtered.sort(function(a,b){ return (wlDir === 'down') ? (a.dayPct - b.dayPct) : (b.dayPct - a.dayPct); });
+      var dirLabel = wlDir === 'up' ? '▲ 상승' : wlDir === 'down' ? '▼ 하강' : '등락률순';
+      var limit = expanded ? filtered.length : 20;
+      var shownF = filtered.slice(0, limit);
+      var hh = '<div class="watchlist-section all">'+dirLabel+' ('+shownF.length+'/'+filtered.length+')</div>';
+      if (shownF.length === 0) hh += '<div class="empty">해당 종목이 없습니다</div>';
+      else {
+        hh += '<div class="watchlist">'+shownF.map(function(q){return buildWatchlistCard(q, market);}).join('')+'</div>';
+        if (!expanded && filtered.length > 20) hh += '<div class="watchlist-section all">상위 20개 · 펼치면 전체</div>';
+      }
+      container.innerHTML = hh;
+      bindFavButtons(container);
+      return;
+    }
+
     var html = '';
     // 즐겨찾기 (항상 전부 표시)
     if (favList.length > 0) {
@@ -3066,6 +3126,23 @@ html[data-theme="light"] .sb-brand-sub{ color:#888; }
     })['catch'](function(e){ toast('포지션 다운로드 실패: ' + e.message); });
   }
 
+  // [V56] 시장코드 → 자산유형
+  function assetTypeOf(market) {
+    var m = (market || '').toLowerCase();
+    if (m === 'cm' || m.indexOf('commod') >= 0) return 'commodity';
+    if (m.indexOf('bd') === 0 || m.indexOf('bond') >= 0) return 'bonds';
+    return 'stocks';
+  }
+  // [V56] 거래 자산유형 필터 적용
+  function applyTradeFilter() {
+    var box = $('tradesBox');
+    if (!box) return;
+    box.querySelectorAll('tr[data-asset-type]').forEach(function(tr){
+      var t = tr.getAttribute('data-asset-type');
+      tr.style.display = (tradeFilter === 'all' || t === tradeFilter) ? '' : 'none';
+    });
+  }
+
   function renderTradesInto(trades, boxId, totalId, winId, avgId, sliceLimit) {
     var box = $(boxId);
     if (!trades || trades.length === 0) { box.innerHTML='<div class="empty">No trades yet</div>'; updateTradesSummaryInto([], totalId, winId, avgId); return; }
@@ -3080,10 +3157,12 @@ html[data-theme="light"] .sb-brand-sub{ color:#888; }
       var pnlText = t.pnl!=null ? (t.pnl>=0?'+':'')+pnlSymbol+pnlFmt(t.pnl) : '-';
       var name = t.market === 'kr' ? krLabel(t.symbol) : usLabel(t.symbol);
       var label = name ? '<b>'+escapeHtml(t.symbol)+'</b> <span style="color:var(--dim);font-size:10px;">'+escapeHtml(name)+'</span>' : '<b>'+escapeHtml(t.symbol)+'</b>';
-      html += '<tr><td>'+fmtFullTime(t.ts)+'</td><td><span class="market-badge">'+t.market.toUpperCase()+'</span></td><td>'+label+'</td><td class="'+sc+'">'+t.side+'</td><td class="right">'+fmtNum(t.qty)+'</td><td class="right">'+fmtNum(t.price)+'</td><td class="right '+pc+'">'+pnlText+'</td><td class="right '+pc+'">'+pct+'</td><td>'+escapeHtml(t.reason||'')+'</td></tr>';
+      var atype = assetTypeOf(t.market);
+      html += '<tr data-asset-type="'+atype+'"><td>'+fmtFullTime(t.ts)+'</td><td><span class="market-badge mkt-'+atype+'">'+t.market.toUpperCase()+'</span></td><td>'+label+'</td><td class="'+sc+'">'+t.side+'</td><td class="right">'+fmtNum(t.qty)+'</td><td class="right">'+fmtNum(t.price)+'</td><td class="right '+pc+'">'+pnlText+'</td><td class="right '+pc+'">'+pct+'</td><td>'+escapeHtml(t.reason||'')+'</td></tr>';
     });
     box.innerHTML = html + '</tbody></table></div>';
     updateTradesSummaryInto(trades, totalId, winId, avgId);
+    if (boxId === 'tradesBox') applyTradeFilter();
   }
 
   function updateTradesSummary(trades) {
@@ -4463,7 +4542,11 @@ html[data-theme="light"] .sb-brand-sub{ color:#888; }
     var el = $(btnId);
     if (!el) return;
     el.addEventListener('click', function(){
-      if (market === 'us') usViewMode = mode; else krViewMode = mode;
+      if (market === 'us') { usViewMode = mode; usWlDir = 'all'; } else { krViewMode = mode; krWlDir = 'all'; }
+      var up = $(market === 'us' ? 'dirUpUS' : 'dirUpKR');
+      var dn = $(market === 'us' ? 'dirDownUS' : 'dirDownKR');
+      if (up) up.classList.remove('active');
+      if (dn) dn.classList.remove('active');
       // 버튼 active 상태 갱신
       var mc = $(market === 'us' ? 'viewMcapUS' : 'viewMcapKR');
       var hd = $(market === 'us' ? 'viewHeldUS' : 'viewHeldKR');
@@ -4475,6 +4558,53 @@ html[data-theme="light"] .sb-brand-sub{ color:#888; }
   bindViewMode('viewMcapUS', 'us', 'mcap');
   bindViewMode('viewHeldUS', 'us', 'held');
   bindViewMode('viewMcapKR', 'kr', 'mcap');
+
+  // [V56] 상승/하강 방향 필터
+  function bindWlDir(btnId, market, dir) {
+    var el = $(btnId);
+    if (!el) return;
+    el.addEventListener('click', function(){
+      var cur = market === 'us' ? usWlDir : krWlDir;
+      var next = (cur === dir) ? 'all' : dir;
+      if (market === 'us') { usWlDir = next; usViewMode = 'mcap'; } else { krWlDir = next; krViewMode = 'mcap'; }
+      var up = $(market === 'us' ? 'dirUpUS' : 'dirUpKR');
+      var dn = $(market === 'us' ? 'dirDownUS' : 'dirDownKR');
+      if (up) up.classList.toggle('active', next === 'up');
+      if (dn) dn.classList.toggle('active', next === 'down');
+      var mc = $(market === 'us' ? 'viewMcapUS' : 'viewMcapKR');
+      var hd = $(market === 'us' ? 'viewHeldUS' : 'viewHeldKR');
+      if (mc) mc.classList.add('active');
+      if (hd) hd.classList.remove('active');
+      renderWatchlist(window.__lastQuotesArr || []);
+    });
+  }
+  bindWlDir('dirUpUS', 'us', 'up'); bindWlDir('dirDownUS', 'us', 'down');
+  bindWlDir('dirUpKR', 'kr', 'up'); bindWlDir('dirDownKR', 'kr', 'down');
+
+  // [V56] 등락률순 정렬
+  function bindWlSort(btnId, market) {
+    var el = $(btnId);
+    if (!el) return;
+    el.addEventListener('click', function(){
+      var cur = market === 'us' ? usWlSort : krWlSort;
+      var next = (cur === 'change') ? 'mcap' : 'change';
+      if (market === 'us') usWlSort = next; else krWlSort = next;
+      el.classList.toggle('active', next === 'change');
+      el.textContent = (next === 'change') ? '등락률순✓' : '등락률순';
+      renderWatchlist(window.__lastQuotesArr || []);
+    });
+  }
+  bindWlSort('sortChgUS', 'us'); bindWlSort('sortChgKR', 'kr');
+
+  // [V56] Recent Trades 자산유형 필터
+  document.querySelectorAll('.trade-filter-btn').forEach(function(btn){
+    btn.addEventListener('click', function(){
+      tradeFilter = this.getAttribute('data-filter');
+      document.querySelectorAll('.trade-filter-btn').forEach(function(b){ b.classList.remove('active'); });
+      this.classList.add('active');
+      applyTradeFilter();
+    });
+  });
   bindViewMode('viewHeldKR', 'kr', 'held');
   // 시장별 리셋 (확인창 필수)
   function bindReset(btnId, market) {
