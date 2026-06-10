@@ -8,6 +8,21 @@
 <script>
 // 테마 선반영(깜빡임 방지) — 저장값 없으면 기본 다크
 try{var __t=localStorage.getItem('luxTheme');if(__t==='light')document.documentElement.setAttribute('data-theme','light');}catch(e){}
+// [V58] 라이트/다크 토글 — 메인 스크립트와 분리(메인에서 에러가 나도 토글은 항상 동작)
+document.addEventListener('DOMContentLoaded',function(){
+  var btn=document.getElementById('btnTheme');
+  if(!btn||btn.__themeBound)return;
+  btn.__themeBound=true;
+  function lbl(){var l=document.documentElement.getAttribute('data-theme')==='light';btn.textContent=l?'☀ LIGHT':'🌙 DARK';}
+  btn.addEventListener('click',function(){
+    var root=document.documentElement;
+    var l=root.getAttribute('data-theme')==='light';
+    if(l){root.removeAttribute('data-theme');try{localStorage.setItem('luxTheme','dark');}catch(e){}}
+    else{root.setAttribute('data-theme','light');try{localStorage.setItem('luxTheme','light');}catch(e){}}
+    lbl();
+  });
+  lbl();
+});
 </script>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
@@ -431,9 +446,11 @@ button.btn.loading::after{content:'조회 중…';position:absolute;inset:0;disp
 .positions-collapsed.expanded .table-wrap{max-height:none;}
 
 /* ── WATCHLIST 페이지 ── */
-.wl-layout{display:grid;grid-template-columns:1fr 1fr;gap:0;height:100%;overflow:hidden;}
+/* [V58 FIX] 대시보드 통합 후 height:100%+flex:1 조합이 0px로 붕괴해 워치리스트가 사라지던 문제 —
+   고정 max-height 스크롤 방식으로 변경해 어떤 부모 컨텍스트에서도 항상 보이도록 */
+.wl-layout{display:grid;grid-template-columns:1fr 1fr;gap:0;align-items:start;}
 @media(max-width:768px){.wl-layout{grid-template-columns:1fr;}}
-.wl-pane{display:flex;flex-direction:column;border-right:1px solid var(--bd);overflow:hidden;}
+.wl-pane{display:flex;flex-direction:column;border-right:1px solid var(--bd);min-height:220px;}
 .wl-pane:last-child{border-right:none;}
 .wl-pane-header{
   padding:12px 16px;border-bottom:1px solid var(--bd);
@@ -451,7 +468,7 @@ button.btn.loading::after{content:'조회 중…';position:absolute;inset:0;disp
 .wl-search:focus{border-color:var(--acc);}
 .wl-search::placeholder{color:var(--t3);}
 .wl-count{font-size:10px;color:var(--t3);margin-left:4px;}
-.wl-list-wrap{flex:1;overflow-y:auto;}
+.wl-list-wrap{flex:1 1 auto;min-height:120px;max-height:620px;overflow-y:auto;}
 .wl-list-wrap::-webkit-scrollbar{width:3px;}
 .wl-list-wrap::-webkit-scrollbar-thumb{background:var(--bd);}
 
@@ -735,9 +752,10 @@ button.btn.loading::after{content:'조회 중…';position:absolute;inset:0;disp
   margin-bottom:5px;
 }
 .topbar-value{
-  font-size:19px;font-weight:700;color:var(--acc);
+  font-size:clamp(13px,1.35vw,19px);font-weight:700;color:var(--acc);
   font-variant-numeric:tabular-nums;
-  white-space:nowrap;overflow:hidden;text-overflow:ellipsis;
+  white-space:nowrap;overflow:hidden;text-overflow:clip;
+  min-width:0;letter-spacing:-.2px;
 }
 .topbar-sub{
   font-size:12px;font-weight:600;margin-top:3px;
@@ -1829,6 +1847,60 @@ html[data-theme="light"] .wl-name{color:#14181d;}
 .alt-asset-chg{font-size:10px;font-weight:700;margin-left:5px;}
 .alt-asset-chg.pos{color:var(--pos);}
 .alt-asset-chg.neg{color:var(--neg);}
+
+/* ════ [V58] COMMODITIES 컴팩트 리디자인 — 카드 과대 문제 해결 ════
+   스타일시트 최후미 배치: 앞쪽 테마 블록(18px 가격 등)을 전부 최종 오버라이드 */
+.cm-watch-card{padding:7px 9px 6px!important;gap:1px;border-radius:4px!important;}
+.cm-watch-card::before{height:2px;}
+.cm-watch-sym{font-size:10px!important;font-weight:700;letter-spacing:.2px;
+  white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
+.cm-watch-name{font-size:8px!important;margin-top:0!important;
+  white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
+.cm-watch-price{font-size:13px!important;margin-top:3px!important;letter-spacing:-.2px;
+  white-space:nowrap;overflow:hidden;}
+.cm-watch-day{font-size:9.5px!important;margin-top:1px!important;}
+.cm-watch-meta{font-size:8px!important;margin-top:3px!important;gap:4px;}
+.cm-rsi-bar{flex:1;height:3px;background:var(--bd2);border-radius:2px;overflow:hidden;display:inline-block;}
+.cm-rsi-bar i{display:block;height:100%;}
+.cm-watch-card:hover{transform:none!important;}
+
+/* ════ [V58] 라이트 모드 마감 보강 — 최후미 배치로 모든 테마 블록 뒤에서 확정 ════ */
+html[data-theme="light"]{
+  --bg:#eef1f4; --s1:#ffffff; --s2:#f4f6f9; --s3:#e9edf1;
+  --bd:#d4dae1; --bd2:#e3e8ee;
+  --t1:#13171c; --t2:#454e58; --t3:#7d8893;
+  --acc:#13171c; --acc2:#566170;
+  --pos:#067a4b; --neg:#cc3350;
+  --grn:#067a4b;
+  --amber:#a8730a;
+  --glass:#ffffff; --glass-bd:#d4dae1;
+  --fviz-blue:#1d5fc2; --fviz-hover:rgba(255,244,170,.6);
+  --moon:#13171c;
+}
+html[data-theme="light"] body{background:var(--bg);}
+html[data-theme="light"] body::before,html[data-theme="light"] body::after{display:none;}
+html[data-theme="light"] .sidebar{background:#fff;border-right:1px solid var(--bd);}
+html[data-theme="light"] .content-topbar{background:#fff;}
+html[data-theme="light"] .topbar-value,
+html[data-theme="light"] .port-total,
+html[data-theme="light"] .summary-value,
+html[data-theme="light"] .wl-name,
+html[data-theme="light"] .cm-watch-price,
+html[data-theme="light"] .yield-rate,
+html[data-theme="light"] .fv-idx-price,
+html[data-theme="light"] .alt-asset-value{color:#13171c;}
+html[data-theme="light"] .fv-table tbody tr:nth-child(even),
+html[data-theme="light"] .table tbody tr:nth-child(even){background:rgba(20,30,50,.035);}
+html[data-theme="light"] .fv-panel,html[data-theme="light"] .fv-idx,
+html[data-theme="light"] .fv-breadth{background:#fff;}
+html[data-theme="light"] .nav-item.active{background:rgba(6,122,75,.08);box-shadow:inset 0 0 0 1px rgba(6,122,75,.3);}
+html[data-theme="light"] .nav-item.active .nav-item-label{color:var(--pos);}
+html[data-theme="light"] .sb-run-btn{background:var(--pos)!important;color:#fff!important;}
+html[data-theme="light"] .btn.primary{background:var(--pos);color:#fff;}
+html[data-theme="light"] .wl-card:hover{background:#f1f4f8;}
+html[data-theme="light"] #fvHeatmap{background:#fff!important;}
+html[data-theme="light"] .sb-brand{background:#0d0d0d;}
+html[data-theme="light"] .sb-brand-name{color:#fff;}
 </style>
 </head>
 <body>
@@ -2113,7 +2185,7 @@ html[data-theme="light"] .wl-name{color:#14181d;}
           <button type="button" id="btnResetCM" class="btn danger">↺ RESET</button>
         </div>
       </div>
-      <div id="cmWatchGrid" style="display:grid;grid-template-columns:repeat(auto-fill,minmax(160px,1fr));gap:12px;padding:14px 20px;"></div>
+      <div id="cmWatchGrid" style="display:grid;grid-template-columns:repeat(auto-fill,minmax(124px,1fr));gap:7px;padding:10px 16px;"></div>
 
       <!-- ════ [V10.5] TREASURY YIELDS — 대시보드 통합 ════ -->
       <div class="page-header" style="border-top:1px solid var(--bd);">
@@ -2924,8 +2996,12 @@ html[data-theme="light"] .wl-name{color:#14181d;}
   function fmtCompact(n) {
     if (typeof n !== 'number' || !isFinite(n)) return '-';  // [버그수정] Infinity도 차단
     var abs = Math.abs(n);
-    if (abs >= 1e8) return (n/1e8).toFixed(2) + '억';
-    if (abs >= 1e4) return (n/1e4).toFixed(1) + '만';
+    // [V58] 9813.0만 → 9,813만 (콤마 그룹핑, 소수점 제거로 가독성/잘림 개선)
+    if (abs >= 1e8) {
+      var eok = n / 1e8;
+      return (Math.abs(eok) >= 100 ? eok.toLocaleString(undefined,{maximumFractionDigits:0}) : eok.toFixed(2)) + '억';
+    }
+    if (abs >= 1e4) return Math.round(n/1e4).toLocaleString() + '만';
     return n.toLocaleString(undefined, { maximumFractionDigits: 0 });
   }
 
@@ -3812,58 +3888,96 @@ html[data-theme="light"] .wl-name{color:#14181d;}
     if (!data) return;
     if (data.us) renderAltPanel(data.us, 'bdusPanel', 'usd', '🇺🇸', 'US BONDS', 'USD · 미국 국채 ETF');
     if (data.kr) renderAltPanel(data.kr, 'bdkrPanel', 'krw', '🇰🇷', 'KR BONDS', 'KRW · 한국 국고채 ETF');
-    // 국채 금리 카드
+    // 국채 금리 카드 — 🇺🇸 금리 + 🇰🇷 국고채 ETF(금리 직접 심볼 부재 → ETF 가격 프록시)
     var yrow = $('bondYieldRow');
-    if (yrow && data.yields && data.yields.length) {
-      yrow.innerHTML = data.yields.map(function(y){
-        var hasRate = typeof y.rate === 'number';
-        var chgClass = y.dayPct > 0 ? 'pos' : y.dayPct < 0 ? 'neg' : '';
-        var chgSign = y.dayPct >= 0 ? '+' : '';
-        return '<div class="yield-card">'+
-          '<div class="yield-label">'+escapeHtml(y.label)+'</div>'+
-          '<div class="yield-name">'+escapeHtml(y.name)+'</div>'+
-          '<div class="yield-rate">'+(hasRate ? y.rate.toFixed(2)+'%' : '-')+'</div>'+
-          '<div class="yield-chg '+chgClass+'">'+(typeof y.dayPct==='number' ? chgSign+y.dayPct.toFixed(2)+'%' : '')+'</div>'+
-          '</div>';
-      }).join('');
+    if (yrow) {
+      var cards = '';
+      if (data.yields && data.yields.length) {
+        cards += data.yields.map(function(y){
+          var hasRate = typeof y.rate === 'number';
+          var chgClass = y.dayPct > 0 ? 'pos' : y.dayPct < 0 ? 'neg' : '';
+          var chgSign = y.dayPct >= 0 ? '+' : '';
+          return '<div class="yield-card">'+
+            '<div class="yield-label">🇺🇸 '+escapeHtml(y.label)+'</div>'+
+            '<div class="yield-name">'+escapeHtml(y.name)+'</div>'+
+            '<div class="yield-rate">'+(hasRate ? y.rate.toFixed(2)+'%' : '-')+'</div>'+
+            '<div class="yield-chg '+chgClass+'">'+(typeof y.dayPct==='number' ? chgSign+y.dayPct.toFixed(2)+'%' : '')+'</div>'+
+            '</div>';
+        }).join('');
+      }
+      if (data.kr && data.kr.watchlist && data.kr.watchlist.length) {
+        cards += data.kr.watchlist.map(function(q){
+          if (!q) return '';
+          var has = typeof q.price === 'number';
+          var cc = q.dayPct > 0 ? 'pos' : q.dayPct < 0 ? 'neg' : '';
+          var cs = q.dayPct >= 0 ? '+' : '';
+          return '<div class="yield-card">'+
+            '<div class="yield-label">🇰🇷 ETF</div>'+
+            '<div class="yield-name">'+escapeHtml(q.name || q.symbol)+'</div>'+
+            '<div class="yield-rate">'+(has ? '₩'+fmtNum(q.price,0) : '-')+'</div>'+
+            '<div class="yield-chg '+cc+'">'+(typeof q.dayPct==='number' ? cs+fmtNum(q.dayPct,2)+'%' : '')+'</div>'+
+            '</div>';
+        }).join('');
+      }
+      if (cards) yrow.innerHTML = cards;
     }
   }
 
   function loadBonds() {
-    // [V10.4] FV 데크 — FOREX & BONDS (환율 + 국채금리 통합 테이블)
-    fetch('/api/fx').then(function(r){ return r.json(); }).then(function(d){
+    // [V58 재작성] FOREX & BONDS — /api/fx 와 /api/bonds 를 Promise.all 로 동시 수신 후
+    // 한 번에 렌더(기존: 두 fetch가 경쟁하며 innerHTML을 서로 덮어써 환율 또는 금리만 표시되던 버그).
+    // + 한국 국채 섹션 추가: 야후에 한국 국고채 금리 직접 심볼이 없어 국고채 ETF 가격을 프록시로 표시.
+    var fxP = fetch('/api/fx').then(function(r){ return r.json(); })['catch'](function(){ return null; });
+    var bdP = api('/api/bonds')['catch'](function(){ return null; });
+    return Promise.all([fxP, bdP]).then(function(res){
+      var fxd = res[0], data = res[1];
       var tb = $('fvForex');
-      if (!tb) return;
-      var rows = '';
-      if (d && d.data && d.data.rates) {
-        Object.keys(d.data.rates).slice(0, 5).forEach(function(k){
-          var r = d.data.rates[k];
-          if (!r || r.price == null) return;
-          var cls = r.dayPct > 0 ? 'pos' : r.dayPct < 0 ? 'neg' : '';
-          rows += '<tr><td><span class="fv-tick">'+escapeHtml(r.sub || r.label || k)+'</span></td>'+
-            '<td class="right">'+fmtNum(r.price, 2)+'</td>'+
-            '<td class="right '+cls+'">'+(typeof r.dayPct === 'number' ? (r.dayPct>=0?'+':'')+fmtNum(r.dayPct,2)+'%' : '-')+'</td></tr>';
-        });
+      if (tb) {
+        var rows = '';
+        var secRow = function(label){
+          return '<tr><td colspan="3" style="padding:5px 10px;font-size:8px;font-weight:700;letter-spacing:1.2px;color:var(--t3);background:var(--s2);text-transform:uppercase;">'+label+'</td></tr>';
+        };
+        // ── 1) 환율 ──
+        if (fxd && fxd.data && fxd.data.rates) {
+          rows += secRow('FOREX · 환율');
+          Object.keys(fxd.data.rates).slice(0, 5).forEach(function(k){
+            var r = fxd.data.rates[k];
+            if (!r || r.price == null) return;
+            var cls = r.dayPct > 0 ? 'pos' : r.dayPct < 0 ? 'neg' : '';
+            rows += '<tr><td><span class="fv-tick">'+escapeHtml(r.sub || r.label || k)+'</span></td>'+
+              '<td class="right">'+fmtNum(r.price, 2)+'</td>'+
+              '<td class="right '+cls+'">'+(typeof r.dayPct === 'number' ? (r.dayPct>=0?'+':'')+fmtNum(r.dayPct,2)+'%' : '-')+'</td></tr>';
+          });
+        }
+        // ── 2) 미국 국채 금리 ──
+        if (data && data.yields && data.yields.length) {
+          rows += secRow('🇺🇸 US TREASURY · 금리');
+          data.yields.slice(0, 4).forEach(function(y){
+            var has = typeof y.rate === 'number';
+            var cls = y.dayPct > 0 ? 'pos' : y.dayPct < 0 ? 'neg' : '';
+            rows += '<tr><td><span class="fv-tick">'+escapeHtml(y.label || y.name)+'</span> <span style="font-size:8.5px;color:var(--t3);">'+escapeHtml(y.name||'')+'</span></td>'+
+              '<td class="right">'+(has ? y.rate.toFixed(2)+'%' : '-')+'</td>'+
+              '<td class="right '+cls+'">'+(typeof y.dayPct === 'number' ? (y.dayPct>=0?'+':'')+y.dayPct.toFixed(2)+'%' : '-')+'</td></tr>';
+          });
+        }
+        // ── 3) 한국 국채 (국고채 ETF 가격 프록시 — 야후에 KR 금리 직접 심볼 없음) ──
+        if (data && data.kr && data.kr.watchlist && data.kr.watchlist.length) {
+          rows += secRow('🇰🇷 KR 국고채 ETF');
+          data.kr.watchlist.forEach(function(q){
+            if (!q) return;
+            var has = typeof q.price === 'number';
+            var cls = q.dayPct > 0 ? 'pos' : q.dayPct < 0 ? 'neg' : '';
+            rows += '<tr><td><span class="fv-tick">'+escapeHtml(q.name || q.symbol)+'</span></td>'+
+              '<td class="right">'+(has ? '₩'+fmtNum(q.price,0) : '-')+'</td>'+
+              '<td class="right '+cls+'">'+(typeof q.dayPct === 'number' ? (q.dayPct>=0?'+':'')+fmtNum(q.dayPct,2)+'%' : '-')+'</td></tr>';
+          });
+        }
+        if (rows) tb.innerHTML = rows;
       }
-      tb.innerHTML = rows;
-      tb.setAttribute('data-fx-done', '1');
-    })['catch'](function(){});
-    return api('/api/bonds').then(function(data){
-      renderBonds(data);
-      // [V10.4] FV 데크 — 국채금리 행 이어붙임 (환율 아래)
-      var tb = $('fvForex');
-      if (tb && data && data.yields && data.yields.length) {
-        var yr = data.yields.slice(0, 4).map(function(y){
-          var has = typeof y.rate === 'number';
-          var cls = y.dayPct > 0 ? 'pos' : y.dayPct < 0 ? 'neg' : '';
-          return '<tr><td><span class="fv-tick">'+escapeHtml(y.label || y.name)+'</span></td>'+
-            '<td class="right">'+(has ? y.rate.toFixed(2)+'%' : '-')+'</td>'+
-            '<td class="right '+cls+'">'+(typeof y.dayPct === 'number' ? (y.dayPct>=0?'+':'')+y.dayPct.toFixed(2)+'%' : '-')+'</td></tr>';
-        }).join('');
-        tb.innerHTML = tb.innerHTML + yr;
-      }
-      // ALT ASSETS 대시보드 미니카드 갱신
+      // ── 채권 패널 + 금리 카드 행 ──
       if (data) {
+        try { renderBonds(data); } catch(e){ console.error('[render:bonds]', e); }
+        // ALT ASSETS 대시보드 미니카드 갱신
         function altTotal(sleeve, isKRW) {
           if (!sleeve) return null;
           var cash = typeof sleeve.cash === 'number' ? sleeve.cash : 0;
@@ -3876,9 +3990,9 @@ html[data-theme="light"] .wl-name{color:#14181d;}
         var us = altTotal(data.us, false);
         var kr = altTotal(data.kr, true);
         if (us) updateAltAssetCard('altBDUSVal', '$'+fmtNum(us.total,0), us.init>0?(us.total-us.init)/us.init*100:0);
-        if (kr) updateAltAssetCard('altBDKRVal', '₩'+fmtNum(kr.total,0), kr.init>0?(kr.total-kr.init)/kr.init*100:0);
+        if (kr) updateAltAssetCard('altBDKRVal', '₩'+fmtCompact(kr.total), kr.init>0?(kr.total-kr.init)/kr.init*100:0);
       }
-    })['catch'](function(){});
+    });
   }
 
   function runBondNow(key, btnId) {
@@ -4997,7 +5111,7 @@ html[data-theme="light"] .wl-name{color:#14181d;}
         }
         usFavorites = (state.cfg && state.cfg.usFavorites) || [];
         krFavorites = (state.cfg && state.cfg.krFavorites) || [];
-        renderIndices(indices);
+        try { renderIndices(indices); } catch(e){ console.error('[render:indices]', e); }
         // [V10] lastQuotes를 먼저 채워서 renderPositions의 손익계산/heldMap이 정확하도록
         lastQuotes = {};
         quotes.forEach(function(q){ lastQuotes[q.symbol] = q; });
@@ -5022,17 +5136,20 @@ html[data-theme="light"] .wl-name{color:#14181d;}
         if (state.signalTypes) currentSignalTypes = state.signalTypes;     // [신호타입]
         var initUS = (state.cfg && state.cfg.initialCashUS) || 0;
         var initKR = (state.cfg && state.cfg.initialCashKR) || 0;
-        renderSummary('us', calcSummary('us', cash.us, posUS, initUS, twr.us, deposits.us, outflows.us));
-        renderSummary('kr', calcSummary('kr', cash.kr, posKR, initKR, twr.kr, deposits.kr, outflows.kr));
-        renderPositions(posUS, posKR);   // heldMap 갱신 — watchlist보다 먼저
-        renderWatchlist(quotes);          // heldMap 반영된 상태로 카드 렌더
-        renderEngine(state.lastTick, state.lastHeartbeat);
-        renderTrades(trades);
+        // [V58 FIX] 렌더 단계 하나가 예외를 던지면 이후 전부(워치리스트 포함)가 사라지던 문제 —
+        // 각 단계를 독립 try/catch로 격리해 일부 실패해도 나머지는 항상 그려지게 함
+        function safeRun(label, fn){ try { fn(); } catch(e){ console.error('[render:'+label+']', e); } }
+        safeRun('summaryUS', function(){ renderSummary('us', calcSummary('us', cash.us, posUS, initUS, twr.us, deposits.us, outflows.us)); });
+        safeRun('summaryKR', function(){ renderSummary('kr', calcSummary('kr', cash.kr, posKR, initKR, twr.kr, deposits.kr, outflows.kr)); });
+        safeRun('positions', function(){ renderPositions(posUS, posKR); });   // heldMap 갱신 — watchlist보다 먼저
+        safeRun('watchlist', function(){ renderWatchlist(quotes); });          // heldMap 반영된 상태로 카드 렌더
+        safeRun('engine', function(){ renderEngine(state.lastTick, state.lastHeartbeat); });
+        safeRun('trades', function(){ renderTrades(trades); });
         // [V8.6 Hybrid] LLM 배너 렌더링
-        renderLLMBanner(state.llmDaily, state.cfg);
-        renderUsageBanner(state.usageState, state.forceLock, state.cfg);
+        safeRun('llm', function(){ renderLLMBanner(state.llmDaily, state.cfg); });
+        safeRun('usage', function(){ renderUsageBanner(state.usageState, state.forceLock, state.cfg); });
         // [V10.4] FINVIZ DECK — 지수/시장폭/무버/헤드라인
-        renderFvDeck(state);
+        safeRun('fvdeck', function(){ renderFvDeck(state); });
         if (!fvHeatLoaded) setTimeout(loadFvHeatmap, 200);
         // ALL TRADE HISTORY — 요약은 항상 갱신, 테이블은 펼쳐졌을 때만
         if (allTradesExpanded) renderAllTrades(allTrades || []);
@@ -6319,7 +6436,7 @@ html[data-theme="light"] .wl-name{color:#14181d;}
     applyThemeLabel();
   }
   var __tb=document.getElementById('btnTheme');
-  if(__tb) __tb.addEventListener('click',toggleTheme);
+  if(__tb && !__tb.__themeBound){ __tb.__themeBound=true; __tb.addEventListener('click',toggleTheme); }
   applyThemeLabel();
 })();
 </script>
