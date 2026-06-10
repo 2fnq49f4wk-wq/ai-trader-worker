@@ -10721,6 +10721,77 @@ async function handleRequest(request, env) {
       if (!fx) return Response.json({ empty: true, pairs: FX_PAIRS }, { headers: cors });
       return Response.json(Object.assign({ pairs: FX_PAIRS }, fx), { headers: cors });
     }
+
+    // === [V58 신규] OHLC 캔들 조회 — 프론트 기술적 분석(패턴 감지)용 ===
+    //   ?symbol=AAPL&range=3mo&interval=1d  · 10분 캐시(D1 state)로 서브리퀘스트 보호
+    if (path === "/api/chart") {
+      const sym = (url.searchParams.get("symbol") || "").trim();
+      if (!sym || sym.length > 16 || !/^[A-Za-z0-9.^=\-]+$/.test(sym)) {
+        return Response.json({ error: "bad symbol" }, { status: 400, headers: cors });
+      }
+      const range = ["1mo","3mo","6mo","1y"].indexOf(url.searchParams.get("range")) >= 0 ? url.searchParams.get("range") : "3mo";
+      const ck = "chart:" + sym + ":" + range;
+      const cached = await getState(env.DB, ck, null);
+      if (cached && cached.ts && (Date.now() - cached.ts) < 10 * 60 * 1000) {
+        return Response.json(cached, { headers: cors });
+      }
+      try {
+        const j = await yahooFetch("https://query1.finance.yahoo.com/v8/finance/chart/" + encodeURIComponent(sym) + "?interval=1d&range=" + range);
+        const result = j && j.chart && j.chart.result && j.chart.result[0];
+        if (!result) throw new Error("no data");
+        const q = (result.indicators && result.indicators.quote && result.indicators.quote[0]) || {};
+        const tsArr = result.timestamp || [];
+        const candles = [];
+        for (let i = 0; i < tsArr.length; i++) {
+          const o = q.open && q.open[i], h = q.high && q.high[i], l = q.low && q.low[i], c = q.close && q.close[i], v = q.volume && q.volume[i];
+          if (o == null || h == null || l == null || c == null) continue;
+          candles.push({ t: tsArr[i], o: o, h: h, l: l, c: c, v: v || 0 });
+        }
+        const meta = result.meta || {};
+        const payload = { symbol: sym, range: range, candles: candles, price: meta.regularMarketPrice || null, ts: Date.now() };
+        try { await setState(env.DB, ck, payload); } catch (e) {}
+        return Response.json(payload, { headers: cors });
+      } catch (e) {
+        if (cached) return Response.json(cached, { headers: cors }); // 스테일이라도 반환
+        return Response.json({ error: String(e && e.message || e) }, { status: 502, headers: cors });
+      }
+    }
+
+    // === [V58 신규] 경제지표 캘린더 — TradingView 공개 캘린더 프록시 (30분 캐시) ===
+    //   미국+한국, 오늘 기준 -1일 ~ +7일. importance(-1~1)를 임팩트 점수로 사용.
+    if (path === "/api/econ") {
+      const ck = "econ_calendar";
+      const cached = await getState(env.DB, ck, null);
+      if (url.searchParams.get("force") !== "1" && cached && cached.ts && (Date.now() - cached.ts) < 30 * 60 * 1000) {
+        return Response.json(cached, { headers: cors });
+      }
+      try {
+        const now = new Date();
+        const from = new Date(now.getTime() - 1 * 86400000).toISOString();
+        const to = new Date(now.getTime() + 7 * 86400000).toISOString();
+        const u = "https://economic-calendar.tradingview.com/events?from=" + encodeURIComponent(from) + "&to=" + encodeURIComponent(to) + "&countries=" + encodeURIComponent("US,KR");
+        const r = await fetch(u, { headers: { "Origin": "https://www.tradingview.com", "Referer": "https://www.tradingview.com/", "User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36" } });
+        if (!r.ok) throw new Error("econ http " + r.status);
+        const j = await r.json();
+        const list = (j && (j.result || j.events || [])) || [];
+        const events = list.map(function(e){
+          return {
+            id: e.id, title: e.title || e.indicator || "", country: e.country || "",
+            date: e.date || null, period: e.period || "",
+            actual: (e.actual != null ? e.actual : null),
+            forecast: (e.forecast != null ? e.forecast : null),
+            previous: (e.previous != null ? e.previous : null),
+            unit: e.unit || "", importance: (typeof e.importance === "number" ? e.importance : 0)
+          };
+        }).filter(function(e){ return e.title && e.date; });
+        const payload = { events: events, ts: Date.now() };
+        try { await setState(env.DB, ck, payload); } catch (e2) {}
+        return Response.json(payload, { headers: cors });
+      } catch (e) {
+        if (cached) return Response.json(cached, { headers: cors });
+        return Response.json({ events: [], error: String(e && e.message || e), ts: Date.now() }, { headers: cors });
+      }
+    }
     // === [FX] 환율 즉시 갱신 ===
     if (path === "/api/fx/run" && request.method === "POST") {
       const payload = await runFxUpdate(env);
