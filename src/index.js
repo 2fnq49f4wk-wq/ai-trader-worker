@@ -2097,7 +2097,7 @@ const FX_PAIRS = [
 // === 전략 식별자 ===
 // [재작성] 단일 추세추종 전략 "trend"로 통합. 구 swing/momentum/meanrev/day 폐기.
 //   기존 보유 포지션(strategy=swing 등)도 새 evaluateSell이 strategy 무관하게 청산 관리한다.
-const STRATEGIES = ["trend", "scalp"];  // scalp: 분봉 단타 (cfg.strategies.scalp=true 시 활성)
+const STRATEGIES = ["trend", "scalp", "snap"];  // scalp: 분봉 단타 / snap: 상승추세 내 과매도 스냅백 (2~5일 스윙)
 const LEGACY_STRATEGIES = ["swing", "momentum", "meanrev", "day"];  // 통계/호환 표시용
 
 // === [신규] 섹터 매핑 (동시 보유 제한용) ===
@@ -2468,11 +2468,13 @@ const DEFAULT_CFG = {
   //   scalp: 분봉 기반 단타 전략 (기본 OFF — 설정에서 활성화)
   strategies: {
     trend: true,
-    scalp: true   // [V50] 분봉 단타 활성화 (KR 포함 — scalpRules.usOnly=false)
+    scalp: true,  // [V50] 분봉 단타 활성화 (KR 포함 — scalpRules.usOnly=false)
+    snap: true    // [V52] 스냅백(상승추세 내 과매도 단기반등) 활성화
   },
   // [V51] 전략별 사이클 예산 분리 — trend/scalp가 같은 현금풀을 두고 경쟁해 단타가 굶던 문제 해결.
   //   각 시장 가용현금을 비율로 쪼개 전략별 독립 예산으로 사용. 대시보드 슬라이더로 조절.
-  strategyBudgetSplit: { trend: 0.5, scalp: 0.5 },
+  // [V52] 3분할 — trend/scalp/snap 기본 35/30/35.
+  strategyBudgetSplit: { trend: 0.35, scalp: 0.30, snap: 0.35 },
   // === [SCALP] 단타 전략 룰 — 분봉 기반 장중 단타 ===
   //   추세추종(일봉)과 완전 분리: 진입·관리·청산 모두 분봉 기준.
   //   일봉: MA20>MA50 (약 추세 확인) + 일봉 과열 아님(RSI≤72)
@@ -2507,9 +2509,46 @@ const DEFAULT_CFG = {
     // 포지션 크기
     maxPositionPct: 6,       // 포트의 최대 6%
     riskPerTrade: 0.5,       // 손실 리스크 = 포트의 0.5%
+    // === [V52 강화] 단타 품질 게이트 ===
+    avoidOpenMinutes: 15,    // 개장 후 N분간 진입 금지 (오프닝 노이즈·갭 변동 회피) — 패닉 단타는 면제
+    avoidCloseMinutes: 20,   // 마감 N분 전 진입 금지 (청산 시간 부족 → 오버나이트 리스크 방지)
+    dailyLossLimitPct: 1.5,  // 당일 scalp 청산 PnL%(합) ≤ -N% → 그날 scalp 신규진입 중단 (틸트 방지, 시장별)
+    reEntryCooldownMin: 60,  // 같은 종목 scalp 손절 후 N분간 재진입 차단 (연속 칼날 방지)
+    requireVwapSlopeUp: true,// SC_VWAP/SC_MOMENTUM 진입 시 VWAP 기울기 ≥ 0 요구 (하락 VWAP 추격 차단; 눌림목/패닉은 면제)
     // [V50] 단타 KR 허용 — 야후 1분봉 15분 지연 있으나, 패닉장 인버스/캡출 단타 작동 위해 개방.
     //   지연 영향이 큰 건 일반 모멘텀 추격이고, 인버스 추세추종은 지연 영향이 작다.
     usOnly: false
+  },
+  // === [V52 신규 전략] SNAP — 상승추세 내 단기 과매도 스냅백 (Connors RSI-2 계열, 2~5일 스윙) ===
+  //   TREND(추세 순응 진입)·SCALP(분봉 장중)와 직교하는 세 번째 수익원:
+  //   "장기 상승추세가 살아있는 종목이 단기(2~5일) 과매도로 눌렸을 때 평균회귀 반등을 먹는다."
+  //   진입은 약세를 사지만, 장기추세 게이트(price>MA200, MA50>MA200)와 BEAR 레짐 차단으로
+  //   '하락장 칼날잡기'(과거 meanrev 실패 원인)를 구조적으로 배제한다. 데이터: 일봉만(추가 fetch 0).
+  snapRules: {
+    rsi2Max: 10,             // RSI(2) ≤ N → 단기 과매도 (핵심 트리거)
+    rsi14Max: 50,            // RSI(14) 상한 — 중기도 식어있어야(추세 고점 눌림만)
+    requireBelowMa5: true,   // 종가 < MA5 (눌림 확인)
+    downDaysMin: 2,          // 최근 연속 하락일 ≥ N (투매 확인, rsi2와 AND가 아닌 OR 보조)
+    dayDropMin: -4.0,        // 당일 등락 하한 — 이보다 급락이면 칼날로 보고 제외
+    pullbackFromHighMax: 12, // 20일 고점 대비 -N% 이내 눌림만 (추세 붕괴 배제)
+    maxAtrPct: 5,            // 고변동 종목 제외
+    blockInBear: true,       // BEAR 레짐 진입 금지 (역추세성 전략의 최대 리스크 차단)
+    // 청산 (평균회귀 — 빨리 먹고 빨리 나온다)
+    atrStopMult: 1.5,        // 손절 = entry − 1.5×ATR (executeBuy 참조; trend 2.0보다 타이트)
+    stopLossPct: 3.5,        // % 손절과 비교해 타이트한 쪽 (trend 5.0보다 타이트)
+    exitAboveMa5: true,      // 종가 > MA5 → 평균회귀 완료, 전량 익절
+    exitRsi2: 65,            // RSI(2) ≥ N → 과매도 해소, 전량 익절
+    takeProfitPct: 5.0,      // 하드 익절 상한
+    tp1Pct: 2.0,             // +2% 도달 시 절반 익절 + 본전락 (BE)
+    breakEvenLock: 0.1,
+    timeStopDays: 5,         // 5거래일 내 본전 미만 → 청산 (평균회귀 실패 = 빠른 철수)
+    timeStopMinPnl: 0.0,
+    // 사이징 — 역추세성이라 trend(0.75%)보다 작게
+    riskPerTrade: 0.5,
+    maxPositionPct: 8,
+    maxConcurrent: 6,        // snap 동시 보유 상한 (시장별)
+    krRiskScale: 0.7,        // KR 15분 지연 시세 → 리스크 추가 축소
+    reEntryCooldownHours: 12 // snap 손절 후 재진입 차단 (시간)
   },
   // === [SCALP-PANIC] 패닉/베어장 전용 단타 룰 — "패닉 때도 단타로 번다" ===
   //   평시 scalp는 상승추세 종목만 노려 패닉장엔 신호가 0이 된다.
@@ -2583,7 +2622,16 @@ const DEFAULT_CFG = {
     // === [강화] 승자 장기보유 — 깊은 수익 구간 트레일 확대(상방만, 손절폭 불변) ===
     runnerWidenEnabled: true,
     runnerR1: 3, runnerWiden1: 1.25,        // +3R↑ → 트레일 ×1.25
-    runnerR2: 5, runnerWiden2: 1.5          // +5R↑ → 트레일 ×1.5 (큰 추세 끝까지)
+    runnerR2: 5, runnerWiden2: 1.5,         // +5R↑ → 트레일 ×1.5 (큰 추세 끝까지)
+    // === [V52] 신규 유입 정보 활용 — 시가(갭)·종가위치(CLV)·주봉 정합 (전부 사이즈 조절만, 차단 없음 → 악화 불가) ===
+    gapFilterEnabled: true,
+    gapMaxPct: 3.0,                         // 당일 시가가 전일 종가 대비 +N% 초과 갭업 돌파 → 추격 비용↑
+    gapScale: 0.7,                          //   → 사이즈 ×0.7 (갭업 돌파는 되돌림 확률 높음)
+    clvEnabled: true,                       // CLV = (종가-저가)/(고가-저가): 일중 매수 강도
+    clvStrongMin: 0.7, clvStrongScale: 1.06,//   종가가 고가 부근(강한 마감) → 소폭 부스트
+    clvWeakMax: 0.35, clvWeakScale: 0.85,   //   윗꼬리 마감(분산 흔적) → 축소
+    weeklyAlignEnabled: true,               // 주봉 종가 > 주봉 MA10 정합 — 상위 시간프레임 확인
+    weeklyMisalignScale: 0.8                //   미정합 시 사이즈 ×0.8 (차단 아님)
   },
   // === [KR 분리] TREND 룰 — KR 시장 전용 오버라이드 ===
   //   여기 정의한 키만 trendRules(US 기본값)를 덮어쓴다. 누락 키는 US값 상속.
@@ -2954,9 +3002,22 @@ function migrateCfgToMarkets(cfg) {
 
   // [재작성] 단일 추세추종 전략으로 강제 — 저장된 옛 cfg가 swing/momentum/meanrev를
   //   켜둔 채 얕은 병합으로 살아남는 것을 막는다(매 로드 강제). trendRules/trendSizing 보강.
-  cfg.strategies = Object.assign({ trend: true, scalp: true }, cfg.strategies || {}, { trend: true });
+  cfg.strategies = Object.assign({ trend: true, scalp: true, snap: true }, cfg.strategies || {}, { trend: true });
   // [V50] 단타 강제 활성화 — 옛 cfg에 저장된 scalp:false를 무력화(요청: 단타 작동).
   cfg.strategies.scalp = true;
+  // [V52] snapRules 누락키 보강 (UI 토글로 끌 수 있게 강제활성은 안 함 — 기본값만 true)
+  if (cfg.strategies.snap === undefined) cfg.strategies.snap = true;
+  if (!cfg.snapRules || typeof cfg.snapRules !== "object") {
+    cfg.snapRules = JSON.parse(JSON.stringify(DEFAULT_CFG.snapRules));
+  } else {
+    for (const k in DEFAULT_CFG.snapRules) {
+      if (cfg.snapRules[k] === undefined) cfg.snapRules[k] = DEFAULT_CFG.snapRules[k];
+    }
+  }
+  // [V52] 예산 3분할 마이그레이션 — 옛 {trend,scalp} 2분할 저장값이면 기본 35/30/35로 재설정.
+  if (!cfg.strategyBudgetSplit || typeof cfg.strategyBudgetSplit !== "object" || typeof cfg.strategyBudgetSplit.snap !== "number") {
+    cfg.strategyBudgetSplit = { trend: 0.35, scalp: 0.30, snap: 0.35 };
+  }
   // [V50] scalpRules 누락키 보강 + 옛 기본값만 완화값으로 갱신 (기존엔 보강 블록이 없어 새 설정 미반영이었음)
   if (!cfg.scalpRules || typeof cfg.scalpRules !== "object") {
     cfg.scalpRules = JSON.parse(JSON.stringify(DEFAULT_CFG.scalpRules));
@@ -5081,12 +5142,22 @@ async function fetchMinuteBars(symbol, opts) {
   const price = (typeof meta.regularMarketPrice === "number" && meta.regularMarketPrice > 0)
     ? meta.regularMarketPrice : closes[closes.length - 1];
   // VWAP — 일반적가격(H+L+C)/3 × 거래량 누적
+  // [V52] vwapSeries도 누적 계산 — 최근 VWAP 기울기(vwapSlope, %/bar)로 장중 추세 방향 판정 (추가 fetch 0)
   let pv = 0, vv = 0;
+  const vwapSeries = [];
   for (let i = 0; i < closes.length; i++) {
     const tp = (highs[i] + lows[i] + closes[i]) / 3;
     pv += tp * volumes[i]; vv += volumes[i];
+    vwapSeries.push(vv > 0 ? pv / vv : null);
   }
   const vwap = vv > 0 ? pv / vv : null;
+  let vwapSlope = null;
+  {
+    const lookV = Math.min(6, vwapSeries.length - 1);
+    const vNow = vwapSeries[vwapSeries.length - 1];
+    const vPast = lookV > 0 ? vwapSeries[vwapSeries.length - 1 - lookV] : null;
+    if (vNow != null && vPast != null && vPast > 0) vwapSlope = ((vNow - vPast) / vPast) * 100 / lookV;
+  }
   // 최근 모멘텀 — 마지막 N봉(기본 3봉=15분) 수익률
   const n = Math.min(3, closes.length - 1);
   const recentMom = n > 0
@@ -5095,7 +5166,7 @@ async function fetchMinuteBars(symbol, opts) {
   const dayHigh = Math.max.apply(null, highs);
   const dayLow = Math.min.apply(null, lows);
   return {
-    symbol: symbol, interval: interval, price: price, vwap: vwap,
+    symbol: symbol, interval: interval, price: price, vwap: vwap, vwapSlope: vwapSlope,
     recentMom: recentMom, dayHigh: dayHigh, dayLow: dayLow,
     closes: closes, highs: highs, lows: lows, volumes: volumes, times: times
   };
@@ -5144,24 +5215,27 @@ async function fetchDailyFull(symbol) {
   const meta = result.meta || {};
   const quote = (result.indicators && result.indicators.quote && result.indicators.quote[0]) || {};
   // [수정] highs/lows도 같이 추출 — ATR True Range 계산용
+  // [V52] opens도 추출 — 갭(시가-전일종가) 분석용 신규 유입 정보 (같은 fetch, 추가 호출 0)
   const rawCloses = quote.close || [];
   const rawHighs = quote.high || [];
   const rawLows = quote.low || [];
   const rawVols = quote.volume || [];
+  const rawOpens = quote.open || [];
   // 인덱스 정렬을 유지하면서 null을 가진 row 전체를 제거
-  const closes = [], highs = [], lows = [], volumes = [];
+  const closes = [], highs = [], lows = [], volumes = [], opens = [];
   for (let i = 0; i < rawCloses.length; i++) {
-    const c = rawCloses[i], h = rawHighs[i], l = rawLows[i], v = rawVols[i];
+    const c = rawCloses[i], h = rawHighs[i], l = rawLows[i], v = rawVols[i], o = rawOpens[i];
     if (typeof c !== "number" || isNaN(c) || c <= 0) continue;
     closes.push(c);
     highs.push((typeof h === "number" && !isNaN(h) && h > 0) ? h : c);
     lows.push((typeof l === "number" && !isNaN(l) && l > 0) ? l : c);
     volumes.push((typeof v === "number" && !isNaN(v) && v > 0) ? v : 0);
+    opens.push((typeof o === "number" && !isNaN(o) && o > 0) ? o : c);
   }
   if (closes.length === 0) throw new Error("no daily close");
   const price = (typeof meta.regularMarketPrice === "number" && meta.regularMarketPrice > 0) ? meta.regularMarketPrice : closes[closes.length - 1];
   const prevClose = closes.length >= 2 ? closes[closes.length - 2] : price;
-  return { symbol: symbol, price: price, prevClose: prevClose, closes: closes, highs: highs, lows: lows, volumes: volumes };
+  return { symbol: symbol, price: price, prevClose: prevClose, closes: closes, highs: highs, lows: lows, volumes: volumes, opens: opens };
 }
 
 async function getDailyCached(DB, symbol, cacheMinutes) {
@@ -5175,6 +5249,7 @@ async function getDailyCached(DB, symbol, cacheMinutes) {
     highs: data.highs,        // [신규]
     lows: data.lows,          // [신규]
     volumes: data.volumes,
+    opens: data.opens,        // [V52] 갭 분석용
     prevClose: data.prevClose,
     ts: Date.now()
   };
@@ -5653,6 +5728,19 @@ function evaluateScalpEntry(mb, dailyData, cfg, market, regime) {
   const closes = dailyData && dailyData.closes;
   if (!closes || closes.length < 55) return null;
 
+  // ── [V52] 세션 시간 필터 ──
+  //   마감 직전: 청산 시간 부족 → 오버나이트 리스크. 패닉 포함 전면 차단.
+  //   개장 직후: 갭·오프닝 노이즈로 VWAP/모멘텀 신뢰도 낮음 → 평시만 차단(패닉 캡출은 개장 투매가 기회라 면제).
+  let _openNoise = false;
+  try {
+    const _minsLeft = (typeof marketMinutesUntilClose === "function") ? marketMinutesUntilClose(market) : null;
+    const _avoidClose = sr.avoidCloseMinutes != null ? sr.avoidCloseMinutes : 20;
+    if (_minsLeft != null && _avoidClose > 0 && _minsLeft <= _avoidClose) return null;
+    const _ef = (typeof sessionElapsedFraction === "function") ? sessionElapsedFraction(market) : null;
+    const _avoidOpen = sr.avoidOpenMinutes != null ? sr.avoidOpenMinutes : 15;
+    if (_ef != null && _avoidOpen > 0 && (_ef * 390) < _avoidOpen) _openNoise = true;
+  } catch (e) {}
+
   // ── 분봉 상대거래량 헬퍼 (게이트5/패닉 공용) ──
   const _relVol = function(mult) {
     if (!mult || !mb.volumes || mb.volumes.length < 11) return true;
@@ -5723,6 +5811,11 @@ function evaluateScalpEntry(mb, dailyData, cfg, market, regime) {
   }
 
   // ── 게이트 1: 일봉 추세 정렬 ──
+  // [V52] 개장 직후 노이즈 구간 — 평시 단타 진입 차단 (패닉 경로는 위에서 이미 처리됨)
+  if (_openNoise) return null;
+  // [V52] VWAP 기울기 — 하락 중인 VWAP에서의 추격(SC_VWAP/SC_MOMENTUM) 차단용
+  const _vwSlope = (typeof mb.vwapSlope === "number") ? mb.vwapSlope : null;
+  const _slopeOk = (sr.requireVwapSlopeUp === false) || (_vwSlope == null) || (_vwSlope >= 0);
   const ma20 = getMA(closes, sr.maFastPeriod || 20);
   const ma50 = getMA(closes, sr.maSlowPeriod || 50);
   if (ma20 == null || ma50 == null) return null;
@@ -5790,7 +5883,8 @@ function evaluateScalpEntry(mb, dailyData, cfg, market, regime) {
   }
 
   // ── 진입 B: VWAP 근접 + 상승 모멘텀 (VWAP 지지 진입) ──
-  if (Math.abs(aboveVwap) <= vwapBand && recentMom >= momEntry) {
+  //   [V52] VWAP 기울기 ≥ 0 요구 — 하락 VWAP 위 일시 반등 추격(역추세 함정) 차단
+  if (Math.abs(aboveVwap) <= vwapBand && recentMom >= momEntry && _slopeOk) {
     const conf = recentMom >= momStrong ? 0.65 : 0.85;  // 강모멘텀(추격)은 작게
     return {
       name: "SC_VWAP",
@@ -5803,7 +5897,8 @@ function evaluateScalpEntry(mb, dailyData, cfg, market, regime) {
   }
 
   // ── 진입 C: 강한 분봉 모멘텀 + VWAP 살짝 위 (추세 지속) ──
-  if (aboveVwap >= 0 && aboveVwap <= 1.5 && recentMom >= momStrong) {
+  //   [V52] VWAP 기울기 ≥ 0 요구
+  if (aboveVwap >= 0 && aboveVwap <= 1.5 && recentMom >= momStrong && _slopeOk) {
     return {
       name: "SC_MOMENTUM",
       weight: 0.75,
@@ -5826,7 +5921,91 @@ function evaluateScalpEntry(mb, dailyData, cfg, market, regime) {
 //     A) 추세 풀백 반등 — 상승추세 종목이 MA20 근처로 눌렀다 반등
 //     B) 신고가 돌파 — 거래량을 동반한 N일 신고가 돌파
 //   반환: signal | null  (signal 형식은 기존과 동일해 호출부/백테스트 무수정)
-// [다중 팩터 알파] 모멘텀 + 상대강도(RS) + 거래량 추세(OBV)로 종목 "품질" 점수(0~1).
+// [V52] 주봉 정합 — 일봉을 5일 단위로 리샘플해 주봉 종가 > 주봉 MA(n) 여부 판정 (추가 fetch 0).
+//   상위 시간프레임이 정합하지 않은 돌파/풀백은 실패율이 높다(멀티 타임프레임 확인의 실증 우위).
+function weeklyAboveMA(closes, maWeeks) {
+  if (!closes || closes.length < (maWeeks || 10) * 5 + 5) return null;
+  const weekly = [];
+  // 마지막(미완성 주 포함)부터 5일 단위로 종가 샘플링
+  for (let i = closes.length - 1; i >= 0; i -= 5) weekly.unshift(closes[i]);
+  const n = maWeeks || 10;
+  if (weekly.length < n) return null;
+  let s = 0;
+  for (let i = weekly.length - n; i < weekly.length; i++) s += weekly[i];
+  return weekly[weekly.length - 1] > (s / n);
+}
+
+// === [V52 신규 전략] SNAP — 상승추세 내 단기 과매도 스냅백 진입 평가 ===
+//   장기 상승추세(price>MA200, MA50>MA200)가 살아있는 종목이 단기 과매도(RSI(2)≤10, MA5 아래 눌림)로
+//   투매됐을 때 평균회귀 반등을 2~5일 먹는다. TREND(순응)·SCALP(분봉)와 직교하는 수익원.
+//   과거 meanrev 실패(승률 0%) 원인 = 약세장 과매도 반전 → BEAR 차단 + 장기추세 게이트 + 칼날 문턱으로 배제.
+//   데이터: 일봉 closes/highs/lows만 사용 — 추가 fetch 0.
+function evaluateSnapEntry(price, dayPct, dailyData, cfg, regime, market) {
+  const sn = Object.assign({}, DEFAULT_CFG.snapRules || {}, (cfg && cfg.snapRules) || {});
+  const closes = dailyData && dailyData.closes;
+  if (!closes || closes.length < 60) return null;
+  // 인버스/레버리지 ETF 제외 — decay·방향성 구조가 평균회귀와 충돌
+  if (dailyData.symbol && ((typeof INVERSE_ETF !== "undefined" && INVERSE_ETF.has(dailyData.symbol)) ||
+      (typeof LEVERAGED_ETF !== "undefined" && LEVERAGED_ETF.has(dailyData.symbol)))) return null;
+
+  // 게이트 0: BEAR 레짐 진입 금지 — 역추세성 전략의 최대 리스크(약세장 과매도 반전) 원천 차단
+  if (sn.blockInBear !== false && regime && regime.regime === "BEAR") return null;
+  // 게이트 1: 칼날 차단 — 당일 급락이 문턱 초과면 제외
+  if (typeof dayPct === "number" && dayPct < (sn.dayDropMin != null ? sn.dayDropMin : -4.0)) return null;
+
+  const ma50 = getMA(closes, 50);
+  const ma200 = closes.length >= 200 ? getMA(closes, 200) : null;
+  const ma5 = getMA(closes, 5);
+  if (ma50 == null || ma5 == null) return null;
+  // 게이트 2: 장기 상승추세 — price > MA200(없으면 MA50 상승 대체) + MA50 > MA200
+  if (ma200 != null) {
+    if (!(price > ma200 && ma50 > ma200)) return null;
+  } else {
+    const ma50Prev = getMA(closes.slice(0, -5), 50);
+    if (!(ma50Prev != null && ma50 > ma50Prev && price > ma50 * 0.97)) return null;
+  }
+  // 게이트 3: 변동성 정상
+  const atr = getATR(closes, (cfg && cfg.atrPeriod) || 14, dailyData.highs, dailyData.lows);
+  const atrPct = (atr != null && price > 0) ? (atr / price * 100) : null;
+  if (atrPct != null && atrPct > (sn.maxAtrPct || 5)) return null;
+  // 게이트 4: 추세 붕괴 배제 — 20일 고점 대비 눌림 폭이 상한 이내
+  const hi20 = getNDayHigh(closes, 20);
+  if (hi20 != null && hi20 > 0) {
+    const offHi = ((hi20 - price) / hi20) * 100;
+    if (offHi > (sn.pullbackFromHighMax != null ? sn.pullbackFromHighMax : 12)) return null;
+  }
+
+  // 트리거: RSI(2) 과매도 + MA5 아래 눌림 (+ 연속하락 보조)
+  const rsi2 = getRSI(closes, 2);
+  const rsi14 = getRSI(closes, 14);
+  if (rsi2 == null) return null;
+  if (rsi2 > (sn.rsi2Max != null ? sn.rsi2Max : 10)) return null;
+  if (rsi14 != null && rsi14 > (sn.rsi14Max != null ? sn.rsi14Max : 50)) return null;
+  if (sn.requireBelowMa5 !== false && !(price < ma5)) return null;
+  // 연속 하락일 카운트 (정보용 + confidence 가산)
+  let downDays = 0;
+  for (let i = closes.length - 1; i >= 1; i--) {
+    if (closes[i] < closes[i - 1]) downDays++; else break;
+  }
+  if (downDays < (sn.downDaysMin != null ? sn.downDaysMin : 2) && rsi2 > 5) return null;  // 매우 깊은 과매도(RSI2≤5)는 연속하락 면제
+
+  // confidence — 과매도가 깊을수록(RSI2↓, 연속하락↑) 높게. 0.65~0.95
+  let conf = 0.7;
+  if (rsi2 <= 3) conf += 0.15; else if (rsi2 <= 6) conf += 0.08;
+  if (downDays >= 4) conf += 0.07; else if (downDays >= 3) conf += 0.04;
+  conf = Math.min(0.95, conf);
+  // KR — 15분 지연 시세 → 보수화
+  if (market === "kr") conf = Math.min(conf, 0.8);
+
+  const ma5Gap = ((price - ma5) / ma5) * 100;
+  return {
+    name: "SN_RSI2", weight: 0.9, type: "SNAP", confidence: conf,
+    detail: "RSI2 " + rsi2.toFixed(1) + " dn" + downDays + "d MA5" + ma5Gap.toFixed(1) + "%" + (rsi14 != null ? " RSI14 " + rsi14.toFixed(0) : "") + " c" + conf.toFixed(2),
+    members: ["SN_RSI2"]
+  };
+}
+
+
 //   추세정렬 게이트를 통과한 종목 중에서도 더 강한 종목을 가려내 사이즈를 차등한다.
 //   추가 fetch 0 — 기존 일봉(closes/volumes) + 지수 레짐(idxReturn20)만 사용.
 function computeAlphaQuality(dailyData, regime) {
@@ -6084,7 +6263,29 @@ function evaluateAllStrategies(price, dayPct, dailyData, cfg, signalStats, regim
       }
     }
   }
-  if (!sig) return [];
+  // [V52 신규 전략] SNAP — trend 신호가 없을 때만 평가 (같은 종목 중복진입 방지, 추세진입 우선)
+  if (!sig) {
+    if (!(cfg.strategies && cfg.strategies.snap === false)) {
+      const snapSig = evaluateSnapEntry(price, dayPct, dailyData, cfg, regime, market);
+      if (snapSig) {
+        // [SEC 공시] 미국 종목 — 악재 공시(공시 후 하락)만 보수화. 평균회귀는 악재 낙폭과 구분이 어려워 더 위험.
+        if (secData && market === "us" && dailyData.symbol && !getEtfType(dailyData.symbol)) {
+          const sds = secData[dailyData.symbol];
+          if (sds && sds.caution && typeof sds.postReturn === "number" && sds.postReturn <= -2.0) {
+            snapSig.visionBoost = (snapSig.visionBoost || 1.0) * 0.5;
+            snapSig.secNote = "SEC_" + (sds.filingType || "?") + " NEG축소";
+          }
+        }
+        // [Vision] DOWN 고신뢰 예측이면 진입 자체를 보류 (떨어지는 칼 + AI 하락 예측 중첩 회피)
+        if (visionPreds && dailyData.symbol) {
+          const vps = visionPreds[dailyData.symbol];
+          if (vps && vps.pred === "down" && vps.conf >= 0.70) return [];
+        }
+        return [{ strategy: "snap", signal: snapSig, rawCount: 1 }];
+      }
+    }
+    return [];
+  }
 
   // [Vision AI] 예측 결과를 실제 거래에 직접 반영 (적중률 자기보정 포함)
   //   DOWN ≥70% → 매수 신호 완전 차단
@@ -6174,6 +6375,46 @@ function evaluateAllStrategies(price, dayPct, dailyData, cfg, signalStats, regim
       if (aScale !== 1.0) {
         sig.visionBoost = (sig.visionBoost || 1.0) * aScale;
         sig.adxNote = "ADX " + adx.toFixed(0) + "×" + aScale.toFixed(2) + (isLevETF2 ? " LEV" : "");
+      }
+    }
+  }
+
+  // ── [V52 신규정보 활용] 갭(시가)·CLV(일중 종가위치)·주봉 정합 — 사이즈 차등만, 차단 없음 (추가 fetch 0) ──
+  {
+    const r52 = getTrendRules(cfg, market);
+    const _c = dailyData.closes, _o = dailyData.opens, _h = dailyData.highs, _l = dailyData.lows;
+    const _n = _c ? _c.length : 0;
+    // (1) 갭업 돌파 추격 축소 — 당일 시가가 전일 종가 대비 과대 갭업이면 돌파류 사이즈 축소(갭은 되돌림 확률↑)
+    if (r52.gapFilterEnabled !== false && _o && _o.length === _n && _n >= 2 &&
+        (sig.name === "TR_BREAKOUT" || sig.name === "TR_SQUEEZE")) {
+      const gapPct = ((_o[_n - 1] - _c[_n - 2]) / _c[_n - 2]) * 100;
+      if (gapPct > (r52.gapMaxPct != null ? r52.gapMaxPct : 3.0)) {
+        const gs = r52.gapScale != null ? r52.gapScale : 0.7;
+        sig.visionBoost = (sig.visionBoost || 1.0) * gs;
+        sig.gapNote = "GAP+" + gapPct.toFixed(1) + "%×" + gs;
+      }
+    }
+    // (2) CLV — 종가가 일중 고가 부근(강한 마감=매수 우위)이면 부스트, 윗꼬리 마감(분산 흔적)이면 축소
+    if (r52.clvEnabled !== false && _h && _l && _n >= 1 && _h.length === _n && _l.length === _n) {
+      const hh = _h[_n - 1], ll = _l[_n - 1], cc = _c[_n - 1];
+      if (hh > ll) {
+        const clv = (cc - ll) / (hh - ll);
+        let cScale = 1.0;
+        if (clv >= (r52.clvStrongMin != null ? r52.clvStrongMin : 0.7)) cScale = (r52.clvStrongScale != null ? r52.clvStrongScale : 1.06);
+        else if (clv <= (r52.clvWeakMax != null ? r52.clvWeakMax : 0.35)) cScale = (r52.clvWeakScale != null ? r52.clvWeakScale : 0.85);
+        if (cScale !== 1.0) {
+          sig.visionBoost = (sig.visionBoost || 1.0) * cScale;
+          sig.clvNote = "CLV " + clv.toFixed(2) + "×" + cScale.toFixed(2);
+        }
+      }
+    }
+    // (3) 주봉 정합 — 주봉 종가 > 주봉 MA10 미정합이면 축소 (상위 시간프레임 미확인 추세는 작게 베팅)
+    if (r52.weeklyAlignEnabled !== false) {
+      const wOk = weeklyAboveMA(_c, 10);
+      if (wOk === false) {
+        const ws = r52.weeklyMisalignScale != null ? r52.weeklyMisalignScale : 0.8;
+        sig.visionBoost = (sig.visionBoost || 1.0) * ws;
+        sig.weeklyNote = "WK✗×" + ws;
       }
     }
   }
@@ -6475,6 +6716,8 @@ function getStrategyRules(cfg, strategy, market) {
   const trBase = getTrendRules(cfg, market);
   // 단타 전략 — scalpRules 전용 룰 사용
   if (strategy === "scalp") return Object.assign({}, trBase, cfg.scalpRules || DEFAULT_CFG.scalpRules || {});
+  // [V52] 스냅백 전략 — snapRules 전용 룰 (atrStopMult/stopLossPct/breakEvenLock 등 executeBuy·Sell이 참조)
+  if (strategy === "snap") return Object.assign({}, trBase, DEFAULT_CFG.snapRules || {}, cfg.snapRules || {});
   // 레거시 보유 포지션 호환 — 구 전략 룰이 있으면 사용, 없으면 trend(market별)로 폴백
   if (strategy === "swing") return cfg.swingRules || trBase;
   if (strategy === "day") return cfg.dayRules || trBase;
@@ -6566,10 +6809,22 @@ async function executeSell(DB, market, symbol, pos, sellQty, price, reason, cfg,
   const taxNote = market === "kr" ? " tax=" + sellTax.toFixed(2) : "";
   await log(DB, "SELL", symbol, "SELL [" + strategy + "] x" + sellQty + " @" + price.toFixed(2) + " PnL " + pnlPct.toFixed(2) + "% (held " + heldMin + "min, " + reason + ")" + taxNote);
   // [재진입 쿨다운] 손절 손실 전량청산 → 설정된 시간 동안 재진입 차단
-  if (fullClose && reason && reason.startsWith("STOP") && pnlPct < 0) {
+  // [V52] 전략별 분기 — scalp는 분 단위(60분), snap은 시간 단위(12h), trend는 기존 24h.
+  //   (기존엔 "SCALP-STOP"이 startsWith("STOP")에 안 걸려 단타 손절 후 같은 종목 즉시 재진입이 가능했음 — 수정)
+  if (fullClose && reason && pnlPct < 0 && (reason.startsWith("STOP") || reason.startsWith("SCALP-STOP") || reason.startsWith("SNAP-STOP"))) {
     try {
-      const cdH = getTrendRules(cfg, market).reEntryCooldownHours;
-      if (typeof cdH === "number" && cdH > 0) await setState(DB, "cooldown:" + symbol, { until: Date.now() + cdH * 3600000 });
+      let cdMs = 0;
+      if (strategy === "scalp") {
+        const cdM = (cfg.scalpRules && cfg.scalpRules.reEntryCooldownMin != null) ? cfg.scalpRules.reEntryCooldownMin : 60;
+        if (cdM > 0) cdMs = cdM * 60000;
+      } else if (strategy === "snap") {
+        const cdHs = (cfg.snapRules && cfg.snapRules.reEntryCooldownHours != null) ? cfg.snapRules.reEntryCooldownHours : 12;
+        if (cdHs > 0) cdMs = cdHs * 3600000;
+      } else {
+        const cdH = getTrendRules(cfg, market).reEntryCooldownHours;
+        if (typeof cdH === "number" && cdH > 0) cdMs = cdH * 3600000;
+      }
+      if (cdMs > 0) await setState(DB, "cooldown:" + symbol, { until: Date.now() + cdMs });
     } catch (e) {}
   }
   // [섹터그룹·신호타입] 전량청산 시 성과 누적 (autoTune이 가중치 계산에 사용)
@@ -6653,6 +6908,57 @@ function evaluateSell(pos, price, daily, dailyRsi, dailyMa, dailyMaShort, cfg, m
     const tsMinPnl = sr.timeStopMinPnl != null ? sr.timeStopMinPnl : 0.4;
     if (!tp1Done && heldMin >= tsMin && pnlPct < tsMinPnl) {
       return { sell: true, sellQty: pos.qty, reason: "SCALP-TIME " + heldMin + "min " + pnlPct.toFixed(2) + "%" };
+    }
+    return { sell: false };
+  }
+
+  // === [V52 SNAP] 스냅백 전용 청산 — 평균회귀 완료(MA5 상향/RSI2 해소) 시 즉시 전량, 빠른 손절·타임스톱 ===
+  if (strategyName === "snap") {
+    const sn = Object.assign({}, DEFAULT_CFG.snapRules || {}, cfg.snapRules || {});
+    const metaS = pos.meta || {};
+    const pnlS = pos.avg > 0 ? ((price - pos.avg) / pos.avg) * 100 : 0;
+    const heldD = pos.opened_ts ? (Date.now() - pos.opened_ts) / 86400000 : 0;
+    const tp1DoneS = !!metaS.tp1Done;
+    // 1) 하드 손절 (stopPrice 우선 — executeBuy가 entry − 1.5×ATR / −3.5% 타이트쪽으로 설정, TP1 후 BE락)
+    const spS = (typeof metaS.stopPrice === "number") ? metaS.stopPrice : null;
+    if (spS != null && price <= spS) {
+      return { sell: true, sellQty: pos.qty, reason: "SNAP-STOP " + pnlS.toFixed(2) + "%" + (metaS.breakEvenLocked ? " (BE)" : "") };
+    }
+    if (spS == null && pnlS <= -(sn.stopLossPct || 3.5)) {
+      return { sell: true, sellQty: pos.qty, reason: "SNAP-STOP " + pnlS.toFixed(2) + "%" };
+    }
+    // 2) 하드 익절
+    if (pnlS >= (sn.takeProfitPct || 5.0)) {
+      return { sell: true, sellQty: pos.qty, reason: "SNAP-TP +" + pnlS.toFixed(2) + "%" };
+    }
+    // 3) TP1 분할익절 — +tp1Pct 도달 시 절반 + 본전락 (executeSell이 BE락 처리)
+    const tp1S = sn.tp1Pct != null ? sn.tp1Pct : 2.0;
+    if (!tp1DoneS && tp1S > 0 && pnlS >= tp1S) {
+      const halfS = Math.floor(pos.qty / 2);
+      if (halfS > 0) return { sell: true, sellQty: halfS, reason: "SNAP-TP1 +" + pnlS.toFixed(2) + "%" };
+      return { sell: true, sellQty: pos.qty, reason: "SNAP-TP1-FULL +" + pnlS.toFixed(2) + "%" };
+    }
+    // 4) 평균회귀 완료 — 종가 > MA5 또는 RSI(2) ≥ exitRsi2 → 전량 청산 (목표 달성, 오래 들고 있지 않는다)
+    const closesS = daily && daily.closes;
+    if (closesS && closesS.length >= 10) {
+      if (sn.exitAboveMa5 !== false) {
+        const ma5S = getMA(closesS, 5);
+        if (ma5S != null && price > ma5S && pnlS > 0.3) {
+          return { sell: true, sellQty: pos.qty, reason: "SNAP-MR>MA5 +" + pnlS.toFixed(2) + "%" };
+        }
+      }
+      const exR = sn.exitRsi2 != null ? sn.exitRsi2 : 65;
+      if (exR > 0) {
+        const rsi2S = getRSI(closesS, 2);
+        if (rsi2S != null && rsi2S >= exR && pnlS > 0) {
+          return { sell: true, sellQty: pos.qty, reason: "SNAP-MR RSI2 " + rsi2S.toFixed(0) + " +" + pnlS.toFixed(2) + "%" };
+        }
+      }
+    }
+    // 5) 타임스톱 — N거래일 내 본전 미만이면 평균회귀 실패 → 철수
+    const tsD = sn.timeStopDays || 5;
+    if (heldD >= tsD && pnlS < (sn.timeStopMinPnl != null ? sn.timeStopMinPnl : 0)) {
+      return { sell: true, sellQty: pos.qty, reason: "SNAP-TIME " + heldD.toFixed(0) + "d " + pnlS.toFixed(2) + "%" };
     }
     return { sell: false };
   }
@@ -8586,23 +8892,27 @@ async function runTradingCycle(env) {
     //   savePosition 충돌 등으로 executeBuy의 cash 추적이 깨져도 예산 초과 불가능.
     // [V51] 전략별 예산 분리 — 가용현금을 split 비율로 쪼개 trend/scalp 독립 예산 운용.
     //   (기존엔 공용 풀이라 먼저 도는 trend가 다 써버려 scalp가 굶었다.)
-    const _split = (cfg.strategyBudgetSplit && typeof cfg.strategyBudgetSplit === "object") ? cfg.strategyBudgetSplit : { trend: 0.5, scalp: 0.5 };
-    const _trW = (typeof _split.trend === "number" && _split.trend >= 0) ? _split.trend : 0.5;
-    const _scW = (typeof _split.scalp === "number" && _split.scalp >= 0) ? _split.scalp : 0.5;
-    const _sum = (_trW + _scW) > 0 ? (_trW + _scW) : 1;
-    const _trFrac = _trW / _sum, _scFrac = _scW / _sum;
+    // [V51] 전략별 예산 분리 — 가용현금을 split 비율로 쪼개 trend/scalp 독립 예산 운용.
+    //   (기존엔 공용 풀이라 먼저 도는 trend가 다 써버려 scalp가 굶었다.)
+    // [V52] 3분할 — trend/scalp/snap. 합으로 정규화하므로 슬라이더 임의 비율 허용.
+    const _split = (cfg.strategyBudgetSplit && typeof cfg.strategyBudgetSplit === "object") ? cfg.strategyBudgetSplit : { trend: 0.35, scalp: 0.30, snap: 0.35 };
+    const _trW = (typeof _split.trend === "number" && _split.trend >= 0) ? _split.trend : 0.35;
+    const _scW = (typeof _split.scalp === "number" && _split.scalp >= 0) ? _split.scalp : 0.30;
+    const _snW = (typeof _split.snap === "number" && _split.snap >= 0) ? _split.snap : 0.35;
+    const _sum = (_trW + _scW + _snW) > 0 ? (_trW + _scW + _snW) : 1;
+    const _trFrac = _trW / _sum, _scFrac = _scW / _sum, _snFrac = _snW / _sum;
     const cycleBudget = {
-      us: { trend: cash.us * _trFrac, scalp: cash.us * _scFrac },
-      kr: { trend: cash.kr * _trFrac, scalp: cash.kr * _scFrac },
+      us: { trend: cash.us * _trFrac, scalp: cash.us * _scFrac, snap: cash.us * _snFrac },
+      kr: { trend: cash.kr * _trFrac, scalp: cash.kr * _scFrac, snap: cash.kr * _snFrac },
       cm: cash.cm
     };
     const cycleSpent = {
-      us: { trend: 0, scalp: 0 },
-      kr: { trend: 0, scalp: 0 },
+      us: { trend: 0, scalp: 0, snap: 0 },
+      kr: { trend: 0, scalp: 0, snap: 0 },
       cm: 0
     };
-    // 전략→예산버킷 매핑 (scalp만 scalp버킷, 그 외 전부 trend버킷)
-    const _bkt = function (strat) { return strat === "scalp" ? "scalp" : "trend"; };
+    // 전략→예산버킷 매핑 (scalp/snap은 전용 버킷, 그 외 전부 trend버킷)
+    const _bkt = function (strat) { return (strat === "scalp" || strat === "snap") ? strat : "trend"; };
 
     let tried = 0, bought = 0, sold = 0, skipped = 0, fetchFail = 0;
     let signalCount = 0;   // [통계] 이번 사이클 발생 매수신호 수
@@ -8792,6 +9102,29 @@ async function runTradingCycle(env) {
       } catch (e) {}
 
       const deRiskOpts = { active: crashGate.deRisk, vixValue: crashGate.vixValue || 0 };
+
+      // [V52] SCALP 당일 손실 한도 — 세션 시작 이후 scalp 청산 PnL%(합)가 한도 이하면
+      //   그날 해당 시장의 scalp 신규진입을 전면 중단(연속 칼날·틸트 방지). 사이클당 1쿼리.
+      let scalpDailyBlocked = false;
+      try {
+        const _slr = mcfg.scalpRules || DEFAULT_CFG.scalpRules || {};
+        const _slLimit = (_slr.dailyLossLimitPct != null) ? _slr.dailyLossLimitPct : 1.5;
+        if (_slLimit > 0 && canTrade && market !== "cm") {
+          const _efS = sessionElapsedFraction(market);
+          if (_efS != null) {
+            const _sessStart = Date.now() - Math.round(_efS * 390 * 60000);
+            const _slRows = await DB.prepare(
+              "SELECT pnl_pct FROM trades WHERE market = ? AND side = 'SELL' AND ts >= ? AND reason LIKE '[SCALP]%'"
+            ).bind(market, _sessStart).all();
+            let _slSum = 0;
+            for (const _t of ((_slRows && _slRows.results) || [])) _slSum += (_t.pnl_pct || 0);
+            if (_slSum <= -_slLimit) {
+              scalpDailyBlocked = true;
+              await log(DB, "WARN", null, "[V52] " + market.toUpperCase() + " SCALP 당일 손실한도(" + _slSum.toFixed(2) + "% ≤ -" + _slLimit + "%) — 오늘 단타 신규진입 중단");
+            }
+          }
+        }
+      } catch (e) {}
 
       // [V10] === PREFETCH 단계 (대규모 종목 — 가격 배치 + 일봉 라운드로빈) ===
       //   종목이 수백 개로 늘어 기존 "전 종목 매분 fetchIntraday" 방식은
@@ -9275,7 +9608,7 @@ async function runTradingCycle(env) {
           //   (일봉/스윙은 거래윈도우 시프트로 데이터-가격 일치가 보장되지만, 분봉 단타는 시프트로도 못 고침)
           const _srUsOnly = (mcfg.scalpRules && mcfg.scalpRules.usOnly !== undefined) ? mcfg.scalpRules.usOnly : true;
           const _scalpMarketOk = (!_srUsOnly) || market === "us";
-          if (_scalpMarketOk && (_scalpOn || _panicScalpOn) && stratResults.length === 0 && !strategiesHeldNow.has("scalp")) {
+          if (_scalpMarketOk && (_scalpOn || _panicScalpOn) && !scalpDailyBlocked && stratResults.length === 0 && !strategiesHeldNow.has("scalp")) {
             const _scalpIc = mcfg.intradayConfirm || DEFAULT_CFG.intradayConfirm;
             if (minuteFetchUsed < ((_scalpIc && _scalpIc.maxPerCycle) || 60) && fetchBudgetLeft() > 5) {
               try {
@@ -9335,6 +9668,16 @@ async function runTradingCycle(env) {
             if (heldSymbols.size >= maxConc) {
               incNobuy("max_concurrent");
               continue;
+            }
+            // [V52] snap 전용 동시 보유 상한 — 역추세성 전략 노출 총량 통제 (시장별)
+            if (strategy === "snap") {
+              const _snMax = (mcfg.snapRules && mcfg.snapRules.maxConcurrent != null) ? mcfg.snapRules.maxConcurrent : 6;
+              let _snHeld = 0;
+              for (const _pk in positions) { if ((positions[_pk].strategy || "") === "snap") _snHeld++; }
+              if (_snHeld >= _snMax) {
+                incNobuy("snap_max_concurrent");
+                continue;
+              }
             }
 
             const ctx = {
@@ -9416,10 +9759,17 @@ async function runTradingCycle(env) {
             const tsz = getTrendSizing(mcfg, market);
             // [SCALP] 단타는 전용 사이징(작은 리스크·비중) 사용 — 회전 빠르고 손실 누적 방지.
             const _scalpSz = (strategy === "scalp") ? Object.assign({}, mcfg.scalpRules || DEFAULT_CFG.scalpRules || {}) : null;
+            // [V52 SNAP] 스냅백 전용 사이징 — 역추세성이라 trend보다 작게. KR은 지연시세 → 추가 축소.
+            const _snapSz = (strategy === "snap") ? Object.assign({}, DEFAULT_CFG.snapRules || {}, mcfg.snapRules || {}) : null;
             // [Vision AI] UP 고신뢰 신호면 포지션 크기 부스트 (visionBoost=1.25). sizeScale = VIX/드로다운 스케일.
-            const _baseRisk = _scalpSz ? (_scalpSz.riskPerTrade != null ? _scalpSz.riskPerTrade : 0.5) : (tsz.riskPerTrade != null ? tsz.riskPerTrade : 0.75);
+            let _baseRisk;
+            if (_scalpSz)      _baseRisk = (_scalpSz.riskPerTrade != null ? _scalpSz.riskPerTrade : 0.5);
+            else if (_snapSz)  _baseRisk = (_snapSz.riskPerTrade != null ? _snapSz.riskPerTrade : 0.5) * (market === "kr" ? (_snapSz.krRiskScale != null ? _snapSz.krRiskScale : 0.7) : 1.0);
+            else               _baseRisk = (tsz.riskPerTrade != null ? tsz.riskPerTrade : 0.75);
             const riskPct = _baseRisk * (signal.visionBoost || 1.0) * sizeScale;
-            const maxPosPct = _scalpSz ? (_scalpSz.maxPositionPct != null ? _scalpSz.maxPositionPct : 6) : (tsz.maxPositionPct != null ? tsz.maxPositionPct : 15);
+            const maxPosPct = _scalpSz ? (_scalpSz.maxPositionPct != null ? _scalpSz.maxPositionPct : 6)
+                            : _snapSz ? (_snapSz.maxPositionPct != null ? _snapSz.maxPositionPct : 8)
+                            : (tsz.maxPositionPct != null ? tsz.maxPositionPct : 15);
             const equity = (typeof portfolioValue === "number" && portfolioValue > 0) ? portfolioValue : cash[market];
             const tr = getStrategyRules(mcfg, strategy, market);
             // 손절 거리(주당) — executeBuy와 동일 규칙: min(N×ATR, price×stopLoss%)
@@ -11386,7 +11736,7 @@ export default {
 // [검증용 named export] Cloudflare Worker는 default export만 사용하므로 무해.
 //   로컬 백테스트/단위검증 스크립트에서 핵심 함수를 직접 호출하기 위함.
 export {
-  DEFAULT_CFG, migrateCfgToMarkets, evaluateAllStrategies, evaluateTrendEntry,
+  DEFAULT_CFG, migrateCfgToMarkets, evaluateAllStrategies, evaluateTrendEntry, evaluateSnapEntry,
   evaluateSell, backtestSymbol, backtestStats, backtestStatsBySignal,
   getRSI, getMA, getATR, getNDayHigh, getStrategyRules, fetchDailyForBacktest,
   fetchMinuteBars, confirmIntradayEntry
