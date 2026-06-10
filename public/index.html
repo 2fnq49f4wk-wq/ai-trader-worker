@@ -1955,6 +1955,16 @@ html[data-theme="light"] .sb-brand-name{color:#fff;}
 .ta-dir.bear{color:var(--neg);border-color:rgba(246,53,56,.4);}
 .ta-dir.neutral{color:var(--t3);border-color:var(--bd);}
 .ta-sec{padding:5px 12px;font-size:8px;font-weight:700;letter-spacing:1.2px;color:var(--t3);background:var(--s2);border-bottom:1px solid var(--bd2);text-transform:uppercase;}
+/* [V61] TA 패턴 스크리너 — finviz Signal 그룹 + 종목 칩 */
+.ta-scr-group{border-bottom:1px solid var(--bd2);}
+.ta-scr-head{display:flex;align-items:center;gap:8px;padding:6px 12px 4px;font-size:11px;}
+.ta-scr-head .nm{font-weight:700;}
+.ta-scr-chips{display:flex;flex-wrap:wrap;gap:4px;padding:4px 12px 8px;}
+.ta-scr-chip{font-size:10px;font-weight:700;padding:2px 8px;border-radius:3px;border:1px solid var(--bd);
+  color:var(--fviz-blue);background:var(--s2);cursor:pointer;white-space:nowrap;transition:border-color .1s;}
+.ta-scr-chip:hover{border-color:var(--fviz-blue);text-decoration:underline;}
+.ta-scr-chip.bull{border-color:rgba(48,204,90,.35);}
+.ta-scr-chip.bear{border-color:rgba(246,53,56,.35);}
 
 /* ════ [V60] FINVIZ ROW — 어닝스/내부자/지표임팩트 3열 + 가독성 보강 ════ */
 .fv3-grid{display:grid;grid-template-columns:1fr 1.15fr 1.15fr;gap:8px;padding:8px;align-items:stretch;}
@@ -2326,7 +2336,8 @@ html[data-theme="light"] .sb-brand-name{color:#fff;}
           <div style="display:flex;gap:6px;padding:8px 12px;border-bottom:1px solid var(--bd2);flex-wrap:wrap;">
             <input type="text" class="wl-search" id="taSymbol" placeholder="심볼 입력 (AAPL, 005930.KS)" style="flex:1;min-width:140px;" autocomplete="off">
             <button type="button" id="btnTaRun" class="btn primary" style="font-size:10px;">분석</button>
-            <button type="button" id="btnTaHeld" class="btn" style="font-size:10px;">보유종목 스캔</button>
+            <button type="button" id="btnTaScreener" class="btn" style="font-size:10px;">📊 전체 스캔</button>
+            <button type="button" id="btnTaHeld" class="btn" style="font-size:10px;">보유종목</button>
           </div>
           <div id="taResult"><div class="empty">심볼을 입력하고 분석을 눌러보세요</div></div>
         </div>
@@ -4561,6 +4572,44 @@ html[data-theme="light"] .sb-brand-name{color:#fff;}
       })['catch'](function(e){ box.innerHTML = '<div class="empty">분석 실패: '+escapeHtml(String(e && e.message || e))+'</div>'; });
   }
 
+  // ── [V61] TA 패턴 스크리너 — 전체 워치리스트를 finviz식 패턴 유형별 그룹으로 표시 ──
+  //   US 종목은 티커만, KR 종목은 종목명만 라벨링. 칩 클릭 시 해당 종목 상세 분석.
+  function loadTaScreener(force) {
+    var box = $('taResult');
+    if (!box) return;
+    box.innerHTML = '<div class="empty">전체 워치리스트 패턴 스캔 중...</div>';
+    fetch('/api/ta-screener' + (force ? '?force=1' : '')).then(function(r){ return r.json(); }).then(function(d){
+      var gs = (d && d.groups) || [];
+      if (!gs.length) { box.innerHTML = '<div class="empty">감지된 패턴 없음'+(d && d.error ? ' ('+escapeHtml(d.error)+')' : ' — 일봉 캐시 적재 후 다시 시도')+'</div>'; return; }
+      var html = '<div class="ta-summary">'+
+        '<span style="font-weight:700;font-size:12px;">📊 패턴 스크리너</span>'+
+        '<span style="font-size:9.5px;color:var(--t3);">'+d.scanned+'/'+d.total+'종목 스캔 · 패턴 '+gs.length+'유형 · '+fmtAgo(d.ts)+'</span>'+
+        '</div>';
+      gs.forEach(function(g){
+        var dirCls = g.dir === 'bull' ? 'bull' : g.dir === 'bear' ? 'bear' : 'neutral';
+        var dirTxt = g.dir === 'bull' ? 'BUY' : g.dir === 'bear' ? 'SELL' : 'WAIT';
+        html += '<div class="ta-scr-group">'+
+          '<div class="ta-scr-head"><span class="ta-dir '+dirCls+'">'+dirTxt+'</span>'+
+          '<span class="nm">'+escapeHtml(g.name)+'</span>'+
+          '<span style="font-size:8.5px;color:var(--t3);">'+(g.kind==='chart'?'차트 패턴':'캔들 패턴')+' · '+g.items.length+'종목</span></div>'+
+          '<div class="ta-scr-chips">'+
+          g.items.map(function(it){
+            return '<span class="ta-scr-chip '+dirCls+'" data-tasym="'+escapeHtml(it.symbol)+'" title="'+escapeHtml(it.symbol)+' · 종합점수 '+(it.score>=0?'+':'')+it.score+'">'+
+              (it.market==='kr'?'🇰🇷 ':'')+escapeHtml(it.label)+'</span>';
+          }).join('')+
+          '</div></div>';
+      });
+      box.innerHTML = html;
+      box.querySelectorAll('[data-tasym]').forEach(function(el){
+        el.addEventListener('click', function(){
+          var s = el.getAttribute('data-tasym');
+          var inp = $('taSymbol'); if (inp) inp.value = s;
+          runTaAnalysis(s);
+        });
+      });
+    })['catch'](function(e){ box.innerHTML = '<div class="empty">스캔 실패: '+escapeHtml(String(e && e.message || e))+'</div>'; });
+  }
+
   // ── 보유종목 일괄 스캔 (순차 — 서브리퀘스트 보호, 최대 8개) ──
   function runTaHeldScan() {
     var box = $('taResult');
@@ -6683,6 +6732,9 @@ html[data-theme="light"] .sb-brand-name{color:#fff;}
   if (_btnTa) _btnTa.addEventListener('click', _taGo);
   if (_taInput) _taInput.addEventListener('keydown', function(e){ if (e.key === 'Enter') _taGo(); });
   var _btnTaHeld = $('btnTaHeld'); if (_btnTaHeld) _btnTaHeld.addEventListener('click', runTaHeldScan);
+  // [V61] 패턴 스크리너 — 버튼 클릭 + 대시보드 진입 시 자동 1회(캐시 사용이라 가벼움)
+  var _btnTaScr = $('btnTaScreener'); if (_btnTaScr) _btnTaScr.addEventListener('click', function(){ loadTaScreener(true); });
+  try { loadTaScreener(false); } catch(e) {}
   try{showPage(localStorage.getItem('luxPage')||'dashboard');}catch(e){showPage('dashboard');}
 
   // ══════════════════════════════════════════════

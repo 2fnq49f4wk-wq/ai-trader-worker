@@ -5257,6 +5257,145 @@ async function getDailyCached(DB, symbol, cacheMinutes) {
   return toCache;
 }
 
+// ════════════════════════════════════════════════════════════════════════════
+// [V61] 차트/캔들 패턴 감지 (finviz식) — 프론트 TA와 동일 로직의 서버 포팅.
+//   일봉 캐시(opens/highs/lows/closes)만 사용 → 추가 fetch 0.
+//   거래 로직(evaluateAllStrategies)의 사이즈 차등 + /api/ta-screener 전체 스캔에 사용.
+// ════════════════════════════════════════════════════════════════════════════
+function taBuildCandles(dailyData, maxN) {
+  const c = dailyData && dailyData.closes, o = dailyData && dailyData.opens;
+  const h = dailyData && dailyData.highs, l = dailyData && dailyData.lows;
+  if (!c || !h || !l || c.length < 30) return null;
+  const n = c.length;
+  const s = Math.max(0, n - (maxN || 130));
+  const out = [];
+  for (let i = s; i < n; i++) {
+    out.push({ o: (o && typeof o[i] === "number" && o[i] > 0) ? o[i] : c[i], h: h[i], l: l[i], c: c[i] });
+  }
+  return out;
+}
+function taDetectPatterns(dailyData) {
+  const cs = taBuildCandles(dailyData, 130);
+  if (!cs || cs.length < 30) return null;
+  const out = [];
+  const n = cs.length;
+  function add(name, dir, kind) { out.push({ name: name, dir: dir, kind: kind }); }
+  const B = function(x){ return Math.abs(x.c - x.o); };
+  const R = function(x){ return Math.max(1e-9, x.h - x.l); };
+  const UP = function(x){ return x.h - Math.max(x.o, x.c); };
+  const LO = function(x){ return Math.min(x.o, x.c) - x.l; };
+  const G = function(x){ return x.c > x.o; };
+  const D = function(x){ return x.c < x.o; };
+  function trend(end, m) {
+    const st = Math.max(0, end - m), cnt = end - st;
+    if (cnt < 3) return 0;
+    let sx = 0, sy = 0, sxy = 0, sxx = 0;
+    for (let i = st; i < end; i++) { const x = i - st, y = cs[i].c; sx += x; sy += y; sxy += x * y; sxx += x * x; }
+    const slope = (cnt * sxy - sx * sy) / Math.max(1e-9, cnt * sxx - sx * sx);
+    return slope / (sy / cnt) * 100;
+  }
+  // ── 캔들 패턴 (최근 3봉) ──
+  for (let k = n - 1; k >= Math.max(n - 3, 2); k--) {
+    const x = cs[k], p = cs[k - 1], pp = cs[k - 2];
+    const tr = trend(k, 7), b = B(x), r = R(x), up = UP(x), lo = LO(x);
+    if (b <= r * 0.1) {
+      if (lo >= r * 0.6) add("Dragonfly Doji", "bull", "candle");
+      else if (up >= r * 0.6) add("Gravestone Doji", "bear", "candle");
+      else add("Doji", "neutral", "candle");
+    }
+    if (lo >= b * 2 && up <= b * 0.5 && b > r * 0.05) {
+      if (tr < -0.15) add("Hammer", "bull", "candle");
+      else if (tr > 0.15) add("Hanging Man", "bear", "candle");
+    }
+    if (up >= b * 2 && lo <= b * 0.5 && b > r * 0.05) {
+      if (tr < -0.15) add("Inverted Hammer", "bull", "candle");
+      else if (tr > 0.15) add("Shooting Star", "bear", "candle");
+    }
+    if (b >= r * 0.92) add(G(x) ? "Bullish Marubozu" : "Bearish Marubozu", G(x) ? "bull" : "bear", "candle");
+    if (G(x) && D(p) && x.c >= p.o && x.o <= p.c && B(x) > B(p) * 1.1) add("Bullish Engulfing", "bull", "candle");
+    if (D(x) && G(p) && x.o >= p.c && x.c <= p.o && B(x) > B(p) * 1.1) add("Bearish Engulfing", "bear", "candle");
+    if (Math.max(x.o, x.c) <= Math.max(p.o, p.c) && Math.min(x.o, x.c) >= Math.min(p.o, p.c) && B(p) > B(x) * 1.8) {
+      if (D(p) && G(x)) add("Bullish Harami", "bull", "candle");
+      if (G(p) && D(x)) add("Bearish Harami", "bear", "candle");
+    }
+    if (D(x) && G(p) && x.o > p.h && x.c < (p.o + p.c) / 2 && x.c > p.o) add("Dark Cloud Cover", "bear", "candle");
+    if (G(x) && D(p) && x.o < p.l && x.c > (p.o + p.c) / 2 && x.c < p.o) add("Piercing Line", "bull", "candle");
+    if (D(pp) && B(p) < B(pp) * 0.4 && G(x) && x.c > (pp.o + pp.c) / 2 && B(pp) > R(pp) * 0.5) add("Morning Star", "bull", "candle");
+    if (G(pp) && B(p) < B(pp) * 0.4 && D(x) && x.c < (pp.o + pp.c) / 2 && B(pp) > R(pp) * 0.5) add("Evening Star", "bear", "candle");
+    if (G(x) && G(p) && G(pp) && x.c > p.c && p.c > pp.c && B(x) > R(x) * 0.5 && B(p) > R(p) * 0.5 && B(pp) > R(pp) * 0.5) add("Three White Soldiers", "bull", "candle");
+    if (D(x) && D(p) && D(pp) && x.c < p.c && p.c < pp.c && B(x) > R(x) * 0.5 && B(p) > R(p) * 0.5 && B(pp) > R(pp) * 0.5) add("Three Black Crows", "bear", "candle");
+    if (Math.abs(x.h - p.h) / p.h < 0.0015 && tr > 0.15) add("Tweezer Top", "bear", "candle");
+    if (Math.abs(x.l - p.l) / p.l < 0.0015 && tr < -0.15) add("Tweezer Bottom", "bull", "candle");
+  }
+  // ── 피벗(프랙탈) ──
+  const H = [], L = [], K = 3;
+  for (let i = K; i < n - K; i++) {
+    let isH = true, isL = true;
+    for (let j = i - K; j <= i + K; j++) {
+      if (j === i) continue;
+      if (cs[j].h >= cs[i].h) isH = false;
+      if (cs[j].l <= cs[i].l) isL = false;
+    }
+    if (isH) H.push({ i: i, v: cs[i].h });
+    if (isL) L.push({ i: i, v: cs[i].l });
+  }
+  function linfit(pts) {
+    if (pts.length < 2) return null;
+    const m = pts.length;
+    let sx = 0, sy = 0, sxy = 0, sxx = 0;
+    pts.forEach(function(p){ sx += p.i; sy += p.v; sxy += p.i * p.v; sxx += p.i * p.i; });
+    const slope = (m * sxy - sx * sy) / Math.max(1e-9, m * sxx - sx * sx);
+    return slope / (sy / m) * 100;
+  }
+  const last = cs[n - 1].c, tol = 0.02;
+  // ── 차트 패턴 ──
+  if (H.length >= 2) {
+    const h1 = H[H.length - 2], h2 = H[H.length - 1];
+    if (Math.abs(h1.v - h2.v) / h1.v < tol && h2.i - h1.i >= 5) {
+      let valley = Infinity;
+      for (let i = h1.i; i <= h2.i; i++) valley = Math.min(valley, cs[i].l);
+      if ((Math.min(h1.v, h2.v) - valley) / valley > 0.02 && last < Math.max(h1.v, h2.v)) add("Double Top", "bear", "chart");
+    }
+  }
+  if (L.length >= 2) {
+    const l1 = L[L.length - 2], l2 = L[L.length - 1];
+    if (Math.abs(l1.v - l2.v) / l1.v < tol && l2.i - l1.i >= 5) {
+      let peak = -Infinity;
+      for (let i = l1.i; i <= l2.i; i++) peak = Math.max(peak, cs[i].h);
+      if ((peak - Math.max(l1.v, l2.v)) / l2.v > 0.02 && last > Math.min(l1.v, l2.v)) add("Double Bottom", "bull", "chart");
+    }
+  }
+  if (H.length >= 3) {
+    const t3 = H.slice(-3);
+    if (Math.abs(t3[0].v - t3[1].v) / t3[0].v < tol && Math.abs(t3[1].v - t3[2].v) / t3[1].v < tol) add("Triple Top", "bear", "chart");
+    else if (t3[1].v > t3[0].v * 1.015 && t3[1].v > t3[2].v * 1.015 && Math.abs(t3[0].v - t3[2].v) / t3[0].v < 0.03) add("Head & Shoulders", "bear", "chart");
+  }
+  if (L.length >= 3) {
+    const b3 = L.slice(-3);
+    if (Math.abs(b3[0].v - b3[1].v) / b3[0].v < tol && Math.abs(b3[1].v - b3[2].v) / b3[1].v < tol) add("Triple Bottom", "bull", "chart");
+    else if (b3[1].v < b3[0].v * 0.985 && b3[1].v < b3[2].v * 0.985 && Math.abs(b3[0].v - b3[2].v) / b3[0].v < 0.03) add("Inverse H&S", "bull", "chart");
+  }
+  const rH = H.slice(-4), rL = L.slice(-4);
+  const fH = linfit(rH), fL = linfit(rL);
+  if (fH != null && fL != null && rH.length >= 3 && rL.length >= 3) {
+    const flat = 0.06;
+    if (Math.abs(fH) < flat && fL > flat) add("Ascending Triangle", "bull", "chart");
+    else if (Math.abs(fL) < flat && fH < -flat) add("Descending Triangle", "bear", "chart");
+    else if (fH < -flat && fL > flat) add("Symmetrical Triangle", "neutral", "chart");
+    else if (fH > flat && fL > flat) { if (fL > fH * 1.4) add("Rising Wedge", "bear", "chart"); else add("Channel Up", "bull", "chart"); }
+    else if (fH < -flat && fL < -flat) { if (fH < fL * 1.4) add("Falling Wedge", "bull", "chart"); else add("Channel Down", "bear", "chart"); }
+  }
+  // 중복 제거(같은 이름 1개) + 종합 점수 (chart=±2, candle=±1)
+  const seen = {};
+  const patterns = out.filter(function(p){ if (seen[p.name]) return false; seen[p.name] = 1; return true; });
+  let score = 0;
+  patterns.forEach(function(p){
+    const w = p.kind === "chart" ? 2 : 1;
+    score += p.dir === "bull" ? w : p.dir === "bear" ? -w : 0;
+  });
+  return { score: score, patterns: patterns, top: patterns[0] || null };
+}
+
 async function getState(DB, k, def) {
   try {
     const row = await DB.prepare("SELECT v FROM state WHERE k = ?").bind(k).first();
@@ -6281,6 +6420,15 @@ function evaluateAllStrategies(price, dayPct, dailyData, cfg, signalStats, regim
           const vps = visionPreds[dailyData.symbol];
           if (vps && vps.pred === "down" && vps.conf >= 0.70) return [];
         }
+        // [V61 TA 패턴] SNAP은 과매도 반등 매수 — 강한 약세 차트패턴(더블탑/H&S 등) 동반 시 사이즈 축소.
+        //   (차단 없음 — 사이즈 차등만, 기존 하우스 스타일 유지)
+        {
+          const taSnap = taDetectPatterns(dailyData);
+          if (taSnap && taSnap.score <= -4) {
+            snapSig.visionBoost = (snapSig.visionBoost || 1.0) * 0.6;
+            snapSig.taNote = "TA " + taSnap.score + (taSnap.top ? " " + taSnap.top.name : "") + "×0.6";
+          }
+        }
         return [{ strategy: "snap", signal: snapSig, rawCount: 1 }];
       }
     }
@@ -6375,6 +6523,24 @@ function evaluateAllStrategies(price, dayPct, dailyData, cfg, signalStats, regim
       if (aScale !== 1.0) {
         sig.visionBoost = (sig.visionBoost || 1.0) * aScale;
         sig.adxNote = "ADX " + adx.toFixed(0) + "×" + aScale.toFixed(2) + (isLevETF2 ? " LEV" : "");
+      }
+    }
+  }
+
+  // ── [V61 TA 패턴] finviz식 차트/캔들 패턴 점수 — 사이즈 차등만, 차단 없음 (추가 fetch 0) ──
+  //   불리시 패턴 우세(채널업·역H&S·모닝스타 등) → 부스트, 베어리시 우세(더블탑·H&S 등) → 축소.
+  //   chart 패턴 ±2점, candle 패턴 ±1점 합산.
+  {
+    const ta = taDetectPatterns(dailyData);
+    if (ta && ta.patterns.length) {
+      let tScale = 1.0;
+      if (ta.score >= 5)       tScale = 1.15;
+      else if (ta.score >= 3)  tScale = 1.08;
+      else if (ta.score <= -5) tScale = 0.65;
+      else if (ta.score <= -3) tScale = 0.82;
+      if (tScale !== 1.0) {
+        sig.visionBoost = (sig.visionBoost || 1.0) * tScale;
+        sig.taNote = "TA " + (ta.score >= 0 ? "+" : "") + ta.score + (ta.top ? " " + ta.top.name : "") + "×" + tScale.toFixed(2);
       }
     }
   }
@@ -10984,6 +11150,48 @@ async function handleRequest(request, env) {
       } catch (e) {
         if (cached) return Response.json(cached, { headers: cors });
         return Response.json({ rows: [], error: String(e && e.message || e), ts: Date.now() }, { status: 200, headers: cors });
+      }
+    }
+
+    // === [V61 신규] TA 패턴 스크리너 — 전체 워치리스트를 finviz식 패턴 유형별로 분류 (30분 캐시) ===
+    //   일봉 D1 캐시만 읽음(추가 외부 fetch 0). US는 티커, KR은 종목명(NAME_MAP)으로 라벨링.
+    if (path === "/api/ta-screener") {
+      const ck = "ta_screener";
+      const cached = await getState(env.DB, ck, null);
+      if (url.searchParams.get("force") !== "1" && cached && cached.ts && (Date.now() - cached.ts) < 30 * 60 * 1000) {
+        return Response.json(cached, { headers: cors });
+      }
+      try {
+        const cfg = migrateCfgToMarkets(Object.assign({}, DEFAULT_CFG, await getState(env.DB, "cfg", {})));
+        const syms = (cfg.usTickers || []).concat(cfg.krTickers || []);
+        const groups = {};
+        let scanned = 0, skipped = 0;
+        for (const sym of syms) {
+          const daily = await getState(env.DB, "daily:" + sym, null);
+          if (!daily || !daily.closes || daily.closes.length < 30) { skipped++; continue; }
+          const ta = taDetectPatterns(daily);
+          scanned++;
+          if (!ta || !ta.patterns.length) continue;
+          const isKR = /\.(KS|KQ)$/.test(sym);
+          const label = isKR ? (NAME_MAP[sym] || sym.replace(/\.(KS|KQ)$/, "")) : sym;
+          ta.patterns.forEach(function(p){
+            const g = groups[p.name] || (groups[p.name] = { name: p.name, dir: p.dir, kind: p.kind, items: [] });
+            g.items.push({ symbol: sym, label: label, market: isKR ? "kr" : "us", score: ta.score });
+          });
+        }
+        // 차트 패턴 우선, 그 안에서 종목 수 많은 순
+        const list = Object.keys(groups).map(function(k){ return groups[k]; });
+        list.sort(function(a, b){
+          if (a.kind !== b.kind) return a.kind === "chart" ? -1 : 1;
+          return b.items.length - a.items.length;
+        });
+        list.forEach(function(g){ g.items.sort(function(a, b){ return b.score - a.score; }); });
+        const payload = { groups: list, scanned: scanned, skipped: skipped, total: syms.length, ts: Date.now() };
+        try { await setState(env.DB, ck, payload); } catch (e2) {}
+        return Response.json(payload, { headers: cors });
+      } catch (e) {
+        if (cached) return Response.json(cached, { headers: cors });
+        return Response.json({ groups: [], error: String(e && e.message || e), ts: Date.now() }, { status: 200, headers: cors });
       }
     }
 
