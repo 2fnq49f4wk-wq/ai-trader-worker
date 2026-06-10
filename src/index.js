@@ -9934,6 +9934,68 @@ async function runTradingCycle(env) {
               else _s.visionBoost = (_s.visionBoost || 1.0) * 1.1;
             }
           }
+
+          // ═══ [V64 컨텍스트 게이트] 실적·경제지표·내부자·TA패턴을 "주요" 진입 결정 요인으로 격상 ═══
+          //   모든 전략(trend/snap/scalp) 공통. 전부 캐시(D1) 데이터 → 추가 fetch 0, Cloudflare 영향 없음.
+          //   신호가 있는 종목만 계산하므로 CPU 비용도 사이클당 몇 개 수준.
+          //   점수 구성:
+          //     TA 차트/캔들 패턴: taDetectPatterns score (대략 -6~+6) ×1
+          //     실적 D-2 이내: -3 (어닝 갭 도박 차단)
+          //     고중요 지표 발표 24h 전: -1 / 당일 서프라이즈 합산 ≤-2: -2, ≥+2: +1
+          //     내부자 Form4 3일 클러스터(US): -2
+          //   해석: ≤-4 진입 차단 / -3..-1 ×0.7 / 0 중립 / +1..+2 ×1.1 / ≥+3 ×1.25
+          //   SCALP 추가 규칙: 점수 음수면 차단 — 손실 데이터(연속 VWAP 손절)가 역풍 단타를 증명.
+          if (stratResults.length > 0) {
+            let ctxScore = 0;
+            const ctxWhy = [];
+            try {
+              const _ta = taDetectPatterns(daily);
+              if (_ta && _ta.patterns.length) {
+                ctxScore += _ta.score;
+                ctxWhy.push("TA" + (_ta.score >= 0 ? "+" : "") + _ta.score + (_ta.top ? "(" + _ta.top.name + ")" : ""));
+              }
+            } catch (e) {}
+            if (eventData) {
+              const _ets2 = eventData.earningsBySym && eventData.earningsBySym[symbol];
+              if (_ets2) {
+                const _dD = (_ets2 - Date.now()) / 86400000;
+                if (_dD >= -0.5 && _dD <= 2) { ctxScore -= 3; ctxWhy.push("EARN D-" + Math.max(0, _dD).toFixed(1)); }
+              }
+              const _ec = eventData.econ && eventData.econ[market];
+              if (_ec) {
+                if (_ec.preHigh) { ctxScore -= 1; ctxWhy.push("ECON-PRE(" + _ec.preHigh + ")"); }
+                if (_ec.shock <= -2) { ctxScore -= 2; ctxWhy.push("SHOCK" + _ec.shock); }
+                else if (_ec.shock >= 2) { ctxScore += 1; ctxWhy.push("SHOCK+" + _ec.shock); }
+              }
+              const _ic2 = eventData.insiderCount && eventData.insiderCount[symbol];
+              if (_ic2 >= 2 && market === "us") { ctxScore -= 2; ctxWhy.push("INSIDER F4x" + _ic2); }
+            }
+            const _ctxStr = ctxWhy.length ? (" [" + ctxWhy.join(" ") + "]") : "";
+            if (ctxScore <= -4) {
+              incBlock("CTX_NEG");
+              await log(DB, "INFO", symbol, "[V64 CTX] 진입 차단 score=" + ctxScore + _ctxStr);
+              continue;
+            }
+            const _ctxMult = ctxScore >= 3 ? 1.25 : ctxScore >= 1 ? 1.1 : ctxScore <= -1 ? 0.7 : 1.0;
+            const _kept = [];
+            for (const _sr of stratResults) {
+              if (_sr.strategy === "scalp" && ctxScore < 0) {
+                incBlock("CTX_SCALP_NEG");
+                await log(DB, "INFO", symbol, "[V64 CTX] scalp 차단 score=" + ctxScore + _ctxStr);
+                continue;
+              }
+              if (_sr.signal) {
+                _sr.signal.visionBoost = (_sr.signal.visionBoost || 1.0) * _ctxMult;
+                if (ctxWhy.length) _sr.signal.ctxNote = "CTX" + (ctxScore >= 0 ? "+" : "") + ctxScore + "×" + _ctxMult + _ctxStr;
+              }
+              _kept.push(_sr);
+            }
+            stratResults = _kept;
+            if (stratResults.length === 0) continue;
+            if (_ctxMult !== 1.0) {
+              await log(DB, "INFO", symbol, "[V64 CTX] score=" + ctxScore + " → 사이즈 ×" + _ctxMult + _ctxStr);
+            }
+          }
           signalCount += stratResults.length;   // [통계] 발생 매수신호 누적
           // [신호 로그] 발생 신호를 로그에 기록 (종목 + 전략 + 신호명)
           for (const _sr of stratResults) {
