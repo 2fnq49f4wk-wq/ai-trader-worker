@@ -11,7 +11,7 @@ try{var __t=localStorage.getItem('luxTheme');if(__t==='light')document.documentE
 </script>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-<link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600;700&family=Pinyon+Script&family=UnifrakturCook:wght@700&display=swap" rel="stylesheet">
+<link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600;700&family=Space+Grotesk:wght@400;500;600;700&family=Pinyon+Script&family=UnifrakturCook:wght@700&display=swap" rel="stylesheet">
 <style>
 /* LUX-ENGINE · 완전 새 UI */
 :root{
@@ -1069,6 +1069,237 @@ body{background:radial-gradient(1200px 600px at 70% -10%,rgba(76,194,255,0.05),t
 .vision-budget-bar > i{display:block;height:100%;background:var(--acc);border-radius:3px;}
 .vision-alert{font-size:10px;font-weight:700;color:var(--amber);padding:2px 8px;border:1px solid rgba(251,191,36,.35);border-radius:5px;background:rgba(251,191,36,.07);}
 .vision-ok{color:var(--grn);border-color:rgba(74,222,128,.35);background:rgba(74,222,128,.07);}
+
+/* ════════════════════════════════════════════════════════════════════
+   [V54 NEON FUTURE] 전체 리스킨 — 미래지향 투자앱
+   · 모든 셀렉터/ID/레이아웃 구조는 그대로 → 기능 100% 유지
+   · 로고(.lux-star-svg)와 브랜드명은 손대지 않음 (화이트 고정)
+   ════════════════════════════════════════════════════════════════════ */
+:root{
+  --bg:#04060c; --s1:#0a0f1a; --s2:#101726; --s3:#161f33;
+  --bd:#1d2a42; --bd2:#141d30;
+  --t1:#e8eefb; --t2:#9fb0cd; --t3:#5e7194;
+  --acc:#22d3ee; --acc2:#a78bfa;
+  --pos:#34d399; --neg:#fb4d6d;
+  --amber:#fbbf24; --grn:#34d399; --blue:#60a5fa; --purple:#a78bfa;
+  --strat-trend:#22d3ee; --strat-scalp:#fbbf24; --strat-snap:#34d399;
+  --radius:14px;
+  --glow-acc:0 0 18px rgba(34,211,238,.22);
+  --glass:rgba(13,20,35,.62);
+  --glass-bd:rgba(110,160,255,.13);
+}
+html[data-theme="light"]{
+  --bg:#eef2f9; --s1:#ffffff; --s2:#f1f5fb; --s3:#e6ecf6;
+  --bd:#d3dcea; --bd2:#e3eaf4;
+  --t1:#101828; --t2:#3d4d68; --t3:#7587a3;
+  --acc:#0891b2; --acc2:#7c3aed;
+  --pos:#059669; --neg:#e11d48;
+  --glass:rgba(255,255,255,.78); --glass-bd:rgba(60,90,160,.15);
+  --glow-acc:0 0 14px rgba(8,145,178,.12);
+}
+
+/* ── 배경: 딥스페이스 + 오로라 + 미세 그리드 ── */
+body{
+  background:
+    radial-gradient(900px 520px at 85% -8%, rgba(34,211,238,.075), transparent 60%),
+    radial-gradient(820px 560px at -10% 18%, rgba(167,139,250,.06), transparent 55%),
+    radial-gradient(700px 700px at 50% 115%, rgba(52,211,153,.045), transparent 60%),
+    repeating-linear-gradient(0deg, transparent 0 39px, rgba(110,160,255,.025) 39px 40px),
+    repeating-linear-gradient(90deg, transparent 0 39px, rgba(110,160,255,.025) 39px 40px),
+    var(--bg);
+  background-attachment:fixed;
+  font-family:'Space Grotesk','Helvetica Neue','Segoe UI',Arial,sans-serif;
+}
+html[data-theme="light"] body{
+  background:
+    radial-gradient(900px 520px at 85% -8%, rgba(8,145,178,.06), transparent 60%),
+    radial-gradient(820px 560px at -10% 18%, rgba(124,58,237,.05), transparent 55%),
+    var(--bg);
+}
+
+/* ── 사이드바: 글래스 패널 ── */
+.sidebar{
+  background:linear-gradient(180deg, rgba(14,21,38,.92), rgba(8,13,24,.96));
+  backdrop-filter:blur(16px); -webkit-backdrop-filter:blur(16px);
+  border-right:1px solid var(--glass-bd);
+}
+html[data-theme="light"] .sidebar{background:linear-gradient(180deg,rgba(255,255,255,.95),rgba(243,247,252,.97));}
+.sb-brand{border-bottom:1px solid var(--glass-bd);position:relative;}
+.sb-brand::after{content:'';position:absolute;left:16px;right:16px;bottom:-1px;height:1px;
+  background:linear-gradient(90deg,transparent,rgba(34,211,238,.5),rgba(167,139,250,.5),transparent);}
+.sb-brand-name{color:#fff;}  /* 브랜드명 보호 — 액센트 틴트 금지 */
+html[data-theme="light"] .sb-brand-name{color:#101828;}
+.sb-status{border-bottom:1px solid var(--glass-bd);background:rgba(255,255,255,.015);}
+
+/* 네비 — 액티브 글로우 필 */
+.nav-item{
+  font-family:'Space Grotesk','Helvetica Neue',sans-serif;
+  border-radius:9px;margin:2px 8px;padding:9px 12px;
+  transition:all .16s cubic-bezier(.4,0,.2,1);
+  position:relative;overflow:hidden;
+}
+.nav-item:hover{background:rgba(34,211,238,.07);transform:translateX(2px);}
+.nav-item.active{
+  background:linear-gradient(90deg, rgba(34,211,238,.14), rgba(167,139,250,.08));
+  box-shadow:inset 0 0 0 1px rgba(34,211,238,.22), var(--glow-acc);
+}
+.nav-item.active::before{content:'';position:absolute;left:0;top:18%;bottom:18%;width:2.5px;
+  border-radius:2px;background:linear-gradient(180deg,var(--acc),var(--acc2));}
+.nav-item.active .nav-item-label{color:var(--acc);}
+.nav-item-icon{color:var(--acc2);}
+
+/* 사이드바 버튼 */
+.sb-run-btn{
+  background:linear-gradient(135deg,#0ea5b7,#7c5cf0)!important;
+  border:none!important;color:#fff!important;border-radius:10px!important;
+  font-weight:700;letter-spacing:1px;
+  box-shadow:0 4px 18px rgba(34,211,238,.28), inset 0 1px 0 rgba(255,255,255,.18);
+  transition:all .18s;
+}
+.sb-run-btn:hover{box-shadow:0 6px 26px rgba(124,92,240,.4);transform:translateY(-1px);}
+.sb-btn{border-radius:8px!important;border:1px solid var(--glass-bd)!important;background:rgba(255,255,255,.025)!important;transition:all .14s;}
+.sb-btn:hover{border-color:rgba(34,211,238,.45)!important;color:var(--acc);box-shadow:var(--glow-acc);}
+.sb-theme-btn{border-radius:8px;border:1px solid var(--glass-bd);}
+
+/* ── 콘텐츠/탑바 ── */
+.content::-webkit-scrollbar{width:5px;}
+.content::-webkit-scrollbar-thumb{background:linear-gradient(180deg,var(--acc),var(--acc2));border-radius:3px;opacity:.5;}
+.content-topbar{
+  background:var(--glass);backdrop-filter:blur(14px);-webkit-backdrop-filter:blur(14px);
+  border-bottom:1px solid var(--glass-bd);
+}
+.topbar-value{font-family:'IBM Plex Mono',monospace;text-shadow:0 0 14px rgba(34,211,238,.13);}
+.topbar-label{color:var(--t3);letter-spacing:1.6px;}
+.page-header{border-bottom:1px solid var(--glass-bd);}
+.page-title{font-family:'Space Grotesk',sans-serif;letter-spacing:2.5px;
+  background:linear-gradient(90deg,var(--t1) 60%,var(--acc));
+  -webkit-background-clip:text;background-clip:text;-webkit-text-fill-color:transparent;}
+
+/* ── 대시보드 블록 → 글래스 카드 그리드 ── */
+.dash-grid{gap:14px;padding:14px;}
+.dash-block{
+  border:1px solid var(--glass-bd)!important;border-radius:var(--radius);
+  background:var(--glass);backdrop-filter:blur(12px);-webkit-backdrop-filter:blur(12px);
+  box-shadow:0 8px 28px rgba(0,0,0,.32), inset 0 1px 0 rgba(255,255,255,.035);
+  transition:border-color .18s, box-shadow .18s;
+}
+.dash-block:hover{border-color:rgba(34,211,238,.28)!important;box-shadow:0 8px 30px rgba(0,0,0,.36), var(--glow-acc);}
+html[data-theme="light"] .dash-block{box-shadow:0 6px 22px rgba(30,50,90,.08);}
+.dash-block-label{color:var(--acc);letter-spacing:2px;display:flex;align-items:center;gap:7px;}
+.dash-block-label::before{content:'';width:5px;height:5px;border-radius:50%;
+  background:var(--acc);box-shadow:0 0 8px var(--acc);}
+
+/* ── 요약 수치 ── */
+.summary-value{font-family:'IBM Plex Mono',monospace;letter-spacing:-.3px;}
+.port-total{font-family:'IBM Plex Mono',monospace;text-shadow:0 0 22px rgba(34,211,238,.16);}
+
+/* ── 테이블 ── */
+.table th{
+  background:rgba(34,211,238,.05);color:var(--t3);
+  letter-spacing:1.6px;font-size:8.5px;border-bottom:1px solid var(--glass-bd);
+}
+.table td{border-bottom:1px solid var(--bd2);}
+.table tbody tr{transition:background .1s, box-shadow .1s;}
+.table tbody tr:hover{background:rgba(34,211,238,.045);box-shadow:inset 2px 0 0 var(--acc);}
+.table-wrap{border:1px solid var(--glass-bd);border-radius:10px;}
+
+/* ── 워치리스트 카드 ── */
+.wl-card{transition:background .12s, transform .12s;}
+.wl-card:hover{background:rgba(34,211,238,.05);}
+.wl-card.held{border-left:2px solid var(--pos);box-shadow:inset 3px 0 10px -4px rgba(52,211,153,.35);}
+.wl-sym{color:var(--t1);}
+.wl-price{color:var(--t1);font-family:'IBM Plex Mono',monospace;}
+.wl-pane{border:1px solid var(--glass-bd);border-radius:var(--radius);background:var(--glass);backdrop-filter:blur(10px);overflow:hidden;}
+.wl-pane-header{background:rgba(255,255,255,.02);border-bottom:1px solid var(--glass-bd);}
+.wl-search{border-radius:8px;border:1px solid var(--glass-bd);background:rgba(255,255,255,.03);}
+.wl-search:focus{border-color:var(--acc);box-shadow:var(--glow-acc);outline:none;}
+
+/* ── 지수 카드 ── */
+.idx-card{border:1px solid var(--glass-bd);border-radius:12px;background:var(--glass);backdrop-filter:blur(10px);transition:all .15s;}
+.idx-card:hover{border-color:rgba(34,211,238,.3);transform:translateY(-2px);box-shadow:var(--glow-acc);}
+.idx-price{font-family:'IBM Plex Mono',monospace;}
+
+/* ── 버튼 공통 ── */
+.btn{border-radius:8px;border:1px solid var(--glass-bd);background:rgba(255,255,255,.025);transition:all .15s;}
+.btn:hover{border-color:rgba(34,211,238,.45);color:var(--acc);box-shadow:var(--glow-acc);transform:translateY(-1px);}
+.btn.primary{background:linear-gradient(135deg,#0ea5b7,#7c5cf0);border:none;color:#fff;
+  box-shadow:0 3px 14px rgba(34,211,238,.25);}
+.btn.primary:hover{box-shadow:0 5px 22px rgba(124,92,240,.4);color:#fff;}
+.btn.danger{border-color:rgba(251,77,109,.4);color:var(--neg);}
+.btn.danger:hover{background:rgba(251,77,109,.1);box-shadow:0 0 16px rgba(251,77,109,.2);}
+
+/* ── 모달 ── */
+.modal{background:rgba(3,6,12,.7);backdrop-filter:blur(8px);-webkit-backdrop-filter:blur(8px);}
+.modal-content{
+  border:1px solid var(--glass-bd);border-radius:16px;
+  background:linear-gradient(180deg, rgba(16,24,42,.97), rgba(10,15,28,.98));
+  box-shadow:0 24px 80px rgba(0,0,0,.6), 0 0 0 1px rgba(34,211,238,.06), var(--glow-acc);
+}
+html[data-theme="light"] .modal-content{background:linear-gradient(180deg,#fff,#f5f8fc);}
+.field input,.field select,.field textarea{
+  border-radius:8px;border:1px solid var(--glass-bd);background:rgba(255,255,255,.03);transition:all .14s;
+}
+.field input:focus,.field select:focus,.field textarea:focus{border-color:var(--acc);box-shadow:var(--glow-acc);outline:none;}
+
+/* ── 로그 ── */
+.log-box-modal,.logs{border-radius:10px;border:1px solid var(--glass-bd);background:rgba(4,8,16,.8);}
+.log-line:hover{background:rgba(34,211,238,.04);}
+
+/* ── 트레이드 필터/요약 ── */
+.trade-filter-btn{border-radius:7px;border:1px solid var(--glass-bd);transition:all .14s;}
+.trade-filter-btn.active{background:linear-gradient(135deg,rgba(34,211,238,.16),rgba(167,139,250,.12));
+  border-color:rgba(34,211,238,.4);color:var(--acc);box-shadow:var(--glow-acc);}
+.trades-summary{border:1px solid var(--glass-bd);border-radius:12px;background:var(--glass);}
+.trades-summary-value{font-family:'IBM Plex Mono',monospace;}
+
+/* ── Vision ── */
+.vision-card{border:1px solid var(--glass-bd);border-radius:12px;background:var(--glass);backdrop-filter:blur(10px);transition:all .16s;}
+.vision-card:hover{transform:translateY(-2px);border-color:rgba(34,211,238,.32);box-shadow:var(--glow-acc);}
+.vision-status-panel{background:var(--glass);backdrop-filter:blur(10px);border-bottom:1px solid var(--glass-bd);}
+.vision-up{box-shadow:0 0 10px rgba(52,211,153,.12);}
+.vision-down{box-shadow:0 0 10px rgba(251,77,109,.12);}
+
+/* ── 원자재/채권/뉴스 ── */
+.cm-watch-card{border:1px solid var(--glass-bd);border-radius:12px;
+  background:linear-gradient(160deg, rgba(20,30,52,.7), rgba(10,16,30,.8));backdrop-filter:blur(8px);}
+.cm-watch-card:hover{border-color:rgba(34,211,238,.35);box-shadow:var(--glow-acc);}
+.cm-watch-price{font-family:'IBM Plex Mono',monospace;}
+.yield-card{border:1px solid var(--glass-bd);border-radius:12px;background:var(--glass);}
+.yield-rate{font-family:'IBM Plex Mono',monospace;}
+.news-item{border-radius:10px;transition:background .12s;}
+.news-item:hover{background:rgba(34,211,238,.045);}
+.news-sector-chip{border-radius:6px;}
+
+/* ── 포지션 ── */
+.pos-market-card{border:1px solid var(--glass-bd);border-radius:var(--radius);background:var(--glass);backdrop-filter:blur(12px);
+  box-shadow:0 8px 28px rgba(0,0,0,.3);}
+.pos-market-head{background:linear-gradient(90deg, rgba(34,211,238,.07), transparent 65%);
+  border-bottom:1px solid var(--glass-bd);border-radius:var(--radius) var(--radius) 0 0;}
+.pps-item{border:1px solid var(--glass-bd);border-radius:12px;background:var(--glass);padding:12px 16px;}
+.pps-value{font-family:'IBM Plex Mono',monospace;}
+
+/* ── LLM/사용량 배너 ── */
+.llm-banner{border:1px solid var(--glass-bd);border-radius:12px;background:var(--glass);backdrop-filter:blur(10px);}
+#usageBanner{border-radius:0;background:rgba(255,255,255,.015)!important;backdrop-filter:blur(8px);}
+
+/* ── 배지/칩/토스트 ── */
+.market-badge,.vision-badge,.pos-strat-chip,.intel-chip,.llm-status-chip{border-radius:6px;}
+.toast{border-radius:10px;border:1px solid rgba(34,211,238,.3);background:rgba(10,16,30,.92);
+  backdrop-filter:blur(12px);box-shadow:0 8px 30px rgba(0,0,0,.5), var(--glow-acc);}
+
+/* ── ALT 자산 패널 ── */
+.alt-panel{border:1px solid var(--glass-bd);border-radius:12px;background:var(--glass);}
+.alt-asset-value{font-family:'IBM Plex Mono',monospace;}
+
+/* ── 엔진 통계 차트 ── */
+.estat-chart{border:1px solid var(--glass-bd);border-radius:10px;background:rgba(255,255,255,.015);}
+
+/* ── 라이브 인디케이터 글로우 ── */
+.live-dot{box-shadow:0 0 8px currentColor;}
+.dot{box-shadow:0 0 7px currentColor;}
+
+/* ── 셀렉션/포커스 ── */
+::selection{background:rgba(34,211,238,.3);}
 </style>
 </head>
 <body>
