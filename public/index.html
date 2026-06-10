@@ -2374,7 +2374,10 @@ html[data-theme="light"] .port-card .port-total{color:#13171c;}
           </div>
         </div>
         <div class="fv-panel">
-          <div class="fv-panel-head">📐 TECHNICAL ANALYSIS <span class="fv-panel-sub">캔들/차트 패턴 자동 감지</span></div>
+          <div class="fv-panel-head">📐 TECHNICAL ANALYSIS <span class="fv-panel-sub">캔들/차트 패턴 자동 감지</span>
+            <button type="button" id="btnTaBack" class="btn" style="margin-left:auto;font-size:9px;padding:2px 8px;display:none;">← 스크리너</button>
+            <button type="button" id="btnTaCollapse" class="btn" style="font-size:9px;padding:2px 8px;margin-left:6px;">접기</button>
+          </div>
           <div style="display:flex;gap:6px;padding:8px 12px;border-bottom:1px solid var(--bd2);flex-wrap:wrap;">
             <input type="text" class="wl-search" id="taSymbol" placeholder="심볼 입력 (AAPL, 005930.KS)" style="flex:1;min-width:140px;" autocomplete="off">
             <button type="button" id="btnTaRun" class="btn primary" style="font-size:10px;">분석</button>
@@ -2559,6 +2562,7 @@ html[data-theme="light"] .port-card .port-total{color:#13171c;}
           <span id="visionModelInfo" style="font-size:10px;color:var(--t3);">stock-updown-classifier</span>
           <button type="button" class="btn" id="btnVisionScanAll">▶ 전체 스캔</button>
           <button type="button" class="btn" id="btnVisionClear">✕ 초기화</button>
+          <button type="button" class="btn watchlist-toggle-btn" id="btnVisionCollapse">접기</button>
         </div>
       </div>
       <!-- 스캔 상태 바 -->
@@ -2755,6 +2759,7 @@ html[data-theme="light"] .port-card .port-total{color:#13171c;}
         </span>
       </div>
       <div id="usageBody" style="margin-top:6px;color:var(--t2);display:flex;gap:16px;flex-wrap:wrap;font-size:10px;font-variant-numeric:tabular-nums;"></div>
+      <div id="usageChart" style="margin-top:10px;display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:10px;"></div>
     </div>
 
     <div class="section-title" style="margin-top:4px;">ENGINE STATS <span style="color:var(--t3);font-weight:400;">· 매일 KST 05:00 리셋</span></div>
@@ -4592,10 +4597,25 @@ html[data-theme="light"] .port-card .port-total{color:#13171c;}
     return svg;
   }
 
+  // ── [V63] 분석 결과 캐시 — 같은 심볼 재검색 시 fetch/재계산 없이 즉시 표시 (10분 유효) ──
+  var taHtmlCache = {};       // { symbol: { html, ts } }
+  var taScreenerHtml = null;  // 스크리너 마지막 화면 (뒤로가기용)
+  function taShowBack(show) {
+    var b = $('btnTaBack');
+    if (b) b.style.display = show ? '' : 'none';
+  }
+
   // ── 분석 실행 + 렌더 ──
   function runTaAnalysis(symbol, container) {
     var box = container || $('taResult');
     if (!box) return Promise.resolve();
+    // [V63] 캐시 히트 → 재분석 없이 즉시 표시
+    var hit = taHtmlCache[symbol];
+    if (hit && (Date.now() - hit.ts) < 10 * 60 * 1000) {
+      box.innerHTML = hit.html;
+      taShowBack(true);
+      return Promise.resolve();
+    }
     box.innerHTML = '<div class="empty">'+escapeHtml(symbol)+' 차트 로딩 중...</div>';
     return fetch('/api/chart?symbol=' + encodeURIComponent(symbol) + '&range=6mo')
       .then(function(r){ return r.json(); })
@@ -4634,6 +4654,8 @@ html[data-theme="light"] .port-card .port-total{color:#13171c;}
         chartR.sr.support.forEach(function(l){ srTxt.push('지지 '+fmtNum(l.v, l.v>1000?0:2)+' ('+l.n+'회)'); });
         if (srTxt.length) html += '<div class="ta-sec">지지 / 저항</div><div class="ta-pat"><span class="ds" style="white-space:normal;">'+srTxt.join(' · ')+'</span></div>';
         box.innerHTML = html;
+        taHtmlCache[symbol] = { html: html, ts: Date.now() };  // [V63] 결과 캐시
+        taShowBack(true);
       })['catch'](function(e){ box.innerHTML = '<div class="empty">분석 실패: '+escapeHtml(String(e && e.message || e))+'</div>'; });
   }
 
@@ -4666,26 +4688,55 @@ html[data-theme="light"] .port-card .port-total{color:#13171c;}
           '</div></div>';
       });
       box.innerHTML = html;
-      box.querySelectorAll('[data-tasym]').forEach(function(el){
-        el.addEventListener('click', function(){
-          var s = el.getAttribute('data-tasym');
-          var inp = $('taSymbol'); if (inp) inp.value = s;
-          runTaAnalysis(s);
-        });
-      });
-      box.querySelectorAll('.ta-scr-expand').forEach(function(el){
-        el.addEventListener('click', function(){
-          el.parentNode.querySelectorAll('.ta-scr-more').forEach(function(c){ c.classList.remove('ta-scr-more'); });
-          el.remove();
-        });
-      });
+      taScreenerHtml = html;  // [V63] 뒤로가기용 저장
+      taShowBack(false);
+      bindTaScreener(box);
     })['catch'](function(e){ box.innerHTML = '<div class="empty">스캔 실패: '+escapeHtml(String(e && e.message || e))+'</div>'; });
+  }
+
+  // [V63] 스크리너 칩/더보기 이벤트 바인딩 (뒤로가기 복원 시 재사용)
+  function bindTaScreener(box) {
+    box.querySelectorAll('[data-tasym]').forEach(function(el){
+      el.addEventListener('click', function(){
+        var s = el.getAttribute('data-tasym');
+        var inp = $('taSymbol'); if (inp) inp.value = s;
+        runTaAnalysis(s);
+      });
+    });
+    box.querySelectorAll('.ta-scr-expand').forEach(function(el){
+      el.addEventListener('click', function(){
+        el.parentNode.querySelectorAll('.ta-scr-more').forEach(function(c){ c.classList.remove('ta-scr-more'); });
+        el.remove();
+      });
+    });
+  }
+  // [V63] 뒤로가기 — 스크리너 화면 복원 (재스캔 없음)
+  function taGoBack() {
+    var box = $('taResult');
+    if (!box) return;
+    if (taScreenerHtml) {
+      box.innerHTML = taScreenerHtml;
+      bindTaScreener(box);
+      taShowBack(false);
+    } else {
+      loadTaScreener(false);
+    }
   }
 
   // ── 보유종목 일괄 스캔 (순차 — 서브리퀘스트 보호, 최대 8개) ──
   function runTaHeldScan() {
     var box = $('taResult');
     if (!box) return;
+    // [V63] 보유종목 스캔 결과 캐시 (10분) — 재클릭 시 즉시 표시
+    var heldHit = taHtmlCache['__held'];
+    if (heldHit && (Date.now() - heldHit.ts) < 10 * 60 * 1000) {
+      box.innerHTML = heldHit.html;
+      box.querySelectorAll('[data-tasym]').forEach(function(el){
+        el.addEventListener('click', function(){ var s = el.getAttribute('data-tasym'); var inp = $('taSymbol'); if (inp) inp.value = s; runTaAnalysis(s); });
+      });
+      taShowBack(true);
+      return;
+    }
     var syms = [];
     ['us','kr'].forEach(function(m){
       Object.keys(heldMap[m] || {}).forEach(function(s){ if (syms.indexOf(s) < 0) syms.push(s); });
@@ -4706,6 +4757,8 @@ html[data-theme="light"] .port-card .port-total{color:#13171c;}
             '<span class="ds">'+top+(r.count>1?' 외 '+(r.count-1)+'개':'')+' — 탭하면 상세</span></div>';
         }).join('');
         box.innerHTML = html;
+        taHtmlCache['__held'] = { html: html, ts: Date.now() };  // [V63] 캐시
+        taShowBack(true);
         box.querySelectorAll('[data-tasym]').forEach(function(el){
           el.addEventListener('click', function(){ var s = el.getAttribute('data-tasym'); var inp = $('taSymbol'); if (inp) inp.value = s; runTaAnalysis(s); });
         });
@@ -5946,6 +5999,49 @@ html[data-theme="light"] .port-card .port-total{color:#13171c;}
       '<span>CPU: <b>'+cpuPct+'%</b> <span style="color:var(--t3);">('+cpuMin+'분)</span>'+bar(cpuPct, barColor)+'</span>' +
       '<span>Subrequests: <b>'+subAbs+'</b></span>' +
       '<span style="color:var(--t3);">셧다운: '+shutAt+'% | 경보: '+warnAt+'% | 이번 달 cron 기준 누적</span>';
+    renderUsageCharts(ud, usageState);
+  }
+
+  // [V63] 일별 사용량 미니 차트 — Requests / CPU(분) / Subrequests, 일일 페이스 한도선 포함
+  function renderUsageCharts(ud, usageState) {
+    var host = $('usageChart');
+    if (!host) return;
+    var days = ud && ud.days;
+    if (!days || !Object.keys(days).length) { host.innerHTML = '<span style="font-size:9px;color:var(--t3);">일별 데이터 수집 중... (오늘부터 기록)</span>'; return; }
+    var dd = Object.keys(days).sort();
+    var monReq = (usageState && usageState.limits && usageState.limits.monthlyRequests) || 10000000;
+    var monCpu = (usageState && usageState.limits && usageState.limits.monthlyCpuMs) || 30000000;
+    var dim = new Date(new Date().getFullYear(), new Date().getMonth()+1, 0).getDate();
+    function chart(title, vals, dailyLimit, fmt) {
+      var W = 200, H = 64, padB = 12, padT = 12;
+      var mx = Math.max(dailyLimit || 0, Math.max.apply(null, vals), 1);
+      var bw = Math.max(3, Math.floor((W - 4) / vals.length) - 2);
+      var svg = '<svg viewBox="0 0 '+W+' '+H+'" style="width:100%;height:auto;display:block;">';
+      if (dailyLimit) {
+        var ly = padT + (1 - dailyLimit / mx) * (H - padT - padB);
+        svg += '<line x1="0" y1="'+ly+'" x2="'+W+'" y2="'+ly+'" stroke="var(--neg)" stroke-width="0.7" stroke-dasharray="3 3" opacity="0.8"/>';
+        svg += '<text x="'+(W-2)+'" y="'+(ly-2)+'" text-anchor="end" font-size="7" fill="var(--neg)">일일 페이스 한도</text>';
+      }
+      vals.forEach(function(v, i){
+        var h = Math.max(1, (v / mx) * (H - padT - padB));
+        var x = 2 + i * (bw + 2);
+        var over = dailyLimit && v > dailyLimit;
+        svg += '<rect x="'+x+'" y="'+(H - padB - h)+'" width="'+bw+'" height="'+h+'" fill="'+(over?'var(--neg)':'var(--pos)')+'" opacity="0.85" rx="1"/>';
+        svg += '<text x="'+(x+bw/2)+'" y="'+(H-3)+'" text-anchor="middle" font-size="6.5" fill="var(--t3)">'+dd[i]+'</text>';
+      });
+      svg += '</svg>';
+      var last = vals[vals.length-1];
+      return '<div style="border:1px solid var(--bd2);border-radius:4px;padding:7px 9px;background:var(--s1);">'+
+        '<div style="font-size:8px;font-weight:700;letter-spacing:1px;color:var(--t3);margin-bottom:4px;">'+title+
+        ' <span style="float:right;color:var(--t2);">오늘 '+fmt(last)+'</span></div>'+svg+'</div>';
+    }
+    var rVals = dd.map(function(k){ return days[k].r || 0; });
+    var cVals = dd.map(function(k){ return (days[k].c || 0) / 60000; });   // 분
+    var sVals = dd.map(function(k){ return days[k].s || 0; });
+    host.innerHTML =
+      chart('REQUESTS / 일', rVals, monReq / dim, function(v){ return Math.round(v).toLocaleString()+'회'; }) +
+      chart('CPU(분) / 일', cVals, monCpu / 60000 / dim, function(v){ return v.toFixed(1)+'분'; }) +
+      chart('SUBREQUESTS / 일', sVals, null, function(v){ return Math.round(v).toLocaleString(); });
   }
 
   function toggleForceLock() {
@@ -6807,6 +6903,31 @@ html[data-theme="light"] .port-card .port-total{color:#13171c;}
   // [V61] 패턴 스크리너 — 버튼 클릭 + 대시보드 진입 시 자동 1회(캐시 사용이라 가벼움)
   var _btnTaScr = $('btnTaScreener'); if (_btnTaScr) _btnTaScr.addEventListener('click', function(){ loadTaScreener(true); });
   try { loadTaScreener(false); } catch(e) {}
+  // [V63] TA 뒤로가기(스크리너 복원) + 접기/펼치기
+  var _btnTaBack = $('btnTaBack'); if (_btnTaBack) _btnTaBack.addEventListener('click', taGoBack);
+  var _btnTaCol = $('btnTaCollapse');
+  if (_btnTaCol) _btnTaCol.addEventListener('click', function(){
+    var box = $('taResult');
+    var bar = box && box.previousElementSibling; // 입력/버튼 줄
+    var hidden = box && box.style.display === 'none';
+    if (box) box.style.display = hidden ? '' : 'none';
+    if (bar && bar.querySelector && bar.querySelector('#taSymbol')) bar.style.display = hidden ? '' : 'none';
+    _btnTaCol.textContent = hidden ? '접기' : '펼치기';
+  });
+  // [V63] AI VISION 접기/펼치기
+  var _btnVCol = $('btnVisionCollapse');
+  if (_btnVCol) _btnVCol.addEventListener('click', function(){
+    var ids = ['visionGrid', 'visionSummaryRow', 'visionStatusPanel'];
+    var grid = $('visionGrid');
+    var hidden = grid && grid.style.display === 'none';
+    ids.forEach(function(id){
+      var el = $(id);
+      if (!el) return;
+      if (hidden) { el.style.display = (id === 'visionGrid') ? '' : el.__prevDisp || ''; }
+      else { el.__prevDisp = el.style.display; el.style.display = 'none'; }
+    });
+    _btnVCol.textContent = hidden ? '접기' : '펼치기';
+  });
   try{showPage(localStorage.getItem('luxPage')||'dashboard');}catch(e){showPage('dashboard');}
 
   // ══════════════════════════════════════════════
@@ -7035,6 +7156,13 @@ html[data-theme="light"] .port-card .port-total{color:#13171c;}
       return;
     }
 
+    // [V63 렉 해소] 데이터 변화 없으면 재렌더 스킵 (페이지 재진입마다 전체 리빌드하던 것 방지)
+    var _maxTs = 0;
+    keys.forEach(function(k){ var t = visionResults[k] && visionResults[k].ts; if (t && t > _maxTs) _maxTs = t; });
+    var _vSig = keys.length + '|' + _maxTs;
+    if (grid.__vSig === _vSig && grid.querySelector('.vision-grid')) return;
+    grid.__vSig = _vSig;
+
     var upList = [], downList = [];
     var totalConf = 0;
     keys.forEach(function(sym) {
@@ -7057,29 +7185,48 @@ html[data-theme="light"] .port-card .port-total{color:#13171c;}
       return rb.conf - ra.conf;
     });
 
-    var html = '<div class="vision-grid">';
-    sorted.forEach(function(sym) {
+    // [V63 렉 해소] 카드 페이지네이션 — 수백 장을 한 번에 innerHTML 하던 것이 렉의 원인.
+    //   상위 48개만 먼저 렌더, "더 보기" 클릭 시 48개씩 추가.
+    function cardHtml(sym) {
       var r = visionResults[sym];
       var isUp = r.pred === 'up';
       var confPct = (r.conf * 100).toFixed(1) + '%';
       var tsStr = r.ts ? new Date(r.ts).toLocaleTimeString('ko-KR', {hour:'2-digit',minute:'2-digit'}) : '';
       var badgeCls = isUp ? 'vision-up' : 'vision-down';
       var label = isUp ? '▲ UP' : '▼ DOWN';
-      var confBar = Math.round(r.conf * 100);
-      html += '<div class="vision-card">';
-      html += '<div class="vision-card-top">';
-      html += '<span class="vision-card-sym">' + sym + '</span>';
-      html += '<span class="vision-badge ' + badgeCls + '">' + label + '</span>';
-      html += '</div>';
-      // 차트 캔버스를 데이터 URL로 임베드
-      html += '<div class="vision-canvas-wrap" id="vcanvas_' + sym + '"></div>';
-      html += '<div class="vision-card-bottom">';
-      html += '<span style="font-size:10px;color:var(--t2);">신뢰도 <b>' + confPct + '</b> &nbsp; UP ' + (r.upConf*100).toFixed(0) + '% / DN ' + (r.downConf*100).toFixed(0) + '%</span>';
-      html += '<span class="vision-card-ts">' + tsStr + '</span>';
-      html += '</div></div>';
-    });
+      return '<div class="vision-card">'+
+        '<div class="vision-card-top">'+
+        '<span class="vision-card-sym">' + sym + '</span>'+
+        '<span class="vision-badge ' + badgeCls + '">' + label + '</span>'+
+        '</div>'+
+        '<div class="vision-canvas-wrap" id="vcanvas_' + sym + '"></div>'+
+        '<div class="vision-card-bottom">'+
+        '<span style="font-size:10px;color:var(--t2);">신뢰도 <b>' + confPct + '</b> &nbsp; UP ' + (r.upConf*100).toFixed(0) + '% / DN ' + (r.downConf*100).toFixed(0) + '%</span>'+
+        '<span class="vision-card-ts">' + tsStr + '</span>'+
+        '</div></div>';
+    }
+    var PAGE = 48;
+    var firstChunk = sorted.slice(0, PAGE);
+    var html = '<div class="vision-grid" id="visionGridInner">';
+    firstChunk.forEach(function(sym){ html += cardHtml(sym); });
     html += '</div>';
+    if (sorted.length > PAGE) {
+      html += '<div style="padding:10px;text-align:center;"><button type="button" class="btn" id="btnVisionMore">더 보기 (+' + (sorted.length - PAGE) + ')</button></div>';
+    }
     grid.innerHTML = html;
+    var _vShown = PAGE;
+    var _vMore = document.getElementById('btnVisionMore');
+    if (_vMore) _vMore.addEventListener('click', function(){
+      var inner = document.getElementById('visionGridInner');
+      if (!inner) return;
+      var next = sorted.slice(_vShown, _vShown + PAGE);
+      var frag = document.createElement('div');
+      frag.innerHTML = next.map(cardHtml).join('');
+      while (frag.firstChild) inner.appendChild(frag.firstChild);
+      _vShown += next.length;
+      if (_vShown >= sorted.length) _vMore.parentNode.removeChild(_vMore);
+      else _vMore.textContent = '더 보기 (+' + (sorted.length - _vShown) + ')';
+    });
 
     // [V53 랙 해소] 차트 이미지 — 기존엔 모든 카드가 동시에 /api/daily를 fetch해
     //   수백 요청이 한꺼번에 나가 브라우저/워커가 멈췄음. 상위 24개만, 4개씩 순차 로드.

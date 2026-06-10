@@ -4648,6 +4648,13 @@ async function recordUsage(DB, deltaReq, deltaCpuMs, deltaSubreqs) {
     u.data.requests = (u.data.requests || 0) + (deltaReq || 0);
     u.data.cpuMs = (u.data.cpuMs || 0) + (deltaCpuMs || 0);
     u.data.subreqs = (u.data.subreqs || 0) + (deltaSubreqs || 0);
+    // [V63] 일별 분해 — 같은 레코드 안에 저장(추가 D1 호출 0). 사용량 그래프용.
+    if (!u.data.days || typeof u.data.days !== "object") u.data.days = {};
+    const dd = new Date().toISOString().slice(8, 10);
+    const day = u.data.days[dd] || (u.data.days[dd] = { r: 0, c: 0, s: 0 });
+    day.r += (deltaReq || 0);
+    day.c += (deltaCpuMs || 0);
+    day.s += (deltaSubreqs || 0);
     await setState(DB, "usage:" + u.mk, u.data);
     return u.data;
   } catch (e) { return null; }
@@ -9957,21 +9964,26 @@ async function runTradingCycle(env) {
             if (heldSymbols.has(symbol)) {
               continue;
             }
-            // [재작성] 동시 보유 종목 상한 — 분산/과집중 통제 (시장당 maxConcurrent)
-            const _tszC = getTrendSizing(mcfg, market);
-            const maxConc = (_tszC.maxConcurrent != null) ? _tszC.maxConcurrent : 8;
-            if (heldSymbols.size >= maxConc) {
-              incNobuy("max_concurrent");
-              continue;
-            }
-            // [V52] snap 전용 동시 보유 상한 — 역추세성 전략 노출 총량 통제 (시장별)
-            if (strategy === "snap") {
-              const _snMax = (mcfg.snapRules && mcfg.snapRules.maxConcurrent != null) ? mcfg.snapRules.maxConcurrent : 6;
-              let _snHeld = 0;
-              for (const _pk in positions) { if ((positions[_pk].strategy || "") === "snap") _snHeld++; }
-              if (_snHeld >= _snMax) {
-                incNobuy("snap_max_concurrent");
+            // [V63] 동시 보유 종목 수 자동화 — 고정 상한(maxConcurrent) 제거가 기본.
+            //   개수 제한 대신 ① 전략버킷 예산 스냅샷(V28/V51) ② 가용현금 클램프
+            //   ③ executeBuy 최종 클램프 ④ maxPositionPct 종목비중 상한 ⑤ 섹터 상한이
+            //   총량을 통제한다 → 예산 초과 매수는 구조적으로 불가능.
+            //   복원하려면 cfg.autoConcurrent=false (기존 maxConcurrent 게이트 부활).
+            if (mcfg.autoConcurrent === false) {
+              const _tszC = getTrendSizing(mcfg, market);
+              const maxConc = (_tszC.maxConcurrent != null) ? _tszC.maxConcurrent : 8;
+              if (heldSymbols.size >= maxConc) {
+                incNobuy("max_concurrent");
                 continue;
+              }
+              if (strategy === "snap") {
+                const _snMax = (mcfg.snapRules && mcfg.snapRules.maxConcurrent != null) ? mcfg.snapRules.maxConcurrent : 6;
+                let _snHeld = 0;
+                for (const _pk in positions) { if ((positions[_pk].strategy || "") === "snap") _snHeld++; }
+                if (_snHeld >= _snMax) {
+                  incNobuy("snap_max_concurrent");
+                  continue;
+                }
               }
             }
 
@@ -10575,7 +10587,7 @@ async function handleRequest(request, env) {
             const lim = Object.assign({}, USAGE_LIMITS_DEFAULT, (cfg.usageLimits || {}));
             const rr = (us.data.requests || 0) / Math.max(1, lim.monthlyRequests);
             const cr = (us.data.cpuMs || 0) / Math.max(1, lim.monthlyCpuMs);
-            return { data: us.data, reqPct: (rr*100).toFixed(1), cpuPct: (cr*100).toFixed(1), worstPct: (Math.max(rr,cr)*100).toFixed(1), shutdownAt: lim.shutdownAt, warnAt: lim.warnAt };
+            return { data: us.data, limits: { monthlyRequests: lim.monthlyRequests, monthlyCpuMs: lim.monthlyCpuMs }, reqPct: (rr*100).toFixed(1), cpuPct: (cr*100).toFixed(1), worstPct: (Math.max(rr,cr)*100).toFixed(1), shutdownAt: lim.shutdownAt, warnAt: lim.warnAt };
           } catch(e) { return null; }
         })()
       }, { headers: cors });
