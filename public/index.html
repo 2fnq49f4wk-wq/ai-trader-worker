@@ -1901,6 +1901,75 @@ html[data-theme="light"] .wl-card:hover{background:#f1f4f8;}
 html[data-theme="light"] #fvHeatmap{background:#fff!important;}
 html[data-theme="light"] .sb-brand{background:#0d0d0d;}
 html[data-theme="light"] .sb-brand-name{color:#fff;}
+
+/* ════ [V59] COMMODITIES/BONDS/ECON/TA 패널 그리드 — 한 화면 효율 배치 ════ */
+.cmbd-grid{display:grid;grid-template-columns:1fr 1fr;gap:8px;padding:8px;}
+@media(max-width:900px){.cmbd-grid{grid-template-columns:1fr;}}
+.cmbd-grid .fv-panel{display:flex;flex-direction:column;min-width:0;}
+.cmbd-grid .fv-table{width:100%;}
+
+/* ════ [V59] TOP MOVERS 글자 잘림 수정 ════
+   원인: 두 테이블이 패널 폭을 절반씩 나누는데 콘텐츠 폭이 더 커서 마지막 열이 잘림 */
+.fv-movers-grid{overflow:hidden;}
+.fv-movers-grid .fv-table{table-layout:fixed;width:100%;}
+.fv-movers-grid .fv-table th,.fv-movers-grid .fv-table td{
+  padding:4px 6px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
+.fv-movers-grid .fv-table th:nth-child(1),.fv-movers-grid .fv-table td:nth-child(1){width:26%;}
+.fv-movers-grid .fv-table th:nth-child(2),.fv-movers-grid .fv-table td:nth-child(2){width:28%;}
+.fv-movers-grid .fv-table th:nth-child(3),.fv-movers-grid .fv-table td:nth-child(3){width:26%;}
+.fv-movers-grid .fv-table th:nth-child(4),.fv-movers-grid .fv-table td:nth-child(4){width:20%;}
+@media(max-width:1500px){ /* 좁으면 SIGNAL 열 숨겨 숫자 우선 확보 */
+  .fv-movers-grid .fv-table th:nth-child(4),.fv-movers-grid .fv-table td:nth-child(4){display:none;}
+  .fv-movers-grid .fv-table th:nth-child(1),.fv-movers-grid .fv-table td:nth-child(1){width:32%;}
+  .fv-movers-grid .fv-table th:nth-child(2),.fv-movers-grid .fv-table td:nth-child(2){width:34%;}
+  .fv-movers-grid .fv-table th:nth-child(3),.fv-movers-grid .fv-table td:nth-child(3){width:34%;}
+}
+@media(max-width:700px){.fv-movers-grid{grid-template-columns:1fr;}
+  .fv-movers-grid table:first-child{border-right:none;border-bottom:1px solid var(--bd2);}}
+
+/* ════ [V59] 경제지표 캘린더 ════ */
+.econ-imp{display:inline-flex;gap:2px;}
+.econ-imp i{width:9px;height:9px;border-radius:2px;background:var(--bd);}
+.econ-imp.imp1 i:nth-child(1){background:var(--amber);}
+.econ-imp.imp2 i:nth-child(-n+2){background:#ff9f43;}
+.econ-imp.imp3 i{background:var(--neg);}
+.econ-beat{color:var(--pos)!important;font-weight:700;}
+.econ-miss{color:var(--neg)!important;font-weight:700;}
+.econ-today td{background:rgba(255,201,77,.05);}
+
+/* ════ [V59] TECHNICAL ANALYSIS ════ */
+.ta-chart-wrap{padding:8px 12px 4px;}
+.ta-chart-wrap svg{width:100%;height:auto;display:block;background:var(--s2);border:1px solid var(--bd2);border-radius:4px;}
+.ta-summary{display:flex;align-items:center;gap:10px;padding:8px 12px;border-bottom:1px solid var(--bd2);flex-wrap:wrap;}
+.ta-badge{font-size:11px;font-weight:700;letter-spacing:1px;padding:4px 12px;border-radius:4px;border:1px solid;}
+.ta-badge.bull{border-color:rgba(48,204,90,.5);color:var(--pos);background:rgba(48,204,90,.08);}
+.ta-badge.bear{border-color:rgba(246,53,56,.5);color:var(--neg);background:rgba(246,53,56,.08);}
+.ta-badge.neutral{border-color:var(--bd);color:var(--t2);background:var(--s2);}
+.ta-pat{display:flex;align-items:center;gap:8px;padding:5px 12px;border-bottom:1px solid var(--bd2);font-size:10.5px;}
+.ta-pat .nm{font-weight:700;}
+.ta-pat .ds{color:var(--t3);font-size:9.5px;flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
+.ta-dir{flex-shrink:0;font-size:8.5px;font-weight:700;padding:1px 6px;border-radius:3px;border:1px solid;}
+.ta-dir.bull{color:var(--pos);border-color:rgba(48,204,90,.4);}
+.ta-dir.bear{color:var(--neg);border-color:rgba(246,53,56,.4);}
+.ta-dir.neutral{color:var(--t3);border-color:var(--bd);}
+.ta-sec{padding:5px 12px;font-size:8px;font-weight:700;letter-spacing:1.2px;color:var(--t3);background:var(--s2);border-bottom:1px solid var(--bd2);text-transform:uppercase;}
+
+/* ════ [V59] 모바일 보강 — 새 패널들 ════ */
+@media(max-width:767px){
+  .cmbd-grid{grid-template-columns:1fr;padding:6px;}
+  .fv-deck{padding:6px 6px 0;}
+  .fv-bottom{grid-template-columns:1fr;}
+  .fv-mid{grid-template-columns:1fr;}
+  .fv-index-row{grid-template-columns:1fr 1fr;}
+  .fv-idx-price{font-size:14px;}
+  #fvHeatmap{height:260px!important;}
+  .fv-table th,.fv-table td{padding:4px 6px;font-size:9.5px;}
+  .ta-chart-wrap{padding:6px;}
+  .econ-imp i{width:7px;height:7px;}
+}
+@media(max-width:430px){
+  .fv-index-row{grid-template-columns:1fr;}
+}
 </style>
 </head>
 <body>
@@ -2073,24 +2142,8 @@ html[data-theme="light"] .sb-brand-name{color:#fff;}
         </div>
       </div>
 
-      <!-- 지수 + 인텔 그리드 -->
+      <!-- 지수 + 인텔 그리드 — [V59] US/KR INDICES 블록 제거(상단 FV 데크와 중복) -->
       <div class="dash-grid">
-
-        <!-- US INDICES -->
-        <div class="dash-block">
-          <div class="dash-block-label">🇺🇸 US INDICES</div>
-          <div class="indices-row" id="indicesUS" style="grid-template-columns:1fr 1fr 1fr;">
-            <div class="empty">대기 중...</div>
-          </div>
-        </div>
-
-        <!-- KR INDICES -->
-        <div class="dash-block">
-          <div class="dash-block-label">🇰🇷 KR INDICES</div>
-          <div class="indices-row" id="indicesKR" style="grid-template-columns:1fr 1fr;">
-            <div class="empty">대기 중...</div>
-          </div>
-        </div>
 
         <!-- MARKET INTEL (risk-on/off + 섹터 뉴스) -->
         <div class="dash-block">
@@ -2176,26 +2229,48 @@ html[data-theme="light"] .sb-brand-name{color:#fff;}
 
       </div>
 
-      <!-- ════ [V10.5] COMMODITIES WATCH — 대시보드 통합 ════ -->
-      <div class="page-header" style="border-top:1px solid var(--bd);">
-        <span class="page-title">⛏ COMMODITIES</span>
-        <div class="page-actions">
-          <span id="cmTradeInfo" style="font-size:10px;color:var(--t3);">거래: 매일 16:00 KST</span>
-          <button type="button" id="btnRunCM" class="btn">▶ 지금 실행</button>
-          <button type="button" id="btnResetCM" class="btn danger">↺ RESET</button>
+      <!-- ════ [V59] COMMODITIES + BONDS — TOP MOVERS식 컴팩트 테이블 (한 화면 효율 배치) ════ -->
+      <div class="cmbd-grid">
+        <div class="fv-panel">
+          <div class="fv-panel-head">⛏ COMMODITIES <span class="fv-panel-sub" id="cmTradeInfo">실시간(장중)</span>
+            <span style="margin-left:auto;display:flex;gap:4px;">
+              <button type="button" id="btnRunCM" class="btn" style="font-size:9px;padding:2px 8px;">▶ 실행</button>
+              <button type="button" id="btnResetCM" class="btn danger" style="font-size:9px;padding:2px 8px;">↺</button>
+            </span>
+          </div>
+          <table class="fv-table"><thead><tr><th>Name</th><th class="right">Last</th><th class="right">Chg%</th><th class="right">RSI</th></tr></thead><tbody id="cmWatchGrid"></tbody></table>
+        </div>
+        <div class="fv-panel">
+          <div class="fv-panel-head">◈ BONDS · 국채
+            <span style="margin-left:auto;display:flex;gap:4px;">
+              <button type="button" id="btnRunBDUS" class="btn" style="font-size:9px;padding:2px 8px;">▶ US</button>
+              <button type="button" id="btnRunBDKR" class="btn" style="font-size:9px;padding:2px 8px;">▶ KR</button>
+            </span>
+          </div>
+          <table class="fv-table"><thead><tr><th>Name</th><th class="right">Last</th><th class="right">Chg%</th></tr></thead><tbody id="bondYieldRow"></tbody></table>
         </div>
       </div>
-      <div id="cmWatchGrid" style="display:grid;grid-template-columns:repeat(auto-fill,minmax(124px,1fr));gap:7px;padding:10px 16px;"></div>
 
-      <!-- ════ [V10.5] TREASURY YIELDS — 대시보드 통합 ════ -->
-      <div class="page-header" style="border-top:1px solid var(--bd);">
-        <span class="page-title">◈ BONDS · 국채 금리</span>
-        <div class="page-actions">
-          <button type="button" id="btnRunBDUS" class="btn">▶ US 실행</button>
-          <button type="button" id="btnRunBDKR" class="btn">▶ KR 실행</button>
+      <!-- ════ [V59] 경제지표 캘린더 + 기술적 분석 ════ -->
+      <div class="cmbd-grid">
+        <div class="fv-panel">
+          <div class="fv-panel-head">📅 ECONOMIC CALENDAR <span class="fv-panel-sub">영향도 · 발표치 vs 예상</span>
+            <button type="button" id="btnEconRefresh" class="btn" style="margin-left:auto;font-size:9px;padding:2px 8px;">↻</button>
+          </div>
+          <div style="max-height:320px;overflow-y:auto;">
+            <table class="fv-table"><thead><tr><th>일시</th><th>Impact</th><th>지표</th><th class="right">Actual</th><th class="right">Expected</th><th class="right">Prior</th><th class="right">서프라이즈</th></tr></thead><tbody id="econBody"><tr><td colspan="7" class="empty">로딩 중...</td></tr></tbody></table>
+          </div>
+        </div>
+        <div class="fv-panel">
+          <div class="fv-panel-head">📐 TECHNICAL ANALYSIS <span class="fv-panel-sub">캔들/차트 패턴 자동 감지</span></div>
+          <div style="display:flex;gap:6px;padding:8px 12px;border-bottom:1px solid var(--bd2);flex-wrap:wrap;">
+            <input type="text" class="wl-search" id="taSymbol" placeholder="심볼 입력 (AAPL, 005930.KS)" style="flex:1;min-width:140px;" autocomplete="off">
+            <button type="button" id="btnTaRun" class="btn primary" style="font-size:10px;">분석</button>
+            <button type="button" id="btnTaHeld" class="btn" style="font-size:10px;">보유종목 스캔</button>
+          </div>
+          <div id="taResult"><div class="empty">심볼을 입력하고 분석을 눌러보세요</div></div>
         </div>
       </div>
-      <div class="yield-row" id="bondYieldRow"><div class="empty">금리 대기 중...</div></div>
 
     </div><!-- /dashboard -->
 
@@ -3255,6 +3330,7 @@ html[data-theme="light"] .sb-brand-name{color:#fff;}
 
   function renderIndices(indices) {
     var boxUS = $('indicesUS'), boxKR = $('indicesKR');
+    if (!boxUS && !boxKR) return; // [V59] 하단 지수 블록 제거됨 — FV 데크가 대체
     function card(idx) {
       var name = INDEX_NAMES[idx.symbol] || idx.symbol;
       var dayClass = idx.dayPct > 0 ? 'pos' : (idx.dayPct < 0 ? 'neg' : '');
@@ -3264,8 +3340,8 @@ html[data-theme="light"] .sb-brand-name{color:#fff;}
     }
     var us = indices.filter(function(i){return i.region==='us';});
     var kr = indices.filter(function(i){return i.region==='kr';});
-    boxUS.innerHTML = us.length ? us.map(card).join('') : '<div class="empty">대기 중...</div>';
-    boxKR.innerHTML = kr.length ? kr.map(card).join('') : '<div class="empty">대기 중...</div>';
+    if (boxUS) boxUS.innerHTML = us.length ? us.map(card).join('') : '<div class="empty">대기 중...</div>';
+    if (boxKR) boxKR.innerHTML = kr.length ? kr.map(card).join('') : '<div class="empty">대기 중...</div>';
   }
 
   // [회계 재설계] 수익률은 TWR(시간가중수익률)로 계산한다.
@@ -3660,30 +3736,24 @@ html[data-theme="light"] .sb-brand-name{color:#fff;}
       }
     }
 
-    // 워치리스트 소형 카드 그리드
+    // [V59] 워치리스트 — TOP MOVERS식 테이블 행
     var grid = $('cmWatchGrid');
     if (grid) {
       if (watchlist.length === 0) {
-        grid.innerHTML = '<div class="empty">대기 중...</div>';
+        grid.innerHTML = '<tr><td colspan="4" class="empty">대기 중...</td></tr>';
       } else {
         grid.innerHTML = watchlist.map(function(q){
           var hasPrice = typeof q.price === 'number';
           var dc = q.dayPct > 0 ? 'pos' : q.dayPct < 0 ? 'neg' : '';
           var sign = q.dayPct >= 0 ? '+' : '';
-          // [V53] 카드 상단 컬러보더(등락) + RSI 게이지
-          var topColor = q.dayPct > 0 ? 'var(--pos)' : q.dayPct < 0 ? 'var(--neg)' : 'var(--bd)';
-          var rsi = (q.rsi != null && isFinite(q.rsi)) ? q.rsi : null;
-          var rsiColor = rsi == null ? 'var(--t3)' : rsi >= 70 ? 'var(--neg)' : rsi <= 30 ? 'var(--grn)' : 'var(--acc)';
-          var rsiBar = rsi != null
-            ? '<span style="min-width:42px;">RSI ' + rsi.toFixed(0) + '</span><span class="cm-rsi-bar"><i style="width:' + Math.min(100, rsi) + '%;background:' + rsiColor + ';"></i></span>'
-            : '<span>RSI -</span>';
-          return '<div class="cm-watch-card" style="--cm-top:'+topColor+';">'+
-            '<div class="cm-watch-sym">'+escapeHtml(q.name||q.symbol)+'</div>'+
-            '<div class="cm-watch-name">'+escapeHtml(q.symbol)+(q.unit?' · '+escapeHtml(q.unit):'')+'</div>'+
-            '<div class="cm-watch-price">'+(hasPrice?'$'+fmtNum(q.price,2):'-')+'</div>'+
-            '<div class="cm-watch-day '+dc+'">'+(typeof q.dayPct==='number'?sign+fmtNum(q.dayPct,2)+'%':'-')+'</div>'+
-            '<div class="cm-watch-meta">'+rsiBar+'</div>'+
-            '</div>';
+          var rsi = (q.rsi != null && isFinite(q.rsi)) ? q.rsi.toFixed(0) : '-';
+          var rsiCls = q.rsi >= 70 ? 'neg' : q.rsi <= 30 ? 'pos' : '';
+          return '<tr>'+
+            '<td><span class="fv-tick">'+escapeHtml(q.name||q.symbol)+'</span> <span style="font-size:8.5px;color:var(--t3);">'+escapeHtml(q.symbol)+'</span></td>'+
+            '<td class="right">'+(hasPrice?'$'+fmtNum(q.price,2):'-')+'</td>'+
+            '<td class="right '+dc+'">'+(typeof q.dayPct==='number'?sign+fmtNum(q.dayPct,2)+'%':'-')+'</td>'+
+            '<td class="right '+rsiCls+'">'+rsi+'</td>'+
+            '</tr>';
         }).join('');
       }
     }
@@ -3888,38 +3958,41 @@ html[data-theme="light"] .sb-brand-name{color:#fff;}
     if (!data) return;
     if (data.us) renderAltPanel(data.us, 'bdusPanel', 'usd', '🇺🇸', 'US BONDS', 'USD · 미국 국채 ETF');
     if (data.kr) renderAltPanel(data.kr, 'bdkrPanel', 'krw', '🇰🇷', 'KR BONDS', 'KRW · 한국 국고채 ETF');
-    // 국채 금리 카드 — 🇺🇸 금리 + 🇰🇷 국고채 ETF(금리 직접 심볼 부재 → ETF 가격 프록시)
+    // [V59] 국채 — TOP MOVERS식 테이블 행: 🇺🇸 금리 + 🇰🇷 국고채 ETF
     var yrow = $('bondYieldRow');
     if (yrow) {
-      var cards = '';
+      var rows = '';
+      var secRow = function(label){
+        return '<tr><td colspan="3" style="padding:4px 10px;font-size:8px;font-weight:700;letter-spacing:1.2px;color:var(--t3);background:var(--s2);text-transform:uppercase;">'+label+'</td></tr>';
+      };
       if (data.yields && data.yields.length) {
-        cards += data.yields.map(function(y){
+        rows += secRow('🇺🇸 US TREASURY · 금리');
+        rows += data.yields.map(function(y){
           var hasRate = typeof y.rate === 'number';
-          var chgClass = y.dayPct > 0 ? 'pos' : y.dayPct < 0 ? 'neg' : '';
-          var chgSign = y.dayPct >= 0 ? '+' : '';
-          return '<div class="yield-card">'+
-            '<div class="yield-label">🇺🇸 '+escapeHtml(y.label)+'</div>'+
-            '<div class="yield-name">'+escapeHtml(y.name)+'</div>'+
-            '<div class="yield-rate">'+(hasRate ? y.rate.toFixed(2)+'%' : '-')+'</div>'+
-            '<div class="yield-chg '+chgClass+'">'+(typeof y.dayPct==='number' ? chgSign+y.dayPct.toFixed(2)+'%' : '')+'</div>'+
-            '</div>';
+          var cc = y.dayPct > 0 ? 'pos' : y.dayPct < 0 ? 'neg' : '';
+          var cs = y.dayPct >= 0 ? '+' : '';
+          return '<tr>'+
+            '<td><span class="fv-tick">'+escapeHtml(y.label)+'</span> <span style="font-size:8.5px;color:var(--t3);">'+escapeHtml(y.name)+'</span></td>'+
+            '<td class="right">'+(hasRate ? y.rate.toFixed(2)+'%' : '-')+'</td>'+
+            '<td class="right '+cc+'">'+(typeof y.dayPct==='number' ? cs+y.dayPct.toFixed(2)+'%' : '-')+'</td>'+
+            '</tr>';
         }).join('');
       }
       if (data.kr && data.kr.watchlist && data.kr.watchlist.length) {
-        cards += data.kr.watchlist.map(function(q){
+        rows += secRow('🇰🇷 KR 국고채 ETF');
+        rows += data.kr.watchlist.map(function(q){
           if (!q) return '';
           var has = typeof q.price === 'number';
           var cc = q.dayPct > 0 ? 'pos' : q.dayPct < 0 ? 'neg' : '';
           var cs = q.dayPct >= 0 ? '+' : '';
-          return '<div class="yield-card">'+
-            '<div class="yield-label">🇰🇷 ETF</div>'+
-            '<div class="yield-name">'+escapeHtml(q.name || q.symbol)+'</div>'+
-            '<div class="yield-rate">'+(has ? '₩'+fmtNum(q.price,0) : '-')+'</div>'+
-            '<div class="yield-chg '+cc+'">'+(typeof q.dayPct==='number' ? cs+fmtNum(q.dayPct,2)+'%' : '')+'</div>'+
-            '</div>';
+          return '<tr>'+
+            '<td><span class="fv-tick">'+escapeHtml(q.name || q.symbol)+'</span></td>'+
+            '<td class="right">'+(has ? '₩'+fmtNum(q.price,0) : '-')+'</td>'+
+            '<td class="right '+cc+'">'+(typeof q.dayPct==='number' ? cs+fmtNum(q.dayPct,2)+'%' : '-')+'</td>'+
+            '</tr>';
         }).join('');
       }
-      if (cards) yrow.innerHTML = cards;
+      yrow.innerHTML = rows || '<tr><td colspan="3" class="empty">금리 대기 중...</td></tr>';
     }
   }
 
@@ -4004,6 +4077,389 @@ html[data-theme="light"] .sb-brand-name{color:#fff;}
       .then(function(){ toast(key.toUpperCase() + ' 채권 사이클 실행 완료'); return loadBonds(); })
       ['catch'](function(e){ toast('실행 실패: '+e.message); })
       .then(function(){ btn.disabled = false; btn.textContent = orig; });
+  }
+
+  // ════════════════════════════════════════════════════════════════
+  // [V59] 경제지표 캘린더 — finviz식 임팩트 점 + Actual vs Expected 서프라이즈
+  // ════════════════════════════════════════════════════════════════
+  function loadEcon(force) {
+    var body = $('econBody');
+    if (!body) return;
+    fetch('/api/econ' + (force ? '?force=1' : '')).then(function(r){ return r.json(); }).then(function(d){
+      var evs = (d && d.events) || [];
+      if (!evs.length) { body.innerHTML = '<tr><td colspan="7" class="empty">지표 데이터 없음</td></tr>'; return; }
+      // 시간순 정렬, 오늘 ±, 최대 40개
+      evs.sort(function(a,b){ return new Date(a.date) - new Date(b.date); });
+      var todayStr = new Date().toDateString();
+      var rows = evs.slice(0, 40).map(function(e){
+        var dt = new Date(e.date);
+        var isToday = dt.toDateString() === todayStr;
+        var p2 = function(n){ return n<10?'0'+n:n; };
+        var when = (isToday ? '오늘 ' : (dt.getMonth()+1)+'/'+dt.getDate()+' ') + p2(dt.getHours())+':'+p2(dt.getMinutes());
+        // 임팩트: importance(-1~1 또는 0~3) → 1~3 점
+        var imp = e.importance;
+        var impLvl = imp >= 1 ? 3 : imp >= 0 ? 2 : 1;            // TradingView: 1=high, 0=med, -1=low
+        if (imp > 1) impLvl = Math.min(3, Math.round(imp));        // 혹시 0~3 스케일이면 그대로
+        var flag = e.country === 'KR' ? '🇰🇷' : '🇺🇸';
+        // 서프라이즈: (actual - forecast) — 발표 전이면 '-'
+        var surTxt = '-', surCls = '';
+        if (e.actual != null && e.forecast != null && isFinite(e.actual) && isFinite(e.forecast)) {
+          var diff = e.actual - e.forecast;
+          var pct = e.forecast !== 0 ? (diff / Math.abs(e.forecast) * 100) : 0;
+          surTxt = (diff >= 0 ? '+' : '') + fmtNum(diff, 2) + (Math.abs(pct) < 999 ? ' ('+(pct>=0?'+':'')+fmtNum(pct,1)+'%)' : '');
+          surCls = diff > 0 ? 'econ-beat' : diff < 0 ? 'econ-miss' : '';
+        }
+        var fv = function(v){ return v != null && isFinite(v) ? fmtNum(v, 2) + (e.unit ? e.unit : '') : '-'; };
+        var actCls = '';
+        if (e.actual != null && e.forecast != null) actCls = e.actual > e.forecast ? 'econ-beat' : e.actual < e.forecast ? 'econ-miss' : '';
+        return '<tr'+(isToday?' class="econ-today"':'')+'>'+
+          '<td style="white-space:nowrap;">'+when+'</td>'+
+          '<td><span class="econ-imp imp'+impLvl+'"><i></i><i></i><i></i></span></td>'+
+          '<td>'+flag+' <span class="fv-tick">'+escapeHtml(e.title)+'</span>'+(e.period?' <span style="font-size:8.5px;color:var(--t3);">'+escapeHtml(e.period)+'</span>':'')+'</td>'+
+          '<td class="right '+actCls+'">'+fv(e.actual)+'</td>'+
+          '<td class="right">'+fv(e.forecast)+'</td>'+
+          '<td class="right">'+fv(e.previous)+'</td>'+
+          '<td class="right '+surCls+'" style="white-space:nowrap;">'+surTxt+'</td>'+
+          '</tr>';
+      }).join('');
+      body.innerHTML = rows;
+    })['catch'](function(){
+      body.innerHTML = '<tr><td colspan="7" class="empty">지표 로드 실패</td></tr>';
+    });
+  }
+
+  // ════════════════════════════════════════════════════════════════
+  // [V59] TECHNICAL ANALYSIS — 캔들/차트 패턴 자동 감지 (finviz 스타일)
+  // ════════════════════════════════════════════════════════════════
+  // ── 캔들 도우미 ──
+  function _body(c){ return Math.abs(c.c - c.o); }
+  function _range(c){ return Math.max(1e-9, c.h - c.l); }
+  function _upper(c){ return c.h - Math.max(c.o, c.c); }
+  function _lower(c){ return Math.min(c.o, c.c) - c.l; }
+  function _green(c){ return c.c > c.o; }
+  function _red(c){ return c.c < c.o; }
+  // 직전 n봉 추세(종가 선형 기울기, %/봉)
+  function _trend(cs, end, n) {
+    var s = Math.max(0, end - n), cnt = end - s;
+    if (cnt < 3) return 0;
+    var sx=0, sy=0, sxy=0, sxx=0;
+    for (var i = s; i < end; i++) { var x=i-s, y=cs[i].c; sx+=x; sy+=y; sxy+=x*y; sxx+=x*x; }
+    var slope = (cnt*sxy - sx*sy) / Math.max(1e-9, cnt*sxx - sx*sx);
+    return slope / (sy/cnt) * 100;
+  }
+
+  // ── 캔들 패턴 감지 (마지막 5봉 범위) ──
+  function detectCandlePatterns(cs) {
+    var out = [];
+    var n = cs.length;
+    if (n < 5) return out;
+    function add(name, dir, idx, ds){ out.push({ name:name, dir:dir, idx:idx, desc:ds, kind:'candle' }); }
+    // 마지막 3개 위치에서 검사 (최신 우선)
+    for (var k = n - 1; k >= Math.max(n - 3, 2); k--) {
+      var c = cs[k], p = cs[k-1], pp = cs[k-2];
+      var tr = _trend(cs, k, 7);  // 패턴 직전 추세
+      var b = _body(c), r = _range(c), up = _upper(c), lo = _lower(c);
+      // 도지류
+      if (b <= r * 0.1) {
+        if (lo >= r * 0.6) add('Dragonfly Doji', 'bull', k, '아래꼬리 긴 도지 — 하락 거부');
+        else if (up >= r * 0.6) add('Gravestone Doji', 'bear', k, '위꼬리 긴 도지 — 상승 거부');
+        else add('Doji', 'neutral', k, '몸통 극소 — 방향 결정 보류');
+      }
+      // 해머/행잉맨/역해머
+      if (lo >= b * 2 && up <= b * 0.5 && b > r * 0.05) {
+        if (tr < -0.15) add('Hammer', 'bull', k, '하락 후 아래꼬리 반전 신호');
+        else if (tr > 0.15) add('Hanging Man', 'bear', k, '상승 후 매도 압력 출현');
+      }
+      if (up >= b * 2 && lo <= b * 0.5 && b > r * 0.05) {
+        if (tr < -0.15) add('Inverted Hammer', 'bull', k, '하락 후 위꼬리 — 반등 시도');
+        else if (tr > 0.15) add('Shooting Star', 'bear', k, '상승 후 위꼬리 — 고점 경계');
+      }
+      // 마루보주
+      if (b >= r * 0.92) add(_green(c) ? 'Bullish Marubozu' : 'Bearish Marubozu', _green(c) ? 'bull' : 'bear', k, '꼬리 없는 강한 몸통');
+      // 장악형
+      if (_green(c) && _red(p) && c.c >= p.o && c.o <= p.c && _body(c) > _body(p) * 1.1)
+        add('Bullish Engulfing', 'bull', k, '전봉 음봉을 양봉이 완전 장악');
+      if (_red(c) && _green(p) && c.o >= p.c && c.c <= p.o && _body(c) > _body(p) * 1.1)
+        add('Bearish Engulfing', 'bear', k, '전봉 양봉을 음봉이 완전 장악');
+      // 하라미
+      if (Math.max(c.o,c.c) <= Math.max(p.o,p.c) && Math.min(c.o,c.c) >= Math.min(p.o,p.c) && _body(p) > _body(c) * 1.8) {
+        if (_red(p) && _green(c)) add('Bullish Harami', 'bull', k, '큰 음봉 속 작은 양봉 — 약화');
+        if (_green(p) && _red(c)) add('Bearish Harami', 'bear', k, '큰 양봉 속 작은 음봉 — 약화');
+      }
+      // 다크클라우드 / 피어싱
+      if (_red(c) && _green(p) && c.o > p.h && c.c < (p.o + p.c) / 2 && c.c > p.o)
+        add('Dark Cloud Cover', 'bear', k, '갭상승 출발 후 전봉 중간 아래 마감');
+      if (_green(c) && _red(p) && c.o < p.l && c.c > (p.o + p.c) / 2 && c.c < p.o)
+        add('Piercing Line', 'bull', k, '갭하락 출발 후 전봉 중간 위 마감');
+      // 모닝/이브닝 스타
+      if (_red(pp) && _body(p) < _body(pp) * 0.4 && _green(c) && c.c > (pp.o + pp.c) / 2 && _body(pp) > _range(pp)*0.5)
+        add('Morning Star', 'bull', k, '큰음봉→소봉→양봉 — 바닥 반전 3봉');
+      if (_green(pp) && _body(p) < _body(pp) * 0.4 && _red(c) && c.c < (pp.o + pp.c) / 2 && _body(pp) > _range(pp)*0.5)
+        add('Evening Star', 'bear', k, '큰양봉→소봉→음봉 — 천장 반전 3봉');
+      // 적삼병/흑삼병
+      if (_green(c) && _green(p) && _green(pp) && c.c > p.c && p.c > pp.c &&
+          _body(c) > _range(c)*0.5 && _body(p) > _range(p)*0.5 && _body(pp) > _range(pp)*0.5)
+        add('Three White Soldiers', 'bull', k, '연속 3양봉 상승 — 강한 매수세');
+      if (_red(c) && _red(p) && _red(pp) && c.c < p.c && p.c < pp.c &&
+          _body(c) > _range(c)*0.5 && _body(p) > _range(p)*0.5 && _body(pp) > _range(pp)*0.5)
+        add('Three Black Crows', 'bear', k, '연속 3음봉 하락 — 강한 매도세');
+      // 트위저
+      if (Math.abs(c.h - p.h) / p.h < 0.0015 && tr > 0.15) add('Tweezer Top', 'bear', k, '동일 고점 2회 — 저항 확인');
+      if (Math.abs(c.l - p.l) / p.l < 0.0015 && tr < -0.15) add('Tweezer Bottom', 'bull', k, '동일 저점 2회 — 지지 확인');
+    }
+    // 중복 제거(같은 이름은 최신 1개만)
+    var seen = {};
+    return out.filter(function(p){ if (seen[p.name]) return false; seen[p.name] = 1; return true; });
+  }
+
+  // ── 피벗(프랙탈) 추출: k봉 좌우보다 높/낮으면 피벗 ──
+  function _pivots(cs, k) {
+    k = k || 3;
+    var highs = [], lows = [];
+    for (var i = k; i < cs.length - k; i++) {
+      var isH = true, isL = true;
+      for (var j = i - k; j <= i + k; j++) {
+        if (j === i) continue;
+        if (cs[j].h >= cs[i].h) isH = false;
+        if (cs[j].l <= cs[i].l) isL = false;
+      }
+      if (isH) highs.push({ i: i, v: cs[i].h });
+      if (isL) lows.push({ i: i, v: cs[i].l });
+    }
+    return { highs: highs, lows: lows };
+  }
+  function _linfit(pts) { // {i,v}[] → {slope(%/bar), r}
+    if (pts.length < 2) return null;
+    var n = pts.length, sx=0, sy=0, sxy=0, sxx=0;
+    pts.forEach(function(p){ sx+=p.i; sy+=p.v; sxy+=p.i*p.v; sxx+=p.i*p.i; });
+    var slope = (n*sxy - sx*sy) / Math.max(1e-9, n*sxx - sx*sx);
+    var avg = sy / n;
+    return { slope: slope / avg * 100, abs: slope, avg: avg };
+  }
+
+  // ── 차트 패턴 감지 ──
+  function detectChartPatterns(cs) {
+    var out = [];
+    var n = cs.length;
+    if (n < 30) return { patterns: out, sr: { support: [], resistance: [] }, pivots: { highs: [], lows: [] } };
+    function add(name, dir, ds, pts){ out.push({ name:name, dir:dir, desc:ds, pts:pts||[], kind:'chart' }); }
+    var pv = _pivots(cs, 3);
+    var H = pv.highs, L = pv.lows;
+    var last = cs[n-1].c;
+    var tol = 0.02;
+    // 더블탑/바텀 (최근 피벗 2개)
+    if (H.length >= 2) {
+      var h1 = H[H.length-2], h2 = H[H.length-1];
+      if (Math.abs(h1.v - h2.v) / h1.v < tol && h2.i - h1.i >= 5) {
+        var valley = Infinity;
+        for (var i = h1.i; i <= h2.i; i++) valley = Math.min(valley, cs[i].l);
+        if ((Math.min(h1.v,h2.v) - valley) / valley > 0.02 && last < Math.max(h1.v,h2.v))
+          add('Double Top', 'bear', '동일 고점 2회 형성 — 넥라인 '+fmtNum(valley,2)+' 이탈 시 하락', [h1, h2]);
+      }
+    }
+    if (L.length >= 2) {
+      var l1 = L[L.length-2], l2 = L[L.length-1];
+      if (Math.abs(l1.v - l2.v) / l1.v < tol && l2.i - l1.i >= 5) {
+        var peak = -Infinity;
+        for (var i2 = l1.i; i2 <= l2.i; i2++) peak = Math.max(peak, cs[i2].h);
+        if ((peak - Math.max(l1.v,l2.v)) / l2.v > 0.02 && last > Math.min(l1.v,l2.v))
+          add('Double Bottom', 'bull', '동일 저점 2회 형성 — 넥라인 '+fmtNum(peak,2)+' 돌파 시 상승', [l1, l2]);
+      }
+    }
+    // 트리플 탑/바텀
+    if (H.length >= 3) {
+      var t3 = H.slice(-3);
+      if (Math.abs(t3[0].v - t3[1].v)/t3[0].v < tol && Math.abs(t3[1].v - t3[2].v)/t3[1].v < tol)
+        add('Triple Top', 'bear', '동일 고점 3회 — 강한 저항대', t3);
+    }
+    if (L.length >= 3) {
+      var b3 = L.slice(-3);
+      if (Math.abs(b3[0].v - b3[1].v)/b3[0].v < tol && Math.abs(b3[1].v - b3[2].v)/b3[1].v < tol)
+        add('Triple Bottom', 'bull', '동일 저점 3회 — 강한 지지대', b3);
+    }
+    // 헤드앤숄더 / 역헤드앤숄더
+    if (H.length >= 3) {
+      var s3 = H.slice(-3);
+      if (s3[1].v > s3[0].v * 1.015 && s3[1].v > s3[2].v * 1.015 && Math.abs(s3[0].v - s3[2].v)/s3[0].v < 0.03)
+        add('Head & Shoulders', 'bear', '좌어깨-머리-우어깨 — 천장 반전형', s3);
+    }
+    if (L.length >= 3) {
+      var i3 = L.slice(-3);
+      if (i3[1].v < i3[0].v * 0.985 && i3[1].v < i3[2].v * 0.985 && Math.abs(i3[0].v - i3[2].v)/i3[0].v < 0.03)
+        add('Inverse H&S', 'bull', '역헤드앤숄더 — 바닥 반전형', i3);
+    }
+    // 추세선 기반: 최근 피벗 4개 이상으로 채널/삼각형/쐐기
+    var recentH = H.slice(-4), recentL = L.slice(-4);
+    var fH = _linfit(recentH), fL = _linfit(recentL);
+    if (fH && fL && recentH.length >= 3 && recentL.length >= 3) {
+      var sH = fH.slope, sL = fL.slope, flat = 0.06;
+      if (Math.abs(sH) < flat && sL > flat)       add('Ascending Triangle', 'bull', '수평 저항 + 저점 상승 — 상방 돌파 우세', recentH.concat(recentL));
+      else if (Math.abs(sL) < flat && sH < -flat) add('Descending Triangle', 'bear', '수평 지지 + 고점 하락 — 하방 이탈 우세', recentH.concat(recentL));
+      else if (sH < -flat && sL > flat)           add('Symmetrical Triangle', 'neutral', '수렴 삼각형 — 돌파 방향 추종', recentH.concat(recentL));
+      else if (sH > flat && sL > flat) {
+        if (sL > sH * 1.4) add('Rising Wedge', 'bear', '상승 쐐기(수렴) — 피로 누적, 하방 이탈 주의', recentH.concat(recentL));
+        else               add('Channel Up', 'bull', '상승 채널 — 추세 지속', recentH.concat(recentL));
+      }
+      else if (sH < -flat && sL < -flat) {
+        if (sH < sL * 1.4) add('Falling Wedge', 'bull', '하락 쐐기(수렴) — 반등 임박 가능', recentH.concat(recentL));
+        else               add('Channel Down', 'bear', '하락 채널 — 추세 지속', recentH.concat(recentL));
+      }
+    }
+    // 지지/저항 레벨: 피벗 클러스터(1% 이내 2회 이상 터치)
+    function clusters(pts) {
+      var lv = [];
+      pts.forEach(function(p){
+        var hit = null;
+        for (var i = 0; i < lv.length; i++) if (Math.abs(lv[i].v - p.v) / p.v < 0.01) { hit = lv[i]; break; }
+        if (hit) { hit.n++; hit.v = (hit.v * (hit.n-1) + p.v) / hit.n; }
+        else lv.push({ v: p.v, n: 1 });
+      });
+      return lv.filter(function(l){ return l.n >= 2; }).sort(function(a,b){ return b.n - a.n; });
+    }
+    var res = clusters(H).filter(function(l){ return l.v > last; }).slice(0, 2);
+    var sup = clusters(L).filter(function(l){ return l.v < last; }).slice(0, 2);
+    return { patterns: out, sr: { support: sup, resistance: res }, pivots: pv };
+  }
+
+  // ── SVG 캔들차트 (지지/저항 + 패턴 피벗 마커) ──
+  function buildTaChart(cs, sr, patterns) {
+    var show = cs.slice(-90);
+    var off = cs.length - show.length;
+    var W = 720, Hh = 260, padL = 6, padR = 46, padT = 8, padB = 14;
+    var min = Infinity, max = -Infinity;
+    show.forEach(function(c){ min = Math.min(min, c.l); max = Math.max(max, c.h); });
+    (sr.support.concat(sr.resistance)).forEach(function(l){ min = Math.min(min, l.v); max = Math.max(max, l.v); });
+    var span = Math.max(1e-9, max - min); min -= span*0.03; max += span*0.03; span = max - min;
+    var iw = (W - padL - padR) / show.length;
+    function X(i){ return padL + (i + 0.5) * iw; }
+    function Y(v){ return padT + (1 - (v - min) / span) * (Hh - padT - padB); }
+    var svg = '<svg viewBox="0 0 '+W+' '+Hh+'" preserveAspectRatio="xMidYMid meet">';
+    // 지지/저항 라인
+    sr.resistance.forEach(function(l){
+      svg += '<line x1="'+padL+'" y1="'+Y(l.v)+'" x2="'+(W-padR)+'" y2="'+Y(l.v)+'" stroke="#f63538" stroke-width="0.8" stroke-dasharray="4 3" opacity="0.7"/>';
+      svg += '<text x="'+(W-padR+3)+'" y="'+(Y(l.v)+3)+'" font-size="8" fill="#f63538">R '+fmtNum(l.v, l.v>1000?0:2)+'</text>';
+    });
+    sr.support.forEach(function(l){
+      svg += '<line x1="'+padL+'" y1="'+Y(l.v)+'" x2="'+(W-padR)+'" y2="'+Y(l.v)+'" stroke="#30cc5a" stroke-width="0.8" stroke-dasharray="4 3" opacity="0.7"/>';
+      svg += '<text x="'+(W-padR+3)+'" y="'+(Y(l.v)+3)+'" font-size="8" fill="#30cc5a">S '+fmtNum(l.v, l.v>1000?0:2)+'</text>';
+    });
+    // 캔들
+    show.forEach(function(c, i){
+      var x = X(i), g = c.c >= c.o;
+      var col = g ? '#30cc5a' : '#f63538';
+      svg += '<line x1="'+x+'" y1="'+Y(c.h)+'" x2="'+x+'" y2="'+Y(c.l)+'" stroke="'+col+'" stroke-width="0.7"/>';
+      var bw = Math.max(1.5, iw * 0.62);
+      var yo = Y(Math.max(c.o, c.c)), hB = Math.max(0.8, Math.abs(Y(c.o) - Y(c.c)));
+      svg += '<rect x="'+(x - bw/2)+'" y="'+yo+'" width="'+bw+'" height="'+hB+'" fill="'+col+'"/>';
+    });
+    // 패턴 피벗 마커
+    (patterns || []).forEach(function(p){
+      (p.pts || []).forEach(function(pt){
+        var li = pt.i - off;
+        if (li < 0 || li >= show.length) return;
+        var col = p.dir === 'bull' ? '#30cc5a' : p.dir === 'bear' ? '#f63538' : '#ffc94d';
+        svg += '<circle cx="'+X(li)+'" cy="'+Y(pt.v)+'" r="3" fill="none" stroke="'+col+'" stroke-width="1.2"/>';
+      });
+    });
+    // 현재가 라인
+    var lastC = show[show.length-1].c;
+    svg += '<line x1="'+padL+'" y1="'+Y(lastC)+'" x2="'+(W-padR)+'" y2="'+Y(lastC)+'" stroke="#6aa9ff" stroke-width="0.6" stroke-dasharray="2 2" opacity="0.8"/>';
+    svg += '<text x="'+(W-padR+3)+'" y="'+(Y(lastC)+3)+'" font-size="8" fill="#6aa9ff">'+fmtNum(lastC, lastC>1000?0:2)+'</text>';
+    svg += '</svg>';
+    return svg;
+  }
+
+  // ── 분석 실행 + 렌더 ──
+  function runTaAnalysis(symbol, container) {
+    var box = container || $('taResult');
+    if (!box) return Promise.resolve();
+    box.innerHTML = '<div class="empty">'+escapeHtml(symbol)+' 차트 로딩 중...</div>';
+    return fetch('/api/chart?symbol=' + encodeURIComponent(symbol) + '&range=6mo')
+      .then(function(r){ return r.json(); })
+      .then(function(d){
+        if (!d || !d.candles || d.candles.length < 20) { box.innerHTML = '<div class="empty">차트 데이터 부족 ('+escapeHtml(symbol)+')</div>'; return; }
+        var cs = d.candles;
+        var candleP = detectCandlePatterns(cs);
+        var chartR = detectChartPatterns(cs);
+        var all = chartR.patterns.concat(candleP);
+        // 종합 점수
+        var score = 0;
+        all.forEach(function(p){ score += p.dir === 'bull' ? (p.kind==='chart'?2:1) : p.dir === 'bear' ? -(p.kind==='chart'?2:1) : 0; });
+        var bias = score >= 2 ? 'bull' : score <= -2 ? 'bear' : 'neutral';
+        var biasTxt = bias === 'bull' ? '▲ BULLISH' : bias === 'bear' ? '▼ BEARISH' : '— NEUTRAL';
+        var html = '<div class="ta-summary">'+
+          '<span style="font-weight:700;font-size:13px;">'+escapeHtml(symbol)+'</span>'+
+          '<span class="ta-badge '+bias+'">'+biasTxt+'</span>'+
+          '<span style="font-size:9.5px;color:var(--t3);">패턴 '+all.length+'개 · 점수 '+(score>=0?'+':'')+score+' · 일봉 6개월</span>'+
+          '</div>';
+        html += '<div class="ta-chart-wrap">'+buildTaChart(cs, chartR.sr, chartR.patterns)+'</div>';
+        if (chartR.patterns.length) {
+          html += '<div class="ta-sec">차트 패턴</div>';
+          html += chartR.patterns.map(function(p){
+            return '<div class="ta-pat"><span class="ta-dir '+p.dir+'">'+(p.dir==='bull'?'BUY':p.dir==='bear'?'SELL':'WAIT')+'</span><span class="nm">'+p.name+'</span><span class="ds">'+p.desc+'</span></div>';
+          }).join('');
+        }
+        if (candleP.length) {
+          html += '<div class="ta-sec">캔들 패턴 (최근 3봉)</div>';
+          html += candleP.map(function(p){
+            return '<div class="ta-pat"><span class="ta-dir '+p.dir+'">'+(p.dir==='bull'?'BUY':p.dir==='bear'?'SELL':'WAIT')+'</span><span class="nm">'+p.name+'</span><span class="ds">'+p.desc+'</span></div>';
+          }).join('');
+        }
+        if (!all.length) html += '<div class="empty">감지된 패턴 없음 — 명확한 자리 대기</div>';
+        var srTxt = [];
+        chartR.sr.resistance.forEach(function(l){ srTxt.push('저항 '+fmtNum(l.v, l.v>1000?0:2)+' ('+l.n+'회)'); });
+        chartR.sr.support.forEach(function(l){ srTxt.push('지지 '+fmtNum(l.v, l.v>1000?0:2)+' ('+l.n+'회)'); });
+        if (srTxt.length) html += '<div class="ta-sec">지지 / 저항</div><div class="ta-pat"><span class="ds" style="white-space:normal;">'+srTxt.join(' · ')+'</span></div>';
+        box.innerHTML = html;
+      })['catch'](function(e){ box.innerHTML = '<div class="empty">분석 실패: '+escapeHtml(String(e && e.message || e))+'</div>'; });
+  }
+
+  // ── 보유종목 일괄 스캔 (순차 — 서브리퀘스트 보호, 최대 8개) ──
+  function runTaHeldScan() {
+    var box = $('taResult');
+    if (!box) return;
+    var syms = [];
+    ['us','kr'].forEach(function(m){
+      Object.keys(heldMap[m] || {}).forEach(function(s){ if (syms.indexOf(s) < 0) syms.push(s); });
+    });
+    if (!syms.length) { box.innerHTML = '<div class="empty">보유 종목이 없습니다</div>'; return; }
+    syms = syms.slice(0, 8);
+    box.innerHTML = '<div class="empty">보유 '+syms.length+'종목 스캔 중...</div>';
+    var results = [];
+    function next(i) {
+      if (i >= syms.length) {
+        var html = '<div class="ta-sec">보유종목 패턴 스캔 ('+results.length+')</div>';
+        html += results.map(function(r){
+          var biasCls = r.score >= 2 ? 'bull' : r.score <= -2 ? 'bear' : 'neutral';
+          var top = r.top ? r.top.name : '패턴 없음';
+          return '<div class="ta-pat" style="cursor:pointer;" data-tasym="'+escapeHtml(r.symbol)+'">'+
+            '<span class="ta-dir '+biasCls+'">'+(r.score>=0?'+':'')+r.score+'</span>'+
+            '<span class="nm">'+escapeHtml(r.symbol)+'</span>'+
+            '<span class="ds">'+top+(r.count>1?' 외 '+(r.count-1)+'개':'')+' — 탭하면 상세</span></div>';
+        }).join('');
+        box.innerHTML = html;
+        box.querySelectorAll('[data-tasym]').forEach(function(el){
+          el.addEventListener('click', function(){ var s = el.getAttribute('data-tasym'); var inp = $('taSymbol'); if (inp) inp.value = s; runTaAnalysis(s); });
+        });
+        return;
+      }
+      fetch('/api/chart?symbol=' + encodeURIComponent(syms[i]) + '&range=6mo')
+        .then(function(r){ return r.json(); })
+        .then(function(d){
+          if (d && d.candles && d.candles.length >= 20) {
+            var cp = detectCandlePatterns(d.candles);
+            var ch = detectChartPatterns(d.candles);
+            var all = ch.patterns.concat(cp);
+            var score = 0;
+            all.forEach(function(p){ score += p.dir === 'bull' ? (p.kind==='chart'?2:1) : p.dir === 'bear' ? -(p.kind==='chart'?2:1) : 0; });
+            results.push({ symbol: syms[i], score: score, count: all.length, top: all[0] || null });
+          } else {
+            results.push({ symbol: syms[i], score: 0, count: 0, top: null });
+          }
+        })['catch'](function(){ results.push({ symbol: syms[i], score: 0, count: 0, top: null }); })
+        .then(function(){ next(i + 1); });
+    }
+    next(0);
   }
 
   // [V10] 종목 표시명 — 백엔드 NAME_MAP(q.name) 우선, 없으면 로컬 맵 fallback
@@ -6064,6 +6520,16 @@ html[data-theme="light"] .sb-brand-name{color:#fff;}
   var _btnNews = $('btnRefreshNews'); if (_btnNews) _btnNews.addEventListener('click', refreshNews);
   var _btnBDUS = $('btnRunBDUS'); if (_btnBDUS) _btnBDUS.addEventListener('click', function(){ runBondNow('bdus','btnRunBDUS'); });
   var _btnBDKR = $('btnRunBDKR'); if (_btnBDKR) _btnBDKR.addEventListener('click', function(){ runBondNow('bdkr','btnRunBDKR'); });
+  // [V59] 경제지표 캘린더 — 초기 로드 + 30분 주기 + 수동 새로고침
+  var _btnEcon = $('btnEconRefresh'); if (_btnEcon) _btnEcon.addEventListener('click', function(){ loadEcon(true); });
+  try { loadEcon(false); setInterval(function(){ loadEcon(false); }, 30 * 60 * 1000); } catch(e) {}
+  // [V59] 기술적 분석 — 분석 버튼 / 엔터 / 보유종목 스캔
+  var _btnTa = $('btnTaRun');
+  var _taInput = $('taSymbol');
+  function _taGo(){ var s = (_taInput && _taInput.value || '').trim().toUpperCase(); if (!s) { toast('심볼을 입력하세요'); return; } runTaAnalysis(s); }
+  if (_btnTa) _btnTa.addEventListener('click', _taGo);
+  if (_taInput) _taInput.addEventListener('keydown', function(e){ if (e.key === 'Enter') _taGo(); });
+  var _btnTaHeld = $('btnTaHeld'); if (_btnTaHeld) _btnTaHeld.addEventListener('click', runTaHeldScan);
   try{showPage(localStorage.getItem('luxPage')||'dashboard');}catch(e){showPage('dashboard');}
 
   // ══════════════════════════════════════════════
