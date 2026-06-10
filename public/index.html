@@ -1541,6 +1541,206 @@ input[type="range"]{accent-color:#dfe7f4!important;}
 /* 사용량 배너 */
 #usageBanner{background:rgba(255,255,255,.012)!important;backdrop-filter:blur(8px);
   border-left-width:2px!important;}
+
+/* ════════════════════════════════════════════════════════════════════
+   [V10.2 TERMINAL] Bloomberg-inspired 미니멀 터미널
+   · 다크 차콜 + 네온그린 수익 / 소프트레드 손실 · 헤어라인 모듈러 카드
+   · Stability & Precision — 구조/ID/기능 무변경, 로고 보호
+   ════════════════════════════════════════════════════════════════════ */
+:root{
+  --bg:#0d0f12; --s1:#13161a; --s2:#191d22; --s3:#20252c;
+  --bd:#262b33; --bd2:#1c2127;
+  --t1:#e9ecef; --t2:#9aa3ad; --t3:#5c656f;
+  --acc:#e9ecef; --acc2:#8b95a1;
+  --pos:#00e87f; --neg:#ff8095;
+  --amber:#ffc94d; --grn:#00e87f; --blue:#6aa9ff; --purple:#b794f6;
+  --strat-trend:#6aa9ff; --strat-scalp:#ffc94d; --strat-snap:#00e87f;
+  --radius:8px;
+  --glass:#13161a;
+  --glass-bd:#262b33;
+  --glow-acc:0 0 0 1px rgba(233,236,239,.06);
+  --moon:#e9ecef;
+}
+html[data-theme="light"]{
+  --bg:#f2f4f6; --s1:#ffffff; --s2:#f5f7f9; --s3:#eaeef2;
+  --bd:#d7dde3; --bd2:#e6ebf0;
+  --t1:#14181d; --t2:#48515b; --t3:#828c97;
+  --acc:#14181d; --acc2:#5a6571;
+  --pos:#089c5e; --neg:#dc4a64;
+  --glass:#ffffff; --glass-bd:#d7dde3;
+}
+
+/* 배경 — 정적 차콜, 장식 제거(정밀/안정) */
+body{background:var(--bg);font-family:'Space Grotesk','Helvetica Neue','Segoe UI',Arial,sans-serif;}
+body::before,body::after{display:none;}
+
+/* 카드 — 플랫 헤어라인 모듈 */
+.dash-block,.pos-market-card,.wl-pane,.vision-card,.cm-watch-card,.yield-card,
+.trades-summary,.llm-banner,.alt-panel,.idx-card,.pps-item{
+  background:var(--s1)!important;border:1px solid var(--bd)!important;
+  border-radius:var(--radius);backdrop-filter:none;-webkit-backdrop-filter:none;
+  box-shadow:none;transition:border-color .14s;
+}
+.dash-block:hover,.idx-card:hover,.vision-card:hover,.cm-watch-card:hover{
+  border-color:#39414c!important;box-shadow:none;transform:none;
+}
+.dash-block-label{color:var(--t3);}
+.dash-block-label::before{background:var(--pos);box-shadow:0 0 6px rgba(0,232,127,.5);}
+
+/* 사이드바 — 솔리드 패널 */
+.sidebar{background:#101317;backdrop-filter:none;border-right:1px solid var(--bd);}
+html[data-theme="light"] .sidebar{background:#fff;}
+.sb-brand-name{color:#fff;text-shadow:none;}
+html[data-theme="light"] .sb-brand-name{color:#14181d;}
+.sb-brand::after{background:var(--bd);}
+.nav-item{border-radius:6px;}
+.nav-item:hover{background:rgba(233,236,239,.05);transform:none;}
+.nav-item.active{background:rgba(0,232,127,.07);box-shadow:inset 0 0 0 1px rgba(0,232,127,.22);}
+.nav-item.active::before{background:var(--pos);}
+.nav-item.active .nav-item-label{color:var(--pos);}
+.nav-item-icon{color:var(--t3);}
+.sb-run-btn{background:var(--pos)!important;color:#06130c!important;border-radius:7px!important;
+  box-shadow:0 0 16px rgba(0,232,127,.22);}
+.sb-run-btn:hover{box-shadow:0 0 24px rgba(0,232,127,.36);transform:none;}
+.sb-btn:hover{border-color:#3a424d!important;color:var(--t1);box-shadow:none;}
+
+/* 탑바/타이틀 */
+.content-topbar{background:var(--s1);backdrop-filter:none;border-bottom:1px solid var(--bd);}
+.topbar-value{text-shadow:none;font-family:'IBM Plex Mono',monospace;}
+.page-title{background:none;-webkit-text-fill-color:var(--t1);color:var(--t1);letter-spacing:2px;}
+
+/* 테이블 — 터미널 정밀 */
+.table th{background:var(--s2);border-bottom:1px solid var(--bd);}
+.table tbody tr:hover{background:rgba(0,232,127,.035);box-shadow:inset 2px 0 0 var(--pos);}
+.table td{font-family:'IBM Plex Mono',monospace;}
+.table td:first-child{font-family:'Space Grotesk',sans-serif;}
+.pos{color:var(--pos)!important;}
+.neg{color:var(--neg)!important;}
+
+/* 버튼 */
+.btn{border-radius:6px;}
+.btn:hover{border-color:#3a424d;color:var(--t1);box-shadow:none;transform:none;}
+.btn.primary{background:var(--pos);color:#06130c;border:none;box-shadow:0 0 14px rgba(0,232,127,.2);}
+.btn.primary:hover{color:#06130c;box-shadow:0 0 22px rgba(0,232,127,.34);}
+.trade-filter-btn.active{background:rgba(0,232,127,.08);border-color:rgba(0,232,127,.35);
+  color:var(--pos);box-shadow:none;}
+
+/* 모달 — 솔리드 + 그린 헤어라인 */
+.modal{background:rgba(6,8,10,.8);backdrop-filter:blur(4px);}
+.modal-content,.modal-macro,.modal-logs{
+  border:1px solid var(--bd)!important;border-radius:12px!important;
+  background:var(--s1)!important;
+  box-shadow:0 24px 70px rgba(0,0,0,.6)!important;
+}
+html[data-theme="light"] .modal-content,html[data-theme="light"] .modal-macro,
+html[data-theme="light"] .modal-logs{background:#fff!important;}
+.modal-content h2,.modal-macro h2,.modal-logs h2{border-bottom:1px solid var(--bd);}
+.close-x:hover{border-color:#3a424d;color:var(--t1);box-shadow:none;}
+.macro-mkt-head{background:var(--s2);border:1px solid var(--bd2);border-radius:6px;}
+.macro-table-wrap{border:1px solid var(--bd);border-radius:8px;background:transparent;}
+.macro-table th{background:var(--s2);}
+.macro-next{border:1px solid rgba(0,232,127,.25);background:rgba(0,232,127,.04);border-radius:8px;box-shadow:none;}
+.log-filter button.active{background:rgba(0,232,127,.1);color:var(--pos);border-color:rgba(0,232,127,.35);box-shadow:none;}
+.logs-search:focus{border-color:rgba(0,232,127,.4);box-shadow:none;}
+.log-box-modal{background:#0a0c0f;border-radius:8px;}
+.field input:focus,.field select:focus,.field textarea:focus{
+  border-color:rgba(0,232,127,.45)!important;box-shadow:none!important;}
+.checkbox-row input[type="checkbox"]{accent-color:var(--pos);}
+input[type="range"]{accent-color:var(--pos)!important;}
+.section-title{color:var(--t2);}
+.section-title::after{background:var(--bd);}
+.llm-btn:hover{border-color:#3a424d;color:var(--t1);box-shadow:none;}
+
+/* [V10.2] ENGINE PIPELINE 상태 모니터 */
+.pipeline-bar{margin:0 28px 0;border:1px solid var(--bd);border-radius:var(--radius);
+  background:var(--s1);overflow:hidden;}
+.pipeline-head{display:flex;align-items:center;gap:10px;padding:9px 14px;border-bottom:1px solid var(--bd2);}
+.pipeline-title{font-size:9px;font-weight:700;letter-spacing:1.8px;color:var(--t2);}
+.pipeline-sub{font-size:9px;color:var(--t3);font-variant-numeric:tabular-nums;margin-left:auto;letter-spacing:.8px;}
+.pipeline-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(130px,1fr));}
+.pl-step{display:flex;align-items:center;gap:6px;padding:8px 12px;border-right:1px solid var(--bd2);
+  font-size:9px;min-width:0;}
+.pl-step:last-child{border-right:none;}
+.pl-dot{font-size:8px;flex-shrink:0;}
+.pl-ok .pl-dot{color:var(--pos);text-shadow:0 0 6px rgba(0,232,127,.6);}
+.pl-stale .pl-dot{color:var(--amber);}
+.pl-never .pl-dot{color:var(--t3);}
+.pl-name{font-weight:700;letter-spacing:.6px;color:var(--t2);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
+.pl-ok .pl-name{color:var(--t1);}
+.pl-age{margin-left:auto;color:var(--t3);font-variant-numeric:tabular-nums;flex-shrink:0;font-family:'IBM Plex Mono',monospace;}
+@media(max-width:900px){.pipeline-grid{grid-template-columns:repeat(2,1fr);}.pl-step{border-bottom:1px solid var(--bd2);}}
+
+/* AI DIRECTIVE 패널 강조 */
+.llm-banner{border-left:2px solid var(--pos)!important;}
+.llm-banner-title{color:var(--t1);}
+.llm-status-chip{border-radius:4px;}
+
+/* 배지/토스트/기타 */
+.toast{border:1px solid rgba(0,232,127,.3);background:#101317;box-shadow:0 8px 30px rgba(0,0,0,.55);}
+.cm-watch-card{background:var(--s1)!important;}
+.pos-market-head{background:var(--s2);}
+.vision-up{border-color:rgba(0,232,127,.4);color:var(--pos);background:rgba(0,232,127,.05);}
+.vision-down{border-color:rgba(255,128,149,.4);color:var(--neg);background:rgba(255,128,149,.05);}
+.wl-card.held{border-left:2px solid var(--pos);box-shadow:none;}
+::selection{background:rgba(0,232,127,.25);}
+
+/* ════════════════════════════════════════════════════════════════════
+   [V10.3 FINVIZ FLAVOR] — 핀비즈 감성 레이어
+   · 히트맵 그린(#30cc5a)/레드(#f63538) · 틱커 블루링크
+   · 줄무늬 초고밀도 테이블 + 옐로 호버 · 등락 칠해진 칩
+   ════════════════════════════════════════════════════════════════════ */
+:root{
+  --pos:#30cc5a; --neg:#f63538;
+  --grn:#30cc5a;
+  --fviz-blue:#58a6ff; --fviz-hover:rgba(255,233,150,.07);
+}
+html[data-theme="light"]{
+  --pos:#008800; --neg:#cc0000;
+  --fviz-blue:#2a6fd1; --fviz-hover:rgba(255,255,160,.55);
+}
+
+/* 테이블 — 핀비즈 스크리너 밀도 (Verdana 10px + 줄무늬 + 옐로 호버) */
+.table,.macro-table,.trades-table{font-family:Verdana,Arial,sans-serif;font-size:10px;}
+.table td,.macro-table td{font-family:Verdana,Arial,sans-serif;font-size:10px;padding:4px 9px;}
+.table th,.macro-table th{font-size:8px;letter-spacing:1px;}
+.table tbody tr:nth-child(even),.macro-table tbody tr:nth-child(even){background:rgba(255,255,255,.018);}
+html[data-theme="light"] .table tbody tr:nth-child(even){background:rgba(20,30,50,.03);}
+.table tbody tr:hover,.macro-table tbody tr:hover{background:var(--fviz-hover);box-shadow:none;}
+
+/* 틱커 — 핀비즈 블루 링크 */
+.table td:first-child b,.wl-sym,.vision-card-sym{color:var(--fviz-blue);}
+.table tbody tr:hover td:first-child b{text-decoration:underline;}
+
+/* 등락/손익 — 히트맵 셀 필 */
+.table td.pos{background:rgba(48,204,90,.09);}
+.table td.neg{background:rgba(246,53,56,.09);}
+.wl-day.pos,.cm-watch-day.pos{background:#1d7c3d;color:#fff;border-radius:3px;padding:1px 6px;}
+.wl-day.neg,.cm-watch-day.neg{background:#ad2226;color:#fff;border-radius:3px;padding:1px 6px;}
+html[data-theme="light"] .wl-day.pos,html[data-theme="light"] .cm-watch-day.pos{background:#2e9e52;}
+html[data-theme="light"] .wl-day.neg,html[data-theme="light"] .cm-watch-day.neg{background:#d6373b;}
+.idx-day.pos{color:#fff;background:#1d7c3d;border-radius:3px;padding:0 5px;}
+.idx-day.neg{color:#fff;background:#ad2226;border-radius:3px;padding:0 5px;}
+
+/* 카드/모서리 — 핀비즈처럼 각지고 타이트하게 */
+:root{--radius:4px;}
+.dash-block,.pos-market-card,.wl-pane,.vision-card,.cm-watch-card,.yield-card,
+.trades-summary,.llm-banner,.alt-panel,.idx-card,.pps-item,.pipeline-bar{border-radius:4px;}
+.table-wrap,.macro-table-wrap{border-radius:3px;}
+.btn,.sb-btn,.llm-btn,.trade-filter-btn,.log-filter button{border-radius:3px!important;}
+.dash-grid{gap:8px;padding:8px;}
+.dash-block{padding:14px 18px;}
+
+/* 네비/액센트 — 그린 유지하되 채도 매칭 */
+.nav-item.active{background:rgba(48,204,90,.08);box-shadow:inset 0 0 0 1px rgba(48,204,90,.25);}
+.nav-item.active .nav-item-label{color:var(--pos);}
+.nav-item.active::before{background:var(--pos);}
+.sb-run-btn{background:var(--pos)!important;box-shadow:0 0 14px rgba(48,204,90,.22);}
+.btn.primary{background:var(--pos);box-shadow:0 0 12px rgba(48,204,90,.2);}
+.dash-block-label::before{background:var(--pos);box-shadow:0 0 6px rgba(48,204,90,.5);}
+.pl-ok .pl-dot{color:var(--pos);text-shadow:0 0 6px rgba(48,204,90,.6);}
+.llm-banner{border-left-color:var(--pos)!important;}
+.trade-filter-btn.active{background:rgba(48,204,90,.08);border-color:rgba(48,204,90,.35);color:var(--pos);}
+.macro-next{border-color:rgba(48,204,90,.25);background:rgba(48,204,90,.04);}
 </style>
 </head>
 <body>
@@ -1674,10 +1874,10 @@ input[type="range"]{accent-color:#dfe7f4!important;}
     <!-- ══ PAGE: DASHBOARD ══ -->
     <div class="page" id="page-dashboard">
 
-      <!-- LLM 배너 -->
+      <!-- AI DAILY DIRECTIVE 패널 -->
       <div class="llm-banner" id="llmBanner">
         <div class="llm-banner-header">
-          <span class="llm-banner-title"><span class="star-icon"></span>CLAUDE LLM HYBRID</span>
+          <span class="llm-banner-title"><span class="star-icon"></span>AI DAILY DIRECTIVE</span>
           <span class="llm-status-chip" id="llmStatusChip">CHECKING...</span>
           <span id="llmHeaderRight" style="margin-left:auto;font-size:10px;color:var(--t3);"></span>
         </div>
@@ -1690,6 +1890,15 @@ input[type="range"]{accent-color:#dfe7f4!important;}
           <button class="llm-btn" onclick="llmViewDetail()">상세</button>
           <button class="llm-btn danger" onclick="llmClear()">✕ 삭제</button>
         </div>
+      </div>
+
+      <!-- [V10.2] ENGINE PIPELINE — 8단계 서브시스템 상태 모니터 -->
+      <div class="pipeline-bar" id="pipelineBar">
+        <div class="pipeline-head">
+          <span class="pipeline-title">ENGINE PIPELINE</span>
+          <span class="pipeline-sub" id="pipelineSub">8 SUBSYSTEMS · 로딩 중...</span>
+        </div>
+        <div class="pipeline-grid" id="pipelineGrid"></div>
       </div>
 
       <!-- Cloudflare 사용량 + 강제 락 배너 -->
@@ -3155,6 +3364,28 @@ input[type="range"]{accent-color:#dfe7f4!important;}
     }
   }
 
+  // [V10.2] ENGINE PIPELINE — 8개 서브시스템 최종 실행시각 상태 모니터
+  function loadPipeline() {
+    fetch('/api/pipeline').then(function(r){ return r.json(); }).then(function(d){
+      var grid = $('pipelineGrid');
+      var sub = $('pipelineSub');
+      if (!grid || !d || !d.steps) return;
+      var okCnt = 0;
+      grid.innerHTML = d.steps.map(function(s){
+        var cls = s.status === 'OK' ? 'pl-ok' : s.status === 'STALE' ? 'pl-stale' : 'pl-never';
+        if (s.status === 'OK') okCnt++;
+        var ageStr = s.ts ? fmtAgo(s.ts) : '미실행';
+        var icon = s.status === 'OK' ? '●' : s.status === 'STALE' ? '◐' : '○';
+        return '<div class="pl-step '+cls+'">'+
+          '<span class="pl-dot">'+icon+'</span>'+
+          '<span class="pl-name">'+s.label+'</span>'+
+          '<span class="pl-age">'+ageStr+'</span>'+
+        '</div>';
+      }).join('');
+      if (sub) sub.textContent = okCnt + ' / ' + d.steps.length + ' SUBSYSTEMS NOMINAL';
+    })['catch'](function(){});
+  }
+
   function loadCommodities() {
     return api('/api/commodities').then(function(data){
       renderCommodities(data);
@@ -4515,6 +4746,8 @@ input[type="range"]{accent-color:#dfe7f4!important;}
       })['catch'](function(e){ toast('로드 실패: '+e.message); });
     // [COMMODITY] 원자재 패널은 별도 엔드포인트로 로드
     loadCommodities();
+    // [V10.2] 엔진 파이프라인 상태 모니터
+    loadPipeline();
     // [BONDS] 국채 패널 로드
     loadBonds();
     // [NEWS] 뉴스 로드
