@@ -1010,6 +1010,65 @@ html[data-theme="light"] .sb-brand-sub{ color:#888; }
 .alt-row:hover:not(.head){background:var(--s2);}
 .intel-sector-item{transition:background .1s;}
 .intel-sector-item:hover{background:var(--s2);}
+/* ═══════════ [V53 DESIGN REFRESH] 블루나이트 팔레트 + 라운드 + 전략 컬러 ═══════════ */
+:root{
+  --bg:#070b12; --s1:#0d131d; --s2:#131b28; --s3:#1a2433;
+  --bd:#243044; --bd2:#1a2333;
+  --t1:#eef2f8; --t2:#a8b4c8; --t3:#6b7891;
+  --acc:#4cc2ff; --amber:#fbbf24; --grn:#4ade80;
+  --strat-trend:#4cc2ff; --strat-scalp:#fbbf24; --strat-snap:#4ade80;
+  --radius:10px;
+}
+html[data-theme="light"]{
+  --bg:#f4f6fa; --s1:#ffffff; --s2:#eef1f6; --s3:#e3e8f0;
+  --bd:#d4dae4; --bd2:#e3e8f0;
+  --t1:#16202e; --t2:#44516a; --t3:#7b879c;
+  --acc:#0284c7;
+}
+body{background:radial-gradient(1200px 600px at 70% -10%,rgba(76,194,255,0.05),transparent 60%),var(--bg);}
+.card,.pos-market-card,.vision-card,.cm-watch-card,.wl-card,.modal-box{border-radius:var(--radius);}
+.table-wrap{border-radius:8px;overflow:hidden;}
+.btn{border-radius:6px;transition:all .15s;}
+.btn:hover{transform:translateY(-1px);}
+.nav-item{border-radius:6px;margin:1px 6px;}
+.market-badge,.vision-badge,.trade-filter-btn{border-radius:5px;}
+
+/* ── [V53] 포지션 — 전략별 좌측 컬러보더 + PnL 게이지 ── */
+.pos-row-trend{border-left:3px solid var(--strat-trend);}
+.pos-row-scalp{border-left:3px solid var(--strat-scalp);}
+.pos-row-snap{border-left:3px solid var(--strat-snap);}
+.pos-row-other{border-left:3px solid var(--bd);}
+.pos-pnl-bar{position:relative;width:64px;height:5px;background:var(--bd2);border-radius:3px;display:inline-block;vertical-align:middle;margin-left:6px;overflow:hidden;}
+.pos-pnl-bar > i{position:absolute;top:0;height:100%;border-radius:3px;}
+.pos-market-head{display:flex;align-items:center;gap:8px;flex-wrap:wrap;padding:12px 16px;font-weight:700;font-size:12px;letter-spacing:.5px;border-bottom:1px solid var(--bd);background:linear-gradient(180deg,var(--s2),var(--s1));border-radius:var(--radius) var(--radius) 0 0;}
+.pos-strat-chip{font-size:9px;font-weight:700;padding:1px 7px;border-radius:4px;border:1px solid;letter-spacing:.5px;}
+.pos-market-card{border:1px solid var(--bd);background:var(--s1);margin-bottom:14px;overflow:hidden;}
+.pos-market-card .table tbody tr:hover{background:var(--s2);}
+.pos-days-chip{font-size:9px;color:var(--t3);background:var(--s2);padding:1px 6px;border-radius:4px;}
+
+/* ── [V53] 원자재 카드 리디자인 ── */
+.cm-watch-card{position:relative;border:1px solid var(--bd);background:linear-gradient(160deg,var(--s2) 0%,var(--s1) 70%);padding:12px 14px 10px;overflow:hidden;transition:transform .12s,border-color .12s;}
+.cm-watch-card:hover{transform:translateY(-2px);border-color:var(--acc);}
+.cm-watch-card::before{content:'';position:absolute;top:0;left:0;right:0;height:2.5px;background:var(--cm-top,transparent);}
+.cm-watch-sym{font-size:12px;font-weight:700;color:var(--t1);letter-spacing:.3px;}
+.cm-watch-name{font-size:9px;color:var(--t3);margin-top:1px;}
+.cm-watch-price{font-size:18px;font-weight:700;font-variant-numeric:tabular-nums;margin-top:7px;letter-spacing:-.3px;}
+.cm-watch-day{display:inline-block;font-size:10px;font-weight:700;margin-top:4px;padding:1px 7px;border-radius:4px;}
+.cm-watch-day.pos{background:rgba(74,222,128,.12);}
+.cm-watch-day.neg{background:rgba(255,23,68,.12);}
+.cm-watch-meta{font-size:9px;color:var(--t3);margin-top:6px;display:flex;align-items:center;gap:5px;}
+.cm-rsi-bar{flex:1;height:3px;background:var(--bd2);border-radius:2px;overflow:hidden;}
+.cm-rsi-bar > i{display:block;height:100%;border-radius:2px;}
+
+/* ── [V53] Vision 상태 패널 ── */
+.vision-status-panel{display:flex;gap:18px;flex-wrap:wrap;align-items:center;padding:12px 20px;border-bottom:1px solid var(--bd);background:linear-gradient(180deg,var(--s2),var(--s1));font-size:10px;}
+.vision-stat{display:flex;flex-direction:column;gap:2px;}
+.vision-stat-label{font-size:8.5px;font-weight:700;letter-spacing:1px;color:var(--t3);text-transform:uppercase;}
+.vision-stat-value{font-size:13px;font-weight:700;font-variant-numeric:tabular-nums;}
+.vision-budget-bar{width:110px;height:5px;background:var(--bd2);border-radius:3px;overflow:hidden;}
+.vision-budget-bar > i{display:block;height:100%;background:var(--acc);border-radius:3px;}
+.vision-alert{font-size:10px;font-weight:700;color:var(--amber);padding:2px 8px;border:1px solid rgba(251,191,36,.35);border-radius:5px;background:rgba(251,191,36,.07);}
+.vision-ok{color:var(--grn);border-color:rgba(74,222,128,.35);background:rgba(74,222,128,.07);}
 </style>
 </head>
 <body>
@@ -1459,6 +1518,15 @@ html[data-theme="light"] .sb-brand-sub{ color:#888; }
         <span id="visionScanLabel" style="font-size:11px;color:var(--t2);font-weight:600;">Roboflow Vision AI</span>
         <span id="visionScanProgress" class="vision-progress"></span>
         <span id="visionScanStatus" class="vision-scan-status">API Key를 Settings에서 설정하세요</span>
+      </div>
+      <!-- [V53] 백엔드 작동 상태 패널 — Vision이 실제로 도는지 한눈에 -->
+      <div class="vision-status-panel" id="visionStatusPanel" style="display:none;">
+        <div class="vision-stat"><div class="vision-stat-label">엔진 상태</div><div class="vision-stat-value" id="vsEngine">—</div></div>
+        <div class="vision-stat"><div class="vision-stat-label">오늘 API 사용</div><div class="vision-stat-value"><span id="vsUsage">—</span><div class="vision-budget-bar" style="margin-top:3px;"><i id="vsUsageBar" style="width:0%;"></i></div></div></div>
+        <div class="vision-stat"><div class="vision-stat-label">예측 보유</div><div class="vision-stat-value" id="vsPreds">—</div></div>
+        <div class="vision-stat"><div class="vision-stat-label">적중률</div><div class="vision-stat-value" id="vsAcc">—</div></div>
+        <div class="vision-stat"><div class="vision-stat-label">마지막 스캔</div><div class="vision-stat-value" id="vsLast" style="font-size:11px;">—</div></div>
+        <span id="vsAlert" class="vision-alert" style="display:none;"></span>
       </div>
       <!-- 요약 -->
       <div class="vision-summary-row" id="visionSummaryRow" style="display:none;">
@@ -2369,13 +2437,21 @@ html[data-theme="light"] .sb-brand-sub{ color:#888; }
       var agg = market === 'US' ? aggUS : aggKR;
       var flag = market === 'US' ? '🇺🇸' : '🇰🇷';
       var aggHtml = agg ? ' <span class="'+agg.cls+'" style="font-size:12px;font-weight:700;margin-left:8px;">'+agg.pnlText+' ('+agg.pctText+')</span>' : '';
+      // [V53] 전략별 보유 카운트 칩
+      var stratCnt = {};
+      list.forEach(function(p){ var s=(p.strategy||'other').toLowerCase(); stratCnt[s]=(stratCnt[s]||0)+1; });
+      var stratColors = { trend:'var(--strat-trend)', scalp:'var(--strat-scalp)', snap:'var(--strat-snap)' };
+      var chips = Object.keys(stratCnt).map(function(s){
+        var c = stratColors[s] || 'var(--t3)';
+        return '<span class="pos-strat-chip" style="border-color:'+c+';color:'+c+';">'+s.toUpperCase()+' '+stratCnt[s]+'</span>';
+      }).join(' ');
       var html = '<div class="pos-market-card">';
-      html += '<div class="pos-market-head">'+flag+' '+market+' POSITIONS <span class="pos-market-count">'+list.length+'</span>'+aggHtml+'</div>';
+      html += '<div class="pos-market-head">'+flag+' '+market+' POSITIONS <span class="pos-market-count">'+list.length+'</span>'+chips+aggHtml+'</div>';
       html += '<div class="table-wrap"><table class="table"><thead><tr>'+
         '<th>SYMBOL</th><th>STRATEGY</th><th>REASON</th>'+
         '<th class="right">QTY</th><th class="right">AVG</th><th class="right">CUR</th>'+
         '<th class="right">VALUE</th><th class="right">PnL</th><th class="right">PnL%</th>'+
-        '<th class="right">OPENED</th></tr></thead><tbody>';
+        '<th class="right">HELD</th></tr></thead><tbody>';
       withPnl.forEach(function(item){
         var p = item.p;
         var q = lastQuotes[p.symbol];
@@ -2392,10 +2468,25 @@ html[data-theme="light"] .sb-brand-sub{ color:#888; }
         var pnlText = pnl != null ? (pnl >= 0 ? '+' : '-') + sym + fmtMoney(Math.abs(pnl)) : '-';
         var name = market === 'KR' ? krLabel(p.symbol) : usLabel(p.symbol);
         var label = name ? '<b>'+escapeHtml(p.symbol)+'</b> <span style="color:var(--dim);font-size:10px;">'+escapeHtml(name)+'</span>' : '<b>'+escapeHtml(p.symbol)+'</b>';
+        var strat = (p.strategy || 'other').toLowerCase();
+        var rowCls = (strat === 'trend' || strat === 'scalp' || strat === 'snap') ? 'pos-row-' + strat : 'pos-row-other';
         var stratCell = strategyBadge(p.strategy || 'swing');
         var reason = p.entrySignal || (p.meta && p.meta.signal) || '-';
         var reasonCell = '<span style="font-size:10px;color:var(--dim);">'+escapeHtml(reason)+'</span>';
-        html += '<tr>'+
+        // [V53] PnL 게이지 — ±10% 풀스케일 시각화
+        var barHtml = '';
+        if (pnlPct != null) {
+          var mag = Math.min(100, Math.abs(pnlPct) / 10 * 100);
+          var bc = pnlPct >= 0 ? 'var(--pos)' : 'var(--neg)';
+          var side = pnlPct >= 0 ? 'left:50%;' : 'right:50%;';
+          barHtml = '<span class="pos-pnl-bar"><i style="'+side+'width:'+(mag/2)+'%;background:'+bc+';"></i></span>';
+        }
+        // [V53] 보유일 칩
+        var heldDays = p.opened_ts ? Math.floor((Date.now() - p.opened_ts) / 86400000) : null;
+        var heldText = heldDays == null ? fmtAgo(p.opened_ts)
+          : heldDays === 0 ? '<span class="pos-days-chip">오늘</span>'
+          : '<span class="pos-days-chip">' + heldDays + '일</span>';
+        html += '<tr class="'+rowCls+'">'+
           '<td>'+label+'</td>'+
           '<td>'+stratCell+'</td>'+
           '<td>'+reasonCell+'</td>'+
@@ -2404,8 +2495,8 @@ html[data-theme="light"] .sb-brand-sub{ color:#888; }
           '<td class="right">'+curText+'</td>'+
           '<td class="right">'+valueText+'</td>'+
           '<td class="right '+pnlClass+'">'+pnlText+'</td>'+
-          '<td class="right '+pnlClass+'">'+pnlPctText+'</td>'+
-          '<td class="right">'+fmtAgo(p.opened_ts)+'</td>'+
+          '<td class="right '+pnlClass+'">'+pnlPctText+barHtml+'</td>'+
+          '<td class="right">'+heldText+'</td>'+
         '</tr>';
       });
       html += '</tbody></table></div></div>';
@@ -2573,12 +2664,19 @@ html[data-theme="light"] .sb-brand-sub{ color:#888; }
           var hasPrice = typeof q.price === 'number';
           var dc = q.dayPct > 0 ? 'pos' : q.dayPct < 0 ? 'neg' : '';
           var sign = q.dayPct >= 0 ? '+' : '';
-          return '<div class="cm-watch-card">'+
+          // [V53] 카드 상단 컬러보더(등락) + RSI 게이지
+          var topColor = q.dayPct > 0 ? 'var(--pos)' : q.dayPct < 0 ? 'var(--neg)' : 'var(--bd)';
+          var rsi = (q.rsi != null && isFinite(q.rsi)) ? q.rsi : null;
+          var rsiColor = rsi == null ? 'var(--t3)' : rsi >= 70 ? 'var(--neg)' : rsi <= 30 ? 'var(--grn)' : 'var(--acc)';
+          var rsiBar = rsi != null
+            ? '<span style="min-width:42px;">RSI ' + rsi.toFixed(0) + '</span><span class="cm-rsi-bar"><i style="width:' + Math.min(100, rsi) + '%;background:' + rsiColor + ';"></i></span>'
+            : '<span>RSI -</span>';
+          return '<div class="cm-watch-card" style="--cm-top:'+topColor+';">'+
             '<div class="cm-watch-sym">'+escapeHtml(q.name||q.symbol)+'</div>'+
             '<div class="cm-watch-name">'+escapeHtml(q.symbol)+(q.unit?' · '+escapeHtml(q.unit):'')+'</div>'+
             '<div class="cm-watch-price">'+(hasPrice?'$'+fmtNum(q.price,2):'-')+'</div>'+
             '<div class="cm-watch-day '+dc+'">'+(typeof q.dayPct==='number'?sign+fmtNum(q.dayPct,2)+'%':'-')+'</div>'+
-            '<div class="cm-watch-meta">RSI '+(q.rsi!=null?q.rsi.toFixed(1):'-')+'</div>'+
+            '<div class="cm-watch-meta">'+rsiBar+'</div>'+
             '</div>';
         }).join('');
       }
@@ -3996,10 +4094,16 @@ html[data-theme="light"] .sb-brand-sub{ color:#888; }
     var reqPct = usageState.reqPct || '0';
     var cpuPct = usageState.cpuPct || '0';
     var barColor = worst >= shutAt ? 'var(--neg)' : worst >= warnAt ? 'var(--amber)' : 'var(--pos)';
+    // [V53] 절대 수치 동봉 — %만으로는 0.0%일 때 "표시 안 됨"처럼 보이던 문제 해결
+    var ud = usageState.data || {};
+    var reqAbs = (ud.requests != null) ? Number(ud.requests).toLocaleString() : '0';
+    var cpuMin = (ud.cpuMs != null) ? (ud.cpuMs / 60000).toFixed(1) : '0';
+    var subAbs = (ud.subreqs != null) ? Number(ud.subreqs).toLocaleString() : '0';
     body.innerHTML =
-      '<span>Requests: <b>'+reqPct+'%</b>'+bar(reqPct, barColor)+'</span>' +
-      '<span>CPU: <b>'+cpuPct+'%</b>'+bar(cpuPct, barColor)+'</span>' +
-      '<span style="color:var(--t3);">셧다운: '+shutAt+'% | 경보: '+warnAt+'%</span>';
+      '<span>Requests: <b>'+reqPct+'%</b> <span style="color:var(--t3);">('+reqAbs+'회)</span>'+bar(reqPct, barColor)+'</span>' +
+      '<span>CPU: <b>'+cpuPct+'%</b> <span style="color:var(--t3);">('+cpuMin+'분)</span>'+bar(cpuPct, barColor)+'</span>' +
+      '<span>Subrequests: <b>'+subAbs+'</b></span>' +
+      '<span style="color:var(--t3);">셧다운: '+shutAt+'% | 경보: '+warnAt+'% | 이번 달 cron 기준 누적</span>';
   }
 
   function toggleForceLock() {
@@ -4014,6 +4118,10 @@ html[data-theme="light"] .sb-brand-sub{ color:#888; }
         refreshAll();
       })['catch'](function(e) { toast('실패: ' + e.message); });
   }
+
+  // [V53 버그수정] onclick="toggleForceLock()"는 전역을 찾는데 함수가 IIFE 안에 있어
+  //   클릭해도 ReferenceError로 무반응이었음 → 전역 바인딩
+  window.toggleForceLock = toggleForceLock;
 
   function runNow() {
     var btn = $('btnTick');
@@ -4975,35 +5083,81 @@ html[data-theme="light"] .sb-brand-sub{ color:#888; }
     } catch(e) {}
   }
 
-  // [한도 보호] 전체 스캔 = 백엔드 예측 새로고침
-  //   프론트는 더 이상 Roboflow를 직접 호출하지 않는다. 백엔드(beta v1.js)가
-  //   일일예산 추적 하에 전담 스캔하므로, 프론트가 별도로 호출하면 같은 Roboflow
-  //   한도를 이중 소모해 터질 수 있다. 따라서 버튼은 백엔드 결과를 불러와 표시만 한다.
+  // [V53] Vision 백엔드 상태 패널 로드 — 작동 여부 진단 표시
+  function loadVisionStatus() {
+    return fetch('/api/vision-status').then(function(r){ return r.json(); }).then(function(d){
+      var panel = $('visionStatusPanel');
+      if (!panel) return d;
+      panel.style.display = '';
+      var eng = $('vsEngine');
+      if (eng) {
+        eng.textContent = d.enabled && d.hasApiKey ? '● 작동 중' : '○ 정지';
+        eng.style.color = d.enabled && d.hasApiKey ? 'var(--grn)' : 'var(--neg)';
+      }
+      if ($('vsUsage')) $('vsUsage').textContent = d.todayUsage + ' / ' + d.dailyBudget + '콜';
+      if ($('vsUsageBar')) $('vsUsageBar').style.width = Math.min(100, d.todayUsage / Math.max(1, d.dailyBudget) * 100) + '%';
+      if ($('vsPreds')) $('vsPreds').textContent = d.predCount + '종목 (▲' + d.upCount + ' ▼' + d.downCount + ')';
+      if ($('vsAcc')) {
+        var a = d.accuracy;
+        $('vsAcc').textContent = (a && a.total >= 20) ? Math.round(a.precision * 100) + '% (n=' + a.total + ')' : '표본 부족';
+      }
+      if ($('vsLast')) $('vsLast').textContent = d.lastScanTs ? fmtAgo(d.lastScanTs) : '없음';
+      var alertEl = $('vsAlert');
+      if (alertEl) {
+        if (d.notRunningReason) {
+          alertEl.style.display = '';
+          alertEl.className = 'vision-alert';
+          alertEl.textContent = '⚠ ' + d.notRunningReason;
+        } else {
+          alertEl.style.display = '';
+          alertEl.className = 'vision-alert vision-ok';
+          alertEl.textContent = '✓ 정상 — 3분마다 자동 스캔';
+        }
+      }
+      return d;
+    })['catch'](function(){ return null; });
+  }
+
+  // [V53] 전체 스캔 = 백엔드 강제 스캔 트리거 + 결과 반영
+  //   기존엔 저장된 예측만 다시 읽어 "눌러도 아무 일 없음"처럼 보였음.
+  //   이제 POST /api/vision-scan으로 백엔드가 즉시 1배치(최대 6콜)를 돌리고,
+  //   완료되면 새 예측을 불러온다. 일일예산은 백엔드가 동일하게 추적한다.
   async function runVisionScanAll() {
     if (visionScanning) return;
     visionScanning = true;
-    var prog = $('visionScanProgress');
     var stat = $('visionScanStatus');
-    if (prog) prog.textContent = '';
-    if (stat) stat.textContent = '백엔드 예측 불러오는 중...';
+    var btn = $('btnVisionScanAll');
+    if (btn) { btn.disabled = true; btn.textContent = '⏳ 스캔 중...'; }
+    if (stat) stat.textContent = '백엔드 스캔 실행 중... (최대 30초)';
     try {
+      var sr = await fetch('/api/vision-scan', { method: 'POST' });
+      var sd = await sr.json();
+      if (sd && sd.skipped) {
+        var msg = { disabled: 'Vision AI가 Settings에서 꺼져 있음', no_api_key: 'Roboflow API Key 미설정',
+                    daily_budget: '오늘 API 예산 소진 — 내일 자동 재개', all_fresh: '모든 예측이 최신 — 스캔 불필요',
+                    no_candidates: '스캔 대상 없음' }[sd.skipped] || sd.skipped;
+        if (stat) stat.textContent = '⚠ ' + msg;
+      } else if (sd && sd.ok === false) {
+        if (stat) stat.textContent = '스캔 실패: ' + (sd.error || '알 수 없는 오류');
+      } else {
+        if (stat) stat.textContent = '✓ ' + (sd.scanned || 0) + '종목 스캔 (' + (sd.callsUsed || 0) + '콜)' + (sd.rateLimited ? ' · 일부 429 제한' : '');
+      }
+      // 새 예측 반영
       var r = await fetch('/api/state');
       var s = await r.json();
       if (s && s.visionPredictions) {
         Object.keys(s.visionPredictions).forEach(function(k){
-          if (k.indexOf('__') === 0) return;          // __accuracy 등 메타 제외
+          if (k.indexOf('__') === 0) return;
           visionResults[k] = s.visionPredictions[k];
         });
         try { localStorage.setItem('visionResults', JSON.stringify(visionResults)); } catch(e) {}
       }
-      var cnt = Object.keys(visionResults).filter(function(k){ return k.indexOf('__') !== 0; }).length;
-      var acc = s && s.visionPredictions && s.visionPredictions.__accuracy;
-      var accStr = (acc && acc.total >= 20) ? ' · 적중률 ' + Math.round(acc.precision * 100) + '%' : '';
-      if (stat) stat.textContent = '백엔드 예측 ' + cnt + '종목 반영' + accStr;
     } catch(e) {
-      if (stat) stat.textContent = '불러오기 실패';
+      if (stat) stat.textContent = '스캔 실패: ' + e.message;
     }
     visionScanning = false;
+    if (btn) { btn.disabled = false; btn.textContent = '▶ 전체 스캔'; }
+    loadVisionStatus();
     renderVisionPage();
     applyVisionBadges();
   }
@@ -5066,12 +5220,16 @@ html[data-theme="light"] .sb-brand-sub{ color:#888; }
     html += '</div>';
     grid.innerHTML = html;
 
-    // 차트 이미지 삽입 (백엔드 데이터 있을 때)
-    sorted.forEach(function(sym) {
-      var wrap = document.getElementById('vcanvas_' + sym);
-      if (!wrap) return;
-      try {
-        fetch('/api/daily?symbol=' + encodeURIComponent(sym))
+    // [V53 랙 해소] 차트 이미지 — 기존엔 모든 카드가 동시에 /api/daily를 fetch해
+    //   수백 요청이 한꺼번에 나가 브라우저/워커가 멈췄음. 상위 24개만, 4개씩 순차 로드.
+    var chartTargets = sorted.slice(0, 24);
+    (function loadCharts(idx) {
+      if (idx >= chartTargets.length) return;
+      var batch = chartTargets.slice(idx, idx + 4);
+      Promise.all(batch.map(function(sym) {
+        var wrap = document.getElementById('vcanvas_' + sym);
+        if (!wrap) return Promise.resolve();
+        return fetch('/api/daily?symbol=' + encodeURIComponent(sym))
           .then(function(r){ return r.ok ? r.json() : null; })
           .then(function(daily) {
             if (!daily || !daily.closes) return;
@@ -5080,8 +5238,8 @@ html[data-theme="light"] .sb-brand-sub{ color:#888; }
             cv.style.height = 'auto';
             wrap.appendChild(cv);
           })['catch'](function(){});
-      } catch(e) {}
-    });
+      })).then(function(){ setTimeout(function(){ loadCharts(idx + 4); }, 120); });
+    })(0);
   }
 
   // Watchlist 카드에 Vision badge 추가 (렌더 후 호출)
@@ -5123,7 +5281,7 @@ html[data-theme="light"] .sb-brand-sub{ color:#888; }
   document.querySelectorAll('.nav-item').forEach(function(item) {
     item.addEventListener('click', function() {
       if (this.getAttribute('data-page') === 'vision') {
-        setTimeout(function() { renderVisionPage(); }, 50);
+        setTimeout(function() { renderVisionPage(); loadVisionStatus(); }, 50);
       }
     });
   });
