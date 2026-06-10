@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>LUX-ENGINE V9</title>
+<title>LUX-ENGINE V10</title>
 <link rel="icon" type="image/svg+xml" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'%3E%3Crect width='100' height='100' fill='%23000'/%3E%3Cpath fill='%23fff' d='M50 8 L53 41.7 L70.7 29.3 L58.3 47 L92 50 L58.3 53 L70.7 70.7 L53 58.3 L50 92 L47 58.3 L29.3 70.7 L41.7 53 L8 50 L41.7 47 L29.3 29.3 L47 41.7 Z'/%3E%3Cpath fill='%23b6bcc6' d='M50 50 L50 8 L53 41.7 Z M50 50 L70.7 29.3 L58.3 47 Z M50 50 L92 50 L58.3 53 Z M50 50 L70.7 70.7 L53 58.3 Z M50 50 L50 92 L47 58.3 Z M50 50 L29.3 70.7 L41.7 53 Z M50 50 L8 50 L41.7 47 Z M50 50 L29.3 29.3 L47 41.7 Z'/%3E%3C/svg%3E">
 <script>
 // 테마 선반영(깜빡임 방지) — 저장값 없으면 기본 다크
@@ -1300,6 +1300,247 @@ html[data-theme="light"] .modal-content{background:linear-gradient(180deg,#fff,#
 
 /* ── 셀렉션/포커스 ── */
 ::selection{background:rgba(34,211,238,.3);}
+
+/* ════════════════════════════════════════════════════════════════════
+   [V10 MOONLAKE] 완전 리디자인 — 달빛이 비치는 호수
+   · 모노크롬(흑/백/은빛) · 몽환적 글래스 · 문라이트 글로우
+   · 모든 ID/구조 유지 → 기능 100% 보존 · 로고 무변경
+   ════════════════════════════════════════════════════════════════════ */
+:root{
+  --bg:#030409; --s1:#0a0c12; --s2:#10131b; --s3:#171b25;
+  --bd:rgba(225,233,248,.09); --bd2:rgba(225,233,248,.055);
+  --t1:#eef1f8; --t2:#a7adbd; --t3:#5d6373;
+  --acc:#e6ebf5; --acc2:#aab3c5;
+  --pos:#8fe3bd; --neg:#f5a3b3;
+  --amber:#e8d5a3; --grn:#8fe3bd; --blue:#aac4e8; --purple:#c4b5e8;
+  --strat-trend:#cfd9ea; --strat-scalp:#e8d5a3; --strat-snap:#8fe3bd;
+  --radius:14px;
+  --glass:rgba(13,16,24,.58);
+  --glass-bd:rgba(225,233,248,.09);
+  --glow-acc:0 0 22px rgba(230,238,252,.10);
+  --moon:#f2f5fb;
+}
+html[data-theme="light"]{
+  --bg:#eff1f6; --s1:#ffffff; --s2:#f3f5f9; --s3:#e9ecf3;
+  --bd:rgba(20,28,45,.12); --bd2:rgba(20,28,45,.07);
+  --t1:#15181f; --t2:#474d5c; --t3:#848da0;
+  --acc:#1a1f2b; --acc2:#4b5365;
+  --pos:#1d9e6e; --neg:#d24a68;
+  --glass:rgba(255,255,255,.8); --glass-bd:rgba(20,28,45,.1);
+  --glow-acc:0 0 16px rgba(20,30,55,.07);
+}
+
+/* ── 하늘과 호수: 달 + 수면 반영 ── */
+body{
+  font-family:'Space Grotesk','Helvetica Neue','Segoe UI',Arial,sans-serif;
+  background:var(--bg);
+}
+body::before{ /* 밤하늘 + 달 */
+  content:'';position:fixed;inset:0;z-index:0;pointer-events:none;
+  background:
+    radial-gradient(circle 140px at 78% 12%, rgba(244,247,252,.16), rgba(244,247,252,.05) 45%, transparent 70%),
+    radial-gradient(circle 70px at 78% 12%, rgba(248,250,254,.28), transparent 75%),
+    radial-gradient(1100px 700px at 78% 5%, rgba(214,224,242,.05), transparent 60%),
+    radial-gradient(900px 600px at 12% 30%, rgba(190,200,224,.025), transparent 55%);
+}
+body::after{ /* 수면 위 달빛 기둥 — 느린 일렁임 */
+  content:'';position:fixed;left:0;right:0;bottom:0;height:46vh;z-index:0;pointer-events:none;
+  background:
+    linear-gradient(180deg, transparent, rgba(222,230,246,.022) 35%, rgba(222,230,246,.045)),
+    radial-gradient(45% 130% at 78% 100%, rgba(236,242,252,.07), transparent 65%),
+    repeating-linear-gradient(180deg, rgba(238,243,252,.028) 0 1.5px, transparent 1.5px 9px);
+  -webkit-mask-image:linear-gradient(180deg, transparent, #000 30%);
+  mask-image:linear-gradient(180deg, transparent, #000 30%);
+  animation:lakeShimmer 9s ease-in-out infinite;
+}
+@keyframes lakeShimmer{0%,100%{opacity:.75;}50%{opacity:1;}}
+html[data-theme="light"] body::before,html[data-theme="light"] body::after{opacity:.4;}
+.shell{position:relative;z-index:1;}
+
+/* ── 사이드바: 안개 낀 유리 ── */
+.sidebar{
+  background:linear-gradient(180deg, rgba(12,14,21,.88), rgba(5,6,11,.94));
+  backdrop-filter:blur(18px);-webkit-backdrop-filter:blur(18px);
+  border-right:1px solid var(--glass-bd);
+}
+html[data-theme="light"] .sidebar{background:linear-gradient(180deg,rgba(255,255,255,.94),rgba(244,246,250,.97));}
+.sb-brand::after{background:linear-gradient(90deg,transparent,rgba(238,243,252,.4),transparent);}
+.sb-brand-name{color:#fff;text-shadow:0 0 18px rgba(244,248,255,.3);}
+html[data-theme="light"] .sb-brand-name{color:#15181f;text-shadow:none;}
+.nav-item{border-radius:9px;margin:2px 8px;}
+.nav-item:hover{background:rgba(238,243,252,.05);transform:translateX(2px);}
+.nav-item.active{
+  background:linear-gradient(90deg, rgba(240,244,252,.1), rgba(240,244,252,.03));
+  box-shadow:inset 0 0 0 1px rgba(240,244,252,.14), var(--glow-acc);
+}
+.nav-item.active::before{background:linear-gradient(180deg,#f4f7fd,#9aa6bc);}
+.nav-item.active .nav-item-label{color:var(--moon);}
+.nav-item-icon{color:var(--acc2);}
+
+/* RUN NOW — 달빛 버튼 (흰색 채움 + 검은 글자) */
+.sb-run-btn{
+  background:linear-gradient(160deg,#f7f9fd,#c9d2e2)!important;
+  color:#0b0d13!important;border:none!important;border-radius:10px!important;
+  box-shadow:0 4px 22px rgba(238,243,252,.2), inset 0 1px 0 rgba(255,255,255,.6);
+}
+.sb-run-btn:hover{box-shadow:0 6px 30px rgba(238,243,252,.32);transform:translateY(-1px);}
+.sb-btn:hover{border-color:rgba(238,243,252,.35)!important;color:var(--moon);box-shadow:var(--glow-acc);}
+
+/* ── 콘텐츠 영역 ── */
+.content::-webkit-scrollbar-thumb{background:rgba(238,243,252,.18);border-radius:3px;}
+.content-topbar{background:var(--glass);backdrop-filter:blur(16px);border-bottom:1px solid var(--glass-bd);}
+.topbar-value{text-shadow:0 0 16px rgba(240,245,253,.12);}
+.page-title{
+  background:linear-gradient(90deg,var(--t1) 55%,rgba(238,243,252,.55));
+  -webkit-background-clip:text;background-clip:text;-webkit-text-fill-color:transparent;
+}
+
+/* ── 카드: 호수 위 안개 유리 ── */
+.dash-block,.pos-market-card,.wl-pane,.vision-card,.cm-watch-card,.yield-card,
+.trades-summary,.llm-banner,.alt-panel,.idx-card,.pps-item{
+  background:var(--glass)!important;
+  backdrop-filter:blur(14px);-webkit-backdrop-filter:blur(14px);
+  border:1px solid var(--glass-bd)!important;
+  box-shadow:0 10px 34px rgba(0,0,0,.4), inset 0 1px 0 rgba(255,255,255,.03);
+}
+.dash-block:hover,.idx-card:hover,.vision-card:hover,.cm-watch-card:hover{
+  border-color:rgba(238,243,252,.2)!important;
+  box-shadow:0 12px 38px rgba(0,0,0,.44), var(--glow-acc);
+}
+html[data-theme="light"] .dash-block,html[data-theme="light"] .pos-market-card,
+html[data-theme="light"] .wl-pane,html[data-theme="light"] .idx-card{box-shadow:0 6px 22px rgba(25,35,60,.07);}
+.dash-block-label{color:var(--t2);}
+.dash-block-label::before{background:var(--moon);box-shadow:0 0 9px rgba(244,248,255,.5);}
+
+/* ── 고밀도 데이터 뷰 — 더 많은 행이 한 화면에 ── */
+.table{font-size:10.5px;}
+.table th{padding:6px 10px;font-size:8px;background:rgba(238,243,252,.035);color:var(--t3);
+  position:sticky;top:0;z-index:2;backdrop-filter:blur(6px);}
+.table td{padding:5px 10px;}
+.table tbody tr:hover{background:rgba(238,243,252,.04);box-shadow:inset 2px 0 0 var(--moon);}
+.wl-card{padding:8px 12px;}
+.dash-block{padding:18px 22px;}
+.macro-table th,.macro-table td{padding:6px 10px;font-size:10.5px;}
+
+/* ── 버튼 ── */
+.btn:hover{border-color:rgba(238,243,252,.32);color:var(--moon);box-shadow:var(--glow-acc);}
+.btn.primary{background:linear-gradient(160deg,#f7f9fd,#c9d2e2);color:#0b0d13;border:none;
+  box-shadow:0 3px 16px rgba(238,243,252,.18);}
+.btn.primary:hover{color:#0b0d13;box-shadow:0 5px 24px rgba(238,243,252,.3);}
+.trade-filter-btn.active{background:rgba(240,244,252,.1);border-color:rgba(240,244,252,.32);
+  color:var(--moon);box-shadow:var(--glow-acc);}
+
+/* ════ 모달 공통 — 달빛 프레임 ════ */
+.modal{background:rgba(2,3,7,.72);backdrop-filter:blur(10px);-webkit-backdrop-filter:blur(10px);}
+.modal-content,.modal-macro,.modal-logs{
+  border:1px solid rgba(238,243,252,.12)!important;border-radius:18px!important;
+  background:linear-gradient(175deg, rgba(15,18,27,.97), rgba(7,9,15,.98))!important;
+  box-shadow:0 30px 90px rgba(0,0,0,.65), 0 0 0 1px rgba(238,243,252,.04),
+             0 0 60px rgba(238,243,252,.05)!important;
+}
+html[data-theme="light"] .modal-content,html[data-theme="light"] .modal-macro,
+html[data-theme="light"] .modal-logs{background:linear-gradient(175deg,#fff,#f3f5f9)!important;}
+.modal-content h2,.modal-macro h2,.modal-logs h2{
+  letter-spacing:2px;padding-bottom:14px;margin-bottom:16px;
+  border-bottom:1px solid rgba(238,243,252,.09);
+  display:flex;justify-content:space-between;align-items:center;
+}
+.close-x{width:28px;height:28px;display:inline-flex;align-items:center;justify-content:center;
+  border-radius:8px;border:1px solid var(--glass-bd);cursor:pointer;font-size:12px;
+  transition:all .14s;color:var(--t2);}
+.close-x:hover{border-color:rgba(238,243,252,.4);color:var(--moon);box-shadow:var(--glow-acc);}
+
+/* ── 지표(매크로)·환율 모달 ── */
+.macro-sub{color:var(--t3);letter-spacing:.4px;margin-bottom:12px;}
+.macro-mkt-head{
+  display:flex;align-items:center;gap:8px;font-weight:700;font-size:11px;letter-spacing:1.5px;
+  margin:18px 0 8px;padding:8px 12px;border-radius:9px;
+  background:rgba(238,243,252,.04);border:1px solid var(--bd2);
+}
+.macro-table-wrap{border:1px solid var(--glass-bd);border-radius:12px;overflow:hidden;background:rgba(255,255,255,.012);}
+.macro-table{width:100%;border-collapse:collapse;}
+.macro-table th{background:rgba(238,243,252,.045);color:var(--t3);font-size:8.5px;letter-spacing:1.4px;text-transform:uppercase;text-align:left;}
+.macro-table th.r,.macro-table td.r{text-align:right;}
+.macro-table td{border-top:1px solid var(--bd2);font-variant-numeric:tabular-nums;}
+.macro-table tbody tr:hover{background:rgba(238,243,252,.035);}
+.macro-next{border:1px solid rgba(238,243,252,.14);border-radius:12px;background:rgba(238,243,252,.045);
+  box-shadow:inset 0 1px 0 rgba(255,255,255,.04);}
+.macro-next-card{border-radius:9px;}
+.dday{border-radius:6px;font-weight:700;}
+.macro-disclaimer{color:var(--t3);font-size:9.5px;margin-top:14px;opacity:.8;}
+.llm-btn{border-radius:8px;border:1px solid var(--glass-bd);background:rgba(238,243,252,.04);
+  transition:all .14s;color:var(--t2);}
+.llm-btn:hover{border-color:rgba(238,243,252,.35);color:var(--moon);box-shadow:var(--glow-acc);}
+
+/* ── 로그 모달 — 콘솔 감성 ── */
+.logs-toolbar{gap:10px;margin-bottom:10px;}
+.logs-search{
+  border-radius:9px;border:1px solid var(--glass-bd);background:rgba(255,255,255,.025);
+  padding:8px 12px;color:var(--t1);font-family:'IBM Plex Mono',monospace;font-size:11px;
+  transition:all .14s;flex:1;
+}
+.logs-search:focus{border-color:rgba(238,243,252,.35);box-shadow:var(--glow-acc);outline:none;}
+.logs-info{color:var(--t3);font-variant-numeric:tabular-nums;}
+.log-filter{display:flex;flex-wrap:wrap;gap:5px;}
+.log-filter button{
+  border-radius:7px;border:1px solid var(--glass-bd);background:rgba(255,255,255,.02);
+  color:var(--t3);font-size:9px;font-weight:700;letter-spacing:.8px;padding:4px 10px;
+  cursor:pointer;transition:all .13s;font-family:inherit;
+}
+.log-filter button:hover{color:var(--moon);border-color:rgba(238,243,252,.3);}
+.log-filter button.active{background:rgba(240,244,252,.12);color:var(--moon);
+  border-color:rgba(240,244,252,.35);box-shadow:var(--glow-acc);}
+.log-box-modal{
+  border:1px solid var(--glass-bd);border-radius:12px;background:rgba(2,3,7,.85);
+  font-family:'IBM Plex Mono',monospace;
+}
+.log-line{padding:3px 12px;border-bottom:1px solid rgba(238,243,252,.03);line-height:1.55;}
+.log-line:hover{background:rgba(238,243,252,.045);}
+.log-ts{color:var(--t3);}
+.log-level{border-radius:4px;font-weight:700;}
+
+/* ── 세팅 모달 — 입력 폼 클린업 ── */
+.settings-epigraph{opacity:.85;}
+.section-title{
+  color:var(--moon);letter-spacing:2px;font-size:10px;
+  display:flex;align-items:center;gap:8px;margin:20px 0 10px;
+}
+.section-title::after{content:'';flex:1;height:1px;background:linear-gradient(90deg,rgba(238,243,252,.18),transparent);}
+.section-divider{border:none;height:1px;background:rgba(238,243,252,.06);margin:18px 0;}
+.field label{color:var(--t2);font-size:9.5px;letter-spacing:.6px;}
+.field input,.field select,.field textarea{
+  border-radius:9px!important;border:1px solid var(--glass-bd)!important;
+  background:rgba(255,255,255,.028)!important;color:var(--t1)!important;
+  padding:8px 11px!important;transition:all .14s!important;
+  font-family:'IBM Plex Mono',monospace!important;font-size:11px!important;
+}
+.field input:focus,.field select:focus,.field textarea:focus{
+  border-color:rgba(238,243,252,.38)!important;box-shadow:var(--glow-acc)!important;outline:none!important;
+}
+.checkbox-row{padding:7px 10px;border-radius:9px;transition:background .12s;}
+.checkbox-row:hover{background:rgba(238,243,252,.03);}
+.checkbox-row input[type="checkbox"]{accent-color:#dfe7f4;}
+.budget-split-box{border-radius:12px!important;border:1px solid var(--glass-bd)!important;
+  background:rgba(255,255,255,.02)!important;}
+input[type="range"]{accent-color:#dfe7f4!important;}
+.hint{color:var(--t3);opacity:.85;}
+.modal-actions{border-top:1px solid rgba(238,243,252,.07);padding-top:14px;margin-top:18px;}
+
+/* ── 전략/배지 모노톤 조정 ── */
+.vision-up{border-color:rgba(143,227,189,.4);color:var(--pos);background:rgba(143,227,189,.06);box-shadow:none;}
+.vision-down{border-color:rgba(245,163,179,.4);color:var(--neg);background:rgba(245,163,179,.06);box-shadow:none;}
+.pos-market-head{background:linear-gradient(90deg, rgba(238,243,252,.05), transparent 70%);}
+.cm-watch-card{background:linear-gradient(165deg, rgba(20,24,34,.72), rgba(8,10,16,.85))!important;}
+
+/* ── 토스트/인디케이터 ── */
+.toast{border:1px solid rgba(238,243,252,.22);background:rgba(8,10,16,.94);
+  box-shadow:0 10px 36px rgba(0,0,0,.55), var(--glow-acc);}
+.live-dot,.dot{box-shadow:0 0 8px currentColor;}
+::selection{background:rgba(238,243,252,.25);}
+
+/* 사용량 배너 */
+#usageBanner{background:rgba(255,255,255,.012)!important;backdrop-filter:blur(8px);
+  border-left-width:2px!important;}
 </style>
 </head>
 <body>
@@ -1325,7 +1566,7 @@ html[data-theme="light"] .modal-content{background:linear-gradient(180deg,#fff,#
     <div class="sb-brand">
       <span class="sb-brand-logo"><svg class="lux-star-svg" viewBox="0 0 100 100" xmlns="http://www.w3.org/2000/svg" aria-hidden="true"><path class="lux-star-base" d="M50 2 L53.44 41.68 L73.33 26.67 L58.32 46.56 L98 50 L58.32 53.44 L73.33 73.33 L53.44 58.32 L50 98 L46.56 58.32 L26.67 73.33 L41.68 53.44 L2 50 L41.68 46.56 L26.67 26.67 L46.56 41.68 Z"/><path class="lux-star-facet" d="M50 50 L50 2 L53.44 41.68 Z M50 50 L73.33 26.67 L58.32 46.56 Z M50 50 L98 50 L58.32 53.44 Z M50 50 L73.33 73.33 L53.44 58.32 Z M50 50 L50 98 L46.56 58.32 Z M50 50 L26.67 73.33 L41.68 53.44 Z M50 50 L2 50 L41.68 46.56 Z M50 50 L26.67 26.67 L46.56 41.68 Z"/></svg></span>
       <span class="sb-brand-name">LUX-ENGINE</span>
-      <div class="sb-brand-sub">V9 BETA · <span class="blackletter" style="font-size:12px;">Blauenacht</span></div>
+      <div class="sb-brand-sub">V10 · <span class="blackletter" style="font-size:12px;">Blauenacht</span></div>
     </div>
 
     <!-- 상태 표시 -->
