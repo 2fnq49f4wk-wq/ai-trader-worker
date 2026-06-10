@@ -11005,6 +11005,50 @@ async function handleRequest(request, env) {
       return Response.json({ ok: true }, { headers: cors });
     }
 
+    // [V53] VISION AI: 진단 상태 — 작동 여부를 UI에서 한눈에 파악
+    if (path === "/api/vision-status" && request.method === "GET") {
+      const cfg = migrateCfgToMarkets(Object.assign({}, DEFAULT_CFG, await getState(env.DB, "cfg", {})));
+      const va = cfg.visionAI || {};
+      const nowD = new Date();
+      const todayKey = "vision_usage:" + nowD.toISOString().slice(0, 10);
+      const todayUsage = (await getState(env.DB, todayKey, 0)) || 0;
+      const MONTHLY_BUDGET = va.monthlyBudget || 10000;
+      const DAILY_BUDGET = Math.floor(MONTHLY_BUDGET / 22 * 0.85);
+      const preds = await getState(env.DB, "vision_predictions", {});
+      const acc = (await getState(env.DB, "vision_accuracy", null)) || { hits: 0, total: 0 };
+      let predCount = 0, lastTs = 0, upN = 0, downN = 0;
+      for (const k in preds) {
+        if (k.indexOf("__") === 0) continue;
+        predCount++;
+        const p = preds[k];
+        if (p && p.ts > lastTs) lastTs = p.ts;
+        if (p && p.pred === "up") upN++; else downN++;
+      }
+      return Response.json({
+        enabled: !!va.enabled,
+        hasApiKey: !!va.rfApiKey,
+        todayUsage: todayUsage,
+        dailyBudget: DAILY_BUDGET,
+        monthlyBudget: MONTHLY_BUDGET,
+        predCount: predCount, upCount: upN, downCount: downN,
+        lastScanTs: lastTs || null,
+        accuracy: { hits: Math.round(acc.hits), total: Math.round(acc.total), precision: acc.total > 0 ? acc.hits / acc.total : null },
+        notRunningReason: !va.enabled ? "Settings에서 Vision AI가 꺼져 있음"
+          : !va.rfApiKey ? "Roboflow API Key 미설정"
+          : (todayUsage >= DAILY_BUDGET) ? "일일 예산 소진 (내일 자동 재개)"
+          : null
+      }, { headers: cors });
+    }
+
+    // [V53] VISION AI: 수동 전체 스캔 트리거 — cron 시각 게이트를 우회(force)해 즉시 1배치 실행
+    if (path === "/api/vision-scan" && request.method === "POST") {
+      let r = null;
+      try { r = await runVisionScanBackend(env, true); } catch (e) {
+        return Response.json({ ok: false, error: String(e && e.message || e) }, { headers: cors });
+      }
+      return Response.json(Object.assign({ ok: true }, r || {}), { headers: cors });
+    }
+
     if (path === "/api/macro" && request.method === "GET") {
       const data = await getState(env.DB, "macro_data", null);
       return Response.json(data || { us: {}, kr: {}, updatedAt: null, empty: true }, { headers: cors });
@@ -11385,28 +11429,30 @@ async function fetchSecFilings(env) {
 //   C) 입력 품질 — 차트 가격선 3px·MA 2px 굵기로 모델 인식률↑ (EMA 평활 병행)
 //
 // ────────────────────────────────────────────────────────────────────────────
-async function runVisionScanBackend(env) {
+async function runVisionScanBackend(env, force) {
   const DB = env.DB;
   const now = Date.now();
   const nowD = new Date(now);
 
-  // ── (1) 거래 보호: 주말 스킵 + 3분에 1번만 ──
-  const utcDay = nowD.getUTCDay();
-  if (utcDay === 0 || utcDay === 6) return;
-  if (nowD.getUTCMinutes() % 3 !== 0) return;
+  // ── (1) 거래 보호: 주말 스킵 + 3분에 1번만 (force=수동 트리거 시 시각 게이트 우회) ──
+  if (!force) {
+    const utcDay = nowD.getUTCDay();
+    if (utcDay === 0 || utcDay === 6) return;
+    if (nowD.getUTCMinutes() % 3 !== 0) return;
+  }
 
   // [한도 보호] 무거운 외부 fetch가 몰리는 트리거 시각(원자재청산·환율·지표 갱신)엔
   //   Vision을 양보 → 같은 invocation의 Cloudflare subrequest 피크 회피. 다음 cron(3분 후) 재개.
-  if (isCommodityTriggerTime() || isFxTriggerTime() || isMacroTriggerTime()) return;
+  if (!force && (isCommodityTriggerTime() || isFxTriggerTime() || isMacroTriggerTime())) return;
   // [fetch 분산] SEC 스캔 시간대(UTC 08:00~08:30)도 양보 → 외부 fetch 완전 분리
-  {
+  if (!force) {
     const _um = nowD.getUTCHours() * 60 + nowD.getUTCMinutes();
     if (_um >= 480 && _um <= 510) return;
   }
 
   const cfg = migrateCfgToMarkets(Object.assign({}, DEFAULT_CFG, await getState(DB, "cfg", {})));
   const va = cfg.visionAI || {};
-  if (!va.enabled || !va.rfApiKey) return;
+  if (!va.enabled || !va.rfApiKey) return force ? { scanned: 0, callsUsed: 0, skipped: !va.enabled ? "disabled" : "no_api_key" } : undefined;
 
   const apiKey  = va.rfApiKey;
   const version = va.rfVersion || 7;
@@ -11422,7 +11468,7 @@ async function runVisionScanBackend(env) {
 
   const todayKey = "vision_usage:" + nowD.toISOString().slice(0, 10);
   const todayUsage = (await getState(DB, todayKey, 0)) || 0;
-  if (todayUsage >= DAILY_BUDGET) return;
+  if (todayUsage >= DAILY_BUDGET) return force ? { scanned: 0, callsUsed: 0, skipped: "daily_budget" } : undefined;
 
   // ── 보유 종목 + 매수시각 ──
   const heldOpened = {};
@@ -11475,7 +11521,7 @@ async function runVisionScanBackend(env) {
     // 비보유는 일단 가장 짧은 후보 주기 기준으로 통과시키고 2차에서 세분
     return age > CAND_AGE;
   });
-  if (aged.length === 0) return;
+  if (aged.length === 0) return force ? { scanned: 0, callsUsed: 0, skipped: "all_fresh" } : undefined;
 
   // aged 정렬: 보유 먼저 → 오래된 순 (제한된 평가 횟수 안에서 중요 종목 우선)
   aged.sort((a, b) => {
@@ -11507,7 +11553,7 @@ async function runVisionScanBackend(env) {
     }
     scored.push({ sym, group, tf, age });
   }
-  if (scored.length === 0) return;
+  if (scored.length === 0) return force ? { scanned: 0, callsUsed: 0, skipped: "no_candidates" } : undefined;
   scored.sort((a, b) => a.group - b.group || b.age - a.age);
 
   // ── Roboflow 호출 ──
@@ -11614,6 +11660,7 @@ async function runVisionScanBackend(env) {
   if (rateLimited) {
     await log(DB, "WARN", null, "[VISION] Roboflow 429 — 다음 cron 재개");
   }
+  return { scanned: scanned, callsUsed: callsUsed, rateLimited: rateLimited, todayUsage: todayUsage + callsUsed, dailyBudget: DAILY_BUDGET };
 }
 
 export default {
