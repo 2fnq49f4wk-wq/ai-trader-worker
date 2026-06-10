@@ -1764,9 +1764,10 @@ html[data-theme="light"] .table tbody tr:nth-child(even){background:rgba(20,30,5
   font-size:9px;font-weight:700;letter-spacing:1.4px;color:var(--t2);}
 .fv-panel-sub{font-weight:400;color:var(--t3);letter-spacing:.4px;text-transform:none;}
 
-/* 지수 차트 패널 행 */
-.fv-index-row{display:grid;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));gap:8px;}
-.fv-idx{border:1px solid var(--bd);border-radius:4px;background:var(--s1);padding:10px 12px 8px;}
+/* 지수 차트 패널 행 — [V60.1] flex로 변경: 홀수 개수·중간 폭에서도 빈 칸 없이 줄을 꽉 채움 */
+.fv-index-row{display:flex;flex-wrap:wrap;gap:8px;}
+.fv-idx{border:1px solid var(--bd);border-radius:4px;background:var(--s1);padding:10px 12px 8px;
+  flex:1 1 200px;min-width:0;}
 .fv-idx-top{display:flex;align-items:baseline;gap:8px;}
 .fv-idx-name{font-size:12px;font-weight:700;letter-spacing:.5px;}
 .fv-idx-chg{margin-left:auto;font-size:11px;font-weight:700;font-family:'IBM Plex Mono',monospace;}
@@ -1774,8 +1775,9 @@ html[data-theme="light"] .table tbody tr:nth-child(even){background:rgba(20,30,5
 .fv-idx-chart{margin-top:6px;height:58px;width:100%;}
 .fv-idx-chart svg{width:100%;height:100%;display:block;}
 
-/* 시장폭 바 */
-.fv-breadth-row{display:grid;grid-template-columns:repeat(auto-fit,minmax(240px,1fr));gap:8px;}
+/* 시장폭 바 — [V60.1] flex: 빈 칸 없이 채움 */
+.fv-breadth-row{display:flex;flex-wrap:wrap;gap:8px;}
+.fv-breadth{flex:1 1 240px;min-width:0;}
 .fv-breadth{border:1px solid var(--bd);border-radius:4px;background:var(--s1);padding:8px 12px;}
 .fv-breadth-top{display:flex;justify-content:space-between;font-size:9.5px;margin-bottom:5px;}
 .fv-breadth-top .l{color:var(--pos);font-weight:700;}
@@ -1905,7 +1907,7 @@ html[data-theme="light"] .sb-brand-name{color:#fff;}
 /* ════ [V59] COMMODITIES/BONDS/ECON/TA 패널 그리드 — 한 화면 효율 배치 ════ */
 .cmbd-grid{display:grid;grid-template-columns:1fr 1fr;gap:8px;padding:8px;}
 @media(max-width:900px){.cmbd-grid{grid-template-columns:1fr;}}
-.cmbd-grid .fv-panel{display:flex;flex-direction:column;min-width:0;}
+.cmbd-grid .fv-panel{display:flex;flex-direction:column;min-width:0;overflow-x:auto;}
 .cmbd-grid .fv-table{width:100%;}
 
 /* ════ [V59] TOP MOVERS 글자 잘림 수정 ════
@@ -1955,10 +1957,19 @@ html[data-theme="light"] .sb-brand-name{color:#fff;}
 .ta-sec{padding:5px 12px;font-size:8px;font-weight:700;letter-spacing:1.2px;color:var(--t3);background:var(--s2);border-bottom:1px solid var(--bd2);text-transform:uppercase;}
 
 /* ════ [V60] FINVIZ ROW — 어닝스/내부자/지표임팩트 3열 + 가독성 보강 ════ */
-.fv3-grid{display:grid;grid-template-columns:1fr 1.15fr 1.15fr;gap:8px;padding:8px;}
+.fv3-grid{display:grid;grid-template-columns:1fr 1.15fr 1.15fr;gap:8px;padding:8px;align-items:stretch;}
 @media(max-width:1300px){.fv3-grid{grid-template-columns:1fr 1fr;}}
 @media(max-width:900px){.fv3-grid{grid-template-columns:1fr;}}
 .fv3-grid .fv-panel{display:flex;flex-direction:column;min-width:0;}
+.fv3-scroll{height:320px;overflow-y:auto;overflow-x:auto;-webkit-overflow-scrolling:touch;flex:1 1 auto;}
+@media(max-width:900px){.fv3-scroll{height:auto;max-height:300px;}}
+@media(max-width:767px){
+  .insider-name{max-width:90px;}
+  .fv3-grid .fv-table td{max-width:110px;overflow:hidden;text-overflow:ellipsis;}
+}
+/* TOP MOVERS 패널을 히트맵 높이에 맞춰 늘리고 내부 스크롤 — 하단 빈 공간 제거 */
+.fv-mid .fv-panel{display:flex;flex-direction:column;min-width:0;}
+.fv-mid .fv-movers-grid{flex:1 1 auto;max-height:392px;overflow-y:auto;align-items:start;}
 /* 가독성: 핀비즈 밀도 유지하되 본문 폰트 한 단계 업 + 행 간격 확보 */
 .fv-table{font-size:11px;}
 .fv-table td{padding:5px 10px;line-height:1.45;}
@@ -1981,7 +1992,7 @@ html[data-theme="light"] .sb-brand-name{color:#fff;}
   .fv-deck{padding:6px 6px 0;}
   .fv-bottom{grid-template-columns:1fr;}
   .fv-mid{grid-template-columns:1fr;}
-  .fv-index-row{grid-template-columns:1fr 1fr;}
+  .fv-idx{flex:1 1 40%;}
   .fv-idx-price{font-size:14px;}
   #fvHeatmap{height:260px!important;}
   .fv-table th,.fv-table td{padding:4px 6px;font-size:9.5px;}
@@ -1989,7 +2000,7 @@ html[data-theme="light"] .sb-brand-name{color:#fff;}
   .econ-imp i{width:7px;height:7px;}
 }
 @media(max-width:430px){
-  .fv-index-row{grid-template-columns:1fr;}
+  .fv-idx{flex:1 1 100%;}
 }
 </style>
 </head>
@@ -2200,6 +2211,34 @@ html[data-theme="light"] .sb-brand-name{color:#fff;}
 
       </div>
 
+      <!-- ════ [V60 FINVIZ ROW] 어닝스 캘린더 + 내부자 거래 + 지표 임팩트 — 워치리스트 위 배치 ════ -->
+      <div class="fv3-grid">
+        <div class="fv-panel">
+          <div class="fv-panel-head">🗓 EARNINGS CALENDAR <span class="fv-panel-sub">실적 발표 일정</span>
+            <button type="button" id="btnEarnRefresh" class="btn" style="margin-left:auto;font-size:9px;padding:2px 8px;">↻</button>
+          </div>
+          <div class="fv3-scroll">
+            <table class="fv-table"><thead><tr><th>Date</th><th>Ticker</th><th>Company</th><th class="right">EPS Est</th></tr></thead><tbody id="earnBody"><tr><td colspan="4" class="empty">로딩 중...</td></tr></tbody></table>
+          </div>
+        </div>
+        <div class="fv-panel">
+          <div class="fv-panel-head">🧾 INSIDER TRADING <span class="fv-panel-sub">SEC Form 4 최신 공시</span>
+            <button type="button" id="btnInsiderRefresh" class="btn" style="margin-left:auto;font-size:9px;padding:2px 8px;">↻</button>
+          </div>
+          <div class="fv3-scroll">
+            <table class="fv-table"><thead><tr><th>Ticker</th><th>Company</th><th>Insider</th><th class="right">Filed</th></tr></thead><tbody id="insiderBody"><tr><td colspan="4" class="empty">로딩 중...</td></tr></tbody></table>
+          </div>
+        </div>
+        <div class="fv-panel">
+          <div class="fv-panel-head">⚡ INDICATOR IMPACT <span class="fv-panel-sub">발표 당일 지수 반응</span>
+            <button type="button" id="btnImpactRefresh" class="btn" style="margin-left:auto;font-size:9px;padding:2px 8px;">↻</button>
+          </div>
+          <div class="fv3-scroll">
+            <table class="fv-table"><thead><tr><th>Date</th><th>지표</th><th class="right">서프라이즈</th><th class="right">지수 반응</th></tr></thead><tbody id="impactBody"><tr><td colspan="4" class="empty">로딩 중...</td></tr></tbody></table>
+          </div>
+        </div>
+      </div>
+
       <!-- ════ [V10.5] WATCHLIST — 대시보드 통합 ════ -->
       <div class="page-header" style="border-top:1px solid var(--bd);">
         <span class="page-title">WATCHLIST</span>
@@ -2278,7 +2317,7 @@ html[data-theme="light"] .sb-brand-name{color:#fff;}
           <div class="fv-panel-head">📅 ECONOMIC CALENDAR <span class="fv-panel-sub">영향도 · 발표치 vs 예상</span>
             <button type="button" id="btnEconRefresh" class="btn" style="margin-left:auto;font-size:9px;padding:2px 8px;">↻</button>
           </div>
-          <div style="max-height:320px;overflow-y:auto;">
+          <div style="max-height:320px;overflow:auto;-webkit-overflow-scrolling:touch;">
             <table class="fv-table"><thead><tr><th>일시</th><th>Impact</th><th>지표</th><th class="right">Actual</th><th class="right">Expected</th><th class="right">Prior</th><th class="right">서프라이즈</th></tr></thead><tbody id="econBody"><tr><td colspan="7" class="empty">로딩 중...</td></tr></tbody></table>
           </div>
         </div>
@@ -2290,34 +2329,6 @@ html[data-theme="light"] .sb-brand-name{color:#fff;}
             <button type="button" id="btnTaHeld" class="btn" style="font-size:10px;">보유종목 스캔</button>
           </div>
           <div id="taResult"><div class="empty">심볼을 입력하고 분석을 눌러보세요</div></div>
-        </div>
-      </div>
-
-      <!-- ════ [V60 FINVIZ ROW] 어닝스 캘린더 + 내부자 거래 + 지표 임팩트 ════ -->
-      <div class="fv3-grid">
-        <div class="fv-panel">
-          <div class="fv-panel-head">🗓 EARNINGS CALENDAR <span class="fv-panel-sub">실적 발표 일정</span>
-            <button type="button" id="btnEarnRefresh" class="btn" style="margin-left:auto;font-size:9px;padding:2px 8px;">↻</button>
-          </div>
-          <div style="max-height:320px;overflow-y:auto;">
-            <table class="fv-table"><thead><tr><th>Date</th><th>Ticker</th><th>Company</th><th class="right">EPS Est</th></tr></thead><tbody id="earnBody"><tr><td colspan="4" class="empty">로딩 중...</td></tr></tbody></table>
-          </div>
-        </div>
-        <div class="fv-panel">
-          <div class="fv-panel-head">🧾 INSIDER TRADING <span class="fv-panel-sub">SEC Form 4 최신 공시</span>
-            <button type="button" id="btnInsiderRefresh" class="btn" style="margin-left:auto;font-size:9px;padding:2px 8px;">↻</button>
-          </div>
-          <div style="max-height:320px;overflow-y:auto;">
-            <table class="fv-table"><thead><tr><th>Ticker</th><th>Company</th><th>Insider</th><th class="right">Filed</th></tr></thead><tbody id="insiderBody"><tr><td colspan="4" class="empty">로딩 중...</td></tr></tbody></table>
-          </div>
-        </div>
-        <div class="fv-panel">
-          <div class="fv-panel-head">⚡ INDICATOR IMPACT <span class="fv-panel-sub">발표 당일 지수 반응</span>
-            <button type="button" id="btnImpactRefresh" class="btn" style="margin-left:auto;font-size:9px;padding:2px 8px;">↻</button>
-          </div>
-          <div style="max-height:320px;overflow-y:auto;">
-            <table class="fv-table"><thead><tr><th>Date</th><th>지표</th><th class="right">서프라이즈</th><th class="right">지수 반응</th></tr></thead><tbody id="impactBody"><tr><td colspan="4" class="empty">로딩 중...</td></tr></tbody></table>
-          </div>
         </div>
       </div>
 
@@ -3331,8 +3342,9 @@ html[data-theme="light"] .sb-brand-name{color:#fff;}
           '<td class="right '+cls+'">'+(it.q.dayPct>=0?'+':'')+fmtNum(it.q.dayPct,2)+'%</td>'+
           '<td class="fv-sig">'+sig+'</td></tr>';
       }
-      g.innerHTML = sorted.slice(0, 8).map(function(it){ return moverRow(it, true); }).join('') || '<tr><td colspan="4" class="empty">—</td></tr>';
-      l.innerHTML = sorted.slice(-8).reverse().map(function(it){ return moverRow(it, false); }).join('') || '<tr><td colspan="4" class="empty">—</td></tr>';
+      // [V60.1] 8 → 14개 — 히트맵(360px) 높이에 맞춰 패널 하단 빈 공간 제거
+      g.innerHTML = sorted.slice(0, 14).map(function(it){ return moverRow(it, true); }).join('') || '<tr><td colspan="4" class="empty">—</td></tr>';
+      l.innerHTML = sorted.slice(-14).reverse().map(function(it){ return moverRow(it, false); }).join('') || '<tr><td colspan="4" class="empty">—</td></tr>';
     }
     // ④ 헤드라인 — 섹터 뉴스 플랫 리스트
     var hl = $('fvHeadlines');
@@ -6614,30 +6626,29 @@ html[data-theme="light"] .sb-brand-name{color:#fff;}
   window.llmRun = llmRun;
   window.llmViewDetail = llmViewDetail;
   window.llmClear = llmClear;
-})();
 
-// LUX-ENGINE 오프닝 시퀀스 페이드아웃 및 자동 해제 로직
-(function(){
-  function removeIntro(){
-    var overlay = document.getElementById('lux-intro-overlay');
-    if (!overlay) return;
-    overlay.style.opacity = '0';
-    overlay.style.pointerEvents = 'none';
-    setTimeout(function(){ if (overlay && overlay.parentNode) overlay.remove(); }, 1200);
-  }
-  // DOMContentLoaded에 의존하지 않고 무조건 실행 (이미 로드 완료된 경우에도 동작)
-  setTimeout(removeIntro, 4200);
-  // 사용자가 화면을 탭/클릭하면 즉시 스킵
-  var ov = document.getElementById('lux-intro-overlay');
-  if (ov) { ov.addEventListener('click', removeIntro); ov.addEventListener('touchstart', removeIntro); }
-  // 안전장치: 8초 후엔 강제 제거
-  setTimeout(function(){ var o=document.getElementById('lux-intro-overlay'); if(o&&o.parentNode) o.remove(); }, 8000);
-})();
-</script>
+  // LUX-ENGINE 오프닝 시퀀스 페이드아웃 및 자동 해제 로직
+  (function(){
+    function removeIntro(){
+      var overlay = document.getElementById('lux-intro-overlay');
+      if (!overlay) return;
+      overlay.style.opacity = '0';
+      overlay.style.pointerEvents = 'none';
+      setTimeout(function(){ if (overlay && overlay.parentNode) overlay.remove(); }, 1200);
+    }
+    // DOMContentLoaded에 의존하지 않고 무조건 실행 (이미 로드 완료된 경우에도 동작)
+    setTimeout(removeIntro, 4200);
+    // 사용자가 화면을 탭/클릭하면 즉시 스킵
+    var ov = document.getElementById('lux-intro-overlay');
+    if (ov) { ov.addEventListener('click', removeIntro); ov.addEventListener('touchstart', removeIntro); }
+    // 안전장치: 8초 후엔 강제 제거
+    setTimeout(function(){ var o=document.getElementById('lux-intro-overlay'); if(o&&o.parentNode) o.remove(); }, 8000);
+  })();
 
-<script>
-// LUX-ENGINE 페이지 전환 (원본 JS와 독립 동작)
-(function(){
+  // ════ [V60.1 FIX] 페이지 전환 + VISION 모듈을 메인 IIFE 안으로 병합 ════
+  //   기존엔 별도 <script> IIFE였는데 $ / loadEcon / currentCfg 등 메인 스코프
+  //   변수를 참조해 첫 줄($)에서 ReferenceError → 페이지 전환·ECON·TA·VISION
+  //   와이어링 전체가 죽어 있었음. 같은 스코프로 합쳐 해결.
   function showPage(id){
     document.querySelectorAll('.page').forEach(function(p){p.classList.remove('active');});
     document.querySelectorAll('.nav-item').forEach(function(n){n.classList.remove('active');});
@@ -6998,7 +7009,7 @@ html[data-theme="light"] .sb-brand-name{color:#fff;}
     visionResults = {};
     try { localStorage.removeItem('visionResults'); } catch(e) {}
     renderVisionPage();
-    showToast('Vision 결과 초기화됨');
+    toast('Vision 결과 초기화됨');
   });
 
   // AI VISION 페이지 진입 시 렌더
@@ -7047,6 +7058,10 @@ html[data-theme="light"] .sb-brand-name{color:#fff;}
   if(__tb && !__tb.__themeBound){ __tb.__themeBound=true; __tb.addEventListener('click',toggleTheme); }
   applyThemeLabel();
 })();
+</script>
+<script>
+// (안전망) 인트로 오버레이 — 메인 스크립트가 죽어도 8초 후 강제 제거
+setTimeout(function(){ var o=document.getElementById('lux-intro-overlay'); if(o&&o.parentNode) o.remove(); }, 8000);
 </script>
 
 
