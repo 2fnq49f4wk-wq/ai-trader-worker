@@ -1965,6 +1965,9 @@ html[data-theme="light"] .sb-brand-name{color:#fff;}
 .ta-scr-chip:hover{border-color:var(--fviz-blue);text-decoration:underline;}
 .ta-scr-chip.bull{border-color:rgba(48,204,90,.35);}
 .ta-scr-chip.bear{border-color:rgba(246,53,56,.35);}
+.ta-scr-more{display:none;}
+.ta-scr-expand{color:var(--t3);border-style:dashed;}
+#taResult{max-height:560px;overflow-y:auto;}
 
 /* ════ [V60] FINVIZ ROW — 어닝스/내부자/지표임팩트 3열 + 가독성 보강 ════ */
 .fv3-grid{display:grid;grid-template-columns:1fr 1.15fr 1.15fr;gap:8px;padding:8px;align-items:stretch;}
@@ -4593,10 +4596,11 @@ html[data-theme="light"] .sb-brand-name{color:#fff;}
           '<span class="nm">'+escapeHtml(g.name)+'</span>'+
           '<span style="font-size:8.5px;color:var(--t3);">'+(g.kind==='chart'?'차트 패턴':'캔들 패턴')+' · '+g.items.length+'종목</span></div>'+
           '<div class="ta-scr-chips">'+
-          g.items.map(function(it){
-            return '<span class="ta-scr-chip '+dirCls+'" data-tasym="'+escapeHtml(it.symbol)+'" title="'+escapeHtml(it.symbol)+' · 종합점수 '+(it.score>=0?'+':'')+it.score+'">'+
+          g.items.map(function(it, idx){
+            return '<span class="ta-scr-chip '+dirCls+(idx>=40?' ta-scr-more':'')+'" data-tasym="'+escapeHtml(it.symbol)+'" title="'+escapeHtml(it.symbol)+' · 종합점수 '+(it.score>=0?'+':'')+it.score+'">'+
               (it.market==='kr'?'🇰🇷 ':'')+escapeHtml(it.label)+'</span>';
           }).join('')+
+          (g.items.length>40?'<span class="ta-scr-chip ta-scr-expand" data-expand="1">+'+(g.items.length-40)+'개 더보기</span>':'')+
           '</div></div>';
       });
       box.innerHTML = html;
@@ -4605,6 +4609,12 @@ html[data-theme="light"] .sb-brand-name{color:#fff;}
           var s = el.getAttribute('data-tasym');
           var inp = $('taSymbol'); if (inp) inp.value = s;
           runTaAnalysis(s);
+        });
+      });
+      box.querySelectorAll('.ta-scr-expand').forEach(function(el){
+        el.addEventListener('click', function(){
+          el.parentNode.querySelectorAll('.ta-scr-more').forEach(function(c){ c.classList.remove('ta-scr-more'); });
+          el.remove();
         });
       });
     })['catch'](function(e){ box.innerHTML = '<div class="empty">스캔 실패: '+escapeHtml(String(e && e.message || e))+'</div>'; });
