@@ -1741,6 +1741,61 @@ html[data-theme="light"] .wl-day.neg,html[data-theme="light"] .cm-watch-day.neg{
 .llm-banner{border-left-color:var(--pos)!important;}
 .trade-filter-btn.active{background:rgba(48,204,90,.08);border-color:rgba(48,204,90,.35);color:var(--pos);}
 .macro-next{border-color:rgba(48,204,90,.25);background:rgba(48,204,90,.04);}
+
+/* ════ [V10.4 FINVIZ DECK] 메인 마켓 오버뷰 ════ */
+.fv-deck{padding:8px 8px 0;display:flex;flex-direction:column;gap:8px;}
+.fv-panel{border:1px solid var(--bd);border-radius:4px;background:var(--s1);overflow:hidden;}
+.fv-panel-head{display:flex;align-items:center;gap:8px;padding:7px 12px;border-bottom:1px solid var(--bd2);
+  font-size:9px;font-weight:700;letter-spacing:1.4px;color:var(--t2);}
+.fv-panel-sub{font-weight:400;color:var(--t3);letter-spacing:.4px;text-transform:none;}
+
+/* 지수 차트 패널 행 */
+.fv-index-row{display:grid;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));gap:8px;}
+.fv-idx{border:1px solid var(--bd);border-radius:4px;background:var(--s1);padding:10px 12px 8px;}
+.fv-idx-top{display:flex;align-items:baseline;gap:8px;}
+.fv-idx-name{font-size:12px;font-weight:700;letter-spacing:.5px;}
+.fv-idx-chg{margin-left:auto;font-size:11px;font-weight:700;font-family:'IBM Plex Mono',monospace;}
+.fv-idx-price{font-size:17px;font-weight:700;font-family:'IBM Plex Mono',monospace;margin-top:2px;letter-spacing:-.3px;}
+.fv-idx-chart{margin-top:6px;height:58px;width:100%;}
+.fv-idx-chart svg{width:100%;height:100%;display:block;}
+
+/* 시장폭 바 */
+.fv-breadth-row{display:grid;grid-template-columns:repeat(auto-fit,minmax(240px,1fr));gap:8px;}
+.fv-breadth{border:1px solid var(--bd);border-radius:4px;background:var(--s1);padding:8px 12px;}
+.fv-breadth-top{display:flex;justify-content:space-between;font-size:9.5px;margin-bottom:5px;}
+.fv-breadth-top .l{color:var(--pos);font-weight:700;}
+.fv-breadth-top .r{color:var(--neg);font-weight:700;}
+.fv-breadth-bar{display:flex;height:7px;border-radius:2px;overflow:hidden;background:var(--bd2);}
+.fv-breadth-bar .adv{background:#1d7c3d;}
+.fv-breadth-bar .dec{background:#ad2226;}
+
+/* TOP MOVERS + 히트맵 */
+.fv-mid{display:grid;grid-template-columns:1fr 1.1fr;gap:8px;}
+@media(max-width:1100px){.fv-mid{grid-template-columns:1fr;}}
+.fv-movers-grid{display:grid;grid-template-columns:1fr 1fr;}
+.fv-movers-grid table:first-child{border-right:1px solid var(--bd2);}
+.fv-table{width:100%;border-collapse:collapse;font-family:Verdana,Arial,sans-serif;font-size:10px;}
+.fv-table th{padding:5px 10px;font-size:8px;letter-spacing:1px;text-transform:uppercase;color:var(--t3);
+  text-align:left;background:var(--s2);border-bottom:1px solid var(--bd2);}
+.fv-table th.right,.fv-table td.right{text-align:right;}
+.fv-table td{padding:4px 10px;border-bottom:1px solid var(--bd2);font-variant-numeric:tabular-nums;}
+.fv-table tbody tr:nth-child(even){background:rgba(255,255,255,.018);}
+.fv-table tbody tr:hover{background:var(--fviz-hover);}
+.fv-table tbody tr:last-child td{border-bottom:none;}
+.fv-tick{color:var(--fviz-blue);font-weight:700;}
+.fv-sig{font-size:9px;color:var(--t3);}
+
+/* 헤드라인/하단 3열 */
+.fv-bottom{display:grid;grid-template-columns:1.4fr 1fr 1fr;gap:8px;}
+@media(max-width:1100px){.fv-bottom{grid-template-columns:1fr;}}
+.fv-headlines{max-height:235px;overflow-y:auto;}
+.fv-hl{display:flex;gap:9px;padding:5px 12px;border-bottom:1px solid var(--bd2);font-size:10.5px;
+  align-items:baseline;cursor:pointer;}
+.fv-hl:hover{background:var(--fviz-hover);}
+.fv-hl:hover .fv-hl-title{text-decoration:underline;}
+.fv-hl-grp{flex-shrink:0;font-size:8.5px;font-weight:700;color:var(--t3);letter-spacing:.5px;min-width:42px;}
+.fv-hl-title{color:var(--fviz-blue);line-height:1.45;overflow:hidden;display:-webkit-box;
+  -webkit-line-clamp:1;-webkit-box-orient:vertical;}
 </style>
 </head>
 <body>
@@ -1917,6 +1972,43 @@ html[data-theme="light"] .wl-day.neg,html[data-theme="light"] .cm-watch-day.neg{
       <!-- 오토튠 배너 -->
       <div id="tuneBanner" class="tune-banner" style="display:none;">
         <b><span class="star-icon"></span>AUTO-TUNE:</b> <span id="tuneText"></span>
+      </div>
+
+      <!-- ════ [V10.4 FINVIZ DECK] 메인 마켓 오버뷰 ════ -->
+      <div class="fv-deck">
+        <!-- 주요 지수 차트 패널 행 -->
+        <div class="fv-index-row" id="fvIndexRow"><div class="empty">지수 로딩 중...</div></div>
+        <!-- 시장폭(Advancing/Declining) 바 -->
+        <div class="fv-breadth-row" id="fvBreadthRow"></div>
+        <!-- 상승/하락 TOP + 히트맵 -->
+        <div class="fv-mid">
+          <div class="fv-panel">
+            <div class="fv-panel-head">TOP MOVERS <span class="fv-panel-sub">워치리스트 기준 · 실시간</span></div>
+            <div class="fv-movers-grid">
+              <table class="fv-table"><thead><tr><th>Ticker</th><th class="right">Last</th><th class="right">Change</th><th>Signal</th></tr></thead><tbody id="fvGainers"></tbody></table>
+              <table class="fv-table"><thead><tr><th>Ticker</th><th class="right">Last</th><th class="right">Change</th><th>Signal</th></tr></thead><tbody id="fvLosers"></tbody></table>
+            </div>
+          </div>
+          <div class="fv-panel">
+            <div class="fv-panel-head">S&amp;P 500 — 1 DAY PERFORMANCE <button class="llm-btn" id="btnFvHeatRefresh" style="margin-left:auto;">↻</button></div>
+            <div id="fvHeatmap" style="height:360px;background:#000;"></div>
+          </div>
+        </div>
+        <!-- 헤드라인 + 선물 + 환율/채권 -->
+        <div class="fv-bottom">
+          <div class="fv-panel">
+            <div class="fv-panel-head">HEADLINES</div>
+            <div class="fv-headlines" id="fvHeadlines"><div class="empty">뉴스 로딩 중...</div></div>
+          </div>
+          <div class="fv-panel">
+            <div class="fv-panel-head">FUTURES / COMMODITIES</div>
+            <table class="fv-table"><thead><tr><th>Name</th><th class="right">Last</th><th class="right">Change %</th></tr></thead><tbody id="fvFutures"></tbody></table>
+          </div>
+          <div class="fv-panel">
+            <div class="fv-panel-head">FOREX &amp; BONDS</div>
+            <table class="fv-table"><thead><tr><th>Pair</th><th class="right">Last</th><th class="right">Change %</th></tr></thead><tbody id="fvForex"></tbody></table>
+          </div>
+        </div>
       </div>
 
       <!-- 포트폴리오 + 지수 그리드 -->
@@ -2928,6 +3020,128 @@ html[data-theme="light"] .wl-day.neg,html[data-theme="light"] .cm-watch-day.neg{
     }
   }
 
+  // ════ [V10.4 FINVIZ DECK] ════
+  // 지수 차트 패널 (캔들 대신 면적 라인 — 3개월 일봉 history 활용)
+  function fvIdxChart(history, up) {
+    if (!history || history.length < 5) return '';
+    var h = history.slice(-60);
+    var min = Math.min.apply(null, h), max = Math.max.apply(null, h);
+    var range = max - min || 1;
+    var W = 240, H = 58;
+    var pts = h.map(function(v, i){
+      return (i / (h.length - 1) * W).toFixed(1) + ',' + (H - 6 - (v - min) / range * (H - 12)).toFixed(1);
+    });
+    var line = pts.join(' ');
+    var area = '0,' + H + ' ' + line + ' ' + W + ',' + H;
+    var c = up ? '#30cc5a' : '#f63538';
+    return '<svg viewBox="0 0 '+W+' '+H+'" preserveAspectRatio="none">'+
+      '<polygon points="'+area+'" fill="'+c+'" opacity="0.09"/>'+
+      '<polyline points="'+line+'" fill="none" stroke="'+c+'" stroke-width="1.6"/>'+
+      '</svg>';
+  }
+  function renderFvDeck(state) {
+    // ① 지수 패널 행
+    var row = $('fvIndexRow');
+    if (row && state.indices && state.indices.length) {
+      row.innerHTML = state.indices.map(function(idx){
+        var name = (typeof INDEX_NAMES === 'object' && INDEX_NAMES[idx.symbol]) || idx.symbol;
+        var up = idx.dayPct >= 0;
+        var cls = up ? 'pos' : 'neg';
+        var sign = up ? '+' : '';
+        return '<div class="fv-idx">'+
+          '<div class="fv-idx-top"><span class="fv-idx-name">'+escapeHtml(name)+'</span>'+
+          '<span class="fv-idx-chg '+cls+'">'+sign+fmtNum(idx.dayPct,2)+'%</span></div>'+
+          '<div class="fv-idx-price">'+fmtNum(idx.price)+'</div>'+
+          '<div class="fv-idx-chart">'+fvIdxChart(idx.history, up)+'</div>'+
+        '</div>';
+      }).join('');
+    }
+    // ② 시장폭 — 워치리스트 등락 종목 수 (US/KR)
+    var br = $('fvBreadthRow');
+    if (br) {
+      function breadth(mkt, label) {
+        var adv = 0, dec = 0;
+        Object.keys(lastQuotes).forEach(function(sym){
+          var q = lastQuotes[sym];
+          if (!q || typeof q.dayPct !== 'number') return;
+          var isKR = /\.(KS|KQ)$/.test(sym);
+          if ((mkt === 'kr') !== isKR) return;
+          if (q.dayPct > 0) adv++; else if (q.dayPct < 0) dec++;
+        });
+        var tot = adv + dec;
+        if (tot === 0) return '';
+        var ap = Math.round(adv / tot * 100);
+        return '<div class="fv-breadth">'+
+          '<div class="fv-breadth-top"><span class="l">'+label+' Advancing '+ap+'% ('+adv+')</span>'+
+          '<span class="r">Declining ('+dec+') '+(100-ap)+'%</span></div>'+
+          '<div class="fv-breadth-bar"><span class="adv" style="width:'+ap+'%"></span>'+
+          '<span class="dec" style="width:'+(100-ap)+'%"></span></div></div>';
+      }
+      br.innerHTML = breadth('us', '🇺🇸') + breadth('kr', '🇰🇷');
+    }
+    // ③ TOP MOVERS — 상승/하락 상위 8
+    var g = $('fvGainers'), l = $('fvLosers');
+    if (g && l) {
+      var all = Object.keys(lastQuotes).map(function(sym){
+        var q = lastQuotes[sym];
+        return (q && typeof q.dayPct === 'number' && q.price > 0) ? { sym: sym, q: q } : null;
+      }).filter(Boolean);
+      var sorted = all.slice().sort(function(a, b){ return b.q.dayPct - a.q.dayPct; });
+      function moverRow(it, isUp) {
+        var held = (heldMap.us && heldMap.us[it.sym]) || (heldMap.kr && heldMap.kr[it.sym]);
+        var sig = held ? 'HELD' : (isUp ? 'Top Gainer' : 'Top Loser');
+        var cls = it.q.dayPct >= 0 ? 'pos' : 'neg';
+        return '<tr><td><span class="fv-tick">'+escapeHtml(it.sym.replace(/\.(KS|KQ)$/,''))+'</span></td>'+
+          '<td class="right">'+fmtNum(it.q.price)+'</td>'+
+          '<td class="right '+cls+'">'+(it.q.dayPct>=0?'+':'')+fmtNum(it.q.dayPct,2)+'%</td>'+
+          '<td class="fv-sig">'+sig+'</td></tr>';
+      }
+      g.innerHTML = sorted.slice(0, 8).map(function(it){ return moverRow(it, true); }).join('') || '<tr><td colspan="4" class="empty">—</td></tr>';
+      l.innerHTML = sorted.slice(-8).reverse().map(function(it){ return moverRow(it, false); }).join('') || '<tr><td colspan="4" class="empty">—</td></tr>';
+    }
+    // ④ 헤드라인 — 섹터 뉴스 플랫 리스트
+    var hl = $('fvHeadlines');
+    if (hl && state.sectorNews && state.sectorNews.headlines) {
+      var items = [];
+      Object.keys(state.sectorNews.headlines).forEach(function(grp){
+        (state.sectorNews.headlines[grp] || []).forEach(function(n){
+          if (n && n.title) items.push({ grp: grp, title: n.title, link: n.link || '' });
+        });
+      });
+      if (items.length) {
+        hl.innerHTML = items.slice(0, 10).map(function(n){
+          var open = n.link ? ' onclick="window.open(\'' + escapeAttr(n.link) + '\',\'_blank\')"' : '';
+          return '<div class="fv-hl"'+open+'><span class="fv-hl-grp">'+escapeHtml(String(n.grp).toUpperCase().slice(0,6))+'</span>'+
+            '<span class="fv-hl-title">'+escapeHtml(n.title)+'</span></div>';
+        }).join('');
+      }
+    }
+  }
+  // ⑤ 대시보드 히트맵 — TradingView 임베드 (대시보드 첫 진입 시 1회)
+  var fvHeatLoaded = false;
+  function loadFvHeatmap() {
+    var host = $('fvHeatmap');
+    if (!host) return;
+    host.innerHTML = '<div class="tradingview-widget-container" style="height:100%;width:100%;">'+
+                     '<div class="tradingview-widget-container__widget" style="height:100%;width:100%;"></div></div>';
+    var widgetDiv = host.querySelector('.tradingview-widget-container');
+    var script = document.createElement('script');
+    script.type = 'text/javascript';
+    script.async = true;
+    script.src = 'https://s3.tradingview.com/external-embedding/embed-widget-stock-heatmap.js';
+    script.innerHTML = JSON.stringify({
+      exchanges: [], dataSource: "SPX500", grouping: "sector",
+      blockSize: "market_cap_basic", blockColor: "change", locale: "kr",
+      symbolUrl: "", colorTheme: "dark", hasTopBar: false,
+      isDataSetEnabled: false, isZoomEnabled: true, hasSymbolTooltip: true,
+      isMonoSize: false, width: "100%", height: "100%"
+    });
+    widgetDiv.appendChild(script);
+    fvHeatLoaded = true;
+  }
+  var _bfvh = $('btnFvHeatRefresh');
+  if (_bfvh) _bfvh.addEventListener('click', loadFvHeatmap);
+
   function renderIndices(indices) {
     var boxUS = $('indicesUS'), boxKR = $('indicesKR');
     function card(idx) {
@@ -3389,6 +3603,17 @@ html[data-theme="light"] .wl-day.neg,html[data-theme="light"] .cm-watch-day.neg{
   function loadCommodities() {
     return api('/api/commodities').then(function(data){
       renderCommodities(data);
+      // [V10.4] FV 데크 — FUTURES/COMMODITIES 테이블
+      var fvF = $('fvFutures');
+      if (fvF && data && data.watchlist && data.watchlist.length) {
+        fvF.innerHTML = data.watchlist.slice(0, 9).map(function(q){
+          var has = typeof q.price === 'number';
+          var cls = q.dayPct > 0 ? 'pos' : q.dayPct < 0 ? 'neg' : '';
+          return '<tr><td><span class="fv-tick">'+escapeHtml(q.name || q.symbol)+'</span></td>'+
+            '<td class="right">'+(has ? fmtNum(q.price,2) : '-')+'</td>'+
+            '<td class="right '+cls+'">'+(typeof q.dayPct === 'number' ? (q.dayPct>=0?'+':'')+fmtNum(q.dayPct,2)+'%' : '-')+'</td></tr>';
+        }).join('');
+      }
       // ALT ASSETS 대시보드 미니카드 갱신
       if (data) {
         var cash = typeof data.cash === 'number' ? data.cash : 0;
@@ -3570,8 +3795,38 @@ html[data-theme="light"] .wl-day.neg,html[data-theme="light"] .cm-watch-day.neg{
   }
 
   function loadBonds() {
+    // [V10.4] FV 데크 — FOREX & BONDS (환율 + 국채금리 통합 테이블)
+    fetch('/api/fx').then(function(r){ return r.json(); }).then(function(d){
+      var tb = $('fvForex');
+      if (!tb) return;
+      var rows = '';
+      if (d && d.data && d.data.rates) {
+        Object.keys(d.data.rates).slice(0, 5).forEach(function(k){
+          var r = d.data.rates[k];
+          if (!r || r.price == null) return;
+          var cls = r.dayPct > 0 ? 'pos' : r.dayPct < 0 ? 'neg' : '';
+          rows += '<tr><td><span class="fv-tick">'+escapeHtml(r.sub || r.label || k)+'</span></td>'+
+            '<td class="right">'+fmtNum(r.price, 2)+'</td>'+
+            '<td class="right '+cls+'">'+(typeof r.dayPct === 'number' ? (r.dayPct>=0?'+':'')+fmtNum(r.dayPct,2)+'%' : '-')+'</td></tr>';
+        });
+      }
+      tb.innerHTML = rows;
+      tb.setAttribute('data-fx-done', '1');
+    })['catch'](function(){});
     return api('/api/bonds').then(function(data){
       renderBonds(data);
+      // [V10.4] FV 데크 — 국채금리 행 이어붙임 (환율 아래)
+      var tb = $('fvForex');
+      if (tb && data && data.yields && data.yields.length) {
+        var yr = data.yields.slice(0, 4).map(function(y){
+          var has = typeof y.rate === 'number';
+          var cls = y.dayPct > 0 ? 'pos' : y.dayPct < 0 ? 'neg' : '';
+          return '<tr><td><span class="fv-tick">'+escapeHtml(y.label || y.name)+'</span></td>'+
+            '<td class="right">'+(has ? y.rate.toFixed(2)+'%' : '-')+'</td>'+
+            '<td class="right '+cls+'">'+(typeof y.dayPct === 'number' ? (y.dayPct>=0?'+':'')+y.dayPct.toFixed(2)+'%' : '-')+'</td></tr>';
+        }).join('');
+        tb.innerHTML = tb.innerHTML + yr;
+      }
       // ALT ASSETS 대시보드 미니카드 갱신
       if (data) {
         function altTotal(sleeve, isKRW) {
@@ -4739,6 +4994,9 @@ html[data-theme="light"] .wl-day.neg,html[data-theme="light"] .cm-watch-day.neg{
         // [V8.6 Hybrid] LLM 배너 렌더링
         renderLLMBanner(state.llmDaily, state.cfg);
         renderUsageBanner(state.usageState, state.forceLock, state.cfg);
+        // [V10.4] FINVIZ DECK — 지수/시장폭/무버/헤드라인
+        renderFvDeck(state);
+        if (!fvHeatLoaded) setTimeout(loadFvHeatmap, 200);
         // ALL TRADE HISTORY — 요약은 항상 갱신, 테이블은 펼쳐졌을 때만
         if (allTradesExpanded) renderAllTrades(allTrades || []);
         else updateTradesSummaryInto(allTrades || [], 'allTradesTotalCount', 'allTradesWinRate', 'allTradesAvgPnl');
