@@ -5396,6 +5396,60 @@ function taDetectPatterns(dailyData) {
   return { score: score, patterns: patterns, top: patterns[0] || null };
 }
 
+// ════════════════════════════════════════════════════════════════════════════
+// [V62] 이벤트 리스크 데이터 — 어닝스 캘린더·경제지표 캘린더·내부자(Form 4) 캐시를
+//   사이클당 1회 읽어 거래 로직에 공급. 전부 D1 read만 (추가 외부 fetch 0).
+//   /api/earnings·/api/econ·/api/insider 가 채워둔 상태를 재사용.
+// ════════════════════════════════════════════════════════════════════════════
+async function buildEventRiskData(DB) {
+  const out = { earningsBySym: {}, econ: { us: { preHigh: null, shock: 0, shockTitle: "" }, kr: { preHigh: null, shock: 0, shockTitle: "" } }, insiderCount: {} };
+  const now = Date.now();
+  try {
+    // (1) 어닝스 — 심볼별 다가오는 발표 시각
+    const ec = await getState(DB, "earnings_calendar", null);
+    if (ec && ec.items) {
+      ec.items.forEach(function(it){
+        if (!it || !it.symbol || !it.ts) return;
+        const cur = out.earningsBySym[it.symbol];
+        if (cur == null || Math.abs(it.ts - now) < Math.abs(cur - now)) out.earningsBySym[it.symbol] = it.ts;
+      });
+    }
+  } catch (e) {}
+  try {
+    // (2) 경제지표 — 향후 24h 내 고중요(importance≥1) 발표 예정 + 당일 발표된 고중요 서프라이즈 합산
+    const cal = await getState(DB, "econ_calendar", null);
+    const evs = (cal && cal.events) || [];
+    const todayUtc = new Date(now).toISOString().slice(0, 10);
+    evs.forEach(function(e){
+      if (!e || !e.date || typeof e.importance !== "number" || e.importance < 1) return;
+      const t = new Date(e.date).getTime();
+      const m = e.country === "KR" ? "kr" : "us";
+      if (e.actual == null && t > now && t - now <= 24 * 3600000) {
+        if (!out.econ[m].preHigh) out.econ[m].preHigh = e.title || "high-impact";
+      }
+      if (e.actual != null && String(e.date).slice(0, 10) === todayUtc && e.forecast != null && isFinite(e.forecast) && e.forecast !== 0) {
+        const sur = (e.actual - e.forecast) / Math.abs(e.forecast);
+        if (Math.abs(sur) >= 0.10) {  // ±10% 이상 서프라이즈만 집계
+          out.econ[m].shock += (sur > 0 ? 1 : -1);
+          if (!out.econ[m].shockTitle) out.econ[m].shockTitle = e.title || "";
+        }
+      }
+    });
+  } catch (e) {}
+  try {
+    // (3) 내부자 Form 4 — 최근 3일 내 같은 티커 공시 건수 (방향 미상 → 클러스터만 신호로)
+    const ins = await getState(DB, "insider_feed", null);
+    const fs = (ins && ins.filings) || [];
+    fs.forEach(function(f){
+      if (!f || !f.ticker || !f.date) return;
+      const t = new Date(f.date).getTime();
+      if (now - t > 3 * 86400000) return;
+      out.insiderCount[f.ticker] = (out.insiderCount[f.ticker] || 0) + 1;
+    });
+  } catch (e) {}
+  return out;
+}
+
 async function getState(DB, k, def) {
   try {
     const row = await DB.prepare("SELECT v FROM state WHERE k = ?").bind(k).first();
@@ -6118,8 +6172,9 @@ function evaluateSnapEntry(price, dayPct, dailyData, cfg, regime, market) {
   const rsi2 = getRSI(closes, 2);
   const rsi14 = getRSI(closes, 14);
   if (rsi2 == null) return null;
-  if (rsi2 > (sn.rsi2Max != null ? sn.rsi2Max : 10)) return null;
-  if (rsi14 != null && rsi14 > (sn.rsi14Max != null ? sn.rsi14Max : 50)) return null;
+  // [V62] 기본 문턱 완화 (10→12, 50→55) — SNAP 발생 빈도를 높여 트렌드 편중 완화 (cfg로 조절 가능)
+  if (rsi2 > (sn.rsi2Max != null ? sn.rsi2Max : 12)) return null;
+  if (rsi14 != null && rsi14 > (sn.rsi14Max != null ? sn.rsi14Max : 55)) return null;
   if (sn.requireBelowMa5 !== false && !(price < ma5)) return null;
   // 연속 하락일 카운트 (정보용 + confidence 가산)
   let downDays = 0;
@@ -6372,7 +6427,7 @@ function evaluateTrendEntry(price, dayPct, dailyData, cfg, regime, market) {
 
 // === [재작성] 통합 진입 평가기 — 단일 trend 전략만 평가 ===
 //   라이브(runTradingCycle)와 백테스트(backtestSymbol)가 공통 호출. 기존 반환 형식 유지.
-function evaluateAllStrategies(price, dayPct, dailyData, cfg, signalStats, regime, market, intraday, visionPreds, secData) {
+function evaluateAllStrategies(price, dayPct, dailyData, cfg, signalStats, regime, market, intraday, visionPreds, secData, eventData) {
   if (cfg.strategies && cfg.strategies.trend === false) return [];
   let sig = evaluateTrendEntry(price, dayPct, dailyData, cfg, regime, market);
 
@@ -6427,6 +6482,22 @@ function evaluateAllStrategies(price, dayPct, dailyData, cfg, signalStats, regim
           if (taSnap && taSnap.score <= -4) {
             snapSig.visionBoost = (snapSig.visionBoost || 1.0) * 0.6;
             snapSig.taNote = "TA " + taSnap.score + (taSnap.top ? " " + taSnap.top.name : "") + "×0.6";
+          }
+        }
+        // [V62 이벤트 리스크] 어닝스 D-2 이내·고중요 지표 발표 24h 전 → SNAP도 축소 (갭 리스크)
+        if (eventData && dailyData.symbol) {
+          const _ets2 = eventData.earningsBySym && eventData.earningsBySym[dailyData.symbol];
+          if (_ets2) {
+            const _dd2 = (_ets2 - Date.now()) / 86400000;
+            if (_dd2 >= -0.5 && _dd2 <= 2) {
+              snapSig.visionBoost = (snapSig.visionBoost || 1.0) * 0.5;
+              snapSig.earnNote = "EARNINGS D-" + Math.max(0, _dd2).toFixed(1) + "×0.5";
+            }
+          }
+          const _er2 = eventData.econ && eventData.econ[market];
+          if (_er2 && _er2.preHigh) {
+            snapSig.visionBoost = (snapSig.visionBoost || 1.0) * 0.85;
+            snapSig.econNote = "ECON-PRE×0.85";
           }
         }
         return [{ strategy: "snap", signal: snapSig, rawCount: 1 }];
@@ -6542,6 +6613,43 @@ function evaluateAllStrategies(price, dayPct, dailyData, cfg, signalStats, regim
         sig.visionBoost = (sig.visionBoost || 1.0) * tScale;
         sig.taNote = "TA " + (ta.score >= 0 ? "+" : "") + ta.score + (ta.top ? " " + ta.top.name : "") + "×" + tScale.toFixed(2);
       }
+    }
+  }
+
+  // ── [V62 이벤트 리스크] 어닝스 임박·경제지표 발표·내부자 클러스터 — 사이즈 차등만 (추가 fetch 0) ──
+  if (eventData && dailyData.symbol) {
+    const _sym = dailyData.symbol;
+    // (1) 어닝스 임박 — 발표 D-2 이내 신규 진입은 갬블성(갭 리스크) → 축소. 발표 직전(D-1 이내)은 강축소.
+    const _ets = eventData.earningsBySym && eventData.earningsBySym[_sym];
+    if (_ets) {
+      const _dDays = (_ets - Date.now()) / 86400000;
+      if (_dDays >= -0.5 && _dDays <= 2) {
+        const _es = _dDays <= 1 ? 0.5 : 0.7;
+        sig.visionBoost = (sig.visionBoost || 1.0) * _es;
+        sig.earnNote = "EARNINGS D-" + Math.max(0, _dDays).toFixed(1) + "×" + _es;
+      }
+    }
+    // (2) 경제지표 — 향후 24h 고중요 발표 예정이면 시장 전체 보수화(이벤트 직전 포지션 축소).
+    //     당일 발표된 고중요 지표의 서프라이즈 방향 합산: 부정 우세 → 축소, 긍정 우세 → 소폭 부스트.
+    const _er = eventData.econ && eventData.econ[market];
+    if (_er) {
+      if (_er.preHigh) {
+        sig.visionBoost = (sig.visionBoost || 1.0) * 0.85;
+        sig.econNote = "ECON-PRE " + String(_er.preHigh).slice(0, 24) + "×0.85";
+      }
+      if (_er.shock <= -2) {
+        sig.visionBoost = (sig.visionBoost || 1.0) * 0.8;
+        sig.econNote = (sig.econNote ? sig.econNote + " " : "") + "ECON-NEG×0.8";
+      } else if (_er.shock >= 2) {
+        sig.visionBoost = (sig.visionBoost || 1.0) * 1.05;
+        sig.econNote = (sig.econNote ? sig.econNote + " " : "") + "ECON-POS×1.05";
+      }
+    }
+    // (3) 내부자 Form 4 클러스터 — 3일 내 2건 이상 공시(매수/매도 방향 미상) → 불확실성 보수화
+    const _ic = eventData.insiderCount && eventData.insiderCount[_sym];
+    if (_ic >= 2 && market === "us") {
+      sig.visionBoost = (sig.visionBoost || 1.0) * 0.9;
+      sig.insiderNote = "INSIDER F4×" + _ic + "×0.9";
     }
   }
 
@@ -9048,6 +9156,7 @@ async function runTradingCycle(env) {
     const signalStats = await getState(DB, "signal_stats", {});
     const visionPreds = await getState(DB, "vision_predictions", {});  // [Vision AI]
     const secData = await getState(DB, "sec_filings", {});  // [SEC 공시] 미국 종목 보수화
+    const eventData = await buildEventRiskData(DB);  // [V62] 어닝스·경제지표·내부자 이벤트 리스크 (캐시 read만)
     let cash = await computeAllCash(DB, cfg);
     // [V9.1] executeBuy/Sell이 거래마다 cash 전체를 저장하므로, cm 키가 누락된 옛 상태를
     //   읽었을 때 원자재 현금이 사라지지 않도록 보강.
@@ -9134,6 +9243,17 @@ async function runTradingCycle(env) {
         const sec = SECTOR_MAP[sym];
         if (sec) sectorCounts[sec] = (sectorCounts[sec] || 0) + 1;
       }
+
+      // [V62 전략 다변화] 포지션이 한 전략(주로 trend)에 쏠리면 그 전략 신규진입 축소 + 소수 전략 소폭 부스트.
+      //   포트폴리오 단위 분산 — 신호 차단 없이 사이즈로만 유도.
+      let stratShare = { trend: 0, scalp: 0, snap: 0, total: 0 };
+      for (const key in positions) {
+        const st = positions[key].strategy || (key.split("::")[1] || "trend");
+        if (stratShare[st] != null) stratShare[st]++;
+        stratShare.total++;
+      }
+      const trendHeavy = stratShare.total >= 4 && (stratShare.trend / stratShare.total) >= 0.75;
+      if (trendHeavy) await log(DB, "INFO", null, "[V62] " + market.toUpperCase() + " trend 편중 " + stratShare.trend + "/" + stratShare.total + " → trend×0.8, snap/scalp×1.1");
 
       // [V8.1.6] 총자산 = 현금 + 보유 포지션 평가액 (최근 quote 기준)
       // 이전엔 cash[market]만 사용해서 매수할수록 사이즈 작아짐
@@ -9756,7 +9876,7 @@ async function runTradingCycle(env) {
             const _ef = sessionElapsedFraction(market);
             daily.volPaceMult = (_ef != null && _ef > 0 && _ef < 0.95) ? Math.min(2.5, 1 / Math.max(0.4, _ef)) : 1;
           }
-          let stratResults = evaluateAllStrategies(price, dayPct, daily, mcfg, signalStats, regime, market, intra, visionPreds, secData);
+          let stratResults = evaluateAllStrategies(price, dayPct, daily, mcfg, signalStats, regime, market, intra, visionPreds, secData, eventData);
 
           // === [SCALP] 분봉 단타 전략 평가 ===
           //   scalp 활성화 + trend 신호 없을 때만 평가 (같은 종목 중복진입 방지)
@@ -9797,6 +9917,15 @@ async function runTradingCycle(env) {
               stateSamples.push(symbol + "(RSI" + dailyRsi.toFixed(0) + " d" + dayPct.toFixed(1) + "% " + trendStr + ")");
             }
             continue;
+          }
+          // [V62 전략 다변화] trend 편중 시 사이즈 조정 — trend 신규 ×0.8, snap/scalp ×1.1
+          if (trendHeavy) {
+            for (const _sr of stratResults) {
+              const _s = _sr.signal;
+              if (!_s) continue;
+              if (_sr.strategy === "trend") _s.visionBoost = (_s.visionBoost || 1.0) * 0.8;
+              else _s.visionBoost = (_s.visionBoost || 1.0) * 1.1;
+            }
           }
           signalCount += stratResults.length;   // [통계] 발생 매수신호 누적
           // [신호 로그] 발생 신호를 로그에 기록 (종목 + 전략 + 신호명)

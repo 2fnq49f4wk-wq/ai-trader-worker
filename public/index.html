@@ -1768,6 +1768,11 @@ html[data-theme="light"] .table tbody tr:nth-child(even){background:rgba(20,30,5
 .fv-index-row{display:flex;flex-wrap:wrap;gap:8px;}
 .fv-idx{border:1px solid var(--bd);border-radius:4px;background:var(--s1);padding:10px 12px 8px;
   flex:1 1 200px;min-width:0;}
+/* [V62] 아이패드 중간 폭(700~1280): 1줄 3개 기준 → 5개면 3+2 배치.
+   기존엔 2+2+1이라 마지막(KOSDAQ) 카드 하나가 풀폭으로 늘어나 보였음 */
+@media(min-width:700px) and (max-width:1280px){
+  .fv-idx{flex-basis:30%;}
+}
 .fv-idx-top{display:flex;align-items:baseline;gap:8px;}
 .fv-idx-name{font-size:12px;font-weight:700;letter-spacing:.5px;}
 .fv-idx-chg{margin-left:auto;font-size:11px;font-weight:700;font-family:'IBM Plex Mono',monospace;}
@@ -1969,10 +1974,44 @@ html[data-theme="light"] .sb-brand-name{color:#fff;}
 .ta-scr-expand{color:var(--t3);border-style:dashed;}
 #taResult{max-height:560px;overflow-y:auto;}
 
+/* ════ [V62] PORTFOLIO 카드 리디자인 — 플래그 헤더 + 빅넘버 + 투자/현금 배분 바 ════ */
+.port-card{border:1px solid var(--bd);border-radius:6px;background:var(--s1);overflow:hidden;
+  transition:border-color .15s;}
+.port-card:hover{border-color:var(--acc2,#566170);}
+.port-card-head{display:flex;align-items:center;gap:9px;padding:10px 16px;
+  background:linear-gradient(180deg,var(--s2),var(--s1));border-bottom:1px solid var(--bd2);}
+.port-card-flag{font-size:17px;line-height:1;}
+.port-card-title{font-size:10.5px;font-weight:700;letter-spacing:1.6px;color:var(--t2);}
+.port-card-cur{margin-left:auto;font-size:8.5px;font-weight:700;letter-spacing:1px;color:var(--t3);
+  border:1px solid var(--bd2);border-radius:3px;padding:2px 7px;background:var(--s2);}
+.port-card-body{padding:13px 16px 14px;}
+.port-card .port-total{font-size:26px;font-weight:700;font-family:'IBM Plex Mono',monospace;
+  letter-spacing:-.5px;line-height:1.15;}
+.port-card .port-pnl{font-size:12px;font-weight:700;margin-top:3px;}
+.port-alloc-bar{display:flex;height:7px;border-radius:3px;overflow:hidden;background:rgba(106,169,255,.18);
+  margin:11px 0 9px;}
+.port-alloc-bar .inv{display:block;height:100%;background:var(--pos);border-radius:3px 0 0 3px;
+  width:0%;transition:width .5s ease;}
+.port-dot{display:inline-block;width:7px;height:7px;border-radius:2px;margin-right:5px;vertical-align:1px;}
+.port-dot.inv{background:var(--pos);}
+.port-dot.cash{background:rgba(106,169,255,.7);}
+.port-card .port-meta{display:flex;gap:18px;margin-top:2px;}
+.port-card .port-meta-item{display:flex;flex-direction:column;gap:2px;}
+.port-card .port-meta-label{font-size:8.5px;font-weight:700;letter-spacing:1px;color:var(--t3);text-transform:uppercase;}
+.port-card .port-meta-value{font-size:13px;font-weight:700;font-family:'IBM Plex Mono',monospace;}
+html[data-theme="light"] .port-card .port-total{color:#13171c;}
+
 /* ════ [V60] FINVIZ ROW — 어닝스/내부자/지표임팩트 3열 + 가독성 보강 ════ */
 .fv3-grid{display:grid;grid-template-columns:1fr 1.15fr 1.15fr;gap:8px;padding:8px;align-items:stretch;}
-@media(max-width:1300px){.fv3-grid{grid-template-columns:1fr 1fr;}}
-@media(max-width:900px){.fv3-grid{grid-template-columns:1fr;}}
+/* [V62] 2열 구간에선 세 번째 패널이 빈 칸 옆에 어색하게 떨어지지 않게 풀스팬 */
+@media(max-width:1300px){
+  .fv3-grid{grid-template-columns:1fr 1fr;}
+  .fv3-grid > .fv-panel:last-child{grid-column:1/-1;}
+}
+@media(max-width:900px){
+  .fv3-grid{grid-template-columns:1fr;}
+  .fv3-grid > .fv-panel:last-child{grid-column:auto;}
+}
 .fv3-grid .fv-panel{display:flex;flex-direction:column;min-width:0;}
 .fv3-scroll{height:320px;overflow-y:auto;overflow-x:auto;-webkit-overflow-scrolling:touch;flex:1 1 auto;}
 @media(max-width:900px){.fv3-scroll{height:auto;max-height:300px;}}
@@ -2355,39 +2394,53 @@ html[data-theme="light"] .sb-brand-name{color:#fff;}
         <button type="button" class="btn watchlist-toggle-btn" id="positionsToggleBtn">펼치기</button>
       </div>
 
-      <!-- [V10.5] US/KR 포트폴리오 요약 — 포지션 페이지로 이동 -->
+      <!-- [V62] US/KR 포트폴리오 카드 리디자인 — 플래그 헤더 + 빅넘버 + 투자/현금 배분 바 -->
       <div class="dash-grid">
-        <div class="dash-block">
-          <div class="dash-block-label">🇺🇸 US PORTFOLIO</div>
-          <div class="port-total" id="totalUS">—</div>
-          <div class="port-pnl" id="changeUS">—</div>
-          <div class="port-meta">
-            <div class="port-meta-item">
-              <span class="port-meta-label">투자금</span>
-              <span class="port-meta-value" id="investedUS">—</span>
-            </div>
-            <div class="port-meta-item">
-              <span class="port-meta-label">현금</span>
-              <span class="port-meta-value" id="cashUS">—</span>
-            </div>
+        <div class="port-card" id="portCardUS">
+          <div class="port-card-head">
+            <span class="port-card-flag">🇺🇸</span>
+            <span class="port-card-title">US PORTFOLIO</span>
+            <span class="port-card-cur">USD</span>
           </div>
-          <div class="cfg-display" id="cfgDisplayUS"></div>
+          <div class="port-card-body">
+            <div class="port-total" id="totalUS">—</div>
+            <div class="port-pnl" id="changeUS">—</div>
+            <div class="port-alloc-bar" id="allocBarUS"><i class="inv"></i></div>
+            <div class="port-meta">
+              <div class="port-meta-item">
+                <span class="port-meta-label"><i class="port-dot inv"></i>투자금</span>
+                <span class="port-meta-value" id="investedUS">—</span>
+              </div>
+              <div class="port-meta-item">
+                <span class="port-meta-label"><i class="port-dot cash"></i>현금</span>
+                <span class="port-meta-value" id="cashUS">—</span>
+              </div>
+            </div>
+            <div class="cfg-display" id="cfgDisplayUS"></div>
+          </div>
         </div>
-        <div class="dash-block">
-          <div class="dash-block-label">🇰🇷 KR PORTFOLIO</div>
-          <div class="port-total" id="totalKR">—</div>
-          <div class="port-pnl" id="changeKR">—</div>
-          <div class="port-meta">
-            <div class="port-meta-item">
-              <span class="port-meta-label">투자금</span>
-              <span class="port-meta-value" id="investedKR">—</span>
-            </div>
-            <div class="port-meta-item">
-              <span class="port-meta-label">현금</span>
-              <span class="port-meta-value" id="cashKR">—</span>
-            </div>
+        <div class="port-card" id="portCardKR">
+          <div class="port-card-head">
+            <span class="port-card-flag">🇰🇷</span>
+            <span class="port-card-title">KR PORTFOLIO</span>
+            <span class="port-card-cur">KRW</span>
           </div>
-          <div class="cfg-display" id="cfgDisplayKR"></div>
+          <div class="port-card-body">
+            <div class="port-total" id="totalKR">—</div>
+            <div class="port-pnl" id="changeKR">—</div>
+            <div class="port-alloc-bar" id="allocBarKR"><i class="inv"></i></div>
+            <div class="port-meta">
+              <div class="port-meta-item">
+                <span class="port-meta-label"><i class="port-dot inv"></i>투자금</span>
+                <span class="port-meta-value" id="investedKR">—</span>
+              </div>
+              <div class="port-meta-item">
+                <span class="port-meta-label"><i class="port-dot cash"></i>현금</span>
+                <span class="port-meta-value" id="cashKR">—</span>
+              </div>
+            </div>
+            <div class="cfg-display" id="cfgDisplayKR"></div>
+          </div>
         </div>
       </div>
 
@@ -3477,7 +3530,16 @@ html[data-theme="light"] .sb-brand-name{color:#fff;}
     var changeEl = $('change'+up);
     var sign = s.changePct >= 0 ? '+' : '';
     changeEl.textContent = sign + fmtNum(s.changePct, 2) + '%';
-    changeEl.className = 'summary-value ' + (s.changePct > 0 ? 'pos' : (s.changePct < 0 ? 'neg' : ''));
+    changeEl.className = 'port-pnl summary-value ' + (s.changePct > 0 ? 'pos' : (s.changePct < 0 ? 'neg' : ''));
+    // [V62] 투자/현금 배분 바
+    var ab = $('allocBar'+up);
+    if (ab) {
+      var tot = s.invested + s.cash;
+      var pct = tot > 0 ? Math.max(0, Math.min(100, s.invested / tot * 100)) : 0;
+      var inv = ab.querySelector('.inv');
+      if (inv) inv.style.width = pct.toFixed(1) + '%';
+      ab.title = '투자 ' + pct.toFixed(0) + '% · 현금 ' + (100-pct).toFixed(0) + '%';
+    }
     // 상단 바 업데이트
     var tbTotal = $('topbarTotal'+up);
     var tbChange = $('topbarChange'+up);
