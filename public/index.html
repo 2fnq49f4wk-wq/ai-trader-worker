@@ -1633,19 +1633,29 @@ html[data-theme="light"] .sb-brand-sub{ color:#888; }
     <div class="hint" style="margin-bottom:8px;line-height:1.6;">
       <b>TREND (추세추종)</b> — 항상 활성. 추세 정렬(MA20&gt;MA50&gt;MA200) 종목의 풀백 반등·신고가 돌파 진입, ATR 손절·분할익절·트레일링 관리. 한 거래 리스크 0.75%.
     </div>
-    <div class="checkbox-row"><input type="checkbox" id="cfgScalpEnabled"><label for="cfgScalpEnabled"><b>SCALP 단타 전략 활성화</b> — 분봉 기반 장중 단타 (VWAP 근접 진입, 1.5% 손절, 2% 익절, 45분 타임스톱)</label></div>
+    <div class="checkbox-row"><input type="checkbox" id="cfgScalpEnabled"><label for="cfgScalpEnabled"><b>SCALP 단타 전략 활성화</b> — 분봉 기반 장중 단타 (VWAP 근접 진입, 1.2% 손절, TP1 본전락, 40분 타임스톱)</label></div>
     <div class="hint" style="margin-bottom:4px;">단타 전략은 TREND와 독립 운용됩니다. TREND 신호 없는 종목에 한해 분봉(1분봉) 데이터로 진입 신호를 평가합니다.<br>※ 분봉 fetch 증가로 subrequest 소비가 늘어납니다 (최대 +60/사이클). 유료 플랜 권장.</div>
+    <div class="checkbox-row"><input type="checkbox" id="cfgSnapEnabled"><label for="cfgSnapEnabled"><b>SNAP 스냅백 전략 활성화</b> — 상승추세 종목의 단기 과매도(RSI(2)≤10) 반등을 2~5일 스윙으로 포착 (BEAR 레짐 차단, 1.5×ATR 손절, MA5 회귀 익절)</label></div>
+    <div class="hint" style="margin-bottom:4px;">SNAP은 일봉만 사용해 추가 fetch가 없습니다. TREND(순응)·SCALP(분봉)와 직교하는 세 번째 수익원으로, TREND 신호가 없는 종목에서만 평가됩니다.</div>
     <div class="budget-split-box" style="margin:10px 0;padding:12px 14px;background:var(--s1);border:1px solid var(--bd);border-radius:8px;">
       <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px;">
         <b style="font-size:12px;">전략별 예산 비중</b>
-        <span style="font-size:11px;color:var(--t3);">시장별 가용현금을 두 전략에 나눠 배정</span>
+        <span style="font-size:11px;color:var(--t3);">시장별 가용현금을 세 전략에 나눠 배정 (합 100%로 자동 정규화)</span>
       </div>
       <div style="display:flex;justify-content:space-between;font-size:11px;font-weight:700;margin-bottom:4px;">
-        <span style="color:var(--acc);">TREND <span id="budgetTrendPct">50</span>%</span>
-        <span style="color:var(--amber);">SCALP <span id="budgetScalpPct">50</span>%</span>
+        <span style="color:var(--acc);">TREND <span id="budgetTrendPct">35</span>%</span>
+        <span style="color:var(--amber);">SCALP <span id="budgetScalpPct">30</span>%</span>
+        <span style="color:var(--grn,#4ade80);">SNAP <span id="budgetSnapPct">35</span>%</span>
       </div>
-      <input type="range" id="cfgBudgetSplit" min="0" max="100" step="5" value="50" style="width:100%;cursor:pointer;accent-color:var(--acc);">
-      <div class="hint" style="margin-top:6px;">단타 신호가 적으면 SCALP 예산이 남을 수 있습니다(미사용분은 다음 사이클로 이월). 단타를 늘리려면 SCALP 비중을 올리세요.</div>
+      <div style="display:grid;grid-template-columns:52px 1fr;gap:6px 10px;align-items:center;">
+        <span style="font-size:10px;color:var(--acc);font-weight:700;">TREND</span>
+        <input type="range" id="cfgBudgetTrend" min="0" max="100" step="5" value="35" style="width:100%;cursor:pointer;accent-color:var(--acc);">
+        <span style="font-size:10px;color:var(--amber);font-weight:700;">SCALP</span>
+        <input type="range" id="cfgBudgetScalp" min="0" max="100" step="5" value="30" style="width:100%;cursor:pointer;accent-color:var(--amber);">
+        <span style="font-size:10px;color:var(--grn,#4ade80);font-weight:700;">SNAP</span>
+        <input type="range" id="cfgBudgetSnap" min="0" max="100" step="5" value="35" style="width:100%;cursor:pointer;accent-color:var(--grn,#4ade80);">
+      </div>
+      <div class="hint" style="margin-top:6px;">세 슬라이더의 상대 비율로 배정됩니다(예: 35/30/35). 특정 전략 신호가 적으면 해당 예산이 남을 수 있습니다(미사용분은 다음 사이클로 이월).</div>
     </div>
     <div class="section-title" style="margin-top:12px;">VISION AI (Roboflow 차트 예측)</div>
     <div class="checkbox-row"><input type="checkbox" id="cfgVisionEnabled"><label for="cfgVisionEnabled"><b>Vision AI 활성화</b></label></div>
@@ -2256,6 +2266,8 @@ html[data-theme="light"] .sb-brand-sub{ color:#888; }
   // [재작성] 전략별 색상 매핑 — TREND 단일. 구 전략은 레거시 포지션 호환용 유지.
   var STRATEGY_COLORS = {
     trend:    { bg: 'rgba(56, 189, 248, 0.18)', fg: '#38bdf8', label: 'TREND' },
+    scalp:    { bg: 'rgba(251, 191, 36, 0.18)', fg: '#fbbf24', label: 'SCALP' },
+    snap:     { bg: 'rgba(74, 222, 128, 0.18)', fg: '#4ade80', label: 'SNAP' },
     swing:    { bg: 'rgba(100, 116, 139, 0.15)', fg: '#94a3b8', label: 'SWING' },
     day:      { bg: 'rgba(100, 116, 139, 0.15)', fg: '#94a3b8', label: 'DAY' },
     momentum: { bg: 'rgba(100, 116, 139, 0.15)', fg: '#94a3b8', label: 'MOM' },
@@ -4074,16 +4086,19 @@ html[data-theme="light"] .sb-brand-sub{ color:#888; }
 
     // SCALP 단타 전략 토글
     if ($('cfgScalpEnabled')) $('cfgScalpEnabled').checked = !!(currentCfg.strategies && currentCfg.strategies.scalp);
-    // [V51] 전략 예산 비중 슬라이더
-    if ($('cfgBudgetSplit')) {
-      var _bs = currentCfg.strategyBudgetSplit || { trend: 0.5, scalp: 0.5 };
-      var _tw = (typeof _bs.trend === 'number') ? _bs.trend : 0.5;
-      var _sw = (typeof _bs.scalp === 'number') ? _bs.scalp : 0.5;
-      var _tot = (_tw + _sw) > 0 ? (_tw + _sw) : 1;
-      var _trPct = Math.round((_tw / _tot) * 100);
-      $('cfgBudgetSplit').value = _trPct;
-      if ($('budgetTrendPct')) $('budgetTrendPct').textContent = _trPct;
-      if ($('budgetScalpPct')) $('budgetScalpPct').textContent = 100 - _trPct;
+    // [V52] SNAP 스냅백 전략 토글 (기본 활성 — 미정의면 true)
+    if ($('cfgSnapEnabled')) $('cfgSnapEnabled').checked = !(currentCfg.strategies && currentCfg.strategies.snap === false);
+    // [V52] 전략 예산 비중 슬라이더 3개 (trend/scalp/snap — 정규화된 % 표시)
+    if ($('cfgBudgetTrend')) {
+      var _bs = currentCfg.strategyBudgetSplit || { trend: 0.35, scalp: 0.30, snap: 0.35 };
+      var _tw = (typeof _bs.trend === 'number') ? _bs.trend : 0.35;
+      var _sw = (typeof _bs.scalp === 'number') ? _bs.scalp : 0.30;
+      var _nw = (typeof _bs.snap  === 'number') ? _bs.snap  : 0.35;
+      var _tot = (_tw + _sw + _nw) > 0 ? (_tw + _sw + _nw) : 1;
+      $('cfgBudgetTrend').value = Math.round((_tw / _tot) * 100);
+      $('cfgBudgetScalp').value = Math.round((_sw / _tot) * 100);
+      $('cfgBudgetSnap').value  = Math.round((_nw / _tot) * 100);
+      updateBudgetSplitLabels();
     }
 
     // Vision AI 현재값
@@ -4375,16 +4390,21 @@ html[data-theme="light"] .sb-brand-sub{ color:#888; }
       // 하위 호환 — executeBuy 폴백용 cfg.stopLoss / cfg.atrStopMult
       stopLoss: parseFloat($('cfgTrendStopPct').value),
       atrStopMult: parseFloat($('cfgTrendAtrStop').value),
-      // [SCALP] 단타 전략 활성화 여부
+      // [SCALP/SNAP] 전략 활성화 여부
       strategies: Object.assign({}, (currentCfg && currentCfg.strategies) || {}, {
         trend: true,
-        scalp: !!($('cfgScalpEnabled') && $('cfgScalpEnabled').checked)
+        scalp: !!($('cfgScalpEnabled') && $('cfgScalpEnabled').checked),
+        snap:  !!($('cfgSnapEnabled') && $('cfgSnapEnabled').checked)
       }),
-      // [V51] 전략별 예산 비중 (슬라이더, 합=1로 정규화)
+      // [V52] 전략별 예산 비중 3분할 (슬라이더 3개, 합=1로 정규화)
       strategyBudgetSplit: (function(){
-        var p = $('cfgBudgetSplit') ? parseInt($('cfgBudgetSplit').value, 10) : 50;
-        if (isNaN(p)) p = 50;
-        return { trend: p / 100, scalp: (100 - p) / 100 };
+        var t = $('cfgBudgetTrend') ? parseInt($('cfgBudgetTrend').value, 10) : 35;
+        var s = $('cfgBudgetScalp') ? parseInt($('cfgBudgetScalp').value, 10) : 30;
+        var n = $('cfgBudgetSnap')  ? parseInt($('cfgBudgetSnap').value, 10)  : 35;
+        if (isNaN(t)) t = 35; if (isNaN(s)) s = 30; if (isNaN(n)) n = 35;
+        var tot = t + s + n;
+        if (tot <= 0) return { trend: 0.35, scalp: 0.30, snap: 0.35 };
+        return { trend: t / tot, scalp: s / tot, snap: n / tot };
       })()
     };
     fetch('/api/cfg', { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify(body) })
@@ -4716,14 +4736,23 @@ html[data-theme="light"] .sb-brand-sub{ color:#888; }
   $('settingsModal').addEventListener('click', function(e){
     if (e.target === $('settingsModal')) closeSettings();
   });
-  // [V51] 예산 비중 슬라이더 실시간 라벨
-  if ($('cfgBudgetSplit')) {
-    $('cfgBudgetSplit').addEventListener('input', function(){
-      var p = parseInt(this.value, 10); if (isNaN(p)) p = 50;
-      if ($('budgetTrendPct')) $('budgetTrendPct').textContent = p;
-      if ($('budgetScalpPct')) $('budgetScalpPct').textContent = 100 - p;
-    });
+  // [V52] 예산 비중 슬라이더 3개 — 정규화된 %를 실시간 라벨에 표시
+  function updateBudgetSplitLabels() {
+    var t = $('cfgBudgetTrend') ? parseInt($('cfgBudgetTrend').value, 10) : 35;
+    var s = $('cfgBudgetScalp') ? parseInt($('cfgBudgetScalp').value, 10) : 30;
+    var n = $('cfgBudgetSnap')  ? parseInt($('cfgBudgetSnap').value, 10)  : 35;
+    if (isNaN(t)) t = 0; if (isNaN(s)) s = 0; if (isNaN(n)) n = 0;
+    var tot = t + s + n;
+    var tp = tot > 0 ? Math.round((t / tot) * 100) : 0;
+    var sp = tot > 0 ? Math.round((s / tot) * 100) : 0;
+    var np = tot > 0 ? (100 - tp - sp) : 0;
+    if ($('budgetTrendPct')) $('budgetTrendPct').textContent = tp;
+    if ($('budgetScalpPct')) $('budgetScalpPct').textContent = sp;
+    if ($('budgetSnapPct'))  $('budgetSnapPct').textContent  = np;
   }
+  ['cfgBudgetTrend','cfgBudgetScalp','cfgBudgetSnap'].forEach(function(id){
+    if ($(id)) $(id).addEventListener('input', updateBudgetSplitLabels);
+  });
   $('macroModal').addEventListener('click', function(e){
     if (e.target === $('macroModal')) closeMacro();
   });
