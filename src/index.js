@@ -4867,12 +4867,10 @@ async function fetchBatchQuotes(symbols, opts) {
   const out = {};
   if (!symbols || symbols.length === 0) return out;
 
-  // --- 0) [V9.1] KR 교차검증용 네이버 폴링 — 야후가 "기본" 소스, 네이버는 검증·실시간 보정 ---
-  //   기존(V66)엔 네이버가 KR 1순위였으나, 단일 소스 의존을 피하기 위해 야후를 유지하고
-  //   네이버는 별도 맵(naverXV)에 받아 아래 머지 단계에서 교차검증한다:
-  //     · 양쪽 일치(±5%) → 실시간(네이버) 값 채택 (야후 KR은 15분 지연이라 현실 반영은 네이버가 정확)
-  //     · 큰 불일치(>5%) → 야후 값 유지 + WARN 로그 (한쪽 소스 오염 방어)
-  //     · 야후 누락 → 네이버 단독 사용 / 네이버 누락 → 야후 그대로
+  // --- 0) [V9.2] KR 실시간 — 네이버 폴링이 "기본 진실원"(네이버 증권 표시값과 동일) ---
+  //   야후는 한국 종목의 거래소 접미사(.KS=코스피/.KQ=코스닥)가 틀린 경우가 많아 폐기된
+  //   옛 시세를 반환한다(예: 코스닥 펩트론 087010을 .KS로 조회 시 1년 전 81,000원).
+  //   → 네이버 값을 채택하고 야후는 아래 머지에서 검증용으로만 비교(괴리 시 WARN).
   //   60종목/1콜 배치라 subrequest 절약(324종목=6콜). nv=현재가, sv=기준가(전일종가).
   const naverXV = {};
   const krSyms = symbols.filter(function(s){ return s.endsWith(".KS") || s.endsWith(".KQ"); });
@@ -4988,17 +4986,18 @@ async function fetchBatchQuotes(symbols, opts) {
   const xvMismatch = [];
   for (const sym of Object.keys(naverXV)) {
     const nq = naverXV[sym], yq = out[sym];
-    if (!yq) { out[sym] = nq; continue; }                  // 야후 누락 → 네이버 단독
-    const diff = Math.abs(yq.price - nq.price) / nq.price;
-    if (diff <= XV_TOL) {
-      out[sym] = Object.assign({}, nq, { xv: 1 });         // 교차검증 통과 → 실시간값
-    } else {
-      out[sym] = Object.assign({}, yq, { xvFail: 1 });     // 괴리 큼 → 야후 유지
-      xvMismatch.push(sym + " y" + yq.price + "/n" + nq.price);
+    // [V9.2] KR은 네이버(=네이버 증권, 사용자가 보는 실제값)가 "기본 진실원".
+    //   야후는 한국 종목의 거래소 접미사(.KS/.KQ)가 틀린 경우가 많아(코스닥 종목을 .KS로
+    //   조회 등) 폐기된 옛 시세를 반환한다 → 직전 V9.1b "야후 우선"이 KR 전체를 오염시켰음.
+    //   따라서 네이버 값을 항상 채택하고, 야후는 검증용으로만 비교(괴리 시 WARN).
+    out[sym] = Object.assign({}, nq, { xv: 1 });
+    if (yq && yq.price > 0) {
+      const diff = Math.abs(yq.price - nq.price) / nq.price;
+      if (diff > XV_TOL) xvMismatch.push(sym + " naver=" + nq.price + " yahoo=" + yq.price);
     }
   }
   if (xvMismatch.length > 0 && opts.DB) {
-    try { await log(opts.DB, "WARN", null, "[XV] 야후·네이버 가격 괴리 " + xvMismatch.length + "건: " + xvMismatch.slice(0, 5).join(", ")); } catch (e) {}
+    try { await log(opts.DB, "WARN", null, "[XV] 야후 KR 시세 의심(접미사 오류 가능) " + xvMismatch.length + "건 — 네이버값 사용: " + xvMismatch.slice(0, 8).join(", ")); } catch (e) {}
   }
 
   return out;
@@ -5314,7 +5313,18 @@ async function fetchDailyFull(symbol) {
     opens.push((typeof o === "number" && !isNaN(o) && o > 0) ? o : c);
   }
   if (closes.length === 0) throw new Error("no daily close");
-  const price = (typeof meta.regularMarketPrice === "number" && meta.regularMarketPrice > 0) ? meta.regularMarketPrice : closes[closes.length - 1];
+  // [V9.2] stale meta 가드 — 야후가 접미사 오류(코스닥 종목 .KS 조회 등) 시 일봉 캔들은
+  //   최신인데 meta.regularMarketPrice는 1년 전 폐기값을 주는 경우가 있다(예: 펩트론 .KS=81,000원).
+  //   meta 시각이 마지막 캔들보다 오래됐거나, meta가가 마지막 종가와 20% 이상 어긋나면
+  //   meta를 버리고 일봉 마지막 종가를 현재가로 사용한다(지표 오염 방지).
+  const lastClose = closes[closes.length - 1];
+  const tsArr = result.timestamp || [];
+  const lastCandleTs = tsArr.length ? tsArr[tsArr.length - 1] : 0;
+  const metaTs = meta.regularMarketTime || 0;
+  let metaOk = (typeof meta.regularMarketPrice === "number" && meta.regularMarketPrice > 0);
+  if (metaOk && metaTs && lastCandleTs && metaTs < lastCandleTs - 2 * 86400) metaOk = false;  // meta 2일+ 뒤처짐
+  if (metaOk && Math.abs(meta.regularMarketPrice - lastClose) / lastClose > 0.20) metaOk = false;  // 마지막 종가와 20%+ 괴리
+  const price = metaOk ? meta.regularMarketPrice : lastClose;
   const prevClose = closes.length >= 2 ? closes[closes.length - 2] : price;
   return { symbol: symbol, price: price, prevClose: prevClose, closes: closes, highs: highs, lows: lows, volumes: volumes, opens: opens };
 }
