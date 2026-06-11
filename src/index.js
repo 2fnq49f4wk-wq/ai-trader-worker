@@ -4655,6 +4655,8 @@ async function recordUsage(DB, deltaReq, deltaCpuMs, deltaSubreqs) {
     day.r += (deltaReq || 0);
     day.c += (deltaCpuMs || 0);
     day.s += (deltaSubreqs || 0);
+    // [V66] invocation당 fetch 피크 — Workers 한도(1000/요청, 가드 850) 대비 여유 추적용
+    if ((deltaSubreqs || 0) > (day.fp || 0)) day.fp = deltaSubreqs;
     await setState(DB, "usage:" + u.mk, u.data);
     return u.data;
   } catch (e) { return null; }
@@ -4851,6 +4853,38 @@ async function fetchBatchQuotes(symbols, opts) {
   const out = {};
   if (!symbols || symbols.length === 0) return out;
 
+  // --- 0) [V66] KR 실시간 — 네이버 폴링 API (야후 15분 지연 해소) ---
+  //   60종목/1콜 배치라 subrequest도 절약(324종목=6콜). 실패 종목은 야후 폴백이 그대로 처리.
+  //   nv=현재가, sv=기준가(전일종가) → dayPct 부호 자동.
+  const krSyms = symbols.filter(function(s){ return s.endsWith(".KS") || s.endsWith(".KQ"); });
+  if (krSyms.length > 0 && fetchBudgetLeft() > 2) {
+    const codeMap = {};
+    for (const s of krSyms) codeMap[s.split(".")[0]] = s;
+    const codes = Object.keys(codeMap);
+    const NB = 60;
+    const nslices = [];
+    for (let i = 0; i < codes.length; i += NB) nslices.push(codes.slice(i, i + NB));
+    await Promise.all(nslices.map(async function(sl){
+      if (fetchBudgetLeft() <= 0) return;
+      __fetchBudget.used++;
+      try {
+        const r = await fetch("https://polling.finance.naver.com/api/realtime?query=SERVICE_ITEM:" + sl.join("|"),
+          { headers: { "User-Agent": "Mozilla/5.0", "Referer": "https://finance.naver.com" } });
+        if (!r.ok) return;
+        const j = await r.json();
+        const datas = (j && j.result && j.result.areas && j.result.areas[0] && j.result.areas[0].datas) || [];
+        for (const d of datas) {
+          const sym = codeMap[d.cd];
+          if (!sym) continue;
+          const nv = Number(d.nv), sv = Number(d.sv);
+          if (!(nv > 0)) continue;
+          const prev = (sv > 0) ? sv : nv;
+          out[sym] = { price: nv, prevClose: prev, dayPct: prev ? ((nv - prev) / prev) * 100 : 0, rt: 1 };
+        }
+      } catch (e) {}
+    }));
+  }
+
   // --- 1) v7 batch 시도 (성공하면 호출 수가 적어 가장 효율적) ---
   //   [V11] v7 은 crumb 인증이 없으면 전면 차단(401/403/429)되는 경우가 많다.
   //         첫 배치가 0건이면 이후 배치도 실패할 게 뻔하므로 즉시 포기하고 v8 폴백으로
@@ -4881,7 +4915,8 @@ async function fetchBatchQuotes(symbols, opts) {
   const v7Headers = auth && auth.cookie ? { "Cookie": auth.cookie } : null;
   // 슬라이스 목록 구성
   const slices = [];
-  for (let i = 0; i < symbols.length; i += BATCH) slices.push(symbols.slice(i, i + BATCH));
+  const v7Targets = symbols.filter(function(s){ return !out[s]; });  // [V66] 네이버로 채운 KR은 제외
+  for (let i = 0; i < v7Targets.length; i += BATCH) slices.push(v7Targets.slice(i, i + BATCH));
   let v7Dead = false;
   if (slices.length > 0 && fetchBudgetLeft() > 0) {
     // 1) 첫 배치로 v7 생존 확인
@@ -11723,6 +11758,20 @@ async function handleRequest(request, env) {
     }
 
     // [V53] VISION AI: 수동 전체 스캔 트리거 — cron 시각 게이트를 우회(force)해 즉시 1배치 실행
+    // [V66 임시진단] 네이버 증권 API Workers 접근성 테스트
+    if (path === "/api/naver-test" && request.method === "POST") {
+      const out = {};
+      try {
+        const r1 = await fetch("https://polling.finance.naver.com/api/realtime?query=SERVICE_ITEM:005930|000660|035420",
+          { headers: { "User-Agent": "Mozilla/5.0", "Referer": "https://finance.naver.com" } });
+        out.polling = r1.status + " " + (await r1.text()).slice(0, 200).replace(/\n/g, "");
+      } catch (e) { out.polling = "ERR " + e.message; }
+      try {
+        const r2 = await fetch("https://m.stock.naver.com/api/stock/005930/basic", { headers: { "User-Agent": "Mozilla/5.0" } });
+        out.mstock = r2.status + " " + (await r2.text()).slice(0, 150).replace(/\n/g, "");
+      } catch (e) { out.mstock = "ERR " + e.message; }
+      return Response.json(out, { headers: cors });
+    }
     // [V65 임시진단] Roboflow 호스트별 Workers 접근성 테스트
     if (path === "/api/rf-test" && request.method === "POST") {
       const cfg0 = Object.assign({}, DEFAULT_CFG, await getState(env.DB, "cfg", {}));

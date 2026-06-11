@@ -6052,10 +6052,12 @@ html[data-theme="light"] .port-card .port-total{color:#13171c;}
     var rVals = dd.map(function(k){ return days[k].r || 0; });
     var cVals = dd.map(function(k){ return (days[k].c || 0) / 60000; });   // 분
     var sVals = dd.map(function(k){ return days[k].s || 0; });
+    var fVals = dd.map(function(k){ return days[k].fp || 0; });            // [V66] 사이클당 fetch 피크
     host.innerHTML =
       chart('REQUESTS / 일', rVals, monReq / dim, function(v){ return Math.round(v).toLocaleString()+'회'; }) +
       chart('CPU(분) / 일', cVals, monCpu / 60000 / dim, function(v){ return v.toFixed(1)+'분'; }) +
-      chart('SUBREQUESTS / 일', sVals, null, function(v){ return Math.round(v).toLocaleString(); });
+      chart('SUBREQUESTS / 일', sVals, null, function(v){ return Math.round(v).toLocaleString(); }) +
+      chart('FETCH 피크 / 사이클 (한도 850)', fVals, 850, function(v){ return Math.round(v)+'콜'; });
   }
 
   function toggleForceLock() {
