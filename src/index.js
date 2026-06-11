@@ -11723,6 +11723,53 @@ async function handleRequest(request, env) {
     }
 
     // [V53] VISION AI: 수동 전체 스캔 트리거 — cron 시각 게이트를 우회(force)해 즉시 1배치 실행
+    // [V65 임시진단] Roboflow 호스트별 Workers 접근성 테스트
+    if (path === "/api/rf-test" && request.method === "POST") {
+      const cfg0 = Object.assign({}, DEFAULT_CFG, await getState(env.DB, "cfg", {}));
+      const key = (cfg0.visionAI || {}).rfApiKey;
+      const out = {};
+      const tiny = "Qk1GAAAAAAAAAD4AAAAoAAAAAgAAAAIAAAABAAEAAAAAAAgAAAAAAAAAAAAAAAAAAAAAAAAAAAAA/wD/AAAAwAAAAMAAAAA=";
+      for (const host of ["serverless.roboflow.com", "classify.roboflow.com", "detect.roboflow.com", "infer.roboflow.com", "api.roboflow.com"]) {
+        try {
+          const r0 = await fetch("https://" + host + "/stock-updown-classifier/11?api_key=" + key,
+            { method: "POST", headers: { "Content-Type": "application/x-www-form-urlencoded" }, body: tiny });
+          let body = "";
+          try { body = (await r0.text()).slice(0, 80).replace(/\n/g, " "); } catch (e) {}
+          out[host] = r0.status + " " + body;
+        } catch (e) { out[host] = "ERR " + e.message; }
+      }
+      return Response.json(out, { headers: cors });
+    }
+    // [V65] 브라우저 추론 결과 수신 — Roboflow가 Workers IP를 403 차단하므로
+    //   추론은 브라우저가 수행하고 결과만 여기로 POST(검증 후 vision_predictions에 머지).
+    //   엔진(거래)·UI 는 기존과 동일하게 이 state를 읽는다.
+    if (path === "/api/vision-results" && request.method === "POST") {
+      let body;
+      try { body = await request.json(); } catch (e) { return Response.json({ ok: false, error: "bad json" }, { status: 400, headers: cors }); }
+      if (!body || typeof body !== "object") return Response.json({ ok: false, error: "bad body" }, { status: 400, headers: cors });
+      const keys = Object.keys(body).filter(k => k.indexOf("__") !== 0).slice(0, 120);
+      const store = (await getState(env.DB, "vision_predictions", {})) || {};
+      let merged = 0;
+      const nowTs = Date.now();
+      for (const sym of keys) {
+        const v = body[sym];
+        if (!v || typeof v !== "object") continue;
+        if (v.pred !== "up" && v.pred !== "down") continue;
+        const conf = Number(v.conf);
+        if (!(conf > 0.06 && conf <= 1)) continue;
+        if (!/^[A-Z0-9.\-=^]{1,12}$/i.test(sym)) continue;
+        store[sym] = {
+          pred: v.pred, conf: conf,
+          upConf: Math.max(0, Math.min(1, Number(v.upConf) || 0)),
+          downConf: Math.max(0, Math.min(1, Number(v.downConf) || 0)),
+          predClose: (typeof v.predClose === "number" && v.predClose > 0) ? v.predClose : undefined,
+          src: "browser", ts: nowTs
+        };
+        merged++;
+      }
+      if (merged > 0) await setState(env.DB, "vision_predictions", store);
+      return Response.json({ ok: true, merged: merged }, { headers: cors });
+    }
     if (path === "/api/vision-scan" && request.method === "POST") {
       let r = null;
       try { r = await runVisionScanBackend(env, true); } catch (e) {
@@ -12251,12 +12298,24 @@ async function runVisionScanBackend(env, force) {
     const pixels = drawChartPixels(closes.slice(-win), 224, 224);
     const bmp    = pixelsToBMP(pixels, 224, 224);
     const b64    = uint8ToBase64(bmp);
-    const resp   = await fetch(
-      `https://classify.roboflow.com/${RF_PROJECT}/${version}?api_key=${apiKey}`,
-      { method: "POST", headers: { "Content-Type": "application/x-www-form-urlencoded" }, body: b64 }
+    // [V65 FIX] classify.roboflow.com이 Workers IP를 403(봇챌린지)으로 차단 →
+    //   serverless.roboflow.com 신형 엔드포인트 + 브라우저 UA로 우회. 실패 시 구형으로 폴백.
+    const _rfHeaders = {
+      "Content-Type": "application/x-www-form-urlencoded",
+      "User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0 Safari/537.36"
+    };
+    let resp = await fetch(
+      `https://serverless.roboflow.com/${RF_PROJECT}/${version}?api_key=${apiKey}`,
+      { method: "POST", headers: _rfHeaders, body: b64 }
     );
+    if (resp.status === 403 || resp.status === 404) {
+      resp = await fetch(
+        `https://classify.roboflow.com/${RF_PROJECT}/${version}?api_key=${apiKey}`,
+        { method: "POST", headers: _rfHeaders, body: b64 }
+      );
+    }
     if (resp.status === 429) return { rateLimited: true };
-    if (!resp.ok) return null;
+    if (!resp.ok) { let _t = ""; try { _t = (await resp.text()).slice(0, 120); } catch (e) {} return { fail: resp.status + ":" + _t }; }
     const d = await resp.json();
     // [V65 FIX] 신모델(v11+) 응답은 predictions가 "배열"([{class,confidence}]) + top/confidence.
     //   구형 파서가 객체 맵(p["up"].confidence)만 읽어 upC=downC=0 → 전종목 "up"/신뢰도 0~5% 버그.
@@ -12274,12 +12333,12 @@ async function runVisionScanBackend(env, force) {
     // top/confidence가 있으면 우선 신뢰 (배열에 top 클래스만 담겨 와도 보완됨)
     if (d.top === "up"   && typeof d.confidence === "number") { upC = Math.max(upC, d.confidence); if (!downC) downC = 1 - d.confidence; }
     if (d.top === "down" && typeof d.confidence === "number") { downC = Math.max(downC, d.confidence); if (!upC) upC = 1 - d.confidence; }
-    if (!upC && !downC) return null;  // 파싱 실패 → 쓰레기 저장 방지
+    if (!upC && !downC) return { fail: "parse:" + JSON.stringify(d).slice(0, 120) };  // 파싱 실패 → 쓰레기 저장 방지
     return { pred: upC >= downC ? "up" : "down", upConf: upC, downConf: downC };
   }
 
   const results = Object.assign({}, existing);
-  let scanned = 0, callsUsed = 0, rateLimited = false;
+  let scanned = 0, callsUsed = 0, rateLimited = false, lastFail = null;
 
   // ── [성능 B] 적중률 통계 로드 ──
   const acc = (await getState(DB, "vision_accuracy", null)) || { hits: 0, total: 0 };
@@ -12317,6 +12376,7 @@ async function runVisionScanBackend(env, force) {
         callsUsed++;
         if (!r) continue;
         if (r.rateLimited) { rateLimited = true; break; }
+        if (r.fail) { lastFail = r.fail; continue; }  // [V65 debug]
         frames.push(r);
       }
       if (frames.length === 0) continue;
@@ -12364,7 +12424,7 @@ async function runVisionScanBackend(env, force) {
   if (rateLimited) {
     await log(DB, "WARN", null, "[VISION] Roboflow 429 — 다음 cron 재개");
   }
-  return { scanned: scanned, callsUsed: callsUsed, rateLimited: rateLimited, todayUsage: todayUsage + callsUsed, dailyBudget: DAILY_BUDGET };
+  return { scanned: scanned, callsUsed: callsUsed, rateLimited: rateLimited, lastFail: lastFail, todayUsage: todayUsage + callsUsed, dailyBudget: DAILY_BUDGET };
 }
 
 export default {

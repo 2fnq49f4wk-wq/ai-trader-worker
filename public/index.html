@@ -7141,6 +7141,12 @@ html[data-theme="light"] .port-card .port-total{color:#13171c;}
       } else {
         if (stat) stat.textContent = '✓ ' + (sd.scanned || 0) + '종목 스캔 (' + (sd.callsUsed || 0) + '콜)' + (sd.rateLimited ? ' · 일부 429 제한' : '');
       }
+      // [V65] 백엔드가 0종목(Roboflow가 Workers IP 차단)이면 브라우저 추론으로 폴백
+      if (!sd || !sd.scanned) {
+        if (stat) stat.textContent = '브라우저 추론으로 스캔 중... (Roboflow가 서버 IP 차단)';
+        var bn = await browserVisionScan(60);
+        if (stat) stat.textContent = bn > 0 ? ('✓ 브라우저 추론 ' + bn + '종목 완료') : '⚠ 스캔 실패 — API Key/일일캡 확인';
+      }
       // 새 예측 반영
       var r = await fetch('/api/state');
       var s = await r.json();
@@ -7314,6 +7320,67 @@ html[data-theme="light"] .port-card .port-total{color:#13171c;}
 
   // 초기 렌더 (이미 결과 있을 경우)
   if (Object.keys(visionResults).length > 0) renderVisionPage();
+
+  // ── [V65] 브라우저 추론 스캐너 ──
+  //   Roboflow가 Cloudflare Workers IP를 403으로 차단 → 백엔드 스캔 불가.
+  //   브라우저(차단 안 됨)가 차트를 그려 직접 추론하고 결과를 /api/vision-results로 저장.
+  //   엔진 거래 로직은 동일 state를 읽으므로 자동 연동. 일일 브라우저 호출 캡 300.
+  var _bvsBusy = false;
+  function _bvsBudget() {
+    var key = 'bvs_' + new Date().toISOString().slice(0, 10);
+    return { key: key, used: parseInt(localStorage.getItem(key) || '0', 10) };
+  }
+  async function browserVisionScan(maxCalls) {
+    if (_bvsBusy) return 0;
+    var va = (currentCfg && currentCfg.visionAI) || {};
+    if (!va.enabled || !va.rfApiKey) return 0;
+    var bud = _bvsBudget();
+    if (bud.used >= 300) return 0;
+    maxCalls = Math.min(maxCalls || 20, 300 - bud.used);
+    _bvsBusy = true;
+    var ver = va.rfVersion || 11;
+    // 대상: 워치리스트 중 예측이 없거나 가장 오래된 순
+    var syms = Object.keys(lastQuotes);
+    syms.sort(function(a, b){ return ((visionResults[a]||{}).ts||0) - ((visionResults[b]||{}).ts||0); });
+    var out = {}, calls = 0;
+    for (var i = 0; i < syms.length && calls < maxCalls; i++) {
+      var sym = syms[i];
+      try {
+        var d = await fetch('/api/daily?symbol=' + encodeURIComponent(sym)).then(function(r){ return r.ok ? r.json() : null; });
+        if (!d || !d.closes || d.closes.length < 20) continue;
+        var cv = drawVisionCanvas(d.closes.slice(-60), 224);
+        var b64 = cv.toDataURL('image/jpeg', 0.92).split(',')[1];
+        var r = await fetch('https://serverless.roboflow.com/stock-updown-classifier/' + ver + '?api_key=' + encodeURIComponent(va.rfApiKey),
+          { method: 'POST', headers: { 'Content-Type': 'application/x-www-form-urlencoded' }, body: b64 });
+        calls++;
+        if (r.status === 429) break;
+        if (!r.ok) continue;
+        var j = await r.json();
+        var up = 0, dn = 0;
+        (Array.isArray(j.predictions) ? j.predictions : []).forEach(function(p){
+          if (p.class === 'up') up = p.confidence || 0;
+          else if (p.class === 'down') dn = p.confidence || 0;
+        });
+        if (j.top === 'up' && typeof j.confidence === 'number') { up = Math.max(up, j.confidence); if (!dn) dn = 1 - up; }
+        if (j.top === 'down' && typeof j.confidence === 'number') { dn = Math.max(dn, j.confidence); if (!up) up = 1 - dn; }
+        if (!up && !dn) continue;
+        out[sym] = { pred: up >= dn ? 'up' : 'down', conf: Math.max(up, dn), upConf: up, downConf: dn,
+                     predClose: d.closes[d.closes.length - 1], ts: Date.now() };
+        await new Promise(function(res){ setTimeout(res, 250); });
+      } catch (e) {}
+    }
+    try { localStorage.setItem(bud.key, String(bud.used + calls)); } catch (e) {}
+    var n = Object.keys(out).length;
+    if (n) {
+      try { await fetch('/api/vision-results', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(out) }); } catch (e) {}
+      window._visionApplyBackend(out);
+    }
+    _bvsBusy = false;
+    return n;
+  }
+  // 자동: 페이지 열려있는 동안 5분마다 20종목씩 (일일 300 캡)
+  setInterval(function(){ browserVisionScan(20).then(null, function(){}); }, 5 * 60 * 1000);
+  setTimeout(function(){ browserVisionScan(20).then(null, function(){}); }, 15000);
 
   // ── Vision AI: 백엔드 예측을 표시용으로 머지 (프론트는 Roboflow 직접 호출 안 함) ──
   //   [한도 보호] 스캔은 백엔드 cron이 일일예산 추적 하에 전담. 프론트는 결과만 반영.
