@@ -4885,7 +4885,8 @@ async function fetchBatchQuotes(symbols, opts) {
       if (fetchBudgetLeft() <= 0) return;
       __fetchBudget.used++;
       try {
-        const r = await fetch("https://polling.finance.naver.com/api/realtime?query=SERVICE_ITEM:" + sl.join("|"),
+        // [V9.3] 구분자 | → , (네이버 API 변경: 파이프는 배치당 1개만 반환, 쉼표는 전체 반환)
+        const r = await fetch("https://polling.finance.naver.com/api/realtime?query=SERVICE_ITEM:" + sl.join(","),
           { headers: { "User-Agent": "Mozilla/5.0", "Referer": "https://finance.naver.com" } });
         if (!r.ok) return;
         const j = await r.json();
@@ -11813,7 +11814,7 @@ async function handleRequest(request, env) {
     if (path === "/api/naver-test" && request.method === "POST") {
       const out = {};
       try {
-        const r1 = await fetch("https://polling.finance.naver.com/api/realtime?query=SERVICE_ITEM:005930|000660|035420",
+        const r1 = await fetch("https://polling.finance.naver.com/api/realtime?query=SERVICE_ITEM:005930,000660,035420",
           { headers: { "User-Agent": "Mozilla/5.0", "Referer": "https://finance.naver.com" } });
         out.polling = r1.status + " " + (await r1.text()).slice(0, 200).replace(/\n/g, "");
       } catch (e) { out.polling = "ERR " + e.message; }
