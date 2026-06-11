@@ -4867,9 +4867,14 @@ async function fetchBatchQuotes(symbols, opts) {
   const out = {};
   if (!symbols || symbols.length === 0) return out;
 
-  // --- 0) [V66] KR 실시간 — 네이버 폴링 API (야후 15분 지연 해소) ---
-  //   60종목/1콜 배치라 subrequest도 절약(324종목=6콜). 실패 종목은 야후 폴백이 그대로 처리.
-  //   nv=현재가, sv=기준가(전일종가) → dayPct 부호 자동.
+  // --- 0) [V9.1] KR 교차검증용 네이버 폴링 — 야후가 "기본" 소스, 네이버는 검증·실시간 보정 ---
+  //   기존(V66)엔 네이버가 KR 1순위였으나, 단일 소스 의존을 피하기 위해 야후를 유지하고
+  //   네이버는 별도 맵(naverXV)에 받아 아래 머지 단계에서 교차검증한다:
+  //     · 양쪽 일치(±5%) → 실시간(네이버) 값 채택 (야후 KR은 15분 지연이라 현실 반영은 네이버가 정확)
+  //     · 큰 불일치(>5%) → 야후 값 유지 + WARN 로그 (한쪽 소스 오염 방어)
+  //     · 야후 누락 → 네이버 단독 사용 / 네이버 누락 → 야후 그대로
+  //   60종목/1콜 배치라 subrequest 절약(324종목=6콜). nv=현재가, sv=기준가(전일종가).
+  const naverXV = {};
   const krSyms = symbols.filter(function(s){ return s.endsWith(".KS") || s.endsWith(".KQ"); });
   if (krSyms.length > 0 && fetchBudgetLeft() > 2) {
     const codeMap = {};
@@ -4893,7 +4898,7 @@ async function fetchBatchQuotes(symbols, opts) {
           const nv = Number(d.nv), sv = Number(d.sv);
           if (!(nv > 0)) continue;
           const prev = (sv > 0) ? sv : nv;
-          out[sym] = { price: nv, prevClose: prev, dayPct: prev ? ((nv - prev) / prev) * 100 : 0, rt: 1 };
+          naverXV[sym] = { price: nv, prevClose: prev, dayPct: prev ? ((nv - prev) / prev) * 100 : 0, rt: 1 };
         }
       } catch (e) {}
     }));
@@ -4929,7 +4934,7 @@ async function fetchBatchQuotes(symbols, opts) {
   const v7Headers = auth && auth.cookie ? { "Cookie": auth.cookie } : null;
   // 슬라이스 목록 구성
   const slices = [];
-  const v7Targets = symbols.filter(function(s){ return !out[s]; });  // [V66] 네이버로 채운 KR은 제외
+  const v7Targets = symbols.filter(function(s){ return !out[s]; });  // [V9.1] KR 포함 전 종목 야후 조회(기본 소스) — 네이버는 교차검증용
   for (let i = 0; i < v7Targets.length; i += BATCH) slices.push(v7Targets.slice(i, i + BATCH));
   let v7Dead = false;
   if (slices.length > 0 && fetchBudgetLeft() > 0) {
@@ -4974,6 +4979,26 @@ async function fetchBatchQuotes(symbols, opts) {
     for (const r of results) {
       if (r.q) out[r.sym] = r.q;
     }
+  }
+
+  // --- 3) [V9.1] KR 교차검증 머지 — 야후(기본) vs 네이버(실시간 검증) ---
+  //   야후 KR은 15분 지연이므로 양쪽이 ±5% 내로 일치하면 실시간(네이버) 값을 채택해
+  //   현실과의 시차를 없앤다. 5% 초과 괴리는 한쪽 소스 오염으로 보고 야후 유지 + WARN.
+  const XV_TOL = 0.05;
+  const xvMismatch = [];
+  for (const sym of Object.keys(naverXV)) {
+    const nq = naverXV[sym], yq = out[sym];
+    if (!yq) { out[sym] = nq; continue; }                  // 야후 누락 → 네이버 단독
+    const diff = Math.abs(yq.price - nq.price) / nq.price;
+    if (diff <= XV_TOL) {
+      out[sym] = Object.assign({}, nq, { xv: 1 });         // 교차검증 통과 → 실시간값
+    } else {
+      out[sym] = Object.assign({}, yq, { xvFail: 1 });     // 괴리 큼 → 야후 유지
+      xvMismatch.push(sym + " y" + yq.price + "/n" + nq.price);
+    }
+  }
+  if (xvMismatch.length > 0 && opts.DB) {
+    try { await log(opts.DB, "WARN", null, "[XV] 야후·네이버 가격 괴리 " + xvMismatch.length + "건: " + xvMismatch.slice(0, 5).join(", ")); } catch (e) {}
   }
 
   return out;
