@@ -9692,8 +9692,13 @@ async function runTradingCycle(env) {
       // [성능] 평가 중 quote 지표 갱신을 종목당 D1 write(saveQuote) 대신 batch로 모아
       //   루프 끝에 일괄 커밋 → 종목당 ~419ms였던 평가 속도를 ms 단위로 단축(커버리지 확대 가능).
       const evalQuoteStmts = [];
+      // [V65 FIX] 평가 최소시간 보장 — prefetch·인리치먼트가 hardCap(22s)을 다 먹으면
+      //   평가가 0종목으로 즉시 중단되어 "매수신호 0" 마비가 됐다(라이브 로그: 평가 0/307 반복).
+      //   hardCap을 넘겼어도 최소 8초는 평가를 진행한다(cron invocation은 30s+ 여유 있음).
+      const evalMinMs = 8000;
       for (const item of orderedEval) {
-        if (Date.now() - evalStartedAt > evalBudgetMs || Date.now() - cycleStartedAt > hardCapMs) {
+        const _evalElapsed = Date.now() - evalStartedAt;
+        if (_evalElapsed > evalBudgetMs || (Date.now() - cycleStartedAt > hardCapMs && _evalElapsed > evalMinMs)) {
           evalTimedOut = true;
           try { await setState(DB, "eval_offset:" + market, (evalOffset + evalProcessed) % fetched.length); } catch (e) {}
           await log(DB, "WARN", null, "[TIME-CAP] " + market.toUpperCase() + " 평가 " + evalProcessed + "/" + fetched.length + "종목 후 중단 — 다음 사이클이 이어서 평가");
@@ -12175,6 +12180,14 @@ async function runVisionScanBackend(env, force) {
 
   const allSymbols = [...(cfg.usTickers || []), ...(cfg.krTickers || [])];
   const existing = await getState(DB, "vision_predictions", {});
+  // [V65] 구파서 버그가 남긴 쓰레기 예측 정리 — conf≤6%·up/down 합≤5%는 무효 → 삭제(즉시 재스캔 대상化)
+  for (const k in existing) {
+    if (k.indexOf("__") === 0) continue;
+    const e = existing[k];
+    if (e && typeof e === "object" && (e.conf || 0) <= 0.06 && ((e.upConf || 0) + (e.downConf || 0)) < 0.05) {
+      delete existing[k];
+    }
+  }
 
   // daily 캐시(우선순위 판정에 재사용 → 추가 쿼리 없음)
   const dailyCache = {};
@@ -12245,9 +12258,23 @@ async function runVisionScanBackend(env, force) {
     if (resp.status === 429) return { rateLimited: true };
     if (!resp.ok) return null;
     const d = await resp.json();
-    const p = d.predictions || {};
-    const upC   = (p["up"]   && p["up"].confidence)   || 0;
-    const downC = (p["down"] && p["down"].confidence) || 0;
+    // [V65 FIX] 신모델(v11+) 응답은 predictions가 "배열"([{class,confidence}]) + top/confidence.
+    //   구형 파서가 객체 맵(p["up"].confidence)만 읽어 upC=downC=0 → 전종목 "up"/신뢰도 0~5% 버그.
+    let upC = 0, downC = 0;
+    const p = d.predictions;
+    if (Array.isArray(p)) {
+      for (const pr of p) {
+        if (pr && pr.class === "up") upC = pr.confidence || 0;
+        else if (pr && pr.class === "down") downC = pr.confidence || 0;
+      }
+    } else if (p && typeof p === "object") {
+      upC   = (p["up"]   && p["up"].confidence)   || 0;
+      downC = (p["down"] && p["down"].confidence) || 0;
+    }
+    // top/confidence가 있으면 우선 신뢰 (배열에 top 클래스만 담겨 와도 보완됨)
+    if (d.top === "up"   && typeof d.confidence === "number") { upC = Math.max(upC, d.confidence); if (!downC) downC = 1 - d.confidence; }
+    if (d.top === "down" && typeof d.confidence === "number") { downC = Math.max(downC, d.confidence); if (!upC) upC = 1 - d.confidence; }
+    if (!upC && !downC) return null;  // 파싱 실패 → 쓰레기 저장 방지
     return { pred: upC >= downC ? "up" : "down", upConf: upC, downConf: downC };
   }
 

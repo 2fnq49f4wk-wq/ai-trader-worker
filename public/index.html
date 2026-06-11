@@ -3043,6 +3043,11 @@ html[data-theme="light"] .port-card .port-total{color:#13171c;}
   var logsModalOpen = false;
   // Vision AI 상태
   var visionResults = {};     // {symbol: {pred:'up'|'down', conf, upConf, downConf, ts}}
+  // [V65] 구파서 버그(전종목 up·신뢰도 0~5%)가 남긴 무효 예측 판별
+  function isGarbagePred(v) {
+    return !v || typeof v !== 'object' ||
+      ((v.conf || 0) <= 0.06 && ((v.upConf || 0) + (v.downConf || 0)) < 0.05);
+  }
   var visionScanning = false;
   var visionScanQueue = [];
   // [V10] 대규모 종목 UI 상태
@@ -3379,9 +3384,11 @@ html[data-theme="light"] .port-card .port-total{color:#13171c;}
     if (br) {
       function breadth(mkt, label) {
         var adv = 0, dec = 0;
+        var _bFresh = Date.now() - 24 * 3600 * 1000;  // [V65] 묵은 시세 제외
         Object.keys(lastQuotes).forEach(function(sym){
           var q = lastQuotes[sym];
           if (!q || typeof q.dayPct !== 'number') return;
+          if (q.ts && q.ts < _bFresh) return;
           var isKR = /\.(KS|KQ)$/.test(sym);
           if ((mkt === 'kr') !== isKR) return;
           if (q.dayPct > 0) adv++; else if (q.dayPct < 0) dec++;
@@ -3400,16 +3407,23 @@ html[data-theme="light"] .port-card .port-total{color:#13171c;}
     // ③ TOP MOVERS — 상승/하락 상위 8
     var g = $('fvGainers'), l = $('fvLosers');
     if (g && l) {
+      // [V65] 24시간 이상 묵은 시세는 제외 — 어제 등락이 TOP MOVERS에 박제되던 문제 해결
+      var _freshLimit = Date.now() - 24 * 3600 * 1000;
       var all = Object.keys(lastQuotes).map(function(sym){
         var q = lastQuotes[sym];
-        return (q && typeof q.dayPct === 'number' && q.price > 0) ? { sym: sym, q: q } : null;
+        if (!q || typeof q.dayPct !== 'number' || !(q.price > 0)) return null;
+        if (q.ts && q.ts < _freshLimit) return null;
+        return { sym: sym, q: q };
       }).filter(Boolean);
       var sorted = all.slice().sort(function(a, b){ return b.q.dayPct - a.q.dayPct; });
       function moverRow(it, isUp) {
         var held = (heldMap.us && heldMap.us[it.sym]) || (heldMap.kr && heldMap.kr[it.sym]);
         var sig = held ? 'HELD' : (isUp ? 'Top Gainer' : 'Top Loser');
         var cls = it.q.dayPct >= 0 ? 'pos' : 'neg';
-        return '<tr><td><span class="fv-tick">'+escapeHtml(it.sym.replace(/\.(KS|KQ)$/,''))+'</span></td>'+
+        // [V65] KR은 티커 대신 종목명 표시
+        var isKR = /\.(KS|KQ)$/.test(it.sym);
+        var disp = isKR ? (it.q.name || DYNAMIC_NAMES[it.sym] || it.sym.replace(/\.(KS|KQ)$/,'')) : it.sym;
+        return '<tr><td><span class="fv-tick" title="'+escapeHtml(it.sym)+'">'+escapeHtml(disp)+'</span></td>'+
           '<td class="right">'+fmtNum(it.q.price)+'</td>'+
           '<td class="right '+cls+'">'+(it.q.dayPct>=0?'+':'')+fmtNum(it.q.dayPct,2)+'%</td>'+
           '<td class="fv-sig">'+sig+'</td></tr>';
@@ -6938,7 +6952,10 @@ html[data-theme="light"] .port-card .port-total{color:#13171c;}
   // localStorage에서 이전 결과 복원
   try {
     var _savedVision = localStorage.getItem('visionResults');
-    if (_savedVision) visionResults = JSON.parse(_savedVision);
+    if (_savedVision) {
+      visionResults = JSON.parse(_savedVision);
+      Object.keys(visionResults).forEach(function(k){ if (isGarbagePred(visionResults[k])) delete visionResults[k]; });  // [V65]
+    }
   } catch(e) {}
 
   // 차트 이미지를 Canvas에 그려 base64로 반환
@@ -7130,6 +7147,7 @@ html[data-theme="light"] .port-card .port-total{color:#13171c;}
       if (s && s.visionPredictions) {
         Object.keys(s.visionPredictions).forEach(function(k){
           if (k.indexOf('__') === 0) return;
+          if (isGarbagePred(s.visionPredictions[k])) { delete visionResults[k]; return; }  // [V65]
           visionResults[k] = s.visionPredictions[k];
         });
         try { localStorage.setItem('visionResults', JSON.stringify(visionResults)); } catch(e) {}
@@ -7303,6 +7321,7 @@ html[data-theme="light"] .port-card .port-total{color:#13171c;}
     if (!preds) return;
     Object.keys(preds).forEach(function(k){
       if (k.indexOf('__') === 0) return;            // __accuracy 등 메타 제외
+      if (isGarbagePred(preds[k])) { delete visionResults[k]; return; }  // [V65]
       visionResults[k] = preds[k];
     });
     try { localStorage.setItem('visionResults', JSON.stringify(visionResults)); } catch(e) {}
