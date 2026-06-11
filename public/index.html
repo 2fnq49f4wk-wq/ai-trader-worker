@@ -2690,13 +2690,9 @@ html[data-theme="light"] .port-card .port-total{color:#13171c;}
     </div>
     <div id="heatmapChartView">
       <div style="font-size:10px;color:var(--t3);margin-bottom:12px;padding-bottom:10px;border-bottom:1px solid var(--bd);">
-        S&P 500 히트맵 · 상자 크기 = 시가총액, 색상 = 등락 · 섹터별 그룹
+        S&P 500 히트맵 · 상자 크기 = 시가총액, 색상 = 등락 · 섹터별 그룹 · <span id="tvHeatmapSub" style="color:var(--pos);">엔진 실시간 시세</span>
       </div>
-      <div id="tvHeatmapContainer" style="width:100%;height:650px;background:#000;overflow:hidden;">
-        <div class="tradingview-widget-container" style="height:100%;width:100%;">
-          <div class="tradingview-widget-container__widget" style="height:100%;width:100%;"></div>
-        </div>
-      </div>
+      <div id="tvHeatmapContainer" style="width:100%;height:650px;background:#000;overflow:hidden;"></div>
     </div>
   </div>
 </div>
@@ -3462,7 +3458,6 @@ html[data-theme="light"] .port-card .port-total{color:#13171c;}
       }
     }
   }
-  // ⑤ 대시보드 히트맵 — TradingView 임베드 (대시보드 첫 진입 시 1회)
   // ════ [V64] S&P 500 히트맵 — TradingView 임베드(15분 지연·외부소스) 제거, 엔진 실시간 시세로 직접 렌더 ════
   //   데이터: /api/state watchlist(US 전 종목, TOP MOVERS와 동일 소스) → 대시보드 전체와 항상 일치.
   //   10초 폴링(refreshAll)마다 재렌더. 타일 크기 = 시총 순위 가중, 색 = 당일 등락률(±3% 클램프).
@@ -3529,7 +3524,12 @@ html[data-theme="light"] .port-card .port-total{color:#13171c;}
   }
 
   function renderFvHeatmap() {
-    var host = $('fvHeatmap');
+    renderFvHeatmapInto($('fvHeatmap'));
+    // 전체화면 모달이 열려 있으면 같이 갱신
+    var hm = $('heatmapModal');
+    if (hm && hm.classList.contains('show')) renderFvHeatmapInto($('tvHeatmapContainer'));
+  }
+  function renderFvHeatmapInto(host) {
     if (!host) return;
     var quotes = window.__lastQuotesArr || [];
     var W = host.clientWidth, H = host.clientHeight || 360;
@@ -3585,7 +3585,7 @@ html[data-theme="light"] .port-card .port-total{color:#13171c;}
     var fresh = 0;
     stocks.forEach(function(q){ if (q.ts && Date.now() - q.ts < 300000) fresh++; });
     host.innerHTML = '<div style="position:relative;width:100%;height:100%;overflow:hidden;">' + html + '</div>';
-    var subEl = $('fvHeatSub');
+    var subEl = (host.id === 'fvHeatmap') ? $('fvHeatSub') : $('tvHeatmapSub');
     if (subEl) subEl.textContent = stocks.length + '종목 · 5분내 시세 ' + fresh + ' · ' + new Date().toLocaleTimeString('ko-KR', { hour: '2-digit', minute: '2-digit', second: '2-digit' }) + ' 갱신';
   }
   function loadFvHeatmap() { renderFvHeatmap(); }  // 하위호환 별칭 (↻ 버튼·초기 로드)
@@ -5700,60 +5700,19 @@ html[data-theme="light"] .port-card .port-total{color:#13171c;}
   }
   var currentFxPairs = null;
 
-  // ===== [HEATMAP] S&P 500 히트맵 =====
-  var tvHeatmapLoaded = false;
-  // TradingView Stock Heatmap 위젯 스크립트를 컨테이너에 주입 (또는 재주입)
-  function loadTVHeatmap() {
-    var host = $('tvHeatmapContainer');
-    if (!host) return;
-    // 컨테이너 초기화 후 재생성 (새로고침 시 깨끗하게 다시 그림)
-    host.innerHTML = '<div class="tradingview-widget-container" style="height:100%;width:100%;">'+
-                     '<div class="tradingview-widget-container__widget" style="height:100%;width:100%;"></div></div>';
-    var widgetDiv = host.querySelector('.tradingview-widget-container');
-    var script = document.createElement('script');
-    script.type = 'text/javascript';
-    script.async = true;
-    script.src = 'https://s3.tradingview.com/external-embedding/embed-widget-stock-heatmap.js';
-    script.innerHTML = JSON.stringify({
-      exchanges: [],
-      dataSource: "SPX500",
-      grouping: "sector",
-      blockSize: "market_cap_basic",
-      blockColor: "change",
-      locale: "kr",
-      symbolUrl: "",
-      colorTheme: "dark",
-      hasTopBar: true,
-      isDataSetEnabled: false,
-      isZoomEnabled: true,
-      hasSymbolTooltip: true,
-      isMonoSize: false,
-      width: "100%",
-      height: "100%"
-    });
-    widgetDiv.appendChild(script);
-    tvHeatmapLoaded = true;
-  }
-
+  // ===== [HEATMAP] S&P 500 히트맵 — [V64] TradingView 임베드(15분 지연) 제거, 엔진 실시간 시세 직접 렌더 =====
+  //   대시보드 패널과 동일한 renderFvHeatmapInto 재사용. 모달 열려 있는 동안 10초 폴링마다 자동 갱신.
   function openHeatmap() {
     $('heatmapModal').classList.add('show');
-    // 위젯이 아직 로드 안 됐으면 주입 (모달 열릴 때 컨테이너 크기가 잡힌 뒤 그려야 정상 표시)
-    if (!tvHeatmapLoaded) {
-      setTimeout(loadTVHeatmap, 100);
-    }
+    // 모달이 표시돼 컨테이너 크기가 잡힌 뒤 그려야 정상 표시
+    setTimeout(function(){ renderFvHeatmapInto($('tvHeatmapContainer')); }, 100);
   }
   function closeHeatmap() {
     $('heatmapModal').classList.remove('show');
   }
 
   function heatmapRefresh() {
-    var btn = $('btnHeatmapRefresh');
-    if (btn) { btn.disabled = true; btn.textContent = '갱신 중…'; }
-    // TradingView 위젯 재주입
-    loadTVHeatmap();
-    setTimeout(function(){
-      if (btn) { btn.disabled = false; btn.textContent = '↻ 새로고침'; }
-    }, 1000);
+    renderFvHeatmapInto($('tvHeatmapContainer'));
   }
 
   // ===== [V8.6 Hybrid] LLM Banner =====
