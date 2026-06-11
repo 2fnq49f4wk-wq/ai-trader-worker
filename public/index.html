@@ -2205,7 +2205,7 @@ html[data-theme="light"] .port-card .port-total{color:#13171c;}
             </div>
           </div>
           <div class="fv-panel">
-            <div class="fv-panel-head">S&amp;P 500 — 1 DAY PERFORMANCE <button class="llm-btn" id="btnFvHeatRefresh" style="margin-left:auto;">↻</button></div>
+            <div class="fv-panel-head">S&amp;P 500 — 1 DAY PERFORMANCE <span class="fv-panel-sub" id="fvHeatSub">엔진 실시간 시세</span> <button class="llm-btn" id="btnFvHeatRefresh" style="margin-left:auto;">↻</button></div>
             <div id="fvHeatmap" style="height:360px;background:#000;"></div>
           </div>
         </div>
@@ -3463,29 +3463,139 @@ html[data-theme="light"] .port-card .port-total{color:#13171c;}
     }
   }
   // ⑤ 대시보드 히트맵 — TradingView 임베드 (대시보드 첫 진입 시 1회)
-  var fvHeatLoaded = false;
-  function loadFvHeatmap() {
+  // ════ [V64] S&P 500 히트맵 — TradingView 임베드(15분 지연·외부소스) 제거, 엔진 실시간 시세로 직접 렌더 ════
+  //   데이터: /api/state watchlist(US 전 종목, TOP MOVERS와 동일 소스) → 대시보드 전체와 항상 일치.
+  //   10초 폴링(refreshAll)마다 재렌더. 타일 크기 = 시총 순위 가중, 색 = 당일 등락률(±3% 클램프).
+  var FV_SECTORS = {
+    '기술':       'NVDA AAPL MSFT AVGO MU AMD INTC ORCL CSCO LRCX AMAT PLTR TXN KLAC QCOM IBM ADI PANW SNDK ANET STX APP WDC CRWD DELL GLW APH CRM INTU ACN NOW ADBE SNPS CDNS FTNT DDOG CIEN NXPI MPWR COHR MSI LITE TEL KEYS ADSK TER MCHP HPE GRMN ON HPQ CTSH NTAP AKAM FFIV VRSN FICO FSLR SMCI JBL ROP WDAY TDY GEN PTC TYL CDW TRMB ZBRA GDDY SWKS TTD IT EPAM',
+    '통신':       'GOOGL GOOG META NFLX TMUS VZ DIS T CMCSA EA TTWO WBD SATS LYV TKO FOXA FOX NWS NWSA OMC CHTR PSKY',
+    '임의소비재': 'AMZN TSLA HD MCD TJX SBUX BKNG LOW NKE TGT ORLY MAR ABNB CVNA HLT DASH ROST RCL GM F CMG YUM DHI EBAY AZO LVS CCL EXPE PHM ULTA LEN WSM RL DRI TSCO NVR LULU DECK HAS GPC BBY APTV WYNN MGM DPZ NCLH POOL TPR',
+    '필수소비재': 'WMT COST KO PG PM PEP MO MDLZ MNST CL KDP ADM HSY SYY KVUE KMB CASY KR EL STZ BG TSN DG CHD GIS DLTR KHC MKC BF-B CLX HRL SJM TAP CAG CPB',
+    '헬스케어':   'LLY JNJ ABBV UNH MRK TMO ABT DHR PFE AMGN ISRG BMY VRTX GILD SYK MDT CVS CI ELV HCA MCK BSX REGN ZTS BDX EW IDXX A IQV CNC RMD GEHC BIIB MRNA INCY VTRS DXCM WAT STE WST MTD DGX LH HUM CAH COR BAX HSIC UHS DVA CRL RVTY PODD SOLV ZBH TECH ALGN COO',
+    '금융':       'BRK-B JPM V MA BAC MS GS WFC AXP C SCHW BLK SPGI PGR CB PNC USB TFC COF MET AIG PRU ALL AJG AON MMC ICE CME NDAQ CBOE MCO BX KKR APO ARES AMP STT BK NTRS RJF FITB HBAN MTB RF KEY CFG SYF TROW BEN IVZ WTW BRO AFL TRV HIG CINF ACGL EG GL AIZ WRB ERIE L PFG FDS MSCI PYPL FIS FISV GPN CPAY COIN HOOD IBKR XYZ JKHY',
+    '산업재':     'CAT GE RTX HON UNP BA LMT DE UPS GD MMM EMR ETN PH CMI NOC LHX ITW CSX NSC FDX WM RSG JCI CTAS GWW PCAR URI PWR TT CPRT FAST ODFL VRSK DAL UAL LUV WAB IR OTIS CARR DOV XYL HUBB EME FIX ROK AME TDG HWM AXON JBHT CHRW EXPD ROL SNA PNR ALLE TXT HII LDOS IEX NDSN J GNRC SWK AOS MAS BR PAYX ADP EFX RKLB GEV VLTO UBER VRT FTV LII',
+    '에너지':     'XOM CVX COP SLB EOG MPC PSX VLO OXY WMB KMI OKE HAL DVN FANG BKR TRGP EQT APA EXE TPL',
+    '소재':       'LIN SHW APD ECL FCX NEM NUE DOW DD PPG LYB VMC MLM ALB IFF PKG IP BALL AVY CF MOS STLD CTVA AMCR SW CRH',
+    '유틸리티':   'NEE SO DUK AEP SRE D EXC XEL ED WEC PEG ETR ES FE AEE CMS CNP ATO NI LNT EVRG PNW DTE PPL EIX PCG AES AWK VST CEG NRG',
+    '리츠':       'PLD AMT EQIX WELL SPG PSA O CCI DLR VICI EXR AVB EQR VTR INVH MAA ESS KIM REG DOC HST UDR CPT BXP FRT ARE IRM SBAC CSGP WY CBRE'
+  };
+  var FV_SECTOR_OF = {};
+  Object.keys(FV_SECTORS).forEach(function(sec){
+    FV_SECTORS[sec].split(/\s+/).forEach(function(sym){ if (sym) FV_SECTOR_OF[sym] = sec; });
+  });
+
+  // squarified treemap — items: [{_a:면적}] 내림차순. out에 {it,x,y,w,h} push.
+  function fvSquarify(items, x, y, w, h, out) {
+    while (items.length) {
+      if (items.length === 1 || w <= 0 || h <= 0) {
+        if (items[0]) out.push({ it: items[0], x: x, y: y, w: Math.max(0, w), h: Math.max(0, h) });
+        return;
+      }
+      var side = Math.min(w, h);
+      var row = [], rowSum = 0, best = Infinity, i;
+      for (i = 0; i < items.length; i++) {
+        var newSum = rowSum + items[i]._a;
+        var thick0 = newSum / side;
+        var worst = 0;
+        for (var j = 0; j <= i; j++) {
+          var len0 = items[j]._a / thick0;
+          var ar = Math.max(thick0 / len0, len0 / thick0);
+          if (ar > worst) worst = ar;
+        }
+        if (row.length && worst > best) break;
+        best = worst; row.push(items[i]); rowSum = newSum;
+      }
+      var thick = rowSum / side, off = 0, k;
+      if (w >= h) {
+        for (k = 0; k < row.length; k++) { var lh = row[k]._a / thick; out.push({ it: row[k], x: x, y: y + off, w: thick, h: lh }); off += lh; }
+        x += thick; w -= thick;
+      } else {
+        for (k = 0; k < row.length; k++) { var lw = row[k]._a / thick; out.push({ it: row[k], x: x + off, y: y, w: lw, h: thick }); off += lw; }
+        y += thick; h -= thick;
+      }
+      items = items.slice(row.length);
+    }
+  }
+
+  // 등락률 → 색 (Finviz 팔레트: -3% 빨강 ↔ 0 회색 ↔ +3% 초록)
+  function fvHeatColor(p) {
+    var t = Math.max(-3, Math.min(3, p || 0)) / 3;
+    function mix(a, b, f) { return Math.round(a + (b - a) * f); }
+    var R0 = 65, G0 = 69, B0 = 84;   // 0% 회색 #414554
+    var r, g, b;
+    if (t >= 0) { r = mix(R0, 48, t); g = mix(G0, 204, t); b = mix(B0, 90, t); }   // → #30cc5a
+    else { t = -t; r = mix(R0, 246, t); g = mix(G0, 53, t); b = mix(B0, 56, t); }  // → #f63538
+    return 'rgb(' + r + ',' + g + ',' + b + ')';
+  }
+
+  function renderFvHeatmap() {
     var host = $('fvHeatmap');
     if (!host) return;
-    host.innerHTML = '<div class="tradingview-widget-container" style="height:100%;width:100%;">'+
-                     '<div class="tradingview-widget-container__widget" style="height:100%;width:100%;"></div></div>';
-    var widgetDiv = host.querySelector('.tradingview-widget-container');
-    var script = document.createElement('script');
-    script.type = 'text/javascript';
-    script.async = true;
-    script.src = 'https://s3.tradingview.com/external-embedding/embed-widget-stock-heatmap.js';
-    script.innerHTML = JSON.stringify({
-      exchanges: [], dataSource: "SPX500", grouping: "sector",
-      blockSize: "market_cap_basic", blockColor: "change", locale: "kr",
-      symbolUrl: "", colorTheme: "dark", hasTopBar: false,
-      isDataSetEnabled: false, isZoomEnabled: true, hasSymbolTooltip: true,
-      isMonoSize: false, width: "100%", height: "100%"
+    var quotes = window.__lastQuotesArr || [];
+    var W = host.clientWidth, H = host.clientHeight || 360;
+    if (W < 60) return;  // 패널 미표시 중 — 다음 폴링에서 재시도
+    // US 개별주(ETF 제외)만, 가격 있는 것만
+    var stocks = quotes.filter(function(q){
+      return q.market === 'us' && !q.isEtf && typeof q.price === 'number' && q.price > 0 && typeof q.dayPct === 'number';
     });
-    widgetDiv.appendChild(script);
-    fvHeatLoaded = true;
+    if (!stocks.length) { host.innerHTML = '<div class="empty" style="padding:20px;">시세 수신 대기 중...</div>'; return; }
+    // 섹터별 그룹 + 시총순위 기반 면적 가중 (rank 1=최대)
+    var bySec = {};
+    stocks.forEach(function(q){
+      var sec = FV_SECTOR_OF[q.symbol] || '기타';
+      var rank = (typeof q.rank === 'number' && q.rank > 0) ? q.rank : 600;
+      q._wgt = 100 / Math.pow(rank + 3, 0.82);
+      if (!bySec[sec]) bySec[sec] = { name: sec, items: [], sum: 0 };
+      bySec[sec].items.push(q);
+      bySec[sec].sum += q._wgt;
+    });
+    var sectors = Object.keys(bySec).map(function(k){ return bySec[k]; }).sort(function(a, b){ return b.sum - a.sum; });
+    var totalW = 0;
+    sectors.forEach(function(s){ totalW += s.sum; });
+    var scale = (W * H) / totalW;
+    sectors.forEach(function(s){ s._a = s.sum * scale; });
+    var secRects = [];
+    fvSquarify(sectors.slice(), 0, 0, W, H, secRects);
+    var html = '';
+    secRects.forEach(function(sr){
+      var s = sr.it;
+      var inner = [];
+      var items = s.items.slice().sort(function(a, b){ return b._wgt - a._wgt; });
+      var iScale = (sr.w * sr.h) / s.sum;
+      items.forEach(function(q){ q._a = q._wgt * iScale; });
+      fvSquarify(items, sr.x, sr.y, sr.w, sr.h, inner);
+      inner.forEach(function(r){
+        var q = r.it;
+        if (r.w < 2 || r.h < 2) return;
+        var pct = q.dayPct;
+        var label = '';
+        if (r.w >= 30 && r.h >= 14) {
+          var fs = Math.max(8, Math.min(13, Math.floor(Math.min(r.w / 4.2, r.h / 2.6))));
+          label = '<span style="font-size:' + fs + 'px;font-weight:700;line-height:1.1;">' + q.symbol + '</span>';
+          if (r.h >= 30 && r.w >= 36) label += '<span style="font-size:' + Math.max(7, fs - 3) + 'px;opacity:.9;">' + (pct >= 0 ? '+' : '') + pct.toFixed(1) + '%</span>';
+        }
+        var tip = q.symbol + (q.name && q.name !== q.symbol ? ' ' + q.name : '') + ' · ' + (pct >= 0 ? '+' : '') + pct.toFixed(2) + '% · $' + q.price.toFixed(2) + ' [' + s.name + ']';
+        html += '<div title="' + tip.replace(/"/g, '&quot;') + '" style="position:absolute;left:' + r.x.toFixed(1) + 'px;top:' + r.y.toFixed(1) + 'px;width:' + r.w.toFixed(1) + 'px;height:' + r.h.toFixed(1) + 'px;background:' + fvHeatColor(pct) + ';border:1px solid rgba(0,0,0,.55);box-sizing:border-box;display:flex;flex-direction:column;align-items:center;justify-content:center;overflow:hidden;color:#fff;cursor:default;">' + label + '</div>';
+      });
+      // 섹터 라벨 오버레이
+      if (sr.w >= 56 && sr.h >= 24) {
+        html += '<div style="position:absolute;left:' + (sr.x + 2).toFixed(1) + 'px;top:' + (sr.y + 1).toFixed(1) + 'px;font-size:8px;font-weight:700;letter-spacing:.5px;color:rgba(255,255,255,.85);text-shadow:0 1px 3px rgba(0,0,0,.9);pointer-events:none;z-index:2;">' + s.name + '</div>';
+      }
+    });
+    var fresh = 0;
+    stocks.forEach(function(q){ if (q.ts && Date.now() - q.ts < 300000) fresh++; });
+    host.innerHTML = '<div style="position:relative;width:100%;height:100%;overflow:hidden;">' + html + '</div>';
+    var subEl = $('fvHeatSub');
+    if (subEl) subEl.textContent = stocks.length + '종목 · 5분내 시세 ' + fresh + ' · ' + new Date().toLocaleTimeString('ko-KR', { hour: '2-digit', minute: '2-digit', second: '2-digit' }) + ' 갱신';
   }
+  function loadFvHeatmap() { renderFvHeatmap(); }  // 하위호환 별칭 (↻ 버튼·초기 로드)
   var _bfvh = $('btnFvHeatRefresh');
   if (_bfvh) _bfvh.addEventListener('click', loadFvHeatmap);
+  var _fvHeatRszT = null;
+  window.addEventListener('resize', function(){
+    clearTimeout(_fvHeatRszT);
+    _fvHeatRszT = setTimeout(renderFvHeatmap, 250);
+  });
 
   function renderIndices(indices) {
     var boxUS = $('indicesUS'), boxKR = $('indicesKR');
@@ -5960,7 +6070,8 @@ html[data-theme="light"] .port-card .port-total{color:#13171c;}
         safeRun('usage', function(){ renderUsageBanner(state.usageState, state.forceLock, state.cfg); });
         // [V10.4] FINVIZ DECK — 지수/시장폭/무버/헤드라인
         safeRun('fvdeck', function(){ renderFvDeck(state); });
-        if (!fvHeatLoaded) setTimeout(loadFvHeatmap, 200);
+        // [V64] 히트맵 — 엔진 실시간 시세로 매 폴링 재렌더 (외부 위젯 지연 문제 제거)
+        safeRun('fvheat', function(){ renderFvHeatmap(); });
         // ALL TRADE HISTORY — 요약은 항상 갱신, 테이블은 펼쳐졌을 때만
         if (allTradesExpanded) renderAllTrades(allTrades || []);
         else updateTradesSummaryInto(allTrades || [], 'allTradesTotalCount', 'allTradesWinRate', 'allTradesAvgPnl');
