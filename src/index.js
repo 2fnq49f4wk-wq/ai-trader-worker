@@ -2534,11 +2534,11 @@ const DEFAULT_CFG = {
     // [신규] 품질 게이트 — 승률 개선의 핵심
     requirePriceAboveMaFast: true,  // 일봉 종가가 MA20 위일 때만 (추세 상단)
     minDayMomPct: -1.5,      // [V50완화] -1.0→-1.5 당일 급락 차단 문턱
-    adxMin: 15,              // [V50완화] 20→15 추세 강도 문턱 (신호 증가)
-    minRelVol: 1.1,          // [V50완화] 1.2→1.1 분봉 상대거래량 문턱
+    adxMin: 12,              // [V65완화] 15→12 추세 강도 문턱 (단타 거래량 확대)
+    minRelVol: 1.0,          // [V65완화] 1.1→1.0 분봉 상대거래량 문턱
     // 분봉 진입 조건
-    vwapBand: 0.8,           // [강화] 1.0→0.8 VWAP 더 가까이서만 진입(추격 비용↓)
-    momEntry: 0.4,           // [강화] 0.3→0.4 분봉 모멘텀 더 확실할 때만
+    vwapBand: 1.0,           // [V65완화] 0.8→1.0 VWAP 진입 밴드 복원 (신호 증가)
+    momEntry: 0.35,          // [V65완화] 0.4→0.35 분봉 모멘텀 문턱
     momStrong: 1.5,          // recentMom ≥ 1.5%: 강한 모멘텀 → 더 작은 포지션(추격 방지)
     pullbackEnabled: true,   // [신규] VWAP 눌림목 반등 진입 — 추격 대신 되돌림에서 진입(수익률↑)
     pullbackVwapMin: -1.2,   // VWAP −1.2%까지 눌렸다가
@@ -2556,10 +2556,11 @@ const DEFAULT_CFG = {
     maxPositionPct: 6,       // 포트의 최대 6%
     riskPerTrade: 0.5,       // 손실 리스크 = 포트의 0.5%
     // === [V52 강화] 단타 품질 게이트 ===
-    avoidOpenMinutes: 15,    // 개장 후 N분간 진입 금지 (오프닝 노이즈·갭 변동 회피) — 패닉 단타는 면제
+    avoidOpenMinutes: 10,    // [V65완화] 15→10 개장 후 진입 금지 (오프닝 노이즈 회피) — 패닉 단타는 면제
     avoidCloseMinutes: 20,   // 마감 N분 전 진입 금지 (청산 시간 부족 → 오버나이트 리스크 방지)
-    dailyLossLimitPct: 1.5,  // 당일 scalp 청산 PnL%(합) ≤ -N% → 그날 scalp 신규진입 중단 (틸트 방지, 시장별)
-    reEntryCooldownMin: 60,  // 같은 종목 scalp 손절 후 N분간 재진입 차단 (연속 칼날 방지)
+    dailyLossLimitPct: 2.0,  // [V65완화] 1.5→2.0 당일 scalp 청산 PnL%(합) ≤ -N% → 그날 scalp 신규진입 중단
+    reEntryCooldownMin: 45,  // [V65완화] 60→45 같은 종목 scalp 손절 후 재진입 차단 (연속 칼날 방지)
+    scanMaxPerCycle: 50,     // [V65] scalp 스캔 전용 분봉 fetch 상한/사이클 — 진입확인(intradayConfirm)과 분리
     requireVwapSlopeUp: true,// SC_VWAP/SC_MOMENTUM 진입 시 VWAP 기울기 ≥ 0 요구 (하락 VWAP 추격 차단; 눌림목/패닉은 면제)
     // [V50] 단타 KR 허용 — 야후 1분봉 15분 지연 있으나, 패닉장 인버스/캡출 단타 작동 위해 개방.
     //   지연 영향이 큰 건 일반 모멘텀 추격이고, 인버스 추세추종은 지연 영향이 작다.
@@ -2709,7 +2710,8 @@ const DEFAULT_CFG = {
   },
   // [포트폴리오 히트] 보유 포지션 총 미실현 리스크 한도(%) — 계좌 전체 리스크 상한.
   //   초과 시 신규 진입 차단, 80% 근접 시 사이즈 축소. (개별 0.75% × 12종목 = 9% 노출 통제)
-  maxPortfolioHeat: 8.0,
+  // [V65] 8→12 완화 + HEAT_MAX는 trend/snap만 차단(scalp 면제) — 설정 UI에서 조절 가능.
+  maxPortfolioHeat: 12.0,
   // [패닉 헤지] 인버스 ETF가 시장 약세/패닉에 진입할 때 사이즈 부스트 배수 (하락장 수익·헤지)
   inversePanicBoost: 1.3,
   // === [KR 분리] 고정리스크 사이징 — KR 전용 오버라이드 ===
@@ -3093,12 +3095,19 @@ function migrateCfgToMarkets(cfg) {
     }
     const _sc = cfg.scalpRules;
     if (_sc.usOnly === true)       _sc.usOnly = false;   // KR 단타 개방
-    if (_sc.adxMin === 20)         _sc.adxMin = 15;
-    if (_sc.minRelVol === 1.2)     _sc.minRelVol = 1.1;
+    if (_sc.adxMin === 20 || _sc.adxMin === 15)         _sc.adxMin = 12;        // [V65] 단타 거래량 확대
+    if (_sc.minRelVol === 1.2 || _sc.minRelVol === 1.1) _sc.minRelVol = 1.0;
+    if (_sc.vwapBand === 0.8)      _sc.vwapBand = 1.0;
+    if (_sc.momEntry === 0.4)      _sc.momEntry = 0.35;
+    if (_sc.avoidOpenMinutes === 15)   _sc.avoidOpenMinutes = 10;
+    if (_sc.reEntryCooldownMin === 60) _sc.reEntryCooldownMin = 45;
+    if (_sc.dailyLossLimitPct === 1.5) _sc.dailyLossLimitPct = 2.0;
     if (_sc.rsiMin === 42)         _sc.rsiMin = 38;
     if (_sc.minDayMomPct === -1.0) _sc.minDayMomPct = -1.5;
     if (_sc.takeProfit === 2.5)    _sc.takeProfit = 3.0;   // [V51] 잔량 최종익절 상향
   }
+  // [V65] 포트폴리오 히트 한도 — 옛 기본값(8)만 12로 완화 (커스텀 보존)
+  if (cfg.maxPortfolioHeat === 8 || cfg.maxPortfolioHeat === 8.0) cfg.maxPortfolioHeat = 12.0;
   if (!cfg.scalpPanicRules || typeof cfg.scalpPanicRules !== "object") {
     cfg.scalpPanicRules = JSON.parse(JSON.stringify(DEFAULT_CFG.scalpPanicRules));
   } else {
@@ -9359,7 +9368,8 @@ async function runTradingCycle(env) {
 
     let tried = 0, bought = 0, sold = 0, skipped = 0, fetchFail = 0;
     let signalCount = 0;   // [통계] 이번 사이클 발생 매수신호 수
-    let minuteFetchUsed = 0;  // [분봉] 이번 invocation 분봉 조회 횟수 (subrequest 캡 통제)
+    let minuteFetchUsed = 0;  // [분봉] 진입확인(intradayConfirm) 분봉 조회 횟수 (subrequest 캡 통제)
+    let scalpScanUsed = 0;    // [V65] scalp 스캔 전용 분봉 카운터 — 진입확인과 분리(단타 굶김 방지)
 
     // [V8.1.1] 장 열린 시장만 처리 — 마감된 시장은 시세도 fetch 안 함
     // [V23] 가격 갱신 대상 = 정규장 시간 시장 / 거래 대상 = 거래가능(윈도우+휴장통과) 시장
@@ -9442,7 +9452,7 @@ async function runTradingCycle(env) {
       //   portfolioValue(=equity)로 고점 추적 → 드로다운/연속손실/패닉을 종합.
       //   gate.blockNew(신규매수 차단), gate.sizeScale(사이즈 축소),
       //   gate.deRisk(보유 손절·트레일 타이트닝)로 아래 매도/매수 루프에 작용.
-      let crashGate = { blockNew: false, sizeScale: 1, deRisk: false, ddLevel: 0, ddPct: 0, reasons: [] };
+      let crashGate = { blockNew: false, heatBlock: false, sizeScale: 1, deRisk: false, ddLevel: 0, ddPct: 0, reasons: [] };
       try {
         // equity 고점 갱신엔 방금 구한 portfolioValue를 그대로 사용(중복 fetch 회피).
         const peakInfo = await updateEquityPeak(DB, market, portfolioValue);
@@ -9480,7 +9490,7 @@ async function runTradingCycle(env) {
           }
         }
         if (crashGate.reasons.length > 0) {
-          await log(DB, "INFO", null, "[V12 CRASH-GATE " + market.toUpperCase() + "] dd=" + crashGate.ddPct.toFixed(1) + "% L" + crashGate.ddLevel + (crashGate.blockNew ? " BLOCK-NEW" : (crashGate.sizeScale < 1 ? " size×" + crashGate.sizeScale : "")) + (crashGate.deRisk ? " DE-RISK" : "") + " · " + crashGate.reasons.join(", "));
+          await log(DB, "INFO", null, "[V12 CRASH-GATE " + market.toUpperCase() + "] dd=" + crashGate.ddPct.toFixed(1) + "% L" + crashGate.ddLevel + (crashGate.blockNew ? " BLOCK-NEW" : (crashGate.sizeScale < 1 ? " size×" + crashGate.sizeScale : "")) + (crashGate.heatBlock ? " HEAT-BLOCK(scalp면제)" : "") + (crashGate.deRisk ? " DE-RISK" : "") + " · " + crashGate.reasons.join(", "));
         }
       } catch (e) {
         await log(DB, "WARN", null, "[V12] crashGate fail " + market + ": " + e.message);
@@ -9520,10 +9530,13 @@ async function runTradingCycle(env) {
       //   개별 종목 리스크(0.75%)는 작아도 12종목이면 합산 9%+ → 시장 급락 시 동시 손실.
       //   총 히트가 한도 초과면 신규 진입 차단, 근접하면 사이즈 축소(분산 강제).
       {
-        const maxHeat = (typeof mcfg.maxPortfolioHeat === "number") ? mcfg.maxPortfolioHeat : 8.0;
+        const maxHeat = (typeof mcfg.maxPortfolioHeat === "number") ? mcfg.maxPortfolioHeat : 12.0;
         if (portfolioHeatPct >= maxHeat) {
-          crashGate.blockNew = true;
-          crashGate.reasons.push("HEAT_MAX " + portfolioHeatPct.toFixed(1) + "%≥" + maxHeat + "%");
+          // [V65] 히트 초과는 blockNew(전면차단)와 분리 — trend가 히트를 다 차지하면 scalp(0.5% 저리스크·
+          //   1.2% 타이트손절·당일회전)까지 막혀 "trend만 거래되는" 편중이 생겼다.
+          //   heatBlock은 trend/snap 신규만 차단, scalp은 통과(자체 손절·일손실한도·쿨다운으로 방어).
+          crashGate.heatBlock = true;
+          crashGate.reasons.push("HEAT_MAX " + portfolioHeatPct.toFixed(1) + "%≥" + maxHeat + "% (scalp 면제)");
         } else if (portfolioHeatPct >= maxHeat * 0.8) {
           crashGate.sizeScale *= 0.6;
           crashGate.reasons.push("HEAT_HIGH " + portfolioHeatPct.toFixed(1) + "%");
@@ -10068,10 +10081,12 @@ async function runTradingCycle(env) {
           const _srUsOnly = (mcfg.scalpRules && mcfg.scalpRules.usOnly !== undefined) ? mcfg.scalpRules.usOnly : true;
           const _scalpMarketOk = (!_srUsOnly) || market === "us";
           if (_scalpMarketOk && (_scalpOn || _panicScalpOn) && !scalpDailyBlocked && stratResults.length === 0 && !strategiesHeldNow.has("scalp")) {
-            const _scalpIc = mcfg.intradayConfirm || DEFAULT_CFG.intradayConfirm;
-            if (minuteFetchUsed < ((_scalpIc && _scalpIc.maxPerCycle) || 60) && fetchBudgetLeft() > 5) {
+            // [V65] scalp 전용 스캔 예산 — 기존엔 intradayConfirm.maxPerCycle(60)을 공유해
+            //   진입확인 fetch가 단타 스캔을 굶겼다(단타 거래량 저하의 주원인). 별도 카운터로 분리.
+            const _scanMax = (mcfg.scalpRules && mcfg.scalpRules.scanMaxPerCycle != null) ? mcfg.scalpRules.scanMaxPerCycle : 50;
+            if (scalpScanUsed < _scanMax && fetchBudgetLeft() > 5) {
               try {
-                minuteFetchUsed++;
+                scalpScanUsed++;
                 const _scalpMb = await fetchMinuteBars(symbol, { interval: "1m", range: "1d" });
                 const _scalpSig = evaluateScalpEntry(_scalpMb, daily, mcfg, market, regime);
                 if (_scalpSig && !strategiesHeldNow.has("scalp") && !heldSymbols.has(symbol)) {
@@ -10230,6 +10245,12 @@ async function runTradingCycle(env) {
             const _isPanicScalpSig = signal && signal.isPanicScalp === true;
             if (crashGate.blockNew && !_symInverse && !_isPanicScalpSig) {
               incBlock("CRASH_GATE[" + strategy + "]");
+              continue;
+            }
+            // [V65] 히트 한도 초과 — trend/snap 신규만 차단. scalp은 리스크 작고(0.5%) 손절
+            //   타이트(1.2%)·당일 회전이라 히트 기여가 미미해 면제 → 전략 편중 해소.
+            if (crashGate.heatBlock && strategy !== "scalp" && !_symInverse && !_isPanicScalpSig) {
+              incBlock("HEAT_MAX[" + strategy + "]");
               continue;
             }
 

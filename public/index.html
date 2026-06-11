@@ -2431,6 +2431,10 @@ html[data-theme="light"] .port-card .port-total{color:#13171c;}
                 <span class="port-meta-value" id="cashUS">—</span>
               </div>
             </div>
+            <!-- [V65] 전략별 보유 분해 + 리스크 히트 + 적용 예산분배 -->
+            <div class="port-strats" id="stratBreakUS" style="margin-top:10px;border-top:1px solid var(--bd2);padding-top:8px;"></div>
+            <div class="port-heat" id="heatRowUS" style="margin-top:8px;"></div>
+            <div class="port-budget" id="budgetRowUS" style="margin-top:6px;"></div>
             <div class="cfg-display" id="cfgDisplayUS"></div>
           </div>
         </div>
@@ -2454,6 +2458,10 @@ html[data-theme="light"] .port-card .port-total{color:#13171c;}
                 <span class="port-meta-value" id="cashKR">—</span>
               </div>
             </div>
+            <!-- [V65] 전략별 보유 분해 + 리스크 히트 + 적용 예산분배 -->
+            <div class="port-strats" id="stratBreakKR" style="margin-top:10px;border-top:1px solid var(--bd2);padding-top:8px;"></div>
+            <div class="port-heat" id="heatRowKR" style="margin-top:8px;"></div>
+            <div class="port-budget" id="budgetRowKR" style="margin-top:6px;"></div>
             <div class="cfg-display" id="cfgDisplayKR"></div>
           </div>
         </div>
@@ -2907,6 +2915,52 @@ html[data-theme="light"] .port-card .port-total{color:#13171c;}
         <div class="field"><label>RSI Breakout Max</label><input type="number" id="cfgKrRsiBreakout" min="50" max="90" step="1"></div>
         <div class="field"><label>Conf Min</label><input type="number" id="cfgKrConfMin" min="0.2" max="1" step="0.05"></div>
       </div>
+    </div>
+    <div class="section-divider"></div>
+    <!-- [V65] 리스크 한도 — 포트폴리오 차원 -->
+    <div class="section-title">RISK LIMITS <span style="color:var(--t3);font-weight:400;font-size:10px;">포트폴리오 차원 한도</span></div>
+    <div class="field-row">
+      <div class="field"><label>Portfolio Heat 한도 %</label><input type="number" id="cfgMaxHeat" min="2" max="50" step="0.5"><span class="hint" style="font-size:9px;">보유 총 미실현 리스크 합 한도 — 초과 시 trend/snap 신규 차단 (scalp은 면제)</span></div>
+      <div class="field" style="display:flex;align-items:center;gap:6px;padding-top:18px;">
+        <input type="checkbox" id="cfgAutoConc"><label for="cfgAutoConc" style="font-size:11px;"><b>동시보유 무제한 (자동)</b></label>
+      </div>
+    </div>
+    <div class="hint" style="margin:-2px 0 8px;">무제한 ON이면 종목 수 제한 없이 예산·히트·비중 상한이 총량을 통제합니다. OFF면 TREND 탭의 "Max 동시보유"가 적용됩니다.</div>
+    <div class="section-divider"></div>
+    <!-- [V65] SCALP 단타 룰 -->
+    <div class="section-title">SCALP 단타 룰 <span style="color:var(--t3);font-weight:400;font-size:10px;">분봉 장중 단타 — 진입·청산·한도</span></div>
+    <div class="field-row">
+      <div class="field"><label>Risk/Trade %</label><input type="number" id="cfgScalpRisk" min="0.1" max="3" step="0.05"></div>
+      <div class="field"><label>Max Position %</label><input type="number" id="cfgScalpMaxPos" min="1" max="30" step="1"></div>
+      <div class="field"><label>스캔 종목/사이클</label><input type="number" id="cfgScalpScanMax" min="10" max="120" step="5"><span class="hint" style="font-size:9px;">분당 분봉 조회 종목 수 — 클수록 단타 기회↑</span></div>
+    </div>
+    <div class="field-row">
+      <div class="field"><label>StopLoss %</label><input type="number" id="cfgScalpStop" min="0.3" max="5" step="0.1"></div>
+      <div class="field"><label>TP1 % (절반익절+본전락)</label><input type="number" id="cfgScalpTp1" min="0.3" max="5" step="0.1"></div>
+      <div class="field"><label>최종 TP %</label><input type="number" id="cfgScalpTp" min="1" max="10" step="0.5"></div>
+    </div>
+    <div class="field-row">
+      <div class="field"><label>ADX Min</label><input type="number" id="cfgScalpAdx" min="5" max="40" step="1"><span class="hint" style="font-size:9px;">낮을수록 신호↑</span></div>
+      <div class="field"><label>상대거래량 Min ×</label><input type="number" id="cfgScalpRelVol" min="0.5" max="3" step="0.1"></div>
+      <div class="field"><label>VWAP Band %</label><input type="number" id="cfgScalpVwap" min="0.3" max="3" step="0.1"><span class="hint" style="font-size:9px;">넓을수록 신호↑</span></div>
+    </div>
+    <div class="field-row">
+      <div class="field"><label>일손실 한도 %</label><input type="number" id="cfgScalpDailyLoss" min="0.5" max="10" step="0.5"><span class="hint" style="font-size:9px;">당일 합산 손실 시 신규 중단</span></div>
+      <div class="field"><label>재진입 쿨다운 (분)</label><input type="number" id="cfgScalpCooldown" min="0" max="240" step="5"></div>
+      <div class="field"><label>개장 회피 (분)</label><input type="number" id="cfgScalpAvoidOpen" min="0" max="60" step="5"></div>
+    </div>
+    <div class="section-divider"></div>
+    <!-- [V65] SNAP 스냅백 룰 -->
+    <div class="section-title">SNAP 스냅백 룰 <span style="color:var(--t3);font-weight:400;font-size:10px;">상승추세 내 과매도 반등 (2~5일)</span></div>
+    <div class="field-row">
+      <div class="field"><label>Risk/Trade %</label><input type="number" id="cfgSnapRisk" min="0.1" max="3" step="0.05"></div>
+      <div class="field"><label>Max Position %</label><input type="number" id="cfgSnapMaxPos" min="1" max="30" step="1"></div>
+      <div class="field"><label>동시보유 상한</label><input type="number" id="cfgSnapMaxConc" min="1" max="30" step="1"></div>
+    </div>
+    <div class="field-row">
+      <div class="field"><label>RSI(2) Max</label><input type="number" id="cfgSnapRsi2" min="2" max="30" step="1"><span class="hint" style="font-size:9px;">높을수록 신호↑</span></div>
+      <div class="field"><label>StopLoss %</label><input type="number" id="cfgSnapStop" min="1" max="10" step="0.5"></div>
+      <div class="field"><label>TP %</label><input type="number" id="cfgSnapTp" min="2" max="15" step="0.5"></div>
     </div>
     <div class="section-divider"></div>
     <div class="section-title">CRASH GATE <span style="color:var(--t3);font-weight:400;font-size:10px;">패닉·드로다운·연속손실 방어</span></div>
@@ -3630,6 +3684,9 @@ html[data-theme="light"] .port-card .port-total{color:#13171c;}
       var p = positions[k];
       return { symbol: p.symbol || k, qty: p.qty, avg: p.avg };
     });
+    // [V65] 전략별 분해(개수·평가액·손익) + 오픈 리스크(히트) 동시 집계
+    var byStrategy = {};
+    var riskDollar = 0;
     list.forEach(function(p) {
       var qty = isFinite(p.qty) ? p.qty : 0;
       var avg = isFinite(p.avg) ? p.avg : 0;
@@ -3638,8 +3695,17 @@ html[data-theme="light"] .port-card .port-total{color:#13171c;}
       // [버그수정] 시세가 0/null/비정상이면 평단가로 폴백 (평가액 왜곡 방지)
       var curPrice = (q && isFinite(q.price) && q.price > 0) ? q.price : avg;
       marketVal += qty * curPrice;
+      var st = (p.strategy || 'other').toLowerCase();
+      if (!byStrategy[st]) byStrategy[st] = { n: 0, val: 0, cost: 0 };
+      byStrategy[st].n++;
+      byStrategy[st].val += qty * curPrice;
+      byStrategy[st].cost += qty * avg;
+      // 히트 = Σ(현재가 − 손절가)×수량 (엔진 portfolioHeat와 동일 정의)
+      var stop = (typeof p.stopPrice === 'number') ? p.stopPrice : (p.meta && typeof p.meta.stopPrice === 'number' ? p.meta.stopPrice : null);
+      if (stop != null && curPrice > stop) riskDollar += (curPrice - stop) * qty;
     });
     var total = cash + marketVal;
+    var heatPct = total > 0 ? (riskDollar / total * 100) : 0;
     var changePct, change;
     // [버그수정] isFinite로 NaN/Infinity까지 차단 (typeof 'number'는 NaN도 통과)
     if (twr && isFinite(twr.factor) && isFinite(twr.lastValue) && twr.lastValue > 0) {
@@ -3658,7 +3724,8 @@ html[data-theme="light"] .port-card .port-total{color:#13171c;}
     // [버그수정] 최종 NaN/Infinity 방어 — 화면에 "NaN%" 표시 차단
     if (!isFinite(changePct)) changePct = 0;
     if (!isFinite(change)) change = 0;
-    return { symbol: symbol, cash: cash, invested: invested, marketVal: marketVal, total: total, change: change, changePct: changePct };
+    return { symbol: symbol, cash: cash, invested: invested, marketVal: marketVal, total: total, change: change, changePct: changePct,
+             byStrategy: byStrategy, heatPct: heatPct };
   }
 
   function renderSummary(market, s) {
@@ -3688,6 +3755,70 @@ html[data-theme="light"] .port-card .port-total{color:#13171c;}
     if (tbChange) {
       tbChange.textContent = sign + fmtNum(s.changePct, 2) + '%';
       tbChange.className = 'topbar-sub ' + (s.changePct > 0 ? 'pos' : (s.changePct < 0 ? 'neg' : ''));
+    }
+
+    // ── [V65] 전략별 보유 분해 — 개수·평가액·미실현 손익 ──
+    var sb = $('stratBreak'+up);
+    if (sb) {
+      var bs = s.byStrategy || {};
+      var order = ['trend','scalp','snap'];
+      Object.keys(bs).forEach(function(k){ if (order.indexOf(k) < 0) order.push(k); });
+      var rows = '';
+      order.forEach(function(st){
+        var a = bs[st];
+        var meta = STRATEGY_COLORS[st] || { fg: '#94a3b8', label: st.toUpperCase() };
+        if (!a || !a.n) {
+          // 활성 3전략은 0건이어도 표시 — "전략별 보유가 안 보인다"는 불투명성 해소
+          if (['trend','scalp','snap'].indexOf(st) < 0) return;
+          rows += '<div style="display:flex;align-items:center;gap:8px;margin-bottom:4px;font-size:10px;opacity:.45;">'
+            + '<span style="width:46px;font-weight:700;color:' + meta.fg + ';">' + meta.label + '</span>'
+            + '<span style="width:34px;text-align:right;color:var(--t3);">0</span>'
+            + '<div style="flex:1;"></div><span style="color:var(--t3);">보유 없음</span></div>';
+          return;
+        }
+        var pnl = a.cost > 0 ? ((a.val - a.cost) / a.cost * 100) : 0;
+        var share = s.marketVal > 0 ? (a.val / s.marketVal * 100) : 0;
+        var pc = pnl > 0 ? 'var(--pos)' : (pnl < 0 ? 'var(--neg)' : 'var(--t2)');
+        rows += '<div style="display:flex;align-items:center;gap:8px;margin-bottom:4px;font-size:10px;">'
+          + '<span style="width:46px;font-weight:700;color:' + meta.fg + ';">' + meta.label + '</span>'
+          + '<span style="width:34px;text-align:right;color:var(--t2);">' + a.n + '종목</span>'
+          + '<div style="flex:1;height:5px;background:var(--s3);border-radius:3px;overflow:hidden;"><div style="width:' + Math.min(100, share).toFixed(0) + '%;height:100%;background:' + meta.fg + ';opacity:.7;"></div></div>'
+          + '<span style="width:64px;text-align:right;color:var(--t2);">' + s.symbol + fmt(a.val) + '</span>'
+          + '<span style="width:52px;text-align:right;font-weight:700;color:' + pc + ';">' + (pnl >= 0 ? '+' : '') + pnl.toFixed(2) + '%</span>'
+          + '</div>';
+      });
+      sb.innerHTML = rows;
+    }
+    // ── [V65] 리스크 히트 게이지 — 오픈 리스크 합 vs 한도 ──
+    var hr = $('heatRow'+up);
+    if (hr) {
+      var maxHeat = (currentCfg && typeof currentCfg.maxPortfolioHeat === 'number') ? currentCfg.maxPortfolioHeat : 12;
+      var hPct = s.heatPct || 0;
+      var hRatio = maxHeat > 0 ? Math.min(100, hPct / maxHeat * 100) : 0;
+      var hColor = hRatio >= 90 ? 'var(--neg)' : (hRatio >= 60 ? 'var(--amber)' : 'var(--pos)');
+      hr.innerHTML = '<div style="display:flex;align-items:center;gap:8px;font-size:10px;">'
+        + '<span style="width:46px;font-weight:700;color:var(--t3);letter-spacing:.5px;">HEAT</span>'
+        + '<div style="flex:1;height:5px;background:var(--s3);border-radius:3px;overflow:hidden;"><div style="width:' + hRatio.toFixed(0) + '%;height:100%;background:' + hColor + ';"></div></div>'
+        + '<span style="width:118px;text-align:right;color:' + hColor + ';font-weight:600;">' + hPct.toFixed(1) + '% / ' + maxHeat + '% 한도</span>'
+        + '</div>'
+        + '<div style="font-size:9px;color:var(--t3);margin-top:2px;padding-left:54px;">오픈 리스크 합(손절까지 거리×수량) — 한도 초과 시 trend/snap 신규 차단 · scalp 면제</div>';
+    }
+    // ── [V65] 적용 중인 전략 예산 분배 (레짐 적응형) ──
+    var br = $('budgetRow'+up);
+    if (br) {
+      var bsa = window.__budgetSplitApplied;
+      var d = bsa && bsa[market];
+      if (d) {
+        var chip = function(label, frac, color){ return '<span style="font-size:9px;padding:1px 7px;border:1px solid ' + color + ';color:' + color + ';border-radius:2px;font-weight:700;">' + label + ' ' + Math.round((frac||0)*100) + '%</span>'; };
+        var rgc = d.regime === 'BULL' ? 'var(--pos)' : (d.regime === 'BEAR' ? 'var(--neg)' : 'var(--t2)');
+        br.innerHTML = '<div style="display:flex;align-items:center;gap:6px;flex-wrap:wrap;font-size:10px;">'
+          + '<span style="width:46px;font-weight:700;color:var(--t3);letter-spacing:.5px;">예산</span>'
+          + '<span style="font-size:9px;padding:1px 7px;border:1px solid ' + rgc + ';color:' + rgc + ';border-radius:2px;font-weight:700;">' + (d.regime || '—') + '</span>'
+          + chip('TREND', d.trend, '#4488ff') + chip('SCALP', d.scalp, '#ffc107') + chip('SNAP', d.snap, '#bb86fc')
+          + '</div>';
+      } else {
+        br.innerHTML = '';
+      }
     }
   }
 
@@ -5375,15 +5506,20 @@ html[data-theme="light"] .port-card .port-total{color:#13171c;}
   }
 
   function buildCfgHtml(cfg) {
-    // [재작성] TREND 단일 전략 기준 표시
+    // [V65] 3전략 요약 표시 — 동시보유는 자동(무제한)/수동 구분
     var tr = cfg.trendRules || {};
     var tsz = cfg.trendSizing || {};
+    var scr = cfg.scalpRules || {};
+    var snr = cfg.snapRules || {};
     var sl = tr.stopLossPct != null ? tr.stopLossPct : (cfg.stopLoss != null ? cfg.stopLoss : 5);
     var risk = tsz.riskPerTrade != null ? tsz.riskPerTrade : 0.75;
-    var conc = tsz.maxConcurrent != null ? tsz.maxConcurrent : 8;
-    var trail = tr.trailAtrMult != null ? tr.trailAtrMult : 2.5;
+    var conc = (cfg.autoConcurrent !== false) ? '∞자동' : (tsz.maxConcurrent != null ? tsz.maxConcurrent : 8);
     var atrStop = tr.atrStopMult != null ? tr.atrStopMult : 2.0;
-    return 'Strategy/<b>TREND</b> · Risk/<b>'+risk+'%</b> · 동시/<b>'+conc+'</b> · Stop/<b>'+sl+'%(ATR×'+atrStop+')</b> · Trail/<b>ATR×'+trail+'</b> · RSI/<b>'+cfg.rsiBuy+'/'+cfg.rsiSell+'</b>';
+    var heat = cfg.maxPortfolioHeat != null ? cfg.maxPortfolioHeat : 12;
+    return 'TREND R<b>'+risk+'%</b> Stop<b>'+sl+'%(ATR×'+atrStop+')</b>'
+      + ' · SCALP R<b>'+(scr.riskPerTrade != null ? scr.riskPerTrade : 0.5)+'%</b> Stop<b>'+(scr.stopLossPct != null ? scr.stopLossPct : 1.2)+'%</b>'
+      + ' · SNAP R<b>'+(snr.riskPerTrade != null ? snr.riskPerTrade : 0.5)+'%</b>'
+      + ' · 동시/<b>'+conc+'</b> · Heat/<b>'+heat+'%</b>';
   }
 
   function renderCfgDisplay(cfg) {
@@ -5977,6 +6113,8 @@ html[data-theme="light"] .port-card .port-total{color:#13171c;}
         var quotes = state.watchlist || [];
         var indices = state.indices || [];
         currentCfg = state.cfg;
+        // [V65] 적용 예산분배 — 포트폴리오 카드(renderSummary)가 참조하므로 summary 렌더 전에 저장
+        if (state.budgetSplitApplied) window.__budgetSplitApplied = state.budgetSplitApplied;
         // ── Vision AI 자동 설정: API 키가 없으면 기본값 주입 ──
         if (!currentCfg.visionAI) currentCfg.visionAI = {};
         if (!currentCfg.visionAI.rfApiKey) {
@@ -6311,6 +6449,30 @@ html[data-theme="light"] .port-card .port-total{color:#13171c;}
     // US 탭에 rsiBreakoutMax 로드
     if ($('cfgTrendRsiBreakout')) $('cfgTrendRsiBreakout').value = tr.rsiBreakoutMax != null ? tr.rsiBreakoutMax : 72;
 
+    // [V65] 리스크 한도 + SCALP/SNAP 룰 로드
+    if ($('cfgMaxHeat')) $('cfgMaxHeat').value = currentCfg.maxPortfolioHeat != null ? currentCfg.maxPortfolioHeat : 12;
+    if ($('cfgAutoConc')) $('cfgAutoConc').checked = currentCfg.autoConcurrent !== false;  // 기본 = 무제한
+    var _scr = currentCfg.scalpRules || {};
+    if ($('cfgScalpRisk'))      $('cfgScalpRisk').value      = _scr.riskPerTrade != null ? _scr.riskPerTrade : 0.5;
+    if ($('cfgScalpMaxPos'))    $('cfgScalpMaxPos').value    = _scr.maxPositionPct != null ? _scr.maxPositionPct : 6;
+    if ($('cfgScalpScanMax'))   $('cfgScalpScanMax').value   = _scr.scanMaxPerCycle != null ? _scr.scanMaxPerCycle : 50;
+    if ($('cfgScalpStop'))      $('cfgScalpStop').value      = _scr.stopLossPct != null ? _scr.stopLossPct : 1.2;
+    if ($('cfgScalpTp1'))       $('cfgScalpTp1').value       = _scr.tp1Pct != null ? _scr.tp1Pct : 1.2;
+    if ($('cfgScalpTp'))        $('cfgScalpTp').value        = _scr.takeProfit != null ? _scr.takeProfit : 3.0;
+    if ($('cfgScalpAdx'))       $('cfgScalpAdx').value       = _scr.adxMin != null ? _scr.adxMin : 12;
+    if ($('cfgScalpRelVol'))    $('cfgScalpRelVol').value    = _scr.minRelVol != null ? _scr.minRelVol : 1.0;
+    if ($('cfgScalpVwap'))      $('cfgScalpVwap').value      = _scr.vwapBand != null ? _scr.vwapBand : 1.0;
+    if ($('cfgScalpDailyLoss')) $('cfgScalpDailyLoss').value = _scr.dailyLossLimitPct != null ? _scr.dailyLossLimitPct : 2.0;
+    if ($('cfgScalpCooldown'))  $('cfgScalpCooldown').value  = _scr.reEntryCooldownMin != null ? _scr.reEntryCooldownMin : 45;
+    if ($('cfgScalpAvoidOpen')) $('cfgScalpAvoidOpen').value = _scr.avoidOpenMinutes != null ? _scr.avoidOpenMinutes : 10;
+    var _snr = currentCfg.snapRules || {};
+    if ($('cfgSnapRisk'))    $('cfgSnapRisk').value    = _snr.riskPerTrade != null ? _snr.riskPerTrade : 0.5;
+    if ($('cfgSnapMaxPos'))  $('cfgSnapMaxPos').value  = _snr.maxPositionPct != null ? _snr.maxPositionPct : 8;
+    if ($('cfgSnapMaxConc')) $('cfgSnapMaxConc').value = _snr.maxConcurrent != null ? _snr.maxConcurrent : 6;
+    if ($('cfgSnapRsi2'))    $('cfgSnapRsi2').value    = _snr.rsi2Max != null ? _snr.rsi2Max : 12;
+    if ($('cfgSnapStop'))    $('cfgSnapStop').value    = _snr.stopLossPct != null ? _snr.stopLossPct : 3.5;
+    if ($('cfgSnapTp'))      $('cfgSnapTp').value      = _snr.takeProfitPct != null ? _snr.takeProfitPct : 5.0;
+
     // [CRASH GATE] 패닉·드로다운 필드 로드
     var cs = currentCfg.crashSurvival || {};
     var cpanic = cs.panic || {};
@@ -6636,6 +6798,39 @@ html[data-theme="light"] .port-card .port-total{color:#13171c;}
         scalp: !!($('cfgScalpEnabled') && $('cfgScalpEnabled').checked),
         snap:  !!($('cfgSnapEnabled') && $('cfgSnapEnabled').checked)
       }),
+      // [V65] 리스크 한도 + 동시보유 자동화 + SCALP/SNAP 룰 (NaN은 기존값 유지)
+      maxPortfolioHeat: (function(){ var v = parseFloat($('cfgMaxHeat') && $('cfgMaxHeat').value); return isNaN(v) ? (currentCfg.maxPortfolioHeat != null ? currentCfg.maxPortfolioHeat : 12) : v; })(),
+      autoConcurrent: !!($('cfgAutoConc') && $('cfgAutoConc').checked),
+      scalpRules: Object.assign({}, (currentCfg && currentCfg.scalpRules) || {}, (function(){
+        function nv(id, def){ var v = parseFloat($(id) && $(id).value); return isNaN(v) ? def : v; }
+        var prev = (currentCfg && currentCfg.scalpRules) || {};
+        return {
+          riskPerTrade:       nv('cfgScalpRisk',      prev.riskPerTrade != null ? prev.riskPerTrade : 0.5),
+          maxPositionPct:     nv('cfgScalpMaxPos',    prev.maxPositionPct != null ? prev.maxPositionPct : 6),
+          scanMaxPerCycle:    Math.round(nv('cfgScalpScanMax', prev.scanMaxPerCycle != null ? prev.scanMaxPerCycle : 50)),
+          stopLossPct:        nv('cfgScalpStop',      prev.stopLossPct != null ? prev.stopLossPct : 1.2),
+          tp1Pct:             nv('cfgScalpTp1',       prev.tp1Pct != null ? prev.tp1Pct : 1.2),
+          takeProfit:         nv('cfgScalpTp',        prev.takeProfit != null ? prev.takeProfit : 3.0),
+          adxMin:             nv('cfgScalpAdx',       prev.adxMin != null ? prev.adxMin : 12),
+          minRelVol:          nv('cfgScalpRelVol',    prev.minRelVol != null ? prev.minRelVol : 1.0),
+          vwapBand:           nv('cfgScalpVwap',      prev.vwapBand != null ? prev.vwapBand : 1.0),
+          dailyLossLimitPct:  nv('cfgScalpDailyLoss', prev.dailyLossLimitPct != null ? prev.dailyLossLimitPct : 2.0),
+          reEntryCooldownMin: nv('cfgScalpCooldown',  prev.reEntryCooldownMin != null ? prev.reEntryCooldownMin : 45),
+          avoidOpenMinutes:   nv('cfgScalpAvoidOpen', prev.avoidOpenMinutes != null ? prev.avoidOpenMinutes : 10)
+        };
+      })()),
+      snapRules: Object.assign({}, (currentCfg && currentCfg.snapRules) || {}, (function(){
+        function nv(id, def){ var v = parseFloat($(id) && $(id).value); return isNaN(v) ? def : v; }
+        var prev = (currentCfg && currentCfg.snapRules) || {};
+        return {
+          riskPerTrade:   nv('cfgSnapRisk',    prev.riskPerTrade != null ? prev.riskPerTrade : 0.5),
+          maxPositionPct: nv('cfgSnapMaxPos',  prev.maxPositionPct != null ? prev.maxPositionPct : 8),
+          maxConcurrent:  Math.round(nv('cfgSnapMaxConc', prev.maxConcurrent != null ? prev.maxConcurrent : 6)),
+          rsi2Max:        nv('cfgSnapRsi2',    prev.rsi2Max != null ? prev.rsi2Max : 12),
+          stopLossPct:    nv('cfgSnapStop',    prev.stopLossPct != null ? prev.stopLossPct : 3.5),
+          takeProfitPct:  nv('cfgSnapTp',      prev.takeProfitPct != null ? prev.takeProfitPct : 5.0)
+        };
+      })()),
       // [V52] 전략별 예산 비중 3분할 (슬라이더 3개, 합=1로 정규화)
       strategyBudgetSplit: (function(){
         var t = $('cfgBudgetTrend') ? parseInt($('cfgBudgetTrend').value, 10) : 35;
