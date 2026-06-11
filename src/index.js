@@ -3427,7 +3427,9 @@ function isQuoteRefreshWindow(market) {
   const now = new Date();
   if (market === "us") {
     const et = getUSEt(now);
-    return et.day >= 1 && et.day <= 5 && et.totalMin >= 570 && et.totalMin < 960;
+    // [V9.1] 종료 16:00→16:10 ET: 마감 직전 마지막 틱이 아닌 "공식 종가" 프린트가
+    //   야후에 반영될 시간을 확보 (기존엔 지수/종목 종가가 공식 종가와 0.1%대 어긋남).
+    return et.day >= 1 && et.day <= 5 && et.totalMin >= 570 && et.totalMin < 970;
   }
   if (market === "kr") {
     const kst = getKST(now);
@@ -3553,6 +3555,18 @@ function isFxTriggerTime() {
   const now = new Date();
   const kst = getKST(now);
   return kst.totalMin === 390;  // 06:30 KST = 390분
+}
+
+// [V9.1] FX 시장 개장 추정 — 글로벌 FX는 월요일 새벽(시드니)~토요일 새벽(뉴욕 마감) 24시간.
+//   UTC 기준 휴장: 토요일 전체, 일요일 21:00 이전, 금요일 22:00 이후.
+//   환율 실시간 갱신(10분 주기)의 게이트 — 휴장 중 무의미한 fetch 차단.
+function isFxMarketOpen() {
+  const d = new Date();
+  const day = d.getUTCDay(), h = d.getUTCHours();
+  if (day === 6) return false;
+  if (day === 0 && h < 21) return false;
+  if (day === 5 && h >= 22) return false;
+  return true;
 }
 
 // [V8.6] 장 마감까지 남은 분 — Day 전략 강제 청산용
@@ -8429,7 +8443,7 @@ async function refreshCycleLock(DB, ttl, myPid) {
 }
 
 // ============================================================
-// [FX] 환율 갱신 — 매일 06:30 KST 1회 (조회 전용, 매매 없음)
+// [FX] 환율 갱신 — [V9.1] 10분 주기 (조회 전용, 매매 없음, FX 휴장 주말 제외)
 //   • 대상: 달러/원·엔/원·달러/엔·파운드/원·유로/원·위안/원·호주달러/원·
 //           캐나다달러/원·스위스프랑/원 + 달러 인덱스(DXY)
 //   • 야후 환율 심볼을 fetchIntraday로 조회해 가격·전일대비% 저장.
@@ -8439,7 +8453,6 @@ async function refreshCycleLock(DB, ttl, myPid) {
 async function runFxUpdate(env) {
   const DB = env.DB;
   resetFetchBudget(100);  // [PAID] FX ~10쌍 + 여유
-  await log(DB, "INFO", null, "[FX] === 환율 갱신 시작 ===");
   const out = {};
   let ok = 0, fail = 0;
 
@@ -8500,7 +8513,8 @@ async function runFxUpdate(env) {
 
   const payload = { rates: out, updatedAt: Date.now() };
   await setState(DB, "fx", payload);
-  await log(DB, "INFO", null, "[FX] 환율 갱신 완료 (성공 " + ok + " / 실패 " + fail + ")");
+  // [V9.1] 10분 주기화로 성공 로그는 노이즈 — 실패가 있을 때만 기록
+  if (fail > 0) await log(DB, "WARN", null, "[FX] 환율 갱신 일부 실패 (성공 " + ok + " / 실패 " + fail + ")");
   return payload;
 }
 
@@ -11249,7 +11263,7 @@ async function handleRequest(request, env) {
 
     // === [V60 신규] 어닝스 캘린더 — Yahoo v7(crumb) 우선, 실패 시 Nasdaq 캘린더 폴백 (6시간 캐시) ===
     if (path === "/api/earnings") {
-      const ck = "earnings_calendar";
+      const ck = "earnings_calendar_v2";  // [V9.1] epsType 필드 추가로 캐시 키 갱신(구 캐시 무효화)
       const cached = await getState(env.DB, ck, null);
       if (url.searchParams.get("force") !== "1" && cached && cached.ts && (Date.now() - cached.ts) < 6 * 60 * 60 * 1000) {
         return Response.json(cached, { headers: cors });
@@ -11274,9 +11288,11 @@ async function handleRequest(request, env) {
             rows.forEach(function(row){
               const ts0 = row.earningsTimestamp || row.earningsTimestampStart;
               if (!ts0) return;
+              // [V9.1] epsForward는 "연간 선행 EPS" — 분기 예상 EPS가 아님. epsType으로 구분해
+              //   프론트에서 '연간' 표시 (기존엔 분기 예상치처럼 보여 실제 발표치와 크게 어긋나 보였음).
               items.push({ symbol: row.symbol, name: row.longName || row.shortName || row.symbol,
                 ts: ts0 * 1000, eps: (typeof row.epsForward === "number" ? row.epsForward : null),
-                watch: true, src: "yahoo" });
+                epsType: "fy", watch: true, src: "yahoo" });
             });
           } catch (e) {}
         }
@@ -11301,7 +11317,7 @@ async function handleRequest(request, env) {
                 items.push({ symbol: rw.symbol, name: rw.companyName || rw.name || rw.symbol,
                   ts: new Date(ds + "T12:00:00Z").getTime(),
                   when: rw.time || "", eps: (rw.epsForecast != null && rw.epsForecast !== "" ? rw.epsForecast : null),
-                  watch: !!watchSet[String(rw.symbol).toUpperCase()], src: "nasdaq" });
+                  epsType: "q", watch: !!watchSet[String(rw.symbol).toUpperCase()], src: "nasdaq" });
               });
             } catch (e) {}
           }
@@ -12560,11 +12576,19 @@ export default {
         }
       } catch (e) { try { await log(env.DB, "ERROR", null, "[SCHED] alt sleeves fail: " + e.message); } catch (e2) {} }
 
-      // 4) 환율 갱신 (매일 06:30 KST)
-      if (isFxTriggerTime()) {
-        try { await runFxUpdate(env); }
-        catch (e) { try { await log(env.DB, "ERROR", null, "[SCHED] fx fail: " + e.message); } catch (e2) {} }
-      }
+      // 4) 환율 갱신 — [V9.1] 하루 1회(06:30) → 10분 주기 실시간화.
+      //    기존엔 06:30 KST 1회만 갱신해 장중 내내 새벽 환율이 그대로 표시됐음(현실과 수 원대 차이).
+      //    FX 휴장(주말) 제외, 마지막 갱신 후 10분 경과 시에만 실행 — 10쌍 fetch라 예산 부담 미미.
+      try {
+        if (isFxMarketOpen()) {
+          const fxPrev = await getState(env.DB, "fx", null);
+          const fxAge = (fxPrev && fxPrev.updatedAt) ? (Date.now() - fxPrev.updatedAt) : Infinity;
+          if (fxAge > 10 * 60 * 1000) {
+            try { await runFxUpdate(env); }
+            catch (e) { try { await log(env.DB, "ERROR", null, "[SCHED] fx fail: " + e.message); } catch (e2) {} }
+          }
+        }
+      } catch (e) {}
 
       // 5) 경제지표 갱신 (매일 07:00 KST) — runTradingCycle 내부에도 트리거가 있으나
       //    엔진 disabled 상태에서도 매크로는 갱신되도록 여기서도 안전하게 한 번 더 보장.

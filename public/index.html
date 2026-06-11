@@ -4298,7 +4298,11 @@ html[data-theme="light"] .port-card .port-total{color:#13171c;}
         var dt = new Date(it.ts);
         var isToday = dt.toDateString() === todayStr;
         var when = (isToday ? '오늘' : (dt.getMonth()+1)+'/'+dt.getDate()) + (it.when ? ' <span style="font-size:8.5px;color:var(--t3);">'+(it.when==='time-pre-market'?'개장 전':it.when==='time-after-hours'?'마감 후':'')+'</span>' : '');
-        var eps = it.eps != null ? escapeHtml(String(it.eps)) : '-';
+        // [V9.1] epsType: 'fy'=연간 선행 EPS(야후 epsForward), 'q'=분기 예상 EPS(나스닥).
+        //   연간치를 분기 예상처럼 보여주면 실제 발표치와 어긋나 보이므로 '연' 배지로 구분.
+        var epsNum = it.eps != null ? Number(it.eps) : null;
+        var eps = (epsNum != null && isFinite(epsNum)) ? escapeHtml(epsNum.toFixed(2)) : (it.eps != null ? escapeHtml(String(it.eps)) : '-');
+        if (it.eps != null && it.epsType === 'fy') eps += ' <span style="font-size:8px;color:var(--t3);">연</span>';
         return '<tr'+(isToday?' class="earn-today"':'')+'>'+
           '<td style="white-space:nowrap;">'+when+'</td>'+
           '<td><span class="fv-tick'+(it.watch?' earn-watch':'')+'">'+escapeHtml(it.symbol)+'</span>'+(it.watch?' <span class="wl-held-badge" style="font-size:7.5px;">관심</span>':'')+'</td>'+
