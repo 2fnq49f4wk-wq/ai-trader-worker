@@ -2200,7 +2200,15 @@ async function applySectorGroupWeights(DB, cfg) {
 
 // [신호타입 가중치] 진입신호 종류별(TR_PULLBACK/TR_BREAKOUT) 성과로 베팅 크기 차등.
 //   섹터그룹과 동일한 메커니즘 — 잘 되는 신호에 더 베팅. shrinkage로 적은 표본 보호.
-const SIGNAL_TYPES = ["TR_PULLBACK", "TR_BREAKOUT"];
+// [V63 성능강화] 신호타입 학습을 전 신호로 확장 — 기존 돌파/풀백 2종만 성과 추적하던 것을
+//   trend 4종 + vision + snap + scalp 5종 전체로. executeSell이 전량청산 시 신호별 성과를 누적하고
+//   applySignalTypeWeights가 가중치(0.7~1.3)를 계산, 매수 사이징(sigTypeW)에서 신호 이름으로 조회한다.
+//   잘 버는 신호에 더 베팅, 못 버는 신호는 자동 축소 — 사이즈만 조절(차단 없음)이라 악화 불가.
+const SIGNAL_TYPES = [
+  "TR_PULLBACK", "TR_BREAKOUT", "TR_SQUEEZE", "TR_RS_LEADER", "TR_VISION_UP",
+  "SN_RSI2",
+  "SC_VWAP", "SC_MOMENTUM", "SC_PULLBACK", "SC_PANIC_INV", "SC_PANIC_BOUNCE"
+];
 function computeSignalWeight(stat, cfg) {
   const sw = (cfg && cfg.signalTypeWeights) || {};
   const n0 = sw.shrinkN != null ? sw.shrinkN : 15;
@@ -2215,6 +2223,33 @@ function computeSignalWeight(stat, cfg) {
   const w = 1 + (raw - 1) * shrink;
   return Math.max(wMin, Math.min(wMax, w));
 }
+// [V63] 레짐 적응형 전략 예산 분배 — 기준 split × 레짐 배수 → 정규화(합 1) + 전략별 하한.
+//   사이즈/신호엔 손대지 않고 "사이클당 전략별 매수예산"만 재배분 → 기존 가드 전부 그대로 작동.
+function computeAdaptiveSplit(baseSplit, regime, cfg) {
+  const bs = baseSplit || {};
+  const tr = (typeof bs.trend === "number" && bs.trend >= 0) ? bs.trend : 0.35;
+  const sc = (typeof bs.scalp === "number" && bs.scalp >= 0) ? bs.scalp : 0.30;
+  const sn = (typeof bs.snap === "number" && bs.snap >= 0) ? bs.snap : 0.35;
+  const ad = (cfg && cfg.strategyBudgetAdaptive) || null;
+  let mult = { trend: 1, scalp: 1, snap: 1 };
+  if (ad && ad.enabled !== false && regime && regime.regime) {
+    const m = regime.regime === "BULL" ? ad.bull : (regime.regime === "BEAR" ? ad.bear : ad.neutral);
+    if (m && typeof m === "object") mult = m;
+  }
+  let w = {
+    trend: tr * (typeof mult.trend === "number" ? mult.trend : 1),
+    scalp: sc * (typeof mult.scalp === "number" ? mult.scalp : 1),
+    snap:  sn * (typeof mult.snap  === "number" ? mult.snap  : 1)
+  };
+  let sum = w.trend + w.scalp + w.snap;
+  if (!(sum > 0)) return { trend: 0.35, scalp: 0.30, snap: 0.35 };
+  let f = { trend: w.trend / sum, scalp: w.scalp / sum, snap: w.snap / sum };
+  const floor = (ad && typeof ad.minFrac === "number" && ad.minFrac >= 0 && ad.minFrac < 0.34) ? ad.minFrac : 0.10;
+  f.trend = Math.max(f.trend, floor); f.scalp = Math.max(f.scalp, floor); f.snap = Math.max(f.snap, floor);
+  sum = f.trend + f.scalp + f.snap;
+  return { trend: f.trend / sum, scalp: f.scalp / sum, snap: f.snap / sum };
+}
+
 async function applySignalTypeWeights(DB, cfg) {
   try {
     const sw = cfg.signalTypeWeights;
@@ -2263,8 +2298,8 @@ const DEFAULT_CFG = {
   //   sleep은 CPU 비소모 → 비용 영향 최소. subrequest는 서브틱당 시장별 1배치(≤50종목).
   fastWatch: {
     enabled: true,
-    ticks: 3,             // invocation당 최대 서브틱 수
-    intervalMs: 9000,     // 서브틱 간격(~9초)
+    ticks: 5,             // [V63] 3→5 — 사이클이 빨리 끝난 invocation에서 감시 횟수 확대 (maxElapsedMs가 자동 상한)
+    intervalMs: 8000,     // [V63] 9000→8000 — 서브틱 간격 단축, 같은 시간창에 1틱 더 (청산 반응속도↑)
     maxSymbols: 50,       // 폴링 대상 상한 (1 배치=1 subrequest)
     maxElapsedMs: 52000   // invocation 총 경과 상한 (다음 cron과 겹침 방지)
   },
@@ -2475,6 +2510,17 @@ const DEFAULT_CFG = {
   //   각 시장 가용현금을 비율로 쪼개 전략별 독립 예산으로 사용. 대시보드 슬라이더로 조절.
   // [V52] 3분할 — trend/scalp/snap 기본 35/30/35.
   strategyBudgetSplit: { trend: 0.35, scalp: 0.30, snap: 0.35 },
+  // [V63 성능강화] 레짐 적응형 예산 분배 — 위 고정 split(사용자 슬라이더)을 "기준"으로 두고,
+  //   시장별 레짐에 따라 배수를 곱해 동적으로 기울인다(곱 후 정규화 → 합은 항상 1).
+  //   BULL: 추세추종이 주수익원 → trend↑ / BEAR: trend·snap은 레짐 게이트에 막혀 예산이 놀고
+  //   수익원은 패닉단타 → scalp↑, snap(역추세)은 blockInBear라 축소. minFrac 하한으로 굶는 전략 방지.
+  strategyBudgetAdaptive: {
+    enabled: true,
+    bull:    { trend: 1.35, scalp: 0.85, snap: 0.90 },
+    bear:    { trend: 0.55, scalp: 1.70, snap: 0.50 },
+    neutral: { trend: 1.00, scalp: 1.00, snap: 1.00 },
+    minFrac: 0.10
+  },
   // === [SCALP] 단타 전략 룰 — 분봉 기반 장중 단타 ===
   //   추세추종(일봉)과 완전 분리: 진입·관리·청산 모두 분봉 기준.
   //   일봉: MA20>MA50 (약 추세 확인) + 일봉 과열 아님(RSI≤72)
@@ -2689,7 +2735,9 @@ const DEFAULT_CFG = {
     weightMin: 0.7, weightMax: 1.3,
     shrinkN: 15,
     minTradesToWeight: 10,             // 신호 거래가 이 미만이면 가중치 1.0
-    weights: { TR_PULLBACK: 1.0, TR_BREAKOUT: 1.0 }
+    // [V63] 전 신호 학습 — applySignalTypeWeights가 SIGNAL_TYPES 전체를 갱신
+    weights: { TR_PULLBACK: 1.0, TR_BREAKOUT: 1.0, TR_SQUEEZE: 1.0, TR_RS_LEADER: 1.0, TR_VISION_UP: 1.0,
+               SN_RSI2: 1.0, SC_VWAP: 1.0, SC_MOMENTUM: 1.0, SC_PULLBACK: 1.0, SC_PANIC_INV: 1.0, SC_PANIC_BOUNCE: 1.0 }
   },
   // 다층 가중치(confidence×그룹×신호) 곱이 너무 작아져 거래 누락되는 것 방지 — 전체 하한
   weightFloor: 0.3,
@@ -3017,6 +3065,24 @@ function migrateCfgToMarkets(cfg) {
   // [V52] 예산 3분할 마이그레이션 — 옛 {trend,scalp} 2분할 저장값이면 기본 35/30/35로 재설정.
   if (!cfg.strategyBudgetSplit || typeof cfg.strategyBudgetSplit !== "object" || typeof cfg.strategyBudgetSplit.snap !== "number") {
     cfg.strategyBudgetSplit = { trend: 0.35, scalp: 0.30, snap: 0.35 };
+  }
+  // [V63] fastWatch 누락키 보강 + 옛 기본값만 새 값으로 갱신 (커스텀 보존)
+  if (!cfg.fastWatch || typeof cfg.fastWatch !== "object") {
+    cfg.fastWatch = JSON.parse(JSON.stringify(DEFAULT_CFG.fastWatch));
+  } else {
+    for (const k in DEFAULT_CFG.fastWatch) {
+      if (cfg.fastWatch[k] === undefined) cfg.fastWatch[k] = DEFAULT_CFG.fastWatch[k];
+    }
+    if (cfg.fastWatch.ticks === 3)         cfg.fastWatch.ticks = 5;
+    if (cfg.fastWatch.intervalMs === 9000) cfg.fastWatch.intervalMs = 8000;
+  }
+  // [V63] 적응형 예산 분배 누락키 보강 (구 cfg 저장본에 블록 자체가 없을 때)
+  if (!cfg.strategyBudgetAdaptive || typeof cfg.strategyBudgetAdaptive !== "object") {
+    cfg.strategyBudgetAdaptive = JSON.parse(JSON.stringify(DEFAULT_CFG.strategyBudgetAdaptive));
+  } else {
+    for (const k in DEFAULT_CFG.strategyBudgetAdaptive) {
+      if (cfg.strategyBudgetAdaptive[k] === undefined) cfg.strategyBudgetAdaptive[k] = JSON.parse(JSON.stringify(DEFAULT_CFG.strategyBudgetAdaptive[k]));
+    }
   }
   // [V50] scalpRules 누락키 보강 + 옛 기본값만 완화값으로 갱신 (기존엔 보강 블록이 없어 새 설정 미반영이었음)
   if (!cfg.scalpRules || typeof cfg.scalpRules !== "object") {
@@ -7106,7 +7172,9 @@ async function executeSell(DB, market, symbol, pos, sellQty, price, reason, cfg,
   const strategy = pos.strategy || (pos.meta && pos.meta.strategy) || "swing";
   // [수정] 전량청산 여부를 pos.qty 감소 전에 판정 (부분청산 통계 오집계 방지)
   const fullClose = sellQty >= pos.qty;
-  const entrySignalName = (pos.meta && pos.meta.signalName) || null;
+  // [V63 결함수정] 라이브 executeBuy는 meta.signal에, 백테스트는 meta.signalName에 신호명을 저장한다.
+  //   기존엔 signalName만 읽어 라이브 청산이 신호타입 통계에 한 건도 누적되지 않았다(학습 레이어 死문).
+  const entrySignalName = (pos.meta && (pos.meta.signalName || pos.meta.signal)) || null;
   // [V9.1] 입력 검증 — 비정상 가격/수량/포지션 방어
   if (!(typeof price === "number" && isFinite(price) && price > 0)) {
     await log(DB, "WARN", symbol, "SELL aborted: bad price " + price); return { cash: cash, pnlPct: 0 };
@@ -9263,16 +9331,24 @@ async function runTradingCycle(env) {
     //   (기존엔 공용 풀이라 먼저 도는 trend가 다 써버려 scalp가 굶었다.)
     // [V52] 3분할 — trend/scalp/snap. 합으로 정규화하므로 슬라이더 임의 비율 허용.
     const _split = (cfg.strategyBudgetSplit && typeof cfg.strategyBudgetSplit === "object") ? cfg.strategyBudgetSplit : { trend: 0.35, scalp: 0.30, snap: 0.35 };
-    const _trW = (typeof _split.trend === "number" && _split.trend >= 0) ? _split.trend : 0.35;
-    const _scW = (typeof _split.scalp === "number" && _split.scalp >= 0) ? _split.scalp : 0.30;
-    const _snW = (typeof _split.snap === "number" && _split.snap >= 0) ? _split.snap : 0.35;
-    const _sum = (_trW + _scW + _snW) > 0 ? (_trW + _scW + _snW) : 1;
-    const _trFrac = _trW / _sum, _scFrac = _scW / _sum, _snFrac = _snW / _sum;
+    // [V63] 레짐 적응형 분배 — 시장별 레짐으로 기준 split을 동적 기울임 (BULL→trend↑, BEAR→scalp↑).
+    //   adaptive off면 computeAdaptiveSplit이 기준 split 정규화값을 그대로 반환(기존 동작 보존).
+    const _splitUS = computeAdaptiveSplit(_split, regimes.us, cfg);
+    const _splitKR = computeAdaptiveSplit(_split, regimes.kr, cfg);
     const cycleBudget = {
-      us: { trend: cash.us * _trFrac, scalp: cash.us * _scFrac, snap: cash.us * _snFrac },
-      kr: { trend: cash.kr * _trFrac, scalp: cash.kr * _scFrac, snap: cash.kr * _snFrac },
+      us: { trend: cash.us * _splitUS.trend, scalp: cash.us * _splitUS.scalp, snap: cash.us * _splitUS.snap },
+      kr: { trend: cash.kr * _splitKR.trend, scalp: cash.kr * _splitKR.scalp, snap: cash.kr * _splitKR.snap },
       cm: cash.cm
     };
+    // 적용 현황 저장 — UI(/api/state)와 로그에서 확인용
+    try {
+      await setState(DB, "budget_split_applied", {
+        ts: Date.now(),
+        us: { trend: _splitUS.trend, scalp: _splitUS.scalp, snap: _splitUS.snap, regime: regimes.us.regime },
+        kr: { trend: _splitKR.trend, scalp: _splitKR.scalp, snap: _splitKR.snap, regime: regimes.kr.regime },
+        base: _split
+      });
+    } catch (e) {}
     const cycleSpent = {
       us: { trend: 0, scalp: 0, snap: 0 },
       kr: { trend: 0, scalp: 0, snap: 0 },
@@ -10708,6 +10784,7 @@ async function handleRequest(request, env) {
         twr: twr,
         sectorGroups: sectorGroups,
         signalTypes: signalTypes,
+        budgetSplitApplied: await getState(env.DB, "budget_split_applied", null),  // [V63] 레짐 적응형 예산 적용 현황
         positions: {
           us: posUS.list,          // [V8] array of (symbol, strategy) rows
           kr: posKR.list,

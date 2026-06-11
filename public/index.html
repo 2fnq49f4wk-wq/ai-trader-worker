@@ -2261,6 +2261,18 @@ html[data-theme="light"] .port-card .port-total{color:#13171c;}
           </div>
         </div>
 
+        <!-- [V63] STRATEGY PERFORMANCE — 전략별 청산 성과 -->
+        <div class="dash-block">
+          <div class="dash-block-label">⚡ STRATEGY PERFORMANCE <span style="font-weight:400;letter-spacing:0;color:var(--t3);">· 최근 청산 200건</span></div>
+          <div id="stratPerfBox" style="font-size:10px;"><div style="color:var(--t3);">로딩 중...</div></div>
+        </div>
+
+        <!-- [V63] BUDGET ALLOCATION — 레짐 적응형 전략 예산 -->
+        <div class="dash-block">
+          <div class="dash-block-label">◎ BUDGET ALLOCATION <span style="font-weight:400;letter-spacing:0;color:var(--t3);">· 레짐 적응형</span></div>
+          <div id="budgetSplitBox" style="font-size:10px;"><div style="color:var(--t3);">다음 거래 사이클부터 집계됩니다</div></div>
+        </div>
+
       </div>
 
       <!-- ════ [V60 FINVIZ ROW] 어닝스 캘린더 + 내부자 거래 + 지표 임팩트 — 워치리스트 위 배치 ════ -->
@@ -2969,7 +2981,7 @@ html[data-theme="light"] .port-card .port-total{color:#13171c;}
     <div id="sectorGroupsBox" style="font-size:11px;margin-bottom:6px;"></div>
     <div class="section-divider"></div>
     <div class="section-title">신호 타입 가중치 (autoTune)</div>
-    <div style="font-size:10px;color:var(--t3);margin-bottom:8px;">진입신호 종류별(돌파/풀백) 성과로 베팅 크기 차등. 데이터상 돌파(BREAKOUT)가 풀백(PULLBACK)보다 수익성↑ (거래 10건+ 부터 반영).</div>
+    <div style="font-size:10px;color:var(--t3);margin-bottom:8px;">진입신호 종류별 성과로 베팅 크기 차등 (거래 10건+ 부터 반영). [V63] 돌파/풀백 2종 → 트렌드 4종 + 스냅 + 단타 전 신호 학습으로 확장.</div>
     <div id="signalTypesBox" style="font-size:11px;margin-bottom:6px;"></div>
     <div class="section-divider"></div>
     <div class="section-title">백테스트 (2년 과거데이터)</div>
@@ -5940,6 +5952,9 @@ html[data-theme="light"] .port-card .port-total{color:#13171c;}
         safeRun('watchlist', function(){ renderWatchlist(quotes); });          // heldMap 반영된 상태로 카드 렌더
         safeRun('engine', function(){ renderEngine(state.lastTick, state.lastHeartbeat); });
         safeRun('trades', function(){ renderTrades(trades); });
+        // [V63] 전략별 성과 + 레짐 적응형 예산 현황
+        safeRun('stratPerf', function(){ renderStrategyPerf(allTrades || []); });
+        safeRun('budgetSplit', function(){ renderBudgetSplit(state.budgetSplitApplied); });
         // [V8.6 Hybrid] LLM 배너 렌더링
         safeRun('llm', function(){ renderLLMBanner(state.llmDaily, state.cfg); });
         safeRun('usage', function(){ renderUsageBanner(state.usageState, state.forceLock, state.cfg); });
@@ -6282,7 +6297,23 @@ html[data-theme="light"] .port-card .port-total{color:#13171c;}
   function renderSignalTypes() {
     var box = $('signalTypesBox'); if (!box) return;
     var sig = currentSignalTypes || { stats: {}, weights: {} };
-    var types = [{ k: 'TR_BREAKOUT', label: 'BREAKOUT (돌파)' }, { k: 'TR_PULLBACK', label: 'PULLBACK (풀백)' }];
+    // [V63] 전 신호 학습 확장 — trend 4종은 항상 표시, 나머지는 거래 발생 시 표시
+    var types = [
+      { k: 'TR_BREAKOUT',    label: 'BREAKOUT (돌파)',      always: true },
+      { k: 'TR_PULLBACK',    label: 'PULLBACK (풀백)',      always: true },
+      { k: 'TR_SQUEEZE',     label: 'SQUEEZE (변동성수축)',  always: true },
+      { k: 'TR_RS_LEADER',   label: 'RS LEADER (주도주)',   always: true },
+      { k: 'TR_VISION_UP',   label: 'VISION (AI차트)' },
+      { k: 'SN_RSI2',        label: 'SNAP RSI2 (스냅백)' },
+      { k: 'SC_VWAP',        label: 'SCALP VWAP' },
+      { k: 'SC_MOMENTUM',    label: 'SCALP MOMENTUM' },
+      { k: 'SC_PULLBACK',    label: 'SCALP PULLBACK' },
+      { k: 'SC_PANIC_INV',   label: 'PANIC INVERSE' },
+      { k: 'SC_PANIC_BOUNCE',label: 'PANIC BOUNCE' }
+    ].filter(function(t){
+      var s = (sig.stats || {})[t.k];
+      return t.always || (s && s.trades > 0);
+    });
     var html = '';
     types.forEach(function(t){
       var s = (sig.stats || {})[t.k] || { trades: 0, wins: 0, sumPnlPct: 0 };
@@ -6299,6 +6330,79 @@ html[data-theme="light"] .port-card .port-total{color:#13171c;}
         + '</div>';
     });
     box.innerHTML = html;
+  }
+
+  // [V63] 전략별 청산 성과 — 대시보드 블록 (refreshAll의 allTrades 재사용, 추가 fetch 없음)
+  function renderStrategyPerf(allTrades) {
+    var box = $('stratPerfBox'); if (!box) return;
+    var sells = (allTrades || []).filter(function(t){ return t.side === 'SELL' && typeof t.pnl_pct === 'number'; }).slice(0, 200);
+    if (!sells.length) { box.innerHTML = '<div style="color:var(--t3);">청산 거래가 아직 없습니다</div>'; return; }
+    var META = {
+      trend: { label: 'TREND', color: '#4488ff' },
+      scalp: { label: 'SCALP', color: '#ffc107' },
+      snap:  { label: 'SNAP',  color: '#bb86fc' }
+    };
+    var agg = {};
+    sells.forEach(function(t){
+      var m = /\[([A-Z-]+)\]/.exec(t.reason || '');
+      var st = m ? m[1].toLowerCase() : 'other';
+      if (!META[st]) st = 'other';
+      if (!agg[st]) agg[st] = { trades: 0, wins: 0, sumPnl: 0 };
+      agg[st].trades++;
+      if (t.pnl_pct > 0) agg[st].wins++;
+      agg[st].sumPnl += t.pnl_pct;
+    });
+    var order = ['trend','scalp','snap','other'];
+    var html = '';
+    order.forEach(function(st){
+      var a = agg[st]; if (!a || !a.trades) return;
+      var meta = META[st] || { label: '기타', color: 'var(--t3)' };
+      var wr = Math.round(a.wins / a.trades * 100);
+      var avg = a.sumPnl / a.trades;
+      var sumColor = a.sumPnl >= 0 ? 'var(--pos)' : 'var(--neg)';
+      var wrW = Math.max(0, Math.min(100, wr));
+      html += '<div style="display:flex;align-items:center;gap:8px;margin-bottom:6px;">'
+        + '<span style="width:52px;font-weight:700;color:' + meta.color + ';letter-spacing:.5px;">' + meta.label + '</span>'
+        + '<span style="width:44px;text-align:right;color:var(--t2);">' + a.trades + '건</span>'
+        + '<div style="flex:1;height:6px;background:var(--s3);border-radius:3px;overflow:hidden;"><div style="width:' + wrW + '%;height:100%;background:' + meta.color + ';opacity:.8;"></div></div>'
+        + '<span style="width:40px;text-align:right;color:var(--t2);">' + wr + '%</span>'
+        + '<span style="width:62px;text-align:right;color:' + sumColor + ';font-weight:600;">' + (a.sumPnl >= 0 ? '+' : '') + a.sumPnl.toFixed(1) + '%</span>'
+        + '<span style="width:56px;text-align:right;color:var(--t3);">avg ' + (avg >= 0 ? '+' : '') + avg.toFixed(2) + '</span>'
+        + '</div>';
+    });
+    box.innerHTML = html || '<div style="color:var(--t3);">청산 거래가 아직 없습니다</div>';
+  }
+
+  // [V63] 레짐 적응형 예산 분배 현황 — /api/state.budgetSplitApplied
+  function renderBudgetSplit(bs) {
+    var box = $('budgetSplitBox'); if (!box) return;
+    if (!bs || (!bs.us && !bs.kr)) { box.innerHTML = '<div style="color:var(--t3);">다음 거래 사이클부터 집계됩니다</div>'; return; }
+    var COLORS = { trend: '#4488ff', scalp: '#ffc107', snap: '#bb86fc' };
+    function regimeChip(rg) {
+      var c = rg === 'BULL' ? 'var(--pos)' : (rg === 'BEAR' ? 'var(--neg)' : 'var(--t2)');
+      return '<span style="font-size:9px;padding:0 6px;border:1px solid ' + c + ';color:' + c + ';font-weight:700;border-radius:2px;">' + (rg || '—') + '</span>';
+    }
+    function row(label, d) {
+      if (!d) return '';
+      var segs = '';
+      ['trend','scalp','snap'].forEach(function(k){
+        var pct = Math.round((d[k] || 0) * 100);
+        segs += '<div style="width:' + pct + '%;height:100%;background:' + COLORS[k] + ';opacity:.85;" title="' + k + ' ' + pct + '%"></div>';
+      });
+      return '<div style="display:flex;align-items:center;gap:8px;margin-bottom:7px;">'
+        + '<span style="width:24px;font-weight:700;color:var(--t1);">' + label + '</span>' + regimeChip(d.regime)
+        + '<div style="flex:1;height:8px;display:flex;border-radius:3px;overflow:hidden;background:var(--s3);">' + segs + '</div>'
+        + '<span style="width:118px;text-align:right;color:var(--t3);font-variant-numeric:tabular-nums;">'
+        + Math.round((d.trend||0)*100) + '/' + Math.round((d.scalp||0)*100) + '/' + Math.round((d.snap||0)*100) + '</span>'
+        + '</div>';
+    }
+    var legend = '<div style="display:flex;gap:10px;margin-top:2px;font-size:9px;color:var(--t3);">'
+      + '<span><i style="display:inline-block;width:7px;height:7px;background:#4488ff;margin-right:3px;"></i>TREND</span>'
+      + '<span><i style="display:inline-block;width:7px;height:7px;background:#ffc107;margin-right:3px;"></i>SCALP</span>'
+      + '<span><i style="display:inline-block;width:7px;height:7px;background:#bb86fc;margin-right:3px;"></i>SNAP</span>'
+      + (bs.ts ? '<span style="margin-left:auto;">' + new Date(bs.ts).toLocaleTimeString('ko-KR', { hour: '2-digit', minute: '2-digit' }) + ' 적용</span>' : '')
+      + '</div>';
+    box.innerHTML = row('US', bs.us) + row('KR', bs.kr) + legend;
   }
 
   window.switchStratTab = function switchStratTab(tab) {
