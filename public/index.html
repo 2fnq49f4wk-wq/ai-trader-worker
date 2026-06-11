@@ -2205,7 +2205,16 @@ html[data-theme="light"] .port-card .port-total{color:#13171c;}
             </div>
           </div>
           <div class="fv-panel">
-            <div class="fv-panel-head">S&amp;P 500 — 1 DAY PERFORMANCE <span class="fv-panel-sub" id="fvHeatSub">엔진 실시간 시세</span> <button class="llm-btn" id="btnFvHeatRefresh" style="margin-left:auto;">↻</button></div>
+            <div class="fv-panel-head">S&amp;P 500 MAP <span class="fv-panel-sub" id="fvHeatSub">엔진 실시간 시세</span>
+              <span style="margin-left:auto;display:flex;gap:3px;align-items:center;">
+                <button class="llm-btn fv-hm" data-metric="1d" style="font-size:9px;padding:2px 7px;">1D</button>
+                <button class="llm-btn fv-hm" data-metric="1w" style="font-size:9px;padding:2px 7px;">1W</button>
+                <button class="llm-btn fv-hm" data-metric="1m" style="font-size:9px;padding:2px 7px;">1M</button>
+                <button class="llm-btn fv-hm" data-metric="3m" style="font-size:9px;padding:2px 7px;">3M</button>
+                <button class="llm-btn fv-hm" data-metric="rsi" style="font-size:9px;padding:2px 7px;">RSI</button>
+                <button class="llm-btn" id="btnFvHeatRefresh">↻</button>
+              </span>
+            </div>
             <div id="fvHeatmap" style="height:360px;background:#000;"></div>
           </div>
         </div>
@@ -2691,9 +2700,14 @@ html[data-theme="light"] .port-card .port-total{color:#13171c;}
   <div style="width:95%;max-width:1300px;background:var(--s1);border:1px solid var(--bd);margin:auto;padding:20px;max-height:90vh;overflow-y:auto;">
     <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:16px;flex-wrap:wrap;gap:10px;">
       <h2 style="margin:0;color:var(--acc);font-size:14px;font-weight:700;letter-spacing:1.5px;text-transform:uppercase;">📊 S&P 500 MARKET VIEW</h2>
-      <div style="display:flex;gap:8px;align-items:center;">
+      <div style="display:flex;gap:4px;align-items:center;">
+        <button class="llm-btn fv-hm" data-metric="1d" style="font-size:10px;">1D</button>
+        <button class="llm-btn fv-hm" data-metric="1w" style="font-size:10px;">1W</button>
+        <button class="llm-btn fv-hm" data-metric="1m" style="font-size:10px;">1M</button>
+        <button class="llm-btn fv-hm" data-metric="3m" style="font-size:10px;">3M</button>
+        <button class="llm-btn fv-hm" data-metric="rsi" style="font-size:10px;">RSI</button>
         <button class="llm-btn" id="btnHeatmapRefresh">↻ 새로고침</button>
-        <span id="btnCloseHeatmap" style="cursor:pointer;font-size:18px;color:var(--t2);">✕</span>
+        <span id="btnCloseHeatmap" style="cursor:pointer;font-size:18px;color:var(--t2);margin-left:6px;">✕</span>
       </div>
     </div>
     <div id="heatmapChartView">
@@ -3577,6 +3591,34 @@ html[data-theme="light"] .port-card .port-total{color:#13171c;}
     return 'rgb(' + r + ',' + g + ',' + b + ')';
   }
 
+  // ════ [V66] TradingView급 기능 — 기간/RSI 토글 · 섹터 줌 · 타일 클릭=차트분석 · 리치 툴팁 · 보유 하이라이트 ════
+  var fvHeatMetric = '1d';     // '1d' | '1w' | '1m' | '3m' | 'rsi'
+  var fvHeatZoomSec = null;    // 섹터 줌 상태 (섹터명 또는 null)
+  var FV_METRICS = {
+    '1d':  { label: '1일 수익률',  clamp: 3,  get: function(q){ return (typeof q.dayPct   === 'number') ? q.dayPct   : null; } },
+    '1w':  { label: '1주 수익률',  clamp: 6,  get: function(q){ return (typeof q.return5  === 'number') ? q.return5  : null; } },
+    '1m':  { label: '1개월 수익률', clamp: 12, get: function(q){ return (typeof q.return20 === 'number') ? q.return20 : null; } },
+    '3m':  { label: '3개월 수익률', clamp: 25, get: function(q){ return (typeof q.return60 === 'number') ? q.return60 : null; } },
+    'rsi': { label: 'RSI(14)',    clamp: 0,  get: function(q){ return (typeof q.rsi      === 'number') ? q.rsi      : null; } }
+  };
+  function fvMetricColor(v) {
+    if (v == null) return '#2a2d36';
+    if (fvHeatMetric === 'rsi') return fvHeatColor((50 - v) / 20 * 3);  // RSI 70+ 빨강(과열) · 30− 초록(과매도)
+    var c = FV_METRICS[fvHeatMetric].clamp || 3;
+    return fvHeatColor(v / c * 3);
+  }
+  function fvMetricText(v) {
+    if (v == null) return '—';
+    if (fvHeatMetric === 'rsi') return v.toFixed(0);
+    return (v >= 0 ? '+' : '') + v.toFixed(1) + '%';
+  }
+  function fvUpdateMetricBtns() {
+    document.querySelectorAll('.fv-hm').forEach(function(b){
+      var on = b.getAttribute('data-metric') === fvHeatMetric;
+      b.style.background = on ? 'var(--t1)' : '';
+      b.style.color = on ? 'var(--bg)' : '';
+    });
+  }
   function renderFvHeatmap() {
     renderFvHeatmapInto($('fvHeatmap'));
     // 전체화면 모달이 열려 있으면 같이 갱신
@@ -3588,9 +3630,10 @@ html[data-theme="light"] .port-card .port-total{color:#13171c;}
     var quotes = window.__lastQuotesArr || [];
     var W = host.clientWidth, H = host.clientHeight || 360;
     if (W < 60) return;  // 패널 미표시 중 — 다음 폴링에서 재시도
+    var met = FV_METRICS[fvHeatMetric] || FV_METRICS['1d'];
     // US 개별주(ETF 제외)만, 가격 있는 것만
     var stocks = quotes.filter(function(q){
-      return q.market === 'us' && !q.isEtf && typeof q.price === 'number' && q.price > 0 && typeof q.dayPct === 'number';
+      return q.market === 'us' && !q.isEtf && typeof q.price === 'number' && q.price > 0;
     });
     if (!stocks.length) { host.innerHTML = '<div class="empty" style="padding:20px;">시세 수신 대기 중...</div>'; return; }
     // 섹터별 그룹 + 시총순위 기반 면적 가중 (rank 1=최대)
@@ -3604,6 +3647,9 @@ html[data-theme="light"] .port-card .port-total{color:#13171c;}
       bySec[sec].sum += q._wgt;
     });
     var sectors = Object.keys(bySec).map(function(k){ return bySec[k]; }).sort(function(a, b){ return b.sum - a.sum; });
+    // [V66] 섹터 줌 — 라벨 클릭 시 해당 섹터만 풀패널
+    if (fvHeatZoomSec && bySec[fvHeatZoomSec]) sectors = [bySec[fvHeatZoomSec]];
+    else fvHeatZoomSec = null;
     var totalW = 0;
     sectors.forEach(function(s){ totalW += s.sum; });
     var scale = (W * H) / totalW;
@@ -3611,6 +3657,7 @@ html[data-theme="light"] .port-card .port-total{color:#13171c;}
     var secRects = [];
     fvSquarify(sectors.slice(), 0, 0, W, H, secRects);
     var html = '';
+    var heldUS = (typeof heldMap !== 'undefined' && heldMap && heldMap.us) ? heldMap.us : {};
     secRects.forEach(function(sr){
       var s = sr.it;
       var inner = [];
@@ -3621,30 +3668,92 @@ html[data-theme="light"] .port-card .port-total{color:#13171c;}
       inner.forEach(function(r){
         var q = r.it;
         if (r.w < 2 || r.h < 2) return;
-        var pct = q.dayPct;
+        var v = met.get(q);
+        var isHeld = !!heldUS[q.symbol];
         var label = '';
         if (r.w >= 30 && r.h >= 14) {
           var fs = Math.max(8, Math.min(13, Math.floor(Math.min(r.w / 4.2, r.h / 2.6))));
           label = '<span style="font-size:' + fs + 'px;font-weight:700;line-height:1.1;">' + q.symbol + '</span>';
-          if (r.h >= 30 && r.w >= 36) label += '<span style="font-size:' + Math.max(7, fs - 3) + 'px;opacity:.9;">' + (pct >= 0 ? '+' : '') + pct.toFixed(1) + '%</span>';
+          if (r.h >= 30 && r.w >= 36) label += '<span style="font-size:' + Math.max(7, fs - 3) + 'px;opacity:.9;">' + fvMetricText(v) + '</span>';
         }
-        var tip = q.symbol + (q.name && q.name !== q.symbol ? ' ' + q.name : '') + ' · ' + (pct >= 0 ? '+' : '') + pct.toFixed(2) + '% · $' + q.price.toFixed(2) + ' [' + s.name + ']';
-        html += '<div title="' + tip.replace(/"/g, '&quot;') + '" style="position:absolute;left:' + r.x.toFixed(1) + 'px;top:' + r.y.toFixed(1) + 'px;width:' + r.w.toFixed(1) + 'px;height:' + r.h.toFixed(1) + 'px;background:' + fvHeatColor(pct) + ';border:1px solid rgba(0,0,0,.55);box-sizing:border-box;display:flex;flex-direction:column;align-items:center;justify-content:center;overflow:hidden;color:#fff;cursor:default;">' + label + '</div>';
+        // [V66] 리치 툴팁 데이터 — 가격·1일/1주/1개월·RSI·섹터·보유
+        var tipHtml = '<b style="font-size:11px;">' + q.symbol + '</b>' + (q.name && q.name !== q.symbol ? ' <span style="color:#999;">' + q.name + '</span>' : '')
+          + (isHeld ? ' <span style="color:#ffc107;font-weight:700;">● 보유중</span>' : '') + '<br>'
+          + '현재가 <b>$' + q.price.toFixed(2) + '</b> · 1일 ' + fvFmtPct(q.dayPct) + '<br>'
+          + '1주 ' + fvFmtPct(q.return5) + ' · 1개월 ' + fvFmtPct(q.return20) + ' · 3개월 ' + fvFmtPct(q.return60) + '<br>'
+          + 'RSI ' + (typeof q.rsi === 'number' ? q.rsi.toFixed(0) : '—') + ' · ' + s.name + ' · 클릭=차트분석';
+        var border = isHeld ? '1.5px solid #ffc107' : '1px solid rgba(0,0,0,.55)';
+        html += '<div data-sym="' + q.symbol + '" data-tip="' + tipHtml.replace(/"/g, '&quot;') + '" style="position:absolute;left:' + r.x.toFixed(1) + 'px;top:' + r.y.toFixed(1) + 'px;width:' + r.w.toFixed(1) + 'px;height:' + r.h.toFixed(1) + 'px;background:' + fvMetricColor(v) + ';border:' + border + ';box-sizing:border-box;display:flex;flex-direction:column;align-items:center;justify-content:center;overflow:hidden;color:#fff;cursor:pointer;">' + label + '</div>';
       });
-      // 섹터 라벨 오버레이
+      // 섹터 라벨 오버레이 — [V66] 클릭=줌 토글
       if (sr.w >= 56 && sr.h >= 24) {
-        html += '<div style="position:absolute;left:' + (sr.x + 2).toFixed(1) + 'px;top:' + (sr.y + 1).toFixed(1) + 'px;font-size:8px;font-weight:700;letter-spacing:.5px;color:rgba(255,255,255,.85);text-shadow:0 1px 3px rgba(0,0,0,.9);pointer-events:none;z-index:2;">' + s.name + '</div>';
+        html += '<div data-fvsec="' + s.name + '" style="position:absolute;left:' + (sr.x + 2).toFixed(1) + 'px;top:' + (sr.y + 1).toFixed(1) + 'px;font-size:8px;font-weight:700;letter-spacing:.5px;color:rgba(255,255,255,.9);text-shadow:0 1px 3px rgba(0,0,0,.9);z-index:2;cursor:pointer;padding:1px 4px;background:rgba(0,0,0,.35);border-radius:2px;" title="' + (fvHeatZoomSec ? '클릭하면 전체 보기로' : '클릭하면 이 섹터만 확대') + '">' + s.name + (fvHeatZoomSec ? ' ✕' : ' ⊕') + '</div>';
       }
     });
     var fresh = 0;
     stocks.forEach(function(q){ if (q.ts && Date.now() - q.ts < 300000) fresh++; });
     host.innerHTML = '<div style="position:relative;width:100%;height:100%;overflow:hidden;">' + html + '</div>';
+    fvBindHeatmapEvents(host);
+    fvUpdateMetricBtns();
     var subEl = (host.id === 'fvHeatmap') ? $('fvHeatSub') : $('tvHeatmapSub');
-    if (subEl) subEl.textContent = stocks.length + '종목 · 5분내 시세 ' + fresh + ' · ' + new Date().toLocaleTimeString('ko-KR', { hour: '2-digit', minute: '2-digit', second: '2-digit' }) + ' 갱신';
+    if (subEl) subEl.textContent = met.label + (fvHeatZoomSec ? ' · ' + fvHeatZoomSec + ' 확대' : '') + ' · ' + stocks.length + '종목 · 5분내 시세 ' + fresh + ' · ' + new Date().toLocaleTimeString('ko-KR', { hour: '2-digit', minute: '2-digit', second: '2-digit' }) + ' 갱신';
+  }
+  function fvFmtPct(v) { return (typeof v === 'number') ? ((v >= 0 ? '+' : '') + v.toFixed(2) + '%') : '—'; }
+  // [V66] 이벤트 위임 — 타일 클릭(차트분석)·섹터 줌·커스텀 툴팁 (host당 1회 바인딩)
+  function fvBindHeatmapEvents(host) {
+    if (host.__fvBound) return;
+    host.__fvBound = true;
+    host.addEventListener('click', function(e){
+      var sec = e.target.closest ? e.target.closest('[data-fvsec]') : null;
+      if (sec) {
+        var sname = sec.getAttribute('data-fvsec');
+        fvHeatZoomSec = (fvHeatZoomSec === sname) ? null : sname;
+        renderFvHeatmap();
+        return;
+      }
+      var tile = e.target.closest ? e.target.closest('[data-sym]') : null;
+      if (tile) {
+        var sym = tile.getAttribute('data-sym');
+        var hm = $('heatmapModal');
+        if (hm && hm.classList.contains('show')) hm.classList.remove('show');
+        var ni = document.querySelector('[data-page="dashboard"]');
+        if (ni) ni.click();
+        var inp = $('taSymbol'); if (inp) inp.value = sym;
+        try { runTaAnalysis(sym); } catch (err) {}
+        var tr = $('taResult');
+        if (tr) setTimeout(function(){ tr.scrollIntoView({ behavior: 'smooth', block: 'center' }); }, 150);
+        var tipEl = document.getElementById('fvHeatTip');
+        if (tipEl) tipEl.style.display = 'none';
+      }
+    });
+    var tip = document.getElementById('fvHeatTip');
+    if (!tip) {
+      tip = document.createElement('div');
+      tip.id = 'fvHeatTip';
+      tip.style.cssText = 'position:fixed;z-index:99999;pointer-events:none;display:none;background:rgba(10,10,14,.96);border:1px solid var(--bd);padding:8px 10px;font-size:10px;line-height:1.7;color:#eee;border-radius:4px;max-width:260px;box-shadow:0 6px 20px rgba(0,0,0,.5);';
+      document.body.appendChild(tip);
+    }
+    host.addEventListener('mousemove', function(e){
+      var tile = e.target.closest ? e.target.closest('[data-sym]') : null;
+      if (!tile) { tip.style.display = 'none'; return; }
+      tip.innerHTML = tile.getAttribute('data-tip') || '';
+      tip.style.display = 'block';
+      tip.style.left = Math.min(e.clientX + 14, window.innerWidth - 270) + 'px';
+      tip.style.top = Math.min(e.clientY + 14, window.innerHeight - 120) + 'px';
+    });
+    host.addEventListener('mouseleave', function(){ tip.style.display = 'none'; });
   }
   function loadFvHeatmap() { renderFvHeatmap(); }  // 하위호환 별칭 (↻ 버튼·초기 로드)
   var _bfvh = $('btnFvHeatRefresh');
   if (_bfvh) _bfvh.addEventListener('click', loadFvHeatmap);
+  // [V66] 기간/RSI 토글 버튼 (패널 + 모달 공용 .fv-hm)
+  document.querySelectorAll('.fv-hm').forEach(function(b){
+    b.addEventListener('click', function(){
+      fvHeatMetric = b.getAttribute('data-metric') || '1d';
+      fvUpdateMetricBtns();
+      renderFvHeatmap();
+    });
+  });
   var _fvHeatRszT = null;
   window.addEventListener('resize', function(){
     clearTimeout(_fvHeatRszT);

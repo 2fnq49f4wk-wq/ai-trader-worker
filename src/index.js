@@ -5993,6 +5993,7 @@ async function saveQuote(DB, symbol, market, q) {
     dailyAtr: q.dailyAtr, dailyMa: q.dailyMa, dailyMaShort: q.dailyMaShort,
     bbLower: q.bbLower, bbUpper: q.bbUpper,
     return20: q.return20,
+    return5: q.return5, return60: q.return60,  // [V66] 히트맵 기간 토글용 (1주·3개월)
     ts: Date.now()
   });
 }
@@ -7814,7 +7815,8 @@ async function refreshQuotesOnly(env, market) {
         price: price, prevClose: prevClose, dayPct: dayPct,
         dailyRsi: dailyRsi, dailyMa: dailyMa, dailyMaShort: dailyMaShort, dailyAtr: dailyAtr,
         bbLower: bb ? bb.lower : null, bbUpper: bb ? bb.upper : null,
-        return20: return20
+        return20: return20,
+        return5: getNDayReturn(closes, 5), return60: getNDayReturn(closes, 60)  // [V66]
       });
       ok++; processed++;
     } catch (e) {
@@ -7981,7 +7983,9 @@ async function refreshDailyShard(env, market, shard) {
       };
       const bb = getBollingerBands(closes, mcfg.maPeriod, mcfg.bbStdMult);
       const return20 = getNDayReturn(closes, 20);
-      return { symbol: symbol, ok: true, ind: indicators, bb: bb, return20: return20, lastClose: closes[closes.length-1], prevClose: daily.prevClose };
+      return { symbol: symbol, ok: true, ind: indicators, bb: bb, return20: return20,
+        return5: getNDayReturn(closes, 5), return60: getNDayReturn(closes, 60),  // [V66]
+        lastClose: closes[closes.length-1], prevClose: daily.prevClose };
     } catch (e) { return { symbol: symbol, ok: false }; }
   });
 
@@ -8001,6 +8005,7 @@ async function refreshDailyShard(env, market, shard) {
         dailyAtr: r.ind.dailyAtr, atr: r.ind.dailyAtr,
         bbLower: r.bb ? r.bb.lower : null, bbUpper: r.bb ? r.bb.upper : null,
         return20: r.return20,
+        return5: r.return5, return60: r.return60,  // [V66]
         ts: (typeof prev.ts === "number") ? prev.ts : nowTs
       });
       stmts.push(
