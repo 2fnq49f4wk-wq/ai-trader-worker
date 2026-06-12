@@ -5197,12 +5197,13 @@ function _scoreHeadlines(titles) {
   return _clamp((pos - neg) / (pos + neg + total * 0.3), -1, 1);
 }
 
-async function updateSectorNewsSentiment(DB, cfg) {
+async function updateSectorNewsSentiment(DB, cfg, force) {
   const sc = Object.assign({ enabled:true, refreshHours:6, enrichMaxUsageRatio:0.82, minBudgetReserve:8, posScaleMax:1.08, negScaleMin:0.88 }, (cfg && cfg.sectorNews) || {});
   if (sc.enabled === false) return null;
   let cached = null;
   try { cached = await getState(DB, "sector_news_sentiment", null); } catch(e) {}
-  if (cached && cached.ts && (Date.now() - cached.ts) < (sc.refreshHours || 6) * 3600000) return cached;
+  // [V83 FIX] force=1 수동 갱신이 이 캐시 체크에 막혀 무력했음 — force면 TTL 무시
+  if (!force && cached && cached.ts && (Date.now() - cached.ts) < (sc.refreshHours || 6) * 3600000) return cached;
   try {
     const u = await getUsageState(DB);
     const lim = Object.assign({}, USAGE_LIMITS_DEFAULT, (cfg && cfg.usageLimits) || {});
@@ -5211,34 +5212,58 @@ async function updateSectorNewsSentiment(DB, cfg) {
   } catch(e) {}
   const groups = Object.keys(SECTOR_NEWS_REP);
   if (fetchBudgetLeft() < (sc.minBudgetReserve || 8) + groups.length) return cached;
+  // [V83] RSS item 파서 공용화 (야후/구글 뉴스 동일 포맷)
+  function _parseRssItems(xml, max) {
+    const items = [];
+    const itemBlocks = xml.split(/<item[\s>]/);
+    for (const block of itemBlocks.slice(1)) {
+      const titleM = block.match(/<title>(?:<!\[CDATA\[)?([\s\S]*?)(?:\]\]>)?<\/title>/);
+      const linkM  = block.match(/<link>([\s\S]*?)<\/link>/);
+      const pubM   = block.match(/<pubDate>([\s\S]*?)<\/pubDate>/);
+      const title  = titleM ? titleM[1].trim() : null;
+      if (title) items.push({
+        title: title,
+        link:  linkM  ? linkM[1].trim()  : null,
+        pub:   pubM   ? pubM[1].trim()   : null
+      });
+      if (items.length >= (max || 10)) break;
+    }
+    return items;
+  }
   const scores = {}, headlines = {};
+  let yahooDead = 0, googleUsed = 0;
   for (const grp of groups) {
     if (fetchBudgetLeft() < (sc.minBudgetReserve || 8) + 1) break;
-    const url = "https://feeds.finance.yahoo.com/rss/2.0/headline?s=" + SECTOR_NEWS_REP[grp] + "&lang=en-US&region=US";
+    let items = [];
+    // 1차: 야후 RSS (폐기 가능성 높음 — 실패 카운트해 진단)
     try {
+      const url = "https://feeds.finance.yahoo.com/rss/2.0/headline?s=" + SECTOR_NEWS_REP[grp] + "&lang=en-US&region=US";
       const resp = await fetch(url, { headers: { "User-Agent": "Mozilla/5.0 (compatible)" } });
-      if (!resp.ok) continue;
-      const xml = await resp.text();
-      // 제목 + 링크 + 발행시각 함께 추출
-      const items = [];
-      const itemBlocks = xml.split(/<item[\s>]/);
-      for (const block of itemBlocks.slice(1)) {
-        const titleM = block.match(/<title>(?:<!\[CDATA\[)?([\s\S]*?)(?:\]\]>)?<\/title>/);
-        const linkM  = block.match(/<link>([\s\S]*?)<\/link>/);
-        const pubM   = block.match(/<pubDate>([\s\S]*?)<\/pubDate>/);
-        const title  = titleM ? titleM[1].trim() : null;
-        if (title) items.push({
-          title: title,
-          link:  linkM  ? linkM[1].trim()  : null,
-          pub:   pubM   ? pubM[1].trim()   : null
-        });
-        if (items.length >= 10) break;
-      }
-      if (items.length > 0) {
-        headlines[grp] = items;
-        scores[grp] = _scoreHeadlines(items.map(function(i){ return i.title; }));
-      }
+      if (resp.ok) items = _parseRssItems(await resp.text(), 10);
     } catch(e) {}
+    // 2차: [V83] Google News RSS 폴백 — 야후 RSS가 사실상 폐기돼 수집 0건이던 문제의 본 수정.
+    //   그룹 대표티커 2개로 검색 쿼리 구성. 키 불필요·안정적.
+    if (items.length === 0 && fetchBudgetLeft() > (sc.minBudgetReserve || 8)) {
+      yahooDead++;
+      try {
+        const reps = SECTOR_NEWS_REP[grp].split(",").slice(0, 2).join(" OR ");
+        const gUrl = "https://news.google.com/rss/search?q=" + encodeURIComponent(reps + " stock") + "&hl=en-US&gl=US&ceid=US:en";
+        const gResp = await fetch(gUrl, { headers: { "User-Agent": "Mozilla/5.0 (compatible)" } });
+        if (gResp.ok) {
+          items = _parseRssItems(await gResp.text(), 10);
+          if (items.length > 0) googleUsed++;
+        }
+      } catch(e) {}
+    }
+    if (items.length > 0) {
+      headlines[grp] = items;
+      scores[grp] = _scoreHeadlines(items.map(function(i){ return i.title; }));
+    }
+  }
+  // [V83] 전 그룹 실패 시 — 조용히 빈 결과로 캐시 덮지 말고 기존 캐시 유지 + WARN
+  if (Object.keys(headlines).length === 0) {
+    try { await log(DB, "WARN", null, "[SECTOR-NEWS] 수집 실패 — 야후 RSS " + yahooDead + "그룹 무응답, 구글 폴백도 0건. 네트워크/차단 확인 필요"); } catch(e) {}
+    return cached;
   }
   const posMax = sc.posScaleMax || 1.08, negMin = sc.negScaleMin || 0.88;
   const scales = {};
@@ -5246,10 +5271,10 @@ async function updateSectorNewsSentiment(DB, cfg) {
     const s = typeof scores[grp] === "number" ? scores[grp] : 0;
     scales[grp] = s >= 0 ? (1 + s * (posMax - 1)) : (1 + s * (1 - negMin));
   }
-  const result = { scales, scores, headlines, ts: Date.now() };
+  const result = { scales, scores, headlines, ts: Date.now(), src: (googleUsed > 0 ? (googleUsed === Object.keys(headlines).length ? "google" : "mixed") : "yahoo") };
   try { await setState(DB, "sector_news_sentiment", result); } catch(e) {}
   const detail = groups.map(g => g + (scores[g] != null ? (scores[g]>=0?"+":"")+scores[g].toFixed(2) : "=?")).join(" ");
-  try { await log(DB, "INFO", null, "[SECTOR-NEWS] " + detail); } catch(e) {}
+  try { await log(DB, "INFO", null, "[SECTOR-NEWS] " + detail + (googleUsed ? " (google폴백 " + googleUsed + "그룹)" : "")); } catch(e) {}
   return result;
 }
 
@@ -11833,9 +11858,10 @@ async function handleRequest(request, env) {
     if (path === "/api/news") {
       const cfg = migrateCfgToMarkets(Object.assign({}, DEFAULT_CFG, await getState(env.DB, "cfg", {})));
       let cached = await getState(env.DB, "sector_news_sentiment", null);
-      if (url.searchParams.get("force") === "1" || !cached) {
+      const _forceNews = url.searchParams.get("force") === "1";
+      if (_forceNews || !cached) {
         resetFetchBudget(80);
-        cached = await updateSectorNewsSentiment(env.DB, cfg);
+        cached = await updateSectorNewsSentiment(env.DB, cfg, _forceNews);
       }
       return Response.json(cached || { empty: true }, { headers: cors });
     }
