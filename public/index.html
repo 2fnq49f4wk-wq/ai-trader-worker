@@ -2215,7 +2215,7 @@ html[data-theme="light"] .port-card .port-total{color:#13171c;}
                 <button class="llm-btn fv-hm" data-metric="5y" style="font-size:9px;padding:2px 7px;">5Y</button>
                 <button class="llm-btn fv-hm" data-metric="vol" style="font-size:9px;padding:2px 7px;">VOL</button>
                 <button class="llm-btn fv-hm" data-metric="rsi" style="font-size:9px;padding:2px 7px;">RSI</button>
-                <select class="fv-sec-sel" style="font-size:9px;padding:2px 4px;background:var(--bg2,#161b22);color:var(--t1,#ddd);border:1px solid var(--bd,#333);border-radius:3px;"><option value="">전체 섹터</option></select>
+                <select class="fv-sec-sel" style="font-size:9px;padding:2px 4px;background:var(--bg2,#161b22);color:var(--t1,#ddd);border:1px solid var(--bd,#333);border-radius:3px;"><option value="">전체</option></select>
                 <button class="llm-btn" id="btnFvHeatRefresh">↻</button>
               </span>
             </div>
@@ -2713,7 +2713,7 @@ html[data-theme="light"] .port-card .port-total{color:#13171c;}
         <button class="llm-btn fv-hm" data-metric="5y" style="font-size:10px;">5Y</button>
         <button class="llm-btn fv-hm" data-metric="vol" style="font-size:10px;">VOL</button>
         <button class="llm-btn fv-hm" data-metric="rsi" style="font-size:10px;">RSI</button>
-        <select class="fv-sec-sel" style="font-size:10px;padding:3px 6px;background:var(--bg2,#161b22);color:var(--t1,#ddd);border:1px solid var(--bd,#333);border-radius:3px;"><option value="">전체 섹터</option></select>
+        <select class="fv-sec-sel" style="font-size:10px;padding:3px 6px;background:var(--bg2,#161b22);color:var(--t1,#ddd);border:1px solid var(--bd,#333);border-radius:3px;"><option value="">전체</option></select>
         <button class="llm-btn" id="btnHeatmapRefresh">↻ 새로고침</button>
         <span id="btnCloseHeatmap" style="cursor:pointer;font-size:18px;color:var(--t2);margin-left:6px;">✕</span>
       </div>
@@ -3599,6 +3599,18 @@ html[data-theme="light"] .port-card .port-total{color:#13171c;}
     return 'rgb(' + r + ',' + g + ',' + b + ')';
   }
 
+  // ════ [V68] /api/heatmap 데이터 로더 ════
+  var fvHeatExtra = {}, _fvHeatExtraTs = 0, _fvHeatExtraLoading = false;
+  function fvLoadHeatExtra(force) {
+    if (_fvHeatExtraLoading) return;
+    if (!force && Date.now() - _fvHeatExtraTs < 55000) return;
+    _fvHeatExtraLoading = true;
+    fetch('/api/heatmap').then(function(r){ return r.json(); }).then(function(j){
+      _fvHeatExtraLoading = false;
+      if (j && j.ok && j.data) { fvHeatExtra = j.data; _fvHeatExtraTs = Date.now(); renderFvHeatmap(); }
+    })['catch'](function(){ _fvHeatExtraLoading = false; });
+  }
+
   // ════ [V66] TradingView급 기능 — 기간/RSI 토글 · 섹터 줌 · 타일 클릭=차트분석 · 리치 툴팁 · 보유 하이라이트 ════
   var fvHeatMetric = '1d';     // '1d' | '1w' | '1m' | '3m' | 'rsi'
   var fvHeatZoomSec = null;    // 섹터 줌 상태 (섹터명 또는 null)
@@ -3609,7 +3621,7 @@ html[data-theme="light"] .port-card .port-total{color:#13171c;}
     '3m':  { label: '3개월 수익률', clamp: 25, get: function(q){ return (typeof q.return60 === 'number') ? q.return60 : null; } },
     '1y':  { label: '1년 수익률',  clamp: 60, get: function(q){ return (typeof q.ret1y    === 'number') ? q.ret1y    : null; } },
     '5y':  { label: '5년 수익률',  clamp: 200,get: function(q){ return (typeof q.ret5y    === 'number') ? q.ret5y    : null; } },
-    'vol': { label: '상대거래량(20일比)', clamp: 0, get: function(q){
+    'vol': { label: '거래량(20日比)', clamp: 0, get: function(q){
                return (typeof q.vol === 'number' && typeof q.avgVol20 === 'number' && q.avgVol20 > 0) ? (q.vol / q.avgVol20) : null; } },
     'rsi': { label: 'RSI(14)',    clamp: 0,  get: function(q){ return (typeof q.rsi      === 'number') ? q.rsi      : null; } }
   };
@@ -3622,8 +3634,8 @@ html[data-theme="light"] .port-card .port-total{color:#13171c;}
   }
   function fvMetricColor(v) {
     if (v == null) return '#2a2d36';
-    if (fvHeatMetric === 'rsi') return fvHeatColor((50 - v) / 20 * 3);  // RSI 70+ 빨강(과열) · 30− 초록(과매도)
-    if (fvHeatMetric === 'vol') return fvHeatColor((v - 1) * 2.2);     // relVol 1.0=회색, 2.4x≈최록, 0.3x 빨강쪽 (관심 집중도)
+    if (fvHeatMetric === 'rsi') return fvHeatColor((50 - v) / 20 * 3);
+    if (fvHeatMetric === 'vol') return fvHeatColor((v - 1) * 2.2);
     var c = FV_METRICS[fvHeatMetric].clamp || 3;
     return fvHeatColor(v / c * 3);
   }
@@ -3633,6 +3645,110 @@ html[data-theme="light"] .port-card .port-total{color:#13171c;}
     if (fvHeatMetric === 'vol') return v.toFixed(1) + 'x';
     return (v >= 0 ? '+' : '') + v.toFixed(1) + '%';
   }
+  // ════ [V68] 줌 제스처 ════
+  function fvGetZoom(host) {
+    if (!host.__fvZoom) host.__fvZoom = { s: 1, x: 0, y: 0 };
+    return host.__fvZoom;
+  }
+  function fvApplyZoom(host) {
+    var z = fvGetZoom(host), layer = host.__fvLayer;
+    if (!layer) return;
+    var W = host.clientWidth, H = host.clientHeight || 360;
+    z.s = Math.max(1, Math.min(8, z.s));
+    z.x = Math.min(0, Math.max(W - W * z.s, z.x));
+    z.y = Math.min(0, Math.max(H - H * z.s, z.y));
+    layer.style.transformOrigin = '0 0';
+    layer.style.transform = 'translate(' + z.x.toFixed(1) + 'px,' + z.y.toFixed(1) + 'px) scale(' + z.s.toFixed(3) + ')';
+    var zl = host.__fvZoomLbl;
+    if (zl) zl.textContent = z.s <= 1.01 ? '' : ('×' + z.s.toFixed(1));
+  }
+  function fvBindZoomGestures(host, layer) {
+    if (host.__fvZoomBound) return;
+    host.__fvZoomBound = true;
+    var ptrs = {}, drag = null, pinch = null;
+    host.style.touchAction = 'none';
+    host.addEventListener('wheel', function(e){
+      e.preventDefault();
+      var z = fvGetZoom(host);
+      var rect = host.getBoundingClientRect();
+      var mx = e.clientX - rect.left, my = e.clientY - rect.top;
+      var olds = z.s;
+      z.s *= (e.deltaY < 0 ? 1.15 : 1 / 1.15);
+      z.s = Math.max(1, Math.min(8, z.s));
+      var f = z.s / olds;
+      z.x = mx - (mx - z.x) * f;
+      z.y = my - (my - z.y) * f;
+      fvApplyZoom(host);
+    }, { passive: false });
+    host.addEventListener('pointerdown', function(e){
+      if (e.target.closest && e.target.closest('.fv-zb')) return;
+      ptrs[e.pointerId] = { x: e.clientX, y: e.clientY };
+      var ids = Object.keys(ptrs), z = fvGetZoom(host);
+      if (ids.length === 1) {
+        drag = { x: e.clientX, y: e.clientY, zx: z.x, zy: z.y, moved: false };
+        pinch = null;
+      } else if (ids.length === 2) {
+        var a = ptrs[ids[0]], b = ptrs[ids[1]];
+        pinch = {
+          d0: Math.hypot(a.x - b.x, a.y - b.y), s0: z.s,
+          cx: (a.x + b.x) / 2, cy: (a.y + b.y) / 2, zx0: z.x, zy0: z.y
+        };
+        drag = null;
+      }
+      try { host.setPointerCapture(e.pointerId); } catch (err) {}
+    });
+    host.addEventListener('pointermove', function(e){
+      if (!ptrs[e.pointerId]) return;
+      ptrs[e.pointerId] = { x: e.clientX, y: e.clientY };
+      var z = fvGetZoom(host), ids = Object.keys(ptrs);
+      if (pinch && ids.length >= 2) {
+        var a = ptrs[ids[0]], b = ptrs[ids[1]];
+        var d = Math.hypot(a.x - b.x, a.y - b.y);
+        if (pinch.d0 > 0) {
+          var rect = host.getBoundingClientRect();
+          var cx = (a.x + b.x) / 2 - rect.left, cy = (a.y + b.y) / 2 - rect.top;
+          var olds = z.s;
+          z.s = Math.max(1, Math.min(8, pinch.s0 * (d / pinch.d0)));
+          var f = z.s / olds;
+          z.x = cx - (cx - z.x) * f;
+          z.y = cy - (cy - z.y) * f;
+          fvApplyZoom(host);
+        }
+        e.preventDefault();
+      } else if (drag) {
+        var dx = e.clientX - drag.x, dy = e.clientY - drag.y;
+        if (Math.abs(dx) + Math.abs(dy) > 5) drag.moved = true;
+        if (z.s > 1.001 && drag.moved) {
+          z.x = drag.zx + dx;
+          z.y = drag.zy + dy;
+          fvApplyZoom(host);
+          e.preventDefault();
+        }
+      }
+    });
+    function endPtr(e) {
+      delete ptrs[e.pointerId];
+      if (Object.keys(ptrs).length < 2) pinch = null;
+      if (drag && drag.moved) host.__fvDragJustEnded = Date.now();
+      if (!Object.keys(ptrs).length) drag = null;
+    }
+    host.addEventListener('pointerup', endPtr);
+    host.addEventListener('pointercancel', endPtr);
+    host.addEventListener('pointerleave', function(e){ if (ptrs[e.pointerId]) endPtr(e); });
+    host.addEventListener('dblclick', function(e){
+      e.preventDefault();
+      var z = fvGetZoom(host);
+      var rect = host.getBoundingClientRect();
+      var mx = e.clientX - rect.left, my = e.clientY - rect.top;
+      if (z.s <= 1.01) {
+        var olds = z.s; z.s = 2.5;
+        var f = z.s / olds;
+        z.x = mx - (mx - z.x) * f; z.y = my - (my - z.y) * f;
+      } else { z.s = 1; z.x = 0; z.y = 0; }
+      fvApplyZoom(host);
+    });
+  }
+
   function fvUpdateMetricBtns() {
     document.querySelectorAll('.fv-hm').forEach(function(b){
       var on = b.getAttribute('data-metric') === fvHeatMetric;
@@ -3646,32 +3762,30 @@ html[data-theme="light"] .port-card .port-total{color:#13171c;}
     var hm = $('heatmapModal');
     if (hm && hm.classList.contains('show')) renderFvHeatmapInto($('tvHeatmapContainer'));
   }
-  // ════ [V67] TradingView급 부드러운 히트맵 — DOM 재사용 + CSS 트랜지션 (레이아웃 변화가 애니메이션됨) ════
-  var FV_TILE_TRANS = 'left .45s cubic-bezier(.4,0,.2,1),top .45s cubic-bezier(.4,0,.2,1),width .45s cubic-bezier(.4,0,.2,1),height .45s cubic-bezier(.4,0,.2,1),background-color .6s ease';
-  function fvTileLabel(q, r, v) {
-    // [V67] 확대 시 종목코드·등락률 가독성 — 타일 크기에 비례한 폰트, 큰 타일은 이름까지 3줄
-    if (r.w < 26 || r.h < 13) return '';
-    var fs = Math.max(8, Math.min(34, Math.floor(Math.min(r.w / (q.symbol.length * 0.62 + 1.2), r.h / 2.4))));
-    var html = '<span style="font-size:' + fs + 'px;font-weight:700;line-height:1.12;text-shadow:0 1px 2px rgba(0,0,0,.45);">' + q.symbol + '</span>';
-    if (r.h >= fs * 2 + 8 && r.w >= 34) {
-      var fs2 = Math.max(8, Math.round(fs * 0.62));
-      html += '<span style="font-size:' + fs2 + 'px;opacity:.95;font-weight:600;text-shadow:0 1px 2px rgba(0,0,0,.4);">' + fvMetricText(v) + '</span>';
-    }
-    if (r.h >= fs * 3.2 + 14 && r.w >= 110 && q.name && q.name !== q.symbol) {
-      html += '<span style="font-size:' + Math.max(8, Math.round(fs * 0.42)) + 'px;opacity:.75;white-space:nowrap;overflow:hidden;max-width:' + Math.floor(r.w - 8) + 'px;">' + q.name + '</span>';
-    }
-    return html;
-  }
   function renderFvHeatmapInto(host) {
     if (!host) return;
     var quotes = window.__lastQuotesArr || [];
     var W = host.clientWidth, H = host.clientHeight || 360;
-    if (W < 60) return;  // 패널 미표시 중 — 다음 폴링에서 재시도
+    if (W < 60) return;
     var met = FV_METRICS[fvHeatMetric] || FV_METRICS['1d'];
     var stocks = quotes.filter(function(q){
       return q.market === 'us' && !q.isEtf && typeof q.price === 'number' && q.price > 0;
     });
     if (!stocks.length) { host.innerHTML = '<div class="empty" style="padding:20px;">시세 수신 대기 중...</div>'; host.__fvTiles = null; return; }
+    // [V68] /api/heatmap 데이터 머지
+    stocks.forEach(function(q){
+      var ex = fvHeatExtra[q.symbol];
+      if (!ex) return;
+      if (q.return5  == null && ex.return5  != null) q.return5  = ex.return5;
+      if (q.return20 == null && ex.return20 != null) q.return20 = ex.return20;
+      if (q.return60 == null && ex.return60 != null) q.return60 = ex.return60;
+      if (q.ret1y    == null && ex.ret1y    != null) q.ret1y    = ex.ret1y;
+      if (q.ret5y    == null && ex.ret5y    != null) q.ret5y    = ex.ret5y;
+      if (q.vol      == null && ex.vol      != null) q.vol      = ex.vol;
+      if (q.avgVol20 == null && ex.avgVol20 != null) q.avgVol20 = ex.avgVol20;
+    });
+    fvLoadHeatExtra(false);
+    // 섹터별 그룹 + 시총순위 기반 면적 가중 (rank 1=최대)
     var bySec = {};
     stocks.forEach(function(q){
       var sec = FV_SECTOR_OF[q.symbol] || '기타';
@@ -3682,6 +3796,7 @@ html[data-theme="light"] .port-card .port-total{color:#13171c;}
       bySec[sec].sum += q._wgt;
     });
     var sectors = Object.keys(bySec).map(function(k){ return bySec[k]; }).sort(function(a, b){ return b.sum - a.sum; });
+    // [V66] 섹터 줌 — 라벨 클릭 시 해당 섹터만 풀패널
     if (fvHeatZoomSec && bySec[fvHeatZoomSec]) sectors = [bySec[fvHeatZoomSec]];
     else fvHeatZoomSec = null;
     var totalW = 0;
@@ -3690,8 +3805,7 @@ html[data-theme="light"] .port-card .port-total{color:#13171c;}
     sectors.forEach(function(s){ s._a = s.sum * scale; });
     var secRects = [];
     fvSquarify(sectors.slice(), 0, 0, W, H, secRects);
-
-    // ── DOM 재사용 레이어 준비 ──
+    // [V68] DOM 재사용 레이어
     var layer = host.__fvLayer;
     if (!layer || layer.parentNode !== host) {
       host.innerHTML = '';
@@ -3701,11 +3815,36 @@ html[data-theme="light"] .port-card .port-total{color:#13171c;}
       host.__fvLayer = layer;
       host.__fvTiles = {};
       host.__fvSecLabels = {};
+      var zc = document.createElement('div');
+      zc.style.cssText = 'position:absolute;right:8px;bottom:8px;z-index:10;display:flex;gap:4px;align-items:center;';
+      zc.innerHTML = '<span class="fv-zl" style="font-size:10px;color:#ddd;text-shadow:0 1px 2px #000;margin-right:2px;"></span>'
+        + '<button class="fv-zb" data-z="in" style="width:26px;height:26px;font-size:15px;background:rgba(20,22,28,.85);color:#ddd;border:1px solid #444;border-radius:4px;cursor:pointer;">＋</button>'
+        + '<button class="fv-zb" data-z="out" style="width:26px;height:26px;font-size:15px;background:rgba(20,22,28,.85);color:#ddd;border:1px solid #444;border-radius:4px;cursor:pointer;">−</button>'
+        + '<button class="fv-zb" data-z="reset" style="width:26px;height:26px;font-size:13px;background:rgba(20,22,28,.85);color:#ddd;border:1px solid #444;border-radius:4px;cursor:pointer;">⟲</button>';
+      host.style.position = host.style.position || 'relative';
+      if (getComputedStyle(host).position === 'static') host.style.position = 'relative';
+      host.appendChild(zc);
+      host.__fvZoomLbl = zc.querySelector('.fv-zl');
+      zc.addEventListener('click', function(e){
+        var b = e.target.closest('.fv-zb'); if (!b) return;
+        e.stopPropagation();
+        var z = fvGetZoom(host), W2 = host.clientWidth / 2, H2 = (host.clientHeight || 360) / 2;
+        var olds = z.s;
+        if (b.getAttribute('data-z') === 'in') z.s = z.s * 1.5;
+        else if (b.getAttribute('data-z') === 'out') z.s = z.s / 1.5;
+        else { z.s = 1; z.x = 0; z.y = 0; fvApplyZoom(host); return; }
+        z.s = Math.max(1, Math.min(8, z.s));
+        var f = z.s / olds;
+        z.x = W2 - (W2 - z.x) * f;
+        z.y = H2 - (H2 - z.y) * f;
+        fvApplyZoom(host);
+      });
+      fvBindZoomGestures(host, layer);
     }
+    fvApplyZoom(host);
     var tiles = host.__fvTiles, secLabels = host.__fvSecLabels;
     var seen = {}, seenSec = {};
     var heldUS = (typeof heldMap !== 'undefined' && heldMap && heldMap.us) ? heldMap.us : {};
-
     secRects.forEach(function(sr){
       var s = sr.it;
       var inner = [];
@@ -3716,9 +3855,14 @@ html[data-theme="light"] .port-card .port-total{color:#13171c;}
       inner.forEach(function(r){
         var q = r.it;
         if (r.w < 2 || r.h < 2) return;
-        seen[q.symbol] = 1;
         var v = met.get(q);
         var isHeld = !!heldUS[q.symbol];
+        var label = '';
+        if (r.w >= 30 && r.h >= 14) {
+          var fs = Math.max(8, Math.min(13, Math.floor(Math.min(r.w / 4.2, r.h / 2.6))));
+          label = '<span style="font-size:' + fs + 'px;font-weight:700;line-height:1.1;">' + q.symbol + '</span>';
+          if (r.h >= 30 && r.w >= 36) label += '<span style="font-size:' + Math.max(7, fs - 3) + 'px;opacity:.9;">' + fvMetricText(v) + '</span>';
+        }
         var relV = (typeof q.vol === 'number' && typeof q.avgVol20 === 'number' && q.avgVol20 > 0) ? (q.vol / q.avgVol20) : null;
         var tipHtml = '<b style="font-size:11px;">' + q.symbol + '</b>' + (q.name && q.name !== q.symbol ? ' <span style="color:#999;">' + q.name + '</span>' : '')
           + (isHeld ? ' <span style="color:#ffc107;font-weight:700;">● 보유중</span>' : '') + '<br>'
@@ -3727,35 +3871,30 @@ html[data-theme="light"] .port-card .port-total{color:#13171c;}
           + '1년 ' + fvFmtPct(q.ret1y) + ' · 5년 ' + fvFmtPct(q.ret5y) + '<br>'
           + '거래량 ' + fvFmtVol(q.vol) + (relV != null ? ' (<b style="color:' + (relV >= 1.5 ? '#3fb950' : relV <= 0.6 ? '#8b949e' : '#ddd') + ';">' + relV.toFixed(1) + 'x</b> vs 20일평균)' : '') + '<br>'
           + 'RSI ' + (typeof q.rsi === 'number' ? q.rsi.toFixed(0) : '—') + ' · ' + s.name + ' · 클릭=차트분석';
+        seen[q.symbol] = 1;
         var el = tiles[q.symbol];
-        var isNew = false;
         if (!el) {
           el = document.createElement('div');
           el.setAttribute('data-sym', q.symbol);
-          el.style.cssText = 'position:absolute;box-sizing:border-box;display:flex;flex-direction:column;align-items:center;justify-content:center;overflow:hidden;color:#fff;cursor:pointer;opacity:0;will-change:left,top,width,height;';
-          el.style.left = r.x.toFixed(1) + 'px'; el.style.top = r.y.toFixed(1) + 'px';
-          el.style.width = r.w.toFixed(1) + 'px'; el.style.height = r.h.toFixed(1) + 'px';
+          el.style.cssText = 'position:absolute;box-sizing:border-box;display:flex;flex-direction:column;align-items:center;justify-content:center;overflow:hidden;color:#fff;cursor:pointer;opacity:0;';
           layer.appendChild(el);
           tiles[q.symbol] = el;
-          isNew = true;
         }
-        el.style.transition = isNew ? 'opacity .4s ease' : FV_TILE_TRANS + ',opacity .4s ease';
         el.style.left = r.x.toFixed(1) + 'px'; el.style.top = r.y.toFixed(1) + 'px';
         el.style.width = r.w.toFixed(1) + 'px'; el.style.height = r.h.toFixed(1) + 'px';
         el.style.background = fvMetricColor(v);
         el.style.border = isHeld ? '1.5px solid #ffc107' : '1px solid rgba(0,0,0,.55)';
         el.style.opacity = '1';
         el.setAttribute('data-tip', tipHtml);
-        el.innerHTML = fvTileLabel(q, r, v);
+        el.innerHTML = label;
       });
-      // 섹터 라벨 — 클릭=줌 토글, 동일하게 재사용·트랜지션
       if (sr.w >= 56 && sr.h >= 24) {
         seenSec[s.name] = 1;
         var le = secLabels[s.name];
         if (!le) {
           le = document.createElement('div');
           le.setAttribute('data-fvsec', s.name);
-          le.style.cssText = 'position:absolute;font-weight:700;letter-spacing:.5px;color:rgba(255,255,255,.92);text-shadow:0 1px 3px rgba(0,0,0,.9);z-index:2;cursor:pointer;padding:1px 5px;background:rgba(0,0,0,.4);border-radius:2px;transition:left .45s cubic-bezier(.4,0,.2,1),top .45s cubic-bezier(.4,0,.2,1);';
+          le.style.cssText = 'position:absolute;font-weight:700;letter-spacing:.5px;color:rgba(255,255,255,.92);text-shadow:0 1px 3px rgba(0,0,0,.9);z-index:2;cursor:pointer;padding:1px 5px;background:rgba(0,0,0,.4);border-radius:2px;';
           layer.appendChild(le);
           secLabels[s.name] = le;
         }
@@ -3766,7 +3905,7 @@ html[data-theme="light"] .port-card .port-total{color:#13171c;}
         le.textContent = s.name + (fvHeatZoomSec ? ' ✕' : ' ⊕');
       }
     });
-    // 사라진 타일/라벨은 페이드아웃 후 제거
+    // 사라진 타일 페이드아웃 후 제거
     Object.keys(tiles).forEach(function(sym){
       if (!seen[sym]) {
         var el = tiles[sym]; delete tiles[sym];
@@ -3780,30 +3919,12 @@ html[data-theme="light"] .port-card .port-total{color:#13171c;}
         if (le.parentNode) le.parentNode.removeChild(le);
       }
     });
-
-    fvBindHeatmapEvents(host);
-    fvUpdateMetricBtns();
-    fvSyncSectorSelects();
     var fresh = 0;
     stocks.forEach(function(q){ if (q.ts && Date.now() - q.ts < 300000) fresh++; });
+    fvBindHeatmapEvents(host);
+    fvUpdateMetricBtns();
     var subEl = (host.id === 'fvHeatmap') ? $('fvHeatSub') : $('tvHeatmapSub');
     if (subEl) subEl.textContent = met.label + (fvHeatZoomSec ? ' · ' + fvHeatZoomSec + ' 확대' : '') + ' · ' + stocks.length + '종목 · 5분내 시세 ' + fresh + ' · ' + new Date().toLocaleTimeString('ko-KR', { hour: '2-digit', minute: '2-digit', second: '2-digit' }) + ' 갱신';
-  }
-  // [V67] 섹터 셀렉터 — 패널·모달 공용 .fv-sec-sel, 줌 상태와 양방향 동기화
-  function fvSyncSectorSelects() {
-    document.querySelectorAll('.fv-sec-sel').forEach(function(sel){
-      if (!sel.__fvInit) {
-        sel.__fvInit = true;
-        Object.keys(FV_SECTORS).forEach(function(nm){
-          var o = document.createElement('option'); o.value = nm; o.textContent = nm; sel.appendChild(o);
-        });
-        sel.addEventListener('change', function(){
-          fvHeatZoomSec = sel.value || null;
-          renderFvHeatmap();
-        });
-      }
-      if (sel.value !== (fvHeatZoomSec || '')) sel.value = fvHeatZoomSec || '';
-    });
   }
   function fvFmtPct(v) { return (typeof v === 'number') ? ((v >= 0 ? '+' : '') + v.toFixed(2) + '%') : '—'; }
   // [V66] 이벤트 위임 — 타일 클릭(차트분석)·섹터 줌·커스텀 툴팁 (host당 1회 바인딩)
@@ -3811,6 +3932,7 @@ html[data-theme="light"] .port-card .port-total{color:#13171c;}
     if (host.__fvBound) return;
     host.__fvBound = true;
     host.addEventListener('click', function(e){
+      if (host.__fvDragJustEnded && Date.now() - host.__fvDragJustEnded < 250) return;
       var sec = e.target.closest ? e.target.closest('[data-fvsec]') : null;
       if (sec) {
         var sname = sec.getAttribute('data-fvsec');
@@ -3842,14 +3964,11 @@ html[data-theme="light"] .port-card .port-total{color:#13171c;}
     }
     host.addEventListener('mousemove', function(e){
       var tile = e.target.closest ? e.target.closest('[data-sym]') : null;
-      // [V67] TradingView식 호버 하이라이트
       if (host.__fvHover && host.__fvHover !== tile) {
-        host.__fvHover.style.filter = ''; host.__fvHover.style.zIndex = '';
-        host.__fvHover.style.boxShadow = '';
+        host.__fvHover.style.filter = ''; host.__fvHover.style.zIndex = ''; host.__fvHover.style.boxShadow = '';
       }
       if (tile) {
-        tile.style.filter = 'brightness(1.18)'; tile.style.zIndex = '3';
-        tile.style.boxShadow = 'inset 0 0 0 1.5px rgba(255,255,255,.85)';
+        tile.style.filter = 'brightness(1.18)'; tile.style.zIndex = '3'; tile.style.boxShadow = 'inset 0 0 0 1.5px rgba(255,255,255,.85)';
         host.__fvHover = tile;
       } else { host.__fvHover = null; }
       if (!tile) { tip.style.display = 'none'; return; }
@@ -3871,9 +3990,28 @@ html[data-theme="light"] .port-card .port-total{color:#13171c;}
     b.addEventListener('click', function(){
       fvHeatMetric = b.getAttribute('data-metric') || '1d';
       fvUpdateMetricBtns();
+      if (fvHeatMetric !== '1d') fvLoadHeatExtra(false);
       renderFvHeatmap();
     });
   });
+  // [V68] 섹터 셀렉터 동기화
+  function fvSyncSectorSelects() {
+    document.querySelectorAll('.fv-sec-sel').forEach(function(sel){
+      if (!sel.__fvInit) {
+        sel.__fvInit = true;
+        Object.keys(FV_SECTORS).forEach(function(nm){
+          var o = document.createElement('option'); o.value = nm; o.textContent = nm; sel.appendChild(o);
+        });
+        sel.addEventListener('change', function(){
+          fvHeatZoomSec = sel.value || null;
+          renderFvHeatmap();
+        });
+      }
+      if (sel.value !== (fvHeatZoomSec || '')) sel.value = fvHeatZoomSec || '';
+    });
+  }
+  fvSyncSectorSelects();
+  fvLoadHeatExtra(false);
   var _fvHeatRszT = null;
   window.addEventListener('resize', function(){
     clearTimeout(_fvHeatRszT);
@@ -6069,6 +6207,7 @@ html[data-theme="light"] .port-card .port-total{color:#13171c;}
   //   대시보드 패널과 동일한 renderFvHeatmapInto 재사용. 모달 열려 있는 동안 10초 폴링마다 자동 갱신.
   function openHeatmap() {
     $('heatmapModal').classList.add('show');
+    fvLoadHeatExtra(false);
     // 모달이 표시돼 컨테이너 크기가 잡힌 뒤 그려야 정상 표시
     setTimeout(function(){ renderFvHeatmapInto($('tvHeatmapContainer')); }, 100);
   }
