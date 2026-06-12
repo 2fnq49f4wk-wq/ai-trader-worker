@@ -3652,17 +3652,47 @@ html[data-theme="light"] .port-card .port-total{color:#13171c;}
     if (!host.__fvCam) host.__fvCam = { x: 0, y: 0, w: 0, h: 0, bw: 0, bh: 0 };
     return host.__fvCam;
   }
-  function fvApplyCam(host) {
-    var c = fvCam(host), svg = host.__fvSvg;
-    if (!svg || !c.bw) return;
-    // 줌 1~8배, 화면 밖 패닝 방지
+  function fvClampCam(c) {
     c.w = Math.max(c.bw / 8, Math.min(c.bw, c.w));
     c.h = c.w * (c.bh / c.bw);
     c.x = Math.max(0, Math.min(c.bw - c.w, c.x));
     c.y = Math.max(0, Math.min(c.bh - c.h, c.y));
-    svg.setAttribute('viewBox', c.x.toFixed(2) + ' ' + c.y.toFixed(2) + ' ' + c.w.toFixed(2) + ' ' + c.h.toFixed(2));
+  }
+  // [V71] 렉 완화 — 제스처 중에는 SVG 전체를 GPU CSS transform으로만 이동(벡터 재래스터 없음, 60fps),
+  //   제스처가 끝나면 viewBox를 1회 커밋해 선명한 벡터로 스냅. rAF로 프레임당 1회만 갱신.
+  function fvApplyCam(host, interactive) {
+    var c = fvCam(host), svg = host.__fvSvg;
+    if (!svg || !c.bw) return;
+    fvClampCam(c);
     var zl = host.__fvZoomLbl, zs = c.bw / c.w;
     if (zl) zl.textContent = zs <= 1.01 ? '' : ('×' + zs.toFixed(1));
+    if (interactive) {
+      if (host.__fvRaf) return;                 // 프레임당 1회
+      host.__fvRaf = requestAnimationFrame(function(){
+        host.__fvRaf = null;
+        var c0 = host.__fvCommitted;
+        if (!c0) { fvCommitCam(host); return; }
+        var rect = svg.getBoundingClientRect();
+        var s = c0.w / c.w;
+        var tx = (c0.x - c.x) * (rect.width / c.w);
+        var ty = (c0.y - c.y) * (rect.height / c.h);
+        svg.style.transformOrigin = '0 0';
+        svg.style.transform = 'translate(' + tx.toFixed(2) + 'px,' + ty.toFixed(2) + 'px) scale(' + s.toFixed(4) + ')';
+      });
+      clearTimeout(host.__fvCommitT);           // 휠 등 연속 입력 — 멈추면 자동 커밋
+      host.__fvCommitT = setTimeout(function(){ fvCommitCam(host); }, 160);
+    } else {
+      fvCommitCam(host);
+    }
+  }
+  function fvCommitCam(host) {
+    var c = fvCam(host), svg = host.__fvSvg;
+    if (!svg || !c.bw) return;
+    if (host.__fvRaf) { cancelAnimationFrame(host.__fvRaf); host.__fvRaf = null; }
+    clearTimeout(host.__fvCommitT);
+    svg.style.transform = '';
+    svg.setAttribute('viewBox', c.x.toFixed(2) + ' ' + c.y.toFixed(2) + ' ' + c.w.toFixed(2) + ' ' + c.h.toFixed(2));
+    host.__fvCommitted = { x: c.x, y: c.y, w: c.w, h: c.h };
   }
   function fvZoomAt(host, clientX, clientY, factor) {
     var c = fvCam(host), svg = host.__fvSvg;
@@ -3673,7 +3703,7 @@ html[data-theme="light"] .port-card .port-total{color:#13171c;}
     var nw = Math.max(c.bw / 8, Math.min(c.bw, c.w / factor));
     var nh = nw * (c.bh / c.bw);
     c.x = vx - fx * nw; c.y = vy - fy * nh; c.w = nw; c.h = nh;
-    fvApplyCam(host);
+    fvApplyCam(host, true);
   }
   function fvBindZoomGestures(host) {
     if (host.__fvZoomBound) return;
@@ -3712,7 +3742,7 @@ html[data-theme="light"] .port-card .port-total{color:#13171c;}
           var nw = Math.max(c.bw / 8, Math.min(c.bw, pinch.w0 * (pinch.d0 / d)));
           var nh = nw * (c.bh / c.bw);
           c.x = vx - fx * nw; c.y = vy - fy * nh; c.w = nw; c.h = nh;
-          fvApplyCam(host);
+          fvApplyCam(host, true);
         }
         e.preventDefault();
       } else if (drag) {
@@ -3721,7 +3751,7 @@ html[data-theme="light"] .port-card .port-total{color:#13171c;}
         if (drag.moved && c.w < c.bw - 0.5) {
           c.x = drag.cx - dx * (c.w / rect.width);
           c.y = drag.cy - dy * (c.h / rect.height);
-          fvApplyCam(host);
+          fvApplyCam(host, true);
           e.preventDefault();
         }
       }
@@ -3730,7 +3760,7 @@ html[data-theme="light"] .port-card .port-total{color:#13171c;}
       delete ptrs[e.pointerId];
       if (Object.keys(ptrs).length < 2) pinch = null;
       if (drag && drag.moved) host.__fvDragJustEnded = Date.now();
-      if (!Object.keys(ptrs).length) drag = null;
+      if (!Object.keys(ptrs).length) { drag = null; fvCommitCam(host); }  // [V71] 제스처 종료 → 선명한 벡터로 커밋
     }
     host.addEventListener('pointerup', endPtr);
     host.addEventListener('pointercancel', endPtr);
@@ -3809,21 +3839,27 @@ html[data-theme="light"] .port-card .port-total{color:#13171c;}
     if (!svg || svg.parentNode !== host || sizeChanged) {
       host.innerHTML = '';
       svg = fvSvgEl('svg', { width: '100%', height: '100%', preserveAspectRatio: 'none' });
-      svg.style.cssText = 'display:block;background:#0a0c10;';
+      svg.style.cssText = 'display:block;background:#0a0c10;will-change:transform;';
+      svg.setAttribute('text-rendering', 'optimizeSpeed');
+      svg.setAttribute('shape-rendering', 'optimizeSpeed');
       host.appendChild(svg);
       host.__fvSvg = svg;
       host.__fvT = {};      // sym → {g, rect, t1, t2}
       host.__fvS = {};      // 섹터명 → {g, rect, text}
       cam.bw = W; cam.bh = H; cam.x = 0; cam.y = 0; cam.w = W; cam.h = H;
-      // 줌 컨트롤 오버레이 (HTML)
-      var zc = document.createElement('div');
-      zc.style.cssText = 'position:absolute;right:8px;bottom:8px;z-index:10;display:flex;gap:4px;align-items:center;';
-      zc.innerHTML = '<span class="fv-zl" style="font-size:10px;color:#ddd;text-shadow:0 1px 2px #000;margin-right:2px;"></span>'
-        + '<button class="fv-zb" data-z="in" style="width:26px;height:26px;font-size:15px;background:rgba(20,22,28,.85);color:#ddd;border:1px solid #444;border-radius:4px;cursor:pointer;">＋</button>'
-        + '<button class="fv-zb" data-z="out" style="width:26px;height:26px;font-size:15px;background:rgba(20,22,28,.85);color:#ddd;border:1px solid #444;border-radius:4px;cursor:pointer;">−</button>'
-        + '<button class="fv-zb" data-z="reset" style="width:26px;height:26px;font-size:13px;background:rgba(20,22,28,.85);color:#ddd;border:1px solid #444;border-radius:4px;cursor:pointer;">⟲</button>';
+      // [V71] 줌 컨트롤 — 맵 "위쪽" 바로 이동 (맵을 가리지 않음)
+      var zc = host.__fvZc;
+      if (!zc) {
+        zc = document.createElement('div');
+        zc.style.cssText = 'display:flex;gap:4px;align-items:center;justify-content:flex-end;padding:3px 4px;background:transparent;';
+        zc.innerHTML = '<span class="fv-zl" style="font-size:10px;color:var(--t2,#999);margin-right:4px;"></span>'
+          + '<button class="fv-zb" data-z="in" style="width:26px;height:24px;font-size:14px;background:var(--s2,#1f1f1f);color:var(--t1,#ddd);border:1px solid var(--bd,#363636);border-radius:4px;cursor:pointer;">＋</button>'
+          + '<button class="fv-zb" data-z="out" style="width:26px;height:24px;font-size:14px;background:var(--s2,#1f1f1f);color:var(--t1,#ddd);border:1px solid var(--bd,#363636);border-radius:4px;cursor:pointer;">−</button>'
+          + '<button class="fv-zb" data-z="reset" style="width:26px;height:24px;font-size:12px;background:var(--s2,#1f1f1f);color:var(--t1,#ddd);border:1px solid var(--bd,#363636);border-radius:4px;cursor:pointer;">⟲</button>';
+        host.parentNode.insertBefore(zc, host);
+        host.__fvZc = zc;
+      }
       if (getComputedStyle(host).position === 'static') host.style.position = 'relative';
-      host.appendChild(zc);
       host.__fvZoomLbl = zc.querySelector('.fv-zl');
       zc.addEventListener('click', function(e){
         var b = e.target.closest('.fv-zb'); if (!b) return;
@@ -3837,7 +3873,7 @@ html[data-theme="light"] .port-card .port-total{color:#13171c;}
       fvBindZoomGestures(host);
       fvBindHeatmapEvents(host);
     }
-    fvApplyCam(host);
+    fvCommitCam(host);
     var tiles = host.__fvT, secEls = host.__fvS;
     var seen = {}, seenSec = {};
     var heldUS = (typeof heldMap !== 'undefined' && heldMap && heldMap.us) ? heldMap.us : {};
