@@ -3734,6 +3734,22 @@ html[data-theme="light"] .port-card .port-total{color:#13171c;}
   // [V73] 검은 화면·렉 제거 — 제스처 중 CSS transform으로 기존 래스터를 밀던 방식은
   //   커밋(160ms) 전까지 새 영역이 비어 검게 보이고 스냅도 생겼다. 대신 매 rAF마다
   //   viewBox를 직접 갱신한다(현재 카메라 영역을 항상 정확히 그림 → 검은 가장자리 없음).
+  // [V78] 하이브리드 카메라 — 제스처 중에도 글씨가 보이게.
+  //   V75는 렉 때문에 제스처 중 텍스트를 숨겼는데(글씨 사라짐), 대신:
+  //   ① 현재 카메라보다 40% 넓은 "패딩 viewBox"를 1회 래스터하고
+  //   ② 제스처 동안은 GPU CSS transform으로만 그 래스터를 이동/확대(텍스트 포함, 재래스터 없음)
+  //   ③ 카메라가 패딩 영역을 벗어나려는 순간에만 새 패딩 영역을 재커밋(가끔 1회)
+  //   → 글씨 항상 표시 + 60fps + 검은 가장자리 없음.
+  function fvPadCommit(host, c) {
+    var svg = host.__fvSvg;
+    var pad = 0.4;
+    var pw = Math.min(c.bw, c.w * (1 + pad * 2));
+    var ph = pw * (c.bh / c.bw);
+    var px = Math.max(0, Math.min(c.bw - pw, c.x - (pw - c.w) / 2));
+    var py = Math.max(0, Math.min(c.bh - ph, c.y - (ph - c.h) / 2));
+    svg.setAttribute('viewBox', px.toFixed(2) + ' ' + py.toFixed(2) + ' ' + pw.toFixed(2) + ' ' + ph.toFixed(2));
+    host.__fvCommitted = { x: px, y: py, w: pw, h: ph };
+  }
   function fvApplyCam(host, interactive) {
     var c = fvCam(host), svg = host.__fvSvg;
     if (!svg || !c.bw) return;
@@ -3742,21 +3758,28 @@ html[data-theme="light"] .port-card .port-total{color:#13171c;}
     if (zl) zl.textContent = zs <= 1.01 ? '' : ('×' + zs.toFixed(1));
     if (interactive) {
       host.__fvCamDirty = true;
-      // [V75] 제스처 중 텍스트 레이어 숨김 — 한글 벡터 텍스트(수백개) 재래스터가 팬/줌 렉의 주범.
-      //   rect만 움직이면 GPU로 가볍게 처리됨. 커밋 시 다시 표시(선명).
-      if (!host.__fvTextHidden) { host.__fvTextHidden = true; svg.classList.add('fv-panning'); }
-      // 멈추면(160ms) 텍스트 복원 + 선명 커밋
       clearTimeout(host.__fvCommitT);
-      host.__fvCommitT = setTimeout(function(){ fvCommitCam(host); }, 160);
-      if (host.__fvRaf) return;                 // 프레임당 1회만 viewBox 반영
-      host.__fvRaf = requestAnimationFrame(function step(){
+      host.__fvCommitT = setTimeout(function(){ fvCommitCam(host); }, 160);  // 멈추면 정확 커밋
+      if (host.__fvRaf) return;                 // 프레임당 1회
+      host.__fvRaf = requestAnimationFrame(function(){
         host.__fvRaf = null;
         if (!host.__fvCamDirty) return;
         host.__fvCamDirty = false;
         var cc = fvCam(host);
-        svg.style.transform = '';
-        svg.setAttribute('viewBox', cc.x.toFixed(2) + ' ' + cc.y.toFixed(2) + ' ' + cc.w.toFixed(2) + ' ' + cc.h.toFixed(2));
-        host.__fvCommitted = { x: cc.x, y: cc.y, w: cc.w, h: cc.h };
+        var p = host.__fvCommitted;
+        var eps = 0.5;
+        // 패딩 영역 밖으로 나가거나, 패딩 해상도 대비 3배 이상 확대되면(흐릿해짐) 재커밋
+        var out = !p || cc.x < p.x - eps || cc.y < p.y - eps
+               || cc.x + cc.w > p.x + p.w + eps || cc.y + cc.h > p.y + p.h + eps
+               || (p.w / cc.w) > 3;
+        if (out) fvPadCommit(host, cc);
+        p = host.__fvCommitted;
+        var rect = host.getBoundingClientRect();
+        var s = p.w / cc.w;
+        var tx = (p.x - cc.x) * (rect.width / cc.w);
+        var ty = (p.y - cc.y) * (rect.height / cc.h);
+        svg.style.transformOrigin = '0 0';
+        svg.style.transform = 'translate(' + tx.toFixed(2) + 'px,' + ty.toFixed(2) + 'px) scale(' + s.toFixed(4) + ')';
       });
     } else {
       fvCommitCam(host);
@@ -3771,7 +3794,6 @@ html[data-theme="light"] .port-card .port-total{color:#13171c;}
     svg.style.transform = '';
     svg.setAttribute('viewBox', c.x.toFixed(2) + ' ' + c.y.toFixed(2) + ' ' + c.w.toFixed(2) + ' ' + c.h.toFixed(2));
     host.__fvCommitted = { x: c.x, y: c.y, w: c.w, h: c.h };
-    if (host.__fvTextHidden) { host.__fvTextHidden = false; svg.classList.remove('fv-panning'); }  // [V75] 텍스트 복원
     // [V76] 줌 배율이 바뀌면 텍스트 표시 임계값이 달라지므로 재렌더(작은 타일 글씨 채움/제거).
     var zNow = c.bw / c.w, zPrev = host.__fvZoomRendered || 0;
     if (Math.abs(Math.log((zNow || 1) / (zPrev || 1))) > 0.12) {
@@ -4098,7 +4120,7 @@ html[data-theme="light"] .port-card .port-total{color:#13171c;}
     var fresh = 0;
     stocks.forEach(function(q){ if (q.ts && Date.now() - q.ts < 300000) fresh++; });
     var subEl = (host.id === 'fvHeatmap') ? $('fvHeatSub') : $('tvHeatmapSub');
-    if (subEl) subEl.textContent = (fvHeatMarket === 'kr' ? 'KOSPI·KOSDAQ · ' : 'S&P500 · ') + met.label + (fvHeatZoomSec ? ' · ' + fvHeatZoomSec + ' 확대' : '') + ' · ' + stocks.length + '종목 · 5분내 시세 ' + fresh + ' · ' + new Date().toLocaleTimeString('ko-KR', { hour: '2-digit', minute: '2-digit', second: '2-digit' }) + ' 갱신';
+    if (subEl) subEl.textContent = new Date().toLocaleTimeString('ko-KR', { hour: '2-digit', minute: '2-digit', second: '2-digit' }) + ' 갱신';
   }
   function fvFmtPct(v) { return (typeof v === 'number') ? ((v >= 0 ? '+' : '') + v.toFixed(2) + '%') : '—'; }
   // 이벤트 위임 — 타일 클릭(차트분석)·섹터 줌·툴팁·호버 (SVG 버전)
