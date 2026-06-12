@@ -3772,6 +3772,13 @@ html[data-theme="light"] .port-card .port-total{color:#13171c;}
     svg.setAttribute('viewBox', c.x.toFixed(2) + ' ' + c.y.toFixed(2) + ' ' + c.w.toFixed(2) + ' ' + c.h.toFixed(2));
     host.__fvCommitted = { x: c.x, y: c.y, w: c.w, h: c.h };
     if (host.__fvTextHidden) { host.__fvTextHidden = false; svg.classList.remove('fv-panning'); }  // [V75] 텍스트 복원
+    // [V76] 줌 배율이 바뀌면 텍스트 표시 임계값이 달라지므로 재렌더(작은 타일 글씨 채움/제거).
+    var zNow = c.bw / c.w, zPrev = host.__fvZoomRendered || 0;
+    if (Math.abs(Math.log((zNow || 1) / (zPrev || 1))) > 0.12) {
+      host.__fvZoomRendered = zNow;
+      clearTimeout(host.__fvReT);
+      host.__fvReT = setTimeout(function(){ if (!host.__fvGesturing) renderFvHeatmap(); }, 60);
+    }
   }
   function fvZoomAt(host, clientX, clientY, factor) {
     var c = fvCam(host), svg = host.__fvSvg;
@@ -3887,6 +3894,11 @@ html[data-theme="light"] .port-card .port-total{color:#13171c;}
     var W = host.clientWidth, H = host.clientHeight || 360;
     if (W < 60) return;
     var met = FV_METRICS[fvHeatMetric] || FV_METRICS['1d'];
+    // [V76] 현재 줌 배율 — 텍스트 표시 임계값을 화면상 크기 기준으로 보정.
+    //   기존엔 base 좌표 fs>=1.6(8배 줌 가정) 고정이라, KR처럼 작은 타일이 많으면
+    //   확대해도 텍스트가 비어 있어 글씨가 사라져 보였다. 줌 배율을 반영해 다시 채운다.
+    var _zc = host.__fvCam;
+    var fvZoom = (_zc && _zc.w > 0) ? (_zc.bw / _zc.w) : 1;
     var stocks = quotes.filter(function(q){
       return q.market === fvHeatMarket && !q.isEtf && typeof q.price === 'number' && q.price > 0;
     });
@@ -4051,9 +4063,10 @@ html[data-theme="light"] .port-card .port-total{color:#13171c;}
         var fs = Math.min(r.w / (label.length * cw + 0.5), r.h / 2.5);
         fs = Math.min(fs, 26);
         var cx = r.x + r.w / 2;
-        if (fs >= 1.6) {  // 1.6 SVG px — 8배 줌이면 화면상 ~13px로 읽힘
+        // 화면상 글자 높이(px) ≈ fs × 줌배율. ~9px 이상이면 표시 → 확대하면 작은 타일도 글씨가 채워짐.
+        if (fs * fvZoom >= 9) {
           var sub = (fvHeatMetric === 'vol') ? fvFmtVol(q.vol) : fvMetricText(v);
-          var showSub = r.h >= fs * 2.3 && fs >= 2.2;
+          var showSub = r.h >= fs * 2.3 && fs * fvZoom >= 13;
           t.t1.setAttribute('x', cx);
           t.t1.setAttribute('y', showSub ? (r.y + r.h / 2 - fs * 0.15) : (r.y + r.h / 2 + fs * 0.36));
           t.t1.setAttribute('font-size', fs.toFixed(2));
