@@ -2205,14 +2205,16 @@ html[data-theme="light"] .port-card .port-total{color:#13171c;}
             </div>
           </div>
           <div class="fv-panel">
-            <div class="fv-panel-head">S&amp;P 500 MAP <span class="fv-panel-sub" id="fvHeatSub">엔진 실시간 시세</span>
+            <div class="fv-panel-head"><span class="fv-mkt-title">S&amp;P 500 MAP</span> <span class="fv-panel-sub" id="fvHeatSub">엔진 실시간 시세</span>
               <span style="margin-left:auto;display:flex;gap:3px;align-items:center;">
+                <button class="llm-btn fv-mkt" data-market="us" style="font-size:9px;padding:2px 8px;font-weight:700;">US</button>
+                <button class="llm-btn fv-mkt" data-market="kr" style="font-size:9px;padding:2px 8px;font-weight:700;">KR</button>
+                <span style="width:1px;height:14px;background:var(--bd,#333);margin:0 2px;"></span>
                 <button class="llm-btn fv-hm" data-metric="1d" style="font-size:9px;padding:2px 7px;">1D</button>
                 <button class="llm-btn fv-hm" data-metric="1w" style="font-size:9px;padding:2px 7px;">1W</button>
                 <button class="llm-btn fv-hm" data-metric="1m" style="font-size:9px;padding:2px 7px;">1M</button>
                 <button class="llm-btn fv-hm" data-metric="3m" style="font-size:9px;padding:2px 7px;">3M</button>
                 <button class="llm-btn fv-hm" data-metric="1y" style="font-size:9px;padding:2px 7px;">1Y</button>
-                <button class="llm-btn fv-hm" data-metric="5y" style="font-size:9px;padding:2px 7px;">5Y</button>
                 <button class="llm-btn fv-hm" data-metric="vol" style="font-size:9px;padding:2px 7px;">VOL</button>
                 <button class="llm-btn fv-hm" data-metric="rsi" style="font-size:9px;padding:2px 7px;">RSI</button>
                 <select class="fv-sec-sel" style="font-size:9px;padding:2px 4px;background:var(--bg2,#161b22);color:var(--t1,#ddd);border:1px solid var(--bd,#333);border-radius:3px;"><option value="">전체</option></select>
@@ -2703,14 +2705,16 @@ html[data-theme="light"] .port-card .port-total{color:#13171c;}
 <div class="modal" id="heatmapModal" style="padding:0;">
   <div style="width:95%;max-width:1300px;background:var(--s1);border:1px solid var(--bd);margin:auto;padding:20px;max-height:90vh;overflow-y:auto;">
     <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:16px;flex-wrap:wrap;gap:10px;">
-      <h2 style="margin:0;color:var(--acc);font-size:14px;font-weight:700;letter-spacing:1.5px;text-transform:uppercase;">📊 S&P 500 MARKET VIEW</h2>
+      <h2 style="margin:0;color:var(--acc);font-size:14px;font-weight:700;letter-spacing:1.5px;text-transform:uppercase;">📊 <span class="fv-mkt-title">S&P 500 MAP</span> MARKET VIEW</h2>
       <div style="display:flex;gap:4px;align-items:center;">
+        <button class="llm-btn fv-mkt" data-market="us" style="font-size:10px;font-weight:700;">US</button>
+        <button class="llm-btn fv-mkt" data-market="kr" style="font-size:10px;font-weight:700;">KR</button>
+        <span style="width:1px;height:16px;background:var(--bd,#333);margin:0 3px;"></span>
         <button class="llm-btn fv-hm" data-metric="1d" style="font-size:10px;">1D</button>
         <button class="llm-btn fv-hm" data-metric="1w" style="font-size:10px;">1W</button>
         <button class="llm-btn fv-hm" data-metric="1m" style="font-size:10px;">1M</button>
         <button class="llm-btn fv-hm" data-metric="3m" style="font-size:10px;">3M</button>
         <button class="llm-btn fv-hm" data-metric="1y" style="font-size:10px;">1Y</button>
-        <button class="llm-btn fv-hm" data-metric="5y" style="font-size:10px;">5Y</button>
         <button class="llm-btn fv-hm" data-metric="vol" style="font-size:10px;">VOL</button>
         <button class="llm-btn fv-hm" data-metric="rsi" style="font-size:10px;">RSI</button>
         <select class="fv-sec-sel" style="font-size:10px;padding:3px 6px;background:var(--bg2,#161b22);color:var(--t1,#ddd);border:1px solid var(--bd,#333);border-radius:3px;"><option value="">전체</option></select>
@@ -3555,6 +3559,42 @@ html[data-theme="light"] .port-card .port-total{color:#13171c;}
     FV_SECTORS[sec].split(/\s+/).forEach(function(sym){ if (sym) FV_SECTOR_OF[sym] = sec; });
   });
 
+  // [V74] 한국 시장 섹터 분류 (KOSPI/KOSDAQ 시총 상위 ~270종목)
+  var KR_SECTORS = {
+    '반도체': '005930.KS 000660.KS 042700.KS 357780.KQ 005290.KQ 240810.KQ 403870.KQ 084370.KQ 036930.KQ 095340.KQ 067310.KQ 064760.KQ 039030.KQ 178320.KQ 089030.KQ 101490.KQ 213420.KQ 108320.KS 108490.KQ 000990.KS 140860.KQ 232140.KQ 204270.KQ 058470.KQ 353200.KQ 022100.KS 248070.KS 081660.KS 281740.KQ 137400.KQ',
+    'IT·전자': '009150.KS 066570.KS 011070.KS 009830.KS 034220.KS 007660.KS 103590.KS 005070.KS 078600.KQ 014680.KS 489790.KS 062040.KS 001440.KS 001040.KS 010060.KS',
+    '인터넷·게임': '035420.KS 035720.KS 259960.KS 036570.KS 251270.KS 263750.KQ 112040.KQ 225570.KQ 293490.KQ 192080.KS 376300.KQ 067160.KQ 042000.KQ',
+    '2차전지': '373220.KS 006400.KS 003670.KS 247540.KQ 086520.KQ 066970.KS 450080.KS 020150.KS 348370.KQ 137310.KS 011790.KS 005850.KS 361610.KS',
+    '자동차·부품': '005380.KS 000270.KS 012330.KS 086280.KS 307950.KS 204320.KS 018880.KS 011210.KS 007340.KS 161390.KS 073240.KS 003570.KS',
+    '바이오·제약': '207940.KS 068270.KS 196170.KQ 326030.KS 128940.KS 000100.KS 145020.KQ 302440.KS 069620.KS 006280.KS 185750.KS 195940.KQ 141080.KQ 298380.KQ 087010.KQ 310210.KQ 214450.KQ 237690.KQ 008930.KS 068760.KQ 028300.KQ 000250.KQ 009420.KS 347850.KQ 086900.KQ 096530.KQ 003090.KS 039200.KQ 085660.KQ 214370.KQ 226950.KQ 007390.KQ 082270.KQ',
+    '금융': '105560.KS 055550.KS 086790.KS 316140.KS 138040.KS 024110.KS 071050.KS 323410.KS 039490.KS 005940.KS 016360.KS 006800.KS 032830.KS 000810.KS 005830.KS 088350.KS 001450.KS 029780.KS 138930.KS 175330.KS 139130.KS 003540.KS 003530.KS 030610.KS 001720.KS 003690.KS 031210.KS',
+    '중공업·방산': '012450.KS 042660.KS 329180.KS 009540.KS 010140.KS 064350.KS 047810.KS 272210.KS 079550.KS 267270.KS 100090.KS 082740.KS 071970.KS 112610.KS 017960.KS 083650.KQ 077970.KS',
+    '전력·에너지설비': '034020.KS 267260.KS 010120.KS 298040.KS 052690.KS 051600.KS 229640.KS 100840.KS 336260.KS',
+    '화학·소재': '051910.KS 011170.KS 011780.KS 285130.KS 120110.KS 004000.KS 298020.KS 298050.KS 457190.KS 002380.KS',
+    '철강·비철': '005490.KS 010130.KS 004020.KS 103140.KS 001430.KS 003030.KS 000670.KS',
+    '조선·해운': '011200.KS 028670.KS 060370.KQ',
+    '건설': '000720.KS 047040.KS 375500.KS 006360.KS 012630.KS 294870.KS 028050.KS 300720.KS',
+    '유틸리티': '015760.KS 036460.KS 071320.KS 018670.KS',
+    '지주·상사': '034730.KS 028260.KS 267250.KS 003550.KS 006260.KS 004990.KS 001120.KS 047050.KS 000150.KS 004800.KS 005440.KS 006120.KS 000210.KS 023590.KS',
+    '유통·소비재': '139480.KS 023530.KS 004170.KS 282330.KS 007070.KS 069960.KS 021240.KS 008770.KS',
+    '음식료': '003230.KS 097950.KS 271560.KS 280360.KS 005300.KS 004370.KS 001680.KS 005180.KS 007310.KS 000080.KS 026960.KS 001800.KS',
+    '화장품·패션': '051900.KS 090430.KS 161890.KS 192820.KS 002790.KS 383220.KS 111770.KS 257720.KQ 018290.KQ 009970.KS',
+    '엔터·미디어': '352820.KS 035900.KQ 041510.KQ 122870.KQ 035760.KQ 253450.KQ 030000.KS',
+    '운송': '003490.KS 180640.KS 000120.KS',
+    '통신': '017670.KS 030200.KS 032640.KS 377300.KS',
+    '기계·로봇': '454910.KS 277810.KQ 098460.KQ 009450.KS 017800.KS 012750.KS 484870.KS 241560.KS',
+    '에너지·정유': '096770.KS 010950.KS'
+  };
+  var KR_SECTOR_OF = {};
+  Object.keys(KR_SECTORS).forEach(function(sec){
+    KR_SECTORS[sec].split(/\s+/).forEach(function(sym){ if (sym) KR_SECTOR_OF[sym] = sec; });
+  });
+
+  // [V74] 히트맵 대상 시장 — 'us'(S&P500) | 'kr'(코스피·코스닥)
+  var fvHeatMarket = 'us';
+  function fvSecOf(sym)  { return fvHeatMarket === 'kr' ? (KR_SECTOR_OF[sym] || '기타') : (FV_SECTOR_OF[sym] || '기타'); }
+  function fvSecMap()    { return fvHeatMarket === 'kr' ? KR_SECTORS : FV_SECTORS; }
+
   // squarified treemap — items: [{_a:면적}] 내림차순. out에 {it,x,y,w,h} push.
   function fvSquarify(items, x, y, w, h, out) {
     while (items.length) {
@@ -3605,6 +3645,22 @@ html[data-theme="light"] .port-card .port-total{color:#13171c;}
     return A[n-1][1];
   }
 
+  // [V74] KR rank → 시총(조원) 근사. 삼성전자(1위)≈500조, SK하이닉스≈250조 … 꼬리 급감.
+  var FV_CAP_ANCH_KR = [[1,520],[2,250],[3,90],[5,70],[7,55],[10,45],[15,32],[20,24],[30,16],[50,9.5],[75,6],[100,4.2],[150,2.6],[200,1.7],[300,0.9]];
+  function fvRankCapKR(rank) {
+    var A = FV_CAP_ANCH_KR, n = A.length;
+    if (rank <= A[0][0]) return A[0][1];
+    if (rank >= A[n-1][0]) return Math.max(0.2, A[n-1][1] * Math.pow(A[n-1][0] / rank, 1.1));
+    for (var i = 1; i < n; i++) {
+      if (rank <= A[i][0]) {
+        var a = A[i-1], b = A[i];
+        var t = (Math.log(rank) - Math.log(a[0])) / (Math.log(b[0]) - Math.log(a[0]));
+        return Math.exp(Math.log(a[1]) + t * (Math.log(b[1]) - Math.log(a[1])));
+      }
+    }
+    return A[n-1][1];
+  }
+
   // 등락률 → 색 (Finviz 팔레트: -3% 빨강 ↔ 0 회색 ↔ +3% 초록)
   function fvHeatColor(p) {
     var t = Math.max(-3, Math.min(3, p || 0)) / 3;
@@ -3637,7 +3693,6 @@ html[data-theme="light"] .port-card .port-total{color:#13171c;}
     '1m':  { label: '1개월 수익률', clamp: 12, get: function(q){ return (typeof q.return20 === 'number') ? q.return20 : null; } },
     '3m':  { label: '3개월 수익률', clamp: 25, get: function(q){ return (typeof q.return60 === 'number') ? q.return60 : null; } },
     '1y':  { label: '1년 수익률',  clamp: 60, get: function(q){ return (typeof q.ret1y    === 'number') ? q.ret1y    : null; } },
-    '5y':  { label: '5년 수익률',  clamp: 200,get: function(q){ return (typeof q.ret5y    === 'number') ? q.ret5y    : null; } },
     'vol': { label: '거래량(20日比)', clamp: 0, get: function(q){
                return (typeof q.vol === 'number' && typeof q.avgVol20 === 'number' && q.avgVol20 > 0) ? (q.vol / q.avgVol20) : null; } },
     'rsi': { label: 'RSI(14)',    clamp: 0,  get: function(q){ return (typeof q.rsi      === 'number') ? q.rsi      : null; } }
@@ -3825,7 +3880,7 @@ html[data-theme="light"] .port-card .port-total{color:#13171c;}
     if (W < 60) return;
     var met = FV_METRICS[fvHeatMetric] || FV_METRICS['1d'];
     var stocks = quotes.filter(function(q){
-      return q.market === 'us' && !q.isEtf && typeof q.price === 'number' && q.price > 0;
+      return q.market === fvHeatMarket && !q.isEtf && typeof q.price === 'number' && q.price > 0;
     });
     if (!stocks.length) { host.innerHTML = '<div class="empty" style="padding:20px;">시세 수신 대기 중...</div>'; host.__fvSvg = null; return; }
     // /api/heatmap 보충 데이터 머지
@@ -3845,12 +3900,12 @@ html[data-theme="light"] .port-card .port-total{color:#13171c;}
     // 섹터 그룹 + 시총 가중
     var bySec = {};
     stocks.forEach(function(q){
-      var sec = FV_SECTOR_OF[q.symbol] || '기타';
+      var sec = fvSecOf(q.symbol);
       var rank = (typeof q.rank === 'number' && q.rank > 0) ? q.rank : 600;
-      // [V72] 타일 면적 = 실제 시총 비례. q.mcap($) 있으면 그대로, 없으면
-      //   S&P500 시총 분포 실측 앵커(log-log 보간)로 rank→$B 환산.
-      //   기존 rank^0.82 곡선은 분포가 너무 평평해 대형주가 작게, 소형주가 크게 나왔음.
-      q._wgt = (typeof q.mcap === 'number' && q.mcap > 0) ? (q.mcap / 1e9) : fvRankCap(rank);
+      // [V72] 타일 면적 = 실제 시총 비례. q.mcap 있으면 그대로, 없으면 rank→시총 근사.
+      //   KR은 1위(삼성전자) 시총이 US 1위의 ~1/8이라 별도 앵커 곡선 사용.
+      q._wgt = (typeof q.mcap === 'number' && q.mcap > 0) ? (q.mcap / 1e9)
+             : (fvHeatMarket === 'kr' ? fvRankCapKR(rank) : fvRankCap(rank));
       if (!bySec[sec]) bySec[sec] = { name: sec, items: [], sum: 0 };
       bySec[sec].items.push(q);
       bySec[sec].sum += q._wgt;
@@ -3910,7 +3965,9 @@ html[data-theme="light"] .port-card .port-total{color:#13171c;}
     fvCommitCam(host);
     var tiles = host.__fvT, secEls = host.__fvS;
     var seen = {}, seenSec = {};
-    var heldUS = (typeof heldMap !== 'undefined' && heldMap && heldMap.us) ? heldMap.us : {};
+    var heldUS = (typeof heldMap !== 'undefined' && heldMap && heldMap[fvHeatMarket]) ? heldMap[fvHeatMarket] : {};
+    var fvCur = (fvHeatMarket === 'kr') ? '₩' : '$';
+    var fvPx = function(p){ return fvCur + (fvHeatMarket === 'kr' ? Math.round(p).toLocaleString('ko-KR') : p.toFixed(2)); };
 
     secRects.forEach(function(sr){
       var s = sr.it;
@@ -3950,10 +4007,10 @@ html[data-theme="light"] .port-card .port-total{color:#13171c;}
         var relV = (typeof q.vol === 'number' && typeof q.avgVol20 === 'number' && q.avgVol20 > 0) ? (q.vol / q.avgVol20) : null;
         var tipHtml = '<b style="font-size:11px;">' + q.symbol + '</b>' + (q.name && q.name !== q.symbol ? ' <span style="color:#999;">' + q.name + '</span>' : '')
           + (isHeld ? ' <span style="color:#ffc107;font-weight:700;">● 보유중</span>' : '') + '<br>'
-          + '현재가 <b>$' + q.price.toFixed(2) + '</b> · 1일 ' + fvFmtPct(q.dayPct) + '<br>'
+          + '현재가 <b>' + fvPx(q.price) + '</b> · 1일 ' + fvFmtPct(q.dayPct) + '<br>'
           + '1주 ' + fvFmtPct(q.return5) + ' · 1개월 ' + fvFmtPct(q.return20) + ' · 3개월 ' + fvFmtPct(q.return60) + '<br>'
           + '1년 ' + fvFmtPct(q.ret1y) + ' · 5년 ' + fvFmtPct(q.ret5y) + '<br>'
-          + '거래량 <b>' + fvFmtVol(q.vol) + '</b>주' + (typeof q.vol === 'number' ? ' · 거래대금 <b>$' + fvFmtVol(q.vol * q.price) + '</b>' : '')
+          + '거래량 <b>' + fvFmtVol(q.vol) + '</b>주' + (typeof q.vol === 'number' ? ' · 거래대금 <b>' + fvCur + fvFmtVol(q.vol * q.price) + '</b>' : '')
           + (relV != null ? ' · <b style="color:' + (relV >= 1.5 ? '#3fb950' : relV <= 0.6 ? '#8b949e' : '#ddd') + ';">평균比 ' + relV.toFixed(1) + 'x</b>' : '') + '<br>'
           + 'RSI ' + (typeof q.rsi === 'number' ? q.rsi.toFixed(0) : '—') + ' · ' + s.name + ' · 클릭=차트분석';
         var t = tiles[q.symbol];
@@ -3977,7 +4034,10 @@ html[data-theme="light"] .port-card .port-total{color:#13171c;}
         t.rect.setAttribute('stroke', isHeld ? '#ffc107' : '#0a0c10');
         t.rect.setAttribute('stroke-width', isHeld ? '1' : '0.6');
         // ── 벡터 텍스트 — 타일 기하에 맞는 폰트(SVG 단위). 줌인하면 비례 확대돼 자동으로 선명하게 보임 ──
-        var fs = Math.min(r.w / (q.symbol.length * 0.64 + 0.6), r.h / 2.5);
+        // KR은 티커(005930.KS)가 무의미하므로 종목명을 표시(8자 넘으면 잘라서 폭 계산 안정화).
+        var label = (fvHeatMarket === 'kr') ? ((q.name && q.name !== q.symbol) ? q.name : q.symbol) : q.symbol;
+        if (fvHeatMarket === 'kr' && label.length > 7) label = label.slice(0, 6);
+        var fs = Math.min(r.w / (label.length * 0.64 + 0.6), r.h / 2.5);
         fs = Math.min(fs, 26);
         var cx = r.x + r.w / 2;
         if (fs >= 1.6) {  // 1.6 SVG px — 8배 줌이면 화면상 ~13px로 읽힘
@@ -3986,7 +4046,7 @@ html[data-theme="light"] .port-card .port-total{color:#13171c;}
           t.t1.setAttribute('x', cx);
           t.t1.setAttribute('y', showSub ? (r.y + r.h / 2 - fs * 0.15) : (r.y + r.h / 2 + fs * 0.36));
           t.t1.setAttribute('font-size', fs.toFixed(2));
-          t.t1.textContent = q.symbol;
+          t.t1.textContent = label;
           if (showSub) {
             t.t2.setAttribute('x', cx);
             t.t2.setAttribute('y', r.y + r.h / 2 + fs * 0.85);
@@ -4009,7 +4069,7 @@ html[data-theme="light"] .port-card .port-total{color:#13171c;}
     var fresh = 0;
     stocks.forEach(function(q){ if (q.ts && Date.now() - q.ts < 300000) fresh++; });
     var subEl = (host.id === 'fvHeatmap') ? $('fvHeatSub') : $('tvHeatmapSub');
-    if (subEl) subEl.textContent = met.label + (fvHeatZoomSec ? ' · ' + fvHeatZoomSec + ' 확대' : '') + ' · ' + stocks.length + '종목 · 5분내 시세 ' + fresh + ' · ' + new Date().toLocaleTimeString('ko-KR', { hour: '2-digit', minute: '2-digit', second: '2-digit' }) + ' 갱신';
+    if (subEl) subEl.textContent = (fvHeatMarket === 'kr' ? 'KOSPI·KOSDAQ · ' : 'S&P500 · ') + met.label + (fvHeatZoomSec ? ' · ' + fvHeatZoomSec + ' 확대' : '') + ' · ' + stocks.length + '종목 · 5분내 시세 ' + fresh + ' · ' + new Date().toLocaleTimeString('ko-KR', { hour: '2-digit', minute: '2-digit', second: '2-digit' }) + ' 갱신';
   }
   function fvFmtPct(v) { return (typeof v === 'number') ? ((v >= 0 ? '+' : '') + v.toFixed(2) + '%') : '—'; }
   // 이벤트 위임 — 타일 클릭(차트분석)·섹터 줌·툴팁·호버 (SVG 버전)
@@ -4091,14 +4151,46 @@ html[data-theme="light"] .port-card .port-total{color:#13171c;}
       renderFvHeatmap();
     });
   });
-  // [V68] 섹터 셀렉터 동기화
+  // [V74] 시장 전환 (US ↔ KR) — 패널·모달 공용 .fv-mkt
+  function fvUpdateMarketBtns() {
+    document.querySelectorAll('.fv-mkt').forEach(function(b){
+      var on = b.getAttribute('data-market') === fvHeatMarket;
+      b.style.background = on ? 'var(--t1)' : '';
+      b.style.color = on ? 'var(--bg)' : '';
+    });
+    document.querySelectorAll('.fv-mkt-title').forEach(function(el){
+      el.textContent = (fvHeatMarket === 'kr') ? 'KR MAP' : 'S&P 500 MAP';
+    });
+  }
+  function fvSwitchMarket(mkt) {
+    if (mkt === fvHeatMarket) return;
+    fvHeatMarket = mkt;
+    fvHeatZoomSec = null;
+    // 카메라 리셋 — 시장 바뀌면 트리맵 구조가 완전히 달라지므로 줌 초기화
+    [$('fvHeatmap'), $('tvHeatmapContainer')].forEach(function(h){
+      if (h) { var c = fvCam(h); c.x = 0; c.y = 0; c.w = c.bw; c.h = c.bh; }
+    });
+    fvUpdateMarketBtns();
+    fvSyncSectorSelects();
+    if (fvHeatMetric !== '1d') fvLoadHeatExtra(false);
+    renderFvHeatmap();
+  }
+  document.querySelectorAll('.fv-mkt').forEach(function(b){
+    b.addEventListener('click', function(){ fvSwitchMarket(b.getAttribute('data-market') || 'us'); });
+  });
+  fvUpdateMarketBtns();
+  // [V68] 섹터 셀렉터 동기화 — [V74] 활성 시장 섹터로 옵션 재생성
   function fvSyncSectorSelects() {
     document.querySelectorAll('.fv-sec-sel').forEach(function(sel){
-      if (!sel.__fvInit) {
-        sel.__fvInit = true;
-        Object.keys(FV_SECTORS).forEach(function(nm){
+      if (sel.__fvMkt !== fvHeatMarket) {
+        sel.__fvMkt = fvHeatMarket;
+        sel.innerHTML = '<option value="">전체</option>';
+        Object.keys(fvSecMap()).forEach(function(nm){
           var o = document.createElement('option'); o.value = nm; o.textContent = nm; sel.appendChild(o);
         });
+      }
+      if (!sel.__fvInit) {
+        sel.__fvInit = true;
         sel.addEventListener('change', function(){
           fvHeatZoomSec = sel.value || null;
           renderFvHeatmap();
