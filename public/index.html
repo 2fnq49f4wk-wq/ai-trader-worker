@@ -3588,6 +3588,23 @@ html[data-theme="light"] .port-card .port-total{color:#13171c;}
     }
   }
 
+  // [V72] rank → 시총($B) 근사 — S&P500 실측 분포 앵커를 log-log 보간.
+  //   Finviz처럼 초대형주(NVDA·AAPL)는 압도적으로 크고 꼬리는 작게 나오도록.
+  var FV_CAP_ANCH = [[1,4600],[2,3900],[3,3300],[5,3000],[7,1900],[10,1250],[15,950],[20,780],[30,520],[50,310],[75,210],[100,155],[150,105],[200,75],[250,58],[300,44],[400,27],[500,17],[600,10]];
+  function fvRankCap(rank) {
+    var A = FV_CAP_ANCH, n = A.length;
+    if (rank <= A[0][0]) return A[0][1];
+    if (rank >= A[n-1][0]) return Math.max(2, A[n-1][1] * Math.pow(A[n-1][0] / rank, 1.2));
+    for (var i = 1; i < n; i++) {
+      if (rank <= A[i][0]) {
+        var a = A[i-1], b = A[i];
+        var t = (Math.log(rank) - Math.log(a[0])) / (Math.log(b[0]) - Math.log(a[0]));
+        return Math.exp(Math.log(a[1]) + t * (Math.log(b[1]) - Math.log(a[1])));
+      }
+    }
+    return A[n-1][1];
+  }
+
   // 등락률 → 색 (Finviz 팔레트: -3% 빨강 ↔ 0 회색 ↔ +3% 초록)
   function fvHeatColor(p) {
     var t = Math.max(-3, Math.min(3, p || 0)) / 3;
@@ -3672,7 +3689,8 @@ html[data-theme="light"] .port-card .port-total{color:#13171c;}
         host.__fvRaf = null;
         var c0 = host.__fvCommitted;
         if (!c0) { fvCommitCam(host); return; }
-        var rect = svg.getBoundingClientRect();
+        // [V72 FIX] svg rect는 직전 프레임 transform에 오염될 수 있음 → 변형 없는 host 기준
+        var rect = host.getBoundingClientRect();
         var s = c0.w / c.w;
         var tx = (c0.x - c.x) * (rect.width / c.w);
         var ty = (c0.y - c.y) * (rect.height / c.h);
@@ -3697,8 +3715,12 @@ html[data-theme="light"] .port-card .port-total{color:#13171c;}
   function fvZoomAt(host, clientX, clientY, factor) {
     var c = fvCam(host), svg = host.__fvSvg;
     if (!svg) return;
-    var rect = svg.getBoundingClientRect();
+    // [V72 FIX] svg.getBoundingClientRect()는 제스처 중 CSS transform이 걸려 있으면
+    //   스케일/이동된 좌표를 반환해 줌 중심이 틀어지고 맵이 튀었다. 변형되지 않는
+    //   host 기준으로 계산해야 연속 줌이 안정적이다.
+    var rect = host.getBoundingClientRect();
     var fx = (clientX - rect.left) / rect.width, fy = (clientY - rect.top) / rect.height;
+    fx = Math.max(0, Math.min(1, fx)); fy = Math.max(0, Math.min(1, fy));
     var vx = c.x + fx * c.w, vy = c.y + fy * c.h;
     var nw = Math.max(c.bw / 8, Math.min(c.bw, c.w / factor));
     var nh = nw * (c.bh / c.bw);
@@ -3717,11 +3739,12 @@ html[data-theme="light"] .port-card .port-total{color:#13171c;}
     host.addEventListener('pointerdown', function(e){
       if (e.target.closest && e.target.closest('.fv-zb')) return;
       ptrs[e.pointerId] = { x: e.clientX, y: e.clientY };
+      host.__fvGesturing = true;                 // [V72] 제스처 중 외부 re-render의 카메라 커밋 차단
       var ids = Object.keys(ptrs), c = fvCam(host);
       if (ids.length === 1) { drag = { x: e.clientX, y: e.clientY, cx: c.x, cy: c.y, moved: false }; pinch = null; }
       else if (ids.length === 2) {
         var p1 = ptrs[ids[0]], p2 = ptrs[ids[1]];
-        pinch = { d0: Math.hypot(p1.x - p2.x, p1.y - p2.y), w0: c.w };
+        pinch = { d0: Math.hypot(p1.x - p2.x, p1.y - p2.y), w0: c.w, x0: c.x, y0: c.y };
         drag = null;
       }
       try { host.setPointerCapture(e.pointerId); } catch (err) {}
@@ -3731,13 +3754,15 @@ html[data-theme="light"] .port-card .port-total{color:#13171c;}
       ptrs[e.pointerId] = { x: e.clientX, y: e.clientY };
       var c = fvCam(host), svg = host.__fvSvg, ids = Object.keys(ptrs);
       if (!svg) return;
-      var rect = svg.getBoundingClientRect();
+      // [V72 FIX] svg가 아닌 host 기준 rect — 제스처 중 transform 오염 방지
+      var rect = host.getBoundingClientRect();
       if (pinch && ids.length >= 2) {
         var p1 = ptrs[ids[0]], p2 = ptrs[ids[1]];
         var d = Math.hypot(p1.x - p2.x, p1.y - p2.y);
         if (pinch.d0 > 0 && d > 0) {
           var midX = (p1.x + p2.x) / 2, midY = (p1.y + p2.y) / 2;
           var fx = (midX - rect.left) / rect.width, fy = (midY - rect.top) / rect.height;
+          fx = Math.max(0, Math.min(1, fx)); fy = Math.max(0, Math.min(1, fy));
           var vx = c.x + fx * c.w, vy = c.y + fy * c.h;
           var nw = Math.max(c.bw / 8, Math.min(c.bw, pinch.w0 * (pinch.d0 / d)));
           var nh = nw * (c.bh / c.bw);
@@ -3760,7 +3785,12 @@ html[data-theme="light"] .port-card .port-total{color:#13171c;}
       delete ptrs[e.pointerId];
       if (Object.keys(ptrs).length < 2) pinch = null;
       if (drag && drag.moved) host.__fvDragJustEnded = Date.now();
-      if (!Object.keys(ptrs).length) { drag = null; fvCommitCam(host); }  // [V71] 제스처 종료 → 선명한 벡터로 커밋
+      if (!Object.keys(ptrs).length) {
+        drag = null;
+        host.__fvGesturing = false;
+        fvCommitCam(host);  // [V71] 제스처 종료 → 선명한 벡터로 커밋
+        if (host.__fvRenderPending) { host.__fvRenderPending = false; renderFvHeatmap(); }  // [V72] 미뤄둔 재렌더 실행
+      }
     }
     host.addEventListener('pointerup', endPtr);
     host.addEventListener('pointercancel', endPtr);
@@ -3790,6 +3820,8 @@ html[data-theme="light"] .port-card .port-total{color:#13171c;}
   }
   function renderFvHeatmapInto(host) {
     if (!host) return;
+    // [V72] 핀치/드래그 도중 10초 폴링 재렌더가 카메라를 커밋해 화면이 튀던 문제 — 제스처 끝난 뒤로 미룸
+    if (host.__fvGesturing) { host.__fvRenderPending = true; return; }
     var quotes = window.__lastQuotesArr || [];
     var W = host.clientWidth, H = host.clientHeight || 360;
     if (W < 60) return;
@@ -3817,7 +3849,10 @@ html[data-theme="light"] .port-card .port-total{color:#13171c;}
     stocks.forEach(function(q){
       var sec = FV_SECTOR_OF[q.symbol] || '기타';
       var rank = (typeof q.rank === 'number' && q.rank > 0) ? q.rank : 600;
-      q._wgt = 100 / Math.pow(rank + 3, 0.82);
+      // [V72] 타일 면적 = 실제 시총 비례. q.mcap($) 있으면 그대로, 없으면
+      //   S&P500 시총 분포 실측 앵커(log-log 보간)로 rank→$B 환산.
+      //   기존 rank^0.82 곡선은 분포가 너무 평평해 대형주가 작게, 소형주가 크게 나왔음.
+      q._wgt = (typeof q.mcap === 'number' && q.mcap > 0) ? (q.mcap / 1e9) : fvRankCap(rank);
       if (!bySec[sec]) bySec[sec] = { name: sec, items: [], sum: 0 };
       bySec[sec].items.push(q);
       bySec[sec].sum += q._wgt;
@@ -3860,6 +3895,7 @@ html[data-theme="light"] .port-card .port-total{color:#13171c;}
         host.__fvZc = zc;
       }
       if (getComputedStyle(host).position === 'static') host.style.position = 'relative';
+      host.style.overflow = 'hidden';   // [V72] 제스처 중 CSS transform된 SVG가 패널 밖으로 비져나오지 않게
       host.__fvZoomLbl = zc.querySelector('.fv-zl');
       zc.addEventListener('click', function(e){
         var b = e.target.closest('.fv-zb'); if (!b) return;
