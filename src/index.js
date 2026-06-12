@@ -2544,7 +2544,9 @@ const DEFAULT_CFG = {
     pullbackVwapMin: -1.2,   // VWAP −1.2%까지 눌렸다가
     pullbackBounce: 0.25,    // 직전 분봉 대비 +0.25% 반등 시 진입
     // 청산 조건 (빠른 손절·익절 + 분할익절·본전락)
-    stopLossPct: 1.2,        // [강화] 1.5→1.2 손절 타이트(손실폭↓ → 손익비 개선)
+    stopLossPct: 1.2,        // [강화] 1.5→1.2 손절 타이트(손실폭↓ → 손익비 개선). [V77] ATR 손절의 하한으로 사용.
+    scalpAtrStopMult: 0.9,   // [V77] 손절폭 = 일봉ATR% × 0.9 (변동성 매칭). 휩쏘 방지 핵심.
+    scalpStopMaxPct: 2.2,    // [V77] 손절폭 상한 — 리스크 고정. 변동성 커도 이 이상은 안 넓힘.
     tp1Pct: 1.2,             // [신규] +1.2% 도달 시 절반 익절 + 손절 본전 이동(BE락)
     takeProfit: 3.0,         // [V51강화] 2.5→3.0 잔량 최종 익절(추세 지속 수익 극대화)
     trailActivatePct: 1.2,   // [신규] +1.2% 이상에서만 트레일 작동(조기 청산 방지)
@@ -7103,6 +7105,18 @@ async function executeBuy(DB, market, symbol, strategy, qty, price, signal, dail
     const atrStop = price - dailyAtr * atrMult;
     stopPrice = Math.min(atrStop, pctStop);
   }
+  // [V77] SCALP 휩쏘 대책 — 고정 1.2% 손절이 종목 변동성과 미스매치라 노이즈에 손절 연발.
+  //   진입가 기준 손절폭을 일봉 ATR에 비례(scalpAtrStopMult·기본 0.9배)시키되,
+  //   하한=stopPct(기존 1.2%), 상한=scalpStopMaxPct(기본 2.2%)로 클램프 → 리스크는 여전히 상한 고정,
+  //   변동성 큰 종목만 손절폭을 넓혀 일반적 흔들림에 안 털리게 한다.
+  if (strategy === "scalp" && dailyAtr && price > 0) {
+    const atrPct = (dailyAtr / price) * 100;
+    const sMult = (rules.scalpAtrStopMult != null) ? rules.scalpAtrStopMult : 0.9;
+    const sFloor = stopPct;                                   // 최소 손절폭(기존 1.2%)
+    const sCap = (rules.scalpStopMaxPct != null) ? rules.scalpStopMaxPct : 2.2;
+    const dynPct = Math.max(sFloor, Math.min(sCap, atrPct * sMult));
+    stopPrice = price * (1 - dynPct / 100);
+  } else
   // 최대 손절폭은 stopPct로 고정
   if (stopPrice > pctStop) stopPrice = pctStop;
 
@@ -7370,8 +7384,15 @@ function evaluateSell(pos, price, daily, dailyRsi, dailyMa, dailyMaShort, cfg, m
       return { sell: true, sellQty: pos.qty, reason: "SCALP-STOP " + pnlPct.toFixed(2) + "%" };
     }
 
+    // [V77] TP1/트레일 발동선을 "실제 손절폭"에 비례시킴 — ATR로 손절을 넓힌 변동성 종목인데
+    //   TP1/BE를 고정 +1.2%에 두면 진입 직후 정상 되돌림에 본전락→미세익절로 털린다(휩쏘의 2차 원인).
+    //   stopDist = 진입가→손절가 거리(%). 손절을 넓힌 만큼 익절 발동선도 비례해 넓힌다(하한=기존값).
+    var stopDist = (sprice != null && pos.avg > 0) ? ((pos.avg - sprice) / pos.avg) * 100 : slPct;
+    if (!(stopDist > 0)) stopDist = slPct;
+    var tpScale = Math.max(1, stopDist / slPct);   // 손절이 2.2%면 ≈1.83배
+
     // 2) TP1 분할익절 — +tp1Pct 도달 시 절반 익절(executeSell이 손절을 본전으로 올림=BE락)
-    const tp1Pct = sr.tp1Pct != null ? sr.tp1Pct : 1.2;
+    const tp1Pct = (sr.tp1Pct != null ? sr.tp1Pct : 1.2) * tpScale;
     if (!tp1Done && tp1Pct > 0 && pnlPct >= tp1Pct) {
       const half = Math.floor(pos.qty / 2);
       if (half > 0) return { sell: true, sellQty: half, reason: "SCALP-TP1 +" + pnlPct.toFixed(2) + "%" };
@@ -7383,8 +7404,8 @@ function evaluateSell(pos, price, daily, dailyRsi, dailyMa, dailyMaShort, cfg, m
     if (pnlPct >= tpPct) return { sell: true, sellQty: pos.qty, reason: "SCALP-TP +" + pnlPct.toFixed(2) + "%" };
 
     // 4) 트레일 — trailActivatePct 이상 수익에서만 작동(조기 청산 방지)
-    const trailActivate = sr.trailActivatePct != null ? sr.trailActivatePct : 1.2;
-    const trailPct = sr.trailPct || 0.7;
+    const trailActivate = (sr.trailActivatePct != null ? sr.trailActivatePct : 1.2) * tpScale;
+    const trailPct = (sr.trailPct || 0.7) * Math.max(1, Math.sqrt(tpScale));  // 변동성 종목은 트레일도 약간 넓힘
     if (pnlPct >= trailActivate) {
       const trailStop = peakP * (1 - trailPct / 100);
       if (price <= trailStop) {
