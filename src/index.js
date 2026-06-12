@@ -2562,6 +2562,10 @@ const DEFAULT_CFG = {
     reEntryCooldownMin: 45,  // [V65완화] 60→45 같은 종목 scalp 손절 후 재진입 차단 (연속 칼날 방지)
     scanMaxPerCycle: 50,     // [V65] scalp 스캔 전용 분봉 fetch 상한/사이클 — 진입확인(intradayConfirm)과 분리
     requireVwapSlopeUp: true,// SC_VWAP/SC_MOMENTUM 진입 시 VWAP 기울기 ≥ 0 요구 (하락 VWAP 추격 차단; 눌림목/패닉은 면제)
+    // === [V67] 단타 품질 강화 — "늦은 추격"과 "고변동 휩쏘"가 scalp 손실의 양대 원인 ===
+    momMax: 2.5,             // 분봉 모멘텀 ≥ N%면 진입 자체 금지 (이미 달린 차 추격 = 평균 진입가 최악)
+    maxDailyAtrPct: 6.0,     // 일봉 ATR% > N 고변동 종목 제외 (1.2% 고정손절과 구조적 미스매치 → 휩쏘 손절 연발)
+    pullbackVolMult: 1.05,   // SC_PULLBACK 반등봉 상대거래량 문턱 — 거래량 없는 데드캣 반등 걸러냄
     // [V50] 단타 KR 허용 — 야후 1분봉 15분 지연 있으나, 패닉장 인버스/캡출 단타 작동 위해 개방.
     //   지연 영향이 큰 건 일반 모멘텀 추격이고, 인버스 추세추종은 지연 영향이 작다.
     usOnly: false
@@ -2595,7 +2599,10 @@ const DEFAULT_CFG = {
     maxPositionPct: 8,
     maxConcurrent: 6,        // snap 동시 보유 상한 (시장별)
     krRiskScale: 0.7,        // KR 15분 지연 시세 → 리스크 추가 축소
-    reEntryCooldownHours: 12 // snap 손절 후 재진입 차단 (시간)
+    reEntryCooldownHours: 12,// snap 손절 후 재진입 차단 (시간)
+    // === [V67] 스냅백 품질 강화 ===
+    minClosePos: 0.25,       // 당일 -2% 초과 하락일 때, 종가가 당일 레인지 하위 N 미만(저가 마감)이면 제외 — 아직 떨어지는 칼날
+    closePosConfBoost: 0.6   // 종가가 레인지 상위 N 이상(해머형 반전)이면 confidence +0.05
   },
   // === [SCALP-PANIC] 패닉/베어장 전용 단타 룰 — "패닉 때도 단타로 번다" ===
   //   평시 scalp는 상승추세 종목만 노려 패닉장엔 신호가 0이 된다.
@@ -5365,7 +5372,8 @@ async function fetchDailyFull(symbol) {
   // [강화] range 3mo→1y: MA200 장기추세 필터·52주 신고가·60일 모멘텀(computeAlphaQuality)을 실제로 활성화.
   //   지표는 모두 last-N 윈도우만 쓰므로 MA20/50·RSI·ATR 결과는 불변, MA200/52w/장기모멘텀만 새로 가능.
   //   일봉은 DB 캐시(cacheMin)라 fetch 빈도 영향 작음.
-  const j = await yahooFetch("https://query1.finance.yahoo.com/v8/finance/chart/" + encodeURIComponent(symbol) + "?interval=1d&range=1y");
+  // [V67] range 1y→5y: 히트맵 1Y/5Y 수익률용. 배열은 아래에서 last-320으로 트림해 D1 저장량 불변 수준 유지.
+  const j = await yahooFetch("https://query1.finance.yahoo.com/v8/finance/chart/" + encodeURIComponent(symbol) + "?interval=1d&range=5y");
   const result = j && j.chart && j.chart.result && j.chart.result[0];
   if (!result) throw new Error("no daily data");
   const meta = result.meta || {};
@@ -5402,7 +5410,24 @@ async function fetchDailyFull(symbol) {
   if (metaOk && Math.abs(meta.regularMarketPrice - lastClose) / lastClose > 0.20) metaOk = false;  // 마지막 종가와 20%+ 괴리
   const price = metaOk ? meta.regularMarketPrice : lastClose;
   const prevClose = closes.length >= 2 ? closes[closes.length - 2] : price;
-  return { symbol: symbol, price: price, prevClose: prevClose, closes: closes, highs: highs, lows: lows, volumes: volumes, opens: opens };
+  // [V67] 장기 수익률 스칼라 — 풀 5y 배열에서 계산 후 배열은 트림(저장량 보호).
+  //   ret1y: 252거래일, ret5y: 가용 전체(>=900일일 때만 — 신규상장 왜곡 방지).
+  const ret1y = getNDayReturn(closes, 252);
+  let ret5y = null;
+  if (closes.length >= 900) {
+    const first5 = closes[Math.max(0, closes.length - 1260)];
+    if (first5 > 0) ret5y = (lastClose - first5) / first5 * 100;
+  }
+  // [V67] 거래량 스칼라 — 당일 거래량 + 20일 평균 (히트맵 VOL 토글·툴팁용)
+  const _vn = volumes.length;
+  const vol = _vn ? volumes[_vn - 1] : null;
+  let avgVol20 = null;
+  if (_vn >= 21) { let s = 0; for (let i = _vn - 21; i < _vn - 1; i++) s += volumes[i]; avgVol20 = s / 20; }
+  const T = 320;  // MA200·52주(252) 룩백 모두 보존
+  return { symbol: symbol, price: price, prevClose: prevClose,
+    closes: closes.slice(-T), highs: highs.slice(-T), lows: lows.slice(-T),
+    volumes: volumes.slice(-T), opens: opens.slice(-T),
+    ret1y: ret1y, ret5y: ret5y, vol: vol, avgVol20: avgVol20 };
 }
 
 async function getDailyCached(DB, symbol, cacheMinutes) {
@@ -5994,6 +6019,7 @@ async function saveQuote(DB, symbol, market, q) {
     bbLower: q.bbLower, bbUpper: q.bbUpper,
     return20: q.return20,
     return5: q.return5, return60: q.return60,  // [V66] 히트맵 기간 토글용 (1주·3개월)
+    ret1y: q.ret1y, ret5y: q.ret5y, vol: q.vol, avgVol20: q.avgVol20,  // [V67]
     ts: Date.now()
   });
 }
@@ -6198,6 +6224,12 @@ function evaluateScalpEntry(mb, dailyData, cfg, market, regime) {
     if (adx != null && adx < sr.adxMin) return null;
   }
 
+  // ── [V67] 게이트 3.5: 고변동 종목 제외 — ATR%가 손절폭(1.2%) 대비 너무 크면 노이즈만으로 손절 ──
+  if (sr.maxDailyAtrPct) {
+    const _atrD = getATR(closes, 14, dailyData.highs, dailyData.lows);
+    if (_atrD != null && dayClose > 0 && (_atrD / dayClose * 100) > sr.maxDailyAtrPct) return null;
+  }
+
   // ── 게이트 4: 당일 급락 회피 (칼날잡기 차단) ──
   if (sr.minDayMomPct != null && dailyData.prevClose && dailyData.prevClose > 0) {
     const dayMom = ((mb.price - dailyData.prevClose) / dailyData.prevClose) * 100;
@@ -6231,7 +6263,8 @@ function evaluateScalpEntry(mb, dailyData, cfg, market, regime) {
   if (sr.pullbackEnabled !== false) {
     const pbMin = sr.pullbackVwapMin != null ? sr.pullbackVwapMin : -1.2;
     const pbBounce = sr.pullbackBounce != null ? sr.pullbackBounce : 0.25;
-    if (aboveVwap <= 0 && aboveVwap >= pbMin && lastBarChg >= pbBounce) {
+    if (aboveVwap <= 0 && aboveVwap >= pbMin && lastBarChg >= pbBounce &&
+        _relVol(sr.pullbackVolMult != null ? sr.pullbackVolMult : 1.05)) {  // [V67] 거래량 동반 반등만 (데드캣 차단)
       return {
         name: "SC_PULLBACK",
         weight: 0.9,
@@ -6245,7 +6278,8 @@ function evaluateScalpEntry(mb, dailyData, cfg, market, regime) {
 
   // ── 진입 B: VWAP 근접 + 상승 모멘텀 (VWAP 지지 진입) ──
   //   [V52] VWAP 기울기 ≥ 0 요구 — 하락 VWAP 위 일시 반등 추격(역추세 함정) 차단
-  if (Math.abs(aboveVwap) <= vwapBand && recentMom >= momEntry && _slopeOk) {
+  const _momMax = sr.momMax != null ? sr.momMax : 2.5;  // [V67] 과열 추격 하드컷
+  if (Math.abs(aboveVwap) <= vwapBand && recentMom >= momEntry && recentMom <= _momMax && _slopeOk) {
     const conf = recentMom >= momStrong ? 0.65 : 0.85;  // 강모멘텀(추격)은 작게
     return {
       name: "SC_VWAP",
@@ -6259,7 +6293,8 @@ function evaluateScalpEntry(mb, dailyData, cfg, market, regime) {
 
   // ── 진입 C: 강한 분봉 모멘텀 + VWAP 살짝 위 (추세 지속) ──
   //   [V52] VWAP 기울기 ≥ 0 요구
-  if (aboveVwap >= 0 && aboveVwap <= 1.5 && recentMom >= momStrong && _slopeOk) {
+  if (aboveVwap >= 0 && aboveVwap <= 1.5 && recentMom >= momStrong && recentMom <= _momMax &&
+      lastBarChg > 0 && _slopeOk) {  // [V67] 과열 하드컷 + 직전봉 음봉이면 진입 금지(꺾이는 모멘텀 추격 차단)
     return {
       name: "SC_MOMENTUM",
       weight: 0.75,
@@ -6351,10 +6386,21 @@ function evaluateSnapEntry(price, dayPct, dailyData, cfg, regime, market) {
   }
   if (downDays < (sn.downDaysMin != null ? sn.downDaysMin : 2) && rsi2 > 5) return null;  // 매우 깊은 과매도(RSI2≤5)는 연속하락 면제
 
+  // ── [V67] 당일 종가 위치 — 레인지 하단 마감(투매 지속)은 제외, 상단 마감(해머형)은 가산 ──
+  let closePos = null;
+  if (dailyData.highs && dailyData.lows && dailyData.highs.length === closes.length) {
+    const _li = closes.length - 1;
+    const _h = dailyData.highs[_li], _l = dailyData.lows[_li];
+    if (_h > _l) closePos = (closes[_li] - _l) / (_h - _l);
+  }
+  if (closePos != null && typeof dayPct === "number" && dayPct <= -2 &&
+      closePos < (sn.minClosePos != null ? sn.minClosePos : 0.25)) return null;  // 저가 마감 급락 = 반전 미확인
+
   // confidence — 과매도가 깊을수록(RSI2↓, 연속하락↑) 높게. 0.65~0.95
   let conf = 0.7;
   if (rsi2 <= 3) conf += 0.15; else if (rsi2 <= 6) conf += 0.08;
   if (downDays >= 4) conf += 0.07; else if (downDays >= 3) conf += 0.04;
+  if (closePos != null && closePos >= (sn.closePosConfBoost != null ? sn.closePosConfBoost : 0.6)) conf += 0.05;  // [V67] 해머형 반전 가산
   conf = Math.min(0.95, conf);
   // KR — 15분 지연 시세 → 보수화
   if (market === "kr") conf = Math.min(conf, 0.8);
@@ -7816,7 +7862,11 @@ async function refreshQuotesOnly(env, market) {
         dailyRsi: dailyRsi, dailyMa: dailyMa, dailyMaShort: dailyMaShort, dailyAtr: dailyAtr,
         bbLower: bb ? bb.lower : null, bbUpper: bb ? bb.upper : null,
         return20: return20,
-        return5: getNDayReturn(closes, 5), return60: getNDayReturn(closes, 60)  // [V66]
+        return5: getNDayReturn(closes, 5), return60: getNDayReturn(closes, 60),  // [V66]
+        ret1y: (daily.ret1y != null ? daily.ret1y : getNDayReturn(closes, 252)),  // [V67]
+        ret5y: (daily.ret5y != null ? daily.ret5y : null),
+        vol: (daily.vol != null ? daily.vol : ((daily.volumes && daily.volumes.length) ? daily.volumes[daily.volumes.length - 1] : null)),
+        avgVol20: (daily.avgVol20 != null ? daily.avgVol20 : null)
       });
       ok++; processed++;
     } catch (e) {
@@ -7967,7 +8017,9 @@ async function refreshDailyShard(env, market, shard) {
           if (fb && fb.data) {
             daily = {
               closes: fb.data.closes, highs: fb.data.highs, lows: fb.data.lows,
-              volumes: fb.data.volumes, prevClose: fb.data.prevClose, ts: Date.now()
+              volumes: fb.data.volumes, prevClose: fb.data.prevClose,
+              ret1y: fb.data.ret1y, ret5y: fb.data.ret5y, vol: fb.data.vol, avgVol20: fb.data.avgVol20,  // [V67]
+              ts: Date.now()
             };
             await setState(DB, "daily:" + symbol, daily);
           }
@@ -7985,6 +8037,10 @@ async function refreshDailyShard(env, market, shard) {
       const return20 = getNDayReturn(closes, 20);
       return { symbol: symbol, ok: true, ind: indicators, bb: bb, return20: return20,
         return5: getNDayReturn(closes, 5), return60: getNDayReturn(closes, 60),  // [V66]
+        ret1y: (daily.ret1y != null ? daily.ret1y : getNDayReturn(closes, 252)),  // [V67]
+        ret5y: (daily.ret5y != null ? daily.ret5y : null),
+        vol: (daily.vol != null ? daily.vol : ((daily.volumes && daily.volumes.length) ? daily.volumes[daily.volumes.length - 1] : null)),
+        avgVol20: daily.avgVol20 != null ? daily.avgVol20 : null,
         lastClose: closes[closes.length-1], prevClose: daily.prevClose };
     } catch (e) { return { symbol: symbol, ok: false }; }
   });
@@ -8006,6 +8062,7 @@ async function refreshDailyShard(env, market, shard) {
         bbLower: r.bb ? r.bb.lower : null, bbUpper: r.bb ? r.bb.upper : null,
         return20: r.return20,
         return5: r.return5, return60: r.return60,  // [V66]
+        ret1y: r.ret1y, ret5y: r.ret5y, vol: r.vol, avgVol20: r.avgVol20,  // [V67]
         ts: (typeof prev.ts === "number") ? prev.ts : nowTs
       });
       stmts.push(
@@ -8797,6 +8854,12 @@ async function saveQuoteCM(DB, symbol, q, partial) {
     bbLower:      partial ? (prev.bbLower ?? null)      : (q.bbLower ?? prev.bbLower ?? null),
     bbUpper:      partial ? (prev.bbUpper ?? null)      : (q.bbUpper ?? prev.bbUpper ?? null),
     return20:     partial ? (prev.return20 ?? null)     : (q.return20 ?? prev.return20 ?? null),
+    return5:  partial ? (prev.return5  ?? null) : (q.return5  ?? prev.return5  ?? null),  // [V67]
+    return60: partial ? (prev.return60 ?? null) : (q.return60 ?? prev.return60 ?? null),
+    ret1y:    partial ? (prev.ret1y    ?? null) : (q.ret1y    ?? prev.ret1y    ?? null),
+    ret5y:    partial ? (prev.ret5y    ?? null) : (q.ret5y    ?? prev.ret5y    ?? null),
+    vol:      partial ? (prev.vol      ?? null) : (q.vol      ?? prev.vol      ?? null),
+    avgVol20: partial ? (prev.avgVol20 ?? null) : (q.avgVol20 ?? prev.avgVol20 ?? null),
     ts: Date.now()
   };
   await setState(DB, "quote:" + symbol, merged);
@@ -9054,6 +9117,12 @@ async function saveQuoteAlt(DB, market, q, partial) {
     bbLower:      partial ? (prev.bbLower ?? null)      : (q.bbLower ?? prev.bbLower ?? null),
     bbUpper:      partial ? (prev.bbUpper ?? null)      : (q.bbUpper ?? prev.bbUpper ?? null),
     return20:     partial ? (prev.return20 ?? null)     : (q.return20 ?? prev.return20 ?? null),
+    return5:  partial ? (prev.return5  ?? null) : (q.return5  ?? prev.return5  ?? null),  // [V67]
+    return60: partial ? (prev.return60 ?? null) : (q.return60 ?? prev.return60 ?? null),
+    ret1y:    partial ? (prev.ret1y    ?? null) : (q.ret1y    ?? prev.ret1y    ?? null),
+    ret5y:    partial ? (prev.ret5y    ?? null) : (q.ret5y    ?? prev.ret5y    ?? null),
+    vol:      partial ? (prev.vol      ?? null) : (q.vol      ?? prev.vol      ?? null),
+    avgVol20: partial ? (prev.avgVol20 ?? null) : (q.avgVol20 ?? prev.avgVol20 ?? null),
     ts: Date.now()
   };
   await setState(DB, "quote:" + q.symbol, merged);
@@ -9667,6 +9736,10 @@ async function runTradingCycle(env) {
           dailyMaShort: prevQ ? prevQ.dailyMaShort : null,
           bbLower: prevQ ? prevQ.bbLower : null, bbUpper: prevQ ? prevQ.bbUpper : null,
           return20: prevQ ? prevQ.return20 : null,
+          // [V67 FIX] 1W/3M 미작동 원인 — return5/return60이 매분 여기서 소실됐다. 장기 필드 전부 보존.
+          return5: prevQ ? prevQ.return5 : null, return60: prevQ ? prevQ.return60 : null,
+          ret1y: prevQ ? prevQ.ret1y : null, ret5y: prevQ ? prevQ.ret5y : null,
+          vol: prevQ ? prevQ.vol : null, avgVol20: prevQ ? prevQ.avgVol20 : null,
           ts: nowTs
         };
         quoteStmts.push(
@@ -9936,7 +10009,14 @@ async function runTradingCycle(env) {
                 rsi: dailyRsi, ma: dailyMa, atr: dailyAtr,
                 dailyAtr: dailyAtr, dailyMa: dailyMa, dailyMaShort: dailyMaShort,
                 bbLower: bb ? bb.lower : null, bbUpper: bb ? bb.upper : null,
-                return20: return20, ts: _qts
+                return20: return20,
+                // [V67] 1주·3개월·1년·5년·거래량 — 평가루프가 매 사이클 덮어쓰며 소실되던 문제 해결
+                return5: getNDayReturn(closes, 5), return60: getNDayReturn(closes, 60),
+                ret1y: (daily.ret1y != null ? daily.ret1y : getNDayReturn(closes, 252)),
+                ret5y: (daily.ret5y != null ? daily.ret5y : null),
+                vol: (daily.vol != null ? daily.vol : ((daily.volumes && daily.volumes.length) ? daily.volumes[daily.volumes.length - 1] : null)),
+                avgVol20: (daily.avgVol20 != null ? daily.avgVol20 : null),
+                ts: _qts
               }), _qts)
           );
 
