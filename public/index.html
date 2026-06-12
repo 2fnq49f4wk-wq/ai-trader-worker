@@ -3646,82 +3646,52 @@ html[data-theme="light"] .port-card .port-total{color:#13171c;}
     return (v >= 0 ? '+' : '') + v.toFixed(1) + '%';
   }
   // ════ [V68] 줌 제스처 ════
-  function fvGetZoom(host) {
-    if (!host.__fvZoom) host.__fvZoom = { s: 1, x: 0, y: 0 };
-    return host.__fvZoom;
+  // ════ [V70] SVG 벡터 히트맵 — viewBox 카메라 줌 (확대해도 텍스트·경계 선명, div 500개 → SVG 1장으로 랙 제거) ════
+  var SVGNS = 'http://www.w3.org/2000/svg';
+  function fvCam(host) {
+    if (!host.__fvCam) host.__fvCam = { x: 0, y: 0, w: 0, h: 0, bw: 0, bh: 0 };
+    return host.__fvCam;
   }
-  // [V69] 줌 배율 반영 라벨 — 화면상 유효 크기(타일×배율) 기준으로 표시할 내용 결정.
-  //   CSS scale로 글자가 커지는 걸 역보정(fs/zs)해 확대해도 또렷한 크기 유지.
-  function fvTileLabel(q, r, v, zs) {
-    zs = zs || 1;
-    var ew = r.w * zs, eh = r.h * zs;
-    if (ew < 22 || eh < 11) return '';
-    var fs = Math.max(8, Math.min(44, Math.floor(Math.min(ew / (q.symbol.length * 0.6 + 1), eh / 2.3))));
-    var html = '<span style="font-size:' + (fs / zs).toFixed(2) + 'px;font-weight:700;line-height:1.1;text-shadow:0 1px 2px rgba(0,0,0,.5);">' + q.symbol + '</span>';
-    if (eh >= fs * 2 + 6 && ew >= 30) {
-      var sub = (fvHeatMetric === 'vol') ? fvFmtVol(q.vol) : fvMetricText(v);
-      html += '<span style="font-size:' + (Math.max(7, Math.round(fs * 0.6)) / zs).toFixed(2) + 'px;opacity:.95;font-weight:600;text-shadow:0 1px 2px rgba(0,0,0,.45);">' + sub + '</span>';
-    }
-    if (fvHeatMetric === 'vol' && eh >= fs * 2.9 + 10 && ew >= 56 && typeof q.vol === 'number' && typeof q.avgVol20 === 'number' && q.avgVol20 > 0) {
-      html += '<span style="font-size:' + (Math.max(7, Math.round(fs * 0.46)) / zs).toFixed(2) + 'px;opacity:.85;">' + (q.vol / q.avgVol20).toFixed(1) + 'x 평균</span>';
-    } else if (eh >= fs * 3.1 + 12 && ew >= 105 && q.name && q.name !== q.symbol) {
-      html += '<span style="font-size:' + (Math.max(7, Math.round(fs * 0.42)) / zs).toFixed(2) + 'px;opacity:.75;white-space:nowrap;overflow:hidden;max-width:' + Math.floor(r.w - 6) + 'px;">' + q.name + '</span>';
-    }
-    return html;
+  function fvApplyCam(host) {
+    var c = fvCam(host), svg = host.__fvSvg;
+    if (!svg || !c.bw) return;
+    // 줌 1~8배, 화면 밖 패닝 방지
+    c.w = Math.max(c.bw / 8, Math.min(c.bw, c.w));
+    c.h = c.w * (c.bh / c.bw);
+    c.x = Math.max(0, Math.min(c.bw - c.w, c.x));
+    c.y = Math.max(0, Math.min(c.bh - c.h, c.y));
+    svg.setAttribute('viewBox', c.x.toFixed(2) + ' ' + c.y.toFixed(2) + ' ' + c.w.toFixed(2) + ' ' + c.h.toFixed(2));
+    var zl = host.__fvZoomLbl, zs = c.bw / c.w;
+    if (zl) zl.textContent = zs <= 1.01 ? '' : ('×' + zs.toFixed(1));
   }
-  function fvRelabel(host) {
-    var tiles = host.__fvTiles; if (!tiles) return;
-    var zs = fvGetZoom(host).s;
-    Object.keys(tiles).forEach(function(sym){
-      var el = tiles[sym];
-      if (el.__fvQ && el.__fvRect) el.innerHTML = fvTileLabel(el.__fvQ, el.__fvRect, el.__fvV, zs);
-    });
+  function fvZoomAt(host, clientX, clientY, factor) {
+    var c = fvCam(host), svg = host.__fvSvg;
+    if (!svg) return;
+    var rect = svg.getBoundingClientRect();
+    var fx = (clientX - rect.left) / rect.width, fy = (clientY - rect.top) / rect.height;
+    var vx = c.x + fx * c.w, vy = c.y + fy * c.h;
+    var nw = Math.max(c.bw / 8, Math.min(c.bw, c.w / factor));
+    var nh = nw * (c.bh / c.bw);
+    c.x = vx - fx * nw; c.y = vy - fy * nh; c.w = nw; c.h = nh;
+    fvApplyCam(host);
   }
-  function fvApplyZoom(host) {
-    var z = fvGetZoom(host), layer = host.__fvLayer;
-    if (!layer) return;
-    var W = host.clientWidth, H = host.clientHeight || 360;
-    z.s = Math.max(1, Math.min(8, z.s));
-    z.x = Math.min(0, Math.max(W - W * z.s, z.x));
-    z.y = Math.min(0, Math.max(H - H * z.s, z.y));
-    layer.style.transformOrigin = '0 0';
-    layer.style.transform = 'translate(' + z.x.toFixed(1) + 'px,' + z.y.toFixed(1) + 'px) scale(' + z.s.toFixed(3) + ')';
-    var zl = host.__fvZoomLbl;
-    if (zl) zl.textContent = z.s <= 1.01 ? '' : ('×' + z.s.toFixed(1));
-    clearTimeout(host.__fvRelabelT);
-    host.__fvRelabelT = setTimeout(function(){ fvRelabel(host); }, 130);
-  }
-  function fvBindZoomGestures(host, layer) {
+  function fvBindZoomGestures(host) {
     if (host.__fvZoomBound) return;
     host.__fvZoomBound = true;
     var ptrs = {}, drag = null, pinch = null;
     host.style.touchAction = 'none';
     host.addEventListener('wheel', function(e){
       e.preventDefault();
-      var z = fvGetZoom(host);
-      var rect = host.getBoundingClientRect();
-      var mx = e.clientX - rect.left, my = e.clientY - rect.top;
-      var olds = z.s;
-      z.s *= (e.deltaY < 0 ? 1.15 : 1 / 1.15);
-      z.s = Math.max(1, Math.min(8, z.s));
-      var f = z.s / olds;
-      z.x = mx - (mx - z.x) * f;
-      z.y = my - (my - z.y) * f;
-      fvApplyZoom(host);
+      fvZoomAt(host, e.clientX, e.clientY, e.deltaY < 0 ? 1.18 : 1 / 1.18);
     }, { passive: false });
     host.addEventListener('pointerdown', function(e){
       if (e.target.closest && e.target.closest('.fv-zb')) return;
       ptrs[e.pointerId] = { x: e.clientX, y: e.clientY };
-      var ids = Object.keys(ptrs), z = fvGetZoom(host);
-      if (ids.length === 1) {
-        drag = { x: e.clientX, y: e.clientY, zx: z.x, zy: z.y, moved: false };
-        pinch = null;
-      } else if (ids.length === 2) {
-        var a = ptrs[ids[0]], b = ptrs[ids[1]];
-        pinch = {
-          d0: Math.hypot(a.x - b.x, a.y - b.y), s0: z.s,
-          cx: (a.x + b.x) / 2, cy: (a.y + b.y) / 2, zx0: z.x, zy0: z.y
-        };
+      var ids = Object.keys(ptrs), c = fvCam(host);
+      if (ids.length === 1) { drag = { x: e.clientX, y: e.clientY, cx: c.x, cy: c.y, moved: false }; pinch = null; }
+      else if (ids.length === 2) {
+        var p1 = ptrs[ids[0]], p2 = ptrs[ids[1]];
+        pinch = { d0: Math.hypot(p1.x - p2.x, p1.y - p2.y), w0: c.w };
         drag = null;
       }
       try { host.setPointerCapture(e.pointerId); } catch (err) {}
@@ -3729,28 +3699,29 @@ html[data-theme="light"] .port-card .port-total{color:#13171c;}
     host.addEventListener('pointermove', function(e){
       if (!ptrs[e.pointerId]) return;
       ptrs[e.pointerId] = { x: e.clientX, y: e.clientY };
-      var z = fvGetZoom(host), ids = Object.keys(ptrs);
+      var c = fvCam(host), svg = host.__fvSvg, ids = Object.keys(ptrs);
+      if (!svg) return;
+      var rect = svg.getBoundingClientRect();
       if (pinch && ids.length >= 2) {
-        var a = ptrs[ids[0]], b = ptrs[ids[1]];
-        var d = Math.hypot(a.x - b.x, a.y - b.y);
-        if (pinch.d0 > 0) {
-          var rect = host.getBoundingClientRect();
-          var cx = (a.x + b.x) / 2 - rect.left, cy = (a.y + b.y) / 2 - rect.top;
-          var olds = z.s;
-          z.s = Math.max(1, Math.min(8, pinch.s0 * (d / pinch.d0)));
-          var f = z.s / olds;
-          z.x = cx - (cx - z.x) * f;
-          z.y = cy - (cy - z.y) * f;
-          fvApplyZoom(host);
+        var p1 = ptrs[ids[0]], p2 = ptrs[ids[1]];
+        var d = Math.hypot(p1.x - p2.x, p1.y - p2.y);
+        if (pinch.d0 > 0 && d > 0) {
+          var midX = (p1.x + p2.x) / 2, midY = (p1.y + p2.y) / 2;
+          var fx = (midX - rect.left) / rect.width, fy = (midY - rect.top) / rect.height;
+          var vx = c.x + fx * c.w, vy = c.y + fy * c.h;
+          var nw = Math.max(c.bw / 8, Math.min(c.bw, pinch.w0 * (pinch.d0 / d)));
+          var nh = nw * (c.bh / c.bw);
+          c.x = vx - fx * nw; c.y = vy - fy * nh; c.w = nw; c.h = nh;
+          fvApplyCam(host);
         }
         e.preventDefault();
       } else if (drag) {
         var dx = e.clientX - drag.x, dy = e.clientY - drag.y;
         if (Math.abs(dx) + Math.abs(dy) > 5) drag.moved = true;
-        if (z.s > 1.001 && drag.moved) {
-          z.x = drag.zx + dx;
-          z.y = drag.zy + dy;
-          fvApplyZoom(host);
+        if (drag.moved && c.w < c.bw - 0.5) {
+          c.x = drag.cx - dx * (c.w / rect.width);
+          c.y = drag.cy - dy * (c.h / rect.height);
+          fvApplyCam(host);
           e.preventDefault();
         }
       }
@@ -3763,21 +3734,13 @@ html[data-theme="light"] .port-card .port-total{color:#13171c;}
     }
     host.addEventListener('pointerup', endPtr);
     host.addEventListener('pointercancel', endPtr);
-    host.addEventListener('pointerleave', function(e){ if (ptrs[e.pointerId]) endPtr(e); });
     host.addEventListener('dblclick', function(e){
       e.preventDefault();
-      var z = fvGetZoom(host);
-      var rect = host.getBoundingClientRect();
-      var mx = e.clientX - rect.left, my = e.clientY - rect.top;
-      if (z.s <= 1.01) {
-        var olds = z.s; z.s = 2.5;
-        var f = z.s / olds;
-        z.x = mx - (mx - z.x) * f; z.y = my - (my - z.y) * f;
-      } else { z.s = 1; z.x = 0; z.y = 0; }
-      fvApplyZoom(host);
+      var c = fvCam(host);
+      if (c.w > c.bw * 0.99) fvZoomAt(host, e.clientX, e.clientY, 2.5);
+      else { c.x = 0; c.y = 0; c.w = c.bw; c.h = c.bh; fvApplyCam(host); }
     });
   }
-
   function fvUpdateMetricBtns() {
     document.querySelectorAll('.fv-hm').forEach(function(b){
       var on = b.getAttribute('data-metric') === fvHeatMetric;
@@ -3787,9 +3750,13 @@ html[data-theme="light"] .port-card .port-total{color:#13171c;}
   }
   function renderFvHeatmap() {
     renderFvHeatmapInto($('fvHeatmap'));
-    // 전체화면 모달이 열려 있으면 같이 갱신
     var hm = $('heatmapModal');
     if (hm && hm.classList.contains('show')) renderFvHeatmapInto($('tvHeatmapContainer'));
+  }
+  function fvSvgEl(tag, attrs) {
+    var el = document.createElementNS(SVGNS, tag);
+    for (var k in attrs) el.setAttribute(k, attrs[k]);
+    return el;
   }
   function renderFvHeatmapInto(host) {
     if (!host) return;
@@ -3800,8 +3767,8 @@ html[data-theme="light"] .port-card .port-total{color:#13171c;}
     var stocks = quotes.filter(function(q){
       return q.market === 'us' && !q.isEtf && typeof q.price === 'number' && q.price > 0;
     });
-    if (!stocks.length) { host.innerHTML = '<div class="empty" style="padding:20px;">시세 수신 대기 중...</div>'; host.__fvTiles = null; return; }
-    // [V68] /api/heatmap 데이터 머지
+    if (!stocks.length) { host.innerHTML = '<div class="empty" style="padding:20px;">시세 수신 대기 중...</div>'; host.__fvSvg = null; return; }
+    // /api/heatmap 보충 데이터 머지
     stocks.forEach(function(q){
       var ex = fvHeatExtra[q.symbol];
       if (!ex) return;
@@ -3814,7 +3781,8 @@ html[data-theme="light"] .port-card .port-total{color:#13171c;}
       if (q.avgVol20 == null && ex.avgVol20 != null) q.avgVol20 = ex.avgVol20;
     });
     fvLoadHeatExtra(false);
-    // 섹터별 그룹 + 시총순위 기반 면적 가중 (rank 1=최대)
+
+    // 섹터 그룹 + 시총 가중
     var bySec = {};
     stocks.forEach(function(q){
       var sec = FV_SECTOR_OF[q.symbol] || '기타';
@@ -3825,7 +3793,6 @@ html[data-theme="light"] .port-card .port-total{color:#13171c;}
       bySec[sec].sum += q._wgt;
     });
     var sectors = Object.keys(bySec).map(function(k){ return bySec[k]; }).sort(function(a, b){ return b.sum - a.sum; });
-    // [V66] 섹터 줌 — 라벨 클릭 시 해당 섹터만 풀패널
     if (fvHeatZoomSec && bySec[fvHeatZoomSec]) sectors = [bySec[fvHeatZoomSec]];
     else fvHeatZoomSec = null;
     var totalW = 0;
@@ -3834,125 +3801,148 @@ html[data-theme="light"] .port-card .port-total{color:#13171c;}
     sectors.forEach(function(s){ s._a = s.sum * scale; });
     var secRects = [];
     fvSquarify(sectors.slice(), 0, 0, W, H, secRects);
-    // [V68] DOM 재사용 레이어
-    var layer = host.__fvLayer;
-    if (!layer || layer.parentNode !== host) {
+
+    // ── SVG 준비 (1회 생성, 이후 재사용) ──
+    var svg = host.__fvSvg;
+    var cam = fvCam(host);
+    var sizeChanged = (cam.bw && (Math.abs(cam.bw - W) > 2 || Math.abs(cam.bh - H) > 2));
+    if (!svg || svg.parentNode !== host || sizeChanged) {
       host.innerHTML = '';
-      layer = document.createElement('div');
-      layer.style.cssText = 'position:relative;width:100%;height:100%;overflow:hidden;';
-      host.appendChild(layer);
-      host.__fvLayer = layer;
-      host.__fvTiles = {};
-      host.__fvSecLabels = {};
+      svg = fvSvgEl('svg', { width: '100%', height: '100%', preserveAspectRatio: 'none' });
+      svg.style.cssText = 'display:block;background:#0a0c10;';
+      host.appendChild(svg);
+      host.__fvSvg = svg;
+      host.__fvT = {};      // sym → {g, rect, t1, t2}
+      host.__fvS = {};      // 섹터명 → {g, rect, text}
+      cam.bw = W; cam.bh = H; cam.x = 0; cam.y = 0; cam.w = W; cam.h = H;
+      // 줌 컨트롤 오버레이 (HTML)
       var zc = document.createElement('div');
       zc.style.cssText = 'position:absolute;right:8px;bottom:8px;z-index:10;display:flex;gap:4px;align-items:center;';
       zc.innerHTML = '<span class="fv-zl" style="font-size:10px;color:#ddd;text-shadow:0 1px 2px #000;margin-right:2px;"></span>'
         + '<button class="fv-zb" data-z="in" style="width:26px;height:26px;font-size:15px;background:rgba(20,22,28,.85);color:#ddd;border:1px solid #444;border-radius:4px;cursor:pointer;">＋</button>'
         + '<button class="fv-zb" data-z="out" style="width:26px;height:26px;font-size:15px;background:rgba(20,22,28,.85);color:#ddd;border:1px solid #444;border-radius:4px;cursor:pointer;">−</button>'
         + '<button class="fv-zb" data-z="reset" style="width:26px;height:26px;font-size:13px;background:rgba(20,22,28,.85);color:#ddd;border:1px solid #444;border-radius:4px;cursor:pointer;">⟲</button>';
-      host.style.position = host.style.position || 'relative';
       if (getComputedStyle(host).position === 'static') host.style.position = 'relative';
       host.appendChild(zc);
       host.__fvZoomLbl = zc.querySelector('.fv-zl');
       zc.addEventListener('click', function(e){
         var b = e.target.closest('.fv-zb'); if (!b) return;
         e.stopPropagation();
-        var z = fvGetZoom(host), W2 = host.clientWidth / 2, H2 = (host.clientHeight || 360) / 2;
-        var olds = z.s;
-        if (b.getAttribute('data-z') === 'in') z.s = z.s * 1.5;
-        else if (b.getAttribute('data-z') === 'out') z.s = z.s / 1.5;
-        else { z.s = 1; z.x = 0; z.y = 0; fvApplyZoom(host); return; }
-        z.s = Math.max(1, Math.min(8, z.s));
-        var f = z.s / olds;
-        z.x = W2 - (W2 - z.x) * f;
-        z.y = H2 - (H2 - z.y) * f;
-        fvApplyZoom(host);
+        var r = host.__fvSvg.getBoundingClientRect();
+        var act = b.getAttribute('data-z');
+        if (act === 'in') fvZoomAt(host, r.left + r.width / 2, r.top + r.height / 2, 1.5);
+        else if (act === 'out') fvZoomAt(host, r.left + r.width / 2, r.top + r.height / 2, 1 / 1.5);
+        else { var c = fvCam(host); c.x = 0; c.y = 0; c.w = c.bw; c.h = c.bh; fvApplyCam(host); }
       });
-      fvBindZoomGestures(host, layer);
+      fvBindZoomGestures(host);
+      fvBindHeatmapEvents(host);
     }
-    fvApplyZoom(host);
-    var tiles = host.__fvTiles, secLabels = host.__fvSecLabels;
+    fvApplyCam(host);
+    var tiles = host.__fvT, secEls = host.__fvS;
     var seen = {}, seenSec = {};
     var heldUS = (typeof heldMap !== 'undefined' && heldMap && heldMap.us) ? heldMap.us : {};
+
     secRects.forEach(function(sr){
       var s = sr.it;
+      // 섹터 헤더 바 — TradingView식 상단 스트립
+      var hh = (sr.h >= 40 && sr.w >= 50) ? 13 : 0;
+      if (hh) {
+        seenSec[s.name] = 1;
+        var se = secEls[s.name];
+        if (!se) {
+          var g = fvSvgEl('g', { 'data-fvsec': s.name });
+          g.style.cursor = 'pointer';
+          var rc = fvSvgEl('rect', { fill: '#181b22' });
+          var tx = fvSvgEl('text', { fill: '#aab2c0', 'font-weight': '700', 'letter-spacing': '0.5',
+            'font-family': "'IBM Plex Mono',monospace", 'pointer-events': 'none' });
+          g.appendChild(rc); g.appendChild(tx);
+          svg.appendChild(g);
+          se = secEls[s.name] = { g: g, rect: rc, text: tx };
+        }
+        se.rect.setAttribute('x', sr.x); se.rect.setAttribute('y', sr.y);
+        se.rect.setAttribute('width', sr.w); se.rect.setAttribute('height', hh);
+        se.text.setAttribute('x', sr.x + 4); se.text.setAttribute('y', sr.y + hh - 3.5);
+        se.text.setAttribute('font-size', 8.5);
+        se.text.textContent = s.name + (fvHeatZoomSec ? ' ✕' : '');
+      }
       var inner = [];
       var items = s.items.slice().sort(function(a, b){ return b._wgt - a._wgt; });
-      var iScale = (sr.w * sr.h) / s.sum;
+      var areaY = sr.y + hh, areaH = Math.max(1, sr.h - hh);
+      var iScale = (sr.w * areaH) / s.sum;
       items.forEach(function(q){ q._a = q._wgt * iScale; });
-      fvSquarify(items, sr.x, sr.y, sr.w, sr.h, inner);
+      fvSquarify(items, sr.x, areaY, sr.w, areaH, inner);
       inner.forEach(function(r){
         var q = r.it;
-        if (r.w < 2 || r.h < 2) return;
+        if (r.w < 0.8 || r.h < 0.8) return;
+        seen[q.symbol] = 1;
         var v = met.get(q);
         var isHeld = !!heldUS[q.symbol];
-        var label = fvTileLabel(q, r, v, fvGetZoom(host).s);
         var relV = (typeof q.vol === 'number' && typeof q.avgVol20 === 'number' && q.avgVol20 > 0) ? (q.vol / q.avgVol20) : null;
         var tipHtml = '<b style="font-size:11px;">' + q.symbol + '</b>' + (q.name && q.name !== q.symbol ? ' <span style="color:#999;">' + q.name + '</span>' : '')
           + (isHeld ? ' <span style="color:#ffc107;font-weight:700;">● 보유중</span>' : '') + '<br>'
           + '현재가 <b>$' + q.price.toFixed(2) + '</b> · 1일 ' + fvFmtPct(q.dayPct) + '<br>'
           + '1주 ' + fvFmtPct(q.return5) + ' · 1개월 ' + fvFmtPct(q.return20) + ' · 3개월 ' + fvFmtPct(q.return60) + '<br>'
           + '1년 ' + fvFmtPct(q.ret1y) + ' · 5년 ' + fvFmtPct(q.ret5y) + '<br>'
-          + '거래량 <b>' + fvFmtVol(q.vol) + '</b>주' + (typeof q.vol === 'number' ? ' · 거래대금 <b>$' + fvFmtVol(q.vol * q.price) + '</b>' : '') + (relV != null ? ' · <b style="color:' + (relV >= 1.5 ? '#3fb950' : relV <= 0.6 ? '#8b949e' : '#ddd') + ';">평균比 ' + relV.toFixed(1) + 'x</b>' : '') + '<br>'
+          + '거래량 <b>' + fvFmtVol(q.vol) + '</b>주' + (typeof q.vol === 'number' ? ' · 거래대금 <b>$' + fvFmtVol(q.vol * q.price) + '</b>' : '')
+          + (relV != null ? ' · <b style="color:' + (relV >= 1.5 ? '#3fb950' : relV <= 0.6 ? '#8b949e' : '#ddd') + ';">평균比 ' + relV.toFixed(1) + 'x</b>' : '') + '<br>'
           + 'RSI ' + (typeof q.rsi === 'number' ? q.rsi.toFixed(0) : '—') + ' · ' + s.name + ' · 클릭=차트분석';
-        seen[q.symbol] = 1;
-        var el = tiles[q.symbol];
-        if (!el) {
-          el = document.createElement('div');
-          el.setAttribute('data-sym', q.symbol);
-          el.style.cssText = 'position:absolute;box-sizing:border-box;display:flex;flex-direction:column;align-items:center;justify-content:center;overflow:hidden;color:#fff;cursor:pointer;opacity:0;';
-          layer.appendChild(el);
-          tiles[q.symbol] = el;
+        var t = tiles[q.symbol];
+        if (!t) {
+          var g = fvSvgEl('g', { 'data-sym': q.symbol });
+          g.style.cursor = 'pointer';
+          var rc = fvSvgEl('rect', { stroke: '#0a0c10', 'stroke-width': '0.6' });
+          rc.style.transition = 'fill .5s ease';
+          var t1 = fvSvgEl('text', { fill: '#fff', 'font-weight': '700', 'text-anchor': 'middle',
+            'font-family': "'IBM Plex Mono',monospace", 'pointer-events': 'none' });
+          var t2 = fvSvgEl('text', { fill: 'rgba(255,255,255,.92)', 'font-weight': '600', 'text-anchor': 'middle',
+            'font-family': "'IBM Plex Mono',monospace", 'pointer-events': 'none' });
+          g.appendChild(rc); g.appendChild(t1); g.appendChild(t2);
+          svg.appendChild(g);
+          t = tiles[q.symbol] = { g: g, rect: rc, t1: t1, t2: t2 };
         }
-        el.style.left = r.x.toFixed(1) + 'px'; el.style.top = r.y.toFixed(1) + 'px';
-        el.style.width = r.w.toFixed(1) + 'px'; el.style.height = r.h.toFixed(1) + 'px';
-        el.style.background = fvMetricColor(v);
-        el.style.border = isHeld ? '1.5px solid #ffc107' : '1px solid rgba(0,0,0,.55)';
-        el.style.opacity = '1';
-        el.setAttribute('data-tip', tipHtml);
-        el.__fvQ = q; el.__fvRect = { w: r.w, h: r.h }; el.__fvV = v;
-        el.innerHTML = label;
+        t.g.setAttribute('data-tip', tipHtml);
+        t.rect.setAttribute('x', r.x); t.rect.setAttribute('y', r.y);
+        t.rect.setAttribute('width', r.w); t.rect.setAttribute('height', r.h);
+        t.rect.setAttribute('fill', fvMetricColor(v));
+        t.rect.setAttribute('stroke', isHeld ? '#ffc107' : '#0a0c10');
+        t.rect.setAttribute('stroke-width', isHeld ? '1' : '0.6');
+        // ── 벡터 텍스트 — 타일 기하에 맞는 폰트(SVG 단위). 줌인하면 비례 확대돼 자동으로 선명하게 보임 ──
+        var fs = Math.min(r.w / (q.symbol.length * 0.64 + 0.6), r.h / 2.5);
+        fs = Math.min(fs, 26);
+        var cx = r.x + r.w / 2;
+        if (fs >= 1.6) {  // 1.6 SVG px — 8배 줌이면 화면상 ~13px로 읽힘
+          var sub = (fvHeatMetric === 'vol') ? fvFmtVol(q.vol) : fvMetricText(v);
+          var showSub = r.h >= fs * 2.3 && fs >= 2.2;
+          t.t1.setAttribute('x', cx);
+          t.t1.setAttribute('y', showSub ? (r.y + r.h / 2 - fs * 0.15) : (r.y + r.h / 2 + fs * 0.36));
+          t.t1.setAttribute('font-size', fs.toFixed(2));
+          t.t1.textContent = q.symbol;
+          if (showSub) {
+            t.t2.setAttribute('x', cx);
+            t.t2.setAttribute('y', r.y + r.h / 2 + fs * 0.85);
+            t.t2.setAttribute('font-size', (fs * 0.62).toFixed(2));
+            t.t2.textContent = sub;
+          } else t.t2.textContent = '';
+        } else { t.t1.textContent = ''; t.t2.textContent = ''; }
       });
-      if (sr.w >= 56 && sr.h >= 24) {
-        seenSec[s.name] = 1;
-        var le = secLabels[s.name];
-        if (!le) {
-          le = document.createElement('div');
-          le.setAttribute('data-fvsec', s.name);
-          le.style.cssText = 'position:absolute;font-weight:700;letter-spacing:.5px;color:rgba(255,255,255,.92);text-shadow:0 1px 3px rgba(0,0,0,.9);z-index:2;cursor:pointer;padding:1px 5px;background:rgba(0,0,0,.4);border-radius:2px;';
-          layer.appendChild(le);
-          secLabels[s.name] = le;
-        }
-        le.style.left = (sr.x + 2).toFixed(1) + 'px';
-        le.style.top = (sr.y + 1).toFixed(1) + 'px';
-        le.style.fontSize = (fvHeatZoomSec ? 11 : 8) + 'px';
-        le.title = fvHeatZoomSec ? '클릭하면 전체 보기로' : '클릭하면 이 섹터만 확대';
-        le.textContent = s.name + (fvHeatZoomSec ? ' ✕' : ' ⊕');
-      }
     });
-    // 사라진 타일 페이드아웃 후 제거
+    // 사라진 요소 제거
     Object.keys(tiles).forEach(function(sym){
-      if (!seen[sym]) {
-        var el = tiles[sym]; delete tiles[sym];
-        el.style.transition = 'opacity .3s ease'; el.style.opacity = '0';
-        setTimeout(function(){ if (el.parentNode) el.parentNode.removeChild(el); }, 320);
-      }
+      if (!seen[sym]) { var t = tiles[sym]; delete tiles[sym]; if (t.g.parentNode) t.g.parentNode.removeChild(t.g); }
     });
-    Object.keys(secLabels).forEach(function(nm){
-      if (!seenSec[nm]) {
-        var le = secLabels[nm]; delete secLabels[nm];
-        if (le.parentNode) le.parentNode.removeChild(le);
-      }
+    Object.keys(secEls).forEach(function(nm){
+      if (!seenSec[nm]) { var se = secEls[nm]; delete secEls[nm]; if (se.g.parentNode) se.g.parentNode.removeChild(se.g); }
     });
+
+    fvUpdateMetricBtns();
+    if (typeof fvSyncSectorSelects === 'function') fvSyncSectorSelects();
     var fresh = 0;
     stocks.forEach(function(q){ if (q.ts && Date.now() - q.ts < 300000) fresh++; });
-    fvBindHeatmapEvents(host);
-    fvUpdateMetricBtns();
     var subEl = (host.id === 'fvHeatmap') ? $('fvHeatSub') : $('tvHeatmapSub');
     if (subEl) subEl.textContent = met.label + (fvHeatZoomSec ? ' · ' + fvHeatZoomSec + ' 확대' : '') + ' · ' + stocks.length + '종목 · 5분내 시세 ' + fresh + ' · ' + new Date().toLocaleTimeString('ko-KR', { hour: '2-digit', minute: '2-digit', second: '2-digit' }) + ' 갱신';
   }
   function fvFmtPct(v) { return (typeof v === 'number') ? ((v >= 0 ? '+' : '') + v.toFixed(2) + '%') : '—'; }
-  // [V66] 이벤트 위임 — 타일 클릭(차트분석)·섹터 줌·커스텀 툴팁 (host당 1회 바인딩)
+  // 이벤트 위임 — 타일 클릭(차트분석)·섹터 줌·툴팁·호버 (SVG 버전)
   function fvBindHeatmapEvents(host) {
     if (host.__fvBound) return;
     host.__fvBound = true;
@@ -3962,6 +3952,7 @@ html[data-theme="light"] .port-card .port-total{color:#13171c;}
       if (sec) {
         var sname = sec.getAttribute('data-fvsec');
         fvHeatZoomSec = (fvHeatZoomSec === sname) ? null : sname;
+        var c = fvCam(host); c.x = 0; c.y = 0; c.w = c.bw; c.h = c.bh;  // 섹터 전환 시 카메라 리셋
         renderFvHeatmap();
         return;
       }
@@ -3984,27 +3975,38 @@ html[data-theme="light"] .port-card .port-total{color:#13171c;}
     if (!tip) {
       tip = document.createElement('div');
       tip.id = 'fvHeatTip';
-      tip.style.cssText = 'position:fixed;z-index:99999;pointer-events:none;display:none;background:rgba(10,10,14,.96);border:1px solid var(--bd);padding:8px 10px;font-size:10px;line-height:1.7;color:#eee;border-radius:4px;max-width:260px;box-shadow:0 6px 20px rgba(0,0,0,.5);';
+      tip.style.cssText = 'position:fixed;z-index:99999;pointer-events:none;display:none;background:rgba(10,10,14,.96);border:1px solid var(--bd);padding:8px 10px;font-size:10px;line-height:1.7;color:#eee;border-radius:4px;max-width:280px;box-shadow:0 6px 20px rgba(0,0,0,.5);';
       document.body.appendChild(tip);
     }
     host.addEventListener('mousemove', function(e){
-      var tile = e.target.closest ? e.target.closest('[data-sym]') : null;
-      if (host.__fvHover && host.__fvHover !== tile) {
-        host.__fvHover.style.filter = ''; host.__fvHover.style.zIndex = ''; host.__fvHover.style.boxShadow = '';
+      var g = e.target.closest ? e.target.closest('[data-sym]') : null;
+      if (host.__fvHover && host.__fvHover !== g) {
+        var pr = host.__fvHover.querySelector('rect');
+        if (pr) { pr.setAttribute('stroke', pr.__hold || '#0a0c10'); pr.setAttribute('stroke-width', pr.__holdW || '0.6'); }
       }
-      if (tile) {
-        tile.style.filter = 'brightness(1.18)'; tile.style.zIndex = '3'; tile.style.boxShadow = 'inset 0 0 0 1.5px rgba(255,255,255,.85)';
-        host.__fvHover = tile;
-      } else { host.__fvHover = null; }
-      if (!tile) { tip.style.display = 'none'; return; }
-      tip.innerHTML = tile.getAttribute('data-tip') || '';
-      tip.style.display = 'block';
-      tip.style.left = Math.min(e.clientX + 14, window.innerWidth - 270) + 'px';
-      tip.style.top = Math.min(e.clientY + 14, window.innerHeight - 120) + 'px';
+      if (g) {
+        var rc = g.querySelector('rect');
+        if (rc) {
+          if (host.__fvHover !== g) { rc.__hold = rc.getAttribute('stroke'); rc.__holdW = rc.getAttribute('stroke-width'); }
+          rc.setAttribute('stroke', '#ffffff'); rc.setAttribute('stroke-width', '1.2');
+        }
+        host.__fvHover = g;
+        tip.innerHTML = g.getAttribute('data-tip') || '';
+        tip.style.display = 'block';
+        tip.style.left = Math.min(e.clientX + 14, window.innerWidth - 290) + 'px';
+        tip.style.top = Math.min(e.clientY + 14, window.innerHeight - 140) + 'px';
+      } else {
+        host.__fvHover = null;
+        tip.style.display = 'none';
+      }
     });
     host.addEventListener('mouseleave', function(){
       tip.style.display = 'none';
-      if (host.__fvHover) { host.__fvHover.style.filter = ''; host.__fvHover.style.zIndex = ''; host.__fvHover.style.boxShadow = ''; host.__fvHover = null; }
+      if (host.__fvHover) {
+        var pr = host.__fvHover.querySelector('rect');
+        if (pr) { pr.setAttribute('stroke', pr.__hold || '#0a0c10'); pr.setAttribute('stroke-width', pr.__holdW || '0.6'); }
+        host.__fvHover = null;
+      }
     });
   }
   function loadFvHeatmap() { renderFvHeatmap(); }  // 하위호환 별칭 (↻ 버튼·초기 로드)
