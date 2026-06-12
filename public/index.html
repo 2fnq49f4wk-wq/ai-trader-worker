@@ -3880,13 +3880,39 @@ html[data-theme="light"] .port-card .port-total{color:#13171c;}
     });
     function endPtr(e) {
       delete ptrs[e.pointerId];
+      if (Object.keys(ptrs).length >= 2 || pinch) host.__fvHadPinch = true;
       if (Object.keys(ptrs).length < 2) pinch = null;
-      if (drag && drag.moved) host.__fvDragJustEnded = Date.now();
+      var wasDrag = drag && drag.moved;
+      if (wasDrag) host.__fvDragJustEnded = Date.now();
       if (!Object.keys(ptrs).length) {
         drag = null;
         host.__fvGesturing = false;
         fvCommitCam(host);  // [V71] 제스처 종료 → 선명한 벡터로 커밋
         if (host.__fvRenderPending) { host.__fvRenderPending = false; renderFvHeatmap(); }  // [V72] 미뤄둔 재렌더 실행
+        // [V81] iPad 더블탭 — touch-action:none + setPointerCapture 환경에선 dblclick이 발화하지
+        //   않으므로 pointerup 기반으로 직접 감지. 캡처가 e.target을 host로 재지정하기 때문에
+        //   타일 식별은 elementFromPoint로 한다. 350ms 내 30px 이내 두 번 탭 = 더블탭.
+        if (e.type === 'pointerup' && e.pointerType !== 'mouse' && !wasDrag && !host.__fvHadPinch) {
+          var now = Date.now();
+          var el = document.elementFromPoint(e.clientX, e.clientY);
+          var tile = (el && el.closest) ? el.closest('[data-sym]') : null;
+          var sym = tile ? tile.getAttribute('data-sym') : null;
+          var lt = host.__fvLastTap;
+          if (lt && now - lt.t < 350 && Math.hypot(e.clientX - lt.x, e.clientY - lt.y) < 30) {
+            host.__fvLastTap = null;
+            if (sym && sym === lt.sym) { fvOpenTa(sym); }
+            else {  // 빈 영역/섹터 더블탭 = 줌 토글 (데스크톱 dblclick과 동일)
+              var c2 = fvCam(host);
+              if (c2.w > c2.bw * 0.99) fvZoomAt(host, e.clientX, e.clientY, 2.5);
+              else { c2.x = 0; c2.y = 0; c2.w = c2.bw; c2.h = c2.bh; fvApplyCam(host); }
+            }
+          } else {
+            host.__fvLastTap = { t: now, x: e.clientX, y: e.clientY, sym: sym };
+          }
+        } else if (wasDrag || host.__fvHadPinch) {
+          host.__fvLastTap = null;  // 드래그/핀치 후 첫 탭은 더블탭 카운트 안 함
+        }
+        host.__fvHadPinch = false;
       }
     }
     host.addEventListener('pointerup', endPtr);
