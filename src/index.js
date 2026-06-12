@@ -10929,6 +10929,46 @@ async function handleRequest(request, env) {
     }
 
     // 하위 호환 엔드포인트 유지
+    // ════ [V68] /api/heatmap — 히트맵 기간수익률·거래량 전용 ════
+    //   quote: 저장 경로가 여러 곳이라 필드가 소실될 수 있는 구조적 문제를 우회한다.
+    //   일봉 캐시(daily:)에서 직접 계산 — 단일 D1 쿼리, 추가 fetch 0. 60초 메모리 캐시.
+    if (path === "/api/heatmap") {
+      try {
+        if (globalThis.__hmCache && Date.now() - globalThis.__hmCache.ts < 60000) {
+          return Response.json(globalThis.__hmCache.data, { headers: cors });
+        }
+        const rows = await env.DB.prepare("SELECT k, v FROM state WHERE k LIKE 'daily:%'").all();
+        const out = {};
+        for (const r of (rows.results || [])) {
+          let d; try { d = JSON.parse(r.v); } catch (e) { continue; }
+          const closes = d && d.closes;
+          if (!closes || closes.length < 10) continue;
+          const sym = r.k.slice(6);
+          const len = closes.length;
+          // 1년: 252거래일, 캐시가 짧으면 가용 범위로 대체(없는 것보단 근사치)
+          let ret1y = (d.ret1y != null) ? d.ret1y : getNDayReturn(closes, Math.min(252, len - 1));
+          let ret5y = (d.ret5y != null) ? d.ret5y : null;
+          let vol = (d.vol != null) ? d.vol : null, avgVol20 = (d.avgVol20 != null) ? d.avgVol20 : null;
+          if ((vol == null || avgVol20 == null) && d.volumes && d.volumes.length >= 21) {
+            const vs = d.volumes, vn = vs.length;
+            if (vol == null) vol = vs[vn - 1];
+            if (avgVol20 == null) { let s = 0; for (let i = vn - 21; i < vn - 1; i++) s += vs[i]; avgVol20 = s / 20; }
+          }
+          out[sym] = {
+            return5: getNDayReturn(closes, 5),
+            return20: getNDayReturn(closes, 20),
+            return60: getNDayReturn(closes, 60),
+            ret1y: ret1y, ret5y: ret5y, vol: vol, avgVol20: avgVol20
+          };
+        }
+        const payload = { ok: true, ts: Date.now(), n: Object.keys(out).length, data: out };
+        globalThis.__hmCache = { ts: Date.now(), data: payload };
+        return Response.json(payload, { headers: cors });
+      } catch (e) {
+        return Response.json({ ok: false, error: e.message }, { status: 500, headers: cors });
+      }
+    }
+
     if (path === "/api/watchlist") {
       const cfg = migrateCfgToMarkets(Object.assign({}, DEFAULT_CFG, await getState(env.DB, "cfg", {})));
       const allSymbols = cfg.usTickers.concat(cfg.krTickers);
