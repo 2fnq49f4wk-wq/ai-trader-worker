@@ -5082,7 +5082,15 @@ async function fetchBatchQuotes(symbols, opts) {
     }
   }
   if (xvMismatch.length > 0 && opts.DB) {
-    try { await log(opts.DB, "WARN", null, "[XV] 야후 KR 시세 의심(접미사 오류 가능) " + xvMismatch.length + "건 — 네이버값 사용: " + xvMismatch.slice(0, 8).join(", ")); } catch (e) {}
+    // [V82] 동일 종목 괴리가 1분마다 반복 WARN되던 것 → 구성이 바뀌거나 30분 경과 시에만 기록
+    try {
+      const _sig = xvMismatch.map(function(s){ return s.split(" ")[0]; }).sort().join(",");
+      const _prev = await getState(opts.DB, "xv_warn_state", null);
+      if (!_prev || _prev.sig !== _sig || (Date.now() - (_prev.ts || 0)) > 30 * 60000) {
+        await log(opts.DB, "WARN", null, "[XV] 야후 KR 시세 의심(접미사 오류 가능) " + xvMismatch.length + "건 — 네이버값 사용: " + xvMismatch.slice(0, 8).join(", "));
+        await setState(opts.DB, "xv_warn_state", { sig: _sig, ts: Date.now() });
+      }
+    } catch (e) {}
   }
 
   return out;
@@ -7998,6 +8006,20 @@ async function refreshPriceShard(env, market, shard) {
       ok++;
     } else if (r) { fail++; }
   }
+  // [V82] "어떤 종목이 조회 실패했는지" 가시화 — 카운트만 찍혀 원인 종목을 알 수 없던 문제.
+  //   실패 심볼 목록을 시장별 10분 스로틀로 WARN (배치+폴백 모두 실패 = 야후 미상장/티커 변경/지연 의심).
+  if (fail > 0) {
+    try {
+      const failedSyms = results.filter(function(r){ return r && !r.ok; }).map(function(r){ return r.symbol; });
+      const _fk = "px_fail_warn_" + market;
+      const _prevF = await getState(DB, _fk, null);
+      const _sigF = failedSyms.slice().sort().join(",");
+      if (!_prevF || _prevF.sig !== _sigF || (Date.now() - (_prevF.ts || 0)) > 10 * 60000) {
+        await log(DB, "WARN", null, "[PX] " + market.toUpperCase() + " 시세 조회 실패 " + fail + "건: " + failedSyms.slice(0, 12).join(", ") + (failedSyms.length > 12 ? " 외" : "") + " — 티커 변경/상장폐지/야후 누락 여부 확인 필요");
+        await setState(DB, _fk, { sig: _sigF, ts: Date.now() });
+      }
+    } catch (e) {}
+  }
   const tWrite0 = Date.now();
   for (let i = 0; i < stmts.length; i += 100) {
     try { await DB.batch(stmts.slice(i, i + 100)); } catch (e) {
@@ -9682,7 +9704,16 @@ async function runTradingCycle(env) {
             for (const _t of ((_slRows && _slRows.results) || [])) _slSum += (_t.pnl_pct || 0);
             if (_slSum <= -_slLimit) {
               scalpDailyBlocked = true;
-              await log(DB, "WARN", null, "[V52] " + market.toUpperCase() + " SCALP 당일 손실한도(" + _slSum.toFixed(2) + "% ≤ -" + _slLimit + "%) — 오늘 단타 신규진입 중단");
+              // [V82] 사이클마다(매분) 같은 WARN이 도배되던 것 → 시장별 하루 1회만 기록
+              try {
+                const _dlbKey = "scalp_dlb_logged_" + market;
+                const _today = new Date().toISOString().slice(0, 10);
+                const _logged = await getState(DB, _dlbKey, null);
+                if (_logged !== _today) {
+                  await log(DB, "WARN", null, "[V52] " + market.toUpperCase() + " SCALP 당일 손실한도(" + _slSum.toFixed(2) + "% ≤ -" + _slLimit + "%) — 오늘 단타 신규진입 중단");
+                  await setState(DB, _dlbKey, _today);
+                }
+              } catch (e) {}
             }
           }
         }
