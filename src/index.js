@@ -10937,6 +10937,7 @@ async function handleRequest(request, env) {
         if (globalThis.__hmCache && Date.now() - globalThis.__hmCache.ts < 60000) {
           return Response.json(globalThis.__hmCache.data, { headers: cors });
         }
+        // ── (1) 단기(1W/1M/3M)·거래량 — 일봉 캐시에서 계산 ──
         const rows = await env.DB.prepare("SELECT k, v FROM state WHERE k LIKE 'daily:%'").all();
         const out = {};
         for (const r of (rows.results || [])) {
@@ -10945,9 +10946,6 @@ async function handleRequest(request, env) {
           if (!closes || closes.length < 10) continue;
           const sym = r.k.slice(6);
           const len = closes.length;
-          // 1년: 252거래일, 캐시가 짧으면 가용 범위로 대체(없는 것보단 근사치)
-          let ret1y = (d.ret1y != null) ? d.ret1y : getNDayReturn(closes, Math.min(252, len - 1));
-          let ret5y = (d.ret5y != null) ? d.ret5y : null;
           let vol = (d.vol != null) ? d.vol : null, avgVol20 = (d.avgVol20 != null) ? d.avgVol20 : null;
           if ((vol == null || avgVol20 == null) && d.volumes && d.volumes.length >= 21) {
             const vs = d.volumes, vn = vs.length;
@@ -10958,10 +10956,70 @@ async function handleRequest(request, env) {
             return5: getNDayReturn(closes, 5),
             return20: getNDayReturn(closes, 20),
             return60: getNDayReturn(closes, 60),
-            ret1y: ret1y, ret5y: ret5y, vol: vol, avgVol20: avgVol20
+            ret1y: (d.ret1y != null) ? d.ret1y : getNDayReturn(closes, Math.min(252, len - 1)),
+            ret5y: (d.ret5y != null) ? d.ret5y : null,
+            vol: vol, avgVol20: avgVol20
           };
         }
-        const payload = { ok: true, ts: Date.now(), n: Object.keys(out).length, data: out };
+        // ── (2) [V69] 1Y/5Y — spark 배치(월봉 5년)로 즉시 확보. 일봉 캐시가 5y로 갱신되길 기다릴 필요 없음.
+        //   하루 1회 빌드, state(heat_longret)에 저장. 518종목 ÷ 40 = ~13 subrequest (이 요청에서만, 동시 1회 락).
+        let longret = await getState(env.DB, "heat_longret", null);
+        const lrStale = !longret || !longret.ts || (Date.now() - longret.ts) > 24 * 3600 * 1000;
+        if (lrStale && !globalThis.__hmLrBuilding) {
+          globalThis.__hmLrBuilding = true;
+          try {
+            const cfg0 = migrateCfgToMarkets(Object.assign({}, DEFAULT_CFG, await getState(env.DB, "cfg", {})));
+            const usSyms = (cfg0.usTickers || []).filter(function(s){ return !s.endsWith(".KS") && !s.endsWith(".KQ"); });
+            const lr = {};
+            for (let i = 0; i < usSyms.length; i += 40) {
+              const chunk = usSyms.slice(i, i + 40);
+              try {
+                const j = await yahooFetch("https://query1.finance.yahoo.com/v8/finance/spark?symbols=" +
+                  encodeURIComponent(chunk.join(",")) + "&range=5y&interval=1mo");
+                // 응답 포맷 방어적 파싱 — {spark:{result:[{symbol,response:[{indicators..}]}]}} 또는 {SYM:{close:[..]}}
+                const results = (j && j.spark && Array.isArray(j.spark.result)) ? j.spark.result : null;
+                const handle = function(sym, closesArr){
+                  const cl = [];
+                  for (const c of (closesArr || [])) if (typeof c === "number" && c > 0) cl.push(c);
+                  if (cl.length < 6) return;
+                  const last = cl[cl.length - 1];
+                  // 월봉이므로 1Y=12개월 전, 5Y=전체 첫 값(상장 5년 미만이면 가용 범위 — 근사치로 제공)
+                  const i1y = cl.length - 13;
+                  const r1y = (i1y >= 0 && cl[i1y] > 0) ? (last - cl[i1y]) / cl[i1y] * 100 : null;
+                  const r5y = (cl[0] > 0 && cl.length >= 13) ? (last - cl[0]) / cl[0] * 100 : null;
+                  lr[sym] = { ret1y: r1y, ret5y: r5y };
+                };
+                if (results) {
+                  for (const it of results) {
+                    const resp = it && it.response && it.response[0];
+                    const cls = resp && resp.indicators && resp.indicators.quote && resp.indicators.quote[0] && resp.indicators.quote[0].close;
+                    if (it.symbol) handle(it.symbol, cls);
+                  }
+                } else if (j && typeof j === "object") {
+                  for (const sym of chunk) {
+                    if (j[sym] && Array.isArray(j[sym].close)) handle(sym, j[sym].close);
+                  }
+                }
+              } catch (e) { /* 청크 실패 — 다음 청크 계속 */ }
+            }
+            if (Object.keys(lr).length >= 50) {
+              longret = { ts: Date.now(), data: lr };
+              await setState(env.DB, "heat_longret", longret);
+            }
+          } catch (e) {
+          } finally { globalThis.__hmLrBuilding = false; }
+        }
+        // 머지 — spark 값이 항상 우선 (일봉 캐시 근사치보다 정확)
+        if (longret && longret.data) {
+          for (const sym in longret.data) {
+            const v = longret.data[sym];
+            if (!out[sym]) out[sym] = {};
+            if (v.ret1y != null) out[sym].ret1y = v.ret1y;
+            if (v.ret5y != null) out[sym].ret5y = v.ret5y;
+          }
+        }
+        const payload = { ok: true, ts: Date.now(), n: Object.keys(out).length,
+          longretTs: longret ? longret.ts : null, data: out };
         globalThis.__hmCache = { ts: Date.now(), data: payload };
         return Response.json(payload, { headers: cors });
       } catch (e) {
