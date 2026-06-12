@@ -1906,6 +1906,7 @@ html[data-theme="light"] .sb-run-btn{background:var(--pos)!important;color:#fff!
 html[data-theme="light"] .btn.primary{background:var(--pos);color:#fff;}
 html[data-theme="light"] .wl-card:hover{background:#f1f4f8;}
 html[data-theme="light"] #fvHeatmap{background:#fff!important;}
+svg.fv-panning text{display:none!important;}  /* [V75] 팬/줌 중 텍스트 숨겨 렉 제거 */
 html[data-theme="light"] .sb-brand{background:#0d0d0d;}
 html[data-theme="light"] .sb-brand-name{color:#fff;}
 
@@ -3741,6 +3742,12 @@ html[data-theme="light"] .port-card .port-total{color:#13171c;}
     if (zl) zl.textContent = zs <= 1.01 ? '' : ('×' + zs.toFixed(1));
     if (interactive) {
       host.__fvCamDirty = true;
+      // [V75] 제스처 중 텍스트 레이어 숨김 — 한글 벡터 텍스트(수백개) 재래스터가 팬/줌 렉의 주범.
+      //   rect만 움직이면 GPU로 가볍게 처리됨. 커밋 시 다시 표시(선명).
+      if (!host.__fvTextHidden) { host.__fvTextHidden = true; svg.classList.add('fv-panning'); }
+      // 멈추면(160ms) 텍스트 복원 + 선명 커밋
+      clearTimeout(host.__fvCommitT);
+      host.__fvCommitT = setTimeout(function(){ fvCommitCam(host); }, 160);
       if (host.__fvRaf) return;                 // 프레임당 1회만 viewBox 반영
       host.__fvRaf = requestAnimationFrame(function step(){
         host.__fvRaf = null;
@@ -3764,6 +3771,7 @@ html[data-theme="light"] .port-card .port-total{color:#13171c;}
     svg.style.transform = '';
     svg.setAttribute('viewBox', c.x.toFixed(2) + ' ' + c.y.toFixed(2) + ' ' + c.w.toFixed(2) + ' ' + c.h.toFixed(2));
     host.__fvCommitted = { x: c.x, y: c.y, w: c.w, h: c.h };
+    if (host.__fvTextHidden) { host.__fvTextHidden = false; svg.classList.remove('fv-panning'); }  // [V75] 텍스트 복원
   }
   function fvZoomAt(host, clientX, clientY, factor) {
     var c = fvCam(host), svg = host.__fvSvg;
@@ -4034,10 +4042,13 @@ html[data-theme="light"] .port-card .port-total{color:#13171c;}
         t.rect.setAttribute('stroke', isHeld ? '#ffc107' : '#0a0c10');
         t.rect.setAttribute('stroke-width', isHeld ? '1' : '0.6');
         // ── 벡터 텍스트 — 타일 기하에 맞는 폰트(SVG 단위). 줌인하면 비례 확대돼 자동으로 선명하게 보임 ──
-        // KR은 티커(005930.KS)가 무의미하므로 종목명을 표시(8자 넘으면 잘라서 폭 계산 안정화).
-        var label = (fvHeatMarket === 'kr') ? ((q.name && q.name !== q.symbol) ? q.name : q.symbol) : q.symbol;
-        if (fvHeatMarket === 'kr' && label.length > 7) label = label.slice(0, 6);
-        var fs = Math.min(r.w / (label.length * 0.64 + 0.6), r.h / 2.5);
+        // KR은 티커(005930.KS)가 무의미하므로 종목명 표시. 한글 글리프는 폴백폰트라 폭이 ASCII(0.62)보다
+        // 훨씬 넓다(~1.05) → 폭 계수를 분리하지 않으면 폰트가 과대 계산돼 글자가 타일 밖으로 튀어나옴.
+        var isKR = (fvHeatMarket === 'kr');
+        var label = isKR ? ((q.name && q.name !== q.symbol) ? q.name : q.symbol) : q.symbol;
+        if (isKR && label.length > 6) label = label.slice(0, 6);
+        var cw = isKR ? 1.06 : 0.64;   // 글자당 폭 비율(em)
+        var fs = Math.min(r.w / (label.length * cw + 0.5), r.h / 2.5);
         fs = Math.min(fs, 26);
         var cx = r.x + r.w / 2;
         if (fs >= 1.6) {  // 1.6 SVG px — 8배 줌이면 화면상 ~13px로 읽힘
@@ -4046,6 +4057,10 @@ html[data-theme="light"] .port-card .port-total{color:#13171c;}
           t.t1.setAttribute('x', cx);
           t.t1.setAttribute('y', showSub ? (r.y + r.h / 2 - fs * 0.15) : (r.y + r.h / 2 + fs * 0.36));
           t.t1.setAttribute('font-size', fs.toFixed(2));
+          // 폭 클램프 — 폰트 메트릭과 무관하게 타일 너비(95%)를 넘으면 자동 압축 → 절대 안 튀어나감
+          var maxW = r.w * 0.94;
+          if (label.length * cw * fs > maxW) { t.t1.setAttribute('textLength', maxW.toFixed(1)); t.t1.setAttribute('lengthAdjust', 'spacingAndGlyphs'); }
+          else t.t1.removeAttribute('textLength');
           t.t1.textContent = label;
           if (showSub) {
             t.t2.setAttribute('x', cx);
