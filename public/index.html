@@ -2022,7 +2022,7 @@ html[data-theme="light"] .port-card .port-total{color:#13171c;}
 }
 /* TOP MOVERS 패널을 히트맵 높이에 맞춰 늘리고 내부 스크롤 — 하단 빈 공간 제거 */
 .fv-mid .fv-panel{display:flex;flex-direction:column;min-width:0;}
-.fv-mid .fv-movers-grid{flex:1 1 auto;max-height:392px;overflow-y:auto;align-items:start;}
+.fv-mid .fv-movers-grid{flex:1 1 auto;max-height:414px;overflow-y:auto;align-items:start;}
 /* 가독성: 핀비즈 밀도 유지하되 본문 폰트 한 단계 업 + 행 간격 확보 */
 .fv-table{font-size:11px;}
 .fv-table td{padding:5px 10px;line-height:1.45;}
@@ -3517,9 +3517,9 @@ html[data-theme="light"] .port-card .port-total{color:#13171c;}
           '<td class="right '+cls+'">'+(it.q.dayPct>=0?'+':'')+fmtNum(it.q.dayPct,2)+'%</td>'+
           '<td class="fv-sig">'+sig+'</td></tr>';
       }
-      // [V60.1] 8 → 14개 — 히트맵(360px) 높이에 맞춰 패널 하단 빈 공간 제거
-      g.innerHTML = sorted.slice(0, 14).map(function(it){ return moverRow(it, true); }).join('') || '<tr><td colspan="4" class="empty">—</td></tr>';
-      l.innerHTML = sorted.slice(-14).reverse().map(function(it){ return moverRow(it, false); }).join('') || '<tr><td colspan="4" class="empty">—</td></tr>';
+      // [V80] 14 → 20개 — 맵 카드(줌바 포함 ~414px) 길이에 맞춤
+      g.innerHTML = sorted.slice(0, 20).map(function(it){ return moverRow(it, true); }).join('') || '<tr><td colspan="4" class="empty">—</td></tr>';
+      l.innerHTML = sorted.slice(-20).reverse().map(function(it){ return moverRow(it, false); }).join('') || '<tr><td colspan="4" class="empty">—</td></tr>';
     }
     // ④ 헤드라인 — 섹터 뉴스 플랫 리스트
     var hl = $('fvHeadlines');
@@ -3740,9 +3740,15 @@ html[data-theme="light"] .port-card .port-total{color:#13171c;}
   //   ② 제스처 동안은 GPU CSS transform으로만 그 래스터를 이동/확대(텍스트 포함, 재래스터 없음)
   //   ③ 카메라가 패딩 영역을 벗어나려는 순간에만 새 패딩 영역을 재커밋(가끔 1회)
   //   → 글씨 항상 표시 + 60fps + 검은 가장자리 없음.
+  function fvHostRect(host) {
+    // [V79] getBoundingClientRect는 강제 레이아웃 — 매 프레임/이벤트 호출이 렉 원인.
+    //   제스처 동안 1회만 측정해 캐시(커밋 시 무효화).
+    if (!host.__fvRect) host.__fvRect = host.getBoundingClientRect();
+    return host.__fvRect;
+  }
   function fvPadCommit(host, c) {
     var svg = host.__fvSvg;
-    var pad = 0.4;
+    var pad = 0.8;   // [V79] 0.4→0.8 — 패딩 넓혀 팬 중 재커밋(무거운 재래스터) 빈도 대폭 감소
     var pw = Math.min(c.bw, c.w * (1 + pad * 2));
     var ph = pw * (c.bh / c.bw);
     var px = Math.max(0, Math.min(c.bw - pw, c.x - (pw - c.w) / 2));
@@ -3768,13 +3774,13 @@ html[data-theme="light"] .port-card .port-total{color:#13171c;}
         var cc = fvCam(host);
         var p = host.__fvCommitted;
         var eps = 0.5;
-        // 패딩 영역 밖으로 나가거나, 패딩 해상도 대비 3배 이상 확대되면(흐릿해짐) 재커밋
+        // 패딩 영역 밖으로 나가거나, 패딩 해상도 대비 4배 이상 확대되면(흐릿해짐) 재커밋
         var out = !p || cc.x < p.x - eps || cc.y < p.y - eps
                || cc.x + cc.w > p.x + p.w + eps || cc.y + cc.h > p.y + p.h + eps
-               || (p.w / cc.w) > 3;
+               || (p.w / cc.w) > 4;
         if (out) fvPadCommit(host, cc);
         p = host.__fvCommitted;
-        var rect = host.getBoundingClientRect();
+        var rect = fvHostRect(host);
         var s = p.w / cc.w;
         var tx = (p.x - cc.x) * (rect.width / cc.w);
         var ty = (p.y - cc.y) * (rect.height / cc.h);
@@ -3791,6 +3797,7 @@ html[data-theme="light"] .port-card .port-total{color:#13171c;}
     if (host.__fvRaf) { cancelAnimationFrame(host.__fvRaf); host.__fvRaf = null; }
     clearTimeout(host.__fvCommitT);
     host.__fvCamDirty = false;
+    host.__fvRect = null;   // [V79] rect 캐시 무효화 — 다음 제스처 시작 시 재측정
     svg.style.transform = '';
     svg.setAttribute('viewBox', c.x.toFixed(2) + ' ' + c.y.toFixed(2) + ' ' + c.w.toFixed(2) + ' ' + c.h.toFixed(2));
     host.__fvCommitted = { x: c.x, y: c.y, w: c.w, h: c.h };
@@ -3808,7 +3815,7 @@ html[data-theme="light"] .port-card .port-total{color:#13171c;}
     // [V72 FIX] svg.getBoundingClientRect()는 제스처 중 CSS transform이 걸려 있으면
     //   스케일/이동된 좌표를 반환해 줌 중심이 틀어지고 맵이 튀었다. 변형되지 않는
     //   host 기준으로 계산해야 연속 줌이 안정적이다.
-    var rect = host.getBoundingClientRect();
+    var rect = fvHostRect(host);
     var fx = (clientX - rect.left) / rect.width, fy = (clientY - rect.top) / rect.height;
     fx = Math.max(0, Math.min(1, fx)); fy = Math.max(0, Math.min(1, fy));
     var vx = c.x + fx * c.w, vy = c.y + fy * c.h;
@@ -3845,7 +3852,7 @@ html[data-theme="light"] .port-card .port-total{color:#13171c;}
       var c = fvCam(host), svg = host.__fvSvg, ids = Object.keys(ptrs);
       if (!svg) return;
       // [V72 FIX] svg가 아닌 host 기준 rect — 제스처 중 transform 오염 방지
-      var rect = host.getBoundingClientRect();
+      var rect = fvHostRect(host);
       if (pinch && ids.length >= 2) {
         var p1 = ptrs[ids[0]], p2 = ptrs[ids[1]];
         var d = Math.hypot(p1.x - p2.x, p1.y - p2.y);
@@ -3886,6 +3893,9 @@ html[data-theme="light"] .port-card .port-total{color:#13171c;}
     host.addEventListener('pointercancel', endPtr);
     host.addEventListener('dblclick', function(e){
       e.preventDefault();
+      // [V79] 타일 더블클릭 → 차트분석. 타일 밖(빈 영역) 더블클릭은 기존 줌 토글 유지.
+      var tile = e.target.closest ? e.target.closest('[data-sym]') : null;
+      if (tile) { fvOpenTa(tile.getAttribute('data-sym')); return; }
       var c = fvCam(host);
       if (c.w > c.bw * 0.99) fvZoomAt(host, e.clientX, e.clientY, 2.5);
       else { c.x = 0; c.y = 0; c.w = c.bw; c.h = c.bh; fvApplyCam(host); }
@@ -4054,7 +4064,7 @@ html[data-theme="light"] .port-card .port-total{color:#13171c;}
           + '1년 ' + fvFmtPct(q.ret1y) + ' · 5년 ' + fvFmtPct(q.ret5y) + '<br>'
           + '거래량 <b>' + fvFmtVol(q.vol) + '</b>주' + (typeof q.vol === 'number' ? ' · 거래대금 <b>' + fvCur + fvFmtVol(q.vol * q.price) + '</b>' : '')
           + (relV != null ? ' · <b style="color:' + (relV >= 1.5 ? '#3fb950' : relV <= 0.6 ? '#8b949e' : '#ddd') + ';">평균比 ' + relV.toFixed(1) + 'x</b>' : '') + '<br>'
-          + 'RSI ' + (typeof q.rsi === 'number' ? q.rsi.toFixed(0) : '—') + ' · ' + s.name + ' · 클릭=차트분석';
+          + 'RSI ' + (typeof q.rsi === 'number' ? q.rsi.toFixed(0) : '—') + ' · ' + s.name + ' · 더블클릭=차트분석';
         var t = tiles[q.symbol];
         if (!t) {
           var g = fvSvgEl('g', { 'data-sym': q.symbol });
@@ -4124,6 +4134,18 @@ html[data-theme="light"] .port-card .port-total{color:#13171c;}
   }
   function fvFmtPct(v) { return (typeof v === 'number') ? ((v >= 0 ? '+' : '') + v.toFixed(2) + '%') : '—'; }
   // 이벤트 위임 — 타일 클릭(차트분석)·섹터 줌·툴팁·호버 (SVG 버전)
+  function fvOpenTa(sym) {
+    var hm = $('heatmapModal');
+    if (hm && hm.classList.contains('show')) hm.classList.remove('show');
+    var ni = document.querySelector('[data-page="dashboard"]');
+    if (ni) ni.click();
+    var inp = $('taSymbol'); if (inp) inp.value = sym;
+    try { runTaAnalysis(sym); } catch (err) {}
+    var tr = $('taResult');
+    if (tr) setTimeout(function(){ tr.scrollIntoView({ behavior: 'smooth', block: 'center' }); }, 150);
+    var tipEl = document.getElementById('fvHeatTip');
+    if (tipEl) tipEl.style.display = 'none';
+  }
   function fvBindHeatmapEvents(host) {
     if (host.__fvBound) return;
     host.__fvBound = true;
@@ -4137,20 +4159,7 @@ html[data-theme="light"] .port-card .port-total{color:#13171c;}
         renderFvHeatmap();
         return;
       }
-      var tile = e.target.closest ? e.target.closest('[data-sym]') : null;
-      if (tile) {
-        var sym = tile.getAttribute('data-sym');
-        var hm = $('heatmapModal');
-        if (hm && hm.classList.contains('show')) hm.classList.remove('show');
-        var ni = document.querySelector('[data-page="dashboard"]');
-        if (ni) ni.click();
-        var inp = $('taSymbol'); if (inp) inp.value = sym;
-        try { runTaAnalysis(sym); } catch (err) {}
-        var tr = $('taResult');
-        if (tr) setTimeout(function(){ tr.scrollIntoView({ behavior: 'smooth', block: 'center' }); }, 150);
-        var tipEl = document.getElementById('fvHeatTip');
-        if (tipEl) tipEl.style.display = 'none';
-      }
+      // [V79] 타일 단일 클릭 → 차트분석 이동 제거(오터치 방지). 더블클릭으로 이동.
     });
     var tip = document.getElementById('fvHeatTip');
     if (!tip) {
