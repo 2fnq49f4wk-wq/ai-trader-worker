@@ -4063,10 +4063,11 @@ html[data-theme="light"] .port-card .port-total{color:#13171c;}
         var fs = Math.min(r.w / (label.length * cw + 0.5), r.h / 2.5);
         fs = Math.min(fs, 26);
         var cx = r.x + r.w / 2;
-        // 화면상 글자 높이(px) ≈ fs × 줌배율. ~9px 이상이면 표시 → 확대하면 작은 타일도 글씨가 채워짐.
-        if (fs * fvZoom >= 9) {
+        // [V76b FIX] 임계값 9px가 과도해 기본 화면에서 글씨가 대부분 사라졌음.
+        //   기존 base 기준(fs≥1.6)을 유지하되 줌 배율을 곱해, 확대하면 작은 타일도 채워지게.
+        if (fs * fvZoom >= 1.6) {
           var sub = (fvHeatMetric === 'vol') ? fvFmtVol(q.vol) : fvMetricText(v);
-          var showSub = r.h >= fs * 2.3 && fs * fvZoom >= 13;
+          var showSub = r.h >= fs * 2.3 && fs * fvZoom >= 2.2;
           t.t1.setAttribute('x', cx);
           t.t1.setAttribute('y', showSub ? (r.y + r.h / 2 - fs * 0.15) : (r.y + r.h / 2 + fs * 0.36));
           t.t1.setAttribute('font-size', fs.toFixed(2));
