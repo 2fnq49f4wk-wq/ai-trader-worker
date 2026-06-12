@@ -3675,8 +3675,9 @@ html[data-theme="light"] .port-card .port-total{color:#13171c;}
     c.x = Math.max(0, Math.min(c.bw - c.w, c.x));
     c.y = Math.max(0, Math.min(c.bh - c.h, c.y));
   }
-  // [V71] 렉 완화 — 제스처 중에는 SVG 전체를 GPU CSS transform으로만 이동(벡터 재래스터 없음, 60fps),
-  //   제스처가 끝나면 viewBox를 1회 커밋해 선명한 벡터로 스냅. rAF로 프레임당 1회만 갱신.
+  // [V73] 검은 화면·렉 제거 — 제스처 중 CSS transform으로 기존 래스터를 밀던 방식은
+  //   커밋(160ms) 전까지 새 영역이 비어 검게 보이고 스냅도 생겼다. 대신 매 rAF마다
+  //   viewBox를 직접 갱신한다(현재 카메라 영역을 항상 정확히 그림 → 검은 가장자리 없음).
   function fvApplyCam(host, interactive) {
     var c = fvCam(host), svg = host.__fvSvg;
     if (!svg || !c.bw) return;
@@ -3684,21 +3685,17 @@ html[data-theme="light"] .port-card .port-total{color:#13171c;}
     var zl = host.__fvZoomLbl, zs = c.bw / c.w;
     if (zl) zl.textContent = zs <= 1.01 ? '' : ('×' + zs.toFixed(1));
     if (interactive) {
-      if (host.__fvRaf) return;                 // 프레임당 1회
-      host.__fvRaf = requestAnimationFrame(function(){
+      host.__fvCamDirty = true;
+      if (host.__fvRaf) return;                 // 프레임당 1회만 viewBox 반영
+      host.__fvRaf = requestAnimationFrame(function step(){
         host.__fvRaf = null;
-        var c0 = host.__fvCommitted;
-        if (!c0) { fvCommitCam(host); return; }
-        // [V72 FIX] svg rect는 직전 프레임 transform에 오염될 수 있음 → 변형 없는 host 기준
-        var rect = host.getBoundingClientRect();
-        var s = c0.w / c.w;
-        var tx = (c0.x - c.x) * (rect.width / c.w);
-        var ty = (c0.y - c.y) * (rect.height / c.h);
-        svg.style.transformOrigin = '0 0';
-        svg.style.transform = 'translate(' + tx.toFixed(2) + 'px,' + ty.toFixed(2) + 'px) scale(' + s.toFixed(4) + ')';
+        if (!host.__fvCamDirty) return;
+        host.__fvCamDirty = false;
+        var cc = fvCam(host);
+        svg.style.transform = '';
+        svg.setAttribute('viewBox', cc.x.toFixed(2) + ' ' + cc.y.toFixed(2) + ' ' + cc.w.toFixed(2) + ' ' + cc.h.toFixed(2));
+        host.__fvCommitted = { x: cc.x, y: cc.y, w: cc.w, h: cc.h };
       });
-      clearTimeout(host.__fvCommitT);           // 휠 등 연속 입력 — 멈추면 자동 커밋
-      host.__fvCommitT = setTimeout(function(){ fvCommitCam(host); }, 160);
     } else {
       fvCommitCam(host);
     }
@@ -3708,6 +3705,7 @@ html[data-theme="light"] .port-card .port-total{color:#13171c;}
     if (!svg || !c.bw) return;
     if (host.__fvRaf) { cancelAnimationFrame(host.__fvRaf); host.__fvRaf = null; }
     clearTimeout(host.__fvCommitT);
+    host.__fvCamDirty = false;
     svg.style.transform = '';
     svg.setAttribute('viewBox', c.x.toFixed(2) + ' ' + c.y.toFixed(2) + ' ' + c.w.toFixed(2) + ' ' + c.h.toFixed(2));
     host.__fvCommitted = { x: c.x, y: c.y, w: c.w, h: c.h };
@@ -3874,7 +3872,7 @@ html[data-theme="light"] .port-card .port-total{color:#13171c;}
     if (!svg || svg.parentNode !== host || sizeChanged) {
       host.innerHTML = '';
       svg = fvSvgEl('svg', { width: '100%', height: '100%', preserveAspectRatio: 'none' });
-      svg.style.cssText = 'display:block;background:#0a0c10;will-change:transform;';
+      svg.style.cssText = 'display:block;background:#0a0c10;will-change:transform;contain:strict;';
       svg.setAttribute('text-rendering', 'optimizeSpeed');
       svg.setAttribute('shape-rendering', 'optimizeSpeed');
       host.appendChild(svg);
