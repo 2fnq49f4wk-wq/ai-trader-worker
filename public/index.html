@@ -4091,9 +4091,15 @@ html[data-theme="light"] .cfg-slider::-moz-range-thumb{background:#1d5fc2;border
     stocks.forEach(function(q){
       var sec = fvSecOf(q.symbol);
       var rank = (typeof q.rank === 'number' && q.rank > 0) ? q.rank : 600;
-      // [V72] 타일 면적 = 실제 시총 비례. q.mcap 있으면 그대로, 없으면 rank→시총 근사.
-      //   KR은 1위(삼성전자) 시총이 US 1위의 ~1/8이라 별도 앵커 곡선 사용.
-      q._wgt = (typeof q.mcap === 'number' && q.mcap > 0) ? (q.mcap / 1e9)
+      // [V81] 타일 면적 = 실시간 시총. 우선순위:
+      //   ① 실시간 가격 × 발행주식수(q.shares) → 가격이 바뀔 때마다 박스 자동 조절
+      //   ② Yahoo 시총(q.mcap) 폴백  ③ rank→시총 근사(데이터 없을 때)
+      //   단위 통일: US=$B(÷1e9), KR=조원(÷1e12) — 같은 시장 내 상대 면적 일관성 유지.
+      var mcDiv = (fvHeatMarket === 'kr') ? 1e12 : 1e9;
+      var liveMc = (typeof q.price === 'number' && q.price > 0 && typeof q.shares === 'number' && q.shares > 0)
+                 ? (q.price * q.shares / mcDiv)
+                 : ((typeof q.mcap === 'number' && q.mcap > 0) ? (q.mcap / mcDiv) : null);
+      q._wgt = (liveMc != null && liveMc > 0) ? liveMc
              : (fvHeatMarket === 'kr' ? fvRankCapKR(rank) : fvRankCap(rank));
       if (!bySec[sec]) bySec[sec] = { name: sec, items: [], sum: 0 };
       bySec[sec].items.push(q);

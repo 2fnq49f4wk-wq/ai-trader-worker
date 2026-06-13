@@ -5006,7 +5006,13 @@ async function fetchBatchQuotes(symbols, opts) {
         ? row.regularMarketPreviousClose : (typeof row.chartPreviousClose === "number" ? row.chartPreviousClose : null);
       let dayPct = (typeof row.regularMarketChangePercent === "number") ? row.regularMarketChangePercent : null;
       if (dayPct == null && price != null && prevClose) dayPct = ((price - prevClose) / prevClose) * 100;
-      if (price != null) { out[sym] = { price: price, prevClose: prevClose || price, dayPct: dayPct != null ? dayPct : 0 }; got++; }
+      if (price != null) {
+        const o = { price: price, prevClose: prevClose || price, dayPct: dayPct != null ? dayPct : 0 };
+        // [V81] 시총맵 실시간 박스 크기용 — 발행주식수·시총 수집(있을 때만)
+        if (typeof row.sharesOutstanding === "number" && row.sharesOutstanding > 0) o.shares = row.sharesOutstanding;
+        if (typeof row.marketCap === "number" && row.marketCap > 0) o.mcap = row.marketCap;
+        out[sym] = o; got++;
+      }
     }
     return got;
   }
@@ -9801,6 +9807,7 @@ async function runTradingCycle(env) {
       const quoteStmts = [];
       const nowTs = Date.now();
       let brUp = 0, brTotal = 0;  // [시장 폭] 상승종목 비율 집계 (추가 fetch 0)
+      const sharesUpd = {};       // [V81] 이번 배치에서 받은 발행주식수·시총 (시총맵 실시간 박스용)
       for (const sym of tickers) {
         const bq = batchQuotes[sym];
         if (!bq) continue;
@@ -9808,6 +9815,10 @@ async function runTradingCycle(env) {
         if (typeof bq.price === "number" && typeof bq.prevClose === "number" && bq.prevClose > 0) {
           brTotal++;
           if (bq.price > bq.prevClose) brUp++;
+        }
+        // [V81] 발행주식수/시총 수집 — 별도 키에 누적(quote 재기록에 영향 안 받게)
+        if ((typeof bq.shares === "number" && bq.shares > 0) || (typeof bq.mcap === "number" && bq.mcap > 0)) {
+          sharesUpd[sym] = { sh: (bq.shares > 0 ? bq.shares : null), mc: (bq.mcap > 0 ? bq.mcap : null) };
         }
         const prevQ = prevQuoteMap[sym] || null;
         const merged = {
@@ -9834,6 +9845,14 @@ async function runTradingCycle(env) {
         try { await DB.batch(quoteStmts.slice(i, i + 100)); } catch (e) {
           await log(DB, "WARN", null, "[V10] quote batch write fail: " + e.message);
         }
+      }
+      // [V81] 발행주식수/시총 맵 갱신 — 기존 값과 병합 저장(다른 시장·미수신 종목 보존)
+      if (Object.keys(sharesUpd).length > 0) {
+        try {
+          const exMap = (await getState(DB, "mcap_shares", {})) || {};
+          Object.assign(exMap, sharesUpd);
+          await setState(DB, "mcap_shares", exMap);
+        } catch (e) {}
       }
       // [시장 폭] 다음 사이클 게이트용으로 저장 (상승종목 비율)
       if (brTotal >= 30) {
@@ -10941,14 +10960,19 @@ async function handleRequest(request, env) {
           try { quoteRowMap[r.k.slice(6)] = JSON.parse(r.v); } catch (e) {}
         }
       } catch (e) {}
+      // [V81] 발행주식수/시총 맵 — 프론트가 가격×주식수로 실시간 시총 박스 계산
+      const mcapShares = (await getState(env.DB, "mcap_shares", {})) || {};
       for (const sym of allSymbols) {
         const q = quoteRowMap[sym];
+        const ms = mcapShares[sym] || null;
         const base = {
           symbol: sym,
           name: NAME_MAP[sym] || sym,
           rank: MCAP_RANK[sym] || 99999,
           isEtf: ETF_SYMBOLS.has(sym),
-          market: (sym.endsWith(".KS") || sym.endsWith(".KQ")) ? "kr" : "us"
+          market: (sym.endsWith(".KS") || sym.endsWith(".KQ")) ? "kr" : "us",
+          shares: ms && ms.sh ? ms.sh : null,   // [V81] 발행주식수(가격×주식수=실시간 시총)
+          mcap: ms && ms.mc ? ms.mc : null      // [V81] Yahoo 시총(폴백)
         };
         // [V11 FIX] quote 가 아직 없는 종목도 노출(가격 대기 상태). 기존엔 quote 있는
         //   종목만 push 해서 v7 차단 + 라운드로빈 미도달 종목이 watchlist 에서 통째로
