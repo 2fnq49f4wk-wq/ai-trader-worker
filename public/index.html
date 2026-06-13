@@ -485,8 +485,16 @@ button.btn.loading::after{content:'조회 중…';position:absolute;inset:0;disp
 .wl-sym{grid-column:1;grid-row:1;font-size:12px;font-weight:700;color:var(--acc);padding-right:18px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
 .wl-name{grid-column:1;grid-row:2;font-size:10px;color:var(--t3);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
 /* [V80] 일주일 일봉 스파크라인 — 가격/등락 왼쪽 */
-.wl-spark{grid-column:2;grid-row:1 / span 2;align-self:center;width:62px;height:28px;display:flex;align-items:center;justify-content:center;opacity:.92;}
+.wl-spark{grid-column:2;grid-row:1 / span 2;align-self:center;width:62px;height:28px;display:flex;align-items:center;justify-content:center;opacity:.95;}
 .wl-spark svg{width:100%;height:100%;display:block;}
+/* [V82] 색은 CSS 속성으로 지정(여기선 var() 정상 동작) — 상승 녹/하락 적 */
+.wl-spark .wls-line{fill:none;stroke-width:1.4;stroke-linejoin:round;stroke-linecap:round;}
+.wl-spark .wls-area{stroke:none;fill-opacity:.13;}
+.wl-spark.up .wls-line,.wl-spark.up .wls-dot{stroke:var(--pos);fill:var(--pos);}
+.wl-spark.up .wls-area{fill:var(--pos);}
+.wl-spark.down .wls-line,.wl-spark.down .wls-dot{stroke:var(--neg);fill:var(--neg);}
+.wl-spark.down .wls-area{fill:var(--neg);}
+.wl-spark .wls-dot{stroke:none;}
 .wl-price{grid-column:3;grid-row:1;font-size:13px;font-weight:700;color:var(--acc);font-variant-numeric:tabular-nums;text-align:right;white-space:nowrap;}
 .wl-day{grid-column:3;grid-row:2;font-size:11px;font-weight:700;font-variant-numeric:tabular-nums;text-align:right;white-space:nowrap;}
 .wl-meta{display:none;}
@@ -5827,7 +5835,8 @@ html[data-theme="light"] .cfg-slider::-moz-range-thumb{background:#1d5fc2;border
     var min = Math.min.apply(null, spark), max = Math.max.apply(null, spark);
     var rng = (max - min) || (Math.abs(max) || 1) * 0.01;
     var up = (spark[spark.length-1] >= spark[0]);
-    var col = up ? 'var(--pos)' : 'var(--neg)';
+    // [V82] 색은 CSS 변수로 — SVG '표시 속성(stroke=...)'엔 var()가 안 먹으므로 반드시 inline style 사용.
+    var cls = up ? 'up' : 'down';
     var n = spark.length, step = (w - pad*2) / (n - 1);
     var pts = spark.map(function(v, i){
       var x = pad + i * step;
@@ -5835,12 +5844,12 @@ html[data-theme="light"] .cfg-slider::-moz-range-thumb{background:#1d5fc2;border
       return x.toFixed(1) + ',' + y.toFixed(1);
     });
     var lastXY = pts[pts.length-1].split(',');
-    // 면적 채움 경로
+    // 면적 채움 경로(아래쪽 살짝 채워 미니 차트 느낌)
     var area = 'M' + pts[0] + ' L' + pts.join(' L') + ' L' + (pad+(n-1)*step).toFixed(1) + ',' + (h-pad) + ' L' + pad + ',' + (h-pad) + ' Z';
-    var gid = 'wlsp' + Math.round(min*1000 % 100000) + '_' + n;
-    return '<div class="wl-spark"><svg viewBox="0 0 '+w+' '+h+'" preserveAspectRatio="none">'+
-      '<polyline fill="none" stroke="'+col+'" stroke-width="1.4" stroke-linejoin="round" stroke-linecap="round" points="'+pts.join(' ')+'"/>'+
-      '<circle cx="'+lastXY[0]+'" cy="'+lastXY[1]+'" r="1.7" fill="'+col+'"/>'+
+    return '<div class="wl-spark '+cls+'"><svg viewBox="0 0 '+w+' '+h+'" preserveAspectRatio="none">'+
+      '<path class="wls-area" d="'+area+'"/>'+
+      '<polyline class="wls-line" points="'+pts.join(' ')+'"/>'+
+      '<circle class="wls-dot" cx="'+lastXY[0]+'" cy="'+lastXY[1]+'" r="1.7"/>'+
       '</svg></div>';
   }
 
@@ -5895,8 +5904,16 @@ html[data-theme="light"] .cfg-slider::-moz-range-thumb{background:#1d5fc2;border
     if (countEl) countEl.textContent = '(' + quotes.length + '종목)';
     if (quotes.length === 0) { container.innerHTML = '<div class="empty">\ub300\uae30 \uc911...</div>'; return; }
 
-    // 시총순 정렬 (rank 작을수록 대형주)
-    var sorted = quotes.slice().sort(function(a,b){ return (a.rank||99999) - (b.rank||99999); });
+    // [V82] 실시간 시총순 정렬 — 가격×발행주식수(q.shares)로 시총이 바뀌면 순서도 자동 변동.
+    //   shares 없으면 Yahoo 시총(q.mcap), 그것도 없으면 rank를 큰 시총으로 환산해 정렬키 통일.
+    function liveMcapKey(q){
+      if (typeof q.price === 'number' && q.price > 0 && typeof q.shares === 'number' && q.shares > 0) return q.price * q.shares;
+      if (typeof q.mcap === 'number' && q.mcap > 0) return q.mcap;
+      // shares 미도착 종목 — rank 근사치를 시장별 통화단위로 환산(US=USD, KR=KRW)해 스케일 통일
+      var rk = (typeof q.rank === 'number' && q.rank > 0) ? q.rank : 600;
+      return (market === 'kr') ? (fvRankCapKR(rk) * 1e12) : (fvRankCap(rk) * 1e9);
+    }
+    var sorted = quotes.slice().sort(function(a,b){ return liveMcapKey(b) - liveMcapKey(a); });
 
     // 검색 모드: 매칭되는 것만, 시총순으로 전부 표시
     if (term) {
