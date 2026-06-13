@@ -8106,6 +8106,7 @@ async function refreshDailyShard(env, market, shard) {
       const bb = getBollingerBands(closes, mcfg.maPeriod, mcfg.bbStdMult);
       const return20 = getNDayReturn(closes, 20);
       return { symbol: symbol, ok: true, ind: indicators, bb: bb, return20: return20,
+        spark: closes.slice(-8).map(function(v){ return Math.round(v * 100) / 100; }),  // [V80] 워치리스트 스파크라인용 최근 8일봉 종가
         return5: getNDayReturn(closes, 5), return60: getNDayReturn(closes, 60),  // [V66]
         ret1y: (daily.ret1y != null ? daily.ret1y : getNDayReturn(closes, 252)),  // [V67]
         ret5y: (daily.ret5y != null ? daily.ret5y : null),
@@ -8132,6 +8133,7 @@ async function refreshDailyShard(env, market, shard) {
         bbLower: r.bb ? r.bb.lower : null, bbUpper: r.bb ? r.bb.upper : null,
         return20: r.return20,
         return5: r.return5, return60: r.return60,  // [V66]
+        spark: r.spark || (prev.spark || null),  // [V80] 스파크라인
         ret1y: r.ret1y, ret5y: r.ret5y, vol: r.vol, avgVol20: r.avgVol20,  // [V67]
         ts: (typeof prev.ts === "number") ? prev.ts : nowTs
       });
@@ -9817,6 +9819,7 @@ async function runTradingCycle(env) {
           return20: prevQ ? prevQ.return20 : null,
           // [V67 FIX] 1W/3M 미작동 원인 — return5/return60이 매분 여기서 소실됐다. 장기 필드 전부 보존.
           return5: prevQ ? prevQ.return5 : null, return60: prevQ ? prevQ.return60 : null,
+          spark: prevQ ? (prevQ.spark || null) : null,  // [V80] 스파크라인 보존
           ret1y: prevQ ? prevQ.ret1y : null, ret5y: prevQ ? prevQ.ret5y : null,
           vol: prevQ ? prevQ.vol : null, avgVol20: prevQ ? prevQ.avgVol20 : null,
           ts: nowTs
@@ -10091,6 +10094,7 @@ async function runTradingCycle(env) {
                 return20: return20,
                 // [V67] 1주·3개월·1년·5년·거래량 — 평가루프가 매 사이클 덮어쓰며 소실되던 문제 해결
                 return5: getNDayReturn(closes, 5), return60: getNDayReturn(closes, 60),
+                spark: closes.slice(-8).map(function(v){ return Math.round(v * 100) / 100; }),  // [V80] 스파크라인
                 ret1y: (daily.ret1y != null ? daily.ret1y : getNDayReturn(closes, 252)),
                 ret5y: (daily.ret5y != null ? daily.ret5y : null),
                 vol: (daily.vol != null ? daily.vol : ((daily.volumes && daily.volumes.length) ? daily.volumes[daily.volumes.length - 1] : null)),

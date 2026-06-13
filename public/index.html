@@ -474,7 +474,7 @@ button.btn.loading::after{content:'조회 중…';position:absolute;inset:0;disp
 
 .watchlist{display:flex;flex-direction:column;}
 .wl-card{
-  display:grid;grid-template-columns:1fr auto;
+  display:grid;grid-template-columns:1fr auto auto;
   grid-template-rows:auto auto;column-gap:12px;row-gap:1px;
   padding:10px 14px;border-bottom:1px solid var(--bd2);
   position:relative;cursor:default;transition:background .08s;
@@ -484,10 +484,13 @@ button.btn.loading::after{content:'조회 중…';position:absolute;inset:0;disp
 .wl-card:last-child{border-bottom:none;}
 .wl-sym{grid-column:1;grid-row:1;font-size:12px;font-weight:700;color:var(--acc);padding-right:18px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
 .wl-name{grid-column:1;grid-row:2;font-size:10px;color:var(--t3);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
-.wl-price{grid-column:2;grid-row:1;font-size:13px;font-weight:700;color:var(--acc);font-variant-numeric:tabular-nums;text-align:right;white-space:nowrap;}
-.wl-day{grid-column:2;grid-row:2;font-size:11px;font-weight:700;font-variant-numeric:tabular-nums;text-align:right;white-space:nowrap;}
+/* [V80] 일주일 일봉 스파크라인 — 가격/등락 왼쪽 */
+.wl-spark{grid-column:2;grid-row:1 / span 2;align-self:center;width:62px;height:28px;display:flex;align-items:center;justify-content:center;opacity:.92;}
+.wl-spark svg{width:100%;height:100%;display:block;}
+.wl-price{grid-column:3;grid-row:1;font-size:13px;font-weight:700;color:var(--acc);font-variant-numeric:tabular-nums;text-align:right;white-space:nowrap;}
+.wl-day{grid-column:3;grid-row:2;font-size:11px;font-weight:700;font-variant-numeric:tabular-nums;text-align:right;white-space:nowrap;}
 .wl-meta{display:none;}
-.wl-pnl{grid-column:2;grid-row:3;font-size:10px;text-align:right;font-variant-numeric:tabular-nums;}
+.wl-pnl{grid-column:3;grid-row:3;font-size:10px;text-align:right;font-variant-numeric:tabular-nums;}
 .wl-pnl.pos{color:var(--pos);}
 .wl-pnl.neg{color:var(--neg);}
 .wl-fav{position:absolute;top:10px;right:8px;cursor:pointer;font-size:11px;color:var(--s3);transition:color .1s;user-select:none;}
@@ -2055,6 +2058,134 @@ html[data-theme="light"] .port-card .port-total{color:#13171c;}
 @media(max-width:430px){
   .fv-idx{flex:1 1 100%;}
 }
+
+/* ════════════════════════════════════════════════════════════════════
+   [V80] 라이트 모드 가독성 종합 보강 — 안 보이던 밝은 글씨 정리 + 대비 강화
+   (스타일시트 맨 끝 = 최고 우선순위. 다크 모드엔 영향 없음.)
+   ════════════════════════════════════════════════════════════════════ */
+html[data-theme="light"]{
+  /* 작은 라벨/메타가 흰 배경에서 흐릿하던 문제 — 보조색 한 단계 진하게 */
+  --t2:#3c4654; --t3:#5f6b78;
+  --acc2:#46505e;
+}
+/* 인라인으로 밝은 색이 박힌 글씨 — 흰/연회색 계열은 본문색으로 강제 */
+html[data-theme="light"] [style*="color:#dfe7f4"],
+html[data-theme="light"] [style*="color:#e0e0e0"],
+html[data-theme="light"] [style*="color:#cbd5e1"],
+html[data-theme="light"] [style*="color:#ddd"],
+html[data-theme="light"] [style*="color:#e8eefb"],
+html[data-theme="light"] [style*="color:#eef2f8"],
+html[data-theme="light"] [style*="color:#9fb0cd"],
+html[data-theme="light"] [style*="color:#aab2c0"]{ color:var(--t1) !important; }
+html[data-theme="light"] [style*="color:#888"],
+html[data-theme="light"] [style*="color:#999"],
+html[data-theme="light"] [style*="color:#aaa"]{ color:var(--t3) !important; }
+/* 흐릿한 본문/패널 보조 텍스트 가독성 */
+html[data-theme="light"] .fv-panel-sub,
+html[data-theme="light"] .watchlist-section,
+html[data-theme="light"] .summary-label,
+html[data-theme="light"] .alt-sub,
+html[data-theme="light"] .cm-section-label,
+html[data-theme="light"] .wl-meta,
+html[data-theme="light"] .news-pub,
+html[data-theme="light"] .port-meta-label{ color:var(--t2) !important; }
+html[data-theme="light"] .wl-name{ color:#2a323d !important; }
+/* 카드/패널 위 본문 텍스트 기본값 보정 */
+html[data-theme="light"] .card,
+html[data-theme="light"] .dash-block,
+html[data-theme="light"] .fv-panel,
+html[data-theme="light"] .modal-content{ color:var(--t1); }
+/* 입력/셀렉트 — 흰 배경에 밝은 글씨 방지 */
+html[data-theme="light"] input,
+html[data-theme="light"] select,
+html[data-theme="light"] textarea{ color:#15181f; background:#fff; border-color:var(--bd); }
+html[data-theme="light"] input::placeholder{ color:#8a95a1; }
+/* 칩/배지 테두리 텍스트가 옅던 것 보정 */
+html[data-theme="light"] .wl-etf-badge{ color:#8a6a08; }
+html[data-theme="light"] .news-sector-chip.neu{ color:var(--t2); }
+/* 히트맵 줌 버튼 — 흰 배경에서 보이게 */
+html[data-theme="light"] .fv-zb{ background:#fff !important; color:#15181f !important; border-color:var(--bd) !important; }
+html[data-theme="light"] .fv-zl{ color:var(--t2) !important; }
+/* 스파크라인은 var(--pos/--neg) 사용 → 라이트에서도 자동으로 진한 녹/적색 */
+
+/* ════════════════════════════════════════════════════════════════════
+   [V80] 핸드폰 전용 UX 보강 (≤767px). 데스크탑/아이패드(≥768px)는 일절 미변경.
+   터치 타깃 확대·가독 폰트·모달 풀스크린·설정 슬라이더 손가락 조작 최적화.
+   ════════════════════════════════════════════════════════════════════ */
+@media(max-width:767px){
+  /* 손가락 터치 영역 — 버튼/탭 최소 높이 */
+  .nav-item{padding:12px 16px;font-size:12.5px;min-height:44px;display:flex;align-items:center;}
+  .sb-run-btn,.sb-btn,.sb-theme-btn,.btn,.watchlist-toggle-btn,.wl-viewmode-btn{min-height:40px;}
+  .wl-viewmode-btn,.watchlist-toggle-btn{padding:8px 12px;font-size:11px;}
+
+  /* 워치리스트 카드 — 살짝 키우고 스파크라인 폭 축소해 가격과 안 겹치게 */
+  .wl-card{padding:11px 13px;column-gap:9px;}
+  .wl-spark{width:46px;height:26px;}
+  .wl-sym{font-size:13px;}
+  .wl-name{font-size:11px;}
+  .wl-price{font-size:14px;}
+  .wl-day{font-size:12px;}
+  .wl-fav{font-size:14px;top:11px;}
+
+  /* 페이지 헤더/본문 여백 */
+  .page-title{font-size:15px;}
+  .page-body{padding:12px 12px 80px;}   /* 하단 여유(스크롤 끝 잘림 방지) */
+
+  /* 모달 = 거의 풀스크린 + 내부 스크롤 */
+  .modal{padding:0;align-items:stretch;}
+  .modal-box,.modal-content,.modal-macro,.modal-logs{
+    width:100%!important;max-width:100%!important;height:100dvh!important;max-height:100dvh!important;
+    border-radius:0!important;margin:0!important;display:flex;flex-direction:column;
+  }
+  .modal-body{flex:1 1 auto;overflow-y:auto;-webkit-overflow-scrolling:touch;}
+
+  /* 표 — 가로 스크롤 + 폰트 최소 가독 */
+  .table th,.table td{white-space:nowrap;}
+  .summary-value{font-size:14px;}
+
+  /* 히트맵(시총맵) 모바일 높이 */
+  #fvHeatmap{height:300px!important;}
+}
+@media(max-width:430px){
+  .wl-spark{width:40px;height:24px;}
+  .sb-brand-name{font-size:12px;}
+  .nav-item{font-size:12px;padding:11px 13px;}
+  .page-title{font-size:14px;}
+}
+
+/* ════════════════════════════════════════════════════════════════════
+   [V80] 설정 슬라이더 — number 입력을 게임 감도 조절식 슬라이더 + 숫자칸으로
+   ════════════════════════════════════════════════════════════════════ */
+.slider-row{display:flex;align-items:center;gap:10px;margin-top:2px;}
+.field input.cfg-numbox{width:84px;flex:0 0 auto;text-align:right;padding:7px 8px;font-variant-numeric:tabular-nums;}
+.cfg-slider{
+  flex:1 1 auto;-webkit-appearance:none;appearance:none;height:7px;border-radius:5px;cursor:pointer;
+  background:linear-gradient(90deg,var(--acc) var(--pct,50%),var(--s3) var(--pct,50%));
+  outline:none;transition:background .05s;
+}
+.cfg-slider::-webkit-slider-thumb{
+  -webkit-appearance:none;appearance:none;width:18px;height:18px;border-radius:50%;
+  background:var(--acc);border:2px solid var(--s1);cursor:pointer;
+  box-shadow:0 1px 4px rgba(0,0,0,.4);transition:transform .08s;
+}
+.cfg-slider::-webkit-slider-thumb:active{transform:scale(1.25);}
+.cfg-slider::-moz-range-thumb{
+  width:18px;height:18px;border-radius:50%;background:var(--acc);border:2px solid var(--s1);
+  cursor:pointer;box-shadow:0 1px 4px rgba(0,0,0,.4);
+}
+.cfg-slider::-moz-range-track{background:transparent;}
+.cfg-slider:focus{box-shadow:0 0 0 2px rgba(34,211,238,.25);}
+html[data-theme="light"] .cfg-slider{background:linear-gradient(90deg,#1d5fc2 var(--pct,50%),#dbe2ea var(--pct,50%));}
+html[data-theme="light"] .cfg-slider::-webkit-slider-thumb{background:#1d5fc2;border-color:#fff;}
+html[data-theme="light"] .cfg-slider::-moz-range-thumb{background:#1d5fc2;border-color:#fff;}
+/* 폰: 슬라이더 두껍게 + 썸 크게(손가락) */
+@media(max-width:767px){
+  .cfg-slider{height:10px;}
+  .cfg-slider::-webkit-slider-thumb{width:26px;height:26px;}
+  .cfg-slider::-moz-range-thumb{width:26px;height:26px;}
+  .field input.cfg-numbox{width:74px;padding:9px 8px;font-size:13px;}
+  .slider-row{gap:12px;}
+}
 </style>
 </head>
 <body>
@@ -2149,29 +2280,7 @@ html[data-theme="light"] .port-card .port-total{color:#13171c;}
   <!-- ── 콘텐츠 ── -->
   <main class="content">
 
-    <!-- ══ 우측 상단 고정 정보 바 ══ -->
-    <div class="content-topbar" id="contentTopbar">
-      <div class="topbar-block">
-        <div class="topbar-label">🇺🇸 US PORTFOLIO</div>
-        <div class="topbar-value" id="topbarTotalUS">—</div>
-        <div class="topbar-sub" id="topbarChangeUS">—</div>
-      </div>
-      <div class="topbar-block">
-        <div class="topbar-label">🇰🇷 KR PORTFOLIO</div>
-        <div class="topbar-value" id="topbarTotalKR">—</div>
-        <div class="topbar-sub" id="topbarChangeKR">—</div>
-      </div>
-      <div class="topbar-block">
-        <div class="topbar-label">시장 상태</div>
-        <div class="topbar-value" style="font-size:13px;line-height:1.5;" id="topbarMarketUS">🇺🇸 —</div>
-        <div class="topbar-sub" id="topbarMarketKR">🇰🇷 —</div>
-      </div>
-      <div class="topbar-block">
-        <div class="topbar-label">엔진 / 연결</div>
-        <div class="topbar-value" style="font-size:12px;line-height:1.5;" id="topbarLiveStatus">연결 중...</div>
-        <div class="topbar-sub" id="topbarEngineStatus">대기 중</div>
-      </div>
-    </div>
+    <!-- ══ [V80] 상단 고정 정보 바(US/KR 포트폴리오·시장상태·엔진연결) 제거됨 — 사용자 요청 ══ -->
 
     <!-- ══ PAGE: DASHBOARD ══ -->
     <div class="page" id="page-dashboard">
@@ -2817,8 +2926,8 @@ html[data-theme="light"] .port-card .port-total{color:#13171c;}
     <div class="checkbox-row"><input type="checkbox" id="cfgMarketHoursOnly"><label for="cfgMarketHoursOnly">정규장 시간에만 거래 (권장)</label></div>
     <div class="section-title" style="margin-top:10px;">초기 자본금</div>
     <div class="field-row-2">
-      <div class="field"><label>US 초기자금 ($)</label><input type="number" id="cfgInitCashUS" min="1000" step="1000"></div>
-      <div class="field"><label>KR 초기자금 (₩)</label><input type="number" id="cfgInitCashKR" min="100000" step="100000"></div>
+      <div class="field"><label>US 초기자금 ($)</label><input type="number" id="cfgInitCashUS" min="1000" max="1000000" step="1000"></div>
+      <div class="field"><label>KR 초기자금 (₩)</label><input type="number" id="cfgInitCashKR" min="100000" max="1000000000" step="1000000"></div>
     </div>
     <div class="hint">※ 자본금은 SETTINGS 저장 후 RESET ALL DATA를 눌러야 적용됩니다.</div>
     <div class="section-divider"></div>
@@ -3631,7 +3740,8 @@ html[data-theme="light"] .port-card .port-total{color:#13171c;}
 
   // [V72] rank → 시총($B) 근사 — S&P500 실측 분포 앵커를 log-log 보간.
   //   Finviz처럼 초대형주(NVDA·AAPL)는 압도적으로 크고 꼬리는 작게 나오도록.
-  var FV_CAP_ANCH = [[1,4600],[2,3900],[3,3300],[5,3000],[7,1900],[10,1250],[15,950],[20,780],[30,520],[50,310],[75,210],[100,155],[150,105],[200,75],[250,58],[300,44],[400,27],[500,17],[600,10]];
+  // [V80] 2026 실측 시총($B) 재보정 — 초대형주 압도적 우위·중형주 완만·꼬리 급감.
+  var FV_CAP_ANCH = [[1,4400],[2,3800],[3,3500],[4,2900],[5,2500],[7,1800],[10,1050],[15,760],[20,560],[30,360],[50,225],[75,150],[100,112],[150,76],[200,55],[250,42],[300,33],[400,22],[500,15],[600,9]];
   function fvRankCap(rank) {
     var A = FV_CAP_ANCH, n = A.length;
     if (rank <= A[0][0]) return A[0][1];
@@ -3647,7 +3757,8 @@ html[data-theme="light"] .port-card .port-total{color:#13171c;}
   }
 
   // [V74] KR rank → 시총(조원) 근사. 삼성전자(1위)≈500조, SK하이닉스≈250조 … 꼬리 급감.
-  var FV_CAP_ANCH_KR = [[1,520],[2,250],[3,90],[5,70],[7,55],[10,45],[15,32],[20,24],[30,16],[50,9.5],[75,6],[100,4.2],[150,2.6],[200,1.7],[300,0.9]];
+  // [V80] 2026 실측: 삼성전자≈480조·SK하이닉스≈280조 압도, LG엔솔/삼바 80~90조, 이후 급감.
+  var FV_CAP_ANCH_KR = [[1,480],[2,280],[3,95],[4,82],[5,68],[7,54],[10,44],[15,31],[20,23],[30,15.5],[50,9.2],[75,5.8],[100,4.1],[150,2.5],[200,1.6],[300,0.85]];
   function fvRankCapKR(rank) {
     var A = FV_CAP_ANCH_KR, n = A.length;
     if (rank <= A[0][0]) return A[0][1];
@@ -5702,6 +5813,31 @@ html[data-theme="light"] .port-card .port-total{color:#13171c;}
     return market === 'kr' ? krLabel(q.symbol) : usLabel(q.symbol);
   }
 
+  // [V80] 워치리스트 미니 일봉 스파크라인 — 최근 ~1주(8일봉) 종가 라인.
+  //   상승=초록/하락=빨강, 마지막점 도트. 데이터 없으면 빈 박스.
+  function buildWlSpark(spark, dayPct) {
+    if (!spark || !Array.isArray(spark) || spark.length < 2) return '<div class="wl-spark"></div>';
+    var w = 62, h = 28, pad = 3;
+    var min = Math.min.apply(null, spark), max = Math.max.apply(null, spark);
+    var rng = (max - min) || (Math.abs(max) || 1) * 0.01;
+    var up = (spark[spark.length-1] >= spark[0]);
+    var col = up ? 'var(--pos)' : 'var(--neg)';
+    var n = spark.length, step = (w - pad*2) / (n - 1);
+    var pts = spark.map(function(v, i){
+      var x = pad + i * step;
+      var y = pad + (h - pad*2) * (1 - (v - min) / rng);
+      return x.toFixed(1) + ',' + y.toFixed(1);
+    });
+    var lastXY = pts[pts.length-1].split(',');
+    // 면적 채움 경로
+    var area = 'M' + pts[0] + ' L' + pts.join(' L') + ' L' + (pad+(n-1)*step).toFixed(1) + ',' + (h-pad) + ' L' + pad + ',' + (h-pad) + ' Z';
+    var gid = 'wlsp' + Math.round(min*1000 % 100000) + '_' + n;
+    return '<div class="wl-spark"><svg viewBox="0 0 '+w+' '+h+'" preserveAspectRatio="none">'+
+      '<polyline fill="none" stroke="'+col+'" stroke-width="1.4" stroke-linejoin="round" stroke-linecap="round" points="'+pts.join(' ')+'"/>'+
+      '<circle cx="'+lastXY[0]+'" cy="'+lastXY[1]+'" r="1.7" fill="'+col+'"/>'+
+      '</svg></div>';
+  }
+
   function buildWatchlistCard(q, market) {
     var dayClass = q.dayPct > 0 ? 'pos' : (q.dayPct < 0 ? 'neg' : '');
     var sign = q.dayPct >= 0 ? '+' : '';
@@ -5724,6 +5860,7 @@ html[data-theme="light"] .port-card .port-total{color:#13171c;}
       (name
         ? '<div class="wl-name">'+escapeHtml(name)+heldBadge+etfBadge+'</div><div class="wl-sym">'+escapeHtml(q.symbol)+'</div>'
         : '<div class="wl-name">'+escapeHtml(q.symbol)+heldBadge+etfBadge+'</div>')+
+      buildWlSpark(q.spark, q.dayPct)+
       '<div class="wl-price">'+fmtNum(q.price)+'</div>'+
       '<div class="wl-day '+dayClass+'">'+sign+fmtNum(q.dayPct,2)+'%</div>'+
       pnlLine+
@@ -6993,6 +7130,53 @@ html[data-theme="light"] .port-card .port-total{color:#13171c;}
       .then(function(){ clearTimeout(guard); restore(); });
   }
 
+  // [V80] 설정창의 number 입력(min·max 보유)을 슬라이더+숫자칸으로 변환·동기화.
+  //   min/max 없는 거래성 입력(입출금)은 제외. 원본 input(id 유지)을 그대로 두고
+  //   슬라이더를 덧붙여 기존 저장/로드 코드가 그대로 동작하게 한다.
+  function slidifySettings() {
+    var modal = $('settingsModal');
+    if (!modal) return;
+    var nums = modal.querySelectorAll('input[type="number"]');
+    nums.forEach(function(inp){
+      var min = inp.getAttribute('min'), max = inp.getAttribute('max');
+      if (min == null || max == null) return;   // 입출금 등 자유 입력은 슬라이더 미적용
+      if (inp.__slidified) { if (inp.__syncRange) inp.__syncRange(); return; }
+      inp.__slidified = true;
+      var range = document.createElement('input');
+      range.type = 'range';
+      range.min = min; range.max = max;
+      range.step = inp.getAttribute('step') || '1';
+      range.className = 'cfg-slider';
+      var row = document.createElement('div');
+      row.className = 'slider-row';
+      inp.parentNode.insertBefore(row, inp);
+      row.appendChild(range);
+      row.appendChild(inp);
+      inp.classList.add('cfg-numbox');
+      var lo = parseFloat(min), hi = parseFloat(max);
+      function fill(){
+        var v = parseFloat(range.value);
+        var pct = (hi > lo && isFinite(v)) ? ((v - lo) / (hi - lo) * 100) : 0;
+        range.style.setProperty('--pct', Math.max(0, Math.min(100, pct)).toFixed(1) + '%');
+      }
+      function syncRange(){
+        var v = parseFloat(inp.value);
+        if (inp.value !== '' && isFinite(v)) range.value = inp.value;
+        fill();
+      }
+      range.addEventListener('input', function(){
+        inp.value = range.value;
+        fill();
+        inp.dispatchEvent(new Event('input', { bubbles: true }));
+        inp.dispatchEvent(new Event('change', { bubbles: true }));
+      });
+      inp.addEventListener('input', syncRange);
+      inp.addEventListener('change', syncRange);
+      inp.__syncRange = syncRange;
+      syncRange();
+    });
+  }
+
   function openSettings() {
     if (!currentCfg) { toast('설정 로드 중...'); return; }
     var pw = prompt('SETTINGS 비밀번호를 입력하세요:');
@@ -7141,6 +7325,7 @@ html[data-theme="light"] .port-card .port-total{color:#13171c;}
     renderSectorGroups();  // [섹터그룹] 그룹별 가중치·성과 표시
     renderSignalTypes();   // [신호타입] 신호별 가중치·성과 표시
     renderEngineStats();   // [통계] 일별 신호·거래·에러 막대그래프
+    slidifySettings();     // [V80] number 입력 → 슬라이더 변환·동기화 (값 채운 뒤 실행)
     $('settingsModal').classList.add('show');
     window.switchStratTab('us');
 }
