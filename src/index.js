@@ -11688,15 +11688,19 @@ async function handleRequest(request, env) {
       if (!sym || sym.length > 16 || !/^[A-Za-z0-9.^=\-]+$/.test(sym)) {
         return Response.json({ error: "bad symbol" }, { status: 400, headers: cors });
       }
-      // [V85] interval 지원 — 분봉(1m/5m/15m)·일봉(1d)·주봉(1wk). 야후 제약에 맞춰 범위 보정.
-      let interval = ["1m","5m","15m","1d","1wk","1mo"].indexOf(url.searchParams.get("interval")) >= 0 ? url.searchParams.get("interval") : "1d";
+      // [V86] interval 지원 — 분봉(1m/5m/15m/30m/60m)·일봉(1d)·주봉(1wk)·월봉(1mo). 야후 제약에 맞춰 범위 보정.
+      let interval = ["1m","2m","5m","15m","30m","60m","90m","1h","1d","1wk","1mo"].indexOf(url.searchParams.get("interval")) >= 0 ? url.searchParams.get("interval") : "1d";
+      if (interval === "1h") interval = "60m";   // 야후는 60m 사용
       let range = url.searchParams.get("range") || "3mo";
-      if (["1d","5d","1mo","3mo","6mo","1y","2y","5y"].indexOf(range) < 0) range = "3mo";
+      if (["1d","5d","1mo","3mo","6mo","1y","2y","5y","10y"].indexOf(range) < 0) range = "3mo";
       if (interval === "1m"  && ["1d","5d"].indexOf(range) < 0) range = "1d";
       if (interval === "5m"  && ["1d","5d","1mo"].indexOf(range) < 0) range = "5d";
       if (interval === "15m" && ["1d","5d","1mo"].indexOf(range) < 0) range = "1mo";
+      if (interval === "30m" && ["5d","1mo"].indexOf(range) < 0) range = "1mo";
+      if (interval === "60m" && ["1mo","3mo","6mo"].indexOf(range) < 0) range = "3mo";
       if (interval === "1wk" && ["6mo","1y","2y","5y"].indexOf(range) < 0) range = "2y";
-      const intraday = (interval === "1m" || interval === "5m" || interval === "15m");
+      if (interval === "1mo" && ["2y","5y","10y"].indexOf(range) < 0) range = "5y";
+      const intraday = (interval === "1m" || interval === "5m" || interval === "15m" || interval === "30m" || interval === "60m");
       const ck = "chart:" + sym + ":" + interval + ":" + range;
       const cached = await getState(env.DB, ck, null);
       const ttl = intraday ? 2 * 60 * 1000 : 10 * 60 * 1000;   // 분봉은 짧은 캐시(빠른 갱신)
