@@ -2153,18 +2153,30 @@ html[data-theme="light"] .detail-tf-btn.active{color:#fff;}
 .detail-chart .pc-panelbg{fill:transparent;}
 .detail-sec{font-size:10px;font-weight:700;color:var(--t3);text-transform:uppercase;letter-spacing:1px;
   padding:6px 2px;margin-bottom:6px;border-bottom:1px solid var(--bd2);}
-.detail-data{display:grid;grid-template-columns:repeat(auto-fill,minmax(150px,1fr));gap:8px;margin-bottom:30px;}
-.detail-cell{background:var(--s1);border:1px solid var(--bd2);border-radius:6px;padding:9px 11px;}
-.detail-cell .l{font-size:9px;font-weight:700;color:var(--t3);text-transform:uppercase;letter-spacing:.6px;}
-.detail-cell .v{font-size:14px;font-weight:700;color:var(--t1);font-variant-numeric:tabular-nums;margin-top:3px;font-family:'IBM Plex Mono',monospace;}
-.detail-cell .v.pos{color:var(--pos);}
-.detail-cell .v.neg{color:var(--neg);}
+/* [V87] 차트(좌) + 수신 데이터 표(우 사이드바) 2단 레이아웃 */
+.detail-main{display:flex;gap:14px;align-items:flex-start;margin-bottom:30px;}
+.detail-main .detail-chart{flex:1 1 auto;min-width:0;margin-bottom:0;}
+.detail-side{flex:0 0 268px;width:268px;background:var(--s1);border:1px solid var(--bd);border-radius:8px;
+  padding:10px 12px;align-self:stretch;}
+.detail-side .detail-sec{margin-bottom:8px;}
+.detail-table{width:100%;border-collapse:collapse;font-variant-numeric:tabular-nums;}
+.detail-table tr{border-bottom:1px solid var(--bd2);}
+.detail-table tr:last-child{border-bottom:none;}
+.detail-table td{padding:7px 2px;vertical-align:middle;}
+.detail-table td.l{font-size:10.5px;color:var(--t3);font-weight:600;white-space:nowrap;}
+.detail-table td.v{font-size:12.5px;font-weight:700;color:var(--t1);text-align:right;
+  font-family:'IBM Plex Mono',monospace;white-space:nowrap;}
+.detail-table td.v.pos{color:var(--pos);} .detail-table td.v.neg{color:var(--neg);}
 /* 워치리스트 카드 클릭 가능 표시 */
 .wl-card{cursor:pointer;}
+/* 좁은 화면(태블릿 세로/폰): 데이터 표를 차트 아래로 */
+@media(max-width:900px){
+  .detail-main{flex-direction:column;}
+  .detail-side{flex:1 1 auto;width:100%;}
+}
 @media(max-width:767px){
   .detail-sym{font-size:18px;}
   .detail-price{font-size:20px;}
-  .detail-data{grid-template-columns:repeat(auto-fill,minmax(118px,1fr));}
   .detail-tf-btn{flex:1;}
   #detailSearch{width:140px;}
 }
@@ -2810,11 +2822,14 @@ html[data-theme="light"] .cfg-slider::-moz-range-thumb{background:#1d5fc2;border
               <button type="button" class="detail-ind-btn" data-ind="macd">MACD</button>
             </div>
           </div>
-          <!-- 프로 캔들 차트 -->
-          <div class="detail-chart" id="detailChart"><div class="detail-empty">차트 로딩 중…</div></div>
-          <!-- 수신 데이터 -->
-          <div class="detail-sec">수신 데이터 (엔진 보유 지표)</div>
-          <div class="detail-data" id="detailData"></div>
+          <!-- 차트(좌) + 수신 데이터 표(우 사이드바) -->
+          <div class="detail-main">
+            <div class="detail-chart" id="detailChart"><div class="detail-empty">차트 로딩 중…</div></div>
+            <aside class="detail-side">
+              <div class="detail-sec">수신 데이터</div>
+              <table class="detail-table"><tbody id="detailData"></tbody></table>
+            </aside>
+          </div>
         </div>
       </div>
     </div>
@@ -6199,7 +6214,7 @@ html[data-theme="light"] .cfg-slider::-moz-range-thumb{background:#1d5fc2;border
       } else { chEl.textContent = '—'; chEl.className = 'detail-change'; }
     }
     var rows = [];
-    function add(l, v, cls) { rows.push('<div class="detail-cell"><div class="l">' + l + '</div><div class="v' + (cls ? ' ' + cls : '') + '">' + v + '</div></div>'); }
+    function add(l, v, cls) { rows.push('<tr><td class="l">' + l + '</td><td class="v' + (cls ? ' ' + cls : '') + '">' + v + '</td></tr>'); }
     function pct(v) { return (typeof v === 'number') ? ((v >= 0 ? '+' : '') + v.toFixed(2) + '%') : '—'; }
     function pc(v) { return (typeof v === 'number') ? (v >= 0 ? 'pos' : 'neg') : ''; }
     function num(v) { return (v != null && typeof v === 'number') ? fmtNum(v) : '—'; }
