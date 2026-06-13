@@ -2484,8 +2484,15 @@ const DEFAULT_CFG = {
     rfApiKey: "WLMMRNV8GDpmbjEcrFar",
     rfVersion: 7,
     confMin: 0.6,
+    // [V84] Vision 영향 상한 — 아직 성능이 검증 단계라 "다른 변수보다 작게" 반영.
+    //   UP 부스트 최대치(기존 1.50 → 1.15). 기술적 팩터(TA패턴·알파·ADX)보다 항상 작게 유지.
+    maxBoost: 1.15,
+    requireTAConfirm: true,  // [V84] Vision UP 부스트는 기술적 추세가 우호적일 때만 적용(앙상블=오신호↓=실적중률↑)
     monthlyBudget: 10000   // 무료 Public 플랜 월 한도
   },
+  // [V84] 기술적 분석 강조 계수 — 사이징의 기술적 팩터(TA패턴·알파품질·ADX) 영향을 증폭.
+  //   effectiveScale = 1 + (scale-1)×emphasis. 1.0=기존, >1=기술적 분석 비중↑.
+  technicalEmphasis: 1.35,
   // === [신규·인터마켓] 시장 컨텍스트 (risk-on/off) — 외부 자산으로 위험선호 측정 ===
   //   HYG(신용)·BTC(위험심리)·UUP(달러)·^VIX9D(공포)·TLT(안전자산)를 1 batch quote로 수집.
   //   [예산 안전] 캐시(refreshMinutes) + 월 사용량 enrichMaxUsageRatio(코어 셧다운보다 낮음) 초과 시
@@ -4590,6 +4597,38 @@ function getMA(h, p) {
   return s / p;
 }
 
+// [V84] EMA 시리즈 — SMA seed 후 지수평활. MACD 등에 사용.
+function emaSeries(h, p) {
+  if (!Array.isArray(h) || h.length < p) return null;
+  const k = 2 / (p + 1);
+  let e = 0;
+  for (let i = 0; i < p; i++) e += h[i];
+  e /= p;
+  const out = new Array(p - 1).fill(null);
+  out.push(e);
+  for (let i = p; i < h.length; i++) { e = h[i] * k + e * (1 - k); out.push(e); }
+  return out;
+}
+
+// [V84] MACD(12,26,9) — 추세 모멘텀 방향/가속 확인. 표준 EMA 기반.
+//   반환 {macd, signal, hist}. 데이터 부족 시 null. (추가 fetch 0 — 기존 종가만 사용)
+function getMACD(closes, fast, slow, sigP) {
+  fast = fast || 12; slow = slow || 26; sigP = sigP || 9;
+  if (!Array.isArray(closes) || closes.length < slow + sigP) return null;
+  const ef = emaSeries(closes, fast), es = emaSeries(closes, slow);
+  if (!ef || !es) return null;
+  const macdArr = [];
+  for (let i = 0; i < closes.length; i++) {
+    if (ef[i] != null && es[i] != null) macdArr.push(ef[i] - es[i]);
+  }
+  if (macdArr.length < sigP) return null;
+  const sigSeries = emaSeries(macdArr, sigP);
+  if (!sigSeries) return null;
+  const macd = macdArr[macdArr.length - 1];
+  const signal = sigSeries[sigSeries.length - 1];
+  return { macd: macd, signal: signal, hist: macd - signal };
+}
+
 // [수정] 진짜 True Range 기반 ATR — highs/lows/closes 사용
 // 하위 호환: highs/lows가 없거나 길이 부족하면 close-to-close 변동량으로 fallback
 function getATR(closes, p, highs, lows) {
@@ -6515,6 +6554,16 @@ function computeAlphaQuality(dailyData, regime) {
       else if (offHigh >= 40)  { score -= 0.12; factors.push("52WL-"); }   // 고점서 40%↓ = 약세 잔존
     }
   }
+  // 6) [V84 TA강화] MACD(12,26,9) — 모멘텀 방향/가속 확인. 골든(히스토 양전+MACD>0)=상승가속,
+  //    데드(히스토 음전+MACD<0)=하락가속. 추세추종의 핵심 확인 지표라 비중 ±0.12.
+  {
+    const macd = getMACD(closes);
+    if (macd) {
+      if (macd.hist > 0 && macd.macd > 0)       { score += 0.12; factors.push("MACD+"); }
+      else if (macd.hist < 0 && macd.macd < 0)  { score -= 0.12; factors.push("MACD-"); }
+      else if (macd.hist > 0)                    { score += 0.05; factors.push("MACD↑"); }  // 반등 초기
+    }
+  }
 
   score = Math.max(0, Math.min(1, score));
   return { score: score, factors: factors };
@@ -6704,17 +6753,21 @@ function evaluateAllStrategies(price, dayPct, dailyData, cfg, signalStats, regim
     const acc = visionPreds.__accuracy;
     const prc = (acc && acc.total >= 20) ? acc.precision : null;
     const tr2 = (prc == null) ? 1 : (prc < 0.5 ? 0 : Math.min(1, (prc - 0.45) / 0.2));
-    if (va.enabled && vp && vp.pred === "up" && vp.conf >= 0.78 && tr2 >= 0.5) {
+    // [V84] Vision 단독 진입 — 성능 검증 단계라 더 보수적으로(임계 0.78→0.80, trust≥0.6,
+    //   가중치 0.8→0.7, confidence 0.5→0.45, RSI≤70). 추세정렬·OBV 매집까지 동반될 때만.
+    if (va.enabled && vp && vp.pred === "up" && vp.conf >= 0.80 && tr2 >= 0.6) {
       const c = dailyData.closes;
       if (c && c.length >= 50) {
         const ma20v = getMA(c, 20), ma50v = getMA(c, 50);
         const ma200v = c.length >= 200 ? getMA(c, 200) : null;
         const aligned = ma20v != null && ma50v != null && ma20v > ma50v && price > ma50v && (ma200v == null || ma50v > ma200v);
-        // 변동성 정상 + 과열 아님(RSI<=72)일 때만
         const rsiv = getRSI(c, cfg.rsiPeriod || 14);
-        if (aligned && rsiv != null && rsiv <= 72) {
-          sig = { name: "TR_VISION_UP", weight: 0.8, type: "TREND", confidence: 0.5,
-            detail: "VISION_UP " + Math.round(vp.conf * 100) + "% 추세정렬 보조진입 RSI" + rsiv.toFixed(0),
+        // [V84] 기술적 동의 추가 — 알파품질이 우호적(≥0.55)일 때만 단독 진입(오신호↓)
+        const aqv = computeAlphaQuality(dailyData, regime);
+        const taAgree = aqv && aqv.score >= 0.55;
+        if (aligned && taAgree && rsiv != null && rsiv <= 70) {
+          sig = { name: "TR_VISION_UP", weight: 0.7, type: "TREND", confidence: 0.45,
+            detail: "VISION_UP " + Math.round(vp.conf * 100) + "% 추세정렬+알파동의 보조진입 RSI" + rsiv.toFixed(0),
             members: ["TR_VISION_UP"] };
         }
       }
@@ -6791,10 +6844,28 @@ function evaluateAllStrategies(price, dayPct, dailyData, cfg, signalStats, regim
           sig.visionNote = "VISION_DOWN " + Math.round(vp.conf * 100) + "% 축소(미검증)";
         }
       } else if (vp.pred === "up" && vp.conf >= 0.65) {
-        const base = vp.conf >= 0.90 ? 1.50 : vp.conf >= 0.80 ? 1.35 : vp.conf >= 0.70 ? 1.20 : 1.10;
-        const boost = 1 + (base - 1) * trust; // 적중률에 비례
-        sig.visionBoost = boost;
-        sig.visionNote = "VISION_UP " + Math.round(vp.conf * 100) + "% ×" + boost.toFixed(2) + (prec != null ? " p" + Math.round(prec * 100) : "");
+        // [V84] Vision UP 부스트 — "다른 변수보다 작게". 상한은 cfg.visionAI.maxBoost(기본 1.15).
+        //   기술적 추세가 우호적일 때만 적용(앙상블): requireTAConfirm + 알파품질/추세정렬 확인 →
+        //   Vision 단독 오신호로 인한 사이즈 과대 방지 = 실현 적중률↑.
+        const vmax = (typeof va.maxBoost === "number" && va.maxBoost > 1) ? va.maxBoost : 1.15;
+        let taOk = true;
+        if (va.requireTAConfirm !== false) {
+          const _aqv = computeAlphaQuality(dailyData, regime);
+          const _cv = dailyData.closes;
+          const _ma20 = (_cv && _cv.length >= 20) ? getMA(_cv, 20) : null;
+          const _ma50 = (_cv && _cv.length >= 50) ? getMA(_cv, 50) : null;
+          const _aligned = (_ma20 != null && _ma50 != null && _ma20 > _ma50 && price > _ma50);
+          taOk = (_aqv && _aqv.score >= 0.5) || _aligned;   // 알파 우호 또는 추세정렬 시에만 부스트
+        }
+        if (taOk) {
+          // conf 90%→vmax, 80%→70%, 70%→45%, 65%→25% (편차 비례 후 trust 가중)
+          const frac = vp.conf >= 0.90 ? 1.0 : vp.conf >= 0.80 ? 0.7 : vp.conf >= 0.70 ? 0.45 : 0.25;
+          const boost = 1 + (vmax - 1) * frac * trust;
+          sig.visionBoost = (sig.visionBoost || 1.0) * boost;
+          sig.visionNote = "VISION_UP " + Math.round(vp.conf * 100) + "% ×" + boost.toFixed(2) + (prec != null ? " p" + Math.round(prec * 100) : "");
+        } else {
+          sig.visionNote = "VISION_UP " + Math.round(vp.conf * 100) + "% 보류(TA 비우호)";
+        }
       }
     }
   }
@@ -6824,19 +6895,27 @@ function evaluateAllStrategies(price, dayPct, dailyData, cfg, signalStats, regim
     }
   }
 
+  // [V84] 기술적 분석 강조 — TA 팩터(알파·ADX·패턴)의 배수 편차를 emphasis로 증폭해 사이징 비중↑.
+  const _emph = (typeof cfg.technicalEmphasis === "number" && cfg.technicalEmphasis > 0) ? cfg.technicalEmphasis : 1.0;
+  function _te(scale) { return 1 + (scale - 1) * _emph; }   // emphasis 적용 스케일
+  // 기술적 팩터의 종합 우호도(0~1) — Vision 앙상블 게이트에 사용
+  let _taFavor = 0.5;
+
   // [다중 팩터 알파] 모멘텀+RS+거래량 품질로 사이즈 차등 — 강한 종목 더 크게, 약한 종목 작게.
   //   추세정렬 게이트를 통과한 종목 중에서도 "진짜 강한 추세"를 가려내 자본 효율↑ (추가 fetch 0).
   {
     const aq = computeAlphaQuality(dailyData, regime);
     if (aq) {
+      _taFavor = aq.score;
       let qBoost = 1.0;
-      if (aq.score >= 0.78)      qBoost = 1.15;  // 고품질: 강모멘텀+RS우위+매집
-      else if (aq.score >= 0.62) qBoost = 1.07;
-      else if (aq.score <= 0.30) qBoost = 0.78;  // 저품질: 약세+분산 → 보수화
-      else if (aq.score <= 0.42) qBoost = 0.90;
+      if (aq.score >= 0.78)      qBoost = 1.18;  // 고품질: 강모멘텀+RS우위+매집+MACD
+      else if (aq.score >= 0.62) qBoost = 1.09;
+      else if (aq.score <= 0.30) qBoost = 0.76;  // 저품질: 약세+분산 → 보수화
+      else if (aq.score <= 0.42) qBoost = 0.89;
       if (qBoost !== 1.0) {
-        sig.visionBoost = (sig.visionBoost || 1.0) * qBoost;
-        sig.alphaNote = "ALPHA " + aq.score.toFixed(2) + "×" + qBoost + (aq.factors.length ? " " + aq.factors.join(",") : "");
+        const eff = _te(qBoost);
+        sig.visionBoost = (sig.visionBoost || 1.0) * eff;
+        sig.alphaNote = "ALPHA " + aq.score.toFixed(2) + "×" + eff.toFixed(2) + (aq.factors.length ? " " + aq.factors.join(",") : "");
       }
     }
   }
@@ -6854,9 +6933,13 @@ function evaluateAllStrategies(price, dayPct, dailyData, cfg, signalStats, regim
       // [레버리지/인버스 강화] 3배 ETF는 횡보·약추세에서 decay 손실이 치명적 →
       //   강추세(ADX≥25)가 아니면 추가 억제(×0.65). 강추세에서만 레버리지의 증폭을 활용.
       if (isLevETF2 && adx < 25) aScale *= 0.65;
+      // [V84] ADX≥30 강추세면 _taFavor 상향(기술적 우호 신호)
+      if (adx >= 30) _taFavor = Math.min(1, _taFavor + 0.1);
+      else if (adx < 18) _taFavor = Math.max(0, _taFavor - 0.1);
       if (aScale !== 1.0) {
-        sig.visionBoost = (sig.visionBoost || 1.0) * aScale;
-        sig.adxNote = "ADX " + adx.toFixed(0) + "×" + aScale.toFixed(2) + (isLevETF2 ? " LEV" : "");
+        const eff = _te(aScale);
+        sig.visionBoost = (sig.visionBoost || 1.0) * eff;
+        sig.adxNote = "ADX " + adx.toFixed(0) + "×" + eff.toFixed(2) + (isLevETF2 ? " LEV" : "");
       }
     }
   }
@@ -6868,13 +6951,17 @@ function evaluateAllStrategies(price, dayPct, dailyData, cfg, signalStats, regim
     const ta = taDetectPatterns(dailyData);
     if (ta && ta.patterns.length) {
       let tScale = 1.0;
-      if (ta.score >= 5)       tScale = 1.15;
-      else if (ta.score >= 3)  tScale = 1.08;
-      else if (ta.score <= -5) tScale = 0.65;
-      else if (ta.score <= -3) tScale = 0.82;
+      if (ta.score >= 5)       tScale = 1.18;
+      else if (ta.score >= 3)  tScale = 1.10;
+      else if (ta.score <= -5) tScale = 0.62;
+      else if (ta.score <= -3) tScale = 0.80;
+      // [V84] 차트패턴 점수도 기술적 우호도에 반영
+      if (ta.score >= 3) _taFavor = Math.min(1, _taFavor + 0.08);
+      else if (ta.score <= -3) _taFavor = Math.max(0, _taFavor - 0.12);
       if (tScale !== 1.0) {
-        sig.visionBoost = (sig.visionBoost || 1.0) * tScale;
-        sig.taNote = "TA " + (ta.score >= 0 ? "+" : "") + ta.score + (ta.top ? " " + ta.top.name : "") + "×" + tScale.toFixed(2);
+        const eff = _te(tScale);
+        sig.visionBoost = (sig.visionBoost || 1.0) * eff;
+        sig.taNote = "TA " + (ta.score >= 0 ? "+" : "") + ta.score + (ta.top ? " " + ta.top.name : "") + "×" + eff.toFixed(2);
       }
     }
   }

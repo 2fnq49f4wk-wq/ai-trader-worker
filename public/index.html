@@ -487,14 +487,13 @@ button.btn.loading::after{content:'조회 중…';position:absolute;inset:0;disp
 /* [V80] 일주일 일봉 스파크라인 — 가격/등락 왼쪽 */
 .wl-spark{grid-column:2;grid-row:1 / span 2;align-self:center;width:62px;height:28px;display:flex;align-items:center;justify-content:center;opacity:.95;}
 .wl-spark svg{width:100%;height:100%;display:block;}
-/* [V82] 색은 CSS 속성으로 지정(여기선 var() 정상 동작) — 상승 녹/하락 적 */
-.wl-spark .wls-line{fill:none;stroke-width:1.4;stroke-linejoin:round;stroke-linecap:round;}
-.wl-spark .wls-area{stroke:none;fill-opacity:.13;}
-.wl-spark.up .wls-line,.wl-spark.up .wls-dot{stroke:var(--pos);fill:var(--pos);}
-.wl-spark.up .wls-area{fill:var(--pos);}
-.wl-spark.down .wls-line,.wl-spark.down .wls-dot{stroke:var(--neg);fill:var(--neg);}
-.wl-spark.down .wls-area{fill:var(--neg);}
+/* [V84] 깔끔한 선그래프 — 색은 CSS 속성으로(여기선 var() 정상 동작). 상승 녹/하락 적 */
+.wl-spark .wls-line{fill:none;stroke-width:1.5;stroke-linejoin:round;stroke-linecap:round;vector-effect:non-scaling-stroke;}
 .wl-spark .wls-dot{stroke:none;}
+.wl-spark.up .wls-line{stroke:var(--pos);}
+.wl-spark.up .wls-dot{fill:var(--pos);}
+.wl-spark.down .wls-line{stroke:var(--neg);}
+.wl-spark.down .wls-dot{fill:var(--neg);}
 .wl-price{grid-column:3;grid-row:1;font-size:13px;font-weight:700;color:var(--acc);font-variant-numeric:tabular-nums;text-align:right;white-space:nowrap;}
 .wl-day{grid-column:3;grid-row:2;font-size:11px;font-weight:700;font-variant-numeric:tabular-nums;text-align:right;white-space:nowrap;}
 .wl-meta{display:none;}
@@ -2983,6 +2982,11 @@ html[data-theme="light"] .cfg-slider::-moz-range-thumb{background:#1d5fc2;border
       <div class="field"><label>Vision 신뢰도 최소</label><input type="number" id="cfgVisionConfMin" value="0.60" min="0.50" max="0.99" step="0.05"></div>
       <div class="field"><label>월 API 한도 (Roboflow 플랜)</label><input type="number" id="cfgVisionMonthlyBudget" value="10000" min="100" max="100000" step="100"></div>
     </div>
+    <div class="field-row-2">
+      <div class="field"><label>Vision 영향 상한 (×배수)</label><input type="number" id="cfgVisionMaxBoost" value="1.15" min="1.00" max="1.50" step="0.01"></div>
+      <div class="field"><label>기술적 분석 강조 (TA 비중)</label><input type="number" id="cfgTechnicalEmphasis" value="1.35" min="1.00" max="2.00" step="0.05"></div>
+    </div>
+    <div class="hint" style="margin-bottom:8px;">Vision 영향 상한이 낮을수록 AI 차트예측을 더 작게 반영(아직 성능 검증 단계). 기술적 분석 강조가 높을수록 TA 지표(MACD·ADX·패턴·알파)가 매수 사이즈를 더 크게 좌우합니다.</div>
     <div class="hint" style="margin-bottom:4px;">
       📊 <b>한도 자동 분배:</b> 월한도 ÷ 22일 = 일일예산 |
       보유종목(3타임프레임·8h캐시) → 나머지(1타임프레임·순환) |
@@ -5827,29 +5831,32 @@ html[data-theme="light"] .cfg-slider::-moz-range-thumb{background:#1d5fc2;border
     return market === 'kr' ? krLabel(q.symbol) : usLabel(q.symbol);
   }
 
-  // [V80] 워치리스트 미니 일봉 스파크라인 — 최근 ~1주(8일봉) 종가 라인.
+  // [V84] 워치리스트 미니 일봉 선그래프 — 최근 ~1주(8일봉) 종가. 깔끔한 라인만.
   //   상승=초록/하락=빨강, 마지막점 도트. 데이터 없으면 빈 박스.
+  //   · preserveAspectRatio는 'xMidYMid meet'로 균일 스케일(박스 비율 달라도 안 찌그러짐)
+  //   · 세로 범위에 여유(최소 변동폭 보장) → 횡보 주간의 미세 noise가 과장돼 들쭉날쭉 보이던 문제 해결
   function buildWlSpark(spark, dayPct) {
     if (!spark || !Array.isArray(spark) || spark.length < 2) return '<div class="wl-spark"></div>';
-    var w = 62, h = 28, pad = 3;
+    var w = 64, h = 26, padX = 2, padY = 4;
     var min = Math.min.apply(null, spark), max = Math.max.apply(null, spark);
-    var rng = (max - min) || (Math.abs(max) || 1) * 0.01;
+    var base = (max + min) / 2 || 1;
+    // 최소 범위 = 종가의 2% — 거의 평탄한 주간이 와이드하게 출렁이지 않게(완만한 선 유지)
+    var minRng = Math.abs(base) * 0.02;
+    var rng = Math.max(max - min, minRng);
+    var mid = (max + min) / 2;
+    var lo = mid - rng / 2, hi = mid + rng / 2;
     var up = (spark[spark.length-1] >= spark[0]);
-    // [V82] 색은 CSS 변수로 — SVG '표시 속성(stroke=...)'엔 var()가 안 먹으므로 반드시 inline style 사용.
     var cls = up ? 'up' : 'down';
-    var n = spark.length, step = (w - pad*2) / (n - 1);
+    var n = spark.length, step = (w - padX*2) / (n - 1);
     var pts = spark.map(function(v, i){
-      var x = pad + i * step;
-      var y = pad + (h - pad*2) * (1 - (v - min) / rng);
+      var x = padX + i * step;
+      var y = padY + (h - padY*2) * (1 - (v - lo) / (hi - lo));
       return x.toFixed(1) + ',' + y.toFixed(1);
     });
     var lastXY = pts[pts.length-1].split(',');
-    // 면적 채움 경로(아래쪽 살짝 채워 미니 차트 느낌)
-    var area = 'M' + pts[0] + ' L' + pts.join(' L') + ' L' + (pad+(n-1)*step).toFixed(1) + ',' + (h-pad) + ' L' + pad + ',' + (h-pad) + ' Z';
-    return '<div class="wl-spark '+cls+'"><svg viewBox="0 0 '+w+' '+h+'" preserveAspectRatio="none">'+
-      '<path class="wls-area" d="'+area+'"/>'+
+    return '<div class="wl-spark '+cls+'"><svg viewBox="0 0 '+w+' '+h+'" preserveAspectRatio="xMidYMid meet">'+
       '<polyline class="wls-line" points="'+pts.join(' ')+'"/>'+
-      '<circle class="wls-dot" cx="'+lastXY[0]+'" cy="'+lastXY[1]+'" r="1.7"/>'+
+      '<circle class="wls-dot" cx="'+lastXY[0]+'" cy="'+lastXY[1]+'" r="1.6"/>'+
       '</svg></div>';
   }
 
@@ -7247,6 +7254,8 @@ html[data-theme="light"] .cfg-slider::-moz-range-thumb{background:#1d5fc2;border
     if ($('cfgRfVersion')) $('cfgRfVersion').value = _va.rfVersion || 7;
     if ($('cfgVisionConfMin')) $('cfgVisionConfMin').value = _va.confMin || 0.6;
     if ($('cfgVisionMonthlyBudget')) $('cfgVisionMonthlyBudget').value = _va.monthlyBudget || 10000;
+    if ($('cfgVisionMaxBoost')) $('cfgVisionMaxBoost').value = _va.maxBoost != null ? _va.maxBoost : 1.15;
+    if ($('cfgTechnicalEmphasis')) $('cfgTechnicalEmphasis').value = currentCfg.technicalEmphasis != null ? currentCfg.technicalEmphasis : 1.35;
     updateVisionBudgetPreview();
 
     // [V11] LLM Hybrid 토글 현재값
@@ -7564,8 +7573,11 @@ html[data-theme="light"] .cfg-slider::-moz-range-thumb{background:#1d5fc2;border
         rfApiKey: $('cfgRfApiKey') ? $('cfgRfApiKey').value.trim() : '',
         rfVersion: parseInt($('cfgRfVersion') ? $('cfgRfVersion').value : '7', 10) || 7,
         confMin: parseFloat($('cfgVisionConfMin') ? $('cfgVisionConfMin').value : '0.6') || 0.6,
+        maxBoost: parseFloat($('cfgVisionMaxBoost') ? $('cfgVisionMaxBoost').value : '1.15') || 1.15,
+        requireTAConfirm: true,
         monthlyBudget: parseInt($('cfgVisionMonthlyBudget') ? $('cfgVisionMonthlyBudget').value : '10000', 10) || 10000
       },
+      technicalEmphasis: parseFloat($('cfgTechnicalEmphasis') ? $('cfgTechnicalEmphasis').value : '1.35') || 1.35,
       // [V11] LLM Hybrid — 기존 설정(model/maxTokens 등) 보존하고 enabled만 갱신
       llmHybrid: Object.assign({}, (currentCfg && currentCfg.llmHybrid) || {}, {
         enabled: $('cfgLlmEnabled') ? $('cfgLlmEnabled').checked : false
