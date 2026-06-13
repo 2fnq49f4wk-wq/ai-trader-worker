@@ -8059,6 +8059,24 @@ async function refreshPriceShard(env, market, shard) {
       await log(DB, "WARN", null, "[V13] price shard write fail: " + e.message);
     }
   }
+  // [V81] 발행주식수/시총 수집 — 시총맵 실시간 박스용. 프론트 라운드로빈이 이 경로를
+  //   자주 호출하므로(장 마감 중에도) 여기서 채우면 안정적으로 누적된다.
+  let sharesGot = 0;
+  const sharesUpd = {};
+  for (const symbol of symbols) {
+    const q = bq[symbol];
+    if (q && ((typeof q.shares === "number" && q.shares > 0) || (typeof q.mcap === "number" && q.mcap > 0))) {
+      sharesUpd[symbol] = { sh: (q.shares > 0 ? q.shares : null), mc: (q.mcap > 0 ? q.mcap : null) };
+      sharesGot++;
+    }
+  }
+  if (sharesGot > 0) {
+    try {
+      const exMap = (await getState(DB, "mcap_shares", {})) || {};
+      Object.assign(exMap, sharesUpd);
+      await setState(DB, "mcap_shares", exMap);
+    } catch (e) {}
+  }
   const tWrite = Date.now() - tWrite0;
   const tTotal = Date.now() - t0;
   if (tTotal > 3000) {
@@ -8066,6 +8084,7 @@ async function refreshPriceShard(env, market, shard) {
       " total=" + tTotal + "ms (setup=" + tSetup + " prev=" + tPrev + " fetch=" + tFetch + " write=" + tWrite + ") ok=" + ok + " fail=" + fail);
   }
   return { ok: ok, fail: fail, shard: shard, shardCount: total, done: shard >= total - 1,
+           sharesGot: sharesGot,  // [V81] v7에서 발행주식수 받은 종목 수(0이면 v7 차단=폴백 사용 중)
            ms: tTotal, msFetch: tFetch, msPrev: tPrev, msWrite: tWrite };
 }
 
