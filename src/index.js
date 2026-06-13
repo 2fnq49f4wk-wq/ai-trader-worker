@@ -5084,6 +5084,12 @@ async function fetchBatchQuotes(symbols, opts) {
     //   조회 등) 폐기된 옛 시세를 반환한다 → 직전 V9.1b "야후 우선"이 KR 전체를 오염시켰음.
     //   따라서 네이버 값을 항상 채택하고, 야후는 검증용으로만 비교(괴리 시 WARN).
     out[sym] = Object.assign({}, nq, { xv: 1 });
+    // [V83] 시총맵용 발행주식수/시총 보존 — 네이버는 가격만 주므로, 야후 v7이 받아온
+    //   shares(가격무관·신뢰)를 살린다. 프론트가 네이버가격×shares로 KR 실시간 시총 계산.
+    if (yq) {
+      if (typeof yq.shares === "number" && yq.shares > 0) out[sym].shares = yq.shares;
+      if (typeof yq.mcap === "number" && yq.mcap > 0) out[sym].mcap = yq.mcap;
+    }
     if (yq && yq.price > 0) {
       const diff = Math.abs(yq.price - nq.price) / nq.price;
       if (diff > XV_TOL) xvMismatch.push(sym + " naver=" + nq.price + " yahoo=" + yq.price);
