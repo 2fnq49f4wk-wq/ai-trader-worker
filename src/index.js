@@ -8224,7 +8224,7 @@ async function refreshDailyShard(env, market, shard) {
       const bb = getBollingerBands(closes, mcfg.maPeriod, mcfg.bbStdMult);
       const return20 = getNDayReturn(closes, 20);
       return { symbol: symbol, ok: true, ind: indicators, bb: bb, return20: return20,
-        spark: closes.slice(-8).map(function(v){ return Math.round(v * 100) / 100; }),  // [V80] 워치리스트 스파크라인용 최근 8일봉 종가
+        spark: closes.slice(-23).map(function(v){ return Math.round(v * 100) / 100; }),  // [V85] 워치리스트 스파크라인용 최근 ~1달(23일봉) 종가
         return5: getNDayReturn(closes, 5), return60: getNDayReturn(closes, 60),  // [V66]
         ret1y: (daily.ret1y != null ? daily.ret1y : getNDayReturn(closes, 252)),  // [V67]
         ret5y: (daily.ret5y != null ? daily.ret5y : null),
@@ -10225,7 +10225,7 @@ async function runTradingCycle(env) {
                 return20: return20,
                 // [V67] 1주·3개월·1년·5년·거래량 — 평가루프가 매 사이클 덮어쓰며 소실되던 문제 해결
                 return5: getNDayReturn(closes, 5), return60: getNDayReturn(closes, 60),
-                spark: closes.slice(-8).map(function(v){ return Math.round(v * 100) / 100; }),  // [V80] 스파크라인
+                spark: closes.slice(-23).map(function(v){ return Math.round(v * 100) / 100; }),  // [V85] 스파크라인(1달)
                 ret1y: (daily.ret1y != null ? daily.ret1y : getNDayReturn(closes, 252)),
                 ret5y: (daily.ret5y != null ? daily.ret5y : null),
                 vol: (daily.vol != null ? daily.vol : ((daily.volumes && daily.volumes.length) ? daily.volumes[daily.volumes.length - 1] : null)),
@@ -11688,14 +11688,23 @@ async function handleRequest(request, env) {
       if (!sym || sym.length > 16 || !/^[A-Za-z0-9.^=\-]+$/.test(sym)) {
         return Response.json({ error: "bad symbol" }, { status: 400, headers: cors });
       }
-      const range = ["1mo","3mo","6mo","1y"].indexOf(url.searchParams.get("range")) >= 0 ? url.searchParams.get("range") : "3mo";
-      const ck = "chart:" + sym + ":" + range;
+      // [V85] interval 지원 — 분봉(1m/5m/15m)·일봉(1d)·주봉(1wk). 야후 제약에 맞춰 범위 보정.
+      let interval = ["1m","5m","15m","1d","1wk","1mo"].indexOf(url.searchParams.get("interval")) >= 0 ? url.searchParams.get("interval") : "1d";
+      let range = url.searchParams.get("range") || "3mo";
+      if (["1d","5d","1mo","3mo","6mo","1y","2y","5y"].indexOf(range) < 0) range = "3mo";
+      if (interval === "1m"  && ["1d","5d"].indexOf(range) < 0) range = "1d";
+      if (interval === "5m"  && ["1d","5d","1mo"].indexOf(range) < 0) range = "5d";
+      if (interval === "15m" && ["1d","5d","1mo"].indexOf(range) < 0) range = "1mo";
+      if (interval === "1wk" && ["6mo","1y","2y","5y"].indexOf(range) < 0) range = "2y";
+      const intraday = (interval === "1m" || interval === "5m" || interval === "15m");
+      const ck = "chart:" + sym + ":" + interval + ":" + range;
       const cached = await getState(env.DB, ck, null);
-      if (cached && cached.ts && (Date.now() - cached.ts) < 10 * 60 * 1000) {
+      const ttl = intraday ? 2 * 60 * 1000 : 10 * 60 * 1000;   // 분봉은 짧은 캐시(빠른 갱신)
+      if (cached && cached.ts && (Date.now() - cached.ts) < ttl) {
         return Response.json(cached, { headers: cors });
       }
       try {
-        const j = await yahooFetch("https://query1.finance.yahoo.com/v8/finance/chart/" + encodeURIComponent(sym) + "?interval=1d&range=" + range);
+        const j = await yahooFetch("https://query1.finance.yahoo.com/v8/finance/chart/" + encodeURIComponent(sym) + "?interval=" + interval + "&range=" + range);
         const result = j && j.chart && j.chart.result && j.chart.result[0];
         if (!result) throw new Error("no data");
         const q = (result.indicators && result.indicators.quote && result.indicators.quote[0]) || {};
@@ -11707,7 +11716,7 @@ async function handleRequest(request, env) {
           candles.push({ t: tsArr[i], o: o, h: h, l: l, c: c, v: v || 0 });
         }
         const meta = result.meta || {};
-        const payload = { symbol: sym, range: range, candles: candles, price: meta.regularMarketPrice || null, ts: Date.now() };
+        const payload = { symbol: sym, range: range, interval: interval, candles: candles, price: meta.regularMarketPrice || null, ts: Date.now() };
         try { await setState(env.DB, ck, payload); } catch (e) {}
         return Response.json(payload, { headers: cors });
       } catch (e) {

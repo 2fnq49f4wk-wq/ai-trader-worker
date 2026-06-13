@@ -2116,6 +2116,45 @@ html[data-theme="light"] .fv-zl{ color:var(--t2) !important; }
 /* 스파크라인은 var(--pos/--neg) 사용 → 라이트에서도 자동으로 진한 녹/적색 */
 
 /* ════════════════════════════════════════════════════════════════════
+   [V85] 종목 상세 페이지 — 캔들차트 + 등락률 + 수신 데이터
+   ════════════════════════════════════════════════════════════════════ */
+.detail-empty{padding:40px 20px;text-align:center;color:var(--t3);font-size:12px;}
+.detail-head{display:flex;align-items:flex-start;justify-content:space-between;gap:16px;
+  padding:16px 18px;background:var(--s1);border:1px solid var(--bd);border-radius:8px;margin-bottom:12px;flex-wrap:wrap;}
+.detail-sym{font-size:22px;font-weight:800;color:var(--t1);font-family:'IBM Plex Mono',monospace;letter-spacing:.5px;}
+.detail-name{font-size:12px;color:var(--t3);margin-top:2px;}
+.detail-px{text-align:right;}
+.detail-price{font-size:24px;font-weight:800;color:var(--t1);font-variant-numeric:tabular-nums;font-family:'IBM Plex Mono',monospace;}
+.detail-change{font-size:14px;font-weight:700;font-variant-numeric:tabular-nums;margin-top:2px;}
+.detail-change.pos{color:var(--pos);}
+.detail-change.neg{color:var(--neg);}
+.detail-tf{display:flex;gap:6px;margin-bottom:10px;}
+.detail-tf-btn{font-size:12px;font-weight:700;padding:8px 16px;background:var(--s2);border:1px solid var(--bd);
+  color:var(--t2);cursor:pointer;border-radius:5px;font-family:'IBM Plex Mono',monospace;transition:all .1s;min-height:38px;}
+.detail-tf-btn:hover{color:var(--t1);border-color:var(--t3);}
+.detail-tf-btn.active{background:var(--acc);color:var(--bg);border-color:var(--acc);}
+html[data-theme="light"] .detail-tf-btn.active{color:#fff;}
+.detail-chart{background:var(--s1);border:1px solid var(--bd);border-radius:8px;padding:8px;margin-bottom:14px;min-height:280px;}
+.detail-chart svg{width:100%;height:auto;display:block;}
+.detail-sec{font-size:10px;font-weight:700;color:var(--t3);text-transform:uppercase;letter-spacing:1px;
+  padding:6px 2px;margin-bottom:6px;border-bottom:1px solid var(--bd2);}
+.detail-data{display:grid;grid-template-columns:repeat(auto-fill,minmax(150px,1fr));gap:8px;margin-bottom:30px;}
+.detail-cell{background:var(--s1);border:1px solid var(--bd2);border-radius:6px;padding:9px 11px;}
+.detail-cell .l{font-size:9px;font-weight:700;color:var(--t3);text-transform:uppercase;letter-spacing:.6px;}
+.detail-cell .v{font-size:14px;font-weight:700;color:var(--t1);font-variant-numeric:tabular-nums;margin-top:3px;font-family:'IBM Plex Mono',monospace;}
+.detail-cell .v.pos{color:var(--pos);}
+.detail-cell .v.neg{color:var(--neg);}
+/* 워치리스트 카드 클릭 가능 표시 */
+.wl-card{cursor:pointer;}
+@media(max-width:767px){
+  .detail-sym{font-size:18px;}
+  .detail-price{font-size:20px;}
+  .detail-data{grid-template-columns:repeat(auto-fill,minmax(118px,1fr));}
+  .detail-tf-btn{flex:1;}
+  #detailSearch{width:140px;}
+}
+
+/* ════════════════════════════════════════════════════════════════════
    [V80] 핸드폰 전용 UX 보강 (≤767px). 데스크탑/아이패드(≥768px)는 일절 미변경.
    터치 타깃 확대·가독 폰트·모달 풀스크린·설정 슬라이더 손가락 조작 최적화.
    ════════════════════════════════════════════════════════════════════ */
@@ -2261,6 +2300,10 @@ html[data-theme="light"] .cfg-slider::-moz-range-thumb{background:#1d5fc2;border
       <div class="nav-item" data-page="vision">
         <span class="nav-item-icon">◑</span>
         <span class="nav-item-label">AI VISION</span>
+      </div>
+      <div class="nav-item" data-page="detail">
+        <span class="nav-item-icon">📈</span>
+        <span class="nav-item-label">종목 상세</span>
       </div>
     </div>
 
@@ -2707,6 +2750,45 @@ html[data-theme="light"] .cfg-slider::-moz-range-thumb{background:#1d5fc2;border
     </div><!-- /trades -->
 
     <!-- ══ PAGE: AI VISION ══ -->
+    <!-- ══ [V85] PAGE: 종목 상세 — 캔들차트(분/일/주봉) + 등락률 + 수신 데이터 ══ -->
+    <div class="page" id="page-detail">
+      <div class="page-header">
+        <span class="page-title">📈 종목 상세</span>
+        <div class="page-actions">
+          <input type="text" id="detailSearch" placeholder="심볼 입력 (예: NVDA, 005930.KS)" autocomplete="off"
+            style="font-size:12px;padding:7px 10px;background:var(--s2);border:1px solid var(--bd);color:var(--t1);width:200px;max-width:48vw;">
+          <button type="button" class="btn" id="detailSearchBtn">조회</button>
+        </div>
+      </div>
+      <div class="page-body" id="detailBody">
+        <div class="detail-empty" id="detailEmpty">워치리스트에서 종목을 누르거나 위에서 심볼을 검색하세요.</div>
+        <div id="detailContent" style="display:none;">
+          <!-- 헤더: 종목명/가격/등락 -->
+          <div class="detail-head">
+            <div class="detail-id">
+              <div class="detail-sym" id="detailSym">—</div>
+              <div class="detail-name" id="detailName">—</div>
+            </div>
+            <div class="detail-px">
+              <div class="detail-price" id="detailPrice">—</div>
+              <div class="detail-change" id="detailChange">—</div>
+            </div>
+          </div>
+          <!-- 타임프레임 토글 -->
+          <div class="detail-tf" id="detailTf">
+            <button type="button" class="detail-tf-btn" data-tf="5m">분봉</button>
+            <button type="button" class="detail-tf-btn active" data-tf="1d">일봉</button>
+            <button type="button" class="detail-tf-btn" data-tf="1wk">주봉</button>
+          </div>
+          <!-- 캔들 차트 -->
+          <div class="detail-chart" id="detailChart"><div class="detail-empty">차트 로딩 중…</div></div>
+          <!-- 수신 데이터 -->
+          <div class="detail-sec">수신 데이터 (엔진 보유 지표)</div>
+          <div class="detail-data" id="detailData"></div>
+        </div>
+      </div>
+    </div>
+
     <div class="page" id="page-vision">
       <div class="page-header">
         <span class="page-title">◑ AI VISION · 차트 예측</span>
@@ -3886,29 +3968,21 @@ html[data-theme="light"] .cfg-slider::-moz-range-thumb{background:#1d5fc2;border
     var zl = host.__fvZoomLbl, zs = c.bw / c.w;
     if (zl) zl.textContent = zs <= 1.01 ? '' : ('×' + zs.toFixed(1));
     if (interactive) {
+      // [V85] 제스처 중에도 viewBox를 직접 갱신 — 기존 V78 하이브리드(미리 래스터한 SVG를
+      //   GPU CSS transform으로 확대)는 래스터를 확대해 "블러"가 생기고, 패딩영역 이탈 시
+      //   무거운 재래스터 커밋으로 "렉/끊김"이 났다. 벡터 viewBox를 매 프레임 정확히 그리면
+      //   확대해도 선명하고(블러 없음) 재래스터 커밋도 없어 부드럽다.
       host.__fvCamDirty = true;
       clearTimeout(host.__fvCommitT);
-      host.__fvCommitT = setTimeout(function(){ fvCommitCam(host); }, 160);  // 멈추면 정확 커밋
+      host.__fvCommitT = setTimeout(function(){ fvCommitCam(host); }, 130);  // 멈추면 정밀 커밋(줌단계 텍스트 재렌더)
       if (host.__fvRaf) return;                 // 프레임당 1회
       host.__fvRaf = requestAnimationFrame(function(){
         host.__fvRaf = null;
         if (!host.__fvCamDirty) return;
         host.__fvCamDirty = false;
         var cc = fvCam(host);
-        var p = host.__fvCommitted;
-        var eps = 0.5;
-        // 패딩 영역 밖으로 나가거나, 패딩 해상도 대비 4배 이상 확대되면(흐릿해짐) 재커밋
-        var out = !p || cc.x < p.x - eps || cc.y < p.y - eps
-               || cc.x + cc.w > p.x + p.w + eps || cc.y + cc.h > p.y + p.h + eps
-               || (p.w / cc.w) > 4;
-        if (out) fvPadCommit(host, cc);
-        p = host.__fvCommitted;
-        var rect = fvHostRect(host);
-        var s = p.w / cc.w;
-        var tx = (p.x - cc.x) * (rect.width / cc.w);
-        var ty = (p.y - cc.y) * (rect.height / cc.h);
-        svg.style.transformOrigin = '0 0';
-        svg.style.transform = 'translate(' + tx.toFixed(2) + 'px,' + ty.toFixed(2) + 'px) scale(' + s.toFixed(4) + ')';
+        if (svg.style.transform) svg.style.transform = '';   // 혹시 남은 transform 제거
+        svg.setAttribute('viewBox', cc.x.toFixed(2) + ' ' + cc.y.toFixed(2) + ' ' + cc.w.toFixed(2) + ' ' + cc.h.toFixed(2));
       });
     } else {
       fvCommitCam(host);
@@ -4134,7 +4208,7 @@ html[data-theme="light"] .cfg-slider::-moz-range-thumb{background:#1d5fc2;border
     if (!svg || svg.parentNode !== host || sizeChanged) {
       host.innerHTML = '';
       svg = fvSvgEl('svg', { width: '100%', height: '100%', preserveAspectRatio: 'none' });
-      svg.style.cssText = 'display:block;background:#0a0c10;will-change:transform;contain:strict;';
+      svg.style.cssText = 'display:block;background:#0a0c10;contain:strict;';  // [V85] will-change:transform 제거 — viewBox 직접갱신 방식이라 GPU 고정 래스터(블러) 불필요
       svg.setAttribute('text-rendering', 'optimizeSpeed');
       svg.setAttribute('shape-rendering', 'optimizeSpeed');
       host.appendChild(svg);
@@ -5860,6 +5934,101 @@ html[data-theme="light"] .cfg-slider::-moz-range-thumb{background:#1d5fc2;border
       '</svg></div>';
   }
 
+  // ════════════════════════════════════════════════════════════════════
+  // [V85] 종목 상세 — 캔들차트(분/일/주봉) + 등락률 + 엔진 수신 데이터
+  // ════════════════════════════════════════════════════════════════════
+  var detailState = { symbol: null, market: 'us', interval: '1d' };
+
+  function fmtMcapVal(mc, market) {
+    if (!mc || mc <= 0) return '—';
+    if (market === 'kr') return '₩' + (mc / 1e12).toFixed(mc >= 1e13 ? 0 : 1) + '조';
+    if (mc >= 1e12) return '$' + (mc / 1e12).toFixed(2) + 'T';
+    if (mc >= 1e9)  return '$' + (mc / 1e9).toFixed(1) + 'B';
+    return '$' + (mc / 1e6).toFixed(0) + 'M';
+  }
+
+  function openStockDetail(symbol, market) {
+    if (!symbol) return;
+    market = market || ((symbol.indexOf('.KS') >= 0 || symbol.indexOf('.KQ') >= 0) ? 'kr' : 'us');
+    detailState.symbol = symbol;
+    detailState.market = market;
+    var emp = $('detailEmpty'), con = $('detailContent');
+    if (emp) emp.style.display = 'none';
+    if (con) con.style.display = '';
+    renderDetailHeaderData();
+    loadDetailChart(detailState.interval || '1d');
+    showPage('detail');
+  }
+
+  function renderDetailHeaderData() {
+    var st = detailState;
+    var q = (typeof lastQuotes !== 'undefined' && lastQuotes[st.symbol]) ? lastQuotes[st.symbol] : { symbol: st.symbol };
+    var nm = displayName(q, st.market);
+    if ($('detailSym'))  $('detailSym').textContent = st.symbol;
+    if ($('detailName')) $('detailName').textContent = (nm && nm !== st.symbol) ? nm : '';
+    if ($('detailPrice')) $('detailPrice').textContent = (q.price != null) ? fmtNum(q.price) : '—';
+    var chEl = $('detailChange');
+    if (chEl) {
+      if (typeof q.dayPct === 'number') {
+        chEl.textContent = (q.dayPct >= 0 ? '+' : '') + fmtNum(q.dayPct, 2) + '%';
+        chEl.className = 'detail-change ' + (q.dayPct >= 0 ? 'pos' : 'neg');
+      } else { chEl.textContent = '—'; chEl.className = 'detail-change'; }
+    }
+    var rows = [];
+    function add(l, v, cls) { rows.push('<div class="detail-cell"><div class="l">' + l + '</div><div class="v' + (cls ? ' ' + cls : '') + '">' + v + '</div></div>'); }
+    function pct(v) { return (typeof v === 'number') ? ((v >= 0 ? '+' : '') + v.toFixed(2) + '%') : '—'; }
+    function pc(v) { return (typeof v === 'number') ? (v >= 0 ? 'pos' : 'neg') : ''; }
+    function num(v) { return (v != null && typeof v === 'number') ? fmtNum(v) : '—'; }
+    add('현재가', num(q.price));
+    add('전일종가', num(q.prevClose));
+    add('당일등락', pct(q.dayPct), pc(q.dayPct));
+    add('RSI(14)', q.rsi != null ? q.rsi.toFixed(1) : '—');
+    add('이동평균(장기)', num(q.ma));
+    add('이동평균(단기)', num(q.dailyMaShort != null ? q.dailyMaShort : q.maShort));
+    add('ATR', num(q.atr));
+    add('볼린저 하단', num(q.bbLower));
+    add('볼린저 상단', num(q.bbUpper));
+    add('1주 수익률', pct(q.return5), pc(q.return5));
+    add('1개월 수익률', pct(q.return20), pc(q.return20));
+    add('3개월 수익률', pct(q.return60), pc(q.return60));
+    add('1년 수익률', pct(q.ret1y), pc(q.ret1y));
+    add('거래량', q.vol != null ? fvFmtVol(q.vol) : '—');
+    add('평균거래(20일)', q.avgVol20 != null ? fvFmtVol(q.avgVol20) : '—');
+    var mc = (q.price > 0 && q.shares > 0) ? (q.price * q.shares) : (q.mcap || null);
+    add('시가총액', fmtMcapVal(mc, st.market));
+    add('발행주식수', q.shares ? fvFmtVol(q.shares) : '—');
+    add('시총 순위', (q.rank && q.rank < 99999) ? ('#' + q.rank) : '—');
+    add('갱신', q.ts ? fmtAgo(q.ts) : '—');
+    if ($('detailData')) $('detailData').innerHTML = rows.join('');
+  }
+
+  function loadDetailChart(interval) {
+    var st = detailState;
+    if (!st.symbol) return;
+    st.interval = interval;
+    document.querySelectorAll('#detailTf .detail-tf-btn').forEach(function(b) {
+      b.classList.toggle('active', b.getAttribute('data-tf') === interval);
+    });
+    var rangeMap = { '5m': '5d', '1d': '6mo', '1wk': '2y' };
+    var range = rangeMap[interval] || '6mo';
+    var box = $('detailChart');
+    if (!box) return;
+    box.innerHTML = '<div class="detail-empty">차트 로딩 중…</div>';
+    var reqSym = st.symbol, reqTf = interval;
+    fetch('/api/chart?symbol=' + encodeURIComponent(st.symbol) + '&interval=' + interval + '&range=' + range)
+      .then(function(r) { return r.json(); })
+      .then(function(d) {
+        if (st.symbol !== reqSym || st.interval !== reqTf) return;   // 그새 종목/탭 변경됨
+        if (!d || !d.candles || d.candles.length < 3) { box.innerHTML = '<div class="detail-empty">차트 데이터 없음</div>'; return; }
+        var cs = d.candles;
+        var sr = { support: [], resistance: [] }, pats = [];
+        if (interval !== '5m') { try { var cr = detectChartPatterns(cs); sr = cr.sr; pats = cr.patterns; } catch (e) {} }
+        box.innerHTML = buildTaChart(cs, sr, pats);
+      })['catch'](function() {
+        if (st.symbol === reqSym && st.interval === reqTf) box.innerHTML = '<div class="detail-empty">차트 로딩 실패</div>';
+      });
+  }
+
   function buildWatchlistCard(q, market) {
     var dayClass = q.dayPct > 0 ? 'pos' : (q.dayPct < 0 ? 'neg' : '');
     var sign = q.dayPct >= 0 ? '+' : '';
@@ -5876,7 +6045,7 @@ html[data-theme="light"] .cfg-slider::-moz-range-thumb{background:#1d5fc2;border
       var pnlSign = held.pnlPct >= 0 ? '+' : '';
       pnlLine = '<div class="wl-pnl '+pnlCls+'">평가손익 '+pnlSign+held.pnlPct.toFixed(2)+'%</div>';
     }
-    return '<div class="wl-card'+(held?' held':'')+'">'+
+    return '<div class="wl-card'+(held?' held':'')+'" data-symbol="'+escapeHtml(q.symbol)+'" data-market="'+market+'">'+
       '<span class="wl-fav '+(isFav?'active':'')+'" data-symbol="'+escapeHtml(q.symbol)+'" data-market="'+market+'">'+(isFav?'\u2605':'\u2606')+'</span>'+
       // [V10.5] 종목명을 위, 티커를 아래로 — 이름 없으면 티커가 이름 자리 차지
       (name
@@ -6032,6 +6201,11 @@ html[data-theme="light"] .cfg-slider::-moz-range-thumb{background:#1d5fc2;border
     var kr = quotes.filter(function(q){return q.market==='kr';});
     renderWatchlistMarket('us', us);
     renderWatchlistMarket('kr', kr);
+    // [V85] 상세 페이지가 열려 있으면 헤더/데이터도 최신 시세로 갱신(차트는 탭/종목 바뀔 때만 재요청)
+    if (detailState.symbol) {
+      var dp = document.getElementById('page-detail');
+      if (dp && dp.classList.contains('active')) renderDetailHeaderData();
+    }
   }
 
   function toggleFavorite(market, symbol) {
@@ -8077,6 +8251,29 @@ html[data-theme="light"] .cfg-slider::-moz-range-thumb{background:#1d5fc2;border
   });
 
     refreshAll();
+
+  // [V85] 종목 상세 — 워치리스트 카드 클릭 위임(별표 제외), 타임프레임 토글, 심볼 검색
+  document.addEventListener('click', function(e){
+    var card = e.target.closest ? e.target.closest('.wl-card') : null;
+    if (!card) return;
+    if (e.target.closest('.wl-fav')) return;   // 별표는 즐겨찾기 토글 전용
+    var sym = card.getAttribute('data-symbol'), mk = card.getAttribute('data-market');
+    if (sym) openStockDetail(sym, mk);
+  });
+  var _dtf = $('detailTf');
+  if (_dtf) _dtf.addEventListener('click', function(e){
+    var b = e.target.closest ? e.target.closest('.detail-tf-btn') : null;
+    if (!b) return;
+    loadDetailChart(b.getAttribute('data-tf'));
+  });
+  function _detailSearchGo(){
+    var v = ($('detailSearch') && $('detailSearch').value || '').trim().toUpperCase();
+    if (!v) return;
+    openStockDetail(v);
+  }
+  var _dsb = $('detailSearchBtn'); if (_dsb) _dsb.addEventListener('click', _detailSearchGo);
+  var _dsi = $('detailSearch'); if (_dsi) _dsi.addEventListener('keydown', function(e){ if (e.key === 'Enter') _detailSearchGo(); });
+
   // [V13] 샤드 fan-out 시작 — 가격은 매분 전부 병렬, 일봉은 라운드로빈
   loadShardMeta().then(function(){
   });
