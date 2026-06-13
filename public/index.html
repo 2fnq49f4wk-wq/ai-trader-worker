@@ -2153,32 +2153,57 @@ html[data-theme="light"] .detail-tf-btn.active{color:#fff;}
 .detail-chart .pc-panelbg{fill:transparent;}
 .detail-sec{font-size:10px;font-weight:700;color:var(--t3);text-transform:uppercase;letter-spacing:1px;
   padding:6px 2px;margin-bottom:6px;border-bottom:1px solid var(--bd2);}
-/* [V87] 차트(좌) + 수신 데이터 표(우 사이드바) 2단 레이아웃 */
-.detail-main{display:flex;gap:14px;align-items:flex-start;margin-bottom:30px;}
-.detail-main .detail-chart{flex:1 1 auto;min-width:0;margin-bottom:0;}
-.detail-side{flex:0 0 268px;width:268px;background:var(--s1);border:1px solid var(--bd);border-radius:8px;
-  padding:10px 12px;align-self:stretch;}
-.detail-side .detail-sec{margin-bottom:8px;}
+/* [V88] 차트(좌) + 사이드바(우) — 한눈에 보이게 뷰포트 높이에 맞춤 */
+.detail-main{display:flex;gap:12px;align-items:stretch;margin-bottom:20px;}
+.detail-left{flex:1 1 auto;min-width:0;display:flex;flex-direction:column;gap:8px;}
+.detail-main .detail-chart{flex:0 0 auto;height:46vh;min-height:240px;max-height:520px;margin-bottom:0;padding:4px;}
+.detail-main .detail-chart svg{width:100%;height:100%;}
+.detail-side{flex:0 0 290px;width:290px;background:var(--s1);border:1px solid var(--bd);border-radius:8px;
+  padding:10px 12px;align-self:stretch;overflow-y:auto;max-height:calc(46vh + 90px);}
+.detail-side .detail-sec{margin-bottom:6px;margin-top:4px;}
+/* AI 예측 + 기술적 분석 미니카드 */
+.detail-vt{display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-bottom:8px;}
+.detail-vcard{background:var(--s2);border:1px solid var(--bd2);border-radius:6px;padding:8px 9px;min-height:62px;}
+.detail-vcard .vt-h{font-size:9px;font-weight:700;color:var(--t3);text-transform:uppercase;letter-spacing:.5px;margin-bottom:4px;}
+.detail-vcard .vt-big{font-size:14px;font-weight:800;font-family:'IBM Plex Mono',monospace;}
+.detail-vcard .vt-sub{font-size:9.5px;color:var(--t3);margin-top:2px;line-height:1.3;}
+.vt-big.pos{color:var(--pos);} .vt-big.neg{color:var(--neg);} .vt-big.neu{color:var(--t2);}
+/* 실적 발표 */
+.detail-earn{font-size:11px;color:var(--t2);background:var(--s2);border:1px solid var(--bd2);border-radius:6px;
+  padding:7px 10px;margin-bottom:8px;display:none;}
+.detail-earn b{color:var(--amber);font-weight:700;}
+/* 관련 뉴스 */
+.detail-news{background:var(--s1);border:1px solid var(--bd);border-radius:8px;padding:4px 10px;}
+.detail-news .dn-item{display:flex;gap:8px;align-items:baseline;padding:6px 0;border-bottom:1px solid var(--bd2);cursor:pointer;}
+.detail-news .dn-item:last-child{border-bottom:none;}
+.detail-news .dn-item:hover .dn-t{color:var(--acc);}
+.detail-news .dn-grp{flex:0 0 auto;font-size:8.5px;font-weight:700;color:var(--t3);font-family:'IBM Plex Mono',monospace;
+  border:1px solid var(--bd2);border-radius:3px;padding:1px 5px;}
+.detail-news .dn-t{font-size:11px;color:var(--t1);line-height:1.4;overflow:hidden;text-overflow:ellipsis;
+  display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;}
+.detail-news .dn-head{font-size:9px;font-weight:700;color:var(--t3);text-transform:uppercase;letter-spacing:1px;padding:6px 0 2px;}
 .detail-table{width:100%;border-collapse:collapse;font-variant-numeric:tabular-nums;}
 .detail-table tr{border-bottom:1px solid var(--bd2);}
 .detail-table tr:last-child{border-bottom:none;}
-.detail-table td{padding:7px 2px;vertical-align:middle;}
-.detail-table td.l{font-size:10.5px;color:var(--t3);font-weight:600;white-space:nowrap;}
-.detail-table td.v{font-size:12.5px;font-weight:700;color:var(--t1);text-align:right;
+.detail-table td{padding:5px 2px;vertical-align:middle;}
+.detail-table td.l{font-size:10px;color:var(--t3);font-weight:600;white-space:nowrap;}
+.detail-table td.v{font-size:12px;font-weight:700;color:var(--t1);text-align:right;
   font-family:'IBM Plex Mono',monospace;white-space:nowrap;}
 .detail-table td.v.pos{color:var(--pos);} .detail-table td.v.neg{color:var(--neg);}
 /* 워치리스트 카드 클릭 가능 표시 */
 .wl-card{cursor:pointer;}
-/* 좁은 화면(태블릿 세로/폰): 데이터 표를 차트 아래로 */
+/* 좁은 화면(태블릿 세로/폰): 사이드바를 차트 아래로 */
 @media(max-width:900px){
   .detail-main{flex-direction:column;}
-  .detail-side{flex:1 1 auto;width:100%;}
+  .detail-side{flex:1 1 auto;width:100%;max-height:none;}
+  .detail-main .detail-chart{height:42vh;}
 }
 @media(max-width:767px){
   .detail-sym{font-size:18px;}
   .detail-price{font-size:20px;}
   .detail-tf-btn{flex:1;}
   #detailSearch{width:140px;}
+  .detail-main .detail-chart{height:38vh;min-height:200px;}
 }
 
 /* ════════════════════════════════════════════════════════════════════
@@ -2822,10 +2847,18 @@ html[data-theme="light"] .cfg-slider::-moz-range-thumb{background:#1d5fc2;border
               <button type="button" class="detail-ind-btn" data-ind="macd">MACD</button>
             </div>
           </div>
-          <!-- 차트(좌) + 수신 데이터 표(우 사이드바) -->
+          <!-- 차트(좌) + 사이드바(우: AI예측·기술분석·실적·수신데이터) -->
           <div class="detail-main">
-            <div class="detail-chart" id="detailChart"><div class="detail-empty">차트 로딩 중…</div></div>
+            <div class="detail-left">
+              <div class="detail-chart" id="detailChart"><div class="detail-empty">차트 로딩 중…</div></div>
+              <div class="detail-news" id="detailNews"></div>
+            </div>
             <aside class="detail-side">
+              <div class="detail-vt">
+                <div class="detail-vcard" id="detailVision"></div>
+                <div class="detail-vcard" id="detailTA"></div>
+              </div>
+              <div class="detail-earn" id="detailEarn"></div>
               <div class="detail-sec">수신 데이터</div>
               <table class="detail-table"><tbody id="detailData"></tbody></table>
             </aside>
@@ -5435,6 +5468,9 @@ html[data-theme="light"] .cfg-slider::-moz-range-thumb{background:#1d5fc2;border
     if (!body) return;
     fetch('/api/earnings' + (force ? '?force=1' : '')).then(function(r){ return r.json(); }).then(function(d){
       var items = (d && d.items) || [];
+      // [V88] 상세 페이지용 심볼→실적일 맵
+      window.__earningsBySym = {};
+      items.forEach(function(it){ if (it.symbol) window.__earningsBySym[String(it.symbol).toUpperCase()] = it; });
       if (!items.length) { body.innerHTML = '<tr><td colspan="4" class="empty">예정된 실적 발표 없음</td></tr>'; return; }
       var todayStr = new Date().toDateString();
       body.innerHTML = items.slice(0, 60).map(function(it){
@@ -6058,12 +6094,12 @@ html[data-theme="light"] .cfg-slider::-moz-range-thumb{background:#1d5fc2;border
     var bU = sl(boll.up), bM = sl(boll.mid), bL = sl(boll.lo), rsiV = sl(rsi);
     var mH, mM, mS; if (macd) { mH = sl(macd.hist); mM = sl(macd.macd); mS = sl(macd.signal); }
 
-    var W = 760, padL = 4, padR = 54, legendH = 16, priceH = 300, gap = 8, axisH = 16;
+    var W = 820, padL = 4, padR = 54, legendH = 15, priceH = 236, gap = 7, axisH = 15;
     var panels = [];
     if (ind.vol) panels.push('vol');
     if (ind.rsi) panels.push('rsi');
     if (ind.macd) panels.push('macd');
-    var subH = 60;
+    var subH = 48;
     var H = legendH + priceH + panels.length * (gap + subH) + axisH;
     var iw = (W - padL - padR) / n;
     var cw = Math.max(1, Math.min(11, iw * 0.66));
@@ -6186,6 +6222,80 @@ html[data-theme="light"] .cfg-slider::-moz-range-thumb{background:#1d5fc2;border
     return '$' + (mc / 1e6).toFixed(0) + 'M';
   }
 
+  // [V88] 섹터(한글) → 뉴스 그룹(SECTOR_GROUPS) 매핑
+  var SECTOR_TO_GROUP = { '기술':'TECH','통신':'TECH','임의소비재':'CONSUMER','필수소비재':'CONSUMER',
+    '헬스케어':'HEALTH','금융':'FINANCE','산업재':'INDUSTRIAL','에너지':'RESOURCES','소재':'RESOURCES',
+    '유틸리티':'RESOURCES','리츠':'FINANCE' };
+
+  // AI Vision 예측 카드
+  function renderDetailVision() {
+    var el = $('detailVision'); if (!el) return;
+    var r = (typeof visionResults !== 'undefined') ? visionResults[detailState.symbol] : null;
+    if (!r || !r.pred || isGarbagePred(r)) {
+      el.innerHTML = '<div class="vt-h">🤖 AI VISION</div><div class="vt-big neu">—</div><div class="vt-sub">예측 데이터 없음</div>';
+      return;
+    }
+    var up = r.pred === 'up';
+    var conf = Math.round((r.conf || 0) * 100);
+    el.innerHTML = '<div class="vt-h">🤖 AI VISION</div>' +
+      '<div class="vt-big ' + (up ? 'pos' : 'neg') + '">' + (up ? '▲ 상승' : '▼ 하락') + '</div>' +
+      '<div class="vt-sub">신뢰도 ' + conf + '%' + (r.ts ? ' · ' + fmtAgo(r.ts) : '') + '</div>';
+  }
+
+  // 기술적 분석 카드 (현재 차트 캔들 기반)
+  function renderDetailTA(cs) {
+    var el = $('detailTA'); if (!el) return;
+    if (!cs || cs.length < 20) { el.innerHTML = '<div class="vt-h">📊 기술적 분석</div><div class="vt-big neu">—</div><div class="vt-sub">데이터 부족</div>'; return; }
+    var score = 0, all = [];
+    try {
+      var candleP = detectCandlePatterns(cs), chartR = detectChartPatterns(cs);
+      all = chartR.patterns.concat(candleP);
+      all.forEach(function(p){ score += p.dir === 'bull' ? (p.kind === 'chart' ? 2 : 1) : p.dir === 'bear' ? -(p.kind === 'chart' ? 2 : 1) : 0; });
+    } catch (e) {}
+    var bias = score >= 2 ? 'bull' : score <= -2 ? 'bear' : 'neu';
+    var txt = bias === 'bull' ? '▲ 매수우위' : bias === 'bear' ? '▼ 매도우위' : '— 중립';
+    var top = all.length ? all[0].name : '뚜렷한 패턴 없음';
+    el.innerHTML = '<div class="vt-h">📊 기술적 분석</div>' +
+      '<div class="vt-big ' + (bias === 'bull' ? 'pos' : bias === 'bear' ? 'neg' : 'neu') + '">' + txt + '</div>' +
+      '<div class="vt-sub">패턴 ' + all.length + '개 · ' + escapeHtml(top) + '</div>';
+  }
+
+  // 실적 발표일
+  function renderDetailEarn() {
+    var el = $('detailEarn'); if (!el) return;
+    var m = window.__earningsBySym || {};
+    var it = m[String(detailState.symbol).toUpperCase()];
+    if (!it || !it.ts) { el.style.display = 'none'; return; }
+    var dt = new Date(it.ts);
+    var days = Math.round((it.ts - Date.now()) / 86400000);
+    var whenTxt = (dt.getMonth() + 1) + '/' + dt.getDate() + (days >= 0 ? ' (D-' + days + ')' : '');
+    var epsTxt = (it.eps != null && isFinite(Number(it.eps))) ? ' · 예상 EPS ' + Number(it.eps).toFixed(2) + (it.epsType === 'fy' ? '(연)' : '') : '';
+    el.style.display = '';
+    el.innerHTML = '📅 실적 발표 <b>' + whenTxt + '</b>' + epsTxt;
+  }
+
+  // 관련 뉴스 헤드라인 (종목 섹터그룹 기준)
+  function renderDetailNews() {
+    var el = $('detailNews'); if (!el) return;
+    var sn = window.__sectorNews;
+    if (!sn || !sn.headlines) { el.innerHTML = ''; return; }
+    var sym = detailState.symbol;
+    var sec = (detailState.market === 'kr') ? (KR_SECTOR_OF[sym] || KR_SECTOR_OF[sym.split('.')[0]]) : FV_SECTOR_OF[sym];
+    var grp = sec ? SECTOR_TO_GROUP[sec] : null;
+    var items = [];
+    if (grp && sn.headlines[grp]) sn.headlines[grp].forEach(function(n){ if (n && n.title) items.push({ grp: grp, title: n.title, link: n.link || '' }); });
+    // 그룹 뉴스 없으면 전체에서 일부
+    if (!items.length) {
+      Object.keys(sn.headlines).forEach(function(g){ (sn.headlines[g] || []).slice(0, 2).forEach(function(n){ if (n && n.title) items.push({ grp: g, title: n.title, link: n.link || '' }); }); });
+    }
+    if (!items.length) { el.innerHTML = ''; return; }
+    el.innerHTML = '<div class="dn-head">관련 뉴스 (' + (grp || '시장') + ')</div>' +
+      items.slice(0, 4).map(function(n){
+        var open = n.link ? ' onclick="window.open(\'' + escapeAttr(n.link) + '\',\'_blank\')"' : '';
+        return '<div class="dn-item"' + open + '><span class="dn-grp">' + escapeHtml(String(n.grp).slice(0, 6)) + '</span><span class="dn-t">' + escapeHtml(n.title) + '</span></div>';
+      }).join('');
+  }
+
   function openStockDetail(symbol, market) {
     if (!symbol) return;
     market = market || ((symbol.indexOf('.KS') >= 0 || symbol.indexOf('.KQ') >= 0) ? 'kr' : 'us');
@@ -6195,6 +6305,9 @@ html[data-theme="light"] .cfg-slider::-moz-range-thumb{background:#1d5fc2;border
     if (emp) emp.style.display = 'none';
     if (con) con.style.display = '';
     renderDetailHeaderData();
+    renderDetailVision();
+    renderDetailEarn();
+    renderDetailNews();
     loadDetailChart(detailState.interval || '1d');
     showPage('detail');
   }
@@ -6287,6 +6400,7 @@ html[data-theme="light"] .cfg-slider::-moz-range-thumb{background:#1d5fc2;border
         detailState.lastCandles = d.candles;
         renderDetailChartFromCache();
         renderDetailOhlc(d.candles);
+        renderDetailTA(d.candles);
       })['catch'](function() {
         if (st.symbol === reqSym && st.interval === reqTf) box.innerHTML = '<div class="detail-empty">차트 로딩 실패</div>';
       });
@@ -7343,13 +7457,18 @@ html[data-theme="light"] .cfg-slider::-moz-range-thumb{background:#1d5fc2;border
     }
   }
 
+  function isPage(id){ var p = document.getElementById('page-' + id); return !!(p && p.classList.contains('active')); }
   function refreshAll() {
     renderMarketStatus();
+    // [V88 렉] 전체 거래내역(limit=10000)은 매 폴링이 아니라 60초마다만 — 거대 페이로드+10000건
+    //   처리(renderStrategyPerf)가 10초 폴링마다 돌아 대시보드가 끊기던 주원인.
+    var _needAll = !window.__allTradesCache || (Date.now() - (window.__allTradesTs || 0)) > 60000;
     // [개선] /api/state 1회로 watchlist + indices까지 한 번에 받음
-    // trades는 별도 — 자주 안 바뀌니 분리 유지 (캐싱 가능성)
-    Promise.all([api('/api/state'), api('/api/trades?limit=50'), api('/api/trades?limit=10000')])
+    Promise.all([api('/api/state'), api('/api/trades?limit=50'),
+                 _needAll ? api('/api/trades?limit=10000') : Promise.resolve(window.__allTradesCache || [])])
       .then(function(r){
         var state = r[0], trades = r[1], allTrades = r[2];
+        if (_needAll) { window.__allTradesCache = allTrades; window.__allTradesTs = Date.now(); }
         // [V33] 데이터 수신 성공 — 라이브 인디케이터용 시각 기록
         window.__lastDataReceived = Date.now();
         window.__serverLastTick = state.lastTick || null;
@@ -7395,6 +7514,7 @@ html[data-theme="light"] .cfg-slider::-moz-range-thumb{background:#1d5fc2;border
         currentTwr = twr;
         if (state.sectorGroups) currentSectorGroups = state.sectorGroups;  // [섹터그룹]
         if (state.signalTypes) currentSignalTypes = state.signalTypes;     // [신호타입]
+        if (state.sectorNews) window.__sectorNews = state.sectorNews;       // [V88] 상세 페이지 관련 뉴스용
         var initUS = (state.cfg && state.cfg.initialCashUS) || 0;
         var initKR = (state.cfg && state.cfg.initialCashKR) || 0;
         // [V58 FIX] 렌더 단계 하나가 예외를 던지면 이후 전부(워치리스트 포함)가 사라지던 문제 —
@@ -7403,22 +7523,34 @@ html[data-theme="light"] .cfg-slider::-moz-range-thumb{background:#1d5fc2;border
         safeRun('summaryUS', function(){ renderSummary('us', calcSummary('us', cash.us, posUS, initUS, twr.us, deposits.us, outflows.us)); });
         safeRun('summaryKR', function(){ renderSummary('kr', calcSummary('kr', cash.kr, posKR, initKR, twr.kr, deposits.kr, outflows.kr)); });
         safeRun('positions', function(){ renderPositions(posUS, posKR); });   // heldMap 갱신 — watchlist보다 먼저
-        safeRun('watchlist', function(){ renderWatchlist(quotes); });          // heldMap 반영된 상태로 카드 렌더
+        // [V88 렉] 워치리스트(60+ 스파크라인 SVG)는 대시보드 볼 때만 재렌더
+        if (isPage('dashboard')) safeRun('watchlist', function(){ renderWatchlist(quotes); });
+        // [V85→V88] 상세 페이지가 열려 있으면 헤더/데이터/예측/뉴스/실적 갱신(워치리스트 게이팅과 무관)
+        if (detailState.symbol && isPage('detail')) {
+          try { renderDetailHeaderData(); renderDetailVision(); renderDetailEarn(); renderDetailNews(); } catch(e){}
+        }
         safeRun('engine', function(){ renderEngine(state.lastTick, state.lastHeartbeat); });
         safeRun('trades', function(){ renderTrades(trades); });
-        // [V63] 전략별 성과 + 레짐 적응형 예산 현황
-        safeRun('stratPerf', function(){ renderStrategyPerf(allTrades || []); });
+        // [V63] 전략별 성과 — [V88] 새 거래데이터(60초마다)일 때만 (10000건 처리 매 폴링 제거)
+        if (_needAll) safeRun('stratPerf', function(){ renderStrategyPerf(allTrades || []); });
         safeRun('budgetSplit', function(){ renderBudgetSplit(state.budgetSplitApplied); });
         // [V8.6 Hybrid] LLM 배너 렌더링
         safeRun('llm', function(){ renderLLMBanner(state.llmDaily, state.cfg); });
         safeRun('usage', function(){ renderUsageBanner(state.usageState, state.forceLock, state.cfg); });
-        // [V10.4] FINVIZ DECK — 지수/시장폭/무버/헤드라인
-        safeRun('fvdeck', function(){ renderFvDeck(state); });
-        // [V64] 히트맵 — 엔진 실시간 시세로 매 폴링 재렌더 (외부 위젯 지연 문제 제거)
-        safeRun('fvheat', function(){ renderFvHeatmap(); });
-        // ALL TRADE HISTORY — 요약은 항상 갱신, 테이블은 펼쳐졌을 때만
-        if (allTradesExpanded) renderAllTrades(allTrades || []);
-        else updateTradesSummaryInto(allTrades || [], 'allTradesTotalCount', 'allTradesWinRate', 'allTradesAvgPnl');
+        // [V10.4→V88] FINVIZ DECK + 히트맵 — 대시보드 활성 시에만. 히트맵은 25초 스로틀(색/크기 변화 느림).
+        if (isPage('dashboard')) {
+          safeRun('fvdeck', function(){ renderFvDeck(state); });
+          safeRun('fvheat', function(){
+            if (window.__fvHeatLastTs && (Date.now() - window.__fvHeatLastTs) < 25000) return;
+            window.__fvHeatLastTs = Date.now();
+            renderFvHeatmap();
+          });
+        }
+        // ALL TRADE HISTORY — [V88] 새 거래데이터일 때만 갱신
+        if (_needAll) {
+          if (allTradesExpanded) renderAllTrades(allTrades || []);
+          else updateTradesSummaryInto(allTrades || [], 'allTradesTotalCount', 'allTradesWinRate', 'allTradesAvgPnl');
+        }
         renderCfgDisplay(state.cfg);
       })['catch'](function(e){ toast('로드 실패: '+e.message); });
     // [COMMODITY] 원자재 패널은 별도 엔드포인트로 로드
@@ -8539,9 +8671,27 @@ html[data-theme="light"] .cfg-slider::-moz-range-thumb{background:#1d5fc2;border
     renderDetailChartFromCache();   // 재요청 없이 캐시로 즉시 재렌더
   });
   function _detailSearchGo(){
-    var v = ($('detailSearch') && $('detailSearch').value || '').trim().toUpperCase();
-    if (!v) return;
-    openStockDetail(v);
+    var raw = ($('detailSearch') && $('detailSearch').value || '').trim();
+    if (!raw) return;
+    var up = raw.toUpperCase();
+    // 1) 정확한 심볼 우선
+    if (typeof lastQuotes !== 'undefined' && lastQuotes[up]) { openStockDetail(up, lastQuotes[up].market); return; }
+    // 2) 심볼/종목명 부분일치 (워치리스트 전체에서) — 시총 큰 순 우선
+    var arr = window.__lastQuotesArr || [];
+    var term = raw.toLowerCase();
+    var hit = null, hitRank = 1e9;
+    for (var i = 0; i < arr.length; i++) {
+      var q = arr[i];
+      var nm = (displayName(q, q.market) || '').toLowerCase();
+      var sym = (q.symbol || '').toLowerCase();
+      if (sym.indexOf(term) >= 0 || nm.indexOf(term) >= 0) {
+        var rk = q.rank || 9999;
+        if (rk < hitRank) { hit = q; hitRank = rk; }
+      }
+    }
+    if (hit) { openStockDetail(hit.symbol, hit.market); return; }
+    // 3) 매칭 없으면 입력값 그대로(야후가 알아서 해석)
+    openStockDetail(up);
   }
   var _dsb = $('detailSearchBtn'); if (_dsb) _dsb.addEventListener('click', _detailSearchGo);
   var _dsi = $('detailSearch'); if (_dsi) _dsi.addEventListener('keydown', function(e){ if (e.key === 'Enter') _detailSearchGo(); });
@@ -8597,6 +8747,13 @@ html[data-theme="light"] .cfg-slider::-moz-range-thumb{background:#1d5fc2;border
     try{localStorage.setItem('luxPage',id);}catch(e){}
     // 페이지 전환 시 스크롤 상단으로 초기화
     if(pg) pg.scrollTop = 0;
+    // [V88] 게이팅된 렌더는 전환 즉시 1회 그려 빈 화면/지연 방지
+    if (id === 'dashboard') {
+      try { if (window.__lastQuotesArr) renderWatchlist(window.__lastQuotesArr); } catch(e){}
+      try { window.__fvHeatLastTs = 0; renderFvHeatmap(); } catch(e){}
+    } else if (id === 'detail') {
+      try { if (detailState.symbol) renderDetailHeaderData(); } catch(e){}
+    }
   }
   document.querySelectorAll('.nav-item').forEach(function(item){
     item.addEventListener('click',function(){showPage(this.getAttribute('data-page'));});
