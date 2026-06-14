@@ -2113,6 +2113,9 @@ html[data-theme="light"] .news-sector-chip.neu{ color:var(--t2); }
 /* 히트맵 줌 버튼 — 흰 배경에서 보이게 */
 html[data-theme="light"] .fv-zb{ background:#fff !important; color:#15181f !important; border-color:var(--bd) !important; }
 html[data-theme="light"] .fv-zl{ color:var(--t2) !important; }
+/* [V93] 히트맵 팬/줌 중 텍스트 숨김 — 매 프레임 벡터 재렌더 비용 절감(전체화면 맵 렉 해결) */
+svg.fv-pan text{display:none;}
+
 /* [V91] 날짜별 수익 캘린더 */
 .tc-nav{display:flex;align-items:center;gap:8px;}
 .tc-label{font-size:13px;font-weight:700;color:var(--t1);font-family:'IBM Plex Mono',monospace;min-width:96px;text-align:center;}
@@ -4152,6 +4155,9 @@ html[data-theme="light"] .cfg-slider::-moz-range-thumb{background:#1d5fc2;border
       //   무거운 재래스터 커밋으로 "렉/끊김"이 났다. 벡터 viewBox를 매 프레임 정확히 그리면
       //   확대해도 선명하고(블러 없음) 재래스터 커밋도 없어 부드럽다.
       host.__fvCamDirty = true;
+      // [V93 렉] 제스처 중에는 텍스트(타일/섹터 라벨 1000+개)를 숨겨 매 프레임 벡터 재렌더 비용을
+      //   대폭 절감 → 전체화면 S&P500 맵에서도 부드럽게 팬/줌. 멈추면(커밋) 선명히 복원.
+      if (!svg.classList.contains('fv-pan')) svg.classList.add('fv-pan');
       clearTimeout(host.__fvCommitT);
       host.__fvCommitT = setTimeout(function(){ fvCommitCam(host); }, 130);  // 멈추면 정밀 커밋(줌단계 텍스트 재렌더)
       if (host.__fvRaf) return;                 // 프레임당 1회
@@ -4175,6 +4181,7 @@ html[data-theme="light"] .cfg-slider::-moz-range-thumb{background:#1d5fc2;border
     host.__fvCamDirty = false;
     host.__fvRect = null;   // [V79] rect 캐시 무효화 — 다음 제스처 시작 시 재측정
     svg.style.transform = '';
+    svg.classList.remove('fv-pan');   // [V93] 제스처 종료 → 텍스트 복원(선명)
     svg.setAttribute('viewBox', c.x.toFixed(2) + ' ' + c.y.toFixed(2) + ' ' + c.w.toFixed(2) + ' ' + c.h.toFixed(2));
     host.__fvCommitted = { x: c.x, y: c.y, w: c.w, h: c.h };
     // [V76] 줌 배율이 바뀌면 텍스트 표시 임계값이 달라지므로 재렌더(작은 타일 글씨 채움/제거).
