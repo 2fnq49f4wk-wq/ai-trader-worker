@@ -9983,6 +9983,12 @@ async function runTradingCycle(env) {
           spark: prevQ ? (prevQ.spark || null) : null,  // [V80] 스파크라인 보존
           ret1y: prevQ ? prevQ.ret1y : null, ret5y: prevQ ? prevQ.ret5y : null,
           vol: prevQ ? prevQ.vol : null, avgVol20: prevQ ? prevQ.avgVol20 : null,
+          // [시간외] 미국 프리/애프터 시세 — 표시용. fresh(bq) 우선, 없으면 직전값 보존.
+          pre: (typeof bq.pre === "number") ? bq.pre : (prevQ ? (prevQ.pre != null ? prevQ.pre : null) : null),
+          prePct: (typeof bq.pre === "number") ? (bq.prePct != null ? bq.prePct : null) : (prevQ ? (prevQ.prePct != null ? prevQ.prePct : null) : null),
+          post: (typeof bq.post === "number") ? bq.post : (prevQ ? (prevQ.post != null ? prevQ.post : null) : null),
+          postPct: (typeof bq.post === "number") ? (bq.postPct != null ? bq.postPct : null) : (prevQ ? (prevQ.postPct != null ? prevQ.postPct : null) : null),
+          mstate: (typeof bq.mstate === "string") ? bq.mstate : (prevQ ? (prevQ.mstate != null ? prevQ.mstate : null) : null),
           ts: nowTs
         };
         quoteStmts.push(
