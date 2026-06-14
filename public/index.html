@@ -3681,6 +3681,24 @@ html[data-theme="light"] .cfg-slider::-moz-range-thumb{background:#1d5fc2;border
     var d = new Date(ts), p = function(n){return n<10?'0'+n:n;};
     return d.getFullYear()+'-'+p(d.getMonth()+1)+'-'+p(d.getDate())+' '+p(d.getHours())+':'+p(d.getMinutes())+':'+p(d.getSeconds());
   }
+  // [V92 회계정합] 거래는 "해당 시장의 현지 거래일"에 귀속해야 함(미국=ET, 한국=KST).
+  //   브라우저 타임존(KST)로 보면 미국 새벽 거래가 다음날로 넘어가 달력·표가 어긋났음 → 시장 TZ로 통일.
+  function _mktTz(market){ return (market === 'kr' || market === 'bdkr') ? 'Asia/Seoul' : 'America/New_York'; }
+  function _mktTzLabel(market){ return (market === 'kr' || market === 'bdkr') ? 'KST' : 'ET'; }
+  function tradeYMD(ts, market){
+    try {
+      var parts = new Intl.DateTimeFormat('en-CA', { timeZone: _mktTz(market), year: 'numeric', month: '2-digit', day: '2-digit' }).formatToParts(new Date(ts));
+      var o = {}; parts.forEach(function(p){ o[p.type] = p.value; });
+      return { y: +o.year, m: +o.month - 1, d: +o.day };
+    } catch (e) { var d = new Date(ts); return { y: d.getFullYear(), m: d.getMonth(), d: d.getDate() }; }
+  }
+  function fmtTradeTime(ts, market){
+    if (!ts) return '-';
+    try {
+      var s = new Intl.DateTimeFormat('en-CA', { timeZone: _mktTz(market), year: 'numeric', month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: false }).format(new Date(ts));
+      return s.replace(',', '') + ' ' + _mktTzLabel(market);
+    } catch (e) { return fmtFullTime(ts); }
+  }
 
   function fmtAgo(ts) {
     if (!ts) return '없음';
@@ -6816,10 +6834,10 @@ html[data-theme="light"] .cfg-slider::-moz-range-thumb{background:#1d5fc2;border
     var byDay = {}, monthTot = {};
     trades.forEach(function(t){
       if (t.side !== 'SELL' || t.pnl == null) return;
-      var d = new Date(t.ts);
-      if (d.getFullYear() !== tcMonth.y || d.getMonth() !== tcMonth.m) return;
+      var ymd = tradeYMD(t.ts, t.market);   // [V92] 시장 현지 거래일 기준
+      if (ymd.y !== tcMonth.y || ymd.m !== tcMonth.m) return;
       var c = tcCatOf(t.market); if (!c) return;
-      var key = c.flag + '|' + c.cur, day = d.getDate();
+      var key = c.flag + '|' + c.cur, day = ymd.d;
       if (!byDay[day]) byDay[day] = {};
       if (!byDay[day][key]) byDay[day][key] = { flag: c.flag, cur: c.cur, sum: 0, ord: c.ord };
       byDay[day][key].sum += t.pnl;
@@ -6884,7 +6902,7 @@ html[data-theme="light"] .cfg-slider::-moz-range-thumb{background:#1d5fc2;border
       var pnl = (t.pnl != null) ? t.pnl : '';
       var pnlPct = (t.pnl_pct != null) ? t.pnl_pct.toFixed(2) : '';
       var row = [
-        csvCell(fmtFullTime(t.ts)),
+        csvCell(fmtTradeTime(t.ts, t.market)),
         csvCell((t.market || '').toUpperCase()),
         csvCell(t.symbol || ''),
         csvCell(name),
@@ -7031,7 +7049,7 @@ html[data-theme="light"] .cfg-slider::-moz-range-thumb{background:#1d5fc2;border
       var name = t.market === 'kr' ? krLabel(t.symbol) : usLabel(t.symbol);
       var label = name ? '<b>'+escapeHtml(t.symbol)+'</b> <span style="color:var(--dim);font-size:10px;">'+escapeHtml(name)+'</span>' : '<b>'+escapeHtml(t.symbol)+'</b>';
       var atype = assetTypeOf(t.market);
-      html += '<tr data-asset-type="'+atype+'"><td>'+fmtFullTime(t.ts)+'</td><td><span class="market-badge mkt-'+atype+'">'+t.market.toUpperCase()+'</span></td><td>'+label+'</td><td class="'+sc+'">'+t.side+'</td><td class="right">'+fmtNum(t.qty)+'</td><td class="right">'+fmtNum(t.price)+'</td><td class="right '+pc+'">'+pnlText+'</td><td class="right '+pc+'">'+pct+'</td><td>'+escapeHtml(t.reason||'')+'</td></tr>';
+      html += '<tr data-asset-type="'+atype+'"><td style="white-space:nowrap;">'+fmtTradeTime(t.ts, t.market)+'</td><td><span class="market-badge mkt-'+atype+'">'+t.market.toUpperCase()+'</span></td><td>'+label+'</td><td class="'+sc+'">'+t.side+'</td><td class="right">'+fmtNum(t.qty)+'</td><td class="right">'+fmtNum(t.price)+'</td><td class="right '+pc+'">'+pnlText+'</td><td class="right '+pc+'">'+pct+'</td><td>'+escapeHtml(t.reason||'')+'</td></tr>';
     });
     box.innerHTML = html + '</tbody></table></div>';
     updateTradesSummaryInto(trades, totalId, winId, avgId);
