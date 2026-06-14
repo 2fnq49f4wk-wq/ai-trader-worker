@@ -2113,6 +2113,42 @@ html[data-theme="light"] .news-sector-chip.neu{ color:var(--t2); }
 /* 히트맵 줌 버튼 — 흰 배경에서 보이게 */
 html[data-theme="light"] .fv-zb{ background:#fff !important; color:#15181f !important; border-color:var(--bd) !important; }
 html[data-theme="light"] .fv-zl{ color:var(--t2) !important; }
+/* [V91] 날짜별 수익 캘린더 */
+.tc-nav{display:flex;align-items:center;gap:8px;}
+.tc-label{font-size:13px;font-weight:700;color:var(--t1);font-family:'IBM Plex Mono',monospace;min-width:96px;text-align:center;}
+.tc-legend{display:flex;flex-wrap:wrap;gap:8px 16px;padding:6px 14px 10px;}
+.tc-lg{font-size:10.5px;color:var(--t3);font-weight:600;}
+.tc-lg b{font-style:normal;}
+.tc-cal{display:grid;grid-template-columns:repeat(7,1fr);gap:4px;padding:0 14px;}
+.tc-dow{font-size:9px;font-weight:700;color:var(--t3);text-align:center;padding:2px 0;text-transform:uppercase;letter-spacing:.5px;}
+.tc-dow.sun{color:var(--neg);} .tc-dow.sat{color:#6aa9ff;}
+.tc-cell{background:var(--s1);border:1px solid var(--bd2);border-radius:5px;min-height:74px;padding:4px 5px;
+  display:flex;flex-direction:column;gap:1px;overflow:hidden;}
+.tc-cell.blank{background:transparent;border:none;}
+.tc-cell.empty{opacity:.5;}
+.tc-cell.today{border-color:var(--acc);box-shadow:inset 0 0 0 1px var(--acc);}
+.tc-day{font-size:10px;font-weight:700;color:var(--t2);margin-bottom:1px;}
+.tc-day.sun{color:var(--neg);} .tc-day.sat{color:#6aa9ff;}
+.tc-line{font-size:9.5px;font-weight:700;font-variant-numeric:tabular-nums;white-space:nowrap;overflow:hidden;
+  text-overflow:ellipsis;font-family:'IBM Plex Mono',monospace;line-height:1.35;}
+.tc-line.pos{color:var(--pos);} .tc-line.neg{color:var(--neg);}
+.tc-line .fl{margin-right:2px;}
+.tc-totals{display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:8px;padding:12px 14px 4px;}
+.tc-tot{background:var(--s1);border:1px solid var(--bd);border-radius:6px;padding:9px 11px;}
+.tc-tot .l{font-size:9.5px;color:var(--t3);font-weight:700;}
+.tc-tot .v{font-size:14px;font-weight:800;font-variant-numeric:tabular-nums;margin-top:2px;font-family:'IBM Plex Mono',monospace;}
+.tc-tot .v.pos{color:var(--pos);} .tc-tot .v.neg{color:var(--neg);}
+.tc-tot .v.zero{color:var(--t3);}
+.tc-empty-msg{padding:24px;text-align:center;color:var(--t3);font-size:11px;grid-column:1/-1;}
+@media(max-width:767px){
+  .tc-cal{gap:2px;padding:0 8px;}
+  .tc-cell{min-height:58px;padding:3px;border-radius:4px;}
+  .tc-line{font-size:8px;}
+  .tc-day{font-size:9px;}
+  .tc-legend{padding:6px 8px 8px;gap:6px 10px;}
+  .tc-totals{padding:10px 8px 4px;}
+}
+
 /* 스파크라인은 var(--pos/--neg) 사용 → 라이트에서도 자동으로 진한 녹/적색 */
 
 /* ════════════════════════════════════════════════════════════════════
@@ -2765,8 +2801,26 @@ html[data-theme="light"] .cfg-slider::-moz-range-thumb{background:#1d5fc2;border
     <!-- ══ PAGE: TRADES ══ -->
     <div class="page" id="page-trades">
 
-      <!-- RECENT TRADES -->
+      <!-- [V91] 날짜별 수익 캘린더 — 미국주식·한국주식·채권·원자재 따로 표시 -->
       <div class="page-header">
+        <span class="page-title">📅 날짜별 수익</span>
+        <div class="page-actions tc-nav">
+          <button type="button" class="btn" id="tcPrev">◀</button>
+          <span class="tc-label" id="tcLabel">—</span>
+          <button type="button" class="btn" id="tcNext">▶</button>
+        </div>
+      </div>
+      <div class="tc-legend">
+        <span class="tc-lg"><b>🇺🇸</b> 미국주식 ($)</span>
+        <span class="tc-lg"><b>🇰🇷</b> 한국주식 (₩)</span>
+        <span class="tc-lg"><b>📜</b> 채권</span>
+        <span class="tc-lg"><b>🛢</b> 원자재 ($)</span>
+      </div>
+      <div class="tc-cal" id="tcCal"></div>
+      <div class="tc-totals" id="tcTotals"></div>
+
+      <!-- RECENT TRADES -->
+      <div class="page-header" style="margin-top:28px;">
         <span class="page-title">RECENT TRADES</span>
       </div>
       <div class="trades-filters">
@@ -6733,6 +6787,70 @@ html[data-theme="light"] .cfg-slider::-moz-range-thumb{background:#1d5fc2;border
     renderWatchlist(quotes);
   }
 
+  // ════════════════════════════════════════════════════════════════
+  // [V91] 날짜별 수익 캘린더 — 미국주식·한국주식·채권·원자재 따로
+  // ════════════════════════════════════════════════════════════════
+  var tcMonth = null;
+  function tcEnsure(){ if (!tcMonth) { var d = new Date(); tcMonth = { y: d.getFullYear(), m: d.getMonth() }; } }
+  function tcCatOf(market){
+    if (market === 'us')   return { flag: '🇺🇸', cur: '$', ord: 0 };
+    if (market === 'kr')   return { flag: '🇰🇷', cur: '₩', ord: 1 };
+    if (market === 'bdus') return { flag: '📜', cur: '$', ord: 2 };
+    if (market === 'bdkr') return { flag: '📜', cur: '₩', ord: 3 };
+    if (market === 'cm')   return { flag: '🛢', cur: '$', ord: 4 };
+    return null;
+  }
+  function tcFmt(v, cur){
+    var sign = v >= 0 ? '+' : '-', a = Math.abs(v), s;
+    if (cur === '₩') { s = a >= 1e8 ? (a / 1e8).toFixed(a >= 1e9 ? 0 : 1) + '억' : a >= 1e4 ? Math.round(a / 1e4) + '만' : Math.round(a).toString(); }
+    else { s = a >= 1e6 ? (a / 1e6).toFixed(1) + 'M' : a >= 1e3 ? (a / 1e3).toFixed(1) + 'K' : a.toFixed(a < 100 ? 1 : 0); }
+    return sign + cur + s;
+  }
+  var TC_LABELS = { '🇺🇸|$': '미국주식', '🇰🇷|₩': '한국주식', '📜|$': '채권(미국)', '📜|₩': '채권(한국)', '🛢|$': '원자재' };
+  function renderTradeCalendar(){
+    tcEnsure();
+    var cal = $('tcCal'), lbl = $('tcLabel'), tot = $('tcTotals');
+    if (!cal) return;
+    if (lbl) lbl.textContent = tcMonth.y + '년 ' + (tcMonth.m + 1) + '월';
+    var trades = window.__allTradesCache || [];
+    var byDay = {}, monthTot = {};
+    trades.forEach(function(t){
+      if (t.side !== 'SELL' || t.pnl == null) return;
+      var d = new Date(t.ts);
+      if (d.getFullYear() !== tcMonth.y || d.getMonth() !== tcMonth.m) return;
+      var c = tcCatOf(t.market); if (!c) return;
+      var key = c.flag + '|' + c.cur, day = d.getDate();
+      if (!byDay[day]) byDay[day] = {};
+      if (!byDay[day][key]) byDay[day][key] = { flag: c.flag, cur: c.cur, sum: 0, ord: c.ord };
+      byDay[day][key].sum += t.pnl;
+      if (!monthTot[key]) monthTot[key] = { flag: c.flag, cur: c.cur, sum: 0, ord: c.ord };
+      monthTot[key].sum += t.pnl;
+    });
+    var dow = ['일', '월', '화', '수', '목', '금', '토'], html = '';
+    dow.forEach(function(w, i){ html += '<div class="tc-dow' + (i === 0 ? ' sun' : i === 6 ? ' sat' : '') + '">' + w + '</div>'; });
+    var first = new Date(tcMonth.y, tcMonth.m, 1).getDay();
+    var ndays = new Date(tcMonth.y, tcMonth.m + 1, 0).getDate();
+    var now = new Date(), isThis = now.getFullYear() === tcMonth.y && now.getMonth() === tcMonth.m;
+    for (var b = 0; b < first; b++) html += '<div class="tc-cell blank"></div>';
+    for (var day = 1; day <= ndays; day++) {
+      var dw = (first + day - 1) % 7;
+      var cats = byDay[day] ? Object.keys(byDay[day]).map(function(k){ return byDay[day][k]; }).sort(function(a, b2){ return a.ord - b2.ord; }) : [];
+      var cls = 'tc-cell' + (cats.length ? '' : ' empty') + (isThis && day === now.getDate() ? ' today' : '');
+      var lines = cats.map(function(c){ var p = c.sum >= 0; return '<div class="tc-line ' + (p ? 'pos' : 'neg') + '"><span class="fl">' + c.flag + '</span>' + tcFmt(c.sum, c.cur) + '</div>'; }).join('');
+      html += '<div class="' + cls + '"><div class="tc-day' + (dw === 0 ? ' sun' : dw === 6 ? ' sat' : '') + '">' + day + '</div>' + lines + '</div>';
+    }
+    cal.innerHTML = html;
+    if (tot) {
+      var torder = Object.keys(monthTot).map(function(k){ return monthTot[k]; }).sort(function(a, b2){ return a.ord - b2.ord; });
+      if (!torder.length) tot.innerHTML = '<div class="tc-empty-msg">이번 달 실현 거래 없음</div>';
+      else tot.innerHTML = torder.map(function(c){
+        var p = c.sum > 0, z = Math.abs(c.sum) < 1e-9, nm = TC_LABELS[c.flag + '|' + c.cur] || c.flag;
+        return '<div class="tc-tot"><div class="l">' + c.flag + ' ' + nm + ' 월합계</div><div class="v ' + (z ? 'zero' : p ? 'pos' : 'neg') + '">' + tcFmt(c.sum, c.cur) + '</div></div>';
+      }).join('');
+    }
+  }
+  function tcShift(delta){ tcEnsure(); var m = tcMonth.m + delta, y = tcMonth.y; if (m < 0) { m = 11; y--; } if (m > 11) { m = 0; y++; } tcMonth = { y: y, m: m }; renderTradeCalendar(); }
+
   function renderTrades(trades) {
     renderTradesInto(trades, 'tradesBox', 'tradesTotalCount', 'tradesWinRate', 'tradesAvgPnl', 50);
     // 거래 내역이 있으면 자동 펼치기
@@ -7666,6 +7784,7 @@ html[data-theme="light"] .cfg-slider::-moz-range-thumb{background:#1d5fc2;border
         if (_needAll) {
           if (allTradesExpanded) renderAllTrades(allTrades || []);
           else updateTradesSummaryInto(allTrades || [], 'allTradesTotalCount', 'allTradesWinRate', 'allTradesAvgPnl');
+          if (isPage('trades')) { try { renderTradeCalendar(); } catch(e){} }   // [V91] 날짜별 수익 캘린더
         }
         renderCfgDisplay(state.cfg);
       })['catch'](function(e){ toast('로드 실패: '+e.message); });
@@ -8915,11 +9034,16 @@ html[data-theme="light"] .cfg-slider::-moz-range-thumb{background:#1d5fc2;border
       try { window.__fvHeatLastTs = 0; renderFvHeatmap(); } catch(e){}
     } else if (id === 'detail') {
       try { if (detailState.symbol) renderDetailHeaderData(); } catch(e){}
+    } else if (id === 'trades') {
+      try { renderTradeCalendar(); } catch(e){}
     }
   }
   document.querySelectorAll('.nav-item').forEach(function(item){
     item.addEventListener('click',function(){showPage(this.getAttribute('data-page'));});
   });
+  // [V91] 날짜별 수익 캘린더 — 월 이동
+  var _tcPrev = $('tcPrev'); if (_tcPrev) _tcPrev.addEventListener('click', function(){ tcShift(-1); });
+  var _tcNext = $('tcNext'); if (_tcNext) _tcNext.addEventListener('click', function(){ tcShift(1); });
   var _btnNews = $('btnRefreshNews'); if (_btnNews) _btnNews.addEventListener('click', refreshNews);
   var _btnBDUS = $('btnRunBDUS'); if (_btnBDUS) _btnBDUS.addEventListener('click', function(){ runBondNow('bdus','btnRunBDUS'); });
   var _btnBDKR = $('btnRunBDKR'); if (_btnBDKR) _btnBDKR.addEventListener('click', function(){ runBondNow('bdkr','btnRunBDKR'); });
