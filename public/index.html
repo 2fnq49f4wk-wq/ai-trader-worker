@@ -1916,7 +1916,7 @@ html[data-theme="light"] .sb-run-btn{background:var(--pos)!important;color:#fff!
 html[data-theme="light"] .btn.primary{background:var(--pos);color:#fff;}
 html[data-theme="light"] .wl-card:hover{background:#f1f4f8;}
 html[data-theme="light"] #fvHeatmap{background:#fff!important;}
-svg.fv-panning text{display:none!important;}  /* [V75] 팬/줌 중 텍스트 숨겨 렉 제거 */
+/* [V95] 옛 팬/줌 텍스트 숨김(fv-panning) 규칙 제거 — 이제 오버사이즈 SVG translate로 텍스트 항상 표시 */
 html[data-theme="light"] .sb-brand{background:#0d0d0d;}
 html[data-theme="light"] .sb-brand-name{color:#fff;}
 
@@ -2113,9 +2113,6 @@ html[data-theme="light"] .news-sector-chip.neu{ color:var(--t2); }
 /* 히트맵 줌 버튼 — 흰 배경에서 보이게 */
 html[data-theme="light"] .fv-zb{ background:#fff !important; color:#15181f !important; border-color:var(--bd) !important; }
 html[data-theme="light"] .fv-zl{ color:var(--t2) !important; }
-/* [V93] 히트맵 팬/줌 중 텍스트 숨김 — 매 프레임 벡터 재렌더 비용 절감(전체화면 맵 렉 해결) */
-svg.fv-pan text{display:none;}
-
 /* [V91] 날짜별 수익 캘린더 */
 .tc-nav{display:flex;align-items:center;gap:8px;}
 .tc-label{font-size:13px;font-weight:700;color:var(--t1);font-family:'IBM Plex Mono',monospace;min-width:96px;text-align:center;}
@@ -4143,9 +4140,11 @@ html[data-theme="light"] .cfg-slider::-moz-range-thumb{background:#1d5fc2;border
     svg.setAttribute('viewBox', px.toFixed(2) + ' ' + py.toFixed(2) + ' ' + pw.toFixed(2) + ' ' + ph.toFixed(2));
     host.__fvCommitted = { x: px, y: py, w: pw, h: ph };
   }
-  function fvApplyCam(host, interactive, hideTxt) {
+  function fvApplyCam(host, interactive) {
     var c = fvCam(host), svg = host.__fvSvg;
     if (!svg || !c.bw) return;
+    // [V95] 줌 경로 진입 시 오버사이즈 팬 상태가 남아있으면 원복(혼합 제스처 방어)
+    if (host.__fvPan) { svg.style.width = '100%'; svg.style.height = '100%'; svg.style.position = ''; svg.style.left = ''; svg.style.top = ''; host.__fvPan = null; }
     fvClampCam(c);
     var zl = host.__fvZoomLbl, zs = c.bw / c.w;
     if (zl) zl.textContent = zs <= 1.01 ? '' : ('×' + zs.toFixed(1));
@@ -4155,11 +4154,6 @@ html[data-theme="light"] .cfg-slider::-moz-range-thumb{background:#1d5fc2;border
       //   무거운 재래스터 커밋으로 "렉/끊김"이 났다. 벡터 viewBox를 매 프레임 정확히 그리면
       //   확대해도 선명하고(블러 없음) 재래스터 커밋도 없어 부드럽다.
       host.__fvCamDirty = true;
-      // [V94] 텍스트 숨김은 "이동(드래그)" 중에만 — 확대/축소(줌) 중에는 글씨 유지(사용자 요청).
-      //   드래그는 매 프레임 텍스트 1000+개 평행이동이라 가장 무거워 숨김이 효과적이고,
-      //   줌은 단계적이라 글씨를 유지해도 부담이 적다.
-      if (hideTxt) { if (!svg.classList.contains('fv-pan')) svg.classList.add('fv-pan'); }
-      else { if (svg.classList.contains('fv-pan')) svg.classList.remove('fv-pan'); }
       clearTimeout(host.__fvCommitT);
       host.__fvCommitT = setTimeout(function(){ fvCommitCam(host); }, 130);  // 멈추면 정밀 커밋(줌단계 텍스트 재렌더)
       if (host.__fvRaf) return;                 // 프레임당 1회
@@ -4182,8 +4176,9 @@ html[data-theme="light"] .cfg-slider::-moz-range-thumb{background:#1d5fc2;border
     clearTimeout(host.__fvCommitT);
     host.__fvCamDirty = false;
     host.__fvRect = null;   // [V79] rect 캐시 무효화 — 다음 제스처 시작 시 재측정
+    // [V95] 오버사이즈 팬 잔여 상태 원복(안전)
+    if (host.__fvPan) { svg.style.width = '100%'; svg.style.height = '100%'; svg.style.position = ''; svg.style.left = ''; svg.style.top = ''; host.__fvPan = null; }
     svg.style.transform = '';
-    svg.classList.remove('fv-pan');   // [V93] 제스처 종료 → 텍스트 복원(선명)
     svg.setAttribute('viewBox', c.x.toFixed(2) + ' ' + c.y.toFixed(2) + ' ' + c.w.toFixed(2) + ' ' + c.h.toFixed(2));
     host.__fvCommitted = { x: c.x, y: c.y, w: c.w, h: c.h };
     // [V76] 줌 배율이 바뀌면 텍스트 표시 임계값이 달라지므로 재렌더(작은 타일 글씨 채움/제거).
@@ -4193,6 +4188,48 @@ html[data-theme="light"] .cfg-slider::-moz-range-thumb{background:#1d5fc2;border
       clearTimeout(host.__fvReT);
       host.__fvReT = setTimeout(function(){ if (!host.__fvGesturing) renderFvHeatmap(); }, 60);
     }
+  }
+  // [V95] 오버사이즈 SVG 팬 — 드래그(이동)를 "재렌더 없이" 순수 GPU translate로 처리.
+  //   패딩 영역을 호스트 네이티브 해상도로 1회만 래스터(SVG 엘리먼트를 패딩 배율만큼 키워
+  //   viewBox=패딩영역) → 카메라 영역이 호스트 크기에 1:1 매핑(스케일 없음=블러 없음=선명).
+  //   드래그는 translate만 → 텍스트 포함 전체가 부드럽게 따라옴(텍스트 숨김 불필요).
+  function fvPanBegin(host) {
+    var c = fvCam(host), svg = host.__fvSvg;
+    if (!svg || !c.bw) return false;
+    var rect = fvHostRect(host);
+    if (!rect.width || !rect.height || c.w <= 0 || c.h <= 0) return false;
+    var pad = 0.7;
+    var pw = Math.min(c.bw, c.w * (1 + pad * 2));
+    var ph = Math.min(c.bh, c.h * (1 + pad * 2));
+    var px = Math.max(0, Math.min(c.bw - pw, c.x - (pw - c.w) / 2));
+    var py = Math.max(0, Math.min(c.bh - ph, c.y - (ph - c.h) / 2));
+    var svgW = rect.width * (pw / c.w);
+    var svgH = rect.height * (ph / c.h);
+    svg.setAttribute('viewBox', px.toFixed(2) + ' ' + py.toFixed(2) + ' ' + pw.toFixed(2) + ' ' + ph.toFixed(2));
+    svg.style.position = 'absolute'; svg.style.left = '0'; svg.style.top = '0';
+    svg.style.width = svgW.toFixed(1) + 'px'; svg.style.height = svgH.toFixed(1) + 'px';
+    host.__fvPan = { px: px, py: py, pw: pw, ph: ph, svgW: svgW, svgH: svgH };
+    fvPanApply(host);
+    return true;
+  }
+  function fvPanApply(host) {
+    var c = fvCam(host), p = host.__fvPan, svg = host.__fvSvg;
+    if (!p || !svg) return;
+    fvClampCam(c);
+    // 패딩 영역을 벗어나면 재커밋(드물게) — 패딩 안이면 순수 translate
+    var eps = 0.5;
+    if (c.x < p.px - eps || c.y < p.py - eps || c.x + c.w > p.px + p.pw + eps || c.y + c.h > p.py + p.ph + eps) {
+      fvPanBegin(host); return;
+    }
+    var L = -((c.x - p.px) / p.pw) * p.svgW;
+    var T = -((c.y - p.py) / p.ph) * p.svgH;
+    svg.style.transform = 'translate(' + L.toFixed(1) + 'px,' + T.toFixed(1) + 'px)';
+  }
+  function fvPanEnd(host) {
+    var svg = host.__fvSvg;
+    host.__fvPan = null;
+    if (svg) { svg.style.width = '100%'; svg.style.height = '100%'; svg.style.position = ''; svg.style.left = ''; svg.style.top = ''; svg.style.transform = ''; }
+    fvCommitCam(host);
   }
   function fvZoomAt(host, clientX, clientY, factor) {
     var c = fvCam(host), svg = host.__fvSvg;
@@ -4256,9 +4293,11 @@ html[data-theme="light"] .cfg-slider::-moz-range-thumb{background:#1d5fc2;border
         var dx = e.clientX - drag.x, dy = e.clientY - drag.y;
         if (Math.abs(dx) + Math.abs(dy) > 5) drag.moved = true;
         if (drag.moved && c.w < c.bw - 0.5) {
+          // [V95] 오버사이즈 SVG 팬 — 시작 시 패딩 1회 렌더, 이후 순수 translate(재렌더 없음·선명·텍스트 유지)
+          if (!host.__fvPan) fvPanBegin(host);
           c.x = drag.cx - dx * (c.w / rect.width);
           c.y = drag.cy - dy * (c.h / rect.height);
-          fvApplyCam(host, true, true);   // [V94] 이동 중에만 텍스트 숨김(부드럽게)
+          if (host.__fvPan) fvPanApply(host); else fvApplyCam(host, true);
           e.preventDefault();
         }
       }
@@ -4272,7 +4311,8 @@ html[data-theme="light"] .cfg-slider::-moz-range-thumb{background:#1d5fc2;border
       if (!Object.keys(ptrs).length) {
         drag = null;
         host.__fvGesturing = false;
-        fvCommitCam(host);  // [V71] 제스처 종료 → 선명한 벡터로 커밋
+        if (host.__fvPan) fvPanEnd(host);   // [V95] 오버사이즈 팬 종료 → SVG 원복 + 정확 커밋
+        else fvCommitCam(host);             // [V71] 제스처 종료 → 선명한 벡터로 커밋
         if (host.__fvRenderPending) { host.__fvRenderPending = false; renderFvHeatmap(); }  // [V72] 미뤄둔 재렌더 실행
         // [V81] iPad 더블탭 — touch-action:none + setPointerCapture 환경에선 dblclick이 발화하지
         //   않으므로 pointerup 기반으로 직접 감지. 캡처가 e.target을 host로 재지정하기 때문에
