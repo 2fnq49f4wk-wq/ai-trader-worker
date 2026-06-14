@@ -2155,6 +2155,17 @@ html[data-theme="light"] .fv-zl{ color:var(--t2) !important; }
    [V85] 종목 상세 페이지 — 캔들차트 + 등락률 + 수신 데이터
    ════════════════════════════════════════════════════════════════════ */
 .detail-empty{padding:40px 20px;text-align:center;color:var(--t3);font-size:12px;}
+/* [V96] 조회 전 한국(좌)·미국(우) 워치리스트 */
+.detail-browse{display:grid;grid-template-columns:1fr 1fr;gap:12px;}
+.detail-browse .db-col{background:var(--s1);border:1px solid var(--bd);border-radius:8px;overflow:hidden;display:flex;flex-direction:column;}
+.detail-browse .db-head{font-size:11px;font-weight:700;color:var(--t1);padding:9px 12px;border-bottom:1px solid var(--bd);
+  background:var(--s2);letter-spacing:.5px;position:sticky;top:0;z-index:1;}
+.detail-browse .db-list{max-height:72vh;overflow-y:auto;-webkit-overflow-scrolling:touch;}
+.detail-browse .empty{padding:24px;text-align:center;color:var(--t3);font-size:11px;}
+@media(max-width:640px){
+  .detail-browse{grid-template-columns:1fr;}
+  .detail-browse .db-list{max-height:none;}
+}
 .detail-head{display:flex;align-items:flex-start;justify-content:space-between;gap:16px;
   padding:16px 18px;background:var(--s1);border:1px solid var(--bd);border-radius:8px;margin-bottom:12px;flex-wrap:wrap;}
 .detail-sym{font-size:22px;font-weight:800;color:var(--t1);font-family:'IBM Plex Mono',monospace;letter-spacing:.5px;}
@@ -2883,13 +2894,26 @@ html[data-theme="light"] .cfg-slider::-moz-range-thumb{background:#1d5fc2;border
       <div class="page-header">
         <span class="page-title">📈 종목 상세</span>
         <div class="page-actions">
+          <button type="button" class="btn" id="detailBackBtn" style="display:none;">← 목록</button>
           <input type="text" id="detailSearch" placeholder="심볼 입력 (예: NVDA, 005930.KS)" autocomplete="off"
             style="font-size:12px;padding:7px 10px;background:var(--s2);border:1px solid var(--bd);color:var(--t1);width:200px;max-width:48vw;">
           <button type="button" class="btn" id="detailSearchBtn">조회</button>
         </div>
       </div>
       <div class="page-body" id="detailBody">
-        <div class="detail-empty" id="detailEmpty">워치리스트에서 종목을 누르거나 위에서 심볼을 검색하세요.</div>
+        <!-- [V96] 조회 전: 한국주식(좌) · 미국주식(우) 워치리스트 — 종목 클릭 시 상세 -->
+        <div id="detailEmpty">
+          <div class="detail-browse">
+            <div class="db-col">
+              <div class="db-head">🇰🇷 한국주식</div>
+              <div class="db-list" id="detailBrowseKR"><div class="empty">대기 중...</div></div>
+            </div>
+            <div class="db-col">
+              <div class="db-head">🇺🇸 미국주식</div>
+              <div class="db-list" id="detailBrowseUS"><div class="empty">대기 중...</div></div>
+            </div>
+          </div>
+        </div>
         <div id="detailContent" style="display:none;">
           <!-- 헤더: 종목명/가격/등락 + OHLC -->
           <div class="detail-head">
@@ -6502,14 +6526,43 @@ html[data-theme="light"] .cfg-slider::-moz-range-thumb{background:#1d5fc2;border
       }).join('');
   }
 
+  // [V96] 조회 전 — 한국주식(좌)·미국주식(우) 워치리스트 (시총순, 클릭 시 상세)
+  function renderDetailBrowse() {
+    var arr = window.__lastQuotesArr || [];
+    function mk(q) {
+      if (typeof q.price === 'number' && q.price > 0 && typeof q.shares === 'number' && q.shares > 0) return q.price * q.shares;
+      if (typeof q.mcap === 'number' && q.mcap > 0) return q.mcap;
+      return 1e15 / (q.rank || 9999);
+    }
+    function fill(market, id) {
+      var box = $(id); if (!box) return;
+      var items = arr.filter(function(q){ return q.market === market && !q.isEtf; });
+      items.sort(function(a, b){ return mk(b) - mk(a); });
+      if (!items.length) { box.innerHTML = '<div class="empty">대기 중...</div>'; return; }
+      box.innerHTML = '<div class="watchlist">' + items.slice(0, 80).map(function(q){ return buildWatchlistCard(q, market); }).join('') + '</div>';
+      bindFavButtons(box);
+    }
+    fill('kr', 'detailBrowseKR');
+    fill('us', 'detailBrowseUS');
+  }
+  function showDetailBrowse() {
+    detailState.symbol = null;
+    var emp = $('detailEmpty'), con = $('detailContent'), back = $('detailBackBtn');
+    if (con) con.style.display = 'none';
+    if (emp) emp.style.display = '';
+    if (back) back.style.display = 'none';
+    renderDetailBrowse();
+  }
+
   function openStockDetail(symbol, market) {
     if (!symbol) return;
     market = market || ((symbol.indexOf('.KS') >= 0 || symbol.indexOf('.KQ') >= 0) ? 'kr' : 'us');
     detailState.symbol = symbol;
     detailState.market = market;
-    var emp = $('detailEmpty'), con = $('detailContent');
+    var emp = $('detailEmpty'), con = $('detailContent'), back = $('detailBackBtn');
     if (emp) emp.style.display = 'none';
     if (con) con.style.display = '';
+    if (back) back.style.display = '';
     renderDetailHeaderData();
     renderDetailVision();
     renderDetailEarn();
@@ -7827,8 +7880,9 @@ html[data-theme="light"] .cfg-slider::-moz-range-thumb{background:#1d5fc2;border
         // [V88 렉] 워치리스트(60+ 스파크라인 SVG)는 대시보드 볼 때만 재렌더
         if (isPage('dashboard')) safeRun('watchlist', function(){ renderWatchlist(quotes); });
         // [V85→V88] 상세 페이지가 열려 있으면 헤더/데이터/예측/뉴스/실적 갱신(워치리스트 게이팅과 무관)
-        if (detailState.symbol && isPage('detail')) {
-          try { renderDetailHeaderData(); renderDetailVision(); renderDetailEarn(); renderDetailNews(); } catch(e){}
+        if (isPage('detail')) {
+          if (detailState.symbol) { try { renderDetailHeaderData(); renderDetailVision(); renderDetailEarn(); renderDetailNews(); } catch(e){} }
+          else { try { renderDetailBrowse(); } catch(e){} }   // [V96] 조회 전 목록 시세 갱신
         }
         safeRun('engine', function(){ renderEngine(state.lastTick, state.lastHeartbeat); });
         safeRun('trades', function(){ renderTrades(trades); });
@@ -9043,6 +9097,7 @@ html[data-theme="light"] .cfg-slider::-moz-range-thumb{background:#1d5fc2;border
   }
   var _dsb = $('detailSearchBtn'); if (_dsb) _dsb.addEventListener('click', _detailSearchGo);
   var _dsi = $('detailSearch'); if (_dsi) _dsi.addEventListener('keydown', function(e){ if (e.key === 'Enter') _detailSearchGo(); });
+  var _dback = $('detailBackBtn'); if (_dback) _dback.addEventListener('click', function(){ showDetailBrowse(); });
 
   // [V13] 샤드 fan-out 시작 — 가격은 매분 전부 병렬, 일봉은 라운드로빈
   loadShardMeta().then(function(){
@@ -9100,7 +9155,7 @@ html[data-theme="light"] .cfg-slider::-moz-range-thumb{background:#1d5fc2;border
       try { if (window.__lastQuotesArr) renderWatchlist(window.__lastQuotesArr); } catch(e){}
       try { window.__fvHeatLastTs = 0; renderFvHeatmap(); } catch(e){}
     } else if (id === 'detail') {
-      try { if (detailState.symbol) renderDetailHeaderData(); } catch(e){}
+      try { if (detailState.symbol) renderDetailHeaderData(); else showDetailBrowse(); } catch(e){}
     } else if (id === 'trades') {
       try { renderTradeCalendar(); } catch(e){}
     }
