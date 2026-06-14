@@ -2153,14 +2153,31 @@ html[data-theme="light"] .detail-tf-btn.active{color:#fff;}
 .detail-chart .pc-panelbg{fill:transparent;}
 .detail-sec{font-size:10px;font-weight:700;color:var(--t3);text-transform:uppercase;letter-spacing:1px;
   padding:6px 2px;margin-bottom:6px;border-bottom:1px solid var(--bd2);}
-/* [V88] 차트(좌) + 사이드바(우) — 한눈에 보이게 뷰포트 높이에 맞춤 */
-.detail-main{display:flex;gap:12px;align-items:stretch;margin-bottom:20px;}
+/* [V89] 차트(좌) + 사이드바(우) — 한눈에 + 사이드바 잘림 없음(자연 높이) */
+.detail-main{display:flex;gap:12px;align-items:flex-start;margin-bottom:20px;}
 .detail-left{flex:1 1 auto;min-width:0;display:flex;flex-direction:column;gap:8px;}
-.detail-main .detail-chart{flex:0 0 auto;height:46vh;min-height:240px;max-height:520px;margin-bottom:0;padding:4px;}
+.detail-main .detail-chart{flex:0 0 auto;height:52vh;min-height:280px;max-height:600px;margin-bottom:0;padding:4px;}
 .detail-main .detail-chart svg{width:100%;height:100%;}
-.detail-side{flex:0 0 290px;width:290px;background:var(--s1);border:1px solid var(--bd);border-radius:8px;
-  padding:10px 12px;align-self:stretch;overflow-y:auto;max-height:calc(46vh + 90px);}
-.detail-side .detail-sec{margin-bottom:6px;margin-top:4px;}
+.detail-side{flex:0 0 300px;width:300px;background:var(--s1);border:1px solid var(--bd);border-radius:8px;
+  padding:10px 12px;}
+.detail-side .detail-sec{margin-bottom:6px;margin-top:8px;}
+.detail-side .detail-sec:first-child{margin-top:0;}
+/* 수신 데이터 2열 컴팩트 그리드 */
+.detail-data{display:grid;grid-template-columns:1fr 1fr;gap:1px 14px;}
+.detail-dcell{display:flex;align-items:baseline;justify-content:space-between;gap:6px;
+  padding:4px 0;border-bottom:1px solid var(--bd2);min-width:0;}
+.detail-dcell .l{font-size:9.5px;color:var(--t3);font-weight:600;white-space:nowrap;}
+.detail-dcell .v{font-size:11.5px;font-weight:700;color:var(--t1);text-align:right;
+  font-family:'IBM Plex Mono',monospace;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
+.detail-dcell .v.pos{color:var(--pos);} .detail-dcell .v.neg{color:var(--neg);}
+/* 기술적 패턴 정석 모양 예시 */
+.detail-pattern{background:var(--s2);border:1px solid var(--bd2);border-radius:6px;padding:8px;display:none;}
+.detail-pattern .dp-row{display:flex;gap:10px;align-items:center;}
+.detail-pattern svg{flex:0 0 auto;width:96px;height:54px;background:var(--bg);border-radius:4px;}
+.detail-pattern .dp-info{min-width:0;}
+.detail-pattern .dp-name{font-size:11.5px;font-weight:700;color:var(--t1);}
+.detail-pattern .dp-name.bull{color:var(--pos);} .detail-pattern .dp-name.bear{color:var(--neg);}
+.detail-pattern .dp-desc{font-size:9.5px;color:var(--t3);margin-top:2px;line-height:1.35;}
 /* AI 예측 + 기술적 분석 미니카드 */
 .detail-vt{display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-bottom:8px;}
 .detail-vcard{background:var(--s2);border:1px solid var(--bd2);border-radius:6px;padding:8px 9px;min-height:62px;}
@@ -2859,8 +2876,10 @@ html[data-theme="light"] .cfg-slider::-moz-range-thumb{background:#1d5fc2;border
                 <div class="detail-vcard" id="detailTA"></div>
               </div>
               <div class="detail-earn" id="detailEarn"></div>
+              <div class="detail-sec">기술적 패턴 예시</div>
+              <div class="detail-pattern" id="detailPattern"></div>
               <div class="detail-sec">수신 데이터</div>
-              <table class="detail-table"><tbody id="detailData"></tbody></table>
+              <div class="detail-data" id="detailData"></div>
             </aside>
           </div>
         </div>
@@ -6080,7 +6099,7 @@ html[data-theme="light"] .cfg-slider::-moz-range-thumb{background:#1d5fc2;border
     opts = opts || {};
     var ind = opts.ind || { ma: true, boll: true, vol: true, rsi: true, macd: false };
     var dec = opts.dec != null ? opts.dec : 2;
-    var N = opts.count || 90;
+    var N = opts.count || 150;   // [V89] 더 많은 봉 표시
     var fullC = cs.map(function(c) { return c.c; });
     var maArr = PC_MA.map(function(m) { return _smaArr(fullC, m.p); });
     var boll = _bollArr(fullC, 20, 2);
@@ -6196,19 +6215,27 @@ html[data-theme="light"] .cfg-slider::-moz-range-thumb{background:#1d5fc2;border
       py += h;
     });
 
-    // 하단 날짜 라벨
-    var labelN = Math.min(6, n);
+    // [V89] 하단 날짜축 — interval별 올바른 포맷 + 세로 그리드 + 라벨 8개(겹침 방지)
+    var intr = opts.interval || '1d';
+    var isIntra = ['1m', '2m', '5m', '15m', '30m', '60m', '90m', '1h'].indexOf(intr) >= 0;
+    var isLong = (intr === '1wk' || intr === '1mo');
+    function p2(x) { return (x < 10 ? '0' : '') + x; }
+    function fmtDate(c2) {
+      var dt = new Date(c2.t * 1000);
+      if (isIntra) return (dt.getMonth() + 1) + '/' + dt.getDate() + ' ' + p2(dt.getHours()) + ':' + p2(dt.getMinutes());
+      if (isLong) return (dt.getFullYear() % 100) + "'" + p2(dt.getMonth() + 1);
+      return (dt.getMonth() + 1) + '/' + p2(dt.getDate());
+    }
+    var labelN = Math.max(2, Math.min(8, Math.floor((W - padR) / 90)));
+    var axisY = pTop + priceH + panels.length * (gap + subH) + gap;  // 마지막 패널 하단
     for (i = 0; i < labelN; i++) {
       var idx = Math.round(i * (n - 1) / (labelN - 1)), c2 = show[idx];
       if (!c2) continue;
-      var dt = new Date(c2.t * 1000);
-      var intr = opts.interval || '1d';
-      var lbl = (intr.indexOf('m') >= 0 && intr !== '1mo' || intr === '60m')
-        ? (dt.getMonth() + 1) + '/' + dt.getDate() + ' ' + ('0' + dt.getHours()).slice(-2) + ':' + ('0' + dt.getMinutes()).slice(-2)
-        : (intr === '1wk' || intr === '1mo') ? (dt.getFullYear() % 100) + '/' + (dt.getMonth() + 1)
-        : (dt.getMonth() + 1) + '/' + dt.getDate();
+      var lx2 = X(idx);
+      // 세로 그리드 (가격 패널 전체 높이)
+      svg += '<line class="pc-grid" x1="' + lx2.toFixed(1) + '" y1="' + pTop + '" x2="' + lx2.toFixed(1) + '" y2="' + (pTop + priceH).toFixed(1) + '" opacity="0.5"/>';
       var anchor = i === 0 ? 'start' : i === labelN - 1 ? 'end' : 'middle';
-      svg += '<text class="pc-axis" x="' + X(idx).toFixed(1) + '" y="' + (H - 4).toFixed(1) + '" text-anchor="' + anchor + '">' + lbl + '</text>';
+      svg += '<text class="pc-axis" x="' + lx2.toFixed(1) + '" y="' + (H - 4).toFixed(1) + '" text-anchor="' + anchor + '">' + fmtDate(c2) + '</text>';
     }
     svg += '</svg>';
     return svg;
@@ -6227,6 +6254,45 @@ html[data-theme="light"] .cfg-slider::-moz-range-thumb{background:#1d5fc2;border
     '헬스케어':'HEALTH','금융':'FINANCE','산업재':'INDUSTRIAL','에너지':'RESOURCES','소재':'RESOURCES',
     '유틸리티':'RESOURCES','리츠':'FINANCE' };
 
+  // [V89] 기술적 패턴 정석 모양 예시 — viewBox 96×54. {C}=가격선 색.
+  //   가는 점선 = 추세선/넥라인 가이드. 정석 형태를 단순화해 한눈에 보이게.
+  var GL = 'stroke="#6b7689" stroke-width="0.8" stroke-dasharray="3 2" fill="none"';
+  var PATTERN_SHAPES = {
+    'Head & Shoulders': '<polyline points="5,46 17,26 28,38 46,13 64,38 76,27 90,46" stroke="{C}" stroke-width="1.6" fill="none" stroke-linejoin="round"/><line x1="5" y1="38" x2="90" y2="38" '+GL+'/>',
+    'Inverse H&S': '<polyline points="5,8 17,28 28,16 46,41 64,16 76,27 90,8" stroke="{C}" stroke-width="1.6" fill="none" stroke-linejoin="round"/><line x1="5" y1="16" x2="90" y2="16" '+GL+'/>',
+    'Double Top': '<polyline points="6,47 26,14 46,33 66,14 88,47" stroke="{C}" stroke-width="1.6" fill="none" stroke-linejoin="round"/><line x1="6" y1="33" x2="88" y2="33" '+GL+'/>',
+    'Double Bottom': '<polyline points="6,7 26,40 46,21 66,40 88,7" stroke="{C}" stroke-width="1.6" fill="none" stroke-linejoin="round"/><line x1="6" y1="21" x2="88" y2="21" '+GL+'/>',
+    'Triple Top': '<polyline points="5,45 17,15 31,33 46,15 61,33 75,15 90,45" stroke="{C}" stroke-width="1.6" fill="none" stroke-linejoin="round"/><line x1="5" y1="15" x2="90" y2="15" '+GL+'/>',
+    'Triple Bottom': '<polyline points="5,9 17,39 31,21 46,39 61,21 75,39 90,9" stroke="{C}" stroke-width="1.6" fill="none" stroke-linejoin="round"/><line x1="5" y1="39" x2="90" y2="39" '+GL+'/>',
+    'Ascending Triangle': '<polyline points="6,42 22,15 34,29 50,15 62,23 80,15 88,19" stroke="{C}" stroke-width="1.5" fill="none" stroke-linejoin="round"/><line x1="14" y1="15" x2="90" y2="15" '+GL+'/><line x1="6" y1="44" x2="90" y2="12" '+GL+'/>',
+    'Descending Triangle': '<polyline points="6,12 22,39 34,25 50,39 62,31 80,39 88,35" stroke="{C}" stroke-width="1.5" fill="none" stroke-linejoin="round"/><line x1="14" y1="39" x2="90" y2="39" '+GL+'/><line x1="6" y1="10" x2="90" y2="42" '+GL+'/>',
+    'Symmetrical Triangle': '<polyline points="6,10 20,42 34,16 50,36 64,22 80,30 90,27" stroke="{C}" stroke-width="1.5" fill="none" stroke-linejoin="round"/><line x1="6" y1="8" x2="90" y2="26" '+GL+'/><line x1="6" y1="46" x2="90" y2="28" '+GL+'/>',
+    'Rising Wedge': '<polyline points="6,44 18,30 28,40 42,22 54,30 70,15 82,22 90,17" stroke="{C}" stroke-width="1.5" fill="none" stroke-linejoin="round"/><line x1="6" y1="46" x2="90" y2="14" '+GL+'/><line x1="6" y1="34" x2="90" y2="16" '+GL+'/>',
+    'Falling Wedge': '<polyline points="6,16 18,28 28,18 42,34 54,26 70,42 82,34 90,40" stroke="{C}" stroke-width="1.5" fill="none" stroke-linejoin="round"/><line x1="6" y1="14" x2="90" y2="42" '+GL+'/><line x1="6" y1="26" x2="90" y2="44" '+GL+'/>',
+    'Channel Up': '<polyline points="6,46 20,30 30,40 46,22 58,32 76,14 88,24" stroke="{C}" stroke-width="1.5" fill="none" stroke-linejoin="round"/><line x1="6" y1="40" x2="88" y2="10" '+GL+'/><line x1="6" y1="50" x2="88" y2="22" '+GL+'/>',
+    'Channel Down': '<polyline points="6,8 20,24 30,14 46,32 58,22 76,40 88,30" stroke="{C}" stroke-width="1.5" fill="none" stroke-linejoin="round"/><line x1="6" y1="14" x2="88" y2="44" '+GL+'/><line x1="6" y1="4" x2="88" y2="32" '+GL+'/>'
+  };
+  function _candleShape(dir) {
+    // 캔들 패턴용 대표 캔들 1봉
+    var c = dir === 'bull' ? '#26a69a' : dir === 'bear' ? '#ef5350' : '#9aa7bd';
+    return '<line x1="48" y1="8" x2="48" y2="46" stroke="'+c+'" stroke-width="1"/>' +
+      '<rect x="40" y="' + (dir === 'bull' ? 22 : 16) + '" width="16" height="16" fill="'+c+'"/>';
+  }
+  function renderDetailPattern(top) {
+    var el = $('detailPattern'); if (!el) return;
+    if (!top) { el.style.display = 'none'; return; }
+    var dirCol = top.dir === 'bull' ? '#26a69a' : top.dir === 'bear' ? '#ef5350' : '#9aa7bd';
+    var inner = PATTERN_SHAPES[top.name];
+    var shape = inner ? inner.split('{C}').join(dirCol) : _candleShape(top.dir);
+    var dirCls = top.dir === 'bull' ? 'bull' : top.dir === 'bear' ? 'bear' : '';
+    var dirTxt = top.dir === 'bull' ? '▲ 매수형' : top.dir === 'bear' ? '▼ 매도형' : '— 중립형';
+    el.style.display = '';
+    el.innerHTML = '<div class="dp-row">' +
+      '<svg viewBox="0 0 96 54" preserveAspectRatio="xMidYMid meet">' + shape + '</svg>' +
+      '<div class="dp-info"><div class="dp-name ' + dirCls + '">' + escapeHtml(top.name) + ' <span style="font-size:9px;font-weight:600;">' + dirTxt + '</span></div>' +
+      '<div class="dp-desc">' + escapeHtml(top.desc || '정석 패턴 형태') + '</div></div></div>';
+  }
+
   // AI Vision 예측 카드
   function renderDetailVision() {
     var el = $('detailVision'); if (!el) return;
@@ -6242,22 +6308,27 @@ html[data-theme="light"] .cfg-slider::-moz-range-thumb{background:#1d5fc2;border
       '<div class="vt-sub">신뢰도 ' + conf + '%' + (r.ts ? ' · ' + fmtAgo(r.ts) : '') + '</div>';
   }
 
-  // 기술적 분석 카드 (현재 차트 캔들 기반)
+  // 기술적 분석 카드 (현재 차트 캔들 기반) + 정석 패턴 예시
   function renderDetailTA(cs) {
     var el = $('detailTA'); if (!el) return;
-    if (!cs || cs.length < 20) { el.innerHTML = '<div class="vt-h">📊 기술적 분석</div><div class="vt-big neu">—</div><div class="vt-sub">데이터 부족</div>'; return; }
-    var score = 0, all = [];
+    if (!cs || cs.length < 20) {
+      el.innerHTML = '<div class="vt-h">📊 기술적 분석</div><div class="vt-big neu">—</div><div class="vt-sub">데이터 부족</div>';
+      renderDetailPattern(null); return;
+    }
+    var score = 0, chartPats = [], candlePats = [];
     try {
-      var candleP = detectCandlePatterns(cs), chartR = detectChartPatterns(cs);
-      all = chartR.patterns.concat(candleP);
-      all.forEach(function(p){ score += p.dir === 'bull' ? (p.kind === 'chart' ? 2 : 1) : p.dir === 'bear' ? -(p.kind === 'chart' ? 2 : 1) : 0; });
+      candlePats = detectCandlePatterns(cs); var chartR = detectChartPatterns(cs); chartPats = chartR.patterns;
+      chartPats.concat(candlePats).forEach(function(p){ score += p.dir === 'bull' ? (p.kind === 'chart' ? 2 : 1) : p.dir === 'bear' ? -(p.kind === 'chart' ? 2 : 1) : 0; });
     } catch (e) {}
+    var all = chartPats.concat(candlePats);
     var bias = score >= 2 ? 'bull' : score <= -2 ? 'bear' : 'neu';
     var txt = bias === 'bull' ? '▲ 매수우위' : bias === 'bear' ? '▼ 매도우위' : '— 중립';
-    var top = all.length ? all[0].name : '뚜렷한 패턴 없음';
+    var topName = all.length ? all[0].name : '뚜렷한 패턴 없음';
     el.innerHTML = '<div class="vt-h">📊 기술적 분석</div>' +
       '<div class="vt-big ' + (bias === 'bull' ? 'pos' : bias === 'bear' ? 'neg' : 'neu') + '">' + txt + '</div>' +
-      '<div class="vt-sub">패턴 ' + all.length + '개 · ' + escapeHtml(top) + '</div>';
+      '<div class="vt-sub">패턴 ' + all.length + '개 · ' + escapeHtml(topName) + '</div>';
+    // 정석 모양 예시 — 차트 패턴 우선(모양 있음), 없으면 캔들 패턴
+    renderDetailPattern(chartPats[0] || candlePats[0] || null);
   }
 
   // 실적 발표일
@@ -6327,7 +6398,7 @@ html[data-theme="light"] .cfg-slider::-moz-range-thumb{background:#1d5fc2;border
       } else { chEl.textContent = '—'; chEl.className = 'detail-change'; }
     }
     var rows = [];
-    function add(l, v, cls) { rows.push('<tr><td class="l">' + l + '</td><td class="v' + (cls ? ' ' + cls : '') + '">' + v + '</td></tr>'); }
+    function add(l, v, cls) { rows.push('<div class="detail-dcell"><span class="l">' + l + '</span><span class="v' + (cls ? ' ' + cls : '') + '">' + v + '</span></div>'); }
     function pct(v) { return (typeof v === 'number') ? ((v >= 0 ? '+' : '') + v.toFixed(2) + '%') : '—'; }
     function pc(v) { return (typeof v === 'number') ? (v >= 0 ? 'pos' : 'neg') : ''; }
     function num(v) { return (v != null && typeof v === 'number') ? fmtNum(v) : '—'; }
