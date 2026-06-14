@@ -2113,6 +2113,60 @@ html[data-theme="light"] .news-sector-chip.neu{ color:var(--t2); }
 /* 히트맵 줌 버튼 — 흰 배경에서 보이게 */
 html[data-theme="light"] .fv-zb{ background:#fff !important; color:#15181f !important; border-color:var(--bd) !important; }
 html[data-theme="light"] .fv-zl{ color:var(--t2) !important; }
+/* [V98] 빠른 검색 FAB */
+.cmdk-fab{position:fixed;right:18px;bottom:18px;z-index:900;width:48px;height:48px;border-radius:50%;
+  background:var(--acc);color:var(--bg);border:none;font-size:20px;cursor:pointer;
+  box-shadow:0 6px 18px rgba(0,0,0,.35);transition:transform .1s,box-shadow .1s;display:flex;align-items:center;justify-content:center;}
+.cmdk-fab:hover{transform:scale(1.08);}
+.cmdk-fab:active{transform:scale(.95);}
+html[data-theme="light"] .cmdk-fab{color:#fff;}
+@media(max-width:767px){.cmdk-fab{width:44px;height:44px;right:14px;bottom:14px;font-size:18px;}}
+/* [V98] 명령 팔레트 (Ctrl+K) */
+.cmdk-overlay{position:fixed;inset:0;z-index:1000;background:rgba(0,0,0,.5);backdrop-filter:blur(2px);
+  display:none;align-items:flex-start;justify-content:center;padding-top:12vh;}
+.cmdk-overlay.show{display:flex;}
+.cmdk-box{width:92%;max-width:560px;background:var(--s1);border:1px solid var(--bd);border-radius:10px;
+  box-shadow:0 20px 60px rgba(0,0,0,.5);overflow:hidden;}
+#cmdkInput{width:100%;border:none;border-bottom:1px solid var(--bd);background:transparent;color:var(--t1);
+  font-size:15px;padding:15px 16px;outline:none;font-family:inherit;}
+.cmdk-list{max-height:46vh;overflow-y:auto;}
+.cmdk-item{display:flex;align-items:center;gap:10px;padding:10px 16px;cursor:pointer;border-bottom:1px solid var(--bd2);}
+.cmdk-item:last-child{border-bottom:none;}
+.cmdk-item.sel,.cmdk-item:hover{background:var(--s2);}
+.cmdk-ic{flex:0 0 auto;font-size:13px;width:22px;text-align:center;}
+.cmdk-main{flex:1;min-width:0;}
+.cmdk-t{font-size:13px;font-weight:700;color:var(--t1);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
+.cmdk-s{font-size:10px;color:var(--t3);margin-top:1px;}
+.cmdk-r{font-size:12px;font-weight:700;font-variant-numeric:tabular-nums;font-family:'IBM Plex Mono',monospace;}
+.cmdk-r.pos{color:var(--pos);} .cmdk-r.neg{color:var(--neg);}
+.cmdk-tag{font-size:8.5px;font-weight:700;color:var(--t3);border:1px solid var(--bd);border-radius:3px;padding:1px 5px;}
+.cmdk-foot{display:flex;gap:16px;padding:8px 16px;border-top:1px solid var(--bd);font-size:10px;color:var(--t3);}
+.cmdk-foot b{color:var(--t2);font-weight:700;}
+.cmdk-empty{padding:18px 16px;color:var(--t3);font-size:12px;text-align:center;}
+/* [V98] 가격 알림 */
+.alerts-add{display:flex;gap:6px;flex-wrap:wrap;align-items:center;}
+.alerts-add input,.alerts-add select{padding:8px 10px;background:var(--s2);border:1px solid var(--bd);color:var(--t1);
+  font-size:12px;border-radius:5px;font-family:inherit;}
+.alerts-list{display:flex;flex-direction:column;gap:6px;max-height:46vh;overflow-y:auto;margin-top:4px;}
+.alert-row{display:flex;align-items:center;gap:10px;padding:9px 11px;background:var(--s2);border:1px solid var(--bd2);border-radius:6px;}
+.alert-row.triggered{border-color:var(--pos);opacity:.7;}
+.alert-row .a-sym{font-size:12px;font-weight:700;color:var(--t1);font-family:'IBM Plex Mono',monospace;flex:0 0 auto;}
+.alert-row .a-cond{font-size:11px;color:var(--t2);flex:1;}
+.alert-row .a-now{font-size:11px;color:var(--t3);font-variant-numeric:tabular-nums;}
+.alert-row .a-del{cursor:pointer;color:var(--t3);font-size:14px;border:none;background:none;}
+.alert-row .a-del:hover{color:var(--neg);}
+.alerts-empty{padding:16px;text-align:center;color:var(--t3);font-size:11px;}
+.detail-alertbtn{font-size:11px;font-weight:700;padding:7px 12px;background:var(--s2);border:1px solid var(--bd);
+  color:var(--t2);cursor:pointer;border-radius:5px;min-height:34px;}
+.detail-alertbtn:hover{border-color:var(--amber);color:var(--amber);}
+/* [V98] 누적 손익 추이 차트 */
+.pnl-curve .pnl-leg{display:flex;flex-wrap:wrap;gap:6px 14px;margin-bottom:6px;}
+.pnl-curve .pc-leg-item{font-size:10.5px;color:var(--t3);display:flex;align-items:center;gap:4px;}
+.pnl-curve .pc-leg-item i{width:10px;height:3px;border-radius:2px;display:inline-block;}
+.pnl-curve .pc-leg-item b{font-family:'IBM Plex Mono',monospace;}
+.pnl-curve .pc-leg-item b.pos{color:var(--pos);} .pnl-curve .pc-leg-item b.neg{color:var(--neg);}
+.pnl-curve .pnl-svg{width:100%;height:220px;background:var(--s1);border:1px solid var(--bd);border-radius:8px;display:block;}
+
 /* [V91] 날짜별 수익 캘린더 */
 .tc-nav{display:flex;align-items:center;gap:8px;}
 .tc-label{font-size:13px;font-weight:700;color:var(--t1);font-family:'IBM Plex Mono',monospace;min-width:96px;text-align:center;}
@@ -2837,6 +2891,10 @@ html[data-theme="light"] .cfg-slider::-moz-range-thumb{background:#1d5fc2;border
       <div class="tc-cal" id="tcCal"></div>
       <div class="tc-totals" id="tcTotals"></div>
 
+      <!-- [V98] 누적 실현손익 추이 -->
+      <div class="page-header" style="margin-top:22px;"><span class="page-title">📈 누적 실현손익 추이</span></div>
+      <div class="pnl-curve" id="pnlCurve" style="padding:0 14px;"></div>
+
       <!-- RECENT TRADES -->
       <div class="page-header" style="margin-top:28px;">
         <span class="page-title">RECENT TRADES</span>
@@ -2902,6 +2960,7 @@ html[data-theme="light"] .cfg-slider::-moz-range-thumb{background:#1d5fc2;border
         <span class="page-title">📈 종목 상세</span>
         <div class="page-actions">
           <button type="button" class="btn" id="detailBackBtn" style="display:none;">← 목록</button>
+          <button type="button" class="detail-alertbtn" id="detailAlertBtn" style="display:none;">🔔 알림</button>
           <input type="text" id="detailSearch" placeholder="심볼 입력 (예: NVDA, 005930.KS)" autocomplete="off"
             style="font-size:12px;padding:7px 10px;background:var(--s2);border:1px solid var(--bd);color:var(--t1);width:200px;max-width:48vw;">
           <button type="button" class="btn" id="detailSearchBtn">조회</button>
@@ -3100,6 +3159,36 @@ html[data-theme="light"] .cfg-slider::-moz-range-thumb{background:#1d5fc2;border
 </div>
 
 <!-- ══ 히트맵 모달 ══ -->
+<!-- [V98] 빠른 검색 FAB (모바일/마우스용) -->
+<button type="button" class="cmdk-fab" id="cmdkFab" title="빠른 검색 (Ctrl+K)">🔍</button>
+
+<!-- [V98] 명령 팔레트 (Ctrl/Cmd+K) — 종목 검색·페이지 이동 -->
+<div class="cmdk-overlay" id="cmdkOverlay">
+  <div class="cmdk-box">
+    <input type="text" id="cmdkInput" placeholder="종목/페이지 검색…  (예: NVDA, 삼성, 대시보드)" autocomplete="off" spellcheck="false">
+    <div class="cmdk-list" id="cmdkList"></div>
+    <div class="cmdk-foot"><span><b>↑↓</b> 이동</span><span><b>Enter</b> 선택</span><span><b>Esc</b> 닫기</span></div>
+  </div>
+</div>
+
+<!-- [V98] 가격 알림 관리 모달 -->
+<div class="modal" id="alertsModal">
+  <div class="modal-box" style="width:92%;max-width:560px;">
+    <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:14px;">
+      <h2 style="margin:0;color:var(--acc);font-size:14px;font-weight:700;letter-spacing:1.2px;">🔔 가격 알림</h2>
+      <button type="button" class="btn" id="alertsCloseBtn">✕</button>
+    </div>
+    <div class="alerts-add">
+      <input type="text" id="alertSym" placeholder="심볼" autocomplete="off" style="flex:1;min-width:90px;">
+      <select id="alertDir"><option value="up">↑ 이상</option><option value="down">↓ 이하</option></select>
+      <input type="number" id="alertPrice" placeholder="목표가" step="any" style="width:110px;">
+      <button type="button" class="btn primary" id="alertAddBtn">추가</button>
+    </div>
+    <div class="hint" style="margin:8px 0;">목표가에 도달하면 토스트와 브라우저 알림으로 알려줍니다. 종목 상세에서도 추가할 수 있어요.</div>
+    <div id="alertsList" class="alerts-list"></div>
+  </div>
+</div>
+
 <div class="modal" id="heatmapModal" style="padding:0;">
   <div style="width:95%;max-width:1300px;background:var(--s1);border:1px solid var(--bd);margin:auto;padding:20px;max-height:90vh;overflow-y:auto;">
     <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:16px;flex-wrap:wrap;gap:10px;">
@@ -6570,10 +6659,11 @@ html[data-theme="light"] .cfg-slider::-moz-range-thumb{background:#1d5fc2;border
   }
   function showDetailBrowse() {
     detailState.symbol = null;
-    var emp = $('detailEmpty'), con = $('detailContent'), back = $('detailBackBtn');
+    var emp = $('detailEmpty'), con = $('detailContent'), back = $('detailBackBtn'), abtn = $('detailAlertBtn');
     if (con) con.style.display = 'none';
     if (emp) emp.style.display = '';
     if (back) back.style.display = 'none';
+    if (abtn) abtn.style.display = 'none';
     renderDetailBrowse();
   }
 
@@ -6582,10 +6672,11 @@ html[data-theme="light"] .cfg-slider::-moz-range-thumb{background:#1d5fc2;border
     market = market || ((symbol.indexOf('.KS') >= 0 || symbol.indexOf('.KQ') >= 0) ? 'kr' : 'us');
     detailState.symbol = symbol;
     detailState.market = market;
-    var emp = $('detailEmpty'), con = $('detailContent'), back = $('detailBackBtn');
+    var emp = $('detailEmpty'), con = $('detailContent'), back = $('detailBackBtn'), abtn = $('detailAlertBtn');
     if (emp) emp.style.display = 'none';
     if (con) con.style.display = '';
     if (back) back.style.display = '';
+    if (abtn) abtn.style.display = '';
     renderDetailHeaderData();
     renderDetailVision();
     renderDetailEarn();
@@ -6993,6 +7084,170 @@ html[data-theme="light"] .cfg-slider::-moz-range-thumb{background:#1d5fc2;border
     }
   }
   function tcShift(delta){ tcEnsure(); var m = tcMonth.m + delta, y = tcMonth.y; if (m < 0) { m = 11; y--; } if (m > 11) { m = 0; y++; } tcMonth = { y: y, m: m }; renderTradeCalendar(); }
+
+  // ════════════════════════════════════════════════════════════════
+  // [V98] 누적 실현손익 추이 — 카테고리별(통화분리) 라인차트
+  // ════════════════════════════════════════════════════════════════
+  function renderPnlCurve() {
+    var box = $('pnlCurve'); if (!box) return;
+    var trades = (window.__allTradesCache || []).filter(function(t){ return t.side === 'SELL' && t.pnl != null; });
+    if (trades.length < 1) { box.innerHTML = '<div class="tc-empty-msg">실현 거래 없음</div>'; return; }
+    trades = trades.slice().sort(function(a, b){ return a.ts - b.ts; });
+    // 카테고리: us($), kr(₩), cm($), bd($/₩) — 통화별 누적 시리즈
+    var series = {};  // key flag|cur → {flag,cur,pts:[{t,cum}], ord, color}
+    var COL = { 'US$': '#22d3ee', 'KR₩': '#fbbf24', 'CM$': '#34d399', 'BD$': '#a78bfa', 'BD₩': '#f472b6' };
+    var cum = {};
+    trades.forEach(function(t){
+      var c = tcCatOf(t.market); if (!c) return;
+      var key = c.flag + '|' + c.cur;
+      cum[key] = (cum[key] || 0) + t.pnl;
+      if (!series[key]) series[key] = { flag: c.flag, cur: c.cur, ord: c.ord, pts: [], color: COL[(c.flag === '🇺🇸' ? 'US' : c.flag === '🇰🇷' ? 'KR' : c.flag === '🛢' ? 'CM' : 'BD') + c.cur] || '#9aa7bd' };
+      series[key].pts.push({ t: t.ts, cum: cum[key] });
+    });
+    var keys = Object.keys(series).sort(function(a, b){ return series[a].ord - series[b].ord; });
+    var W = 760, H = 220, padL = 4, padR = 8, padT = 10, padB = 18;
+    var tMin = trades[0].ts, tMax = trades[trades.length - 1].ts; if (tMax <= tMin) tMax = tMin + 1;
+    // 시리즈는 통화가 달라 절대값 비교 불가 → 각 시리즈를 자기 범위로 정규화(0=시작선 공유)
+    var X = function(t){ return padL + (t - tMin) / (tMax - tMin) * (W - padL - padR); };
+    var leg = [], lines = '';
+    keys.forEach(function(k){
+      var s = series[k];
+      var vals = s.pts.map(function(p){ return p.cum; }).concat([0]);
+      var mn = Math.min.apply(null, vals), mx = Math.max.apply(null, vals);
+      var rng = (mx - mn) || Math.abs(mx) || 1;
+      var Y = function(v){ return padT + (1 - (v - mn) / rng) * (H - padT - padB); };
+      var pts = s.pts.map(function(p){ return X(p.t).toFixed(1) + ',' + Y(p.cum).toFixed(1); });
+      // 시작점 0
+      pts.unshift(X(s.pts[0].t).toFixed(1) + ',' + Y(0).toFixed(1));
+      lines += '<polyline points="' + pts.join(' ') + '" fill="none" stroke="' + s.color + '" stroke-width="1.6" stroke-linejoin="round"/>';
+      var last = s.pts[s.pts.length - 1].cum;
+      var nm = TC_LABELS[k] || s.flag;
+      leg.push('<span class="pc-leg-item"><i style="background:' + s.color + ';"></i>' + s.flag + ' ' + nm + ' <b class="' + (last >= 0 ? 'pos' : 'neg') + '">' + tcFmt(last, s.cur) + '</b></span>');
+    });
+    // 0 기준선
+    var zeroY = padT + (H - padT - padB) * 0.5;
+    box.innerHTML = '<div class="pnl-leg">' + leg.join('') + '</div>' +
+      '<svg viewBox="0 0 ' + W + ' ' + H + '" preserveAspectRatio="none" class="pnl-svg">' +
+      '<line x1="' + padL + '" y1="' + zeroY + '" x2="' + (W - padR) + '" y2="' + zeroY + '" stroke="var(--bd2)" stroke-width="0.5" stroke-dasharray="3 3"/>' +
+      lines + '</svg>';
+  }
+
+  // ════════════════════════════════════════════════════════════════
+  // [V98] 명령 팔레트 (Ctrl/Cmd+K) — 종목/페이지 빠른 이동
+  // ════════════════════════════════════════════════════════════════
+  var cmdkSel = 0, cmdkItems = [];
+  var CMDK_PAGES = [
+    { t: '대시보드', s: 'DASHBOARD', ic: '◈', act: function(){ showPage('dashboard'); } },
+    { t: '종목 상세', s: 'STOCK', ic: '📈', act: function(){ showPage('detail'); } },
+    { t: '포지션', s: 'POSITIONS', ic: '◉', act: function(){ showPage('positions'); } },
+    { t: '뉴스', s: 'NEWS', ic: '📰', act: function(){ showPage('news'); } },
+    { t: '거래내역', s: 'TRADES', ic: '◷', act: function(){ showPage('trades'); } },
+    { t: 'AI 비전', s: 'VISION', ic: '◑', act: function(){ showPage('vision'); } },
+    { t: '가격 알림', s: 'ALERTS', ic: '🔔', act: function(){ openAlerts(); } },
+    { t: '설정', s: 'SETTINGS', ic: '⚙', act: function(){ openSettings(); } }
+  ];
+  function cmdkOpen() {
+    var ov = $('cmdkOverlay'); if (!ov) return;
+    ov.classList.add('show');
+    var inp = $('cmdkInput'); inp.value = ''; cmdkRender('');
+    setTimeout(function(){ inp.focus(); }, 10);
+  }
+  function cmdkClose() { var ov = $('cmdkOverlay'); if (ov) ov.classList.remove('show'); }
+  function cmdkRender(term) {
+    term = (term || '').trim().toLowerCase();
+    var items = [];
+    CMDK_PAGES.forEach(function(p){
+      if (!term || p.t.toLowerCase().indexOf(term) >= 0 || p.s.toLowerCase().indexOf(term) >= 0)
+        items.push({ kind: 'page', label: p.t, sub: p.s, ic: p.ic, act: p.act });
+    });
+    if (term) {
+      var arr = window.__lastQuotesArr || [], matched = [];
+      arr.forEach(function(q){
+        if (q.isEtf) return;
+        var nm = (displayName(q, q.market) || '').toLowerCase(), sym = (q.symbol || '').toLowerCase();
+        if (sym.indexOf(term) >= 0 || nm.indexOf(term) >= 0) matched.push(q);
+      });
+      matched.sort(function(a, b){ return (a.rank || 99999) - (b.rank || 99999); });
+      matched.slice(0, 40).forEach(function(q){
+        items.push({ kind: 'stock', q: q, label: q.symbol, sub: displayName(q, q.market) || q.market.toUpperCase(),
+          ic: q.market === 'kr' ? '🇰🇷' : '🇺🇸', act: function(){ openStockDetail(q.symbol, q.market); } });
+      });
+    }
+    cmdkItems = items; cmdkSel = 0;
+    var box = $('cmdkList');
+    if (!items.length) { box.innerHTML = '<div class="cmdk-empty">결과 없음</div>'; return; }
+    box.innerHTML = items.map(function(it, i){
+      var right = '';
+      if (it.kind === 'stock' && typeof it.q.dayPct === 'number') {
+        var dp = it.q.dayPct; right = '<span class="cmdk-r ' + (dp >= 0 ? 'pos' : 'neg') + '">' + (dp >= 0 ? '+' : '') + dp.toFixed(2) + '%</span>';
+      } else if (it.kind === 'page') { right = '<span class="cmdk-tag">' + it.sub + '</span>'; }
+      return '<div class="cmdk-item' + (i === 0 ? ' sel' : '') + '" data-i="' + i + '"><span class="cmdk-ic">' + it.ic + '</span>' +
+        '<div class="cmdk-main"><div class="cmdk-t">' + escapeHtml(it.label) + '</div>' + (it.kind === 'stock' ? '<div class="cmdk-s">' + escapeHtml(it.sub) + '</div>' : '') + '</div>' + right + '</div>';
+    }).join('');
+  }
+  function cmdkMove(d) {
+    if (!cmdkItems.length) return;
+    cmdkSel = (cmdkSel + d + cmdkItems.length) % cmdkItems.length;
+    var els = $('cmdkList').querySelectorAll('.cmdk-item');
+    els.forEach(function(el, i){ el.classList.toggle('sel', i === cmdkSel); });
+    if (els[cmdkSel]) els[cmdkSel].scrollIntoView({ block: 'nearest' });
+  }
+  function cmdkExec() { var it = cmdkItems[cmdkSel]; if (it) { cmdkClose(); it.act(); } }
+
+  // ════════════════════════════════════════════════════════════════
+  // [V98] 가격 알림 — 목표가 도달 시 토스트+브라우저 알림
+  // ════════════════════════════════════════════════════════════════
+  function loadAlerts() { try { return JSON.parse(localStorage.getItem('priceAlerts') || '[]'); } catch (e) { return []; } }
+  function saveAlerts(a) { try { localStorage.setItem('priceAlerts', JSON.stringify(a)); } catch (e) {} }
+  function openAlerts(sym) {
+    $('alertsModal').classList.add('show');
+    if (sym) { var si = $('alertSym'); if (si) si.value = sym; }
+    renderAlerts();
+    try { if (window.Notification && Notification.permission === 'default') Notification.requestPermission(); } catch (e) {}
+  }
+  function closeAlerts() { $('alertsModal').classList.remove('show'); }
+  function addAlert(sym, dir, price) {
+    sym = (sym || '').trim().toUpperCase();
+    price = parseFloat(price);
+    if (!sym || !isFinite(price) || price <= 0) { toast('심볼과 목표가를 확인하세요'); return; }
+    var market = (sym.indexOf('.KS') >= 0 || sym.indexOf('.KQ') >= 0) ? 'kr' : 'us';
+    var a = loadAlerts();
+    a.push({ symbol: sym, market: market, dir: dir || 'up', price: price, created: Date.now(), triggered: false });
+    saveAlerts(a); renderAlerts();
+    toast('🔔 알림 추가: ' + sym + ' ' + (dir === 'down' ? '↓' : '↑') + ' ' + price);
+  }
+  function delAlert(idx) { var a = loadAlerts(); a.splice(idx, 1); saveAlerts(a); renderAlerts(); }
+  function renderAlerts() {
+    var box = $('alertsList'); if (!box) return;
+    var a = loadAlerts();
+    if (!a.length) { box.innerHTML = '<div class="alerts-empty">설정된 알림이 없습니다</div>'; return; }
+    box.innerHTML = a.map(function(al, i){
+      var q = (typeof lastQuotes !== 'undefined') ? lastQuotes[al.symbol] : null;
+      var now = (q && typeof q.price === 'number') ? fmtNum(q.price) : '—';
+      return '<div class="alert-row' + (al.triggered ? ' triggered' : '') + '">' +
+        '<span class="a-sym">' + escapeHtml(al.symbol) + '</span>' +
+        '<span class="a-cond">' + (al.dir === 'down' ? '↓ 이하' : '↑ 이상') + ' <b>' + fmtNum(al.price) + '</b>' + (al.triggered ? ' · ✅ 도달' : '') + '</span>' +
+        '<span class="a-now">현재 ' + now + '</span>' +
+        '<button class="a-del" data-i="' + i + '">✕</button></div>';
+    }).join('');
+  }
+  function checkAlerts() {
+    var a = loadAlerts(); if (!a.length) return;
+    var changed = false;
+    a.forEach(function(al){
+      if (al.triggered) return;
+      var q = (typeof lastQuotes !== 'undefined') ? lastQuotes[al.symbol] : null;
+      if (!q || typeof q.price !== 'number') return;
+      var hit = al.dir === 'up' ? (q.price >= al.price) : (q.price <= al.price);
+      if (hit) {
+        al.triggered = true; al.triggeredTs = Date.now(); changed = true;
+        var msg = al.symbol + ' ' + (al.dir === 'up' ? '↑' : '↓') + ' ' + fmtNum(al.price) + ' 도달 (현재 ' + fmtNum(q.price) + ')';
+        toast('🔔 ' + msg);
+        try { if (window.Notification && Notification.permission === 'granted') new Notification('LUX 가격 알림', { body: msg }); } catch (e) {}
+      }
+    });
+    if (changed) { saveAlerts(a); if ($('alertsModal').classList.contains('show')) renderAlerts(); }
+  }
 
   function renderTrades(trades) {
     renderTradesInto(trades, 'tradesBox', 'tradesTotalCount', 'tradesWinRate', 'tradesAvgPnl', 50);
@@ -7929,9 +8184,10 @@ html[data-theme="light"] .cfg-slider::-moz-range-thumb{background:#1d5fc2;border
         if (_needAll) {
           if (allTradesExpanded) renderAllTrades(allTrades || []);
           else updateTradesSummaryInto(allTrades || [], 'allTradesTotalCount', 'allTradesWinRate', 'allTradesAvgPnl');
-          if (isPage('trades')) { try { renderTradeCalendar(); } catch(e){} }   // [V91] 날짜별 수익 캘린더
+          if (isPage('trades')) { try { renderTradeCalendar(); renderPnlCurve(); } catch(e){} }   // [V91/V98] 캘린더 + 손익추이
         }
         renderCfgDisplay(state.cfg);
+        try { checkAlerts(); } catch(e){}   // [V98] 가격 알림 체크
       })['catch'](function(e){ toast('로드 실패: '+e.message); });
     // [COMMODITY] 원자재 패널은 별도 엔드포인트로 로드
     loadCommodities();
@@ -9131,6 +9387,47 @@ html[data-theme="light"] .cfg-slider::-moz-range-thumb{background:#1d5fc2;border
     renderDetailBrowse();
   });
 
+  // [V98] 명령 팔레트 + 키보드 단축키
+  function _inEditable(el){ if (!el) return false; var tn = el.tagName; return tn === 'INPUT' || tn === 'TEXTAREA' || tn === 'SELECT' || el.isContentEditable; }
+  document.addEventListener('keydown', function(e){
+    var cmdkOpen_ = $('cmdkOverlay') && $('cmdkOverlay').classList.contains('show');
+    // Ctrl/Cmd+K 토글
+    if ((e.ctrlKey || e.metaKey) && (e.key === 'k' || e.key === 'K')) { e.preventDefault(); cmdkOpen_ ? cmdkClose() : cmdkOpen(); return; }
+    if (cmdkOpen_) {
+      if (e.key === 'Escape') { e.preventDefault(); cmdkClose(); }
+      else if (e.key === 'ArrowDown') { e.preventDefault(); cmdkMove(1); }
+      else if (e.key === 'ArrowUp') { e.preventDefault(); cmdkMove(-1); }
+      else if (e.key === 'Enter') { e.preventDefault(); cmdkExec(); }
+      return;
+    }
+    if (_inEditable(e.target)) return;
+    // '/' 로 팔레트 열기
+    if (e.key === '/') { e.preventDefault(); cmdkOpen(); return; }
+    // 숫자키 페이지 전환
+    var pages = { '1': 'dashboard', '2': 'detail', '3': 'positions', '4': 'news', '5': 'trades', '6': 'vision' };
+    if (pages[e.key]) { showPage(pages[e.key]); }
+  });
+  var _cfab = $('cmdkFab'); if (_cfab) _cfab.addEventListener('click', cmdkOpen);
+  var _cin = $('cmdkInput'); if (_cin) _cin.addEventListener('input', function(){ cmdkRender(_cin.value); });
+  var _cov = $('cmdkOverlay'); if (_cov) _cov.addEventListener('click', function(e){ if (e.target === _cov) cmdkClose(); });
+  var _clist = $('cmdkList'); if (_clist) _clist.addEventListener('click', function(e){
+    var it = e.target.closest ? e.target.closest('.cmdk-item') : null; if (!it) return;
+    cmdkSel = parseInt(it.getAttribute('data-i'), 10) || 0; cmdkExec();
+  });
+
+  // [V98] 가격 알림
+  var _aClose = $('alertsCloseBtn'); if (_aClose) _aClose.addEventListener('click', closeAlerts);
+  var _aAdd = $('alertAddBtn'); if (_aAdd) _aAdd.addEventListener('click', function(){
+    addAlert($('alertSym').value, $('alertDir').value, $('alertPrice').value);
+    $('alertSym').value = ''; $('alertPrice').value = '';
+  });
+  var _aList = $('alertsList'); if (_aList) _aList.addEventListener('click', function(e){
+    var b = e.target.closest ? e.target.closest('.a-del') : null; if (!b) return;
+    delAlert(parseInt(b.getAttribute('data-i'), 10));
+  });
+  var _aModal = $('alertsModal'); if (_aModal) _aModal.addEventListener('click', function(e){ if (e.target === _aModal) closeAlerts(); });
+  var _dAlert = $('detailAlertBtn'); if (_dAlert) _dAlert.addEventListener('click', function(){ if (detailState.symbol) openAlerts(detailState.symbol); });
+
   // [V13] 샤드 fan-out 시작 — 가격은 매분 전부 병렬, 일봉은 라운드로빈
   loadShardMeta().then(function(){
   });
@@ -9189,7 +9486,7 @@ html[data-theme="light"] .cfg-slider::-moz-range-thumb{background:#1d5fc2;border
     } else if (id === 'detail') {
       try { if (detailState.symbol) renderDetailHeaderData(); else showDetailBrowse(); } catch(e){}
     } else if (id === 'trades') {
-      try { renderTradeCalendar(); } catch(e){}
+      try { renderTradeCalendar(); renderPnlCurve(); } catch(e){}
     }
   }
   document.querySelectorAll('.nav-item').forEach(function(item){
