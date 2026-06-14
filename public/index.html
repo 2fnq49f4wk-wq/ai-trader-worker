@@ -4143,7 +4143,7 @@ html[data-theme="light"] .cfg-slider::-moz-range-thumb{background:#1d5fc2;border
     svg.setAttribute('viewBox', px.toFixed(2) + ' ' + py.toFixed(2) + ' ' + pw.toFixed(2) + ' ' + ph.toFixed(2));
     host.__fvCommitted = { x: px, y: py, w: pw, h: ph };
   }
-  function fvApplyCam(host, interactive) {
+  function fvApplyCam(host, interactive, hideTxt) {
     var c = fvCam(host), svg = host.__fvSvg;
     if (!svg || !c.bw) return;
     fvClampCam(c);
@@ -4155,9 +4155,11 @@ html[data-theme="light"] .cfg-slider::-moz-range-thumb{background:#1d5fc2;border
       //   무거운 재래스터 커밋으로 "렉/끊김"이 났다. 벡터 viewBox를 매 프레임 정확히 그리면
       //   확대해도 선명하고(블러 없음) 재래스터 커밋도 없어 부드럽다.
       host.__fvCamDirty = true;
-      // [V93 렉] 제스처 중에는 텍스트(타일/섹터 라벨 1000+개)를 숨겨 매 프레임 벡터 재렌더 비용을
-      //   대폭 절감 → 전체화면 S&P500 맵에서도 부드럽게 팬/줌. 멈추면(커밋) 선명히 복원.
-      if (!svg.classList.contains('fv-pan')) svg.classList.add('fv-pan');
+      // [V94] 텍스트 숨김은 "이동(드래그)" 중에만 — 확대/축소(줌) 중에는 글씨 유지(사용자 요청).
+      //   드래그는 매 프레임 텍스트 1000+개 평행이동이라 가장 무거워 숨김이 효과적이고,
+      //   줌은 단계적이라 글씨를 유지해도 부담이 적다.
+      if (hideTxt) { if (!svg.classList.contains('fv-pan')) svg.classList.add('fv-pan'); }
+      else { if (svg.classList.contains('fv-pan')) svg.classList.remove('fv-pan'); }
       clearTimeout(host.__fvCommitT);
       host.__fvCommitT = setTimeout(function(){ fvCommitCam(host); }, 130);  // 멈추면 정밀 커밋(줌단계 텍스트 재렌더)
       if (host.__fvRaf) return;                 // 프레임당 1회
@@ -4256,7 +4258,7 @@ html[data-theme="light"] .cfg-slider::-moz-range-thumb{background:#1d5fc2;border
         if (drag.moved && c.w < c.bw - 0.5) {
           c.x = drag.cx - dx * (c.w / rect.width);
           c.y = drag.cy - dy * (c.h / rect.height);
-          fvApplyCam(host, true);
+          fvApplyCam(host, true, true);   // [V94] 이동 중에만 텍스트 숨김(부드럽게)
           e.preventDefault();
         }
       }
