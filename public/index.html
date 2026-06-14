@@ -2145,8 +2145,13 @@ html[data-theme="light"] .detail-tf-btn.active{color:#fff;}
   color:var(--t3);cursor:pointer;border-radius:4px;font-family:'IBM Plex Mono',monospace;transition:all .1s;min-height:32px;letter-spacing:.5px;}
 .detail-ind-btn:hover{color:var(--t1);}
 .detail-ind-btn.active{color:var(--acc);border-color:var(--acc);background:rgba(34,211,238,.08);}
-.detail-chart{background:var(--s1);border:1px solid var(--bd);border-radius:8px;padding:6px;margin-bottom:14px;min-height:300px;overflow:hidden;}
+.detail-chart{background:var(--s1);border:1px solid var(--bd);border-radius:8px;padding:6px;margin-bottom:14px;min-height:300px;overflow:hidden;cursor:grab;touch-action:none;}
+.detail-chart:active{cursor:grabbing;}
 .detail-chart svg{width:100%;height:auto;display:block;}
+.detail-zoom{display:flex;gap:4px;}
+.detail-zoom-btn{width:34px;height:32px;font-size:15px;font-weight:700;background:var(--s2);border:1px solid var(--bd);
+  color:var(--t2);cursor:pointer;border-radius:5px;line-height:1;transition:all .1s;}
+.detail-zoom-btn:hover{color:var(--t1);border-color:var(--acc);}
 .detail-chart .pc-grid{stroke:var(--bd2);stroke-width:.5;}
 .detail-chart .pc-axis{fill:var(--t3);font-size:9px;font-family:'IBM Plex Mono',monospace;}
 .detail-chart .pc-legend{font-size:9.5px;font-family:'IBM Plex Mono',monospace;font-weight:700;}
@@ -2862,6 +2867,11 @@ html[data-theme="light"] .cfg-slider::-moz-range-thumb{background:#1d5fc2;border
               <button type="button" class="detail-ind-btn active" data-ind="vol">VOL</button>
               <button type="button" class="detail-ind-btn active" data-ind="rsi">RSI</button>
               <button type="button" class="detail-ind-btn" data-ind="macd">MACD</button>
+            </div>
+            <div class="detail-zoom" id="detailZoom">
+              <button type="button" class="detail-zoom-btn" data-z="out" title="축소">－</button>
+              <button type="button" class="detail-zoom-btn" data-z="in" title="확대">＋</button>
+              <button type="button" class="detail-zoom-btn" data-z="reset" title="초기화">⟲</button>
             </div>
           </div>
           <!-- 차트(좌) + 사이드바(우: AI예측·기술분석·실적·수신데이터) -->
@@ -6038,7 +6048,8 @@ html[data-theme="light"] .cfg-slider::-moz-range-thumb{background:#1d5fc2;border
   // [V85] 종목 상세 — 캔들차트(분/일/주봉) + 등락률 + 엔진 수신 데이터
   // ════════════════════════════════════════════════════════════════════
   var detailState = { symbol: null, market: 'us', interval: '1d',
-    ind: { ma: true, boll: true, vol: true, rsi: true, macd: false }, lastCandles: null };
+    ind: { ma: true, boll: true, vol: true, rsi: true, macd: false }, lastCandles: null,
+    view: { count: 150, off: 0 } };   // [V90] 줌(count)·팬(off)
 
   // ── [V86] 프로 차트 지표 계산 ──
   function _smaArr(v, p) {
@@ -6100,14 +6111,17 @@ html[data-theme="light"] .cfg-slider::-moz-range-thumb{background:#1d5fc2;border
     var ind = opts.ind || { ma: true, boll: true, vol: true, rsi: true, macd: false };
     var dec = opts.dec != null ? opts.dec : 2;
     var N = opts.count || 150;   // [V89] 더 많은 봉 표시
+    // [V90] 줌/팬 — off = 끝에서 거꾸로 몇 봉 떨어진 위치(팬), N = 보이는 봉 수(줌)
+    var off = Math.max(0, Math.round(opts.off || 0));
     var fullC = cs.map(function(c) { return c.c; });
     var maArr = PC_MA.map(function(m) { return _smaArr(fullC, m.p); });
     var boll = _bollArr(fullC, 20, 2);
     var rsi = _rsiArr(fullC, 14);
     var macd = ind.macd ? _macdArr(fullC) : null;
-    var start = Math.max(0, cs.length - N);
-    function sl(a) { return a.slice(start); }
-    var show = cs.slice(start), n = show.length;
+    var end = Math.max(2, cs.length - off);
+    var start = Math.max(0, end - N);
+    function sl(a) { return a.slice(start, end); }
+    var show = cs.slice(start, end), n = show.length;
     if (n < 2) return '<div class="detail-empty">차트 데이터 부족</div>';
     maArr = maArr.map(sl);
     var bU = sl(boll.up), bM = sl(boll.mid), bL = sl(boll.lo), rsiV = sl(rsi);
@@ -6425,13 +6439,43 @@ html[data-theme="light"] .cfg-slider::-moz-range-thumb{background:#1d5fc2;border
     if ($('detailData')) $('detailData').innerHTML = rows.join('');
   }
 
+  function _detailClampView() {
+    var v = detailState.view, cs = detailState.lastCandles || [];
+    var maxN = Math.max(20, cs.length);
+    v.count = Math.max(20, Math.min(maxN, Math.round(v.count)));
+    v.off = Math.max(0, Math.min(Math.max(0, cs.length - v.count), Math.round(v.off)));
+  }
   function renderDetailChartFromCache() {
     var box = $('detailChart');
     if (!box || !detailState.lastCandles) return;
+    _detailClampView();
     box.innerHTML = buildProChart(detailState.lastCandles, {
       ind: detailState.ind, interval: detailState.interval,
-      dec: detailState.market === 'kr' ? 0 : 2
+      dec: detailState.market === 'kr' ? 0 : 2,
+      count: detailState.view.count, off: detailState.view.off
     });
+  }
+  // [V90] 줌/팬 조작 — count(보이는 봉 수)·off(끝에서 떨어진 위치) 조정 후 재렌더(rAF 스로틀)
+  var _detailRaf = null;
+  function _detailRender() {
+    if (_detailRaf) return;
+    _detailRaf = requestAnimationFrame(function(){ _detailRaf = null; renderDetailChartFromCache(); });
+  }
+  function detailZoom(factor) {
+    var v = detailState.view, cs = detailState.lastCandles || [];
+    if (!cs.length) return;
+    var center = (cs.length - v.off) - v.count / 2;          // 현재 화면 중앙(봉 인덱스)
+    v.count = Math.max(20, Math.min(cs.length, Math.round(v.count / factor)));
+    v.off = Math.max(0, Math.min(cs.length - v.count, Math.round((cs.length - center) - v.count / 2)));
+    _detailRender();
+  }
+  function detailPan(deltaCandles) {
+    detailState.view.off += deltaCandles;
+    _detailRender();
+  }
+  function detailResetView() {
+    detailState.view = { count: Math.min(150, (detailState.lastCandles || []).length || 150), off: 0 };
+    _detailRender();
   }
   function renderDetailOhlc(cs) {
     var el = $('detailOhlc');
@@ -6469,6 +6513,7 @@ html[data-theme="light"] .cfg-slider::-moz-range-thumb{background:#1d5fc2;border
         if (st.symbol !== reqSym || st.interval !== reqTf) return;   // 그새 종목/탭 변경됨
         if (!d || !d.candles || d.candles.length < 3) { box.innerHTML = '<div class="detail-empty">차트 데이터 없음 (' + escapeHtml(st.symbol) + ')</div>'; detailState.lastCandles = null; return; }
         detailState.lastCandles = d.candles;
+        detailState.view = { count: Math.min(150, d.candles.length), off: 0 };  // [V90] 새 데이터 → 뷰 초기화
         renderDetailChartFromCache();
         renderDetailOhlc(d.candles);
         renderDetailTA(d.candles);
@@ -8740,6 +8785,52 @@ html[data-theme="light"] .cfg-slider::-moz-range-thumb{background:#1d5fc2;border
     detailState.ind[key] = !detailState.ind[key];
     b.classList.toggle('active', detailState.ind[key]);
     renderDetailChartFromCache();   // 재요청 없이 캐시로 즉시 재렌더
+  });
+  // [V90] 차트 줌/팬 — 휠(줌)·드래그(팬)·핀치(줌) + 버튼
+  var _dchart = $('detailChart');
+  if (_dchart) {
+    _dchart.addEventListener('wheel', function(e){
+      if (!detailState.lastCandles) return;
+      e.preventDefault();
+      detailZoom(e.deltaY < 0 ? 1.18 : 1 / 1.18);
+    }, { passive: false });
+    var _ptrs = {}, _drag = null, _pinch = null;
+    _dchart.addEventListener('pointerdown', function(e){
+      if (!detailState.lastCandles) return;
+      _ptrs[e.pointerId] = e.clientX;
+      try { _dchart.setPointerCapture(e.pointerId); } catch(_){}
+      var ids = Object.keys(_ptrs);
+      if (ids.length === 1) { _drag = { x: e.clientX, off: detailState.view.off }; _pinch = null; }
+      else if (ids.length >= 2) { _drag = null; _pinch = { dist: Math.abs(_ptrs[ids[0]] - _ptrs[ids[1]]) || 1, count: detailState.view.count }; }
+    });
+    _dchart.addEventListener('pointermove', function(e){
+      if (!(e.pointerId in _ptrs)) return;
+      _ptrs[e.pointerId] = e.clientX;
+      var ids = Object.keys(_ptrs), rect = _dchart.getBoundingClientRect();
+      if (_pinch && ids.length >= 2) {
+        var nd = Math.abs(_ptrs[ids[0]] - _ptrs[ids[1]]);
+        if (nd > 4) {
+          var ratio = nd / _pinch.dist;
+          detailState.view.count = Math.round(_pinch.count / ratio);
+          _detailRender();
+        }
+      } else if (_drag) {
+        var dc = Math.round((e.clientX - _drag.x) * detailState.view.count / Math.max(1, rect.width));
+        detailState.view.off = _drag.off + dc;   // 드래그 우→과거. 클램프는 렌더에서.
+        _detailRender();
+      }
+    });
+    function _ptrEnd(e){ delete _ptrs[e.pointerId]; var ids = Object.keys(_ptrs); if (ids.length < 2) _pinch = null; if (ids.length === 0) _drag = null; }
+    _dchart.addEventListener('pointerup', _ptrEnd);
+    _dchart.addEventListener('pointercancel', _ptrEnd);
+    _dchart.addEventListener('dblclick', function(){ detailResetView(); });
+  }
+  var _dzoom = $('detailZoom');
+  if (_dzoom) _dzoom.addEventListener('click', function(e){
+    var b = e.target.closest ? e.target.closest('.detail-zoom-btn') : null;
+    if (!b) return;
+    var z = b.getAttribute('data-z');
+    if (z === 'in') detailZoom(1.4); else if (z === 'out') detailZoom(1 / 1.4); else detailResetView();
   });
   function _detailSearchGo(){
     var raw = ($('detailSearch') && $('detailSearch').value || '').trim();
