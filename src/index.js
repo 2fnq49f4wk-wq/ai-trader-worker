@@ -3307,6 +3307,31 @@ function getKST(now) {
            year: kstDate.getUTCFullYear(), month: kstDate.getUTCMonth() + 1, date: kstDate.getUTCDate() };
 }
 
+// [시간외] 현재 세션 분류 — US: pre 04:00-09:30 / regular 09:30-16:00 / post 16:00-20:00 ET.
+//   KR: 시간외종가/단일가 시간대(연속시세 없음, 표시·판별용). 평일만, 그 외 closed.
+function getMarketSession(market) {
+  const now = new Date();
+  if (market === "us") {
+    const et = getUSEt(now);
+    if (et.day < 1 || et.day > 5) return "closed";
+    const m = et.totalMin;
+    if (m >= 240 && m < 570) return "pre";       // 04:00~09:30
+    if (m >= 570 && m < 960) return "regular";    // 09:30~16:00
+    if (m >= 960 && m < 1200) return "post";      // 16:00~20:00
+    return "closed";
+  }
+  if (market === "kr") {
+    const kst = getKST(now);
+    if (kst.day < 1 || kst.day > 5) return "closed";
+    const m = kst.totalMin;
+    if (m >= 510 && m < 540) return "pre";        // 08:30~09:00 장전 시간외(단일가, 라이브 시세 없음)
+    if (m >= 540 && m < 930) return "regular";    // 09:00~15:30
+    if (m >= 940 && m < 1080) return "post";      // 15:40~18:00 장후 시간외(단일가)
+    return "closed";
+  }
+  return "closed";
+}
+
 // [통계] KST 05:00 리셋 기준 거래일 키 "YYYY-MM-DD".
 //   KST(=UTC+9)에서 5시간을 뺀 시각의 날짜 = UTC+4h의 날짜. (05:00에 날짜 전환)
 function kstTradingDayKey(now) {
@@ -4968,7 +4993,10 @@ async function fetchQuoteViaChart(symbol) {
     ? meta.chartPreviousClose
     : (typeof meta.previousClose === "number" && meta.previousClose > 0 ? meta.previousClose : price);
   const dayPct = prevClose ? ((price - prevClose) / prevClose) * 100 : 0;
-  return { price: price, prevClose: prevClose || price, dayPct: dayPct };
+  const o = { price: price, prevClose: prevClose || price, dayPct: dayPct };
+  if (typeof meta.preMarketPrice === "number" && meta.preMarketPrice > 0) o.pre = meta.preMarketPrice;
+  if (typeof meta.postMarketPrice === "number" && meta.postMarketPrice > 0) o.post = meta.postMarketPrice;
+  return o;
 }
 
 async function fetchQuoteViaChartFallback(symbol) {
@@ -5050,6 +5078,16 @@ async function fetchBatchQuotes(symbols, opts) {
         // [V81] 시총맵 실시간 박스 크기용 — 발행주식수·시총 수집(있을 때만)
         if (typeof row.sharesOutstanding === "number" && row.sharesOutstanding > 0) o.shares = row.sharesOutstanding;
         if (typeof row.marketCap === "number" && row.marketCap > 0) o.mcap = row.marketCap;
+        // [시간외] price는 불변. 시간외가는 별도 필드로만 표시(미국). KR은 필드 부재로 자동 무시.
+        if (typeof row.preMarketPrice === "number" && row.preMarketPrice > 0) {
+          o.pre = row.preMarketPrice;
+          o.prePct = (typeof row.preMarketChangePercent === "number") ? row.preMarketChangePercent : null;
+        }
+        if (typeof row.postMarketPrice === "number" && row.postMarketPrice > 0) {
+          o.post = row.postMarketPrice;
+          o.postPct = (typeof row.postMarketChangePercent === "number") ? row.postMarketChangePercent : null;
+        }
+        if (typeof row.marketState === "string") o.mstate = row.marketState;
         out[sym] = o; got++;
       }
     }
@@ -12324,6 +12362,26 @@ async function handleRequest(request, env) {
     }
 
     // [V53] VISION AI: 수동 전체 스캔 트리거 — cron 시각 게이트를 우회(force)해 즉시 1배치 실행
+    // [시간외 진단] 네이버 basic 엔드포인트의 시간외(overMarket) 필드 확인 — Workers IP 기준 실제 응답 구조 확보
+    if (path === "/api/naver-overtime-test" && request.method === "POST") {
+      const out = {};
+      for (const code of ["005930", "000660", "035420"]) {
+        try {
+          const r = await fetch("https://m.stock.naver.com/api/stock/" + code + "/basic",
+            { headers: { "User-Agent": "Mozilla/5.0", "Referer": "https://m.stock.naver.com" } });
+          const j = await r.json();
+          out[code] = {
+            status: r.status,
+            marketStatus: j.marketStatus || null,
+            closePrice: j.closePrice || null,
+            overMarketPriceInfo: j.overMarketPriceInfo || null,
+            overMarketStatus: j.overMarketStatus || null,
+            topKeys: Object.keys(j)
+          };
+        } catch (e) { out[code] = { err: e.message }; }
+      }
+      return Response.json(out, { headers: cors });
+    }
     // [V66 임시진단] 네이버 증권 API Workers 접근성 테스트
     if (path === "/api/naver-test" && request.method === "POST") {
       const out = {};
