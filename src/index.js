@@ -11992,10 +11992,15 @@ async function handleRequest(request, env) {
         }
 
         const payload = { symbol: sym, range: range, interval: interval, candles: candles, price: price, ts: Date.now() };
-        try { await setState(env.DB, ck, payload); } catch (e) {}
+        // [V58b] 빈 캔들은 캐시 저장 안 함 — 이전 실패(fchart 차단 등)가 DB에 굳어서
+        //   계속 "차트 데이터 없음" 뜨는 문제 방지
+        if (candles.length > 0) {
+          try { await setState(env.DB, ck, payload); } catch (e) {}
+        }
         return Response.json(payload, { headers: cors });
       } catch (e) {
-        if (cached) return Response.json(cached, { headers: cors }); // 스테일이라도 반환
+        // 에러 시 기존 캐시(스테일)도 반환하되, 빈 캔들 캐시는 무시
+        if (cached && cached.candles && cached.candles.length > 0) return Response.json(cached, { headers: cors });
         return Response.json({ error: String(e && e.message || e) }, { status: 502, headers: cors });
       }
     }
@@ -12620,6 +12625,22 @@ async function handleRequest(request, env) {
     }
 
     // [진단] 네이버 차트(분봉/일봉) Workers 접근성·포맷 확인 — 분봉 무지연 소스 후보 검증용
+    // [V58b] KR 차트 캐시 강제 초기화 — "차트 데이터 없음" 고착 시 호출
+    //   GET /api/chart-cache-clear → DB에서 chart:*.KS/chart:*.KQ/chart:^KS* 키 삭제
+    if (path === "/api/chart-cache-clear") {
+      try {
+        // D1에서 chart: 로 시작하는 KR 관련 키 전체 삭제
+        const rows = await env.DB.prepare("SELECT key FROM kv_store WHERE key LIKE 'chart:%' AND (key LIKE '%.KS%' OR key LIKE '%.KQ%' OR key LIKE '%^KS%' OR key LIKE '%^KQ%')").all();
+        const keys = (rows.results || []).map(function(r){ return r.key; });
+        for (const k of keys) {
+          try { await env.DB.prepare("DELETE FROM kv_store WHERE key = ?").bind(k).run(); } catch(e2) {}
+        }
+        return Response.json({ ok: true, cleared: keys.length, keys: keys.slice(0,20) }, { headers: cors });
+      } catch(e) {
+        return Response.json({ ok: false, error: String(e.message) }, { headers: cors });
+      }
+    }
+
     if (path === "/api/naver-chart-test" && request.method === "POST") {
       const out = {};
       const code = "005930";
