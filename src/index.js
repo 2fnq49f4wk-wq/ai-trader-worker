@@ -2293,7 +2293,9 @@ const DEFAULT_CFG = {
     monthlyCpuMs: 30000000,     // Paid 포함량
     shutdownAt: 0.85,           // [강화] 0.90→0.85: 추가과금 방지 버퍼 확대
     warnAt: 0.65,               // [강화] 0.70→0.65: 조기 경보
-    cpuCalibration: 0.10        // CPU 추정 보정 (대시보드 실측 대비 조정)
+    // [실측 보정 2026-06-16] CF 대시보드 실측 CPU=요청당 P50 4.99ms/P99 100ms → 월 합계 ~0.2~0.6M(30M의 1~2%).
+    //   기존 0.10은 wall-time(fetch대기)을 CPU로 과대계상해 27M(90%) 가짜 셧다운 유발. 0.01로 낮춰 실측에 근접(추정 ~2~3M=9%, 여전히 ~9배 보수적). 진짜 안전판은 requests(0.12%).
+    cpuCalibration: 0.01
   },
   // [실시간] 분(分) 내 빠른 포지션 감시 — 한 invocation에서 sleep 서브틱으로 보유 포지션의
   //   손절/트레일/익절을 ~10초 간격 재점검. 추가 cron/DO/외부피드 없이 반응속도 1분→~10초.
@@ -4777,7 +4779,8 @@ const USAGE_LIMITS_DEFAULT = {
   // [정확도] Workers는 런타임 CPU측정 API가 없다. invocation의 "비(非)sleep 경과시간"은
   //   대부분 fetch/D1 I/O 대기라 실제 CPU보다 훨씬 크다 → 그 일부만 CPU로 추정(보수적).
   //   실제 CPU는 Cloudflare 대시보드에서 확인하고 이 값을 보정하면 셧다운이 정확해진다.
-  cpuCalibration: 0.10
+  //   [실측 보정 2026-06-16] 대시보드 요청당 CPU P50 4.99ms/P99 100ms → 0.10은 ~90배 과대 → 0.01로 보정.
+  cpuCalibration: 0.01
 };
 // [실시간] sleep 누적 — invocation 내 서브틱 대기는 CPU를 쓰지 않으므로 usage 계산에서 제외.
 let __sleepAccumMs = 0;
