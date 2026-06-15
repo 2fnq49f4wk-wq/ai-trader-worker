@@ -12321,6 +12321,32 @@ async function handleRequest(request, env) {
       }, { headers: cors });
     }
 
+    // [진단] 네이버 차트(분봉/일봉) Workers 접근성·포맷 확인 — 분봉 무지연 소스 후보 검증용
+    if (path === "/api/naver-chart-test" && request.method === "POST") {
+      const out = {};
+      const code = "005930";
+      const now = new Date();
+      const toS = now.getUTCFullYear() + String(now.getUTCMonth()+1).padStart(2,"0") + String(now.getUTCDate()).padStart(2,"0");
+      // (1) 일봉 — 포맷 확정 엔드포인트(siseJson)
+      try {
+        const r = await fetch("https://fchart.stock.naver.com/siseJson.nhn?symbol=" + code + "&requestType=1&startTime=20260101&endTime=" + toS + "&timeframe=day",
+          { headers: { "User-Agent": "Mozilla/5.0", "Referer": "https://finance.naver.com" } });
+        out.day = r.status + " | " + (await r.text()).slice(0, 300).replace(/\s+/g, " ");
+      } catch (e) { out.day = "ERR " + e.message; }
+      // (2) 분봉 후보 A — sise.nhn XML(timeframe=minute)
+      try {
+        const r = await fetch("https://fchart.stock.naver.com/sise.nhn?symbol=" + code + "&timeframe=minute&count=20&requestType=0",
+          { headers: { "User-Agent": "Mozilla/5.0", "Referer": "https://finance.naver.com" } });
+        out.min_sise = r.status + " | " + (await r.text()).slice(0, 400).replace(/\s+/g, " ");
+      } catch (e) { out.min_sise = "ERR " + e.message; }
+      // (3) 분봉 후보 B — m.stock front-api(timeframe=minute)
+      try {
+        const r = await fetch("https://m.stock.naver.com/front-api/external/chart/domestic/info?symbol=" + code + "&requestType=1&timeframe=minute",
+          { headers: { "User-Agent": "Mozilla/5.0", "Referer": "https://m.stock.naver.com" } });
+        out.min_front = r.status + " | " + (await r.text()).slice(0, 400).replace(/\s+/g, " ");
+      } catch (e) { out.min_front = "ERR " + e.message; }
+      return Response.json(out, { headers: cors });
+    }
     // [V53] VISION AI: 수동 전체 스캔 트리거 — cron 시각 게이트를 우회(force)해 즉시 1배치 실행
     // [V66 임시진단] 네이버 증권 API Workers 접근성 테스트
     if (path === "/api/naver-test" && request.method === "POST") {
