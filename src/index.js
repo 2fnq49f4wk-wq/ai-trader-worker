@@ -9911,6 +9911,7 @@ async function runTradingCycle(env) {
     let signalCount = 0;   // [통계] 이번 사이클 발생 매수신호 수
     let minuteFetchUsed = 0;  // [분봉] 진입확인(intradayConfirm) 분봉 조회 횟수 (subrequest 캡 통제)
     let scalpScanUsed = 0;    // [V65] scalp 스캔 전용 분봉 카운터 — 진입확인과 분리(단타 굶김 방지)
+    let scalpEligible = 0, scalpSig = 0;  // [진단] scalp 진입 병목 추적: 후보(no-trend)·스캔·신호 카운트
 
     // [V8.1.1] 장 열린 시장만 처리 — 마감된 시장은 시세도 fetch 안 함
     // [V23] 가격 갱신 대상 = 정규장 시간 시장 / 거래 대상 = 거래가능(윈도우+휴장통과) 시장
@@ -10673,6 +10674,7 @@ async function runTradingCycle(env) {
           const _srUsOnly = (mcfg.scalpRules && mcfg.scalpRules.usOnly !== undefined) ? mcfg.scalpRules.usOnly : true;
           const _scalpMarketOk = (!_srUsOnly) || market === "us";
           if (_scalpMarketOk && (_scalpOn || _panicScalpOn) && !scalpDailyBlocked && stratResults.length === 0 && !strategiesHeldNow.has("scalp")) {
+            scalpEligible++;  // [진단] no-trend·미보유 → scalp 후보 도달
             // [V65] scalp 전용 스캔 예산 — 기존엔 intradayConfirm.maxPerCycle(60)을 공유해
             //   진입확인 fetch가 단타 스캔을 굶겼다(단타 거래량 저하의 주원인). 별도 카운터로 분리.
             const _scanMax = (mcfg.scalpRules && mcfg.scalpRules.scanMaxPerCycle != null) ? mcfg.scalpRules.scanMaxPerCycle : 50;
@@ -10681,6 +10683,7 @@ async function runTradingCycle(env) {
                 scalpScanUsed++;
                 const _scalpMb = await fetchMinuteBars(symbol, { interval: "1m", range: "1d" });
                 const _scalpSig = evaluateScalpEntry(_scalpMb, daily, mcfg, market, regime);
+                if (_scalpSig) scalpSig++;  // [진단] 게이트 통과해 신호 발생
                 if (_scalpSig && !strategiesHeldNow.has("scalp") && !heldSymbols.has(symbol)) {
                   stratResults = [{ strategy: "scalp", signal: _scalpSig, rawCount: 1 }];
                 }
@@ -11056,7 +11059,7 @@ async function runTradingCycle(env) {
     const cycleMs = Date.now() - cycleStartedAt;
     // [실시간] fastWatch가 쓸 거래가능 시장 목록 기록 — 휴장/엔진OFF/윈도우 판정 재사용.
     try { await setState(DB, "fastwatch:markets", { list: marketsToTrade, ts: Date.now() }); } catch (e) {}
-    await log(DB, "INFO", null, "Done: tried=" + tried + " skip=" + skipped + " buy=" + bought + " sell=" + sold + " fetchFail=" + fetchFail + " minBars=" + minuteFetchUsed + " cycleMs=" + cycleMs);
+    await log(DB, "INFO", null, "Done: tried=" + tried + " skip=" + skipped + " buy=" + bought + " sell=" + sold + " fetchFail=" + fetchFail + " minBars=" + minuteFetchUsed + " scalp[elig=" + scalpEligible + " scan=" + scalpScanUsed + " sig=" + scalpSig + "] cycleMs=" + cycleMs);
     try { await DB.prepare("DELETE FROM logs WHERE id NOT IN (SELECT id FROM logs ORDER BY id DESC LIMIT 500)").run(); } catch (e) {}
     // [통계] 일별 엔진 통계 누적 (KST 05:00 리셋). 신호=signalCount, 거래=buy+sell, 에러=직전 집계 이후 누적분.
     try {
