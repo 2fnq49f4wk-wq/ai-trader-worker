@@ -11922,6 +11922,7 @@ async function handleRequest(request, env) {
         let candles = [], price = null;
 
         if (isKRsym) {
+         try {
           // [V58b] KR 차트 — 네이버 모바일 캔들 API (fchart 대신 m.stock.naver.com 사용)
           //   Workers 환경에서 fchart.stock.naver.com이 차단될 수 있어 모바일 API로 교체
           //   포맷: [{openPrice, highPrice, lowPrice, closePrice, volume, localDate, localDateTime}]
@@ -11976,6 +11977,7 @@ async function handleRequest(request, env) {
             }
             price = candles.length ? candles[candles.length-1].c : null;
           }
+         } catch (eNaver) { candles = []; price = null; }  // [V91b] 네이버 실패(throw) 격리 → 아래 Yahoo 폴백이 처리
         } else {
           // US 종목 — Yahoo v8 chart (기존)
           const j = await yahooFetch("https://query1.finance.yahoo.com/v8/finance/chart/" + encodeURIComponent(sym) + "?interval=" + interval + "&range=" + range);
