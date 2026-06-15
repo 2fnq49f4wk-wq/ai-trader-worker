@@ -6636,7 +6636,11 @@ html[data-theme="light"] .cfg-slider::-moz-range-thumb{background:#1d5fc2;border
     window.__detailBrowseTs = Date.now();
     var arr = window.__lastQuotesArr || [];
     function mk(q) {
-      if (typeof q.price === 'number' && q.price > 0 && typeof q.shares === 'number' && q.shares > 0) return q.price * q.shares;
+      // price×shares 상한 체크 — Yahoo sharesOutstanding 오류값으로 비정상 대형주 정렬 방지
+      // US $6T, KR 500조 초과하면 비정상 → q.mcap 또는 rank 폴백
+      var calc = (typeof q.price === 'number' && q.price > 0 && typeof q.shares === 'number' && q.shares > 0) ? q.price * q.shares : 0;
+      var maxMc = q.market === 'kr' ? 5e14 : 6e12;
+      if (calc > 0 && calc <= maxMc) return calc;
       if (typeof q.mcap === 'number' && q.mcap > 0) return q.mcap;
       return 1e15 / (q.rank || 9999);
     }
