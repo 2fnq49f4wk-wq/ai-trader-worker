@@ -6456,11 +6456,12 @@ function evaluateScalpEntry(mb, dailyData, cfg, market, regime) {
 
   // ── 분봉 상대거래량 헬퍼 (게이트5/패닉 공용) ──
   const _relVol = function(mult) {
-    if (!mult || !mb.volumes || mb.volumes.length < 11) return true;
+    if (!mult || !mb.volumes || mb.volumes.length < 12) return true;
     const vN = mb.volumes.length;
-    const recentVol = mb.volumes[vN - 1] + mb.volumes[vN - 2];
+    // [개선] 마지막(형성중) 봉 제외 — 부분 거래량이 평균(완성봉) 대비 과소계상돼 relVol_low를 과다유발하던 버그.
+    const recentVol = mb.volumes[vN - 2] + mb.volumes[vN - 3];
     let avg = 0, cnt = 0;
-    for (let i = Math.max(0, vN - 11); i < vN - 1; i++) { avg += mb.volumes[i]; cnt++; }
+    for (let i = Math.max(0, vN - 13); i < vN - 3; i++) { avg += mb.volumes[i]; cnt++; }
     avg = cnt > 0 ? (avg / cnt) * 2 : 0;
     return !(avg > 0 && recentVol < avg * mult);
   };
@@ -6563,11 +6564,12 @@ function evaluateScalpEntry(mb, dailyData, cfg, market, regime) {
   }
 
   // ── 게이트 5: 분봉 상대거래량 — 유동성·관심 확인 ──
-  if (sr.minRelVol && mb.volumes && mb.volumes.length >= 11) {
+  if (sr.minRelVol && mb.volumes && mb.volumes.length >= 12) {
     const vN = mb.volumes.length;
-    const recentVol = mb.volumes[vN - 1] + mb.volumes[vN - 2];
+    // [개선] 마지막(형성중) 봉 제외 — 완성된 직전 2봉으로 비교(부분봉 과소계상 버그 수정).
+    const recentVol = mb.volumes[vN - 2] + mb.volumes[vN - 3];
     let avgVol = 0, cnt = 0;
-    for (let i = Math.max(0, vN - 11); i < vN - 1; i++) { avgVol += mb.volumes[i]; cnt++; }
+    for (let i = Math.max(0, vN - 13); i < vN - 3; i++) { avgVol += mb.volumes[i]; cnt++; }
     avgVol = cnt > 0 ? (avgVol / cnt) * 2 : 0;  // 2봉 합과 비교 위해 ×2
     if (avgVol > 0 && recentVol < avgVol * sr.minRelVol) return _no("relvol_low");
   }
