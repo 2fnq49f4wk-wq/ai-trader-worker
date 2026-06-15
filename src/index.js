@@ -4757,6 +4757,7 @@ function filterNulls(rawArr) {
 //     하지 않고 즉시 throw 해서(=조용히 스킵) 한도 폭발을 막는다. 남은 종목은 다음
 //     사이클 라운드로빈으로 처리된다.
 let __fetchBudget = { used: 0, max: 850 };  // [PAID] Workers Paid 1000 한도의 85%
+let __scalpDiag = {};  // [진단] scalp 게이트 탈락 사유 집계(사이클마다 리셋)
 function resetFetchBudget(max) {
   __fetchBudget = { used: 0, max: (typeof max === "number" && max > 0) ? max : 600 };
 }
@@ -6433,10 +6434,12 @@ function evaluateBuySignals_swing(price, dayPct, dailyData, cfg) {
 //     SC_VWAP_CROSS: 가격이 VWAP 근접(±1%) + 상승 모멘텀 → VWAP 지지 진입
 //     SC_MOMENTUM:   분봉 모멘텀 강함(≥0.5%) + VWAP 하향 이탈 아님 → 추세 타기
 function evaluateScalpEntry(mb, dailyData, cfg, market, regime) {
-  if (!mb || !mb.vwap || !mb.closes || mb.closes.length < 6) return null;
+  // [진단] 각 게이트 탈락 사유 집계 — runTradingCycle이 __scalpDiag를 사이클마다 리셋·로깅.
+  const _no = function(r){ try { __scalpDiag[r] = (__scalpDiag[r] || 0) + 1; } catch(e){} return null; };
+  if (!mb || !mb.vwap || !mb.closes || mb.closes.length < 6) return _no("no_mb");
   const sr = Object.assign({}, (cfg && cfg.scalpRules) || DEFAULT_CFG.scalpRules || {});
   const closes = dailyData && dailyData.closes;
-  if (!closes || closes.length < 55) return null;
+  if (!closes || closes.length < 55) return _no("daily_short");
 
   // ── [V52] 세션 시간 필터 ──
   //   마감 직전: 청산 시간 부족 → 오버나이트 리스크. 패닉 포함 전면 차단.
@@ -6522,41 +6525,41 @@ function evaluateScalpEntry(mb, dailyData, cfg, market, regime) {
 
   // ── 게이트 1: 일봉 추세 정렬 ──
   // [V52] 개장 직후 노이즈 구간 — 평시 단타 진입 차단 (패닉 경로는 위에서 이미 처리됨)
-  if (_openNoise) return null;
+  if (_openNoise) return _no("open_noise");
   // [V52] VWAP 기울기 — 하락 중인 VWAP에서의 추격(SC_VWAP/SC_MOMENTUM) 차단용
   const _vwSlope = (typeof mb.vwapSlope === "number") ? mb.vwapSlope : null;
   const _slopeOk = (sr.requireVwapSlopeUp === false) || (_vwSlope == null) || (_vwSlope >= 0);
   const ma20 = getMA(closes, sr.maFastPeriod || 20);
   const ma50 = getMA(closes, sr.maSlowPeriod || 50);
-  if (ma20 == null || ma50 == null) return null;
-  if (!(ma20 > ma50)) return null;  // 추세 방향 아니면 진입 차단
+  if (ma20 == null || ma50 == null) return _no("ma_null");
+  if (!(ma20 > ma50)) return _no("downtrend");  // 추세 방향 아니면 진입 차단
   // [강화] 일봉 종가가 MA20 위 — 추세 상단에서만 단타 (눌림 깊은 종목 회피)
   const dayClose = closes[closes.length - 1];
-  if (sr.requirePriceAboveMaFast !== false && !(dayClose > ma20)) return null;
+  if (sr.requirePriceAboveMaFast !== false && !(dayClose > ma20)) return _no("below_ma20");
 
   // ── 게이트 2: 일봉 RSI 밴드 — 과열·약세 양쪽 차단 ──
   const rsi = getRSI(closes, (cfg && cfg.rsiPeriod) || 14);
   if (rsi != null) {
-    if (rsi > (sr.rsiMax || 70)) return null;
-    if (rsi < (sr.rsiMin != null ? sr.rsiMin : 42)) return null;
+    if (rsi > (sr.rsiMax || 70)) return _no("rsi_high");
+    if (rsi < (sr.rsiMin != null ? sr.rsiMin : 42)) return _no("rsi_low");
   }
 
   // ── 게이트 3: ADX 추세 강도 — 횡보장 휩쏘 회피 (승률 핵심) ──
   if (sr.adxMin && dailyData.highs && dailyData.lows) {
     const adx = getADX(dailyData.highs, dailyData.lows, closes, 14);
-    if (adx != null && adx < sr.adxMin) return null;
+    if (adx != null && adx < sr.adxMin) return _no("adx_low");
   }
 
   // ── [V67] 게이트 3.5: 고변동 종목 제외 — ATR%가 손절폭(1.2%) 대비 너무 크면 노이즈만으로 손절 ──
   if (sr.maxDailyAtrPct) {
     const _atrD = getATR(closes, 14, dailyData.highs, dailyData.lows);
-    if (_atrD != null && dayClose > 0 && (_atrD / dayClose * 100) > sr.maxDailyAtrPct) return null;
+    if (_atrD != null && dayClose > 0 && (_atrD / dayClose * 100) > sr.maxDailyAtrPct) return _no("atr_high");
   }
 
   // ── 게이트 4: 당일 급락 회피 (칼날잡기 차단) ──
   if (sr.minDayMomPct != null && dailyData.prevClose && dailyData.prevClose > 0) {
     const dayMom = ((mb.price - dailyData.prevClose) / dailyData.prevClose) * 100;
-    if (dayMom < sr.minDayMomPct) return null;
+    if (dayMom < sr.minDayMomPct) return _no("daymom_low");
   }
 
   // ── 게이트 5: 분봉 상대거래량 — 유동성·관심 확인 ──
@@ -6566,7 +6569,7 @@ function evaluateScalpEntry(mb, dailyData, cfg, market, regime) {
     let avgVol = 0, cnt = 0;
     for (let i = Math.max(0, vN - 11); i < vN - 1; i++) { avgVol += mb.volumes[i]; cnt++; }
     avgVol = cnt > 0 ? (avgVol / cnt) * 2 : 0;  // 2봉 합과 비교 위해 ×2
-    if (avgVol > 0 && recentVol < avgVol * sr.minRelVol) return null;
+    if (avgVol > 0 && recentVol < avgVol * sr.minRelVol) return _no("relvol_low");
   }
 
   const price = mb.price;
@@ -6628,7 +6631,7 @@ function evaluateScalpEntry(mb, dailyData, cfg, market, regime) {
     };
   }
 
-  return null;
+  return _no("no_trigger");
 }
 
 // === [V8] 통합 평가기 — 모든 활성 전략에서 신호 수집 ===
@@ -9912,6 +9915,7 @@ async function runTradingCycle(env) {
     let minuteFetchUsed = 0;  // [분봉] 진입확인(intradayConfirm) 분봉 조회 횟수 (subrequest 캡 통제)
     let scalpScanUsed = 0;    // [V65] scalp 스캔 전용 분봉 카운터 — 진입확인과 분리(단타 굶김 방지)
     let scalpEligible = 0, scalpSig = 0;  // [진단] scalp 진입 병목 추적: 후보(no-trend)·스캔·신호 카운트
+    __scalpDiag = {};  // [진단] 게이트 탈락 사유 집계 리셋
 
     // [V8.1.1] 장 열린 시장만 처리 — 마감된 시장은 시세도 fetch 안 함
     // [V23] 가격 갱신 대상 = 정규장 시간 시장 / 거래 대상 = 거래가능(윈도우+휴장통과) 시장
@@ -11059,7 +11063,7 @@ async function runTradingCycle(env) {
     const cycleMs = Date.now() - cycleStartedAt;
     // [실시간] fastWatch가 쓸 거래가능 시장 목록 기록 — 휴장/엔진OFF/윈도우 판정 재사용.
     try { await setState(DB, "fastwatch:markets", { list: marketsToTrade, ts: Date.now() }); } catch (e) {}
-    await log(DB, "INFO", null, "Done: tried=" + tried + " skip=" + skipped + " buy=" + bought + " sell=" + sold + " fetchFail=" + fetchFail + " minBars=" + minuteFetchUsed + " scalp[elig=" + scalpEligible + " scan=" + scalpScanUsed + " sig=" + scalpSig + "] cycleMs=" + cycleMs);
+    await log(DB, "INFO", null, "Done: tried=" + tried + " skip=" + skipped + " buy=" + bought + " sell=" + sold + " fetchFail=" + fetchFail + " minBars=" + minuteFetchUsed + " scalp[elig=" + scalpEligible + " scan=" + scalpScanUsed + " sig=" + scalpSig + " gates=" + JSON.stringify(__scalpDiag) + "] cycleMs=" + cycleMs);
     try { await DB.prepare("DELETE FROM logs WHERE id NOT IN (SELECT id FROM logs ORDER BY id DESC LIMIT 500)").run(); } catch (e) {}
     // [통계] 일별 엔진 통계 누적 (KST 05:00 리셋). 신호=signalCount, 거래=buy+sell, 에러=직전 집계 이후 누적분.
     try {
