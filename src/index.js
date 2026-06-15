@@ -10699,7 +10699,10 @@ async function runTradingCycle(env) {
             if (_scAligned && scalpScanUsed < _scanMax && fetchBudgetLeft() > 5) {
               try {
                 scalpScanUsed++;
-                const _scalpMb = await fetchMinuteBars(symbol, { interval: "1m", range: "1d" });
+                // [개선] 1m→5m: evaluateScalpEntry의 VWAP/상대거래량/모멘텀 임계는 5분봉 기준 설계(함수 docstring).
+                //   1m봉은 형성중 봉의 부분거래량으로 relvol_low를 과다유발(라이브: scan 50중 relvol_low 25)하고
+                //   모멘텀도 과소계상해 트리거를 막았다. 5m봉으로 노이즈↓·임계 정합 → 단타 신호 발생률 상승.
+                const _scalpMb = await fetchMinuteBars(symbol, { interval: "5m", range: "1d" });
                 const _scalpSig = evaluateScalpEntry(_scalpMb, daily, mcfg, market, regime);
                 if (_scalpSig) scalpSig++;  // [진단] 게이트 통과해 신호 발생
                 if (_scalpSig && !strategiesHeldNow.has("scalp") && !heldSymbols.has(symbol)) {
