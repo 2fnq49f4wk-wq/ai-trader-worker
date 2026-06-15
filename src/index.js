@@ -11914,7 +11914,7 @@ async function handleRequest(request, env) {
       const isKRsym = sym.endsWith(".KS") || sym.endsWith(".KQ") || sym === "^KS11" || sym === "^KQ11";
       const ck = "chart:" + sym + ":" + interval + ":" + range;
       const cached = await getState(env.DB, ck, null);
-      const ttl = intraday ? 2 * 60 * 1000 : 10 * 60 * 1000;
+      const ttl = intraday ? 15 * 1000 : 10 * 60 * 1000;  // [V91] 분봉 실시간화: 2분→15초
       if (cached && cached.ts && (Date.now() - cached.ts) < ttl) {
         return Response.json(cached, { headers: cors });
       }
@@ -11989,6 +11989,25 @@ async function handleRequest(request, env) {
             candles.push({ t: tsArr[i], o: o, h: h, l: l, c: c, v: v || 0 });
           }
           price = (result.meta || {}).regularMarketPrice || null;
+        }
+
+        // [V91] KR 네이버 응답이 빈/부족이면 Yahoo(.KS/.KQ 일·분봉 모두 지원)로 폴백
+        if (isKRsym && candles.length < 3) {
+          try {
+            const yj = await yahooFetch("https://query1.finance.yahoo.com/v8/finance/chart/" + encodeURIComponent(sym) + "?interval=" + interval + "&range=" + range);
+            const yr = yj && yj.chart && yj.chart.result && yj.chart.result[0];
+            if (yr) {
+              const yq = (yr.indicators && yr.indicators.quote && yr.indicators.quote[0]) || {};
+              const yts = yr.timestamp || [];
+              const yc = [];
+              for (let i = 0; i < yts.length; i++) {
+                const o = yq.open && yq.open[i], h = yq.high && yq.high[i], l = yq.low && yq.low[i], c = yq.close && yq.close[i], v = yq.volume && yq.volume[i];
+                if (o == null || h == null || l == null || c == null) continue;
+                yc.push({ t: yts[i], o: o, h: h, l: l, c: c, v: v || 0 });
+              }
+              if (yc.length >= 3) { candles = yc; price = (yr.meta || {}).regularMarketPrice || price; }
+            }
+          } catch (e2) {}
         }
 
         const payload = { symbol: sym, range: range, interval: interval, candles: candles, price: price, ts: Date.now() };
