@@ -500,6 +500,7 @@ button.btn.loading::after{content:'조회 중…';position:absolute;inset:0;disp
 .wl-pnl{grid-column:3;grid-row:3;font-size:10px;text-align:right;font-variant-numeric:tabular-nums;}
 .wl-pnl.pos{color:var(--pos);}
 .wl-pnl.neg{color:var(--neg);}
+.wl-ext{grid-column:3;grid-row:4;font-size:9px;text-align:right;color:var(--t3);}
 .wl-fav{position:absolute;top:10px;right:8px;cursor:pointer;font-size:11px;color:var(--s3);transition:color .1s;user-select:none;}
 .wl-fav:hover{color:var(--t3);}
 .wl-fav.active{color:var(--amber);}
@@ -6635,9 +6636,20 @@ html[data-theme="light"] .cfg-slider::-moz-range-thumb{background:#1d5fc2;border
     window.__detailBrowseTs = Date.now();
     var arr = window.__lastQuotesArr || [];
     function mk(q) {
-      if (typeof q.price === 'number' && q.price > 0 && typeof q.shares === 'number' && q.shares > 0) return q.price * q.shares;
-      if (typeof q.mcap === 'number' && q.mcap > 0) return q.mcap;
-      return 1e15 / (q.rank || 9999);
+      // price×shares 상한 체크 — sharesOutstanding 오류값으로 비정상 대형주 정렬 방지
+      // US $8T(NVDA 여유), KR 700조 초과하면 비정상 → q.mcap 또는 rank 폴백
+      var calc = (typeof q.price === 'number' && q.price > 0 && typeof q.shares === 'number' && q.shares > 0) ? q.price * q.shares : 0;
+      var maxMc = q.market === 'kr' ? 7e14 : 8e12;
+      if (calc > 0 && calc <= maxMc) return calc;
+      if (typeof q.mcap === 'number' && q.mcap > 0 && q.mcap <= maxMc) return q.mcap;
+      // rank 폴백 — fvRankCap/fvRankCapKR 로그-선형 보간으로 현실적 시총 추정
+      // (기존 1e15/rank 공식은 rank 낮은 종목을 비현실적으로 크게 만들어 상위 오류 발생)
+      var rank = (typeof q.rank === 'number' && q.rank > 0) ? q.rank : 9999;
+      if (q.market === 'kr') {
+        return fvRankCapKR(rank) * 1e12;  // 조원 → 원
+      } else {
+        return fvRankCap(rank) * 1e9;     // $B → $
+      }
     }
     function sortItems(items) {
       var s = detailBrowseSort;
@@ -6659,6 +6671,7 @@ html[data-theme="light"] .cfg-slider::-moz-range-thumb{background:#1d5fc2;border
   }
   function showDetailBrowse() {
     detailState.symbol = null;
+    stopDetailChartPoll();  // [V91] 상세 닫힘 → 실시간 폴링 정지
     var emp = $('detailEmpty'), con = $('detailContent'), back = $('detailBackBtn'), abtn = $('detailAlertBtn');
     if (con) con.style.display = 'none';
     if (emp) emp.style.display = '';
@@ -6707,6 +6720,14 @@ html[data-theme="light"] .cfg-slider::-moz-range-thumb{background:#1d5fc2;border
     add('현재가', num(q.price));
     add('전일종가', num(q.prevClose));
     add('당일등락', pct(q.dayPct), pc(q.dayPct));
+    // [프리/애프터마켓] 시간외 실시간 — 장전이면 장전가, 장후/마감이면 장후가 표시
+    if (q.mstate === 'PRE' && q.pre > 0) {
+      var _ppr = (typeof q.prePct === 'number') ? q.prePct : (q.prevClose > 0 ? (q.pre - q.prevClose) / q.prevClose * 100 : 0);
+      add('장전(시간외)', num(q.pre) + '  ' + (_ppr >= 0 ? '+' : '') + _ppr.toFixed(2) + '%', pc(_ppr));
+    } else if ((q.mstate === 'POST' || q.mstate === 'POSTPOST' || q.mstate === 'CLOSED') && q.post > 0) {
+      var _ppo = (typeof q.postPct === 'number') ? q.postPct : (q.price > 0 ? (q.post - q.price) / q.price * 100 : 0);
+      add('장후(시간외)', num(q.post) + '  ' + (_ppo >= 0 ? '+' : '') + _ppo.toFixed(2) + '%', pc(_ppo));
+    }
     add('RSI(14)', q.rsi != null ? q.rsi.toFixed(1) : '—');
     add('이동평균(장기)', num(q.ma));
     add('이동평균(단기)', num(q.dailyMaShort != null ? q.dailyMaShort : q.maShort));
@@ -6719,7 +6740,7 @@ html[data-theme="light"] .cfg-slider::-moz-range-thumb{background:#1d5fc2;border
     add('1년 수익률', pct(q.ret1y), pc(q.ret1y));
     add('거래량', q.vol != null ? fvFmtVol(q.vol) : '—');
     add('평균거래(20일)', q.avgVol20 != null ? fvFmtVol(q.avgVol20) : '—');
-    var mc = (q.price > 0 && q.shares > 0) ? (q.price * q.shares) : (q.mcap || null);
+    var mc = (typeof q.price === 'number' && q.price > 0 && typeof q.shares === 'number' && q.shares > 0) ? (q.price * q.shares) : (typeof q.mcap === 'number' && q.mcap > 0 ? q.mcap : null);
     add('시가총액', fmtMcapVal(mc, st.market));
     add('발행주식수', q.shares ? fvFmtVol(q.shares) : '—');
     add('시총 순위', (q.rank && q.rank < 99999) ? ('#' + q.rank) : '—');
@@ -6781,9 +6802,35 @@ html[data-theme="light"] .cfg-slider::-moz-range-thumb{background:#1d5fc2;border
       '<span class="oh">변동<b class="' + (chg >= 0 ? 'pos' : 'neg') + '">' + (chg != null ? (chg >= 0 ? '+' : '') + chg.toFixed(2) + '%' : '—') + '</b></span>' +
       '<span class="oh">거래량<b>' + fvFmtVol(last.v || 0) + '</b></span>';
   }
+  // [V91] 분봉(1m/5m/15m/30m/60m) 실시간 폴링 — 일/주/월봉은 폴링 안 함
+  var _detailPoll = null;
+  var DETAIL_POLL_MS = 15000;
+  function _isIntradayTf(tf) { return ['1m','5m','15m','30m','60m'].indexOf(tf) >= 0; }
+  function stopDetailChartPoll() { if (_detailPoll) { clearInterval(_detailPoll); _detailPoll = null; } }
+  function startDetailChartPoll(sym, tf, range) {
+    stopDetailChartPoll();
+    if (!_isIntradayTf(tf)) return;
+    _detailPoll = setInterval(function() {
+      if (detailState.symbol !== sym || detailState.interval !== tf) { stopDetailChartPoll(); return; }
+      if (document.hidden) return;  // 백그라운드 탭이면 호출 스킵
+      fetch('/api/chart?symbol=' + encodeURIComponent(sym) + '&interval=' + tf + '&range=' + range)
+        .then(function(r) { return r.json(); })
+        .then(function(d) {
+          if (detailState.symbol !== sym || detailState.interval !== tf) return;
+          if (!d || !d.candles || d.candles.length < 3) return;
+          // 줌(count)·팬(off)은 유지 — 사용자가 보던 위치 그대로, off=0이면 새 봉 자동 추적
+          detailState.lastCandles = d.candles;
+          renderDetailChartFromCache();
+          renderDetailOhlc(d.candles);
+          renderDetailTA(d.candles);
+        })['catch'](function() {});
+    }, DETAIL_POLL_MS);
+  }
+
   function loadDetailChart(interval) {
     var st = detailState;
     if (!st.symbol) return;
+    stopDetailChartPoll();
     st.interval = interval;
     document.querySelectorAll('#detailTf .detail-tf-btn').forEach(function(b) {
       b.classList.toggle('active', b.getAttribute('data-tf') === interval);
@@ -6805,9 +6852,26 @@ html[data-theme="light"] .cfg-slider::-moz-range-thumb{background:#1d5fc2;border
         renderDetailChartFromCache();
         renderDetailOhlc(d.candles);
         renderDetailTA(d.candles);
+        startDetailChartPoll(reqSym, reqTf, range);  // [V91] 분봉이면 실시간 폴링 시작
       })['catch'](function() {
         if (st.symbol === reqSym && st.interval === reqTf) box.innerHTML = '<div class="detail-empty">차트 로딩 실패</div>';
       });
+  }
+
+  // [실시간 그래프] 스파크라인 마지막 점을 실시간 시세(정규장 현재가 또는 시간외 가격)로 끌어 올려
+  //   대시보드 워치리스트 그래프 끝이 항상 현 시세를 가리키게 한다(일봉 종가에 멈추지 않음).
+  function liveSpark(q) {
+    var spk = q.spark;
+    if (!spk || !Array.isArray(spk) || spk.length < 2) return spk;
+    var live = null;
+    if (q.mstate === 'PRE' && q.pre > 0) live = q.pre;
+    else if ((q.mstate === 'POST' || q.mstate === 'POSTPOST' || q.mstate === 'CLOSED') && q.post > 0) live = q.post;
+    else if (typeof q.price === 'number' && q.price > 0) live = q.price;
+    if (live == null) return spk;
+    var out = spk.slice();
+    // 마지막 봉(오늘)이 형성 중이면 그 값을 실시간으로 교체, 아니면 한 점 추가.
+    if (Math.abs(live - out[out.length - 1]) / (out[out.length - 1] || 1) > 0.0005) out[out.length - 1] = live;
+    return out;
   }
 
   function buildWatchlistCard(q, market) {
@@ -6826,16 +6890,19 @@ html[data-theme="light"] .cfg-slider::-moz-range-thumb{background:#1d5fc2;border
       var pnlSign = held.pnlPct >= 0 ? '+' : '';
       pnlLine = '<div class="wl-pnl '+pnlCls+'">평가손익 '+pnlSign+held.pnlPct.toFixed(2)+'%</div>';
     }
+    var extLine = '';
+    if (q.mstate === 'PRE' && q.pre > 0) { var _p=q.prePct||(q.prevClose>0?(q.pre-q.prevClose)/q.prevClose*100:0); extLine='<div class="wl-ext">장전 '+fmtNum(q.pre)+' <span class="'+((_p>=0)?'pos':'neg')+'">'+((_p>=0)?'+':'')+fmtNum(_p,2)+'%</span></div>'; }
+    else if ((q.mstate==='POST'||q.mstate==='POSTPOST'||q.mstate==='CLOSED') && q.post > 0) { var _p=q.postPct||(q.price>0?(q.post-q.price)/q.price*100:0); extLine='<div class="wl-ext">장후 '+fmtNum(q.post)+' <span class="'+((_p>=0)?'pos':'neg')+'">'+((_p>=0)?'+':'')+fmtNum(_p,2)+'%</span></div>'; }
     return '<div class="wl-card'+(held?' held':'')+'" data-symbol="'+escapeHtml(q.symbol)+'" data-market="'+market+'">'+
       '<span class="wl-fav '+(isFav?'active':'')+'" data-symbol="'+escapeHtml(q.symbol)+'" data-market="'+market+'">'+(isFav?'\u2605':'\u2606')+'</span>'+
       // [V10.5] 종목명을 위, 티커를 아래로 — 이름 없으면 티커가 이름 자리 차지
       (name
         ? '<div class="wl-name">'+escapeHtml(name)+heldBadge+etfBadge+'</div><div class="wl-sym">'+escapeHtml(q.symbol)+'</div>'
         : '<div class="wl-name">'+escapeHtml(q.symbol)+heldBadge+etfBadge+'</div>')+
-      buildWlSpark(q.spark, q.dayPct)+
+      buildWlSpark(liveSpark(q), q.dayPct)+
       '<div class="wl-price">'+fmtNum(q.price)+'</div>'+
       '<div class="wl-day '+dayClass+'">'+sign+fmtNum(q.dayPct,2)+'%</div>'+
-      pnlLine+
+      pnlLine+extLine+
       '<div class="wl-meta">RSI '+(q.rsi!=null?q.rsi.toFixed(1):'-')+' \u00b7 '+fmtAgo(q.ts)+'</div>'+
       '</div>';
   }
