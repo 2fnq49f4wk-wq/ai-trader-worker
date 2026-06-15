@@ -22,7 +22,7 @@
 //   • [모델 안정화] claude-haiku-4-5 → claude-haiku-4-5-20251001 (고정버전으로 갱신 충격 방지)
 // V8.6 시간처리 변경점 (이미 적용됨):
 //   • US 시장 시간 DST 자동 전환 (EST/EDT)
-//   • KR 거래 윈도우 09:15~15:45 (야후 15분 지연 보정)
+//   • KR 거래 윈도우 09:00~15:30 (네이버 실시간 시세 적용, 지연 보정 불필요)
 //   • isLLMTriggerTime() 헬퍼로 분 단위 정확한 트리거
 // V8.4 → V8.5 변경점 (수익률 개선 핵심):
 // V8.4 → V8.5 변경점 (수익률 개선 핵심):
@@ -3307,31 +3307,6 @@ function getKST(now) {
            year: kstDate.getUTCFullYear(), month: kstDate.getUTCMonth() + 1, date: kstDate.getUTCDate() };
 }
 
-// [시간외] 현재 세션 분류 — US: pre 04:00-09:30 / regular 09:30-16:00 / post 16:00-20:00 ET.
-//   KR: 시간외종가/단일가 시간대(연속시세 없음, 표시·판별용). 평일만, 그 외 closed.
-function getMarketSession(market) {
-  const now = new Date();
-  if (market === "us") {
-    const et = getUSEt(now);
-    if (et.day < 1 || et.day > 5) return "closed";
-    const m = et.totalMin;
-    if (m >= 240 && m < 570) return "pre";       // 04:00~09:30
-    if (m >= 570 && m < 960) return "regular";    // 09:30~16:00
-    if (m >= 960 && m < 1200) return "post";      // 16:00~20:00
-    return "closed";
-  }
-  if (market === "kr") {
-    const kst = getKST(now);
-    if (kst.day < 1 || kst.day > 5) return "closed";
-    const m = kst.totalMin;
-    if (m >= 510 && m < 540) return "pre";        // 08:30~09:00 장전 시간외(단일가, 라이브 시세 없음)
-    if (m >= 540 && m < 930) return "regular";    // 09:00~15:30
-    if (m >= 940 && m < 1080) return "post";      // 15:40~18:00 장후 시간외(단일가)
-    return "closed";
-  }
-  return "closed";
-}
-
 // [통계] KST 05:00 리셋 기준 거래일 키 "YYYY-MM-DD".
 //   KST(=UTC+9)에서 5시간을 뺀 시각의 날짜 = UTC+4h의 날짜. (05:00에 날짜 전환)
 function kstTradingDayKey(now) {
@@ -3538,9 +3513,8 @@ function isMarketOpen(market) {
 }
 
 // [V9.0] 가격 갱신 전용 창 — UI/휴장판정용 isMarketOpen과 분리.
-//   KR은 야후 15분 지연이라 가격 갱신 종료를 15:45(945)까지 늘려, 실제 마지막 15분
-//   (14:45~15:30) 거래의 지연 데이터가 quote/종가에 반영될 시간을 확보한다.
-//   시작은 09:00 그대로(데이터 일찍 받아두는 건 무해). US는 실시간이라 정규장과 동일.
+//   KR: 네이버 실시간 시세 채택으로 지연 보정 불필요 — 정규장 09:00~15:30과 동일.
+//   US는 실시간이라 정규장과 동일.
 function isQuoteRefreshWindow(market) {
   const now = new Date();
   if (market === "us") {
@@ -3551,15 +3525,14 @@ function isQuoteRefreshWindow(market) {
   }
   if (market === "kr") {
     const kst = getKST(now);
-    return kst.day >= 1 && kst.day <= 5 && kst.totalMin >= 540 && kst.totalMin < 945;
+    return kst.day >= 1 && kst.day <= 5 && kst.totalMin >= 540 && kst.totalMin < 930;
   }
   return false;
 }
 
-// [V8.6 신규] 엔진이 거래해도 되는 시간 — 야후 KR 시세 15분 지연 보정
+// [V8.6] 엔진이 거래해도 되는 시간
 // US: 09:30~16:00 ET (실시간이므로 정규장과 동일)
-// KR: 09:15~15:45 KST (15분 지연 데이터로 거래하므로 시작도 15분 늦추고 종료도 15분 늦춤)
-//     이로써 모든 매매가 "15분 전 실제 가격" 기준이 됨 — 데이터-가격 일치 보장.
+// KR: 09:00~15:30 KST (네이버 실시간 시세 채택 — 15분 지연 보정 불필요)
 function isTradingWindow(market) {
   const now = new Date();
   if (market === "us") {
@@ -3568,8 +3541,8 @@ function isTradingWindow(market) {
   }
   if (market === "kr") {
     const kst = getKST(now);
-    // 09:15 = 555, 15:45 = 945
-    return kst.day >= 1 && kst.day <= 5 && kst.totalMin >= 555 && kst.totalMin < 945;
+    // 09:00 = 540, 15:30 = 930
+    return kst.day >= 1 && kst.day <= 5 && kst.totalMin >= 540 && kst.totalMin < 930;
   }
   return false;
 }
@@ -3689,9 +3662,7 @@ function isFxMarketOpen() {
 
 // [V8.6] 장 마감까지 남은 분 — Day 전략 강제 청산용
 // US: 16:00 ET 마감 기준 (DST 자동)
-// KR: 15:45 KST 기준 — 야후 15분 지연 데이터로 거래하므로 거래 윈도우 마감 시각 사용.
-//     실제 거래소는 15:30 마감이지만 우리가 보는 15:30 데이터는 15:15 시점의 가격이므로
-//     15:45까지 거래해야 실제 15:30 마감 직전 가격으로 청산 가능.
+// KR: 15:30 KST 기준 — 네이버 실시간 시세 채택, 정규장 종료 시각 사용.
 function marketMinutesUntilClose(market) {
   const now = new Date();
   if (market === "us") {
@@ -3703,16 +3674,16 @@ function marketMinutesUntilClose(market) {
   if (market === "kr") {
     const kst = getKST(now);
     if (kst.day < 1 || kst.day > 5) return null;
-    // 거래 윈도우: 09:15~15:45
-    if (kst.totalMin < 555 || kst.totalMin >= 945) return null;
-    return 945 - kst.totalMin;  // 15:45 KST (거래 윈도우 종료)
+    // 거래 윈도우: 09:00~15:30
+    if (kst.totalMin < 540 || kst.totalMin >= 930) return null;
+    return 930 - kst.totalMin;  // 15:30 KST
   }
   return null;
 }
 
 // [강화·데이터적합] 현재 거래 세션의 경과 비율(0~1) — 장중 형성 중인 당일봉의
 //   "부분 거래량"을 풀데이(full-day) 기준으로 환산하는 데 사용. 윈도우 밖이면 null(=완성봉으로 취급).
-//   US 09:30~16:00(390분), KR 거래윈도우 09:15~15:45(390분).
+//   US 09:30~16:00(390분), KR 09:00~15:30(390분).
 function sessionElapsedFraction(market) {
   const now = new Date();
   if (market === "us") {
@@ -3724,8 +3695,8 @@ function sessionElapsedFraction(market) {
   if (market === "kr") {
     const kst = getKST(now);
     if (kst.day < 1 || kst.day > 5) return null;
-    if (kst.totalMin < 555 || kst.totalMin >= 945) return null;
-    return Math.max(0, Math.min(1, (kst.totalMin - 555) / 390));
+    if (kst.totalMin < 540 || kst.totalMin >= 930) return null;
+    return Math.max(0, Math.min(1, (kst.totalMin - 540) / 390));
   }
   return null;
 }
@@ -4993,10 +4964,7 @@ async function fetchQuoteViaChart(symbol) {
     ? meta.chartPreviousClose
     : (typeof meta.previousClose === "number" && meta.previousClose > 0 ? meta.previousClose : price);
   const dayPct = prevClose ? ((price - prevClose) / prevClose) * 100 : 0;
-  const o = { price: price, prevClose: prevClose || price, dayPct: dayPct };
-  if (typeof meta.preMarketPrice === "number" && meta.preMarketPrice > 0) o.pre = meta.preMarketPrice;
-  if (typeof meta.postMarketPrice === "number" && meta.postMarketPrice > 0) o.post = meta.postMarketPrice;
-  return o;
+  return { price: price, prevClose: prevClose || price, dayPct: dayPct };
 }
 
 async function fetchQuoteViaChartFallback(symbol) {
@@ -5078,16 +5046,6 @@ async function fetchBatchQuotes(symbols, opts) {
         // [V81] 시총맵 실시간 박스 크기용 — 발행주식수·시총 수집(있을 때만)
         if (typeof row.sharesOutstanding === "number" && row.sharesOutstanding > 0) o.shares = row.sharesOutstanding;
         if (typeof row.marketCap === "number" && row.marketCap > 0) o.mcap = row.marketCap;
-        // [시간외] price는 불변. 시간외가는 별도 필드로만 표시(미국). KR은 필드 부재로 자동 무시.
-        if (typeof row.preMarketPrice === "number" && row.preMarketPrice > 0) {
-          o.pre = row.preMarketPrice;
-          o.prePct = (typeof row.preMarketChangePercent === "number") ? row.preMarketChangePercent : null;
-        }
-        if (typeof row.postMarketPrice === "number" && row.postMarketPrice > 0) {
-          o.post = row.postMarketPrice;
-          o.postPct = (typeof row.postMarketChangePercent === "number") ? row.postMarketChangePercent : null;
-        }
-        if (typeof row.marketState === "string") o.mstate = row.marketState;
         out[sym] = o; got++;
       }
     }
@@ -9983,12 +9941,6 @@ async function runTradingCycle(env) {
           spark: prevQ ? (prevQ.spark || null) : null,  // [V80] 스파크라인 보존
           ret1y: prevQ ? prevQ.ret1y : null, ret5y: prevQ ? prevQ.ret5y : null,
           vol: prevQ ? prevQ.vol : null, avgVol20: prevQ ? prevQ.avgVol20 : null,
-          // [시간외] 미국 프리/애프터 시세 — 표시용. fresh(bq) 우선, 없으면 직전값 보존.
-          pre: (typeof bq.pre === "number") ? bq.pre : (prevQ ? (prevQ.pre != null ? prevQ.pre : null) : null),
-          prePct: (typeof bq.pre === "number") ? (bq.prePct != null ? bq.prePct : null) : (prevQ ? (prevQ.prePct != null ? prevQ.prePct : null) : null),
-          post: (typeof bq.post === "number") ? bq.post : (prevQ ? (prevQ.post != null ? prevQ.post : null) : null),
-          postPct: (typeof bq.post === "number") ? (bq.postPct != null ? bq.postPct : null) : (prevQ ? (prevQ.postPct != null ? prevQ.postPct : null) : null),
-          mstate: (typeof bq.mstate === "string") ? bq.mstate : (prevQ ? (prevQ.mstate != null ? prevQ.mstate : null) : null),
           ts: nowTs
         };
         quoteStmts.push(
@@ -11233,9 +11185,11 @@ async function handleRequest(request, env) {
           try {
             const cfg0 = migrateCfgToMarkets(Object.assign({}, DEFAULT_CFG, await getState(env.DB, "cfg", {})));
             const usSyms = (cfg0.usTickers || []).filter(function(s){ return !s.endsWith(".KS") && !s.endsWith(".KQ"); });
+            const krEtfSyms = (cfg0.krTickers || []).filter(function(s){ return ETF_SYMBOLS.has(s); });
+            const allSparkSyms = usSyms.concat(krEtfSyms);  // [시간외] KR ETF도 1Y/5Y spark 배치에 포함
             const lr = {};
-            for (let i = 0; i < usSyms.length; i += 40) {
-              const chunk = usSyms.slice(i, i + 40);
+            for (let i = 0; i < allSparkSyms.length; i += 40) {
+              const chunk = allSparkSyms.slice(i, i + 40);
               try {
                 const j = await yahooFetch("https://query1.finance.yahoo.com/v8/finance/spark?symbols=" +
                   encodeURIComponent(chunk.join(",")) + "&range=5y&interval=1mo");
@@ -12368,26 +12322,6 @@ async function handleRequest(request, env) {
     }
 
     // [V53] VISION AI: 수동 전체 스캔 트리거 — cron 시각 게이트를 우회(force)해 즉시 1배치 실행
-    // [시간외 진단] 네이버 basic 엔드포인트의 시간외(overMarket) 필드 확인 — Workers IP 기준 실제 응답 구조 확보
-    if (path === "/api/naver-overtime-test" && request.method === "POST") {
-      const out = {};
-      for (const code of ["005930", "000660", "035420"]) {
-        try {
-          const r = await fetch("https://m.stock.naver.com/api/stock/" + code + "/basic",
-            { headers: { "User-Agent": "Mozilla/5.0", "Referer": "https://m.stock.naver.com" } });
-          const j = await r.json();
-          out[code] = {
-            status: r.status,
-            marketStatus: j.marketStatus || null,
-            closePrice: j.closePrice || null,
-            overMarketPriceInfo: j.overMarketPriceInfo || null,
-            overMarketStatus: j.overMarketStatus || null,
-            topKeys: Object.keys(j)
-          };
-        } catch (e) { out[code] = { err: e.message }; }
-      }
-      return Response.json(out, { headers: cors });
-    }
     // [V66 임시진단] 네이버 증권 API Workers 접근성 테스트
     if (path === "/api/naver-test" && request.method === "POST") {
       const out = {};
