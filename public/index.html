@@ -500,6 +500,7 @@ button.btn.loading::after{content:'조회 중…';position:absolute;inset:0;disp
 .wl-pnl{grid-column:3;grid-row:3;font-size:10px;text-align:right;font-variant-numeric:tabular-nums;}
 .wl-pnl.pos{color:var(--pos);}
 .wl-pnl.neg{color:var(--neg);}
+.wl-ext{grid-column:3;grid-row:4;font-size:9px;text-align:right;color:var(--t3);}
 .wl-fav{position:absolute;top:10px;right:8px;cursor:pointer;font-size:11px;color:var(--s3);transition:color .1s;user-select:none;}
 .wl-fav:hover{color:var(--t3);}
 .wl-fav.active{color:var(--amber);}
@@ -6826,6 +6827,9 @@ html[data-theme="light"] .cfg-slider::-moz-range-thumb{background:#1d5fc2;border
       var pnlSign = held.pnlPct >= 0 ? '+' : '';
       pnlLine = '<div class="wl-pnl '+pnlCls+'">평가손익 '+pnlSign+held.pnlPct.toFixed(2)+'%</div>';
     }
+    var extLine = '';
+    if (q.mstate === 'PRE' && q.pre > 0) { var _p=q.prePct||(q.prevClose>0?(q.pre-q.prevClose)/q.prevClose*100:0); extLine='<div class="wl-ext">장전 '+fmtNum(q.pre)+' <span class="'+((_p>=0)?'pos':'neg')+'">'+((_p>=0)?'+':'')+fmtNum(_p,2)+'%</span></div>'; }
+    else if ((q.mstate==='POST'||q.mstate==='POSTPOST'||q.mstate==='CLOSED') && q.post > 0) { var _p=q.postPct||(q.price>0?(q.post-q.price)/q.price*100:0); extLine='<div class="wl-ext">장후 '+fmtNum(q.post)+' <span class="'+((_p>=0)?'pos':'neg')+'">'+((_p>=0)?'+':'')+fmtNum(_p,2)+'%</span></div>'; }
     return '<div class="wl-card'+(held?' held':'')+'" data-symbol="'+escapeHtml(q.symbol)+'" data-market="'+market+'">'+
       '<span class="wl-fav '+(isFav?'active':'')+'" data-symbol="'+escapeHtml(q.symbol)+'" data-market="'+market+'">'+(isFav?'\u2605':'\u2606')+'</span>'+
       // [V10.5] 종목명을 위, 티커를 아래로 — 이름 없으면 티커가 이름 자리 차지
@@ -6835,7 +6839,7 @@ html[data-theme="light"] .cfg-slider::-moz-range-thumb{background:#1d5fc2;border
       buildWlSpark(q.spark, q.dayPct)+
       '<div class="wl-price">'+fmtNum(q.price)+'</div>'+
       '<div class="wl-day '+dayClass+'">'+sign+fmtNum(q.dayPct,2)+'%</div>'+
-      pnlLine+
+      pnlLine+extLine+
       '<div class="wl-meta">RSI '+(q.rsi!=null?q.rsi.toFixed(1):'-')+' \u00b7 '+fmtAgo(q.ts)+'</div>'+
       '</div>';
   }
