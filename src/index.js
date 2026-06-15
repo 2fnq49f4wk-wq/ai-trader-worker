@@ -5381,32 +5381,28 @@ async function fetchMinuteBars(symbol, opts) {
   //   포맷: <item data="날짜시간|시가|고가|저가|종가|거래량"/>
   //   count=80: 5분봉 기준 장중 400분(6.5시간) 이상 — 당일 전체 커버
   if (symbol.endsWith(".KS") || symbol.endsWith(".KQ")) {
+    // [V58b] 네이버 모바일 분봉 API: m.stock.naver.com/api/stock/{code}/candle/minute?timeframe=5
     const code = symbol.split(".")[0];
     __fetchBudget.used++;
     const r = await fetch(
-      "https://fchart.stock.naver.com/sise.nhn?symbol=" + code + "&timeframe=minute&count=80&requestType=0",
-      { headers: { "User-Agent": "Mozilla/5.0", "Referer": "https://finance.naver.com" } }
+      "https://m.stock.naver.com/api/stock/" + code + "/candle/minute?timeframe=5",
+      { headers: { "User-Agent": "Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X) AppleWebKit/605.1.15", "Referer": "https://m.stock.naver.com/" } }
     );
-    if (!r.ok) throw new Error("naver sise.nhn " + r.status);
-    const xml = await r.text();
-    // item data 파싱 — 정규식으로 data 속성 추출 후 | 분리
+    if (!r.ok) throw new Error("naver candle/minute " + r.status);
+    let rows;
+    try { rows = await r.json(); } catch(e) { throw new Error("naver candle/minute parse"); }
+    if (!Array.isArray(rows)) throw new Error("naver candle/minute bad format");
     const closes = [], highs = [], lows = [], volumes = [], times = [];
-    const re = /data="([^"]+)"/g;
-    let m;
-    while ((m = re.exec(xml)) !== null) {
-      const parts = m[1].split("|");
-      if (parts.length < 6) continue;
-      // parts[0]=날짜시간(YYYYMMDDHHmm), [1]=시가, [2]=고가, [3]=저가, [4]=종가, [5]=거래량
-      const c = Number(parts[4]);
+    for (const row of rows) {
+      const c = Number(row.closePrice);
       if (!(c > 0)) continue;
-      const h = Number(parts[2]), l = Number(parts[3]), v = Number(parts[5]);
-      // 타임스탬프: YYYYMMDDHHmm → KST epoch (UTC+9)
-      const ds = parts[0];
+      const h = Number(row.highPrice), l = Number(row.lowPrice), v = Number(row.volume);
+      const dt = String(row.localDateTime || row.localDate || "");
       let ts = 0;
-      if (ds && ds.length >= 12) {
-        const yr = Number(ds.slice(0,4)), mo = Number(ds.slice(4,6))-1,
-              dy = Number(ds.slice(6,8)), hr = Number(ds.slice(8,10)), mn = Number(ds.slice(10,12));
-        ts = Date.UTC(yr, mo, dy, hr - 9, mn) / 1000; // KST→UTC
+      if (dt.length >= 12) {
+        ts = Date.UTC(Number(dt.slice(0,4)), Number(dt.slice(4,6))-1, Number(dt.slice(6,8)), Number(dt.slice(8,10))-9, Number(dt.slice(10,12))) / 1000;
+      } else if (dt.length >= 8) {
+        ts = Date.UTC(Number(dt.slice(0,4)), Number(dt.slice(4,6))-1, Number(dt.slice(6,8)), 6) / 1000;
       }
       closes.push(c);
       highs.push(h > 0 ? h : c);
@@ -5414,7 +5410,7 @@ async function fetchMinuteBars(symbol, opts) {
       volumes.push(v >= 0 ? v : 0);
       times.push(ts);
     }
-    if (closes.length === 0) throw new Error("naver sise.nhn empty for " + code);
+    if (closes.length === 0) throw new Error("naver candle/minute empty for " + code);
     const price = closes[closes.length - 1];
     // VWAP + slope
     let pv = 0, vv = 0;
@@ -5531,44 +5527,41 @@ function confirmIntradayEntry(mb, price, rules) {
   return { ok: true, confidenceBoost: confidenceBoost };
 }
 
-// [V58] 네이버 siseJson 일봉 파서 — KR 종목 전용
-//   포맷: [[날짜,시가,고가,저가,종가,거래량], ...]  (JSON 배열)
-//   startTime: 5년치(1800거래일 이상 확보), endTime: 오늘
+// [V58b] 네이버 모바일 캔들 일봉 파서 — KR 종목 전용
+//   엔드포인트: m.stock.naver.com/api/stock/{code}/candle/day
+//   포맷: [{openPrice, highPrice, lowPrice, closePrice, volume, localDate}]
+//   pageSize=1500: 5년치(~1260거래일) 확보
 async function fetchDailyFullNaver(code) {
   const now = new Date();
   const toS = now.getUTCFullYear() +
     String(now.getUTCMonth() + 1).padStart(2, "0") +
     String(now.getUTCDate()).padStart(2, "0");
-  // 5년 전 날짜
   const from = new Date(now);
   from.setUTCFullYear(from.getUTCFullYear() - 5);
   const fromS = from.getUTCFullYear() +
     String(from.getUTCMonth() + 1).padStart(2, "0") +
     String(from.getUTCDate()).padStart(2, "0");
-  const url = "https://fchart.stock.naver.com/siseJson.nhn?symbol=" + code +
-    "&requestType=1&startTime=" + fromS + "&endTime=" + toS + "&timeframe=day";
+  const url = "https://m.stock.naver.com/api/stock/" + code + "/candle/day?startTime=" + fromS + "&endTime=" + toS + "&pageSize=1500";
   __fetchBudget.used++;
   const r = await fetch(url, {
-    headers: { "User-Agent": "Mozilla/5.0", "Referer": "https://finance.naver.com" }
+    headers: { "User-Agent": "Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X) AppleWebKit/605.1.15", "Referer": "https://m.stock.naver.com/" }
   });
-  if (!r.ok) throw new Error("naver siseJson " + r.status);
-  const text = await r.text();
-  // 포맷: [["날짜","시가","고가","저가","종가","거래량"], ...] — 헤더행 포함
+  if (!r.ok) throw new Error("naver candle/day " + r.status);
   let rows;
-  try { rows = JSON.parse(text); } catch (e) { throw new Error("naver siseJson parse fail"); }
+  try { rows = await r.json(); } catch (e) { throw new Error("naver candle/day parse fail"); }
+  if (!Array.isArray(rows)) throw new Error("naver candle/day bad format");
   const closes = [], highs = [], lows = [], volumes = [], opens = [];
-  for (let i = 0; i < rows.length; i++) {
-    const row = rows[i];
-    if (!Array.isArray(row) || row.length < 6) continue;
-    const o = Number(row[1]), h = Number(row[2]), l = Number(row[3]), c = Number(row[4]), v = Number(row[5]);
+  for (const row of rows) {
+    const c = Number(row.closePrice);
     if (!(c > 0)) continue;
+    const o = Number(row.openPrice), h = Number(row.highPrice), l = Number(row.lowPrice), v = Number(row.volume);
     opens.push(o > 0 ? o : c);
     highs.push(h > 0 ? h : c);
     lows.push(l > 0 ? l : c);
     closes.push(c);
     volumes.push(v >= 0 ? v : 0);
   }
-  if (closes.length === 0) throw new Error("naver siseJson empty");
+  if (closes.length === 0) throw new Error("naver candle/day empty");
   return { closes, highs, lows, volumes, opens };
 }
 
@@ -6225,39 +6218,29 @@ async function fetchIndexDaily(symbol) {
   //   ^KS11 → KOSPI (코드: KOSPI), ^KQ11 → KOSDAQ (코드: KOSDAQ)
   //   네이버 지수 일봉: https://fchart.stock.naver.com/siseJson.nhn?symbol=KOSPI&requestType=1&timeframe=day
   if (symbol === "^KS11" || symbol === "^KQ11") {
+    // [V58b] 지수 일봉 — 네이버 모바일 candle API
     const idxCode = symbol === "^KS11" ? "KOSPI" : "KOSDAQ";
     const now = new Date();
-    const toS = now.getUTCFullYear() +
-      String(now.getUTCMonth() + 1).padStart(2, "0") +
-      String(now.getUTCDate()).padStart(2, "0");
-    const from = new Date(now);
-    from.setUTCMonth(from.getUTCMonth() - 3);
-    const fromS = from.getUTCFullYear() +
-      String(from.getUTCMonth() + 1).padStart(2, "0") +
-      String(from.getUTCDate()).padStart(2, "0");
+    const toS = now.getUTCFullYear() + String(now.getUTCMonth()+1).padStart(2,"0") + String(now.getUTCDate()).padStart(2,"0");
+    const from = new Date(now); from.setUTCMonth(from.getUTCMonth()-3);
+    const fromS = from.getUTCFullYear() + String(from.getUTCMonth()+1).padStart(2,"0") + String(from.getUTCDate()).padStart(2,"0");
     __fetchBudget.used++;
     const r = await fetch(
-      "https://fchart.stock.naver.com/siseJson.nhn?symbol=" + idxCode +
-      "&requestType=1&startTime=" + fromS + "&endTime=" + toS + "&timeframe=day",
-      { headers: { "User-Agent": "Mozilla/5.0", "Referer": "https://finance.naver.com" } }
+      "https://m.stock.naver.com/api/stock/" + idxCode + "/candle/day?startTime=" + fromS + "&endTime=" + toS + "&pageSize=100",
+      { headers: { "User-Agent": "Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X) AppleWebKit/605.1.15", "Referer": "https://m.stock.naver.com/" } }
     );
-    if (!r.ok) throw new Error("naver idx siseJson " + r.status);
-    const text = await r.text();
+    if (!r.ok) throw new Error("naver idx candle/day " + r.status);
     let rows;
-    try { rows = JSON.parse(text); } catch (e) { throw new Error("naver idx parse fail"); }
+    try { rows = await r.json(); } catch(e) { throw new Error("naver idx parse fail"); }
+    if (!Array.isArray(rows)) throw new Error("naver idx bad format");
     const closes = [];
     let lastTs = null;
-    for (let i = 0; i < rows.length; i++) {
-      const row = rows[i];
-      if (!Array.isArray(row) || row.length < 5) continue;
-      const c = Number(row[4]);
+    for (const row of rows) {
+      const c = Number(row.closePrice);
       if (!(c > 0)) continue;
       closes.push(c);
-      // 날짜: row[0] = "YYYYMMDD" 형식
-      if (row[0] && String(row[0]).length >= 8) {
-        const ds = String(row[0]);
-        lastTs = Date.UTC(Number(ds.slice(0,4)), Number(ds.slice(4,6))-1, Number(ds.slice(6,8))) / 1000;
-      }
+      const ds = String(row.localDate || "");
+      if (ds.length >= 8) lastTs = Date.UTC(Number(ds.slice(0,4)), Number(ds.slice(4,6))-1, Number(ds.slice(6,8))) / 1000;
     }
     if (closes.length === 0) throw new Error("naver idx empty");
     const price = closes[closes.length - 1];
@@ -7922,27 +7905,28 @@ async function fetchDailyForBacktest(symbol, range) {
   // [V58] KR 종목 — 네이버 siseJson (Yahoo 접미사 오류·지연 없음)
   const isKR = symbol.endsWith(".KS") || symbol.endsWith(".KQ");
   if (isKR) {
+    // [V58b] 백테스트 일봉 — 네이버 모바일 candle API
     const code = symbol.split(".")[0];
     const now = new Date();
     const toS = now.getUTCFullYear()+String(now.getUTCMonth()+1).padStart(2,"0")+String(now.getUTCDate()).padStart(2,"0");
-    // range 파라미터를 월 수로 변환 (2y→24, 5y→60 등)
     const rangeM = range === "1y" ? 12 : range === "5y" ? 60 : range === "1mo" ? 1 : range === "6mo" ? 6 : 24;
     const from = new Date(now); from.setUTCMonth(from.getUTCMonth() - rangeM);
     const fromS = from.getUTCFullYear()+String(from.getUTCMonth()+1).padStart(2,"0")+String(from.getUTCDate()).padStart(2,"0");
+    const pgSize = rangeM <= 12 ? 300 : rangeM <= 24 ? 600 : 1500;
     __fetchBudget.used++;
     const r = await fetch(
-      "https://fchart.stock.naver.com/siseJson.nhn?symbol=" + code + "&requestType=1&startTime=" + fromS + "&endTime=" + toS + "&timeframe=day",
-      { headers: { "User-Agent": "Mozilla/5.0", "Referer": "https://finance.naver.com" } }
+      "https://m.stock.naver.com/api/stock/" + code + "/candle/day?startTime=" + fromS + "&endTime=" + toS + "&pageSize=" + pgSize,
+      { headers: { "User-Agent": "Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X) AppleWebKit/605.1.15", "Referer": "https://m.stock.naver.com/" } }
     );
-    if (!r.ok) throw new Error("naver siseJson bt " + r.status);
-    let rows; try { rows = JSON.parse(await r.text()); } catch(e) { throw new Error("naver siseJson bt parse"); }
+    if (!r.ok) throw new Error("naver candle/day bt " + r.status);
+    let rows; try { rows = await r.json(); } catch(e) { throw new Error("naver candle/day bt parse"); }
+    if (!Array.isArray(rows)) throw new Error("naver candle/day bt bad format");
     const closes = [], highs = [], lows = [], volumes = [], dates = [];
     for (const row of rows) {
-      if (!Array.isArray(row) || row.length < 6) continue;
-      const c = Number(row[4]);
+      const c = Number(row.closePrice);
       if (!(c > 0)) continue;
-      const h = Number(row[2]), l = Number(row[3]), v = Number(row[5]);
-      const ds = String(row[0]);
+      const h = Number(row.highPrice), l = Number(row.lowPrice), v = Number(row.volume);
+      const ds = String(row.localDate || "");
       const ts2 = ds.length >= 8
         ? Date.UTC(Number(ds.slice(0,4)), Number(ds.slice(4,6))-1, Number(ds.slice(6,8)), 6)
         : Date.now();
@@ -7952,7 +7936,7 @@ async function fetchDailyForBacktest(symbol, range) {
       volumes.push(v >= 0 ? v : 0);
       dates.push(ts2);
     }
-    if (closes.length === 0) throw new Error("naver siseJson bt empty");
+    if (closes.length === 0) throw new Error("naver candle/day bt empty");
     return { symbol: symbol, closes: closes, highs: highs, lows: lows, volumes: volumes, dates: dates };
   }
 
@@ -11938,52 +11922,57 @@ async function handleRequest(request, env) {
         let candles = [], price = null;
 
         if (isKRsym) {
-          // [V58] KR 차트 — 네이버 siseJson / sise.nhn
+          // [V58b] KR 차트 — 네이버 모바일 캔들 API (fchart 대신 m.stock.naver.com 사용)
+          //   Workers 환경에서 fchart.stock.naver.com이 차단될 수 있어 모바일 API로 교체
+          //   포맷: [{openPrice, highPrice, lowPrice, closePrice, volume, localDate, localDateTime}]
           const code = (sym === "^KS11") ? "KOSPI" : (sym === "^KQ11") ? "KOSDAQ" : sym.split(".")[0];
+          const naverBase = "https://m.stock.naver.com/api/stock/" + code + "/candle/";
+          const naverHdr = { "User-Agent": "Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X) AppleWebKit/605.1.15", "Referer": "https://m.stock.naver.com/" };
+
           if (intraday) {
-            // 분봉 — sise.nhn XML (count=80: 장중 전체 커버)
-            const rq = await fetch(
-              "https://fchart.stock.naver.com/sise.nhn?symbol=" + code + "&timeframe=minute&count=80&requestType=0",
-              { headers: { "User-Agent": "Mozilla/5.0", "Referer": "https://finance.naver.com" } }
-            );
-            if (!rq.ok) throw new Error("naver sise.nhn " + rq.status);
-            const xml = await rq.text();
-            const re = /data="([^"]+)"/g; let m;
-            while ((m = re.exec(xml)) !== null) {
-              const p = m[1].split("|");
-              if (p.length < 6) continue;
-              const o2 = Number(p[1]), h2 = Number(p[2]), l2 = Number(p[3]), c2 = Number(p[4]), v2 = Number(p[5]);
+            // 분봉 — /candle/minute?timeframe=N
+            // timeframe: 1,3,5,10,15,30,60 (분)
+            const tfMin = interval === "1m" ? 1 : interval === "5m" ? 5 : interval === "15m" ? 15 : interval === "30m" ? 30 : 60;
+            const rq = await fetch(naverBase + "minute?timeframe=" + tfMin,
+              { headers: naverHdr });
+            if (!rq.ok) throw new Error("naver candle/minute " + rq.status);
+            const rows2 = await rq.json();
+            if (!Array.isArray(rows2)) throw new Error("naver candle/minute bad format");
+            for (const row of rows2) {
+              const c2 = Number(row.closePrice);
               if (!(c2 > 0)) continue;
-              const ds = p[0]; // YYYYMMDDHHmm
+              // localDateTime: "2026061509:05" 형식
               let ts = 0;
-              if (ds && ds.length >= 12) {
-                ts = Date.UTC(Number(ds.slice(0,4)), Number(ds.slice(4,6))-1, Number(ds.slice(6,8)), Number(ds.slice(8,10))-9, Number(ds.slice(10,12))) / 1000;
+              const dt = row.localDateTime || row.localDate || "";
+              if (dt.length >= 12) {
+                ts = Date.UTC(Number(dt.slice(0,4)), Number(dt.slice(4,6))-1, Number(dt.slice(6,8)), Number(dt.slice(8,10))-9, Number(dt.slice(10,12))) / 1000;
+              } else if (dt.length >= 8) {
+                ts = Date.UTC(Number(dt.slice(0,4)), Number(dt.slice(4,6))-1, Number(dt.slice(6,8)), 6) / 1000;
               }
-              candles.push({ t: ts, o: o2||c2, h: h2||c2, l: l2||c2, c: c2, v: v2||0 });
+              candles.push({ t: ts, o: Number(row.openPrice)||c2, h: Number(row.highPrice)||c2, l: Number(row.lowPrice)||c2, c: c2, v: Number(row.volume)||0 });
             }
             price = candles.length ? candles[candles.length-1].c : null;
           } else {
-            // 일봉/주봉/월봉 — siseJson
+            // 일봉/주봉/월봉
             const now2 = new Date();
             const toS2 = now2.getUTCFullYear()+String(now2.getUTCMonth()+1).padStart(2,"0")+String(now2.getUTCDate()).padStart(2,"0");
             const rangeMonths = range === "1mo" ? 1 : range === "3mo" ? 3 : range === "6mo" ? 6 : range === "1y" ? 12 : range === "2y" ? 24 : range === "5y" ? 60 : 36;
             const from2 = new Date(now2); from2.setUTCMonth(from2.getUTCMonth()-rangeMonths);
             const fromS2 = from2.getUTCFullYear()+String(from2.getUTCMonth()+1).padStart(2,"0")+String(from2.getUTCDate()).padStart(2,"0");
             const tf = interval === "1wk" ? "week" : interval === "1mo" ? "month" : "day";
-            const rq = await fetch(
-              "https://fchart.stock.naver.com/siseJson.nhn?symbol=" + code + "&requestType=1&startTime=" + fromS2 + "&endTime=" + toS2 + "&timeframe=" + tf,
-              { headers: { "User-Agent": "Mozilla/5.0", "Referer": "https://finance.naver.com" } }
-            );
-            if (!rq.ok) throw new Error("naver siseJson " + rq.status);
-            let rows2; try { rows2 = JSON.parse(await rq.text()); } catch(e) { throw new Error("naver siseJson parse"); }
+            // pageSize=400: 일봉 1y=250거래일, 2y=500 → 최대 400으로 충분
+            const rq = await fetch(naverBase + tf + "?startTime=" + fromS2 + "&endTime=" + toS2 + "&pageSize=400",
+              { headers: naverHdr });
+            if (!rq.ok) throw new Error("naver candle/" + tf + " " + rq.status);
+            const rows2 = await rq.json();
+            if (!Array.isArray(rows2)) throw new Error("naver candle/" + tf + " bad format");
             for (const row of rows2) {
-              if (!Array.isArray(row) || row.length < 6) continue;
-              const c2 = Number(row[4]);
+              const c2 = Number(row.closePrice);
               if (!(c2 > 0)) continue;
-              const ds = String(row[0]);
+              const ds = String(row.localDate || "");
               let ts = 0;
-              if (ds.length >= 8) ts = Date.UTC(Number(ds.slice(0,4)), Number(ds.slice(4,6))-1, Number(ds.slice(6,8)), 6) / 1000; // KST 15:00 = UTC 06:00
-              candles.push({ t: ts, o: Number(row[1])||c2, h: Number(row[2])||c2, l: Number(row[3])||c2, c: c2, v: Number(row[5])||0 });
+              if (ds.length >= 8) ts = Date.UTC(Number(ds.slice(0,4)), Number(ds.slice(4,6))-1, Number(ds.slice(6,8)), 6) / 1000;
+              candles.push({ t: ts, o: Number(row.openPrice)||c2, h: Number(row.highPrice)||c2, l: Number(row.lowPrice)||c2, c: c2, v: Number(row.volume)||0 });
             }
             price = candles.length ? candles[candles.length-1].c : null;
           }
@@ -12203,16 +12192,16 @@ async function handleRequest(request, env) {
               const toS = now.getUTCFullYear() + String(now.getUTCMonth()+1).padStart(2,"0") + String(now.getUTCDate()).padStart(2,"0");
               const from = new Date(now); from.setUTCMonth(from.getUTCMonth()-1);
               const fromS = from.getUTCFullYear() + String(from.getUTCMonth()+1).padStart(2,"0") + String(from.getUTCDate()).padStart(2,"0");
-              const r = await fetch("https://fchart.stock.naver.com/siseJson.nhn?symbol=" + idxCode + "&requestType=1&startTime=" + fromS + "&endTime=" + toS + "&timeframe=day",
-                { headers: { "User-Agent": "Mozilla/5.0", "Referer": "https://finance.naver.com" } });
+              const r = await fetch("https://m.stock.naver.com/api/stock/" + idxCode + "/candle/day?startTime=" + fromS + "&endTime=" + toS + "&pageSize=50",
+                { headers: { "User-Agent": "Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X) AppleWebKit/605.1.15", "Referer": "https://m.stock.naver.com/" } });
               if (!r.ok) return out;
-              let rows; try { rows = JSON.parse(await r.text()); } catch(e) { return out; }
+              let rows; try { rows = await r.json(); } catch(e) { return out; }
+              if (!Array.isArray(rows)) return out;
               let prev = null;
               for (const row of rows) {
-                if (!Array.isArray(row) || row.length < 5) continue;
-                const c = Number(row[4]);
+                const c = Number(row.closePrice);
                 if (!(c > 0)) continue;
-                const ds = String(row[0]);
+                const ds = String(row.localDate || "");
                 if (ds.length >= 8) {
                   const dkey = ds.slice(0,4) + "-" + ds.slice(4,6) + "-" + ds.slice(6,8);
                   if (prev != null && prev > 0) out[dkey] = (c - prev) / prev * 100;
