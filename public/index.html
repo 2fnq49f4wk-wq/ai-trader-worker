@@ -6636,13 +6636,20 @@ html[data-theme="light"] .cfg-slider::-moz-range-thumb{background:#1d5fc2;border
     window.__detailBrowseTs = Date.now();
     var arr = window.__lastQuotesArr || [];
     function mk(q) {
-      // price×shares 상한 체크 — Yahoo sharesOutstanding 오류값으로 비정상 대형주 정렬 방지
-      // US $6T, KR 500조 초과하면 비정상 → q.mcap 또는 rank 폴백
+      // price×shares 상한 체크 — sharesOutstanding 오류값으로 비정상 대형주 정렬 방지
+      // US $8T(NVDA 여유), KR 700조 초과하면 비정상 → q.mcap 또는 rank 폴백
       var calc = (typeof q.price === 'number' && q.price > 0 && typeof q.shares === 'number' && q.shares > 0) ? q.price * q.shares : 0;
-      var maxMc = q.market === 'kr' ? 5e14 : 6e12;
+      var maxMc = q.market === 'kr' ? 7e14 : 8e12;
       if (calc > 0 && calc <= maxMc) return calc;
-      if (typeof q.mcap === 'number' && q.mcap > 0) return q.mcap;
-      return 1e15 / (q.rank || 9999);
+      if (typeof q.mcap === 'number' && q.mcap > 0 && q.mcap <= maxMc) return q.mcap;
+      // rank 폴백 — fvRankCap/fvRankCapKR 로그-선형 보간으로 현실적 시총 추정
+      // (기존 1e15/rank 공식은 rank 낮은 종목을 비현실적으로 크게 만들어 상위 오류 발생)
+      var rank = (typeof q.rank === 'number' && q.rank > 0) ? q.rank : 9999;
+      if (q.market === 'kr') {
+        return fvRankCapKR(rank) * 1e12;  // 조원 → 원
+      } else {
+        return fvRankCap(rank) * 1e9;     // $B → $
+      }
     }
     function sortItems(items) {
       var s = detailBrowseSort;
