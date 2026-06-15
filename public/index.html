@@ -6720,7 +6720,7 @@ html[data-theme="light"] .cfg-slider::-moz-range-thumb{background:#1d5fc2;border
     add('1년 수익률', pct(q.ret1y), pc(q.ret1y));
     add('거래량', q.vol != null ? fvFmtVol(q.vol) : '—');
     add('평균거래(20일)', q.avgVol20 != null ? fvFmtVol(q.avgVol20) : '—');
-    var mc = (q.price > 0 && q.shares > 0) ? (q.price * q.shares) : (q.mcap || null);
+    var mc = (typeof q.price === 'number' && q.price > 0 && typeof q.shares === 'number' && q.shares > 0) ? (q.price * q.shares) : (typeof q.mcap === 'number' && q.mcap > 0 ? q.mcap : null);
     add('시가총액', fmtMcapVal(mc, st.market));
     add('발행주식수', q.shares ? fvFmtVol(q.shares) : '—');
     add('시총 순위', (q.rank && q.rank < 99999) ? ('#' + q.rank) : '—');
