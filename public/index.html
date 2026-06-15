@@ -6671,6 +6671,7 @@ html[data-theme="light"] .cfg-slider::-moz-range-thumb{background:#1d5fc2;border
   }
   function showDetailBrowse() {
     detailState.symbol = null;
+    stopDetailChartPoll();  // [V91] 상세 닫힘 → 실시간 폴링 정지
     var emp = $('detailEmpty'), con = $('detailContent'), back = $('detailBackBtn'), abtn = $('detailAlertBtn');
     if (con) con.style.display = 'none';
     if (emp) emp.style.display = '';
@@ -6793,9 +6794,35 @@ html[data-theme="light"] .cfg-slider::-moz-range-thumb{background:#1d5fc2;border
       '<span class="oh">변동<b class="' + (chg >= 0 ? 'pos' : 'neg') + '">' + (chg != null ? (chg >= 0 ? '+' : '') + chg.toFixed(2) + '%' : '—') + '</b></span>' +
       '<span class="oh">거래량<b>' + fvFmtVol(last.v || 0) + '</b></span>';
   }
+  // [V91] 분봉(1m/5m/15m/30m/60m) 실시간 폴링 — 일/주/월봉은 폴링 안 함
+  var _detailPoll = null;
+  var DETAIL_POLL_MS = 15000;
+  function _isIntradayTf(tf) { return ['1m','5m','15m','30m','60m'].indexOf(tf) >= 0; }
+  function stopDetailChartPoll() { if (_detailPoll) { clearInterval(_detailPoll); _detailPoll = null; } }
+  function startDetailChartPoll(sym, tf, range) {
+    stopDetailChartPoll();
+    if (!_isIntradayTf(tf)) return;
+    _detailPoll = setInterval(function() {
+      if (detailState.symbol !== sym || detailState.interval !== tf) { stopDetailChartPoll(); return; }
+      if (document.hidden) return;  // 백그라운드 탭이면 호출 스킵
+      fetch('/api/chart?symbol=' + encodeURIComponent(sym) + '&interval=' + tf + '&range=' + range)
+        .then(function(r) { return r.json(); })
+        .then(function(d) {
+          if (detailState.symbol !== sym || detailState.interval !== tf) return;
+          if (!d || !d.candles || d.candles.length < 3) return;
+          // 줌(count)·팬(off)은 유지 — 사용자가 보던 위치 그대로, off=0이면 새 봉 자동 추적
+          detailState.lastCandles = d.candles;
+          renderDetailChartFromCache();
+          renderDetailOhlc(d.candles);
+          renderDetailTA(d.candles);
+        })['catch'](function() {});
+    }, DETAIL_POLL_MS);
+  }
+
   function loadDetailChart(interval) {
     var st = detailState;
     if (!st.symbol) return;
+    stopDetailChartPoll();
     st.interval = interval;
     document.querySelectorAll('#detailTf .detail-tf-btn').forEach(function(b) {
       b.classList.toggle('active', b.getAttribute('data-tf') === interval);
@@ -6817,6 +6844,7 @@ html[data-theme="light"] .cfg-slider::-moz-range-thumb{background:#1d5fc2;border
         renderDetailChartFromCache();
         renderDetailOhlc(d.candles);
         renderDetailTA(d.candles);
+        startDetailChartPoll(reqSym, reqTf, range);  // [V91] 분봉이면 실시간 폴링 시작
       })['catch'](function() {
         if (st.symbol === reqSym && st.interval === reqTf) box.innerHTML = '<div class="detail-empty">차트 로딩 실패</div>';
       });
