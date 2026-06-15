@@ -9934,12 +9934,15 @@ async function runTradingCycle(env) {
     for (const market of marketsForQuotes) {
       const mcfg = getMarketCfg(cfg, market);  // [V8.2] 시장별 독립 룰
       const tickers = market === "us" ? mcfg.usTickers : mcfg.krTickers;
-      const positions = await getPositions(DB, market);  // key: "SYM::strategy"
-      const feeRate = market === "us" ? mcfg.feeUS : mcfg.feeKR;
-      const regime = regimes[market];
       // [프리/애프터마켓] 이 시장이 "시간외 전용"(정규장 마감 + 시간외 창)인가 — 가격 배치만 돌리고 일봉/평가/거래는 스킵.
       const regularOpen = market === "us" ? usMarketHours : krMarketHours;
       const extOnly = !regularOpen;
+      // [CPU 절감] 시간외 전용 시장은 2분마다만 시세 갱신(시간외는 분봉 단타 안 하고 호가 변동도 느림).
+      //   매분 전 종목 배치를 돌리지 않아 시간외 추가 fetch·CPU 추정치를 절반으로.
+      if (extOnly && (new Date().getUTCMinutes() % 2 === 1)) continue;
+      const positions = await getPositions(DB, market);  // key: "SYM::strategy"
+      const feeRate = market === "us" ? mcfg.feeUS : mcfg.feeKR;
+      const regime = regimes[market];
       let canTrade = marketsToTrade.indexOf(market) !== -1;
       // [V31] 매매 직전 락 소유권 재확인 — US 처리가 길어져 락이 만료·탈취됐으면
       //   이 시장은 거래하지 않는다(다른 워커가 이미 처리 중일 수 있음 → 이중체결 방지).

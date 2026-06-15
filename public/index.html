@@ -6917,6 +6917,22 @@ html[data-theme="light"] .cfg-slider::-moz-range-thumb{background:#1d5fc2;border
     return sym.indexOf(term) >= 0 || name.indexOf(term) >= 0 || codeOnly.indexOf(term) >= 0;
   }
 
+  // [렉 개선] 빌드한 HTML이 직전과 바이트 동일하면 DOM 재작성·SVG 재파싱을 통째로 스킵.
+  //   60+ 카드(각 SVG 스파크라인) innerHTML 재생성이 10초 폴링마다 돌던 게 대시보드 렉의 주범.
+  //   시세가 안 바뀐 폴링(장외/시간외 안정)에선 0비용, 바뀐 폴링에서만 재렌더.
+  function setWl(container, html) {
+    if (container.__wlHtml === html) return;
+    container.__wlHtml = html;
+    container.innerHTML = html;
+    bindFavButtons(container);
+    var lm = container.querySelector('.wl-loadmore');
+    if (lm) lm.addEventListener('click', function(){
+      var mk = lm.getAttribute('data-market');
+      if (mk === 'us') usShowCount += 30; else krShowCount += 30;
+      renderWatchlist(window.__lastQuotesArr || []);
+    });
+  }
+
   function renderWatchlistMarket(market, quotes) {
     var containerId = market === 'us' ? 'watchlistUSContainer' : 'watchlistKRContainer';
     var expanded = market === 'us' ? usExpanded : krExpanded;
@@ -6949,8 +6965,7 @@ html[data-theme="light"] .cfg-slider::-moz-range-thumb{background:#1d5fc2;border
         html += '<div class="watchlist">'+matched.slice(0,60).map(function(q){return buildWatchlistCard(q, market);}).join('')+'</div>';
         if (matched.length > 60) html += '<div class="watchlist-section all">\uc0c1\uc704 60\uac1c\ub9cc \ud45c\uc2dc \u00b7 \ub354 \uc88c\ud788\uba74 \uac80\uc0c9\uc5b4\ub97c \uad6c\uccb4\ud654\ud558\uc138\uc694</div>';
       }
-      container.innerHTML = html;
-      bindFavButtons(container);
+      setWl(container, html);
       return;
     }
 
@@ -6966,8 +6981,7 @@ html[data-theme="light"] .cfg-slider::-moz-range-thumb{background:#1d5fc2;border
       } else {
         h2 += '<div class="watchlist">'+heldOnly.map(function(q){return buildWatchlistCard(q, market);}).join('')+'</div>';
       }
-      container.innerHTML = h2;
-      bindFavButtons(container);
+      setWl(container, h2);
       return;
     }
 
@@ -6994,8 +7008,7 @@ html[data-theme="light"] .cfg-slider::-moz-range-thumb{background:#1d5fc2;border
         hh += '<div class="watchlist">'+shownF.map(function(q){return buildWatchlistCard(q, market);}).join('')+'</div>';
         if (!expanded && filtered.length > 20) hh += '<div class="watchlist-section all">상위 20개 · 펼치면 전체</div>';
       }
-      container.innerHTML = hh;
-      bindFavButtons(container);
+      setWl(container, hh);
       return;
     }
 
@@ -7019,14 +7032,7 @@ html[data-theme="light"] .cfg-slider::-moz-range-thumb{background:#1d5fc2;border
         }
       }
     }
-    container.innerHTML = html;
-    bindFavButtons(container);
-    // 더보기 버튼
-    var lm = container.querySelector('.wl-loadmore');
-    if (lm) lm.addEventListener('click', function(){
-      if (market === 'us') usShowCount += 30; else krShowCount += 30;
-      renderWatchlist(window.__lastQuotesArr || []);
-    });
+    setWl(container, html);
   }
 
   function bindFavButtons(container) {
@@ -8159,12 +8165,12 @@ html[data-theme="light"] .cfg-slider::-moz-range-thumb{background:#1d5fc2;border
   function isPage(id){ var p = document.getElementById('page-' + id); return !!(p && p.classList.contains('active')); }
   function refreshAll() {
     renderMarketStatus();
-    // [V88 렉] 전체 거래내역(limit=10000)은 매 폴링이 아니라 60초마다만 — 거대 페이로드+10000건
-    //   처리(renderStrategyPerf)가 10초 폴링마다 돌아 대시보드가 끊기던 주원인.
-    var _needAll = !window.__allTradesCache || (Date.now() - (window.__allTradesTs || 0)) > 60000;
+    // [V88 렉] 전체 거래내역은 매 폴링이 아니라 주기적으로만 — 거대 페이로드+전략성과 처리가 렉 주범.
+    // [렉 개선] 60s→120s 주기 + limit 10000→3000(전략성과는 최근 거래 위주로 충분, 다운로드·처리량 70%↓).
+    var _needAll = !window.__allTradesCache || (Date.now() - (window.__allTradesTs || 0)) > 120000;
     // [개선] /api/state 1회로 watchlist + indices까지 한 번에 받음
     Promise.all([api('/api/state'), api('/api/trades?limit=50'),
-                 _needAll ? api('/api/trades?limit=10000') : Promise.resolve(window.__allTradesCache || [])])
+                 _needAll ? api('/api/trades?limit=3000') : Promise.resolve(window.__allTradesCache || [])])
       .then(function(r){
         var state = r[0], trades = r[1], allTrades = r[2];
         if (_needAll) { window.__allTradesCache = allTrades; window.__allTradesTs = Date.now(); }
@@ -8223,7 +8229,13 @@ html[data-theme="light"] .cfg-slider::-moz-range-thumb{background:#1d5fc2;border
         safeRun('summaryKR', function(){ renderSummary('kr', calcSummary('kr', cash.kr, posKR, initKR, twr.kr, deposits.kr, outflows.kr)); });
         safeRun('positions', function(){ renderPositions(posUS, posKR); });   // heldMap 갱신 — watchlist보다 먼저
         // [V88 렉] 워치리스트(60+ 스파크라인 SVG)는 대시보드 볼 때만 재렌더
-        if (isPage('dashboard')) safeRun('watchlist', function(){ renderWatchlist(quotes); });
+        // [렉 개선] 자동폴링에선 20초마다만 재렌더(가격/요약/포지션은 10초 유지) — 무거운 그리드 렌더 빈도 절반.
+        //   (즐겨찾기·필터·검색 등 사용자 조작 시엔 renderWatchlist를 직접 호출해 즉시 반영되므로 영향 없음)
+        if (isPage('dashboard')) {
+          window.__wlPollTick = (window.__wlPollTick || 0) + 1;
+          if (window.__wlPollTick % 2 === 1) safeRun('watchlist', function(){ renderWatchlist(quotes); });
+          else { window.__lastQuotesArr = quotes; lastQuotes = {}; quotes.forEach(function(q){ lastQuotes[q.symbol] = q; }); }
+        }
         // [V85→V88] 상세 페이지가 열려 있으면 헤더/데이터/예측/뉴스/실적 갱신(워치리스트 게이팅과 무관)
         if (isPage('detail')) {
           if (detailState.symbol) { try { renderDetailHeaderData(); renderDetailVision(); renderDetailEarn(); renderDetailNews(); } catch(e){} }
