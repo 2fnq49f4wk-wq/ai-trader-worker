@@ -10682,7 +10682,21 @@ async function runTradingCycle(env) {
             // [V65] scalp 전용 스캔 예산 — 기존엔 intradayConfirm.maxPerCycle(60)을 공유해
             //   진입확인 fetch가 단타 스캔을 굶겼다(단타 거래량 저하의 주원인). 별도 카운터로 분리.
             const _scanMax = (mcfg.scalpRules && mcfg.scalpRules.scanMaxPerCycle != null) ? mcfg.scalpRules.scanMaxPerCycle : 50;
-            if (scalpScanUsed < _scanMax && fetchBudgetLeft() > 5) {
+            // [핵심개선] 평시 scalp은 분봉 fetch 전에 "상승추세 정렬"을 일봉(이미 보유)으로 사전판정 →
+            //   추세역행 후보(no-trend 잔여의 대다수: 라이브 진단상 downtrend 25/below_ma20 8 = 50중 33)에
+            //   분봉 스캔을 낭비하던 것을 차단. 50회 스캔을 전부 유효 후보(상승추세)에 집중 → 단타 신호 발생률 급증.
+            //   패닉 단타(_panicScalpOn)는 급락 종목을 노리므로 이 사전필터 면제(evaluateScalpEntry가 자체 판정).
+            let _scAligned = true;
+            if (!_panicScalpOn) {
+              const _ma20s = getMA(closes, (mcfg.scalpRules && mcfg.scalpRules.maFastPeriod) || 20);
+              const _ma50s = getMA(closes, (mcfg.scalpRules && mcfg.scalpRules.maSlowPeriod) || 50);
+              const _rMin = (mcfg.scalpRules && mcfg.scalpRules.rsiMin != null) ? mcfg.scalpRules.rsiMin : 38;
+              const _rMax = (mcfg.scalpRules && mcfg.scalpRules.rsiMax) || 70;
+              _scAligned = (_ma20s != null && _ma50s != null && _ma20s > _ma50s && price > _ma20s &&
+                            (dailyRsi == null || (dailyRsi >= _rMin && dailyRsi <= _rMax)));
+              if (!_scAligned) { __scalpDiag.prefilter_skip = (__scalpDiag.prefilter_skip || 0) + 1; }
+            }
+            if (_scAligned && scalpScanUsed < _scanMax && fetchBudgetLeft() > 5) {
               try {
                 scalpScanUsed++;
                 const _scalpMb = await fetchMinuteBars(symbol, { interval: "1m", range: "1d" });
