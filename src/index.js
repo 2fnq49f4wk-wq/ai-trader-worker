@@ -8387,7 +8387,8 @@ async function refreshPriceShard(env, market, shard) {
   const tFetch = Date.now() - tFetch0;
   const results = symbols.map(function(symbol){
     const q = bq[symbol];
-    if (q && q.price != null) return { symbol: symbol, ok: true, price: q.price, prevClose: q.prevClose, dayPct: q.dayPct };
+    if (q && q.price != null) return { symbol: symbol, ok: true, price: q.price, prevClose: q.prevClose, dayPct: q.dayPct,
+      mstate: q.mstate, pre: q.pre, prePct: q.prePct, post: q.post, postPct: q.postPct };
     return { symbol: symbol, ok: false };
   });
 
@@ -8395,18 +8396,32 @@ async function refreshPriceShard(env, market, shard) {
   let ok = 0, fail = 0;
   for (const r of results) {
     if (r && r.ok) {
+      // [프리/애프터마켓] 시간외 필드 — 값이 있을 때만 갱신(없으면 COALESCE로 cron이 쓴 기존 값 보존).
+      const _m = (r.mstate != null) ? r.mstate : null;
+      const _pre = (typeof r.pre === "number" && r.pre > 0) ? r.pre : null;
+      const _prePct = (typeof r.prePct === "number") ? r.prePct : null;
+      const _post = (typeof r.post === "number" && r.post > 0) ? r.post : null;
+      const _postPct = (typeof r.postPct === "number") ? r.postPct : null;
       // [V18] 신규 quote 기본값 (해당 키가 없을 때 INSERT)
-      const fresh = { market: market, price: r.price, prevClose: r.prevClose, dayPct: r.dayPct, ts: nowTs };
+      const fresh = { market: market, price: r.price, prevClose: r.prevClose, dayPct: r.dayPct, ts: nowTs,
+        mstate: _m, pre: _pre, prePct: _prePct, post: _post, postPct: _postPct };
       // ON CONFLICT: 기존 JSON에서 가격 3필드 + ts만 갱신, 일봉 지표(rsi/ma/atr 등)는 보존.
+      // [프리/애프터마켓] 시간외 5필드는 COALESCE — 새 값 있으면 갱신, 없으면(null) 기존값 유지(잔상 제거는 cron이 mstate로 처리).
       // [V33] json_valid 가드 — 기존 v가 깨진 JSON이면 json_set이 실패하므로,
       //   그 경우 fresh 전체로 덮어써 가격 갱신이 영구 중단되는 것을 방지.
       stmts.push(
         DB.prepare(
           "INSERT INTO state (k, v, updated_ts) VALUES (?1, ?2, ?6) " +
           "ON CONFLICT(k) DO UPDATE SET v = CASE WHEN json_valid(v) " +
-          "THEN json_set(v, '$.price', ?3, '$.prevClose', ?4, '$.dayPct', ?5, '$.ts', ?6) " +
+          "THEN json_set(v, '$.price', ?3, '$.prevClose', ?4, '$.dayPct', ?5, '$.ts', ?6, " +
+          "'$.mstate', COALESCE(?7, json_extract(v, '$.mstate')), " +
+          "'$.pre', COALESCE(?8, json_extract(v, '$.pre')), " +
+          "'$.prePct', COALESCE(?9, json_extract(v, '$.prePct')), " +
+          "'$.post', COALESCE(?10, json_extract(v, '$.post')), " +
+          "'$.postPct', COALESCE(?11, json_extract(v, '$.postPct'))) " +
           "ELSE ?2 END, updated_ts = ?6"
-        ).bind("quote:" + r.symbol, JSON.stringify(fresh), r.price, r.prevClose, r.dayPct, nowTs)
+        ).bind("quote:" + r.symbol, JSON.stringify(fresh), r.price, r.prevClose, r.dayPct, nowTs,
+          _m, _pre, _prePct, _post, _postPct)
       );
       ok++;
     } else if (r) { fail++; }
