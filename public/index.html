@@ -6717,6 +6717,9 @@ html[data-theme="light"] .cfg-slider::-moz-range-thumb{background:#1d5fc2;border
     function pct(v) { return (typeof v === 'number') ? ((v >= 0 ? '+' : '') + v.toFixed(2) + '%') : '—'; }
     function pc(v) { return (typeof v === 'number') ? (v >= 0 ? 'pos' : 'neg') : ''; }
     function num(v) { return (v != null && typeof v === 'number') ? fmtNum(v) : '—'; }
+    // [V92] 미국 프리/애프터마켓 — 정규장 외 시간에 보조 가격 표시
+    if (q.mstate === 'PRE' && q.pre > 0) add('장전(프리)', num(q.pre) + '  ' + pct(q.prePct), pc(q.prePct));
+    else if ((q.mstate === 'POST' || q.mstate === 'POSTPOST') && q.post > 0) add('장후(애프터)', num(q.post) + '  ' + pct(q.postPct), pc(q.postPct));
     add('현재가', num(q.price));
     add('전일종가', num(q.prevClose));
     add('당일등락', pct(q.dayPct), pc(q.dayPct));
@@ -8124,8 +8127,8 @@ html[data-theme="light"] .cfg-slider::-moz-range-thumb{background:#1d5fc2;border
     }
     var utcMin = now.getUTCHours() * 60 + now.getUTCMinutes();
     if (mkt === 'us') {
-      // 미 정규장 대략 13:30~20:00 UTC (서머타임 ±1h 여유로 13:00~21:00)
-      return utcMin >= 13*60 && utcMin <= 21*60;
+      // [V92] 프리(04:00 ET~)·정규·애프터(~20:00 ET) 커버 → 08:00 UTC ~ 익일 01:00 UTC
+      return utcMin >= 8*60 || utcMin <= 1*60;
     } else {
       // 한국 정규장 09:00~15:30 KST = 00:00~06:30 UTC (야후 지연 여유로 ~07:00)
       return utcMin >= 0 && utcMin <= 7*60;
