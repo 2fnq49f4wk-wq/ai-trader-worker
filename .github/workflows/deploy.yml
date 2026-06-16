@@ -14,7 +14,7 @@ jobs:
       - name: Setup Node
         uses: actions/setup-node@v4
         with:
-          node-version: '20'
+          node-version: '22'
       # 배포 전 안전게이트 — 깨진 코드 push 시 구문오류면 배포 차단(라이브 보호)
       - name: Syntax check
         run: node --check src/index.js
