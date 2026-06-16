@@ -2209,7 +2209,7 @@ async function applySectorGroupWeights(DB, cfg) {
 const SIGNAL_TYPES = [
   "TR_PULLBACK", "TR_BREAKOUT", "TR_SQUEEZE", "TR_RS_LEADER", "TR_VISION_UP",
   "SN_RSI2",
-  "SC_VWAP", "SC_MOMENTUM", "SC_PULLBACK", "SC_PANIC_INV", "SC_PANIC_BOUNCE"
+  "SC_VWAP", "SC_MOMENTUM", "SC_PULLBACK", "SC_PANIC_INV", "SC_PANIC_BOUNCE", "SC_VBURST"
 ];
 function computeSignalWeight(stat, cfg) {
   const sw = (cfg && cfg.signalTypeWeights) || {};
@@ -2581,6 +2581,32 @@ const DEFAULT_CFG = {
     //   지연 영향이 큰 건 일반 모멘텀 추격이고, 인버스 추세추종은 지연 영향이 작다.
     usOnly: false
   },
+  // === [SC_VBURST] VWAP 돌파 + 거래량 폭증 + RSI 밴드 — 사용자 정의 순수 분봉 스캘핑 ===
+  //   진입(분봉): ① 종가가 VWAP 상향 돌파  ② 현재봉 거래량 ≥ 직전 volLen봉 평균 × volMult
+  //              ③ 분봉 RSI(rsiLen)가 rsiLow~rsiHigh 사이 (과매도·과열 양쪽 휩쏘 차단)
+  //   청산: 하드 스탑 −stopLossPct% / 고점이 +trailActivatePct% 도달 후 고점 대비 −trailPct% 트레일링 익절
+  //   일봉 추세 게이트를 거치지 않는 독립 진입. 기존 scalp 인프라 재사용, signal.name="SC_VBURST"로 분기.
+  scalpBurstRules: {
+    enabled: true,
+    volLen: 20,              // 거래량 이동평균 기간(분봉)
+    volMult: 3.0,            // [공격] 4.0→3.0 — 평균 3배(+200%)로 완화해 진입 빈도↑
+    rsiLen: 14,              // 분봉 RSI 기간
+    rsiLow: 50,              // RSI 하한 (과매도 거짓신호 차단)
+    rsiHigh: 78,             // [공격] 70→78 — 강한 모멘텀(과열 직전)까지 진입 허용
+    stopLossPct: 1.5,        // 하드 스탑로스(%) — 공격적이어도 리스크는 고정 유지
+    trailActivatePct: 2.0,   // 트레일링 발동 수익 임계(%) — 고점 기준
+    trailPct: 0.8,           // 기본 트레일링 청산폭 — 고점 대비(%)
+    // [공격] 모멘텀 컨티뉴에이션 진입 — VWAP 돌파 순간을 놓쳐도, 이미 VWAP 위에서
+    //   직전봉이 강양봉이면 진행 중 모멘텀에 추격 진입(신호 기회 확대)
+    momentumEntry: true,
+    momBarPct: 0.3,          // 직전 분봉 +momBarPct%↑ 양봉이어야 추격 진입
+    // [공격] 2단 런너 트레일 — 큰 수익 구간은 트레일을 넓혀 추세를 길게 태운다
+    runnerAfterPct: 4.0,     // 고점 수익 +runnerAfterPct% 넘으면
+    runnerTrailPct: 1.6,     // 트레일폭을 runnerTrailPct%로 확대(런너)
+    takeProfitPct: 0,        // 하드 익절 없음(트레일링만으로 수익 극대화)
+    confidence: 0.85,        // [공격] 0.8→0.85 — 사이징 약간 상향
+    usOnly: false            // false = KR 분봉(네이버 실시간)도 허용
+  },
   // === [V52 신규 전략] SNAP — 상승추세 내 단기 과매도 스냅백 (Connors RSI-2 계열, 2~5일 스윙) ===
   //   TREND(추세 순응 진입)·SCALP(분봉 장중)와 직교하는 세 번째 수익원:
   //   "장기 상승추세가 살아있는 종목이 단기(2~5일) 과매도로 눌렸을 때 평균회귀 반등을 먹는다."
@@ -2757,7 +2783,7 @@ const DEFAULT_CFG = {
     minTradesToWeight: 10,             // 신호 거래가 이 미만이면 가중치 1.0
     // [V63] 전 신호 학습 — applySignalTypeWeights가 SIGNAL_TYPES 전체를 갱신
     weights: { TR_PULLBACK: 1.0, TR_BREAKOUT: 1.0, TR_SQUEEZE: 1.0, TR_RS_LEADER: 1.0, TR_VISION_UP: 1.0,
-               SN_RSI2: 1.0, SC_VWAP: 1.0, SC_MOMENTUM: 1.0, SC_PULLBACK: 1.0, SC_PANIC_INV: 1.0, SC_PANIC_BOUNCE: 1.0 }
+               SN_RSI2: 1.0, SC_VWAP: 1.0, SC_MOMENTUM: 1.0, SC_PULLBACK: 1.0, SC_PANIC_INV: 1.0, SC_PANIC_BOUNCE: 1.0, SC_VBURST: 1.0 }
   },
   // 다층 가중치(confidence×그룹×신호) 곱이 너무 작아져 거래 누락되는 것 방지 — 전체 하한
   weightFloor: 0.3,
@@ -3123,6 +3149,19 @@ function migrateCfgToMarkets(cfg) {
     if (_sc.rsiMin === 42)         _sc.rsiMin = 38;
     if (_sc.minDayMomPct === -1.0) _sc.minDayMomPct = -1.5;
     if (_sc.takeProfit === 2.5)    _sc.takeProfit = 3.0;   // [V51] 잔량 최종익절 상향
+  }
+  // [SC_VBURST] scalpBurstRules 보강 — 기존 저장 cfg에 누락 시 기본값 주입(작동 보장)
+  if (!cfg.scalpBurstRules || typeof cfg.scalpBurstRules !== "object") {
+    cfg.scalpBurstRules = JSON.parse(JSON.stringify(DEFAULT_CFG.scalpBurstRules));
+  } else {
+    for (const k in DEFAULT_CFG.scalpBurstRules) {
+      if (cfg.scalpBurstRules[k] === undefined) cfg.scalpBurstRules[k] = DEFAULT_CFG.scalpBurstRules[k];
+    }
+    // [공격] 옛 기본값 → 공격형 기본값 이행 (사용자가 명시 변경한 값은 다른 값이라 보존됨)
+    const _vb = cfg.scalpBurstRules;
+    if (_vb.volMult === 4.0)    _vb.volMult = 3.0;
+    if (_vb.rsiHigh === 70)     _vb.rsiHigh = 78;
+    if (_vb.confidence === 0.8) _vb.confidence = 0.85;
   }
   // [V65] 포트폴리오 히트 한도 — 옛 기본값(8)만 12로 완화 (커스텀 보존)
   if (cfg.maxPortfolioHeat === 8 || cfg.maxPortfolioHeat === 8.0) cfg.maxPortfolioHeat = 12.0;
@@ -6468,6 +6507,43 @@ function evaluateScalpEntry(mb, dailyData, cfg, market, regime) {
     // 패닉 전용 진입 미체결 → 평시 게이트로 계속(인버스 등 일부는 평시 로직도 통과 가능)
   }
 
+  // ══ [SC_VBURST] 사용자 정의 순수 분봉 스캘핑 — VWAP 상향돌파 + 거래량 폭증 + RSI 밴드 ══
+  //   일봉 추세 게이트를 거치지 않고 분봉 3조건만으로 진입(패닉 경로처럼 early-return).
+  const _br = Object.assign({}, (cfg && cfg.scalpBurstRules) || DEFAULT_CFG.scalpBurstRules || {});
+  if (_br.enabled !== false && mb.closes && mb.volumes &&
+      mb.closes.length >= ((_br.rsiLen || 14) + 2) && mb.volumes.length >= ((_br.volLen || 20) + 1)) {
+    const _isKRsym = dailyData.symbol && /\.(KS|KQ)$/i.test(dailyData.symbol);
+    if (!(_br.usOnly === true && _isKRsym)) {
+      const _mc = mb.closes, _n = _mc.length, _vwapB = mb.vwap;
+      // ① 종가가 VWAP 상향 돌파 (직전봉 ≤ VWAP < 현재봉) — 분봉 단위 crossover 근사
+      const _crossUp = _vwapB > 0 && _mc[_n - 1] > _vwapB && _mc[_n - 2] <= _vwapB;
+      // ①' [공격] 모멘텀 컨티뉴에이션 — 이미 VWAP 위 + 직전봉 강양봉이면 진행 중 모멘텀 추격
+      const _lastBarUp = _n >= 2 ? ((_mc[_n - 1] - _mc[_n - 2]) / _mc[_n - 2]) * 100 : 0;
+      const _momCont = (_br.momentumEntry !== false) && _vwapB > 0 && _mc[_n - 1] > _vwapB &&
+                       _lastBarUp >= (_br.momBarPct != null ? _br.momBarPct : 0.3);
+      const _trig = _crossUp || _momCont;
+      // ② 거래량 폭증 — 현재봉 ≥ 직전 volLen봉 평균 × volMult
+      const _vN = mb.volumes.length, _curVol = mb.volumes[_vN - 1];
+      let _vsum = 0, _vc = 0;
+      for (let i = Math.max(0, _vN - 1 - (_br.volLen || 20)); i < _vN - 1; i++) { _vsum += mb.volumes[i]; _vc++; }
+      const _vAvg = _vc > 0 ? _vsum / _vc : 0;
+      const _volSpike = _vAvg > 0 && _curVol >= _vAvg * (_br.volMult || 4.0);
+      // ③ 분봉 RSI 밴드 — 과매도 거짓신호·과열 고점매수 양쪽 차단
+      const _mRsi = getRSI(mb.closes, _br.rsiLen || 14);
+      const _rsiOk = _mRsi != null && _mRsi >= (_br.rsiLow != null ? _br.rsiLow : 50) && _mRsi <= (_br.rsiHigh != null ? _br.rsiHigh : 70);
+      if (_trig && _volSpike && _rsiOk) {
+        const _spike = _vAvg > 0 ? _curVol / _vAvg : 0;
+        const _tlabel = _crossUp ? "X" : "M";   // X=VWAP 돌파, M=모멘텀 추격
+        return {
+          name: "SC_VBURST", weight: 1.0, type: "SCALP",
+          confidence: _br.confidence != null ? _br.confidence : 0.85,
+          detail: "VBURST[" + _tlabel + "] vol×" + _spike.toFixed(1) + " rsi" + (_mRsi != null ? _mRsi.toFixed(0) : "-"),
+          members: ["SC_VBURST"], burst: true
+        };
+      }
+    }
+  }
+
   // ── 게이트 1: 일봉 추세 정렬 ──
   // [V52] 개장 직후 노이즈 구간 — 평시 단타 진입 차단 (패닉 경로는 위에서 이미 처리됨)
   if (_openNoise) return null;
@@ -7426,7 +7502,11 @@ async function executeBuy(DB, market, symbol, strategy, qty, price, signal, dail
   //   진입가 기준 손절폭을 일봉 ATR에 비례(scalpAtrStopMult·기본 0.9배)시키되,
   //   하한=stopPct(기존 1.2%), 상한=scalpStopMaxPct(기본 2.2%)로 클램프 → 리스크는 여전히 상한 고정,
   //   변동성 큰 종목만 손절폭을 넓혀 일반적 흔들림에 안 털리게 한다.
-  if (strategy === "scalp" && dailyAtr && price > 0) {
+  if (strategy === "scalp" && signal && signal.name === "SC_VBURST") {
+    // [SC_VBURST] 사용자 정의 고정 손절 — 진입가 −stopLossPct% (ATR 비례 미사용)
+    const _vb = (cfg && cfg.scalpBurstRules) || DEFAULT_CFG.scalpBurstRules || {};
+    stopPrice = price * (1 - (_vb.stopLossPct != null ? _vb.stopLossPct : 1.5) / 100);
+  } else if (strategy === "scalp" && dailyAtr && price > 0) {
     const atrPct = (dailyAtr / price) * 100;
     const sMult = (rules.scalpAtrStopMult != null) ? rules.scalpAtrStopMult : 0.9;
     const sFloor = stopPct;                                   // 최소 손절폭(기존 1.2%)
@@ -7686,6 +7766,34 @@ function evaluateSell(pos, price, daily, dailyRsi, dailyMa, dailyMaShort, cfg, m
   if (strategyName === "scalp") {
     const sr = Object.assign({}, cfg.scalpRules || DEFAULT_CFG.scalpRules || {});
     const meta2 = pos.meta || {};
+    // [SC_VBURST] 사용자 정의 청산 — 하드 −stopLossPct% / 고점 +trailActivatePct% 도달 후 고점 −trailPct% 트레일 (TP1·타임스톱 없음)
+    const _entrySigB = meta2.signal || meta2.signalName || null;
+    if (_entrySigB === "SC_VBURST") {
+      const vb = Object.assign({}, DEFAULT_CFG.scalpBurstRules || {}, cfg.scalpBurstRules || {});
+      const pnlB = pos.avg > 0 ? ((price - pos.avg) / pos.avg) * 100 : 0;
+      const peakB = (meta2.peakPrice && meta2.peakPrice > 0) ? meta2.peakPrice : pos.avg;
+      const spB = (typeof meta2.stopPrice === "number") ? meta2.stopPrice : null;
+      const slB = vb.stopLossPct != null ? vb.stopLossPct : 1.5;
+      // 1) 하드 스탑 — executeBuy가 설정한 stopPrice 우선, 없으면 % 기준 (예외 없이 즉시 청산)
+      if (spB != null && price <= spB) return { sell: true, sellQty: pos.qty, reason: "VBURST-STOP " + pnlB.toFixed(2) + "%" };
+      if (spB == null && pnlB <= -slB) return { sell: true, sellQty: pos.qty, reason: "VBURST-STOP " + pnlB.toFixed(2) + "%" };
+      // 2) 고점이 +trailActivatePct% 도달한 뒤 → 고점 대비 −trailPct% 트레일링 익절
+      const peakPctB = pos.avg > 0 ? ((peakB - pos.avg) / pos.avg) * 100 : 0;
+      const armB = vb.trailActivatePct != null ? vb.trailActivatePct : 2.0;
+      let trB = vb.trailPct != null ? vb.trailPct : 0.8;
+      // [공격] 2단 런너 트레일 — 큰 수익 구간은 트레일을 넓혀 추세를 길게 태운다(수익 극대화)
+      const runAfter = vb.runnerAfterPct != null ? vb.runnerAfterPct : 4.0;
+      const runTr = vb.runnerTrailPct != null ? vb.runnerTrailPct : trB;
+      if (runAfter > 0 && peakPctB >= runAfter) trB = Math.max(trB, runTr);
+      if (peakPctB >= armB && price <= peakB * (1 - trB / 100)) {
+        return { sell: true, sellQty: pos.qty, reason: "VBURST-TRAIL +" + pnlB.toFixed(2) + "% (peak +" + peakPctB.toFixed(1) + "%)" };
+      }
+      // 3) (옵션) 하드 익절 상한 — takeProfitPct > 0 일 때만
+      if (vb.takeProfitPct && vb.takeProfitPct > 0 && pnlB >= vb.takeProfitPct) {
+        return { sell: true, sellQty: pos.qty, reason: "VBURST-TP +" + pnlB.toFixed(2) + "%" };
+      }
+      return { sell: false };
+    }
     const pnlPct = pos.avg > 0 ? ((price - pos.avg) / pos.avg) * 100 : 0;
     const heldMin = pos.opened_ts ? Math.floor((Date.now() - pos.opened_ts) / 60000) : 0;
     const peakP = (meta2.peakPrice && meta2.peakPrice > 0) ? meta2.peakPrice : pos.avg;
