@@ -8130,8 +8130,8 @@ html[data-theme="light"] .cfg-slider::-moz-range-thumb{background:#1d5fc2;border
       // [V92] 프리(04:00 ET~)·정규·애프터(~20:00 ET) 커버 → 08:00 UTC ~ 익일 01:00 UTC
       return utcMin >= 8*60 || utcMin <= 1*60;
     } else {
-      // 한국 정규장 09:00~15:30 KST = 00:00~06:30 UTC (야후 지연 여유로 ~07:00)
-      return utcMin >= 0 && utcMin <= 7*60;
+      // [V93] KR — NXT 프리(08:00)~애프터(20:00) KST = 23:00(전일) UTC ~ 11:00 UTC
+      return utcMin >= 23*60 || utcMin <= 11*60;
     }
   }
 
