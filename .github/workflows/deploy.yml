@@ -11,6 +11,12 @@ jobs:
     name: Deploy
     steps:
       - uses: actions/checkout@v4
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+      - name: Syntax check (배포 전 안전게이트 — 깨진 코드 push 시 배포 차단)
+        run: node --check src/index.js
       - name: Deploy
         uses: cloudflare/wrangler-action@v3
         with:
