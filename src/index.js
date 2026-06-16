@@ -5061,6 +5061,18 @@ async function fetchBatchQuotes(symbols, opts) {
         // [V81] 시총맵 실시간 박스 크기용 — 발행주식수·시총 수집(있을 때만)
         if (typeof row.sharesOutstanding === "number" && row.sharesOutstanding > 0) o.shares = row.sharesOutstanding;
         if (typeof row.marketCap === "number" && row.marketCap > 0) o.mcap = row.marketCap;
+        // [V92] 미국 프리/애프터마켓 — Yahoo marketState(PRE/REGULAR/POST/POSTPOST/CLOSED)
+        if (typeof row.marketState === "string") o.mstate = row.marketState;
+        if (typeof row.preMarketPrice === "number" && row.preMarketPrice > 0) {
+          o.pre = row.preMarketPrice;
+          o.prePct = (typeof row.preMarketChangePercent === "number") ? row.preMarketChangePercent
+                     : (prevClose ? ((row.preMarketPrice - prevClose) / prevClose) * 100 : 0);
+        }
+        if (typeof row.postMarketPrice === "number" && row.postMarketPrice > 0) {
+          o.post = row.postMarketPrice;
+          o.postPct = (typeof row.postMarketChangePercent === "number") ? row.postMarketChangePercent
+                      : (price ? ((row.postMarketPrice - price) / price) * 100 : 0);
+        }
         out[sym] = o; got++;
       }
     }
@@ -8317,7 +8329,8 @@ async function refreshPriceShard(env, market, shard) {
   const tFetch = Date.now() - tFetch0;
   const results = symbols.map(function(symbol){
     const q = bq[symbol];
-    if (q && q.price != null) return { symbol: symbol, ok: true, price: q.price, prevClose: q.prevClose, dayPct: q.dayPct };
+    if (q && q.price != null) return { symbol: symbol, ok: true, price: q.price, prevClose: q.prevClose, dayPct: q.dayPct,
+      mstate: q.mstate, pre: q.pre, prePct: q.prePct, post: q.post, postPct: q.postPct };
     return { symbol: symbol, ok: false };
   });
 
@@ -8326,7 +8339,9 @@ async function refreshPriceShard(env, market, shard) {
   for (const r of results) {
     if (r && r.ok) {
       // [V18] 신규 quote 기본값 (해당 키가 없을 때 INSERT)
-      const fresh = { market: market, price: r.price, prevClose: r.prevClose, dayPct: r.dayPct, ts: nowTs };
+      const fresh = { market: market, price: r.price, prevClose: r.prevClose, dayPct: r.dayPct, ts: nowTs,
+        mstate: r.mstate || null, pre: (r.pre != null ? r.pre : null), prePct: (r.prePct != null ? r.prePct : null),
+        post: (r.post != null ? r.post : null), postPct: (r.postPct != null ? r.postPct : null) };
       // ON CONFLICT: 기존 JSON에서 가격 3필드 + ts만 갱신, 일봉 지표(rsi/ma/atr 등)는 보존.
       // [V33] json_valid 가드 — 기존 v가 깨진 JSON이면 json_set이 실패하므로,
       //   그 경우 fresh 전체로 덮어써 가격 갱신이 영구 중단되는 것을 방지.
@@ -8334,9 +8349,12 @@ async function refreshPriceShard(env, market, shard) {
         DB.prepare(
           "INSERT INTO state (k, v, updated_ts) VALUES (?1, ?2, ?6) " +
           "ON CONFLICT(k) DO UPDATE SET v = CASE WHEN json_valid(v) " +
-          "THEN json_set(v, '$.price', ?3, '$.prevClose', ?4, '$.dayPct', ?5, '$.ts', ?6) " +
+          "THEN json_set(v, '$.price', ?3, '$.prevClose', ?4, '$.dayPct', ?5, '$.ts', ?6, " +
+          "'$.mstate', ?7, '$.pre', ?8, '$.prePct', ?9, '$.post', ?10, '$.postPct', ?11) " +
           "ELSE ?2 END, updated_ts = ?6"
-        ).bind("quote:" + r.symbol, JSON.stringify(fresh), r.price, r.prevClose, r.dayPct, nowTs)
+        ).bind("quote:" + r.symbol, JSON.stringify(fresh), r.price, r.prevClose, r.dayPct, nowTs,
+          r.mstate || null, (r.pre != null ? r.pre : null), (r.prePct != null ? r.prePct : null),
+          (r.post != null ? r.post : null), (r.postPct != null ? r.postPct : null))
       );
       ok++;
     } else if (r) { fail++; }
@@ -11979,8 +11997,8 @@ async function handleRequest(request, env) {
           }
          } catch (eNaver) { candles = []; price = null; }  // [V91b] 네이버 실패(throw) 격리 → 아래 Yahoo 폴백이 처리
         } else {
-          // US 종목 — Yahoo v8 chart (기존)
-          const j = await yahooFetch("https://query1.finance.yahoo.com/v8/finance/chart/" + encodeURIComponent(sym) + "?interval=" + interval + "&range=" + range);
+          // US 종목 — Yahoo v8 chart (기존) + [V92] 프리/애프터 봉 포함
+          const j = await yahooFetch("https://query1.finance.yahoo.com/v8/finance/chart/" + encodeURIComponent(sym) + "?interval=" + interval + "&range=" + range + "&includePrePost=true");
           const result = j && j.chart && j.chart.result && j.chart.result[0];
           if (!result) throw new Error("no data");
           const q = (result.indicators && result.indicators.quote && result.indicators.quote[0]) || {};
