@@ -3525,7 +3525,8 @@ function isQuoteRefreshWindow(market) {
   }
   if (market === "kr") {
     const kst = getKST(now);
-    return kst.day >= 1 && kst.day <= 5 && kst.totalMin >= 540 && kst.totalMin < 930;
+    // [V93] NXT 프리(08:00~08:50)·애프터(15:30~20:00) 포함 — KRX 09:00~15:30 → NXT 통합 08:00~20:00
+    return kst.day >= 1 && kst.day <= 5 && kst.totalMin >= 480 && kst.totalMin < 1200;
   }
   return false;
 }
