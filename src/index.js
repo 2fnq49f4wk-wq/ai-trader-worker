@@ -5036,15 +5036,23 @@ function applyKrOverMarket(o, d) {
   const op = num(info.overPrice);
   const sess = info.tradingSessionType || "";
   if (!(op > 0)) { o.mstate = "CLOSED"; return o; }
+  // [프리/애프터마켓] 등락률은 네이버가 주는 fluctuationsRatio(전일종가 대비, 네이버 증권 표시값과 동일)를
+  //   부호와 함께 채택. 부호는 compareToPreviousPrice.code(4 하한/5 하락 = 음수). 값이 없으면 전일종가 대비로 계산.
+  //   (장후엔 o.price=nv가 이미 NXT가라 (op-price)/price가 항상 0이 되던 문제 회피.)
+  const ratioRaw = num(info.fluctuationsRatio);
+  const code = info.compareToPreviousPrice && info.compareToPreviousPrice.code;
+  let pct;
+  if (isFinite(ratioRaw)) pct = (code === "4" || code === "5") ? -Math.abs(ratioRaw) : Math.abs(ratioRaw);
+  else pct = (o.prevClose > 0) ? ((op - o.prevClose) / o.prevClose) * 100 : 0;
   if (sess === "BEFORE_MARKET") {
     o.mstate = "PRE";
     o.pre = op;
-    o.prePct = (o.prevClose > 0) ? ((op - o.prevClose) / o.prevClose) * 100 : 0;
+    o.prePct = pct;
   } else {
-    // AFTER_MARKET (기본) — 장후 시간외 종가는 정규장 종가(o.price) 대비 등락
+    // AFTER_MARKET (기본) — 장후 시간외 단일가
     o.mstate = "POST";
     o.post = op;
-    o.postPct = (o.price > 0) ? ((op - o.price) / o.price) * 100 : 0;
+    o.postPct = pct;
   }
   return o;
 }
