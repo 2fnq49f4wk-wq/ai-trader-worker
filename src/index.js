@@ -5494,12 +5494,14 @@ async function fetchMinuteBars(symbol, opts) {
   //   포맷: <item data="날짜시간|시가|고가|저가|종가|거래량"/>
   //   count=80: 5분봉 기준 장중 400분(6.5시간) 이상 — 당일 전체 커버
   if (symbol.endsWith(".KS") || symbol.endsWith(".KQ")) {
-    // [V58b] 네이버 모바일 분봉 API: m.stock.naver.com/api/stock/{code}/candle/minute?timeframe=5
+    // [핵심FIX] 구 m.stock.naver.com/.../candle/minute?timeframe=5 가 404로 폐기됨 → KR 분봉이 0개라
+    //   KR 스캘프가 전혀 작동 못 했음(거래빈도 저하 주원인). api.stock.naver.com 네이티브 5분봉으로 교체.
+    //   필드: localDateTime, currentPrice(종가), openPrice/highPrice/lowPrice, accumulatedTradingVolume.
     const code = symbol.split(".")[0];
     __fetchBudget.used++;
     const r = await fetch(
-      "https://m.stock.naver.com/api/stock/" + code + "/candle/minute?timeframe=5",
-      { headers: { "User-Agent": "Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X) AppleWebKit/605.1.15", "Referer": "https://m.stock.naver.com/" } }
+      "https://api.stock.naver.com/chart/domestic/item/" + code + "/minute5",
+      { headers: { "User-Agent": "Mozilla/5.0", "Referer": "https://m.stock.naver.com/" } }
     );
     if (!r.ok) throw new Error("naver candle/minute " + r.status);
     let rows;
@@ -5507,9 +5509,10 @@ async function fetchMinuteBars(symbol, opts) {
     if (!Array.isArray(rows)) throw new Error("naver candle/minute bad format");
     const closes = [], highs = [], lows = [], volumes = [], times = [];
     for (const row of rows) {
-      const c = Number(row.closePrice);
+      const c = Number(row.currentPrice != null ? row.currentPrice : row.closePrice);
       if (!(c > 0)) continue;
-      const h = Number(row.highPrice), l = Number(row.lowPrice), v = Number(row.volume);
+      const h = Number(row.highPrice), l = Number(row.lowPrice);
+      const v = Number(row.volume != null ? row.volume : row.accumulatedTradingVolume);
       const dt = String(row.localDateTime || row.localDate || "");
       let ts = 0;
       if (dt.length >= 12) {
@@ -8098,11 +8101,12 @@ async function fetchDailyForBacktest(symbol, range) {
     const rangeM = range === "1y" ? 12 : range === "5y" ? 60 : range === "1mo" ? 1 : range === "6mo" ? 6 : 24;
     const from = new Date(now); from.setUTCMonth(from.getUTCMonth() - rangeM);
     const fromS = from.getUTCFullYear()+String(from.getUTCMonth()+1).padStart(2,"0")+String(from.getUTCDate()).padStart(2,"0");
-    const pgSize = rangeM <= 12 ? 300 : rangeM <= 24 ? 600 : 1500;
     __fetchBudget.used++;
+    // [검증FIX] m.stock.naver.com/api/stock/.../candle/day 가 404로 폐기됨 → api.stock.naver.com 일봉 차트 API로 교체.
+    //   동일 필드(localDate/closePrice/highPrice/lowPrice), 거래량은 accumulatedTradingVolume. 날짜는 YYYYMMDDHHmm.
     const r = await fetch(
-      "https://m.stock.naver.com/api/stock/" + code + "/candle/day?startTime=" + fromS + "&endTime=" + toS + "&pageSize=" + pgSize,
-      { headers: { "User-Agent": "Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X) AppleWebKit/605.1.15", "Referer": "https://m.stock.naver.com/" } }
+      "https://api.stock.naver.com/chart/domestic/item/" + code + "/day?startDateTime=" + fromS + "0000&endDateTime=" + toS + "0000",
+      { headers: { "User-Agent": "Mozilla/5.0", "Referer": "https://m.stock.naver.com/" } }
     );
     if (!r.ok) throw new Error("naver candle/day bt " + r.status);
     let rows; try { rows = await r.json(); } catch(e) { throw new Error("naver candle/day bt parse"); }
@@ -8111,7 +8115,8 @@ async function fetchDailyForBacktest(symbol, range) {
     for (const row of rows) {
       const c = Number(row.closePrice);
       if (!(c > 0)) continue;
-      const h = Number(row.highPrice), l = Number(row.lowPrice), v = Number(row.volume);
+      const h = Number(row.highPrice), l = Number(row.lowPrice);
+      const v = Number(row.volume != null ? row.volume : row.accumulatedTradingVolume);
       const ds = String(row.localDate || "");
       const ts2 = ds.length >= 8
         ? Date.UTC(Number(ds.slice(0,4)), Number(ds.slice(4,6))-1, Number(ds.slice(6,8)), 6)
@@ -8324,6 +8329,7 @@ function backtestStatsByExit(trades) {
 // 여러 심볼 백테스트 실행 + 통합 통계
 async function runBacktest(env, opts) {
   opts = opts || {};
+  resetFetchBudget(200);  // [검증] 백테스트는 종목당 일봉 1fetch — 15~20종목 받으려면 기본 예산(10)으론 부족했음(가짜 "거래 없음" 유발)
   const cfg = migrateCfgToMarkets(Object.assign({}, DEFAULT_CFG, await getState(env.DB, "cfg", {})));
   // [튜닝] 파라미터 오버라이드 — 배포 없이 trendRules 조합을 실험(POST body의 cfgOverride).
   if (opts.cfgOverride && opts.cfgOverride.trendRules && cfg.trendRules) {
