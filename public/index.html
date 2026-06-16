@@ -3469,6 +3469,26 @@ html[data-theme="light"] .cfg-slider::-moz-range-thumb{background:#1d5fc2;border
       <div class="field"><label>개장 회피 (분)</label><input type="number" id="cfgScalpAvoidOpen" min="0" max="60" step="5"></div>
     </div>
     <div class="section-divider"></div>
+    <!-- [SC_VBURST] VWAP 돌파 + 거래량 폭증 + RSI 밴드 — 사용자 정의 분봉 시그널(SCALP 전략 내) -->
+    <div class="checkbox-row"><input type="checkbox" id="cfgVburstEnabled"><label for="cfgVburstEnabled"><b>VBURST 시그널 활성화</b> — VWAP 상향돌파 + 거래량 폭증 + RSI 밴드 (SCALP 전략 예산·회계 공유)</label></div>
+    <div class="hint" style="margin-bottom:4px;">SCALP 전략의 한 진입 시그널로 동작합니다. 진입: 종가 VWAP 상향돌파 + 분봉거래량 ≥ 20MA×배수 + 분봉 RSI 밴드. 청산: 고정 손절 / 고점 도달 후 트레일링. 다른 SCALP 시그널과 청산이 분리되어 간섭하지 않습니다.</div>
+    <div class="section-title">VBURST 룰 <span style="color:var(--t3);font-weight:400;font-size:10px;">분봉 모멘텀·거래량 폭발</span></div>
+    <div class="field-row">
+      <div class="field"><label>거래량 폭증 배수 (20MA×)</label><input type="number" id="cfgVburstVolMult" min="1.5" max="10" step="0.5"><span class="hint" style="font-size:9px;">4 = 평균 대비 +300%</span></div>
+      <div class="field"><label>RSI 하한</label><input type="number" id="cfgVburstRsiLow" min="0" max="100" step="1"></div>
+      <div class="field"><label>RSI 상한</label><input type="number" id="cfgVburstRsiHigh" min="0" max="100" step="1"></div>
+    </div>
+    <div class="field-row">
+      <div class="field"><label>하드 손절 %</label><input type="number" id="cfgVburstStop" min="0.3" max="5" step="0.1"></div>
+      <div class="field"><label>트레일 발동 % (고점)</label><input type="number" id="cfgVburstTrailArm" min="0.5" max="10" step="0.1"></div>
+      <div class="field"><label>트레일 청산폭 % (고점대비)</label><input type="number" id="cfgVburstTrail" min="0.2" max="5" step="0.1"></div>
+    </div>
+    <div class="field-row">
+      <div class="field"><label>런너 발동 % (고점)</label><input type="number" id="cfgVburstRunAfter" min="0" max="20" step="0.5"><span class="hint" style="font-size:9px;">이 수익 넘으면 트레일 확대(추세 런)</span></div>
+      <div class="field"><label>런너 트레일폭 %</label><input type="number" id="cfgVburstRunTrail" min="0.3" max="5" step="0.1"></div>
+    </div>
+    <div class="checkbox-row"><input type="checkbox" id="cfgVburstMomEntry"><label for="cfgVburstMomEntry">모멘텀 추격 진입(공격) — VWAP 위 강양봉+거래량폭증이면 돌파 순간이 아니어도 진입</label></div>
+    <div class="section-divider"></div>
     <!-- [V65] SNAP 스냅백 룰 -->
     <div class="section-title">SNAP 스냅백 룰 <span style="color:var(--t3);font-weight:400;font-size:10px;">상승추세 내 과매도 반등 (2~5일)</span></div>
     <div class="field-row">
@@ -6717,6 +6737,9 @@ html[data-theme="light"] .cfg-slider::-moz-range-thumb{background:#1d5fc2;border
     function pct(v) { return (typeof v === 'number') ? ((v >= 0 ? '+' : '') + v.toFixed(2) + '%') : '—'; }
     function pc(v) { return (typeof v === 'number') ? (v >= 0 ? 'pos' : 'neg') : ''; }
     function num(v) { return (v != null && typeof v === 'number') ? fmtNum(v) : '—'; }
+    // [V92] 미국 프리/애프터마켓 — 정규장 외 시간에 보조 가격 표시
+    if (q.mstate === 'PRE' && q.pre > 0) add('장전(프리)', num(q.pre) + '  ' + pct(q.prePct), pc(q.prePct));
+    else if ((q.mstate === 'POST' || q.mstate === 'POSTPOST') && q.post > 0) add('장후(애프터)', num(q.post) + '  ' + pct(q.postPct), pc(q.postPct));
     add('현재가', num(q.price));
     add('전일종가', num(q.prevClose));
     add('당일등락', pct(q.dayPct), pc(q.dayPct));
@@ -8154,11 +8177,11 @@ html[data-theme="light"] .cfg-slider::-moz-range-thumb{background:#1d5fc2;border
     }
     var utcMin = now.getUTCHours() * 60 + now.getUTCMinutes();
     if (mkt === 'us') {
-      // 미 정규장 대략 13:30~20:00 UTC (서머타임 ±1h 여유로 13:00~21:00)
-      return utcMin >= 13*60 && utcMin <= 21*60;
+      // [V92] 프리(04:00 ET~)·정규·애프터(~20:00 ET) 커버 → 08:00 UTC ~ 익일 01:00 UTC
+      return utcMin >= 8*60 || utcMin <= 1*60;
     } else {
-      // 한국 정규장 09:00~15:30 KST = 00:00~06:30 UTC (야후 지연 여유로 ~07:00)
-      return utcMin >= 0 && utcMin <= 7*60;
+      // [V93] KR — NXT 프리(08:00)~애프터(20:00) KST = 23:00(전일) UTC ~ 11:00 UTC
+      return utcMin >= 23*60 || utcMin <= 11*60;
     }
   }
 
@@ -8516,6 +8539,18 @@ html[data-theme="light"] .cfg-slider::-moz-range-thumb{background:#1d5fc2;border
 
     // SCALP 단타 전략 토글
     if ($('cfgScalpEnabled')) $('cfgScalpEnabled').checked = !!(currentCfg.strategies && currentCfg.strategies.scalp);
+    // [SC_VBURST] VBURST 시그널 룰 로드
+    var _vbr = currentCfg.scalpBurstRules || {};
+    if ($('cfgVburstEnabled'))  $('cfgVburstEnabled').checked  = _vbr.enabled !== false;
+    if ($('cfgVburstVolMult'))  $('cfgVburstVolMult').value    = _vbr.volMult != null ? _vbr.volMult : 3.0;
+    if ($('cfgVburstRsiLow'))   $('cfgVburstRsiLow').value     = _vbr.rsiLow != null ? _vbr.rsiLow : 50;
+    if ($('cfgVburstRsiHigh'))  $('cfgVburstRsiHigh').value    = _vbr.rsiHigh != null ? _vbr.rsiHigh : 78;
+    if ($('cfgVburstStop'))     $('cfgVburstStop').value       = _vbr.stopLossPct != null ? _vbr.stopLossPct : 1.5;
+    if ($('cfgVburstTrailArm')) $('cfgVburstTrailArm').value   = _vbr.trailActivatePct != null ? _vbr.trailActivatePct : 2.0;
+    if ($('cfgVburstTrail'))    $('cfgVburstTrail').value      = _vbr.trailPct != null ? _vbr.trailPct : 0.8;
+    if ($('cfgVburstRunAfter')) $('cfgVburstRunAfter').value   = _vbr.runnerAfterPct != null ? _vbr.runnerAfterPct : 4.0;
+    if ($('cfgVburstRunTrail')) $('cfgVburstRunTrail').value   = _vbr.runnerTrailPct != null ? _vbr.runnerTrailPct : 1.6;
+    if ($('cfgVburstMomEntry')) $('cfgVburstMomEntry').checked = _vbr.momentumEntry !== false;
     // [V52] SNAP 스냅백 전략 토글 (기본 활성 — 미정의면 true)
     if ($('cfgSnapEnabled')) $('cfgSnapEnabled').checked = !(currentCfg.strategies && currentCfg.strategies.snap === false);
     // [V52] 전략 예산 비중 슬라이더 3개 (trend/scalp/snap — 정규화된 % 표시)
@@ -8987,7 +9022,24 @@ html[data-theme="light"] .cfg-slider::-moz-range-thumb{background:#1d5fc2;border
         var tot = t + s + n;
         if (tot <= 0) return { trend: 0.35, scalp: 0.30, snap: 0.35 };
         return { trend: t / tot, scalp: s / tot, snap: n / tot };
-      })()
+      })(),
+      // [SC_VBURST] VBURST 시그널 룰 (SCALP 전략 내 — 기존값 보존 머지)
+      scalpBurstRules: Object.assign({}, (currentCfg && currentCfg.scalpBurstRules) || {}, (function(){
+        function nv(id, def){ var v = parseFloat($(id) && $(id).value); return isNaN(v) ? def : v; }
+        var prev = (currentCfg && currentCfg.scalpBurstRules) || {};
+        return {
+          enabled:          !!($('cfgVburstEnabled') && $('cfgVburstEnabled').checked),
+          volMult:          nv('cfgVburstVolMult',  prev.volMult != null ? prev.volMult : 4.0),
+          rsiLow:           nv('cfgVburstRsiLow',   prev.rsiLow != null ? prev.rsiLow : 50),
+          rsiHigh:          nv('cfgVburstRsiHigh',  prev.rsiHigh != null ? prev.rsiHigh : 70),
+          stopLossPct:      nv('cfgVburstStop',     prev.stopLossPct != null ? prev.stopLossPct : 1.5),
+          trailActivatePct: nv('cfgVburstTrailArm', prev.trailActivatePct != null ? prev.trailActivatePct : 2.0),
+          trailPct:         nv('cfgVburstTrail',    prev.trailPct != null ? prev.trailPct : 0.8),
+          runnerAfterPct:   nv('cfgVburstRunAfter', prev.runnerAfterPct != null ? prev.runnerAfterPct : 4.0),
+          runnerTrailPct:   nv('cfgVburstRunTrail', prev.runnerTrailPct != null ? prev.runnerTrailPct : 1.6),
+          momentumEntry:    !!($('cfgVburstMomEntry') && $('cfgVburstMomEntry').checked)
+        };
+      })())
     };
     fetch('/api/cfg', { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify(body) })
       .then(function(r){return r.json();})
