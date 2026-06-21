@@ -5069,32 +5069,63 @@ function applyKrOverMarket(o, d) {
   if (!o || !d) return o;
   const num = function(s){ if (typeof s === "number") return s; if (typeof s !== "string") return NaN; return Number(s.replace(/,/g, "")); };
   if (d.ms === "OPEN") { o.mstate = "REGULAR"; return o; }
-  // 정규장 종료(또는 개장 전) — 시간외 정보가 있으면 채택
-  const info = d.overMarketPriceInfo || d.nxtOverMarketPriceInfo || null;
-  if (!info) { o.mstate = "CLOSED"; return o; }
+  // [PRE/POST FIX] 세션 판정을 네이버 tradingSessionType(불안정·직전세션 잔상)에 의존하지 않고
+  //   KST 시각으로 확정한다. 08:00~09:00=장전(PRE), 15:30~20:00=장후(POST).
+  const kst = getKST(new Date());
+  const inPre  = kst.totalMin >= 480 && kst.totalMin < 540;
+  const inPost = kst.totalMin >= 930 && kst.totalMin < 1200;
+  // 두 시간외 정보 중, 현재 창에 맞는 세션을 우선 선택(없으면 가용한 것).
+  const krx = d.overMarketPriceInfo || null;
+  const nxt = d.nxtOverMarketPriceInfo || null;
+  const wantSess = inPre ? "BEFORE_MARKET" : inPost ? "AFTER_MARKET" : null;
+  function pick() {
+    const cands = [krx, nxt].filter(Boolean);
+    if (wantSess) {
+      const m = cands.find(function(x){ return (x.tradingSessionType || "") === wantSess && num(x.overPrice) > 0; });
+      if (m) return m;
+    }
+    return cands.find(function(x){ return num(x.overPrice) > 0; }) || null;
+  }
+  const info = pick();
+  if (!info) { o.mstate = (inPre ? "PRE" : inPost ? "POST" : "CLOSED"); return o; }
   const op = num(info.overPrice);
-  const sess = info.tradingSessionType || "";
-  if (!(op > 0)) { o.mstate = "CLOSED"; return o; }
-  // [프리/애프터마켓] 등락률은 네이버가 주는 fluctuationsRatio(전일종가 대비, 네이버 증권 표시값과 동일)를
-  //   부호와 함께 채택. 부호는 compareToPreviousPrice.code(4 하한/5 하락 = 음수). 값이 없으면 전일종가 대비로 계산.
-  //   (장후엔 o.price=nv가 이미 NXT가라 (op-price)/price가 항상 0이 되던 문제 회피.)
+  if (!(op > 0)) { o.mstate = (inPre ? "PRE" : inPost ? "POST" : "CLOSED"); return o; }
+  // 등락률 — fluctuationsRatio(전일종가 대비, 네이버 표시값)를 부호와 함께 채택, 없으면 전일종가 대비 계산.
   const ratioRaw = num(info.fluctuationsRatio);
   const code = info.compareToPreviousPrice && info.compareToPreviousPrice.code;
   let pct;
   if (isFinite(ratioRaw)) pct = (code === "4" || code === "5") ? -Math.abs(ratioRaw) : Math.abs(ratioRaw);
   else pct = (o.prevClose > 0) ? ((op - o.prevClose) / o.prevClose) * 100 : 0;
-  if (sess === "BEFORE_MARKET") {
-    o.mstate = "PRE";
-    o.pre = op;
-    o.prePct = pct;
+  // 시각 창 우선, 창 밖이면 세션 필드로 보조 판정.
+  const isPre = inPre || (!inPost && (info.tradingSessionType === "BEFORE_MARKET"));
+  if (isPre) {
+    o.mstate = "PRE"; o.pre = op; o.prePct = pct;
   } else {
-    // AFTER_MARKET (기본) — 장후 시간외 단일가
-    o.mstate = "POST";
-    o.post = op;
-    o.postPct = pct;
+    o.mstate = "POST"; o.post = op; o.postPct = pct;
   }
   return o;
 }
+
+// [PRE/POST 표시] 워치리스트/무버/맵 payload용 — 시간외(PRE/POST)면 표시 가격·등락율을
+//   시간외 값으로 채운다(정규장 dayPct=0이라 0%로 보이던 문제). 정규/마감은 그대로.
+//   trading 경로는 DB quote를 직접 읽으므로 영향 없음(이 함수는 응답 payload 전용).
+function applyDisplayOverMarket(q) {
+  if (!q) return q;
+  const st = q.mstate;
+  q.regPrice = q.price; q.regPct = q.dayPct;   // 정규장 값 보존(프런트가 필요시 사용)
+  if (st === "PRE" && typeof q.pre === "number" && q.pre > 0) {
+    q.dispPrice = q.pre; q.dispPct = (typeof q.prePct === "number") ? q.prePct : q.dayPct;
+  } else if ((st === "POST" || st === "POSTPOST") && typeof q.post === "number" && q.post > 0) {
+    q.dispPrice = q.post; q.dispPct = (typeof q.postPct === "number") ? q.postPct : q.dayPct;
+  } else {
+    q.dispPrice = q.price; q.dispPct = q.dayPct;
+    return q;
+  }
+  // 프런트 기존 렌더(dayPct/price 직접 사용)를 위해 표시값으로 덮어쓴다.
+  q.price = q.dispPrice; q.dayPct = q.dispPct;
+  return q;
+}
+
 
 async function fetchBatchQuotes(symbols, opts) {
   opts = opts || {};
@@ -5686,9 +5717,30 @@ async function fetchDailyFull(symbol) {
   const isKR = symbol.endsWith(".KS") || symbol.endsWith(".KQ");
 
   if (isKR) {
-    // [V58] KR 일봉 — 네이버 siseJson (실시간, 접미사 오류 없음)
+    // [V58] KR 일봉 — 네이버 api.stock (실시간). [폴백FIX] Workers에서 네이버 차단/실패 시 Yahoo .KS/.KQ로 폴백.
     const code = symbol.split(".")[0];
-    const { closes, highs, lows, volumes, opens } = await fetchDailyFullNaver(code);
+    let closes, highs, lows, volumes, opens;
+    try {
+      ({ closes, highs, lows, volumes, opens } = await fetchDailyFullNaver(code));
+    } catch (eNaver) {
+      // Yahoo v8 일봉 폴백 — 네이버가 Workers IP를 막거나 포맷이 바뀌어도 일봉이 끊기지 않게.
+      const j = await yahooFetch("https://query1.finance.yahoo.com/v8/finance/chart/" + encodeURIComponent(symbol) + "?interval=1d&range=5y");
+      const result = j && j.chart && j.chart.result && j.chart.result[0];
+      const quote = (result && result.indicators && result.indicators.quote && result.indicators.quote[0]) || null;
+      if (!result || !quote) throw eNaver;
+      const rc = quote.close || [], rh = quote.high || [], rl = quote.low || [], rv = quote.volume || [], ro = quote.open || [];
+      closes = []; highs = []; lows = []; volumes = []; opens = [];
+      for (let i = 0; i < rc.length; i++) {
+        const c = rc[i];
+        if (typeof c !== "number" || !isFinite(c) || c <= 0) continue;
+        closes.push(c);
+        highs.push((typeof rh[i] === "number" && rh[i] > 0) ? rh[i] : c);
+        lows.push((typeof rl[i] === "number" && rl[i] > 0) ? rl[i] : c);
+        volumes.push((typeof rv[i] === "number" && rv[i] > 0) ? rv[i] : 0);
+        opens.push((typeof ro[i] === "number" && ro[i] > 0) ? ro[i] : c);
+      }
+      if (closes.length === 0) throw eNaver;
+    }
     const lastClose = closes[closes.length - 1];
     const prevClose = closes.length >= 2 ? closes[closes.length - 2] : lastClose;
     const ret1y = getNDayReturn(closes, 252);
@@ -11581,7 +11633,7 @@ async function handleRequest(request, env) {
         //   종목만 push 해서 v7 차단 + 라운드로빈 미도달 종목이 watchlist 에서 통째로
         //   누락(미국 26개 / 한국 28개만 보이던 증상)됐다.
         if (q) {
-          quotes.push(Object.assign(base, q));
+          quotes.push(applyDisplayOverMarket(Object.assign(base, q)));
         } else {
           quotes.push(Object.assign(base, { price: null, prevClose: null, dayPct: null, pending: true }));
         }
@@ -11750,7 +11802,7 @@ async function handleRequest(request, env) {
       } catch(e){}
       for (const sym of allSymbols) {
         const q = _qmap[sym];
-        if (q) quotes.push(Object.assign({ symbol: sym }, q));
+        if (q) quotes.push(applyDisplayOverMarket(Object.assign({ symbol: sym }, q)));
       }
       return Response.json(quotes, { headers: cors });
     }
@@ -12962,24 +13014,19 @@ async function handleRequest(request, env) {
       const code = "005930";
       const now = new Date();
       const toS = now.getUTCFullYear() + String(now.getUTCMonth()+1).padStart(2,"0") + String(now.getUTCDate()).padStart(2,"0");
-      // (1) 일봉 — 포맷 확정 엔드포인트(siseJson)
-      try {
-        const r = await fetch("https://fchart.stock.naver.com/siseJson.nhn?symbol=" + code + "&requestType=1&startTime=20260101&endTime=" + toS + "&timeframe=day",
-          { headers: { "User-Agent": "Mozilla/5.0", "Referer": "https://finance.naver.com" } });
-        out.day = r.status + " | " + (await r.text()).slice(0, 300).replace(/\s+/g, " ");
-      } catch (e) { out.day = "ERR " + e.message; }
-      // (2) 분봉 후보 A — sise.nhn XML(timeframe=minute)
-      try {
-        const r = await fetch("https://fchart.stock.naver.com/sise.nhn?symbol=" + code + "&timeframe=minute&count=20&requestType=0",
-          { headers: { "User-Agent": "Mozilla/5.0", "Referer": "https://finance.naver.com" } });
-        out.min_sise = r.status + " | " + (await r.text()).slice(0, 400).replace(/\s+/g, " ");
-      } catch (e) { out.min_sise = "ERR " + e.message; }
-      // (3) 분봉 후보 B — m.stock front-api(timeframe=minute)
-      try {
-        const r = await fetch("https://m.stock.naver.com/front-api/external/chart/domestic/info?symbol=" + code + "&requestType=1&timeframe=minute",
-          { headers: { "User-Agent": "Mozilla/5.0", "Referer": "https://m.stock.naver.com" } });
-        out.min_front = r.status + " | " + (await r.text()).slice(0, 400).replace(/\s+/g, " ");
-      } catch (e) { out.min_front = "ERR " + e.message; }
+      const hdr = { "User-Agent": "Mozilla/5.0", "Referer": "https://m.stock.naver.com/" };
+      // 실제 엔진이 의존하는 api.stock.naver.com 경로들 — Workers IP 차단 여부 확정용.
+      async function probe(label, u) {
+        try {
+          const r = await fetch(u, { headers: hdr });
+          out[label] = r.status + " | " + (await r.text()).slice(0, 200).replace(/\s+/g, " ");
+        } catch (e) { out[label] = "ERR " + e.message; }
+      }
+      await probe("item_day", "https://api.stock.naver.com/chart/domestic/item/" + code + "/day?startDateTime=20260101000000&endDateTime=" + toS + "0000");
+      await probe("item_minute5", "https://api.stock.naver.com/chart/domestic/item/" + code + "/minute5");
+      await probe("index_day", "https://api.stock.naver.com/chart/domestic/index/KOSPI/day?startDateTime=20260101000000&endDateTime=" + toS + "0000");
+      await probe("polling", "https://polling.finance.naver.com/api/realtime?query=SERVICE_ITEM:" + code);
+      await probe("yahoo_ks", "https://query1.finance.yahoo.com/v8/finance/chart/" + code + ".KS?interval=1d&range=1mo");
       return Response.json(out, { headers: cors });
     }
     // [V53] VISION AI: 수동 전체 스캔 트리거 — cron 시각 게이트를 우회(force)해 즉시 1배치 실행
