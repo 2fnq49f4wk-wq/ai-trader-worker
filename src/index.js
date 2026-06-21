@@ -5657,10 +5657,11 @@ async function fetchDailyFullNaver(code) {
   const fromS = from.getUTCFullYear() +
     String(from.getUTCMonth() + 1).padStart(2, "0") +
     String(from.getUTCDate()).padStart(2, "0");
-  const url = "https://m.stock.naver.com/api/stock/" + code + "/candle/day?startTime=" + fromS + "&endTime=" + toS + "&pageSize=1500";
+  // [검증FIX] m.stock.naver.com/.../candle/day 404 폐기 → api.stock.naver.com 일봉 차트 API로 교체.
+  const url = "https://api.stock.naver.com/chart/domestic/item/" + code + "/day?startDateTime=" + fromS + "0000&endDateTime=" + toS + "0000";
   __fetchBudget.used++;
   const r = await fetch(url, {
-    headers: { "User-Agent": "Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X) AppleWebKit/605.1.15", "Referer": "https://m.stock.naver.com/" }
+    headers: { "User-Agent": "Mozilla/5.0", "Referer": "https://m.stock.naver.com/" }
   });
   if (!r.ok) throw new Error("naver candle/day " + r.status);
   let rows;
@@ -5670,7 +5671,7 @@ async function fetchDailyFullNaver(code) {
   for (const row of rows) {
     const c = Number(row.closePrice);
     if (!(c > 0)) continue;
-    const o = Number(row.openPrice), h = Number(row.highPrice), l = Number(row.lowPrice), v = Number(row.volume);
+    const o = Number(row.openPrice), h = Number(row.highPrice), l = Number(row.lowPrice), v = Number(row.volume != null ? row.volume : row.accumulatedTradingVolume);
     opens.push(o > 0 ? o : c);
     highs.push(h > 0 ? h : c);
     lows.push(l > 0 ? l : c);
@@ -6334,34 +6335,47 @@ async function fetchIndexDaily(symbol) {
   //   ^KS11 → KOSPI (코드: KOSPI), ^KQ11 → KOSDAQ (코드: KOSDAQ)
   //   네이버 지수 일봉: https://fchart.stock.naver.com/siseJson.nhn?symbol=KOSPI&requestType=1&timeframe=day
   if (symbol === "^KS11" || symbol === "^KQ11") {
-    // [V58b] 지수 일봉 — 네이버 모바일 candle API
     const idxCode = symbol === "^KS11" ? "KOSPI" : "KOSDAQ";
-    const now = new Date();
-    const toS = now.getUTCFullYear() + String(now.getUTCMonth()+1).padStart(2,"0") + String(now.getUTCDate()).padStart(2,"0");
-    const from = new Date(now); from.setUTCMonth(from.getUTCMonth()-3);
-    const fromS = from.getUTCFullYear() + String(from.getUTCMonth()+1).padStart(2,"0") + String(from.getUTCDate()).padStart(2,"0");
-    __fetchBudget.used++;
-    const r = await fetch(
-      "https://m.stock.naver.com/api/stock/" + idxCode + "/candle/day?startTime=" + fromS + "&endTime=" + toS + "&pageSize=100",
-      { headers: { "User-Agent": "Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X) AppleWebKit/605.1.15", "Referer": "https://m.stock.naver.com/" } }
-    );
-    if (!r.ok) throw new Error("naver idx candle/day " + r.status);
-    let rows;
-    try { rows = await r.json(); } catch(e) { throw new Error("naver idx parse fail"); }
-    if (!Array.isArray(rows)) throw new Error("naver idx bad format");
-    const closes = [];
-    let lastTs = null;
-    for (const row of rows) {
-      const c = Number(row.closePrice);
-      if (!(c > 0)) continue;
-      closes.push(c);
-      const ds = String(row.localDate || "");
-      if (ds.length >= 8) lastTs = Date.UTC(Number(ds.slice(0,4)), Number(ds.slice(4,6))-1, Number(ds.slice(6,8))) / 1000;
+    try {
+      const now = new Date();
+      const toS = now.getUTCFullYear() + String(now.getUTCMonth()+1).padStart(2,"0") + String(now.getUTCDate()).padStart(2,"0");
+      const from = new Date(now); from.setUTCMonth(from.getUTCMonth()-3);
+      const fromS = from.getUTCFullYear() + String(from.getUTCMonth()+1).padStart(2,"0") + String(from.getUTCDate()).padStart(2,"0");
+      __fetchBudget.used++;
+      const r = await fetch(
+        "https://api.stock.naver.com/chart/domestic/index/" + idxCode + "/day?startDateTime=" + fromS + "0000&endDateTime=" + toS + "0000",
+        { headers: { "User-Agent": "Mozilla/5.0", "Referer": "https://m.stock.naver.com/" } }
+      );
+      if (!r.ok) throw new Error("naver idx day " + r.status);
+      let rows;
+      try { rows = await r.json(); } catch(e) { throw new Error("naver idx parse fail"); }
+      if (!Array.isArray(rows)) throw new Error("naver idx bad format");
+      const closes = [];
+      let lastTs = null;
+      for (const row of rows) {
+        const c = Number(row.closePrice);
+        if (!(c > 0)) continue;
+        closes.push(c);
+        const ds = String(row.localDate || "");
+        if (ds.length >= 8) lastTs = Date.UTC(Number(ds.slice(0,4)), Number(ds.slice(4,6))-1, Number(ds.slice(6,8))) / 1000;
+      }
+      if (closes.length === 0) throw new Error("naver idx empty");
+      const price = closes[closes.length - 1];
+      const prevClose = closes.length >= 2 ? closes[closes.length - 2] : price;
+      return { price: price, prevClose: prevClose, history: closes, marketTime: lastTs };
+    } catch (eNaver) {
+      // [폴백FIX] 네이버 지수 API 실패 시 Yahoo ^KS11/^KQ11로 폴백 — 게이트가 지수 없이 도는 것 방지.
+      const j = await yahooFetch("https://query1.finance.yahoo.com/v8/finance/chart/" + encodeURIComponent(symbol) + "?interval=1d&range=3mo");
+      const result = j && j.chart && j.chart.result && j.chart.result[0];
+      if (!result) throw eNaver;
+      const meta = result.meta || {};
+      const raw = (result.indicators && result.indicators.quote && result.indicators.quote[0] && result.indicators.quote[0].close) || [];
+      const closes = filterNulls(raw);
+      if (closes.length === 0) throw eNaver;
+      const price = (typeof meta.regularMarketPrice === "number" && meta.regularMarketPrice > 0) ? meta.regularMarketPrice : closes[closes.length - 1];
+      const prevClose = closes.length >= 2 ? closes[closes.length - 2] : price;
+      return { price: price, prevClose: prevClose, history: closes, marketTime: meta.regularMarketTime || null };
     }
-    if (closes.length === 0) throw new Error("naver idx empty");
-    const price = closes[closes.length - 1];
-    const prevClose = closes.length >= 2 ? closes[closes.length - 2] : price;
-    return { price: price, prevClose: prevClose, history: closes, marketTime: lastTs };
   }
 
   // US 지수 / VIX — 기존 Yahoo v8 chart
@@ -10328,7 +10342,7 @@ async function runTradingCycle(env) {
           DB: DB
         });
       } catch (e) {
-        await log(DB, "WARN", null, "[V11] batchQuotes fail " + market + ": " + e.message);
+        await log(DB, "ERROR", null, "[V11] batchQuotes fail " + market + ": " + e.message);
       }
       const qpSlices = Math.max(1, Math.ceil(tickers.length / priceBudget));
       await setState(DB, qpRrKey, (qpRr + 1) % qpSlices);
@@ -10404,6 +10418,12 @@ async function runTradingCycle(env) {
         try { await setState(DB, "breadth:" + market, { upRatio: brUp / brTotal, up: brUp, total: brTotal, ts: nowTs }); } catch (e) {}
       }
 
+      // [통계FIX] 시세 배치 전멸 감지 — priced=0이면 데이터 소스 다운으로 보고 ERROR(통계 errors 집계).
+      //   장전/장후(extOnly) 포함 모든 거래시장에 적용. 기존엔 WARN/무음이라 daily_stats.errors가 0으로 굳었다.
+      if (tickers.length > 0 && Object.keys(batchQuotes).length === 0) {
+        await log(DB, "ERROR", null, "[FETCH] " + market.toUpperCase() + " 시세 배치 전멸(priced=0/" + tickers.length + ") — 데이터 소스 점검");
+      }
+
       // [프리/애프터마켓] 시간외 전용 시장은 가격 배치만 갱신하고 종료 — 일봉 라운드로빈/평가/거래는 정규장에서만.
       //   (시간외에 무거운 일봉 fetch를 돌리지 않아 fetch 예산·CPU 추정치 절약 → 사용량 가드 보호)
       if (extOnly) continue;
@@ -10437,6 +10457,7 @@ async function runTradingCycle(env) {
       //   캐시 히트는 fetch 0이라, 실제 fetch는 만료/미존재 종목만 발생.
       const dailyTargetArr = Array.from(dailyTargets).slice(0, maxDailyPerCycle);
       const dailyMap = {};   // symbol -> daily data (이번에 갱신/캐시 로드된 것)
+      let dailyFetchTried = 0, dailyFetchFail = 0;   // [통계FIX] 일봉 fetch 전멸 감지용
       for (let i = 0; i < dailyTargetArr.length; i += DBATCH) {
         const slice = dailyTargetArr.slice(i, i + DBATCH);
         const results = await Promise.all(slice.map(async function(symbol){
@@ -10451,6 +10472,7 @@ async function runTradingCycle(env) {
               return { symbol: symbol, daily: cached || null };
             }
             const fb = await fetchDailyWithFallback(symbol);
+            dailyFetchTried++;
             if (fb && fb.data) {
               const toCache = {
                 closes: fb.data.closes, highs: fb.data.highs, lows: fb.data.lows,
@@ -10459,8 +10481,10 @@ async function runTradingCycle(env) {
               await setState(DB, "daily:" + symbol, toCache);
               return { symbol: symbol, daily: toCache };
             }
+            dailyFetchFail++;
             return { symbol: symbol, daily: cached || null };
           } catch (e) {
+            dailyFetchTried++; dailyFetchFail++;
             return { symbol: symbol, daily: null };
           }
         }));
@@ -10544,6 +10568,17 @@ async function runTradingCycle(env) {
       await log(DB, "INFO", null, "prefetch[" + market + "] universe=" + tickers.length +
         " priced=" + Object.keys(batchQuotes).length + " dailyRefresh=" + dailyTargetArr.length +
         " evaluable=" + fetched.length + " in " + prefetchMs + "ms");
+
+      // [통계FIX] tried=0 무음 처리 방지 — 평가가능 0종목이면 ERROR로 집계(데이터 전멸 → 거래 마비 신호).
+      if (tickers.length > 0 && fetched.length === 0) {
+        await log(DB, "ERROR", null, "[FETCH] " + market.toUpperCase() + " 평가가능 0종목(priced=" +
+          Object.keys(batchQuotes).length + ", 일봉결측) — tried=0, 데이터 소스 점검");
+      }
+      // [통계FIX] 스테일 캐시가 evaluable>0으로 가려도, 실제 일봉 fetch가 전멸하면 별도 ERROR로 노출.
+      if (dailyFetchTried >= 5 && dailyFetchFail === dailyFetchTried) {
+        await log(DB, "ERROR", null, "[FETCH] " + market.toUpperCase() + " 일봉 fetch 전멸(" +
+          dailyFetchFail + "/" + dailyFetchTried + ") — 네이버 일봉 API 점검");
+      }
 
       // [V8.1] 카운터: NOBUY 로그를 매번 DB에 쓰면 사이클당 100+ INSERT 발생.
       // 사유별로 카운트만 누적해서 시장당 1줄만 요약 로그로 남김.
@@ -12171,57 +12206,57 @@ async function handleRequest(request, env) {
 
         if (isKRsym) {
          try {
-          // [V58b] KR 차트 — 네이버 모바일 캔들 API (fchart 대신 m.stock.naver.com 사용)
-          //   Workers 환경에서 fchart.stock.naver.com이 차단될 수 있어 모바일 API로 교체
-          //   포맷: [{openPrice, highPrice, lowPrice, closePrice, volume, localDate, localDateTime}]
-          const code = (sym === "^KS11") ? "KOSPI" : (sym === "^KQ11") ? "KOSDAQ" : sym.split(".")[0];
-          const naverBase = "https://m.stock.naver.com/api/stock/" + code + "/candle/";
-          const naverHdr = { "User-Agent": "Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X) AppleWebKit/605.1.15", "Referer": "https://m.stock.naver.com/" };
+          // [FIX] m.stock.naver.com/.../candle/* 404 폐기 → api.stock.naver.com 네이티브 차트 API.
+          //   지수(^KS11/^KQ11)는 index, 종목은 item 라우팅. 포맷: closePrice/currentPrice, open/high/lowPrice, volume, localDate(Time)
+          const isIdx = (sym === "^KS11" || sym === "^KQ11");
+          const code = isIdx ? (sym === "^KS11" ? "KOSPI" : "KOSDAQ") : sym.split(".")[0];
+          const naverKind = isIdx ? "index" : "item";
+          const naverBase = "https://api.stock.naver.com/chart/domestic/" + naverKind + "/" + code + "/";
+          const naverHdr = { "User-Agent": "Mozilla/5.0", "Referer": "https://m.stock.naver.com/" };
 
           if (intraday) {
-            // 분봉 — /candle/minute?timeframe=N
-            // timeframe: 1,3,5,10,15,30,60 (분)
-            const tfMin = interval === "1m" ? 1 : interval === "5m" ? 5 : interval === "15m" ? 15 : interval === "30m" ? 30 : 60;
-            const rq = await fetch(naverBase + "minute?timeframe=" + tfMin,
-              { headers: naverHdr });
-            if (!rq.ok) throw new Error("naver candle/minute " + rq.status);
+            // 분봉 — /minute{N} (timeframe 쿼리 아님, 경로에 분 단위 포함)
+            const tfMin = interval === "1m" ? "" : interval === "5m" ? "5" : interval === "15m" ? "15" : interval === "30m" ? "30" : "60";
+            const rq = await fetch(naverBase + "minute" + tfMin, { headers: naverHdr });
+            if (!rq.ok) throw new Error("naver minute " + rq.status);
             const rows2 = await rq.json();
-            if (!Array.isArray(rows2)) throw new Error("naver candle/minute bad format");
+            if (!Array.isArray(rows2)) throw new Error("naver minute bad format");
             for (const row of rows2) {
-              const c2 = Number(row.closePrice);
+              const c2 = Number(row.currentPrice != null ? row.currentPrice : row.closePrice);
               if (!(c2 > 0)) continue;
-              // localDateTime: "2026061509:05" 형식
+              // localDateTime: "YYYYMMDDHHmm"(KST)
               let ts = 0;
-              const dt = row.localDateTime || row.localDate || "";
+              const dt = String(row.localDateTime || row.localDate || "");
               if (dt.length >= 12) {
                 ts = Date.UTC(Number(dt.slice(0,4)), Number(dt.slice(4,6))-1, Number(dt.slice(6,8)), Number(dt.slice(8,10))-9, Number(dt.slice(10,12))) / 1000;
               } else if (dt.length >= 8) {
                 ts = Date.UTC(Number(dt.slice(0,4)), Number(dt.slice(4,6))-1, Number(dt.slice(6,8)), 6) / 1000;
               }
-              candles.push({ t: ts, o: Number(row.openPrice)||c2, h: Number(row.highPrice)||c2, l: Number(row.lowPrice)||c2, c: c2, v: Number(row.volume)||0 });
+              const v2 = Number(row.volume != null ? row.volume : row.accumulatedTradingVolume);
+              candles.push({ t: ts, o: Number(row.openPrice)||c2, h: Number(row.highPrice)||c2, l: Number(row.lowPrice)||c2, c: c2, v: v2>=0?v2:0 });
             }
             price = candles.length ? candles[candles.length-1].c : null;
           } else {
-            // 일봉/주봉/월봉
+            // 일봉/주봉/월봉 — /day · /week · /month, startDateTime/endDateTime(YYYYMMDDHHmm)
             const now2 = new Date();
             const toS2 = now2.getUTCFullYear()+String(now2.getUTCMonth()+1).padStart(2,"0")+String(now2.getUTCDate()).padStart(2,"0");
             const rangeMonths = range === "1mo" ? 1 : range === "3mo" ? 3 : range === "6mo" ? 6 : range === "1y" ? 12 : range === "2y" ? 24 : range === "5y" ? 60 : 36;
             const from2 = new Date(now2); from2.setUTCMonth(from2.getUTCMonth()-rangeMonths);
             const fromS2 = from2.getUTCFullYear()+String(from2.getUTCMonth()+1).padStart(2,"0")+String(from2.getUTCDate()).padStart(2,"0");
             const tf = interval === "1wk" ? "week" : interval === "1mo" ? "month" : "day";
-            // pageSize=400: 일봉 1y=250거래일, 2y=500 → 최대 400으로 충분
-            const rq = await fetch(naverBase + tf + "?startTime=" + fromS2 + "&endTime=" + toS2 + "&pageSize=400",
+            const rq = await fetch(naverBase + tf + "?startDateTime=" + fromS2 + "0000&endDateTime=" + toS2 + "0000",
               { headers: naverHdr });
-            if (!rq.ok) throw new Error("naver candle/" + tf + " " + rq.status);
+            if (!rq.ok) throw new Error("naver " + tf + " " + rq.status);
             const rows2 = await rq.json();
-            if (!Array.isArray(rows2)) throw new Error("naver candle/" + tf + " bad format");
+            if (!Array.isArray(rows2)) throw new Error("naver " + tf + " bad format");
             for (const row of rows2) {
               const c2 = Number(row.closePrice);
               if (!(c2 > 0)) continue;
               const ds = String(row.localDate || "");
               let ts = 0;
               if (ds.length >= 8) ts = Date.UTC(Number(ds.slice(0,4)), Number(ds.slice(4,6))-1, Number(ds.slice(6,8)), 6) / 1000;
-              candles.push({ t: ts, o: Number(row.openPrice)||c2, h: Number(row.highPrice)||c2, l: Number(row.lowPrice)||c2, c: c2, v: Number(row.volume)||0 });
+              const v2 = Number(row.volume != null ? row.volume : row.accumulatedTradingVolume);
+              candles.push({ t: ts, o: Number(row.openPrice)||c2, h: Number(row.highPrice)||c2, l: Number(row.lowPrice)||c2, c: c2, v: v2>=0?v2:0 });
             }
             price = candles.length ? candles[candles.length-1].c : null;
           }
@@ -12468,21 +12503,37 @@ async function handleRequest(request, env) {
               const toS = now.getUTCFullYear() + String(now.getUTCMonth()+1).padStart(2,"0") + String(now.getUTCDate()).padStart(2,"0");
               const from = new Date(now); from.setUTCMonth(from.getUTCMonth()-1);
               const fromS = from.getUTCFullYear() + String(from.getUTCMonth()+1).padStart(2,"0") + String(from.getUTCDate()).padStart(2,"0");
-              const r = await fetch("https://m.stock.naver.com/api/stock/" + idxCode + "/candle/day?startTime=" + fromS + "&endTime=" + toS + "&pageSize=50",
-                { headers: { "User-Agent": "Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X) AppleWebKit/605.1.15", "Referer": "https://m.stock.naver.com/" } });
-              if (!r.ok) return out;
-              let rows; try { rows = await r.json(); } catch(e) { return out; }
-              if (!Array.isArray(rows)) return out;
-              let prev = null;
-              for (const row of rows) {
-                const c = Number(row.closePrice);
-                if (!(c > 0)) continue;
-                const ds = String(row.localDate || "");
-                if (ds.length >= 8) {
-                  const dkey = ds.slice(0,4) + "-" + ds.slice(4,6) + "-" + ds.slice(6,8);
-                  if (prev != null && prev > 0) out[dkey] = (c - prev) / prev * 100;
+              const r = await fetch("https://api.stock.naver.com/chart/domestic/index/" + idxCode + "/day?startDateTime=" + fromS + "0000&endDateTime=" + toS + "0000",
+                { headers: { "User-Agent": "Mozilla/5.0", "Referer": "https://m.stock.naver.com/" } });
+              let rows = null;
+              if (r.ok) { try { rows = await r.json(); } catch(e) { rows = null; } }
+              if (Array.isArray(rows) && rows.length > 0) {
+                let prev = null;
+                for (const row of rows) {
+                  const c = Number(row.closePrice);
+                  if (!(c > 0)) continue;
+                  const ds = String(row.localDate || "");
+                  if (ds.length >= 8) {
+                    const dkey = ds.slice(0,4) + "-" + ds.slice(4,6) + "-" + ds.slice(6,8);
+                    if (prev != null && prev > 0) out[dkey] = (c - prev) / prev * 100;
+                  }
+                  prev = c;
                 }
-                prev = c;
+                return out;
+              }
+              // [폴백FIX] 네이버 지수 실패 → Yahoo ^KS11/^KQ11 일봉으로 일간 변동 계산.
+              const yj = await yahooFetch("https://query1.finance.yahoo.com/v8/finance/chart/" + encodeURIComponent(sym) + "?interval=1d&range=1mo");
+              const yr = yj && yj.chart && yj.chart.result && yj.chart.result[0];
+              if (!yr) return out;
+              const yts = yr.timestamp || [];
+              const ycl = (yr.indicators && yr.indicators.quote && yr.indicators.quote[0] && yr.indicators.quote[0].close) || [];
+              let prevY = null;
+              for (let i = 0; i < yts.length; i++) {
+                const c = ycl[i];
+                if (c == null) continue;
+                const dkey = new Date(yts[i] * 1000).toISOString().slice(0, 10);
+                if (prevY != null && prevY > 0) out[dkey] = (c - prevY) / prevY * 100;
+                prevY = c;
               }
               return out;
             }
@@ -12722,37 +12773,31 @@ async function handleRequest(request, env) {
     // [V9.9] 현재 포지션 다운로드 (CSV)
     if (path === "/api/download/positions") {
       try {
-        const allKeys = await env.DB.prepare("SELECT key FROM kv_store").all();
-        const keys = (allKeys.results || []).map(r => r.key).filter(k => k.startsWith("positions:"));
-        
+        // [FIX] 포지션은 state KV가 아니라 positions 테이블에 저장됨 — getPositions로 시장별 로드.
         let positions = [];
-        for (const key of keys) {
-          const val = await getState(env.DB, key, null);
-          if (!val) continue;
-          const [_, market, symbol] = key.split(":");
-          const pos = typeof val === "string" ? JSON.parse(val) : val;
-          positions.push({ key, market, symbol, ...pos });
+        for (const mkt of ["us", "kr"]) {
+          const pmap = await getPositions(env.DB, mkt);
+          for (const key in pmap) {
+            const p = pmap[key];
+            positions.push({ market: mkt, symbol: p.symbol, strategy: p.strategy,
+              qty: p.qty, entryPrice: p.avg, opened_ts: p.opened_ts, meta: p.meta || {} });
+          }
         }
 
         // 시장별, 종목별 정렬
         positions.sort((a, b) => a.market.localeCompare(b.market) || a.symbol.localeCompare(b.symbol));
 
-        // CSV 생성: 시장,종목,수량,평단가,매수액,손익,손익율,상태
-        let csv = "시장,종목,수량,평단가,매수액,손익(예상),손익율,최종매수시각,최종매도시각\n";
+        // CSV 생성
+        let csv = "시장,종목,전략,수량,평단가,매수액,최종매수시각\n";
         positions.forEach(p => {
           const qty = p.qty || 0;
           const entryPx = p.entryPrice || 0;
           const amount = qty * entryPx;
-          const pnl = (p.unrealizedPnL || p.pnl || 0).toFixed(2);
-          const pnlPct = amount > 0 ? ((pnl / amount) * 100).toFixed(2) : "0.00";
-          const buyTs = p.buyTs ? new Date(p.buyTs).toLocaleString('ko-KR') : "";
-          const sellTs = p.sellTs ? new Date(p.sellTs).toLocaleString('ko-KR') : "";
-          
-          csv += `"${p.market}","${p.symbol}",${qty},${entryPx},${amount},${pnl},${pnlPct}%,"${buyTs}","${sellTs}"\n`;
+          const buyTs = p.opened_ts ? new Date(p.opened_ts).toLocaleString('ko-KR') : "";
+          csv += [p.market, p.symbol, p.strategy, qty, entryPx, amount.toFixed(2), buyTs]
+            .map(x => '"' + String(x).replace(/"/g, '""') + '"').join(",") + "\n";
         });
-
-        return new Response(csv, {
-          status: 200,
+        return new Response("\uFEFF" + csv, {
           headers: {
             "Content-Type": "text/csv; charset=utf-8",
             "Content-Disposition": `attachment; filename="positions_${new Date().toISOString().split('T')[0]}.csv"`,
@@ -12760,10 +12805,10 @@ async function handleRequest(request, env) {
           }
         });
       } catch (e) {
-        return new Response(JSON.stringify({ok:false, error: e.message}), {status:500, headers:cors});
+        return Response.json({ error: String(e && e.message || e) }, { status: 500, headers: cors });
       }
     }
-    
+
     // [신규] 통합 다운로드 (거래 + 로그 + 요약)
     if (path === "/api/download/report") {
       const tradesRes = await env.DB.prepare("SELECT * FROM trades ORDER BY ts DESC").all();
@@ -12901,10 +12946,10 @@ async function handleRequest(request, env) {
     if (path === "/api/chart-cache-clear") {
       try {
         // D1에서 chart: 로 시작하는 KR 관련 키 전체 삭제
-        const rows = await env.DB.prepare("SELECT key FROM kv_store WHERE key LIKE 'chart:%' AND (key LIKE '%.KS%' OR key LIKE '%.KQ%' OR key LIKE '%^KS%' OR key LIKE '%^KQ%')").all();
-        const keys = (rows.results || []).map(function(r){ return r.key; });
+        const rows = await env.DB.prepare("SELECT k FROM state WHERE k LIKE 'chart:%' AND (k LIKE '%.KS%' OR k LIKE '%.KQ%' OR k LIKE '%^KS%' OR k LIKE '%^KQ%')").all();
+        const keys = (rows.results || []).map(function(r){ return r.k; });
         for (const k of keys) {
-          try { await env.DB.prepare("DELETE FROM kv_store WHERE key = ?").bind(k).run(); } catch(e2) {}
+          try { await env.DB.prepare("DELETE FROM state WHERE k = ?").bind(k).run(); } catch(e2) {}
         }
         return Response.json({ ok: true, cleared: keys.length, keys: keys.slice(0,20) }, { headers: cors });
       } catch(e) {
