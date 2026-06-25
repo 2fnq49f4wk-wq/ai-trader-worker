@@ -5178,8 +5178,9 @@ html[data-theme="light"] .cfg-slider::-moz-range-thumb{background:#1d5fc2;border
         var curText = curPrice != null ? fmtNum(curPrice) : '-';
         var valueText = value != null ? sym + fmtMoney(value) : '-';
         var pnlText = pnl != null ? (pnl >= 0 ? '+' : '-') + sym + fmtMoney(Math.abs(pnl)) : '-';
-        var name = market === 'KR' ? krLabel(p.symbol) : usLabel(p.symbol);
-        var label = name ? '<b>'+escapeHtml(p.symbol)+'</b> <span style="color:var(--dim);font-size:10px;">'+escapeHtml(name)+'</span>' : '<b>'+escapeHtml(p.symbol)+'</b>';
+        var name = p.name || (market === 'KR' ? krLabel(p.symbol) : usLabel(p.symbol));
+        var ticker = String(p.symbol).replace(/\.(KS|KQ)$/, '');
+        var label = name ? '<b>'+escapeHtml(name)+'</b> <span style="color:var(--dim);font-size:10px;">'+escapeHtml(ticker)+'</span>' : '<b>'+escapeHtml(ticker)+'</b>';
         var strat = (p.strategy || 'other').toLowerCase();
         var rowCls = (strat === 'trend' || strat === 'scalp' || strat === 'snap') ? 'pos-row-' + strat : 'pos-row-other';
         var stratCell = strategyBadge(p.strategy || 'swing');
@@ -7458,10 +7459,11 @@ html[data-theme="light"] .cfg-slider::-moz-range-thumb{background:#1d5fc2;border
   // [회계 재설계] 현재 포지션 CSV 다운로드 — /api/state의 실제 포지션 구조 기반.
   //   각 row: { market, symbol, strategy, qty, avg, opened_ts } + 실시간 현재가로 손익 계산.
   function positionsToCSV(positions) {
-    var csv = "시장,종목,전략,수량,평단가,현재가,매수액,평가액,손익,손익율(%),보유시작\n";
+    var csv = "시장,종목,티커,전략,수량,평단가,현재가,매수액,평가액,손익,손익율(%),보유시작\n";
     positions.forEach(function(pos){
       var market = (pos.market || "").toUpperCase();
       var symbol = pos.symbol || "";
+      var name = pos.name || (market === 'KR' ? krLabel(symbol) : usLabel(symbol)) || String(symbol).replace(/\.(KS|KQ)$/, '');
       var strategy = pos.strategy || "";
       var qty = pos.qty || 0;
       var avg = pos.avg || 0;
@@ -7472,7 +7474,7 @@ html[data-theme="light"] .cfg-slider::-moz-range-thumb{background:#1d5fc2;border
       var pnl = value - cost;
       var pnlPct = cost > 0 ? (pnl / cost * 100) : 0;
       var opened = pos.opened_ts ? new Date(pos.opened_ts).toLocaleString('ko-KR') : "";
-      csv += '"' + market + '","' + symbol + '","' + strategy + '",' + qty + ',' + avg + ',' + cur + ',' +
+      csv += '"' + market + '","' + name.replace(/"/g,'""') + '","' + symbol + '","' + strategy + '",' + qty + ',' + avg + ',' + cur + ',' +
              cost.toFixed(2) + ',' + value.toFixed(2) + ',' + pnl.toFixed(2) + ',' + pnlPct.toFixed(2) + ',"' + opened + '"\n';
     });
     return csv;
