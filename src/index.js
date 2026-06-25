@@ -2575,6 +2575,29 @@ const DEFAULT_CFG = {
   //   추세추종(일봉)과 완전 분리: 진입·관리·청산 모두 분봉 기준.
   //   일봉: MA20>MA50 (약 추세 확인) + 일봉 과열 아님(RSI≤72)
   //   분봉: VWAP 돌파 진입 또는 장중 눌림목 반등
+  // === [V10 개혁] 스캘프 엣지 점수 게이트 — 트리거가 떠도 "통계적으로 먹히는 환경"일 때만 진입 ===
+  // === [V10 개혁] SNAP 엣지 점수 게이트 ===
+  snapEdge: {
+    enabled: true,
+    minScore: 0.50,
+    expMinN: 6,
+    expHardFloor: -1.0,      // SN_RSI2 실현 평균손익이 이보다 낮고 표본 충분 → 자동 차단
+    weights: { bias: -0.1, oversold: 0.9, adx: 0.5, trend: 0.8, reversal: 0.6, pead: 1.0, obv: 0.5, exp: 1.1, regime: 0.5 }
+  },
+  scalpEdge: {
+    enabled: true,
+    minScore: 0.52,          // 평시 진입 엣지 임계(0~1). 미만이면 트리거 있어도 진입 거부.
+    minScoreBurst: 0.45,     // 거래량 폭증(VBURST)은 자체 확인이 강해 임계 완화
+    erLen: 20,               // Kaufman 효율비 측정 분봉 수
+    expMinN: 8,              // 실현 기대값 반영 최소 표본
+    expHardFloor: -0.6,      // 이 신호의 실현 평균손익(%)이 이보다 낮고 표본 충분 → 자동 차단(지는 신호 가지치기)
+    confLo: 0.5, confHi: 0.95, // 엣지 점수 → confidence 매핑 범위
+    intradayAtrLen: 14,        // 분봉 ATR 측정 봉수
+    intradayStopMult: 1.5,     // 손절폭 = 분봉ATR% × 이 배수
+    intradayStopFloor: 0.6,    // 손절폭 하한(%)
+    intradayStopCap: 2.2,      // 손절폭 상한(%) — 리스크 고정
+    weights: { bias: -0.2, er: 1.6, vwapSlope: 0.5, relVol: 0.45, rsi: 0.5, dTrend: 0.9, adx: 0.5, regime: 0.6, exp: 1.2 }
+  },
   scalpRules: {
     // 일봉 추세 조건 (느슨 — 단타는 추세 방향만 맞으면 됨)
     rsiMax: 70,              // [강화] 72→70 일봉 RSI 상한 (과열 진입 더 차단 → 승률↑)
@@ -2604,6 +2627,13 @@ const DEFAULT_CFG = {
     breakEvenLock: 0.1,      // [신규] TP1 후 손절을 본전+0.1%로 → 무손실 런너 (executeSell이 참조)
     timeStopMinutes: 40,     // [강화] 45→40 더 빠른 죽은돈 회수
     timeStopMinPnl: 0.4,     // [강화] 0.3→0.4
+    // [V9.11 수익률 강화] 타임스톱은 "명확한 손실"일 때만 컷(평/약수익 출혈 차단). 진행 없는 좀비만 2×시간 후 정리.
+    timeStopLossPct: -0.3,   // tsMin 경과 + pnl ≤ 이 값일 때만 시간컷
+    runnerAfterPct: 3.0,     // 고점 +3%↑ 도달 시 트레일 확대(런너 주행)
+    runnerTrailPct: 1.4,     // 런너 구간 트레일 폭(기본 0.7%보다 넓게 → 추세 길게)
+    requireMaFastRising: true, // 평시 단타는 일봉 MA20 상승추세에서만(횡보 휩쏘 회피)
+    pullbackTwoBar: true,    // SC_PULLBACK 2봉 확인(데드캣 단일봉 반등 배제)
+    pullbackPrevBarMin: -0.4, // 직전봉 변화율 하한(붕괴 중 진입 차단)
     // 포지션 크기
     maxPositionPct: 6,       // 포트의 최대 6%
     riskPerTrade: 0.5,       // 손실 리스크 = 포트의 0.5%
@@ -2675,6 +2705,11 @@ const DEFAULT_CFG = {
     breakEvenLock: 0.1,
     timeStopDays: 5,         // 5거래일 내 본전 미만 → 청산 (평균회귀 실패 = 빠른 철수)
     timeStopMinPnl: 0.0,
+    // [V9.11 수익률 강화] TP1 후 잔량은 즉시 MR청산하지 않고 트레일 주행 → 큰 반등 포착(BE락으로 리스크 0).
+    runnerArmPct: 2.5,       // 고점 +2.5%↑에서 런너 트레일 무장
+    runnerTrailPct: 2.0,     // 고점 대비 −2% 이탈 시 잔량 청산
+    requireReversal: true,   // [V10.1] 과매도 + 반전(양봉/해머) 동반일 때만 진입(떨어지는 칼 회피)
+    reversalClosePos: 0.5,   // 해머형 인정 종가위치 하한
     // 사이징 — 역추세성이라 trend(0.75%)보다 작게
     riskPerTrade: 0.5,
     maxPositionPct: 8,
@@ -6680,13 +6715,80 @@ function evaluateBuySignals_swing(price, dayPct, dailyData, cfg) {
 //   분봉 진입 신호:
 //     SC_VWAP_CROSS: 가격이 VWAP 근접(±1%) + 상승 모멘텀 → VWAP 지지 진입
 //     SC_MOMENTUM:   분봉 모멘텀 강함(≥0.5%) + VWAP 하향 이탈 아님 → 추세 타기
-function evaluateScalpEntry(mb, dailyData, cfg, market, regime) {
+function evaluateScalpEntry(mb, dailyData, cfg, market, regime, signalStats) {
   // [진단] 각 게이트 탈락 사유 집계 — runTradingCycle이 __scalpDiag를 사이클마다 리셋·로깅.
   const _no = function(r){ try { __scalpDiag[r] = (__scalpDiag[r] || 0) + 1; } catch(e){} return null; };
   if (!mb || !mb.vwap || !mb.closes || mb.closes.length < 6) return _no("no_mb");
   const sr = Object.assign({}, (cfg && cfg.scalpRules) || DEFAULT_CFG.scalpRules || {});
   const closes = dailyData && dailyData.closes;
   if (!closes || closes.length < 55) return _no("daily_short");
+
+  // [V10 개혁] 엣지 게이트 — 트리거가 만든 후보를 "환경 적합도(엣지 점수)"로 최종 심사.
+  //   패닉/인버스 진입은 역추세가 정상이라 면제. 평시·VBURST에만 적용. 점수로 confidence도 재설정.
+  const _edge = Object.assign({}, (cfg && cfg.scalpEdge) || DEFAULT_CFG.scalpEdge || {});
+  function _edgeGate(cand) {
+    if (!cand) return null;
+    if (_edge.enabled === false || cand.isPanicScalp) return cand;
+    // 적응형 가지치기 — 실현 평균손익이 하한 이하인 신호는 표본 충분 시 차단(지는 신호 자동 제거)
+    const _se = signalExpectancy(signalStats, cand.name, _edge.expMinN || 8);
+    if (_se && _se.exp <= (_edge.expHardFloor != null ? _edge.expHardFloor : -0.6)) return _no("edge_pruned");
+    // 특징 벡터 구성
+    let _relV = null;
+    if (mb.volumes && mb.volumes.length >= 13) {
+      const vN = mb.volumes.length;
+      const recent = (mb.volumes[vN - 2] + mb.volumes[vN - 3]) / 2;
+      let a = 0, c = 0; for (let i = Math.max(0, vN - 13); i < vN - 3; i++) { a += mb.volumes[i]; c++; }
+      const avg = c > 0 ? a / c : 0; _relV = avg > 0 ? recent / avg : null;
+    }
+    const _ma20 = getMA(closes, sr.maFastPeriod || 20), _ma50 = getMA(closes, sr.maSlowPeriod || 50);
+    let _dTrend = 0;
+    if (_ma20 != null && _ma50 != null) {
+      const _ma20p = getMA(closes.slice(0, -3), sr.maFastPeriod || 20);
+      const rising = _ma20p != null && _ma20 > _ma20p;
+      if (mb.price > _ma20 && _ma20 > _ma50 && rising) _dTrend = 1;
+      else if (mb.price < _ma50) _dTrend = -1;
+      else if (_ma20 > _ma50) _dTrend = 0.3;
+    }
+    let _risk = 0;
+    if (regime && regime.regime === "BEAR") _risk = -0.6;
+    else if (regime && regime.regime === "BULL") _risk = 0.4;
+    if (regime && typeof regime.worstDayPct === "number" && regime.worstDayPct <= -1.5) _risk -= 0.3;
+    let _expZ = null;
+    if (_se) _expZ = Math.max(-1, Math.min(1, _se.exp / 1.0));
+    let _openFrac = null;
+    try { _openFrac = (typeof sessionElapsedFraction === "function") ? sessionElapsedFraction(market) : null; } catch (e) {}
+    const feat = {
+      er: efficiencyRatio(mb.closes, _edge.erLen || 20),
+      vwapSlopeUp: (typeof mb.vwapSlope === "number") ? (mb.vwapSlope >= 0) : null,
+      relVol: _relV,
+      mRsi: getRSI(mb.closes, 14),
+      dTrend: _dTrend,
+      adx: (dailyData.highs && dailyData.lows) ? getADX(dailyData.highs, dailyData.lows, closes, 14) : null,
+      riskScore: _risk,
+      expZ: _expZ,
+      openFrac: _openFrac
+    };
+    const score = computeScalpEdgeScore(feat, cfg);
+    const minS = cand.burst ? (_edge.minScoreBurst != null ? _edge.minScoreBurst : 0.45) : (_edge.minScore != null ? _edge.minScore : 0.52);
+    if (score < minS) return _no("low_edge");
+    // 엣지 점수 → confidence 매핑(높은 엣지 = 큰 사이즈)
+    const lo = _edge.confLo != null ? _edge.confLo : 0.5, hi = _edge.confHi != null ? _edge.confHi : 0.95;
+    cand.confidence = Math.max(lo, Math.min(hi, lo + (score - minS) / (1 - minS) * (hi - lo)));
+    cand.edgeScore = score;
+    // [V10.1] 분봉 변동성 적응형 손절 — 일중 노이즈(분봉 ATR)에 손절폭을 맞춰 휩쏘 손절 방지.
+    //   청산부의 tpScale=stopDist/slPct가 TP·트레일을 자동 비례 → R:R 일관 유지.
+    if (!cand.burst) {  // VBURST는 자체 고정 손절 유지
+      const _iatr = intradayAtrPct(mb, _edge.intradayAtrLen || 14);
+      if (_iatr != null) {
+        const mult = _edge.intradayStopMult != null ? _edge.intradayStopMult : 1.5;
+        const floor = _edge.intradayStopFloor != null ? _edge.intradayStopFloor : 0.6;
+        const cap = _edge.intradayStopCap != null ? _edge.intradayStopCap : 2.2;
+        cand.intradayStopPct = Math.max(floor, Math.min(cap, _iatr * mult));
+      }
+    }
+    cand.detail = (cand.detail || "") + " E" + score.toFixed(2) + (feat.er != null ? " ER" + feat.er.toFixed(2) : "") + (cand.intradayStopPct ? " S" + cand.intradayStopPct.toFixed(1) + "%" : "") + (_se ? " x̄" + _se.exp.toFixed(1) : "");
+    return cand;
+  }
 
   // ── [V52] 세션 시간 필터 ──
   //   마감 직전: 청산 시간 부족 → 오버나이트 리스크. 패닉 포함 전면 차단.
@@ -6798,12 +6900,12 @@ function evaluateScalpEntry(mb, dailyData, cfg, market, regime) {
       if (_trig && _volSpike && _rsiOk) {
         const _spike = _vAvg > 0 ? _curVol / _vAvg : 0;
         const _tlabel = _crossUp ? "X" : "M";   // X=VWAP 돌파, M=모멘텀 추격
-        return {
+        return _edgeGate({
           name: "SC_VBURST", weight: 1.0, type: "SCALP",
           confidence: _br.confidence != null ? _br.confidence : 0.85,
           detail: "VBURST[" + _tlabel + "] vol×" + _spike.toFixed(1) + " rsi" + (_mRsi != null ? _mRsi.toFixed(0) : "-"),
           members: ["SC_VBURST"], burst: true
-        };
+        });
       }
     }
   }
@@ -6818,6 +6920,12 @@ function evaluateScalpEntry(mb, dailyData, cfg, market, regime) {
   const ma50 = getMA(closes, sr.maSlowPeriod || 50);
   if (ma20 == null || ma50 == null) return _no("ma_null");
   if (!(ma20 > ma50)) return _no("downtrend");  // 추세 방향 아니면 진입 차단
+  // [V9.11] MA20 상승 기울기 — 횡보/하향 롤오버 구간의 평시 단타는 휩쏘(SC_VWAP 24%·SC_PULLBACK 35% 승률의 원인).
+  //   추세가 실제로 진행 중일 때만 평시 진입 허용 → 승률·기대값 개선.
+  if (sr.requireMaFastRising !== false && closes.length >= (sr.maFastPeriod || 20) + 4) {
+    const ma20Prev = getMA(closes.slice(0, -3), sr.maFastPeriod || 20);
+    if (ma20Prev != null && !(ma20 > ma20Prev)) return _no("ma20_flat");
+  }
   // [강화] 일봉 종가가 MA20 위 — 추세 상단에서만 단타 (눌림 깊은 종목 회피)
   const dayClose = closes[closes.length - 1];
   if (sr.requirePriceAboveMaFast !== false && !(dayClose > ma20)) return _no("below_ma20");
@@ -6875,16 +6983,19 @@ function evaluateScalpEntry(mb, dailyData, cfg, market, regime) {
   if (sr.pullbackEnabled !== false) {
     const pbMin = sr.pullbackVwapMin != null ? sr.pullbackVwapMin : -1.2;
     const pbBounce = sr.pullbackBounce != null ? sr.pullbackBounce : 0.25;
-    if (aboveVwap <= 0 && aboveVwap >= pbMin && lastBarChg >= pbBounce &&
+    // [V9.11] 2봉 확인 — 직전봉이 급락(붕괴) 중이 아니어야 함. 단일봉 데드캣 반등 진입을 배제해 승률↑.
+    const _prevBarChg = mc.length >= 3 ? ((mc[mc.length - 2] - mc[mc.length - 3]) / mc[mc.length - 3]) * 100 : 0;
+    const _twoBarOk = (sr.pullbackTwoBar === false) || (_prevBarChg >= (sr.pullbackPrevBarMin != null ? sr.pullbackPrevBarMin : -0.4));
+    if (aboveVwap <= 0 && aboveVwap >= pbMin && lastBarChg >= pbBounce && _twoBarOk &&
         _relVol(sr.pullbackVolMult != null ? sr.pullbackVolMult : 1.05)) {  // [V67] 거래량 동반 반등만 (데드캣 차단)
-      return {
+      return _edgeGate({
         name: "SC_PULLBACK",
         weight: 0.9,
         type: "SCALP",
-        confidence: 0.9,  // 눌림목은 진입가 우위 → 높은 신뢰도
-        detail: "PB vwap" + aboveVwap.toFixed(2) + "% bounce+" + lastBarChg.toFixed(2) + "% c0.90",
+        confidence: 0.9,
+        detail: "PB vwap" + aboveVwap.toFixed(2) + "% bounce+" + lastBarChg.toFixed(2) + "%",
         members: ["SC_PULLBACK"]
-      };
+      });
     }
   }
 
@@ -6893,28 +7004,28 @@ function evaluateScalpEntry(mb, dailyData, cfg, market, regime) {
   const _momMax = sr.momMax != null ? sr.momMax : 2.5;  // [V67] 과열 추격 하드컷
   if (Math.abs(aboveVwap) <= vwapBand && recentMom >= momEntry && recentMom <= _momMax && _slopeOk) {
     const conf = recentMom >= momStrong ? 0.65 : 0.85;  // 강모멘텀(추격)은 작게
-    return {
+    return _edgeGate({
       name: "SC_VWAP",
       weight: 0.8,
       type: "SCALP",
       confidence: conf,
-      detail: "VWAP " + aboveVwap.toFixed(2) + "% mom " + recentMom.toFixed(2) + "% c" + conf.toFixed(2),
+      detail: "VWAP " + aboveVwap.toFixed(2) + "% mom " + recentMom.toFixed(2) + "%",
       members: ["SC_VWAP"]
-    };
+    });
   }
 
   // ── 진입 C: 강한 분봉 모멘텀 + VWAP 살짝 위 (추세 지속) ──
   //   [V52] VWAP 기울기 ≥ 0 요구
   if (aboveVwap >= 0 && aboveVwap <= 1.5 && recentMom >= momStrong && recentMom <= _momMax &&
       lastBarChg > 0 && _slopeOk) {  // [V67] 과열 하드컷 + 직전봉 음봉이면 진입 금지(꺾이는 모멘텀 추격 차단)
-    return {
+    return _edgeGate({
       name: "SC_MOMENTUM",
       weight: 0.75,
       type: "SCALP",
       confidence: 0.7,
-      detail: "MOM " + recentMom.toFixed(2) + "% vwap+" + aboveVwap.toFixed(2) + "% c0.70",
+      detail: "MOM " + recentMom.toFixed(2) + "% vwap+" + aboveVwap.toFixed(2) + "%",
       members: ["SC_MOMENTUM"]
-    };
+    });
   }
 
   return _no("no_trigger");
@@ -7007,6 +7118,13 @@ function evaluateSnapEntry(price, dayPct, dailyData, cfg, regime, market) {
   }
   if (closePos != null && typeof dayPct === "number" && dayPct <= -2 &&
       closePos < (sn.minClosePos != null ? sn.minClosePos : 0.25)) return null;  // 저가 마감 급락 = 반전 미확인
+  // [V10.1] 반전 확인 — 과매도만으로 진입하면 떨어지는 칼. 당일 반등(양봉) 또는 해머형 마감일 때만 진입.
+  //   극단 캡출(RSI2≤3)은 V반등이 강해 면제. 평균회귀의 핵심 승률 개선.
+  if (sn.requireReversal !== false && rsi2 > 3) {
+    const _todayGreen = typeof dayPct === "number" && dayPct > 0;
+    const _hammer = closePos != null && closePos >= (sn.reversalClosePos != null ? sn.reversalClosePos : 0.5);
+    if (!_todayGreen && !_hammer) return null;  // 아직 하락 + 약한 마감 = 반전 미확인 → 보류
+  }
 
   // confidence — 과매도가 깊을수록(RSI2↓, 연속하락↑) 높게. 0.65~0.95
   let conf = 0.7;
@@ -7335,6 +7453,112 @@ function computeMicroFactors(dailyData, cfg, market) {
   return { rangePos: rangePos, advUsd: advUsd, obvSlope: obvSlope };
 }
 
+// [V9.10 합성함수] 부호점수(−1~+1) 가중평균을 단일 사이즈 배수로 변환 — 모든 전략 공통.
+//   곱셈 누적(분산↑=노이즈) 대신 가중평균(분산↓, 불일치 시 상쇄). composite=Σ(w·s)/Σw.
+//   mult = clamp(exp(gain·composite), lo, hi). 사용 가능한 팩터만 평균 → 결측은 노이즈 0.
+// ════════ [V10 개혁] 스캘핑 판단 방식 전환 — 단발 트리거→고정RR 에서 "엣지 점수 게이트 + 적응형 가지치기"로 ════════
+// 새 변수 3종을 도입해 "지금 이 진입이 통계적으로 먹히는 환경인가"를 0~1 확률로 추정한다.
+//   (1) Kaufman 효율비(ER): 분봉 경로의 방향성/노이즈 비 — 추세장(높음) vs 횡보장(낮음) 직접 측정. 휩쏘 회피 핵심.
+//   (2) 실현 기대값: signal_type_stats(자체 누적 성과)로 "이 신호가 실제로 벌었는가"를 반영 → 지는 신호 자동 축소/차단.
+//   (3) 일중 추세성·시간대: 추세시간 vs 점심 횡보 구분.
+// [V10 개혁] SNAP 엣지 점수 — 평균회귀 진입을 일봉 변수로 합성 심사(0~1).
+//   feat: { rsi2, adx, aboveMa200Pct, closePos, pead(−1~1), obv(−1~1), expZ, regime(−1~1) }
+function computeSnapEdgeScore(feat, cfg) {
+  const w = (cfg && cfg.snapEdge && cfg.snapEdge.weights) || {};
+  let z = (w.bias != null ? w.bias : -0.1);
+  // 과매도 깊이 — 너무 얕으면(약신호) ↓, 적정(3~8) 최적, 너무 깊으면(칼날) ↓
+  if (feat.rsi2 != null) { const ideal = 1 - Math.abs(feat.rsi2 - 5) / 6; z += (w.oversold != null ? w.oversold : 0.9) * Math.max(-1, ideal); }
+  // 추세 추종력(ADX) — 반등의 지속성
+  if (feat.adx != null) z += (w.adx != null ? w.adx : 0.5) * Math.max(-1, Math.min(1, (feat.adx - 15) / 15));
+  // 200일선 위 여유(건강한 상승추세 내 눌림)
+  if (feat.aboveMa200Pct != null) z += (w.trend != null ? w.trend : 0.8) * Math.max(-1, Math.min(1, feat.aboveMa200Pct / 12));
+  // 반전 캔들(종가위치)
+  if (feat.closePos != null) z += (w.reversal != null ? w.reversal : 0.6) * ((feat.closePos - 0.5) * 2);
+  if (feat.pead != null) z += (w.pead != null ? w.pead : 1.0) * feat.pead;
+  if (feat.obv != null) z += (w.obv != null ? w.obv : 0.5) * feat.obv;
+  if (feat.expZ != null) z += (w.exp != null ? w.exp : 1.1) * feat.expZ;
+  if (feat.regime != null) z += (w.regime != null ? w.regime : 0.5) * feat.regime;
+  return _sigmoid(z);
+}
+
+// [V10.1] 분봉 ATR% — 단타가 실제로 직면하는 "일중 노이즈"를 측정(일봉 ATR 미스매치 해소).
+function intradayAtrPct(mb, n) {
+  const h = mb && mb.highs, l = mb && mb.lows, c = mb && mb.closes;
+  if (!h || !l || !c || c.length < n + 1) return null;
+  let sum = 0, cnt = 0;
+  for (let i = c.length - n; i < c.length; i++) {
+    if (i < 1) continue;
+    const tr = Math.max(h[i] - l[i], Math.abs(h[i] - c[i - 1]), Math.abs(l[i] - c[i - 1]));
+    sum += tr; cnt++;
+  }
+  if (cnt === 0) return null;
+  const px = c[c.length - 1];
+  return px > 0 ? (sum / cnt) / px * 100 : null;
+}
+
+function efficiencyRatio(closes, n) {
+  if (!closes || closes.length < n + 1) return null;
+  const a = closes.length - 1 - n;
+  const net = Math.abs(closes[closes.length - 1] - closes[a]);
+  let path = 0;
+  for (let i = a + 1; i < closes.length; i++) path += Math.abs(closes[i] - closes[i - 1]);
+  if (path <= 0) return null;
+  return net / path;  // 0(완전 노이즈) ~ 1(완전 추세)
+}
+
+// signal_type_stats → {exp(평균 PnL%), wr, n}. 표본 부족(n<minN)이면 null(중립 처리).
+function signalExpectancy(stats, name, minN) {
+  if (!stats || !name || !stats[name]) return null;
+  const s = stats[name];
+  if (!s.trades || s.trades < (minN || 8)) return null;
+  return { exp: s.sumPnlPct / s.trades, wr: s.wins / s.trades, n: s.trades };
+}
+
+function _sigmoid(x) { return 1 / (1 + Math.exp(-x)); }
+
+// 스캘프 엣지 점수(0~1) — 여러 변수를 로지스틱으로 합성해 승률 우호도를 추정한다.
+//   feat: { er, vwapSlopeUp, relVol, mRsi, dTrend(−1~1), adx, riskScore(−1~1), expZ(−1~1), openFrac }
+function computeScalpEdgeScore(feat, cfg) {
+  const w = (cfg && cfg.scalpEdge && cfg.scalpEdge.weights) || {};
+  let z = (w.bias != null ? w.bias : -0.2);
+  // ER: 0.5 기준 중심화(추세적일수록 +)
+  if (feat.er != null) z += (w.er != null ? w.er : 1.6) * (feat.er - 0.45);
+  // VWAP 기울기 상승
+  if (feat.vwapSlopeUp != null) z += (w.vwapSlope != null ? w.vwapSlope : 0.5) * (feat.vwapSlopeUp ? 1 : -1);
+  // 상대거래량(1 기준, log)
+  if (feat.relVol != null && feat.relVol > 0) z += (w.relVol != null ? w.relVol : 0.45) * Math.max(-1, Math.min(1.5, Math.log(feat.relVol)));
+  // 분봉 RSI 스위트스폿(50~65 최적, 과열/약세 감점) — 종 모양
+  if (feat.mRsi != null) { const d = Math.abs(feat.mRsi - 57) / 18; z += (w.rsi != null ? w.rsi : 0.5) * (1 - 2 * Math.min(1, d)); }
+  // 일봉 추세 정렬(−1~1)
+  if (feat.dTrend != null) z += (w.dTrend != null ? w.dTrend : 0.9) * feat.dTrend;
+  // 일봉 ADX(18 기준)
+  if (feat.adx != null) z += (w.adx != null ? w.adx : 0.5) * Math.max(-1, Math.min(1, (feat.adx - 18) / 14));
+  // 시장 레짐 위험(−risk_off ~ +risk_on)
+  if (feat.riskScore != null) z += (w.regime != null ? w.regime : 0.6) * feat.riskScore;
+  // 실현 기대값 Z(이 신호가 실제로 벌었나) — 적응형
+  if (feat.expZ != null) z += (w.exp != null ? w.exp : 1.2) * feat.expZ;
+  // 개장 직후(노이즈 큰 구간) 약감점
+  if (feat.openFrac != null && feat.openFrac < 0.12) z -= 0.4 * (1 - feat.openFrac / 0.12);
+  return _sigmoid(z);
+}
+
+function fuseFactors(factors, opts) {
+  opts = opts || {};
+  const gain = opts.gain != null ? opts.gain : 0.42;
+  const lo = opts.lo != null ? opts.lo : 0.55;
+  const hi = opts.hi != null ? opts.hi : 1.6;
+  let sw = 0, ws = 0, used = [];
+  for (const f of factors) {
+    if (!f || !(f.w > 0) || typeof f.s !== "number" || !isFinite(f.s)) continue;
+    const s = Math.max(-1, Math.min(1, f.s));
+    sw += f.w; ws += f.w * s; used.push(f.n + (s >= 0 ? "+" : "") + s.toFixed(1));
+  }
+  if (sw <= 0) return { mult: 1.0, composite: 0, n: 0, note: "" };
+  const composite = ws / sw;
+  const mult = Math.max(lo, Math.min(hi, Math.exp(gain * composite)));
+  return { mult: mult, composite: composite, n: used.length, note: "n" + used.length + " c" + (composite >= 0 ? "+" : "") + composite.toFixed(2) + "×" + mult.toFixed(2) + " [" + used.join(" ") + "]" };
+}
+
 function classifyEarningsReaction(dailyData, cfg) {
   const pr = (cfg && cfg.peadRules) || {};
   if (pr.enabled === false) return null;
@@ -7404,29 +7628,95 @@ function evaluateAllStrategies(price, dayPct, dailyData, cfg, signalStats, regim
     if (!(cfg.strategies && cfg.strategies.snap === false)) {
       const snapSig = evaluateSnapEntry(price, dayPct, dailyData, cfg, regime, market);
       if (snapSig) {
-        // [SEC 공시] 미국 종목 — 악재 공시(공시 후 하락)만 보수화. 평균회귀는 악재 낙폭과 구분이 어려워 더 위험.
-        if (secData && market === "us" && dailyData.symbol && !getEtfType(dailyData.symbol)) {
-          const sds = secData[dailyData.symbol];
-          if (sds && sds.caution && typeof sds.postReturn === "number" && sds.postReturn <= -2.0) {
-            snapSig.visionBoost = (snapSig.visionBoost || 1.0) * 0.5;
-            snapSig.secNote = "SEC_" + (sds.filingType || "?") + " NEG축소";
-          }
-        }
-        // [Vision] DOWN 고신뢰 예측이면 진입 자체를 보류 (떨어지는 칼 + AI 하락 예측 중첩 회피)
+        // [Vision-down 게이트] 고신뢰 하락 예측 + 떨어지는 칼 중첩 → 진입 보류(하드 게이트)
         if (visionPreds && dailyData.symbol) {
           const vps = visionPreds[dailyData.symbol];
           if (vps && vps.pred === "down" && vps.conf >= 0.70) return [];
         }
-        // [V61 TA 패턴] SNAP은 과매도 반등 매수 — 강한 약세 차트패턴(더블탑/H&S 등) 동반 시 사이즈 축소.
-        //   (차단 없음 — 사이즈 차등만, 기존 하우스 스타일 유지)
+        // [V10 개혁] SNAP 엣지 점수 게이트 — 과매도 깊이·추세·반전·PEAD·OBV·실현기대값을 합성해 임계 미달 시 진입 거부.
+        const _snE = cfg.snapEdge || DEFAULT_CFG.snapEdge || {};
+        if (_snE.enabled !== false) {
+          const _scl = dailyData.closes;
+          const _ma200s = getMA(_scl, 200), _adxs = (dailyData.highs && dailyData.lows) ? getADX(dailyData.highs, dailyData.lows, _scl, 14) : null;
+          const _rsi2s = getRSI(_scl, 2);
+          let _cpos = null;
+          if (dailyData.highs && dailyData.lows) { const _li = _scl.length - 1, _h = dailyData.highs[_li], _l = dailyData.lows[_li]; if (_h > _l) _cpos = (_scl[_li] - _l) / (_h - _l); }
+          const _erS = classifyEarningsReaction(dailyData, cfg);
+          const _mfS0 = computeMicroFactors(dailyData, cfg, market);
+          const _stats = eventData && eventData.sigTypeStats;
+          const _seS = signalExpectancy(_stats, "SN_RSI2", _snE.expMinN || 6);
+          if (_seS && _seS.exp <= (_snE.expHardFloor != null ? _snE.expHardFloor : -1.0)) return [];  // 지는 신호 가지치기
+          const _featS = {
+            rsi2: _rsi2s, adx: _adxs,
+            aboveMa200Pct: (_ma200s != null && _ma200s > 0) ? ((price - _ma200s) / _ma200s) * 100 : null,
+            closePos: _cpos,
+            pead: _erS ? (_erS.verdict === "beat" ? 1 : (_erS.verdict === "miss" ? -1 : 0)) : null,
+            obv: (_mfS0 && _mfS0.obvSlope != null) ? (_mfS0.obvSlope > 0 ? 0.6 : -0.6) : null,
+            expZ: _seS ? Math.max(-1, Math.min(1, _seS.exp / 2.0)) : null,
+            regime: regime ? (regime.regime === "BEAR" ? -1 : (regime.regime === "BULL" ? 0.4 : 0)) : null
+          };
+          const _scoreS = computeSnapEdgeScore(_featS, cfg);
+          if (_scoreS < (_snE.minScore != null ? _snE.minScore : 0.50)) return [];
+          snapSig.edgeScore = _scoreS;
+          snapSig.confidence = Math.max(0.5, Math.min(0.95, 0.5 + (_scoreS - 0.5) / 0.5 * 0.45));
+          snapSig.detail = (snapSig.detail || "") + " E" + _scoreS.toFixed(2) + (_seS ? " x̄" + _seS.exp.toFixed(1) : "");
+        }
+        // [V9.10 합성함수] SNAP(과매도 반등)용 직교 팩터 — 곱셈 대신 가중평균 1개로 융합.
+        //   추세추종과 달리 모멘텀을 보상하지 않고, "상승추세 내 눌림 + 반전 + 매집 + 호재"를 가산한다.
+        const _sf = [];
+        const _sc = dailyData.closes;
+        const _ma50 = getMA(_sc, 50), _ma200 = getMA(_sc, 200);
+        // (1) 추세 정렬 — 눌림목은 상승추세 안에서만 유효(추세 깨진 종목의 과매도는 칼날)
+        if (_ma50 != null) {
+          if (price > _ma50 && (_ma200 == null || _ma50 > _ma200)) _sf.push({ n: "TREND", w: 1.0, s: 0.6 });
+          else if (price < _ma50) _sf.push({ n: "TREND", w: 1.0, s: -0.7 });
+        }
+        // (2) 반전 캔들(종가위치) — 해머형 상단 마감 = 반전 우위
+        if (dailyData.highs && dailyData.lows) {
+          const _li = _sc.length - 1, _h = dailyData.highs[_li], _l = dailyData.lows[_li];
+          if (_h > _l) _sf.push({ n: "REV", w: 0.6, s: ((_sc[_li] - _l) / (_h - _l) - 0.5) * 2 });
+        }
+        // (3) PEAD 실적반응 — 호재 후 눌림은 강한 반등(beat +) / 악재 후 눌림은 회피(miss −)
+        {
+          const _er3 = classifyEarningsReaction(dailyData, cfg);
+          if (_er3 && _er3.verdict === "beat") _sf.push({ n: "PEAD", w: 1.2, s: 1 });
+          else if (_er3 && _er3.verdict === "miss") _sf.push({ n: "PEAD", w: 1.3, s: -1 });
+        }
+        // (4) OBV 매집/분산 — 매집 중 눌림 = 우량, 분산 중 눌림 = 위험
+        {
+          const _mfS = computeMicroFactors(dailyData, cfg, market);
+          if (_mfS && _mfS.obvSlope != null) _sf.push({ n: "OBV", w: 0.7, s: _mfS.obvSlope > 0 ? 0.6 : (_mfS.obvSlope < 0 ? -0.6 : 0) });
+        }
+        // (5) TA 약세 패턴 — 더블탑/H&S 동반 반등은 저품질
         {
           const taSnap = taDetectPatterns(dailyData);
-          if (taSnap && taSnap.score <= -4) {
-            snapSig.visionBoost = (snapSig.visionBoost || 1.0) * 0.6;
-            snapSig.taNote = "TA " + taSnap.score + (taSnap.top ? " " + taSnap.top.name : "") + "×0.6";
+          if (taSnap && taSnap.patterns.length) _sf.push({ n: "TA", w: 0.8, s: taSnap.score / 6 });
+        }
+        // (6) SEC 악재 공시(미국) — 공시 후 하락은 평균회귀가 아니라 추세훼손
+        if (secData && market === "us" && dailyData.symbol && !getEtfType(dailyData.symbol)) {
+          const sds = secData[dailyData.symbol];
+          if (sds && sds.caution && typeof sds.postReturn === "number" && sds.postReturn <= -2.0) _sf.push({ n: "SEC", w: 1.4, s: -1 });
+        }
+        // (7) 애널리스트 컨센서스(직교 펀더멘털)
+        if (eventData && eventData.analystBySym && dailyData.symbol) {
+          const _a = eventData.analystBySym[dailyData.symbol];
+          if (_a) {
+            let _as = 0, _h = false;
+            if (typeof _a.upsidePct === "number") { _as += Math.max(-1, Math.min(1, _a.upsidePct / 25)); _h = true; }
+            if (typeof _a.rating === "number") { _as += Math.max(-1, Math.min(1, (3 - _a.rating) / 1.5)); _h = true; }
+            if (_h) _sf.push({ n: "ANALYST", w: 0.8, s: _as / ((typeof _a.upsidePct === "number" && typeof _a.rating === "number") ? 2 : 1) });
           }
         }
-        // [V62 이벤트 리스크] 어닝스 D-2 이내·고중요 지표 발표 24h 전 → SNAP도 축소 (갭 리스크)
+        // (8) 경제지표 임박 — 시장 전체 보수화(음의 팩터로 합성)
+        const _erc = eventData && eventData.econ && eventData.econ[market];
+        if (_erc && _erc.preHigh) _sf.push({ n: "ECON", w: 0.6, s: -0.7 });
+
+        if (_sf.length) {
+          const _ff = fuseFactors(_sf, { gain: 0.40 });   // SNAP은 약간 보수적 gain
+          snapSig.visionBoost = (snapSig.visionBoost || 1.0) * _ff.mult;
+          snapSig.fuseNote = "FUSE " + _ff.note;
+        }
+        // [하드 게이트] 어닝 발표 D-2 이내 — 양방향 갭 도박 → 강축소(합성과 별도)
         if (eventData && dailyData.symbol) {
           const _ets2 = eventData.earningsBySym && eventData.earningsBySym[dailyData.symbol];
           if (_ets2) {
@@ -7435,11 +7725,6 @@ function evaluateAllStrategies(price, dayPct, dailyData, cfg, signalStats, regim
               snapSig.visionBoost = (snapSig.visionBoost || 1.0) * 0.5;
               snapSig.earnNote = "EARNINGS D-" + Math.max(0, _dd2).toFixed(1) + "×0.5";
             }
-          }
-          const _er2 = eventData.econ && eventData.econ[market];
-          if (_er2 && _er2.preHigh) {
-            snapSig.visionBoost = (snapSig.visionBoost || 1.0) * 0.85;
-            snapSig.econNote = "ECON-PRE×0.85";
           }
         }
         return [{ strategy: "snap", signal: snapSig, rawCount: 1 }];
@@ -7785,14 +8070,9 @@ function evaluateAllStrategies(price, dayPct, dailyData, cfg, signalStats, regim
   //   composite ∈ [−1,1] = Σ(w·s)/Σw. 곱셈 누적이 아니라 평균이라 의견 불일치 시 상쇄(노이즈↓).
   //   기술강조(emphasis)는 gain에 흡수. 단일 mult = clamp(exp(gain·composite), 0.55, 1.6).
   if (_fuse.length) {
-    let _sw = 0, _ws = 0;
-    for (const f of _fuse) { _sw += f.w; _ws += f.w * f.s; }
-    const _composite = _sw > 0 ? _ws / _sw : 0;
-    const _gain = 0.42 * _emph;                          // emphasis 흡수
-    const _mult = Math.max(0.55, Math.min(1.6, Math.exp(_gain * _composite)));
-    sig.visionBoost = (sig.visionBoost || 1.0) * _mult;
-    sig.fuseNote = "FUSE n" + _fuse.length + " c" + (_composite >= 0 ? "+" : "") + _composite.toFixed(2) + "×" + _mult.toFixed(2)
-      + " [" + _fuse.map(function(f){ return f.n + (f.s >= 0 ? "+" : "") + f.s.toFixed(1); }).join(" ") + "]";
+    const _f = fuseFactors(_fuse, { gain: 0.42 * _emph });
+    sig.visionBoost = (sig.visionBoost || 1.0) * _f.mult;
+    sig.fuseNote = "FUSE " + _f.note;
   }
 
   // [안전장치] 여러 부스트(vision×sec×alpha×etf) 누적이 극단값이 되지 않게 상하한 clamp.
@@ -7958,6 +8238,9 @@ async function executeBuy(DB, market, symbol, strategy, qty, price, signal, dail
     // [SC_VBURST] 사용자 정의 고정 손절 — 진입가 −stopLossPct% (ATR 비례 미사용)
     const _vb = (cfg && cfg.scalpBurstRules) || DEFAULT_CFG.scalpBurstRules || {};
     stopPrice = price * (1 - (_vb.stopLossPct != null ? _vb.stopLossPct : 1.5) / 100);
+  } else if (strategy === "scalp" && signal && typeof signal.intradayStopPct === "number" && signal.intradayStopPct > 0) {
+    // [V10.1] 분봉 변동성 적응형 손절 — evaluateScalpEntry가 일중 ATR로 산출한 손절폭 사용(일봉 ATR 미스매치 해소).
+    stopPrice = price * (1 - signal.intradayStopPct / 100);
   } else if (strategy === "scalp" && dailyAtr && price > 0) {
     const atrPct = (dailyAtr / price) * 100;
     const sMult = (rules.scalpAtrStopMult != null) ? rules.scalpAtrStopMult : 0.9;
@@ -8282,7 +8565,11 @@ function evaluateSell(pos, price, daily, dailyRsi, dailyMa, dailyMaShort, cfg, m
 
     // 4) 트레일 — trailActivatePct 이상 수익에서만 작동(조기 청산 방지)
     const trailActivate = (sr.trailActivatePct != null ? sr.trailActivatePct : 1.2) * tpScale;
-    const trailPct = (sr.trailPct || 0.7) * Math.max(1, Math.sqrt(tpScale));  // 변동성 종목은 트레일도 약간 넓힘
+    let trailPct = (sr.trailPct || 0.7) * Math.max(1, Math.sqrt(tpScale));  // 변동성 종목은 트레일도 약간 넓힘
+    // [V9.11] 런너 — 큰 수익(+runnerAfterPct↑) 구간은 트레일을 넓혀 추세를 길게 태운다(손익비·기대값↑).
+    const _peakPctNow = pos.avg > 0 ? ((peakP - pos.avg) / pos.avg) * 100 : 0;
+    const _runAfter = sr.runnerAfterPct != null ? sr.runnerAfterPct : 3.0;
+    if (_runAfter > 0 && _peakPctNow >= _runAfter) trailPct = Math.max(trailPct, (sr.runnerTrailPct != null ? sr.runnerTrailPct : 1.4) * Math.max(1, Math.sqrt(tpScale)));
     if (pnlPct >= trailActivate) {
       const trailStop = peakP * (1 - trailPct / 100);
       if (price <= trailStop) {
@@ -8291,11 +8578,18 @@ function evaluateSell(pos, price, daily, dailyRsi, dailyMa, dailyMaShort, cfg, m
       }
     }
 
-    // 5) 타임스톱 — N분 내 목표 미달 시 청산(죽은돈 회수). TP1 후 런너는 면제(추세 지속 기대).
+    // 5) 타임스톱 [V9.11 개선] — 기존 "+0.4% 미만이면 40분컷"이 평/약수익까지 털어 19% 승률 출혈의 주범.
+    //   → ① tsMin 경과 + "명확한 손실(≤ timeStopLossPct)"일 때만 컷(near-BE·미세익은 트레일로 발전 기회 부여)
+    //      ② 진행 없는 좀비는 2×tsMin 후 정리(죽은돈 회수). 손익비를 살려 기대값 개선.
     const tsMin = sr.timeStopMinutes || 40;
     const tsMinPnl = sr.timeStopMinPnl != null ? sr.timeStopMinPnl : 0.4;
-    if (!tp1Done && heldMin >= tsMin && pnlPct < tsMinPnl) {
-      return { sell: true, sellQty: pos.qty, reason: "SCALP-TIME " + heldMin + "min " + pnlPct.toFixed(2) + "%" };
+    const tsLossPct = sr.timeStopLossPct != null ? sr.timeStopLossPct : -0.3;
+    if (!tp1Done) {
+      const clearLoss = pnlPct <= tsLossPct;
+      const zombie = heldMin >= tsMin * 2 && pnlPct < tsMinPnl;
+      if ((heldMin >= tsMin && clearLoss) || zombie) {
+        return { sell: true, sellQty: pos.qty, reason: "SCALP-TIME " + heldMin + "min " + pnlPct.toFixed(2) + "%" };
+      }
     }
     return { sell: false };
   }
@@ -8326,9 +8620,10 @@ function evaluateSell(pos, price, daily, dailyRsi, dailyMa, dailyMaShort, cfg, m
       if (halfS > 0) return { sell: true, sellQty: halfS, reason: "SNAP-TP1 +" + pnlS.toFixed(2) + "%" };
       return { sell: true, sellQty: pos.qty, reason: "SNAP-TP1-FULL +" + pnlS.toFixed(2) + "%" };
     }
-    // 4) 평균회귀 완료 — 종가 > MA5 또는 RSI(2) ≥ exitRsi2 → 전량 청산 (목표 달성, 오래 들고 있지 않는다)
+    // 4) 평균회귀 완료 — [V9.11] TP1 "전"에만 전량 청산. TP1 후 잔량(런너)은 BE락으로 보호되므로
+    //    조기 MR청산하지 않고 트레일로 주행시켜 큰 반등을 포착(평균 수익↑, 추가 리스크 0).
     const closesS = daily && daily.closes;
-    if (closesS && closesS.length >= 10) {
+    if (!tp1DoneS && closesS && closesS.length >= 10) {
       if (sn.exitAboveMa5 !== false) {
         const ma5S = getMA(closesS, 5);
         if (ma5S != null && price > ma5S && pnlS > 0.3) {
@@ -8341,6 +8636,15 @@ function evaluateSell(pos, price, daily, dailyRsi, dailyMa, dailyMaShort, cfg, m
         if (rsi2S != null && rsi2S >= exR && pnlS > 0) {
           return { sell: true, sellQty: pos.qty, reason: "SNAP-MR RSI2 " + rsi2S.toFixed(0) + " +" + pnlS.toFixed(2) + "%" };
         }
+      }
+    }
+    // 4b) [V9.11] TP1 후 런너 트레일 — 고점 대비 −snapRunnerTrailPct% 이탈 시 잔량 청산(BE 위 이익 확정).
+    if (tp1DoneS) {
+      const peakS = (metaS.peakPrice && metaS.peakPrice > 0) ? metaS.peakPrice : pos.avg;
+      const peakPctS = pos.avg > 0 ? ((peakS - pos.avg) / pos.avg) * 100 : 0;
+      const rtr = sn.runnerTrailPct != null ? sn.runnerTrailPct : 2.0;
+      if (peakPctS >= (sn.runnerArmPct != null ? sn.runnerArmPct : 2.5) && price <= peakS * (1 - rtr / 100)) {
+        return { sell: true, sellQty: pos.qty, reason: "SNAP-RUN-TRAIL +" + pnlS.toFixed(2) + "% (peak +" + peakPctS.toFixed(1) + "%)" };
       }
     }
     // 5) 타임스톱 — N거래일 내 본전 미만이면 평균회귀 실패 → 철수
@@ -10393,6 +10697,10 @@ async function runTradingCycle(env) {
     const visionPreds = await getState(DB, "vision_predictions", {});  // [Vision AI]
     const secData = await getState(DB, "sec_filings", {});  // [SEC 공시] 미국 종목 보수화
     const eventData = await buildEventRiskData(DB);  // [V62] 어닝스·경제지표·내부자 이벤트 리스크 (캐시 read만)
+    // [V10] 스캘프 적응형 엣지 — 신호별 실현 성과(승률·평균손익) 캐시 1회 로드. 지는 신호 자동 가지치기에 사용.
+    let _sigTypeStats = {};
+    try { _sigTypeStats = await getState(DB, "signal_type_stats", {}) || {}; } catch (e) {}
+    try { eventData.sigTypeStats = _sigTypeStats; } catch (e) {}
     let cash = await computeAllCash(DB, cfg);
     // [V9.1] executeBuy/Sell이 거래마다 cash 전체를 저장하므로, cm 키가 누락된 옛 상태를
     //   읽었을 때 원자재 현금이 사라지지 않도록 보강.
@@ -11274,8 +11582,38 @@ async function runTradingCycle(env) {
                 //   1m봉은 형성중 봉의 부분거래량으로 relvol_low를 과다유발(라이브: scan 50중 relvol_low 25)하고
                 //   모멘텀도 과소계상해 트리거를 막았다. 5m봉으로 노이즈↓·임계 정합 → 단타 신호 발생률 상승.
                 const _scalpMb = await fetchMinuteBars(symbol, { interval: "5m", range: "1d" });
-                const _scalpSig = evaluateScalpEntry(_scalpMb, daily, mcfg, market, regime);
+                const _scalpSig = evaluateScalpEntry(_scalpMb, daily, mcfg, market, regime, _sigTypeStats);
                 if (_scalpSig) scalpSig++;  // [진단] 게이트 통과해 신호 발생
+                // [V9.10 합성함수] SCALP 일봉 컨텍스트 직교 강화 — 분봉 진입을 일봉 추세/매집/실적/애널리스트로 사이즈 차등.
+                //   곱셈 아닌 가중평균. 패닉·인버스 진입은 추세역행이 정상이라 추세정렬 팩터 제외.
+                if (_scalpSig && daily && daily.closes && daily.closes.length >= 55) {
+                  const _kf = [];
+                  const _isPanic = /PANIC|INV/.test(_scalpSig.name || "") || (typeof getEtfType === "function" && getEtfType(symbol) === "inverse");
+                  const _kc = daily.closes;
+                  const _km20 = getMA(_kc, 20), _km50 = getMA(_kc, 50);
+                  if (!_isPanic && _km20 != null && _km50 != null) {
+                    if (price > _km20 && _km20 > _km50) _kf.push({ n: "DTREND", w: 1.0, s: 0.6 });
+                    else if (price < _km50) _kf.push({ n: "DTREND", w: 1.0, s: -0.6 });
+                  }
+                  const _ker = classifyEarningsReaction(daily, mcfg);
+                  if (_ker && _ker.verdict === "beat") _kf.push({ n: "PEAD", w: 1.0, s: 1 });
+                  else if (_ker && _ker.verdict === "miss") _kf.push({ n: "PEAD", w: 1.0, s: -1 });
+                  const _kmf = computeMicroFactors(daily, mcfg, market);
+                  if (_kmf && _kmf.obvSlope != null) _kf.push({ n: "OBV", w: 0.6, s: _kmf.obvSlope > 0 ? 0.6 : -0.6 });
+                  if (_kmf && _kmf.rangePos != null) _kf.push({ n: "RANGE", w: 0.5, s: (_kmf.rangePos - 0.5) * 2 });
+                  if (eventData && eventData.analystBySym && eventData.analystBySym[symbol]) {
+                    const _ka = eventData.analystBySym[symbol];
+                    let _kas = 0, _kh = false;
+                    if (typeof _ka.upsidePct === "number") { _kas += Math.max(-1, Math.min(1, _ka.upsidePct / 25)); _kh = true; }
+                    if (typeof _ka.rating === "number") { _kas += Math.max(-1, Math.min(1, (3 - _ka.rating) / 1.5)); _kh = true; }
+                    if (_kh) _kf.push({ n: "ANALYST", w: 0.6, s: _kas / ((typeof _ka.upsidePct === "number" && typeof _ka.rating === "number") ? 2 : 1) });
+                  }
+                  if (_kf.length) {
+                    const _kff = fuseFactors(_kf, { gain: 0.30, lo: 0.6, hi: 1.4 });  // scalp은 ATR 사이징이라 보수적
+                    _scalpSig.visionBoost = (_scalpSig.visionBoost || 1.0) * _kff.mult;
+                    _scalpSig.fuseNote = "FUSE " + _kff.note;
+                  }
+                }
                 if (_scalpSig && !strategiesHeldNow.has("scalp") && !heldSymbols.has(symbol)) {
                   stratResults = [{ strategy: "scalp", signal: _scalpSig, rawCount: 1 }];
                 }
@@ -11528,6 +11866,10 @@ async function runTradingCycle(env) {
             const atrStopDist = (dailyAtr && dailyAtr > 0) ? dailyAtr * (tr.atrStopMult || mcfg.atrStopMult || 2.0) : null;
             const pctStopDist = price * ((tr.stopLossPct || mcfg.stopLoss || 5) / 100);
             let stopDist = (atrStopDist != null) ? Math.min(atrStopDist, pctStopDist) : pctStopDist;
+            // [V10.1] 단타는 분봉 적응형 손절폭으로 수량 산정 → 실제 손절가와 리스크/주 일치(손익비 일관).
+            if (strategy === "scalp" && signal && typeof signal.intradayStopPct === "number" && signal.intradayStopPct > 0) {
+              stopDist = price * (signal.intradayStopPct / 100);
+            }
             if (!(stopDist > 0)) stopDist = price * 0.05;
             // [확실성] 신호 confidence(0.5~1.0)로 리스크 축소 — 약추세는 작게(악화 방어). 최대 1.0(그대로).
             const sigConf = (signal && typeof signal.confidence === "number") ? Math.max(0, Math.min(1, signal.confidence)) : 1.0;
