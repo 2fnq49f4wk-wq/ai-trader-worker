@@ -2482,7 +2482,7 @@ const DEFAULT_CFG = {
   },
   // === [Vision AI] Roboflow 차트예측 — 백엔드/거래 기본값 (프론트도 동일 키 저장) ===
   visionAI: {
-    enabled: true,
+    enabled: false,          // [V9.9] Vision AI 제거 — 신뢰도는 높으나 실측 적중률 41%(역신호 수준). 기술적 분석으로 전면 대체.
     rfApiKey: "WLMMRNV8GDpmbjEcrFar",
     rfVersion: 7,
     confMin: 0.6,
@@ -2490,18 +2490,57 @@ const DEFAULT_CFG = {
     //   UP 부스트 최대치(기존 1.50 → 1.15). 기술적 팩터(TA패턴·알파·ADX)보다 항상 작게 유지.
     maxBoost: 1.15,
     requireTAConfirm: true,  // [V84] Vision UP 부스트는 기술적 추세가 우호적일 때만 적용(앙상블=오신호↓=실적중률↑)
+    minPnlForExit: -2.0,     // [V9.8] VISION_EXIT(≥90% conf) 즉시청산 하한 손익(%). 이보다 손실이 크면 하드손절에 위임(패닉 저점 투매 방지)
     monthlyBudget: 10000   // 무료 Public 플랜 월 한도
   },
   // [V84] 기술적 분석 강조 계수 — 사이징의 기술적 팩터(TA패턴·알파품질·ADX) 영향을 증폭.
   //   effectiveScale = 1 + (scale-1)×emphasis. 1.0=기존, >1=기술적 분석 비중↑.
-  technicalEmphasis: 1.35,
+  technicalEmphasis: 1.5,
+  // === [V9.9 PEAD] 실적 서프라이즈 — 기존 추세 신호를 "강화"하는 보조 요소(새 진입신호 아님) ===
+  //   근거: Post-Earnings Announcement Drift는 가장 견고한 아노말리 중 하나. 가격독립 정보라 직교 엣지.
+  //   추정치 없이 "시장 반응(갭·거래량·종가강도)"을 서프라이즈 프록시로 사용 → 기존 진입의 사이즈·컨텍스트 점수만 가감.
+  peadRules: {
+    enabled: true,
+    driftDays: 10,          // 실적발표 후 N일까지 드리프트(추종) 윈도우
+    lookbackBars: 7,        // 최근 N봉 중 거래량 최대봉을 실적반응봉으로 추정(어닝=구간 내 최대 거래량)
+    volSpikeMin: 1.8,       // 실적반응봉 인정 거래량 배수(20일 평균 대비) — 진짜 이벤트만
+    beatMovePct: 3.0,       // 반응봉 종가가 전일 대비 +N%↑ + 강한 마감 → 'beat'(긍정 서프라이즈)
+    beatClvMin: 0.55,       // 반응봉 CLV(종가위치) ≥ — 윗꼬리 없이 강하게 마감해야 진짜 beat
+    missMovePct: -3.0,      // 반응봉 종가 ≤ N% → 'miss'(부정) — 기존 진입 강축소
+    beatBoost: 1.18,        // beat 드리프트 구간: 기존 추세 진입 사이즈 부스트
+    missScale: 0.45,        // miss 종목: 기존 진입 강축소(사실상 회피)
+    requireCalendar: true   // 캘린더로 어닝 확인된 종목만(거래량 스파이크 오탐 방지)
+  },
+  // === [V9.9 마이크로팩터] 기존 일봉 OHLCV에서 추가 산출하는 직교 팩터 — 전부 사이즈 가중만(추가 fetch 0) ===
+  //   새 진입신호·새 전략 아님. 기존 추세 신호의 사이즈에만 가감(차단은 유동성 하한만).
+  microFactors: {
+    enabled: true,
+    // (1) 52주 레인지 위치 — 1년 고저 대비 현재가 위치(0~1). 상단=모멘텀 강세, 하단=약세. (cross-sectional momentum 보강)
+    rangeEnabled: true,
+    rangeLookback: 252,
+    rangeHighPos: 0.80,     // 위치 ≥ 0.80(상단 20%) → 모멘텀 부스트
+    rangeHighScale: 1.10,
+    rangeLowPos: 0.25,      // 위치 ≤ 0.25(하단 25%) → 약세 축소
+    rangeLowScale: 0.85,
+    // (2) 유동성 하한 — 20일 평균 거래대금(가격×거래량)이 너무 작으면 슬리피지·갭 위험 → 사이즈 축소/차단
+    liqEnabled: true,
+    liqMinUsd: 3_000_000,   // US: 일평균 거래대금 $3M 미만 = 소형/저유동 → 축소
+    liqMinKrw: 2_000_000_000, // KR: 20억원 미만 → 축소
+    liqThinScale: 0.7,      // 저유동 사이즈 배수
+    liqHardMinFrac: 0.25,   // 하한의 25% 미만이면 진입 차단(체결 비용 과다)
+    // (3) OBV(매집/분산) 기울기 — 최근 N일 OBV 추세. 상승=매집(부스트), 하락=분산(축소). 가격선행 정보.
+    obvEnabled: true,
+    obvLen: 20,
+    obvUpScale: 1.08,
+    obvDownScale: 0.88
+  },
   // === [신규·인터마켓] 시장 컨텍스트 (risk-on/off) — 외부 자산으로 위험선호 측정 ===
   //   HYG(신용)·BTC(위험심리)·UUP(달러)·^VIX9D(공포)·TLT(안전자산)를 1 batch quote로 수집.
   //   [예산 안전] 캐시(refreshMinutes) + 월 사용량 enrichMaxUsageRatio(코어 셧다운보다 낮음) 초과 시
   //   enrichment 자동 중단 → 한도 여유분 항상 보장. risk-off면 신규매수 축소, risk-on이면 소폭 확대.
   marketContext: {
     enabled: true,
-    symbols: ["HYG", "BTC-USD", "UUP", "^VIX9D", "TLT"],
+    symbols: ["HYG", "BTC-USD", "UUP", "^VIX9D", "^VIX", "TLT"],
     refreshMinutes: 12,
     enrichMaxUsageRatio: 0.75,
     minBudgetReserve: 8,
@@ -2571,7 +2610,10 @@ const DEFAULT_CFG = {
     // === [V52 강화] 단타 품질 게이트 ===
     avoidOpenMinutes: 10,    // [V65완화] 15→10 개장 후 진입 금지 (오프닝 노이즈 회피) — 패닉 단타는 면제
     avoidCloseMinutes: 20,   // 마감 N분 전 진입 금지 (청산 시간 부족 → 오버나이트 리스크 방지)
-    dailyLossLimitPct: 2.0,  // [V65완화] 1.5→2.0 당일 scalp 청산 PnL%(합) ≤ -N% → 그날 scalp 신규진입 중단
+    dailyLossLimitPct: 1.2,  // [V9.8] 2.0→1.2 — PF 0.32 적자전략, 손실누적 더 빨리 차단(틸트 방지)
+    // [V9.8] 변동성 레짐 차단 — VKOSPI 91·일중 ±5% 휩쏘장에서 1.2% 고정손절 스캘핑은 구조적 적자(검증: SCALP PF 0.32).
+    skipWhenRiskOff: true,   // mktCtx.regime이 risk_off/caution 또는 crashGate.deRisk면 그 시장 scalp 신규진입 전면 중단
+    haltVixAbove: 28,        // crashGate.vixValue(또는 VIX9D)가 이 값 초과면 scalp 중단 (고변동 구간 회피)
     reEntryCooldownMin: 45,  // [V65완화] 60→45 같은 종목 scalp 손절 후 재진입 차단 (연속 칼날 방지)
     scanMaxPerCycle: 50,     // [V65] scalp 스캔 전용 분봉 fetch 상한/사이클 — 진입확인(intradayConfirm)과 분리
     requireVwapSlopeUp: true,// SC_VWAP/SC_MOMENTUM 진입 시 VWAP 기울기 ≥ 0 요구 (하락 VWAP 추격 차단; 눌림목/패닉은 면제)
@@ -2696,6 +2738,12 @@ const DEFAULT_CFG = {
     confStrongPct: 4.0,                     // 추세강도(MA정렬 합산%) ≥ 이면 confidence 1.0(그대로)
     confWeakPct: 1.5,                       // ≤ 이면 confMin까지 축소
     confMin: 0.5,                           // confidence 하한(리스크 축소 최대폭 = 절반)
+    // === [V9.9 승률 강화] 추세 품질 게이트 — 고변동·횡보장(VKOSPI 91, 하이커-포-롱거)에서 휩쏘 진입 차단 ===
+    adxTrendMin: 18,                        // ADX(14) < 이면 진입 금지 (비추세 횡보 = 풀백 가짜반등 양산). 승률 직접 개선.
+    requireAbove200: true,                  // MA200 산출 가능 시 price>MA200 필수 (200일선 위 매수 = 승률·기대값 우위, 실증)
+    requireMa20Rising: true,                // MA20 기울기 상승(추세 진행중)일 때만 — 천장 형성·롤오버 회피
+    pullbackRsiTurnUp: true,                // TR_PULLBACK은 RSI가 전봉 대비 반등(turn-up)할 때만 — 떨어지는 칼 회피
+    cautionPbRsiMin: 45,                    // regime이 BEAR/약세일 때 풀백 RSI 하한을 이 값으로 상향(저품질 반등 배제)
     // === 분산 매도 감지 (거래량 급증+하락 → 기관 분산 차단) ===
     distDetectEnabled: true,
     distDetectVolMult: 2.5,                 // 20일 평균 대비 거래량 배수 (이 이상 + 하락 → 차단)
@@ -2724,7 +2772,14 @@ const DEFAULT_CFG = {
     clvStrongMin: 0.7, clvStrongScale: 1.06,//   종가가 고가 부근(강한 마감) → 소폭 부스트
     clvWeakMax: 0.35, clvWeakScale: 0.85,   //   윗꼬리 마감(분산 흔적) → 축소
     weeklyAlignEnabled: true,               // 주봉 종가 > 주봉 MA10 정합 — 상위 시간프레임 확인
-    weeklyMisalignScale: 0.8                //   미정합 시 사이즈 ×0.8 (차단 아님)
+    weeklyMisalignScale: 0.8,               //   미정합 시 사이즈 ×0.8 (차단 아님)
+    // === [V9.9] 횡단면 상대강도(RS) 틸트 — 기존 모든 추세 진입에 적용(새 전략 아님, 사이즈만) ===
+    //   지수 대비 20일 초과수익으로 주도주/소외주 판별. cross-sectional momentum(견고한 팩터)을 사이징에 반영.
+    rsTiltEnabled: true,
+    rsTiltLeadPct: 8,                       // 지수 대비 +8%p↑ 초과수익 = 주도주 → 부스트
+    rsTiltLagPct: -5,                       // 지수 대비 -5%p↓ = 소외주 → 축소
+    rsTiltBoost: 1.12,                      // 주도주 사이즈 부스트
+    rsTiltCut: 0.85                         // 소외주 사이즈 축소
   },
   // === [KR 분리] TREND 룰 — KR 시장 전용 오버라이드 ===
   //   여기 정의한 키만 trendRules(US 기본값)를 덮어쓴다. 누락 키는 US값 상속.
@@ -3147,7 +3202,9 @@ function migrateCfgToMarkets(cfg) {
     if (_sc.momEntry === 0.4)      _sc.momEntry = 0.35;
     if (_sc.avoidOpenMinutes === 15)   _sc.avoidOpenMinutes = 10;
     if (_sc.reEntryCooldownMin === 60) _sc.reEntryCooldownMin = 45;
-    if (_sc.dailyLossLimitPct === 1.5) _sc.dailyLossLimitPct = 2.0;
+    if (_sc.dailyLossLimitPct === 1.5 || _sc.dailyLossLimitPct === 2.0) _sc.dailyLossLimitPct = 1.2;
+    if (_sc.skipWhenRiskOff === undefined) _sc.skipWhenRiskOff = true;
+    if (_sc.haltVixAbove === undefined)    _sc.haltVixAbove = 28;
     if (_sc.rsiMin === 42)         _sc.rsiMin = 38;
     if (_sc.minDayMomPct === -1.0) _sc.minDayMomPct = -1.5;
     if (_sc.takeProfit === 2.5)    _sc.takeProfit = 3.0;   // [V51] 잔량 최종익절 상향
@@ -3250,6 +3307,7 @@ function migrateCfgToMarkets(cfg) {
       if (cfg.visionAI[k] === undefined) cfg.visionAI[k] = DEFAULT_CFG.visionAI[k];
     }
   }
+  cfg.visionAI.enabled = false;  // [V9.9] 저장된 enabled:true를 덮어써 Vision을 코드 레벨에서 영구 차단
   if (!cfg.secFilings || typeof cfg.secFilings !== "object") {
     cfg.secFilings = JSON.parse(JSON.stringify(DEFAULT_CFG.secFilings));
   } else {
@@ -3911,7 +3969,7 @@ async function collectLLMContext(DB, env, market) {
     marketSnapshot: marketSnapshot,
     cash: cashState[market] || 0,
     positions: (positions.results || []).map(function(p) {
-      return { symbol: p.symbol, strategy: p.strategy, qty: p.qty, avg: p.avg_price };
+      return { symbol: p.symbol, name: NAME_MAP[p.symbol] || String(p.symbol).replace(/\.(KS|KQ)$/, ""), strategy: p.strategy, qty: p.qty, avg: p.avg_price };
     }),
     last7days: {
       trades: sells.length,
@@ -5298,7 +5356,7 @@ async function fetchBatchQuotes(symbols, opts) {
 //   "코어 거래 보호"를 위해 enrichment를 먼저 중단 → 한도 여유분을 항상 남긴다.
 const MARKET_CONTEXT_DEFAULT = {
   enabled: true,
-  symbols: ["HYG", "BTC-USD", "UUP", "^VIX9D", "TLT"],
+  symbols: ["HYG", "BTC-USD", "UUP", "^VIX9D", "^VIX", "TLT"],
   refreshMinutes: 12,          // 캐시 주기(분) — 이 주기 내엔 재fetch 안 함
   enrichMaxUsageRatio: 0.75,   // [여유분 보장] 월 사용량 75% 넘으면 enrichment 중단(코어 거래 우선)
   minBudgetReserve: 8,         // invocation subrequest 잔여가 이 미만이면 스킵(코어용 예비)
@@ -5314,6 +5372,16 @@ function _computeRiskScore(q) {
   s += _clamp(d("BTC-USD") * 0.04, -0.25, 0.25); // 위험심리
   s -= _clamp(d("UUP") * 0.20, -0.20, 0.20);    // 달러강세=역풍
   s -= _clamp(d("^VIX9D") * 0.025, -0.30, 0.30); // 공포
+  // [V9.9] VIX 기간구조 — 단기(VIX9D) > 30일(VIX)면 백워데이션 = 급성 근시 스트레스(주식 약세 선행).
+  //   레벨비(가격 직교 정보)로 risk score를 추가 하향. 콘탱고(평시)면 영향 0.
+  {
+    const v9 = (q["^VIX9D"] && q["^VIX9D"].price) || 0;
+    const v30 = (q["^VIX"] && q["^VIX"].price) || 0;
+    if (v9 > 0 && v30 > 0) {
+      const ratio = v9 / v30;                       // >1 = 백워데이션
+      s -= _clamp((ratio - 1) * 0.8, -0.05, 0.25);  // 백워데이션만 페널티(콘탱고는 거의 0)
+    }
+  }
   s -= _clamp(d("TLT") * 0.08, -0.15, 0.15);    // 안전자산 도피
   return _clamp(s, -1, 1);
 }
@@ -5383,6 +5451,56 @@ function _scoreHeadlines(titles) {
   }
   const total = Math.max(titles.length, 1);
   return _clamp((pos - neg) / (pos + neg + total * 0.3), -1, 1);
+}
+
+// [V9.9 신규데이터] 애널리스트 컨센서스 — 목표가 상승여력·투자의견을 야후 v7에서 수집(US 한정).
+//   가격독립 펀더멘털 정보. 6h 캐시, 예산 가드, 1배치=1 subrequest 묶음. 실패해도 기존 캐시 유지.
+async function updateAnalystConsensus(DB, cfg, force) {
+  const ac = Object.assign({ enabled: true, refreshHours: 6, minBudgetReserve: 10, chunk: 40 }, (cfg && cfg.analyst) || {});
+  if (ac.enabled === false) return null;
+  let cached = null;
+  try { cached = await getState(DB, "analyst_consensus", null); } catch (e) {}
+  if (!force && cached && cached.ts && (Date.now() - cached.ts) < (ac.refreshHours * 3600000)) return cached;
+  if (fetchBudgetLeft() < (ac.minBudgetReserve || 10)) return cached;
+  const syms = (cfg && cfg.usTickers) || DEFAULT_US;
+  if (!syms || !syms.length) return cached;
+  const auth = await getYahooAuth(DB);
+  const FIELDS = "symbol,regularMarketPrice,targetMeanPrice,targetHighPrice,targetLowPrice,averageAnalystRating,numberOfAnalystOpinions";
+  const bySym = (cached && cached.bySym) ? Object.assign({}, cached.bySym) : {};
+  let okCount = 0;
+  for (let i = 0; i < syms.length; i += (ac.chunk || 40)) {
+    if (fetchBudgetLeft() <= (ac.minBudgetReserve || 10)) break;
+    const slice = syms.slice(i, i + (ac.chunk || 40));
+    let url = "https://query1.finance.yahoo.com/v7/finance/quote?fields=" + encodeURIComponent(FIELDS) +
+              "&symbols=" + slice.map(function (s) { return encodeURIComponent(s); }).join(",");
+    if (auth && auth.crumb) url += "&crumb=" + encodeURIComponent(auth.crumb);
+    try {
+      __fetchBudget.used++;
+      const r = await fetch(url, { headers: auth && auth.cookie ? { "Cookie": auth.cookie } : {} });
+      if (!r.ok) continue;
+      const j = await r.json();
+      const rows = (j && j.quoteResponse && j.quoteResponse.result) || [];
+      rows.forEach(function (row) {
+        if (!row || !row.symbol) return;
+        const px = row.regularMarketPrice, tgt = row.targetMeanPrice;
+        // averageAnalystRating 형태: "2.1 - Buy" → 앞 숫자만
+        let rating = null;
+        if (typeof row.averageAnalystRating === "string") { const m = parseFloat(row.averageAnalystRating); if (isFinite(m)) rating = m; }
+        else if (typeof row.averageAnalystRating === "number") rating = row.averageAnalystRating;
+        const o = {};
+        if (typeof px === "number" && px > 0 && typeof tgt === "number" && tgt > 0) o.upsidePct = ((tgt - px) / px) * 100;
+        if (rating != null) o.rating = rating;
+        if (typeof row.numberOfAnalystOpinions === "number") o.nOpinions = row.numberOfAnalystOpinions;
+        // 신뢰도 낮은(애널리스트 3인 미만) 항목은 제외 — 노이즈 차단
+        if ((o.upsidePct != null || o.rating != null) && (o.nOpinions == null || o.nOpinions >= 3)) { bySym[row.symbol] = o; okCount++; }
+      });
+    } catch (e) {}
+  }
+  if (okCount === 0) return cached;  // 전부 실패 → 기존 캐시 보존
+  const result = { bySym: bySym, ts: Date.now(), n: okCount };
+  try { await setState(DB, "analyst_consensus", result); } catch (e) {}
+  try { await log(DB, "INFO", null, "[ANALYST] 컨센서스 " + okCount + "종목 갱신(목표가·투자의견)"); } catch (e) {}
+  return result;
 }
 
 async function updateSectorNewsSentiment(DB, cfg, force) {
@@ -5986,16 +6104,29 @@ function taDetectPatterns(dailyData) {
 //   /api/earnings·/api/econ·/api/insider 가 채워둔 상태를 재사용.
 // ════════════════════════════════════════════════════════════════════════════
 async function buildEventRiskData(DB) {
-  const out = { earningsBySym: {}, econ: { us: { preHigh: null, shock: 0, shockTitle: "" }, kr: { preHigh: null, shock: 0, shockTitle: "" } }, insiderCount: {} };
+  const out = { earningsBySym: {}, earningsRecentBySym: {}, analystBySym: {}, econ: { us: { preHigh: null, shock: 0, shockTitle: "" }, kr: { preHigh: null, shock: 0, shockTitle: "" } }, insiderCount: {} };
   const now = Date.now();
   try {
-    // (1) 어닝스 — 심볼별 다가오는 발표 시각
+    // (0) [V9.9] 애널리스트 컨센서스 — 별도 크론이 채운 캐시 로드(목표가 상승여력·투자의견). 추가 fetch 0.
+    const ac = await getState(DB, "analyst_consensus", null);
+    if (ac && ac.bySym) out.analystBySym = ac.bySym;
+  } catch (e) {}
+  try {
+    // (1) 어닝스 — 심볼별 다가오는 발표 시각(회피용) + 최근 과거 발표(PEAD 추종용) 분리 추적
     const ec = await getState(DB, "earnings_calendar", null);
     if (ec && ec.items) {
       ec.items.forEach(function(it){
         if (!it || !it.symbol || !it.ts) return;
-        const cur = out.earningsBySym[it.symbol];
-        if (cur == null || Math.abs(it.ts - now) < Math.abs(cur - now)) out.earningsBySym[it.symbol] = it.ts;
+        // 다가오는 발표(미래) — 가장 가까운 것
+        if (it.ts >= now) {
+          const cur = out.earningsBySym[it.symbol];
+          if (cur == null || it.ts < cur) out.earningsBySym[it.symbol] = it.ts;
+        }
+        // 최근 과거 발표(드리프트 윈도우 내) — 가장 최근 것
+        if (it.ts < now && (now - it.ts) <= 14 * 86400000) {
+          const cp = out.earningsRecentBySym[it.symbol];
+          if (cp == null || it.ts > cp) out.earningsRecentBySym[it.symbol] = it.ts;
+        }
       });
     }
   } catch (e) {}
@@ -6981,6 +7112,8 @@ function evaluateTrendEntry(price, dayPct, dailyData, cfg, regime, market) {
   let longOk;
   if (ma200 != null) {
     longOk = ma50 > ma200;
+    // [V9.9] 200일선 위 매수 필수 — 200DMA 아래 종목은 추세훼손 구간, 풀백 반등 승률 급락(실증)
+    if (r.requireAbove200 !== false && !(price > ma200)) return null;
   } else {
     const ma50Prev = getMA(closes.slice(0, -3), maMid);
     longOk = (ma50Prev != null && ma50 > ma50Prev);
@@ -6988,9 +7121,19 @@ function evaluateTrendEntry(price, dayPct, dailyData, cfg, regime, market) {
   if (!(price > ma50 && longOk)) return null;
   // 게이트 2: 중기 추세 — MA20 > MA50
   if (!(ma20 > ma50)) return null;
+  // [V9.9] 게이트 2b: MA20 상승 기울기 — 추세 진행중일 때만(천장 형성·하향 롤오버 구간 회피 → 승률↑)
+  if (r.requireMa20Rising !== false && closes.length >= (r.maShort || 20) + 4) {
+    const ma20Prev = getMA(closes.slice(0, -3), r.maShort || 20);
+    if (ma20Prev != null && !(ma20 > ma20Prev)) return null;
+  }
   // 게이트 3: 변동성 정상 — ATR%가 과도하면 진입 금지(가짜돌파·슬리피지 회피)
   const atrPct = (atr != null && price > 0) ? (atr / price * 100) : null;
   if (atrPct != null && atrPct > (r.maxAtrPct || 6)) return null;
+  // [V9.9] 게이트 3b: ADX 추세강도 — 비추세 횡보장에서 풀백·돌파는 가짜신호 양산(승률 핵심 필터).
+  if (r.adxTrendMin && r.adxTrendMin > 0 && highs && lows && closes.length >= 30) {
+    const _adxT = getADX(highs, lows, closes, 14);
+    if (_adxT != null && _adxT < r.adxTrendMin) return null;
+  }
   // 게이트 4: 시장 레짐 — BEAR + 지수 급락이면 신규 진입 중단 (백테스트는 regime 미지정→통과)
   //   [패닉 헤지] 인버스 ETF는 면제 — 시장이 하락(BEAR)이면 인버스는 상승추세라 진입해야 수익.
   const _isInv = dailyData.symbol && INVERSE_ETF.has(dailyData.symbol);
@@ -7028,9 +7171,19 @@ function evaluateTrendEntry(price, dayPct, dailyData, cfg, regime, market) {
   // 트리거 A: 추세 풀백 반등 — MA20 ±N% 이내 + 당일 상승 + RSI 밴드
   const ma20Gap = ((price - ma20) / ma20) * 100;
   const pbBand   = isEtf ? 5  : (r.pullbackBandPct || 4);
-  const pbRsiMin = isEtf ? 30 : (r.rsiPullbackMin || 37);
+  let   pbRsiMin = isEtf ? 30 : (r.rsiPullbackMin || 37);
   const pbRsiMax = isEtf ? 72 : (r.rsiPullbackMax || 68);
-  if (Math.abs(ma20Gap) <= pbBand && isGreen && rsi >= pbRsiMin && rsi <= pbRsiMax) {
+  // [V9.9] 약세/중립 레짐에서는 풀백 RSI 하한 상향 — 약한 반등(저품질) 배제로 승률↑
+  if (!isEtf && regime && (regime.regime === "BEAR" || regime.regime === "NEUTRAL") && r.cautionPbRsiMin) {
+    pbRsiMin = Math.max(pbRsiMin, r.cautionPbRsiMin);
+  }
+  // [V9.9] RSI turn-up — 모멘텀이 실제로 위로 꺾일 때만 진입(떨어지는 칼 회피)
+  let rsiTurnUp = true;
+  if (!isEtf && r.pullbackRsiTurnUp !== false && closes.length >= (cfg.rsiPeriod || 14) + 2) {
+    const rsiPrev = getRSI(closes.slice(0, -1), cfg.rsiPeriod || 14);
+    rsiTurnUp = (rsiPrev == null) || (rsi >= rsiPrev);
+  }
+  if (Math.abs(ma20Gap) <= pbBand && isGreen && rsiTurnUp && rsi >= pbRsiMin && rsi <= pbRsiMax) {
     return { name: "TR_PULLBACK", weight: 1.0, type: "TREND", confidence: confidence,
       detail: "MA20 " + ma20Gap.toFixed(1) + "% RSI " + rsi.toFixed(0) + (atrPct != null ? " ATR" + atrPct.toFixed(1) + "%" : "") + confStr + (isEtf ? " ETF" : ""),
       members: ["TR_PULLBACK"] };
@@ -7132,6 +7285,86 @@ function evaluateTrendEntry(price, dayPct, dailyData, cfg, regime, market) {
 
 // === [재작성] 통합 진입 평가기 — 단일 trend 전략만 평가 ===
 //   라이브(runTradingCycle)와 백테스트(backtestSymbol)가 공통 호출. 기존 반환 형식 유지.
+// [V9.9 PEAD] 실적 반응 분류 — 추정치 데이터 없이 "시장 반응"을 서프라이즈 프록시로 사용.
+//   최근 lookbackBars 중 거래량 최대봉을 실적반응봉으로 추정(어닝일=구간 내 최대 거래량 스파이크).
+//   반환: { verdict:'beat'|'miss'|'neutral', reactPct, volRatio, clv, driftPct, barsAgo } 또는 null.
+//   추가 fetch 0 — 일봉 OHLCV만 사용.
+// [V9.9] 마이크로팩터 — 기존 일봉 OHLCV에서 직교 팩터 산출. 추가 fetch 0.
+//   반환 { rangePos, advUsd, obvSlope } (산출 불가 항목은 null). 사이즈 가중에만 사용.
+function computeMicroFactors(dailyData, cfg, market) {
+  const mf = (cfg && cfg.microFactors) || {};
+  const c = dailyData.closes, h = dailyData.highs, l = dailyData.lows, v = dailyData.volumes;
+  const n = c ? c.length : 0;
+  if (n < 25) return null;
+  let rangePos = null, advUsd = null, obvSlope = null;
+  // (1) 52주 레인지 위치
+  if (mf.rangeEnabled !== false) {
+    const look = Math.min(mf.rangeLookback || 252, n);
+    let hi = -Infinity, lo = Infinity;
+    for (let i = n - look; i < n; i++) {
+      const hh = (h && h[i] != null) ? h[i] : c[i];
+      const ll = (l && l[i] != null) ? l[i] : c[i];
+      if (hh > hi) hi = hh; if (ll < lo) lo = ll;
+    }
+    if (hi > lo) rangePos = (c[n - 1] - lo) / (hi - lo);
+  }
+  // (2) 20일 평균 거래대금(거래대금 = 종가×거래량)
+  if (mf.liqEnabled !== false && v && v.length === n) {
+    let sum = 0, cnt = 0;
+    for (let i = Math.max(0, n - 20); i < n; i++) { sum += c[i] * (v[i] || 0); cnt++; }
+    if (cnt > 0) advUsd = sum / cnt;
+  }
+  // (3) OBV 기울기 — 최근 obvLen일 OBV 선형추세 부호
+  if (mf.obvEnabled !== false && v && v.length === n) {
+    const len = Math.min(mf.obvLen || 20, n - 1);
+    let obv = 0; const series = [];
+    for (let i = n - len; i < n; i++) {
+      const dir = c[i] > c[i - 1] ? 1 : (c[i] < c[i - 1] ? -1 : 0);
+      obv += dir * (v[i] || 0);
+      series.push(obv);
+    }
+    // 단순 기울기: 후반 평균 − 전반 평균
+    if (series.length >= 4) {
+      const half = Math.floor(series.length / 2);
+      let a = 0, b = 0;
+      for (let i = 0; i < half; i++) a += series[i];
+      for (let i = half; i < series.length; i++) b += series[i];
+      obvSlope = (b / (series.length - half)) - (a / half);
+    }
+  }
+  return { rangePos: rangePos, advUsd: advUsd, obvSlope: obvSlope };
+}
+
+function classifyEarningsReaction(dailyData, cfg) {
+  const pr = (cfg && cfg.peadRules) || {};
+  if (pr.enabled === false) return null;
+  const c = dailyData.closes, o = dailyData.opens, h = dailyData.highs, l = dailyData.lows, v = dailyData.volumes;
+  const n = c ? c.length : 0;
+  if (!c || !o || !h || !l || !v || n < 25 || o.length !== n || v.length !== n) return null;
+  const look = Math.min(pr.lookbackBars || 7, n - 22);
+  if (look < 1) return null;
+  // 20일 평균 거래량(반응봉 직전 구간) 및 최근 look봉 중 거래량 최대봉 탐색
+  let maxVol = 0, ix = -1;
+  for (let i = n - look; i < n; i++) { if (v[i] > maxVol) { maxVol = v[i]; ix = i; } }
+  if (ix < 1) return null;
+  let avg = 0, cnt = 0;
+  for (let i = Math.max(0, ix - 21); i < ix - 1; i++) { avg += v[i]; cnt++; }
+  avg = cnt > 0 ? avg / cnt : 0;
+  const volRatio = avg > 0 ? maxVol / avg : 0;
+  if (volRatio < (pr.volSpikeMin || 1.8)) return null;   // 진짜 이벤트(스파이크) 아님
+  const prevC = c[ix - 1];
+  if (!(prevC > 0)) return null;
+  const reactPct = ((c[ix] - prevC) / prevC) * 100;       // 반응봉 종가 변화(서프라이즈 방향)
+  const hh = h[ix], ll = l[ix];
+  const clv = hh > ll ? (c[ix] - ll) / (hh - ll) : 0.5;   // 종가위치(마감 강도)
+  const driftPct = ((c[n - 1] - c[ix]) / c[ix]) * 100;    // 반응봉 이후 누적 드리프트
+  const barsAgo = (n - 1) - ix;
+  let verdict = "neutral";
+  if (reactPct >= (pr.beatMovePct || 3.0) && clv >= (pr.beatClvMin || 0.55)) verdict = "beat";
+  else if (reactPct <= (pr.missMovePct || -3.0)) verdict = "miss";
+  return { verdict: verdict, reactPct: reactPct, volRatio: volRatio, clv: clv, driftPct: driftPct, barsAgo: barsAgo };
+}
+
 function evaluateAllStrategies(price, dayPct, dailyData, cfg, signalStats, regime, market, intraday, visionPreds, secData, eventData) {
   if (cfg.strategies && cfg.strategies.trend === false) return [];
   let sig = evaluateTrendEntry(price, dayPct, dailyData, cfg, regime, market);
@@ -7291,8 +7524,17 @@ function evaluateAllStrategies(price, dayPct, dailyData, cfg, signalStats, regim
   // [V84] 기술적 분석 강조 — TA 팩터(알파·ADX·패턴)의 배수 편차를 emphasis로 증폭해 사이징 비중↑.
   const _emph = (typeof cfg.technicalEmphasis === "number" && cfg.technicalEmphasis > 0) ? cfg.technicalEmphasis : 1.0;
   function _te(scale) { return 1 + (scale - 1) * _emph; }   // emphasis 적용 스케일
-  // 기술적 팩터의 종합 우호도(0~1) — Vision 앙상블 게이트에 사용
+  // 기술적 팩터의 종합 우호도(0~1)
   let _taFavor = 0.5;
+
+  // [V9.9 융합] 약한 방향성 알파 팩터들을 곱셈으로 쌓지 않고 "부호점수(−1~+1) 가중평균 1개"로 융합한다.
+  //   이유: 독립 팩터를 곱하면 분산이 누적(노이즈↑)되지만, 평균은 분산을 줄이고 의견 불일치 시 상쇄된다(노이즈↓).
+  //   리스크 게이트(어닝임박·경제지표·갭·유동성·ETF·SEC·ADX)는 성격이 달라 별도 곱셈으로 유지.
+  const _fuse = [];
+  function _pushF(name, w, s) {
+    if (!(w > 0) || typeof s !== "number" || !isFinite(s)) return;
+    _fuse.push({ n: name, w: w, s: Math.max(-1, Math.min(1, s)) });
+  }
 
   // [다중 팩터 알파] 모멘텀+RS+거래량 품질로 사이즈 차등 — 강한 종목 더 크게, 약한 종목 작게.
   //   추세정렬 게이트를 통과한 종목 중에서도 "진짜 강한 추세"를 가려내 자본 효율↑ (추가 fetch 0).
@@ -7300,16 +7542,9 @@ function evaluateAllStrategies(price, dayPct, dailyData, cfg, signalStats, regim
     const aq = computeAlphaQuality(dailyData, regime);
     if (aq) {
       _taFavor = aq.score;
-      let qBoost = 1.0;
-      if (aq.score >= 0.78)      qBoost = 1.18;  // 고품질: 강모멘텀+RS우위+매집+MACD
-      else if (aq.score >= 0.62) qBoost = 1.09;
-      else if (aq.score <= 0.30) qBoost = 0.76;  // 저품질: 약세+분산 → 보수화
-      else if (aq.score <= 0.42) qBoost = 0.89;
-      if (qBoost !== 1.0) {
-        const eff = _te(qBoost);
-        sig.visionBoost = (sig.visionBoost || 1.0) * eff;
-        sig.alphaNote = "ALPHA " + aq.score.toFixed(2) + "×" + eff.toFixed(2) + (aq.factors.length ? " " + aq.factors.join(",") : "");
-      }
+      // 융합: 알파품질(0~1) → 부호점수(−1~+1), 가중 1.2(핵심 팩터)
+      _pushF("ALPHA", 1.2, (aq.score - 0.5) * 2);
+      sig.alphaNote = "ALPHA " + aq.score.toFixed(2) + (aq.factors.length ? " " + aq.factors.join(",") : "");
     }
   }
 
@@ -7343,19 +7578,11 @@ function evaluateAllStrategies(price, dayPct, dailyData, cfg, signalStats, regim
   {
     const ta = taDetectPatterns(dailyData);
     if (ta && ta.patterns.length) {
-      let tScale = 1.0;
-      if (ta.score >= 5)       tScale = 1.18;
-      else if (ta.score >= 3)  tScale = 1.10;
-      else if (ta.score <= -5) tScale = 0.62;
-      else if (ta.score <= -3) tScale = 0.80;
-      // [V84] 차트패턴 점수도 기술적 우호도에 반영
+      // 융합: 차트/캔들 패턴 점수(±6 근방) → 부호점수, 가중 1.0
+      _pushF("TA", 1.0, ta.score / 5);
       if (ta.score >= 3) _taFavor = Math.min(1, _taFavor + 0.08);
       else if (ta.score <= -3) _taFavor = Math.max(0, _taFavor - 0.12);
-      if (tScale !== 1.0) {
-        const eff = _te(tScale);
-        sig.visionBoost = (sig.visionBoost || 1.0) * eff;
-        sig.taNote = "TA " + (ta.score >= 0 ? "+" : "") + ta.score + (ta.top ? " " + ta.top.name : "") + "×" + eff.toFixed(2);
-      }
+      sig.taNote = "TA " + (ta.score >= 0 ? "+" : "") + ta.score + (ta.top ? " " + ta.top.name : "");
     }
   }
 
@@ -7370,6 +7597,26 @@ function evaluateAllStrategies(price, dayPct, dailyData, cfg, signalStats, regim
         const _es = _dDays <= 1 ? 0.5 : 0.7;
         sig.visionBoost = (sig.visionBoost || 1.0) * _es;
         sig.earnNote = "EARNINGS D-" + Math.max(0, _dDays).toFixed(1) + "×" + _es;
+      }
+    }
+    // (1b) [V9.9 PEAD] 실적 발표 직후(드리프트 윈도우) — 반응 방향으로 사이즈 차등.
+    //   beat: 추세 진입 부스트(서프라이즈 추종) / miss: 강축소(사실상 회피). 갭 추격 패널티는 면제(실적갭은 드리프트).
+    {
+      const _pr = cfg.peadRules || {};
+      const _recent = eventData.earningsRecentBySym && eventData.earningsRecentBySym[_sym];
+      if (_pr.enabled !== false && (!_pr.requireCalendar || _recent)) {
+        const _dd = _recent ? (Date.now() - _recent) / 86400000 : 999;
+        if (_dd <= (_pr.driftDays || 10)) {
+          const _er = classifyEarningsReaction(dailyData, cfg);
+          if (_er && _er.verdict === "beat") {
+            _pushF("PEAD", 1.4, 1);          // 융합: 긍정 실적반응 — 강가중 +1
+            sig.peadNote = "PEAD-BEAT react+" + _er.reactPct.toFixed(1) + "% (gap면제)";
+            sig.peadGapExempt = true;
+          } else if (_er && _er.verdict === "miss") {
+            _pushF("PEAD", 1.4, -1);         // 융합: 부정 실적반응 — 강가중 −1
+            sig.peadNote = "PEAD-MISS react" + _er.reactPct.toFixed(1) + "%";
+          }
+        }
       }
     }
     // (2) 경제지표 — 향후 24h 고중요 발표 예정이면 시장 전체 보수화(이벤트 직전 포지션 축소).
@@ -7402,7 +7649,7 @@ function evaluateAllStrategies(price, dayPct, dailyData, cfg, signalStats, regim
     const _c = dailyData.closes, _o = dailyData.opens, _h = dailyData.highs, _l = dailyData.lows;
     const _n = _c ? _c.length : 0;
     // (1) 갭업 돌파 추격 축소 — 당일 시가가 전일 종가 대비 과대 갭업이면 돌파류 사이즈 축소(갭은 되돌림 확률↑)
-    if (r52.gapFilterEnabled !== false && _o && _o.length === _n && _n >= 2 &&
+    if (r52.gapFilterEnabled !== false && !sig.peadGapExempt && _o && _o.length === _n && _n >= 2 &&
         (sig.name === "TR_BREAKOUT" || sig.name === "TR_SQUEEZE")) {
       const gapPct = ((_o[_n - 1] - _c[_n - 2]) / _c[_n - 2]) * 100;
       if (gapPct > (r52.gapMaxPct != null ? r52.gapMaxPct : 3.0)) {
@@ -7416,23 +7663,14 @@ function evaluateAllStrategies(price, dayPct, dailyData, cfg, signalStats, regim
       const hh = _h[_n - 1], ll = _l[_n - 1], cc = _c[_n - 1];
       if (hh > ll) {
         const clv = (cc - ll) / (hh - ll);
-        let cScale = 1.0;
-        if (clv >= (r52.clvStrongMin != null ? r52.clvStrongMin : 0.7)) cScale = (r52.clvStrongScale != null ? r52.clvStrongScale : 1.06);
-        else if (clv <= (r52.clvWeakMax != null ? r52.clvWeakMax : 0.35)) cScale = (r52.clvWeakScale != null ? r52.clvWeakScale : 0.85);
-        if (cScale !== 1.0) {
-          sig.visionBoost = (sig.visionBoost || 1.0) * cScale;
-          sig.clvNote = "CLV " + clv.toFixed(2) + "×" + cScale.toFixed(2);
-        }
+        _pushF("CLV", 0.6, (clv - 0.5) * 2);   // 융합: 종가위치(0~1) → 부호점수, 가중 0.6
+        sig.clvNote = "CLV " + clv.toFixed(2);
       }
     }
     // (3) 주봉 정합 — 주봉 종가 > 주봉 MA10 미정합이면 축소 (상위 시간프레임 미확인 추세는 작게 베팅)
     if (r52.weeklyAlignEnabled !== false) {
       const wOk = weeklyAboveMA(_c, 10);
-      if (wOk === false) {
-        const ws = r52.weeklyMisalignScale != null ? r52.weeklyMisalignScale : 0.8;
-        sig.visionBoost = (sig.visionBoost || 1.0) * ws;
-        sig.weeklyNote = "WK✗×" + ws;
-      }
+      if (wOk === false) { _pushF("WK", 0.5, -0.7); sig.weeklyNote = "WK✗"; }   // 융합: 주봉 미정합 → 음(−)
     }
   }
 
@@ -7475,6 +7713,86 @@ function evaluateAllStrategies(price, dayPct, dailyData, cfg, signalStats, regim
         sig.etfNote = "ETF:" + eNote + "×" + eScale.toFixed(2) + (rs != null ? " RS" + rs.toFixed(1) : "");
       }
     }
+  }
+
+  // [V9.9] 횡단면 상대강도 틸트 — 기존 추세 신호 전체에 적용. 지수 대비 20일 초과수익으로 주도주/소외주 가중.
+  //   cross-sectional momentum(견고한 팩터)을 사이즈에만 반영(차단 아님). 추가 fetch 0(일봉+regime 재사용).
+  {
+    const _rt = getTrendRules(cfg, market);
+    if (_rt.rsTiltEnabled !== false && regime && typeof regime.idxReturn20 === "number" &&
+        dailyData.closes && dailyData.closes.length >= 22) {
+      const _r20 = getNDayReturn(dailyData.closes, 20);
+      if (_r20 != null) {
+        const _rs = _r20 - regime.idxReturn20;
+        const _lead = _rt.rsTiltLeadPct != null ? _rt.rsTiltLeadPct : 8;
+        const _lag = _rt.rsTiltLagPct != null ? _rt.rsTiltLagPct : -5;
+        // 융합: 지수 대비 초과수익을 ±1로 정규화(주도주 +, 소외주 −), 가중 1.0
+        const _s = _rs >= 0 ? _rs / Math.max(1, _lead) : _rs / Math.max(1, Math.abs(_lag));
+        _pushF("RS", 1.0, _s);
+        sig.rsTiltNote = "RS" + (_rs >= 0 ? "+" : "") + _rs.toFixed(1) + "%p";
+      }
+    }
+  }
+
+  // [V9.9] 마이크로팩터 — 52주 위치·유동성·OBV(매집) 사이즈 가중 + 저유동 하드차단. 기존 신호에만 적용, fetch 0.
+  {
+    const _mf = cfg.microFactors || {};
+    if (_mf.enabled !== false) {
+      const _m = computeMicroFactors(dailyData, cfg, market);
+      if (_m) {
+        // 유동성 하한 — 너무 얇으면 차단(체결비용), 약하면 축소
+        if (_mf.liqEnabled !== false && _m.advUsd != null) {
+          const _floor = market === "kr" ? (_mf.liqMinKrw || 2e9) : (_mf.liqMinUsd || 3e6);
+          if (_m.advUsd < _floor * (_mf.liqHardMinFrac != null ? _mf.liqHardMinFrac : 0.25)) {
+            return [];  // 극저유동 → 진입 차단(슬리피지·갭 리스크 과다)
+          }
+          if (_m.advUsd < _floor) {
+            sig.visionBoost = (sig.visionBoost || 1.0) * (_mf.liqThinScale != null ? _mf.liqThinScale : 0.7);
+            sig.liqNote = "LIQ thin×" + (_mf.liqThinScale || 0.7);
+          }
+        }
+        // 52주 레인지 위치 — 융합: (위치−0.5)×2 → 부호점수, 가중 0.8
+        if (_mf.rangeEnabled !== false && _m.rangePos != null) {
+          _pushF("RANGE", 0.8, (_m.rangePos - 0.5) * 2);
+          sig.rangeNote = "52wPos" + (_m.rangePos * 100).toFixed(0) + "%";
+        }
+        // OBV 매집/분산 — 융합: 부호, 가중 0.7
+        if (_mf.obvEnabled !== false && _m.obvSlope != null) {
+          _pushF("OBV", 0.7, _m.obvSlope > 0 ? 0.6 : (_m.obvSlope < 0 ? -0.6 : 0));
+          sig.obvNote = "OBV" + (_m.obvSlope > 0 ? "↑" : "↓");
+        }
+      }
+    }
+  }
+
+  // [V9.9 신규데이터] 애널리스트 컨센서스 — 목표가 상승여력 + 투자의견(1~5, 낮을수록 매수).
+  //   가격에서 독립한 펀더멘털 정보(직교). eventData.analystBySym에 캐시(추가 fetch 0, 별도 크론이 채움).
+  //   없으면 융합 평균에서 자연히 제외 → 노이즈 0.
+  if (eventData && eventData.analystBySym && dailyData.symbol) {
+    const _a = eventData.analystBySym[dailyData.symbol];
+    if (_a) {
+      let _as = 0, _has = false;
+      if (typeof _a.upsidePct === "number") { _as += Math.max(-1, Math.min(1, _a.upsidePct / 25)); _has = true; }   // ±25% 여력 → ±1
+      if (typeof _a.rating === "number")    { _as += Math.max(-1, Math.min(1, (3 - _a.rating) / 1.5)); _has = true; } // 1.5(강매수)→+1, 4.5(매도)→−1
+      if (_has) {
+        _pushF("ANALYST", 0.9, _as / (typeof _a.upsidePct === "number" && typeof _a.rating === "number" ? 2 : 1));
+        sig.analystNote = "ANALYST" + (typeof _a.upsidePct === "number" ? " up" + _a.upsidePct.toFixed(0) + "%" : "") + (typeof _a.rating === "number" ? " r" + _a.rating.toFixed(1) : "");
+      }
+    }
+  }
+
+  // [V9.9 융합 적용] 위에서 모은 약한 방향성 팩터들을 "가중평균 1개"로 합쳐 사이즈에 한 번만 반영.
+  //   composite ∈ [−1,1] = Σ(w·s)/Σw. 곱셈 누적이 아니라 평균이라 의견 불일치 시 상쇄(노이즈↓).
+  //   기술강조(emphasis)는 gain에 흡수. 단일 mult = clamp(exp(gain·composite), 0.55, 1.6).
+  if (_fuse.length) {
+    let _sw = 0, _ws = 0;
+    for (const f of _fuse) { _sw += f.w; _ws += f.w * f.s; }
+    const _composite = _sw > 0 ? _ws / _sw : 0;
+    const _gain = 0.42 * _emph;                          // emphasis 흡수
+    const _mult = Math.max(0.55, Math.min(1.6, Math.exp(_gain * _composite)));
+    sig.visionBoost = (sig.visionBoost || 1.0) * _mult;
+    sig.fuseNote = "FUSE n" + _fuse.length + " c" + (_composite >= 0 ? "+" : "") + _composite.toFixed(2) + "×" + _mult.toFixed(2)
+      + " [" + _fuse.map(function(f){ return f.n + (f.s >= 0 ? "+" : "") + f.s.toFixed(1); }).join(" ") + "]";
   }
 
   // [안전장치] 여러 부스트(vision×sec×alpha×etf) 누적이 극단값이 되지 않게 상하한 clamp.
@@ -10142,6 +10460,8 @@ async function runTradingCycle(env) {
     let sectorSentiment = null;
     if (marketsToTrade.length > 0) {
       try { sectorSentiment = await updateSectorNewsSentiment(DB, cfg); } catch (e) {}
+      // [V9.9] 애널리스트 컨센서스 — 6h 캐시, 예산 가드 내장. US 종목 목표가·투자의견(가격독립 정보).
+      try { await updateAnalystConsensus(DB, cfg); } catch (e) {}
     }
 
     for (const market of marketsForQuotes) {
@@ -10359,7 +10679,30 @@ async function runTradingCycle(env) {
         }
       } catch (e) {}
 
-      // [V10] === PREFETCH 단계 (대규모 종목 — 가격 배치 + 일봉 라운드로빈) ===
+      // [V9.8] 변동성 레짐 게이트 — 추세 없는 고변동장(VKOSPI 91·이란 사태·반도체 셀오프)에서
+      //   VWAP/눌림목 단타는 동전던지기(검증: SC_VWAP 24%·SC_PULLBACK 35% 승률, 합산 -131만).
+      //   risk_off/caution 또는 VIX 급등 시 그 시장 scalp 신규진입을 끈다(손절폭↔변동성 미스매치 회피).
+      try {
+        const _vr = mcfg.scalpRules || DEFAULT_CFG.scalpRules || {};
+        if (!scalpDailyBlocked && market !== "cm") {
+          const _vix = (crashGate && crashGate.vixValue) || 0;
+          const _regime = (mktCtx && mktCtx.regime) || null;
+          const _riskOff = _vr.skipWhenRiskOff && (crashGate.deRisk || _regime === "risk_off" || _regime === "caution");
+          const _vixHot = _vr.haltVixAbove > 0 && _vix > _vr.haltVixAbove;
+          if (_riskOff || _vixHot) {
+            scalpDailyBlocked = true;
+            try {
+              const _vrKey = "scalp_vol_halt_" + market;
+              const _today = new Date().toISOString().slice(0, 10);
+              if ((await getState(DB, _vrKey, null)) !== _today) {
+                await log(DB, "WARN", null, "[V9.8] " + market.toUpperCase() + " SCALP 변동성 차단 (regime=" + _regime + " vix=" + _vix.toFixed(1) + ") — 오늘 단타 신규진입 중단");
+                await setState(DB, _vrKey, _today);
+              }
+            } catch (e) {}
+          }
+        }
+      } catch (e) {}
+
       //   종목이 수백 개로 늘어 기존 "전 종목 매분 fetchIntraday" 방식은
       //   Cloudflare subrequest 한도(50/invocation)를 초과하므로 아래로 분리:
       //
@@ -10831,7 +11174,9 @@ async function runTradingCycle(env) {
               if (_trusted && _va.enabled && _vp && _vp.pred === "down") {
                 const _vc = _vp.conf;
                 const _pnl = held.avg > 0 ? ((price - held.avg) / held.avg) * 100 : 0;
-                if (_vc >= 0.90) {
+                if (_vc >= 0.90 && _pnl > (_va.minPnlForExit != null ? _va.minPnlForExit : -2.0)) {
+                  // [V9.8] 손실 -2% 초과 구간에서만 즉시청산. 그 이하면 패닉 저점 투매가 되므로(검증: 033780 VISION_EXIT -50만)
+                  //   하드 손절(ATR/스탑가)에 위임 → 반등 시 회복 여지 확보.
                   await executeSell(DB, market, symbol, held, held.qty, price, "VISION_EXIT " + Math.round(_vc * 100) + "%", mcfg, cash);
                   sold++;
                   const _sk = Object.keys(positions).some(k => positions[k].symbol === symbol && k !== posKey);
@@ -10992,6 +11337,15 @@ async function runTradingCycle(env) {
               }
               const _ic2 = eventData.insiderCount && eventData.insiderCount[symbol];
               if (_ic2 >= 2 && market === "us") { ctxScore -= 2; ctxWhy.push("INSIDER F4x" + _ic2); }
+              // [V9.9 PEAD] 실적 반응 — beat는 진입 지지(+2), miss는 차단 가중(-3). 어닝 회피만 하지 않고 방향 반영.
+              const _prc = mcfg.peadRules || {};
+              const _recC = eventData.earningsRecentBySym && eventData.earningsRecentBySym[symbol];
+              if (_prc.enabled !== false && (!_prc.requireCalendar || _recC) &&
+                  (!_recC || (Date.now() - _recC) / 86400000 <= (_prc.driftDays || 10))) {
+                const _erc = classifyEarningsReaction(daily, mcfg);
+                if (_erc && _erc.verdict === "beat") { ctxScore += 2; ctxWhy.push("PEAD-BEAT+" + _erc.reactPct.toFixed(0) + "%"); }
+                else if (_erc && _erc.verdict === "miss") { ctxScore -= 3; ctxWhy.push("PEAD-MISS" + _erc.reactPct.toFixed(0) + "%"); }
+              }
             }
             const _ctxStr = ctxWhy.length ? (" [" + ctxWhy.join(" ") + "]") : "";
             if (ctxScore <= -4) {
@@ -12839,14 +13193,15 @@ async function handleRequest(request, env) {
         // 시장별, 종목별 정렬
         positions.sort((a, b) => a.market.localeCompare(b.market) || a.symbol.localeCompare(b.symbol));
 
-        // CSV 생성
-        let csv = "시장,종목,전략,수량,평단가,매수액,최종매수시각\n";
+        // CSV 생성 — [V9.9] 종목 컬럼을 회사명으로 표기(티커는 별도 컬럼 유지)
+        let csv = "시장,종목,티커,전략,수량,평단가,매수액,최종매수시각\n";
         positions.forEach(p => {
           const qty = p.qty || 0;
           const entryPx = p.entryPrice || 0;
           const amount = qty * entryPx;
           const buyTs = p.opened_ts ? new Date(p.opened_ts).toLocaleString('ko-KR') : "";
-          csv += [p.market, p.symbol, p.strategy, qty, entryPx, amount.toFixed(2), buyTs]
+          const nm = NAME_MAP[p.symbol] || String(p.symbol).replace(/\.(KS|KQ)$/, "");
+          csv += [p.market, nm, p.symbol, p.strategy, qty, entryPx, amount.toFixed(2), buyTs]
             .map(x => '"' + String(x).replace(/"/g, '""') + '"').join(",") + "\n";
         });
         return new Response("\uFEFF" + csv, {
