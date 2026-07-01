@@ -6258,9 +6258,45 @@ function stmtDeletePosition(DB, symbol, strategy, market) {
   }
   return DB.prepare("DELETE FROM positions WHERE symbol = ? AND strategy = ?").bind(symbol, strategy);
 }
+// [중복실행 방지 CAS] 매도 시 포지션 쓰기를 "읽은 시점의 수량(expectedQty)"에 조건부로 건다.
+//   겹치는 cron invocation 또는 runTradingCycle+runFastWatch 이중 실행이 같은 포지션을
+//   각자 stale 스냅샷으로 팔면, DB에서 먼저 반영된 쪽만 성공하고 나중 것은 0행 매칭 →
+//   호출부가 이를 감지해 유령 거래기록·유령 현금(원장 파생)을 원천 차단한다.
+//   plain UPDATE(부분청산)/guarded DELETE(전량청산) — 삭제된 행을 되살리는 upsert 금지.
+function stmtUpdatePositionGuarded(DB, market, symbol, strategy, pos, expectedQty) {
+  return DB.prepare(
+    "UPDATE positions SET qty=?, avg_price=?, meta=? WHERE symbol=? AND strategy=? AND market=? AND qty=?"
+  ).bind(pos.qty, pos.avg, JSON.stringify(pos.meta || {}), symbol, strategy, market, expectedQty);
+}
+function stmtDeletePositionGuarded(DB, symbol, strategy, market, expectedQty) {
+  return DB.prepare("DELETE FROM positions WHERE symbol = ? AND strategy = ? AND market = ? AND qty = ?")
+    .bind(symbol, strategy, market, expectedQty);
+}
+// D1 결과에서 실제 변경된 행 수를 안전하게 추출(드라이버별 필드 편차 방어).
+function _rowsChanged(res) {
+  try {
+    if (res && res.meta && typeof res.meta.changes === "number") return res.meta.changes;
+    if (res && res.meta && typeof res.meta.rows_written === "number") return res.meta.rows_written;
+    if (Array.isArray(res) && res[0] && res[0].meta && typeof res[0].meta.changes === "number") return res[0].meta.changes;
+  } catch (e) {}
+  return null;   // 알 수 없음 → 호출부는 보수적으로 진행(기존 동작)
+}
 function stmtRecordTrade(DB, t) {
   return DB.prepare("INSERT INTO trades (ts, market, symbol, side, qty, price, pnl, pnl_pct, reason) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)")
     .bind(t.ts, t.market, t.symbol, t.side, t.qty, t.price, t.pnl == null ? null : t.pnl, t.pnl_pct == null ? null : t.pnl_pct, t.reason);
+}
+
+// [중복실행 방지] 최근 windowMs 내 동일 (market, symbol, side, qty, price≈) 거래가 이미 있으면 true.
+//   매수는 ON CONFLICT 병합이라 CAS를 못 걸어, 겹치는 invocation의 중복 매수(현금 이중차감·
+//   수량 증발)를 원장 멱등성으로 차단한다. 정상 불타기는 가격이 달라 걸리지 않음(동일가+동일수량+2분내만 중복 판정).
+async function isDuplicateRecentTrade(DB, market, symbol, side, qty, price, windowMs) {
+  try {
+    const since = Date.now() - (windowMs || 120000);
+    const row = await DB.prepare(
+      "SELECT COUNT(*) AS n FROM trades WHERE market=? AND symbol=? AND side=? AND qty=? AND ABS(price-?)<0.0001 AND ts>=?"
+    ).bind(market, symbol, side, qty, price, since).first();
+    return !!(row && row.n > 0);
+  } catch (e) { return false; }   // 조회 실패 시 보수적으로 진행(기존 동작)
 }
 
 async function savePosition(DB, market, symbol, strategy, pos) {
@@ -6337,6 +6373,167 @@ async function computeAllCash(DB, cfg) {
     bdus: await computeCashFromTrades(DB, "bdus", cfg),
     bdkr: await computeCashFromTrades(DB, "bdkr", cfg)
   };
+}
+
+// ═══════════════════════════════════════════════════════════════════
+// [자가진단] 원장↔포지션↔현금 정합성 감사 — 유령거래(중복실행) 자동 탐지
+//   목적: "US 수익률 +8% 뻥튀기" 같은 회계 붕괴를 스스로 잡아낸다.
+//   방법(가격정보 불필요·순수 원장 재생):
+//    1) 시장별 심볼별로 trades를 시간순 재생 → 매도가 보유수량을 초과(oversell)하면
+//       그 SELL은 "유령"(중복실행 산물) → 유령 현금 유입의 직접 증거.
+//    2) 재생으로 얻은 net 포지션(qty·avg)을 positions 테이블과 대조 → drift 탐지.
+//    3) 근접 시각(±windowMs) 동일 (market,symbol,side,qty,price) 거래쌍 → 중복 의심.
+//   반환: { ok, markets:{...}, phantomSellIds:[...], duplicatePairs:[...], drift:[...] }
+async function runLedgerAudit(DB, cfg, opts) {
+  opts = opts || {};
+  const windowMs = opts.windowMs || 120000;
+  const markets = ["us", "kr", "cm", "bdus", "bdkr"];
+  const report = { ok: true, generatedAt: Date.now(), markets: {}, phantomSellIds: [], duplicatePairs: [], drift: [], stale: [] };
+
+  // 전체 trades 로드(오래된→최신). 규모가 커지면 시장별로 나눠도 되나 현재 규모(수천건)면 충분.
+  const allRows = (await DB.prepare("SELECT rowid AS rid, id, ts, market, symbol, side, qty, price, pnl FROM trades ORDER BY ts ASC, rowid ASC").all()).results || [];
+
+  for (const mkt of markets) {
+    const rows = allRows.filter(function(r){ return r.market === mkt; });
+    if (!rows.length) continue;
+    // (1)(2) 심볼별 재생
+    const book = {};   // sym -> { qty, cost }
+    const phantomHere = [];
+    for (const t of rows) {
+      const sym = t.symbol;
+      if (!book[sym]) book[sym] = { qty: 0, cost: 0 };
+      const b = book[sym];
+      const qty = Number(t.qty) || 0, price = Number(t.price) || 0;
+      if (t.side === "BUY") { b.cost += qty * price; b.qty += qty; }
+      else {
+        // 매도가 보유수량 초과 → 유령(중복실행)
+        if (qty > b.qty + 1e-6) {
+          phantomHere.push({ id: t.id, rid: t.rid, ts: t.ts, symbol: sym, side: "SELL", qty: qty, price: price, oversellBy: +(qty - b.qty).toFixed(4) });
+        }
+        const avg = b.qty > 0 ? b.cost / b.qty : price;
+        b.cost -= avg * Math.min(qty, b.qty);
+        b.qty -= qty;   // 초과분은 음수로 남겨 후속 재생에 반영(연쇄 오류 가시화)
+      }
+    }
+    // net 포지션(재생) vs positions 테이블
+    const posRows = (await DB.prepare("SELECT symbol, qty, avg_price FROM positions WHERE market = ?").bind(mkt).all()).results || [];
+    const posMap = {}; posRows.forEach(function(p){ posMap[p.symbol] = { qty: Number(p.qty)||0, avg: Number(p.avg_price)||0 }; });
+    const driftHere = [];
+    const syms = new Set([].concat(Object.keys(book), Object.keys(posMap)));
+    syms.forEach(function(sym){
+      const led = book[sym] || { qty: 0, cost: 0 };
+      const ledQty = Math.round(led.qty * 1e6) / 1e6;
+      const tbl = posMap[sym] || { qty: 0, avg: 0 };
+      if (Math.abs(ledQty - tbl.qty) > 0.0001) {
+        driftHere.push({ symbol: sym, ledgerQty: ledQty, tableQty: tbl.qty, diff: +(tbl.qty - ledQty).toFixed(4) });
+      }
+    });
+    report.markets[mkt] = {
+      trades: rows.length,
+      phantomSells: phantomHere.length,
+      drift: driftHere.length,
+      cashComputed: await computeCashFromTrades(DB, mkt, cfg)
+    };
+    phantomHere.forEach(function(p){ p.market = mkt; report.phantomSellIds.push(p); });
+    driftHere.forEach(function(d){ d.market = mkt; report.drift.push(d); });
+
+    // (3) 근접 중복쌍
+    for (let i = 0; i < rows.length; i++) {
+      for (let j = i + 1; j < rows.length; j++) {
+        if (rows[j].ts - rows[i].ts > windowMs) break;
+        const a = rows[i], b = rows[j];
+        if (a.symbol === b.symbol && a.side === b.side && Number(a.qty) === Number(b.qty) && Math.abs(Number(a.price) - Number(b.price)) < 0.01) {
+          report.duplicatePairs.push({ market: mkt, symbol: a.symbol, side: a.side, qty: Number(a.qty), keepId: a.id, dupId: b.id, gapMs: b.ts - a.ts });
+        }
+      }
+    }
+  }
+  report.ok = report.phantomSellIds.length === 0 && report.drift.length === 0;
+  return report;
+}
+
+// [자가치유] 중복실행으로 생긴 유령 거래를 시그니처 기반으로 제거하고, 영향받은 심볼의
+//   포지션을 원장 기준으로 강제 동기화 + 현금 체크포인트를 무효화한다.
+//   중복 시그니처 = 동일 (market, symbol, side, qty, price≈) 이면서 windowMs 내 연속 → 최초 1건만 남기고 나머지 삭제.
+//   정상 분할청산(TP1/TP2 등)은 가격이 달라 걸리지 않는다(오탐 방지). BUY 중복(현금 이중차감)도 함께 정리.
+async function dedupePhantomTrades(DB, cfg, opts) {
+  opts = opts || {};
+  const gapMs = opts.gapMs || 20000;       // 중복실행은 같은 사이클 내 수초 내 재발(관측 최대 8.6s)
+  const priceTol = opts.priceTol || 0.003; // 재실행 시 가격 미세차(관측 ≤0.02%) 허용, 정상 분할청산(≥0.3%)은 제외
+  const rows = (await DB.prepare("SELECT id, ts, market, symbol, side, qty, price FROM trades ORDER BY ts ASC, id ASC").all()).results || [];
+  const removeSet = new Set();
+  const affectedMarkets = new Set();
+  const affectedSyms = new Set();   // "market|symbol"
+  function markDup(t) { removeSet.add(t.id); affectedMarkets.add(t.market); affectedSyms.add(t.market + "|" + t.symbol); }
+
+  // Pass A — 근접 재실행 시그니처: 동일 (market,symbol,side,qty) + 가격 priceTol 이내 + 간격 gapMs 이내
+  const lastKept = {};   // key market|symbol|side|qty -> { ts, price }
+  for (const t of rows) {
+    const key = t.market + "|" + t.symbol + "|" + t.side + "|" + Number(t.qty);
+    const lk = lastKept[key];
+    const price = Number(t.price) || 0;
+    if (lk && (t.ts - lk.ts) <= gapMs && lk.price > 0 && Math.abs(price - lk.price) / lk.price <= priceTol) {
+      markDup(t);   // 원본(lk)은 유지, 이건 중복
+    } else {
+      lastKept[key] = { ts: t.ts, price: price };
+    }
+  }
+  // Pass B — oversell 안전망: Pass A 후에도 심볼 net이 음수로 가는 SELL은 유령 → 제거(정합성 보장)
+  {
+    const byMkt = {};
+    for (const t of rows) { if (removeSet.has(t.id)) continue; (byMkt[t.market] = byMkt[t.market] || []).push(t); }
+    for (const mkt of Object.keys(byMkt)) {
+      const book = {};
+      for (const t of byMkt[mkt]) {
+        const s = t.symbol; if (!(s in book)) book[s] = 0;
+        if (t.side === "BUY") book[s] += Number(t.qty) || 0;
+        else {
+          const q = Number(t.qty) || 0;
+          if (q > book[s] + 1e-6) markDup(t);   // 보유 초과 매도 → 유령(net 차감 안 함)
+          else book[s] -= q;
+        }
+      }
+    }
+  }
+  const removeIds = Array.from(removeSet);
+  for (const id of removeIds) {
+    try { await DB.prepare("DELETE FROM trades WHERE id = ?").bind(id).run(); } catch (e) {}
+  }
+  // 현금 체크포인트 무효화(삭제분 전체 재합산 유도)
+  for (const mkt of affectedMarkets) {
+    try { await DB.prepare("DELETE FROM state WHERE k = ?").bind("cash_ckpt:" + mkt).run(); } catch (e) {}
+  }
+  // 영향 심볼의 포지션을 "삭제 후 원장 재생 net"으로 강제 동기화(양/음 drift 모두 정정)
+  const rebuilt = [];
+  for (const ms of affectedSyms) {
+    const [mkt, symbol] = ms.split("|");
+    const trs = (await DB.prepare("SELECT side, qty, price FROM trades WHERE market=? AND symbol=? ORDER BY ts ASC, id ASC").bind(mkt, symbol).all()).results || [];
+    let qty = 0, cost = 0;
+    for (const t of trs) {
+      const q = Number(t.qty) || 0, p = Number(t.price) || 0;
+      if (t.side === "BUY") { cost += q * p; qty += q; }
+      else { const avg = qty > 0 ? cost / qty : p; cost -= avg * Math.min(q, qty); qty -= q; }
+    }
+    qty = Math.round(qty * 1e6) / 1e6;
+    // 기존 포지션 행 조회(전략 보존 위해)
+    const prow = await DB.prepare("SELECT strategy, avg_price, opened_ts, meta FROM positions WHERE symbol=? AND market=?").bind(symbol, mkt).first();
+    if (qty <= 0) {
+      if (prow) { try { await DB.prepare("DELETE FROM positions WHERE symbol=? AND market=?").bind(symbol, mkt).run(); rebuilt.push({ market: mkt, symbol: symbol, action: "delete" }); } catch (e) {} }
+    } else {
+      const avg = cost / qty;
+      const strat = (prow && prow.strategy) || "swing";
+      const openedTs = (prow && prow.opened_ts) || Date.now();
+      let meta = {}; try { meta = prow && prow.meta ? JSON.parse(prow.meta) : {}; } catch (e) {}
+      try {
+        await DB.prepare("INSERT INTO positions (symbol, strategy, market, qty, avg_price, opened_ts, meta) VALUES (?, ?, ?, ?, ?, ?, ?) ON CONFLICT(symbol, strategy, market) DO UPDATE SET qty=excluded.qty, avg_price=excluded.avg_price")
+          .bind(symbol, strat, mkt, qty, avg, openedTs, JSON.stringify(meta)).run();
+        rebuilt.push({ market: mkt, symbol: symbol, action: "sync", qty: qty, avg: +avg.toFixed(4) });
+      } catch (e) {}
+    }
+  }
+  const after = await runLedgerAudit(DB, cfg);
+  await log(DB, "WARN", null, "[AUDIT] dedupe: 유령거래 " + removeIds.length + "건 삭제, 시장 " + Array.from(affectedMarkets).join(",") + ", 포지션 동기화 " + rebuilt.length + "건");
+  return { ok: true, removedIds: removeIds, removedCount: removeIds.length, affectedMarkets: Array.from(affectedMarkets), rebuilt: rebuilt, auditAfter: after };
 }
 
 // ─────────────────────────────────────────────────────────────
@@ -8310,6 +8507,11 @@ async function executeBuy(DB, market, symbol, strategy, qty, price, signal, dail
     return cash;
   }
 
+  // [중복실행 방지] 겹치는 invocation이 같은 매수를 두 번 찍는 것 차단(현금 이중차감).
+  if (await isDuplicateRecentTrade(DB, market, symbol, "BUY", qty, price, 120000)) {
+    await log(DB, "WARN", symbol, "BUY 중복실행 차단(120s내 동일 매수): x" + qty + " @" + price.toFixed(2));
+    return cash;
+  }
   // [V31] 원자적 트랜잭션 — trades(원장)와 positions(상태)를 DB.batch()로 묶어
   //   둘 다 성공하거나 둘 다 롤백. "유령 포지션"(돈만 나감)·정합성 붕괴 원천 차단.
   try {
@@ -8411,10 +8613,13 @@ async function executeSell(DB, market, symbol, pos, sellQty, price, reason, cfg,
   const signalMembers = pos.meta.signalMembers || [];
   const enrichedReason = "[" + strategy.toUpperCase() + "] " + reason + " #entry=" + signalMembers.join(",");
 
-  // [V31] 원자적 트랜잭션 — 매도 원장과 포지션 변경을 batch로 묶어 둘 다 성공/둘 다 롤백.
-  //   "좀비 포지션"(매도대금은 들어왔는데 포지션이 안 줄어 무한 매도) 원천 차단.
+  // [V31→CAS] 매도 = "포지션 쓰기(조건부)" → "거래 원장" 순서.
+  //   포지션 쓰기를 읽은 시점 수량(origQty)에 CAS로 걸어, 이미 다른 실행이 판 포지션이면
+  //   0행 매칭 → 거래기록/현금반영을 아예 하지 않는다(유령 SELL·유령 현금 차단).
+  //   현금은 trades 원장에서 파생되므로(computeCashFromTrades), 유령 거래를 안 쓰는 것만으로
+  //   현금 왜곡이 원천 차단된다. 크래시로 포지션만 줄고 거래기록 실패 시엔 대금 미반영(안전방향).
+  const origQty = pos.qty;
   try {
-    const stmtTrade = stmtRecordTrade(DB, { ts: Date.now(), market: market, symbol: symbol, side: "SELL", qty: sellQty, price: price, pnl: pnl, pnl_pct: pnlPct, reason: enrichedReason });
     let stmtPos;
     if (sellQty < pos.qty) {
       pos.qty = pos.qty - sellQty;
@@ -8422,8 +8627,6 @@ async function executeSell(DB, market, symbol, pos, sellQty, price, reason, cfg,
       if (reason && reason.startsWith("TP2")) pos.meta.tp2Done = true;
       pos.meta.feeRemaining = Math.max(0, feeRemaining - entryFeeForThisSell);
       // [V9.7] TP1 부분익절 직후, 남은 런너의 손절을 본전+lock으로 즉시 상향.
-      //   실거래상 TP1-HALF는 100% 익절이지만, 남은 절반이 손절로 되돌아가 라운드트립하는
-      //   사례를 차단. 이미 breakEvenLocked면 더 내리지 않음(Math.max).
       try {
         const beRules = getStrategyRules(cfg, strategy, market);
         const beLock = (beRules.breakEvenLock || 0) / 100;
@@ -8431,16 +8634,24 @@ async function executeSell(DB, market, symbol, pos, sellQty, price, reason, cfg,
         if (pos.meta.stopPrice == null || pos.meta.stopPrice < beStop) pos.meta.stopPrice = beStop;
         pos.meta.breakEvenLocked = true;
       } catch (e) {}
-      stmtPos = stmtSavePosition(DB, market, symbol, strategy, pos);
+      stmtPos = stmtUpdatePositionGuarded(DB, market, symbol, strategy, pos, origQty);
     } else {
-      stmtPos = stmtDeletePosition(DB, symbol, strategy, market);
+      stmtPos = stmtDeletePositionGuarded(DB, symbol, strategy, market, origQty);
     }
-    await DB.batch([stmtTrade, stmtPos]);
+    const posRes = await stmtPos.run();
+    const changed = _rowsChanged(posRes);
+    if (changed === 0) {
+      // 이 매도는 다른 실행이 이미 처리함 — 중복. 거래기록·현금반영 안 함.
+      await log(DB, "WARN", symbol, "SELL 중복실행 차단(CAS 0행): x" + sellQty + " @" + price.toFixed(2) + " " + reason);
+      pos.qty = origQty;   // 인메모리 롤백
+      return { cash: cash, pnlPct: 0, duplicate: true };
+    }
+    await stmtRecordTrade(DB, { ts: Date.now(), market: market, symbol: symbol, side: "SELL", qty: sellQty, price: price, pnl: pnl, pnl_pct: pnlPct, reason: enrichedReason }).run();
   } catch (e) {
-    await log(DB, "ERROR", symbol, "SELL transaction aborted (롤백됨, cash·포지션 무변동): " + e.message);
+    await log(DB, "ERROR", symbol, "SELL transaction aborted: " + e.message);
     return { cash: cash, pnlPct: 0 };
   }
-  // DB 트랜잭션 완전 성공 후에만 인메모리 cash 반영
+  // DB 반영 성공 후에만 인메모리 cash 반영
   if (cash && typeof cash[market] === "number") cash[market] += proceeds;
   const taxNote = market === "kr" ? " tax=" + sellTax.toFixed(2) : "";
   await log(DB, "SELL", symbol, "SELL [" + strategy + "] x" + sellQty + " @" + price.toFixed(2) + " PnL " + pnlPct.toFixed(2) + "% (held " + heldMin + "min, " + reason + ")" + taxNote);
@@ -10043,6 +10254,11 @@ async function executeBuyCM(DB, symbol, qty, price, signal, dailyAtr, cfg, cash)
   }
   if (stopPrice > pctStop) stopPrice = pctStop;
 
+  // [중복실행 방지] 겹치는 invocation의 중복 매수 차단(현금 이중차감)
+  if (await isDuplicateRecentTrade(DB, "cm", symbol, "BUY", qty, price, 120000)) {
+    await log(DB, "WARN", symbol, "[CM] BUY 중복실행 차단(120s내 동일 매수): x" + qty + " @" + price.toFixed(2));
+    return cash;
+  }
   // [V31] 원자재도 batch 트랜잭션으로 통일 (주식과 동일 회계 처리)
   try {
     const posToSave = {
@@ -10088,21 +10304,28 @@ async function executeSellCM(DB, symbol, pos, sellQty, price, reason, cfg, cash)
   const signalMembers = pos.meta.signalMembers || [];
   const enrichedReason = "[CM-SWING] " + reason + " #entry=" + signalMembers.join(",");
 
-  // [V31] 원자재 매도도 batch 트랜잭션으로 통일 (좀비 포지션 차단, market 명시)
+  // [V31→CAS] 원자재 매도도 포지션 CAS 가드 (중복실행 유령 SELL 차단)
+  const origQtyCM = pos.qty;
   try {
-    const stmtTrade = stmtRecordTrade(DB, { ts: Date.now(), market: "cm", symbol: symbol, side: "SELL", qty: sellQty, price: price, pnl: pnl, pnl_pct: pnlPct, reason: enrichedReason });
     let stmtPos;
     if (sellQty < pos.qty) {
       pos.qty = pos.qty - sellQty;
       pos.meta.tp1Done = true;
       pos.meta.feeRemaining = Math.max(0, feeRemaining - entryFeeForThisSell);
-      stmtPos = stmtSavePosition(DB, "cm", symbol, "swing", pos);
+      stmtPos = stmtUpdatePositionGuarded(DB, "cm", symbol, "swing", pos, origQtyCM);
     } else {
-      stmtPos = stmtDeletePosition(DB, symbol, "swing", "cm");
+      stmtPos = stmtDeletePositionGuarded(DB, symbol, "swing", "cm", origQtyCM);
     }
-    await DB.batch([stmtTrade, stmtPos]);
+    const posRes = await stmtPos.run();
+    const changed = _rowsChanged(posRes);
+    if (changed === 0) {
+      await log(DB, "WARN", symbol, "[CM] SELL 중복실행 차단(CAS 0행): x" + sellQty + " @" + price.toFixed(2) + " " + reason);
+      pos.qty = origQtyCM;
+      return { pnlPct: 0, cash: cash, duplicate: true };
+    }
+    await stmtRecordTrade(DB, { ts: Date.now(), market: "cm", symbol: symbol, side: "SELL", qty: sellQty, price: price, pnl: pnl, pnl_pct: pnlPct, reason: enrichedReason }).run();
   } catch (e) {
-    await log(DB, "ERROR", symbol, "[CM] SELL transaction aborted (롤백됨): " + e.message);
+    await log(DB, "ERROR", symbol, "[CM] SELL transaction aborted: " + e.message);
     return { pnlPct: 0, cash: cash };
   }
   if (cash && typeof cash.cm === "number") cash.cm += proceeds;
@@ -10444,6 +10667,11 @@ async function executeBuyAlt(DB, sleeve, symbol, qty, price, signal, dailyAtr, c
   let stopPrice = pctStop;
   if (dailyAtr) { const atrStop = price - dailyAtr * atrMult; stopPrice = Math.min(atrStop, pctStop); }
   if (stopPrice > pctStop) stopPrice = pctStop;
+  // [중복실행 방지] 겹치는 invocation의 중복 매수 차단(현금 이중차감)
+  if (await isDuplicateRecentTrade(DB, mk, symbol, "BUY", qty, price, 120000)) {
+    await log(DB, "WARN", symbol, "[" + sleeve.label + "] BUY 중복실행 차단(120s내 동일 매수): x" + qty + " @" + price.toFixed(2));
+    return cash;
+  }
   try {
     const posToSave = { qty: qty, avg: price, opened_ts: Date.now(), meta: { strategy: "swing", feePaid: fee, feeRemaining: fee, atrAtEntry: dailyAtr, stopPrice: stopPrice, peakPrice: price, signal: signal.name, signalMembers: signal.members || [signal.name], tp1Done: false, originalQty: qty } };
     const stmtTrade = stmtRecordTrade(DB, { ts: Date.now(), market: mk, symbol: symbol, side: "BUY", qty: qty, price: price, pnl: null, pnl_pct: null, reason: "[" + sleeve.label + "-SWING] " + signal.name + " " + signal.detail });
@@ -10469,13 +10697,20 @@ async function executeSellAlt(DB, sleeve, symbol, pos, sellQty, price, reason, c
   const pnlPct = costBasis > 0 ? (pnl / costBasis * 100) : 0;
   const heldMin = pos.opened_ts ? Math.floor((Date.now() - pos.opened_ts) / 60000) : 0;
   const enrichedReason = "[" + sleeve.label + "-SWING] " + reason + " #entry=" + (pos.meta.signalMembers || []).join(",");
+  const origQtyAlt = pos.qty;
   try {
-    const stmtTrade = stmtRecordTrade(DB, { ts: Date.now(), market: mk, symbol: symbol, side: "SELL", qty: sellQty, price: price, pnl: pnl, pnl_pct: pnlPct, reason: enrichedReason });
     let stmtPos;
-    if (sellQty < pos.qty) { pos.qty = pos.qty - sellQty; pos.meta.tp1Done = true; pos.meta.feeRemaining = Math.max(0, feeRemaining - entryFeeForThisSell); stmtPos = stmtSavePosition(DB, mk, symbol, "swing", pos); }
-    else { stmtPos = stmtDeletePosition(DB, symbol, "swing", mk); }
-    await DB.batch([stmtTrade, stmtPos]);
-  } catch (e) { await log(DB, "ERROR", symbol, "[" + sleeve.label + "] SELL 롤백: " + e.message); return { pnlPct: 0, cash: cash }; }
+    if (sellQty < pos.qty) { pos.qty = pos.qty - sellQty; pos.meta.tp1Done = true; pos.meta.feeRemaining = Math.max(0, feeRemaining - entryFeeForThisSell); stmtPos = stmtUpdatePositionGuarded(DB, mk, symbol, "swing", pos, origQtyAlt); }
+    else { stmtPos = stmtDeletePositionGuarded(DB, symbol, "swing", mk, origQtyAlt); }
+    const posRes = await stmtPos.run();
+    const changed = _rowsChanged(posRes);
+    if (changed === 0) {
+      await log(DB, "WARN", symbol, "[" + sleeve.label + "] SELL 중복실행 차단(CAS 0행): x" + sellQty + " @" + price.toFixed(2) + " " + reason);
+      pos.qty = origQtyAlt;
+      return { pnlPct: 0, cash: cash, duplicate: true };
+    }
+    await stmtRecordTrade(DB, { ts: Date.now(), market: mk, symbol: symbol, side: "SELL", qty: sellQty, price: price, pnl: pnl, pnl_pct: pnlPct, reason: enrichedReason }).run();
+  } catch (e) { await log(DB, "ERROR", symbol, "[" + sleeve.label + "] SELL aborted: " + e.message); return { pnlPct: 0, cash: cash }; }
   if (cash && typeof cash[mk] === "number") cash[mk] += proceeds;
   await log(DB, "TRADE", symbol, "[" + sleeve.label + "] SELL x" + sellQty + " @" + price.toFixed(2) + " PnL " + pnlPct.toFixed(2) + "% (held " + heldMin + "min, " + reason + ")");
   return { pnlPct: pnlPct, cash: cash };
@@ -12514,6 +12749,22 @@ async function handleRequest(request, env) {
       const limit = parseInt(url.searchParams.get("limit") || "100", 10);
       const res = await env.DB.prepare("SELECT * FROM trades ORDER BY ts DESC LIMIT ?").bind(limit).all();
       return Response.json(res.results, { headers: cors });
+    }
+    // [자가진단] 원장↔포지션↔현금 정합성 리포트(읽기 전용). 로컬 audit.py가 폴링.
+    if (path === "/api/audit" && request.method === "GET") {
+      const cfg = migrateCfgToMarkets(Object.assign({}, DEFAULT_CFG, await getState(env.DB, "cfg", {})));
+      const report = await runLedgerAudit(env.DB, cfg);
+      return Response.json(report, { headers: cors });
+    }
+    // [자가치유] 유령 SELL 제거 + 현금 체크포인트 무효화 + 포지션 재구성.
+    //   파괴적이라 ?confirm=1 필수. reset류와 동일하게 별도 인증은 없음(개인 사이트 관례).
+    if (path === "/api/audit/dedupe" && request.method === "POST") {
+      if (url.searchParams.get("confirm") !== "1") {
+        return Response.json({ ok: false, error: "confirm=1 required" }, { status: 400, headers: cors });
+      }
+      const cfg = migrateCfgToMarkets(Object.assign({}, DEFAULT_CFG, await getState(env.DB, "cfg", {})));
+      const result = await dedupePhantomTrades(env.DB, cfg);
+      return Response.json(result, { headers: cors });
     }
     if (path === "/api/logs") {
       const limit = parseInt(url.searchParams.get("limit") || "200", 10);
