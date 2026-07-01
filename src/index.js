@@ -2566,8 +2566,11 @@ const DEFAULT_CFG = {
   //   수익원은 패닉단타 → scalp↑, snap(역추세)은 blockInBear라 축소. minFrac 하한으로 굶는 전략 방지.
   strategyBudgetAdaptive: {
     enabled: true,
+    // [성과개선] bear 레짐이 scalp를 1.7×로 증폭하고 trend를 0.55×로 삭감하던 것을 뒤집음.
+    //   실측: trend는 bear장에서도 승자(us +1.45%·kr +0.69% 기대값), scalp는 지속 손실(kr -0.25% PF0.36).
+    //   → bear에서 trend 우위로 재조정(승자에 배분, 패자 축소).
     bull:    { trend: 1.35, scalp: 0.85, snap: 0.90 },
-    bear:    { trend: 0.55, scalp: 1.70, snap: 0.50 },
+    bear:    { trend: 1.15, scalp: 0.60, snap: 0.55 },
     neutral: { trend: 1.00, scalp: 1.00, snap: 1.00 },
     minFrac: 0.10
   },
@@ -2651,9 +2654,9 @@ const DEFAULT_CFG = {
     momMax: 2.5,             // 분봉 모멘텀 ≥ N%면 진입 자체 금지 (이미 달린 차 추격 = 평균 진입가 최악)
     maxDailyAtrPct: 6.0,     // 일봉 ATR% > N 고변동 종목 제외 (1.2% 고정손절과 구조적 미스매치 → 휩쏘 손절 연발)
     pullbackVolMult: 1.05,   // SC_PULLBACK 반등봉 상대거래량 문턱 — 거래량 없는 데드캣 반등 걸러냄
-    // [V58] 단타 KR 허용 — 네이버 분봉 실시간. 패닉장 인버스/캡출 단타 작동.
-    //   지연 영향이 큰 건 일반 모멘텀 추격이고, 인버스 추세추종은 지연 영향이 작다.
-    usOnly: false
+    // [성과개선] KR 스캘프 지속 손실(최근14일 n=53 WR34% 기대값-0.25% PF0.36) → US 전용으로 KR 단타 차단.
+    //   us:SCALP은 본전(무해)이라 유지. 되돌리려면 usOnly=false. (migrate가 더 이상 강제 false로 덮지 않음)
+    usOnly: true
   },
   // === [SC_VBURST] VWAP 돌파 + 거래량 폭증 + RSI 밴드 — 사용자 정의 순수 분봉 스캘핑 ===
   //   진입(분봉): ① 종가가 VWAP 상향 돌파  ② 현재봉 거래량 ≥ 직전 volLen봉 평균 × volMult
@@ -3230,7 +3233,9 @@ function migrateCfgToMarkets(cfg) {
       if (cfg.scalpRules[k] === undefined) cfg.scalpRules[k] = DEFAULT_CFG.scalpRules[k];
     }
     const _sc = cfg.scalpRules;
-    if (_sc.usOnly === true)       _sc.usOnly = false;   // KR 단타 개방
+    // [성과개선] usOnly는 저장 cfg 값을 존중한다(기존엔 강제 false로 KR 단타 개방).
+    //   근거: kr:SCALP 지속 손실(최근 14일 n=53 WR34% 기대값-0.25% PF0.36) → /api/cfg로 usOnly=true 시 KR 단타 차단.
+    //   us:SCALP은 본전이라 유지. 되돌리려면 usOnly=false POST.
     if (_sc.adxMin === 20 || _sc.adxMin === 15)         _sc.adxMin = 12;        // [V65] 단타 거래량 확대
     if (_sc.minRelVol === 1.2 || _sc.minRelVol === 1.1) _sc.minRelVol = 1.0;
     if (_sc.vwapBand === 0.8)      _sc.vwapBand = 1.0;
