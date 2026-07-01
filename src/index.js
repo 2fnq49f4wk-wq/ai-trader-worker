@@ -324,6 +324,15 @@ function getEtfType(sym) {
   return ETF_SYMBOLS.has(sym) ? "other" : null;  // 분류 안 된 ETF는 "other"
 }
 
+// [KR 해외추종 ETF] — KR 슬리브가 미국/중국 지수·테마 추종 ETF만 사서 사실상 레버리지 해외노출이 되던 문제.
+//   이 집합은 KR 매매에서 제외해 진짜 한국주식을 거래하게 한다(cfg.krExcludeForeignEtf).
+//   us_index(미국S&P500/나스닥100/커버드콜) + 미국반도체 테마 + country(차이나).
+const FOREIGN_TRACKING_KR_ETF = new Set([
+  "360750.KS","133690.KS","379800.KS","379810.KS","441680.KS",  // 미국 S&P500·나스닥100·커버드콜
+  "381180.KS","381170.KS","0183J0.KS",                          // 미국 필라델피아반도체·테크·우주
+  "192090.KS"                                                    // 차이나 CSI300
+]);
+
 // 종목 한글/영문 이름 맵 (UI 표시용)
 const NAME_MAP = {
   "NVDA":"NVIDIA",
@@ -2559,7 +2568,7 @@ const DEFAULT_CFG = {
   // [V51] 전략별 사이클 예산 분리 — trend/scalp가 같은 현금풀을 두고 경쟁해 단타가 굶던 문제 해결.
   //   각 시장 가용현금을 비율로 쪼개 전략별 독립 예산으로 사용. 대시보드 슬라이더로 조절.
   // [V52] 3분할 — trend/scalp/snap 기본 35/30/35.
-  strategyBudgetSplit: { trend: 0.35, scalp: 0.30, snap: 0.35 },
+  strategyBudgetSplit: { trend: 0.60, scalp: 0.20, snap: 0.20 },  // [공격] 승자(trend)에 자본 집중. scalp/snap 축소.
   // [V63 성능강화] 레짐 적응형 예산 분배 — 위 고정 split(사용자 슬라이더)을 "기준"으로 두고,
   //   시장별 레짐에 따라 배수를 곱해 동적으로 기울인다(곱 후 정규화 → 합은 항상 1).
   //   BULL: 추세추종이 주수익원 → trend↑ / BEAR: trend·snap은 레짐 게이트에 막혀 예산이 놀고
@@ -2841,23 +2850,24 @@ const DEFAULT_CFG = {
     threshold2: -2.5,   // PnL 합계 ≤ -2.5% → scale2 적용 (경고)
     scale2: 0.80
   },
-  // === [재작성] 고정리스크 사이징 (균형) ===
+  // === [공격형 집중] 고정리스크 사이징 ===
+  //   과분산(26종목=지수복제) 해소를 위해 소수 종목에 크게. maxOpenPositions(10)와 함께 동작.
   trendSizing: {
-    riskPerTrade: 0.75,    // 한 거래 최대손실 = 자산의 0.75%
-    maxPositionPct: 15,    // 한 종목 비중 상한 = 자산의 15%
-    maxConcurrent: 12      // [확대] 8→12 동시 보유 종목 상한 (거래·데이터 축적↑, 분산도 개선)
+    riskPerTrade: 1.2,     // [공격] 0.75→1.2 한 거래 리스크 = 자산의 1.2% (집중 사이징)
+    maxPositionPct: 15,    // 한 종목 비중 상한 = 자산의 15% (10종목×~10% = 자본 집중 활용)
+    maxConcurrent: 10      // [공격] 12→10 동시 보유 상한 (maxOpenPositions.us와 정렬)
   },
   // [포트폴리오 히트] 보유 포지션 총 미실현 리스크 한도(%) — 계좌 전체 리스크 상한.
   //   초과 시 신규 진입 차단, 80% 근접 시 사이즈 축소. (개별 0.75% × 12종목 = 9% 노출 통제)
   // [V65] 8→12 완화 + HEAT_MAX는 trend/snap만 차단(scalp 면제) — 설정 UI에서 조절 가능.
-  maxPortfolioHeat: 12.0,
+  maxPortfolioHeat: 16.0,   // [공격] 12→16 집중 포지션이 히트로 조기차단되지 않게 상향(낙폭 감수).
   // [패닉 헤지] 인버스 ETF가 시장 약세/패닉에 진입할 때 사이즈 부스트 배수 (하락장 수익·헤지)
   inversePanicBoost: 1.3,
   // === [KR 분리] 고정리스크 사이징 — KR 전용 오버라이드 ===
   trendSizingKR: {
-    riskPerTrade: 0.6,     // 0.75→0.6 (KR 리스크 축소)
-    maxPositionPct: 12,    // 15→12
-    maxConcurrent: 9       // [확대] 6→9 (거래·데이터 축적↑, KR은 US보다 보수적 유지)
+    riskPerTrade: 1.0,     // [공격] 0.6→1.0 (집중 사이징, KR은 US보다 약간 보수)
+    maxPositionPct: 15,    // [공격] 12→15
+    maxConcurrent: 8       // [공격] 9→8 (maxOpenPositions.kr와 정렬)
   },
   // === [섹터그룹] 6개 그룹별 성과 가중치 — autoTune이 자동 조정 ===
   //   진입 사이즈 = 자산×Risk%×confidence×그룹가중치. 사이즈만 조절(악화 방어).
@@ -3054,6 +3064,14 @@ const DEFAULT_CFG = {
   // === 섹터 / 페어 제한 ===
   maxPositionsPerSector: 3,    // [V8] 전략별 포지션 가능해서 2→3 완화
   blockInversePair: true,
+  // === [공격형 집중] 시장별 최대 동시 trend 포지션 수 ===
+  //   기존엔 상한 없이 예산 소진까지 매수 → US 26종목 과분산(지수복제, 수익률 지수화).
+  //   자본을 소수 강종목에 집중해 수익률 잠재력↑(대신 낙폭↑). 유니버스 순서상 대형주가 앞이라
+  //   자격 생기면 우선 편입. scalp/snap은 자체 캡 별도.
+  maxOpenPositions: { us: 10, kr: 8 },
+  // === [KR] 미국/중국 추종 ETF 매수 제외 ===
+  //   KR 슬리브가 BEAR장에 미국추종 ETF만 사서 사실상 레버리지 해외노출이 되던 문제 차단 → 실제 한국주식 매매.
+  krExcludeForeignEtf: true,
   // === 사이클 락 ===
   cycleLockTTL: 90000   // [V31] 90s — US 처리 지연 시 락 만료/이중체결 방지
 };
@@ -8365,6 +8383,21 @@ function evaluateBuyBlocks(price, dayPct, dailyData, cfg, regime, signal, ctx) {
     }
   }
 
+  // [KR 해외추종 ETF 제외] KR 슬리브가 미국/중국 추종 ETF만 매수하는 문제 차단 → 실제 한국주식 매매.
+  if (cfg.krExcludeForeignEtf !== false && ctx && ctx.market === "kr" && FOREIGN_TRACKING_KR_ETF.has(ctx.symbol)) {
+    return "FOREIGN_ETF " + ctx.symbol;
+  }
+
+  // [집중] 시장별 최대 동시 trend 포지션 수 상한 — 과분산(지수복제) 방지, 자본을 소수 강종목에 집중(수익률↑).
+  //   scalp/snap은 자체 동시보유 캡(scanMax/snapMaxConcurrent)이 별도라 여기선 trend만 적용.
+  if (ctx && ctx.strategy === "trend" && cfg.maxOpenPositions && ctx.openCounts && ctx.market) {
+    const cap = cfg.maxOpenPositions[ctx.market];
+    const cur = ctx.openCounts.trend || 0;
+    if (typeof cap === "number" && cap > 0 && cur >= cap) {
+      return "MAXPOS trend " + cur + "/" + cap;
+    }
+  }
+
   // [V8] 같은 (종목, 전략) 조합 이미 보유 시 추가 진입 차단
   if (ctx && ctx.strategiesHeld && ctx.strategiesHeld.has(strategy)) {
     return "ALREADY_HELD " + strategy;
@@ -12007,6 +12040,8 @@ async function runTradingCycle(env) {
             const ctx = {
               symbol: symbol,
               strategy: strategy,
+              market: market,
+              openCounts: stratShare,   // {trend,scalp,snap,total} — maxOpenPositions 집중 게이트용
               heldSymbols: heldSymbols,
               sectorCounts: sectorCounts,
               strategiesHeld: strategiesHeldNow,
@@ -12185,6 +12220,9 @@ async function runTradingCycle(env) {
                 strategiesHeldNow.add(strategy);
                 const sec = SECTOR_MAP[symbol];
                 if (sec) sectorCounts[sec] = (sectorCounts[sec] || 0) + 1;
+                // [집중] 사이클 내 즉시 카운트 갱신 — maxOpenPositions 상한을 같은 사이클에서도 정확히 적용.
+                if (stratShare[strategy] != null) stratShare[strategy]++;
+                stratShare.total++;
               } else {
                 incNobuy("buy_failed[" + strategy + "]");
               }
