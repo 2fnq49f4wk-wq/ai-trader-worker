@@ -2771,12 +2771,15 @@ const DEFAULT_CFG = {
     maxAtrPct: 6,                           // ATR%가 이보다 크면 진입 금지(슬리피지 회피)
     atrStopMult: 2.0,                       // 손절 = entry − N×ATR (executeBuy가 참조)
     stopLossPct: 5.0,                       // ATR 손절과 비교해 더 타이트한 쪽 채택 (executeBuy가 참조)
-    trailAtrMult: 2.5,                      // 트레일 = peak − N×ATR
+    // [수익률 개선·원장실증] TP2 도달 러너 평균 +10.1%(최대 수익원) vs TRAIL 조기청산 +1.06% →
+    //   트레일 완화(2.5→3.0)·TP1 익절 축소(40→35%)·TP2 상향(2R→2.5R)으로 러너를 더 살린다.
+    //   TIME-STOP 16건 평균 -0.37%(자본만 묶는 좀비) → 10일→7일 단축(집중 체제에서 자본 회전↑).
+    trailAtrMult: 3.0,                      // 트레일 = peak − N×ATR (2.5→3.0 러너 여유)
     tp1AtR: 1.0,                            // +1R 도달 시 분할익절
-    tp1SellFrac: 0.4,                       // [V51] +1R 익절 비율 (0.4=40%만 익절, 60%는 트레일 추종)
-    tp2AtR: 2.0,                            // +2R 도달 시 잔량 절반 추가 익절 (0 = 비활성)
+    tp1SellFrac: 0.35,                      // +1R 익절 비율 (0.4→0.35, 65%는 트레일 추종)
+    tp2AtR: 2.5,                            // +2.5R 도달 시 잔량 절반 추가 익절 (2.0→2.5 러너 연장)
     reEntryCooldownHours: 24,               // 손절 손실 전량청산 후 재진입 차단 시간 (0 = 비활성)
-    timeStopDays: 10,                       // N거래일 내 +0.5R 미달 시 청산
+    timeStopDays: 7,                        // N거래일 내 +0.35R 미달 시 청산 (10→7 좀비 조기정리)
     timeStopMinR: 0.35,                     // [V51완화] 0.5→0.35 성급한 횡보청산 완화(추세 발현 여유)
     exitBelowMa: 20,                        // 종가가 MA20 하향 이탈 시 청산
     // [확실성] 추세 강도 기반 신호 confidence — 불확실(약추세) 진입은 리스크를 줄인다.
@@ -12798,6 +12801,36 @@ async function handleRequest(request, env) {
       const cfg = migrateCfgToMarkets(Object.assign({}, DEFAULT_CFG, await getState(env.DB, "cfg", {})));
       const report = await runLedgerAudit(env.DB, cfg);
       return Response.json(report, { headers: cors });
+    }
+    // [수동 청산] 특정 포지션을 현재가로 전량/부분 시장가 청산.
+    //   POST /api/close?market=us&symbol=AMAT&strategy=trend&confirm=1 (&qty=N 부분청산)
+    //   executeSell 재사용 → CAS 가드·원장 기록·현금(원장 파생) 자동 일관. UI 청산 버튼용.
+    if (path === "/api/close" && request.method === "POST") {
+      if (url.searchParams.get("confirm") !== "1") {
+        return Response.json({ ok: false, error: "confirm=1 required" }, { status: 400, headers: cors });
+      }
+      const mkt = url.searchParams.get("market");
+      const symbol = url.searchParams.get("symbol");
+      const strategy = url.searchParams.get("strategy") || null;
+      if (!mkt || !symbol) return Response.json({ ok: false, error: "market & symbol required" }, { status: 400, headers: cors });
+      const cfg = migrateCfgToMarkets(Object.assign({}, DEFAULT_CFG, await getState(env.DB, "cfg", {})));
+      const positions = await getPositions(env.DB, mkt);
+      // strategy 미지정 시 해당 심볼 첫 포지션
+      let pos = null, posStrategy = strategy;
+      if (strategy) pos = positions[symbol + "::" + strategy];
+      else { for (const k in positions) { if (positions[k].symbol === symbol) { pos = positions[k]; posStrategy = positions[k].strategy; break; } } }
+      if (!pos || !(pos.qty > 0)) return Response.json({ ok: false, error: "position not found: " + symbol }, { status: 404, headers: cors });
+      // 현재가: 저장 quote 우선, 없으면 평단(최후수단)
+      const q = await getState(env.DB, "quote:" + symbol, null);
+      const price = (q && typeof q.price === "number" && q.price > 0) ? q.price : pos.avg;
+      const reqQty = parseInt(url.searchParams.get("qty") || "0", 10);
+      const sellQty = (reqQty > 0 && reqQty < pos.qty) ? reqQty : pos.qty;
+      let cash = await computeAllCash(env.DB, cfg);
+      let r;
+      if (mkt === "us" || mkt === "kr") r = await executeSell(env.DB, mkt, symbol, pos, sellQty, price, "MANUAL-CLOSE", cfg, cash);
+      else if (mkt === "cm") r = await executeSellCM(env.DB, symbol, pos, sellQty, price, "MANUAL-CLOSE", cfg, cash);
+      else { const sl = _altSleeve(mkt, cfg); if (!sl) return Response.json({ ok: false, error: "bad market" }, { status: 400, headers: cors }); r = await executeSellAlt(env.DB, sl, symbol, pos, sellQty, price, "MANUAL-CLOSE", cfg, cash); }
+      return Response.json({ ok: true, symbol: symbol, strategy: posStrategy, qty: sellQty, price: price, pnlPct: r ? r.pnlPct : null, duplicate: !!(r && r.duplicate) }, { headers: cors });
     }
     // [자가치유] 유령 SELL 제거 + 현금 체크포인트 무효화 + 포지션 재구성.
     //   파괴적이라 ?confirm=1 필수. reset류와 동일하게 별도 인증은 없음(개인 사이트 관례).

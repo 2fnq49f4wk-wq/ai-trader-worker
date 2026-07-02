@@ -2415,6 +2415,91 @@ html[data-theme="light"] .cfg-slider::-moz-range-thumb{background:#1d5fc2;border
   .field input.cfg-numbox{width:74px;padding:9px 8px;font-size:13px;}
   .slider-row{gap:12px;}
 }
+
+/* ════════════════════════════════════════════════════════════════════
+   [V11 PRO TERMINAL] 전문 트레이딩 터미널 마감 레이어 (최후미 = 최종 우선)
+   · 목표: 블룸버그/TradingView급 정밀함 — 수치는 전부 모노스페이스 탭넘버,
+     섹션 라벨 마이크로캡 통일, 헤어라인 그리드, 장식/글로우 제거 마감.
+   · 모든 셀렉터/ID/기능/정보 무변경 — 표시 정보 100% 유지.
+   ════════════════════════════════════════════════════════════════════ */
+:root{
+  --mono:'IBM Plex Mono',ui-monospace,'SFMono-Regular',Menlo,Consolas,monospace;
+  --pos:#2ebd85; --neg:#f6465d;             /* 거래소 표준 톤(핀비즈보다 차분) */
+  --pos-bg:rgba(46,189,133,.10); --neg-bg:rgba(246,70,93,.10);
+  --acc:#58a6ff;                            /* 인터랙티브 액센트 — 정보(파랑)/손익(초록·빨강) 분리 */
+  --strat-trend:#58a6ff; --strat-scalp:#e3b341; --strat-snap:#2ebd85;
+  --radius:8px;
+}
+html[data-theme="light"]{
+  --pos:#0f9d6e; --neg:#dc3d55; --acc:#0969da;
+  --pos-bg:rgba(15,157,110,.09); --neg-bg:rgba(220,61,85,.09);
+}
+/* 수치 규율 — 모든 숫자 셀·값은 모노스페이스 + tabular-nums (자릿수 정렬) */
+.table td.right,.table th.right,.topbar-value,.topbar-sub,.port-total,.port-pnl,
+.port-meta-value,.pps-value,.summary-value,.cm-watch-price,.vision-stat-value,
+.idx-price,.idx-chg,.wl-price,.wl-chg,.fv-num,.pos-days-chip,.trades-summary b{
+  font-family:var(--mono);font-variant-numeric:tabular-nums;letter-spacing:0;
+}
+/* 섹션/카드 헤더 마이크로캡 통일 */
+.page-title,.dash-block-label,.pos-market-head,.port-card-title,.vision-stat-label,.wl-pane-title{
+  text-transform:uppercase;letter-spacing:1.8px;font-weight:700;
+}
+.page-title{font-size:13px;color:var(--t1);}
+.dash-block-label{font-size:9.5px;color:var(--t3);}
+/* 테이블 — 전문 단말 밀도: 스티키 헤더 + 헤어라인 + 조용한 호버 */
+.table{font-size:11px;}
+.table thead th{
+  position:sticky;top:0;z-index:2;background:var(--s1);
+  font-size:9px;font-weight:700;letter-spacing:1.2px;text-transform:uppercase;color:var(--t3);
+  border-bottom:1px solid var(--bd);padding:7px 10px;
+}
+.table tbody td{padding:6.5px 10px;border-bottom:1px solid var(--bd2);}
+.table tbody tr:last-child td{border-bottom:none;}
+.table tbody tr:hover{background:rgba(255,255,255,.028);}
+html[data-theme="light"] .table tbody tr:hover{background:rgba(9,105,218,.045);}
+/* 손익 배지 — 채운 칩 대신 절제된 틴트 */
+.pos{color:var(--pos);} .neg{color:var(--neg);}
+.cm-watch-day.pos{background:var(--pos-bg);} .cm-watch-day.neg{background:var(--neg-bg);}
+/* 포트폴리오 카드 — 빅넘버 정밀 + 수익률 캡션(지표 정의 명시) */
+.port-total{font-size:24px;font-weight:600;letter-spacing:-.4px;}
+.port-pnl{font-size:14px;font-weight:700;}
+.port-pnl-caption{font-size:8.5px;color:var(--t3);letter-spacing:1.2px;text-transform:uppercase;margin-top:2px;}
+.pps-label::after{content:' · 보유분만';font-size:8px;color:var(--t3);letter-spacing:.5px;}
+/* 버튼 — 조용한 고스트, 포커스 링 접근성 */
+.btn{border-radius:6px;font-weight:600;letter-spacing:.4px;}
+.btn:hover{transform:none;border-color:var(--acc);color:var(--acc);}
+.btn:focus-visible,.nav-item:focus-visible{outline:2px solid var(--acc);outline-offset:1px;}
+/* 포지션 수동 청산 버튼 */
+.pos-close-btn{
+  font-size:9px;padding:2px 8px;border:1px solid rgba(246,70,93,.4);border-radius:5px;
+  background:transparent;color:var(--neg);cursor:pointer;font-weight:700;letter-spacing:.5px;
+  transition:all .12s;white-space:nowrap;
+}
+.pos-close-btn:hover{background:var(--neg-bg);border-color:var(--neg);}
+.pos-close-btn:disabled{opacity:.4;cursor:wait;}
+/* 내비 액티브 — 액센트 통일(파랑=인터랙션) */
+.nav-item.active{background:rgba(88,166,255,.08);box-shadow:inset 0 0 0 1px rgba(88,166,255,.25);}
+.nav-item.active::before{background:var(--acc);}
+.nav-item.active .nav-item-label{color:var(--acc);}
+/* 전략 칩/보더 컬러 갱신(위 변수 재정의 반영) */
+.pos-row-trend{border-left-color:var(--strat-trend);}
+.pos-row-scalp{border-left-color:var(--strat-scalp);}
+.pos-row-snap{border-left-color:var(--strat-snap);}
+/* 스크롤바 — 단말식 얇은 바 */
+::-webkit-scrollbar{width:9px;height:9px;}
+::-webkit-scrollbar-thumb{background:var(--s3);border-radius:5px;border:2px solid var(--bg);}
+::-webkit-scrollbar-thumb:hover{background:var(--bd);}
+::-webkit-scrollbar-track{background:transparent;}
+/* 선택/캐럿 */
+::selection{background:rgba(88,166,255,.28);}
+/* 카드 호버 — 이동 없이 보더만 */
+.dash-block:hover,.idx-card:hover,.vision-card:hover,.cm-watch-card:hover{border-color:var(--acc)!important;transform:none;}
+/* 상태 점 — 엔진 러닝 그린 유지하되 글로우 축소 */
+.dash-block-label::before{box-shadow:none;}
+.sb-run-btn{box-shadow:none;}
+.sb-run-btn:hover{box-shadow:0 0 10px rgba(46,189,133,.25);}
+/* 페이지 헤더 정렬 통일 */
+.page-header{display:flex;align-items:center;gap:10px;padding-bottom:10px;border-bottom:1px solid var(--bd);margin-bottom:14px;}
 </style>
 </head>
 <body>
@@ -2778,6 +2863,7 @@ html[data-theme="light"] .cfg-slider::-moz-range-thumb{background:#1d5fc2;border
           <div class="port-card-body">
             <div class="port-total" id="totalUS">—</div>
             <div class="port-pnl" id="changeUS">—</div>
+            <div class="port-pnl-caption" title="초기자본 대비 총자산 변화 — 실현손익+평가손익 모두 포함. 포지션 페이지의 '평가손익'은 현재 보유분만.">누적 수익률 · 실현+평가 포함</div>
             <div class="port-alloc-bar" id="allocBarUS"><i class="inv"></i></div>
             <div class="port-meta">
               <div class="port-meta-item">
@@ -2805,6 +2891,7 @@ html[data-theme="light"] .cfg-slider::-moz-range-thumb{background:#1d5fc2;border
           <div class="port-card-body">
             <div class="port-total" id="totalKR">—</div>
             <div class="port-pnl" id="changeKR">—</div>
+            <div class="port-pnl-caption" title="초기자본 대비 총자산 변화 — 실현손익+평가손익 모두 포함. 포지션 페이지의 '평가손익'은 현재 보유분만.">누적 수익률 · 실현+평가 포함</div>
             <div class="port-alloc-bar" id="allocBarKR"><i class="inv"></i></div>
             <div class="port-meta">
               <div class="port-meta-item">
@@ -5163,7 +5250,7 @@ html[data-theme="light"] .cfg-slider::-moz-range-thumb{background:#1d5fc2;border
         '<th>SYMBOL</th><th>STRATEGY</th><th>REASON</th>'+
         '<th class="right">QTY</th><th class="right">AVG</th><th class="right">CUR</th>'+
         '<th class="right">VALUE</th><th class="right">PnL</th><th class="right">PnL%</th>'+
-        '<th class="right">HELD</th></tr></thead><tbody>';
+        '<th class="right">HELD</th><th class="right">ACT</th></tr></thead><tbody>';
       withPnl.forEach(function(item){
         var p = item.p;
         var q = lastQuotes[p.symbol];
@@ -5210,6 +5297,7 @@ html[data-theme="light"] .cfg-slider::-moz-range-thumb{background:#1d5fc2;border
           '<td class="right '+pnlClass+'">'+pnlText+'</td>'+
           '<td class="right '+pnlClass+'">'+pnlPctText+barHtml+'</td>'+
           '<td class="right">'+heldText+'</td>'+
+          '<td class="right"><button type="button" class="pos-close-btn" onclick="manualClose(\''+market.toLowerCase()+'\',\''+escapeHtml(p.symbol)+'\',\''+escapeHtml(p.strategy||'')+'\',this)">청산</button></td>'+
         '</tr>';
       });
       html += '</tbody></table></div></div>';
@@ -5220,6 +5308,27 @@ html[data-theme="light"] .cfg-slider::-moz-range-thumb{background:#1d5fc2;border
     if (!htmlUS && !htmlKR) { box.innerHTML = '<div class="empty">No positions yet</div>'; return; }
     box.innerHTML = htmlUS + htmlKR;
   }
+
+  // [V11] 수동 청산 — 포지션 행의 '청산' 버튼 → POST /api/close (현재가 전량 시장가 청산)
+  window.manualClose = function(market, symbol, strategy, btn) {
+    var name = symbol.replace(/\.(KS|KQ)$/, '');
+    if (!confirm(name + ' (' + market.toUpperCase() + (strategy ? '/' + strategy : '') + ') 포지션을 현재가로 전량 청산할까요?')) return;
+    if (btn) { btn.disabled = true; btn.textContent = '...'; }
+    var qs = '/api/close?confirm=1&market=' + encodeURIComponent(market) + '&symbol=' + encodeURIComponent(symbol) + (strategy ? '&strategy=' + encodeURIComponent(strategy) : '');
+    api(qs, { method: 'POST' }).then(function(r){
+      if (r && r.ok) {
+        var pp = (r.pnlPct != null) ? ' (' + (r.pnlPct >= 0 ? '+' : '') + r.pnlPct.toFixed(2) + '%)' : '';
+        toast('✓ ' + name + ' x' + r.qty + ' 청산 완료' + pp);
+        setTimeout(function(){ try { refreshAll(); } catch(e) {} }, 800);
+      } else {
+        toast('청산 실패: ' + ((r && r.error) || '알 수 없음'));
+        if (btn) { btn.disabled = false; btn.textContent = '청산'; }
+      }
+    }).catch(function(e){
+      toast('청산 실패: ' + e.message);
+      if (btn) { btn.disabled = false; btn.textContent = '청산'; }
+    });
+  };
 
   // === [NEWS] 섹터 뉴스 렌더링 ===
   var _newsData = null;
