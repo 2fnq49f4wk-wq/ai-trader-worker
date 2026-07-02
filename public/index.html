@@ -8,8 +8,6 @@
 <script>
 // 테마 선반영(깜빡임 방지) — 저장값 없으면 기본 다크
 try{var __t=localStorage.getItem('luxTheme');if(__t==='light')document.documentElement.setAttribute('data-theme','light');}catch(e){}
-// [V12] 스킨 선반영 — 'clean'(새 디자인, 기본) ↔ 'classic'(기존 디자인). 언제든 토글로 복귀.
-try{var __s=localStorage.getItem('luxSkin')||'clean';if(__s==='clean')document.documentElement.setAttribute('data-skin','clean');}catch(e){}
 // [V58] 라이트/다크 토글 — 메인 스크립트와 분리(메인에서 에러가 나도 토글은 항상 동작)
 document.addEventListener('DOMContentLoaded',function(){
   var btn=document.getElementById('btnTheme');
@@ -24,20 +22,6 @@ document.addEventListener('DOMContentLoaded',function(){
       lbl();
     });
     lbl();
-  }
-  // [V12] 새 UI ↔ 기존 UI 토글 (localStorage 영속, 새로고침 없이 즉시 전환)
-  var sk=document.getElementById('btnSkin');
-  if(sk&&!sk.__skinBound){
-    sk.__skinBound=true;
-    var slbl=function(){var c=document.documentElement.getAttribute('data-skin')==='clean';sk.textContent=c?'◧ CLASSIC UI':'✦ NEW UI';sk.title=c?'기존 디자인으로 전환':'새 클린 디자인으로 전환';};
-    sk.addEventListener('click',function(){
-      var root=document.documentElement;
-      var c=root.getAttribute('data-skin')==='clean';
-      if(c){root.removeAttribute('data-skin');try{localStorage.setItem('luxSkin','classic');}catch(e){}}
-      else{root.setAttribute('data-skin','clean');try{localStorage.setItem('luxSkin','clean');}catch(e){}}
-      slbl();
-    });
-    slbl();
   }
 });
 </script>
@@ -922,7 +906,7 @@ button.btn.loading::after{content:'조회 중…';position:absolute;inset:0;disp
   .dash-grid{grid-template-columns:1fr;}
 
   /* 표는 가로 스크롤 */
-  .table-wrap{overflow-x:auto;-webkit-overflow-scrolling:touch;}
+  .table-wrap{overflow-x:auto!important;-webkit-overflow-scrolling:touch;}
 }
 
 /* 아주 좁은 폰(≤430px): 정보바도 1열로 */
@@ -2512,123 +2496,29 @@ html[data-theme="light"] .table tbody tr:hover{background:rgba(9,105,218,.045);}
 /* 페이지 헤더 정렬 통일 */
 .page-header{display:flex;align-items:center;gap:10px;padding-bottom:10px;border-bottom:1px solid var(--bd);margin-bottom:14px;}
 
-/* ═══ [V13 REDESIGN] 앱 전체 구조 재설계 — html[data-skin="clean"] 스코프 ═══
-   · 색은 오리지널(차콜+핀비즈 그린/레드) 그대로 — 색 토큰 오버라이드 없음
-   · 구조: 좌측 사이드바 → 상단 커맨드바(스티키), 콘텐츠 풀폭
-   · 대시보드 정보 우선순위 재배치 + 페어링 그리드 · 반응형 3단
-   · 정보 손실 0 · '◧ CLASSIC UI' 토글로 기존 디자인 즉시 복귀 */
-/* ─ A. 상단 커맨드바 (≥768px) ─ */
-@media(min-width:768px){
-  html[data-skin="clean"] .shell{flex-direction:column;}
-  html[data-skin="clean"] .sidebar{
-    width:100%!important;height:auto;min-height:0;flex-shrink:0;
-    flex-direction:row;align-items:center;gap:10px;
-    padding:7px 16px;overflow:visible;
-    border-right:none!important;border-bottom:1px solid var(--bd)!important;
-    position:sticky;top:0;z-index:130;
-  }
-  html[data-skin="clean"] .sb-brand{display:flex;align-items:center;gap:8px;padding:0;border:none;flex-shrink:0;}
-  html[data-skin="clean"] .sb-brand::after{display:none;}
-  html[data-skin="clean"] .lux-star-svg{width:20px;height:20px;}
-  html[data-skin="clean"] .sb-brand-name{font-size:13px;letter-spacing:1.5px;}
-  html[data-skin="clean"] .sb-brand-sub{margin:0 0 0 2px;font-size:8.5px;color:var(--t3);}
-  html[data-skin="clean"] .sb-status{
-    display:flex;flex-direction:row;align-items:center;gap:12px;
-    background:none!important;border:none!important;padding:0 12px;
-    border-left:1px solid var(--bd)!important;flex-shrink:1;min-width:0;overflow:hidden;
-  }
-  html[data-skin="clean"] .sb-engine,html[data-skin="clean"] .sb-live{white-space:nowrap;}
-  html[data-skin="clean"] .sb-market{display:flex;gap:10px;margin:0;}
-  html[data-skin="clean"] .sb-market-row{white-space:nowrap;font-size:9.5px;}
-  html[data-skin="clean"] .sb-pnl{white-space:nowrap;overflow:hidden;text-overflow:ellipsis;min-width:0;font-size:10px;}
-  html[data-skin="clean"] .sb-nav{display:flex;flex-direction:row;gap:2px;margin:0 0 0 4px;padding:0;flex:0 0 auto;border:none;}
-  html[data-skin="clean"] .nav-item{margin:0;padding:8px 12px;border-radius:7px;}
-  html[data-skin="clean"] .nav-item-icon{display:none;}
-  html[data-skin="clean"] .nav-item-label{font-size:10.5px;letter-spacing:1px;}
-  html[data-skin="clean"] .sb-actions{
-    margin-left:auto;display:flex;flex-direction:row;align-items:center;gap:6px;
-    padding:0;border:none;flex-shrink:0;
-  }
-  html[data-skin="clean"] .sb-btn-row{display:flex;gap:5px;margin:0;}
-  html[data-skin="clean"] .sb-run-btn{width:auto;margin:0;padding:7px 14px;font-size:10.5px;border-radius:7px!important;}
-  html[data-skin="clean"] .sb-btn{padding:6px 9px;font-size:9.5px;}
-  html[data-skin="clean"] .sb-theme-btn{width:auto;margin:0;padding:6px 9px;font-size:9.5px;}
-  html[data-skin="clean"] .content{flex:1;width:100%;height:auto;min-height:0;}
+/* ═══ [V14 POLISH] 원본 디자인 유지 + 가벼운 다듬기 + 기기별 반응형 ═══
+   · 새 스킨/토글 제거 — 오리지널 레이아웃(좌측 사이드바·기존 순서·기존 색) 그대로
+   · 아래는 전부 "원본에 직접" 적용되는 소폭 개선: 기기별 가독/터치/표 처리 */
+/* ─ 데스크톱(≥1280): 과대 폭에서 콘텐츠 숨쉬기 ─ */
+@media(min-width:1600px){
+  .page{max-width:1720px;margin:0 auto;}
 }
-/* 태블릿(768~1279): 커맨드바 2줄 — 내비 가로스크롤 */
+/* ─ 태블릿(768~1279): 터치 여유 ─ */
 @media(min-width:768px) and (max-width:1279px){
-  html[data-skin="clean"] .sidebar{flex-wrap:wrap;row-gap:4px;}
-  html[data-skin="clean"] .sb-nav{order:9;flex:0 0 100%;width:100%;overflow-x:auto;-webkit-overflow-scrolling:touch;}
-  html[data-skin="clean"] .sb-pnl{display:none;}
+  .btn{min-height:32px;}
+  .nav-item{padding:9px 12px;}
 }
-/* ─ B. 대시보드 정보 우선순위 재배치 (실제 직계: pipelineBar/tuneBanner/fv-deck/dash-grid/fv3-grid/page-header/wl-layout/cmbd-grid x2) ─ */
-html[data-skin="clean"] #page-dashboard.active{display:flex;flex-direction:column;gap:14px;}
-html[data-skin="clean"] #page-dashboard>*{order:20;min-width:0;}
-/* 1. 시장 개관(지수 스트립·시장폭·무버·헤드라인) */
-html[data-skin="clean"] #page-dashboard>.fv-deck{order:1;}
-/* 2. 엔진 인텔 그리드 — 내부 순서도 재배치: 전략성과·예산 먼저, 인텔·대체자산 다음 */
-html[data-skin="clean"] #page-dashboard>.dash-grid{order:2;}
-html[data-skin="clean"] .dash-grid>.dash-block{order:9;}
-html[data-skin="clean"] .dash-grid>.dash-block:has(#stratPerfBox){order:1;}
-html[data-skin="clean"] .dash-grid>.dash-block:has(#budgetSplitBox){order:2;}
-html[data-skin="clean"] .dash-grid>.dash-block:has(#intelRegimeChip){order:3;}
-html[data-skin="clean"] .dash-grid>.dash-block:has(#altCM){order:4;}
-/* 3. 워치리스트 → 4. 캘린더류(어닝/내부자/지표임팩트) → 5. 원자재·채권 → 6. 경제지표·TA */
-html[data-skin="clean"] #page-dashboard>.wl-layout{order:3;}
-html[data-skin="clean"] #page-dashboard>.fv3-grid{order:4;}
-html[data-skin="clean"] #page-dashboard>.cmbd-grid:has(#btnRunCM){order:5;}
-html[data-skin="clean"] #page-dashboard>.cmbd-grid:has(#btnEconRefresh){order:6;}
-/* 7. 구분 헤더(구순서 잔재)·오토튠 배너 → 8. 엔진 파이프라인(진단, 최하단·뮤트) */
-html[data-skin="clean"] #page-dashboard>.page-header{order:7;opacity:.7;margin:6px 0 0!important;}
-html[data-skin="clean"] #page-dashboard>.tune-banner{order:8;}
-html[data-skin="clean"] #page-dashboard>.pipeline-bar{order:9;opacity:.85;}
-/* 워치리스트 height 붕괴 방어(V58 이력) */
-html[data-skin="clean"] #page-dashboard .wl-pane{min-height:380px;height:auto;}
-/* ─ C. 밀도/타이포/여백 정돈 (색 무관) ─ */
-html[data-skin="clean"] body{font-size:12.5px;line-height:1.55;}
-html[data-skin="clean"] .page{padding:18px 20px 44px;}
-html[data-skin="clean"] .page-title{font-size:12.5px;letter-spacing:2.2px;color:var(--t2);}
-html[data-skin="clean"] .dash-block-label,html[data-skin="clean"] .fv-panel-head,
-html[data-skin="clean"] .vision-stat-label,html[data-skin="clean"] .wl-pane-title{
-  font-size:9.5px;letter-spacing:1.6px;font-weight:700;
-}
-html[data-skin="clean"] .dash-block,html[data-skin="clean"] .port-card-body{padding:14px 16px;}
-html[data-skin="clean"] .port-total{font-size:26px;font-weight:650;letter-spacing:-.5px;}
-html[data-skin="clean"] .port-pnl{font-size:13.5px;}
-html[data-skin="clean"] .table tbody td{padding:8px 12px;}
-html[data-skin="clean"] .table thead th{padding:8px 12px;}
-html[data-skin="clean"] .table tbody tr:hover{background:var(--s2);}
-html[data-skin="clean"] .pos-strat-chip{border:none;background:var(--s2);padding:2px 8px;}
-html[data-skin="clean"] .pos-days-chip{background:var(--s2);}
-html[data-skin="clean"] .dash-block,html[data-skin="clean"] .pos-market-card,
-html[data-skin="clean"] .wl-pane,html[data-skin="clean"] .fv-panel,
-html[data-skin="clean"] .port-card,html[data-skin="clean"] .idx-card{border-radius:10px;box-shadow:none!important;}
-html[data-skin="clean"] .modal-box{box-shadow:0 24px 64px rgba(0,0,0,.5)!important;border-radius:12px;}
-@media(min-width:1280px){
-  html[data-skin="clean"] .page{max-width:1680px;margin:0 auto;padding:22px 28px 48px;}
-}
-/* ─ D. 폰(≤767) ─ */
+/* ─ 폰(≤767): 가독 + 44px 터치 + 표 가로스크롤(첫열 고정) ─ */
 @media(max-width:767px){
-  html[data-skin="clean"] body{font-size:13.5px;}
-  html[data-skin="clean"] .page{padding:12px 12px 56px;}
-  html[data-skin="clean"] #page-dashboard.active{gap:12px;}
-  html[data-skin="clean"] .port-total{font-size:30px;}
-  html[data-skin="clean"] .port-pnl{font-size:15px;}
-  html[data-skin="clean"] .btn,html[data-skin="clean"] .nav-item,html[data-skin="clean"] .pos-close-btn{min-height:44px;}
-  html[data-skin="clean"] .pos-close-btn{padding:8px 12px;font-size:11px;}
-  html[data-skin="clean"] .table-wrap{overflow-x:auto;-webkit-overflow-scrolling:touch;}
-  html[data-skin="clean"] .table{min-width:640px;}
-  html[data-skin="clean"] .table td:first-child,html[data-skin="clean"] .table th:first-child{
+  .pos-close-btn{min-height:40px;padding:8px 12px;font-size:11px;}
+  .table-wrap{overflow-x:auto!important;-webkit-overflow-scrolling:touch;}
+  .table{min-width:640px;}
+  .table td:first-child,.table th:first-child{
     position:sticky;left:0;background:var(--s1);z-index:1;
   }
-  html[data-skin="clean"] .table tbody td{padding:10px 12px;font-size:12px;}
-  html[data-skin="clean"] .cm-watch-price{font-size:20px;}
-  html[data-skin="clean"] .modal-box{border-radius:14px 14px 0 0;}
-  html[data-skin="clean"] #page-dashboard>.wl-pane{min-height:320px;}
-  /* 모바일 상단 내비 슬림화 — 아이콘+라벨 가로 배치(두꺼운 세로 적층 해소) */
-  html[data-skin="clean"] .sb-nav .nav-item{display:flex;flex-direction:row;align-items:center;gap:6px;padding:10px 12px;min-height:44px;max-height:48px;}
-  html[data-skin="clean"] .sb-nav .nav-item-icon{font-size:12px;margin:0;}
-  html[data-skin="clean"] .sb-nav .nav-item-label{font-size:11px;white-space:nowrap;}
+  .table tbody td{padding:9px 11px;font-size:12px;}
+  .port-total{font-size:26px;}
+  .modal-box{border-radius:14px 14px 0 0;}
 }
 </style>
 </head>
@@ -2722,7 +2612,6 @@ html[data-skin="clean"] .modal-box{box-shadow:0 24px 64px rgba(0,0,0,.5)!importa
         <button type="button" class="sb-btn btn" id="btnSettings" style="flex:1;">⚙ SETTINGS</button>
       </div>
       <button type="button" class="sb-theme-btn" id="btnTheme">🌙 DARK</button>
-      <button type="button" class="sb-theme-btn" id="btnSkin">◧ CLASSIC UI</button>
     </div>
   </nav>
 
