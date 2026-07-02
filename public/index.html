@@ -8,20 +8,37 @@
 <script>
 // 테마 선반영(깜빡임 방지) — 저장값 없으면 기본 다크
 try{var __t=localStorage.getItem('luxTheme');if(__t==='light')document.documentElement.setAttribute('data-theme','light');}catch(e){}
+// [V12] 스킨 선반영 — 'clean'(새 디자인, 기본) ↔ 'classic'(기존 디자인). 언제든 토글로 복귀.
+try{var __s=localStorage.getItem('luxSkin')||'clean';if(__s==='clean')document.documentElement.setAttribute('data-skin','clean');}catch(e){}
 // [V58] 라이트/다크 토글 — 메인 스크립트와 분리(메인에서 에러가 나도 토글은 항상 동작)
 document.addEventListener('DOMContentLoaded',function(){
   var btn=document.getElementById('btnTheme');
-  if(!btn||btn.__themeBound)return;
-  btn.__themeBound=true;
-  function lbl(){var l=document.documentElement.getAttribute('data-theme')==='light';btn.textContent=l?'☀ LIGHT':'🌙 DARK';}
-  btn.addEventListener('click',function(){
-    var root=document.documentElement;
-    var l=root.getAttribute('data-theme')==='light';
-    if(l){root.removeAttribute('data-theme');try{localStorage.setItem('luxTheme','dark');}catch(e){}}
-    else{root.setAttribute('data-theme','light');try{localStorage.setItem('luxTheme','light');}catch(e){}}
+  if(btn&&!btn.__themeBound){
+    btn.__themeBound=true;
+    var lbl=function(){var l=document.documentElement.getAttribute('data-theme')==='light';btn.textContent=l?'☀ LIGHT':'🌙 DARK';};
+    btn.addEventListener('click',function(){
+      var root=document.documentElement;
+      var l=root.getAttribute('data-theme')==='light';
+      if(l){root.removeAttribute('data-theme');try{localStorage.setItem('luxTheme','dark');}catch(e){}}
+      else{root.setAttribute('data-theme','light');try{localStorage.setItem('luxTheme','light');}catch(e){}}
+      lbl();
+    });
     lbl();
-  });
-  lbl();
+  }
+  // [V12] 새 UI ↔ 기존 UI 토글 (localStorage 영속, 새로고침 없이 즉시 전환)
+  var sk=document.getElementById('btnSkin');
+  if(sk&&!sk.__skinBound){
+    sk.__skinBound=true;
+    var slbl=function(){var c=document.documentElement.getAttribute('data-skin')==='clean';sk.textContent=c?'◧ CLASSIC UI':'✦ NEW UI';sk.title=c?'기존 디자인으로 전환':'새 클린 디자인으로 전환';};
+    sk.addEventListener('click',function(){
+      var root=document.documentElement;
+      var c=root.getAttribute('data-skin')==='clean';
+      if(c){root.removeAttribute('data-skin');try{localStorage.setItem('luxSkin','classic');}catch(e){}}
+      else{root.setAttribute('data-skin','clean');try{localStorage.setItem('luxSkin','clean');}catch(e){}}
+      slbl();
+    });
+    slbl();
+  }
 });
 </script>
 <link rel="preconnect" href="https://fonts.googleapis.com">
@@ -2500,6 +2517,141 @@ html[data-theme="light"] .table tbody tr:hover{background:rgba(9,105,218,.045);}
 .sb-run-btn:hover{box-shadow:0 0 10px rgba(46,189,133,.25);}
 /* 페이지 헤더 정렬 통일 */
 .page-header{display:flex;align-items:center;gap:10px;padding-bottom:10px;border-bottom:1px solid var(--bd);margin-bottom:14px;}
+
+/* ════════════════════════════════════════════════════════════════════
+   [V12 CLEAN] 토글형 새 디자인 스킨 — html[data-skin="clean"] 스코프
+   · 디자인 토큰 전면 재정의(변수 기반이라 기존 규칙이 자동으로 새 팔레트 착용)
+   · 원칙: 표면 1종 + 헤어라인, 장식 0(그라디언트/글로우/배경아트 제거),
+     수치 위계(빅넘버>델타>메타), 일관 간격 스케일(4/8/12/16/24)
+   · 반응형: 폰(≤767) 1열·터치 44px / 태블릿(768~1279) 2열 / 데스크톱(≥1280) 정렬 그리드
+   · 정보 손실 0 — 셀렉터/ID/기능 무변경. 사이드바 '◧ CLASSIC UI' 버튼으로 즉시 복귀.
+   ════════════════════════════════════════════════════════════════════ */
+html[data-skin="clean"]{
+  --bg:#0a0d13; --s1:#10141c; --s2:#151a24; --s3:#1b2130;
+  --bd:#1d2432; --bd2:#161c28;
+  --t1:#e8ecf4; --t2:#97a2b6; --t3:#5d6a82;
+  --pos:#26bd85; --neg:#f0506e; --acc:#5e9eff; --acc2:#5e9eff;
+  --pos-bg:rgba(38,189,133,.10); --neg-bg:rgba(240,80,110,.10);
+  --amber:#e8b03f; --grn:#26bd85; --blue:#5e9eff; --purple:#9d8cff;
+  --strat-trend:#5e9eff; --strat-scalp:#e8b03f; --strat-snap:#26bd85;
+  --radius:10px; --glass:#10141c; --glass-bd:#1d2432; --glow-acc:none; --moon:#e8ecf4;
+  --panel:#0a0d13; --elev:#10141c; --border:#1d2432; --text:#e8ecf4; --dim:#97a2b6; --faint:#5d6a82;
+  --green:#26bd85; --red:#f0506e; --orange:#e8883f;
+}
+html[data-skin="clean"][data-theme="light"]{
+  --bg:#f6f8fb; --s1:#ffffff; --s2:#f0f3f8; --s3:#e7ebf2;
+  --bd:#dde3ec; --bd2:#e9edf4;
+  --t1:#131c2b; --t2:#4a5871; --t3:#8593a9;
+  --pos:#0e9f6e; --neg:#dc3d55; --acc:#2f6fe4; --acc2:#2f6fe4;
+  --pos-bg:rgba(14,159,110,.08); --neg-bg:rgba(220,61,85,.08);
+  --glass:#ffffff; --glass-bd:#dde3ec;
+  --panel:#f6f8fb; --elev:#ffffff; --border:#dde3ec; --text:#131c2b; --dim:#4a5871; --faint:#8593a9;
+}
+/* ── 장식 전면 제거: 배경아트/그라디언트/글로우 → 순수 평면 ── */
+html[data-skin="clean"] body{background:var(--bg)!important;}
+html[data-skin="clean"] body::before,html[data-skin="clean"] body::after{display:none!important;}
+html[data-skin="clean"] .pos-market-head,
+html[data-skin="clean"] .vision-status-panel{background:var(--s1)!important;}
+html[data-skin="clean"] .cm-watch-card{background:var(--s1)!important;}
+html[data-skin="clean"] .sidebar{background:var(--s1)!important;border-right:1px solid var(--bd)!important;}
+html[data-skin="clean"] .sb-brand::after{background:var(--bd);}
+html[data-skin="clean"] .content-topbar{background:var(--s1)!important;}
+/* ── 카드 통일: 표면 1종 + 헤어라인 + 라운드 10 ── */
+html[data-skin="clean"] .dash-block,html[data-skin="clean"] .pos-market-card,
+html[data-skin="clean"] .wl-pane,html[data-skin="clean"] .vision-card,
+html[data-skin="clean"] .cm-watch-card,html[data-skin="clean"] .yield-card,
+html[data-skin="clean"] .trades-summary,html[data-skin="clean"] .llm-banner,
+html[data-skin="clean"] .alt-panel,html[data-skin="clean"] .idx-card,
+html[data-skin="clean"] .pps-item,html[data-skin="clean"] .fv-panel,
+html[data-skin="clean"] .port-card{
+  background:var(--s1)!important;border:1px solid var(--bd)!important;
+  border-radius:10px;box-shadow:none!important;
+}
+html[data-skin="clean"] .dash-block:hover,html[data-skin="clean"] .idx-card:hover,
+html[data-skin="clean"] .vision-card:hover,html[data-skin="clean"] .cm-watch-card:hover{
+  border-color:#2b3650!important;transform:none!important;box-shadow:none!important;
+}
+/* ── 타이포 위계: 라벨(9.5 caps 뮤트) < 메타(10) < 본문(11.5) < 델타(13) < 빅넘버(24) ── */
+html[data-skin="clean"] body{font-size:12.5px;line-height:1.55;}
+html[data-skin="clean"] .page-title{font-size:12.5px;letter-spacing:2.2px;color:var(--t2);}
+html[data-skin="clean"] .dash-block-label,html[data-skin="clean"] .fv-panel-head,
+html[data-skin="clean"] .vision-stat-label,html[data-skin="clean"] .wl-pane-title{
+  font-size:9.5px;letter-spacing:1.6px;color:var(--t3);font-weight:700;
+}
+html[data-skin="clean"] .dash-block-label::before{box-shadow:none;}
+html[data-skin="clean"] .port-total{font-size:26px;font-weight:650;letter-spacing:-.5px;color:var(--t1);}
+html[data-skin="clean"] .port-pnl{font-size:13.5px;}
+html[data-skin="clean"] .port-pnl-caption{color:var(--t3);}
+/* ── 여백 리듬: 카드 내부 14~16, 그리드 갭 14 ── */
+html[data-skin="clean"] .dash-grid{gap:14px;}
+html[data-skin="clean"] .dash-block,html[data-skin="clean"] .port-card-body{padding:14px 16px;}
+html[data-skin="clean"] .pos-market-head{padding:11px 16px;border-bottom:1px solid var(--bd);}
+html[data-skin="clean"] .page{padding:18px 20px 40px;}
+/* ── 테이블: 8px 수직 리듬 + 헤어라인만(줄무늬 제거) ── */
+html[data-skin="clean"] .table tbody td{padding:8px 12px;border-bottom:1px solid var(--bd2);}
+html[data-skin="clean"] .table thead th{padding:8px 12px;background:var(--s1);color:var(--t3);}
+html[data-skin="clean"] .table tbody tr:nth-child(odd),
+html[data-skin="clean"] .table tbody tr:nth-child(even){background:transparent;}
+html[data-skin="clean"] .table tbody tr:hover{background:var(--s2);}
+html[data-skin="clean"] .fv-table td,html[data-skin="clean"] .fv-table th{border-color:var(--bd2);}
+/* ── 칩/배지 디크롬: 보더 대신 은은한 틴트 ── */
+html[data-skin="clean"] .pos-strat-chip{border:none;background:var(--s2);padding:2px 8px;}
+html[data-skin="clean"] .pos-days-chip{background:var(--s2);}
+html[data-skin="clean"] .market-badge,html[data-skin="clean"] .vision-badge{border:none;}
+/* ── 사이드바/내비: 조용한 액티브(좌측 바 + 액센트 텍스트만) ── */
+html[data-skin="clean"] .nav-item{border-radius:8px;margin:1px 8px;color:var(--t2);}
+html[data-skin="clean"] .nav-item:hover{background:var(--s2);transform:none;}
+html[data-skin="clean"] .nav-item.active{background:var(--s2);box-shadow:none;}
+html[data-skin="clean"] .nav-item.active::before{background:var(--acc);}
+html[data-skin="clean"] .nav-item.active .nav-item-label{color:var(--acc);}
+html[data-skin="clean"] .nav-item-icon{color:var(--t3);}
+html[data-skin="clean"] .sb-run-btn{background:var(--acc)!important;color:#fff!important;box-shadow:none;border-radius:8px!important;}
+html[data-skin="clean"] .sb-run-btn:hover{filter:brightness(1.1);box-shadow:none;}
+html[data-skin="clean"] .sb-btn,html[data-skin="clean"] .sb-theme-btn{
+  background:transparent!important;border:1px solid var(--bd)!important;color:var(--t2)!important;border-radius:8px!important;
+}
+html[data-skin="clean"] .sb-btn:hover,html[data-skin="clean"] .sb-theme-btn:hover{border-color:var(--acc)!important;color:var(--acc)!important;}
+/* ── 버튼 통일: 고스트 1종 ── */
+html[data-skin="clean"] .btn{background:transparent;border:1px solid var(--bd);color:var(--t2);border-radius:8px;}
+html[data-skin="clean"] .btn:hover{border-color:var(--acc);color:var(--acc);background:transparent;}
+html[data-skin="clean"] .btn.primary{background:var(--acc);border-color:var(--acc);color:#fff;}
+/* ── 게이지/바 뮤트 ── */
+html[data-skin="clean"] .port-alloc-bar{height:6px;border-radius:3px;background:var(--s3);}
+html[data-skin="clean"] .cm-rsi-bar,html[data-skin="clean"] .vision-budget-bar{background:var(--s3);}
+/* ── 모달: 유일하게 그림자 허용(입면) ── */
+html[data-skin="clean"] .modal-box{background:var(--s1)!important;border:1px solid var(--bd)!important;box-shadow:0 24px 64px rgba(0,0,0,.5)!important;border-radius:12px;}
+/* ════ 반응형 — 데스크톱(≥1280): 정렬 그리드 + 최대폭 ════ */
+@media(min-width:1280px){
+  html[data-skin="clean"] .page{max-width:1640px;margin:0 auto;padding:22px 28px 48px;}
+  html[data-skin="clean"] .dash-grid{gap:16px;}
+}
+/* ════ 반응형 — 태블릿(768~1279): 2열 강제 + 터치 여유 ════ */
+@media(min-width:768px) and (max-width:1279px){
+  html[data-skin="clean"] .dash-grid{grid-template-columns:1fr 1fr;gap:12px;}
+  html[data-skin="clean"] .content-topbar{grid-template-columns:1fr 1fr;}
+  html[data-skin="clean"] .nav-item{padding:10px 12px;}
+  html[data-skin="clean"] .btn{min-height:34px;}
+  html[data-skin="clean"] .page{padding:16px 16px 40px;}
+}
+/* ════ 반응형 — 폰(≤767): 1열 + 44px 터치 + 가독 폰트 + 표 가로스크롤 ════ */
+@media(max-width:767px){
+  html[data-skin="clean"] body{font-size:13.5px;}
+  html[data-skin="clean"] .page{padding:12px 12px 56px;}
+  html[data-skin="clean"] .dash-grid{grid-template-columns:1fr;gap:12px;}
+  html[data-skin="clean"] .port-total{font-size:30px;}
+  html[data-skin="clean"] .port-pnl{font-size:15px;}
+  html[data-skin="clean"] .btn,html[data-skin="clean"] .nav-item,html[data-skin="clean"] .pos-close-btn{min-height:44px;}
+  html[data-skin="clean"] .pos-close-btn{padding:8px 12px;font-size:11px;}
+  html[data-skin="clean"] .table-wrap{overflow-x:auto;-webkit-overflow-scrolling:touch;}
+  html[data-skin="clean"] .table{min-width:640px;}
+  html[data-skin="clean"] .table td:first-child,html[data-skin="clean"] .table th:first-child{
+    position:sticky;left:0;background:var(--s1);z-index:1;
+  }
+  html[data-skin="clean"] .table tbody td{padding:10px 12px;font-size:12px;}
+  html[data-skin="clean"] .page-title{font-size:13px;}
+  html[data-skin="clean"] .cm-watch-price{font-size:20px;}
+  html[data-skin="clean"] .modal-box{border-radius:14px 14px 0 0;}
+}
 </style>
 </head>
 <body>
@@ -2592,6 +2744,7 @@ html[data-theme="light"] .table tbody tr:hover{background:rgba(9,105,218,.045);}
         <button type="button" class="sb-btn btn" id="btnSettings" style="flex:1;">⚙ SETTINGS</button>
       </div>
       <button type="button" class="sb-theme-btn" id="btnTheme">🌙 DARK</button>
+      <button type="button" class="sb-theme-btn" id="btnSkin">◧ CLASSIC UI</button>
     </div>
   </nav>
 
