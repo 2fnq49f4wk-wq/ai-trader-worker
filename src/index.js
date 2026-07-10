@@ -12210,11 +12210,17 @@ async function runTradingCycle(env) {
             //   미학습/기권/불신이면 규칙엔진 수량 유지(거래영향 0). 모든 실패는 무해 폴백.
             try {
               if (typeof LUXML !== "undefined" && LUXML.enabled && daily && daily.closes && signal) {
-                let _heads = [];
+                let _heads = [], _grpSent = null;
                 try {
                   if (__sectorNews && __sectorNews.headlines) {
                     const _grp = (typeof getSectorGroup === "function") ? getSectorGroup(symbol, mcfg) : null;
-                    if (_grp && __sectorNews.headlines[_grp]) _heads = __sectorNews.headlines[_grp];
+                    if (_grp && __sectorNews.sentiment && __sectorNews.sentiment[_grp]) _grpSent = __sectorNews.sentiment[_grp].compound;
+                    if (_grp && __sectorNews.headlines[_grp]) {
+                      // V83 수집기는 {title,link,pub} 객체 배열, AI 레이어는 문자열 배열 기대 → 정규화
+                      _heads = __sectorNews.headlines[_grp]
+                        .map(function (h) { return (typeof h === "string") ? h : ((h && h.title) || ""); })
+                        .filter(function (t) { return !!t; });
+                    }
                   }
                 } catch (e) {}
                 const _col = mlCollectEvents({
@@ -12222,8 +12228,11 @@ async function runTradingCycle(env) {
                   regime: (regime && regime.regime) ? regime.regime : "NEUTRAL",
                   secData: secData, eventData: eventData, headlines: _heads, eventMemory: __evMem
                 });
-                // VADER식 감성 융합(헤드라인 있으면 newsSent 보강)
-                try { if (_heads && _heads.length && typeof nlpTagHeadlinesV2 === "function") { const _t = nlpTagHeadlinesV2(_heads); _col.ev.newsSent = _t.sent; } } catch (e) {}
+                // VADER식 감성 융합(헤드라인 있으면 newsSent 보강, 없으면 야간 집계 그룹감성 폴백)
+                try {
+                  if (_heads && _heads.length && typeof nlpTagHeadlinesV2 === "function") { const _t = nlpTagHeadlinesV2(_heads); _col.ev.newsSent = _t.sent; }
+                  else if (typeof _grpSent === "number" && !_col.ev.newsSent) _col.ev.newsSent = _grpSent;
+                } catch (e) {}
                 const _vp = (visionPreds && visionPreds[symbol]) ? visionPreds[symbol] : null;
                 signal.mlFeat = mlBuildFeatures({
                   closes: daily.closes, price: price, dayPct: dayPct,
@@ -14963,8 +14972,8 @@ const LUXML = {
   gateThresh: 0.42,
   sizeMin: 0.5, sizeMax: 1.5,
 
-  trainWindow: 1200,
-  epochs: 15,
+  trainWindow: 1600,
+  epochs: 25,
   lr: 0.05,
   l2: 0.0006,        // 릿지(부드러운 축소)
   l1: 0.010,         // 라쏘(누적L1로 0까지 밀어 자동선택). 크게=공격적, 작게=관대. 표본 적을 땐 0.01~0.02 권장
@@ -15738,7 +15747,7 @@ async function mlBanditStatus(DB) {
 
 const BRAIN = {
   enabled: true,
-  bagK: 7,               // 앙상블 모델 수(홀수)
+  bagK: 9,               // 앙상블 모델 수(홀수)
   bagFrac: 0.85,         // 부트스트랩 표본비(복원추출)
   featDropout: 0.15,     // 모델마다 피처 일부를 랜덤 제거(다양성↑, 과적합↓)
   epochs: 12,
@@ -16082,7 +16091,7 @@ async function mlBrainStatus(DB) {
 
 const MIND = {
   enabled: true,
-  fmK: 6, fmEpochs: 15, fmLr: 0.03, fmL2w: 0.001, fmL2v: 0.002,
+  fmK: 8, fmEpochs: 20, fmLr: 0.03, fmL2w: 0.001, fmL2v: 0.003,
   fmValFrac: 0.2, minTrainSamples: 80,
   stackL2: 0.01, stackEpochs: 200, stackLr: 0.1,
   guardMinLive: 25, guardMargin: 0.08, guardWindow: 60,
@@ -16367,20 +16376,25 @@ async function mlMindStatus(DB) {
 
 const DNN = {
   enabled: true,
-  hidden: [24, 16, 8],   // ← 은닉층 구조. 층 수·너비 자유. 예: [16] 얕게 / [32,16,8] 깊게
-  dropout: 0.20,         // 은닉 드롭아웃(과적합 억제)
-  l2: 1e-4,              // 가중치 감쇠
+  hidden: [48, 32, 16],  // ← 은닉층 구조(강화). 층 수·너비 자유. 예: [16] 얕게 / [64,32,16] 더 깊게
+  dropout: 0.25,         // 은닉 드롭아웃(과적합 억제, 폭 커진 만큼 상향)
+  l2: 2e-4,              // 가중치 감쇠(폭 커진 만큼 상향)
   lr: 0.003,             // Adam 학습률
   beta1: 0.9, beta2: 0.999, eps: 1e-8,
-  epochs: 80,
+  epochs: 60,
   batch: 16,
-  patience: 10,          // 조기종료 인내
+  patience: 8,           // 조기종료 인내
   gradClip: 5,
   minTrainSamples: 300,  // 딥넷 하한. 이 미만이면 학습 안 함(자동 미사용)
   valFrac: 0.2,
   trustFloor: 0.505,     // 검증정확도 이 미만이면 신뢰 0
   trustMargin: 0.0,      // mind보다 이만큼은 나아야 신뢰 부여(0=동등이면 절반씩)
-  trustTemp: 12          // 신뢰 소프트맥스 온도(정확도차→가중)
+  trustTemp: 12,         // 신뢰 소프트맥스 온도(정확도차→가중)
+  // ── 과적합 방어(소표본 금융 특화) ──
+  seeds: 3,              // 멀티시드 앙상블 수(서로 다른 초기화·셔플로 K개 학습, 로짓 평균 → 분산↓)
+  labelSmooth: 0.05,     // 라벨 스무딩(승/패 라벨 노이즈에 과신 방지)
+  inputNoise: 0.05,      // 학습 시 표준화 입력에 가우시안 노이즈(σ) 증강
+  trainBudgetMs: 20000   // 야간 학습 총 CPU 예산 — 초과 시 남은 시드 생략(최소 1개 보장)
 };
 
 // ── 선형대수 헬퍼 ──────────────────────────────────────────
@@ -16427,13 +16441,129 @@ function _dnnForward(net, x, train) {
   return { a: a, pre: pre, p: 0.5, masks: masks };
 }
 
+// 앙상블 추론: 각 시드넷의 로짓을 평균 → sigmoid (과신 억제된 확률)
+function _dnnEnsembleP(nets, x) {
+  let zsum = 0, c = 0;
+  for (const nt of nets) {
+    const p = _dnnForward(nt, x, false).p;
+    zsum += Math.log(p / (1 - p)); c++;
+  }
+  if (!c) return 0.5;
+  return _clamp(_sigmoid(zsum / c), 1e-6, 1 - 1e-6);
+}
+
 function mlDNNScore(net, featVec) {
   try {
-    if (!net || !Array.isArray(net.W)) return null;
+    if (!net) return null;
     const x = _dnnStdVec(featVec.map(function (v) { return _num(v, 0); }), net.mean, net.std);
-    const fwd = _dnnForward(net, x, false);
-    return _clamp(fwd.p, 0.001, 0.999);
+    if (Array.isArray(net.nets) && net.nets.length) return _clamp(_dnnEnsembleP(net.nets, x), 0.001, 0.999);
+    if (Array.isArray(net.W)) { const fwd = _dnnForward(net, x, false); return _clamp(fwd.p, 0.001, 0.999); } // 구버전 단일넷 호환
+    return null;
   } catch (e) { return null; }
+}
+
+// ── 시드 1개 학습: Adam + 미니배치 + 조기종료 + 라벨스무딩 + 입력노이즈 증강 ──
+//   deadline 초과 시 그 시점까지의 최적 가중치로 중단(부분학습도 유효). NaN이면 null.
+function _dnnTrainOne(train, val, dims, deadline) {
+  const W = [], b = [], mW = [], vW = [], mB = [], vB = [];
+  for (let l = 0; l < dims.length - 1; l++) {
+    W.push(_dnnHeInit(dims[l + 1], dims[l]));
+    b.push(new Array(dims[l + 1]).fill(0));
+    mW.push(W[l].map(function (r) { return r.map(function () { return 0; }); }));
+    vW.push(W[l].map(function (r) { return r.map(function () { return 0; }); }));
+    mB.push(new Array(dims[l + 1]).fill(0));
+    vB.push(new Array(dims[l + 1]).fill(0));
+  }
+  const net = { W: W, b: b, dims: dims };
+
+  let pos = 0; for (const t of train) pos += t.y;
+  const wPos = pos > 0 ? train.length / (2 * pos) : 1;
+  const wNeg = (train.length - pos) > 0 ? train.length / (2 * (train.length - pos)) : 1;
+  const eps = DNN.labelSmooth || 0;          // 라벨 스무딩: y→y(1-ε)+ε/2
+  const sigma = DNN.inputNoise || 0;         // 입력 가우시안 노이즈(표준화 공간)
+  const D = dims[0];
+
+  function valLoss() {
+    let ll = 0;
+    for (const t of val) { const p = _dnnForward(net, t.x, false).p; ll += -(t.y * Math.log(p) + (1 - t.y) * Math.log(1 - p)); }
+    return ll / val.length;
+  }
+
+  let step = 0, bestLoss = Infinity, bestW = null, bestB = null, wait = 0;
+  const clip = DNN.gradClip;
+  const noisy = new Array(D);
+  for (let ep = 0; ep < DNN.epochs; ep++) {
+    if (Date.now() > deadline && bestW) break;   // 예산 초과 — 지금까지의 최적으로 마감
+    for (let i = train.length - 1; i > 0; i--) { const k = Math.floor(Math.random() * (i + 1)); const tmp = train[i]; train[i] = train[k]; train[k] = tmp; }
+    for (let bs = 0; bs < train.length; bs += DNN.batch) {
+      const batch = train.slice(bs, bs + DNN.batch);
+      // 그래디언트 누적
+      const gW = W.map(function (m) { return m.map(function (r) { return r.map(function () { return 0; }); }); });
+      const gB = b.map(function (r) { return r.map(function () { return 0; }); });
+      for (const t of batch) {
+        let xin = t.x;
+        if (sigma > 0) { for (let j = 0; j < D; j++) noisy[j] = t.x[j] + sigma * _gaussM(); xin = noisy; }
+        const fwd = _dnnForward(net, xin, true);
+        const L = W.length;
+        // 출력 델타 (BCE+sigmoid, 스무딩 라벨): (p - yS) * weight
+        const yS = t.y * (1 - eps) + eps / 2;
+        let delta = [(fwd.p - yS) * (t.y ? wPos : wNeg) * t.mw];
+        for (let l = L - 1; l >= 0; l--) {
+          const aPrev = fwd.a[l];
+          const gWl = gW[l], gBl = gB[l];
+          for (let i = 0; i < W[l].length; i++) {
+            const di = delta[i];
+            gBl[i] += di;
+            const gRow = gWl[i];
+            for (let j = 0; j < aPrev.length; j++) gRow[j] += di * aPrev[j];
+          }
+          if (l > 0) {
+            // 이전 은닉층 델타: (W^T delta) * relu'(pre) * dropoutMask
+            const prevLen = W[l][0].length;
+            const nd = new Array(prevLen).fill(0);
+            for (let i = 0; i < W[l].length; i++) { const di = delta[i], Wi = W[l][i]; for (let j = 0; j < prevLen; j++) nd[j] += Wi[j] * di; }
+            const pre = fwd.pre[l - 1], mask = fwd.masks[l - 1];
+            for (let j = 0; j < prevLen; j++) nd[j] *= (pre[j] > 0 ? 1 : 0) * (mask ? mask[j] : 1);
+            delta = nd;
+          }
+        }
+      }
+      // Adam 갱신(배치평균 + L2)
+      step++;
+      const bc1 = 1 - Math.pow(DNN.beta1, step), bc2 = 1 - Math.pow(DNN.beta2, step);
+      const bl = batch.length;
+      for (let l = 0; l < W.length; l++) {
+        for (let i = 0; i < W[l].length; i++) {
+          for (let j = 0; j < W[l][i].length; j++) {
+            let g = gW[l][i][j] / bl + DNN.l2 * W[l][i][j];
+            if (g > clip) g = clip; else if (g < -clip) g = -clip;
+            mW[l][i][j] = DNN.beta1 * mW[l][i][j] + (1 - DNN.beta1) * g;
+            vW[l][i][j] = DNN.beta2 * vW[l][i][j] + (1 - DNN.beta2) * g * g;
+            const mh = mW[l][i][j] / bc1, vh = vW[l][i][j] / bc2;
+            W[l][i][j] -= DNN.lr * mh / (Math.sqrt(vh) + DNN.eps);
+          }
+          let gb = gB[l][i] / bl;
+          if (gb > clip) gb = clip; else if (gb < -clip) gb = -clip;
+          mB[l][i] = DNN.beta1 * mB[l][i] + (1 - DNN.beta1) * gb;
+          vB[l][i] = DNN.beta2 * vB[l][i] + (1 - DNN.beta2) * gb * gb;
+          const mhb = mB[l][i] / bc1, vhb = vB[l][i] / bc2;
+          b[l][i] -= DNN.lr * mhb / (Math.sqrt(vhb) + DNN.eps);
+        }
+      }
+    }
+    // 조기종료 체크
+    const vl = valLoss();
+    if (isFinite(vl) && vl < bestLoss - 1e-5) {
+      bestLoss = vl; wait = 0;
+      bestW = W.map(function (m) { return m.map(function (r) { return r.slice(); }); });
+      bestB = b.map(function (r) { return r.slice(); });
+    } else { wait++; if (wait >= DNN.patience) break; }
+  }
+  if (bestW) { net.W = bestW; net.b = bestB; }
+
+  // NaN 가드
+  for (const m of net.W) for (const r of m) for (const v of r) if (!isFinite(v)) return null;
+  return { W: net.W, b: net.b, dims: dims };
 }
 
 // ── 학습: Adam + 미니배치 + 조기종료 + 역전파 ──────────────
@@ -16474,108 +16604,25 @@ async function mlDNNTrainNightly(DB) {
     const val = all.slice(N - nVal);
     if (train.length < 60) { await setState(DB, "dnn_trust", { wDnn: 0, trusted: false, reason: "train" }); return "[DNN] 훈련셋 부족"; }
 
-    // 층 구조 [D, ...hidden, 1]
+    // 층 구조 [D, ...hidden, 1] — 멀티시드 앙상블(서로 다른 초기화·셔플 K개 → 로짓 평균)
     const dims = [D].concat(DNN.hidden).concat([1]);
-    const W = [], b = [], mW = [], vW = [], mB = [], vB = [];
-    for (let l = 0; l < dims.length - 1; l++) {
-      W.push(_dnnHeInit(dims[l + 1], dims[l]));
-      b.push(new Array(dims[l + 1]).fill(0));
-      mW.push(_dnnHeInit(dims[l + 1], dims[l]).map(function (r) { return r.map(function () { return 0; }); }));
-      vW.push(W[l].map(function (r) { return r.map(function () { return 0; }); }));
-      mB.push(new Array(dims[l + 1]).fill(0));
-      vB.push(new Array(dims[l + 1]).fill(0));
+    const deadline = Date.now() + (DNN.trainBudgetMs || 20000);
+    const nets = [];
+    const K = Math.max(1, DNN.seeds || 1);
+    for (let sd = 0; sd < K; sd++) {
+      if (sd > 0 && Date.now() > deadline) break;   // CPU 예산 소진 — 최소 1개는 보장
+      const one = _dnnTrainOne(train, val, dims, deadline);
+      if (one) nets.push(one);
     }
-    const net = { W: W, b: b, dims: dims };
+    if (!nets.length) { await setState(DB, "dnn_trust", { wDnn: 0, trusted: false, reason: "nan" }); return "[DNN] 수치불안정 감지 — 미사용"; }
 
-    let pos = 0; for (const t of train) pos += t.y;
-    const wPos = pos > 0 ? train.length / (2 * pos) : 1;
-    const wNeg = (train.length - pos) > 0 ? train.length / (2 * (train.length - pos)) : 1;
-
-    function valLoss() {
-      let ll = 0;
-      for (const t of val) { const p = _dnnForward(net, t.x, false).p; ll += -(t.y * Math.log(p) + (1 - t.y) * Math.log(1 - p)); }
-      return ll / val.length;
-    }
-
-    let step = 0, bestLoss = Infinity, bestW = null, bestB = null, wait = 0;
-    const clip = DNN.gradClip;
-    for (let ep = 0; ep < DNN.epochs; ep++) {
-      for (let i = train.length - 1; i > 0; i--) { const k = Math.floor(Math.random() * (i + 1)); const tmp = train[i]; train[i] = train[k]; train[k] = tmp; }
-      for (let bs = 0; bs < train.length; bs += DNN.batch) {
-        const batch = train.slice(bs, bs + DNN.batch);
-        // 그래디언트 누적
-        const gW = W.map(function (m) { return m.map(function (r) { return r.map(function () { return 0; }); }); });
-        const gB = b.map(function (r) { return r.map(function () { return 0; }); });
-        for (const t of batch) {
-          const fwd = _dnnForward(net, t.x, true);
-          const L = W.length;
-          // 출력 델타 (BCE+sigmoid): (p - y) * weight
-          let delta = [(fwd.p - t.y) * (t.y ? wPos : wNeg) * t.mw];
-          for (let l = L - 1; l >= 0; l--) {
-            const aPrev = fwd.a[l];
-            const gWl = gW[l], gBl = gB[l];
-            for (let i = 0; i < W[l].length; i++) {
-              const di = delta[i];
-              gBl[i] += di;
-              const gRow = gWl[i];
-              for (let j = 0; j < aPrev.length; j++) gRow[j] += di * aPrev[j];
-            }
-            if (l > 0) {
-              // 이전 은닉층 델타: (W^T delta) * relu'(pre) * dropoutMask
-              const prevLen = W[l][0].length;
-              const nd = new Array(prevLen).fill(0);
-              for (let i = 0; i < W[l].length; i++) { const di = delta[i], Wi = W[l][i]; for (let j = 0; j < prevLen; j++) nd[j] += Wi[j] * di; }
-              const pre = fwd.pre[l - 1], mask = fwd.masks[l - 1];
-              for (let j = 0; j < prevLen; j++) nd[j] *= (pre[j] > 0 ? 1 : 0) * (mask ? mask[j] : 1);
-              delta = nd;
-            }
-          }
-        }
-        // Adam 갱신(배치평균 + L2)
-        step++;
-        const bc1 = 1 - Math.pow(DNN.beta1, step), bc2 = 1 - Math.pow(DNN.beta2, step);
-        const bl = batch.length;
-        for (let l = 0; l < W.length; l++) {
-          for (let i = 0; i < W[l].length; i++) {
-            for (let j = 0; j < W[l][i].length; j++) {
-              let g = gW[l][i][j] / bl + DNN.l2 * W[l][i][j];
-              if (g > clip) g = clip; else if (g < -clip) g = -clip;
-              mW[l][i][j] = DNN.beta1 * mW[l][i][j] + (1 - DNN.beta1) * g;
-              vW[l][i][j] = DNN.beta2 * vW[l][i][j] + (1 - DNN.beta2) * g * g;
-              const mh = mW[l][i][j] / bc1, vh = vW[l][i][j] / bc2;
-              W[l][i][j] -= DNN.lr * mh / (Math.sqrt(vh) + DNN.eps);
-            }
-            let gb = gB[l][i] / bl;
-            if (gb > clip) gb = clip; else if (gb < -clip) gb = -clip;
-            mB[l][i] = DNN.beta1 * mB[l][i] + (1 - DNN.beta1) * gb;
-            vB[l][i] = DNN.beta2 * vB[l][i] + (1 - DNN.beta2) * gb * gb;
-            const mhb = mB[l][i] / bc1, vhb = vB[l][i] / bc2;
-            b[l][i] -= DNN.lr * mhb / (Math.sqrt(vhb) + DNN.eps);
-          }
-        }
-      }
-      // 조기종료 체크
-      const vl = valLoss();
-      if (isFinite(vl) && vl < bestLoss - 1e-5) {
-        bestLoss = vl; wait = 0;
-        bestW = W.map(function (m) { return m.map(function (r) { return r.slice(); }); });
-        bestB = b.map(function (r) { return r.slice(); });
-      } else { wait++; if (wait >= DNN.patience) break; }
-    }
-    if (bestW) { net.W = bestW; net.b = bestB; }
-
-    // NaN 가드
-    let bad = false;
-    for (const m of net.W) for (const r of m) for (const v of r) if (!isFinite(v)) bad = true;
-    if (bad) { await setState(DB, "dnn_trust", { wDnn: 0, trusted: false, reason: "nan" }); return "[DNN] 수치불안정 감지 — 미사용"; }
-
-    // 검증 정확도
+    // 검증 정확도(앙상블: 로짓 평균)
     let correct = 0;
-    for (const t of val) { const p = _dnnForward(net, t.x, false).p; if ((p >= 0.5 ? 1 : 0) === t.y) correct++; }
+    for (const t of val) { const p = _dnnEnsembleP(nets, t.x); if ((p >= 0.5 ? 1 : 0) === t.y) correct++; }
     const dnnAcc = correct / val.length;
 
-    net.mean = mean; net.std = std; net.featVer = LUXML.featVer; net.valAcc = +dnnAcc.toFixed(4);
-    net.dims = dims; net.n = N; net.trainedAt = Date.now();
+    const net = { nets: nets, mean: mean, std: std, featVer: LUXML.featVer, valAcc: +dnnAcc.toFixed(4),
+                  dims: dims, n: N, trainedAt: Date.now() };
     await setState(DB, "dnn_model", net);
 
     // ── 신뢰블렌드: mind(스태킹) 대비 검증정확도로 wDnn 결정 ──
@@ -16591,7 +16638,7 @@ async function mlDNNTrainNightly(DB) {
     }
     await setState(DB, "dnn_trust", trust);
 
-    const arch = dims.join("-");
+    const arch = dims.join("-") + "×" + nets.length;
     return "[DNN] arch=" + arch + " n=" + N + " valAcc=" + (dnnAcc * 100).toFixed(1) +
            "% vs mind=" + (mindAcc * 100).toFixed(1) + "% → wDnn=" + trust.wDnn +
            (trust.trusted ? " (신뢰)" : " (자동억제=0)");
@@ -16602,7 +16649,7 @@ async function mlDNNTrainNightly(DB) {
 }
 
 async function mlDNNLoad(DB) {
-  try { const m = await getState(DB, "dnn_model", null); if (!m || m.featVer !== LUXML.featVer || !Array.isArray(m.W)) return null; return m; } catch (e) { return null; }
+  try { const m = await getState(DB, "dnn_model", null); if (!m || m.featVer !== LUXML.featVer || (!Array.isArray(m.nets) && !Array.isArray(m.W))) return null; return m; } catch (e) { return null; }
 }
 
 // ── 최상위 결정: mind(스태킹) ⊕ dnn 신뢰블렌드 → 게이트/켈리 ──
@@ -16650,7 +16697,7 @@ async function mlDNNStatus(DB) {
     const m = await mlDNNLoad(DB);
     const trust = await getState(DB, "dnn_trust", null);
     if (!m) return { trained: false, trust: trust || { wDnn: 0, trusted: false } };
-    return { trained: true, architecture: m.dims.join("-"), hidden: DNN.hidden, n: m.n,
+    return { trained: true, architecture: m.dims.join("-") + (Array.isArray(m.nets) ? "×" + m.nets.length : ""), hidden: DNN.hidden, n: m.n,
       valAcc: m.valAcc, trainedAt: m.trainedAt,
       trust: trust ? { wDnn: trust.wDnn, trusted: !!trust.trusted, dnnAcc: trust.dnnAcc, mindAcc: trust.mindAcc } : null };
   } catch (e) { return { trained: false, error: e && e.message }; }
@@ -16816,34 +16863,55 @@ function _jsonExtract(obj, path, field) {
 }
 
 // 사이클당 1회(스케줄) 호출. fetchImpl 주입가능(테스트용). 기본은 전역 fetch.
+//   ① 추가 소스(SENTI_SOURCES) fetch → 기존 state에 병합(V83 {title,link,pub} 형식 유지)
+//   ② 소스가 없어도, V83 섹터뉴스 수집기가 6시간마다 모아둔 헤드라인에 VADER 감성을
+//      계산해 같은 state의 sentiment 필드로 병합(네트워크 0). scales/scores는 보존.
 async function sentiFetchAndStore(DB, sources, fetchImpl) {
   const F = fetchImpl || (typeof fetch !== "undefined" ? fetch : null);
   const srcs = sources || SENTI_SOURCES;
-  const byGroup = {};        // group → 헤드라인 배열
-  if (!F || !srcs.length) return "[SENTI] 소스 없음 — 스킵";
-  for (const s of srcs) {
-    try {
-      const resp = await F(s.url, { cf: { cacheTtl: 300 } });
-      if (!resp || !resp.ok) continue;
-      let titles = [];
-      if (s.type === "json") { const j = await resp.json(); titles = _jsonExtract(j, s.path, s.field || "title"); }
-      else { const txt = await resp.text(); titles = _rssTitles(txt); }
-      if (titles.length) { byGroup[s.group] = (byGroup[s.group] || []).concat(titles).slice(0, 60); }
-    } catch (e) {}
+  const byGroup = {};        // group → 헤드라인(문자열) 배열
+  let fetched = 0;
+  if (F && srcs.length) {
+    for (const s of srcs) {
+      try {
+        const resp = await F(s.url, { cf: { cacheTtl: 300 } });
+        if (!resp || !resp.ok) continue;
+        let titles = [];
+        if (s.type === "json") { const j = await resp.json(); titles = _jsonExtract(j, s.path, s.field || "title"); }
+        else { const txt = await resp.text(); titles = _rssTitles(txt); }
+        if (titles.length) { byGroup[s.group] = (byGroup[s.group] || []).concat(titles).slice(0, 60); fetched++; }
+      } catch (e) {}
+    }
   }
-  const groups = Object.keys(byGroup);
-  if (!groups.length) return "[SENTI] 수집 0건";
-  // 집계 + 저장(lux_news가 읽는 형식과 호환: {headlines:{group:[...]}, sentiment:{group:score}})
+  // 기존 state 로드(V83 섹터뉴스 수집분) — 덮지 말고 병합
+  let st = null;
+  try { st = await getState(DB, "sector_news_sentiment", null); } catch (e) {}
+  if (!st || typeof st !== "object") st = {};
+  if (!st.headlines) st.headlines = {};
+  // 추가 소스 헤드라인 병합(V83 소비자 호환을 위해 {title} 객체로)
+  for (const g of Object.keys(byGroup)) {
+    const cur = Array.isArray(st.headlines[g]) ? st.headlines[g] : [];
+    const add = byGroup[g].map(function (t) { return { title: t, src: "senti" }; });
+    st.headlines[g] = cur.concat(add).slice(0, 60);
+  }
+  // 전 그룹 VADER 감성 계산(기존+추가 헤드라인 전체 대상, 문자열/객체 모두 수용)
   const sentiment = {};
+  const groups = Object.keys(st.headlines);
   for (const g of groups) {
     let acc = 0, c = 0;
-    for (const h of byGroup[g]) { acc += sentimentScore(h).compound; c++; }
-    sentiment[g] = { compound: c ? +(acc / c).toFixed(3) : 0, n: c };
+    for (const h of st.headlines[g]) {
+      const t = (typeof h === "string") ? h : ((h && h.title) || "");
+      if (!t) continue;
+      acc += sentimentScore(t).compound; c++;
+    }
+    if (c) sentiment[g] = { compound: +(acc / c).toFixed(3), n: c };
   }
-  const payload = { headlines: byGroup, sentiment: sentiment, updatedAt: Date.now() };
-  try { await setState(DB, "sector_news_sentiment", payload); } catch (e) {}
-  return "[SENTI] 수집 " + groups.length + "그룹 " +
-         groups.map(function (g) { return g + ":" + sentiment[g].compound; }).join(" ");
+  if (!Object.keys(sentiment).length) return "[SENTI] 수집 0건 — 스킵";
+  st.sentiment = sentiment;
+  st.sentimentAt = Date.now();
+  try { await setState(DB, "sector_news_sentiment", st); } catch (e) {}
+  return "[SENTI] VADER " + Object.keys(sentiment).length + "그룹" + (fetched ? " (+소스 " + fetched + ")" : "") + " " +
+         Object.keys(sentiment).map(function (g) { return g + ":" + sentiment[g].compound; }).join(" ");
 }
 
 
@@ -17012,7 +17080,7 @@ async function sentiStatus(DB) {
     try { const r = await DB.prepare("SELECT COUNT(*) c FROM ml_candidates WHERE featver=?").bind(LUXML.featVer).first(); cand = (r && r.c) || 0; } catch (e) {}
     try { const r = await DB.prepare("SELECT COUNT(*) c FROM ml_candidates WHERE labeled=0 AND featver=?").bind(LUXML.featVer).first(); unl = (r && r.c) || 0; } catch (e) {}
     return { sentimentGroups: s ? Object.keys(s.sentiment || {}).length : 0,
-      sentimentUpdatedAt: s ? s.updatedAt : null,
+      sentimentUpdatedAt: s ? (s.sentimentAt || s.updatedAt || s.ts || null) : null,
       candidatesTotal: cand, candidatesUnlabeled: unl };
   } catch (e) { return { error: e && e.message }; }
 }
