@@ -12663,6 +12663,36 @@ async function handleRequest(request, env) {
       return new Response(JSON.stringify(_out, null, 2), { headers: { "content-type": "application/json", "access-control-allow-origin": "*" } });
     }
 
+    // ── [FUND] 재무제표 + 내장AI 재무평가(F-Score·Z-Score) — 서버 7일 캐시 ──
+    if (path === "/api/fundamentals") {
+      const sym = (url.searchParams.get("symbol") || "").trim();
+      if (!sym || sym.length > 16 || !/^[A-Za-z0-9.^=\-]+$/.test(sym)) {
+        return Response.json({ error: "bad symbol" }, { status: 400, headers: cors });
+      }
+      const mcap = Number(url.searchParams.get("mcap")) || null;   // 프론트가 이미 아는 시총(서버 조회 절약)
+      const fund = await fetchFundamentals(env.DB, sym);
+      const ev = evaluateFundamentals(fund, mcap);
+      return Response.json({ symbol: sym, years: fund.years || {}, order: fund.order || [], ts: fund.ts || null, eval: ev }, { headers: cors });
+    }
+
+    // ── [CROWD] 투자심리: GET=집계+AI의견, POST /vote=투표(1일 1회는 클라 가드) ──
+    if (path === "/api/crowd") {
+      const sym = (url.searchParams.get("symbol") || "").trim();
+      if (!sym || sym.length > 16 || !/^[A-Za-z0-9.^=\-]+$/.test(sym)) {
+        return Response.json({ error: "bad symbol" }, { status: 400, headers: cors });
+      }
+      return Response.json(await crowdGet(env.DB, sym), { headers: cors });
+    }
+    if (path === "/api/crowd/vote" && request.method === "POST") {
+      let body = null; try { body = await request.json(); } catch (e) {}
+      const sym = body && String(body.symbol || "").trim();
+      const side = body && body.side;
+      if (!sym || sym.length > 16 || !/^[A-Za-z0-9.^=\-]+$/.test(sym) || (side !== "buy" && side !== "sell")) {
+        return Response.json({ error: "bad request" }, { status: 400, headers: cors });
+      }
+      return Response.json(await crowdVote(env.DB, sym, side), { headers: cors });
+    }
+
     if (path === "/api/state") {
       const cfg = migrateCfgToMarkets(Object.assign({}, DEFAULT_CFG, await getState(env.DB, "cfg", {})));
       // [섹터그룹·신호타입] 현재 가중치 계산(cfg에 주입) + 통계 — UI 표시용
@@ -16380,9 +16410,9 @@ async function mlMindStatus(DB) {
 
 const DNN = {
   enabled: true,
-  hidden: [48, 32, 16],  // ← 은닉층 구조(강화). 층 수·너비 자유. 예: [16] 얕게 / [64,32,16] 더 깊게
-  dropout: 0.25,         // 은닉 드롭아웃(과적합 억제, 폭 커진 만큼 상향)
-  l2: 2e-4,              // 가중치 감쇠(폭 커진 만큼 상향)
+  hidden: [96, 64, 48, 32],  // ← 은닉층 4층(V4 강화: 30→96→64→48→32→1, 파라미터 ~13.6k). 층 수·너비 자유.
+  dropout: 0.30,         // 은닉 드롭아웃(망 커진 만큼 상향 — 과적합 억제)
+  l2: 3e-4,              // 가중치 감쇠(망 커진 만큼 상향)
   lr: 0.003,             // Adam 학습률
   beta1: 0.9, beta2: 0.999, eps: 1e-8,
   epochs: 60,
@@ -16398,7 +16428,7 @@ const DNN = {
   seeds: 3,              // 멀티시드 앙상블 수(서로 다른 초기화·셔플로 K개 학습, 로짓 평균 → 분산↓)
   labelSmooth: 0.05,     // 라벨 스무딩(승/패 라벨 노이즈에 과신 방지)
   inputNoise: 0.05,      // 학습 시 표준화 입력에 가우시안 노이즈(σ) 증강
-  trainBudgetMs: 20000   // 야간 학습 총 CPU 예산 — 초과 시 남은 시드 생략(최소 1개 보장)
+  trainBudgetMs: 25000   // 야간 학습 총 CPU 예산 — 초과 시 남은 시드 생략(최소 1개 보장)
 };
 
 // ── 선형대수 헬퍼 ──────────────────────────────────────────
@@ -17000,6 +17030,172 @@ async function mlMarketHarvestNightly(DB) {
     } catch (e) {}
     return made ? ("[HV] 시장수확 +" + made + "표본 (" + scanned + "종목, 오프셋 " + off + "→" + ((off + takeN) % symsAll.length) + ")") : null;
   } catch (e) { return "[HV] fail: " + (e && e.message); }
+}
+
+
+// ============================================================================
+// [FUND] 기업 재무제표 + 내장 AI 재무평가 — 외부 LLM/API키 0
+//   • 데이터: Yahoo fundamentals-timeseries(무키·공개) 연간 재무 13종 → state 7일 캐시
+//   • 평가: 공개 학술 알고리즘 2종을 그대로 이식(결정론적·CPU 마이크로초)
+//       - Piotroski F-Score (2000): 수익성/레버리지/효율 9항목 체크
+//       - Altman Z-Score (1968): 부도위험 판별식 1.2X₁+1.4X₂+3.3X₃+0.6X₄+1.0X₅
+//   • 컴퓨팅 절약 설계: 상세페이지 열 때만 lazy fetch, 서버 7일 캐시(전 사용자 공유),
+//     실패 시 옛 캐시 폴백, 평가는 순수 산술이라 사실상 0 비용.
+// ============================================================================
+
+const FUND_TYPES = "annualTotalRevenue,annualGrossProfit,annualOperatingIncome,annualNetIncome," +
+  "annualTotalAssets,annualTotalLiabilitiesNetMinorityInterest,annualCurrentAssets,annualCurrentLiabilities," +
+  "annualStockholdersEquity,annualRetainedEarnings,annualOperatingCashFlow,annualFreeCashFlow,annualBasicAverageShares";
+
+async function fetchFundamentals(DB, symbol) {
+  const key = "fund:" + symbol;
+  let cached = null;
+  try { cached = await getState(DB, key, null); } catch (e) {}
+  if (cached && cached.ts && (Date.now() - cached.ts) < 7 * 86400000) return cached;
+  let js = null;
+  try {
+    const url = "https://query1.finance.yahoo.com/ws/fundamentals-timeseries/v1/finance/timeseries/" +
+      encodeURIComponent(symbol) + "?type=" + FUND_TYPES + "&period1=1483228800&period2=" + Math.floor(Date.now() / 1000);
+    const r = await fetch(url, { headers: { "User-Agent": "Mozilla/5.0" } });
+    if (r.ok) js = await r.json();
+  } catch (e) {}
+  const out = { symbol: symbol, ts: Date.now(), years: {}, order: [] };
+  try {
+    const rs = (js && js.timeseries && js.timeseries.result) || [];
+    for (const r of rs) {
+      const t = r.meta && r.meta.type && r.meta.type[0]; if (!t) continue;
+      const arr = r[t] || [];
+      for (const it of arr) {
+        if (!it || !it.asOfDate || !it.reportedValue) continue;
+        const v = it.reportedValue.raw;
+        if (typeof v !== "number" || !isFinite(v)) continue;
+        (out.years[it.asOfDate] = out.years[it.asOfDate] || {})[t.replace(/^annual/, "")] = v;
+      }
+    }
+    out.order = Object.keys(out.years).sort();
+  } catch (e) {}
+  if (!out.order.length) return cached || out;   // fetch 실패 → 옛 캐시 폴백
+  try { await setState(DB, key, out); } catch (e) {}
+  return out;
+}
+
+// 내장 AI 재무평가: F-Score(9) + Z-Score + 성장/수익성/건전성 보조지표 → 0~100 종합·등급
+function evaluateFundamentals(fund, marketCap) {
+  try {
+    const ys = (fund && fund.order) || [];
+    if (!ys.length) return null;
+    const cur = fund.years[ys[ys.length - 1]] || {};
+    const prev = ys.length >= 2 ? (fund.years[ys[ys.length - 2]] || {}) : null;
+    function n(v) { return (typeof v === "number" && isFinite(v)) ? v : null; }
+    const rev = n(cur.TotalRevenue), gp = n(cur.GrossProfit), oi = n(cur.OperatingIncome), ni = n(cur.NetIncome),
+          ta = n(cur.TotalAssets), tl = n(cur.TotalLiabilitiesNetMinorityInterest),
+          ca = n(cur.CurrentAssets), cl = n(cur.CurrentLiabilities), eq = n(cur.StockholdersEquity),
+          re = n(cur.RetainedEarnings), cfo = n(cur.OperatingCashFlow), fcf = n(cur.FreeCashFlow),
+          sh = n(cur.BasicAverageShares);
+
+    // ── Piotroski F-Score ──
+    const bits = [];
+    let f = 0, avail = 0;
+    function bit(name, cond, has) {
+      if (has) { avail++; const p = !!cond; if (p) f++; bits.push({ k: name, v: p }); }
+      else bits.push({ k: name, v: null });
+    }
+    const roa = (ni != null && ta) ? ni / ta : null;
+    const pRoa = (prev && n(prev.NetIncome) != null && n(prev.TotalAssets)) ? prev.NetIncome / prev.TotalAssets : null;
+    bit("ROA>0", roa > 0, roa != null);
+    bit("영업CF>0", cfo > 0, cfo != null);
+    bit("ROA 개선", roa != null && pRoa != null && roa > pRoa, roa != null && pRoa != null);
+    bit("CF>순이익(발생액 건전)", cfo != null && ni != null && cfo > ni, cfo != null && ni != null);
+    const lev = (tl != null && ta) ? tl / ta : null;
+    const pLev = (prev && n(prev.TotalLiabilitiesNetMinorityInterest) != null && n(prev.TotalAssets)) ? prev.TotalLiabilitiesNetMinorityInterest / prev.TotalAssets : null;
+    bit("레버리지 감소", lev != null && pLev != null && lev <= pLev, lev != null && pLev != null);
+    const cr = (ca != null && cl) ? ca / cl : null;
+    const pCr = (prev && n(prev.CurrentAssets) != null && n(prev.CurrentLiabilities)) ? prev.CurrentAssets / prev.CurrentLiabilities : null;
+    bit("유동비율 개선", cr != null && pCr != null && cr > pCr, cr != null && pCr != null);
+    const pSh = prev ? n(prev.BasicAverageShares) : null;
+    bit("신주발행 없음", sh != null && pSh != null && sh <= pSh * 1.02, sh != null && pSh != null);
+    const gm = (gp != null && rev) ? gp / rev : null;
+    const pGm = (prev && n(prev.GrossProfit) != null && n(prev.TotalRevenue)) ? prev.GrossProfit / prev.TotalRevenue : null;
+    bit("매출총이익률 개선", gm != null && pGm != null && gm > pGm, gm != null && pGm != null);
+    const at = (rev != null && ta) ? rev / ta : null;
+    const pAt = (prev && n(prev.TotalRevenue) != null && n(prev.TotalAssets)) ? prev.TotalRevenue / prev.TotalAssets : null;
+    bit("자산회전율 개선", at != null && pAt != null && at > pAt, at != null && pAt != null);
+
+    // ── Altman Z-Score ──
+    let z = null;
+    if (ta && tl && tl > 0) {
+      const wc = (ca != null && cl != null) ? (ca - cl) : 0;
+      const mcap = (typeof marketCap === "number" && isFinite(marketCap) && marketCap > 0) ? marketCap : null;
+      z = 1.2 * (wc / ta) + 1.4 * ((re || 0) / ta) + 3.3 * ((oi || 0) / ta) + (mcap ? 0.6 * (mcap / tl) : 0) + 1.0 * ((rev || 0) / ta);
+      z = +z.toFixed(2);
+    }
+
+    // ── 보조 지표 ──
+    const roe = (ni != null && eq && eq > 0) ? ni / eq : null;
+    const growth = (prev && n(prev.TotalRevenue) && rev != null) ? (rev / prev.TotalRevenue - 1) : null;
+    const niGrowth = (prev && n(prev.NetIncome) && prev.NetIncome > 0 && ni != null) ? (ni / prev.NetIncome - 1) : null;
+    const margin = (ni != null && rev) ? ni / rev : null;
+    const opMargin = (oi != null && rev) ? oi / rev : null;
+    const d2e = (tl != null && eq && eq > 0) ? tl / eq : null;
+    const fcfMargin = (fcf != null && rev) ? fcf / rev : null;
+
+    // ── 종합 0~100 (결정론적 가중합) ──
+    let score = 0;
+    score += avail ? (f / avail) * 40 : 20;                                  // F-Score 40점
+    if (z != null) score += z >= 3 ? 20 : (z >= 1.8 ? ((z - 1.8) / 1.2) * 20 : 0); else score += 10;  // Z 20점
+    if (roe != null) score += _clamp(roe / 0.20, 0, 1) * 12; else score += 6;        // ROE 12점(20%=만점)
+    if (growth != null) score += _clamp((growth + 0.05) / 0.25, 0, 1) * 12; else score += 6; // 성장 12점
+    if (opMargin != null) score += _clamp(opMargin / 0.25, 0, 1) * 8; else score += 4;       // 영업마진 8점
+    if (fcfMargin != null) score += _clamp(fcfMargin / 0.15, 0, 1) * 8; else score += 4;     // FCF 8점
+    score = Math.round(_clamp(score, 0, 100));
+    const grade = score >= 85 ? "A+" : score >= 75 ? "A" : score >= 62 ? "B" : score >= 48 ? "C" : score >= 34 ? "D" : "F";
+    const zBand = z == null ? null : (z >= 3 ? "안전" : z >= 1.8 ? "회색지대" : "위험");
+    const verdict =
+      score >= 75 ? "재무 우량 — 수익성·건전성 지표 다수 통과" :
+      score >= 62 ? "재무 양호 — 일부 지표 개선 여지" :
+      score >= 48 ? "재무 보통 — 혼재된 신호, 추세 확인 필요" :
+      score >= 34 ? "재무 취약 — 수익성 또는 건전성 경고" : "재무 위험 — 다수 지표 미달";
+    return {
+      asOf: ys[ys.length - 1], fScore: f, fAvail: avail, fBits: bits, z: z, zBand: zBand,
+      roe: roe != null ? +roe.toFixed(4) : null, revGrowth: growth != null ? +growth.toFixed(4) : null,
+      niGrowth: niGrowth != null ? +niGrowth.toFixed(4) : null,
+      netMargin: margin != null ? +margin.toFixed(4) : null, opMargin: opMargin != null ? +opMargin.toFixed(4) : null,
+      debtToEquity: d2e != null ? +d2e.toFixed(3) : null, fcfMargin: fcfMargin != null ? +fcfMargin.toFixed(4) : null,
+      score: score, grade: grade, verdict: verdict
+    };
+  } catch (e) { return null; }
+}
+
+// ── [CROWD] 투자심리(매수/매도 투표) — 인베스팅닷컴식 집단심리 게이지 ──
+//   state 1행/종목(D1 읽기·쓰기 각 1회). 기술적 요약은 프론트가 이미 받은 캔들로
+//   클라이언트 계산(서버 CPU 0). AI 의견은 학습된 모델이 있을 때만 수 ms 추론.
+async function crowdGet(DB, symbol) {
+  const st = (await getState(DB, "crowd:" + symbol, null)) || { buy: 0, sell: 0 };
+  let ai = null;
+  try {
+    const dd = await getState(DB, "daily:" + symbol, null);
+    if (dd && Array.isArray(dd.closes) && dd.closes.length >= 30) {
+      const price = dd.closes[dd.closes.length - 1];
+      const dayPct = dd.prevClose > 0 ? (price / dd.prevClose - 1) * 100 : 0;
+      const feat = mlBuildFeatures({ closes: dd.closes, price: price, dayPct: dayPct, regime: "NEUTRAL", strategy: "trend", ev: {} });
+      const md = await mlDeepDecide(DB, feat, {});
+      if (md && typeof md.p === "number") ai = { p: +md.p.toFixed(3), verdict: md.p >= 0.60 ? "매수" : md.p >= 0.52 ? "약매수" : md.p > 0.48 ? "중립" : md.p > 0.40 ? "약매도" : "매도", source: md.source };
+      else {
+        const m = await mlLoadModel(DB);
+        if (m && m.mode !== "observe") { const p = mlScore(m, feat); ai = { p: +p.toFixed(3), verdict: p >= 0.60 ? "매수" : p >= 0.52 ? "약매수" : p > 0.48 ? "중립" : p > 0.40 ? "약매도" : "매도", source: "l1" }; }
+      }
+    }
+  } catch (e) {}
+  return { symbol: symbol, votes: { buy: st.buy || 0, sell: st.sell || 0 }, ai: ai };
+}
+
+async function crowdVote(DB, symbol, side) {
+  const key = "crowd:" + symbol;
+  const st = (await getState(DB, key, null)) || { buy: 0, sell: 0 };
+  if (side === "buy") st.buy = (st.buy || 0) + 1; else st.sell = (st.sell || 0) + 1;
+  st.ts = Date.now();
+  await setState(DB, key, st);
+  return { symbol: symbol, votes: { buy: st.buy, sell: st.sell } };
 }
 
 

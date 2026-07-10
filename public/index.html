@@ -2520,6 +2520,44 @@ html[data-theme="light"] .table tbody tr:hover{background:rgba(9,105,218,.045);}
   .port-total{font-size:26px;}
   .modal-box{border-radius:14px 14px 0 0;}
 }
+
+/* ═══ [V15] 투자심리 + 재무제표·LUX-AI 재무평가 ═══ */
+.detail-crowd,.detail-fund{background:var(--s2);border:1px solid var(--bd);border-radius:8px;padding:10px;margin-bottom:10px;font-size:12px;}
+.crowd-row{display:flex;align-items:center;gap:8px;margin-bottom:7px;flex-wrap:wrap;}
+.crowd-k{color:var(--t2);font-size:11px;min-width:70px;}
+.crowd-verdict{font-weight:700;font-size:13px;}
+.crowd-verdict.pos{color:#30cc5a;}.crowd-verdict.neg{color:#f63538;}.crowd-verdict.flat{color:var(--t2);}
+.crowd-sub{color:var(--t2);font-size:10.5px;}
+.crowd-gauge{margin:9px 0 7px;}
+.crowd-bar{height:8px;border-radius:4px;background:#f63538;overflow:hidden;}
+.crowd-buy{height:100%;background:#30cc5a;}
+.crowd-lbl{display:flex;justify-content:space-between;margin-top:4px;font-size:11px;}
+.crowd-lbl .pos{color:#30cc5a;}.crowd-lbl .neg{color:#f63538;}.crowd-n{color:var(--t2);font-size:10px;}
+.crowd-votebtns{display:flex;gap:8px;align-items:center;margin-top:6px;}
+.crowd-vb{flex:1;padding:7px 0;font-size:12px;font-weight:600;border-radius:6px;border:1px solid var(--bd);background:var(--s1);color:var(--t1);cursor:pointer;min-height:34px;}
+.crowd-vb.buy:not(:disabled):hover{border-color:#30cc5a;color:#30cc5a;}
+.crowd-vb.sell:not(:disabled):hover{border-color:#f63538;color:#f63538;}
+.crowd-vb:disabled{opacity:.45;cursor:default;}
+.fund-tblwrap{overflow-x:auto;-webkit-overflow-scrolling:touch;}
+.fund-tbl{width:100%;border-collapse:collapse;font-size:11px;font-variant-numeric:tabular-nums;}
+.fund-tbl th{color:var(--t2);font-weight:600;padding:4px 6px;text-align:right;border-bottom:1px solid var(--bd);}
+.fund-tbl td{padding:4px 6px;text-align:right;border-bottom:1px solid rgba(128,128,128,.08);white-space:nowrap;}
+.fund-tbl .fund-k{text-align:left;color:var(--t2);}
+.fund-tbl .pos{color:#30cc5a;}.fund-tbl .neg{color:#f63538;}
+.fund-eval{margin-top:10px;border-top:1px solid var(--bd);padding-top:9px;}
+.fund-grade{display:flex;align-items:baseline;gap:8px;margin-bottom:5px;}
+.fund-grade-big{font-size:24px;font-weight:800;}
+.fund-grade.pos .fund-grade-big{color:#30cc5a;}.fund-grade.neg .fund-grade-big{color:#f63538;}.fund-grade.flat .fund-grade-big{color:#e8b339;}
+.fund-grade-score{color:var(--t2);font-size:12px;}
+.fund-verdict{font-size:12px;margin-bottom:7px;}
+.fund-metrics{display:flex;flex-wrap:wrap;gap:6px 12px;font-size:11px;color:var(--t2);margin-bottom:8px;}
+.fund-metrics b{color:var(--t1);}
+.fund-metrics .pos{color:#30cc5a;}.fund-metrics .neg{color:#f63538;}.fund-metrics .flat{color:#e8b339;}
+.fund-fbits{display:flex;flex-wrap:wrap;gap:4px;margin-bottom:7px;}
+.fund-fbit{font-size:10px;padding:2px 7px;border-radius:9px;border:1px solid var(--bd);color:var(--t2);}
+.fund-fbit.ok{color:#30cc5a;border-color:rgba(48,204,90,.4);}
+.fund-fbit.no{color:#f63538;border-color:rgba(246,53,56,.4);}
+.fund-note{font-size:10px;color:var(--t2);opacity:.75;}
 </style>
 </head>
 <body>
@@ -3145,6 +3183,10 @@ html[data-theme="light"] .table tbody tr:hover{background:rgba(9,105,218,.045);}
                 <div class="detail-vcard" id="detailTA"></div>
               </div>
               <div class="detail-earn" id="detailEarn"></div>
+              <div class="detail-sec">투자심리</div>
+              <div class="detail-crowd" id="detailCrowd"><div class="empty">로딩…</div></div>
+              <div class="detail-sec">재무제표 · LUX-AI 평가</div>
+              <div class="detail-fund" id="detailFund"><div class="empty">로딩…</div></div>
               <div class="detail-sec">기술적 패턴 예시</div>
               <div class="detail-pattern" id="detailPattern"></div>
               <div class="detail-sec">수신 데이터</div>
@@ -6758,6 +6800,167 @@ html[data-theme="light"] .table tbody tr:hover{background:rgba(9,105,218,.045);}
     el.innerHTML = '📅 실적 발표 <b>' + whenTxt + '</b>' + epsTxt;
   }
 
+  // ══ [V15] 투자심리(인베스팅닷컴식) — 기술적 요약(클라 계산·서버 0) + 커뮤니티 투표 + AI 의견 ══
+  var __crowdCache = {};   // sym → {votes, ai, ts}
+  function _techGauge(cs) {
+    // 이미 로드된 캔들로만 계산: MA5/20/60 정배열, RSI, MACD 히스토그램 → -6..+6
+    if (!cs || cs.length < 30) return null;
+    var c = cs.map(function(x){ return x.c; });
+    var px = c[c.length - 1];
+    var ma5 = _smaArr(c, 5), ma20 = _smaArr(c, 20), ma60 = _smaArr(c, 60);
+    var rsi = _rsiArr(c, 14), macd = _macdArr(c);
+    var i = c.length - 1, s = 0, parts = [];
+    function add(name, v) { s += v; parts.push({ n: name, v: v }); }
+    if (ma5[i] != null)  add('MA5',  px > ma5[i]  ? 1 : -1);
+    if (ma20[i] != null) add('MA20', px > ma20[i] ? 1 : -1);
+    if (ma60[i] != null) add('MA60', px > ma60[i] ? 1 : -1);
+    if (rsi[i] != null)  add('RSI',  rsi[i] > 55 ? 1 : (rsi[i] < 45 ? -1 : 0));
+    if (macd.hist[i] != null) add('MACD', macd.hist[i] > 0 ? 1 : -1);
+    if (ma20[i] != null && ma20[i - 5] != null) add('추세', ma20[i] > ma20[i - 5] ? 1 : -1);
+    var verdict = s >= 4 ? '적극매수' : s >= 2 ? '매수' : s > -2 ? '중립' : s > -4 ? '매도' : '적극매도';
+    return { score: s, max: parts.length, verdict: verdict, parts: parts };
+  }
+  function renderDetailCrowd() {
+    var el = $('detailCrowd'); if (!el) return;
+    var sym = detailState.symbol; if (!sym) return;
+    var tech = _techGauge(detailState.lastCandles);
+    var cc = __crowdCache[sym];
+    var votes = cc && cc.votes ? cc.votes : { buy: 0, sell: 0 };
+    var ai = cc ? cc.ai : null;
+    var tot = (votes.buy || 0) + (votes.sell || 0);
+    var bp = tot ? Math.round(votes.buy / tot * 100) : 50;
+    var votedKey = 'crowdVoted:' + sym + ':' + new Date().toISOString().slice(0, 10);
+    var voted = false; try { voted = !!localStorage.getItem(votedKey); } catch (e) {}
+    var vcls = function(v){ return v === '적극매수' || v === '매수' ? 'pos' : (v === '적극매도' || v === '매도' ? 'neg' : 'flat'); };
+    var html = '';
+    if (tech) {
+      html += '<div class="crowd-row"><span class="crowd-k">기술적 요약</span>' +
+        '<span class="crowd-verdict ' + vcls(tech.verdict) + '">' + tech.verdict + '</span>' +
+        '<span class="crowd-sub">' + tech.parts.filter(function(p){ return p.v !== 0; }).map(function(p){ return (p.v > 0 ? '▲' : '▼') + p.n; }).join(' ') + '</span></div>';
+    }
+    if (ai && typeof ai.p === 'number') {
+      html += '<div class="crowd-row"><span class="crowd-k">LUX-AI 의견</span>' +
+        '<span class="crowd-verdict ' + vcls(ai.verdict) + '">' + ai.verdict + '</span>' +
+        '<span class="crowd-sub">승률예측 ' + Math.round(ai.p * 100) + '%</span></div>';
+    } else {
+      html += '<div class="crowd-row"><span class="crowd-k">LUX-AI 의견</span><span class="crowd-sub">학습 표본 축적 중 — 곧 활성화</span></div>';
+    }
+    html += '<div class="crowd-gauge"><div class="crowd-bar"><div class="crowd-buy" style="width:' + bp + '%"></div></div>' +
+      '<div class="crowd-lbl"><span class="pos">매수 ' + bp + '%</span><span class="crowd-n">' + tot + '표</span><span class="neg">매도 ' + (100 - bp) + '%</span></div></div>';
+    html += '<div class="crowd-votebtns">' +
+      '<button type="button" class="crowd-vb buy" data-side="buy"' + (voted ? ' disabled' : '') + '>👍 매수</button>' +
+      '<button type="button" class="crowd-vb sell" data-side="sell"' + (voted ? ' disabled' : '') + '>👎 매도</button>' +
+      (voted ? '<span class="crowd-sub">오늘 투표 완료</span>' : '') + '</div>';
+    el.innerHTML = html;
+    el.querySelectorAll('.crowd-vb').forEach(function(b) {
+      b.addEventListener('click', function() {
+        var side = b.getAttribute('data-side');
+        fetch('/api/crowd/vote', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ symbol: sym, side: side }) })
+          .then(function(r){ return r.json(); })
+          .then(function(d) {
+            if (d && d.votes) { __crowdCache[sym] = __crowdCache[sym] || {}; __crowdCache[sym].votes = d.votes; }
+            try { localStorage.setItem(votedKey, '1'); } catch (e) {}
+            renderDetailCrowd();
+            toast(side === 'buy' ? '매수 투표 완료' : '매도 투표 완료');
+          })['catch'](function(){ toast('투표 실패'); });
+      });
+    });
+  }
+  function loadDetailCrowd() {
+    var sym = detailState.symbol; if (!sym) return;
+    var cc = __crowdCache[sym];
+    renderDetailCrowd();   // 캐시/기술요약 먼저 즉시 표시
+    if (cc && cc.ts && Date.now() - cc.ts < 120000) return;   // 2분 클라 캐시
+    fetch('/api/crowd?symbol=' + encodeURIComponent(sym))
+      .then(function(r){ return r.json(); })
+      .then(function(d) {
+        if (!d || detailState.symbol !== sym) return;
+        __crowdCache[sym] = { votes: d.votes || { buy: 0, sell: 0 }, ai: d.ai || null, ts: Date.now() };
+        renderDetailCrowd();
+      })['catch'](function(){});
+  }
+
+  // ══ [V15] 재무제표 + LUX-AI 재무평가 — lazy fetch(상세 열 때만)·서버 7일 캐시·클라 세션 캐시 ══
+  var __fundCache = {};   // sym → api 응답
+  function _fmtMoney(v, kr) {
+    if (v == null || !isFinite(v)) return '—';
+    var a = Math.abs(v), sign = v < 0 ? '-' : '';
+    if (kr) {
+      if (a >= 1e12) return sign + (a / 1e12).toFixed(1) + '조';
+      if (a >= 1e8)  return sign + (a / 1e8).toFixed(0) + '억';
+      return sign + Math.round(a).toLocaleString();
+    }
+    if (a >= 1e12) return sign + '$' + (a / 1e12).toFixed(2) + 'T';
+    if (a >= 1e9)  return sign + '$' + (a / 1e9).toFixed(1) + 'B';
+    if (a >= 1e6)  return sign + '$' + (a / 1e6).toFixed(0) + 'M';
+    return sign + '$' + Math.round(a).toLocaleString();
+  }
+  function renderDetailFund(d) {
+    var el = $('detailFund'); if (!el) return;
+    if (!d || !d.order || !d.order.length) { el.innerHTML = '<div class="empty">재무 데이터 없음</div>'; return; }
+    var kr = detailState.market === 'kr';
+    var ys = d.order.slice(-4);
+    var ROWS = [
+      ['TotalRevenue', '매출'], ['OperatingIncome', '영업이익'], ['NetIncome', '순이익'],
+      ['TotalAssets', '자산'], ['TotalLiabilitiesNetMinorityInterest', '부채'], ['StockholdersEquity', '자본'],
+      ['OperatingCashFlow', '영업CF'], ['FreeCashFlow', 'FCF']
+    ];
+    var html = '<div class="fund-tblwrap"><table class="fund-tbl"><thead><tr><th></th>' +
+      ys.map(function(y){ return '<th>' + y.slice(0, 4) + '</th>'; }).join('') + '</tr></thead><tbody>';
+    ROWS.forEach(function(r) {
+      var has = ys.some(function(y){ return d.years[y] && d.years[y][r[0]] != null; });
+      if (!has) return;
+      html += '<tr><td class="fund-k">' + r[1] + '</td>' + ys.map(function(y) {
+        var v = d.years[y] ? d.years[y][r[0]] : null;
+        var cls = (r[0] === 'NetIncome' || r[0] === 'OperatingIncome' || r[0] === 'FreeCashFlow') && v != null ? (v >= 0 ? ' class="pos"' : ' class="neg"') : '';
+        return '<td' + cls + '>' + _fmtMoney(v, kr) + '</td>';
+      }).join('') + '</tr>';
+    });
+    html += '</tbody></table></div>';
+    // ── LUX-AI 재무평가 카드 ──
+    var ev = d.eval;
+    if (ev) {
+      var gcls = ev.score >= 62 ? 'pos' : (ev.score >= 48 ? 'flat' : 'neg');
+      html += '<div class="fund-eval">' +
+        '<div class="fund-grade ' + gcls + '"><span class="fund-grade-big">' + ev.grade + '</span><span class="fund-grade-score">' + ev.score + '/100</span></div>' +
+        '<div class="fund-verdict">' + escapeHtml(ev.verdict) + '</div>' +
+        '<div class="fund-metrics">' +
+        '<span>F-Score <b>' + ev.fScore + '/' + ev.fAvail + '</b></span>' +
+        (ev.z != null ? '<span>Z-Score <b class="' + (ev.zBand === '안전' ? 'pos' : ev.zBand === '위험' ? 'neg' : 'flat') + '">' + ev.z + ' ' + ev.zBand + '</b></span>' : '') +
+        (ev.roe != null ? '<span>ROE <b>' + (ev.roe * 100).toFixed(1) + '%</b></span>' : '') +
+        (ev.revGrowth != null ? '<span>매출성장 <b class="' + (ev.revGrowth >= 0 ? 'pos' : 'neg') + '">' + (ev.revGrowth * 100).toFixed(1) + '%</b></span>' : '') +
+        (ev.opMargin != null ? '<span>영업마진 <b>' + (ev.opMargin * 100).toFixed(1) + '%</b></span>' : '') +
+        (ev.debtToEquity != null ? '<span>부채/자본 <b>' + ev.debtToEquity.toFixed(2) + '</b></span>' : '') +
+        '</div>' +
+        '<div class="fund-fbits">' + (ev.fBits || []).map(function(b) {
+          return '<span class="fund-fbit ' + (b.v === true ? 'ok' : b.v === false ? 'no' : 'na') + '" title="' + escapeAttr(b.k) + '">' + (b.v === true ? '✓' : b.v === false ? '✗' : '·') + ' ' + escapeHtml(b.k) + '</span>';
+        }).join('') + '</div>' +
+        '<div class="fund-note">Piotroski F-Score + Altman Z-Score 내장 평가 · 기준연도 ' + escapeHtml(ev.asOf || '') + '</div>' +
+        '</div>';
+    }
+    el.innerHTML = html;
+  }
+  function loadDetailFund() {
+    var el = $('detailFund'); if (!el) return;
+    var sym = detailState.symbol; if (!sym) return;
+    if (__fundCache[sym]) { renderDetailFund(__fundCache[sym]); return; }   // 세션 캐시 → fetch 0
+    el.innerHTML = '<div class="empty">재무 로딩…</div>';
+    // 시총은 이미 받은 quotes에서 전달(서버 조회 절약)
+    var mcap = null;
+    try {
+      var q = (window.__lastQuotesArr || []).find(function(x){ return x.symbol === sym; });
+      if (q && q.mcap > 0) mcap = q.mcap;
+      else if (q && q.price > 0 && q.shares > 0) mcap = q.price * q.shares;
+    } catch (e) {}
+    fetch('/api/fundamentals?symbol=' + encodeURIComponent(sym) + (mcap ? '&mcap=' + Math.round(mcap) : ''))
+      .then(function(r){ return r.json(); })
+      .then(function(d) {
+        if (detailState.symbol !== sym) return;
+        __fundCache[sym] = d;
+        renderDetailFund(d);
+      })['catch'](function(){ if (detailState.symbol === sym) el.innerHTML = '<div class="empty">재무 로딩 실패</div>'; });
+  }
+
   // 관련 뉴스 헤드라인 (종목 섹터그룹 기준)
   function renderDetailNews() {
     var el = $('detailNews'); if (!el) return;
@@ -6844,6 +7047,8 @@ html[data-theme="light"] .table tbody tr:hover{background:rgba(9,105,218,.045);}
     renderDetailVision();
     renderDetailEarn();
     renderDetailNews();
+    loadDetailCrowd();   // [V15] 투자심리(투표+AI 의견) — 2분 클라 캐시
+    loadDetailFund();    // [V15] 재무제표+평가 — 세션 캐시·서버 7일 캐시
     loadDetailChart(detailState.interval || '1d');
     showPage('detail');
   }
@@ -7005,6 +7210,7 @@ html[data-theme="light"] .table tbody tr:hover{background:rgba(9,105,218,.045);}
         renderDetailChartFromCache();
         renderDetailOhlc(d.candles);
         renderDetailTA(d.candles);
+        renderDetailCrowd();   // [V15] 캔들 도착 → 기술적 요약 게이지 갱신(클라 계산)
         startDetailChartPoll(reqSym, reqTf, range);  // [V91] 분봉이면 실시간 폴링 시작
       })['catch'](function() {
         if (st.symbol === reqSym && st.interval === reqTf) box.innerHTML = '<div class="detail-empty">차트 로딩 실패</div>';
