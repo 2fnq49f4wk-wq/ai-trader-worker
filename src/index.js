@@ -14975,8 +14975,7 @@ const LUXML = {
 
 const _EV_START = 14;  // 이벤트 피처 시작 인덱스(가격피처 14개 다음)
 
-function _sigmoid(z) { return z >= 0 ? 1 / (1 + Math.exp(-z)) : (function(){ const e = Math.exp(z); return e / (1 + e); })(); }
-function _clamp(v, lo, hi) { return v < lo ? lo : (v > hi ? hi : v); }
+// _sigmoid/_clamp reuse the earlier top-level declarations (line ~5427/~7740) — ESM disallows duplicate top-level function names
 function _num(v, d) { return (typeof v === "number" && isFinite(v)) ? v : d; }
 
 // ── 진입 피처 벡터 생성 ────────────────────────────────────
