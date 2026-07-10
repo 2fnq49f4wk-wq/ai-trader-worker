@@ -11638,7 +11638,8 @@ async function runTradingCycle(env) {
       const evalMinMs = 8000;
       // === [LUX-AI] 사이클당 1회 모델/보조데이터 로드(후보마다 재로딩 방지) ===
       let __mlModel = null, __ensemble = null, __mind = null, __guard = { distrust: false },
-          __dnn = null, __dnnTrust = null, __noiseFilter = null, __evMem = {}, __sectorNews = null;
+          __dnn = null, __dnnTrust = null, __noiseFilter = null, __evMem = {}, __sectorNews = null,
+          __gbdt = null, __gbdtTrust = null;
       const __candBatch = [], __candSyms = new Set();  // [LUX-AI] 반사실 후보 배치(사이클당 1커밋)
       try {
         if (typeof LUXML !== "undefined" && LUXML.enabled) {
@@ -11648,6 +11649,8 @@ async function runTradingCycle(env) {
           try { __guard = await mlGuardState(DB); } catch (e) {}
           try { __dnnTrust = await getState(DB, "dnn_trust", null); } catch (e) {}
           try { if (__dnnTrust && __dnnTrust.trusted) __dnn = await mlDNNLoad(DB); } catch (e) {}
+          try { __gbdtTrust = await getState(DB, "gbdt_trust", null); } catch (e) {}
+          try { if (__gbdtTrust && __gbdtTrust.trusted) __gbdt = await mlGBDTLoad(DB); } catch (e) {}
           try { __noiseFilter = await getState(DB, "noise_filter", null); } catch (e) {}
           try { __evMem = await mlLoadEventMemory(DB); } catch (e) {}
           try { __sectorNews = await getState(DB, "sector_news_sentiment", null); } catch (e) {}
@@ -12254,7 +12257,7 @@ async function runTradingCycle(env) {
                 } catch (e) {}
                 // 최상위 결정(deep) → 폴백(mind)
                 let _md = null;
-                try { _md = await mlDeepDecide(DB, signal.mlFeat, { mind: __mind, guard: __guard, ens: __ensemble, trust: __dnnTrust, dnn: __dnn }); } catch (e) {}
+                try { _md = await mlDeepDecide(DB, signal.mlFeat, { mind: __mind, guard: __guard, ens: __ensemble, trust: __dnnTrust, dnn: __dnn, gbdtTrust: __gbdtTrust, gbdt: __gbdt }); } catch (e) {}
                 if (!_md) { try { _md = await mlMindDecide(DB, signal.mlFeat, { mind: __mind, guard: __guard, ens: __ensemble }); } catch (e) {} }
                 if (_md && (_md.observe || _md.abstain)) {
                   // 자기불신 / 기권 → 규칙엔진 수량 유지(ML 개입 안 함)
@@ -12655,6 +12658,7 @@ async function handleRequest(request, env) {
       try { _out.brain = (typeof mlBrainStatus === "function") ? await mlBrainStatus(env.DB) : null; } catch (e) {}
       try { _out.mind = (typeof mlMindStatus === "function") ? await mlMindStatus(env.DB) : null; } catch (e) {}
       try { _out.dnn = (typeof mlDNNStatus === "function") ? await mlDNNStatus(env.DB) : null; } catch (e) {}
+      try { _out.gbdt = (typeof mlGBDTStatus === "function") ? await mlGBDTStatus(env.DB) : null; } catch (e) {}
       try { _out.data = (typeof sentiStatus === "function") ? await sentiStatus(env.DB) : null; } catch (e) {}
       return new Response(JSON.stringify(_out, null, 2), { headers: { "content-type": "application/json", "access-control-allow-origin": "*" } });
     }
@@ -15096,7 +15100,7 @@ async function mlTrainNightly(DB) {
   try {
     await mlEnsureTable(DB);
     const rows = await DB.prepare(
-      "SELECT feat, label, pnl_pct FROM ml_samples WHERE featver = ? ORDER BY ts DESC LIMIT ?"
+      "SELECT feat, label, pnl_pct, strategy FROM ml_samples WHERE featver = ? ORDER BY ts DESC LIMIT ?"
     ).bind(LUXML.featVer, LUXML.trainWindow).all();
     const raw = (rows && rows.results) ? rows.results : [];
     if (raw.length < LUXML.minTrainSamples) return "[ML] 표본 " + raw.length + "/" + LUXML.minTrainSamples + " — 학습 대기(observe)";
@@ -15105,7 +15109,7 @@ async function mlTrainNightly(DB) {
     for (let i = raw.length - 1; i >= 0; i--) {
       let v; try { v = JSON.parse(raw[i].feat); } catch (e) { continue; }
       if (!Array.isArray(v) || v.length !== LUXML.featNames.length) continue;
-      data.push({ x: v.map(function(t){ return _num(t, 0); }), y: raw[i].label ? 1 : 0, pnl: _num(raw[i].pnl_pct, 0) });
+      data.push({ x: v.map(function(t){ return _num(t, 0); }), y: raw[i].label ? 1 : 0, pnl: _num(raw[i].pnl_pct, 0), hv: raw[i].strategy === "hv" });
     }
     const N = data.length;
     if (N < LUXML.minTrainSamples) return "[ML] 유효표본 부족(" + N + ")";
@@ -15125,7 +15129,7 @@ async function mlTrainNightly(DB) {
       return {
         z: d.x.map(function(v, j){ return (v - mean[j]) / (std[j] > 1e-6 ? std[j] : 1); }),
         y: d.y,
-        mw: _clamp(Math.abs(d.pnl) / pnlScale, 0.3, LUXML.pnlWeightCap)
+        mw: _clamp(Math.abs(d.pnl) / pnlScale, 0.3, LUXML.pnlWeightCap) * (d.hv ? HARVEST.srcWeight : 1)
       };
     });
 
@@ -15552,7 +15556,7 @@ async function mlBanditNoiseNightly(DB) {
     const model = await mlLoadModel(DB);
     if (!model) return "[BANDIT] 모델 없음 — 노이즈검정 대기";
     const rows = await DB.prepare(
-      "SELECT feat, label, pnl_pct FROM ml_samples WHERE featver = ? ORDER BY ts DESC LIMIT ?"
+      "SELECT feat, label, pnl_pct, strategy FROM ml_samples WHERE featver = ? ORDER BY ts DESC LIMIT ?"
     ).bind(LUXML.featVer, LUXML.trainWindow).all();
     const raw = (rows && rows.results) ? rows.results : [];
     if (raw.length < LUXML.minTrainSamples) return "[BANDIT] 표본 부족 — 노이즈검정 대기";
@@ -15839,7 +15843,7 @@ async function mlBrainTrainNightly(DB) {
   if (!BRAIN.enabled) return null;
   try {
     const rows = await DB.prepare(
-      "SELECT feat, label, pnl_pct FROM ml_samples WHERE featver = ? ORDER BY ts DESC LIMIT ?"
+      "SELECT feat, label, pnl_pct, strategy FROM ml_samples WHERE featver = ? ORDER BY ts DESC LIMIT ?"
     ).bind(LUXML.featVer, LUXML.trainWindow).all();
     const raw = (rows && rows.results) ? rows.results : [];
     if (raw.length < BRAIN.minTrainSamples) return "[BRAIN] 표본 " + raw.length + " — 대기";
@@ -15848,7 +15852,7 @@ async function mlBrainTrainNightly(DB) {
     for (let i = raw.length - 1; i >= 0; i--) {
       let v; try { v = JSON.parse(raw[i].feat); } catch (e) { continue; }
       if (!Array.isArray(v) || v.length !== LUXML.featNames.length) continue;
-      data.push({ x: v.map(function (t) { return _num(t, 0); }), y: raw[i].label ? 1 : 0, pnl: _num(raw[i].pnl_pct, 0) });
+      data.push({ x: v.map(function (t) { return _num(t, 0); }), y: raw[i].label ? 1 : 0, pnl: _num(raw[i].pnl_pct, 0), hv: raw[i].strategy === "hv" });
     }
     let N = data.length;
     if (N < BRAIN.minTrainSamples) return "[BRAIN] 유효표본 부족(" + N + ")";
@@ -15877,7 +15881,7 @@ async function mlBrainTrainNightly(DB) {
       return {
         z: d.x.map(function (v, j) { return (v - mean[j]) / (std[j] > 1e-6 ? std[j] : 1); }),
         y: d.y,
-        mw: _clamp(Math.abs(d.pnl) / pnlScale, 0.3, 3.0)
+        mw: _clamp(Math.abs(d.pnl) / pnlScale, 0.3, 3.0) * (d.hv ? HARVEST.srcWeight : 1)
       };
     });
     const nVal = Math.max(10, Math.floor(N * BRAIN.valFrac));
@@ -16103,14 +16107,14 @@ const MIND = {
 // ── 표본 로드 공통 ─────────────────────────────────────────
 async function _mindLoadSamples(DB) {
   const rows = await DB.prepare(
-    "SELECT feat, label, pnl_pct FROM ml_samples WHERE featver = ? ORDER BY ts DESC LIMIT ?"
+    "SELECT feat, label, pnl_pct, strategy FROM ml_samples WHERE featver = ? ORDER BY ts DESC LIMIT ?"
   ).bind(LUXML.featVer, LUXML.trainWindow).all();
   const raw = (rows && rows.results) ? rows.results : [];
   const data = [];
   for (let i = raw.length - 1; i >= 0; i--) {
     let v; try { v = JSON.parse(raw[i].feat); } catch (e) { continue; }
     if (!Array.isArray(v) || v.length !== LUXML.featNames.length) continue;
-    data.push({ x: v.map(function (t) { return _num(t, 0); }), y: raw[i].label ? 1 : 0, pnl: _num(raw[i].pnl_pct, 0) });
+    data.push({ x: v.map(function (t) { return _num(t, 0); }), y: raw[i].label ? 1 : 0, pnl: _num(raw[i].pnl_pct, 0), hv: raw[i].strategy === "hv" });
   }
   return data;
 }
@@ -16214,7 +16218,7 @@ async function mlMindTrainNightly(DB) {
     const absP = data.map(function (d) { return Math.abs(d.pnl); }).sort(function (a, b) { return a - b; });
     const pnlScale = absP.length ? (absP[Math.floor(absP.length / 2)] || 1) : 1;
     const Z = data.map(function (d) {
-      return { z: _mindStd(d.x, st.mean, st.std), y: d.y, x: d.x, mw: _clamp(Math.abs(d.pnl) / (pnlScale > 1e-6 ? pnlScale : 1), 0.3, 3.0) };
+      return { z: _mindStd(d.x, st.mean, st.std), y: d.y, x: d.x, mw: _clamp(Math.abs(d.pnl) / (pnlScale > 1e-6 ? pnlScale : 1), 0.3, 3.0) * (d.hv ? HARVEST.srcWeight : 1) };
     });
     const nVal = Math.max(15, Math.floor(N * MIND.fmValFrac));
     const train = Z.slice(0, N - nVal);
@@ -16571,14 +16575,14 @@ async function mlDNNTrainNightly(DB) {
   if (!DNN.enabled) return null;
   try {
     const rows = await DB.prepare(
-      "SELECT feat, label, pnl_pct FROM ml_samples WHERE featver = ? ORDER BY ts DESC LIMIT ?"
+      "SELECT feat, label, pnl_pct, strategy FROM ml_samples WHERE featver = ? ORDER BY ts DESC LIMIT ?"
     ).bind(LUXML.featVer, LUXML.trainWindow).all();
     const raw = (rows && rows.results) ? rows.results : [];
     const data = [];
     for (let i = raw.length - 1; i >= 0; i--) {
       let v; try { v = JSON.parse(raw[i].feat); } catch (e) { continue; }
       if (!Array.isArray(v) || v.length !== LUXML.featNames.length) continue;
-      data.push({ x: v.map(function (t) { return _num(t, 0); }), y: raw[i].label ? 1 : 0, pnl: _num(raw[i].pnl_pct, 0) });
+      data.push({ x: v.map(function (t) { return _num(t, 0); }), y: raw[i].label ? 1 : 0, pnl: _num(raw[i].pnl_pct, 0), hv: raw[i].strategy === "hv" });
     }
     const N = data.length;
     if (N < DNN.minTrainSamples) {
@@ -16597,7 +16601,7 @@ async function mlDNNTrainNightly(DB) {
     const absP = data.map(function (d) { return Math.abs(d.pnl); }).sort(function (a, b) { return a - b; });
     const pnlScale = absP.length ? (absP[Math.floor(absP.length / 2)] || 1) : 1;
     const all = data.map(function (d) {
-      return { x: _dnnStdVec(d.x, mean, std), y: d.y, mw: _clamp(Math.abs(d.pnl) / (pnlScale > 1e-6 ? pnlScale : 1), 0.3, 3.0) };
+      return { x: _dnnStdVec(d.x, mean, std), y: d.y, mw: _clamp(Math.abs(d.pnl) / (pnlScale > 1e-6 ? pnlScale : 1), 0.3, 3.0) * (d.hv ? HARVEST.srcWeight : 1) };
     });
     const nVal = Math.max(20, Math.floor(N * DNN.valFrac));
     const train = all.slice(0, N - nVal);
@@ -16669,17 +16673,29 @@ async function mlDeepDecide(DB, featVec, opts) {
     if (!mindScore) return null;
 
     const trust = (opts.trust !== undefined) ? opts.trust : await getState(DB, "dnn_trust", null);
-    let pCombined = mindScore.p;
-    let usedDnn = false;
+    // ── 전문가 위원회: mind(스태킹) + dnn(멀티시드 딥넷) + gbdt(부스팅트리) ──
+    //   각 전문가의 검증정확도 소프트맥스(T=12)로 로짓 가중평균. 신뢰 못 받은 전문가는 불참.
+    const experts = [{ z: _logitD(mindScore.p), acc: (mind && typeof mind.valAcc === "number") ? mind.valAcc : 0.5 }];
+    let usedDnn = false, usedGbdt = false;
     if (trust && trust.trusted && trust.wDnn > 0) {
       const net = (opts.dnn !== undefined) ? opts.dnn : await mlDNNLoad(DB);
       const pDnn = net ? mlDNNScore(net, featVec) : null;
-      if (pDnn != null) {
-        // 로짓 공간 신뢰가중 결합
-        const zc = trust.wDnn * _logitD(pDnn) + (1 - trust.wDnn) * _logitD(mindScore.p);
-        pCombined = _clamp(_sigmoid(zc), 0.001, 0.999);
-        usedDnn = true;
+      if (pDnn != null) { experts.push({ z: _logitD(pDnn), acc: _num(trust.dnnAcc, 0.5) }); usedDnn = true; }
+    }
+    try {
+      const gtrust = (opts.gbdtTrust !== undefined) ? opts.gbdtTrust : await getState(DB, "gbdt_trust", null);
+      if (gtrust && gtrust.trusted && gtrust.wGbdt > 0) {
+        const gm = (opts.gbdt !== undefined) ? opts.gbdt : await mlGBDTLoad(DB);
+        const pG = gm ? mlGBDTScore(gm, featVec) : null;
+        if (pG != null) { experts.push({ z: _logitD(pG), acc: _num(gtrust.gbdtAcc, 0.5) }); usedGbdt = true; }
       }
+    } catch (e) {}
+    let pCombined = mindScore.p;
+    if (experts.length > 1) {
+      const T = (typeof DNN !== "undefined" ? DNN.trustTemp : 12);
+      let wsum = 0, zsum = 0;
+      for (const ex of experts) { const w = Math.exp(T * (ex.acc - 0.5)); wsum += w; zsum += w * ex.z; }
+      pCombined = _clamp(_sigmoid(zsum / (wsum || 1)), 0.001, 0.999);
     }
 
     const unc = mindScore.uncertainty || 0;
@@ -16688,7 +16704,7 @@ async function mlDeepDecide(DB, featVec, opts) {
     const gate = (typeof MIND !== "undefined") ? MIND.gateThresh : 0.42;
     const allow = pCombined >= gate;
     const sizeMult = allow ? mlKellySize(pCombined, unc) : 1;
-    return { source: "deep", allow: allow, sizeMult: sizeMult, p: pCombined, uncertainty: unc, usedDnn: usedDnn };
+    return { source: "deep", allow: allow, sizeMult: sizeMult, p: pCombined, uncertainty: unc, usedDnn: usedDnn, usedGbdt: usedGbdt };
   } catch (e) { return null; }
 }
 
@@ -16701,6 +16717,289 @@ async function mlDNNStatus(DB) {
       valAcc: m.valAcc, trainedAt: m.trainedAt,
       trust: trust ? { wDnn: trust.wDnn, trusted: !!trust.trusted, dnnAcc: trust.dnnAcc, mindAcc: trust.mindAcc } : null };
   } catch (e) { return { trained: false, error: e && e.message }; }
+}
+
+
+// ============================================================================
+// [GBDT] XGBoost식 그래디언트 부스팅 트리 (Chen & Guestrin, KDD 2016 — 순수 JS 이식)
+//   공개 알고리즘의 핵심 수식을 그대로 구현(외부 API·의존성 0):
+//     • 정규화 분할이득  Gain = ½[G_L²/(H_L+λ) + G_R²/(H_R+λ) − (G_L+G_R)²/(H_L+H_R+λ)] − γ
+//     • 리프 가중치      w* = −G/(H+λ)   (2차 근사 뉴턴 스텝)
+//     • 로지스틱 손실    g = p−y,  h = p(1−p)
+//     • 셔링크(η)·행 서브샘플·열 서브샘플(확률적 부스팅)·조기종료 → 과적합 방어 내장
+//   표 형식(tabular) 금융 데이터에서 신경망보다 강한 업계 표준 계열.
+// ============================================================================
+
+const GBDT = {
+  enabled: true,
+  maxTrees: 120,        // 최대 트리 수(조기종료가 실제 수를 정함)
+  eta: 0.08,            // 셔링크(학습률)
+  maxDepth: 4,          // 트리 깊이(4 = 최대 16리프, 얕게 유지가 과적합 방어)
+  minChildWeight: 5,    // 자식 최소 헤시안 합(소표본 잎 금지)
+  lambda: 1.0,          // 리프 L2 정규화
+  gamma: 0.1,           // 분할 최소이득(가지치기)
+  subsample: 0.8,       // 트리당 행 서브샘플
+  colsample: 0.8,       // 트리당 열 서브샘플
+  patience: 12,         // 검증 로스 개선 없을 때 조기종료 인내(트리 수)
+  minTrainSamples: 200,
+  valFrac: 0.2,
+  trustFloor: 0.505, trustTemp: 12,
+  trainBudgetMs: 15000  // 야간 학습 CPU 예산
+};
+
+function _gbdtLeaf(G, H) { return -G / (H + GBDT.lambda); }
+
+// 재귀 트리 성장(exact greedy). idx=이 노드의 행 인덱스. 반환 {f,t,l,r} 또는 {w}.
+function _gbdtBuild(X, grad, hess, idx, depth, cols) {
+  let G = 0, H = 0;
+  for (const i of idx) { G += grad[i]; H += hess[i]; }
+  if (depth >= GBDT.maxDepth || H < 2 * GBDT.minChildWeight || idx.length < 4) return { w: _gbdtLeaf(G, H) };
+  const base = (G * G) / (H + GBDT.lambda);
+  let best = null;
+  for (const f of cols) {
+    const sorted = idx.slice().sort(function (a, b) { return X[a][f] - X[b][f]; });
+    let GL = 0, HL = 0;
+    for (let k = 0; k < sorted.length - 1; k++) {
+      const i = sorted[k];
+      GL += grad[i]; HL += hess[i];
+      const xv = X[i][f], xn = X[sorted[k + 1]][f];
+      if (!(xn > xv)) continue;                    // 동일값 경계는 분할 불가
+      const GR = G - GL, HR = H - HL;
+      if (HL < GBDT.minChildWeight || HR < GBDT.minChildWeight) continue;
+      const gain = 0.5 * ((GL * GL) / (HL + GBDT.lambda) + (GR * GR) / (HR + GBDT.lambda) - base) - GBDT.gamma;
+      if (gain > 1e-7 && (!best || gain > best.gain)) best = { gain: gain, f: f, t: (xv + xn) / 2 };
+    }
+  }
+  if (!best) return { w: _gbdtLeaf(G, H) };
+  const li = [], ri = [];
+  for (const i of idx) { if (X[i][best.f] < best.t) li.push(i); else ri.push(i); }
+  if (!li.length || !ri.length) return { w: _gbdtLeaf(G, H) };
+  return { f: best.f, t: best.t,
+    l: _gbdtBuild(X, grad, hess, li, depth + 1, cols),
+    r: _gbdtBuild(X, grad, hess, ri, depth + 1, cols) };
+}
+
+function _gbdtTreeOut(tree, x) {
+  let n = tree;
+  while (n.f !== undefined) n = (x[n.f] < n.t) ? n.l : n.r;
+  return n.w;
+}
+function _gbdtRaw(model, x) {
+  let s = model.bias || 0;
+  const trees = model.trees, eta = model.eta || GBDT.eta;
+  for (let i = 0; i < trees.length; i++) s += eta * _gbdtTreeOut(trees[i], x);
+  return s;
+}
+function mlGBDTScore(model, featVec) {
+  try {
+    if (!model || !Array.isArray(model.trees)) return null;
+    const x = featVec.map(function (v) { return _num(v, 0); });
+    return _clamp(_sigmoid(_gbdtRaw(model, x)), 0.001, 0.999);
+  } catch (e) { return null; }
+}
+async function mlGBDTLoad(DB) {
+  try { const m = await getState(DB, "gbdt_model", null); if (!m || m.featVer !== LUXML.featVer || !Array.isArray(m.trees)) return null; return m; } catch (e) { return null; }
+}
+
+async function mlGBDTTrainNightly(DB) {
+  if (!GBDT.enabled) return null;
+  try {
+    const rows = await DB.prepare(
+      "SELECT feat, label, pnl_pct, strategy FROM ml_samples WHERE featver = ? ORDER BY ts DESC LIMIT ?"
+    ).bind(LUXML.featVer, LUXML.trainWindow).all();
+    const raw = (rows && rows.results) ? rows.results : [];
+    const data = [];
+    for (let i = raw.length - 1; i >= 0; i--) {
+      let v; try { v = JSON.parse(raw[i].feat); } catch (e) { continue; }
+      if (!Array.isArray(v) || v.length !== LUXML.featNames.length) continue;
+      data.push({ x: v.map(function (t) { return _num(t, 0); }), y: raw[i].label ? 1 : 0,
+                  pnl: _num(raw[i].pnl_pct, 0), hv: raw[i].strategy === "hv" });
+    }
+    const N = data.length;
+    if (N < GBDT.minTrainSamples) {
+      await setState(DB, "gbdt_trust", { wGbdt: 0, trusted: false, reason: "samples", n: N });
+      return "[GBDT] 표본 " + N + "/" + GBDT.minTrainSamples + " — 대기";
+    }
+    const D = LUXML.featNames.length;
+    // 표본 가중: |pnl| 크기(중앙값 기준) × 수확표본 다운웨이트
+    const absP = data.map(function (d) { return Math.abs(d.pnl); }).sort(function (a, b) { return a - b; });
+    const pnlScale = (absP[Math.floor(absP.length / 2)] || 1) > 1e-6 ? (absP[Math.floor(absP.length / 2)] || 1) : 1;
+    for (const d of data) d.mw = _clamp(Math.abs(d.pnl) / pnlScale, 0.3, 3.0) * (d.hv ? HARVEST.srcWeight : 1);
+    const nVal = Math.max(20, Math.floor(N * GBDT.valFrac));
+    const train = data.slice(0, N - nVal), val = data.slice(N - nVal);
+    if (train.length < 60) { await setState(DB, "gbdt_trust", { wGbdt: 0, trusted: false, reason: "train" }); return "[GBDT] 훈련셋 부족"; }
+
+    const X = train.map(function (d) { return d.x; });
+    let pos = 0; for (const t of train) pos += t.y;
+    const wPos = pos > 0 ? train.length / (2 * pos) : 1;
+    const wNeg = (train.length - pos) > 0 ? train.length / (2 * (train.length - pos)) : 1;
+    const bias = Math.log(Math.max(1, pos) / Math.max(1, train.length - pos));
+
+    const raws = new Array(train.length).fill(bias);        // 훈련 누적 로짓
+    const model = { trees: [], eta: GBDT.eta, bias: bias };
+    const valRaw = new Array(val.length).fill(bias);
+    function valLoss() {
+      let ll = 0;
+      for (let i = 0; i < val.length; i++) {
+        const p = _clamp(_sigmoid(valRaw[i]), 1e-6, 1 - 1e-6);
+        ll += -(val[i].y * Math.log(p) + (1 - val[i].y) * Math.log(1 - p));
+      }
+      return ll / Math.max(1, val.length);
+    }
+    const grad = new Array(train.length), hess = new Array(train.length);
+    const deadline = Date.now() + (GBDT.trainBudgetMs || 15000);
+    let bestLoss = Infinity, bestNTrees = 0, wait = 0;
+    for (let t = 0; t < GBDT.maxTrees; t++) {
+      if (Date.now() > deadline) break;
+      // 그래디언트/헤시안(가중 로지스틱)
+      for (let i = 0; i < train.length; i++) {
+        const p = _sigmoid(raws[i]);
+        const w = (train[i].y ? wPos : wNeg) * train[i].mw;
+        grad[i] = (p - train[i].y) * w;
+        hess[i] = Math.max(p * (1 - p) * w, 1e-6);
+      }
+      // 행/열 서브샘플
+      const idx = [];
+      for (let i = 0; i < train.length; i++) if (Math.random() < GBDT.subsample) idx.push(i);
+      if (idx.length < 20) continue;
+      const cols = [];
+      for (let f = 0; f < D; f++) if (Math.random() < GBDT.colsample) cols.push(f);
+      if (!cols.length) cols.push(Math.floor(Math.random() * D));
+      const tree = _gbdtBuild(X, grad, hess, idx, 0, cols);
+      model.trees.push(tree);
+      // 누적 로짓 갱신(훈련·검증)
+      for (let i = 0; i < train.length; i++) raws[i] += GBDT.eta * _gbdtTreeOut(tree, train[i].x);
+      for (let i = 0; i < val.length; i++) valRaw[i] += GBDT.eta * _gbdtTreeOut(tree, val[i].x);
+      const vl = valLoss();
+      if (isFinite(vl) && vl < bestLoss - 1e-5) { bestLoss = vl; bestNTrees = model.trees.length; wait = 0; }
+      else { wait++; if (wait >= GBDT.patience) break; }
+    }
+    model.trees = model.trees.slice(0, Math.max(1, bestNTrees));  // 최적 시점으로 롤백
+
+    // 검증 정확도
+    let correct = 0;
+    for (const d of val) { const p = mlGBDTScore(model, d.x); if (p != null && (p >= 0.5 ? 1 : 0) === d.y) correct++; }
+    const acc = correct / Math.max(1, val.length);
+    model.featVer = LUXML.featVer; model.valAcc = +acc.toFixed(4); model.n = N;
+    model.nTrees = model.trees.length; model.trainedAt = Date.now();
+    await setState(DB, "gbdt_model", model);
+
+    // 신뢰: mind 대비(DNN과 동일한 소프트맥스 규칙)
+    let mindAcc = 0.5;
+    try { const mm = await mlMindLoad(DB); if (mm && typeof mm.valAcc === "number") mindAcc = mm.valAcc; } catch (e) {}
+    let trust = { wGbdt: 0, trusted: false, gbdtAcc: model.valAcc, mindAcc: mindAcc };
+    if (acc >= GBDT.trustFloor && acc >= mindAcc - 1e-9) {
+      const eG = Math.exp(GBDT.trustTemp * (acc - 0.5));
+      const eM = Math.exp(GBDT.trustTemp * (mindAcc - 0.5));
+      trust.wGbdt = +(eG / (eG + eM)).toFixed(4);
+      trust.trusted = trust.wGbdt > 0.05;
+    }
+    await setState(DB, "gbdt_trust", trust);
+    return "[GBDT] trees=" + model.nTrees + " n=" + N + " valAcc=" + (acc * 100).toFixed(1) +
+           "% vs mind=" + (mindAcc * 100).toFixed(1) + "% → wGbdt=" + trust.wGbdt + (trust.trusted ? " (신뢰)" : " (억제)");
+  } catch (e) {
+    try { await setState(DB, "gbdt_trust", { wGbdt: 0, trusted: false, reason: "err" }); } catch (e2) {}
+    return "[GBDT] train fail: " + (e && e.message);
+  }
+}
+
+async function mlGBDTStatus(DB) {
+  try {
+    const m = await mlGBDTLoad(DB);
+    const trust = await getState(DB, "gbdt_trust", null);
+    if (!m) return { trained: false, trust: trust || { wGbdt: 0, trusted: false } };
+    return { trained: true, nTrees: m.nTrees, maxDepth: GBDT.maxDepth, n: m.n, valAcc: m.valAcc,
+      trainedAt: m.trainedAt, trust: trust ? { wGbdt: trust.wGbdt, trusted: !!trust.trusted, gbdtAcc: trust.gbdtAcc, mindAcc: trust.mindAcc } : null };
+  } catch (e) { return { trained: false, error: e && e.message }; }
+}
+
+
+// ============================================================================
+// [HARVEST] 시장 자기지도 표본 수확 — 거래내역 불필요
+//   LLM의 "다음 토큰 예측" 사전학습과 동일 원리: 전 종목 일봉 캐시의 과거 봉마다
+//   "그 시점 피처 → horizon일 뒤 방향"을 라벨로 만들어 ml_samples에 대량 편입.
+//   • 라벨은 반사실 라벨러와 동일하게 손절선 도달 반영(buy&hold 낙관편향 제거)
+//   • entryLike 필터(MA20 위 + RSI 35~75)로 실제 진입 분포와 유사한 봉만 수확
+//   • 수확표본은 학습 시 srcWeight로 다운웨이트 → 실거래·반사실 표본이 항상 우위
+//   • 야간 로테이션(오프셋) + 심볼별 마지막 수확봉 기억 → 중복 0, D1 폭증 0
+// ============================================================================
+
+const HARVEST = {
+  enabled: true,
+  symbolsPerNight: 80,  // 하룻밤 스캔 종목 수(로테이션)
+  strideBars: 4,        // 봉 간격(인접봉 중복상관 축소)
+  minBars: 120, warmupBars: 60,
+  horizon: 5, stopPct: 5,
+  maxPerNight: 600,     // 하룻밤 최대 표본
+  maxTotal: 6000,       // 수확표본 총 상한(초과분 오래된 것부터 삭제)
+  entryLike: true,
+  srcWeight: 0.6        // 학습 가중(실거래=1.0 대비)
+};
+
+async function mlMarketHarvestNightly(DB) {
+  if (!HARVEST.enabled || !LUXML.enabled) return null;
+  try {
+    await mlEnsureTable(DB);
+    const ks = await DB.prepare("SELECT k FROM state WHERE k LIKE 'daily:%' ORDER BY k").all();
+    const symsAll = (((ks && ks.results) || []).map(function (r) { return r.k.slice(6); }))
+      .filter(function (s) { return s && s[0] !== "^"; });
+    if (!symsAll.length) return "[HV] 일봉 캐시 없음 — 스킵";
+    const off = (await getState(DB, "hv_offset", 0)) || 0;
+    const takeN = Math.min(HARVEST.symbolsPerNight, symsAll.length);
+    const seen = (await getState(DB, "hv_seen", {})) || {};
+    const stmts = [];
+    let made = 0, scanned = 0;
+    for (let si = 0; si < takeN; si++) {
+      if (made >= HARVEST.maxPerNight) break;
+      const sym = symsAll[(off + si) % symsAll.length];
+      scanned++;
+      let dd = null; try { dd = await getState(DB, "daily:" + sym, null); } catch (e) {}
+      const closes = dd && dd.closes;
+      if (!Array.isArray(closes) || closes.length < HARVEST.minBars) continue;
+      const mkt = /\.(KS|KQ)$/.test(sym) ? "kr" : ((/=F$|-USD$/.test(sym)) ? "cm" : "us");
+      const L = closes.length, h = HARVEST.horizon;
+      const lastEnd = L - 1 - h;
+      const baseTs = (dd.ts || Date.now());
+      const startI = Math.max(HARVEST.warmupBars, _num(seen[sym], 0));
+      for (let i = startI; i <= lastEnd; i += HARVEST.strideBars) {
+        const c = closes[i];
+        if (!(c > 0)) continue;
+        const hist = closes.slice(0, i + 1);
+        if (HARVEST.entryLike) {
+          const ma20 = _num(getMA(hist, 20), c), rsi = _num(getRSI(hist, 14), 50);
+          if (!(c > ma20) || rsi < 35 || rsi > 75) continue;
+        }
+        const dayPct = (i > 0 && closes[i - 1] > 0) ? (c / closes[i - 1] - 1) * 100 : 0;
+        const feat = mlBuildFeatures({ closes: hist, price: c, dayPct: dayPct, regime: "NEUTRAL", strategy: "hv", ev: {} });
+        // 라벨: 경로 내 손절선 도달 시 손절가, 아니면 horizon 종가 수익률
+        let pnl = null;
+        for (let k2 = i + 1; k2 <= i + h; k2++) {
+          if ((closes[k2] / c - 1) * 100 <= -HARVEST.stopPct) { pnl = -HARVEST.stopPct; break; }
+        }
+        if (pnl === null) pnl = (closes[i + h] / c - 1) * 100;
+        // ts는 봉 시점 근사(일봉 1개=1일)로 역산 — 시간순 검증분할의 정합 유지
+        const ts = baseTs - (L - 1 - i) * 86400000;
+        stmts.push(DB.prepare(
+          "INSERT INTO ml_samples (ts, market, symbol, strategy, feat, label, pnl_pct, featver) VALUES (?,?,?,?,?,?,?,?)"
+        ).bind(ts, mkt, sym, "hv", JSON.stringify(feat), pnl > 0 ? 1 : 0, +pnl.toFixed(3), LUXML.featVer));
+        made++;
+        if (made >= HARVEST.maxPerNight) break;
+      }
+      seen[sym] = lastEnd + 1;   // 다음 수확은 새 봉부터
+    }
+    for (let i = 0; i < stmts.length; i += 100) { try { await DB.batch(stmts.slice(i, i + 100)); } catch (e) {} }
+    try { await setState(DB, "hv_offset", (off + takeN) % symsAll.length); } catch (e) {}
+    try { await setState(DB, "hv_seen", seen); } catch (e) {}
+    // 총 상한 프루닝(오래된 수확표본부터) — 실거래 표본은 절대 삭제 안 함
+    try {
+      const c = await DB.prepare("SELECT COUNT(*) c FROM ml_samples WHERE strategy='hv'").first();
+      const over = ((c && c.c) || 0) - HARVEST.maxTotal;
+      if (over > 0) await DB.prepare(
+        "DELETE FROM ml_samples WHERE id IN (SELECT id FROM ml_samples WHERE strategy='hv' ORDER BY ts ASC LIMIT ?)"
+      ).bind(over).run();
+    } catch (e) {}
+    return made ? ("[HV] 시장수확 +" + made + "표본 (" + scanned + "종목, 오프셋 " + off + "→" + ((off + takeN) % symsAll.length) + ")") : null;
+  } catch (e) { return "[HV] fail: " + (e && e.message); }
 }
 
 
@@ -17076,12 +17375,15 @@ async function mlBacktestInject(DB, seriesBySym, signalFn, opts) {
 async function sentiStatus(DB) {
   try {
     const s = await getState(DB, "sector_news_sentiment", null);
-    let cand = 0, unl = 0;
+    let cand = 0, unl = 0, hvN = 0, tradeN = 0;
     try { const r = await DB.prepare("SELECT COUNT(*) c FROM ml_candidates WHERE featver=?").bind(LUXML.featVer).first(); cand = (r && r.c) || 0; } catch (e) {}
     try { const r = await DB.prepare("SELECT COUNT(*) c FROM ml_candidates WHERE labeled=0 AND featver=?").bind(LUXML.featVer).first(); unl = (r && r.c) || 0; } catch (e) {}
+    try { const r = await DB.prepare("SELECT COUNT(*) c FROM ml_samples WHERE strategy='hv' AND featver=?").bind(LUXML.featVer).first(); hvN = (r && r.c) || 0; } catch (e) {}
+    try { const r = await DB.prepare("SELECT COUNT(*) c FROM ml_samples WHERE strategy!='hv' AND featver=?").bind(LUXML.featVer).first(); tradeN = (r && r.c) || 0; } catch (e) {}
     return { sentimentGroups: s ? Object.keys(s.sentiment || {}).length : 0,
       sentimentUpdatedAt: s ? (s.sentimentAt || s.updatedAt || s.ts || null) : null,
-      candidatesTotal: cand, candidatesUnlabeled: unl };
+      candidatesTotal: cand, candidatesUnlabeled: unl,
+      samplesHarvested: hvN, samplesFromTrades: tradeN };
   } catch (e) { return { error: e && e.message }; }
 }
 export default {
@@ -17220,12 +17522,15 @@ export default {
             } catch (e) {}
             // (2) 외부 감성 수집 — SENTI_SOURCES에 URL이 채워진 경우만 동작(없으면 스킵)
             try { const _se = await sentiFetchAndStore(env.DB, null, null); if (_se && !/스킵/.test(_se)) await log(env.DB, "INFO", null, _se); } catch (e) {}
-            // (3) 6단 학습 파이프라인(순서 고정: L1→노이즈→앙상블→MIND→DNN)
+            // (2.5) [HARVEST] 시장 자기지도 표본 수확 — 전 종목 일봉에서 "피처→N일 뒤 방향" 대량 편입
+            try { const _hv = await mlMarketHarvestNightly(env.DB); if (_hv) await log(env.DB, "INFO", null, _hv); } catch (e) {}
+            // (3) 7단 학습 파이프라인(순서 고정: L1→노이즈→앙상블→MIND→DNN→GBDT)
             try { const _r = await mlTrainNightly(env.DB); if (_r) await log(env.DB, "INFO", null, _r); } catch (e) {}
             try { const _r = await mlBanditNoiseNightly(env.DB); if (_r) await log(env.DB, "INFO", null, _r); } catch (e) {}
             try { const _r = await mlBrainTrainNightly(env.DB); if (_r) await log(env.DB, "INFO", null, _r); } catch (e) {}
             try { const _r = await mlMindTrainNightly(env.DB); if (_r) await log(env.DB, "INFO", null, _r); } catch (e) {}
             try { const _r = await mlDNNTrainNightly(env.DB); if (_r) await log(env.DB, "INFO", null, _r); } catch (e) {}
+            try { const _r = await mlGBDTTrainNightly(env.DB); if (_r) await log(env.DB, "INFO", null, _r); } catch (e) {}
             await setState(env.DB, "ai_trained_day", _aiDay);
           }
         }
