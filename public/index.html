@@ -2558,6 +2558,7 @@ html[data-theme="light"] .table tbody tr:hover{background:rgba(9,105,218,.045);}
 .fund-fbit.ok{color:#30cc5a;border-color:rgba(48,204,90,.4);}
 .fund-fbit.no{color:#f63538;border-color:rgba(246,53,56,.4);}
 .fund-note{font-size:10px;color:var(--t2);opacity:.75;}
+.fund-warn{font-size:11px;color:#f63538;background:rgba(246,53,56,.09);border:1px solid rgba(246,53,56,.3);border-radius:6px;padding:5px 9px;margin-bottom:8px;font-weight:600;}
 
 /* ═══ [V17] AI 픽 스트립 + 월간 리포트 뷰어 ═══ */
 .aipick-bar{display:flex;align-items:center;gap:10px;flex-wrap:wrap;background:var(--s2);border:1px solid var(--bd);border-radius:8px;padding:9px 12px;margin-bottom:10px;}
@@ -2576,6 +2577,26 @@ html[data-theme="light"] .table tbody tr:hover{background:rgba(9,105,218,.045);}
 .rpt-actions{display:flex;gap:6px;}
 .rpt-body{margin:0;padding:16px;overflow:auto;font-size:12px;line-height:1.65;white-space:pre-wrap;font-family:'IBM Plex Mono',ui-monospace,monospace;color:var(--t1);}
 @media(max-width:767px){.rpt-box{max-height:92vh;}.rpt-head{flex-wrap:wrap;}}
+
+/* ═══ [V19] 상세페이지 재설계 — 차트 아래 재무제표 + 시기별 기술요약 ═══ */
+.detail-below{margin-bottom:20px;}
+.detail-below .detail-fund{margin-bottom:12px;}
+.detail-datawrap{background:var(--s1);border:1px solid var(--bd);border-radius:8px;padding:10px 12px;}
+.detail-tfsum{display:flex;flex-direction:column;gap:8px;margin-bottom:10px;}
+.tfsum-row{display:flex;align-items:center;gap:8px;}
+.tfsum-k{font-size:11px;color:var(--t2);min-width:26px;font-weight:600;}
+.tfsum-bar{flex:1;height:6px;border-radius:3px;background:var(--bd2);overflow:hidden;position:relative;}
+.tfsum-fill{height:100%;border-radius:3px;}
+.tfsum-fill.pos{background:#30cc5a;}.tfsum-fill.neg{background:#f63538;}.tfsum-fill.flat{background:#8b93a7;}
+.tfsum-v{font-size:11px;font-weight:700;min-width:52px;text-align:right;}
+.tfsum-v.pos{color:#30cc5a;}.tfsum-v.neg{color:#f63538;}.tfsum-v.flat{color:var(--t2);}
+/* 재무제표 전체폭: 표를 2열 그리드로 여유있게 */
+.detail-below .fund-tbl{font-size:12px;}
+.detail-below .fund-tbl th,.detail-below .fund-tbl td{padding:6px 10px;}
+@media(min-width:900px){
+  .detail-below{display:grid;grid-template-columns:1.6fr 1fr;gap:12px;align-items:start;}
+  .detail-below .detail-fund{margin-bottom:0;}
+}
 </style>
 </head>
 <body>
@@ -3125,6 +3146,7 @@ html[data-theme="light"] .table tbody tr:hover{background:rgba(9,105,218,.045);}
         <span class="page-title">📈 종목 상세</span>
         <div class="page-actions">
           <button type="button" class="btn" id="detailBackBtn" style="display:none;">← 목록</button>
+          <button type="button" class="btn" id="detailReportBtn" style="display:none;">📝 AI 분석 리포트</button>
           <button type="button" class="detail-alertbtn" id="detailAlertBtn" style="display:none;">🔔 알림</button>
           <input type="text" id="detailSearch" placeholder="심볼 입력 (예: NVDA, 005930.KS)" autocomplete="off"
             style="font-size:12px;padding:7px 10px;background:var(--s2);border:1px solid var(--bd);color:var(--t1);width:200px;max-width:48vw;">
@@ -3196,27 +3218,33 @@ html[data-theme="light"] .table tbody tr:hover{background:rgba(9,105,218,.045);}
               <button type="button" class="detail-zoom-btn" data-z="reset" title="초기화">⟲</button>
             </div>
           </div>
-          <!-- 차트(좌) + 사이드바(우: AI예측·기술분석·실적·수신데이터) -->
+          <!-- [V19 재설계] 차트(좌) + 사이드바(우: 종합의견·시기별 기술요약·심리) / 차트 아래: 재무제표 전체폭 -->
           <div class="detail-main">
             <div class="detail-left">
               <div class="detail-chart" id="detailChart"><div class="detail-empty">차트 로딩 중…</div></div>
               <div class="detail-news" id="detailNews"></div>
             </div>
             <aside class="detail-side">
+              <div class="detail-sec">LUX-AI 종합 의견 · 투자심리</div>
+              <div class="detail-crowd" id="detailCrowd"><div class="empty">로딩…</div></div>
+              <div class="detail-sec">기술적 요약 · 시기별</div>
+              <div class="detail-tfsum" id="detailTfSum"><div class="empty">로딩…</div></div>
               <div class="detail-vt">
                 <div class="detail-vcard" id="detailVision"></div>
                 <div class="detail-vcard" id="detailTA"></div>
               </div>
               <div class="detail-earn" id="detailEarn"></div>
-              <div class="detail-sec">투자심리</div>
-              <div class="detail-crowd" id="detailCrowd"><div class="empty">로딩…</div></div>
-              <div class="detail-sec">재무제표 · LUX-AI 평가</div>
-              <div class="detail-fund" id="detailFund"><div class="empty">로딩…</div></div>
-              <div class="detail-sec">기술적 패턴 예시</div>
+              <div class="detail-sec">기술적 패턴</div>
               <div class="detail-pattern" id="detailPattern"></div>
+            </aside>
+          </div>
+          <!-- 차트 아래: 재무제표 · 재무평가(전체폭) + 수신 데이터 -->
+          <div class="detail-below">
+            <div class="detail-fund" id="detailFund"><div class="empty">재무 로딩…</div></div>
+            <div class="detail-datawrap">
               <div class="detail-sec">수신 데이터</div>
               <div class="detail-data" id="detailData"></div>
-            </aside>
+            </div>
           </div>
         </div>
       </div>
@@ -6959,9 +6987,14 @@ html[data-theme="light"] .table tbody tr:hover{background:rgba(9,105,218,.045);}
       html += '<div class="fund-eval">' +
         '<div class="fund-grade ' + gcls + '"><span class="fund-grade-big">' + ev.grade + '</span><span class="fund-grade-score">' + ev.score + '/100</span></div>' +
         '<div class="fund-verdict">' + escapeHtml(ev.verdict) + '</div>' +
+        (ev.warns && ev.warns.length ? '<div class="fund-warn">⚠ ' + ev.warns.map(function(w){ return escapeHtml(w); }).join(' · ') + '</div>' : '') +
         '<div class="fund-metrics">' +
         '<span>F-Score <b>' + ev.fScore + '/' + ev.fAvail + '</b></span>' +
         (ev.z != null ? '<span>Z-Score <b class="' + (ev.zBand === '안전' ? 'pos' : ev.zBand === '위험' ? 'neg' : 'flat') + '">' + ev.z + ' ' + ev.zBand + '</b></span>' : '') +
+        (ev.mScore != null ? '<span title="Beneish M-Score: 이익 조작 탐지">M-Score <b class="' + (ev.mFlag === '조작의심' ? 'neg' : 'pos') + '">' + ev.mScore + ' ' + ev.mFlag + '</b></span>' : '') +
+        (ev.oProb != null ? '<span title="Ohlson O-Score: 부도 확률">부도확률 <b class="' + (ev.oProb > 0.5 ? 'neg' : 'pos') + '">' + Math.round(ev.oProb * 100) + '%</b></span>' : '') +
+        (ev.accrual != null ? '<span title="Sloan 발생액: 이익의 질(낮을수록 우수)">발생액 <b class="' + (ev.accrual > 0.1 ? 'neg' : 'pos') + '">' + (ev.accrual * 100).toFixed(1) + '%</b></span>' : '') +
+        (ev.grossProf != null ? '<span title="Novy-Marx 총이익성 GP/자산">총이익성 <b>' + (ev.grossProf * 100).toFixed(0) + '%</b></span>' : '') +
         (ev.roe != null ? '<span>ROE <b>' + (ev.roe * 100).toFixed(1) + '%</b></span>' : '') +
         (ev.revGrowth != null ? '<span>매출성장 <b class="' + (ev.revGrowth >= 0 ? 'pos' : 'neg') + '">' + (ev.revGrowth * 100).toFixed(1) + '%</b></span>' : '') +
         (ev.opMargin != null ? '<span>영업마진 <b>' + (ev.opMargin * 100).toFixed(1) + '%</b></span>' : '') +
@@ -6970,7 +7003,7 @@ html[data-theme="light"] .table tbody tr:hover{background:rgba(9,105,218,.045);}
         '<div class="fund-fbits">' + (ev.fBits || []).map(function(b) {
           return '<span class="fund-fbit ' + (b.v === true ? 'ok' : b.v === false ? 'no' : 'na') + '" title="' + escapeAttr(b.k) + '">' + (b.v === true ? '✓' : b.v === false ? '✗' : '·') + ' ' + escapeHtml(b.k) + '</span>';
         }).join('') + '</div>' +
-        '<div class="fund-note">Piotroski F-Score + Altman Z-Score 내장 평가 · 기준연도 ' + escapeHtml(ev.asOf || '') + '</div>' +
+        '<div class="fund-note">Piotroski F · Altman Z · Beneish M · Ohlson O · Sloan 발생액 · Novy-Marx 총이익성 (학술모델) · 기준연도 ' + escapeHtml(ev.asOf || '') + '</div>' +
         '</div>';
     }
     el.innerHTML = html;
@@ -7115,11 +7148,12 @@ html[data-theme="light"] .table tbody tr:hover{background:rgba(9,105,218,.045);}
   function showDetailBrowse() {
     detailState.symbol = null;
     stopDetailChartPoll();  // [V91] 상세 닫힘 → 실시간 폴링 정지
-    var emp = $('detailEmpty'), con = $('detailContent'), back = $('detailBackBtn'), abtn = $('detailAlertBtn');
+    var emp = $('detailEmpty'), con = $('detailContent'), back = $('detailBackBtn'), abtn = $('detailAlertBtn'), rbtn = $('detailReportBtn');
     if (con) con.style.display = 'none';
     if (emp) emp.style.display = '';
     if (back) back.style.display = 'none';
     if (abtn) abtn.style.display = 'none';
+    if (rbtn) rbtn.style.display = 'none';
     renderDetailBrowse();
   }
 
@@ -7128,19 +7162,67 @@ html[data-theme="light"] .table tbody tr:hover{background:rgba(9,105,218,.045);}
     market = market || ((symbol.indexOf('.KS') >= 0 || symbol.indexOf('.KQ') >= 0) ? 'kr' : 'us');
     detailState.symbol = symbol;
     detailState.market = market;
-    var emp = $('detailEmpty'), con = $('detailContent'), back = $('detailBackBtn'), abtn = $('detailAlertBtn');
+    var emp = $('detailEmpty'), con = $('detailContent'), back = $('detailBackBtn'), abtn = $('detailAlertBtn'), rbtn = $('detailReportBtn');
     if (emp) emp.style.display = 'none';
     if (con) con.style.display = '';
     if (back) back.style.display = '';
     if (abtn) abtn.style.display = '';
+    if (rbtn) rbtn.style.display = '';
     renderDetailHeaderData();
     renderDetailVision();
     renderDetailEarn();
     renderDetailNews();
     loadDetailCrowd();   // [V15] 투자심리(투표+AI 의견) — 2분 클라 캐시
     loadDetailFund();    // [V15] 재무제표+평가 — 세션 캐시·서버 7일 캐시
+    loadDetailTfSum();   // [V19] 시기별 기술요약(지금/1주/1달/1년)
     loadDetailChart(detailState.interval || '1d');
     showPage('detail');
+  }
+
+  // ══ [V19] 시기별 기술요약 (인베스팅닷컴식: 지금/1주/1달/1년 매수·매도) ══
+  var __tfCache = {};
+  function renderDetailTfSum(sum) {
+    var el = $('detailTfSum'); if (!el) return;
+    if (!sum) { el.innerHTML = '<div class="empty">데이터 없음</div>'; return; }
+    var rows = [['now','지금'],['week','1주'],['month','1달'],['year','1년']];
+    var cls = function(lb){ return lb.indexOf('매수')>=0 ? 'pos' : (lb.indexOf('매도')>=0 ? 'neg' : 'flat'); };
+    el.innerHTML = rows.map(function(r){
+      var tf = sum[r[0]]; if (!tf) return '';
+      var pct = Math.round((tf.score + 1) / 2 * 100);   // -1..1 → 0..100 매수강도
+      return '<div class="tfsum-row"><span class="tfsum-k">' + r[1] + '</span>' +
+        '<div class="tfsum-bar"><div class="tfsum-fill ' + cls(tf.label) + '" style="width:' + pct + '%"></div></div>' +
+        '<span class="tfsum-v ' + cls(tf.label) + '">' + tf.label + '</span></div>';
+    }).join('');
+  }
+  function loadDetailTfSum() {
+    var el = $('detailTfSum'); if (!el) return;
+    var sym = detailState.symbol; if (!sym) return;
+    if (__tfCache[sym] && Date.now() - __tfCache[sym].ts < 120000) { renderDetailTfSum(__tfCache[sym].sum); return; }
+    el.innerHTML = '<div class="empty">기술요약 로딩…</div>';
+    fetch('/api/tech-summary?symbol=' + encodeURIComponent(sym))
+      .then(function(r){ return r.json(); })
+      .then(function(d){ if (detailState.symbol !== sym) return; __tfCache[sym] = { sum: d.summary, ts: Date.now() }; renderDetailTfSum(d.summary); })
+      ['catch'](function(){ if (detailState.symbol === sym) el.innerHTML = '<div class="empty">기술요약 실패</div>'; });
+  }
+
+  // ══ [V19] 종목별 AI 분석 리포트 뷰어 ══
+  function openStockReport() {
+    var sym = detailState.symbol; if (!sym) return;
+    var old = document.getElementById('srptOverlay'); if (old) old.remove();
+    var ov = document.createElement('div');
+    ov.id = 'srptOverlay'; ov.className = 'rpt-overlay';
+    ov.innerHTML = '<div class="rpt-box"><div class="rpt-head"><span>📝 ' + escapeHtml(sym) + ' AI 분석 리포트</span>' +
+      '<span class="rpt-actions"><button type="button" class="btn" id="srptClose">✕ 닫기</button></span></div>' +
+      '<pre class="rpt-body" id="srptBody">AI가 분석 중…</pre></div>';
+    document.body.appendChild(ov);
+    ov.addEventListener('click', function(e){ if (e.target === ov) ov.remove(); });
+    document.getElementById('srptClose').addEventListener('click', function(){ ov.remove(); });
+    var mcap = null;
+    try { var q = (window.__lastQuotesArr || []).find(function(x){ return x.symbol === sym; }); if (q && q.mcap > 0) mcap = q.mcap; else if (q && q.price > 0 && q.shares > 0) mcap = q.price * q.shares; } catch (e) {}
+    fetch('/api/stock-report?symbol=' + encodeURIComponent(sym) + (mcap ? '&mcap=' + Math.round(mcap) : ''))
+      .then(function(r){ return r.json(); })
+      .then(function(d){ var b = document.getElementById('srptBody'); if (b) b.textContent = (d && d.text) || '분석 없음'; })
+      ['catch'](function(){ var b = document.getElementById('srptBody'); if (b) b.textContent = '분석 로딩 실패'; });
   }
 
   function renderDetailHeaderData() {
@@ -9937,6 +10019,7 @@ html[data-theme="light"] .table tbody tr:hover{background:rgba(9,105,218,.045);}
   var _dsb = $('detailSearchBtn'); if (_dsb) _dsb.addEventListener('click', _detailSearchGo);
   var _dsi = $('detailSearch'); if (_dsi) _dsi.addEventListener('keydown', function(e){ if (e.key === 'Enter') _detailSearchGo(); });
   var _dback = $('detailBackBtn'); if (_dback) _dback.addEventListener('click', function(){ showDetailBrowse(); });
+  var _drpt = $('detailReportBtn'); if (_drpt) _drpt.addEventListener('click', function(){ openStockReport(); });
   var _dsort = $('detailBrowseSort');
   if (_dsort) _dsort.addEventListener('click', function(e){
     var b = e.target.closest ? e.target.closest('.db-sort-btn') : null;
