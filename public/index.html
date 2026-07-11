@@ -2663,6 +2663,7 @@ html[data-theme="light"] .table tbody tr:hover{background:rgba(9,105,218,.045);}
         <button type="button" class="sb-btn btn macro" id="btnMacro">지표</button>
         <button type="button" class="sb-btn btn macro" id="btnFx">환율</button>
         <button type="button" class="sb-btn btn macro" id="btnHeatmap">MAP</button>
+        <button type="button" class="sb-btn btn macro" id="btnRptSide">리포트</button>
       </div>
       <div class="sb-btn-row">
         <button type="button" class="sb-btn btn" id="btnSettings" style="flex:1;">⚙ SETTINGS</button>
@@ -9543,6 +9544,7 @@ html[data-theme="light"] .table tbody tr:hover{background:rgba(9,105,218,.045);}
   $('btnLogs').addEventListener('click', openLogs);
   $('btnCloseLogs').addEventListener('click', closeLogs);
   $('btnMacro').addEventListener('click', openMacro);
+  if ($('btnRptSide')) $('btnRptSide').addEventListener('click', function(){ openMonthlyReport(); });   // [V18] 사이드바 월간 리포트
   $('btnCloseMacro').addEventListener('click', closeMacro);
   $('btnMacroRefresh').addEventListener('click', macroRunNow);
   $('btnFx').addEventListener('click', openFx);
