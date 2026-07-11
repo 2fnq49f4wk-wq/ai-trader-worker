@@ -11,6 +11,11 @@ database_id = "77db8a94-9d85-473a-9f43-9659ee8374c0"
 [triggers]
 crons = ["*/1 * * * *"]
 
+# [V4] 야간 AI 파이프라인(수확+7단 학습+보정)이 기본 CPU 30s를 넘을 수 있어 상향.
+#   평시 사이클은 수 초라 영향 없음 — 한도는 상한일 뿐 과금은 실사용 기준.
+[limits]
+cpu_ms = 300000
+
 [assets]
 directory = "./public"
 binding = "ASSETS"

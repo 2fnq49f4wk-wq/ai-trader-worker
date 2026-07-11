@@ -6842,6 +6842,16 @@ html[data-theme="light"] .table tbody tr:hover{background:rgba(9,105,218,.045);}
       html += '<div class="crowd-row"><span class="crowd-k">LUX-AI 의견</span>' +
         '<span class="crowd-verdict ' + vcls(ai.verdict) + '">' + ai.verdict + '</span>' +
         '<span class="crowd-sub">승률예측 ' + Math.round(ai.p * 100) + '%</span></div>';
+      // [V16] 구체적 근거: 전문가별 예측 + 판단에 크게 작용한 피처
+      var expMap = { mind: '스태킹', dnn: '딥넷', gbdt: '트리' };
+      if (ai.experts && ai.experts.length) {
+        html += '<div class="crowd-row"><span class="crowd-k">전문가</span><span class="crowd-sub">' +
+          ai.experts.map(function(e){ return (expMap[e.name] || e.name) + ' ' + Math.round(e.p * 100) + '%'; }).join(' · ') + '</span></div>';
+      }
+      if (ai.topFeatures && ai.topFeatures.length) {
+        html += '<div class="crowd-row"><span class="crowd-k">주요 근거</span><span class="crowd-sub">' +
+          ai.topFeatures.slice(0, 4).map(function(f){ return f.name; }).join(' · ') + '</span></div>';
+      }
     } else {
       html += '<div class="crowd-row"><span class="crowd-k">LUX-AI 의견</span><span class="crowd-sub">학습 표본 축적 중 — 곧 활성화</span></div>';
     }
