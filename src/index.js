@@ -11639,7 +11639,7 @@ async function runTradingCycle(env) {
       // === [LUX-AI] 사이클당 1회 모델/보조데이터 로드(후보마다 재로딩 방지) ===
       let __mlModel = null, __ensemble = null, __mind = null, __guard = { distrust: false },
           __dnn = null, __dnnTrust = null, __noiseFilter = null, __evMem = {}, __sectorNews = null,
-          __gbdt = null, __gbdtTrust = null, __cal = null;
+          __gbdt = null, __gbdtTrust = null, __cal = null, __evStats = null, __idxCloses = null;
       const __candBatch = [], __candSyms = new Set();  // [LUX-AI] 반사실 후보 배치(사이클당 1커밋)
       const __aiPicks = [];   // [V5] AI 픽 — 위원회가 이번 사이클 평가한 종목별 승률예측(대시보드/리포트 노출)
       try {
@@ -11653,6 +11653,8 @@ async function runTradingCycle(env) {
           try { __gbdtTrust = await getState(DB, "gbdt_trust", null); } catch (e) {}
           try { if (__gbdtTrust && __gbdtTrust.trusted) __gbdt = await mlGBDTLoad(DB); } catch (e) {}
           try { __cal = await getState(DB, "committee_cal", null); } catch (e) {}
+          try { __evStats = await getState(DB, "ml_evstats", null); } catch (e) {}
+          try { __idxCloses = await _mlLoadIndexCloses(DB, market); } catch (e) {}
           try { __noiseFilter = await getState(DB, "noise_filter", null); } catch (e) {}
           try { __evMem = await mlLoadEventMemory(DB); } catch (e) {}
           try { __sectorNews = await getState(DB, "sector_news_sentiment", null); } catch (e) {}
@@ -12241,6 +12243,7 @@ async function runTradingCycle(env) {
                 const _vp = (visionPreds && visionPreds[symbol]) ? visionPreds[symbol] : null;
                 signal.mlFeat = mlBuildFeatures({
                   closes: daily.closes, volumes: daily.volumes, opens: daily.opens,
+                  highs: daily.highs, lows: daily.lows, idxCloses: __idxCloses,
                   price: price, prevClose: daily.prevClose, dayPct: dayPct,
                   regime: (regime && regime.regime) ? regime.regime : "NEUTRAL",
                   visionUp: _vp ? (_vp.upConf != null ? _vp.upConf : 0.5) : 0.5,
@@ -12260,7 +12263,7 @@ async function runTradingCycle(env) {
                 } catch (e) {}
                 // 최상위 결정(deep) → 폴백(mind)
                 let _md = null;
-                try { _md = await mlDeepDecide(DB, signal.mlFeat, { mind: __mind, guard: __guard, ens: __ensemble, trust: __dnnTrust, dnn: __dnn, gbdtTrust: __gbdtTrust, gbdt: __gbdt, cal: __cal }); } catch (e) {}
+                try { _md = await mlDeepDecide(DB, signal.mlFeat, { mind: __mind, guard: __guard, ens: __ensemble, trust: __dnnTrust, dnn: __dnn, gbdtTrust: __gbdtTrust, gbdt: __gbdt, cal: __cal, evstats: __evStats }); } catch (e) {}
                 if (!_md) { try { _md = await mlMindDecide(DB, signal.mlFeat, { mind: __mind, guard: __guard, ens: __ensemble }); } catch (e) {} }
                 // [V5] AI 픽 수집 — 개입 여부와 무관하게 예측 자체는 기록(종목당 1회)
                 try {
@@ -12726,6 +12729,59 @@ async function handleRequest(request, env) {
       for (const p of out.picks) if (!bySym[p.symbol] || p.p > bySym[p.symbol].p) bySym[p.symbol] = p;
       out.picks = Object.keys(bySym).map(function (k) { return bySym[k]; });
       out.picks.sort(function (a, b) { return (!!a.abstain === !!b.abstain ? b.p - a.p : (a.abstain ? 1 : -1)); });
+      return Response.json(out, { headers: cors });
+    }
+
+    // ── [V7] 보유 포지션 AI 진단: 위원회가 현재 시점 승률을 재평가(자문용, 자동청산 아님) ──
+    if (path === "/api/ai-positions") {
+      const out = { ts: Date.now(), positions: [] };
+      try {
+        const mind = await mlMindLoad(env.DB);
+        const l1 = await mlLoadModel(env.DB);
+        if (mind || (l1 && l1.mode !== "observe")) {
+          const ens = mind ? await mlBrainLoad(env.DB) : null;
+          const dnnT = await getState(env.DB, "dnn_trust", null);
+          const dnn = (dnnT && dnnT.trusted) ? await mlDNNLoad(env.DB) : null;
+          const gT = await getState(env.DB, "gbdt_trust", null);
+          const g = (gT && gT.trusted) ? await mlGBDTLoad(env.DB) : null;
+          const cal = await getState(env.DB, "committee_cal", null);
+          const evs = await getState(env.DB, "ml_evstats", null);
+          const guard = await mlGuardState(env.DB);
+          const idxCache = {};
+          for (const mk of ["us", "kr", "cm"]) { try { idxCache[mk] = await _mlLoadIndexCloses(env.DB, mk); } catch (e) { idxCache[mk] = null; } }
+          for (const mk of ["us", "kr", "cm", "bdus", "bdkr"]) {
+            let poss = {};
+            try { poss = await getPositions(env.DB, mk); } catch (e) { continue; }
+            for (const k of Object.keys(poss)) {
+              const pos = poss[k];
+              let dd = null; try { dd = await getState(env.DB, "daily:" + pos.symbol, null); } catch (e) {}
+              if (!dd || !Array.isArray(dd.closes) || dd.closes.length < 30) continue;
+              const price = dd.closes[dd.closes.length - 1];
+              const refMkt = (mk === "bdkr") ? "kr" : (mk === "bdus" ? "us" : mk);
+              const feat = mlBuildFeatures({
+                closes: dd.closes, volumes: dd.volumes, opens: dd.opens,
+                highs: dd.highs, lows: dd.lows, idxCloses: idxCache[refMkt],
+                price: price, prevClose: dd.prevClose,
+                dayPct: dd.prevClose > 0 ? (price / dd.prevClose - 1) * 100 : 0,
+                regime: "NEUTRAL", strategy: pos.strategy || "trend", market: refMkt, ev: {}
+              });
+              let p = null;
+              if (mind) {
+                const md = await mlDeepDecide(env.DB, feat, { mind: mind, guard: guard, ens: ens, trust: dnnT, dnn: dnn, gbdtTrust: gT, gbdt: g, cal: cal, evstats: evs });
+                if (md && typeof md.p === "number") p = md.p;
+              } else { p = mlScore(l1, feat); }
+              if (p == null) continue;
+              const upl = (pos.avg > 0 && price > 0) ? (price / pos.avg - 1) * 100 : null;
+              out.positions.push({
+                market: mk, symbol: pos.symbol, strategy: pos.strategy, qty: pos.qty,
+                uplPct: upl != null ? +upl.toFixed(2) : null, p: +p.toFixed(3),
+                advice: p >= 0.55 ? "유지" : (p > 0.45 ? "중립" : "검토(약세 전환)")
+              });
+            }
+          }
+          out.positions.sort(function (a, b) { return a.p - b.p; });   // 약한 것부터(주의 우선)
+        } else { out.note = "모델 미학습 — 표본 축적 중"; }
+      } catch (e) { out.error = e && e.message; }
       return Response.json(out, { headers: cors });
     }
 
@@ -15059,9 +15115,15 @@ const LUXML = {
     "streak",     // 연속 상승/하락일 (±5 캡)
     "ret5",       // 5일 수익률 %
     "ret20",      // 20일 수익률 %
-    "mktUS", "mktKR", "mktCM"  // 시장 원핫 — 시장별 조건부 사고
+    "mktUS", "mktKR", "mktCM",  // 시장 원핫 — 시장별 조건부 사고
+    // ── [V7] 알파 피처 (5) — 수익률 직결: 상대강도·수급·지지/저항 위치 ──
+    "rs20",        // 시장지수 대비 20일 상대강도 %p (지수 캐시 없으면 0=중립)
+    "rs60",        // 시장지수 대비 60일 상대강도 %p
+    "obvSlope",    // OBV(On-Balance Volume) 20일 기울기 — 수급 방향(정규화)
+    "distLow20Pct",// 20일 저점(지지선) 대비 거리 %
+    "rangePos"     // 당일 고저 레인지 내 종가 위치 0~1 (매수/매도 압력)
   ],
-  featVer: 3,   // ★V4: 피처 30→43 확장. 구버전(2) 표본은 자동 분리(WHERE featver=?)
+  featVer: 4,   // ★V7: 피처 43→48 확장. 구버전 표본은 자동 분리(WHERE featver=?)
 
   minSamplesGate: 150,
   minSamplesSize: 400,
@@ -15072,7 +15134,7 @@ const LUXML = {
   gateThresh: 0.42,
   sizeMin: 0.5, sizeMax: 1.5,
 
-  trainWindow: 3200,
+  trainWindow: 4000,
   epochs: 25,
   lr: 0.05,
   l2: 0.0006,        // 릿지(부드러운 축소)
@@ -15175,9 +15237,64 @@ function _mlStructFeats(closes, volumes, opens, price, prevClose) {
   return o;
 }
 
+// ── [V7] 알파 피처 5종 — 상대강도·수급·지지/레인지 (수확·라이브 동일 소스) ──
+//   idxCloses: 시장지수 일봉(없으면 rs 피처 0=중립). 수확 시 끝-오프셋 정렬로 과거 시점 재현.
+function _mlAlphaFeats(closes, volumes, highs, lows, idxCloses, price) {
+  const o = { rs20: 0, rs60: 0, obvSlope: 0, distLow20Pct: 0, rangePos: 0.5 };
+  try {
+    const L = closes.length, P = price > 0 ? price : 1;
+    // 상대강도: 심볼 수익률 − 지수 수익률 (같은 봉 수 기준)
+    if (Array.isArray(idxCloses) && idxCloses.length >= 61) {
+      const iL = idxCloses.length;
+      if (L >= 21 && closes[L - 21] > 0 && idxCloses[iL - 21] > 0) {
+        o.rs20 = _clamp(((price / closes[L - 21]) - (idxCloses[iL - 1] / idxCloses[iL - 21])) * 100, -60, 60);
+      }
+      if (L >= 61 && closes[L - 61] > 0 && idxCloses[iL - 61] > 0) {
+        o.rs60 = _clamp(((price / closes[L - 61]) - (idxCloses[iL - 1] / idxCloses[iL - 61])) * 100, -100, 100);
+      }
+    }
+    // OBV 20일 기울기: Σ sign(ΔC)·vol 을 평균거래량으로 정규화 → -20~+20 근방
+    if (Array.isArray(volumes) && volumes.length === L && L >= 21) {
+      let obv = 0, avg = 0;
+      for (let i = L - 20; i < L; i++) {
+        const v = _num(volumes[i], 0);
+        avg += v;
+        if (closes[i] > closes[i - 1]) obv += v; else if (closes[i] < closes[i - 1]) obv -= v;
+      }
+      avg /= 20;
+      if (avg > 0) o.obvSlope = _clamp(obv / avg, -20, 20);
+    }
+    // 20일 저점(지지선) 거리
+    if (L >= 20) {
+      let lo = Infinity;
+      const src = (Array.isArray(lows) && lows.length === L) ? lows : closes;
+      for (let i = L - 20; i < L; i++) if (src[i] > 0 && src[i] < lo) lo = src[i];
+      if (isFinite(lo)) o.distLow20Pct = ((price - lo) / P) * 100;
+    }
+    // 당일 레인지 내 종가 위치(고가 근처 마감=1 → 매수압력)
+    if (Array.isArray(highs) && Array.isArray(lows) && highs.length === L && lows.length === L) {
+      const h = _num(highs[L - 1], price), l = _num(lows[L - 1], price);
+      if (h > l) o.rangePos = _clamp((price - l) / (h - l), 0, 1);
+    }
+  } catch (e) {}
+  return o;
+}
+
+// [V7] 시장지수 일봉 로더(상대강도용) — 폴백 체인, 없으면 null(피처 0=중립)
+async function _mlLoadIndexCloses(DB, mkt) {
+  const cands = mkt === "kr" ? ["^KS11", "069500.KS"] : (mkt === "cm" ? ["GC=F"] : ["^GSPC", "SPY", "QQQ"]);
+  for (const s of cands) {
+    try {
+      const d = await getState(DB, "daily:" + s, null);
+      if (d && Array.isArray(d.closes) && d.closes.length >= 61) return d.closes;
+    } catch (e) {}
+  }
+  return null;
+}
+
 // ── 진입 피처 벡터 생성 ────────────────────────────────────
-// args: { closes, volumes, opens, price, prevClose, dayPct, regime, visionUp, sigWeight,
-//         confluence, strategy, market, ev }
+// args: { closes, volumes, opens, highs, lows, idxCloses, price, prevClose, dayPct, regime,
+//         visionUp, sigWeight, confluence, strategy, market, ev }
 //   ev(선택): 이벤트 피처 이름→값 객체. lux_news.mlCollectEvents가 채움. 없으면 전부 0.
 //   volumes/opens/market(선택): [V4] 시장구조 피처용 — 없으면 해당 피처 중립값.
 function mlBuildFeatures(args) {
@@ -15221,6 +15338,10 @@ function mlBuildFeatures(args) {
     f.volSurge = sx.volSurge; f.atrRegime = sx.atrRegime; f.pos52w = sx.pos52w;
     f.gapPct = sx.gapPct; f.streak = sx.streak; f.ret5 = sx.ret5; f.ret20 = sx.ret20;
     f.mktUS = mkt === "us" ? 1 : 0; f.mktKR = mkt === "kr" ? 1 : 0; f.mktCM = mkt === "cm" ? 1 : 0;
+    // [V7] 알파 5종
+    const ax = _mlAlphaFeats(closes, args.volumes, args.highs, args.lows, args.idxCloses, price);
+    f.rs20 = ax.rs20; f.rs60 = ax.rs60; f.obvSlope = ax.obvSlope;
+    f.distLow20Pct = ax.distLow20Pct; f.rangePos = ax.rangePos;
     return LUXML.featNames.map(function(n){ return _num(f[n], 0); });
   } catch (e) {
     return LUXML.featNames.map(function(){ return 0; });
@@ -15462,6 +15583,19 @@ async function mlTrainNightly(DB) {
       trainedAt: Date.now()
     };
     await mlSaveModel(DB, model);
+
+    // [V7] 기대값(EV) 게이트 통계: 승리표본 평균이익% / 패배표본 평균손실% —
+    //   위원회가 '확률×손익 비대칭'까지 반영해 진입 판단(EV = p·W − (1−p)·L > 0).
+    try {
+      let wSum = 0, wN = 0, lSum = 0, lN = 0;
+      for (const d of data) {
+        if (d.y === 1) { wSum += Math.abs(d.pnl); wN++; }
+        else { lSum += Math.abs(d.pnl); lN++; }
+      }
+      if (wN >= 20 && lN >= 20) {
+        await setState(DB, "ml_evstats", { avgWin: +(wSum / wN).toFixed(3), avgLoss: +(lSum / lN).toFixed(3), n: N, ts: Date.now() });
+      }
+    } catch (e) {}
 
     const top = w.map(function(v, j){ return { n: LUXML.featNames[j], w: v }; })
                  .filter(function(o){ return o.w !== 0; })
@@ -17037,10 +17171,19 @@ async function mlDeepDecide(DB, featVec, opts) {
     const _expOut = experts.map(function (ex) { return { name: ex.name, p: +ex.p.toFixed(3), acc: +ex.acc.toFixed(3) }; });
     if (unc > (typeof MIND !== "undefined" ? MIND.abstainStd : 0.16)) return { source: "deep", abstain: true, reason: "uncertain", p: pCombined, uncertainty: unc, experts: _expOut };
     if (Math.abs(pCombined - 0.5) < (typeof MIND !== "undefined" ? MIND.abstainBand : 0.05)) return { source: "deep", abstain: true, reason: "ambiguous", p: pCombined, experts: _expOut };
-    const gate = (typeof MIND !== "undefined") ? MIND.gateThresh : 0.42;
-    const allow = pCombined >= gate;
+    // [V7] 기대값(EV) 게이트: 통계 있으면 p·평균이익 − (1−p)·평균손실 > 0 로 판단
+    //   (손익 비대칭 반영 — 고정 확률 임계보다 수익률 정렬적). 통계 없으면 종전 임계.
+    let allow, evVal = null;
+    const evs = (opts.evstats !== undefined) ? opts.evstats : await getState(DB, "ml_evstats", null);
+    if (evs && evs.avgWin > 0 && evs.avgLoss > 0) {
+      evVal = +(pCombined * evs.avgWin - (1 - pCombined) * evs.avgLoss).toFixed(3);
+      allow = evVal > 0;
+    } else {
+      const gate = (typeof MIND !== "undefined") ? MIND.gateThresh : 0.42;
+      allow = pCombined >= gate;
+    }
     const sizeMult = allow ? mlKellySize(pCombined, unc) : 1;
-    return { source: "deep", allow: allow, sizeMult: sizeMult, p: pCombined, uncertainty: unc, usedDnn: usedDnn, usedGbdt: usedGbdt, experts: _expOut };
+    return { source: "deep", allow: allow, sizeMult: sizeMult, p: pCombined, uncertainty: unc, usedDnn: usedDnn, usedGbdt: usedGbdt, ev: evVal, experts: _expOut };
   } catch (e) { return null; }
 }
 
@@ -17315,7 +17458,7 @@ async function mlCalibrateCommittee(DB) {
     const mind = await mlMindLoad(DB);
     if (!mind) { return null; }   // 위원회 자체가 없으면 보정 없음
     const rows = await DB.prepare(
-      "SELECT ts, feat, label FROM ml_samples WHERE featver = ? ORDER BY ts DESC LIMIT 300"
+      "SELECT ts, feat, label FROM ml_samples WHERE featver = ? ORDER BY ts DESC LIMIT 400"
     ).bind(LUXML.featVer).all();
     const raw = (rows && rows.results) ? rows.results : [];
     if (raw.length < 60) return "[CAL] 표본 " + raw.length + "/60 — 보정 대기";
@@ -17392,7 +17535,7 @@ const HARVEST = {
   minBars: 120, warmupBars: 60,
   horizon: 5, stopPct: 5,
   maxPerNight: 1500,    // 하룻밤 최대 표본 — V6 확대
-  maxTotal: 15000,      // 수확표본 총 상한(초과분 오래된 것부터 삭제) — V6 확대
+  maxTotal: 20000,      // 수확표본 총 상한(초과분 오래된 것부터 삭제) — V7 확대
   entryLike: true,
   srcWeight: 0.6        // 학습 가중(실거래=1.0 대비)
 };
@@ -17412,6 +17555,8 @@ async function mlMarketHarvestNightly(DB) {
     const seen = (await getState(DB, seenKey, {})) || {};
     const stmts = [];
     let made = 0, scanned = 0;
+    const idxCache = {};   // [V7] 시장별 지수 일봉(상대강도용) — 1회 로드
+    for (const mk of ["us", "kr", "cm"]) { try { idxCache[mk] = await _mlLoadIndexCloses(DB, mk); } catch (e) { idxCache[mk] = null; } }
     for (let si = 0; si < takeN; si++) {
       if (made >= HARVEST.maxPerNight) break;
       const sym = symsAll[(off + si) % symsAll.length];
@@ -17433,10 +17578,16 @@ async function mlMarketHarvestNightly(DB) {
           if (!(c > ma20) || rsi < 35 || rsi > 75) continue;
         }
         const dayPct = (i > 0 && closes[i - 1] > 0) ? (c / closes[i - 1] - 1) * 100 : 0;
+        // [V7] 지수 과거정렬: 봉 i 시점 = 지수 끝에서 (L-1-i)봉 전
+        const idxAll = idxCache[mkt];
+        const idxHist = (idxAll && idxAll.length > (L - 1 - i)) ? idxAll.slice(0, idxAll.length - (L - 1 - i)) : null;
         const feat = mlBuildFeatures({
           closes: hist,
           volumes: Array.isArray(dd.volumes) ? dd.volumes.slice(0, i + 1) : null,
           opens: Array.isArray(dd.opens) ? dd.opens.slice(0, i + 1) : null,
+          highs: Array.isArray(dd.highs) ? dd.highs.slice(0, i + 1) : null,
+          lows: Array.isArray(dd.lows) ? dd.lows.slice(0, i + 1) : null,
+          idxCloses: idxHist,
           price: c, prevClose: i > 0 ? closes[i - 1] : 0, dayPct: dayPct,
           regime: "NEUTRAL", strategy: "hv", market: mkt, ev: {}
         });
@@ -17619,6 +17770,7 @@ async function crowdGet(DB, symbol) {
       const mkt = /\.(KS|KQ)$/.test(symbol) ? "kr" : ((/=F$|-USD$/.test(symbol)) ? "cm" : "us");
       const feat = mlBuildFeatures({
         closes: dd.closes, volumes: dd.volumes, opens: dd.opens,
+        highs: dd.highs, lows: dd.lows, idxCloses: await _mlLoadIndexCloses(DB, mkt),
         price: price, prevClose: dd.prevClose, dayPct: dayPct,
         regime: "NEUTRAL", strategy: "trend", market: mkt, ev: {}
       });
@@ -17692,6 +17844,9 @@ async function mlUniverseScanNightly(DB) {
     const picks = [];
     let scanned = 0;
     const deadline = Date.now() + 90000;   // 벽시계 가드(추론은 CPU 수 ms/심볼)
+    const evstats = await getState(DB, "ml_evstats", null);
+    const idxCache = {};   // [V7] 시장별 지수(상대강도) 1회 로드
+    for (const mk of ["us", "kr", "cm"]) { try { idxCache[mk] = await _mlLoadIndexCloses(DB, mk); } catch (e) { idxCache[mk] = null; } }
     for (const sym of syms) {
       if (Date.now() > deadline) break;
       let dd = null; try { dd = await getState(DB, "daily:" + sym, null); } catch (e) {}
@@ -17701,6 +17856,7 @@ async function mlUniverseScanNightly(DB) {
       const mkt = /\.(KS|KQ)$/.test(sym) ? "kr" : ((/=F$|-USD$/.test(sym)) ? "cm" : "us");
       const feat = mlBuildFeatures({
         closes: dd.closes, volumes: dd.volumes, opens: dd.opens,
+        highs: dd.highs, lows: dd.lows, idxCloses: idxCache[mkt],
         price: price, prevClose: dd.prevClose,
         dayPct: dd.prevClose > 0 ? (price / dd.prevClose - 1) * 100 : 0,
         regime: "NEUTRAL", strategy: "trend", market: mkt, ev: {}
@@ -17708,7 +17864,7 @@ async function mlUniverseScanNightly(DB) {
       let p = null;
       if (mind) {
         try {
-          const md = await mlDeepDecide(DB, feat, { mind: mind, guard: guard, ens: ens, trust: dnnT, dnn: dnn, gbdtTrust: gT, gbdt: g, cal: cal });
+          const md = await mlDeepDecide(DB, feat, { mind: mind, guard: guard, ens: ens, trust: dnnT, dnn: dnn, gbdtTrust: gT, gbdt: g, cal: cal, evstats: evstats });
           if (md && typeof md.p === "number") p = md.p;
         } catch (e) {}
       } else { p = mlScore(l1, feat); }
@@ -17915,6 +18071,10 @@ async function mlMonthlyReport(DB, ym, force) {
     if (gbdtT && gbdtT.trusted) L.push("· 부스팅트리: 신뢰가중 " + gbdtT.wGbdt + (gbdtM && gbdtM.nTrees ? " (" + gbdtM.nTrees + "트리)" : ""));
     else L.push("· 부스팅트리: 자동 억제 중(검증 기준 미달 — 정상 안전장치)");
     if (cal && typeof cal.ece === "number") L.push("· 확률 보정: T=" + cal.T + ", 보정오차(ECE) " + (cal.ece * 100).toFixed(1) + "% — 낮을수록 '말한 확률만큼 맞음'");
+    try {
+      const evs = await getState(DB, "ml_evstats", null);
+      if (evs && evs.avgWin > 0) L.push("· 기대값 게이트: 평균이익 +" + evs.avgWin + "% / 평균손실 -" + evs.avgLoss + "% — 진입은 EV(=p·이익−(1−p)·손실)>0 일 때만");
+    } catch (e) {}
     if (guard && guard.distrust) L.push("· ⚠ 자기감시: 라이브 성능 하락 감지 → AI 개입 자동 중단 상태");
     if (senti) L.push("· 데이터: 거래표본 " + (senti.samplesFromTrades || 0) + " + 시장수확 " + (senti.samplesHarvested || 0) + ", 반사실 후보 " + (senti.candidatesTotal || 0));
     if (gbdtM && Array.isArray(gbdtM.topFeatures) && gbdtM.topFeatures.length) {
