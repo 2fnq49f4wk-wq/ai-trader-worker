@@ -12685,6 +12685,12 @@ async function handleRequest(request, env) {
       return new Response(JSON.stringify(_out, null, 2), { headers: { "content-type": "application/json", "access-control-allow-origin": "*" } });
     }
 
+    // ── [V9 시각화] 신경망 구조·가중치 강도·위원회 신뢰 — 프론트 "AI 두뇌 관측" 패널용 ──
+    if (path === "/api/nn-viz") {
+      const data = await mlDNNVizData(env.DB);
+      return Response.json(data, { headers: cors });
+    }
+
     // ── [FUND] 재무제표 + 내장AI 재무평가(F-Score·Z-Score) — 서버 7일 캐시 ──
     if (path === "/api/fundamentals") {
       const sym = (url.searchParams.get("symbol") || "").trim();
@@ -16849,6 +16855,11 @@ const DNN = {
   seeds: 4,              // 멀티시드 앙상블 수(서로 다른 초기화·셔플로 K개 학습, 로짓 평균 → 분산↓)
   labelSmooth: 0.06,     // 라벨 스무딩(승/패 라벨 노이즈에 과신 방지)
   inputNoise: 0.06,      // 학습 시 표준화 입력에 가우시안 노이즈(σ) 증강
+  // [V9] AdamW(디커플드 weight decay) + 코사인 LR — 적응형 옵티마이저의 표준 일반화 개선(Loshchilov&Hutter 2019).
+  //   신뢰블렌드 게이트가 mind 대비 검증성능으로 자동 채택/억제하므로, 이 변경은 "더 나으면 반영·아니면 무시"로 안전.
+  adamW: true,           // true=디커플드 감쇠(g에 L2 미포함, 가중치에 직접 λ·W 감쇠)
+  cosineLR: true,        // 에폭별 코사인 어닐링(lr→lr·lrFloorFrac)
+  lrFloorFrac: 0.08,     // 코사인 하한(lr의 8%까지 감쇠)
   trainBudgetMs: 55000   // 야간 학습 총 CPU 예산 — 초과 시 남은 시드 생략(최소 1개 보장)
                          //   (월 CPU 영향: +55s/일 ≈ +1.7M ms/월 — 사용량 가드 여유 내, 셧다운 90% 대비 안전)
 };
@@ -16953,6 +16964,11 @@ function _dnnTrainOne(train, val, dims, deadline) {
   const noisy = new Array(D);
   for (let ep = 0; ep < DNN.epochs; ep++) {
     if (Date.now() > deadline && bestW) break;   // 예산 초과 — 지금까지의 최적으로 마감
+    // [V9] 코사인 LR 어닐링: lr → lr·lrFloorFrac (에폭 진행에 따라 감쇠, 후반 미세조정으로 일반화↑)
+    const _cosT = DNN.epochs > 1 ? ep / (DNN.epochs - 1) : 0;
+    const curLr = DNN.cosineLR
+      ? DNN.lr * ((DNN.lrFloorFrac || 0.08) + (1 - (DNN.lrFloorFrac || 0.08)) * 0.5 * (1 + Math.cos(Math.PI * _cosT)))
+      : DNN.lr;
     for (let i = train.length - 1; i > 0; i--) { const k = Math.floor(Math.random() * (i + 1)); const tmp = train[i]; train[i] = train[k]; train[k] = tmp; }
     for (let bs = 0; bs < train.length; bs += DNN.batch) {
       const batch = train.slice(bs, bs + DNN.batch);
@@ -16994,19 +17010,22 @@ function _dnnTrainOne(train, val, dims, deadline) {
       for (let l = 0; l < W.length; l++) {
         for (let i = 0; i < W[l].length; i++) {
           for (let j = 0; j < W[l][i].length; j++) {
-            let g = gW[l][i][j] / bl + DNN.l2 * W[l][i][j];
+            // [V9] AdamW: 디커플드면 L2를 그래디언트에 넣지 않고 가중치에 직접 감쇠(적응형 옵티마이저 일반화↑).
+            let g = gW[l][i][j] / bl;
+            if (!DNN.adamW) g += DNN.l2 * W[l][i][j];
             if (g > clip) g = clip; else if (g < -clip) g = -clip;
             mW[l][i][j] = DNN.beta1 * mW[l][i][j] + (1 - DNN.beta1) * g;
             vW[l][i][j] = DNN.beta2 * vW[l][i][j] + (1 - DNN.beta2) * g * g;
             const mh = mW[l][i][j] / bc1, vh = vW[l][i][j] / bc2;
-            W[l][i][j] -= DNN.lr * mh / (Math.sqrt(vh) + DNN.eps);
+            W[l][i][j] -= curLr * mh / (Math.sqrt(vh) + DNN.eps);
+            if (DNN.adamW) W[l][i][j] -= curLr * DNN.l2 * W[l][i][j];  // 디커플드 감쇠
           }
           let gb = gB[l][i] / bl;
           if (gb > clip) gb = clip; else if (gb < -clip) gb = -clip;
           mB[l][i] = DNN.beta1 * mB[l][i] + (1 - DNN.beta1) * gb;
           vB[l][i] = DNN.beta2 * vB[l][i] + (1 - DNN.beta2) * gb * gb;
           const mhb = mB[l][i] / bc1, vhb = vB[l][i] / bc2;
-          b[l][i] -= DNN.lr * mhb / (Math.sqrt(vhb) + DNN.eps);
+          b[l][i] -= curLr * mhb / (Math.sqrt(vhb) + DNN.eps);  // 바이어스는 감쇠 없음(표준)
         }
       }
     }
@@ -17229,6 +17248,52 @@ async function mlDNNStatus(DB) {
   } catch (e) { return { trained: false, error: e && e.message }; }
 }
 
+
+// ── [V9 시각화] 신경망 구조·가중치 강도를 프론트 시각화용으로 요약 반환 ──
+//   층 구조, 뉴런별 incoming-weight L2 norm(시드 평균, 0~1 정규화)=노드 강도, 위원회 신뢰가중.
+//   전체 66k 가중치를 보내지 않고 층당 뉴런 강도만(≈609개 실수) → 경량.
+async function mlDNNVizData(DB) {
+  try {
+    const m = await mlDNNLoad(DB);
+    const trust = await getState(DB, "dnn_trust", null);
+    let gtrust = null; try { gtrust = await getState(DB, "gbdt_trust", null); } catch (e) {}
+    let mindAcc = null; try { const mm = await mlMindLoad(DB); if (mm) mindAcc = _num(mm.valAcc, null); } catch (e) {}
+    if (!m || (!Array.isArray(m.nets) && !Array.isArray(m.W))) {
+      return { trained: false, hidden: DNN.hidden, dims: [null].concat(DNN.hidden).concat([1]), trust: trust || null };
+    }
+    const nets = Array.isArray(m.nets) ? m.nets : [{ W: m.W, b: m.b, dims: m.dims }];
+    const dims = m.dims || nets[0].dims;
+    const nLayers = nets[0].W.length;
+    const norm01 = function (a) { let mx = 0; for (const v of a) if (v > mx) mx = v; if (mx <= 0) return a.map(function () { return 0; }); return a.map(function (v) { return +(v / mx).toFixed(3); }); };
+    // 각 층 출력뉴런 incoming-weight norm(시드 평균)
+    const layerNorms = [];
+    for (let l = 0; l < nLayers; l++) {
+      const nout = nets[0].W[l].length, nin = nets[0].W[l][0].length;
+      const norms = new Array(nout).fill(0);
+      for (const nt of nets) for (let i = 0; i < nout; i++) { let s = 0; const Wi = nt.W[l][i]; for (let j = 0; j < nin; j++) s += Wi[j] * Wi[j]; norms[i] += Math.sqrt(s); }
+      for (let i = 0; i < nout; i++) norms[i] /= nets.length;
+      layerNorms.push(norms);
+    }
+    // 입력노드 강도 = 첫 층 W의 입력열 norm(≈피처 영향도)
+    const nin0 = nets[0].W[0][0].length, inNorms = new Array(nin0).fill(0);
+    for (const nt of nets) for (let i = 0; i < nt.W[0].length; i++) { const Wi = nt.W[0][i]; for (let j = 0; j < nin0; j++) inNorms[j] += Wi[j] * Wi[j]; }
+    for (let j = 0; j < nin0; j++) inNorms[j] = Math.sqrt(inNorms[j] / nets.length);
+    const layers = [{ kind: "input", size: nin0, strength: norm01(inNorms) }];
+    for (let l = 0; l < nLayers; l++) layers.push({ kind: (l === nLayers - 1 ? "output" : "hidden"), size: layerNorms[l].length, strength: norm01(layerNorms[l]) });
+    let params = 0; for (let l = 0; l < nLayers; l++) params += nets[0].W[l].length * nets[0].W[l][0].length + nets[0].b[l].length;
+    const committee = [];
+    if (mindAcc != null) committee.push({ name: "MIND", role: "스태킹", acc: +mindAcc.toFixed(3), w: null, trusted: true });
+    committee.push({ name: "DNN", role: "6층 딥넷", acc: trust ? +_num(trust.dnnAccLB, _num(trust.dnnAcc, 0)).toFixed(3) : null, w: trust ? _num(trust.wDnn, 0) : 0, trusted: !!(trust && trust.trusted) });
+    if (gtrust) committee.push({ name: "GBDT", role: "부스팅트리", acc: +_num(gtrust.gbdtAccLB, _num(gtrust.gbdtAcc, 0)).toFixed(3), w: _num(gtrust.wGbdt, 0), trusted: !!gtrust.trusted });
+    return {
+      trained: true, architecture: dims.join("-") + "×" + nets.length, dims: dims, seeds: nets.length,
+      valAcc: m.valAcc, n: m.n, params: params, trainedAt: m.trainedAt,
+      trust: trust ? { wDnn: trust.wDnn, trusted: !!trust.trusted, dnnAcc: trust.dnnAcc } : null,
+      layers: layers, committee: committee,
+      config: { dropout: DNN.dropout, adamW: !!DNN.adamW, cosineLR: !!DNN.cosineLR, optimizer: DNN.adamW ? "AdamW+cosine" : "Adam" }
+    };
+  } catch (e) { return { trained: false, error: e && e.message }; }
+}
 
 // ============================================================================
 // [GBDT] XGBoost식 그래디언트 부스팅 트리 (Chen & Guestrin, KDD 2016 — 순수 JS 이식)

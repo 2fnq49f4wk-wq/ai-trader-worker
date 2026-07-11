@@ -3161,6 +3161,7 @@ html[data-theme="light"] .table tbody tr:hover{background:rgba(9,105,218,.045);}
             <span class="aipick-title">🤖 AI 픽</span>
             <div class="aipick-list" id="aipickList"><span class="aipick-empty">위원회 학습 후 표시됩니다</span></div>
             <button type="button" class="btn" id="btnMonthlyReport">📊 월간 AI 리포트</button>
+            <button type="button" class="btn" id="btnNnViz" onclick="openNnViz()">🧠 AI 두뇌 관측</button>
           </div>
           <div class="db-sortbar" id="detailBrowseSort">
             <span class="db-sort-label">정렬</span>
@@ -10662,6 +10663,163 @@ html[data-theme="light"] .table tbody tr:hover{background:rgba(9,105,218,.045);}
 <script>
 // (안전망) 인트로 오버레이 — 메인 스크립트가 죽어도 8초 후 강제 제거
 setTimeout(function(){ var o=document.getElementById('lux-intro-overlay'); if(o&&o.parentNode) o.remove(); }, 8000);
+</script>
+
+<!-- ═══════════ [V9] AI 두뇌 관측 — 신경망 시각화 ═══════════ -->
+<style>
+#nnVizModal .nnviz-content{position:relative;max-width:1080px;width:94vw;margin:3vh auto;background:linear-gradient(180deg,#0a0e18,#070a12);border:1px solid #1c2740;border-radius:16px;padding:22px 24px 26px;box-shadow:0 30px 90px rgba(0,0,0,.7),0 0 0 1px rgba(70,130,255,.06) inset;max-height:94vh;overflow-y:auto;}
+#nnVizModal .nnv-head{display:flex;align-items:center;justify-content:space-between;gap:12px;margin-bottom:4px;}
+#nnVizModal .nnv-title{font-family:'Space Grotesk',sans-serif;font-size:17px;font-weight:700;letter-spacing:.5px;color:#eaf2ff;display:flex;align-items:center;gap:9px;}
+#nnVizModal .nnv-title .dot{width:9px;height:9px;border-radius:50%;background:#00e676;box-shadow:0 0 10px #00e676;animation:nnPulse 1.6s ease-in-out infinite;}
+#nnVizModal .nnv-sub{font-size:11px;color:#7c90b5;margin:2px 0 14px;font-family:'IBM Plex Mono',monospace;}
+#nnVizModal .nnv-x{cursor:pointer;color:#7c90b5;font-size:22px;line-height:1;padding:2px 8px;border-radius:8px;transition:.15s;}
+#nnVizModal .nnv-x:hover{color:#ff1744;background:rgba(255,23,68,.1);}
+#nnVizModal .nnv-btn{cursor:pointer;font-family:'IBM Plex Mono',monospace;font-size:11px;color:#9fb4dc;background:rgba(70,130,255,.09);border:1px solid #22345a;border-radius:8px;padding:6px 11px;transition:.15s;}
+#nnVizModal .nnv-btn:hover{color:#eaf2ff;border-color:#3a63b0;background:rgba(70,130,255,.18);}
+#nnVizModal .nnv-chips{display:flex;flex-wrap:wrap;gap:8px;margin-bottom:14px;}
+#nnVizModal .nnv-chip{background:rgba(20,30,52,.7);border:1px solid #1e2c48;border-radius:9px;padding:7px 12px;min-width:82px;}
+#nnVizModal .nnv-chip .k{font-size:9.5px;color:#6f84aa;text-transform:uppercase;letter-spacing:.8px;font-family:'IBM Plex Mono',monospace;}
+#nnVizModal .nnv-chip .v{font-size:15px;font-weight:700;color:#eaf2ff;font-family:'Space Grotesk',sans-serif;margin-top:2px;}
+#nnVizModal .nnv-chip .v.good{color:#00e676;} #nnVizModal .nnv-chip .v.warn{color:#ffc107;} #nnVizModal .nnv-chip .v.off{color:#ff5c7a;}
+#nnVizModal .nnv-stage{position:relative;background:radial-gradient(120% 120% at 50% 0%,#0c1526,#060910 70%);border:1px solid #16223c;border-radius:13px;overflow:hidden;}
+#nnVizModal svg{display:block;width:100%;height:auto;}
+#nnVizModal .nnv-legend{display:flex;flex-wrap:wrap;gap:14px;margin-top:12px;font-size:10.5px;color:#8497ba;font-family:'IBM Plex Mono',monospace;}
+#nnVizModal .nnv-legend i{display:inline-block;width:10px;height:10px;border-radius:50%;margin-right:5px;vertical-align:middle;}
+#nnVizModal .nnv-comm{margin-top:16px;display:grid;gap:9px;}
+#nnVizModal .nnv-comm-row{display:grid;grid-template-columns:74px 1fr 116px;align-items:center;gap:10px;}
+#nnVizModal .nnv-comm-name{font-family:'Space Grotesk',sans-serif;font-weight:700;font-size:12.5px;color:#dbe6fb;}
+#nnVizModal .nnv-comm-name small{display:block;font-size:9px;color:#6f84aa;font-weight:400;}
+#nnVizModal .nnv-bar{height:9px;border-radius:6px;background:rgba(255,255,255,.05);overflow:hidden;}
+#nnVizModal .nnv-bar>span{display:block;height:100%;border-radius:6px;background:linear-gradient(90deg,#2f6bff,#00e0ff);transition:width .8s cubic-bezier(.2,.8,.2,1);}
+#nnVizModal .nnv-comm-meta{font-family:'IBM Plex Mono',monospace;font-size:10.5px;color:#9fb4dc;text-align:right;}
+#nnVizModal .nnv-tag{display:inline-block;font-size:9px;padding:1px 6px;border-radius:5px;margin-left:5px;font-family:'IBM Plex Mono',monospace;}
+#nnVizModal .nnv-tag.on{background:rgba(0,230,118,.14);color:#00e676;} #nnVizModal .nnv-tag.gate{background:rgba(255,193,7,.14);color:#ffc107;}
+#nnVizModal .nnv-empty{padding:50px 20px;text-align:center;color:#8497ba;font-size:13px;line-height:1.8;}
+@keyframes nnPulse{0%,100%{opacity:1;transform:scale(1);}50%{opacity:.45;transform:scale(.82);}}
+@keyframes nnFlow{to{stroke-dashoffset:-16;}}
+#nnVizModal .nnedge{stroke-dasharray:2 6;animation:nnFlow 1s linear infinite;}
+#nnVizModal .nnnode{transition:r .5s ease;}
+html[data-theme="light"] #nnVizModal .nnviz-content{background:linear-gradient(180deg,#f7fafe,#eef3fb);border-color:#cdd9ee;}
+html[data-theme="light"] #nnVizModal .nnv-title,html[data-theme="light"] #nnVizModal .nnv-chip .v,html[data-theme="light"] #nnVizModal .nnv-comm-name{color:#12233f;}
+</style>
+<div class="modal" id="nnVizModal">
+  <div class="nnviz-content">
+    <div class="nnv-head">
+      <div>
+        <div class="nnv-title"><span class="dot"></span>AI 두뇌 관측 · LUX-DNN</div>
+      </div>
+      <div style="display:flex;gap:8px;align-items:center;">
+        <button class="nnv-btn" onclick="openNnViz(1)">↻ 새로고침</button>
+        <span class="nnv-x" onclick="closeNnViz()">&times;</span>
+      </div>
+    </div>
+    <div class="nnv-sub" id="nnvSub">신경망 구조·가중치 강도를 실시간으로 관측합니다.</div>
+    <div class="nnv-chips" id="nnvChips"></div>
+    <div class="nnv-stage" id="nnvStage"><div class="nnv-empty">불러오는 중…</div></div>
+    <div class="nnv-legend" id="nnvLegend" style="display:none;">
+      <span><i style="background:#4488ff;"></i>입력층(48 피처)</span>
+      <span><i style="background:#bb86fc;"></i>은닉층(ReLU·드롭아웃)</span>
+      <span><i style="background:#00e676;"></i>출력층(승률)</span>
+      <span style="color:#6f84aa;">● 노드 크기·밝기 = 가중치 강도(영향력)</span>
+    </div>
+    <div class="nnv-comm" id="nnvComm"></div>
+  </div>
+</div>
+<script>
+(function(){
+  var NNV = { timer:null };
+  window.closeNnViz = function(){ var m=document.getElementById('nnVizModal'); if(m) m.classList.remove('show'); if(NNV.timer){clearInterval(NNV.timer);NNV.timer=null;} };
+  window.openNnViz = function(refreshOnly){
+    var m=document.getElementById('nnVizModal'); if(!m) return;
+    if(!refreshOnly) m.classList.add('show');
+    var stage=document.getElementById('nnvStage');
+    if(!refreshOnly) stage.innerHTML='<div class="nnv-empty">신경망 로딩 중…</div>';
+    fetch('/api/nn-viz').then(function(r){return r.json();}).then(function(d){ NNV_render(d); })
+      ['catch'](function(){ stage.innerHTML='<div class="nnv-empty">조회 실패 — 엔진이 응답하지 않습니다.</div>'; });
+  };
+  function esc(v){ return (v==null)?'—':v; }
+  function pct(v){ return (v==null||isNaN(v))?'—':(v*100).toFixed(1)+'%'; }
+  function chip(k,v,cls){ return '<div class="nnv-chip"><div class="k">'+k+'</div><div class="v '+(cls||'')+'">'+v+'</div></div>'; }
+  function NNV_render(d){
+    var stage=document.getElementById('nnvStage'), chips=document.getElementById('nnvChips'),
+        comm=document.getElementById('nnvComm'), legend=document.getElementById('nnvLegend'), sub=document.getElementById('nnvSub');
+    if(!d || !d.trained){
+      chips.innerHTML=''; comm.innerHTML=''; legend.style.display='none';
+      var need = d && d.dims ? d.dims.join('-') : (d&&d.hidden? ('48-'+d.hidden.join('-')+'-1'):'');
+      stage.innerHTML='<div class="nnv-empty">🌱 아직 학습 전입니다.<br>딥넷은 표본 400건 이상 쌓이면 야간에 자동 학습합니다.<br>'
+        +(need?'<span style="color:#6f84aa;font-family:IBM Plex Mono,monospace;">예정 구조 '+need+'</span><br>':'')
+        +(d&&d.trust?'<span style="color:#ffc107;">현재 신뢰가중 wDnn=0 (검증 통과 시 자동 가동)</span>':'')+'</div>';
+      return;
+    }
+    sub.textContent='구조 '+d.architecture+' · 파라미터 '+ (d.params? d.params.toLocaleString():'—') +'개 · 야간 자가학습';
+    var wDnn = d.trust? d.trust.wDnn : 0, trusted = d.trust && d.trust.trusted;
+    chips.innerHTML =
+      chip('구조', (d.dims?d.dims.length:0)+'층', '') +
+      chip('파라미터', d.params? (d.params/1000).toFixed(1)+'k':'—','') +
+      chip('시드 앙상블', (d.seeds||1)+'개','') +
+      chip('검증 정확도', pct(d.valAcc), d.valAcc>=0.55?'good':(d.valAcc>=0.5?'warn':'off')) +
+      chip('학습 표본', d.n? d.n.toLocaleString():'—','') +
+      chip('신뢰가중 wDNN', (wDnn!=null?wDnn.toFixed(2):'—'), trusted?'good':'off') +
+      chip('옵티마이저', (d.config&&d.config.optimizer)||'Adam','');
+    legend.style.display='flex';
+    NNV_drawSVG(stage, d.layers||[]);
+    // 위원회
+    var rows=(d.committee||[]).map(function(c){
+      var accW = (c.acc!=null? Math.max(0,Math.min(1,c.acc)):0)*100;
+      var tag = (c.w!=null)? (c.trusted? '<span class="nnv-tag on">가동 w='+(c.w||0).toFixed(2)+'</span>':'<span class="nnv-tag gate">억제 w=0</span>') : '';
+      return '<div class="nnv-comm-row"><div class="nnv-comm-name">'+c.name+'<small>'+(c.role||'')+'</small></div>'
+        +'<div class="nnv-bar"><span style="width:'+accW.toFixed(0)+'%;'+(c.name==='DNN'?'background:linear-gradient(90deg,#7d4bff,#00e0ff);':'')+(c.name==='GBDT'?'background:linear-gradient(90deg,#ff9800,#ffd54f);':'')+'"></span></div>'
+        +'<div class="nnv-comm-meta">정확도 '+pct(c.acc)+' '+tag+'</div></div>';
+    }).join('');
+    comm.innerHTML = '<div style="font-family:Space Grotesk,sans-serif;font-size:12px;color:#9fb4dc;margin:4px 0 2px;letter-spacing:.5px;">🏛️ 전문가 위원회 (신뢰가중 소프트맥스 결합)</div>'+rows;
+  }
+  function NNV_drawSVG(stage, layers){
+    if(!layers.length){ stage.innerHTML='<div class="nnv-empty">구조 데이터 없음</div>'; return; }
+    var W=1000, H=440, padX=70, padY=34, capPer=18;
+    var cols=layers.length;
+    var colX=function(i){ return padX + (W-2*padX)*(cols>1? i/(cols-1):0.5); };
+    var layerColor=function(kind,i){ if(kind==='input')return '#4488ff'; if(kind==='output')return '#00e676';
+      var t=(i-1)/Math.max(1,cols-2); var hue=Math.round(265 - t*95); return 'hsl('+hue+',78%,64%)'; };
+    // 각 층에서 강도 상위 capPer개만 시각화(가독성) — 원 인덱스와 강도 보존
+    var shown=layers.map(function(L){
+      var arr=(L.strength||[]).map(function(s,idx){return {s:s,idx:idx};});
+      if(arr.length>capPer){ arr.sort(function(a,b){return b.s-a.s;}); arr=arr.slice(0,capPer); }
+      var n=arr.length||L.size||1;
+      arr.forEach(function(o,k){ o.y = padY + (H-2*padY)*(n>1? k/(n-1):0.5); });
+      return arr;
+    });
+    var edges='', nodes='', labels='';
+    // 엣지: 인접층 표시노드 간 샘플 연결(강한 노드 우선), 흐름 애니메이션
+    for(var l=0;l<cols-1;l++){
+      var A=shown[l], B=shown[l+1], x1=colX(l), x2=colX(l+1);
+      for(var a=0;a<A.length;a++){
+        if(A[a].s<0.12) continue;                 // 약한 소스노드는 연결 생략(엣지 수·부하↓)
+        var deg=Math.min(2,B.length);             // 노드당 2개(다음 층 상위)로 제한
+        for(var b=0;b<deg;b++){
+          var tgt=B[b]; var op=(0.05+0.32*A[a].s*tgt.s).toFixed(3);
+          var dur=(0.7+ (1-A[a].s)*1.4).toFixed(2);
+          edges+='<line class="nnedge" x1="'+x1.toFixed(1)+'" y1="'+A[a].y.toFixed(1)+'" x2="'+x2.toFixed(1)+'" y2="'+tgt.y.toFixed(1)
+            +'" stroke="'+layerColor(layers[l+1].kind,l+1)+'" stroke-width="'+(0.5+1.6*A[a].s*tgt.s).toFixed(2)+'" opacity="'+op+'" style="animation-duration:'+dur+'s"/>';
+        }
+      }
+    }
+    // 노드
+    for(var li=0;li<cols;li++){
+      var col=shown[li], cx=colX(li), color=layerColor(layers[li].kind,li);
+      for(var k=0;k<col.length;k++){
+        var s=col[k].s, r=(3.2+7.5*s).toFixed(1), glow=(0.4+0.6*s).toFixed(2);
+        // 노드는 정적 글로우(SMIL 제거 → GPU 부하·배터리 절약). 살아있는 느낌은 흐르는 엣지가 담당.
+        nodes+='<circle class="nnnode" cx="'+cx.toFixed(1)+'" cy="'+col[k].y.toFixed(1)+'" r="'+r+'" fill="'+color+'" opacity="'+glow
+          +'" style="filter:drop-shadow(0 0 '+(2+5*s).toFixed(1)+'px '+color+');"></circle>';
+      }
+      var kindTxt = layers[li].kind==='input'?'입력':(layers[li].kind==='output'?'출력':'은닉');
+      labels+='<text x="'+cx.toFixed(1)+'" y="'+(H-8)+'" text-anchor="middle" font-family="IBM Plex Mono,monospace" font-size="11" fill="#7c90b5">'+layers[li].size+'</text>';
+      labels+='<text x="'+cx.toFixed(1)+'" y="18" text-anchor="middle" font-family="IBM Plex Mono,monospace" font-size="9.5" fill="'+color+'" opacity="0.85">'+kindTxt+'</text>';
+      if((layers[li].size||0)>capPer) labels+='<text x="'+cx.toFixed(1)+'" y="'+(H-22)+'" text-anchor="middle" font-family="IBM Plex Mono,monospace" font-size="8.5" fill="#556488">top'+capPer+'</text>';
+    }
+    stage.innerHTML='<svg viewBox="0 0 '+W+' '+H+'" preserveAspectRatio="xMidYMid meet">'+edges+nodes+labels+'</svg>';
+  }
+})();
 </script>
 
 
