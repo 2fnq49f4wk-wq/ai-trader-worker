@@ -2558,6 +2558,24 @@ html[data-theme="light"] .table tbody tr:hover{background:rgba(9,105,218,.045);}
 .fund-fbit.ok{color:#30cc5a;border-color:rgba(48,204,90,.4);}
 .fund-fbit.no{color:#f63538;border-color:rgba(246,53,56,.4);}
 .fund-note{font-size:10px;color:var(--t2);opacity:.75;}
+
+/* ═══ [V17] AI 픽 스트립 + 월간 리포트 뷰어 ═══ */
+.aipick-bar{display:flex;align-items:center;gap:10px;flex-wrap:wrap;background:var(--s2);border:1px solid var(--bd);border-radius:8px;padding:9px 12px;margin-bottom:10px;}
+.aipick-title{font-size:12px;font-weight:700;color:var(--t1);white-space:nowrap;}
+.aipick-list{display:flex;gap:6px;flex-wrap:wrap;flex:1;min-width:0;}
+.aipick-empty{font-size:11px;color:var(--t2);}
+.aipick-chip{font-size:11.5px;padding:5px 10px;border-radius:14px;border:1px solid var(--bd);background:var(--s1);color:var(--t1);cursor:pointer;white-space:nowrap;min-height:30px;}
+.aipick-chip b{font-variant-numeric:tabular-nums;}
+.aipick-chip.hot{border-color:rgba(48,204,90,.55);}.aipick-chip.hot b{color:#30cc5a;}
+.aipick-chip.warm{border-color:rgba(232,179,57,.5);}.aipick-chip.warm b{color:#e8b339;}
+.aipick-chip.cool b{color:var(--t2);}
+.aipick-chip:hover{border-color:var(--t2);}
+.rpt-overlay{position:fixed;inset:0;background:rgba(0,0,0,.62);z-index:9000;display:flex;align-items:center;justify-content:center;padding:18px;}
+.rpt-box{background:var(--s1);border:1px solid var(--bd);border-radius:12px;width:min(760px,96vw);max-height:88vh;display:flex;flex-direction:column;overflow:hidden;}
+.rpt-head{display:flex;align-items:center;justify-content:space-between;gap:8px;padding:12px 16px;border-bottom:1px solid var(--bd);font-size:13px;font-weight:700;}
+.rpt-actions{display:flex;gap:6px;}
+.rpt-body{margin:0;padding:16px;overflow:auto;font-size:12px;line-height:1.65;white-space:pre-wrap;font-family:'IBM Plex Mono',ui-monospace,monospace;color:var(--t1);}
+@media(max-width:767px){.rpt-box{max-height:92vh;}.rpt-head{flex-wrap:wrap;}}
 </style>
 </head>
 <body>
@@ -3115,6 +3133,12 @@ html[data-theme="light"] .table tbody tr:hover{background:rgba(9,105,218,.045);}
       <div class="page-body" id="detailBody">
         <!-- [V96] 조회 전: 한국주식(좌) · 미국주식(우) 워치리스트 — 종목 클릭 시 상세 -->
         <div id="detailEmpty">
+          <!-- [V17] AI 픽 — 탑재 AI 위원회의 승률예측 상위 + 월간 리포트 -->
+          <div class="aipick-bar" id="aipickBar">
+            <span class="aipick-title">🤖 AI 픽</span>
+            <div class="aipick-list" id="aipickList"><span class="aipick-empty">위원회 학습 후 표시됩니다</span></div>
+            <button type="button" class="btn" id="btnMonthlyReport">📊 월간 AI 리포트</button>
+          </div>
           <div class="db-sortbar" id="detailBrowseSort">
             <span class="db-sort-label">정렬</span>
             <button type="button" class="db-sort-btn active" data-sort="mcap">시가총액</button>
@@ -6971,6 +6995,56 @@ html[data-theme="light"] .table tbody tr:hover{background:rgba(9,105,218,.045);}
       })['catch'](function(){ if (detailState.symbol === sym) el.innerHTML = '<div class="empty">재무 로딩 실패</div>'; });
   }
 
+  // ══ [V17] AI 픽 스트립 + 월간 AI 리포트 뷰어 ══
+  var __aiPicksTs = 0;
+  function loadAiPicks() {
+    var el = $('aipickList'); if (!el) return;
+    if (Date.now() - __aiPicksTs < 120000) return;   // 2분 캐시
+    fetch('/api/ai-picks').then(function(r){ return r.json(); }).then(function(d) {
+      __aiPicksTs = Date.now();
+      var picks = (d && d.picks || []).filter(function(p){ return !p.abstain; }).slice(0, 8);
+      if (!picks.length) { el.innerHTML = '<span class="aipick-empty">위원회 학습 후 표시됩니다 (표본 축적 중)</span>'; return; }
+      var mkIc = { us: '🇺🇸', kr: '🇰🇷', cm: '🛢' };
+      el.innerHTML = picks.map(function(p) {
+        var cls = p.p >= 0.6 ? 'hot' : (p.p >= 0.52 ? 'warm' : 'cool');
+        return '<button type="button" class="aipick-chip ' + cls + '" data-sym="' + escapeAttr(p.symbol) + '" data-mkt="' + escapeAttr(p.market) + '">' +
+          (mkIc[p.market] || '') + ' ' + escapeHtml(p.symbol) + ' <b>' + Math.round(p.p * 100) + '%</b></button>';
+      }).join('');
+      el.querySelectorAll('.aipick-chip').forEach(function(b) {
+        b.addEventListener('click', function(){ openStockDetail(b.getAttribute('data-sym'), b.getAttribute('data-mkt')); });
+      });
+    })['catch'](function(){});
+  }
+  function openMonthlyReport() {
+    var old = document.getElementById('rptOverlay');
+    if (old) old.remove();
+    var ov = document.createElement('div');
+    ov.id = 'rptOverlay'; ov.className = 'rpt-overlay';
+    ov.innerHTML = '<div class="rpt-box"><div class="rpt-head"><span>📊 LUX-AI 월간 투자 리포트</span>' +
+      '<span class="rpt-actions"><button type="button" class="btn" id="rptThis">이번 달</button>' +
+      '<button type="button" class="btn" id="rptPrev">지난 달</button>' +
+      '<button type="button" class="btn" id="rptClose">✕ 닫기</button></span></div>' +
+      '<pre class="rpt-body" id="rptBody">리포트 생성 중…</pre></div>';
+    document.body.appendChild(ov);
+    ov.addEventListener('click', function(e){ if (e.target === ov) ov.remove(); });
+    document.getElementById('rptClose').addEventListener('click', function(){ ov.remove(); });
+    function loadRpt(ym) {
+      var body = document.getElementById('rptBody'); if (!body) return;
+      body.textContent = '리포트 생성 중…';
+      fetch('/api/report/monthly' + (ym ? '?ym=' + ym + '&refresh=1' : '?refresh=1'))
+        .then(function(r){ return r.json(); })
+        .then(function(d){ body.textContent = (d && d.text) || '리포트 없음'; })
+        ['catch'](function(){ body.textContent = '리포트 로딩 실패'; });
+    }
+    function ymOf(offset) {
+      var d = new Date(); d.setUTCDate(1); d.setUTCMonth(d.getUTCMonth() + offset);
+      return d.toISOString().slice(0, 7);
+    }
+    document.getElementById('rptThis').addEventListener('click', function(){ loadRpt(ymOf(0)); });
+    document.getElementById('rptPrev').addEventListener('click', function(){ loadRpt(ymOf(-1)); });
+    loadRpt(ymOf(0));   // 기본: 이번 달(진행분)
+  }
+
   // 관련 뉴스 헤드라인 (종목 섹터그룹 기준)
   function renderDetailNews() {
     var el = $('detailNews'); if (!el) return;
@@ -6997,6 +7071,11 @@ html[data-theme="light"] .table tbody tr:hover{background:rgba(9,105,218,.045);}
   var detailBrowseSort = 'mcap';
   function renderDetailBrowse() {
     window.__detailBrowseTs = Date.now();
+    try { loadAiPicks(); } catch (e) {}   // [V17] AI 픽 스트립(2분 캐시)
+    try {
+      var _rb = $('btnMonthlyReport');
+      if (_rb && !_rb.__bound) { _rb.__bound = true; _rb.addEventListener('click', openMonthlyReport); }
+    } catch (e) {}
     var arr = window.__lastQuotesArr || [];
     function mk(q) {
       // price×shares 상한 체크 — sharesOutstanding 오류값으로 비정상 대형주 정렬 방지

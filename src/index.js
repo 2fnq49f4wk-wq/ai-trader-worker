@@ -11641,6 +11641,7 @@ async function runTradingCycle(env) {
           __dnn = null, __dnnTrust = null, __noiseFilter = null, __evMem = {}, __sectorNews = null,
           __gbdt = null, __gbdtTrust = null, __cal = null;
       const __candBatch = [], __candSyms = new Set();  // [LUX-AI] 반사실 후보 배치(사이클당 1커밋)
+      const __aiPicks = [];   // [V5] AI 픽 — 위원회가 이번 사이클 평가한 종목별 승률예측(대시보드/리포트 노출)
       try {
         if (typeof LUXML !== "undefined" && LUXML.enabled) {
           try { __mlModel = await mlLoadModel(DB); } catch (e) {}
@@ -12261,6 +12262,13 @@ async function runTradingCycle(env) {
                 let _md = null;
                 try { _md = await mlDeepDecide(DB, signal.mlFeat, { mind: __mind, guard: __guard, ens: __ensemble, trust: __dnnTrust, dnn: __dnn, gbdtTrust: __gbdtTrust, gbdt: __gbdt, cal: __cal }); } catch (e) {}
                 if (!_md) { try { _md = await mlMindDecide(DB, signal.mlFeat, { mind: __mind, guard: __guard, ens: __ensemble }); } catch (e) {} }
+                // [V5] AI 픽 수집 — 개입 여부와 무관하게 예측 자체는 기록(종목당 1회)
+                try {
+                  if (_md && typeof _md.p === "number" && !__candSyms.has(symbol + ":pick")) {
+                    __candSyms.add(symbol + ":pick");
+                    __aiPicks.push({ symbol: symbol, p: +_md.p.toFixed(3), strategy: strategy, abstain: !!_md.abstain });
+                  }
+                } catch (e) {}
                 if (_md && (_md.observe || _md.abstain)) {
                   // 자기불신 / 기권 → 규칙엔진 수량 유지(ML 개입 안 함)
                 } else if (_md && _md.allow === false) {
@@ -12371,6 +12379,14 @@ async function runTradingCycle(env) {
       if (__candBatch.length) {
         try { const _cn = await mlFlushCandidates(DB, __candBatch); if (_cn) await log(DB, "INFO", null, "[LUX-AI] 반사실후보 " + _cn + "건 기록[" + market + "]"); }
         catch (e) {}
+      }
+      // [V5] AI 픽 저장 — 사이클당 시장별 1 write. P 상위 20개(기권 제외 우선).
+      if (__aiPicks.length) {
+        try {
+          __aiPicks.sort(function (a, b) { return (a.abstain === b.abstain ? b.p - a.p : (a.abstain ? 1 : -1)); });
+          await setState(DB, "ai_picks:" + market, { ts: Date.now(), picks: __aiPicks.slice(0, 20) });
+          __aiPicks.length = 0; __candSyms.clear();
+        } catch (e) {}
       }
       // [TIME-CAP] 전 종목 평가를 시간 내 완료했으면 라운드로빈 오프셋 리셋
       if (!evalTimedOut) { try { await setState(DB, "eval_offset:" + market, 0); } catch (e) {} }
@@ -12686,6 +12702,30 @@ async function handleRequest(request, env) {
       }
       return Response.json(await crowdGet(env.DB, sym), { headers: cors });
     }
+    // ── [V5] AI 픽: 위원회가 직전 사이클에 평가한 종목별 승률예측 상위 ──
+    if (path === "/api/ai-picks") {
+      const out = { ts: null, picks: [] };
+      for (const mk of ["us", "kr", "cm"]) {
+        try {
+          const pk = await getState(env.DB, "ai_picks:" + mk, null);
+          if (pk && Array.isArray(pk.picks)) {
+            out.ts = Math.max(out.ts || 0, pk.ts || 0);
+            for (const p of pk.picks) out.picks.push(Object.assign({ market: mk }, p));
+          }
+        } catch (e) {}
+      }
+      out.picks.sort(function (a, b) { return (a.abstain === b.abstain ? b.p - a.p : (a.abstain ? 1 : -1)); });
+      return Response.json(out, { headers: cors });
+    }
+
+    // ── [V5] 월간 AI 투자 리포트: ?ym=YYYY-MM (기본 지난달), &refresh=1 재생성 ──
+    if (path === "/api/report/monthly") {
+      const ym = url.searchParams.get("ym") || null;
+      const force = url.searchParams.get("refresh") === "1";
+      const rpt = await mlMonthlyReport(env.DB, ym, force);
+      return Response.json(rpt, { headers: cors });
+    }
+
     if (path === "/api/crowd/vote" && request.method === "POST") {
       let body = null; try { body = await request.json(); } catch (e) {}
       const sym = body && String(body.symbol || "").trim();
@@ -16630,7 +16670,7 @@ const DNN = {
   trustMargin: 0.0,      // mind보다 이만큼은 나아야 신뢰 부여(0=동등이면 절반씩)
   trustTemp: 12,         // 신뢰 소프트맥스 온도(정확도차→가중)
   // ── 과적합 방어(소표본 금융 특화) ──
-  seeds: 3,              // 멀티시드 앙상블 수(서로 다른 초기화·셔플로 K개 학습, 로짓 평균 → 분산↓)
+  seeds: 4,              // 멀티시드 앙상블 수(서로 다른 초기화·셔플로 K개 학습, 로짓 평균 → 분산↓)
   labelSmooth: 0.05,     // 라벨 스무딩(승/패 라벨 노이즈에 과신 방지)
   inputNoise: 0.05,      // 학습 시 표준화 입력에 가우시안 노이즈(σ) 증강
   trainBudgetMs: 25000   // 야간 학습 총 CPU 예산 — 초과 시 남은 시드 생략(최소 1개 보장)
@@ -17615,6 +17655,205 @@ async function crowdVote(DB, symbol, side) {
 
 
 // ============================================================================
+// [REPORT] 탑재 AI 월간 투자 리포트 — 외부 LLM 0, 전부 온보드 계산
+//   • 요약: TextRank(Mihalcea & Tarau, EMNLP 2004) 순수 JS 이식 — 단어중첩 유사도
+//     그래프 + 파워이터레이션으로 이달 뉴스 헤드라인 핵심문장 추출
+//   • 성과: 원장에서 실현손익·승률·Profit Factor·전략별 성과·최고/최악 거래 산출
+//   • 자기평가: 위원회 전문가 정확도(Wilson 하한)·보정 ECE·GBDT 주요피처 — AI가
+//     자기 판단 품질까지 리포트에 명시(과신 없는 보고)
+//   • 캐시: state "report:YYYY-MM" — 재요청 무비용. 매월 1일 야간 자동 생성.
+// ============================================================================
+
+// TextRank 문장 유사도: 공유단어수 / (log|S1|+log|S2|) — 원 논문 식 그대로
+function _trSim(a, b) {
+  if (a.size < 2 || b.size < 2) return 0;
+  let shared = 0;
+  for (const w of a) if (b.has(w)) shared++;
+  if (!shared) return 0;
+  return shared / (Math.log(a.size) + Math.log(b.size));
+}
+function textRankTop(sentences, topK) {
+  try {
+    const sets = sentences.map(function (s) {
+      return new Set(String(s).toLowerCase().replace(/[^a-z0-9가-힣\s]/g, " ").split(/\s+/).filter(function (w) { return w.length >= 2; }));
+    });
+    const n = sets.length;
+    if (n <= topK) return sentences.slice(0, topK);
+    const W = [];
+    for (let i = 0; i < n; i++) { W.push(new Array(n).fill(0)); }
+    const outSum = new Array(n).fill(0);
+    for (let i = 0; i < n; i++) for (let j = i + 1; j < n; j++) {
+      const s = _trSim(sets[i], sets[j]);
+      if (s > 0) { W[i][j] = s; W[j][i] = s; outSum[i] += s; outSum[j] += s; }
+    }
+    let rank = new Array(n).fill(1 / n);
+    for (let it = 0; it < 30; it++) {           // 파워 이터레이션(d=0.85)
+      const next = new Array(n).fill(0.15 / n);
+      for (let j = 0; j < n; j++) {
+        if (outSum[j] <= 0) continue;
+        const share = 0.85 * rank[j] / outSum[j];
+        for (let i = 0; i < n; i++) if (W[j][i] > 0) next[i] += share * W[j][i];
+      }
+      rank = next;
+    }
+    return sentences.map(function (s, i) { return { s: s, r: rank[i] }; })
+      .sort(function (a, b) { return b.r - a.r; }).slice(0, topK).map(function (o) { return o.s; });
+  } catch (e) { return sentences.slice(0, topK); }
+}
+
+function _rptPct(v) { return (v >= 0 ? "+" : "") + v.toFixed(2) + "%"; }
+function _rptMoney(v, mkt) {
+  const a = Math.abs(v), sg = v < 0 ? "-" : "+";
+  if (/kr$/.test(mkt)) return sg + (a >= 1e8 ? (a / 1e8).toFixed(1) + "억" : Math.round(a / 1e4).toLocaleString() + "만원");  // kr·bdkr = 원화
+  return sg + "$" + (a >= 1e6 ? (a / 1e6).toFixed(2) + "M" : Math.round(a).toLocaleString());
+}
+
+async function mlMonthlyReport(DB, ym, force) {
+  try {
+    // ym = "YYYY-MM" (기본: 지난달)
+    if (!ym || !/^\d{4}-\d{2}$/.test(ym)) {
+      const d = new Date(Date.now() - 86400000);   // 어제 기준 그 달
+      d.setUTCDate(1); d.setUTCMonth(d.getUTCMonth());
+      ym = d.toISOString().slice(0, 7);
+    }
+    const key = "report:" + ym;
+    if (!force) {
+      const cached = await getState(DB, key, null);
+      if (cached && cached.text) return cached;
+    }
+    const start = Date.parse(ym + "-01T00:00:00Z");
+    const endD = new Date(start); endD.setUTCMonth(endD.getUTCMonth() + 1);
+    const end = endD.getTime();
+
+    // ── 1) 원장 성과 ──
+    const rows = await DB.prepare(
+      "SELECT ts, market, symbol, side, qty, price, pnl, pnl_pct, reason FROM trades WHERE ts >= ? AND ts < ? ORDER BY ts ASC"
+    ).bind(start, end).all();
+    const trs = (rows && rows.results) || [];
+    const mkts = {};
+    for (const t of trs) {
+      const m = mkts[t.market] = mkts[t.market] || { buys: 0, sells: 0, pnl: 0, wins: 0, losses: 0, gw: 0, gl: 0, best: null, worst: null, strat: {} };
+      if (t.side === "BUY") { m.buys++; continue; }
+      m.sells++;
+      const pnl = _num(t.pnl, 0), pct = _num(t.pnl_pct, 0);
+      m.pnl += pnl;
+      if (pnl >= 0) { m.wins++; m.gw += pnl; } else { m.losses++; m.gl += -pnl; }
+      if (!m.best || pct > m.best.pct) m.best = { sym: t.symbol, pct: pct };
+      if (!m.worst || pct < m.worst.pct) m.worst = { sym: t.symbol, pct: pct };
+      const sm = String(t.reason || "").match(/^\[?(\w+)/);   // reason 선두 토큰을 전략 근사로
+      const sk = sm ? sm[1].toLowerCase() : "etc";
+      const ss = m.strat[sk] = m.strat[sk] || { n: 0, pnl: 0, wins: 0 };
+      ss.n++; ss.pnl += pnl; if (pnl >= 0) ss.wins++;
+    }
+
+    // ── 2) AI 자기평가 ──
+    const l1 = await mlLoadModel(DB);
+    const mind = await mlMindLoad(DB);
+    const dnnT = await getState(DB, "dnn_trust", null);
+    const gbdtM = await mlGBDTLoad(DB);
+    const gbdtT = await getState(DB, "gbdt_trust", null);
+    const cal = await getState(DB, "committee_cal", null);
+    const senti = await sentiStatus(DB);
+    const guard = await mlGuardState(DB);
+
+    // ── 3) 뉴스 TextRank 요약 + 그룹 감성 ──
+    let newsTop = [], sentiLine = "";
+    try {
+      const sn = await getState(DB, "sector_news_sentiment", null);
+      if (sn && sn.headlines) {
+        const heads = [], seenH = new Set();
+        for (const g of Object.keys(sn.headlines)) {
+          for (const h of sn.headlines[g]) {
+            const t = (typeof h === "string") ? h : (h && h.title);
+            if (t && !seenH.has(t)) { seenH.add(t); heads.push(t); }
+          }
+        }
+        newsTop = textRankTop(heads, 5);
+        if (sn.sentiment) {
+          sentiLine = Object.keys(sn.sentiment).map(function (g) { return g + " " + (sn.sentiment[g].compound >= 0 ? "+" : "") + sn.sentiment[g].compound; }).join(" · ");
+        }
+      }
+    } catch (e) {}
+
+    // ── 4) AI 픽(현재 시점) ──
+    let picks = [];
+    try {
+      for (const mk of ["us", "kr", "cm"]) {
+        const pk = await getState(DB, "ai_picks:" + mk, null);
+        if (pk && Array.isArray(pk.picks)) picks = picks.concat(pk.picks.slice(0, 5).map(function (p) { return Object.assign({ market: mk }, p); }));
+      }
+      picks.sort(function (a, b) { return b.p - a.p; });
+    } catch (e) {}
+
+    // ── 5) 리포트 작성(데이터 기반 문장 선택 — 조건부 NLG) ──
+    const L = [];
+    L.push("═══════════════════════════════════════");
+    L.push(" LUX-AI 월간 투자 리포트 — " + ym);
+    L.push(" (탑재 AI 자동 생성 · 외부 LLM 미사용)");
+    L.push("═══════════════════════════════════════");
+    L.push("");
+    L.push("■ 이달의 성과");
+    const mkNames = { us: "미국", kr: "한국", cm: "원자재", bdus: "미국채", bdkr: "한국채" };
+    let anyTrades = false;
+    for (const mk of Object.keys(mkts)) {
+      const m = mkts[mk];
+      if (!m.sells && !m.buys) continue;
+      anyTrades = true;
+      const wr = m.sells ? (m.wins / m.sells * 100) : 0;
+      const pf = m.gl > 1e-9 ? (m.gw / m.gl) : (m.gw > 0 ? Infinity : 0);
+      L.push("· " + (mkNames[mk] || mk) + ": 매수 " + m.buys + "건 / 청산 " + m.sells + "건, 실현손익 " + _rptMoney(m.pnl, mk) +
+             (m.sells ? " (승률 " + wr.toFixed(0) + "%, PF " + (isFinite(pf) ? pf.toFixed(2) : "∞") + ")" : ""));
+      if (m.best) L.push("   최고: " + m.best.sym + " " + _rptPct(m.best.pct) + (m.worst ? " / 최악: " + m.worst.sym + " " + _rptPct(m.worst.pct) : ""));
+      const stratLines = Object.keys(m.strat).filter(function (k) { return m.strat[k].n >= 2; })
+        .sort(function (a, b) { return m.strat[b].pnl - m.strat[a].pnl; }).slice(0, 3)
+        .map(function (k) { const s = m.strat[k]; return k + " " + s.n + "건 " + _rptMoney(s.pnl, mk) + "(승 " + Math.round(s.wins / s.n * 100) + "%)"; });
+      if (stratLines.length) L.push("   전략별: " + stratLines.join(" · "));
+    }
+    if (!anyTrades) L.push("· 이달 체결 내역 없음(관망 또는 데이터 미축적).");
+    L.push("");
+    L.push("■ AI 판단 품질 자가평가 (과신 방지: 전부 검증 신뢰하한 기준)");
+    if (l1) L.push("· 기본 모델: 표본 " + l1.n + "개, OOF 정확도 " + (l1.valAcc * 100).toFixed(1) + "% (하한 " + ((l1.valAccLB || 0) * 100).toFixed(1) + "%), 모드 " + l1.mode + ", 사용 피처 " + l1.aliveCount + "/" + LUXML.featNames.length);
+    else L.push("· 기본 모델: 학습 전(표본 축적 중) — 거래는 규칙엔진이 전담");
+    if (mind) L.push("· 스태킹(MIND): 결합 정확도 " + (mind.valAcc * 100).toFixed(1) + "% (하한 " + ((mind.valAccLB || 0) * 100).toFixed(1) + "%)");
+    if (dnnT && dnnT.trusted) L.push("· 딥넷: 신뢰가중 " + dnnT.wDnn + " (검증하한 " + ((dnnT.dnnAccLB || 0) * 100).toFixed(1) + "%)");
+    else L.push("· 딥넷: 자동 억제 중(검증 기준 미달 — 정상 안전장치)");
+    if (gbdtT && gbdtT.trusted) L.push("· 부스팅트리: 신뢰가중 " + gbdtT.wGbdt + (gbdtM && gbdtM.nTrees ? " (" + gbdtM.nTrees + "트리)" : ""));
+    else L.push("· 부스팅트리: 자동 억제 중(검증 기준 미달 — 정상 안전장치)");
+    if (cal && typeof cal.ece === "number") L.push("· 확률 보정: T=" + cal.T + ", 보정오차(ECE) " + (cal.ece * 100).toFixed(1) + "% — 낮을수록 '말한 확률만큼 맞음'");
+    if (guard && guard.distrust) L.push("· ⚠ 자기감시: 라이브 성능 하락 감지 → AI 개입 자동 중단 상태");
+    if (senti) L.push("· 데이터: 거래표본 " + (senti.samplesFromTrades || 0) + " + 시장수확 " + (senti.samplesHarvested || 0) + ", 반사실 후보 " + (senti.candidatesTotal || 0));
+    if (gbdtM && Array.isArray(gbdtM.topFeatures) && gbdtM.topFeatures.length) {
+      L.push("· 판단에 가장 크게 작용한 요인: " + gbdtM.topFeatures.slice(0, 5).map(function (f) { return f.name + "(" + f.pct + "%)"; }).join(", "));
+    }
+    L.push("");
+    if (newsTop.length) {
+      L.push("■ 이달의 시장 헤드라인 (TextRank 핵심문장)");
+      for (const h of newsTop) L.push("· " + h);
+      if (sentiLine) L.push("· 섹터 감성: " + sentiLine);
+      L.push("");
+    }
+    if (picks.length) {
+      L.push("■ 현재 AI 관심 종목 (위원회 승률예측 상위)");
+      for (const p of picks.slice(0, 8)) L.push("· " + p.symbol + " [" + (mkNames[p.market] || p.market) + "] P=" + Math.round(p.p * 100) + "%" + (p.strategy ? " (" + p.strategy + ")" : ""));
+      L.push("");
+    }
+    L.push("■ 다음 달 운영 방침 (자동)");
+    const totPnl = Object.keys(mkts).reduce(function (a, k) { return a + mkts[k].pnl; }, 0);
+    if (guard && guard.distrust) L.push("· AI 개입 중단 유지 — 라이브 성능이 검증 약속을 회복할 때까지 규칙엔진 단독 운영.");
+    else if (l1 && l1.mode !== "observe") L.push("· AI 게이트/사이징 " + l1.mode + " 모드 지속. 표본 축적으로 신뢰하한이 오르면 자동 승급.");
+    else L.push("· 관찰(observe) 모드 — 야간 수확·학습으로 표본을 늘려 게이트 발동 조건(하한 " + (LUXML.valAccGate * 100).toFixed(1) + "%↑, " + LUXML.minSamplesGate + "표본↑) 도달 시 자동 개입 시작.");
+    if (anyTrades && totPnl < 0) L.push("· 이달 실현손익 음수 — 시간감쇠 가중이 최근 실패 패턴을 우선 학습해 다음 달 반영.");
+    L.push("");
+    L.push("(생성: " + new Date().toISOString().slice(0, 16).replace("T", " ") + " UTC · featVer " + LUXML.featVer + ")");
+
+    const report = { ym: ym, text: L.join("\n"), stats: { markets: mkts, picks: picks.slice(0, 10) }, ts: Date.now() };
+    await setState(DB, key, report);
+    return report;
+  } catch (e) { return { ym: ym, error: e && e.message, text: "리포트 생성 실패: " + (e && e.message) }; }
+}
+
+
+// ============================================================================
 // [SENTIMENT] VADER식 규칙기반 감성엔진 (순수 JS 재구현)
 //   공개 알고리즘 VADER(Hutto & Gilbert, 2014)의 규칙을 그대로 구현:
 //     • 어휘 극성 사전 + 금융/종목토론 은어 확장
@@ -18146,6 +18385,14 @@ export default {
             try { const _r = await mlGBDTTrainNightly(env.DB); if (_r) await log(env.DB, "INFO", null, _r); } catch (e) {}
             // (4) [V4] 위원회 확률 보정(온도 스케일링) — 결합확률의 과신/과소신 교정
             try { const _r = await mlCalibrateCommittee(env.DB); if (_r) await log(env.DB, "INFO", null, _r); } catch (e) {}
+            // (5) [V5] 매월 1일: 지난달 투자 리포트 자동 생성(캐시라 중복 무해)
+            try {
+              if (new Date().getUTCDate() === 1) {
+                const _pm = new Date(); _pm.setUTCDate(0);   // 지난달 말일
+                const _r = await mlMonthlyReport(env.DB, _pm.toISOString().slice(0, 7), true);
+                if (_r && !_r.error) await log(env.DB, "INFO", null, "[REPORT] " + _r.ym + " 월간 리포트 생성 완료");
+              }
+            } catch (e) {}
             await setState(env.DB, "ai_trained_day", _aiDay);
           }
         }
