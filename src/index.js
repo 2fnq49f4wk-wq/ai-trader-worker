@@ -16958,6 +16958,10 @@ const DNN = {
   seeds: 4,              // 멀티시드 앙상블 수(서로 다른 초기화·셔플로 K개 학습, 로짓 평균 → 분산↓)
   labelSmooth: 0.06,     // 라벨 스무딩(승/패 라벨 노이즈에 과신 방지)
   inputNoise: 0.06,      // 학습 시 표준화 입력에 가우시안 노이즈(σ) 증강
+  // [V9.7 논문 기법] 소표본 금융 tabular 특화 3종 — 신뢰게이트가 mind 대비 검증성능으로 자동 채택/억제.
+  mixupP: 0.2,           // Mixup(Zhang 2018) — 노이즈35% 합성실험서 유일하게 개선(54.0% vs off 53.1%). 라벨노이즈 강건 증강.
+  focalGamma: 0,         // Focal(Lin 2017)은 라벨노이즈 도메인에서 역효과 실측(52.5%<53.1%) — 오라벨을 "어려운 표본"으로 증폭. 기본 OFF(코드 유지, 튜닝용)
+  disagreeK: 3.0,        // Deep Ensembles(Lakshminarayanan 2017) — 시드 로짓 std로 DNN 전문가 신뢰 감쇠 계수
   // [V9] AdamW(디커플드 weight decay) + 코사인 LR — 적응형 옵티마이저의 표준 일반화 개선(Loshchilov&Hutter 2019).
   //   신뢰블렌드 게이트가 mind 대비 검증성능으로 자동 채택/억제하므로, 이 변경은 "더 나으면 반영·아니면 무시"로 안전.
   adamW: true,           // true=디커플드 감쇠(g에 L2 미포함, 가중치에 직접 λ·W 감쇠)
@@ -17032,6 +17036,16 @@ function _dnnEnsembleP(nets, x) {
   if (!c) return 0.5;
   return _clamp(_sigmoid(zsum / c), 1e-6, 1 - 1e-6);
 }
+// [V9.7] 앙상블 통계 — 로짓 평균확률 + 시드 간 로짓 std(불일치=예측 불확실성, Deep Ensembles 2017).
+//   같은 forward 결과 재사용이라 추가 비용 0. std 클수록 이 입력에 대한 DNN 확신이 낮다는 뜻.
+function _dnnEnsembleStats(nets, x) {
+  const zs = [];
+  for (const nt of nets) { const p = _dnnForward(nt, x, false).p; zs.push(Math.log(p / (1 - p))); }
+  if (!zs.length) return { p: 0.5, std: 0 };
+  let m = 0; for (const z of zs) m += z; m /= zs.length;
+  let v = 0; for (const z of zs) v += (z - m) * (z - m);
+  return { p: _clamp(_sigmoid(m), 1e-6, 1 - 1e-6), std: Math.sqrt(v / zs.length) };
+}
 
 function mlDNNScore(net, featVec) {
   try {
@@ -17091,12 +17105,29 @@ function _dnnTrainOne(train, val, dims, deadline) {
       const gB = b.map(function (r) { return r.map(function () { return 0; }); });
       for (const t of batch) {
         let xin = t.x;
-        if (sigma > 0) { for (let j = 0; j < D; j++) noisy[j] = t.x[j] + sigma * _gaussM(); xin = noisy; }
+        // [V9.7 Mixup] (Zhang et al., ICLR 2018) 확률 mixupP로 무작위 파트너와 선형보간(x·y 동시)
+        //   → 소표본 tabular에서 결정경계를 매끄럽게(과적합·과신 완화). 소프트라벨은 BCE grad (p−y)에 그대로 유효.
+        let yEff = t.y, wCls = (t.y ? wPos : wNeg), mwEff = t.mw;
+        if (DNN.mixupP > 0 && Math.random() < DNN.mixupP && train.length > 1) {
+          const u = train[Math.floor(Math.random() * train.length)];
+          const lam = 0.2 + Math.random() * 0.6;   // λ∈[0.2,0.8] (Beta 근사 — 극단 회피)
+          const mixed = new Array(D);
+          for (let j = 0; j < D; j++) mixed[j] = lam * t.x[j] + (1 - lam) * u.x[j];
+          xin = mixed;
+          yEff = lam * t.y + (1 - lam) * u.y;
+          wCls = lam * (t.y ? wPos : wNeg) + (1 - lam) * (u.y ? wPos : wNeg);
+          mwEff = lam * t.mw + (1 - lam) * u.mw;
+        }
+        if (sigma > 0) { const src = xin; for (let j = 0; j < D; j++) noisy[j] = src[j] + sigma * _gaussM(); xin = noisy; }
         const fwd = _dnnForward(net, xin, true);
         const L = W.length;
         // 출력 델타 (BCE+sigmoid, 스무딩 라벨): (p - yS) * weight
-        const yS = t.y * (1 - eps) + eps / 2;
-        let delta = [(fwd.p - yS) * (t.y ? wPos : wNeg) * t.mw];
+        const yS = yEff * (1 - eps) + eps / 2;
+        // [V9.7 Focal] (Lin et al., ICCV 2017) 변조계수 (1−p_t)^γ — 이미 맞춘 쉬운 표본의 grad를 줄이고
+        //   어려운 표본(오분류·경계)에 학습 집중. γ=0이면 기존과 동일.
+        let focal = 1;
+        if (DNN.focalGamma > 0) { const pt = yEff > 0.5 ? fwd.p : (1 - fwd.p); focal = Math.pow(1 - pt, DNN.focalGamma); }
+        let delta = [(fwd.p - yS) * wCls * mwEff * focal];
         for (let l = L - 1; l >= 0; l--) {
           const aPrev = fwd.a[l];
           const gWl = gW[l], gBl = gB[l];
@@ -17308,8 +17339,22 @@ async function mlDeepDecide(DB, featVec, opts) {
     let usedDnn = false, usedGbdt = false;
     if (trust && trust.trusted && trust.wDnn > 0) {
       const net = (opts.dnn !== undefined) ? opts.dnn : await mlDNNLoad(DB);
-      const pDnn = net ? mlDNNScore(net, featVec) : null;
-      if (pDnn != null) { experts.push({ name: "dnn", p: pDnn, z: _logitD(pDnn), acc: _num(trust.dnnAccLB, _num(trust.dnnAcc, 0.5)) }); usedDnn = true; }
+      let pDnn = null, dnnStd = 0;
+      if (net) {
+        try {
+          if (Array.isArray(net.nets) && net.nets.length) {
+            // [V9.7] 시드 불일치(std)로 이 입력에 대한 DNN 신뢰를 감쇠(Deep Ensembles) — 확신 없을 땐 스스로 물러남
+            const xStd = _dnnStdVec(featVec.map(function (v) { return _num(v, 0); }), net.mean, net.std);
+            const st = _dnnEnsembleStats(net.nets, xStd);
+            pDnn = _clamp(st.p, 0.001, 0.999); dnnStd = st.std;
+          } else pDnn = mlDNNScore(net, featVec);
+        } catch (e) { pDnn = null; }
+      }
+      if (pDnn != null) {
+        const accBase = _num(trust.dnnAccLB, _num(trust.dnnAcc, 0.5));
+        const accEff = 0.5 + (accBase - 0.5) / (1 + (DNN.disagreeK || 3.0) * dnnStd);  // 불일치↑ → 소프트맥스 가중↓
+        experts.push({ name: "dnn", p: pDnn, z: _logitD(pDnn), acc: accEff }); usedDnn = true;
+      }
     }
     try {
       const gtrust = (opts.gbdtTrust !== undefined) ? opts.gbdtTrust : await getState(DB, "gbdt_trust", null);
