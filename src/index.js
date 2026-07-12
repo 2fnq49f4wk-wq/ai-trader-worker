@@ -16961,6 +16961,8 @@ const DNN = {
   // [V9.7 논문 기법] 소표본 금융 tabular 특화 3종 — 신뢰게이트가 mind 대비 검증성능으로 자동 채택/억제.
   mixupP: 0.2,           // Mixup(Zhang 2018) — 노이즈35% 합성실험서 유일하게 개선(54.0% vs off 53.1%). 라벨노이즈 강건 증강.
   focalGamma: 0,         // Focal(Lin 2017)은 라벨노이즈 도메인에서 역효과 실측(52.5%<53.1%) — 오라벨을 "어려운 표본"으로 증폭. 기본 OFF(코드 유지, 튜닝용)
+  gceQ: 0,               // [V9.8] GCE 노이즈-강건 손실(Zhang&Sabuncu 2018, arXiv:1805.07836) — grad×p_t^q(MAE↔CE 보간).
+                         //   페어드 5회 실측 평균Δ-0.25%p(승2무1패2)=이득 없음 → 기본 OFF(기존 mixup·라벨스무딩·가중클립이 이미 노이즈방어 수행. 코드 유지=튜닝용)
   disagreeK: 3.0,        // Deep Ensembles(Lakshminarayanan 2017) — 시드 로짓 std로 DNN 전문가 신뢰 감쇠 계수
   // [V9] AdamW(디커플드 weight decay) + 코사인 LR — 적응형 옵티마이저의 표준 일반화 개선(Loshchilov&Hutter 2019).
   //   신뢰블렌드 게이트가 mind 대비 검증성능으로 자동 채택/억제하므로, 이 변경은 "더 나으면 반영·아니면 무시"로 안전.
@@ -17127,7 +17129,11 @@ function _dnnTrainOne(train, val, dims, deadline) {
         //   어려운 표본(오분류·경계)에 학습 집중. γ=0이면 기존과 동일.
         let focal = 1;
         if (DNN.focalGamma > 0) { const pt = yEff > 0.5 ? fwd.p : (1 - fwd.p); focal = Math.pow(1 - pt, DNN.focalGamma); }
-        let delta = [(fwd.p - yS) * wCls * mwEff * focal];
+        // [V9.8 GCE] (Zhang&Sabuncu 2018) grad ×= p_t^q — 라벨과 모델확신이 어긋나는(오라벨 의심) 표본의
+        //   갱신을 자동 감쇠 → CE의 노이즈 암기 방지. 소프트라벨(mixup)엔 기대확률로 일반화.
+        let gce = 1;
+        if (DNN.gceQ > 0) { const ptg = yEff * fwd.p + (1 - yEff) * (1 - fwd.p); gce = Math.pow(Math.max(ptg, 0.05), DNN.gceQ); }
+        let delta = [(fwd.p - yS) * wCls * mwEff * focal * gce];
         for (let l = L - 1; l >= 0; l--) {
           const aPrev = fwd.a[l];
           const gWl = gW[l], gBl = gB[l];
