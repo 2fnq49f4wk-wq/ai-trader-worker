@@ -3163,6 +3163,11 @@ html[data-theme="light"] .table tbody tr:hover{background:rgba(9,105,218,.045);}
             <button type="button" class="btn" id="btnMonthlyReport">📊 월간 AI 리포트</button>
             <button type="button" class="btn" id="btnNnViz" onclick="openNnViz()">🧠 AI 두뇌 관측</button>
           </div>
+          <!-- [V9.6] 뉴스·여론 기반 "내일 오를 종목" 예측(온라인학습 + 재무 저가중 하방가드) -->
+          <div class="aipick-bar" id="newsPickBar">
+            <span class="aipick-title" title="섹터 뉴스감성·감성변화·모멘텀·거래량 + 재무(저가중 하방가드)를 온라인 학습해 다음날 상승확률 예측">📰 내일 오를 뉴스픽</span>
+            <div class="aipick-list" id="newsPickList"><span class="aipick-empty">뉴스 수집·학습 후 표시됩니다</span></div>
+          </div>
           <div class="db-sortbar" id="detailBrowseSort">
             <span class="db-sort-label">정렬</span>
             <button type="button" class="db-sort-btn active" data-sort="mcap">시가총액</button>
@@ -7050,6 +7055,27 @@ html[data-theme="light"] .table tbody tr:hover{background:rgba(9,105,218,.045);}
       });
     })['catch'](function(){});
   }
+  var __newsPicksTs = 0;
+  function loadNewsPicks() {
+    var el = $('newsPickList'); if (!el) return;
+    if (Date.now() - __newsPicksTs < 120000) return;   // 2분 캐시
+    fetch('/api/news-picks').then(function(r){ return r.json(); }).then(function(d) {
+      __newsPicksTs = Date.now();
+      var picks = (d && d.picks || []).slice(0, 10);
+      if (!picks.length) { el.innerHTML = '<span class="aipick-empty">뉴스 수집·학습 후 표시됩니다 (감성 축적 중)</span>'; return; }
+      var mkIc = { us: '🇺🇸', kr: '🇰🇷', cm: '🛢' };
+      el.innerHTML = picks.map(function(p) {
+        var cls = p.p >= 0.6 ? 'hot' : (p.p >= 0.52 ? 'warm' : 'cool');
+        var fundWarn = (typeof p.fund === 'number' && p.fund < 40) ? ' ⚠️' : '';  // 재무 취약 경고
+        var senti = (typeof p.senti === 'number') ? (p.senti > 0 ? '📈' : (p.senti < 0 ? '📉' : '')) : '';
+        return '<button type="button" class="aipick-chip ' + cls + '" data-sym="' + escapeAttr(p.symbol) + '" data-mkt="' + escapeAttr(p.market) + '" title="다음날 상승확률 · 감성 ' + (p.senti != null ? p.senti : '?') + (p.fund != null ? ' · 재무점수 ' + p.fund : '') + '">' +
+          (mkIc[p.market] || '') + ' ' + senti + escapeHtml(p.symbol) + ' <b>' + Math.round(p.p * 100) + '%</b>' + fundWarn + '</button>';
+      }).join('');
+      el.querySelectorAll('.aipick-chip').forEach(function(b) {
+        b.addEventListener('click', function(){ openStockDetail(b.getAttribute('data-sym'), b.getAttribute('data-mkt')); });
+      });
+    })['catch'](function(){});
+  }
   function openMonthlyReport() {
     var old = document.getElementById('rptOverlay');
     if (old) old.remove();
@@ -7107,6 +7133,7 @@ html[data-theme="light"] .table tbody tr:hover{background:rgba(9,105,218,.045);}
   function renderDetailBrowse() {
     window.__detailBrowseTs = Date.now();
     try { loadAiPicks(); } catch (e) {}   // [V17] AI 픽 스트립(2분 캐시)
+    try { loadNewsPicks(); } catch (e) {} // [V9.6] 뉴스픽 스트립(2분 캐시)
     try {
       var _rb = $('btnMonthlyReport');
       if (_rb && !_rb.__bound) { _rb.__bound = true; _rb.addEventListener('click', openMonthlyReport); }

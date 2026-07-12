@@ -11066,6 +11066,9 @@ async function runTradingCycle(env) {
     }
     // [섹터 뉴스] Yahoo Finance RSS 무료 감성 분석 — 6그룹 × 1 subreq, 6h 캐시. LLM 불필요.
     let sectorSentiment = null;
+    // [V9.6] 뉴스 예측기 "내일 오를 종목" 사이징 부스트맵(제한적·경계) — 사이클당 1회 로드
+    let newsBoostMap = null;
+    try { const _nb = await getState(DB, "news_boost", null); if (_nb && _nb.map) newsBoostMap = _nb.map; } catch (e) {}
     if (marketsToTrade.length > 0) {
       try { sectorSentiment = await updateSectorNewsSentiment(DB, cfg); } catch (e) {}
       // [V9.9] 애널리스트 컨센서스 — 6h 캐시, 예산 가드 내장. US 종목 목표가·투자의견(가격독립 정보).
@@ -12167,6 +12170,11 @@ async function runTradingCycle(env) {
               const _newsScale = sectorSentiment.scales[_newsGrp];
               if (typeof _newsScale === "number") sizeScale *= _newsScale;
             }
+            // [V9.6] 뉴스 예측기 "내일 오를 종목" 부스트 — 심볼별 [0.9~1.15] 경계. 인버스 면제. 곱연산이라 다른 축소와 안전 결합.
+            if (newsBoostMap && !_symInverse) {
+              const _nb = newsBoostMap[symbol];
+              if (typeof _nb === "number") sizeScale *= _clamp(_nb, 0.9, 1.15);
+            }
 
             // === [재작성] 고정리스크 사이징 ===
             //   한 거래 손실한도 R$ = 자산 × riskPerTrade%. 손절거리(주당)로 수량을 역산한다.
@@ -12743,6 +12751,20 @@ async function handleRequest(request, env) {
       return Response.json(await crowdGet(env.DB, sym), { headers: cors });
     }
     // ── [V5] AI 픽: 위원회가 직전 사이클에 평가한 종목별 승률예측 상위 ──
+    // [V9.6] 뉴스·여론 기반 "내일 오를 종목" 예측 결과(온라인학습 로지스틱 + 재무 저가중 하방가드)
+    if (path === "/api/news-picks") {
+      const out = { ts: null, picks: [], weights: null };
+      for (const mk of ["us", "kr", "cm"]) {
+        try {
+          const pk = await getState(env.DB, "news_picks:" + mk, null);
+          if (pk && Array.isArray(pk.picks)) { out.ts = Math.max(out.ts || 0, pk.ts || 0); for (const p of pk.picks) out.picks.push(Object.assign({ market: mk }, p)); }
+        } catch (e) {}
+      }
+      out.picks.sort(function (a, b) { return (b.p || 0) - (a.p || 0); });
+      try { out.weights = await getState(env.DB, "nnews_weights", null); } catch (e) {}
+      return Response.json(out, { headers: cors });
+    }
+
     if (path === "/api/ai-picks") {
       const out = { ts: null, picks: [], scan: null };
       for (const mk of ["us", "kr", "cm"]) {
@@ -18295,6 +18317,116 @@ async function crowdVote(DB, symbol, side) {
 //   승률예측을 계산해 ai_picks:scan에 저장 → AI 픽/리포트가 전 유니버스를 커버.
 //   비용: 야간 1회, 심볼당 캐시 read+수 ms 추론(네트워크 fetch 0) — 월 한도 영향 미미.
 // ============================================================================
+// ============================================================================
+// [NNEWS] 뉴스·여론 기반 "내일 오를 종목" 예측기 — 온라인 학습 로지스틱
+//   입력: 섹터그룹 뉴스감성 + 감성변화(모멘텀) + 3일 가격모멘텀 + 거래량서지 + 52주위치 + 재무(저가중)
+//   학습: 어제 예측 → 오늘 실현(다음날 수익률 부호)로 로지스틱 가중치 온라인 SGD(라이브 축적)
+//   재무: 가중치 낮게 유지 + 심각(F/D등급) 시 하방가드로 점수 축소(사용자 요청 — "너무 심각하면 안 됨")
+//   통합: news_picks:MARKET 저장(+/api/news-picks) + news_boost(진입 사이징 제한적 부스트 [0.9~1.15])
+// ============================================================================
+const NNEWS = {
+  enabled: true, topN: 25, lr: 0.03, l2: 1e-4,
+  fundWeightCap: 0.35,   // 재무 피처 가중 상한(낮게 — 사용자 요청)
+  fundDistressMult: 0.6, // F등급(재무 위험) 하방가드 배수
+  fundWeakMult: 0.82,    // D등급(재무 취약) 배수
+  boostLo: 0.9, boostHi: 1.15,  // 사이징 부스트 클램프(안전)
+  w0: { bias: -0.1, senti: 0.9, sentiDelta: 0.7, mom3: 0.5, volSurge: 0.35, pos52w: -0.2, fund: 0.3 }
+};
+function _nnewsFeat(dd, gs, gsPrev, fundScore) {
+  const c = dd.closes, v = dd.volumes, L = c.length, price = c[L - 1];
+  const senti = _clamp(_num(gs, 0), -1, 1);
+  const sentiDelta = _clamp(_num(gs, 0) - _num(gsPrev, 0), -1, 1);
+  let mom3 = 0; if (L >= 4 && c[L - 4] > 0) mom3 = _clamp((price / c[L - 4] - 1) * 100 / 5, -1, 1);
+  let volSurge = 0;
+  if (Array.isArray(v) && v.length >= 21) { let a = 0; for (let i = v.length - 21; i < v.length - 1; i++) a += _num(v[i], 0); a /= 20; if (a > 0) volSurge = _clamp(Math.log(_num(v[v.length - 1], a) / a), -1, 1.5); }
+  let pos52w = 0; if (L >= 60) { let hi = -Infinity, lo = Infinity, lb = Math.min(252, L); for (let i = L - lb; i < L; i++) { if (c[i] > hi) hi = c[i]; if (c[i] < lo) lo = c[i]; } if (hi > lo) pos52w = _clamp((price - lo) / (hi - lo) * 2 - 1, -1, 1); }
+  const fund = (fundScore != null) ? _clamp((fundScore - 50) / 50, -1, 1) : 0;
+  return { senti: senti, sentiDelta: sentiDelta, mom3: mom3, volSurge: volSurge, pos52w: pos52w, fund: fund };
+}
+function _nnewsP(f, w) {
+  const z = w.bias + w.senti * f.senti + w.sentiDelta * f.sentiDelta + w.mom3 * f.mom3 + w.volSurge * f.volSurge + w.pos52w * f.pos52w + w.fund * f.fund;
+  return 1 / (1 + Math.exp(-z));
+}
+function _nnewsFundGuard(fundScore) {
+  if (fundScore == null) return 1.0;
+  if (fundScore < 34) return NNEWS.fundDistressMult;  // F: 재무 위험 → 강한 하방가드
+  if (fundScore < 48) return NNEWS.fundWeakMult;       // D: 재무 취약 → 약한 하방가드
+  return 1.0;
+}
+function _nnewsTrain(w, samples) {
+  const lr = NNEWS.lr, l2 = NNEWS.l2;
+  for (const s of samples) {
+    const g = _nnewsP(s.f, w) - s.y;   // BCE grad
+    w.bias -= lr * g;
+    ["senti", "sentiDelta", "mom3", "volSurge", "pos52w", "fund"].forEach(function (k) { w[k] -= lr * (g * s.f[k] + l2 * w[k]); });
+  }
+  // 재무 가중치는 낮게 유지(사용자 요청) — 상한 클램프. 다른 가중치는 발산 방지 클램프.
+  w.fund = _clamp(_num(w.fund, 0), -0.5, NNEWS.fundWeightCap);
+  ["bias", "senti", "sentiDelta", "mom3", "volSurge", "pos52w"].forEach(function (k) { w[k] = _clamp(_num(w[k], 0), -3, 3); });
+  return w;
+}
+async function mlNewsNextDayNightly(DB) {
+  if (!NNEWS.enabled) return null;
+  try {
+    const sn = await getState(DB, "sector_news_sentiment", null);
+    const sentiment = (sn && sn.sentiment) || {};
+    if (!Object.keys(sentiment).length) return "[NNEWS] 감성 없음 — 스킵(뉴스 수집 대기)";
+    const marketSent = (sentiment.MARKET && typeof sentiment.MARKET.compound === "number") ? sentiment.MARKET.compound
+      : (function () { let a = 0, n = 0; for (const g of Object.keys(sentiment)) { a += _num(sentiment[g].compound, 0); n++; } return n ? a / n : 0; })();
+    const sentiPrev = (await getState(DB, "nnews_senti_prev", {})) || {};
+    let w = await getState(DB, "nnews_weights", null);
+    if (!w || typeof w.senti !== "number") w = Object.assign({}, NNEWS.w0);
+    const today = new Date().toISOString().slice(0, 10);
+    // (1) 어제 pending → 실현 라벨 온라인 학습
+    let trained = 0;
+    const pending = await getState(DB, "nnews_pending", null);
+    if (pending && pending.date && pending.date !== today && Array.isArray(pending.items)) {
+      const samples = [];
+      for (const it of pending.items) {
+        const dd = await getState(DB, "daily:" + it.sym, null);
+        if (!dd || !Array.isArray(dd.closes) || dd.closes.length < 2 || !(it.price > 0)) continue;
+        const nextRet = (dd.closes[dd.closes.length - 1] / it.price - 1) * 100;
+        if (!isFinite(nextRet) || Math.abs(nextRet) > 40) continue;  // 이상치 제외
+        samples.push({ f: it.f, y: nextRet > 0 ? 1 : 0 }); trained++;
+      }
+      if (samples.length) _nnewsTrain(w, samples);
+    }
+    // (2) 유니버스 스코어링(캐시된 재무만 사용 → 추가 fetch 0)
+    const ks = await DB.prepare("SELECT k FROM state WHERE k LIKE 'daily:%' ORDER BY k").all();
+    const syms = (((ks && ks.results) || []).map(function (r) { return r.k.slice(6); })).filter(function (s) { return s && s[0] !== "^"; });
+    const scored = [], deadline = Date.now() + 60000;
+    for (const sym of syms) {
+      if (Date.now() > deadline) break;
+      const dd = await getState(DB, "daily:" + sym, null);
+      if (!dd || !Array.isArray(dd.closes) || dd.closes.length < 30) continue;
+      const grp = getSectorGroup(sym, null);
+      const gsObj = sentiment[grp];
+      const gs = (gsObj && typeof gsObj.compound === "number") ? gsObj.compound : marketSent;  // OTHER/미매핑은 시장감성 폴백
+      const gsPrev = (sentiPrev[grp] != null) ? sentiPrev[grp] : gs;
+      let fundScore = null;
+      try { const fc = await getState(DB, "fund:" + sym, null); if (fc) { const ev = evaluateFundamentals(fc, null); if (ev && typeof ev.score === "number") fundScore = ev.score; } } catch (e) {}
+      const f = _nnewsFeat(dd, gs, gsPrev, fundScore);
+      let p = _nnewsP(f, w) * _nnewsFundGuard(fundScore);  // 재무 심각 시 하방가드
+      p = _clamp(p, 0.001, 0.999);
+      const mkt = /\.(KS|KQ)$/.test(sym) ? "kr" : ((/=F$|-USD$/.test(sym)) ? "cm" : "us");
+      scored.push({ sym: sym, market: mkt, p: +p.toFixed(3), senti: +gs.toFixed(2), fund: fundScore, price: dd.closes[dd.closes.length - 1], f: f });
+    }
+    if (!scored.length) return "[NNEWS] 스코어 0";
+    scored.sort(function (a, b) { return b.p - a.p; });
+    const top = scored.slice(0, NNEWS.topN);
+    // (3) 저장: 시장별 picks + pending(내일 학습) + senti_prev + 사이징 부스트맵
+    const byMkt = {};
+    for (const s of top) { (byMkt[s.market] = byMkt[s.market] || []).push({ sym: s.sym, p: s.p, senti: s.senti, fund: s.fund }); }
+    for (const mk of Object.keys(byMkt)) { try { await setState(DB, "news_picks:" + mk, { ts: Date.now(), picks: byMkt[mk] }); } catch (e) {} }
+    await setState(DB, "nnews_pending", { date: today, items: scored.slice(0, 80).map(function (s) { return { sym: s.sym, price: s.price, f: s.f }; }) });
+    const sp = {}; for (const g of Object.keys(sentiment)) sp[g] = _num(sentiment[g].compound, 0); await setState(DB, "nnews_senti_prev", sp);
+    await setState(DB, "nnews_weights", w);
+    const boost = {}; for (const s of top) boost[s.sym] = +_clamp(NNEWS.boostLo + (s.p - 0.5) * 2 * (NNEWS.boostHi - NNEWS.boostLo), NNEWS.boostLo, NNEWS.boostHi).toFixed(3);
+    await setState(DB, "news_boost", { ts: Date.now(), map: boost });
+    return "[NNEWS] 스코어 " + scored.length + "종목 top" + top.length + ", 학습 " + trained + "건, wSenti=" + w.senti.toFixed(2) + " wFund=" + w.fund.toFixed(2);
+  } catch (e) { return "[NNEWS] fail: " + (e && e.message); }
+}
+
 async function mlUniverseScanNightly(DB) {
   if (!LUXML.enabled) return null;
   try {
@@ -18716,11 +18848,18 @@ function nlpTagHeadlinesV2(headlines) {
 const _GNEWS = function (q) { return "https://news.google.com/rss/search?q=" + encodeURIComponent(q) + "&hl=en-US&gl=US&ceid=US:en"; };
 const SENTI_SOURCES = [
   { type: "rss", group: "TECH",       url: _GNEWS("semiconductor OR AI chip OR Nvidia OR Apple OR Microsoft stock") },
+  { type: "rss", group: "TECH",       url: _GNEWS("artificial intelligence stocks OR TSMC OR AMD OR chip earnings OR cloud software") },
   { type: "rss", group: "FINANCE",    url: _GNEWS("bank stocks OR JPMorgan OR interest rate OR financial sector earnings") },
   { type: "rss", group: "HEALTH",     url: _GNEWS("pharma stocks OR FDA approval OR healthcare sector OR Eli Lilly OR biotech") },
   { type: "rss", group: "CONSUMER",   url: _GNEWS("retail stocks OR Amazon OR Tesla OR consumer spending OR Walmart") },
+  { type: "rss", group: "CONSUMER",   url: _GNEWS("EV sales OR electric vehicle OR Nike OR Starbucks OR consumer confidence") },
   { type: "rss", group: "INDUSTRIAL", url: _GNEWS("defense stocks OR Boeing OR Caterpillar OR industrial sector OR aerospace") },
-  { type: "rss", group: "RESOURCES",  url: _GNEWS("oil price OR energy stocks OR Exxon OR commodities OR natural gas") }
+  { type: "rss", group: "RESOURCES",  url: _GNEWS("oil price OR energy stocks OR Exxon OR commodities OR natural gas") },
+  { type: "rss", group: "RESOURCES",  url: _GNEWS("gold price OR copper OR lithium OR metals OR mining stocks") },
+  // MARKET = 광의 시장감성(미매핑 종목·시장 폴백용)
+  { type: "rss", group: "MARKET",     url: _GNEWS("stock market today OR S&P 500 OR Nasdaq OR Dow Jones rally OR selloff") },
+  { type: "rss", group: "MARKET",     url: _GNEWS("analyst upgrade OR price target raised OR earnings beat OR guidance raised") },
+  { type: "rss", group: "MARKET",     url: _GNEWS("Korea stock OR KOSPI OR Samsung Electronics OR SK Hynix OR won") }
 ];
 
 function _rssTitles(xml) {
@@ -19125,6 +19264,8 @@ export default {
             try { const _r = await mlCalibrateCommittee(env.DB); if (_r) await log(env.DB, "INFO", null, _r); } catch (e) {}
             // (4.5) [V6] 전 종목 야간 AI 스캔 — 유니버스 전체 승률예측(AI 픽·리포트 커버리지)
             try { const _r = await mlUniverseScanNightly(env.DB); if (_r) await log(env.DB, "INFO", null, _r); } catch (e) {}
+            // (4.6) [V9.6] 뉴스·여론 기반 "내일 오를 종목" 예측(온라인학습) + 재무 저가중 하방가드
+            try { const _r = await mlNewsNextDayNightly(env.DB); if (_r) await log(env.DB, "INFO", null, _r); } catch (e) {}
             // (5) [V5] 매월 1일: 지난달 투자 리포트 자동 생성(캐시라 중복 무해)
             try {
               if (new Date().getUTCDate() === 1) {
