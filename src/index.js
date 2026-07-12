@@ -17248,8 +17248,11 @@ async function mlDNNTrainNightly(DB) {
            "%) vs mind하한 " + (mindLB * 100).toFixed(1) + "% → wDnn=" + trust.wDnn +
            (trust.trusted ? " (신뢰)" : " (자동억제=0)");
   } catch (e) {
-    try { await setState(DB, "dnn_trust", { wDnn: 0, trusted: false, reason: "err" }); } catch (e2) {}
-    return "[DNN] train fail: " + (e && e.message);
+    // [V9.2] 에러 메시지·발생시각 저장 → 다음 진단 가능(관측성). 로그에도 남김.
+    const _em = (e && e.message) ? String(e.message).slice(0, 200) : "unknown";
+    try { await setState(DB, "dnn_trust", { wDnn: 0, trusted: false, reason: "err", err: _em, errAt: Date.now() }); } catch (e2) {}
+    try { await log(DB, "ERROR", null, "[DNN] train fail: " + _em); } catch (e3) {}
+    return "[DNN] train fail: " + _em;
   }
 }
 
@@ -17619,8 +17622,10 @@ async function mlGBDTTrainNightly(DB) {
     return "[GBDT] trees=" + model.nTrees + " n=" + N + " OOF=" + (acc * 100).toFixed(1) + "%(하한 " + (accLB * 100).toFixed(1) +
            "%, " + cvMode + ") vs mind하한 " + (mindLB * 100).toFixed(1) + "% → wGbdt=" + trust.wGbdt + (trust.trusted ? " (신뢰)" : " (억제)");
   } catch (e) {
-    try { await setState(DB, "gbdt_trust", { wGbdt: 0, trusted: false, reason: "err" }); } catch (e2) {}
-    return "[GBDT] train fail: " + (e && e.message);
+    const _em = (e && e.message) ? String(e.message).slice(0, 200) : "unknown";
+    try { await setState(DB, "gbdt_trust", { wGbdt: 0, trusted: false, reason: "err", err: _em, errAt: Date.now() }); } catch (e2) {}
+    try { await log(DB, "ERROR", null, "[GBDT] train fail: " + _em); } catch (e3) {}
+    return "[GBDT] train fail: " + _em;
   }
 }
 
