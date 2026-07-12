@@ -16926,7 +16926,8 @@ const DNN = {
   batch: 24,             // 배치 확대(깊은 망 그래디언트 안정)
   patience: 8,           // 조기종료 인내
   gradClip: 5,
-  minTrainSamples: 400,  // 딥넷 하한(파라미터 커진 만큼 상향 — 과적합 방어). 미만이면 미학습
+  minTrainSamples: 500,  // [V9.1] 400→500: 피처 55로 확장(입력차원↑)한 만큼 과적합 방어 상향
+  stdClip: 6,            // [V9.1] 윈저화 표준화 클램프(±σ) — 팬테일 이상치 안정화
   valFrac: 0.2,
   trustFloor: 0.505,     // 검증정확도 이 미만이면 신뢰 0
   trustMargin: 0.0,      // mind보다 이만큼은 나아야 신뢰 부여(0=동등이면 절반씩)
@@ -16952,7 +16953,18 @@ function _dnnHeInit(nout, nin) {
   for (let i = 0; i < nout; i++) { const r = new Array(nin); for (let j = 0; j < nin; j++) r[j] = _gaussM() * scale; W.push(r); }
   return W;
 }
-function _dnnStdVec(x, mean, std) { const o = new Array(x.length); for (let j = 0; j < x.length; j++) o[j] = (_num(x[j], 0) - mean[j]) / (std[j] > 1e-6 ? std[j] : 1); return o; }
+// [V9.1] 윈저화 표준화 — 표준화값을 ±stdClip(σ)로 클램프. 금융 팬테일 이상치가 활성/그래디언트를
+//   지배하는 것을 차단(학습·추론 동일 적용 → 분포 일관). NaN/Inf는 0으로 살균.
+function _dnnStdVec(x, mean, std) {
+  const cl = (typeof DNN !== "undefined" && DNN.stdClip) ? DNN.stdClip : 6;
+  const o = new Array(x.length);
+  for (let j = 0; j < x.length; j++) {
+    let z = (_num(x[j], 0) - mean[j]) / (std[j] > 1e-6 ? std[j] : 1);
+    if (!isFinite(z)) z = 0; else if (z > cl) z = cl; else if (z < -cl) z = -cl;
+    o[j] = z;
+  }
+  return o;
+}
 
 // 순전파. train=true면 드롭아웃 적용(inverted). 반환: {a[], pre[], p, masks[]}
 function _dnnForward(net, x, train) {
