@@ -7096,19 +7096,21 @@ html[data-theme="light"] .table tbody tr:hover{background:rgba(9,105,218,.045);}
     var d = new Date(); d.setUTCDate(1); d.setUTCMonth(d.getUTCMonth() + offset);
     return d.toISOString().slice(0, 7);
   }
-  function loadMonthlyReport(ym) {
+  // [V9.12.1] refresh=1은 매번 재생성이라 느림 → 자동로드는 캐시(즉시), 버튼 클릭 시만 재생성.
+  function loadMonthlyReport(ym, forceRefresh) {
     var body = document.getElementById('rptBody'); if (!body) return;
-    body.textContent = '리포트 생성 중…';
-    fetch('/api/report/monthly' + (ym ? '?ym=' + ym + '&refresh=1' : '?refresh=1'))
+    body.textContent = forceRefresh ? '리포트 재생성 중…' : '리포트 불러오는 중…';
+    var q = '?ym=' + ym + (forceRefresh ? '&refresh=1' : '');
+    fetch('/api/report/monthly' + q)
       .then(function(r){ return r.json(); })
-      .then(function(d){ body.textContent = (d && d.text) || '리포트 없음'; })
+      .then(function(d){ body.textContent = (d && d.text) || '리포트 없음 — 상단 버튼으로 생성하세요.'; })
       ['catch'](function(){ body.textContent = '리포트 로딩 실패'; });
   }
   function openMonthlyReport() {
     var rt = document.getElementById('rptThis'), rp = document.getElementById('rptPrev');
-    if (rt && !rt.__bound) { rt.__bound = true; rt.addEventListener('click', function(){ loadMonthlyReport(ymOf(0)); }); }
-    if (rp && !rp.__bound) { rp.__bound = true; rp.addEventListener('click', function(){ loadMonthlyReport(ymOf(-1)); }); }
-    loadMonthlyReport(ymOf(0));   // 기본: 이번 달(진행분)
+    if (rt && !rt.__bound) { rt.__bound = true; rt.addEventListener('click', function(){ loadMonthlyReport(ymOf(0), true); }); }
+    if (rp && !rp.__bound) { rp.__bound = true; rp.addEventListener('click', function(){ loadMonthlyReport(ymOf(-1), true); }); }
+    loadMonthlyReport(ymOf(0), false);   // 자동: 이번 달 캐시(즉시)
   }
 
   // 관련 뉴스 헤드라인 (종목 섹터그룹 기준)
@@ -10697,10 +10699,13 @@ setTimeout(function(){ var o=document.getElementById('lux-intro-overlay'); if(o&
 
 <!-- ═══════════ [V9] AI 두뇌 관측 — 신경망 시각화 ═══════════ -->
 <style>
-#page-nnviz .nnviz-content{position:relative;max-width:1080px;width:94vw;margin:3vh auto;background:linear-gradient(180deg,#0a0e18,#070a12);border:1px solid #1c2740;border-radius:16px;padding:22px 24px 26px;box-shadow:0 30px 90px rgba(0,0,0,.7),0 0 0 1px rgba(70,130,255,.06) inset;max-height:94vh;overflow-y:auto;}
+/* [V9.12.1] 모달(94vw)→페이지 폭 맞춤 — 콘텐츠 영역 내에서 가로 오버플로 방지 */
+#page-nnviz .nnviz-content{position:relative;margin:14px 20px 20px;box-sizing:border-box;background:linear-gradient(180deg,#0a0e18,#070a12);border:1px solid #1c2740;border-radius:16px;padding:22px 24px 26px;box-shadow:0 30px 90px rgba(0,0,0,.7),0 0 0 1px rgba(70,130,255,.06) inset;overflow-x:hidden;}
 #page-nnviz .nnv-head{display:flex;align-items:center;justify-content:space-between;gap:12px;margin-bottom:4px;}
 #page-nnviz .nnv-title{font-family:'Space Grotesk',sans-serif;font-size:17px;font-weight:700;letter-spacing:.5px;color:#eaf2ff;display:flex;align-items:center;gap:9px;}
-#page-nnviz .nnv-title .dot{width:9px;height:9px;border-radius:50%;background:#00e676;box-shadow:0 0 10px #00e676;animation:nnPulse 1.6s ease-in-out infinite;}
+#page-nnviz .nnv-title .dot{width:9px;height:9px;border-radius:50%;background:#00e676;box-shadow:0 0 10px #00e676;}
+/* [V9.12.1 성능] 무한 애니메이션은 이 페이지가 활성일 때만 — 안 볼 땐 GPU/배터리 소모 0 */
+#page-nnviz.active .nnv-title .dot{animation:nnPulse 1.6s ease-in-out infinite;}
 #page-nnviz .nnv-sub{font-size:11px;color:#7c90b5;margin:2px 0 14px;font-family:'IBM Plex Mono',monospace;}
 #page-nnviz .nnv-x{cursor:pointer;color:#7c90b5;font-size:22px;line-height:1;padding:2px 8px;border-radius:8px;transition:.15s;}
 #page-nnviz .nnv-x:hover{color:#ff1744;background:rgba(255,23,68,.1);}
@@ -10727,7 +10732,8 @@ setTimeout(function(){ var o=document.getElementById('lux-intro-overlay'); if(o&
 #page-nnviz .nnv-empty{padding:50px 20px;text-align:center;color:#8497ba;font-size:13px;line-height:1.8;}
 @keyframes nnPulse{0%,100%{opacity:1;transform:scale(1);}50%{opacity:.45;transform:scale(.82);}}
 @keyframes nnFlow{to{stroke-dashoffset:-16;}}
-#page-nnviz .nnedge{stroke-dasharray:2 6;animation:nnFlow 1s linear infinite;}
+#page-nnviz .nnedge{stroke-dasharray:2 6;}
+#page-nnviz.active .nnedge{animation:nnFlow 1s linear infinite;}
 #page-nnviz .nnnode{transition:r .5s ease;}
 html[data-theme="light"] #page-nnviz .nnviz-content{background:linear-gradient(180deg,#f7fafe,#eef3fb);border-color:#cdd9ee;}
 html[data-theme="light"] #page-nnviz .nnv-title,html[data-theme="light"] #page-nnviz .nnv-chip .v,html[data-theme="light"] #page-nnviz .nnv-comm-name{color:#12233f;}

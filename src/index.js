@@ -17427,7 +17427,7 @@ async function mlDNNVizData(DB) {
     let gtrust = null; try { gtrust = await getState(DB, "gbdt_trust", null); } catch (e) {}
     let mindAcc = null; try { const mm = await mlMindLoad(DB); if (mm) mindAcc = _num(mm.valAcc, null); } catch (e) {}
     if (!m || (!Array.isArray(m.nets) && !Array.isArray(m.W))) {
-      return { trained: false, hidden: DNN.hidden, dims: [null].concat(DNN.hidden).concat([1]), trust: trust || null };
+      return { trained: false, hidden: DNN.hidden, dims: [LUXML.featNames.length].concat(DNN.hidden).concat([1]), inputDim: LUXML.featNames.length, trust: trust || null };
     }
     const nets = Array.isArray(m.nets) ? m.nets : [{ W: m.W, b: m.b, dims: m.dims }];
     const dims = m.dims || nets[0].dims;
