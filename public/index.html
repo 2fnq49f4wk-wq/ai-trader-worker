@@ -2670,6 +2670,15 @@ html[data-theme="light"] .table tbody tr:hover{background:rgba(9,105,218,.045);}
         <span class="nav-item-icon">◉</span>
         <span class="nav-item-label">POSITIONS</span>
       </div>
+      <!-- [V9.10] 액션바 하단 버튼에서 이동 — 사이드바 버튼 과밀 완화 요청 반영. data-modal은 페이지 전환 없이 모달만 연다. -->
+      <div class="nav-item" data-modal="macro">
+        <span class="nav-item-icon">📊</span>
+        <span class="nav-item-label">지표</span>
+      </div>
+      <div class="nav-item" data-modal="fx">
+        <span class="nav-item-icon">💱</span>
+        <span class="nav-item-label">환율</span>
+      </div>
       <div class="nav-item" data-page="news">
         <span class="nav-item-icon">📰</span>
         <span class="nav-item-label">NEWS</span>
@@ -2693,8 +2702,6 @@ html[data-theme="light"] .table tbody tr:hover{background:rgba(9,105,218,.045);}
         <button type="button" class="sb-btn btn logs" id="btnLogs">LOG</button>
       </div>
       <div class="sb-btn-row">
-        <button type="button" class="sb-btn btn macro" id="btnMacro">지표</button>
-        <button type="button" class="sb-btn btn macro" id="btnFx">환율</button>
         <button type="button" class="sb-btn btn macro" id="btnHeatmap">MAP</button>
         <button type="button" class="sb-btn btn macro" id="btnRptSide">리포트</button>
       </div>
@@ -9665,11 +9672,10 @@ html[data-theme="light"] .table tbody tr:hover{background:rgba(9,105,218,.045);}
   $('btnRefreshKR').addEventListener('click', function(){ refreshQuotes('kr'); });
   $('btnLogs').addEventListener('click', openLogs);
   $('btnCloseLogs').addEventListener('click', closeLogs);
-  $('btnMacro').addEventListener('click', openMacro);
+  // [V9.10] 지표/환율은 액션바 버튼 대신 사이드바 nav-item(data-modal)에서 엽니다 — showPage 리스너 쪽에서 처리.
   if ($('btnRptSide')) $('btnRptSide').addEventListener('click', function(){ openMonthlyReport(); });   // [V18] 사이드바 월간 리포트
   $('btnCloseMacro').addEventListener('click', closeMacro);
   $('btnMacroRefresh').addEventListener('click', macroRunNow);
-  $('btnFx').addEventListener('click', openFx);
   $('btnCloseFx').addEventListener('click', closeFx);
   $('btnFxRefresh').addEventListener('click', fxRunNow);
   $('btnHeatmap').addEventListener('click', openHeatmap);
@@ -10172,7 +10178,13 @@ html[data-theme="light"] .table tbody tr:hover{background:rgba(9,105,218,.045);}
     }
   }
   document.querySelectorAll('.nav-item').forEach(function(item){
-    item.addEventListener('click',function(){showPage(this.getAttribute('data-page'));});
+    item.addEventListener('click',function(){
+      // [V9.10] data-modal 항목(지표/환율)은 페이지 전환 없이 해당 모달만 연다.
+      var modal = this.getAttribute('data-modal');
+      if (modal === 'macro') { openMacro(); return; }
+      if (modal === 'fx') { openFx(); return; }
+      showPage(this.getAttribute('data-page'));
+    });
   });
   // [V91] 날짜별 수익 캘린더 — 월 이동
   var _tcPrev = $('tcPrev'); if (_tcPrev) _tcPrev.addEventListener('click', function(){ tcShift(-1); });

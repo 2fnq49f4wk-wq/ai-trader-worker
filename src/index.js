@@ -18500,19 +18500,41 @@ async function mlUniverseScanNightly(DB) {
     const syms = (((ks && ks.results) || []).map(function (r) { return r.k.slice(6); }))
       .filter(function (s) { return s && s[0] !== "^"; });
     if (!syms.length) return "[SCAN] 일봉 캐시 없음";
+    // [V9.10 버그수정] ORDER BY k는 ASCII 정렬 — KR 티커(005930.KS 등, 숫자시작)가 US 티커(AAPL 등, 알파벳시작)보다
+    //   항상 먼저 옴. 회전 없이 매번 처음부터 스캔+90초 벽시계 컷이라 US가 구조적으로 거의 스캔되지 못했음(전량 KR만 픽).
+    //   → 시장별로 나눠 라운드로빈 인터리브(매 스캔에서 공정 배분) + 야간 오프셋 회전(HARVEST와 동일 패턴, 장기 전수 커버).
+    const symsByMkt = { us: [], kr: [], cm: [] };
+    for (const s of syms) {
+      const mk0 = /\.(KS|KQ)$/.test(s) ? "kr" : ((/=F$|-USD$/.test(s)) ? "cm" : "us");
+      symsByMkt[mk0].push(s);
+    }
+    const offsRaw = (await getState(DB, "ai_scan_offset", null)) || {};
+    const offs = { us: _num(offsRaw.us, 0), kr: _num(offsRaw.kr, 0), cm: _num(offsRaw.cm, 0) };
+    const activeMkts = ["us", "kr", "cm"].filter(function (m) { return symsByMkt[m].length > 0; });
+    const order = [];
+    const maxLen = Math.max.apply(null, activeMkts.map(function (m) { return symsByMkt[m].length; }).concat([0]));
+    for (let step = 0; step < maxLen; step++) {
+      for (const m of activeMkts) {
+        const arr = symsByMkt[m];
+        if (step >= arr.length) continue;
+        order.push({ sym: arr[(offs[m] + step) % arr.length], mkt: m });
+      }
+    }
     const picks = [];
     let scanned = 0;
+    const scannedByMkt = { us: 0, kr: 0, cm: 0 };
     const deadline = Date.now() + 90000;   // 벽시계 가드(추론은 CPU 수 ms/심볼)
     const evstats = await getState(DB, "ml_evstats", null);
     const idxCache = {};   // [V7] 시장별 지수(상대강도) 1회 로드
     for (const mk of ["us", "kr", "cm"]) { try { idxCache[mk] = await _mlLoadIndexCloses(DB, mk); } catch (e) { idxCache[mk] = null; } }
-    for (const sym of syms) {
+    for (const it of order) {
       if (Date.now() > deadline) break;
+      const sym = it.sym, mkt = it.mkt;
+      scannedByMkt[mkt]++;   // 오프셋 회전용 — 배리어 통과 여부와 무관하게 "이 심볼까지 처리 시도했음"을 기록해 순회 누락 방지
       let dd = null; try { dd = await getState(DB, "daily:" + sym, null); } catch (e) {}
       if (!dd || !Array.isArray(dd.closes) || dd.closes.length < 60) continue;
       const price = dd.closes[dd.closes.length - 1];
       if (!(price > 0)) continue;
-      const mkt = /\.(KS|KQ)$/.test(sym) ? "kr" : ((/=F$|-USD$/.test(sym)) ? "cm" : "us");
       const feat = mlBuildFeatures({
         closes: dd.closes, volumes: dd.volumes, opens: dd.opens,
         highs: dd.highs, lows: dd.lows, idxCloses: idxCache[mkt],
@@ -18531,7 +18553,11 @@ async function mlUniverseScanNightly(DB) {
       if (p != null) picks.push({ symbol: sym, market: mkt, p: +p.toFixed(3), strategy: "scan" });
     }
     picks.sort(function (a, b) { return b.p - a.p; });
-    await setState(DB, "ai_picks:scan", { ts: Date.now(), scanned: scanned, total: syms.length, picks: picks.slice(0, 40) });
+    const newOffs = {};
+    for (const m of ["us", "kr", "cm"]) newOffs[m] = symsByMkt[m].length ? (offs[m] + scannedByMkt[m]) % symsByMkt[m].length : 0;
+    try { await setState(DB, "ai_scan_offset", newOffs); } catch (e) {}
+    await setState(DB, "ai_picks:scan", { ts: Date.now(), scanned: scanned, total: syms.length, picks: picks.slice(0, 40),
+      byMkt: { us: symsByMkt.us.length, kr: symsByMkt.kr.length, cm: symsByMkt.cm.length }, scannedByMkt: scannedByMkt });
     return "[SCAN] 전종목 " + scanned + "/" + syms.length + " 분석 — AI 픽 상위 " + Math.min(40, picks.length) + "종목 갱신";
   } catch (e) { return "[SCAN] fail: " + (e && e.message); }
 }
