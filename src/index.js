@@ -15158,9 +15158,17 @@ const LUXML = {
     "rs60",        // 시장지수 대비 60일 상대강도 %p
     "obvSlope",    // OBV(On-Balance Volume) 20일 기울기 — 수급 방향(정규화)
     "distLow20Pct",// 20일 저점(지지선) 대비 거리 %
-    "rangePos"     // 당일 고저 레인지 내 종가 위치 0~1 (매수/매도 압력)
+    "rangePos",    // 당일 고저 레인지 내 종가 위치 0~1 (매수/매도 압력)
+    // ── [V9] 차트모양·거래량-수익률 피처 (7) — 순수 OHLCV, 수확·라이브 동일 분포 ──
+    "upDnVolR",    // log(20일 상승일 거래량합 / 하락일 거래량합) — 매집/분산 강도(절대비)
+    "volRetSpread",// 40일 고거래량일 평균수익률 − 저거래량일 평균수익률 (★거래량에 따른 상승률)
+    "bodyRatio",   // 20일 평균 |종가−시가|/(고−저) — 추세 확신도(도지/횡보 vs 강한 몸통)
+    "wickSkew",    // 20일 평균 (아래꼬리−위꼬리)/(고−저) — 저가매수 흡수(+) vs 고점거부(−)
+    "gapFillR",    // 40일 갭 중 당일 되메움 비율 0~1 — 갭 신뢰도(패턴)
+    "volTrendR",   // log(5일 평균거래량 / 20일 평균거래량) — 참여 증가/감소 추세
+    "accel"        // ret5(현재) − ret5(5일전) — 수익률 가속도(모멘텀 2차)
   ],
-  featVer: 4,   // ★V7: 피처 43→48 확장. 구버전 표본은 자동 분리(WHERE featver=?)
+  featVer: 5,   // ★V9: 피처 48→55 확장(차트모양·거래량-수익률 7종). 구버전 표본 자동분리+전종목 재수확
 
   minSamplesGate: 150,
   minSamplesSize: 400,
@@ -15317,6 +15325,74 @@ function _mlAlphaFeats(closes, volumes, highs, lows, idxCloses, price) {
   return o;
 }
 
+// ── [V9] 차트모양·거래량-수익률 피처 7종 — 순수 OHLCV(수확·라이브 동일 분포 보장) ──
+//   closes[L-1]을 최신봉 기준으로 사용(harvest는 hist=closes.slice(0,i+1)라 완전 정합).
+function _mlShapeFeats(closes, volumes, opens, highs, lows, price) {
+  const o = { upDnVolR: 0, volRetSpread: 0, bodyRatio: 0.3, wickSkew: 0, gapFillR: 0.5, volTrendR: 0, accel: 0 };
+  try {
+    const L = closes.length;
+    const hasV = Array.isArray(volumes) && volumes.length === L;
+    const hasOHL = Array.isArray(opens) && Array.isArray(highs) && Array.isArray(lows) &&
+                   opens.length === L && highs.length === L && lows.length === L;
+    // (1) 상승일/하락일 거래량 비 — 매집 vs 분산
+    if (hasV && L >= 21) {
+      let up = 0, dn = 0;
+      for (let i = L - 20; i < L; i++) { const v = _num(volumes[i], 0); if (closes[i] > closes[i - 1]) up += v; else if (closes[i] < closes[i - 1]) dn += v; }
+      if (up > 0 && dn > 0) o.upDnVolR = _clamp(Math.log(up / dn), -2, 2);
+    }
+    // (2) ★거래량에 따른 상승률: 고거래량일 vs 저거래량일 평균 당일수익률 스프레드(40일)
+    if (hasV && L >= 41) {
+      const rows = [];
+      for (let i = L - 40; i < L; i++) { if (closes[i - 1] > 0) rows.push({ v: _num(volumes[i], 0), r: (closes[i] / closes[i - 1] - 1) * 100 }); }
+      if (rows.length >= 12) {
+        const sorted = rows.slice().sort(function (a, b) { return a.v - b.v; });
+        const t = Math.max(1, Math.floor(sorted.length / 3));
+        let hi = 0, lo = 0; for (let k = 0; k < t; k++) { lo += sorted[k].r; hi += sorted[sorted.length - 1 - k].r; }
+        o.volRetSpread = _clamp((hi - lo) / t, -8, 8);
+      }
+    }
+    // (3)(4) 몸통비율 + 꼬리 비대칭(20일)
+    if (hasOHL && L >= 20) {
+      let br = 0, ws = 0, cnt = 0;
+      for (let i = L - 20; i < L; i++) {
+        const rng = _num(highs[i], 0) - _num(lows[i], 0);
+        if (rng > 1e-9) {
+          br += Math.abs(_num(closes[i], 0) - _num(opens[i], 0)) / rng;
+          const uw = _num(highs[i], 0) - Math.max(_num(closes[i], 0), _num(opens[i], 0));
+          const lw = Math.min(_num(closes[i], 0), _num(opens[i], 0)) - _num(lows[i], 0);
+          ws += (lw - uw) / rng; cnt++;
+        }
+      }
+      if (cnt > 0) { o.bodyRatio = _clamp(br / cnt, 0, 1); o.wickSkew = _clamp(ws / cnt, -1, 1); }
+    }
+    // (5) 갭 되메움률(40일) — 갭업이면 저가가 전일종가 터치, 갭다운이면 고가가 터치
+    if (hasOHL && L >= 41) {
+      let g = 0, filled = 0;
+      for (let i = L - 40; i < L; i++) {
+        const pc = _num(closes[i - 1], 0); if (!(pc > 0)) continue;
+        const op = _num(opens[i], pc), gp = (op - pc) / pc;
+        if (Math.abs(gp) < 0.005) continue; g++;
+        if (gp > 0) { if (_num(lows[i], op) <= pc) filled++; } else { if (_num(highs[i], op) >= pc) filled++; }
+      }
+      if (g > 0) o.gapFillR = _clamp(filled / g, 0, 1);
+    }
+    // (6) 거래량 추세: 5일/20일 평균거래량 비(log)
+    if (hasV && L >= 21) {
+      let a5 = 0, a20 = 0;
+      for (let i = L - 5; i < L; i++) a5 += _num(volumes[i], 0);
+      for (let i = L - 20; i < L; i++) a20 += _num(volumes[i], 0);
+      a5 /= 5; a20 /= 20;
+      if (a5 > 0 && a20 > 0) o.volTrendR = _clamp(Math.log(a5 / a20), -1.5, 1.5);
+    }
+    // (7) 수익률 가속도: 최근 5일 수익률 − 직전 5일 수익률
+    if (L >= 11 && closes[L - 6] > 0 && closes[L - 11] > 0) {
+      const rNow = (closes[L - 1] / closes[L - 6] - 1) * 100, rPrev = (closes[L - 6] / closes[L - 11] - 1) * 100;
+      o.accel = _clamp(rNow - rPrev, -15, 15);
+    }
+  } catch (e) {}
+  return o;
+}
+
 // [V7] 시장지수 일봉 로더(상대강도용) — 폴백 체인, 없으면 null(피처 0=중립)
 async function _mlLoadIndexCloses(DB, mkt) {
   const cands = mkt === "kr" ? ["^KS11", "069500.KS"] : (mkt === "cm" ? ["GC=F"] : ["^GSPC", "SPY", "QQQ"]);
@@ -15379,6 +15455,10 @@ function mlBuildFeatures(args) {
     const ax = _mlAlphaFeats(closes, args.volumes, args.highs, args.lows, args.idxCloses, price);
     f.rs20 = ax.rs20; f.rs60 = ax.rs60; f.obvSlope = ax.obvSlope;
     f.distLow20Pct = ax.distLow20Pct; f.rangePos = ax.rangePos;
+    // [V9] 차트모양·거래량-수익률 7종
+    const px = _mlShapeFeats(closes, args.volumes, args.opens, args.highs, args.lows, price);
+    f.upDnVolR = px.upDnVolR; f.volRetSpread = px.volRetSpread; f.bodyRatio = px.bodyRatio;
+    f.wickSkew = px.wickSkew; f.gapFillR = px.gapFillR; f.volTrendR = px.volTrendR; f.accel = px.accel;
     return LUXML.featNames.map(function(n){ return _num(f[n], 0); });
   } catch (e) {
     return LUXML.featNames.map(function(){ return 0; });
@@ -18605,10 +18685,17 @@ function nlpTagHeadlinesV2(headlines) {
 //   네트워크 실패/파싱실패는 전부 무해 폴백(감성 없으면 뉴스피처 0).
 // ============================================================================
 
+// [V9] 무료 구글뉴스 RSS(무키) — 섹터그룹 키(TECH/FINANCE/…)에 매핑해 기존 sector_news_sentiment를 보강.
+//   야간 1회 수집(6 subreq) → VADER 감성 → newsSent 피처 강화. 그룹키는 SECTOR_NEWS_REP과 동일해야 라이브 피처가 읽음.
+//   ※ 뉴스감성은 과거봉 소급수확 불가 → 라이브 표본에만 반영(느리게 축적). 노이즈는 L1/신뢰게이트가 자동 억제.
+const _GNEWS = function (q) { return "https://news.google.com/rss/search?q=" + encodeURIComponent(q) + "&hl=en-US&gl=US&ceid=US:en"; };
 const SENTI_SOURCES = [
-  // 예시(사용자가 실제 URL/심볼매핑로 교체):
-  // { type:"rss", url:"https://news.google.com/rss/search?q=TSLA+stock&hl=en", group:"TSLA" },
-  // { type:"json", url:"https://api.example.com/news?symbol=005930", group:"005930", path:"articles", field:"title" }
+  { type: "rss", group: "TECH",       url: _GNEWS("semiconductor OR AI chip OR Nvidia OR Apple OR Microsoft stock") },
+  { type: "rss", group: "FINANCE",    url: _GNEWS("bank stocks OR JPMorgan OR interest rate OR financial sector earnings") },
+  { type: "rss", group: "HEALTH",     url: _GNEWS("pharma stocks OR FDA approval OR healthcare sector OR Eli Lilly OR biotech") },
+  { type: "rss", group: "CONSUMER",   url: _GNEWS("retail stocks OR Amazon OR Tesla OR consumer spending OR Walmart") },
+  { type: "rss", group: "INDUSTRIAL", url: _GNEWS("defense stocks OR Boeing OR Caterpillar OR industrial sector OR aerospace") },
+  { type: "rss", group: "RESOURCES",  url: _GNEWS("oil price OR energy stocks OR Exxon OR commodities OR natural gas") }
 ];
 
 function _rssTitles(xml) {
