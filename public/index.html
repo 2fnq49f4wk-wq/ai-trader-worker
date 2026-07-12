@@ -838,7 +838,7 @@ button.btn.loading::after{content:'조회 중…';position:absolute;inset:0;disp
   .nav-item{padding:13px 18px;font-size:12px;}
   .nav-item-icon{font-size:13px;}
   .sb-run-btn{padding:13px;font-size:12px;}
-  .sb-btn{padding:9px 2px;font-size:10.5px;}  /* [V9.9] 240px 사이드바에서 4버튼 행 수용(기존 10px4px/11px는 초과) */
+  .sb-btn-row .sb-btn{padding:9px 2px;font-size:10.5px;letter-spacing:.2px;}  /* [V9.9] 240px 사이드바 4버튼 행 수용. 특이도(0,2,0)로 아래 button.btn(0,1,1) 패딩 오버라이드 */
   button.btn{padding:8px 14px;font-size:11px;}
   .llm-btn{padding:6px 12px;font-size:11px;}
   /* 정보바 가독성 */
@@ -854,7 +854,7 @@ button.btn.loading::after{content:'조회 중…';position:absolute;inset:0;disp
 /* iPad 세로: 정보바 2열, 사이드바 약간 축소 */
 @media (min-width:768px) and (max-width:834px) and (orientation:portrait){
   .sidebar{width:200px;}
-  .sb-btn{padding:8px 1px;font-size:9.5px;letter-spacing:0;}  /* [V9.9] 200px 사이드바: 4버튼 행("지표·환율·MAP·리포트") 잘림 없이 수용 */
+  .sb-btn-row .sb-btn{padding:8px 1px;font-size:9.5px;letter-spacing:0;}  /* [V9.9] 200px 사이드바: 4버튼 행 잘림 없이 수용(특이도 0,2,0) */
   .sb-btn-row{gap:4px;}
   .content-topbar{grid-template-columns:1fr 1fr;}
   .dash-grid{grid-template-columns:1fr;}
