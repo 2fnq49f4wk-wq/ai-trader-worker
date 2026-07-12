@@ -1806,6 +1806,7 @@ html[data-theme="light"] .table tbody tr:nth-child(even){background:rgba(20,30,5
 .fv-breadth{border:1px solid var(--bd);border-radius:4px;background:var(--s1);padding:8px 12px;}
 .fv-breadth-top{display:flex;justify-content:space-between;font-size:9.5px;margin-bottom:5px;}
 .fv-breadth-top .l{color:var(--pos);font-weight:700;}
+.fv-breadth-stale{color:var(--t3);font-weight:400;font-size:8.5px;}
 .fv-breadth-top .r{color:var(--neg);font-weight:700;}
 .fv-breadth-bar{display:flex;height:7px;border-radius:2px;overflow:hidden;background:var(--bd2);}
 .fv-breadth-bar .adv{background:#1d7c3d;}
@@ -2679,6 +2680,15 @@ html[data-theme="light"] .table tbody tr:hover{background:rgba(9,105,218,.045);}
         <span class="nav-item-icon">💱</span>
         <span class="nav-item-label">환율</span>
       </div>
+      <!-- [V9.11] AI 월간 리포트·AI 두뇌 관측 — 종목상세 AI픽 바에서 이동, 어디서든 접근 가능하게 -->
+      <div class="nav-item" data-modal="report">
+        <span class="nav-item-icon">📊</span>
+        <span class="nav-item-label">AI 리포트</span>
+      </div>
+      <div class="nav-item" data-modal="nnviz">
+        <span class="nav-item-icon">🧠</span>
+        <span class="nav-item-label">AI 두뇌</span>
+      </div>
       <div class="nav-item" data-page="news">
         <span class="nav-item-icon">📰</span>
         <span class="nav-item-label">NEWS</span>
@@ -2702,8 +2712,7 @@ html[data-theme="light"] .table tbody tr:hover{background:rgba(9,105,218,.045);}
         <button type="button" class="sb-btn btn logs" id="btnLogs">LOG</button>
       </div>
       <div class="sb-btn-row">
-        <button type="button" class="sb-btn btn macro" id="btnHeatmap">MAP</button>
-        <button type="button" class="sb-btn btn macro" id="btnRptSide">리포트</button>
+        <button type="button" class="sb-btn btn macro" id="btnHeatmap" style="flex:1;">MAP</button>
       </div>
       <div class="sb-btn-row">
         <button type="button" class="sb-btn btn" id="btnSettings" style="flex:1;">⚙ SETTINGS</button>
@@ -2776,11 +2785,23 @@ html[data-theme="light"] .table tbody tr:hover{background:rgba(9,105,218,.045);}
             <div class="fv-headlines" id="fvHeadlines"><div class="empty">뉴스 로딩 중...</div></div>
           </div>
           <div class="fv-panel">
-            <div class="fv-panel-head">FUTURES / COMMODITIES</div>
-            <table class="fv-table"><thead><tr><th>Name</th><th class="right">Last</th><th class="right">Change %</th></tr></thead><tbody id="fvFutures"></tbody></table>
+            <!-- [V9.11] 중복 COMMODITIES 창(아래쪽) 통합 — RSI 컬럼 + 실행/리셋 버튼 이곳으로 이전 -->
+            <div class="fv-panel-head">FUTURES / COMMODITIES <span class="fv-panel-sub" id="cmTradeInfo">실시간(장중)</span>
+              <span style="margin-left:auto;display:flex;gap:4px;">
+                <button type="button" id="btnRunCM" class="btn" style="font-size:9px;padding:2px 8px;">▶ 실행</button>
+                <button type="button" id="btnResetCM" class="btn danger" style="font-size:9px;padding:2px 8px;">↺</button>
+              </span>
+            </div>
+            <table class="fv-table"><thead><tr><th>Name</th><th class="right">Last</th><th class="right">Change %</th><th class="right">RSI</th></tr></thead><tbody id="fvFutures"></tbody></table>
           </div>
           <div class="fv-panel">
-            <div class="fv-panel-head">FOREX &amp; BONDS</div>
+            <!-- [V9.11] 중복 BONDS 창(아래쪽) 통합 — 국채 실행 버튼 이곳으로 이전 -->
+            <div class="fv-panel-head">FOREX &amp; BONDS
+              <span style="margin-left:auto;display:flex;gap:4px;">
+                <button type="button" id="btnRunBDUS" class="btn" style="font-size:9px;padding:2px 8px;">▶ US</button>
+                <button type="button" id="btnRunBDKR" class="btn" style="font-size:9px;padding:2px 8px;">▶ KR</button>
+              </span>
+            </div>
             <table class="fv-table"><thead><tr><th>Pair</th><th class="right">Last</th><th class="right">Change %</th></tr></thead><tbody id="fvForex"></tbody></table>
           </div>
         </div>
@@ -2913,27 +2934,7 @@ html[data-theme="light"] .table tbody tr:hover{background:rgba(9,105,218,.045);}
 
       </div>
 
-      <!-- ════ [V59] COMMODITIES + BONDS — TOP MOVERS식 컴팩트 테이블 (한 화면 효율 배치) ════ -->
-      <div class="cmbd-grid">
-        <div class="fv-panel">
-          <div class="fv-panel-head">⛏ COMMODITIES <span class="fv-panel-sub" id="cmTradeInfo">실시간(장중)</span>
-            <span style="margin-left:auto;display:flex;gap:4px;">
-              <button type="button" id="btnRunCM" class="btn" style="font-size:9px;padding:2px 8px;">▶ 실행</button>
-              <button type="button" id="btnResetCM" class="btn danger" style="font-size:9px;padding:2px 8px;">↺</button>
-            </span>
-          </div>
-          <table class="fv-table"><thead><tr><th>Name</th><th class="right">Last</th><th class="right">Chg%</th><th class="right">RSI</th></tr></thead><tbody id="cmWatchGrid"></tbody></table>
-        </div>
-        <div class="fv-panel">
-          <div class="fv-panel-head">◈ BONDS · 국채
-            <span style="margin-left:auto;display:flex;gap:4px;">
-              <button type="button" id="btnRunBDUS" class="btn" style="font-size:9px;padding:2px 8px;">▶ US</button>
-              <button type="button" id="btnRunBDKR" class="btn" style="font-size:9px;padding:2px 8px;">▶ KR</button>
-            </span>
-          </div>
-          <table class="fv-table"><thead><tr><th>Name</th><th class="right">Last</th><th class="right">Chg%</th></tr></thead><tbody id="bondYieldRow"></tbody></table>
-        </div>
-      </div>
+      <!-- ════ [V9.11] 중복이던 COMMODITIES+BONDS 컴팩트 테이블 제거 — S&P맵 아래 FUTURES/COMMODITIES·FOREX&BONDS로 통합(RSI 포함) ════ -->
 
       <!-- ════ [V59] 경제지표 캘린더 + 기술적 분석 ════ -->
       <div class="cmbd-grid">
@@ -3179,9 +3180,8 @@ html[data-theme="light"] .table tbody tr:hover{background:rgba(9,105,218,.045);}
           <div class="aipick-bar" id="aipickBar">
             <span class="aipick-title">🤖 AI 픽</span>
             <div class="aipick-list" id="aipickList"><span class="aipick-empty">위원회 학습 후 표시됩니다</span></div>
-            <button type="button" class="btn" id="btnMonthlyReport">📊 월간 AI 리포트</button>
-            <button type="button" class="btn" id="btnNnViz" onclick="openNnViz()">🧠 AI 두뇌 관측</button>
           </div>
+          <!-- [V9.11] 월간 AI 리포트·AI 두뇌 관측 버튼은 사이드바 네비(POSITIONS 아래)로 이동 — 종목 조회 없이도 접근 가능 -->
           <!-- [V9.6] 뉴스·여론 기반 "내일 오를 종목" 예측(온라인학습 + 재무 저가중 하방가드) -->
           <div class="aipick-bar" id="newsPickBar">
             <span class="aipick-title" title="섹터 뉴스감성·감성변화·모멘텀·거래량 + 재무(저가중 하방가드)를 온라인 학습해 다음날 상승확률 예측">📰 내일 오를 뉴스픽</span>
@@ -4228,23 +4228,35 @@ html[data-theme="light"] .table tbody tr:hover{background:rgba(9,105,218,.045);}
     // ② 시장폭 — 워치리스트 등락 종목 수 (US/KR)
     var br = $('fvBreadthRow');
     if (br) {
+      // [V9.11 버그수정] 신선도(24h) 필터만 걸면 주말·휴장(마지막 시세=금요일 종가, >24h 경과) 때
+      //   전종목이 필터에 걸려 표본이 거의 0으로 줄고, 우연히 통과한 1~2종목만으로 "Declining 100%" 같은
+      //   오해성 표시가 뜸(KR은 완전 공백, US는 표본1개). → 신선표본이 최소치(minSample) 미달이면
+      //   신선도 필터 없이 전체(최근 알려진 등락)로 자동 폴백해 항상 의미 있는 막대를 보여줌.
       function breadth(mkt, label) {
-        var adv = 0, dec = 0;
-        var _bFresh = Date.now() - 24 * 3600 * 1000;  // [V65] 묵은 시세 제외
-        Object.keys(lastQuotes).forEach(function(sym){
-          var q = lastQuotes[sym];
-          if (!q || typeof q.dayPct !== 'number') return;
-          if (q.ts && q.ts < _bFresh) return;
-          var isKR = /\.(KS|KQ)$/.test(sym);
-          if ((mkt === 'kr') !== isKR) return;
-          if (q.dayPct > 0) adv++; else if (q.dayPct < 0) dec++;
-        });
-        var tot = adv + dec;
-        if (tot === 0) return '';
-        var ap = Math.round(adv / tot * 100);
+        var _bFresh = Date.now() - 24 * 3600 * 1000;
+        var minSample = 10;
+        function count(requireFresh){
+          var adv = 0, dec = 0, latestTs = 0;
+          Object.keys(lastQuotes).forEach(function(sym){
+            var q = lastQuotes[sym];
+            if (!q || typeof q.dayPct !== 'number') return;
+            if (requireFresh && q.ts && q.ts < _bFresh) return;
+            var isKR = /\.(KS|KQ)$/.test(sym);
+            if ((mkt === 'kr') !== isKR) return;
+            if (q.ts && q.ts > latestTs) latestTs = q.ts;
+            if (q.dayPct > 0) adv++; else if (q.dayPct < 0) dec++;
+          });
+          return { adv: adv, dec: dec, tot: adv + dec, latestTs: latestTs };
+        }
+        var r = count(true);
+        var stale = false;
+        if (r.tot < minSample) { r = count(false); stale = true; }   // 폴백: 신선표본 부족 → 전체로 재계산
+        if (r.tot === 0) return '';
+        var ap = Math.round(r.adv / r.tot * 100);
+        var staleBadge = stale ? ' <span class="fv-breadth-stale" title="최근 정규장 기준(휴장/데이터 지연 중)">·최근장기준</span>' : '';
         return '<div class="fv-breadth">'+
-          '<div class="fv-breadth-top"><span class="l">'+label+' Advancing '+ap+'% ('+adv+')</span>'+
-          '<span class="r">Declining ('+dec+') '+(100-ap)+'%</span></div>'+
+          '<div class="fv-breadth-top"><span class="l">'+label+' Advancing '+ap+'% ('+r.adv+')'+staleBadge+'</span>'+
+          '<span class="r">Declining ('+r.dec+') '+(100-ap)+'%</span></div>'+
           '<div class="fv-breadth-bar"><span class="adv" style="width:'+ap+'%"></span>'+
           '<span class="dec" style="width:'+(100-ap)+'%"></span></div></div>';
       }
@@ -4254,13 +4266,19 @@ html[data-theme="light"] .table tbody tr:hover{background:rgba(9,105,218,.045);}
     var g = $('fvGainers'), l = $('fvLosers');
     if (g && l) {
       // [V65] 24시간 이상 묵은 시세는 제외 — 어제 등락이 TOP MOVERS에 박제되던 문제 해결
+      // [V9.11] 단, 주말·휴장으로 신선표본이 거의 0이 되면(전종목 필터 탈락) 전체(최근 알려진 등락)로 폴백
+      //   — breadth 막대와 동일한 버그·동일한 수정(신선도 필터 자체는 유지, 폴백만 추가).
       var _freshLimit = Date.now() - 24 * 3600 * 1000;
-      var all = Object.keys(lastQuotes).map(function(sym){
-        var q = lastQuotes[sym];
-        if (!q || typeof q.dayPct !== 'number' || !(q.price > 0)) return null;
-        if (q.ts && q.ts < _freshLimit) return null;
-        return { sym: sym, q: q };
-      }).filter(Boolean);
+      function collectMovers(requireFresh){
+        return Object.keys(lastQuotes).map(function(sym){
+          var q = lastQuotes[sym];
+          if (!q || typeof q.dayPct !== 'number' || !(q.price > 0)) return null;
+          if (requireFresh && q.ts && q.ts < _freshLimit) return null;
+          return { sym: sym, q: q };
+        }).filter(Boolean);
+      }
+      var all = collectMovers(true);
+      if (all.length < 10) all = collectMovers(false);
       var sorted = all.slice().sort(function(a, b){ return b.q.dayPct - a.q.dayPct; });
       function moverRow(it, isUp) {
         var held = (heldMap.us && heldMap.us[it.sym]) || (heldMap.kr && heldMap.kr[it.sym]);
@@ -5616,27 +5634,6 @@ html[data-theme="light"] .table tbody tr:hover{background:rgba(9,105,218,.045);}
       }
     }
 
-    // [V59] 워치리스트 — TOP MOVERS식 테이블 행
-    var grid = $('cmWatchGrid');
-    if (grid) {
-      if (watchlist.length === 0) {
-        grid.innerHTML = '<tr><td colspan="4" class="empty">대기 중...</td></tr>';
-      } else {
-        grid.innerHTML = watchlist.map(function(q){
-          var hasPrice = typeof q.price === 'number';
-          var dc = q.dayPct > 0 ? 'pos' : q.dayPct < 0 ? 'neg' : '';
-          var sign = q.dayPct >= 0 ? '+' : '';
-          var rsi = (q.rsi != null && isFinite(q.rsi)) ? q.rsi.toFixed(0) : '-';
-          var rsiCls = q.rsi >= 70 ? 'neg' : q.rsi <= 30 ? 'pos' : '';
-          return '<tr>'+
-            '<td><span class="fv-tick">'+escapeHtml(q.name||q.symbol)+'</span> <span style="font-size:8.5px;color:var(--t3);">'+escapeHtml(q.symbol)+'</span></td>'+
-            '<td class="right">'+(hasPrice?'$'+fmtNum(q.price,2):'-')+'</td>'+
-            '<td class="right '+dc+'">'+(typeof q.dayPct==='number'?sign+fmtNum(q.dayPct,2)+'%':'-')+'</td>'+
-            '<td class="right '+rsiCls+'">'+rsi+'</td>'+
-            '</tr>';
-        }).join('');
-      }
-    }
   }
 
   // [V10.2] ENGINE PIPELINE — 8개 서브시스템 최종 실행시각 상태 모니터
@@ -5664,15 +5661,18 @@ html[data-theme="light"] .table tbody tr:hover{background:rgba(9,105,218,.045);}
   function loadCommodities() {
     return api('/api/commodities').then(function(data){
       renderCommodities(data);
-      // [V10.4] FV 데크 — FUTURES/COMMODITIES 테이블
+      // [V10.4→V9.11] FV 데크 — FUTURES/COMMODITIES 테이블(중복 창 통합, RSI 컬럼 포함)
       var fvF = $('fvFutures');
       if (fvF && data && data.watchlist && data.watchlist.length) {
-        fvF.innerHTML = data.watchlist.slice(0, 9).map(function(q){
+        fvF.innerHTML = data.watchlist.map(function(q){
           var has = typeof q.price === 'number';
           var cls = q.dayPct > 0 ? 'pos' : q.dayPct < 0 ? 'neg' : '';
+          var rsi = (q.rsi != null && isFinite(q.rsi)) ? q.rsi.toFixed(0) : '-';
+          var rsiCls = q.rsi >= 70 ? 'neg' : q.rsi <= 30 ? 'pos' : '';
           return '<tr><td><span class="fv-tick">'+escapeHtml(q.name || q.symbol)+'</span></td>'+
             '<td class="right">'+(has ? fmtNum(q.price,2) : '-')+'</td>'+
-            '<td class="right '+cls+'">'+(typeof q.dayPct === 'number' ? (q.dayPct>=0?'+':'')+fmtNum(q.dayPct,2)+'%' : '-')+'</td></tr>';
+            '<td class="right '+cls+'">'+(typeof q.dayPct === 'number' ? (q.dayPct>=0?'+':'')+fmtNum(q.dayPct,2)+'%' : '-')+'</td>'+
+            '<td class="right '+rsiCls+'">'+rsi+'</td></tr>';
         }).join('');
       }
       // ALT ASSETS 대시보드 미니카드 갱신
@@ -5838,42 +5838,8 @@ html[data-theme="light"] .table tbody tr:hover{background:rgba(9,105,218,.045);}
     if (!data) return;
     if (data.us) renderAltPanel(data.us, 'bdusPanel', 'usd', '🇺🇸', 'US BONDS', 'USD · 미국 국채 ETF');
     if (data.kr) renderAltPanel(data.kr, 'bdkrPanel', 'krw', '🇰🇷', 'KR BONDS', 'KRW · 한국 국고채 ETF');
-    // [V59] 국채 — TOP MOVERS식 테이블 행: 🇺🇸 금리 + 🇰🇷 국고채 ETF
-    var yrow = $('bondYieldRow');
-    if (yrow) {
-      var rows = '';
-      var secRow = function(label){
-        return '<tr><td colspan="3" style="padding:4px 10px;font-size:8px;font-weight:700;letter-spacing:1.2px;color:var(--t3);background:var(--s2);text-transform:uppercase;">'+label+'</td></tr>';
-      };
-      if (data.yields && data.yields.length) {
-        rows += secRow('🇺🇸 US TREASURY · 금리');
-        rows += data.yields.map(function(y){
-          var hasRate = typeof y.rate === 'number';
-          var cc = y.dayPct > 0 ? 'pos' : y.dayPct < 0 ? 'neg' : '';
-          var cs = y.dayPct >= 0 ? '+' : '';
-          return '<tr>'+
-            '<td><span class="fv-tick">'+escapeHtml(y.label)+'</span> <span style="font-size:8.5px;color:var(--t3);">'+escapeHtml(y.name)+'</span></td>'+
-            '<td class="right">'+(hasRate ? y.rate.toFixed(2)+'%' : '-')+'</td>'+
-            '<td class="right '+cc+'">'+(typeof y.dayPct==='number' ? cs+y.dayPct.toFixed(2)+'%' : '-')+'</td>'+
-            '</tr>';
-        }).join('');
-      }
-      if (data.kr && data.kr.watchlist && data.kr.watchlist.length) {
-        rows += secRow('🇰🇷 KR 국고채 ETF');
-        rows += data.kr.watchlist.map(function(q){
-          if (!q) return '';
-          var has = typeof q.price === 'number';
-          var cc = q.dayPct > 0 ? 'pos' : q.dayPct < 0 ? 'neg' : '';
-          var cs = q.dayPct >= 0 ? '+' : '';
-          return '<tr>'+
-            '<td><span class="fv-tick">'+escapeHtml(q.name || q.symbol)+'</span></td>'+
-            '<td class="right">'+(has ? '₩'+fmtNum(q.price,0) : '-')+'</td>'+
-            '<td class="right '+cc+'">'+(typeof q.dayPct==='number' ? cs+fmtNum(q.dayPct,2)+'%' : '-')+'</td>'+
-            '</tr>';
-        }).join('');
-      }
-      yrow.innerHTML = rows || '<tr><td colspan="3" class="empty">금리 대기 중...</td></tr>';
-    }
+    // [V9.11] 중복 국채 테이블(bondYieldRow) 제거 — FOREX & BONDS(fvForex, loadBonds())가 이미
+    //   US 금리·KR 국채 ETF를 FX와 함께 표시하므로(상위 슈퍼셋) 여기선 별도 렌더 불필요.
   }
 
   function loadBonds() {
@@ -7153,10 +7119,7 @@ html[data-theme="light"] .table tbody tr:hover{background:rgba(9,105,218,.045);}
     window.__detailBrowseTs = Date.now();
     try { loadAiPicks(); } catch (e) {}   // [V17] AI 픽 스트립(2분 캐시)
     try { loadNewsPicks(); } catch (e) {} // [V9.6] 뉴스픽 스트립(2분 캐시)
-    try {
-      var _rb = $('btnMonthlyReport');
-      if (_rb && !_rb.__bound) { _rb.__bound = true; _rb.addEventListener('click', openMonthlyReport); }
-    } catch (e) {}
+    // [V9.11] 월간 리포트 버튼은 사이드바 네비로 이동 — 여기 바인딩 불필요
     var arr = window.__lastQuotesArr || [];
     function mk(q) {
       // price×shares 상한 체크 — sharesOutstanding 오류값으로 비정상 대형주 정렬 방지
@@ -9673,7 +9636,7 @@ html[data-theme="light"] .table tbody tr:hover{background:rgba(9,105,218,.045);}
   $('btnLogs').addEventListener('click', openLogs);
   $('btnCloseLogs').addEventListener('click', closeLogs);
   // [V9.10] 지표/환율은 액션바 버튼 대신 사이드바 nav-item(data-modal)에서 엽니다 — showPage 리스너 쪽에서 처리.
-  if ($('btnRptSide')) $('btnRptSide').addEventListener('click', function(){ openMonthlyReport(); });   // [V18] 사이드바 월간 리포트
+  // [V9.11] 월간 리포트는 사이드바 nav-item(data-modal="report")에서 열림 — 별도 바인딩 불필요
   $('btnCloseMacro').addEventListener('click', closeMacro);
   $('btnMacroRefresh').addEventListener('click', macroRunNow);
   $('btnCloseFx').addEventListener('click', closeFx);
@@ -10179,10 +10142,12 @@ html[data-theme="light"] .table tbody tr:hover{background:rgba(9,105,218,.045);}
   }
   document.querySelectorAll('.nav-item').forEach(function(item){
     item.addEventListener('click',function(){
-      // [V9.10] data-modal 항목(지표/환율)은 페이지 전환 없이 해당 모달만 연다.
+      // [V9.10/9.11] data-modal 항목(지표/환율/AI리포트/AI두뇌)은 페이지 전환 없이 해당 모달만 연다.
       var modal = this.getAttribute('data-modal');
       if (modal === 'macro') { openMacro(); return; }
       if (modal === 'fx') { openFx(); return; }
+      if (modal === 'report') { openMonthlyReport(); return; }
+      if (modal === 'nnviz') { openNnViz(); return; }
       showPage(this.getAttribute('data-page'));
     });
   });
