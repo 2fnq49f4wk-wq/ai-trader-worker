@@ -17800,6 +17800,8 @@ const HARVEST = {
   strideBars: 3,        // 봉 간격(인접봉 중복상관 축소 — 라벨 겹침 방지 위해 유지)
   minBars: 120, warmupBars: 60,
   horizon: 5, stopPct: 5,
+  tpPct: 8,             // [V9.9] Triple-Barrier(de Prado) 익절 배리어 — 기간내 +8% 선도달 시 승 확정.
+                        //   기존 2중(손절+시간)의 "중간에 크게 올랐다가 되돌린 승리 패턴"을 패로 오분류하던 편향 제거.
   maxPerNight: 3000,    // [V9.5] 1500→3000 하룻밤 최대 표본(대폭 — 트레인창을 하룻밤에 신선표본으로 채움)
   maxTotal: 35000,      // [V9.5] 20000→35000 수확표본 풀 확대(초과분 오래된 것부터 삭제)
   entryLike: true,
@@ -17864,12 +17866,15 @@ async function mlMarketHarvestNightly(DB) {
           price: c, prevClose: i > 0 ? closes[i - 1] : 0, dayPct: dayPct,
           regime: "NEUTRAL", strategy: "hv", market: mkt, ev: {}
         });
-        // 라벨: 경로 내 손절선 도달 시 손절가, 아니면 horizon 종가 수익률
+        // [V9.9] Triple-Barrier 라벨(de Prado): 손절/익절/시간 — 경로에서 먼저 닿는 배리어가 라벨.
+        //   일봉 종가 기준이라 같은 봉 동시도달 시 손절 우선(보수적). tpPct=0이면 기존 2중 배리어와 동일.
         let pnl = null;
         for (let k2 = i + 1; k2 <= i + h; k2++) {
-          if ((closes[k2] / c - 1) * 100 <= -HARVEST.stopPct) { pnl = -HARVEST.stopPct; break; }
+          const r = (closes[k2] / c - 1) * 100;
+          if (r <= -HARVEST.stopPct) { pnl = -HARVEST.stopPct; break; }              // 하방 배리어(우선)
+          if (HARVEST.tpPct > 0 && r >= HARVEST.tpPct) { pnl = HARVEST.tpPct; break; } // 상방 배리어
         }
-        if (pnl === null) pnl = (closes[i + h] / c - 1) * 100;
+        if (pnl === null) pnl = (closes[i + h] / c - 1) * 100;                        // 시간 배리어(만기 수익률)
         // ts는 봉 시점 근사(일봉 1개=1일)로 역산 — 시간순 검증분할의 정합 유지
         const ts = baseTs - (L - 1 - i) * 86400000;
         stmts.push(DB.prepare(
@@ -19077,9 +19082,15 @@ async function mlLabelCandidates(DB, priceLookup, opts) {
         const seg = path.slice(-(c.horizon || 5));
         const stopPct = (c.stop_pct > 0) ? c.stop_pct : 5;
         const stopLine = c.entry_price * (1 - stopPct / 100);
-        let stopped = false;
-        for (const p of seg) { if (p > 0 && p <= stopLine) { exitPct = -stopPct; stopped = true; break; } }
-        if (!stopped) { const fin = seg[seg.length - 1]; if (fin > 0) exitPct = (fin - c.entry_price) / c.entry_price * 100; }
+        // [V9.9] Triple-Barrier(de Prado) — 수확 라벨과 동일 규칙(라벨 일관성): 손절 우선 → 익절 → 만기.
+        const tpLine = (typeof HARVEST !== "undefined" && HARVEST.tpPct > 0) ? c.entry_price * (1 + HARVEST.tpPct / 100) : Infinity;
+        let hit = false;
+        for (const p of seg) {
+          if (!(p > 0)) continue;
+          if (p <= stopLine) { exitPct = -stopPct; hit = true; break; }
+          if (p >= tpLine) { exitPct = HARVEST.tpPct; hit = true; break; }
+        }
+        if (!hit) { const fin = seg[seg.length - 1]; if (fin > 0) exitPct = (fin - c.entry_price) / c.entry_price * 100; }
       } else if (typeof pr === "number" && pr > 0) {
         exitPct = (pr - c.entry_price) / c.entry_price * 100;
       }

@@ -213,14 +213,20 @@ body{
 }
 .sb-run-btn:hover{background:#ddd;}
 .sb-run-btn:active{opacity:.7;}
-.sb-btn-row{display:flex;gap:4px;}
+.sb-btn-row{display:flex;gap:6px;}
+/* [V9.9 재설계] min-width:0 + ellipsis → 어떤 폭에서도 행 밖으로 튀어나오지 않음(구조적 보장).
+   rounded pill + 은은한 면 배경으로 통일된 버튼 룩. */
 .sb-btn{font-family:'Helvetica Neue','Segoe UI',Arial,sans-serif !important;
-  flex:1;padding:7px 4px;background:transparent;border:1px solid var(--bd);
+  flex:1 1 0;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;
+  padding:8px 3px;background:rgba(255,255,255,.03);border:1px solid var(--bd);border-radius:9px;
   color:var(--t2);font-family:'IBM Plex Mono',monospace;font-size:10px;
-  cursor:pointer;letter-spacing:.5px;text-transform:uppercase;
+  cursor:pointer;letter-spacing:.3px;text-transform:uppercase;
   transition:all .12s;text-align:center;
 }
-.sb-btn:hover{border-color:var(--t2);color:var(--t1);}
+html[data-theme="light"] .sb-btn{background:rgba(0,0,0,.03);}
+.sb-btn:hover{border-color:var(--t2);color:var(--t1);background:rgba(255,255,255,.07);}
+.sb-run-btn{border-radius:10px;}
+.sb-theme-btn{border-radius:9px;}
 .sb-pnl{
   font-size:11px;color:var(--t2);text-align:center;
   padding:4px 0;font-variant-numeric:tabular-nums;
@@ -832,7 +838,7 @@ button.btn.loading::after{content:'조회 중…';position:absolute;inset:0;disp
   .nav-item{padding:13px 18px;font-size:12px;}
   .nav-item-icon{font-size:13px;}
   .sb-run-btn{padding:13px;font-size:12px;}
-  .sb-btn{padding:10px 4px;font-size:11px;}
+  .sb-btn{padding:9px 2px;font-size:10.5px;}  /* [V9.9] 240px 사이드바에서 4버튼 행 수용(기존 10px4px/11px는 초과) */
   button.btn{padding:8px 14px;font-size:11px;}
   .llm-btn{padding:6px 12px;font-size:11px;}
   /* 정보바 가독성 */
@@ -848,6 +854,8 @@ button.btn.loading::after{content:'조회 중…';position:absolute;inset:0;disp
 /* iPad 세로: 정보바 2열, 사이드바 약간 축소 */
 @media (min-width:768px) and (max-width:834px) and (orientation:portrait){
   .sidebar{width:200px;}
+  .sb-btn{padding:8px 1px;font-size:9.5px;letter-spacing:0;}  /* [V9.9] 200px 사이드바: 4버튼 행("지표·환율·MAP·리포트") 잘림 없이 수용 */
+  .sb-btn-row{gap:4px;}
   .content-topbar{grid-template-columns:1fr 1fr;}
   .dash-grid{grid-template-columns:1fr;}
 }
@@ -2269,8 +2277,10 @@ html[data-theme="light"] .detail-tf-btn.active{color:#fff;}
 .detail-sec{font-size:10px;font-weight:700;color:var(--t3);text-transform:uppercase;letter-spacing:1px;
   padding:6px 2px;margin-bottom:6px;border-bottom:1px solid var(--bd2);}
 /* [V89] 차트(좌) + 사이드바(우) — 한눈에 + 사이드바 잘림 없음(자연 높이) */
-.detail-main{display:flex;gap:12px;align-items:flex-start;margin-bottom:20px;}
+/* [V9.9] flex-start→stretch: 좌(차트+뉴스)·우(사이드) 높이 동기화 — 짧은 쪽 아래 여백 제거 */
+.detail-main{display:flex;gap:12px;align-items:stretch;margin-bottom:20px;}
 .detail-left{flex:1 1 auto;min-width:0;display:flex;flex-direction:column;gap:8px;}
+.detail-left .detail-news{flex:1 1 auto;min-height:0;}  /* 뉴스가 남는 세로공간 흡수 → 좌우 높이 정합 */
 .detail-main .detail-chart{flex:0 0 auto;height:52vh;min-height:280px;max-height:600px;margin-bottom:0;padding:4px;}
 .detail-main .detail-chart svg{width:100%;height:100%;}
 .detail-side{flex:0 0 300px;width:300px;background:var(--s1);border:1px solid var(--bd);border-radius:8px;
@@ -2594,8 +2604,10 @@ html[data-theme="light"] .table tbody tr:hover{background:rgba(9,105,218,.045);}
 .detail-below .fund-tbl{font-size:12px;}
 .detail-below .fund-tbl th,.detail-below .fund-tbl td{padding:6px 10px;}
 @media(min-width:900px){
-  .detail-below{display:grid;grid-template-columns:1.6fr 1fr;gap:12px;align-items:start;}
-  .detail-below .detail-fund{margin-bottom:0;}
+  /* [V9.9] start→stretch + height:100%: 재무박스·수신데이터 박스 높이 동기화 — 비율 불일치 여백 제거 */
+  .detail-below{display:grid;grid-template-columns:1.6fr 1fr;gap:12px;align-items:stretch;}
+  .detail-below .detail-fund{margin-bottom:0;height:100%;box-sizing:border-box;}
+  .detail-below .detail-datawrap{height:100%;box-sizing:border-box;}
 }
 </style>
 </head>
