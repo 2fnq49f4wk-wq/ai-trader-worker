@@ -15179,7 +15179,7 @@ const LUXML = {
   gateThresh: 0.42,
   sizeMin: 0.5, sizeMax: 1.5,
 
-  trainWindow: 4000,
+  trainWindow: 5000,   // [V9.5] 4000→5000: 수확 대폭 확대에 맞춰 학습 표본창 확장(GBDT·선형모델 활용도↑)
   epochs: 25,
   lr: 0.05,
   l2: 0.0006,        // 릿지(부드러운 축소)
@@ -17723,13 +17723,17 @@ async function mlCalibrateCommittee(DB) {
 
 const HARVEST = {
   enabled: true,
-  symbolsPerNight: 300, // 하룻밤 스캔 종목 수(로테이션) — V6: 3일이면 전 유니버스 순회
-  strideBars: 3,        // 봉 간격(인접봉 중복상관 축소)
+  symbolsPerNight: 500, // [V9.5] 300→500 하룻밤 스캔 종목 수(전 유니버스 더 빠르게 순회)
+  strideBars: 3,        // 봉 간격(인접봉 중복상관 축소 — 라벨 겹침 방지 위해 유지)
   minBars: 120, warmupBars: 60,
   horizon: 5, stopPct: 5,
-  maxPerNight: 1500,    // 하룻밤 최대 표본 — V6 확대
-  maxTotal: 20000,      // 수확표본 총 상한(초과분 오래된 것부터 삭제) — V7 확대
+  maxPerNight: 3000,    // [V9.5] 1500→3000 하룻밤 최대 표본(대폭 — 트레인창을 하룻밤에 신선표본으로 채움)
+  maxTotal: 35000,      // [V9.5] 20000→35000 수확표본 풀 확대(초과분 오래된 것부터 삭제)
   entryLike: true,
+  // [V9.5] entryLike 필터 완화 — 깊은 눌림(MA50 위)+모멘텀 winner(RSI 82까지)까지 포함해
+  //   "3~5일 상승 패턴" 등 다양한 진입국면을 사전학습에 편입(사전학습은 커버리지가 넓을수록 유리).
+  maLen: 50, rsiLo: 28, rsiHi: 82,
+  budgetMs: 45000,      // [V9.5] 수확 CPU 예산 — 초과 시 진행분 저장 후 중단(안전. 캡 올린 만큼 필수)
   srcWeight: 0.6        // 학습 가중(실거래=1.0 대비)
 };
 
@@ -17748,10 +17752,12 @@ async function mlMarketHarvestNightly(DB) {
     const seen = (await getState(DB, seenKey, {})) || {};
     const stmts = [];
     let made = 0, scanned = 0;
+    const hvDeadline = Date.now() + (HARVEST.budgetMs || 45000);  // [V9.5] CPU 예산 — 초과 시 진행분 저장 후 중단
     const idxCache = {};   // [V7] 시장별 지수 일봉(상대강도용) — 1회 로드
     for (const mk of ["us", "kr", "cm"]) { try { idxCache[mk] = await _mlLoadIndexCloses(DB, mk); } catch (e) { idxCache[mk] = null; } }
     for (let si = 0; si < takeN; si++) {
       if (made >= HARVEST.maxPerNight) break;
+      if (Date.now() > hvDeadline) break;  // [V9.5] 예산 초과 — 여기까지 수확분 저장(seen/offset도 반영)
       const sym = symsAll[(off + si) % symsAll.length];
       scanned++;
       let dd = null; try { dd = await getState(DB, "daily:" + sym, null); } catch (e) {}
@@ -17767,8 +17773,9 @@ async function mlMarketHarvestNightly(DB) {
         if (!(c > 0)) continue;
         const hist = closes.slice(0, i + 1);
         if (HARVEST.entryLike) {
-          const ma20 = _num(getMA(hist, 20), c), rsi = _num(getRSI(hist, 14), 50);
-          if (!(c > ma20) || rsi < 35 || rsi > 75) continue;
+          // [V9.5] 완화: MA50 위(깊은 눌림 포함) + RSI 28~82(모멘텀 winner 포함) → 사전학습 커버리지 확대
+          const maRef = _num(getMA(hist, HARVEST.maLen || 50), c), rsi = _num(getRSI(hist, 14), 50);
+          if (!(c > maRef) || rsi < (HARVEST.rsiLo || 28) || rsi > (HARVEST.rsiHi || 82)) continue;
         }
         const dayPct = (i > 0 && closes[i - 1] > 0) ? (c / closes[i - 1] - 1) * 100 : 0;
         // [V7] 지수 과거정렬: 봉 i 시점 = 지수 끝에서 (L-1-i)봉 전
@@ -17801,7 +17808,8 @@ async function mlMarketHarvestNightly(DB) {
       seen[sym] = lastEnd + 1;   // 다음 수확은 새 봉부터
     }
     for (let i = 0; i < stmts.length; i += 100) { try { await DB.batch(stmts.slice(i, i + 100)); } catch (e) {} }
-    try { await setState(DB, offKey, (off + takeN) % symsAll.length); } catch (e) {}
+    // [V9.5] 실제 처리한 심볼 수(scanned)만큼만 오프셋 전진 — 예산/캡으로 조기중단 시 남은 심볼을 다음밤에 이어감(순회 누락 0)
+    try { await setState(DB, offKey, (off + Math.max(1, Math.min(takeN, scanned))) % symsAll.length); } catch (e) {}
     try { await setState(DB, seenKey, seen); } catch (e) {}
     // 총 상한 프루닝(오래된 수확표본부터) — 실거래 표본은 절대 삭제 안 함
     try {
