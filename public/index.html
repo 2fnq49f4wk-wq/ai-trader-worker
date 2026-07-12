@@ -2671,21 +2671,20 @@ html[data-theme="light"] .table tbody tr:hover{background:rgba(9,105,218,.045);}
         <span class="nav-item-icon">◉</span>
         <span class="nav-item-label">POSITIONS</span>
       </div>
-      <!-- [V9.10] 액션바 하단 버튼에서 이동 — 사이드바 버튼 과밀 완화 요청 반영. data-modal은 페이지 전환 없이 모달만 연다. -->
-      <div class="nav-item" data-modal="macro">
+      <!-- [V9.10/9.12] 액션바·AI픽 바에서 이동 — 대시보드·종목상세와 동일하게 일반 페이지로 표시 -->
+      <div class="nav-item" data-page="macro">
         <span class="nav-item-icon">📊</span>
         <span class="nav-item-label">지표</span>
       </div>
-      <div class="nav-item" data-modal="fx">
+      <div class="nav-item" data-page="fx">
         <span class="nav-item-icon">💱</span>
         <span class="nav-item-label">환율</span>
       </div>
-      <!-- [V9.11] AI 월간 리포트·AI 두뇌 관측 — 종목상세 AI픽 바에서 이동, 어디서든 접근 가능하게 -->
-      <div class="nav-item" data-modal="report">
+      <div class="nav-item" data-page="report">
         <span class="nav-item-icon">📊</span>
         <span class="nav-item-label">AI 리포트</span>
       </div>
-      <div class="nav-item" data-modal="nnviz">
+      <div class="nav-item" data-page="nnviz">
         <span class="nav-item-icon">🧠</span>
         <span class="nav-item-label">AI 두뇌</span>
       </div>
@@ -3330,16 +3329,12 @@ html[data-theme="light"] .table tbody tr:hover{background:rgba(9,105,218,.045);}
       </div>
     </div><!-- /vision -->
 
-  </main><!-- /content -->
 </div><!-- /shell -->
 
-<!-- ══ 경제지표 모달 ══ -->
-<div class="modal" id="macroModal">
-  <div class="modal-macro">
-    <h2>
-      <span>📊 주요 경제지표</span>
-      <span class="close-x" id="btnCloseMacro">✕</span>
-    </h2>
+<!-- ══ [V9.12] 경제지표 — 팝업 모달→일반 페이지 전환 ══ -->
+<div class="page" id="page-macro">
+  <div class="page-header"><span class="page-title">📊 주요 경제지표</span></div>
+  <div class="modal-macro" style="max-width:940px;">
     <div class="macro-sub">미국 &amp; 한국 핵심 매크로 · 기준일 <b id="macroToday">—</b></div>
     <div style="display:flex;align-items:center;justify-content:space-between;gap:10px;flex-wrap:wrap;margin-bottom:14px;">
       <span id="macroStamp" style="font-size:10px;color:var(--t3);">—</span>
@@ -3364,13 +3359,10 @@ html[data-theme="light"] .table tbody tr:hover{background:rgba(9,105,218,.045);}
   </div>
 </div>
 
-<!-- ══ 환율 모달 ══ -->
-<div class="modal" id="fxModal">
-  <div class="modal-macro">
-    <h2>
-      <span>💱 환율</span>
-      <span class="close-x" id="btnCloseFx">✕</span>
-    </h2>
+<!-- ══ [V9.12] 환율 — 팝업 모달→일반 페이지 전환 ══ -->
+<div class="page" id="page-fx">
+  <div class="page-header"><span class="page-title">💱 환율</span></div>
+  <div class="modal-macro" style="max-width:940px;">
     <div class="macro-sub">주요 통화 환율 · 매일 06:30(KST) 자동 갱신</div>
     <div style="display:flex;align-items:center;justify-content:space-between;gap:10px;flex-wrap:wrap;margin-bottom:14px;">
       <span id="fxStamp" style="font-size:10px;color:var(--t3);">—</span>
@@ -3385,6 +3377,45 @@ html[data-theme="light"] .table tbody tr:hover{background:rgba(9,105,218,.045);}
     <div class="macro-disclaimer">※ 야후 파이낸스 기준. 실거래 전 공식 고시환율을 확인하세요.</div>
   </div>
 </div>
+
+<!-- ══ [V9.12] AI 월간 리포트 — 팝업 모달→일반 페이지 전환 ══ -->
+<div class="page" id="page-report">
+  <div class="page-header"><span class="page-title">📊 LUX-AI 월간 투자 리포트</span>
+    <div class="page-actions">
+      <button type="button" class="btn" id="rptThis">이번 달</button>
+      <button type="button" class="btn" id="rptPrev">지난 달</button>
+    </div>
+  </div>
+  <div class="modal-macro" style="max-width:900px;">
+    <pre class="rpt-body" id="rptBody">리포트 생성 중…</pre>
+  </div>
+</div>
+
+<!-- [V9.12] 팝업 모달→일반 페이지 전환 -->
+<div class="page" id="page-nnviz">
+  <div class="nnviz-content">
+    <div class="nnv-head">
+      <div>
+        <div class="nnv-title"><span class="dot"></span>AI 두뇌 관측 · LUX-DNN</div>
+      </div>
+      <div style="display:flex;gap:8px;align-items:center;">
+        <button class="nnv-btn" onclick="openNnViz(1)">↻ 새로고침</button>
+      </div>
+    </div>
+    <div class="nnv-sub" id="nnvSub">신경망 구조·가중치 강도를 실시간으로 관측합니다.</div>
+    <div class="nnv-chips" id="nnvChips"></div>
+    <div class="nnv-stage" id="nnvStage"><div class="nnv-empty">불러오는 중…</div></div>
+    <div class="nnv-legend" id="nnvLegend" style="display:none;">
+      <span><i style="background:#4488ff;"></i>입력층(48 피처)</span>
+      <span><i style="background:#bb86fc;"></i>은닉층(ReLU·드롭아웃)</span>
+      <span><i style="background:#00e676;"></i>출력층(승률)</span>
+      <span style="color:#6f84aa;">● 노드 크기·밝기 = 가중치 강도(영향력)</span>
+    </div>
+    <div class="nnv-comm" id="nnvComm"></div>
+  </div>
+</div>
+
+  </main><!-- /content -->
 
 <!-- ══ 히트맵 모달 ══ -->
 <!-- [V98] 빠른 검색 FAB (모바일/마우스용) -->
@@ -7061,34 +7092,24 @@ html[data-theme="light"] .table tbody tr:hover{background:rgba(9,105,218,.045);}
       });
     })['catch'](function(){});
   }
+  // [V9.12] 팝업 오버레이 동적생성→고정 페이지(#page-report) 재사용. 표시는 showPage()가 담당.
+  function ymOf(offset) {
+    var d = new Date(); d.setUTCDate(1); d.setUTCMonth(d.getUTCMonth() + offset);
+    return d.toISOString().slice(0, 7);
+  }
+  function loadMonthlyReport(ym) {
+    var body = document.getElementById('rptBody'); if (!body) return;
+    body.textContent = '리포트 생성 중…';
+    fetch('/api/report/monthly' + (ym ? '?ym=' + ym + '&refresh=1' : '?refresh=1'))
+      .then(function(r){ return r.json(); })
+      .then(function(d){ body.textContent = (d && d.text) || '리포트 없음'; })
+      ['catch'](function(){ body.textContent = '리포트 로딩 실패'; });
+  }
   function openMonthlyReport() {
-    var old = document.getElementById('rptOverlay');
-    if (old) old.remove();
-    var ov = document.createElement('div');
-    ov.id = 'rptOverlay'; ov.className = 'rpt-overlay';
-    ov.innerHTML = '<div class="rpt-box"><div class="rpt-head"><span>📊 LUX-AI 월간 투자 리포트</span>' +
-      '<span class="rpt-actions"><button type="button" class="btn" id="rptThis">이번 달</button>' +
-      '<button type="button" class="btn" id="rptPrev">지난 달</button>' +
-      '<button type="button" class="btn" id="rptClose">✕ 닫기</button></span></div>' +
-      '<pre class="rpt-body" id="rptBody">리포트 생성 중…</pre></div>';
-    document.body.appendChild(ov);
-    ov.addEventListener('click', function(e){ if (e.target === ov) ov.remove(); });
-    document.getElementById('rptClose').addEventListener('click', function(){ ov.remove(); });
-    function loadRpt(ym) {
-      var body = document.getElementById('rptBody'); if (!body) return;
-      body.textContent = '리포트 생성 중…';
-      fetch('/api/report/monthly' + (ym ? '?ym=' + ym + '&refresh=1' : '?refresh=1'))
-        .then(function(r){ return r.json(); })
-        .then(function(d){ body.textContent = (d && d.text) || '리포트 없음'; })
-        ['catch'](function(){ body.textContent = '리포트 로딩 실패'; });
-    }
-    function ymOf(offset) {
-      var d = new Date(); d.setUTCDate(1); d.setUTCMonth(d.getUTCMonth() + offset);
-      return d.toISOString().slice(0, 7);
-    }
-    document.getElementById('rptThis').addEventListener('click', function(){ loadRpt(ymOf(0)); });
-    document.getElementById('rptPrev').addEventListener('click', function(){ loadRpt(ymOf(-1)); });
-    loadRpt(ymOf(0));   // 기본: 이번 달(진행분)
+    var rt = document.getElementById('rptThis'), rp = document.getElementById('rptPrev');
+    if (rt && !rt.__bound) { rt.__bound = true; rt.addEventListener('click', function(){ loadMonthlyReport(ymOf(0)); }); }
+    if (rp && !rp.__bound) { rp.__bound = true; rp.addEventListener('click', function(){ loadMonthlyReport(ymOf(-1)); }); }
+    loadMonthlyReport(ymOf(0));   // 기본: 이번 달(진행분)
   }
 
   // 관련 뉴스 헤드라인 (종목 섹터그룹 기준)
@@ -8353,13 +8374,12 @@ html[data-theme="light"] .table tbody tr:hover{background:rgba(9,105,218,.045);}
       .catch(function() { /* 네트워크 실패 시 폴백값 유지 */ });
   }
 
+  // [V9.12] 팝업→페이지 전환 — 표시는 showPage()가 담당, 여기선 데이터 로드만.
   function openMacro() {
     macroLoadAndRender();
-    $('macroModal').classList.add('show');
   }
-  function closeMacro() { $('macroModal').classList.remove('show'); }
 
-  // 수동 즉시 갱신 (모달 안 새로고침 버튼)
+  // 수동 즉시 갱신 (페이지 내 새로고침 버튼)
   function macroRunNow() {
     var btn = $('btnMacroRefresh');
     if (btn) { btn.disabled = true; btn.textContent = '갱신 중… (검색에 30~60초)'; }
@@ -8422,11 +8442,10 @@ html[data-theme="light"] .table tbody tr:hover{background:rgba(9,105,218,.045);}
       .then(function(data){ fxRender(data); })
       .catch(function(){ fxRender(null); });
   }
+  // [V9.12] 팝업→페이지 전환 — 표시는 showPage()가 담당, 여기선 데이터 로드만.
   function openFx() {
     fxLoadAndRender();
-    $('fxModal').classList.add('show');
   }
-  function closeFx() { $('fxModal').classList.remove('show'); }
   function fxRunNow() {
     var btn = $('btnFxRefresh');
     if (btn) { btn.disabled = true; btn.textContent = '갱신 중…'; }
@@ -9635,11 +9654,8 @@ html[data-theme="light"] .table tbody tr:hover{background:rgba(9,105,218,.045);}
   $('btnRefreshKR').addEventListener('click', function(){ refreshQuotes('kr'); });
   $('btnLogs').addEventListener('click', openLogs);
   $('btnCloseLogs').addEventListener('click', closeLogs);
-  // [V9.10] 지표/환율은 액션바 버튼 대신 사이드바 nav-item(data-modal)에서 엽니다 — showPage 리스너 쪽에서 처리.
-  // [V9.11] 월간 리포트는 사이드바 nav-item(data-modal="report")에서 열림 — 별도 바인딩 불필요
-  $('btnCloseMacro').addEventListener('click', closeMacro);
+  // [V9.12] 지표/환율/AI리포트/AI두뇌 — 사이드바 nav-item(data-page)에서 일반 페이지로 열림(showPage 쪽에서 로드 트리거)
   $('btnMacroRefresh').addEventListener('click', macroRunNow);
-  $('btnCloseFx').addEventListener('click', closeFx);
   $('btnFxRefresh').addEventListener('click', fxRunNow);
   $('btnHeatmap').addEventListener('click', openHeatmap);
   $('btnCloseHeatmap').addEventListener('click', closeHeatmap);
@@ -9906,12 +9922,7 @@ html[data-theme="light"] .table tbody tr:hover{background:rgba(9,105,218,.045);}
   ['cfgBudgetTrend','cfgBudgetScalp','cfgBudgetSnap'].forEach(function(id){
     if ($(id)) $(id).addEventListener('input', updateBudgetSplitLabels);
   });
-  $('macroModal').addEventListener('click', function(e){
-    if (e.target === $('macroModal')) closeMacro();
-  });
-  $('fxModal').addEventListener('click', function(e){
-    if (e.target === $('fxModal')) closeFx();
-  });
+  // [V9.12] 지표/환율은 일반 페이지 전환 — 바깥클릭 닫기 핸들러 불필요(모달 아님)
   $('heatmapModal').addEventListener('click', function(e){
     if (e.target === $('heatmapModal')) closeHeatmap();
   });
@@ -10121,6 +10132,8 @@ html[data-theme="light"] .table tbody tr:hover{background:rgba(9,105,218,.045);}
   //   변수를 참조해 첫 줄($)에서 ReferenceError → 페이지 전환·ECON·TA·VISION
   //   와이어링 전체가 죽어 있었음. 같은 스코프로 합쳐 해결.
   function showPage(id){
+    // [V9.12] 지표/환율/AI리포트/AI두뇌 팝업→페이지 전환: 나가는 페이지가 nnviz면 실시간 갱신 타이머 정지
+    try { if (document.getElementById('page-nnviz') && document.getElementById('page-nnviz').classList.contains('active') && id !== 'nnviz' && typeof closeNnViz === 'function') closeNnViz(); } catch(e){}
     document.querySelectorAll('.page').forEach(function(p){p.classList.remove('active');});
     document.querySelectorAll('.nav-item').forEach(function(n){n.classList.remove('active');});
     var pg=document.getElementById('page-'+id);
@@ -10138,16 +10151,18 @@ html[data-theme="light"] .table tbody tr:hover{background:rgba(9,105,218,.045);}
       try { if (detailState.symbol) renderDetailHeaderData(); else showDetailBrowse(); } catch(e){}
     } else if (id === 'trades') {
       try { renderTradeCalendar(); renderPnlCurve(); } catch(e){}
+    } else if (id === 'macro') {
+      try { openMacro(); } catch(e){}
+    } else if (id === 'fx') {
+      try { openFx(); } catch(e){}
+    } else if (id === 'report') {
+      try { openMonthlyReport(); } catch(e){}
+    } else if (id === 'nnviz') {
+      try { openNnViz(); } catch(e){}
     }
   }
   document.querySelectorAll('.nav-item').forEach(function(item){
     item.addEventListener('click',function(){
-      // [V9.10/9.11] data-modal 항목(지표/환율/AI리포트/AI두뇌)은 페이지 전환 없이 해당 모달만 연다.
-      var modal = this.getAttribute('data-modal');
-      if (modal === 'macro') { openMacro(); return; }
-      if (modal === 'fx') { openFx(); return; }
-      if (modal === 'report') { openMonthlyReport(); return; }
-      if (modal === 'nnviz') { openNnViz(); return; }
       showPage(this.getAttribute('data-page'));
     });
   });
@@ -10683,72 +10698,48 @@ setTimeout(function(){ var o=document.getElementById('lux-intro-overlay'); if(o&
 
 <!-- ═══════════ [V9] AI 두뇌 관측 — 신경망 시각화 ═══════════ -->
 <style>
-#nnVizModal .nnviz-content{position:relative;max-width:1080px;width:94vw;margin:3vh auto;background:linear-gradient(180deg,#0a0e18,#070a12);border:1px solid #1c2740;border-radius:16px;padding:22px 24px 26px;box-shadow:0 30px 90px rgba(0,0,0,.7),0 0 0 1px rgba(70,130,255,.06) inset;max-height:94vh;overflow-y:auto;}
-#nnVizModal .nnv-head{display:flex;align-items:center;justify-content:space-between;gap:12px;margin-bottom:4px;}
-#nnVizModal .nnv-title{font-family:'Space Grotesk',sans-serif;font-size:17px;font-weight:700;letter-spacing:.5px;color:#eaf2ff;display:flex;align-items:center;gap:9px;}
-#nnVizModal .nnv-title .dot{width:9px;height:9px;border-radius:50%;background:#00e676;box-shadow:0 0 10px #00e676;animation:nnPulse 1.6s ease-in-out infinite;}
-#nnVizModal .nnv-sub{font-size:11px;color:#7c90b5;margin:2px 0 14px;font-family:'IBM Plex Mono',monospace;}
-#nnVizModal .nnv-x{cursor:pointer;color:#7c90b5;font-size:22px;line-height:1;padding:2px 8px;border-radius:8px;transition:.15s;}
-#nnVizModal .nnv-x:hover{color:#ff1744;background:rgba(255,23,68,.1);}
-#nnVizModal .nnv-btn{cursor:pointer;font-family:'IBM Plex Mono',monospace;font-size:11px;color:#9fb4dc;background:rgba(70,130,255,.09);border:1px solid #22345a;border-radius:8px;padding:6px 11px;transition:.15s;}
-#nnVizModal .nnv-btn:hover{color:#eaf2ff;border-color:#3a63b0;background:rgba(70,130,255,.18);}
-#nnVizModal .nnv-chips{display:flex;flex-wrap:wrap;gap:8px;margin-bottom:14px;}
-#nnVizModal .nnv-chip{background:rgba(20,30,52,.7);border:1px solid #1e2c48;border-radius:9px;padding:7px 12px;min-width:82px;}
-#nnVizModal .nnv-chip .k{font-size:9.5px;color:#6f84aa;text-transform:uppercase;letter-spacing:.8px;font-family:'IBM Plex Mono',monospace;}
-#nnVizModal .nnv-chip .v{font-size:15px;font-weight:700;color:#eaf2ff;font-family:'Space Grotesk',sans-serif;margin-top:2px;}
-#nnVizModal .nnv-chip .v.good{color:#00e676;} #nnVizModal .nnv-chip .v.warn{color:#ffc107;} #nnVizModal .nnv-chip .v.off{color:#ff5c7a;}
-#nnVizModal .nnv-stage{position:relative;background:radial-gradient(120% 120% at 50% 0%,#0c1526,#060910 70%);border:1px solid #16223c;border-radius:13px;overflow:hidden;}
-#nnVizModal svg{display:block;width:100%;height:auto;}
-#nnVizModal .nnv-legend{display:flex;flex-wrap:wrap;gap:14px;margin-top:12px;font-size:10.5px;color:#8497ba;font-family:'IBM Plex Mono',monospace;}
-#nnVizModal .nnv-legend i{display:inline-block;width:10px;height:10px;border-radius:50%;margin-right:5px;vertical-align:middle;}
-#nnVizModal .nnv-comm{margin-top:16px;display:grid;gap:9px;}
-#nnVizModal .nnv-comm-row{display:grid;grid-template-columns:74px 1fr 116px;align-items:center;gap:10px;}
-#nnVizModal .nnv-comm-name{font-family:'Space Grotesk',sans-serif;font-weight:700;font-size:12.5px;color:#dbe6fb;}
-#nnVizModal .nnv-comm-name small{display:block;font-size:9px;color:#6f84aa;font-weight:400;}
-#nnVizModal .nnv-bar{height:9px;border-radius:6px;background:rgba(255,255,255,.05);overflow:hidden;}
-#nnVizModal .nnv-bar>span{display:block;height:100%;border-radius:6px;background:linear-gradient(90deg,#2f6bff,#00e0ff);transition:width .8s cubic-bezier(.2,.8,.2,1);}
-#nnVizModal .nnv-comm-meta{font-family:'IBM Plex Mono',monospace;font-size:10.5px;color:#9fb4dc;text-align:right;}
-#nnVizModal .nnv-tag{display:inline-block;font-size:9px;padding:1px 6px;border-radius:5px;margin-left:5px;font-family:'IBM Plex Mono',monospace;}
-#nnVizModal .nnv-tag.on{background:rgba(0,230,118,.14);color:#00e676;} #nnVizModal .nnv-tag.gate{background:rgba(255,193,7,.14);color:#ffc107;}
-#nnVizModal .nnv-empty{padding:50px 20px;text-align:center;color:#8497ba;font-size:13px;line-height:1.8;}
+#page-nnviz .nnviz-content{position:relative;max-width:1080px;width:94vw;margin:3vh auto;background:linear-gradient(180deg,#0a0e18,#070a12);border:1px solid #1c2740;border-radius:16px;padding:22px 24px 26px;box-shadow:0 30px 90px rgba(0,0,0,.7),0 0 0 1px rgba(70,130,255,.06) inset;max-height:94vh;overflow-y:auto;}
+#page-nnviz .nnv-head{display:flex;align-items:center;justify-content:space-between;gap:12px;margin-bottom:4px;}
+#page-nnviz .nnv-title{font-family:'Space Grotesk',sans-serif;font-size:17px;font-weight:700;letter-spacing:.5px;color:#eaf2ff;display:flex;align-items:center;gap:9px;}
+#page-nnviz .nnv-title .dot{width:9px;height:9px;border-radius:50%;background:#00e676;box-shadow:0 0 10px #00e676;animation:nnPulse 1.6s ease-in-out infinite;}
+#page-nnviz .nnv-sub{font-size:11px;color:#7c90b5;margin:2px 0 14px;font-family:'IBM Plex Mono',monospace;}
+#page-nnviz .nnv-x{cursor:pointer;color:#7c90b5;font-size:22px;line-height:1;padding:2px 8px;border-radius:8px;transition:.15s;}
+#page-nnviz .nnv-x:hover{color:#ff1744;background:rgba(255,23,68,.1);}
+#page-nnviz .nnv-btn{cursor:pointer;font-family:'IBM Plex Mono',monospace;font-size:11px;color:#9fb4dc;background:rgba(70,130,255,.09);border:1px solid #22345a;border-radius:8px;padding:6px 11px;transition:.15s;}
+#page-nnviz .nnv-btn:hover{color:#eaf2ff;border-color:#3a63b0;background:rgba(70,130,255,.18);}
+#page-nnviz .nnv-chips{display:flex;flex-wrap:wrap;gap:8px;margin-bottom:14px;}
+#page-nnviz .nnv-chip{background:rgba(20,30,52,.7);border:1px solid #1e2c48;border-radius:9px;padding:7px 12px;min-width:82px;}
+#page-nnviz .nnv-chip .k{font-size:9.5px;color:#6f84aa;text-transform:uppercase;letter-spacing:.8px;font-family:'IBM Plex Mono',monospace;}
+#page-nnviz .nnv-chip .v{font-size:15px;font-weight:700;color:#eaf2ff;font-family:'Space Grotesk',sans-serif;margin-top:2px;}
+#page-nnviz .nnv-chip .v.good{color:#00e676;} #page-nnviz .nnv-chip .v.warn{color:#ffc107;} #page-nnviz .nnv-chip .v.off{color:#ff5c7a;}
+#page-nnviz .nnv-stage{position:relative;background:radial-gradient(120% 120% at 50% 0%,#0c1526,#060910 70%);border:1px solid #16223c;border-radius:13px;overflow:hidden;}
+#page-nnviz svg{display:block;width:100%;height:auto;}
+#page-nnviz .nnv-legend{display:flex;flex-wrap:wrap;gap:14px;margin-top:12px;font-size:10.5px;color:#8497ba;font-family:'IBM Plex Mono',monospace;}
+#page-nnviz .nnv-legend i{display:inline-block;width:10px;height:10px;border-radius:50%;margin-right:5px;vertical-align:middle;}
+#page-nnviz .nnv-comm{margin-top:16px;display:grid;gap:9px;}
+#page-nnviz .nnv-comm-row{display:grid;grid-template-columns:74px 1fr 116px;align-items:center;gap:10px;}
+#page-nnviz .nnv-comm-name{font-family:'Space Grotesk',sans-serif;font-weight:700;font-size:12.5px;color:#dbe6fb;}
+#page-nnviz .nnv-comm-name small{display:block;font-size:9px;color:#6f84aa;font-weight:400;}
+#page-nnviz .nnv-bar{height:9px;border-radius:6px;background:rgba(255,255,255,.05);overflow:hidden;}
+#page-nnviz .nnv-bar>span{display:block;height:100%;border-radius:6px;background:linear-gradient(90deg,#2f6bff,#00e0ff);transition:width .8s cubic-bezier(.2,.8,.2,1);}
+#page-nnviz .nnv-comm-meta{font-family:'IBM Plex Mono',monospace;font-size:10.5px;color:#9fb4dc;text-align:right;}
+#page-nnviz .nnv-tag{display:inline-block;font-size:9px;padding:1px 6px;border-radius:5px;margin-left:5px;font-family:'IBM Plex Mono',monospace;}
+#page-nnviz .nnv-tag.on{background:rgba(0,230,118,.14);color:#00e676;} #page-nnviz .nnv-tag.gate{background:rgba(255,193,7,.14);color:#ffc107;}
+#page-nnviz .nnv-empty{padding:50px 20px;text-align:center;color:#8497ba;font-size:13px;line-height:1.8;}
 @keyframes nnPulse{0%,100%{opacity:1;transform:scale(1);}50%{opacity:.45;transform:scale(.82);}}
 @keyframes nnFlow{to{stroke-dashoffset:-16;}}
-#nnVizModal .nnedge{stroke-dasharray:2 6;animation:nnFlow 1s linear infinite;}
-#nnVizModal .nnnode{transition:r .5s ease;}
-html[data-theme="light"] #nnVizModal .nnviz-content{background:linear-gradient(180deg,#f7fafe,#eef3fb);border-color:#cdd9ee;}
-html[data-theme="light"] #nnVizModal .nnv-title,html[data-theme="light"] #nnVizModal .nnv-chip .v,html[data-theme="light"] #nnVizModal .nnv-comm-name{color:#12233f;}
+#page-nnviz .nnedge{stroke-dasharray:2 6;animation:nnFlow 1s linear infinite;}
+#page-nnviz .nnnode{transition:r .5s ease;}
+html[data-theme="light"] #page-nnviz .nnviz-content{background:linear-gradient(180deg,#f7fafe,#eef3fb);border-color:#cdd9ee;}
+html[data-theme="light"] #page-nnviz .nnv-title,html[data-theme="light"] #page-nnviz .nnv-chip .v,html[data-theme="light"] #page-nnviz .nnv-comm-name{color:#12233f;}
 </style>
-<div class="modal" id="nnVizModal">
-  <div class="nnviz-content">
-    <div class="nnv-head">
-      <div>
-        <div class="nnv-title"><span class="dot"></span>AI 두뇌 관측 · LUX-DNN</div>
-      </div>
-      <div style="display:flex;gap:8px;align-items:center;">
-        <button class="nnv-btn" onclick="openNnViz(1)">↻ 새로고침</button>
-        <span class="nnv-x" onclick="closeNnViz()">&times;</span>
-      </div>
-    </div>
-    <div class="nnv-sub" id="nnvSub">신경망 구조·가중치 강도를 실시간으로 관측합니다.</div>
-    <div class="nnv-chips" id="nnvChips"></div>
-    <div class="nnv-stage" id="nnvStage"><div class="nnv-empty">불러오는 중…</div></div>
-    <div class="nnv-legend" id="nnvLegend" style="display:none;">
-      <span><i style="background:#4488ff;"></i>입력층(48 피처)</span>
-      <span><i style="background:#bb86fc;"></i>은닉층(ReLU·드롭아웃)</span>
-      <span><i style="background:#00e676;"></i>출력층(승률)</span>
-      <span style="color:#6f84aa;">● 노드 크기·밝기 = 가중치 강도(영향력)</span>
-    </div>
-    <div class="nnv-comm" id="nnvComm"></div>
-  </div>
-</div>
 <script>
 (function(){
   var NNV = { timer:null };
-  window.closeNnViz = function(){ var m=document.getElementById('nnVizModal'); if(m) m.classList.remove('show'); if(NNV.timer){clearInterval(NNV.timer);NNV.timer=null;} };
+  // [V9.12] 팝업→페이지 전환 — 표시/숨김은 showPage()의 .page.active가 담당. 여기선 데이터 로드만.
+  window.closeNnViz = function(){ if(NNV.timer){clearInterval(NNV.timer);NNV.timer=null;} };
   window.openNnViz = function(refreshOnly){
-    var m=document.getElementById('nnVizModal'); if(!m) return;
-    if(!refreshOnly) m.classList.add('show');
-    var stage=document.getElementById('nnvStage');
+    var stage=document.getElementById('nnvStage'); if(!stage) return;
     if(!refreshOnly) stage.innerHTML='<div class="nnv-empty">신경망 로딩 중…</div>';
     fetch('/api/nn-viz').then(function(r){return r.json();}).then(function(d){ NNV_render(d); })
       ['catch'](function(){ stage.innerHTML='<div class="nnv-empty">조회 실패 — 엔진이 응답하지 않습니다.</div>'; });
