@@ -16917,7 +16917,7 @@ async function mlMindStatus(DB) {
 
 const DNN = {
   enabled: true,
-  hidden: [192, 128, 96, 64, 48, 32],  // ← 은닉층 6층(V8: 48→192→128→96→64→48→32→1, 파라미터 ~66k). 층 수·너비 자유.
+  hidden: [192, 128, 96, 64, 48, 32, 24],  // ← [V9.4] 은닉층 7층(55→192→128→96→64→48→32→24→1). 얇은 층 추가로 깊이(비선형 표현력)↑, 파라미터 폭증 없이 강화. 신뢰게이트가 자동 채택/억제.
   dropout: 0.35,         // 은닉 드롭아웃(망 커진 만큼 상향 — 과적합 억제)
   l2: 5e-4,              // 가중치 감쇠(망 커진 만큼 상향)
   lr: 0.0025,            // Adam 학습률(깊어져 약간 보수적)
@@ -18937,11 +18937,13 @@ async function mlBacktestInject(DB, seriesBySym, signalFn, opts) {
         const future = closes[t + horizon];
         if (!(price > 0) || !(future > 0)) continue;
         const ex = sig.extra || {};
+        const _sl = function (a) { return Array.isArray(a) ? a.slice(0, t + 1) : null; };  // [V9.4] OHLCV도 동일 슬라이스 → 수확·라이브 분포 정합
         const feat = mlBuildFeatures({
-          closes: win, price: price, dayPct: _num(ex.dayPct, 0),
+          closes: win, volumes: _sl(S.volumes), opens: _sl(S.opens), highs: _sl(S.highs), lows: _sl(S.lows),
+          price: price, prevClose: t > 0 ? closes[t - 1] : 0, dayPct: _num(ex.dayPct, 0),
           regime: ex.regime || "NEUTRAL", visionUp: _num(ex.visionUp, 0.5),
           sigWeight: _num(ex.sigWeight, 1), confluence: _num(ex.confluence, 1),
-          strategy: sig.strategy || "swing", ev: ex.ev || {}
+          strategy: sig.strategy || "swing", market: S.market, ev: ex.ev || {}
         });
         const pnlPct = (future - price) / price * 100;
         await mlLogSample(DB, S.market || "US", sym, (sig.strategy || "swing") + "_bt", feat, pnlPct);
