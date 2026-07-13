@@ -51,14 +51,17 @@ def train_job(epochs: int = EPOCHS_DEFAULT, dry: bool = False):
     # ── 1) 표본 내려받기 ──
     def fetch_all():
         off, page, samples, cfg, fv, fn = 0, 20000, [], None, None, None
+        anchor = 0  # [V11.1] 스냅샷 앵커 — 수집 중 신규 수확행이 OFFSET을 밀어 중복/누락되는 것 방지
         while True:
-            r = requests.get(BASE + "/api/ml-export",
-                             params={"key": KEY, "limit": page, "offset": off},
-                             headers=HDR, timeout=120)
+            params = {"key": KEY, "limit": page, "offset": off}
+            if anchor:
+                params["beforeTs"] = anchor
+            r = requests.get(BASE + "/api/ml-export", params=params, headers=HDR, timeout=180)
             if r.status_code != 200:
                 raise RuntimeError(f"export {r.status_code}: {r.text[:200]}")
             j = r.json()
             cfg, fv, fn = j["config"], j["featVer"], j["featNames"]
+            anchor = j.get("anchorTs") or anchor
             got = j.get("samples", [])
             samples.extend(got)
             total = j.get("total", len(samples))
@@ -93,7 +96,11 @@ def train_job(epochs: int = EPOCHS_DEFAULT, dry: bool = False):
     if Nall < 60000:      dropout, l2, mixup_p, input_noise = 0.60, 4e-3, 0.35, 0.10   # 데이터 기근 → 강한 규제
     elif Nall < 150000:   dropout, l2, mixup_p, input_noise = 0.50, 2e-3, 0.28, 0.08   # 중간
     else:                 dropout, l2, mixup_p, input_noise = 0.42, 9e-4, 0.20, 0.06   # 데이터 충분 → 기본(표현력 개방)
-    print(f"  적응형 규제: N={Nall} → dropout={dropout} l2={l2} mixup={mixup_p} noise={input_noise}")
+    # [V11.1] 배치·에폭도 데이터 규모에 맞춤 — 300k×에폭400×배치32면 GPU로도 timeout(3600s) 초과.
+    #   대용량일수록 배치↑(스텝수↓)·에폭↓(1에폭당 갱신이 이미 많음). 조기종료가 최적점을 잡음.
+    if Nall >= 150000:    batch, ep = 256, min(ep, 120)
+    elif Nall >= 60000:   batch, ep = 128, min(ep, 220)
+    print(f"  적응형 규제: N={Nall} → dropout={dropout} l2={l2} mixup={mixup_p} noise={input_noise} batch={batch} epochs={ep}")
 
     dev = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     print(f"② 학습 dev={dev} dims={'-'.join(map(str,dims))} seeds={K} epochs={ep} N={len(samples)}")
@@ -203,9 +210,23 @@ def train_job(epochs: int = EPOCHS_DEFAULT, dry: bool = False):
         zsum = torch.zeros(Xva.shape[0], device=dev)
         for net in nets:
             net.eval(); zsum += net(Xva, False).squeeze(-1)
-        acc = ((torch.sigmoid(zsum / len(nets)) >= 0.5).float() == Yva).float().mean().item()
+        pva = torch.sigmoid(zsum / len(nets))
+        acc = ((pva >= 0.5).float() == Yva).float().mean().item()
+        # [V11.1 관측] 기저율·다수클래스 베이스라인·AUC — "정확도 낮음"이 모델 문제인지
+        #   클래스 불균형/분포이동 문제인지 구분하는 진단 지표(로그 전용, 게이트엔 미사용).
+        base = Yva.mean().item()
+        majority = max(base, 1 - base)
+        ys = Yva.cpu().numpy(); ps = pva.cpu().numpy()
+        order = np.argsort(ps); ranks = np.empty_like(order, dtype=np.float64); ranks[order] = np.arange(1, len(ps) + 1)
+        npos = ys.sum(); nneg = len(ys) - npos
+        auc = float((ranks[ys > 0.5].sum() - npos * (npos + 1) / 2) / (npos * nneg)) if npos > 0 and nneg > 0 else 0.5
     lb = wilson_lb(acc, len(va))
     print(f"③ 앙상블 valAcc {acc*100:.2f}% (Wilson하한 {lb*100:.2f}%, n={len(va)})")
+    print(f"   진단: 기저율(양성비율) {base*100:.1f}% | 다수클래스 베이스라인 {majority*100:.1f}% | AUC {auc:.3f}")
+    if acc < majority - 0.02:
+        print("   ⚠️ 정확도가 '전부 다수클래스 찍기'보다 낮음 — 분포이동(최근 시장≠과거 패턴) 또는 과적합 신호")
+    if auc < 0.52:
+        print("   ⚠️ AUC<0.52 — 현재 피처만으론 판별력 자체가 약함. 데이터 축적/피처 확장이 근본 해법")
 
     js_nets = []
     for net in nets:

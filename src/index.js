@@ -12745,11 +12745,15 @@ async function handleRequest(request, env) {
       const au = _trainAuthed(); if (!au.ok) return Response.json({ error: au.msg }, { status: au.code, headers: cors });
       const limit = Math.min(20000, Math.max(1, Number(url.searchParams.get("limit")) || 10000));
       const offset = Math.max(0, Number(url.searchParams.get("offset")) || 0);
+      // [V11.1] 스냅샷 앵커 — 다페이지 수집 중 야간수확이 새 행을 삽입하면 OFFSET이 밀려 중복/누락.
+      //   첫 페이지가 anchorTs(현재 최신 ts)를 반환하고, 이후 페이지는 beforeTs로 그 시점을 고정.
+      const beforeTs = Number(url.searchParams.get("beforeTs")) || 0;
+      const anchorTs = beforeTs > 0 ? beforeTs : Date.now();
       let total = 0;
-      try { const c = await env.DB.prepare("SELECT COUNT(*) AS c FROM ml_samples WHERE featver = ?").bind(LUXML.featVer).first(); total = (c && c.c) || 0; } catch (e) {}
+      try { const c = await env.DB.prepare("SELECT COUNT(*) AS c FROM ml_samples WHERE featver = ? AND ts <= ?").bind(LUXML.featVer, anchorTs).first(); total = (c && c.c) || 0; } catch (e) {}
       const rows = await env.DB.prepare(
-        "SELECT ts, feat, label, pnl_pct, strategy FROM ml_samples WHERE featver = ? ORDER BY ts DESC LIMIT ? OFFSET ?"
-      ).bind(LUXML.featVer, limit, offset).all();
+        "SELECT ts, feat, label, pnl_pct, strategy FROM ml_samples WHERE featver = ? AND ts <= ? ORDER BY ts DESC LIMIT ? OFFSET ?"
+      ).bind(LUXML.featVer, anchorTs, limit, offset).all();
       const raw = (rows && rows.results) ? rows.results : [];
       const out = [];
       for (const r of raw) {
@@ -12758,7 +12762,7 @@ async function handleRequest(request, env) {
         out.push({ ts: _num(r.ts, 0), x: v.map(function (t) { return _num(t, 0); }), y: r.label ? 1 : 0, pnl: _num(r.pnl_pct, 0), hv: r.strategy === "hv" ? 1 : 0 });
       }
       return Response.json({
-        featVer: LUXML.featVer, featNames: LUXML.featNames, total: total, offset: offset, returned: out.length,
+        featVer: LUXML.featVer, featNames: LUXML.featNames, total: total, offset: offset, returned: out.length, anchorTs: anchorTs,
         config: { hidden: DNN.hidden, seeds: DNN.seeds, dropout: DNN.dropout, l2: DNN.l2, labelSmooth: DNN.labelSmooth,
                   inputNoise: DNN.inputNoise, mixupP: DNN.mixupP, stdClip: DNN.stdClip, valFrac: DNN.valFrac,
                   embargoDays: LUXML.embargoDays || 6, hvSrcWeight: (typeof HARVEST !== "undefined" ? HARVEST.srcWeight : 1),
@@ -15319,7 +15323,8 @@ const LUXML = {
   gateThresh: 0.42,
   sizeMin: 0.5, sizeMax: 1.5,
 
-  trainWindow: 5000,   // [V9.5] 4000→5000: 수확 대폭 확대에 맞춰 학습 표본창 확장(GBDT·선형모델 활용도↑)
+  trainWindow: 12000,  // [V11] 5000→12000: 수확 300k 확대에 맞춰 위원회(GBDT·MIND·앙상블) 표본창 확대.
+                       //   각 학습기는 자체 CPU 예산가드(GBDT 25s deadline 등)가 있어 초과분은 스스로 절삭 — 안전.
   epochs: 25,
   lr: 0.05,
   l2: 0.0006,        // 릿지(부드러운 축소)
@@ -17403,15 +17408,15 @@ async function mlDNNTrainNightly(DB) {
 
     // 층 구조 [D, ...hidden, 1] — 멀티시드 앙상블(서로 다른 초기화·셔플 K개 → 로짓 평균)
     const dims = [D].concat(DNN.hidden).concat([1]);
-    // [V11] 외부 GPU 학습 모델이 이미 가동(trusted) 중이면 야간 자가학습이 그걸 열등한 부분학습으로 덮지 않도록 생략.
+    // [V11.1] 외부 GPU 학습 모델이 존재하면 신뢰 여부와 무관하게 야간 자가학습 생략.
+    //   ★기존 버그: trusted일 때만 생략 → 외부모델이 미신뢰(성능 미달)면 Worker의 90초 부분학습이
+    //   400에폭 완전학습본을 매일밤 덮어씀. 외부(Modal)가 12시간마다 재학습하므로 소유권은 항상 외부.
+    //   덤으로 90초 CPU가 수확(harvest)으로 돌아가 데이터 축적도 빨라짐.
     let prevModel = null;
     try { prevModel = await mlDNNLoad(DB); } catch (e) {}
-    try {
-      const _pt = await getState(DB, "dnn_trust", null);
-      if (prevModel && prevModel.source === "external" && _pt && _pt.trusted) {
-        return "[DNN] 외부GPU 학습모델 가동중(valAcc " + ((_num(prevModel.valAcc, 0)) * 100).toFixed(1) + "%) — 야간 자가학습 생략(외부가 소유)";
-      }
-    } catch (e) {}
+    if (prevModel && prevModel.source === "external") {
+      return "[DNN] 외부GPU 학습모델 존재(valAcc " + ((_num(prevModel.valAcc, 0)) * 100).toFixed(1) + "%) — 야간 자가학습 생략(외부 소유, 12h마다 재학습)";
+    }
     const warmNets = (prevModel && Array.isArray(prevModel.nets) && Array.isArray(prevModel.dims)
       && prevModel.dims.length === dims.length && prevModel.dims.every(function (v, i) { return v === dims[i]; }))
       ? prevModel.nets : null;   // [V11] 웜스타트 소스(차원 일치 시에만)

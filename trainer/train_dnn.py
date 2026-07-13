@@ -45,14 +45,19 @@ except ImportError:
 def fetch_all(base, key):
     hdr = {"x-train-key": key}
     off, page, samples, cfg, featver, featnames = 0, 20000, [], None, None, None
+    anchor = 0  # [V11.1] 스냅샷 앵커(수집 중 신규행 삽입에 의한 중복/누락 방지)
     while True:
+        params = {"key": key, "limit": page, "offset": off}
+        if anchor:
+            params["beforeTs"] = anchor
         r = requests.get(base.rstrip("/") + "/api/ml-export",
-                         params={"key": key, "limit": page, "offset": off},
-                         headers=hdr, timeout=120)
+                         params=params,
+                         headers=hdr, timeout=180)
         if r.status_code != 200:
             sys.exit(f"export 실패 {r.status_code}: {r.text[:300]}")
         j = r.json()
         cfg = j["config"]; featver = j["featVer"]; featnames = j["featNames"]
+        anchor = j.get("anchorTs") or anchor
         got = j.get("samples", [])
         samples.extend(got)
         total = j.get("total", len(samples))
