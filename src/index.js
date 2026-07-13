@@ -12728,6 +12728,95 @@ async function handleRequest(request, env) {
       return Response.json(data, { headers: cors });
     }
 
+    // ═══════════ [V11] 외부 GPU/CPU 학습 오프로드 ═══════════
+    //   3M 딥넷은 순수 JS Worker(CPU 300s)로는 완전학습 불가 → 표본을 외부(사용자 PC GPU·Colab)로 내보내
+    //   PyTorch로 완전학습 후 가중치를 업로드. Worker는 추론·저장만. env.TRAIN_KEY 시크릿으로 인증.
+    //   설정: wrangler secret put TRAIN_KEY   (미설정 시 503으로 차단 — 공개 노출 방지)
+    function _trainAuthed() {
+      const want = env.TRAIN_KEY;
+      if (!want) return { ok: false, code: 503, msg: "TRAIN_KEY 미설정 — 'wrangler secret put TRAIN_KEY' 후 사용" };
+      const got = url.searchParams.get("key") || (request.headers.get("x-train-key") || "");
+      if (got !== want) return { ok: false, code: 401, msg: "unauthorized" };
+      return { ok: true };
+    }
+
+    // GET /api/ml-export — 학습표본 내보내기(현재 featVer만). 페이지네이션: ?limit&offset. 트레이너가 이걸 당겨감.
+    if (path === "/api/ml-export") {
+      const au = _trainAuthed(); if (!au.ok) return Response.json({ error: au.msg }, { status: au.code, headers: cors });
+      const limit = Math.min(20000, Math.max(1, Number(url.searchParams.get("limit")) || 10000));
+      const offset = Math.max(0, Number(url.searchParams.get("offset")) || 0);
+      let total = 0;
+      try { const c = await env.DB.prepare("SELECT COUNT(*) AS c FROM ml_samples WHERE featver = ?").bind(LUXML.featVer).first(); total = (c && c.c) || 0; } catch (e) {}
+      const rows = await env.DB.prepare(
+        "SELECT ts, feat, label, pnl_pct, strategy FROM ml_samples WHERE featver = ? ORDER BY ts DESC LIMIT ? OFFSET ?"
+      ).bind(LUXML.featVer, limit, offset).all();
+      const raw = (rows && rows.results) ? rows.results : [];
+      const out = [];
+      for (const r of raw) {
+        let v; try { v = JSON.parse(r.feat); } catch (e) { continue; }
+        if (!Array.isArray(v) || v.length !== LUXML.featNames.length) continue;
+        out.push({ ts: _num(r.ts, 0), x: v.map(function (t) { return _num(t, 0); }), y: r.label ? 1 : 0, pnl: _num(r.pnl_pct, 0), hv: r.strategy === "hv" ? 1 : 0 });
+      }
+      return Response.json({
+        featVer: LUXML.featVer, featNames: LUXML.featNames, total: total, offset: offset, returned: out.length,
+        config: { hidden: DNN.hidden, seeds: DNN.seeds, dropout: DNN.dropout, l2: DNN.l2, labelSmooth: DNN.labelSmooth,
+                  inputNoise: DNN.inputNoise, mixupP: DNN.mixupP, stdClip: DNN.stdClip, valFrac: DNN.valFrac,
+                  embargoDays: LUXML.embargoDays || 6, hvSrcWeight: (typeof HARVEST !== "undefined" ? HARVEST.srcWeight : 1),
+                  recencyHalfLifeDays: LUXML.recencyHalfLifeDays || 45, recencyFloor: LUXML.recencyFloor || 0.35,
+                  epochs: DNN.epochs, batch: DNN.batch, lr: DNN.lr, lrFloorFrac: DNN.lrFloorFrac,
+                  trustFloor: DNN.trustFloor, trustTemp: DNN.trustTemp, trustMargin: DNN.trustMargin },
+        samples: out
+      }, { headers: cors });
+    }
+
+    // POST /api/dnn-import — 외부에서 학습한 3M 가중치 업로드 → 검증 → 청크저장 → 신뢰게이트 갱신.
+    //   body: { nets:[{W,b,dims}], mean, std, dims, valAcc, valAccLB, valN, n, featVer }
+    if (path === "/api/dnn-import" && request.method === "POST") {
+      const au = _trainAuthed(); if (!au.ok) return Response.json({ error: au.msg }, { status: au.code, headers: cors });
+      let body; try { body = await request.json(); } catch (e) { return Response.json({ error: "bad json" }, { status: 400, headers: cors }); }
+      const D = LUXML.featNames.length;
+      const wantDims = [D].concat(DNN.hidden).concat([1]);
+      // ── 검증: featVer·차원·유한성 ──
+      if (_num(body.featVer, -1) !== LUXML.featVer) return Response.json({ error: "featVer 불일치 (서버 " + LUXML.featVer + ")" }, { status: 400, headers: cors });
+      if (!Array.isArray(body.nets) || !body.nets.length) return Response.json({ error: "nets 없음" }, { status: 400, headers: cors });
+      if (!Array.isArray(body.mean) || body.mean.length !== D || !Array.isArray(body.std) || body.std.length !== D)
+        return Response.json({ error: "mean/std 차원 불일치 (" + D + " 필요)" }, { status: 400, headers: cors });
+      const dims = Array.isArray(body.dims) ? body.dims : wantDims;
+      if (dims.length !== wantDims.length || dims.some(function (v, i) { return v !== wantDims[i]; }))
+        return Response.json({ error: "dims 불일치 — 기대 " + wantDims.join("-") }, { status: 400, headers: cors });
+      for (const nt of body.nets) {
+        if (!Array.isArray(nt.W) || nt.W.length !== dims.length - 1 || !Array.isArray(nt.b)) return Response.json({ error: "net 구조 불일치" }, { status: 400, headers: cors });
+        for (let l = 0; l < nt.W.length; l++) {
+          if (!Array.isArray(nt.W[l]) || nt.W[l].length !== dims[l + 1] || !Array.isArray(nt.W[l][0]) || nt.W[l][0].length !== dims[l])
+            return Response.json({ error: "W[" + l + "] 형상 불일치 (" + dims[l + 1] + "×" + dims[l] + " 필요)" }, { status: 400, headers: cors });
+        }
+        // 유한성 스팟체크(출력층 전부 + 첫층 일부)
+        for (const v of nt.W[nt.W.length - 1][0]) if (!isFinite(v)) return Response.json({ error: "비유한 가중치" }, { status: 400, headers: cors });
+      }
+      const dnnAcc = _clamp(_num(body.valAcc, 0), 0, 1);
+      const valN = Math.max(1, Math.floor(_num(body.valN, 30)));
+      const dnnLB = (body.valAccLB != null) ? _clamp(_num(body.valAccLB, 0), 0, 1) : _wilsonLB(dnnAcc, valN);
+      const net = { nets: body.nets, mean: body.mean.map(function (v) { return _num(v, 0); }), std: body.std.map(function (v) { return _num(v, 1); }),
+                    featVer: LUXML.featVer, valAcc: +dnnAcc.toFixed(4), valAccLB: +dnnLB.toFixed(4), valN: valN,
+                    dims: dims, n: Math.max(0, Math.floor(_num(body.n, 0))), trainedAt: Date.now(), source: "external" };
+      let saveInfo;
+      try { saveInfo = await setBigState(env.DB, "dnn_model", net); } catch (e) { return Response.json({ error: "저장 실패: " + (e && e.message) }, { status: 500, headers: cors }); }
+      __dnnMemCache = null;
+      // ── 신뢰게이트: mind 대비 Wilson 하한 비교(야간학습과 동일 로직) ──
+      let mindLB = 0.5;
+      try { const mm = await mlMindLoad(env.DB); if (mm) mindLB = (typeof mm.valAccLB === "number") ? mm.valAccLB : _wilsonLB(_num(mm.valAcc, 0.5), _num(mm.valN, 30)); } catch (e) {}
+      let trust = { wDnn: 0, trusted: false, dnnAcc: net.valAcc, dnnAccLB: net.valAccLB, mindAcc: mindLB, source: "external" };
+      if (dnnLB >= DNN.trustFloor && dnnLB >= mindLB - 1e-9 + DNN.trustMargin) {
+        const eD = Math.exp(DNN.trustTemp * (dnnLB - 0.5)), eM = Math.exp(DNN.trustTemp * (mindLB - 0.5));
+        trust.wDnn = +(eD / (eD + eM)).toFixed(4); trust.trusted = trust.wDnn > 0.05;
+      }
+      await setState(env.DB, "dnn_trust", trust);
+      try { await log(env.DB, "INFO", null, "[DNN] 외부업로드 저장 " + (saveInfo.bytes / 1048576).toFixed(1) + "MB/" + saveInfo.chunks + "청크 valAcc=" + (dnnAcc * 100).toFixed(1) + "% wDnn=" + trust.wDnn); } catch (e) {}
+      return Response.json({ ok: true, saved: saveInfo, trust: trust, activated: trust.trusted,
+        note: trust.trusted ? "3M 딥넷이 위원회에서 가동됩니다(wDnn=" + trust.wDnn + ")" : "저장됐으나 검증성능이 mind 미달 → 자동 억제(wDnn=0). 표본/에폭 늘려 재학습 권장." }, { headers: cors });
+    }
+    // ═══════════ /외부 학습 오프로드 ═══════════
+
     // ── [FUND] 재무제표 + 내장AI 재무평가(F-Score·Z-Score) — 서버 7일 캐시 ──
     if (path === "/api/fundamentals") {
       const sym = (url.searchParams.get("symbol") || "").trim();
@@ -17094,7 +17183,7 @@ function mlDNNScore(net, featVec) {
 
 // ── 시드 1개 학습: Adam + 미니배치 + 조기종료 + 라벨스무딩 + 입력노이즈 증강 ──
 //   deadline 초과 시 그 시점까지의 최적 가중치로 중단(부분학습도 유효). NaN이면 null.
-function _dnnTrainOne(train, val, dims, deadline) {
+function _dnnTrainOne(train, val, dims, deadline, warm) {
   const W = [], b = [], mW = [], vW = [], mB = [], vB = [];
   for (let l = 0; l < dims.length - 1; l++) {
     W.push(_dnnHeInit(dims[l + 1], dims[l]));
@@ -17103,6 +17192,13 @@ function _dnnTrainOne(train, val, dims, deadline) {
     vW.push(W[l].map(function (r) { return r.map(function () { return 0; }); }));
     mB.push(new Array(dims[l + 1]).fill(0));
     vB.push(new Array(dims[l + 1]).fill(0));
+  }
+  // [V11] 웜스타트: 이전 밤 학습된 가중치에서 이어서 학습(3M은 하룻밤에 못 끝내므로 여러 밤에 걸쳐 누적).
+  //   차원 일치 시에만 로드. Adam 모멘트는 0으로 리셋(안전).
+  if (warm && Array.isArray(warm.W) && warm.W.length === W.length) {
+    let okShape = true;
+    for (let l = 0; l < W.length; l++) if (!Array.isArray(warm.W[l]) || warm.W[l].length !== W[l].length || warm.W[l][0].length !== W[l][0].length) { okShape = false; break; }
+    if (okShape) for (let l = 0; l < W.length; l++) { for (let i = 0; i < W[l].length; i++) { const wr = warm.W[l][i]; for (let j = 0; j < W[l][i].length; j++) { const v = wr[j]; if (isFinite(v)) W[l][i][j] = v; } b[l][i] = isFinite(warm.b[l][i]) ? warm.b[l][i] : b[l][i]; } }
   }
   const net = { W: W, b: b, dims: dims };
 
@@ -17119,14 +17215,16 @@ function _dnnTrainOne(train, val, dims, deadline) {
     return ll / val.length;
   }
 
-  let step = 0, bestLoss = Infinity, bestW = null, bestB = null, wait = 0;
+  let step = 0, bestLoss = Infinity, bestW = null, bestB = null, wait = 0, deadlineHit = false;
   // [V4] SWA(Izmailov 2018): 후반부 에폭들의 가중치 평균 — 평평한 최소점으로 일반화↑
   const swaFrom = Math.floor(DNN.epochs * 0.5);
   let swaW = null, swaB = null, swaN = 0;
   const clip = DNN.gradClip;
   const noisy = new Array(D);
   for (let ep = 0; ep < DNN.epochs; ep++) {
-    if (Date.now() > deadline && bestW) break;   // 예산 초과 — 지금까지의 최적으로 마감
+    // [V11] ★핵심 수정★ 예산 초과 시 무조건 중단(기존 `&& bestW`가 첫 에폭 미완료 시 break를 막아
+    //   3M망이 CPU한도까지 폭주→Worker 강제종료→아무것도 저장 못 함→"영원히 학습대기"의 원인이었음).
+    if (Date.now() > deadline) break;
     // [V9] 코사인 LR 어닐링: lr → lr·lrFloorFrac (에폭 진행에 따라 감쇠, 후반 미세조정으로 일반화↑)
     const _cosT = DNN.epochs > 1 ? ep / (DNN.epochs - 1) : 0;
     const curLr = DNN.cosineLR
@@ -17134,6 +17232,9 @@ function _dnnTrainOne(train, val, dims, deadline) {
       : DNN.lr;
     for (let i = train.length - 1; i > 0; i--) { const k = Math.floor(Math.random() * (i + 1)); const tmp = train[i]; train[i] = train[k]; train[k] = tmp; }
     for (let bs = 0; bs < train.length; bs += DNN.batch) {
+      // [V11] 에폭 내부에서도 예산 감시 — 3M 대형망은 단일 에폭도 예산을 넘길 수 있어(에폭경계 체크만으론
+      //   CPU한도 초과→강제종료). 배치마다 확인해 즉시 마감하고 지금까지 학습분을 반환(부분학습도 유효).
+      if (Date.now() > deadline) { deadlineHit = true; break; }
       const batch = train.slice(bs, bs + DNN.batch);
       // 그래디언트 누적
       const gW = W.map(function (m) { return m.map(function (r) { return r.map(function () { return 0; }); }); });
@@ -17213,6 +17314,7 @@ function _dnnTrainOne(train, val, dims, deadline) {
         }
       }
     }
+    if (deadlineHit) break;   // [V11] 예산 소진 — 현재 가중치(부분학습)로 마감
     // [V4] SWA 누적(후반부 에폭)
     if (ep >= swaFrom) {
       if (!swaW) {
@@ -17301,12 +17403,25 @@ async function mlDNNTrainNightly(DB) {
 
     // 층 구조 [D, ...hidden, 1] — 멀티시드 앙상블(서로 다른 초기화·셔플 K개 → 로짓 평균)
     const dims = [D].concat(DNN.hidden).concat([1]);
+    // [V11] 외부 GPU 학습 모델이 이미 가동(trusted) 중이면 야간 자가학습이 그걸 열등한 부분학습으로 덮지 않도록 생략.
+    let prevModel = null;
+    try { prevModel = await mlDNNLoad(DB); } catch (e) {}
+    try {
+      const _pt = await getState(DB, "dnn_trust", null);
+      if (prevModel && prevModel.source === "external" && _pt && _pt.trusted) {
+        return "[DNN] 외부GPU 학습모델 가동중(valAcc " + ((_num(prevModel.valAcc, 0)) * 100).toFixed(1) + "%) — 야간 자가학습 생략(외부가 소유)";
+      }
+    } catch (e) {}
+    const warmNets = (prevModel && Array.isArray(prevModel.nets) && Array.isArray(prevModel.dims)
+      && prevModel.dims.length === dims.length && prevModel.dims.every(function (v, i) { return v === dims[i]; }))
+      ? prevModel.nets : null;   // [V11] 웜스타트 소스(차원 일치 시에만)
     const deadline = Date.now() + (DNN.trainBudgetMs || 20000);
     const nets = [];
     const K = Math.max(1, DNN.seeds || 1);
     for (let sd = 0; sd < K; sd++) {
       if (sd > 0 && Date.now() > deadline) break;   // CPU 예산 소진 — 최소 1개는 보장
-      const one = _dnnTrainOne(train, val, dims, deadline);
+      const warm = warmNets ? warmNets[sd % warmNets.length] : null;   // [V11] 여러 밤에 걸쳐 이어학습
+      const one = _dnnTrainOne(train, val, dims, deadline, warm);
       if (one) nets.push(one);
     }
     if (!nets.length) { await setState(DB, "dnn_trust", { wDnn: 0, trusted: false, reason: "nan" }); return "[DNN] 수치불안정 감지 — 미사용"; }
@@ -17319,7 +17434,8 @@ async function mlDNNTrainNightly(DB) {
 
     const net = { nets: nets, mean: mean, std: std, featVer: LUXML.featVer,
                   valAcc: +dnnAcc.toFixed(4), valAccLB: +dnnLB.toFixed(4), valN: val.length,
-                  dims: dims, n: N, trainedAt: Date.now() };
+                  dims: dims, n: N, trainedAt: Date.now(), source: "worker",
+                  warmResumed: !!warmNets };   // [V11] 웜스타트 여부(누적학습 추적)
     // [V10] 대형 모델(최대 3M) 청크 저장 — D1 단일행 한계 우회. 메모리 캐시 무효화.
     const _saveInfo = await setBigState(DB, "dnn_model", net);
     __dnnMemCache = null;
@@ -17471,6 +17587,22 @@ async function mlDNNStatus(DB) {
 }
 
 
+// [V11] 입력 피처(파라미터) 역할 설명 — featNames 순서와 1:1 대응. 시각화에서 "이 뉴런이 무슨 일을 하는가"를 표시.
+const FEAT_ROLES = {
+  rsi14: "RSI(14) 과매수/과매도", maGapPct: "가격-이동평균 괴리%", atrPct: "ATR 변동성%", dayPct: "당일 등락%", distHighPct: "전고점 대비 거리%",
+  regBull: "강세 국면 플래그", regBear: "약세 국면 플래그", visionUp: "차트 비전AI 상승신호", sigWeight: "신호 가중치", confluence: "신호 합류도",
+  stratSwing: "스윙 전략 적합도", stratDay: "데이트레이딩 적합도", stratMom: "모멘텀 전략 적합도", stratMR: "평균회귀 전략 적합도",
+  earnBeat: "실적 서프라이즈 상회", earnMiss: "실적 하회", earnDrift: "실적후 표류(PEAD)", earnBarsAgo: "실적 경과 봉수", daysToEarn: "다음 실적까지 일수",
+  has8K: "8-K 공시 존재", analystSig: "애널리스트 신호", insiderBuy: "내부자 매수", econShock: "거시 쇼크",
+  newsSent: "뉴스 감성", newsMnA: "M&A 뉴스", newsReg: "규제 뉴스", newsGuide: "가이던스 뉴스", newsUpDn: "등급 상향/하향", newsOther: "기타 뉴스", evPrior: "이벤트 사전확률",
+  ma200Gap: "장기추세(MA200 괴리%)", bollB: "볼린저 %B 위치", macdH: "MACD 히스토그램", volSurge: "거래량 서지", atrRegime: "변동성 국면 백분위",
+  pos52w: "52주 밴드 내 위치", gapPct: "시가 갭%", streak: "연속 상승/하락일", ret5: "5일 수익률", ret20: "20일 수익률",
+  mktUS: "미국시장 원핫", mktKR: "한국시장 원핫", mktCM: "원자재/기타 원핫",
+  rs20: "20일 상대강도", rs60: "60일 상대강도", obvSlope: "OBV 수급 기울기", distLow20Pct: "20일 지지선 거리%", rangePos: "당일 레인지 내 위치",
+  upDnVolR: "매집/분산 거래량비", volRetSpread: "거래량별 수익률 스프레드", bodyRatio: "캔들 몸통 확신도", wickSkew: "꼬리 비대칭(저가매수)",
+  gapFillR: "갭 되메움 비율", volTrendR: "거래량 추세", accel: "수익률 가속도(2차 모멘텀)"
+};
+
 // ── [V9 시각화] 신경망 구조·가중치 강도를 프론트 시각화용으로 요약 반환 ──
 //   층 구조, 뉴런별 incoming-weight L2 norm(시드 평균, 0~1 정규화)=노드 강도, 위원회 신뢰가중.
 //   전체 66k 가중치를 보내지 않고 층당 뉴런 강도만(≈609개 실수) → 경량.
@@ -17481,7 +17613,10 @@ async function mlDNNVizData(DB) {
     let gtrust = null; try { gtrust = await getState(DB, "gbdt_trust", null); } catch (e) {}
     let mindAcc = null; try { const mm = await mlMindLoad(DB); if (mm) mindAcc = _num(mm.valAcc, null); } catch (e) {}
     if (!m || (!Array.isArray(m.nets) && !Array.isArray(m.W))) {
-      return { trained: false, hidden: DNN.hidden, dims: [LUXML.featNames.length].concat(DNN.hidden).concat([1]), inputDim: LUXML.featNames.length, seeds: DNN.seeds, trust: trust || null };
+      const _fn = LUXML.featNames;
+      const _if = _fn.map(function (nm, j) { return { i: j, name: nm, role: FEAT_ROLES[nm] || "", strength: 0 }; });
+      return { trained: false, hidden: DNN.hidden, dims: [_fn.length].concat(DNN.hidden).concat([1]), inputDim: _fn.length, seeds: DNN.seeds, trust: trust || null,
+        active: false, source: null, featNames: _fn, inputFeatures: _if, topFeatures: _if.slice(0, 20) };
     }
     const nets = Array.isArray(m.nets) ? m.nets : [{ W: m.W, b: m.b, dims: m.dims }];
     const dims = m.dims || nets[0].dims;
@@ -17500,7 +17635,13 @@ async function mlDNNVizData(DB) {
     const nin0 = nets[0].W[0][0].length, inNorms = new Array(nin0).fill(0);
     for (const nt of nets) for (let i = 0; i < nt.W[0].length; i++) { const Wi = nt.W[0][i]; for (let j = 0; j < nin0; j++) inNorms[j] += Wi[j] * Wi[j]; }
     for (let j = 0; j < nin0; j++) inNorms[j] = Math.sqrt(inNorms[j] / nets.length);
-    const layers = [{ kind: "input", size: nin0, strength: norm01(inNorms) }];
+    const inStrength = norm01(inNorms);
+    // [V11] 입력 파라미터별 역할 + 영향도 — 각 입력 뉴런이 무슨 피처를 담당하는지, 학습된 가중치로 얼마나 중요한지.
+    const fnames = LUXML.featNames;
+    const inputFeatures = [];
+    for (let j = 0; j < nin0; j++) inputFeatures.push({ i: j, name: fnames[j] || ("f" + j), role: FEAT_ROLES[fnames[j]] || "", strength: inStrength[j] });
+    const topFeatures = inputFeatures.slice().sort(function (a, b) { return b.strength - a.strength; }).slice(0, 20);
+    const layers = [{ kind: "input", size: nin0, strength: inStrength, names: fnames.slice(0, nin0) }];
     for (let l = 0; l < nLayers; l++) layers.push({ kind: (l === nLayers - 1 ? "output" : "hidden"), size: layerNorms[l].length, strength: norm01(layerNorms[l]) });
     let paramsPerNet = 0; for (let l = 0; l < nLayers; l++) paramsPerNet += nets[0].W[l].length * nets[0].W[l][0].length + nets[0].b[l].length;
     const params = paramsPerNet * nets.length;   // [V10] 앙상블 전체 파라미터(시드 곱)
@@ -17508,11 +17649,15 @@ async function mlDNNVizData(DB) {
     if (mindAcc != null) committee.push({ name: "MIND", role: "스태킹", acc: +mindAcc.toFixed(3), w: null, trusted: true });
     committee.push({ name: "DNN", role: "6층 딥넷", acc: trust ? +_num(trust.dnnAccLB, _num(trust.dnnAcc, 0)).toFixed(3) : null, w: trust ? _num(trust.wDnn, 0) : 0, trusted: !!(trust && trust.trusted) });
     if (gtrust) committee.push({ name: "GBDT", role: "부스팅트리", acc: +_num(gtrust.gbdtAccLB, _num(gtrust.gbdtAcc, 0)).toFixed(3), w: _num(gtrust.wGbdt, 0), trusted: !!gtrust.trusted });
+    // [V11] 3M이 실제 거래결정에 기여 중인가? 신뢰게이트 통과(trusted & wDnn>0) 여부 = 실동작 여부.
+    const active = !!(trust && trust.trusted && _num(trust.wDnn, 0) > 0);
+    const source = m.source || "worker";   // "external"=외부GPU 업로드, "worker"=야간 자가학습
     return {
       trained: true, architecture: dims.join("-") + "×" + nets.length, dims: dims, seeds: nets.length,
       valAcc: m.valAcc, n: m.n, params: params, trainedAt: m.trainedAt,
       trust: trust ? { wDnn: trust.wDnn, trusted: !!trust.trusted, dnnAcc: trust.dnnAcc } : null,
-      layers: layers, committee: committee,
+      active: active, source: source,
+      layers: layers, committee: committee, inputFeatures: inputFeatures, topFeatures: topFeatures,
       config: { dropout: DNN.dropout, adamW: !!DNN.adamW, cosineLR: !!DNN.cosineLR, optimizer: DNN.adamW ? "AdamW+cosine" : "Adam" }
     };
   } catch (e) { return { trained: false, error: e && e.message }; }

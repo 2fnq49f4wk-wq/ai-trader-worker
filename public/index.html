@@ -3401,8 +3401,10 @@ html[data-theme="light"] .table tbody tr:hover{background:rgba(9,105,218,.045);}
       </div>
     </div>
     <div class="nnv-sub" id="nnvSub">신경망 구조·가중치 강도를 실시간으로 관측합니다.</div>
+    <div class="nnv-banner" id="nnvBanner" style="display:none;"></div>
     <div class="nnv-chips" id="nnvChips"></div>
     <div class="nnv-stage" id="nnvStage"><div class="nnv-empty">불러오는 중…</div></div>
+    <div class="nnv-roles" id="nnvRoles"></div>
     <div class="nnv-legend" id="nnvLegend" style="display:none;">
       <span><i style="background:#4aa3ff;"></i>입력층(피처)</span>
       <span><i style="background:#eafff4;"></i>은닉층(ReLU·드롭아웃)</span>
@@ -10737,8 +10739,27 @@ setTimeout(function(){ var o=document.getElementById('lux-intro-overlay'); if(o&
 @keyframes nnPulse{0%,100%{opacity:1;transform:scale(1);}50%{opacity:.45;transform:scale(.82);}}
 @keyframes nnFlow{to{stroke-dashoffset:-22;}}
 #page-nnviz .nnedge{stroke-dasharray:5 7;stroke-linecap:round;}
-#page-nnviz.active .nnedge{animation:nnFlow 1s linear infinite;}
+/* [V11] 애니는 현재 페이지가 활성일 때만 — 백그라운드 리페인트 방지(렉↓). 정적 엣지는 애니 없음. */
+#page-nnviz.active .nnedge{animation:nnFlow 1.1s linear infinite;}
+#page-nnviz .nnedge-static{stroke-dasharray:none;}
 #page-nnviz .nnnode{transition:r .5s ease;}
+/* [V11] 3M 실동작 여부 배너 */
+#page-nnviz .nnv-banner{margin:2px 0 12px;padding:9px 13px;border-radius:10px;font-size:11.5px;line-height:1.55;font-family:'IBM Plex Mono',monospace;}
+#page-nnviz .nnv-banner.on{background:rgba(0,230,118,.10);border:1px solid rgba(0,230,118,.32);color:#9affc9;}
+#page-nnviz .nnv-banner.off{background:rgba(255,193,7,.09);border:1px solid rgba(255,193,7,.30);color:#ffd98a;}
+#page-nnviz .nnv-banner b{color:#eaf2ff;}
+/* [V11] 입력 파라미터 역할 패널 */
+#page-nnviz .nnv-roles{margin-top:16px;display:grid;gap:6px;}
+#page-nnviz .nnv-role-h{font-family:'Space Grotesk',sans-serif;font-size:12px;color:#9fb4dc;margin:2px 0 4px;letter-spacing:.4px;}
+#page-nnviz .nnv-role-h small{color:#6f84aa;font-weight:400;}
+#page-nnviz .nnv-role{display:grid;grid-template-columns:200px 1fr 44px;align-items:center;gap:10px;}
+#page-nnviz .nnv-role-n{font-family:'IBM Plex Mono',monospace;font-size:11px;color:#dbe6fb;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
+#page-nnviz .nnv-role-n small{display:block;font-size:9.5px;color:#7c90b5;}
+#page-nnviz .nnv-role-bar{height:7px;border-radius:5px;background:rgba(255,255,255,.05);overflow:hidden;}
+#page-nnviz .nnv-role-bar>span{display:block;height:100%;border-radius:5px;background:linear-gradient(90deg,#2f6bff,#00e0ff);}
+#page-nnviz .nnv-role-v{font-family:'IBM Plex Mono',monospace;font-size:10.5px;color:#9fb4dc;text-align:right;}
+html[data-theme="light"] #page-nnviz .nnv-role-n{color:#12233f;}
+@media(max-width:640px){#page-nnviz .nnv-role{grid-template-columns:130px 1fr 38px;}}
 html[data-theme="light"] #page-nnviz .nnviz-content{background:linear-gradient(180deg,#f7fafe,#eef3fb);border-color:#cdd9ee;}
 html[data-theme="light"] #page-nnviz .nnv-title,html[data-theme="light"] #page-nnviz .nnv-chip .v,html[data-theme="light"] #page-nnviz .nnv-comm-name{color:#12233f;}
 </style>
@@ -10780,6 +10801,9 @@ html[data-theme="light"] #page-nnviz .nnv-title,html[data-theme="light"] #page-n
           return { kind: i===0?'input':(i===dims.length-1?'output':'hidden'), size: sz, strength: strength };
         });
         NNV_drawSVG(stage, pv);
+        NNV_renderRoles(d);
+        var ban0=document.getElementById('nnvBanner');
+        if(ban0){ ban0.className='nnv-banner off'; ban0.innerHTML='⚠️ <b>학습 대기</b> — 아직 저장된 모델이 없습니다. 표본은 충분하나 3M은 Worker CPU로 완전학습이 안 끝납니다. <b>외부 GPU 학습</b>을 돌리면 즉시 가동됩니다.'; ban0.style.display='block'; }
         var note=document.createElement('div');
         note.className='nnv-empty'; note.style.padding='8px'; note.style.fontSize='11px';
         note.innerHTML='🌱 <b>미학습 미리보기</b> — 딥넷은 표본 400건 이상 쌓이면 야간에 자동 학습됩니다. 학습 후엔 실제 가중치 강도로 그려집니다.';
@@ -10801,7 +10825,15 @@ html[data-theme="light"] #page-nnviz .nnv-title,html[data-theme="light"] #page-n
       chip('신뢰가중 wDNN', (wDnn!=null?wDnn.toFixed(2):'—'), trusted?'good':'off') +
       chip('옵티마이저', (d.config&&d.config.optimizer)||'Adam','');
     legend.style.display='flex';
+    // [V11] 3M이 실거래에 실제 기여 중인지 명확히 표시(신뢰게이트 통과 여부)
+    var ban=document.getElementById('nnvBanner');
+    if(ban){
+      if(d.active){ ban.className='nnv-banner on'; ban.innerHTML='✅ <b>가동 중</b> — 이 딥넷이 위원회에서 실거래 결정에 반영됩니다 (wDNN='+((d.trust&&d.trust.wDnn)||0).toFixed(2)+(d.source==='external'?' · 외부GPU 학습':'')+')'; }
+      else { ban.className='nnv-banner off'; ban.innerHTML='⚠️ <b>미반영</b> — 검증성능이 기준(mind)에 못 미쳐 신뢰게이트가 <b>wDNN=0</b>으로 억제 중입니다. 3M 파라미터가 아직 실거래에 기여하지 않습니다. (외부 GPU 학습으로 성능을 끌어올리면 자동 가동)'; }
+      ban.style.display='block';
+    }
     NNV_drawSVG(stage, d.layers||[]);
+    NNV_renderRoles(d);
     // 위원회
     var rows=(d.committee||[]).map(function(c){
       var accW = (c.acc!=null? Math.max(0,Math.min(1,c.acc)):0)*100;
@@ -10812,58 +10844,85 @@ html[data-theme="light"] #page-nnviz .nnv-title,html[data-theme="light"] #page-n
     }).join('');
     comm.innerHTML = '<div style="font-family:Space Grotesk,sans-serif;font-size:12px;color:#9fb4dc;margin:4px 0 2px;letter-spacing:.5px;">🏛️ 전문가 위원회 (신뢰가중 소프트맥스 결합)</div>'+rows;
   }
-  // [V10] "Obsidian Brain" 스타일 — 세로 층 스파이크 + 촘촘한 초록(흥분)/빨강(억제) 곡선 분수 + 층별 라벨.
+  // [V11] 경량 렌더 — 렉 원인이던 (1)엣지 ~1500개 무한 dash 애니, (2)모든 노드·스파이크의 SVG drop-shadow 필터를
+  //   제거/축소. 필터는 SVG 최악의 리페인트 비용원 → 전부 삭제하고 radial-gradient 글로우로 대체. 엣지는 상한(EDGE_CAP)으로 캡.
+  //   입력층 노드에는 담당 파라미터(피처)명을 함께 표기 → "이 뉴런이 무슨 일을 하는가"가 보임.
   function NNV_drawSVG(stage, layers){
     if(!layers.length){ stage.innerHTML='<div class="nnv-empty">구조 데이터 없음</div>'; return; }
-    var W=1040, H=480, padX=58, padY=26, capPer=24, labelH=40;
+    var reduce = false; try{ reduce = window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches; }catch(e){}
+    var W=1040, H=500, padX=118, padY=26, capPer=14, labelH=40, EDGE_CAP=260;
     var cols=layers.length;
     var colX=function(i){ return padX + (W-2*padX)*(cols>1? i/(cols-1):0.5); };
     var yTop=padY, yBot=H-padY-labelH;
-    // 표시 노드: 강도 상위 capPer, 세로 균등
+    // 표시 노드: 강도 상위 capPer, 세로 균등 (원래 인덱스 보존 → 입력 피처명 매핑)
     var shown=layers.map(function(L){
-      var arr=(L.strength||[]).map(function(s,idx){return {s:s,idx:idx};});
+      var nm=L.names||null;
+      var arr=(L.strength||[]).map(function(s,idx){return {s:s,idx:idx,name:nm?nm[idx]:null};});
       if(arr.length>capPer){ arr.sort(function(a,b){return b.s-a.s;}); arr=arr.slice(0,capPer); }
       var n=arr.length||1;
       arr.forEach(function(o,k){ o.y = yTop + (yBot-yTop)*(n>1? k/(n-1):0.5); });
       return arr;
     });
-    // 곡선 엣지(분수 스프레이) — 노드당 여러 타깃, 초록/빨강 혼합
-    var edges='';
+    // 곡선 엣지 — 노드당 소수 타깃, 전역 상한. 애니는 CSS class(.nnedge) 하나로 통일(개별 duration 제거).
+    var eArr=[];
     for(var l=0;l<cols-1;l++){
       var A=shown[l], B=shown[l+1], x1=colX(l), x2=colX(l+1), midx=(x1+x2)/2;
       for(var a=0;a<A.length;a++){
-        var deg=Math.min(6, B.length);
+        var deg=Math.min(3, B.length);
         for(var d=0;d<deg;d++){
           var bi=(a*5+d*11+l*3)%B.length, tgt=B[bi];
           var str=A[a].s*tgt.s;
-          if(str<0.04) continue;
-          var green=((a+bi+d+l)%2===0);
-          var rgb=green?'0,230,118':'255,52,84';
-          var op=(0.05+0.34*str).toFixed(3), sw=(0.35+1.25*str).toFixed(2);
-          var cy1=A[a].y+(tgt.y-A[a].y)*0.12, cy2=tgt.y-(tgt.y-A[a].y)*0.12;
-          var dur=(0.9+(1-str)*1.7).toFixed(2);
-          edges+='<path class="nnedge" d="M'+x1.toFixed(1)+' '+A[a].y.toFixed(1)+' C'+midx.toFixed(1)+' '+cy1.toFixed(1)+' '+midx.toFixed(1)+' '+cy2.toFixed(1)+' '+x2.toFixed(1)+' '+tgt.y.toFixed(1)+'" fill="none" stroke="rgba('+rgb+','+op+')" stroke-width="'+sw+'" style="animation-duration:'+dur+'s"/>';
+          if(str<0.06) continue;
+          eArr.push({x1:x1,y1:A[a].y,mx:midx,x2:x2,y2:tgt.y,str:str,green:((a+bi+d+l)%2===0)});
         }
       }
     }
-    // 세로 층 스파이크(밝은 점선) + 노드 + 라벨
-    var spikes='', nodes='', labels='';
+    eArr.sort(function(p,q){return q.str-p.str;});
+    if(eArr.length>EDGE_CAP) eArr=eArr.slice(0,EDGE_CAP);
+    var edgeCls = reduce ? 'nnedge-static' : 'nnedge';
+    var edges=eArr.map(function(e){
+      var rgb=e.green?'0,230,118':'255,52,84';
+      var op=(0.06+0.36*e.str).toFixed(3), sw=(0.4+1.3*e.str).toFixed(2);
+      var cy1=e.y1+(e.y2-e.y1)*0.12, cy2=e.y2-(e.y2-e.y1)*0.12;
+      return '<path class="'+edgeCls+'" d="M'+e.x1.toFixed(1)+' '+e.y1.toFixed(1)+' C'+e.mx.toFixed(1)+' '+cy1.toFixed(1)+' '+e.mx.toFixed(1)+' '+cy2.toFixed(1)+' '+e.x2.toFixed(1)+' '+e.y2.toFixed(1)+'" fill="none" stroke="rgba('+rgb+','+op+')" stroke-width="'+sw+'"/>';
+    }).join('');
+    // 스파이크 + 노드 + 라벨 (drop-shadow 필터 제거 — opacity/색으로 강도 표현)
+    var spikes='', nodes='', labels='', featLabels='';
     for(var li=0;li<cols;li++){
       var col2=shown[li], cx=colX(li), kind=layers[li].kind;
       var hd = kind==='input'?'#4aa3ff':(kind==='output'?'#00e676':'#eafff4');
-      spikes+='<line x1="'+cx.toFixed(1)+'" y1="'+(yTop-8)+'" x2="'+cx.toFixed(1)+'" y2="'+(yBot+8)+'" stroke="rgba(230,255,240,0.55)" stroke-width="1.5" stroke-dasharray="1 4" style="filter:drop-shadow(0 0 5px rgba(160,255,200,0.7));"/>';
+      spikes+='<line x1="'+cx.toFixed(1)+'" y1="'+(yTop-8)+'" x2="'+cx.toFixed(1)+'" y2="'+(yBot+8)+'" stroke="rgba(180,220,200,0.28)" stroke-width="1.2" stroke-dasharray="1 5"/>';
       for(var k=0;k<col2.length;k++){
-        var s=col2[k].s, r=(1.6+3.4*s).toFixed(1), glow=(0.5+0.5*s).toFixed(2);
-        nodes+='<circle cx="'+cx.toFixed(1)+'" cy="'+col2[k].y.toFixed(1)+'" r="'+r+'" fill="#f0fff6" opacity="'+glow+'" style="filter:drop-shadow(0 0 '+(2.5+4.5*s).toFixed(1)+'px #9dffc4);"></circle>';
+        var s=col2[k].s, r=(1.8+3.6*s).toFixed(1), glow=(0.45+0.55*s).toFixed(2);
+        nodes+='<circle cx="'+cx.toFixed(1)+'" cy="'+col2[k].y.toFixed(1)+'" r="'+r+'" fill="#c8ffe0" opacity="'+glow+'"></circle>';
+        // 입력층: 담당 파라미터명 표기(가장 영향 큰 순 상위만 자연스레 노출)
+        if(kind==='input' && col2[k].name){
+          featLabels+='<text x="'+(cx-9).toFixed(1)+'" y="'+(col2[k].y+2.5).toFixed(1)+'" text-anchor="end" font-family="IBM Plex Mono,monospace" font-size="8" fill="#7fa8d8">'+col2[k].name+'</text>';
+        }
       }
       var tag = kind==='input'?'INPUT':(kind==='output'?'OUTPUT':'ML.'+li);
       var act = kind==='input'?'—':(kind==='output'?'Sigmoid':'ReLU');
       var ly=yBot+16;
       labels+='<text x="'+cx.toFixed(1)+'" y="'+ly+'" text-anchor="middle" font-family="IBM Plex Mono,monospace" font-size="8.5" fill="'+hd+'" font-weight="700">'+tag+'</text>';
-      labels+='<text x="'+cx.toFixed(1)+'" y="'+(ly+11)+'" text-anchor="middle" font-family="IBM Plex Mono,monospace" font-size="8" fill="#8fa6c8">Neurons: '+layers[li].size+'</text>';
-      labels+='<text x="'+cx.toFixed(1)+'" y="'+(ly+21)+'" text-anchor="middle" font-family="IBM Plex Mono,monospace" font-size="7.5" fill="#61789c">Act: '+act+'</text>';
+      labels+='<text x="'+cx.toFixed(1)+'" y="'+(ly+11)+'" text-anchor="middle" font-family="IBM Plex Mono,monospace" font-size="8" fill="#8fa6c8">N: '+layers[li].size+'</text>';
+      labels+='<text x="'+cx.toFixed(1)+'" y="'+(ly+21)+'" text-anchor="middle" font-family="IBM Plex Mono,monospace" font-size="7.5" fill="#61789c">'+act+'</text>';
     }
-    stage.innerHTML='<svg viewBox="0 0 '+W+' '+H+'" preserveAspectRatio="xMidYMid meet" style="background:radial-gradient(120% 90% at 50% 8%,#0d1a2e,#050810 72%);">'+edges+spikes+nodes+labels+'</svg>';
+    stage.innerHTML='<svg viewBox="0 0 '+W+' '+H+'" preserveAspectRatio="xMidYMid meet" style="background:radial-gradient(120% 90% at 50% 8%,#0d1a2e,#050810 72%);">'+edges+spikes+nodes+featLabels+labels+'</svg>';
+  }
+  // [V11] 파라미터(입력 피처) 역할 패널 — 각 파라미터가 무슨 일을 하고 학습된 영향도가 얼마인지.
+  function NNV_renderRoles(d){
+    var host=document.getElementById('nnvRoles'); if(!host) return;
+    var feats=d && (d.topFeatures||d.inputFeatures);
+    if(!feats || !feats.length){ host.innerHTML=''; return; }
+    var trained=!!(d && d.trained);
+    var rows=feats.map(function(f){
+      var pctW=Math.round((f.strength||0)*100);
+      return '<div class="nnv-role"><div class="nnv-role-n">'+f.name+'<small>'+(f.role||'')+'</small></div>'
+        +'<div class="nnv-role-bar"><span style="width:'+pctW+'%"></span></div>'
+        +'<div class="nnv-role-v">'+(trained?pctW+'%':'—')+'</div></div>';
+    }).join('');
+    host.innerHTML='<div class="nnv-role-h">🎛️ 입력 파라미터 역할 · 영향도'
+      +(trained?' <small>(학습된 가중치 기준 상위 '+feats.length+')</small>':' <small>(미학습 — 영향도는 학습 후 표시)</small>')+'</div>'+rows;
   }
 })();
 </script>
