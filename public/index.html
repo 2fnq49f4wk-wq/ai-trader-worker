@@ -7084,8 +7084,11 @@ html[data-theme="light"] .table tbody tr:hover{background:rgba(9,105,218,.045);}
         var cls = p.p >= 0.6 ? 'hot' : (p.p >= 0.52 ? 'warm' : 'cool');
         var fundWarn = (typeof p.fund === 'number' && p.fund < 40) ? ' ⚠️' : '';  // 재무 취약 경고
         var senti = (typeof p.senti === 'number') ? (p.senti > 0 ? '📈' : (p.senti < 0 ? '📉' : '')) : '';
-        return '<button type="button" class="aipick-chip ' + cls + '" data-sym="' + escapeAttr(p.symbol) + '" data-mkt="' + escapeAttr(p.market) + '" title="다음날 상승확률 · 감성 ' + (p.senti != null ? p.senti : '?') + (p.fund != null ? ' · 재무점수 ' + p.fund : '') + '">' +
-          (mkIc[p.market] || '') + ' ' + senti + escapeHtml(p.symbol) + ' <b>' + Math.round(p.p * 100) + '%</b>' + fundWarn + '</button>';
+        // [V10] KR은 코드(005930.KS) 대신 종목명(삼성전자) 표시 — krLabel 해석기 사용
+        var disp = p.symbol;
+        if (p.market === 'kr') { var nm = krLabel(p.symbol); disp = nm || p.symbol.replace(/\.(KS|KQ)$/, ''); }
+        return '<button type="button" class="aipick-chip ' + cls + '" data-sym="' + escapeAttr(p.symbol) + '" data-mkt="' + escapeAttr(p.market) + '" title="' + escapeAttr(p.symbol) + ' · 다음날 상승확률 · 감성 ' + (p.senti != null ? p.senti : '?') + (p.fund != null ? ' · 재무점수 ' + p.fund : '') + '">' +
+          (mkIc[p.market] || '') + ' ' + senti + escapeHtml(disp) + ' <b>' + Math.round(p.p * 100) + '%</b>' + fundWarn + '</button>';
       }).join('');
       el.querySelectorAll('.aipick-chip').forEach(function(b) {
         b.addEventListener('click', function(){ openStockDetail(b.getAttribute('data-sym'), b.getAttribute('data-mkt')); });

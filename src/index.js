@@ -4328,7 +4328,7 @@ function buildLLMPrompt(market, context, opts) {
          "{\n" +
          "  \"sentiment\": \"neutral\",\n")) +
     "  \"confidence\": 0.6,\n" +
-    "  \"summary\": \"한두 문장 핵심 판단 + 근거 수치\",\n" +
+    "  \"summary\": \"2~3문장. 노련한 펀드매니저가 데스크에서 말하듯 — 수치 근거는 반드시 넣되, 살짝 주관적이고 의견이 담긴 인간적 어조로. 예: '지표는 중립인데 솔직히 나는 좀 조심스럽다. 왜냐하면…', '개인적으론 이 반등을 신뢰 안 한다', '오늘은 관망이 정답이라 본다'. 단, 데이터에 없는 사실을 지어내진 말 것.\",\n" +
     "  \"buy_signals\": { \"enabled\": true },\n" +
     "  \"sell_signals\": { \"enabled\": true },\n" +
     "  \"disable_signals\": [],\n" +
@@ -6237,6 +6237,35 @@ async function getState(DB, k, def) {
 async function setState(DB, k, v) {
   await DB.prepare("INSERT INTO state (k, v, updated_ts) VALUES (?, ?, ?) ON CONFLICT(k) DO UPDATE SET v=excluded.v, updated_ts=excluded.updated_ts")
     .bind(k, JSON.stringify(v), Date.now()).run();
+}
+
+// [V10] 대형 객체(3M DNN 등) 청크 저장 — D1 단일 행 크기 한계(SQLITE_TOOBIG) 우회.
+//   숫자는 4자리 반올림(용량↓·정확도 무해), 문자열을 CHUNK 바이트씩 여러 행에 분할 + 메타(청크수/길이).
+async function setBigState(DB, key, v) {
+  const str = JSON.stringify(v, function (k2, val) { return (typeof val === "number" && isFinite(val)) ? +val.toFixed(4) : val; });
+  const CHUNK = 400000;  // ~400KB/행 (D1 단일행 한계 안전 마진)
+  const n = Math.ceil(str.length / CHUNK);
+  // 이전 잔여 청크 삭제(개수 줄었을 때 유령 청크 방지)
+  try { await DB.prepare("DELETE FROM state WHERE k LIKE ?").bind(key + ":chunk:%").run(); } catch (e) {}
+  const up = "INSERT INTO state (k, v, updated_ts) VALUES (?, ?, ?) ON CONFLICT(k) DO UPDATE SET v=excluded.v, updated_ts=excluded.updated_ts";
+  // 청크 개별 저장(배치 대신 순차 — 배치 총 페이로드 한계 회피)
+  for (let i = 0; i < n; i++) await DB.prepare(up).bind(key + ":chunk:" + i, str.slice(i * CHUNK, (i + 1) * CHUNK), Date.now()).run();
+  await DB.prepare(up).bind(key + ":meta", JSON.stringify({ chunks: n, len: str.length, ts: Date.now() }), Date.now()).run();
+  return { chunks: n, bytes: str.length };
+}
+async function getBigState(DB, key, def) {
+  try {
+    const meta = await getState(DB, key + ":meta", null);
+    if (!meta || !meta.chunks) return def;
+    let str = "";
+    for (let i = 0; i < meta.chunks; i++) {
+      const row = await DB.prepare("SELECT v FROM state WHERE k = ?").bind(key + ":chunk:" + i).first();
+      if (!row || row.v == null) return def;
+      str += row.v;
+    }
+    if (meta.len && str.length !== meta.len) return def;  // 무결성 체크
+    return JSON.parse(str);
+  } catch (e) { return def; }
 }
 
 // === [V8] positions DAO — (symbol, strategy) 복합키 ===
@@ -16949,7 +16978,7 @@ const DNN = {
   beta1: 0.9, beta2: 0.999, eps: 1e-8,
   epochs: 50,
   batch: 32,             // [V10] 배치 확대(대형 망 그래디언트 안정·처리량)
-  dnnMaxSamples: 3000,   // [V10] 대형 망 per-epoch 비용 제한 — 최근 표본 이만큼만(예산 내 에폭 수 확보)
+  dnnMaxSamples: 2000,   // [V10] 대형 망 per-epoch 비용 제한 — 최근 표본 이만큼만(예산 내 에폭 수 확보)
   patience: 8,           // 조기종료 인내
   gradClip: 5,
   minTrainSamples: 500,  // [V9.1] 400→500: 피처 55로 확장(입력차원↑)한 만큼 과적합 방어 상향
@@ -16973,7 +17002,7 @@ const DNN = {
   adamW: true,           // true=디커플드 감쇠(g에 L2 미포함, 가중치에 직접 λ·W 감쇠)
   cosineLR: true,        // 에폭별 코사인 어닐링(lr→lr·lrFloorFrac)
   lrFloorFrac: 0.08,     // 코사인 하한(lr의 8%까지 감쇠)
-  trainBudgetMs: 110000  // [V10] 대형 망(3M) 대응 상향 55s→110s. cpu_ms 300s 한도 내(다른 야간 스테이지와 합산 주의). 예산 초과 시 남은 시드 생략(최소 1개 보장)
+  trainBudgetMs: 90000   // [V10] 대형 망(3M) 대응 55s→90s. cpu_ms 300s 한도 내 다른 야간 스테이지와 합산 여유 확보. 예산 초과 시 남은 시드 생략(최소 1개 보장)
                          //   (월 CPU 영향: +55s/일 ≈ +1.7M ms/월 — 사용량 가드 여유 내, 셧다운 90% 대비 안전)
 };
 
@@ -17291,7 +17320,10 @@ async function mlDNNTrainNightly(DB) {
     const net = { nets: nets, mean: mean, std: std, featVer: LUXML.featVer,
                   valAcc: +dnnAcc.toFixed(4), valAccLB: +dnnLB.toFixed(4), valN: val.length,
                   dims: dims, n: N, trainedAt: Date.now() };
-    await setState(DB, "dnn_model", net);
+    // [V10] 대형 모델(최대 3M) 청크 저장 — D1 단일행 한계 우회. 메모리 캐시 무효화.
+    const _saveInfo = await setBigState(DB, "dnn_model", net);
+    __dnnMemCache = null;
+    try { await log(DB, "INFO", null, "[DNN] 저장 " + (_saveInfo.bytes / 1024 / 1024).toFixed(1) + "MB / " + _saveInfo.chunks + "청크"); } catch (e) {}
 
     // ── 신뢰블렌드: mind(스태킹) 대비 — [V4] 양쪽 다 Wilson 하한으로 공정 비교 ──
     let mindLB = 0.5;
@@ -17321,8 +17353,24 @@ async function mlDNNTrainNightly(DB) {
   }
 }
 
+// [V10] 대형 DNN 메모리 캐시 — 청크 모델을 매 사이클 재조립하지 않도록(D1 read 폭증·지연 방지).
+//   메타(1 read)의 trainedAt만 확인 → 안 바뀌었으면 메모리 재사용, 바뀌었을 때만 전체 청크 로드.
+var __dnnMemCache = null;   // { trainedAt, model }
 async function mlDNNLoad(DB) {
-  try { const m = await getState(DB, "dnn_model", null); if (!m || m.featVer !== LUXML.featVer || (!Array.isArray(m.nets) && !Array.isArray(m.W))) return null; return m; } catch (e) { return null; }
+  try {
+    const meta = await getState(DB, "dnn_model:meta", null);
+    if (meta && meta.ts) {
+      if (__dnnMemCache && __dnnMemCache.metaTs === meta.ts) return __dnnMemCache.model;   // 캐시 히트
+      const m = await getBigState(DB, "dnn_model", null);
+      if (!m || m.featVer !== LUXML.featVer || (!Array.isArray(m.nets) && !Array.isArray(m.W))) { __dnnMemCache = null; return null; }
+      __dnnMemCache = { metaTs: meta.ts, model: m };
+      return m;
+    }
+    // 폴백: 구버전 단일행 저장분 호환
+    const m = await getState(DB, "dnn_model", null);
+    if (!m || m.featVer !== LUXML.featVer || (!Array.isArray(m.nets) && !Array.isArray(m.W))) return null;
+    return m;
+  } catch (e) { return null; }
 }
 
 // ── 최상위 결정: mind(스태킹) ⊕ dnn 신뢰블렌드 → 게이트/켈리 ──
@@ -17433,7 +17481,7 @@ async function mlDNNVizData(DB) {
     let gtrust = null; try { gtrust = await getState(DB, "gbdt_trust", null); } catch (e) {}
     let mindAcc = null; try { const mm = await mlMindLoad(DB); if (mm) mindAcc = _num(mm.valAcc, null); } catch (e) {}
     if (!m || (!Array.isArray(m.nets) && !Array.isArray(m.W))) {
-      return { trained: false, hidden: DNN.hidden, dims: [LUXML.featNames.length].concat(DNN.hidden).concat([1]), inputDim: LUXML.featNames.length, trust: trust || null };
+      return { trained: false, hidden: DNN.hidden, dims: [LUXML.featNames.length].concat(DNN.hidden).concat([1]), inputDim: LUXML.featNames.length, seeds: DNN.seeds, trust: trust || null };
     }
     const nets = Array.isArray(m.nets) ? m.nets : [{ W: m.W, b: m.b, dims: m.dims }];
     const dims = m.dims || nets[0].dims;
@@ -18834,7 +18882,24 @@ const SENTI_LEX = {
   "diamond":1.5,"hodl":1.4,"pump":1.2,"green":1.3,"printing":1.8,"ripping":2.3,"golden":1.6,
   "bagholder":-2.2,"bagholding":-2.2,"dump":-2.2,"dumping":-2.4,"rug":-3.0,"rugpull":-3.4,"rekt":-2.8,
   "overvalued":-2.0,"bubble":-1.8,"dead":-2.4,"bleeding":-2.3,"red":-1.3,"tanking":-2.7,"crater":-2.8,
-  "puts":-1.2,"calls":1.2,"short":-1.0,"long":1.0,"scam":-3.2,"beartrap":-1.5,"bulltrap":-1.5
+  "puts":-1.2,"calls":1.2,"short":-1.0,"long":1.0,"scam":-3.2,"beartrap":-1.5,"bulltrap":-1.5,
+  // [V10] 금융 특화 호재/악재(Loughran-McDonald 계열 고신호어 선별)
+  "record-high":2.6,"all-time-high":2.7,"guidance-raised":2.6,"dividend":1.6,"buyback":2.0,"repurchase":1.8,
+  "expansion":1.7,"acquisition":1.4,"merger":1.3,"partnership":1.5,"contract":1.4,"landmark":2.0,"robust":2.1,
+  "accelerate":1.8,"accelerating":1.9,"momentum":1.6,"tailwind":1.8,"upside":1.7,"catalyst":1.6,"secular":1.2,
+  "guidance-cut":-2.6,"headwind":-1.7,"headwinds":-1.7,"impairment":-2.1,"writedown":-2.3,"writeoff":-2.2,
+  "layoffs":-2.2,"restructuring":-1.6,"dilution":-2.0,"insolvency":-3.2,"delisting":-3.0,"downturn":-2.1,
+  "shortfall":-2.2,"missed":-2.1,"guidance-lowered":-2.5,"subpoena":-2.3,"sanction":-2.0,"antitrust":-1.6,
+  "recession":-2.2,"inflationary":-1.4,"volatility":-1.0,"uncertainty":-1.3,"litigation":-2.0,"breach":-2.2,
+  // [V10] 한국어 호재
+  "호재":2.6,"급등":2.7,"강세":2.1,"상한가":3.0,"신고가":2.6,"흑자":2.0,"흑자전환":2.6,"실적개선":2.3,
+  "수주":2.2,"계약":1.5,"인수":1.4,"합병":1.3,"수혜":2.0,"돌파":2.1,"반등":1.9,"매수":1.6,"상승":1.6,
+  "성장":1.8,"최대실적":2.6,"어닝서프라이즈":2.8,"목표가상향":2.4,"배당":1.5,"자사주":1.9,"수출호조":2.2,
+  // [V10] 한국어 악재
+  "악재":-2.6,"급락":-2.7,"약세":-2.0,"하한가":-3.0,"신저가":-2.5,"적자":-2.2,"적자전환":-2.7,"실적악화":-2.4,
+  "감산":-1.6,"소송":-2.2,"횡령":-3.2,"배임":-3.0,"분식":-3.3,"상장폐지":-3.4,"거래정지":-2.8,"부도":-3.5,
+  "리콜":-2.1,"급감":-2.3,"하락":-1.7,"매도":-1.6,"손실":-2.0,"어닝쇼크":-2.8,"목표가하향":-2.4,"유상증자":-1.8,
+  "규제":-1.4,"제재":-2.0,"조사":-1.6,"경고":-2.0,"우려":-1.4,"불확실":-1.3,"부진":-1.9,"둔화":-1.7
 };
 // 정도부사(강조/감쇠). 곱이 아니라 VADER식 가산 스칼라.
 const SENTI_BOOST = {
@@ -18851,7 +18916,8 @@ const SENTI_EXCL_INCR = 0.292; // '!' 강조(최대 4개)
 const SENTI_QUES_INCR = 0.18;
 
 function _sTokenize(text) {
-  return (typeof text === "string" ? text : "").replace(/[^\w'!?$%. ]+/g, " ").split(/\s+/).filter(Boolean);
+  // [V10] 한글(가-힣) 보존 — 기존 \w는 한국어를 전부 제거해 KR 뉴스 감성이 0이던 버그 수정.
+  return (typeof text === "string" ? text : "").replace(/[^\w'!?$%.가-힣 ]+/g, " ").split(/\s+/).filter(Boolean);
 }
 function _sIsCapDiff(tokens) { // 일부만 대문자면 강조로 인정(전부 대문자면 무시)
   let caps = 0, words = 0;
