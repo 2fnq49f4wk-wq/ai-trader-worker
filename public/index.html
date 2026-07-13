@@ -10863,22 +10863,26 @@ html[data-theme="light"] #page-nnviz .nnv-title,html[data-theme="light"] #page-n
       arr.forEach(function(o,k){ o.y = yTop + (yBot-yTop)*(n>1? k/(n-1):0.5); });
       return arr;
     });
-    // 곡선 엣지 — 노드당 소수 타깃, 전역 상한. 애니는 CSS class(.nnedge) 하나로 통일(개별 duration 제거).
-    var eArr=[];
+    // 곡선 엣지 — 노드당 소수 타깃. 모든 표시 노드가 최소 1개 선을 갖도록 "보장 엣지"와 "추가 엣지" 분리:
+    //   보장=각 소스노드의 최강 연결(임계값 무시·상한서 안 잘림) → 고립점 0. 추가=나머지 중 강한 순으로 상한까지.
+    var guar=[], extra=[];
     for(var l=0;l<cols-1;l++){
       var A=shown[l], B=shown[l+1], x1=colX(l), x2=colX(l+1), midx=(x1+x2)/2;
       for(var a=0;a<A.length;a++){
-        var deg=Math.min(3, B.length);
+        var deg=Math.min(3, B.length), best=null;
         for(var d=0;d<deg;d++){
           var bi=(a*5+d*11+l*3)%B.length, tgt=B[bi];
           var str=A[a].s*tgt.s;
-          if(str<0.06) continue;
-          eArr.push({x1:x1,y1:A[a].y,mx:midx,x2:x2,y2:tgt.y,str:str,green:((a+bi+d+l)%2===0)});
+          var e={x1:x1,y1:A[a].y,mx:midx,x2:x2,y2:tgt.y,str:str,green:((a+bi+d+l)%2===0)};
+          if(!best || str>best.str) best=e;
+          if(str>=0.06) extra.push(e);
         }
+        if(best) guar.push(best);   // 소스노드마다 최소 1선 보장
       }
     }
-    eArr.sort(function(p,q){return q.str-p.str;});
-    if(eArr.length>EDGE_CAP) eArr=eArr.slice(0,EDGE_CAP);
+    extra.sort(function(p,q){return q.str-p.str;});
+    var room=Math.max(0, EDGE_CAP-guar.length);
+    var eArr=guar.concat(extra.slice(0, room));
     var edgeCls = reduce ? 'nnedge-static' : 'nnedge';
     var edges=eArr.map(function(e){
       var rgb=e.green?'0,230,118':'255,52,84';
