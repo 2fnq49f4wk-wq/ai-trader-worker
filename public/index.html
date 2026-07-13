@@ -10818,7 +10818,7 @@ html[data-theme="light"] #page-nnviz .nnv-title,html[data-theme="light"] #page-n
     var wDnn = d.trust? d.trust.wDnn : 0, trusted = d.trust && d.trust.trusted;
     chips.innerHTML =
       chip('구조', (d.dims?d.dims.length:0)+'층', '') +
-      chip('파라미터', d.params? (d.params/1000).toFixed(1)+'k':'—','') +
+      chip('파라미터', d.params? (d.params/1e6).toFixed(2)+'M':'—','') +
       chip('시드 앙상블', (d.seeds||1)+'개','') +
       chip('검증 정확도', pct(d.valAcc), d.valAcc>=0.55?'good':(d.valAcc>=0.5?'warn':'off')) +
       chip('학습 표본', d.n? d.n.toLocaleString():'—','') +

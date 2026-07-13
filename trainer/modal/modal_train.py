@@ -87,6 +87,14 @@ def train_job(epochs: int = EPOCHS_DEFAULT, dry: bool = False):
     embargo_ms = cfg.get("embargoDays", 6) * 86400000; hv_w = cfg.get("hvSrcWeight", 1.0)
     hl_days = cfg.get("recencyHalfLifeDays", 45); rec_floor = cfg.get("recencyFloor", 0.35)
 
+    # [성능강화·적응형 정규화] 3M망은 표본이 적으면 과적합(검증<50%)한다. 표본 수에 따라 규제 강도를
+    #   자동 조절 → 데이터가 적을 땐 강하게 막고, 수확이 쌓이면 자동 완화(3M의 표현력을 점진 개방).
+    Nall = len([s for s in samples if isinstance(s.get("x"), list) and len(s["x"]) == D])
+    if Nall < 60000:      dropout, l2, mixup_p, input_noise = 0.60, 4e-3, 0.35, 0.10   # 데이터 기근 → 강한 규제
+    elif Nall < 150000:   dropout, l2, mixup_p, input_noise = 0.50, 2e-3, 0.28, 0.08   # 중간
+    else:                 dropout, l2, mixup_p, input_noise = 0.42, 9e-4, 0.20, 0.06   # 데이터 충분 → 기본(표현력 개방)
+    print(f"  적응형 규제: N={Nall} → dropout={dropout} l2={l2} mixup={mixup_p} noise={input_noise}")
+
     dev = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     print(f"② 학습 dev={dev} dims={'-'.join(map(str,dims))} seeds={K} epochs={ep} N={len(samples)}")
 
