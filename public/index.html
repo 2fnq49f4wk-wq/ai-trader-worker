@@ -3404,10 +3404,11 @@ html[data-theme="light"] .table tbody tr:hover{background:rgba(9,105,218,.045);}
     <div class="nnv-chips" id="nnvChips"></div>
     <div class="nnv-stage" id="nnvStage"><div class="nnv-empty">불러오는 중…</div></div>
     <div class="nnv-legend" id="nnvLegend" style="display:none;">
-      <span><i style="background:#4488ff;"></i>입력층(48 피처)</span>
-      <span><i style="background:#bb86fc;"></i>은닉층(ReLU·드롭아웃)</span>
-      <span><i style="background:#00e676;"></i>출력층(승률)</span>
-      <span style="color:#6f84aa;">● 노드 크기·밝기 = 가중치 강도(영향력)</span>
+      <span><i style="background:#4aa3ff;"></i>입력층(피처)</span>
+      <span><i style="background:#eafff4;"></i>은닉층(ReLU·드롭아웃)</span>
+      <span><i style="background:#00e676;"></i>출력층(Sigmoid·승률)</span>
+      <span><i style="background:#00e676;"></i>초록=흥분(양) <i style="background:#ff3454;"></i>빨강=억제(음)</span>
+      <span style="color:#6f84aa;">세로 스파이크=층축 · 곡선=연결강도 흐름</span>
     </div>
     <div class="nnv-comm" id="nnvComm"></div>
   </div>
@@ -10731,8 +10732,8 @@ setTimeout(function(){ var o=document.getElementById('lux-intro-overlay'); if(o&
 #page-nnviz .nnv-tag.on{background:rgba(0,230,118,.14);color:#00e676;} #page-nnviz .nnv-tag.gate{background:rgba(255,193,7,.14);color:#ffc107;}
 #page-nnviz .nnv-empty{padding:50px 20px;text-align:center;color:#8497ba;font-size:13px;line-height:1.8;}
 @keyframes nnPulse{0%,100%{opacity:1;transform:scale(1);}50%{opacity:.45;transform:scale(.82);}}
-@keyframes nnFlow{to{stroke-dashoffset:-16;}}
-#page-nnviz .nnedge{stroke-dasharray:2 6;}
+@keyframes nnFlow{to{stroke-dashoffset:-22;}}
+#page-nnviz .nnedge{stroke-dasharray:5 7;stroke-linecap:round;}
 #page-nnviz.active .nnedge{animation:nnFlow 1s linear infinite;}
 #page-nnviz .nnnode{transition:r .5s ease;}
 html[data-theme="light"] #page-nnviz .nnviz-content{background:linear-gradient(180deg,#f7fafe,#eef3fb);border-color:#cdd9ee;}
@@ -10756,11 +10757,34 @@ html[data-theme="light"] #page-nnviz .nnv-title,html[data-theme="light"] #page-n
     var stage=document.getElementById('nnvStage'), chips=document.getElementById('nnvChips'),
         comm=document.getElementById('nnvComm'), legend=document.getElementById('nnvLegend'), sub=document.getElementById('nnvSub');
     if(!d || !d.trained){
-      chips.innerHTML=''; comm.innerHTML=''; legend.style.display='none';
-      var need = d && d.dims ? d.dims.join('-') : (d&&d.hidden? ('48-'+d.hidden.join('-')+'-1'):'');
-      stage.innerHTML='<div class="nnv-empty">🌱 아직 학습 전입니다.<br>딥넷은 표본 400건 이상 쌓이면 야간에 자동 학습합니다.<br>'
-        +(need?'<span style="color:#6f84aa;font-family:IBM Plex Mono,monospace;">예정 구조 '+need+'</span><br>':'')
-        +(d&&d.trust?'<span style="color:#ffc107;">현재 신뢰가중 wDnn=0 (검증 통과 시 자동 가동)</span>':'')+'</div>';
+      // [V10] 미학습이어도 구조(dims)로 미리보기 시각화 — 영상처럼 지금 바로 신경망을 볼 수 있게.
+      var dims = (d && d.dims) || (d&&d.hidden? [d.inputDim||55].concat(d.hidden).concat([1]) : null);
+      comm.innerHTML='';
+      if(dims && dims.length>1){
+        var params=0; for(var i2=0;i2<dims.length-1;i2++) params += dims[i2]*dims[i2+1] + dims[i2+1];
+        params *= (d.seeds||4);
+        sub.textContent='구조 '+dims.join('-')+'×'+(d.seeds||4)+'시드 · 파라미터 '+params.toLocaleString()+'개 · (미학습 미리보기)';
+        chips.innerHTML =
+          chip('은닉층', (dims.length-2)+'층','') +
+          chip('총 파라미터', (params/1e6).toFixed(2)+'M','good') +
+          chip('시드 앙상블', (d.seeds||4)+'개','') +
+          chip('상태', '학습 대기','warn') +
+          chip('신뢰가중', 'wDNN 0','off');
+        legend.style.display='flex';
+        // dims → 미리보기 레이어(랜덤 강도)
+        var pv = dims.map(function(sz,i){
+          var strength=[]; for(var q=0;q<sz;q++) strength.push(0.25+Math.random()*0.75);
+          return { kind: i===0?'input':(i===dims.length-1?'output':'hidden'), size: sz, strength: strength };
+        });
+        NNV_drawSVG(stage, pv);
+        var note=document.createElement('div');
+        note.className='nnv-empty'; note.style.padding='8px'; note.style.fontSize='11px';
+        note.innerHTML='🌱 <b>미학습 미리보기</b> — 딥넷은 표본 400건 이상 쌓이면 야간에 자동 학습됩니다. 학습 후엔 실제 가중치 강도로 그려집니다.';
+        stage.appendChild(note);
+        return;
+      }
+      chips.innerHTML=''; legend.style.display='none';
+      stage.innerHTML='<div class="nnv-empty">🌱 구조 정보를 불러오는 중…</div>';
       return;
     }
     sub.textContent='구조 '+d.architecture+' · 파라미터 '+ (d.params? d.params.toLocaleString():'—') +'개 · 야간 자가학습';
@@ -10785,51 +10809,58 @@ html[data-theme="light"] #page-nnviz .nnv-title,html[data-theme="light"] #page-n
     }).join('');
     comm.innerHTML = '<div style="font-family:Space Grotesk,sans-serif;font-size:12px;color:#9fb4dc;margin:4px 0 2px;letter-spacing:.5px;">🏛️ 전문가 위원회 (신뢰가중 소프트맥스 결합)</div>'+rows;
   }
+  // [V10] "Obsidian Brain" 스타일 — 세로 층 스파이크 + 촘촘한 초록(흥분)/빨강(억제) 곡선 분수 + 층별 라벨.
   function NNV_drawSVG(stage, layers){
     if(!layers.length){ stage.innerHTML='<div class="nnv-empty">구조 데이터 없음</div>'; return; }
-    var W=1000, H=440, padX=70, padY=34, capPer=18;
+    var W=1040, H=480, padX=58, padY=26, capPer=24, labelH=40;
     var cols=layers.length;
     var colX=function(i){ return padX + (W-2*padX)*(cols>1? i/(cols-1):0.5); };
-    var layerColor=function(kind,i){ if(kind==='input')return '#4488ff'; if(kind==='output')return '#00e676';
-      var t=(i-1)/Math.max(1,cols-2); var hue=Math.round(265 - t*95); return 'hsl('+hue+',78%,64%)'; };
-    // 각 층에서 강도 상위 capPer개만 시각화(가독성) — 원 인덱스와 강도 보존
+    var yTop=padY, yBot=H-padY-labelH;
+    // 표시 노드: 강도 상위 capPer, 세로 균등
     var shown=layers.map(function(L){
       var arr=(L.strength||[]).map(function(s,idx){return {s:s,idx:idx};});
       if(arr.length>capPer){ arr.sort(function(a,b){return b.s-a.s;}); arr=arr.slice(0,capPer); }
-      var n=arr.length||L.size||1;
-      arr.forEach(function(o,k){ o.y = padY + (H-2*padY)*(n>1? k/(n-1):0.5); });
+      var n=arr.length||1;
+      arr.forEach(function(o,k){ o.y = yTop + (yBot-yTop)*(n>1? k/(n-1):0.5); });
       return arr;
     });
-    var edges='', nodes='', labels='';
-    // 엣지: 인접층 표시노드 간 샘플 연결(강한 노드 우선), 흐름 애니메이션
+    // 곡선 엣지(분수 스프레이) — 노드당 여러 타깃, 초록/빨강 혼합
+    var edges='';
     for(var l=0;l<cols-1;l++){
-      var A=shown[l], B=shown[l+1], x1=colX(l), x2=colX(l+1);
+      var A=shown[l], B=shown[l+1], x1=colX(l), x2=colX(l+1), midx=(x1+x2)/2;
       for(var a=0;a<A.length;a++){
-        if(A[a].s<0.12) continue;                 // 약한 소스노드는 연결 생략(엣지 수·부하↓)
-        var deg=Math.min(2,B.length);             // 노드당 2개(다음 층 상위)로 제한
-        for(var b=0;b<deg;b++){
-          var tgt=B[b]; var op=(0.05+0.32*A[a].s*tgt.s).toFixed(3);
-          var dur=(0.7+ (1-A[a].s)*1.4).toFixed(2);
-          edges+='<line class="nnedge" x1="'+x1.toFixed(1)+'" y1="'+A[a].y.toFixed(1)+'" x2="'+x2.toFixed(1)+'" y2="'+tgt.y.toFixed(1)
-            +'" stroke="'+layerColor(layers[l+1].kind,l+1)+'" stroke-width="'+(0.5+1.6*A[a].s*tgt.s).toFixed(2)+'" opacity="'+op+'" style="animation-duration:'+dur+'s"/>';
+        var deg=Math.min(6, B.length);
+        for(var d=0;d<deg;d++){
+          var bi=(a*5+d*11+l*3)%B.length, tgt=B[bi];
+          var str=A[a].s*tgt.s;
+          if(str<0.04) continue;
+          var green=((a+bi+d+l)%2===0);
+          var rgb=green?'0,230,118':'255,52,84';
+          var op=(0.05+0.34*str).toFixed(3), sw=(0.35+1.25*str).toFixed(2);
+          var cy1=A[a].y+(tgt.y-A[a].y)*0.12, cy2=tgt.y-(tgt.y-A[a].y)*0.12;
+          var dur=(0.9+(1-str)*1.7).toFixed(2);
+          edges+='<path class="nnedge" d="M'+x1.toFixed(1)+' '+A[a].y.toFixed(1)+' C'+midx.toFixed(1)+' '+cy1.toFixed(1)+' '+midx.toFixed(1)+' '+cy2.toFixed(1)+' '+x2.toFixed(1)+' '+tgt.y.toFixed(1)+'" fill="none" stroke="rgba('+rgb+','+op+')" stroke-width="'+sw+'" style="animation-duration:'+dur+'s"/>';
         }
       }
     }
-    // 노드
+    // 세로 층 스파이크(밝은 점선) + 노드 + 라벨
+    var spikes='', nodes='', labels='';
     for(var li=0;li<cols;li++){
-      var col=shown[li], cx=colX(li), color=layerColor(layers[li].kind,li);
-      for(var k=0;k<col.length;k++){
-        var s=col[k].s, r=(3.2+7.5*s).toFixed(1), glow=(0.4+0.6*s).toFixed(2);
-        // 노드는 정적 글로우(SMIL 제거 → GPU 부하·배터리 절약). 살아있는 느낌은 흐르는 엣지가 담당.
-        nodes+='<circle class="nnnode" cx="'+cx.toFixed(1)+'" cy="'+col[k].y.toFixed(1)+'" r="'+r+'" fill="'+color+'" opacity="'+glow
-          +'" style="filter:drop-shadow(0 0 '+(2+5*s).toFixed(1)+'px '+color+');"></circle>';
+      var col2=shown[li], cx=colX(li), kind=layers[li].kind;
+      var hd = kind==='input'?'#4aa3ff':(kind==='output'?'#00e676':'#eafff4');
+      spikes+='<line x1="'+cx.toFixed(1)+'" y1="'+(yTop-8)+'" x2="'+cx.toFixed(1)+'" y2="'+(yBot+8)+'" stroke="rgba(230,255,240,0.55)" stroke-width="1.5" stroke-dasharray="1 4" style="filter:drop-shadow(0 0 5px rgba(160,255,200,0.7));"/>';
+      for(var k=0;k<col2.length;k++){
+        var s=col2[k].s, r=(1.6+3.4*s).toFixed(1), glow=(0.5+0.5*s).toFixed(2);
+        nodes+='<circle cx="'+cx.toFixed(1)+'" cy="'+col2[k].y.toFixed(1)+'" r="'+r+'" fill="#f0fff6" opacity="'+glow+'" style="filter:drop-shadow(0 0 '+(2.5+4.5*s).toFixed(1)+'px #9dffc4);"></circle>';
       }
-      var kindTxt = layers[li].kind==='input'?'입력':(layers[li].kind==='output'?'출력':'은닉');
-      labels+='<text x="'+cx.toFixed(1)+'" y="'+(H-8)+'" text-anchor="middle" font-family="IBM Plex Mono,monospace" font-size="11" fill="#7c90b5">'+layers[li].size+'</text>';
-      labels+='<text x="'+cx.toFixed(1)+'" y="18" text-anchor="middle" font-family="IBM Plex Mono,monospace" font-size="9.5" fill="'+color+'" opacity="0.85">'+kindTxt+'</text>';
-      if((layers[li].size||0)>capPer) labels+='<text x="'+cx.toFixed(1)+'" y="'+(H-22)+'" text-anchor="middle" font-family="IBM Plex Mono,monospace" font-size="8.5" fill="#556488">top'+capPer+'</text>';
+      var tag = kind==='input'?'INPUT':(kind==='output'?'OUTPUT':'ML.'+li);
+      var act = kind==='input'?'—':(kind==='output'?'Sigmoid':'ReLU');
+      var ly=yBot+16;
+      labels+='<text x="'+cx.toFixed(1)+'" y="'+ly+'" text-anchor="middle" font-family="IBM Plex Mono,monospace" font-size="8.5" fill="'+hd+'" font-weight="700">'+tag+'</text>';
+      labels+='<text x="'+cx.toFixed(1)+'" y="'+(ly+11)+'" text-anchor="middle" font-family="IBM Plex Mono,monospace" font-size="8" fill="#8fa6c8">Neurons: '+layers[li].size+'</text>';
+      labels+='<text x="'+cx.toFixed(1)+'" y="'+(ly+21)+'" text-anchor="middle" font-family="IBM Plex Mono,monospace" font-size="7.5" fill="#61789c">Act: '+act+'</text>';
     }
-    stage.innerHTML='<svg viewBox="0 0 '+W+' '+H+'" preserveAspectRatio="xMidYMid meet">'+edges+nodes+labels+'</svg>';
+    stage.innerHTML='<svg viewBox="0 0 '+W+' '+H+'" preserveAspectRatio="xMidYMid meet" style="background:radial-gradient(120% 90% at 50% 8%,#0d1a2e,#050810 72%);">'+edges+spikes+nodes+labels+'</svg>';
   }
 })();
 </script>

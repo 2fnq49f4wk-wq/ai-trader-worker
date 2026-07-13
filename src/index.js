@@ -16939,13 +16939,17 @@ async function mlMindStatus(DB) {
 
 const DNN = {
   enabled: true,
-  hidden: [192, 128, 96, 64, 48, 32, 24],  // ← [V9.4] 은닉층 7층(55→192→128→96→64→48→32→24→1). 얇은 층 추가로 깊이(비선형 표현력)↑, 파라미터 폭증 없이 강화. 신뢰게이트가 자동 채택/억제.
-  dropout: 0.35,         // 은닉 드롭아웃(망 커진 만큼 상향 — 과적합 억제)
-  l2: 5e-4,              // 가중치 감쇠(망 커진 만큼 상향)
+  // [V10] 대형화: 은닉 10층 55→640→512→384→256→192→128→96→64→48→32→1. 넷당 ~757K × 4시드 = 총 3.03M 파라미터.
+  //   ⚠️순수 JS Worker(CPU 300s)에선 이 크기가 완전학습은 어려움 — 예산가드가 도는 만큼만 학습, 신뢰게이트가
+  //     mind 대비 검증성능으로 자동 채택/억제(못 이기면 wDnn=0). 표본·컴퓨트 늘수록 진가 발휘. 구조·표현력은 대폭↑.
+  hidden: [640, 512, 384, 256, 192, 128, 96, 64, 48, 32],
+  dropout: 0.42,         // [V10] 망 대형화 → 드롭아웃 상향(과적합 강력 억제)
+  l2: 9e-4,              // [V10] 가중치 감쇠 상향
   lr: 0.0025,            // Adam 학습률(깊어져 약간 보수적)
   beta1: 0.9, beta2: 0.999, eps: 1e-8,
   epochs: 50,
-  batch: 24,             // 배치 확대(깊은 망 그래디언트 안정)
+  batch: 32,             // [V10] 배치 확대(대형 망 그래디언트 안정·처리량)
+  dnnMaxSamples: 3000,   // [V10] 대형 망 per-epoch 비용 제한 — 최근 표본 이만큼만(예산 내 에폭 수 확보)
   patience: 8,           // 조기종료 인내
   gradClip: 5,
   minTrainSamples: 500,  // [V9.1] 400→500: 피처 55로 확장(입력차원↑)한 만큼 과적합 방어 상향
@@ -16969,7 +16973,7 @@ const DNN = {
   adamW: true,           // true=디커플드 감쇠(g에 L2 미포함, 가중치에 직접 λ·W 감쇠)
   cosineLR: true,        // 에폭별 코사인 어닐링(lr→lr·lrFloorFrac)
   lrFloorFrac: 0.08,     // 코사인 하한(lr의 8%까지 감쇠)
-  trainBudgetMs: 55000   // 야간 학습 총 CPU 예산 — 초과 시 남은 시드 생략(최소 1개 보장)
+  trainBudgetMs: 110000  // [V10] 대형 망(3M) 대응 상향 55s→110s. cpu_ms 300s 한도 내(다른 야간 스테이지와 합산 주의). 예산 초과 시 남은 시드 생략(최소 1개 보장)
                          //   (월 CPU 영향: +55s/일 ≈ +1.7M ms/월 — 사용량 가드 여유 내, 셧다운 90% 대비 안전)
 };
 
@@ -17261,6 +17265,8 @@ async function mlDNNTrainNightly(DB) {
     const cutTs = all[N - nVal].ts - embargoMs;
     let train = all.slice(0, N - nVal).filter(function (t) { return t.ts < cutTs; });
     if (train.length < 60) train = all.slice(0, N - nVal);
+    // [V10] 대형 망 학습비용 제한 — 최근 dnnMaxSamples개만 사용(예산 내 에폭 수 확보). 최신성 우선이라 뒤쪽(최근) 유지.
+    if (DNN.dnnMaxSamples && train.length > DNN.dnnMaxSamples) train = train.slice(train.length - DNN.dnnMaxSamples);
     const val = all.slice(N - nVal);
     if (train.length < 60) { await setState(DB, "dnn_trust", { wDnn: 0, trusted: false, reason: "train" }); return "[DNN] 훈련셋 부족"; }
 
@@ -17448,7 +17454,8 @@ async function mlDNNVizData(DB) {
     for (let j = 0; j < nin0; j++) inNorms[j] = Math.sqrt(inNorms[j] / nets.length);
     const layers = [{ kind: "input", size: nin0, strength: norm01(inNorms) }];
     for (let l = 0; l < nLayers; l++) layers.push({ kind: (l === nLayers - 1 ? "output" : "hidden"), size: layerNorms[l].length, strength: norm01(layerNorms[l]) });
-    let params = 0; for (let l = 0; l < nLayers; l++) params += nets[0].W[l].length * nets[0].W[l][0].length + nets[0].b[l].length;
+    let paramsPerNet = 0; for (let l = 0; l < nLayers; l++) paramsPerNet += nets[0].W[l].length * nets[0].W[l][0].length + nets[0].b[l].length;
+    const params = paramsPerNet * nets.length;   // [V10] 앙상블 전체 파라미터(시드 곱)
     const committee = [];
     if (mindAcc != null) committee.push({ name: "MIND", role: "스태킹", acc: +mindAcc.toFixed(3), w: null, trusted: true });
     committee.push({ name: "DNN", role: "6층 딥넷", acc: trust ? +_num(trust.dnnAccLB, _num(trust.dnnAcc, 0)).toFixed(3) : null, w: trust ? _num(trust.wDnn, 0) : 0, trusted: !!(trust && trust.trusted) });
