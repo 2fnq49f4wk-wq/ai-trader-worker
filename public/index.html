@@ -739,6 +739,50 @@ button.btn.loading::after{content:'조회 중…';position:absolute;inset:0;disp
 .macro-table .dd.far{color:var(--t3);}
 .macro-disclaimer{margin-top:12px;padding:10px 12px;background:var(--bg);border:1px solid var(--bd);font-size:10px;color:var(--t3);line-height:1.6;}
 
+/* ══════════ [V11] 지표·환율 페이지 리디자인 (ID 스코프로 기존 위에 얹음) ══════════ */
+#page-macro .page-header,#page-fx .page-header{display:flex;align-items:center;gap:12px;margin:14px 20px 4px;padding-bottom:14px;position:relative;}
+#page-macro .page-header::after,#page-fx .page-header::after{content:'';position:absolute;left:0;bottom:0;width:100%;height:1px;
+  background:linear-gradient(90deg,var(--acc,#4aa3ff),transparent 55%);opacity:.5;}
+#page-macro .page-title,#page-fx .page-title{font-family:'Space Grotesk',sans-serif;font-size:19px;font-weight:800;letter-spacing:.3px;}
+#page-macro .modal-macro,#page-fx .modal-macro{
+  margin:6px 20px 22px;max-width:1000px;border-radius:16px;padding:22px 24px 24px;
+  background:linear-gradient(180deg,rgba(255,255,255,.02),rgba(255,255,255,.006));
+  border:1px solid var(--glass-bd);box-shadow:0 24px 70px rgba(0,0,0,.4),0 0 0 1px rgba(120,160,255,.04) inset;}
+#page-macro .macro-sub,#page-fx .macro-sub{font-size:11px;color:var(--t3);letter-spacing:.3px;}
+/* 임박 발표 카드 — 강조 그라디언트 */
+#page-macro .macro-next{gap:10px;margin:6px 0 18px;}
+#page-macro .macro-next-card{flex:1;min-width:150px;border-radius:13px;padding:13px 15px;
+  background:linear-gradient(145deg,rgba(74,163,255,.09),rgba(74,163,255,.02));
+  border:1px solid rgba(74,163,255,.18);border-left:3px solid var(--acc,#4aa3ff);box-shadow:0 6px 20px rgba(0,0,0,.25);}
+#page-macro .macro-next-card .lbl{font-size:8.5px;letter-spacing:1.4px;color:var(--t3);}
+#page-macro .macro-next-card .nm{font-size:13px;font-weight:800;margin:3px 0;font-family:'Space Grotesk',sans-serif;}
+#page-macro .macro-next-card .dt{font-size:10.5px;color:var(--t2);font-variant-numeric:tabular-nums;}
+/* 시장 헤더 — 좌측 액센트 바 칩 */
+#page-macro .macro-mkt-head,#page-fx .macro-mkt-head{border:none;border-radius:10px;padding:9px 14px;margin:20px 0 10px;
+  background:linear-gradient(90deg,rgba(238,243,252,.06),transparent);border-left:3px solid var(--acc,#4aa3ff);
+  font-size:11px;letter-spacing:1.4px;color:var(--t1);}
+/* 테이블 카드 */
+#page-macro .macro-table-wrap,#page-fx .macro-table-wrap{border:1px solid var(--glass-bd);border-radius:14px;overflow:hidden;
+  background:rgba(255,255,255,.008);box-shadow:0 2px 12px rgba(0,0,0,.18);}
+#page-macro .macro-table th,#page-fx .macro-table th{padding:11px 14px;font-size:8.5px;letter-spacing:1.3px;
+  background:linear-gradient(180deg,rgba(238,243,252,.06),rgba(238,243,252,.02));border-bottom:1px solid var(--glass-bd);}
+#page-macro .macro-table td,#page-fx .macro-table td{padding:12px 14px;border-top:1px solid var(--bd2);border-bottom:none;}
+#page-macro .macro-table tbody tr:nth-child(even),#page-fx .macro-table tbody tr:nth-child(even){background:rgba(238,243,252,.018);}
+#page-macro .macro-table tbody tr,#page-fx .macro-table tbody tr{transition:background .12s,box-shadow .12s;}
+#page-macro .macro-table tbody tr:hover,#page-fx .macro-table tbody tr:hover{background:rgba(74,163,255,.07);box-shadow:inset 3px 0 0 var(--acc,#4aa3ff);}
+#page-macro .macro-table .val,#page-fx .macro-table .val{font-family:'IBM Plex Mono',monospace;font-size:14px;}
+/* D-day 를 알약 배지로 */
+#page-macro .macro-table .dd{display:inline-block;padding:3px 10px;border-radius:20px;font-size:10px;font-weight:800;font-variant-numeric:tabular-nums;
+  background:rgba(238,243,252,.06);color:var(--t3);border:1px solid var(--bd2);}
+#page-macro .macro-table .dd.soon{background:rgba(255,193,7,.14);color:var(--amber);border-color:rgba(255,193,7,.32);}
+#page-macro .macro-table .dd.today{background:var(--neg);color:#fff;border-color:var(--neg);animation:dotBlink 1.6s infinite;}
+/* 환율 등락 알약 */
+#page-fx .macro-table td.pos{color:var(--pos,#00e676);font-weight:800;font-variant-numeric:tabular-nums;}
+#page-fx .macro-table td.neg{color:var(--neg,#ff5c7a);font-weight:800;font-variant-numeric:tabular-nums;}
+#page-macro .macro-disclaimer,#page-fx .macro-disclaimer{margin-top:16px;border-radius:10px;background:rgba(238,243,252,.03);border-color:var(--bd2);}
+#page-macro .llm-btn,#page-fx .llm-btn{border-radius:9px;padding:7px 13px;font-size:11px;font-weight:600;}
+@media(max-width:640px){#page-macro .modal-macro,#page-fx .modal-macro{margin:6px 10px 16px;padding:16px 14px;}}
+
 /* 별 아이콘 */
 .star-icon{display:inline-block;width:10px;height:10px;vertical-align:-1px;margin-right:3px;background:var(--acc);clip-path:polygon(50% 0%,62% 38%,100% 50%,62% 62%,50% 100%,38% 62%,0% 50%,38% 38%);}
 
@@ -10883,12 +10927,15 @@ html[data-theme="light"] #page-nnviz .nnv-title,html[data-theme="light"] #page-n
     extra.sort(function(p,q){return q.str-p.str;});
     var room=Math.max(0, EDGE_CAP-guar.length);
     var eArr=guar.concat(extra.slice(0, room));
-    var edgeCls = reduce ? 'nnedge-static' : 'nnedge';
-    var edges=eArr.map(function(e){
+    // [V11 렉해결] 흐름 애니는 매 프레임 리페인트라 260개 전부면 렉. 강도 상위 ANIM_CAP개만 애니, 나머지 정적.
+    eArr.sort(function(p,q){return q.str-p.str;});
+    var ANIM_CAP = reduce ? 0 : 48;
+    var edges=eArr.map(function(e,ei){
       var rgb=e.green?'0,230,118':'255,52,84';
       var op=(0.06+0.36*e.str).toFixed(3), sw=(0.4+1.3*e.str).toFixed(2);
       var cy1=e.y1+(e.y2-e.y1)*0.12, cy2=e.y2-(e.y2-e.y1)*0.12;
-      return '<path class="'+edgeCls+'" d="M'+e.x1.toFixed(1)+' '+e.y1.toFixed(1)+' C'+e.mx.toFixed(1)+' '+cy1.toFixed(1)+' '+e.mx.toFixed(1)+' '+cy2.toFixed(1)+' '+e.x2.toFixed(1)+' '+e.y2.toFixed(1)+'" fill="none" stroke="rgba('+rgb+','+op+')" stroke-width="'+sw+'"/>';
+      var cls=(ei<ANIM_CAP)?'nnedge':'nnedge-static';
+      return '<path class="'+cls+'" d="M'+e.x1.toFixed(1)+' '+e.y1.toFixed(1)+' C'+e.mx.toFixed(1)+' '+cy1.toFixed(1)+' '+e.mx.toFixed(1)+' '+cy2.toFixed(1)+' '+e.x2.toFixed(1)+' '+e.y2.toFixed(1)+'" fill="none" stroke="rgba('+rgb+','+op+')" stroke-width="'+sw+'"/>';
     }).join('');
     // 스파이크 + 노드 + 라벨 (drop-shadow 필터 제거 — opacity/색으로 강도 표현)
     var spikes='', nodes='', labels='', featLabels='';
