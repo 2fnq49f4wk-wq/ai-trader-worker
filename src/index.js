@@ -2492,7 +2492,7 @@ const AI_PARAMS = {
   // ── 예측 타겟 설계(Target Variable) ── AI가 '무엇을' 예측할지 정교화(정답지 설계).
   //   (구현: labelTarget 라벨러 — binary는 현행, alpha/logreturn/multiclass는 opt-in)
   prediction: {
-    target: "binary",              // "binary"(승/패, 현행) | "logreturn" | "alpha"(초과수익) | "multiclass"(상/하/횡보)
+    target: "alpha",               // [V17] alpha(초과수익=지수 대비 잔차) 학습 전환. | "binary" | "logreturn" | "multiclass"
     logReturnWindowDays: 1,        // 로그수익률 타겟 계산 기간 ln(P_t / P_{t-k}) — 노이즈 감쇠
     alphaBenchmark: { us: "^GSPC", kr: "^KS11", cm: "GC=F" }, // 초과수익률(잔차) 기준지수
     alphaTargetThresholdPct: 1.0,  // 지수 대비 이 %↑ 초과(잔차) 시 양(+) 라벨
@@ -16009,7 +16009,7 @@ const LUXML = {
     "fibSig",      // 피보나치 되돌림 신호(−1..1) — 눌림목 지지(+)/되돌림 저항(−)
     "taUpProb"     // 종합 기술적 상승확률(0..1) — taPredictDirection 예측기 출력
   ],
-  featVer: 7,   // ★V13: 기술적예측·피보나치 6종 추가(54→60). 구버전 표본 자동분리(WHERE featver=?)+전종목 재수확
+  featVer: 8,   // ★V17: 라벨을 alpha(초과수익) 타겟으로 전환 → 구 binary 표본 분리 위해 승격(WHERE featver=?)+전종목 재수확
 
   minSamplesGate: 150,
   minSamplesSize: 400,
@@ -16360,11 +16360,30 @@ async function mlEnsureTable(DB) {
   } catch (e) {}
 }
 
-async function mlLogSample(DB, market, symbol, strategy, featVec, pnlPct) {
+// [V17] 표본 라벨 산출 — AI_PARAMS.prediction.target에 따라 승/패·초과수익(alpha)·3분류.
+//   alpha 모드: 라벨 = (종목수익 − 지수수익) ≥ 임계 → 1. 지수수익(idxRetPct) 없으면 null 반환
+//   (라벨 순도 보장 — alpha 표본만 편입, binary 혼입 방지). binary 모드는 현행과 동일.
+function _sampleLabel(stockPnlPct, idxRetPct) {
+  try {
+    const P = (typeof AI_PARAMS !== "undefined" && AI_PARAMS.prediction) || {};
+    const mode = P.target || "binary";
+    if (mode === "alpha") {
+      if (typeof idxRetPct !== "number" || !isFinite(idxRetPct)) return null;   // 지수 없음 → 편입 보류(순도)
+      const alpha = _num(stockPnlPct, 0) - idxRetPct;
+      return alpha >= (P.alphaTargetThresholdPct != null ? P.alphaTargetThresholdPct : 1.0) ? 1 : 0;
+    }
+    if (mode === "logreturn") return _num(stockPnlPct, 0) > 0 ? 1 : 0;
+    if (mode === "multiclass") { const flat = (P.multiClass && P.multiClass.flatThresholdPct != null) ? P.multiClass.flatThresholdPct : 1.5; return _num(stockPnlPct, 0) > flat ? 1 : 0; }
+    return (_num(stockPnlPct, 0) > 0) ? 1 : 0;   // binary(현행)
+  } catch (e) { return (stockPnlPct > 0) ? 1 : 0; }
+}
+
+async function mlLogSample(DB, market, symbol, strategy, featVec, pnlPct, idxRetPct) {
   if (!LUXML.enabled) return;
   try {
     if (!Array.isArray(featVec) || featVec.length !== LUXML.featNames.length) return;
-    const label = (pnlPct > 0) ? 1 : 0;
+    const label = _sampleLabel(pnlPct, idxRetPct);
+    if (label == null) return;   // [V17] alpha 모드에서 지수수익 없으면 편입 보류(라벨 순도)
     await mlEnsureTable(DB);
     await DB.prepare(
       "INSERT INTO ml_samples (ts, market, symbol, strategy, feat, label, pnl_pct, featver) VALUES (?,?,?,?,?,?,?,?)"
@@ -18792,11 +18811,19 @@ async function mlMarketHarvestNightly(DB) {
           if (HARVEST.tpPct > 0 && r >= HARVEST.tpPct) { pnl = HARVEST.tpPct; break; } // 상방 배리어
         }
         if (pnl === null) pnl = (closes[i + h] / c - 1) * 100;                        // 시간 배리어(만기 수익률)
+        // [V17] alpha 라벨용 지수 수익률(진입 i → 만기 i+h, 정확 봉정렬). idxAll 끝정렬로 봉 매핑.
+        let idxRet = null;
+        if (idxAll && idxAll.length >= L) {
+          const idxOff = idxAll.length - L, ie = idxAll[idxOff + i], ix = idxAll[idxOff + i + h];
+          if (ie > 0 && ix > 0) idxRet = (ix / ie - 1) * 100;
+        }
+        const _lab = _sampleLabel(pnl, idxRet);
+        if (_lab == null) continue;   // [V17] alpha 모드에서 지수 없으면 편입 보류(라벨 순도)
         // ts는 봉 시점 근사(일봉 1개=1일)로 역산 — 시간순 검증분할의 정합 유지
         const ts = baseTs - (L - 1 - i) * 86400000;
         stmts.push(DB.prepare(
           "INSERT INTO ml_samples (ts, market, symbol, strategy, feat, label, pnl_pct, featver) VALUES (?,?,?,?,?,?,?,?)"
-        ).bind(ts, mkt, sym, "hv", JSON.stringify(feat), pnl > 0 ? 1 : 0, +pnl.toFixed(3), LUXML.featVer));
+        ).bind(ts, mkt, sym, "hv", JSON.stringify(feat), _lab, +pnl.toFixed(3), LUXML.featVer));
         made++;
         if (made >= HARVEST.maxPerNight) break;
       }
@@ -20382,7 +20409,13 @@ async function mlLabelCandidates(DB, priceLookup, opts) {
       }
       let feat; try { feat = JSON.parse(c.feat); } catch (e) { delStmts.push(DB.prepare("DELETE FROM ml_candidates WHERE id=?").bind(c.id)); continue; }
       seen[key] = 1;
-      await mlLogSample(DB, c.market, c.symbol, (c.strategy || "swing") + "_cf", feat, exitPct);
+      // [V17] alpha 라벨용 지수 수익률 — 종목 경로와 동일 창(진입~만기)의 지수 수익
+      let idxRet = null;
+      if (pr && Array.isArray(pr.idxCloses) && pr.idxCloses.length >= 2) {
+        const ic = pr.idxCloses, ie = ic[0], ix = ic[ic.length - 1];
+        if (ie > 0 && ix > 0) idxRet = (ix / ie - 1) * 100;
+      }
+      await mlLogSample(DB, c.market, c.symbol, (c.strategy || "swing") + "_cf", feat, exitPct, idxRet);
       delStmts.push(DB.prepare("DELETE FROM ml_candidates WHERE id=?").bind(c.id)); // 편입 후 원본 제거
       labeled++;
     }
@@ -20588,7 +20621,11 @@ export default {
                   const dd = await getState(env.DB, "daily:" + sym, null);
                   if (!dd || !dd.closes || !dd.closes.length) return null;
                   // 진입 이후 경로가 필요 — 최근 (horizon+2)봉을 경로로 제공(손절선 도달 판정용).
-                  return { closes: dd.closes.slice(-(Math.max(1, horizon || 5) + 2)) };
+                  const n = Math.max(1, horizon || 5) + 2;
+                  // [V17] alpha 라벨용 지수 경로(동일 창) — 종목 경로와 같은 최근 n봉으로 정렬
+                  let idxCloses = null;
+                  try { const ic = await _mlLoadIndexCloses(env.DB, mkt); if (ic && ic.length >= 2) idxCloses = ic.slice(-n); } catch (e) {}
+                  return { closes: dd.closes.slice(-n), idxCloses: idxCloses };
                 } catch (e) { return null; }
               }, {});
               if (_cf) await log(env.DB, "INFO", null, _cf);
