@@ -13090,6 +13090,7 @@ async function handleRequest(request, env) {
       try { _out.gbdt = (typeof mlGBDTStatus === "function") ? await mlGBDTStatus(env.DB) : null; } catch (e) {}
       try { _out.committee = await getState(env.DB, "committee_cal", null); } catch (e) {}
       try { _out.data = (typeof sentiStatus === "function") ? await sentiStatus(env.DB) : null; } catch (e) {}
+      try { _out.dataHealth = (typeof mlDataHealth === "function") ? await mlDataHealth(env.DB) : null; } catch (e) {}  // [V20] alpha·딥·featVer 관측
       return new Response(JSON.stringify(_out, null, 2), { headers: { "content-type": "application/json", "access-control-allow-origin": "*" } });
     }
 
@@ -18816,6 +18817,7 @@ const HARVEST = {
   deepBars: 1800,       // 딥 저장 봉수(~7.2년, 코로나 폭락 포함). 라이브 캐시와 분리라 매매 무영향
   deepFetchPerNight: 30,// 매일밤 딥이력 갱신 종목수(로테이션). 딥이력은 거의 안변해 저빈도 OK
   deepRefreshDays: 30,  // 딥이력 재수집 주기(일) — 이보다 최신이면 스킵
+  maxPerSymbol: 400,    // [V20 안정화] 종목당 야간 표본 상한 — 딥이력(1800봉)이 한 종목에 편중되지 않게 분산(더 많은 종목 커버)
   srcWeight: 0.6        // 학습 가중(실거래=1.0 대비)
 };
 
@@ -18877,6 +18879,26 @@ async function harvestDeepFetchNightly(DB) {
   } catch (e) { return "[HIST] fail: " + (e && e.message); }
 }
 
+// [V20 관측] 학습 데이터 건강도 — featVer/타겟/표본수/클래스균형/딥커버리지/드리프트.
+//   alpha 전환·딥히스토리 안정화 확인용(positiveRate가 0/1이면 지수정렬 이상 신호).
+async function mlDataHealth(DB) {
+  const out = { featVer: LUXML.featVer, target: (typeof AI_PARAMS !== "undefined" && AI_PARAMS.prediction && AI_PARAMS.prediction.target) || "binary", featCount: LUXML.featNames.length };
+  try {
+    const cur = await DB.prepare("SELECT COUNT(*) n, AVG(label) pos FROM ml_samples WHERE featver = ?").bind(LUXML.featVer).first();
+    out.samplesCurrentFeatVer = (cur && cur.n) || 0;
+    out.positiveRate = (cur && cur.pos != null) ? +Number(cur.pos).toFixed(3) : null;   // alpha 클래스 균형(~0.3~0.45 정상)
+    const byStrat = await DB.prepare("SELECT strategy, COUNT(*) n FROM ml_samples WHERE featver = ? GROUP BY strategy").bind(LUXML.featVer).all();
+    out.byStrategy = {}; for (const r of ((byStrat && byStrat.results) || [])) out.byStrategy[r.strategy] = r.n;
+    const old = await DB.prepare("SELECT COUNT(*) n FROM ml_samples WHERE featver != ?").bind(LUXML.featVer).first();
+    out.staleSamples = (old && old.n) || 0;    // 구버전(정리 대상) 잔여
+    const dh = await DB.prepare("SELECT COUNT(*) n FROM state WHERE k LIKE 'hist:%'").first();
+    out.deepHistorySymbols = (dh && dh.n) || 0;
+    out.deepBars = HARVEST.deepBars;
+    try { out.drift = await getState(DB, "model_drift", null); } catch (e) {}
+  } catch (e) { out.error = String(e && e.message); }
+  return out;
+}
+
 async function mlMarketHarvestNightly(DB) {
   if (!HARVEST.enabled || !LUXML.enabled) return null;
   try {
@@ -18929,6 +18951,7 @@ async function mlMarketHarvestNightly(DB) {
       const lastEnd = L - 1 - h;
       const baseTs = (dd.ts || Date.now());
       const startI = Math.max(HARVEST.warmupBars, _num(seen[sym], 0));
+      let symMade = 0, nextStart = lastEnd + 1;   // [V20] 종목당 표본 카운터 + 재개 지점(캡에 걸리면 다음밤 이어감)
       for (let i = startI; i <= lastEnd; i += HARVEST.strideBars) {
         const c = closes[i];
         if (!(c > 0)) continue;
@@ -18974,10 +18997,11 @@ async function mlMarketHarvestNightly(DB) {
         stmts.push(DB.prepare(
           "INSERT INTO ml_samples (ts, market, symbol, strategy, feat, label, pnl_pct, featver) VALUES (?,?,?,?,?,?,?,?)"
         ).bind(ts, mkt, sym, "hv", JSON.stringify(feat), _lab, +pnl.toFixed(3), LUXML.featVer));
-        made++;
-        if (made >= HARVEST.maxPerNight) break;
+        made++; symMade++;
+        if (made >= HARVEST.maxPerNight) { nextStart = i + HARVEST.strideBars; break; }
+        if (symMade >= (HARVEST.maxPerSymbol || 400)) { nextStart = i + HARVEST.strideBars; break; }  // [V20] 종목당 상한 → 다음밤 이어감
       }
-      seen[sym] = lastEnd + 1;   // 다음 수확은 새 봉부터
+      seen[sym] = nextStart;   // 다음 수확 재개 지점(완주=lastEnd+1, 캡=중단봉)
     }
     for (let i = 0; i < stmts.length; i += 100) { try { await DB.batch(stmts.slice(i, i + 100)); } catch (e) {} }
     // [V9.5] 실제 처리한 심볼 수(scanned)만큼만 오프셋 전진 — 예산/캡으로 조기중단 시 남은 심볼을 다음밤에 이어감(순회 누락 0)
