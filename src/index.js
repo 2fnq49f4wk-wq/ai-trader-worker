@@ -2275,6 +2275,67 @@ async function applySignalTypeWeights(DB, cfg) {
   } catch (e) {}
 }
 
+// ============================================================================
+// [V12] AI 트레이딩 파라미터 레지스트리 — "모델이 무엇을 어떻게 매매하는가"를 결정하는
+//   핵심 하이퍼파라미터를 한곳에 모아 문서화. 각 항목은 실제 구현부(참조)와 값이 일치하며,
+//   horizon/lookback 등 코드가 직접 읽는 항목은 이 객체가 단일 출처(single source)다.
+//   ※ visionUp(차트 비전AI 상승신호)은 V12에서 모델 입력 피처에서 제거됨.
+// ============================================================================
+const AI_PARAMS = {
+  // ── OHLCV 타임프레임 ── 시가/고가/저가/종가/거래량을 어떤 봉 주기로 볼지.
+  //   진입필터 AI(LUXML/DNN)는 일봉(D1) 기준으로 학습·추론. 분봉(5m/1m)은 스캘프 실행 전용.
+  timeframe: "1d",                 // 모델 기준 봉: "1d"(일봉). 참고: KR 5분봉·1분봉은 실시간 감시용
+  intradayTimeframe: "5m",
+
+  // ── 기술적 지표 기간(Technical Indicators) ── 모델 입력 피처 계산 파라미터.
+  //   (구현: DEFAULT_CFG의 rsiPeriod/maPeriod/atrPeriod/bbStdMult + mlBuildFeatures/_mlStructFeats)
+  indicators: {
+    rsiPeriod: 14,                 // RSI(상대강도지수) 기간
+    smaShort: 5, smaLong: 20,      // 단기/장기 이동평균(SMA) — maGapPct 피처
+    ma200: 200,                    // 장기추세선 — ma200Gap 피처
+    emaFast: 12, emaSlow: 26, macdSignal: 9,  // MACD(EMA 12·26, 시그널 9) — macdH 피처
+    bbPeriod: 20, bbStdMult: 2.0,  // 볼린저 밴드(20, 2σ) — bollB(%B) 피처
+    atrPeriod: 14                  // ATR 변동성 — atrPct 피처
+  },
+
+  // ── 예측 기간(Prediction Horizon) ── 진입 시점 피처로 "며칠 뒤" 방향을 예측/라벨링할지.
+  //   (구현: HARVEST.horizon, 반사실 후보 라벨러, 백테스트 주입기가 모두 이 값을 사용)
+  predictionHorizonDays: 5,
+
+  // ── 룩백 윈도우(Lookback Window) ── 과거 얼마만큼의 봉을 입력/학습에 쓸지.
+  featureLookbackBars: 200,        // 피처 1건 계산에 필요한 최소 과거 봉(MA200 때문에 200 권장)
+  trainWindow: 12000,              // 야간 학습이 사용하는 최근 표본 수(위원회 공통 표본창)
+
+  // ── 진입/청산 임계값(Threshold) ── 모델 확률/점수가 이 값 이상일 때만 개입.
+  //   (구현: LUXML.gateThresh — 이 미만이면 진입 차단, 이상이면 사이징 반영)
+  entryThreshold: 0.42,
+  exitThreshold: 0.42,
+
+  // ── 손절선/익절선(Stop-Loss / Take-Profit) ── 진입가 대비 % 강제청산/익절.
+  //   (전략별 rules.stopLossPct/takeProfit가 우선, 없으면 아래 DEFAULT_CFG 값)
+  stopLossPct: 5.0,                // 하드 스탑로스(%) — MEANREV 등은 max(값, 1.5×ATR%)로 동적화
+  takeProfit1Pct: 4.0,             // 1차 부분익절(%)
+  takeProfit2Pct: 11.0,            // 2차/최종 익절(%)
+
+  // ── 포지션 사이징(Position Sizing) ── 1회 거래에 투입할 자본 비율.
+  //   변동성(손절폭) 기반 리스크 사이징 후, ML 신뢰도로 sizeMult 배율 조절(켈리류 축소).
+  riskPerTradePct: 1.0,            // 거래당 리스크(자산 대비 %) — riskDollar = equity×risk%/stopDist
+  sizeMultMin: 0.5, sizeMultMax: 1.5,  // ML 확신도에 따른 수량 배율 하한/상한(LUXML.sizeMin/Max)
+
+  // ── 최대 낙폭 제한(Max Drawdown Limit) ── 안전장치.
+  maxDailyDropPct: 5.0,            // 일중 낙폭 한도(구현: DEFAULT_CFG.maxDailyDrop)
+  marketCrashPct: -4.0,            // 시장 급락 감지 컷(신규진입 억제)
+  portfolioMaxDrawdownPct: 15.0,   // 포트폴리오 고점 대비 MDD 경보 한도(리포팅/리스크 대시보드 기준)
+
+  // ── 학습률(Learning Rate) ── 과거 패턴을 얼마나 가파르게 학습할지.
+  dnnLearningRate: 0.0025,         // 딥넷(AdamW+코사인) 학습률(구현: DNN.lr)
+  linearLearningRate: 0.05,        // L1 로지스틱 학습률(구현: LUXML.lr)
+
+  // ── 보상 함수(Reward Function) ── 학습 표본 가중 방향.
+  //   "pnl"=손익 크기 가중(큰 손익 거래가 더 크게 가르침, 현행) / "sharpe"=위험대비수익 지향(예약)
+  rewardFunction: "pnl"
+};
+
 const DEFAULT_CFG = {
   usTickers: DEFAULT_US,
   krTickers: DEFAULT_KR,
@@ -12277,13 +12338,11 @@ async function runTradingCycle(env) {
                   if (_heads && _heads.length && typeof nlpTagHeadlinesV2 === "function") { const _t = nlpTagHeadlinesV2(_heads); _col.ev.newsSent = _t.sent; }
                   else if (typeof _grpSent === "number" && !_col.ev.newsSent) _col.ev.newsSent = _grpSent;
                 } catch (e) {}
-                const _vp = (visionPreds && visionPreds[symbol]) ? visionPreds[symbol] : null;
                 signal.mlFeat = mlBuildFeatures({
                   closes: daily.closes, volumes: daily.volumes, opens: daily.opens,
                   highs: daily.highs, lows: daily.lows, idxCloses: __idxCloses,
                   price: price, prevClose: daily.prevClose, dayPct: dayPct,
                   regime: (regime && regime.regime) ? regime.regime : "NEUTRAL",
-                  visionUp: _vp ? (_vp.upConf != null ? _vp.upConf : 0.5) : 0.5,
                   sigWeight: (typeof signal.weight === "number") ? signal.weight : 1,
                   confluence: (signal.members) ? signal.members.length : 1,
                   strategy: strategy, market: market, ev: _col.ev
@@ -12294,7 +12353,7 @@ async function runTradingCycle(env) {
                 try {
                   if (!__candSyms.has(symbol)) {
                     const _sp = (stopDist > 0 && price > 0) ? (stopDist / price * 100) : 5;
-                    const _cs = mlCandidateStmt(DB, market, symbol, strategy, signal.mlFeat, price, _sp, 5);
+                    const _cs = mlCandidateStmt(DB, market, symbol, strategy, signal.mlFeat, price, _sp, AI_PARAMS.predictionHorizonDays);
                     if (_cs) { __candBatch.push(_cs); __candSyms.add(symbol); }
                   }
                 } catch (e) {}
@@ -15276,9 +15335,9 @@ async function runVisionScanBackend(env, force) {
 const LUXML = {
   enabled: true,
   featNames: [
-    // ── 가격/기술 (14) ──
+    // ── 가격/기술 (13) ── [V12] visionUp(차트 비전AI) 제거 — 모델 입력에서 배제
     "rsi14", "maGapPct", "atrPct", "dayPct", "distHighPct",
-    "regBull", "regBear", "visionUp", "sigWeight", "confluence",
+    "regBull", "regBear", "sigWeight", "confluence",
     "stratSwing", "stratDay", "stratMom", "stratMR",
     // ── 구조적 이벤트 (9) ──
     "earnBeat", "earnMiss", "earnDrift", "earnBarsAgo", "daysToEarn",
@@ -15312,7 +15371,7 @@ const LUXML = {
     "volTrendR",   // log(5일 평균거래량 / 20일 평균거래량) — 참여 증가/감소 추세
     "accel"        // ret5(현재) − ret5(5일전) — 수익률 가속도(모멘텀 2차)
   ],
-  featVer: 5,   // ★V9: 피처 48→55 확장(차트모양·거래량-수익률 7종). 구버전 표본 자동분리+전종목 재수확
+  featVer: 6,   // ★V12: visionUp 제거로 피처 55→54 축소. 구버전 표본 자동분리(WHERE featver=?)+전종목 재수확
 
   minSamplesGate: 150,
   minSamplesSize: 400,
@@ -15340,8 +15399,8 @@ const LUXML = {
   recencyFloor: 0.35     // 오래된 표본 최저 가중
 };
 
-const _EV_START = 14;  // 이벤트 피처 시작 인덱스(가격피처 14개 다음)
-const _EV_END = 30;    // 이벤트 피처 끝(exclusive) — 이후는 [V4] 시장구조 피처(코드가 직접 계산)
+const _EV_START = 13;  // 이벤트 피처 시작 인덱스(가격피처 13개 다음 — visionUp 제거로 14→13)
+const _EV_END = 29;    // 이벤트 피처 끝(exclusive) — 이후는 [V4] 시장구조 피처(코드가 직접 계산)
 
 // _sigmoid/_clamp reuse the earlier top-level declarations (line ~5427/~7740) — ESM disallows duplicate top-level function names
 function _num(v, d) { return (typeof v === "number" && isFinite(v)) ? v : d; }
@@ -15552,7 +15611,7 @@ async function _mlLoadIndexCloses(DB, mkt) {
 
 // ── 진입 피처 벡터 생성 ────────────────────────────────────
 // args: { closes, volumes, opens, highs, lows, idxCloses, price, prevClose, dayPct, regime,
-//         visionUp, sigWeight, confluence, strategy, market, ev }
+//         sigWeight, confluence, strategy, market, ev }
 //   ev(선택): 이벤트 피처 이름→값 객체. lux_news.mlCollectEvents가 채움. 없으면 전부 0.
 //   volumes/opens/market(선택): [V4] 시장구조 피처용 — 없으면 해당 피처 중립값.
 function mlBuildFeatures(args) {
@@ -15578,7 +15637,6 @@ function mlBuildFeatures(args) {
       distHighPct: ((price - high20) / P) * 100,
       regBull:     regime === "BULL" ? 1 : 0,
       regBear:     regime === "BEAR" ? 1 : 0,
-      visionUp:    _clamp(_num(args.visionUp, 0.5), 0, 1),
       sigWeight:   _num(args.sigWeight, 1),
       confluence:  _num(args.confluence, 1),
       stratSwing:  strat === "swing" ? 1 : 0,
@@ -17075,7 +17133,7 @@ const DNN = {
   dnnMaxSamples: 2000,   // [V10] 대형 망 per-epoch 비용 제한 — 최근 표본 이만큼만(예산 내 에폭 수 확보)
   patience: 8,           // 조기종료 인내
   gradClip: 5,
-  minTrainSamples: 500,  // [V9.1] 400→500: 피처 55로 확장(입력차원↑)한 만큼 과적합 방어 상향
+  minTrainSamples: 500,  // [V9.1] 400→500: 피처 54(V12 visionUp 제거)로 확장한 입력차원 대비 과적합 방어 상향
   stdClip: 6,            // [V9.1] 윈저화 표준화 클램프(±σ) — 팬테일 이상치 안정화
   valFrac: 0.2,
   trustFloor: 0.505,     // 검증정확도 이 미만이면 신뢰 0
@@ -17595,7 +17653,7 @@ async function mlDNNStatus(DB) {
 // [V11] 입력 피처(파라미터) 역할 설명 — featNames 순서와 1:1 대응. 시각화에서 "이 뉴런이 무슨 일을 하는가"를 표시.
 const FEAT_ROLES = {
   rsi14: "RSI(14) 과매수/과매도", maGapPct: "가격-이동평균 괴리%", atrPct: "ATR 변동성%", dayPct: "당일 등락%", distHighPct: "전고점 대비 거리%",
-  regBull: "강세 국면 플래그", regBear: "약세 국면 플래그", visionUp: "차트 비전AI 상승신호", sigWeight: "신호 가중치", confluence: "신호 합류도",
+  regBull: "강세 국면 플래그", regBear: "약세 국면 플래그", sigWeight: "신호 가중치", confluence: "신호 합류도",
   stratSwing: "스윙 전략 적합도", stratDay: "데이트레이딩 적합도", stratMom: "모멘텀 전략 적합도", stratMR: "평균회귀 전략 적합도",
   earnBeat: "실적 서프라이즈 상회", earnMiss: "실적 하회", earnDrift: "실적후 표류(PEAD)", earnBarsAgo: "실적 경과 봉수", daysToEarn: "다음 실적까지 일수",
   has8K: "8-K 공시 존재", analystSig: "애널리스트 신호", insiderBuy: "내부자 매수", econShock: "거시 쇼크",
@@ -18004,7 +18062,7 @@ const HARVEST = {
   symbolsPerNight: 1500, // [V11] 500→1500 — 전 유니버스(~900종목)를 매일밤 완전순회(커버리지 극대화)
   strideBars: 2,        // [V11] 3→2 — 봉 간격 축소로 종목당 표본↑(과적합 완화용 데이터 확대. 라벨 겹침은 엠바고가 방어)
   minBars: 120, warmupBars: 60,
-  horizon: 5, stopPct: 5,
+  horizon: AI_PARAMS.predictionHorizonDays, stopPct: 5,  // [V12] 예측지평은 AI_PARAMS 단일출처
   tpPct: 8,             // [V9.9] Triple-Barrier(de Prado) 익절 배리어 — 기간내 +8% 선도달 시 승 확정.
                         //   기존 2중(손절+시간)의 "중간에 크게 올랐다가 되돌린 승리 패턴"을 패로 오분류하던 편향 제거.
   maxPerNight: 20000,   // [V11] 3000→20000 — 하룻밤 대량 수확(외부GPU 학습이 3M 담당→Worker 야간DNN 생략분 예산을 수확에 투입)
@@ -19368,7 +19426,7 @@ async function mlLabelCandidates(DB, priceLookup, opts) {
 //
 //   인자:
 //     seriesBySym: { SYM: { closes:[...], market, dates?:[...] } }  (오래된→최신 순)
-//     signalFn(window)→ { fire:bool, strategy, extra:{regime,visionUp,sigWeight,confluence,dayPct} }
+//     signalFn(window)→ { fire:bool, strategy, extra:{regime,sigWeight,confluence,dayPct} }
 //         window = 그 시점까지의 closes 슬라이스. fire=true면 그 시점에 진입신호로 간주.
 //     opts: { horizon=5, minBars=60, step=1, maxPerSym=500 }
 // ============================================================================
@@ -19399,7 +19457,7 @@ async function mlBacktestInject(DB, seriesBySym, signalFn, opts) {
         const feat = mlBuildFeatures({
           closes: win, volumes: _sl(S.volumes), opens: _sl(S.opens), highs: _sl(S.highs), lows: _sl(S.lows),
           price: price, prevClose: t > 0 ? closes[t - 1] : 0, dayPct: _num(ex.dayPct, 0),
-          regime: ex.regime || "NEUTRAL", visionUp: _num(ex.visionUp, 0.5),
+          regime: ex.regime || "NEUTRAL",
           sigWeight: _num(ex.sigWeight, 1), confluence: _num(ex.confluence, 1),
           strategy: sig.strategy || "swing", market: S.market, ev: ex.ev || {}
         });
