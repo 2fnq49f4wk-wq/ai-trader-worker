@@ -2344,7 +2344,27 @@ const AI_PARAMS = {
     negScaleMin: 0.88,         // 강한 악재 시 사이즈 하한 배율(구현: sectorNews.negScaleMin)
     minHeadlines: 2,           // 감성 신뢰에 필요한 최소 헤드라인 수(소표본 과신 방지)
     lexWeight: 0.5, vaderWeight: 0.5,  // 사건사전 극성 : VADER 극성 융합비(nlpTagHeadlinesV2)
-    krEnabled: true            // 한국어 감성 사전 사용
+    krEnabled: true,           // 한국어 감성 사전 사용
+    // ── 필터링·연관성(Filtering & Relevance) ──
+    entityRelevance: { headlineBonus: 1.5, mentionBonus: 0.3, listingOnlyWeight: 0.4 }, // 메인주제(헤드라인/다수언급) 가중, 단순나열 감점
+    sourceWeights: {           // 매체 신뢰도 가중 — 공시·메이저는 ↑, 블로그·찌라시는 ↓
+      dart: 1.6, sec: 1.6, bloomberg: 1.5, reuters: 1.5, wsj: 1.4, ft: 1.4, cnbc: 1.2,
+      yonhap: 1.3, mk: 1.2, hankyung: 1.2, major: 1.2, blog: 0.4, unknown: 1.0
+    },
+    duplicatePenalty: 0.5,     // 동일시간대 유사기사 중복분 감성 가중 축소비(복붙 과적합 방지)
+    duplicateSimilarity: 0.8,  // 제목 자카드 유사도 이 이상이면 중복으로 간주
+    // ── 금융 특화 평가(Financial Scoring) ──
+    intensityThreshold: 0.7,   // 확실한 매수 시그널 인정 컷오프(효과 compound ≥ 이 값)
+    mixedHandling: "net",      // 한 기사 호·악재 혼재 시: "net"(상계) | "hold"(거래 보류)
+    mixedConflictGap: 0.5,     // pos·neg 강도가 둘 다 이 값↑면 충돌(뉘앙스 혼재)로 판정
+    // ── 시간·시장반응(Time & Reaction) ──
+    halfLifeMinutes: { breaking: 30, filing: 10080, default: 720 }, // 반감기: 속보 30분/공시 7일/일반 12시간
+    priceInThresholdPct: 8,    // 뉴스 전 priceInLookbackDays 급등이 이 %↑면 재료소멸(추격차단)
+    priceInLookbackDays: 3,
+    volumeConfirmMult: 1.5,    // 호재 시 거래량이 20일평균 대비 이 배수↑라야 시장인정(교차검증)
+    // ── 기술적 융합·오버라이드(Override) ──
+    overrideEnabled: true,     // 감성 오버라이드 — 치명 악재 감지 시 기술신호 무시하고 매수금지
+    overrideLiquidate: true    // 오버라이드 시 보유분 전량매도까지 집행(최상위 권한)
   },
 
   // ── 포트폴리오 리스크 한도(Risk Limits) ── 분산·시장민감도 통제.
@@ -5737,18 +5757,18 @@ async function updateSectorNewsSentiment(DB, cfg, force) {
     try {
       const url = "https://feeds.finance.yahoo.com/rss/2.0/headline?s=" + SECTOR_NEWS_REP[grp] + "&lang=en-US&region=US";
       const resp = await fetch(url, { headers: { "User-Agent": "Mozilla/5.0 (compatible)" } });
-      if (resp.ok) items = _parseRssItems(await resp.text(), 10);
+      if (resp.ok) items = _parseRssItems(await resp.text(), 25);  // [V14] 10→25 수집량 확대
     } catch(e) {}
     // 2차: [V83] Google News RSS 폴백 — 야후 RSS가 사실상 폐기돼 수집 0건이던 문제의 본 수정.
     //   그룹 대표티커 2개로 검색 쿼리 구성. 키 불필요·안정적.
     if (items.length === 0 && fetchBudgetLeft() > (sc.minBudgetReserve || 8)) {
       yahooDead++;
       try {
-        const reps = SECTOR_NEWS_REP[grp].split(",").slice(0, 2).join(" OR ");
+        const reps = SECTOR_NEWS_REP[grp].split(",").slice(0, 3).join(" OR ");  // [V14] 대표티커 2→3개로 검색 폭 확대
         const gUrl = "https://news.google.com/rss/search?q=" + encodeURIComponent(reps + " stock") + "&hl=en-US&gl=US&ceid=US:en";
         const gResp = await fetch(gUrl, { headers: { "User-Agent": "Mozilla/5.0 (compatible)" } });
         if (gResp.ok) {
-          items = _parseRssItems(await gResp.text(), 10);
+          items = _parseRssItems(await gResp.text(), 25);  // [V14] 10→25 수집량 확대
           if (items.length > 0) googleUsed++;
         }
       } catch(e) {}
@@ -11803,6 +11823,7 @@ async function runTradingCycle(env) {
       let __mlModel = null, __ensemble = null, __mind = null, __guard = { distrust: false },
           __dnn = null, __dnnTrust = null, __noiseFilter = null, __evMem = {}, __sectorNews = null,
           __gbdt = null, __gbdtTrust = null, __cal = null, __evStats = null, __idxCloses = null;
+      const __sentiOvrMemo = {};  // [V14] 종목별 감성 오버라이드 판정 사이클 캐시(매도·매수 루프 공유)
       const __candBatch = [], __candSyms = new Set();  // [LUX-AI] 반사실 후보 배치(사이클당 1커밋)
       const __aiPicks = [];   // [V5] AI 픽 — 위원회가 이번 사이클 평가한 종목별 승률예측(대시보드/리포트 노출)
       try {
@@ -11954,6 +11975,25 @@ async function runTradingCycle(env) {
             }
             if (beJustLocked) {
               await log(DB, "INFO", symbol, "BREAK-EVEN locked [" + stratName + "] at +" + beLockedPnl.toFixed(2) + "% stop=" + beLockedStop.toFixed(2));
+            }
+
+            // [V14] 감성 오버라이드 — 최상위 권한. 종목 연관 치명 악재(횡령·배임·분식·상폐·거래정지
+            //   ·감사의견거절 등) 감지 시 기술신호·손익 무관하게 즉시 전량청산(자본 보호 최우선).
+            {
+              const _sp = (typeof AI_PARAMS !== "undefined") ? AI_PARAMS.sentiment : null;
+              if (_sp && _sp.overrideEnabled !== false && _sp.overrideLiquidate !== false && __sectorNews) {
+                const _cn = (typeof NAME_MAP !== "undefined" && NAME_MAP[symbol]) ? NAME_MAP[symbol] : null;
+                if (__sentiOvrMemo[symbol] === undefined) __sentiOvrMemo[symbol] = sentiSymbolOverride(symbol, _cn, __sectorNews, mcfg);
+                const _ovr = __sentiOvrMemo[symbol];
+                if (_ovr && _ovr.hit) {
+                  await log(DB, "WARN", symbol, "[SENTI-OVERRIDE] 치명악재 '" + _ovr.kw + "' 감지 → 전량청산(최상위 권한)");
+                  await executeSell(DB, market, symbol, held, held.qty, price, "SENTI_OVERRIDE " + _ovr.kw, mcfg, cash);
+                  sold++;
+                  const _sk = Object.keys(positions).some(k => positions[k].symbol === symbol && k !== posKey);
+                  if (!_sk) { heldSymbols.delete(symbol); const _sc = SECTOR_MAP[symbol]; if (_sc && sectorCounts[_sc]) sectorCounts[_sc]--; }
+                  continue;
+                }
+              }
             }
 
             // [Vision AI] DOWN 고신뢰 보유 포지션 조기 청산 (적중률 게이팅)
@@ -12385,14 +12425,15 @@ async function runTradingCycle(env) {
             //   미학습/기권/불신이면 규칙엔진 수량 유지(거래영향 0). 모든 실패는 무해 폴백.
             try {
               if (typeof LUXML !== "undefined" && LUXML.enabled && daily && daily.closes && signal) {
-                let _heads = [], _grpSent = null;
+                let _heads = [], _grpSent = null, _artObjs = null;
                 try {
                   if (__sectorNews && __sectorNews.headlines) {
                     const _grp = (typeof getSectorGroup === "function") ? getSectorGroup(symbol, mcfg) : null;
                     if (_grp && __sectorNews.sentiment && __sectorNews.sentiment[_grp]) _grpSent = __sectorNews.sentiment[_grp].compound;
                     if (_grp && __sectorNews.headlines[_grp]) {
                       // V83 수집기는 {title,link,pub} 객체 배열, AI 레이어는 문자열 배열 기대 → 정규화
-                      _heads = __sectorNews.headlines[_grp]
+                      _artObjs = __sectorNews.headlines[_grp];  // [V14] 원본(출처·시각 포함) 보존 → 고도화 스코어러용
+                      _heads = _artObjs
                         .map(function (h) { return (typeof h === "string") ? h : ((h && h.title) || ""); })
                         .filter(function (t) { return !!t; });
                     }
@@ -12403,11 +12444,29 @@ async function runTradingCycle(env) {
                   regime: (regime && regime.regime) ? regime.regime : "NEUTRAL",
                   secData: secData, eventData: eventData, headlines: _heads, eventMemory: __evMem
                 });
-                // VADER식 감성 융합(헤드라인 있으면 newsSent 보강, 없으면 야간 집계 그룹감성 폴백)
+                // [V14] 고도화 감성(연관성·출처·중복·금융문맥·반감기·거래량동조) → newsSent 보강 + 오버라이드 판정
+                let _sentiAdv = null;
                 try {
-                  if (_heads && _heads.length && typeof nlpTagHeadlinesV2 === "function") { const _t = nlpTagHeadlinesV2(_heads); _col.ev.newsSent = _t.sent; }
-                  else if (typeof _grpSent === "number" && !_col.ev.newsSent) _col.ev.newsSent = _grpSent;
+                  const _srcArts = (_artObjs && _artObjs.length) ? _artObjs : _heads;
+                  if (_srcArts && _srcArts.length && typeof scoreNewsAdvanced === "function") {
+                    const _cn = (typeof NAME_MAP !== "undefined" && NAME_MAP[symbol]) ? NAME_MAP[symbol] : null;
+                    let _volR = null;
+                    if (daily.volumes && daily.volumes.length >= 21) {
+                      let _vs = 0; for (let _i = daily.volumes.length - 21; _i < daily.volumes.length - 1; _i++) _vs += _num(daily.volumes[_i], 0);
+                      const _va2 = _vs / 20; if (_va2 > 0) _volR = _num(daily.volumes[daily.volumes.length - 1], 0) / _va2;
+                    }
+                    const _runup = (daily.closes.length > 4 && daily.closes[daily.closes.length - 4] > 0) ? (price / daily.closes[daily.closes.length - 4] - 1) * 100 : 0;
+                    _sentiAdv = scoreNewsAdvanced(_srcArts, { symbol: symbol, companyName: _cn, params: AI_PARAMS.sentiment, priceRunupPct: _runup, volRatio: _volR });
+                    if (_sentiAdv.n > 0) _col.ev.newsSent = _sentiAdv.sent;
+                    if (_sentiAdv.override) __sentiOvrMemo[symbol] = { hit: true, kw: _sentiAdv.overrideKw };
+                  } else if (typeof _grpSent === "number" && !_col.ev.newsSent) _col.ev.newsSent = _grpSent;
                 } catch (e) {}
+                // [V14] 감성 오버라이드 매수차단 — 치명 악재 감지 시 기술신호 무시하고 진입 금지(최상위 권한)
+                if (_sentiAdv && _sentiAdv.override && AI_PARAMS.sentiment && AI_PARAMS.sentiment.overrideEnabled !== false) {
+                  await log(DB, "WARN", symbol, "[SENTI-OVERRIDE] 치명악재 '" + _sentiAdv.overrideKw + "' 감지 → 매수금지");
+                  incNobuy("senti_override");
+                  continue;
+                }
                 signal.mlFeat = mlBuildFeatures({
                   closes: daily.closes, volumes: daily.volumes, opens: daily.opens,
                   highs: daily.highs, lows: daily.lows, idxCloses: __idxCloses,
@@ -19564,6 +19623,183 @@ function nlpTagHeadlinesV2(headlines) {
   return base;
 }
 
+// ============================================================================
+// [V14] 고도화 뉴스/감성 스코어러 — 여의도 문법·연관성·시간·중복·오버라이드
+//   일반 VADER(sentimentScore) 위에 금융 도메인 레이어를 얹는다:
+//     1) 필터링·연관성 : 개체명 연관성, 매체 신뢰도, 중복기사 페널티
+//     2) 금융 특화     : 금융 문맥 극성반전(금리인하·부채감소=호재), 강도 컷오프, 혼재 처리
+//     3) 시간·반응     : 뉴스 반감기 감쇠, 선반영(추격) 차단, 거래량-뉴스 동조 교차검증
+//     4) 오버라이드    : 횡령·배임·상폐 등 치명 악재 → 기술신호 무시하고 매수금지·전량매도
+//   파라미터는 AI_PARAMS.sentiment 에서 조회. LLM 0.
+// ============================================================================
+
+// 금융 문맥 극성(구절 포함 매칭 — 토큰화 전 원문 소문자에서 includes). 일반어와 정반대인 케이스 위주.
+const SENTI_FIN_CONTEXT = {
+  // 호재(일반적으론 '인하/감소/축소'라 부정적으로 보일 수 있으나 시장에선 +)
+  "rate cut": 1.8, "rate cuts": 1.8, "cuts rates": 1.8, "cut interest": 1.6, "dovish": 1.4,
+  "debt reduction": 1.6, "reduces debt": 1.5, "deleveraging": 1.2, "cost cutting": 1.0, "cost reduction": 1.0,
+  "tax cut": 1.5, "tax cuts": 1.5, "buyback": 1.6, "stock split": 0.8, "short squeeze": 1.4, "oversold": 0.8,
+  "금리 인하": 1.8, "금리인하": 1.8, "기준금리 인하": 1.8, "부채 감소": 1.6, "부채감소": 1.6, "차입금 감소": 1.4,
+  "원가 절감": 1.0, "비용 절감": 1.0, "감세": 1.5, "자사주 매입": 1.6, "자사주매입": 1.6, "과매도": 0.8,
+  // 악재(일반적으론 '인상/증가'라 긍정처럼 보일 수 있으나 시장에선 −)
+  "rate hike": -1.3, "rate hikes": -1.3, "hikes rates": -1.3, "hawkish": -1.1, "debt surge": -1.4,
+  "rising debt": -1.2, "dilution": -1.6, "share dilution": -1.8, "capital raise": -1.2, "overbought": -0.8,
+  "금리 인상": -1.3, "금리인상": -1.3, "기준금리 인상": -1.3, "부채 급증": -1.4, "차입금 증가": -1.1,
+  "유상증자": -1.6, "주식 희석": -1.6, "과매수": -0.8
+};
+
+// 치명 악재(오버라이드) — 종목과 함께 등장 시 매수금지·전량매도. 소문자 부분매칭.
+const SENTI_CRITICAL_NEG = [
+  "횡령", "배임", "분식", "분식회계", "회계부정", "상장폐지", "상폐", "거래정지", "감사의견 거절", "감사의견거절",
+  "의견거절", "자본잠식", "부도", "파산", "회생절차", "법정관리", "상장적격성", "불성실공시", "관리종목 지정",
+  "내부자 거래", "주가조작", "시세조종", "대규모 손실",
+  "embezzlement", "accounting fraud", "financial fraud", "fraud charges", "sec charges", "delisting",
+  "delisted", "bankruptcy", "chapter 11", "going concern", "insolvency", "default on", "ponzi", "restatement",
+  "auditor resign", "sec investigation", "sec probe", "criminal charges", "indicted"
+];
+
+// 기사에서 매체(source) 추정 — 구글뉴스 제목 접미(" - Reuters") 또는 링크 도메인.
+function _articleSource(art) {
+  try {
+    const title = (art && (art.title || art.headline)) || (typeof art === "string" ? art : "");
+    let src = (art && art.source) || "";
+    if (!src && title) { const m = title.match(/\s[-–—]\s([^-–—]{2,40})$/); if (m) src = m[1].trim(); }
+    if (!src && art && art.link) { const dm = String(art.link).match(/https?:\/\/(?:www\.)?([^\/]+)/); if (dm) src = dm[1]; }
+    return src.toLowerCase();
+  } catch (e) { return ""; }
+}
+function _sourceWeight(src, sw) {
+  if (!src) return (sw && sw.unknown) || 1.0;
+  const keys = { "dart": "dart", "sec.gov": "sec", "bloomberg": "bloomberg", "reuters": "reuters", "wsj": "wsj",
+    "wall street": "wsj", "financial times": "ft", "ft.com": "ft", "cnbc": "cnbc", "yonhap": "yonhap", "연합": "yonhap",
+    "매일경제": "mk", "mk.co.kr": "mk", "한국경제": "hankyung", "hankyung": "hankyung", "blog": "blog", "tistory": "blog", "naver.me": "blog" };
+  for (const k in keys) if (src.indexOf(k) !== -1) return (sw && sw[keys[k]]) || 1.0;
+  return (sw && sw.unknown) || 1.0;
+}
+// 금융 문맥 극성 보정(구절 매칭 합).
+function _finContextAdjust(lowerText) {
+  let adj = 0;
+  for (const p in SENTI_FIN_CONTEXT) if (lowerText.indexOf(p) !== -1) adj += SENTI_FIN_CONTEXT[p];
+  return _clamp(adj, -3, 3);
+}
+// 개체명 연관성 — 종목/회사명이 헤드라인 주제인지(가중↑) 단순나열인지(가중↓).
+function _entityRelevance(lowerTitle, symbol, companyName, er) {
+  try {
+    er = er || {};
+    const names = [];
+    if (companyName) names.push(String(companyName).toLowerCase());
+    if (symbol) { const base = String(symbol).replace(/\.(KS|KQ)$/i, "").toLowerCase(); if (base) names.push(base); }
+    let cnt = 0, inHead = false;
+    for (const nm of names) {
+      if (!nm || nm.length < 2) continue;
+      const idx = lowerTitle.indexOf(nm);
+      if (idx !== -1) { cnt++; if (idx < Math.max(40, lowerTitle.length * 0.5)) inHead = true; }
+    }
+    if (cnt === 0) return (er.listingOnlyWeight != null ? er.listingOnlyWeight : 0.4); // 언급 없음 → 섹터 나열 취급
+    let w = 1.0;
+    if (inHead) w *= (er.headlineBonus || 1.5);
+    if (cnt >= 2) w *= (1 + (er.mentionBonus || 0.3));
+    return _clamp(w, 0.2, 3);
+  } catch (e) { return 1.0; }
+}
+// 제목 자카드 유사도(중복 판정).
+function _titleJaccard(a, b) {
+  try {
+    const ta = new Set(a.toLowerCase().split(/\s+/).filter(function (t) { return t.length > 1; }));
+    const tb = new Set(b.toLowerCase().split(/\s+/).filter(function (t) { return t.length > 1; }));
+    if (!ta.size || !tb.size) return 0;
+    let inter = 0; for (const t of ta) if (tb.has(t)) inter++;
+    return inter / (ta.size + tb.size - inter);
+  } catch (e) { return 0; }
+}
+
+// ── 고도화 스코어러 ──────────────────────────────────────────
+//   articles: [{title, link?, pub?, source?}] 또는 문자열 배열
+//   opts: { symbol, companyName, nowTs, priceRunupPct, volRatio, params(AI_PARAMS.sentiment) }
+//   반환: { compound(-1..1), sent(-3..3), confirmedBuy, chaseBlocked, abstain, override, overrideKw, n, effN, flags }
+function scoreNewsAdvanced(articles, opts) {
+  opts = opts || {};
+  const P = opts.params || ((typeof AI_PARAMS !== "undefined" && AI_PARAMS.sentiment) || {});
+  const out = { compound: 0, sent: 0, confirmedBuy: false, chaseBlocked: false, abstain: false,
+    override: false, overrideKw: null, n: 0, effN: 0, flags: {} };
+  try {
+    const arr = (Array.isArray(articles) ? articles : []).map(function (a) {
+      return (typeof a === "string") ? { title: a } : (a || {});
+    }).filter(function (a) { return a.title; });
+    if (!arr.length) return out;
+    const now = opts.nowTs || Date.now();
+    const seen = [];  // 중복판정용 이미 채택된 제목들
+    let wSum = 0, wComp = 0, posMax = 0, negMax = 0;
+    for (const a of arr) {
+      const title = String(a.title);
+      const low = title.toLowerCase();
+      // 오버라이드(치명 악재) — 종목 연관 있을 때만 발동(연관 없으면 섹터 노이즈)
+      const rel = _entityRelevance(low, opts.symbol, opts.companyName, P.entityRelevance);
+      if (P.overrideEnabled !== false && rel >= 1.0) {
+        for (const kw of SENTI_CRITICAL_NEG) { if (low.indexOf(kw) !== -1) { out.override = true; out.overrideKw = kw; break; } }
+      }
+      // 기본 VADER + 금융 문맥 보정
+      const base = sentimentScore(title).compound;
+      const fin = _finContextAdjust(low) / 4;   // -0.75..0.75 스케일
+      let c = _clamp(base + fin, -1, 1);
+      // 혼재 뉘앙스 추적(한 기사 내 pos·neg 동시 강)
+      if (base > 0) posMax = Math.max(posMax, base); else if (base < 0) negMax = Math.max(negMax, -base);
+      // 매체 신뢰도 × 개체명 연관성 × 반감기 감쇠
+      const srcW = _sourceWeight(_articleSource(a), P.sourceWeights);
+      let hl = (P.halfLifeMinutes && P.halfLifeMinutes.default) || 720;
+      if (/속보|breaking|긴급/.test(low)) hl = (P.halfLifeMinutes && P.halfLifeMinutes.breaking) || 30;
+      else if (/공시|filing|8-k|dart|사업보고서/.test(low)) hl = (P.halfLifeMinutes && P.halfLifeMinutes.filing) || 10080;
+      let decay = 1;
+      const ts = a.pub ? Date.parse(a.pub) : (a.ts || 0);
+      if (ts && isFinite(ts) && ts > 0) { const ageMin = Math.max(0, (now - ts) / 60000); decay = Math.pow(0.5, ageMin / hl); }
+      // 중복 페널티 — 이미 채택된 유사 제목이 있으면 축소
+      let dupW = 1;
+      for (const s of seen) { if (_titleJaccard(title, s) >= (P.duplicateSimilarity || 0.8)) { dupW = (P.duplicatePenalty != null ? P.duplicatePenalty : 0.5); break; } }
+      seen.push(title);
+      const w = srcW * rel * decay * dupW;
+      wSum += w; wComp += w * c; out.n++;
+    }
+    if (wSum <= 0) return out;
+    let compound = _clamp(wComp / wSum, -1, 1);
+    out.effN = +wSum.toFixed(2);
+    // 혼재 처리 — 호·악재 모두 강하면 상계(net) 또는 보류(hold)
+    if (posMax >= (P.mixedConflictGap || 0.5) && negMax >= (P.mixedConflictGap || 0.5)) {
+      out.flags.mixed = true;
+      if ((P.mixedHandling || "net") === "hold") { out.abstain = true; compound = 0; }
+    }
+    // 선반영(추격) 차단 — 뉴스 전 급등 상태면 호재라도 추격 금지
+    if (typeof opts.priceRunupPct === "number" && opts.priceRunupPct >= (P.priceInThresholdPct || 8) && compound > 0) {
+      out.chaseBlocked = true; out.flags.priceIn = +opts.priceRunupPct.toFixed(1);
+    }
+    // 거래량-뉴스 동조 교차검증 — 호재인데 거래량 안 붙으면 확신 감쇠
+    let volOK = true;
+    if (typeof opts.volRatio === "number" && compound > 0) { volOK = opts.volRatio >= (P.volumeConfirmMult || 1.5); out.flags.volRatio = +opts.volRatio.toFixed(2); }
+    // 확실한 매수 시그널 — 강도 컷오프 + 거래량 확인 + 추격아님 + 최소기사수
+    out.confirmedBuy = compound >= (P.intensityThreshold || 0.7) && volOK && !out.chaseBlocked && !out.abstain && out.n >= (P.minHeadlines || 2);
+    out.compound = +compound.toFixed(3);
+    out.sent = +_clampN(compound * 3, -3, 3).toFixed(3);
+  } catch (e) {}
+  return out;
+}
+
+// 보유/후보 종목의 치명 악재 오버라이드 여부 — 섹터 헤드라인에서 종목 연관 치명키워드 탐지.
+//   반환: { hit, kw } (hit=false면 없음). 결과는 호출부 사이클 캐시로 재사용 권장.
+function sentiSymbolOverride(symbol, companyName, sectorNews, mcfg) {
+  try {
+    const P = (typeof AI_PARAMS !== "undefined" && AI_PARAMS.sentiment) || {};
+    if (P.overrideEnabled === false || !sectorNews || !sectorNews.headlines) return { hit: false };
+    const grp = (typeof getSectorGroup === "function") ? getSectorGroup(symbol, mcfg) : null;
+    const buckets = [];
+    if (grp && sectorNews.headlines[grp]) buckets.push(sectorNews.headlines[grp]);
+    if (sectorNews.headlines.MARKET) buckets.push(sectorNews.headlines.MARKET);
+    for (const arts of buckets) {
+      const r = scoreNewsAdvanced(arts, { symbol: symbol, companyName: companyName, params: P });
+      if (r.override) return { hit: true, kw: r.overrideKw };
+    }
+    return { hit: false };
+  } catch (e) { return { hit: false }; }
+}
+
 
 // ============================================================================
 // [FETCH] 외부 뉴스/감성 수집 파이프라인 (Worker fetch → 감성 → state)
@@ -19577,20 +19813,30 @@ function nlpTagHeadlinesV2(headlines) {
 //   야간 1회 수집(6 subreq) → VADER 감성 → newsSent 피처 강화. 그룹키는 SECTOR_NEWS_REP과 동일해야 라이브 피처가 읽음.
 //   ※ 뉴스감성은 과거봉 소급수확 불가 → 라이브 표본에만 반영(느리게 축적). 노이즈는 L1/신뢰게이트가 자동 억제.
 const _GNEWS = function (q) { return "https://news.google.com/rss/search?q=" + encodeURIComponent(q) + "&hl=en-US&gl=US&ceid=US:en"; };
+const _GNEWSK = function (q) { return "https://news.google.com/rss/search?q=" + encodeURIComponent(q) + "&hl=ko&gl=KR&ceid=KR:ko"; }; // [V14] 한국어 뉴스
 const SENTI_SOURCES = [
   { type: "rss", group: "TECH",       url: _GNEWS("semiconductor OR AI chip OR Nvidia OR Apple OR Microsoft stock") },
   { type: "rss", group: "TECH",       url: _GNEWS("artificial intelligence stocks OR TSMC OR AMD OR chip earnings OR cloud software") },
+  { type: "rss", group: "TECH",       url: _GNEWS("Broadcom OR Micron OR ASML OR Qualcomm OR data center OR GPU demand") },   // [V14]
   { type: "rss", group: "FINANCE",    url: _GNEWS("bank stocks OR JPMorgan OR interest rate OR financial sector earnings") },
+  { type: "rss", group: "FINANCE",    url: _GNEWS("Federal Reserve OR Goldman Sachs OR bond yields OR credit spreads OR insurance stocks") }, // [V14]
   { type: "rss", group: "HEALTH",     url: _GNEWS("pharma stocks OR FDA approval OR healthcare sector OR Eli Lilly OR biotech") },
+  { type: "rss", group: "HEALTH",     url: _GNEWS("clinical trial OR drug approval OR Merck OR Pfizer OR medical device stocks") },   // [V14]
   { type: "rss", group: "CONSUMER",   url: _GNEWS("retail stocks OR Amazon OR Tesla OR consumer spending OR Walmart") },
   { type: "rss", group: "CONSUMER",   url: _GNEWS("EV sales OR electric vehicle OR Nike OR Starbucks OR consumer confidence") },
   { type: "rss", group: "INDUSTRIAL", url: _GNEWS("defense stocks OR Boeing OR Caterpillar OR industrial sector OR aerospace") },
+  { type: "rss", group: "INDUSTRIAL", url: _GNEWS("robotics OR machinery orders OR GE Aerospace OR Lockheed OR industrial demand") }, // [V14]
   { type: "rss", group: "RESOURCES",  url: _GNEWS("oil price OR energy stocks OR Exxon OR commodities OR natural gas") },
   { type: "rss", group: "RESOURCES",  url: _GNEWS("gold price OR copper OR lithium OR metals OR mining stocks") },
   // MARKET = 광의 시장감성(미매핑 종목·시장 폴백용)
   { type: "rss", group: "MARKET",     url: _GNEWS("stock market today OR S&P 500 OR Nasdaq OR Dow Jones rally OR selloff") },
   { type: "rss", group: "MARKET",     url: _GNEWS("analyst upgrade OR price target raised OR earnings beat OR guidance raised") },
-  { type: "rss", group: "MARKET",     url: _GNEWS("Korea stock OR KOSPI OR Samsung Electronics OR SK Hynix OR won") }
+  { type: "rss", group: "MARKET",     url: _GNEWS("VIX OR market volatility OR recession fears OR Fed rate decision OR jobs report") }, // [V14]
+  // [V14] 한국어 소스 — KR 종목 감성·오버라이드(횡령·상폐 등) 탐지 강화
+  { type: "rss", group: "MARKET",     url: _GNEWSK("코스피 OR 코스닥 OR 삼성전자 OR SK하이닉스 OR 증시") },
+  { type: "rss", group: "TECH",       url: _GNEWSK("반도체 OR 2차전지 OR AI 반도체 OR 삼성전자 실적 OR 하이닉스") },
+  { type: "rss", group: "FINANCE",    url: _GNEWSK("은행주 OR 금리 OR 증권주 OR 실적 발표 OR 배당") },
+  { type: "rss", group: "MARKET",     url: _GNEWSK("상장폐지 OR 횡령 OR 배임 OR 분식회계 OR 거래정지 OR 감사의견") }  // 치명 악재 전담
 ];
 
 function _rssTitles(xml) {
