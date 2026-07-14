@@ -15892,6 +15892,34 @@ function _mlTaFibFeats(closes, highs, lows, volumes, opens, price) {
   return o;
 }
 
+// [V19] 지수-상대 횡단면 피처 — 시장지수 대비 상대위치(수확·라이브 동일 계산, 분포 정합).
+//   closes(종목)·idxCloses(시장지수) 모두 끝정렬 → 최근 창으로 상대RSI·상대변동성·베타·상관 산출.
+//   지수 없으면 중립값(모든 사이트 동일 폴백) — 분포 불일치 없음.
+function _mlXSectFeats(closes, idxCloses) {
+  const o = { rsiRel: 0, volRatioRel: 1, betaIdx: 1, corrIdx: 0 };
+  try {
+    if (!Array.isArray(closes) || closes.length < 30 || !Array.isArray(idxCloses) || idxCloses.length < 30) return o;
+    // 상대 RSI — 종목이 시장보다 얼마나 과열/과매도인지
+    const rS = _num(getRSI(closes, 14), 50), rI = _num(getRSI(idxCloses, 14), 50);
+    o.rsiRel = _clamp((rS - rI) / 100, -1, 1);
+    // 최근 수익률 시퀀스(둘 다 끝정렬 → 동일 날짜창)
+    const n = Math.min(61, closes.length, idxCloses.length);
+    const cs = closes.slice(-n), is = idxCloses.slice(-n);
+    const sr = [], ir = [];
+    for (let k = 1; k < n; k++) { if (cs[k - 1] > 0 && is[k - 1] > 0) { sr.push(cs[k] / cs[k - 1] - 1); ir.push(is[k] / is[k - 1] - 1); } }
+    if (sr.length >= 20) {
+      let ms = 0, mi = 0; for (let k = 0; k < sr.length; k++) { ms += sr[k]; mi += ir[k]; } ms /= sr.length; mi /= sr.length;
+      let vs = 0, vi = 0, cov = 0;
+      for (let k = 0; k < sr.length; k++) { vs += (sr[k] - ms) * (sr[k] - ms); vi += (ir[k] - mi) * (ir[k] - mi); cov += (sr[k] - ms) * (ir[k] - mi); }
+      vs /= sr.length; vi /= sr.length; cov /= sr.length;
+      o.volRatioRel = vi > 1e-12 ? _clamp(Math.sqrt(vs) / Math.sqrt(vi), 0, 5) : 1;  // 상대 변동성
+      o.betaIdx = vi > 1e-12 ? _clamp(cov / vi, -3, 4) : 1;                            // 시장 베타(민감도)
+      o.corrIdx = _pearson(sr, ir);                                                     // 지수 동조도
+    }
+  } catch (e) {}
+  return o;
+}
+
 // ============================================================================
 // [V15] 통계적 차익거래(Statistical Arbitrage) — 상관 페어 스프레드 평균회귀 퀀트
 //   • pairSpreadZScore : 두 종목 로그가격 OLS 헤지비 → 스프레드 Z-score + 상관계수
@@ -16036,9 +16064,14 @@ const LUXML = {
     "rsiDiverg",   // RSI 다이버전스(−1..1) — 추세 반전 선행신호
     "bbSqueeze",   // 볼린저 스퀴즈 비율(현재밴드폭/과거평균) — 에너지 응축(<1)
     "fibSig",      // 피보나치 되돌림 신호(−1..1) — 눌림목 지지(+)/되돌림 저항(−)
-    "taUpProb"     // 종합 기술적 상승확률(0..1) — taPredictDirection 예측기 출력
+    "taUpProb",    // 종합 기술적 상승확률(0..1) — taPredictDirection 예측기 출력
+    // ── [V19] 지수-상대 횡단면 (4) — 시장 대비 상대위치(수확·라이브 동일 분포) ──
+    "rsiRel",      // 상대 RSI(종목−지수)/100 — 시장 대비 과열/과매도
+    "volRatioRel", // 상대 변동성(종목σ/지수σ) — 시장보다 얼마나 변동적인가
+    "betaIdx",     // 시장 베타(민감도) — 지수 1%에 종목 몇 % 반응
+    "corrIdx"      // 지수 동조도(상관) — 개별알파 vs 시장추종 구분
   ],
-  featVer: 8,   // ★V17: 라벨을 alpha(초과수익) 타겟으로 전환 → 구 binary 표본 분리 위해 승격(WHERE featver=?)+전종목 재수확
+  featVer: 9,   // ★V19: 지수-상대 횡단면 4종 추가(60→64). 구버전 표본 분리(WHERE featver=?)+전종목 재수확
 
   minSamplesGate: 150,
   minSamplesSize: 400,
@@ -16333,6 +16366,9 @@ function mlBuildFeatures(args) {
     const tf = _mlTaFibFeats(closes, args.highs, args.lows, args.volumes, args.opens, price);
     f.maSlope20 = tf.maSlope20; f.disparity20 = tf.disparity20; f.rsiDiverg = tf.rsiDiverg;
     f.bbSqueeze = tf.bbSqueeze; f.fibSig = tf.fibSig; f.taUpProb = tf.taUpProb;
+    // [V19] 지수-상대 횡단면 4종 — 지수 대비 상대위치(수확·라이브 동일: idxCloses 기반)
+    const xs = _mlXSectFeats(closes, args.idxCloses);
+    f.rsiRel = xs.rsiRel; f.volRatioRel = xs.volRatioRel; f.betaIdx = xs.betaIdx; f.corrIdx = xs.corrIdx;
     return LUXML.featNames.map(function(n){ return _num(f[n], 0); });
   } catch (e) {
     return LUXML.featNames.map(function(){ return 0; });
@@ -18365,7 +18401,8 @@ const FEAT_ROLES = {
   upDnVolR: "매집/분산 거래량비", volRetSpread: "거래량별 수익률 스프레드", bodyRatio: "캔들 몸통 확신도", wickSkew: "꼬리 비대칭(저가매수)",
   gapFillR: "갭 되메움 비율", volTrendR: "거래량 추세", accel: "수익률 가속도(2차 모멘텀)",
   maSlope20: "20일선 기울기(추세강도)", disparity20: "이동평균 이격도", rsiDiverg: "RSI 다이버전스", bbSqueeze: "볼린저 스퀴즈",
-  fibSig: "피보나치 되돌림 신호", taUpProb: "기술적 종합 상승확률"
+  fibSig: "피보나치 되돌림 신호", taUpProb: "기술적 종합 상승확률",
+  rsiRel: "지수대비 상대 RSI", volRatioRel: "지수대비 상대 변동성", betaIdx: "시장 베타(민감도)", corrIdx: "지수 동조도(상관)"
 };
 
 // ── [V9 시각화] 신경망 구조·가중치 강도를 프론트 시각화용으로 요약 반환 ──
