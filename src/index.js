@@ -2530,6 +2530,29 @@ const AI_PARAMS = {
     lookbackBars: 60,              // 시계열 입력 시퀀스 길이
     gnnEnabled: false,             // 종목간 동조화 그래프신경망(삼성전자·SK하이닉스·애플 연결 단서)
     gnnEdgeWeightMin: 0.70         // GNN 엣지 생성 최소 상관계수(구현: pairSpreadZScore corr / riskLimits.correlationLimit)
+  },
+
+  // ── 모델기반 청산(Learned Exit) ── 진입뿐 아니라 청산도 예측기로. 보유 포지션 재평가.
+  //   (구현: 매도루프에서 taPredictDirection 재평가 → 강한 약세전환이면 청산/이익실현. 패닉투매 가드)
+  exit: {
+    enabled: true,
+    modelExitProb: 0.35,       // 기술예측 상승확률이 이 미만이면 청산 신호(약세전환)
+    minConfidence: 0.55,       // 예측 신뢰도 이 이상일 때만 개입(약신호 무시)
+    minPnlForExit: -3.0,       // 이 손실% 이하에선 청산 안 함 → 하드손절에 위임(저점 투매 방지)
+    profitLockProb: 0.45,      // 이익 중 + 상승확률 이 미만이면 이익실현
+    profitLockMinPnl: 1.0      // 이익실현 최소 수익%
+  },
+
+  // ── 옵션/파생 신호(Options) ── 풋/콜 비율·IV로 스마트머니 방향 교차검증(US 라이브 오버레이).
+  //   (구현: fetchOptionsSignal → 매수 사이징/게이트 소프트조정. ML 피처 아님=과거수확 불가라 분포정합 위배 회피)
+  options: {
+    enabled: true,
+    putCallBearish: 1.3,       // 풋/콜 OI 비율 이 초과면 약세심리 → 매수 사이즈 축소
+    putCallBullish: 0.7,       // 이 미만이면 강세심리 → 소폭 부스트
+    bearishSizeScale: 0.7,     // 약세심리 시 사이즈 배율
+    bullishSizeScale: 1.1,     // 강세심리 시 사이즈 배율
+    cacheHours: 6,             // 옵션 데이터 캐시(예산 절약)
+    minBudgetReserve: 30       // fetch 예산 이 미만이면 스킵
   }
 };
 
@@ -6285,6 +6308,30 @@ async function fetchDeepDaily(symbol, deepBars) {
     const ts = tsArr.length ? tsArr[tsArr.length - 1] * 1000 : Date.now();
     return { closes: closes.slice(-T), highs: highs.slice(-T), lows: lows.slice(-T),
              volumes: volumes.slice(-T), opens: opens.slice(-T), ts: ts, bars: Math.min(closes.length, T) };
+  } catch (e) { return null; }
+}
+
+// [V22] 옵션 신호(US) — 풋/콜 미결제약정 비율로 스마트머니 심리 교차검증. 6h 캐시·예산가드.
+//   과거 옵션데이터는 수확 불가 → ML 피처로 쓰면 분포불일치. 그래서 라이브 사이징 오버레이로만 사용.
+async function fetchOptionsSignal(DB, symbol) {
+  const oc = (typeof AI_PARAMS !== "undefined") ? AI_PARAMS.options : null;
+  if (!oc || oc.enabled === false) return null;
+  try {
+    const cached = await getState(DB, "opt:" + symbol, null);
+    if (cached && cached.ts && (Date.now() - cached.ts) < (oc.cacheHours || 6) * 3600000) return cached;
+    if (fetchBudgetLeft() < (oc.minBudgetReserve || 30)) return cached;
+    __fetchBudget.used++;
+    const j = await yahooFetch("https://query1.finance.yahoo.com/v7/finance/options/" + encodeURIComponent(symbol));
+    const res = j && j.optionChain && j.optionChain.result && j.optionChain.result[0];
+    const opt = res && res.options && res.options[0];
+    if (!opt) return cached;
+    let callOI = 0, putOI = 0;
+    for (const c of (opt.calls || [])) callOI += _num(c.openInterest, 0);
+    for (const p of (opt.puts || [])) putOI += _num(p.openInterest, 0);
+    const putCall = callOI > 0 ? putOI / callOI : null;
+    const out = { ts: Date.now(), putCall: putCall != null ? +putCall.toFixed(3) : null, callOI: callOI, putOI: putOI };
+    try { await setState(DB, "opt:" + symbol, out); } catch (e) {}
+    return out;
   } catch (e) { return null; }
 }
 
@@ -11958,7 +12005,7 @@ async function runTradingCycle(env) {
       // === [LUX-AI] 사이클당 1회 모델/보조데이터 로드(후보마다 재로딩 방지) ===
       let __mlModel = null, __ensemble = null, __mind = null, __guard = { distrust: false },
           __dnn = null, __dnnTrust = null, __noiseFilter = null, __evMem = {}, __sectorNews = null,
-          __gbdt = null, __gbdtTrust = null, __cal = null, __evStats = null, __idxCloses = null;
+          __gbdt = null, __gbdtTrust = null, __cal = null, __evStats = null, __idxCloses = null, __xsPanel = null;
       let __mlDrift = { drift: false, action: "none", acc: null };  // [V16] 모델 열화 감지(사이클 1회)
       const __sentiOvrMemo = {};  // [V14] 종목별 감성 오버라이드 판정 사이클 캐시(매도·매수 루프 공유)
       const __candBatch = [], __candSyms = new Set();  // [LUX-AI] 반사실 후보 배치(사이클당 1커밋)
@@ -11976,6 +12023,7 @@ async function runTradingCycle(env) {
           try { __cal = await getState(DB, "committee_cal", null); } catch (e) {}
           try { __evStats = await getState(DB, "ml_evstats", null); } catch (e) {}
           try { __idxCloses = await _mlLoadIndexCloses(DB, market); } catch (e) {}
+          try { __xsPanel = await getState(DB, "xs_panel", null); } catch (e) {}   // [V21] 횡단면 랭크 패널
           try { __noiseFilter = await getState(DB, "noise_filter", null); } catch (e) {}
           try { __evMem = await mlLoadEventMemory(DB); } catch (e) {}
           try { __sectorNews = await getState(DB, "sector_news_sentiment", null); } catch (e) {}
@@ -12137,6 +12185,32 @@ async function runTradingCycle(env) {
                   const _sk = Object.keys(positions).some(k => positions[k].symbol === symbol && k !== posKey);
                   if (!_sk) { heldSymbols.delete(symbol); const _sc = SECTOR_MAP[symbol]; if (_sc && sectorCounts[_sc]) sectorCounts[_sc]--; }
                   continue;
+                }
+              }
+            }
+
+            // [V22] 모델기반 청산(Learned Exit) — 보유 포지션을 기술예측기로 재평가.
+            //   강한 약세전환(상승확률↓·신뢰도↑)이면 청산/이익실현. 저점 투매 방지 가드(minPnlForExit).
+            {
+              const _ex = (typeof AI_PARAMS !== "undefined") ? AI_PARAMS.exit : null;
+              if (_ex && _ex.enabled !== false && daily && Array.isArray(daily.closes) && daily.closes.length >= 30) {
+                let _pr = null;
+                try { _pr = taPredictDirection({ closes: daily.closes, highs: daily.highs, lows: daily.lows, volumes: daily.volumes, opens: daily.opens }, AI_PARAMS); } catch (e) {}
+                const _pnlX = held.avg > 0 ? ((price - held.avg) / held.avg) * 100 : 0;
+                if (_pr && _pr.confidence >= (_ex.minConfidence != null ? _ex.minConfidence : 0.55)) {
+                  let _exReason = null;
+                  if (_pr.upProb <= (_ex.modelExitProb != null ? _ex.modelExitProb : 0.35) && _pnlX > (_ex.minPnlForExit != null ? _ex.minPnlForExit : -3.0)) {
+                    _exReason = "MODEL_EXIT p" + (_pr.upProb * 100).toFixed(0) + "% c" + (_pr.confidence * 100).toFixed(0) + "%";
+                  } else if (_pr.upProb <= (_ex.profitLockProb != null ? _ex.profitLockProb : 0.45) && _pnlX >= (_ex.profitLockMinPnl != null ? _ex.profitLockMinPnl : 1.0)) {
+                    _exReason = "MODEL_PROFIT_LOCK +" + _pnlX.toFixed(1) + "% p" + (_pr.upProb * 100).toFixed(0) + "%";
+                  }
+                  if (_exReason) {
+                    await executeSell(DB, market, symbol, held, held.qty, price, _exReason, mcfg, cash);
+                    sold++;
+                    const _sk = Object.keys(positions).some(k => positions[k].symbol === symbol && k !== posKey);
+                    if (!_sk) { heldSymbols.delete(symbol); const _sc = SECTOR_MAP[symbol]; if (_sc && sectorCounts[_sc]) sectorCounts[_sc]--; }
+                    continue;
+                  }
                 }
               }
             }
@@ -12638,6 +12712,7 @@ async function runTradingCycle(env) {
                 signal.mlFeat = mlBuildFeatures({
                   closes: daily.closes, volumes: daily.volumes, opens: daily.opens,
                   highs: daily.highs, lows: daily.lows, idxCloses: __idxCloses, sectorCloses: _secCloses,
+                  xsPanel: __xsPanel, barsAgo: 0,
                   price: price, prevClose: daily.prevClose, dayPct: dayPct,
                   regime: (regime && regime.regime) ? regime.regime : "NEUTRAL",
                   sigWeight: (typeof signal.weight === "number") ? signal.weight : 1,
@@ -12708,6 +12783,19 @@ async function runTradingCycle(env) {
                 }
               }
             } catch (_e) { /* ML 실패 무시 — 규칙엔진 그대로 */ }
+            // [V22] 옵션 심리 오버레이(US) — 풋/콜 비율로 사이즈 소프트조정(스마트머니 교차검증). 예산가드.
+            try {
+              const _oc = AI_PARAMS.options;
+              if (_oc && _oc.enabled !== false && market === "us" && qty > 0) {
+                const _os = await fetchOptionsSignal(DB, symbol);
+                if (_os && typeof _os.putCall === "number") {
+                  let _oscale = 1;
+                  if (_os.putCall >= (_oc.putCallBearish || 1.3)) _oscale = _oc.bearishSizeScale || 0.7;
+                  else if (_os.putCall <= (_oc.putCallBullish || 0.7)) _oscale = _oc.bullishSizeScale || 1.1;
+                  if (_oscale !== 1) { qty = Math.max(0, Math.floor(qty * _oscale)); signal.optPutCall = _os.putCall; }
+                }
+              }
+            } catch (e) {}
             // 종목 비중 상한 (자산의 maxPosPct%)
             const maxByPos = Math.floor(equity * (maxPosPct / 100) / (price * (1 + feeRate)));
             if (qty > maxByPos) qty = maxByPos;
@@ -15971,6 +16059,23 @@ function _mlSectorFeats(closes, sectorCloses) {
   return o;
 }
 
+// [V21] 유니버스 횡단면 랭크 — 그 시점 전 종목 분포 대비 이 종목의 z-score(백분위).
+//   panel: mlBuildXSPanel이 만든 날짜별(barsAgo) 분포요약. barsAgo=수확 L-1-i / 라이브 0.
+//   수확·라이브 모두 "동일 날짜의 유니버스 분포"로 정규화 → 분포 정합 보장.
+function _mlXSPanelFeats(closes, panel, barsAgo) {
+  const o = { xsRet20z: 0, xsRet5z: 0 };
+  try {
+    if (!Array.isArray(closes) || closes.length < 26 || !panel || !Array.isArray(panel.data)) return o;
+    const b = _num(barsAgo, 0);
+    const row = (b >= 0 && b < panel.data.length) ? panel.data[b] : panel.data[0];
+    if (!row) return o;
+    const L = closes.length, c0 = closes[L - 1], c20 = closes[L - 21], c5 = closes[L - 6];
+    if (c0 > 0 && c20 > 0 && row.r20 && row.r20.s > 1e-6) o.xsRet20z = _clamp(((c0 / c20 - 1) * 100 - row.r20.m) / row.r20.s, -4, 4);
+    if (c0 > 0 && c5 > 0 && row.r5 && row.r5.s > 1e-6) o.xsRet5z = _clamp(((c0 / c5 - 1) * 100 - row.r5.m) / row.r5.s, -4, 4);
+  } catch (e) {}
+  return o;
+}
+
 // ============================================================================
 // [V15] 통계적 차익거래(Statistical Arbitrage) — 상관 페어 스프레드 평균회귀 퀀트
 //   • pairSpreadZScore : 두 종목 로그가격 OLS 헤지비 → 스프레드 Z-score + 상관계수
@@ -16127,9 +16232,12 @@ const LUXML = {
     "idxVol",      // 지수 변동성(20일 σ%) — 고변동/저변동 국면
     "idxMom20",    // 지수 20일 모멘텀(%) — 시장 방향
     "sectorRs20",  // 섹터 대비 20일 상대수익(%) — 섹터 내 알파
-    "sectorBeta"   // 섹터 베타 — 섹터 민감도
+    "sectorBeta",  // 섹터 베타 — 섹터 민감도
+    // ── [V21] 유니버스 횡단면 랭크 2 — 그 시점 전 종목 분포 대비 z-score(백분위) ──
+    "xsRet20z",    // 20일 수익률의 유니버스 횡단면 z-score
+    "xsRet5z"      // 5일 수익률의 유니버스 횡단면 z-score
   ],
-  featVer: 10,  // ★V20: 시장국면4+섹터상대2 추가(64→70). 구버전 표본 분리(WHERE featver=?)+전종목 재수확
+  featVer: 11,  // ★V21: 유니버스 횡단면 랭크 2 추가(70→72). 구버전 표본 분리(WHERE featver=?)+전종목 재수확
 
   minSamplesGate: 150,
   minSamplesSize: 400,
@@ -16432,6 +16540,9 @@ function mlBuildFeatures(args) {
     f.idxTrend = rg.idxTrend; f.idxRsi = rg.idxRsi; f.idxVol = rg.idxVol; f.idxMom20 = rg.idxMom20;
     const sc = _mlSectorFeats(closes, args.sectorCloses);
     f.sectorRs20 = sc.sectorRs20; f.sectorBeta = sc.sectorBeta;
+    // [V21] 유니버스 횡단면 랭크 2종 — 그 시점 분포 대비 z(패널·barsAgo로 수확·라이브 동일)
+    const xp = _mlXSPanelFeats(closes, args.xsPanel, args.barsAgo);
+    f.xsRet20z = xp.xsRet20z; f.xsRet5z = xp.xsRet5z;
     return LUXML.featNames.map(function(n){ return _num(f[n], 0); });
   } catch (e) {
     return LUXML.featNames.map(function(){ return 0; });
@@ -18467,7 +18578,8 @@ const FEAT_ROLES = {
   fibSig: "피보나치 되돌림 신호", taUpProb: "기술적 종합 상승확률",
   rsiRel: "지수대비 상대 RSI", volRatioRel: "지수대비 상대 변동성", betaIdx: "시장 베타(민감도)", corrIdx: "지수 동조도(상관)",
   idxTrend: "시장 추세(지수 vs MA50)", idxRsi: "시장 RSI(과열/과매도)", idxVol: "시장 변동성", idxMom20: "시장 모멘텀",
-  sectorRs20: "섹터 상대강도", sectorBeta: "섹터 베타"
+  sectorRs20: "섹터 상대강도", sectorBeta: "섹터 베타",
+  xsRet20z: "유니버스 20일수익 랭크(z)", xsRet5z: "유니버스 5일수익 랭크(z)"
 };
 
 // ── [V9 시각화] 신경망 구조·가중치 강도를 프론트 시각화용으로 요약 반환 ──
@@ -18963,6 +19075,43 @@ async function mlDataHealth(DB) {
   return out;
 }
 
+// [V21] 유니버스 횡단면 분포 패널 — 날짜별(barsAgo) 전 종목 ret20/ret5 평균·표준편차.
+//   메모리 안전: 종목 1개씩 스트리밍 누적. 읽기 바운드: 최대 250종목 샘플(분포추정 충분).
+//   결과 xs_panel → mlBuildFeatures가 z-score 정규화에 사용(수확·라이브 동일).
+async function mlBuildXSPanel(DB) {
+  try {
+    const PB = 252;   // 1년치 날짜별 분포
+    let ks = await DB.prepare("SELECT k FROM state WHERE k LIKE 'hist:%' ORDER BY k LIMIT 300").all();
+    let syms = (((ks && ks.results) || []).map(function (r) { return r.k.slice(5); })).filter(function (s) { return s && s[0] !== "^"; });
+    if (syms.length < 30) {
+      const dks = await DB.prepare("SELECT k FROM state WHERE k LIKE 'daily:%' ORDER BY k LIMIT 300").all();
+      syms = (((dks && dks.results) || []).map(function (r) { return r.k.slice(6); })).filter(function (s) { return s && s[0] !== "^"; });
+    }
+    if (syms.length < 20) return null;
+    syms = syms.slice(0, 250);
+    const acc = [];
+    for (let b = 0; b < PB; b++) acc.push({ r20s: 0, r20ss: 0, r5s: 0, r5ss: 0, n: 0 });
+    for (const sym of syms) {
+      let dd = null; try { dd = await getState(DB, "hist:" + sym, null) || await getState(DB, "daily:" + sym, null); } catch (e) {}
+      const c = dd && dd.closes; if (!Array.isArray(c) || c.length < 80) continue;
+      const L = c.length;
+      for (let b = 0; b < PB; b++) {
+        const t = L - 1 - b; if (t - 20 < 0) break;
+        const c0 = c[t], c20 = c[t - 20], c5 = c[t - 5];
+        if (c0 > 0 && c20 > 0 && c5 > 0) { const r20 = (c0 / c20 - 1) * 100, r5 = (c0 / c5 - 1) * 100, a = acc[b]; a.r20s += r20; a.r20ss += r20 * r20; a.r5s += r5; a.r5ss += r5 * r5; a.n++; }
+      }
+    }
+    const data = [];
+    for (let b = 0; b < PB; b++) {
+      const a = acc[b];
+      if (a.n >= 8) { const m20 = a.r20s / a.n, m5 = a.r5s / a.n; data.push({ r20: { m: +m20.toFixed(3), s: +Math.sqrt(Math.max(1e-6, a.r20ss / a.n - m20 * m20)).toFixed(3) }, r5: { m: +m5.toFixed(3), s: +Math.sqrt(Math.max(1e-6, a.r5ss / a.n - m5 * m5)).toFixed(3) } }); }
+      else data.push(null);
+    }
+    await setState(DB, "xs_panel", { ts: Date.now(), depth: PB, n: syms.length, data: data });
+    return "[XS] 횡단면 랭크 패널 갱신 " + syms.length + "종목 × " + PB + "봉";
+  } catch (e) { return "[XS] fail: " + (e && e.message); }
+}
+
 async function mlMarketHarvestNightly(DB) {
   if (!HARVEST.enabled || !LUXML.enabled) return null;
   try {
@@ -19002,6 +19151,7 @@ async function mlMarketHarvestNightly(DB) {
     // [V20] 섹터 ETF 종가 캐시(1회) — 섹터-상대강도 피처용. 딥(hist:) 우선.
     const secCache = {};
     try { for (const etf of Object.keys(_SECTOR_ETF).map(function (g) { return _SECTOR_ETF[g]; })) { let sd = await getState(DB, "hist:" + etf, null); if (!sd) sd = await getState(DB, "daily:" + etf, null); secCache[etf] = (sd && Array.isArray(sd.closes)) ? sd.closes : null; } } catch (e) {}
+    let xsPanel = null; try { xsPanel = await getState(DB, "xs_panel", null); } catch (e) {}   // [V21] 횡단면 랭크 패널(1회)
     for (let si = 0; si < takeN; si++) {
       if (made >= HARVEST.maxPerNight) break;
       if (Date.now() > hvDeadline) break;  // [V9.5] 예산 초과 — 여기까지 수확분 저장(seen/offset도 반영)
@@ -19042,6 +19192,7 @@ async function mlMarketHarvestNightly(DB) {
           highs: Array.isArray(dd.highs) ? dd.highs.slice(0, i + 1) : null,
           lows: Array.isArray(dd.lows) ? dd.lows.slice(0, i + 1) : null,
           idxCloses: idxHist, sectorCloses: secHist,
+          xsPanel: xsPanel, barsAgo: L - 1 - i,
           price: c, prevClose: i > 0 ? closes[i - 1] : 0, dayPct: dayPct,
           regime: "NEUTRAL", strategy: "hv", market: mkt, ev: {}
         });
@@ -20879,6 +21030,8 @@ export default {
             try { const _se = await sentiFetchAndStore(env.DB, null, null); if (_se && !/스킵/.test(_se)) await log(env.DB, "INFO", null, _se); } catch (e) {}
             // (2.4) [HIST] 딥-히스토리 로테이션 — range=max 장기이력(폭락장 포함)을 hist:로 갱신(수확이 사용)
             try { const _dh = await harvestDeepFetchNightly(env.DB); if (_dh) await log(env.DB, "INFO", null, _dh); } catch (e) {}
+            // (2.45) [XS] 유니버스 횡단면 랭크 패널 — 수확 전에 갱신(수확이 z-score 정규화에 사용)
+            try { const _xp = await mlBuildXSPanel(env.DB); if (_xp) await log(env.DB, "INFO", null, _xp); } catch (e) {}
             // (2.5) [HARVEST] 시장 자기지도 표본 수확 — 전 종목 일봉에서 "피처→N일 뒤 방향" 대량 편입
             try { const _hv = await mlMarketHarvestNightly(env.DB); if (_hv) await log(env.DB, "INFO", null, _hv); } catch (e) {}
             // (3) 7단 학습 파이프라인(순서 고정: L1→노이즈→앙상블→MIND→DNN→GBDT)
