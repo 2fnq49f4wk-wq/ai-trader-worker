@@ -6584,7 +6584,10 @@ async function setBigState(DB, key, v) {
   const up = "INSERT INTO state (k, v, updated_ts) VALUES (?, ?, ?) ON CONFLICT(k) DO UPDATE SET v=excluded.v, updated_ts=excluded.updated_ts";
   // 청크 개별 저장(배치 대신 순차 — 배치 총 페이로드 한계 회피)
   for (let i = 0; i < n; i++) await DB.prepare(up).bind(key + ":chunk:" + i, str.slice(i * CHUNK, (i + 1) * CHUNK), Date.now()).run();
-  await DB.prepare(up).bind(key + ":meta", JSON.stringify({ chunks: n, len: str.length, ts: Date.now() }), Date.now()).run();
+  // [V11.2] 저장 객체에 featVer가 있으면 메타에도 기록 — 로더가 청크 전체를 읽기 전에 버전 선판정 가능(대형모델 헛로드 방지)
+  const _metaObj = { chunks: n, len: str.length, ts: Date.now() };
+  if (v && typeof v.featVer === "number") _metaObj.featVer = v.featVer;
+  await DB.prepare(up).bind(key + ":meta", JSON.stringify(_metaObj), Date.now()).run();
   return { chunks: n, bytes: str.length };
 }
 async function getBigState(DB, key, def) {
@@ -18463,8 +18466,18 @@ async function mlDNNLoad(DB) {
     const meta = await getState(DB, "dnn_model:meta", null);
     if (meta && meta.ts) {
       if (__dnnMemCache && __dnnMemCache.metaTs === meta.ts) return __dnnMemCache.model;   // 캐시 히트
+      // [V11.2] 메타에 featVer가 있으면 21MB 청크 로드 전에 선판정 — nn-viz가 매번 구모델을
+      //   헛로드(53청크 순차 read≈20s)해 "두뇌 관측 안 돌아감"이 되던 것 차단.
+      if (typeof meta.featVer === "number" && meta.featVer !== LUXML.featVer) { __dnnMemCache = null; return null; }
       const m = await getBigState(DB, "dnn_model", null);
-      if (!m || m.featVer !== LUXML.featVer || (!Array.isArray(m.nets) && !Array.isArray(m.W))) { __dnnMemCache = null; return null; }
+      if (!m || m.featVer !== LUXML.featVer || (!Array.isArray(m.nets) && !Array.isArray(m.W))) {
+        __dnnMemCache = null;
+        // [V11.2] featVer 불일치 구모델은 재사용 불가 — 청크를 지워 다음 호출부터 메타 1read로 즉시 종료.
+        if (m && m.featVer !== LUXML.featVer) {
+          try { await DB.prepare("DELETE FROM state WHERE k LIKE 'dnn_model:chunk:%' OR k = 'dnn_model:meta'").run(); } catch (e2) {}
+        }
+        return null;
+      }
       __dnnMemCache = { metaTs: meta.ts, model: m };
       return m;
     }
@@ -19182,28 +19195,39 @@ async function mlMarketHarvestNightly(DB) {
       const baseTs = (dd.ts || Date.now());
       const startI = Math.max(HARVEST.warmupBars, _num(seen[sym], 0));
       let symMade = 0, nextStart = lastEnd + 1;   // [V20] 종목당 표본 카운터 + 재개 지점(캡에 걸리면 다음밤 이어감)
+      // [V11.2] ★성능버그 수정★ getRSI/getMA 등 지표함수는 넘겨받은 배열 전체를 순회(O(n)).
+      //   기존 hist=closes.slice(0,i+1)은 "처음부터 지금까지 전체"를 매 봉마다 재계산 → 딥히스토리
+      //   종목(수천 봉)에서 O(n²) 폭발 → CPU예산 초과로 Worker 강제종료(HTTP 000·표본 0의 원인).
+      //   지표 수렴에 충분한 고정 창(260봉 — MA200+워밍업 여유)만 넘기면 값은 동일하고 비용은 O(n).
+      const HIST_CAP = 260;
       for (let i = startI; i <= lastEnd; i += HARVEST.strideBars) {
         const c = closes[i];
         if (!(c > 0)) continue;
-        const hist = closes.slice(0, i + 1);
+        const winStart = Math.max(0, i + 1 - HIST_CAP);
+        const hist = closes.slice(winStart, i + 1);
         if (HARVEST.entryLike) {
           // [V9.5] 완화: MA50 위(깊은 눌림 포함) + RSI 28~82(모멘텀 winner 포함) → 사전학습 커버리지 확대
           const maRef = _num(getMA(hist, HARVEST.maLen || 50), c), rsi = _num(getRSI(hist, 14), 50);
           if (!(c > maRef) || rsi < (HARVEST.rsiLo || 28) || rsi > (HARVEST.rsiHi || 82)) continue;
         }
         const dayPct = (i > 0 && closes[i - 1] > 0) ? (c / closes[i - 1] - 1) * 100 : 0;
-        // [V7] 지수 과거정렬: 봉 i 시점 = 지수 끝에서 (L-1-i)봉 전
+        // [V7] 지수 과거정렬: 봉 i 시점 = 지수 끝에서 (L-1-i)봉 전 — 지수/섹터도 동일 고정창 적용(끝 정렬 유지)
         const idxAll = idxCache[mkt];
-        const idxHist = (idxAll && idxAll.length > (L - 1 - i)) ? idxAll.slice(0, idxAll.length - (L - 1 - i)) : null;
+        const idxEnd = idxAll ? (idxAll.length - (L - 1 - i)) : 0;
+        const idxHist = (idxAll && idxEnd > 0) ? idxAll.slice(Math.max(0, idxEnd - HIST_CAP), idxEnd) : null;
         // [V20] 섹터 ETF 과거정렬(봉 i) — US만. 그룹→ETF→캐시(수확·라이브 동일 계산).
         let secHist = null;
-        if (mkt === "us") { const _sc = secCache[_SECTOR_ETF[getSectorGroup(sym, null)]]; if (_sc && _sc.length > (L - 1 - i)) secHist = _sc.slice(0, _sc.length - (L - 1 - i)); }
+        if (mkt === "us") {
+          const _sc = secCache[_SECTOR_ETF[getSectorGroup(sym, null)]];
+          const secEnd = _sc ? (_sc.length - (L - 1 - i)) : 0;
+          if (_sc && secEnd > 0) secHist = _sc.slice(Math.max(0, secEnd - HIST_CAP), secEnd);
+        }
         const feat = mlBuildFeatures({
           closes: hist,
-          volumes: Array.isArray(dd.volumes) ? dd.volumes.slice(0, i + 1) : null,
-          opens: Array.isArray(dd.opens) ? dd.opens.slice(0, i + 1) : null,
-          highs: Array.isArray(dd.highs) ? dd.highs.slice(0, i + 1) : null,
-          lows: Array.isArray(dd.lows) ? dd.lows.slice(0, i + 1) : null,
+          volumes: Array.isArray(dd.volumes) ? dd.volumes.slice(winStart, i + 1) : null,
+          opens: Array.isArray(dd.opens) ? dd.opens.slice(winStart, i + 1) : null,
+          highs: Array.isArray(dd.highs) ? dd.highs.slice(winStart, i + 1) : null,
+          lows: Array.isArray(dd.lows) ? dd.lows.slice(winStart, i + 1) : null,
           idxCloses: idxHist, sectorCloses: secHist,
           xsPanel: xsPanel, barsAgo: L - 1 - i,
           price: c, prevClose: i > 0 ? closes[i - 1] : 0, dayPct: dayPct,
@@ -19236,6 +19260,13 @@ async function mlMarketHarvestNightly(DB) {
         if (symMade >= (HARVEST.maxPerSymbol || 400)) { nextStart = i + HARVEST.strideBars; break; }  // [V20] 종목당 상한 → 다음밤 이어감
       }
       seen[sym] = nextStart;   // 다음 수확 재개 지점(완주=lastEnd+1, 캡=중단봉)
+      // [V11.2] 중간 플러시 — maxPerNight 20000 확대로 마지막 일괄저장은 메모리·유실 위험.
+      //   2000건마다 저장해 예산초과/강제종료가 나도 그 시점까지의 표본은 살린다.
+      if (stmts.length >= 2000) {
+        for (let fi = 0; fi < stmts.length; fi += 100) { try { await DB.batch(stmts.slice(fi, fi + 100)); } catch (e) {} }
+        stmts.length = 0;
+        try { await setState(DB, seenKey, seen); } catch (e) {}
+      }
     }
     for (let i = 0; i < stmts.length; i += 100) { try { await DB.batch(stmts.slice(i, i + 100)); } catch (e) {} }
     // [V9.5] 실제 처리한 심볼 수(scanned)만큼만 오프셋 전진 — 예산/캡으로 조기중단 시 남은 심볼을 다음밤에 이어감(순회 누락 0)
