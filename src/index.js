@@ -2423,6 +2423,46 @@ const AI_PARAMS = {
   multiTimeframe: {
     enabled: true,
     weights: { d1: 0.5, h1: 0.3, m5: 0.2 }
+  },
+
+  // ── 기업 재무·펀더멘털(Fundamental Analysis) ── 상폐종목 회피·저평가 우량주 선별.
+  //   (구현: fetchFundamentals→evaluateFundamentals(Piotroski F·Altman Z·Beneish M·Ohlson O·D/E) + financialHealthGate)
+  fundamental: {
+    earningsSurpriseThreshold: 3.0,  // 실적이 컨센서스 대비 이 %↑ 상회 시 강력 매수신호(구현: earnRules.beatMovePct)
+    valuationPercentileMax: 20,      // 과거 valuationLookbackYears PER/PBR 대비 현재가 하위 이 %↓면 저평가 인식
+    valuationLookbackYears: 5,
+    healthFilter: {                  // 재무 건전성 하드필터 — 통과 못하면 차트·뉴스 무관 매수금지(깡통·흑자도산 회피)
+      enabled: true,
+      minScore: 34,                  // 재무 종합점수(0~100) 이 미만(등급 F)이면 차단
+      minAltmanZ: 1.8,               // Altman Z < 1.8(부실위험) → 차단. (운전자본·유동성 반영)
+      maxOhlsonProb: 0.5,            // Ohlson 부도확률 > 0.5 → 차단
+      maxBeneishM: -1.78,            // Beneish M > -1.78(이익조작 의심) → 차단
+      maxDebtToEquity: 3.0,          // 부채비율(D/E) 초과 → 차단
+      blockOnWarn: false             // 경고(warns)만으로도 차단할지
+    }
+  },
+
+  // ── 통계적 차익거래(Statistical Arbitrage) ── 상관 페어 스프레드 평균회귀 퀀트.
+  //   (구현: pairSpreadZScore·mrHalfLife·statArbSignal — 분석 함수 제공. 페어 자동체결은 미배선)
+  statArb: {
+    enabled: true,
+    zScoreEntry: 2.0,        // 페어 스프레드 Z-score ≥ 이 값 → 진입(비싼쪽 매도/싼쪽 매수)
+    zScoreExit: 0.5,         // |Z| ≤ 이 값으로 수렴 → 청산
+    zScoreStop: 3.5,         // |Z| > 이 값 → 관계 붕괴로 보고 손절
+    lookbackDays: 60,        // 스프레드 평균/표준편차 산출 기간
+    minHalfLifeDays: 1,      // 평균회귀 반감기 하한(너무 짧으면 노이즈)
+    maxHalfLifeDays: 30,     // 반감기 상한 — 초과 페어는 수렴 너무 느려 제외
+    minCorrelation: 0.70     // 페어 자격 최소 상관계수(riskLimits.correlationLimit과 연동)
+  },
+
+  // ── 강화학습 설계(Reinforcement Learning) ── 밴딧/RL 행동 교정 파라미터.
+  //   (구현: mlBanditUpdate 보상 = tanh(pnl%/5) − 매매벌점, mlBanditChoose ε-탐험)
+  rl: {
+    transactionCostPenalty: 0.15,  // 매매 1회당 보상 벌점(과잉매매→수수료 시드소진 억제)
+    explorationEpsilon: 0.05,      // ε-탐욕: 이 확률로 새 타점 탐험(나머지는 학습된 활용)
+    epsilonMin: 0.01,              // 탐험비율 하한
+    epsilonDecay: 1.0,             // 사이클당 ε 감쇠(1.0=고정). <1이면 점진 수렴
+    rewardScale: 5.0               // 보상 포화 스케일 tanh(pnl%/scale) (현행 5)
   }
 };
 
@@ -12467,6 +12507,21 @@ async function runTradingCycle(env) {
                   incNobuy("senti_override");
                   continue;
                 }
+                // [V15] 재무 건전성 하드필터 — 깡통·흑자도산·이익조작 기업은 차트·뉴스 무관 매수금지(펀더 캐시 있을 때만)
+                try {
+                  const _fp = AI_PARAMS.fundamental;
+                  if (_fp && _fp.healthFilter && _fp.healthFilter.enabled !== false) {
+                    let _fc = null; try { _fc = await getState(DB, "fund:" + symbol, null); } catch (e) {}
+                    if (_fc) {
+                      const _hg = financialHealthGate(evaluateFundamentals(_fc, null), _fp);
+                      if (_hg.block) {
+                        await log(DB, "INFO", symbol, "[FUND-GATE] 재무 미달 매수금지: " + _hg.reasons.join(", "));
+                        incNobuy("fund_health");
+                        continue;
+                      }
+                    }
+                  }
+                } catch (e) {}
                 signal.mlFeat = mlBuildFeatures({
                   closes: daily.closes, volumes: daily.volumes, opens: daily.opens,
                   highs: daily.highs, lows: daily.lows, idxCloses: __idxCloses,
@@ -15709,6 +15764,91 @@ function _mlTaFibFeats(closes, highs, lows, volumes, opens, price) {
   return o;
 }
 
+// ============================================================================
+// [V15] 통계적 차익거래(Statistical Arbitrage) — 상관 페어 스프레드 평균회귀 퀀트
+//   • pairSpreadZScore : 두 종목 로그가격 OLS 헤지비 → 스프레드 Z-score + 상관계수
+//   • mrHalfLife       : Ornstein-Uhlenbeck 반감기(AR(1) 회귀) — 수렴속도(일)
+//   • statArbSignal    : Z-score 진입/청산/손절 + 반감기·상관 자격심사 → 페어 신호
+//   순수 수학·fetch 0. 파라미터는 AI_PARAMS.statArb. (자동 체결은 미배선 — 분석/신호 제공)
+// ============================================================================
+function _olsSlope(x, y) {  // y = a + b·x 의 기울기 b
+  const n = Math.min(x.length, y.length);
+  if (n < 3) return null;
+  let sx = 0, sy = 0, sxx = 0, sxy = 0;
+  for (let i = 0; i < n; i++) { sx += x[i]; sy += y[i]; sxx += x[i] * x[i]; sxy += x[i] * y[i]; }
+  const den = n * sxx - sx * sx;
+  if (Math.abs(den) < 1e-12) return null;
+  return (n * sxy - sx * sy) / den;
+}
+function _pearson(x, y) {
+  const n = Math.min(x.length, y.length);
+  if (n < 3) return 0;
+  let sx = 0, sy = 0, sxx = 0, syy = 0, sxy = 0;
+  for (let i = 0; i < n; i++) { sx += x[i]; sy += y[i]; sxx += x[i] * x[i]; syy += y[i] * y[i]; sxy += x[i] * y[i]; }
+  const cov = n * sxy - sx * sy, vx = n * sxx - sx * sx, vy = n * syy - sy * sy;
+  const den = Math.sqrt(vx * vy);
+  return den > 1e-12 ? _clamp(cov / den, -1, 1) : 0;
+}
+// 페어 스프레드 Z-score + 헤지비 + 상관. a,b: 종가배열(오래된→최신, 동일 길이 권장).
+function pairSpreadZScore(a, b, lookback) {
+  const out = { z: 0, hedge: 1, mean: 0, std: 0, spreadNow: 0, corr: 0, n: 0 };
+  try {
+    if (!Array.isArray(a) || !Array.isArray(b)) return out;
+    const n = Math.min(a.length, b.length, lookback || 60);
+    if (n < 20) return out;
+    const la = [], lb = [];
+    for (let i = 0; i < n; i++) {
+      const av = a[a.length - n + i], bv = b[b.length - n + i];
+      if (!(av > 0) || !(bv > 0)) return out;
+      la.push(Math.log(av)); lb.push(Math.log(bv));
+    }
+    const hedge = _olsSlope(lb, la); if (hedge == null) return out;
+    const spread = [];
+    for (let i = 0; i < n; i++) spread.push(la[i] - hedge * lb[i]);
+    let m = 0; for (const s of spread) m += s; m /= n;
+    let v = 0; for (const s of spread) v += (s - m) * (s - m); const sd = Math.sqrt(v / n);
+    out.hedge = +hedge.toFixed(4); out.mean = m; out.std = sd; out.spreadNow = spread[n - 1];
+    out.z = sd > 1e-9 ? _clamp((spread[n - 1] - m) / sd, -6, 6) : 0;
+    out.corr = _pearson(la, lb); out.n = n;
+    out.spread = spread;
+  } catch (e) {}
+  return out;
+}
+// 평균회귀 반감기(일) — OU: Δs_t = α + λ·s_{t-1}. halfLife = -ln2/ln(1+λ).
+function mrHalfLife(spread) {
+  try {
+    if (!Array.isArray(spread) || spread.length < 20) return null;
+    const x = [], dy = [];
+    for (let i = 1; i < spread.length; i++) { x.push(spread[i - 1]); dy.push(spread[i] - spread[i - 1]); }
+    const lam = _olsSlope(x, dy); if (lam == null || lam >= 0) return null;  // λ<0 이라야 평균회귀
+    const hl = -Math.log(2) / Math.log(1 + lam);
+    return (isFinite(hl) && hl > 0) ? +hl.toFixed(1) : null;
+  } catch (e) { return null; }
+}
+// 페어 신호 — 자격심사(상관·반감기) + Z-score 진입/청산/손절.
+//   dir: +1=A 매수·B 매도(스프레드 저평가), -1=A 매도·B 매수(스프레드 고평가), 0=관망.
+function statArbSignal(a, b, params) {
+  const S = Object.assign({ zScoreEntry: 2.0, zScoreExit: 0.5, zScoreStop: 3.5, lookbackDays: 60,
+    minHalfLifeDays: 1, maxHalfLifeDays: 30, minCorrelation: 0.70 }, (params && params.statArb) || params || {});
+  const out = { eligible: false, z: 0, corr: 0, halfLife: null, hedge: 1, action: "none", dir: 0, reason: "" };
+  try {
+    const zs = pairSpreadZScore(a, b, S.lookbackDays);
+    out.z = zs.z; out.corr = zs.corr; out.hedge = zs.hedge;
+    if (zs.n < 20) { out.reason = "표본부족"; return out; }
+    const hl = mrHalfLife(zs.spread); out.halfLife = hl;
+    if (zs.corr < S.minCorrelation) { out.reason = "상관 " + zs.corr.toFixed(2) + "<" + S.minCorrelation; return out; }
+    if (hl == null || hl < S.minHalfLifeDays || hl > S.maxHalfLifeDays) { out.reason = "반감기 " + (hl == null ? "N/A" : hl + "일") + " 범위밖"; return out; }
+    out.eligible = true;
+    const az = Math.abs(zs.z);
+    if (az > S.zScoreStop) { out.action = "stop"; out.dir = 0; out.reason = "관계붕괴 |Z|" + az.toFixed(2); }
+    else if (az <= S.zScoreExit) { out.action = "exit"; out.dir = 0; out.reason = "수렴 |Z|" + az.toFixed(2); }
+    else if (zs.z >= S.zScoreEntry) { out.action = "enter"; out.dir = -1; out.reason = "A고평가 Z+" + zs.z.toFixed(2); }
+    else if (zs.z <= -S.zScoreEntry) { out.action = "enter"; out.dir = 1; out.reason = "A저평가 Z" + zs.z.toFixed(2); }
+    else { out.action = "hold"; out.reason = "대기 Z" + zs.z.toFixed(2); }
+  } catch (e) {}
+  return out;
+}
+
 // ============================================================
 // LUX-ML V2.0 — 자가학습 진입 필터 (L1 자동 피처선택 로지스틱 회귀)
 //
@@ -16799,6 +16939,13 @@ function mlBanditChoose(banditState, ctx) {
       scores.push({ arm: a, mean: +mean.toFixed(3), ucb: +ucb.toFixed(3), n: arm.n });
       if (ucb > bestScore) { bestScore = ucb; best = a; }
     }
+    // [V15] ε-탐험 — 확률 ε로 학습된 활용(UCB best) 대신 새 팔 무작위 시도(진화). 파라미터: AI_PARAMS.rl
+    const _rl = (typeof AI_PARAMS !== "undefined" && AI_PARAMS.rl) || {};
+    const _eps = _rl.explorationEpsilon || 0;
+    if (_eps > 0 && banditState.arms.length > 1 && Math.random() < _eps) {
+      const ra = Math.floor(Math.random() * banditState.arms.length);
+      return { armIdx: ra, sizeMult: LUXBANDIT.arms[ra], scores: scores, explore: true };
+    }
     return { armIdx: best, sizeMult: LUXBANDIT.arms[best], scores: scores };
   } catch (e) { return null; }
 }
@@ -16827,7 +16974,10 @@ async function mlBanditUpdate(DB, armIdx, ctxX, pnlPct) {
     const state = await mlBanditLoad(DB, d);
     const arm = state.arms[armIdx];
     if (!arm) return;
-    const reward = _clamp(Math.tanh(_num(pnlPct, 0) / 5), -1, 1); // pnl%를 -1..1로 포화압축
+    // [V15] RL 보상 = tanh(pnl%/scale) − 거래비용 벌점(과잉매매 억제). 파라미터: AI_PARAMS.rl
+    const _rl = (typeof AI_PARAMS !== "undefined" && AI_PARAMS.rl) || {};
+    let reward = _clamp(Math.tanh(_num(pnlPct, 0) / (_rl.rewardScale || 5)), -1, 1); // pnl%를 -1..1로 포화압축
+    reward = _clamp(reward - (_rl.transactionCostPenalty || 0), -1, 1);              // 매매 1회당 벌점
     for (let i = 0; i < d; i++) {
       for (let j = 0; j < d; j++) arm.A[i][j] += ctxX[i] * ctxX[j];
       arm.b[i] += reward * ctxX[i];
@@ -18768,6 +18918,37 @@ function evaluateFundamentals(fund, marketCap) {
       debtToEquity: d2e != null ? +d2e.toFixed(3) : null, fcfMargin: fcfMargin != null ? +fcfMargin.toFixed(4) : null,
       score: score, grade: grade, verdict: verdict, warns: warns
     };
+  } catch (e) { return null; }
+}
+
+// [V15] 재무 건전성 하드필터 — evaluateFundamentals 결과로 매수 가부 판정.
+//   깡통·흑자도산·이익조작 의심 기업은 차트·뉴스가 좋아도 진입 차단(자본 보호).
+//   데이터 없으면 block=false(폴백 허용) — 펀더 미수집 종목까지 막지 않음(무해).
+//   반환: { block:bool, reasons:[] }
+function financialHealthGate(fundEval, params) {
+  const out = { block: false, reasons: [] };
+  try {
+    const hf = (params && params.healthFilter) || {};
+    if (hf.enabled === false || !fundEval) return out;
+    if (typeof fundEval.score === "number" && hf.minScore != null && fundEval.score < hf.minScore) out.reasons.push("score " + fundEval.score + "<" + hf.minScore);
+    if (typeof fundEval.z === "number" && hf.minAltmanZ != null && fundEval.z < hf.minAltmanZ) out.reasons.push("AltmanZ " + fundEval.z.toFixed(2) + "<" + hf.minAltmanZ);
+    if (typeof fundEval.oProb === "number" && hf.maxOhlsonProb != null && fundEval.oProb > hf.maxOhlsonProb) out.reasons.push("부도확률 " + (fundEval.oProb * 100).toFixed(0) + "%>" + (hf.maxOhlsonProb * 100) + "%");
+    if (typeof fundEval.mScore === "number" && hf.maxBeneishM != null && fundEval.mScore > hf.maxBeneishM) out.reasons.push("이익조작 M " + fundEval.mScore.toFixed(2) + ">" + hf.maxBeneishM);
+    if (typeof fundEval.debtToEquity === "number" && hf.maxDebtToEquity != null && fundEval.debtToEquity > hf.maxDebtToEquity) out.reasons.push("D/E " + fundEval.debtToEquity.toFixed(2) + ">" + hf.maxDebtToEquity);
+    if (hf.blockOnWarn && Array.isArray(fundEval.warns) && fundEval.warns.length) out.reasons.push("경고 " + fundEval.warns.length + "건");
+    out.block = out.reasons.length > 0;
+  } catch (e) {}
+  return out;
+}
+
+// 역사적 밸류에이션 백분위 — 현재값이 과거 분포 하위 몇 %인지(0~100, 낮을수록 저평가).
+function valuationPercentile(current, history) {
+  try {
+    if (typeof current !== "number" || !Array.isArray(history) || history.length < 8) return null;
+    const arr = history.filter(function (v) { return typeof v === "number" && isFinite(v) && v > 0; });
+    if (arr.length < 8) return null;
+    let below = 0; for (const v of arr) if (v < current) below++;
+    return Math.round(below / arr.length * 100);
   } catch (e) { return null; }
 }
 
