@@ -2463,6 +2463,30 @@ const AI_PARAMS = {
     epsilonMin: 0.01,              // 탐험비율 하한
     epsilonDecay: 1.0,             // 사이클당 ε 감쇠(1.0=고정). <1이면 점진 수렴
     rewardScale: 5.0               // 보상 포화 스케일 tanh(pnl%/scale) (현행 5)
+  },
+
+  // ── 모델 모니터링·MLOps(Model Drift & XAI) ── AI가 시장변화에 뒤처지면 감지·교정.
+  //   (구현: mlDriftCheck(위원회 검증정확도 기반) + 확신도 하한 게이트 + 야간 재학습/L1 재선택)
+  mlops: {
+    driftAccFloor: 0.505,          // 위원회 검증정확도(valAccLB)가 이 미만이면 열화(drift)로 판정
+    driftAction: "observe",        // 열화 시: "observe"(ML 개입중단, 규칙엔진 유지) | "halt"(ML게이트 신규진입 차단)
+    driftLookbackDays: 10,         // 실전 예측오차 관측 창(참고 — 검증정확도 기반 판정)
+    retrainOnDrift: true,          // 열화 감지 시 재학습 필요 플래그(model_drift) 기록 → 야간 파이프라인/외부GPU
+    confidenceFloor: 0.55,         // 위원회 확신도(p) 이 미만이면 매수비중 축소(gateThresh 0.42 통과분 중 저확신)
+    confidenceReduceScale: 0.5,    // 확신도 미달 시 수량 배율(0이면 아예 무시). 확신도 클수록 그대로
+    strongConfidence: 0.80,        // 이 이상이면 완전 확신(비중 축소 없음)
+    featureImportanceRebalanceHours: 24  // 피처 중요도(L1 가중) 재선택 주기 — 야간 재학습 간격
+  },
+
+  // ── 꼬리위험·헷징(Tail-Risk & Hedging) ── 블랙스완 대비 상시 보험 + 롱숏 균형.
+  //   (구현: tailRiskHedgeTarget·marketNeutralityCheck 헬퍼 + 기존 인버스 ETF 패닉헤지 인프라)
+  tailRisk: {
+    hedgeRatioPct: 1.5,            // 전체 자본의 이 %를 상시 인버스/VIX 헤지에 배분(블랙스완 보험)
+    hedgeInstrumentsUS: ["SH", "SQQQ", "VIXY"],   // 미국 헤지 수단(인버스·VIX)
+    hedgeInstrumentsKR: ["114800.KS", "251340.KS"], // KODEX 인버스·코스닥인버스
+    hedgeRebalanceBandPct: 0.5,   // 목표 대비 이 %p 이상 벗어나면 헤지 리밸런스
+    marketNeutralityTolerancePct: 10, // 롱숏 순노출(롱−숏)/총자본 허용 한도(±%). 초과 시 균형 보정
+    activateVixAbove: 25          // VIX 이 이상일 때 헤지 배분 상향(기존 crashGate와 연동)
   }
 };
 
@@ -11863,6 +11887,7 @@ async function runTradingCycle(env) {
       let __mlModel = null, __ensemble = null, __mind = null, __guard = { distrust: false },
           __dnn = null, __dnnTrust = null, __noiseFilter = null, __evMem = {}, __sectorNews = null,
           __gbdt = null, __gbdtTrust = null, __cal = null, __evStats = null, __idxCloses = null;
+      let __mlDrift = { drift: false, action: "none", acc: null };  // [V16] 모델 열화 감지(사이클 1회)
       const __sentiOvrMemo = {};  // [V14] 종목별 감성 오버라이드 판정 사이클 캐시(매도·매수 루프 공유)
       const __candBatch = [], __candSyms = new Set();  // [LUX-AI] 반사실 후보 배치(사이클당 1커밋)
       const __aiPicks = [];   // [V5] AI 픽 — 위원회가 이번 사이클 평가한 종목별 승률예측(대시보드/리포트 노출)
@@ -11882,6 +11907,14 @@ async function runTradingCycle(env) {
           try { __noiseFilter = await getState(DB, "noise_filter", null); } catch (e) {}
           try { __evMem = await mlLoadEventMemory(DB); } catch (e) {}
           try { __sectorNews = await getState(DB, "sector_news_sentiment", null); } catch (e) {}
+          // [V16] 모델 열화(Concept Drift) 감지 — 위원회 검증정확도 기반. 열화면 ML 개입 보수화 + 재학습 플래그.
+          try {
+            __mlDrift = mlDriftCheck(__dnnTrust, AI_PARAMS.mlops);
+            if (__mlDrift.drift) {
+              await log(DB, "WARN", null, "[MLOPS] 모델 열화 감지 — " + __mlDrift.reason + " → ML " + __mlDrift.action + (AI_PARAMS.mlops.retrainOnDrift ? " + 재학습 필요" : ""));
+              if (AI_PARAMS.mlops.retrainOnDrift) { try { await setState(DB, "model_drift", { ts: Date.now(), acc: __mlDrift.acc, action: __mlDrift.action }); } catch (e) {} }
+            }
+          } catch (e) {}
         }
       } catch (e) {}
       for (const item of orderedEval) {
@@ -12559,7 +12592,23 @@ async function runTradingCycle(env) {
                   incNobuy("ml_gate");
                   continue;
                 } else if (_md && _md.allow) {
-                  if (_md.sizeMult && _md.sizeMult !== 1) qty = Math.max(0, Math.floor(qty * _md.sizeMult));
+                  // [V16] 모델 열화 시 ML 개입 보수화 — halt면 신규진입 차단, observe면 사이즈 증폭 억제(축소만 허용)
+                  if (__mlDrift.drift) {
+                    if (__mlDrift.action === "halt") { await log(DB, "INFO", symbol, "[MLOPS] 열화-halt 진입차단"); incNobuy("model_drift"); continue; }
+                  }
+                  // [V16] 예측 확신도 하한 — p가 confidenceFloor 미만이면 비중 축소(저확신 주문 안전계수)
+                  const _mo = AI_PARAMS.mlops || {};
+                  if (typeof _md.p === "number" && _mo.confidenceFloor != null && _md.p < _mo.confidenceFloor) {
+                    const _rs = (_mo.confidenceReduceScale != null) ? _mo.confidenceReduceScale : 0.5;
+                    if (_rs <= 0) { await log(DB, "INFO", symbol, "[MLOPS] 확신도 " + (_md.p * 100).toFixed(0) + "% 미달 진입무시"); incNobuy("low_confidence"); continue; }
+                    qty = Math.max(0, Math.floor(qty * _rs));
+                    signal.mlLowConf = true;
+                  }
+                  const _ampOK = !(__mlDrift.drift && __mlDrift.action === "observe");  // 열화-observe면 증폭 금지
+                  if (_md.sizeMult && _md.sizeMult !== 1) {
+                    const _sm = (_md.sizeMult > 1 && !_ampOK) ? 1 : _md.sizeMult;  // 증폭은 막고 축소는 허용
+                    if (_sm !== 1) qty = Math.max(0, Math.floor(qty * _sm));
+                  }
                   signal.mlMindP = (typeof _md.p === "number") ? _md.p : null;
                 } else {
                   // MIND/DEEP 미준비 → 톰슨 밴딧 사이징 폴백
@@ -18620,13 +18669,13 @@ const HARVEST = {
   horizon: AI_PARAMS.predictionHorizonDays, stopPct: 5,  // [V12] 예측지평은 AI_PARAMS 단일출처
   tpPct: 8,             // [V9.9] Triple-Barrier(de Prado) 익절 배리어 — 기간내 +8% 선도달 시 승 확정.
                         //   기존 2중(손절+시간)의 "중간에 크게 올랐다가 되돌린 승리 패턴"을 패로 오분류하던 편향 제거.
-  maxPerNight: 20000,   // [V11] 3000→20000 — 하룻밤 대량 수확(외부GPU 학습이 3M 담당→Worker 야간DNN 생략분 예산을 수확에 투입)
-  maxTotal: 300000,     // [V11] ★35000→300000★ 3만개에서 멈춘 근본원인=이 상한. 10배로 확대(과적합 151:1→10:1 목표)
+  maxPerNight: 30000,   // [V16] 20000→30000 — 야간 수확량 확대(피처 60종 → 과적합 방어에 표본 더 필요)
+  maxTotal: 500000,     // [V16] ★300000→500000★ 상한 확대(과적합비 60피처 대비 표본 여유 ↑, 목표 8000:1→더 낮게)
   entryLike: true,
-  // [V9.5] entryLike 필터 완화 — 깊은 눌림(MA50 위)+모멘텀 winner(RSI 82까지)까지 포함해
+  // [V9.5] entryLike 필터 완화 — 깊은 눌림(MA50 위)+모멘텀 winner(RSI 85까지)까지 포함해
   //   "3~5일 상승 패턴" 등 다양한 진입국면을 사전학습에 편입(사전학습은 커버리지가 넓을수록 유리).
-  maLen: 50, rsiLo: 28, rsiHi: 82,
-  budgetMs: 90000,      // [V11] 45s→90s 수확 CPU 예산 확대(대량 수확). 초과 시 진행분 저장 후 중단(안전)
+  maLen: 50, rsiLo: 25, rsiHi: 85,   // [V16] 진입국면 커버리지 확대(28→25, 82→85) — 표본 다양성↑
+  budgetMs: 120000,     // [V16] 90s→120s 수확 CPU 예산 확대(대량 수확). 초과 시 진행분 저장 후 중단(안전)
   srcWeight: 0.6        // 학습 가중(실거래=1.0 대비)
 };
 
@@ -18950,6 +18999,60 @@ function valuationPercentile(current, history) {
     let below = 0; for (const v of arr) if (v < current) below++;
     return Math.round(below / arr.length * 100);
   } catch (e) { return null; }
+}
+
+// [V16] 모델 열화(Concept Drift) 감지 — 위원회 검증정확도(recent embargoed valAcc)가
+//   임계 미만이면 시장 성격 변화로 판정. Wilson 하한(valAccLB) 우선(소표본 과신 방지).
+//   반환: { drift, acc, floor, action, reason }
+function mlDriftCheck(trust, params) {
+  const P = params || {};
+  const out = { drift: false, acc: null, floor: P.driftAccFloor != null ? P.driftAccFloor : 0.505, action: "none", reason: "" };
+  try {
+    if (!trust) { out.reason = "미학습"; return out; }
+    const acc = (typeof trust.valAccLB === "number") ? trust.valAccLB
+      : (typeof trust.valAcc === "number") ? trust.valAcc
+      : (typeof trust.dnnAcc === "number") ? trust.dnnAcc
+      : (typeof trust.mindAcc === "number") ? trust.mindAcc : null;
+    if (acc == null) { out.reason = "정확도 없음"; return out; }
+    out.acc = +acc.toFixed(4);
+    if (acc < out.floor) { out.drift = true; out.action = P.driftAction || "observe"; out.reason = "검증정확도 " + (acc * 100).toFixed(1) + "% < " + (out.floor * 100).toFixed(1) + "% → 열화"; }
+    else out.reason = "정상 " + (acc * 100).toFixed(1) + "%";
+  } catch (e) {}
+  return out;
+}
+
+// [V16] 꼬리위험 헤지 목표 — 자본의 hedgeRatioPct%를 상시 인버스/VIX에 배분(블랙스완 보험).
+//   반환: { targetValue, currentValue, shortfall, needRebalance, targetPct }
+function tailRiskHedgeTarget(equity, currentHedgeValue, params, vix) {
+  const P = params || {};
+  const out = { targetValue: 0, currentValue: _num(currentHedgeValue, 0), shortfall: 0, needRebalance: false, targetPct: P.hedgeRatioPct || 0 };
+  try {
+    if (!(equity > 0) || !(P.hedgeRatioPct > 0)) return out;
+    let pct = P.hedgeRatioPct;
+    if (typeof vix === "number" && P.activateVixAbove && vix >= P.activateVixAbove) pct *= 1.5;  // 공포 급등 시 헤지 상향
+    out.targetPct = +pct.toFixed(2);
+    out.targetValue = equity * pct / 100;
+    out.shortfall = out.targetValue - out.currentValue;
+    const band = (P.hedgeRebalanceBandPct || 0.5) / 100 * equity;
+    out.needRebalance = Math.abs(out.shortfall) > band;
+  } catch (e) {}
+  return out;
+}
+
+// [V16] 시장 중립성 점검 — 롱/숏 순노출이 허용 한도를 넘는지(롱숏 전략 균형).
+//   반환: { netExposurePct, grossValue, breach, tiltSide }
+function marketNeutralityCheck(longValue, shortValue, tolerancePct) {
+  const out = { netExposurePct: 0, grossValue: 0, breach: false, tiltSide: "flat" };
+  try {
+    const L = _num(longValue, 0), S = _num(shortValue, 0), gross = L + S;
+    out.grossValue = gross;
+    if (gross <= 0) return out;
+    const net = (L - S) / gross * 100;   // +롱편중 / -숏편중
+    out.netExposurePct = +net.toFixed(1);
+    out.tiltSide = net > 0 ? "long" : (net < 0 ? "short" : "flat");
+    out.breach = Math.abs(net) > (tolerancePct != null ? tolerancePct : 10);
+  } catch (e) {}
+  return out;
 }
 
 // ============================================================================
