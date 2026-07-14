@@ -12627,9 +12627,17 @@ async function runTradingCycle(env) {
                     }
                   }
                 } catch (e) {}
+                // [V20] 섹터 ETF 종가(섹터-상대강도용) — US만. hist:(딥) 우선, 없으면 daily:. 없으면 중립.
+                let _secCloses = null;
+                try {
+                  if (market === "us") {
+                    const _etf = _SECTOR_ETF[getSectorGroup(symbol, mcfg)];
+                    if (_etf) { let _sd = await getState(DB, "hist:" + _etf, null); if (!_sd) _sd = await getState(DB, "daily:" + _etf, null); if (_sd && Array.isArray(_sd.closes)) _secCloses = _sd.closes; }
+                  }
+                } catch (e) {}
                 signal.mlFeat = mlBuildFeatures({
                   closes: daily.closes, volumes: daily.volumes, opens: daily.opens,
-                  highs: daily.highs, lows: daily.lows, idxCloses: __idxCloses,
+                  highs: daily.highs, lows: daily.lows, idxCloses: __idxCloses, sectorCloses: _secCloses,
                   price: price, prevClose: daily.prevClose, dayPct: dayPct,
                   regime: (regime && regime.regime) ? regime.regime : "NEUTRAL",
                   sigWeight: (typeof signal.weight === "number") ? signal.weight : 1,
@@ -15921,6 +15929,48 @@ function _mlXSectFeats(closes, idxCloses) {
   return o;
 }
 
+// [V20] 시장 국면(Market Regime) 컨텍스트 — 지수 자체의 추세/과열/변동성/모멘텀.
+//   순수 idxCloses(이미 배선됨) → 무배선. 모델이 "지금 어떤 장인지" 조건부 학습(폭락장 일반화 핵심).
+function _mlMarketRegimeFeats(idxCloses) {
+  const o = { idxTrend: 0, idxRsi: 0.5, idxVol: 0, idxMom20: 0 };
+  try {
+    if (!Array.isArray(idxCloses) || idxCloses.length < 55) return o;
+    const price = idxCloses[idxCloses.length - 1];
+    const ma50 = _num(getMA(idxCloses, 50), price);
+    o.idxTrend = ma50 > 0 ? _clamp((price / ma50 - 1) * 100, -20, 20) : 0;   // 지수 vs MA50 추세
+    o.idxRsi = _clamp(_num(getRSI(idxCloses, 14), 50) / 100, 0, 1);          // 지수 RSI(과열/과매도)
+    const n = Math.min(21, idxCloses.length), rets = [];
+    for (let k = idxCloses.length - n + 1; k < idxCloses.length; k++) { if (idxCloses[k - 1] > 0) rets.push(idxCloses[k] / idxCloses[k - 1] - 1); }
+    if (rets.length >= 10) { let m = 0; for (const r of rets) m += r; m /= rets.length; let v = 0; for (const r of rets) v += (r - m) * (r - m); o.idxVol = _clamp(Math.sqrt(v / rets.length) * 100, 0, 10); }
+    if (idxCloses.length >= 21 && idxCloses[idxCloses.length - 21] > 0) o.idxMom20 = _clamp((price / idxCloses[idxCloses.length - 21] - 1) * 100, -30, 30);
+  } catch (e) {}
+  return o;
+}
+
+// [V20] 그룹 → 섹터 ETF(미국) — 섹터-상대강도 벤치마크. ETF는 HARVEST_EXTRA_SYMS로 딥캐시됨.
+const _SECTOR_ETF = { TECH: "XLK", FINANCE: "XLF", HEALTH: "XLV", CONSUMER: "XLY", INDUSTRIAL: "XLI", RESOURCES: "XLE" };
+
+// [V20] 섹터-상대강도 — 종목 vs 소속 섹터 ETF(더 정밀한 횡단면 알파). sectorCloses 없으면 중립.
+function _mlSectorFeats(closes, sectorCloses) {
+  const o = { sectorRs20: 0, sectorBeta: 1 };
+  try {
+    if (!Array.isArray(closes) || closes.length < 25 || !Array.isArray(sectorCloses) || sectorCloses.length < 25) return o;
+    const n1 = Math.min(21, closes.length, sectorCloses.length);
+    const c0 = closes[closes.length - n1], s0 = sectorCloses[sectorCloses.length - n1];
+    const cN = closes[closes.length - 1], sN = sectorCloses[sectorCloses.length - 1];
+    if (c0 > 0 && s0 > 0) o.sectorRs20 = _clamp((cN / c0 - 1) * 100 - (sN / s0 - 1) * 100, -30, 30);  // 섹터 대비 20일 상대수익
+    const n = Math.min(61, closes.length, sectorCloses.length);
+    const cs = closes.slice(-n), es = sectorCloses.slice(-n), sr = [], er = [];
+    for (let k = 1; k < n; k++) { if (cs[k - 1] > 0 && es[k - 1] > 0) { sr.push(cs[k] / cs[k - 1] - 1); er.push(es[k] / es[k - 1] - 1); } }
+    if (sr.length >= 20) {
+      let ms = 0, me = 0; for (let k = 0; k < sr.length; k++) { ms += sr[k]; me += er[k]; } ms /= sr.length; me /= sr.length;
+      let cov = 0, ve = 0; for (let k = 0; k < sr.length; k++) { cov += (sr[k] - ms) * (er[k] - me); ve += (er[k] - me) * (er[k] - me); }
+      o.sectorBeta = ve > 1e-12 ? _clamp(cov / ve, -3, 4) : 1;   // 섹터 베타
+    }
+  } catch (e) {}
+  return o;
+}
+
 // ============================================================================
 // [V15] 통계적 차익거래(Statistical Arbitrage) — 상관 페어 스프레드 평균회귀 퀀트
 //   • pairSpreadZScore : 두 종목 로그가격 OLS 헤지비 → 스프레드 Z-score + 상관계수
@@ -16070,9 +16120,16 @@ const LUXML = {
     "rsiRel",      // 상대 RSI(종목−지수)/100 — 시장 대비 과열/과매도
     "volRatioRel", // 상대 변동성(종목σ/지수σ) — 시장보다 얼마나 변동적인가
     "betaIdx",     // 시장 베타(민감도) — 지수 1%에 종목 몇 % 반응
-    "corrIdx"      // 지수 동조도(상관) — 개별알파 vs 시장추종 구분
+    "corrIdx",     // 지수 동조도(상관) — 개별알파 vs 시장추종 구분
+    // ── [V20] 시장국면 4 + 섹터상대 2 — 국면조건부 학습 + 섹터알파(수확·라이브 동일 분포) ──
+    "idxTrend",    // 지수 vs MA50 추세(%) — 강세/약세 국면
+    "idxRsi",      // 지수 RSI — 시장 과열/과매도
+    "idxVol",      // 지수 변동성(20일 σ%) — 고변동/저변동 국면
+    "idxMom20",    // 지수 20일 모멘텀(%) — 시장 방향
+    "sectorRs20",  // 섹터 대비 20일 상대수익(%) — 섹터 내 알파
+    "sectorBeta"   // 섹터 베타 — 섹터 민감도
   ],
-  featVer: 9,   // ★V19: 지수-상대 횡단면 4종 추가(60→64). 구버전 표본 분리(WHERE featver=?)+전종목 재수확
+  featVer: 10,  // ★V20: 시장국면4+섹터상대2 추가(64→70). 구버전 표본 분리(WHERE featver=?)+전종목 재수확
 
   minSamplesGate: 150,
   minSamplesSize: 400,
@@ -16370,6 +16427,11 @@ function mlBuildFeatures(args) {
     // [V19] 지수-상대 횡단면 4종 — 지수 대비 상대위치(수확·라이브 동일: idxCloses 기반)
     const xs = _mlXSectFeats(closes, args.idxCloses);
     f.rsiRel = xs.rsiRel; f.volRatioRel = xs.volRatioRel; f.betaIdx = xs.betaIdx; f.corrIdx = xs.corrIdx;
+    // [V20] 시장국면 4종(무배선) + 섹터-상대강도 2종(sectorCloses 배선) — 국면조건부 학습 + 섹터알파
+    const rg = _mlMarketRegimeFeats(args.idxCloses);
+    f.idxTrend = rg.idxTrend; f.idxRsi = rg.idxRsi; f.idxVol = rg.idxVol; f.idxMom20 = rg.idxMom20;
+    const sc = _mlSectorFeats(closes, args.sectorCloses);
+    f.sectorRs20 = sc.sectorRs20; f.sectorBeta = sc.sectorBeta;
     return LUXML.featNames.map(function(n){ return _num(f[n], 0); });
   } catch (e) {
     return LUXML.featNames.map(function(){ return 0; });
@@ -18403,7 +18465,9 @@ const FEAT_ROLES = {
   gapFillR: "갭 되메움 비율", volTrendR: "거래량 추세", accel: "수익률 가속도(2차 모멘텀)",
   maSlope20: "20일선 기울기(추세강도)", disparity20: "이동평균 이격도", rsiDiverg: "RSI 다이버전스", bbSqueeze: "볼린저 스퀴즈",
   fibSig: "피보나치 되돌림 신호", taUpProb: "기술적 종합 상승확률",
-  rsiRel: "지수대비 상대 RSI", volRatioRel: "지수대비 상대 변동성", betaIdx: "시장 베타(민감도)", corrIdx: "지수 동조도(상관)"
+  rsiRel: "지수대비 상대 RSI", volRatioRel: "지수대비 상대 변동성", betaIdx: "시장 베타(민감도)", corrIdx: "지수 동조도(상관)",
+  idxTrend: "시장 추세(지수 vs MA50)", idxRsi: "시장 RSI(과열/과매도)", idxVol: "시장 변동성", idxMom20: "시장 모멘텀",
+  sectorRs20: "섹터 상대강도", sectorBeta: "섹터 베타"
 };
 
 // ── [V9 시각화] 신경망 구조·가중치 강도를 프론트 시각화용으로 요약 반환 ──
@@ -18851,11 +18915,11 @@ async function harvestDeepFetchNightly(DB) {
         try { await setState(DB, "hist:" + isym, dh); await setState(DB, "hist_meta:" + isym, { ts: now, bars: dh.bars, dataTs: dh.ts }); fetched++; } catch (e) {}
       }
     }
-    // (2) 종목 딥 — daily:(거래) ∪ HARVEST_EXTRA_SYMS(수확전용) 로테이션
+    // (2) 종목 딥 — HARVEST_EXTRA_SYMS(섹터ETF 우선 → 섹터피처 조기활성) + daily:(거래) 로테이션
     const ks = await DB.prepare("SELECT k FROM state WHERE k LIKE 'daily:%' ORDER BY k").all();
     const _sset = {};
+    for (const s of HARVEST_EXTRA_SYMS) _sset[s] = 1;   // 먼저 삽입 → 로테이션 앞순위(섹터ETF 조기 확보)
     for (const r of ((ks && ks.results) || [])) { const s = r.k.slice(6); if (s && s[0] !== "^") _sset[s] = 1; }
-    for (const s of HARVEST_EXTRA_SYMS) _sset[s] = 1;
     const syms = Object.keys(_sset);
     if (syms.length) {
       const perNight = HARVEST.deepFetchPerNight || 30;
@@ -18935,6 +18999,9 @@ async function mlMarketHarvestNightly(DB) {
         idxCache[mk] = ic || await _mlLoadIndexCloses(DB, mk);
       } catch (e) { idxCache[mk] = null; }
     }
+    // [V20] 섹터 ETF 종가 캐시(1회) — 섹터-상대강도 피처용. 딥(hist:) 우선.
+    const secCache = {};
+    try { for (const etf of Object.keys(_SECTOR_ETF).map(function (g) { return _SECTOR_ETF[g]; })) { let sd = await getState(DB, "hist:" + etf, null); if (!sd) sd = await getState(DB, "daily:" + etf, null); secCache[etf] = (sd && Array.isArray(sd.closes)) ? sd.closes : null; } } catch (e) {}
     for (let si = 0; si < takeN; si++) {
       if (made >= HARVEST.maxPerNight) break;
       if (Date.now() > hvDeadline) break;  // [V9.5] 예산 초과 — 여기까지 수확분 저장(seen/offset도 반영)
@@ -18965,13 +19032,16 @@ async function mlMarketHarvestNightly(DB) {
         // [V7] 지수 과거정렬: 봉 i 시점 = 지수 끝에서 (L-1-i)봉 전
         const idxAll = idxCache[mkt];
         const idxHist = (idxAll && idxAll.length > (L - 1 - i)) ? idxAll.slice(0, idxAll.length - (L - 1 - i)) : null;
+        // [V20] 섹터 ETF 과거정렬(봉 i) — US만. 그룹→ETF→캐시(수확·라이브 동일 계산).
+        let secHist = null;
+        if (mkt === "us") { const _sc = secCache[_SECTOR_ETF[getSectorGroup(sym, null)]]; if (_sc && _sc.length > (L - 1 - i)) secHist = _sc.slice(0, _sc.length - (L - 1 - i)); }
         const feat = mlBuildFeatures({
           closes: hist,
           volumes: Array.isArray(dd.volumes) ? dd.volumes.slice(0, i + 1) : null,
           opens: Array.isArray(dd.opens) ? dd.opens.slice(0, i + 1) : null,
           highs: Array.isArray(dd.highs) ? dd.highs.slice(0, i + 1) : null,
           lows: Array.isArray(dd.lows) ? dd.lows.slice(0, i + 1) : null,
-          idxCloses: idxHist,
+          idxCloses: idxHist, sectorCloses: secHist,
           price: c, prevClose: i > 0 ? closes[i - 1] : 0, dayPct: dayPct,
           regime: "NEUTRAL", strategy: "hv", market: mkt, ev: {}
         });
