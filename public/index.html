@@ -7313,12 +7313,16 @@ html[data-theme="light"] .table tbody tr:hover{background:rgba(9,105,218,.045);}
     var nm = displayName(q, st.market);
     if ($('detailSym'))  $('detailSym').textContent = st.symbol;
     if ($('detailName')) $('detailName').textContent = (nm && nm !== st.symbol) ? nm : '';
-    if ($('detailPrice')) $('detailPrice').textContent = (q.price != null) ? fmtNum(q.price) : '—';
+    // [V12.1 버그수정] 시간외(PRE/POST)엔 백엔드가 price/dayPct를 시간외 값으로 덮어쓴다(applyDisplayOverMarket).
+    //   종목상세의 "현재가/당일등락(장중)"은 정규장 값이어야 하므로 보존된 regPrice/regPct를 우선 사용.
+    var regPx  = (typeof q.regPrice === 'number' && q.regPrice > 0) ? q.regPrice : q.price;
+    var regPct = (typeof q.regPct === 'number') ? q.regPct : q.dayPct;
+    if ($('detailPrice')) $('detailPrice').textContent = (regPx != null) ? fmtNum(regPx) : '—';
     var chEl = $('detailChange');
     if (chEl) {
-      if (typeof q.dayPct === 'number') {
-        chEl.textContent = (q.dayPct >= 0 ? '+' : '') + fmtNum(q.dayPct, 2) + '%';
-        chEl.className = 'detail-change ' + (q.dayPct >= 0 ? 'pos' : 'neg');
+      if (typeof regPct === 'number') {
+        chEl.textContent = (regPct >= 0 ? '+' : '') + fmtNum(regPct, 2) + '%';
+        chEl.className = 'detail-change ' + (regPct >= 0 ? 'pos' : 'neg');
       } else { chEl.textContent = '—'; chEl.className = 'detail-change'; }
     }
     var rows = [];
@@ -7329,15 +7333,15 @@ html[data-theme="light"] .table tbody tr:hover{background:rgba(9,105,218,.045);}
     // [V92] 미국 프리/애프터마켓 — 정규장 외 시간에 보조 가격 표시
     if (q.mstate === 'PRE' && q.pre > 0) add('장전(프리)', num(q.pre) + '  ' + pct(q.prePct), pc(q.prePct));
     else if ((q.mstate === 'POST' || q.mstate === 'POSTPOST') && q.post > 0) add('장후(애프터)', num(q.post) + '  ' + pct(q.postPct), pc(q.postPct));
-    add('현재가', num(q.price));
+    add('현재가', num(regPx));
     add('전일종가', num(q.prevClose));
-    add('당일등락', pct(q.dayPct), pc(q.dayPct));
+    add('당일등락(장중)', pct(regPct), pc(regPct));
     // [프리/애프터마켓] 시간외 실시간 — 장전이면 장전가, 장후/마감이면 장후가 표시
     if (q.mstate === 'PRE' && q.pre > 0) {
       var _ppr = (typeof q.prePct === 'number') ? q.prePct : (q.prevClose > 0 ? (q.pre - q.prevClose) / q.prevClose * 100 : 0);
       add('장전(시간외)', num(q.pre) + '  ' + (_ppr >= 0 ? '+' : '') + _ppr.toFixed(2) + '%', pc(_ppr));
     } else if ((q.mstate === 'POST' || q.mstate === 'POSTPOST' || q.mstate === 'CLOSED') && q.post > 0) {
-      var _ppo = (typeof q.postPct === 'number') ? q.postPct : (q.price > 0 ? (q.post - q.price) / q.price * 100 : 0);
+      var _ppo = (typeof q.postPct === 'number') ? q.postPct : (regPx > 0 ? (q.post - regPx) / regPx * 100 : 0);
       add('장후(시간외)', num(q.post) + '  ' + (_ppo >= 0 ? '+' : '') + _ppo.toFixed(2) + '%', pc(_ppo));
     }
     add('RSI(14)', q.rsi != null ? q.rsi.toFixed(1) : '—');
