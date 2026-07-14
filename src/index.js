@@ -18652,13 +18652,13 @@ async function mlDNNVizData(DB) {
     const params = paramsPerNet * nets.length;   // [V10] 앙상블 전체 파라미터(시드 곱)
     const committee = [];
     if (mindAcc != null) committee.push({ name: "MIND", role: "스태킹", acc: +mindAcc.toFixed(3), w: null, trusted: true });
-    committee.push({ name: "DNN", role: "6층 딥넷", acc: trust ? +_num(trust.dnnAccLB, _num(trust.dnnAcc, 0)).toFixed(3) : null, w: trust ? _num(trust.wDnn, 0) : 0, trusted: !!(trust && trust.trusted) });
+    committee.push({ name: "DNN", role: dims.length + "층 딥넷", acc: trust ? +_num(trust.dnnAccLB, _num(trust.dnnAcc, 0)).toFixed(3) : null, w: trust ? _num(trust.wDnn, 0) : 0, trusted: !!(trust && trust.trusted) });
     if (gtrust) committee.push({ name: "GBDT", role: "부스팅트리", acc: +_num(gtrust.gbdtAccLB, _num(gtrust.gbdtAcc, 0)).toFixed(3), w: _num(gtrust.wGbdt, 0), trusted: !!gtrust.trusted });
     // [V11] 3M이 실제 거래결정에 기여 중인가? 신뢰게이트 통과(trusted & wDnn>0) 여부 = 실동작 여부.
     const active = !!(trust && trust.trusted && _num(trust.wDnn, 0) > 0);
     const source = m.source || "worker";   // "external"=외부GPU 업로드, "worker"=야간 자가학습
     return {
-      trained: true, architecture: dims.join("-") + "×" + nets.length, dims: dims, seeds: nets.length,
+      trained: true, architecture: dims.join("-") + "×" + nets.length, dims: dims, cfgLayers: DNN.hidden.length + 2, seeds: nets.length,
       valAcc: m.valAcc, n: m.n, params: params, trainedAt: m.trainedAt,
       trust: trust ? { wDnn: trust.wDnn, trusted: !!trust.trusted, dnnAcc: trust.dnnAcc } : null,
       active: active, source: source,
