@@ -13287,6 +13287,19 @@ async function handleRequest(request, env) {
       return Response.json({ ok: true, saved: saveInfo, trust: trust, activated: trust.trusted,
         note: trust.trusted ? "3M 딥넷이 위원회에서 가동됩니다(wDnn=" + trust.wDnn + ")" : "저장됐으나 검증성능이 mind 미달 → 자동 억제(wDnn=0). 표본/에폭 늘려 재학습 권장." }, { headers: cors });
     }
+    // POST /api/ai/harvest-now — 야간 수확을 지금 즉시 1회 실행(하루1회 ai_trained_day 게이트 무시).
+    //   [V11.2] featVer가 바뀌면 구표본이 전부 필터링되어 total=0이 되는데, 원본 일봉(daily:/hist: 캐시)은
+    //   그대로 있어 재계산만 하면 됨. 다음 UTC자정까지 기다리지 않고 캐시에서 즉시 재수확하기 위한 트리거.
+    if (path === "/api/ai/harvest-now" && request.method === "POST") {
+      const au = _trainAuthed(); if (!au.ok) return Response.json({ error: au.msg }, { status: au.code, headers: cors });
+      try {
+        const r = await mlMarketHarvestNightly(env.DB);
+        try { await log(env.DB, "INFO", null, "[수동트리거] " + r); } catch (e) {}
+        return Response.json({ ok: true, result: r }, { headers: cors });
+      } catch (e) {
+        return Response.json({ ok: false, error: e && e.message }, { status: 500, headers: cors });
+      }
+    }
     // ═══════════ /외부 학습 오프로드 ═══════════
 
     // ── [FUND] 재무제표 + 내장AI 재무평가(F-Score·Z-Score) — 서버 7일 캐시 ──
