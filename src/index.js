@@ -2333,7 +2333,77 @@ const AI_PARAMS = {
 
   // ── 보상 함수(Reward Function) ── 학습 표본 가중 방향.
   //   "pnl"=손익 크기 가중(큰 손익 거래가 더 크게 가르침, 현행) / "sharpe"=위험대비수익 지향(예약)
-  rewardFunction: "pnl"
+  rewardFunction: "pnl",
+
+  // ── 시장 심리(Sentiment) 파라미터 ── 뉴스/SNS NLP 감성 → 매수 필터·사이징.
+  //   (구현: sentimentScore/nlpTagHeadlinesV2 VADER 엔진, sector_news_sentiment, newsSent 피처)
+  sentiment: {
+    buyThreshold: -0.35,       // 종목/섹터 감성 compound(-1..1)가 이 값 미만이면 매수 보류(악재 회피)
+    strongPosThreshold: 0.45,  // 이 값 초과면 강한 호재 → 사이즈 소폭 부스트
+    posScaleMax: 1.08,         // 강한 호재 시 사이즈 상한 배율(구현: sectorNews.posScaleMax)
+    negScaleMin: 0.88,         // 강한 악재 시 사이즈 하한 배율(구현: sectorNews.negScaleMin)
+    minHeadlines: 2,           // 감성 신뢰에 필요한 최소 헤드라인 수(소표본 과신 방지)
+    lexWeight: 0.5, vaderWeight: 0.5,  // 사건사전 극성 : VADER 극성 융합비(nlpTagHeadlinesV2)
+    krEnabled: true            // 한국어 감성 사전 사용
+  },
+
+  // ── 포트폴리오 리스크 한도(Risk Limits) ── 분산·시장민감도 통제.
+  //   ※ 현재는 설정·리포팅 계층 파라미터(진입 하드게이트로는 미배선). 리스크 대시보드/사이징 참고값.
+  riskLimits: {
+    correlationLimit: 0.70,       // 종목 간 60일 수익률 상관계수가 이 값 이상이면 동시 신규보유 제한
+    correlationLookbackDays: 60,
+    sectorExposureLimitPct: 30,   // 단일 섹터(반도체·2차전지 등) 최대 자본 비중 %
+    maxConcurrentPositions: 20,   // 동시 보유 종목 수 상한(집중 방지)
+    targetBeta: 1.0,              // 포트폴리오 목표 베타(시장 민감도). <1 방어적 / >1 공격적
+    betaTolerance: 0.35,          // 목표 베타 허용 밴드(±). 이탈 시 사이징으로 보정 권고
+    betaBenchmark: { us: "^GSPC", kr: "^KS11" }  // 베타 산출 기준지수
+  },
+
+  // ── 매크로 필터(Macro Filters / Circuit Breaker) ── 거시 안전구간 이탈 시 매수 차단.
+  //   (구현: crashGate.haltVixAbove, marketContext risk-off(HYG/UUP/VIX/TLT), crashSurvival 서킷브레이커)
+  macroFilters: {
+    enabled: true,
+    vixHaltAbove: 28,             // VIX(또는 VIX9D) 이 값 초과 → 신규매수 중단(구현: scalpRules.haltVixAbove)
+    vixCautionAbove: 22,          // 이 값 초과 → 사이즈 축소(고변동 주의구간)
+    us10yMaxPct: 5.0,             // 미 국채 10년 금리가 이 값 초과 시 위험자산 매수 보수화
+    usdkrwMax: 1450,              // 원/달러 환율 이 값 초과(원화 급락) 시 KR 신규매수 축소
+    riskOffScale: 0.6,            // risk-off 감지 시 신규 진입 사이즈 배율(구현: marketContext.riskOffScale)
+    circuitBreakerDrawdownPct: 12 // 포트폴리오 고점 대비 -12% → 신규매수 전면중단(구현: crashSurvival.drawdown.l2Pct)
+  },
+
+  // ── 기술적 예측·추세강도·변동성 파라미터(Technical / Trend / Volatility) ──
+  //   (구현: taPredictDirection·_mlTaFibFeats 예측기 + ML 피처 maSlope20/disparity20/rsiDiverg/bbSqueeze/taUpProb)
+  technical: {
+    patternConfCutoff: 0.60,     // 패턴 신뢰도 커트라인(0~1) — 이상일 때만 차트패턴 신호 채택
+    maSlopeMinPctPerBar: 0.05,   // 이동평균선 기울기 하한 — 상승추세 인정 20일선 최소 기울기(%/봉)
+    maSlopeWindow: 10,           // 기울기 측정 봉 수
+    maDisparityLimitPct: 8,      // 이동평균 이격도 한계(±%) — 초과 시 평균회귀(역추세) 전략 가동
+    divergenceLookback: 20,      // 다이버전스 감지 윈도우 — 가격·RSI 고점 비교 기간(봉)
+    bbSqueezeRatio: 0.60,        // 볼린저 스퀴즈 기준 — 밴드폭이 과거평균의 이 비율 이하면 '스퀴즈(응축)'
+    bbSqueezeHistWin: 120,       // 스퀴즈 판정용 밴드폭 과거평균 기간
+    atrMultiplier: 2.0,          // ATR 배수 — 동적 트레일링 손절폭(현재가 − N×ATR). (구현: cfg.atrStopMult)
+    breakoutVolMult: 2.5,        // 돌파 거래량 가중치 — 20일 평균 대비 이 배수↑ 거래량이라야 '진짜 돌파'
+    breakoutHighLookback: 20,    // 신고가(저항) 판정 기간
+    adxTrendMin: 20              // 추세 인정 최소 ADX(이하는 횡보로 보고 추세신호 감쇠)
+  },
+
+  // ── 피보나치 되돌림(Fibonacci Retracement) ── 스윙 고저 기준 되돌림 반전매매.
+  //   (구현: fibAnalyze → fibSig ML 피처로 학습, evKey "fib_*"로 사건기대값 학습)
+  fibonacci: {
+    enabled: true,
+    swingLookback: 60,                       // 스윙 고점/저점 탐색 기간(봉)
+    levels: [0.236, 0.382, 0.5, 0.618, 0.786],
+    keyLevels: [0.382, 0.5, 0.618],          // 반전매매에 쓰는 핵심 되돌림 비율
+    tolerancePct: 1.5,                       // 되돌림 오차 허용치(±%) — 이 범위 안 반전이면 유효
+    extensions: [1.272, 1.618]               // 되돌림 후 익절 목표(확장 레벨)
+  },
+
+  // ── 다중 타임프레임 가중치(Multi-Timeframe Weights) ── 숲(장기)과 나무(단기) 동시 판단.
+  //   일봉(장기추세)·1시간봉(중기)·5분봉(단기타점) 신호 종합 비중(합=1). 프레임 없으면 일봉만 사용.
+  multiTimeframe: {
+    enabled: true,
+    weights: { d1: 0.5, h1: 0.3, m5: 0.2 }
+  }
 };
 
 const DEFAULT_CFG = {
@@ -15317,6 +15387,269 @@ async function runVisionScanBackend(env, force) {
 //    / L1공식 / 규칙엔진 원수량. 각 단계 준비 미달이면 자동 폴백(거래로직 불변).
 // ============================================================================
 
+// ============================================================================
+// [V13] 기술적 분석 상승/하락 예측기 + 피보나치 되돌림 (순수 OHLCV, LLM 0, fetch 0)
+//   • taPredictDirection : 추세(기울기/ADX)·모멘텀(RSI/MACD)·변동성(볼밴/스퀴즈)·
+//       거래량(돌파확인)·차트패턴(도지/해머/장악/쌍바닥)·피보나치를 가중결합 →
+//       상승확률(0~1) + 신뢰도 + 근거. 멀티타임프레임(일/시간/분봉) 가중 종합 지원.
+//   • fibAnalyze        : 스윙 고저 → 되돌림 레벨(0.382/0.5/0.618 등) → 현재가 근접·반전 신호.
+//   • _mlTaFibFeats     : 위 결과를 6개 ML 피처(maSlope20/disparity20/rsiDiverg/bbSqueeze/
+//       fibSig/taUpProb)로 압축 → 모델이 "학습"해 게이트·사이징에 반영(라이브·수확 동일 분포).
+//   파라미터는 AI_PARAMS.technical / fibonacci / multiTimeframe 에서 조회(없으면 안전 기본값).
+// ============================================================================
+
+// 20일선 기울기(%/봉) — 최근 win봉 동안 MA(maP)의 상승 각도. 상승추세 진위 판별.
+function _maSlopePct(closes, maP, win) {
+  try {
+    if (!Array.isArray(closes) || closes.length < maP + win + 1) return 0;
+    const now = getMA(closes, maP);
+    const past = getMA(closes.slice(0, closes.length - win), maP);
+    if (!(now > 0) || !(past > 0)) return 0;
+    return _clamp(((now - past) / past) / win * 100, -5, 5);  // %/봉
+  } catch (e) { return 0; }
+}
+
+// RSI 다이버전스(-1..+1) — 가격과 RSI의 방향 불일치. +상승반전 / -하락반전.
+function _rsiDivergence(closes, look) {
+  try {
+    const n = closes.length;
+    if (n < look + 16) return 0;
+    const pNow = closes[n - 1], pAgo = closes[n - 1 - look];
+    const rNow = getRSI(closes, 14), rAgo = getRSI(closes.slice(0, n - look), 14);
+    if (!(pNow > 0) || !(pAgo > 0) || rNow == null || rAgo == null) return 0;
+    const pUp = pNow > pAgo, rUp = rNow > rAgo;
+    if (pUp && !rUp) return _clamp(-((rAgo - rNow) / 20), -1, 0);  // 약세 다이버전스(고점↑·RSI↓)
+    if (!pUp && rUp) return _clamp(((rNow - rAgo) / 20), 0, 1);    // 강세 다이버전스(저점↓·RSI↑)
+    return 0;
+  } catch (e) { return 0; }
+}
+
+// 볼린저 스퀴즈 비율(0..2, 낮을수록 응축) — 현재 밴드폭 / 과거평균 밴드폭.
+function _bbSqueezeRatio(closes, p, mult, histWin) {
+  try {
+    p = p || 20; mult = mult || 2.0; histWin = histWin || 120;
+    const n = closes.length;
+    if (n < p + 10) return 1;
+    function bw(arr) { const b = getBollingerBands(arr, p, mult); return (b && b.mid > 0) ? (b.upper - b.lower) / b.mid : null; }
+    const cur = bw(closes);
+    if (cur == null) return 1;
+    let sum = 0, cnt = 0;
+    const start = Math.max(p, n - histWin);
+    for (let i = start; i < n; i += 5) {
+      const v = bw(closes.slice(0, i + 1));
+      if (v != null) { sum += v; cnt++; }
+    }
+    const avg = cnt ? sum / cnt : cur;
+    return avg > 1e-9 ? _clamp(cur / avg, 0, 2) : 1;
+  } catch (e) { return 1; }
+}
+
+// 돌파+거래량 확인(0..1) — 신고가 근접 & 거래량이 평균 대비 volMult배↑ 이면 '진짜 돌파'.
+function _breakoutVolScore(closes, volumes, hiN, volMult) {
+  try {
+    if (!Array.isArray(volumes) || volumes.length < 21) return 0;
+    const n = closes.length, price = closes[n - 1];
+    const hi = getNDayHigh(closes.slice(0, n - 1), hiN || 20);  // 직전까지의 신고가
+    if (!(hi > 0) || !(price > 0)) return 0;
+    let s = 0; for (let i = volumes.length - 21; i < volumes.length - 1; i++) s += _num(volumes[i], 0);
+    const avg = s / 20, vol = _num(volumes[volumes.length - 1], 0);
+    if (!(avg > 0)) return 0;
+    const volR = vol / avg;
+    const nearHigh = price >= hi * 0.998;
+    if (!nearHigh || volR < (volMult || 2.5)) return 0;
+    return _clamp(volR / (volMult || 2.5) / 2, 0, 1);
+  } catch (e) { return 0; }
+}
+
+// 차트패턴 신뢰도 — 최근 캔들/스윙에서 교과서 패턴 일치도. { conf:0..1, dir:-1|0|1 }.
+function _patternConfidence(opens, highs, lows, closes) {
+  try {
+    const n = closes.length;
+    if (n < 5 || !Array.isArray(opens) || !Array.isArray(highs) || !Array.isArray(lows)) return { conf: 0, dir: 0 };
+    const o = opens[n - 1], h = highs[n - 1], l = lows[n - 1], c = closes[n - 1];
+    const rng = h - l;
+    if (!(rng > 0)) return { conf: 0, dir: 0 };
+    const body = Math.abs(c - o), upper = h - Math.max(c, o), lower = Math.min(c, o) - l;
+    let dir = 0, conf = 0;
+    // 도지 — 방향 모호(확신↓)
+    if (body / rng < 0.1) { return { conf: 0.2, dir: 0 }; }
+    // 해머(하단 긴 꼬리, 몸통 상단) — 강세 반전
+    if (lower > body * 2 && upper < body && c >= o) { dir = 1; conf = Math.max(conf, _clamp(lower / rng, 0, 1)); }
+    // 슈팅스타(상단 긴 꼬리) — 약세 반전
+    if (upper > body * 2 && lower < body && c <= o) { dir = -1; conf = Math.max(conf, _clamp(upper / rng, 0, 1)); }
+    // 장악형(engulfing) 2봉
+    if (n >= 2) {
+      const o1 = opens[n - 2], c1 = closes[n - 2];
+      if (c > o && c1 < o1 && c >= o1 && o <= c1) { dir = 1; conf = Math.max(conf, 0.65); }        // 강세장악
+      else if (c < o && c1 > o1 && c <= o1 && o >= c1) { dir = -1; conf = Math.max(conf, 0.65); }   // 약세장악
+    }
+    // 쌍바닥(Double Bottom) — 최근 40봉 내 두 저점이 근접 + 사이 반등
+    if (n >= 20) {
+      const seg = Math.min(40, n), base = n - seg;
+      let lo1 = Infinity, i1 = -1;
+      for (let i = base; i < n - 5; i++) if (lows[i] < lo1) { lo1 = lows[i]; i1 = i; }
+      let lo2 = Infinity, i2 = -1;
+      for (let i = i1 + 3; i < n; i++) if (lows[i] < lo2) { lo2 = lows[i]; i2 = i; }
+      if (i1 > 0 && i2 > i1 && lo1 > 0 && Math.abs(lo2 - lo1) / lo1 < 0.03) {
+        let mid = 0; for (let i = i1; i <= i2; i++) mid = Math.max(mid, highs[i]);
+        if (mid > lo1 * 1.03 && c > lo2) { dir = 1; conf = Math.max(conf, 0.7); }  // W 바닥 확인
+      }
+    }
+    return { conf: _clamp(conf, 0, 1), dir: dir };
+  } catch (e) { return { conf: 0, dir: 0 }; }
+}
+
+// ── 피보나치 되돌림 분석 ─────────────────────────────────────
+//   반환: { trendUp, hi, lo, levels:{r:price}, nearest:{r,price,distPct}, atLevel, fibSig(-1..1), targets }
+function fibAnalyze(highs, lows, closes, params) {
+  const P = Object.assign({ swingLookback: 60, keyLevels: [0.382, 0.5, 0.618],
+    levels: [0.236, 0.382, 0.5, 0.618, 0.786], tolerancePct: 1.5, extensions: [1.272, 1.618] },
+    (params || {}));
+  const out = { trendUp: true, hi: 0, lo: 0, levels: {}, nearest: null, atLevel: false, fibSig: 0, targets: [] };
+  try {
+    if (!Array.isArray(highs) || !Array.isArray(lows) || !Array.isArray(closes)) return out;
+    const n = closes.length;
+    if (n < 15) return out;
+    const seg = Math.min(P.swingLookback, n);
+    const s = n - seg;
+    let hi = -Infinity, lo = Infinity, hiIdx = s, loIdx = s;
+    for (let i = s; i < n; i++) {
+      const hv = _num(highs[i], closes[i]), lv = _num(lows[i], closes[i]);
+      if (hv > hi) { hi = hv; hiIdx = i; }
+      if (lv < lo) { lo = lv; loIdx = i; }
+    }
+    if (!(hi > lo)) return out;
+    const range = hi - lo, price = closes[n - 1];
+    const trendUp = loIdx < hiIdx;   // 저점이 먼저 → 상승 후 되돌림(눌림목)
+    out.trendUp = trendUp; out.hi = hi; out.lo = lo;
+    for (const r of P.levels) out.levels[r] = trendUp ? (hi - r * range) : (lo + r * range);
+    // 현재가에서 가장 가까운 핵심 되돌림
+    let best = null;
+    for (const r of P.keyLevels) {
+      const lp = trendUp ? (hi - r * range) : (lo + r * range);
+      const distPct = Math.abs(price - lp) / price * 100;
+      if (!best || distPct < best.distPct) best = { r: r, price: lp, distPct: distPct };
+    }
+    out.nearest = best;
+    if (best && best.distPct <= P.tolerancePct) {
+      out.atLevel = true;
+      // 상승추세 눌림목 지지 반등 → +, 하락추세 되돌림 저항 → -
+      const strength = _clamp(1 - best.distPct / P.tolerancePct, 0, 1);
+      out.fibSig = _clamp((trendUp ? 1 : -1) * strength, -1, 1);
+    }
+    // 익절 목표(확장 레벨)
+    for (const e of P.extensions) out.targets.push(trendUp ? (lo + e * range) : (hi - e * range));
+  } catch (e) {}
+  return out;
+}
+
+// ── 기술적 상승/하락 예측기 ──────────────────────────────────
+//   bars: { closes, highs, lows, volumes, opens }  (일봉, 오래된→최신)
+//   반환: { upProb(0..1), dir:'up'|'down', confidence(0..1), patternConf, fibSig, reasons:[], components:{} }
+function taPredictDirection(bars, params) {
+  const T = Object.assign({ patternConfCutoff: 0.6, maSlopeMinPctPerBar: 0.05, maSlopeWindow: 10,
+    maDisparityLimitPct: 8, divergenceLookback: 20, bbSqueezeRatio: 0.6, bbSqueezeHistWin: 120,
+    breakoutVolMult: 2.5, breakoutHighLookback: 20, adxTrendMin: 20 }, (params && params.technical) || params || {});
+  const fibP = (params && params.fibonacci) || {};
+  const res = { upProb: 0.5, dir: "up", confidence: 0, patternConf: 0, fibSig: 0, reasons: [], components: {} };
+  try {
+    const closes = bars && bars.closes;
+    if (!Array.isArray(closes) || closes.length < 30) return res;
+    const highs = bars.highs, lows = bars.lows, volumes = bars.volumes, opens = bars.opens;
+    const n = closes.length, price = closes[n - 1];
+    const ma20 = _num(getMA(closes, 20), price);
+    const rsi = _num(getRSI(closes, 14), 50);
+    const macd = getMACD(closes, 12, 26, 9);
+    const adx = _num(getADX(highs, lows, closes, 14), 0);
+    const slope = _maSlopePct(closes, 20, T.maSlopeWindow);
+    const disp = ma20 > 0 ? (price / ma20 - 1) * 100 : 0;
+    const diverg = _rsiDivergence(closes, T.divergenceLookback);
+    const squeeze = _bbSqueezeRatio(closes, 20, 2.0, T.bbSqueezeHistWin);
+    const brk = _breakoutVolScore(closes, volumes, T.breakoutHighLookback, T.breakoutVolMult);
+    const pat = _patternConfidence(opens, highs, lows, closes);
+    const fib = fibAnalyze(highs, lows, closes, fibP);
+    const bb = getBollingerBands(closes, 20, 2.0);
+    const pctB = (bb && bb.upper > bb.lower) ? (price - bb.lower) / (bb.upper - bb.lower) : 0.5;
+    const trendOn = adx >= T.adxTrendMin;   // 추세 유효성 게이트(횡보면 추세신호 감쇠)
+
+    let score = 0; const R = res.reasons;
+    // 추세: 기울기 방향 × ADX 강도
+    if (slope >= T.maSlopeMinPctPerBar) { score += 0.9 * (trendOn ? 1 : 0.5); R.push("MA기울기+" + slope.toFixed(2)); }
+    else if (slope <= -T.maSlopeMinPctPerBar) { score -= 0.9 * (trendOn ? 1 : 0.5); R.push("MA기울기" + slope.toFixed(2)); }
+    // MACD 히스토그램
+    if (macd && macd.hist > 0) { score += 0.6; R.push("MACD+"); } else if (macd && macd.hist < 0) { score -= 0.6; R.push("MACD-"); }
+    // 모멘텀(RSI 중심선)
+    if (rsi >= 55) { score += 0.4; } else if (rsi <= 45) { score -= 0.4; }
+    // 평균회귀(이격도 과열/과매도)
+    if (disp >= T.maDisparityLimitPct) { score -= 0.5; R.push("이격과열" + disp.toFixed(1) + "%"); }
+    else if (disp <= -T.maDisparityLimitPct) { score += 0.5; R.push("이격과매도" + disp.toFixed(1) + "%"); }
+    // 볼밴 위치 — 상단 돌파/하단 이탈
+    if (pctB > 1) score += 0.3; else if (pctB < 0) score -= 0.3;
+    // 돌파 거래량 확인
+    if (brk > 0) { score += 0.7 * brk; R.push("거래량돌파×" + brk.toFixed(2)); }
+    // 다이버전스
+    if (diverg !== 0) { score += 0.6 * diverg; R.push((diverg > 0 ? "강세" : "약세") + "다이버전스"); }
+    // 피보나치 되돌림 반전
+    if (fib.fibSig !== 0) { score += 0.6 * fib.fibSig; R.push("피보" + (fib.nearest ? fib.nearest.r : "") + (fib.fibSig > 0 ? "지지" : "저항")); }
+    // 차트패턴(신뢰도 커트라인 통과 시)
+    if (pat.conf >= T.patternConfCutoff && pat.dir !== 0) { score += 0.8 * pat.dir * pat.conf; R.push("패턴" + (pat.dir > 0 ? "강세" : "약세") + pat.conf.toFixed(2)); }
+    // 스퀴즈: 응축 상태면 방향확신 약화(팽창 대기) — score를 0쪽으로 약간 수축
+    if (squeeze < T.bbSqueezeRatio) { score *= 0.85; R.push("스퀴즈응축"); }
+
+    const upProb = _sigmoid(score);
+    res.upProb = +upProb.toFixed(4);
+    res.dir = upProb >= 0.5 ? "up" : "down";
+    // 신뢰도: 예측 극성 + 패턴신뢰 + 추세강도(ADX) 결합
+    res.confidence = +_clamp(0.5 * Math.abs(2 * upProb - 1) + 0.3 * pat.conf + 0.2 * _clamp(adx / 40, 0, 1), 0, 1).toFixed(4);
+    res.patternConf = +pat.conf.toFixed(4);
+    res.fibSig = +fib.fibSig.toFixed(4);
+    res.components = { slope: +slope.toFixed(3), disp: +disp.toFixed(2), rsi: +rsi.toFixed(1),
+      macdH: macd ? +macd.hist.toFixed(4) : 0, adx: +adx.toFixed(1), pctB: +pctB.toFixed(3),
+      squeeze: +squeeze.toFixed(3), brk: +brk.toFixed(3), diverg: +diverg.toFixed(3) };
+  } catch (e) {}
+  return res;
+}
+
+// ── 멀티 타임프레임 종합 예측 ────────────────────────────────
+//   framesByTf: { d1:{closes,highs,lows,volumes,opens}, h1:{...}, m5:{...} }  (있는 것만)
+//   가중치(AI_PARAMS.multiTimeframe.weights)로 각 프레임 upProb를 블렌딩.
+function taPredictMultiTF(framesByTf, params) {
+  try {
+    const mtf = (params && params.multiTimeframe) || { weights: { d1: 1 } };
+    const W = mtf.weights || { d1: 1 };
+    let wsum = 0, acc = 0; const per = {};
+    for (const tf of Object.keys(W)) {
+      const fr = framesByTf && framesByTf[tf];
+      if (!fr || !Array.isArray(fr.closes) || fr.closes.length < 30) continue;
+      const p = taPredictDirection(fr, params);
+      per[tf] = p.upProb; acc += W[tf] * p.upProb; wsum += W[tf];
+    }
+    if (!wsum) { const d = taPredictDirection((framesByTf && framesByTf.d1) || {}, params); return { upProb: d.upProb, dir: d.dir, perTf: per, confidence: d.confidence }; }
+    const upProb = acc / wsum;
+    return { upProb: +upProb.toFixed(4), dir: upProb >= 0.5 ? "up" : "down", perTf: per, confidence: +_clamp(Math.abs(2 * upProb - 1), 0, 1).toFixed(4) };
+  } catch (e) { return { upProb: 0.5, dir: "up", perTf: {}, confidence: 0 }; }
+}
+
+// ── ML 피처 6종 압축(순수 OHLCV) — mlBuildFeatures가 호출 ──
+//   maSlope20, disparity20, rsiDiverg, bbSqueeze, fibSig, taUpProb
+function _mlTaFibFeats(closes, highs, lows, volumes, opens, price) {
+  const o = { maSlope20: 0, disparity20: 0, rsiDiverg: 0, bbSqueeze: 1, fibSig: 0, taUpProb: 0.5 };
+  try {
+    if (!Array.isArray(closes) || closes.length < 30) return o;
+    const P = (typeof AI_PARAMS !== "undefined") ? AI_PARAMS : {};
+    // 예측기 1회 호출 → 내부 컴포넌트 재사용(중복 계산 회피, 수확 핫패스 비용 절감).
+    const pr = taPredictDirection({ closes: closes, highs: highs, lows: lows, volumes: volumes, opens: opens }, P);
+    const cp = pr.components || {};
+    o.maSlope20 = _num(cp.slope, 0);
+    o.disparity20 = _clamp(_num(cp.disp, 0), -30, 30);
+    o.rsiDiverg = _num(cp.diverg, 0);
+    o.bbSqueeze = _num(cp.squeeze, 1);
+    o.fibSig = _num(pr.fibSig, 0);
+    o.taUpProb = _num(pr.upProb, 0.5);
+  } catch (e) {}
+  return o;
+}
+
 // ============================================================
 // LUX-ML V2.0 — 자가학습 진입 필터 (L1 자동 피처선택 로지스틱 회귀)
 //
@@ -15369,9 +15702,16 @@ const LUXML = {
     "wickSkew",    // 20일 평균 (아래꼬리−위꼬리)/(고−저) — 저가매수 흡수(+) vs 고점거부(−)
     "gapFillR",    // 40일 갭 중 당일 되메움 비율 0~1 — 갭 신뢰도(패턴)
     "volTrendR",   // log(5일 평균거래량 / 20일 평균거래량) — 참여 증가/감소 추세
-    "accel"        // ret5(현재) − ret5(5일전) — 수익률 가속도(모멘텀 2차)
+    "accel",       // ret5(현재) − ret5(5일전) — 수익률 가속도(모멘텀 2차)
+    // ── [V13] 기술적예측·피보나치 (6) — 순수 OHLCV, 수확·라이브 동일 분포 ──
+    "maSlope20",   // 20일선 기울기(%/봉) — 상승추세 진위(MA Slope)
+    "disparity20", // 이격도 (price/MA20−1)% — 과매수/과매도 평균회귀 트리거
+    "rsiDiverg",   // RSI 다이버전스(−1..1) — 추세 반전 선행신호
+    "bbSqueeze",   // 볼린저 스퀴즈 비율(현재밴드폭/과거평균) — 에너지 응축(<1)
+    "fibSig",      // 피보나치 되돌림 신호(−1..1) — 눌림목 지지(+)/되돌림 저항(−)
+    "taUpProb"     // 종합 기술적 상승확률(0..1) — taPredictDirection 예측기 출력
   ],
-  featVer: 6,   // ★V12: visionUp 제거로 피처 55→54 축소. 구버전 표본 자동분리(WHERE featver=?)+전종목 재수확
+  featVer: 7,   // ★V13: 기술적예측·피보나치 6종 추가(54→60). 구버전 표본 자동분리(WHERE featver=?)+전종목 재수확
 
   minSamplesGate: 150,
   minSamplesSize: 400,
@@ -15662,6 +16002,10 @@ function mlBuildFeatures(args) {
     const px = _mlShapeFeats(closes, args.volumes, args.opens, args.highs, args.lows, price);
     f.upDnVolR = px.upDnVolR; f.volRetSpread = px.volRetSpread; f.bodyRatio = px.bodyRatio;
     f.wickSkew = px.wickSkew; f.gapFillR = px.gapFillR; f.volTrendR = px.volTrendR; f.accel = px.accel;
+    // [V13] 기술적예측·피보나치 6종
+    const tf = _mlTaFibFeats(closes, args.highs, args.lows, args.volumes, args.opens, price);
+    f.maSlope20 = tf.maSlope20; f.disparity20 = tf.disparity20; f.rsiDiverg = tf.rsiDiverg;
+    f.bbSqueeze = tf.bbSqueeze; f.fibSig = tf.fibSig; f.taUpProb = tf.taUpProb;
     return LUXML.featNames.map(function(n){ return _num(f[n], 0); });
   } catch (e) {
     return LUXML.featNames.map(function(){ return 0; });
@@ -17663,7 +18007,9 @@ const FEAT_ROLES = {
   mktUS: "미국시장 원핫", mktKR: "한국시장 원핫", mktCM: "원자재/기타 원핫",
   rs20: "20일 상대강도", rs60: "60일 상대강도", obvSlope: "OBV 수급 기울기", distLow20Pct: "20일 지지선 거리%", rangePos: "당일 레인지 내 위치",
   upDnVolR: "매집/분산 거래량비", volRetSpread: "거래량별 수익률 스프레드", bodyRatio: "캔들 몸통 확신도", wickSkew: "꼬리 비대칭(저가매수)",
-  gapFillR: "갭 되메움 비율", volTrendR: "거래량 추세", accel: "수익률 가속도(2차 모멘텀)"
+  gapFillR: "갭 되메움 비율", volTrendR: "거래량 추세", accel: "수익률 가속도(2차 모멘텀)",
+  maSlope20: "20일선 기울기(추세강도)", disparity20: "이동평균 이격도", rsiDiverg: "RSI 다이버전스", bbSqueeze: "볼린저 스퀴즈",
+  fibSig: "피보나치 되돌림 신호", taUpProb: "기술적 종합 상승확률"
 };
 
 // ── [V9 시각화] 신경망 구조·가중치 강도를 프론트 시각화용으로 요약 반환 ──
@@ -19107,17 +19453,39 @@ const SENTI_LEX = {
   "악재":-2.6,"급락":-2.7,"약세":-2.0,"하한가":-3.0,"신저가":-2.5,"적자":-2.2,"적자전환":-2.7,"실적악화":-2.4,
   "감산":-1.6,"소송":-2.2,"횡령":-3.2,"배임":-3.0,"분식":-3.3,"상장폐지":-3.4,"거래정지":-2.8,"부도":-3.5,
   "리콜":-2.1,"급감":-2.3,"하락":-1.7,"매도":-1.6,"손실":-2.0,"어닝쇼크":-2.8,"목표가하향":-2.4,"유상증자":-1.8,
-  "규제":-1.4,"제재":-2.0,"조사":-1.6,"경고":-2.0,"우려":-1.4,"불확실":-1.3,"부진":-1.9,"둔화":-1.7
+  "규제":-1.4,"제재":-2.0,"조사":-1.6,"경고":-2.0,"우려":-1.4,"불확실":-1.3,"부진":-1.9,"둔화":-1.7,
+  // [V12] 감성 강화 — 단일토큰 고신호어 확장(토크나이저가 하이픈·공백을 분리하므로 단어 단위만 유효)
+  //   ─ 영어 호재 ─
+  "outperforms":2.3,"reaffirms":1.6,"reiterates":1.4,"accumulate":1.5,"rebound":1.9,"rebounds":1.9,
+  "recovery":1.6,"recovers":1.7,"surpasses":2.2,"exceeds":2.0,"exceeded":2.0,"milestone":1.5,"approves":2.1,
+  "greenlight":2.0,"inflows":1.6,"blowout":2.6,"stellar":2.6,"booming":2.4,"resilient":1.8,"turnaround":1.9,
+  "upbeat":1.8,"soared":2.8,"rallied":2.2,"climbs":1.6,"climbed":1.6,"jumped":2.0,"upsized":1.6,"reinstated":1.4,
+  //   ─ 영어 악재 ─
+  "selloff":-2.3,"rout":-2.7,"meltdown":-3.0,"freefall":-2.9,"capitulation":-2.6,"outflows":-1.7,
+  "distress":-2.4,"distressed":-2.5,"liquidation":-2.6,"halted":-2.0,"suspended":-2.1,"delisted":-3.0,
+  "restated":-2.2,"restatement":-2.2,"clawback":-1.8,"furloughs":-1.8,"glut":-1.9,"oversupply":-1.9,
+  "slowdown":-1.9,"contraction":-2.0,"stagnation":-1.9,"overhang":-1.6,"dilutive":-1.8,"downbeat":-1.9,
+  "gloomy":-2.0,"plummet":-2.9,"plummets":-2.9,"plummeted":-2.9,"cratered":-2.8,"tanked":-2.7,"sank":-2.3,
+  //   ─ 한국어 호재 ─
+  "호실적":2.4,"수익성개선":2.2,"점유율확대":2.0,"대규모수주":2.5,"독점공급":2.2,"임상성공":2.6,"승인":2.1,
+  "목표주가상향":2.4,"외국인순매수":2.0,"기관순매수":1.9,"자사주소각":2.2,"무상증자":1.6,"회복":1.6,"개선":1.5,
+  "강세전환":2.0,"신고가경신":2.6,"호황":2.3,
+  //   ─ 한국어 악재 ─
+  "실적쇼크":-2.8,"약세전환":-2.0,"외국인순매도":-2.0,"기관순매도":-1.9,"공매도":-1.6,"반대매매":-2.4,
+  "손상차손":-2.1,"영업정지":-2.6,"불성실공시":-2.4,"관리종목":-2.8,"투자경고":-2.2,"투자주의":-1.8,
+  "경영권분쟁":-1.8,"파산신청":-3.4,"회생절차":-3.0,"자본잠식":-3.0,"적자지속":-2.3,"수요둔화":-1.9,"공급과잉":-1.9
 };
 // 정도부사(강조/감쇠). 곱이 아니라 VADER식 가산 스칼라.
 const SENTI_BOOST = {
   "very":0.293,"really":0.293,"extremely":0.393,"absolutely":0.393,"incredibly":0.393,"hugely":0.35,
   "so":0.25,"too":0.2,"massively":0.4,"significantly":0.3,"substantially":0.3,"sharply":0.35,"strongly":0.3,
-  "slightly":-0.293,"somewhat":-0.2,"barely":-0.35,"marginally":-0.3,"kinda":-0.15,"partially":-0.2
-};
+  "slightly":-0.293,"somewhat":-0.2,"barely":-0.35,"marginally":-0.3,"kinda":-0.15,"partially":-0.2,
+  // [V12] 강조어 확장
+  "notably":0.3,"remarkably":0.35,"dramatically":0.4,"steeply":0.35,"vastly":0.38,"modestly":-0.2,"mildly":-0.25 };
 const SENTI_NEGATE = { "not":1,"no":1,"never":1,"none":1,"nobody":1,"nothing":1,"neither":1,"nowhere":1,
   "cannot":1,"can't":1,"won't":1,"wouldn't":1,"don't":1,"doesn't":1,"didn't":1,"isn't":1,"aren't":1,
-  "wasn't":1,"weren't":1,"without":1,"lack":1,"lacks":1,"fails":1,"failed":1,"denies":1,"denied":1,"rejects":1 };
+  "wasn't":1,"weren't":1,"without":1,"lack":1,"lacks":1,"fails":1,"failed":1,"denies":1,"denied":1,"rejects":1,
+  "hardly":1,"scarcely":1,"unlikely":1 };
 const SENTI_NEG_SCALE = -0.74; // VADER 부정 반전계수
 const SENTI_CAP_INCR = 0.733;  // 대문자 강조 증분
 const SENTI_EXCL_INCR = 0.292; // '!' 강조(최대 4개)
