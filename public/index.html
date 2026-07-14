@@ -3453,8 +3453,8 @@ html[data-theme="light"] .table tbody tr:hover{background:rgba(9,105,218,.045);}
       <span><i style="background:#4aa3ff;"></i>입력층(피처)</span>
       <span><i style="background:#eafff4;"></i>은닉층(ReLU·드롭아웃)</span>
       <span><i style="background:#00e676;"></i>출력층(Sigmoid·승률)</span>
-      <span><i style="background:#00e676;"></i>초록=흥분(양) <i style="background:#ff3454;"></i>빨강=억제(음)</span>
-      <span style="color:#6f84aa;">세로 스파이크=층축 · 곡선=연결강도 흐름</span>
+      <span style="color:#6f84aa;">곡선 굵기·밝기=연결강도 · 각 층은 강도 상위 16개 뉴런만 표시(전체 수=배지 아래 n)</span>
+      <span style="color:#9fb4dc;">👆 점을 클릭/터치하면 그 뉴런의 역할이 표시됩니다</span>
     </div>
     <div class="nnv-comm" id="nnvComm"></div>
   </div>
@@ -7334,17 +7334,15 @@ html[data-theme="light"] .table tbody tr:hover{background:rgba(9,105,218,.045);}
     function pct(v) { return (typeof v === 'number') ? ((v >= 0 ? '+' : '') + v.toFixed(2) + '%') : '—'; }
     function pc(v) { return (typeof v === 'number') ? (v >= 0 ? 'pos' : 'neg') : ''; }
     function num(v) { return (v != null && typeof v === 'number') ? fmtNum(v) : '—'; }
-    // [V92] 미국 프리/애프터마켓 — 정규장 외 시간에 보조 가격 표시
-    if (q.mstate === 'PRE' && q.pre > 0) add('장전(프리)', num(q.pre) + '  ' + pct(q.prePct), pc(q.prePct));
-    else if ((q.mstate === 'POST' || q.mstate === 'POSTPOST') && q.post > 0) add('장후(애프터)', num(q.post) + '  ' + pct(q.postPct), pc(q.postPct));
-    add('현재가', num(regPx));
+    // [V12.3] 장중/장전/장후 3분리 — 장중(정규장)은 항상 정규장 값, 장전·장후는 데이터가 있으면 각각 별도 행.
+    add('현재가(장중)', num(regPx));
     add('전일종가', num(q.prevClose));
     add('당일등락(장중)', pct(regPct), pc(regPct));
-    // [프리/애프터마켓] 시간외 실시간 — 장전이면 장전가, 장후/마감이면 장후가 표시
-    if (q.mstate === 'PRE' && q.pre > 0) {
+    if (q.pre > 0) {
       var _ppr = (typeof q.prePct === 'number') ? q.prePct : (q.prevClose > 0 ? (q.pre - q.prevClose) / q.prevClose * 100 : 0);
       add('장전(시간외)', num(q.pre) + '  ' + (_ppr >= 0 ? '+' : '') + _ppr.toFixed(2) + '%', pc(_ppr));
-    } else if ((q.mstate === 'POST' || q.mstate === 'POSTPOST' || q.mstate === 'CLOSED') && q.post > 0) {
+    }
+    if (q.post > 0) {
       var _ppo = (typeof q.postPct === 'number') ? q.postPct : (regPx > 0 ? (q.post - regPx) / regPx * 100 : 0);
       add('장후(시간외)', num(q.post) + '  ' + (_ppo >= 0 ? '+' : '') + _ppo.toFixed(2) + '%', pc(_ppo));
     }
@@ -10776,6 +10774,10 @@ setTimeout(function(){ var o=document.getElementById('lux-intro-overlay'); if(o&
 #page-nnviz .nnv-chip .v.good{color:#00e676;} #page-nnviz .nnv-chip .v.warn{color:#ffc107;} #page-nnviz .nnv-chip .v.off{color:#ff5c7a;}
 #page-nnviz .nnv-stage{position:relative;background:radial-gradient(120% 120% at 50% 0%,#0c1526,#060910 70%);border:1px solid #16223c;border-radius:13px;overflow:hidden;}
 #page-nnviz .nnv-scroll{overflow-x:auto;-webkit-overflow-scrolling:touch;}
+#page-nnviz .nnv-hit{cursor:pointer;}
+#page-nnviz .nnv-tip{position:absolute;z-index:5;max-width:290px;background:rgba(10,17,32,.96);border:1px solid #2a4270;border-radius:10px;padding:10px 12px;font-size:11px;line-height:1.6;color:#dbe6fb;box-shadow:0 12px 34px rgba(0,0,0,.55);pointer-events:none;font-family:'IBM Plex Mono',monospace;}
+#page-nnviz .nnv-tip b{color:#eaf2ff;}
+#page-nnviz .nnv-tip .m{color:#7c90b5;font-size:10px;}
 #page-nnviz svg{display:block;width:100%;height:auto;}
 #page-nnviz .nnv-legend{display:flex;flex-wrap:wrap;gap:14px;margin-top:12px;font-size:10.5px;color:#8497ba;font-family:'IBM Plex Mono',monospace;}
 #page-nnviz .nnv-legend i{display:inline-block;width:10px;height:10px;border-radius:50%;margin-right:5px;vertical-align:middle;}
@@ -10831,6 +10833,8 @@ html[data-theme="light"] #page-nnviz .nnv-title,html[data-theme="light"] #page-n
   function pct(v){ return (v==null||isNaN(v))?'—':(v*100).toFixed(1)+'%'; }
   function chip(k,v,cls){ return '<div class="nnv-chip"><div class="k">'+k+'</div><div class="v '+(cls||'')+'">'+v+'</div></div>'; }
   function NNV_render(d){
+    // [V12.3] 노드 클릭 툴팁용 — 입력 피처명 → 역할 맵
+    NNV.roles={}; try{ ((d&&(d.inputFeatures||d.topFeatures))||[]).forEach(function(f){ if(f&&f.name) NNV.roles[f.name]={role:f.role||''}; }); }catch(e){}
     var stage=document.getElementById('nnvStage'), chips=document.getElementById('nnvChips'),
         comm=document.getElementById('nnvComm'), legend=document.getElementById('nnvLegend'), sub=document.getElementById('nnvSub');
     if(!d || !d.trained){
@@ -10971,10 +10975,14 @@ html[data-theme="light"] #page-nnviz .nnv-title,html[data-theme="light"] #page-n
       heads+='<rect x="'+(cx-24)+'" y="14" width="48" height="20" rx="10" fill="rgba(70,130,255,0.10)" stroke="'+hd+'" stroke-opacity="0.55" stroke-width="1"/>'
         +'<text x="'+cx+'" y="28" text-anchor="middle" font-family="IBM Plex Mono,monospace" font-size="10.5" font-weight="700" fill="'+hd+'">'+tag+'</text>'
         +'<text x="'+cx+'" y="48" text-anchor="middle" font-family="IBM Plex Mono,monospace" font-size="9" fill="#8fa6c8">'+layers[li].size+'n</text>';
-      var col2=shown[li];
+      var col2=shown[li], allS=layers[li].strength||[];
       for(var k=0;k<col2.length;k++){
         var s=col2[k].s, r=(1.9+3.6*s).toFixed(1), glow=(0.45+0.55*s).toFixed(2);
-        nodes+='<circle cx="'+cx+'" cy="'+col2[k].y.toFixed(1)+'" r="'+r+'" fill="'+fill+'" opacity="'+glow+'"></circle>';
+        // 층 내 강도 순위(전체 뉴런 기준) — 클릭 툴팁에 표시
+        var rank=1; for(var q2=0;q2<allS.length;q2++) if(allS[q2]>s) rank++;
+        nodes+='<circle cx="'+cx+'" cy="'+col2[k].y.toFixed(1)+'" r="'+r+'" fill="'+fill+'" opacity="'+glow+'"></circle>'
+          // 투명 히트영역(터치 타깃 ≥18px) — 클릭하면 뉴런 역할 툴팁
+          +'<circle class="nnv-hit" cx="'+cx+'" cy="'+col2[k].y.toFixed(1)+'" r="10" fill="transparent" data-kind="'+kind+'" data-tag="'+tag+'" data-name="'+(col2[k].name||'')+'" data-s="'+(s*100).toFixed(0)+'" data-rank="'+rank+'" data-size="'+layers[li].size+'"/>';
         if(kind==='input' && col2[k].name){
           featLabels+='<text x="'+(cx-10)+'" y="'+(col2[k].y+2.5).toFixed(1)+'" text-anchor="end" font-family="IBM Plex Mono,monospace" font-size="8.5" fill="#7fa8d8">'+col2[k].name+'</text>';
         }
@@ -10987,6 +10995,43 @@ html[data-theme="light"] #page-nnviz .nnv-title,html[data-theme="light"] #page-n
     var summary='<text x="14" y="28" font-family="Space Grotesk,sans-serif" font-size="13" font-weight="700" fill="#eaf2ff">'+cols+' LAYERS</text>'
       +'<text x="14" y="44" font-family="IBM Plex Mono,monospace" font-size="8.5" fill="#7c90b5">입력 1 · 은닉 '+nHidden+' · 출력 1</text>';
     stage.innerHTML='<div class="nnv-scroll"><svg viewBox="0 0 '+W+' '+H+'" preserveAspectRatio="xMidYMid meet" style="min-width:'+Math.min(W,1180)+'px;background:radial-gradient(120% 90% at 50% 8%,#0d1a2e,#050810 72%);">'+rails+edges+nodes+featLabels+heads+foots+summary+'</svg></div>';
+    NNV_bindNodeTips(stage);
+  }
+  // [V12.3] 노드 클릭/터치 → 역할 툴팁. 입력=피처 역할(백엔드 inputFeatures), 은닉/출력=층 역할 설명.
+  function NNV_bindNodeTips(stage){
+    var svg=stage.querySelector('svg'); if(!svg) return;
+    svg.addEventListener('click', function(ev){
+      var t=ev.target;
+      var old=stage.querySelector('.nnv-tip'); if(old) old.remove();
+      if(!t || !t.classList || !t.classList.contains('nnv-hit')) return;
+      var kind=t.getAttribute('data-kind'), tag=t.getAttribute('data-tag'), name=t.getAttribute('data-name'),
+          s=t.getAttribute('data-s'), rank=t.getAttribute('data-rank'), size=t.getAttribute('data-size');
+      var html;
+      if(kind==='input'){
+        var fi=(NNV.roles&&NNV.roles[name])||null;
+        html='<b>'+ (name||'입력 뉴런') +'</b>'+(fi&&fi.role?' — '+fi.role:'')
+          +'<br><span class="m">입력층 뉴런 · 영향도 '+s+'% (전체 '+size+'개 피처 중 '+rank+'위)</span>'
+          +'<br>이 값이 정규화되어 첫 은닉층(H1)의 모든 뉴런으로 전달됩니다.';
+      } else if(kind==='output'){
+        html='<b>출력 뉴런</b> — 상승확률'
+          +'<br><span class="m">출력층 · Sigmoid</span>'
+          +'<br>10개 은닉층이 추출한 신호를 종합해 <b>익일 상승확률(0~1)</b> 하나를 출력합니다. 이 확률이 위원회(MIND·GBDT)와 결합돼 실거래 판단에 쓰입니다.';
+      } else {
+        var depth=parseInt(tag.slice(1),10)||1;
+        var role= depth<=2 ? '피처 간 1차 조합 — 지표·수급·이벤트의 기초 패턴을 감지'
+                : depth<=6 ? '중간 추상화 — 앞 층 패턴들을 엮어 추세/변동성/국면 같은 복합 신호를 형성'
+                : '고차 압축 — 신호를 소수 핵심 요인으로 압축해 최종 확률 판단을 준비';
+        html='<b>'+tag+' 은닉뉴런</b>'
+          +'<br><span class="m">가중치 강도 '+s+'% · 층 내 '+rank+'위/전체 '+size+'개 (강도 상위 16개만 표시)</span>'
+          +'<br>'+role+'합니다. (가중합 + ReLU 활성화)';
+      }
+      var tip=document.createElement('div'); tip.className='nnv-tip'; tip.innerHTML=html;
+      stage.appendChild(tip);
+      var rect=stage.getBoundingClientRect();
+      var x=ev.clientX-rect.left, y=ev.clientY-rect.top;
+      tip.style.left=Math.max(8, Math.min(rect.width-tip.offsetWidth-8, x+12))+'px';
+      tip.style.top =Math.max(8, Math.min(rect.height-tip.offsetHeight-8, y-tip.offsetHeight-10))+'px';
+    });
   }
   // [V11] 파라미터(입력 피처) 역할 패널 — 각 파라미터가 무슨 일을 하고 학습된 영향도가 얼마인지.
   function NNV_renderRoles(d){
