@@ -2487,6 +2487,49 @@ const AI_PARAMS = {
     hedgeRebalanceBandPct: 0.5,   // 목표 대비 이 %p 이상 벗어나면 헤지 리밸런스
     marketNeutralityTolerancePct: 10, // 롱숏 순노출(롱−숏)/총자본 허용 한도(±%). 초과 시 균형 보정
     activateVixAbove: 25          // VIX 이 이상일 때 헤지 배분 상향(기존 crashGate와 연동)
+  },
+
+  // ── 예측 타겟 설계(Target Variable) ── AI가 '무엇을' 예측할지 정교화(정답지 설계).
+  //   (구현: labelTarget 라벨러 — binary는 현행, alpha/logreturn/multiclass는 opt-in)
+  prediction: {
+    target: "binary",              // "binary"(승/패, 현행) | "logreturn" | "alpha"(초과수익) | "multiclass"(상/하/횡보)
+    logReturnWindowDays: 1,        // 로그수익률 타겟 계산 기간 ln(P_t / P_{t-k}) — 노이즈 감쇠
+    alphaBenchmark: { us: "^GSPC", kr: "^KS11", cm: "GC=F" }, // 초과수익률(잔차) 기준지수
+    alphaTargetThresholdPct: 1.0,  // 지수 대비 이 %↑ 초과(잔차) 시 양(+) 라벨
+    multiClass: { flatThresholdPct: 1.5 }, // 상승(1)/하락(-1)/횡보(0) — ±이 % 이내면 횡보 컷라인
+    horizonDays: 5                 // 타겟 예측 지평(AI_PARAMS.predictionHorizonDays와 정합)
+  },
+
+  // ── 메타 라벨링·앙상블(Meta-Labeling, Lopez de Prado) ── '예측을 다시 예측'해 승률 극대화.
+  //   (구현: 규칙엔진=1차 신호생성기, ML위원회(mlDeepDecide)=2차 성공확률 예측 → 게이트)
+  metaLabeling: {
+    enabled: true,
+    firstModelSensitivity: "high", // 1차 신호생성기 민감도 — 대량 신호 허용(승률 낮아도 됨). 2차가 걸러냄
+    metaThreshold: 0.50,           // 2차 메타모델 성공확률 이 이상일 때만 최종 집행(권장 0.5~0.75)
+    metaHardFilter: false,         // true=metaThreshold 미만 진입 차단 / false=confidenceFloor 소프트 축소만
+    ensembleWeights: { dnn: 0.34, gbdt: 0.33, mind: 0.33 }, // 정적 초기 가중(동적은 trust가 성과로 자동조정)
+    ensembleDynamic: true,         // 최근 성과 좋은 모델에 가중 자동 상향(구현: dnn_trust/gbdt_trust/committee_cal)
+    ensembleRecencyDays: 30        // 동적 가중 산출 최근 성과창
+  },
+
+  // ── 시계열 교차검증(Time-Series Validation) ── 과적합·데이터누수 차단(예측모델 생명줄).
+  //   (구현: _purgedFolds(de Prado Purged 워크포워드 CV) + 엠바고 — 선형·GBDT 모두 적용 중)
+  validation: {
+    purgeEmbargoDays: 6,           // 학습/검증 경계 퍼징·엠바고 공백(구현: LUXML.embargoDays — 라벨 horizon 겹침 누수차단)
+    cvFolds: 5,                    // Purged 워크포워드 CV 폴드(구현: LUXML.cvFolds / GBDT.cvFolds=3)
+    walkForwardTrainDays: 365,     // 전진탐색 학습창(롤링)
+    walkForwardStepDays: 21,       // 전진탐색 리밸런싱 주기(학습→다음 N일 예측 후 재학습)
+    recencyHalfLifeDays: 45        // 표본 시간감쇠 반감기(구현: LUXML.recencyHalfLifeDays)
+  },
+
+  // ── 시계열 딥러닝 아키텍처(Architecture) ── 외부 GPU 트레이너(train_dnn.py)용 설계값.
+  //   ※ Cloudflare Worker는 MLP 추론만 담당 — Transformer/GNN는 외부 학습기 확장 시 사용.
+  architecture: {
+    model: "mlp",                  // 현행: 10층 MLP 시드앙상블. 확장예정: "transformer" | "gnn"
+    attentionWindowBars: 60,       // 트랜스포머 어텐션 탐색 범위 — 과거 N봉 중 결정적 시점에 가중 집중
+    lookbackBars: 60,              // 시계열 입력 시퀀스 길이
+    gnnEnabled: false,             // 종목간 동조화 그래프신경망(삼성전자·SK하이닉스·애플 연결 단서)
+    gnnEdgeWeightMin: 0.70         // GNN 엣지 생성 최소 상관계수(구현: pairSpreadZScore corr / riskLimits.correlationLimit)
   }
 };
 
@@ -12592,6 +12635,13 @@ async function runTradingCycle(env) {
                   incNobuy("ml_gate");
                   continue;
                 } else if (_md && _md.allow) {
+                  // [V17] 메타 라벨링(de Prado) — 2차 메타모델(위원회) 성공확률 하한. metaHardFilter면 미달 진입 차단.
+                  const _mlab = AI_PARAMS.metaLabeling || {};
+                  if (_mlab.enabled !== false && _mlab.metaHardFilter && typeof _md.p === "number" && _md.p < (_mlab.metaThreshold != null ? _mlab.metaThreshold : 0.5)) {
+                    await log(DB, "INFO", symbol, "[META] 성공확률 " + (_md.p * 100).toFixed(0) + "% < 메타컷 " + ((_mlab.metaThreshold || 0.5) * 100).toFixed(0) + "% → 진입보류");
+                    incNobuy("meta_gate");
+                    continue;
+                  }
                   // [V16] 모델 열화 시 ML 개입 보수화 — halt면 신규진입 차단, observe면 사이즈 증폭 억제(축소만 허용)
                   if (__mlDrift.drift) {
                     if (__mlDrift.action === "halt") { await log(DB, "INFO", symbol, "[MLOPS] 열화-halt 진입차단"); incNobuy("model_drift"); continue; }
@@ -19051,6 +19101,33 @@ function marketNeutralityCheck(longValue, shortValue, tolerancePct) {
     out.netExposurePct = +net.toFixed(1);
     out.tiltSide = net > 0 ? "long" : (net < 0 ? "short" : "flat");
     out.breach = Math.abs(net) > (tolerancePct != null ? tolerancePct : 10);
+  } catch (e) {}
+  return out;
+}
+
+// [V17] 예측 타겟 라벨러 — '무엇을 예측할지'(정답지) 설계. de Prado식 다중 타겟 지원.
+//   entryPrice→exitPrice(+선택 지수 idxEntry→idxExit)로 승/패·로그수익률·초과수익(alpha)·3분류 산출.
+//   params=AI_PARAMS.prediction. binary는 현행과 동일(하위호환). 반환: { y, retPct, logRet, alphaPct, cls }
+//     y: 이진 라벨(모델 컨슈머 호환) / cls: 3분류(-1 하락·0 횡보·+1 상승)
+function labelTarget(entryPrice, exitPrice, idxEntry, idxExit, params) {
+  const P = params || {};
+  const out = { y: 0, retPct: 0, logRet: 0, alphaPct: null, cls: 0 };
+  try {
+    if (!(entryPrice > 0) || !(exitPrice > 0)) return out;
+    out.retPct = (exitPrice / entryPrice - 1) * 100;
+    out.logRet = +Math.log(exitPrice / entryPrice).toFixed(6);   // 로그수익률(노이즈 안정)
+    if (idxEntry > 0 && idxExit > 0) {                            // 초과수익률(잔차) — 지수 차감
+      const idxRet = (idxExit / idxEntry - 1) * 100;
+      out.alphaPct = +(out.retPct - idxRet).toFixed(3);
+    }
+    const flat = (P.multiClass && P.multiClass.flatThresholdPct != null) ? P.multiClass.flatThresholdPct : 1.5;
+    const ref = (P.target === "alpha" && out.alphaPct != null) ? out.alphaPct : out.retPct;
+    out.cls = ref > flat ? 1 : (ref < -flat ? -1 : 0);           // 상/하/횡보 3분류
+    const mode = P.target || "binary";
+    if (mode === "alpha" && out.alphaPct != null) out.y = out.alphaPct >= (P.alphaTargetThresholdPct != null ? P.alphaTargetThresholdPct : 1.0) ? 1 : 0;
+    else if (mode === "multiclass") out.y = out.cls > 0 ? 1 : 0;  // 이진 컨슈머 호환(상승만 승)
+    else if (mode === "logreturn") out.y = out.logRet > 0 ? 1 : 0;
+    else out.y = out.retPct > 0 ? 1 : 0;                          // binary(현행)
   } catch (e) {}
   return out;
 }
