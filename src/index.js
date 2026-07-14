@@ -6259,6 +6259,35 @@ async function fetchDailyFull(symbol) {
     ret1y: ret1y, ret5y: ret5y, vol: vol, avgVol20: avgVol20 };
 }
 
+// [V18] 딥-히스토리 일봉(수확 전용) — range=max로 장기이력(폭락장 포함) 확보.
+//   라이브 캐시(daily:, 320봉)와 분리 저장 → 매매 경로·D1·리프레시 부담 0. 야간 수확만 사용.
+//   US 티커·KR .KS/.KQ 모두 야후 range=max(딥이력은 실시간 불필요 → 야후 단일경로로 단순화).
+async function fetchDeepDaily(symbol, deepBars) {
+  const T = deepBars || 1800;
+  try {
+    const j = await yahooFetch("https://query1.finance.yahoo.com/v8/finance/chart/" + encodeURIComponent(symbol) + "?interval=1d&range=max");
+    const result = j && j.chart && j.chart.result && j.chart.result[0];
+    const quote = (result && result.indicators && result.indicators.quote && result.indicators.quote[0]) || null;
+    if (!result || !quote) return null;
+    const rc = quote.close || [], rh = quote.high || [], rl = quote.low || [], rv = quote.volume || [], ro = quote.open || [];
+    const closes = [], highs = [], lows = [], volumes = [], opens = [];
+    for (let i = 0; i < rc.length; i++) {
+      const c = rc[i];
+      if (typeof c !== "number" || !isFinite(c) || c <= 0) continue;
+      closes.push(c);
+      highs.push((typeof rh[i] === "number" && rh[i] > 0) ? rh[i] : c);
+      lows.push((typeof rl[i] === "number" && rl[i] > 0) ? rl[i] : c);
+      volumes.push((typeof rv[i] === "number" && rv[i] > 0) ? rv[i] : 0);
+      opens.push((typeof ro[i] === "number" && ro[i] > 0) ? ro[i] : c);
+    }
+    if (closes.length < 300) return null;   // 딥 자격 미달(신규상장 등)
+    const tsArr = result.timestamp || [];
+    const ts = tsArr.length ? tsArr[tsArr.length - 1] * 1000 : Date.now();
+    return { closes: closes.slice(-T), highs: highs.slice(-T), lows: lows.slice(-T),
+             volumes: volumes.slice(-T), opens: opens.slice(-T), ts: ts, bars: Math.min(closes.length, T) };
+  } catch (e) { return null; }
+}
+
 async function getDailyCached(DB, symbol, cacheMinutes) {
   const cached = await getState(DB, "daily:" + symbol, null);
   if (cached && cached.ts && (Date.now() - cached.ts) < cacheMinutes * 60 * 1000) {
@@ -18745,16 +18774,87 @@ const HARVEST = {
   //   "3~5일 상승 패턴" 등 다양한 진입국면을 사전학습에 편입(사전학습은 커버리지가 넓을수록 유리).
   maLen: 50, rsiLo: 25, rsiHi: 85,   // [V16] 진입국면 커버리지 확대(28→25, 82→85) — 표본 다양성↑
   budgetMs: 120000,     // [V16] 90s→120s 수확 CPU 예산 확대(대량 수확). 초과 시 진행분 저장 후 중단(안전)
+  // [V18] 딥-히스토리 수확 — range=max 장기이력(2020 코로나·2022 긴축·2018 Q4 폭락 포함) → 국면 다양성으로 과적합↓
+  useDeepHistory: true, // hist: 캐시가 있으면 320봉 daily: 대신 딥이력으로 수확(폭락장 학습)
+  deepBars: 1800,       // 딥 저장 봉수(~7.2년, 코로나 폭락 포함). 라이브 캐시와 분리라 매매 무영향
+  deepFetchPerNight: 30,// 매일밤 딥이력 갱신 종목수(로테이션). 딥이력은 거의 안변해 저빈도 OK
+  deepRefreshDays: 30,  // 딥이력 재수집 주기(일) — 이보다 최신이면 스킵
   srcWeight: 0.6        // 학습 가중(실거래=1.0 대비)
 };
+
+// [V18] 수확 전용 광범위 유니버스 — 거래하지 않지만 학습표본 다양성용(섹터·자산군·장기이력).
+//   전부 장기이력(2008+) 보유 → 폭락장 국면 커버리지 확대. 거래 로직과 무관(hist:만 생성).
+const HARVEST_EXTRA_SYMS = [
+  "SPY", "QQQ", "IWM", "DIA", "MDY",                                  // 광의 시장
+  "XLK", "XLF", "XLE", "XLV", "XLI", "XLY", "XLP", "XLU", "XLB", "XLRE", "XLC", // 11 섹터 SPDR
+  "SMH", "XBI", "KRE", "ITB", "JETS", "IYT", "GDX",                   // 산업 하위섹터
+  "EEM", "EFA", "FXI", "EWJ", "EWY", "INDA",                          // 국제(신흥·선진)
+  "TLT", "IEF", "HYG", "LQD", "GLD", "SLV", "USO", "UNG", "DBC"       // 채권·원자재
+];
+
+// [V18] 딥-히스토리 로테이션 수집 — 매일밤 N종목 range=max 장기이력을 hist:로 갱신.
+//   지수(^GSPC/^KS11/GC=F)도 매번 딥으로 갱신 — alpha 라벨(지수 대비 잔차)이 딥구간 정렬에 필요.
+//   deepRefreshDays 지난/없는 심볼 우선, 예산가드로 한도 보호. 딥이력은 거의 안변해 저빈도 OK.
+async function harvestDeepFetchNightly(DB) {
+  if (!HARVEST.useDeepHistory) return null;
+  try {
+    let fetched = 0, scanned = 0;
+    const now = Date.now();
+    // (1) 지수 딥 — alpha 라벨 정렬용(항상 갱신 시도, 소수)
+    const idxSyms = ["^GSPC", "^KS11", "GC=F"];
+    for (const isym of idxSyms) {
+      if (fetchBudgetLeft() < 20) break;
+      let meta = null; try { meta = await getState(DB, "hist_meta:" + isym, null); } catch (e) {}
+      if (meta && meta.ts && (now - meta.ts) < (HARVEST.deepRefreshDays || 30) * 86400000) continue;
+      __fetchBudget.used++;
+      const dh = await fetchDeepDaily(isym, HARVEST.deepBars);
+      if (dh && dh.closes && dh.closes.length >= 300) {
+        try { await setState(DB, "hist:" + isym, dh); await setState(DB, "hist_meta:" + isym, { ts: now, bars: dh.bars, dataTs: dh.ts }); fetched++; } catch (e) {}
+      }
+    }
+    // (2) 종목 딥 — daily:(거래) ∪ HARVEST_EXTRA_SYMS(수확전용) 로테이션
+    const ks = await DB.prepare("SELECT k FROM state WHERE k LIKE 'daily:%' ORDER BY k").all();
+    const _sset = {};
+    for (const r of ((ks && ks.results) || [])) { const s = r.k.slice(6); if (s && s[0] !== "^") _sset[s] = 1; }
+    for (const s of HARVEST_EXTRA_SYMS) _sset[s] = 1;
+    const syms = Object.keys(_sset);
+    if (syms.length) {
+      const perNight = HARVEST.deepFetchPerNight || 30;
+      const refreshMs = (HARVEST.deepRefreshDays || 30) * 86400000;
+      let off = (await getState(DB, "hist_off", 0)) || 0;
+      for (let i = 0; i < syms.length && fetched < perNight + idxSyms.length; i++) {
+        if (fetchBudgetLeft() < 20) break;
+        const sym = syms[(off + i) % syms.length];
+        scanned++;
+        let meta = null; try { meta = await getState(DB, "hist_meta:" + sym, null); } catch (e) {}
+        if (meta && meta.ts && (now - meta.ts) < refreshMs) continue;
+        __fetchBudget.used++;
+        const dh = await fetchDeepDaily(sym, HARVEST.deepBars);
+        if (dh && dh.closes && dh.closes.length >= 300) {
+          try { await setState(DB, "hist:" + sym, dh); await setState(DB, "hist_meta:" + sym, { ts: now, bars: dh.bars, dataTs: dh.ts }); fetched++; } catch (e) {}
+        }
+      }
+      try { await setState(DB, "hist_off", (off + Math.max(1, scanned)) % syms.length); } catch (e) {}
+    }
+    return fetched ? ("[HIST] 딥-히스토리 " + fetched + "종목 갱신(range=max, " + (HARVEST.deepBars || 1800) + "봉)") : null;
+  } catch (e) { return "[HIST] fail: " + (e && e.message); }
+}
 
 async function mlMarketHarvestNightly(DB) {
   if (!HARVEST.enabled || !LUXML.enabled) return null;
   try {
     await mlEnsureTable(DB);
-    const ks = await DB.prepare("SELECT k FROM state WHERE k LIKE 'daily:%' ORDER BY k").all();
-    const symsAll = (((ks && ks.results) || []).map(function (r) { return r.k.slice(6); }))
-      .filter(function (s) { return s && s[0] !== "^"; });
+    // [V18] 수확 유니버스 = daily:(거래) ∪ hist:(수확전용 딥) — 거래 안 하는 종목도 학습표본으로 편입(다양성↑)
+    const dks = await DB.prepare("SELECT k FROM state WHERE k LIKE 'daily:%' ORDER BY k").all();
+    const _symset = {};
+    for (const r of ((dks && dks.results) || [])) { const s = r.k.slice(6); if (s && s[0] !== "^") _symset[s] = 1; }
+    if (HARVEST.useDeepHistory) {
+      try {
+        const hks = await DB.prepare("SELECT k FROM state WHERE k LIKE 'hist:%' ORDER BY k").all();
+        for (const r of ((hks && hks.results) || [])) { const s = r.k.slice(5); if (s && s[0] !== "^") _symset[s] = 1; }
+      } catch (e) {}
+    }
+    const symsAll = Object.keys(_symset).sort();
     if (!symsAll.length) return "[HV] 일봉 캐시 없음 — 스킵";
     // [V4] 상태키를 featVer로 격리 — 피처 확장 시 신버전 피처로 전 종목 자동 재수확
     const offKey = "hv_offset:v" + LUXML.featVer, seenKey = "hv_seen:v" + LUXML.featVer;
@@ -18765,13 +18865,26 @@ async function mlMarketHarvestNightly(DB) {
     let made = 0, scanned = 0;
     const hvDeadline = Date.now() + (HARVEST.budgetMs || 45000);  // [V9.5] CPU 예산 — 초과 시 진행분 저장 후 중단
     const idxCache = {};   // [V7] 시장별 지수 일봉(상대강도용) — 1회 로드
-    for (const mk of ["us", "kr", "cm"]) { try { idxCache[mk] = await _mlLoadIndexCloses(DB, mk); } catch (e) { idxCache[mk] = null; } }
+    for (const mk of ["us", "kr", "cm"]) {
+      try {
+        let ic = null;
+        if (HARVEST.useDeepHistory) {   // [V18] alpha 정렬용 딥 지수 우선(있으면 딥, 없으면 320봉 폴백)
+          const isym = mk === "us" ? "^GSPC" : (mk === "kr" ? "^KS11" : "GC=F");
+          const hd = await getState(DB, "hist:" + isym, null);
+          if (hd && Array.isArray(hd.closes) && hd.closes.length >= 300) ic = hd.closes;
+        }
+        idxCache[mk] = ic || await _mlLoadIndexCloses(DB, mk);
+      } catch (e) { idxCache[mk] = null; }
+    }
     for (let si = 0; si < takeN; si++) {
       if (made >= HARVEST.maxPerNight) break;
       if (Date.now() > hvDeadline) break;  // [V9.5] 예산 초과 — 여기까지 수확분 저장(seen/offset도 반영)
       const sym = symsAll[(off + si) % symsAll.length];
       scanned++;
-      let dd = null; try { dd = await getState(DB, "daily:" + sym, null); } catch (e) {}
+      // [V18] 딥-히스토리(hist:) 우선 — 폭락장 포함 장기이력으로 수확. 없으면 320봉 daily: 폴백.
+      let dd = null;
+      if (HARVEST.useDeepHistory) { try { dd = await getState(DB, "hist:" + sym, null); } catch (e) {} }
+      if (!dd || !Array.isArray(dd.closes) || dd.closes.length < HARVEST.minBars) { try { dd = await getState(DB, "daily:" + sym, null); } catch (e) {} }
       const closes = dd && dd.closes;
       if (!Array.isArray(closes) || closes.length < HARVEST.minBars) continue;
       const mkt = /\.(KS|KQ)$/.test(sym) ? "kr" : ((/=F$|-USD$/.test(sym)) ? "cm" : "us");
@@ -18833,12 +18946,13 @@ async function mlMarketHarvestNightly(DB) {
     // [V9.5] 실제 처리한 심볼 수(scanned)만큼만 오프셋 전진 — 예산/캡으로 조기중단 시 남은 심볼을 다음밤에 이어감(순회 누락 0)
     try { await setState(DB, offKey, (off + Math.max(1, Math.min(takeN, scanned))) % symsAll.length); } catch (e) {}
     try { await setState(DB, seenKey, seen); } catch (e) {}
-    // 총 상한 프루닝(오래된 수확표본부터) — 실거래 표본은 절대 삭제 안 함
+    // [V18] 총 상한 프루닝 — 무작위 삭제(오래된순 아님)로 국면 다양성 보존. 실거래 표본은 절대 삭제 안 함.
+    //   기존 ORDER BY ts ASC는 딥-히스토리(2008·2020 폭락 등 오래된 봉)를 먼저 지워 다양성을 훼손 → RANDOM으로 균등 절삭.
     try {
       const c = await DB.prepare("SELECT COUNT(*) c FROM ml_samples WHERE strategy='hv'").first();
       const over = ((c && c.c) || 0) - HARVEST.maxTotal;
       if (over > 0) await DB.prepare(
-        "DELETE FROM ml_samples WHERE id IN (SELECT id FROM ml_samples WHERE strategy='hv' ORDER BY ts ASC LIMIT ?)"
+        "DELETE FROM ml_samples WHERE id IN (SELECT id FROM ml_samples WHERE strategy='hv' ORDER BY RANDOM() LIMIT ?)"
       ).bind(over).run();
     } catch (e) {}
     return made ? ("[HV] 시장수확 +" + made + "표본 (" + scanned + "종목, 오프셋 " + off + "→" + ((off + takeN) % symsAll.length) + ")") : null;
@@ -20632,6 +20746,8 @@ export default {
             } catch (e) {}
             // (2) 외부 감성 수집 — SENTI_SOURCES에 URL이 채워진 경우만 동작(없으면 스킵)
             try { const _se = await sentiFetchAndStore(env.DB, null, null); if (_se && !/스킵/.test(_se)) await log(env.DB, "INFO", null, _se); } catch (e) {}
+            // (2.4) [HIST] 딥-히스토리 로테이션 — range=max 장기이력(폭락장 포함)을 hist:로 갱신(수확이 사용)
+            try { const _dh = await harvestDeepFetchNightly(env.DB); if (_dh) await log(env.DB, "INFO", null, _dh); } catch (e) {}
             // (2.5) [HARVEST] 시장 자기지도 표본 수확 — 전 종목 일봉에서 "피처→N일 뒤 방향" 대량 편입
             try { const _hv = await mlMarketHarvestNightly(env.DB); if (_hv) await log(env.DB, "INFO", null, _hv); } catch (e) {}
             // (3) 7단 학습 파이프라인(순서 고정: L1→노이즈→앙상블→MIND→DNN→GBDT)
