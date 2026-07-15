@@ -901,6 +901,14 @@ button.btn.loading::after{content:'조회 중…';position:absolute;inset:0;disp
   .topbar-value{font-size:16px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
   .fv-panel{min-width:0;}
   .page-body{max-width:100%;}
+  /* [V12.21] 하단 3열(헤드라인·원자재·환율채권)이 iPad에선 너무 좁아 RSI 열이 잘림 →
+     헤드라인 전폭 + 원자재/환율 2열. 테이블 셀 패딩 축소·이름 열 말줄임으로 4열 전부 표시. */
+  .fv-bottom .fv-table th,.fv-bottom .fv-table td{padding:4px 7px;}
+  .fv-bottom .fv-table td:first-child{max-width:118px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
+}
+@media (min-width:1101px) and (max-width:1440px){
+  .fv-bottom{grid-template-columns:1fr 1fr;}
+  .fv-bottom>.fv-panel:first-child{grid-column:1/-1;}
 }
 
 /* iPad 세로: 정보바 2열, 사이드바 약간 축소 */
