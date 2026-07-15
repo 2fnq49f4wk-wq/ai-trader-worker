@@ -10819,6 +10819,11 @@ setTimeout(function(){ var o=document.getElementById('lux-intro-overlay'); if(o&
 #page-nnviz .nnedge{stroke-linecap:round;}
 #page-nnviz.active .nnedge{animation:nnGlowPulse 1.8s ease-in-out infinite;}
 #page-nnviz .nnedge-static{}
+/* [V12.16] 노드 클릭 포커스 — 연결된 노드·선만 파랗게 발광, 나머지는 감쇠 */
+#page-nnviz svg.nnv-focus .nnedge,#page-nnviz svg.nnv-focus .nnedge-static{opacity:.045;animation:none;}
+#page-nnviz svg.nnv-focus .nnv-node{opacity:.12;}
+#page-nnviz svg.nnv-focus .nnedge.hl,#page-nnviz svg.nnv-focus .nnedge-static.hl{opacity:1;stroke:#5ab4ff;stroke-width:1.5;filter:drop-shadow(0 0 3.5px rgba(90,180,255,.95));}
+#page-nnviz svg.nnv-focus .nnv-node.hl{opacity:1;fill:#8fd0ff;filter:drop-shadow(0 0 6px rgba(110,190,255,1));}
 #page-nnviz .nnnode{transition:r .5s ease;}
 /* [V11] 3M 실동작 여부 배너 */
 #page-nnviz .nnv-banner{margin:2px 0 12px;padding:9px 13px;border-radius:10px;font-size:11.5px;line-height:1.55;font-family:'IBM Plex Mono',monospace;}
@@ -10986,7 +10991,7 @@ html[data-theme="light"] #page-nnviz .nnv-title,html[data-theme="light"] #page-n
         for(var d=0;d<deg;d++){
           var bi=(a*5+d*11+l*3)%B.length, tgt=B[bi];
           var str=A[a].s*tgt.s;
-          var e={x1:x1,y1:A[a].y,mx:midx,x2:x2,y2:tgt.y,str:str,bi:bi};
+          var e={x1:x1,y1:A[a].y,mx:midx,x2:x2,y2:tgt.y,str:str,l:l,ai:a,bi:bi};
           if(!best || str>best.str) best=e;
           if(str>=0.06) extra.push(e);
         }
@@ -10995,8 +11000,8 @@ html[data-theme="light"] #page-nnviz .nnv-title,html[data-theme="light"] #page-n
       // 들어오는 선 보장 — 아직 아무 소스와도 연결 안 된 타깃 노드는 가장 강한 소스와 연결
       for(var b2=0;b2<B.length;b2++){
         if(inCovered[b2] || !A.length) continue;
-        var srcA=A[(b2*7+l*5)%A.length];   // 소스 분산(한 노드 부챗살 방지)
-        guar.push({x1:x1,y1:srcA.y,mx:midx,x2:x2,y2:B[b2].y,str:Math.max(0.12,srcA.s*B[b2].s)});
+        var sai=(b2*7+l*5)%A.length, srcA=A[sai];   // 소스 분산(한 노드 부챗살 방지)
+        guar.push({x1:x1,y1:srcA.y,mx:midx,x2:x2,y2:B[b2].y,str:Math.max(0.12,srcA.s*B[b2].s),l:l,ai:sai,bi:b2});
       }
     }
     extra.sort(function(p,q){return q.str-p.str;});
@@ -11008,7 +11013,7 @@ html[data-theme="light"] #page-nnviz .nnv-title,html[data-theme="light"] #page-n
       var op=(0.045+0.32*e.str).toFixed(3), sw=(0.3+0.9*e.str).toFixed(2);
       var cy1=e.y1+(e.y2-e.y1)*0.12, cy2=e.y2-(e.y2-e.y1)*0.12;
       var cls=(ei<ANIM_CAP)?'nnedge':'nnedge-static';
-      return '<path class="'+cls+'" d="M'+e.x1.toFixed(1)+' '+e.y1.toFixed(1)+' C'+e.mx.toFixed(1)+' '+cy1.toFixed(1)+' '+e.mx.toFixed(1)+' '+cy2.toFixed(1)+' '+e.x2.toFixed(1)+' '+e.y2.toFixed(1)+'" fill="none" stroke="rgba(96,168,255,'+op+')" stroke-width="'+sw+'"/>';
+      return '<path class="'+cls+'" data-a="'+e.l+'-'+e.ai+'" data-b="'+(e.l+1)+'-'+e.bi+'" d="M'+e.x1.toFixed(1)+' '+e.y1.toFixed(1)+' C'+e.mx.toFixed(1)+' '+cy1.toFixed(1)+' '+e.mx.toFixed(1)+' '+cy2.toFixed(1)+' '+e.x2.toFixed(1)+' '+e.y2.toFixed(1)+'" fill="none" stroke="rgba(96,168,255,'+op+')" stroke-width="'+sw+'"/>';
     }).join('');
     var rails='', nodes='', heads='', foots='', featLabels='';
     var nHidden=0;
@@ -11029,9 +11034,9 @@ html[data-theme="light"] #page-nnviz .nnv-title,html[data-theme="light"] #page-n
         var s=col2[k].s, r=(1.1+2.0*s).toFixed(1), glow=(0.45+0.55*s).toFixed(2);
         // 층 내 강도 순위(전체 뉴런 기준) — 클릭 툴팁에 표시
         var rank=1; for(var q2=0;q2<allS.length;q2++) if(allS[q2]>s) rank++;
-        nodes+='<circle cx="'+cx+'" cy="'+col2[k].y.toFixed(1)+'" r="'+r+'" fill="'+fill+'" opacity="'+glow+'"></circle>'
-          // 투명 히트영역(터치 타깃 ≥18px) — 클릭하면 뉴런 역할 툴팁
-          +'<circle class="nnv-hit" cx="'+cx+'" cy="'+col2[k].y.toFixed(1)+'" r="6" fill="transparent" data-kind="'+kind+'" data-tag="'+tag+'" data-name="'+(col2[k].name||'')+'" data-s="'+(s*100).toFixed(0)+'" data-rank="'+rank+'" data-size="'+layers[li].size+'"/>';
+        nodes+='<circle class="nnv-node" data-key="'+li+'-'+k+'" cx="'+cx+'" cy="'+col2[k].y.toFixed(1)+'" r="'+r+'" fill="'+fill+'" opacity="'+glow+'"></circle>'
+          // 투명 히트영역(터치 타깃 ≥18px) — 클릭하면 뉴런 역할 툴팁 + 연결 하이라이트
+          +'<circle class="nnv-hit" data-key="'+li+'-'+k+'" cx="'+cx+'" cy="'+col2[k].y.toFixed(1)+'" r="6" fill="transparent" data-kind="'+kind+'" data-tag="'+tag+'" data-name="'+(col2[k].name||'')+'" data-s="'+(s*100).toFixed(0)+'" data-rank="'+rank+'" data-size="'+layers[li].size+'"/>';
         if(kind==='input' && col2[k].name){
           featLabels+='<text x="'+(cx-8)+'" y="'+(col2[k].y+2).toFixed(1)+'" text-anchor="end" font-family="IBM Plex Mono,monospace" font-size="7" fill="#7fa8d8">'+col2[k].name+'</text>';
         }
@@ -11109,7 +11114,35 @@ html[data-theme="light"] #page-nnviz .nnv-title,html[data-theme="light"] #page-n
       if(NNV._dragged){ NNV._dragged=false; return; }   // [V12.13] 팬/줌 드래그 직후엔 툴팁 억제
       var t=ev.target;
       var old=stage.querySelector('.nnv-tip'); if(old) old.remove();
-      if(!t || !t.classList || !t.classList.contains('nnv-hit')) return;
+      // [V12.16] 연결 하이라이트 해제 헬퍼 — 포커스 클래스 제거 + hl 일괄 해제
+      function clearHL(){
+        svg.classList.remove('nnv-focus');
+        var hs=svg.querySelectorAll('.hl');
+        for(var hi=0;hi<hs.length;hi++) hs[hi].classList.remove('hl');
+        NNV._focusKey=null;
+      }
+      if(!t || !t.classList || !t.classList.contains('nnv-hit')){ clearHL(); return; }
+      // [V12.16] 클릭 노드에 연결된 엣지·이웃 노드만 파랗게 발광(재클릭 시 해제)
+      var key=t.getAttribute('data-key');
+      if(key && NNV._focusKey===key){ clearHL(); }
+      else if(key){
+        clearHL();
+        var eds=svg.querySelectorAll('path[data-a="'+key+'"],path[data-b="'+key+'"]');
+        if(eds.length){
+          svg.classList.add('nnv-focus');
+          var seen={}; seen[key]=1;
+          for(var ei2=0;ei2<eds.length;ei2++){
+            eds[ei2].classList.add('hl');
+            seen[eds[ei2].getAttribute('data-a')]=1;
+            seen[eds[ei2].getAttribute('data-b')]=1;
+          }
+          for(var kk in seen){
+            var ns=svg.querySelectorAll('circle.nnv-node[data-key="'+kk+'"]');
+            for(var ni=0;ni<ns.length;ni++) ns[ni].classList.add('hl');
+          }
+          NNV._focusKey=key;
+        }
+      }
       var kind=t.getAttribute('data-kind'), tag=t.getAttribute('data-tag'), name=t.getAttribute('data-name'),
           s=t.getAttribute('data-s'), rank=t.getAttribute('data-rank'), size=t.getAttribute('data-size');
       var html;
