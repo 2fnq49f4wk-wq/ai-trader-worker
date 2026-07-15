@@ -893,6 +893,14 @@ button.btn.loading::after{content:'조회 중…';position:absolute;inset:0;disp
   .page-header{padding:20px 28px 16px;}
   /* 테이블 셀 터치/가독 */
   .table td,.table th{padding:11px 10px;}
+  /* [V12.20] iPad 텍스트 잘림 방지 — 패널 헤더 툴바는 줄바꿈 허용, 상단바 값은 말줄임 */
+  .fv-panel-head{flex-wrap:wrap;row-gap:4px;}
+  .fv-panel-head>span{flex-wrap:wrap;row-gap:3px;}
+  .llm-btn{padding:5px 9px;font-size:10.5px;}
+  .topbar-block{min-width:0;}
+  .topbar-value{font-size:16px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
+  .fv-panel{min-width:0;}
+  .page-body{max-width:100%;}
 }
 
 /* iPad 세로: 정보바 2열, 사이드바 약간 축소 */
@@ -2808,6 +2816,7 @@ html[data-theme="light"] .table tbody tr:hover{background:rgba(9,105,218,.045);}
                 <button class="llm-btn fv-mkt" data-market="kr" style="font-size:9px;padding:2px 8px;font-weight:700;">KR</button>
                 <span style="width:1px;height:14px;background:var(--bd,#333);margin:0 2px;"></span>
                 <button class="llm-btn fv-hm" data-metric="1d" style="font-size:9px;padding:2px 7px;">1D</button>
+                <button class="llm-btn fv-hm" data-metric="reg" style="font-size:9px;padding:2px 7px;" title="정규장(장중) 등락률 — 시간외 반영 안 함">장중</button>
                 <button class="llm-btn fv-hm" data-metric="1w" style="font-size:9px;padding:2px 7px;">1W</button>
                 <button class="llm-btn fv-hm" data-metric="1m" style="font-size:9px;padding:2px 7px;">1M</button>
                 <button class="llm-btn fv-hm" data-metric="3m" style="font-size:9px;padding:2px 7px;">3M</button>
@@ -10821,6 +10830,11 @@ setTimeout(function(){ var o=document.getElementById('lux-intro-overlay'); if(o&
 #page-nnviz svg.nnv-focus .nnv-node{opacity:.12;}
 #page-nnviz svg.nnv-focus .nnedge.hl,#page-nnviz svg.nnv-focus .nnedge-static.hl{opacity:1;stroke:#5ab4ff;stroke-width:1.5;filter:drop-shadow(0 0 3.5px rgba(90,180,255,.95));}
 #page-nnviz svg.nnv-focus .nnv-node.hl{opacity:1;fill:#8fd0ff;filter:drop-shadow(0 0 6px rgba(110,190,255,1));}
+/* 층별 최강 뉴런 코어 맥동 */
+#page-nnviz .nnv-core{animation:nnvCorePulse 2.6s ease-in-out infinite;filter:drop-shadow(0 0 3px rgba(150,200,255,.55));}
+@keyframes nnvCorePulse{0%,100%{opacity:.7;}50%{opacity:1;}}
+@media (prefers-reduced-motion:reduce){#page-nnviz .nnv-core{animation:none;}}
+#page-nnviz svg.nnv-focus .nnv-core:not(.hl):not(.hl2){animation:none;opacity:.12;filter:none;}
 /* 2홉(이웃의 연결) — 옅은 파랑으로 신호가 어디로 퍼지는지 표시 */
 #page-nnviz svg.nnv-focus .nnedge.hl2,#page-nnviz svg.nnv-focus .nnedge-static.hl2{opacity:.5;stroke:#3f86d8;stroke-width:.9;}
 #page-nnviz svg.nnv-focus .nnv-node.hl2{opacity:.8;fill:#79aee6;}
@@ -11040,10 +11054,19 @@ html[data-theme="light"] #page-nnviz .nnv-title,html[data-theme="light"] #page-n
     }).join('');
     var nodes='', heads='', foots='', featLabels='';
     var nHidden=0;
+    // 은닉층 깊이 그라데이션 — 얼음빛(#e6efff)에서 깊은 하늘빛(#9fd2ff)으로. 깊이가 색으로 읽히게.
+    function mixHex(c1,c2,tt){
+      var a=parseInt(c1.slice(1),16), b=parseInt(c2.slice(1),16);
+      var r=Math.round(((a>>16)&255)+ (((b>>16)&255)-((a>>16)&255))*tt);
+      var g=Math.round(((a>>8)&255) + (((b>>8)&255) -((a>>8)&255)) *tt);
+      var bl=Math.round((a&255)     + ((b&255)      -(a&255))      *tt);
+      return '#'+((1<<24)|(r<<16)|(g<<8)|bl).toString(16).slice(1);
+    }
     for(var li=0;li<cols;li++){
       var kind=layers[li].kind, cx=bands[li].cx;
       var hd = kind==='input'?'#4aa3ff':(kind==='output'?'#00e676':'#9fc2ff');
-      var fill = kind==='input'?'#7dc0ff':(kind==='output'?'#7dffb8':'#dbe9ff');
+      var depthT = cols>2 ? li/(cols-1) : 0;
+      var fill = kind==='input'?'#7dc0ff':(kind==='output'?'#7dffb8':mixHex('#e6efff','#9fd2ff',depthT));
       var tag = kind==='input'?'IN':(kind==='output'?'OUT':'H'+(++nHidden));
       var act = kind==='input'?'FEAT':(kind==='output'?'σ':'ReLU');
       // 층 헤더 배지: 층 태그 + 뉴런수 — 전 층이 "몇 번째 층인지" 즉시 보이게
@@ -11055,9 +11078,11 @@ html[data-theme="light"] #page-nnviz .nnv-title,html[data-theme="light"] #page-n
         var s=col2[k].s, r=(1.0+1.6*s).toFixed(1), glow=(0.4+0.6*s).toFixed(2);
         // 층 내 강도 순위 — center-out 배치라 k+1이 곧 순위(강도 내림차순 정렬 상태)
         var rank=k+1;
-        nodes+='<circle class="nnv-node" data-key="'+li+'-'+k+'" cx="'+col2[k].x.toFixed(1)+'" cy="'+col2[k].y.toFixed(1)+'" r="'+r+'" fill="'+fill+'" opacity="'+glow+'"></circle>'
+        // 층별 최강 뉴런 3개 — 은은한 맥동(코어 강조, reduced-motion 시 정지)
+        var core=(k<3 && col2.length>8)?' nnv-core':'';
+        nodes+='<circle class="nnv-node'+core+'" data-key="'+li+'-'+k+'" cx="'+col2[k].x.toFixed(1)+'" cy="'+col2[k].y.toFixed(1)+'" r="'+r+'" fill="'+fill+'" opacity="'+glow+'"></circle>'
           // 투명 히트영역 — 클릭하면 뉴런 역할 툴팁 + 연결 하이라이트
-          +'<circle class="nnv-hit" data-key="'+li+'-'+k+'" cx="'+col2[k].x.toFixed(1)+'" cy="'+col2[k].y.toFixed(1)+'" r="4.4" fill="transparent" data-kind="'+kind+'" data-tag="'+tag+'" data-name="'+(col2[k].name||'')+'" data-s="'+(s*100).toFixed(0)+'" data-rank="'+rank+'" data-size="'+layers[li].size+'"/>';
+          +'<circle class="nnv-hit" data-key="'+li+'-'+k+'" cx="'+col2[k].x.toFixed(1)+'" cy="'+col2[k].y.toFixed(1)+'" r="5.5" fill="transparent" data-kind="'+kind+'" data-tag="'+tag+'" data-name="'+(col2[k].name||'')+'" data-s="'+(s*100).toFixed(0)+'" data-rank="'+rank+'" data-size="'+layers[li].size+'"/>';
         if(kind==='input' && col2[k].name){
           featLabels+='<text x="'+(col2[k].x-8).toFixed(1)+'" y="'+(col2[k].y+2).toFixed(1)+'" text-anchor="end" font-family="IBM Plex Mono,monospace" font-size="7" fill="#7fa8d8">'+col2[k].name+'</text>';
         }
@@ -11084,7 +11109,24 @@ html[data-theme="light"] #page-nnviz .nnv-title,html[data-theme="light"] #page-n
         for(var hi=0;hi<hs.length;hi++){ hs[hi].classList.remove('hl'); hs[hi].classList.remove('hl2'); }
         NNV._focusKey=null;
       }
-      if(!t || !t.classList || !t.classList.contains('nnv-hit')){ clearHL(); return; }
+      // [V12.20] 클릭 인식 개선 — 히트원을 정확히 못 맞혀도 근접(반경 9 viewBox px) 노드로 스냅
+      if(!t || !t.classList || !t.classList.contains('nnv-hit')){
+        if(!svg.__hitCache){
+          var hcs=svg.querySelectorAll('circle.nnv-hit'), cache=[];
+          for(var ci=0;ci<hcs.length;ci++) cache.push({el:hcs[ci], x:+hcs[ci].getAttribute('cx'), y:+hcs[ci].getAttribute('cy')});
+          svg.__hitCache=cache;
+        }
+        var rct=svg.getBoundingClientRect(), vbv=svg.viewBox.baseVal;
+        var mx=vbv.x+(ev.clientX-rct.left)/rct.width*vbv.width;
+        var my=vbv.y+(ev.clientY-rct.top)/rct.height*vbv.height;
+        var bestEl=null, bestD=81; // 9px^2
+        for(var hi2=0;hi2<svg.__hitCache.length;hi2++){
+          var hc=svg.__hitCache[hi2], ddx=hc.x-mx, ddy=hc.y-my, dd=ddx*ddx+ddy*ddy;
+          if(dd<bestD){ bestD=dd; bestEl=hc.el; }
+        }
+        if(bestEl){ t=bestEl; }
+        else { clearHL(); return; }
+      }
       // [V12.16] 클릭 노드에 연결된 엣지·이웃 노드만 파랗게 발광(재클릭 시 해제)
       var key=t.getAttribute('data-key');
       if(key && NNV._focusKey===key){ clearHL(); }
