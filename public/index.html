@@ -1880,13 +1880,24 @@ html[data-theme="light"] .table tbody tr:nth-child(even){background:rgba(20,30,5
 .fv-tick{color:var(--fviz-blue);font-weight:700;}
 .fv-sig{font-size:9px;color:var(--t3);}
 
-/* [V12.22] 헤드라인/하단 — 고정 3열 폐기, 화면 폭에 맞춰 열 수 자동 조절(패널 최소 385px 보장).
-   어떤 화면/줌에서도 원자재 RSI 열이 패널 밖으로 잘리지 않음. */
-.fv-bottom{display:grid;grid-template-columns:repeat(auto-fit,minmax(385px,1fr));gap:8px;}
-@media(max-width:900px){.fv-bottom{grid-template-columns:1fr;}}
+/* [V12.23] 헤드라인·원자재·채권 — 항상 3개 한 줄(폰 제외). 좁은 화면은 셀을 조밀하게 압축해
+   RSI 열까지 패널 안에 수납. */
+.fv-bottom{display:grid;grid-template-columns:1.1fr 1fr 1fr;gap:8px;}
 /* 하단 테이블: 셀 패딩 축소 + 이름 열 말줄임 — 좁은 패널에서도 4열(RSI까지) 전부 표시 */
 .fv-bottom .fv-table th,.fv-bottom .fv-table td{padding:4px 7px;}
 .fv-bottom .fv-table td:first-child{max-width:140px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
+/* iPad 등 중간 폭: 3열 유지를 위해 더 조밀하게 */
+@media(min-width:768px) and (max-width:1500px){
+  .fv-bottom .fv-table th,.fv-bottom .fv-table td{padding:3px 5px;font-size:9.5px;}
+  .fv-bottom .fv-table th{font-size:7.5px;letter-spacing:.5px;}
+  .fv-bottom .fv-table td:first-child{max-width:92px;}
+}
+/* iPad 세로 등 아주 좁은 3열: 초조밀(패널 ~180px에서도 RSI 수납) */
+@media(min-width:768px) and (max-width:1000px){
+  .fv-bottom .fv-table th,.fv-bottom .fv-table td{padding:2px 3px;font-size:8.5px;}
+  .fv-bottom .fv-table th{font-size:7px;letter-spacing:.2px;}
+  .fv-bottom .fv-table td:first-child{max-width:56px;}
+}
 .fv-headlines{max-height:235px;overflow-y:auto;}
 .fv-hl{display:flex;gap:9px;padding:5px 12px;border-bottom:1px solid var(--bd2);font-size:10.5px;
   align-items:baseline;cursor:pointer;}
