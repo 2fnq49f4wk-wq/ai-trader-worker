@@ -5438,14 +5438,32 @@ async function fetchQuoteViaChart(symbol) {
   const closesRaw = (result.indicators && result.indicators.quote && result.indicators.quote[0] &&
                      result.indicators.quote[0].close) || [];
   const closes = closesRaw.filter(function(c){ return typeof c === "number" && !isNaN(c) && c > 0; });
-  const price = (typeof meta.regularMarketPrice === "number" && meta.regularMarketPrice > 0)
+  const live = (typeof meta.regularMarketPrice === "number" && meta.regularMarketPrice > 0)
     ? meta.regularMarketPrice : (closes.length ? closes[closes.length - 1] : null);
-  if (price == null) return null;
+  if (live == null) return null;
   const prevClose = (typeof meta.chartPreviousClose === "number" && meta.chartPreviousClose > 0)
     ? meta.chartPreviousClose
-    : (typeof meta.previousClose === "number" && meta.previousClose > 0 ? meta.previousClose : price);
+    : (typeof meta.previousClose === "number" && meta.previousClose > 0 ? meta.previousClose : live);
+  // [장중/장후 분리 FIX] v8 meta.regularMarketPrice는 프리/애프터 중엔 시간외 가격으로 움직인다(Yahoo 특성).
+  //   이걸 그대로 price/dayPct로 쓰면 DB의 "장중 등락"이 시간외 값으로 오염 → 정규장 밖이면
+  //   일봉 종가(closes, 정규장 전용)를 장중 가격으로 쓰고, 시간외 가격은 pre/post 필드로 분리.
+  const ctp = meta.currentTradingPeriod && meta.currentTradingPeriod.regular;
+  const nowSec = Math.floor(Date.now() / 1000);
+  const inRegular = !(ctp && typeof ctp.start === "number" && typeof ctp.end === "number"
+                      && (nowSec < ctp.start || nowSec >= ctp.end));
+  let price = live;
+  const o = {};
+  if (!inRegular && closes.length) {
+    price = closes[closes.length - 1];
+    const isPre = ctp && nowSec < ctp.start;
+    o.mstate = isPre ? "PRE" : "POST";
+    if (live > 0 && Math.abs(live - price) / price > 1e-6) {
+      if (isPre) { o.pre = live; o.prePct = prevClose ? ((live - prevClose) / prevClose) * 100 : 0; }
+      else { o.post = live; o.postPct = price ? ((live - price) / price) * 100 : 0; }
+    }
+  }
   const dayPct = prevClose ? ((price - prevClose) / prevClose) * 100 : 0;
-  return { price: price, prevClose: prevClose || price, dayPct: dayPct };
+  return Object.assign({ price: price, prevClose: prevClose || price, dayPct: dayPct }, o);
 }
 
 async function fetchQuoteViaChartFallback(symbol) {

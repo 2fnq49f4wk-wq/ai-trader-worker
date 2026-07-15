@@ -4036,13 +4036,13 @@ html[data-theme="light"] .table tbody tr:hover{background:rgba(9,105,218,.045);}
     var etDay = (utcDay + etDayShift + 7) % 7;
     var usOpen = etDay >= 1 && etDay <= 5 && etTotalMin >= 570 && etTotalMin < 960;
     var usTradingWindow = usOpen;  // US는 실시간이므로 동일
-    // KR — 야후 15분 지연 보정
+    // [V12.5] KR — 네이버 실시간 시세 채택 후 15분 지연 보정(09:15~15:45) 폐기. 엔진도 09:00~15:30 실시간.
     var kstTotalMin = utcMin + 9 * 60;
     var kstDayShift = 0;
     if (kstTotalMin >= 24 * 60) { kstTotalMin -= 24 * 60; kstDayShift = 1; }
     var kstDay = (utcDay + kstDayShift) % 7;
     var krOpen = kstDay >= 1 && kstDay <= 5 && kstTotalMin >= 540 && kstTotalMin < 930;
-    var krTradingWindow = kstDay >= 1 && kstDay <= 5 && kstTotalMin >= 555 && kstTotalMin < 945;
+    var krTradingWindow = krOpen;
     return {
       us: usOpen, kr: krOpen,
       usTrading: usTradingWindow, krTrading: krTradingWindow,
@@ -4083,12 +4083,8 @@ html[data-theme="light"] .table tbody tr:hover{background:rgba(9,105,218,.045);}
       krEl.className = 'market-status-closed';
       return;
     }
-    if (status.kr && status.krTrading) {
-      krText = '🟢 정규장 OPEN';
-    } else if (status.kr && !status.krTrading) {
-      krText = '🟡 정규장 OPEN (엔진 대기 09:15~)';
-    } else if (!status.kr && status.krTrading) {
-      krText = '🟡 정규장 마감 (엔진 청산 ~15:45)';
+    if (status.kr) {
+      krText = '🟢 정규장 OPEN (실시간)';
     } else {
       krText = '🔴 장 종료';
     }
