@@ -10962,35 +10962,46 @@ html[data-theme="light"] #page-nnviz .nnv-title,html[data-theme="light"] #page-n
     if(!layers.length){ stage.innerHTML='<div class="nnv-empty">구조 데이터 없음</div>'; return; }
     var reduce = false; try{ reduce = window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches; }catch(e){}
     var cols=layers.length;
-    // [V12.17] 전 뉴런(2,408) 유지 + 여유 배치 — 겹침 해소를 위해 세로 캔버스를 최대층(640n)
-    //   기준 노드당 4.5px로 동적 확장(≈3,000px, 페이지 스크롤). 가로 간격 58→96. 확대/축소 폐지.
-    //   렉 완화: 엣지 상한 10.4K→4.5K(고립 방지 보장선 3.3K는 전량 유지, extra만 상위 컷).
-    var colGap=96, padL=122, padR=40, headH=60, footH=48, capPer=999999, EDGE_CAP=4500;
-    var maxN=1; for(var mi=0;mi<layers.length;mi++) maxN=Math.max(maxN,(layers[mi].strength||[]).length);
-    var W=padL+padR+colGap*(cols-1), H=headH+footH+32+Math.max(560, Math.min(maxN,capPer)*5);
-    var colX=function(i){ return padL + colGap*i; };
-    var yTop=headH+18, yBot=H-footH-14;
-    // 표시 노드: 강도 상위 capPer, 세로 균등 (원래 인덱스 보존 → 입력 피처명 매핑)
-    var shown=layers.map(function(L){
+    // [V12.18 리디자인] 벌집 클러스터 배치 — 일자 나열 폐기. 큰 층은 세로 80칸 × 여러 줄로 접어
+    //   전 뉴런(2,408)이 겹침 0으로 한 화면 높이(~850px)에 수납. 강도 높은 뉴런일수록 밴드
+    //   중앙으로(center-out) — 층마다 "발광 코어"가 실제 기여 뉴런 무리를 형태로 보여줌.
+    var dxN=9, dyN=9, maxRows=80, bandGap=62, padL=158, padR=36, headH=58, footH=44, EDGE_CAP=4500;
+    var H=headH+footH+maxRows*dyN+24, yMid=headH+12+(maxRows*dyN)/2;
+    // 각 층 = 밴드: 노드마다 개별 (x,y) 좌표. 원래 인덱스 보존 → 입력 피처명 매핑 유지.
+    var bands=[], bx=padL;
+    var shown=layers.map(function(L,li){
       var nm=L.names||null;
-      var arr=(L.strength||[]).map(function(s,idx){return {s:s,idx:idx,name:nm?nm[idx]:null};});
-      if(arr.length>capPer){ arr.sort(function(a,b){return b.s-a.s;}); arr=arr.slice(0,capPer); }
-      var n=arr.length||1;
-      arr.forEach(function(o,k){ o.y = yTop + (yBot-yTop)*(n>1? k/(n-1):0.5); });
-      return arr;
+      var st=L.strength||[], n=st.length||1;
+      var colsN=Math.ceil(n/maxRows), rowsN=Math.ceil(n/colsN);
+      var order=st.map(function(s,idx){return {s:s,idx:idx,name:nm?nm[idx]:null};})
+                  .sort(function(a,b){return b.s-a.s;});
+      // 자리(slot)를 중앙에서 바깥 순으로 정렬 → 강도 상위가 중앙 코어에 배치
+      var slots=[];
+      for(var c=0;c<colsN;c++) for(var r=0;r<rowsN;r++)
+        slots.push({c:c,r:r,d:Math.abs(r-(rowsN-1)/2)+Math.abs(c-(colsN-1)/2)*0.6});
+      slots.sort(function(a,b){return a.d-b.d;}); slots.length=Math.min(slots.length,n);
+      order.forEach(function(o,k){
+        var sl=slots[k];
+        o.x = bx + sl.c*dxN + (sl.r%2 ? dxN*0.5 : 0);   // 벌집(홀수행 반칸 오프셋)
+        o.y = yMid + (sl.r-(rowsN-1)/2)*dyN;
+      });
+      bands.push({cx: bx+(colsN-1)*dxN/2+dxN*0.25, w: colsN*dxN});
+      bx += Math.max(colsN*dxN, 14) + bandGap;
+      return order;
     });
+    var W=bx-bandGap+padR;
     // 곡선 엣지 — 노드당 소수 타깃 샘플링. 실제 망은 전결합이므로 "선 없는 점"은 표시 오류로 보임 →
     //   모든 표시 노드가 나가는 선 1개 + 들어오는 선 1개를 반드시 갖도록 이중 보장(고립점 0).
     var guar=[], extra=[];
     for(var l=0;l<cols-1;l++){
-      var A=shown[l], B=shown[l+1], x1=colX(l), x2=colX(l+1), midx=(x1+x2)/2;
+      var A=shown[l], B=shown[l+1];
       var inCovered={};
       for(var a=0;a<A.length;a++){
         var deg=Math.min(3, B.length), best=null;
         for(var d=0;d<deg;d++){
           var bi=(a*5+d*11+l*3)%B.length, tgt=B[bi];
           var str=A[a].s*tgt.s;
-          var e={x1:x1,y1:A[a].y,mx:midx,x2:x2,y2:tgt.y,str:str,l:l,ai:a,bi:bi};
+          var e={x1:A[a].x,y1:A[a].y,x2:tgt.x,y2:tgt.y,str:str,l:l,ai:a,bi:bi};
           if(!best || str>best.str) best=e;
           if(str>=0.06) extra.push(e);
         }
@@ -11000,7 +11011,7 @@ html[data-theme="light"] #page-nnviz .nnv-title,html[data-theme="light"] #page-n
       for(var b2=0;b2<B.length;b2++){
         if(inCovered[b2] || !A.length) continue;
         var sai=(b2*7+l*5)%A.length, srcA=A[sai];   // 소스 분산(한 노드 부챗살 방지)
-        guar.push({x1:x1,y1:srcA.y,mx:midx,x2:x2,y2:B[b2].y,str:Math.max(0.12,srcA.s*B[b2].s),l:l,ai:sai,bi:b2});
+        guar.push({x1:srcA.x,y1:srcA.y,x2:B[b2].x,y2:B[b2].y,str:Math.max(0.12,srcA.s*B[b2].s),l:l,ai:sai,bi:b2});
       }
     }
     extra.sort(function(p,q){return q.str-p.str;});
@@ -11010,47 +11021,41 @@ html[data-theme="light"] #page-nnviz .nnv-title,html[data-theme="light"] #page-n
     // 단일 색상 축: 강도 → 불투명도·굵기 (색상혼용 제거 — 강도만 정직하게 인코딩)
     var edges=eArr.map(function(e,ei){
       var op=(0.045+0.32*e.str).toFixed(3), sw=(0.3+0.9*e.str).toFixed(2);
-      var cy1=e.y1+(e.y2-e.y1)*0.12, cy2=e.y2-(e.y2-e.y1)*0.12;
+      var mx=(e.x1+e.x2)/2;
       var cls=(ei<ANIM_CAP)?'nnedge':'nnedge-static';
-      return '<path class="'+cls+'" data-a="'+e.l+'-'+e.ai+'" data-b="'+(e.l+1)+'-'+e.bi+'" d="M'+e.x1.toFixed(1)+' '+e.y1.toFixed(1)+' C'+e.mx.toFixed(1)+' '+cy1.toFixed(1)+' '+e.mx.toFixed(1)+' '+cy2.toFixed(1)+' '+e.x2.toFixed(1)+' '+e.y2.toFixed(1)+'" fill="none" stroke="rgba(96,168,255,'+op+')" stroke-width="'+sw+'"/>';
+      return '<path class="'+cls+'" data-a="'+e.l+'-'+e.ai+'" data-b="'+(e.l+1)+'-'+e.bi+'" d="M'+e.x1.toFixed(1)+' '+e.y1.toFixed(1)+' C'+mx.toFixed(1)+' '+e.y1.toFixed(1)+' '+mx.toFixed(1)+' '+e.y2.toFixed(1)+' '+e.x2.toFixed(1)+' '+e.y2.toFixed(1)+'" fill="none" stroke="rgba(96,168,255,'+op+')" stroke-width="'+sw+'"/>';
     }).join('');
-    var rails='', nodes='', heads='', foots='', featLabels='';
+    var nodes='', heads='', foots='', featLabels='';
     var nHidden=0;
     for(var li=0;li<cols;li++){
-      var kind=layers[li].kind, cx=colX(li);
+      var kind=layers[li].kind, cx=bands[li].cx;
       var hd = kind==='input'?'#4aa3ff':(kind==='output'?'#00e676':'#9fc2ff');
       var fill = kind==='input'?'#7dc0ff':(kind==='output'?'#7dffb8':'#dbe9ff');
       var tag = kind==='input'?'IN':(kind==='output'?'OUT':'H'+(++nHidden));
       var act = kind==='input'?'FEAT':(kind==='output'?'σ':'ReLU');
-      // 세로 가이드 레일(은은하게)
-      rails+='<line x1="'+cx+'" y1="'+(yTop-8)+'" x2="'+cx+'" y2="'+(yBot+8)+'" stroke="rgba(140,170,220,0.14)" stroke-width="1"/>';
       // 층 헤더 배지: 층 태그 + 뉴런수 — 전 층이 "몇 번째 층인지" 즉시 보이게
-      heads+='<rect x="'+(cx-24)+'" y="14" width="48" height="20" rx="10" fill="rgba(70,130,255,0.10)" stroke="'+hd+'" stroke-opacity="0.55" stroke-width="1"/>'
-        +'<text x="'+cx+'" y="28" text-anchor="middle" font-family="IBM Plex Mono,monospace" font-size="10.5" font-weight="700" fill="'+hd+'">'+tag+'</text>'
-        +'<text x="'+cx+'" y="48" text-anchor="middle" font-family="IBM Plex Mono,monospace" font-size="9" fill="#8fa6c8">'+layers[li].size+'n</text>';
+      heads+='<rect x="'+(cx-24)+'" y="13" width="48" height="20" rx="10" fill="rgba(70,130,255,0.10)" stroke="'+hd+'" stroke-opacity="0.55" stroke-width="1"/>'
+        +'<text x="'+cx+'" y="27" text-anchor="middle" font-family="IBM Plex Mono,monospace" font-size="10.5" font-weight="700" fill="'+hd+'">'+tag+'</text>'
+        +'<text x="'+cx+'" y="46" text-anchor="middle" font-family="IBM Plex Mono,monospace" font-size="9" fill="#8fa6c8">'+layers[li].size+'n</text>';
       var col2=shown[li], allS=layers[li].strength||[];
-      // 밀집층 겹침 방지 — 노드 반지름을 층 세로간격의 42% 이하로 자동 클램프
-      var lg=col2.length>1 ? (yBot-yTop)/(col2.length-1) : (yBot-yTop);
-      var rCap=Math.max(0.9, lg*0.42);
       for(var k=0;k<col2.length;k++){
-        var s=col2[k].s, r=Math.min(1.1+2.0*s, rCap).toFixed(1), glow=(0.45+0.55*s).toFixed(2);
-        // 층 내 강도 순위(전체 뉴런 기준) — 클릭 툴팁에 표시
-        var rank=1; for(var q2=0;q2<allS.length;q2++) if(allS[q2]>s) rank++;
-        nodes+='<circle class="nnv-node" data-key="'+li+'-'+k+'" cx="'+cx+'" cy="'+col2[k].y.toFixed(1)+'" r="'+r+'" fill="'+fill+'" opacity="'+glow+'"></circle>'
-          // 투명 히트영역(터치 타깃 ≥18px) — 클릭하면 뉴런 역할 툴팁 + 연결 하이라이트
-          +'<circle class="nnv-hit" data-key="'+li+'-'+k+'" cx="'+cx+'" cy="'+col2[k].y.toFixed(1)+'" r="6" fill="transparent" data-kind="'+kind+'" data-tag="'+tag+'" data-name="'+(col2[k].name||'')+'" data-s="'+(s*100).toFixed(0)+'" data-rank="'+rank+'" data-size="'+layers[li].size+'"/>';
+        var s=col2[k].s, r=(1.0+1.6*s).toFixed(1), glow=(0.4+0.6*s).toFixed(2);
+        // 층 내 강도 순위 — center-out 배치라 k+1이 곧 순위(강도 내림차순 정렬 상태)
+        var rank=k+1;
+        nodes+='<circle class="nnv-node" data-key="'+li+'-'+k+'" cx="'+col2[k].x.toFixed(1)+'" cy="'+col2[k].y.toFixed(1)+'" r="'+r+'" fill="'+fill+'" opacity="'+glow+'"></circle>'
+          // 투명 히트영역 — 클릭하면 뉴런 역할 툴팁 + 연결 하이라이트
+          +'<circle class="nnv-hit" data-key="'+li+'-'+k+'" cx="'+col2[k].x.toFixed(1)+'" cy="'+col2[k].y.toFixed(1)+'" r="4.4" fill="transparent" data-kind="'+kind+'" data-tag="'+tag+'" data-name="'+(col2[k].name||'')+'" data-s="'+(s*100).toFixed(0)+'" data-rank="'+rank+'" data-size="'+layers[li].size+'"/>';
         if(kind==='input' && col2[k].name){
-          featLabels+='<text x="'+(cx-8)+'" y="'+(col2[k].y+2).toFixed(1)+'" text-anchor="end" font-family="IBM Plex Mono,monospace" font-size="7" fill="#7fa8d8">'+col2[k].name+'</text>';
+          featLabels+='<text x="'+(col2[k].x-8).toFixed(1)+'" y="'+(col2[k].y+2).toFixed(1)+'" text-anchor="end" font-family="IBM Plex Mono,monospace" font-size="7" fill="#7fa8d8">'+col2[k].name+'</text>';
         }
       }
-      // 하단: 활성함수 + 표본 표시(뉴런이 capPer 초과면 상위표시임을 명시)
-      foots+='<text x="'+cx+'" y="'+(yBot+26)+'" text-anchor="middle" font-family="IBM Plex Mono,monospace" font-size="8.5" fill="#61789c">'+act+'</text>';
-      if(layers[li].size>capPer) foots+='<text x="'+cx+'" y="'+(yBot+38)+'" text-anchor="middle" font-family="IBM Plex Mono,monospace" font-size="7.5" fill="#4d6285">상위'+capPer+'</text>';
+      // 하단: 활성함수
+      foots+='<text x="'+cx+'" y="'+(H-footH+22)+'" text-anchor="middle" font-family="IBM Plex Mono,monospace" font-size="8.5" fill="#61789c">'+act+'</text>';
     }
     // 좌상단 층수 요약 — "몇 층짜리 뇌인가"가 그림 안에서 바로 읽히게
     var summary='<text x="14" y="28" font-family="Space Grotesk,sans-serif" font-size="13" font-weight="700" fill="#eaf2ff">'+cols+' LAYERS</text>'
       +'<text x="14" y="44" font-family="IBM Plex Mono,monospace" font-size="8.5" fill="#7c90b5">입력 1 · 은닉 '+nHidden+' · 출력 1</text>';
-    stage.innerHTML='<div class="nnv-scroll"><svg viewBox="0 0 '+W+' '+H+'" preserveAspectRatio="xMidYMid meet" style="min-width:'+W+'px;background:radial-gradient(120% 90% at 50% 8%,#0d1a2e,#050810 72%);">'+rails+edges+nodes+featLabels+heads+foots+summary+'</svg></div>';
+    stage.innerHTML='<div class="nnv-scroll"><svg viewBox="0 0 '+W+' '+H+'" preserveAspectRatio="xMidYMid meet" style="min-width:'+W+'px;background:radial-gradient(120% 90% at 50% 8%,#0d1a2e,#050810 72%);">'+edges+nodes+featLabels+heads+foots+summary+'</svg></div>';
     NNV_bindNodeTips(stage);
   }
   // [V12.3] 노드 클릭/터치 → 역할 툴팁. 입력=피처 역할(백엔드 inputFeatures), 은닉/출력=층 역할 설명.
