@@ -10793,9 +10793,6 @@ setTimeout(function(){ var o=document.getElementById('lux-intro-overlay'); if(o&
 #page-nnviz .nnv-stage{position:relative;background:radial-gradient(120% 120% at 50% 0%,#0c1526,#060910 70%);border:1px solid #16223c;border-radius:13px;overflow:hidden;}
 #page-nnviz .nnv-scroll{overflow-x:auto;-webkit-overflow-scrolling:touch;}
 #page-nnviz .nnv-hit{cursor:pointer;}
-#page-nnviz .nnv-zoombtns{position:absolute;right:10px;top:10px;display:flex;flex-direction:column;gap:5px;z-index:4;}
-#page-nnviz .nnv-zoombtns button{width:30px;height:30px;border-radius:8px;border:1px solid #2a4270;background:rgba(12,20,38,.85);color:#9fb4dc;font-size:14px;cursor:pointer;line-height:1;}
-#page-nnviz .nnv-zoombtns button:hover{color:#eaf2ff;border-color:#3a63b0;}
 #page-nnviz .nnv-tip{position:absolute;z-index:5;max-width:290px;background:rgba(10,17,32,.96);border:1px solid #2a4270;border-radius:10px;padding:10px 12px;font-size:11px;line-height:1.6;color:#dbe6fb;box-shadow:0 12px 34px rgba(0,0,0,.55);pointer-events:none;font-family:'IBM Plex Mono',monospace;}
 #page-nnviz .nnv-tip b{color:#eaf2ff;}
 #page-nnviz .nnv-tip .m{color:#7c90b5;font-size:10px;}
@@ -10965,10 +10962,12 @@ html[data-theme="light"] #page-nnviz .nnv-title,html[data-theme="light"] #page-n
     if(!layers.length){ stage.innerHTML='<div class="nnv-empty">구조 데이터 없음</div>'; return; }
     var reduce = false; try{ reduce = window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches; }catch(e){}
     var cols=layers.length;
-    // [V12.15] 노드 캡 완전 해제 — 전 뉴런(2,408개) 표시. 엣지는 노드당 최대 3개 샘플링 구조라
-    //   전결합 폭발(327K) 없이 ~10.5K path로 수렴. 실측(Chromium): 최초 렌더 ~0.36s, 줌/팬 3.6ms/frame(60fps).
-    var colGap=58, padL=122, padR=40, headH=60, footH=48, capPer=999999, EDGE_CAP=999999;
-    var W=padL+padR+colGap*(cols-1), H=760;
+    // [V12.17] 전 뉴런(2,408) 유지 + 여유 배치 — 겹침 해소를 위해 세로 캔버스를 최대층(640n)
+    //   기준 노드당 4.5px로 동적 확장(≈3,000px, 페이지 스크롤). 가로 간격 58→96. 확대/축소 폐지.
+    //   렉 완화: 엣지 상한 10.4K→4.5K(고립 방지 보장선 3.3K는 전량 유지, extra만 상위 컷).
+    var colGap=96, padL=122, padR=40, headH=60, footH=48, capPer=999999, EDGE_CAP=4500;
+    var maxN=1; for(var mi=0;mi<layers.length;mi++) maxN=Math.max(maxN,(layers[mi].strength||[]).length);
+    var W=padL+padR+colGap*(cols-1), H=headH+footH+32+Math.max(560, Math.min(maxN,capPer)*5);
     var colX=function(i){ return padL + colGap*i; };
     var yTop=headH+18, yBot=H-footH-14;
     // 표시 노드: 강도 상위 capPer, 세로 균등 (원래 인덱스 보존 → 입력 피처명 매핑)
@@ -11030,8 +11029,11 @@ html[data-theme="light"] #page-nnviz .nnv-title,html[data-theme="light"] #page-n
         +'<text x="'+cx+'" y="28" text-anchor="middle" font-family="IBM Plex Mono,monospace" font-size="10.5" font-weight="700" fill="'+hd+'">'+tag+'</text>'
         +'<text x="'+cx+'" y="48" text-anchor="middle" font-family="IBM Plex Mono,monospace" font-size="9" fill="#8fa6c8">'+layers[li].size+'n</text>';
       var col2=shown[li], allS=layers[li].strength||[];
+      // 밀집층 겹침 방지 — 노드 반지름을 층 세로간격의 42% 이하로 자동 클램프
+      var lg=col2.length>1 ? (yBot-yTop)/(col2.length-1) : (yBot-yTop);
+      var rCap=Math.max(0.9, lg*0.42);
       for(var k=0;k<col2.length;k++){
-        var s=col2[k].s, r=(1.1+2.0*s).toFixed(1), glow=(0.45+0.55*s).toFixed(2);
+        var s=col2[k].s, r=Math.min(1.1+2.0*s, rCap).toFixed(1), glow=(0.45+0.55*s).toFixed(2);
         // 층 내 강도 순위(전체 뉴런 기준) — 클릭 툴팁에 표시
         var rank=1; for(var q2=0;q2<allS.length;q2++) if(allS[q2]>s) rank++;
         nodes+='<circle class="nnv-node" data-key="'+li+'-'+k+'" cx="'+cx+'" cy="'+col2[k].y.toFixed(1)+'" r="'+r+'" fill="'+fill+'" opacity="'+glow+'"></circle>'
@@ -11048,70 +11050,13 @@ html[data-theme="light"] #page-nnviz .nnv-title,html[data-theme="light"] #page-n
     // 좌상단 층수 요약 — "몇 층짜리 뇌인가"가 그림 안에서 바로 읽히게
     var summary='<text x="14" y="28" font-family="Space Grotesk,sans-serif" font-size="13" font-weight="700" fill="#eaf2ff">'+cols+' LAYERS</text>'
       +'<text x="14" y="44" font-family="IBM Plex Mono,monospace" font-size="8.5" fill="#7c90b5">입력 1 · 은닉 '+nHidden+' · 출력 1</text>';
-    stage.innerHTML='<div class="nnv-scroll"><svg viewBox="0 0 '+W+' '+H+'" preserveAspectRatio="xMidYMid meet" style="min-width:'+Math.min(W,1000)+'px;touch-action:none;background:radial-gradient(120% 90% at 50% 8%,#0d1a2e,#050810 72%);">'+rails+edges+nodes+featLabels+heads+foots+summary+'</svg></div>'
-      +'<div class="nnv-zoombtns"><button data-z="in">＋</button><button data-z="out">－</button><button data-z="reset">⟳</button></div>';
+    stage.innerHTML='<div class="nnv-scroll"><svg viewBox="0 0 '+W+' '+H+'" preserveAspectRatio="xMidYMid meet" style="min-width:'+W+'px;background:radial-gradient(120% 90% at 50% 8%,#0d1a2e,#050810 72%);">'+rails+edges+nodes+featLabels+heads+foots+summary+'</svg></div>';
     NNV_bindNodeTips(stage);
-    NNV_bindZoom(stage, W, H);
-  }
-  // [V12.13] 휠/핀치 줌 + 드래그 팬 — viewBox 카메라 방식(확대해도 벡터라 선명)
-  function NNV_bindZoom(stage, W, H){
-    var svg=stage.querySelector('svg'); if(!svg) return;
-    var vb={x:0,y:0,w:W,h:H};
-    function apply(){ svg.setAttribute('viewBox', vb.x.toFixed(1)+' '+vb.y.toFixed(1)+' '+vb.w.toFixed(1)+' '+vb.h.toFixed(1)); }
-    function clamp(){
-      vb.w=Math.max(W/10, Math.min(W, vb.w)); vb.h=vb.w*(H/W);
-      vb.x=Math.max(0, Math.min(W-vb.w, vb.x)); vb.y=Math.max(0, Math.min(H-vb.h, vb.y));
-    }
-    function zoomAt(px, py, factor){
-      // px,py: svg 화면좌표 → viewBox 좌표로 환산 후 그 점 고정 줌
-      var r=svg.getBoundingClientRect();
-      var mx=vb.x+(px-r.left)/r.width*vb.w, my=vb.y+(py-r.top)/r.height*vb.h;
-      vb.w*=factor; vb.h=vb.w*(H/W);
-      vb.x=mx-(px-r.left)/r.width*vb.w; vb.y=my-(py-r.top)/r.height*vb.h;
-      clamp(); apply();
-    }
-    svg.addEventListener('wheel', function(e){ e.preventDefault(); zoomAt(e.clientX, e.clientY, e.deltaY>0?1.15:1/1.15); }, {passive:false});
-    // 포인터: 1개=팬(이동량 5px 넘으면 클릭 억제), 2개=핀치줌
-    var pts={}, panStart=null, pinchD=0;
-    svg.addEventListener('pointerdown', function(e){
-      pts[e.pointerId]={x:e.clientX,y:e.clientY};
-      var ks=Object.keys(pts);
-      if(ks.length===1){ panStart={x:e.clientX,y:e.clientY,vx:vb.x,vy:vb.y}; NNV._dragged=false; }
-      else if(ks.length===2){ panStart=null; var a=pts[ks[0]],b=pts[ks[1]]; pinchD=Math.hypot(a.x-b.x,a.y-b.y); }
-      try{ svg.setPointerCapture(e.pointerId); }catch(err){}
-    });
-    svg.addEventListener('pointermove', function(e){
-      if(!pts[e.pointerId]) return;
-      pts[e.pointerId]={x:e.clientX,y:e.clientY};
-      var ks=Object.keys(pts);
-      if(ks.length===1 && panStart){
-        var dx=e.clientX-panStart.x, dy=e.clientY-panStart.y;
-        if(Math.abs(dx)+Math.abs(dy)>5) NNV._dragged=true;
-        var r=svg.getBoundingClientRect();
-        vb.x=panStart.vx-dx/r.width*vb.w; vb.y=panStart.vy-dy/r.height*vb.h;
-        clamp(); apply();
-      } else if(ks.length===2){
-        var a=pts[ks[0]],b=pts[ks[1]], d=Math.hypot(a.x-b.x,a.y-b.y);
-        if(pinchD>0 && d>0){ NNV._dragged=true; zoomAt((a.x+b.x)/2,(a.y+b.y)/2, pinchD/d); }
-        pinchD=d;
-      }
-    });
-    function up(e){ delete pts[e.pointerId]; panStart=null; pinchD=0; }
-    svg.addEventListener('pointerup', up); svg.addEventListener('pointercancel', up);
-    var btns=stage.querySelector('.nnv-zoombtns');
-    if(btns) btns.addEventListener('click', function(e){
-      var z=e.target && e.target.getAttribute('data-z'); if(!z) return;
-      var r=svg.getBoundingClientRect(), cx=r.left+r.width/2, cy=r.top+r.height/2;
-      if(z==='in') zoomAt(cx,cy,1/1.35);
-      else if(z==='out') zoomAt(cx,cy,1.35);
-      else { vb={x:0,y:0,w:W,h:H}; apply(); }
-    });
   }
   // [V12.3] 노드 클릭/터치 → 역할 툴팁. 입력=피처 역할(백엔드 inputFeatures), 은닉/출력=층 역할 설명.
   function NNV_bindNodeTips(stage){
     var svg=stage.querySelector('svg'); if(!svg) return;
     svg.addEventListener('click', function(ev){
-      if(NNV._dragged){ NNV._dragged=false; return; }   // [V12.13] 팬/줌 드래그 직후엔 툴팁 억제
       var t=ev.target;
       var old=stage.querySelector('.nnv-tip'); if(old) old.remove();
       // [V12.16] 연결 하이라이트 해제 헬퍼 — 포커스 클래스 제거 + hl 일괄 해제
@@ -11161,7 +11106,7 @@ html[data-theme="light"] #page-nnviz .nnv-title,html[data-theme="light"] #page-n
                 : depth<=6 ? '중간 추상화 — 앞 층 패턴들을 엮어 추세/변동성/국면 같은 복합 신호를 형성'
                 : '고차 압축 — 신호를 소수 핵심 요인으로 압축해 최종 확률 판단을 준비';
         html='<b>'+tag+' 은닉뉴런</b>'
-          +'<br><span class="m">가중치 강도 '+s+'% · 층 내 '+rank+'위/전체 '+size+'개 (강도 상위 일부만 표시)</span>'
+          +'<br><span class="m">가중치 강도 '+s+'% · 층 내 '+rank+'위/전체 '+size+'개</span>'
           +'<br>'+role+'합니다. (가중합 + ReLU 활성화)';
       }
       var tip=document.createElement('div'); tip.className='nnv-tip'; tip.innerHTML=html;
