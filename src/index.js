@@ -192,7 +192,7 @@ const DEFAULT_US = [
   "XLK","XLV","XLY","XLI","XLP","XLU","XLB","XLC","XLRE",
   "SOXX","IBB","DIA",
   // [V12.5 추가] 대형 ADR·글로벌 반도체·성장주 — TSMC/마벨/하이닉스ADR 등
-  "TSM","MRVL","ASML","ARM","HXSCL",
+  "TSM","MRVL","ASML","ARM","SKHY",
   "NVO","SAP","BABA","TM","SONY","PDD","JD","MELI","SE",
   "SHOP","SPOT","RBLX","SNOW","NET","MDB","ZS","OKTA","TEAM",
   "DKNG","SOFI","RIVN","MSTR"
@@ -350,7 +350,7 @@ const NAME_MAP = {
   "MSFT":"Microsoft",
   "AMZN":"Amazon",
   "AVGO":"Broadcom",
-  "TSM":"TSMC(ADR)","MRVL":"마벨 테크놀로지","ASML":"ASML(ADR)","ARM":"Arm홀딩스","HXSCL":"SK하이닉스(ADR)",
+  "TSM":"TSMC(ADR)","MRVL":"마벨 테크놀로지","ASML":"ASML(ADR)","ARM":"Arm홀딩스","SKHY":"SK하이닉스(ADR)",
   "NVO":"노보노디스크","SAP":"SAP","BABA":"알리바바","TM":"도요타","SONY":"소니",
   "PDD":"핀둬둬(PDD)","JD":"징둥닷컴","MELI":"메르카도리브레","SE":"씨(SEA)",
   "SHOP":"쇼피파이","SPOT":"스포티파이","RBLX":"로블록스","SNOW":"스노우플레이크","NET":"클라우드플레어",
@@ -1205,7 +1205,7 @@ const MCAP_RANK = {
   "MSFT":5,
   "AMZN":6,
   "AVGO":7,
-  "TSM":9,"ASML":22,"SAP":26,"NVO":28,"BABA":30,"TM":33,"HXSCL":45,"SONY":55,"ARM":58,"MELI":62,
+  "TSM":9,"ASML":22,"SAP":26,"NVO":28,"BABA":30,"TM":33,"SKHY":45,"SONY":55,"ARM":58,"MELI":62,
   "SPOT":66,"SHOP":68,"SE":70,"MRVL":75,"PDD":78,"NET":105,"MSTR":110,"SNOW":140,"RBLX":150,"JD":160,
   "ZS":190,"TEAM":210,"SOFI":260,"RIVN":300,"OKTA":310,"MDB":320,"DKNG":330,
   "META":8,
@@ -2131,7 +2131,7 @@ const LEGACY_STRATEGIES = ["swing", "momentum", "meanrev", "day"];  // 통계/�
 // === [신규] 섹터 매핑 (동시 보유 제한용) ===
 const SECTOR_MAP = {
   "NVDA":"US_SEMI","AVGO":"US_SEMI","AMD":"US_SEMI","INTC":"US_SEMI","SNDK":"US_SEMI",
-  "TSM":"US_SEMI","MRVL":"US_SEMI","ASML":"US_SEMI","ARM":"US_SEMI","HXSCL":"US_SEMI",
+  "TSM":"US_SEMI","MRVL":"US_SEMI","ASML":"US_SEMI","ARM":"US_SEMI","SKHY":"US_SEMI",
   "AAPL":"US_TECH","GOOGL":"US_TECH","META":"US_TECH","AMZN":"US_TECH","ORCL":"US_TECH",
   "TSLA":"US_AUTO","RKLB":"US_AERO","BA":"US_AERO",
   "GS":"US_FIN","BRK-B":"US_FIN",
@@ -2185,7 +2185,7 @@ const SECTOR_GROUP_MAP = {
   // KR RESOURCES (철강·비철·유틸)
   "005490.KS":"RESOURCES","010130.KS":"RESOURCES","015760.KS":"RESOURCES",
   // [V12.5 추가] 신규 ADR·성장주 그룹 매핑
-  "TSM":"TECH","MRVL":"TECH","ASML":"TECH","ARM":"TECH","HXSCL":"TECH","SAP":"TECH","SONY":"TECH",
+  "TSM":"TECH","MRVL":"TECH","ASML":"TECH","ARM":"TECH","SKHY":"TECH","SAP":"TECH","SONY":"TECH",
   "SNOW":"TECH","NET":"TECH","MDB":"TECH","ZS":"TECH","OKTA":"TECH","TEAM":"TECH","SHOP":"TECH","MSTR":"TECH",
   "BABA":"CONSUMER","PDD":"CONSUMER","JD":"CONSUMER","MELI":"CONSUMER","SE":"CONSUMER","SPOT":"CONSUMER",
   "RBLX":"CONSUMER","DKNG":"CONSUMER","TM":"CONSUMER","RIVN":"CONSUMER",
@@ -5554,6 +5554,17 @@ function applyKrOverMarket(o, d) {
 function applyDisplayOverMarket(q) {
   if (!q) return q;
   const st = q.mstate;
+  // [V12.7 자가치유] 과거 v8 폴백이 price/dayPct를 시간외 값으로 오염시킨 행 복구.
+  //   postPct는 "정규장 종가 대비"로 계산돼 있으므로 rc = post/(1+postPct/100)로 정규장 종가 역산 가능.
+  //   (post≈price면 오염 신호. 역산식은 정상 데이터에도 항등이라 오적용 무해.)
+  try {
+    if (q.post > 0 && typeof q.postPct === "number" && q.price > 0 && Math.abs(q.price - q.post) / q.post < 0.001) {
+      const rc = q.post / (1 + q.postPct / 100);
+      if (rc > 0 && isFinite(rc)) { q.price = rc; if (q.prevClose > 0) q.dayPct = ((rc - q.prevClose) / q.prevClose) * 100; }
+    } else if (q.pre > 0 && typeof q.prePct === "number" && q.price > 0 && Math.abs(q.price - q.pre) / q.pre < 0.001 && q.prevClose > 0) {
+      q.price = q.prevClose; q.dayPct = 0;   // 프리마켓 오염 — 새 거래일 장중은 아직 없음
+    }
+  } catch (e) {}
   q.regPrice = q.price; q.regPct = q.dayPct;   // 정규장 값 보존(프런트가 필요시 사용)
   if (st === "PRE" && typeof q.pre === "number" && q.pre > 0) {
     q.dispPrice = q.pre; q.dispPct = (typeof q.prePct === "number") ? q.prePct : q.dayPct;

@@ -8783,9 +8783,9 @@ html[data-theme="light"] .table tbody tr:hover{background:rgba(9,105,218,.045);}
     // [렉 개선] 60s→120s 주기 + limit 10000→3000(전략성과는 최근 거래 위주로 충분, 다운로드·처리량 70%↓).
     var _needAll = !window.__allTradesCache || (Date.now() - (window.__allTradesTs || 0)) > 120000;
     // [개선] /api/state 1회로 watchlist + indices까지 한 번에 받음
-    Promise.all([api('/api/state'), api('/api/trades?limit=50'),
-                 _needAll ? api('/api/trades?limit=3000') : Promise.resolve(window.__allTradesCache || [])])
-      .then(function(r){
+    // [V12.7 로딩속도] 응답 처리부를 _apply로 분리 — 첫 부팅 시 마지막 성공 데이터(localStorage)로
+    //   즉시 화면을 그리고(체감 0초), 네트워크 응답이 오면 최신으로 덮어쓴다.
+    var _apply = function(r){
         var state = r[0], trades = r[1], allTrades = r[2];
         if (_needAll) { window.__allTradesCache = allTrades; window.__allTradesTs = Date.now(); }
         // [V33] 데이터 수신 성공 — 라이브 인디케이터용 시각 기록
@@ -8881,6 +8881,17 @@ html[data-theme="light"] .table tbody tr:hover{background:rgba(9,105,218,.045);}
         }
         renderCfgDisplay(state.cfg);
         try { checkAlerts(); } catch(e){}   // [V98] 가격 알림 체크
+    };
+    if (!window.__bootPainted) {
+      window.__bootPainted = 1;
+      try { var _bc = localStorage.getItem('bootBundle'); if (_bc) { var _bb = JSON.parse(_bc); if (_bb && _bb.state) _apply([_bb.state, _bb.trades || [], []]); } } catch(e){}
+    }
+    Promise.all([api('/api/state'), api('/api/trades?limit=50'),
+                 _needAll ? api('/api/trades?limit=3000') : Promise.resolve(window.__allTradesCache || [])])
+      .then(function(r){
+        _apply(r);
+        // 마지막 성공 스냅샷 저장(전체 거래내역 제외 — 용량 절약)
+        try { localStorage.setItem('bootBundle', JSON.stringify({ state: r[0], trades: r[1] })); } catch(e){}
       })['catch'](function(e){ toast('로드 실패: '+e.message); });
     // [COMMODITY] 원자재 패널은 별도 엔드포인트로 로드
     loadCommodities();
