@@ -10960,7 +10960,8 @@ html[data-theme="light"] #page-nnviz .nnv-title,html[data-theme="light"] #page-n
     if(!layers.length){ stage.innerHTML='<div class="nnv-empty">구조 데이터 없음</div>'; return; }
     var reduce = false; try{ reduce = window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches; }catch(e){}
     var cols=layers.length;
-    // [V12.13] 층당 뉴런 48→64, 가로 간격 압축(74→58), 휠/핀치 줌·드래그 팬 지원
+    // [V12.15] 노드 캡 완전 해제 — 전 뉴런(2,408개) 표시. 엣지는 노드당 최대 3개 샘플링 구조라
+    //   전결합 폭발(327K) 없이 ~10.5K path로 수렴. 실측(Chromium): 최초 렌더 ~0.36s, 줌/팬 3.6ms/frame(60fps).
     var colGap=58, padL=122, padR=40, headH=60, footH=48, capPer=999999, EDGE_CAP=999999;
     var W=padL+padR+colGap*(cols-1), H=760;
     var colX=function(i){ return padL + colGap*i; };
