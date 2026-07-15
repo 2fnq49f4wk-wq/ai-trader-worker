@@ -9786,9 +9786,12 @@ async function refreshQuotesOnly(env, market) {
     // intra(1) + 일봉 만료 시(최대 1~2) 여유를 두고, 예산이 3 미만이면 중단
     if (fetchBudgetLeft() < 3) { skippedBudget++; continue; }
     try {
-      const intra = await fetchIntraday(symbol);
+      // [V12.9] US는 fetchIntraday(1m 차트 meta) 대신 fetchQuoteViaChart(일봉 앵커·시간외 분리) 사용 —
+      //   1m 차트의 meta.regularMarketPrice/chartPreviousClose는 시간외·자정 롤오버에 오염됨.
+      const intra = (symbol.endsWith(".KS") || symbol.endsWith(".KQ"))
+        ? await fetchIntraday(symbol) : await fetchQuoteViaChart(symbol);
       const daily = await getDailyCached(DB, symbol, cfg.dailyCacheMinutes);
-      if (!intra.price || intra.price <= 0) { fail++; processed++; continue; }
+      if (!intra || !intra.price || intra.price <= 0) { fail++; processed++; continue; }
       const price = intra.price;
       const prevClose = intra.prevClose || price;
       const dayPct = ((price - prevClose) / prevClose) * 100;
@@ -21072,25 +21075,46 @@ export default {
       try { await runTradingCycle(env); }
       catch (e) { try { await log(env.DB, "ERROR", null, "[SCHED] trading cycle fail: " + e.message); } catch (e2) {} }
 
-      // 1.5) [V12.8] 신규 편입 종목 즉시 백필 — quote가 아예 없는 종목은 장 시간과 무관하게
-      //   사이클당 60개씩 채움(유니버스에 종목 추가 후 다음 개장까지 빈 칸으로 남던 문제 해결).
+      // 1.5) [V12.8] 신규 편입 종목 즉시 백필 + [V12.9] 오염 quote 전량 재기록 마이그레이션.
+      //   - 백필: quote가 아예 없는 종목은 장 시간과 무관하게 사이클당 60개씩 채움.
+      //   - 재기록: 과거 v8 롤오버 버그로 오염된 미국 quote 전체(560개)를 수정된 fetch로
+      //     사이클당 60개씩 한 바퀴 다시 써서(기존 일봉 지표 보존 머지) 즉시 정상화. 1회성.
       try {
         const have = new Set();
         const rows = await env.DB.prepare("SELECT k FROM state WHERE k LIKE 'quote:%'").all();
         for (const r of ((rows && rows.results) || [])) have.add(String(r.k).slice(6));
-        const missing = DEFAULT_US.concat(DEFAULT_KR).filter(function (s) { return !have.has(s); }).slice(0, 60);
-        if (missing.length) {
-          resetFetchBudget(80);
-          const got = await fetchBatchQuotes(missing, { DB: env.DB, maxFallback: missing.length });
+        const missing = DEFAULT_US.concat(DEFAULT_KR).filter(function (s) { return !have.has(s); });
+        let remig = [];
+        const mig = await getState(env.DB, "quote_remigrate_v129", null);
+        if (!mig || !mig.done) {
+          const start = (mig && typeof mig.idx === "number") ? mig.idx : 0;
+          remig = DEFAULT_US.slice(start, start + 60);
+          await setState(env.DB, "quote_remigrate_v129", (start + 60 >= DEFAULT_US.length) ? { done: true } : { idx: start + 60 });
+        }
+        const targets = Array.from(new Set(missing.concat(remig))).slice(0, 90);
+        if (targets.length) {
+          resetFetchBudget(120);
+          const got = await fetchBatchQuotes(targets, { DB: env.DB, maxFallback: targets.length });
           const now2 = Date.now(); const stmts2 = [];
-          for (const s of missing) {
+          for (const s of targets) {
             const q = got[s]; if (!q || q.price == null) continue;
-            const merged = Object.assign({ market: (s.endsWith(".KS") || s.endsWith(".KQ")) ? "kr" : "us", ts: now2 }, q);
+            let prevQ = {};
+            try { const e2 = await getState(env.DB, "quote:" + s, null); if (e2 && typeof e2 === "object") prevQ = e2; } catch (e) {}
+            const merged = Object.assign({}, prevQ, {
+              market: (s.endsWith(".KS") || s.endsWith(".KQ")) ? "kr" : "us",
+              price: q.price, prevClose: q.prevClose, dayPct: q.dayPct, ts: now2
+            });
+            // 시간외 필드는 새 값이 있을 때만 갱신(없으면 기존 유지)
+            if (q.mstate != null) merged.mstate = q.mstate;
+            if (typeof q.pre === "number" && q.pre > 0) { merged.pre = q.pre; merged.prePct = q.prePct; }
+            if (typeof q.post === "number" && q.post > 0) { merged.post = q.post; merged.postPct = q.postPct; }
+            if (typeof q.shares === "number" && q.shares > 0) merged.shares = q.shares;
+            if (typeof q.mcap === "number" && q.mcap > 0) merged.mcap = q.mcap;
             stmts2.push(env.DB.prepare("INSERT INTO state (k, v, updated_ts) VALUES (?, ?, ?) ON CONFLICT(k) DO UPDATE SET v=excluded.v, updated_ts=excluded.updated_ts")
               .bind("quote:" + s, JSON.stringify(merged), now2));
           }
           for (let i = 0; i < stmts2.length; i += 50) { try { await env.DB.batch(stmts2.slice(i, i + 50)); } catch (e) {} }
-          if (stmts2.length) { try { await log(env.DB, "INFO", null, "[V12.8] 신규종목 시세 백필 " + stmts2.length + "/" + missing.length + "건"); } catch (e) {} }
+          if (stmts2.length) { try { await log(env.DB, "INFO", null, "[V12.9] quote 백필/재기록 " + stmts2.length + "/" + targets.length + "건"); } catch (e) {} }
         }
       } catch (e) {}
 
