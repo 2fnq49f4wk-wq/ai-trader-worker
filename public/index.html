@@ -10821,6 +10821,9 @@ setTimeout(function(){ var o=document.getElementById('lux-intro-overlay'); if(o&
 #page-nnviz svg.nnv-focus .nnv-node{opacity:.12;}
 #page-nnviz svg.nnv-focus .nnedge.hl,#page-nnviz svg.nnv-focus .nnedge-static.hl{opacity:1;stroke:#5ab4ff;stroke-width:1.5;filter:drop-shadow(0 0 3.5px rgba(90,180,255,.95));}
 #page-nnviz svg.nnv-focus .nnv-node.hl{opacity:1;fill:#8fd0ff;filter:drop-shadow(0 0 6px rgba(110,190,255,1));}
+/* 2홉(이웃의 연결) — 옅은 파랑으로 신호가 어디로 퍼지는지 표시 */
+#page-nnviz svg.nnv-focus .nnedge.hl2,#page-nnviz svg.nnv-focus .nnedge-static.hl2{opacity:.5;stroke:#3f86d8;stroke-width:.9;}
+#page-nnviz svg.nnv-focus .nnv-node.hl2{opacity:.8;fill:#79aee6;}
 #page-nnviz .nnnode{transition:r .5s ease;}
 /* [V11] 3M 실동작 여부 배너 */
 #page-nnviz .nnv-banner{margin:2px 0 12px;padding:9px 13px;border-radius:10px;font-size:11.5px;line-height:1.55;font-family:'IBM Plex Mono',monospace;}
@@ -10965,14 +10968,21 @@ html[data-theme="light"] #page-nnviz .nnv-title,html[data-theme="light"] #page-n
     // [V12.18 리디자인] 벌집 클러스터 배치 — 일자 나열 폐기. 큰 층은 세로 80칸 × 여러 줄로 접어
     //   전 뉴런(2,408)이 겹침 0으로 한 화면 높이(~850px)에 수납. 강도 높은 뉴런일수록 밴드
     //   중앙으로(center-out) — 층마다 "발광 코어"가 실제 기여 뉴런 무리를 형태로 보여줌.
-    var dxN=9, dyN=9, maxRows=80, bandGap=62, padL=158, padR=36, headH=58, footH=44, EDGE_CAP=4500;
+    var dxN=9, dyN=9, maxRows=80, padL=158, padR=36, headH=58, footH=44, EDGE_CAP=4500;
     var H=headH+footH+maxRows*dyN+24, yMid=headH+12+(maxRows*dyN)/2;
-    // 각 층 = 밴드: 노드마다 개별 (x,y) 좌표. 원래 인덱스 보존 → 입력 피처명 매핑 유지.
+    // 1패스: 층별 접기(콜럼 수)와 밴드 폭 계산 — 층간 간격을 이웃 밴드 폭에 비례시켜
+    //   뒤쪽 좁은 층들(H6~OUT)은 촘촘히, 앞쪽 큰 층들은 넉넉히(30~62px 사이).
+    var meta=layers.map(function(L){
+      var n=(L.strength||[]).length||1;
+      var colsN=Math.ceil(n/maxRows), rowsN=Math.ceil(n/colsN);
+      return {n:n, colsN:colsN, rowsN:rowsN, w:Math.max(colsN*dxN,14)};
+    });
+    // 2패스: 노드 좌표. 각 층 = 밴드, 노드마다 개별 (x,y). 원래 인덱스 보존 → 입력 피처명 매핑 유지.
     var bands=[], bx=padL;
     var shown=layers.map(function(L,li){
       var nm=L.names||null;
       var st=L.strength||[], n=st.length||1;
-      var colsN=Math.ceil(n/maxRows), rowsN=Math.ceil(n/colsN);
+      var colsN=meta[li].colsN, rowsN=meta[li].rowsN;
       var order=st.map(function(s,idx){return {s:s,idx:idx,name:nm?nm[idx]:null};})
                   .sort(function(a,b){return b.s-a.s;});
       // 자리(slot)를 중앙에서 바깥 순으로 정렬 → 강도 상위가 중앙 코어에 배치
@@ -10985,11 +10995,14 @@ html[data-theme="light"] #page-nnviz .nnv-title,html[data-theme="light"] #page-n
         o.x = bx + sl.c*dxN + (sl.r%2 ? dxN*0.5 : 0);   // 벌집(홀수행 반칸 오프셋)
         o.y = yMid + (sl.r-(rowsN-1)/2)*dyN;
       });
-      bands.push({cx: bx+(colsN-1)*dxN/2+dxN*0.25, w: colsN*dxN});
-      bx += Math.max(colsN*dxN, 14) + bandGap;
+      bands.push({cx: bx+(colsN-1)*dxN/2+dxN*0.25, w: meta[li].w});
+      if(li<layers.length-1){
+        var gap=Math.min(62, Math.max(38, 20 + (meta[li].w+meta[li+1].w)*0.5));
+        bx += meta[li].w + gap;
+      } else bx += meta[li].w;
       return order;
     });
-    var W=bx-bandGap+padR;
+    var W=bx+padR;
     // 곡선 엣지 — 노드당 소수 타깃 샘플링. 실제 망은 전결합이므로 "선 없는 점"은 표시 오류로 보임 →
     //   모든 표시 노드가 나가는 선 1개 + 들어오는 선 1개를 반드시 갖도록 이중 보장(고립점 0).
     var guar=[], extra=[];
@@ -11034,7 +11047,7 @@ html[data-theme="light"] #page-nnviz .nnv-title,html[data-theme="light"] #page-n
       var tag = kind==='input'?'IN':(kind==='output'?'OUT':'H'+(++nHidden));
       var act = kind==='input'?'FEAT':(kind==='output'?'σ':'ReLU');
       // 층 헤더 배지: 층 태그 + 뉴런수 — 전 층이 "몇 번째 층인지" 즉시 보이게
-      heads+='<rect x="'+(cx-24)+'" y="13" width="48" height="20" rx="10" fill="rgba(70,130,255,0.10)" stroke="'+hd+'" stroke-opacity="0.55" stroke-width="1"/>'
+      heads+='<rect x="'+(cx-21)+'" y="13" width="42" height="20" rx="10" fill="rgba(70,130,255,0.10)" stroke="'+hd+'" stroke-opacity="0.55" stroke-width="1"/>'
         +'<text x="'+cx+'" y="27" text-anchor="middle" font-family="IBM Plex Mono,monospace" font-size="10.5" font-weight="700" fill="'+hd+'">'+tag+'</text>'
         +'<text x="'+cx+'" y="46" text-anchor="middle" font-family="IBM Plex Mono,monospace" font-size="9" fill="#8fa6c8">'+layers[li].size+'n</text>';
       var col2=shown[li], allS=layers[li].strength||[];
@@ -11067,8 +11080,8 @@ html[data-theme="light"] #page-nnviz .nnv-title,html[data-theme="light"] #page-n
       // [V12.16] 연결 하이라이트 해제 헬퍼 — 포커스 클래스 제거 + hl 일괄 해제
       function clearHL(){
         svg.classList.remove('nnv-focus');
-        var hs=svg.querySelectorAll('.hl');
-        for(var hi=0;hi<hs.length;hi++) hs[hi].classList.remove('hl');
+        var hs=svg.querySelectorAll('.hl,.hl2');
+        for(var hi=0;hi<hs.length;hi++){ hs[hi].classList.remove('hl'); hs[hi].classList.remove('hl2'); }
         NNV._focusKey=null;
       }
       if(!t || !t.classList || !t.classList.contains('nnv-hit')){ clearHL(); return; }
@@ -11080,6 +11093,7 @@ html[data-theme="light"] #page-nnviz .nnv-title,html[data-theme="light"] #page-n
         var eds=svg.querySelectorAll('path[data-a="'+key+'"],path[data-b="'+key+'"]');
         if(eds.length){
           svg.classList.add('nnv-focus');
+          // 1홉: 클릭 노드에 직접 닿는 엣지·이웃 — 밝은 발광(hl)
           var seen={}; seen[key]=1;
           for(var ei2=0;ei2<eds.length;ei2++){
             eds[ei2].classList.add('hl');
@@ -11089,6 +11103,23 @@ html[data-theme="light"] #page-nnviz .nnv-title,html[data-theme="light"] #page-n
           for(var kk in seen){
             var ns=svg.querySelectorAll('circle.nnv-node[data-key="'+kk+'"]');
             for(var ni=0;ni<ns.length;ni++) ns[ni].classList.add('hl');
+          }
+          // 2홉: 이웃 노드들이 또 어디에 연결되는지 — 옅은 발광(hl2)으로 신호 경로 확장 표시
+          var seen2={};
+          for(var nk in seen){
+            if(nk===key) continue;
+            var eds2=svg.querySelectorAll('path[data-a="'+nk+'"],path[data-b="'+nk+'"]');
+            for(var e3=0;e3<eds2.length;e3++){
+              if(eds2[e3].classList.contains('hl')) continue;
+              eds2[e3].classList.add('hl2');
+              seen2[eds2[e3].getAttribute('data-a')]=1;
+              seen2[eds2[e3].getAttribute('data-b')]=1;
+            }
+          }
+          for(var kk2 in seen2){
+            if(seen[kk2]) continue;
+            var ns2=svg.querySelectorAll('circle.nnv-node[data-key="'+kk2+'"]');
+            for(var n2=0;n2<ns2.length;n2++) ns2[n2].classList.add('hl2');
           }
           NNV._focusKey=key;
         }
