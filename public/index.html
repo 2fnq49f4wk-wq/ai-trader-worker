@@ -10840,9 +10840,16 @@ html[data-theme="light"] #page-nnviz .nnv-title,html[data-theme="light"] #page-n
   window.closeNnViz = function(){ if(NNV.timer){clearInterval(NNV.timer);NNV.timer=null;} };
   window.openNnViz = function(refreshOnly){
     var stage=document.getElementById('nnvStage'); if(!stage) return;
-    if(!refreshOnly) stage.innerHTML='<div class="nnv-empty">신경망 로딩 중…</div>';
-    fetch('/api/nn-viz').then(function(r){return r.json();}).then(function(d){ NNV_render(d); })
-      ['catch'](function(){ stage.innerHTML='<div class="nnv-empty">조회 실패 — 엔진이 응답하지 않습니다.</div>'; });
+    // [V12.5 로딩속도] 마지막 성공 데이터로 즉시 렌더(체감 0ms) → 백그라운드로 최신 데이터 갱신
+    var painted=false;
+    if(!refreshOnly){
+      try{ var c=localStorage.getItem('nnvCache'); if(c){ NNV_render(JSON.parse(c)); painted=true; } }catch(e){}
+      if(!painted) stage.innerHTML='<div class="nnv-empty">신경망 로딩 중…</div>';
+    }
+    fetch('/api/nn-viz').then(function(r){return r.json();}).then(function(d){
+      NNV_render(d);
+      try{ localStorage.setItem('nnvCache', JSON.stringify(d)); }catch(e){}
+    })['catch'](function(){ if(!painted) stage.innerHTML='<div class="nnv-empty">조회 실패 — 엔진이 응답하지 않습니다.</div>'; });
   };
   function esc(v){ return (v==null)?'—':v; }
   function pct(v){ return (v==null||isNaN(v))?'—':(v*100).toFixed(1)+'%'; }

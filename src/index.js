@@ -190,7 +190,12 @@ const DEFAULT_US = [
   "SPXU","SH",
   // [추가 ETF] 미국 섹터 SPDR + 테마(반도체/바이오/다우) — 추세 명확·거래량 큼
   "XLK","XLV","XLY","XLI","XLP","XLU","XLB","XLC","XLRE",
-  "SOXX","IBB","DIA"
+  "SOXX","IBB","DIA",
+  // [V12.5 추가] 대형 ADR·글로벌 반도체·성장주 — TSMC/마벨/하이닉스ADR 등
+  "TSM","MRVL","ASML","ARM","HXSCL",
+  "NVO","SAP","BABA","TM","SONY","PDD","JD","MELI","SE",
+  "SHOP","SPOT","RBLX","SNOW","NET","MDB","ZS","OKTA","TEAM",
+  "DKNG","SOFI","RIVN","MSTR"
 ];
 
 const DEFAULT_KR = [
@@ -265,7 +270,9 @@ const DEFAULT_KR = [
   // [추가 ETF] 비미국 테마 — 원자재(금·원유)·국내섹터(2차전지·은행)·중국
   "132030.KS","130680.KS","305540.KS","091170.KS","192090.KS",
   // [추가 ETF] 리츠·코스닥
-  "329200.KS","232080.KS"
+  "329200.KS","232080.KS",
+  // [V12.5 추가] 조선 보강
+  "010620.KS"
 ];
 
 // ETF 심볼 셋 (레버리지 ETF 리스크 처리용)
@@ -343,6 +350,12 @@ const NAME_MAP = {
   "MSFT":"Microsoft",
   "AMZN":"Amazon",
   "AVGO":"Broadcom",
+  "TSM":"TSMC(ADR)","MRVL":"마벨 테크놀로지","ASML":"ASML(ADR)","ARM":"Arm홀딩스","HXSCL":"SK하이닉스(ADR)",
+  "NVO":"노보노디스크","SAP":"SAP","BABA":"알리바바","TM":"도요타","SONY":"소니",
+  "PDD":"핀둬둬(PDD)","JD":"징둥닷컴","MELI":"메르카도리브레","SE":"씨(SEA)",
+  "SHOP":"쇼피파이","SPOT":"스포티파이","RBLX":"로블록스","SNOW":"스노우플레이크","NET":"클라우드플레어",
+  "MDB":"몽고DB","ZS":"지스케일러","OKTA":"옥타","TEAM":"아틀라시안",
+  "DKNG":"드래프트킹스","SOFI":"소파이","RIVN":"리비안","MSTR":"스트래티지(MSTR)",
   "META":"Meta",
   "TSLA":"Tesla",
   "WMT":"Walmart",
@@ -888,6 +901,7 @@ const NAME_MAP = {
   "010130.KS":"고려아연",
   "009540.KS":"HD한국조선해양",
   "010140.KS":"삼성중공업",
+  "010620.KS":"HD현대미포",
   "000150.KS":"두산",
   "015760.KS":"한국전력",
   "000810.KS":"삼성화재",
@@ -1191,6 +1205,9 @@ const MCAP_RANK = {
   "MSFT":5,
   "AMZN":6,
   "AVGO":7,
+  "TSM":9,"ASML":22,"SAP":26,"NVO":28,"BABA":30,"TM":33,"HXSCL":45,"SONY":55,"ARM":58,"MELI":62,
+  "SPOT":66,"SHOP":68,"SE":70,"MRVL":75,"PDD":78,"NET":105,"MSTR":110,"SNOW":140,"RBLX":150,"JD":160,
+  "ZS":190,"TEAM":210,"SOFI":260,"RIVN":300,"OKTA":310,"MDB":320,"DKNG":330,
   "META":8,
   "SPCX":9,
   "TSLA":9,
@@ -2114,6 +2131,7 @@ const LEGACY_STRATEGIES = ["swing", "momentum", "meanrev", "day"];  // 통계/�
 // === [신규] 섹터 매핑 (동시 보유 제한용) ===
 const SECTOR_MAP = {
   "NVDA":"US_SEMI","AVGO":"US_SEMI","AMD":"US_SEMI","INTC":"US_SEMI","SNDK":"US_SEMI",
+  "TSM":"US_SEMI","MRVL":"US_SEMI","ASML":"US_SEMI","ARM":"US_SEMI","HXSCL":"US_SEMI",
   "AAPL":"US_TECH","GOOGL":"US_TECH","META":"US_TECH","AMZN":"US_TECH","ORCL":"US_TECH",
   "TSLA":"US_AUTO","RKLB":"US_AERO","BA":"US_AERO",
   "GS":"US_FIN","BRK-B":"US_FIN",
@@ -2165,7 +2183,13 @@ const SECTOR_GROUP_MAP = {
   // KR INDUSTRIAL (배터리·조선·방산·중공업·화학)
   "373220.KS":"INDUSTRIAL","006400.KS":"INDUSTRIAL","034020.KS":"INDUSTRIAL","329180.KS":"INDUSTRIAL","028260.KS":"INDUSTRIAL","012450.KS":"INDUSTRIAL","042660.KS":"INDUSTRIAL","064350.KS":"INDUSTRIAL","267260.KS":"INDUSTRIAL","010120.KS":"INDUSTRIAL","298040.KS":"INDUSTRIAL","047810.KS":"INDUSTRIAL","051910.KS":"INDUSTRIAL",
   // KR RESOURCES (철강·비철·유틸)
-  "005490.KS":"RESOURCES","010130.KS":"RESOURCES","015760.KS":"RESOURCES"
+  "005490.KS":"RESOURCES","010130.KS":"RESOURCES","015760.KS":"RESOURCES",
+  // [V12.5 추가] 신규 ADR·성장주 그룹 매핑
+  "TSM":"TECH","MRVL":"TECH","ASML":"TECH","ARM":"TECH","HXSCL":"TECH","SAP":"TECH","SONY":"TECH",
+  "SNOW":"TECH","NET":"TECH","MDB":"TECH","ZS":"TECH","OKTA":"TECH","TEAM":"TECH","SHOP":"TECH","MSTR":"TECH",
+  "BABA":"CONSUMER","PDD":"CONSUMER","JD":"CONSUMER","MELI":"CONSUMER","SE":"CONSUMER","SPOT":"CONSUMER",
+  "RBLX":"CONSUMER","DKNG":"CONSUMER","TM":"CONSUMER","RIVN":"CONSUMER",
+  "NVO":"HEALTH","SOFI":"FINANCE"
 };
 // 종목 → 그룹 (cfg에 추가 매핑 있으면 우선). 미매핑은 OTHER.
 function getSectorGroup(symbol, cfg) {
@@ -18631,10 +18655,31 @@ const FEAT_ROLES = {
 //   전체 66k 가중치를 보내지 않고 층당 뉴런 강도만(≈609개 실수) → 경량.
 async function mlDNNVizData(DB) {
   try {
-    const m = await mlDNNLoad(DB);
     const trust = await getState(DB, "dnn_trust", null);
     let gtrust = null; try { gtrust = await getState(DB, "gbdt_trust", null); } catch (e) {}
     let mindAcc = null; try { const mm = await mlMindLoad(DB); if (mm) mindAcc = _num(mm.valAcc, null); } catch (e) {}
+    // [V12.5 로딩속도] 가중치 요약(layers·params·피처영향도)은 모델이 바뀔 때만 변한다 →
+    //   dnn_model:meta.ts 기준으로 캐시(nn_viz_cache). 캐시 적중 시 21MB 청크 로드 0회.
+    //   trust/위원회/가동여부는 학습과 무관하게 변하므로 매 요청 소량 재조회로 신선도 유지.
+    const _meta = await getState(DB, "dnn_model:meta", null);
+    let _cachedHeavy = null;
+    if (_meta && _meta.ts) {
+      try { const c = await getState(DB, "nn_viz_cache", null); if (c && c.heavy && c.metaTs === _meta.ts) _cachedHeavy = c.heavy; } catch (e) {}
+    }
+    if (_cachedHeavy) {
+      const dimsC = _cachedHeavy.dims || [];
+      const committeeC = [];
+      if (mindAcc != null) committeeC.push({ name: "MIND", role: "스태킹", acc: +mindAcc.toFixed(3), w: null, trusted: true });
+      committeeC.push({ name: "DNN", role: dimsC.length + "층 딥넷", acc: trust ? +_num(trust.dnnAccLB, _num(trust.dnnAcc, 0)).toFixed(3) : null, w: trust ? _num(trust.wDnn, 0) : 0, trusted: !!(trust && trust.trusted) });
+      if (gtrust) committeeC.push({ name: "GBDT", role: "부스팅트리", acc: +_num(gtrust.gbdtAccLB, _num(gtrust.gbdtAcc, 0)).toFixed(3), w: _num(gtrust.wGbdt, 0), trusted: !!gtrust.trusted });
+      return Object.assign({}, _cachedHeavy, {
+        trust: trust ? { wDnn: trust.wDnn, trusted: !!trust.trusted, dnnAcc: trust.dnnAcc } : null,
+        active: !!(trust && trust.trusted && _num(trust.wDnn, 0) > 0),
+        committee: committeeC,
+        config: { dropout: DNN.dropout, adamW: !!DNN.adamW, cosineLR: !!DNN.cosineLR, optimizer: DNN.adamW ? "AdamW+cosine" : "Adam" }
+      });
+    }
+    const m = await mlDNNLoad(DB);
     if (!m || (!Array.isArray(m.nets) && !Array.isArray(m.W))) {
       const _fn = LUXML.featNames;
       const _if = _fn.map(function (nm, j) { return { i: j, name: nm, role: FEAT_ROLES[nm] || "", strength: 0 }; });
@@ -18675,14 +18720,18 @@ async function mlDNNVizData(DB) {
     // [V11] 3M이 실제 거래결정에 기여 중인가? 신뢰게이트 통과(trusted & wDnn>0) 여부 = 실동작 여부.
     const active = !!(trust && trust.trusted && _num(trust.wDnn, 0) > 0);
     const source = m.source || "worker";   // "external"=외부GPU 업로드, "worker"=야간 자가학습
-    return {
+    // [V12.5 로딩속도] 무거운 요약을 캐시(모델 meta.ts 키) — 다음 요청부터 21MB 로드 생략
+    const heavy = {
       trained: true, architecture: dims.join("-") + "×" + nets.length, dims: dims, cfgLayers: DNN.hidden.length + 2, seeds: nets.length,
-      valAcc: m.valAcc, n: m.n, params: params, trainedAt: m.trainedAt,
-      trust: trust ? { wDnn: trust.wDnn, trusted: !!trust.trusted, dnnAcc: trust.dnnAcc } : null,
-      active: active, source: source,
-      layers: layers, committee: committee, inputFeatures: inputFeatures, topFeatures: topFeatures,
-      config: { dropout: DNN.dropout, adamW: !!DNN.adamW, cosineLR: !!DNN.cosineLR, optimizer: DNN.adamW ? "AdamW+cosine" : "Adam" }
+      valAcc: m.valAcc, n: m.n, params: params, trainedAt: m.trainedAt, source: source,
+      layers: layers, inputFeatures: inputFeatures, topFeatures: topFeatures
     };
+    if (_meta && _meta.ts) { try { await setState(DB, "nn_viz_cache", { metaTs: _meta.ts, heavy: heavy }); } catch (e) {} }
+    return Object.assign({}, heavy, {
+      trust: trust ? { wDnn: trust.wDnn, trusted: !!trust.trusted, dnnAcc: trust.dnnAcc } : null,
+      active: active, committee: committee,
+      config: { dropout: DNN.dropout, adamW: !!DNN.adamW, cosineLR: !!DNN.cosineLR, optimizer: DNN.adamW ? "AdamW+cosine" : "Adam" }
+    });
   } catch (e) { return { trained: false, error: e && e.message }; }
 }
 
