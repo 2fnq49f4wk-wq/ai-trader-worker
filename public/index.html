@@ -3453,8 +3453,8 @@ html[data-theme="light"] .table tbody tr:hover{background:rgba(9,105,218,.045);}
       <span><i style="background:#4aa3ff;"></i>입력층(피처)</span>
       <span><i style="background:#eafff4;"></i>은닉층(ReLU·드롭아웃)</span>
       <span><i style="background:#00e676;"></i>출력층(Sigmoid·승률)</span>
-      <span style="color:#6f84aa;">곡선 굵기·밝기=연결강도(깜빡임=강한 연결의 신호 흐름) · 각 층은 강도 상위 48개 뉴런만 표시(전체 수=배지 아래 n)</span>
-      <span style="color:#9fb4dc;">👆 점을 클릭/터치하면 그 뉴런의 역할이 표시됩니다</span>
+      <span style="color:#6f84aa;">곡선 굵기·밝기=연결강도(깜빡임=강한 연결의 신호 흐름) · 각 층은 강도 상위 64개 뉴런만 표시(전체 수=배지 아래 n)</span>
+      <span style="color:#9fb4dc;">👆 점 클릭/터치=뉴런 역할 · 휠/핀치=확대 · 드래그=이동</span>
     </div>
     <div class="nnv-comm" id="nnvComm"></div>
   </div>
@@ -10793,6 +10793,9 @@ setTimeout(function(){ var o=document.getElementById('lux-intro-overlay'); if(o&
 #page-nnviz .nnv-stage{position:relative;background:radial-gradient(120% 120% at 50% 0%,#0c1526,#060910 70%);border:1px solid #16223c;border-radius:13px;overflow:hidden;}
 #page-nnviz .nnv-scroll{overflow-x:auto;-webkit-overflow-scrolling:touch;}
 #page-nnviz .nnv-hit{cursor:pointer;}
+#page-nnviz .nnv-zoombtns{position:absolute;right:10px;top:10px;display:flex;flex-direction:column;gap:5px;z-index:4;}
+#page-nnviz .nnv-zoombtns button{width:30px;height:30px;border-radius:8px;border:1px solid #2a4270;background:rgba(12,20,38,.85);color:#9fb4dc;font-size:14px;cursor:pointer;line-height:1;}
+#page-nnviz .nnv-zoombtns button:hover{color:#eaf2ff;border-color:#3a63b0;}
 #page-nnviz .nnv-tip{position:absolute;z-index:5;max-width:290px;background:rgba(10,17,32,.96);border:1px solid #2a4270;border-radius:10px;padding:10px 12px;font-size:11px;line-height:1.6;color:#dbe6fb;box-shadow:0 12px 34px rgba(0,0,0,.55);pointer-events:none;font-family:'IBM Plex Mono',monospace;}
 #page-nnviz .nnv-tip b{color:#eaf2ff;}
 #page-nnviz .nnv-tip .m{color:#7c90b5;font-size:10px;}
@@ -10957,9 +10960,9 @@ html[data-theme="light"] #page-nnviz .nnv-title,html[data-theme="light"] #page-n
     if(!layers.length){ stage.innerHTML='<div class="nnv-empty">구조 데이터 없음</div>'; return; }
     var reduce = false; try{ reduce = window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches; }catch(e){}
     var cols=layers.length;
-    // [V12.12] 밀도 재확대 — 층당 뉴런 32→48, 세로 640→720, 엣지 상한 700
-    var colGap=74, padL=150, padR=56, headH=60, footH=48, capPer=48, EDGE_CAP=700;
-    var W=padL+padR+colGap*(cols-1), H=720;
+    // [V12.13] 층당 뉴런 48→64, 가로 간격 압축(74→58), 휠/핀치 줌·드래그 팬 지원
+    var colGap=58, padL=122, padR=40, headH=60, footH=48, capPer=64, EDGE_CAP=840;
+    var W=padL+padR+colGap*(cols-1), H=760;
     var colX=function(i){ return padL + colGap*i; };
     var yTop=headH+18, yBot=H-footH-14;
     // 표시 노드: 강도 상위 capPer, 세로 균등 (원래 인덱스 보존 → 입력 피처명 매핑)
@@ -11029,7 +11032,7 @@ html[data-theme="light"] #page-nnviz .nnv-title,html[data-theme="light"] #page-n
           // 투명 히트영역(터치 타깃 ≥18px) — 클릭하면 뉴런 역할 툴팁
           +'<circle class="nnv-hit" cx="'+cx+'" cy="'+col2[k].y.toFixed(1)+'" r="6" fill="transparent" data-kind="'+kind+'" data-tag="'+tag+'" data-name="'+(col2[k].name||'')+'" data-s="'+(s*100).toFixed(0)+'" data-rank="'+rank+'" data-size="'+layers[li].size+'"/>';
         if(kind==='input' && col2[k].name){
-          featLabels+='<text x="'+(cx-9)+'" y="'+(col2[k].y+2.2).toFixed(1)+'" text-anchor="end" font-family="IBM Plex Mono,monospace" font-size="7.5" fill="#7fa8d8">'+col2[k].name+'</text>';
+          featLabels+='<text x="'+(cx-8)+'" y="'+(col2[k].y+2).toFixed(1)+'" text-anchor="end" font-family="IBM Plex Mono,monospace" font-size="7" fill="#7fa8d8">'+col2[k].name+'</text>';
         }
       }
       // 하단: 활성함수 + 표본 표시(뉴런이 capPer 초과면 상위표시임을 명시)
@@ -11039,13 +11042,70 @@ html[data-theme="light"] #page-nnviz .nnv-title,html[data-theme="light"] #page-n
     // 좌상단 층수 요약 — "몇 층짜리 뇌인가"가 그림 안에서 바로 읽히게
     var summary='<text x="14" y="28" font-family="Space Grotesk,sans-serif" font-size="13" font-weight="700" fill="#eaf2ff">'+cols+' LAYERS</text>'
       +'<text x="14" y="44" font-family="IBM Plex Mono,monospace" font-size="8.5" fill="#7c90b5">입력 1 · 은닉 '+nHidden+' · 출력 1</text>';
-    stage.innerHTML='<div class="nnv-scroll"><svg viewBox="0 0 '+W+' '+H+'" preserveAspectRatio="xMidYMid meet" style="min-width:'+Math.min(W,1180)+'px;background:radial-gradient(120% 90% at 50% 8%,#0d1a2e,#050810 72%);">'+rails+edges+nodes+featLabels+heads+foots+summary+'</svg></div>';
+    stage.innerHTML='<div class="nnv-scroll"><svg viewBox="0 0 '+W+' '+H+'" preserveAspectRatio="xMidYMid meet" style="min-width:'+Math.min(W,1000)+'px;touch-action:none;background:radial-gradient(120% 90% at 50% 8%,#0d1a2e,#050810 72%);">'+rails+edges+nodes+featLabels+heads+foots+summary+'</svg></div>'
+      +'<div class="nnv-zoombtns"><button data-z="in">＋</button><button data-z="out">－</button><button data-z="reset">⟳</button></div>';
     NNV_bindNodeTips(stage);
+    NNV_bindZoom(stage, W, H);
+  }
+  // [V12.13] 휠/핀치 줌 + 드래그 팬 — viewBox 카메라 방식(확대해도 벡터라 선명)
+  function NNV_bindZoom(stage, W, H){
+    var svg=stage.querySelector('svg'); if(!svg) return;
+    var vb={x:0,y:0,w:W,h:H};
+    function apply(){ svg.setAttribute('viewBox', vb.x.toFixed(1)+' '+vb.y.toFixed(1)+' '+vb.w.toFixed(1)+' '+vb.h.toFixed(1)); }
+    function clamp(){
+      vb.w=Math.max(W/10, Math.min(W, vb.w)); vb.h=vb.w*(H/W);
+      vb.x=Math.max(0, Math.min(W-vb.w, vb.x)); vb.y=Math.max(0, Math.min(H-vb.h, vb.y));
+    }
+    function zoomAt(px, py, factor){
+      // px,py: svg 화면좌표 → viewBox 좌표로 환산 후 그 점 고정 줌
+      var r=svg.getBoundingClientRect();
+      var mx=vb.x+(px-r.left)/r.width*vb.w, my=vb.y+(py-r.top)/r.height*vb.h;
+      vb.w*=factor; vb.h=vb.w*(H/W);
+      vb.x=mx-(px-r.left)/r.width*vb.w; vb.y=my-(py-r.top)/r.height*vb.h;
+      clamp(); apply();
+    }
+    svg.addEventListener('wheel', function(e){ e.preventDefault(); zoomAt(e.clientX, e.clientY, e.deltaY>0?1.15:1/1.15); }, {passive:false});
+    // 포인터: 1개=팬(이동량 5px 넘으면 클릭 억제), 2개=핀치줌
+    var pts={}, panStart=null, pinchD=0;
+    svg.addEventListener('pointerdown', function(e){
+      pts[e.pointerId]={x:e.clientX,y:e.clientY};
+      var ks=Object.keys(pts);
+      if(ks.length===1){ panStart={x:e.clientX,y:e.clientY,vx:vb.x,vy:vb.y}; NNV._dragged=false; }
+      else if(ks.length===2){ panStart=null; var a=pts[ks[0]],b=pts[ks[1]]; pinchD=Math.hypot(a.x-b.x,a.y-b.y); }
+      try{ svg.setPointerCapture(e.pointerId); }catch(err){}
+    });
+    svg.addEventListener('pointermove', function(e){
+      if(!pts[e.pointerId]) return;
+      pts[e.pointerId]={x:e.clientX,y:e.clientY};
+      var ks=Object.keys(pts);
+      if(ks.length===1 && panStart){
+        var dx=e.clientX-panStart.x, dy=e.clientY-panStart.y;
+        if(Math.abs(dx)+Math.abs(dy)>5) NNV._dragged=true;
+        var r=svg.getBoundingClientRect();
+        vb.x=panStart.vx-dx/r.width*vb.w; vb.y=panStart.vy-dy/r.height*vb.h;
+        clamp(); apply();
+      } else if(ks.length===2){
+        var a=pts[ks[0]],b=pts[ks[1]], d=Math.hypot(a.x-b.x,a.y-b.y);
+        if(pinchD>0 && d>0){ NNV._dragged=true; zoomAt((a.x+b.x)/2,(a.y+b.y)/2, pinchD/d); }
+        pinchD=d;
+      }
+    });
+    function up(e){ delete pts[e.pointerId]; panStart=null; pinchD=0; }
+    svg.addEventListener('pointerup', up); svg.addEventListener('pointercancel', up);
+    var btns=stage.querySelector('.nnv-zoombtns');
+    if(btns) btns.addEventListener('click', function(e){
+      var z=e.target && e.target.getAttribute('data-z'); if(!z) return;
+      var r=svg.getBoundingClientRect(), cx=r.left+r.width/2, cy=r.top+r.height/2;
+      if(z==='in') zoomAt(cx,cy,1/1.35);
+      else if(z==='out') zoomAt(cx,cy,1.35);
+      else { vb={x:0,y:0,w:W,h:H}; apply(); }
+    });
   }
   // [V12.3] 노드 클릭/터치 → 역할 툴팁. 입력=피처 역할(백엔드 inputFeatures), 은닉/출력=층 역할 설명.
   function NNV_bindNodeTips(stage){
     var svg=stage.querySelector('svg'); if(!svg) return;
     svg.addEventListener('click', function(ev){
+      if(NNV._dragged){ NNV._dragged=false; return; }   // [V12.13] 팬/줌 드래그 직후엔 툴팁 억제
       var t=ev.target;
       var old=stage.querySelector('.nnv-tip'); if(old) old.remove();
       if(!t || !t.classList || !t.classList.contains('nnv-hit')) return;
