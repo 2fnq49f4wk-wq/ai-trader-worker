@@ -21082,11 +21082,19 @@ export default {
           remig = DEFAULT_US.slice(start, start + 60);
           await setState(env.DB, "quote_remigrate_v129", (start + 60 >= DEFAULT_US.length) ? { done: true } : { idx: start + 60 });
         }
-        const targets = Array.from(new Set(missing.concat(remig))).slice(0, 90);
+        // [V12.12] 스파크(그래프) 없는 종목도 대상 포함 — 신규 종목은 quote는 있으나 일봉/스파크가 빔
+        let sparkless = [];
+        try {
+          const sr = await env.DB.prepare("SELECT k FROM state WHERE k LIKE 'quote:%' AND json_extract(v,'$.spark') IS NULL LIMIT 15").all();
+          sparkless = ((sr && sr.results) || []).map(function (r) { return String(r.k).slice(6); })
+            .filter(function (s) { return DEFAULT_US.indexOf(s) >= 0 || DEFAULT_KR.indexOf(s) >= 0; });
+        } catch (e) {}
+        const targets = Array.from(new Set(missing.concat(remig).concat(sparkless))).slice(0, 90);
         if (targets.length) {
-          resetFetchBudget(120);
+          resetFetchBudget(140);
           const got = await fetchBatchQuotes(targets, { DB: env.DB, maxFallback: targets.length });
           const now2 = Date.now(); const stmts2 = [];
+          let dailyBudget = 15;   // [V12.12] 스파크라인 백필 — 일봉 없는 신규종목, 사이클당 15개
           for (const s of targets) {
             const q = got[s]; if (!q || q.price == null) continue;
             let prevQ = {};
@@ -21095,6 +21103,22 @@ export default {
               market: (s.endsWith(".KS") || s.endsWith(".KQ")) ? "kr" : "us",
               price: q.price, prevClose: q.prevClose, dayPct: q.dayPct, ts: now2
             });
+            // [V12.12] 그래프(스파크)·기간수익률이 없는 신규 종목은 일봉을 즉시 당겨 채움
+            if ((!merged.spark || !merged.spark.length) && dailyBudget > 0 && fetchBudgetLeft() > 2) {
+              dailyBudget--;
+              try {
+                const dw = await fetchDailyWithFallback(s);
+                const cl = dw && dw.data && dw.data.closes;
+                if (Array.isArray(cl) && cl.length >= 2) {
+                  merged.spark = cl.slice(-23).map(function (v) { return Math.round(v * 100) / 100; });
+                  const L = cl.length, last = cl[L - 1];
+                  const retN = function (n) { return (L > n && cl[L - 1 - n] > 0) ? ((last / cl[L - 1 - n]) - 1) * 100 : null; };
+                  if (merged.return5 == null) merged.return5 = retN(5);
+                  if (merged.return20 == null) merged.return20 = retN(20);
+                  if (merged.return60 == null) merged.return60 = retN(60);
+                }
+              } catch (e) {}
+            }
             // 시간외 필드는 새 값이 있을 때만 갱신(없으면 기존 유지)
             if (q.mstate != null) merged.mstate = q.mstate;
             if (typeof q.pre === "number" && q.pre > 0) { merged.pre = q.pre; merged.prePct = q.prePct; }
