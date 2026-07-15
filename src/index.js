@@ -5453,38 +5453,43 @@ async function fetchQuoteViaChart(symbol) {
       return nq;
     } catch(e) { return null; }
   }
-  // US 종목 — Yahoo v8 chart meta
+  // US 종목 — Yahoo v8 chart. [V12.8] range=5d 일봉을 진실원으로: 마지막 일봉 종가=장중 가격,
+  //   직전 일봉 종가=전일종가. meta.regularMarketPrice(라이브·시간외 포함)는 세션 판정 후 분리 사용.
+  //   (기존 range=1d는 UTC 자정 롤오버 시 prevClose가 당일 종가로 밀려 dayPct가 시간외 등락으로 오염됐음)
   const j = await yahooFetch("https://query1.finance.yahoo.com/v8/finance/chart/" +
-    encodeURIComponent(symbol) + "?interval=1d&range=1d");
+    encodeURIComponent(symbol) + "?interval=1d&range=5d");
   const result = j && j.chart && j.chart.result && j.chart.result[0];
   if (!result) return null;
   const meta = result.meta || {};
   const closesRaw = (result.indicators && result.indicators.quote && result.indicators.quote[0] &&
                      result.indicators.quote[0].close) || [];
   const closes = closesRaw.filter(function(c){ return typeof c === "number" && !isNaN(c) && c > 0; });
-  const live = (typeof meta.regularMarketPrice === "number" && meta.regularMarketPrice > 0)
-    ? meta.regularMarketPrice : (closes.length ? closes[closes.length - 1] : null);
-  if (live == null) return null;
-  const prevClose = (typeof meta.chartPreviousClose === "number" && meta.chartPreviousClose > 0)
-    ? meta.chartPreviousClose
-    : (typeof meta.previousClose === "number" && meta.previousClose > 0 ? meta.previousClose : live);
-  // [장중/장후 분리 FIX] v8 meta.regularMarketPrice는 프리/애프터 중엔 시간외 가격으로 움직인다(Yahoo 특성).
-  //   이걸 그대로 price/dayPct로 쓰면 DB의 "장중 등락"이 시간외 값으로 오염 → 정규장 밖이면
-  //   일봉 종가(closes, 정규장 전용)를 장중 가격으로 쓰고, 시간외 가격은 pre/post 필드로 분리.
+  const live = (typeof meta.regularMarketPrice === "number" && meta.regularMarketPrice > 0) ? meta.regularMarketPrice : null;
+  // 장중 가격/전일종가 — 일봉 시계열(정규장 전용)에서 뽑아 어떤 시각(자정 포함)에도 안전
+  let price = null, prevClose = null;
+  if (closes.length >= 2) { price = closes[closes.length - 1]; prevClose = closes[closes.length - 2]; }
+  else if (closes.length === 1) {
+    price = closes[0];
+    prevClose = (typeof meta.chartPreviousClose === "number" && meta.chartPreviousClose > 0) ? meta.chartPreviousClose : price;
+  }
+  if (price == null) {
+    if (live == null) return null;
+    price = live;
+    prevClose = (typeof meta.chartPreviousClose === "number" && meta.chartPreviousClose > 0) ? meta.chartPreviousClose : live;
+  }
   const ctp = meta.currentTradingPeriod && meta.currentTradingPeriod.regular;
   const nowSec = Math.floor(Date.now() / 1000);
-  const inRegular = !(ctp && typeof ctp.start === "number" && typeof ctp.end === "number"
-                      && (nowSec < ctp.start || nowSec >= ctp.end));
-  let price = live;
+  const inRegular = !!(ctp && typeof ctp.start === "number" && typeof ctp.end === "number"
+                       && nowSec >= ctp.start && nowSec < ctp.end);
   const o = {};
-  if (!inRegular && closes.length) {
-    price = closes[closes.length - 1];
-    const isPre = ctp && nowSec < ctp.start;
-    o.mstate = isPre ? "PRE" : "POST";
-    if (live > 0 && Math.abs(live - price) / price > 1e-6) {
-      if (isPre) { o.pre = live; o.prePct = prevClose ? ((live - prevClose) / prevClose) * 100 : 0; }
-      else { o.post = live; o.postPct = price ? ((live - price) / price) * 100 : 0; }
-    }
+  if (inRegular) {
+    if (live > 0) price = live;   // 정규장 중엔 라이브(오늘 일봉과 사실상 동일)
+    o.mstate = "REGULAR";
+  } else if (live > 0 && price > 0 && Math.abs(live - price) / price > 1e-6) {
+    // 시간외 가격 분리 — 정규장 시작 5.5h 이내 전이면 장전(프리), 그 외(마감 후·심야)는 장후로 간주
+    const isPre = !!(ctp && nowSec < ctp.start && (ctp.start - nowSec) < 5.5 * 3600);
+    if (isPre) { o.mstate = "PRE"; o.pre = live; o.prePct = ((live - price) / price) * 100; }
+    else { o.mstate = "POST"; o.post = live; o.postPct = ((live - price) / price) * 100; }
   }
   const dayPct = prevClose ? ((price - prevClose) / prevClose) * 100 : 0;
   return Object.assign({ price: price, prevClose: prevClose || price, dayPct: dayPct }, o);
@@ -21066,6 +21071,28 @@ export default {
       // 1) 주식/지수 가격 갱신 + 거래 (가장 무거움)
       try { await runTradingCycle(env); }
       catch (e) { try { await log(env.DB, "ERROR", null, "[SCHED] trading cycle fail: " + e.message); } catch (e2) {} }
+
+      // 1.5) [V12.8] 신규 편입 종목 즉시 백필 — quote가 아예 없는 종목은 장 시간과 무관하게
+      //   사이클당 60개씩 채움(유니버스에 종목 추가 후 다음 개장까지 빈 칸으로 남던 문제 해결).
+      try {
+        const have = new Set();
+        const rows = await env.DB.prepare("SELECT k FROM state WHERE k LIKE 'quote:%'").all();
+        for (const r of ((rows && rows.results) || [])) have.add(String(r.k).slice(6));
+        const missing = DEFAULT_US.concat(DEFAULT_KR).filter(function (s) { return !have.has(s); }).slice(0, 60);
+        if (missing.length) {
+          resetFetchBudget(80);
+          const got = await fetchBatchQuotes(missing, { DB: env.DB, maxFallback: missing.length });
+          const now2 = Date.now(); const stmts2 = [];
+          for (const s of missing) {
+            const q = got[s]; if (!q || q.price == null) continue;
+            const merged = Object.assign({ market: (s.endsWith(".KS") || s.endsWith(".KQ")) ? "kr" : "us", ts: now2 }, q);
+            stmts2.push(env.DB.prepare("INSERT INTO state (k, v, updated_ts) VALUES (?, ?, ?) ON CONFLICT(k) DO UPDATE SET v=excluded.v, updated_ts=excluded.updated_ts")
+              .bind("quote:" + s, JSON.stringify(merged), now2));
+          }
+          for (let i = 0; i < stmts2.length; i += 50) { try { await env.DB.batch(stmts2.slice(i, i + 50)); } catch (e) {} }
+          if (stmts2.length) { try { await log(env.DB, "INFO", null, "[V12.8] 신규종목 시세 백필 " + stmts2.length + "/" + missing.length + "건"); } catch (e) {} }
+        }
+      } catch (e) {}
 
       // 2+3) [신규] alt 슬리브 실시간 거래 — 원자재(cm)·미국국채(bdus)·한국국채(bdkr)
       //   기존 "매분 시세갱신 + 16:00 1회 거래"를 실시간(매 사이클 장중 매매)으로 통합.
