@@ -901,14 +901,6 @@ button.btn.loading::after{content:'조회 중…';position:absolute;inset:0;disp
   .topbar-value{font-size:16px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
   .fv-panel{min-width:0;}
   .page-body{max-width:100%;}
-  /* [V12.21] 하단 3열(헤드라인·원자재·환율채권)이 iPad에선 너무 좁아 RSI 열이 잘림 →
-     헤드라인 전폭 + 원자재/환율 2열. 테이블 셀 패딩 축소·이름 열 말줄임으로 4열 전부 표시. */
-  .fv-bottom .fv-table th,.fv-bottom .fv-table td{padding:4px 7px;}
-  .fv-bottom .fv-table td:first-child{max-width:118px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
-}
-@media (min-width:1101px) and (max-width:1440px){
-  .fv-bottom{grid-template-columns:1fr 1fr;}
-  .fv-bottom>.fv-panel:first-child{grid-column:1/-1;}
 }
 
 /* iPad 세로: 정보바 2열, 사이드바 약간 축소 */
@@ -1888,9 +1880,13 @@ html[data-theme="light"] .table tbody tr:nth-child(even){background:rgba(20,30,5
 .fv-tick{color:var(--fviz-blue);font-weight:700;}
 .fv-sig{font-size:9px;color:var(--t3);}
 
-/* 헤드라인/하단 3열 */
-.fv-bottom{display:grid;grid-template-columns:1.4fr 1fr 1fr;gap:8px;}
-@media(max-width:1100px){.fv-bottom{grid-template-columns:1fr;}}
+/* [V12.22] 헤드라인/하단 — 고정 3열 폐기, 화면 폭에 맞춰 열 수 자동 조절(패널 최소 385px 보장).
+   어떤 화면/줌에서도 원자재 RSI 열이 패널 밖으로 잘리지 않음. */
+.fv-bottom{display:grid;grid-template-columns:repeat(auto-fit,minmax(385px,1fr));gap:8px;}
+@media(max-width:900px){.fv-bottom{grid-template-columns:1fr;}}
+/* 하단 테이블: 셀 패딩 축소 + 이름 열 말줄임 — 좁은 패널에서도 4열(RSI까지) 전부 표시 */
+.fv-bottom .fv-table th,.fv-bottom .fv-table td{padding:4px 7px;}
+.fv-bottom .fv-table td:first-child{max-width:140px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
 .fv-headlines{max-height:235px;overflow-y:auto;}
 .fv-hl{display:flex;gap:9px;padding:5px 12px;border-bottom:1px solid var(--bd2);font-size:10.5px;
   align-items:baseline;cursor:pointer;}
