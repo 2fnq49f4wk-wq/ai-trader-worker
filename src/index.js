@@ -5559,17 +5559,8 @@ function applyKrOverMarket(o, d) {
 function applyDisplayOverMarket(q) {
   if (!q) return q;
   const st = q.mstate;
-  // [V12.7 자가치유] 과거 v8 폴백이 price/dayPct를 시간외 값으로 오염시킨 행 복구.
-  //   postPct는 "정규장 종가 대비"로 계산돼 있으므로 rc = post/(1+postPct/100)로 정규장 종가 역산 가능.
-  //   (post≈price면 오염 신호. 역산식은 정상 데이터에도 항등이라 오적용 무해.)
-  try {
-    if (q.post > 0 && typeof q.postPct === "number" && q.price > 0 && Math.abs(q.price - q.post) / q.post < 0.001) {
-      const rc = q.post / (1 + q.postPct / 100);
-      if (rc > 0 && isFinite(rc)) { q.price = rc; if (q.prevClose > 0) q.dayPct = ((rc - q.prevClose) / q.prevClose) * 100; }
-    } else if (q.pre > 0 && typeof q.prePct === "number" && q.price > 0 && Math.abs(q.price - q.pre) / q.pre < 0.001 && q.prevClose > 0) {
-      q.price = q.prevClose; q.dayPct = 0;   // 프리마켓 오염 — 새 거래일 장중은 아직 없음
-    }
-  } catch (e) {}
+  // [V12.10] V12.7의 postPct 역산 "자가치유" 제거 — post/postPct가 서로 다른 시점 값(COALESCE 잔존)이면
+  //   오히려 정상 장중 가격을 오염시킬 수 있음. 오염 데이터는 V12.9 전량 재기록으로 근본 해결됨.
   q.regPrice = q.price; q.regPct = q.dayPct;   // 정규장 값 보존(프런트가 필요시 사용)
   if (st === "PRE" && typeof q.pre === "number" && q.pre > 0) {
     q.dispPrice = q.pre; q.dispPct = (typeof q.prePct === "number") ? q.prePct : q.dayPct;

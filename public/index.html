@@ -7244,6 +7244,7 @@ html[data-theme="light"] .table tbody tr:hover{background:rgba(9,105,218,.045);}
     market = market || ((symbol.indexOf('.KS') >= 0 || symbol.indexOf('.KQ') >= 0) ? 'kr' : 'us');
     detailState.symbol = symbol;
     detailState.market = market;
+    detailState.__tfAutoSwapped = 0;   // [V12.10] 신규상장 일봉 부족 시 분봉 자동전환 플래그 초기화
     var emp = $('detailEmpty'), con = $('detailContent'), back = $('detailBackBtn'), abtn = $('detailAlertBtn'), rbtn = $('detailReportBtn');
     if (emp) emp.style.display = 'none';
     if (con) con.style.display = '';
@@ -7460,7 +7461,12 @@ html[data-theme="light"] .table tbody tr:hover{background:rgba(9,105,218,.045);}
       .then(function(r) { return r.json(); })
       .then(function(d) {
         if (st.symbol !== reqSym || st.interval !== reqTf) return;   // 그새 종목/탭 변경됨
-        if (!d || !d.candles || d.candles.length < 3) { box.innerHTML = '<div class="detail-empty">차트 데이터 없음 (' + escapeHtml(st.symbol) + ')</div>'; detailState.lastCandles = null; return; }
+        // [V12.10] 신규 상장(예: SKHY)은 일봉이 1~2개뿐 — 3개 미만이어도 있으면 그리되,
+        //   일봉 계열이면 60분봉으로 자동 전환해 의미 있는 차트를 보여준다.
+        if (!d || !d.candles || d.candles.length < 1) { box.innerHTML = '<div class="detail-empty">차트 데이터 없음 (' + escapeHtml(st.symbol) + ')</div>'; detailState.lastCandles = null; return; }
+        if (d.candles.length < 3 && (reqTf === '1d' || reqTf === '1wk' || reqTf === '1mo') && !st.__tfAutoSwapped) {
+          st.__tfAutoSwapped = 1; loadDetailChart('60m'); return;
+        }
         detailState.lastCandles = d.candles;
         detailState.view = { count: Math.min(150, d.candles.length), off: 0 };  // [V90] 새 데이터 → 뷰 초기화
         renderDetailChartFromCache();
