@@ -10961,7 +10961,7 @@ html[data-theme="light"] #page-nnviz .nnv-title,html[data-theme="light"] #page-n
     var reduce = false; try{ reduce = window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches; }catch(e){}
     var cols=layers.length;
     // [V12.13] 층당 뉴런 48→64, 가로 간격 압축(74→58), 휠/핀치 줌·드래그 팬 지원
-    var colGap=58, padL=122, padR=40, headH=60, footH=48, capPer=256, EDGE_CAP=8000;
+    var colGap=58, padL=122, padR=40, headH=60, footH=48, capPer=999999, EDGE_CAP=999999;
     var W=padL+padR+colGap*(cols-1), H=760;
     var colX=function(i){ return padL + colGap*i; };
     var yTop=headH+18, yBot=H-footH-14;
