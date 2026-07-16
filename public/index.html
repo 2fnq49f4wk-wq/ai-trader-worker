@@ -3493,6 +3493,7 @@ html[data-theme="light"] .table tbody tr:hover{background:rgba(9,105,218,.045);}
         <div class="nnv-title"><span class="dot"></span>AI 두뇌 관측 · LUX-DNN</div>
       </div>
       <div style="display:flex;gap:8px;align-items:center;">
+        <button class="nnv-btn" onclick="redeployBrain()" title="Modal 학습기를 재배포하고 즉시 1회 재학습(GitHub Actions 수동 실행)">🚀 재학습·재배포</button>
         <button class="nnv-btn" onclick="openNnViz(1)">↻ 새로고침</button>
       </div>
     </div>
@@ -11085,6 +11086,13 @@ html[data-theme="light"] #page-nnviz .nnv-title,html[data-theme="light"] #page-n
   var NNV = { timer:null };
   // [V9.12] 팝업→페이지 전환 — 표시/숨김은 showPage()의 .page.active가 담당. 여기선 데이터 로드만.
   window.closeNnViz = function(){ if(NNV.timer){clearInterval(NNV.timer);NNV.timer=null;} };
+  // [V12.35] 두뇌 재학습·재배포 — GitHub Actions "Deploy Modal Trainer" 수동 실행(run_now 체크)로 이동.
+  //   브라우저에 GitHub 토큰을 심지 않는 안전 방식: 워크플로 페이지를 새 탭으로 열어 Run workflow 한 번만 누르면 됨.
+  window.redeployBrain = function(){
+    var url='https://github.com/2fnq49f4wk-wq/ai-trader-worker/actions/workflows/modal-deploy.yml';
+    if(!confirm('Modal 학습기를 재배포하고 즉시 1회 재학습합니다.\n\nGitHub Actions 페이지가 열리면 오른쪽 "Run workflow" → "배포 후 즉시 학습 1회 실행" 체크 → 초록 "Run workflow" 버튼을 누르세요.\n\n(약 5분 뒤 이 페이지 새로고침 시 갱신된 두뇌가 반영됩니다.)')) return;
+    window.open(url,'_blank','noopener');
+  };
   window.openNnViz = function(refreshOnly){
     var stage=document.getElementById('nnvStage'); if(!stage) return;
     // [V12.5 로딩속도] 마지막 성공 데이터로 즉시 렌더(체감 0ms) → 백그라운드로 최신 데이터 갱신

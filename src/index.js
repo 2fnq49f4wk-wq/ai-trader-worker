@@ -6653,6 +6653,31 @@ async function getBigState(DB, key, def) {
     return JSON.parse(str);
   } catch (e) { return def; }
 }
+// [V12.35] 대형모델 OOM 회피용 원문(String) I/O — 중첩배열을 JS 객체로 파싱하지 않고 문자열 그대로 다룬다.
+//   업로드 커밋에서 37MB를 request.json()으로 파싱하면 Worker 128MB를 초과(503)하므로,
+//   시드별로 이미 직렬화된 JSON 문자열을 이어붙여 dnn_model 청크를 만든다(문자열은 파싱보다 훨씬 가벼움).
+async function getBigStateRaw(DB, key) {
+  const meta = await getState(DB, key + ":meta", null);
+  if (!meta || !meta.chunks) return null;
+  let str = "";
+  for (let i = 0; i < meta.chunks; i++) {
+    const row = await DB.prepare("SELECT v FROM state WHERE k = ?").bind(key + ":chunk:" + i).first();
+    if (!row || row.v == null) return null;
+    str += row.v;
+  }
+  if (meta.len && str.length !== meta.len) return null;
+  return str;
+}
+async function setBigStateRaw(DB, key, str, metaExtra) {
+  const CHUNK = 400000;
+  const n = Math.ceil(str.length / CHUNK);
+  try { await DB.prepare("DELETE FROM state WHERE k LIKE ?").bind(key + ":chunk:%").run(); } catch (e) {}
+  const up = "INSERT INTO state (k, v, updated_ts) VALUES (?, ?, ?) ON CONFLICT(k) DO UPDATE SET v=excluded.v, updated_ts=excluded.updated_ts";
+  for (let i = 0; i < n; i++) await DB.prepare(up).bind(key + ":chunk:" + i, str.slice(i * CHUNK, (i + 1) * CHUNK), Date.now()).run();
+  const _metaObj = Object.assign({ chunks: n, len: str.length, ts: Date.now() }, metaExtra || {});
+  await DB.prepare(up).bind(key + ":meta", JSON.stringify(_metaObj), Date.now()).run();
+  return { chunks: n, bytes: str.length };
+}
 
 // === [V8] positions DAO — (symbol, strategy) 복합키 ===
 // 반환 구조: { "SYMBOL::strategy": { qty, avg, opened_ts, meta, strategy, symbol } }
@@ -13491,9 +13516,92 @@ async function handleRequest(request, env) {
     //   body: { nets:[{W,b,dims}], mean, std, dims, valAcc, valAccLB, valN, n, featVer }
     if (path === "/api/dnn-import" && request.method === "POST") {
       const au = _trainAuthed(); if (!au.ok) return Response.json({ error: au.msg }, { status: au.code, headers: cors });
-      let body; try { body = await request.json(); } catch (e) { return Response.json({ error: "bad json" }, { status: 400, headers: cors }); }
       const D = LUXML.featNames.length;
       const wantDims = [D].concat(DNN.hidden).concat([1]);
+      const stage = url.searchParams.get("stage");   // [V12.35] 분할 업로드 모드
+
+      // ── 공용: 단일 net 형상/유한성 검증 ──
+      const _validNet = function (nt, dims) {
+        if (!nt || !Array.isArray(nt.W) || nt.W.length !== dims.length - 1 || !Array.isArray(nt.b)) return "net 구조 불일치";
+        for (let l = 0; l < nt.W.length; l++) {
+          if (!Array.isArray(nt.W[l]) || nt.W[l].length !== dims[l + 1] || !Array.isArray(nt.W[l][0]) || nt.W[l][0].length !== dims[l])
+            return "W[" + l + "] 형상 불일치 (" + dims[l + 1] + "×" + dims[l] + " 필요)";
+        }
+        for (const v of nt.W[nt.W.length - 1][0]) if (!isFinite(v)) return "비유한 가중치";
+        return null;
+      };
+      // ── 공용: 신뢰게이트 계산 + 저장 + 응답(단발/커밋 공통) ──
+      const _finishImport = async function (saveInfo, valAcc, valAccLB, valN) {
+        __dnnMemCache = null;
+        let mindLB = 0.5;
+        try { const mm = await mlMindLoad(env.DB); if (mm) mindLB = (typeof mm.valAccLB === "number") ? mm.valAccLB : _wilsonLB(_num(mm.valAcc, 0.5), _num(mm.valN, 30)); } catch (e) {}
+        let trust = { wDnn: 0, trusted: false, dnnAcc: valAcc, dnnAccLB: valAccLB, mindAcc: mindLB, source: "external" };
+        if (valAccLB >= DNN.trustFloor && valAccLB >= mindLB - 1e-9 + DNN.trustMargin) {
+          const eD = Math.exp(DNN.trustTemp * (valAccLB - 0.5)), eM = Math.exp(DNN.trustTemp * (mindLB - 0.5));
+          trust.wDnn = +(eD / (eD + eM)).toFixed(4); trust.trusted = trust.wDnn > 0.05;
+        }
+        await setState(env.DB, "dnn_trust", trust);
+        try { await log(env.DB, "INFO", null, "[DNN] 외부업로드 저장 " + (saveInfo.bytes / 1048576).toFixed(1) + "MB/" + saveInfo.chunks + "청크 valAcc=" + (valAcc * 100).toFixed(1) + "% wDnn=" + trust.wDnn); } catch (e) {}
+        return Response.json({ ok: true, saved: saveInfo, trust: trust, activated: trust.trusted,
+          note: trust.trusted ? "3M 딥넷이 위원회에서 가동됩니다(wDnn=" + trust.wDnn + ")" : "저장됐으나 검증성능이 mind 미달 → 자동 억제(wDnn=0). 표본/에폭 늘려 재학습 권장." }, { headers: cors });
+      };
+
+      // ════════ [V12.35] 분할 업로드: begin → net×K → commit (37MB 통째 파싱 회피) ════════
+      if (stage === "begin") {
+        let body; try { body = await request.json(); } catch (e) { return Response.json({ error: "bad json" }, { status: 400, headers: cors }); }
+        if (_num(body.featVer, -1) !== LUXML.featVer) return Response.json({ error: "featVer 불일치 (서버 " + LUXML.featVer + ")" }, { status: 400, headers: cors });
+        if (!Array.isArray(body.mean) || body.mean.length !== D || !Array.isArray(body.std) || body.std.length !== D)
+          return Response.json({ error: "mean/std 차원 불일치 (" + D + " 필요)" }, { status: 400, headers: cors });
+        const dims = Array.isArray(body.dims) ? body.dims : wantDims;
+        if (dims.length !== wantDims.length || dims.some(function (v, i) { return v !== wantDims[i]; }))
+          return Response.json({ error: "dims 불일치 — 기대 " + wantDims.join("-") }, { status: 400, headers: cors });
+        const seeds = Math.max(1, Math.floor(_num(body.seeds, 0)));
+        if (!seeds) return Response.json({ error: "seeds 없음" }, { status: 400, headers: cors });
+        // 이전 스테이징 잔여 제거
+        try { await env.DB.prepare("DELETE FROM state WHERE k = 'dnn_stage' OR k LIKE 'dnn_stage:net:%'").run(); } catch (e) {}
+        const dnnAcc = _clamp(_num(body.valAcc, 0), 0, 1);
+        const valN = Math.max(1, Math.floor(_num(body.valN, 30)));
+        const dnnLB = (body.valAccLB != null) ? _clamp(_num(body.valAccLB, 0), 0, 1) : _wilsonLB(dnnAcc, valN);
+        await setState(env.DB, "dnn_stage", { featVer: LUXML.featVer, mean: body.mean.map(function (v) { return _num(v, 0); }),
+          std: body.std.map(function (v) { return _num(v, 1); }), dims: dims, seeds: seeds, valAcc: +dnnAcc.toFixed(4),
+          valAccLB: +dnnLB.toFixed(4), valN: valN, n: Math.max(0, Math.floor(_num(body.n, 0))), ts: Date.now() });
+        return Response.json({ ok: true, staged: "begin", seeds: seeds }, { headers: cors });
+      }
+      if (stage === "net") {
+        const stg = await getState(env.DB, "dnn_stage", null);
+        if (!stg) return Response.json({ error: "begin 먼저 호출" }, { status: 409, headers: cors });
+        const i = Math.floor(Number(url.searchParams.get("i")));   // 쿼리파라미터는 문자열 → Number 파싱(_num은 number타입만 허용해 항상 default 반환)
+        if (!isFinite(i) || i < 0 || i >= stg.seeds) return Response.json({ error: "시드 인덱스 범위밖 (0.." + (stg.seeds - 1) + ")" }, { status: 400, headers: cors });
+        let nt; try { nt = await request.json(); } catch (e) { return Response.json({ error: "bad json" }, { status: 400, headers: cors }); }
+        const err = _validNet(nt, stg.dims);
+        if (err) return Response.json({ error: "시드 " + i + ": " + err }, { status: 400, headers: cors });
+        const info = await setBigState(env.DB, "dnn_stage:net:" + i, { W: nt.W, b: nt.b, dims: stg.dims });
+        return Response.json({ ok: true, i: i, saved: info }, { headers: cors });
+      }
+      if (stage === "commit") {
+        const stg = await getState(env.DB, "dnn_stage", null);
+        if (!stg) return Response.json({ error: "begin 먼저 호출" }, { status: 409, headers: cors });
+        // 모든 시드 net 원문 문자열을 이어붙여 최종 dnn_model JSON 문자열을 조립(객체 파싱 없음 → OOM 회피)
+        let netsStr = "";
+        for (let k = 0; k < stg.seeds; k++) {
+          const raw = await getBigStateRaw(env.DB, "dnn_stage:net:" + k);
+          if (raw == null) return Response.json({ error: "시드 " + k + " 누락 — 재업로드 필요" }, { status: 409, headers: cors });
+          netsStr += (k ? "," : "") + raw;
+        }
+        const head = '{"nets":[' + netsStr + '],"mean":' + JSON.stringify(stg.mean) + ',"std":' + JSON.stringify(stg.std) +
+          ',"featVer":' + LUXML.featVer + ',"valAcc":' + stg.valAcc + ',"valAccLB":' + stg.valAccLB + ',"valN":' + stg.valN +
+          ',"dims":' + JSON.stringify(stg.dims) + ',"n":' + (stg.n || 0) + ',"trainedAt":' + Date.now() + ',"source":"external"}';
+        netsStr = null;
+        let saveInfo;
+        try { saveInfo = await setBigStateRaw(env.DB, "dnn_model", head, { featVer: LUXML.featVer }); }
+        catch (e) { return Response.json({ error: "저장 실패: " + (e && e.message) }, { status: 500, headers: cors }); }
+        // 스테이징 정리
+        try { await env.DB.prepare("DELETE FROM state WHERE k = 'dnn_stage' OR k LIKE 'dnn_stage:net:%'").run(); } catch (e) {}
+        return await _finishImport(saveInfo, stg.valAcc, stg.valAccLB, stg.valN);
+      }
+
+      // ════════ 기존 단발 업로드(소형·수동용) ════════
+      let body; try { body = await request.json(); } catch (e) { return Response.json({ error: "bad json" }, { status: 400, headers: cors }); }
       // ── 검증: featVer·차원·유한성 ──
       if (_num(body.featVer, -1) !== LUXML.featVer) return Response.json({ error: "featVer 불일치 (서버 " + LUXML.featVer + ")" }, { status: 400, headers: cors });
       if (!Array.isArray(body.nets) || !body.nets.length) return Response.json({ error: "nets 없음" }, { status: 400, headers: cors });
@@ -18858,7 +18966,9 @@ async function mlDNNVizData(DB) {
   try {
     const trust = await getState(DB, "dnn_trust", null);
     let gtrust = null; try { gtrust = await getState(DB, "gbdt_trust", null); } catch (e) {}
-    let mindAcc = null; try { const mm = await mlMindLoad(DB); if (mm) mindAcc = _num(mm.valAcc, null); } catch (e) {}
+    // [V12.35] 위원회 표시는 하한(LB)으로 통일 — DNN/GBDT는 AccLB로 표시되고 가중치도 전부 하한 기반이므로,
+    //   MIND만 점추정(valAcc)으로 보이면 "표시 정확도↑인데 실제 가중치↓" 모순이 생긴다. mind도 valAccLB 사용.
+    let mindAcc = null; try { const mm = await mlMindLoad(DB); if (mm) mindAcc = (typeof mm.valAccLB === "number") ? mm.valAccLB : _wilsonLB(_num(mm.valAcc, 0.5), _num(mm.valN, 30)); } catch (e) {}
     // [V12.5 로딩속도] 가중치 요약(layers·params·피처영향도)은 모델이 바뀔 때만 변한다 →
     //   dnn_model:meta.ts 기준으로 캐시(nn_viz_cache). 캐시 적중 시 21MB 청크 로드 0회.
     //   trust/위원회/가동여부는 학습과 무관하게 변하므로 매 요청 소량 재조회로 신선도 유지.

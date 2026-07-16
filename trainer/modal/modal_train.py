@@ -264,18 +264,32 @@ def train_job(epochs: int = EPOCHS_DEFAULT, dry: bool = False):
             bl.append(np.round(lin.bias.detach().cpu().numpy(), 4).tolist())
         js_nets.append({"W": Wl, "b": bl, "dims": dims})
 
-    payload = {"featVer": featver, "nets": js_nets, "mean": mean.tolist(), "std": std.tolist(),
-               "dims": dims, "valAcc": round(acc, 4), "valAccLB": round(lb, 4), "valN": n_eval, "n": N}
-
     if dry:
         print("--dry: 업로드 생략"); return {"ok": True, "valAcc": acc, "uploaded": False}
 
-    print("④ 업로드")
-    r = requests.post(BASE + "/api/dnn-import", params={"key": KEY}, headers=HDR,
-                      data=json.dumps(payload), timeout=300)
-    if r.status_code != 200:
-        raise RuntimeError(f"import {r.status_code}: {r.text[:300]}")
-    res = r.json()
+    # ── [V12.35] 분할 업로드: begin → net×K → commit ──
+    #   6시드 앙상블은 ~37MB라 한 번에 보내면 Worker(메모리 128MB)가 request.json()에서 죽어 503.
+    #   시드별로 쪼개 보내면 Worker는 회당 ~6MB만 파싱 → OOM 없이 6시드 그대로 반영.
+    print("④ 업로드 (분할)")
+
+    def _post(params, obj, what):
+        r = requests.post(BASE + "/api/dnn-import", params=params, headers=HDR,
+                          data=json.dumps(obj), timeout=300)
+        if r.status_code != 200:
+            raise RuntimeError(f"{what} {r.status_code}: {r.text[:300]}")
+        return r.json()
+
+    # 1) begin — 메타(가중치 제외)만 전송
+    _post({"key": KEY, "stage": "begin"},
+          {"featVer": featver, "mean": mean.tolist(), "std": std.tolist(), "dims": dims,
+           "seeds": len(js_nets), "valAcc": round(acc, 4), "valAccLB": round(lb, 4), "valN": n_eval, "n": N},
+          "begin")
+    # 2) net — 시드별 개별 전송(회당 ~6MB)
+    for k, nt in enumerate(js_nets):
+        _post({"key": KEY, "stage": "net", "i": k}, nt, f"net[{k}]")
+        print(f"   시드 {k+1}/{len(js_nets)} 업로드")
+    # 3) commit — Worker가 조립·검증·게이트
+    res = _post({"key": KEY, "stage": "commit"}, {}, "commit")
     print("✅", json.dumps(res.get("trust", {}), ensure_ascii=False), res.get("note", ""))
     return {"ok": True, "valAcc": acc, "trust": res.get("trust")}
 
