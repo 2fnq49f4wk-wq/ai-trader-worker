@@ -2755,6 +2755,10 @@ html[data-theme="light"] .table tbody tr:hover{background:rgba(9,105,218,.045);}
         <span class="nav-item-icon">🧠</span>
         <span class="nav-item-label">AI 두뇌</span>
       </div>
+      <div class="nav-item" data-page="whatif">
+        <span class="nav-item-icon">🧪</span>
+        <span class="nav-item-label">WHAT-IF</span>
+      </div>
       <div class="nav-item" data-page="news">
         <span class="nav-item-icon">📰</span>
         <span class="nav-item-label">NEWS</span>
@@ -3477,10 +3481,35 @@ html[data-theme="light"] .table tbody tr:hover{background:rgba(9,105,218,.045);}
       <span><i style="background:#4aa3ff;"></i>입력층(피처)</span>
       <span><i style="background:#eafff4;"></i>은닉층(ReLU·드롭아웃)</span>
       <span><i style="background:#00e676;"></i>출력층(Sigmoid·승률)</span>
-      <span style="color:#6f84aa;">곡선 굵기·밝기=연결강도(깜빡임=강한 연결의 신호 흐름) · 각 층은 강도 상위 64개 뉴런만 표시(전체 수=배지 아래 n)</span>
-      <span style="color:#9fb4dc;">👆 점 클릭/터치=뉴런 역할 · 휠/핀치=확대 · 드래그=이동</span>
+      <span style="color:#6f84aa;">곡선 굵기·밝기=연결강도 · 전 뉴런 표시(강도 상위일수록 밴드 중앙) · 깊을수록 푸른색</span>
+      <span style="color:#9fb4dc;">👆 점 클릭/터치=뉴런 역할 + 연결 발광(밝은 파랑=직접, 옅은 파랑=2단계 확산)</span>
     </div>
     <div class="nnv-comm" id="nnvComm"></div>
+  </div>
+</div>
+
+<!-- ══ [V12.24] WHAT-IF 매크로 시나리오 ══ -->
+<div class="page" id="page-whatif">
+  <div class="nnviz-content">
+    <div class="nnv-head">
+      <div><div class="nnv-title"><span class="dot" style="background:#ffc107;box-shadow:0 0 10px #ffc107;"></span>WHAT-IF 매크로 시나리오</div></div>
+      <div style="display:flex;gap:8px;align-items:center;">
+        <button class="nnv-btn" onclick="loadWhatIf(1)">↻ 재계산</button>
+      </div>
+    </div>
+    <div class="nnv-sub">"미국 금리가 1%p 오르면?" — 최근 120영업일 민감도(베타) 기반으로 포트폴리오·관심종목 예상 타격을 시뮬레이션합니다. 과거 데이터 근사이며 예측 보장이 아닙니다.</div>
+    <div class="wi-controls">
+      <div class="wi-row" id="wiFactors">
+        <button class="wi-f active" data-f="rate">🏦 미국 금리</button>
+        <button class="wi-f" data-f="oil">🛢 국제 유가</button>
+        <button class="wi-f" data-f="usdkrw">💱 달러/원</button>
+        <button class="wi-f" data-f="spx">📈 S&P 500</button>
+        <button class="wi-f" data-f="gold">🥇 금</button>
+      </div>
+      <div class="wi-row" id="wiShocks"></div>
+    </div>
+    <div class="wi-summary" id="wiSummary"></div>
+    <div class="wi-table" id="wiTable"><div class="nnv-empty">시나리오를 선택하세요…</div></div>
   </div>
 </div>
 
@@ -10258,6 +10287,8 @@ html[data-theme="light"] .table tbody tr:hover{background:rgba(9,105,218,.045);}
       try { openMonthlyReport(); } catch(e){}
     } else if (id === 'nnviz') {
       try { openNnViz(); } catch(e){}
+    } else if (id === 'whatif') {
+      try { if (typeof loadWhatIf === 'function') loadWhatIf(); } catch(e){}
     }
   }
   document.querySelectorAll('.nav-item').forEach(function(item){
@@ -10845,6 +10876,26 @@ setTimeout(function(){ var o=document.getElementById('lux-intro-overlay'); if(o&
 #page-nnviz svg.nnv-focus .nnv-node{opacity:.12;}
 #page-nnviz svg.nnv-focus .nnedge.hl,#page-nnviz svg.nnv-focus .nnedge-static.hl{opacity:1;stroke:#5ab4ff;stroke-width:1.5;filter:drop-shadow(0 0 3.5px rgba(90,180,255,.95));}
 #page-nnviz svg.nnv-focus .nnv-node.hl{opacity:1;fill:#8fd0ff;filter:drop-shadow(0 0 6px rgba(110,190,255,1));}
+/* [V12.24] WHAT-IF 시나리오 */
+#page-whatif .wi-controls{display:flex;flex-direction:column;gap:8px;margin:6px 0 14px;}
+#page-whatif .wi-row{display:flex;gap:6px;flex-wrap:wrap;align-items:center;}
+#page-whatif .wi-f,#page-whatif .wi-s{cursor:pointer;font-family:'IBM Plex Mono',monospace;font-size:11px;color:#9fb4dc;background:rgba(70,130,255,.09);border:1px solid #22345a;border-radius:8px;padding:7px 12px;transition:.15s;}
+#page-whatif .wi-f.active,#page-whatif .wi-s.active{color:#0a0e18;background:#ffc107;border-color:#ffc107;font-weight:700;}
+#page-whatif .wi-custom{display:inline-flex;align-items:center;gap:5px;color:#7c90b5;font-size:11px;font-family:'IBM Plex Mono',monospace;}
+#page-whatif .wi-custom input{width:74px;background:#0d1524;border:1px solid #22345a;border-radius:7px;color:#eaf2ff;padding:6px 8px;font-family:inherit;font-size:11px;}
+#page-whatif .wi-summary{display:flex;gap:10px;flex-wrap:wrap;margin-bottom:14px;}
+#page-whatif .wi-card{flex:1 1 200px;min-width:200px;background:rgba(70,130,255,.06);border:1px solid #1c2740;border-radius:12px;padding:12px 14px;}
+#page-whatif .wi-card .k{font-size:10px;color:#7c90b5;letter-spacing:1px;font-family:'IBM Plex Mono',monospace;margin-bottom:5px;}
+#page-whatif .wi-card .v{font-size:19px;font-weight:700;font-family:'Space Grotesk',sans-serif;}
+#page-whatif .wi-card .m{font-size:10.5px;color:#61789c;margin-top:3px;font-family:'IBM Plex Mono',monospace;}
+#page-whatif .wi-table table{width:100%;border-collapse:collapse;font-family:'IBM Plex Mono',monospace;font-size:11px;}
+#page-whatif .wi-table th{font-size:8.5px;letter-spacing:1px;text-transform:uppercase;color:#61789c;text-align:left;padding:6px 9px;border-bottom:1px solid #1c2740;background:rgba(70,130,255,.05);}
+#page-whatif .wi-table td{padding:6px 9px;border-bottom:1px solid #131c30;color:#c9d7f2;}
+#page-whatif .wi-table th.r,#page-whatif .wi-table td.r{text-align:right;font-variant-numeric:tabular-nums;}
+#page-whatif .wi-table tr.held td{background:rgba(255,193,7,.05);}
+#page-whatif .wi-pos{color:#00e676;} #page-whatif .wi-neg{color:#ff1744;}
+#page-whatif .wi-note{font-size:10.5px;color:#61789c;margin-top:12px;line-height:1.7;font-family:'IBM Plex Mono',monospace;}
+#page-whatif .wi-badge{display:inline-block;font-size:8.5px;padding:1px 6px;border-radius:6px;background:rgba(255,193,7,.15);color:#ffc107;border:1px solid rgba(255,193,7,.4);margin-left:6px;}
 /* 층별 최강 뉴런 코어 맥동 */
 #page-nnviz .nnv-core{animation:nnvCorePulse 2.6s ease-in-out infinite;filter:drop-shadow(0 0 3px rgba(150,200,255,.55));}
 @keyframes nnvCorePulse{0%,100%{opacity:.7;}50%{opacity:1;}}
@@ -11067,7 +11118,7 @@ html[data-theme="light"] #page-nnviz .nnv-title,html[data-theme="light"] #page-n
       var cls=(ei<ANIM_CAP)?'nnedge':'nnedge-static';
       return '<path class="'+cls+'" data-a="'+e.l+'-'+e.ai+'" data-b="'+(e.l+1)+'-'+e.bi+'" d="M'+e.x1.toFixed(1)+' '+e.y1.toFixed(1)+' C'+mx.toFixed(1)+' '+e.y1.toFixed(1)+' '+mx.toFixed(1)+' '+e.y2.toFixed(1)+' '+e.x2.toFixed(1)+' '+e.y2.toFixed(1)+'" fill="none" stroke="rgba(96,168,255,'+op+')" stroke-width="'+sw+'"/>';
     }).join('');
-    var nodes='', heads='', foots='', featLabels='';
+    var nodes='', heads='', foots='', featLabels='', hits=[];
     var nHidden=0;
     // 은닉층 깊이 그라데이션 — 얼음빛(#e6efff)에서 깊은 하늘빛(#9fd2ff)으로. 깊이가 색으로 읽히게.
     function mixHex(c1,c2,tt){
@@ -11095,9 +11146,9 @@ html[data-theme="light"] #page-nnviz .nnv-title,html[data-theme="light"] #page-n
         var rank=k+1;
         // 층별 최강 뉴런 3개 — 은은한 맥동(코어 강조, reduced-motion 시 정지)
         var core=(k<3 && col2.length>8)?' nnv-core':'';
-        nodes+='<circle class="nnv-node'+core+'" data-key="'+li+'-'+k+'" cx="'+col2[k].x.toFixed(1)+'" cy="'+col2[k].y.toFixed(1)+'" r="'+r+'" fill="'+fill+'" opacity="'+glow+'"></circle>'
-          // 투명 히트영역 — 클릭하면 뉴런 역할 툴팁 + 연결 하이라이트
-          +'<circle class="nnv-hit" data-key="'+li+'-'+k+'" cx="'+col2[k].x.toFixed(1)+'" cy="'+col2[k].y.toFixed(1)+'" r="5.5" fill="transparent" data-kind="'+kind+'" data-tag="'+tag+'" data-name="'+(col2[k].name||'')+'" data-s="'+(s*100).toFixed(0)+'" data-rank="'+rank+'" data-size="'+layers[li].size+'"/>';
+        nodes+='<circle class="nnv-node'+core+'" data-key="'+li+'-'+k+'" cx="'+col2[k].x.toFixed(1)+'" cy="'+col2[k].y.toFixed(1)+'" r="'+r+'" fill="'+fill+'" opacity="'+glow+'"></circle>';
+        // [V12.24 로딩속도] 투명 히트원 2,408개 DOM 폐기 → 좌표 배열(근접 스냅 클릭이 이미 좌표 기반)
+        hits.push({key:li+'-'+k, x:col2[k].x, y:col2[k].y, kind:kind, tag:tag, name:col2[k].name||'', s:(s*100).toFixed(0), rank:rank, size:layers[li].size});
         if(kind==='input' && col2[k].name){
           featLabels+='<text x="'+(col2[k].x-8).toFixed(1)+'" y="'+(col2[k].y+2).toFixed(1)+'" text-anchor="end" font-family="IBM Plex Mono,monospace" font-size="7" fill="#7fa8d8">'+col2[k].name+'</text>';
         }
@@ -11108,7 +11159,11 @@ html[data-theme="light"] #page-nnviz .nnv-title,html[data-theme="light"] #page-n
     // 좌상단 층수 요약 — "몇 층짜리 뇌인가"가 그림 안에서 바로 읽히게
     var summary='<text x="14" y="28" font-family="Space Grotesk,sans-serif" font-size="13" font-weight="700" fill="#eaf2ff">'+cols+' LAYERS</text>'
       +'<text x="14" y="44" font-family="IBM Plex Mono,monospace" font-size="8.5" fill="#7c90b5">입력 1 · 은닉 '+nHidden+' · 출력 1</text>';
-    stage.innerHTML='<div class="nnv-scroll"><svg viewBox="0 0 '+W+' '+H+'" preserveAspectRatio="xMidYMid meet" style="min-width:'+W+'px;background:radial-gradient(120% 90% at 50% 8%,#0d1a2e,#050810 72%);">'+edges+nodes+featLabels+heads+foots+summary+'</svg></div>';
+    // [V12.24 로딩속도] 1프레임: 노드·라벨·헤더만 즉시 페인트(체감 로딩) → 다음 프레임에 엣지 4.5K 삽입
+    stage.innerHTML='<div class="nnv-scroll"><svg viewBox="0 0 '+W+' '+H+'" preserveAspectRatio="xMidYMid meet" style="min-width:'+W+'px;background:radial-gradient(120% 90% at 50% 8%,#0d1a2e,#050810 72%);">'+nodes+featLabels+heads+foots+summary+'</svg></div>';
+    var svgEl=stage.querySelector('svg');
+    svgEl.__hits=hits;
+    requestAnimationFrame(function(){ try{ if(svgEl.isConnected) svgEl.insertAdjacentHTML('afterbegin', edges); }catch(e){} });
     NNV_bindNodeTips(stage);
   }
   // [V12.3] 노드 클릭/터치 → 역할 툴팁. 입력=피처 역할(백엔드 inputFeatures), 은닉/출력=층 역할 설명.
@@ -11124,26 +11179,19 @@ html[data-theme="light"] #page-nnviz .nnv-title,html[data-theme="light"] #page-n
         for(var hi=0;hi<hs.length;hi++){ hs[hi].classList.remove('hl'); hs[hi].classList.remove('hl2'); }
         NNV._focusKey=null;
       }
-      // [V12.20] 클릭 인식 개선 — 히트원을 정확히 못 맞혀도 근접(반경 9 viewBox px) 노드로 스냅
-      if(!t || !t.classList || !t.classList.contains('nnv-hit')){
-        if(!svg.__hitCache){
-          var hcs=svg.querySelectorAll('circle.nnv-hit'), cache=[];
-          for(var ci=0;ci<hcs.length;ci++) cache.push({el:hcs[ci], x:+hcs[ci].getAttribute('cx'), y:+hcs[ci].getAttribute('cy')});
-          svg.__hitCache=cache;
-        }
-        var rct=svg.getBoundingClientRect(), vbv=svg.viewBox.baseVal;
-        var mx=vbv.x+(ev.clientX-rct.left)/rct.width*vbv.width;
-        var my=vbv.y+(ev.clientY-rct.top)/rct.height*vbv.height;
-        var bestEl=null, bestD=81; // 9px^2
-        for(var hi2=0;hi2<svg.__hitCache.length;hi2++){
-          var hc=svg.__hitCache[hi2], ddx=hc.x-mx, ddy=hc.y-my, dd=ddx*ddx+ddy*ddy;
-          if(dd<bestD){ bestD=dd; bestEl=hc.el; }
-        }
-        if(bestEl){ t=bestEl; }
-        else { clearHL(); return; }
+      // [V12.24] 히트원 DOM 없이 좌표 배열로 근접(반경 9 viewBox px) 노드 판정 — 클릭 인식 + 렌더 절감 동시 해결
+      var hitsArr=svg.__hits||[];
+      var rct=svg.getBoundingClientRect(), vbv=svg.viewBox.baseVal;
+      var mx=vbv.x+(ev.clientX-rct.left)/rct.width*vbv.width;
+      var my=vbv.y+(ev.clientY-rct.top)/rct.height*vbv.height;
+      var hit=null, bestD=81; // 9px^2
+      for(var hi2=0;hi2<hitsArr.length;hi2++){
+        var hc=hitsArr[hi2], ddx=hc.x-mx, ddy=hc.y-my, dd=ddx*ddx+ddy*ddy;
+        if(dd<bestD){ bestD=dd; hit=hc; }
       }
+      if(!hit){ clearHL(); return; }
       // [V12.16] 클릭 노드에 연결된 엣지·이웃 노드만 파랗게 발광(재클릭 시 해제)
-      var key=t.getAttribute('data-key');
+      var key=hit.key;
       if(key && NNV._focusKey===key){ clearHL(); }
       else if(key){
         clearHL();
@@ -11181,8 +11229,7 @@ html[data-theme="light"] #page-nnviz .nnv-title,html[data-theme="light"] #page-n
           NNV._focusKey=key;
         }
       }
-      var kind=t.getAttribute('data-kind'), tag=t.getAttribute('data-tag'), name=t.getAttribute('data-name'),
-          s=t.getAttribute('data-s'), rank=t.getAttribute('data-rank'), size=t.getAttribute('data-size');
+      var kind=hit.kind, tag=hit.tag, name=hit.name, s=hit.s, rank=hit.rank, size=hit.size;
       var html;
       if(kind==='input'){
         var fi=(NNV.roles&&NNV.roles[name])||null;
@@ -11225,6 +11272,81 @@ html[data-theme="light"] #page-nnviz .nnv-title,html[data-theme="light"] #page-n
     host.innerHTML='<div class="nnv-role-h">🎛️ 입력 파라미터 역할 · 영향도'
       +(trained?' <small>(학습된 가중치 기준 상위 '+feats.length+')</small>':' <small>(미학습 — 영향도는 학습 후 표시)</small>')+'</div>'+rows;
   }
+})();
+
+// ── [V12.24] WHAT-IF 매크로 시나리오 — 과거 민감도(베타) 기반 포트폴리오 충격 시뮬레이션 ──
+(function(){
+  var WI={ factor:'rate', shock:1, busy:false,
+    presets:{ rate:[0.5,1,-0.5,-1], oil:[10,-10,20,-20], usdkrw:[5,-5,10,-10], spx:[5,-5,10,-10], gold:[10,-10,20,-20] },
+    unit:{ rate:'%p', oil:'%', usdkrw:'%', spx:'%', gold:'%' },
+    deflt:{ rate:1, oil:-10, usdkrw:5, spx:-5, gold:10 } };
+  function fmtShock(v,u){ return (v>0?'+':'')+v+u; }
+  function money(v,mkt){ if(v==null) return '—';
+    var sg=v<0?'-':'', a=Math.abs(+v);
+    return sg+(mkt==='KR' ? '₩'+Math.round(a).toLocaleString() : '$'+a.toLocaleString(undefined,{maximumFractionDigits:0})); }
+  function cls(v){ return v>0?'wi-pos':(v<0?'wi-neg':''); }
+  function renderShocks(){
+    var host=document.getElementById('wiShocks'); if(!host) return;
+    var u=WI.unit[WI.factor];
+    var html=(WI.presets[WI.factor]||[]).map(function(p){
+      return '<button class="wi-s'+(p===WI.shock?' active':'')+'" data-s="'+p+'">'+fmtShock(p,u)+'</button>';
+    }).join('');
+    html+='<span class="wi-custom">직접 입력 <input type="number" step="0.5" id="wiCustom" value="'+WI.shock+'"> '+u+' <button class="wi-s" id="wiGo">실행</button></span>';
+    host.innerHTML=html;
+    host.querySelectorAll('.wi-s[data-s]').forEach(function(b){
+      b.addEventListener('click',function(){ WI.shock=parseFloat(this.getAttribute('data-s')); loadWhatIf(); });
+    });
+    var go=document.getElementById('wiGo');
+    if(go) go.addEventListener('click',function(){
+      var v=parseFloat(document.getElementById('wiCustom').value);
+      if(isFinite(v)&&v!==0){ WI.shock=v; loadWhatIf(); }
+    });
+  }
+  var fBtns=document.querySelectorAll('#wiFactors .wi-f');
+  fBtns.forEach(function(b){
+    b.addEventListener('click',function(){
+      WI.factor=this.getAttribute('data-f'); WI.shock=WI.deflt[WI.factor];
+      fBtns.forEach(function(x){x.classList.remove('active');}); this.classList.add('active');
+      renderShocks(); loadWhatIf();
+    });
+  });
+  window.loadWhatIf=function(force){
+    var tbl=document.getElementById('wiTable'), sum=document.getElementById('wiSummary');
+    if(!tbl) return;
+    if(!document.getElementById('wiShocks').innerHTML) renderShocks(); else renderShocks();
+    if(WI.busy&&!force) return; WI.busy=true;
+    tbl.innerHTML='<div class="nnv-empty">과거 데이터로 민감도 계산 중… (첫 계산은 몇 초 걸립니다)</div>';
+    fetch('/api/whatif?factor='+WI.factor+'&shock='+WI.shock).then(function(r){return r.json();}).then(function(d){
+      WI.busy=false;
+      if(!d||d.error){ tbl.innerHTML='<div class="nnv-empty">실패: '+((d&&d.error)||'응답 없음')+'</div>'; sum.innerHTML=''; return; }
+      var u=WI.unit[WI.factor];
+      var cards='<div class="wi-card"><div class="k">시나리오</div><div class="v" style="color:#ffc107;">'+d.factorLabel+' '+fmtShock(d.shock,u)+'</div>'
+        +'<div class="m">현재 '+d.factorLast+(WI.factor==='rate'?'%':'')+' 기준 · 팩터 변화 '+(d.shockPct>0?'+':'')+d.shockPct+'%</div></div>';
+      ['US','KR'].forEach(function(mk){
+        var p=d.portfolio&&d.portfolio[mk];
+        if(p&&p.value>0){
+          cards+='<div class="wi-card"><div class="k">'+mk+' 포트폴리오 예상</div>'
+            +'<div class="v '+cls(p.expPnl)+'">'+(p.expPct>0?'+':'')+p.expPct+'%</div>'
+            +'<div class="m">'+money(p.value,mk)+' 보유 → 예상 '+(p.expPnl>0?'+':'')+money(p.expPnl,mk)+'</div></div>';
+        }
+      });
+      if(!(d.portfolio&&((d.portfolio.US&&d.portfolio.US.value>0)||(d.portfolio.KR&&d.portfolio.KR.value>0))))
+        cards+='<div class="wi-card"><div class="k">포트폴리오</div><div class="v" style="color:#61789c;font-size:14px;">보유 포지션 없음</div><div class="m">아래는 관심종목 예상 민감도입니다</div></div>';
+      sum.innerHTML=cards;
+      var rows=(d.items||[]).map(function(it){
+        return '<tr'+(it.held?' class="held"':'')+'><td>'+it.name+(it.held?'<span class="wi-badge">보유</span>':'')+'</td>'
+          +'<td>'+it.market+'</td>'
+          +'<td class="r">'+it.beta.toFixed(2)+'</td>'
+          +'<td class="r">'+(it.r2*100).toFixed(0)+'%</td>'
+          +'<td class="r '+cls(it.expPct)+'"><b>'+(it.expPct>0?'+':'')+it.expPct.toFixed(2)+'%</b></td>'
+          +'<td class="r">'+(it.held?money(it.posValue,it.market):'—')+'</td>'
+          +'<td class="r '+cls(it.expPnl)+'">'+(it.held?(it.expPnl>0?'+':'')+money(it.expPnl,it.market):'—')+'</td></tr>';
+      }).join('');
+      tbl.innerHTML='<table><thead><tr><th>종목</th><th>시장</th><th class="r">베타</th><th class="r">설명력 R²</th><th class="r">예상 등락</th><th class="r">보유 평가액</th><th class="r">예상 손익</th></tr></thead><tbody>'
+        +(rows||'<tr><td colspan="7" style="color:#61789c;">일봉 캐시가 쌓인 종목이 없습니다 — 엔진이 하루 이상 가동되면 표시됩니다.</td></tr>')+'</tbody></table>'
+        +'<div class="wi-note">⚠️ '+(d.note||'')+'</div>';
+    })['catch'](function(e){ WI.busy=false; tbl.innerHTML='<div class="nnv-empty">요청 실패: '+e.message+'</div>'; });
+  };
 })();
 </script>
 

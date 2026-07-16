@@ -13251,6 +13251,116 @@ async function handleRequest(request, env) {
       return Response.json(data, { headers: cors });
     }
 
+    // ── [V12.24 What-If] 거시 시나리오 시뮬레이터 — "금리 +1%p면? 유가 -10%면?" ──
+    //   외부 유료 API 0: 팩터 일봉은 기존 Yahoo 무료 차트 경로(getDailyCached), 종목 일봉은
+    //   이미 D1에 있는 daily: 캐시(320봉)만 읽음(추가 fetch 없음). 방법론: 종목 일수익률을
+    //   팩터 일변화율에 OLS 회귀(최근 ≤120영업일)한 역사적 베타 × 시나리오 충격 = 예상 등락.
+    //   베타는 6시간 캐시. R²(설명력)를 함께 반환해 신뢰도 표시. 과거 민감도 기반 근사이며 예측 보장 아님.
+    if (path === "/api/whatif") {
+      const FACTORS = {
+        rate:   { sym: "^TNX",  label: "미국 10년물 금리", unit: "pp", presets: [0.5, 1, -0.5, -1] },
+        oil:    { sym: "CL=F",  label: "WTI 국제유가",     unit: "%",  presets: [10, -10, 20, -20] },
+        usdkrw: { sym: "KRW=X", label: "달러/원 환율",     unit: "%",  presets: [5, -5, 10, -10] },
+        spx:    { sym: "^GSPC", label: "S&P 500 지수",     unit: "%",  presets: [5, -5, 10, -10] },
+        gold:   { sym: "GC=F",  label: "금 가격",          unit: "%",  presets: [10, -10, 20, -20] }
+      };
+      const fKey = url.searchParams.get("factor") || "rate";
+      const F = FACTORS[fKey];
+      if (!F) return Response.json({ error: "factor는 rate|oil|usdkrw|spx|gold 중 하나" }, { status: 400, headers: cors });
+      const shock = Math.max(-50, Math.min(50, parseFloat(url.searchParams.get("shock") || (F.unit === "pp" ? "1" : "10"))));
+      if (!isFinite(shock) || shock === 0) return Response.json({ error: "shock이 0이거나 숫자가 아님" }, { status: 400, headers: cors });
+      try {
+        // 1) 팩터 시계열(12시간 캐시 — 캐시 적중 시 외부 fetch 0)
+        const fd = await getDailyCached(env.DB, F.sym, 720);
+        const fc = (fd && fd.closes) || [];
+        if (fc.length < 60) return Response.json({ error: "팩터 시계열 부족: " + F.sym }, { status: 503, headers: cors });
+        const fLast = fc[fc.length - 1];
+        // 충격 → 팩터 % 변화 (금리는 %p 충격을 현재 수익률 대비 %변화로 환산)
+        const shockPct = F.unit === "pp" ? (fLast > 0 ? (shock / fLast) * 100 : shock * 25) : shock;
+        // 팩터 일변화율
+        const fRet = []; for (let i = 1; i < fc.length; i++) fRet.push(fc[i] / fc[i - 1] - 1);
+        // 2) 대상 종목: 보유 포지션 전량 + 워치리스트(US/KR 앞쪽) — daily: 캐시가 있는 것만(추가 fetch 0)
+        let posRows = [];
+        try { posRows = ((await env.DB.prepare("SELECT symbol, market, qty, avg_price FROM positions").all()).results) || []; } catch (e) {}
+        const posSyms = posRows.map(function (r) { return r.symbol; });
+        const uniq = {}; const syms = [];
+        posSyms.concat(DEFAULT_US.slice(0, 45)).concat(DEFAULT_KR.slice(0, 45)).forEach(function (s) {
+          if (s && !uniq[s]) { uniq[s] = 1; syms.push(s); }
+        });
+        // 3) 베타 캐시(팩터 시계열 ts 기준 6시간)
+        const ckey = "whatif_beta:" + fKey;
+        let bcache = null; try { bcache = await getState(env.DB, ckey, null); } catch (e) {}
+        const betas = (bcache && bcache.ts && Date.now() - bcache.ts < 6 * 3600 * 1000 && bcache.betas) ? bcache.betas : {};
+        const missing = syms.filter(function (s) { return !(s in betas); });
+        // 4) 누락 종목 베타 계산 — daily: 캐시 읽기(병렬 청크), OLS beta = cov(r,f)/var(f)
+        for (let ci = 0; ci < missing.length; ci += 20) {
+          const chunk = missing.slice(ci, ci + 20);
+          const rows = await Promise.all(chunk.map(function (s) {
+            return getState(env.DB, "daily:" + s, null).then(function (d) { return { s: s, d: d }; })["catch"](function () { return { s: s, d: null }; });
+          }));
+          for (const row of rows) {
+            const closes = (row.d && row.d.closes) || [];
+            if (closes.length < 45) { betas[row.s] = null; continue; }   // 표본 부족 → 제외 마킹
+            const sRet = []; for (let i = 1; i < closes.length; i++) sRet.push(closes[i] / closes[i - 1] - 1);
+            // 꼬리 정렬(달력 미보유 → 최근 N봉 인덱스 근사. KR-US 휴장차는 근사 오차로 수용)
+            const N = Math.min(120, sRet.length, fRet.length);
+            const a = sRet.slice(-N), b = fRet.slice(-N);
+            let ma = 0, mb = 0; for (let i = 0; i < N; i++) { ma += a[i]; mb += b[i]; } ma /= N; mb /= N;
+            let cov = 0, vb = 0, va = 0;
+            for (let i = 0; i < N; i++) { const da = a[i] - ma, db = b[i] - mb; cov += da * db; vb += db * db; va += da * da; }
+            if (vb <= 0 || va <= 0) { betas[row.s] = null; continue; }
+            const beta = cov / vb;
+            const r2 = (cov * cov) / (va * vb);
+            betas[row.s] = { b: +beta.toFixed(3), r2: +r2.toFixed(3), n: N };
+          }
+        }
+        if (missing.length) { try { await setState(env.DB, ckey, { ts: (bcache && bcache.ts && Object.keys(betas).length > missing.length ? bcache.ts : Date.now()), betas: betas }); } catch (e) {} }
+        // 5) 포지션 시가(quote: 캐시) → 금액 영향
+        const posBySym = {};
+        for (const p of posRows) {
+          if (!posBySym[p.symbol]) posBySym[p.symbol] = { qty: 0, cost: 0, market: p.market };
+          posBySym[p.symbol].qty += _num(p.qty, 0); posBySym[p.symbol].cost += _num(p.qty, 0) * _num(p.avg_price, 0);
+        }
+        const posQuoteRows = await Promise.all(Object.keys(posBySym).map(function (s) {
+          return getState(env.DB, "quote:" + s, null).then(function (q) { return { s: s, q: q }; })["catch"](function () { return { s: s, q: null }; });
+        }));
+        const lastPx = {}; posQuoteRows.forEach(function (r) { if (r.q && _num(r.q.price, 0) > 0) lastPx[r.s] = _num(r.q.price, 0); });
+        // 6) 결과 조립
+        const items = [];
+        const port = { US: { value: 0, pnl: 0 }, KR: { value: 0, pnl: 0 } };
+        for (const s of syms) {
+          const bi = betas[s]; if (!bi) continue;
+          const expPct = bi.b * shockPct;
+          const pos = posBySym[s];
+          let posValue = null, expPnl = null, mkt = /\.(KS|KQ)$/.test(s) ? "KR" : "US";
+          if (pos && pos.qty > 0) {
+            const px = lastPx[s] || (pos.cost / pos.qty);
+            posValue = pos.qty * px; expPnl = posValue * expPct / 100;
+            const pm = pos.market === "KR" ? "KR" : "US";
+            port[pm].value += posValue; port[pm].pnl += expPnl;
+          }
+          items.push({ symbol: s, name: NAME_MAP[s] || s.replace(/\.(KS|KQ)$/, ""), market: mkt,
+            beta: bi.b, r2: bi.r2, n: bi.n, expPct: +expPct.toFixed(2),
+            held: !!pos && pos.qty > 0, posValue: posValue != null ? +posValue.toFixed(2) : null,
+            expPnl: expPnl != null ? +expPnl.toFixed(2) : null });
+        }
+        items.sort(function (x, y) { return Math.abs(y.expPct) - Math.abs(x.expPct); });
+        return Response.json({
+          factor: fKey, factorLabel: F.label, factorSym: F.sym, unit: F.unit, presets: F.presets,
+          shock: shock, shockPct: +shockPct.toFixed(2), factorLast: +_num(fLast, 0).toFixed(3),
+          portfolio: {
+            US: { value: +port.US.value.toFixed(2), expPnl: +port.US.pnl.toFixed(2), expPct: port.US.value > 0 ? +(port.US.pnl / port.US.value * 100).toFixed(2) : null },
+            KR: { value: Math.round(port.KR.value), expPnl: Math.round(port.KR.pnl), expPct: port.KR.value > 0 ? +(port.KR.pnl / port.KR.value * 100).toFixed(2) : null }
+          },
+          items: items.slice(0, 70),
+          note: "최근 " + Math.min(120, fRet.length) + "영업일 일수익률 OLS 회귀 기반 역사적 민감도(베타) 근사. R²가 낮은 종목은 해당 팩터로 설명되는 변동이 작음 — 참고용이며 예측 보장 아님.",
+          ts: Date.now()
+        }, { headers: cors });
+      } catch (e) {
+        return Response.json({ error: "whatif 실패: " + (e && e.message) }, { status: 500, headers: cors });
+      }
+    }
+
     // ═══════════ [V11] 외부 GPU/CPU 학습 오프로드 ═══════════
     //   3M 딥넷은 순수 JS Worker(CPU 300s)로는 완전학습 불가 → 표본을 외부(사용자 PC GPU·Colab)로 내보내
     //   PyTorch로 완전학습 후 가중치를 업로드. Worker는 추론·저장만. env.TRAIN_KEY 시크릿으로 인증.
