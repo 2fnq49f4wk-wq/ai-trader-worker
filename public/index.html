@@ -3499,6 +3499,7 @@ html[data-theme="light"] .table tbody tr:hover{background:rgba(9,105,218,.045);}
     </div>
     <div class="nnv-sub">"미국 금리가 1%p 오르면?" — 최근 120영업일 민감도(베타) 기반으로 포트폴리오·관심종목 예상 타격을 시뮬레이션합니다. 과거 데이터 근사이며 예측 보장이 아닙니다.</div>
     <div class="wi-controls">
+      <div class="wi-lab">STEP 1 · 거시 변수</div>
       <div class="wi-row" id="wiFactors">
         <button class="wi-f active" data-f="rate">🏦 미국 금리</button>
         <button class="wi-f" data-f="oil">🛢 국제 유가</button>
@@ -3506,6 +3507,7 @@ html[data-theme="light"] .table tbody tr:hover{background:rgba(9,105,218,.045);}
         <button class="wi-f" data-f="spx">📈 S&P 500</button>
         <button class="wi-f" data-f="gold">🥇 금</button>
       </div>
+      <div class="wi-lab">STEP 2 · 충격 크기</div>
       <div class="wi-row" id="wiShocks"></div>
     </div>
     <div class="wi-summary" id="wiSummary"></div>
@@ -10876,11 +10878,21 @@ setTimeout(function(){ var o=document.getElementById('lux-intro-overlay'); if(o&
 #page-nnviz svg.nnv-focus .nnv-node{opacity:.12;}
 #page-nnviz svg.nnv-focus .nnedge.hl,#page-nnviz svg.nnv-focus .nnedge-static.hl{opacity:1;stroke:#5ab4ff;stroke-width:1.5;filter:drop-shadow(0 0 3.5px rgba(90,180,255,.95));}
 #page-nnviz svg.nnv-focus .nnv-node.hl{opacity:1;fill:#8fd0ff;filter:drop-shadow(0 0 6px rgba(110,190,255,1));}
-/* [V12.24] WHAT-IF 시나리오 */
-#page-whatif .wi-controls{display:flex;flex-direction:column;gap:8px;margin:6px 0 14px;}
-#page-whatif .wi-row{display:flex;gap:6px;flex-wrap:wrap;align-items:center;}
-#page-whatif .wi-f,#page-whatif .wi-s{cursor:pointer;font-family:'IBM Plex Mono',monospace;font-size:11px;color:#9fb4dc;background:rgba(70,130,255,.09);border:1px solid #22345a;border-radius:8px;padding:7px 12px;transition:.15s;}
-#page-whatif .wi-f.active,#page-whatif .wi-s.active{color:#0a0e18;background:#ffc107;border-color:#ffc107;font-weight:700;}
+/* [V12.26] WHAT-IF 시나리오 — 중앙 정렬 + 카드형 컨트롤 재디자인 */
+#page-whatif .nnviz-content{max-width:1100px;margin-left:auto;margin-right:auto;}
+#page-whatif .nnv-head{justify-content:center;text-align:center;}
+#page-whatif .nnv-head>div:last-child{position:absolute;right:38px;}
+#page-whatif .nnviz-content{position:relative;}
+#page-whatif .nnv-title{justify-content:center;font-size:19px;letter-spacing:1px;}
+#page-whatif .nnv-sub{text-align:center;max-width:64ch;margin:6px auto 18px;}
+#page-whatif .wi-controls{display:flex;flex-direction:column;gap:12px;margin:0 auto 18px;max-width:860px;
+  background:rgba(70,130,255,.045);border:1px solid #1c2740;border-radius:14px;padding:16px 18px;}
+#page-whatif .wi-lab{font-family:'IBM Plex Mono',monospace;font-size:9.5px;letter-spacing:2px;color:#61789c;text-transform:uppercase;}
+#page-whatif .wi-row{display:flex;gap:8px;flex-wrap:wrap;align-items:center;justify-content:center;}
+#page-whatif .wi-f,#page-whatif .wi-s{cursor:pointer;font-family:'IBM Plex Mono',monospace;font-size:12px;color:#9fb4dc;background:rgba(70,130,255,.09);border:1px solid #22345a;border-radius:10px;padding:9px 16px;transition:.15s;}
+#page-whatif .wi-f:hover,#page-whatif .wi-s:hover{border-color:#3a63b0;color:#dbe8ff;}
+#page-whatif .wi-f.active,#page-whatif .wi-s.active{color:#0a0e18;background:#ffc107;border-color:#ffc107;font-weight:700;box-shadow:0 4px 18px rgba(255,193,7,.25);}
+#page-whatif .wi-summary,#page-whatif .wi-table{max-width:1100px;margin-left:auto;margin-right:auto;}
 #page-whatif .wi-custom{display:inline-flex;align-items:center;gap:5px;color:#7c90b5;font-size:11px;font-family:'IBM Plex Mono',monospace;}
 #page-whatif .wi-custom input{width:74px;background:#0d1524;border:1px solid #22345a;border-radius:7px;color:#eaf2ff;padding:6px 8px;font-family:inherit;font-size:11px;}
 #page-whatif .wi-summary{display:flex;gap:10px;flex-wrap:wrap;margin-bottom:14px;}
@@ -11329,10 +11341,10 @@ html[data-theme="light"] #page-nnviz .nnv-title,html[data-theme="light"] #page-n
       if(!d||d.error){ tbl.innerHTML='<div class="nnv-empty">실패: '+((d&&d.error)||'응답 없음')+'</div>'; sum.innerHTML=''; return; }
       var u=WI.unit[WI.factor];
       var capNote = d.shockCapped
-        ? '요청 '+fmtShock(d.shock,u)+' → 역사적 20일 3σ('+(3*d.sigF20).toFixed(2)+u+') 상한 적용: <b>유효 '+fmtShock(d.effShock,u)+'</b>'
-        : '현재 '+d.factorLast+(WI.factor==='rate'?'%':'')+' 기준 · 20영업일 내 반영 가정';
+        ? '요청 '+fmtShock(d.shock,u)+' → 역사적 변동(3σ='+(3*d.sigF20).toFixed(2)+u+')에 점근하는 포화 곡선 적용: <b>유효 '+fmtShock(d.effShock,u)+'</b>'
+        : '현재 '+d.factorLast+(WI.factor==='rate'?'%':'')+' 기준 · 20영업일 내 반영 가정 · 유효 '+fmtShock(d.effShock,u);
       var cards='<div class="wi-card"><div class="k">시나리오</div><div class="v" style="color:#ffc107;">'+d.factorLabel+' '+fmtShock(d.shock,u)
-        +(d.shockCapped?'<span class="wi-cap">3σ 상한</span>':'')+'</div>'
+        +(d.shockCapped?'<span class="wi-cap">포화</span>':'')+'</div>'
         +'<div class="m">'+capNote+'</div></div>';
       ['US','KR'].forEach(function(mk){
         var p=d.portfolio&&d.portfolio[mk];
