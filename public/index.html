@@ -3533,6 +3533,11 @@ html[data-theme="light"] .table tbody tr:hover{background:rgba(9,105,218,.045);}
       </div>
       <div class="wi-lab">STEP 2 · 충격 크기</div>
       <div class="wi-row" id="wiShocks"></div>
+      <div class="wi-lab">STEP 3 · 반영 속도</div>
+      <div class="wi-row" id="wiSpeed">
+        <button class="wi-sp" data-sp="fast">⚡ 급격 — 5영업일 내 쇼크</button>
+        <button class="wi-sp active" data-sp="slow">🌊 점진 — 역사적 속도로 반영</button>
+      </div>
     </div>
     <div class="wi-summary" id="wiSummary"></div>
     <div class="wi-table" id="wiTable"><div class="nnv-empty">시나리오를 선택하세요…</div></div>
@@ -10973,12 +10978,16 @@ setTimeout(function(){ var o=document.getElementById('lux-intro-overlay'); if(o&
 #page-whatif .wi-lab{font-family:'IBM Plex Mono',monospace;font-size:9.5px;letter-spacing:2.5px;color:var(--wi-faint);text-transform:uppercase;text-align:center;}
 #page-whatif .wi-row{display:flex;gap:8px;flex-wrap:wrap;align-items:center;justify-content:center;}
 /* 굵기는 모든 상태 동일(600) — 활성 시 폭이 변해 버튼이 움직이던 리플로우 제거 */
-#page-whatif .wi-f,#page-whatif .wi-s{cursor:pointer;font-family:'IBM Plex Mono',monospace;font-size:12px;font-weight:600;color:var(--wi-dim);
+#page-whatif .wi-f,#page-whatif .wi-s,#page-whatif .wi-sp{cursor:pointer;font-family:'IBM Plex Mono',monospace;font-size:12px;font-weight:600;color:var(--wi-dim);
   background:rgba(70,130,255,.07);border:1px solid #223a5e;border-radius:10px;padding:9px 16px;transition:background .16s ease,border-color .16s ease,color .16s ease,box-shadow .16s ease;}
-#page-whatif .wi-f:hover,#page-whatif .wi-s:hover{border-color:#3f6bb0;color:var(--wi-ink);background:rgba(84,168,255,.13);}
-#page-whatif .wi-f.active,#page-whatif .wi-s.active{color:#06111f;border-color:transparent;
+#page-whatif .wi-f:hover,#page-whatif .wi-s:hover,#page-whatif .wi-sp:hover{border-color:#3f6bb0;color:var(--wi-ink);background:rgba(84,168,255,.13);}
+#page-whatif .wi-f.active,#page-whatif .wi-s.active,#page-whatif .wi-sp.active{color:#06111f;border-color:transparent;
   background:linear-gradient(135deg,var(--wi-accent),var(--wi-accent-2));box-shadow:0 5px 20px -4px rgba(84,168,255,.55);}
-#page-whatif .wi-f:focus-visible,#page-whatif .wi-s:focus-visible{outline:2px solid var(--wi-accent-2);outline-offset:2px;}
+#page-whatif .wi-f:focus-visible,#page-whatif .wi-s:focus-visible,#page-whatif .wi-sp:focus-visible{outline:2px solid var(--wi-accent-2);outline-offset:2px;}
+/* 구성 분해(직접·시장파급)·고변동 배지 */
+#page-whatif .wi-decomp{font-size:9.5px;line-height:1.5;color:var(--wi-dim);white-space:nowrap;font-variant-numeric:tabular-nums;}
+#page-whatif .wi-decomp b{color:#cbd9f2;font-weight:600;}
+#page-whatif .wi-hot{display:inline-block;font-size:8.5px;padding:1px 6px;border-radius:6px;background:rgba(255,171,64,.13);color:#ffc067;border:1px solid rgba(255,171,64,.38);margin-left:6px;}
 #page-whatif .wi-summary,#page-whatif .wi-table{max-width:1120px;margin-left:auto;margin-right:auto;}
 #page-whatif .wi-custom{display:inline-flex;align-items:center;gap:5px;color:var(--wi-faint);font-size:11px;font-family:'IBM Plex Mono',monospace;}
 #page-whatif .wi-custom input{width:74px;background:#0c1526;border:1px solid #223a5e;border-radius:8px;color:var(--wi-ink);padding:7px 9px;font-family:inherit;font-size:11px;}
@@ -11394,7 +11403,7 @@ html[data-theme="light"] #page-nnviz .nnv-title,html[data-theme="light"] #page-n
 
 // ── [V12.24] WHAT-IF 매크로 시나리오 — 과거 민감도(베타) 기반 포트폴리오 충격 시뮬레이션 ──
 (function(){
-  var WI={ factor:'rate', shock:1, busy:false,
+  var WI={ factor:'rate', shock:1, speed:'slow', busy:false,
     presets:{ rate:[0.5,1,-0.5,-1], oil:[10,-10,20,-20], usdkrw:[5,-5,10,-10], spx:[5,-5,10,-10], gold:[10,-10,20,-20] },
     unit:{ rate:'%p', oil:'%', usdkrw:'%', spx:'%', gold:'%' },
     deflt:{ rate:1, oil:-10, usdkrw:5, spx:-5, gold:10 } };
@@ -11436,6 +11445,14 @@ html[data-theme="light"] #page-nnviz .nnv-title,html[data-theme="light"] #page-n
       buildShocks(); highlightShocks(); loadWhatIf();
     });
   });
+  var spBtns=document.querySelectorAll('#wiSpeed .wi-sp');
+  spBtns.forEach(function(b){
+    b.addEventListener('click',function(){
+      WI.speed=this.getAttribute('data-sp');
+      spBtns.forEach(function(x){x.classList.remove('active');}); this.classList.add('active');
+      loadWhatIf();
+    });
+  });
   window.loadWhatIf=function(force){
     var tbl=document.getElementById('wiTable'), sum=document.getElementById('wiSummary');
     if(!tbl) return;
@@ -11445,14 +11462,17 @@ html[data-theme="light"] #page-nnviz .nnv-title,html[data-theme="light"] #page-n
     // 표를 비우지 않고 유지 — collapse로 인한 화면 이동 방지(min-height + 유지). 갱신 중엔 살짝 흐리게.
     if(tbl.querySelector('table')) tbl.style.opacity='.5';
     else tbl.innerHTML='<div class="nnv-empty">과거 데이터로 민감도 계산 중… (첫 계산은 몇 초 걸립니다)</div>';
-    fetch('/api/whatif?factor='+WI.factor+'&shock='+WI.shock).then(function(r){return r.json();}).then(function(d){
+    fetch('/api/whatif?factor='+WI.factor+'&shock='+WI.shock+'&speed='+WI.speed).then(function(r){return r.json();}).then(function(d){
       WI.busy=false; tbl.style.opacity='1';
       if(!d||d.error){ tbl.innerHTML='<div class="nnv-empty">실패: '+((d&&d.error)||'응답 없음')+'</div>'; sum.innerHTML=''; return; }
       var u=WI.unit[WI.factor];
       var hd=d.horizonDays||20, months=(hd/21).toFixed(1);
-      var capNote='현재 '+d.factorLast+(WI.factor==='rate'?'%':'')+' 기준 · 역사적 변동 속도상 약 <b>'+hd+'영업일(≈'+months+'개월)</b>에 걸친 반영 가정';
-      var cards='<div class="wi-card"><div class="k">시나리오</div><div class="v" style="color:var(--wi-accent);">'+d.factorLabel+' '+fmtShock(d.shock,u)
-        +(hd>20?'<span class="wi-cap">≈'+months+'개월</span>':'')+'</div>'
+      var fast=d.speed==='fast';
+      var capNote='현재 '+d.factorLast+(WI.factor==='rate'?'%':'')+' 기준 · '
+        +(fast ? '<b>5영업일 내 단기 쇼크</b> 가정(상한 타이트)' : '역사적 변동 속도상 약 <b>'+hd+'영업일(≈'+months+'개월)</b>에 걸친 반영 가정')
+        +' · 시장파급 계수 US '+(d.gF&&d.gF.us!=null?d.gF.us:'—')+' / KR '+(d.gF&&d.gF.kr!=null?d.gF.kr:'—');
+      var cards='<div class="wi-card"><div class="k">시나리오</div><div class="v" style="color:var(--wi-accent);">'+(fast?'⚡ ':'🌊 ')+d.factorLabel+' '+fmtShock(d.shock,u)
+        +(fast?'<span class="wi-cap">단기 5일</span>':(hd>20?'<span class="wi-cap">≈'+months+'개월</span>':''))+'</div>'
         +'<div class="m">'+capNote+'</div></div>';
       ['US','KR'].forEach(function(mk){
         var p=d.portfolio&&d.portfolio[mk];
@@ -11477,18 +11497,23 @@ html[data-theme="light"] #page-nnviz .nnv-title,html[data-theme="light"] #page-n
           +'<span class="pt '+c2+'" style="left:'+pl.toFixed(1)+'%;width:'+pw.toFixed(1)+'%"></span></div>';
       }
       var rows=(d.items||[]).map(function(it){
-        return '<tr'+(it.held?' class="held"':'')+'><td>'+it.name+(it.held?'<span class="wi-badge">보유</span>':'')+(it.capped?'<span class="wi-cap">3σ</span>':'')+'</td>'
+        var pfx=function(v){return (v>0?'+':'')+(+v).toFixed(1);};
+        return '<tr'+(it.held?' class="held"':'')+'><td>'+it.name+(it.held?'<span class="wi-badge">보유</span>':'')
+          +((it.regime||1)>=1.15?'<span class="wi-hot">고변동×'+it.regime.toFixed(1)+'</span>':'')
+          +(it.capped?'<span class="wi-cap">캡</span>':'')+'</td>'
           +'<td>'+it.market+'</td>'
           +'<td class="r">'+it.beta.toFixed(2)+'</td>'
+          +'<td class="r">'+((it.mktBeta!=null)?it.mktBeta.toFixed(2):'—')+'</td>'
           +'<td class="r">'+(it.r2*100).toFixed(0)+'%</td>'
           +'<td class="r '+cls(it.expPct)+'"><b>'+(it.expPct>0?'+':'')+it.expPct.toFixed(2)+'%</b><br><span class="wi-range">'+it.lo.toFixed(1)+' ~ '+it.hi.toFixed(1)+'%</span></td>'
+          +'<td class="r wi-decomp">직접 <b>'+pfx(it.direct||0)+'</b><br>파급 <b>'+pfx(it.indirect||0)+'</b></td>'
           +'<td>'+bar(it)+'</td>'
           +'<td class="r">'+(it.held?money(it.posValue,it.market):'—')+'</td>'
           +'<td class="r '+cls(it.expPnl)+'">'+(it.held?(it.expPnl>0?'+':'')+money(it.expPnl,it.market):'—')+'</td></tr>';
       }).join('');
-      tbl.innerHTML='<table><thead><tr><th>종목</th><th>시장</th><th class="r">베타*</th><th class="r">설명력 R²</th><th class="r">예상 등락(범위)</th><th>분포</th><th class="r">보유 평가액</th><th class="r">예상 손익</th></tr></thead><tbody>'
-        +(rows||'<tr><td colspan="8" style="color:#61789c;">일봉 캐시가 쌓인 종목이 없습니다 — 엔진이 하루 이상 가동되면 표시됩니다.</td></tr>')+'</tbody></table>'
-        +'<div class="wi-note">⚠️ '+(d.note||'')+' · 베타*는 R² 기반 축소(shrinkage) 적용값.</div>';
+      tbl.innerHTML='<table><thead><tr><th>종목</th><th>시장</th><th class="r">팩터β*</th><th class="r">시장β</th><th class="r">R²</th><th class="r">예상 등락(범위)</th><th class="r">구성</th><th>분포</th><th class="r">보유 평가액</th><th class="r">예상 손익</th></tr></thead><tbody>'
+        +(rows||'<tr><td colspan="10" style="color:#61789c;">일봉 캐시가 쌓인 종목이 없습니다 — 엔진이 하루 이상 가동되면 표시됩니다.</td></tr>')+'</tbody></table>'
+        +'<div class="wi-note">⚠️ '+(d.note||'')+' · 팩터β*=시장효과를 통제한 부분베타(√R² 축소) · 구성=직접(고유 민감도)+파급(시장 경유) · 고변동 배지=최근 변동성이 장기 대비 높아 충격 증폭 반영.</div>';
     })['catch'](function(e){ WI.busy=false; tbl.innerHTML='<div class="nnv-empty">요청 실패: '+e.message+'</div>'; });
   };
 })();

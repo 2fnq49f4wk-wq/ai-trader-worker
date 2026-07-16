@@ -13269,37 +13269,51 @@ async function handleRequest(request, env) {
       if (!F) return Response.json({ error: "factor는 rate|oil|usdkrw|spx|gold 중 하나" }, { status: 400, headers: cors });
       const shock = Math.max(-50, Math.min(50, parseFloat(url.searchParams.get("shock") || (F.unit === "pp" ? "1" : "10"))));
       if (!isFinite(shock) || shock === 0) return Response.json({ error: "shock이 0이거나 숫자가 아님" }, { status: 400, headers: cors });
+      const speed = url.searchParams.get("speed") === "fast" ? "fast" : "slow";
       try {
-        // 1) 팩터 시계열(12시간 캐시 — 캐시 적중 시 외부 fetch 0)
+        // ══ [V12.30 엔진 v3] 2채널 다변수 모델 ══
+        //   예상등락 = [직접 민감도 + 시장 경유 파급] × 변동성 국면 승수 → 지평선 소프트캡
+        //   ① 직접: 종목 5일수익 ~ (시장지수, 팩터) 2변수 OLS — 시장효과를 통제한 팩터 '부분베타'
+        //   ② 간접: 종목 시장베타(bM) × 지수의 팩터 민감도(gF) × 충격 — 금리→시장 전체→종목 파급
+        //   ③ 국면: 최근 변동성/장기 변동성 비(0.8~1.4배) — 고변동 국면일수록 충격이 크게 전달
+        //   ④ 속도: fast=5영업일 단기 쇼크(상한 √(5/20)로 타이트) / slow=역사적 확산 속도(X²×20일)
+        //   ⑤ 축소·상한: 부분베타 √R² 축소, |예상| tanh 소프트캡(3σ20×√(h/20)), 잔차 예상범위
         const fd = await getDailyCached(env.DB, F.sym, 720);
         const fc = (fd && fd.closes) || [];
         if (fc.length < 60) return Response.json({ error: "팩터 시계열 부족: " + F.sym }, { status: 503, headers: cors });
         const fLast = fc[fc.length - 1];
-        // ── [V12.25 엔진 고도화] 과도 예측 수정 ──
-        //   (a) 금리는 %p '차분' 회귀(비율 환산 폐기 — -1%p를 -23% 변화로 부풀리던 원인)
-        //   (b) 5영업일 겹침 수익률 회귀 — 일간 노이즈·KR/US 시차 완화
-        //   (c) 충격을 팩터의 역사적 20일 변동 3σ로 클램프 — 표본에 없는 급변은 외삽하지 않음
-        //   (d) 베타 축소(shrinkage): R² 낮으면 0쪽으로 감쇠(√R²×1.6, 상한 1)
-        //   (e) 종목별 상한: |예상| ≤ 3×σ20(그 종목의 20일 변동성) + 잔차 기반 예상범위(lo~hi)
         const isDiff = F.unit === "pp";
         const chg = function (arr, k, diff) { const o = []; for (let i = k; i < arr.length; i++) o.push(diff ? arr[i] - arr[i - k] : arr[i] / arr[i - k] - 1); return o; };
-        const f5 = chg(fc, 5, isDiff);               // 회귀용 5일 변화(금리=pp차분, 나머지=비율)
-        const f20 = chg(fc, 20, isDiff);
         const stdv = function (a) { if (a.length < 8) return 0; let m = 0; for (const v of a) m += v; m /= a.length; let s = 0; for (const v of a) s += (v - m) * (v - m); return Math.sqrt(s / (a.length - 1)); };
-        const sigF20 = stdv(f20.slice(-160));        // 팩터 20일 변화의 역사적 σ
-        // 요청 충격 → 팩터 단위(금리 pp, 나머지 비율)
-        //   [V12.29 v2.2] 포화 클램프 폐지 — 임의의 큰 충격(예: 금리 +5%p)을 넣어도 결과가
-        //   ~3σ에서 붙어버려 "계산이 안 바뀌는" 문제의 근본 수정. 대신 확산(diffusion) 가정:
-        //   X-σ 규모의 팩터 이동은 역사적 속도로 약 X²×20 영업일에 걸쳐 실현된다고 보고,
-        //   반영 지평선(horizon)을 충격 크기에 맞춰 늘린다. 예상 등락 = 베타 × 충격(선형 유지),
-        //   종목별 상한도 3σ20×√(horizon/20)로 함께 확장 → 충격에 비례해 결과가 항상 달라짐.
+        const f5 = chg(fc, 5, isDiff), f20 = chg(fc, 20, isDiff);
+        const sigF20 = stdv(f20.slice(-160));
         const shockUnit = isDiff ? shock : shock / 100;
-        const X = sigF20 > 0 ? Math.abs(shockUnit) / sigF20 : 1;              // 충격이 몇 개의 20일 σ인가
-        const horizonDays = Math.min(500, Math.max(20, Math.round(20 * X * X)));
+        const X = sigF20 > 0 ? Math.abs(shockUnit) / sigF20 : 1;
+        const horizonDays = speed === "fast" ? 5 : Math.min(500, Math.max(20, Math.round(20 * X * X)));
         const hScale = Math.sqrt(horizonDays / 20);
-        const effShockUnit = shockUnit;                                       // 선형 유지(자르지 않음)
-        const effShock = isDiff ? effShockUnit : effShockUnit * 100;          // 표시용(원 단위)
-        // 2) 대상 종목: 보유 포지션 전량 + 워치리스트(US/KR 앞쪽) — daily: 캐시가 있는 것만(추가 fetch 0)
+        const effShock = isDiff ? shockUnit : shockUnit * 100;
+        // ── 시장 경유 채널: 지수 5일 수익률 + 지수의 팩터 민감도 gF ──
+        const idx5 = {};
+        for (const isym of ["^GSPC", "^KS11"]) {
+          try { const idd = await getDailyCached(env.DB, isym, 720); idx5[isym] = chg((idd && idd.closes) || [], 5, false); }
+          catch (e) { idx5[isym] = []; }
+        }
+        const ols1 = function (y, x) {
+          const N = Math.min(160, y.length, x.length); if (N < 40) return null;
+          const a = y.slice(-N), b = x.slice(-N);
+          let ma = 0, mb = 0; for (let i = 0; i < N; i++) { ma += a[i]; mb += b[i]; } ma /= N; mb /= N;
+          let cov = 0, vb = 0, va = 0;
+          for (let i = 0; i < N; i++) { const da = a[i] - ma, db = b[i] - mb; cov += da * db; vb += db * db; va += da * da; }
+          if (vb <= 0 || va <= 0) return null;
+          return { b: cov / vb, r2: (cov * cov) / (va * vb) };
+        };
+        const gF = {};
+        for (const isym of ["^GSPC", "^KS11"]) {
+          if (fKey === "spx" && isym === "^GSPC") { gF[isym] = 1; continue; }   // 팩터=시장 자신
+          const o = ols1(idx5[isym], f5);
+          gF[isym] = o ? +(o.b * Math.min(1, Math.sqrt(Math.max(0, o.r2)) * 1.6)).toFixed(4) : 0;
+        }
+        // ── 대상 종목: 보유 포지션 + 워치리스트 (daily: 캐시만 읽음 — 추가 fetch 0) ──
         let posRows = [];
         try { posRows = ((await env.DB.prepare("SELECT symbol, market, qty, avg_price FROM positions").all()).results) || []; } catch (e) {}
         const posSyms = posRows.map(function (r) { return r.symbol; });
@@ -13307,13 +13321,13 @@ async function handleRequest(request, env) {
         posSyms.concat(DEFAULT_US.slice(0, 45)).concat(DEFAULT_KR.slice(0, 45)).forEach(function (s) {
           if (s && !uniq[s]) { uniq[s] = 1; syms.push(s); }
         });
-        // 3) 베타 캐시(방법론 v2 키 — 구 캐시와 분리, 6시간)
-        const ckey = "whatif_beta2:" + fKey;
+        // ── 계수 캐시(v3 키, 6시간) ──
+        const ckey = "whatif_beta3:" + fKey;
         let bcache = null; try { bcache = await getState(env.DB, ckey, null); } catch (e) {}
         const cacheValid = !!(bcache && bcache.ts && Date.now() - bcache.ts < 6 * 3600 * 1000 && bcache.betas);
         const betas = cacheValid ? bcache.betas : {};
         const missing = syms.filter(function (s) { return !(s in betas); });
-        // 4) 누락 종목 계산 — 5일 겹침 수익률 OLS + shrinkage + 종목 20일 σ
+        // ── 종목별 2변수 OLS(시장·팩터 동시) + 국면·변동성 ──
         for (let ci = 0; ci < missing.length; ci += 20) {
           const chunk = missing.slice(ci, ci + 20);
           const rows = await Promise.all(chunk.map(function (s) {
@@ -13321,76 +13335,89 @@ async function handleRequest(request, env) {
           }));
           for (const row of rows) {
             const closes = (row.d && row.d.closes) || [];
-            if (closes.length < 60) { betas[row.s] = null; continue; }   // 표본 부족 → 제외 마킹
-            const s5 = chg(closes, 5, false);        // 5일 겹침 수익률(비율)
-            const s20 = chg(closes, 20, false);
-            // 꼬리 정렬(최근 N개 5일 윈도. KR-US 휴장차는 근사 오차로 수용)
-            const N = Math.min(160, s5.length, f5.length);
+            if (closes.length < 60) { betas[row.s] = null; continue; }
+            const s5 = chg(closes, 5, false), s20 = chg(closes, 20, false);
+            const isKR = /\.(KS|KQ)$/.test(row.s);
+            const ix = idx5[isKR ? "^KS11" : "^GSPC"] || [];
+            const N = Math.min(160, s5.length, f5.length, ix.length || 1e9);
             if (N < 40) { betas[row.s] = null; continue; }
-            const a = s5.slice(-N), b = f5.slice(-N);
-            let ma = 0, mb = 0; for (let i = 0; i < N; i++) { ma += a[i]; mb += b[i]; } ma /= N; mb /= N;
-            let cov = 0, vb = 0, va = 0;
-            for (let i = 0; i < N; i++) { const da = a[i] - ma, db = b[i] - mb; cov += da * db; vb += db * db; va += da * da; }
-            if (vb <= 0 || va <= 0) { betas[row.s] = null; continue; }
-            const betaRaw = cov / vb;                              // 종목 5일수익(비율) / 팩터 5일변화(단위)
-            const r2 = (cov * cov) / (va * vb);
-            const w = Math.min(1, Math.sqrt(Math.max(0, r2)) * 1.6); // shrinkage — R² 낮으면 감쇠
-            const sigS20 = stdv(s20.slice(-160)) * 100;             // 종목 20일 변동성(%)
-            betas[row.s] = { b: +(betaRaw * w).toFixed(4), bRaw: +betaRaw.toFixed(4), r2: +r2.toFixed(3), n: N, sig20: +sigS20.toFixed(2) };
+            const y = s5.slice(-N), x1 = ix.slice(-N), x2 = f5.slice(-N);
+            let m0 = 0, m1 = 0, m2 = 0;
+            for (let i = 0; i < N; i++) { m0 += y[i]; m1 += x1[i]; m2 += x2[i]; } m0 /= N; m1 /= N; m2 /= N;
+            let s11 = 0, s22 = 0, s12 = 0, sy1 = 0, sy2 = 0, syy = 0;
+            for (let i = 0; i < N; i++) {
+              const dy = y[i] - m0, d1 = x1[i] - m1, d2 = x2[i] - m2;
+              s11 += d1 * d1; s22 += d2 * d2; s12 += d1 * d2; sy1 += dy * d1; sy2 += dy * d2; syy += dy * dy;
+            }
+            // 2×2 정규방정식 풀이(부분베타). 공선성(예: SPX 팩터 × ^GSPC 지수)이면 단일 팩터 폴백.
+            let bM = 0, bF = 0, r2 = 0, usedMkt = 1;
+            const det = s11 * s22 - s12 * s12;
+            if (s11 > 0 && s22 > 0 && Math.abs(det) > 1e-6 * s11 * s22) {
+              bM = (sy1 * s22 - sy2 * s12) / det;
+              bF = (sy2 * s11 - sy1 * s12) / det;
+            } else { usedMkt = 0; bM = 0; bF = s22 > 0 ? sy2 / s22 : 0; }
+            if (syy > 0) r2 = Math.max(0, Math.min(1, (bM * sy1 + bF * sy2) / syy));
+            const w = Math.min(1, Math.sqrt(r2) * 1.5);                    // 부분베타 축소
+            const volNow = stdv(s20.slice(-40)), volAll = stdv(s20.slice(-160));
+            const regime = volAll > 0 ? Math.max(0.8, Math.min(1.4, volNow / volAll)) : 1;   // 변동성 국면
+            const sigS20 = volAll * 100;
+            betas[row.s] = { bF: +(bF * w).toFixed(4), bM: +bM.toFixed(3), r2: +r2.toFixed(3), n: N,
+              sig20: +sigS20.toFixed(2), reg: +regime.toFixed(2), mk: usedMkt };
           }
         }
-        // [버그수정] 만료 후 재계산했는데 옛 ts를 유지해 캐시가 즉시 다시 만료되던 문제 —
-        //   유효 캐시에 신규 종목만 추가한 경우에만 기존 ts 유지, 그 외(전체 재계산)는 ts 갱신.
         if (missing.length) { try { await setState(env.DB, ckey, { ts: cacheValid ? bcache.ts : Date.now(), betas: betas }); } catch (e) {} }
-        // 5) 포지션 시가(quote: 캐시) → 금액 영향
+        // ── 포지션 평가액(quote: 캐시) ──
         const posBySym = {};
         for (const p of posRows) {
-          if (!posBySym[p.symbol]) posBySym[p.symbol] = { qty: 0, cost: 0, market: p.market };
+          if (!posBySym[p.symbol]) posBySym[p.symbol] = { qty: 0, cost: 0 };
           posBySym[p.symbol].qty += _num(p.qty, 0); posBySym[p.symbol].cost += _num(p.qty, 0) * _num(p.avg_price, 0);
         }
         const posQuoteRows = await Promise.all(Object.keys(posBySym).map(function (s) {
           return getState(env.DB, "quote:" + s, null).then(function (q) { return { s: s, q: q }; })["catch"](function () { return { s: s, q: null }; });
         }));
         const lastPx = {}; posQuoteRows.forEach(function (r) { if (r.q && _num(r.q.price, 0) > 0) lastPx[r.s] = _num(r.q.price, 0); });
-        // 6) 결과 조립
+        // ── 결과 조립: 직접+간접 분해 × 국면 승수 → 소프트캡 ──
         const items = [];
         const port = { US: { value: 0, pnl: 0 }, KR: { value: 0, pnl: 0 } };
         for (const s of syms) {
           const bi = betas[s]; if (!bi) continue;
-          // 예상 등락 = 축소 베타 × 충격(선형) — 종목 상한은 지평선 확장된 3σ20×√(h/20)에 tanh 소프트캡
-          let expPct = bi.b * effShockUnit * 100;
+          const mkt = /\.(KS|KQ)$/.test(s) ? "KR" : "US";
+          const g = gF[mkt === "KR" ? "^KS11" : "^GSPC"] || 0;
+          const direct = bi.bF * shockUnit * 100;                 // 시장효과 통제한 고유 민감도
+          const indirect = (bi.bM || 0) * g * shockUnit * 100;    // 시장 경유 파급
+          const raw = (direct + indirect) * (bi.reg || 1);
           const capS = 3 * Math.max(1, bi.sig20 || 0) * hScale;
-          const raw = expPct;
-          expPct = capS * Math.tanh(expPct / capS);            // 소프트캡(단조 유지 — 값이 붙지 않음)
-          const stockCapped = Math.abs(expPct) < Math.abs(raw) * 0.9;
-          const band = +(Math.max(0.5, (bi.sig20 || 2) * hScale * Math.sqrt(Math.max(0.05, 1 - bi.r2)))).toFixed(2);
+          const expPct = capS * Math.tanh(raw / capS);
+          const kk = raw !== 0 ? expPct / raw : 0;                // 분해값도 캡 비율만큼 동일 축소
+          const dAdj = direct * (bi.reg || 1) * kk, iAdj = indirect * (bi.reg || 1) * kk;
+          const band = +(Math.max(0.4, (bi.sig20 || 2) * hScale * Math.sqrt(Math.max(0.05, 1 - bi.r2)))).toFixed(2);
           const pos = posBySym[s];
-          let posValue = null, expPnl = null, mkt = /\.(KS|KQ)$/.test(s) ? "KR" : "US";
+          let posValue = null, expPnl = null;
           if (pos && pos.qty > 0) {
             const px = lastPx[s] || (pos.cost / pos.qty);
             posValue = pos.qty * px; expPnl = posValue * expPct / 100;
-            // [버그수정] positions.market은 소문자('kr')인데 'KR'와 비교해 KR 보유가 US 달러
-            //   버킷에 합산되던 통화 혼입 — 심볼 접미사로 판정(대소문자 무관).
             port[mkt].value += posValue; port[mkt].pnl += expPnl;
           }
           items.push({ symbol: s, name: NAME_MAP[s] || s.replace(/\.(KS|KQ)$/, ""), market: mkt,
-            beta: bi.b, betaRaw: bi.bRaw, r2: bi.r2, n: bi.n, sig20: bi.sig20,
-            expPct: +expPct.toFixed(2), lo: +(expPct - band).toFixed(2), hi: +(expPct + band).toFixed(2),
-            capped: stockCapped,
+            beta: bi.bF, mktBeta: bi.bM, regime: bi.reg, r2: bi.r2, n: bi.n, sig20: bi.sig20,
+            expPct: +expPct.toFixed(2), direct: +dAdj.toFixed(2), indirect: +iAdj.toFixed(2),
+            lo: +(expPct - band).toFixed(2), hi: +(expPct + band).toFixed(2),
+            capped: Math.abs(expPct) < Math.abs(raw) * 0.9,
             held: !!pos && pos.qty > 0, posValue: posValue != null ? +posValue.toFixed(2) : null,
             expPnl: expPnl != null ? +expPnl.toFixed(2) : null });
         }
         items.sort(function (x, y) { return Math.abs(y.expPct) - Math.abs(x.expPct); });
         return Response.json({
           factor: fKey, factorLabel: F.label, factorSym: F.sym, unit: F.unit, presets: F.presets,
-          shock: shock, effShock: +effShock.toFixed(3), shockCapped: false, horizonDays: horizonDays,
+          shock: shock, effShock: +effShock.toFixed(3), speed: speed, horizonDays: horizonDays,
+          gF: { us: gF["^GSPC"], kr: gF["^KS11"] },
           sigF20: +(isDiff ? sigF20 : sigF20 * 100).toFixed(3), factorLast: +_num(fLast, 0).toFixed(3),
           portfolio: {
             US: { value: +port.US.value.toFixed(2), expPnl: +port.US.pnl.toFixed(2), expPct: port.US.value > 0 ? +(port.US.pnl / port.US.value * 100).toFixed(2) : null },
             KR: { value: Math.round(port.KR.value), expPnl: Math.round(port.KR.pnl), expPct: port.KR.value > 0 ? +(port.KR.pnl / port.KR.value * 100).toFixed(2) : null }
           },
           items: items.slice(0, 70),
-          note: "방법론 v2.2: 최근 " + Math.min(160, f5.length) + "개 5일 겹침 수익률 OLS + 베타 축소(√R²). 충격은 자르지 않고(선형) 역사적 확산 속도 기준 약 " + horizonDays + "영업일에 걸친 반영으로 가정 — 종목 상한·예상범위도 그 지평선의 변동성(3σ×√h)으로 확장. 역사적 근사이며 예측 보장 아님.",
+          note: "방법론 v3: 종목 5일수익 ~ (시장지수·팩터) 2변수 OLS 부분베타(√R² 축소) + 시장 경유 파급(bM×gF) + 변동성 국면 승수(0.8~1.4) — " + (speed === "fast" ? "5영업일 단기 쇼크" : "역사적 확산 속도(약 " + horizonDays + "영업일)") + " 지평선의 3σ 소프트캡·잔차 예상범위 적용. 역사적 근사이며 예측 보장 아님.",
           ts: Date.now()
         }, { headers: cors });
       } catch (e) {
