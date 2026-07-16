@@ -10896,6 +10896,14 @@ setTimeout(function(){ var o=document.getElementById('lux-intro-overlay'); if(o&
 #page-whatif .wi-pos{color:#00e676;} #page-whatif .wi-neg{color:#ff1744;}
 #page-whatif .wi-note{font-size:10.5px;color:#61789c;margin-top:12px;line-height:1.7;font-family:'IBM Plex Mono',monospace;}
 #page-whatif .wi-badge{display:inline-block;font-size:8.5px;padding:1px 6px;border-radius:6px;background:rgba(255,193,7,.15);color:#ffc107;border:1px solid rgba(255,193,7,.4);margin-left:6px;}
+#page-whatif .wi-cap{display:inline-block;font-size:8.5px;padding:1px 6px;border-radius:6px;background:rgba(96,168,255,.12);color:#7fb0e8;border:1px solid rgba(96,168,255,.35);margin-left:6px;}
+#page-whatif .wi-range{font-size:9.5px;color:#61789c;}
+/* 예상 등락 미니 바 — 0 중심, 범위(잔차) 옅게 + 점추정 진하게 */
+#page-whatif .wi-bar{position:relative;width:150px;height:12px;background:rgba(255,255,255,.035);border-radius:6px;overflow:hidden;}
+#page-whatif .wi-bar .zero{position:absolute;left:50%;top:0;bottom:0;width:1px;background:rgba(140,170,220,.4);}
+#page-whatif .wi-bar .band{position:absolute;top:2px;bottom:2px;border-radius:4px;opacity:.28;}
+#page-whatif .wi-bar .pt{position:absolute;top:0;bottom:0;border-radius:3px;}
+#page-whatif .wi-bar .pos{background:#00e676;} #page-whatif .wi-bar .neg{background:#ff1744;}
 /* 층별 최강 뉴런 코어 맥동 */
 #page-nnviz .nnv-core{animation:nnvCorePulse 2.6s ease-in-out infinite;filter:drop-shadow(0 0 3px rgba(150,200,255,.55));}
 @keyframes nnvCorePulse{0%,100%{opacity:.7;}50%{opacity:1;}}
@@ -11320,8 +11328,12 @@ html[data-theme="light"] #page-nnviz .nnv-title,html[data-theme="light"] #page-n
       WI.busy=false;
       if(!d||d.error){ tbl.innerHTML='<div class="nnv-empty">실패: '+((d&&d.error)||'응답 없음')+'</div>'; sum.innerHTML=''; return; }
       var u=WI.unit[WI.factor];
-      var cards='<div class="wi-card"><div class="k">시나리오</div><div class="v" style="color:#ffc107;">'+d.factorLabel+' '+fmtShock(d.shock,u)+'</div>'
-        +'<div class="m">현재 '+d.factorLast+(WI.factor==='rate'?'%':'')+' 기준 · 팩터 변화 '+(d.shockPct>0?'+':'')+d.shockPct+'%</div></div>';
+      var capNote = d.shockCapped
+        ? '요청 '+fmtShock(d.shock,u)+' → 역사적 20일 3σ('+(3*d.sigF20).toFixed(2)+u+') 상한 적용: <b>유효 '+fmtShock(d.effShock,u)+'</b>'
+        : '현재 '+d.factorLast+(WI.factor==='rate'?'%':'')+' 기준 · 20영업일 내 반영 가정';
+      var cards='<div class="wi-card"><div class="k">시나리오</div><div class="v" style="color:#ffc107;">'+d.factorLabel+' '+fmtShock(d.shock,u)
+        +(d.shockCapped?'<span class="wi-cap">3σ 상한</span>':'')+'</div>'
+        +'<div class="m">'+capNote+'</div></div>';
       ['US','KR'].forEach(function(mk){
         var p=d.portfolio&&d.portfolio[mk];
         if(p&&p.value>0){
@@ -11333,18 +11345,30 @@ html[data-theme="light"] #page-nnviz .nnv-title,html[data-theme="light"] #page-n
       if(!(d.portfolio&&((d.portfolio.US&&d.portfolio.US.value>0)||(d.portfolio.KR&&d.portfolio.KR.value>0))))
         cards+='<div class="wi-card"><div class="k">포트폴리오</div><div class="v" style="color:#61789c;font-size:14px;">보유 포지션 없음</div><div class="m">아래는 관심종목 예상 민감도입니다</div></div>';
       sum.innerHTML=cards;
+      // 바 스케일: 범위(lo/hi) 절대 최댓값 기준
+      var mx=0.5;(d.items||[]).forEach(function(it){ mx=Math.max(mx,Math.abs(it.lo||0),Math.abs(it.hi||0),Math.abs(it.expPct)); });
+      function bar(it){
+        var sc=function(v){ return 50 + Math.max(-50,Math.min(50, v/mx*50)); }; // % 위치(0=좌, 50=중앙)
+        var l=sc(Math.min(it.lo,it.hi)), rgt=sc(Math.max(it.lo,it.hi));
+        var p0=sc(0), p1=sc(it.expPct), pl=Math.min(p0,p1), pw=Math.max(0.8,Math.abs(p1-p0));
+        var c2=it.expPct>=0?'pos':'neg';
+        return '<div class="wi-bar"><span class="zero"></span>'
+          +'<span class="band '+c2+'" style="left:'+l.toFixed(1)+'%;width:'+Math.max(1,(rgt-l)).toFixed(1)+'%"></span>'
+          +'<span class="pt '+c2+'" style="left:'+pl.toFixed(1)+'%;width:'+pw.toFixed(1)+'%"></span></div>';
+      }
       var rows=(d.items||[]).map(function(it){
-        return '<tr'+(it.held?' class="held"':'')+'><td>'+it.name+(it.held?'<span class="wi-badge">보유</span>':'')+'</td>'
+        return '<tr'+(it.held?' class="held"':'')+'><td>'+it.name+(it.held?'<span class="wi-badge">보유</span>':'')+(it.capped?'<span class="wi-cap">3σ</span>':'')+'</td>'
           +'<td>'+it.market+'</td>'
           +'<td class="r">'+it.beta.toFixed(2)+'</td>'
           +'<td class="r">'+(it.r2*100).toFixed(0)+'%</td>'
-          +'<td class="r '+cls(it.expPct)+'"><b>'+(it.expPct>0?'+':'')+it.expPct.toFixed(2)+'%</b></td>'
+          +'<td class="r '+cls(it.expPct)+'"><b>'+(it.expPct>0?'+':'')+it.expPct.toFixed(2)+'%</b><br><span class="wi-range">'+it.lo.toFixed(1)+' ~ '+it.hi.toFixed(1)+'%</span></td>'
+          +'<td>'+bar(it)+'</td>'
           +'<td class="r">'+(it.held?money(it.posValue,it.market):'—')+'</td>'
           +'<td class="r '+cls(it.expPnl)+'">'+(it.held?(it.expPnl>0?'+':'')+money(it.expPnl,it.market):'—')+'</td></tr>';
       }).join('');
-      tbl.innerHTML='<table><thead><tr><th>종목</th><th>시장</th><th class="r">베타</th><th class="r">설명력 R²</th><th class="r">예상 등락</th><th class="r">보유 평가액</th><th class="r">예상 손익</th></tr></thead><tbody>'
-        +(rows||'<tr><td colspan="7" style="color:#61789c;">일봉 캐시가 쌓인 종목이 없습니다 — 엔진이 하루 이상 가동되면 표시됩니다.</td></tr>')+'</tbody></table>'
-        +'<div class="wi-note">⚠️ '+(d.note||'')+'</div>';
+      tbl.innerHTML='<table><thead><tr><th>종목</th><th>시장</th><th class="r">베타*</th><th class="r">설명력 R²</th><th class="r">예상 등락(범위)</th><th>분포</th><th class="r">보유 평가액</th><th class="r">예상 손익</th></tr></thead><tbody>'
+        +(rows||'<tr><td colspan="8" style="color:#61789c;">일봉 캐시가 쌓인 종목이 없습니다 — 엔진이 하루 이상 가동되면 표시됩니다.</td></tr>')+'</tbody></table>'
+        +'<div class="wi-note">⚠️ '+(d.note||'')+' · 베타*는 R² 기반 축소(shrinkage) 적용값.</div>';
     })['catch'](function(e){ WI.busy=false; tbl.innerHTML='<div class="nnv-empty">요청 실패: '+e.message+'</div>'; });
   };
 })();

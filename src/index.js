@@ -13275,10 +13275,24 @@ async function handleRequest(request, env) {
         const fc = (fd && fd.closes) || [];
         if (fc.length < 60) return Response.json({ error: "팩터 시계열 부족: " + F.sym }, { status: 503, headers: cors });
         const fLast = fc[fc.length - 1];
-        // 충격 → 팩터 % 변화 (금리는 %p 충격을 현재 수익률 대비 %변화로 환산)
-        const shockPct = F.unit === "pp" ? (fLast > 0 ? (shock / fLast) * 100 : shock * 25) : shock;
-        // 팩터 일변화율
-        const fRet = []; for (let i = 1; i < fc.length; i++) fRet.push(fc[i] / fc[i - 1] - 1);
+        // ── [V12.25 엔진 고도화] 과도 예측 수정 ──
+        //   (a) 금리는 %p '차분' 회귀(비율 환산 폐기 — -1%p를 -23% 변화로 부풀리던 원인)
+        //   (b) 5영업일 겹침 수익률 회귀 — 일간 노이즈·KR/US 시차 완화
+        //   (c) 충격을 팩터의 역사적 20일 변동 3σ로 클램프 — 표본에 없는 급변은 외삽하지 않음
+        //   (d) 베타 축소(shrinkage): R² 낮으면 0쪽으로 감쇠(√R²×1.6, 상한 1)
+        //   (e) 종목별 상한: |예상| ≤ 3×σ20(그 종목의 20일 변동성) + 잔차 기반 예상범위(lo~hi)
+        const isDiff = F.unit === "pp";
+        const chg = function (arr, k, diff) { const o = []; for (let i = k; i < arr.length; i++) o.push(diff ? arr[i] - arr[i - k] : arr[i] / arr[i - k] - 1); return o; };
+        const f5 = chg(fc, 5, isDiff);               // 회귀용 5일 변화(금리=pp차분, 나머지=비율)
+        const f20 = chg(fc, 20, isDiff);
+        const stdv = function (a) { if (a.length < 8) return 0; let m = 0; for (const v of a) m += v; m /= a.length; let s = 0; for (const v of a) s += (v - m) * (v - m); return Math.sqrt(s / (a.length - 1)); };
+        const sigF20 = stdv(f20.slice(-160));        // 팩터 20일 변화의 역사적 σ
+        // 요청 충격 → 팩터 단위(금리 pp, 나머지 비율)
+        const shockUnit = isDiff ? shock : shock / 100;
+        const capF = 3 * sigF20;
+        const effShockUnit = capF > 0 ? Math.max(-capF, Math.min(capF, shockUnit)) : shockUnit;
+        const shockCapped = Math.abs(effShockUnit) < Math.abs(shockUnit) - 1e-12;
+        const effShock = isDiff ? effShockUnit : effShockUnit * 100;   // 표시용(원 단위)
         // 2) 대상 종목: 보유 포지션 전량 + 워치리스트(US/KR 앞쪽) — daily: 캐시가 있는 것만(추가 fetch 0)
         let posRows = [];
         try { posRows = ((await env.DB.prepare("SELECT symbol, market, qty, avg_price FROM positions").all()).results) || []; } catch (e) {}
@@ -13287,12 +13301,12 @@ async function handleRequest(request, env) {
         posSyms.concat(DEFAULT_US.slice(0, 45)).concat(DEFAULT_KR.slice(0, 45)).forEach(function (s) {
           if (s && !uniq[s]) { uniq[s] = 1; syms.push(s); }
         });
-        // 3) 베타 캐시(팩터 시계열 ts 기준 6시간)
-        const ckey = "whatif_beta:" + fKey;
+        // 3) 베타 캐시(방법론 v2 키 — 구 캐시와 분리, 6시간)
+        const ckey = "whatif_beta2:" + fKey;
         let bcache = null; try { bcache = await getState(env.DB, ckey, null); } catch (e) {}
         const betas = (bcache && bcache.ts && Date.now() - bcache.ts < 6 * 3600 * 1000 && bcache.betas) ? bcache.betas : {};
         const missing = syms.filter(function (s) { return !(s in betas); });
-        // 4) 누락 종목 베타 계산 — daily: 캐시 읽기(병렬 청크), OLS beta = cov(r,f)/var(f)
+        // 4) 누락 종목 계산 — 5일 겹침 수익률 OLS + shrinkage + 종목 20일 σ
         for (let ci = 0; ci < missing.length; ci += 20) {
           const chunk = missing.slice(ci, ci + 20);
           const rows = await Promise.all(chunk.map(function (s) {
@@ -13300,18 +13314,22 @@ async function handleRequest(request, env) {
           }));
           for (const row of rows) {
             const closes = (row.d && row.d.closes) || [];
-            if (closes.length < 45) { betas[row.s] = null; continue; }   // 표본 부족 → 제외 마킹
-            const sRet = []; for (let i = 1; i < closes.length; i++) sRet.push(closes[i] / closes[i - 1] - 1);
-            // 꼬리 정렬(달력 미보유 → 최근 N봉 인덱스 근사. KR-US 휴장차는 근사 오차로 수용)
-            const N = Math.min(120, sRet.length, fRet.length);
-            const a = sRet.slice(-N), b = fRet.slice(-N);
+            if (closes.length < 60) { betas[row.s] = null; continue; }   // 표본 부족 → 제외 마킹
+            const s5 = chg(closes, 5, false);        // 5일 겹침 수익률(비율)
+            const s20 = chg(closes, 20, false);
+            // 꼬리 정렬(최근 N개 5일 윈도. KR-US 휴장차는 근사 오차로 수용)
+            const N = Math.min(160, s5.length, f5.length);
+            if (N < 40) { betas[row.s] = null; continue; }
+            const a = s5.slice(-N), b = f5.slice(-N);
             let ma = 0, mb = 0; for (let i = 0; i < N; i++) { ma += a[i]; mb += b[i]; } ma /= N; mb /= N;
             let cov = 0, vb = 0, va = 0;
             for (let i = 0; i < N; i++) { const da = a[i] - ma, db = b[i] - mb; cov += da * db; vb += db * db; va += da * da; }
             if (vb <= 0 || va <= 0) { betas[row.s] = null; continue; }
-            const beta = cov / vb;
+            const betaRaw = cov / vb;                              // 종목 5일수익(비율) / 팩터 5일변화(단위)
             const r2 = (cov * cov) / (va * vb);
-            betas[row.s] = { b: +beta.toFixed(3), r2: +r2.toFixed(3), n: N };
+            const w = Math.min(1, Math.sqrt(Math.max(0, r2)) * 1.6); // shrinkage — R² 낮으면 감쇠
+            const sigS20 = stdv(s20.slice(-160)) * 100;             // 종목 20일 변동성(%)
+            betas[row.s] = { b: +(betaRaw * w).toFixed(4), bRaw: +betaRaw.toFixed(4), r2: +r2.toFixed(3), n: N, sig20: +sigS20.toFixed(2) };
           }
         }
         if (missing.length) { try { await setState(env.DB, ckey, { ts: (bcache && bcache.ts && Object.keys(betas).length > missing.length ? bcache.ts : Date.now()), betas: betas }); } catch (e) {} }
@@ -13330,7 +13348,12 @@ async function handleRequest(request, env) {
         const port = { US: { value: 0, pnl: 0 }, KR: { value: 0, pnl: 0 } };
         for (const s of syms) {
           const bi = betas[s]; if (!bi) continue;
-          const expPct = bi.b * shockPct;
+          // 예상 등락 = 축소 베타 × 유효 충격(3σ 클램프) — 종목 자체 3σ20 상한 + 잔차 예상범위
+          let expPct = bi.b * effShockUnit * 100;
+          const capS = 3 * Math.max(1, bi.sig20 || 0);
+          let stockCapped = false;
+          if (Math.abs(expPct) > capS) { expPct = capS * Math.sign(expPct); stockCapped = true; }
+          const band = +(Math.max(0.5, (bi.sig20 || 2) * Math.sqrt(Math.max(0.05, 1 - bi.r2)))).toFixed(2);
           const pos = posBySym[s];
           let posValue = null, expPnl = null, mkt = /\.(KS|KQ)$/.test(s) ? "KR" : "US";
           if (pos && pos.qty > 0) {
@@ -13340,20 +13363,23 @@ async function handleRequest(request, env) {
             port[pm].value += posValue; port[pm].pnl += expPnl;
           }
           items.push({ symbol: s, name: NAME_MAP[s] || s.replace(/\.(KS|KQ)$/, ""), market: mkt,
-            beta: bi.b, r2: bi.r2, n: bi.n, expPct: +expPct.toFixed(2),
+            beta: bi.b, betaRaw: bi.bRaw, r2: bi.r2, n: bi.n, sig20: bi.sig20,
+            expPct: +expPct.toFixed(2), lo: +(expPct - band).toFixed(2), hi: +(expPct + band).toFixed(2),
+            capped: stockCapped,
             held: !!pos && pos.qty > 0, posValue: posValue != null ? +posValue.toFixed(2) : null,
             expPnl: expPnl != null ? +expPnl.toFixed(2) : null });
         }
         items.sort(function (x, y) { return Math.abs(y.expPct) - Math.abs(x.expPct); });
         return Response.json({
           factor: fKey, factorLabel: F.label, factorSym: F.sym, unit: F.unit, presets: F.presets,
-          shock: shock, shockPct: +shockPct.toFixed(2), factorLast: +_num(fLast, 0).toFixed(3),
+          shock: shock, effShock: +effShock.toFixed(3), shockCapped: shockCapped,
+          sigF20: +(isDiff ? sigF20 : sigF20 * 100).toFixed(3), factorLast: +_num(fLast, 0).toFixed(3),
           portfolio: {
             US: { value: +port.US.value.toFixed(2), expPnl: +port.US.pnl.toFixed(2), expPct: port.US.value > 0 ? +(port.US.pnl / port.US.value * 100).toFixed(2) : null },
             KR: { value: Math.round(port.KR.value), expPnl: Math.round(port.KR.pnl), expPct: port.KR.value > 0 ? +(port.KR.pnl / port.KR.value * 100).toFixed(2) : null }
           },
           items: items.slice(0, 70),
-          note: "최근 " + Math.min(120, fRet.length) + "영업일 일수익률 OLS 회귀 기반 역사적 민감도(베타) 근사. R²가 낮은 종목은 해당 팩터로 설명되는 변동이 작음 — 참고용이며 예측 보장 아님.",
+          note: "방법론 v2: 최근 " + Math.min(160, f5.length) + "개 5일 겹침 수익률 OLS + 베타 축소(√R²) + 충격 3σ 클램프 + 종목 3σ20 상한. 예상범위는 잔차 변동성 기반. 20영업일 내 충격 반영 가정의 역사적 근사 — 예측 보장 아님.",
           ts: Date.now()
         }, { headers: cors });
       } catch (e) {
