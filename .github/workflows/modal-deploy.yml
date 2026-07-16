@@ -1,0 +1,58 @@
+name: Deploy Modal Trainer
+
+# [V12.34] Modal DNN 학습기 재배포 자동화
+#   • trainer/modal/** 가 main에 푸시되면 자동으로 modal deploy (수동 PC 작업 불필요)
+#   • GitHub → Actions → "Deploy Modal Trainer" → Run workflow = 수동 재배포 버튼
+#     (run_now 체크 시 배포 직후 학습 1회 즉시 실행)
+#   사전 준비(1회): 저장소 Settings → Secrets and variables → Actions 에
+#     MODAL_TOKEN_ID / MODAL_TOKEN_SECRET 등록 (PC의 ~/.modal.toml 값 또는 `modal token new`)
+
+on:
+  push:
+    branches:
+      - main
+    paths:
+      - 'trainer/modal/**'
+  workflow_dispatch:
+    inputs:
+      run_now:
+        description: '배포 후 즉시 학습 1회 실행'
+        type: boolean
+        default: false
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    name: modal deploy
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - name: Check secrets
+        id: sec
+        env:
+          MODAL_TOKEN_ID: ${{ secrets.MODAL_TOKEN_ID }}
+        run: |
+          if [ -z "$MODAL_TOKEN_ID" ]; then
+            echo "::warning::MODAL_TOKEN_ID/MODAL_TOKEN_SECRET 시크릿이 없어 배포를 건너뜁니다."
+            echo "::warning::PC에서 'modal token new' 실행 후 Settings → Secrets → Actions 에 두 값을 등록하세요."
+            echo "ok=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "ok=true" >> "$GITHUB_OUTPUT"
+          fi
+      - name: Install modal
+        if: steps.sec.outputs.ok == 'true'
+        run: pip install modal
+      - name: Deploy trainer (cron 갱신)
+        if: steps.sec.outputs.ok == 'true'
+        env:
+          MODAL_TOKEN_ID: ${{ secrets.MODAL_TOKEN_ID }}
+          MODAL_TOKEN_SECRET: ${{ secrets.MODAL_TOKEN_SECRET }}
+        run: modal deploy trainer/modal/modal_train.py
+      - name: Run training once now
+        if: steps.sec.outputs.ok == 'true' && github.event_name == 'workflow_dispatch' && inputs.run_now
+        env:
+          MODAL_TOKEN_ID: ${{ secrets.MODAL_TOKEN_ID }}
+          MODAL_TOKEN_SECRET: ${{ secrets.MODAL_TOKEN_SECRET }}
+        run: modal run trainer/modal/modal_train.py

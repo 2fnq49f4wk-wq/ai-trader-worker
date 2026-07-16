@@ -61,3 +61,17 @@ modal run modal_train.py
 ## 크레딧 걱정?
 3M 학습 1회 = CPU 수 분. 하루 1회면 월 크레딧의 극히 일부만 씁니다. 무료 $30 크레딧 안에서
 매일 돌려도 남습니다. 대시보드 Usage에서 실사용량 확인 가능.
+
+---
+
+## [V12.34] 재배포 자동화 — 이제 PC 없이 GitHub에서 처리됩니다
+
+**1회 준비**: PC에서 `modal token new` 실행(또는 `~/.modal.toml`의 값 확인) 후,
+GitHub 저장소 **Settings → Secrets and variables → Actions**에 등록:
+- `MODAL_TOKEN_ID`
+- `MODAL_TOKEN_SECRET`
+
+이후:
+- **자동 재배포** — `trainer/modal/` 파일이 main에 푸시되면 GitHub Actions가 자동으로 `modal deploy` 실행
+- **수동 재배포 버튼** — GitHub → **Actions → "Deploy Modal Trainer" → Run workflow**
+  (`run_now` 체크 시 배포 직후 학습 1회 즉시 실행 → 두뇌 페이지 정확도 바로 갱신)
