@@ -2295,6 +2295,20 @@ html[data-theme="light"] .cmdk-fab{color:#fff;}
 .db-sort-btn:hover{color:var(--t1);border-color:var(--t3);}
 .db-sort-btn.active{background:var(--acc);color:var(--bg);border-color:var(--acc);}
 html[data-theme="light"] .db-sort-btn.active{color:#fff;}
+/* [V12.28] 주요 지수 스트립 — 종목상세 목록 상단. 터미널풍의 절제된 카드. */
+.db-idx-strip{display:grid;grid-template-columns:repeat(6,1fr);gap:1px;background:var(--bd2);
+  border:1px solid var(--bd);border-radius:10px;overflow:hidden;margin-bottom:12px;}
+@media(max-width:1100px){.db-idx-strip{grid-template-columns:repeat(3,1fr);}}
+@media(max-width:640px){.db-idx-strip{grid-template-columns:repeat(2,1fr);}}
+.db-idx{cursor:pointer;background:var(--s1);padding:11px 13px 10px;transition:background .15s;position:relative;min-width:0;}
+.db-idx:hover{background:var(--s2);}
+.db-idx .n{font-size:9.5px;letter-spacing:1.2px;color:var(--t3);text-transform:uppercase;font-family:'IBM Plex Mono',monospace;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
+.db-idx .nk{font-size:10.5px;color:var(--t2);margin-top:1px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
+.db-idx .p{font-size:15px;font-weight:700;font-family:'Space Grotesk',sans-serif;font-variant-numeric:tabular-nums;margin-top:4px;color:var(--t1);}
+.db-idx .row2{display:flex;align-items:center;justify-content:space-between;gap:6px;margin-top:3px;}
+.db-idx .d{font-size:11px;font-weight:600;font-variant-numeric:tabular-nums;font-family:'IBM Plex Mono',monospace;}
+.db-idx .d.pos{color:var(--pos);} .db-idx .d.neg{color:var(--neg);}
+.db-idx svg{flex:0 0 auto;opacity:.9;}
 .detail-browse{display:grid;grid-template-columns:1fr 1fr;gap:12px;}
 .detail-browse .db-col{background:var(--s1);border:1px solid var(--bd);border-radius:8px;overflow:hidden;display:flex;flex-direction:column;}
 .detail-browse .db-head{font-size:11px;font-weight:700;color:var(--t1);padding:9px 12px;border-bottom:1px solid var(--bd);
@@ -2347,6 +2361,14 @@ html[data-theme="light"] .detail-tf-btn.active{color:#fff;}
 /* [V89] 차트(좌) + 사이드바(우) — 한눈에 + 사이드바 잘림 없음(자연 높이) */
 /* [V9.9] flex-start→stretch: 좌(차트+뉴스)·우(사이드) 높이 동기화 — 짧은 쪽 아래 여백 제거 */
 .detail-main{display:flex;gap:12px;align-items:stretch;margin-bottom:20px;}
+/* [V12.28] 지수 모드 — 종목 전용 패널(심리/비전/실적/뉴스/재무) 숨김, 차트 전폭.
+   우측 사이드바는 기술요약·패턴(차트 파생)만 남김 */
+#detailContent.idx-mode #detailNews,
+#detailContent.idx-mode #detailCrowd,
+#detailContent.idx-mode #detailVision,
+#detailContent.idx-mode #detailEarn,
+#detailContent.idx-mode .detail-side .detail-sec:first-of-type,
+#detailContent.idx-mode .detail-below{display:none;}
 .detail-left{flex:1 1 auto;min-width:0;display:flex;flex-direction:column;gap:8px;}
 .detail-left .detail-news{flex:1 1 auto;min-height:0;}  /* 뉴스가 남는 세로공간 흡수 → 좌우 높이 정합 */
 .detail-main .detail-chart{flex:0 0 auto;height:52vh;min-height:280px;max-height:600px;margin-bottom:0;padding:4px;}
@@ -3258,6 +3280,8 @@ html[data-theme="light"] .table tbody tr:hover{background:rgba(9,105,218,.045);}
             <span class="aipick-title" title="섹터 뉴스감성·감성변화·모멘텀·거래량 + 재무(저가중 하방가드)를 온라인 학습해 다음날 상승확률 예측">📰 내일 오를 뉴스픽</span>
             <div class="aipick-list" id="newsPickList"><span class="aipick-empty">뉴스 수집·학습 후 표시됩니다</span></div>
           </div>
+          <!-- [V12.28] 주요 지수 — 나스닥·다우·S&P500·러셀2000·코스피·코스닥. 클릭 시 지수 상세(차트) -->
+          <div class="db-idx-strip" id="detailIdxStrip"><div class="empty" style="padding:14px;text-align:center;color:var(--t3);font-size:11px;">지수 로딩 중…</div></div>
           <div class="db-sortbar" id="detailBrowseSort">
             <span class="db-sort-label">정렬</span>
             <button type="button" class="db-sort-btn active" data-sort="mcap">시가총액</button>
@@ -4025,8 +4049,12 @@ html[data-theme="light"] .table tbody tr:hover{background:rgba(9,105,218,.045);}
   var tradeFilter = 'all';
 
   var INDEX_NAMES = {
-    '^IXIC': 'NASDAQ', '^DJI': 'DOW JONES', '^GSPC': 'S&P 500',
+    '^IXIC': 'NASDAQ', '^DJI': 'DOW JONES', '^GSPC': 'S&P 500', '^RUT': 'RUSSELL 2000',
     '^KS11': 'KOSPI', '^KQ11': 'KOSDAQ'
+  };
+  var INDEX_NAMES_KO = {
+    '^IXIC': '나스닥 종합', '^DJI': '다우존스 산업평균', '^GSPC': 'S&P 500', '^RUT': '러셀 2000',
+    '^KS11': '코스피', '^KQ11': '코스닥'
   };
 
   var KR_NAMES = {
@@ -7242,8 +7270,39 @@ html[data-theme="light"] .table tbody tr:hover{background:rgba(9,105,218,.045);}
 
   // [V96] 조회 전 — 한국주식(좌)·미국주식(우) 전체 워치리스트 (정렬: 시총/거래량/상승/하락)
   var detailBrowseSort = 'mcap';
+  // [V12.28] 주요 지수 스트립 — 나스닥·다우·S&P500·러셀2000·코스피·코스닥 (클릭 → 지수 차트 상세)
+  var IDX_ORDER = ['^IXIC','^DJI','^GSPC','^RUT','^KS11','^KQ11'];
+  function renderDetailIdxStrip() {
+    var box = $('detailIdxStrip'); if (!box) return;
+    var paint = function(list){
+      var m = {}; (list||[]).forEach(function(i){ m[i.symbol]=i; });
+      window.__idxMap = m;
+      var cards = IDX_ORDER.map(function(sym){
+        var i = m[sym];
+        var name = INDEX_NAMES[sym]||sym, ko = INDEX_NAMES_KO[sym]||'';
+        if (!i) return '<div class="db-idx" data-idx="'+sym+'"><div class="n">'+name+'</div><div class="nk">'+ko+'</div><div class="p">—</div></div>';
+        var pc = (typeof i.dayPct==='number') ? i.dayPct : null;
+        var cl = pc==null?'':(pc>=0?'pos':'neg');
+        var color = pc!=null && pc<0 ? '#f85149' : '#3fb950';
+        var spark = ''; try{ spark = makeSparkline(i.history, color); }catch(e){}
+        return '<div class="db-idx" data-idx="'+sym+'"><div class="n">'+name+'</div><div class="nk">'+ko+'</div>'
+          +'<div class="p">'+fmtNum(i.price)+'</div>'
+          +'<div class="row2"><span class="d '+cl+'">'+(pc==null?'—':(pc>=0?'+':'')+fmtNum(pc,2)+'%')+'</span>'+spark+'</div></div>';
+      }).join('');
+      box.innerHTML = cards;
+      box.querySelectorAll('.db-idx').forEach(function(el){
+        el.addEventListener('click', function(){ openStockDetail(this.getAttribute('data-idx')); });
+      });
+    };
+    if (window.__idxCache && Date.now()-window.__idxCache.ts < 60000) { paint(window.__idxCache.list); return; }
+    fetch('/api/indices').then(function(r){return r.json();}).then(function(list){
+      window.__idxCache = { list: list, ts: Date.now() };
+      paint(list);
+    })['catch'](function(){ if(!window.__idxMap) box.innerHTML='<div class="empty" style="padding:14px;text-align:center;color:var(--t3);font-size:11px;">지수 조회 실패</div>'; });
+  }
   function renderDetailBrowse() {
     window.__detailBrowseTs = Date.now();
+    try { renderDetailIdxStrip(); } catch (e) {}  // [V12.28] 주요 지수 스트립
     try { loadAiPicks(); } catch (e) {}   // [V17] AI 픽 스트립(2분 캐시)
     try { loadNewsPicks(); } catch (e) {} // [V9.6] 뉴스픽 스트립(2분 캐시)
     // [V9.11] 월간 리포트 버튼은 사이드바 네비로 이동 — 여기 바인딩 불필요
@@ -7300,19 +7359,24 @@ html[data-theme="light"] .table tbody tr:hover{background:rgba(9,105,218,.045);}
     detailState.symbol = symbol;
     detailState.market = market;
     detailState.__tfAutoSwapped = 0;   // [V12.10] 신규상장 일봉 부족 시 분봉 자동전환 플래그 초기화
+    // [V12.28] 지수 모드 — ^IXIC 등은 재무/실적/뉴스/심리 등 종목 전용 패널이 없으므로 차트 전폭 뷰
+    var isIdx = symbol.charAt(0) === '^';
     var emp = $('detailEmpty'), con = $('detailContent'), back = $('detailBackBtn'), abtn = $('detailAlertBtn'), rbtn = $('detailReportBtn');
+    if (con) con.classList.toggle('idx-mode', isIdx);
     if (emp) emp.style.display = 'none';
     if (con) con.style.display = '';
     if (back) back.style.display = '';
-    if (abtn) abtn.style.display = '';
-    if (rbtn) rbtn.style.display = '';
+    if (abtn) abtn.style.display = isIdx ? 'none' : '';
+    if (rbtn) rbtn.style.display = isIdx ? 'none' : '';
     renderDetailHeaderData();
-    renderDetailVision();
-    renderDetailEarn();
-    renderDetailNews();
-    loadDetailCrowd();   // [V15] 투자심리(투표+AI 의견) — 2분 클라 캐시
-    loadDetailFund();    // [V15] 재무제표+평가 — 세션 캐시·서버 7일 캐시
-    loadDetailTfSum();   // [V19] 시기별 기술요약(지금/1주/1달/1년)
+    if (!isIdx) {
+      renderDetailVision();
+      renderDetailEarn();
+      renderDetailNews();
+      loadDetailCrowd();   // [V15] 투자심리(투표+AI 의견) — 2분 클라 캐시
+      loadDetailFund();    // [V15] 재무제표+평가 — 세션 캐시·서버 7일 캐시
+    }
+    loadDetailTfSum();   // [V19] 시기별 기술요약(지금/1주/1달/1년) — 지수도 차트 기반이라 동작
     loadDetailChart(detailState.interval || '1d');
     showPage('detail');
   }
@@ -7366,7 +7430,14 @@ html[data-theme="light"] .table tbody tr:hover{background:rgba(9,105,218,.045);}
   function renderDetailHeaderData() {
     var st = detailState;
     var q = (typeof lastQuotes !== 'undefined' && lastQuotes[st.symbol]) ? lastQuotes[st.symbol] : { symbol: st.symbol };
-    var nm = displayName(q, st.market);
+    // [V12.28] 지수는 lastQuotes에 없음 — /api/indices 캐시(__idxMap)에서 시세 합성
+    if (st.symbol && st.symbol.charAt(0) === '^' && window.__idxMap && window.__idxMap[st.symbol]) {
+      var ix = window.__idxMap[st.symbol];
+      q = { symbol: st.symbol, price: ix.price, dayPct: ix.dayPct, regPrice: ix.price, regPct: ix.dayPct, prevClose: ix.prevClose };
+    }
+    var nm = (st.symbol && st.symbol.charAt(0) === '^')
+      ? ((INDEX_NAMES[st.symbol]||st.symbol) + (INDEX_NAMES_KO[st.symbol] ? ' · ' + INDEX_NAMES_KO[st.symbol] : ''))
+      : displayName(q, st.market);
     if ($('detailSym'))  $('detailSym').textContent = st.symbol;
     if ($('detailName')) $('detailName').textContent = (nm && nm !== st.symbol) ? nm : '';
     // [V12.1 버그수정] 시간외(PRE/POST)엔 백엔드가 price/dayPct를 시간외 값으로 덮어쓴다(applyDisplayOverMarket).

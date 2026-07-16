@@ -2048,7 +2048,7 @@ const MCAP_RANK = {
   "232080.KS":324
 };
 
-const US_INDICES = ["^IXIC", "^DJI", "^GSPC"];
+const US_INDICES = ["^IXIC", "^DJI", "^GSPC", "^RUT"];   // [V12.28] 러셀2000 추가(종목상세 지수 뷰)
 const KR_INDICES = ["^KS11", "^KQ11"];
 
 // === [COMMODITY] 원자재 거래 대상 ===
@@ -13307,7 +13307,8 @@ async function handleRequest(request, env) {
         // 3) 베타 캐시(방법론 v2 키 — 구 캐시와 분리, 6시간)
         const ckey = "whatif_beta2:" + fKey;
         let bcache = null; try { bcache = await getState(env.DB, ckey, null); } catch (e) {}
-        const betas = (bcache && bcache.ts && Date.now() - bcache.ts < 6 * 3600 * 1000 && bcache.betas) ? bcache.betas : {};
+        const cacheValid = !!(bcache && bcache.ts && Date.now() - bcache.ts < 6 * 3600 * 1000 && bcache.betas);
+        const betas = cacheValid ? bcache.betas : {};
         const missing = syms.filter(function (s) { return !(s in betas); });
         // 4) 누락 종목 계산 — 5일 겹침 수익률 OLS + shrinkage + 종목 20일 σ
         for (let ci = 0; ci < missing.length; ci += 20) {
@@ -13335,7 +13336,9 @@ async function handleRequest(request, env) {
             betas[row.s] = { b: +(betaRaw * w).toFixed(4), bRaw: +betaRaw.toFixed(4), r2: +r2.toFixed(3), n: N, sig20: +sigS20.toFixed(2) };
           }
         }
-        if (missing.length) { try { await setState(env.DB, ckey, { ts: (bcache && bcache.ts && Object.keys(betas).length > missing.length ? bcache.ts : Date.now()), betas: betas }); } catch (e) {} }
+        // [버그수정] 만료 후 재계산했는데 옛 ts를 유지해 캐시가 즉시 다시 만료되던 문제 —
+        //   유효 캐시에 신규 종목만 추가한 경우에만 기존 ts 유지, 그 외(전체 재계산)는 ts 갱신.
+        if (missing.length) { try { await setState(env.DB, ckey, { ts: cacheValid ? bcache.ts : Date.now(), betas: betas }); } catch (e) {} }
         // 5) 포지션 시가(quote: 캐시) → 금액 영향
         const posBySym = {};
         for (const p of posRows) {
@@ -13363,8 +13366,9 @@ async function handleRequest(request, env) {
           if (pos && pos.qty > 0) {
             const px = lastPx[s] || (pos.cost / pos.qty);
             posValue = pos.qty * px; expPnl = posValue * expPct / 100;
-            const pm = pos.market === "KR" ? "KR" : "US";
-            port[pm].value += posValue; port[pm].pnl += expPnl;
+            // [버그수정] positions.market은 소문자('kr')인데 'KR'와 비교해 KR 보유가 US 달러
+            //   버킷에 합산되던 통화 혼입 — 심볼 접미사로 판정(대소문자 무관).
+            port[mkt].value += posValue; port[mkt].pnl += expPnl;
           }
           items.push({ symbol: s, name: NAME_MAP[s] || s.replace(/\.(KS|KQ)$/, ""), market: mkt,
             beta: bi.b, betaRaw: bi.bRaw, r2: bi.r2, n: bi.n, sig20: bi.sig20,
