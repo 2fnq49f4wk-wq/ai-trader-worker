@@ -211,7 +211,6 @@ def train_job(epochs: int = EPOCHS_DEFAULT, dry: bool = False):
         for net in nets:
             net.eval(); zsum += net(Xva, False).squeeze(-1)
         pva = torch.sigmoid(zsum / len(nets))
-        acc = ((pva >= 0.5).float() == Yva).float().mean().item()
         # [V11.1 관측] 기저율·다수클래스 베이스라인·AUC — "정확도 낮음"이 모델 문제인지
         #   클래스 불균형/분포이동 문제인지 구분하는 진단 지표(로그 전용, 게이트엔 미사용).
         base = Yva.mean().item()
@@ -220,8 +219,37 @@ def train_job(epochs: int = EPOCHS_DEFAULT, dry: bool = False):
         order = np.argsort(ps); ranks = np.empty_like(order, dtype=np.float64); ranks[order] = np.arange(1, len(ps) + 1)
         npos = ys.sum(); nneg = len(ys) - npos
         auc = float((ranks[ys > 0.5].sum() - npos * (npos + 1) / 2) / (npos * nneg)) if npos > 0 and nneg > 0 else 0.5
-    lb = wilson_lb(acc, len(va))
-    print(f"③ 앙상블 valAcc {acc*100:.2f}% (Wilson하한 {lb*100:.2f}%, n={len(va)})")
+
+    # ── [V12.33 임계값 캘리브레이션] 31%형 겉보기 붕괴 수정 ──
+    #   원인: 균형가중 학습 + 검증 라벨 쏠림 상황에서 고정 0.5 컷은 다수클래스보다 못한 정확도로 붕괴.
+    #   해법: 검증 앞 절반(캘리브레이션)에서 균형정확도 최대 임계값 τ*를 찾아 각 시드망 마지막 층
+    #   bias에 -logit(τ*)로 굽는다 → Worker의 0.5 기준 추론이 그대로 캘리브레이션 반영.
+    #   정확도는 τ* 선택에 쓰지 않은 '뒤 절반'에서 산출(정직한 홀드아웃).
+    half = max(20, len(ps) // 2)
+    if len(ps) - half >= 20:
+        ps_c, ys_c = ps[:half], ys[:half]
+        taus = np.unique(np.quantile(ps_c, np.linspace(0.05, 0.95, 37)))
+        def _balacc(th):
+            pred = ps_c >= th; pos = ys_c > 0.5
+            tpr = pred[pos].mean() if pos.any() else 0.0
+            tnr = (~pred[~pos]).mean() if (~pos).any() else 0.0
+            return (tpr + tnr) / 2
+        tau = float(taus[int(np.argmax([_balacc(t) for t in taus]))])
+        tau = min(max(tau, 1e-4), 1 - 1e-4)
+        delta = math.log(tau / (1 - tau))
+        with torch.no_grad():
+            for net in nets:
+                net.lins[-1].bias.data -= float(delta)   # 임계값을 가중치에 영구 반영(업로드에 포함)
+        psc = np.clip(ps, 1e-6, 1 - 1e-6)
+        p_adj = 1.0 / (1.0 + np.exp(-(np.log(psc / (1 - psc)) - delta)))
+        ys_t, p_t = ys[half:], p_adj[half:]
+        acc = float(((p_t >= 0.5) == (ys_t > 0.5)).mean())
+        n_eval = len(p_t)
+        print(f"   캘리브레이션: τ*={tau:.3f} (logit 시프트 {delta:+.3f}) — 검증 전반 {half}건으로 선택, 후반 {n_eval}건으로 평가")
+    else:
+        acc = float(((ps >= 0.5) == (ys > 0.5)).mean()); n_eval = len(ps)
+    lb = wilson_lb(acc, n_eval)
+    print(f"③ 앙상블 valAcc {acc*100:.2f}% (Wilson하한 {lb*100:.2f}%, n={n_eval})")
     print(f"   진단: 기저율(양성비율) {base*100:.1f}% | 다수클래스 베이스라인 {majority*100:.1f}% | AUC {auc:.3f}")
     if acc < majority - 0.02:
         print("   ⚠️ 정확도가 '전부 다수클래스 찍기'보다 낮음 — 분포이동(최근 시장≠과거 패턴) 또는 과적합 신호")
@@ -237,7 +265,7 @@ def train_job(epochs: int = EPOCHS_DEFAULT, dry: bool = False):
         js_nets.append({"W": Wl, "b": bl, "dims": dims})
 
     payload = {"featVer": featver, "nets": js_nets, "mean": mean.tolist(), "std": std.tolist(),
-               "dims": dims, "valAcc": round(acc, 4), "valAccLB": round(lb, 4), "valN": len(va), "n": N}
+               "dims": dims, "valAcc": round(acc, 4), "valAccLB": round(lb, 4), "valN": n_eval, "n": N}
 
     if dry:
         print("--dry: 업로드 생략"); return {"ok": True, "valAcc": acc, "uploaded": False}
