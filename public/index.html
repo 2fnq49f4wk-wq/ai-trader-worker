@@ -10878,44 +10878,71 @@ setTimeout(function(){ var o=document.getElementById('lux-intro-overlay'); if(o&
 #page-nnviz svg.nnv-focus .nnv-node{opacity:.12;}
 #page-nnviz svg.nnv-focus .nnedge.hl,#page-nnviz svg.nnv-focus .nnedge-static.hl{opacity:1;stroke:#5ab4ff;stroke-width:1.5;filter:drop-shadow(0 0 3.5px rgba(90,180,255,.95));}
 #page-nnviz svg.nnv-focus .nnv-node.hl{opacity:1;fill:#8fd0ff;filter:drop-shadow(0 0 6px rgba(110,190,255,1));}
-/* [V12.26] WHAT-IF 시나리오 — 중앙 정렬 + 카드형 컨트롤 재디자인 */
-#page-whatif .nnviz-content{max-width:1100px;margin-left:auto;margin-right:auto;}
+/* [V12.27] WHAT-IF 시나리오 — 쿨 애저 재디자인(살짝 푸른빛) + 레이아웃 고정(리플로우 0) */
+#page-whatif{
+  --wi-accent:#54a8ff; --wi-accent-2:#7cc0ff;
+  --wi-ink:#eaf3ff; --wi-dim:#93aace; --wi-faint:#5f79a2;
+  --wi-line:#1d2d4a; --wi-panel:rgba(70,130,255,.05);
+  --wi-pos:#00e676; --wi-neg:#ff5470;
+}
+#page-whatif .nnviz-content{max-width:1120px;margin-left:auto;margin-right:auto;position:relative;
+  background:linear-gradient(180deg,#0a1120,#070b14);border-color:#16233d;}
 #page-whatif .nnv-head{justify-content:center;text-align:center;}
-#page-whatif .nnv-head>div:last-child{position:absolute;right:38px;}
-#page-whatif .nnviz-content{position:relative;}
-#page-whatif .nnv-title{justify-content:center;font-size:19px;letter-spacing:1px;}
-#page-whatif .nnv-sub{text-align:center;max-width:64ch;margin:6px auto 18px;}
-#page-whatif .wi-controls{display:flex;flex-direction:column;gap:12px;margin:0 auto 18px;max-width:860px;
-  background:rgba(70,130,255,.045);border:1px solid #1c2740;border-radius:14px;padding:16px 18px;}
-#page-whatif .wi-lab{font-family:'IBM Plex Mono',monospace;font-size:9.5px;letter-spacing:2px;color:#61789c;text-transform:uppercase;}
+#page-whatif .nnv-head>div:last-child{position:absolute;right:34px;top:22px;}
+#page-whatif .nnv-title{justify-content:center;font-size:20px;letter-spacing:1px;}
+#page-whatif .nnv-title .dot{background:var(--wi-accent);box-shadow:0 0 12px var(--wi-accent);}
+#page-whatif .nnv-sub{text-align:center;max-width:62ch;margin:7px auto 20px;color:var(--wi-dim);}
+#page-whatif .nnv-btn{background:rgba(84,168,255,.12);border-color:rgba(84,168,255,.32);color:var(--wi-accent-2);}
+#page-whatif .nnv-btn:hover{background:rgba(84,168,255,.2);}
+/* 컨트롤 패널 — 상단 은은한 애저 글로우 */
+#page-whatif .wi-controls{display:flex;flex-direction:column;gap:11px;margin:0 auto 20px;max-width:880px;
+  background:linear-gradient(180deg,rgba(84,168,255,.07),rgba(70,130,255,.02));
+  border:1px solid var(--wi-line);border-radius:16px;padding:18px 20px;
+  box-shadow:0 1px 0 rgba(124,192,255,.12) inset,0 18px 50px -30px rgba(84,168,255,.5);}
+#page-whatif .wi-lab{font-family:'IBM Plex Mono',monospace;font-size:9.5px;letter-spacing:2.5px;color:var(--wi-faint);text-transform:uppercase;text-align:center;}
 #page-whatif .wi-row{display:flex;gap:8px;flex-wrap:wrap;align-items:center;justify-content:center;}
-#page-whatif .wi-f,#page-whatif .wi-s{cursor:pointer;font-family:'IBM Plex Mono',monospace;font-size:12px;color:#9fb4dc;background:rgba(70,130,255,.09);border:1px solid #22345a;border-radius:10px;padding:9px 16px;transition:.15s;}
-#page-whatif .wi-f:hover,#page-whatif .wi-s:hover{border-color:#3a63b0;color:#dbe8ff;}
-#page-whatif .wi-f.active,#page-whatif .wi-s.active{color:#0a0e18;background:#ffc107;border-color:#ffc107;font-weight:700;box-shadow:0 4px 18px rgba(255,193,7,.25);}
-#page-whatif .wi-summary,#page-whatif .wi-table{max-width:1100px;margin-left:auto;margin-right:auto;}
-#page-whatif .wi-custom{display:inline-flex;align-items:center;gap:5px;color:#7c90b5;font-size:11px;font-family:'IBM Plex Mono',monospace;}
-#page-whatif .wi-custom input{width:74px;background:#0d1524;border:1px solid #22345a;border-radius:7px;color:#eaf2ff;padding:6px 8px;font-family:inherit;font-size:11px;}
-#page-whatif .wi-summary{display:flex;gap:10px;flex-wrap:wrap;margin-bottom:14px;}
-#page-whatif .wi-card{flex:1 1 200px;min-width:200px;background:rgba(70,130,255,.06);border:1px solid #1c2740;border-radius:12px;padding:12px 14px;}
-#page-whatif .wi-card .k{font-size:10px;color:#7c90b5;letter-spacing:1px;font-family:'IBM Plex Mono',monospace;margin-bottom:5px;}
-#page-whatif .wi-card .v{font-size:19px;font-weight:700;font-family:'Space Grotesk',sans-serif;}
-#page-whatif .wi-card .m{font-size:10.5px;color:#61789c;margin-top:3px;font-family:'IBM Plex Mono',monospace;}
+/* 굵기는 모든 상태 동일(600) — 활성 시 폭이 변해 버튼이 움직이던 리플로우 제거 */
+#page-whatif .wi-f,#page-whatif .wi-s{cursor:pointer;font-family:'IBM Plex Mono',monospace;font-size:12px;font-weight:600;color:var(--wi-dim);
+  background:rgba(70,130,255,.07);border:1px solid #223a5e;border-radius:10px;padding:9px 16px;transition:background .16s ease,border-color .16s ease,color .16s ease,box-shadow .16s ease;}
+#page-whatif .wi-f:hover,#page-whatif .wi-s:hover{border-color:#3f6bb0;color:var(--wi-ink);background:rgba(84,168,255,.13);}
+#page-whatif .wi-f.active,#page-whatif .wi-s.active{color:#06111f;border-color:transparent;
+  background:linear-gradient(135deg,var(--wi-accent),var(--wi-accent-2));box-shadow:0 5px 20px -4px rgba(84,168,255,.55);}
+#page-whatif .wi-f:focus-visible,#page-whatif .wi-s:focus-visible{outline:2px solid var(--wi-accent-2);outline-offset:2px;}
+#page-whatif .wi-summary,#page-whatif .wi-table{max-width:1120px;margin-left:auto;margin-right:auto;}
+#page-whatif .wi-custom{display:inline-flex;align-items:center;gap:5px;color:var(--wi-faint);font-size:11px;font-family:'IBM Plex Mono',monospace;}
+#page-whatif .wi-custom input{width:74px;background:#0c1526;border:1px solid #223a5e;border-radius:8px;color:var(--wi-ink);padding:7px 9px;font-family:inherit;font-size:11px;}
+#page-whatif .wi-custom input:focus{outline:none;border-color:var(--wi-accent);}
+/* 요약 카드 — 리플로우 방지 위해 최소 높이 고정 */
+/* 고정 높이 — 안내문 줄 수가 달라져도 표가 밀리지 않게(리플로우 0) */
+#page-whatif .wi-summary{display:flex;gap:10px;margin-bottom:16px;height:118px;}
+#page-whatif .wi-card{flex:1 1 0;min-width:0;border-radius:14px;padding:13px 16px;overflow:hidden;
+  display:flex;flex-direction:column;
+  background:linear-gradient(180deg,rgba(84,168,255,.08),rgba(70,130,255,.025));border:1px solid var(--wi-line);}
+#page-whatif .wi-card .k{font-size:10px;color:var(--wi-faint);letter-spacing:1.5px;font-family:'IBM Plex Mono',monospace;margin-bottom:6px;text-transform:uppercase;}
+#page-whatif .wi-card .v{font-size:20px;font-weight:700;font-family:'Space Grotesk',sans-serif;line-height:1.25;}
+#page-whatif .wi-card .m{font-size:10.5px;color:var(--wi-faint);margin-top:4px;font-family:'IBM Plex Mono',monospace;line-height:1.5;
+  overflow:hidden;flex:1 1 auto;}
+/* 표 — 로딩 중 collapse 방지 min-height */
+#page-whatif .wi-table{min-height:340px;}
 #page-whatif .wi-table table{width:100%;border-collapse:collapse;font-family:'IBM Plex Mono',monospace;font-size:11px;}
-#page-whatif .wi-table th{font-size:8.5px;letter-spacing:1px;text-transform:uppercase;color:#61789c;text-align:left;padding:6px 9px;border-bottom:1px solid #1c2740;background:rgba(70,130,255,.05);}
-#page-whatif .wi-table td{padding:6px 9px;border-bottom:1px solid #131c30;color:#c9d7f2;}
+#page-whatif .wi-table th{font-size:8.5px;letter-spacing:1px;text-transform:uppercase;color:var(--wi-faint);text-align:left;padding:7px 10px;border-bottom:1px solid var(--wi-line);background:rgba(84,168,255,.05);position:sticky;top:0;}
+#page-whatif .wi-table td{padding:7px 10px;border-bottom:1px solid #111c30;color:#cbd9f2;}
 #page-whatif .wi-table th.r,#page-whatif .wi-table td.r{text-align:right;font-variant-numeric:tabular-nums;}
-#page-whatif .wi-table tr.held td{background:rgba(255,193,7,.05);}
-#page-whatif .wi-pos{color:#00e676;} #page-whatif .wi-neg{color:#ff1744;}
-#page-whatif .wi-note{font-size:10.5px;color:#61789c;margin-top:12px;line-height:1.7;font-family:'IBM Plex Mono',monospace;}
-#page-whatif .wi-badge{display:inline-block;font-size:8.5px;padding:1px 6px;border-radius:6px;background:rgba(255,193,7,.15);color:#ffc107;border:1px solid rgba(255,193,7,.4);margin-left:6px;}
-#page-whatif .wi-cap{display:inline-block;font-size:8.5px;padding:1px 6px;border-radius:6px;background:rgba(96,168,255,.12);color:#7fb0e8;border:1px solid rgba(96,168,255,.35);margin-left:6px;}
-#page-whatif .wi-range{font-size:9.5px;color:#61789c;}
+#page-whatif .wi-table tbody tr:hover td{background:rgba(84,168,255,.045);}
+#page-whatif .wi-table tr.held td{background:rgba(84,168,255,.07);}
+#page-whatif .wi-table tr.held td:first-child{box-shadow:inset 2px 0 0 var(--wi-accent);}
+#page-whatif .wi-pos{color:var(--wi-pos);} #page-whatif .wi-neg{color:var(--wi-neg);}
+#page-whatif .wi-note{font-size:10.5px;color:var(--wi-faint);margin-top:14px;line-height:1.7;font-family:'IBM Plex Mono',monospace;}
+#page-whatif .wi-badge{display:inline-block;font-size:8.5px;padding:1px 6px;border-radius:6px;background:rgba(84,168,255,.16);color:var(--wi-accent-2);border:1px solid rgba(84,168,255,.42);margin-left:6px;}
+#page-whatif .wi-cap{display:inline-block;font-size:8.5px;padding:1px 6px;border-radius:6px;background:rgba(124,192,255,.1);color:#9ec8f4;border:1px solid rgba(124,192,255,.3);margin-left:6px;}
+#page-whatif .wi-range{font-size:9.5px;color:var(--wi-faint);}
+#page-whatif .nnv-empty{padding:40px 0;text-align:center;color:var(--wi-faint);}
 /* 예상 등락 미니 바 — 0 중심, 범위(잔차) 옅게 + 점추정 진하게 */
-#page-whatif .wi-bar{position:relative;width:150px;height:12px;background:rgba(255,255,255,.035);border-radius:6px;overflow:hidden;}
-#page-whatif .wi-bar .zero{position:absolute;left:50%;top:0;bottom:0;width:1px;background:rgba(140,170,220,.4);}
-#page-whatif .wi-bar .band{position:absolute;top:2px;bottom:2px;border-radius:4px;opacity:.28;}
+#page-whatif .wi-bar{position:relative;width:150px;height:12px;background:rgba(124,160,220,.06);border-radius:6px;overflow:hidden;}
+#page-whatif .wi-bar .zero{position:absolute;left:50%;top:0;bottom:0;width:1px;background:rgba(140,170,220,.45);}
+#page-whatif .wi-bar .band{position:absolute;top:2px;bottom:2px;border-radius:4px;opacity:.3;}
 #page-whatif .wi-bar .pt{position:absolute;top:0;bottom:0;border-radius:3px;}
-#page-whatif .wi-bar .pos{background:#00e676;} #page-whatif .wi-bar .neg{background:#ff1744;}
+#page-whatif .wi-bar .pos{background:var(--wi-pos);} #page-whatif .wi-bar .neg{background:var(--wi-neg);}
 /* 층별 최강 뉴런 코어 맥동 */
 #page-nnviz .nnv-core{animation:nnvCorePulse 2.6s ease-in-out infinite;filter:drop-shadow(0 0 3px rgba(150,200,255,.55));}
 @keyframes nnvCorePulse{0%,100%{opacity:.7;}50%{opacity:1;}}
@@ -11305,11 +11332,12 @@ html[data-theme="light"] #page-nnviz .nnv-title,html[data-theme="light"] #page-n
     var sg=v<0?'-':'', a=Math.abs(+v);
     return sg+(mkt==='KR' ? '₩'+Math.round(a).toLocaleString() : '$'+a.toLocaleString(undefined,{maximumFractionDigits:0})); }
   function cls(v){ return v>0?'wi-pos':(v<0?'wi-neg':''); }
-  function renderShocks(){
+  // 충격 버튼은 팩터가 바뀔 때만 재생성(리스너 재부착·깜빡임 방지). 활성 표시만 매번 갱신.
+  function buildShocks(){
     var host=document.getElementById('wiShocks'); if(!host) return;
     var u=WI.unit[WI.factor];
     var html=(WI.presets[WI.factor]||[]).map(function(p){
-      return '<button class="wi-s'+(p===WI.shock?' active':'')+'" data-s="'+p+'">'+fmtShock(p,u)+'</button>';
+      return '<button class="wi-s" data-s="'+p+'">'+fmtShock(p,u)+'</button>';
     }).join('');
     html+='<span class="wi-custom">직접 입력 <input type="number" step="0.5" id="wiCustom" value="'+WI.shock+'"> '+u+' <button class="wi-s" id="wiGo">실행</button></span>';
     host.innerHTML=html;
@@ -11321,29 +11349,39 @@ html[data-theme="light"] #page-nnviz .nnv-title,html[data-theme="light"] #page-n
       var v=parseFloat(document.getElementById('wiCustom').value);
       if(isFinite(v)&&v!==0){ WI.shock=v; loadWhatIf(); }
     });
+    WI._shockFactor=WI.factor;
+  }
+  function highlightShocks(){
+    var host=document.getElementById('wiShocks'); if(!host) return;
+    host.querySelectorAll('.wi-s[data-s]').forEach(function(b){
+      b.classList.toggle('active', parseFloat(b.getAttribute('data-s'))===WI.shock);
+    });
   }
   var fBtns=document.querySelectorAll('#wiFactors .wi-f');
   fBtns.forEach(function(b){
     b.addEventListener('click',function(){
       WI.factor=this.getAttribute('data-f'); WI.shock=WI.deflt[WI.factor];
       fBtns.forEach(function(x){x.classList.remove('active');}); this.classList.add('active');
-      renderShocks(); loadWhatIf();
+      buildShocks(); highlightShocks(); loadWhatIf();
     });
   });
   window.loadWhatIf=function(force){
     var tbl=document.getElementById('wiTable'), sum=document.getElementById('wiSummary');
     if(!tbl) return;
-    if(!document.getElementById('wiShocks').innerHTML) renderShocks(); else renderShocks();
+    if(WI._shockFactor!==WI.factor || !document.getElementById('wiShocks').innerHTML) buildShocks();
+    highlightShocks();
     if(WI.busy&&!force) return; WI.busy=true;
-    tbl.innerHTML='<div class="nnv-empty">과거 데이터로 민감도 계산 중… (첫 계산은 몇 초 걸립니다)</div>';
+    // 표를 비우지 않고 유지 — collapse로 인한 화면 이동 방지(min-height + 유지). 갱신 중엔 살짝 흐리게.
+    if(tbl.querySelector('table')) tbl.style.opacity='.5';
+    else tbl.innerHTML='<div class="nnv-empty">과거 데이터로 민감도 계산 중… (첫 계산은 몇 초 걸립니다)</div>';
     fetch('/api/whatif?factor='+WI.factor+'&shock='+WI.shock).then(function(r){return r.json();}).then(function(d){
-      WI.busy=false;
+      WI.busy=false; tbl.style.opacity='1';
       if(!d||d.error){ tbl.innerHTML='<div class="nnv-empty">실패: '+((d&&d.error)||'응답 없음')+'</div>'; sum.innerHTML=''; return; }
       var u=WI.unit[WI.factor];
       var capNote = d.shockCapped
         ? '요청 '+fmtShock(d.shock,u)+' → 역사적 변동(3σ='+(3*d.sigF20).toFixed(2)+u+')에 점근하는 포화 곡선 적용: <b>유효 '+fmtShock(d.effShock,u)+'</b>'
         : '현재 '+d.factorLast+(WI.factor==='rate'?'%':'')+' 기준 · 20영업일 내 반영 가정 · 유효 '+fmtShock(d.effShock,u);
-      var cards='<div class="wi-card"><div class="k">시나리오</div><div class="v" style="color:#ffc107;">'+d.factorLabel+' '+fmtShock(d.shock,u)
+      var cards='<div class="wi-card"><div class="k">시나리오</div><div class="v" style="color:var(--wi-accent);">'+d.factorLabel+' '+fmtShock(d.shock,u)
         +(d.shockCapped?'<span class="wi-cap">포화</span>':'')+'</div>'
         +'<div class="m">'+capNote+'</div></div>';
       ['US','KR'].forEach(function(mk){
@@ -11355,7 +11393,7 @@ html[data-theme="light"] #page-nnviz .nnv-title,html[data-theme="light"] #page-n
         }
       });
       if(!(d.portfolio&&((d.portfolio.US&&d.portfolio.US.value>0)||(d.portfolio.KR&&d.portfolio.KR.value>0))))
-        cards+='<div class="wi-card"><div class="k">포트폴리오</div><div class="v" style="color:#61789c;font-size:14px;">보유 포지션 없음</div><div class="m">아래는 관심종목 예상 민감도입니다</div></div>';
+        cards+='<div class="wi-card"><div class="k">포트폴리오</div><div class="v" style="color:var(--wi-faint);font-size:14px;">보유 포지션 없음</div><div class="m">아래는 관심종목 예상 민감도입니다</div></div>';
       sum.innerHTML=cards;
       // 바 스케일: 범위(lo/hi) 절대 최댓값 기준
       var mx=0.5;(d.items||[]).forEach(function(it){ mx=Math.max(mx,Math.abs(it.lo||0),Math.abs(it.hi||0),Math.abs(it.expPct)); });
