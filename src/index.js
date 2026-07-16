@@ -13288,14 +13288,17 @@ async function handleRequest(request, env) {
         const stdv = function (a) { if (a.length < 8) return 0; let m = 0; for (const v of a) m += v; m /= a.length; let s = 0; for (const v of a) s += (v - m) * (v - m); return Math.sqrt(s / (a.length - 1)); };
         const sigF20 = stdv(f20.slice(-160));        // 팩터 20일 변화의 역사적 σ
         // 요청 충격 → 팩터 단위(금리 pp, 나머지 비율)
-        //   [V12.26] 하드 클램프 → tanh 포화 곡선: eff = L·tanh(shock/L), L=3σ20.
-        //   0.5%p와 1%p가 같은 값으로 잘리던 문제 해결 — 충격이 클수록 항상 더 크되(단조),
-        //   역사적 변동 범위(3σ)에 점근하며 체감. 표본 밖 선형 외삽은 여전히 금지.
+        //   [V12.29 v2.2] 포화 클램프 폐지 — 임의의 큰 충격(예: 금리 +5%p)을 넣어도 결과가
+        //   ~3σ에서 붙어버려 "계산이 안 바뀌는" 문제의 근본 수정. 대신 확산(diffusion) 가정:
+        //   X-σ 규모의 팩터 이동은 역사적 속도로 약 X²×20 영업일에 걸쳐 실현된다고 보고,
+        //   반영 지평선(horizon)을 충격 크기에 맞춰 늘린다. 예상 등락 = 베타 × 충격(선형 유지),
+        //   종목별 상한도 3σ20×√(horizon/20)로 함께 확장 → 충격에 비례해 결과가 항상 달라짐.
         const shockUnit = isDiff ? shock : shock / 100;
-        const L = 3 * sigF20;
-        const effShockUnit = L > 0 ? L * Math.tanh(shockUnit / L) : shockUnit;
-        const shockCapped = L > 0 && Math.abs(effShockUnit) < Math.abs(shockUnit) * 0.9;  // 10% 이상 압축 시 '포화' 표시
-        const effShock = isDiff ? effShockUnit : effShockUnit * 100;   // 표시용(원 단위)
+        const X = sigF20 > 0 ? Math.abs(shockUnit) / sigF20 : 1;              // 충격이 몇 개의 20일 σ인가
+        const horizonDays = Math.min(500, Math.max(20, Math.round(20 * X * X)));
+        const hScale = Math.sqrt(horizonDays / 20);
+        const effShockUnit = shockUnit;                                       // 선형 유지(자르지 않음)
+        const effShock = isDiff ? effShockUnit : effShockUnit * 100;          // 표시용(원 단위)
         // 2) 대상 종목: 보유 포지션 전량 + 워치리스트(US/KR 앞쪽) — daily: 캐시가 있는 것만(추가 fetch 0)
         let posRows = [];
         try { posRows = ((await env.DB.prepare("SELECT symbol, market, qty, avg_price FROM positions").all()).results) || []; } catch (e) {}
@@ -13354,13 +13357,13 @@ async function handleRequest(request, env) {
         const port = { US: { value: 0, pnl: 0 }, KR: { value: 0, pnl: 0 } };
         for (const s of syms) {
           const bi = betas[s]; if (!bi) continue;
-          // 예상 등락 = 축소 베타 × 유효 충격(3σ 클램프) — 종목 자체 3σ20 상한 + 잔차 예상범위
+          // 예상 등락 = 축소 베타 × 충격(선형) — 종목 상한은 지평선 확장된 3σ20×√(h/20)에 tanh 소프트캡
           let expPct = bi.b * effShockUnit * 100;
-          const capS = 3 * Math.max(1, bi.sig20 || 0);
+          const capS = 3 * Math.max(1, bi.sig20 || 0) * hScale;
           const raw = expPct;
-          expPct = capS * Math.tanh(expPct / capS);            // 종목 상한도 tanh 포화(단조 유지)
+          expPct = capS * Math.tanh(expPct / capS);            // 소프트캡(단조 유지 — 값이 붙지 않음)
           const stockCapped = Math.abs(expPct) < Math.abs(raw) * 0.9;
-          const band = +(Math.max(0.5, (bi.sig20 || 2) * Math.sqrt(Math.max(0.05, 1 - bi.r2)))).toFixed(2);
+          const band = +(Math.max(0.5, (bi.sig20 || 2) * hScale * Math.sqrt(Math.max(0.05, 1 - bi.r2)))).toFixed(2);
           const pos = posBySym[s];
           let posValue = null, expPnl = null, mkt = /\.(KS|KQ)$/.test(s) ? "KR" : "US";
           if (pos && pos.qty > 0) {
@@ -13380,14 +13383,14 @@ async function handleRequest(request, env) {
         items.sort(function (x, y) { return Math.abs(y.expPct) - Math.abs(x.expPct); });
         return Response.json({
           factor: fKey, factorLabel: F.label, factorSym: F.sym, unit: F.unit, presets: F.presets,
-          shock: shock, effShock: +effShock.toFixed(3), shockCapped: shockCapped,
+          shock: shock, effShock: +effShock.toFixed(3), shockCapped: false, horizonDays: horizonDays,
           sigF20: +(isDiff ? sigF20 : sigF20 * 100).toFixed(3), factorLast: +_num(fLast, 0).toFixed(3),
           portfolio: {
             US: { value: +port.US.value.toFixed(2), expPnl: +port.US.pnl.toFixed(2), expPct: port.US.value > 0 ? +(port.US.pnl / port.US.value * 100).toFixed(2) : null },
             KR: { value: Math.round(port.KR.value), expPnl: Math.round(port.KR.pnl), expPct: port.KR.value > 0 ? +(port.KR.pnl / port.KR.value * 100).toFixed(2) : null }
           },
           items: items.slice(0, 70),
-          note: "방법론 v2.1: 최근 " + Math.min(160, f5.length) + "개 5일 겹침 수익률 OLS + 베타 축소(√R²) + 충격 tanh 포화(3σ 점근) + 종목 3σ20 상한. 예상범위는 잔차 변동성 기반. 20영업일 내 충격 반영 가정의 역사적 근사 — 예측 보장 아님.",
+          note: "방법론 v2.2: 최근 " + Math.min(160, f5.length) + "개 5일 겹침 수익률 OLS + 베타 축소(√R²). 충격은 자르지 않고(선형) 역사적 확산 속도 기준 약 " + horizonDays + "영업일에 걸친 반영으로 가정 — 종목 상한·예상범위도 그 지평선의 변동성(3σ×√h)으로 확장. 역사적 근사이며 예측 보장 아님.",
           ts: Date.now()
         }, { headers: cors });
       } catch (e) {

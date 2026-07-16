@@ -11449,11 +11449,10 @@ html[data-theme="light"] #page-nnviz .nnv-title,html[data-theme="light"] #page-n
       WI.busy=false; tbl.style.opacity='1';
       if(!d||d.error){ tbl.innerHTML='<div class="nnv-empty">실패: '+((d&&d.error)||'응답 없음')+'</div>'; sum.innerHTML=''; return; }
       var u=WI.unit[WI.factor];
-      var capNote = d.shockCapped
-        ? '요청 '+fmtShock(d.shock,u)+' → 역사적 변동(3σ='+(3*d.sigF20).toFixed(2)+u+')에 점근하는 포화 곡선 적용: <b>유효 '+fmtShock(d.effShock,u)+'</b>'
-        : '현재 '+d.factorLast+(WI.factor==='rate'?'%':'')+' 기준 · 20영업일 내 반영 가정 · 유효 '+fmtShock(d.effShock,u);
+      var hd=d.horizonDays||20, months=(hd/21).toFixed(1);
+      var capNote='현재 '+d.factorLast+(WI.factor==='rate'?'%':'')+' 기준 · 역사적 변동 속도상 약 <b>'+hd+'영업일(≈'+months+'개월)</b>에 걸친 반영 가정';
       var cards='<div class="wi-card"><div class="k">시나리오</div><div class="v" style="color:var(--wi-accent);">'+d.factorLabel+' '+fmtShock(d.shock,u)
-        +(d.shockCapped?'<span class="wi-cap">포화</span>':'')+'</div>'
+        +(hd>20?'<span class="wi-cap">≈'+months+'개월</span>':'')+'</div>'
         +'<div class="m">'+capNote+'</div></div>';
       ['US','KR'].forEach(function(mk){
         var p=d.portfolio&&d.portfolio[mk];
