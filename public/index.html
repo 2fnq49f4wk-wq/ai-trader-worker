@@ -3523,6 +3523,12 @@ html[data-theme="light"] .table tbody tr:hover{background:rgba(9,105,218,.045);}
     </div>
     <div class="nnv-sub">"미국 금리가 1%p 오르면?" — 최근 120영업일 민감도(베타) 기반으로 포트폴리오·관심종목 예상 타격을 시뮬레이션합니다. 과거 데이터 근사이며 예측 보장이 아닙니다.</div>
     <div class="wi-controls">
+      <div class="wi-lab">종목 검색 — 워치리스트 밖 종목도 조회</div>
+      <div class="wi-row">
+        <span class="wi-custom"><input type="text" id="wiSym" placeholder="예: NVDA · 005930.KS" style="width:150px;" autocomplete="off">
+        <button class="wi-s" id="wiSymGo">조회</button>
+        <button class="wi-s" id="wiSymClr" style="display:none;">✕ 해제</button></span>
+      </div>
       <div class="wi-lab">STEP 1 · 거시 변수</div>
       <div class="wi-row" id="wiFactors">
         <button class="wi-f active" data-f="rate">🏦 미국 금리</button>
@@ -10988,6 +10994,10 @@ setTimeout(function(){ var o=document.getElementById('lux-intro-overlay'); if(o&
 #page-whatif .wi-decomp{font-size:9.5px;line-height:1.5;color:var(--wi-dim);white-space:nowrap;font-variant-numeric:tabular-nums;}
 #page-whatif .wi-decomp b{color:#cbd9f2;font-weight:600;}
 #page-whatif .wi-hot{display:inline-block;font-size:8.5px;padding:1px 6px;border-radius:6px;background:rgba(255,171,64,.13);color:#ffc067;border:1px solid rgba(255,171,64,.38);margin-left:6px;}
+/* 검색 고정 행 — 상단 애저 하이라이트 */
+#page-whatif .wi-table tr.pinned td{background:rgba(84,168,255,.12);border-bottom:1px solid rgba(84,168,255,.35);}
+#page-whatif .wi-table tr.pinned td:first-child{box-shadow:inset 3px 0 0 var(--wi-accent-2);}
+#page-whatif .wi-pin{display:inline-block;font-size:8.5px;padding:1px 6px;border-radius:6px;background:linear-gradient(135deg,var(--wi-accent),var(--wi-accent-2));color:#06111f;font-weight:700;margin-left:6px;}
 #page-whatif .wi-summary,#page-whatif .wi-table{max-width:1120px;margin-left:auto;margin-right:auto;}
 #page-whatif .wi-custom{display:inline-flex;align-items:center;gap:5px;color:var(--wi-faint);font-size:11px;font-family:'IBM Plex Mono',monospace;}
 #page-whatif .wi-custom input{width:74px;background:#0c1526;border:1px solid #223a5e;border-radius:8px;color:var(--wi-ink);padding:7px 9px;font-family:inherit;font-size:11px;}
@@ -11453,6 +11463,19 @@ html[data-theme="light"] #page-nnviz .nnv-title,html[data-theme="light"] #page-n
       loadWhatIf();
     });
   });
+  // 종목 검색 — 워치리스트 밖 종목도 즉석 수집·계산해 맨 위 고정
+  var symIn=document.getElementById('wiSym'), symGo=document.getElementById('wiSymGo'), symClr=document.getElementById('wiSymClr');
+  function runSym(){
+    var v=(symIn.value||'').trim().toUpperCase();
+    if(!v) return;
+    WI.sym=v; if(symClr) symClr.style.display='';
+    loadWhatIf();
+  }
+  if(symGo) symGo.addEventListener('click',runSym);
+  if(symIn) symIn.addEventListener('keydown',function(e){ if(e.key==='Enter') runSym(); });
+  if(symClr) symClr.addEventListener('click',function(){
+    WI.sym=null; symIn.value=''; symClr.style.display='none'; loadWhatIf();
+  });
   window.loadWhatIf=function(force){
     var tbl=document.getElementById('wiTable'), sum=document.getElementById('wiSummary');
     if(!tbl) return;
@@ -11462,7 +11485,7 @@ html[data-theme="light"] #page-nnviz .nnv-title,html[data-theme="light"] #page-n
     // 표를 비우지 않고 유지 — collapse로 인한 화면 이동 방지(min-height + 유지). 갱신 중엔 살짝 흐리게.
     if(tbl.querySelector('table')) tbl.style.opacity='.5';
     else tbl.innerHTML='<div class="nnv-empty">과거 데이터로 민감도 계산 중… (첫 계산은 몇 초 걸립니다)</div>';
-    fetch('/api/whatif?factor='+WI.factor+'&shock='+WI.shock+'&speed='+WI.speed).then(function(r){return r.json();}).then(function(d){
+    fetch('/api/whatif?factor='+WI.factor+'&shock='+WI.shock+'&speed='+WI.speed+(WI.sym?'&sym='+encodeURIComponent(WI.sym):'')).then(function(r){return r.json();}).then(function(d){
       WI.busy=false; tbl.style.opacity='1';
       if(!d||d.error){ tbl.innerHTML='<div class="nnv-empty">실패: '+((d&&d.error)||'응답 없음')+'</div>'; sum.innerHTML=''; return; }
       var u=WI.unit[WI.factor];
@@ -11498,7 +11521,8 @@ html[data-theme="light"] #page-nnviz .nnv-title,html[data-theme="light"] #page-n
       }
       var rows=(d.items||[]).map(function(it){
         var pfx=function(v){return (v>0?'+':'')+(+v).toFixed(1);};
-        return '<tr'+(it.held?' class="held"':'')+'><td>'+it.name+(it.held?'<span class="wi-badge">보유</span>':'')
+        var trCls=it.pinned?'pinned':(it.held?'held':'');
+        return '<tr'+(trCls?' class="'+trCls+'"':'')+'><td>'+it.name+(it.pinned?'<span class="wi-pin">검색</span>':'')+(it.held?'<span class="wi-badge">보유</span>':'')
           +((it.regime||1)>=1.15?'<span class="wi-hot">고변동×'+it.regime.toFixed(1)+'</span>':'')
           +(it.capped?'<span class="wi-cap">캡</span>':'')+'</td>'
           +'<td>'+it.market+'</td>'
@@ -11511,7 +11535,8 @@ html[data-theme="light"] #page-nnviz .nnv-title,html[data-theme="light"] #page-n
           +'<td class="r">'+(it.held?money(it.posValue,it.market):'—')+'</td>'
           +'<td class="r '+cls(it.expPnl)+'">'+(it.held?(it.expPnl>0?'+':'')+money(it.expPnl,it.market):'—')+'</td></tr>';
       }).join('');
-      tbl.innerHTML='<table><thead><tr><th>종목</th><th>시장</th><th class="r">팩터β*</th><th class="r">시장β</th><th class="r">R²</th><th class="r">예상 등락(범위)</th><th class="r">구성</th><th>분포</th><th class="r">보유 평가액</th><th class="r">예상 손익</th></tr></thead><tbody>'
+      var missNote = d.searchMiss ? '<div class="wi-note" style="color:#ffc067;">🔍 '+d.searchMiss+'</div>' : '';
+      tbl.innerHTML=missNote+'<table><thead><tr><th>종목</th><th>시장</th><th class="r">팩터β*</th><th class="r">시장β</th><th class="r">R²</th><th class="r">예상 등락(범위)</th><th class="r">구성</th><th>분포</th><th class="r">보유 평가액</th><th class="r">예상 손익</th></tr></thead><tbody>'
         +(rows||'<tr><td colspan="10" style="color:#61789c;">일봉 캐시가 쌓인 종목이 없습니다 — 엔진이 하루 이상 가동되면 표시됩니다.</td></tr>')+'</tbody></table>'
         +'<div class="wi-note">⚠️ '+(d.note||'')+' · 팩터β*=시장효과를 통제한 부분베타(√R² 축소) · 구성=직접(고유 민감도)+파급(시장 경유) · 고변동 배지=최근 변동성이 장기 대비 높아 충격 증폭 반영.</div>';
     })['catch'](function(e){ WI.busy=false; tbl.innerHTML='<div class="nnv-empty">요청 실패: '+e.message+'</div>'; });

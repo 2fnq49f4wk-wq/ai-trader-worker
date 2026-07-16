@@ -13313,12 +13313,14 @@ async function handleRequest(request, env) {
           const o = ols1(idx5[isym], f5);
           gF[isym] = o ? +(o.b * Math.min(1, Math.sqrt(Math.max(0, o.r2)) * 1.6)).toFixed(4) : 0;
         }
-        // ── 대상 종목: 보유 포지션 + 워치리스트 (daily: 캐시만 읽음 — 추가 fetch 0) ──
+        // ── 대상 종목: 검색 종목(최우선) + 보유 포지션 + 워치리스트 (daily: 캐시만 읽음 — 추가 fetch 0) ──
+        const extraSymRaw = (url.searchParams.get("sym") || "").trim().toUpperCase();
+        const extraSym = /^[A-Z0-9.\-\^]{1,14}$/.test(extraSymRaw) ? extraSymRaw : "";
         let posRows = [];
         try { posRows = ((await env.DB.prepare("SELECT symbol, market, qty, avg_price FROM positions").all()).results) || []; } catch (e) {}
         const posSyms = posRows.map(function (r) { return r.symbol; });
         const uniq = {}; const syms = [];
-        posSyms.concat(DEFAULT_US.slice(0, 45)).concat(DEFAULT_KR.slice(0, 45)).forEach(function (s) {
+        (extraSym ? [extraSym] : []).concat(posSyms).concat(DEFAULT_US.slice(0, 60)).concat(DEFAULT_KR.slice(0, 60)).forEach(function (s) {
           if (s && !uniq[s]) { uniq[s] = 1; syms.push(s); }
         });
         // ── 계수 캐시(v3 키, 6시간) ──
@@ -13327,45 +13329,54 @@ async function handleRequest(request, env) {
         const cacheValid = !!(bcache && bcache.ts && Date.now() - bcache.ts < 6 * 3600 * 1000 && bcache.betas);
         const betas = cacheValid ? bcache.betas : {};
         const missing = syms.filter(function (s) { return !(s in betas); });
-        // ── 종목별 2변수 OLS(시장·팩터 동시) + 국면·변동성 ──
+        // ── 종목별 2변수 OLS(시장·팩터 동시) + 국면·변동성 — 계산 함수(검색 종목도 재사용) ──
+        const calcCoef = function (sym, closes) {
+          if (!closes || closes.length < 60) return null;
+          const s5 = chg(closes, 5, false), s20 = chg(closes, 20, false);
+          const isKR = /\.(KS|KQ)$/.test(sym);
+          const ix = idx5[isKR ? "^KS11" : "^GSPC"] || [];
+          const N = Math.min(160, s5.length, f5.length, ix.length || 1e9);
+          if (N < 40) return null;
+          const y = s5.slice(-N), x1 = ix.slice(-N), x2 = f5.slice(-N);
+          let m0 = 0, m1 = 0, m2 = 0;
+          for (let i = 0; i < N; i++) { m0 += y[i]; m1 += x1[i]; m2 += x2[i]; } m0 /= N; m1 /= N; m2 /= N;
+          let s11 = 0, s22 = 0, s12 = 0, sy1 = 0, sy2 = 0, syy = 0;
+          for (let i = 0; i < N; i++) {
+            const dy = y[i] - m0, d1 = x1[i] - m1, d2 = x2[i] - m2;
+            s11 += d1 * d1; s22 += d2 * d2; s12 += d1 * d2; sy1 += dy * d1; sy2 += dy * d2; syy += dy * dy;
+          }
+          // 2×2 정규방정식 풀이(부분베타). 공선성(예: SPX 팩터 × ^GSPC 지수)이면 단일 팩터 폴백.
+          let bM = 0, bF = 0, r2 = 0, usedMkt = 1;
+          const det = s11 * s22 - s12 * s12;
+          if (s11 > 0 && s22 > 0 && Math.abs(det) > 1e-6 * s11 * s22) {
+            bM = (sy1 * s22 - sy2 * s12) / det;
+            bF = (sy2 * s11 - sy1 * s12) / det;
+          } else { usedMkt = 0; bM = 0; bF = s22 > 0 ? sy2 / s22 : 0; }
+          if (syy > 0) r2 = Math.max(0, Math.min(1, (bM * sy1 + bF * sy2) / syy));
+          const w = Math.min(1, Math.sqrt(r2) * 1.5);                    // 부분베타 축소
+          const volNow = stdv(s20.slice(-40)), volAll = stdv(s20.slice(-160));
+          const regime = volAll > 0 ? Math.max(0.8, Math.min(1.4, volNow / volAll)) : 1;   // 변동성 국면
+          const sigS20 = volAll * 100;
+          return { bF: +(bF * w).toFixed(4), bM: +bM.toFixed(3), r2: +r2.toFixed(3), n: N,
+            sig20: +sigS20.toFixed(2), reg: +regime.toFixed(2), mk: usedMkt };
+        };
         for (let ci = 0; ci < missing.length; ci += 20) {
           const chunk = missing.slice(ci, ci + 20);
           const rows = await Promise.all(chunk.map(function (s) {
             return getState(env.DB, "daily:" + s, null).then(function (d) { return { s: s, d: d }; })["catch"](function () { return { s: s, d: null }; });
           }));
-          for (const row of rows) {
-            const closes = (row.d && row.d.closes) || [];
-            if (closes.length < 60) { betas[row.s] = null; continue; }
-            const s5 = chg(closes, 5, false), s20 = chg(closes, 20, false);
-            const isKR = /\.(KS|KQ)$/.test(row.s);
-            const ix = idx5[isKR ? "^KS11" : "^GSPC"] || [];
-            const N = Math.min(160, s5.length, f5.length, ix.length || 1e9);
-            if (N < 40) { betas[row.s] = null; continue; }
-            const y = s5.slice(-N), x1 = ix.slice(-N), x2 = f5.slice(-N);
-            let m0 = 0, m1 = 0, m2 = 0;
-            for (let i = 0; i < N; i++) { m0 += y[i]; m1 += x1[i]; m2 += x2[i]; } m0 /= N; m1 /= N; m2 /= N;
-            let s11 = 0, s22 = 0, s12 = 0, sy1 = 0, sy2 = 0, syy = 0;
-            for (let i = 0; i < N; i++) {
-              const dy = y[i] - m0, d1 = x1[i] - m1, d2 = x2[i] - m2;
-              s11 += d1 * d1; s22 += d2 * d2; s12 += d1 * d2; sy1 += dy * d1; sy2 += dy * d2; syy += dy * dy;
-            }
-            // 2×2 정규방정식 풀이(부분베타). 공선성(예: SPX 팩터 × ^GSPC 지수)이면 단일 팩터 폴백.
-            let bM = 0, bF = 0, r2 = 0, usedMkt = 1;
-            const det = s11 * s22 - s12 * s12;
-            if (s11 > 0 && s22 > 0 && Math.abs(det) > 1e-6 * s11 * s22) {
-              bM = (sy1 * s22 - sy2 * s12) / det;
-              bF = (sy2 * s11 - sy1 * s12) / det;
-            } else { usedMkt = 0; bM = 0; bF = s22 > 0 ? sy2 / s22 : 0; }
-            if (syy > 0) r2 = Math.max(0, Math.min(1, (bM * sy1 + bF * sy2) / syy));
-            const w = Math.min(1, Math.sqrt(r2) * 1.5);                    // 부분베타 축소
-            const volNow = stdv(s20.slice(-40)), volAll = stdv(s20.slice(-160));
-            const regime = volAll > 0 ? Math.max(0.8, Math.min(1.4, volNow / volAll)) : 1;   // 변동성 국면
-            const sigS20 = volAll * 100;
-            betas[row.s] = { bF: +(bF * w).toFixed(4), bM: +bM.toFixed(3), r2: +r2.toFixed(3), n: N,
-              sig20: +sigS20.toFixed(2), reg: +regime.toFixed(2), mk: usedMkt };
-          }
+          for (const row of rows) betas[row.s] = calcCoef(row.s, (row.d && row.d.closes) || []);
         }
-        if (missing.length) { try { await setState(env.DB, ckey, { ts: cacheValid ? bcache.ts : Date.now(), betas: betas }); } catch (e) {} }
+        // ── [V12.31] 검색 종목(sym=) — 유니버스 밖이어도 즉석 일봉 수집(무료 Yahoo 1콜) 후 계산 ──
+        let searchMiss = null;
+        if (extraSym && !betas[extraSym]) {
+          try {
+            const dd = await getDailyCached(env.DB, extraSym, 720);
+            betas[extraSym] = calcCoef(extraSym, (dd && dd.closes) || []);
+          } catch (e) { betas[extraSym] = null; }
+          if (!betas[extraSym]) searchMiss = extraSym + " 시세를 찾지 못했거나 이력이 부족합니다 (심볼 확인: 미국=NVDA, 한국=005930.KS)";
+        }
+        if (missing.length || (extraSym && betas[extraSym])) { try { await setState(env.DB, ckey, { ts: cacheValid ? bcache.ts : Date.now(), betas: betas }); } catch (e) {} }
         // ── 포지션 평가액(quote: 캐시) ──
         const posBySym = {};
         for (const p of posRows) {
@@ -13407,8 +13418,14 @@ async function handleRequest(request, env) {
             expPnl: expPnl != null ? +expPnl.toFixed(2) : null });
         }
         items.sort(function (x, y) { return Math.abs(y.expPct) - Math.abs(x.expPct); });
+        // 검색 종목은 항상 맨 위에 고정(pinned)
+        if (extraSym) {
+          const pi = items.findIndex(function (it) { return it.symbol === extraSym; });
+          if (pi >= 0) { const p = items.splice(pi, 1)[0]; p.pinned = true; items.unshift(p); }
+        }
         return Response.json({
           factor: fKey, factorLabel: F.label, factorSym: F.sym, unit: F.unit, presets: F.presets,
+          searched: extraSym || null, searchMiss: searchMiss,
           shock: shock, effShock: +effShock.toFixed(3), speed: speed, horizonDays: horizonDays,
           gF: { us: gF["^GSPC"], kr: gF["^KS11"] },
           sigF20: +(isDiff ? sigF20 : sigF20 * 100).toFixed(3), factorLast: +_num(fLast, 0).toFixed(3),
@@ -19253,24 +19270,24 @@ async function mlCalibrateCommittee(DB) {
 const HARVEST = {
   enabled: true,
   symbolsPerNight: 1500, // [V11] 500→1500 — 전 유니버스(~900종목)를 매일밤 완전순회(커버리지 극대화)
-  strideBars: 2,        // [V11] 3→2 — 봉 간격 축소로 종목당 표본↑(과적합 완화용 데이터 확대. 라벨 겹침은 엠바고가 방어)
+  strideBars: 1,        // [V12.31] 2→1 — 매 봉 표본화로 종목당 표본 ~2배(한 번에 받는 표본 극대화. 라벨 겹침은 엠바고가 방어)
   minBars: 120, warmupBars: 60,
   horizon: AI_PARAMS.predictionHorizonDays, stopPct: 5,  // [V12] 예측지평은 AI_PARAMS 단일출처
   tpPct: 8,             // [V9.9] Triple-Barrier(de Prado) 익절 배리어 — 기간내 +8% 선도달 시 승 확정.
                         //   기존 2중(손절+시간)의 "중간에 크게 올랐다가 되돌린 승리 패턴"을 패로 오분류하던 편향 제거.
-  maxPerNight: 30000,   // [V16] 20000→30000 — 야간 수확량 확대(피처 60종 → 과적합 방어에 표본 더 필요)
-  maxTotal: 500000,     // [V16] ★300000→500000★ 상한 확대(과적합비 60피처 대비 표본 여유 ↑, 목표 8000:1→더 낮게)
+  maxPerNight: 50000,   // [V12.31] 30000→50000 — 야간 1회 수확량 확대(stride 1과 함께 회당 표본 대폭↑)
+  maxTotal: 800000,     // [V12.31] 500000→800000 — 총 상한 동반 확대(피처 72종 대비 표본비 개선)
   entryLike: true,
   // [V9.5] entryLike 필터 완화 — 깊은 눌림(MA50 위)+모멘텀 winner(RSI 85까지)까지 포함해
   //   "3~5일 상승 패턴" 등 다양한 진입국면을 사전학습에 편입(사전학습은 커버리지가 넓을수록 유리).
   maLen: 50, rsiLo: 25, rsiHi: 85,   // [V16] 진입국면 커버리지 확대(28→25, 82→85) — 표본 다양성↑
-  budgetMs: 120000,     // [V16] 90s→120s 수확 CPU 예산 확대(대량 수확). 초과 시 진행분 저장 후 중단(안전)
+  budgetMs: 150000,     // [V12.31] 120s→150s 수확 CPU 예산 확대(stride 1 대량 수확 수용). 초과 시 진행분 저장 후 중단(안전)
   // [V18] 딥-히스토리 수확 — range=max 장기이력(2020 코로나·2022 긴축·2018 Q4 폭락 포함) → 국면 다양성으로 과적합↓
   useDeepHistory: true, // hist: 캐시가 있으면 320봉 daily: 대신 딥이력으로 수확(폭락장 학습)
   deepBars: 1800,       // 딥 저장 봉수(~7.2년, 코로나 폭락 포함). 라이브 캐시와 분리라 매매 무영향
-  deepFetchPerNight: 30,// 매일밤 딥이력 갱신 종목수(로테이션). 딥이력은 거의 안변해 저빈도 OK
+  deepFetchPerNight: 50,// [V12.31] 30→50 — 딥이력(7년치, 표본의 주 원천) 커버리지 축적 속도 ~1.7배
   deepRefreshDays: 30,  // 딥이력 재수집 주기(일) — 이보다 최신이면 스킵
-  maxPerSymbol: 400,    // [V20 안정화] 종목당 야간 표본 상한 — 딥이력(1800봉)이 한 종목에 편중되지 않게 분산(더 많은 종목 커버)
+  maxPerSymbol: 600,    // [V12.31] 400→600 — 종목당 상한 완화(stride 1로 늘어난 표본 수용, 편중은 여전히 방지)
   srcWeight: 0.6        // 학습 가중(실거래=1.0 대비)
 };
 
