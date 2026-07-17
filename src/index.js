@@ -2328,7 +2328,7 @@ const AI_PARAMS = {
 
   // ── 룩백 윈도우(Lookback Window) ── 과거 얼마만큼의 봉을 입력/학습에 쓸지.
   featureLookbackBars: 200,        // 피처 1건 계산에 필요한 최소 과거 봉(MA200 때문에 200 권장)
-  trainWindow: 12000,              // 야간 학습이 사용하는 최근 표본 수(위원회 공통 표본창)
+  trainWindow: 60000,              // [V12.36] 야간 학습이 사용하는 최근 표본 수(위원회 공통 표본창) — 실제 값은 LUXML.trainWindow
 
   // ── 진입/청산 임계값(Threshold) ── 모델 확률/점수가 이 값 이상일 때만 개입.
   //   (구현: LUXML.gateThresh — 이 미만이면 진입 차단, 이상이면 사이징 반영)
@@ -13271,8 +13271,12 @@ async function handleRequest(request, env) {
     }
 
     // ── [V9 시각화] 신경망 구조·가중치 강도·위원회 신뢰 — 프론트 "AI 두뇌 관측" 패널용 ──
+    //   [V12.36] ?model=dnn(기본)|mind|gbdt — 사이드바 두뇌 페이지에서 3개 모델 구조를 각각 관측.
     if (path === "/api/nn-viz") {
-      const data = await mlDNNVizData(env.DB);
+      const modelSel = url.searchParams.get("model") || "dnn";
+      const data = modelSel === "mind" ? await mlMindVizData(env.DB)
+        : modelSel === "gbdt" ? await mlGBDTVizData(env.DB)
+        : await mlDNNVizData(env.DB);
       return Response.json(data, { headers: cors });
     }
 
@@ -13650,6 +13654,22 @@ async function handleRequest(request, env) {
         const r = await mlMarketHarvestNightly(env.DB);
         try { await log(env.DB, "INFO", null, "[수동트리거] " + r); } catch (e) {}
         return Response.json({ ok: true, result: r }, { headers: cors });
+      } catch (e) {
+        return Response.json({ ok: false, error: e && e.message }, { status: 500, headers: cors });
+      }
+    }
+    // POST /api/ai/train-now?target=mind|gbdt|brain|dnn|l1|calibrate — 하루1회 게이트를 기다리지 않고
+    //   특정 학습기 하나만 지금 즉시 재학습. [V12.37] MIND 회귀가드 발동 직후 정상 모델로 즉시 복구할 때,
+    //   또는 trainWindow 등 설정 변경 검증 시 전체 야간파이프라인(수확+7단)을 다시 돌릴 필요 없이 사용.
+    if (path === "/api/ai/train-now" && request.method === "POST") {
+      const au = _trainAuthed(); if (!au.ok) return Response.json({ error: au.msg }, { status: au.code, headers: cors });
+      const target = url.searchParams.get("target") || "mind";
+      const FN = { mind: mlMindTrainNightly, gbdt: mlGBDTTrainNightly, brain: mlBrainTrainNightly, dnn: mlDNNTrainNightly, l1: mlTrainNightly, calibrate: mlCalibrateCommittee };
+      if (!FN[target]) return Response.json({ error: "target은 " + Object.keys(FN).join("|") + " 중 하나" }, { status: 400, headers: cors });
+      try {
+        const r = await FN[target](env.DB);
+        try { await log(env.DB, "INFO", null, "[수동트리거:" + target + "] " + r); } catch (e) {}
+        return Response.json({ ok: true, target: target, result: r }, { headers: cors });
       } catch (e) {
         return Response.json({ ok: false, error: e && e.message }, { status: 500, headers: cors });
       }
@@ -16615,8 +16635,10 @@ const LUXML = {
   gateThresh: 0.42,
   sizeMin: 0.5, sizeMax: 1.5,
 
-  trainWindow: 12000,  // [V11] 5000→12000: 수확 300k 확대에 맞춰 위원회(GBDT·MIND·앙상블) 표본창 확대.
-                       //   각 학습기는 자체 CPU 예산가드(GBDT 25s deadline 등)가 있어 초과분은 스스로 절삭 — 안전.
+  trainWindow: 60000,  // [V12.36] 12000→60000: DNN(외부GPU)은 이미 전체 79k 표본을 쓰는데 GBDT·MIND는 12k로
+                       //   제한되어 있어 DNN보다 정확도가 낮게 나오는 원인이었다. GBDT(18s)·MIND(신규 45s, _fmTrain
+                       //   데드라인가드 추가) 둘 다 시간예산 초과시 자체 절삭하므로 안전. D1 read/JSON.parse
+                       //   비용도 이 정도 행수에서는 여유 있음.
   epochs: 25,
   lr: 0.05,
   l2: 0.0006,        // 릿지(부드러운 축소)
@@ -18098,8 +18120,17 @@ async function mlBrainStatus(DB) {
 
 const MIND = {
   enabled: true,
-  fmK: 8, fmEpochs: 20, fmLr: 0.03, fmL2w: 0.001, fmL2v: 0.003,
-  fmValFrac: 0.2, minTrainSamples: 80,
+  // [V12.38] trainWindow 12000→60000 확대(GBDT용) 후 MIND(FM)만 39~57%대에서 오실레이션하며
+  //   다수클래스(~67%) 기준을 못 넘김 — 원래 12000에선 78%였음. FM(선형+2차상호작용)이 60000의
+  //   국면 이질성(폭락장 등 혼재)을 감당할 용량이 부족한 것으로 판단, MIND만 15000으로 되돌림.
+  //   GBDT·DNN(트리/딥넷)은 구조적으로 큰 창을 잘 소화하므로 60000 그대로 유지.
+  trainWindow: 15000,
+  fmK: 8, fmEpochs: 20, fmLr: 0.03, fmL2w: 0.001, fmL2v: 0.003, fmBudgetMs: 20000, fmMaxSamples: 20000,
+  // [V12.41] FM 멀티시드 — 단일 학습의 무작위성(초기화·셔플)으로 valAcc가 43~64%를 오가며
+  //   회귀가드 문턱(다수클래스-3%p)을 넘을락말락 하던 분산 문제. 시드 3개를 학습해 검증 앞절반
+  //   정확도 최고를 선택(DNN 멀티시드와 동일 원리). 시드당 예산 20s×3 = 총 60s(종전과 동일).
+  fmSeeds: 3,
+  fmValFrac: 0.2, minTrainSamples: 80, regressGuardMargin: 0.08,
   stackL2: 0.01, stackEpochs: 200, stackLr: 0.1,
   guardMinLive: 25, guardMargin: 0.08, guardWindow: 60,
   kellyGain: 1.6, kellyUCap: 0.15,
@@ -18109,9 +18140,11 @@ const MIND = {
 
 // ── 표본 로드 공통 ─────────────────────────────────────────
 async function _mindLoadSamples(DB) {
+  // [V12.38] MIND(FM)는 GBDT·DNN과 별개로 자신의 trainWindow를 씀 — 60000 공용창에서 FM이
+  //   오실레이션하며 다수클래스를 못 넘던 문제 해결(15000으로 축소, 근거는 MIND 설정 주석 참고).
   const rows = await DB.prepare(
     "SELECT ts, feat, label, pnl_pct, strategy FROM ml_samples WHERE featver = ? ORDER BY ts DESC LIMIT ?"
-  ).bind(LUXML.featVer, LUXML.trainWindow).all();
+  ).bind(LUXML.featVer, MIND.trainWindow || LUXML.trainWindow).all();
   const raw = (rows && rows.results) ? rows.results : [];
   const data = [];
   for (let i = raw.length - 1; i >= 0; i--) {
@@ -18152,7 +18185,7 @@ function mlFMScore(fm, featVec) {
     return _clamp(_sigmoid(_fmRaw(fm, z)), 0.001, 0.999);
   } catch (e) { return null; }
 }
-function _fmTrain(train, D) {
+function _fmTrain(train, D, deadline) {
   const K = MIND.fmK;
   const w = new Array(D).fill(0);
   const V = []; for (let i = 0; i < D; i++) { const r = new Array(K); for (let f = 0; f < K; f++) r[f] = 0.01 * _gaussM(); V.push(r); }
@@ -18160,7 +18193,10 @@ function _fmTrain(train, D) {
   let pos = 0; for (const t of train) pos += t.y;
   const wPos = pos > 0 ? train.length / (2 * pos) : 1;
   const wNeg = (train.length - pos) > 0 ? train.length / (2 * (train.length - pos)) : 1;
+  // [V12.36] 표본창 확대(trainWindow↑) 대비 시간예산 가드 — 원래 고정 epoch 루프라 대형 N에서
+  //   Worker CPU 한도(하베스트·GBDT·DNN과 공유)를 넘길 수 있었다. 예산 초과 시 다음 에폭 진입 전 조기종료.
   for (let ep = 0; ep < MIND.fmEpochs; ep++) {
+    if (deadline && Date.now() > deadline) break;
     for (let i = train.length - 1; i > 0; i--) { const k = Math.floor(Math.random() * (i + 1)); const tmp = train[i]; train[i] = train[k]; train[k] = tmp; }
     const lr = MIND.fmLr / (1 + 0.2 * ep);
     for (const t of train) {
@@ -18234,8 +18270,26 @@ async function mlMindTrainNightly(DB) {
     const val = Z.slice(N - nVal);
     if (train.length < 30) return "[MIND] 훈련셋 부족(" + train.length + ")";
 
-    // FM 학습
-    const fm = _fmTrain(train, D);
+    // [V12.37 버그수정] trainWindow 12000→60000 확대 후 FM(_fmTrain, 고정 20에폭 SGD)이
+    //   45초 예산 안에 1~2에폭도 못 돌고 잘려 "초기화에 가까운" 모델이 그대로 발행 → valAcc가
+    //   78%→38%로 붕괴(다수클래스보다도 낮음). 원인: 에폭당 비용이 표본수에 비례하는데 시간예산은
+    //   고정이라 대형 N에서 항상 미수렴. 해법: FM 학습분만 최근 fmMaxSamples로 캡(GBDT·L1·메타스태킹은
+    //   전체 표본창 그대로 사용 — 안전창 확대 효과 유지), 그래도 예산초과 시엔 아래 회귀가드가 최종 방어선.
+    let fmTrain = train;
+    if (MIND.fmMaxSamples && fmTrain.length > MIND.fmMaxSamples) fmTrain = fmTrain.slice(fmTrain.length - MIND.fmMaxSamples);
+    // [V12.41] FM 멀티시드 best-of-N — 검증 "앞 절반"으로만 선택(뒤 절반은 메타 평가용으로 보존해
+    //   선택편향 차단). 무작위성으로 인한 43~64% 오실레이션을 상단으로 수렴시킨다.
+    const _fmSelN = Math.max(10, Math.floor(val.length / 2));
+    const _fmSel = val.slice(0, _fmSelN);
+    let fm = null, _fmBest = -1;
+    const _fmTries = Math.max(1, MIND.fmSeeds || 1);
+    for (let _fs = 0; _fs < _fmTries; _fs++) {
+      const cand = _fmTrain(fmTrain, D, Date.now() + (MIND.fmBudgetMs || 20000));
+      let c = 0;
+      for (const t of _fmSel) { const p = _sigmoid(_fmRaw(cand, t.z)); if ((p >= 0.5 ? 1 : 0) === t.y) c++; }
+      const a = c / _fmSel.length;
+      if (a > _fmBest) { _fmBest = a; fm = cand; }
+    }
     fm.mean = st.mean; fm.std = st.std; fm.featVer = LUXML.featVer; fm.n = N; fm.trainedAt = Date.now();
 
     // 전문가 예측 로드(가능한 것만): L1로지스틱, 앙상블, FM
@@ -18261,25 +18315,80 @@ async function mlMindTrainNightly(DB) {
     const meta = _metaTrain(metaTrainRows);
 
     // 성능 평가(메타 결합확률 — 미학습 구간)
-    let correct = 0, ll = 0;
     const evalRows = metaEvalRows.length >= 8 ? metaEvalRows : metaRows;
-    for (const r of evalRows) {
+    // ── [V12.39 임계값 캘리브레이션] DNN의 V12.33과 동일 원리를 MIND에 적용 ──
+    //   균형가중 학습 + 검증 라벨 쏠림(약세장 양성률 ~31%) 상황에서 고정 0.5 컷은 다수클래스보다
+    //   못한 정확도로 붕괴한다(39~57% 오실레이션의 원인). 평가 앞 절반에서 정확도 최대 임계값 τ*를
+    //   찾아 meta.b에 -logit(τ*)로 굽는다 → 이후 0.5 기준 추론이 그대로 캘리브레이션 반영.
+    //   정확도는 τ* 선택에 쓰지 않은 '뒤 절반'에서 산출(정직한 홀드아웃).
+    let evalR = evalRows;
+    const halfE = Math.floor(evalRows.length / 2);
+    if (halfE >= 20 && evalRows.length - halfE >= 20) {
+      const psC = [];
+      for (let i = 0; i < halfE; i++) psC.push(_metaPredict(meta, evalRows[i].e));
+      const sortedP = psC.slice().sort(function (a, b) { return a - b; });
+      let bestTau = 0.5, bestScore = -1;
+      for (let q = 2; q <= 36; q++) {
+        const tau = sortedP[Math.floor((q / 38) * (sortedP.length - 1))];
+        let c = 0;
+        for (let i = 0; i < halfE; i++) if ((psC[i] >= tau ? 1 : 0) === evalRows[i].y) c++;
+        if (c / halfE > bestScore) { bestScore = c / halfE; bestTau = tau; }
+      }
+      bestTau = _clamp(bestTau, 1e-4, 1 - 1e-4);
+      meta.b -= Math.log(bestTau / (1 - bestTau));   // 임계값을 가중치에 영구 반영(저장 모델에 포함)
+      evalR = evalRows.slice(halfE);
+    }
+    let correct = 0, ll = 0;
+    for (const r of evalR) {
       const p = _metaPredict(meta, r.e);
       if ((p >= 0.5 ? 1 : 0) === r.y) correct++;
       ll += -(r.y * Math.log(_clamp(p, 1e-6, 1 - 1e-6)) + (1 - r.y) * Math.log(_clamp(1 - p, 1e-6, 1 - 1e-6)));
     }
-    const valAcc = correct / evalRows.length;
-    const accLB = _wilsonLB(valAcc, evalRows.length);
+    const valAcc = correct / evalR.length;
+    const accLB = _wilsonLB(valAcc, evalR.length);
 
     // FM 단독 성능(상호작용 기여 확인용)
     let fmc = 0;
     for (const t of val) { const p = _sigmoid(_fmRaw(fm, t.z)); if ((p >= 0.5 ? 1 : 0) === t.y) fmc++; }
     const fmAcc = fmc / val.length;
 
+    // ── [V12.39 규칙엔진 이식] 규칙엔진의 기술적 종합확률(taUpProb 피처)을 "전문가"로 승격하기 위한
+    //   검증 정확도 측정 — 위원회(mlDeepDecide)가 이 정확도의 소프트맥스 가중으로 규칙엔진에 투표권을
+    //   준다. 규칙이 잘 맞는 국면(추세장 등)엔 자동으로 발언권↑, 안 맞는 국면엔 자동 감쇠.
+    let ruleAcc = null, ruleAccLB = null, ruleN = 0;
+    const _tiR = LUXML.featNames.indexOf("taUpProb");
+    if (_tiR >= 0) {
+      let rc = 0;
+      for (const t of val) {
+        const pR = _num(t.x[_tiR], 0.5);
+        if (pR === 0.5) continue;   // 0.5=중립(신호 없음) — 평가 제외
+        if ((pR >= 0.5 ? 1 : 0) === t.y) rc++;
+        ruleN++;
+      }
+      if (ruleN >= 30) { ruleAcc = +(rc / ruleN).toFixed(4); ruleAccLB = +_wilsonLB(rc / ruleN, ruleN).toFixed(4); }
+      else { ruleN = 0; }
+    }
+
     const mind = { fm: fm, meta: meta, experts: expertNames, mean: st.mean, std: st.std,
-      featVer: LUXML.featVer, n: N, valAcc: +valAcc.toFixed(4), valAccLB: +accLB.toFixed(4), valN: evalRows.length,
-      fmAcc: +fmAcc.toFixed(4),
-      valLogLoss: +(ll / evalRows.length).toFixed(4), trainedAt: Date.now() };
+      featVer: LUXML.featVer, n: N, valAcc: +valAcc.toFixed(4), valAccLB: +accLB.toFixed(4), valN: evalR.length,
+      fmAcc: +fmAcc.toFixed(4), ruleAcc: ruleAcc, ruleAccLB: ruleAccLB, ruleN: ruleN,
+      valLogLoss: +(ll / evalR.length).toFixed(4), trainedAt: Date.now() };
+    // [V12.37] 회귀 가드 — MIND는 위원장(게이트 없이 항상 가동)이라 DNN·GBDT와 달리 자기 자신을
+    //   지켜줄 신뢰게이트가 없다. CPU예산 초과로 미수렴 모델이 만들어져도 그대로 덮어쓰면 즉시
+    //   실거래에 반영되어 위험 — 기존 모델보다 큰 폭으로 나빠지거나 다수클래스 찍기보다도 못하면
+    //   발행을 거부하고 기존 모델을 그대로 유지(관측 로그만 남김).
+    let prevMind = null; try { prevMind = await getState(DB, "mind_model", null); } catch (e) {}
+    const prevLB = prevMind ? ((typeof prevMind.valAccLB === "number") ? prevMind.valAccLB : _wilsonLB(_num(prevMind.valAcc, 0.5), _num(prevMind.valN, 30))) : null;
+    const posRate = data.reduce(function (s, d) { return s + (d.y ? 1 : 0); }, 0) / N;
+    const majorityAcc = Math.max(posRate, 1 - posRate);
+    const regressed = (prevLB != null && accLB < prevLB - MIND.regressGuardMargin) || (accLB < majorityAcc - 0.03);
+    if (regressed) {
+      const _msg = "[MIND] ⚠️ 회귀가드 발동 — 신규 valAcc " + (valAcc * 100).toFixed(1) + "%(하한 " + (accLB * 100).toFixed(1) +
+        "%)가 " + (prevLB != null ? "기존 하한 " + (prevLB * 100).toFixed(1) + "%" : "다수클래스 기준 " + (majorityAcc * 100).toFixed(1) + "%") +
+        "보다 크게 낮아 발행 거부(기존 모델 유지). CPU예산 초과로 미수렴했을 가능성 — fmMaxSamples/fmBudgetMs 점검 필요.";
+      try { await log(DB, "ERROR", null, _msg); } catch (e2) {}
+      return _msg;
+    }
     await setState(DB, "mind_model", mind);
     // 재학습 시 자기감시 추적 리셋(새 모델은 새 신뢰장부)
     await setState(DB, "mind_guard", { live: [], distrust: false, baseAcc: mind.valAcc });
@@ -18361,6 +18470,57 @@ async function mlMindDecide(DB, featVec, opts) {
     const sizeMult = allow ? mlKellySize(sc.p, sc.uncertainty) : 1;
     return { source: "mind", allow: allow, sizeMult: sizeMult, p: sc.p, uncertainty: sc.uncertainty, abstain: false };
   } catch (e) { return null; }
+}
+
+// [V12.36] MIND(FM 스태킹) 구조 시각화 — 두뇌 관측 페이지에서 DNN 대신 선택 시 사용.
+//   FM엔 층(layer)이 없어 DNN과 같은 SVG 다이어그램 대신 "피처별 영향도 + 전문가 결합가중" 막대로 표시.
+async function mlMindVizData(DB) {
+  try {
+    const m = await mlMindLoad(DB);
+    const fn = LUXML.featNames;
+    if (!m) {
+      const _if = fn.map(function (nm, j) { return { i: j, name: nm, role: FEAT_ROLES[nm] || "", strength: 0 }; });
+      return { kind: "mind", trained: false, featNames: fn, inputFeatures: _if, topFeatures: _if.slice(0, 20) };
+    }
+    const D = fn.length, K = m.fm.K;
+    // 피처 영향도 = |선형항 w| + 인수분해항 V행의 L2노름(상호작용 기여) — 둘을 합쳐 0~1 정규화.
+    const raw = new Array(D).fill(0);
+    for (let j = 0; j < D; j++) {
+      let vnorm = 0; for (let f = 0; f < K; f++) vnorm += m.fm.V[j][f] * m.fm.V[j][f];
+      raw[j] = Math.abs(m.fm.w[j]) + Math.sqrt(vnorm);
+    }
+    let mx = 0; for (const v of raw) if (v > mx) mx = v;
+    const strength = raw.map(function (v) { return mx > 0 ? +(v / mx).toFixed(3) : 0; });
+    const inputFeatures = fn.map(function (nm, j) { return { i: j, name: nm, role: FEAT_ROLES[nm] || "", strength: strength[j] }; });
+    const topFeatures = inputFeatures.slice().sort(function (a, b) { return b.strength - a.strength; }).slice(0, 20);
+    const expertNames = { l1: "L1 로지스틱", fm: "인수분해기계(FM)", ens: "신경망 앙상블(BRAIN)" };
+    const experts = (m.experts || []).map(function (nm, i) { return { name: expertNames[nm] || nm, weight: +(m.meta.w[i] || 0).toFixed(3) }; });
+    const g = await mlGuardState(DB);
+    const mindLB = (typeof m.valAccLB === "number") ? m.valAccLB : _wilsonLB(_num(m.valAcc, 0.5), _num(m.valN, 30));
+    return { kind: "mind", trained: true, n: m.n, valAcc: m.valAcc, valAccLB: +mindLB.toFixed(4), fmAcc: m.fmAcc, valLogLoss: m.valLogLoss,
+      ruleAcc: (typeof m.ruleAcc === "number") ? m.ruleAcc : null, ruleAccLB: (typeof m.ruleAccLB === "number") ? m.ruleAccLB : null,   // [V12.39] 규칙엔진 전문가 정확도
+      fmK: K, experts: experts, trainedAt: m.trainedAt, featNames: fn, inputFeatures: inputFeatures, topFeatures: topFeatures,
+      guard: { distrust: !!g.distrust, liveAcc: g.liveAcc, baseAcc: g.baseAcc, liveN: (g.live || []).length } };
+  } catch (e) { return { kind: "mind", trained: false, error: e && e.message }; }
+}
+// [V12.36] GBDT(부스팅트리) 구조 시각화 — topFeatures(이미 계산됨)를 공통 포맷으로 변환.
+async function mlGBDTVizData(DB) {
+  try {
+    const m = await mlGBDTLoad(DB);
+    const trust = await getState(DB, "gbdt_trust", null);
+    const fn = LUXML.featNames;
+    if (!m) {
+      const _if = fn.map(function (nm, j) { return { i: j, name: nm, role: FEAT_ROLES[nm] || "", strength: 0 }; });
+      return { kind: "gbdt", trained: false, featNames: fn, inputFeatures: _if, topFeatures: _if.slice(0, 20), trust: trust || null };
+    }
+    const byName = {}; for (const t of (m.topFeatures || [])) byName[t.name] = t.pct;
+    let mx = 0; for (const k in byName) if (byName[k] > mx) mx = byName[k];
+    const inputFeatures = fn.map(function (nm, j) { const pct = byName[nm] || 0; return { i: j, name: nm, role: FEAT_ROLES[nm] || "", strength: mx > 0 ? +(pct / mx).toFixed(3) : 0, pct: pct }; });
+    const topFeatures = inputFeatures.slice().sort(function (a, b) { return b.strength - a.strength; }).slice(0, 20);
+    return { kind: "gbdt", trained: true, n: m.n, valAcc: m.valAcc, valAccLB: m.valAccLB || null, nTrees: m.nTrees, maxDepth: GBDT.maxDepth,
+      trainedAt: m.trainedAt, featNames: fn, inputFeatures: inputFeatures, topFeatures: topFeatures,
+      trust: trust ? { wGbdt: trust.wGbdt, trusted: !!trust.trusted, gbdtAcc: trust.gbdtAcc, gbdtAccLB: trust.gbdtAccLB, mindAcc: trust.mindAcc } : null };
+  } catch (e) { return { kind: "gbdt", trained: false, error: e && e.message }; }
 }
 
 async function mlMindStatus(DB) {
@@ -18699,6 +18859,14 @@ function _dnnTrainOne(train, val, dims, deadline, warm) {
 async function mlDNNTrainNightly(DB) {
   if (!DNN.enabled) return null;
   try {
+    // [V12.36] 외부(Modal GPU) 모델이 이미 소유 중이면 여기서 즉시 종료 — trainWindow(60000)를 D1에서
+    //   읽어 JSON.parse·표준화까지 다 해놓고 18757줄에서야 버리던 낭비 제거(예전엔 12000행 기준으로도
+    //   낭비였는데 표본창 확대로 5배 커짐). 조기 리턴을 판정 앞단으로 이동.
+    let prevModelEarly = null;
+    try { prevModelEarly = await mlDNNLoad(DB); } catch (e) {}
+    if (prevModelEarly && prevModelEarly.source === "external") {
+      return "[DNN] 외부GPU 학습모델 존재(valAcc " + ((_num(prevModelEarly.valAcc, 0)) * 100).toFixed(1) + "%) — 야간 자가학습 생략(외부 소유, 12h마다 재학습)";
+    }
     const rows = await DB.prepare(
       "SELECT ts, feat, label, pnl_pct, strategy FROM ml_samples WHERE featver = ? ORDER BY ts DESC LIMIT ?"
     ).bind(LUXML.featVer, LUXML.trainWindow).all();
@@ -18743,15 +18911,8 @@ async function mlDNNTrainNightly(DB) {
 
     // 층 구조 [D, ...hidden, 1] — 멀티시드 앙상블(서로 다른 초기화·셔플 K개 → 로짓 평균)
     const dims = [D].concat(DNN.hidden).concat([1]);
-    // [V11.1] 외부 GPU 학습 모델이 존재하면 신뢰 여부와 무관하게 야간 자가학습 생략.
-    //   ★기존 버그: trusted일 때만 생략 → 외부모델이 미신뢰(성능 미달)면 Worker의 90초 부분학습이
-    //   400에폭 완전학습본을 매일밤 덮어씀. 외부(Modal)가 12시간마다 재학습하므로 소유권은 항상 외부.
-    //   덤으로 90초 CPU가 수확(harvest)으로 돌아가 데이터 축적도 빨라짐.
-    let prevModel = null;
-    try { prevModel = await mlDNNLoad(DB); } catch (e) {}
-    if (prevModel && prevModel.source === "external") {
-      return "[DNN] 외부GPU 학습모델 존재(valAcc " + ((_num(prevModel.valAcc, 0)) * 100).toFixed(1) + "%) — 야간 자가학습 생략(외부 소유, 12h마다 재학습)";
-    }
+    // [V12.36] "외부 모델 존재→생략" 판정은 함수 맨 앞으로 이동(위 prevModelEarly) — 여기선 웜스타트에만 재사용.
+    const prevModel = prevModelEarly;
     const warmNets = (prevModel && Array.isArray(prevModel.nets) && Array.isArray(prevModel.dims)
       && prevModel.dims.length === dims.length && prevModel.dims.every(function (v, i) { return v === dims[i]; }))
       ? prevModel.nets : null;   // [V11] 웜스타트 소스(차원 일치 시에만)
@@ -18888,6 +19049,17 @@ async function mlDeepDecide(DB, featVec, opts) {
         const gm = (opts.gbdt !== undefined) ? opts.gbdt : await mlGBDTLoad(DB);
         const pG = gm ? mlGBDTScore(gm, featVec) : null;
         if (pG != null) { experts.push({ name: "gbdt", p: pG, z: _logitD(pG), acc: _num(gtrust.gbdtAccLB, _num(gtrust.gbdtAcc, 0.5)) }); usedGbdt = true; }
+      }
+    } catch (e) {}
+    // ── [V12.39 규칙엔진 전문가] 규칙엔진의 기술적 종합확률(taUpProb)을 위원회 정식 위원으로 합류 ──
+    //   MIND 야간학습이 검증셋에서 측정한 규칙엔진 정확도(ruleAccLB)가 동전던지기(0.5)를 넘을 때만
+    //   그 정확도의 소프트맥스 가중으로 투표. 규칙엔진이 AI 안에 "이식"되어 잘 맞는 국면엔 발언권이
+    //   커지고, 못 맞는 국면엔 자동으로 줄어든다(고정 규칙→성과연동 규칙으로 승격).
+    try {
+      const _tiR = LUXML.featNames.indexOf("taUpProb");
+      if (_tiR >= 0 && typeof mind.ruleAccLB === "number" && mind.ruleAccLB > 0.5) {
+        const pR = _clamp(_num(featVec[_tiR], 0.5), 0.01, 0.99);
+        if (pR !== 0.5) experts.push({ name: "rule", p: pR, z: _logitD(pR), acc: mind.ruleAccLB });
       }
     } catch (e) {}
     let pCombined = mindScore.p;
@@ -21498,10 +21670,31 @@ export default {
         if (typeof LUXML !== "undefined" && LUXML.enabled) {
           const _aiDay = new Date().toISOString().slice(0, 10);
           const _aiLast = await getState(env.DB, "ai_trained_day", null);
-          if (_aiLast !== _aiDay) {
+          // [V12.37] 동시실행 방지 락 — 완료플래그(ai_trained_day)는 파이프라인 맨 끝에만 찍히는데,
+          //   CPU예산 초과 등으로 중간에 끊기면 다음 cron(매분)마다 새 파이프라인이 겹쳐 실행되어
+          //   서로 다른 실행이 mind_model 등 같은 상태를 경쟁적으로 덮어쓰는 위험이 있었다(회귀가드
+          //   우회 원인 — 낡은 실행이 늦게 끝나며 새 실행의 정상 결과를 덮어씀). 15분 이상 된 락은
+          //   죽은 실행으로 보고 자동 해제(영구 교착 방지).
+          const _aiLock = await getState(env.DB, "ai_train_lock", null);
+          const _aiLockFresh = _aiLock && (Date.now() - _aiLock < 900000);
+          if (_aiLast !== _aiDay && !_aiLockFresh) {
+            await setState(env.DB, "ai_train_lock", Date.now());
+            // [V12.40 단계별 체크포인트] trainWindow 확대 후 전체 파이프라인 CPU가 300s 한도를 넘겨
+            //   invocation이 중간에 죽고, 완료플래그를 못 찍어 15분마다 "처음부터" 무한 재시도하며
+            //   하루 종일 CPU를 태우던 문제 수정. 각 단계가 끝날 때마다 오늘 날짜 도장을 찍어,
+            //   재시도는 미완료 단계부터 "이어서" 진행 → 몇 번의 재시도에 걸쳐 반드시 완주한다.
+            //   단계 자체가 CPU예산 초과로 죽으면 그 단계부터 재개(멱등 — 각 학습은 재실행 무해).
+            const _stg = async function (nm, fn) {
+              try {
+                if ((await getState(env.DB, "ai_stage:" + nm, null)) === _aiDay) return;   // 오늘 이미 완료
+                const _r = await fn();
+                if (_r) await log(env.DB, "INFO", null, _r);
+                await setState(env.DB, "ai_stage:" + nm, _aiDay);
+              } catch (e) { try { await log(env.DB, "ERROR", null, "[STAGE:" + nm + "] " + (e && e.message)); } catch (e2) {} }
+            };
             // (1) 반사실 후보 라벨링 — 성숙분(N일 경과)을 손절반영 경로로 라벨링해 표본 편입
-            try {
-              const _cf = await mlLabelCandidates(env.DB, async (sym, mkt, entryTs, horizon) => {
+            await _stg("cflabel", async function () {
+              return await mlLabelCandidates(env.DB, async (sym, mkt, entryTs, horizon) => {
                 try {
                   const dd = await getState(env.DB, "daily:" + sym, null);
                   if (!dd || !dd.closes || !dd.closes.length) return null;
@@ -21513,29 +21706,28 @@ export default {
                   return { closes: dd.closes.slice(-n), idxCloses: idxCloses };
                 } catch (e) { return null; }
               }, {});
-              if (_cf) await log(env.DB, "INFO", null, _cf);
-            } catch (e) {}
+            });
             // (2) 외부 감성 수집 — SENTI_SOURCES에 URL이 채워진 경우만 동작(없으면 스킵)
-            try { const _se = await sentiFetchAndStore(env.DB, null, null); if (_se && !/스킵/.test(_se)) await log(env.DB, "INFO", null, _se); } catch (e) {}
+            await _stg("senti", async function () { const _se = await sentiFetchAndStore(env.DB, null, null); return (_se && !/스킵/.test(_se)) ? _se : null; });
             // (2.4) [HIST] 딥-히스토리 로테이션 — range=max 장기이력(폭락장 포함)을 hist:로 갱신(수확이 사용)
-            try { const _dh = await harvestDeepFetchNightly(env.DB); if (_dh) await log(env.DB, "INFO", null, _dh); } catch (e) {}
+            await _stg("deephist", async function () { return await harvestDeepFetchNightly(env.DB); });
             // (2.45) [XS] 유니버스 횡단면 랭크 패널 — 수확 전에 갱신(수확이 z-score 정규화에 사용)
-            try { const _xp = await mlBuildXSPanel(env.DB); if (_xp) await log(env.DB, "INFO", null, _xp); } catch (e) {}
+            await _stg("xspanel", async function () { return await mlBuildXSPanel(env.DB); });
             // (2.5) [HARVEST] 시장 자기지도 표본 수확 — 전 종목 일봉에서 "피처→N일 뒤 방향" 대량 편입
-            try { const _hv = await mlMarketHarvestNightly(env.DB); if (_hv) await log(env.DB, "INFO", null, _hv); } catch (e) {}
+            await _stg("harvest", async function () { return await mlMarketHarvestNightly(env.DB); });
             // (3) 7단 학습 파이프라인(순서 고정: L1→노이즈→앙상블→MIND→DNN→GBDT)
-            try { const _r = await mlTrainNightly(env.DB); if (_r) await log(env.DB, "INFO", null, _r); } catch (e) {}
-            try { const _r = await mlBanditNoiseNightly(env.DB); if (_r) await log(env.DB, "INFO", null, _r); } catch (e) {}
-            try { const _r = await mlBrainTrainNightly(env.DB); if (_r) await log(env.DB, "INFO", null, _r); } catch (e) {}
-            try { const _r = await mlMindTrainNightly(env.DB); if (_r) await log(env.DB, "INFO", null, _r); } catch (e) {}
-            try { const _r = await mlDNNTrainNightly(env.DB); if (_r) await log(env.DB, "INFO", null, _r); } catch (e) {}
-            try { const _r = await mlGBDTTrainNightly(env.DB); if (_r) await log(env.DB, "INFO", null, _r); } catch (e) {}
+            await _stg("l1", async function () { return await mlTrainNightly(env.DB); });
+            await _stg("bandit", async function () { return await mlBanditNoiseNightly(env.DB); });
+            await _stg("brain", async function () { return await mlBrainTrainNightly(env.DB); });
+            await _stg("mind", async function () { return await mlMindTrainNightly(env.DB); });
+            await _stg("dnn", async function () { return await mlDNNTrainNightly(env.DB); });
+            await _stg("gbdt", async function () { return await mlGBDTTrainNightly(env.DB); });
             // (4) [V4] 위원회 확률 보정(온도 스케일링) — 결합확률의 과신/과소신 교정
-            try { const _r = await mlCalibrateCommittee(env.DB); if (_r) await log(env.DB, "INFO", null, _r); } catch (e) {}
+            await _stg("calibrate", async function () { return await mlCalibrateCommittee(env.DB); });
             // (4.5) [V6] 전 종목 야간 AI 스캔 — 유니버스 전체 승률예측(AI 픽·리포트 커버리지)
-            try { const _r = await mlUniverseScanNightly(env.DB); if (_r) await log(env.DB, "INFO", null, _r); } catch (e) {}
+            await _stg("uniscan", async function () { return await mlUniverseScanNightly(env.DB); });
             // (4.6) [V9.6] 뉴스·여론 기반 "내일 오를 종목" 예측(온라인학습) + 재무 저가중 하방가드
-            try { const _r = await mlNewsNextDayNightly(env.DB); if (_r) await log(env.DB, "INFO", null, _r); } catch (e) {}
+            await _stg("newsnext", async function () { return await mlNewsNextDayNightly(env.DB); });
             // (5) [V5] 매월 1일: 지난달 투자 리포트 자동 생성(캐시라 중복 무해)
             try {
               if (new Date().getUTCDate() === 1) {
@@ -21545,6 +21737,8 @@ export default {
               }
             } catch (e) {}
             await setState(env.DB, "ai_trained_day", _aiDay);
+            try { await env.DB.prepare("DELETE FROM state WHERE k = 'ai_train_lock'").run(); } catch (e2) {}
+            try { await log(env.DB, "INFO", null, "[SCHED] 야간 AI 파이프라인 완주(" + _aiDay + ")"); } catch (e2) {}
           }
         }
       } catch (e) { try { await log(env.DB, "ERROR", null, "[SCHED] AI train fail: " + e.message); } catch (e2) {} }

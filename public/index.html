@@ -3490,12 +3490,17 @@ html[data-theme="light"] .table tbody tr:hover{background:rgba(9,105,218,.045);}
   <div class="nnviz-content">
     <div class="nnv-head">
       <div>
-        <div class="nnv-title"><span class="dot"></span>AI 두뇌 관측 · LUX-DNN</div>
+        <div class="nnv-title"><span class="dot"></span>AI 두뇌 관측</div>
       </div>
       <div style="display:flex;gap:8px;align-items:center;">
         <button class="nnv-btn" onclick="redeployBrain()" title="Modal 학습기를 재배포하고 즉시 1회 재학습(GitHub Actions 수동 실행)">🚀 재학습·재배포</button>
         <button class="nnv-btn" onclick="openNnViz(1)">↻ 새로고침</button>
       </div>
+    </div>
+    <div class="nnv-tabs" id="nnvTabs" style="display:flex;gap:6px;margin:2px 0 10px;">
+      <button class="nnv-tab active" data-model="dnn" onclick="switchNnModel('dnn')">🧠 DNN (딥넷)</button>
+      <button class="nnv-tab" data-model="mind" onclick="switchNnModel('mind')">🧩 MIND (스태킹)</button>
+      <button class="nnv-tab" data-model="gbdt" onclick="switchNnModel('gbdt')">🌳 GBDT (부스팅트리)</button>
     </div>
     <div class="nnv-sub" id="nnvSub">신경망 구조·가중치 강도를 실시간으로 관측합니다.</div>
     <div class="nnv-banner" id="nnvBanner" style="display:none;"></div>
@@ -10925,6 +10930,15 @@ setTimeout(function(){ var o=document.getElementById('lux-intro-overlay'); if(o&
 #page-nnviz .nnv-x:hover{color:#ff1744;background:rgba(255,23,68,.1);}
 #page-nnviz .nnv-btn{cursor:pointer;font-family:'IBM Plex Mono',monospace;font-size:11px;color:#9fb4dc;background:rgba(70,130,255,.09);border:1px solid #22345a;border-radius:8px;padding:6px 11px;transition:.15s;}
 #page-nnviz .nnv-btn:hover{color:#eaf2ff;border-color:#3a63b0;background:rgba(70,130,255,.18);}
+#page-nnviz .nnv-tab{cursor:pointer;font-family:'IBM Plex Mono',monospace;font-size:11.5px;color:#7c90b5;background:rgba(20,30,52,.6);border:1px solid #1e2c48;border-radius:9px;padding:7px 13px;transition:.15s;}
+#page-nnviz .nnv-tab:hover{color:#cdddf7;border-color:#3a63b0;}
+#page-nnviz .nnv-tab.active{color:#eaf2ff;background:rgba(70,130,255,.16);border-color:#4a83ff;box-shadow:0 0 10px rgba(74,131,255,.25);}
+#page-nnviz .nnv-feat-row{display:flex;align-items:center;gap:10px;padding:5px 0;}
+#page-nnviz .nnv-feat-name{width:150px;flex:none;font-size:11px;color:#cdddf7;font-family:'IBM Plex Mono',monospace;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
+#page-nnviz .nnv-feat-role{font-size:9.5px;color:#6f84aa;}
+#page-nnviz .nnv-feat-bar{flex:1;height:9px;background:rgba(20,30,52,.7);border-radius:5px;overflow:hidden;}
+#page-nnviz .nnv-feat-bar span{display:block;height:100%;background:linear-gradient(90deg,#7d4bff,#00e0ff);}
+#page-nnviz .nnv-feat-pct{width:40px;flex:none;text-align:right;font-size:10.5px;color:#9fb4dc;font-family:'IBM Plex Mono',monospace;}
 #page-nnviz .nnv-chips{display:flex;flex-wrap:wrap;gap:8px;margin-bottom:14px;}
 #page-nnviz .nnv-chip{background:rgba(20,30,52,.7);border:1px solid #1e2c48;border-radius:9px;padding:7px 12px;min-width:82px;}
 #page-nnviz .nnv-chip .k{font-size:9.5px;color:#6f84aa;text-transform:uppercase;letter-spacing:.8px;font-family:'IBM Plex Mono',monospace;}
@@ -11083,7 +11097,16 @@ html[data-theme="light"] #page-nnviz .nnv-title,html[data-theme="light"] #page-n
 </style>
 <script>
 (function(){
-  var NNV = { timer:null };
+  var NNV = { timer:null, model:'dnn' };
+  // [V12.36] 두뇌 모델 탭 전환 — DNN(레이어 SVG) / MIND·GBDT(피처 영향도 막대)
+  window.switchNnModel = function(m){
+    if(NNV.model===m) return;
+    NNV.model = m;
+    var tabs = document.querySelectorAll('#nnvTabs .nnv-tab');
+    for(var i=0;i<tabs.length;i++) tabs[i].classList.toggle('active', tabs[i].getAttribute('data-model')===m);
+    var legend = document.getElementById('nnvLegend'); if(legend) legend.style.display='none';
+    openNnViz(0, true);
+  };
   // [V9.12] 팝업→페이지 전환 — 표시/숨김은 showPage()의 .page.active가 담당. 여기선 데이터 로드만.
   window.closeNnViz = function(){ if(NNV.timer){clearInterval(NNV.timer);NNV.timer=null;} };
   // [V12.35] 두뇌 재학습·재배포 — GitHub Actions "Deploy Modal Trainer" 수동 실행(run_now 체크)로 이동.
@@ -11093,27 +11116,95 @@ html[data-theme="light"] #page-nnviz .nnv-title,html[data-theme="light"] #page-n
     if(!confirm('Modal 학습기를 재배포하고 즉시 1회 재학습합니다.\n\nGitHub Actions 페이지가 열리면 오른쪽 "Run workflow" → "배포 후 즉시 학습 1회 실행" 체크 → 초록 "Run workflow" 버튼을 누르세요.\n\n(약 5분 뒤 이 페이지 새로고침 시 갱신된 두뇌가 반영됩니다.)')) return;
     window.open(url,'_blank','noopener');
   };
-  window.openNnViz = function(refreshOnly){
+  window.openNnViz = function(refreshOnly, modelSwitch){
     var stage=document.getElementById('nnvStage'); if(!stage) return;
+    var model = NNV.model || 'dnn';
+    var cacheKey = 'nnvCache_'+model;
     // [V12.5 로딩속도] 마지막 성공 데이터로 즉시 렌더(체감 0ms) → 백그라운드로 최신 데이터 갱신
     var painted=false;
     if(!refreshOnly){
-      try{ var c=localStorage.getItem('nnvCache'); if(c){ NNV_render(JSON.parse(c)); painted=true; } }catch(e){}
-      if(!painted) stage.innerHTML='<div class="nnv-empty">신경망 로딩 중…</div>';
+      try{ var c=localStorage.getItem(cacheKey); if(c){ NNV_render(JSON.parse(c)); painted=true; } }catch(e){}
+      if(!painted) stage.innerHTML='<div class="nnv-empty">불러오는 중…</div>';
+    } else if(modelSwitch){
+      // 모델 탭 전환 시엔 이전 모델 화면이 잔상으로 남지 않게 즉시 로딩 표시
+      stage.innerHTML='<div class="nnv-empty">불러오는 중…</div>';
+      try{ var c2=localStorage.getItem(cacheKey); if(c2){ NNV_render(JSON.parse(c2)); painted=true; } }catch(e){}
     }
-    fetch('/api/nn-viz').then(function(r){return r.json();}).then(function(d){
+    fetch('/api/nn-viz?model='+encodeURIComponent(model)).then(function(r){return r.json();}).then(function(d){
       NNV_render(d);
-      try{ localStorage.setItem('nnvCache', JSON.stringify(d)); }catch(e){}
+      try{ localStorage.setItem(cacheKey, JSON.stringify(d)); }catch(e){}
     })['catch'](function(){ if(!painted) stage.innerHTML='<div class="nnv-empty">조회 실패 — 엔진이 응답하지 않습니다.</div>'; });
   };
   function esc(v){ return (v==null)?'—':v; }
   function pct(v){ return (v==null||isNaN(v))?'—':(v*100).toFixed(1)+'%'; }
   function chip(k,v,cls){ return '<div class="nnv-chip"><div class="k">'+k+'</div><div class="v '+(cls||'')+'">'+v+'</div></div>'; }
+  // [V12.36] MIND·GBDT용 경량 렌더러 — 층 구조가 없는 모델이라 DNN의 SVG 다이어그램 대신
+  //   피처 영향도 막대 목록 + (MIND는) 전문가 결합가중을 보여준다.
+  function NNV_renderSimple(d){
+    var stage=document.getElementById('nnvStage'), chips=document.getElementById('nnvChips'),
+        comm=document.getElementById('nnvComm'), legend=document.getElementById('nnvLegend'), sub=document.getElementById('nnvSub'),
+        ban=document.getElementById('nnvBanner'), roles=document.getElementById('nnvRoles');
+    legend.style.display='none'; if(roles) roles.innerHTML='';
+    var isMind = d.kind==='mind';
+    var label = isMind? 'MIND(스태킹)' : 'GBDT(부스팅트리)';
+    if(!d || !d.trained){
+      sub.textContent = label+' — 아직 학습된 모델이 없습니다.';
+      chips.innerHTML = chip('상태','학습 대기','warn');
+      if(ban){ ban.className='nnv-banner off'; ban.innerHTML='⚠️ <b>학습 대기</b> — 표본이 쌓이면 야간에 자동 학습됩니다.'; ban.style.display='block'; }
+      comm.innerHTML='';
+      stage.innerHTML='<div class="nnv-empty">🌱 '+label+' 학습 대기 중…</div>';
+      return;
+    }
+    var trust = d.trust || null;
+    var wKey = isMind? null : 'wGbdt';   // MIND는 항상 위원장(게이트 없음) — GBDT만 신뢰게이트 표시
+    if(isMind){
+      sub.textContent = '구조: FM(인수분해기계, K='+(d.fmK||'—')+') + 전문가 스태킹 · 야간 자가학습';
+      chips.innerHTML =
+        chip('전체 표본', d.n? d.n.toLocaleString():'—','good') +
+        chip('검증 정확도(하한)', pct(d.valAccLB!=null?d.valAccLB:d.valAcc), (d.valAccLB||d.valAcc)>=0.55?'good':'warn') +
+        chip('FM 자체정확도', pct(d.fmAcc),'') +
+        chip('참여 전문가', (d.experts||[]).length+'개','good') +
+        chip('상태','항상 가동(위원장)','good');
+      if(ban){ ban.className='nnv-banner on'; ban.innerHTML='✅ <b>항상 가동 중</b> — MIND는 위원회의 기준(위원장) 모델로, 신뢰게이트 없이 항상 최종 결정에 참여합니다. DNN·GBDT는 이 모델보다 정확할 때만 합류합니다.'; ban.style.display='block'; }
+      var expRows = (d.experts||[]).map(function(e){
+        var w=Math.max(0,Math.min(1,Math.abs(e.weight)))*100;
+        return '<div class="nnv-comm-row"><div class="nnv-comm-name">'+e.name+'</div>'+
+          '<div class="nnv-bar"><span style="width:'+w.toFixed(0)+'%;background:linear-gradient(90deg,#7d4bff,#00e0ff);"></span></div>'+
+          '<div class="nnv-comm-meta">결합가중 '+e.weight.toFixed(3)+'</div></div>';
+      }).join('');
+      comm.innerHTML = '<div style="font-family:Space Grotesk,sans-serif;font-size:12px;color:#9fb4dc;margin:4px 0 2px;letter-spacing:.5px;">🧩 스태킹 전문가 결합가중</div>'+expRows;
+    } else {
+      sub.textContent = '구조: 트리 '+(d.nTrees||'—')+'개 · 최대깊이 '+(d.maxDepth||'—')+' · 야간 자가학습';
+      var wG = trust? trust.wGbdt : 0, trusted = trust && trust.trusted;
+      chips.innerHTML =
+        chip('트리 수', d.nTrees||'—','good') +
+        chip('최대 깊이', d.maxDepth||'—','') +
+        chip('학습 표본', d.n? d.n.toLocaleString():'—','good') +
+        chip('검증 정확도(하한)', pct(d.valAccLB!=null?d.valAccLB:d.valAcc), (d.valAccLB||d.valAcc)>=0.55?'good':'warn') +
+        chip('신뢰가중 wGBDT', (wG!=null?wG.toFixed(2):'—'), trusted?'good':'off');
+      if(ban){
+        if(trusted){ ban.className='nnv-banner on'; ban.innerHTML='✅ <b>가동 중</b> — GBDT가 위원회에서 실거래 결정에 반영됩니다 (wGBDT='+(wG||0).toFixed(2)+')'; }
+        else { ban.className='nnv-banner off'; ban.innerHTML='⚠️ <b>미반영</b> — 검증성능이 MIND(위원장) 기준에 못 미쳐 wGBDT=0으로 억제 중입니다'+(trust&&trust.mindAcc!=null?' (MIND 하한 '+pct(trust.mindAcc)+' vs GBDT 하한 '+pct(trust.gbdtAccLB)+')':'')+'.'; }
+        ban.style.display='block';
+      }
+      comm.innerHTML='';
+    }
+    // 공통: 피처 영향도 막대(상위 20개)
+    var feats = d.topFeatures || [];
+    var rows = feats.map(function(f){
+      var w = Math.max(0,Math.min(1,f.strength||0))*100;
+      return '<div class="nnv-feat-row"><div class="nnv-feat-name" title="'+esc(f.name)+'">'+esc(f.name)+'<br><span class="nnv-feat-role">'+esc(f.role)+'</span></div>'+
+        '<div class="nnv-feat-bar"><span style="width:'+w.toFixed(0)+'%;"></span></div>'+
+        '<div class="nnv-feat-pct">'+w.toFixed(0)+'%</div></div>';
+    }).join('');
+    stage.innerHTML = '<div style="padding:6px 4px;"><div style="font-family:Space Grotesk,sans-serif;font-size:12px;color:#9fb4dc;margin-bottom:8px;letter-spacing:.5px;">📊 피처 영향도 상위 20개</div>'+(rows||'<div class="nnv-empty">피처 데이터 없음</div>')+'</div>';
+  }
   function NNV_render(d){
     // [V12.3] 노드 클릭 툴팁용 — 입력 피처명 → 역할 맵
     NNV.roles={}; try{ ((d&&(d.inputFeatures||d.topFeatures))||[]).forEach(function(f){ if(f&&f.name) NNV.roles[f.name]={role:f.role||''}; }); }catch(e){}
     var stage=document.getElementById('nnvStage'), chips=document.getElementById('nnvChips'),
         comm=document.getElementById('nnvComm'), legend=document.getElementById('nnvLegend'), sub=document.getElementById('nnvSub');
+    if(d && d.kind && d.kind!=='dnn'){ NNV_renderSimple(d); return; }
     if(!d || !d.trained){
       // [V10] 미학습이어도 구조(dims)로 미리보기 시각화 — 영상처럼 지금 바로 신경망을 볼 수 있게.
       var dims = (d && d.dims) || (d&&d.hidden? [d.inputDim||55].concat(d.hidden).concat([1]) : null);
