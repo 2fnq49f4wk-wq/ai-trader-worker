@@ -13674,6 +13674,28 @@ async function handleRequest(request, env) {
         return Response.json({ ok: false, error: e && e.message }, { status: 500, headers: cors });
       }
     }
+    // POST /api/ops/redeploy — [V12.42] 사이트 버튼 원클릭 재학습·재배포. GitHub Actions의
+    //   "Deploy Modal Trainer" workflow_dispatch를 Worker가 대리 호출(브라우저에 GitHub 토큰 미노출).
+    //   사전 1회: wrangler secret put GITHUB_TOKEN  (fine-grained PAT — 이 저장소 Actions read&write)
+    if (path === "/api/ops/redeploy" && request.method === "POST") {
+      const au = _trainAuthed(); if (!au.ok) return Response.json({ error: au.msg }, { status: au.code, headers: cors });
+      const gh = env.GITHUB_TOKEN;
+      if (!gh) return Response.json({ error: "GITHUB_TOKEN 미설정 — 'wrangler secret put GITHUB_TOKEN' (fine-grained PAT, 이 저장소 Actions read&write 권한) 등록 후 사용" }, { status: 503, headers: cors });
+      try {
+        const r = await fetch("https://api.github.com/repos/2fnq49f4wk-wq/ai-trader-worker/actions/workflows/modal-deploy.yml/dispatches", {
+          method: "POST",
+          headers: { "authorization": "Bearer " + gh, "accept": "application/vnd.github+json", "user-agent": "lux-trader-worker",
+                     "x-github-api-version": "2022-11-28", "content-type": "application/json" },
+          body: JSON.stringify({ ref: "main", inputs: { run_now: "true" } })   // dispatch inputs는 문자열만 허용
+        });
+        if (r.status === 204) {
+          try { await log(env.DB, "INFO", null, "[OPS] 재학습·재배포 트리거(GitHub Actions workflow_dispatch)"); } catch (e) {}
+          return Response.json({ ok: true, note: "재배포+즉시 학습 1회가 실행됐습니다. 약 5~8분 뒤 두뇌가 갱신됩니다." }, { headers: cors });
+        }
+        const t = await r.text();
+        return Response.json({ ok: false, error: "GitHub " + r.status + ": " + t.slice(0, 200) }, { status: 502, headers: cors });
+      } catch (e) { return Response.json({ ok: false, error: e && e.message }, { status: 500, headers: cors }); }
+    }
     // ═══════════ /외부 학습 오프로드 ═══════════
 
     // ── [FUND] 재무제표 + 내장AI 재무평가(F-Score·Z-Score) — 서버 7일 캐시 ──
@@ -18279,16 +18301,37 @@ async function mlMindTrainNightly(DB) {
     if (MIND.fmMaxSamples && fmTrain.length > MIND.fmMaxSamples) fmTrain = fmTrain.slice(fmTrain.length - MIND.fmMaxSamples);
     // [V12.41] FM 멀티시드 best-of-N — 검증 "앞 절반"으로만 선택(뒤 절반은 메타 평가용으로 보존해
     //   선택편향 차단). 무작위성으로 인한 43~64% 오실레이션을 상단으로 수렴시킨다.
+    //   [V12.42] 선택기준을 원정확도→균형정확도로 교정 — FM은 균형가중으로 학습되므로 라벨 쏠린
+    //   검증셋의 0.5컷 원정확도로 고르면 "다수클래스로 퇴화한 시드"가 뽑히는 왜곡이 있었다.
     const _fmSelN = Math.max(10, Math.floor(val.length / 2));
     const _fmSel = val.slice(0, _fmSelN);
     let fm = null, _fmBest = -1;
     const _fmTries = Math.max(1, MIND.fmSeeds || 1);
     for (let _fs = 0; _fs < _fmTries; _fs++) {
       const cand = _fmTrain(fmTrain, D, Date.now() + (MIND.fmBudgetMs || 20000));
-      let c = 0;
-      for (const t of _fmSel) { const p = _sigmoid(_fmRaw(cand, t.z)); if ((p >= 0.5 ? 1 : 0) === t.y) c++; }
-      const a = c / _fmSel.length;
+      let tp = 0, tn = 0, np = 0, nn = 0;
+      for (const t of _fmSel) {
+        const up = _sigmoid(_fmRaw(cand, t.z)) >= 0.5;
+        if (t.y) { np++; if (up) tp++; } else { nn++; if (!up) tn++; }
+      }
+      const a = ((np ? tp / np : 0) + (nn ? tn / nn : 0)) / 2;   // 균형정확도
       if (a > _fmBest) { _fmBest = a; fm = cand; }
+    }
+    // [V12.42] FM 자체 임계값 캘리브레이션 — 메타(meta.b)에만 τ*를 굽고 FM은 0.5 고정컷 그대로라
+    //   "FM단독 37.6%"처럼 붕괴 표시되던 문제. 선택절반에서 원정확도 최대 τ*를 fm.b에 굽는다
+    //   (메타 입력 로짓은 상수이동 — 메타가 bias로 흡수하므로 스태킹 무해, FM단독 지표만 정직해짐).
+    {
+      const _fps = _fmSel.map(function (t) { return _sigmoid(_fmRaw(fm, t.z)); });
+      const _fsort = _fps.slice().sort(function (a, b) { return a - b; });
+      let _fTau = 0.5, _fBst = -1;
+      for (let q = 2; q <= 36; q++) {
+        const tau = _fsort[Math.floor((q / 38) * (_fsort.length - 1))];
+        let c = 0;
+        for (let i = 0; i < _fmSel.length; i++) if ((_fps[i] >= tau ? 1 : 0) === _fmSel[i].y) c++;
+        if (c / _fmSel.length > _fBst) { _fBst = c / _fmSel.length; _fTau = tau; }
+      }
+      _fTau = _clamp(_fTau, 1e-4, 1 - 1e-4);
+      fm.b -= Math.log(_fTau / (1 - _fTau));
     }
     fm.mean = st.mean; fm.std = st.std; fm.featVer = LUXML.featVer; fm.n = N; fm.trainedAt = Date.now();
 
@@ -18347,10 +18390,11 @@ async function mlMindTrainNightly(DB) {
     const valAcc = correct / evalR.length;
     const accLB = _wilsonLB(valAcc, evalR.length);
 
-    // FM 단독 성능(상호작용 기여 확인용)
+    // FM 단독 성능(상호작용 기여 확인용) — [V12.42] τ* 선택에 쓴 앞절반 제외, 뒤절반만(정직 홀드아웃)
+    const _fmHold = val.slice(_fmSelN);
     let fmc = 0;
-    for (const t of val) { const p = _sigmoid(_fmRaw(fm, t.z)); if ((p >= 0.5 ? 1 : 0) === t.y) fmc++; }
-    const fmAcc = fmc / val.length;
+    for (const t of _fmHold) { const p = _sigmoid(_fmRaw(fm, t.z)); if ((p >= 0.5 ? 1 : 0) === t.y) fmc++; }
+    const fmAcc = _fmHold.length ? fmc / _fmHold.length : 0;
 
     // ── [V12.39 규칙엔진 이식] 규칙엔진의 기술적 종합확률(taUpProb 피처)을 "전문가"로 승격하기 위한
     //   검증 정확도 측정 — 위원회(mlDeepDecide)가 이 정확도의 소프트맥스 가중으로 규칙엔진에 투표권을
@@ -19242,9 +19286,11 @@ const GBDT = {
   minTrainSamples: 200,
   valFrac: 0.2,
   trustFloor: 0.505, trustTemp: 12,
-  trainBudgetMs: 25000, // 야간 학습 CPU 예산(CV 포함)
+  trainBudgetMs: 90000, // [V12.42] 25s→90s — trainWindow 60000 확대 후 25s로는 트리 20개만 자라
+                        //   시장국면 피처 4종에 중요도 87%가 편중(개별종목 피처 전멸)되던 문제.
+                        //   V12.40 단계별 체크포인트로 gbdt 스테이지가 단독 invocation에서 돌므로 안전.
   cvFolds: 3,           // [V4] Purged CV 폴드(신뢰 추정용 — 가벼운 설정으로)
-  cvMaxTrees: 100       // [V4] CV 폴드당 최대 트리
+  cvMaxTrees: 160       // [V12.42] 100→160 — 본학습 트리 수 확대에 맞춰 CV 추정도 동반 확대
 };
 
 function _gbdtLeaf(G, H) { return -G / (H + GBDT.lambda); }

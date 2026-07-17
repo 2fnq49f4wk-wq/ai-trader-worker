@@ -229,12 +229,12 @@ def train_job(epochs: int = EPOCHS_DEFAULT, dry: bool = False):
     if len(ps) - half >= 20:
         ps_c, ys_c = ps[:half], ys[:half]
         taus = np.unique(np.quantile(ps_c, np.linspace(0.05, 0.95, 37)))
-        def _balacc(th):
-            pred = ps_c >= th; pos = ys_c > 0.5
-            tpr = pred[pos].mean() if pos.any() else 0.0
-            tnr = (~pred[~pos]).mean() if (~pos).any() else 0.0
-            return (tpr + tnr) / 2
-        tau = float(taus[int(np.argmax([_balacc(t) for t in taus]))])
+        # [V12.42] 균형정확도→원(raw)정확도 기준으로 τ* 선택 변경 — Worker 신뢰게이트는 "원정확도
+        #   Wilson 하한"으로 mind와 비교하는데, DNN만 균형정확도 τ*를 쓰면 게이트에서 구조적으로
+        #   불리(60.3%로 표시되던 원인). MIND V12.39 캘리브레이션과 동일 기준으로 통일.
+        def _rawacc(th):
+            return float(((ps_c >= th) == (ys_c > 0.5)).mean())
+        tau = float(taus[int(np.argmax([_rawacc(t) for t in taus]))])
         tau = min(max(tau, 1e-4), 1 - 1e-4)
         delta = math.log(tau / (1 - tau))
         with torch.no_grad():

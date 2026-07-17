@@ -11109,12 +11109,29 @@ html[data-theme="light"] #page-nnviz .nnv-title,html[data-theme="light"] #page-n
   };
   // [V9.12] 팝업→페이지 전환 — 표시/숨김은 showPage()의 .page.active가 담당. 여기선 데이터 로드만.
   window.closeNnViz = function(){ if(NNV.timer){clearInterval(NNV.timer);NNV.timer=null;} };
-  // [V12.35] 두뇌 재학습·재배포 — GitHub Actions "Deploy Modal Trainer" 수동 실행(run_now 체크)로 이동.
-  //   브라우저에 GitHub 토큰을 심지 않는 안전 방식: 워크플로 페이지를 새 탭으로 열어 Run workflow 한 번만 누르면 됨.
+  // [V12.42] 두뇌 재학습·재배포 — 버튼 한 번으로 GitHub Actions workflow_dispatch를 Worker가 대리
+  //   호출(/api/ops/redeploy). 브라우저엔 GitHub 토큰이 없고 TRAIN_KEY만 최초 1회 입력받아 저장.
+  //   Worker에 GITHUB_TOKEN 시크릿이 없으면(503) 종전처럼 GitHub 페이지를 여는 폴백.
   window.redeployBrain = function(){
-    var url='https://github.com/2fnq49f4wk-wq/ai-trader-worker/actions/workflows/modal-deploy.yml';
-    if(!confirm('Modal 학습기를 재배포하고 즉시 1회 재학습합니다.\n\nGitHub Actions 페이지가 열리면 오른쪽 "Run workflow" → "배포 후 즉시 학습 1회 실행" 체크 → 초록 "Run workflow" 버튼을 누르세요.\n\n(약 5분 뒤 이 페이지 새로고침 시 갱신된 두뇌가 반영됩니다.)')) return;
-    window.open(url,'_blank','noopener');
+    var key = localStorage.getItem('luxTrainKey') || '';
+    if(!key){
+      key = prompt('관리 키(TRAIN_KEY)를 입력하세요 — 이 브라우저에 1회만 저장됩니다.');
+      if(!key) return;
+      localStorage.setItem('luxTrainKey', key);
+    }
+    if(!confirm('Modal 학습기를 재배포하고 즉시 1회 재학습합니다. 진행할까요?\n(약 5~8분 뒤 두뇌 갱신)')) return;
+    fetch('/api/ops/redeploy', { method:'POST', headers:{'x-train-key':key} })
+      .then(function(r){ return r.json().then(function(j){ return { s:r.status, j:j }; }); })
+      .then(function(o){
+        if(o.j && o.j.ok){ alert('✅ '+(o.j.note||'재배포가 실행됐습니다.')); return; }
+        if(o.s===401){ localStorage.removeItem('luxTrainKey'); alert('키가 올바르지 않습니다 — 버튼을 다시 눌러 재입력하세요.'); return; }
+        if(o.s===503){
+          alert('⚠️ '+((o.j&&o.j.error)||'서버에 GITHUB_TOKEN 미설정')+'\n\nGitHub Actions 페이지를 대신 엽니다 — "Run workflow"를 눌러주세요.');
+          window.open('https://github.com/2fnq49f4wk-wq/ai-trader-worker/actions/workflows/modal-deploy.yml','_blank','noopener');
+          return;
+        }
+        alert('실패: '+((o.j&&o.j.error)||('HTTP '+o.s)));
+      })['catch'](function(e){ alert('요청 실패: '+e); });
   };
   window.openNnViz = function(refreshOnly, modelSwitch){
     var stage=document.getElementById('nnvStage'); if(!stage) return;
@@ -11172,7 +11189,9 @@ html[data-theme="light"] #page-nnviz .nnv-title,html[data-theme="light"] #page-n
           '<div class="nnv-bar"><span style="width:'+w.toFixed(0)+'%;background:linear-gradient(90deg,#7d4bff,#00e0ff);"></span></div>'+
           '<div class="nnv-comm-meta">결합가중 '+e.weight.toFixed(3)+'</div></div>';
       }).join('');
-      comm.innerHTML = '<div style="font-family:Space Grotesk,sans-serif;font-size:12px;color:#9fb4dc;margin:4px 0 2px;letter-spacing:.5px;">🧩 스태킹 전문가 결합가중</div>'+expRows;
+      comm.innerHTML = '<div style="font-family:Space Grotesk,sans-serif;font-size:12px;color:#9fb4dc;margin:4px 0 2px;letter-spacing:.5px;">🧩 스태킹 전문가 결합가중</div>'+expRows
+        +'<div style="font-size:10px;color:#6f84aa;margin-top:6px;line-height:1.5;">막대 크기=영향력(|가중|). 가중이 <b>음수</b>면 메타러너가 그 전문가의 신호를 <b>역방향으로 활용</b> 중이라는 뜻 — 약세국면에서 흔한 정상 학습 결과입니다(고장 아님).'
+        +(d.ruleAccLB!=null?' · 규칙엔진 전문가 검증정확도(하한) <b>'+pct(d.ruleAccLB)+'</b>'+(d.ruleAccLB>0.5?' → 위원회 합류 중':' → 0.5 이하라 미합류'):'')+'</div>';
     } else {
       sub.textContent = '구조: 트리 '+(d.nTrees||'—')+'개 · 최대깊이 '+(d.maxDepth||'—')+' · 야간 자가학습';
       var wG = trust? trust.wGbdt : 0, trusted = trust && trust.trusted;
