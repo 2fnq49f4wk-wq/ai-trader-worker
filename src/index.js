@@ -19282,7 +19282,8 @@ const GBDT = {
   gamma: 0.1,           // 분할 최소이득(가지치기)
   subsample: 0.8,       // 트리당 행 서브샘플
   colsample: 0.8,       // 트리당 열 서브샘플
-  patience: 14,         // 검증 로스 개선 없을 때 조기종료 인내(트리 수)
+  patience: 24,         // [V12.43] 14→24 — 트리 20개에서 조기종료해 시장국면 피처만 쓰고 멈추던 것.
+                        //   지배 피처 소진 후 평탄 구간을 지나 2차(개별종목) 피처 분할을 탐색할 여지 부여.
   minTrainSamples: 200,
   valFrac: 0.2,
   trustFloor: 0.505, trustTemp: 12,
@@ -19603,17 +19604,18 @@ const HARVEST = {
   horizon: AI_PARAMS.predictionHorizonDays, stopPct: 5,  // [V12] 예측지평은 AI_PARAMS 단일출처
   tpPct: 8,             // [V9.9] Triple-Barrier(de Prado) 익절 배리어 — 기간내 +8% 선도달 시 승 확정.
                         //   기존 2중(손절+시간)의 "중간에 크게 올랐다가 되돌린 승리 패턴"을 패로 오분류하던 편향 제거.
-  maxPerNight: 70000,   // [V12.32] 50000→70000 — 야간 1회 수확량 추가 확대(예산가드가 실제 상한)
+  maxPerNight: 110000,  // [V12.43] 70000→110000 — 표본 확보 가속(예산가드가 실제 상한)
   maxTotal: 1200000,    // [V12.32] 800000→1200000 — 총 상한 동반 확대(72피처 대비 표본비 ≥16,000:1)
   entryLike: true,
   // [V9.5] entryLike 필터 완화 — 깊은 눌림(MA50 위)+모멘텀 winner(RSI 85까지)까지 포함해
   //   "3~5일 상승 패턴" 등 다양한 진입국면을 사전학습에 편입(사전학습은 커버리지가 넓을수록 유리).
   maLen: 50, rsiLo: 25, rsiHi: 85,   // [V16] 진입국면 커버리지 확대(28→25, 82→85) — 표본 다양성↑
-  budgetMs: 180000,     // [V12.32] 150s→180s — 수확 CPU 예산 추가 확대(학습 파이프라인 몫 ~120s 보존). 초과 시 진행분 저장 후 중단(안전)
+  budgetMs: 200000,     // [V12.43] 180s→200s — V12.40 체크포인트로 수확 스테이지가 단독 invocation에서 돌므로
+                        //   학습 몫과 경쟁 없음(CPU 300s 중 거래사이클 ~60s 제외 여유). 초과 시 진행분 저장 후 중단(안전)
   // [V18] 딥-히스토리 수확 — range=max 장기이력(2020 코로나·2022 긴축·2018 Q4 폭락 포함) → 국면 다양성으로 과적합↓
   useDeepHistory: true, // hist: 캐시가 있으면 320봉 daily: 대신 딥이력으로 수확(폭락장 학습)
   deepBars: 2400,       // [V12.32] 1800→2400(~9.6년, 2018 Q4 급락까지 포함) — 종목당 원천 봉수 +33%
-  deepFetchPerNight: 70,// [V12.32] 50→70 — 예산가드(fetchBudgetLeft)가 실제 상한이라 안전
+  deepFetchPerNight: 100,// [V12.43] 70→100 — 딥이력 커버리지 가속(예산가드 fetchBudgetLeft가 실제 상한이라 안전)
   deepRefreshDays: 45,  // [V12.32] 30→45 — 재수집 주기 연장: 예산을 재갱신 대신 신규 종목 커버리지에 사용
   maxPerSymbol: 800,    // [V12.32] 600→800 — 딥 2400봉×stride1 수용(편중 방지는 유지)
   srcWeight: 0.6        // 학습 가중(실거래=1.0 대비)
@@ -19818,6 +19820,19 @@ async function mlMarketHarvestNightly(DB) {
           const secEnd = _sc ? (_sc.length - (L - 1 - i)) : 0;
           if (_sc && secEnd > 0) secHist = _sc.slice(Math.max(0, secEnd - HIST_CAP), secEnd);
         }
+        // [V12.43 국면피처 복원] regime:"NEUTRAL" 하드코딩 탓에 regBull/regBear가 79k 전 표본에서
+        //   상수 0(죽은 입력)이었다 — 모델이 "지금이 강세장인가 약세장인가"를 배울 수 없던 원인.
+        //   수확 시점의 지수 이력으로 근사 국면을 계산해 채운다(라이브 판정의 idx 성분 근사 —
+        //   시장폭(worst 하락률) 성분은 과거 재구성 불가라 제외. 상수 0보다 압도적으로 낫다).
+        //   ※ ev(실적·뉴스 16종)·sigWeight/confluence는 과거 이벤트 데이터가 없어 복원 불가(문서화).
+        let hvRegime = "NEUTRAL";
+        if (idxHist && idxHist.length >= 60) {
+          const iC = idxHist[idxHist.length - 1];
+          const iMA = _num(getMA(idxHist, 50), iC);
+          const i20 = (idxHist.length > 21 && idxHist[idxHist.length - 21] > 0) ? (iC / idxHist[idxHist.length - 21] - 1) * 100 : 0;
+          if (iC > iMA && i20 > 2) hvRegime = "BULL";
+          else if (iC < iMA && i20 < -4) hvRegime = "BEAR";
+        }
         const feat = mlBuildFeatures({
           closes: hist,
           volumes: Array.isArray(dd.volumes) ? dd.volumes.slice(winStart, i + 1) : null,
@@ -19827,7 +19842,7 @@ async function mlMarketHarvestNightly(DB) {
           idxCloses: idxHist, sectorCloses: secHist,
           xsPanel: xsPanel, barsAgo: L - 1 - i,
           price: c, prevClose: i > 0 ? closes[i - 1] : 0, dayPct: dayPct,
-          regime: "NEUTRAL", strategy: "hv", market: mkt, ev: {}
+          regime: hvRegime, strategy: "hv", market: mkt, ev: {}
         });
         // [V9.9] Triple-Barrier 라벨(de Prado): 손절/익절/시간 — 경로에서 먼저 닿는 배리어가 라벨.
         //   일봉 종가 기준이라 같은 봉 동시도달 시 손절 우선(보수적). tpPct=0이면 기존 2중 배리어와 동일.

@@ -86,6 +86,8 @@ body{
 .lux-star-svg{display:block;}
 .lux-star-svg .lux-star-base{fill:#ffffff;}
 .lux-star-svg .lux-star-facet{fill:#b6bcc6;}
+/* [V12.43] AI 이모지 대체용 인라인 로고 아이콘 — 폰트 크기에 비례(1em) */
+.lux-ico{width:1.05em;height:1.05em;display:inline-block;vertical-align:-0.15em;}
 /* ── 블랙레터(고딕) 표기 — Blauenacht ── */
 .blackletter{
   font-family:'UnifrakturCook','UnifrakturMaguntia',serif;
@@ -2703,6 +2705,11 @@ html[data-theme="light"] .table tbody tr:hover{background:rgba(9,105,218,.045);}
 </head>
 <body>
 
+<!-- [V12.43] AI 이모지 대체용 재사용 로고 심볼 — 인트로 오버레이 "밖"에 정의(오버레이는 애니메이션 후
+     DOM에서 제거되므로 안에 두면 <use> 참조가 끊겨 아이콘이 빈 칸이 됨) -->
+<svg style="display:none" xmlns="http://www.w3.org/2000/svg" aria-hidden="true"><symbol id="luxStarSym" viewBox="0 0 100 100"><path class="lux-star-base" d="M50 2 L53.44 41.68 L73.33 26.67 L58.32 46.56 L98 50 L58.32 53.44 L73.33 73.33 L53.44 58.32 L50 98 L46.56 58.32 L26.67 73.33 L41.68 53.44 L2 50 L41.68 46.56 L26.67 26.67 L46.56 41.68 Z"/><path class="lux-star-facet" d="M50 50 L50 2 L53.44 41.68 Z M50 50 L73.33 26.67 L58.32 46.56 Z M50 50 L98 50 L58.32 53.44 Z M50 50 L73.33 73.33 L53.44 58.32 Z M50 50 L50 98 L46.56 58.32 Z M50 50 L26.67 73.33 L41.68 53.44 Z M50 50 L2 50 L41.68 46.56 Z M50 50 L26.67 26.67 L46.56 41.68 Z"/></symbol></svg>
+<script>window.LUX_ICO='<svg class="lux-star-svg lux-ico" viewBox="0 0 100 100" aria-hidden="true"><use href="#luxStarSym"/></svg>';</script>
+
 <!-- ══ 인트로 (유지) ══ -->
 <div id="lux-intro-overlay">
   <div class="intro-center-box">
@@ -2774,7 +2781,7 @@ html[data-theme="light"] .table tbody tr:hover{background:rgba(9,105,218,.045);}
         <span class="nav-item-label">AI 리포트</span>
       </div>
       <div class="nav-item" data-page="nnviz">
-        <span class="nav-item-icon">🧠</span>
+        <span class="nav-item-icon"><svg class="lux-star-svg lux-ico" viewBox="0 0 100 100" aria-hidden="true"><use href="#luxStarSym"/></svg></span>
         <span class="nav-item-label">AI 두뇌</span>
       </div>
       <div class="nav-item" data-page="whatif">
@@ -3271,7 +3278,7 @@ html[data-theme="light"] .table tbody tr:hover{background:rgba(9,105,218,.045);}
         <div id="detailEmpty">
           <!-- [V17] AI 픽 — 탑재 AI 위원회의 승률예측 상위 + 월간 리포트 -->
           <div class="aipick-bar" id="aipickBar">
-            <span class="aipick-title">🤖 AI 픽</span>
+            <span class="aipick-title"><svg class="lux-star-svg lux-ico" viewBox="0 0 100 100" aria-hidden="true"><use href="#luxStarSym"/></svg> AI 픽</span>
             <div class="aipick-list" id="aipickList"><span class="aipick-empty">위원회 학습 후 표시됩니다</span></div>
           </div>
           <!-- [V9.11] 월간 AI 리포트·AI 두뇌 관측 버튼은 사이드바 네비(POSITIONS 아래)로 이동 — 종목 조회 없이도 접근 가능 -->
@@ -3498,9 +3505,9 @@ html[data-theme="light"] .table tbody tr:hover{background:rgba(9,105,218,.045);}
       </div>
     </div>
     <div class="nnv-tabs" id="nnvTabs" style="display:flex;gap:6px;margin:2px 0 10px;">
-      <button class="nnv-tab active" data-model="dnn" onclick="switchNnModel('dnn')">🧠 DNN (딥넷)</button>
-      <button class="nnv-tab" data-model="mind" onclick="switchNnModel('mind')">🧩 MIND (스태킹)</button>
-      <button class="nnv-tab" data-model="gbdt" onclick="switchNnModel('gbdt')">🌳 GBDT (부스팅트리)</button>
+      <button class="nnv-tab active" data-model="dnn" onclick="switchNnModel('dnn')"><svg class="lux-star-svg lux-ico" viewBox="0 0 100 100" aria-hidden="true"><use href="#luxStarSym"/></svg> DNN (딥넷)</button>
+      <button class="nnv-tab" data-model="mind" onclick="switchNnModel('mind')"><svg class="lux-star-svg lux-ico" viewBox="0 0 100 100" aria-hidden="true"><use href="#luxStarSym"/></svg> MIND (스태킹)</button>
+      <button class="nnv-tab" data-model="gbdt" onclick="switchNnModel('gbdt')"><svg class="lux-star-svg lux-ico" viewBox="0 0 100 100" aria-hidden="true"><use href="#luxStarSym"/></svg> GBDT (부스팅트리)</button>
     </div>
     <div class="nnv-sub" id="nnvSub">신경망 구조·가중치 강도를 실시간으로 관측합니다.</div>
     <div class="nnv-banner" id="nnvBanner" style="display:none;"></div>
@@ -6974,12 +6981,12 @@ html[data-theme="light"] .table tbody tr:hover{background:rgba(9,105,218,.045);}
     var el = $('detailVision'); if (!el) return;
     var r = (typeof visionResults !== 'undefined') ? visionResults[detailState.symbol] : null;
     if (!r || !r.pred || isGarbagePred(r)) {
-      el.innerHTML = '<div class="vt-h">🤖 AI VISION</div><div class="vt-big neu">—</div><div class="vt-sub">예측 데이터 없음</div>';
+      el.innerHTML = '<div class="vt-h">'+(window.LUX_ICO||'')+' AI VISION</div><div class="vt-big neu">—</div><div class="vt-sub">예측 데이터 없음</div>';
       return;
     }
     var up = r.pred === 'up';
     var conf = Math.round((r.conf || 0) * 100);
-    el.innerHTML = '<div class="vt-h">🤖 AI VISION</div>' +
+    el.innerHTML = '<div class="vt-h">'+(window.LUX_ICO||'')+' AI VISION</div>' +
       '<div class="vt-big ' + (up ? 'pos' : 'neg') + '">' + (up ? '▲ 상승' : '▼ 하락') + '</div>' +
       '<div class="vt-sub">신뢰도 ' + conf + '%' + (r.ts ? ' · ' + fmtAgo(r.ts) : '') + '</div>';
   }
@@ -11189,7 +11196,7 @@ html[data-theme="light"] #page-nnviz .nnv-title,html[data-theme="light"] #page-n
           '<div class="nnv-bar"><span style="width:'+w.toFixed(0)+'%;background:linear-gradient(90deg,#7d4bff,#00e0ff);"></span></div>'+
           '<div class="nnv-comm-meta">결합가중 '+e.weight.toFixed(3)+'</div></div>';
       }).join('');
-      comm.innerHTML = '<div style="font-family:Space Grotesk,sans-serif;font-size:12px;color:#9fb4dc;margin:4px 0 2px;letter-spacing:.5px;">🧩 스태킹 전문가 결합가중</div>'+expRows
+      comm.innerHTML = '<div style="font-family:Space Grotesk,sans-serif;font-size:12px;color:#9fb4dc;margin:4px 0 2px;letter-spacing:.5px;">'+(window.LUX_ICO||'')+' 스태킹 전문가 결합가중</div>'+expRows
         +'<div style="font-size:10px;color:#6f84aa;margin-top:6px;line-height:1.5;">막대 크기=영향력(|가중|). 가중이 <b>음수</b>면 메타러너가 그 전문가의 신호를 <b>역방향으로 활용</b> 중이라는 뜻 — 약세국면에서 흔한 정상 학습 결과입니다(고장 아님).'
         +(d.ruleAccLB!=null?' · 규칙엔진 전문가 검증정확도(하한) <b>'+pct(d.ruleAccLB)+'</b>'+(d.ruleAccLB>0.5?' → 위원회 합류 중':' → 0.5 이하라 미합류'):'')+'</div>';
     } else {
@@ -11277,7 +11284,7 @@ html[data-theme="light"] #page-nnviz .nnv-title,html[data-theme="light"] #page-n
       else { ban.className='nnv-banner off'; ban.innerHTML='⚠️ <b>미반영</b> — 검증성능이 기준(mind)에 못 미쳐 신뢰게이트가 <b>wDNN=0</b>으로 억제 중입니다. 3M 파라미터가 아직 실거래에 기여하지 않습니다. (외부 GPU 학습으로 성능을 끌어올리면 자동 가동)'; }
       // [V12] 저장 모델이 구버전 구조면 안내 — "12층이라는데 왜 안 보이나"의 원인 표시
       if(d.cfgLayers && d.dims && d.dims.length !== d.cfgLayers){
-        ban.innerHTML += '<br>🧠 현재 표시 중인 학습 모델은 <b>'+d.dims.length+'층(구버전 구조)</b>입니다. 최신 설정은 <b>'+d.cfgLayers+'층</b> — 다음 학습(야간 자가학습 또는 외부 GPU)이 완료되면 '+d.cfgLayers+'층으로 갱신됩니다.';
+        ban.innerHTML += '<br>'+(window.LUX_ICO||'')+' 현재 표시 중인 학습 모델은 <b>'+d.dims.length+'층(구버전 구조)</b>입니다. 최신 설정은 <b>'+d.cfgLayers+'층</b> — 다음 학습(야간 자가학습 또는 외부 GPU)이 완료되면 '+d.cfgLayers+'층으로 갱신됩니다.';
       }
       ban.style.display='block';
     }
