@@ -19175,7 +19175,7 @@ async function mlDeepDecide(DB, featVec, opts) {
     // [V4] 위원회 확률 보정(야간 mlCalibrateCommittee가 학습한 온도)
     try {
       const cal = (opts.cal !== undefined) ? opts.cal : await getState(DB, "committee_cal", null);
-      if (cal && typeof cal.T === "number" && cal.T > 0.3 && cal.T < 4) {
+      if (cal && typeof cal.T === "number" && cal.T > 0.3 && cal.T < 8) {   // [V12.49] 상한 4→8(탐색확대 동반)
         pCombined = _clamp(_sigmoid(_logitD(pCombined) / cal.T), 0.001, 0.999);
       }
     } catch (e) {}
@@ -19356,36 +19356,76 @@ const GBDT = {
 
 function _gbdtLeaf(G, H) { return -G / (H + GBDT.lambda); }
 
-// 재귀 트리 성장(exact greedy). idx=이 노드의 행 인덱스. 반환 {f,t,l,r} 또는 {w}.
+// [V12.49] 히스토그램 분할탐색(XGBoost tree_method=hist / LightGBM 표준 방식) 준비 —
+//   ★nTrees=20 정체 근본원인 수정★ 기존 exact greedy는 노드마다·피처마다 노드 행 전체를
+//   매번 sort(O(n log n))해서 trainWindow 60000에선 트리 1개에 수 초 → 90s 예산에 CV 1폴드가
+//   트리 ~15개 키우다 종료, medTrees 바닥 → fixedTrees 하한 20에 항상 걸림. V12.42/43의
+//   예산 90s·patience 24·cvMaxTrees 160 확대가 전부 무효였던 이유(계산속도가 병목).
+//   해법: 피처별 분위수 컷(≤63)을 fit당 1회만 계산해 행마다 bin 인덱스(Uint8)를 부여,
+//   노드 분할탐색은 "행→bin 누적 + 64구간 스캔"(O(n+64))으로. 트리당 비용 ~50배↓,
+//   같은 예산에 트리가 실제로 100~240개까지 자람. 트리수·깊이·파라미터는 불변.
+//   추론 형식({f,t,l,r}, x[f]<t)도 불변 — bin b 경계값을 t로 저장하므로 기존 모델과 호환.
+const _GBDT_MAXBINS = 64;
+const _histG = new Float64Array(_GBDT_MAXBINS + 1);
+const _histH = new Float64Array(_GBDT_MAXBINS + 1);
+function _gbdtHistPrep(X, D) {
+  const N = X.length;
+  const edges = new Array(D), bins = new Array(D);
+  const step = Math.max(1, Math.floor(N / 6000));   // 컷 추정은 최대 ~6000행 샘플로 충분
+  for (let f = 0; f < D; f++) {
+    const vals = [];
+    for (let i = 0; i < N; i += step) { const v = X[i][f]; if (isFinite(v)) vals.push(v); }
+    vals.sort(function (a, b) { return a - b; });
+    const e = [];
+    for (let q = 1; q < _GBDT_MAXBINS; q++) {
+      const v = vals.length ? vals[Math.floor(q / _GBDT_MAXBINS * (vals.length - 1))] : 0;
+      if (!e.length || v > e[e.length - 1]) e.push(v);   // 중복 컷 제거(상수/저분산 피처는 컷 0~소수)
+    }
+    edges[f] = e;
+    const bf = new Uint8Array(N);
+    for (let i = 0; i < N; i++) {
+      const x = X[i][f];
+      let lo = 0, hi = e.length;                 // bin = "x보다 큰 첫 컷"의 인덱스 → x < e[b] ⟺ bin ≤ b
+      while (lo < hi) { const mid = (lo + hi) >> 1; if (e[mid] <= x) lo = mid + 1; else hi = mid; }
+      bf[i] = lo;
+    }
+    bins[f] = bf;
+  }
+  return { edges: edges, bins: bins };
+}
+
+// 재귀 트리 성장(히스토그램). idx=이 노드의 행 인덱스. 반환 {f,t,l,r} 또는 {w}.
 //   imp(선택): 피처별 분할이득 누적 배열 — 피처 중요도(설명가능성).
-function _gbdtBuild(X, grad, hess, idx, depth, cols, imp) {
+function _gbdtBuild(hp, grad, hess, idx, depth, cols, imp) {
   let G = 0, H = 0;
   for (const i of idx) { G += grad[i]; H += hess[i]; }
   if (depth >= GBDT.maxDepth || H < 2 * GBDT.minChildWeight || idx.length < 4) return { w: _gbdtLeaf(G, H) };
   const base = (G * G) / (H + GBDT.lambda);
   let best = null;
   for (const f of cols) {
-    const sorted = idx.slice().sort(function (a, b) { return X[a][f] - X[b][f]; });
+    const e = hp.edges[f];
+    if (!e.length) continue;                     // 상수 피처 — 분할 불가
+    const bf = hp.bins[f], nb = e.length + 1;
+    for (let b = 0; b < nb; b++) { _histG[b] = 0; _histH[b] = 0; }
+    for (const i of idx) { const b = bf[i]; _histG[b] += grad[i]; _histH[b] += hess[i]; }
     let GL = 0, HL = 0;
-    for (let k = 0; k < sorted.length - 1; k++) {
-      const i = sorted[k];
-      GL += grad[i]; HL += hess[i];
-      const xv = X[i][f], xn = X[sorted[k + 1]][f];
-      if (!(xn > xv)) continue;                    // 동일값 경계는 분할 불가
+    for (let b = 0; b < nb - 1; b++) {
+      GL += _histG[b]; HL += _histH[b];
       const GR = G - GL, HR = H - HL;
       if (HL < GBDT.minChildWeight || HR < GBDT.minChildWeight) continue;
       const gain = 0.5 * ((GL * GL) / (HL + GBDT.lambda) + (GR * GR) / (HR + GBDT.lambda) - base) - GBDT.gamma;
-      if (gain > 1e-7 && (!best || gain > best.gain)) best = { gain: gain, f: f, t: (xv + xn) / 2 };
+      if (gain > 1e-7 && (!best || gain > best.gain)) best = { gain: gain, f: f, b: b, t: e[b] };
     }
   }
   if (!best) return { w: _gbdtLeaf(G, H) };
   if (imp) imp[best.f] = (imp[best.f] || 0) + best.gain;
   const li = [], ri = [];
-  for (const i of idx) { if (X[i][best.f] < best.t) li.push(i); else ri.push(i); }
+  const bff = hp.bins[best.f];
+  for (const i of idx) { if (bff[i] <= best.b) li.push(i); else ri.push(i); }
   if (!li.length || !ri.length) return { w: _gbdtLeaf(G, H) };
   return { f: best.f, t: best.t,
-    l: _gbdtBuild(X, grad, hess, li, depth + 1, cols, imp),
-    r: _gbdtBuild(X, grad, hess, ri, depth + 1, cols, imp) };
+    l: _gbdtBuild(hp, grad, hess, li, depth + 1, cols, imp),
+    r: _gbdtBuild(hp, grad, hess, ri, depth + 1, cols, imp) };
 }
 
 // [V4] 부스팅 1회 학습(조기종료는 val 있을 때만) — CV와 최종학습이 공유.
@@ -19395,6 +19435,7 @@ function _gbdtFit(train, val, opts) {
   const D = LUXML.featNames.length;
   const maxTrees = opts.maxTrees || GBDT.maxTrees;
   const X = train.map(function (d) { return d.x; });
+  const hp = _gbdtHistPrep(X, D);   // [V12.49] 히스토그램 컷·bin 인덱스 — fit당 1회(트리마다 재사용)
   let pos = 0; for (const t of train) pos += t.y;
   const wPos = pos > 0 ? train.length / (2 * pos) : 1;
   const wNeg = (train.length - pos) > 0 ? train.length / (2 * (train.length - pos)) : 1;
@@ -19427,7 +19468,7 @@ function _gbdtFit(train, val, opts) {
     const cols = [];
     for (let f = 0; f < D; f++) if (Math.random() < GBDT.colsample) cols.push(f);
     if (!cols.length) cols.push(Math.floor(Math.random() * D));
-    const tree = _gbdtBuild(X, grad, hess, idx, 0, cols, imp);
+    const tree = _gbdtBuild(hp, grad, hess, idx, 0, cols, imp);
     model.trees.push(tree);
     for (let i = 0; i < train.length; i++) raws[i] += GBDT.eta * _gbdtTreeOut(tree, train[i].x);
     if (val && !opts.fixedTrees) {
@@ -19490,16 +19531,21 @@ async function mlGBDTTrainNightly(DB) {
     const pnlScale = (absP[Math.floor(absP.length / 2)] || 1) > 1e-6 ? (absP[Math.floor(absP.length / 2)] || 1) : 1;
     for (const d of data) d.mw = _clamp(Math.abs(d.pnl) / pnlScale, 0.3, 3.0) * (d.hv ? HARVEST.srcWeight : 1) * _recencyW(d.ts, nowTs);
 
-    const deadline = Date.now() + (GBDT.trainBudgetMs || 18000);
+    const _gbStart = Date.now();
+    const deadline = _gbStart + (GBDT.trainBudgetMs || 18000);
+    // [V12.49] ★예산 배분 수정★ 기존엔 CV가 deadline-4000까지 통째로 쓸 수 있어 최종학습이
+    //   4초 찌꺼기로 돌았다(60000표본 전체라 CV 폴드보다 트리당 비용이 더 큰데도) — fixedTrees를
+    //   못 채우고 조기 절단돼도 티가 안 났음. CV는 예산의 절반까지만, 나머지 절반은 최종학습 보장.
+    const cvDeadline = _gbStart + Math.floor((GBDT.trainBudgetMs || 18000) * 0.5);
     // ── [V4] Purged K폴드 CV(엠바고, 가벼운 설정) → OOF 정확도 + 최적 트리수 추정 ──
     const embargoMs = (LUXML.embargoDays || 6) * 86400000;
     const folds = _purgedFolds(data.map(function (d) { return d.ts; }), GBDT.cvFolds || 3, embargoMs);
     let oofCorrect = 0, oofN = 0, treeCounts = [];
     for (const fd of folds) {
-      if (Date.now() > deadline - 4000) break;   // 최종학습 시간 확보
+      if (Date.now() > cvDeadline - 1000) break;   // 최종학습 시간 확보
       const ftr = fd.train.map(function (i) { return data[i]; });
       const fvl = fd.val.map(function (i) { return data[i]; });
-      const m = _gbdtFit(ftr, fvl, { maxTrees: GBDT.cvMaxTrees, deadline: deadline - 4000 });
+      const m = _gbdtFit(ftr, fvl, { maxTrees: GBDT.cvMaxTrees, deadline: cvDeadline });
       treeCounts.push(m.nTrees);
       for (const d of fvl) { const p = mlGBDTScore(m, d.x); if (p != null && (p >= 0.5 ? 1 : 0) === d.y) { oofCorrect++; } oofN++; }
     }
@@ -19518,7 +19564,7 @@ async function mlGBDTTrainNightly(DB) {
       if (tr.length < 60) tr = data.slice(0, N - nVal);
       const vl = data.slice(N - nVal);
       if (tr.length < 60) { await setState(DB, "gbdt_trust", { wGbdt: 0, trusted: false, reason: "train" }); return "[GBDT] 훈련셋 부족"; }
-      const m = _gbdtFit(tr, vl, { deadline: deadline - 3000 });
+      const m = _gbdtFit(tr, vl, { deadline: cvDeadline });   // [V12.49] 홀드아웃도 CV 몫만 — 최종학습 절반 보장
       let c = 0; for (const d of vl) { const p = mlGBDTScore(m, d.x); if (p != null && (p >= 0.5 ? 1 : 0) === d.y) c++; }
       acc = c / Math.max(1, vl.length); valN = vl.length; cvMode = "홀드아웃";
       fixedTrees = Math.max(20, m.nTrees);
@@ -19623,7 +19669,9 @@ async function mlCalibrateCommittee(DB) {
       return ll / preds.length;
     }
     let bestT = 1, bestLL = nllAt(1);
-    for (let T = 0.5; T <= 3.01; T += 0.1) { const v = nllAt(T); if (v < bestLL) { bestLL = v; bestT = T; } }
+    // [V12.49] 탐색 상한 3→6 — 실측에서 bestT=3(경계값)에 붙어 NLL이 더 개선될 여지가 잘려 있었다
+    //   (라이브 diagram이 역상관 수준이라 강한 평탄화가 필요했던 상황). 적용측 가드도 <4→<8 동반 확대.
+    for (let T = 0.5; T <= 6.01; T += 0.1) { const v = nllAt(T); if (v < bestLL) { bestLL = v; bestT = T; } }
     bestT = +bestT.toFixed(2);
 
     // 신뢰도 다이어그램(10구간): 예측확률 vs 실제 적중률 — 구체적 자기점검 데이터
