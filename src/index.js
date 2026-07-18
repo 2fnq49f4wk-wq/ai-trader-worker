@@ -13127,6 +13127,10 @@ async function runFastWatch(env, cronStart) {
         for (const posKey of Object.keys(c.positions)) {
           const held = c.positions[posKey];
           if (!held || held.qty <= 0) continue;
+          // [V12.60] 꼬리위험 헤지("hedge" 전략)는 runTailRiskHedge가 전담 — 일반 손절/트레일로 팔면 안 됨.
+          //   메인 매도루프는 STRATEGIES(trend/scalp/snap)만 돌아 자동 제외되지만, fastWatch는 전 포지션을
+          //   순회하므로 여기서 명시적으로 건너뛴다(안 그러면 헤지가 트레일/손절로 청산돼 슬리브가 붕괴).
+          if (held.strategy === "hedge") continue;
           const q = quotes[held.symbol];
           if (!q || !(typeof q.price === "number" && q.price > 0)) continue;
           const price = q.price;
@@ -20482,8 +20486,11 @@ async function runTailRiskHedge(DB, market, mcfg, equity, vixValue, cash) {
     if (!(equity > 0)) return cash;
     const instruments = (market === "us" ? tr.hedgeInstrumentsUS : tr.hedgeInstrumentsKR) || [];
     if (!instruments.length) return cash;
+    // [V12.60] VIX 시세가 없으면(0/미상) 현 상태 유지 — 데이터 일시결측에 헤지를 팔았다 되사는 churn 방지.
+    //   (평상시엔 어차피 목표 0이라 무동작이고, 결측 시 기존 헤지는 그대로 홀드 → 수수료 낭비 없음.)
+    if (!(vixValue > 0)) return cash;
     // VIX 트리거 — 공포 구간에서만 목표>0. 미만이면 목표 0(보유 헤지가 있으면 정상화로 청산).
-    const vixOn = (typeof vixValue === "number" && tr.activateVixAbove > 0 && vixValue >= tr.activateVixAbove);
+    const vixOn = (tr.activateVixAbove > 0 && vixValue >= tr.activateVixAbove);
     const _priceOf = async function (sym) {
       try { const dd = await getState(DB, "daily:" + sym, null); const c = dd && dd.closes; return (Array.isArray(c) && c.length && c[c.length - 1] > 0) ? c[c.length - 1] : null; } catch (e) { return null; }
     };
