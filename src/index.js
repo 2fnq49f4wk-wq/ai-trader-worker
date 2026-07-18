@@ -19283,17 +19283,26 @@ async function mlDeepDecide(DB, featVec, opts) {
     if (guard && guard.distrust) return { source: "deep", observe: true, reason: "distrust" };
 
     const mind = (opts.mind !== undefined) ? opts.mind : await mlMindLoad(DB);
-    if (!mind) return null; // mind 없으면 이 층도 없음 → 하위 폴백
-    const mindScore = await mlMindScore(DB, mind, featVec, opts.ens);
-    if (!mindScore) return null;
+    // [V12.62] ★위원회 조화 — MIND 하드의존 제거★ 종전엔 !mind면 즉시 null 반환이라 DNN/GBDT가 아무리
+    //   잘 학습돼도 MIND가 없으면(미학습·featVer 불일치·회귀가드 거부) 위원회 전체가 죽어 규칙엔진으로
+    //   폴백했다("하나 때문에 전부 막힘"). 이제 사용 가능한 전문가(mind·dnn·gbdt·rule)만으로 위원회를
+    //   구성하고, 단 하나라도 있으면 결정을 낸다. MIND는 있으면 위원장, 없으면 나머지가 대행.
+    const experts = [];
+    let mindScore = null, mindAccLB = 0.5, _committeeUnc = 0;
+    if (mind) {
+      mindScore = await mlMindScore(DB, mind, featVec, opts.ens);
+      if (mindScore) {
+        mindAccLB = (typeof mind.valAccLB === "number") ? mind.valAccLB
+          : ((typeof mind.valAcc === "number") ? _wilsonLB(mind.valAcc, _num(mind.valN, 30)) : 0.5);
+        experts.push({ name: "mind", p: mindScore.p, z: _logitD(mindScore.p), acc: mindAccLB });
+        _committeeUnc = mindScore.uncertainty || 0;
+      }
+    }
 
     const trust = (opts.trust !== undefined) ? opts.trust : await getState(DB, "dnn_trust", null);
     // ── 전문가 위원회: mind(스태킹) + dnn(멀티시드 딥넷) + gbdt(부스팅트리) ──
     //   [V4] 각 전문가의 검증정확도 "Wilson 하한" 소프트맥스(T=12)로 로짓 가중평균.
     //   신뢰 못 받은 전문가는 불참. 결합확률은 야간 보정 온도(committee_cal.T)로 캘리브레이션.
-    const mindAccLB = (mind && typeof mind.valAccLB === "number") ? mind.valAccLB
-      : ((mind && typeof mind.valAcc === "number") ? _wilsonLB(mind.valAcc, _num(mind.valN, 30)) : 0.5);
-    const experts = [{ name: "mind", p: mindScore.p, z: _logitD(mindScore.p), acc: mindAccLB }];
     let usedDnn = false, usedGbdt = false;
     if (trust && trust.trusted && trust.wDnn > 0) {
       const net = (opts.dnn !== undefined) ? opts.dnn : await mlDNNLoad(DB);
@@ -19312,6 +19321,7 @@ async function mlDeepDecide(DB, featVec, opts) {
         const accBase = _num(trust.dnnAccLB, _num(trust.dnnAcc, 0.5));
         const accEff = 0.5 + (accBase - 0.5) / (1 + (DNN.disagreeK || 3.0) * dnnStd);  // 불일치↑ → 소프트맥스 가중↓
         experts.push({ name: "dnn", p: pDnn, z: _logitD(pDnn), acc: accEff }); usedDnn = true;
+        if (!mind) _committeeUnc = Math.max(_committeeUnc, dnnStd);  // [V12.62] MIND 없을 땐 DNN 시드불일치를 위원회 불확실성으로
       }
     }
     try {
@@ -19328,7 +19338,7 @@ async function mlDeepDecide(DB, featVec, opts) {
     //   커지고, 못 맞는 국면엔 자동으로 줄어든다(고정 규칙→성과연동 규칙으로 승격).
     try {
       const _tiR = LUXML.featNames.indexOf("taUpProb");
-      if (_tiR >= 0 && typeof mind.ruleAccLB === "number" && mind.ruleAccLB > 0.5) {
+      if (mind && _tiR >= 0 && typeof mind.ruleAccLB === "number" && mind.ruleAccLB > 0.5) {
         let pR = _clamp(_num(featVec[_tiR], 0.5), 0.01, 0.99);
         // [V12.45] 학습 때 찾은 τ*(ruleTau)로 임계 시프트 적용 → 0.5 기준 판단이 캘리브레이션 반영
         const _rt = _clamp(_num(mind.ruleTau, 0.5), 0.01, 0.99);
@@ -19336,7 +19346,8 @@ async function mlDeepDecide(DB, featVec, opts) {
         if (Math.abs(pR - 0.5) > 1e-4) experts.push({ name: "rule", p: pR, z: _logitD(pR), acc: mind.ruleAccLB });
       }
     } catch (e) {}
-    let pCombined = mindScore.p;
+    if (!experts.length) return null;   // [V12.62] 쓸 전문가 0 → 하위 폴백(밴딧/규칙엔진)
+    let pCombined = experts[0].p;        // 단일 전문가면 그 확률 그대로
     if (experts.length > 1) {
       const T = (typeof DNN !== "undefined" ? DNN.trustTemp : 12);
       // [V12.54] 가중용 정확도에 상한(committeeAccCap) 적용 — 한 전문가(특히 in-sample 누수로 부푼 MIND)의
@@ -19354,7 +19365,7 @@ async function mlDeepDecide(DB, featVec, opts) {
       }
     } catch (e) {}
 
-    const unc = mindScore.uncertainty || 0;
+    const unc = mindScore ? (mindScore.uncertainty || 0) : _committeeUnc;
     const _expOut = experts.map(function (ex) { return { name: ex.name, p: +ex.p.toFixed(3), acc: +ex.acc.toFixed(3) }; });
     if (unc > (typeof MIND !== "undefined" ? MIND.abstainStd : 0.16)) return { source: "deep", abstain: true, reason: "uncertain", p: pCombined, uncertainty: unc, experts: _expOut };
     if (Math.abs(pCombined - 0.5) < (typeof MIND !== "undefined" ? MIND.abstainBand : 0.05)) return { source: "deep", abstain: true, reason: "ambiguous", p: pCombined, experts: _expOut };
