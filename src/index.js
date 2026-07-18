@@ -8930,6 +8930,15 @@ async function executeBuy(DB, market, symbol, strategy, qty, price, signal, dail
   // 최대 손절폭은 stopPct로 고정
   if (stopPrice > pctStop) stopPrice = pctStop;
 
+  // [V12.47] 진입 시점 지수종가 스냅샷 — 청산 때 초과수익(alpha) 라벨 계산용(캐시 read만, fetch 0).
+  let __mlEntryIdxClose = null;
+  try {
+    if (typeof LUXML !== "undefined" && LUXML.enabled) {
+      const __ic = await _mlLoadIndexCloses(DB, market);
+      if (Array.isArray(__ic) && __ic.length && __ic[__ic.length - 1] > 0) __mlEntryIdxClose = __ic[__ic.length - 1];
+    }
+  } catch (e) {}
+
   // [V9.1] 동일 종목+전략 기존 포지션이 있으면 "덮어쓰기"가 아니라 평단·수량 합산.
   //   (호출부 가드가 깨져도 유령손실/수량증발이 생기지 않도록 방어)
   //   전체 getPositions 대신 해당 1건만 조회해 D1 부하 최소화.
@@ -8985,7 +8994,11 @@ async function executeBuy(DB, market, symbol, strategy, qty, price, signal, dail
           mlEvKeys: (signal && Array.isArray(signal.mlEvKeys)) ? signal.mlEvKeys : null,
           mlMindP: (signal && typeof signal.mlMindP === "number") ? signal.mlMindP : null,
           banditArmIdx: (signal && signal.mlBanditArmIdx != null) ? signal.mlBanditArmIdx : null,
-          banditCtxX: (signal && Array.isArray(signal.mlBanditCtxX)) ? signal.mlBanditCtxX : null
+          banditCtxX: (signal && Array.isArray(signal.mlBanditCtxX)) ? signal.mlBanditCtxX : null,
+          // [V12.47] ★버그수정★ target:"alpha" 모드에선 idxRetPct 없으면 mlLogSample이 표본을
+          //   버린다(_sampleLabel null) — 실거래 청산부(executeSell)가 이 값을 못 넘겨 실거래
+          //   표본이 0건이던 원인. 진입 시점 지수종가를 남겨 청산 때 초과수익 계산에 쓴다.
+          entryIdxClose: __mlEntryIdxClose
         }
       };
     }
@@ -9104,7 +9117,18 @@ async function executeSell(DB, market, symbol, pos, sellQty, price, reason, cfg,
   try {
     if (typeof LUXML !== "undefined" && LUXML.enabled && fullClose && pos.meta) {
       if (Array.isArray(pos.meta.entryFeatures)) {
-        await mlLogSample(DB, market, symbol, strategy, pos.meta.entryFeatures, pnlPct);
+        // [V12.47] ★버그수정★ target:"alpha" 모드는 idxRetPct 없으면 표본을 버린다(_sampleLabel).
+        //   이 인자가 계속 빠져 있어 실거래 청산 표본이 0건이었다(harvest만 학습에 반영됨).
+        //   진입시 스냅샷(entryIdxClose, executeBuy)과 현재 지수종가로 보유기간 지수수익률 계산.
+        let __idxRetPct = null;
+        try {
+          if (typeof pos.meta.entryIdxClose === "number" && pos.meta.entryIdxClose > 0) {
+            const __icNow = await _mlLoadIndexCloses(DB, market);
+            const __idxNow = (Array.isArray(__icNow) && __icNow.length) ? __icNow[__icNow.length - 1] : null;
+            if (__idxNow > 0) __idxRetPct = (__idxNow / pos.meta.entryIdxClose - 1) * 100;
+          }
+        } catch (e) {}
+        await mlLogSample(DB, market, symbol, strategy, pos.meta.entryFeatures, pnlPct, __idxRetPct);
       }
       if (Array.isArray(pos.meta.mlEvKeys) && pos.meta.mlEvKeys.length && typeof mlUpdateEventExpectancy === "function") {
         await mlUpdateEventExpectancy(DB, pos.meta.mlEvKeys, pnlPct);
@@ -17099,7 +17123,13 @@ function _l1TrainOne(train, D, initW, initB) {
       const g = (p - t.y) * (t.y ? wPos : wNeg) * t.mw;
       for (let j = 0; j < D; j++) w[j] -= lr * (g * t.z[j] + LUXML.l2 * w[j]);
       b -= lr * g;
-      u += lr * LUXML.l1;
+      // [V12.47] ★원인 발견★ 누적L1(Tsuruoka 2009)의 u는 "샘플 방문마다" 고정폭(lr*l1)씩 커져
+      //   총 누적량이 epochs×N에 비례한다. trainWindow가 12000→60000(V12.36)으로 5배 커진 뒤
+      //   재보정 없이 그대로라 u가 학습 끝까지 ~750까지 폭증 — 표준화(z-score)된 어떤 가중치도
+      //   버틸 수 없는 크기라 72피처 중 71개가 0으로 밀려 사실상 1피처(volRatioRel)만 생존했다
+      //   (selectedFeatures 단일화의 원인). N으로 나눠 "에폭당 총 벌점"을 표본수와 무관하게
+      //   일정하게 유지 — l1=0.010의 의도(작은 표본 기준 설계, 주석 참고)를 표본수 변화에도 보존.
+      u += lr * LUXML.l1 / train.length;
       for (let j = 0; j < D; j++) {
         const wj = w[j];
         if (wj > 0)      w[j] = Math.max(0, wj - (u + q[j]));
@@ -18149,9 +18179,14 @@ const MIND = {
   trainWindow: 15000,
   fmK: 8, fmEpochs: 20, fmLr: 0.03, fmL2w: 0.001, fmL2v: 0.003, fmBudgetMs: 20000, fmMaxSamples: 20000,
   // [V12.41] FM 멀티시드 — 단일 학습의 무작위성(초기화·셔플)으로 valAcc가 43~64%를 오가며
-  //   회귀가드 문턱(다수클래스-3%p)을 넘을락말락 하던 분산 문제. 시드 3개를 학습해 검증 앞절반
-  //   정확도 최고를 선택(DNN 멀티시드와 동일 원리). 시드당 예산 20s×3 = 총 60s(종전과 동일).
-  fmSeeds: 3,
+  //   회귀가드 문턱(다수클래스-3%p)을 넘을락말락 하던 분산 문제. 시드 N개를 학습해 검증 앞절반
+  //   정확도 최고를 선택(DNN 멀티시드와 동일 원리).
+  // [V12.47] 3→5 — fmAcc(뒤절반 정직 홀드아웃)가 47.6%로 기준선(66.5%)보다 낮게 나오던 문제 조사.
+  //   원인은 학습표본 100%가 hv 자기지도라 원래 노이즈가 컸던 것(실거래표본 0건 버그를
+  //   별도로 수정함 — 실거래 유입되면 자연 개선). 여기서는 안전하게 늘릴 수 있는 레버로
+  //   시드 수를 늘려 앞절반 선택폭을 넓혀 뒤절반 일반화 가능성을 높인다(파라미터/트리수는 불변).
+  //   예산 20s×5=100s(기존 60s 대비 +40s) — mind 스테이지는 독립 체크포인트라 여유 CPU 내.
+  fmSeeds: 5,
   fmValFrac: 0.2, minTrainSamples: 80, regressGuardMargin: 0.08,
   stackL2: 0.01, stackEpochs: 200, stackLr: 0.1,
   guardMinLive: 25, guardMargin: 0.08, guardWindow: 60,
@@ -19820,6 +19855,11 @@ async function mlMarketHarvestNightly(DB) {
       //   지표 수렴에 충분한 고정 창(260봉 — MA200+워밍업 여유)만 넘기면 값은 동일하고 비용은 O(n).
       const HIST_CAP = 260;
       for (let i = startI; i <= lastEnd; i += HARVEST.strideBars) {
+        // [V12.47] ★원인 발견★ 기존엔 예산체크가 심볼 단위(바깥루프)뿐이라, 딥이력 종목
+        //   (최대 2400봉)이 안쪽 루프를 다 돌 때까지 시간체크 없이 진행 → 한 종목이 200s 예산을
+        //   통째로 잡아먹고 나머지 900여 종목이 그 밤 표본 0으로 굶는 편중이 발생(총량 정체 원인
+        //   중 하나). 64봉마다 체크해 밤 예산을 종목 간 고르게 분산.
+        if (((i - startI) & 63) === 0 && Date.now() > hvDeadline) { nextStart = i; break; }
         const c = closes[i];
         if (!(c > 0)) continue;
         const winStart = Math.max(0, i + 1 - HIST_CAP);
@@ -21792,6 +21832,11 @@ export default {
             // (2) 외부 감성 수집 — SENTI_SOURCES에 URL이 채워진 경우만 동작(없으면 스킵)
             await _stg("senti", async function () { const _se = await sentiFetchAndStore(env.DB, null, null); return (_se && !/스킵/.test(_se)) ? _se : null; });
             // (2.4) [HIST] 딥-히스토리 로테이션 — range=max 장기이력(폭락장 포함)을 hist:로 갱신(수확이 사용)
+            //   [V12.47] ★원인 발견★ 이 단계 전용 fetch예산 리셋이 없어 앞선 거래사이클/스캔이 남긴
+            //   찌꺼기 예산(종종 20 미만)으로 돌았음 → deepFetchPerNight:100 목표를 거의 못 채우고
+            //   fetchBudgetLeft()<20에서 조기중단, 딥이력 커버리지(358/900+종목)가 며칠째 정체된 원인.
+            //   LLM(400)·시세백필(140)과 동일 패턴으로 이 단계만의 깨끗한 예산 부여.
+            try { resetFetchBudget(130); } catch (e0) {}
             await _stg("deephist", async function () { return await harvestDeepFetchNightly(env.DB); });
             // (2.45) [XS] 유니버스 횡단면 랭크 패널 — 수확 전에 갱신(수확이 z-score 정규화에 사용)
             await _stg("xspanel", async function () { return await mlBuildXSPanel(env.DB); });
