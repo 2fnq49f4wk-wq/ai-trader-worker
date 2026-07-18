@@ -16940,10 +16940,14 @@ function mlBuildFeatures(args) {
       regBear:     regime === "BEAR" ? 1 : 0,
       sigWeight:   _num(args.sigWeight, 1),
       confluence:  _num(args.confluence, 1),
-      stratSwing:  strat === "swing" ? 1 : 0,
-      stratDay:    strat === "day" ? 1 : 0,
-      stratMom:    strat === "momentum" ? 1 : 0,
-      stratMR:     strat === "meanrev" ? 1 : 0
+      // [V12.47] ★원인 발견★ 이 4개 원핫이 구버전 전략명("swing"/"day"/"momentum"/"meanrev",
+      //   LEGACY_STRATEGIES)만 매칭했는데, 실제 신호생성기는 전부 STRATEGIES=["trend","scalp","snap"]를
+      //   쓴다 — harvest("hv")뿐 아니라 실거래·반사실 표본까지 전부 4개가 항상 0(72피처 중 4개가
+      //   출처 무관 영구 죽은 입력). 현재 전략명으로 교정(4번째 슬롯은 구버전 명칭 호환용으로 유지).
+      stratSwing:  strat === "trend" ? 1 : 0,
+      stratDay:    strat === "scalp" ? 1 : 0,
+      stratMom:    strat === "snap" ? 1 : 0,
+      stratMR:     LEGACY_STRATEGIES.indexOf(strat) >= 0 ? 1 : 0
     };
     for (let i = _EV_START; i < _EV_END; i++) {
       const n = LUXML.featNames[i];
@@ -19212,7 +19216,7 @@ async function mlDNNStatus(DB) {
 const FEAT_ROLES = {
   rsi14: "RSI(14) 과매수/과매도", maGapPct: "가격-이동평균 괴리%", atrPct: "ATR 변동성%", dayPct: "당일 등락%", distHighPct: "전고점 대비 거리%",
   regBull: "강세 국면 플래그", regBear: "약세 국면 플래그", sigWeight: "신호 가중치", confluence: "신호 합류도",
-  stratSwing: "스윙 전략 적합도", stratDay: "데이트레이딩 적합도", stratMom: "모멘텀 전략 적합도", stratMR: "평균회귀 전략 적합도",
+  stratSwing: "trend 전략 신호", stratDay: "scalp 전략 신호", stratMom: "snap 전략 신호", stratMR: "구버전 전략명 호환",
   earnBeat: "실적 서프라이즈 상회", earnMiss: "실적 하회", earnDrift: "실적후 표류(PEAD)", earnBarsAgo: "실적 경과 봉수", daysToEarn: "다음 실적까지 일수",
   has8K: "8-K 공시 존재", analystSig: "애널리스트 신호", insiderBuy: "내부자 매수", econShock: "거시 쇼크",
   newsSent: "뉴스 감성", newsMnA: "M&A 뉴스", newsReg: "규제 뉴스", newsGuide: "가이던스 뉴스", newsUpDn: "등급 상향/하향", newsOther: "기타 뉴스", evPrior: "이벤트 사전확률",
