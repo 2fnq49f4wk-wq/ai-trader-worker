@@ -13564,14 +13564,16 @@ async function handleRequest(request, env) {
         let mindLB = 0.5;
         try { const mm = await mlMindLoad(env.DB); if (mm) mindLB = (typeof mm.valAccLB === "number") ? mm.valAccLB : _wilsonLB(_num(mm.valAcc, 0.5), _num(mm.valN, 30)); } catch (e) {}
         let trust = { wDnn: 0, trusted: false, dnnAcc: valAcc, dnnAccLB: valAccLB, mindAcc: mindLB, source: "external" };
-        if (valAccLB >= DNN.trustFloor && valAccLB >= mindLB - (DNN.trustSlack || 0)) {
+        // [V12.54] 절대실력 게이트 — MIND 상대비교 폐기. 외부학습분은 val 라벨이 없어 다수클래스 기저를
+        //   못 구하므로 trustFloor 절대문턱만 적용(외부 학습기가 자체 홀드아웃으로 valAccLB를 보고).
+        if (valAccLB >= DNN.trustFloor) {
           const eD = Math.exp(DNN.trustTemp * (valAccLB - 0.5)), eM = Math.exp(DNN.trustTemp * (mindLB - 0.5));
-          trust.wDnn = +(eD / (eD + eM)).toFixed(4); trust.trusted = trust.wDnn > 0.05;
+          trust.wDnn = +(eD / (eD + eM)).toFixed(4); trust.trusted = true;
         }
         await setState(env.DB, "dnn_trust", trust);
         try { await log(env.DB, "INFO", null, "[DNN] 외부업로드 저장 " + (saveInfo.bytes / 1048576).toFixed(1) + "MB/" + saveInfo.chunks + "청크 valAcc=" + (valAcc * 100).toFixed(1) + "% wDnn=" + trust.wDnn); } catch (e) {}
         return Response.json({ ok: true, saved: saveInfo, trust: trust, activated: trust.trusted,
-          note: trust.trusted ? "3M 딥넷이 위원회에서 가동됩니다(wDnn=" + trust.wDnn + ")" : "저장됐으나 검증성능이 mind 미달 → 자동 억제(wDnn=0). 표본/에폭 늘려 재학습 권장." }, { headers: cors });
+          note: trust.trusted ? "3M 딥넷이 위원회에서 가동됩니다(wDnn=" + trust.wDnn + ")" : "저장됐으나 검증성능이 trustFloor 미달 → 자동 억제(wDnn=0). 표본/에폭 늘려 재학습 권장." }, { headers: cors });
       };
 
       // ════════ [V12.35] 분할 업로드: begin → net×K → commit (37MB 통째 파싱 회피) ════════
@@ -13660,14 +13662,15 @@ async function handleRequest(request, env) {
       let mindLB = 0.5;
       try { const mm = await mlMindLoad(env.DB); if (mm) mindLB = (typeof mm.valAccLB === "number") ? mm.valAccLB : _wilsonLB(_num(mm.valAcc, 0.5), _num(mm.valN, 30)); } catch (e) {}
       let trust = { wDnn: 0, trusted: false, dnnAcc: net.valAcc, dnnAccLB: net.valAccLB, mindAcc: mindLB, source: "external" };
-      if (dnnLB >= DNN.trustFloor && dnnLB >= mindLB - (DNN.trustSlack || 0)) {
+      // [V12.54] 절대실력 게이트 — MIND 상대비교 폐기(외부학습분은 val 라벨 부재로 trustFloor만 적용).
+      if (dnnLB >= DNN.trustFloor) {
         const eD = Math.exp(DNN.trustTemp * (dnnLB - 0.5)), eM = Math.exp(DNN.trustTemp * (mindLB - 0.5));
-        trust.wDnn = +(eD / (eD + eM)).toFixed(4); trust.trusted = trust.wDnn > 0.05;
+        trust.wDnn = +(eD / (eD + eM)).toFixed(4); trust.trusted = true;
       }
       await setState(env.DB, "dnn_trust", trust);
       try { await log(env.DB, "INFO", null, "[DNN] 외부업로드 저장 " + (saveInfo.bytes / 1048576).toFixed(1) + "MB/" + saveInfo.chunks + "청크 valAcc=" + (dnnAcc * 100).toFixed(1) + "% wDnn=" + trust.wDnn); } catch (e) {}
       return Response.json({ ok: true, saved: saveInfo, trust: trust, activated: trust.trusted,
-        note: trust.trusted ? "3M 딥넷이 위원회에서 가동됩니다(wDnn=" + trust.wDnn + ")" : "저장됐으나 검증성능이 mind 미달 → 자동 억제(wDnn=0). 표본/에폭 늘려 재학습 권장." }, { headers: cors });
+        note: trust.trusted ? "3M 딥넷이 위원회에서 가동됩니다(wDnn=" + trust.wDnn + ")" : "저장됐으나 검증성능이 trustFloor 미달 → 자동 억제(wDnn=0). 표본/에폭 늘려 재학습 권장." }, { headers: cors });
     }
     // POST /api/ai/harvest-now — 야간 수확을 지금 즉시 1회 실행(하루1회 ai_trained_day 게이트 무시).
     //   [V11.2] featVer가 바뀌면 구표본이 전부 필터링되어 total=0이 되는데, 원본 일봉(daily:/hist: 캐시)은
@@ -18446,6 +18449,12 @@ async function mlMindTrainNightly(DB) {
     if (l1) expertNames.unshift("l1");
     if (ens) expertNames.push("ens");
 
+    // [V12.54 누수 주석] ★MIND valAcc 과대추정 근본원인★ 아래 전문가 중 l1(mlLoadModel)·ens(mlBrainLoad)는
+    //   전체 표본(=지금의 val 구간 포함)으로 학습된 모델이다. 따라서 val 행에 대한 이들의 예측은 in-sample →
+    //   메타 스태킹 valAcc가 실제 일반화보다 부풀려진다(FM만 train 전용이라 누수 없음). 이 부푼 LB가 종전
+    //   신뢰게이트에서 DNN/GBDT를 영구 억제하고 위원회 표까지 독식했다. 완전 제거하려면 l1/ens를 train
+    //   전용 out-of-fold로 재학습해야 하나 CPU예산상 과함 → 다운스트림 영향을 committeeAccCap(위원회 표
+    //   상한)과 절대실력 게이트(다수클래스 기저 대비)로 중화한다. fmAcc(순수 홀드아웃)를 정직 참고치로 병기.
     const metaRows = val.map(function (t) {
       const e = [];
       if (l1) e.push(_logit(mlScore(l1, t.x)));
@@ -18739,6 +18748,15 @@ const DNN = {
   trustMargin: 0.0,      // mind보다 이만큼은 나아야 신뢰 부여(0=동등이면 절반씩)
   trustSlack: 0.03,      // [V12.44 통합] mind보다 이만큼까지 낮아도 위원회 합류(소프트맥스가 자동 소수가중).
                          //   winner-takes-all(mind단독)→다양성 앙상블. 딥넷/트리/스택은 오류상관 낮아 근접시 결합이득.
+  // [V12.54] ★MIND 독점 해소★ 종전 신뢰게이트는 "standalone 모델(DNN/GBDT) LB ≥ mindLB − slack"이라
+  //   MIND(=L1+FM+ENS 스태킹 앙상블)를 단일모델이 이겨야 했다. 스태킹은 구성요소보다 거의 항상 높고,
+  //   게다가 MIND valAcc는 L1/ENS 전문가가 val구간을 포함해 학습돼 in-sample 누수로 더 부풀려진다
+  //   (→ mlMindTrainNightly 주석). 그 결과 DNN/GBDT가 아무리 잘 나와도 영구 억제(wDnn=0)돼 "만들어놔도
+  //   작동 안 함". 해결: 참여게이트를 MIND 상대비교→절대실력(trustFloor & 다수클래스 기저 +margin)으로 전환.
+  trustBaselineMargin: 0.015,  // 검증 다수클래스(naive) 대비 이만큼↑라야 실력으로 인정(절대게이트)
+  committeeAccCap: 0.66,       // [V12.54] 위원회 소프트맥스 가중용 LB 상한 — 한 전문가(특히 누수로 부푼 MIND)가
+                              //   표를 독식(T=12에선 LB 0.85→97% 지배)하는 것을 차단. 노이즈 큰 금융 라벨에서
+                              //   단일 검증LB를 이 이상으로 신뢰하지 않음 → 참여 전문가가 실질 발언권을 갖는다.
   trustTemp: 12,         // 신뢰 소프트맥스 온도(정확도차→가중)
   // ── 과적합 방어(소표본 금융 특화) ──
   seeds: 4,              // 멀티시드 앙상블 수(서로 다른 초기화·셔플로 K개 학습, 로짓 평균 → 분산↓)
@@ -19112,12 +19130,16 @@ async function mlDNNTrainNightly(DB) {
       const mm = await mlMindLoad(DB);
       if (mm) mindLB = (typeof mm.valAccLB === "number") ? mm.valAccLB : _wilsonLB(_num(mm.valAcc, 0.5), _num(mm.valN, 30));
     } catch (e) {}
-    let trust = { wDnn: 0, trusted: false, dnnAcc: net.valAcc, dnnAccLB: +dnnLB.toFixed(4), mindAcc: mindLB };
-    if (dnnLB >= DNN.trustFloor && dnnLB >= mindLB - (DNN.trustSlack || 0)) {
+    // [V12.54] 절대실력 게이트 — MIND 상대비교 폐기(위 config 주석 참조). 다수클래스 기저를 넘고
+    //   trustFloor를 넘으면 위원회 합류. wDnn은 참고용(실제 표는 mlDeepDecide가 결정시 재계산).
+    let _dnnPos = 0; for (const t of val) _dnnPos += (t.y ? 1 : 0);
+    const _dnnBase = val.length ? Math.max(_dnnPos / val.length, 1 - _dnnPos / val.length) : 0.5;
+    let trust = { wDnn: 0, trusted: false, dnnAcc: net.valAcc, dnnAccLB: +dnnLB.toFixed(4), mindAcc: mindLB, base: +_dnnBase.toFixed(4) };
+    if (dnnLB >= DNN.trustFloor && dnnLB >= _dnnBase + (DNN.trustBaselineMargin || 0)) {
       const eD = Math.exp(DNN.trustTemp * (dnnLB - 0.5));
       const eM = Math.exp(DNN.trustTemp * (mindLB - 0.5));
       trust.wDnn = +(eD / (eD + eM)).toFixed(4);
-      trust.trusted = trust.wDnn > 0.05;
+      trust.trusted = true;
     }
     await setState(DB, "dnn_trust", trust);
 
@@ -19232,8 +19254,11 @@ async function mlDeepDecide(DB, featVec, opts) {
     let pCombined = mindScore.p;
     if (experts.length > 1) {
       const T = (typeof DNN !== "undefined" ? DNN.trustTemp : 12);
+      // [V12.54] 가중용 정확도에 상한(committeeAccCap) 적용 — 한 전문가(특히 in-sample 누수로 부푼 MIND)의
+      //   검증LB가 표를 독식하는 것을 차단. LB 0.85·T=12면 종전 97% 지배 → 참여 전문가가 사실상 무의미했다.
+      const _cap = (typeof DNN !== "undefined" && DNN.committeeAccCap) ? DNN.committeeAccCap : 0.66;
       let wsum = 0, zsum = 0;
-      for (const ex of experts) { const w = Math.exp(T * (ex.acc - 0.5)); wsum += w; zsum += w * ex.z; }
+      for (const ex of experts) { const _a = Math.min(ex.acc, _cap); const w = Math.exp(T * (_a - 0.5)); wsum += w; zsum += w * ex.z; }
       pCombined = _clamp(_sigmoid(zsum / (wsum || 1)), 0.001, 0.999);
     }
     // [V4] 위원회 확률 보정(야간 mlCalibrateCommittee가 학습한 온도)
@@ -19656,12 +19681,15 @@ async function mlGBDTTrainNightly(DB) {
       const mm = await mlMindLoad(DB);
       if (mm) mindLB = (typeof mm.valAccLB === "number") ? mm.valAccLB : _wilsonLB(_num(mm.valAcc, 0.5), _num(mm.valN, 30));
     } catch (e) {}
-    let trust = { wGbdt: 0, trusted: false, gbdtAcc: model.valAcc, gbdtAccLB: +accLB.toFixed(4), mindAcc: mindLB };
-    if (accLB >= GBDT.trustFloor && accLB >= mindLB - (GBDT.trustSlack || 0)) {
+    // [V12.54] 절대실력 게이트 — MIND 상대비교 폐기(DNN config 주석 참조).
+    let _gPos = 0; for (const d of data) _gPos += (d.y ? 1 : 0);
+    const _gBase = data.length ? Math.max(_gPos / data.length, 1 - _gPos / data.length) : 0.5;
+    let trust = { wGbdt: 0, trusted: false, gbdtAcc: model.valAcc, gbdtAccLB: +accLB.toFixed(4), mindAcc: mindLB, base: +_gBase.toFixed(4) };
+    if (accLB >= GBDT.trustFloor && accLB >= _gBase + (DNN.trustBaselineMargin || 0)) {
       const eG = Math.exp(GBDT.trustTemp * (accLB - 0.5));
       const eM = Math.exp(GBDT.trustTemp * (mindLB - 0.5));
       trust.wGbdt = +(eG / (eG + eM)).toFixed(4);
-      trust.trusted = trust.wGbdt > 0.05;
+      trust.trusted = true;
     }
     await setState(DB, "gbdt_trust", trust);
     return "[GBDT] trees=" + model.nTrees + " n=" + N + " OOF=" + (acc * 100).toFixed(1) + "%(하한 " + (accLB * 100).toFixed(1) +
