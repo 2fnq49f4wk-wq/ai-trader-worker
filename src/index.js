@@ -13706,7 +13706,19 @@ async function handleRequest(request, env) {
       const au = _trainAuthed(); if (!au.ok) return Response.json({ error: au.msg }, { status: au.code, headers: cors });
       const target = url.searchParams.get("target") || "mind";
       const FN = { mind: mlMindTrainNightly, gbdt: mlGBDTTrainNightly, brain: mlBrainTrainNightly, dnn: mlDNNTrainNightly, l1: mlTrainNightly, calibrate: mlCalibrateCommittee };
-      if (!FN[target]) return Response.json({ error: "target은 " + Object.keys(FN).join("|") + " 중 하나" }, { status: 400, headers: cors });
+      // [V12.63] target=all — 재배포 직후 "한 방에" 전체 파이프라인을 정확한 순서로 재실행(하루1회 게이트 무시).
+      //   순서 고정: harvest → l1 → brain → mind → dnn → gbdt → calibrate (뒤 단계가 앞 단계 산출물 의존).
+      //   각 단계 자체 CPU예산 가드가 있어 안전. 재학습 즉시 모든 수정이 반영되게 하는 원클릭 경로.
+      if (target === "all") {
+        const _order = [["harvest", mlMarketHarvestNightly], ["l1", mlTrainNightly], ["brain", mlBrainTrainNightly], ["mind", mlMindTrainNightly], ["dnn", mlDNNTrainNightly], ["gbdt", mlGBDTTrainNightly], ["calibrate", mlCalibrateCommittee]];
+        const out = {};
+        for (const [nm, fn] of _order) {
+          try { out[nm] = await fn(env.DB); } catch (e) { out[nm] = "FAIL: " + (e && e.message); }
+          try { await log(env.DB, "INFO", null, "[수동트리거:all:" + nm + "] " + out[nm]); } catch (e) {}
+        }
+        return Response.json({ ok: true, target: "all", results: out }, { headers: cors });
+      }
+      if (!FN[target]) return Response.json({ error: "target은 all|" + Object.keys(FN).join("|") + " 중 하나" }, { status: 400, headers: cors });
       try {
         const r = await FN[target](env.DB);
         try { await log(env.DB, "INFO", null, "[수동트리거:" + target + "] " + r); } catch (e) {}
@@ -18529,19 +18541,24 @@ async function mlMindTrainNightly(DB) {
     //   산출하고 이 값으로 덮어쓴다(위원회 표·게이트가 정직한 수치를 쓰게). 배포 meta(serving)는 위에서
     //   full-data 전문가로 학습된 그대로 유지 — serving 무회귀. 워커 CPU예산 300s 내 여유(외부학습은 DNN뿐).
     try {
+      // [V12.63] ★병목 방지★ OOF 정직측정용 재학습은 전체 train이 아니라 최근 대표 부분표본으로 캡한다
+      //   (측정 목적이라 전량 불필요 — 60k×K 브레인 재학습이 MIND 야간 예산을 잠식하던 것을 방지).
+      //   방법 축소가 아니라 "측정용 서브샘플"로 대체 → 정직도 유지, 비용 대폭↓.
+      const _OOF_CAP = 8000, _OOF_K = Math.min(BRAIN.bagK || 8, 5);
+      const _trOOF = (train.length > _OOF_CAP) ? train.slice(train.length - _OOF_CAP) : train;
       // train-only L1 (선형 — MIND z-space에서 직접 로짓)
-      const _l1z = l1 ? _l1TrainOne(train, D, null, 0) : null;
+      const _l1z = l1 ? _l1TrainOne(_trOOF, D, null, 0) : null;
       // train-only ENS(브레인) — 부트스트랩 K + 피처드롭아웃, T는 train 내부 홀드아웃에서 적합
       let _ensLF = null;
       if (ens) {
-        const _mem = [], _bag = Math.max(20, Math.floor(train.length * BRAIN.bagFrac));
-        for (let k = 0; k < BRAIN.bagK; k++) {
-          const boot = []; for (let i = 0; i < _bag; i++) boot.push(train[Math.floor(Math.random() * train.length)]);
+        const _mem = [], _bag = Math.max(20, Math.floor(_trOOF.length * BRAIN.bagFrac));
+        for (let k = 0; k < _OOF_K; k++) {
+          const boot = []; for (let i = 0; i < _bag; i++) boot.push(_trOOF[Math.floor(Math.random() * _trOOF.length)]);
           const dm = new Array(D); for (let j = 0; j < D; j++) dm[j] = Math.random() >= BRAIN.featDropout;
           _mem.push(_brainTrainOne(boot, D, dm));
         }
-        const _tv = train.slice(Math.floor(train.length * 0.8));
-        _ensLF = { members: _mem, T: _brainFitTemperature(_tv.length >= 10 ? _tv : train, _mem) };
+        const _tv = _trOOF.slice(Math.floor(_trOOF.length * 0.8));
+        _ensLF = { members: _mem, T: _brainFitTemperature(_tv.length >= 10 ? _tv : _trOOF, _mem) };
       }
       const _lfLogit = function (t) {
         const e = [];
