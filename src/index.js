@@ -11586,6 +11586,7 @@ async function runTradingCycle(env) {
       let stratShare = { trend: 0, scalp: 0, snap: 0, total: 0 };
       for (const key in positions) {
         const st = positions[key].strategy || (key.split("::")[1] || "trend");
+        if (st === "hedge") continue;   // [V12.61] 꼬리위험 헤지는 전략편중 통계에서 제외(매매전략 아님)
         if (stratShare[st] != null) stratShare[st]++;
         stratShare.total++;
       }
