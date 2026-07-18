@@ -11729,6 +11729,11 @@ async function runTradingCycle(env) {
 
       const deRiskOpts = { active: crashGate.deRisk, vixValue: crashGate.vixValue || 0 };
 
+      // [V12.60] 꼬리위험 상시헤지 집행(VIX 트리거형) — 일반 매매 전에 헤지 배분을 먼저 조정한다.
+      //   평상시(VIX<activateVixAbove)엔 목표 0이라 무동작(드래그 0), 공포구간에서만 인버스/VIX 매수.
+      //   crashGate.blockNew와 무관하게 동작(폭락장에 헤지를 사는 게 목적).
+      try { cash = await runTailRiskHedge(DB, market, mcfg, portfolioValue, crashGate.vixValue || 0, cash); } catch (e) {}
+
       // [V52] SCALP 당일 손실 한도 — 세션 시작 이후 scalp 청산 PnL%(합)가 한도 이하면
       //   그날 해당 시장의 scalp 신규진입을 전면 중단(연속 칼날·틸트 방지). 사이클당 1쿼리.
       let scalpDailyBlocked = false;
@@ -20461,6 +20466,68 @@ function marketNeutralityCheck(longValue, shortValue, tolerancePct) {
     out.breach = Math.abs(net) > (tolerancePct != null ? tolerancePct : 10);
   } catch (e) {}
   return out;
+}
+
+// [V12.60] ★꼬리위험 상시헤지 집행★ — 종전 tailRiskHedgeTarget/marketNeutralityCheck는 정의만 되고
+//   어디서도 호출되지 않아 "설계됐으나 미작동"이었다. 이 함수가 매 사이클(시장별) 호출되어 실제
+//   인버스/VIX ETF 매수·리밸런스를 집행한다. 사용자 선택=VIX 트리거형: VIX가 activateVixAbove 미만이면
+//   목표 0(평상시 헤지 0 → 불장 드래그 없음), 공포 구간에서만 자본 hedgeRatioPct%를 헤지에 배분.
+//   안전설계: (1)"hedge" 전략태그라 일반 매도루프(STRATEGIES=trend/scalp/snap)가 안 건드림 → 이중관리 0.
+//   (2)executeBuy/executeSell은 CAS(원장 재계산)라 유령거래·현금 오류 불가. (3)시세는 캐시만(추가 fetch 0).
+async function runTailRiskHedge(DB, market, mcfg, equity, vixValue, cash) {
+  try {
+    const tr = mcfg && mcfg.tailRisk;
+    if (!tr || !(tr.hedgeRatioPct > 0)) return cash;
+    if (market !== "us" && market !== "kr") return cash;   // 파생(cm)은 별도 슬리브에서 처리
+    if (!(equity > 0)) return cash;
+    const instruments = (market === "us" ? tr.hedgeInstrumentsUS : tr.hedgeInstrumentsKR) || [];
+    if (!instruments.length) return cash;
+    // VIX 트리거 — 공포 구간에서만 목표>0. 미만이면 목표 0(보유 헤지가 있으면 정상화로 청산).
+    const vixOn = (typeof vixValue === "number" && tr.activateVixAbove > 0 && vixValue >= tr.activateVixAbove);
+    const _priceOf = async function (sym) {
+      try { const dd = await getState(DB, "daily:" + sym, null); const c = dd && dd.closes; return (Array.isArray(c) && c.length && c[c.length - 1] > 0) ? c[c.length - 1] : null; } catch (e) { return null; }
+    };
+    // 현재 헤지 보유가치(캐시시세) 집계 — "hedge" 전략으로 보유한 헤지수단만
+    const positions = await getPositions(DB, market);
+    let curValue = 0; const held = [];
+    for (const k in positions) {
+      const p = positions[k];
+      if (p.strategy !== "hedge" || instruments.indexOf(p.symbol) === -1 || !(p.qty > 0)) continue;
+      const px = await _priceOf(p.symbol);
+      if (px == null) continue;
+      curValue += px * p.qty; held.push({ pos: p, price: px });
+    }
+    const tgt = tailRiskHedgeTarget(equity, curValue, tr, vixOn ? vixValue : 0);
+    const targetValue = vixOn ? tgt.targetValue : 0;   // 트리거 OFF → 목표 0(헤지 청산 지향)
+    const band = (tr.hedgeRebalanceBandPct || 0.5) / 100 * equity;
+    const shortfall = targetValue - curValue;
+    if (Math.abs(shortfall) <= band && vixOn) return cash;   // 밴드 내 — 유지(트리거 ON일 때만)
+    if (shortfall > band) {
+      // 헤지 확대 — 캐시시세 있는 첫 수단으로 매수
+      for (const sym of instruments) {
+        const px = await _priceOf(sym);
+        if (px == null) continue;
+        const feeR = (market === "us" ? mcfg.feeUS : mcfg.feeKR) || 0;
+        const qty = Math.floor(shortfall / (px * (1 + feeR)));
+        if (qty <= 0) break;
+        await log(DB, "INFO", sym, "[HEDGE] VIX " + (vixValue || 0).toFixed(1) + " 꼬리위험 헤지 매수 목표$" + Math.round(targetValue) + " 현재$" + Math.round(curValue) + " → " + qty + "주");
+        cash = await executeBuy(DB, market, sym, "hedge", qty, px, { name: "TAILHEDGE", members: ["TAILHEDGE"] }, null, mcfg, cash, { stopPctOverride: 8 });
+        break;
+      }
+    } else if (shortfall < -band || (!vixOn && held.length)) {
+      // 헤지 축소/청산 — 트리거 OFF면 전량, ON이면 초과분만
+      let excess = -shortfall;
+      for (const h of held) {
+        const sellQty = vixOn ? Math.min(h.pos.qty, Math.floor(excess / h.price)) : h.pos.qty;
+        if (sellQty <= 0) continue;
+        await log(DB, "INFO", h.pos.symbol, "[HEDGE] " + (vixOn ? "리밸런스 축소" : "VIX 정상화 헤지청산") + " " + sellQty + "주");
+        const r = await executeSell(DB, market, h.pos.symbol, h.pos, sellQty, h.price, vixOn ? "[HEDGE] rebal" : "[HEDGE] exit", mcfg, cash);
+        cash = r.cash; excess -= sellQty * h.price;
+        if (vixOn && excess <= band) break;
+      }
+    }
+    return cash;
+  } catch (e) { try { await log(DB, "WARN", null, "[HEDGE] fail " + market + ": " + (e && e.message)); } catch (e2) {} return cash; }
 }
 
 // [V17] 예측 타겟 라벨러 — '무엇을 예측할지'(정답지) 설계. de Prado식 다중 타겟 지원.
