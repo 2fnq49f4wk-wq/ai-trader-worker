@@ -17070,14 +17070,21 @@ async function mlLogSample(DB, market, symbol, strategy, featVec, pnlPct, idxRet
   } catch (e) {}
 }
 
+// [V12.51] ★핫패스 병목 수정★ mlMindScore가 experts에 l1이 있으면 호출마다 이 함수를 부르는데
+//   캐시가 없어 D1 read가 종목마다 발생했다 — 장중 사이클 ~300종목/분 + 전종목 스캔 900회 +
+//   위원회 보정 400회가 전부 중복 read("핫패스 종목마다 D1 read 금지" 패턴 위반 중 유일한 누락).
+//   60s TTL 인아이솔레이트 캐시(__dnnMemCache와 동일 철학) — 야간 재학습 직후 mlSaveModel이 무효화.
+let __l1MemCache = null;   // { m, at }
 async function mlLoadModel(DB) {
   try {
+    if (__l1MemCache && (Date.now() - __l1MemCache.at) < 60000) return __l1MemCache.m;
     const m = await getState(DB, "ml_model", null);
-    if (!m || m.featVer !== LUXML.featVer || !Array.isArray(m.w) || m.w.length !== LUXML.featNames.length) return null;
-    return m;
+    const ok = (m && m.featVer === LUXML.featVer && Array.isArray(m.w) && m.w.length === LUXML.featNames.length) ? m : null;
+    __l1MemCache = { m: ok, at: Date.now() };
+    return ok;
   } catch (e) { return null; }
 }
-async function mlSaveModel(DB, model) { try { await setState(DB, "ml_model", model); } catch (e) {} }
+async function mlSaveModel(DB, model) { try { await setState(DB, "ml_model", model); __l1MemCache = null; } catch (e) {} }
 
 function mlScore(model, featVec) {
   try {

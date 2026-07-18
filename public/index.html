@@ -10981,6 +10981,13 @@ setTimeout(function(){ var o=document.getElementById('lux-intro-overlay'); if(o&
 #page-nnviz .nnedge{stroke-linecap:round;}
 #page-nnviz.active .nnedge{animation:nnGlowPulse 1.8s ease-in-out infinite;}
 #page-nnviz .nnedge-static{}
+/* [V12.51] 신호 흐름 펄스 — 상위 엣지 위로 작은 파란 패킷이 입력→출력으로 흘러감(살아있는 느낌).
+   비활성 페이지에선 opacity 0 + animation 없음(비용 0), 단일 keyframes 공유 + 음수 delay 위상분산. */
+#page-nnviz .nnpulse{stroke-linecap:round;pointer-events:none;opacity:0;}
+#page-nnviz.active .nnpulse{opacity:.8;stroke-dasharray:7 260;animation:nnDashFlow 4.2s linear infinite;}
+@keyframes nnDashFlow{to{stroke-dashoffset:-267;}}
+#page-nnviz svg.nnv-focus .nnpulse{display:none;}
+@media (prefers-reduced-motion:reduce){#page-nnviz .nnpulse{display:none;}}
 /* [V12.16] 노드 클릭 포커스 — 연결된 노드·선만 파랗게 발광, 나머지는 감쇠 */
 #page-nnviz svg.nnv-focus .nnedge,#page-nnviz svg.nnv-focus .nnedge-static{opacity:.045;animation:none;}
 #page-nnviz svg.nnv-focus .nnv-node{opacity:.12;}
@@ -11377,12 +11384,21 @@ html[data-theme="light"] #page-nnviz .nnv-title,html[data-theme="light"] #page-n
     var eArr=guar.concat(extra.slice(0, Math.max(0, EDGE_CAP-guar.length)));
     eArr.sort(function(p,q){return q.str-p.str;});
     var ANIM_CAP = reduce ? 0 : 48;
+    // [V12.51] 신호 흐름 펄스 — 상위 강도 엣지에만 "패킷이 입력→출력으로 흘러가는" 오버레이 경로.
+    //   전체 엣지(수천)를 움직이면 렉이므로 FLOW_CAP개만, CSS 애니메이션(stroke-dashoffset) 단일
+    //   keyframes 공유 + 음수 delay로 위상만 분산(JS 타이머 0, 페이지 active일 때만 구동, reduced-motion 존중).
+    var FLOW_CAP = reduce ? 0 : 56;
+    var flows='';
     // 단일 색상 축: 강도 → 불투명도·굵기 (색상혼용 제거 — 강도만 정직하게 인코딩)
     var edges=eArr.map(function(e,ei){
       var op=(0.045+0.32*e.str).toFixed(3), sw=(0.3+0.9*e.str).toFixed(2);
       var mx=(e.x1+e.x2)/2;
       var cls=(ei<ANIM_CAP)?'nnedge':'nnedge-static';
-      return '<path class="'+cls+'" data-a="'+e.l+'-'+e.ai+'" data-b="'+(e.l+1)+'-'+e.bi+'" d="M'+e.x1.toFixed(1)+' '+e.y1.toFixed(1)+' C'+mx.toFixed(1)+' '+e.y1.toFixed(1)+' '+mx.toFixed(1)+' '+e.y2.toFixed(1)+' '+e.x2.toFixed(1)+' '+e.y2.toFixed(1)+'" fill="none" stroke="rgba(96,168,255,'+op+')" stroke-width="'+sw+'"/>';
+      var dStr='M'+e.x1.toFixed(1)+' '+e.y1.toFixed(1)+' C'+mx.toFixed(1)+' '+e.y1.toFixed(1)+' '+mx.toFixed(1)+' '+e.y2.toFixed(1)+' '+e.x2.toFixed(1)+' '+e.y2.toFixed(1);
+      if(ei<FLOW_CAP){
+        flows+='<path class="nnpulse" d="'+dStr+'" fill="none" stroke="rgba(150,205,255,0.9)" stroke-width="'+(0.6+0.9*e.str).toFixed(2)+'" style="animation-delay:'+(-((ei*0.53)%4.2)).toFixed(2)+'s"/>';
+      }
+      return '<path class="'+cls+'" data-a="'+e.l+'-'+e.ai+'" data-b="'+(e.l+1)+'-'+e.bi+'" d="'+dStr+'" fill="none" stroke="rgba(96,168,255,'+op+')" stroke-width="'+sw+'"/>';
     }).join('');
     var nodes='', heads='', foots='', featLabels='', hits=[];
     var nHidden=0;
@@ -11429,7 +11445,7 @@ html[data-theme="light"] #page-nnviz .nnv-title,html[data-theme="light"] #page-n
     stage.innerHTML='<div class="nnv-scroll"><svg viewBox="0 0 '+W+' '+H+'" preserveAspectRatio="xMidYMid meet" style="min-width:'+W+'px;background:radial-gradient(120% 90% at 50% 8%,#0d1a2e,#050810 72%);">'+nodes+featLabels+heads+foots+summary+'</svg></div>';
     var svgEl=stage.querySelector('svg');
     svgEl.__hits=hits;
-    requestAnimationFrame(function(){ try{ if(svgEl.isConnected) svgEl.insertAdjacentHTML('afterbegin', edges); }catch(e){} });
+    requestAnimationFrame(function(){ try{ if(svgEl.isConnected) svgEl.insertAdjacentHTML('afterbegin', edges+flows); }catch(e){} });
     NNV_bindNodeTips(stage);
   }
   // [V12.3] 노드 클릭/터치 → 역할 툴팁. 입력=피처 역할(백엔드 inputFeatures), 은닉/출력=층 역할 설명.
