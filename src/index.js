@@ -2531,9 +2531,13 @@ const AI_PARAMS = {
     firstModelSensitivity: "high", // 1차 신호생성기 민감도 — 대량 신호 허용(승률 낮아도 됨). 2차가 걸러냄
     metaThreshold: 0.50,           // 2차 메타모델 성공확률 이 이상일 때만 최종 집행(권장 0.5~0.75)
     metaHardFilter: false,         // true=metaThreshold 미만 진입 차단 / false=confidenceFloor 소프트 축소만
-    ensembleWeights: { dnn: 0.34, gbdt: 0.33, mind: 0.33 }, // 정적 초기 가중(동적은 trust가 성과로 자동조정)
-    ensembleDynamic: true,         // 최근 성과 좋은 모델에 가중 자동 상향(구현: dnn_trust/gbdt_trust/committee_cal)
-    ensembleRecencyDays: 30        // 동적 가중 산출 최근 성과창
+    // [V12.59 문서정정] 아래 3개는 코드가 읽지 않는 "설명용" 표기다(실측 audit로 확인). 실제 위원회
+    //   가중은 mlDeepDecide가 각 전문가 검증정확도 Wilson하한의 소프트맥스(T=DNN.trustTemp)로 매 결정마다
+    //   동적 산출하고 committeeAccCap으로 상한을 건다 — 정적 가중치나 recencyDays 창을 쓰지 않는다.
+    //   (오해 방지: 이 값들을 바꿔도 가중은 안 변함. 가중을 조정하려면 DNN.trustTemp/committeeAccCap.)
+    ensembleWeights: { dnn: 0.34, gbdt: 0.33, mind: 0.33 }, // [표기용] 실제 미사용 — accLB 소프트맥스가 대체
+    ensembleDynamic: true,         // [표기용] 동적가중은 항상 켜짐(소프트맥스 하드코딩) — 이 플래그로 못 끔
+    ensembleRecencyDays: 30        // [표기용] 미사용 — 성과창 대신 표본 recency 감쇠(LUXML.recencyHalfLifeDays)
   },
 
   // ── 시계열 교차검증(Time-Series Validation) ── 과적합·데이터누수 차단(예측모델 생명줄).
@@ -18628,8 +18632,13 @@ async function mlMindTrainNightly(DB) {
       return _msg;
     }
     await setState(DB, "mind_model", mind);
-    // 재학습 시 자기감시 추적 리셋(새 모델은 새 신뢰장부)
-    await setState(DB, "mind_guard", { live: [], distrust: false, baseAcc: mind.valAcc });
+    // [V12.59] ★자기감시 가드 이월★ 종전엔 매 밤 재학습마다 live:[]로 리셋 → 실거래 체결이 하루
+    //   guardMinLive건 미만이면 관측창이 채워지기 전 계속 리셋돼 distrust(자동불신·롤백)가 영구
+    //   미발동(안전장치 유명무실)이었다. 이제 라이브 관측 이력을 보존(이월)하고 baseAcc만 새 모델
+    //   기준으로 갱신 → 관측이 누적돼 자기감시가 실제로 작동. distrust 상태는 새 모델이므로 초기화.
+    let _prevGuard = null; try { _prevGuard = await getState(DB, "mind_guard", null); } catch (e) {}
+    const _carry = (_prevGuard && Array.isArray(_prevGuard.live)) ? _prevGuard.live.slice(-MIND.guardWindow) : [];
+    await setState(DB, "mind_guard", { live: _carry, distrust: false, baseAcc: mind.valAcc });
 
     return "[MIND] n=" + N + " 결합valAcc=" + (valAcc * 100).toFixed(1) + "%(하한 " + (accLB * 100).toFixed(1) + "%) (FM단독 " + (fmAcc * 100).toFixed(1) +
            "%) 전문가=" + expertNames.join("+") + " meta_w=[" + meta.w.map(function (v) { return v.toFixed(2); }).join(",") + "]";
@@ -22073,6 +22082,12 @@ export default {
                 if (_r && !_r.error) await log(env.DB, "INFO", null, "[REPORT] " + _r.ym + " 월간 리포트 생성 완료");
               }
             } catch (e) {}
+            // [V12.59] ★열화 플래그 이월 버그 수정★ model_drift는 거래 사이클에서 쓰기만 되고
+            //   mlDataHealth(대시보드)에서 읽을 뿐, 학습 파이프라인이 소비하지도·해제하지도 않았다
+            //   → 한번 열화 뜨면 재학습 후에도 영원히 "열화" 표시(retrainOnDrift가 사실상 무동작).
+            //   전체 재학습을 완주했으니 플래그를 해제 → 다음 거래 사이클의 mlDriftCheck가 새 모델
+            //   기준으로 재평가(여전히 미달이면 다시 셋). 이로써 "열화→재학습→해소" 루프가 실제로 닫힌다.
+            try { await env.DB.prepare("DELETE FROM state WHERE k = 'model_drift'").run(); } catch (e) {}
             await setState(env.DB, "ai_trained_day", _aiDay);
             try { await env.DB.prepare("DELETE FROM state WHERE k = 'ai_train_lock'").run(); } catch (e2) {}
             try { await log(env.DB, "INFO", null, "[SCHED] 야간 AI 파이프라인 완주(" + _aiDay + ")"); } catch (e2) {}
