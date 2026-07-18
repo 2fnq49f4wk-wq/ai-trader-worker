@@ -19365,7 +19365,18 @@ async function mlDeepDecide(DB, featVec, opts) {
       }
     } catch (e) {}
 
-    const unc = mindScore ? (mindScore.uncertainty || 0) : _committeeUnc;
+    // [V12.63] ★고도화 산식 — 위원회 합의도(cross-expert agreement)를 신뢰도에 반영★ 세 모델이
+    //   서로 동의할수록(전문가 확률 분산↓) 확신을 키우고, 엇갈릴수록(분산↑) 불확실성으로 흡수해
+    //   사이즈 축소·기권을 넓힌다. MIND/DNN/GBDT가 "조화롭게" 하나의 확신을 만들도록 결합(단일 모델
+    //   과신 방지 + 합의 시 기회 포착). 기존 불확실성(mind 스태킹/ DNN 시드std)과 max로 결합.
+    let _expDisagree = 0;
+    if (experts.length > 1) {
+      let _m = 0; for (const ex of experts) _m += ex.p; _m /= experts.length;
+      let _v = 0; for (const ex of experts) _v += (ex.p - _m) * (ex.p - _m);
+      _expDisagree = Math.sqrt(_v / experts.length);   // 전문가 확률 표준편차(0~0.5)
+    }
+    const _baseUnc = mindScore ? (mindScore.uncertainty || 0) : _committeeUnc;
+    const unc = Math.max(_baseUnc, _expDisagree);   // 합의도 반영 유효 불확실성
     const _expOut = experts.map(function (ex) { return { name: ex.name, p: +ex.p.toFixed(3), acc: +ex.acc.toFixed(3) }; });
     if (unc > (typeof MIND !== "undefined" ? MIND.abstainStd : 0.16)) return { source: "deep", abstain: true, reason: "uncertain", p: pCombined, uncertainty: unc, experts: _expOut };
     if (Math.abs(pCombined - 0.5) < (typeof MIND !== "undefined" ? MIND.abstainBand : 0.05)) return { source: "deep", abstain: true, reason: "ambiguous", p: pCombined, experts: _expOut };
