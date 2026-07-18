@@ -18615,7 +18615,11 @@ async function mlMindTrainNightly(DB) {
     const prevLB = prevMind ? ((typeof prevMind.valAccLB === "number") ? prevMind.valAccLB : _wilsonLB(_num(prevMind.valAcc, 0.5), _num(prevMind.valN, 30))) : null;
     const posRate = data.reduce(function (s, d) { return s + (d.y ? 1 : 0); }, 0) / N;
     const majorityAcc = Math.max(posRate, 1 - posRate);
-    const regressed = (prevLB != null && accLB < prevLB - MIND.regressGuardMargin) || (accLB < majorityAcc - 0.03);
+    // [V12.56] 누수제거 전환 보호 — 이전 모델이 누수(leaky) 수치로 측정됐고 새 모델이 leak-free면 척도가
+    //   달라(누수 valAcc가 구조적으로 더 높음) 회귀가드가 항상 오발동 → 정직모델이 영구 미발행되는 교착.
+    //   방법 변경 첫 발행엔 prevLB 비교를 건너뛰고 다수클래스 절대바닥만 적용(다음밤부터 leakfree끼리 정상비교).
+    const _methodChanged = leakFree && prevMind && prevMind.leakFree !== true;
+    const regressed = (prevLB != null && !_methodChanged && accLB < prevLB - MIND.regressGuardMargin) || (accLB < majorityAcc - 0.03);
     if (regressed) {
       const _msg = "[MIND] ⚠️ 회귀가드 발동 — 신규 valAcc " + (valAcc * 100).toFixed(1) + "%(하한 " + (accLB * 100).toFixed(1) +
         "%)가 " + (prevLB != null ? "기존 하한 " + (prevLB * 100).toFixed(1) + "%" : "다수클래스 기준 " + (majorityAcc * 100).toFixed(1) + "%") +
