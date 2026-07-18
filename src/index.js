@@ -17187,25 +17187,56 @@ async function mlTrainNightly(DB) {
       };
     });
 
-    // ── [V4] Purged K폴드 CV(엠바고) → OOF 정확도/로그로스 ──
+    // ── [V4] Purged K폴드 CV(엠바고) → OOF 예측 수집 ──
     const embargoMs = (LUXML.embargoDays || 6) * 86400000;
     const folds = _purgedFolds(Z.map(function(t){ return t.ts; }), LUXML.cvFolds || 5, embargoMs);
-    let oofCorrect = 0, oofN = 0, oofLL = 0;
+    const oofPreds = [];
     for (const fd of folds) {
       const ftr = fd.train.map(function(i){ return Z[i]; });
       const m = _l1TrainOne(ftr, D, null, 0);
       for (const i of fd.val) {
         const t = Z[i];
         let zsum = m.b; for (let j = 0; j < D; j++) if (m.w[j] !== 0) zsum += m.w[j] * t.z[j];
-        const p = _clamp(_sigmoid(zsum), 1e-6, 1 - 1e-6);
-        if ((p >= 0.5 ? 1 : 0) === t.y) oofCorrect++;
-        oofLL += -(t.y * Math.log(p) + (1 - t.y) * Math.log(1 - p));
-        oofN++;
+        oofPreds.push({ p: _clamp(_sigmoid(zsum), 1e-6, 1 - 1e-6), y: t.y, ts: t.ts });
       }
     }
-    // 폴드 구성 불가(표본 부족)면 종전 홀드아웃 폴백
-    let valAcc, valLL, valN;
-    if (oofN >= 30) { valAcc = oofCorrect / oofN; valLL = oofLL / oofN; valN = oofN; }
+    // ── [V12.50 임계값 캘리브레이션] ★버그수정★ 균형가중(wPos/wNeg)으로 학습한 모델을 0.5
+    //   고정컷으로 평가하면 라벨 쏠린 데이터(양성률 ~33%)에서 "전부 양성 찍기"로 퇴화해
+    //   valAcc가 posRate(33%)로 붕괴한다 — 라이브에서 실측된 그 값. MIND(V12.39)·DNN(V12.33)·
+    //   FM(V12.42)은 전부 τ* 캘리브레이션을 받았는데 L1만 빠져 mode=observe가 영구화되던 원인.
+    //   동일 패턴: OOF 예측 시간순 앞절반에서 정확도 최대 임계 τ*를 찾고, 뒤절반에서 τ* 반영
+    //   정확도를 정직하게 측정. τ*는 최종 모델 b에 -logit(τ*)로 굽는다(추론 0.5컷 그대로 유효).
+    let valAcc, valLL, valN, _tauShift = 0;
+    if (oofPreds.length >= 60) {
+      oofPreds.sort(function (a, b) { return a.ts - b.ts; });
+      const _half = Math.floor(oofPreds.length / 2);
+      const _sel = oofPreds.slice(0, _half), _hold = oofPreds.slice(_half);
+      const _srt = _sel.map(function (r) { return r.p; }).sort(function (a, b) { return a - b; });
+      let _bT = 0.5, _bS = -1;
+      for (let q = 2; q <= 36; q++) {
+        const tau = _srt[Math.floor((q / 38) * (_srt.length - 1))];
+        let c = 0;
+        for (const r of _sel) if ((r.p >= tau ? 1 : 0) === r.y) c++;
+        if (c / _sel.length > _bS) { _bS = c / _sel.length; _bT = tau; }
+      }
+      _bT = _clamp(_bT, 1e-4, 1 - 1e-4);
+      _tauShift = -Math.log(_bT / (1 - _bT));
+      let c = 0, ll = 0;
+      for (const r of _hold) {
+        const pc = _clamp(_sigmoid(_logit(r.p) + _tauShift), 1e-6, 1 - 1e-6);
+        if ((pc >= 0.5 ? 1 : 0) === r.y) c++;
+        ll += -(r.y * Math.log(pc) + (1 - r.y) * Math.log(1 - pc));
+      }
+      valAcc = c / _hold.length; valLL = ll / _hold.length; valN = _hold.length;
+    } else if (oofPreds.length >= 30) {
+      // 표본 애매(30~59) — 캘리브레이션 없이 종전 방식(0.5컷)
+      let c = 0, ll = 0;
+      for (const r of oofPreds) {
+        if ((r.p >= 0.5 ? 1 : 0) === r.y) c++;
+        ll += -(r.y * Math.log(r.p) + (1 - r.y) * Math.log(1 - r.p));
+      }
+      valAcc = c / oofPreds.length; valLL = ll / oofPreds.length; valN = oofPreds.length;
+    }
     else {
       const nVal = Math.max(10, Math.floor(N * LUXML.valFrac));
       const cut = N - nVal, cutTs = Z[cut].ts - embargoMs;
@@ -17228,7 +17259,8 @@ async function mlTrainNightly(DB) {
     const fit = _l1TrainOne(Z, D,
       (prevM && Array.isArray(prevM.w) && prevM.w.length === D) ? prevM.w : null,
       prevM && typeof prevM.b === "number" ? prevM.b : 0);
-    const w = fit.w, b = fit.b;
+    // [V12.50] τ*를 b에 영구 반영 — 이후 mlScore의 0.5 기준 판단이 캘리브레이션된 컷으로 동작
+    const w = fit.w, b = fit.b + _tauShift;
 
     const alive = [];
     for (let j = 0; j < D; j++) if (w[j] !== 0) alive.push(LUXML.featNames[j]);
@@ -17982,18 +18014,42 @@ async function mlBrainTrainNightly(DB) {
 
     const T = _brainFitTemperature(val, members);
 
-    // val 성능: 앙상블 평균확률 + 보정 적용
-    let correct = 0, ll = 0;
-    for (const t of val) {
-      let acc = 0; for (const m of members) acc += _brainRawP(m, t.z);
-      let p = _clamp(acc / members.length, 1e-6, 1 - 1e-6);
-      const logit = Math.log(p / (1 - p)) / T;
-      p = _clamp(_sigmoid(logit), 1e-6, 1 - 1e-6);
-      if ((p >= 0.5 ? 1 : 0) === t.y) correct++;
-      ll += -(t.y * Math.log(p) + (1 - t.y) * Math.log(1 - p));
+    // ── [V12.50 임계값 캘리브레이션] ★버그수정★ 온도(T)는 로짓을 나눌 뿐 부호를 못 바꿔
+    //   0.5컷 결정경계를 1도 못 움직인다 — 균형가중 멤버 + 라벨 쏠림(양성률 ~33%)에서 밤마다
+    //   valAcc가 73%↔33%(=posRate, 전부 양성 찍기)를 오가던 원인. 퇴화한 33%가 Page-Hinkley
+    //   드리프트를 오발동시켜 학습창을 400으로 쪼그라뜨리는 2차 피해까지 있었다(라이브 n=400 실측).
+    //   MIND(V12.39)·DNN(V12.33)·FM(V12.42)·L1(V12.50)과 동일하게 val 앞절반에서 τ*를 찾아
+    //   tauShift로 저장(mlBrainScore가 적용), 뒤절반에서 정직한 정확도 측정.
+    const _pv = val.map(function (t) {
+      let acc0 = 0; for (const m of members) acc0 += _brainRawP(m, t.z);
+      let p = _clamp(acc0 / members.length, 1e-6, 1 - 1e-6);
+      p = _clamp(_sigmoid(Math.log(p / (1 - p)) / T), 1e-6, 1 - 1e-6);
+      return { p: p, y: t.y };
+    });
+    let tauShift = 0, _evalRows = _pv;
+    const _halfB = Math.floor(_pv.length / 2);
+    if (_halfB >= 20 && _pv.length - _halfB >= 20) {
+      const _sel = _pv.slice(0, _halfB);
+      const _srt = _sel.map(function (r) { return r.p; }).sort(function (a, b) { return a - b; });
+      let _bT = 0.5, _bS = -1;
+      for (let q = 2; q <= 36; q++) {
+        const tau = _srt[Math.floor((q / 38) * (_srt.length - 1))];
+        let c = 0;
+        for (const r of _sel) if ((r.p >= tau ? 1 : 0) === r.y) c++;
+        if (c / _sel.length > _bS) { _bS = c / _sel.length; _bT = tau; }
+      }
+      _bT = _clamp(_bT, 1e-4, 1 - 1e-4);
+      tauShift = -Math.log(_bT / (1 - _bT));
+      _evalRows = _pv.slice(_halfB);
     }
-    const valAcc = correct / val.length;
-    const accLB = _wilsonLB(valAcc, val.length);   // [V4] 신뢰하한
+    let correct = 0, ll = 0;
+    for (const r of _evalRows) {
+      const pc = _clamp(_sigmoid(_logit(r.p) + tauShift), 1e-6, 1 - 1e-6);
+      if ((pc >= 0.5 ? 1 : 0) === r.y) correct++;
+      ll += -(r.y * Math.log(pc) + (1 - r.y) * Math.log(1 - pc));
+    }
+    const valAcc = correct / _evalRows.length;
+    const accLB = _wilsonLB(valAcc, _evalRows.length);   // [V4] 신뢰하한
 
     // 살아있는 피처 합집합
     const aliveSet = {};
@@ -18001,10 +18057,10 @@ async function mlBrainTrainNightly(DB) {
     const aliveCount = Object.keys(aliveSet).length;
 
     const ensemble = {
-      members: members, T: T, mean: mean, std: std,
+      members: members, T: T, tauShift: +tauShift.toFixed(4), mean: mean, std: std,
       featVer: LUXML.featVer, K: members.length,
-      n: N, valAcc: +valAcc.toFixed(4), valAccLB: +accLB.toFixed(4), valN: val.length,
-      valLogLoss: +(ll / val.length).toFixed(4),
+      n: N, valAcc: +valAcc.toFixed(4), valAccLB: +accLB.toFixed(4), valN: _evalRows.length,
+      valLogLoss: +(ll / _evalRows.length).toFixed(4),
       aliveCount: aliveCount, trainedAt: Date.now()
     };
     await setState(DB, "ml_ensemble", ensemble);
@@ -18058,7 +18114,8 @@ function mlBrainScore(ensemble, featVec) {
     let vr = 0; for (const p of ps) vr += (p - mu) * (p - mu); vr = Math.sqrt(vr / ps.length);
     const T = ensemble.T || 1;
     const mc = _clamp(mu, 1e-6, 1 - 1e-6);
-    const cal = _clamp(_sigmoid(Math.log(mc / (1 - mc)) / T), 0.001, 0.999);
+    // [V12.50] 학습 때 찾은 τ* 시프트 적용 — 0.5 기준 판단(mlBrainGate·MIND 메타)이 캘리브레이션 반영
+    const cal = _clamp(_sigmoid(Math.log(mc / (1 - mc)) / T + _num(ensemble.tauShift, 0)), 0.001, 0.999);
     return { p: cal, rawP: mu, uncertainty: vr };
   } catch (e) { return null; }
 }
