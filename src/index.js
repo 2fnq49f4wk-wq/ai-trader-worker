@@ -2524,6 +2524,20 @@ const AI_PARAMS = {
     horizonDays: 5                 // 타겟 예측 지평(AI_PARAMS.predictionHorizonDays와 정합)
   },
 
+  // ── [V12.64] AI 주도 진입(엔진 대체) ── 규칙엔진이 신호를 못 낸 종목도 AI 위원회가 스스로 진입 결정.
+  //   규칙엔진=1차 필터에서 → AI가 독립적 1차 결정자로 승격(점진적 엔진 대체). 안전: 상승추세 사전필터 +
+  //   높은 확신 문턱 + 사이클당 상한 + 축소 사이즈 + 기존 전 가드(감성·재무·예산·섹터·히트·크래시게이트) 통과.
+  //   합성신호(AI_PRIMARY)를 기존 진입 파이프라인에 주입 → 코드 중복 없이 모든 안전장치 재사용.
+  aiPrimary: {
+    enabled: true,          // AI 주도 진입 활성(끄려면 false → 규칙엔진 전용으로 복귀)
+    threshold: 0.60,        // 위원회 결합확률 이 이상일 때만 AI 단독 진입(규칙신호 없는 종목이라 보수적)
+    maxPerCycle: 8,         // 사이클당 AI 주도 진입 후보 상한(위원회 계산·subrequest 통제)
+    baseWeight: 0.6,        // 합성신호 기본 가중(규칙신호 1.0 대비 축소 → 사이즈 보수화)
+    maxDisagree: 0.22,      // 전문가 불일치(std) 이 초과면 AI 단독진입 보류(합의 없는 진입 차단)
+    rsiMin: 45, rsiMax: 72, // 사전필터 RSI 밴드(상승추세 정렬 종목만 위원회 평가)
+    requireTrustedModel: true // DNN/GBDT 중 최소 하나가 신뢰(합류)해야 AI 단독진입 허용(MIND 단독 과신 방지)
+  },
+
   // ── 메타 라벨링·앙상블(Meta-Labeling, Lopez de Prado) ── '예측을 다시 예측'해 승률 극대화.
   //   (구현: 규칙엔진=1차 신호생성기, ML위원회(mlDeepDecide)=2차 성공확률 예측 → 게이트)
   metaLabeling: {
@@ -11516,6 +11530,7 @@ async function runTradingCycle(env) {
     let signalCount = 0;   // [통계] 이번 사이클 발생 매수신호 수
     let minuteFetchUsed = 0;  // [분봉] 진입확인(intradayConfirm) 분봉 조회 횟수 (subrequest 캡 통제)
     let scalpScanUsed = 0;    // [V65] scalp 스캔 전용 분봉 카운터 — 진입확인과 분리(단타 굶김 방지)
+    let aiPrimaryUsed = 0;    // [V12.64] AI 주도 진입 후보 카운터(사이클당 상한 통제)
     let scalpEligible = 0, scalpSig = 0;  // [진단] scalp 진입 병목 추적: 후보(no-trend)·스캔·신호 카운트
     __scalpDiag = {};  // [진단] 게이트 탈락 사유 집계 리셋
 
@@ -12578,6 +12593,27 @@ async function runTradingCycle(env) {
             await log(DB, "SIGNAL", symbol, "SIGNAL[" + market.toUpperCase() + "] " + _sr.strategy + " " + (_sig && _sig.name ? _sig.name : "?") + " w=" + (_sig && _sig.weight ? _sig.weight.toFixed(2) : "?") + " RSI=" + (dailyRsi != null ? dailyRsi.toFixed(1) : "?") + " d=" + dayPct.toFixed(1) + "%");
           }
 
+          // [V12.64] ★AI 주도 진입(엔진 대체)★ 규칙엔진이 신호를 못 낸 종목도, 상승추세 정렬 + 위원회
+          //   고확신이면 합성 후보(AI_PRIMARY)를 주입해 기존 진입 파이프라인(감성·재무 게이트 → 위원회 →
+          //   예산·섹터·히트·크래시 가드 → executeBuy)을 그대로 통과시킨다. AI가 규칙엔진을 대체해 독립
+          //   진입 결정. 실제 허용/차단·사이즈는 아래 위원회(mlDeepDecide)가 결정하며, isAiPrimary 전용
+          //   고문턱/합의/신뢰모델 조건을 추가로 요구(무분별 진입 차단).
+          try {
+            const _ap = (typeof AI_PARAMS !== "undefined") ? AI_PARAMS.aiPrimary : null;
+            if (_ap && _ap.enabled && stratResults.length === 0 && !heldSymbols.has(symbol) && !strategiesHeldNow.has("trend")
+                && !crashGate.blockNew && canTrade && aiPrimaryUsed < (_ap.maxPerCycle || 8)
+                && closes.length >= 55) {
+              const _ma20 = getMA(closes, 20), _ma50 = getMA(closes, 50);
+              const _uptrend = (_ma20 != null && _ma50 != null && _ma20 > _ma50 && price > _ma20 &&
+                                (dailyRsi == null || (dailyRsi >= (_ap.rsiMin || 45) && dailyRsi <= (_ap.rsiMax || 72))));
+              if (_uptrend) {
+                aiPrimaryUsed++;
+                stratResults.push({ strategy: "trend", weight: (_ap.baseWeight || 0.6),
+                  signal: { name: "AI_PRIMARY", members: ["AI_PRIMARY"], weight: (_ap.baseWeight || 0.6), isAiPrimary: true } });
+              }
+            }
+          } catch (e) {}
+
           // Cross-strategy confluence: 2개 이상 전략이 동시 신호면 보너스
           const crossBonus = (stratResults.length >= 2) ? (mcfg.crossConfluenceBonus || 1.0) : 1.0;
           if (stratResults.length >= 2) {
@@ -12708,6 +12744,9 @@ async function runTradingCycle(env) {
               const _nb = newsBoostMap[symbol];
               if (typeof _nb === "number") sizeScale *= _clamp(_nb, 0.9, 1.15);
             }
+
+            // [V12.64] AI 주도 진입은 규칙신호 없이 들어가므로 사이즈를 보수적으로 축소(baseWeight 배).
+            if (signal && signal.isAiPrimary) sizeScale *= ((AI_PARAMS.aiPrimary && AI_PARAMS.aiPrimary.baseWeight) || 0.6);
 
             // === [재작성] 고정리스크 사이징 ===
             //   한 거래 손실한도 R$ = 자산 × riskPerTrade%. 손절거리(주당)로 수량을 역산한다.
@@ -12854,6 +12893,20 @@ async function runTradingCycle(env) {
                     __aiPicks.push({ symbol: symbol, p: +_md.p.toFixed(3), strategy: strategy, abstain: !!_md.abstain });
                   }
                 } catch (e) {}
+                // [V12.64] ★AI 주도 진입 안전문★ 규칙 폴백 수량이 없는 AI_PRIMARY는 위원회의 명시적 강승인
+                //   없이는 절대 진입 금지 — observe/abstain/차단/저확신/합의부족/신뢰모델 부재면 즉시 스킵.
+                if (signal.isAiPrimary) {
+                  const _ap2 = (AI_PARAMS && AI_PARAMS.aiPrimary) || {};
+                  const _dis = (_md && typeof _md.uncertainty === "number") ? _md.uncertainty : 1;
+                  const _trustedModel = !!(_md && (_md.usedDnn || _md.usedGbdt));
+                  if (!_md || !_md.allow || _md.observe || _md.abstain
+                      || !(typeof _md.p === "number" && _md.p >= (_ap2.threshold || 0.6))
+                      || (_ap2.maxDisagree != null && _dis > _ap2.maxDisagree)
+                      || (_ap2.requireTrustedModel && !_trustedModel)) {
+                    incNobuy("ai_primary_gate");
+                    continue;
+                  }
+                }
                 if (_md && (_md.observe || _md.abstain)) {
                   // 자기불신 / 기권 → 규칙엔진 수량 유지(ML 개입 안 함)
                 } else if (_md && _md.allow === false) {
@@ -13689,6 +13742,11 @@ async function handleRequest(request, env) {
     // POST /api/ai/harvest-now — 야간 수확을 지금 즉시 1회 실행(하루1회 ai_trained_day 게이트 무시).
     //   [V11.2] featVer가 바뀌면 구표본이 전부 필터링되어 total=0이 되는데, 원본 일봉(daily:/hist: 캐시)은
     //   그대로 있어 재계산만 하면 됨. 다음 UTC자정까지 기다리지 않고 캐시에서 즉시 재수확하기 위한 트리거.
+    // GET /api/ai/selfcheck — AI 레이어 자가 오류진단(읽기전용). 모델·표본·위원회·가드 이상을 목록화.
+    if (path === "/api/ai/selfcheck") {
+      try { return Response.json(await aiSelfCheck(env.DB), { headers: cors }); }
+      catch (e) { return Response.json({ error: e && e.message }, { status: 500, headers: cors }); }
+    }
     if (path === "/api/ai/harvest-now" && request.method === "POST") {
       const au = _trainAuthed(); if (!au.ok) return Response.json({ error: au.msg }, { status: au.code, headers: cors });
       try {
@@ -20021,6 +20079,52 @@ async function mlDataHealth(DB) {
     try { out.drift = await getState(DB, "model_drift", null); } catch (e) {}
   } catch (e) { out.error = String(e && e.message); }
   return out;
+}
+
+// [V12.64] ★자가 오류 진단★ AI 레이어 전체를 한 번에 점검해 문제(errors)·경고(warnings)를 목록화한다.
+//   "오류를 스스로 찾게" — 모델 미학습·정지·스태일·신뢰 0·위원회 불참·표본 붕괴·드리프트·클래스 퇴화를
+//   규칙으로 검출. /api/ai/selfcheck로 노출(대시보드·수동 점검). 읽기 전용(부작용 0).
+async function aiSelfCheck(DB) {
+  const R = { ts: Date.now(), errors: [], warnings: [], ok: [], models: {} };
+  const nowT = Date.now();
+  const ageH = function (t) { return (typeof t === "number" && t > 0) ? Math.round((nowT - t) / 3600000) : null; };
+  try {
+    const health = await mlDataHealth(DB);
+    R.data = { samples: health.samplesCurrentFeatVer, posRate: health.positiveRate, stale: health.staleSamples, featVer: health.featVer, deepSyms: health.deepHistorySymbols };
+    // 표본/클래스 건강
+    if (!(health.samplesCurrentFeatVer > 0)) R.errors.push("표본 0건(현 featVer=" + health.featVer + ") — 수확 파이프라인 점검");
+    else if (health.samplesCurrentFeatVer < (LUXML.minTrainSamples || 80)) R.warnings.push("표본 부족 " + health.samplesCurrentFeatVer + "/" + (LUXML.minTrainSamples || 80));
+    if (health.positiveRate != null && (health.positiveRate < 0.05 || health.positiveRate > 0.95)) R.errors.push("클래스 퇴화 posRate=" + health.positiveRate + " (라벨/지수정렬 이상)");
+    if (health.staleSamples > (health.samplesCurrentFeatVer || 0)) R.warnings.push("구버전 표본 과다 " + health.staleSamples + " — featVer 전환 재수확 대기");
+    if (health.drift) R.warnings.push("열화 플래그 상존 acc=" + (health.drift.acc != null ? (health.drift.acc * 100).toFixed(1) + "%" : "?") + " (다음 재학습에 해제됨)");
+
+    // 각 모델 상태
+    let mind = null; try { mind = await mlMindLoad(DB); } catch (e) {}
+    const dnnT = await getState(DB, "dnn_trust", null);
+    const gT = await getState(DB, "gbdt_trust", null);
+    R.models.mind = mind ? { trained: true, valAcc: mind.valAcc, valAccLB: mind.valAccLB, leakFree: !!mind.leakFree, ageH: ageH(mind.trainedAt), experts: mind.experts } : { trained: false };
+    R.models.dnn = dnnT ? { trusted: !!dnnT.trusted, wDnn: dnnT.wDnn, accLB: dnnT.dnnAccLB, source: dnnT.source, reason: dnnT.reason } : { trained: false };
+    R.models.gbdt = gT ? { trusted: !!gT.trusted, wGbdt: gT.wGbdt, accLB: gT.gbdtAccLB } : { trained: false };
+
+    if (!mind) R.errors.push("MIND 미학습 — 위원장 부재(단 DNN/GBDT 신뢰 시 위원회는 대행 가동: V12.62)");
+    else {
+      if (ageH(mind.trainedAt) != null && ageH(mind.trainedAt) > 48) R.warnings.push("MIND 스태일 " + ageH(mind.trainedAt) + "h — 야간 재학습 확인");
+      if (typeof mind.valAccLB === "number" && mind.valAccLB < 0.5) R.warnings.push("MIND 검증 하한 " + (mind.valAccLB * 100).toFixed(1) + "% < 50% (신호 미약)");
+      if (mind.leakFree !== true) R.warnings.push("MIND 누수측정(구버전) — 재학습 시 OOF 정직수치로 전환됨");
+    }
+    // 위원회 조화 — 신뢰받는 보조 모델 유무
+    const nTrusted = (dnnT && dnnT.trusted ? 1 : 0) + (gT && gT.trusted ? 1 : 0);
+    if (nTrusted === 0) R.warnings.push("DNN·GBDT 모두 미신뢰 — 위원회가 MIND 단독(다양성 부족). 절대게이트 통과 대기");
+    else R.ok.push("보조 모델 " + nTrusted + "종 위원회 합류");
+    if ((dnnT && dnnT.reason === "err")) R.errors.push("DNN 학습 오류: " + (dnnT.err || "?"));
+    // 가드 상태
+    const guard = await getState(DB, "mind_guard", null);
+    if (guard && guard.distrust) R.errors.push("자기감시 distrust 발동(라이브 정확도 급락) — ML 개입 중단 중");
+    R.guard = guard ? { distrust: !!guard.distrust, liveAcc: guard.liveAcc, baseAcc: guard.baseAcc, liveN: (guard.live || []).length } : null;
+
+    R.summary = R.errors.length ? ("ERROR " + R.errors.length + "건") : (R.warnings.length ? ("WARN " + R.warnings.length + "건") : "정상");
+  } catch (e) { R.errors.push("selfcheck 실패: " + (e && e.message)); }
+  return R;
 }
 
 // [V21] 유니버스 횡단면 분포 패널 — 날짜별(barsAgo) 전 종목 ret20/ret5 평균·표준편차.
