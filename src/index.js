@@ -16695,6 +16695,11 @@ const LUXML = {
   valFrac: 0.2,
   minTrainSamples: 60,
   pnlWeightCap: 3.0, // PnL 크기 가중 상한(한 거래가 과도하게 지배 방지)
+  // [V12.57] 실거래/반사실(비-harvest) 표본 학습가중 — 이벤트16·전략원핫4·sigWeight·confluence 등
+  //   "라이브에만 존재하는" 피처는 harvest(srcWeight 0.6·수만건)에 파묻혀 사실상 죽은 입력이었다.
+  //   비-hv 표본을 이 배수로 올려 그 피처들이 실제 그래디언트를 받게 한다(과적합 방지 위해 과하지 않게).
+  //   결과 비율: 라이브 1.5 vs harvest 0.6 = 2.5배. (harvest는 이 피처들을 원천 복원 불가 — 문서화)
+  liveSrcWeight: 1.5,
 
   // ── [V4] 신뢰학습(reliable training) 공통 다이얼 ──
   cvFolds: 5,            // Purged 워크포워드 교차검증 폴드 수(선형/저비용 모델)
@@ -17193,7 +17198,7 @@ async function mlTrainNightly(DB) {
       return {
         z: d.x.map(function(v, j){ return (v - mean[j]) / (std[j] > 1e-6 ? std[j] : 1); }),
         y: d.y, ts: d.ts,
-        mw: _clamp(Math.abs(d.pnl) / pnlScale, 0.3, LUXML.pnlWeightCap) * (d.hv ? HARVEST.srcWeight : 1) * _recencyW(d.ts, nowTs)
+        mw: _clamp(Math.abs(d.pnl) / pnlScale, 0.3, LUXML.pnlWeightCap) * (d.hv ? HARVEST.srcWeight : (LUXML.liveSrcWeight || 1)) * _recencyW(d.ts, nowTs)
       };
     });
 
@@ -17998,7 +18003,7 @@ async function mlBrainTrainNightly(DB) {
       return {
         z: d.x.map(function (v, j) { return (v - mean[j]) / (std[j] > 1e-6 ? std[j] : 1); }),
         y: d.y, ts: d.ts,
-        mw: _clamp(Math.abs(d.pnl) / pnlScale, 0.3, 3.0) * (d.hv ? HARVEST.srcWeight : 1) * _recencyW(d.ts, nowTs)
+        mw: _clamp(Math.abs(d.pnl) / pnlScale, 0.3, 3.0) * (d.hv ? HARVEST.srcWeight : (LUXML.liveSrcWeight || 1)) * _recencyW(d.ts, nowTs)
       };
     });
     const nVal = Math.max(10, Math.floor(N * BRAIN.valFrac));
@@ -18387,7 +18392,7 @@ async function mlMindTrainNightly(DB) {
     const pnlScale = absP.length ? (absP[Math.floor(absP.length / 2)] || 1) : 1;
     const Z = data.map(function (d) {
       return { z: _mindStd(d.x, st.mean, st.std), y: d.y, x: d.x, ts: d.ts,
-        mw: _clamp(Math.abs(d.pnl) / (pnlScale > 1e-6 ? pnlScale : 1), 0.3, 3.0) * (d.hv ? HARVEST.srcWeight : 1) * _recencyW(d.ts, nowTs) };
+        mw: _clamp(Math.abs(d.pnl) / (pnlScale > 1e-6 ? pnlScale : 1), 0.3, 3.0) * (d.hv ? HARVEST.srcWeight : (LUXML.liveSrcWeight || 1)) * _recencyW(d.ts, nowTs) };
     });
     const nVal = Math.max(24, Math.floor(N * MIND.fmValFrac));
     // [V4] 엠바고 퍼지 홀드아웃
@@ -18452,9 +18457,9 @@ async function mlMindTrainNightly(DB) {
     // [V12.54 누수 주석] ★MIND valAcc 과대추정 근본원인★ 아래 전문가 중 l1(mlLoadModel)·ens(mlBrainLoad)는
     //   전체 표본(=지금의 val 구간 포함)으로 학습된 모델이다. 따라서 val 행에 대한 이들의 예측은 in-sample →
     //   메타 스태킹 valAcc가 실제 일반화보다 부풀려진다(FM만 train 전용이라 누수 없음). 이 부푼 LB가 종전
-    //   신뢰게이트에서 DNN/GBDT를 영구 억제하고 위원회 표까지 독식했다. 완전 제거하려면 l1/ens를 train
-    //   전용 out-of-fold로 재학습해야 하나 CPU예산상 과함 → 다운스트림 영향을 committeeAccCap(위원회 표
-    //   상한)과 절대실력 게이트(다수클래스 기저 대비)로 중화한다. fmAcc(순수 홀드아웃)를 정직 참고치로 병기.
+    //   신뢰게이트에서 DNN/GBDT를 영구 억제하고 위원회 표까지 독식했다. [V12.56] 아래에서 l1/ens를 train
+    //   전용으로 재학습(OOF)해 valAcc를 정직하게 덮어쓴다(누수 완전제거). 이 metaRows는 배포 meta(serving)
+    //   학습용이라 full-data 전문가 그대로 사용(serving 무회귀) — 정직수치 측정은 아래 별도 OOF 경로.
     const metaRows = val.map(function (t) {
       const e = [];
       if (l1) e.push(_logit(mlScore(l1, t.x)));
@@ -18499,8 +18504,65 @@ async function mlMindTrainNightly(DB) {
       if ((p >= 0.5 ? 1 : 0) === r.y) correct++;
       ll += -(r.y * Math.log(_clamp(p, 1e-6, 1 - 1e-6)) + (1 - r.y) * Math.log(_clamp(1 - p, 1e-6, 1 - 1e-6)));
     }
-    const valAcc = correct / evalR.length;
-    const accLB = _wilsonLB(valAcc, evalR.length);
+    let valAcc = correct / evalR.length;
+    let accLB = _wilsonLB(valAcc, evalR.length);
+    let valN = evalR.length;
+    let leakFree = false;
+
+    // ── [V12.56] ★MIND 누수 완전제거(OOF)★ 위 valAcc는 l1(mlLoadModel)·ens(mlBrainLoad)가 val구간
+    //   포함 전체표본으로 학습돼 in-sample 예측을 쓰므로 과대추정된다. 여기서 l1·ens를 MIND의 train
+    //   split만으로 재학습(FM은 이미 train전용)해 val 행을 완전 out-of-sample로 평가 → 정직한 valAcc를
+    //   산출하고 이 값으로 덮어쓴다(위원회 표·게이트가 정직한 수치를 쓰게). 배포 meta(serving)는 위에서
+    //   full-data 전문가로 학습된 그대로 유지 — serving 무회귀. 워커 CPU예산 300s 내 여유(외부학습은 DNN뿐).
+    try {
+      // train-only L1 (선형 — MIND z-space에서 직접 로짓)
+      const _l1z = l1 ? _l1TrainOne(train, D, null, 0) : null;
+      // train-only ENS(브레인) — 부트스트랩 K + 피처드롭아웃, T는 train 내부 홀드아웃에서 적합
+      let _ensLF = null;
+      if (ens) {
+        const _mem = [], _bag = Math.max(20, Math.floor(train.length * BRAIN.bagFrac));
+        for (let k = 0; k < BRAIN.bagK; k++) {
+          const boot = []; for (let i = 0; i < _bag; i++) boot.push(train[Math.floor(Math.random() * train.length)]);
+          const dm = new Array(D); for (let j = 0; j < D; j++) dm[j] = Math.random() >= BRAIN.featDropout;
+          _mem.push(_brainTrainOne(boot, D, dm));
+        }
+        const _tv = train.slice(Math.floor(train.length * 0.8));
+        _ensLF = { members: _mem, T: _brainFitTemperature(_tv.length >= 10 ? _tv : train, _mem) };
+      }
+      const _lfLogit = function (t) {
+        const e = [];
+        if (l1) { let zs = _l1z.b; for (let j = 0; j < D; j++) if (_l1z.w[j] !== 0) zs += _l1z.w[j] * t.z[j]; e.push(_logit(_clamp(_sigmoid(zs), 1e-4, 1 - 1e-4))); }
+        e.push(_logit(_clamp(_sigmoid(_fmRaw(fm, t.z)), 1e-4, 1 - 1e-4)));
+        if (ens && _ensLF) { let ac = 0; for (const m of _ensLF.members) ac += _brainRawP(m, t.z); const pv = _clamp(ac / _ensLF.members.length, 1e-6, 1 - 1e-6); e.push(_logit(_clamp(_sigmoid(_logit(pv) / _ensLF.T), 1e-4, 1 - 1e-4))); }
+        return e;
+      };
+      const _lfRows = val.map(function (t) { return { e: _lfLogit(t), y: t.y }; });
+      const _lfCut = Math.max(10, Math.floor(_lfRows.length * 0.6));
+      const _lfMeta = _metaTrain(_lfRows.slice(0, _lfCut));
+      let _lfEval = _lfRows.slice(_lfCut);
+      if (_lfEval.length < 8) _lfEval = _lfRows;
+      // τ* 캘리브레이션(앞절반) → 뒤절반에서 정직 측정
+      const _lfHalf = Math.floor(_lfEval.length / 2);
+      if (_lfHalf >= 20 && _lfEval.length - _lfHalf >= 20) {
+        const _ps = []; for (let i = 0; i < _lfHalf; i++) _ps.push(_metaPredict(_lfMeta, _lfEval[i].e));
+        const _srt = _ps.slice().sort(function (a, b) { return a - b; });
+        let _bT = 0.5, _bS = -1;
+        for (let q = 2; q <= 36; q++) {
+          const tau = _srt[Math.floor((q / 38) * (_srt.length - 1))];
+          let c = 0; for (let i = 0; i < _lfHalf; i++) if ((_ps[i] >= tau ? 1 : 0) === _lfEval[i].y) c++;
+          if (c / _lfHalf > _bS) { _bS = c / _lfHalf; _bT = tau; }
+        }
+        _lfMeta.b -= Math.log(_clamp(_bT, 1e-4, 1 - 1e-4) / (1 - _clamp(_bT, 1e-4, 1 - 1e-4)));
+        _lfEval = _lfEval.slice(_lfHalf);
+      }
+      let _lc = 0; for (const r of _lfEval) if ((_metaPredict(_lfMeta, r.e) >= 0.5 ? 1 : 0) === r.y) _lc++;
+      if (_lfEval.length >= 20) {
+        valAcc = _lc / _lfEval.length;
+        accLB = _wilsonLB(valAcc, _lfEval.length);
+        valN = _lfEval.length;
+        leakFree = true;
+      }
+    } catch (e) { /* OOF 실패 시 위의 보수 폴백(누수 포함) 유지 */ }
 
     // FM 단독 성능(상호작용 기여 확인용) — [V12.42] τ* 선택에 쓴 앞절반 제외, 뒤절반만(정직 홀드아웃)
     const _fmHold = val.slice(_fmSelN);
@@ -18541,7 +18603,8 @@ async function mlMindTrainNightly(DB) {
     }
 
     const mind = { fm: fm, meta: meta, experts: expertNames, mean: st.mean, std: st.std,
-      featVer: LUXML.featVer, n: N, valAcc: +valAcc.toFixed(4), valAccLB: +accLB.toFixed(4), valN: evalR.length,
+      featVer: LUXML.featVer, n: N, valAcc: +valAcc.toFixed(4), valAccLB: +accLB.toFixed(4), valN: valN,
+      leakFree: leakFree,   // [V12.56] true=OOF 누수제거 정직수치 / false=폴백(누수포함 보수치)
       fmAcc: +fmAcc.toFixed(4), ruleAcc: ruleAcc, ruleAccLB: ruleAccLB, ruleN: ruleN, ruleTau: ruleTau,
       valLogLoss: +(ll / evalR.length).toFixed(4), trainedAt: Date.now() };
     // [V12.37] 회귀 가드 — MIND는 위원장(게이트 없이 항상 가동)이라 DNN·GBDT와 달리 자기 자신을
@@ -19077,7 +19140,7 @@ async function mlDNNTrainNightly(DB) {
     const pnlScale = absP.length ? (absP[Math.floor(absP.length / 2)] || 1) : 1;
     const all = data.map(function (d) {
       return { x: _dnnStdVec(d.x, mean, std), y: d.y, ts: d.ts,
-        mw: _clamp(Math.abs(d.pnl) / (pnlScale > 1e-6 ? pnlScale : 1), 0.3, 3.0) * (d.hv ? HARVEST.srcWeight : 1) * _recencyW(d.ts, nowTs) };
+        mw: _clamp(Math.abs(d.pnl) / (pnlScale > 1e-6 ? pnlScale : 1), 0.3, 3.0) * (d.hv ? HARVEST.srcWeight : (LUXML.liveSrcWeight || 1)) * _recencyW(d.ts, nowTs) };
     });
     const nVal = Math.max(20, Math.floor(N * DNN.valFrac));
     // [V4] 엠바고 퍼지 홀드아웃(라벨 horizon 겹침 누출 차단)
@@ -19617,7 +19680,7 @@ async function mlGBDTTrainNightly(DB) {
     // 표본 가중: |pnl| 크기(중앙값) × 수확 다운웨이트 × [V4] 시간감쇠
     const absP = data.map(function (d) { return Math.abs(d.pnl); }).sort(function (a, b) { return a - b; });
     const pnlScale = (absP[Math.floor(absP.length / 2)] || 1) > 1e-6 ? (absP[Math.floor(absP.length / 2)] || 1) : 1;
-    for (const d of data) d.mw = _clamp(Math.abs(d.pnl) / pnlScale, 0.3, 3.0) * (d.hv ? HARVEST.srcWeight : 1) * _recencyW(d.ts, nowTs);
+    for (const d of data) d.mw = _clamp(Math.abs(d.pnl) / pnlScale, 0.3, 3.0) * (d.hv ? HARVEST.srcWeight : (LUXML.liveSrcWeight || 1)) * _recencyW(d.ts, nowTs);
 
     const _gbStart = Date.now();
     const deadline = _gbStart + (GBDT.trainBudgetMs || 18000);
