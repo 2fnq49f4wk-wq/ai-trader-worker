@@ -18746,8 +18746,7 @@ const DNN = {
   valFrac: 0.2,
   trustFloor: 0.505,     // 검증정확도 이 미만이면 신뢰 0
   trustMargin: 0.0,      // mind보다 이만큼은 나아야 신뢰 부여(0=동등이면 절반씩)
-  trustSlack: 0.03,      // [V12.44 통합] mind보다 이만큼까지 낮아도 위원회 합류(소프트맥스가 자동 소수가중).
-                         //   winner-takes-all(mind단독)→다양성 앙상블. 딥넷/트리/스택은 오류상관 낮아 근접시 결합이득.
+  // [V12.54] trustSlack 제거 — MIND 상대비교 게이트 폐기로 더 이상 읽는 곳이 없어 죽은 파라미터가 됨.
   // [V12.54] ★MIND 독점 해소★ 종전 신뢰게이트는 "standalone 모델(DNN/GBDT) LB ≥ mindLB − slack"이라
   //   MIND(=L1+FM+ENS 스태킹 앙상블)를 단일모델이 이겨야 했다. 스태킹은 구성요소보다 거의 항상 높고,
   //   게다가 MIND valAcc는 L1/ENS 전문가가 val구간을 포함해 학습돼 in-sample 누수로 더 부풀려진다
@@ -19435,7 +19434,7 @@ const GBDT = {
   minTrainSamples: 200,
   valFrac: 0.2,
   trustFloor: 0.505, trustTemp: 12,
-  trustSlack: 0.03,     // [V12.44 통합] mind보다 이만큼까지 낮아도 위원회 합류(소프트맥스 소수가중)
+  // [V12.54] trustSlack 제거 — MIND 상대비교 게이트 폐기로 죽은 파라미터가 됨.
   trainBudgetMs: 90000, // [V12.42] 25s→90s — trainWindow 60000 확대 후 25s로는 트리 20개만 자라
                         //   시장국면 피처 4종에 중요도 87%가 편중(개별종목 피처 전멸)되던 문제.
                         //   V12.40 단계별 체크포인트로 gbdt 스테이지가 단독 invocation에서 돌므로 안전.
