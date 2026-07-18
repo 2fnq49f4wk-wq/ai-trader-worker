@@ -13540,7 +13540,7 @@ async function handleRequest(request, env) {
         let mindLB = 0.5;
         try { const mm = await mlMindLoad(env.DB); if (mm) mindLB = (typeof mm.valAccLB === "number") ? mm.valAccLB : _wilsonLB(_num(mm.valAcc, 0.5), _num(mm.valN, 30)); } catch (e) {}
         let trust = { wDnn: 0, trusted: false, dnnAcc: valAcc, dnnAccLB: valAccLB, mindAcc: mindLB, source: "external" };
-        if (valAccLB >= DNN.trustFloor && valAccLB >= mindLB - 1e-9 + DNN.trustMargin) {
+        if (valAccLB >= DNN.trustFloor && valAccLB >= mindLB - (DNN.trustSlack || 0)) {
           const eD = Math.exp(DNN.trustTemp * (valAccLB - 0.5)), eM = Math.exp(DNN.trustTemp * (mindLB - 0.5));
           trust.wDnn = +(eD / (eD + eM)).toFixed(4); trust.trusted = trust.wDnn > 0.05;
         }
@@ -13636,7 +13636,7 @@ async function handleRequest(request, env) {
       let mindLB = 0.5;
       try { const mm = await mlMindLoad(env.DB); if (mm) mindLB = (typeof mm.valAccLB === "number") ? mm.valAccLB : _wilsonLB(_num(mm.valAcc, 0.5), _num(mm.valN, 30)); } catch (e) {}
       let trust = { wDnn: 0, trusted: false, dnnAcc: net.valAcc, dnnAccLB: net.valAccLB, mindAcc: mindLB, source: "external" };
-      if (dnnLB >= DNN.trustFloor && dnnLB >= mindLB - 1e-9 + DNN.trustMargin) {
+      if (dnnLB >= DNN.trustFloor && dnnLB >= mindLB - (DNN.trustSlack || 0)) {
         const eD = Math.exp(DNN.trustTemp * (dnnLB - 0.5)), eM = Math.exp(DNN.trustTemp * (mindLB - 0.5));
         trust.wDnn = +(eD / (eD + eM)).toFixed(4); trust.trusted = trust.wDnn > 0.05;
       }
@@ -18619,6 +18619,8 @@ const DNN = {
   valFrac: 0.2,
   trustFloor: 0.505,     // 검증정확도 이 미만이면 신뢰 0
   trustMargin: 0.0,      // mind보다 이만큼은 나아야 신뢰 부여(0=동등이면 절반씩)
+  trustSlack: 0.03,      // [V12.44 통합] mind보다 이만큼까지 낮아도 위원회 합류(소프트맥스가 자동 소수가중).
+                         //   winner-takes-all(mind단독)→다양성 앙상블. 딥넷/트리/스택은 오류상관 낮아 근접시 결합이득.
   trustTemp: 12,         // 신뢰 소프트맥스 온도(정확도차→가중)
   // ── 과적합 방어(소표본 금융 특화) ──
   seeds: 4,              // 멀티시드 앙상블 수(서로 다른 초기화·셔플로 K개 학습, 로짓 평균 → 분산↓)
@@ -18993,7 +18995,7 @@ async function mlDNNTrainNightly(DB) {
       if (mm) mindLB = (typeof mm.valAccLB === "number") ? mm.valAccLB : _wilsonLB(_num(mm.valAcc, 0.5), _num(mm.valN, 30));
     } catch (e) {}
     let trust = { wDnn: 0, trusted: false, dnnAcc: net.valAcc, dnnAccLB: +dnnLB.toFixed(4), mindAcc: mindLB };
-    if (dnnLB >= DNN.trustFloor && dnnLB >= mindLB - 1e-9 + DNN.trustMargin) {
+    if (dnnLB >= DNN.trustFloor && dnnLB >= mindLB - (DNN.trustSlack || 0)) {
       const eD = Math.exp(DNN.trustTemp * (dnnLB - 0.5));
       const eM = Math.exp(DNN.trustTemp * (mindLB - 0.5));
       trust.wDnn = +(eD / (eD + eM)).toFixed(4);
@@ -19287,6 +19289,7 @@ const GBDT = {
   minTrainSamples: 200,
   valFrac: 0.2,
   trustFloor: 0.505, trustTemp: 12,
+  trustSlack: 0.03,     // [V12.44 통합] mind보다 이만큼까지 낮아도 위원회 합류(소프트맥스 소수가중)
   trainBudgetMs: 90000, // [V12.42] 25s→90s — trainWindow 60000 확대 후 25s로는 트리 20개만 자라
                         //   시장국면 피처 4종에 중요도 87%가 편중(개별종목 피처 전멸)되던 문제.
                         //   V12.40 단계별 체크포인트로 gbdt 스테이지가 단독 invocation에서 돌므로 안전.
@@ -19487,7 +19490,7 @@ async function mlGBDTTrainNightly(DB) {
       if (mm) mindLB = (typeof mm.valAccLB === "number") ? mm.valAccLB : _wilsonLB(_num(mm.valAcc, 0.5), _num(mm.valN, 30));
     } catch (e) {}
     let trust = { wGbdt: 0, trusted: false, gbdtAcc: model.valAcc, gbdtAccLB: +accLB.toFixed(4), mindAcc: mindLB };
-    if (accLB >= GBDT.trustFloor && accLB >= mindLB - 1e-9) {
+    if (accLB >= GBDT.trustFloor && accLB >= mindLB - (GBDT.trustSlack || 0)) {
       const eG = Math.exp(GBDT.trustTemp * (accLB - 0.5));
       const eM = Math.exp(GBDT.trustTemp * (mindLB - 0.5));
       trust.wGbdt = +(eG / (eG + eM)).toFixed(4);

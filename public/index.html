@@ -86,8 +86,11 @@ body{
 .lux-star-svg{display:block;}
 .lux-star-svg .lux-star-base{fill:#ffffff;}
 .lux-star-svg .lux-star-facet{fill:#b6bcc6;}
-/* [V12.43] AI 이모지 대체용 인라인 로고 아이콘 — 폰트 크기에 비례(1em) */
-.lux-ico{width:1.05em;height:1.05em;display:inline-block;vertical-align:-0.15em;}
+/* [V12.44] AI 이모지 대체 인라인 로고 — 작고 흰색. <use> 복제 경로엔 클래스 fill이
+   안 먹으므로(그림자 트리) 아이콘 자체에 흰색 fill 직접 지정. */
+.lux-ico{width:0.82em;height:0.82em;display:inline-block;vertical-align:-0.08em;fill:#ffffff;opacity:.95;}
+.lux-ico .lux-star-base,.lux-ico .lux-star-facet{fill:#ffffff;}
+.lux-ico use{fill:#ffffff;}
 /* ── 블랙레터(고딕) 표기 — Blauenacht ── */
 .blackletter{
   font-family:'UnifrakturCook','UnifrakturMaguntia',serif;
