@@ -18399,23 +18399,38 @@ async function mlMindTrainNightly(DB) {
     // ── [V12.39 규칙엔진 이식] 규칙엔진의 기술적 종합확률(taUpProb 피처)을 "전문가"로 승격하기 위한
     //   검증 정확도 측정 — 위원회(mlDeepDecide)가 이 정확도의 소프트맥스 가중으로 규칙엔진에 투표권을
     //   준다. 규칙이 잘 맞는 국면(추세장 등)엔 자동으로 발언권↑, 안 맞는 국면엔 자동 감쇠.
-    let ruleAcc = null, ruleAccLB = null, ruleN = 0;
+    // [V12.45] 규칙엔진 전문가 캘리브레이션 — taUpProb는 "절대상승" 예측인데 라벨은 alpha(지수초과)라
+    //   원값 0.5컷은 약세장에서 42%로 붕괴(합류 불가). 앞절반에서 최적 임계 τ*(균형정확도)를 찾아
+    //   저장(ruleTau)하고 뒤절반에서 τ* 반영 정확도를 측정 → 규칙엔진을 정직하게 위원회에 통합.
+    let ruleAcc = null, ruleAccLB = null, ruleN = 0, ruleTau = 0.5;
     const _tiR = LUXML.featNames.indexOf("taUpProb");
     if (_tiR >= 0) {
-      let rc = 0;
-      for (const t of val) {
-        const pR = _num(t.x[_tiR], 0.5);
-        if (pR === 0.5) continue;   // 0.5=중립(신호 없음) — 평가 제외
-        if ((pR >= 0.5 ? 1 : 0) === t.y) rc++;
-        ruleN++;
+      const rv = val.filter(function (t) { return _num(t.x[_tiR], 0.5) !== 0.5; });
+      if (rv.length >= 60) {
+        const half = Math.floor(rv.length / 2);
+        const selP = rv.slice(0, half).map(function (t) { return _num(t.x[_tiR], 0.5); });
+        const srt = selP.slice().sort(function (a, b) { return a - b; });
+        let bT = 0.5, bS = -1;
+        for (let q = 2; q <= 36; q++) {
+          const tau = srt[Math.floor((q / 38) * (srt.length - 1))];
+          let tp = 0, tn = 0, np = 0, nn = 0;
+          for (const t of rv.slice(0, half)) {
+            const up = _num(t.x[_tiR], 0.5) >= tau;
+            if (t.y) { np++; if (up) tp++; } else { nn++; if (!up) tn++; }
+          }
+          const s = ((np ? tp / np : 0) + (nn ? tn / nn : 0)) / 2;
+          if (s > bS) { bS = s; bT = tau; }
+        }
+        ruleTau = _clamp(bT, 1e-4, 1 - 1e-4);
+        const hold = rv.slice(half);
+        let rc = 0; for (const t of hold) if ((_num(t.x[_tiR], 0.5) >= ruleTau ? 1 : 0) === t.y) rc++;
+        ruleN = hold.length; ruleAcc = +(rc / ruleN).toFixed(4); ruleAccLB = +_wilsonLB(rc / ruleN, ruleN).toFixed(4);
       }
-      if (ruleN >= 30) { ruleAcc = +(rc / ruleN).toFixed(4); ruleAccLB = +_wilsonLB(rc / ruleN, ruleN).toFixed(4); }
-      else { ruleN = 0; }
     }
 
     const mind = { fm: fm, meta: meta, experts: expertNames, mean: st.mean, std: st.std,
       featVer: LUXML.featVer, n: N, valAcc: +valAcc.toFixed(4), valAccLB: +accLB.toFixed(4), valN: evalR.length,
-      fmAcc: +fmAcc.toFixed(4), ruleAcc: ruleAcc, ruleAccLB: ruleAccLB, ruleN: ruleN,
+      fmAcc: +fmAcc.toFixed(4), ruleAcc: ruleAcc, ruleAccLB: ruleAccLB, ruleN: ruleN, ruleTau: ruleTau,
       valLogLoss: +(ll / evalR.length).toFixed(4), trainedAt: Date.now() };
     // [V12.37] 회귀 가드 — MIND는 위원장(게이트 없이 항상 가동)이라 DNN·GBDT와 달리 자기 자신을
     //   지켜줄 신뢰게이트가 없다. CPU예산 초과로 미수렴 모델이 만들어져도 그대로 덮어쓰면 즉시
@@ -19104,8 +19119,11 @@ async function mlDeepDecide(DB, featVec, opts) {
     try {
       const _tiR = LUXML.featNames.indexOf("taUpProb");
       if (_tiR >= 0 && typeof mind.ruleAccLB === "number" && mind.ruleAccLB > 0.5) {
-        const pR = _clamp(_num(featVec[_tiR], 0.5), 0.01, 0.99);
-        if (pR !== 0.5) experts.push({ name: "rule", p: pR, z: _logitD(pR), acc: mind.ruleAccLB });
+        let pR = _clamp(_num(featVec[_tiR], 0.5), 0.01, 0.99);
+        // [V12.45] 학습 때 찾은 τ*(ruleTau)로 임계 시프트 적용 → 0.5 기준 판단이 캘리브레이션 반영
+        const _rt = _clamp(_num(mind.ruleTau, 0.5), 0.01, 0.99);
+        pR = _clamp(_sigmoid(_logitD(pR) - _logitD(_rt)), 0.01, 0.99);
+        if (Math.abs(pR - 0.5) > 1e-4) experts.push({ name: "rule", p: pR, z: _logitD(pR), acc: mind.ruleAccLB });
       }
     } catch (e) {}
     let pCombined = mindScore.p;
