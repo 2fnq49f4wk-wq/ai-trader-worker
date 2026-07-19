@@ -6778,6 +6778,7 @@ html[data-theme="light"] .table tbody tr:hover{background:rgba(9,105,218,.045);}
   var PC_UP = '#26a69a', PC_DN = '#ef5350';
 
   // ── [V86] 프로 캔들 차트 — 캔들 + MA/BOLL 오버레이 + 거래량·RSI·MACD 서브패널 ──
+  var _pcIndCache = null;   // [V12.66] buildProChart 전체시계열 지표 메모이즈(줌·팬 재계산 방지)
   function buildProChart(cs, opts) {
     opts = opts || {};
     var ind = opts.ind || { ma: true, boll: true, vol: true, rsi: true, macd: false };
@@ -6786,10 +6787,23 @@ html[data-theme="light"] .table tbody tr:hover{background:rgba(9,105,218,.045);}
     // [V90] 줌/팬 — off = 끝에서 거꾸로 몇 봉 떨어진 위치(팬), N = 보이는 봉 수(줌)
     var off = Math.max(0, Math.round(opts.off || 0));
     var fullC = cs.map(function(c) { return c.c; });
-    var maArr = PC_MA.map(function(m) { return _smaArr(fullC, m.p); });
-    var boll = _bollArr(fullC, 20, 2);
-    var rsi = _rsiArr(fullC, 14);
-    var macd = ind.macd ? _macdArr(fullC) : null;
+    // [V12.66] ★상세뷰 드래그 렉 병목 수정★ MA/BOLL/RSI/MACD는 전체 시계열 기준이라
+    //   줌(count)·팬(off)에는 불변인데, 기존엔 매 rAF 프레임(드래그 1프레임마다)마다 전체
+    //   캔들에 대해 재계산했다 — 일봉 장기범위(수천 봉)에선 이 재계산이 드래그를 버벅이게 한 원인.
+    //   해법: 캔들 데이터 서명(길이+마지막봉+MACD플래그)으로 지표 배열을 메모이즈 → 데이터가
+    //   바뀔 때(신규 로드/폴링)만 재계산, 줌·팬은 캐시 재사용(프레임당 O(n) 슬라이스만).
+    var _last = cs.length ? cs[cs.length - 1] : null;
+    var _sig = cs.length + '|' + (_last ? _last.c : '') + '|' + (_last ? (_last.t || _last.d || '') : '') + '|' + (ind.macd ? 1 : 0);
+    var maArr, boll, rsi, macd;
+    if (_pcIndCache && _pcIndCache.sig === _sig) {
+      maArr = _pcIndCache.maArr; boll = _pcIndCache.boll; rsi = _pcIndCache.rsi; macd = _pcIndCache.macd;
+    } else {
+      maArr = PC_MA.map(function(m) { return _smaArr(fullC, m.p); });
+      boll = _bollArr(fullC, 20, 2);
+      rsi = _rsiArr(fullC, 14);
+      macd = ind.macd ? _macdArr(fullC) : null;
+      _pcIndCache = { sig: _sig, maArr: maArr, boll: boll, rsi: rsi, macd: macd };
+    }
     var end = Math.max(2, cs.length - off);
     var start = Math.max(0, end - N);
     function sl(a) { return a.slice(start, end); }
