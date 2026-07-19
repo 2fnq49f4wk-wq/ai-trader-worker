@@ -10985,7 +10985,7 @@ setTimeout(function(){ var o=document.getElementById('lux-intro-overlay'); if(o&
 /* [V12.16] 노드 클릭 포커스 — 연결된 노드·선만 파랗게 발광, 나머지는 감쇠 */
 #page-nnviz svg.nnv-focus .nnedge,#page-nnviz svg.nnv-focus .nnedge-static{opacity:.045;animation:none;}
 #page-nnviz svg.nnv-focus .nnv-node{opacity:.12;}
-#page-nnviz svg.nnv-focus .nnedge.hl,#page-nnviz svg.nnv-focus .nnedge-static.hl{opacity:1;stroke:#5ab4ff;stroke-width:1.5;filter:drop-shadow(0 0 3.5px rgba(90,180,255,.95));}
+#page-nnviz svg.nnv-focus .nnedge.hl,#page-nnviz svg.nnv-focus .nnedge-static.hl{opacity:1;stroke:#5ab4ff;stroke-width:1.05;filter:drop-shadow(0 0 3px rgba(90,180,255,.95));}
 #page-nnviz svg.nnv-focus .nnv-node.hl{opacity:1;fill:#8fd0ff;filter:drop-shadow(0 0 6px rgba(110,190,255,1));}
 /* [V12.27] WHAT-IF 시나리오 — 쿨 애저 재디자인(살짝 푸른빛) + 레이아웃 고정(리플로우 0) */
 #page-whatif{
@@ -11066,7 +11066,7 @@ setTimeout(function(){ var o=document.getElementById('lux-intro-overlay'); if(o&
 @media (prefers-reduced-motion:reduce){#page-nnviz .nnv-core{animation:none;}}
 #page-nnviz svg.nnv-focus .nnv-core:not(.hl):not(.hl2){animation:none;opacity:.12;filter:none;}
 /* 2홉(이웃의 연결) — 옅은 파랑으로 신호가 어디로 퍼지는지 표시 */
-#page-nnviz svg.nnv-focus .nnedge.hl2,#page-nnviz svg.nnv-focus .nnedge-static.hl2{opacity:.5;stroke:#3f86d8;stroke-width:.9;}
+#page-nnviz svg.nnv-focus .nnedge.hl2,#page-nnviz svg.nnv-focus .nnedge-static.hl2{opacity:.5;stroke:#3f86d8;stroke-width:.65;}
 #page-nnviz svg.nnv-focus .nnv-node.hl2{opacity:.8;fill:#79aee6;}
 #page-nnviz .nnnode{transition:r .5s ease;}
 /* [V11] 3M 실동작 여부 배너 */
@@ -11381,7 +11381,7 @@ html[data-theme="light"] #page-nnviz .nnv-title,html[data-theme="light"] #page-n
     //   엣지는 100% 정적(리페인트 0, 렉 0). 대신 불투명도 하한/기울기·굵기 하한을 올려
     //   약한 연결도 눈에 띄게(기존 0.045 최저치는 사실상 안 보임 수준이었다).
     var edges=eArr.map(function(e,ei){
-      var op=(0.16+0.62*e.str).toFixed(3), sw=(0.55+1.35*e.str).toFixed(2);
+      var op=(0.16+0.62*e.str).toFixed(3), sw=(0.28+0.72*e.str).toFixed(2);
       var mx=(e.x1+e.x2)/2;
       var dStr='M'+e.x1.toFixed(1)+' '+e.y1.toFixed(1)+' C'+mx.toFixed(1)+' '+e.y1.toFixed(1)+' '+mx.toFixed(1)+' '+e.y2.toFixed(1)+' '+e.x2.toFixed(1)+' '+e.y2.toFixed(1);
       return '<path class="nnedge-static" data-a="'+e.l+'-'+e.ai+'" data-b="'+(e.l+1)+'-'+e.bi+'" d="'+dStr+'" fill="none" stroke="rgba(120,185,255,'+op+')" stroke-width="'+sw+'"/>';
