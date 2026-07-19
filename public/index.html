@@ -6778,6 +6778,7 @@ html[data-theme="light"] .table tbody tr:hover{background:rgba(9,105,218,.045);}
   var PC_UP = '#26a69a', PC_DN = '#ef5350';
 
   // ── [V86] 프로 캔들 차트 — 캔들 + MA/BOLL 오버레이 + 거래량·RSI·MACD 서브패널 ──
+  var _pcIndCache = null;   // [V12.66] buildProChart 전체시계열 지표 메모이즈(줌·팬 재계산 방지)
   function buildProChart(cs, opts) {
     opts = opts || {};
     var ind = opts.ind || { ma: true, boll: true, vol: true, rsi: true, macd: false };
@@ -6786,10 +6787,23 @@ html[data-theme="light"] .table tbody tr:hover{background:rgba(9,105,218,.045);}
     // [V90] 줌/팬 — off = 끝에서 거꾸로 몇 봉 떨어진 위치(팬), N = 보이는 봉 수(줌)
     var off = Math.max(0, Math.round(opts.off || 0));
     var fullC = cs.map(function(c) { return c.c; });
-    var maArr = PC_MA.map(function(m) { return _smaArr(fullC, m.p); });
-    var boll = _bollArr(fullC, 20, 2);
-    var rsi = _rsiArr(fullC, 14);
-    var macd = ind.macd ? _macdArr(fullC) : null;
+    // [V12.66] ★상세뷰 드래그 렉 병목 수정★ MA/BOLL/RSI/MACD는 전체 시계열 기준이라
+    //   줌(count)·팬(off)에는 불변인데, 기존엔 매 rAF 프레임(드래그 1프레임마다)마다 전체
+    //   캔들에 대해 재계산했다 — 일봉 장기범위(수천 봉)에선 이 재계산이 드래그를 버벅이게 한 원인.
+    //   해법: 캔들 데이터 서명(길이+마지막봉+MACD플래그)으로 지표 배열을 메모이즈 → 데이터가
+    //   바뀔 때(신규 로드/폴링)만 재계산, 줌·팬은 캐시 재사용(프레임당 O(n) 슬라이스만).
+    var _last = cs.length ? cs[cs.length - 1] : null;
+    var _sig = cs.length + '|' + (_last ? _last.c : '') + '|' + (_last ? (_last.t || _last.d || '') : '') + '|' + (ind.macd ? 1 : 0);
+    var maArr, boll, rsi, macd;
+    if (_pcIndCache && _pcIndCache.sig === _sig) {
+      maArr = _pcIndCache.maArr; boll = _pcIndCache.boll; rsi = _pcIndCache.rsi; macd = _pcIndCache.macd;
+    } else {
+      maArr = PC_MA.map(function(m) { return _smaArr(fullC, m.p); });
+      boll = _bollArr(fullC, 20, 2);
+      rsi = _rsiArr(fullC, 14);
+      macd = ind.macd ? _macdArr(fullC) : null;
+      _pcIndCache = { sig: _sig, maArr: maArr, boll: boll, rsi: rsi, macd: macd };
+    }
     var end = Math.max(2, cs.length - off);
     var start = Math.max(0, end - N);
     function sl(a) { return a.slice(start, end); }
@@ -10985,7 +10999,7 @@ setTimeout(function(){ var o=document.getElementById('lux-intro-overlay'); if(o&
 /* [V12.16] 노드 클릭 포커스 — 연결된 노드·선만 파랗게 발광, 나머지는 감쇠 */
 #page-nnviz svg.nnv-focus .nnedge,#page-nnviz svg.nnv-focus .nnedge-static{opacity:.045;animation:none;}
 #page-nnviz svg.nnv-focus .nnv-node{opacity:.12;}
-#page-nnviz svg.nnv-focus .nnedge.hl,#page-nnviz svg.nnv-focus .nnedge-static.hl{opacity:1;stroke:#5ab4ff;stroke-width:1.5;filter:drop-shadow(0 0 3.5px rgba(90,180,255,.95));}
+#page-nnviz svg.nnv-focus .nnedge.hl,#page-nnviz svg.nnv-focus .nnedge-static.hl{opacity:1;stroke:#5ab4ff;stroke-width:1.05;filter:drop-shadow(0 0 3px rgba(90,180,255,.95));}
 #page-nnviz svg.nnv-focus .nnv-node.hl{opacity:1;fill:#8fd0ff;filter:drop-shadow(0 0 6px rgba(110,190,255,1));}
 /* [V12.27] WHAT-IF 시나리오 — 쿨 애저 재디자인(살짝 푸른빛) + 레이아웃 고정(리플로우 0) */
 #page-whatif{
@@ -11066,7 +11080,7 @@ setTimeout(function(){ var o=document.getElementById('lux-intro-overlay'); if(o&
 @media (prefers-reduced-motion:reduce){#page-nnviz .nnv-core{animation:none;}}
 #page-nnviz svg.nnv-focus .nnv-core:not(.hl):not(.hl2){animation:none;opacity:.12;filter:none;}
 /* 2홉(이웃의 연결) — 옅은 파랑으로 신호가 어디로 퍼지는지 표시 */
-#page-nnviz svg.nnv-focus .nnedge.hl2,#page-nnviz svg.nnv-focus .nnedge-static.hl2{opacity:.5;stroke:#3f86d8;stroke-width:.9;}
+#page-nnviz svg.nnv-focus .nnedge.hl2,#page-nnviz svg.nnv-focus .nnedge-static.hl2{opacity:.5;stroke:#3f86d8;stroke-width:.65;}
 #page-nnviz svg.nnv-focus .nnv-node.hl2{opacity:.8;fill:#79aee6;}
 #page-nnviz .nnnode{transition:r .5s ease;}
 /* [V11] 3M 실동작 여부 배너 */
@@ -11381,7 +11395,7 @@ html[data-theme="light"] #page-nnviz .nnv-title,html[data-theme="light"] #page-n
     //   엣지는 100% 정적(리페인트 0, 렉 0). 대신 불투명도 하한/기울기·굵기 하한을 올려
     //   약한 연결도 눈에 띄게(기존 0.045 최저치는 사실상 안 보임 수준이었다).
     var edges=eArr.map(function(e,ei){
-      var op=(0.16+0.62*e.str).toFixed(3), sw=(0.55+1.35*e.str).toFixed(2);
+      var op=(0.16+0.62*e.str).toFixed(3), sw=(0.28+0.72*e.str).toFixed(2);
       var mx=(e.x1+e.x2)/2;
       var dStr='M'+e.x1.toFixed(1)+' '+e.y1.toFixed(1)+' C'+mx.toFixed(1)+' '+e.y1.toFixed(1)+' '+mx.toFixed(1)+' '+e.y2.toFixed(1)+' '+e.x2.toFixed(1)+' '+e.y2.toFixed(1);
       return '<path class="nnedge-static" data-a="'+e.l+'-'+e.ai+'" data-b="'+(e.l+1)+'-'+e.bi+'" d="'+dStr+'" fill="none" stroke="rgba(120,185,255,'+op+')" stroke-width="'+sw+'"/>';
