@@ -2497,7 +2497,7 @@ const AI_PARAMS = {
 
   // ── 룩백 윈도우(Lookback Window) ── 과거 얼마만큼의 봉을 입력/학습에 쓸지.
   featureLookbackBars: 200,        // 피처 1건 계산에 필요한 최소 과거 봉(MA200 때문에 200 권장)
-  trainWindow: 90000,              // [V12.84] 야간 학습이 사용하는 최근 표본 수(위원회 공통 표본창) — 실제 값은 LUXML.trainWindow
+  trainWindow: 180000,             // [V12.103] 야간 학습이 사용하는 최근 표본 수(위원회 공통 표본창) — 실제 값은 LUXML.trainWindow
 
   // ── 진입/청산 임계값(Threshold) ── 모델 확률/점수가 이 값 이상일 때만 개입.
   //   (구현: LUXML.gateThresh — 이 미만이면 진입 차단, 이상이면 사이징 반영)
@@ -17315,7 +17315,7 @@ const LUXML = {
 
   pickTechWeight: 0.22,  // [V12.86] AI 픽 랭킹에 기술 종합(다기간 컨센서스+차트패턴) 반영 가중(±0.22). 그래프/추세 분석 강화.
   pickBlueWeight: 0.10,  // [V12.86] '우량주 위주 매수' — 시총순위(MCAP_RANK) 기반 우량주 보너스 가중(+0.10). 대형·안정주 선호.
-  trainWindow: 90000,  // [V12.84] 60000→90000: DNN(외부GPU)은 이미 전체 79k 표본을 쓰는데 GBDT·MIND는 12k로
+  trainWindow: 180000,  // [V12.103] 90000→180000: 재수확 풀이 커지면 GBDT/MIND/L1가 더 많이 학습(Modal DNN은 전량). featver별 인덱스로 읽기 커버.
                        //   제한되어 있어 DNN보다 정확도가 낮게 나오는 원인이었다. GBDT(18s)·MIND(신규 45s, _fmTrain
                        //   데드라인가드 추가) 둘 다 시간예산 초과시 자체 절삭하므로 안전. D1 read/JSON.parse
                        //   비용도 이 정도 행수에서는 여유 있음.
@@ -20669,13 +20669,14 @@ const HARVEST = {
   horizon: AI_PARAMS.predictionHorizonDays, stopPct: 5,  // [V12] 예측지평은 AI_PARAMS 단일출처
   tpPct: 8,             // [V9.9] Triple-Barrier(de Prado) 익절 배리어 — 기간내 +8% 선도달 시 승 확정.
                         //   기존 2중(손절+시간)의 "중간에 크게 올랐다가 되돌린 승리 패턴"을 패로 오분류하던 편향 제거.
-  maxPerNight: 160000,  // [V12.84] 110000→160000 — 표본 확보 가속(예산가드가 실제 상한)
+  maxPerNight: 300000,  // [V12.103] 160000→300000 — 예산(260s)이 실제 상한이라 캡은 넉넉히(재수확 가속)
+  rebuildTarget: 700000, // [V12.103] featVer 상향 후 이 미만이면 캐치업 수확(매 cron 틱) 가동 — 빠른 재구축
   maxTotal: 1200000,    // [V12.32] 800000→1200000 — 총 상한 동반 확대(72피처 대비 표본비 ≥16,000:1)
   entryLike: true,
   // [V9.5] entryLike 필터 완화 — 깊은 눌림(MA50 위)+모멘텀 winner(RSI 85까지)까지 포함해
   //   "3~5일 상승 패턴" 등 다양한 진입국면을 사전학습에 편입(사전학습은 커버리지가 넓을수록 유리).
   maLen: 50, rsiLo: 25, rsiHi: 85,   // [V16] 진입국면 커버리지 확대(28→25, 82→85) — 표본 다양성↑
-  budgetMs: 200000,     // [V12.43] 180s→200s — V12.40 체크포인트로 수확 스테이지가 단독 invocation에서 돌므로
+  budgetMs: 260000,     // [V12.103] 200s→260s — 재수확 가속(단독 invocation, Paid 300s CPU 내 여유). 밤당 표본↑
                         //   학습 몫과 경쟁 없음(CPU 300s 중 거래사이클 ~60s 제외 여유). 초과 시 진행분 저장 후 중단(안전)
   // [V18] 딥-히스토리 수확 — range=max 장기이력(2020 코로나·2022 긴축·2018 Q4 폭락 포함) → 국면 다양성으로 과적합↓
   useDeepHistory: true, // hist: 캐시가 있으면 320봉 daily: 대신 딥이력으로 수확(폭락장 학습)
@@ -20855,8 +20856,9 @@ async function mlBuildXSPanel(DB) {
   } catch (e) { return "[XS] fail: " + (e && e.message); }
 }
 
-async function mlMarketHarvestNightly(DB) {
+async function mlMarketHarvestNightly(DB, opts) {
   if (!HARVEST.enabled || !LUXML.enabled) return null;
+  opts = opts || {};
   try {
     await mlEnsureTable(DB);
     // [V18] 수확 유니버스 = daily:(거래) ∪ hist:(수확전용 딥) — 거래 안 하는 종목도 학습표본으로 편입(다양성↑)
@@ -20878,7 +20880,7 @@ async function mlMarketHarvestNightly(DB) {
     const seen = (await getState(DB, seenKey, {})) || {};
     const stmts = [];
     let made = 0, scanned = 0;
-    const hvDeadline = Date.now() + (HARVEST.budgetMs || 45000);  // [V9.5] CPU 예산 — 초과 시 진행분 저장 후 중단
+    const hvDeadline = Date.now() + (opts.budgetMs || HARVEST.budgetMs || 45000);  // [V12.103] 예산 override(캐치업 수확용)
     const idxCache = {};   // [V7] 시장별 지수 일봉(상대강도용) — 1회 로드
     for (const mk of ["us", "kr", "cm"]) {
       try {
@@ -23540,6 +23542,26 @@ export default {
       //    미학습/표본부족이면 각 함수가 자동 대기(observe)라 거래영향 0.
       try {
         if (typeof LUXML !== "undefined" && LUXML.enabled) {
+          // [V12.103] ★재수확 캐치업★ featVer 상향 후 표본 풀은 0부터 다시 채워야 하는데(구 featVer는
+          //   피처차원이 달라 재사용 불가), 야간 1회 수확은 예산상 밤당 ~수만개라 120만 재구축에 수 주가
+          //   걸렸다. 풀이 rebuildTarget 미만인 동안에는 '매 cron 틱'마다 짧은 예산(22s)으로 수확을 추가
+          //   실행해 몇 시간 내 재구축을 끝낸다. 일일 파이프라인과 별개(게이트 무관), 90s 락으로 틱 겹침
+          //   방지, 거래윈도우 밖일 때만(시세 사이클 CPU 경쟁 회피).
+          try {
+            if (HARVEST.enabled && LUXML.enabled) {
+              const _pr = await env.DB.prepare("SELECT COUNT(*) c FROM ml_samples WHERE featver=?").bind(LUXML.featVer).first();
+              const _poolN = (_pr && _pr.c) || 0;
+              const _target = HARVEST.rebuildTarget || 700000;
+              const _cuLock = _num(await getState(env.DB, "hv_catchup_lock", 0), 0);
+              const _mktOpen = (typeof isTradingWindow === "function") && (isTradingWindow("us") || isTradingWindow("kr"));
+              if (_poolN < _target && !_mktOpen && (Date.now() - _cuLock > 90000)) {
+                await setState(env.DB, "hv_catchup_lock", Date.now());
+                try { resetFetchBudget(120); } catch (e0) {}
+                const _cr = await mlMarketHarvestNightly(env.DB, { budgetMs: 22000 });   // 짧은 예산 캐치업
+                if (_cr) await log(env.DB, "INFO", null, "[HV-CATCHUP] pool=" + _poolN + "/" + _target + " " + _cr);
+              }
+            }
+          } catch (e) {}
           const _aiDay = new Date().toISOString().slice(0, 10);
           let _aiLast = await getState(env.DB, "ai_trained_day", null);
           // [V12.99] ★재배포 후 1회 강제 재실행★ 새 코드가 배포되면(_PIPE_VER 변경) 그날 이미 학습했어도
