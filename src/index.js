@@ -17192,9 +17192,14 @@ const LUXML = {
     "sectorBeta",  // 섹터 베타 — 섹터 민감도
     // ── [V21] 유니버스 횡단면 랭크 2 — 그 시점 전 종목 분포 대비 z-score(백분위) ──
     "xsRet20z",    // 20일 수익률의 유니버스 횡단면 z-score
-    "xsRet5z"      // 5일 수익률의 유니버스 횡단면 z-score
+    "xsRet5z",     // 5일 수익률의 유니버스 횡단면 z-score
+    // ── [V12.87] ★기술적 상승패턴 학습 3종★ — 순수 OHLCV라 수확이 과거로 복원(죽은피처 아님). ──
+    //   AI가 '기술적 분석 중심으로 상승하는 패턴'을 직접 학습하도록 그래프분석을 피처화.
+    "chartPat",    // 차트패턴 종합(-1..1) — 헤드앤숄더/채널/쐐기/이중천정 등(taDetectPatterns) bull(+)/bear(-)
+    "tfConsBull",  // 다기간 기술 컨센서스(-1..1) — now·week·month(MA/RSI/스토캐스틱/MACD) 가중 강세도
+    "maStack"      // 이동평균 정배열(-1..1) — MA5>20>50>200 완전정배열(+1) … 완전역배열(-1), 상승추세 진위
   ],
-  featVer: 11,  // ★V21: 유니버스 횡단면 랭크 2 추가(70→72). 구버전 표본 분리(WHERE featver=?)+전종목 재수확
+  featVer: 12,  // ★V12.87: 기술 상승패턴 3종 추가(72→75). 구버전 표본 분리(WHERE featver=?)+전종목 재수확
 
   minSamplesGate: 150,
   minSamplesSize: 400,
@@ -17446,6 +17451,29 @@ async function _mlLoadIndexCloses(DB, mkt) {
 //         sigWeight, confluence, strategy, market, ev }
 //   ev(선택): 이벤트 피처 이름→값 객체. lux_news.mlCollectEvents가 채움. 없으면 전부 0.
 //   volumes/opens/market(선택): [V4] 시장구조 피처용 — 없으면 해당 피처 중립값.
+// [V12.87] 기술적 상승패턴 피처 — 차트패턴·다기간 컨센서스·MA정배열(전부 순수 OHLCV, 수확 복원 가능).
+function _mlPatternFeats(closes, highs, lows, opens) {
+  const o = { chartPat: 0, tfConsBull: 0, maStack: 0 };
+  try {
+    if (!Array.isArray(closes) || closes.length < 30) return o;
+    const H = (Array.isArray(highs) && highs.length === closes.length) ? highs : closes;
+    const L = (Array.isArray(lows) && lows.length === closes.length) ? lows : closes;
+    const O = (Array.isArray(opens) && opens.length === closes.length) ? opens : closes;
+    try { const tp = taDetectPatterns({ closes: closes, highs: H, lows: L, opens: O }); if (tp && typeof tp.score === "number") o.chartPat = _clamp(tp.score / 5, -1, 1); } catch (e) {}
+    try { const ts = techSummaryMultiTF(closes, H, L); if (ts && ts.now && ts.week && ts.month) o.tfConsBull = _clamp(_num(ts.now.score, 0) * 0.5 + _num(ts.week.score, 0) * 0.35 + _num(ts.month.score, 0) * 0.15, -1, 1); } catch (e) {}
+    try {
+      const p = closes[closes.length - 1];
+      const m5 = getMA(closes, 5), m20 = getMA(closes, 20), m50 = getMA(closes, 50), m200 = getMA(closes, Math.min(200, closes.length - 1));
+      let sc = 0, n = 0;
+      if (m5 != null && m20 != null) { sc += m5 > m20 ? 1 : -1; n++; }
+      if (m20 != null && m50 != null) { sc += m20 > m50 ? 1 : -1; n++; }
+      if (m50 != null && m200 != null) { sc += m50 > m200 ? 1 : -1; n++; }
+      if (p > 0 && m20 != null) { sc += p > m20 ? 1 : -1; n++; }
+      if (n) o.maStack = sc / n;
+    } catch (e) {}
+  } catch (e) {}
+  return o;
+}
 function mlBuildFeatures(args) {
   try {
     const closes = Array.isArray(args.closes) ? args.closes : [];
@@ -17505,6 +17533,9 @@ function mlBuildFeatures(args) {
     // [V19] 지수-상대 횡단면 4종 — 지수 대비 상대위치(수확·라이브 동일: idxCloses 기반)
     const xs = _mlXSectFeats(closes, args.idxCloses);
     f.rsiRel = xs.rsiRel; f.volRatioRel = xs.volRatioRel; f.betaIdx = xs.betaIdx; f.corrIdx = xs.corrIdx;
+    // [V12.87] 기술 상승패턴 3종 — 차트패턴·다기간 컨센서스·MA정배열(그래프분석 피처화)
+    const pat = _mlPatternFeats(closes, args.highs, args.lows, args.opens);
+    f.chartPat = pat.chartPat; f.tfConsBull = pat.tfConsBull; f.maStack = pat.maStack;
     // [V20] 시장국면 4종(무배선) + 섹터-상대강도 2종(sectorCloses 배선) — 국면조건부 학습 + 섹터알파
     const rg = _mlMarketRegimeFeats(args.idxCloses);
     f.idxTrend = rg.idxTrend; f.idxRsi = rg.idxRsi; f.idxVol = rg.idxVol; f.idxMom20 = rg.idxMom20;
@@ -19951,7 +19982,8 @@ const FEAT_ROLES = {
   rsiRel: "지수대비 상대 RSI", volRatioRel: "지수대비 상대 변동성", betaIdx: "시장 베타(민감도)", corrIdx: "지수 동조도(상관)",
   idxTrend: "시장 추세(지수 vs MA50)", idxRsi: "시장 RSI(과열/과매도)", idxVol: "시장 변동성", idxMom20: "시장 모멘텀",
   sectorRs20: "섹터 상대강도", sectorBeta: "섹터 베타",
-  xsRet20z: "유니버스 20일수익 랭크(z)", xsRet5z: "유니버스 5일수익 랭크(z)"
+  xsRet20z: "유니버스 20일수익 랭크(z)", xsRet5z: "유니버스 5일수익 랭크(z)",
+  chartPat: "차트패턴 종합(그래프분석)", tfConsBull: "다기간 기술 컨센서스", maStack: "이동평균 정배열(추세)"
 };
 
 // ── [V9 시각화] 신경망 구조·가중치 강도를 프론트 시각화용으로 요약 반환 ──
