@@ -21956,37 +21956,59 @@ function _luxWriteReport(ym, D) {
       if (stats.length) S.push("심화 통계: " + stats.join(" · ") + ".");
     } catch (e) {}
   }
-  // ══ 4) 시장 전망 — AI 종합 의견 ══
+  // ══ 4) 시장 전망 — 리서치 보고서 형식(투자의견→논거→촉매/리스크→트리거→전략) ══
   const ol = D.outlook || {};
   if (ol.us || ol.kr) {
-    S.push("\n## 시장 전망 — AI 종합 의견 (1개월)");
+    S.push("\n## 시장 전망");
     for (const mk of ["us", "kr"]) {
       const o = ol[mk]; if (!o) continue;
       const idxName = mk === "us" ? "S&P500" : "코스피";
-      let po = "**" + idxName + " " + o.px.toLocaleString() + "pt** — ";
-      const trendBits = [];
-      if (o.r20 != null) trendBits.push("20일 " + (o.r20 >= 0 ? "+" : "") + o.r20 + "%");
-      if (o.r60 != null) trendBits.push("60일 " + (o.r60 >= 0 ? "+" : "") + o.r60 + "%");
-      if (o.vsMa50 != null) trendBits.push("MA50 대비 " + (o.vsMa50 >= 0 ? "+" : "") + o.vsMa50 + "%");
-      if (o.vsMa200 != null) trendBits.push("MA200 대비 " + (o.vsMa200 >= 0 ? "+" : "") + o.vsMa200 + "%");
-      trendBits.push("RSI " + o.rsi);
-      po += trendBits.join(", ") + ". ";
-      if (o.dd52 != null) po += "52주 고점(" + (o.hi52 != null ? o.hi52.toLocaleString() + "pt" : "") + ") 대비 " + o.dd52 + "%" + (o.dd52 >= -1 ? " — 고점권" : o.dd52 <= -10 ? " — 조정 구간" : "") + ", 최근 20일 밴드 내 위치 " + (o.pos20 != null ? o.pos20 + "%" : "—") + ". ";
-      if (o.vol20 != null) po += "실현변동성(20일 연율) " + o.vol20 + "%" + (o.volRising ? " — 60일(" + o.vol60 + "%) 대비 상승 국면, 리스크 확대 신호" : " — 안정 국면") + ". ";
-      if (o.vix != null) po += "VIX " + o.vix + (o.vix >= 28 ? "(공포 구간)" : o.vix >= 20 ? "(경계 구간)" : "(안정 구간)") + ". ";
-      if (o.aiMeanP != null) po += "위원회가 전종목 스캔에서 산출한 이 시장 평균 성공확률은 " + (o.aiMeanP * 100).toFixed(1) + "%(" + o.aiN + "종목)로, 모델의 종합 편향은 " + (o.aiMeanP >= 0.53 ? "강세" : o.aiMeanP <= 0.47 ? "약세" : "중립") + ". ";
-      if (o.sentiAvg != null && mk === "us") po += "섹터 뉴스 감성 평균 " + (o.sentiAvg >= 0 ? "+" : "") + o.sentiAvg + ". ";
-      S.push(po);
-      let pv = "종합 판단: 1개월 상승확률 **" + (o.upProb * 100).toFixed(0) + "%**";
-      if (o.bandPct != null) pv += ", 기대 밴드 ±" + o.bandPct + "% (" + o.bandLo.toLocaleString() + "~" + o.bandHi.toLocaleString() + "pt, 실현변동성 기반 1σ)";
-      pv += ". ";
-      if (o.pBull != null) pv += "시나리오 확률: 강세(+0.5σ↑) " + o.pBull + "% · 횡보 " + o.pBase + "% · 약세(-0.5σ↓) " + o.pBear + "%. ";
-      if (o.upProb >= 0.6) pv += "추세·모멘텀·모델 편향이 정렬된 상방 우위 — 단, RSI " + o.rsi + (o.rsi >= 70 ? "의 과열은 단기 되돌림 리스크로 상방 시나리오의 주된 제약" : " 수준에서 과열 부담은 제한적") + ".";
-      else if (o.upProb <= 0.45) pv += "추세 약화·변동성 확대가 겹친 하방 경계 구간 — 신규 진입 문턱을 높이고 사이즈를 줄이는 것이 기대값상 우월.";
-      else pv += "방향 신호가 혼재된 중립 구간 — 방향 베팅보다 종목 선별(알파)에 집중하는 것이 합리적.";
-      pv += " 이 전망은 확률이며, 실제 진입은 종목 단위 위원회 재확인을 통과해야 집행된다.";
-      S.push(pv);
+      const rating = o.upProb >= 0.6 ? "비중확대(Overweight)" : o.upProb <= 0.44 ? "비중축소(Underweight)" : "중립(Neutral)";
+      const stance = o.upProb >= 0.6 ? "상방" : o.upProb <= 0.44 ? "하방" : "중립";
+      S.push("### " + idxName + " — 투자의견 **" + rating + "**");
+      let onel = "현 지수 " + o.px.toLocaleString() + "pt. 향후 1개월 ";
+      if (o.bandLo != null) onel += (stance === "상방" ? "밴드 상단 **" + o.bandHi.toLocaleString() + "pt** 도전을 상정" : stance === "하방" ? "밴드 하단 **" + o.bandLo.toLocaleString() + "pt** 이탈 리스크에 무게" : "**" + o.bandLo.toLocaleString() + "~" + o.bandHi.toLocaleString() + "pt** 박스권을 상정") + "한다(상승확률 " + (o.upProb * 100).toFixed(0) + "%, 실현변동성 1σ 밴드).";
+      S.push(onel);
+      // 투자 논거(Thesis)
+      let th = "**투자 논거.** ";
+      if (o.vsMa200 != null && o.vsMa50 != null) {
+        if (o.vsMa200 > 0 && o.vsMa50 > 0) th += "지수는 200일선을 " + o.vsMa200 + "%, 50일선을 " + o.vsMa50 + "% 상회하며 중기 상승추세를 유지하고 있어 추세 관성이 향후 한 달도 상방으로 작용할 것으로 판단한다. ";
+        else if (o.vsMa200 > 0 && o.vsMa50 <= 0) th += "장기 추세(200일선 +" + o.vsMa200 + "%)는 유효하나 단기(50일선 " + o.vsMa50 + "%)가 꺾여, 중기 상승추세 내 단기 조정으로 해석한다. 50일선 회복 여부가 추세 재개의 1차 관문이 될 것이다. ";
+        else th += "지수가 50·200일선을 모두 하회(각각 " + o.vsMa50 + "%, " + o.vsMa200 + "%)해 추세가 하방 전환된 상태로, 반등이 나오더라도 이동평균 저항에 직면할 공산이 크다. ";
+      }
+      if (o.r20 != null && o.r60 != null) th += "모멘텀은 20일 " + (o.r20 >= 0 ? "+" : "") + o.r20 + "%·60일 " + (o.r60 >= 0 ? "+" : "") + o.r60 + "%로 " + (o.r20 >= 0 && o.r60 >= 0 ? "단·중기 동반 양(+)이며" : o.r20 < 0 && o.r60 >= 0 ? "중기 상승·단기 둔화이고" : "동반 약세이며") + ", ";
+      if (o.dd52 != null) th += "52주 고점 대비 " + o.dd52 + "%(밴드 위치 " + (o.pos20 != null ? o.pos20 + "%" : "-") + ")로 " + (o.dd52 >= -3 ? "고점권 밸류에이션 부담이 존재한다. " : o.dd52 <= -12 ? "낙폭과대에 따른 기술적 반등 여지가 열려 있다. " : "중립적 위치다. ");
+      if (o.vol20 != null) th += "변동성은 20일 실현 " + o.vol20 + "%로 " + (o.volRising ? "60일(" + o.vol60 + "%) 대비 확대되고 있어, 방향성보다 리스크 관리가 우선되는 국면임을 시사한다. " : "안정적이어서 추세 추종 환경은 우호적이다. ");
+      if (o.vix != null && o.vix >= 20) th += "VIX " + o.vix + "의 " + (o.vix >= 28 ? "공포" : "경계") + " 레벨은 하방 꼬리위험을 경고한다. ";
+      if (o.aiMeanP != null) th += "무엇보다 자체 위원회가 " + o.aiN + "개 종목을 스캔해 산출한 평균 성공확률 " + (o.aiMeanP * 100).toFixed(1) + "%는 " + (o.aiMeanP >= 0.53 ? "종목군 전반의 상방 우위를 지지한다" : o.aiMeanP <= 0.47 ? "매력적 진입 후보가 희소함을 시사한다" : "중립적이다") + ". ";
+      S.push(th);
+      if (o.pBull != null) S.push("**시나리오(1개월).** 강세(+0.5σ↑) " + o.pBull + "% → " + o.bandHi.toLocaleString() + "pt 상향 / 기준선(횡보) " + o.pBase + "% → " + o.px.toLocaleString() + "pt 내외 / 약세(-0.5σ↓) " + o.pBear + "% → " + o.bandLo.toLocaleString() + "pt 하향.");
+      const cat = [], risk = [];
+      if (o.vsMa50 != null && o.vsMa50 < 0) cat.push("50일선(" + Math.abs(o.vsMa50) + "%p 위) 회복 시 추세 재개");
+      if (o.rsi < 45) cat.push("RSI " + o.rsi + " 과매도 해소 반등");
+      if (o.dd52 != null && o.dd52 <= -10) cat.push("낙폭과대(52주 -" + Math.abs(o.dd52) + "%) 기술적 반등");
+      if (o.aiMeanP != null && o.aiMeanP >= 0.53) cat.push("모델 강세 편향 → 개별 알파 종목 상승 견인");
+      if (!cat.length) cat.push("실적·매크로 서프라이즈에 따른 밴드 상단 돌파");
+      if (o.rsi >= 70) risk.push("RSI " + o.rsi + " 과열 되돌림");
+      if (o.volRising) risk.push("변동성 확대 지속 시 리스크 프리미엄 상승");
+      if (o.vix != null && o.vix >= 22) risk.push("VIX " + o.vix + " 상승 전환(꼬리위험)");
+      if (o.vsMa50 != null && o.vsMa50 < 0) risk.push("50일선 회복 실패 시 추세 이탈 가속");
+      if (o.aiMeanP != null && o.aiMeanP <= 0.47) risk.push("모델 약세 편향 → 진입 후보 부재");
+      if (!risk.length) risk.push("예상 밖 매크로 충격에 따른 밴드 하단 이탈");
+      S.push("**상방 촉매.** " + cat.slice(0, 3).join("; ") + ".");
+      S.push("**하방 리스크.** " + risk.slice(0, 3).join("; ") + ".");
+      let trig = "**관점 변경 트리거.** ";
+      if (stance === "상방") trig += "20일 실현변동성이 " + (o.vol60 != null ? (o.vol60 * 1.3).toFixed(0) : "22") + "%를 상향 돌파하거나 지수가 50일선을 하향 이탈하면 중립 이하로 하향한다.";
+      else if (stance === "하방") trig += "지수의 50일선 회복과 RSI 50 상향 돌파가 동반되면 중립으로 상향한다.";
+      else trig += "상승확률이 60%를 상회하면 비중확대로, 44%를 하회하면 비중축소로 전환한다.";
+      S.push(trig);
+      let strat = "**운용 대응.** ";
+      if (stance === "상방") strat += "추세 추종 진입을 유지하되 RSI " + o.rsi + " 수준의 신규 진입은 눌림목으로 제한하고, 변동성 타게팅이 사이즈를 자동 조절하도록 둔다.";
+      else if (stance === "하방") strat += "위원회 확률 게이트를 높이고 종목·시장 사이즈 상한을 보수 적용하며, 일일 손실 서킷브레이커의 개입 여지를 남긴다. 방향 베팅 대신 현금·헤지 비중을 확대한다.";
+      else strat += "지수 방향 베팅을 지양하고 종목 선별(알파)에 집중한다. 위원회 고확신 종목만 선별 진입하고 변동성 타게팅으로 노출을 통제한다.";
+      S.push(strat);
     }
+    S.push("_상기 전망은 온보드 정량모델의 확률적 추정이며 투자 권유가 아니다. 실제 진입은 종목 단위 위원회 재확인을 통과한 경우에만 집행된다._");
   }
   // ══ 5) 시스템 자가진단 ══
   S.push("\n## 시스템 자가진단");
