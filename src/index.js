@@ -2699,10 +2699,10 @@ const AI_PARAMS = {
   //   합성신호(AI_PRIMARY)를 기존 진입 파이프라인에 주입 → 코드 중복 없이 모든 안전장치 재사용.
   aiPrimary: {
     enabled: true,          // AI 주도 진입 활성(끄려면 false → 규칙엔진 전용으로 복귀)
-    threshold: 0.60,        // 위원회 결합확률 이 이상일 때만 AI 단독 진입(규칙신호 없는 종목이라 보수적)
+    threshold: 0.55,        // [V12.89] 0.60→0.55 — 블렌드확률 기준 0.60은 과도(매수 정체). 기술 드라이버와 함께 완화(규칙신호 없는 종목이라 보수적)
     maxPerCycle: 8,         // 사이클당 AI 주도 진입 후보 상한(위원회 계산·subrequest 통제)
     baseWeight: 0.6,        // 합성신호 기본 가중(규칙신호 1.0 대비 축소 → 사이즈 보수화)
-    maxDisagree: 0.22,      // 전문가 불일치(std) 이 초과면 AI 단독진입 보류(합의 없는 진입 차단)
+    maxDisagree: 0.30,      // [V12.89] 0.22→0.30 — 표본부족기 전문가 불일치가 커 과도차단되던 것 완화(합의 없는 진입 차단)
     rsiMin: 45, rsiMax: 72, // 사전필터 RSI 밴드(상승추세 정렬 종목만 위원회 평가)
     requireTrustedModel: true // DNN/GBDT 중 최소 하나가 신뢰(합류)해야 AI 단독진입 허용(MIND 단독 과신 방지)
   },
@@ -2753,7 +2753,7 @@ const AI_PARAMS = {
   metaLabeling: {
     enabled: true,
     firstModelSensitivity: "high", // 1차 신호생성기 민감도 — 대량 신호 허용(승률 낮아도 됨). 2차가 걸러냄
-    metaThreshold: 0.52,           // [V12.69] 0.50→0.52 — 2차 메타모델(위원회) 성공확률 이 이상일 때만 집행.
+    metaThreshold: 0.50,           // [V12.89] 0.52→0.50 — decisionCore 블렌드가 이미 기술 반영, 이중차단 완화(매수 정체 해소) — 2차 메타모델(위원회) 성공확률 이 이상일 때만 집행.
                                    //   2달 거래분석: 손실이 저확률 KR 진입(SC_VWAP 승률26% 등)에 집중 → 코인플립
                                    //   미만 진입을 위원회가 실제로 걸러내도록 소폭 상향. 여전히 걸러도 너무 많이
                                    //   막지 않는 보수적 문턱(권장 0.5~0.75, 손실 지속 시 0.55+로 상향 가능).
@@ -12906,10 +12906,20 @@ async function runTradingCycle(env) {
               const _ma20 = getMA(closes, 20), _ma50 = getMA(closes, 50);
               const _uptrend = (_ma20 != null && _ma50 != null && _ma20 > _ma50 && price > _ma20 &&
                                 (dailyRsi == null || (dailyRsi >= (_ap.rsiMin || 45) && dailyRsi <= (_ap.rsiMax || 72))));
-              if (_picked || _uptrend) {
+              // [V12.89] ★다기간 기술요약을 매수 드라이버로★ (사용자 요청) — 시기별(단기·1주·1달·1년)
+              //   컨센서스가 3개 이상 매수면 AI가 이 기술신호만으로도 진입 후보에 올린다. 그래프 중심 매수.
+              let _techBuy = false, _tfBull = 0;
+              try {
+                const _tf = techSummaryMultiTF(daily.closes, daily.highs, daily.lows);
+                if (_tf) {
+                  for (const _p of [_tf.now, _tf.week, _tf.month, _tf.year]) if (_p && String(_p.label).indexOf("매수") >= 0) _tfBull++;
+                  _techBuy = _tfBull >= 3 && _tf.now && String(_tf.now.label).indexOf("적극매도") < 0;
+                }
+              } catch (e) {}
+              if (_picked || _uptrend || _techBuy) {
                 aiPrimaryUsed++;
                 stratResults.push({ strategy: "trend", weight: (_ap.baseWeight || 0.6),
-                  signal: { name: "AI_PRIMARY", members: ["AI_PRIMARY"], picked: _picked, isAiPrimary: true, weight: (_ap.baseWeight || 0.6) } });
+                  signal: { name: "AI_PRIMARY", members: ["AI_PRIMARY"], picked: _picked, techBuy: _techBuy, tfBull: _tfBull, isAiPrimary: true, weight: (_ap.baseWeight || 0.6) } });
               }
             }
           } catch (e) {}
@@ -13344,7 +13354,7 @@ async function runTradingCycle(env) {
                     _md.pRaw = _md.p;
                     _md.p = _luxDecisionBlend(_md.p, _tk.tech, _ns, _dc);
                     _md.blended = true; _md.techScore = _tk.tech; _md.newsScore = _ns;
-                    if (_tk.tech != null && _tk.tech <= -0.4) { _md.allow = false; _md.techVeto = true; }   // 그래프 강한 약세 → 진입 거부
+                    if (_tk.tech != null && _tk.tech <= -0.5) { _md.allow = false; _md.techVeto = true; }   // 그래프 강한 약세 → 진입 거부
                   }
                 } catch (e) {}
                 if (_md && (_md.observe || _md.abstain)) {
