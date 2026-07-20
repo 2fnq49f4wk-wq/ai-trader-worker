@@ -437,8 +437,9 @@ button.btn.loading::after{content:'조회 중…';position:absolute;inset:0;disp
 /* ── 테이블 공통 ── */
 .table-wrap{overflow-x:auto;-webkit-overflow-scrolling:touch;}
 /* [V12.92] 거래 사유(REASON) 짤림 방지 — 넉넉한 폭 + 가로스크롤로 오른쪽까지 다 보이게, 마우스오버 시 전체 툴팁 */
-.table td.trade-reason{white-space:nowrap;min-width:260px;max-width:520px;overflow:hidden;text-overflow:ellipsis;cursor:help;}
-.trade-reason{cursor:help;}
+/* [V12.102] 거래 사유 짤림 → 클립 제거하고 자연폭으로 확장 → .table-wrap(overflow-x:auto)로 오른쪽 스크롤해 전문 확인. 툴팁도 유지. */
+.table td.trade-reason{white-space:nowrap;cursor:help;}
+.trade-reason{cursor:help;white-space:nowrap;}
 .table{width:100%;border-collapse:collapse;font-size:11px;}
 .table th{
   position:sticky;top:0;z-index:1;

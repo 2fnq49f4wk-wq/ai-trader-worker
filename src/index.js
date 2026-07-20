@@ -21026,13 +21026,16 @@ async function mlMarketHarvestNightly(DB) {
         "DELETE FROM ml_samples WHERE id IN (SELECT id FROM ml_samples WHERE strategy='hv' AND featver=? ORDER BY RANDOM() LIMIT ?)"
       ).bind(LUXML.featVer, over).run();
     } catch (e) {}
-    // [V12.95] 구 featVer 표본 점진 정리 — 피처차원이 달라(v.length 불일치) 현재 학습에 절대 안 쓰이는
-    //   죽은 표본이 D1을 채워 프루닝·용량을 왜곡했다. CPU/D1 스파이크 방지용 '편법'으로 한 밤에 최대
-    //   80,000행만 삭제(여러 밤에 걸쳐 완전 정리 — 순회는 harvest가 이미 매밤 도므로 안전).
+    // [V12.102] 구 featVer 표본 능동 정리 가속 — 죽은 표본(현 학습이 절대 안 읽음)이 D1을 채워 신 featVer
+    //   풀 성장·인서트를 방해하던 것. 밤당 80k→300k로 상향(≈1.2M을 4밤에 완전 정리). 단, 한 번의 대량
+    //   삭제 timeout 방지를 위해 100k씩 3회 배치로 쪼갬. 삭제된 만큼 신 featVer 표본이 자랄 공간 확보.
     try {
-      await DB.prepare(
-        "DELETE FROM ml_samples WHERE id IN (SELECT id FROM ml_samples WHERE featver != ? ORDER BY id LIMIT 80000)"
-      ).bind(LUXML.featVer).run();
+      for (let _p = 0; _p < 3; _p++) {
+        const _r = await DB.prepare(
+          "DELETE FROM ml_samples WHERE id IN (SELECT id FROM ml_samples WHERE featver != ? ORDER BY id LIMIT 100000)"
+        ).bind(LUXML.featVer).run();
+        if (!(_r && _r.meta && _r.meta.changes)) break;   // 더 지울 구 표본 없으면 조기 종료
+      }
     } catch (e) {}
     return made ? ("[HV] 시장수확 +" + made + "표본 (" + scanned + "종목, 오프셋 " + off + "→" + ((off + takeN) % symsAll.length) + ")") : null;
   } catch (e) { return "[HV] fail: " + (e && e.message); }
