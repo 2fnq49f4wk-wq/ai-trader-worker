@@ -21850,6 +21850,52 @@ async function mlMarketOutlook(DB) {
   return out;
 }
 
+// [V12.83] ★거시·금리·섹터 데이터 엔진★ — 리포트의 매크로/섹터 섹션 재료. 외부 API 0(자체 수집분만).
+//   금리: index/daily(^TNX 10년물)로 레벨·20일 변화 → 방향. 물가·고용: macro_data(자체 수집).
+//   섹터: sector_news_sentiment 점수 + 대표티커 20일 모멘텀(일봉 캐시)으로 섹터별 view 산출.
+async function _luxMacroSectorData(DB) {
+  const R = { macro: null, sectors: [] };
+  try {
+    const md = await getState(DB, "macro_data", null);
+    const us = (md && md.us) || {};
+    const parseRate = function (v) { if (v == null) return null; const m = String(v).match(/-?\d+(\.\d+)?/g); if (!m) return null; const nums = m.map(Number); return nums.reduce(function (a, b) { return a + b; }, 0) / nums.length; };
+    let ten = null, ten20 = null;
+    try {
+      const ti = await getState(DB, "index:^TNX", null); if (ti && typeof ti.price === "number") ten = ti.price;
+      const td = await getState(DB, "daily:^TNX", null);
+      if (td && Array.isArray(td.closes) && td.closes.length >= 21) { const c = td.closes; ten = ten != null ? ten : c[c.length - 1]; ten20 = c[c.length - 1] - c[c.length - 21]; }
+    } catch (e) {}
+    R.macro = {
+      fedRate: us.fed_rate ? String(us.fed_rate.value) : null,
+      cpi: us.cpi ? _num(parseRate(us.cpi.value), null) : null,
+      corePce: us.core_pce ? _num(parseRate(us.core_pce.value), null) : null,
+      unemployment: us.unemployment ? _num(parseRate(us.unemployment.value), null) : null,
+      ten: ten != null ? +ten.toFixed(2) : null,
+      ten20: ten20 != null ? +ten20.toFixed(2) : null,
+      asOf: us.cpi ? (us.cpi.released || "") : ""
+    };
+  } catch (e) {}
+  try {
+    const sn = await getState(DB, "sector_news_sentiment", null);
+    const gNames = { TECH: "기술/반도체", FINANCE: "금융", HEALTH: "헬스케어", CONSUMER: "소비재", INDUSTRIAL: "산업재/방산", RESOURCES: "에너지/소재" };
+    const scores = (sn && sn.scores) || {};
+    for (const g of Object.keys(gNames)) {
+      let mom = null, mn = 0, ms = 0;
+      const reps = (SECTOR_NEWS_REP[g] || "").split(",").slice(0, 4);
+      for (const r of reps) {
+        try { const d = await getState(DB, "daily:" + r, null); if (d && Array.isArray(d.closes) && d.closes.length >= 21) { const c = d.closes; if (c[c.length - 21] > 0) { ms += (c[c.length - 1] / c[c.length - 21] - 1) * 100; mn++; } } } catch (e) {}
+      }
+      if (mn) mom = ms / mn;
+      const senti = typeof scores[g] === "number" ? scores[g] : null;
+      if (senti == null && mom == null) continue;
+      R.sectors.push({ g: g, name: gNames[g], senti: senti != null ? +senti.toFixed(2) : null, mom20: mom != null ? +mom.toFixed(1) : null });
+    }
+    R.sectors.sort(function (a, b) { return (b.mom20 != null ? b.mom20 : -99) - (a.mom20 != null ? a.mom20 : -99); });
+  } catch (e) {}
+  return R;
+}
+
+
 function _luxWriteReport(ym, D) {
   const mkNames = { us: "미국", kr: "한국", cm: "원자재", bdus: "미국채", bdkr: "한국채" };
   const mkts = D.mkts || {};
@@ -21955,6 +22001,43 @@ function _luxWriteReport(ym, D) {
       }
       if (stats.length) S.push("심화 통계: " + stats.join(" · ") + ".");
     } catch (e) {}
+  }
+  // ══ 3.5) 거시·금리 전망 ══
+  const mc = D.macro;
+  if (mc && (mc.ten != null || mc.cpi != null || mc.fedRate)) {
+    S.push("\n## 거시·금리 전망");
+    let pm = "";
+    if (mc.fedRate) pm += "연준 정책금리는 " + mc.fedRate + "% 구간에 머물러 있다. ";
+    if (mc.cpi != null) {
+      pm += "물가 쪽을 보면 CPI가 " + mc.cpi.toFixed(1) + "%" + (mc.corePce != null ? "(근원 PCE " + mc.corePce.toFixed(1) + "%)" : "") + "로, ";
+      pm += (mc.cpi >= 3 ? "여전히 연준의 2% 목표를 뚜렷이 웃돌고 있다. 이 수준이 이어지는 한 조기·대폭 인하 기대는 제한적이며, 우리는 '완만한 인하 또는 동결 장기화'를 기준 시나리오로 본다. "
+            : mc.cpi >= 2.3 ? "목표선(2%)에 근접해 가는 흐름이다. 디스인플레이션이 확인될수록 인하 여력이 커진다는 점에서 위험자산에는 점진적 우호 환경이 조성될 수 있다고 판단한다. "
+            : "목표를 밑도는 안정 국면이다. 물가가 걸림돌이 아니라면 통화정책은 성장·고용 지표에 더 민감하게 반응할 것이다. ");
+    }
+    if (mc.unemployment != null) pm += "고용은 실업률 " + mc.unemployment.toFixed(1) + "%로 " + (mc.unemployment >= 4.5 ? "완만한 둔화 신호를 내고 있어, 경기 방어와 인하 기대가 동시에 커지는 구간이다. " : "아직 견조하다. 고용이 버티는 한 연준이 서둘러 완화에 나설 이유는 크지 않다. ");
+    S.push(pm.trim());
+    if (mc.ten != null) {
+      let pr = "시장금리(미 10년물)는 " + mc.ten.toFixed(2) + "%로 ";
+      if (mc.ten20 != null) pr += "최근 한 달 " + (mc.ten20 >= 0 ? "+" : "") + mc.ten20.toFixed(2) + "%p " + (mc.ten20 >= 0.15 ? "상승했다. 금리 상승은 밸류에이션 부담과 성장주 할인율 확대로 이어지는 만큼, 우리는 이를 주식시장의 단기 역풍 요인으로 지목한다." : mc.ten20 <= -0.15 ? "하락했다. 금리 하락은 성장주·장기듀레이션 자산에 우호적이며, 위험선호를 지지하는 배경으로 작용할 것으로 본다." : "대체로 횡보했다. 금리가 방향을 정하지 못한 국면에서는 주식시장도 매크로보다 실적·개별 재료에 더 좌우되기 쉽다.");
+      else pr += "형성돼 있다.";
+      S.push(pr);
+    }
+    S.push("_거시 판단은 자체 수집한 발표치에 근거한 해석이며, 예상 밖 지표·정책 이벤트가 전제를 뒤집을 수 있다는 점을 전제로 한다._");
+  }
+  // ══ 3.6) 섹터 코멘트 ══
+  const secs = D.sectors;
+  if (secs && secs.length) {
+    S.push("\n## 섹터 코멘트");
+    S.push("아래는 뉴스 감성과 대표 종목 20일 모멘텀을 결합해 본 섹터별 온도다. 강한 쪽부터 적는다.");
+    for (const sc of secs) {
+      const bits = [];
+      if (sc.mom20 != null) bits.push("20일 모멘텀 " + (sc.mom20 >= 0 ? "+" : "") + sc.mom20 + "%");
+      if (sc.senti != null) bits.push("뉴스 감성 " + (sc.senti >= 0 ? "+" : "") + sc.senti);
+      const strong = (sc.mom20 != null && sc.mom20 >= 3) && (sc.senti == null || sc.senti >= 0);
+      const weak = (sc.mom20 != null && sc.mom20 <= -3) || (sc.senti != null && sc.senti <= -0.2);
+      let view = strong ? "모멘텀과 심리가 함께 우호적이어서, 신규 진입 후보를 이 안에서 우선 탐색할 만하다." : weak ? "모멘텀·심리가 약해 당분간은 관망이 무난하다는 판단이다." : "뚜렷한 방향성은 약하다. 개별 종목 단위 선별로 접근하는 편이 낫다.";
+      S.push("- **" + sc.name + "** (" + bits.join(", ") + "): " + view);
+    }
   }
   // ══ 4) 시장 전망 — 리서치 보고서 형식(투자의견→논거→촉매/리스크→트리거→전략) ══
   const ol = D.outlook || {};
@@ -22242,7 +22325,9 @@ async function mlMonthlyReport(DB, ym, force, env) {
         }
       } catch (e) {}
       let _olk = null; try { _olk = await mlMarketOutlook(DB); } catch (e) {}
+      let _macsec = null; try { _macsec = await _luxMacroSectorData(DB); } catch (e) {}
       const _essay = _luxWriteReport(ym, { mkts: mkts, selfreview: _sr, idxRet: _idxRet, outlook: _olk,
+        macro: _macsec ? _macsec.macro : null, sectors: _macsec ? _macsec.sectors : null,
         mind: mind, dnnT: dnnT, gbdtT: gbdtT, picks: picks, newsTop: newsTop, scanMeta: scanMeta });
       if (_essay && _essay.length > 300) {
         report.textRaw = report.text;
