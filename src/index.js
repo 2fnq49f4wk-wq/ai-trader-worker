@@ -19419,7 +19419,9 @@ const DNN = {
   dnnMaxSamples: 2000,   // [V10] 대형 망 per-epoch 비용 제한 — 최근 표본 이만큼만(예산 내 에폭 수 확보)
   patience: 8,           // 조기종료 인내
   gradClip: 5,
-  minTrainSamples: 500,  // [V9.1] 400→500: 피처 54(V12 visionUp 제거)로 확장한 입력차원 대비 과적합 방어 상향
+  minTrainSamples: 300,  // [V12.94] 500→300 — featVer 상향 직후 DNN만 표본문턱(500) 때문에 MIND(80)/GBDT
+                         //   (200)보다 한참 늦게 참여하던 것 완화. 과적합은 신뢰게이트(valAccLB≥trustFloor)가
+                         //   방어(미달 모델은 자동 억제). 본 학습기는 Modal GPU — Worker는 폴백.
   stdClip: 6,            // [V9.1] 윈저화 표준화 클램프(±σ) — 팬테일 이상치 안정화
   valFrac: 0.2,
   trustFloor: 0.505,     // 검증정확도 이 미만이면 신뢰 0
