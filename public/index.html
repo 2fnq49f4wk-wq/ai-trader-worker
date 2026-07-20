@@ -4471,7 +4471,9 @@ html[data-theme="light"] .table tbody tr:hover{background:rgba(9,105,218,.045);}
         // [V65] KR은 티커 대신 종목명 표시
         var isKR = /\.(KS|KQ)$/.test(it.sym);
         var disp = isKR ? (it.q.name || DYNAMIC_NAMES[it.sym] || it.sym.replace(/\.(KS|KQ)$/,'')) : it.sym;
-        return '<tr><td><span class="fv-tick" title="'+escapeHtml(it.sym)+'">'+escapeHtml(disp)+'</span></td>'+
+        // [V12.68] data-sym + 더블클릭/더블탭 시 종목상세로. 힌트 title도 표시.
+        return '<tr data-sym="'+escapeHtml(it.sym)+'" style="cursor:pointer;" title="더블클릭(더블탭) → 종목상세">'+
+          '<td><span class="fv-tick" title="'+escapeHtml(it.sym)+'">'+escapeHtml(disp)+'</span></td>'+
           '<td class="right">'+fmtNum(it.q.price)+'</td>'+
           '<td class="right '+cls+'">'+(it.q.dayPct>=0?'+':'')+fmtNum(it.q.dayPct,2)+'%</td>'+
           '<td class="fv-sig">'+sig+'</td></tr>';
@@ -4479,6 +4481,7 @@ html[data-theme="light"] .table tbody tr:hover{background:rgba(9,105,218,.045);}
       // [V80] 14 → 20개 — 맵 카드(줌바 포함 ~414px) 길이에 맞춤
       g.innerHTML = sorted.slice(0, 20).map(function(it){ return moverRow(it, true); }).join('') || '<tr><td colspan="4" class="empty">—</td></tr>';
       l.innerHTML = sorted.slice(-20).reverse().map(function(it){ return moverRow(it, false); }).join('') || '<tr><td colspan="4" class="empty">—</td></tr>';
+      bindDblTapDetail(g); bindDblTapDetail(l);   // [V12.68] 더블클릭/더블탭 → 종목상세 (위임, 1회 바인딩)
     }
     // ④ 헤드라인 — 섹터 뉴스 플랫 리스트
     var hl = $('fvHeadlines');
@@ -4904,7 +4907,7 @@ html[data-theme="light"] .table tbody tr:hover{background:rgba(9,105,218,.045);}
           var lt = host.__fvLastTap;
           if (lt && now - lt.t < 350 && Math.hypot(e.clientX - lt.x, e.clientY - lt.y) < 30) {
             host.__fvLastTap = null;
-            if (sym && sym === lt.sym) { fvOpenTa(sym); }
+            if (sym && sym === lt.sym) { openDetailFromSym(sym); }   // [V12.68] 더블탭 → 종목상세
             else {  // 빈 영역/섹터 더블탭 = 줌 토글 (데스크톱 dblclick과 동일)
               var c2 = fvCam(host);
               if (c2.w > c2.bw * 0.99) fvZoomAt(host, e.clientX, e.clientY, 2.5);
@@ -4923,9 +4926,9 @@ html[data-theme="light"] .table tbody tr:hover{background:rgba(9,105,218,.045);}
     host.addEventListener('pointercancel', endPtr);
     host.addEventListener('dblclick', function(e){
       e.preventDefault();
-      // [V79] 타일 더블클릭 → 차트분석. 타일 밖(빈 영역) 더블클릭은 기존 줌 토글 유지.
+      // [V12.68] 타일 더블클릭 → 종목상세. 타일 밖(빈 영역) 더블클릭은 기존 줌 토글 유지.
       var tile = e.target.closest ? e.target.closest('[data-sym]') : null;
-      if (tile) { fvOpenTa(tile.getAttribute('data-sym')); return; }
+      if (tile) { openDetailFromSym(tile.getAttribute('data-sym')); return; }
       var c = fvCam(host);
       if (c.w > c.bw * 0.99) fvZoomAt(host, e.clientX, e.clientY, 2.5);
       else { c.x = 0; c.y = 0; c.w = c.bw; c.h = c.bh; fvApplyCam(host); }
@@ -5171,6 +5174,29 @@ html[data-theme="light"] .table tbody tr:hover{background:rgba(9,105,218,.045);}
   }
   function fvFmtPct(v) { return (typeof v === 'number') ? ((v >= 0 ? '+' : '') + v.toFixed(2) + '%') : '—'; }
   // 이벤트 위임 — 타일 클릭(차트분석)·섹터 줌·툴팁·호버 (SVG 버전)
+  // [V12.68] 더블클릭/더블탭 → 종목상세 열기 (TopMovers·MAP 공용)
+  //   openStockDetail이 심볼 접미사(.KS/.KQ)로 시장을 자동판정하므로 sym만 넘기면 됨.
+  function openDetailFromSym(sym) {
+    if (!sym) return;
+    try { var hm = $('heatmapModal'); if (hm && hm.classList.contains('show')) hm.classList.remove('show'); } catch (e) {}
+    try { openStockDetail(sym); } catch (e) {}
+  }
+  // 컨테이너에 위임(delegation)으로 더블클릭+터치 더블탭 바인딩(1회만) — 내부 행이 재렌더돼도 유지.
+  function bindDblTapDetail(el) {
+    if (!el || el.__dblDetailBound) return;
+    el.__dblDetailBound = true;
+    el.addEventListener('dblclick', function(e) {
+      var t = e.target && e.target.closest ? e.target.closest('[data-sym]') : null;
+      if (t) { e.preventDefault(); openDetailFromSym(t.getAttribute('data-sym')); }
+    });
+    el.addEventListener('touchend', function(e) {
+      var t = e.target && e.target.closest ? e.target.closest('[data-sym]') : null;
+      if (!t) return;
+      var sym = t.getAttribute('data-sym'), now = Date.now(), lt = el.__lastTapDetail;
+      if (lt && sym === lt.sym && now - lt.t < 350) { el.__lastTapDetail = null; e.preventDefault(); openDetailFromSym(sym); }
+      else { el.__lastTapDetail = { sym: sym, t: now }; }
+    }, { passive: false });
+  }
   function fvOpenTa(sym) {
     var hm = $('heatmapModal');
     if (hm && hm.classList.contains('show')) hm.classList.remove('show');
