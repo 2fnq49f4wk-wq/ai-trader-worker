@@ -6144,6 +6144,46 @@ async function updateAnalystConsensus(DB, cfg, force) {
   return result;
 }
 
+// [V12.76] ★LLM 뉴스 감성 보정★ — VADER 사전은 문맥('규제 완화'=호재인데 '규제'만 히트)·반어·복합문에
+//   약하다. 야간 1회, 전 섹터그룹 헤드라인을 Claude 1콜로 일괄 채점해 사전 점수와 절반씩 블렌드.
+//   CPU 편법: 언어이해를 API로 오프로드(네트워크 대기는 Workers CPU 과금 0) + 그룹당 8개 캡·1일 1콜로 토큰 통제.
+async function sentiLLMRefine(DB, env) {
+  try {
+    if (!env || !env.ANTHROPIC_API_KEY) return null;
+    const sn = await getState(DB, "sector_news_sentiment", null);
+    if (!sn || !sn.headlines || !Object.keys(sn.headlines).length) return "[SENTI-LLM] 헤드라인 없음 — 스킵";
+    if (sn.llmTs && Date.now() - sn.llmTs < 20 * 3600000) return null;   // 1일 1콜
+    const groups = Object.keys(sn.headlines);
+    const payload = {};
+    for (const g of groups) payload[g] = (sn.headlines[g] || []).slice(0, 8).map(function (i) { return String(i.title || "").slice(0, 140); });
+    const prompt = "당신은 금융 뉴스 감성분석 전문가입니다. 아래는 섹터 그룹별 최신 헤드라인입니다.\n"
+      + JSON.stringify(payload) + "\n\n"
+      + "각 그룹의 '주가 방향 관점' 종합 감성을 -1(강한 악재)~+1(강한 호재) 실수로 채점하세요.\n"
+      + "규칙: 문맥 우선(예: '규제 완화'는 호재, '하락 후 반등'은 호재), 반어·조건문 주의, 애매하면 0 쪽으로.\n"
+      + '출력은 JSON만: {"TECH":0.3,...} (모든 그룹 키 포함, 다른 텍스트 금지)';
+    const res = await callClaude(env.ANTHROPIC_API_KEY, "claude-haiku-4-5-20251001", prompt, 500, 30000,
+      { maxRetries: 1, baseURL: env.LLM_BASE_URL || null, aigToken: env.AI_GATEWAY_TOKEN || null });
+    if (!res || !res.text) return "[SENTI-LLM] 응답 없음";
+    let js = null;
+    try { js = JSON.parse(res.text.replace(/```json|```/g, "").trim()); } catch (e) { return "[SENTI-LLM] JSON 파싱 실패"; }
+    const sc = { posScaleMax: 1.08, negScaleMin: 0.88 };
+    let applied = 0;
+    for (const g of groups) {
+      const lv = _num(js[g], NaN);
+      if (!isFinite(lv)) continue;
+      const lex = typeof sn.scores[g] === "number" ? sn.scores[g] : 0;
+      const blended = _clamp(0.5 * lex + 0.5 * _clamp(lv, -1, 1), -1, 1);   // 사전 절반 + LLM 절반
+      sn.scores[g] = +blended.toFixed(3);
+      sn.scales[g] = blended >= 0 ? (1 + blended * (sc.posScaleMax - 1)) : (1 + blended * (1 - sc.negScaleMin));
+      applied++;
+    }
+    if (!applied) return "[SENTI-LLM] 적용 0그룹";
+    sn.llmTs = Date.now(); sn.llm = true;
+    await setState(DB, "sector_news_sentiment", sn);
+    return "[SENTI-LLM] " + applied + "그룹 감성 LLM 보정(사전 50%+LLM 50% 블렌드)";
+  } catch (e) { return "[SENTI-LLM] fail: " + (e && e.message); }
+}
+
 async function updateSectorNewsSentiment(DB, cfg, force) {
   const sc = Object.assign({ enabled:true, refreshHours:6, enrichMaxUsageRatio:0.82, minBudgetReserve:8, posScaleMax:1.08, negScaleMin:0.88 }, (cfg && cfg.sectorNews) || {});
   if (sc.enabled === false) return null;
@@ -14338,7 +14378,7 @@ async function handleRequest(request, env) {
     if (path === "/api/report/monthly") {
       const ym = url.searchParams.get("ym") || null;
       const force = url.searchParams.get("refresh") === "1";
-      const rpt = await mlMonthlyReport(env.DB, ym, force);
+      const rpt = await mlMonthlyReport(env.DB, ym, force, env);
       return Response.json(rpt, { headers: cors });
     }
 
@@ -21691,7 +21731,7 @@ function _rptMoney(v, mkt) {
   return sg + "$" + (a >= 1e6 ? (a / 1e6).toFixed(2) + "M" : Math.round(a).toLocaleString());
 }
 
-async function mlMonthlyReport(DB, ym, force) {
+async function mlMonthlyReport(DB, ym, force, env) {
   try {
     // ym = "YYYY-MM" (기본: 지난달)
     if (!ym || !/^\d{4}-\d{2}$/.test(ym)) {
@@ -21864,6 +21904,30 @@ async function mlMonthlyReport(DB, ym, force) {
     // 저장 전 대용량 중간데이터 정리(state 용량 절약)
     for (const mk of Object.keys(mkts)) { delete mkts[mk].closed; delete mkts[mk].cum; delete mkts[mk].peak; }
     const report = { ym: ym, text: L.join("\n"), stats: { markets: mkts, picks: picks.slice(0, 10) }, ts: Date.now() };
+    // ── [V12.76] ★LLM 리포트 라이터★ — 온보드 데이터 리포트를 Claude가 "대형 운용사 월간 서한" 문체로
+    //   재집필. CPU 편법: 텍스트 생성을 전부 LLM API로 오프로드 — Workers CPU 과금은 실연산 시간만이라
+    //   네트워크 대기(LLM 응답)는 CPU 0. 월 1회 + 수동 재생성만이라 토큰 비용도 미미. 실패 시 원문 유지.
+    try {
+      if (env && env.ANTHROPIC_API_KEY) {
+        let _sr = null; try { _sr = await getState(DB, "ai_selfreview", null); } catch (e) {}
+        const _prompt = "당신은 글로벌 톱티어 자산운용사의 수석 포트폴리오 매니저입니다. 아래는 자동매매 시스템 LUX-AI의 " + ym + " 월간 원데이터 리포트입니다.\n\n"
+          + "```\n" + L.join("\n").slice(0, 9000) + "\n```\n\n"
+          + (_sr && _sr.diagnosis ? "AI 자가진단: " + JSON.stringify(_sr.diagnosis).slice(0, 800) + "\n\n" : "")
+          + "이 데이터를 근거로 전문 월간 운용보고서를 한국어로 작성하세요.\n"
+          + "# 필수 구조\n1) 총평(Executive Summary — 3~4문장, 핵심 성과와 한 달의 서사)\n2) 성과 분석(시장별·전략별 — 수치는 원문 그대로 인용)\n"
+          + "3) 잘한 점과 아쉬운 점(구체 거래 사례 인용)\n4) AI 시스템 자가진단(모델 신뢰도·개선 조치)\n5) 다음 달 운용 방침(리스크 관리 관점)\n"
+          + "# 문체 규칙\n- 노련한 펀드매니저가 LP에게 보내는 서한처럼: 정확하되 인간적이고, 확신과 겸손이 공존하는 어조.\n"
+          + "- 모든 수치는 원데이터에 있는 것만 사용(창작 절대 금지). 원데이터에 없는 시장 사건 언급 금지.\n"
+          + "- 불릿 남발 금지 — 문단 중심 서술, 섹션당 1~2문단.\n- 분량 700~1100자 내외. 마크다운 헤더(##) 사용 가능.";
+        const _llm = await callClaude(env.ANTHROPIC_API_KEY, "claude-sonnet-4-6", _prompt, 2500, 45000,
+          { maxRetries: 2, baseURL: env.LLM_BASE_URL || null, aigToken: env.AI_GATEWAY_TOKEN || null });
+        if (_llm && _llm.text && _llm.text.length > 200) {
+          report.textRaw = report.text;         // 온보드 원문 보존(데이터 검증용)
+          report.text = _llm.text.trim() + "\n\n" + "─".repeat(30) + "\n[부록] 원데이터 리포트\n" + "─".repeat(30) + "\n" + report.textRaw;
+          report.llm = true;
+        }
+      }
+    } catch (e) { /* LLM 실패 → 온보드 원문 그대로(무손실 폴백) */ }
     await setState(DB, key, report);
     return report;
   } catch (e) { return { ym: ym, error: e && e.message, text: "리포트 생성 실패: " + (e && e.message) }; }
@@ -21977,6 +22041,14 @@ function sentimentScore(text) {
     for (let i = 0; i < lower.length; i++) {
       const bareToken = lower[i].replace(/[!?.]+$/g, "");
       let v = SENTI_LEX[bareToken];
+      // [V12.76] 한국어 접두 매칭 — "급등했다"·"수주로"처럼 조사/어미가 붙으면 정확매칭이 실패했다.
+      //   한글 토큰은 긴 접두부터(최대 5자→2자) 사전 조회해 어간 히트를 잡는다(영어엔 미적용 — 오탐 방지).
+      if (v === undefined && /[가-힣]/.test(bareToken) && bareToken.length >= 3) {
+        for (let pl = Math.min(5, bareToken.length - 1); pl >= 2; pl--) {
+          const pv = SENTI_LEX[bareToken.slice(0, pl)];
+          if (pv !== undefined) { v = pv * 0.9; break; }   // 접두 히트는 소폭 감쇠(불확실성 반영)
+        }
+      }
       if (v === undefined) { sentiments.push(0); continue; }
       // 대문자 강조
       const orig = rawTokens[i].replace(/[^A-Za-z]/g, "");
@@ -22737,6 +22809,8 @@ export default {
             });
             // (2) 외부 감성 수집 — SENTI_SOURCES에 URL이 채워진 경우만 동작(없으면 스킵)
             await _stg("senti", async function () { const _se = await sentiFetchAndStore(env.DB, null, null); return (_se && !/스킵/.test(_se)) ? _se : null; });
+            // [V12.76] LLM 감성 보정 — 섹터 헤드라인을 Claude 1콜로 채점해 사전점수와 블렌드(문맥 이해 보강)
+            await _stg("sentillm", async function () { return await sentiLLMRefine(env.DB, env); });
             // (2.4) [HIST] 딥-히스토리 로테이션 — range=max 장기이력(폭락장 포함)을 hist:로 갱신(수확이 사용)
             //   [V12.47] ★원인 발견★ 이 단계 전용 fetch예산 리셋이 없어 앞선 거래사이클/스캔이 남긴
             //   찌꺼기 예산(종종 20 미만)으로 돌았음 → deepFetchPerNight:100 목표를 거의 못 채우고
@@ -22767,7 +22841,7 @@ export default {
             try {
               if (new Date().getUTCDate() === 1) {
                 const _pm = new Date(); _pm.setUTCDate(0);   // 지난달 말일
-                const _r = await mlMonthlyReport(env.DB, _pm.toISOString().slice(0, 7), true);
+                const _r = await mlMonthlyReport(env.DB, _pm.toISOString().slice(0, 7), true, env);
                 if (_r && !_r.error) await log(env.DB, "INFO", null, "[REPORT] " + _r.ym + " 월간 리포트 생성 완료");
               }
             } catch (e) {}
