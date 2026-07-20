@@ -19416,6 +19416,7 @@ const DNN = {
   valFrac: 0.2,
   trustFloor: 0.505,     // 검증정확도 이 미만이면 신뢰 0
   diThreshold: 2.2,      // [V12.73] FreqAI식 DI 기권 임계 — 입력 평균|z|가 이 초과(학습분포 밖)면 위원회 기권
+  techPriorW: 0.30,      // [V12.91] 위원회 확률에 반영할 그래프(기술패턴) 프라이어 가중 — 애매기권 완화·그래프 중심
   trustMargin: 0.0,      // mind보다 이만큼은 나아야 신뢰 부여(0=동등이면 절반씩)
   // [V12.54] trustSlack 제거 — MIND 상대비교 게이트 폐기로 더 이상 읽는 곳이 없어 죽은 파라미터가 됨.
   // [V12.54] ★MIND 독점 해소★ 종전 신뢰게이트는 "standalone 모델(DNN/GBDT) LB ≥ mindLB − slack"이라
@@ -19951,6 +19952,22 @@ async function mlDeepDecide(DB, featVec, opts) {
       const cal = (opts.cal !== undefined) ? opts.cal : await getState(DB, "committee_cal", null);
       if (cal && typeof cal.T === "number" && cal.T > 0.3 && cal.T < 8) {   // [V12.49] 상한 4→8(탐색확대 동반)
         pCombined = _clamp(_sigmoid(_logitD(pCombined) / cal.T), 0.001, 0.999);
+      }
+    } catch (e) {}
+    // [V12.91] ★그래프(기술) 프라이어★ — featVec의 기술패턴 피처(tfConsBull/maStack/chartPat)를 위원회
+    //   확률에 직접 반영. 모델 미학습으로 p≈0.5 '애매기권'만 반복하며 매수를 못하던 핵심 원인 완화 —
+    //   강한 기술신호가 애매 구간을 밀어내 위원회가 실제 판단을 내리게 한다(사용자 방침: 그래프 중심).
+    try {
+      const _iTC = LUXML.featNames.indexOf("tfConsBull"), _iMS = LUXML.featNames.indexOf("maStack"), _iCP = LUXML.featNames.indexOf("chartPat");
+      const _b = [], _bw = [];
+      if (_iTC >= 0) { _b.push(_num(featVec[_iTC], 0)); _bw.push(0.5); }
+      if (_iMS >= 0) { _b.push(_num(featVec[_iMS], 0)); _bw.push(0.3); }
+      if (_iCP >= 0) { _b.push(_num(featVec[_iCP], 0)); _bw.push(0.2); }
+      if (_b.length) {
+        let _ts = 0, _tw = 0; for (let _i = 0; _i < _b.length; _i++) { _ts += _bw[_i] * _b[_i]; _tw += _bw[_i]; }
+        const _techP = _clamp(0.5 + (_ts / _tw) * 0.5, 0.02, 0.98);   // 기술점수[-1,1] → 확률[0,1]
+        const _w = (typeof DNN !== "undefined" && DNN.techPriorW != null) ? DNN.techPriorW : 0.30;
+        pCombined = _clamp(pCombined * (1 - _w) + _techP * _w, 0.001, 0.999);
       }
     } catch (e) {}
 
