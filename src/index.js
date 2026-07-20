@@ -17205,6 +17205,7 @@ const LUXML = {
   gateThresh: 0.42,
   sizeMin: 0.5, sizeMax: 1.5,
 
+  pickTechWeight: 0.18,  // [V12.85] AI 픽 랭킹에 다기간 기술 컨센서스를 반영하는 가중(±0.18). 그래프/추세 분석 강화.
   trainWindow: 90000,  // [V12.84] 60000→90000: DNN(외부GPU)은 이미 전체 79k 표본을 쓰는데 GBDT·MIND는 12k로
                        //   제한되어 있어 DNN보다 정확도가 낮게 나오는 원인이었다. GBDT(18s)·MIND(신규 45s, _fmTrain
                        //   데드라인가드 추가) 둘 다 시간예산 초과시 자체 절삭하므로 안전. D1 read/JSON.parse
@@ -21642,9 +21643,26 @@ async function mlUniverseScanNightly(DB) {
         } catch (e) {}
       } else { p = mlScore(l1, feat); }
       scanned++;
-      if (p != null) picks.push({ symbol: sym, market: mkt, p: +p.toFixed(3), strategy: "scan" });
+      // [V12.85] ★기술적 분석 정렬 게이트/가중★ — "내일 오를" 픽이 하락추세(적극매도) 종목을 상위로
+      //   올리던 문제 수정. 다기간 기술 컨센서스(단기 우선)를 픽 점수에 반영하고, 기술적 강한 약세는 제외.
+      //   techAlign ∈ [-1,+1] (적극매도 -1 … 적극매수 +1). 그래프/추세 분석에 실질 가중을 부여.
+      let techScore = null, techLabel = null;
+      try {
+        const _ts = techSummaryMultiTF(dd.closes, dd.highs, dd.lows);
+        if (_ts && _ts.now && _ts.week && _ts.month) {
+          techScore = _num(_ts.now.score, 0) * 0.5 + _num(_ts.week.score, 0) * 0.35 + _num(_ts.month.score, 0) * 0.15;
+          techLabel = _ts.now.label;
+        }
+      } catch (e) {}
+      if (p != null) {
+        // 기술적으로 뚜렷한 하락추세(가중 컨센서스 ≤ -0.35, 대략 '매도~적극매도')는 상승 픽에서 배제.
+        if (techScore != null && techScore <= -0.35) continue;
+        // 픽 랭킹 점수 = 위원회 확률 + 기술 정렬 보정(최대 ±0.18). 그래프 분석에 큰 가중.
+        const rankP = techScore != null ? _clamp(p + (LUXML.pickTechWeight != null ? LUXML.pickTechWeight : 0.18) * techScore, 0.01, 0.99) : p;
+        picks.push({ symbol: sym, market: mkt, p: +p.toFixed(3), rankP: +rankP.toFixed(3), tech: techScore != null ? +techScore.toFixed(2) : null, techLabel: techLabel, strategy: "scan" });
+      }
     }
-    picks.sort(function (a, b) { return b.p - a.p; });
+    picks.sort(function (a, b) { return (b.rankP != null ? b.rankP : b.p) - (a.rankP != null ? a.rankP : a.p); });   // [V12.85] 기술 반영 랭킹으로 정렬
     const newOffs = {};
     for (const m of ["us", "kr", "cm"]) newOffs[m] = symsByMkt[m].length ? (offs[m] + scannedByMkt[m]) % symsByMkt[m].length : 0;
     try { await setState(DB, "ai_scan_offset", newOffs); } catch (e) {}
