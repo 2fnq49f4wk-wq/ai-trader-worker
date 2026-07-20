@@ -19404,7 +19404,7 @@ async function mlMindVizData(DB) {
     const m = await mlMindLoad(DB);
     const fn = LUXML.featNames;
     if (!m) {
-      const _if = fn.map(function (nm, j) { return { i: j, name: nm, role: FEAT_ROLES[nm] || "", strength: 0 }; });
+      const _if = fn.map(function (nm, j) { return { i: j, name: nm, role: FEAT_ROLES[nm] || "", liveOnly: _LIVE_ONLY_FEATS.has(nm), strength: 0 }; });
       let _sn = 0; try { const _r = await DB.prepare("SELECT COUNT(*) c FROM ml_samples WHERE featver=?").bind(LUXML.featVer).first(); _sn = (_r && _r.c) || 0; } catch (e) {}
       return { kind: "mind", trained: false, samples: _sn, minTrainSamples: MIND.minTrainSamples, featVer: LUXML.featVer, featNames: fn, inputFeatures: _if, topFeatures: _if.slice(0, 20) };
     }
@@ -19417,7 +19417,7 @@ async function mlMindVizData(DB) {
     }
     let mx = 0; for (const v of raw) if (v > mx) mx = v;
     const strength = raw.map(function (v) { return mx > 0 ? +(v / mx).toFixed(3) : 0; });
-    const inputFeatures = fn.map(function (nm, j) { return { i: j, name: nm, role: FEAT_ROLES[nm] || "", strength: strength[j] }; });
+    const inputFeatures = fn.map(function (nm, j) { return { i: j, name: nm, role: FEAT_ROLES[nm] || "", liveOnly: _LIVE_ONLY_FEATS.has(nm), strength: strength[j] }; });
     const topFeatures = inputFeatures.slice().sort(function (a, b) { return b.strength - a.strength; }).slice(0, 20);
     const expertNames = { l1: "L1 로지스틱", fm: "인수분해기계(FM)", ens: "신경망 앙상블(BRAIN)" };
     const experts = (m.experts || []).map(function (nm, i) { return { name: expertNames[nm] || nm, weight: +(m.meta.w[i] || 0).toFixed(3) }; });
@@ -19439,13 +19439,13 @@ async function mlGBDTVizData(DB) {
     const trust = await getState(DB, "gbdt_trust", null);
     const fn = LUXML.featNames;
     if (!m) {
-      const _if = fn.map(function (nm, j) { return { i: j, name: nm, role: FEAT_ROLES[nm] || "", strength: 0 }; });
+      const _if = fn.map(function (nm, j) { return { i: j, name: nm, role: FEAT_ROLES[nm] || "", liveOnly: _LIVE_ONLY_FEATS.has(nm), strength: 0 }; });
       let _sn = 0; try { const _r = await DB.prepare("SELECT COUNT(*) c FROM ml_samples WHERE featver=?").bind(LUXML.featVer).first(); _sn = (_r && _r.c) || 0; } catch (e) {}
       return { kind: "gbdt", trained: false, samples: _sn, minTrainSamples: GBDT.minTrainSamples, featVer: LUXML.featVer, featNames: fn, inputFeatures: _if, topFeatures: _if.slice(0, 20), trust: trust || null };
     }
     const byName = {}; for (const t of (m.topFeatures || [])) byName[t.name] = t.pct;
     let mx = 0; for (const k in byName) if (byName[k] > mx) mx = byName[k];
-    const inputFeatures = fn.map(function (nm, j) { const pct = byName[nm] || 0; return { i: j, name: nm, role: FEAT_ROLES[nm] || "", strength: mx > 0 ? +(pct / mx).toFixed(3) : 0, pct: pct }; });
+    const inputFeatures = fn.map(function (nm, j) { const pct = byName[nm] || 0; return { i: j, name: nm, role: FEAT_ROLES[nm] || "", liveOnly: _LIVE_ONLY_FEATS.has(nm), strength: mx > 0 ? +(pct / mx).toFixed(3) : 0, pct: pct }; });
     const topFeatures = inputFeatures.slice().sort(function (a, b) { return b.strength - a.strength; }).slice(0, 20);
     return { kind: "gbdt", trained: true, n: m.n, valAcc: m.valAcc, valAccLB: m.valAccLB || null, nTrees: m.nTrees, maxDepth: GBDT.maxDepth,
       trainedAt: m.trainedAt, featNames: fn, inputFeatures: inputFeatures, topFeatures: topFeatures,
@@ -20139,6 +20139,19 @@ const FEAT_ROLES = {
   chartPat: "차트패턴 종합(그래프분석)", tfConsBull: "다기간 기술 컨센서스", maStack: "이동평균 정배열(추세)"
 };
 
+// [V12.101] '라이브/실거래 전용' 피처 — 뉴스·실적·공시·신호 컨텍스트(16 이벤트 + sigWeight/confluence).
+//   과거 시장수확(harvest) 표본엔 원천적으로 없어(과거 뉴스/실적을 OHLCV로 복원 불가) ev:{}·기본값 1로
+//   상수가 된다 → 수확이 지배하는 풀에선 트리(GBDT)가 이들에 분할하지 못해 '영향력 0'으로 보인다.
+//   이는 코드 버그(구 전략 원핫 이름불일치 등)가 아니라 데이터 특성 — 억지 복원은 학습↔실거래 분포
+//   왜곡(train/serve skew)을 유발하므로 하지 않고, viz에서 '라이브 전용'으로 표기해 오해만 제거한다.
+//   실거래·반사실(CF) 표본이 누적될수록 이 피처들이 실제 영향력을 얻는다.
+const _LIVE_ONLY_FEATS = new Set([
+  "sigWeight", "confluence",
+  "earnBeat", "earnMiss", "earnDrift", "earnBarsAgo", "daysToEarn",
+  "has8K", "analystSig", "insiderBuy", "econShock",
+  "newsSent", "newsMnA", "newsReg", "newsGuide", "newsUpDn", "newsOther", "evPrior"
+]);
+
 // ── [V9 시각화] 신경망 구조·가중치 강도를 프론트 시각화용으로 요약 반환 ──
 //   층 구조, 뉴런별 incoming-weight L2 norm(시드 평균, 0~1 정규화)=노드 강도, 위원회 신뢰가중.
 //   전체 66k 가중치를 보내지 않고 층당 뉴런 강도만(≈609개 실수) → 경량.
@@ -20173,7 +20186,7 @@ async function mlDNNVizData(DB) {
     const m = await mlDNNLoad(DB);
     if (!m || (!Array.isArray(m.nets) && !Array.isArray(m.W))) {
       const _fn = LUXML.featNames;
-      const _if = _fn.map(function (nm, j) { return { i: j, name: nm, role: FEAT_ROLES[nm] || "", strength: 0 }; });
+      const _if = _fn.map(function (nm, j) { return { i: j, name: nm, role: FEAT_ROLES[nm] || "", liveOnly: _LIVE_ONLY_FEATS.has(nm), strength: 0 }; });
       return { trained: false, hidden: DNN.hidden, dims: [_fn.length].concat(DNN.hidden).concat([1]), inputDim: _fn.length, seeds: DNN.seeds, trust: trust || null,
         active: false, source: null, featNames: _fn, inputFeatures: _if, topFeatures: _if.slice(0, 20) };
     }
@@ -20198,7 +20211,7 @@ async function mlDNNVizData(DB) {
     // [V11] 입력 파라미터별 역할 + 영향도 — 각 입력 뉴런이 무슨 피처를 담당하는지, 학습된 가중치로 얼마나 중요한지.
     const fnames = LUXML.featNames;
     const inputFeatures = [];
-    for (let j = 0; j < nin0; j++) inputFeatures.push({ i: j, name: fnames[j] || ("f" + j), role: FEAT_ROLES[fnames[j]] || "", strength: inStrength[j] });
+    for (let j = 0; j < nin0; j++) inputFeatures.push({ i: j, name: fnames[j] || ("f" + j), role: FEAT_ROLES[fnames[j]] || "", liveOnly: _LIVE_ONLY_FEATS.has(fnames[j]), strength: inStrength[j] });
     const topFeatures = inputFeatures.slice().sort(function (a, b) { return b.strength - a.strength; }).slice(0, 20);
     const layers = [{ kind: "input", size: nin0, strength: inStrength, names: fnames.slice(0, nin0) }];
     for (let l = 0; l < nLayers; l++) layers.push({ kind: (l === nLayers - 1 ? "output" : "hidden"), size: layerNorms[l].length, strength: norm01(layerNorms[l]) });

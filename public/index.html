@@ -11663,12 +11663,16 @@ html[data-theme="light"] #page-nnviz .nnv-title,html[data-theme="light"] #page-n
     var feats=d && (d.topFeatures||d.inputFeatures);
     if(!feats || !feats.length){ host.innerHTML=''; return; }
     var trained=!!(d && d.trained);
+    var anyLive=false;
     var rows=feats.map(function(f){
       var pctW=Math.round((f.strength||0)*100);
-      return '<div class="nnv-role"><div class="nnv-role-n">'+f.name+'<small>'+(f.role||'')+'</small></div>'
+      if(f.liveOnly) anyLive=true;
+      var lo=f.liveOnly?' <span style="font-size:8px;color:#ffb060;border:1px solid #ffb06066;border-radius:2px;padding:0 3px;">라이브 전용</span>':'';
+      return '<div class="nnv-role"><div class="nnv-role-n">'+f.name+lo+'<small>'+(f.role||'')+'</small></div>'
         +'<div class="nnv-role-bar"><span style="width:'+pctW+'%"></span></div>'
         +'<div class="nnv-role-v">'+(trained?pctW+'%':'—')+'</div></div>';
     }).join('');
+    if(anyLive) rows+='<div style="font-size:9px;color:#7c90b5;margin-top:6px;line-height:1.5;">※ <b style="color:#ffb060;">라이브 전용</b> 피처(뉴스·실적·공시·신호)는 과거 시장수확 표본엔 없어 영향력이 낮게 보입니다 — 버그가 아니라, 실거래·반사실 표본이 쌓일수록 실제 영향력을 얻습니다.</div>';
     host.innerHTML='<div class="nnv-role-h">🎛️ 입력 파라미터 역할 · 영향도'
       +(trained?' <small>(학습된 가중치 기준 상위 '+feats.length+')</small>':' <small>(미학습 — 영향도는 학습 후 표시)</small>')+'</div>'+rows;
   }
