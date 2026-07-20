@@ -2882,6 +2882,11 @@ html[data-theme="light"] .table tbody tr:hover{background:rgba(9,105,218,.045);}
           </div>
         </div>
         <!-- 헤드라인 + 선물 + 환율/채권 -->
+        <!-- [V12.73] AI 운용모드 + 자가평가 — AI가 스스로 진단한 문제점을 대시보드에 노출 -->
+        <div class="fv-panel" id="fvAiModePanel" style="margin-bottom:8px;">
+          <div class="fv-panel-head">AI 운용 상태 <span class="fv-panel-sub" id="fvAiModeBadge">확인 중…</span></div>
+          <div id="fvAiModeBody" style="padding:8px 10px;font-size:11px;line-height:1.6;color:var(--t2);">로딩 중…</div>
+        </div>
         <div class="fv-bottom">
           <div class="fv-panel">
             <div class="fv-panel-head">HEADLINES</div>
@@ -4392,7 +4397,35 @@ html[data-theme="light"] .table tbody tr:hover{background:rgba(9,105,218,.045);}
       '<polyline points="'+line+'" fill="none" stroke="'+c+'" stroke-width="1.6"/>'+
       '</svg>';
   }
+  // [V12.73] AI 운용모드 + 자가평가 카드 — /api/ai-mode (5분 스로틀, 대시보드 렌더 시 갱신)
+  var __aiModeTs = 0;
+  function renderAiModePanel() {
+    if (Date.now() - __aiModeTs < 300000) return;
+    __aiModeTs = Date.now();
+    var badge = $('fvAiModeBadge'), body = $('fvAiModeBody');
+    if (!badge || !body) return;
+    fetch('/api/ai-mode').then(function(r){ return r.json(); }).then(function(d){
+      var ai = d && d.aiReady;
+      badge.innerHTML = ai
+        ? '<span style="color:var(--pos);font-weight:700;">● AI 자율운용 중</span>'
+        : '<span style="color:#e8b339;font-weight:700;">● 규칙엔진 비상운용 (AI 학습/신뢰 대기)</span>';
+      var c = (d && d.committee) || {};
+      var html = '위원회: MIND ' + (c.mind?'✅':'⏳') + ' · DNN ' + (c.dnn?'✅':'⏳') + ' · GBDT ' + (c.gbdt?'✅':'⏳');
+      if (d && d.scan && d.scan.top && d.scan.top.length) {
+        html += ' &nbsp;|&nbsp; 야간 AI픽: ' + d.scan.top.slice(0,5).map(function(p){ return p.symbol+'('+(p.p*100).toFixed(0)+'%)'; }).join(', ');
+      }
+      var rv = d && d.selfreview;
+      if (rv && rv.diagnosis && rv.diagnosis.length) {
+        html += '<div style="margin-top:6px;padding-top:6px;border-top:1px solid var(--bd2);"><b style="color:var(--t1);">🔍 AI 자가진단</b> <span style="color:var(--t3);">(최근 '+rv.windowDays+'일 · '+rv.n+'건 · 승률 '+(rv.winRate*100).toFixed(0)+'% · PF '+rv.profitFactor+')</span><br>'
+          + rv.diagnosis.map(function(t){ return '· ' + t; }).join('<br>') + '</div>';
+      } else {
+        html += '<div style="margin-top:4px;color:var(--t3);">자가진단은 야간 파이프라인에서 생성됩니다.</div>';
+      }
+      body.innerHTML = html;
+    })['catch'](function(){ body.textContent = '조회 실패'; });
+  }
   function renderFvDeck(state) {
+    try { renderAiModePanel(); } catch(e) {}
     // ① 지수 패널 행
     var row = $('fvIndexRow');
     if (row && state.indices && state.indices.length) {

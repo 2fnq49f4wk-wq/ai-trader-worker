@@ -3374,8 +3374,8 @@ const DEFAULT_CFG = {
   // === [공격형 집중] 고정리스크 사이징 ===
   //   과분산(26종목=지수복제) 해소를 위해 소수 종목에 크게. maxOpenPositions(10)와 함께 동작.
   trendSizing: {
-    riskPerTrade: 1.2,     // [공격] 0.75→1.2 한 거래 리스크 = 자산의 1.2% (집중 사이징)
-    maxPositionPct: 15,    // 한 종목 비중 상한 = 자산의 15% (10종목×~10% = 자본 집중 활용)
+    riskPerTrade: 0.9,     // [V12.73 꼬리캡] 1.2→0.9 — 원장분석: 소수 대형손실이 전체손익 좌우 → 거래당 리스크 하향
+    maxPositionPct: 10,    // [V12.73 꼬리캡] 15→10 — 한 종목 갭하락이 계좌를 흔들지 못하게 몰빵 상한 축소
     maxConcurrent: 10      // [공격] 12→10 동시 보유 상한 (maxOpenPositions.us와 정렬)
   },
   // [포트폴리오 히트] 보유 포지션 총 미실현 리스크 한도(%) — 계좌 전체 리스크 상한.
@@ -3386,8 +3386,8 @@ const DEFAULT_CFG = {
   inversePanicBoost: 1.3,
   // === [KR 분리] 고정리스크 사이징 — KR 전용 오버라이드 ===
   trendSizingKR: {
-    riskPerTrade: 1.0,     // [공격] 0.6→1.0 (집중 사이징, KR은 US보다 약간 보수)
-    maxPositionPct: 15,    // [공격] 12→15
+    riskPerTrade: 0.7,     // [V12.73 꼬리캡] 1.0→0.7 — KR이 손실 진원지(최악5거래 전부 KR·갭슬리피지 34건)
+    maxPositionPct: 8,     // [V12.73 꼬리캡] 15→8 — KR 몰빵 상한 대폭 축소(-122만원급 단일손실 재발 방지)
     maxConcurrent: 8       // [공격] 9→8 (maxOpenPositions.kr와 정렬)
   },
   // === [섹터그룹] 6개 그룹별 성과 가중치 — autoTune이 자동 조정 ===
@@ -13609,7 +13609,24 @@ async function handleRequest(request, env) {
       try { _out.committee = await getState(env.DB, "committee_cal", null); } catch (e) {}
       try { _out.data = (typeof sentiStatus === "function") ? await sentiStatus(env.DB) : null; } catch (e) {}
       try { _out.dataHealth = (typeof mlDataHealth === "function") ? await mlDataHealth(env.DB) : null; } catch (e) {}  // [V20] alpha·딥·featVer 관측
+      try { _out.selfreview = await getState(env.DB, "ai_selfreview", null); } catch (e) {}   // [V12.73] AI 자가평가
       return new Response(JSON.stringify(_out, null, 2), { headers: { "content-type": "application/json", "access-control-allow-origin": "*" } });
+    }
+
+    // [V12.73] 경량 운용모드 조회 — 대시보드 배지·자가평가 카드용(ml-status 전체보다 훨씬 가벼움)
+    if (path === "/api/ai-mode") {
+      let aiReady = false, mindOk = false, dnnOk = false, gbdtOk = false;
+      try {
+        const _m = await mlMindLoad(env.DB); mindOk = !!_m;
+        const _dt = await getState(env.DB, "dnn_trust", null); dnnOk = !!(_dt && _dt.trusted);
+        const _gt = await getState(env.DB, "gbdt_trust", null); gbdtOk = !!(_gt && _gt.trusted);
+        const _auto = (typeof AI_PARAMS !== "undefined" && AI_PARAMS.autonomy) || {};
+        aiReady = !!(_auto.enabled && mindOk && (dnnOk || gbdtOk));
+      } catch (e) {}
+      let review = null; try { review = await getState(env.DB, "ai_selfreview", null); } catch (e) {}
+      let scan = null; try { const _s = await getState(env.DB, "ai_picks:scan", null); if (_s) scan = { ts: _s.ts, scanned: _s.scanned, total: _s.total, top: (_s.picks || []).slice(0, 8) }; } catch (e) {}
+      return Response.json({ aiReady: aiReady, mode: aiReady ? "AI_AUTONOMOUS" : "RULE_FALLBACK",
+        committee: { mind: mindOk, dnn: dnnOk, gbdt: gbdtOk }, selfreview: review, scan: scan }, { headers: cors });
     }
 
     // ── [V9 시각화] 신경망 구조·가중치 강도·위원회 신뢰 — 프론트 "AI 두뇌 관측" 패널용 ──
@@ -19157,6 +19174,7 @@ const DNN = {
   stdClip: 6,            // [V9.1] 윈저화 표준화 클램프(±σ) — 팬테일 이상치 안정화
   valFrac: 0.2,
   trustFloor: 0.505,     // 검증정확도 이 미만이면 신뢰 0
+  diThreshold: 2.2,      // [V12.73] FreqAI식 DI 기권 임계 — 입력 평균|z|가 이 초과(학습분포 밖)면 위원회 기권
   trustMargin: 0.0,      // mind보다 이만큼은 나아야 신뢰 부여(0=동등이면 절반씩)
   // [V12.54] trustSlack 제거 — MIND 상대비교 게이트 폐기로 더 이상 읽는 곳이 없어 죽은 파라미터가 됨.
   // [V12.54] ★MIND 독점 해소★ 종전 신뢰게이트는 "standalone 모델(DNN/GBDT) LB ≥ mindLB − slack"이라
@@ -19630,6 +19648,7 @@ async function mlDeepDecide(DB, featVec, opts) {
     //   [V4] 각 전문가의 검증정확도 "Wilson 하한" 소프트맥스(T=12)로 로짓 가중평균.
     //   신뢰 못 받은 전문가는 불참. 결합확률은 야간 보정 온도(committee_cal.T)로 캘리브레이션.
     let usedDnn = false, usedGbdt = false;
+    let _diVal = null;   // [V12.73] FreqAI식 Dissimilarity Index — 입력이 학습분포에서 얼마나 먼지(평균|z|)
     if (trust && trust.trusted && trust.wDnn > 0) {
       const net = (opts.dnn !== undefined) ? opts.dnn : await mlDNNLoad(DB);
       let pDnn = null, dnnStd = 0;
@@ -19638,6 +19657,9 @@ async function mlDeepDecide(DB, featVec, opts) {
           if (Array.isArray(net.nets) && net.nets.length) {
             // [V9.7] 시드 불일치(std)로 이 입력에 대한 DNN 신뢰를 감쇠(Deep Ensembles) — 확신 없을 땐 스스로 물러남
             const xStd = _dnnStdVec(featVec.map(function (v) { return _num(v, 0); }), net.mean, net.std);
+            // [V12.73] DI 산출 — FreqAI(freqtrade) 벤치마킹: 예측 입력을 학습분포(mean/std)와 비교해
+            //   분포 밖(OOD)이면 그 예측 자체를 불신. 평균|z|가 임계 초과면 아래에서 기권(abstain).
+            try { let _s = 0; for (let _j = 0; _j < xStd.length; _j++) _s += Math.abs(xStd[_j]); _diVal = _s / Math.max(1, xStd.length); } catch (e) {}
             const st = _dnnEnsembleStats(net.nets, xStd);
             pDnn = _clamp(st.p, 0.001, 0.999); dnnStd = st.std;
           } else pDnn = mlDNNScore(net, featVec);
@@ -19704,6 +19726,11 @@ async function mlDeepDecide(DB, featVec, opts) {
     const _baseUnc = mindScore ? (mindScore.uncertainty || 0) : _committeeUnc;
     const unc = Math.max(_baseUnc, _expDisagree);   // 합의도 반영 유효 불확실성
     const _expOut = experts.map(function (ex) { return { name: ex.name, p: +ex.p.toFixed(3), acc: +ex.acc.toFixed(3) }; });
+    // [V12.73] ★DI 기권 게이트★ (FreqAI Dissimilarity Index 이식) — 입력 피처가 학습분포에서 평균
+    //   |z|>diThreshold 만큼 멀면(전례 없는 시장상황) 예측 신뢰 불가 → 기권. "모르는 건 모른다"가
+    //   실전 자동매매 AI의 표준 안전장치(freqtrade DI_threshold와 동일 사상).
+    if (_diVal != null && _diVal > ((typeof DNN !== "undefined" && DNN.diThreshold) || 2.2))
+      return { source: "deep", abstain: true, reason: "di_ood", di: +_diVal.toFixed(2), p: pCombined, uncertainty: unc, experts: _expOut };
     if (unc > (typeof MIND !== "undefined" ? MIND.abstainStd : 0.16)) return { source: "deep", abstain: true, reason: "uncertain", p: pCombined, uncertainty: unc, experts: _expOut };
     if (Math.abs(pCombined - 0.5) < (typeof MIND !== "undefined" ? MIND.abstainBand : 0.05)) return { source: "deep", abstain: true, reason: "ambiguous", p: pCombined, experts: _expOut };
     // [V7] 기대값(EV) 게이트: 통계 있으면 p·평균이익 − (1−p)·평균손실 > 0 로 판단
