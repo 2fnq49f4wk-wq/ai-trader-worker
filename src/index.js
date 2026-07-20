@@ -6144,7 +6144,64 @@ async function updateAnalystConsensus(DB, cfg, force) {
   return result;
 }
 
+// [V12.78] ★감성 자가학습(야간)★ — 어제 저장한 섹터 헤드라인과 오늘 대표티커 등락을 짝지어
+//   토큰 극성을 EMA로 갱신한다(자기지도 온라인 학습). "시장이 정답지"가 되는 구조라 사람 라벨·외부
+//   API가 전혀 필요 없다. 상한 4000토큰(메모리·저장 통제), 학습률 0.03(노이즈 완만 흡수).
+async function sentiLearnNightly(DB) {
+  try {
+    const snapKey = "senti_learn_snap";
+    const prev = await getState(DB, snapKey, null);
+    const learned = (await getState(DB, "senti_learned", null)) || { tokens: {}, n: 0 };
+    let updated = 0, labelInfo = [];
+    if (prev && prev.groups && prev.ts && Date.now() - prev.ts > 16 * 3600000 && Date.now() - prev.ts < 40 * 3600000) {
+      for (const g of Object.keys(prev.groups)) {
+        // 라벨: 그룹 대표티커 3종의 오늘 등락 평균 → [-1,1]
+        const reps = (SECTOR_NEWS_REP[g] || "").split(",").slice(0, 3);
+        let mv = 0, mn = 0;
+        for (const r of reps) {
+          try { const q = await getState(DB, "quote:" + r, null); if (q && typeof q.dayPct === "number") { mv += q.dayPct; mn++; } } catch (e) {}
+        }
+        if (!mn) continue;
+        const label = _clamp((mv / mn) / 2.5, -1, 1);   // ±2.5% 이상이면 만점
+        labelInfo.push(g + (label >= 0 ? "+" : "") + label.toFixed(2));
+        const seen = new Set();
+        for (const title of (prev.groups[g] || [])) {
+          for (const tok0 of _sTokenize(String(title))) {
+            const tok = tok0.toLowerCase().replace(/[!?.,'"()\[\]]+/g, "");
+            if (tok.length < 2 || tok.length > 24 || /^[0-9.%$+-]+$/.test(tok) || seen.has(tok)) continue;
+            seen.add(tok);
+            const cur = learned.tokens[tok] || 0;
+            learned.tokens[tok] = +(cur * 0.97 + 0.03 * label * 3).toFixed(4);   // EMA → 사전 스케일(±3)
+            updated++;
+          }
+        }
+      }
+      // 상한 관리 — |w| 작은 것부터 제거
+      const keys = Object.keys(learned.tokens);
+      if (keys.length > 4000) {
+        keys.sort(function (a, b) { return Math.abs(learned.tokens[a]) - Math.abs(learned.tokens[b]); });
+        for (let i = 0; i < keys.length - 4000; i++) delete learned.tokens[keys[i]];
+      }
+      learned.n = (learned.n || 0) + 1; learned.ts = Date.now();
+      await setState(DB, "senti_learned", learned);
+      _SENTI_LEARNED = learned.tokens; _SENTI_LEARNED_TS = Date.now();
+    }
+    // 오늘 스냅샷 저장(내일 학습용) — 현재 섹터 헤드라인
+    try {
+      const sn = await getState(DB, "sector_news_sentiment", null);
+      if (sn && sn.headlines) {
+        const groups = {};
+        for (const g of Object.keys(sn.headlines)) groups[g] = (sn.headlines[g] || []).slice(0, 15).map(function (i) { return String((i && i.title) || i).slice(0, 160); });
+        await setState(DB, snapKey, { ts: Date.now(), groups: groups });
+      }
+    } catch (e) {}
+    if (!updated) return "[SENTI-LEARN] 학습쌍 없음(스냅샷만 갱신) — 내일부터 학습";
+    return "[SENTI-LEARN] " + updated + "토큰 갱신 (라벨: " + labelInfo.join(" ") + ", 누적 " + learned.n + "회, 어휘 " + Object.keys(learned.tokens).length + "개)";
+  } catch (e) { return "[SENTI-LEARN] fail: " + (e && e.message); }
+}
+
 async function updateSectorNewsSentiment(DB, cfg, force) {
+  try { await _sentiLearnedEnsure(DB); } catch (e) {}   // [V12.78] 학습 감성어휘 로드(스코어링 전)
   const sc = Object.assign({ enabled:true, refreshHours:6, enrichMaxUsageRatio:0.82, minBudgetReserve:8, posScaleMax:1.08, negScaleMin:0.88 }, (cfg && cfg.sectorNews) || {});
   if (sc.enabled === false) return null;
   let cached = null;
@@ -22114,6 +22171,18 @@ const SENTI_NEGATE = { "not":1,"no":1,"never":1,"none":1,"nobody":1,"nothing":1,
   "wasn't":1,"weren't":1,"without":1,"lack":1,"lacks":1,"fails":1,"failed":1,"denies":1,"denied":1,"rejects":1,
   "hardly":1,"scarcely":1,"unlikely":1 };
 const SENTI_NEG_SCALE = -0.74; // VADER 부정 반전계수
+// [V12.78] ★자체 학습형 감성 어휘★ — 고정 사전(SENTI_LEX)을 넘어, "헤드라인 → 다음날 섹터 주가"
+//   상관을 매일 밤 스스로 학습해 단어 극성을 갱신하는 온라인 학습 레이어(sentiLearnNightly).
+//   외부 API 0 — 데이터(자체 수집 헤드라인+자체 시세)와 연산(EMA 갱신) 모두 온보드.
+let _SENTI_LEARNED = null;           // { tok: w(-3..3) } — 학습된 극성(전역 캐시)
+let _SENTI_LEARNED_TS = 0;
+async function _sentiLearnedEnsure(DB) {
+  try {
+    if (_SENTI_LEARNED && Date.now() - _SENTI_LEARNED_TS < 6 * 3600000) return;
+    const st = await getState(DB, "senti_learned", null);
+    if (st && st.tokens) { _SENTI_LEARNED = st.tokens; _SENTI_LEARNED_TS = Date.now(); }
+  } catch (e) {}
+}
 // [V12.77] ★문맥 반전어(Relief-Flip)★ — "규제 완화"·"우려 해소"·"tensions ease"처럼 악재 명사 뒤에
 //   붙으면 극성이 뒤집히는 어휘. 사전 단독매칭의 최대 오류원("규제"만 히트→악재 오판)을 온보드로 수정.
 const SENTI_RELIEF = { "완화":1,"해소":1,"불식":1,"진정":1,"해제":1,"철회":1,"면제":1,"모면":1,"종결":1,"타결":1,"합의":1,
@@ -22150,6 +22219,15 @@ function sentimentScore(text) {
         for (let pl = Math.min(5, bareToken.length - 1); pl >= 2; pl--) {
           const pv = SENTI_LEX[bareToken.slice(0, pl)];
           if (pv !== undefined) { v = pv * 0.9; break; }   // 접두 히트는 소폭 감쇠(불확실성 반영)
+        }
+      }
+      // [V12.78] 학습 어휘 반영 — 사전에 없는 토큰도 학습 극성(|w|≥0.5)이면 감성 신호로 편입,
+      //   사전 등재 토큰은 학습치를 30% 블렌드(시장이 가르쳐준 극성으로 사전을 미세보정).
+      if (_SENTI_LEARNED) {
+        const lw = _SENTI_LEARNED[bareToken];
+        if (typeof lw === "number") {
+          if (v === undefined) { if (Math.abs(lw) >= 0.5) v = _clamp(lw, -2.5, 2.5); }
+          else v = v * 0.7 + _clamp(lw, -3, 3) * 0.3;
         }
       }
       if (v === undefined) { sentiments.push(0); continue; }
@@ -22471,6 +22549,7 @@ function _jsonExtract(obj, path, field) {
 //   ② 소스가 없어도, V83 섹터뉴스 수집기가 6시간마다 모아둔 헤드라인에 VADER 감성을
 //      계산해 같은 state의 sentiment 필드로 병합(네트워크 0). scales/scores는 보존.
 async function sentiFetchAndStore(DB, sources, fetchImpl) {
+  try { await _sentiLearnedEnsure(DB); } catch (e) {}   // [V12.78] 학습 감성어휘 로드(스코어링 전)
   const F = fetchImpl || (typeof fetch !== "undefined" ? fetch : null);
   const srcs = sources || SENTI_SOURCES;
   const byGroup = {};        // group → 헤드라인(문자열) 배열
@@ -22934,6 +23013,8 @@ export default {
             });
             // (2) 외부 감성 수집 — SENTI_SOURCES에 URL이 채워진 경우만 동작(없으면 스킵)
             await _stg("senti", async function () { const _se = await sentiFetchAndStore(env.DB, null, null); return (_se && !/스킵/.test(_se)) ? _se : null; });
+            // [V12.78] 감성 자가학습 — 어제 헤드라인×오늘 섹터등락으로 토큰 극성 온라인 학습(외부 API 0)
+            await _stg("sentilearn", async function () { return await sentiLearnNightly(env.DB); });
             // (2.4) [HIST] 딥-히스토리 로테이션 — range=max 장기이력(폭락장 포함)을 hist:로 갱신(수확이 사용)
             //   [V12.47] ★원인 발견★ 이 단계 전용 fetch예산 리셋이 없어 앞선 거래사이클/스캔이 남긴
             //   찌꺼기 예산(종종 20 미만)으로 돌았음 → deepFetchPerNight:100 목표를 거의 못 채우고
