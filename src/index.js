@@ -2719,7 +2719,22 @@ const AI_PARAMS = {
   autonomy: {
     enabled: true,           // AI 자율운용 활성(끄면 규칙엔진 상시 운용 + AI는 게이트 보조)
     emergencyFallback: true, // AI 미준비 시 규칙엔진으로 비상 매매(false면 미준비 시 신규진입 관망)
-    minPickP: 0.58           // 야간 스캔 AI픽 중 이 성공확률 이상만 자율 진입 후보 풀에 포함
+    minPickP: 0.58,          // 야간 스캔 AI픽 중 이 성공확률 이상만 자율 진입 후보 풀에 포함
+    // [V12.74] Qlib TopkDropout 벤치마킹 — 보유종목 중 위원회 점수 최하위(p≤topkDropP)이고 AI픽
+    //   풀에도 없는 종목을 사이클당 최대 topkDropN개 회전 청산(턴오버 통제된 포트폴리오 리밸런싱).
+    topkDropP: 0.48,
+    topkDropN: 2
+  },
+
+  // ── [V12.74] ★변동성 타게팅(Volatility Targeting)★ — 기관 표준 리스크 스케일링 벤치마킹.
+  //   실증(인버스 변동성 가중): Sharpe 0.99→1.54, MDD -30.8%→-13.8%. 시장(지수) 실현변동성이
+  //   목표치보다 높으면 신규 진입 사이즈를 줄이고, 낮으면 소폭 확대 — "폭풍 전 미리 감속".
+  //   crashGate(급락 즉시반응)와 달리 연속적·선제적 스로틀. 지수 20일 변동성 연율화로 산출.
+  volTarget: {
+    enabled: true,
+    targetVolPct: { us: 15, kr: 17, cm: 20 },  // 시장별 목표 연율 변동성(%)
+    lookback: 20,                              // 실현변동성 창(일)
+    scaleMin: 0.5, scaleMax: 1.2               // 스케일 클램프(과도 증폭/축소 방지)
   },
 
   // ── 메타 라벨링·앙상블(Meta-Labeling, Lopez de Prado) ── '예측을 다시 예측'해 승률 극대화.
@@ -12362,7 +12377,7 @@ async function runTradingCycle(env) {
         }
       } catch (e) {}
       // [V12.71] ★AI 자율운용 컨트롤러★ 사이클 시작 시 1회 결정 — 운용 주체(AI vs 규칙 폴백)와 AI 후보 풀.
-      let __aiReady = false, __aiPickPool = null;
+      let __aiReady = false, __aiPickPool = null, __aiRotated = 0;   // [V12.74] TopkDropout 회전 카운터
       try {
         const _auto = (typeof AI_PARAMS !== "undefined" && AI_PARAMS.autonomy) || {};
         if (_auto.enabled && typeof LUXML !== "undefined" && LUXML.enabled) {
@@ -12578,6 +12593,22 @@ async function runTradingCycle(env) {
                       sold++;
                       const _sk = Object.keys(positions).some(k => positions[k].symbol === symbol && k !== posKey);
                       if (!_sk) { heldSymbols.delete(symbol); const _sc = SECTOR_MAP[symbol]; if (_sc && sectorCounts[_sc]) sectorCounts[_sc]--; }
+                      continue;
+                    }
+                    // [V12.74] ★Qlib TopkDropout 회전★ — 점수 최하위 보유종목을 상위픽으로 교체(턴오버 통제).
+                    //   위원회 p가 애매하게 낮고(≤topkDropP) AI픽 풀에서도 탈락한 종목은 사이클당 최대
+                    //   topkDropN개 회전 청산 → 자본이 AI 최고확신 종목으로 재배치된다(Qlib TopK-DropN 프로토콜).
+                    const _au2 = (typeof AI_PARAMS !== "undefined" && AI_PARAMS.autonomy) || {};
+                    if (_mdx && typeof _mdx.p === "number" && !_mdx.observe && !_mdx.abstain
+                        && __aiPickPool && __aiPickPool.size > 0 && !__aiPickPool.has(symbol)
+                        && _mdx.p <= (_au2.topkDropP != null ? _au2.topkDropP : 0.48)
+                        && __aiRotated < (_au2.topkDropN != null ? _au2.topkDropN : 2)
+                        && _pnlY > (_xc.minPnlForExit != null ? _xc.minPnlForExit : -3.0)) {
+                      __aiRotated++;
+                      await executeSell(DB, market, symbol, held, held.qty, price, "AI_ROTATE p" + (_mdx.p * 100).toFixed(0) + "% (TopK 회전 — 상위픽 교체)", mcfg, cash);
+                      sold++;
+                      const _sk2 = Object.keys(positions).some(k => positions[k].symbol === symbol && k !== posKey);
+                      if (!_sk2) { heldSymbols.delete(symbol); const _sc2 = SECTOR_MAP[symbol]; if (_sc2 && sectorCounts[_sc2]) sectorCounts[_sc2]--; }
                       continue;
                     }
                   }
@@ -12998,6 +13029,29 @@ async function runTradingCycle(env) {
 
             // [V12.64] AI 주도 진입은 규칙신호 없이 들어가므로 사이즈를 보수적으로 축소(baseWeight 배).
             if (signal && signal.isAiPrimary) sizeScale *= ((AI_PARAMS.aiPrimary && AI_PARAMS.aiPrimary.baseWeight) || 0.6);
+            // [V12.74] ★변동성 타게팅★ (기관 표준 벤치마킹) — 지수 실현변동성이 목표 초과면 감속, 미달이면 소폭 증속.
+            //   crashGate(급락 반응)와 곱연산으로 결합되는 연속·선제적 스로틀. 인버스는 면제(변동성 확대가 호재).
+            try {
+              const _vt = (typeof AI_PARAMS !== "undefined" && AI_PARAMS.volTarget) || null;
+              if (_vt && _vt.enabled && !_symInverse && Array.isArray(__idxCloses) && __idxCloses.length >= (_vt.lookback || 20) + 1) {
+                const _lb = _vt.lookback || 20, _ic = __idxCloses;
+                let _sum = 0, _sum2 = 0, _cnt = 0;
+                for (let _i = _ic.length - _lb; _i < _ic.length; _i++) {
+                  const _r = Math.log(_ic[_i] / _ic[_i - 1]);
+                  if (isFinite(_r)) { _sum += _r; _sum2 += _r * _r; _cnt++; }
+                }
+                if (_cnt >= 10) {
+                  const _mu = _sum / _cnt, _varr = Math.max(0, _sum2 / _cnt - _mu * _mu);
+                  const _realVol = Math.sqrt(_varr) * Math.sqrt(252) * 100;   // 연율화(%)
+                  const _tgt = (_vt.targetVolPct && _vt.targetVolPct[market]) || 15;
+                  if (_realVol > 1) {
+                    const _vs = _clamp(_tgt / _realVol, _vt.scaleMin || 0.5, _vt.scaleMax || 1.2);
+                    sizeScale *= _vs;
+                    if (_vs < 0.85) signal.volTargetNote = "VOLTGT ×" + _vs.toFixed(2) + " (실현 " + _realVol.toFixed(0) + "%>목표 " + _tgt + "%)";
+                  }
+                }
+              }
+            } catch (e) {}
 
             // === [재작성] 고정리스크 사이징 ===
             //   한 거래 손실한도 R$ = 자산 × riskPerTrade%. 손절거리(주당)로 수량을 역산한다.
