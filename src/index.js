@@ -14038,8 +14038,10 @@ async function handleRequest(request, env) {
           const mkt = /\.(KS|KQ)$/.test(s) ? "KR" : "US";
           let directSum = 0, indirectSum = 0, reg = 1, sig20 = 2, r2max = 0, nMin = 1e9, hasAny = false;
           const parts = [];
+          let betaF = 0, betaM = 0, gotBeta = false;   // [V12.98] 대표 팩터 베타(프론트 β*·시장β 컬럼용)
           for (const fi of factorInfo) {
             const bi = fi.betas[s]; if (!bi) continue; hasAny = true;
+            if (!gotBeta) { betaF = bi.bF; betaM = bi.bM; gotBeta = true; }
             const g = fi.gF[mkt === "KR" ? "^KS11" : "^GSPC"] || 0;
             const direct = bi.bF * fi.shockUnit * 100;
             const indirect = (bi.bM || 0) * g * fi.shockUnit * 100;
@@ -14062,6 +14064,7 @@ async function handleRequest(request, env) {
             port[mkt].value += posValue; port[mkt].pnl += expPnl;
           }
           const it = { symbol: s, name: NAME_MAP[s] || s.replace(/\.(KS|KQ)$/, ""), market: mkt,
+            beta: +betaF.toFixed(4), mktBeta: +betaM.toFixed(3),
             regime: +reg.toFixed(2), r2: +r2max.toFixed(3), n: nMin === 1e9 ? 0 : nMin, sig20: +sig20.toFixed(2),
             expPct: +expPct.toFixed(2), direct: +dAdj.toFixed(2), indirect: +iAdj.toFixed(2),
             lo: +(expPct - band).toFixed(2), hi: +(expPct + band).toFixed(2),
@@ -19402,7 +19405,8 @@ async function mlMindVizData(DB) {
     const fn = LUXML.featNames;
     if (!m) {
       const _if = fn.map(function (nm, j) { return { i: j, name: nm, role: FEAT_ROLES[nm] || "", strength: 0 }; });
-      return { kind: "mind", trained: false, featNames: fn, inputFeatures: _if, topFeatures: _if.slice(0, 20) };
+      let _sn = 0; try { const _r = await DB.prepare("SELECT COUNT(*) c FROM ml_samples WHERE featver=?").bind(LUXML.featVer).first(); _sn = (_r && _r.c) || 0; } catch (e) {}
+      return { kind: "mind", trained: false, samples: _sn, minTrainSamples: MIND.minTrainSamples, featVer: LUXML.featVer, featNames: fn, inputFeatures: _if, topFeatures: _if.slice(0, 20) };
     }
     const D = fn.length, K = m.fm.K;
     // 피처 영향도 = |선형항 w| + 인수분해항 V행의 L2노름(상호작용 기여) — 둘을 합쳐 0~1 정규화.
@@ -19433,7 +19437,8 @@ async function mlGBDTVizData(DB) {
     const fn = LUXML.featNames;
     if (!m) {
       const _if = fn.map(function (nm, j) { return { i: j, name: nm, role: FEAT_ROLES[nm] || "", strength: 0 }; });
-      return { kind: "gbdt", trained: false, featNames: fn, inputFeatures: _if, topFeatures: _if.slice(0, 20), trust: trust || null };
+      let _sn = 0; try { const _r = await DB.prepare("SELECT COUNT(*) c FROM ml_samples WHERE featver=?").bind(LUXML.featVer).first(); _sn = (_r && _r.c) || 0; } catch (e) {}
+      return { kind: "gbdt", trained: false, samples: _sn, minTrainSamples: GBDT.minTrainSamples, featVer: LUXML.featVer, featNames: fn, inputFeatures: _if, topFeatures: _if.slice(0, 20), trust: trust || null };
     }
     const byName = {}; for (const t of (m.topFeatures || [])) byName[t.name] = t.pct;
     let mx = 0; for (const k in byName) if (byName[k] > mx) mx = byName[k];

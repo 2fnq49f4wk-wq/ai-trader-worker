@@ -11301,11 +11301,13 @@ html[data-theme="light"] #page-nnviz .nnv-title,html[data-theme="light"] #page-n
     var isMind = d.kind==='mind';
     var label = isMind? 'MIND(스태킹)' : 'GBDT(부스팅트리)';
     if(!d || !d.trained){
+      var _sn=(d&&d.samples!=null)?d.samples:null, _mn=(d&&d.minTrainSamples)||(isMind?80:120);
+      var _prog=(_sn!=null)?(' · 표본 <b>'+_sn.toLocaleString()+'/'+_mn.toLocaleString()+'</b>'+(_sn>=_mn?' (문턱 충족 — 다음 학습에서 생성)':' (문턱 미달 — 수확 누적 중)')):'';
       sub.textContent = label+' — 아직 학습된 모델이 없습니다.';
-      chips.innerHTML = chip('상태','학습 대기','warn');
-      if(ban){ ban.className='nnv-banner off'; ban.innerHTML='⚠️ <b>학습 대기</b> — 표본이 쌓이면 야간에 자동 학습됩니다.'; ban.style.display='block'; }
+      chips.innerHTML = chip('상태','학습 대기','warn') + (_sn!=null?chip('표본', _sn.toLocaleString()+'/'+_mn.toLocaleString(), _sn>=_mn?'good':'warn'):'');
+      if(ban){ ban.className='nnv-banner off'; ban.innerHTML='⚠️ <b>학습 대기</b> — featVer '+((d&&d.featVer)||'')+' 표본이 문턱 이상 쌓이면 야간 파이프라인이 자동 학습합니다'+_prog+'. <br>즉시 생성하려면 시장 수확을 먼저 돌리세요(관리): <code>POST /api/ai/harvest-now</code> → <code>POST /api/ai/train-now?target='+(isMind?'mind':'gbdt')+'</code>.'; ban.style.display='block'; }
       comm.innerHTML='';
-      stage.innerHTML='<div class="nnv-empty">🌱 '+label+' 학습 대기 중…</div>';
+      stage.innerHTML='<div class="nnv-empty">🌱 '+label+' 학습 대기 중…'+(_sn!=null?' (표본 '+_sn.toLocaleString()+'/'+_mn.toLocaleString()+')':'')+'</div>';
       return;
     }
     var trust = d.trust || null;
