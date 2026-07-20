@@ -2742,6 +2742,12 @@ const AI_PARAMS = {
     scaleMin: 0.5, scaleMax: 1.2               // 스케일 클램프(과도 증폭/축소 방지)
   },
 
+  // ── [V12.88] ★AI 결정 핵심 = 그래프(기술)+최근이슈(뉴스) 중심★ — 사용자 방침.
+  //   위원회 모델 p를 그대로 게이트에 쓰지 않고, 기술 컨센서스+뉴스 감성과 확률공간에서 결합해
+  //   '통합 성공확률'을 만든다. 기술+뉴스가 주도(합 0.70), 위원회는 보조(0.30). 기술적 강한 약세면
+  //   진입 거부(그래프 중심). 표시·게이트·사이징이 모두 이 통합확률로 일관 → AI 의견과 기술요약 불일치 해소.
+  decisionCore: { enabled: true, tech: 0.45, news: 0.25, model: 0.30 },
+
   // ── 메타 라벨링·앙상블(Meta-Labeling, Lopez de Prado) ── '예측을 다시 예측'해 승률 극대화.
   //   (구현: 규칙엔진=1차 신호생성기, ML위원회(mlDeepDecide)=2차 성공확률 예측 → 게이트)
   metaLabeling: {
@@ -9325,7 +9331,8 @@ async function executeBuy(DB, market, symbol, strategy, qty, price, signal, dail
     const stmtTrade = stmtRecordTrade(DB, {
       ts: Date.now(), market: market, symbol: symbol, side: "BUY",
       qty: qty, price: price, pnl: null, pnl_pct: null,
-      reason: "[" + strategy.toUpperCase() + "] " + signal.name + " " + signal.detail
+      // [V12.88] 원장에 매수 주체 태그 — AI 주도(AI_PRIMARY) vs 규칙엔진 신호 구분
+      reason: "[" + ((signal && signal.isAiPrimary) ? "AI" : "RULE") + "][" + strategy.toUpperCase() + "] " + signal.name + " " + signal.detail
     });
     const stmtPos = stmtSavePosition(DB, market, symbol, strategy, posToSave);
     await DB.batch([stmtTrade, stmtPos]);
@@ -11112,7 +11119,7 @@ async function executeBuyCM(DB, symbol, qty, price, signal, dailyAtr, cfg, cash)
     const stmtTrade = stmtRecordTrade(DB, {
       ts: Date.now(), market: "cm", symbol: symbol, side: "BUY",
       qty: qty, price: price, pnl: null, pnl_pct: null,
-      reason: "[CM-SWING] " + signal.name + " " + signal.detail
+      reason: "[RULE][CM-SWING] " + signal.name + " " + signal.detail
     });
     const stmtPos = stmtSavePosition(DB, "cm", symbol, "swing", posToSave);
     await DB.batch([stmtTrade, stmtPos]);
@@ -11513,7 +11520,7 @@ async function executeBuyAlt(DB, sleeve, symbol, qty, price, signal, dailyAtr, c
   }
   try {
     const posToSave = { qty: qty, avg: price, opened_ts: Date.now(), meta: { strategy: "swing", feePaid: fee, feeRemaining: fee, atrAtEntry: dailyAtr, stopPrice: stopPrice, peakPrice: price, signal: signal.name, signalMembers: signal.members || [signal.name], tp1Done: false, originalQty: qty } };
-    const stmtTrade = stmtRecordTrade(DB, { ts: Date.now(), market: mk, symbol: symbol, side: "BUY", qty: qty, price: price, pnl: null, pnl_pct: null, reason: "[" + sleeve.label + "-SWING] " + signal.name + " " + signal.detail });
+    const stmtTrade = stmtRecordTrade(DB, { ts: Date.now(), market: mk, symbol: symbol, side: "BUY", qty: qty, price: price, pnl: null, pnl_pct: null, reason: "[RULE][" + sleeve.label + "-SWING] " + signal.name + " " + signal.detail });
     const stmtPos = stmtSavePosition(DB, mk, symbol, "swing", posToSave);
     await DB.batch([stmtTrade, stmtPos]);
   } catch (e) { await log(DB, "ERROR", symbol, "[" + sleeve.label + "] BUY 롤백: " + e.message); return cash; }
@@ -13327,6 +13334,19 @@ async function runTradingCycle(env) {
                     continue;
                   }
                 }
+                // [V12.88] ★AI 결정 = 그래프+최근이슈 중심★ — 위원회 p를 기술 컨센서스+뉴스와 결합해
+                //   통합확률로 대체(모델은 보조). 기술 강한 약세면 진입 거부. 게이트·사이징·표시 일관.
+                try {
+                  const _dc = AI_PARAMS.decisionCore || {};
+                  if (_dc.enabled !== false && _md && typeof _md.p === "number" && !_md.observe && !_md.abstain) {
+                    const _tk = _luxPickTech(daily, symbol, market);
+                    let _ns = null; try { _ns = await _luxSymNewsScore(DB, symbol); } catch (e) {}
+                    _md.pRaw = _md.p;
+                    _md.p = _luxDecisionBlend(_md.p, _tk.tech, _ns, _dc);
+                    _md.blended = true; _md.techScore = _tk.tech; _md.newsScore = _ns;
+                    if (_tk.tech != null && _tk.tech <= -0.4) { _md.allow = false; _md.techVeto = true; }   // 그래프 강한 약세 → 진입 거부
+                  }
+                } catch (e) {}
                 if (_md && (_md.observe || _md.abstain)) {
                   // 자기불신 / 기권 → 규칙엔진 수량 유지(ML 개입 안 함)
                 } else if (_md && _md.allow === false) {
@@ -21330,6 +21350,32 @@ function _luxPickTech(dd, sym, market) {
   return R;
 }
 
+// [V12.88] ★AI 결정 = 그래프(기술)+최근이슈(뉴스) 중심, 위원회모델은 조언★ — 사용자 방침.
+//   techScore·newsScore ∈ [-1(약세)..+1(강세)], committeeP ∈ [0..1]. 반환: 통합 성공확률 [0..1].
+//   가중 기본: 기술 0.45 + 뉴스 0.25(합 0.70 = 주도) + 모델 0.30(보조). 확률공간 가중평균이라 해석 명료.
+//   → AI 표시 의견과 기술요약이 더는 정반대로 갈리지 않고, 판단이 그래프·이슈를 중심으로 수렴.
+function _luxDecisionBlend(committeeP, techScore, newsScore, w) {
+  w = w || {};
+  const parts = [], wts = [];
+  if (techScore != null) { parts.push(_clamp(0.5 + techScore * 0.5, 0, 1)); wts.push(w.tech != null ? w.tech : 0.45); }
+  if (newsScore != null) { parts.push(_clamp(0.5 + newsScore * 0.5, 0, 1)); wts.push(w.news != null ? w.news : 0.25); }
+  if (committeeP != null) { parts.push(_clamp(committeeP, 0, 1)); wts.push(w.model != null ? w.model : 0.30); }
+  let sw = 0, sp = 0; for (let i = 0; i < parts.length; i++) { sw += wts[i]; sp += wts[i] * parts[i]; }
+  return sw > 0 ? _clamp(sp / sw, 0.02, 0.98) : (committeeP != null ? committeeP : 0.5);
+}
+// 종목 섹터의 최근 뉴스 감성(-1..1) — 없으면 null.
+async function _luxSymNewsScore(DB, symbol) {
+  try {
+    const sn = await getState(DB, "sector_news_sentiment", null);
+    if (!sn || !sn.scores) return null;
+    const g = (typeof getSectorGroup === "function") ? getSectorGroup(symbol, null) : null;
+    if (g && typeof sn.scores[g] === "number") return _clamp(sn.scores[g], -1, 1);
+    const ks = Object.keys(sn.scores); if (!ks.length) return null;
+    let t = 0; for (const k of ks) t += _num(sn.scores[k], 0); return _clamp(t / ks.length, -1, 1);
+  } catch (e) { return null; }
+}
+
+
 
 // ============================================================================
 // [STOCK-REPORT] 종목별 AI 분석 리포트 — 탑재 AI가 직접 쓰는 종합 분석문
@@ -21407,13 +21453,19 @@ async function stockAnalysisReport(DB, symbol, marketCap) {
       else L.push("· 다기간 혼조 — 시기별 신호 엇갈림, 진입 신중");
       L.push("");
     }
+    // [V12.88] 그래프+뉴스 중심 통합 판단 — AI 승률과 기술요약이 따로 놀며 정반대로 보이던 문제 수정.
+    let _techScore = null;
+    if (tech && tech.now) _techScore = _clamp(_num(tech.now.score, 0) * 0.5 + _num(tech.week.score, 0) * 0.35 + _num(tech.month.score, 0) * 0.15, -1, 1);
+    let _newsScore = null; try { _newsScore = await _luxSymNewsScore(DB, symbol); } catch (e) {}
+    const _blend = _luxDecisionBlend(ai && typeof ai.p === "number" ? ai.p : null, _techScore, _newsScore);
     if (ai && typeof ai.p === "number") {
-      const vd = ai.p >= 0.60 ? "매수" : ai.p >= 0.52 ? "약매수" : ai.p > 0.48 ? "중립" : ai.p > 0.40 ? "약매도" : "매도";
-      L.push("■ LUX-AI 위원회 판단");
-      L.push("· 종합 승률예측 " + Math.round(ai.p * 100) + "% → " + vd + (ai.ev != null ? " (기대값 " + (ai.ev >= 0 ? "+" : "") + ai.ev + "%)" : ""));
+      const vd = _blend >= 0.60 ? "매수" : _blend >= 0.52 ? "약매수" : _blend > 0.48 ? "중립" : _blend > 0.40 ? "약매도" : "매도";
+      L.push("■ LUX-AI 통합 판단 (그래프·최근이슈 중심)");
+      L.push("· 종합 판단 " + Math.round(_blend * 100) + "% → " + vd + " — 기술(그래프)·뉴스를 중심으로, 위원회 모델은 보조로 결합");
+      L.push("· 구성: 기술 컨센서스 " + (_techScore != null ? (_techScore >= 0 ? "+" : "") + _techScore.toFixed(2) : "N/A") + " · 최근이슈(뉴스) " + (_newsScore != null ? (_newsScore >= 0 ? "+" : "") + _newsScore.toFixed(2) : "N/A") + " · 위원회 승률 " + Math.round(ai.p * 100) + "%(보조)");
       if (Array.isArray(ai.experts) && ai.experts.length) {
         const em = { mind: "스태킹", dnn: "딥넷", gbdt: "트리" };
-        L.push("· 전문가별: " + ai.experts.map(function (e) { return (em[e.name] || e.name) + " " + Math.round(e.p * 100) + "%"; }).join(" · "));
+        L.push("· 위원회 전문가별(참고): " + ai.experts.map(function (e) { return (em[e.name] || e.name) + " " + Math.round(e.p * 100) + "%"; }).join(" · "));
       }
       L.push("");
     } else {
@@ -21450,11 +21502,10 @@ async function stockAnalysisReport(DB, symbol, marketCap) {
     if (tech) { for (const tf of [tech.now, tech.week, tech.month, tech.year]) { if (tf.label.indexOf("매수") >= 0) techBull++; else if (tf.label.indexOf("매도") >= 0) techBear++; } }
     const fundGood = ev && ev.score >= 62 && !(ev.warns && ev.warns.length);
     const fundBad = ev && (ev.score < 48 || (ev.warns && ev.warns.length));
-    const aiBull = ai && ai.p >= 0.55;
-    const aiBear = ai && ai.p < 0.45;
-    if (techBull >= 3 && fundGood && (aiBull || !ai)) L.push("· 기술·재무·AI가 대체로 긍정적 — 추세 순응 매수 관점(단, 분할·손절 병행).");
-    else if (techBear >= 3 || fundBad || aiBear) L.push("· 부정 신호 우위 — 신규 진입보다 관망·리스크 관리 우선.");
-    else L.push("· 신호 혼재 — 확정적 방향성 부족. 다음 촉매(실적·거래량)를 확인 후 대응.");
+    // [V12.88] 종합 의견도 그래프+뉴스 중심 통합판단(_blend)을 주 신호로, 재무는 보조 조언으로.
+    if (_blend >= 0.55 && techBull >= 2) L.push("· 그래프·이슈 중심 통합판단이 매수 우위(" + Math.round(_blend * 100) + "%) — 추세 순응 관점(분할·손절 병행)." + (fundBad ? " 다만 재무 경고는 리스크 관리로 참고." : ""));
+    else if (_blend < 0.45 || techBear >= 3) L.push("· 그래프·이슈 중심 통합판단이 부정적(" + Math.round(_blend * 100) + "%) — 신규 진입보다 관망·리스크 관리 우선." + (fundGood ? " 재무는 양호하나 기술 반등 확인이 먼저." : ""));
+    else L.push("· 통합판단 중립(" + Math.round(_blend * 100) + "%) — 방향성 부족. 다음 촉매(실적·거래량) 확인 후 대응.");
     L.push("· 본 분석은 탑재 AI의 데이터 기반 판단이며 투자 권유가 아닙니다. 최종 결정은 투자자 본인.");
 
     const out = { symbol: symbol, ts: Date.now(), text: L.join("\n"),
