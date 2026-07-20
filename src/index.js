@@ -2699,6 +2699,10 @@ const AI_PARAMS = {
   //   합성신호(AI_PRIMARY)를 기존 진입 파이프라인에 주입 → 코드 중복 없이 모든 안전장치 재사용.
   aiPrimary: {
     enabled: true,          // AI 주도 진입 활성(끄려면 false → 규칙엔진 전용으로 복귀)
+    soleDriver: true,       // [V12.70] ★AI 단독 드라이버★ true면 규칙엔진의 '진입'신호를 전량 폐기하고
+                            //   AI 위원회(mlDeepDecide)가 유일한 진입 판단자가 됨(규칙로직 대체). 청산·손절·
+                            //   트레일링 등 리스크관리(runFastWatch/포지션관리)는 그대로 유지 — 진입만 이관.
+                            //   되돌리려면 false(→ 규칙엔진 진입 + AI는 게이트/보조로 복귀).
     threshold: 0.60,        // 위원회 결합확률 이 이상일 때만 AI 단독 진입(규칙신호 없는 종목이라 보수적)
     maxPerCycle: 8,         // 사이클당 AI 주도 진입 후보 상한(위원회 계산·subrequest 통제)
     baseWeight: 0.6,        // 합성신호 기본 가중(규칙신호 1.0 대비 축소 → 사이즈 보수화)
@@ -12671,6 +12675,27 @@ async function runTradingCycle(env) {
             }
           }
 
+          // [V12.70] ★AI 단독 드라이버(규칙엔진 진입 대체)★ — 여기서 AI_PRIMARY 후보를 주입한다.
+          //   (기존 V12.64 주입은 아래 no_signal continue 뒤에 있어 length===0 조건이 영원히 막혀 미발화였음.)
+          //   soleDriver=true: 규칙 매수신호를 폐기하고 AI 위원회를 유일 진입경로로. 상승추세 사전필터를
+          //   통과한 종목을 합성후보로 넣으면 아래 위원회(mlDeepDecide + metaHardFilter)가 최종 허용/차단·사이즈 결정.
+          try {
+            const _ap = (typeof AI_PARAMS !== "undefined") ? AI_PARAMS.aiPrimary : null;
+            if (_ap && _ap.enabled && _ap.soleDriver) stratResults = [];   // 규칙 진입신호 전량 폐기(단독 드라이버)
+            if (_ap && _ap.enabled && stratResults.length === 0 && !heldSymbols.has(symbol) && !strategiesHeldNow.has("trend")
+                && !crashGate.blockNew && canTrade && aiPrimaryUsed < (_ap.maxPerCycle || 8)
+                && closes.length >= 55) {
+              const _ma20 = getMA(closes, 20), _ma50 = getMA(closes, 50);
+              const _uptrend = (_ma20 != null && _ma50 != null && _ma20 > _ma50 && price > _ma20 &&
+                                (dailyRsi == null || (dailyRsi >= (_ap.rsiMin || 45) && dailyRsi <= (_ap.rsiMax || 72))));
+              if (_uptrend) {
+                aiPrimaryUsed++;
+                stratResults.push({ strategy: "trend", weight: (_ap.baseWeight || 0.6),
+                  signal: { name: "AI_PRIMARY", members: ["AI_PRIMARY"], weight: (_ap.baseWeight || 0.6), isAiPrimary: true } });
+              }
+            }
+          } catch (e) {}
+
           if (stratResults.length === 0) {
             incNobuy("no_signal");
             // [V8.1.2] 진단: 처음 5개 종목의 상태를 샘플로 수집
@@ -12773,21 +12798,7 @@ async function runTradingCycle(env) {
           //   예산·섹터·히트·크래시 가드 → executeBuy)을 그대로 통과시킨다. AI가 규칙엔진을 대체해 독립
           //   진입 결정. 실제 허용/차단·사이즈는 아래 위원회(mlDeepDecide)가 결정하며, isAiPrimary 전용
           //   고문턱/합의/신뢰모델 조건을 추가로 요구(무분별 진입 차단).
-          try {
-            const _ap = (typeof AI_PARAMS !== "undefined") ? AI_PARAMS.aiPrimary : null;
-            if (_ap && _ap.enabled && stratResults.length === 0 && !heldSymbols.has(symbol) && !strategiesHeldNow.has("trend")
-                && !crashGate.blockNew && canTrade && aiPrimaryUsed < (_ap.maxPerCycle || 8)
-                && closes.length >= 55) {
-              const _ma20 = getMA(closes, 20), _ma50 = getMA(closes, 50);
-              const _uptrend = (_ma20 != null && _ma50 != null && _ma20 > _ma50 && price > _ma20 &&
-                                (dailyRsi == null || (dailyRsi >= (_ap.rsiMin || 45) && dailyRsi <= (_ap.rsiMax || 72))));
-              if (_uptrend) {
-                aiPrimaryUsed++;
-                stratResults.push({ strategy: "trend", weight: (_ap.baseWeight || 0.6),
-                  signal: { name: "AI_PRIMARY", members: ["AI_PRIMARY"], weight: (_ap.baseWeight || 0.6), isAiPrimary: true } });
-              }
-            }
-          } catch (e) {}
+          // [V12.70] (구 V12.64 AI_PRIMARY 주입은 위쪽 no_signal continue 이전으로 이동 — 여기선 제거)
 
           // Cross-strategy confluence: 2개 이상 전략이 동시 신호면 보너스
           const crossBonus = (stratResults.length >= 2) ? (mcfg.crossConfluenceBonus || 1.0) : 1.0;
