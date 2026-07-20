@@ -12693,9 +12693,15 @@ async function runTradingCycle(env) {
                       dayPct: daily.prevClose > 0 ? (price / daily.prevClose - 1) * 100 : 0,
                       regime: (regime && regime.regime) ? regime.regime : "NEUTRAL", strategy: "trend", market: market, ev: {} });
                     const _mdx = await mlDeepDecide(DB, _fx, { mind: __mind, guard: __guard, ens: __ensemble, trust: __dnnTrust, dnn: __dnn, gbdtTrust: __gbdtTrust, gbdt: __gbdt, cal: __cal, evstats: __evStats });
-                    if (_mdx && typeof _mdx.p === "number" && !_mdx.observe && !_mdx.abstain
-                        && _mdx.p <= (_xc.committeeExitProb != null ? _xc.committeeExitProb : 0.42)) {
-                      await executeSell(DB, market, symbol, held, held.qty, price, "AI_EXIT p" + (_mdx.p * 100).toFixed(0) + "% (위원회 약세전환)", mcfg, cash);
+                    // [V12.90] ★청산도 기술+뉴스 블렌드로 통일★ — 진입은 그래프 중심인데 청산이 위원회 원시
+                    //   확률만 쓰면 기술적으로 강한 종목을 노이즈로 파는 모순. 진입과 동일 기준으로 통합확률 산출.
+                    let _exitP = (_mdx && typeof _mdx.p === "number") ? _mdx.p : null;
+                    if (_exitP != null && !_mdx.observe && !_mdx.abstain && (AI_PARAMS.decisionCore || {}).enabled !== false) {
+                      try { const _tkx = _luxPickTech(daily, symbol, market); let _nsx = null; try { _nsx = await _luxSymNewsScore(DB, symbol); } catch (e) {} _exitP = _luxDecisionBlend(_mdx.p, _tkx.tech, _nsx, AI_PARAMS.decisionCore); } catch (e) {}
+                    }
+                    if (_mdx && _exitP != null && !_mdx.observe && !_mdx.abstain
+                        && _exitP <= (_xc.committeeExitProb != null ? _xc.committeeExitProb : 0.42)) {
+                      await executeSell(DB, market, symbol, held, held.qty, price, "AI_EXIT p" + (_exitP * 100).toFixed(0) + "% (통합 약세전환)", mcfg, cash);
                       sold++;
                       const _sk = Object.keys(positions).some(k => positions[k].symbol === symbol && k !== posKey);
                       if (!_sk) { heldSymbols.delete(symbol); const _sc = SECTOR_MAP[symbol]; if (_sc && sectorCounts[_sc]) sectorCounts[_sc]--; }
@@ -12705,13 +12711,13 @@ async function runTradingCycle(env) {
                     //   위원회 p가 애매하게 낮고(≤topkDropP) AI픽 풀에서도 탈락한 종목은 사이클당 최대
                     //   topkDropN개 회전 청산 → 자본이 AI 최고확신 종목으로 재배치된다(Qlib TopK-DropN 프로토콜).
                     const _au2 = (typeof AI_PARAMS !== "undefined" && AI_PARAMS.autonomy) || {};
-                    if (_mdx && typeof _mdx.p === "number" && !_mdx.observe && !_mdx.abstain
+                    if (_mdx && _exitP != null && !_mdx.observe && !_mdx.abstain
                         && __aiPickPool && __aiPickPool.size > 0 && !__aiPickPool.has(symbol)
-                        && _mdx.p <= (_au2.topkDropP != null ? _au2.topkDropP : 0.48)
+                        && _exitP <= (_au2.topkDropP != null ? _au2.topkDropP : 0.48)
                         && __aiRotated < (_au2.topkDropN != null ? _au2.topkDropN : 2)
                         && _pnlY > (_xc.minPnlForExit != null ? _xc.minPnlForExit : -3.0)) {
                       __aiRotated++;
-                      await executeSell(DB, market, symbol, held, held.qty, price, "AI_ROTATE p" + (_mdx.p * 100).toFixed(0) + "% (TopK 회전 — 상위픽 교체)", mcfg, cash);
+                      await executeSell(DB, market, symbol, held, held.qty, price, "AI_ROTATE p" + (_exitP * 100).toFixed(0) + "% (TopK 회전 — 상위픽 교체)", mcfg, cash);
                       sold++;
                       const _sk2 = Object.keys(positions).some(k => positions[k].symbol === symbol && k !== posKey);
                       if (!_sk2) { heldSymbols.delete(symbol); const _sc2 = SECTOR_MAP[symbol]; if (_sc2 && sectorCounts[_sc2]) sectorCounts[_sc2]--; }
@@ -13354,6 +13360,9 @@ async function runTradingCycle(env) {
                     _md.pRaw = _md.p;
                     _md.p = _luxDecisionBlend(_md.p, _tk.tech, _ns, _dc);
                     _md.blended = true; _md.techScore = _tk.tech; _md.newsScore = _ns;
+                    // [V12.90] 사이징도 통합확률에 정렬 — sizeMult가 위원회 원시 p로 계산돼 있어 블렌드와
+                    //   불일치(중간 확신인데 과대 사이징)하던 것 수정. 통합확률로 켈리 재계산.
+                    try { _md.sizeMult = mlKellySize(_md.p, _md.uncertainty); } catch (e) {}
                     if (_tk.tech != null && _tk.tech <= -0.5) { _md.allow = false; _md.techVeto = true; }   // 그래프 강한 약세 → 진입 거부
                   }
                 } catch (e) {}
