@@ -19218,13 +19218,19 @@ async function mlMindTrainNightly(DB) {
     //   실거래에 반영되어 위험 — 기존 모델보다 큰 폭으로 나빠지거나 다수클래스 찍기보다도 못하면
     //   발행을 거부하고 기존 모델을 그대로 유지(관측 로그만 남김).
     let prevMind = null; try { prevMind = await getState(DB, "mind_model", null); } catch (e) {}
-    const prevLB = prevMind ? ((typeof prevMind.valAccLB === "number") ? prevMind.valAccLB : _wilsonLB(_num(prevMind.valAcc, 0.5), _num(prevMind.valN, 30))) : null;
+    // [V12.95] ★featVer 교차비교 교착 수정★ 회귀가드가 featVer가 다른 낡은 모델의 valAccLB와
+    //   새 모델을 비교하면(예: featVer 11→12 상향 직후 저장소엔 아직 featVer-11 MIND가 남아있다)
+    //   피처 공간·표본 풀이 완전히 달라 비교 자체가 무의미하다. 낡은 모델의 높은 LB에 막혀 새 featVer
+    //   MIND가 영구 발행 거부되어 mlMindLoad(featVer 불일치→null)가 계속 null → 두뇌 페이지 "학습 대기"
+    //   에서 못 벗어나던 근본원인. featVer가 바뀐 이전 모델은 비교 대상에서 제외(mlMindLoad와 동일 기준).
+    const _prevUsable = prevMind && prevMind.featVer === LUXML.featVer;
+    const prevLB = _prevUsable ? ((typeof prevMind.valAccLB === "number") ? prevMind.valAccLB : _wilsonLB(_num(prevMind.valAcc, 0.5), _num(prevMind.valN, 30))) : null;
     const posRate = data.reduce(function (s, d) { return s + (d.y ? 1 : 0); }, 0) / N;
     const majorityAcc = Math.max(posRate, 1 - posRate);
     // [V12.56] 누수제거 전환 보호 — 이전 모델이 누수(leaky) 수치로 측정됐고 새 모델이 leak-free면 척도가
     //   달라(누수 valAcc가 구조적으로 더 높음) 회귀가드가 항상 오발동 → 정직모델이 영구 미발행되는 교착.
     //   방법 변경 첫 발행엔 prevLB 비교를 건너뛰고 다수클래스 절대바닥만 적용(다음밤부터 leakfree끼리 정상비교).
-    const _methodChanged = leakFree && prevMind && prevMind.leakFree !== true;
+    const _methodChanged = leakFree && _prevUsable && prevMind.leakFree !== true;
     const regressed = (prevLB != null && !_methodChanged && accLB < prevLB - MIND.regressGuardMargin) || (accLB < majorityAcc - 0.03);
     if (regressed) {
       const _msg = "[MIND] ⚠️ 회귀가드 발동 — 신규 valAcc " + (valAcc * 100).toFixed(1) + "%(하한 " + (accLB * 100).toFixed(1) +
@@ -20162,7 +20168,10 @@ const GBDT = {
   colsample: 0.8,       // 트리당 열 서브샘플
   patience: 24,         // [V12.43] 14→24 — 트리 20개에서 조기종료해 시장국면 피처만 쓰고 멈추던 것.
                         //   지배 피처 소진 후 평탄 구간을 지나 2차(개별종목) 피처 분할을 탐색할 여지 부여.
-  minTrainSamples: 200,
+  minTrainSamples: 120,  // [V12.95] 200→120 — featVer 상향(11→12) 직후 표본 풀이 0부터 재구축되는 동안
+                         //   GBDT만 200 문턱에 걸려 MIND(80)보다 한참 늦게 참여(계속 "학습 대기")하던 것 완화.
+                         //   DNN(500→300)과 동일 취지. 과적합은 신뢰게이트(accLB≥trustFloor+base마진)가 방어 —
+                         //   미달 모델은 wGbdt=0으로 자동 억제되어 위원회에 영향 없이 표시상 "학습됨"으로 전환.
   valFrac: 0.2,
   trustFloor: 0.505, trustTemp: 12,
   // [V12.54] trustSlack 제거 — MIND 상대비교 게이트 폐기로 죽은 파라미터가 됨.
