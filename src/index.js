@@ -11280,6 +11280,25 @@ async function refreshCommodityQuotes(env) {
   return { ok: okCount, fail: failCount };
 }
 
+// [V12.106] ★AI 가동중 규칙엔진 신규진입 차단★ — CM(원자재)/Alt(보조) 슬리브는 각자 독립 크론으로
+//   돌며 AI 준비상태(__aiReady)와 무관하게 항상 규칙엔진(swing) 신규매수를 실행해왔다. "AI가 가동되면
+//   규칙엔진은 비상 폴백"이라는 설계원칙에서 벗어난 사각지대였다. KR/US 메인 파이프라인의 __aiReady
+//   판정(mlAiReadyState 참고)과 동일 기준으로 여기서도 신규매수만 차단하고, 보유 포지션 매도(위험관리)는
+//   그대로 유지한다(청산까지 막으면 오히려 위험).
+async function mlAiReadyState(DB) {
+  try {
+    const _auto = (typeof AI_PARAMS !== "undefined" && AI_PARAMS.autonomy) || {};
+    if (!_auto.enabled || typeof LUXML === "undefined" || !LUXML.enabled) return false;
+    const _mind = await mlMindLoad(DB);
+    if (!_mind) return false;
+    const _dt = await getState(DB, "dnn_trust", null);
+    const _dnn = (_dt && _dt.trusted) ? await mlDNNLoad(DB) : null;
+    const _gt = await getState(DB, "gbdt_trust", null);
+    const _gbdt = (_gt && _gt.trusted) ? await mlGBDTLoad(DB) : null;
+    return !!(_dnn || _gbdt);
+  } catch (e) { return false; }
+}
+
 async function runCommodityCycle(env, forceTrade) {
   const DB = env.DB;
   resetFetchBudget(100);  // [PAID] 원자재 cycle 여유
@@ -11300,6 +11319,7 @@ async function runCommodityCycle(env, forceTrade) {
   const positions = await getPositions(DB, "cm");   // key "SYM::swing"
   const swingRules = cfg.swingRules || {};
   let tried = 0, bought = 0, sold = 0, fetchFail = 0;
+  const _aiReadyCM = await mlAiReadyState(DB);   // [V12.106] AI 가동중이면 규칙엔진 신규매수 차단(청산은 유지)
 
   // [V8.9] 거래 시각이 아니면 시세 fetch 자체를 스킵.
   //   매분 도는 refreshCommodityQuotes가 이미 시세를 갱신하므로, 여기서 또 12종목을
@@ -11400,6 +11420,7 @@ async function runCommodityCycle(env, forceTrade) {
 
       // === STEP 2: swing 매수 신호 평가 ===
       if (positions[posKey]) continue;   // 이미 보유 중이면 추가 매수 안 함
+      if (_aiReadyCM) continue;          // [V12.106] AI 가동중 — 규칙엔진 신규매수 비상폴백 아님, 스킵
       const signals = evaluateBuySignals_swing(price, dayPct, daily, cfg);
       if (!signals || signals.length === 0) continue;
 
@@ -11586,6 +11607,7 @@ async function runAltSleeveCycle(env, key) {
   const positions = await getPositions(DB, key);
   const swingRules = cfg.swingRules || {};
   let tried = 0, bought = 0, sold = 0, fetchFail = 0;
+  const _aiReadyAlt = await mlAiReadyState(DB);   // [V12.106] AI 가동중이면 규칙엔진 신규매수 차단(청산은 유지)
   const BATCH = 6;
   const fetched = [];
   for (let i = 0; i < sleeve.syms.length; i += BATCH) {
@@ -11626,6 +11648,7 @@ async function runAltSleeveCycle(env, key) {
         }
       }
       if (positions[posKey]) continue;
+      if (_aiReadyAlt) continue;   // [V12.106] AI 가동중 — 규칙엔진 신규매수 비상폴백 아님, 스킵
       const signals = evaluateBuySignals_swing(price, dayPct, dd, cfg);
       if (!signals || signals.length === 0) continue;
       let best = signals[0];
