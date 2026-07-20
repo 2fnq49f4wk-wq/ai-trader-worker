@@ -11315,7 +11315,7 @@ html[data-theme="light"] #page-nnviz .nnv-title,html[data-theme="light"] #page-n
     if(isMind){
       sub.textContent = '구조: FM(인수분해기계, K='+(d.fmK||'—')+') + 전문가 스태킹 · 야간 자가학습';
       chips.innerHTML =
-        chip('전체 표본', d.n? d.n.toLocaleString():'—','good') +
+        chip('학습창 표본', (d.n? d.n.toLocaleString():'—')+(d.poolSamples? ' <span style="opacity:.6">/ 풀 '+d.poolSamples.toLocaleString()+'</span>':''),'good') +
         chip('검증 정확도(하한)', pct(d.valAccLB!=null?d.valAccLB:d.valAcc), (d.valAccLB||d.valAcc)>=0.55?'good':'warn') +
         chip('FM 자체정확도', pct(d.fmAcc),'') +
         chip('참여 전문가', (d.experts||[]).length+'개','good') +

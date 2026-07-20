@@ -14308,7 +14308,7 @@ async function handleRequest(request, env) {
       //   순서 고정: harvest → l1 → brain → mind → dnn → gbdt → calibrate (뒤 단계가 앞 단계 산출물 의존).
       //   각 단계 자체 CPU예산 가드가 있어 안전. 재학습 즉시 모든 수정이 반영되게 하는 원클릭 경로.
       if (target === "all") {
-        const _order = [["harvest", mlMarketHarvestNightly], ["l1", mlTrainNightly], ["brain", mlBrainTrainNightly], ["mind", mlMindTrainNightly], ["dnn", mlDNNTrainNightly], ["gbdt", mlGBDTTrainNightly], ["calibrate", mlCalibrateCommittee]];
+        const _order = [["harvest", mlMarketHarvestNightly], ["l1", mlTrainNightly], ["brain", mlBrainTrainNightly], ["mind", mlMindTrainNightly], ["gbdt", mlGBDTTrainNightly], ["dnn", mlDNNTrainNightly], ["calibrate", mlCalibrateCommittee]];
         const out = {};
         for (const [nm, fn] of _order) {
           try { out[nm] = await fn(env.DB); } catch (e) { out[nm] = "FAIL: " + (e && e.message); }
@@ -19423,7 +19423,10 @@ async function mlMindVizData(DB) {
     const experts = (m.experts || []).map(function (nm, i) { return { name: expertNames[nm] || nm, weight: +(m.meta.w[i] || 0).toFixed(3) }; });
     const g = await mlGuardState(DB);
     const mindLB = (typeof m.valAccLB === "number") ? m.valAccLB : _wilsonLB(_num(m.valAcc, 0.5), _num(m.valN, 30));
-    return { kind: "mind", trained: true, n: m.n, valAcc: m.valAcc, valAccLB: +mindLB.toFixed(4), fmAcc: m.fmAcc, valLogLoss: m.valLogLoss,
+    // [V12.100] 풀 전체 표본수도 함께 반환 — MIND는 FM 특성상 최근 trainWindow(15000)만 학습창으로 쓰므로
+    //   n(=학습창)이 풀보다 작게 보여 "표본이 줄었나?" 오해가 있었다(사용자 지적). 둘을 구분 표시하기 위함.
+    let _pool = 0; try { const _r = await DB.prepare("SELECT COUNT(*) c FROM ml_samples WHERE featver=?").bind(LUXML.featVer).first(); _pool = (_r && _r.c) || 0; } catch (e) {}
+    return { kind: "mind", trained: true, n: m.n, poolSamples: _pool, trainWindow: MIND.trainWindow, valAcc: m.valAcc, valAccLB: +mindLB.toFixed(4), fmAcc: m.fmAcc, valLogLoss: m.valLogLoss,
       ruleAcc: (typeof m.ruleAcc === "number") ? m.ruleAcc : null, ruleAccLB: (typeof m.ruleAccLB === "number") ? m.ruleAccLB : null,   // [V12.39] 규칙엔진 전문가 정확도
       fmK: K, experts: experts, trainedAt: m.trainedAt, featNames: fn, inputFeatures: inputFeatures, topFeatures: topFeatures,
       guard: { distrust: !!g.distrust, liveAcc: g.liveAcc, baseAcc: g.baseAcc, liveN: (g.live || []).length } };
@@ -19809,9 +19812,13 @@ async function mlDNNTrainNightly(DB) {
     if (prevModelEarly && prevModelEarly.source === "external") {
       return "[DNN] 외부GPU 학습모델 존재(valAcc " + ((_num(prevModelEarly.valAcc, 0)) * 100).toFixed(1) + "%) — 야간 자가학습 생략(외부 소유, 12h마다 재학습)";
     }
+    // [V12.100] ★DNN 완주 신뢰성★ 종전엔 trainWindow(90000)만큼 다 읽어 JSON.parse·표준화했는데
+    //   실제 학습엔 최근 dnnMaxSamples(2000)만 쓴다 — 표본이 커질수록(37k+) 읽기·파싱만으로 CPU를 태워
+    //   DNN 단계가 완주 못 하고(뒤의 GBDT까지 굶김) "DNN만 안 넘어가던" 원인. 필요한 최근 표본만 읽는다.
+    const _dnnRead = Math.min(LUXML.trainWindow, (DNN.dnnMaxSamples || 2000) * 2 + 1000);
     const rows = await DB.prepare(
       "SELECT ts, feat, label, pnl_pct, strategy FROM ml_samples WHERE featver = ? ORDER BY ts DESC LIMIT ?"
-    ).bind(LUXML.featVer, LUXML.trainWindow).all();
+    ).bind(LUXML.featVer, _dnnRead).all();
     const raw = (rows && rows.results) ? rows.results : [];
     const nowTs = Date.now();
     const data = [];
@@ -23524,7 +23531,7 @@ export default {
           //   단계별 체크포인트가 300s 한도를 여러 cron에 걸쳐 처리하므로 안전하게 완주. 무한루프 방지:
           //   마커를 먼저 갱신하고 게이트/스테이지 체크포인트만 리셋(다음부터는 정상 하루1회 게이트).
           //   → harvest-now/train-now를 수동으로 칠 필요 없이, 배포만으로 MIND/GBDT가 재학습된다.
-          const _PIPE_VER = "V12.100-refill";
+          const _PIPE_VER = "V12.100b-refill";
           try {
             const _pv = await getState(env.DB, "ai_pipeline_ver", null);
             if (_pv !== _PIPE_VER) {
@@ -23593,8 +23600,10 @@ export default {
             await _stg("bandit", async function () { return await mlBanditNoiseNightly(env.DB); });
             await _stg("brain", async function () { return await mlBrainTrainNightly(env.DB); });
             await _stg("mind", async function () { return await mlMindTrainNightly(env.DB); });
-            await _stg("dnn", async function () { return await mlDNNTrainNightly(env.DB); });
+            // [V12.100] GBDT를 DNN 앞으로 — DNN(무거운 3M Worker폴백)이 CPU예산 초과로 죽어도 GBDT는
+            //   먼저 완주해 학습되게(종전 순서는 DNN 실패 시 뒤의 GBDT가 영영 못 돌던 원인).
             await _stg("gbdt", async function () { return await mlGBDTTrainNightly(env.DB); });
+            await _stg("dnn", async function () { return await mlDNNTrainNightly(env.DB); });
             // (4) [V4] 위원회 확률 보정(온도 스케일링) — 결합확률의 과신/과소신 교정
             await _stg("calibrate", async function () { return await mlCalibrateCommittee(env.DB); });
             // (4.5) [V6] 전 종목 야간 AI 스캔 — 유니버스 전체 승률예측(AI 픽·리포트 커버리지)
