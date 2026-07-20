@@ -13340,6 +13340,25 @@ async function runTradingCycle(env) {
                     __aiPicks.push({ symbol: symbol, p: +_md.p.toFixed(3), strategy: strategy, abstain: !!_md.abstain });
                   }
                 } catch (e) {}
+                // [V12.93] ★AI 결정 = 그래프+최근이슈 중심★ (AI_PRIMARY 게이트보다 먼저 적용) —
+                //   위원회 p를 기술 컨센서스+뉴스와 결합한 통합확률로 대체하고, allow도 통합확률 기준으로
+                //   재계산. 종전엔 블렌드가 AI_PRIMARY 게이트 뒤에 있어, 기술적으로 강한데 위원회 원시
+                //   확률이 낮은 종목이 블렌드로 올라오기 전에 게이트에서 컷되던 버그(그래프 중심 무력화) 수정.
+                try {
+                  const _dc = AI_PARAMS.decisionCore || {};
+                  if (_dc.enabled !== false && _md && typeof _md.p === "number" && !_md.observe && !_md.abstain) {
+                    const _tk = _luxPickTech(daily, symbol, market);
+                    let _ns = null; try { _ns = await _luxSymNewsScore(DB, symbol); } catch (e) {}
+                    _md.pRaw = _md.p;
+                    _md.p = _luxDecisionBlend(_md.p, _tk.tech, _ns, _dc);
+                    _md.blended = true; _md.techScore = _tk.tech; _md.newsScore = _ns;
+                    // allow 재계산 — 통합확률이 게이트문턱 이상이면 허용(원시 p 기준 stale allow 정정).
+                    _md.allow = _md.p >= (typeof MIND !== "undefined" ? MIND.gateThresh : 0.42);
+                    // 사이징도 통합확률로 켈리 재계산(확신도 정합).
+                    try { _md.sizeMult = _md.allow ? mlKellySize(_md.p, _md.uncertainty) : 1; } catch (e) {}
+                    if (_tk.tech != null && _tk.tech <= -0.5) { _md.allow = false; _md.techVeto = true; }   // 그래프 강한 약세 → 진입 거부
+                  }
+                } catch (e) {}
                 // [V12.64] ★AI 주도 진입 안전문★ 규칙 폴백 수량이 없는 AI_PRIMARY는 위원회의 명시적 강승인
                 //   없이는 절대 진입 금지 — observe/abstain/차단/저확신/합의부족/신뢰모델 부재면 즉시 스킵.
                 if (signal.isAiPrimary) {
@@ -13354,22 +13373,6 @@ async function runTradingCycle(env) {
                     continue;
                   }
                 }
-                // [V12.88] ★AI 결정 = 그래프+최근이슈 중심★ — 위원회 p를 기술 컨센서스+뉴스와 결합해
-                //   통합확률로 대체(모델은 보조). 기술 강한 약세면 진입 거부. 게이트·사이징·표시 일관.
-                try {
-                  const _dc = AI_PARAMS.decisionCore || {};
-                  if (_dc.enabled !== false && _md && typeof _md.p === "number" && !_md.observe && !_md.abstain) {
-                    const _tk = _luxPickTech(daily, symbol, market);
-                    let _ns = null; try { _ns = await _luxSymNewsScore(DB, symbol); } catch (e) {}
-                    _md.pRaw = _md.p;
-                    _md.p = _luxDecisionBlend(_md.p, _tk.tech, _ns, _dc);
-                    _md.blended = true; _md.techScore = _tk.tech; _md.newsScore = _ns;
-                    // [V12.90] 사이징도 통합확률에 정렬 — sizeMult가 위원회 원시 p로 계산돼 있어 블렌드와
-                    //   불일치(중간 확신인데 과대 사이징)하던 것 수정. 통합확률로 켈리 재계산.
-                    try { _md.sizeMult = mlKellySize(_md.p, _md.uncertainty); } catch (e) {}
-                    if (_tk.tech != null && _tk.tech <= -0.5) { _md.allow = false; _md.techVeto = true; }   // 그래프 강한 약세 → 진입 거부
-                  }
-                } catch (e) {}
                 if (_md && (_md.observe || _md.abstain)) {
                   // 자기불신 / 기권 → 규칙엔진 수량 유지(ML 개입 안 함)
                 } else if (_md && _md.allow === false) {
@@ -19955,7 +19958,8 @@ async function mlDeepDecide(DB, featVec, opts) {
     // [V4] 위원회 확률 보정(야간 mlCalibrateCommittee가 학습한 온도)
     try {
       const cal = (opts.cal !== undefined) ? opts.cal : await getState(DB, "committee_cal", null);
-      if (cal && typeof cal.T === "number" && cal.T > 0.3 && cal.T < 8) {   // [V12.49] 상한 4→8(탐색확대 동반)
+      // [V12.93] featVer 불일치 보정온도는 무시 — featVer 상향 직후 구버전 T가 신버전 확률을 왜곡하던 것 방지.
+      if (cal && (cal.featVer == null || cal.featVer === LUXML.featVer) && typeof cal.T === "number" && cal.T > 0.3 && cal.T < 8) {
         pCombined = _clamp(_sigmoid(_logitD(pCombined) / cal.T), 0.001, 0.999);
       }
     } catch (e) {}
@@ -20537,7 +20541,7 @@ async function mlCalibrateCommittee(DB) {
     let ece = 0;
     for (const b of bins) if (b.n > 0) ece += (b.n / preds.length) * Math.abs(b.pSum / b.n - b.ySum / b.n);
 
-    await setState(DB, "committee_cal", { T: bestT, n: preds.length, ece: +ece.toFixed(4), diagram: diagram, ts: Date.now() });
+    await setState(DB, "committee_cal", { T: bestT, n: preds.length, ece: +ece.toFixed(4), diagram: diagram, featVer: LUXML.featVer, ts: Date.now() });
     return "[CAL] 위원회 보정 T=" + bestT + " ECE=" + (ece * 100).toFixed(1) + "% (n=" + preds.length + ")";
   } catch (e) { return "[CAL] fail: " + (e && e.message); }
 }
