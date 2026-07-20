@@ -13331,9 +13331,14 @@ async function runTradingCycle(env) {
                 //   손절폭(stopDist/price)도 저장 → 라벨 시 손절 반영(buy&hold 낙관편향 제거).
                 try {
                   if (!__candSyms.has(symbol)) {
-                    const _sp = (stopDist > 0 && price > 0) ? (stopDist / price * 100) : 5;
-                    const _cs = mlCandidateStmt(DB, market, symbol, strategy, signal.mlFeat, price, _sp, AI_PARAMS.predictionHorizonDays);
-                    if (_cs) { __candBatch.push(_cs); __candSyms.add(symbol); }
+                    // [V12.97] 하루 1회만 기록 — 아이솔레이트 일일 가드로 분당 중복 삽입 차단(라벨 중복제거 유지).
+                    const _cday = Math.floor(Date.now() / 86400000);
+                    if (__candDayGuard.day !== _cday) __candDayGuard = { day: _cday, set: new Set() };
+                    if (!__candDayGuard.set.has(symbol)) {
+                      const _sp = (stopDist > 0 && price > 0) ? (stopDist / price * 100) : 5;
+                      const _cs = mlCandidateStmt(DB, market, symbol, strategy, signal.mlFeat, price, _sp, AI_PARAMS.predictionHorizonDays);
+                      if (_cs) { __candBatch.push(_cs); __candSyms.add(symbol); __candDayGuard.set.add(symbol); }
+                    } else __candSyms.add(symbol);   // 오늘 이미 기록됨 — 재삽입 생략
                   }
                 } catch (e) {}
                 // 최상위 결정(deep) → 폴백(mind)
@@ -17685,6 +17690,11 @@ function _purgedFolds(dataTs, K, embargoMs) {
   return folds;
 }
 
+let _samplesTableReady = false;
+// [V12.97] 반사실 후보 일일 삽입 가드(아이솔레이트 단위) — 종전 __candSyms는 사이클(분)마다 리셋돼
+//   지속 발화 종목이 하루 최대 ~390개 중복 후보를 만들었다(라벨 시 중복제거되나 테이블·LIMIT 처리량 낭비).
+//   같은 종목을 하루 1회만 기록 → 후보 테이블 폭증 억제, 라벨링이 실제 '구별되는' 후보를 빠르게 소화.
+let __candDayGuard = { day: 0, set: null };
 async function mlEnsureTable(DB) {
   try {
     await DB.prepare(
@@ -17692,6 +17702,15 @@ async function mlEnsureTable(DB) {
       "id INTEGER PRIMARY KEY AUTOINCREMENT, ts INTEGER, market TEXT, symbol TEXT, " +
       "strategy TEXT, feat TEXT, label INTEGER, pnl_pct REAL, featver INTEGER)"
     ).run();
+    // [V12.97] ★인덱스 부재 근본수정★ 종전 ml_samples엔 인덱스가 없어 야간 학습의 반복 읽기
+    //   (WHERE featver=? ORDER BY ts DESC LIMIT N — L1·BRAIN·MIND·DNN·GBDT·CAL이 밤마다 6+회)가
+    //   최대 120만행 풀스캔+정렬이었다 → D1 부하로 읽기 지연/실패 시 표본 0건으로 "학습 대기"가
+    //   될 수 있었다. featver+ts 복합인덱스로 커버(정렬까지). 프루닝/카운트용 strategy 인덱스도 추가.
+    if (!_samplesTableReady) {
+      try { await DB.prepare("CREATE INDEX IF NOT EXISTS idx_samples_fv_ts ON ml_samples(featver, ts)").run(); } catch (e) {}
+      try { await DB.prepare("CREATE INDEX IF NOT EXISTS idx_samples_strat_fv ON ml_samples(strategy, featver)").run(); } catch (e) {}
+      _samplesTableReady = true;
+    }
   } catch (e) {}
 }
 
@@ -23221,7 +23240,9 @@ async function mlLabelCandidates(DB, priceLookup, opts) {
       // [V17] alpha 라벨용 지수 수익률 — 종목 경로와 동일 창(진입~만기)의 지수 수익
       let idxRet = null;
       if (pr && Array.isArray(pr.idxCloses) && pr.idxCloses.length >= 2) {
-        const ic = pr.idxCloses, ie = ic[0], ix = ic[ic.length - 1];
+        // [V12.97] 지수 창을 종목 horizon에 정확 정렬 — 종전 ie=ic[0]은 (horizon+2)일 전이라 종목
+        //   창(horizon일)보다 ~2일 길어 alpha 라벨이 소폭 편향됐다. 만기 기준 horizon봉 전으로 진입 정렬.
+        const ic = pr.idxCloses, ie = ic[Math.max(0, ic.length - 1 - (c.horizon || 5))], ix = ic[ic.length - 1];
         if (ie > 0 && ix > 0) idxRet = (ix / ie - 1) * 100;
       }
       await mlLogSample(DB, c.market, c.symbol, (c.strategy || "swing") + "_cf", feat, exitPct, idxRet);
