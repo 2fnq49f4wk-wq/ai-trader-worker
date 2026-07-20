@@ -6144,46 +6144,6 @@ async function updateAnalystConsensus(DB, cfg, force) {
   return result;
 }
 
-// [V12.76] ★LLM 뉴스 감성 보정★ — VADER 사전은 문맥('규제 완화'=호재인데 '규제'만 히트)·반어·복합문에
-//   약하다. 야간 1회, 전 섹터그룹 헤드라인을 Claude 1콜로 일괄 채점해 사전 점수와 절반씩 블렌드.
-//   CPU 편법: 언어이해를 API로 오프로드(네트워크 대기는 Workers CPU 과금 0) + 그룹당 8개 캡·1일 1콜로 토큰 통제.
-async function sentiLLMRefine(DB, env) {
-  try {
-    if (!env || !env.ANTHROPIC_API_KEY) return null;
-    const sn = await getState(DB, "sector_news_sentiment", null);
-    if (!sn || !sn.headlines || !Object.keys(sn.headlines).length) return "[SENTI-LLM] 헤드라인 없음 — 스킵";
-    if (sn.llmTs && Date.now() - sn.llmTs < 20 * 3600000) return null;   // 1일 1콜
-    const groups = Object.keys(sn.headlines);
-    const payload = {};
-    for (const g of groups) payload[g] = (sn.headlines[g] || []).slice(0, 8).map(function (i) { return String(i.title || "").slice(0, 140); });
-    const prompt = "당신은 금융 뉴스 감성분석 전문가입니다. 아래는 섹터 그룹별 최신 헤드라인입니다.\n"
-      + JSON.stringify(payload) + "\n\n"
-      + "각 그룹의 '주가 방향 관점' 종합 감성을 -1(강한 악재)~+1(강한 호재) 실수로 채점하세요.\n"
-      + "규칙: 문맥 우선(예: '규제 완화'는 호재, '하락 후 반등'은 호재), 반어·조건문 주의, 애매하면 0 쪽으로.\n"
-      + '출력은 JSON만: {"TECH":0.3,...} (모든 그룹 키 포함, 다른 텍스트 금지)';
-    const res = await callClaude(env.ANTHROPIC_API_KEY, "claude-haiku-4-5-20251001", prompt, 500, 30000,
-      { maxRetries: 1, baseURL: env.LLM_BASE_URL || null, aigToken: env.AI_GATEWAY_TOKEN || null });
-    if (!res || !res.text) return "[SENTI-LLM] 응답 없음";
-    let js = null;
-    try { js = JSON.parse(res.text.replace(/```json|```/g, "").trim()); } catch (e) { return "[SENTI-LLM] JSON 파싱 실패"; }
-    const sc = { posScaleMax: 1.08, negScaleMin: 0.88 };
-    let applied = 0;
-    for (const g of groups) {
-      const lv = _num(js[g], NaN);
-      if (!isFinite(lv)) continue;
-      const lex = typeof sn.scores[g] === "number" ? sn.scores[g] : 0;
-      const blended = _clamp(0.5 * lex + 0.5 * _clamp(lv, -1, 1), -1, 1);   // 사전 절반 + LLM 절반
-      sn.scores[g] = +blended.toFixed(3);
-      sn.scales[g] = blended >= 0 ? (1 + blended * (sc.posScaleMax - 1)) : (1 + blended * (1 - sc.negScaleMin));
-      applied++;
-    }
-    if (!applied) return "[SENTI-LLM] 적용 0그룹";
-    sn.llmTs = Date.now(); sn.llm = true;
-    await setState(DB, "sector_news_sentiment", sn);
-    return "[SENTI-LLM] " + applied + "그룹 감성 LLM 보정(사전 50%+LLM 50% 블렌드)";
-  } catch (e) { return "[SENTI-LLM] fail: " + (e && e.message); }
-}
-
 async function updateSectorNewsSentiment(DB, cfg, force) {
   const sc = Object.assign({ enabled:true, refreshHours:6, enrichMaxUsageRatio:0.82, minBudgetReserve:8, posScaleMax:1.08, negScaleMin:0.88 }, (cfg && cfg.sectorNews) || {});
   if (sc.enabled === false) return null;
@@ -21731,6 +21691,146 @@ function _rptMoney(v, mkt) {
   return sg + "$" + (a >= 1e6 ? (a / 1e6).toFixed(2) + "M" : Math.round(a).toLocaleString());
 }
 
+// ============================================================================
+// [V12.77] ★온보드 NLG(자연어 생성) 서사엔진★ — 외부 LLM 0, 순수 JS.
+//   통계(성과·거래·모델신뢰·자가진단)를 근거로 "운용사 월간 서한" 문체의 산문을 생성한다.
+//   설계: ①월(ym) 시드 결정론적 문체 변주(같은 달=같은 글, 달마다 표현 다름) ②한국어 조사
+//   자동 처리(은/는·이/가·을/를) ③데이터 조건부 서사(성과 국면별 어조·전개) ④수치는 전부
+//   실데이터 인용(창작 0). CPU는 문자열 조립뿐(수 ms).
+// ============================================================================
+function _luxJosa(w, withBatchim, withoutBatchim) {
+  try { const c = w.charCodeAt(w.length - 1); if (c < 0xAC00 || c > 0xD7A3) return withoutBatchim;
+    return ((c - 0xAC00) % 28) ? withBatchim : withoutBatchim; } catch (e) { return withoutBatchim; }
+}
+function _luxRng(seedStr) {
+  let h = 1779033703; for (let i = 0; i < seedStr.length; i++) { h = Math.imul(h ^ seedStr.charCodeAt(i), 3432918353); h = (h << 13) | (h >>> 19); }
+  return function () { h = Math.imul(h ^ (h >>> 16), 2246822507); h = Math.imul(h ^ (h >>> 13), 3266489909); return ((h ^= h >>> 16) >>> 0) / 4294967296; };
+}
+function _luxWriteReport(ym, D) {
+  const rng = _luxRng("lux" + ym);
+  const pick = function (arr) { return arr[Math.floor(rng() * arr.length)]; };
+  const mkNames = { us: "미국", kr: "한국", cm: "원자재", bdus: "미국채", bdkr: "한국채" };
+  const mkts = D.mkts || {};
+  // ── 전체 집계 ──
+  let totPnlKR = 0, totSells = 0, totWins = 0, hasKR = false, hasUS = false;
+  for (const mk of Object.keys(mkts)) {
+    const m = mkts[mk]; totSells += m.sells || 0; totWins += m.wins || 0;
+    if (mk === "kr" || mk === "bdkr") { totPnlKR += m.pnl || 0; hasKR = hasKR || !!m.sells; }
+    if (mk === "us") hasUS = hasUS || !!m.sells;
+  }
+  const wr = totSells ? totWins / totSells : null;
+  const krM = mkts.kr, usM = mkts.us;
+  const tone = (function () {
+    const krBad = krM && krM.pnl < 0, usBad = usM && usM.pnl < 0;
+    if (!totSells) return "quiet";
+    if (!krBad && !usBad) return "good";
+    if (krBad && usBad) return "hard";
+    return "mixed";
+  })();
+  const S = [];   // 문단 배열
+  // ── 1) 총평 ──
+  S.push("## 총평");
+  const opening = {
+    good: ["이달은 시스템이 설계 의도대로 작동한 달이었습니다.", "숫자가 말해주듯, 이번 달은 규율이 성과로 이어진 달이었습니다."],
+    mixed: ["이달의 성적표는 한 문장으로 요약하기 어렵습니다 — 시장별로 명암이 갈렸습니다.", "절반의 성공이라 부르는 것이 정직하겠습니다."],
+    hard: ["솔직하게 시작하겠습니다. 이번 달은 어려운 달이었습니다.", "숫자를 미화하지 않겠습니다 — 이번 달 성과는 기대에 못 미쳤습니다."],
+    quiet: ["이달은 거래가 거의 없었던 관망의 달이었습니다.", "포지션을 거의 잡지 않은 조용한 달이었습니다."]
+  };
+  let p1 = pick(opening[tone]);
+  if (totSells) {
+    p1 += " 전체 " + totSells + "건을 청산해 승률 " + (wr * 100).toFixed(0) + "%를 기록했고, ";
+    const parts = [];
+    for (const mk of ["us", "kr"]) { const m = mkts[mk]; if (m && m.sells) parts.push(mkNames[mk] + " " + _rptMoney(m.pnl, mk)); }
+    p1 += parts.length ? "시장별 실현손익은 " + parts.join(", ") + "입니다." : "";
+  }
+  // 지수 대비(알파) — 목표는 지수를 이기는 것
+  const ir = D.idxRet || {};
+  const alphaBits = [];
+  if (usM && usM.sells && typeof ir.us === "number") alphaBits.push("S&P500이 최근 한 달 " + (ir.us >= 0 ? "+" : "") + ir.us.toFixed(1) + "%");
+  if (krM && krM.sells && typeof ir.kr === "number") alphaBits.push("코스피가 " + (ir.kr >= 0 ? "+" : "") + ir.kr.toFixed(1) + "%");
+  if (alphaBits.length) p1 += " 벤치마크는 " + alphaBits.join(", ") + " 움직였습니다. 이 시스템의 존재 이유는 지수를 이기는 것이며, 모든 평가는 그 기준을 따릅니다.";
+  S.push(p1);
+  // ── 2) 성과 분석 ──
+  S.push("\n## 성과 분석");
+  for (const mk of Object.keys(mkts)) {
+    const m = mkts[mk]; if (!m || !m.sells) continue;
+    const nm = mkNames[mk] || mk;
+    const mwr = m.wins / m.sells, pf = m.gl > 1e-9 ? m.gw / m.gl : (m.gw > 0 ? Infinity : 0);
+    let para = nm + " 시장" + _luxJosa(nm + " 시장", "은", "는") + " 청산 " + m.sells + "건, 승률 " + (mwr * 100).toFixed(0) + "%, Profit Factor " + (isFinite(pf) ? pf.toFixed(2) : "∞") + "를 기록했습니다. ";
+    if (m.pnl >= 0 && mwr >= 0.55) para += pick(["승률과 손익비가 함께 잡힌, 흠잡을 데 없는 구간이었습니다.", "이기는 거래를 길게, 지는 거래를 짧게 — 교과서적인 흐름이었습니다."]);
+    else if (m.pnl >= 0) para += pick(["승률은 평범했지만 손익비가 이를 메웠습니다. 이 시스템은 원래 그렇게 설계돼 있습니다.", "몇 번의 큰 승리가 잦은 작은 패배를 상쇄한, 전형적인 추세추종형 손익 구조였습니다."]);
+    else if (isFinite(pf) && pf >= 1) para += pick(["거래당 기대값은 플러스였는데 총손익이 음수입니다 — 소수 대형 손실의 흔적이며, 사이징이 반성할 지점입니다.", "구조는 이기고 있었지만 몇 건의 큰 손실이 전체를 끌어내렸습니다."]);
+    else para += pick(["변명하지 않겠습니다. 진입 선별과 손절 집행 모두 기준에 못 미쳤습니다.", "시장 탓으로 돌리기 전에 시스템의 선별력이 부족했음을 인정합니다."]);
+    // 주차 흐름 서사
+    try {
+      const wk = Object.keys(m.weekly || {}).sort();
+      if (wk.length >= 3) {
+        const h = Math.floor(wk.length / 2);
+        let a = 0, b = 0;
+        wk.forEach(function (w, i) { if (i < h) a += m.weekly[w]; else b += m.weekly[w]; });
+        if (b > a && b > 0) para += " 월초의 부진을 후반으로 갈수록 만회하는 흐름이었다는 점은 긍정적입니다.";
+        else if (a > b && b < 0) para += " 다만 월 후반으로 갈수록 힘이 빠진 점은 다음 달 경계 대상입니다.";
+      }
+    } catch (e) {}
+    // 전략 서사
+    try {
+      const st = Object.keys(m.strat || {});
+      if (st.length >= 2) {
+        const arr = st.map(function (k) { return { k: k, p: m.strat[k].pnl || m.strat[k] || 0 }; }).sort(function (x, y) { return y.p - x.p; });
+        const best = arr[0], worst = arr[arr.length - 1];
+        if (best && worst && best.k !== worst.k) para += " 전략 중에는 " + best.k + _luxJosa(best.k, "이", "가") + " 견인했고, " + worst.k + _luxJosa(worst.k, "은", "는") + " 발목을 잡았습니다.";
+      }
+    } catch (e) {}
+    S.push(para);
+  }
+  if (!totSells) S.push("이달은 유의미한 청산이 없어 성과 분석을 생략합니다. 거래하지 않은 것도 결정이며, 나쁜 진입보다 낫습니다.");
+  // ── 3) 잘한 점과 아쉬운 점 ──
+  const allClosed = [];
+  for (const mk of Object.keys(mkts)) for (const c of (mkts[mk].closed || [])) allClosed.push(Object.assign({ mk: mk }, c));
+  if (allClosed.length >= 3) {
+    S.push("\n## 잘한 점과 아쉬운 점");
+    allClosed.sort(function (a, b) { return b.pct - a.pct; });
+    const bt = allClosed[0], wt = allClosed[allClosed.length - 1];
+    let p3 = "이달 최고의 거래는 " + bt.sym + "(" + _rptPct(bt.pct) + ")였습니다. " +
+      pick(["수익 거래를 조급하게 끊지 않고 추세가 소진될 때까지 끌고 간 것이 주효했습니다.", "좋은 진입보다 어려운 것이 좋은 보유인데, 이 거래에서는 둘 다 해냈습니다."]);
+    if (wt && wt.pct < 0) {
+      p3 += " 반대편에는 " + wt.sym + "(" + _rptPct(wt.pct) + ")" + _luxJosa(")", "이", "가") + " 있습니다. " +
+        (wt.pct < -6 ? "손절선을 넘겨 체결된 폭이 컸다는 점에서, 갭 리스크에 대한 사이징 보수화가 필요하다는 교훈을 남겼습니다."
+                     : "손실 자체는 시스템의 일부입니다 — 중요한 것은 손절 규율이 작동했고, 한 건의 손실이 계좌를 위협하지 않았다는 사실입니다.");
+    }
+    S.push(p3);
+  }
+  // ── 4) AI 시스템 자가진단 ──
+  S.push("\n## AI 시스템 자가진단");
+  const dnnOk = D.dnnT && D.dnnT.trusted, gbdtOk = D.gbdtT && D.gbdtT.trusted;
+  let p4 = "";
+  if (D.mind && (dnnOk || gbdtOk)) p4 += "위원회는 현재 정상 가동 중입니다 — 위원장(MIND)에 " + [dnnOk ? "딥넷" : null, gbdtOk ? "부스팅트리" : null].filter(Boolean).join("과 ") + _luxJosa(gbdtOk ? "트리" : "딥넷", "이", "가") + " 검증을 통과해 합류해 있습니다. ";
+  else if (D.mind) p4 += "위원장(MIND)은 가동 중이나 표준모델(딥넷·부스팅트리)은 아직 검증 문턱을 넘지 못해 자동 억제 상태입니다. 이는 결함이 아니라 과신 방지 장치가 작동하는 모습입니다. ";
+  else p4 += "모델은 아직 학습 표본을 축적하는 단계로, 거래는 규칙엔진이 비상 운용하고 있습니다. ";
+  const sr = D.selfreview;
+  if (sr && Array.isArray(sr.diagnosis) && sr.diagnosis.length) {
+    p4 += "시스템이 스스로 내린 진단은 다음과 같습니다: ";
+    p4 += sr.diagnosis.slice(0, 3).map(function (d) { return "" + d; }).join(" 또한 ") + ".";
+    if (sr.autoDisable && sr.autoDisable.length) p4 += " 이 중 저성과 전략(" + sr.autoDisable.join(", ") + ")은 이미 자동 차단 조치가 내려져 있으며, 성과가 회복되면 스스로 해제됩니다.";
+  } else p4 += "자가진단에서 구조적 문제는 발견되지 않았습니다.";
+  S.push(p4);
+  // ── 5) 다음 달 운용 방침 ──
+  S.push("\n## 다음 달 운용 방침");
+  let p5 = "";
+  if (tone === "hard") p5 += pick(["다음 달의 최우선 과제는 수익이 아니라 손실의 크기를 통제하는 것입니다. ", "공격보다 수비를 앞에 두겠습니다. "]);
+  else if (tone === "good") p5 += pick(["잘 되는 달일수록 규율이 시험받습니다. 사이징 확대의 유혹을 경계하겠습니다. ", "성과에 취하지 않고 같은 절차를 반복하는 것이 다음 달의 계획입니다. "]);
+  else p5 += "잘 작동한 쪽을 유지하고, 부진한 쪽은 게이트를 조이는 비대칭 대응을 이어가겠습니다. ";
+  p5 += "구체적으로는 위원회 확률 게이트와 분포밖(DI) 기권, 변동성 타게팅, 일일 손실 서킷브레이커가 신규 진입을 계속 감시하며, ";
+  p5 += "야간 자가평가가 전략별 성과를 재점검해 필요한 차단·해제를 자동 집행합니다. ";
+  if (D.picks && D.picks.length) {
+    const tp = D.picks.slice(0, 3).map(function (p) { return (NAME_MAP[p.symbol] || p.symbol) + "(" + (p.p * 100).toFixed(0) + "%)"; }).join(", ");
+    p5 += "현재 모델이 가장 높은 확률을 부여한 후보는 " + tp + "이며, 이는 예측이지 약속이 아닙니다. ";
+  }
+  p5 += "목표는 변함없습니다 — 시장 지수를 이기는 것, 그리고 그 과정에서 살아남는 것입니다.";
+  S.push(p5);
+  return "# LUX-AI 월간 운용 서한 — " + ym + "\n(탑재 서사엔진 자동 작성 · 외부 LLM 미사용 · 모든 수치는 원장 실데이터)\n\n" + S.join("\n");
+}
+
 async function mlMonthlyReport(DB, ym, force, env) {
   try {
     // ym = "YYYY-MM" (기본: 지난달)
@@ -21904,30 +22004,28 @@ async function mlMonthlyReport(DB, ym, force, env) {
     // 저장 전 대용량 중간데이터 정리(state 용량 절약)
     for (const mk of Object.keys(mkts)) { delete mkts[mk].closed; delete mkts[mk].cum; delete mkts[mk].peak; }
     const report = { ym: ym, text: L.join("\n"), stats: { markets: mkts, picks: picks.slice(0, 10) }, ts: Date.now() };
-    // ── [V12.76] ★LLM 리포트 라이터★ — 온보드 데이터 리포트를 Claude가 "대형 운용사 월간 서한" 문체로
-    //   재집필. CPU 편법: 텍스트 생성을 전부 LLM API로 오프로드 — Workers CPU 과금은 실연산 시간만이라
-    //   네트워크 대기(LLM 응답)는 CPU 0. 월 1회 + 수동 재생성만이라 토큰 비용도 미미. 실패 시 원문 유지.
+    // ── [V12.77] ★온보드 NLG 라이터★ — 외부 API 0. 탑재 서사엔진(_luxWriteReport)이 통계를
+    //   근거로 운용서한 문체의 리포트를 직접 작성. 원데이터 리포트는 부록으로 보존(검증용).
     try {
-      if (env && env.ANTHROPIC_API_KEY) {
-        let _sr = null; try { _sr = await getState(DB, "ai_selfreview", null); } catch (e) {}
-        const _prompt = "당신은 글로벌 톱티어 자산운용사의 수석 포트폴리오 매니저입니다. 아래는 자동매매 시스템 LUX-AI의 " + ym + " 월간 원데이터 리포트입니다.\n\n"
-          + "```\n" + L.join("\n").slice(0, 9000) + "\n```\n\n"
-          + (_sr && _sr.diagnosis ? "AI 자가진단: " + JSON.stringify(_sr.diagnosis).slice(0, 800) + "\n\n" : "")
-          + "이 데이터를 근거로 전문 월간 운용보고서를 한국어로 작성하세요.\n"
-          + "# 필수 구조\n1) 총평(Executive Summary — 3~4문장, 핵심 성과와 한 달의 서사)\n2) 성과 분석(시장별·전략별 — 수치는 원문 그대로 인용)\n"
-          + "3) 잘한 점과 아쉬운 점(구체 거래 사례 인용)\n4) AI 시스템 자가진단(모델 신뢰도·개선 조치)\n5) 다음 달 운용 방침(리스크 관리 관점)\n"
-          + "# 문체 규칙\n- 노련한 펀드매니저가 LP에게 보내는 서한처럼: 정확하되 인간적이고, 확신과 겸손이 공존하는 어조.\n"
-          + "- 모든 수치는 원데이터에 있는 것만 사용(창작 절대 금지). 원데이터에 없는 시장 사건 언급 금지.\n"
-          + "- 불릿 남발 금지 — 문단 중심 서술, 섹션당 1~2문단.\n- 분량 700~1100자 내외. 마크다운 헤더(##) 사용 가능.";
-        const _llm = await callClaude(env.ANTHROPIC_API_KEY, "claude-sonnet-4-6", _prompt, 2500, 45000,
-          { maxRetries: 2, baseURL: env.LLM_BASE_URL || null, aigToken: env.AI_GATEWAY_TOKEN || null });
-        if (_llm && _llm.text && _llm.text.length > 200) {
-          report.textRaw = report.text;         // 온보드 원문 보존(데이터 검증용)
-          report.text = _llm.text.trim() + "\n\n" + "─".repeat(30) + "\n[부록] 원데이터 리포트\n" + "─".repeat(30) + "\n" + report.textRaw;
-          report.llm = true;
+      let _sr = null; try { _sr = await getState(DB, "ai_selfreview", null); } catch (e) {}
+      const _idxRet = {};
+      try {
+        for (const _p of [["us", "^GSPC"], ["kr", "^KS11"]]) {
+          const _d = await getState(DB, "daily:" + _p[1], null);
+          if (_d && Array.isArray(_d.closes) && _d.closes.length >= 22) {
+            const _c = _d.closes, _l = _c[_c.length - 1], _f = _c[_c.length - 22];
+            if (_l > 0 && _f > 0) _idxRet[_p[0]] = (_l / _f - 1) * 100;
+          }
         }
+      } catch (e) {}
+      const _essay = _luxWriteReport(ym, { mkts: mkts, selfreview: _sr, idxRet: _idxRet,
+        mind: mind, dnnT: dnnT, gbdtT: gbdtT, picks: picks, newsTop: newsTop, scanMeta: scanMeta });
+      if (_essay && _essay.length > 300) {
+        report.textRaw = report.text;
+        report.text = _essay + "\n\n" + "─".repeat(30) + "\n[부록] 원데이터 리포트\n" + "─".repeat(30) + "\n" + report.textRaw;
+        report.nlg = true;
       }
-    } catch (e) { /* LLM 실패 → 온보드 원문 그대로(무손실 폴백) */ }
+    } catch (e) { /* NLG 실패 → 원데이터 리포트 그대로 */ }
     await setState(DB, key, report);
     return report;
   } catch (e) { return { ym: ym, error: e && e.message, text: "리포트 생성 실패: " + (e && e.message) }; }
@@ -22016,6 +22114,11 @@ const SENTI_NEGATE = { "not":1,"no":1,"never":1,"none":1,"nobody":1,"nothing":1,
   "wasn't":1,"weren't":1,"without":1,"lack":1,"lacks":1,"fails":1,"failed":1,"denies":1,"denied":1,"rejects":1,
   "hardly":1,"scarcely":1,"unlikely":1 };
 const SENTI_NEG_SCALE = -0.74; // VADER 부정 반전계수
+// [V12.77] ★문맥 반전어(Relief-Flip)★ — "규제 완화"·"우려 해소"·"tensions ease"처럼 악재 명사 뒤에
+//   붙으면 극성이 뒤집히는 어휘. 사전 단독매칭의 최대 오류원("규제"만 히트→악재 오판)을 온보드로 수정.
+const SENTI_RELIEF = { "완화":1,"해소":1,"불식":1,"진정":1,"해제":1,"철회":1,"면제":1,"모면":1,"종결":1,"타결":1,"합의":1,
+  "eases":1,"eased":1,"easing":1,"resolved":1,"resolves":1,"settled":1,"settles":1,"lifted":1,"lifts":1,
+  "avoided":1,"averted":1,"dismissed":1,"waived":1,"cleared":1 };
 const SENTI_CAP_INCR = 0.733;  // 대문자 강조 증분
 const SENTI_EXCL_INCR = 0.292; // '!' 강조(최대 4개)
 const SENTI_QUES_INCR = 0.18;
@@ -22060,7 +22163,29 @@ function sentimentScore(text) {
         if (b !== undefined) { let inc = b; if (d === 2) inc *= 0.95; if (d === 3) inc *= 0.9; v += (v > 0 ? inc : -inc); }
         if (SENTI_NEGATE[prev]) v *= SENTI_NEG_SCALE;
       }
+      // [V12.77] 문맥 반전(Relief-Flip) — 악재 토큰 뒤 2단어 내 완화/해소류면 극성 반전("규제 완화"=호재).
+      //   한글은 접두 매칭(완화됐다·해소될)까지 커버. 호재 토큰엔 미적용(비대칭 — 오탐 방지).
+      if (v < 0) {
+        for (let d2 = 1; d2 <= 2 && i + d2 < lower.length; d2++) {
+          const nxt = lower[i + d2].replace(/[!?.]+$/g, "");
+          let hit = SENTI_RELIEF[nxt];
+          if (!hit && /[가-힣]/.test(nxt) && nxt.length >= 2) {
+            for (let pl2 = Math.min(4, nxt.length); pl2 >= 2 && !hit; pl2--) hit = SENTI_RELIEF[nxt.slice(0, pl2)];
+          }
+          if (hit) { v = Math.abs(v) * 0.8; break; }
+        }
+      }
       sentiments.push(v);
+    }
+    // [V12.77] 한국어 후행 부정 — "오르지 않았다"처럼 극성어 '뒤'에 오는 부정어가 극성을 반전.
+    //   영어(선행 부정)와 어순이 반대라 별도 처리. 접두 매칭으로 활용형(않았다/못했다/없다) 커버.
+    const _KO_NEG = ["않", "못하", "못했", "없"];
+    for (let i2 = 0; i2 < sentiments.length; i2++) {
+      if (!sentiments[i2]) continue;
+      for (let d3 = 1; d3 <= 2 && i2 + d3 < lower.length; d3++) {
+        const nx = lower[i2 + d3];
+        if (/[가-힣]/.test(nx) && _KO_NEG.some(function (n) { return nx.indexOf(n) === 0; })) { sentiments[i2] *= SENTI_NEG_SCALE; break; }
+      }
     }
     // 대조접속사 "but": 앞은 0.5배, 뒤는 1.5배
     const bi = lower.indexOf("but");
@@ -22809,8 +22934,6 @@ export default {
             });
             // (2) 외부 감성 수집 — SENTI_SOURCES에 URL이 채워진 경우만 동작(없으면 스킵)
             await _stg("senti", async function () { const _se = await sentiFetchAndStore(env.DB, null, null); return (_se && !/스킵/.test(_se)) ? _se : null; });
-            // [V12.76] LLM 감성 보정 — 섹터 헤드라인을 Claude 1콜로 채점해 사전점수와 블렌드(문맥 이해 보강)
-            await _stg("sentillm", async function () { return await sentiLLMRefine(env.DB, env); });
             // (2.4) [HIST] 딥-히스토리 로테이션 — range=max 장기이력(폭락장 포함)을 hist:로 갱신(수확이 사용)
             //   [V12.47] ★원인 발견★ 이 단계 전용 fetch예산 리셋이 없어 앞선 거래사이클/스캔이 남긴
             //   찌꺼기 예산(종종 20 미만)으로 돌았음 → deepFetchPerNight:100 목표를 거의 못 채우고
