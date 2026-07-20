@@ -21811,6 +21811,27 @@ async function mlMarketOutlook(DB) {
       if (mk === "us" && vix != null) { if (vix >= 28) z -= 0.4; else if (vix <= 14) z += 0.15; }
       const upProb = _clamp(1 / (1 + Math.exp(-z)), 0.35, 0.75);   // 과신 클램프
       const bandPct = vol20 != null ? vol20 * Math.sqrt(21 / 252) : null;   // 1개월 ±1σ(%)
+      // [V12.81] 위치 지표 — 52주 고점 대비 낙폭, 최근 20일 밴드 내 위치(0=저점, 100=고점)
+      let dd52 = null, pos20 = null, hi52 = null;
+      try {
+        const lb52 = Math.min(252, c.length); let mx = -Infinity;
+        for (let i = c.length - lb52; i < c.length; i++) if (c[i] > mx) mx = c[i];
+        hi52 = mx; dd52 = mx > 0 ? (px / mx - 1) * 100 : null;
+        let h20 = -Infinity, l20 = Infinity;
+        for (let i = c.length - 20; i < c.length; i++) { if (c[i] > h20) h20 = c[i]; if (c[i] < l20) l20 = c[i]; }
+        if (h20 > l20) pos20 = (px - l20) / (h20 - l20) * 100;
+      } catch (e) {}
+      // [V12.81] 시나리오 3분할 — 정규분포 가정하에 upProb를 평균 이동으로 역산해
+      //   P(+0.5σ 초과)=강세, P(-0.5σ 미만)=약세, 나머지=횡보로 분해(합=100%).
+      //   Φ 근사: Abramowitz-Stegun 26.2.17. 과신 클램프된 upProb와 일관된 확률 분해.
+      let pBull = null, pBear = null, pBase = null;
+      try {
+        const phi = function (x) { const t = 1 / (1 + 0.2316419 * Math.abs(x)); const d = 0.3989423 * Math.exp(-x * x / 2);
+          let p = d * t * (0.3193815 + t * (-0.3565638 + t * (1.781478 + t * (-1.821256 + t * 1.330274)))); return x >= 0 ? 1 - p : p; };
+        const invPhi = function (p) { let lo = -3, hi = 3; for (let i = 0; i < 40; i++) { const mid = (lo + hi) / 2; if (phi(mid) < p) lo = mid; else hi = mid; } return (lo + hi) / 2; };
+        const mu = invPhi(upProb);                    // P(X>0)=upProb 되는 평균(σ=1 단위)
+        pBull = 1 - phi(0.5 - mu); pBear = phi(-0.5 - mu); pBase = Math.max(0, 1 - pBull - pBear);
+      } catch (e) {}
       out[mk] = {
         idx: IDX[mk], px: +px.toFixed(1), r5: r5 != null ? +r5.toFixed(1) : null, r20: r20 != null ? +r20.toFixed(1) : null, r60: r60 != null ? +r60.toFixed(1) : null,
         vsMa50: ma50 ? +((px / ma50 - 1) * 100).toFixed(1) : null, vsMa200: ma200 ? +((px / ma200 - 1) * 100).toFixed(1) : null,
@@ -21818,6 +21839,8 @@ async function mlMarketOutlook(DB) {
         vix: mk === "us" ? (vix != null ? +(+vix).toFixed(1) : null) : null,
         aiMeanP: aiMeanP != null ? +aiMeanP.toFixed(3) : null, aiN: aiN,
         sentiAvg: sentiAvg != null ? +sentiAvg.toFixed(2) : null,
+        dd52: dd52 != null ? +dd52.toFixed(1) : null, hi52: hi52 != null ? +hi52.toFixed(0) : null, pos20: pos20 != null ? +pos20.toFixed(0) : null,
+        pBull: pBull != null ? +(pBull * 100).toFixed(0) : null, pBase: pBase != null ? +(pBase * 100).toFixed(0) : null, pBear: pBear != null ? +(pBear * 100).toFixed(0) : null,
         upProb: +upProb.toFixed(2), bandPct: bandPct != null ? +bandPct.toFixed(1) : null,
         bandLo: bandPct != null ? +(px * (1 - bandPct / 100)).toFixed(0) : null,
         bandHi: bandPct != null ? +(px * (1 + bandPct / 100)).toFixed(0) : null
@@ -21907,6 +21930,31 @@ function _luxWriteReport(ym, D) {
       else p4 += "손실 원인을 다음 자가평가 사이클에 반영.";
       S.push(p4);
     }
+    // [V12.81] 심화 통계 — 손실 집중도·연속 스트릭·요일 효과(전부 원장 실계산)
+    try {
+      const stats = [];
+      const pcts = allClosed.map(function (c) { return c.pct; }).sort(function (a, b) { return a - b; });
+      const med = pcts[Math.floor(pcts.length / 2)];
+      stats.push("거래당 중앙값 " + _rptPct(med));
+      let gl2 = 0; for (const c of allClosed) if (c.pnl < 0) gl2 += -c.pnl;
+      if (gl2 > 0 && wt && wt.pnl < 0) {
+        const share = -wt.pnl / gl2 * 100;
+        stats.push("최대 손실 1건이 총손실의 " + share.toFixed(0) + "%" + (share >= 25 ? "(집중 위험 — 사이즈 상한이 존재하는 이유)" : "(분산 양호)"));
+      }
+      const chron = allClosed.slice().sort(function (a, b) { return (a.ts || 0) - (b.ts || 0); });
+      let maxW = 0, maxL = 0, curW = 0, curL = 0;
+      for (const c of chron) { if (c.pnl >= 0) { curW++; curL = 0; if (curW > maxW) maxW = curW; } else { curL++; curW = 0; if (curL > maxL) maxL = curL; } }
+      stats.push("최장 연승 " + maxW + "회 / 연패 " + maxL + "회" + (maxL >= 6 ? " — 연패 구간 사이즈 자동축소(LOSS_STREAK) 개입 여부 점검 대상" : ""));
+      const wd = {}; const wdN = ["일", "월", "화", "수", "목", "금", "토"];
+      for (const c of chron) { if (!c.ts) continue; const d = new Date(c.ts).getUTCDay(); (wd[d] = wd[d] || { n: 0, pnl: 0 }); wd[d].n++; wd[d].pnl += c.pnl; }
+      const wdk = Object.keys(wd).filter(function (k) { return wd[k].n >= 3; });
+      if (wdk.length >= 3) {
+        let bw2 = wdk[0], ww2 = wdk[0];
+        for (const k of wdk) { if (wd[k].pnl > wd[bw2].pnl) bw2 = k; if (wd[k].pnl < wd[ww2].pnl) ww2 = k; }
+        if (bw2 !== ww2) stats.push("요일별 최고 " + wdN[bw2] + "요일(" + wd[bw2].n + "건) / 최저 " + wdN[ww2] + "요일(" + wd[ww2].n + "건) — 표본이 쌓이면 요일 필터 후보");
+      }
+      if (stats.length) S.push("심화 통계: " + stats.join(" · ") + ".");
+    } catch (e) {}
   }
   // ══ 4) 시장 전망 — AI 종합 의견 ══
   const ol = D.outlook || {};
@@ -21923,6 +21971,7 @@ function _luxWriteReport(ym, D) {
       if (o.vsMa200 != null) trendBits.push("MA200 대비 " + (o.vsMa200 >= 0 ? "+" : "") + o.vsMa200 + "%");
       trendBits.push("RSI " + o.rsi);
       po += trendBits.join(", ") + ". ";
+      if (o.dd52 != null) po += "52주 고점(" + (o.hi52 != null ? o.hi52.toLocaleString() + "pt" : "") + ") 대비 " + o.dd52 + "%" + (o.dd52 >= -1 ? " — 고점권" : o.dd52 <= -10 ? " — 조정 구간" : "") + ", 최근 20일 밴드 내 위치 " + (o.pos20 != null ? o.pos20 + "%" : "—") + ". ";
       if (o.vol20 != null) po += "실현변동성(20일 연율) " + o.vol20 + "%" + (o.volRising ? " — 60일(" + o.vol60 + "%) 대비 상승 국면, 리스크 확대 신호" : " — 안정 국면") + ". ";
       if (o.vix != null) po += "VIX " + o.vix + (o.vix >= 28 ? "(공포 구간)" : o.vix >= 20 ? "(경계 구간)" : "(안정 구간)") + ". ";
       if (o.aiMeanP != null) po += "위원회가 전종목 스캔에서 산출한 이 시장 평균 성공확률은 " + (o.aiMeanP * 100).toFixed(1) + "%(" + o.aiN + "종목)로, 모델의 종합 편향은 " + (o.aiMeanP >= 0.53 ? "강세" : o.aiMeanP <= 0.47 ? "약세" : "중립") + ". ";
@@ -21931,6 +21980,7 @@ function _luxWriteReport(ym, D) {
       let pv = "종합 판단: 1개월 상승확률 **" + (o.upProb * 100).toFixed(0) + "%**";
       if (o.bandPct != null) pv += ", 기대 밴드 ±" + o.bandPct + "% (" + o.bandLo.toLocaleString() + "~" + o.bandHi.toLocaleString() + "pt, 실현변동성 기반 1σ)";
       pv += ". ";
+      if (o.pBull != null) pv += "시나리오 확률: 강세(+0.5σ↑) " + o.pBull + "% · 횡보 " + o.pBase + "% · 약세(-0.5σ↓) " + o.pBear + "%. ";
       if (o.upProb >= 0.6) pv += "추세·모멘텀·모델 편향이 정렬된 상방 우위 — 단, RSI " + o.rsi + (o.rsi >= 70 ? "의 과열은 단기 되돌림 리스크로 상방 시나리오의 주된 제약" : " 수준에서 과열 부담은 제한적") + ".";
       else if (o.upProb <= 0.45) pv += "추세 약화·변동성 확대가 겹친 하방 경계 구간 — 신규 진입 문턱을 높이고 사이즈를 줄이는 것이 기대값상 우월.";
       else pv += "방향 신호가 혼재된 중립 구간 — 방향 베팅보다 종목 선별(알파)에 집중하는 것이 합리적.";
