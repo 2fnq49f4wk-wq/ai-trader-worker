@@ -2772,7 +2772,12 @@ const AI_PARAMS = {
     minConfidence: 0.55,       // 예측 신뢰도 이 이상일 때만 개입(약신호 무시)
     minPnlForExit: -3.0,       // 이 손실% 이하에선 청산 안 함 → 하드손절에 위임(저점 투매 방지)
     profitLockProb: 0.45,      // 이익 중 + 상승확률 이 미만이면 이익실현
-    profitLockMinPnl: 1.0      // 이익실현 최소 수익%
+    profitLockMinPnl: 1.0,     // 이익실현 최소 수익%
+    // [V12.72] ★위원회 기반 AI 청산★ 진입을 주도하는 위원회(GBDT/DNN/MIND)가 보유 포지션도 재평가.
+    //   위원회 성공확률 p가 committeeExitProb 미만이면 청산(약세 전환). 하드손절은 안전망으로 항상 유지되고
+    //   minPnlForExit보다 큰 손실은 하드손절에 위임(저점 투매 방지). AI가 진입뿐 아니라 청산까지 판단.
+    committeeExit: true,
+    committeeExitProb: 0.42    // 위원회 성공확률 이 미만이면 AI 청산(약세전환)
   },
 
   // ── 옵션/파생 신호(Options) ── 풋/콜 비율·IV로 스마트머니 방향 교차검증(US 라이브 오버레이).
@@ -12552,6 +12557,34 @@ async function runTradingCycle(env) {
               }
             }
 
+            // [V12.72] ★AI 위원회 청산★ 진입을 주도하는 위원회(GBDT/DNN/MIND)로 보유 포지션도 재평가.
+            //   위원회 성공확률 p가 committeeExitProb 미만이면 청산. 하드손절은 안전망으로 유지되고, 큰 손실은
+            //   minPnlForExit로 하드손절에 위임(저점 투매 방지). __aiReady(AI 운용 준비완료)일 때만 개입.
+            {
+              const _xc = (typeof AI_PARAMS !== "undefined") ? AI_PARAMS.exit : null;
+              if (_xc && _xc.committeeExit && __aiReady && daily && Array.isArray(daily.closes) && daily.closes.length >= 60) {
+                try {
+                  const _pnlY = held.avg > 0 ? ((price - held.avg) / held.avg) * 100 : 0;
+                  if (_pnlY > (_xc.minPnlForExit != null ? _xc.minPnlForExit : -3.0)) {   // 큰 손실은 하드손절에 위임
+                    const _fx = mlBuildFeatures({ closes: daily.closes, volumes: daily.volumes, opens: daily.opens,
+                      highs: daily.highs, lows: daily.lows, idxCloses: __idxCloses, xsPanel: __xsPanel, barsAgo: 0,
+                      price: price, prevClose: daily.prevClose,
+                      dayPct: daily.prevClose > 0 ? (price / daily.prevClose - 1) * 100 : 0,
+                      regime: (regime && regime.regime) ? regime.regime : "NEUTRAL", strategy: "trend", market: market, ev: {} });
+                    const _mdx = await mlDeepDecide(DB, _fx, { mind: __mind, guard: __guard, ens: __ensemble, trust: __dnnTrust, dnn: __dnn, gbdtTrust: __gbdtTrust, gbdt: __gbdt, cal: __cal, evstats: __evStats });
+                    if (_mdx && typeof _mdx.p === "number" && !_mdx.observe && !_mdx.abstain
+                        && _mdx.p <= (_xc.committeeExitProb != null ? _xc.committeeExitProb : 0.42)) {
+                      await executeSell(DB, market, symbol, held, held.qty, price, "AI_EXIT p" + (_mdx.p * 100).toFixed(0) + "% (위원회 약세전환)", mcfg, cash);
+                      sold++;
+                      const _sk = Object.keys(positions).some(k => positions[k].symbol === symbol && k !== posKey);
+                      if (!_sk) { heldSymbols.delete(symbol); const _sc = SECTOR_MAP[symbol]; if (_sc && sectorCounts[_sc]) sectorCounts[_sc]--; }
+                      continue;
+                    }
+                  }
+                } catch (e) {}
+              }
+            }
+
             // [Vision AI] DOWN 고신뢰 보유 포지션 조기 청산 (적중률 게이팅)
             //   ≥90% → 즉시 전량 청산 (손익 무관)
             //   ≥80% → 이익 중이면 즉시 이익 실현 (손실 중이면 기존 손절 로직에 맡김)
@@ -13981,7 +14014,7 @@ async function handleRequest(request, env) {
     if (path === "/api/ai/train-now" && request.method === "POST") {
       const au = _trainAuthed(); if (!au.ok) return Response.json({ error: au.msg }, { status: au.code, headers: cors });
       const target = url.searchParams.get("target") || "mind";
-      const FN = { mind: mlMindTrainNightly, gbdt: mlGBDTTrainNightly, brain: mlBrainTrainNightly, dnn: mlDNNTrainNightly, l1: mlTrainNightly, calibrate: mlCalibrateCommittee };
+      const FN = { mind: mlMindTrainNightly, gbdt: mlGBDTTrainNightly, brain: mlBrainTrainNightly, dnn: mlDNNTrainNightly, l1: mlTrainNightly, calibrate: mlCalibrateCommittee, selfreview: mlSelfReview };
       // [V12.63] target=all — 재배포 직후 "한 방에" 전체 파이프라인을 정확한 순서로 재실행(하루1회 게이트 무시).
       //   순서 고정: harvest → l1 → brain → mind → dnn → gbdt → calibrate (뒤 단계가 앞 단계 산출물 의존).
       //   각 단계 자체 CPU예산 가드가 있어 안전. 재학습 즉시 모든 수정이 반영되게 하는 원클릭 경로.
@@ -21418,6 +21451,46 @@ async function mlUniverseScanNightly(DB) {
   } catch (e) { return "[SCAN] fail: " + (e && e.message); }
 }
 
+// ============================================================================
+// [V12.72] ★AI 자가평가(Self-Review)★ — AI가 스스로 최근 원장을 분석해 "무엇이 문제였는지" 진단.
+//   최근 60일 청산거래를 전략별·시장별로 집계 → 승률/손익비/손절슬리피지/저성과 전략을 스스로 지목하고
+//   진단 문장을 생성해 state("ai_selfreview")에 저장(대시보드/리포트 노출) + 로그. 야간 파이프라인 1회.
+//   ※ 목표는 '지수 이기기' — 학습 라벨이 이미 alpha(지수 대비 초과수익)라 모델은 초과수익을 추구하고,
+//     이 자가평가는 그 결과를 사후 점검해 정책 조정(게이트/사이징)의 근거를 만든다.
+// ============================================================================
+async function mlSelfReview(DB) {
+  try {
+    const since = Date.now() - 60 * 86400000;
+    const rows = ((await DB.prepare("SELECT market, symbol, pnl, pnl_pct, reason FROM trades WHERE side='SELL' AND ts >= ?").bind(since).all()).results) || [];
+    if (rows.length < 10) return "[SELFREVIEW] 청산표본 " + rows.length + "/10 — 대기";
+    function entryTag(r) { const m = /#entry=(\S+)/.exec(r.reason || ""); if (m) return m[1]; const m2 = /\[([^\]]+)\]/.exec(r.reason || ""); return m2 ? m2[1] : "?"; }
+    let tot = 0, wins = 0, gW = 0, gL = 0, slip = 0;
+    const byEntry = {}, byMkt = {};
+    for (const r of rows) {
+      const pnl = _num(r.pnl, 0), pct = _num(r.pnl_pct, 0);
+      tot += pnl; if (pnl > 0) { wins++; gW += pnl; } else gL += Math.abs(pnl);
+      const e = entryTag(r); (byEntry[e] = byEntry[e] || { n: 0, pnl: 0, w: 0 }); byEntry[e].n++; byEntry[e].pnl += pnl; if (pnl > 0) byEntry[e].w++;
+      (byMkt[r.market] = byMkt[r.market] || { n: 0, pnl: 0, w: 0 }); byMkt[r.market].n++; byMkt[r.market].pnl += pnl; if (pnl > 0) byMkt[r.market].w++;
+      const sm = /STOP (-?\d+\.\d+)%/.exec(r.reason || ""); if (sm && pct < parseFloat(sm[1]) - 0.05) slip++;
+    }
+    const n = rows.length, winRate = wins / n, pf = gL > 0 ? gW / gL : 99;
+    const worst = Object.keys(byEntry).map(function (e) { return { e: e, n: byEntry[e].n, pnl: byEntry[e].pnl, w: byEntry[e].w }; }).sort(function (a, b) { return a.pnl - b.pnl; }).slice(0, 3);
+    const diagnosis = [];
+    if (winRate >= 0.5 && pf >= 1.3 && tot < 0) diagnosis.push("승률·손익비는 양호하나 총손익 마이너스 → 소수 대형손실·사이징 집중이 문제(꼬리리스크 상한 검토)");
+    for (const w of worst) if (w.pnl < 0 && w.w / w.n < 0.4) diagnosis.push("전략 " + w.e + " 승률" + (w.w / w.n * 100).toFixed(0) + "%·손익" + w.pnl.toFixed(0) + " → 저성과(게이트 강화/비활성 검토)");
+    for (const mk of Object.keys(byMkt)) if (byMkt[mk].pnl < 0) diagnosis.push(mk.toUpperCase() + " 시장 손익 " + byMkt[mk].pnl.toFixed(0) + " → 해당 시장 진입 보수화 필요");
+    if (slip >= 5) diagnosis.push("손절 슬리피지 " + slip + "건 → 갭 리스크(사이즈 축소·스탑 버퍼 검토)");
+    if (!diagnosis.length) diagnosis.push("특이 문제 없음 — 현 정책 유지");
+    const review = { ts: Date.now(), windowDays: 60, n: n, winRate: +winRate.toFixed(3), profitFactor: +pf.toFixed(2),
+      totalPnl: +tot.toFixed(0), stopSlippage: slip,
+      byMarket: Object.keys(byMkt).map(function (m) { return { market: m, trades: byMkt[m].n, pnl: +byMkt[m].pnl.toFixed(0), winRate: +(byMkt[m].w / byMkt[m].n).toFixed(2) }; }),
+      worstStrategies: worst.map(function (w) { return { strategy: w.e, trades: w.n, pnl: +w.pnl.toFixed(0), winRate: +(w.w / w.n).toFixed(2) }; }),
+      diagnosis: diagnosis };
+    await setState(DB, "ai_selfreview", review);
+    return "[SELFREVIEW] n=" + n + " 승률" + (winRate * 100).toFixed(0) + "% PF" + pf.toFixed(2) + " 손익" + tot.toFixed(0) + " | 진단: " + diagnosis.join(" / ");
+  } catch (e) { return "[SELFREVIEW] fail: " + (e && e.message); }
+}
+
 
 // ============================================================================
 // [REPORT] 탑재 AI 월간 투자 리포트 — 외부 LLM 0, 전부 온보드 계산
@@ -22541,6 +22614,8 @@ export default {
             await _stg("calibrate", async function () { return await mlCalibrateCommittee(env.DB); });
             // (4.5) [V6] 전 종목 야간 AI 스캔 — 유니버스 전체 승률예측(AI 픽·리포트 커버리지)
             await _stg("uniscan", async function () { return await mlUniverseScanNightly(env.DB); });
+            // [V12.72] AI 자가평가 — 최근 원장 스스로 분석해 문제점 진단(대시보드/정책조정 근거)
+            await _stg("selfreview", async function () { return await mlSelfReview(env.DB); });
             // (4.6) [V9.6] 뉴스·여론 기반 "내일 오를 종목" 예측(온라인학습) + 재무 저가중 하방가드
             await _stg("newsnext", async function () { return await mlNewsNextDayNightly(env.DB); });
             // (5) [V5] 매월 1일: 지난달 투자 리포트 자동 생성(캐시라 중복 무해)
