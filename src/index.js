@@ -2497,7 +2497,7 @@ const AI_PARAMS = {
 
   // ── 룩백 윈도우(Lookback Window) ── 과거 얼마만큼의 봉을 입력/학습에 쓸지.
   featureLookbackBars: 200,        // 피처 1건 계산에 필요한 최소 과거 봉(MA200 때문에 200 권장)
-  trainWindow: 60000,              // [V12.36] 야간 학습이 사용하는 최근 표본 수(위원회 공통 표본창) — 실제 값은 LUXML.trainWindow
+  trainWindow: 90000,              // [V12.84] 야간 학습이 사용하는 최근 표본 수(위원회 공통 표본창) — 실제 값은 LUXML.trainWindow
 
   // ── 진입/청산 임계값(Threshold) ── 모델 확률/점수가 이 값 이상일 때만 개입.
   //   (구현: LUXML.gateThresh — 이 미만이면 진입 차단, 이상이면 사이징 반영)
@@ -17205,7 +17205,7 @@ const LUXML = {
   gateThresh: 0.42,
   sizeMin: 0.5, sizeMax: 1.5,
 
-  trainWindow: 60000,  // [V12.36] 12000→60000: DNN(외부GPU)은 이미 전체 79k 표본을 쓰는데 GBDT·MIND는 12k로
+  trainWindow: 90000,  // [V12.84] 60000→90000: DNN(외부GPU)은 이미 전체 79k 표본을 쓰는데 GBDT·MIND는 12k로
                        //   제한되어 있어 DNN보다 정확도가 낮게 나오는 원인이었다. GBDT(18s)·MIND(신규 45s, _fmTrain
                        //   데드라인가드 추가) 둘 다 시간예산 초과시 자체 절삭하므로 안전. D1 read/JSON.parse
                        //   비용도 이 정도 행수에서는 여유 있음.
@@ -18774,7 +18774,7 @@ const MIND = {
   //   국면 이질성(폭락장 등 혼재)을 감당할 용량이 부족한 것으로 판단, MIND만 15000으로 되돌림.
   //   GBDT·DNN(트리/딥넷)은 구조적으로 큰 창을 잘 소화하므로 60000 그대로 유지.
   trainWindow: 15000,
-  fmK: 8, fmEpochs: 20, fmLr: 0.03, fmL2w: 0.001, fmL2v: 0.003, fmBudgetMs: 20000, fmMaxSamples: 20000,
+  fmK: 8, fmEpochs: 20, fmLr: 0.03, fmL2w: 0.001, fmL2v: 0.003, fmBudgetMs: 20000, fmMaxSamples: 50000,
   // [V12.41] FM 멀티시드 — 단일 학습의 무작위성(초기화·셔플)으로 valAcc가 43~64%를 오가며
   //   회귀가드 문턱(다수클래스-3%p)을 넘을락말락 하던 분산 문제. 시드 N개를 학습해 검증 앞절반
   //   정확도 최고를 선택(DNN 멀티시드와 동일 원리).
@@ -20466,7 +20466,7 @@ const HARVEST = {
   horizon: AI_PARAMS.predictionHorizonDays, stopPct: 5,  // [V12] 예측지평은 AI_PARAMS 단일출처
   tpPct: 8,             // [V9.9] Triple-Barrier(de Prado) 익절 배리어 — 기간내 +8% 선도달 시 승 확정.
                         //   기존 2중(손절+시간)의 "중간에 크게 올랐다가 되돌린 승리 패턴"을 패로 오분류하던 편향 제거.
-  maxPerNight: 110000,  // [V12.43] 70000→110000 — 표본 확보 가속(예산가드가 실제 상한)
+  maxPerNight: 160000,  // [V12.84] 110000→160000 — 표본 확보 가속(예산가드가 실제 상한)
   maxTotal: 1200000,    // [V12.32] 800000→1200000 — 총 상한 동반 확대(72피처 대비 표본비 ≥16,000:1)
   entryLike: true,
   // [V9.5] entryLike 필터 완화 — 깊은 눌림(MA50 위)+모멘텀 winner(RSI 85까지)까지 포함해
@@ -20477,7 +20477,7 @@ const HARVEST = {
   // [V18] 딥-히스토리 수확 — range=max 장기이력(2020 코로나·2022 긴축·2018 Q4 폭락 포함) → 국면 다양성으로 과적합↓
   useDeepHistory: true, // hist: 캐시가 있으면 320봉 daily: 대신 딥이력으로 수확(폭락장 학습)
   deepBars: 2400,       // [V12.32] 1800→2400(~9.6년, 2018 Q4 급락까지 포함) — 종목당 원천 봉수 +33%
-  deepFetchPerNight: 100,// [V12.43] 70→100 — 딥이력 커버리지 가속(예산가드 fetchBudgetLeft가 실제 상한이라 안전)
+  deepFetchPerNight: 180,// [V12.84] 100→180 — 딥이력 커버리지 가속(예산가드 fetchBudgetLeft가 실제 상한이라 안전)
   deepRefreshDays: 45,  // [V12.32] 30→45 — 재수집 주기 연장: 예산을 재갱신 대신 신규 종목 커버리지에 사용
   maxPerSymbol: 800,    // [V12.32] 600→800 — 딥 2400봉×stride1 수용(편중 방지는 유지)
   srcWeight: 0.6        // 학습 가중(실거래=1.0 대비)
@@ -20486,11 +20486,18 @@ const HARVEST = {
 // [V18] 수확 전용 광범위 유니버스 — 거래하지 않지만 학습표본 다양성용(섹터·자산군·장기이력).
 //   전부 장기이력(2008+) 보유 → 폭락장 국면 커버리지 확대. 거래 로직과 무관(hist:만 생성).
 const HARVEST_EXTRA_SYMS = [
-  "SPY", "QQQ", "IWM", "DIA", "MDY",                                  // 광의 시장
-  "XLK", "XLF", "XLE", "XLV", "XLI", "XLY", "XLP", "XLU", "XLB", "XLRE", "XLC", // 11 섹터 SPDR
-  "SMH", "XBI", "KRE", "ITB", "JETS", "IYT", "GDX",                   // 산업 하위섹터
-  "EEM", "EFA", "FXI", "EWJ", "EWY", "INDA",                          // 국제(신흥·선진)
-  "TLT", "IEF", "HYG", "LQD", "GLD", "SLV", "USO", "UNG", "DBC"       // 채권·원자재
+  // [V18] 광의 시장·섹터·국제·채권·원자재 (거래 안 함 — 학습표본 다양성용, 전부 장기이력 보유)
+  "SPY", "QQQ", "IWM", "DIA", "MDY", "VTI", "RSP", "OEF", "IWB", "IWF", "IWD", "IWN", "IWO", "IJH", "IJR",
+  "XLK", "XLF", "XLE", "XLV", "XLI", "XLY", "XLP", "XLU", "XLB", "XLRE", "XLC",
+  "SMH", "SOXX", "XBI", "IBB", "KRE", "KBE", "ITB", "XHB", "JETS", "IYT", "GDX", "GDXJ", "XOP", "OIH", "XRT", "XME", "TAN", "ICLN", "IGV", "HACK", "SKYY", "FDN", "XSD", "PBW", "MOO", "KIE", "IAK",
+  // [V12.84] 국제·팩터·테마 확대 — 국면·지역 다양성으로 과적합 완화 (전부 2010+ 장기이력)
+  "EEM", "EFA", "FXI", "EWJ", "EWY", "INDA", "EWZ", "EWG", "EWU", "EWC", "EWA", "EWT", "EWH", "EWW", "EWS", "EPP", "VGK", "VWO", "ACWI", "MCHI", "ASHR", "TUR", "EIDO", "THD", "EPHE",
+  "MTUM", "QUAL", "USMV", "VLUE", "SIZE", "VIG", "VYM", "SDY", "SCHD", "NOBL", "SPLV", "SPHB", "DVY", "PFF",
+  // [V12.84] 채권·크레딧·원자재 확대 (금리·인플레 국면 커버리지)
+  "TLT", "IEF", "SHY", "AGG", "BND", "TIP", "HYG", "LQD", "EMB", "MBB", "BIL", "VCIT", "VCSH", "JNK", "BKLN",
+  "GLD", "SLV", "USO", "UNG", "DBC", "DBA", "CORN", "WEAT", "PALL", "PPLT", "CPER", "URA", "LIT", "REMX", "WOOD",
+  // [V12.84] 미국 초대형주(장기이력·유동성 최상 — 종목 단위 국면 표본)
+  "AAPL", "MSFT", "AMZN", "GOOGL", "META", "NVDA", "TSLA", "JPM", "V", "MA", "UNH", "HD", "PG", "JNJ", "XOM", "CVX", "KO", "PEP", "WMT", "COST", "MCD", "DIS", "CSCO", "ORCL", "CRM", "ADBE", "NFLX", "AMD", "INTC", "QCOM", "TXN", "IBM", "GE", "CAT", "BA", "GS", "MS", "BAC", "WFC", "C", "PFE", "MRK", "ABBV", "LLY", "TMO", "ABT", "NKE", "SBUX", "LOW", "T", "VZ"
 ];
 
 // [V18] 딥-히스토리 로테이션 수집 — 매일밤 N종목 range=max 장기이력을 hist:로 갱신.
@@ -23272,7 +23279,7 @@ export default {
             //   찌꺼기 예산(종종 20 미만)으로 돌았음 → deepFetchPerNight:100 목표를 거의 못 채우고
             //   fetchBudgetLeft()<20에서 조기중단, 딥이력 커버리지(358/900+종목)가 며칠째 정체된 원인.
             //   LLM(400)·시세백필(140)과 동일 패턴으로 이 단계만의 깨끗한 예산 부여.
-            try { resetFetchBudget(130); } catch (e0) {}
+            try { resetFetchBudget(280); } catch (e0) {}   // [V12.84] 130→280 (deepFetchPerNight 180 + 지수·여유 수용, Paid 850 내)
             await _stg("deephist", async function () { return await harvestDeepFetchNightly(env.DB); });
             // (2.45) [XS] 유니버스 횡단면 랭크 패널 — 수확 전에 갱신(수확이 z-score 정규화에 사용)
             await _stg("xspanel", async function () { return await mlBuildXSPanel(env.DB); });
