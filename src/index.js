@@ -12669,9 +12669,14 @@ async function runTradingCycle(env) {
 
             // [V22] 모델기반 청산(Learned Exit) — 보유 포지션을 기술예측기로 재평가.
             //   강한 약세전환(상승확률↓·신뢰도↑)이면 청산/이익실현. 저점 투매 방지 가드(minPnlForExit).
+            // [V12.105] trend 전략 제외 — trendRules는 TP1(+1R)/TP2(+2.5R)/ATR트레일(3.0×)로 러너를
+            //   살리도록 원장실증(TP2 러너 평균 +10.1% vs 조기트레일 +1.06%)으로 튜닝돼 있는데, 이 블록이
+            //   evaluateSell(트렌드 로직)보다 먼저 실행되어 확률 노이즈만으로 러너를 조기 컷하고 있었다.
+            //   AI_PRIMARY 진입도 strategy:"trend"라 이 버그의 영향을 그대로 받았다. trend는 아래
+            //   evaluateSell의 검증된 트레일/TP 시스템에 맡기고, 이 확률기반 조기청산은 trend 이외 전략만 적용.
             {
               const _ex = (typeof AI_PARAMS !== "undefined") ? AI_PARAMS.exit : null;
-              if (_ex && _ex.enabled !== false && daily && Array.isArray(daily.closes) && daily.closes.length >= 30) {
+              if (_ex && _ex.enabled !== false && held.strategy !== "trend" && daily && Array.isArray(daily.closes) && daily.closes.length >= 30) {
                 let _pr = null;
                 try { _pr = taPredictDirection({ closes: daily.closes, highs: daily.highs, lows: daily.lows, volumes: daily.volumes, opens: daily.opens }, AI_PARAMS); } catch (e) {}
                 const _pnlX = held.avg > 0 ? ((price - held.avg) / held.avg) * 100 : 0;
