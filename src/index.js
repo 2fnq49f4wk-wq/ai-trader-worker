@@ -6242,6 +6242,12 @@ async function updateSectorNewsSentiment(DB, cfg, force) {
   }
   const scores = {}, headlines = {};
   let yahooDead = 0, googleUsed = 0;
+  // [V12.96] 제목 중복 제거 병합 — 소스 폴백이 아니라 '합산'으로 수집량 극대화(사용자 요청: 뉴스 더).
+  const _mergeItems = function (dst, add) {
+    const seen = {}; for (const it of dst) seen[(it.title || "").toLowerCase().slice(0, 80)] = 1;
+    for (const it of add) { const k = (it.title || "").toLowerCase().slice(0, 80); if (k && !seen[k]) { seen[k] = 1; dst.push(it); } }
+    return dst;
+  };
   for (const grp of groups) {
     if (fetchBudgetLeft() < (sc.minBudgetReserve || 8) + 1) break;
     let items = [];
@@ -6249,24 +6255,25 @@ async function updateSectorNewsSentiment(DB, cfg, force) {
     try {
       const url = "https://feeds.finance.yahoo.com/rss/2.0/headline?s=" + SECTOR_NEWS_REP[grp] + "&lang=en-US&region=US";
       const resp = await fetch(url, { headers: { "User-Agent": "Mozilla/5.0 (compatible)" } });
-      if (resp.ok) items = _parseRssItems(await resp.text(), 50);  // [V12.95] 25→50 수집량 확대(사용자 요청)
+      if (resp.ok) items = _parseRssItems(await resp.text(), 60);
     } catch(e) {}
-    // 2차: [V83] Google News RSS 폴백 — 야후 RSS가 사실상 폐기돼 수집 0건이던 문제의 본 수정.
-    //   그룹 대표티커 2개로 검색 쿼리 구성. 키 불필요·안정적.
-    if (items.length === 0 && fetchBudgetLeft() > (sc.minBudgetReserve || 8)) {
-      yahooDead++;
-      try {
-        const reps = SECTOR_NEWS_REP[grp].split(",").slice(0, 5).join(" OR ");  // [V12.95] 3→5개 — 검색 폭 확대(사용자 요청)
-        const gUrl = "https://news.google.com/rss/search?q=" + encodeURIComponent(reps + " stock") + "&hl=en-US&gl=US&ceid=US:en";
-        const gResp = await fetch(gUrl, { headers: { "User-Agent": "Mozilla/5.0 (compatible)" } });
-        if (gResp.ok) {
-          items = _parseRssItems(await gResp.text(), 50);  // [V12.95] 25→50 수집량 확대(사용자 요청)
-          if (items.length > 0) googleUsed++;
-        }
-      } catch(e) {}
+    if (!items.length) yahooDead++;
+    // 2차: [V12.96] Google News RSS — 폴백이 아니라 항상 병합 수집(야후가 됐어도 추가). 대표티커 검색 +
+    //   그룹 키워드 검색 2쿼리를 합쳐 커버리지 극대화. 키 불필요·안정적.
+    if (fetchBudgetLeft() > (sc.minBudgetReserve || 8)) {
+      const reps = SECTOR_NEWS_REP[grp].split(",").slice(0, 5).join(" OR ");
+      const queries = [reps + " stock", grp.toLowerCase() + " sector stocks earnings"];
+      for (const q of queries) {
+        if (fetchBudgetLeft() <= (sc.minBudgetReserve || 8)) break;
+        try {
+          const gUrl = "https://news.google.com/rss/search?q=" + encodeURIComponent(q) + "&hl=en-US&gl=US&ceid=US:en";
+          const gResp = await fetch(gUrl, { headers: { "User-Agent": "Mozilla/5.0 (compatible)" } });
+          if (gResp.ok) { const gi = _parseRssItems(await gResp.text(), 60); if (gi.length) { _mergeItems(items, gi); googleUsed++; } }
+        } catch(e) {}
+      }
     }
     if (items.length > 0) {
-      headlines[grp] = items;
+      headlines[grp] = items.slice(0, 120);   // [V12.96] 그룹당 저장 상한 확대
       scores[grp] = _scoreHeadlines(items.map(function(i){ return i.title; }));
     }
   }
@@ -20631,7 +20638,7 @@ const HARVEST = {
   deepFetchPerNight: 260,// [V12.95] 180→260 — 딥이력(주식 장기데이터) 수집 확대(사용자 요청). 실제 상한은
                          //   fetchBudgetLeft 예산가드(아래 deephist 스테이지 resetFetchBudget)라 초과분은 다음밤 이어감(안전).
   deepRefreshDays: 45,  // [V12.32] 30→45 — 재수집 주기 연장: 예산을 재갱신 대신 신규 종목 커버리지에 사용
-  maxPerSymbol: 800,    // [V12.32] 600→800 — 딥 2400봉×stride1 수용(편중 방지는 유지)
+  maxPerSymbol: 1200,   // [V12.96] 800→1200 — alpha 지수정렬 수정으로 유효표본 회복분 수용(딥 2400봉 활용↑, 예산가드가 편중 방지)
   srcWeight: 0.6        // 학습 가중(실거래=1.0 대비)
 };
 
@@ -20925,11 +20932,19 @@ async function mlMarketHarvestNightly(DB) {
           if (HARVEST.tpPct > 0 && r >= HARVEST.tpPct) { pnl = HARVEST.tpPct; break; } // 상방 배리어
         }
         if (pnl === null) pnl = (closes[i + h] / c - 1) * 100;                        // 시간 배리어(만기 수익률)
-        // [V17] alpha 라벨용 지수 수익률(진입 i → 만기 i+h, 정확 봉정렬). idxAll 끝정렬로 봉 매핑.
+        // [V17] alpha 라벨용 지수 수익률(진입 i → 만기 i+h). [V12.96] ★표본 대량탈락 수정★ 종전
+        //   조건 idxAll.length>=L 은 지수 딥이력이 종목 이력보다 짧으면(예: 종목 2400봉 vs 지수 2000봉,
+        //   또는 지수 갱신 지연) 그 종목 표본을 alpha 모드에서 전량 탈락시켰다. 봉단위 끝정렬(barsAgo)로
+        //   바꿔 최근 구간만 지수가 커버해도 라벨링 — 지수가 못 미치는 오래된 봉만 자연 제외(정합 유지).
         let idxRet = null;
-        if (idxAll && idxAll.length >= L) {
-          const idxOff = idxAll.length - L, ie = idxAll[idxOff + i], ix = idxAll[idxOff + i + h];
-          if (ie > 0 && ix > 0) idxRet = (ix / ie - 1) * 100;
+        if (idxAll && idxAll.length > h) {
+          const barsAgo = L - 1 - i;                       // 진입봉의 '끝에서 몇 봉 전'
+          const ieIdx = idxAll.length - 1 - barsAgo;        // 지수 진입 인덱스(끝정렬)
+          const ixIdx = ieIdx + h;                          // 지수 만기 인덱스
+          if (ieIdx >= 0 && ixIdx < idxAll.length) {
+            const ie = idxAll[ieIdx], ix = idxAll[ixIdx];
+            if (ie > 0 && ix > 0) idxRet = (ix / ie - 1) * 100;
+          }
         }
         const _lab = _sampleLabel(pnl, idxRet);
         if (_lab == null) continue;   // [V17] alpha 모드에서 지수 없으면 편입 보류(라벨 순도)
