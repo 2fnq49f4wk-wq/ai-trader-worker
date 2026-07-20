@@ -2730,6 +2730,11 @@ const AI_PARAMS = {
   //   실증(인버스 변동성 가중): Sharpe 0.99→1.54, MDD -30.8%→-13.8%. 시장(지수) 실현변동성이
   //   목표치보다 높으면 신규 진입 사이즈를 줄이고, 낮으면 소폭 확대 — "폭풍 전 미리 감속".
   //   crashGate(급락 즉시반응)와 달리 연속적·선제적 스로틀. 지수 20일 변동성 연율화로 산출.
+  // [V12.75] 프랍 트레이딩 표준 리스크 운영 — 일일 손실 서킷브레이커
+  riskOps: {
+    dailyLossLimitPct: 2.5   // 최근 24h 실현손실이 계좌의 이 % 이상이면 당일 신규진입 차단(틸트 방지 1차 방어선)
+  },
+
   volTarget: {
     enabled: true,
     targetVolPct: { us: 15, kr: 17, cm: 20 },  // 시장별 목표 연율 변동성(%)
@@ -4587,7 +4592,14 @@ async function collectLLMContext(DB, env, market) {
     disabledSignals: cfg.disabledSignals || [],
     enabledStrategies: Object.keys(cfg.strategies || {}).filter(function(s) { return cfg.strategies[s]; }),
     // [V9 매크로] 발표 0~4일 이내 지표만. 비어있으면(평상시) LLM은 무시.
-    recentMacro: freshMacro
+    recentMacro: freshMacro,
+    // [V12.75] AI 자가진단 + 위원회 신뢰현황 — LLM 리스크심의가 온보드 ML의 상태를 알고 판단하게(TradingAgents식 정보공유)
+    aiSelfReview: await (async function () { try { const r = await getState(DB, "ai_selfreview", null); return r ? { winRate: r.winRate, profitFactor: r.profitFactor, totalPnl: r.totalPnl, diagnosis: r.diagnosis } : null; } catch (e) { return null; } })(),
+    committee: await (async function () { try {
+      const dt = await getState(DB, "dnn_trust", null), gt = await getState(DB, "gbdt_trust", null);
+      return { dnnTrusted: !!(dt && dt.trusted), gbdtTrusted: !!(gt && gt.trusted),
+        dnnAccLB: dt ? (dt.dnnAccLB || dt.dnnAcc || null) : null, gbdtAccLB: gt ? (gt.gbdtAccLB || gt.gbdtAcc || null) : null };
+    } catch (e) { return null; } })()
   };
 }
 
@@ -4824,7 +4836,14 @@ function buildLLMPrompt(market, context, opts) {
     "   - 단순히 'winRate < 0.40'이라는 이유만으로 sizing을 줄이는 것은 금지. 시장 원인을 배제한 뒤에만 판단.\n" +
     "3) 신호 품질: worstSignals 중 count>=8 이고 exp(기대값)<0 인 것만 disable 후보로. exp는 1거래당 기대 손익%이며, 음수면 장기적으로 잃는 신호다. wr(승률)만 낮고 exp>0이면 손익비가 좋은 것이니 끄지 말 것. stopRate가 높으면(>0.5) 손절로 자주 끝나는 신호다. 표본 작으면(count<8) 건드리지 말 것.\n" +
     "4) 종목 리스크: positions와 worstTrade를 보고 손실 집중 종목이 있으면 avoid_symbols 후보로.\n" +
-    "5) 종합: 위 1~4를 근거로 sentiment / sizing / stop을 결정. 각 결정은 반드시 데이터 수치를 근거로 들 것.\n" +
+    "5) [V12.75 변증 토론 — TradingAgents 방식] 결정 전에 반드시 세 단계 내부 토론을 거칠 것:\n" +
+    "   (a) 강세 연구원(Bull): 지금 사이징을 유지/확대해야 할 가장 강한 근거를 데이터에서 2가지 제시.\n" +
+    "   (b) 약세 연구원(Bear): 지금 축소/방어해야 할 가장 강한 근거를 데이터에서 2가지 제시.\n" +
+    "   (c) 리스크 심의(3관점): 공격적/중립/보수적 관점이 각각 어떤 지시를 낼지 비교한 뒤, 증거 우위에 따라 하나를 채택.\n" +
+    "   토론에서 진 쪽의 근거도 confidence에 반영(근거가 팽팽하면 confidence↓, sizing 1.0).\n" +
+    "6) 종합: 위 1~5를 근거로 sentiment / sizing / stop을 결정. 각 결정은 반드시 데이터 수치를 근거로 들 것.\n" +
+    "7) [자가진단 반영] context.aiSelfReview가 있으면 그 diagnosis(온보드 AI가 스스로 찾은 문제)를 존중하되, 데이터와 모순되면 데이터 우선.\n" +
+    "   context.committee가 있으면: 두 표준모델(dnn/gbdt) 모두 미신뢰(trusted=false)면 ML 게이트가 약한 상태이니 sizing 상한을 1.0으로 제한.\n" +
     "6) [보조] 최근 경제지표: context.recentMacro는 '최근 4일 이내 발표된' 경제지표만 담겨 있습니다(없으면 빈 배열).\n" +
     "   - 비어 있으면 이 단계는 건너뛰고 매크로를 일절 언급하지 마세요.\n" +
     "   - 값이 있으면 '아주 약하게'만 반영합니다. 이것은 보조 신호이며, 위 1~5의 데이터 기반 판단을 뒤집어선 안 됩니다.\n" +
@@ -4850,6 +4869,9 @@ function buildLLMPrompt(market, context, opts) {
          "{\n" +
          "  \"reasoning\": {\n" +
          "    \"market_regime\": \"국면 판정 + 근거 수치 (예: worstIdx -1.6% → 강한 약세)\",\n" +
+         "    \"bull_case\": \"강세 연구원 핵심 근거 2가지(수치 포함)\",\n" +
+         "    \"bear_case\": \"약세 연구원 핵심 근거 2가지(수치 포함)\",\n" +
+         "    \"risk_debate\": \"공격/중립/보수 3관점 비교와 채택 결론 + 이유\",\n" +
          "    \"performance\": \"최근 성과 진단 (예: 7일 winRate 0.38, day전략 부진)\",\n" +
          "    \"signal_quality\": \"disable 후보와 근거 (없으면 '해당 없음')\",\n" +
          "    \"symbol_risk\": \"손실 집중 종목 (없으면 '해당 없음')\",\n" +
@@ -11873,6 +11895,21 @@ async function runTradingCycle(env) {
             crashGate.deRisk = true;
             crashGate.reasons.push("PANIC avg=" + (regime.avgDayPct || 0).toFixed(2) + "% size×" + pScale);
           }
+          // [V12.75] ★일일 손실 서킷브레이커★ (프랍 트레이딩 표준 벤치마킹) — 최근 24h 실현손실이
+          //   계좌의 dailyLossLimitPct%를 넘으면 당일 신규진입 전면 차단("틸트 매매" 원천봉쇄).
+          //   드로다운 L2(-12%)보다 훨씬 빨리 걸리는 1차 방어선. 청산·손절은 정상 작동.
+          try {
+            const _dll = (typeof AI_PARAMS !== "undefined" && AI_PARAMS.riskOps && AI_PARAMS.riskOps.dailyLossLimitPct) || 2.5;
+            if (portfolioValue > 0) {
+              const _dr = await DB.prepare("SELECT COALESCE(SUM(pnl),0) AS p FROM trades WHERE market = ? AND side = 'SELL' AND ts >= ?")
+                .bind(market, Date.now() - 24 * 3600 * 1000).first();
+              const _dp = _dr ? _num(_dr.p, 0) : 0;
+              if (_dp < 0 && Math.abs(_dp) / portfolioValue * 100 >= _dll) {
+                crashGate.blockNew = true;
+                crashGate.reasons.push("DAILY_LOSS " + (_dp / portfolioValue * 100).toFixed(1) + "%≤-" + _dll + "%");
+              }
+            }
+          } catch (e) {}
         }
         if (crashGate.reasons.length > 0) {
           await log(DB, "INFO", null, "[V12 CRASH-GATE " + market.toUpperCase() + "] dd=" + crashGate.ddPct.toFixed(1) + "% L" + crashGate.ddLevel + (crashGate.blockNew ? " BLOCK-NEW" : (crashGate.sizeScale < 1 ? " size×" + crashGate.sizeScale : "")) + (crashGate.heatBlock ? " HEAT-BLOCK(scalp면제)" : "") + (crashGate.deRisk ? " DE-RISK" : "") + " · " + crashGate.reasons.join(", "));
@@ -12378,11 +12415,16 @@ async function runTradingCycle(env) {
       } catch (e) {}
       // [V12.71] ★AI 자율운용 컨트롤러★ 사이클 시작 시 1회 결정 — 운용 주체(AI vs 규칙 폴백)와 AI 후보 풀.
       let __aiReady = false, __aiPickPool = null, __aiRotated = 0;   // [V12.74] TopkDropout 회전 카운터
+      let __autoDisabled = null;   // [V12.75] 자가치유 — 자가평가가 차단한 저성과 진입전략 Set
       try {
         const _auto = (typeof AI_PARAMS !== "undefined" && AI_PARAMS.autonomy) || {};
         if (_auto.enabled && typeof LUXML !== "undefined" && LUXML.enabled) {
           // 위원장(MIND) 존재 + 표준모델(DNN/GBDT) 중 최소 하나 신뢰 = AI가 실력 입증해 주도 준비됨.
           __aiReady = !!(__mind && ((__dnnTrust && __dnnTrust.trusted) || (__gbdtTrust && __gbdtTrust.trusted)));
+          try {
+            const _sr = await getState(DB, "ai_selfreview", null);   // [V12.75] 자가치유 차단목록
+            if (_sr && Array.isArray(_sr.autoDisable) && _sr.autoDisable.length) __autoDisabled = new Set(_sr.autoDisable);
+          } catch (e) {}
           if (__aiReady) {
             const _sc = await getState(DB, "ai_picks:scan", null);   // AI가 야간 전종목 스캔에서 고른 상위 종목
             if (_sc && Array.isArray(_sc.picks)) {
@@ -12766,6 +12808,22 @@ async function runTradingCycle(env) {
                 }
               } catch (e) { /* 분봉 조회 실패 → scalp 스킵, trend 신호도 없으면 그냥 패스 */ }
             }
+          }
+
+          // [V12.75] ★자가치유 차단★ — 자가평가가 지목한 저성과 진입전략(승률<35%·손익 음수·n≥15)의
+          //   규칙신호를 걸러낸다. AI가 스스로 평가→문제 발견→조치까지 닫는 피드백 루프.
+          if (__autoDisabled && stratResults.length > 0) {
+            const _keptSH = [];
+            for (const _sr2 of stratResults) {
+              const _nm = _sr2.signal && _sr2.signal.name;
+              const _mem = (_sr2.signal && _sr2.signal.members) || (_nm ? [_nm] : []);
+              if (_mem.some(function (m) { return __autoDisabled.has(m); })) {
+                incBlock("SELF_HEAL[" + (_nm || "?") + "]");
+                continue;
+              }
+              _keptSH.push(_sr2);
+            }
+            stratResults = _keptSH;
           }
 
           // [V12.71] ★AI 자율운용 진입 주입★ — 여기서 AI_PRIMARY 후보를 주입한다(no_signal continue 이전).
@@ -21562,10 +21620,16 @@ async function mlSelfReview(DB) {
     for (const mk of Object.keys(byMkt)) if (byMkt[mk].pnl < 0) diagnosis.push(mk.toUpperCase() + " 시장 손익 " + byMkt[mk].pnl.toFixed(0) + " → 해당 시장 진입 보수화 필요");
     if (slip >= 5) diagnosis.push("손절 슬리피지 " + slip + "건 → 갭 리스크(사이즈 축소·스탑 버퍼 검토)");
     if (!diagnosis.length) diagnosis.push("특이 문제 없음 — 현 정책 유지");
+    // [V12.75] ★자가치유(Self-Healing)★ 진단에 그치지 않고 행동 — 표본 충분(n≥15)한데 승률<35%·
+    //   손익 음수인 진입전략을 자동 차단 목록에 올림. 다음 자가평가에서 성과가 회복되면 자동 해제.
+    const autoDisable = Object.keys(byEntry)
+      .filter(function (e) { return e !== "?" && byEntry[e].n >= 15 && byEntry[e].w / byEntry[e].n < 0.35 && byEntry[e].pnl < 0; });
+    if (autoDisable.length) diagnosis.push("자동조치: " + autoDisable.join(",") + " 진입 차단(자가치유 — 성과 회복 시 자동 해제)");
     const review = { ts: Date.now(), windowDays: 60, n: n, winRate: +winRate.toFixed(3), profitFactor: +pf.toFixed(2),
       totalPnl: +tot.toFixed(0), stopSlippage: slip,
       byMarket: Object.keys(byMkt).map(function (m) { return { market: m, trades: byMkt[m].n, pnl: +byMkt[m].pnl.toFixed(0), winRate: +(byMkt[m].w / byMkt[m].n).toFixed(2) }; }),
       worstStrategies: worst.map(function (w) { return { strategy: w.e, trades: w.n, pnl: +w.pnl.toFixed(0), winRate: +(w.w / w.n).toFixed(2) }; }),
+      autoDisable: autoDisable,
       diagnosis: diagnosis };
     await setState(DB, "ai_selfreview", review);
     return "[SELFREVIEW] n=" + n + " 승률" + (winRate * 100).toFixed(0) + "% PF" + pf.toFixed(2) + " 손익" + tot.toFixed(0) + " | 진단: " + diagnosis.join(" / ");
