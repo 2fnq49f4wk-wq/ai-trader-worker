@@ -21768,125 +21768,172 @@ function _luxWriteReport(ym, D) {
   const pick = function (arr) { return arr[Math.floor(rng() * arr.length)]; };
   const mkNames = { us: "미국", kr: "한국", cm: "원자재", bdus: "미국채", bdkr: "한국채" };
   const mkts = D.mkts || {};
+  const ymKo = ym.slice(0, 4) + "년 " + parseInt(ym.slice(5), 10) + "월";
+  const nm2 = function (sym) { const n = (typeof NAME_MAP !== "undefined" && NAME_MAP[sym]) || null; return n ? n : String(sym).replace(/\.(KS|KQ)$/, ""); };
+  const dKo = function (ts) { try { const d = new Date(ts); return (d.getUTCMonth() + 1) + "월 " + d.getUTCDate() + "일"; } catch (e) { return ""; } };
   // ── 전체 집계 ──
-  let totPnlKR = 0, totSells = 0, totWins = 0, hasKR = false, hasUS = false;
-  for (const mk of Object.keys(mkts)) {
-    const m = mkts[mk]; totSells += m.sells || 0; totWins += m.wins || 0;
-    if (mk === "kr" || mk === "bdkr") { totPnlKR += m.pnl || 0; hasKR = hasKR || !!m.sells; }
-    if (mk === "us") hasUS = hasUS || !!m.sells;
-  }
+  let totSells = 0, totWins = 0;
+  for (const mk of Object.keys(mkts)) { const m = mkts[mk]; totSells += m.sells || 0; totWins += m.wins || 0; }
   const wr = totSells ? totWins / totSells : null;
   const krM = mkts.kr, usM = mkts.us;
   const tone = (function () {
-    const krBad = krM && krM.pnl < 0, usBad = usM && usM.pnl < 0;
     if (!totSells) return "quiet";
+    const krBad = krM && krM.pnl < 0, usBad = usM && usM.pnl < 0;
     if (!krBad && !usBad) return "good";
     if (krBad && usBad) return "hard";
     return "mixed";
   })();
-  const S = [];   // 문단 배열
-  // ── 1) 총평 ──
+  const S = [];
+  // ══ 1) 총평 ══
   S.push("## 총평");
   const opening = {
-    good: ["이달은 시스템이 설계 의도대로 작동한 달이었습니다.", "숫자가 말해주듯, 이번 달은 규율이 성과로 이어진 달이었습니다."],
-    mixed: ["이달의 성적표는 한 문장으로 요약하기 어렵습니다 — 시장별로 명암이 갈렸습니다.", "절반의 성공이라 부르는 것이 정직하겠습니다."],
-    hard: ["솔직하게 시작하겠습니다. 이번 달은 어려운 달이었습니다.", "숫자를 미화하지 않겠습니다 — 이번 달 성과는 기대에 못 미쳤습니다."],
-    quiet: ["이달은 거래가 거의 없었던 관망의 달이었습니다.", "포지션을 거의 잡지 않은 조용한 달이었습니다."]
+    good: ["한 달을 마감하며 숫자를 다시 확인했습니다. 좋은 달이었습니다 — 운이 아니라 절차가 만든 결과라고 판단합니다.",
+           ymKo + "은 시스템이 설계 의도대로 작동한 달이었습니다. 자랑보다는 기록으로 남깁니다."],
+    mixed: [ymKo + "의 성적표는 한 문장으로 요약되지 않습니다. 시장별로 명암이 뚜렷하게 갈렸기 때문입니다.",
+            "먼저 잘된 것과 안 된 것을 나눠 말씀드리는 것이 정직하겠습니다. 이번 달은 절반의 성공이었습니다."],
+    hard: ["솔직하게 시작하겠습니다. " + ymKo + "은 어려운 달이었고, 이 서한의 대부분은 그 원인을 해부하는 데 쓰겠습니다.",
+           "숫자를 미화하지 않겠습니다. 이번 달 성과는 기대에 미치지 못했으며, 아래에 그 이유와 대응을 적었습니다."],
+    quiet: [ymKo + "은 거래가 거의 없는 관망의 달이었습니다. 지루한 보고서가 되겠지만, 지루함도 전략의 일부입니다."]
   };
   let p1 = pick(opening[tone]);
   if (totSells) {
-    p1 += " 전체 " + totSells + "건을 청산해 승률 " + (wr * 100).toFixed(0) + "%를 기록했고, ";
     const parts = [];
-    for (const mk of ["us", "kr"]) { const m = mkts[mk]; if (m && m.sells) parts.push(mkNames[mk] + " " + _rptMoney(m.pnl, mk)); }
-    p1 += parts.length ? "시장별 실현손익은 " + parts.join(", ") + "입니다." : "";
+    for (const mk of ["us", "kr", "cm"]) { const m = mkts[mk]; if (m && m.sells) parts.push(mkNames[mk] + " " + _rptMoney(m.pnl, mk) + "(청산 " + m.sells + "건)"); }
+    p1 += " 이달 전체 " + totSells + "건을 청산해 승률 " + (wr * 100).toFixed(0) + "%를 기록했고, 시장별로는 " + parts.join(", ") + "입니다.";
   }
-  // 지수 대비(알파) — 목표는 지수를 이기는 것
-  const ir = D.idxRet || {};
-  const alphaBits = [];
-  if (usM && usM.sells && typeof ir.us === "number") alphaBits.push("S&P500이 최근 한 달 " + (ir.us >= 0 ? "+" : "") + ir.us.toFixed(1) + "%");
-  if (krM && krM.sells && typeof ir.kr === "number") alphaBits.push("코스피가 " + (ir.kr >= 0 ? "+" : "") + ir.kr.toFixed(1) + "%");
-  if (alphaBits.length) p1 += " 벤치마크는 " + alphaBits.join(", ") + " 움직였습니다. 이 시스템의 존재 이유는 지수를 이기는 것이며, 모든 평가는 그 기준을 따릅니다.";
   S.push(p1);
-  // ── 2) 성과 분석 ──
+  // 지수 대비 판정 — 목표는 알파
+  const ir = D.idxRet || {};
+  let pAlpha = "";
+  if (usM && usM.sells && typeof ir.us === "number") {
+    const beat = (usM.pnl >= 0 && ir.us <= 0) ? "명확히 앞섰습니다" : (usM.pnl >= 0 && ir.us > 0) ? "동반 상승했습니다 — 방향은 맞았고, 폭의 우열은 자본 대비 수익률로 검증이 필요합니다" : (ir.us > 0 ? "뒤졌습니다. 시장이 올랐는데 우리가 벌지 못했다면 변명의 여지가 없습니다" : "함께 어려웠습니다. 다만 하락장에서의 손실 폭 통제가 이 시스템의 존재 이유입니다");
+    pAlpha += "미국은 같은 기간 S&P500이 " + (ir.us >= 0 ? "+" : "") + ir.us.toFixed(1) + "% 움직인 가운데 " + beat + ". ";
+  }
+  if (krM && krM.sells && typeof ir.kr === "number") {
+    const beatK = (krM.pnl >= 0 && ir.kr <= 0) ? "지수를 이겼습니다" : (krM.pnl >= 0) ? "수익으로 마감했습니다" : (ir.kr > 0 ? "지수에 뒤졌습니다 — 이 간극이 이번 달 가장 아픈 숫자입니다" : "지수와 함께 밀렸습니다");
+    pAlpha += "한국은 코스피 " + (ir.kr >= 0 ? "+" : "") + ir.kr.toFixed(1) + "% 대비 " + beatK + ".";
+  }
+  if (pAlpha) S.push(pAlpha + " 이 시스템의 목표는 언제나 같습니다 — 지수를 이기는 것. 그 기준으로만 스스로를 평가합니다.");
+  // ══ 2) 성과 분석 ══
   S.push("\n## 성과 분석");
   for (const mk of Object.keys(mkts)) {
     const m = mkts[mk]; if (!m || !m.sells) continue;
     const nm = mkNames[mk] || mk;
     const mwr = m.wins / m.sells, pf = m.gl > 1e-9 ? m.gw / m.gl : (m.gw > 0 ? Infinity : 0);
-    let para = nm + " 시장" + _luxJosa(nm + " 시장", "은", "는") + " 청산 " + m.sells + "건, 승률 " + (mwr * 100).toFixed(0) + "%, Profit Factor " + (isFinite(pf) ? pf.toFixed(2) : "∞") + "를 기록했습니다. ";
-    if (m.pnl >= 0 && mwr >= 0.55) para += pick(["승률과 손익비가 함께 잡힌, 흠잡을 데 없는 구간이었습니다.", "이기는 거래를 길게, 지는 거래를 짧게 — 교과서적인 흐름이었습니다."]);
-    else if (m.pnl >= 0) para += pick(["승률은 평범했지만 손익비가 이를 메웠습니다. 이 시스템은 원래 그렇게 설계돼 있습니다.", "몇 번의 큰 승리가 잦은 작은 패배를 상쇄한, 전형적인 추세추종형 손익 구조였습니다."]);
-    else if (isFinite(pf) && pf >= 1) para += pick(["거래당 기대값은 플러스였는데 총손익이 음수입니다 — 소수 대형 손실의 흔적이며, 사이징이 반성할 지점입니다.", "구조는 이기고 있었지만 몇 건의 큰 손실이 전체를 끌어내렸습니다."]);
-    else para += pick(["변명하지 않겠습니다. 진입 선별과 손절 집행 모두 기준에 못 미쳤습니다.", "시장 탓으로 돌리기 전에 시스템의 선별력이 부족했음을 인정합니다."]);
-    // 주차 흐름 서사
+    let para = "**" + nm + "** — 청산 " + m.sells + "건, 승률 " + (mwr * 100).toFixed(0) + "%, Profit Factor " + (isFinite(pf) ? pf.toFixed(2) : "∞") + ", 실현손익 " + _rptMoney(m.pnl, mk) + ". ";
+    // 청산 유형 해부 — 구체 수치로
+    const ec = m.exitCats || {};
+    const stopN = (ec.stop || 0), tpN = (ec.tp1 || 0) + (ec.tp2 || 0), trailN = (ec.trail || 0), timeN = (ec.time || 0), aiN = (ec.ai || 0);
+    if (m.sells >= 8) {
+      para += "청산의 내용을 뜯어보면 익절(목표가·트레일링)이 " + (tpN + trailN) + "건, 손절이 " + stopN + "건, 시간청산이 " + timeN + "건" + (aiN ? ", AI 판단 청산이 " + aiN + "건" : "") + "이었습니다. ";
+      if (stopN / m.sells > 0.45) para += "손절 비중이 절반에 가깝다는 것은 진입 타이밍이 무뎠다는 뜻입니다 — 선별 게이트를 조이는 근거로 삼겠습니다. ";
+      else if ((tpN + trailN) / m.sells > 0.45) para += "익절이 절반 가까이 차지한 것은 진입 뒤 추세가 실제로 따라와 줬다는 뜻으로, 선별이 유효했다는 방증입니다. ";
+      if (timeN / m.sells > 0.35) para += "시간청산이 " + timeN + "건이나 된 점은 되짚을 대목입니다 — 방향이 틀렸다기보다 '아무 일도 일어나지 않은' 진입이 많았다는 뜻이라, 촉매 없는 진입을 줄이는 쪽으로 보정하겠습니다. ";
+      if (m.slip) para += "또한 " + m.slip + "건은 표기 손절선보다 눈에 띄게 나쁜 가격에 체결됐습니다(갭·유동성). 이 시장에서의 포지션 크기를 보수적으로 가져가야 할 실증적 이유입니다. ";
+    }
+    // 성과 총평 문장
+    if (m.pnl >= 0 && mwr >= 0.55) para += pick(["종합하면 흠잡을 데 없는 구간이었습니다. 다만 좋은 달의 유혹 — 사이즈를 키우고 싶은 마음 — 을 경계합니다.",
+      "승률과 손익비가 함께 잡혔습니다. 이런 달에 해야 할 일은 하나, 같은 절차를 반복하는 것입니다."]);
+    else if (m.pnl >= 0) para += pick(["승률은 평범했지만 이긴 거래가 길고 진 거래가 짧았습니다. 이 시스템의 설계 그대로입니다.",
+      "몇 번의 큰 승리가 잦은 작은 패배를 상쇄했습니다. 저승률·고손익비 — 설계대로입니다."]);
+    else if (isFinite(pf) && pf >= 1) para += "거래당 기대값은 플러스인데 총손익이 음수라는 모순은 소수 대형 손실이 만든 것입니다. 문제는 확률이 아니라 크기였습니다.";
+    else para += pick(["이 시장에서는 변명하지 않겠습니다. 진입 선별과 손실 관리 모두 기준 미달이었습니다.",
+      "시장 탓을 하기 전에 시스템의 선별력이 부족했음을 먼저 인정합니다."]);
+    // 주차 흐름
     try {
       const wk = Object.keys(m.weekly || {}).sort();
       if (wk.length >= 3) {
-        const h = Math.floor(wk.length / 2);
-        let a = 0, b = 0;
+        let bw = wk[0], ww = wk[0];
+        for (const w of wk) { if (m.weekly[w] > m.weekly[bw]) bw = w; if (m.weekly[w] < m.weekly[ww]) ww = w; }
+        para += " 주차별로는 " + bw + "주차(" + _rptMoney(m.weekly[bw], mk) + ")가 가장 좋았고 " + ww + "주차(" + _rptMoney(m.weekly[ww], mk) + ")가 가장 무거웠습니다.";
+        const h = Math.floor(wk.length / 2); let a = 0, b = 0;
         wk.forEach(function (w, i) { if (i < h) a += m.weekly[w]; else b += m.weekly[w]; });
-        if (b > a && b > 0) para += " 월초의 부진을 후반으로 갈수록 만회하는 흐름이었다는 점은 긍정적입니다.";
-        else if (a > b && b < 0) para += " 다만 월 후반으로 갈수록 힘이 빠진 점은 다음 달 경계 대상입니다.";
-      }
-    } catch (e) {}
-    // 전략 서사
-    try {
-      const st = Object.keys(m.strat || {});
-      if (st.length >= 2) {
-        const arr = st.map(function (k) { return { k: k, p: m.strat[k].pnl || m.strat[k] || 0 }; }).sort(function (x, y) { return y.p - x.p; });
-        const best = arr[0], worst = arr[arr.length - 1];
-        if (best && worst && best.k !== worst.k) para += " 전략 중에는 " + best.k + _luxJosa(best.k, "이", "가") + " 견인했고, " + worst.k + _luxJosa(worst.k, "은", "는") + " 발목을 잡았습니다.";
+        if (b > a && b > 0) para += " 월초의 부진을 후반에 만회한 흐름 자체는 긍정적입니다.";
+        else if (a > b && b < 0) para += " 후반으로 갈수록 힘이 빠진 점은 다음 달의 경계 대상입니다.";
       }
     } catch (e) {}
     S.push(para);
+    // 전략 서사 — 수치 포함
+    try {
+      const st = Object.keys(m.strat || {});
+      if (st.length >= 2) {
+        const arr = st.map(function (k) { const v = m.strat[k]; return { k: k, n: v.n || 0, pnl: v.pnl || 0, wr: v.n ? (v.wins || 0) / v.n : 0 }; })
+          .filter(function (x) { return x.n >= 2; }).sort(function (x, y) { return y.pnl - x.pnl; });
+        if (arr.length >= 2) {
+          const best = arr[0], worst = arr[arr.length - 1];
+          if (best.k !== worst.k) S.push("전략 단위로 보면 " + best.k.toUpperCase() + _luxJosa(best.k, "이", "가") + " " + best.n + "건에서 " + _rptMoney(best.pnl, mk) + "(승률 " + (best.wr * 100).toFixed(0) + "%)로 견인했고, " + worst.k.toUpperCase() + _luxJosa(worst.k, "은", "는") + " " + worst.n + "건에서 " + _rptMoney(worst.pnl, mk) + "(승률 " + (worst.wr * 100).toFixed(0) + "%)로 발목을 잡았습니다." + (worst.pnl < 0 && worst.wr < 0.4 ? " 후자는 자가평가 파이프라인의 자동 차단 심사 대상입니다." : ""));
+        }
+      }
+    } catch (e) {}
   }
-  if (!totSells) S.push("이달은 유의미한 청산이 없어 성과 분석을 생략합니다. 거래하지 않은 것도 결정이며, 나쁜 진입보다 낫습니다.");
-  // ── 3) 잘한 점과 아쉬운 점 ──
+  if (!totSells) S.push("이달은 유의미한 청산이 없었습니다. 거래하지 않은 것도 결정입니다 — 나쁜 진입보다 낫습니다.");
+  // ══ 3) 이달의 거래 복기 ══
   const allClosed = [];
   for (const mk of Object.keys(mkts)) for (const c of (mkts[mk].closed || [])) allClosed.push(Object.assign({ mk: mk }, c));
   if (allClosed.length >= 3) {
-    S.push("\n## 잘한 점과 아쉬운 점");
+    S.push("\n## 이달의 거래 복기");
     allClosed.sort(function (a, b) { return b.pct - a.pct; });
     const bt = allClosed[0], wt = allClosed[allClosed.length - 1];
-    let p3 = "이달 최고의 거래는 " + bt.sym + "(" + _rptPct(bt.pct) + ")였습니다. " +
-      pick(["수익 거래를 조급하게 끊지 않고 추세가 소진될 때까지 끌고 간 것이 주효했습니다.", "좋은 진입보다 어려운 것이 좋은 보유인데, 이 거래에서는 둘 다 해냈습니다."]);
-    if (wt && wt.pct < 0) {
-      p3 += " 반대편에는 " + wt.sym + "(" + _rptPct(wt.pct) + ")" + _luxJosa(")", "이", "가") + " 있습니다. " +
-        (wt.pct < -6 ? "손절선을 넘겨 체결된 폭이 컸다는 점에서, 갭 리스크에 대한 사이징 보수화가 필요하다는 교훈을 남겼습니다."
-                     : "손실 자체는 시스템의 일부입니다 — 중요한 것은 손절 규율이 작동했고, 한 건의 손실이 계좌를 위협하지 않았다는 사실입니다.");
-    }
+    const btName = nm2(bt.sym), btDate = dKo(bt.ts);
+    let p3 = "가장 잘한 거래는 " + (btDate ? btDate + " " : "") + btName + _luxJosa(btName, "을", "를") + " " + _rptPct(bt.pct) + "로 마감한 건입니다";
+    p3 += bt.entry ? " (진입전략 " + bt.entry + ", " + (bt.cat === "tp2" ? "2차 목표가 도달" : bt.cat === "tp1" ? "1차 목표가" : bt.cat === "trail" ? "트레일링 익절" : bt.cat === "ai" ? "AI 위원회 청산" : "정상 청산") + "). " : ". ";
+    p3 += pick(["복기해 보면 이 거래의 미덕은 진입이 아니라 보유였습니다 — 조급하게 끊지 않고 추세가 소진될 때까지 기다렸습니다.",
+      "좋은 진입보다 어려운 것이 좋은 보유인데, 이 거래는 둘 다 해냈습니다."]);
     S.push(p3);
+    if (wt && wt.pct < 0) {
+      const wtName = nm2(wt.sym), wtDate = dKo(wt.ts);
+      let p4 = "가장 아픈 거래는 " + (wtDate ? wtDate + " " : "") + wtName + "(" + _rptPct(wt.pct) + (wt.entry ? ", 진입 " + wt.entry : "") + ")입니다. ";
+      if (wt.cat === "stop" && wt.pct < -6) p4 += "손절선을 크게 넘긴 가격에 체결됐다는 점이 핵심 교훈입니다 — 손절 규율 자체는 작동했지만, 갭 앞에서는 규율보다 사이즈가 먼저입니다. 해당 시장의 포지션 상한을 낮춘 것은 정확히 이 때문입니다.";
+      else if (wt.cat === "stop") p4 += "손절 규율은 정확히 작동했습니다. 손실은 시스템의 일부이며, 중요한 것은 한 건의 손실이 계좌를 위협하지 않았다는 사실입니다.";
+      else if (wt.cat === "time") p4 += "시간청산으로 끝났다는 것은 방향이 틀렸다기보다 촉매가 없었다는 뜻입니다. 진입 근거의 신선도를 더 따지겠습니다.";
+      else p4 += "이 손실에서 배울 것은 배우고, 나머지는 잊겠습니다. 복기는 후회가 아니라 보정을 위한 것입니다.";
+      S.push(p4);
+    }
+    // 통계적 재미 — 최다 등장 종목
+    try {
+      const cnt = {};
+      for (const c of allClosed) cnt[c.sym] = (cnt[c.sym] || 0) + 1;
+      const most = Object.keys(cnt).sort(function (a, b) { return cnt[b] - cnt[a]; })[0];
+      if (most && cnt[most] >= 3) {
+        let mp = 0; for (const c of allClosed) if (c.sym === most) mp += c.pnl;
+        S.push("여담으로, 이달 가장 자주 오간 종목은 " + nm2(most) + "(" + cnt[most] + "회, 합산 " + _rptMoney(mp, /\.(KS|KQ)$/.test(most) ? "kr" : "us") + ")였습니다. " + (mp >= 0 ? "자주 간 만큼 벌었으니 다행입니다." : "잦은 만남이 좋은 인연은 아니었습니다 — 재진입 조건을 점검하겠습니다."));
+      }
+    } catch (e) {}
   }
-  // ── 4) AI 시스템 자가진단 ──
+  // ══ 4) AI 시스템 자가진단 ══
   S.push("\n## AI 시스템 자가진단");
   const dnnOk = D.dnnT && D.dnnT.trusted, gbdtOk = D.gbdtT && D.gbdtT.trusted;
-  let p4 = "";
-  if (D.mind && (dnnOk || gbdtOk)) p4 += "위원회는 현재 정상 가동 중입니다 — 위원장(MIND)에 " + [dnnOk ? "딥넷" : null, gbdtOk ? "부스팅트리" : null].filter(Boolean).join("과 ") + _luxJosa(gbdtOk ? "트리" : "딥넷", "이", "가") + " 검증을 통과해 합류해 있습니다. ";
-  else if (D.mind) p4 += "위원장(MIND)은 가동 중이나 표준모델(딥넷·부스팅트리)은 아직 검증 문턱을 넘지 못해 자동 억제 상태입니다. 이는 결함이 아니라 과신 방지 장치가 작동하는 모습입니다. ";
-  else p4 += "모델은 아직 학습 표본을 축적하는 단계로, 거래는 규칙엔진이 비상 운용하고 있습니다. ";
+  let p5 = "";
+  if (D.mind && (dnnOk || gbdtOk)) {
+    const members = [dnnOk ? "딥넷(검증하한 " + ((_num(D.dnnT.dnnAccLB, 0)) * 100).toFixed(1) + "%)" : null, gbdtOk ? "부스팅트리(검증하한 " + ((_num(D.gbdtT.gbdtAccLB, 0)) * 100).toFixed(1) + "%)" : null].filter(Boolean);
+    p5 += "위원회는 정상 가동 중입니다. 위원장(MIND)에 " + members.join("과 ") + "가 검증을 통과해 합류해 있고, 진입·청산 결정에 실제 투표하고 있습니다. ";
+  } else if (D.mind) p5 += "위원장(MIND)은 가동 중이나 표준모델(딥넷·부스팅트리)은 아직 검증 문턱을 넘지 못해 자동 억제 상태입니다. 답답해 보여도 이것이 과신을 막는 장치이며, 문턱을 낮출 계획은 없습니다. ";
+  else p5 += "모델은 학습 표본을 축적하는 단계이며, 그동안 거래는 규칙엔진이 비상 운용합니다. ";
   const sr = D.selfreview;
   if (sr && Array.isArray(sr.diagnosis) && sr.diagnosis.length) {
-    p4 += "시스템이 스스로 내린 진단은 다음과 같습니다: ";
-    p4 += sr.diagnosis.slice(0, 3).map(function (d) { return "" + d; }).join(" 또한 ") + ".";
-    if (sr.autoDisable && sr.autoDisable.length) p4 += " 이 중 저성과 전략(" + sr.autoDisable.join(", ") + ")은 이미 자동 차단 조치가 내려져 있으며, 성과가 회복되면 스스로 해제됩니다.";
-  } else p4 += "자가진단에서 구조적 문제는 발견되지 않았습니다.";
-  S.push(p4);
-  // ── 5) 다음 달 운용 방침 ──
-  S.push("\n## 다음 달 운용 방침");
-  let p5 = "";
-  if (tone === "hard") p5 += pick(["다음 달의 최우선 과제는 수익이 아니라 손실의 크기를 통제하는 것입니다. ", "공격보다 수비를 앞에 두겠습니다. "]);
-  else if (tone === "good") p5 += pick(["잘 되는 달일수록 규율이 시험받습니다. 사이징 확대의 유혹을 경계하겠습니다. ", "성과에 취하지 않고 같은 절차를 반복하는 것이 다음 달의 계획입니다. "]);
-  else p5 += "잘 작동한 쪽을 유지하고, 부진한 쪽은 게이트를 조이는 비대칭 대응을 이어가겠습니다. ";
-  p5 += "구체적으로는 위원회 확률 게이트와 분포밖(DI) 기권, 변동성 타게팅, 일일 손실 서킷브레이커가 신규 진입을 계속 감시하며, ";
-  p5 += "야간 자가평가가 전략별 성과를 재점검해 필요한 차단·해제를 자동 집행합니다. ";
-  if (D.picks && D.picks.length) {
-    const tp = D.picks.slice(0, 3).map(function (p) { return (NAME_MAP[p.symbol] || p.symbol) + "(" + (p.p * 100).toFixed(0) + "%)"; }).join(", ");
-    p5 += "현재 모델이 가장 높은 확률을 부여한 후보는 " + tp + "이며, 이는 예측이지 약속이 아닙니다. ";
-  }
-  p5 += "목표는 변함없습니다 — 시장 지수를 이기는 것, 그리고 그 과정에서 살아남는 것입니다.";
+    p5 += "시스템이 원장을 스스로 분석해 내린 진단은 이렇습니다: “" + sr.diagnosis.slice(0, 2).join("” 그리고 “") + "”";
+    if (sr.autoDisable && sr.autoDisable.length) p5 += " — 이 중 저성과 전략(" + sr.autoDisable.join(", ") + ")에는 이미 자동 차단이 집행됐고, 성과가 회복되면 스스로 해제됩니다. 진단이 문서로 끝나지 않고 조치로 이어진다는 점이 이 시스템의 요체입니다.";
+    else p5 += ".";
+  } else p5 += "이달 자가진단에서 구조적 문제는 발견되지 않았습니다.";
   S.push(p5);
-  return "# LUX-AI 월간 운용 서한 — " + ym + "\n(탑재 서사엔진 자동 작성 · 외부 LLM 미사용 · 모든 수치는 원장 실데이터)\n\n" + S.join("\n");
+  // ══ 5) 다음 달 운용 방침 ══
+  S.push("\n## 다음 달 운용 방침");
+  let p6 = "";
+  if (tone === "hard") p6 += pick(["다음 달의 최우선 과제는 수익이 아니라 손실의 크기를 통제하는 것입니다. 수비가 서면 공격은 따라옵니다. ",
+    "공격보다 수비를 앞에 두겠습니다. 계좌가 살아 있어야 다음 기회도 있습니다. "]);
+  else if (tone === "good") p6 += pick(["잘 되는 달일수록 규율이 시험받습니다. 사이즈를 키우고 싶은 유혹이 가장 큰 리스크입니다. ",
+    "성과에 취하지 않고 같은 절차를 반복하는 것 — 그것이 다음 달의 계획 전부입니다. "]);
+  else p6 += "잘 작동한 쪽은 그대로 두고, 부진한 쪽만 게이트를 조이는 비대칭 대응을 이어갑니다. ";
+  p6 += "구조적으로는 다섯 겹의 방어 — 위원회 확률 게이트, 분포밖(DI) 기권, 변동성 타게팅, 종목·시장별 사이즈 상한, 일일 손실 서킷브레이커 — 가 모든 신규 진입을 감시하고, 야간 자가평가가 전략별 성과를 재점검해 차단·해제를 자동 집행합니다. ";
+  if (D.picks && D.picks.length) {
+    const tp = D.picks.slice(0, 3).map(function (p) { return nm2(p.symbol) + "(" + (p.p * 100).toFixed(0) + "%)"; }).join(", ");
+    p6 += "현재 모델이 가장 높은 성공확률을 부여한 후보는 " + tp + "입니다. 물론 이는 예측이지 약속이 아니며, 장중 위원회의 재확인을 통과해야 실제 진입합니다. ";
+  }
+  p6 += "목표는 변하지 않습니다 — 지수를 이기는 것, 그리고 그 과정에서 반드시 살아남는 것입니다. 다음 서한에서 결과로 보고드리겠습니다.";
+  S.push(p6);
+  return "# LUX-AI 월간 운용 서한 — " + ymKo + "\n(탑재 서사엔진 자동 작성 · 외부 LLM 미사용 · 모든 수치는 원장 실데이터)\n\n" + S.join("\n");
 }
+
 
 async function mlMonthlyReport(DB, ym, force, env) {
   try {
@@ -21918,7 +21965,16 @@ async function mlMonthlyReport(DB, ym, force, env) {
       const pnl = _num(t.pnl, 0), pct = _num(t.pnl_pct, 0);
       m.pnl += pnl;
       if (pnl >= 0) { m.wins++; m.gw += pnl; } else { m.losses++; m.gl += -pnl; }
-      m.closed.push({ sym: t.symbol, pct: pct, pnl: pnl });
+      // [V12.79] 리포트 서사용 재료 확장 — 날짜·사유·진입전략·청산유형·손절 슬리피지까지 수집
+      const _rs = String(t.reason || "");
+      const _em = _rs.match(/#entry=(\S+)/);
+      const _cat = /TP2|2R/.test(_rs) ? "tp2" : /TP1|1R/.test(_rs) ? "tp1" : /TRAIL/.test(_rs) ? "trail"
+                 : /TIME-STOP/.test(_rs) ? "time" : /STOP/.test(_rs) ? "stop"
+                 : /AI_EXIT|AI_ROTATE/.test(_rs) ? "ai" : /VISION/.test(_rs) ? "vision" : "etc";
+      m.exitCats = m.exitCats || {}; m.exitCats[_cat] = (m.exitCats[_cat] || 0) + 1;
+      const _sm2 = _rs.match(/STOP (-?\d+\.\d+)%/);
+      if (_sm2 && pct < parseFloat(_sm2[1]) - 0.5) m.slip = (m.slip || 0) + 1;   // 표기 손절선보다 0.5%p+ 나쁜 체결
+      m.closed.push({ sym: t.symbol, pct: pct, pnl: pnl, ts: t.ts, entry: _em ? _em[1] : null, cat: _cat });
       // [V6] 주차별 손익(1~5주차) + 실현손익 누적 기준 최대낙폭(MDD)
       const wk = Math.min(5, Math.floor((new Date(t.ts).getUTCDate() - 1) / 7) + 1);
       m.weekly[wk] = (m.weekly[wk] || 0) + pnl;
