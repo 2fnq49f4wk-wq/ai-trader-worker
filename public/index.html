@@ -436,6 +436,9 @@ button.btn.loading::after{content:'조회 중…';position:absolute;inset:0;disp
 
 /* ── 테이블 공통 ── */
 .table-wrap{overflow-x:auto;-webkit-overflow-scrolling:touch;}
+/* [V12.92] 거래 사유(REASON) 짤림 방지 — 넉넉한 폭 + 가로스크롤로 오른쪽까지 다 보이게, 마우스오버 시 전체 툴팁 */
+.table td.trade-reason{white-space:nowrap;min-width:260px;max-width:520px;overflow:hidden;text-overflow:ellipsis;cursor:help;}
+.trade-reason{cursor:help;}
 .table{width:100%;border-collapse:collapse;font-size:11px;}
 .table th{
   position:sticky;top:0;z-index:1;
@@ -5676,7 +5679,7 @@ html[data-theme="light"] .table tbody tr:hover{background:rgba(9,105,218,.045);}
         var rowCls = (strat === 'trend' || strat === 'scalp' || strat === 'snap') ? 'pos-row-' + strat : 'pos-row-other';
         var stratCell = strategyBadge(p.strategy || 'swing');
         var reason = p.entrySignal || (p.meta && p.meta.signal) || '-';
-        var reasonCell = '<span style="font-size:10px;color:var(--dim);">'+escapeHtml(reason)+'</span>';
+        var reasonCell = '<span class="trade-reason" style="font-size:10px;color:var(--dim);" title="'+escapeHtml(reason)+'">'+escapeHtml(reason)+'</span>';
         // [V53] PnL 게이지 — ±10% 풀스케일 시각화
         var barHtml = '';
         if (pnlPct != null) {
@@ -8373,7 +8376,7 @@ html[data-theme="light"] .table tbody tr:hover{background:rgba(9,105,218,.045);}
       var name = t.market === 'kr' ? krLabel(t.symbol) : usLabel(t.symbol);
       var label = name ? '<b>'+escapeHtml(t.symbol)+'</b> <span style="color:var(--dim);font-size:10px;">'+escapeHtml(name)+'</span>' : '<b>'+escapeHtml(t.symbol)+'</b>';
       var atype = assetTypeOf(t.market);
-      html += '<tr data-asset-type="'+atype+'"><td style="white-space:nowrap;">'+fmtTradeTime(t.ts, t.market)+'</td><td><span class="market-badge mkt-'+atype+'">'+t.market.toUpperCase()+'</span></td><td>'+label+'</td><td class="'+sc+'">'+t.side+'</td><td class="right">'+fmtNum(t.qty)+'</td><td class="right">'+fmtNum(t.price)+'</td><td class="right '+pc+'">'+pnlText+'</td><td class="right '+pc+'">'+pct+'</td><td>'+escapeHtml(t.reason||'')+'</td></tr>';
+      html += '<tr data-asset-type="'+atype+'"><td style="white-space:nowrap;">'+fmtTradeTime(t.ts, t.market)+'</td><td><span class="market-badge mkt-'+atype+'">'+t.market.toUpperCase()+'</span></td><td>'+label+'</td><td class="'+sc+'">'+t.side+'</td><td class="right">'+fmtNum(t.qty)+'</td><td class="right">'+fmtNum(t.price)+'</td><td class="right '+pc+'">'+pnlText+'</td><td class="right '+pc+'">'+pct+'</td><td class="trade-reason" title="'+escapeHtml(t.reason||'')+'">'+escapeHtml(t.reason||'')+'</td></tr>';
     });
     box.innerHTML = html + '</tbody></table></div>';
     updateTradesSummaryInto(trades, totalId, winId, avgId);

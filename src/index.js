@@ -12484,7 +12484,11 @@ async function runTradingCycle(env) {
         const _auto = (typeof AI_PARAMS !== "undefined" && AI_PARAMS.autonomy) || {};
         if (_auto.enabled && typeof LUXML !== "undefined" && LUXML.enabled) {
           // 위원장(MIND) 존재 + 표준모델(DNN/GBDT) 중 최소 하나 신뢰 = AI가 실력 입증해 주도 준비됨.
-          __aiReady = !!(__mind && ((__dnnTrust && __dnnTrust.trusted) || (__gbdtTrust && __gbdtTrust.trusted)));
+          // [V12.92] ★버그수정★ 종전엔 trust '플래그'만 봤는데, featVer 상향(예: 12) 직후엔 플래그가
+          //   구버전(11)에서 trusted=true인 채 남아 __aiReady가 켜지지만 정작 mlDNNLoad/mlGBDTLoad는
+          //   featVer 불일치로 null → AI가 '가동'된다면서 실은 MIND 단독으로 돌아 requireTrustedModel
+          //   취지에 반했다. 이제 '실제 로드된 현재 featVer 모델'(__dnn/__gbdt 객체)이 있을 때만 준비완료.
+          __aiReady = !!(__mind && (__dnn || __gbdt));
           try {
             const _sr = await getState(DB, "ai_selfreview", null);   // [V12.75] 자가치유 차단목록
             if (_sr && Array.isArray(_sr.autoDisable) && _sr.autoDisable.length) __autoDisabled = new Set(_sr.autoDisable);
@@ -13826,8 +13830,9 @@ async function handleRequest(request, env) {
       let aiReady = false, mindOk = false, dnnOk = false, gbdtOk = false;
       try {
         const _m = await mlMindLoad(env.DB); mindOk = !!_m;
-        const _dt = await getState(env.DB, "dnn_trust", null); dnnOk = !!(_dt && _dt.trusted);
-        const _gt = await getState(env.DB, "gbdt_trust", null); gbdtOk = !!(_gt && _gt.trusted);
+        // [V12.92] 실제 현재 featVer로 로드되는지까지 확인(trust 플래그만 보면 featVer 상향 직후 오판).
+        const _dt = await getState(env.DB, "dnn_trust", null); dnnOk = !!(_dt && _dt.trusted && await mlDNNLoad(env.DB));
+        const _gt = await getState(env.DB, "gbdt_trust", null); gbdtOk = !!(_gt && _gt.trusted && await mlGBDTLoad(env.DB));
         const _auto = (typeof AI_PARAMS !== "undefined" && AI_PARAMS.autonomy) || {};
         aiReady = !!(_auto.enabled && mindOk && (dnnOk || gbdtOk));
       } catch (e) {}
