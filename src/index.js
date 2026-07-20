@@ -23517,7 +23517,24 @@ export default {
       try {
         if (typeof LUXML !== "undefined" && LUXML.enabled) {
           const _aiDay = new Date().toISOString().slice(0, 10);
-          const _aiLast = await getState(env.DB, "ai_trained_day", null);
+          let _aiLast = await getState(env.DB, "ai_trained_day", null);
+          // [V12.99] ★재배포 후 1회 강제 재실행★ 새 코드가 배포되면(_PIPE_VER 변경) 그날 이미 학습했어도
+          //   전체 파이프라인(수확→L1→BRAIN→MIND→DNN→GBDT→보정)을 한 번 더 돌려 수정을 즉시 반영한다.
+          //   단계별 체크포인트가 300s 한도를 여러 cron에 걸쳐 처리하므로 안전하게 완주. 무한루프 방지:
+          //   마커를 먼저 갱신하고 게이트/스테이지 체크포인트만 리셋(다음부터는 정상 하루1회 게이트).
+          //   → harvest-now/train-now를 수동으로 칠 필요 없이, 배포만으로 MIND/GBDT가 재학습된다.
+          const _PIPE_VER = "V12.99-refill";
+          try {
+            const _pv = await getState(env.DB, "ai_pipeline_ver", null);
+            if (_pv !== _PIPE_VER) {
+              await setState(env.DB, "ai_pipeline_ver", _PIPE_VER);
+              try { await env.DB.prepare("DELETE FROM state WHERE k = 'ai_trained_day'").run(); } catch (e) {}
+              try { await env.DB.prepare("DELETE FROM state WHERE k LIKE 'ai_stage:%'").run(); } catch (e) {}
+              try { await env.DB.prepare("DELETE FROM state WHERE k = 'ai_train_lock'").run(); } catch (e) {}
+              _aiLast = null;   // 로컬 게이트값도 리셋 — 오늘 이미 학습했어도 이번 배포분은 재실행
+              try { await log(env.DB, "INFO", null, "[SCHED] 재배포 감지(" + _PIPE_VER + ") — 야간 파이프라인 강제 재실행(수확+MIND/GBDT 포함)"); } catch (e) {}
+            }
+          } catch (e) {}
           // [V12.37] 동시실행 방지 락 — 완료플래그(ai_trained_day)는 파이프라인 맨 끝에만 찍히는데,
           //   CPU예산 초과 등으로 중간에 끊기면 다음 cron(매분)마다 새 파이프라인이 겹쳐 실행되어
           //   서로 다른 실행이 mind_model 등 같은 상태를 경쟁적으로 덮어쓰는 위험이 있었다(회귀가드
