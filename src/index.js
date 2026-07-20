@@ -2712,8 +2712,14 @@ const AI_PARAMS = {
   metaLabeling: {
     enabled: true,
     firstModelSensitivity: "high", // 1차 신호생성기 민감도 — 대량 신호 허용(승률 낮아도 됨). 2차가 걸러냄
-    metaThreshold: 0.50,           // 2차 메타모델 성공확률 이 이상일 때만 최종 집행(권장 0.5~0.75)
-    metaHardFilter: false,         // true=metaThreshold 미만 진입 차단 / false=confidenceFloor 소프트 축소만
+    metaThreshold: 0.52,           // [V12.69] 0.50→0.52 — 2차 메타모델(위원회) 성공확률 이 이상일 때만 집행.
+                                   //   2달 거래분석: 손실이 저확률 KR 진입(SC_VWAP 승률26% 등)에 집중 → 코인플립
+                                   //   미만 진입을 위원회가 실제로 걸러내도록 소폭 상향. 여전히 걸러도 너무 많이
+                                   //   막지 않는 보수적 문턱(권장 0.5~0.75, 손실 지속 시 0.55+로 상향 가능).
+    metaHardFilter: true,          // [V12.69] false→true — 위원회 진입 게이트 강화(사용자 지시). 종전엔 저확률
+                                   //   진입을 사이즈만 줄이고 통과시켰다(soft). 이제 metaThreshold 미만 신규진입은
+                                   //   차단. 단, 위원회가 관망(observe)·기권(abstain)이면 이 게이트는 미적용(규칙
+                                   //   수량 유지)이라 "모델 미학습 시 전면 거래중단"은 발생하지 않음.
     // [V12.59 문서정정] 아래 3개는 코드가 읽지 않는 "설명용" 표기다(실측 audit로 확인). 실제 위원회
     //   가중은 mlDeepDecide가 각 전문가 검증정확도 Wilson하한의 소프트맥스(T=DNN.trustTemp)로 매 결정마다
     //   동적 산출하고 committeeAccCap으로 상한을 건다 — 정적 가중치나 recencyDays 창을 쓰지 않는다.
