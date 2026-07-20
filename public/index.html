@@ -3555,11 +3555,17 @@ html[data-theme="light"] .table tbody tr:hover{background:rgba(9,105,218,.045);}
       </div>
       <div class="wi-lab">STEP 1 · 거시 변수</div>
       <div class="wi-row" id="wiFactors">
-        <button class="wi-f active" data-f="rate">🏦 미국 금리</button>
+        <button class="wi-f active" data-f="rate">🏦 미국 10년금리</button>
+        <button class="wi-f" data-f="rate2y">🏦 단기(5년)금리</button>
         <button class="wi-f" data-f="oil">🛢 국제 유가</button>
         <button class="wi-f" data-f="usdkrw">💱 달러/원</button>
+        <button class="wi-f" data-f="dxy">💵 달러지수</button>
         <button class="wi-f" data-f="spx">📈 S&P 500</button>
+        <button class="wi-f" data-f="kospi">📊 코스피</button>
         <button class="wi-f" data-f="gold">🥇 금</button>
+        <button class="wi-f" data-f="copper">🔶 구리</button>
+        <button class="wi-f" data-f="vix">🌪 VIX</button>
+        <button class="wi-f" data-f="btc">₿ 비트코인</button>
       </div>
       <div class="wi-lab">STEP 2 · 충격 크기</div>
       <div class="wi-row" id="wiShocks"></div>
@@ -7332,6 +7338,30 @@ html[data-theme="light"] .table tbody tr:hover{background:rgba(9,105,218,.045);}
     var d = new Date(); d.setUTCDate(1); d.setUTCMonth(d.getUTCMonth() + offset);
     return d.toISOString().slice(0, 7);
   }
+  // [V12.95] 리포트 마크다운 정리 — <pre>는 텍스트를 그대로 찍어 **굵게**·### 머리표시가 날것으로
+  //   노출됐다(사용자 지적). 마크다운 마커를 걷어내고 머리글은 밑줄선으로, 목록은 •로 바꿔 깔끔한
+  //   서한체 평문으로 변환한다. (리포트 본문은 신뢰 소스 — HTML 주입 아님, textContent로만 사용)
+  function _cleanReport(t) {
+    if (!t) return '';
+    var lines = String(t).replace(/\r/g, '').split('\n');
+    var out = [];
+    for (var i = 0; i < lines.length; i++) {
+      var ln = lines[i];
+      var h = ln.match(/^\s*(#{1,6})\s+(.*)$/);        // 머리글 → 평문 + 다음 줄 밑줄선
+      if (h) {
+        var title = h[2].replace(/\*\*/g, '').replace(/`/g, '').trim();
+        out.push(title);
+        out.push('─'.repeat(Math.min(46, Math.max(8, title.length))));
+        continue;
+      }
+      ln = ln.replace(/\*\*(.*?)\*\*/g, '$1')          // **굵게** → 평문
+             .replace(/\*\*/g, '')                     // 짝 안 맞는 잔여 **
+             .replace(/`([^`]*)`/g, '$1')              // `코드` → 평문
+             .replace(/^(\s*)[-*]\s+/, '$1• ');        // - 목록 → •
+      out.push(ln);
+    }
+    return out.join('\n').replace(/\n{3,}/g, '\n\n').trim();
+  }
   // [V9.12.1] refresh=1은 매번 재생성이라 느림 → 자동로드는 캐시(즉시), 버튼 클릭 시만 재생성.
   function loadMonthlyReport(ym, forceRefresh) {
     var body = document.getElementById('rptBody'); if (!body) return;
@@ -7339,7 +7369,7 @@ html[data-theme="light"] .table tbody tr:hover{background:rgba(9,105,218,.045);}
     var q = '?ym=' + ym + (forceRefresh ? '&refresh=1' : '');
     fetch('/api/report/monthly' + q)
       .then(function(r){ return r.json(); })
-      .then(function(d){ body.textContent = (d && d.text) || '리포트 없음 — 상단 버튼으로 생성하세요.'; })
+      .then(function(d){ body.textContent = _cleanReport((d && d.text) || '') || '리포트 없음 — 상단 버튼으로 생성하세요.'; })
       ['catch'](function(){ body.textContent = '리포트 로딩 실패'; });
   }
   function openMonthlyReport() {
@@ -7544,7 +7574,7 @@ html[data-theme="light"] .table tbody tr:hover{background:rgba(9,105,218,.045);}
     try { var q = (window.__lastQuotesArr || []).find(function(x){ return x.symbol === sym; }); if (q && q.mcap > 0) mcap = q.mcap; else if (q && q.price > 0 && q.shares > 0) mcap = q.price * q.shares; } catch (e) {}
     fetch('/api/stock-report?symbol=' + encodeURIComponent(sym) + (mcap ? '&mcap=' + Math.round(mcap) : ''))
       .then(function(r){ return r.json(); })
-      .then(function(d){ var b = document.getElementById('srptBody'); if (b) b.textContent = (d && d.text) || '분석 없음'; })
+      .then(function(d){ var b = document.getElementById('srptBody'); if (b) b.textContent = _cleanReport((d && d.text) || '') || '분석 없음'; })
       ['catch'](function(){ var b = document.getElementById('srptBody'); if (b) b.textContent = '분석 로딩 실패'; });
   }
 
@@ -11409,7 +11439,8 @@ html[data-theme="light"] #page-nnviz .nnv-title,html[data-theme="light"] #page-n
     // [V12.18 리디자인] 벌집 클러스터 배치 — 일자 나열 폐기. 큰 층은 세로 80칸 × 여러 줄로 접어
     //   전 뉴런(2,408)이 겹침 0으로 한 화면 높이(~850px)에 수납. 강도 높은 뉴런일수록 밴드
     //   중앙으로(center-out) — 층마다 "발광 코어"가 실제 기여 뉴런 무리를 형태로 보여줌.
-    var dxN=9, dyN=9, maxRows=80, padL=158, padR=36, headH=58, footH=44, EDGE_CAP=4500;
+    // [V12.95] 전체 크기 축소 — 노드 간격·최대 행수·여백을 줄여 스테이지를 더 컴팩트하게(사용자 요청).
+    var dxN=7, dyN=7, maxRows=64, padL=132, padR=28, headH=52, footH=38, EDGE_CAP=4500;
     var H=headH+footH+maxRows*dyN+24, yMid=headH+12+(maxRows*dyN)/2;
     // 1패스: 층별 접기(콜럼 수)와 밴드 폭 계산 — 층간 간격을 이웃 밴드 폭에 비례시켜
     //   뒤쪽 좁은 층들(H6~OUT)은 촘촘히, 앞쪽 큰 층들은 넉넉히(30~62px 사이).
@@ -11474,11 +11505,13 @@ html[data-theme="light"] #page-nnviz .nnv-title,html[data-theme="light"] #page-n
     // [V12.53] ★애니메이션 완전 제거★ + 선 선명도 강화 — 사용자 요청대로 흐름점(V12.52)까지 폐기.
     //   엣지는 100% 정적(리페인트 0, 렉 0). 대신 불투명도 하한/기울기·굵기 하한을 올려
     //   약한 연결도 눈에 띄게(기존 0.045 최저치는 사실상 안 보임 수준이었다).
+    // [V12.95] 선 더 얇게·색 더 연하게·반투명 — 불투명도/굵기 하한과 기울기를 낮추고 색을 파스텔톤
+    //   청색(150,205,255)으로. 강한 연결만 살짝 도드라지고 전체적으로 은은한 반투명 그물망이 되게(사용자 요청).
     var edges=eArr.map(function(e,ei){
-      var op=(0.16+0.62*e.str).toFixed(3), sw=(0.28+0.72*e.str).toFixed(2);
+      var op=(0.07+0.30*e.str).toFixed(3), sw=(0.16+0.40*e.str).toFixed(2);
       var mx=(e.x1+e.x2)/2;
       var dStr='M'+e.x1.toFixed(1)+' '+e.y1.toFixed(1)+' C'+mx.toFixed(1)+' '+e.y1.toFixed(1)+' '+mx.toFixed(1)+' '+e.y2.toFixed(1)+' '+e.x2.toFixed(1)+' '+e.y2.toFixed(1);
-      return '<path class="nnedge-static" data-a="'+e.l+'-'+e.ai+'" data-b="'+(e.l+1)+'-'+e.bi+'" d="'+dStr+'" fill="none" stroke="rgba(120,185,255,'+op+')" stroke-width="'+sw+'"/>';
+      return '<path class="nnedge-static" data-a="'+e.l+'-'+e.ai+'" data-b="'+(e.l+1)+'-'+e.bi+'" d="'+dStr+'" fill="none" stroke="rgba(150,205,255,'+op+')" stroke-width="'+sw+'"/>';
     }).join('');
     var nodes='', heads='', foots='', featLabels='', hits=[];
     var nHidden=0;
@@ -11503,7 +11536,7 @@ html[data-theme="light"] #page-nnviz .nnv-title,html[data-theme="light"] #page-n
         +'<text x="'+cx+'" y="46" text-anchor="middle" font-family="IBM Plex Mono,monospace" font-size="9" fill="#8fa6c8">'+layers[li].size+'n</text>';
       var col2=shown[li], allS=layers[li].strength||[];
       for(var k=0;k<col2.length;k++){
-        var s=col2[k].s, r=(1.0+1.6*s).toFixed(1), glow=(0.4+0.6*s).toFixed(2);
+        var s=col2[k].s, r=(0.7+1.1*s).toFixed(1), glow=(0.34+0.52*s).toFixed(2);
         // 층 내 강도 순위 — center-out 배치라 k+1이 곧 순위(강도 내림차순 정렬 상태)
         var rank=k+1;
         // 층별 최강 뉴런 3개 — 은은한 맥동(코어 강조, reduced-motion 시 정지)
@@ -11642,9 +11675,9 @@ html[data-theme="light"] #page-nnviz .nnv-title,html[data-theme="light"] #page-n
 // ── [V12.24] WHAT-IF 매크로 시나리오 — 과거 민감도(베타) 기반 포트폴리오 충격 시뮬레이션 ──
 (function(){
   var WI={ factor:'rate', shock:1, speed:'slow', busy:false,
-    presets:{ rate:[0.5,1,-0.5,-1], oil:[10,-10,20,-20], usdkrw:[5,-5,10,-10], spx:[5,-5,10,-10], gold:[10,-10,20,-20] },
-    unit:{ rate:'%p', oil:'%', usdkrw:'%', spx:'%', gold:'%' },
-    deflt:{ rate:1, oil:-10, usdkrw:5, spx:-5, gold:10 } };
+    presets:{ rate:[0.5,1,-0.5,-1], rate2y:[0.5,1,-0.5,-1], oil:[10,-10,20,-20], usdkrw:[5,-5,10,-10], dxy:[3,-3,5,-5], spx:[5,-5,10,-10], kospi:[5,-5,10,-10], gold:[10,-10,20,-20], copper:[10,-10,20,-20], vix:[30,-30,60,-60], btc:[15,-15,30,-30] },
+    unit:{ rate:'%p', rate2y:'%p', oil:'%', usdkrw:'%', dxy:'%', spx:'%', kospi:'%', gold:'%', copper:'%', vix:'%', btc:'%' },
+    deflt:{ rate:1, rate2y:1, oil:-10, usdkrw:5, dxy:3, spx:-5, kospi:-5, gold:10, copper:-10, vix:30, btc:-15 } };
   function fmtShock(v,u){ return (v>0?'+':'')+v+u; }
   function money(v,mkt){ if(v==null) return '—';
     var sg=v<0?'-':'', a=Math.abs(+v);

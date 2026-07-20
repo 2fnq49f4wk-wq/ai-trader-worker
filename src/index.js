@@ -6197,7 +6197,7 @@ async function sentiLearnNightly(DB) {
       const sn = await getState(DB, "sector_news_sentiment", null);
       if (sn && sn.headlines) {
         const groups = {};
-        for (const g of Object.keys(sn.headlines)) groups[g] = (sn.headlines[g] || []).slice(0, 15).map(function (i) { return String((i && i.title) || i).slice(0, 160); });
+        for (const g of Object.keys(sn.headlines)) groups[g] = (sn.headlines[g] || []).slice(0, 30).map(function (i) { return String((i && i.title) || i).slice(0, 160); });
         await setState(DB, snapKey, { ts: Date.now(), groups: groups });
       }
     } catch (e) {}
@@ -6249,18 +6249,18 @@ async function updateSectorNewsSentiment(DB, cfg, force) {
     try {
       const url = "https://feeds.finance.yahoo.com/rss/2.0/headline?s=" + SECTOR_NEWS_REP[grp] + "&lang=en-US&region=US";
       const resp = await fetch(url, { headers: { "User-Agent": "Mozilla/5.0 (compatible)" } });
-      if (resp.ok) items = _parseRssItems(await resp.text(), 25);  // [V14] 10→25 수집량 확대
+      if (resp.ok) items = _parseRssItems(await resp.text(), 50);  // [V12.95] 25→50 수집량 확대(사용자 요청)
     } catch(e) {}
     // 2차: [V83] Google News RSS 폴백 — 야후 RSS가 사실상 폐기돼 수집 0건이던 문제의 본 수정.
     //   그룹 대표티커 2개로 검색 쿼리 구성. 키 불필요·안정적.
     if (items.length === 0 && fetchBudgetLeft() > (sc.minBudgetReserve || 8)) {
       yahooDead++;
       try {
-        const reps = SECTOR_NEWS_REP[grp].split(",").slice(0, 3).join(" OR ");  // [V14] 대표티커 2→3개로 검색 폭 확대
+        const reps = SECTOR_NEWS_REP[grp].split(",").slice(0, 5).join(" OR ");  // [V12.95] 3→5개 — 검색 폭 확대(사용자 요청)
         const gUrl = "https://news.google.com/rss/search?q=" + encodeURIComponent(reps + " stock") + "&hl=en-US&gl=US&ceid=US:en";
         const gResp = await fetch(gUrl, { headers: { "User-Agent": "Mozilla/5.0 (compatible)" } });
         if (gResp.ok) {
-          items = _parseRssItems(await gResp.text(), 25);  // [V14] 10→25 수집량 확대
+          items = _parseRssItems(await gResp.text(), 50);  // [V12.95] 25→50 수집량 확대(사용자 요청)
           if (items.length > 0) googleUsed++;
         }
       } catch(e) {}
@@ -13861,18 +13861,43 @@ async function handleRequest(request, env) {
     //   팩터 일변화율에 OLS 회귀(최근 ≤120영업일)한 역사적 베타 × 시나리오 충격 = 예상 등락.
     //   베타는 6시간 캐시. R²(설명력)를 함께 반환해 신뢰도 표시. 과거 민감도 기반 근사이며 예측 보장 아님.
     if (path === "/api/whatif") {
+      // [V12.95] 팩터 확대 — 변동성(VIX)·달러지수·구리·비트코인·단기금리·코스피 추가(사용자 요청: what-if 강화)
       const FACTORS = {
-        rate:   { sym: "^TNX",  label: "미국 10년물 금리", unit: "pp", presets: [0.5, 1, -0.5, -1] },
-        oil:    { sym: "CL=F",  label: "WTI 국제유가",     unit: "%",  presets: [10, -10, 20, -20] },
-        usdkrw: { sym: "KRW=X", label: "달러/원 환율",     unit: "%",  presets: [5, -5, 10, -10] },
-        spx:    { sym: "^GSPC", label: "S&P 500 지수",     unit: "%",  presets: [5, -5, 10, -10] },
-        gold:   { sym: "GC=F",  label: "금 가격",          unit: "%",  presets: [10, -10, 20, -20] }
+        rate:   { sym: "^TNX",       label: "미국 10년물 금리", unit: "pp", presets: [0.5, 1, -0.5, -1] },
+        rate2y: { sym: "^FVX",       label: "미국 단기(5년)금리", unit: "pp", presets: [0.5, 1, -0.5, -1] },
+        oil:    { sym: "CL=F",       label: "WTI 국제유가",     unit: "%",  presets: [10, -10, 20, -20] },
+        usdkrw: { sym: "KRW=X",      label: "달러/원 환율",     unit: "%",  presets: [5, -5, 10, -10] },
+        dxy:    { sym: "DX-Y.NYB",   label: "달러지수(DXY)",    unit: "%",  presets: [3, -3, 5, -5] },
+        spx:    { sym: "^GSPC",      label: "S&P 500 지수",     unit: "%",  presets: [5, -5, 10, -10] },
+        kospi:  { sym: "^KS11",      label: "코스피 지수",      unit: "%",  presets: [5, -5, 10, -10] },
+        gold:   { sym: "GC=F",       label: "금 가격",          unit: "%",  presets: [10, -10, 20, -20] },
+        copper: { sym: "HG=F",       label: "구리(경기)",       unit: "%",  presets: [10, -10, 20, -20] },
+        vix:    { sym: "^VIX",       label: "VIX 변동성",       unit: "%",  presets: [30, -30, 60, -60] },
+        btc:    { sym: "BTC-USD",    label: "비트코인",         unit: "%",  presets: [15, -15, 30, -30] }
       };
-      const fKey = url.searchParams.get("factor") || "rate";
-      const F = FACTORS[fKey];
-      if (!F) return Response.json({ error: "factor는 rate|oil|usdkrw|spx|gold 중 하나" }, { status: 400, headers: cors });
-      const shock = Math.max(-50, Math.min(50, parseFloat(url.searchParams.get("shock") || (F.unit === "pp" ? "1" : "10"))));
-      if (!isFinite(shock) || shock === 0) return Response.json({ error: "shock이 0이거나 숫자가 아님" }, { status: 400, headers: cors });
+      // [V12.95] ★복합 시나리오★ combo=rate:1,oil:-10,spx:-5 처럼 여러 팩터를 동시에 걸 수 있다(최대 5개).
+      //   단일 팩터(factor=&shock=)는 종전과 동일 — 내부적으로 1개짜리 시나리오로 통일 처리.
+      const _clampShock = function (v) { return Math.max(-100, Math.min(100, v)); };
+      let scenario = [];
+      const comboRaw = (url.searchParams.get("combo") || "").trim();
+      if (comboRaw) {
+        for (const part of comboRaw.split(",").slice(0, 5)) {
+          const bits = part.split(":"); const F = FACTORS[(bits[0] || "").trim()];
+          const s = _clampShock(parseFloat(bits[1]));
+          if (F && isFinite(s) && s !== 0) scenario.push({ key: bits[0].trim(), F: F, shock: s });
+        }
+        if (!scenario.length) return Response.json({ error: "combo 형식: rate:1,oil:-10 (팩터:충격 쉼표구분)" }, { status: 400, headers: cors });
+      } else {
+        const fKey = url.searchParams.get("factor") || "rate";
+        const F = FACTORS[fKey];
+        if (!F) return Response.json({ error: "factor는 " + Object.keys(FACTORS).join("|") + " 중 하나" }, { status: 400, headers: cors });
+        const shock = _clampShock(parseFloat(url.searchParams.get("shock") || (F.unit === "pp" ? "1" : "10")));
+        if (!isFinite(shock) || shock === 0) return Response.json({ error: "shock이 0이거나 숫자가 아님" }, { status: 400, headers: cors });
+        scenario.push({ key: fKey, F: F, shock: shock });
+      }
+      const isCombo = scenario.length > 1;
+      const F = scenario[0].F;              // 대표 팩터(단일 응답 필드 하위호환)
+      const fKey = scenario[0].key, shock = scenario[0].shock;
       const speed = url.searchParams.get("speed") === "fast" ? "fast" : "slow";
       try {
         // ══ [V12.30 엔진 v3] 2채널 다변수 모델 ══
@@ -13882,26 +13907,8 @@ async function handleRequest(request, env) {
         //   ③ 국면: 최근 변동성/장기 변동성 비(0.8~1.4배) — 고변동 국면일수록 충격이 크게 전달
         //   ④ 속도: fast=5영업일 단기 쇼크(상한 √(5/20)로 타이트) / slow=역사적 확산 속도(X²×20일)
         //   ⑤ 축소·상한: 부분베타 √R² 축소, |예상| tanh 소프트캡(3σ20×√(h/20)), 잔차 예상범위
-        const fd = await getDailyCached(env.DB, F.sym, 720);
-        const fc = (fd && fd.closes) || [];
-        if (fc.length < 60) return Response.json({ error: "팩터 시계열 부족: " + F.sym }, { status: 503, headers: cors });
-        const fLast = fc[fc.length - 1];
-        const isDiff = F.unit === "pp";
         const chg = function (arr, k, diff) { const o = []; for (let i = k; i < arr.length; i++) o.push(diff ? arr[i] - arr[i - k] : arr[i] / arr[i - k] - 1); return o; };
         const stdv = function (a) { if (a.length < 8) return 0; let m = 0; for (const v of a) m += v; m /= a.length; let s = 0; for (const v of a) s += (v - m) * (v - m); return Math.sqrt(s / (a.length - 1)); };
-        const f5 = chg(fc, 5, isDiff), f20 = chg(fc, 20, isDiff);
-        const sigF20 = stdv(f20.slice(-160));
-        const shockUnit = isDiff ? shock : shock / 100;
-        const X = sigF20 > 0 ? Math.abs(shockUnit) / sigF20 : 1;
-        const horizonDays = speed === "fast" ? 5 : Math.min(500, Math.max(20, Math.round(20 * X * X)));
-        const hScale = Math.sqrt(horizonDays / 20);
-        const effShock = isDiff ? shockUnit : shockUnit * 100;
-        // ── 시장 경유 채널: 지수 5일 수익률 + 지수의 팩터 민감도 gF ──
-        const idx5 = {};
-        for (const isym of ["^GSPC", "^KS11"]) {
-          try { const idd = await getDailyCached(env.DB, isym, 720); idx5[isym] = chg((idd && idd.closes) || [], 5, false); }
-          catch (e) { idx5[isym] = []; }
-        }
         const ols1 = function (y, x) {
           const N = Math.min(160, y.length, x.length); if (N < 40) return null;
           const a = y.slice(-N), b = x.slice(-N);
@@ -13911,11 +13918,11 @@ async function handleRequest(request, env) {
           if (vb <= 0 || va <= 0) return null;
           return { b: cov / vb, r2: (cov * cov) / (va * vb) };
         };
-        const gF = {};
+        // ── 시장 경유 채널: 지수 5일 수익률(양 시장) — 팩터별 gF 계산에 공유 ──
+        const idx5 = {};
         for (const isym of ["^GSPC", "^KS11"]) {
-          if (fKey === "spx" && isym === "^GSPC") { gF[isym] = 1; continue; }   // 팩터=시장 자신
-          const o = ols1(idx5[isym], f5);
-          gF[isym] = o ? +(o.b * Math.min(1, Math.sqrt(Math.max(0, o.r2)) * 1.6)).toFixed(4) : 0;
+          try { const idd = await getDailyCached(env.DB, isym, 720); idx5[isym] = chg((idd && idd.closes) || [], 5, false); }
+          catch (e) { idx5[isym] = []; }
         }
         // ── 대상 종목: 검색 종목(최우선) + 보유 포지션 + 워치리스트 (daily: 캐시만 읽음 — 추가 fetch 0) ──
         const extraSymRaw = (url.searchParams.get("sym") || "").trim().toUpperCase();
@@ -13927,14 +13934,8 @@ async function handleRequest(request, env) {
         (extraSym ? [extraSym] : []).concat(posSyms).concat(DEFAULT_US.slice(0, 60)).concat(DEFAULT_KR.slice(0, 60)).forEach(function (s) {
           if (s && !uniq[s]) { uniq[s] = 1; syms.push(s); }
         });
-        // ── 계수 캐시(v3 키, 6시간) ──
-        const ckey = "whatif_beta3:" + fKey;
-        let bcache = null; try { bcache = await getState(env.DB, ckey, null); } catch (e) {}
-        const cacheValid = !!(bcache && bcache.ts && Date.now() - bcache.ts < 6 * 3600 * 1000 && bcache.betas);
-        const betas = cacheValid ? bcache.betas : {};
-        const missing = syms.filter(function (s) { return !(s in betas); });
-        // ── 종목별 2변수 OLS(시장·팩터 동시) + 국면·변동성 — 계산 함수(검색 종목도 재사용) ──
-        const calcCoef = function (sym, closes) {
+        // ── [V12.95] 팩터별 2변수 OLS 계수 계산기(팩터 f5를 인자로 — 복합 시나리오 재사용) ──
+        const calcCoef = function (sym, closes, f5) {
           if (!closes || closes.length < 60) return null;
           const s5 = chg(closes, 5, false), s20 = chg(closes, 20, false);
           const isKR = /\.(KS|KQ)$/.test(sym);
@@ -13949,7 +13950,6 @@ async function handleRequest(request, env) {
             const dy = y[i] - m0, d1 = x1[i] - m1, d2 = x2[i] - m2;
             s11 += d1 * d1; s22 += d2 * d2; s12 += d1 * d2; sy1 += dy * d1; sy2 += dy * d2; syy += dy * dy;
           }
-          // 2×2 정규방정식 풀이(부분베타). 공선성(예: SPX 팩터 × ^GSPC 지수)이면 단일 팩터 폴백.
           let bM = 0, bF = 0, r2 = 0, usedMkt = 1;
           const det = s11 * s22 - s12 * s12;
           if (s11 > 0 && s22 > 0 && Math.abs(det) > 1e-6 * s11 * s22) {
@@ -13957,30 +13957,58 @@ async function handleRequest(request, env) {
             bF = (sy2 * s11 - sy1 * s12) / det;
           } else { usedMkt = 0; bM = 0; bF = s22 > 0 ? sy2 / s22 : 0; }
           if (syy > 0) r2 = Math.max(0, Math.min(1, (bM * sy1 + bF * sy2) / syy));
-          const w = Math.min(1, Math.sqrt(r2) * 1.5);                    // 부분베타 축소
+          const w = Math.min(1, Math.sqrt(r2) * 1.5);
           const volNow = stdv(s20.slice(-40)), volAll = stdv(s20.slice(-160));
-          const regime = volAll > 0 ? Math.max(0.8, Math.min(1.4, volNow / volAll)) : 1;   // 변동성 국면
+          const regime = volAll > 0 ? Math.max(0.8, Math.min(1.4, volNow / volAll)) : 1;
           const sigS20 = volAll * 100;
           return { bF: +(bF * w).toFixed(4), bM: +bM.toFixed(3), r2: +r2.toFixed(3), n: N,
             sig20: +sigS20.toFixed(2), reg: +regime.toFixed(2), mk: usedMkt };
         };
-        for (let ci = 0; ci < missing.length; ci += 20) {
-          const chunk = missing.slice(ci, ci + 20);
-          const rows = await Promise.all(chunk.map(function (s) {
-            return getState(env.DB, "daily:" + s, null).then(function (d) { return { s: s, d: d }; })["catch"](function () { return { s: s, d: null }; });
-          }));
-          for (const row of rows) betas[row.s] = calcCoef(row.s, (row.d && row.d.closes) || []);
-        }
-        // ── [V12.31] 검색 종목(sym=) — 유니버스 밖이어도 즉석 일봉 수집(무료 Yahoo 1콜) 후 계산 ──
+        // ── 팩터별 사전계산(시계열·충격·gF) + 종목 계수(팩터별 6h 캐시) ──
         let searchMiss = null;
-        if (extraSym && !betas[extraSym]) {
-          try {
-            const dd = await getDailyCached(env.DB, extraSym, 720);
-            betas[extraSym] = calcCoef(extraSym, (dd && dd.closes) || []);
-          } catch (e) { betas[extraSym] = null; }
-          if (!betas[extraSym]) searchMiss = extraSym + " 시세를 찾지 못했거나 이력이 부족합니다 (심볼 확인: 미국=NVDA, 한국=005930.KS)";
+        const factorInfo = [];
+        for (const sc of scenario) {
+          const fd = await getDailyCached(env.DB, sc.F.sym, 720);
+          const fc = (fd && fd.closes) || [];
+          if (fc.length < 60) { if (isCombo) continue; return Response.json({ error: "팩터 시계열 부족: " + sc.F.sym }, { status: 503, headers: cors }); }
+          const isDiff = sc.F.unit === "pp";
+          const f5 = chg(fc, 5, isDiff), f20 = chg(fc, 20, isDiff);
+          const sigF20 = stdv(f20.slice(-160));
+          const shockUnit = isDiff ? sc.shock : sc.shock / 100;
+          const X = sigF20 > 0 ? Math.abs(shockUnit) / sigF20 : 1;
+          const hDays = speed === "fast" ? 5 : Math.min(500, Math.max(20, Math.round(20 * X * X)));
+          const gF = {};
+          for (const isym of ["^GSPC", "^KS11"]) {
+            if (sc.key === "spx" && isym === "^GSPC") { gF[isym] = 1; continue; }
+            if (sc.key === "kospi" && isym === "^KS11") { gF[isym] = 1; continue; }
+            const o = ols1(idx5[isym], f5);
+            gF[isym] = o ? +(o.b * Math.min(1, Math.sqrt(Math.max(0, o.r2)) * 1.6)).toFixed(4) : 0;
+          }
+          // 종목별 계수 — 팩터 키별 캐시
+          const ckey = "whatif_beta3:" + sc.key;
+          let bcache = null; try { bcache = await getState(env.DB, ckey, null); } catch (e) {}
+          const cacheValid = !!(bcache && bcache.ts && Date.now() - bcache.ts < 6 * 3600 * 1000 && bcache.betas);
+          const betas = cacheValid ? bcache.betas : {};
+          const missing = syms.filter(function (s) { return !(s in betas); });
+          for (let ci = 0; ci < missing.length; ci += 20) {
+            const chunk = missing.slice(ci, ci + 20);
+            const rows = await Promise.all(chunk.map(function (s) {
+              return getState(env.DB, "daily:" + s, null).then(function (d) { return { s: s, d: d }; })["catch"](function () { return { s: s, d: null }; });
+            }));
+            for (const row of rows) betas[row.s] = calcCoef(row.s, (row.d && row.d.closes) || [], f5);
+          }
+          if (extraSym && !betas[extraSym]) {
+            try { const dd = await getDailyCached(env.DB, extraSym, 720); betas[extraSym] = calcCoef(extraSym, (dd && dd.closes) || [], f5); }
+            catch (e) { betas[extraSym] = null; }
+            if (!betas[extraSym] && !searchMiss) searchMiss = extraSym + " 시세를 찾지 못했거나 이력이 부족합니다 (심볼 확인: 미국=NVDA, 한국=005930.KS)";
+          }
+          if (missing.length || (extraSym && betas[extraSym])) { try { await setState(env.DB, ckey, { ts: cacheValid ? bcache.ts : Date.now(), betas: betas }); } catch (e) {} }
+          factorInfo.push({ key: sc.key, F: sc.F, shock: sc.shock, isDiff: isDiff, shockUnit: shockUnit,
+            effShock: isDiff ? shockUnit : shockUnit * 100, sigF20: sigF20, fLast: fc[fc.length - 1], gF: gF, betas: betas, horizonDays: hDays });
         }
-        if (missing.length || (extraSym && betas[extraSym])) { try { await setState(env.DB, ckey, { ts: cacheValid ? bcache.ts : Date.now(), betas: betas }); } catch (e) {} }
+        if (!factorInfo.length) return Response.json({ error: "팩터 시계열 부족" }, { status: 503, headers: cors });
+        const horizonDays = factorInfo.reduce(function (m, fi) { return Math.max(m, fi.horizonDays); }, 0);
+        const hScale = Math.sqrt(horizonDays / 20);
         // ── 포지션 평가액(quote: 캐시) ──
         const posBySym = {};
         for (const p of posRows) {
@@ -13991,21 +14019,29 @@ async function handleRequest(request, env) {
           return getState(env.DB, "quote:" + s, null).then(function (q) { return { s: s, q: q }; })["catch"](function () { return { s: s, q: null }; });
         }));
         const lastPx = {}; posQuoteRows.forEach(function (r) { if (r.q && _num(r.q.price, 0) > 0) lastPx[r.s] = _num(r.q.price, 0); });
-        // ── 결과 조립: 직접+간접 분해 × 국면 승수 → 소프트캡 ──
+        // ── 결과 조립: 팩터별 (직접+간접) 합산 → 종목 단일 소프트캡(복합 시나리오는 팩터 기여 분해도 반환) ──
         const items = [];
         const port = { US: { value: 0, pnl: 0 }, KR: { value: 0, pnl: 0 } };
         for (const s of syms) {
-          const bi = betas[s]; if (!bi) continue;
           const mkt = /\.(KS|KQ)$/.test(s) ? "KR" : "US";
-          const g = gF[mkt === "KR" ? "^KS11" : "^GSPC"] || 0;
-          const direct = bi.bF * shockUnit * 100;                 // 시장효과 통제한 고유 민감도
-          const indirect = (bi.bM || 0) * g * shockUnit * 100;    // 시장 경유 파급
-          const raw = (direct + indirect) * (bi.reg || 1);
-          const capS = 3 * Math.max(1, bi.sig20 || 0) * hScale;
+          let directSum = 0, indirectSum = 0, reg = 1, sig20 = 2, r2max = 0, nMin = 1e9, hasAny = false;
+          const parts = [];
+          for (const fi of factorInfo) {
+            const bi = fi.betas[s]; if (!bi) continue; hasAny = true;
+            const g = fi.gF[mkt === "KR" ? "^KS11" : "^GSPC"] || 0;
+            const direct = bi.bF * fi.shockUnit * 100;
+            const indirect = (bi.bM || 0) * g * fi.shockUnit * 100;
+            directSum += direct; indirectSum += indirect;
+            reg = bi.reg || reg; sig20 = bi.sig20 || sig20; r2max = Math.max(r2max, bi.r2); nMin = Math.min(nMin, bi.n);
+            parts.push({ factor: fi.key, pct: (direct + indirect) * (bi.reg || 1) });
+          }
+          if (!hasAny) continue;
+          const raw = (directSum + indirectSum) * reg;
+          const capS = 3 * Math.max(1, sig20) * hScale;
           const expPct = capS * Math.tanh(raw / capS);
           const kk = raw !== 0 ? expPct / raw : 0;                // 분해값도 캡 비율만큼 동일 축소
-          const dAdj = direct * (bi.reg || 1) * kk, iAdj = indirect * (bi.reg || 1) * kk;
-          const band = +(Math.max(0.4, (bi.sig20 || 2) * hScale * Math.sqrt(Math.max(0.05, 1 - bi.r2)))).toFixed(2);
+          const dAdj = directSum * reg * kk, iAdj = indirectSum * reg * kk;
+          const band = +(Math.max(0.4, sig20 * hScale * Math.sqrt(Math.max(0.05, 1 - r2max)))).toFixed(2);
           const pos = posBySym[s];
           let posValue = null, expPnl = null;
           if (pos && pos.qty > 0) {
@@ -14013,13 +14049,15 @@ async function handleRequest(request, env) {
             posValue = pos.qty * px; expPnl = posValue * expPct / 100;
             port[mkt].value += posValue; port[mkt].pnl += expPnl;
           }
-          items.push({ symbol: s, name: NAME_MAP[s] || s.replace(/\.(KS|KQ)$/, ""), market: mkt,
-            beta: bi.bF, mktBeta: bi.bM, regime: bi.reg, r2: bi.r2, n: bi.n, sig20: bi.sig20,
+          const it = { symbol: s, name: NAME_MAP[s] || s.replace(/\.(KS|KQ)$/, ""), market: mkt,
+            regime: +reg.toFixed(2), r2: +r2max.toFixed(3), n: nMin === 1e9 ? 0 : nMin, sig20: +sig20.toFixed(2),
             expPct: +expPct.toFixed(2), direct: +dAdj.toFixed(2), indirect: +iAdj.toFixed(2),
             lo: +(expPct - band).toFixed(2), hi: +(expPct + band).toFixed(2),
             capped: Math.abs(expPct) < Math.abs(raw) * 0.9,
             held: !!pos && pos.qty > 0, posValue: posValue != null ? +posValue.toFixed(2) : null,
-            expPnl: expPnl != null ? +expPnl.toFixed(2) : null });
+            expPnl: expPnl != null ? +expPnl.toFixed(2) : null };
+          if (isCombo) it.parts = parts.map(function (p) { return { factor: p.factor, pct: +(p.pct * kk).toFixed(2) }; });
+          items.push(it);
         }
         items.sort(function (x, y) { return Math.abs(y.expPct) - Math.abs(x.expPct); });
         // 검색 종목은 항상 맨 위에 고정(pinned)
@@ -14027,18 +14065,21 @@ async function handleRequest(request, env) {
           const pi = items.findIndex(function (it) { return it.symbol === extraSym; });
           if (pi >= 0) { const p = items.splice(pi, 1)[0]; p.pinned = true; items.unshift(p); }
         }
+        const f0 = factorInfo[0];
+        const scenarioOut = factorInfo.map(function (fi) { return { factor: fi.key, label: fi.F.label, sym: fi.F.sym, unit: fi.F.unit, shock: fi.shock, effShock: +fi.effShock.toFixed(3) }; });
         return Response.json({
-          factor: fKey, factorLabel: F.label, factorSym: F.sym, unit: F.unit, presets: F.presets,
+          factor: f0.key, factorLabel: f0.F.label, factorSym: f0.F.sym, unit: f0.F.unit, presets: f0.F.presets,
+          combo: isCombo, scenario: scenarioOut, factorsAvailable: Object.keys(FACTORS).map(function (k) { return { key: k, label: FACTORS[k].label, unit: FACTORS[k].unit, presets: FACTORS[k].presets }; }),
           searched: extraSym || null, searchMiss: searchMiss,
-          shock: shock, effShock: +effShock.toFixed(3), speed: speed, horizonDays: horizonDays,
-          gF: { us: gF["^GSPC"], kr: gF["^KS11"] },
-          sigF20: +(isDiff ? sigF20 : sigF20 * 100).toFixed(3), factorLast: +_num(fLast, 0).toFixed(3),
+          shock: f0.shock, effShock: +f0.effShock.toFixed(3), speed: speed, horizonDays: horizonDays,
+          gF: { us: f0.gF["^GSPC"], kr: f0.gF["^KS11"] },
+          sigF20: +(f0.isDiff ? f0.sigF20 : f0.sigF20 * 100).toFixed(3), factorLast: +_num(f0.fLast, 0).toFixed(3),
           portfolio: {
             US: { value: +port.US.value.toFixed(2), expPnl: +port.US.pnl.toFixed(2), expPct: port.US.value > 0 ? +(port.US.pnl / port.US.value * 100).toFixed(2) : null },
             KR: { value: Math.round(port.KR.value), expPnl: Math.round(port.KR.pnl), expPct: port.KR.value > 0 ? +(port.KR.pnl / port.KR.value * 100).toFixed(2) : null }
           },
           items: items.slice(0, 70),
-          note: "방법론 v3: 종목 5일수익 ~ (시장지수·팩터) 2변수 OLS 부분베타(√R² 축소) + 시장 경유 파급(bM×gF) + 변동성 국면 승수(0.8~1.4) — " + (speed === "fast" ? "5영업일 단기 쇼크" : "역사적 확산 속도(약 " + horizonDays + "영업일)") + " 지평선의 3σ 소프트캡·잔차 예상범위 적용. 역사적 근사이며 예측 보장 아님.",
+          note: (isCombo ? "복합 시나리오(" + scenarioOut.length + "개 팩터 동시 충격 합산): " : "방법론 v3: ") + "종목 5일수익 ~ (시장지수·팩터) 2변수 OLS 부분베타(√R² 축소) + 시장 경유 파급(bM×gF) + 변동성 국면 승수(0.8~1.4) — " + (speed === "fast" ? "5영업일 단기 쇼크" : "역사적 확산 속도(약 " + horizonDays + "영업일)") + " 지평선의 3σ 소프트캡·잔차 예상범위 적용. 역사적 근사이며 예측 보장 아님.",
           ts: Date.now()
         }, { headers: cors });
       } catch (e) {
@@ -20587,7 +20628,8 @@ const HARVEST = {
   // [V18] 딥-히스토리 수확 — range=max 장기이력(2020 코로나·2022 긴축·2018 Q4 폭락 포함) → 국면 다양성으로 과적합↓
   useDeepHistory: true, // hist: 캐시가 있으면 320봉 daily: 대신 딥이력으로 수확(폭락장 학습)
   deepBars: 2400,       // [V12.32] 1800→2400(~9.6년, 2018 Q4 급락까지 포함) — 종목당 원천 봉수 +33%
-  deepFetchPerNight: 180,// [V12.84] 100→180 — 딥이력 커버리지 가속(예산가드 fetchBudgetLeft가 실제 상한이라 안전)
+  deepFetchPerNight: 260,// [V12.95] 180→260 — 딥이력(주식 장기데이터) 수집 확대(사용자 요청). 실제 상한은
+                         //   fetchBudgetLeft 예산가드(아래 deephist 스테이지 resetFetchBudget)라 초과분은 다음밤 이어감(안전).
   deepRefreshDays: 45,  // [V12.32] 30→45 — 재수집 주기 연장: 예산을 재갱신 대신 신규 종목 커버리지에 사용
   maxPerSymbol: 800,    // [V12.32] 600→800 — 딥 2400봉×stride1 수용(편중 방지는 유지)
   srcWeight: 0.6        // 학습 가중(실거래=1.0 대비)
@@ -20913,14 +20955,24 @@ async function mlMarketHarvestNightly(DB) {
     // [V9.5] 실제 처리한 심볼 수(scanned)만큼만 오프셋 전진 — 예산/캡으로 조기중단 시 남은 심볼을 다음밤에 이어감(순회 누락 0)
     try { await setState(DB, offKey, (off + Math.max(1, Math.min(takeN, scanned))) % symsAll.length); } catch (e) {}
     try { await setState(DB, seenKey, seen); } catch (e) {}
-    // [V18] 총 상한 프루닝 — 무작위 삭제(오래된순 아님)로 국면 다양성 보존. 실거래 표본은 절대 삭제 안 함.
-    //   기존 ORDER BY ts ASC는 딥-히스토리(2008·2020 폭락 등 오래된 봉)를 먼저 지워 다양성을 훼손 → RANDOM으로 균등 절삭.
+    // [V12.95] ★표본 고갈 근본원인 수정★ 구 featVer 표본이 삭제되지 않은 채(후보 테이블만 정리됐다)
+    //   총량 프루닝이 featver 구분 없이 strategy='hv' 전체를 maxTotal과 비교했다 → featVer 상향 직후엔
+    //   구 featVer 표본이 이미 상한을 채워, 갓 수확한 신 featVer 표본까지 무작위로 삭제 → 학습(WHERE
+    //   featver=현재)이 보는 풀이 계속 깎여 "표본이 이상하게 적은" 원인. 프루닝을 현재 featVer로 한정.
     try {
-      const c = await DB.prepare("SELECT COUNT(*) c FROM ml_samples WHERE strategy='hv'").first();
+      const c = await DB.prepare("SELECT COUNT(*) c FROM ml_samples WHERE strategy='hv' AND featver=?").bind(LUXML.featVer).first();
       const over = ((c && c.c) || 0) - HARVEST.maxTotal;
       if (over > 0) await DB.prepare(
-        "DELETE FROM ml_samples WHERE id IN (SELECT id FROM ml_samples WHERE strategy='hv' ORDER BY RANDOM() LIMIT ?)"
-      ).bind(over).run();
+        "DELETE FROM ml_samples WHERE id IN (SELECT id FROM ml_samples WHERE strategy='hv' AND featver=? ORDER BY RANDOM() LIMIT ?)"
+      ).bind(LUXML.featVer, over).run();
+    } catch (e) {}
+    // [V12.95] 구 featVer 표본 점진 정리 — 피처차원이 달라(v.length 불일치) 현재 학습에 절대 안 쓰이는
+    //   죽은 표본이 D1을 채워 프루닝·용량을 왜곡했다. CPU/D1 스파이크 방지용 '편법'으로 한 밤에 최대
+    //   80,000행만 삭제(여러 밤에 걸쳐 완전 정리 — 순회는 harvest가 이미 매밤 도므로 안전).
+    try {
+      await DB.prepare(
+        "DELETE FROM ml_samples WHERE id IN (SELECT id FROM ml_samples WHERE featver != ? ORDER BY id LIMIT 80000)"
+      ).bind(LUXML.featVer).run();
     } catch (e) {}
     return made ? ("[HV] 시장수확 +" + made + "표본 (" + scanned + "종목, 오프셋 " + off + "→" + ((off + takeN) % symsAll.length) + ")") : null;
   } catch (e) { return "[HV] fail: " + (e && e.message); }
@@ -23228,10 +23280,13 @@ async function sentiStatus(DB) {
     try { const r = await DB.prepare("SELECT COUNT(*) c FROM ml_candidates WHERE labeled=0 AND featver=?").bind(LUXML.featVer).first(); unl = (r && r.c) || 0; } catch (e) {}
     try { const r = await DB.prepare("SELECT COUNT(*) c FROM ml_samples WHERE strategy='hv' AND featver=?").bind(LUXML.featVer).first(); hvN = (r && r.c) || 0; } catch (e) {}
     try { const r = await DB.prepare("SELECT COUNT(*) c FROM ml_samples WHERE strategy!='hv' AND featver=?").bind(LUXML.featVer).first(); tradeN = (r && r.c) || 0; } catch (e) {}
+    let staleN = 0;   // [V12.95] 구 featVer 잔량(점진 정리 중) — 표본 진단용
+    try { const r = await DB.prepare("SELECT COUNT(*) c FROM ml_samples WHERE featver != ?").bind(LUXML.featVer).first(); staleN = (r && r.c) || 0; } catch (e) {}
     return { sentimentGroups: s ? Object.keys(s.sentiment || {}).length : 0,
       sentimentUpdatedAt: s ? (s.sentimentAt || s.updatedAt || s.ts || null) : null,
       candidatesTotal: cand, candidatesUnlabeled: unl,
-      samplesHarvested: hvN, samplesFromTrades: tradeN };
+      samplesHarvested: hvN, samplesFromTrades: tradeN,
+      featVer: LUXML.featVer, staleFeatverSamples: staleN };
   } catch (e) { return { error: e && e.message }; }
 }
 export default {
@@ -23468,7 +23523,7 @@ export default {
             //   찌꺼기 예산(종종 20 미만)으로 돌았음 → deepFetchPerNight:100 목표를 거의 못 채우고
             //   fetchBudgetLeft()<20에서 조기중단, 딥이력 커버리지(358/900+종목)가 며칠째 정체된 원인.
             //   LLM(400)·시세백필(140)과 동일 패턴으로 이 단계만의 깨끗한 예산 부여.
-            try { resetFetchBudget(280); } catch (e0) {}   // [V12.84] 130→280 (deepFetchPerNight 180 + 지수·여유 수용, Paid 850 내)
+            try { resetFetchBudget(380); } catch (e0) {}   // [V12.95] 280→380 (deepFetchPerNight 260 + 지수·여유 수용, Paid 850 내)
             await _stg("deephist", async function () { return await harvestDeepFetchNightly(env.DB); });
             // (2.45) [XS] 유니버스 횡단면 랭크 패널 — 수확 전에 갱신(수확이 z-score 정규화에 사용)
             await _stg("xspanel", async function () { return await mlBuildXSPanel(env.DB); });
