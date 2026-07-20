@@ -19497,9 +19497,10 @@ const DNN = {
   dnnMaxSamples: 2000,   // [V10] 대형 망 per-epoch 비용 제한 — 최근 표본 이만큼만(예산 내 에폭 수 확보)
   patience: 8,           // 조기종료 인내
   gradClip: 5,
-  minTrainSamples: 300,  // [V12.94] 500→300 — featVer 상향 직후 DNN만 표본문턱(500) 때문에 MIND(80)/GBDT
-                         //   (200)보다 한참 늦게 참여하던 것 완화. 과적합은 신뢰게이트(valAccLB≥trustFloor)가
-                         //   방어(미달 모델은 자동 억제). 본 학습기는 Modal GPU — Worker는 폴백.
+  minTrainSamples: 150,  // [V12.100] 300→150 — DNN Worker폴백만 문턱이 높아 MIND(80)/GBDT(120)는 학습되는데
+                         //   DNN만 계속 "학습 대기"로 남던 것 해소(사용자 지적: 왜 DNN은 안 도냐). featVer 재구축
+                         //   중 풀이 150~300 사이일 때 DNN도 함께 참여. 과적합은 신뢰게이트(valAccLB≥trustFloor)가
+                         //   방어(미달 모델은 wDnn=0 자동 억제). 본 학습기는 Modal GPU — Worker는 폴백.
   stdClip: 6,            // [V9.1] 윈저화 표준화 클램프(±σ) — 팬테일 이상치 안정화
   valFrac: 0.2,
   trustFloor: 0.505,     // 검증정확도 이 미만이면 신뢰 0
@@ -23523,7 +23524,7 @@ export default {
           //   단계별 체크포인트가 300s 한도를 여러 cron에 걸쳐 처리하므로 안전하게 완주. 무한루프 방지:
           //   마커를 먼저 갱신하고 게이트/스테이지 체크포인트만 리셋(다음부터는 정상 하루1회 게이트).
           //   → harvest-now/train-now를 수동으로 칠 필요 없이, 배포만으로 MIND/GBDT가 재학습된다.
-          const _PIPE_VER = "V12.99-refill";
+          const _PIPE_VER = "V12.100-refill";
           try {
             const _pv = await getState(env.DB, "ai_pipeline_ver", null);
             if (_pv !== _PIPE_VER) {
