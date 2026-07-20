@@ -17205,7 +17205,8 @@ const LUXML = {
   gateThresh: 0.42,
   sizeMin: 0.5, sizeMax: 1.5,
 
-  pickTechWeight: 0.18,  // [V12.85] AI 픽 랭킹에 다기간 기술 컨센서스를 반영하는 가중(±0.18). 그래프/추세 분석 강화.
+  pickTechWeight: 0.22,  // [V12.86] AI 픽 랭킹에 기술 종합(다기간 컨센서스+차트패턴) 반영 가중(±0.22). 그래프/추세 분석 강화.
+  pickBlueWeight: 0.10,  // [V12.86] '우량주 위주 매수' — 시총순위(MCAP_RANK) 기반 우량주 보너스 가중(+0.10). 대형·안정주 선호.
   trainWindow: 90000,  // [V12.84] 60000→90000: DNN(외부GPU)은 이미 전체 79k 표본을 쓰는데 GBDT·MIND는 12k로
                        //   제한되어 있어 DNN보다 정확도가 낮게 나오는 원인이었다. GBDT(18s)·MIND(신규 45s, _fmTrain
                        //   데드라인가드 추가) 둘 다 시간예산 초과시 자체 절삭하므로 안전. D1 read/JSON.parse
@@ -21264,6 +21265,40 @@ function techSummaryMultiTF(closes, highs, lows) {
   } catch (e) { return null; }
 }
 
+// [V12.86] ★픽 기술·우량주 종합 조정 헬퍼★ — 모든 픽 생성부(스캔·뉴스픽·리포트)가 공유.
+//   기술점수(techScore): 다기간 MA/RSI/스토캐스틱/MACD 컨센서스(now·week·month 가중) + 차트패턴
+//   (taDetectPatterns: 헤드앤숄더·채널·쐐기 등 '그래프 분석') 종합. 하락추세·약세패턴은 강하게 감점.
+//   우량주(blue): 시총순위(MCAP_RANK)가 높을수록(대형·안정) 보너스 — '우량주 위주 매수' 성향 부여.
+//   반환: { tech(-1..1), blue(0..1), label, exclude(true=강한 약세라 상승픽 제외) }.
+function _luxPickTech(dd, sym, market) {
+  const R = { tech: null, blue: 0, label: null, exclude: false };
+  try {
+    if (!dd || !Array.isArray(dd.closes) || dd.closes.length < 30) return R;
+    const ts = techSummaryMultiTF(dd.closes, dd.highs, dd.lows);
+    let consensus = null, label = null;
+    if (ts && ts.now && ts.week && ts.month) {
+      consensus = _num(ts.now.score, 0) * 0.5 + _num(ts.week.score, 0) * 0.35 + _num(ts.month.score, 0) * 0.15;
+      label = ts.now.label;
+    }
+    // 차트패턴(그래프 분석) — chart=±2·candle=±1 누적점수를 [-1,1]로 정규화
+    let patt = 0;
+    try { const tp = taDetectPatterns(dd); if (tp && typeof tp.score === "number") patt = _clamp(tp.score / 5, -1, 1); } catch (e) {}
+    // 종합 기술점수 — 컨센서스 70% + 패턴 30%. 그래프 분석에 실질 가중.
+    if (consensus != null) R.tech = _clamp(consensus * 0.7 + patt * 0.3, -1, 1);
+    else if (patt) R.tech = patt;
+    R.label = label;
+    // 강한 약세(가중 컨센서스 매도~적극매도) → 상승 픽 제외
+    if (R.tech != null && R.tech <= -0.35) R.exclude = true;
+    // 우량주 보너스 — MCAP_RANK 낮을수록(대형) 크게. 시장별 상한(US 120·KR 80) 내 로그감쇠.
+    try {
+      const rank = (typeof MCAP_RANK !== "undefined" && MCAP_RANK[sym]) ? MCAP_RANK[sym] : null;
+      if (rank != null) { const cap = market === "kr" ? 80 : 120; R.blue = _clamp(1 - Math.log(1 + rank) / Math.log(1 + cap), 0, 1); }
+    } catch (e) {}
+  } catch (e) {}
+  return R;
+}
+
+
 // ============================================================================
 // [STOCK-REPORT] 종목별 AI 분석 리포트 — 탑재 AI가 직접 쓰는 종합 분석문
 //   기술(다기간)+재무(학술모델)+AI위원회+밸류에이션+뉴스 → 자연어 리포트.
@@ -21558,14 +21593,19 @@ async function mlNewsNextDayNightly(DB) {
       let p = _nnewsP(f, w) * _nnewsFundGuard(fundScore);  // 재무 심각 시 하방가드
       p = _clamp(p, 0.001, 0.999);
       const mkt = /\.(KS|KQ)$/.test(sym) ? "kr" : ((/=F$|-USD$/.test(sym)) ? "cm" : "us");
-      scored.push({ sym: sym, market: mkt, p: +p.toFixed(3), senti: +gs.toFixed(2), fund: fundScore, price: dd.closes[dd.closes.length - 1], f: f });
+      // [V12.86] 뉴스픽도 동일 문제 수정 — 기술적 하락추세·약세패턴 종목은 '내일 오를 종목'에서 배제,
+      //   기술점수·우량주 보너스를 반영해 랭킹(rankP). (스캔픽과 동일 헬퍼)
+      const _pt = _luxPickTech(dd, sym, mkt);
+      if (_pt.exclude) continue;
+      const rankP = _clamp(p + (_pt.tech != null ? (LUXML.pickTechWeight != null ? LUXML.pickTechWeight : 0.22) * _pt.tech : 0) + (LUXML.pickBlueWeight != null ? LUXML.pickBlueWeight : 0.10) * _pt.blue, 0.001, 0.999);
+      scored.push({ sym: sym, market: mkt, p: +p.toFixed(3), rankP: +rankP.toFixed(3), tech: _pt.tech, techLabel: _pt.label, blue: +_pt.blue.toFixed(2), senti: +gs.toFixed(2), fund: fundScore, price: dd.closes[dd.closes.length - 1], f: f });
     }
     if (!scored.length) return "[NNEWS] 스코어 0";
-    scored.sort(function (a, b) { return b.p - a.p; });
+    scored.sort(function (a, b) { return (b.rankP != null ? b.rankP : b.p) - (a.rankP != null ? a.rankP : a.p); });   // [V12.86] 기술·우량주 반영 랭킹
     const top = scored.slice(0, NNEWS.topN);
     // (3) 저장: 시장별 picks + pending(내일 학습) + senti_prev + 사이징 부스트맵
     const byMkt = {};
-    for (const s of top) { (byMkt[s.market] = byMkt[s.market] || []).push({ sym: s.sym, p: s.p, senti: s.senti, fund: s.fund }); }
+    for (const s of top) { (byMkt[s.market] = byMkt[s.market] || []).push({ sym: s.sym, p: s.p, tech: s.tech, techLabel: s.techLabel, blue: s.blue, senti: s.senti, fund: s.fund }); }
     for (const mk of Object.keys(byMkt)) { try { await setState(DB, "news_picks:" + mk, { ts: Date.now(), picks: byMkt[mk] }); } catch (e) {} }
     await setState(DB, "nnews_pending", { date: today, items: scored.slice(0, 80).map(function (s) { return { sym: s.sym, price: s.price, f: s.f }; }) });
     const sp = {}; for (const g of Object.keys(sentiment)) sp[g] = _num(sentiment[g].compound, 0); await setState(DB, "nnews_senti_prev", sp);
@@ -21643,23 +21683,15 @@ async function mlUniverseScanNightly(DB) {
         } catch (e) {}
       } else { p = mlScore(l1, feat); }
       scanned++;
-      // [V12.85] ★기술적 분석 정렬 게이트/가중★ — "내일 오를" 픽이 하락추세(적극매도) 종목을 상위로
-      //   올리던 문제 수정. 다기간 기술 컨센서스(단기 우선)를 픽 점수에 반영하고, 기술적 강한 약세는 제외.
-      //   techAlign ∈ [-1,+1] (적극매도 -1 … 적극매수 +1). 그래프/추세 분석에 실질 가중을 부여.
-      let techScore = null, techLabel = null;
-      try {
-        const _ts = techSummaryMultiTF(dd.closes, dd.highs, dd.lows);
-        if (_ts && _ts.now && _ts.week && _ts.month) {
-          techScore = _num(_ts.now.score, 0) * 0.5 + _num(_ts.week.score, 0) * 0.35 + _num(_ts.month.score, 0) * 0.15;
-          techLabel = _ts.now.label;
-        }
-      } catch (e) {}
+      // [V12.86] ★기술·우량주 종합 조정★ — 공용 헬퍼(_luxPickTech: 다기간 컨센서스+차트패턴+우량주)로
+      //   하락추세·약세패턴 종목을 상승픽에서 배제하고, 기술점수·우량주 보너스를 랭킹에 반영.
+      const _pt = _luxPickTech(dd, sym, mkt);
       if (p != null) {
-        // 기술적으로 뚜렷한 하락추세(가중 컨센서스 ≤ -0.35, 대략 '매도~적극매도')는 상승 픽에서 배제.
-        if (techScore != null && techScore <= -0.35) continue;
-        // 픽 랭킹 점수 = 위원회 확률 + 기술 정렬 보정(최대 ±0.18). 그래프 분석에 큰 가중.
-        const rankP = techScore != null ? _clamp(p + (LUXML.pickTechWeight != null ? LUXML.pickTechWeight : 0.18) * techScore, 0.01, 0.99) : p;
-        picks.push({ symbol: sym, market: mkt, p: +p.toFixed(3), rankP: +rankP.toFixed(3), tech: techScore != null ? +techScore.toFixed(2) : null, techLabel: techLabel, strategy: "scan" });
+        if (_pt.exclude) continue;   // 기술적 강한 약세 → 상승 픽 제외
+        const _tw = (LUXML.pickTechWeight != null ? LUXML.pickTechWeight : 0.22);
+        const _bw = (LUXML.pickBlueWeight != null ? LUXML.pickBlueWeight : 0.10);
+        const rankP = _clamp(p + (_pt.tech != null ? _tw * _pt.tech : 0) + _bw * _pt.blue, 0.01, 0.99);
+        picks.push({ symbol: sym, market: mkt, p: +p.toFixed(3), rankP: +rankP.toFixed(3), tech: _pt.tech, techLabel: _pt.label, blue: +_pt.blue.toFixed(2), strategy: "scan" });
       }
     }
     picks.sort(function (a, b) { return (b.rankP != null ? b.rankP : b.p) - (a.rankP != null ? a.rankP : a.p); });   // [V12.85] 기술 반영 랭킹으로 정렬
