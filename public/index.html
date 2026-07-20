@@ -7311,6 +7311,7 @@ html[data-theme="light"] .table tbody tr:hover{background:rgba(9,105,218,.045);}
 
   // [V96] 조회 전 — 한국주식(좌)·미국주식(우) 전체 워치리스트 (정렬: 시총/거래량/상승/하락)
   var detailBrowseSort = 'mcap';
+  var dbShowKR = 60, dbShowUS = 60;   // [V12.67] 상세 목록 점진표시 상한(더 보기로 +60) — 초기 렌더 렉 방지
   // [V12.28] 주요 지수 스트립 — 나스닥·다우·S&P500·러셀2000·코스피·코스닥 (클릭 → 지수 차트 상세)
   var IDX_ORDER = ['^IXIC','^DJI','^GSPC','^RUT','^KS11','^KQ11'];
   function renderDetailIdxStrip() {
@@ -7375,9 +7376,26 @@ html[data-theme="light"] .table tbody tr:hover{background:rgba(9,105,218,.045);}
     function fill(market, id) {
       var box = $(id); if (!box) return;
       var items = sortItems(arr.filter(function(q){ return q.market === market && !q.isEtf; }));
-      if (!items.length) { box.innerHTML = '<div class="empty">대기 중...</div>'; return; }
-      box.innerHTML = '<div class="watchlist">' + items.map(function(q){ return buildWatchlistCard(q, market); }).join('') + '</div>';
+      if (!items.length) {
+        if (box.__dbHtml !== '__empty') { box.__dbHtml = '__empty'; box.innerHTML = '<div class="empty">대기 중...</div>'; }
+        return;
+      }
+      // [V12.67] ★상세 '목록부분' 렉 수정★ 기존엔 전 종목(KR 403 + US, 각 SVG 스파크라인)을
+      //   상한·diff가드 없이 통째로 innerHTML 렌더하고 20초 폴링마다 재빌드 → 종목 확장 후 렉의 주범.
+      //   메인 워치리스트가 이미 쓰는 방식(점진표시 상한 + HTML 동일 시 재렌더 스킵)을 여기에도 적용.
+      var cap = market === 'us' ? dbShowUS : dbShowKR;
+      var shown = items.slice(0, cap), more = items.length - shown.length;
+      var html = '<div class="watchlist">' + shown.map(function(q){ return buildWatchlistCard(q, market); }).join('') + '</div>'
+        + (more > 0 ? '<button class="wl-loadmore db-loadmore" data-market="' + market + '">더 보기 (' + more + ')</button>' : '');
+      if (box.__dbHtml === html) return;   // 변경 없으면 DOM 재작성·SVG 재파싱 스킵(폴링 0비용)
+      box.__dbHtml = html;
+      box.innerHTML = html;
       bindFavButtons(box);
+      var lm = box.querySelector('.db-loadmore');
+      if (lm) lm.addEventListener('click', function(){
+        if (lm.getAttribute('data-market') === 'us') dbShowUS += 60; else dbShowKR += 60;
+        renderDetailBrowse();
+      });
     }
     fill('kr', 'detailBrowseKR');
     fill('us', 'detailBrowseUS');
