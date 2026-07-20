@@ -2699,16 +2699,27 @@ const AI_PARAMS = {
   //   합성신호(AI_PRIMARY)를 기존 진입 파이프라인에 주입 → 코드 중복 없이 모든 안전장치 재사용.
   aiPrimary: {
     enabled: true,          // AI 주도 진입 활성(끄려면 false → 규칙엔진 전용으로 복귀)
-    soleDriver: true,       // [V12.70] ★AI 단독 드라이버★ true면 규칙엔진의 '진입'신호를 전량 폐기하고
-                            //   AI 위원회(mlDeepDecide)가 유일한 진입 판단자가 됨(규칙로직 대체). 청산·손절·
-                            //   트레일링 등 리스크관리(runFastWatch/포지션관리)는 그대로 유지 — 진입만 이관.
-                            //   되돌리려면 false(→ 규칙엔진 진입 + AI는 게이트/보조로 복귀).
     threshold: 0.60,        // 위원회 결합확률 이 이상일 때만 AI 단독 진입(규칙신호 없는 종목이라 보수적)
     maxPerCycle: 8,         // 사이클당 AI 주도 진입 후보 상한(위원회 계산·subrequest 통제)
     baseWeight: 0.6,        // 합성신호 기본 가중(규칙신호 1.0 대비 축소 → 사이즈 보수화)
     maxDisagree: 0.22,      // 전문가 불일치(std) 이 초과면 AI 단독진입 보류(합의 없는 진입 차단)
     rsiMin: 45, rsiMax: 72, // 사전필터 RSI 밴드(상승추세 정렬 종목만 위원회 평가)
     requireTrustedModel: true // DNN/GBDT 중 최소 하나가 신뢰(합류)해야 AI 단독진입 허용(MIND 단독 과신 방지)
+  },
+
+  // ── [V12.71] ★AI 자율운용 컨트롤러★ — "AI가 스스로 시장 스캔 → 종목 선정 → 투자" ──
+  //   운용 주체를 AI 준비상태에 따라 자동 전환한다:
+  //     • aiReady(위원장 MIND 존재 + DNN/GBDT 중 최소 하나 '신뢰') → AI가 단독 드라이버.
+  //       규칙엔진 진입신호를 폐기하고, AI가 야간 전종목 스캔(ai_picks:scan)에서 스스로 고른
+  //       종목을 후보로 삼아 위원회가 장중 재확인 후 진입. = 시장 스캔→선정→투자를 AI가 수행.
+  //     • !aiReady(미학습/신뢰 부족) → 규칙엔진이 '비상 폴백'으로 매매(공백 없이 안전 운용).
+  //   ※ 청산·손절·트레일링(runFastWatch/포지션관리)은 어느 모드든 항상 그대로 — 진입 주체만 전환.
+  //   ※ AI의 '판단 로직'은 위원회 모델(GBDT/DNN/MIND)의 학습 파라미터 그 자체 — 야간에 수확표본으로
+  //     매일 재학습(train-now/야간 파이프라인)되어 스스로 갱신된다. 아래는 그 정책의 운용 스위치.
+  autonomy: {
+    enabled: true,           // AI 자율운용 활성(끄면 규칙엔진 상시 운용 + AI는 게이트 보조)
+    emergencyFallback: true, // AI 미준비 시 규칙엔진으로 비상 매매(false면 미준비 시 신규진입 관망)
+    minPickP: 0.58           // 야간 스캔 AI픽 중 이 성공확률 이상만 자율 진입 후보 풀에 포함
   },
 
   // ── 메타 라벨링·앙상블(Meta-Labeling, Lopez de Prado) ── '예측을 다시 예측'해 승률 극대화.
@@ -12345,6 +12356,24 @@ async function runTradingCycle(env) {
           } catch (e) {}
         }
       } catch (e) {}
+      // [V12.71] ★AI 자율운용 컨트롤러★ 사이클 시작 시 1회 결정 — 운용 주체(AI vs 규칙 폴백)와 AI 후보 풀.
+      let __aiReady = false, __aiPickPool = null;
+      try {
+        const _auto = (typeof AI_PARAMS !== "undefined" && AI_PARAMS.autonomy) || {};
+        if (_auto.enabled && typeof LUXML !== "undefined" && LUXML.enabled) {
+          // 위원장(MIND) 존재 + 표준모델(DNN/GBDT) 중 최소 하나 신뢰 = AI가 실력 입증해 주도 준비됨.
+          __aiReady = !!(__mind && ((__dnnTrust && __dnnTrust.trusted) || (__gbdtTrust && __gbdtTrust.trusted)));
+          if (__aiReady) {
+            const _sc = await getState(DB, "ai_picks:scan", null);   // AI가 야간 전종목 스캔에서 고른 상위 종목
+            if (_sc && Array.isArray(_sc.picks)) {
+              const _minP = (_auto.minPickP != null) ? _auto.minPickP : 0.58;
+              __aiPickPool = new Set(_sc.picks
+                .filter(function (p) { return p && typeof p.p === "number" && p.p >= _minP; })
+                .map(function (p) { return p.symbol; }));
+            }
+          }
+        }
+      } catch (e) {}
       for (const item of orderedEval) {
         const _evalElapsed = Date.now() - evalStartedAt;
         if (_evalElapsed > evalBudgetMs || (Date.now() - cycleStartedAt > hardCapMs && _evalElapsed > evalMinMs)) {
@@ -12675,23 +12704,26 @@ async function runTradingCycle(env) {
             }
           }
 
-          // [V12.70] ★AI 단독 드라이버(규칙엔진 진입 대체)★ — 여기서 AI_PRIMARY 후보를 주입한다.
-          //   (기존 V12.64 주입은 아래 no_signal continue 뒤에 있어 length===0 조건이 영원히 막혀 미발화였음.)
-          //   soleDriver=true: 규칙 매수신호를 폐기하고 AI 위원회를 유일 진입경로로. 상승추세 사전필터를
-          //   통과한 종목을 합성후보로 넣으면 아래 위원회(mlDeepDecide + metaHardFilter)가 최종 허용/차단·사이즈 결정.
+          // [V12.71] ★AI 자율운용 진입 주입★ — 여기서 AI_PRIMARY 후보를 주입한다(no_signal continue 이전).
+          //   __aiReady면 AI가 단독 드라이버(규칙 진입 폐기), 후보는 AI 야간 스캔픽 우선 + 상승추세 사전필터 보조.
+          //   __aiReady가 아니면 규칙엔진이 비상 폴백으로 매매(아무것도 폐기/주입하지 않음).
           try {
             const _ap = (typeof AI_PARAMS !== "undefined") ? AI_PARAMS.aiPrimary : null;
-            if (_ap && _ap.enabled && _ap.soleDriver) stratResults = [];   // 규칙 진입신호 전량 폐기(단독 드라이버)
-            if (_ap && _ap.enabled && stratResults.length === 0 && !heldSymbols.has(symbol) && !strategiesHeldNow.has("trend")
+            // [V12.71] AI 자율운용: __aiReady면 AI가 단독 드라이버(규칙 진입 폐기 → AI가 스스로 종목 선정·진입).
+            //   __aiReady가 아니면 규칙엔진이 비상 폴백으로 매매(stratResults 유지). 후보는 AI 야간 스캔픽 우선,
+            //   보조로 상승추세 사전필터 — 최종 허용/차단·사이즈는 아래 위원회(mlDeepDecide + metaHardFilter)가 결정.
+            if (_ap && _ap.enabled && __aiReady) stratResults = [];   // AI 준비완료 → 규칙 진입신호 폐기(AI 단독 판단)
+            if (_ap && _ap.enabled && __aiReady && stratResults.length === 0 && !heldSymbols.has(symbol) && !strategiesHeldNow.has("trend")
                 && !crashGate.blockNew && canTrade && aiPrimaryUsed < (_ap.maxPerCycle || 8)
                 && closes.length >= 55) {
+              const _picked = !!(__aiPickPool && __aiPickPool.has(symbol));   // AI가 야간 전종목 스캔에서 스스로 고른 종목
               const _ma20 = getMA(closes, 20), _ma50 = getMA(closes, 50);
               const _uptrend = (_ma20 != null && _ma50 != null && _ma20 > _ma50 && price > _ma20 &&
                                 (dailyRsi == null || (dailyRsi >= (_ap.rsiMin || 45) && dailyRsi <= (_ap.rsiMax || 72))));
-              if (_uptrend) {
+              if (_picked || _uptrend) {
                 aiPrimaryUsed++;
                 stratResults.push({ strategy: "trend", weight: (_ap.baseWeight || 0.6),
-                  signal: { name: "AI_PRIMARY", members: ["AI_PRIMARY"], weight: (_ap.baseWeight || 0.6), isAiPrimary: true } });
+                  signal: { name: "AI_PRIMARY", members: ["AI_PRIMARY"], picked: _picked, isAiPrimary: true, weight: (_ap.baseWeight || 0.6) } });
               }
             }
           } catch (e) {}
