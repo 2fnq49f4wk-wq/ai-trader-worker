@@ -14298,20 +14298,39 @@ async function handleRequest(request, env, ctx) {
     }
 
     // [V12.73] 경량 운용모드 조회 — 대시보드 배지·자가평가 카드용(ml-status 전체보다 훨씬 가벼움)
+    // [V12.133] ★대시보드 "AI 운용 상태: 확인 중…"이 안 끝나던 원인★ 실측 138초.
+    //   mlMindLoad + mlDNNLoad(3M 딥넷 청크) + mlGBDTLoad를 직렬로 전부 로드한다 —
+    //   "경량 조회"라는 주석과 달리 실제로는 ml-status급으로 무겁다. 프론트가 5분 스로틀로
+    //   부르지만 첫 호출이 끝나지 않아 배지가 영영 "확인 중…"에 머물렀다.
+    //   병렬화 + SWR(L2 공유). 모델 신뢰상태는 야간 학습에서만 바뀌므로 stale 허용이 커도 안전.
     if (path === "/api/ai-mode") {
-      let aiReady = false, mindOk = false, dnnOk = false, gbdtOk = false;
-      try {
-        const _m = await mlMindLoad(env.DB); mindOk = !!_m;
-        // [V12.92] 실제 현재 featVer로 로드되는지까지 확인(trust 플래그만 보면 featVer 상향 직후 오판).
-        const _dt = await getState(env.DB, "dnn_trust", null); dnnOk = !!(_dt && _dt.trusted && await mlDNNLoad(env.DB));
-        const _gt = await getState(env.DB, "gbdt_trust", null); gbdtOk = !!(_gt && _gt.trusted && await mlGBDTLoad(env.DB));
-        const _auto = (typeof AI_PARAMS !== "undefined" && AI_PARAMS.autonomy) || {};
-        aiReady = !!(_auto.enabled && mindOk && (dnnOk || gbdtOk));
-      } catch (e) {}
-      let review = null; try { review = await getState(env.DB, "ai_selfreview", null); } catch (e) {}
-      let scan = null; try { const _s = await getState(env.DB, "ai_picks:scan", null); if (_s) scan = { ts: _s.ts, scanned: _s.scanned, total: _s.total, top: (_s.picks || []).slice(0, 8) }; } catch (e) {}
-      return Response.json({ aiReady: aiReady, mode: aiReady ? "AI_AUTONOMOUS" : "RULE_FALLBACK",
-        committee: { mind: mindOk, dnn: dnnOk, gbdt: gbdtOk }, selfreview: review, scan: scan }, { headers: cors });
+      return await swrJson("ai-mode", 60000, 6 * 3600000, async function () {
+        let aiReady = false, mindOk = false, dnnOk = false, gbdtOk = false;
+        try {
+          const [_m, _dt, _gt] = await Promise.all([
+            mlMindLoad(env.DB),
+            getState(env.DB, "dnn_trust", null),
+            getState(env.DB, "gbdt_trust", null)
+          ]);
+          mindOk = !!_m;
+          // [V12.92] 실제 현재 featVer로 로드되는지까지 확인(trust 플래그만 보면 featVer 상향 직후 오판).
+          const [_dn, _gb] = await Promise.all([
+            (_dt && _dt.trusted) ? mlDNNLoad(env.DB) : Promise.resolve(null),
+            (_gt && _gt.trusted) ? mlGBDTLoad(env.DB) : Promise.resolve(null)
+          ]);
+          dnnOk = !!(_dt && _dt.trusted && _dn);
+          gbdtOk = !!(_gt && _gt.trusted && _gb);
+          const _auto = (typeof AI_PARAMS !== "undefined" && AI_PARAMS.autonomy) || {};
+          aiReady = !!(_auto.enabled && mindOk && (dnnOk || gbdtOk));
+        } catch (e) {}
+        const [review, _s] = await Promise.all([
+          getState(env.DB, "ai_selfreview", null),
+          getState(env.DB, "ai_picks:scan", null)
+        ]);
+        const scan = _s ? { ts: _s.ts, scanned: _s.scanned, total: _s.total, top: (_s.picks || []).slice(0, 8) } : null;
+        return { aiReady: aiReady, mode: aiReady ? "AI_AUTONOMOUS" : "RULE_FALLBACK",
+                 committee: { mind: mindOk, dnn: dnnOk, gbdt: gbdtOk }, selfreview: review, scan: scan };
+      });
     }
 
     // POST /api/ai-ask — [V12.112] 온보드 자연어 Q&A. body: { question }. 외부 LLM API 미사용.
@@ -21370,8 +21389,13 @@ const HARVEST_EXTRA_SYMS = [
 // [V18] 딥-히스토리 로테이션 수집 — 매일밤 N종목 range=max 장기이력을 hist:로 갱신.
 //   지수(^GSPC/^KS11/GC=F)도 매번 딥으로 갱신 — alpha 라벨(지수 대비 잔차)이 딥구간 정렬에 필요.
 //   deepRefreshDays 지난/없는 심볼 우선, 예산가드로 한도 보호. 딥이력은 거의 안변해 저빈도 OK.
-async function harvestDeepFetchNightly(DB) {
+async function harvestDeepFetchNightly(DB, opts) {
   if (!HARVEST.useDeepHistory) return null;
+  // [V12.133] ★시간 예산 추가★ 종전엔 fetch '개수' 예산만 있고 시간 상한이 없었다.
+  //   외부 fetch가 느리거나 타임아웃으로 실패하면 수십 건이 누적돼 cron invocation 자체가
+  //   한도로 죽었고, 그 결과 락은 갱신됐는데(진입은 함) 완료 로그는 영영 안 남는 유령 상태가 됐다
+  //   (실측: lockAgeMs는 계속 갱신되는데 [DEEPHIST] 완료 로그 0건). 반드시 시간 내 반환한다.
+  const __dlDeadline = Date.now() + (((opts && opts.budgetMs) || 25000));
   try {
     let fetched = 0, scanned = 0, attempted = 0;   // [V12.131d] attempted: 실제 외부 fetch 시도 수(진단용)
     __deepFail = { throw: 0, noResult: 0, shortBars: 0, ok: 0, lastErr: "" };   // [V12.132] 이번 실행분 사유 계측
@@ -21379,7 +21403,7 @@ async function harvestDeepFetchNightly(DB) {
     // (1) 지수 딥 — alpha 라벨 정렬용(항상 갱신 시도, 소수)
     const idxSyms = ["^GSPC", "^KS11", "GC=F"];
     for (const isym of idxSyms) {
-      if (fetchBudgetLeft() < 20) break;
+      if (fetchBudgetLeft() < 20 || Date.now() > __dlDeadline) break;
       let meta = null; try { meta = await getState(DB, "hist_meta:" + isym, null); } catch (e) {}
       if (meta && meta.ts && (now - meta.ts) < (HARVEST.deepRefreshDays || 30) * 86400000) continue;
       __fetchBudget.used++; attempted++;
@@ -21399,7 +21423,7 @@ async function harvestDeepFetchNightly(DB) {
       const refreshMs = (HARVEST.deepRefreshDays || 30) * 86400000;
       let off = (await getState(DB, "hist_off", 0)) || 0;
       for (let i = 0; i < syms.length && fetched < perNight + idxSyms.length; i++) {
-        if (fetchBudgetLeft() < 20) break;
+        if (fetchBudgetLeft() < 20 || Date.now() > __dlDeadline) break;
         const sym = syms[(off + i) % syms.length];
         scanned++;
         let meta = null; try { meta = await getState(DB, "hist_meta:" + sym, null); } catch (e) {}
@@ -21416,6 +21440,7 @@ async function harvestDeepFetchNightly(DB) {
     //   남아 진단 불가). 딥이력 확대는 표본을 늘리는 유일한 경로라 실패 원인 관측이 중요하다 —
     //   시도(attempted)·스캔·남은 fetch 예산을 함께 남겨 예산 소진인지 외부 API 실패인지 구분한다.
     const _diag = "scanned=" + scanned + " attempted=" + attempted + " budgetLeft=" + fetchBudgetLeft() +
+      (Date.now() > __dlDeadline ? " TIME-CAP" : "") +
       " [실패내역 throw=" + __deepFail.throw + " noResult=" + __deepFail.noResult + " shortBars=" + __deepFail.shortBars +
       " ok=" + __deepFail.ok + (__deepFail.lastErr ? " lastErr=" + __deepFail.lastErr : "") + "]";
     return fetched
@@ -24722,13 +24747,31 @@ export default {
             const _dry = await getState(env.DB, "hv_catchup_dry", null);
             const _starved = !!(_dry && _dry.until && Date.now() < _dry.until);   // 수확이 고갈로 쿨다운 중
             const _dhGap = _mktOpen3 ? 1800000 : 1200000;                          // 장중 30분 / 장외 20분
-            if ((!_mktOpen3 || _starved) && (Date.now() - _dhLock > _dhGap)) {
+            // [V12.133] 조건이 전부 참으로 보이는데도 49분간 실행되지 않았다(락 갱신조차 없음).
+            //   추측으로 고치지 않기 위해 스킵 사유를 직접 남긴다 — 10분에 한 번만 기록(로그 폭주 방지).
+            const _dhSkipOk = (!_mktOpen3 || _starved) && (Date.now() - _dhLock > _dhGap);
+            if (!_dhSkipOk) {
+              const _lastDiag = _num(await getState(env.DB, "deephist_diag_ts", 0), 0);
+              if (Date.now() - _lastDiag > 600000) {
+                await setState(env.DB, "deephist_diag_ts", Date.now());
+                await log(env.DB, "INFO", null, "[DEEPHIST-SKIP] mktOpen=" + _mktOpen3 + " starved=" + _starved +
+                  " lockAgeMs=" + (Date.now() - _dhLock) + " gap=" + _dhGap +
+                  " usWin=" + (typeof isTradingWindow === "function" ? isTradingWindow("us") : "?") +
+                  " krWin=" + (typeof isTradingWindow === "function" ? isTradingWindow("kr") : "?"));
+              }
+            }
+            if (_dhSkipOk) {
               const _hc = await env.DB.prepare("SELECT (SELECT COUNT(*) FROM state WHERE k LIKE 'hist:%') h, (SELECT COUNT(*) FROM state WHERE k LIKE 'daily:%') d").first();
               const _hn = (_hc && _hc.h) || 0, _dn = (_hc && _hc.d) || 0;
+              if (!(_dn > 0 && _hn < _dn * 0.9)) {
+                await log(env.DB, "INFO", null, "[DEEPHIST-SKIP] 커버리지 충족/데이터없음 h=" + _hn + " d=" + _dn);
+              }
               if (_dn > 0 && _hn < _dn * 0.9) {
                 await setState(env.DB, "deephist_lock", Date.now());
                 try { resetFetchBudget(_mktOpen3 ? 40 : 200); } catch (e0) {}
-                const _dr = await harvestDeepFetchNightly(env.DB);
+                // [V12.133] 시간 예산 명시 — 장중 12s / 장외 25s. 초과분은 다음 실행이 이어받는다
+                //   (hist_off 로테이션이 진행상태를 보존하므로 중단해도 손실 없음).
+                const _dr = await harvestDeepFetchNightly(env.DB, { budgetMs: _mktOpen3 ? 12000 : 25000 });
                 const _hc2 = await env.DB.prepare("SELECT COUNT(*) h FROM state WHERE k LIKE 'hist:%'").first();
                 const _hn2 = (_hc2 && _hc2.h) || 0;
                 await log(env.DB, "INFO", null, "[DEEPHIST] 커버리지 " + _hn + "→" + _hn2 + "/" + _dn +
