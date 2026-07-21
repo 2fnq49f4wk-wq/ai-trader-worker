@@ -12575,10 +12575,21 @@ async function runTradingCycle(env) {
       //   평가 커버리지가 25→수백으로 늘어도 사이클이 느려지지 않게(락 스킵 방지).
       if (missingDaily.length > 0) {
         try {
-          const drows = await DB.prepare("SELECT k, v FROM state WHERE k LIKE 'daily:%'").all();
-          const allDaily = {};
-          for (const r of (drows.results || [])) {
-            try { allDaily[r.k.slice(6)] = JSON.parse(r.v); } catch (e) {}
+          // [V12.131] ★prefetch 지연·D1 부하의 큰 축★ 이 쿼리는 977종목의 일봉 전체(종목당
+          //   320~2400봉 배열, 합계 수 MB)를 매 사이클·매 시장마다 D1에서 통째로 읽고 파싱했다.
+          //   일봉은 하루 단위로만 바뀌고, 이번 사이클에 갱신된 종목(dailyTargetArr)은 이미
+          //   dailyMap에 신선한 값이 들어와 있어 여기(missingDaily)로 오지 않는다.
+          //   → 아이솔레이트 메모리에 10분 캐시. 갱신 종목은 캐시를 우회하므로 신선도 손실 없음.
+          let allDaily = null;
+          if (globalThis.__allDailyCache && Date.now() - globalThis.__allDailyCache.ts < 600000) {
+            allDaily = globalThis.__allDailyCache.map;
+          } else {
+            const drows = await DB.prepare("SELECT k, v FROM state WHERE k LIKE 'daily:%'").all();
+            allDaily = {};
+            for (const r of (drows.results || [])) {
+              try { allDaily[r.k.slice(6)] = JSON.parse(r.v); } catch (e) {}
+            }
+            globalThis.__allDailyCache = { ts: Date.now(), map: allDaily };
           }
           for (const sym of missingDaily) {
             if (dailyMap[sym] === undefined) dailyMap[sym] = allDaily[sym] || null;
@@ -12699,7 +12710,14 @@ async function runTradingCycle(env) {
       // [V65 FIX] 평가 최소시간 보장 — prefetch·인리치먼트가 hardCap(22s)을 다 먹으면
       //   평가가 0종목으로 즉시 중단되어 "매수신호 0" 마비가 됐다(라이브 로그: 평가 0/307 반복).
       //   hardCap을 넘겼어도 최소 8초는 평가를 진행한다(cron invocation은 30s+ 여유 있음).
-      const evalMinMs = 8000;
+      // [V12.131] ★TIME-CAP이 계속 한 자릿수로 끊기던 실제 원인★
+      //   prefetch가 19~42초(실측), 그 뒤 모델 로딩까지 끝나면 평가 시작 시점에 이미
+      //   hardCap(55s)에 근접·초과한다. 그러면 아래 조건의 두 번째 항이 즉시 참이 되어
+      //   evalMinMs(8s)만 평가하고 끊겼다 → "9/557", "2/557"의 정체.
+      //   평가는 이 엔진의 본체이므로 prefetch가 아무리 느려도 최소 시간을 넉넉히 보장한다.
+      //   종목당 D1 read를 0으로 만든 뒤라 35s면 수백 종목을 돈다(실측 40s에 248종목).
+      //   cycleMs는 벽시계이고 대부분 fetch 대기라 CPU 300s 한도와는 무관하다.
+      const evalMinMs = (typeof cfg.evalMinMs === "number") ? cfg.evalMinMs : 35000;
       // === [LUX-AI] 사이클당 1회 모델/보조데이터 로드(후보마다 재로딩 방지) ===
       let __mlModel = null, __ensemble = null, __mind = null, __guard = { distrust: false },
           __dnn = null, __dnnTrust = null, __noiseFilter = null, __evMem = {}, __sectorNews = null,
@@ -13122,7 +13140,14 @@ async function runTradingCycle(env) {
                             (dailyRsi == null || (dailyRsi >= _rMin && dailyRsi <= _rMax)));
               if (!_scAligned) { __scalpDiag.prefilter_skip = (__scalpDiag.prefilter_skip || 0) + 1; }
             }
-            if (_scAligned && scalpScanUsed < _scanMax && fetchBudgetLeft() > 5) {
+            // [V12.131] ★"주식 평가가 느리다"의 실제 병목★ 이 분봉 fetch는 외부 HTTP 왕복(회당
+            //   300~800ms)인데 평가 루프 안에서 종목마다 '직렬'로 일어난다. scanMaxPerCycle=50이면
+            //   최대 ~25초로, 평가 예산(35s)의 대부분을 스캘프가 먹어치워 정작 종목 평가는 한 자릿수에
+            //   그쳤다(로그: 평가 9/557인데 scalp scan=53). D1이 아니라 네트워크 I/O가 병목이었다.
+            //   → 스캘프에 쓸 시간을 평가 예산의 35%로 제한. 나머지 65%는 종목 평가가 확보한다.
+            //   스캘프 기회는 라운드로빈으로 다음 사이클에 이어서 스캔되므로 기능 손실은 없다.
+            const _scalpTimeLeft = (Date.now() - evalStartedAt) < (evalBudgetMs * 0.35);
+            if (_scAligned && scalpScanUsed < _scanMax && _scalpTimeLeft && fetchBudgetLeft() > 5) {
               try {
                 scalpScanUsed++;
                 // [개선] 1m→5m: evaluateScalpEntry의 VWAP/상대거래량/모멘텀 임계는 5분봉 기준 설계(함수 docstring).
@@ -14118,6 +14143,35 @@ async function handleRequest(request, env, ctx) {
     "Access-Control-Allow-Headers": "Content-Type"
   };
   if (request.method === "OPTIONS") return new Response(null, { headers: cors });
+
+  // [V12.131] 읽기전용 조회 엔드포인트용 공통 SWR 헬퍼.
+  //   /api/state·/api/ml-status에서 효과가 검증된 패턴(신선하면 즉시, 오래됐어도 즉시 주고
+  //   갱신은 백그라운드)을 나머지 느린 조회에도 동일하게 적용한다. 대시보드가 이들을 함께
+  //   호출하므로 하나라도 느리면 화면 전체가 늦게 뜬다. 부수효과 없는 GET에만 쓴다.
+  const swrJson = async function (key, freshMs, staleMs, build) {
+    const store = (globalThis.__swr || (globalThis.__swr = {}));
+    const hit = store[key];
+    const age = hit ? Date.now() - hit.ts : Infinity;
+    const jhdr = Object.assign({ "content-type": "application/json" }, cors);
+    const refresh = function () {
+      const bk = "__b_" + key;
+      if (store[bk]) return null;
+      store[bk] = 1;
+      return Promise.resolve().then(build)
+        .then(function (v) { store[key] = { ts: Date.now(), str: JSON.stringify(v) }; })
+        ["catch"](function () {})
+        ["then"](function () { store[bk] = 0; });
+    };
+    if (hit && age < freshMs) return new Response(hit.str, { headers: jhdr });
+    if (hit && age < staleMs) {
+      const p = refresh();
+      if (p && ctx && ctx.waitUntil) ctx.waitUntil(p);
+      return new Response(hit.str, { headers: jhdr });
+    }
+    const v = await build();
+    store[key] = { ts: Date.now(), str: JSON.stringify(v) };
+    return new Response(store[key].str, { headers: jhdr });
+  };
 
   try {
     // === [개선] /api/state 통합 응답 ===
@@ -15246,6 +15300,16 @@ async function handleRequest(request, env, ctx) {
       return Response.json(quotes, { headers: cors });
     }
     if (path === "/api/indices") {
+      // [V12.131] 지수는 종목당 1쿼리 순차였다 — 단일 IN 쿼리 + SWR(가격은 cron이 갱신).
+      return await swrJson("indices", 15000, 600000, async function () {
+        const syms = US_INDICES.concat(KR_INDICES);
+        const m = await getStates(env.DB, syms.map(function (s) { return "index:" + s; }));
+        const out = [];
+        for (const sym of syms) if (m["index:" + sym]) out.push(Object.assign({ symbol: sym }, m["index:" + sym]));
+        return out;
+      });
+    }
+    if (path === "/api/__indices_legacy") {
       const indices = [];
       for (const sym of US_INDICES.concat(KR_INDICES)) {
         const idx = await getState(env.DB, "index:" + sym, null);
@@ -15267,9 +15331,12 @@ async function handleRequest(request, env, ctx) {
     }
     // [자가진단] 원장↔포지션↔현금 정합성 리포트(읽기 전용). 로컬 audit.py가 폴링.
     if (path === "/api/audit" && request.method === "GET") {
-      const cfg = migrateCfgToMarkets(Object.assign({}, DEFAULT_CFG, await getState(env.DB, "cfg", {})));
-      const report = await runLedgerAudit(env.DB, cfg);
-      return Response.json(report, { headers: cors });
+      // [V12.131] runLedgerAudit는 trades 전량을 재생하는 무거운 조회(실측 8~12s). 읽기전용
+      //   진단이라 분 단위 신선도면 충분하므로 SWR 적용(로컬 audit.py 폴링 부하도 함께 감소).
+      return await swrJson("audit", 60000, 900000, async function () {
+        const cfg = migrateCfgToMarkets(Object.assign({}, DEFAULT_CFG, await getState(env.DB, "cfg", {})));
+        return await runLedgerAudit(env.DB, cfg);
+      });
     }
     // [수동 청산] 특정 포지션을 현재가로 전량/부분 시장가 청산.
     //   POST /api/close?market=us&symbol=AMAT&strategy=trend&confirm=1 (&qty=N 부분청산)
@@ -15592,10 +15659,16 @@ async function handleRequest(request, env, ctx) {
 
     // === [COMMODITY] 원자재 상태 조회 ===
     if (path === "/api/commodities") {
+      // [V12.131] 실측 14.9s — 원자재마다 quote를 순차 getState로 읽고(왕복 N회) computeAllCash까지
+      //   직렬로 돌았다. 일괄 조회 + 병렬화 + SWR(가격은 cron이 갱신하므로 15s 신선도면 충분).
+      return await swrJson("commodities", 15000, 600000, async function () {
       const cfg = migrateCfgToMarkets(Object.assign({}, DEFAULT_CFG, await getState(env.DB, "cfg", {})));
-      const cash = await computeAllCash(env.DB, cfg);
+      const [cash, rawPos, qmap] = await Promise.all([
+        computeAllCash(env.DB, cfg),
+        getPositions(env.DB, "cm"),
+        getStates(env.DB, COMMODITIES.map(function (c) { return "quote:" + c.symbol; }))
+      ]);
       const cmCash = (typeof cash.cm === "number") ? cash.cm : cfg.initialCashCM;
-      const rawPos = await getPositions(env.DB, "cm");
       const positions = [];
       for (const key in rawPos) {
         const p = rawPos[key];
@@ -15610,11 +15683,11 @@ async function handleRequest(request, env, ctx) {
       }
       const quotes = [];
       for (const c of COMMODITIES) {
-        const q = await getState(env.DB, "quote:" + c.symbol, null);
+        const q = qmap["quote:" + c.symbol];
         if (q) quotes.push(Object.assign({ symbol: c.symbol, name: c.name, unit: c.unit }, q));
         else quotes.push({ symbol: c.symbol, name: c.name, unit: c.unit });
       }
-      return Response.json({
+      return ({
         cash: cmCash,
         initialCash: cfg.initialCashCM,
         positions: positions,
@@ -15622,7 +15695,8 @@ async function handleRequest(request, env, ctx) {
         symbols: COMMODITIES,
         tradeTime: "16:00 KST",
         isTradeTimeNow: isCommodityTriggerTime()
-      }, { headers: cors });
+      });
+      });
     }
 
     // === [BOND] 국채 슬리브 조회 — 미국(bdus)+한국(bdkr) + 금리 ===
@@ -22062,7 +22136,17 @@ function _luxDecisionBlend(committeeP, techScore, newsScore, w) {
 // 종목 섹터의 최근 뉴스 감성(-1..1) — 없으면 null.
 async function _luxSymNewsScore(DB, symbol) {
   try {
-    const sn = await getState(DB, "sector_news_sentiment", null);
+    // [V12.131] 이 함수는 평가 루프에서 종목마다 불리는데, 매번 '같은 키'(sector_news_sentiment)를
+    //   D1에서 다시 읽었다 — 종목별로 다른 건 섹터 그룹 매핑뿐이고 원본 데이터는 동일하다.
+    //   557종목이면 동일 행을 557번 조회한 셈. 60초 메모리 캐시로 종목당 D1 read를 제거한다.
+    //   (뉴스 감성은 수집 주기가 분~시간 단위라 60초 신선도면 충분)
+    let sn;
+    if (globalThis.__snCache && Date.now() - globalThis.__snCache.ts < 60000) {
+      sn = globalThis.__snCache.v;
+    } else {
+      sn = await getState(DB, "sector_news_sentiment", null);
+      globalThis.__snCache = { ts: Date.now(), v: sn };
+    }
     if (!sn || !sn.scores) return null;
     const g = (typeof getSectorGroup === "function") ? getSectorGroup(symbol, null) : null;
     if (g && typeof sn.scores[g] === "number") return _clamp(sn.scores[g], -1, 1);
