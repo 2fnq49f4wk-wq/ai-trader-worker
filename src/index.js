@@ -18974,7 +18974,11 @@ const MIND = {
   //   다수클래스(~67%) 기준을 못 넘김 — 원래 12000에선 78%였음. FM(선형+2차상호작용)이 60000의
   //   국면 이질성(폭락장 등 혼재)을 감당할 용량이 부족한 것으로 판단, MIND만 15000으로 되돌림.
   //   GBDT·DNN(트리/딥넷)은 구조적으로 큰 창을 잘 소화하므로 60000 그대로 유지.
-  trainWindow: 15000,
+  // [V12.118] 15000→25000 — 사용자 지적(풀은 16만인데 15000만 씀)에 따른 신중한 소폭 확대.
+  //   60000에서 붕괴가 확인됐던 이력이 있어 그 근처로 되돌리진 않되, 멀티시드(V12.41)·캘리브레이션
+  //   등 그 후 개선을 감안해 25000까지만 실험적으로 올린다. 다음 야간학습 valAcc가 다수클래스 기준
+  //   밑으로 다시 떨어지면 15000으로 롤백할 것.
+  trainWindow: 25000,
   fmK: 8, fmEpochs: 20, fmLr: 0.03, fmL2w: 0.001, fmL2v: 0.003, fmBudgetMs: 20000, fmMaxSamples: 50000,
   // [V12.41] FM 멀티시드 — 단일 학습의 무작위성(초기화·셔플)으로 valAcc가 43~64%를 오가며
   //   회귀가드 문턱(다수클래스-3%p)을 넘을락말락 하던 분산 문제. 시드 N개를 학습해 검증 앞절반
@@ -22453,6 +22457,8 @@ async function mlAiAsk(DB, question) {
   const isPeriodQ = /이번\s*주|이번\s*달|올해|일주일|한\s*달|1개월|1년|최근\s*(\d+)\s*일|얼마나\s*올랐|얼마나\s*떨어졌|수익률/.test(q);
   const isExitQ = /언제\s*팔|매도\s*시점|익절|청산\s*시점|팔아야/.test(q);
   const isSizeQ = /몇\s*주|얼마나\s*사|몇\s*개\s*사|비중\s*얼마|얼마어치/.test(q);
+  const isEarningsQ = /실적|어닝스|earnings/i.test(q);
+  const isValuationQ = /per\b|pbr\b|배당|밸류에이션|저평가|고평가|이익률|매출/i.test(q);
   const isCompareQ = syms.length >= 2;   // 2개 이상 종목이 언급되면 비교 모드로 응답
 
   let scanCache = null; try { scanCache = await getState(DB, "ai_picks:scan", null); } catch (e) {}
@@ -22516,11 +22522,50 @@ async function mlAiAsk(DB, question) {
   if (isRiskQ && atrPct != null) {
     lines.push("일간 변동성(ATR) " + atrPct.toFixed(1) + "%" + (atrPct >= 4 ? " — 변동폭이 커서 포지션 크기를 보수적으로 가져가는 게 안전해." : atrPct <= 1.5 ? " — 변동성이 낮은 편이라 상대적으로 안정적이야." : " — 평이한 변동성 수준이야."));
   }
-  // [V12.115] 지지/저항 질문 — MA·볼린저·52주 고저 기반 근접 레벨 제시
+  // [V12.118] 목표가 질문 — 실제 애널리스트 컨센서스(analyst_consensus)를 우선 사용, 없으면 기술적 레벨로 대체
+  let analystHit = false;
+  if (isLevelQ) {
+    try {
+      const acAll = await getState(DB, "analyst_consensus", null);
+      const ac = acAll && acAll.bySym && acAll.bySym[sym];
+      if (ac && (ac.upsidePct != null || ac.rating != null)) {
+        analystHit = true;
+        const bits = [];
+        if (ac.upsidePct != null) bits.push("현재가 대비 " + (ac.upsidePct >= 0 ? "+" : "") + ac.upsidePct.toFixed(1) + "% 상승여력");
+        if (ac.rating != null) bits.push("평균 투자의견 " + ac.rating.toFixed(1) + "(1=Strong Buy~5=Sell)");
+        if (ac.nOpinions != null) bits.push(ac.nOpinions + "명 애널리스트 기준");
+        lines.push("**애널리스트 목표가 컨센서스**: " + bits.join(", ") + ".");
+      }
+    } catch (e) {}
+  }
+  // [V12.115] 지지/저항 질문 — MA·볼린저·52주 고저 기반 근접 레벨 제시(애널리스트 데이터 유무와 무관하게 함께 제공)
   if (isLevelQ && levels) {
-    if (levels.support.length) lines.push("아래쪽 지지 후보: " + levels.support.map(function (x) { return x.label + " " + Math.round(x.v).toLocaleString(); }).join(", ") + ".");
-    if (levels.resistance.length) lines.push("위쪽 저항/목표 후보: " + levels.resistance.map(function (x) { return x.label + " " + Math.round(x.v).toLocaleString(); }).join(", ") + ".");
-    if (!levels.support.length && !levels.resistance.length) lines.push("뚜렷한 지지·저항 레벨을 계산할 데이터가 부족해.");
+    if (levels.support.length) lines.push("(기술적) 아래쪽 지지 후보: " + levels.support.map(function (x) { return x.label + " " + Math.round(x.v).toLocaleString(); }).join(", ") + ".");
+    if (levels.resistance.length) lines.push("(기술적) 위쪽 저항 후보: " + levels.resistance.map(function (x) { return x.label + " " + Math.round(x.v).toLocaleString(); }).join(", ") + ".");
+    if (!levels.support.length && !levels.resistance.length && !analystHit) lines.push("뚜렷한 지지·저항 레벨을 계산할 데이터가 부족해.");
+  }
+  // [V12.118] 실적발표 질문 — earnings_calendar(다가오는 발표) 조회, 없으면 명시적으로 "데이터 없음"
+  if (isEarningsQ) {
+    try {
+      const ec = await getState(DB, "earnings_calendar", null);
+      let nextTs = null;
+      if (ec && Array.isArray(ec.items)) {
+        const now = Date.now();
+        for (const it of ec.items) {
+          if (it && it.symbol === sym && it.ts >= now) { if (nextTs == null || it.ts < nextTs) nextTs = it.ts; }
+        }
+      }
+      if (nextTs != null) {
+        const days = Math.round((nextTs - Date.now()) / 86400000);
+        lines.push("**다음 실적 발표**: " + new Date(nextTs).toISOString().slice(0, 10) + " (D-" + days + ").");
+      } else {
+        lines.push("**실적 발표일**: 해당 데이터 없음(수집된 일정에 이 종목이 없어).");
+      }
+    } catch (e) { lines.push("**실적 발표일**: 해당 데이터 없음(조회 실패)."); }
+  }
+  // [V12.118] 밸류에이션 질문 — PER/PBR/배당 등 펀더멘털 지표는 수집하지 않음(가격·거래량·뉴스만 사용) → 명시적 "데이터 없음"
+  if (isValuationQ) {
+    lines.push("**PER·PBR·배당 등 재무 지표**: 해당 데이터 없음 — 이 시스템은 가격·거래량·기술패턴·뉴스감성만 사용하고 재무제표 데이터는 수집하지 않아. 대신 애널리스트 목표가 상승여력은 '목표가' 질문으로 물어보면 답해줄 수 있어.");
   }
   // [V12.115] 손절/진입 가이드 — 매수·리스크 질문에 ATR 2배 기준 참고 손절가 제시(트렌드 전략과 동일 사상)
   if ((isOutlookQ || isRiskQ) && atrPct != null && /매수|사도|살까|손절|진입/.test(q)) {
@@ -23929,7 +23974,7 @@ export default {
           //   단계별 체크포인트가 300s 한도를 여러 cron에 걸쳐 처리하므로 안전하게 완주. 무한루프 방지:
           //   마커를 먼저 갱신하고 게이트/스테이지 체크포인트만 리셋(다음부터는 정상 하루1회 게이트).
           //   → harvest-now/train-now를 수동으로 칠 필요 없이, 배포만으로 MIND/GBDT가 재학습된다.
-          const _PIPE_VER = "V12.100b-refill";
+          const _PIPE_VER = "V12.118-refill";   // [V12.118] GBDT가 커진 표본풀(16만)을 아직 못 봤다는 사용자 지적 — 강제 전체 재학습
           try {
             const _pv = await getState(env.DB, "ai_pipeline_ver", null);
             if (_pv !== _PIPE_VER) {
