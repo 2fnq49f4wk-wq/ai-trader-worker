@@ -22377,13 +22377,17 @@ async function _aiAskSnapshot(DB, sym, scanCache) {
   // [V12.116] 기간수익률 — "이번주/이번달/올해 얼마나 올랐어" 질문용
   let periodRet = null;
   try { periodRet = { d5: getNDayReturn(dd.closes, 5), d20: getNDayReturn(dd.closes, 20), d60: getNDayReturn(dd.closes, 60), d252: getNDayReturn(dd.closes, 252) }; } catch (e) {}
+  // [V12.120] 최근 실적 반응(가격 기반 추정) — "지난 실적 어땠어?" 질문용. 거래량 스파이크+가격반응으로
+  //   beat/miss를 사후 추정(classifyEarningsReaction, PEAD 로직과 동일 함수 재사용).
+  let earnReaction = null;
+  try { earnReaction = classifyEarningsReaction({ closes: dd.closes, opens: dd.opens, highs: dd.highs, lows: dd.lows, volumes: dd.volumes }, DEFAULT_CFG); } catch (e) {}
   let aiP = null;
   try {
     const scan = scanCache !== undefined ? scanCache : await getState(DB, "ai_picks:scan", null);
     const pick = scan && Array.isArray(scan.picks) ? scan.picks.find(function (p) { return p.symbol === sym; }) : null;
     if (pick && typeof pick.p === "number") aiP = pick.p;
   } catch (e) {}
-  return { sym: sym, nm: nm, market: market, price: price, dayPct: dayPct, tk: tk, ts: ts, pat: pat, newsS: newsS, volConf: volConf, atrPct: atrPct, levels: levels, periodRet: periodRet, aiP: aiP };
+  return { sym: sym, nm: nm, market: market, price: price, dayPct: dayPct, tk: tk, ts: ts, pat: pat, newsS: newsS, volConf: volConf, atrPct: atrPct, levels: levels, periodRet: periodRet, earnReaction: earnReaction, aiP: aiP };
 }
 async function mlAiAsk(DB, question) {
   const q = String(question || "").trim().slice(0, 300);
@@ -22489,7 +22493,7 @@ async function mlAiAsk(DB, question) {
   const sym = syms[0];
   const S = await _aiAskSnapshot(DB, sym, scanCache);
   if (!S) return { ok: true, symbol: sym, answer: (NAME_MAP[sym] || sym) + "의 데이터가 아직 부족해서 분석하기 어려워." };
-  const { nm, market, price, dayPct, tk, ts, pat, newsS, volConf, atrPct, levels, periodRet, aiP } = S;
+  const { nm, market, price, dayPct, tk, ts, pat, newsS, volConf, atrPct, levels, periodRet, earnReaction, aiP } = S;
   const lines = [];
   lines.push("**" + nm + "(" + sym + ")** 현재가 " + price.toLocaleString() + (market === "kr" ? "원" : "$") + " (" + (dayPct >= 0 ? "+" : "") + dayPct.toFixed(1) + "%)");
   if (ts && ts.now && ts.week && ts.month) {
@@ -22560,6 +22564,12 @@ async function mlAiAsk(DB, question) {
         lines.push("**다음 실적 발표**: " + new Date(nextTs).toISOString().slice(0, 10) + " (D-" + days + ").");
       } else {
         lines.push("**실적 발표일**: 해당 데이터 없음(수집된 일정에 이 종목이 없어).");
+      }
+      // [V12.120] 최근 실적 반응 — 발표일 캘린더는 없어도 가격·거래량 패턴으로 사후 추정 가능
+      if (earnReaction && earnReaction.verdict !== "neutral" && earnReaction.barsAgo <= 10) {
+        lines.push("**최근 실적 반응(추정)**: " + earnReaction.barsAgo + "거래일 전 거래량 급증과 함께 " + (earnReaction.verdict === "beat" ? "긍정적(어닝 서프라이즈 상회 추정)" : "부정적(어닝 미스 추정)") + " 반응(" + (earnReaction.reactPct >= 0 ? "+" : "") + earnReaction.reactPct.toFixed(1) + "%)이 있었고, 이후 드리프트는 " + (earnReaction.driftPct >= 0 ? "+" : "") + earnReaction.driftPct.toFixed(1) + "%야. (공식 발표 데이터가 아니라 가격패턴 기반 추정치야.)");
+      } else if (nextTs == null) {
+        lines.push("최근 실적 반응으로 볼 만한 뚜렷한 거래량 스파이크도 감지되지 않았어.");
       }
     } catch (e) { lines.push("**실적 발표일**: 해당 데이터 없음(조회 실패)."); }
   }
