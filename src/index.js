@@ -15320,8 +15320,13 @@ async function handleRequest(request, env, ctx) {
     if (path === "/api/trades") {
       const limit = parseInt(url.searchParams.get("limit") || "100", 10);
       try {
-        const res = await env.DB.prepare("SELECT * FROM trades ORDER BY ts DESC LIMIT ?").bind(limit).all();
-        return Response.json(res.results, { headers: cors });
+        // [V12.131b] 프론트가 limit=50과 limit=3000을 매 폴링마다 호출해 D1을 계속 쳤고,
+        //   D1이 순간 과부하일 때 [TRADES-500]으로 떨어졌다(재시도 4회로도 실패한 케이스).
+        //   거래 내역은 체결 시에만 바뀌므로 SWR로 접근 자체를 줄인다(limit별 캐시 키).
+        return await swrJson("trades:" + limit, 15000, 600000, async function () {
+          const res = await env.DB.prepare("SELECT * FROM trades ORDER BY ts DESC LIMIT ?").bind(limit).all();
+          return res.results;
+        });
       } catch (e) {
         // [V12.126] /api/state와 같은 Promise.all에 묶여 있어, 여기 실패도 대시보드 전체를 500으로
         //   끌고 갔다 — 빈 배열로 200 반환해 부분 실패가 전체를 막지 않게 한다.
