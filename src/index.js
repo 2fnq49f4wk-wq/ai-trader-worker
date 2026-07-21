@@ -22551,6 +22551,13 @@ function _luxWriteReport(ym, D) {
       if (o.vol20 != null) th += "변동성은 20일 실현 " + o.vol20 + "%로 " + (o.volRising ? "60일(" + o.vol60 + "%) 대비 확대되고 있어, 방향성보다 리스크 관리가 우선되는 국면임을 시사한다. " : "안정적이어서 추세 추종 환경은 우호적이다. ");
       if (o.vix != null && o.vix >= 20) th += "VIX " + o.vix + "의 " + (o.vix >= 28 ? "공포" : "경계") + " 레벨은 하방 꼬리위험을 경고한다. ";
       if (o.aiMeanP != null) th += "무엇보다 자체 위원회가 " + o.aiN + "개 종목을 스캔해 산출한 평균 성공확률 " + (o.aiMeanP * 100).toFixed(1) + "%는 " + (o.aiMeanP >= 0.53 ? "종목군 전반의 상방 우위를 지지한다" : o.aiMeanP <= 0.47 ? "매력적 진입 후보가 희소함을 시사한다" : "중립적이다") + ". ";
+      // [V12.113] 매크로 연계 — 위 거시·금리 섹션(mc)의 결론을 지수 전망에도 명시적으로 연결(요청: 시장전망 강화)
+      if (mk === "us" && mc) {
+        if (mc.ten20 != null && Math.abs(mc.ten20) >= 0.15) {
+          th += "매크로 측면에서는 최근 금리가 " + (mc.ten20 >= 0 ? "상승" : "하락") + "하며(" + (mc.ten20 >= 0 ? "+" : "") + mc.ten20.toFixed(2) + "%p) " + (mc.ten20 >= 0 ? "밸류에이션에 부담을 주는 역풍" : "위험선호를 지지하는 순풍") + "으로 작용하고 있어, 이 지수 전망과 " + ((mc.ten20 >= 0) === (stance === "하방") ? "같은 방향을 가리킨다" : "다소 엇갈린다") + ". ";
+        }
+        if (mc.cpi != null && mc.cpi >= 3) th += "CPI(" + mc.cpi.toFixed(1) + "%)가 목표를 웃도는 동안은 연준발 유동성 완화 서프라이즈를 기대하기 어려워, 상승 시나리오는 정책보다 실적·모멘텀에 더 의존한다고 본다. ";
+      }
       S.push(th);
       if (o.pBull != null) S.push("**시나리오(1개월).** 강세(+0.5σ↑) " + o.pBull + "% → " + o.bandHi.toLocaleString() + "pt 상향 / 기준선(횡보) " + o.pBase + "% → " + o.px.toLocaleString() + "pt 내외 / 약세(-0.5σ↓) " + o.pBear + "% → " + o.bandLo.toLocaleString() + "pt 하향.");
       const cat = [], risk = [];
