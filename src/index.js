@@ -6158,6 +6158,118 @@ async function updateAnalystConsensus(DB, cfg, force) {
   return result;
 }
 
+// [V12.123] ★내부자거래 피드 자동 갱신★ — /api/insider는 지금까지 프론트가 그 페이지를 열 때만
+//   호출되는 수동 엔드포인트였다. 아무도 페이지를 안 열면 insider_feed가 영영 안 채워져, PEAD·사이징
+//   로직(sig.insiderNote)과 AI 피처(insiderBuy)가 구조적으로 항상 0이었다(사용자 리포트: "내부자거래
+//   데이터 안 들어온다"). updateAnalystConsensus와 동일하게 거래사이클에서 자동 호출하도록 승격 —
+//   내부 15분 캐시가 있어 매 사이클 호출해도 실제 fetch는 15분에 1번뿐(과도 조회 방지).
+async function updateInsiderFeedNow(DB) {
+  try {
+    const cached = await getState(DB, "insider_feed", null);
+    if (cached && cached.ts && (Date.now() - cached.ts) < 15 * 60 * 1000) return cached;
+    if (fetchBudgetLeft() < 5) return cached;
+    const UA = "LUX-ENGINE/1.0 (contact: yryeolove@gmail.com)";
+    __fetchBudget.used++;
+    const r = await fetch("https://www.sec.gov/cgi-bin/browse-edgar?action=getcurrent&type=4&company=&dateb=&owner=include&count=80&output=atom",
+      { headers: { "User-Agent": UA, "Accept": "application/atom+xml" } });
+    if (!r.ok) return cached;
+    const xml = await r.text();
+    const dec = function (s) { return String(s || "").replace(/&amp;/g, "&").replace(/&lt;/g, "<").replace(/&gt;/g, ">").replace(/&quot;/g, '"').replace(/&#39;/g, "'").trim(); };
+    const cikMap = await getState(DB, "sec_cik_map", null);
+    const rev = {};
+    if (cikMap && cikMap.map) for (const t in cikMap.map) { if (!rev[cikMap.map[t]]) rev[cikMap.map[t]] = t; }
+    const byAcc = {}, order = [];
+    xml.split("<entry>").slice(1).forEach(function (en) {
+      const title = (en.match(/<title>([\s\S]*?)<\/title>/) || [])[1] || "";
+      const linkM = en.match(/<link[^>]*href="([^"]+)"/);
+      const upd = (en.match(/<updated>([^<]+)<\/updated>/) || [])[1] || "";
+      const link = linkM ? dec(linkM[1]) : "";
+      const accM = link.match(/(\d{10}-\d{2}-\d{6})/);
+      const acc = accM ? accM[1] : link;
+      const tm = dec(title).match(/^4(\/A)? - (.*?) \((\d{10})\) \((Issuer|Reporting|Filer)\)/);
+      if (!tm) return;
+      if (!byAcc[acc]) { byAcc[acc] = { date: upd, link: link, amended: !!tm[1] }; order.push(acc); }
+      const rec = byAcc[acc];
+      if (tm[4] === "Issuer") { rec.company = tm[2]; rec.cik = tm[3]; rec.ticker = rev[tm[3]] || null; }
+      else { rec.insider = tm[2]; }
+    });
+    const filings = order.map(function (a) { return byAcc[a]; }).filter(function (f) { return f.company || f.insider; }).slice(0, 40);
+    const payload = { filings: filings, ts: Date.now() };
+    try { await setState(DB, "insider_feed", payload); } catch (e2) {}
+    try { await log(DB, "INFO", null, "[INSIDER] Form4 피드 갱신 " + filings.length + "건"); } catch (e2) {}
+    return payload;
+  } catch (e) { return null; }
+}
+
+// [V12.123] ★실적캘린더 자동 갱신★ — buildEventRiskData가 읽는 키("earnings_calendar")와 이 캐시가
+// 실제로 쓰던 키("earnings_calendar_v2")가 어긋나 있던 데다(별도 수정), /api/earnings도 인사이더와
+// 같은 수동 전용 엔드포인트였다. 거래사이클에서 자동 갱신하도록 승격(내부 6h 캐시로 과도 조회 방지).
+async function updateEarningsCalendarNow(DB, cfg) {
+  try {
+    const ck = "earnings_calendar_v2";
+    const cached = await getState(DB, ck, null);
+    if (cached && cached.ts && (Date.now() - cached.ts) < 6 * 3600000) return cached;
+    if (fetchBudgetLeft() < 10) return cached;
+    const usTickers = (cfg.usTickers || []).filter(function (s) { return s.indexOf(".") === -1; });
+    const watchSet = {};
+    usTickers.forEach(function (s) { watchSet[s.toUpperCase()] = 1; });
+    let items = [];
+    if (usTickers.length && fetchBudgetLeft() >= 5) {
+      try {
+        const auth = await getYahooAuth(DB);
+        let u = "https://query1.finance.yahoo.com/v7/finance/quote?symbols=" +
+          usTickers.map(function (s) { return encodeURIComponent(s); }).join(",") +
+          "&fields=symbol,longName,shortName,earningsTimestamp,earningsTimestampStart,earningsTimestampEnd,epsForward";
+        if (auth && auth.crumb) u += "&crumb=" + encodeURIComponent(auth.crumb);
+        __fetchBudget.used++;
+        const j = await yahooFetch(u, auth && auth.cookie ? { "Cookie": auth.cookie } : null);
+        const rows = (j && j.quoteResponse && j.quoteResponse.result) || [];
+        rows.forEach(function (row) {
+          const ts0 = row.earningsTimestamp || row.earningsTimestampStart;
+          if (!ts0) return;
+          items.push({ symbol: row.symbol, name: row.longName || row.shortName || row.symbol,
+            ts: ts0 * 1000, eps: (typeof row.epsForward === "number" ? row.epsForward : null),
+            epsType: "fy", watch: true, src: "yahoo" });
+        });
+      } catch (e) {}
+    }
+    if (items.length < 3 && fetchBudgetLeft() >= 7) {
+      const nUA = { "User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.0 Safari/605.1.15",
+        "Accept": "application/json", "Origin": "https://www.nasdaq.com", "Referer": "https://www.nasdaq.com/" };
+      let fetched = 0;
+      for (let d = 0; d < 10 && fetched < 7 && fetchBudgetLeft() >= 2; d++) {
+        const dt = new Date(Date.now() + d * 86400000);
+        const dow = dt.getUTCDay();
+        if (dow === 0 || dow === 6) continue;
+        const ds = dt.toISOString().slice(0, 10);
+        try {
+          __fetchBudget.used++;
+          const r = await fetch("https://api.nasdaq.com/api/calendar/earnings?date=" + ds, { headers: nUA });
+          fetched++;
+          if (!r.ok) continue;
+          const j2 = await r.json();
+          const rows2 = (j2 && j2.data && j2.data.rows) || [];
+          rows2.slice(0, 30).forEach(function (rw) {
+            if (!rw || !rw.symbol) return;
+            items.push({ symbol: rw.symbol, name: rw.companyName || rw.name || rw.symbol,
+              ts: new Date(ds + "T12:00:00Z").getTime(),
+              when: rw.time || "", eps: (rw.epsForecast != null && rw.epsForecast !== "" ? rw.epsForecast : null),
+              epsType: "q", watch: !!watchSet[String(rw.symbol).toUpperCase()], src: "nasdaq" });
+          });
+        } catch (e) {}
+      }
+    }
+    const lo = Date.now() - 3 * 86400000, hi = Date.now() + 30 * 86400000;
+    items = items.filter(function (it) { return it.ts >= lo && it.ts <= hi; });
+    items.sort(function (a, b) { return a.ts - b.ts || (b.watch ? 1 : 0) - (a.watch ? 1 : 0); });
+    items = items.slice(0, 80);
+    const payload = { items: items, ts: Date.now() };
+    try { await setState(DB, ck, payload); } catch (e2) {}
+    try { await log(DB, "INFO", null, "[EARNINGS] 캘린더 갱신 " + items.length + "건"); } catch (e2) {}
+    return payload;
+  } catch (e) { return null; }
+}
+
 // [V12.78] ★감성 자가학습(야간)★ — 어제 저장한 섹터 헤드라인과 오늘 대표티커 등락을 짝지어
 //   토큰 극성을 EMA로 갱신한다(자기지도 온라인 학습). "시장이 정답지"가 되는 구조라 사람 라벨·외부
 //   API가 전혀 필요 없다. 상한 4000토큰(메모리·저장 통제), 학습률 0.03(노이즈 완만 흡수).
@@ -6885,7 +6997,10 @@ async function buildEventRiskData(DB) {
   } catch (e) {}
   try {
     // (1) 어닝스 — 심볼별 다가오는 발표 시각(회피용) + 최근 과거 발표(PEAD 추종용) 분리 추적
-    const ec = await getState(DB, "earnings_calendar", null);
+    // [V12.123] ★버그수정★ 실제로 쓰는 캐시 키는 "earnings_calendar_v2"(/api/earnings, V9.1)인데
+    //   여긴 구버전 키("earnings_calendar")를 읽고 있었다 — 그 키엔 아무도 쓴 적이 없어(grep 확인)
+    //   PEAD·어닝임박축소 로직이 구조적으로 항상 빈 데이터로 동작했다(사용자 리포트로 발견).
+    const ec = await getState(DB, "earnings_calendar_v2", null);
     if (ec && ec.items) {
       ec.items.forEach(function(it){
         if (!it || !it.symbol || !it.ts) return;
@@ -11893,6 +12008,11 @@ async function runTradingCycle(env) {
       try { sectorSentiment = await updateSectorNewsSentiment(DB, cfg); } catch (e) {}
       // [V9.9] 애널리스트 컨센서스 — 6h 캐시, 예산 가드 내장. US 종목 목표가·투자의견(가격독립 정보).
       try { await updateAnalystConsensus(DB, cfg); } catch (e) {}
+      // [V12.123] 내부자거래·실적캘린더 자동 갱신 — 지금까지 /api/insider·/api/earnings가 프론트
+      //   수동 방문에만 의존해 아무도 안 열면 영영 안 채워지던 것을 analyst_consensus와 동일하게
+      //   거래사이클 자동 갱신으로 승격(각자 15분/6h 내부 캐시라 과도 조회 없음).
+      try { await updateInsiderFeedNow(DB); } catch (e) {}
+      try { await updateEarningsCalendarNow(DB, cfg); } catch (e) {}
     }
 
     for (const market of marketsForQuotes) {
@@ -12466,7 +12586,12 @@ async function runTradingCycle(env) {
       // [긴급수정] 평가 가드를 "평가 시작" 기준으로 — prefetch가 느려도 평가에 시간을 보장한다.
       //   (이전 cycleStartedAt 기준은 prefetch 18초가 18초 가드를 다 써 평가 0종목 → 거래 마비)
       //   동시에 전체 사이클 상한(hardCap)으로 Cloudflare invocation 초과(마비) 방지.
-      const evalStartedAt = Date.now();
+      // [V12.123] ★재발 버그 수정★ evalStartedAt이 여기서 찍힌 뒤, 아래 모델 로딩 블록(mlDNNLoad 등
+      //   무거운 3M 딥넷 로드 포함)이 평가 루프 진입 '전에' 실행된다. 로딩이 느려지면(최근 DNN이 다시
+      //   신뢰상태(trusted)가 되며 실제로 로드되기 시작함) 루프 첫 반복에서 이미 예산 초과 판정이 나
+      //   "평가 0/556종목 후 중단"이 발생했다(사용자 리포트). 이전에 prefetch를 위해 도입한 것과 같은
+      //   종류의 버그가 모델 로딩 블록에서 재발한 것 — evalStartedAt을 실제 평가 루프 진입 직전으로 이동.
+      let evalStartedAt = 0;
       const evalBudgetMs = (typeof cfg.evalBudgetMs === "number") ? cfg.evalBudgetMs : 16000;   // [실시간] heavy 평가 cap 축소 → fastWatch 시간 확보(라운드로빈으로 커버리지 유지)
       const hardCapMs = (typeof cfg.cycleHardCapMs === "number") ? cfg.cycleHardCapMs : 22000;  // [실시간] heavy 사이클 상한 22s → 분(分) 내 fastWatch 서브틱 여유
       let evalOffset = await getState(DB, "eval_offset:" + market, 0);
@@ -12542,6 +12667,7 @@ async function runTradingCycle(env) {
           }
         }
       } catch (e) {}
+      evalStartedAt = Date.now();   // [V12.123] 모델 로딩이 끝난 실제 평가 시작 시점으로 예산 기준을 이동
       for (const item of orderedEval) {
         const _evalElapsed = Date.now() - evalStartedAt;
         if (_evalElapsed > evalBudgetMs || (Date.now() - cycleStartedAt > hardCapMs && _evalElapsed > evalMinMs)) {
@@ -22572,10 +22698,11 @@ async function mlAiAsk(DB, question) {
     if (levels.resistance.length) lines.push("(기술적) 위쪽 저항 후보: " + levels.resistance.map(function (x) { return x.label + " " + Math.round(x.v).toLocaleString(); }).join(", ") + ".");
     if (!levels.support.length && !levels.resistance.length && !analystHit) lines.push("뚜렷한 지지·저항 레벨을 계산할 데이터가 부족해.");
   }
-  // [V12.118] 실적발표 질문 — earnings_calendar(다가오는 발표) 조회, 없으면 명시적으로 "데이터 없음"
+  // [V12.118] 실적발표 질문 — earnings_calendar_v2(다가오는 발표) 조회, 없으면 명시적으로 "데이터 없음"
+  // [V12.123] 키 오타 수정(earnings_calendar → _v2, 실제 저장 키와 일치)
   if (isEarningsQ) {
     try {
-      const ec = await getState(DB, "earnings_calendar", null);
+      const ec = await getState(DB, "earnings_calendar_v2", null);
       let nextTs = null;
       if (ec && Array.isArray(ec.items)) {
         const now = Date.now();
