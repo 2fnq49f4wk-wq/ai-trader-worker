@@ -14058,7 +14058,7 @@ async function auditAccounting(DB, market, cash) {
   }
 }
 
-async function handleRequest(request, env) {
+async function handleRequest(request, env, ctx) {
   const url = new URL(request.url);
   const path = url.pathname;
   const cors = {
@@ -14778,13 +14778,12 @@ async function handleRequest(request, env) {
     }
 
     if (path === "/api/state") {
-     // [V12.128] 이 핸들러 1회가 D1 쿼리 20여 개를 순차 발사하는데 프론트는 10s마다 폴링한다
-     //   (탭 N개면 N배, 매분 cron 사이클과도 겹침) → D1 큐 포화의 최대 단일 기여자.
-     //   5s 메모리 캐시로 중복 폭주를 흡수한다(폴링 주기 10s이므로 체감 지연 없음).
-     if (globalThis.__stateCache && Date.now() - globalThis.__stateCache.ts < 5000) {
-       return Response.json(globalThis.__stateCache.data, { headers: cors });
-     }
-     try {
+     // [V12.129] ★로딩 느림 근본수정 — SWR(stale-while-revalidate)★
+     //   V12.128의 5s 캐시는 TTL(5s) < 폴링주기(10s)라 매 폴링이 캐시미스 → 매번 풀 빌드
+     //   (D1 바쁠 때 10~18s)를 사용자가 그대로 기다렸다(TOP MOVERS·지수·indicators 전부 늦게 뜸).
+     //   이제 캐시가 오래됐어도 "일단 즉시 반환"하고 갱신은 ctx.waitUntil 백그라운드로 돌린다.
+     //   사용자는 풀 빌드를 기다리지 않는다(활성 사용 중 항상 ~0.2s). 갱신 중복은 플래그로 방지.
+     const __buildState = async () => {
       const cfg = migrateCfgToMarkets(Object.assign({}, DEFAULT_CFG, await getState(env.DB, "cfg", {})));
       // [섹터그룹·신호타입] 현재 가중치 계산(cfg에 주입) + 통계 — UI 표시용
       await applySectorGroupWeights(env.DB, cfg);
@@ -14927,8 +14926,70 @@ async function handleRequest(request, env) {
           } catch(e) { return null; }
         })()
       };
-      globalThis.__stateCache = { ts: Date.now(), data: __statePayload };   // [V12.128] 실패 시 폴백용 최종 성공 스냅샷
-      return Response.json(__statePayload, { headers: cors });
+      return __statePayload;
+     };  // ── __buildState 끝 ──
+
+     // 페이로드는 한 번만 직렬화해 문자열로 캐시(요청마다 1.2MB 재직렬화 방지).
+     //   float를 유효숫자 6자리로 절사(51.28742146792077 → 51.2874) — 표시용으론 충분,
+     //   정수(타임스탬프·주식수)는 건드리지 않는다. 페이로드 ~30% 감량.
+     const __numTrim = function (k, v) {
+       return (typeof v === "number" && isFinite(v) && !Number.isInteger(v)) ? +v.toPrecision(6) : v;
+     };
+     const __mkCache = function (pl) { return { ts: Date.now(), data: pl, str: JSON.stringify(pl, __numTrim) }; };
+     const __jh = Object.assign({ "content-type": "application/json" }, cors);
+     // [V12.129b] 아이솔레이트 메모리(L1)만으론 부족 — 요청이 아이솔레이트 여러 개에 분산돼
+     //   각자 콜드 캐시로 풀 빌드를 반복했다(측정: 폴링 5회 중 3회가 9~23s). colo 단위로 공유되는
+     //   Edge Cache(caches.default)를 L2로 둬서 "같은 지역 사용자는 누가 먼저 빌드했든 재사용"한다.
+     const __edgeKey = new Request("https://state-cache.internal/api/state");
+     const __refresh = function () {
+       if (globalThis.__stateBuilding) return null;
+       globalThis.__stateBuilding = true;
+       return __buildState().then(function (pl) {
+         const c = __mkCache(pl);
+         globalThis.__stateCache = c;
+         return caches.default.put(__edgeKey, new Response(c.str, { headers: {
+           "content-type": "application/json", "cache-control": "s-maxage=300", "x-built-at": String(c.ts) } }))
+           .catch(function () {});
+       }).catch(function () {}).then(function () { globalThis.__stateBuilding = false; });
+     };
+     const FRESH_MS = 8000, USABLE_MS = 150000;
+     // ── L1: 아이솔레이트 메모리 ──
+     const __sc = globalThis.__stateCache;
+     const __age = __sc ? Date.now() - __sc.ts : Infinity;
+     if (__sc && __age < FRESH_MS) {
+       return new Response(__sc.str || JSON.stringify(__sc.data, __numTrim), { headers: __jh });
+     }
+     if (__sc && __age < USABLE_MS) {
+       const __bp = __refresh();
+       if (__bp && ctx && ctx.waitUntil) ctx.waitUntil(__bp);
+       return new Response(__sc.str || JSON.stringify(__sc.data, __numTrim), { headers: __jh });
+     }
+     // ── L2: colo 공유 Edge Cache ──
+     try {
+       const __edge = await caches.default.match(__edgeKey);
+       if (__edge) {
+         const __bAt = +(__edge.headers.get("x-built-at") || 0);
+         const __eage = Date.now() - __bAt;
+         if (__eage < USABLE_MS) {
+           const __body = await __edge.text();
+           globalThis.__stateCache = { ts: __bAt, data: null, str: __body };   // L1 워밍(data는 str에서 필요시 파싱)
+           if (__eage > FRESH_MS) {
+             const __bp = __refresh();
+             if (__bp && ctx && ctx.waitUntil) ctx.waitUntil(__bp);
+           }
+           return new Response(__body, { headers: __jh });
+         }
+       }
+     } catch (e) {}
+     // ── 콜드(어느 캐시에도 없음) → 동기 빌드. 이때만 기다린다 ──
+     try {
+      const __pl = await __buildState();
+      const __c = __mkCache(__pl);
+      globalThis.__stateCache = __c;
+      const __pp = caches.default.put(__edgeKey, new Response(__c.str, { headers: {
+        "content-type": "application/json", "cache-control": "s-maxage=300", "x-built-at": String(__c.ts) } })).catch(function () {});
+      if (ctx && ctx.waitUntil) ctx.waitUntil(__pp);
+      return new Response(__c.str, { headers: __jh });
      } catch (e) {
       // [V12.126] ★500 에러 방지★ /api/state는 전체 대시보드가 의존하는 단일 통합 응답인데
       //   try/catch 없이 20개 이상의 순차 DB조회가 하나로 이어져, 그중 하나만 던져도 요청 전체가
@@ -14939,11 +15000,16 @@ async function handleRequest(request, env) {
       // [V12.128] 빈 뼈대를 주면 500은 면해도 화면은 여전히 "데이터 전부 안 보임"이다.
       //   직전 성공 스냅샷이 있으면 그걸 stale 표시와 함께 내려 대시보드를 살려둔다.
       if (globalThis.__stateCache) {
-        return Response.json(Object.assign({}, globalThis.__stateCache.data, {
-          stale: true,
-          staleAgeMs: Date.now() - globalThis.__stateCache.ts,
-          staleReason: String((e && e.message) || e).slice(0, 200)
-        }), { headers: cors });
+        const __scc = globalThis.__stateCache;
+        let __base = __scc.data;
+        if (!__base && __scc.str) { try { __base = JSON.parse(__scc.str); } catch (e3) { __base = null; } }
+        if (__base) {
+          return Response.json(Object.assign({}, __base, {
+            stale: true,
+            staleAgeMs: Date.now() - __scc.ts,
+            staleReason: String((e && e.message) || e).slice(0, 200)
+          }), { headers: cors });
+        }
       }
       return Response.json({ error: String(e && e.message || e), watchlist: [], indices: [], positions: { us: { list: [], bySymbol: {} }, kr: { list: [], bySymbol: {} } },
         cfg: DEFAULT_CFG, marketStatus: { us: false, kr: false }, tradingWindow: { us: false, kr: false } }, { status: 200, headers: cors });
@@ -24059,7 +24125,7 @@ async function sentiStatus(DB) {
 }
 export default {
   // [V12.128] 모든 D1 접근을 과부하 재시도 래퍼로 감싼다(호출부 160여 곳을 건드리지 않고 일괄 적용).
-  async fetch(request, env, ctx) { return handleRequest(request, Object.assign({}, env, { DB: wrapD1(env.DB) })); },
+  async fetch(request, env, ctx) { return handleRequest(request, Object.assign({}, env, { DB: wrapD1(env.DB) }), ctx); },
   async scheduled(event, env, ctx) {
     env = Object.assign({}, env, { DB: wrapD1(env.DB) });
     // [FIX V8.8] 기존엔 runTradingCycle / refreshCommodityQuotes / runCommodityCycle을
