@@ -17599,10 +17599,12 @@ function _mlPatternFeats(closes, highs, lows, opens) {
     const L = (Array.isArray(lows) && lows.length === closes.length) ? lows : closes;
     const O = (Array.isArray(opens) && opens.length === closes.length) ? opens : closes;
     try { const tp = taDetectPatterns({ closes: closes, highs: H, lows: L, opens: O }); if (tp && typeof tp.score === "number") o.chartPat = _clamp(tp.score / 5, -1, 1); } catch (e) {}
-    // [V12.109] _luxPickTech와 동일 가중(now .40/week .30/month .20/year .10)으로 통일 — 규칙기반
-    //   기술분석과 AI 학습 피처가 같은 데이터·같은 공식을 쓰게 해 의견 불일치(모순) 소지를 줄인다.
-    //   featNames 배열 길이는 그대로라 featVer 변경 불필요(표본 재구축 안 건드림).
-    try { const ts = techSummaryMultiTF(closes, H, L); if (ts && ts.now && ts.week && ts.month) o.tfConsBull = _clamp(_num(ts.now.score, 0) * 0.40 + _num(ts.week.score, 0) * 0.30 + _num(ts.month.score, 0) * 0.20 + (ts.year ? _num(ts.year.score, 0) * 0.10 : 0), -1, 1); } catch (e) {}
+    // [V12.110] ★되돌림★ V12.109에서 이 공식을 _luxPickTech와 통일시켰는데, tfConsBull은 결정레이어
+    //   파라미터가 아니라 harvest 시점에 ml_samples에 "박제되는" 학습 피처값이다. featVer 안 올리고
+    //   공식만 바꾸면 같은 featVer=12 안에 구공식/신공식 값이 섞여 피처 드리프트가 생기고, 이게 DNN
+    //   재학습 직후 검증정확도 하락으로 나타났다(사용자 보고). 학습 피처는 원래 공식대로 고정 복원 —
+    //   기술분석 개선(year 시간대·ADX 스케일링)은 _luxPickTech(추론 시점, 비저장)에만 남겨둔다.
+    try { const ts = techSummaryMultiTF(closes, H, L); if (ts && ts.now && ts.week && ts.month) o.tfConsBull = _clamp(_num(ts.now.score, 0) * 0.5 + _num(ts.week.score, 0) * 0.35 + _num(ts.month.score, 0) * 0.15, -1, 1); } catch (e) {}
     try {
       const p = closes[closes.length - 1];
       const m5 = getMA(closes, 5), m20 = getMA(closes, 20), m50 = getMA(closes, 50), m200 = getMA(closes, Math.min(200, closes.length - 1));
