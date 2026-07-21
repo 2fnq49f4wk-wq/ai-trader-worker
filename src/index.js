@@ -7052,12 +7052,96 @@ async function buildEventRiskData(DB) {
   return out;
 }
 
+// ════════════════════════════════════════════════════════════════════════════
+// [V12.128] D1 과부하 전역 내성 — "D1_ERROR: D1 DB is overloaded. Requests queued for too long."
+//   V12.126(방어적 catch)·V12.127(COUNT 스캔 빈도↓·월간리포트 1회 재시도)은 증상 국소 완화였다.
+//   남은 근본문제: D1 호출부 160여 곳 어디서든 과부하가 나면 그 요청은 그대로 실패한다.
+//   여기서 (1) 과부하성 오류 지수백오프 재시도, (2) 동시 인플라이트 상한으로 큐 포화 예방을
+//   entrypoint 한 곳에서 일괄 적용한다(호출부 수정 0).
+// ⚠️ [V12.128a] 여기에 "동시 인플라이트 상한(세마포어)"을 두면 안 된다 — 실제로 넣었다가 장애를 냈다.
+//   Workers 한 아이솔레이트는 여러 요청을 동시에 처리하는데, 모듈 전역 대기큐에 담긴 resolve 콜백은
+//   그것을 만든 요청의 컨텍스트에 묶인다. 그 요청이 끝나거나 취소되면 콜백은 죽고("A promise was
+//   resolved from a different request context"), 다른 요청이 슬롯을 넘겨줘도 아무도 받지 못해
+//   슬롯이 영구 누수 → inflight가 상한에 고정 → 이후 모든 D1 호출이 영원히 대기 → Worker 행(1101).
+//   D1 부하 저감은 세마포어가 아니라 "쿼리 수 자체를 줄이는 것"(getStates 일괄조회·병렬화)으로 한다.
+function __d1IsOverload(e) {
+  const m = String((e && e.message) || e || "").toLowerCase();
+  return m.indexOf("overloaded") >= 0 || m.indexOf("queued for too long") >= 0 ||
+         m.indexOf("too many api requests") >= 0 || m.indexOf("network connection lost") >= 0 ||
+         m.indexOf("storage operation exceeded timeout") >= 0;
+}
+async function __d1Attempt(fn) {
+  const MAX = 4;
+  for (let i = 0; ; i++) {
+    try { return await fn(); }
+    catch (e) {
+      if (i >= MAX || !__d1IsOverload(e)) throw e;   // 과부하가 아니면 즉시 전파(버그 은폐 방지)
+      // 백오프 타이머는 이 요청 컨텍스트 안에서만 만들어지고 소비된다(요청 간 공유 없음 — 위 주석 참조).
+      const backoff = 100 * Math.pow(2, i) + Math.floor(Math.random() * 80);  // 100→200→400→800ms +지터
+      await new Promise(function (r) { setTimeout(r, backoff); });
+    }
+  }
+}
+// 재시도하려면 매 시도마다 새로 prepare 해야 하므로 sql/바인딩을 기록해두는 얇은 프록시.
+function __d1Stmt(realDB, sql, binds) {
+  const call = function (method, arg) {
+    return __d1Attempt(function () {
+      const s = realDB.prepare(sql);
+      const b = binds ? s.bind.apply(s, binds) : s;
+      return (arg === undefined) ? b[method]() : b[method](arg);
+    });
+  };
+  return {
+    __d1sql: sql, __d1binds: binds,
+    bind: function () { return __d1Stmt(realDB, sql, Array.prototype.slice.call(arguments)); },
+    first: function (col) { return call("first", col); },
+    all: function () { return call("all"); },
+    run: function () { return call("run"); },
+    raw: function () { return call("raw"); }
+  };
+}
+function wrapD1(realDB) {
+  if (!realDB || realDB.__d1wrapped) return realDB;
+  return {
+    __d1wrapped: true, __d1real: realDB,
+    prepare: function (sql) { return __d1Stmt(realDB, sql, null); },
+    // batch()는 프록시 문장을 받으므로 매 시도마다 진짜 D1 문장으로 되살려 넘긴다.
+    batch: function (stmts) {
+      return __d1Attempt(function () {
+        return realDB.batch(stmts.map(function (st) {
+          if (!st || !st.__d1sql) return st;   // 이미 진짜 D1 문장이면 그대로
+          const s = realDB.prepare(st.__d1sql);
+          return st.__d1binds ? s.bind.apply(s, st.__d1binds) : s;
+        }));
+      });
+    },
+    dump: function () { return realDB.dump(); },
+    exec: function (q) { return __d1Attempt(function () { return realDB.exec(q); }); }
+  };
+}
+
 async function getState(DB, k, def) {
   try {
     const row = await DB.prepare("SELECT v FROM state WHERE k = ?").bind(k).first();
     if (!row) return def;
     try { return JSON.parse(row.v); } catch (e) { return def; }
   } catch (e) { return def; }
+}
+
+// [V12.128] 여러 state 키를 단일 쿼리로 — 순차 getState N회(=D1 왕복 N회)를 1회로 접는다.
+//   /api/state가 D1이 바쁠 때 25초까지 걸리던 주원인이 이 순차 왕복 누적이었다.
+async function getStates(DB, keys) {
+  const out = {};
+  if (!keys || !keys.length) return out;
+  try {
+    const ph = keys.map(function () { return "?"; }).join(",");
+    const stmt = DB.prepare("SELECT k, v FROM state WHERE k IN (" + ph + ")");
+    const rows = await stmt.bind.apply(stmt, keys).all();
+    for (const r of ((rows && rows.results) || [])) {
+      try { out[r.k] = JSON.parse(r.v); } catch (e) {}
+    }
+  } catch (e) {}
+  return out;
 }
 
 async function setState(DB, k, v) {
@@ -7275,13 +7359,14 @@ async function computeCashFromTrades(DB, market, cfg) {
 
 // 전체 시장 cash 객체를 trades에서 재구성
 async function computeAllCash(DB, cfg) {
-  return {
-    us: await computeCashFromTrades(DB, "us", cfg),
-    kr: await computeCashFromTrades(DB, "kr", cfg),
-    cm: await computeCashFromTrades(DB, "cm", cfg),
-    bdus: await computeCashFromTrades(DB, "bdus", cfg),
-    bdkr: await computeCashFromTrades(DB, "bdkr", cfg)
-  };
+  // [V12.128] 5개 시장을 순차 처리하면 시장당 D1 왕복 4회 × 5 = 20회가 직렬로 쌓인다
+  //   (deposits/outflows는 시장마다 같은 키를 중복으로 다시 읽었다). 병렬로 돌려 지연을
+  //   최대 5분의 1로 줄인다 — 시장 5개뿐이라 동시 쿼리 수는 유계다.
+  const markets = ["us", "kr", "cm", "bdus", "bdkr"];
+  const vals = await Promise.all(markets.map(function (m) { return computeCashFromTrades(DB, m, cfg); }));
+  const out = {};
+  markets.forEach(function (m, i) { out[m] = vals[i]; });
+  return out;
 }
 
 // ═══════════════════════════════════════════════════════════════════
@@ -14693,25 +14778,38 @@ async function handleRequest(request, env) {
     }
 
     if (path === "/api/state") {
+     // [V12.128] 이 핸들러 1회가 D1 쿼리 20여 개를 순차 발사하는데 프론트는 10s마다 폴링한다
+     //   (탭 N개면 N배, 매분 cron 사이클과도 겹침) → D1 큐 포화의 최대 단일 기여자.
+     //   5s 메모리 캐시로 중복 폭주를 흡수한다(폴링 주기 10s이므로 체감 지연 없음).
+     if (globalThis.__stateCache && Date.now() - globalThis.__stateCache.ts < 5000) {
+       return Response.json(globalThis.__stateCache.data, { headers: cors });
+     }
      try {
       const cfg = migrateCfgToMarkets(Object.assign({}, DEFAULT_CFG, await getState(env.DB, "cfg", {})));
       // [섹터그룹·신호타입] 현재 가중치 계산(cfg에 주입) + 통계 — UI 표시용
       await applySectorGroupWeights(env.DB, cfg);
       await applySignalTypeWeights(env.DB, cfg);
-      const sectorGroupStats = await getState(env.DB, "sector_group_stats", {});
+      // [V12.128] 흩어져 있던 단건 getState들을 단일 IN 쿼리 1회로 접는다(D1 왕복 10여 회 → 1회).
+      const __S = await getStates(env.DB, [
+        "sector_group_stats", "signal_type_stats", "deposits", "outflows",
+        "twr:us", "twr:kr", "last_tick", "last_heartbeat", "mcap_shares",
+        "signal_stats", "budget_split_applied", "llm_daily:us", "llm_daily:kr",
+        "mkt_context", "sector_news_sentiment", "vision_predictions"
+      ]);
+      const sectorGroupStats = __S["sector_group_stats"] || {};
       const sectorGroups = { stats: sectorGroupStats, weights: (cfg.sectorGroups && cfg.sectorGroups.weights) || {} };
-      const signalTypeStats = await getState(env.DB, "signal_type_stats", {});
+      const signalTypeStats = __S["signal_type_stats"] || {};
       const signalTypes = { stats: signalTypeStats, weights: (cfg.signalTypeWeights && cfg.signalTypeWeights.weights) || {} };
-      const cash = await computeAllCash(env.DB, cfg);
-      const deposits = await getState(env.DB, "deposits", { us: 0, kr: 0 });
-      const outflows = await getState(env.DB, "outflows", { us: 0, kr: 0 });
+      const deposits = __S["deposits"] || { us: 0, kr: 0 };
+      const outflows = __S["outflows"] || { us: 0, kr: 0 };
       // [회계 재설계] TWR 상태 — 프론트가 실시간 평가액으로 마지막 구간을 마감해 수익률% 산출
-      const twr = {
-        us: await getState(env.DB, "twr:us", null),
-        kr: await getState(env.DB, "twr:kr", null)
-      };
-      const positionsUSRaw = await getPositions(env.DB, "us");
-      const positionsKRRaw = await getPositions(env.DB, "kr");
+      const twr = { us: __S["twr:us"] || null, kr: __S["twr:kr"] || null };
+      // 서로 독립적인 무거운 조회는 병렬로(직렬 누적이 25초 지연의 주범이었다).
+      const [cash, positionsUSRaw, positionsKRRaw] = await Promise.all([
+        computeAllCash(env.DB, cfg),
+        getPositions(env.DB, "us"),
+        getPositions(env.DB, "kr")
+      ]);
 
       // [V8] 포지션 응답 가공:
       // - list: 각 (symbol, strategy) 포지션을 row로 (프론트 테이블용)
@@ -14742,8 +14840,8 @@ async function handleRequest(request, env) {
       const posUS = buildPositionViews(positionsUSRaw);
       const posKR = buildPositionViews(positionsKRRaw);
 
-      const lastTick = await getState(env.DB, "last_tick", null);
-      const lastHeartbeat = await getState(env.DB, "last_heartbeat", null);
+      const lastTick = __S["last_tick"] || null;
+      const lastHeartbeat = __S["last_heartbeat"] || null;
 
       const allSymbols = cfg.usTickers.concat(cfg.krTickers);
       const quotes = [];
@@ -14757,7 +14855,7 @@ async function handleRequest(request, env) {
         }
       } catch (e) {}
       // [V81] 발행주식수/시총 맵 — 프론트가 가격×주식수로 실시간 시총 박스 계산
-      const mcapShares = (await getState(env.DB, "mcap_shares", {})) || {};
+      const mcapShares = __S["mcap_shares"] || {};
       for (const sym of allSymbols) {
         const q = quoteRowMap[sym];
         const ms = mcapShares[sym] || null;
@@ -14779,21 +14877,24 @@ async function handleRequest(request, env) {
           quotes.push(Object.assign(base, { price: null, prevClose: null, dayPct: null, pending: true }));
         }
       }
+      // [V12.128] 지수도 종목당 1쿼리씩 순차로 읽던 것을 단일 IN 쿼리로 — D1 왕복 N→1.
+      const __idxSyms = US_INDICES.concat(KR_INDICES);
+      const __IDX = await getStates(env.DB, __idxSyms.map(function (s) { return "index:" + s; }));
       const indices = [];
-      for (const sym of US_INDICES.concat(KR_INDICES)) {
-        const idx = await getState(env.DB, "index:" + sym, null);
+      for (const sym of __idxSyms) {
+        const idx = __IDX["index:" + sym] || null;
         if (idx) indices.push(Object.assign({ symbol: sym }, idx));
       }
-      const signalStats = await getState(env.DB, "signal_stats", {});
+      const signalStats = __S["signal_stats"] || {};
 
-      return Response.json({
+      const __statePayload = {
         cash: cash,
         deposits: deposits,
         outflows: outflows,
         twr: twr,
         sectorGroups: sectorGroups,
         signalTypes: signalTypes,
-        budgetSplitApplied: await getState(env.DB, "budget_split_applied", null),  // [V63] 레짐 적응형 예산 적용 현황
+        budgetSplitApplied: __S["budget_split_applied"] || null,  // [V63] 레짐 적응형 예산 적용 현황
         positions: {
           us: posUS.list,          // [V8] array of (symbol, strategy) rows
           kr: posKR.list,
@@ -14806,17 +14907,14 @@ async function handleRequest(request, env) {
           kr: isMarketOpen("kr") && (await isMarketTradingDay(env.DB, "kr", env)) !== false
         },
         tradingWindow: { us: isTradingWindow("us"), kr: isTradingWindow("kr") },
-        llmDaily: {
-          us: await getState(env.DB, "llm_daily:us", null),
-          kr: await getState(env.DB, "llm_daily:kr", null)
-        },
-        marketContext: await getState(env.DB, "mkt_context", null),
-        sectorNews: await getState(env.DB, "sector_news_sentiment", null),
+        llmDaily: { us: __S["llm_daily:us"] || null, kr: __S["llm_daily:kr"] || null },
+        marketContext: __S["mkt_context"] || null,
+        sectorNews: __S["sector_news_sentiment"] || null,
         watchlist: quotes,
         indices: indices,
         signalStats: signalStats,
         strategies: STRATEGIES,   // [V8]
-        visionPredictions: await getState(env.DB, "vision_predictions", {}),
+        visionPredictions: __S["vision_predictions"] || {},
         // [강제 락 & 사용량] UI 표시용
         forceLock: !!cfg.forceLock,
         usageState: await (async () => {
@@ -14828,7 +14926,9 @@ async function handleRequest(request, env) {
             return { data: us.data, limits: { monthlyRequests: lim.monthlyRequests, monthlyCpuMs: lim.monthlyCpuMs }, reqPct: (rr*100).toFixed(1), cpuPct: (cr*100).toFixed(1), worstPct: (Math.max(rr,cr)*100).toFixed(1), shutdownAt: lim.shutdownAt, warnAt: lim.warnAt };
           } catch(e) { return null; }
         })()
-      }, { headers: cors });
+      };
+      globalThis.__stateCache = { ts: Date.now(), data: __statePayload };   // [V12.128] 실패 시 폴백용 최종 성공 스냅샷
+      return Response.json(__statePayload, { headers: cors });
      } catch (e) {
       // [V12.126] ★500 에러 방지★ /api/state는 전체 대시보드가 의존하는 단일 통합 응답인데
       //   try/catch 없이 20개 이상의 순차 DB조회가 하나로 이어져, 그중 하나만 던져도 요청 전체가
@@ -14836,6 +14936,15 @@ async function handleRequest(request, env) {
       //   특정 못해도 최소한 대시보드가 안 깨지도록 최후 방어선 추가 — 로그로 원인을 남기고 200으로
       //   빈 뼈대를 반환(프론트는 각 필드에 이미 || [] / || {} 폴백이 있어 부분 데이터로도 안 죽는다).
       try { await log(env.DB, "ERROR", null, "[STATE-500] " + (e && e.stack ? e.stack.slice(0, 500) : (e && e.message))); } catch (e2) {}
+      // [V12.128] 빈 뼈대를 주면 500은 면해도 화면은 여전히 "데이터 전부 안 보임"이다.
+      //   직전 성공 스냅샷이 있으면 그걸 stale 표시와 함께 내려 대시보드를 살려둔다.
+      if (globalThis.__stateCache) {
+        return Response.json(Object.assign({}, globalThis.__stateCache.data, {
+          stale: true,
+          staleAgeMs: Date.now() - globalThis.__stateCache.ts,
+          staleReason: String((e && e.message) || e).slice(0, 200)
+        }), { headers: cors });
+      }
       return Response.json({ error: String(e && e.message || e), watchlist: [], indices: [], positions: { us: { list: [], bySymbol: {} }, kr: { list: [], bySymbol: {} } },
         cfg: DEFAULT_CFG, marketStatus: { us: false, kr: false }, tradingWindow: { us: false, kr: false } }, { status: 200, headers: cors });
      }
@@ -23949,8 +24058,10 @@ async function sentiStatus(DB) {
   } catch (e) { return { error: e && e.message }; }
 }
 export default {
-  async fetch(request, env, ctx) { return handleRequest(request, env); },
+  // [V12.128] 모든 D1 접근을 과부하 재시도 래퍼로 감싼다(호출부 160여 곳을 건드리지 않고 일괄 적용).
+  async fetch(request, env, ctx) { return handleRequest(request, Object.assign({}, env, { DB: wrapD1(env.DB) })); },
   async scheduled(event, env, ctx) {
+    env = Object.assign({}, env, { DB: wrapD1(env.DB) });
     // [FIX V8.8] 기존엔 runTradingCycle / refreshCommodityQuotes / runCommodityCycle을
     //   각각 ctx.waitUntil로 "동시" 실행했는데, 이들이 전역 __fetchBudget(yahoo fetch
     //   예산)을 공유하면서 서로 resetFetchBudget()로 카운터를 덮어쓰고 소진시켜
