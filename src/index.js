@@ -22463,6 +22463,8 @@ async function mlAiAsk(DB, question) {
   const isSizeQ = /몇\s*주|얼마나\s*사|몇\s*개\s*사|비중\s*얼마|얼마어치/.test(q);
   const isEarningsQ = /실적|어닝스|earnings/i.test(q);
   const isValuationQ = /per\b|pbr\b|배당|밸류에이션|저평가|고평가|이익률|매출/i.test(q);
+  // [V12.121] 기간별 방향성 예측 질문 — "단기/중기/장기", "며칠 후", "1주일 후엔", "기간별로" 등
+  const isForecastQ = /단기|중기|장기|며칠|몇일|기간별|앞으로 어떻게|방향성|기간\s*별|얼마 후|추세.*방향/.test(q) || isOutlookQ || isTrendQ;
   const isCompareQ = syms.length >= 2;   // 2개 이상 종목이 언급되면 비교 모드로 응답
 
   let scanCache = null; try { scanCache = await getState(DB, "ai_picks:scan", null); } catch (e) {}
@@ -22505,6 +22507,28 @@ async function mlAiAsk(DB, question) {
       if (shortStrong && longWeak) lines.push("→ 단기(지금)만 강하고 1달·1년 흐름은 아직 약해 **일시적 반등에 가까운 모습**이야. 장기추세가 아직 뒷받침을 못 해주고 있어.");
       else if (aligned) lines.push("→ 단기·1주·1달이 같은 방향으로 정렬돼 있어 **구조적인 추세일 가능성이 커** — 일회성 반등보다는 흐름 지속 쪽에 무게를 둬.");
       else lines.push("→ 시간대별 신호가 엇갈려 방향을 확신하기 어려운 구간이야. 조금 더 지켜볼 만해.");
+    }
+    // [V12.121] ★기간별 방향성 예측★ — now/week/month/year 컨센서스를 상승/하락/횡보 판정+신뢰도로 변환.
+    //   ADX(추세강도)로 신뢰도를 가감(무추세 구간이면 방향성 자체를 낮게 봄). AI위원회 확률은 근사 앵커로 병기.
+    if (isForecastQ) {
+      const _horizons = [
+        { label: "초단기(수일)", sc: nowS }, { label: "1주", sc: weekS }, { label: "1달", sc: monthS }
+      ];
+      if (yearS != null) _horizons.push({ label: "1년", sc: yearS });
+      const _dir = function (sc) { return sc >= 0.15 ? "상승" : sc <= -0.15 ? "하락" : "횡보/중립"; };
+      const _conf = function (sc) {
+        let base = _clamp(Math.abs(sc), 0, 1);
+        if (tk.adx != null) base *= (tk.adx >= 25 ? 1.0 : tk.adx < 15 ? 0.6 : 0.85);   // 무추세면 확신 낮춤
+        return base >= 0.5 ? "높음" : base >= 0.25 ? "중간" : "낮음";
+      };
+      lines.push("**기간별 방향성 예측** (규칙기반 기술분석):");
+      for (const h of _horizons) lines.push("· " + h.label + ": **" + _dir(h.sc) + "** (점수 " + h.sc.toFixed(2) + ", 확신도 " + _conf(h.sc) + ")");
+      if (aiP != null) lines.push("· AI 위원회 확률(약 " + (typeof AI_PARAMS !== "undefined" && AI_PARAMS.predictionHorizonDays ? AI_PARAMS.predictionHorizonDays : 5) + "일 앵커): 상승확률 " + (aiP * 100).toFixed(0) + "%");
+      const dirs = _horizons.map(function (h) { return _dir(h.sc); });
+      const allUp = dirs.every(function (d) { return d === "상승"; }), allDown = dirs.every(function (d) { return d === "하락"; });
+      if (allUp) lines.push("→ 모든 기간대가 상승으로 정렬돼 **추세 지속 가능성에 무게**를 둘 만해.");
+      else if (allDown) lines.push("→ 모든 기간대가 하락으로 정렬돼 있어 **당분간 반등보다 하락 지속 리스크**가 더 커 보여.");
+      else lines.push("→ 기간대별로 방향이 엇갈려서 하나의 시나리오로 단정하기 어려워 — 짧은 기간과 긴 기간 중 어느 쪽에 무게를 둘지는 보유 목적(단타 vs 장투)에 따라 달라져.");
     }
   }
   // [V12.114] 차트패턴 구체 근거 — "왜"·전망 질문엔 패턴 이름까지 짚어준다
