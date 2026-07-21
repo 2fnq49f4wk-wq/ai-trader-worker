@@ -14685,6 +14685,7 @@ async function handleRequest(request, env) {
     }
 
     if (path === "/api/state") {
+     try {
       const cfg = migrateCfgToMarkets(Object.assign({}, DEFAULT_CFG, await getState(env.DB, "cfg", {})));
       // [섹터그룹·신호타입] 현재 가중치 계산(cfg에 주입) + 통계 — UI 표시용
       await applySectorGroupWeights(env.DB, cfg);
@@ -14820,6 +14821,16 @@ async function handleRequest(request, env) {
           } catch(e) { return null; }
         })()
       }, { headers: cors });
+     } catch (e) {
+      // [V12.126] ★500 에러 방지★ /api/state는 전체 대시보드가 의존하는 단일 통합 응답인데
+      //   try/catch 없이 20개 이상의 순차 DB조회가 하나로 이어져, 그중 하나만 던져도 요청 전체가
+      //   500으로 죽어 프론트 폴링이 "HTTP 500" 토스트와 함께 완전히 멈췄다(사용자 리포트). 원인을
+      //   특정 못해도 최소한 대시보드가 안 깨지도록 최후 방어선 추가 — 로그로 원인을 남기고 200으로
+      //   빈 뼈대를 반환(프론트는 각 필드에 이미 || [] / || {} 폴백이 있어 부분 데이터로도 안 죽는다).
+      try { await log(env.DB, "ERROR", null, "[STATE-500] " + (e && e.stack ? e.stack.slice(0, 500) : (e && e.message))); } catch (e2) {}
+      return Response.json({ error: String(e && e.message || e), watchlist: [], indices: [], positions: { us: { list: [], bySymbol: {} }, kr: { list: [], bySymbol: {} } },
+        cfg: DEFAULT_CFG, marketStatus: { us: false, kr: false }, tradingWindow: { us: false, kr: false } }, { status: 200, headers: cors });
+     }
     }
 
     // 하위 호환 엔드포인트 유지
@@ -14948,8 +14959,15 @@ async function handleRequest(request, env) {
     }
     if (path === "/api/trades") {
       const limit = parseInt(url.searchParams.get("limit") || "100", 10);
-      const res = await env.DB.prepare("SELECT * FROM trades ORDER BY ts DESC LIMIT ?").bind(limit).all();
-      return Response.json(res.results, { headers: cors });
+      try {
+        const res = await env.DB.prepare("SELECT * FROM trades ORDER BY ts DESC LIMIT ?").bind(limit).all();
+        return Response.json(res.results, { headers: cors });
+      } catch (e) {
+        // [V12.126] /api/state와 같은 Promise.all에 묶여 있어, 여기 실패도 대시보드 전체를 500으로
+        //   끌고 갔다 — 빈 배열로 200 반환해 부분 실패가 전체를 막지 않게 한다.
+        try { await log(env.DB, "ERROR", null, "[TRADES-500] " + (e && e.message)); } catch (e2) {}
+        return Response.json([], { status: 200, headers: cors });
+      }
     }
     // [자가진단] 원장↔포지션↔현금 정합성 리포트(읽기 전용). 로컬 audit.py가 폴링.
     if (path === "/api/audit" && request.method === "GET") {
