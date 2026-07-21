@@ -14123,19 +14123,81 @@ async function handleRequest(request, env, ctx) {
     // === [개선] /api/state 통합 응답 ===
     if (path === "/api/ml-status") {
       // [LUX-AI] 모델이 스스로 고른 피처 / 배운 사건 / 밴딧 / 앙상블 / MIND / DNN / 데이터 현황
-      const _out = {};
-      try { _out.model = (typeof mlStatus === "function") ? await mlStatus(env.DB) : null; } catch (e) { _out.model = { error: String(e && e.message) }; }
-      try { _out.events = (typeof mlLoadEventMemory === "function") ? await mlLoadEventMemory(env.DB) : null; } catch (e) {}
-      try { _out.bandit = (typeof mlBanditStatus === "function") ? await mlBanditStatus(env.DB) : null; } catch (e) {}
-      try { _out.brain = (typeof mlBrainStatus === "function") ? await mlBrainStatus(env.DB) : null; } catch (e) {}
-      try { _out.mind = (typeof mlMindStatus === "function") ? await mlMindStatus(env.DB) : null; } catch (e) {}
-      try { _out.dnn = (typeof mlDNNStatus === "function") ? await mlDNNStatus(env.DB) : null; } catch (e) {}
-      try { _out.gbdt = (typeof mlGBDTStatus === "function") ? await mlGBDTStatus(env.DB) : null; } catch (e) {}
-      try { _out.committee = await getState(env.DB, "committee_cal", null); } catch (e) {}
-      try { _out.data = (typeof sentiStatus === "function") ? await sentiStatus(env.DB) : null; } catch (e) {}
-      try { _out.dataHealth = (typeof mlDataHealth === "function") ? await mlDataHealth(env.DB) : null; } catch (e) {}  // [V20] alpha·딥·featVer 관측
-      try { _out.selfreview = await getState(env.DB, "ai_selfreview", null); } catch (e) {}   // [V12.73] AI 자가평가
-      return new Response(JSON.stringify(_out, null, 2), { headers: { "content-type": "application/json", "access-control-allow-origin": "*" } });
+      // [V12.130b] ★100초 지연 수정★ 종전엔 무거운 조회 11개(DNN 청크 로드·ml_samples COUNT 포함)를
+      //   전부 직렬로 await 했다(실측 100.0s — 사실상 타임아웃). 서로 독립적이므로 병렬로 돌리고,
+      //   내용이 분 단위로만 바뀌는 관측용 데이터라 30초 캐시를 둔다.
+      // [V12.130c] 쿼리 통합 후에도 캐시미스는 ~70s였다(무거운 모델 로딩이 남아 있고, 어느 한
+      //   하위 호출을 더 최적화해도 다음 병목이 또 드러나는 구조). 관측용이고 분 단위로만 바뀌므로
+      //   /api/state와 같은 SWR로 구조적으로 해결한다 — 오래된 값이라도 즉시 주고 갱신은 백그라운드.
+      //   사용자는 콜드 스타트 1회를 제외하면 대기하지 않는다.
+      const _msHdr = { "content-type": "application/json", "access-control-allow-origin": "*" };
+      const _msc = globalThis.__mlStatusCache;
+      const _msAge = _msc ? Date.now() - _msc.ts : Infinity;
+      const _safe = function (fn) { try { const p = fn(); return Promise.resolve(p)["catch"](function () { return null; }); } catch (e) { return Promise.resolve(null); } };
+      const _msBuild = async function () {
+        const [a, b2, c2, d2, e2, f2, g2, h2, i2, j2, k2] = await Promise.all([
+          _safe(function () { return (typeof mlStatus === "function") ? mlStatus(env.DB) : null; }),
+          _safe(function () { return (typeof mlLoadEventMemory === "function") ? mlLoadEventMemory(env.DB) : null; }),
+          _safe(function () { return (typeof mlBanditStatus === "function") ? mlBanditStatus(env.DB) : null; }),
+          _safe(function () { return (typeof mlBrainStatus === "function") ? mlBrainStatus(env.DB) : null; }),
+          _safe(function () { return (typeof mlMindStatus === "function") ? mlMindStatus(env.DB) : null; }),
+          _safe(function () { return (typeof mlDNNStatus === "function") ? mlDNNStatus(env.DB) : null; }),
+          _safe(function () { return (typeof mlGBDTStatus === "function") ? mlGBDTStatus(env.DB) : null; }),
+          _safe(function () { return getState(env.DB, "committee_cal", null); }),
+          _safe(function () { return (typeof sentiStatus === "function") ? sentiStatus(env.DB) : null; }),
+          _safe(function () { return (typeof mlDataHealth === "function") ? mlDataHealth(env.DB) : null; }),
+          _safe(function () { return getState(env.DB, "ai_selfreview", null); })
+        ]);
+        const o = { model: a, events: b2, bandit: c2, brain: d2, mind: e2, dnn: f2, gbdt: g2,
+                    committee: h2, data: i2, dataHealth: j2, selfreview: k2 };
+        const s = JSON.stringify(o, null, 2);
+        globalThis.__mlStatusCache = { ts: Date.now(), str: s };
+        return s;
+      };
+      if (_msc && _msAge < 30000) return new Response(_msc.str, { headers: _msHdr });
+      if (_msc && _msAge < 900000) {   // 15분까지는 stale 허용 + 백그라운드 갱신
+        if (!globalThis.__mlStatusBuilding) {
+          globalThis.__mlStatusBuilding = true;
+          const bp = _msBuild()["catch"](function () {})["then"](function () { globalThis.__mlStatusBuilding = false; });
+          if (ctx && ctx.waitUntil) ctx.waitUntil(bp);
+        }
+        return new Response(_msc.str, { headers: _msHdr });
+      }
+      return new Response(await _msBuild(), { headers: _msHdr });
+    }
+
+
+    // [V12.130b] ★누락 엔드포인트 복구★ 프론트 loadPipeline()이 /api/pipeline을 호출하는데
+    //   서버에 라우트가 없어 404 → r.json() 실패 → catch로 조용히 삼켜져 대시보드의
+    //   "ENGINE PIPELINE · 8 SUBSYSTEMS 로딩 중…"이 영원히 로딩 상태로 남아 있었다.
+    //   각 서브시스템의 최종 실행시각(state.updated_ts)으로 OK/STALE/NEVER를 판정해 돌려준다.
+    if (path === "/api/pipeline") {
+      try {
+        const SUBS = [
+          { key: "last_tick",           label: "거래 사이클",   staleMs: 10 * 60000 },
+          { key: "fastwatch:markets",   label: "실시간 시세",   staleMs: 10 * 60000 },
+          { key: "mkt_context",         label: "시장 컨텍스트", staleMs: 24 * 3600000 },
+          { key: "sector_news_sentiment", label: "뉴스 감성",   staleMs: 24 * 3600000 },
+          { key: "xs_panel",            label: "횡단면 패널",   staleMs: 36 * 3600000 },
+          { key: "hv_offset:v12",       label: "표본 수확",     staleMs: 24 * 3600000 },
+          { key: "cf_label_lock",       label: "반사실 라벨링", staleMs: 6 * 3600000 },
+          { key: "ai_trained_day",      label: "AI 학습",       staleMs: 36 * 3600000 }
+        ];
+        const _ph = SUBS.map(function () { return "?"; }).join(",");
+        const _st = env.DB.prepare("SELECT k, updated_ts FROM state WHERE k IN (" + _ph + ")");
+        const _rows = await _st.bind.apply(_st, SUBS.map(function (s) { return s.key; })).all();
+        const _tsMap = {};
+        for (const r of ((_rows && _rows.results) || [])) _tsMap[r.k] = r.updated_ts || 0;
+        const now = Date.now();
+        const steps = SUBS.map(function (s) {
+          const ts = _tsMap[s.key] || 0;
+          return { key: s.key, label: s.label, ts: ts || null,
+                   status: !ts ? "NEVER" : ((now - ts) <= s.staleMs ? "OK" : "STALE") };
+        });
+        return Response.json({ steps: steps, serverTime: now }, { headers: cors });
+      } catch (e) {
+        return Response.json({ steps: [], error: String((e && e.message) || e) }, { headers: cors });
+      }
     }
 
     // [V12.73] 경량 운용모드 조회 — 대시보드 배지·자가평가 카드용(ml-status 전체보다 훨씬 가벼움)
@@ -21197,13 +21259,12 @@ async function harvestDeepFetchNightly(DB) {
 async function mlDataHealth(DB) {
   const out = { featVer: LUXML.featVer, target: (typeof AI_PARAMS !== "undefined" && AI_PARAMS.prediction && AI_PARAMS.prediction.target) || "binary", featCount: LUXML.featNames.length };
   try {
-    const cur = await DB.prepare("SELECT COUNT(*) n, AVG(label) pos FROM ml_samples WHERE featver = ?").bind(LUXML.featVer).first();
-    out.samplesCurrentFeatVer = (cur && cur.n) || 0;
-    out.positiveRate = (cur && cur.pos != null) ? +Number(cur.pos).toFixed(3) : null;   // alpha 클래스 균형(~0.3~0.45 정상)
-    const byStrat = await DB.prepare("SELECT strategy, COUNT(*) n FROM ml_samples WHERE featver = ? GROUP BY strategy").bind(LUXML.featVer).all();
-    out.byStrategy = {}; for (const r of ((byStrat && byStrat.results) || [])) out.byStrategy[r.strategy] = r.n;
-    const old = await DB.prepare("SELECT COUNT(*) n FROM ml_samples WHERE featver != ?").bind(LUXML.featVer).first();
-    out.staleSamples = (old && old.n) || 0;    // 구버전(정리 대상) 잔여
+    // [V12.130b] 동일 집계를 sentiStatus와 중복 스캔하던 것을 공유 캐시(GROUP BY 1회)로 통합.
+    const c = await _mlCountsCached(DB);
+    out.samplesCurrentFeatVer = c.curTotal;
+    out.positiveRate = c.curTotal > 0 ? +(c.curPosSum / c.curTotal).toFixed(3) : null;   // alpha 클래스 균형(~0.3~0.45 정상)
+    out.byStrategy = Object.assign({}, c.byStrategyCur);
+    out.staleSamples = c.stale;                // 구버전(정리 대상) 잔여
     const dh = await DB.prepare("SELECT COUNT(*) n FROM state WHERE k LIKE 'hist:%'").first();
     out.deepHistorySymbols = (dh && dh.n) || 0;
     out.deepBars = HARVEST.deepBars;
@@ -24157,21 +24218,47 @@ async function mlBacktestInject(DB, seriesBySym, signalFn, opts) {
   } catch (e) { return "[BT] fail: " + (e && e.message); }
 }
 
+// [V12.130b] ★/api/ml-status 100초 지연의 실제 범인★ 종전 sentiStatus는 ml_samples에 COUNT(*)를
+//   4번, ml_candidates에 2번 던졌다. 그중 strategy!='hv' / featver!=? 는 부정 조건이라 인덱스를
+//   못 타고 16만 행 풀스캔이 된다. mlDataHealth도 같은 집계를 중복 수행해 총 10회 가까운 스캔이
+//   한 요청에 몰렸다(병렬화해도 D1을 동시에 때려 더 나빠짐 — 실측 109~115s).
+//   → GROUP BY 한 방으로 전부 계산하고 60초 공유 캐시에 담는다(관측용이라 분 단위 신선도면 충분).
+async function _mlCountsCached(DB) {
+  if (globalThis.__mlCounts && Date.now() - globalThis.__mlCounts.ts < 60000) return globalThis.__mlCounts.v;
+  const v = { byFvStrat: {}, curTotal: 0, curPosSum: 0, stale: 0, byStrategyCur: {}, cand: 0, candUnlabeled: 0 };
+  try {
+    // 표본: featver×strategy 집계 1회 스캔으로 현재/구버전/전략별을 모두 도출
+    const rs = await DB.prepare("SELECT featver, strategy, COUNT(*) n, SUM(label) pos FROM ml_samples GROUP BY featver, strategy").all();
+    for (const r of ((rs && rs.results) || [])) {
+      const fv = r.featver, st = r.strategy || "?", n = r.n || 0;
+      if (fv === LUXML.featVer) {
+        v.curTotal += n; v.curPosSum += (r.pos || 0);
+        v.byStrategyCur[st] = (v.byStrategyCur[st] || 0) + n;
+      } else v.stale += n;
+    }
+  } catch (e) {}
+  try {
+    const rc = await DB.prepare("SELECT labeled, COUNT(*) n FROM ml_candidates WHERE featver=? GROUP BY labeled").bind(LUXML.featVer).all();
+    for (const r of ((rc && rc.results) || [])) {
+      v.cand += (r.n || 0);
+      if (r.labeled === 0) v.candUnlabeled += (r.n || 0);
+    }
+  } catch (e) {}
+  globalThis.__mlCounts = { ts: Date.now(), v: v };
+  return v;
+}
+
 async function sentiStatus(DB) {
   try {
     const s = await getState(DB, "sector_news_sentiment", null);
-    let cand = 0, unl = 0, hvN = 0, tradeN = 0;
-    try { const r = await DB.prepare("SELECT COUNT(*) c FROM ml_candidates WHERE featver=?").bind(LUXML.featVer).first(); cand = (r && r.c) || 0; } catch (e) {}
-    try { const r = await DB.prepare("SELECT COUNT(*) c FROM ml_candidates WHERE labeled=0 AND featver=?").bind(LUXML.featVer).first(); unl = (r && r.c) || 0; } catch (e) {}
-    try { const r = await DB.prepare("SELECT COUNT(*) c FROM ml_samples WHERE strategy='hv' AND featver=?").bind(LUXML.featVer).first(); hvN = (r && r.c) || 0; } catch (e) {}
-    try { const r = await DB.prepare("SELECT COUNT(*) c FROM ml_samples WHERE strategy!='hv' AND featver=?").bind(LUXML.featVer).first(); tradeN = (r && r.c) || 0; } catch (e) {}
-    let staleN = 0;   // [V12.95] 구 featVer 잔량(점진 정리 중) — 표본 진단용
-    try { const r = await DB.prepare("SELECT COUNT(*) c FROM ml_samples WHERE featver != ?").bind(LUXML.featVer).first(); staleN = (r && r.c) || 0; } catch (e) {}
+    const c = await _mlCountsCached(DB);
+    let tradeN = 0;
+    for (const k in c.byStrategyCur) if (k !== "hv") tradeN += c.byStrategyCur[k];
     return { sentimentGroups: s ? Object.keys(s.sentiment || {}).length : 0,
       sentimentUpdatedAt: s ? (s.sentimentAt || s.updatedAt || s.ts || null) : null,
-      candidatesTotal: cand, candidatesUnlabeled: unl,
-      samplesHarvested: hvN, samplesFromTrades: tradeN,
-      featVer: LUXML.featVer, staleFeatverSamples: staleN };
+      candidatesTotal: c.cand, candidatesUnlabeled: c.candUnlabeled,
+      samplesHarvested: c.byStrategyCur["hv"] || 0, samplesFromTrades: tradeN,
+      featVer: LUXML.featVer, staleFeatverSamples: c.stale };
   } catch (e) { return { error: e && e.message }; }
 }
 export default {
@@ -24381,7 +24468,14 @@ export default {
               //   풀이 목표에 크게 못 미치면(<60%) 재구축이 최우선이므로 장중에도 짧은 예산으로
               //   돌린다. 거래 사이클과의 CPU 경쟁은 예산(장중 8s)과 락 주기로 억제.
               const _cuGap = _mktOpen ? 180000 : 90000;   // 장중엔 3분 간격으로 더 여유
-              if (Date.now() - _cuLock > _cuGap) {
+              // [V12.130b] ★고갈 감지★ 원천 데이터(딥이력 422종목·일봉 555종목)에서 뽑을 수 있는 표본을
+              //   이미 다 뽑으면 캐치업이 매 틱 돌면서 0건만 생산해 CPU·D1을 순수 낭비한다(실측: 락·오프셋은
+              //   계속 갱신되는데 표본은 163,667에서 3분간 증가 0). rebuildTarget(70만)은 현재 원천으론
+              //   도달 불가능한 값이라 "목표 미달=계속 수확" 조건만으로는 영원히 멈추지 않는다.
+              //   → 풀 크기가 직전 시도와 같으면(=0건 생산) 카운트를 올리고, 3회 연속이면 30분 쿨다운.
+              const _cuDry = await getState(env.DB, "hv_catchup_dry", null);
+              const _dryUntil = (_cuDry && _cuDry.until) || 0;
+              if (Date.now() - _cuLock > _cuGap && Date.now() > _dryUntil) {
               const _pr = await env.DB.prepare("SELECT COUNT(*) c FROM ml_samples WHERE featver=?").bind(LUXML.featVer).first();
               const _poolN = (_pr && _pr.c) || 0;
               const _target = HARVEST.rebuildTarget || 700000;
@@ -24391,7 +24485,18 @@ export default {
                 await setState(env.DB, "hv_catchup_lock", Date.now());
                 try { resetFetchBudget(_mktOpen ? 40 : 120); } catch (e0) {}
                 const _cr = await mlMarketHarvestNightly(env.DB, { budgetMs: _mktOpen ? 8000 : 22000 });
-                if (_cr) await log(env.DB, "INFO", null, "[HV-CATCHUP] pool=" + _poolN + "/" + _target + (_mktOpen ? " (장중 단축)" : "") + " " + _cr);
+                const _pr2 = await env.DB.prepare("SELECT COUNT(*) c FROM ml_samples WHERE featver=?").bind(LUXML.featVer).first();
+                const _gained = ((_pr2 && _pr2.c) || 0) - _poolN;
+                if (_gained > 0) {
+                  await setState(env.DB, "hv_catchup_dry", { n: 0, until: 0 });
+                  await log(env.DB, "INFO", null, "[HV-CATCHUP] pool=" + _poolN + "→" + (_poolN + _gained) + "/" + _target + (_mktOpen ? " (장중 단축)" : ""));
+                } else {
+                  const _n = ((_cuDry && _cuDry.n) || 0) + 1;
+                  const _stop = _n >= 3;
+                  await setState(env.DB, "hv_catchup_dry", { n: _stop ? 0 : _n, until: _stop ? Date.now() + 1800000 : 0 });
+                  await log(env.DB, "WARN", null, "[HV-CATCHUP] 0건 생산(" + _n + "/3) pool=" + _poolN +
+                    " — 원천 데이터 고갈 추정" + (_stop ? " → 30분 쿨다운(딥이력 확대 필요)" : ""));
+                }
               }
               }
             }
@@ -24420,6 +24525,30 @@ export default {
               if (_cfr) await log(env.DB, "INFO", null, "[CF-TICK] " + _cfr);
             }
           } catch (e) { try { await log(env.DB, "ERROR", null, "[CF-TICK] " + (e && e.message)); } catch (e2) {} }
+
+          // [V12.130b] ★표본을 실제로 늘리는 유일한 길 — 딥이력 커버리지 확대★
+          //   현재 딥이력(2400봉) 보유 422종목 / 일봉(320봉)만 555종목. 표본 상한이 원천 데이터로
+          //   묶여 있어(163,667에서 고갈) 수확을 아무리 돌려도 더 나오지 않는다. 딥이력이 붙은 종목은
+          //   봉수가 7.5배라 표본 기여도 그만큼 크다 → 커버리지를 올리는 게 표본 증가의 본질.
+          //   종전엔 이 수집이 야간 파이프라인 _stg("deephist") 안에만 있어 하루 1회로 제한됐다.
+          //   커버리지 90% 미만인 동안엔 장외에 20분 주기로 추가 수집한다(외부 fetch 예산가드 내장).
+          try {
+            const _dhLock = _num(await getState(env.DB, "deephist_lock", 0), 0);
+            const _mktOpen3 = (typeof isTradingWindow === "function") && (isTradingWindow("us") || isTradingWindow("kr"));
+            if (!_mktOpen3 && (Date.now() - _dhLock > 1200000)) {
+              const _hc = await env.DB.prepare("SELECT (SELECT COUNT(*) FROM state WHERE k LIKE 'hist:%') h, (SELECT COUNT(*) FROM state WHERE k LIKE 'daily:%') d").first();
+              const _hn = (_hc && _hc.h) || 0, _dn = (_hc && _hc.d) || 0;
+              if (_dn > 0 && _hn < _dn * 0.9) {
+                await setState(env.DB, "deephist_lock", Date.now());
+                try { resetFetchBudget(200); } catch (e0) {}
+                const _dr = await harvestDeepFetchNightly(env.DB);
+                await log(env.DB, "INFO", null, "[DEEPHIST] 커버리지 " + _hn + "/" + _dn +
+                  "(" + (_hn / _dn * 100).toFixed(0) + "%) " + (_dr || ""));
+                // 딥이력이 늘면 새 봉이 생기므로 수확 고갈 쿨다운을 해제한다.
+                try { await setState(env.DB, "hv_catchup_dry", { n: 0, until: 0 }); } catch (e0) {}
+              }
+            }
+          } catch (e) { try { await log(env.DB, "ERROR", null, "[DEEPHIST] " + (e && e.message)); } catch (e2) {} }
 
           // [V12.125] 내부자거래·실적캘린더 자동 갱신 — 장중 핫패스에서 여기(장 마감 시간대·저우선순위
           //   구간)로 이동. 각자 15분/6h 내부 캐시가 있어 이 블록이 자주 돌아도 실제 외부 fetch는 그
