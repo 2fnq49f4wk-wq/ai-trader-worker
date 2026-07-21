@@ -14670,7 +14670,15 @@ async function handleRequest(request, env) {
     if (path === "/api/report/monthly") {
       const ym = url.searchParams.get("ym") || null;
       const force = url.searchParams.get("refresh") === "1";
-      const rpt = await mlMonthlyReport(env.DB, ym, force, env);
+      let rpt = await mlMonthlyReport(env.DB, ym, force, env);
+      // [V12.127] ★D1 과부하 재시도★ 리포트는 수십 회의 순차 D1 조회(거래내역·일봉·매크로 등)를
+      //   묶어서 하는데, 트레이딩 사이클과 동시에 D1이 바쁠 때 "D1 is overloaded"로 통째 실패했다
+      //   (사용자 리포트). 일시적 과부하일 가능성이 커 짧은 대기 후 1회만 재시도 — 그래도 실패하면
+      //   있는 그대로(에러 텍스트 포함) 반환해 사용자가 재시도 버튼으로 다시 시도할 수 있게 한다.
+      if (rpt && rpt.error && /D1_ERROR|overloaded|queued/i.test(String(rpt.error))) {
+        try { await new Promise(function (res) { setTimeout(res, 1500); }); } catch (e) {}
+        try { rpt = await mlMonthlyReport(env.DB, ym, force, env); } catch (e) {}
+      }
       return Response.json(rpt, { headers: cors });
     }
 
@@ -24133,16 +24141,22 @@ export default {
           //   방지, 거래윈도우 밖일 때만(시세 사이클 CPU 경쟁 회피).
           try {
             if (HARVEST.enabled && LUXML.enabled) {
+              // [V12.127] ★D1 부하 감소★ 종전엔 COUNT(*)(ml_samples 전체 스캔)가 락 체크보다 먼저 실행돼
+              //   90s 락과 무관하게 '매 cron 틱'(1분마다=하루 1440회) 무조건 실행됐다. 값싼 락/장중 체크를
+              //   먼저 걸러서, 실제로 캐치업을 실행할 가능성이 있을 때만 COUNT를 돌리도록 순서를 바꿨다
+              //   (D1_ERROR "overloaded" 리포트 이후 D1 부하원 점검 중 발견).
+              const _cuLock = _num(await getState(env.DB, "hv_catchup_lock", 0), 0);
+              const _mktOpen = (typeof isTradingWindow === "function") && (isTradingWindow("us") || isTradingWindow("kr"));
+              if (!_mktOpen && (Date.now() - _cuLock > 90000)) {
               const _pr = await env.DB.prepare("SELECT COUNT(*) c FROM ml_samples WHERE featver=?").bind(LUXML.featVer).first();
               const _poolN = (_pr && _pr.c) || 0;
               const _target = HARVEST.rebuildTarget || 700000;
-              const _cuLock = _num(await getState(env.DB, "hv_catchup_lock", 0), 0);
-              const _mktOpen = (typeof isTradingWindow === "function") && (isTradingWindow("us") || isTradingWindow("kr"));
-              if (_poolN < _target && !_mktOpen && (Date.now() - _cuLock > 90000)) {
+              if (_poolN < _target) {
                 await setState(env.DB, "hv_catchup_lock", Date.now());
                 try { resetFetchBudget(120); } catch (e0) {}
                 const _cr = await mlMarketHarvestNightly(env.DB, { budgetMs: 22000 });   // 짧은 예산 캐치업
                 if (_cr) await log(env.DB, "INFO", null, "[HV-CATCHUP] pool=" + _poolN + "/" + _target + " " + _cr);
+              }
               }
             }
           } catch (e) {}
