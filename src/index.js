@@ -14148,29 +14148,65 @@ async function handleRequest(request, env, ctx) {
   //   /api/state·/api/ml-status에서 효과가 검증된 패턴(신선하면 즉시, 오래됐어도 즉시 주고
   //   갱신은 백그라운드)을 나머지 느린 조회에도 동일하게 적용한다. 대시보드가 이들을 함께
   //   호출하므로 하나라도 느리면 화면 전체가 늦게 뜬다. 부수효과 없는 GET에만 쓴다.
+  //   [V12.131c] L1(아이솔레이트 메모리)만으론 부족하다 — 대시보드 부팅은 12개 엔드포인트를
+  //   '동시에' 치는데, 콜드 아이솔레이트에서는 전부 각자 D1 빌드를 시작해 D1을 동시에 때린다
+  //   (실측: 동시호출 시 heatmap 500 D1_ERROR, trades·indices 빈 응답). 그래서 colo 단위로
+  //   공유되는 Edge Cache를 L2로 둔다 — 누가 한 번 빌드하면 같은 지역의 모든 요청이 재사용.
   const swrJson = async function (key, freshMs, staleMs, build) {
     const store = (globalThis.__swr || (globalThis.__swr = {}));
-    const hit = store[key];
-    const age = hit ? Date.now() - hit.ts : Infinity;
     const jhdr = Object.assign({ "content-type": "application/json" }, cors);
+    const ekey = new Request("https://swr-cache.internal/" + encodeURIComponent(key));
+    const put = function (str, ts) {
+      try {
+        return caches.default.put(ekey, new Response(str, { headers: {
+          "content-type": "application/json", "cache-control": "s-maxage=900", "x-built-at": String(ts) } }))["catch"](function () {});
+      } catch (e) { return Promise.resolve(); }
+    };
     const refresh = function () {
       const bk = "__b_" + key;
       if (store[bk]) return null;
       store[bk] = 1;
       return Promise.resolve().then(build)
-        .then(function (v) { store[key] = { ts: Date.now(), str: JSON.stringify(v) }; })
+        .then(function (v) {
+          const s = JSON.stringify(v), t = Date.now();
+          store[key] = { ts: t, str: s };
+          return put(s, t);
+        })
         ["catch"](function () {})
         ["then"](function () { store[bk] = 0; });
     };
+    // ── L1: 아이솔레이트 메모리 ──
+    const hit = store[key];
+    const age = hit ? Date.now() - hit.ts : Infinity;
     if (hit && age < freshMs) return new Response(hit.str, { headers: jhdr });
     if (hit && age < staleMs) {
       const p = refresh();
       if (p && ctx && ctx.waitUntil) ctx.waitUntil(p);
       return new Response(hit.str, { headers: jhdr });
     }
+    // ── L2: colo 공유 Edge Cache (콜드 아이솔레이트가 D1로 몰리는 것을 막는다) ──
+    try {
+      const er = await caches.default.match(ekey);
+      if (er) {
+        const bAt = +(er.headers.get("x-built-at") || 0);
+        const eAge = Date.now() - bAt;
+        if (eAge < staleMs) {
+          const body = await er.text();
+          store[key] = { ts: bAt, str: body };          // L1 워밍
+          if (eAge > freshMs) {
+            const p = refresh();
+            if (p && ctx && ctx.waitUntil) ctx.waitUntil(p);
+          }
+          return new Response(body, { headers: jhdr });
+        }
+      }
+    } catch (e) {}
+    // ── 콜드: 실제 빌드(이때만 D1을 친다) ──
     const v = await build();
-    store[key] = { ts: Date.now(), str: JSON.stringify(v) };
-    return new Response(store[key].str, { headers: jhdr });
+    const s = JSON.stringify(v), t = Date.now();
+    store[key] = { ts: t, str: s };
+    if (ctx && ctx.waitUntil) ctx.waitUntil(put(s, t)); else await put(s, t);
+    return new Response(s, { headers: jhdr });
   };
 
   try {
@@ -14184,11 +14220,12 @@ async function handleRequest(request, env, ctx) {
       //   하위 호출을 더 최적화해도 다음 병목이 또 드러나는 구조). 관측용이고 분 단위로만 바뀌므로
       //   /api/state와 같은 SWR로 구조적으로 해결한다 — 오래된 값이라도 즉시 주고 갱신은 백그라운드.
       //   사용자는 콜드 스타트 1회를 제외하면 대기하지 않는다.
-      const _msHdr = { "content-type": "application/json", "access-control-allow-origin": "*" };
-      const _msc = globalThis.__mlStatusCache;
-      const _msAge = _msc ? Date.now() - _msc.ts : Infinity;
+      // [V12.131c] L1(아이솔레이트)만으론 콜드 빌드가 반복돼 100초대가 계속 나왔다
+      //   (동시 부하에서 130s 관측). swrJson으로 통일해 L2(colo 공유 Edge Cache)를 태운다 —
+      //   같은 지역에서 누가 한 번 빌드하면 이후 요청은 아이솔레이트가 달라도 즉시 응답.
+      //   관측용이라 stale 허용을 6시간으로 넉넉히 둬 콜드 빌드 빈도 자체를 낮춘다.
       const _safe = function (fn) { try { const p = fn(); return Promise.resolve(p)["catch"](function () { return null; }); } catch (e) { return Promise.resolve(null); } };
-      const _msBuild = async function () {
+      return await swrJson("ml-status", 30000, 6 * 3600000, async function () {
         const [a, b2, c2, d2, e2, f2, g2, h2, i2, j2, k2] = await Promise.all([
           _safe(function () { return (typeof mlStatus === "function") ? mlStatus(env.DB) : null; }),
           _safe(function () { return (typeof mlLoadEventMemory === "function") ? mlLoadEventMemory(env.DB) : null; }),
@@ -14202,22 +14239,9 @@ async function handleRequest(request, env, ctx) {
           _safe(function () { return (typeof mlDataHealth === "function") ? mlDataHealth(env.DB) : null; }),
           _safe(function () { return getState(env.DB, "ai_selfreview", null); })
         ]);
-        const o = { model: a, events: b2, bandit: c2, brain: d2, mind: e2, dnn: f2, gbdt: g2,
-                    committee: h2, data: i2, dataHealth: j2, selfreview: k2 };
-        const s = JSON.stringify(o, null, 2);
-        globalThis.__mlStatusCache = { ts: Date.now(), str: s };
-        return s;
-      };
-      if (_msc && _msAge < 30000) return new Response(_msc.str, { headers: _msHdr });
-      if (_msc && _msAge < 900000) {   // 15분까지는 stale 허용 + 백그라운드 갱신
-        if (!globalThis.__mlStatusBuilding) {
-          globalThis.__mlStatusBuilding = true;
-          const bp = _msBuild()["catch"](function () {})["then"](function () { globalThis.__mlStatusBuilding = false; });
-          if (ctx && ctx.waitUntil) ctx.waitUntil(bp);
-        }
-        return new Response(_msc.str, { headers: _msHdr });
-      }
-      return new Response(await _msBuild(), { headers: _msHdr });
+        return { model: a, events: b2, bandit: c2, brain: d2, mind: e2, dnn: f2, gbdt: g2,
+                 committee: h2, data: i2, dataHealth: j2, selfreview: k2 };
+      });
     }
 
 
@@ -15193,10 +15217,24 @@ async function handleRequest(request, env, ctx) {
           return Response.json(globalThis.__hmCache.data, { headers: cors });
         }
         // ── (1) 단기(1W/1M/3M)·거래량 — 일봉 캐시에서 계산 ──
-        const rows = await env.DB.prepare("SELECT k, v FROM state WHERE k LIKE 'daily:%'").all();
+        // [V12.131c] 이 daily:% 전체 스캔(977종목 × 320~2400봉, 수 MB)은 prefetch가 쓰는 것과
+        //   동일하다. 대시보드 부팅 시 동시 호출되면 D1이 이 쿼리 여러 개를 한꺼번에 받아
+        //   과부하로 떨어졌다(실측: heatmap 500 D1_ERROR). 공유 캐시(__allDailyCache)를 재사용한다.
+        let _hmDaily;
+        if (globalThis.__allDailyCache && Date.now() - globalThis.__allDailyCache.ts < 600000) {
+          _hmDaily = globalThis.__allDailyCache.map;
+        } else {
+          const rows0 = await env.DB.prepare("SELECT k, v FROM state WHERE k LIKE 'daily:%'").all();
+          _hmDaily = {};
+          for (const r of (rows0.results || [])) {
+            try { _hmDaily[r.k.slice(6)] = JSON.parse(r.v); } catch (e) {}
+          }
+          globalThis.__allDailyCache = { ts: Date.now(), map: _hmDaily };
+        }
+        const rows = { results: Object.keys(_hmDaily).map(function (s) { return { k: "daily:" + s, __d: _hmDaily[s] }; }) };
         const out = {};
         for (const r of (rows.results || [])) {
-          let d; try { d = JSON.parse(r.v); } catch (e) { continue; }
+          let d = r.__d; if (!d) continue;
           const closes = d && d.closes;
           if (!closes || closes.length < 10) continue;
           const sym = r.k.slice(6);
