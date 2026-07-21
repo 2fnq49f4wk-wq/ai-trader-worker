@@ -22294,28 +22294,63 @@ const US_KO_ALIAS = {
   "삼성전자":"005930.KS","하이닉스":"000660.KS","SK하이닉스":"000660.KS","카카오":"035720.KS","네이버":"035420.KS",
   "현대차":"005380.KS","기아":"000270.KS","LG에너지솔루션":"373220.KS","포스코":"005490.KS","셀트리온":"068270.KS"
 };
-function _aiAskResolveSymbol(q) {
+// [V12.114] 단일→다중 심볼 인식으로 확장(비교 질문 대응). 발견 순서 유지, 중복 제거.
+function _aiAskResolveSymbols(q) {
+  const out = [];
+  const add = function (s) { if (s && out.indexOf(s) < 0) out.push(s); };
   try {
-    const krM = q.match(/\b(\d{6}\.(KS|KQ))\b/i);
-    if (krM) return krM[1].toUpperCase();
+    const krMs = q.match(/\d{6}\.(KS|KQ)/ig) || [];
+    for (const m of krMs) add(m.toUpperCase());
     const aliasKeys = Object.keys(US_KO_ALIAS).sort(function (a, b) { return b.length - a.length; });
-    for (const k of aliasKeys) if (q.indexOf(k) >= 0) return US_KO_ALIAS[k];
+    for (const k of aliasKeys) if (q.indexOf(k) >= 0) add(US_KO_ALIAS[k]);
     const names = Object.keys(NAME_MAP).map(function (k) { return { sym: k, name: NAME_MAP[k] }; })
       .filter(function (n) { return n.name && n.name.length >= 3; })
       .sort(function (a, b) { return b.name.length - a.name.length; });
-    for (const n of names) if (q.toLowerCase().indexOf(n.name.toLowerCase()) >= 0) return n.sym;
+    const qLow = q.toLowerCase();
+    for (const n of names) if (qLow.indexOf(n.name.toLowerCase()) >= 0) add(n.sym);
     const toks = q.toUpperCase().match(/[A-Z]{2,5}/g) || [];
-    for (const t of toks) if (NAME_MAP[t]) return t;
-    return null;
-  } catch (e) { return null; }
+    for (const t of toks) if (NAME_MAP[t]) add(t);
+  } catch (e) {}
+  return out;
+}
+function _aiAskResolveSymbol(q) { const a = _aiAskResolveSymbols(q); return a.length ? a[0] : null; }
+// [V12.114] 종목 스냅샷 — 단일질문·비교질문이 공유하는 데이터 수집기(내부 계산만, 외부 호출 0)
+async function _aiAskSnapshot(DB, sym, scanCache) {
+  const dd = await getState(DB, "daily:" + sym, null);
+  if (!dd || !Array.isArray(dd.closes) || dd.closes.length < 30) return null;
+  const market = /\.(KS|KQ)$/i.test(sym) ? "kr" : "us";
+  const nm = NAME_MAP[sym] || sym;
+  const price = dd.price != null ? dd.price : dd.closes[dd.closes.length - 1];
+  const prevClose = dd.prevClose || dd.closes[dd.closes.length - 2] || price;
+  const dayPct = prevClose ? ((price / prevClose) - 1) * 100 : 0;
+  let tk = { tech: null, blue: 0, adx: null }; try { tk = _luxPickTech(dd, sym, market); } catch (e) {}
+  let ts = null; try { ts = techSummaryMultiTF(dd.closes, dd.highs, dd.lows); } catch (e) {}
+  let pat = null; try { pat = taDetectPatterns(dd); } catch (e) {}
+  let newsS = null; try { newsS = await _luxSymNewsScore(DB, sym); } catch (e) {}
+  let volConf = null;
+  try {
+    if (Array.isArray(dd.volumes) && dd.volumes.length >= 21) {
+      const v = dd.volumes, last = v[v.length - 1];
+      let avg20 = 0; for (let i = v.length - 21; i < v.length - 1; i++) avg20 += _num(v[i], 0); avg20 /= 20;
+      if (avg20 > 0) volConf = last / avg20;
+    }
+  } catch (e) {}
+  let atrPct = null; try { const _atr = getATR(dd.closes, 14, dd.highs, dd.lows); if (_atr != null && price > 0) atrPct = (_atr / price) * 100; } catch (e) {}
+  let aiP = null;
+  try {
+    const scan = scanCache !== undefined ? scanCache : await getState(DB, "ai_picks:scan", null);
+    const pick = scan && Array.isArray(scan.picks) ? scan.picks.find(function (p) { return p.symbol === sym; }) : null;
+    if (pick && typeof pick.p === "number") aiP = pick.p;
+  } catch (e) {}
+  return { sym: sym, nm: nm, market: market, price: price, dayPct: dayPct, tk: tk, ts: ts, pat: pat, newsS: newsS, volConf: volConf, atrPct: atrPct, aiP: aiP };
 }
 async function mlAiAsk(DB, question) {
   const q = String(question || "").trim().slice(0, 300);
   if (!q) return { ok: false, msg: "질문을 입력해줘." };
-  const sym = _aiAskResolveSymbol(q);
+  const syms = _aiAskResolveSymbols(q);
   const macroKw = ["금리", "연준", "fed", "cpi", "물가", "인플레", "고용", "실업률", "경기", "거시"];
   const qLower = q.toLowerCase();
-  const isMacroQ = !sym && macroKw.some(function (k) { return q.indexOf(k) >= 0 || qLower.indexOf(k) >= 0; });
+  const isMacroQ = !syms.length && macroKw.some(function (k) { return q.indexOf(k) >= 0 || qLower.indexOf(k) >= 0; });
   if (isMacroQ) {
     try {
       const md = await _luxMacroSectorData(DB);
@@ -22329,26 +22364,42 @@ async function mlAiAsk(DB, question) {
       return { ok: true, answer: parts.join(" ") || "관련 거시 데이터를 아직 충분히 못 모았어." };
     } catch (e) { return { ok: true, answer: "거시 데이터 조회 중 문제가 있었어." }; }
   }
-  if (!sym) return { ok: true, answer: "어떤 종목인지 못 알아들었어. 티커(예: MU, 005930.KS)나 정확한 회사명을 같이 적어줘." };
-  let dd = null; try { dd = await getState(DB, "daily:" + sym, null); } catch (e) {}
-  if (!dd || !Array.isArray(dd.closes) || dd.closes.length < 30) return { ok: true, symbol: sym, answer: (NAME_MAP[sym] || sym) + "의 데이터가 아직 부족해서 분석하기 어려워." };
-  const market = /\.(KS|KQ)$/i.test(sym) ? "kr" : "us";
-  const nm = NAME_MAP[sym] || sym;
-  const price = dd.price != null ? dd.price : dd.closes[dd.closes.length - 1];
-  const prevClose = dd.prevClose || dd.closes[dd.closes.length - 2] || price;
-  const dayPct = prevClose ? ((price / prevClose) - 1) * 100 : 0;
-  let tk = { tech: null, blue: 0, adx: null }; try { tk = _luxPickTech(dd, sym, market); } catch (e) {}
-  let ts = null; try { ts = techSummaryMultiTF(dd.closes, dd.highs, dd.lows); } catch (e) {}
-  let newsS = null; try { newsS = await _luxSymNewsScore(DB, sym); } catch (e) {}
-  let aiP = null;
-  try {
-    const scan = await getState(DB, "ai_picks:scan", null);
-    const pick = scan && Array.isArray(scan.picks) ? scan.picks.find(function (p) { return p.symbol === sym; }) : null;
-    if (pick && typeof pick.p === "number") aiP = pick.p;
-  } catch (e) {}
+  if (!syms.length) return { ok: true, answer: "어떤 종목인지 못 알아들었어. 티커(예: MU, 005930.KS)나 정확한 회사명을 같이 적어줘." };
   const isTrendQ = /일시적|지속|계속|오래|반짝|단기|추세/.test(q);
   const isOutlookQ = /전망|오를까|떨어질까|매수|매도|사도|팔아|어떻게 될까|살까|살만/.test(q);
   const isWhyQ = /왜|이유|원인/.test(q);
+  const isRiskQ = /리스크|위험|변동성|손절/.test(q);
+  const isCompareQ = syms.length >= 2;   // 2개 이상 종목이 언급되면 비교 모드로 응답
+
+  let scanCache = null; try { scanCache = await getState(DB, "ai_picks:scan", null); } catch (e) {}
+
+  // ── 다중 종목: 비교 답변 ──
+  if (isCompareQ) {
+    const snaps = [];
+    for (const s of syms.slice(0, 4)) { try { const sn = await _aiAskSnapshot(DB, s, scanCache); if (sn) snaps.push(sn); } catch (e) {} }
+    if (snaps.length < 2) return { ok: true, answer: "비교하려면 최소 두 종목의 데이터가 필요한데, 하나는 데이터가 부족해." };
+    const lines = ["**비교: " + snaps.map(function (s) { return s.nm; }).join(" vs ") + "**"];
+    for (const s of snaps) {
+      const bits = [];
+      bits.push((s.dayPct >= 0 ? "+" : "") + s.dayPct.toFixed(1) + "%");
+      if (s.tk.tech != null) bits.push("기술점수 " + s.tk.tech.toFixed(2));
+      if (s.tk.adx != null) bits.push("ADX " + s.tk.adx);
+      if (s.aiP != null) bits.push("AI확률 " + (s.aiP * 100).toFixed(0) + "%");
+      if (s.newsS != null) bits.push("뉴스 " + (s.newsS >= 0 ? "+" : "") + s.newsS.toFixed(2));
+      lines.push("- **" + s.nm + "(" + s.sym + ")**: " + bits.join(", "));
+    }
+    const scoreOf = function (s) { return (s.tk.tech || 0) * 0.5 + (s.aiP != null ? (s.aiP - 0.5) * 2 : 0) * 0.35 + (s.newsS || 0) * 0.15; };
+    const best = snaps.slice().sort(function (a, b) { return scoreOf(b) - scoreOf(a); })[0];
+    lines.push("→ 기술점수·AI확률·뉴스감성을 종합하면 지금은 **" + best.nm + "**의 신호조합이 상대적으로 더 우호적이야. 다만 차이가 크지 않으면 둘 다 관망 구간일 수 있어.");
+    lines.push("_규칙기반 기술분석 + AI위원회 확률을 조합한 참고용 비교이며, 투자판단의 책임은 본인에게 있어._");
+    return { ok: true, symbols: snaps.map(function (s) { return s.sym; }), answer: lines.join("\n") };
+  }
+
+  // ── 단일 종목 ──
+  const sym = syms[0];
+  const S = await _aiAskSnapshot(DB, sym, scanCache);
+  if (!S) return { ok: true, symbol: sym, answer: (NAME_MAP[sym] || sym) + "의 데이터가 아직 부족해서 분석하기 어려워." };
+  const { nm, market, price, dayPct, tk, ts, pat, newsS, volConf, atrPct, aiP } = S;
   const lines = [];
   lines.push("**" + nm + "(" + sym + ")** 현재가 " + price.toLocaleString() + (market === "kr" ? "원" : "$") + " (" + (dayPct >= 0 ? "+" : "") + dayPct.toFixed(1) + "%)");
   if (ts && ts.now && ts.week && ts.month) {
@@ -22362,11 +22413,26 @@ async function mlAiAsk(DB, question) {
       else lines.push("→ 시간대별 신호가 엇갈려 방향을 확신하기 어려운 구간이야. 조금 더 지켜볼 만해.");
     }
   }
+  // [V12.114] 차트패턴 구체 근거 — "왜"·전망 질문엔 패턴 이름까지 짚어준다
+  if (pat && Array.isArray(pat.patterns) && pat.patterns.length && (isWhyQ || isOutlookQ || isTrendQ)) {
+    const bulls = pat.patterns.filter(function (p) { return p.dir === "bull"; }).slice(0, 2).map(function (p) { return p.name; });
+    const bears = pat.patterns.filter(function (p) { return p.dir === "bear"; }).slice(0, 2).map(function (p) { return p.name; });
+    if (bulls.length) lines.push("차트패턴상 강세 신호: " + bulls.join(", ") + ".");
+    if (bears.length) lines.push("차트패턴상 약세 신호: " + bears.join(", ") + ".");
+  }
+  // [V12.114] 거래량 동반 여부 — 추세/전망 질문에 신뢰도 근거로 추가
+  if (volConf != null && (isTrendQ || isOutlookQ)) {
+    lines.push("거래량은 20일 평균 대비 " + volConf.toFixed(1) + "배" + (volConf >= 1.5 ? " — 거래량이 크게 실려 움직임의 신뢰도가 높은 편이야." : volConf <= 0.7 ? " — 거래량이 저조해 움직임에 힘이 덜 실린 편이야(속임수 가능성 유의)." : " — 평이한 수준이야."));
+  }
   if (tk.adx != null) lines.push("추세강도(ADX) " + tk.adx + (tk.adx >= 25 ? " — 방향성이 뚜렷한 추세 구간이야." : tk.adx < 15 ? " — 무추세·횡보에 가까워 지금 신호는 신뢰도를 낮게 봐야 해." : " — 추세 강도는 보통 수준이야."));
   if (newsS != null) lines.push("최근 뉴스 감성 " + (newsS >= 0.2 ? "긍정적" : newsS <= -0.2 ? "부정적" : "중립적") + "(" + newsS.toFixed(2) + ")" + (isWhyQ ? (Math.abs(newsS) >= 0.3 ? " — 최근 움직임에 뉴스 재료가 상당히 실려 있어." : " — 뉴스보다는 수급·기술적 요인이 더 커 보여.") : ""));
   if (aiP != null) lines.push("AI 위원회 성공확률 " + (aiP * 100).toFixed(0) + "%" + (isOutlookQ ? (aiP >= 0.58 ? " — 매수 우위 시그널이야." : aiP <= 0.45 ? " — 매도·관망 쪽에 가까워." : " — 뚜렷한 방향성 확신은 낮은 구간이야.") : ""));
   if (tk.blue > 0.5) lines.push("시총 상위 우량주라 변동성 대비 기초체력은 비교적 안정적인 편이야.");
-  lines.push("_규칙기반 기술분석 + AI위원회 확률을 조합한 참고용 해석이며, 투자판단의 책임은 본인에게 있어._");
+  // [V12.114] 리스크 질문 — ATR 기반 변동성/손절폭 코멘트(펀더멘털 밸류에이션 데이터는 미보유라 변동성으로 대체)
+  if (isRiskQ && atrPct != null) {
+    lines.push("일간 변동성(ATR) " + atrPct.toFixed(1) + "%" + (atrPct >= 4 ? " — 변동폭이 커서 포지션 크기를 보수적으로 가져가는 게 안전해." : atrPct <= 1.5 ? " — 변동성이 낮은 편이라 상대적으로 안정적이야." : " — 평이한 변동성 수준이야."));
+  }
+  lines.push("_규칙기반 기술분석 + AI위원회 확률을 조합한 참고용 해석이며, 투자판단의 책임은 본인에게 있어. 외부 AI API는 사용하지 않고 이 사이트 내부 데이터로만 답했어._");
   return { ok: true, symbol: sym, answer: lines.join("\n") };
 }
 
