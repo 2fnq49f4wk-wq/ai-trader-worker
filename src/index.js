@@ -24008,7 +24008,7 @@ export default {
           //   단계별 체크포인트가 300s 한도를 여러 cron에 걸쳐 처리하므로 안전하게 완주. 무한루프 방지:
           //   마커를 먼저 갱신하고 게이트/스테이지 체크포인트만 리셋(다음부터는 정상 하루1회 게이트).
           //   → harvest-now/train-now를 수동으로 칠 필요 없이, 배포만으로 MIND/GBDT가 재학습된다.
-          const _PIPE_VER = "V12.118-refill";   // [V12.118] GBDT가 커진 표본풀(16만)을 아직 못 봤다는 사용자 지적 — 강제 전체 재학습
+          const _PIPE_VER = "V12.122-refill";   // [V12.122] GBDT 일일게이트로 인한 재학습 지연 수정 — 즉시 강제 전체 재학습
           try {
             const _pv = await getState(env.DB, "ai_pipeline_ver", null);
             if (_pv !== _PIPE_VER) {
@@ -24072,6 +24072,24 @@ export default {
             await _stg("xspanel", async function () { return await mlBuildXSPanel(env.DB); });
             // (2.5) [HARVEST] 시장 자기지도 표본 수확 — 전 종목 일봉에서 "피처→N일 뒤 방향" 대량 편입
             await _stg("harvest", async function () { return await mlMarketHarvestNightly(env.DB); });
+            // [V12.122] ★재구축기 재학습 가속★ _stg는 하루 1회만 학습을 허용하는데, 표본풀이 재구축
+            //   중(< rebuildTarget)엔 하루 안에도 풀이 크게 늘어난다(catch-up 수확이 매 틱 실행). GBDT가
+            //   그날 이른 시각 작은 풀(예: 7만)로 한 번 학습해버리면, 그 뒤 풀이 16만으로 늘어도 다음날까지
+            //   갱신 안 되던 문제(사용자 보고: "16만인데 GBDT는 7만"). GBDT는 trainWindow(18만)가 풀 전체를
+            //   덮으므로 model.n≈풀 크기다 — 마지막 학습 대비 풀이 25% 이상 늘면 체크포인트를 지워 오늘
+            //   안에 한 번 더 학습시킨다(과도 재학습 방지로 25% 문턱). MIND는 trainWindow가 의도적으로
+            //   작아(25000, V12.38 이력) 풀 전체와 비교하면 항상 "늘었다"고 오판하므로 이 체크 대상에서 제외.
+            try {
+              const _poolChk = await env.DB.prepare("SELECT COUNT(*) c FROM ml_samples WHERE featver=?").bind(LUXML.featVer).first();
+              const _poolNow = (_poolChk && _poolChk.c) || 0;
+              if (_poolNow > 0 && _poolNow < (HARVEST.rebuildTarget || 700000)) {
+                const _gModel = await mlGBDTLoad(env.DB);
+                if (_gModel && _gModel.n > 0 && _poolNow >= _gModel.n * 1.25) {
+                  await env.DB.prepare("DELETE FROM state WHERE k = 'ai_stage:gbdt'").run();
+                  await log(env.DB, "INFO", null, "[REFILL] GBDT 재학습 트리거 — 풀 " + _gModel.n + "→" + _poolNow);
+                }
+              }
+            } catch (e) {}
             // (3) 7단 학습 파이프라인(순서 고정: L1→노이즈→앙상블→MIND→DNN→GBDT)
             await _stg("l1", async function () { return await mlTrainNightly(env.DB); });
             await _stg("bandit", async function () { return await mlBanditNoiseNightly(env.DB); });
