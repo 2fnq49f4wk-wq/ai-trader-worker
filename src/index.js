@@ -22294,6 +22294,15 @@ const US_KO_ALIAS = {
   "삼성전자":"005930.KS","하이닉스":"000660.KS","SK하이닉스":"000660.KS","카카오":"035720.KS","네이버":"035420.KS",
   "현대차":"005380.KS","기아":"000270.KS","LG에너지솔루션":"373220.KS","포스코":"005490.KS","셀트리온":"068270.KS"
 };
+// [V12.115] 섹터 질의 별칭 — _luxMacroSectorData의 그룹키(TECH/FINANCE/...)로 매핑
+const SECTOR_Q_ALIAS = {
+  "반도체":"TECH","기술주":"TECH","테크":"TECH","IT":"TECH",
+  "금융":"FINANCE","은행":"FINANCE","증권":"FINANCE","금융주":"FINANCE",
+  "헬스케어":"HEALTH","바이오":"HEALTH","제약":"HEALTH",
+  "소비재":"CONSUMER","유통":"CONSUMER","리테일":"CONSUMER",
+  "산업재":"INDUSTRIAL","방산":"INDUSTRIAL","항공":"INDUSTRIAL",
+  "에너지":"RESOURCES","소재":"RESOURCES","원자재섹터":"RESOURCES"
+};
 // [V12.114] 단일→다중 심볼 인식으로 확장(비교 질문 대응). 발견 순서 유지, 중복 제거.
 function _aiAskResolveSymbols(q) {
   const out = [];
@@ -22336,13 +22345,32 @@ async function _aiAskSnapshot(DB, sym, scanCache) {
     }
   } catch (e) {}
   let atrPct = null; try { const _atr = getATR(dd.closes, 14, dd.highs, dd.lows); if (_atr != null && price > 0) atrPct = (_atr / price) * 100; } catch (e) {}
+  // [V12.115] 지지/저항 후보 — MA20/50/200·볼린저밴드·52주 고저를 가격 기준 위/아래로 정렬
+  let levels = null;
+  try {
+    const c = dd.closes;
+    const m20 = getMA(c, 20), m50 = getMA(c, 50), m200 = c.length >= 200 ? getMA(c, 200) : null;
+    const bb = getBollingerBands(c, 20, 2.0);
+    const win = c.slice(-252);
+    const hi52 = win.length ? Math.max.apply(null, win) : null, lo52 = win.length ? Math.min.apply(null, win) : null;
+    const cands = [];
+    if (m20 != null) cands.push({ label: "MA20", v: m20 });
+    if (m50 != null) cands.push({ label: "MA50", v: m50 });
+    if (m200 != null) cands.push({ label: "MA200", v: m200 });
+    if (bb) { cands.push({ label: "볼린저 상단", v: bb.upper }); cands.push({ label: "볼린저 하단", v: bb.lower }); }
+    if (hi52 != null) cands.push({ label: "52주 고점", v: hi52 });
+    if (lo52 != null) cands.push({ label: "52주 저점", v: lo52 });
+    const support = cands.filter(function (x) { return x.v < price; }).sort(function (a, b) { return b.v - a.v; }).slice(0, 2);
+    const resistance = cands.filter(function (x) { return x.v > price; }).sort(function (a, b) { return a.v - b.v; }).slice(0, 2);
+    levels = { support: support, resistance: resistance };
+  } catch (e) {}
   let aiP = null;
   try {
     const scan = scanCache !== undefined ? scanCache : await getState(DB, "ai_picks:scan", null);
     const pick = scan && Array.isArray(scan.picks) ? scan.picks.find(function (p) { return p.symbol === sym; }) : null;
     if (pick && typeof pick.p === "number") aiP = pick.p;
   } catch (e) {}
-  return { sym: sym, nm: nm, market: market, price: price, dayPct: dayPct, tk: tk, ts: ts, pat: pat, newsS: newsS, volConf: volConf, atrPct: atrPct, aiP: aiP };
+  return { sym: sym, nm: nm, market: market, price: price, dayPct: dayPct, tk: tk, ts: ts, pat: pat, newsS: newsS, volConf: volConf, atrPct: atrPct, levels: levels, aiP: aiP };
 }
 async function mlAiAsk(DB, question) {
   const q = String(question || "").trim().slice(0, 300);
@@ -22364,11 +22392,55 @@ async function mlAiAsk(DB, question) {
       return { ok: true, answer: parts.join(" ") || "관련 거시 데이터를 아직 충분히 못 모았어." };
     } catch (e) { return { ok: true, answer: "거시 데이터 조회 중 문제가 있었어." }; }
   }
-  if (!syms.length) return { ok: true, answer: "어떤 종목인지 못 알아들었어. 티커(예: MU, 005930.KS)나 정확한 회사명을 같이 적어줘." };
+  // [V12.115] 포트폴리오 질의 — 종목 특정 없이 "내 포지션/보유종목" 등을 물으면 실제 보유현황으로 답변
+  const portKw = ["내 포지션", "보유종목", "내가 산", "포트폴리오", "내 계좌", "보유 중", "내 보유", "지금 뭐 들고"];
+  if (!syms.length && portKw.some(function (k) { return q.indexOf(k) >= 0; })) {
+    try {
+      const markets = ["us", "kr", "cm", "bdus", "bdkr"];
+      const mkNm = { us: "미국", kr: "한국", cm: "원자재", bdus: "미국채", bdkr: "한국채" };
+      const lines = []; let any = false;
+      for (const mk of markets) {
+        let pos = {}; try { pos = await getPositions(DB, mk); } catch (e) {}
+        const keys = Object.keys(pos); if (!keys.length) continue;
+        any = true; lines.push("**" + mkNm[mk] + "**");
+        for (const k of keys) {
+          const p = pos[k];
+          let dd2 = null; try { dd2 = await getState(DB, "daily:" + p.symbol, null); } catch (e) {}
+          const cur = dd2 ? (dd2.price != null ? dd2.price : (Array.isArray(dd2.closes) ? dd2.closes[dd2.closes.length - 1] : null)) : null;
+          const pnl = (cur != null && p.avg > 0) ? ((cur / p.avg) - 1) * 100 : null;
+          lines.push("- " + (NAME_MAP[p.symbol] || p.symbol) + " x" + p.qty + (pnl != null ? " (" + (pnl >= 0 ? "+" : "") + pnl.toFixed(1) + "%)" : ""));
+        }
+      }
+      if (!any) return { ok: true, answer: "지금 보유 중인 포지션이 없어." };
+      lines.push("_최근 저장된 시세 기준 참고치야(실시간 평가금액과 다를 수 있어)._");
+      return { ok: true, answer: lines.join("\n") };
+    } catch (e) { return { ok: true, answer: "포지션 조회 중 문제가 있었어." }; }
+  }
+  // [V12.115] 섹터 질의 — 종목 특정 없이 섹터명(반도체·금융·헬스케어 등)을 물으면 섹터 온도로 답변
+  if (!syms.length) {
+    const secAliasKeys = Object.keys(SECTOR_Q_ALIAS).sort(function (a, b) { return b.length - a.length; });
+    let secHit = null; for (const k of secAliasKeys) if (q.indexOf(k) >= 0) { secHit = SECTOR_Q_ALIAS[k]; break; }
+    if (secHit) {
+      try {
+        const md = await _luxMacroSectorData(DB);
+        const sc = md && md.sectors && md.sectors.find(function (s) { return s.g === secHit; });
+        if (!sc) return { ok: true, answer: "해당 섹터 데이터가 아직 충분히 없어." };
+        const bits = [];
+        if (sc.mom20 != null) bits.push("20일 모멘텀 " + (sc.mom20 >= 0 ? "+" : "") + sc.mom20 + "%");
+        if (sc.senti != null) bits.push("뉴스 감성 " + (sc.senti >= 0 ? "+" : "") + sc.senti);
+        const strong = (sc.mom20 != null && sc.mom20 >= 3) && (sc.senti == null || sc.senti >= 0);
+        const weak = (sc.mom20 != null && sc.mom20 <= -3) || (sc.senti != null && sc.senti <= -0.2);
+        const view = strong ? "모멘텀과 심리가 함께 우호적이라 이 섹터 안에서 신규 후보를 찾아볼 만해." : weak ? "모멘텀·심리가 약해 당분간은 관망이 무난해." : "뚜렷한 방향성은 약해서 종목 단위 선별이 더 나아.";
+        return { ok: true, answer: "**" + sc.name + "** (" + bits.join(", ") + "): " + view };
+      } catch (e) { return { ok: true, answer: "섹터 데이터 조회 중 문제가 있었어." }; }
+    }
+  }
+  if (!syms.length) return { ok: true, answer: "어떤 종목인지 못 알아들었어. 티커(예: MU, 005930.KS)나 정확한 회사명, 섹터명, 또는 '내 포지션'처럼 적어줘." };
   const isTrendQ = /일시적|지속|계속|오래|반짝|단기|추세/.test(q);
   const isOutlookQ = /전망|오를까|떨어질까|매수|매도|사도|팔아|어떻게 될까|살까|살만/.test(q);
   const isWhyQ = /왜|이유|원인/.test(q);
   const isRiskQ = /리스크|위험|변동성|손절/.test(q);
+  const isLevelQ = /지지|저항|목표가|레벨|어디까지|얼마까지|어디서 사/.test(q);
   const isCompareQ = syms.length >= 2;   // 2개 이상 종목이 언급되면 비교 모드로 응답
 
   let scanCache = null; try { scanCache = await getState(DB, "ai_picks:scan", null); } catch (e) {}
@@ -22399,7 +22471,7 @@ async function mlAiAsk(DB, question) {
   const sym = syms[0];
   const S = await _aiAskSnapshot(DB, sym, scanCache);
   if (!S) return { ok: true, symbol: sym, answer: (NAME_MAP[sym] || sym) + "의 데이터가 아직 부족해서 분석하기 어려워." };
-  const { nm, market, price, dayPct, tk, ts, pat, newsS, volConf, atrPct, aiP } = S;
+  const { nm, market, price, dayPct, tk, ts, pat, newsS, volConf, atrPct, levels, aiP } = S;
   const lines = [];
   lines.push("**" + nm + "(" + sym + ")** 현재가 " + price.toLocaleString() + (market === "kr" ? "원" : "$") + " (" + (dayPct >= 0 ? "+" : "") + dayPct.toFixed(1) + "%)");
   if (ts && ts.now && ts.week && ts.month) {
@@ -22431,6 +22503,17 @@ async function mlAiAsk(DB, question) {
   // [V12.114] 리스크 질문 — ATR 기반 변동성/손절폭 코멘트(펀더멘털 밸류에이션 데이터는 미보유라 변동성으로 대체)
   if (isRiskQ && atrPct != null) {
     lines.push("일간 변동성(ATR) " + atrPct.toFixed(1) + "%" + (atrPct >= 4 ? " — 변동폭이 커서 포지션 크기를 보수적으로 가져가는 게 안전해." : atrPct <= 1.5 ? " — 변동성이 낮은 편이라 상대적으로 안정적이야." : " — 평이한 변동성 수준이야."));
+  }
+  // [V12.115] 지지/저항 질문 — MA·볼린저·52주 고저 기반 근접 레벨 제시
+  if (isLevelQ && levels) {
+    if (levels.support.length) lines.push("아래쪽 지지 후보: " + levels.support.map(function (x) { return x.label + " " + Math.round(x.v).toLocaleString(); }).join(", ") + ".");
+    if (levels.resistance.length) lines.push("위쪽 저항/목표 후보: " + levels.resistance.map(function (x) { return x.label + " " + Math.round(x.v).toLocaleString(); }).join(", ") + ".");
+    if (!levels.support.length && !levels.resistance.length) lines.push("뚜렷한 지지·저항 레벨을 계산할 데이터가 부족해.");
+  }
+  // [V12.115] 손절/진입 가이드 — 매수·리스크 질문에 ATR 2배 기준 참고 손절가 제시(트렌드 전략과 동일 사상)
+  if ((isOutlookQ || isRiskQ) && atrPct != null && /매수|사도|살까|손절|진입/.test(q)) {
+    const stopPx = price * (1 - (atrPct * 2) / 100);
+    lines.push("참고 손절가(2×ATR 기준): 약 " + Math.round(stopPx).toLocaleString() + (market === "kr" ? "원" : "$") + " 부근 — 실제 매매의 손절폭은 전략별 규칙을 따로 적용해.");
   }
   lines.push("_규칙기반 기술분석 + AI위원회 확률을 조합한 참고용 해석이며, 투자판단의 책임은 본인에게 있어. 외부 AI API는 사용하지 않고 이 사이트 내부 데이터로만 답했어._");
   return { ok: true, symbol: sym, answer: lines.join("\n") };
