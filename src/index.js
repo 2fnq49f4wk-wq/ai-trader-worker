@@ -21399,6 +21399,7 @@ async function harvestDeepFetchNightly(DB, opts) {
   try {
     let fetched = 0, scanned = 0, attempted = 0;   // [V12.131d] attempted: 실제 외부 fetch 시도 수(진단용)
     __deepFail = { throw: 0, noResult: 0, shortBars: 0, ok: 0, lastErr: "" };   // [V12.132] 이번 실행분 사유 계측
+    let skippedIneligible = 0;   // [V12.133] 이번 실행에서 새로 '영구 자격미달'로 마킹한 수
     const now = Date.now();
     // (1) 지수 딥 — alpha 라벨 정렬용(항상 갱신 시도, 소수)
     const idxSyms = ["^GSPC", "^KS11", "GC=F"];
@@ -21428,10 +21429,19 @@ async function harvestDeepFetchNightly(DB, opts) {
         scanned++;
         let meta = null; try { meta = await getState(DB, "hist_meta:" + sym, null); } catch (e) {}
         if (meta && meta.ts && (now - meta.ts) < refreshMs) continue;
+        // [V12.133] ★영구 자격미달 종목 재시도 차단★ 진단 결과 실패 91건이 전부 shortBars였다
+        //   (throw=0 noResult=0 → rate limit이 아니라 '원본 봉수 300 미만'). 이런 종목은 몇 번을
+        //   다시 받아도 결과가 같은데, 종전엔 매 실행마다 다시 fetch해 20분마다 91회를 낭비했다.
+        //   ineligible로 마킹해 건너뛴다(상장 이력이 쌓이면 풀리도록 만료는 refreshMs의 2배).
+        if (meta && meta.ineligible && meta.ts && (now - meta.ts) < refreshMs * 2) continue;
+        const _sbBefore = __deepFail.shortBars;
         __fetchBudget.used++; attempted++;
         const dh = await fetchDeepDaily(sym, HARVEST.deepBars);
         if (dh && dh.closes && dh.closes.length >= 300) {
           try { await setState(DB, "hist:" + sym, dh); await setState(DB, "hist_meta:" + sym, { ts: now, bars: dh.bars, dataTs: dh.ts }); fetched++; } catch (e) {}
+        } else if (__deepFail.shortBars > _sbBefore) {
+          // 원본이 300봉 미만 — 구조적 자격미달이므로 마킹(다음 실행부터 fetch 자체를 건너뜀)
+          try { await setState(DB, "hist_meta:" + sym, { ts: now, ineligible: true, reason: "shortBars" }); skippedIneligible++; } catch (e) {}
         }
       }
       try { await setState(DB, "hist_off", (off + Math.max(1, scanned)) % syms.length); } catch (e) {}
@@ -21442,7 +21452,8 @@ async function harvestDeepFetchNightly(DB, opts) {
     const _diag = "scanned=" + scanned + " attempted=" + attempted + " budgetLeft=" + fetchBudgetLeft() +
       (Date.now() > __dlDeadline ? " TIME-CAP" : "") +
       " [실패내역 throw=" + __deepFail.throw + " noResult=" + __deepFail.noResult + " shortBars=" + __deepFail.shortBars +
-      " ok=" + __deepFail.ok + (__deepFail.lastErr ? " lastErr=" + __deepFail.lastErr : "") + "]";
+      " ok=" + __deepFail.ok + " newIneligible=" + skippedIneligible +
+      (__deepFail.lastErr ? " lastErr=" + __deepFail.lastErr : "") + "]";
     return fetched
       ? ("[HIST] 딥-히스토리 " + fetched + "종목 갱신(range=max, " + (HARVEST.deepBars || 1800) + "봉) " + _diag)
       : ("[HIST] 갱신 0건 — " + _diag + (attempted > 0 ? " (외부 fetch 실패 추정)" : " (수집대상 없음/예산부족)"));
