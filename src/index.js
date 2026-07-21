@@ -21604,8 +21604,14 @@ function _luxPickTech(dd, sym, market) {
 function _luxDecisionBlend(committeeP, techScore, newsScore, w) {
   w = w || {};
   const parts = [], wts = [];
-  if (techScore != null) { parts.push(_clamp(0.5 + techScore * 0.5, 0, 1)); wts.push(w.tech != null ? w.tech : 0.45); }
-  if (newsScore != null) { parts.push(_clamp(0.5 + newsScore * 0.5, 0, 1)); wts.push(w.news != null ? w.news : 0.25); }
+  // [V12.116] ★과신 방지 캘리브레이션★ tech/news는 검증정확도 없는 휴리스틱 점수인데 종전엔
+  //   techScore=+1을 확률 1.0(=100% 확신)으로 그대로 매핑했다. decisionCore가 tech 비중을 52%까지
+  //   올린 지금, 강한(그러나 검증 안 된) 기술신호 하나가 켈리사이징을 거의 최대치로 밀어붙이는
+  //   과신 위험이 커졌다. committeeP(위원회, Wilson LB로 이미 캘리브레이션됨)는 그대로 두고
+  //   tech/news만 0.75배 감쇠(damp)해 극단치가 0.5±0.375(0.125~0.875)를 넘지 않게 압축.
+  const DAMP = 0.75;
+  if (techScore != null) { parts.push(_clamp(0.5 + techScore * 0.5 * DAMP, 0, 1)); wts.push(w.tech != null ? w.tech : 0.45); }
+  if (newsScore != null) { parts.push(_clamp(0.5 + newsScore * 0.5 * DAMP, 0, 1)); wts.push(w.news != null ? w.news : 0.25); }
   if (committeeP != null) { parts.push(_clamp(committeeP, 0, 1)); wts.push(w.model != null ? w.model : 0.30); }
   let sw = 0, sp = 0; for (let i = 0; i < parts.length; i++) { sw += wts[i]; sp += wts[i] * parts[i]; }
   return sw > 0 ? _clamp(sp / sw, 0.02, 0.98) : (committeeP != null ? committeeP : 0.5);
@@ -22364,13 +22370,16 @@ async function _aiAskSnapshot(DB, sym, scanCache) {
     const resistance = cands.filter(function (x) { return x.v > price; }).sort(function (a, b) { return a.v - b.v; }).slice(0, 2);
     levels = { support: support, resistance: resistance };
   } catch (e) {}
+  // [V12.116] 기간수익률 — "이번주/이번달/올해 얼마나 올랐어" 질문용
+  let periodRet = null;
+  try { periodRet = { d5: getNDayReturn(dd.closes, 5), d20: getNDayReturn(dd.closes, 20), d60: getNDayReturn(dd.closes, 60), d252: getNDayReturn(dd.closes, 252) }; } catch (e) {}
   let aiP = null;
   try {
     const scan = scanCache !== undefined ? scanCache : await getState(DB, "ai_picks:scan", null);
     const pick = scan && Array.isArray(scan.picks) ? scan.picks.find(function (p) { return p.symbol === sym; }) : null;
     if (pick && typeof pick.p === "number") aiP = pick.p;
   } catch (e) {}
-  return { sym: sym, nm: nm, market: market, price: price, dayPct: dayPct, tk: tk, ts: ts, pat: pat, newsS: newsS, volConf: volConf, atrPct: atrPct, levels: levels, aiP: aiP };
+  return { sym: sym, nm: nm, market: market, price: price, dayPct: dayPct, tk: tk, ts: ts, pat: pat, newsS: newsS, volConf: volConf, atrPct: atrPct, levels: levels, periodRet: periodRet, aiP: aiP };
 }
 async function mlAiAsk(DB, question) {
   const q = String(question || "").trim().slice(0, 300);
@@ -22441,6 +22450,9 @@ async function mlAiAsk(DB, question) {
   const isWhyQ = /왜|이유|원인/.test(q);
   const isRiskQ = /리스크|위험|변동성|손절/.test(q);
   const isLevelQ = /지지|저항|목표가|레벨|어디까지|얼마까지|어디서 사/.test(q);
+  const isPeriodQ = /이번\s*주|이번\s*달|올해|일주일|한\s*달|1개월|1년|최근\s*(\d+)\s*일|얼마나\s*올랐|얼마나\s*떨어졌|수익률/.test(q);
+  const isExitQ = /언제\s*팔|매도\s*시점|익절|청산\s*시점|팔아야/.test(q);
+  const isSizeQ = /몇\s*주|얼마나\s*사|몇\s*개\s*사|비중\s*얼마|얼마어치/.test(q);
   const isCompareQ = syms.length >= 2;   // 2개 이상 종목이 언급되면 비교 모드로 응답
 
   let scanCache = null; try { scanCache = await getState(DB, "ai_picks:scan", null); } catch (e) {}
@@ -22471,7 +22483,7 @@ async function mlAiAsk(DB, question) {
   const sym = syms[0];
   const S = await _aiAskSnapshot(DB, sym, scanCache);
   if (!S) return { ok: true, symbol: sym, answer: (NAME_MAP[sym] || sym) + "의 데이터가 아직 부족해서 분석하기 어려워." };
-  const { nm, market, price, dayPct, tk, ts, pat, newsS, volConf, atrPct, levels, aiP } = S;
+  const { nm, market, price, dayPct, tk, ts, pat, newsS, volConf, atrPct, levels, periodRet, aiP } = S;
   const lines = [];
   lines.push("**" + nm + "(" + sym + ")** 현재가 " + price.toLocaleString() + (market === "kr" ? "원" : "$") + " (" + (dayPct >= 0 ? "+" : "") + dayPct.toFixed(1) + "%)");
   if (ts && ts.now && ts.week && ts.month) {
@@ -22514,6 +22526,24 @@ async function mlAiAsk(DB, question) {
   if ((isOutlookQ || isRiskQ) && atrPct != null && /매수|사도|살까|손절|진입/.test(q)) {
     const stopPx = price * (1 - (atrPct * 2) / 100);
     lines.push("참고 손절가(2×ATR 기준): 약 " + Math.round(stopPx).toLocaleString() + (market === "kr" ? "원" : "$") + " 부근 — 실제 매매의 손절폭은 전략별 규칙을 따로 적용해.");
+  }
+  // [V12.116] 기간수익률 질문
+  if (isPeriodQ && periodRet) {
+    const bits = [];
+    if (periodRet.d5 != null) bits.push("1주 " + (periodRet.d5 >= 0 ? "+" : "") + periodRet.d5.toFixed(1) + "%");
+    if (periodRet.d20 != null) bits.push("1달 " + (periodRet.d20 >= 0 ? "+" : "") + periodRet.d20.toFixed(1) + "%");
+    if (periodRet.d60 != null) bits.push("3달 " + (periodRet.d60 >= 0 ? "+" : "") + periodRet.d60.toFixed(1) + "%");
+    if (periodRet.d252 != null) bits.push("1년 " + (periodRet.d252 >= 0 ? "+" : "") + periodRet.d252.toFixed(1) + "%");
+    if (bits.length) lines.push("기간별 수익률 — " + bits.join(", ") + ".");
+  }
+  // [V12.116] 매도 시점 질문 — 이 종목의 전략별 청산 트리거를 구체적으로 안내
+  if (isExitQ) {
+    lines.push("일반적인 청산 트리거: **MA20 하향이탈** 또는 **ATR 기반 트레일링스탑**(고점 대비 일정폭 하락) 도달 시, 혹은 AI 위원회 성공확률이 42% 이하로 떨어지는 뚜렷한 약세전환 시야. 정해진 목표가보다는 추세 추종형(러너를 살리는) 청산 방식을 쓰고 있어.");
+    if (levels && levels.support.length) lines.push("참고로 가까운 지지선(" + levels.support[0].label + " " + Math.round(levels.support[0].v).toLocaleString() + ")을 하향 이탈하면 경계 신호로 볼 만해.");
+  }
+  // [V12.116] 사이즈/비중 질문 — 계좌 자체 사이징 규칙(리스크 기준) 설명
+  if (isSizeQ && atrPct != null) {
+    lines.push("사이트의 사이징 원칙은 '고정 리스크'야 — 종목당 손실한도(계좌의 약 0.7~0.9%)를 손절폭(대략 ATR×2, 지금 약 " + (atrPct * 2).toFixed(1) + "%)으로 나눠 수량을 정해. 변동성이 큰(지금 ATR " + atrPct.toFixed(1) + "%) 종목일수록 자동으로 더 작게 사서 손실금액을 종목마다 비슷하게 맞추는 방식이야. 구체적인 수량은 계좌 잔고에 따라 달라져서 여기선 원칙만 안내할게.");
   }
   lines.push("_규칙기반 기술분석 + AI위원회 확률을 조합한 참고용 해석이며, 투자판단의 책임은 본인에게 있어. 외부 AI API는 사용하지 않고 이 사이트 내부 데이터로만 답했어._");
   return { ok: true, symbol: sym, answer: lines.join("\n") };
