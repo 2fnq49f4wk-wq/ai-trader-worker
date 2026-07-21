@@ -2891,6 +2891,18 @@ html[data-theme="light"] .table tbody tr:hover{background:rgba(9,105,218,.045);}
           <div class="fv-panel-head">AI 운용 상태 <span class="fv-panel-sub" id="fvAiModeBadge">확인 중…</span></div>
           <div id="fvAiModeBody" style="padding:8px 10px;font-size:11px;line-height:1.6;color:var(--t2);">로딩 중…</div>
         </div>
+        <!-- [V12.112] AI에게 물어보기 — 온보드 자연어 Q&A(외부 LLM API 미사용) -->
+        <div class="fv-panel" id="fvAiAskPanel" style="margin-bottom:8px;">
+          <div class="fv-panel-head">AI에게 물어보기</div>
+          <div style="padding:8px 10px;">
+            <div style="display:flex;gap:6px;">
+              <input id="fvAiAskInput" type="text" placeholder="예: 마이크론 상승은 일시적인가? / 지금 금리 어때?" maxlength="300"
+                style="flex:1;font-size:11px;padding:6px 8px;background:var(--bg2,#161b22);color:var(--t1,#ddd);border:1px solid var(--bd,#333);border-radius:4px;">
+              <button class="llm-btn" id="fvAiAskBtn" style="padding:6px 12px;">질문</button>
+            </div>
+            <div id="fvAiAskBody" style="margin-top:8px;font-size:11px;line-height:1.7;color:var(--t2);white-space:pre-wrap;"></div>
+          </div>
+        </div>
         <div class="fv-bottom">
           <div class="fv-panel">
             <div class="fv-panel-head">HEADLINES</div>
@@ -4434,8 +4446,30 @@ html[data-theme="light"] .table tbody tr:hover{background:rgba(9,105,218,.045);}
       body.innerHTML = html;
     })['catch'](function(){ body.textContent = '조회 실패'; });
   }
+  // [V12.112] AI 질문창 — 1회만 리스너 등록
+  var __aiAskBound = false;
+  function bindAiAskPanel() {
+    if (__aiAskBound) return;
+    var btn = $('fvAiAskBtn'), inp = $('fvAiAskInput'), out = $('fvAiAskBody');
+    if (!btn || !inp || !out) return;
+    __aiAskBound = true;
+    var busy = false;
+    function ask() {
+      var q = (inp.value || '').trim();
+      if (!q || busy) return;
+      busy = true; btn.disabled = true; out.textContent = '생각 중…';
+      fetch('/api/ai-ask', { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ question:q }) })
+        .then(function(r){ return r.json(); })
+        .then(function(d){ out.textContent = (d && (d.answer||d.msg)) || '답변을 만들지 못했어.'; })
+        ['catch'](function(){ out.textContent = '조회 실패 — 잠시 후 다시 시도해줘.'; })
+        ['finally'](function(){ busy = false; btn.disabled = false; });
+    }
+    btn.addEventListener('click', ask);
+    inp.addEventListener('keydown', function(e){ if (e.key === 'Enter') ask(); });
+  }
   function renderFvDeck(state) {
     try { renderAiModePanel(); } catch(e) {}
+    try { bindAiAskPanel(); } catch(e) {}
     // ① 지수 패널 행
     var row = $('fvIndexRow');
     if (row && state.indices && state.indices.length) {

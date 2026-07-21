@@ -13893,6 +13893,16 @@ async function handleRequest(request, env) {
         committee: { mind: mindOk, dnn: dnnOk, gbdt: gbdtOk }, selfreview: review, scan: scan }, { headers: cors });
     }
 
+    // POST /api/ai-ask — [V12.112] 온보드 자연어 Q&A. body: { question }. 외부 LLM API 미사용.
+    if (path === "/api/ai-ask" && request.method === "POST") {
+      let body = null; try { body = await request.json(); } catch (e) {}
+      const q = body && body.question;
+      if (!q || typeof q !== "string" || !q.trim()) return Response.json({ ok: false, msg: "질문을 입력해줘." }, { status: 400, headers: cors });
+      if (q.length > 300) return Response.json({ ok: false, msg: "질문이 너무 길어(300자 이내)." }, { status: 400, headers: cors });
+      let r; try { r = await mlAiAsk(env.DB, q); } catch (e) { r = { ok: false, msg: "답변 생성 중 오류: " + (e && e.message) }; }
+      return Response.json(r, { headers: cors });
+    }
+
     // ── [V9 시각화] 신경망 구조·가중치 강도·위원회 신뢰 — 프론트 "AI 두뇌 관측" 패널용 ──
     //   [V12.36] ?model=dnn(기본)|mind|gbdt — 사이드바 두뇌 페이지에서 3개 모델 구조를 각각 관측.
     if (path === "/api/nn-viz") {
@@ -22272,6 +22282,93 @@ async function _luxMacroSectorData(DB) {
   return R;
 }
 
+// [V12.112] ★온보드 자연어 Q&A★ — 외부 LLM API 연결 없이, 사이트가 이미 갖고 있는 데이터(기술분석·
+//   AI위원회 확률·뉴스감성·거시지표)만으로 자유 질문에 답한다. "마이크론의 상승은 일시적인가?" 같은
+//   질문을 (1) 종목/거시 여부 판별 → (2) 질문 의도(추세지속·전망·이유·거시) 분류 → (3) 이미 계산된
+//   신호를 조합한 결정론적 문장으로 응답한다. 외부망 호출 0.
+const US_KO_ALIAS = {
+  "마이크론테크놀로지스":"MU","마이크론테크놀로지":"MU","마이크론 테크놀로지스":"MU","마이크론 테크놀로지":"MU","마이크론":"MU",
+  "엔비디아":"NVDA","애플":"AAPL","테슬라":"TSLA","마이크로소프트":"MSFT","구글":"GOOGL","알파벳":"GOOGL",
+  "아마존":"AMZN","메타":"META","페이스북":"META","브로드컴":"AVGO","퀄컴":"QCOM","인텔":"INTC","팔란티어":"PLTR",
+  "넷플릭스":"NFLX","오라클":"ORCL","세일즈포스":"CRM","어도비":"ADBE","IBM":"IBM","시스코":"CSCO","텍사스인스트루먼트":"TXN",
+  "삼성전자":"005930.KS","하이닉스":"000660.KS","SK하이닉스":"000660.KS","카카오":"035720.KS","네이버":"035420.KS",
+  "현대차":"005380.KS","기아":"000270.KS","LG에너지솔루션":"373220.KS","포스코":"005490.KS","셀트리온":"068270.KS"
+};
+function _aiAskResolveSymbol(q) {
+  try {
+    const krM = q.match(/\b(\d{6}\.(KS|KQ))\b/i);
+    if (krM) return krM[1].toUpperCase();
+    const aliasKeys = Object.keys(US_KO_ALIAS).sort(function (a, b) { return b.length - a.length; });
+    for (const k of aliasKeys) if (q.indexOf(k) >= 0) return US_KO_ALIAS[k];
+    const names = Object.keys(NAME_MAP).map(function (k) { return { sym: k, name: NAME_MAP[k] }; })
+      .filter(function (n) { return n.name && n.name.length >= 3; })
+      .sort(function (a, b) { return b.name.length - a.name.length; });
+    for (const n of names) if (q.toLowerCase().indexOf(n.name.toLowerCase()) >= 0) return n.sym;
+    const toks = q.toUpperCase().match(/[A-Z]{2,5}/g) || [];
+    for (const t of toks) if (NAME_MAP[t]) return t;
+    return null;
+  } catch (e) { return null; }
+}
+async function mlAiAsk(DB, question) {
+  const q = String(question || "").trim().slice(0, 300);
+  if (!q) return { ok: false, msg: "질문을 입력해줘." };
+  const sym = _aiAskResolveSymbol(q);
+  const macroKw = ["금리", "연준", "fed", "cpi", "물가", "인플레", "고용", "실업률", "경기", "거시"];
+  const qLower = q.toLowerCase();
+  const isMacroQ = !sym && macroKw.some(function (k) { return q.indexOf(k) >= 0 || qLower.indexOf(k) >= 0; });
+  if (isMacroQ) {
+    try {
+      const md = await _luxMacroSectorData(DB);
+      const mc = md && md.macro;
+      if (!mc || (mc.ten == null && mc.cpi == null && !mc.fedRate)) return { ok: true, answer: "거시 데이터가 아직 충분히 수집되지 않았어. 잠시 뒤 다시 물어봐줘." };
+      const parts = [];
+      if (mc.fedRate) parts.push("연준 정책금리는 " + mc.fedRate + "% 구간이야.");
+      if (mc.cpi != null) parts.push("CPI는 " + mc.cpi.toFixed(1) + "%로 " + (mc.cpi >= 3 ? "목표(2%)를 뚜렷이 웃돌아 조기·대폭 인하 기대는 제한적이야." : mc.cpi >= 2.3 ? "목표선에 근접해가는 디스인플레이션 흐름이야." : "목표를 밑도는 안정 국면이야."));
+      if (mc.unemployment != null) parts.push("실업률은 " + mc.unemployment.toFixed(1) + "%로 " + (mc.unemployment >= 4.5 ? "완만한 둔화 신호가 보여." : "아직 견조해."));
+      if (mc.ten != null) parts.push("미 10년물 금리는 " + mc.ten.toFixed(2) + "%" + (mc.ten20 != null ? "(최근 한 달 " + (mc.ten20 >= 0 ? "+" : "") + mc.ten20.toFixed(2) + "%p)" : "") + "야." + (mc.ten20 != null && mc.ten20 >= 0.15 ? " 금리 상승은 성장주엔 역풍, 금융·가치주엔 상대적 우호로 봐." : mc.ten20 != null && mc.ten20 <= -0.15 ? " 금리 하락은 성장주·장기듀레이션 자산에 우호적이야." : ""));
+      return { ok: true, answer: parts.join(" ") || "관련 거시 데이터를 아직 충분히 못 모았어." };
+    } catch (e) { return { ok: true, answer: "거시 데이터 조회 중 문제가 있었어." }; }
+  }
+  if (!sym) return { ok: true, answer: "어떤 종목인지 못 알아들었어. 티커(예: MU, 005930.KS)나 정확한 회사명을 같이 적어줘." };
+  let dd = null; try { dd = await getState(DB, "daily:" + sym, null); } catch (e) {}
+  if (!dd || !Array.isArray(dd.closes) || dd.closes.length < 30) return { ok: true, symbol: sym, answer: (NAME_MAP[sym] || sym) + "의 데이터가 아직 부족해서 분석하기 어려워." };
+  const market = /\.(KS|KQ)$/i.test(sym) ? "kr" : "us";
+  const nm = NAME_MAP[sym] || sym;
+  const price = dd.price != null ? dd.price : dd.closes[dd.closes.length - 1];
+  const prevClose = dd.prevClose || dd.closes[dd.closes.length - 2] || price;
+  const dayPct = prevClose ? ((price / prevClose) - 1) * 100 : 0;
+  let tk = { tech: null, blue: 0, adx: null }; try { tk = _luxPickTech(dd, sym, market); } catch (e) {}
+  let ts = null; try { ts = techSummaryMultiTF(dd.closes, dd.highs, dd.lows); } catch (e) {}
+  let newsS = null; try { newsS = await _luxSymNewsScore(DB, sym); } catch (e) {}
+  let aiP = null;
+  try {
+    const scan = await getState(DB, "ai_picks:scan", null);
+    const pick = scan && Array.isArray(scan.picks) ? scan.picks.find(function (p) { return p.symbol === sym; }) : null;
+    if (pick && typeof pick.p === "number") aiP = pick.p;
+  } catch (e) {}
+  const isTrendQ = /일시적|지속|계속|오래|반짝|단기|추세/.test(q);
+  const isOutlookQ = /전망|오를까|떨어질까|매수|매도|사도|팔아|어떻게 될까|살까|살만/.test(q);
+  const isWhyQ = /왜|이유|원인/.test(q);
+  const lines = [];
+  lines.push("**" + nm + "(" + sym + ")** 현재가 " + price.toLocaleString() + (market === "kr" ? "원" : "$") + " (" + (dayPct >= 0 ? "+" : "") + dayPct.toFixed(1) + "%)");
+  if (ts && ts.now && ts.week && ts.month) {
+    const nowS = _num(ts.now.score, 0), weekS = _num(ts.week.score, 0), monthS = _num(ts.month.score, 0), yearS = ts.year ? _num(ts.year.score, 0) : null;
+    lines.push("기술 컨센서스 — 지금 " + ts.now.label + "(" + nowS.toFixed(2) + "), 1주 " + ts.week.label + ", 1달 " + ts.month.label + (ts.year ? ", 1년 " + ts.year.label : ""));
+    if (isTrendQ || isWhyQ) {
+      const shortStrong = nowS >= 0.3, longWeak = monthS < 0.1 && (yearS == null || yearS < 0.15);
+      const aligned = nowS > 0 && weekS > 0 && monthS > 0 && (yearS == null || yearS >= -0.1);
+      if (shortStrong && longWeak) lines.push("→ 단기(지금)만 강하고 1달·1년 흐름은 아직 약해 **일시적 반등에 가까운 모습**이야. 장기추세가 아직 뒷받침을 못 해주고 있어.");
+      else if (aligned) lines.push("→ 단기·1주·1달이 같은 방향으로 정렬돼 있어 **구조적인 추세일 가능성이 커** — 일회성 반등보다는 흐름 지속 쪽에 무게를 둬.");
+      else lines.push("→ 시간대별 신호가 엇갈려 방향을 확신하기 어려운 구간이야. 조금 더 지켜볼 만해.");
+    }
+  }
+  if (tk.adx != null) lines.push("추세강도(ADX) " + tk.adx + (tk.adx >= 25 ? " — 방향성이 뚜렷한 추세 구간이야." : tk.adx < 15 ? " — 무추세·횡보에 가까워 지금 신호는 신뢰도를 낮게 봐야 해." : " — 추세 강도는 보통 수준이야."));
+  if (newsS != null) lines.push("최근 뉴스 감성 " + (newsS >= 0.2 ? "긍정적" : newsS <= -0.2 ? "부정적" : "중립적") + "(" + newsS.toFixed(2) + ")" + (isWhyQ ? (Math.abs(newsS) >= 0.3 ? " — 최근 움직임에 뉴스 재료가 상당히 실려 있어." : " — 뉴스보다는 수급·기술적 요인이 더 커 보여.") : ""));
+  if (aiP != null) lines.push("AI 위원회 성공확률 " + (aiP * 100).toFixed(0) + "%" + (isOutlookQ ? (aiP >= 0.58 ? " — 매수 우위 시그널이야." : aiP <= 0.45 ? " — 매도·관망 쪽에 가까워." : " — 뚜렷한 방향성 확신은 낮은 구간이야.") : ""));
+  if (tk.blue > 0.5) lines.push("시총 상위 우량주라 변동성 대비 기초체력은 비교적 안정적인 편이야.");
+  lines.push("_규칙기반 기술분석 + AI위원회 확률을 조합한 참고용 해석이며, 투자판단의 책임은 본인에게 있어._");
+  return { ok: true, symbol: sym, answer: lines.join("\n") };
+}
 
 function _luxWriteReport(ym, D) {
   const mkNames = { us: "미국", kr: "한국", cm: "원자재", bdus: "미국채", bdkr: "한국채" };
