@@ -754,9 +754,6 @@ button.btn.loading::after{content:'조회 중…';position:absolute;inset:0;disp
 .im-sec-ico{font-size:15px;}
 .im-sec-title{font-family:'Space Grotesk',sans-serif;font-size:14px;font-weight:800;letter-spacing:.2px;color:var(--t1);}
 .im-sec-sub{font-size:10.5px;color:var(--t3);}
-/* ══════════ [V12.117] AI Q&A 페이지 ══════════ */
-.ask-chip{font-size:10.5px;padding:5px 11px;border-radius:20px;background:rgba(74,163,255,.08);border:1px solid var(--glass-bd);color:var(--t2);cursor:pointer;}
-.ask-chip:hover{background:rgba(74,163,255,.16);color:var(--t1);}
 /* ══════════ [V11] 지표·환율 페이지 리디자인 (ID 스코프로 기존 위에 얹음) ══════════ */
 #page-macro .page-header,#page-fx .page-header{display:flex;align-items:center;gap:12px;margin:14px 20px 4px;padding-bottom:14px;position:relative;}
 #page-macro .page-header::after,#page-fx .page-header::after{content:'';position:absolute;left:0;bottom:0;width:100%;height:1px;
@@ -2813,11 +2810,6 @@ html[data-theme="light"] .table tbody tr:hover{background:rgba(9,105,218,.045);}
         <span class="nav-item-icon">◑</span>
         <span class="nav-item-label">AI VISION</span>
       </div>
-      <!-- [V12.117] AI Q&A — 대시보드 인라인 패널에서 사이드바 전용 페이지로 이동 -->
-      <div class="nav-item" data-page="ask">
-        <span class="nav-item-icon">💬</span>
-        <span class="nav-item-label">AI Q&amp;A</span>
-      </div>
     </div>
 
     <!-- 액션 버튼 -->
@@ -2901,6 +2893,18 @@ html[data-theme="light"] .table tbody tr:hover{background:rgba(9,105,218,.045);}
         <div class="fv-panel" id="fvAiModePanel" style="margin-bottom:8px;">
           <div class="fv-panel-head">AI 운용 상태 <span class="fv-panel-sub" id="fvAiModeBadge">확인 중…</span></div>
           <div id="fvAiModeBody" style="padding:8px 10px;font-size:11px;line-height:1.6;color:var(--t2);">로딩 중…</div>
+        </div>
+        <!-- [V12.112] AI에게 물어보기 — 온보드 자연어 Q&A(외부 LLM API 미사용). 사용자 요청으로 대시보드에 유지. -->
+        <div class="fv-panel" id="fvAiAskPanel" style="margin-bottom:8px;">
+          <div class="fv-panel-head">AI에게 물어보기</div>
+          <div style="padding:8px 10px;">
+            <div style="display:flex;gap:6px;">
+              <input id="fvAiAskInput" type="text" placeholder="예: 마이크론 상승은 일시적인가? / 지금 금리 어때?" maxlength="300"
+                style="flex:1;font-size:11px;padding:6px 8px;background:var(--bg2,#161b22);color:var(--t1,#ddd);border:1px solid var(--bd,#333);border-radius:4px;">
+              <button class="llm-btn" id="fvAiAskBtn" style="padding:6px 12px;">질문</button>
+            </div>
+            <div id="fvAiAskBody" style="margin-top:8px;font-size:11px;line-height:1.7;color:var(--t2);white-space:pre-wrap;"></div>
+          </div>
         </div>
         <div class="fv-bottom">
           <div class="fv-panel">
@@ -3496,28 +3500,6 @@ html[data-theme="light"] .table tbody tr:hover{background:rgba(9,105,218,.045);}
       </table>
     </div>
     <div class="macro-disclaimer">※ 야후 파이낸스 기준. 실거래 전 공식 고시환율을 확인하세요.</div>
-  </div>
-</div>
-
-<!-- ══ [V12.117] AI Q&A — 온보드 자연어 질의응답(외부 LLM API 미사용), 사이드바 전용 페이지 ══ -->
-<div class="page" id="page-ask">
-  <div class="page-header"><span class="page-title">💬 AI Q&amp;A</span></div>
-  <div class="modal-macro" style="max-width:760px;">
-    <div class="macro-sub">종목·섹터·거시경제·내 포지션에 대해 자유롭게 물어봐 — 전부 이 사이트 내부 데이터로만 답하고, 외부 AI API는 쓰지 않아.</div>
-    <div style="display:flex;gap:8px;margin:16px 0 6px;">
-      <input id="askInput" type="text" placeholder="예: 마이크론 상승은 일시적인가? / 삼성전자 실적 언제야? / 반도체 섹터 전망은?" maxlength="300"
-        style="flex:1;font-size:13px;padding:10px 12px;background:var(--bg2,#161b22);color:var(--t1,#ddd);border:1px solid var(--bd,#333);border-radius:8px;">
-      <button class="llm-btn" id="askBtn" style="padding:0 18px;">질문</button>
-    </div>
-    <div style="display:flex;gap:6px;flex-wrap:wrap;margin-bottom:14px;">
-      <button type="button" class="ask-chip" data-q="지금 금리 어때?">지금 금리 어때?</button>
-      <button type="button" class="ask-chip" data-q="내 포지션 어때?">내 포지션</button>
-      <button type="button" class="ask-chip" data-q="반도체 섹터 전망은?">반도체 섹터</button>
-    </div>
-    <div id="askBody" class="macro-table-wrap" style="padding:16px 18px;font-size:12.5px;line-height:1.8;color:var(--t2);white-space:pre-wrap;min-height:80px;">
-      <span style="color:var(--t3);">궁금한 걸 위에 입력하고 질문 버튼을 눌러줘.</span>
-    </div>
-    <div class="macro-disclaimer">※ 규칙기반 기술분석 + AI위원회 확률 + 내부 수집 데이터를 조합한 참고용 답변이며, 투자판단의 책임은 본인에게 있어. 데이터가 없는 항목은 "해당 데이터 없음"으로 답해.</div>
   </div>
 </div>
 
@@ -4468,14 +4450,13 @@ html[data-theme="light"] .table tbody tr:hover{background:rgba(9,105,218,.045);}
   var __aiAskBound = false;
   function bindAiAskPanel() {
     if (__aiAskBound) return;
-    var btn = $('askBtn'), inp = $('askInput'), out = $('askBody');
+    var btn = $('fvAiAskBtn'), inp = $('fvAiAskInput'), out = $('fvAiAskBody');
     if (!btn || !inp || !out) return;
     __aiAskBound = true;
     var busy = false;
-    function ask(qOverride) {
-      var q = (qOverride != null ? qOverride : (inp.value || '')).trim();
+    function ask() {
+      var q = (inp.value || '').trim();
       if (!q || busy) return;
-      inp.value = q;
       busy = true; btn.disabled = true; out.textContent = '생각 중…';
       fetch('/api/ai-ask', { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ question:q }) })
         .then(function(r){ return r.json(); })
@@ -4483,14 +4464,12 @@ html[data-theme="light"] .table tbody tr:hover{background:rgba(9,105,218,.045);}
         ['catch'](function(){ out.textContent = '조회 실패 — 잠시 후 다시 시도해줘.'; })
         ['finally'](function(){ busy = false; btn.disabled = false; });
     }
-    btn.addEventListener('click', function(){ ask(); });
+    btn.addEventListener('click', ask);
     inp.addEventListener('keydown', function(e){ if (e.key === 'Enter') ask(); });
-    document.querySelectorAll('.ask-chip').forEach(function(chip){
-      chip.addEventListener('click', function(){ ask(chip.getAttribute('data-q')); });
-    });
   }
   function renderFvDeck(state) {
     try { renderAiModePanel(); } catch(e) {}
+    try { bindAiAskPanel(); } catch(e) {}
     // ① 지수 패널 행
     var row = $('fvIndexRow');
     if (row && state.indices && state.indices.length) {
@@ -10569,8 +10548,6 @@ html[data-theme="light"] .table tbody tr:hover{background:rgba(9,105,218,.045);}
       try { openNnViz(); } catch(e){}
     } else if (id === 'whatif') {
       try { if (typeof loadWhatIf === 'function') loadWhatIf(); } catch(e){}
-    } else if (id === 'ask') {
-      try { bindAiAskPanel(); } catch(e){}
     }
   }
   document.querySelectorAll('.nav-item').forEach(function(item){
