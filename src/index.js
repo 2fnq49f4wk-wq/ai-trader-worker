@@ -2700,7 +2700,11 @@ const AI_PARAMS = {
   aiPrimary: {
     enabled: true,          // AI 주도 진입 활성(끄려면 false → 규칙엔진 전용으로 복귀)
     threshold: 0.55,        // [V12.89] 0.60→0.55 — 블렌드확률 기준 0.60은 과도(매수 정체). 기술 드라이버와 함께 완화(규칙신호 없는 종목이라 보수적)
-    maxPerCycle: 8,         // 사이클당 AI 주도 진입 후보 상한(위원회 계산·subrequest 통제)
+    // [V12.132] 8→30. 평가가 3.6%만 돌던 시절엔 8이 합리적이었으나, 이제 557종목을 100% 완주하므로
+    //   8은 명백한 병목이었다(로그: NOBUY no_signal 549 — 평가한 549종목이 상한 때문에 후보조차 못 됨).
+    //   실제 진입은 아래 위원회(p>=threshold·metaHardFilter·합의도)가 결정하므로 후보 확대가
+    //   곧 매수 남발이 되지는 않는다. subrequest는 후보당 옵션신호 1회 수준이라 30이면 안전.
+    maxPerCycle: 30,        // 사이클당 AI 주도 진입 후보 상한(위원회 계산·subrequest 통제)
     baseWeight: 0.6,        // 합성신호 기본 가중(규칙신호 1.0 대비 축소 → 사이즈 보수화)
     maxDisagree: 0.30,      // [V12.89] 0.22→0.30 — 표본부족기 전문가 불일치가 커 과도차단되던 것 완화(합의 없는 진입 차단)
     rsiMin: 45, rsiMax: 72, // 사전필터 RSI 밴드(상승추세 정렬 종목만 위원회 평가)
@@ -6779,13 +6783,16 @@ async function fetchDailyFull(symbol) {
 // [V18] 딥-히스토리 일봉(수확 전용) — range=max로 장기이력(폭락장 포함) 확보.
 //   라이브 캐시(daily:, 320봉)와 분리 저장 → 매매 경로·D1·리프레시 부담 0. 야간 수확만 사용.
 //   US 티커·KR .KS/.KQ 모두 야후 range=max(딥이력은 실시간 불필요 → 야후 단일경로로 단순화).
+// [V12.132] 실패 사유 계측 — 91회 시도해 0건 성공인데 원인을 알 수 없었다(모든 실패가
+//   catch로 조용히 null이 됐다). 전역 카운터에 사유별로 쌓아 호출부가 로그로 남긴다.
+var __deepFail = { throw: 0, noResult: 0, shortBars: 0, ok: 0, lastErr: "" };
 async function fetchDeepDaily(symbol, deepBars) {
   const T = deepBars || 1800;
   try {
     const j = await yahooFetch("https://query1.finance.yahoo.com/v8/finance/chart/" + encodeURIComponent(symbol) + "?interval=1d&range=max");
     const result = j && j.chart && j.chart.result && j.chart.result[0];
     const quote = (result && result.indicators && result.indicators.quote && result.indicators.quote[0]) || null;
-    if (!result || !quote) return null;
+    if (!result || !quote) { __deepFail.noResult++; return null; }
     const rc = quote.close || [], rh = quote.high || [], rl = quote.low || [], rv = quote.volume || [], ro = quote.open || [];
     const closes = [], highs = [], lows = [], volumes = [], opens = [];
     for (let i = 0; i < rc.length; i++) {
@@ -6797,12 +6804,13 @@ async function fetchDeepDaily(symbol, deepBars) {
       volumes.push((typeof rv[i] === "number" && rv[i] > 0) ? rv[i] : 0);
       opens.push((typeof ro[i] === "number" && ro[i] > 0) ? ro[i] : c);
     }
-    if (closes.length < 300) return null;   // 딥 자격 미달(신규상장 등)
+    if (closes.length < 300) { __deepFail.shortBars++; return null; }   // 딥 자격 미달(신규상장 등)
     const tsArr = result.timestamp || [];
     const ts = tsArr.length ? tsArr[tsArr.length - 1] * 1000 : Date.now();
+    __deepFail.ok++;
     return { closes: closes.slice(-T), highs: highs.slice(-T), lows: lows.slice(-T),
              volumes: volumes.slice(-T), opens: opens.slice(-T), ts: ts, bars: Math.min(closes.length, T) };
-  } catch (e) { return null; }
+  } catch (e) { __deepFail.throw++; __deepFail.lastErr = String((e && e.message) || e).slice(0, 90); return null; }
 }
 
 // [V22] 옵션 신호(US) — 풋/콜 미결제약정 비율로 스마트머니 심리 교차검증. 6h 캐시·예산가드.
@@ -13849,8 +13857,19 @@ async function runTradingCycle(env) {
           __aiPicks.length = 0; __candSyms.clear();
         } catch (e) {}
       }
-      // [TIME-CAP] 전 종목 평가를 시간 내 완료했으면 라운드로빈 오프셋 리셋
-      if (!evalTimedOut) { try { await setState(DB, "eval_offset:" + market, 0); } catch (e) {} }
+      // [TIME-CAP] 라운드로빈 오프셋
+      // [V12.132] ★완주 시 0으로 리셋하면 안 된다★ 평가가 100% 완주하게 된 뒤(V12.131),
+      //   매 사이클 같은 지점에서 시작하므로 AI_PRIMARY 후보 슬롯(maxPerCycle)을 항상
+      //   '순서상 앞쪽' 종목들이 선점했다. 즉 전 종목을 평가하고도 후보는 늘 같은 얼굴이었다
+      //   (TIME-CAP 시절엔 오프셋이 돌아 오히려 다양했던 것이 역전된 부작용).
+      //   완주했어도 시작점을 후보 상한만큼 전진시켜 사이클마다 다른 종목이 우선권을 갖게 한다.
+      //   커버리지는 어차피 100%라 손실이 없고, 후보 다양성만 확보된다.
+      if (!evalTimedOut) {
+        try {
+          const _stride = ((AI_PARAMS && AI_PARAMS.aiPrimary && AI_PARAMS.aiPrimary.maxPerCycle) || 30);
+          await setState(DB, "eval_offset:" + market, fetched.length ? ((evalOffset + _stride) % fetched.length) : 0);
+        } catch (e) {}
+      }
       // [V12.130] 후보 신호 일괄 기록 — 종전 종목별 D1 write N회를 1회로. '후보'임을 명시(매수 확정 아님).
       if (__candLog.length) {
         try {
@@ -14734,6 +14753,28 @@ async function handleRequest(request, env, ctx) {
     if (path === "/api/ai/selfcheck") {
       try { return Response.json(await aiSelfCheck(env.DB), { headers: cors }); }
       catch (e) { return Response.json({ error: e && e.message }, { status: 500, headers: cors }); }
+    }
+    // [V12.132] 딥이력 수집 즉시 진단/실행 — 장외 20분 락을 기다리지 않고 원인을 확인한다.
+    //   표본이 원천 고갈(163,667)이라 딥이력 확대가 유일한 증량 경로인데, 실행돼도 0건이라
+    //   예산 소진인지 외부 API 실패인지 구분이 필요했다. budget 파라미터로 fetch 예산도 조절.
+    if (path === "/api/ai/deephist-now" && request.method === "POST") {
+      const au = _trainAuthed(); if (!au.ok) return Response.json({ error: au.msg }, { status: au.code, headers: cors });
+      try {
+        const bg = parseInt(url.searchParams.get("budget") || "200", 10);
+        try { resetFetchBudget(bg); } catch (e) {}
+        const before = await env.DB.prepare("SELECT COUNT(*) n FROM state WHERE k LIKE 'hist:%'").first();
+        const t0 = Date.now();
+        const r = await harvestDeepFetchNightly(env.DB);
+        const after = await env.DB.prepare("SELECT COUNT(*) n FROM state WHERE k LIKE 'hist:%'").first();
+        const out = { ok: true, result: r, ms: Date.now() - t0,
+                      histBefore: (before && before.n) || 0, histAfter: (after && after.n) || 0,
+                      gained: ((after && after.n) || 0) - ((before && before.n) || 0),
+                      budgetGiven: bg, budgetLeft: fetchBudgetLeft() };
+        try { await log(env.DB, "INFO", null, "[수동트리거][DEEPHIST] " + JSON.stringify(out).slice(0, 300)); } catch (e) {}
+        return Response.json(out, { headers: cors });
+      } catch (e) {
+        return Response.json({ ok: false, error: e && e.message, stack: String(e && e.stack).slice(0, 300) }, { status: 500, headers: cors });
+      }
     }
     if (path === "/api/ai/harvest-now" && request.method === "POST") {
       const au = _trainAuthed(); if (!au.ok) return Response.json({ error: au.msg }, { status: au.code, headers: cors });
@@ -21299,7 +21340,10 @@ const HARVEST = {
   // [V18] 딥-히스토리 수확 — range=max 장기이력(2020 코로나·2022 긴축·2018 Q4 폭락 포함) → 국면 다양성으로 과적합↓
   useDeepHistory: true, // hist: 캐시가 있으면 320봉 daily: 대신 딥이력으로 수확(폭락장 학습)
   deepBars: 2400,       // [V12.32] 1800→2400(~9.6년, 2018 Q4 급락까지 포함) — 종목당 원천 봉수 +33%
-  deepFetchPerNight: 260,// [V12.95] 180→260 — 딥이력(주식 장기데이터) 수집 확대(사용자 요청). 실제 상한은
+  // [V12.132] 260→40. 한 실행에서 91회 연속 요청해 전부 실패했다(Yahoo rate limit 추정 —
+  //   422종목은 과거에 같은 코드로 수집됐으므로 코드 결함이 아니라 요청량 문제로 본다).
+  //   소량씩 자주(20~30분 주기) 받아 누적한다. 555종목이면 ~14회 실행이면 채워진다.
+  deepFetchPerNight: 40, // [V12.95] 180→260 — 딥이력(주식 장기데이터) 수집 확대(사용자 요청). 실제 상한은
                          //   fetchBudgetLeft 예산가드(아래 deephist 스테이지 resetFetchBudget)라 초과분은 다음밤 이어감(안전).
   deepRefreshDays: 45,  // [V12.32] 30→45 — 재수집 주기 연장: 예산을 재갱신 대신 신규 종목 커버리지에 사용
   maxPerSymbol: 1200,   // [V12.96] 800→1200 — alpha 지수정렬 수정으로 유효표본 회복분 수용(딥 2400봉 활용↑, 예산가드가 편중 방지)
@@ -21330,6 +21374,7 @@ async function harvestDeepFetchNightly(DB) {
   if (!HARVEST.useDeepHistory) return null;
   try {
     let fetched = 0, scanned = 0, attempted = 0;   // [V12.131d] attempted: 실제 외부 fetch 시도 수(진단용)
+    __deepFail = { throw: 0, noResult: 0, shortBars: 0, ok: 0, lastErr: "" };   // [V12.132] 이번 실행분 사유 계측
     const now = Date.now();
     // (1) 지수 딥 — alpha 라벨 정렬용(항상 갱신 시도, 소수)
     const idxSyms = ["^GSPC", "^KS11", "GC=F"];
@@ -21370,7 +21415,9 @@ async function harvestDeepFetchNightly(DB) {
     // [V12.131d] 종전엔 fetched=0이면 null만 반환해 "왜 0인지"를 알 수 없었다(호출부 로그가 빈 채로
     //   남아 진단 불가). 딥이력 확대는 표본을 늘리는 유일한 경로라 실패 원인 관측이 중요하다 —
     //   시도(attempted)·스캔·남은 fetch 예산을 함께 남겨 예산 소진인지 외부 API 실패인지 구분한다.
-    const _diag = "scanned=" + scanned + " attempted=" + attempted + " budgetLeft=" + fetchBudgetLeft();
+    const _diag = "scanned=" + scanned + " attempted=" + attempted + " budgetLeft=" + fetchBudgetLeft() +
+      " [실패내역 throw=" + __deepFail.throw + " noResult=" + __deepFail.noResult + " shortBars=" + __deepFail.shortBars +
+      " ok=" + __deepFail.ok + (__deepFail.lastErr ? " lastErr=" + __deepFail.lastErr : "") + "]";
     return fetched
       ? ("[HIST] 딥-히스토리 " + fetched + "종목 갱신(range=max, " + (HARVEST.deepBars || 1800) + "봉) " + _diag)
       : ("[HIST] 갱신 0건 — " + _diag + (attempted > 0 ? " (외부 fetch 실패 추정)" : " (수집대상 없음/예산부족)"));
@@ -24668,15 +24715,24 @@ export default {
           try {
             const _dhLock = _num(await getState(env.DB, "deephist_lock", 0), 0);
             const _mktOpen3 = (typeof isTradingWindow === "function") && (isTradingWindow("us") || isTradingWindow("kr"));
-            if (!_mktOpen3 && (Date.now() - _dhLock > 1200000)) {
+            // [V12.132] 장외에만 돌게 했더니 미국+한국 장을 합친 시간대에 막혀 실행 자체가 드물었고,
+            //   표본이 고갈된 상태(HV-CATCHUP이 "딥이력 확대 필요"로 쿨다운)에서도 몇 시간씩 아무것도
+            //   못 늘렸다. 고갈이 확인된 동안에는 장중에도 돌리되 fetch 예산을 크게 줄여 거래를 방해하지
+            //   않는다(장중 40 / 장외 200). 딥이력 확대는 표본 증량의 유일한 경로라 우선순위가 높다.
+            const _dry = await getState(env.DB, "hv_catchup_dry", null);
+            const _starved = !!(_dry && _dry.until && Date.now() < _dry.until);   // 수확이 고갈로 쿨다운 중
+            const _dhGap = _mktOpen3 ? 1800000 : 1200000;                          // 장중 30분 / 장외 20분
+            if ((!_mktOpen3 || _starved) && (Date.now() - _dhLock > _dhGap)) {
               const _hc = await env.DB.prepare("SELECT (SELECT COUNT(*) FROM state WHERE k LIKE 'hist:%') h, (SELECT COUNT(*) FROM state WHERE k LIKE 'daily:%') d").first();
               const _hn = (_hc && _hc.h) || 0, _dn = (_hc && _hc.d) || 0;
               if (_dn > 0 && _hn < _dn * 0.9) {
                 await setState(env.DB, "deephist_lock", Date.now());
-                try { resetFetchBudget(200); } catch (e0) {}
+                try { resetFetchBudget(_mktOpen3 ? 40 : 200); } catch (e0) {}
                 const _dr = await harvestDeepFetchNightly(env.DB);
-                await log(env.DB, "INFO", null, "[DEEPHIST] 커버리지 " + _hn + "/" + _dn +
-                  "(" + (_hn / _dn * 100).toFixed(0) + "%) " + (_dr || ""));
+                const _hc2 = await env.DB.prepare("SELECT COUNT(*) h FROM state WHERE k LIKE 'hist:%'").first();
+                const _hn2 = (_hc2 && _hc2.h) || 0;
+                await log(env.DB, "INFO", null, "[DEEPHIST] 커버리지 " + _hn + "→" + _hn2 + "/" + _dn +
+                  "(" + (_hn2 / _dn * 100).toFixed(0) + "%)" + (_mktOpen3 ? " [장중축소]" : "") + " " + (_dr || "(반환없음)"));
                 // 딥이력이 늘면 새 봉이 생기므로 수확 고갈 쿨다운을 해제한다.
                 try { await setState(env.DB, "hv_catchup_dry", { n: 0, until: 0 }); } catch (e0) {}
               }
