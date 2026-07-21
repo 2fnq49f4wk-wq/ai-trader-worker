@@ -5306,6 +5306,11 @@ async function ensureSchema(DB) {
   try {
     await DB.prepare("CREATE TABLE IF NOT EXISTS daily_stats (day_key TEXT PRIMARY KEY, signals INTEGER NOT NULL DEFAULT 0, errors INTEGER NOT NULL DEFAULT 0, trades INTEGER NOT NULL DEFAULT 0, updated_ts INTEGER)").run();
   } catch (e) { console.error("daily_stats create fail:", e.message); }
+  // [V12.130] trades 인덱스 — /api/trades는 "ORDER BY ts DESC LIMIT n"인데 인덱스가 없어
+  //   매 요청이 풀스캔+정렬이었다. D1이 바쁠 때 이 쿼리가 같이 밀려 [TRADES-500] D1_ERROR를
+  //   유발했다. logs도 동일 패턴(ts DESC)이라 함께 건다.
+  try { await DB.prepare("CREATE INDEX IF NOT EXISTS idx_trades_ts ON trades(ts DESC)").run(); } catch (e) {}
+  try { await DB.prepare("CREATE INDEX IF NOT EXISTS idx_logs_ts ON logs(ts DESC)").run(); } catch (e) {}
   __schemaReady = true;
 }
 
@@ -12677,12 +12682,17 @@ async function runTradingCycle(env) {
       //   "평가 0/556종목 후 중단"이 발생했다(사용자 리포트). 이전에 prefetch를 위해 도입한 것과 같은
       //   종류의 버그가 모델 로딩 블록에서 재발한 것 — evalStartedAt을 실제 평가 루프 진입 직전으로 이동.
       let evalStartedAt = 0;
-      const evalBudgetMs = (typeof cfg.evalBudgetMs === "number") ? cfg.evalBudgetMs : 16000;   // [실시간] heavy 평가 cap 축소 → fastWatch 시간 확보(라운드로빈으로 커버리지 유지)
-      const hardCapMs = (typeof cfg.cycleHardCapMs === "number") ? cfg.cycleHardCapMs : 22000;  // [실시간] heavy 사이클 상한 22s → 분(分) 내 fastWatch 서브틱 여유
+      // [V12.130] 평가 예산 상향 16s→40s / 상한 22s→55s.
+      //   근거: 종목당 D1 read 3회(fund + 섹터ETF 2회)를 사이클 프리로드로 제거해 종목당 평가가
+      //   크게 싸졌고, Worker CPU 한도는 300s라 여유가 크다. 종전 16s로는 557종목 중 2~95개
+      //   (평균 ~20개, 커버리지 3.6%)만 평가돼 AI가 대부분의 기회를 아예 못 봤다 — 수익률 직결 병목.
+      const evalBudgetMs = (typeof cfg.evalBudgetMs === "number") ? cfg.evalBudgetMs : 40000;
+      const hardCapMs = (typeof cfg.cycleHardCapMs === "number") ? cfg.cycleHardCapMs : 55000;
       let evalOffset = await getState(DB, "eval_offset:" + market, 0);
       if (!(typeof evalOffset === "number" && evalOffset >= 0 && evalOffset < fetched.length)) evalOffset = 0;
       const orderedEval = evalOffset > 0 ? fetched.slice(evalOffset).concat(fetched.slice(0, evalOffset)) : fetched;
       let evalProcessed = 0, evalTimedOut = false;
+      const __candLog = [];   // [V12.130] 후보 신호를 모아 사이클 끝에 1회만 기록(D1 write 절감)
       // [성능] 평가 중 quote 지표 갱신을 종목당 D1 write(saveQuote) 대신 batch로 모아
       //   루프 끝에 일괄 커밋 → 종목당 ~419ms였던 평가 속도를 ms 단위로 단축(커버리지 확대 가능).
       const evalQuoteStmts = [];
@@ -12693,7 +12703,8 @@ async function runTradingCycle(env) {
       // === [LUX-AI] 사이클당 1회 모델/보조데이터 로드(후보마다 재로딩 방지) ===
       let __mlModel = null, __ensemble = null, __mind = null, __guard = { distrust: false },
           __dnn = null, __dnnTrust = null, __noiseFilter = null, __evMem = {}, __sectorNews = null,
-          __gbdt = null, __gbdtTrust = null, __cal = null, __evStats = null, __idxCloses = null, __xsPanel = null;
+          __gbdt = null, __gbdtTrust = null, __cal = null, __evStats = null, __idxCloses = null, __xsPanel = null,
+          __secCache = {}, __fundCache = {};   // [V12.130] 사이클당 1회 프리로드(종목별 중복 D1 read 제거)
       let __mlDrift = { drift: false, action: "none", acc: null };  // [V16] 모델 열화 감지(사이클 1회)
       const __sentiOvrMemo = {};  // [V14] 종목별 감성 오버라이드 판정 사이클 캐시(매도·매수 루프 공유)
       const __candBatch = [], __candSyms = new Set();  // [LUX-AI] 반사실 후보 배치(사이클당 1커밋)
@@ -12712,6 +12723,25 @@ async function runTradingCycle(env) {
           try { __evStats = await getState(DB, "ml_evstats", null); } catch (e) {}
           try { __idxCloses = await _mlLoadIndexCloses(DB, market); } catch (e) {}
           try { __xsPanel = await getState(DB, "xs_panel", null); } catch (e) {}   // [V21] 횡단면 랭크 패널
+          // [V12.130] ★TIME-CAP 근본원인 수정★ 섹터ETF 종가를 종목마다 getState로 다시 읽고 있었다
+          //   (hist: 없으면 daily:까지 최대 2 read × 557종목). 섹터ETF는 6종뿐이라 사이클당 1회면 충분한데
+          //   이 중복 read가 종목당 평가시간을 수백 ms로 부풀려 16s 예산에 2~95종목밖에 못 돌았다
+          //   (커버리지 3.6%). 수확 경로(secCache)엔 이미 있던 최적화가 평가 루프에만 빠져 있었다.
+          try {
+            __secCache = {};
+            const _etfs = Object.keys(_SECTOR_ETF).map(function (g) { return _SECTOR_ETF[g]; });
+            const _hs = await getStates(DB, _etfs.map(function (e2) { return "hist:" + e2; }));
+            const _ds = await getStates(DB, _etfs.map(function (e2) { return "daily:" + e2; }));
+            for (const e2 of _etfs) {
+              const sd = _hs["hist:" + e2] || _ds["daily:" + e2] || null;
+              __secCache[e2] = (sd && Array.isArray(sd.closes)) ? sd.closes : null;
+            }
+          } catch (e) { __secCache = {}; }
+          // 재무 캐시도 종목마다 1 read였다 — 이번 사이클 평가 대상만 한 번에 당겨온다.
+          try {
+            const _fsyms = orderedEval.slice(0, 700).map(function (it) { return "fund:" + it.symbol; });
+            __fundCache = await getStates(DB, _fsyms);
+          } catch (e) { __fundCache = {}; }
           try { __noiseFilter = await getState(DB, "noise_filter", null); } catch (e) {}
           try { __evMem = await mlLoadEventMemory(DB); } catch (e) {}
           try { __sectorNews = await getState(DB, "sector_news_sentiment", null); } catch (e) {}
@@ -13279,10 +13309,15 @@ async function runTradingCycle(env) {
             }
           }
           signalCount += stratResults.length;   // [통계] 발생 매수신호 누적
-          // [신호 로그] 발생 신호를 로그에 기록 (종목 + 전략 + 신호명)
+          // [V12.130] 종전엔 후보마다 D1 write 1회(로그)를 했다 — 사이클당 77건 관측, 매분 반복이라
+          //   D1 쓰기 부하의 실질적 기여자였다. 사이클 끝에 한 줄로 모아 쓴다(D1 write 77→1).
+          //   문구도 정정: 이 시점은 '후보 주입'일 뿐 매수 확정이 아니다(최종 허용·사이즈는 아래 위원회가
+          //   결정하며 실제로 대부분 여기서 걸러진다). 종전 "SIGNAL ... w=0.60"이 전 종목 매수처럼
+          //   보여 오해를 샀는데, w는 후보 기본가중치(상수)이지 AI 확신도가 아니다.
           for (const _sr of stratResults) {
             const _sig = _sr.signal;
-            await log(DB, "SIGNAL", symbol, "SIGNAL[" + market.toUpperCase() + "] " + _sr.strategy + " " + (_sig && _sig.name ? _sig.name : "?") + " w=" + (_sig && _sig.weight ? _sig.weight.toFixed(2) : "?") + " RSI=" + (dailyRsi != null ? dailyRsi.toFixed(1) : "?") + " d=" + dayPct.toFixed(1) + "%");
+            __candLog.push(symbol + "/" + _sr.strategy + "/" + (_sig && _sig.name ? _sig.name : "?") +
+              " RSI=" + (dailyRsi != null ? dailyRsi.toFixed(0) : "?") + " d=" + dayPct.toFixed(1) + "%");
           }
 
           // [V12.64] ★AI 주도 진입(엔진 대체)★ 규칙엔진이 신호를 못 낸 종목도, 상승추세 정렬 + 위원회
@@ -13544,7 +13579,9 @@ async function runTradingCycle(env) {
                 try {
                   const _fp = AI_PARAMS.fundamental;
                   if (_fp && _fp.healthFilter && _fp.healthFilter.enabled !== false) {
-                    let _fc = null; try { _fc = await getState(DB, "fund:" + symbol, null); } catch (e) {}
+                    // [V12.130] 사이클 프리로드 캐시 사용(종목당 D1 read 제거). 미수록분만 폴백 조회.
+                    let _fc = __fundCache["fund:" + symbol];
+                    if (_fc === undefined) { try { _fc = await getState(DB, "fund:" + symbol, null); } catch (e) { _fc = null; } }
                     if (_fc) {
                       const _hg = financialHealthGate(evaluateFundamentals(_fc, null), _fp);
                       if (_hg.block) {
@@ -13560,7 +13597,7 @@ async function runTradingCycle(env) {
                 try {
                   if (market === "us") {
                     const _etf = _SECTOR_ETF[getSectorGroup(symbol, mcfg)];
-                    if (_etf) { let _sd = await getState(DB, "hist:" + _etf, null); if (!_sd) _sd = await getState(DB, "daily:" + _etf, null); if (_sd && Array.isArray(_sd.closes)) _secCloses = _sd.closes; }
+                    if (_etf) _secCloses = __secCache[_etf] || null;   // [V12.130] 사이클 프리로드 캐시(종목당 최대 2 read 제거)
                   }
                 } catch (e) {}
                 signal.mlFeat = mlBuildFeatures({
@@ -13789,6 +13826,20 @@ async function runTradingCycle(env) {
       }
       // [TIME-CAP] 전 종목 평가를 시간 내 완료했으면 라운드로빈 오프셋 리셋
       if (!evalTimedOut) { try { await setState(DB, "eval_offset:" + market, 0); } catch (e) {} }
+      // [V12.130] 후보 신호 일괄 기록 — 종전 종목별 D1 write N회를 1회로. '후보'임을 명시(매수 확정 아님).
+      if (__candLog.length) {
+        try {
+          await log(DB, "SIGNAL", null, "[후보] " + market.toUpperCase() + " " + __candLog.length +
+            "종목 진입후보 (위원회 심사 전) — " + __candLog.slice(0, 40).join(", ") +
+            (__candLog.length > 40 ? " 외 " + (__candLog.length - 40) + "건" : ""));
+        } catch (e) {}
+      }
+      // [V12.130] 평가 커버리지 관측 — 몇 %를 실제로 봤는지 로그로 남긴다(종전엔 중단 시에만 보였다).
+      try {
+        await log(DB, "INFO", null, "[EVAL] " + market.toUpperCase() + " 평가 " + evalProcessed + "/" + fetched.length +
+          "종목(" + (fetched.length ? (evalProcessed / fetched.length * 100).toFixed(0) : "0") + "%)" +
+          (evalTimedOut ? " TIME-CAP" : " 완주"));
+      } catch (e) {}
 
       // [V8.1.2] 시장당 NOBUY / BLOCK / 샘플 요약
       const nbKeys = Object.keys(nobuyCounts);
@@ -24324,19 +24375,52 @@ export default {
               //   (D1_ERROR "overloaded" 리포트 이후 D1 부하원 점검 중 발견).
               const _cuLock = _num(await getState(env.DB, "hv_catchup_lock", 0), 0);
               const _mktOpen = (typeof isTradingWindow === "function") && (isTradingWindow("us") || isTradingWindow("kr"));
-              if (!_mktOpen && (Date.now() - _cuLock > 90000)) {
+              // [V12.130] ★표본 정체 수정★ 종전엔 장중(!_mktOpen)이면 캐치업을 통째로 막았다.
+              //   미국+한국 장을 합치면 하루의 상당 부분이 '장중'이라, 야간 수확이 그날 도장을
+              //   찍은 뒤엔 표본 생산 경로가 전부 닫혀 몇 시간씩 0건 정체했다(실측: 60초간 증가 0).
+              //   풀이 목표에 크게 못 미치면(<60%) 재구축이 최우선이므로 장중에도 짧은 예산으로
+              //   돌린다. 거래 사이클과의 CPU 경쟁은 예산(장중 8s)과 락 주기로 억제.
+              const _cuGap = _mktOpen ? 180000 : 90000;   // 장중엔 3분 간격으로 더 여유
+              if (Date.now() - _cuLock > _cuGap) {
               const _pr = await env.DB.prepare("SELECT COUNT(*) c FROM ml_samples WHERE featver=?").bind(LUXML.featVer).first();
               const _poolN = (_pr && _pr.c) || 0;
               const _target = HARVEST.rebuildTarget || 700000;
-              if (_poolN < _target) {
+              // 장중엔 "심각한 부족(<60%)"일 때만 — 풀이 충분히 찼으면 장중 CPU를 거래에 양보.
+              const _cuAllowed = _mktOpen ? (_poolN < _target * 0.6) : (_poolN < _target);
+              if (_cuAllowed) {
                 await setState(env.DB, "hv_catchup_lock", Date.now());
-                try { resetFetchBudget(120); } catch (e0) {}
-                const _cr = await mlMarketHarvestNightly(env.DB, { budgetMs: 22000 });   // 짧은 예산 캐치업
-                if (_cr) await log(env.DB, "INFO", null, "[HV-CATCHUP] pool=" + _poolN + "/" + _target + " " + _cr);
+                try { resetFetchBudget(_mktOpen ? 40 : 120); } catch (e0) {}
+                const _cr = await mlMarketHarvestNightly(env.DB, { budgetMs: _mktOpen ? 8000 : 22000 });
+                if (_cr) await log(env.DB, "INFO", null, "[HV-CATCHUP] pool=" + _poolN + "/" + _target + (_mktOpen ? " (장중 단축)" : "") + " " + _cr);
               }
               }
             }
           } catch (e) {}
+
+          // [V12.130] ★반사실 라벨링을 하루1회 게이트에서 분리★ 종전엔 _stg("cflabel")로 야간
+          //   파이프라인 안에만 있어, 오늘 도장(ai_stage:cflabel)이 찍히면 그날은 성숙한 후보가
+          //   아무리 쌓여도 편입되지 않았다(실측: 미라벨 후보 1,403건 적체, 실거래 기반 표본 0건).
+          //   성숙 판정은 함수 내부에서 horizon으로 하므로 자주 돌려도 안전·멱등하다.
+          //   10분 락으로 틱 겹침만 막고 장중/장외 무관하게 상시 편입한다.
+          try {
+            const _cfLock = _num(await getState(env.DB, "cf_label_lock", 0), 0);
+            if (Date.now() - _cfLock > 600000) {
+              await setState(env.DB, "cf_label_lock", Date.now());
+              const _cfr = await mlLabelCandidates(env.DB, async (sym, mkt, entryTs, horizon) => {
+                try {
+                  const dd = await getState(env.DB, "daily:" + sym, null);
+                  if (!dd || !dd.closes || !dd.closes.length) return null;
+                  const n = Math.max(1, horizon || 5) + 2;
+                  let idxCloses = null;
+                  try { const ic = await _mlLoadIndexCloses(env.DB, mkt); if (ic && ic.length >= 2) idxCloses = ic.slice(-n); } catch (e) {}
+                  return { closes: dd.closes.slice(-n), idxCloses: idxCloses };
+                } catch (e) { return null; }
+              }, {});
+              // 편입 0건이어도 로그로 관측 — 종전엔 조용히 삼켜져 정체를 몰랐다.
+              if (_cfr) await log(env.DB, "INFO", null, "[CF-TICK] " + _cfr);
+            }
+          } catch (e) { try { await log(env.DB, "ERROR", null, "[CF-TICK] " + (e && e.message)); } catch (e2) {} }
+
           // [V12.125] 내부자거래·실적캘린더 자동 갱신 — 장중 핫패스에서 여기(장 마감 시간대·저우선순위
           //   구간)로 이동. 각자 15분/6h 내부 캐시가 있어 이 블록이 자주 돌아도 실제 외부 fetch는 그
           //   주기로만 발생. 10분 락으로 틱 겹침 방지, 거래윈도우 밖일 때만(시세/평가 CPU 경쟁 회피).
