@@ -12008,11 +12008,11 @@ async function runTradingCycle(env) {
       try { sectorSentiment = await updateSectorNewsSentiment(DB, cfg); } catch (e) {}
       // [V9.9] 애널리스트 컨센서스 — 6h 캐시, 예산 가드 내장. US 종목 목표가·투자의견(가격독립 정보).
       try { await updateAnalystConsensus(DB, cfg); } catch (e) {}
-      // [V12.123] 내부자거래·실적캘린더 자동 갱신 — 지금까지 /api/insider·/api/earnings가 프론트
-      //   수동 방문에만 의존해 아무도 안 열면 영영 안 채워지던 것을 analyst_consensus와 동일하게
-      //   거래사이클 자동 갱신으로 승격(각자 15분/6h 내부 캐시라 과도 조회 없음).
-      try { await updateInsiderFeedNow(DB); } catch (e) {}
-      try { await updateEarningsCalendarNow(DB, cfg); } catch (e) {}
+      // [V12.125] ★되돌림★ V12.123에서 내부자거래·실적캘린더 자동갱신을 여기(거래 핫패스)에 넣었더니
+      //   외부 fetch(SEC/Yahoo/Nasdaq) 지연이 캐시 만료 시점마다 트레이딩 사이클 전체를 늦춰
+      //   대시보드 전반(TopMovers·지표창 등)이 느려지는 부작용이 발생했다(사용자 리포트). 자동갱신
+      //   자체는 유지하되, 장중 매분 실행되는 이 핫패스가 아니라 장 마감 시간대(!_mktOpen)에만 도는
+      //   캐치업 하베스트와 같은 저우선순위 구간으로 옮긴다(아래 scheduled 핸들러 참고).
     }
 
     for (const market of marketsForQuotes) {
@@ -24126,6 +24126,21 @@ export default {
                 const _cr = await mlMarketHarvestNightly(env.DB, { budgetMs: 22000 });   // 짧은 예산 캐치업
                 if (_cr) await log(env.DB, "INFO", null, "[HV-CATCHUP] pool=" + _poolN + "/" + _target + " " + _cr);
               }
+            }
+          } catch (e) {}
+          // [V12.125] 내부자거래·실적캘린더 자동 갱신 — 장중 핫패스에서 여기(장 마감 시간대·저우선순위
+          //   구간)로 이동. 각자 15분/6h 내부 캐시가 있어 이 블록이 자주 돌아도 실제 외부 fetch는 그
+          //   주기로만 발생. 10분 락으로 틱 겹침 방지, 거래윈도우 밖일 때만(시세/평가 CPU 경쟁 회피).
+          try {
+            const _ieLock = _num(await getState(env.DB, "insider_earn_lock", 0), 0);
+            const _mktOpen2 = (typeof isTradingWindow === "function") && (isTradingWindow("us") || isTradingWindow("kr"));
+            if (!_mktOpen2 && (Date.now() - _ieLock > 600000)) {
+              await setState(env.DB, "insider_earn_lock", Date.now());
+              try {
+                const _icfg = migrateCfgToMarkets(Object.assign({}, DEFAULT_CFG, await getState(env.DB, "cfg", {})));
+                try { await updateInsiderFeedNow(env.DB); } catch (e0) {}
+                try { await updateEarningsCalendarNow(env.DB, _icfg); } catch (e0) {}
+              } catch (e0) {}
             }
           } catch (e) {}
           const _aiDay = new Date().toISOString().slice(0, 10);
