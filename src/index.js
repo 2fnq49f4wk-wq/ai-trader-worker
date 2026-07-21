@@ -21329,7 +21329,7 @@ const HARVEST_EXTRA_SYMS = [
 async function harvestDeepFetchNightly(DB) {
   if (!HARVEST.useDeepHistory) return null;
   try {
-    let fetched = 0, scanned = 0;
+    let fetched = 0, scanned = 0, attempted = 0;   // [V12.131d] attempted: 실제 외부 fetch 시도 수(진단용)
     const now = Date.now();
     // (1) 지수 딥 — alpha 라벨 정렬용(항상 갱신 시도, 소수)
     const idxSyms = ["^GSPC", "^KS11", "GC=F"];
@@ -21337,7 +21337,7 @@ async function harvestDeepFetchNightly(DB) {
       if (fetchBudgetLeft() < 20) break;
       let meta = null; try { meta = await getState(DB, "hist_meta:" + isym, null); } catch (e) {}
       if (meta && meta.ts && (now - meta.ts) < (HARVEST.deepRefreshDays || 30) * 86400000) continue;
-      __fetchBudget.used++;
+      __fetchBudget.used++; attempted++;
       const dh = await fetchDeepDaily(isym, HARVEST.deepBars);
       if (dh && dh.closes && dh.closes.length >= 300) {
         try { await setState(DB, "hist:" + isym, dh); await setState(DB, "hist_meta:" + isym, { ts: now, bars: dh.bars, dataTs: dh.ts }); fetched++; } catch (e) {}
@@ -21359,7 +21359,7 @@ async function harvestDeepFetchNightly(DB) {
         scanned++;
         let meta = null; try { meta = await getState(DB, "hist_meta:" + sym, null); } catch (e) {}
         if (meta && meta.ts && (now - meta.ts) < refreshMs) continue;
-        __fetchBudget.used++;
+        __fetchBudget.used++; attempted++;
         const dh = await fetchDeepDaily(sym, HARVEST.deepBars);
         if (dh && dh.closes && dh.closes.length >= 300) {
           try { await setState(DB, "hist:" + sym, dh); await setState(DB, "hist_meta:" + sym, { ts: now, bars: dh.bars, dataTs: dh.ts }); fetched++; } catch (e) {}
@@ -21367,7 +21367,13 @@ async function harvestDeepFetchNightly(DB) {
       }
       try { await setState(DB, "hist_off", (off + Math.max(1, scanned)) % syms.length); } catch (e) {}
     }
-    return fetched ? ("[HIST] 딥-히스토리 " + fetched + "종목 갱신(range=max, " + (HARVEST.deepBars || 1800) + "봉)") : null;
+    // [V12.131d] 종전엔 fetched=0이면 null만 반환해 "왜 0인지"를 알 수 없었다(호출부 로그가 빈 채로
+    //   남아 진단 불가). 딥이력 확대는 표본을 늘리는 유일한 경로라 실패 원인 관측이 중요하다 —
+    //   시도(attempted)·스캔·남은 fetch 예산을 함께 남겨 예산 소진인지 외부 API 실패인지 구분한다.
+    const _diag = "scanned=" + scanned + " attempted=" + attempted + " budgetLeft=" + fetchBudgetLeft();
+    return fetched
+      ? ("[HIST] 딥-히스토리 " + fetched + "종목 갱신(range=max, " + (HARVEST.deepBars || 1800) + "봉) " + _diag)
+      : ("[HIST] 갱신 0건 — " + _diag + (attempted > 0 ? " (외부 fetch 실패 추정)" : " (수집대상 없음/예산부족)"));
   } catch (e) { return "[HIST] fail: " + (e && e.message); }
 }
 
