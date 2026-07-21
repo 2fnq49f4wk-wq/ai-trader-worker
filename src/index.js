@@ -17599,7 +17599,10 @@ function _mlPatternFeats(closes, highs, lows, opens) {
     const L = (Array.isArray(lows) && lows.length === closes.length) ? lows : closes;
     const O = (Array.isArray(opens) && opens.length === closes.length) ? opens : closes;
     try { const tp = taDetectPatterns({ closes: closes, highs: H, lows: L, opens: O }); if (tp && typeof tp.score === "number") o.chartPat = _clamp(tp.score / 5, -1, 1); } catch (e) {}
-    try { const ts = techSummaryMultiTF(closes, H, L); if (ts && ts.now && ts.week && ts.month) o.tfConsBull = _clamp(_num(ts.now.score, 0) * 0.5 + _num(ts.week.score, 0) * 0.35 + _num(ts.month.score, 0) * 0.15, -1, 1); } catch (e) {}
+    // [V12.109] _luxPickTech와 동일 가중(now .40/week .30/month .20/year .10)으로 통일 — 규칙기반
+    //   기술분석과 AI 학습 피처가 같은 데이터·같은 공식을 쓰게 해 의견 불일치(모순) 소지를 줄인다.
+    //   featNames 배열 길이는 그대로라 featVer 변경 불필요(표본 재구축 안 건드림).
+    try { const ts = techSummaryMultiTF(closes, H, L); if (ts && ts.now && ts.week && ts.month) o.tfConsBull = _clamp(_num(ts.now.score, 0) * 0.40 + _num(ts.week.score, 0) * 0.30 + _num(ts.month.score, 0) * 0.20 + (ts.year ? _num(ts.year.score, 0) * 0.10 : 0), -1, 1); } catch (e) {}
     try {
       const p = closes[closes.length - 1];
       const m5 = getMA(closes, 5), m20 = getMA(closes, 20), m50 = getMA(closes, 50), m200 = getMA(closes, Math.min(200, closes.length - 1));
@@ -21538,21 +21541,38 @@ function techSummaryMultiTF(closes, highs, lows) {
 //   우량주(blue): 시총순위(MCAP_RANK)가 높을수록(대형·안정) 보너스 — '우량주 위주 매수' 성향 부여.
 //   반환: { tech(-1..1), blue(0..1), label, exclude(true=강한 약세라 상승픽 제외) }.
 function _luxPickTech(dd, sym, market) {
-  const R = { tech: null, blue: 0, label: null, exclude: false };
+  const R = { tech: null, blue: 0, label: null, exclude: false, adx: null };
   try {
     if (!dd || !Array.isArray(dd.closes) || dd.closes.length < 30) return R;
     const ts = techSummaryMultiTF(dd.closes, dd.highs, dd.lows);
     let consensus = null, label = null;
+    // [V12.109] year(1년) 시간대 추가 — 종전엔 now/week/month만 봐서 장기추세를 놓치고 단기 노이즈에
+    //   과반응했다. 장기비중을 조금 실어 "장기추세에 역행하는 단기 반등"에 낚이는 걸 줄인다.
     if (ts && ts.now && ts.week && ts.month) {
-      consensus = _num(ts.now.score, 0) * 0.5 + _num(ts.week.score, 0) * 0.35 + _num(ts.month.score, 0) * 0.15;
+      consensus = _num(ts.now.score, 0) * 0.40 + _num(ts.week.score, 0) * 0.30 + _num(ts.month.score, 0) * 0.20
+                + (ts.year ? _num(ts.year.score, 0) * 0.10 : 0);
       label = ts.now.label;
     }
     // 차트패턴(그래프 분석) — chart=±2·candle=±1 누적점수를 [-1,1]로 정규화
     let patt = 0;
     try { const tp = taDetectPatterns(dd); if (tp && typeof tp.score === "number") patt = _clamp(tp.score / 5, -1, 1); } catch (e) {}
     // 종합 기술점수 — 컨센서스 70% + 패턴 30%. 그래프 분석에 실질 가중.
-    if (consensus != null) R.tech = _clamp(consensus * 0.7 + patt * 0.3, -1, 1);
-    else if (patt) R.tech = patt;
+    let tech = null;
+    if (consensus != null) tech = _clamp(consensus * 0.7 + patt * 0.3, -1, 1);
+    else if (patt) tech = patt;
+    // [V12.109] ADX 추세강도 기반 신뢰도 스케일링 — ADX가 낮은(횡보·휩쏘) 구간에서 기술신호가
+    //   방향성 없이 오락가락하며 위원회 확률을 왜곡하던 것을 완화. ADX<15(무추세)면 신호를 최대 절반까지
+    //   감쇠, ADX>=25(뚜렷한 추세)면 그대로 반영 — "추세 없을 땐 기술신호도 확신 낮춰라"는 원칙.
+    try {
+      const _adx = getADX(dd.highs || dd.closes, dd.lows || dd.closes, dd.closes, 14);
+      if (_adx != null && tech != null) {
+        R.adx = +_adx.toFixed(1);
+        const _adxConf = _clamp((_adx - 15) / (25 - 15), 0, 1);   // 15→0.0, 25+→1.0
+        const _scale = 0.5 + 0.5 * _adxConf;                      // 0.5~1.0
+        tech = _clamp(tech * _scale, -1, 1);
+      }
+    } catch (e) {}
+    R.tech = tech;
     R.label = label;
     // 강한 약세(가중 컨센서스 매도~적극매도) → 상승 픽 제외
     if (R.tech != null && R.tech <= -0.35) R.exclude = true;
