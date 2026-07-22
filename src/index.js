@@ -22714,12 +22714,15 @@ async function mlNewsNextDayNightly(DB) {
       if (samples.length) _nnewsTrain(w, samples);
     }
     // (2) 유니버스 스코어링(캐시된 재무만 사용 → 추가 fetch 0)
-    const ks = await DB.prepare("SELECT k FROM state WHERE k LIKE 'daily:%' ORDER BY k").all();
-    const syms = (((ks && ks.results) || []).map(function (r) { return r.k.slice(6); })).filter(function (s) { return s && s[0] !== "^"; });
+    // [V32.4] 일봉을 종목마다 getState하던 것을 단일 쿼리 일괄 로드로(D1 왕복 수백→1) — 스캔과 동일 최적화.
+    const ks = await DB.prepare("SELECT k, v FROM state WHERE k LIKE 'daily:%' ORDER BY k").all();
+    const _dMap = {};
+    for (const r of ((ks && ks.results) || [])) { try { _dMap[r.k.slice(6)] = JSON.parse(r.v); } catch (e) {} }
+    const syms = Object.keys(_dMap).filter(function (s) { return s && s[0] !== "^"; });
     const scored = [], deadline = Date.now() + 60000;
     for (const sym of syms) {
       if (Date.now() > deadline) break;
-      const dd = await getState(DB, "daily:" + sym, null);
+      const dd = _dMap[sym];
       if (!dd || !Array.isArray(dd.closes) || dd.closes.length < 30) continue;
       const grp = getSectorGroup(sym, null);
       const gsObj = sentiment[grp];
@@ -22814,6 +22817,12 @@ async function mlUniverseScanNightly(DB) {
       if (!dd || !Array.isArray(dd.closes) || dd.closes.length < 60) continue;
       const price = dd.closes[dd.closes.length - 1];
       if (!(price > 0)) continue;
+      // [V32.4] ★CPU 절감·스캔 가속★ 값싼 기술 프리스크린(_luxPickTech: 다기간 컨센서스·패턴·ADX)을
+      //   무거운 위원회 추론(mlBuildFeatures + mlDeepDecide = 3M DNN·GBDT·MIND 순전파) '앞'으로 옮겨,
+      //   강한 약세(exclude) 종목은 추론 자체를 생략한다. 제외 종목은 어차피 상승픽이 안 되므로 결과는
+      //   동일하고, 매 종목 3M 추론을 건너뛰는 만큼 CPU가 줄고 같은 90s 안에 더 많은 종목을 커버한다.
+      const _pt = _luxPickTech(dd, sym, mkt);
+      if (_pt.exclude) continue;   // 기술적 강한 약세 → 상승 픽 대상 아님 → 추론 생략
       const feat = mlBuildFeatures({
         closes: dd.closes, volumes: dd.volumes, opens: dd.opens,
         highs: dd.highs, lows: dd.lows, idxCloses: idxCache[mkt],
@@ -22829,11 +22838,7 @@ async function mlUniverseScanNightly(DB) {
         } catch (e) {}
       } else { p = mlScore(l1, feat); }
       scanned++;
-      // [V12.86] ★기술·우량주 종합 조정★ — 공용 헬퍼(_luxPickTech: 다기간 컨센서스+차트패턴+우량주)로
-      //   하락추세·약세패턴 종목을 상승픽에서 배제하고, 기술점수·우량주 보너스를 랭킹에 반영.
-      const _pt = _luxPickTech(dd, sym, mkt);
       if (p != null) {
-        if (_pt.exclude) continue;   // 기술적 강한 약세 → 상승 픽 제외
         const _tw = (LUXML.pickTechWeight != null ? LUXML.pickTechWeight : 0.22);
         const _bw = (LUXML.pickBlueWeight != null ? LUXML.pickBlueWeight : 0.10);
         const rankP = _clamp(p + (_pt.tech != null ? _tw * _pt.tech : 0) + _bw * _pt.blue, 0.01, 0.99);
