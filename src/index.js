@@ -5881,11 +5881,21 @@ async function fetchBatchQuotes(symbols, opts) {
       __fetchBudget.used++;
       try {
         // [V9.3] 구분자 | → , (네이버 API 변경: 파이프는 배치당 1개만 반환, 쉼표는 전체 반환)
-        const r = await fetch("https://polling.finance.naver.com/api/realtime?query=SERVICE_ITEM:" + sl.join(","),
-          { headers: { "User-Agent": "Mozilla/5.0", "Referer": "https://finance.naver.com" } });
-        if (!r.ok) return;
-        const j = await r.json();
-        const datas = (j && j.result && j.result.areas && j.result.areas[0] && j.result.areas[0].datas) || [];
+        // [V32.1] ★KR priced=0 완화★ 네이버 폴링이 일시적으로 비거나(빈 datas) 5xx면 한 번 재시도.
+        //   전멸(priced=0 → 거래·표본 마비)을 유발하던 순간적 실패를 흡수한다(추가 1콜, 예산 내).
+        const nvUrl = "https://polling.finance.naver.com/api/realtime?query=SERVICE_ITEM:" + sl.join(",");
+        const nvHdr = { headers: { "User-Agent": "Mozilla/5.0", "Referer": "https://finance.naver.com" } };
+        let r = await fetch(nvUrl, nvHdr);
+        let j = null;
+        if (r.ok) { try { j = await r.json(); } catch (e) { j = null; } }
+        let datas = (j && j.result && j.result.areas && j.result.areas[0] && j.result.areas[0].datas) || [];
+        if (datas.length === 0 && fetchBudgetLeft() > 0) {
+          __fetchBudget.used++;
+          try {
+            r = await fetch(nvUrl, nvHdr);
+            if (r.ok) { j = await r.json(); datas = (j && j.result && j.result.areas && j.result.areas[0] && j.result.areas[0].datas) || []; }
+          } catch (e) {}
+        }
         for (const d of datas) {
           const sym = codeMap[d.cd];
           if (!sym) continue;
@@ -16070,10 +16080,13 @@ async function handleRequest(request, env, ctx) {
     if (path === "/api/econ") {
       const ck = "econ_calendar";
       const cached = await getState(env.DB, ck, null);
-      if (url.searchParams.get("force") !== "1" && cached && cached.ts && (Date.now() - cached.ts) < 30 * 60 * 1000) {
+      const __fresh = cached && cached.ts && (Date.now() - cached.ts) < 30 * 60 * 1000;
+      const __force = url.searchParams.get("force") === "1";
+      if (!__force && __fresh) {
         return Response.json(cached, { headers: cors });
       }
-      try {
+      // [V32.1] SWR — TradingView fetch를 요청 경로에서 await하다 CPU 한도로 "지표 로드 실패"가 났다.
+      const __buildEcon = async () => {
         const now = new Date();
         const from = new Date(now.getTime() - 1 * 86400000).toISOString();
         const to = new Date(now.getTime() + 7 * 86400000).toISOString();
@@ -16094,6 +16107,14 @@ async function handleRequest(request, env, ctx) {
         }).filter(function(e){ return e.title && e.date; });
         const payload = { events: events, ts: Date.now() };
         try { await setState(env.DB, ck, payload); } catch (e2) {}
+        return payload;
+      };  // ── __buildEcon 끝 ──
+      if (cached && !__force) {
+        if (ctx && ctx.waitUntil) ctx.waitUntil(__buildEcon().catch(function(){}));
+        return Response.json(cached, { headers: cors });
+      }
+      try {
+        const payload = await __buildEcon();
         return Response.json(payload, { headers: cors });
       } catch (e) {
         if (cached) return Response.json(cached, { headers: cors });
@@ -16104,10 +16125,15 @@ async function handleRequest(request, env, ctx) {
     if (path === "/api/insider") {
       const ck = "insider_feed";
       const cached = await getState(env.DB, ck, null);
-      if (url.searchParams.get("force") !== "1" && cached && cached.ts && (Date.now() - cached.ts) < 15 * 60 * 1000) {
+      const __fresh = cached && cached.ts && (Date.now() - cached.ts) < 15 * 60 * 1000;
+      const __force = url.searchParams.get("force") === "1";
+      if (!__force && __fresh) {
         return Response.json(cached, { headers: cors });
       }
-      try {
+      // [V32.1] SWR — 캐시가 있으면(오래됐어도) 즉시 반환하고 갱신은 백그라운드로.
+      //   외부 fetch(SEC)를 요청 경로에서 await하면 CPU 한도(1102)에 걸려 응답이 JSON이 아닌
+      //   에러 페이지로 나가 프론트가 "공시 로드 실패"를 띄우던 문제. 콜드(캐시無)일 때만 동기 빌드.
+      const __buildInsider = async () => {
         const UA = "LUX-ENGINE/1.0 (contact: yryeolove@gmail.com)";
         const r = await fetch("https://www.sec.gov/cgi-bin/browse-edgar?action=getcurrent&type=4&company=&dateb=&owner=include&count=80&output=atom",
           { headers: { "User-Agent": UA, "Accept": "application/atom+xml" } });
@@ -16139,6 +16165,16 @@ async function handleRequest(request, env, ctx) {
           .slice(0, 40);
         const payload = { filings: filings, ts: Date.now() };
         try { await setState(env.DB, ck, payload); } catch (e2) {}
+        return payload;
+      };  // ── __buildInsider 끝 ──
+      // 자동 폴링(비-force): 캐시가 있으면 stale라도 즉시 반환 + 백그라운드 갱신 → 요청경로 무거운 fetch 제거.
+      if (cached && !__force) {
+        if (ctx && ctx.waitUntil) ctx.waitUntil(__buildInsider().catch(function(){}));
+        return Response.json(cached, { headers: cors });
+      }
+      // 수동 새로고침(force) 또는 콜드(캐시無): 동기 빌드하되 실패 시 캐시/빈값으로 폴백(500 방지).
+      try {
+        const payload = await __buildInsider();
         return Response.json(payload, { headers: cors });
       } catch (e) {
         if (cached) return Response.json(cached, { headers: cors });
@@ -16150,10 +16186,14 @@ async function handleRequest(request, env, ctx) {
     if (path === "/api/earnings") {
       const ck = "earnings_calendar_v2";  // [V9.1] epsType 필드 추가로 캐시 키 갱신(구 캐시 무효화)
       const cached = await getState(env.DB, ck, null);
-      if (url.searchParams.get("force") !== "1" && cached && cached.ts && (Date.now() - cached.ts) < 6 * 60 * 60 * 1000) {
+      const __fresh = cached && cached.ts && (Date.now() - cached.ts) < 6 * 60 * 60 * 1000;
+      const __force = url.searchParams.get("force") === "1";
+      if (!__force && __fresh) {
         return Response.json(cached, { headers: cors });
       }
-      try {
+      // [V32.1] SWR — Yahoo/Nasdaq fetch fan-out을 요청 경로에서 await하면 CPU 한도로 응답이
+      //   에러 페이지가 돼 "어닝스 로드 실패"가 떴다. 캐시가 있으면 즉시 반환하고 갱신은 백그라운드로.
+      const __buildEarnings = async () => {
         resetFetchBudget(20);
         const cfg = migrateCfgToMarkets(Object.assign({}, DEFAULT_CFG, await getState(env.DB, "cfg", {})));
         const usTickers = (cfg.usTickers || []).filter(function(s){ return s.indexOf(".") === -1; });
@@ -16214,6 +16254,14 @@ async function handleRequest(request, env, ctx) {
         items = items.slice(0, 80);
         const payload = { items: items, ts: Date.now() };
         try { await setState(env.DB, ck, payload); } catch (e2) {}
+        return payload;
+      };  // ── __buildEarnings 끝 ──
+      if (cached && !__force) {
+        if (ctx && ctx.waitUntil) ctx.waitUntil(__buildEarnings().catch(function(){}));
+        return Response.json(cached, { headers: cors });
+      }
+      try {
+        const payload = await __buildEarnings();
         return Response.json(payload, { headers: cors });
       } catch (e) {
         if (cached) return Response.json(cached, { headers: cors });
@@ -16225,10 +16273,13 @@ async function handleRequest(request, env, ctx) {
     if (path === "/api/econ-impact") {
       const ck = "econ_impact";
       const cached = await getState(env.DB, ck, null);
-      if (url.searchParams.get("force") !== "1" && cached && cached.ts && (Date.now() - cached.ts) < 60 * 60 * 1000) {
+      const __fresh = cached && cached.ts && (Date.now() - cached.ts) < 60 * 60 * 1000;
+      const __force = url.searchParams.get("force") === "1";
+      if (!__force && __fresh) {
         return Response.json(cached, { headers: cors });
       }
-      try {
+      // [V32.1] SWR — TradingView/Yahoo/네이버 fetch를 요청 경로에서 await하면 CPU 한도로 "임팩트 로드 실패"가 났다.
+      const __buildImpact = async () => {
         resetFetchBudget(10);
         // 1) 최근 14일 발표 완료된 지표 (TradingView 캘린더)
         let evs = [];
@@ -16331,6 +16382,14 @@ async function handleRequest(request, env, ctx) {
         rows.sort(function(a, b){ return new Date(b.date) - new Date(a.date) || b.importance - a.importance; });
         const payload = { rows: rows.slice(0, 40), ts: Date.now() };
         try { await setState(env.DB, ck, payload); } catch (e2) {}
+        return payload;
+      };  // ── __buildImpact 끝 ──
+      if (cached && !__force) {
+        if (ctx && ctx.waitUntil) ctx.waitUntil(__buildImpact().catch(function(){}));
+        return Response.json(cached, { headers: cors });
+      }
+      try {
+        const payload = await __buildImpact();
         return Response.json(payload, { headers: cors });
       } catch (e) {
         if (cached) return Response.json(cached, { headers: cors });
@@ -16349,10 +16408,24 @@ async function handleRequest(request, env, ctx) {
       try {
         const cfg = migrateCfgToMarkets(Object.assign({}, DEFAULT_CFG, await getState(env.DB, "cfg", {})));
         const syms = (cfg.usTickers || []).concat(cfg.krTickers || []);
+        // [V32.1] ★CPU 과부하·"스캔 실패" 수정★ 종전엔 종목마다 await getState(daily:*)로 D1을 800회
+        //   왕복해 요청이 CPU 한도(1102)에 걸려 JSON이 아닌 에러로 끝났다. 일봉 전체를 단일 쿼리로
+        //   한 번에 로드(10분 아이솔레이트 캐시 공유)해 왕복을 800→1로 줄인다.
+        let __allDaily = null;
+        if (globalThis.__allDailyCache && Date.now() - globalThis.__allDailyCache.ts < 600000) {
+          __allDaily = globalThis.__allDailyCache.map;
+        } else {
+          __allDaily = {};
+          try {
+            const drows = await env.DB.prepare("SELECT k, v FROM state WHERE k LIKE 'daily:%'").all();
+            for (const r of (drows.results || [])) { try { __allDaily[r.k.slice(6)] = JSON.parse(r.v); } catch (e) {} }
+            globalThis.__allDailyCache = { ts: Date.now(), map: __allDaily };
+          } catch (e) {}
+        }
         const groups = {};
         let scanned = 0, skipped = 0;
         for (const sym of syms) {
-          const daily = await getState(env.DB, "daily:" + sym, null);
+          const daily = __allDaily[sym];
           if (!daily || !daily.closes || daily.closes.length < 30) { skipped++; continue; }
           const ta = taDetectPatterns(daily);
           scanned++;
@@ -22657,9 +22730,17 @@ async function mlUniverseScanNightly(DB) {
     const g = (gT && gT.trusted) ? await mlGBDTLoad(DB) : null;
     const cal = await getState(DB, "committee_cal", null);
     const guard = await mlGuardState(DB);
-    const ks = await DB.prepare("SELECT k FROM state WHERE k LIKE 'daily:%' ORDER BY k").all();
-    const syms = (((ks && ks.results) || []).map(function (r) { return r.k.slice(6); }))
-      .filter(function (s) { return s && s[0] !== "^"; });
+    // [V32.1] ★CPU/D1 과부하 수정★ 종전엔 심볼 목록만 받아온 뒤 루프에서 종목마다
+    //   await getState(DB, "daily:"+sym)로 D1을 수백 회 왕복했다 — 이게 스캔을 느리게 하고
+    //   D1을 점유해 같은 시간대의 API 요청(어닝스·공시·지표·기술분석)까지 CPU 한도(1102)로
+    //   밀어내 "로드 실패"를 유발한 주범. 이제 일봉 전체를 단일 쿼리로 한 번에 읽어 메모리 맵으로
+    //   쓴다(왕복 수백→1). 12608행의 __allDailyCache(10분)와 동일 철학 — 야간 스캔은 신선도 무관.
+    const ks = await DB.prepare("SELECT k, v FROM state WHERE k LIKE 'daily:%' ORDER BY k").all();
+    const dailyMapAll = {};
+    for (const r of ((ks && ks.results) || [])) {
+      try { dailyMapAll[r.k.slice(6)] = JSON.parse(r.v); } catch (e) {}
+    }
+    const syms = Object.keys(dailyMapAll).filter(function (s) { return s && s[0] !== "^"; });
     if (!syms.length) return "[SCAN] 일봉 캐시 없음";
     // [V9.10 버그수정] ORDER BY k는 ASCII 정렬 — KR 티커(005930.KS 등, 숫자시작)가 US 티커(AAPL 등, 알파벳시작)보다
     //   항상 먼저 옴. 회전 없이 매번 처음부터 스캔+90초 벽시계 컷이라 US가 구조적으로 거의 스캔되지 못했음(전량 KR만 픽).
@@ -22692,7 +22773,7 @@ async function mlUniverseScanNightly(DB) {
       if (Date.now() > deadline) break;
       const sym = it.sym, mkt = it.mkt;
       scannedByMkt[mkt]++;   // 오프셋 회전용 — 배리어 통과 여부와 무관하게 "이 심볼까지 처리 시도했음"을 기록해 순회 누락 방지
-      let dd = null; try { dd = await getState(DB, "daily:" + sym, null); } catch (e) {}
+      const dd = dailyMapAll[sym];   // [V32.1] 위에서 일괄 로드 — 루프 내 D1 왕복 제거
       if (!dd || !Array.isArray(dd.closes) || dd.closes.length < 60) continue;
       const price = dd.closes[dd.closes.length - 1];
       if (!(price > 0)) continue;
