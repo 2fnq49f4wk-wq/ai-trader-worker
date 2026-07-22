@@ -6808,8 +6808,56 @@ async function fetchDailyFull(symbol) {
 // [V12.132] 실패 사유 계측 — 91회 시도해 0건 성공인데 원인을 알 수 없었다(모든 실패가
 //   catch로 조용히 null이 됐다). 전역 카운터에 사유별로 쌓아 호출부가 로그로 남긴다.
 var __deepFail = { throw: 0, noResult: 0, shortBars: 0, ok: 0, lastErr: "" };
+// [V32.5] ★KR 딥이력 원천 추가(표본 정체 근본수정)★ 종전 fetchDeepDaily는 Yahoo range=max만 썼는데,
+//   야후는 한국 종목(.KS/.KQ) 장기이력이 짧거나 부정확해 대부분 shortBars(300봉 미만)로 자격미달 처리됐다
+//   → 딥커버리지가 422(대부분 US)에서 정체 → 표본 풀이 16만에서 성장 정지. 네이버 국내 차트 API는 KR
+//   종목의 수천 봉 장기 일봉을 제공하므로(시세와 동일 원천), KR은 네이버로 딥이력을 받는다. fetch '횟수'는
+//   종목당 1회로 동일(예산 증가 없음) — 같은 예산으로 성공률만 올려 커버리지·표본을 늘린다.
+async function _fetchDeepDailyNaverKR(code, T) {
+  // 네이버 국내 개별종목 일봉 — 약 12년 범위로 요청해 2400+봉 확보(있는 만큼 반환).
+  const now = new Date();
+  const toS = now.getUTCFullYear() + String(now.getUTCMonth() + 1).padStart(2, "0") + String(now.getUTCDate()).padStart(2, "0");
+  const from = new Date(now); from.setUTCFullYear(from.getUTCFullYear() - 12);
+  const fromS = from.getUTCFullYear() + String(from.getUTCMonth() + 1).padStart(2, "0") + String(from.getUTCDate()).padStart(2, "0");
+  const url = "https://api.stock.naver.com/chart/domestic/item/" + code +
+    "/day?startDateTime=" + fromS + "0000&endDateTime=" + toS + "0000";
+  const r = await fetch(url, { headers: { "User-Agent": "Mozilla/5.0", "Referer": "https://m.stock.naver.com/" } });
+  if (!r.ok) return null;
+  let rows = null; try { rows = await r.json(); } catch (e) { return null; }
+  // 응답 배열 형태: [{localDate:"YYYYMMDD", closePrice, openPrice, highPrice, lowPrice, accumulatedTradingVolume}, ...]
+  const arr = Array.isArray(rows) ? rows : (rows && Array.isArray(rows.priceInfos) ? rows.priceInfos : null);
+  if (!arr || !arr.length) return null;
+  // 날짜 오름차순 정렬(오래된→최신) — 야후 포맷과 정합.
+  arr.sort(function (a, b) { return String(a.localDate || "").localeCompare(String(b.localDate || "")); });
+  const closes = [], highs = [], lows = [], volumes = [], opens = [];
+  const _n = function (v) { const x = Number(String(v == null ? "" : v).replace(/,/g, "")); return isFinite(x) ? x : 0; };
+  let lastTs = Date.now();
+  for (const row of arr) {
+    const c = _n(row.closePrice);
+    if (!(c > 0)) continue;
+    closes.push(c);
+    const h = _n(row.highPrice), l = _n(row.lowPrice), o = _n(row.openPrice), v = _n(row.accumulatedTradingVolume);
+    highs.push(h > 0 ? h : c); lows.push(l > 0 ? l : c); opens.push(o > 0 ? o : c); volumes.push(v > 0 ? v : 0);
+    const ds = String(row.localDate || "");
+    if (ds.length >= 8) { const t = Date.parse(ds.slice(0, 4) + "-" + ds.slice(4, 6) + "-" + ds.slice(6, 8) + "T00:00:00Z"); if (isFinite(t)) lastTs = t; }
+  }
+  if (closes.length < 300) { __deepFail.shortBars++; return null; }
+  __deepFail.ok++;
+  return { closes: closes.slice(-T), highs: highs.slice(-T), lows: lows.slice(-T),
+           volumes: volumes.slice(-T), opens: opens.slice(-T), ts: lastTs, bars: Math.min(closes.length, T) };
+}
+
 async function fetchDeepDaily(symbol, deepBars) {
   const T = deepBars || 1800;
+  // [V32.5] KR 종목은 네이버 장기이력으로(야후는 KR 딥이력이 짧아 자격미달 다발). 실패 시 아래 야후로 폴백.
+  if (/\.(KS|KQ)$/.test(symbol)) {
+    try {
+      const code = symbol.split(".")[0];
+      const nv = await _fetchDeepDailyNaverKR(code, T);
+      if (nv) return nv;
+    } catch (e) { __deepFail.lastErr = "naverKR:" + String((e && e.message) || e).slice(0, 60); }
+    // 네이버 실패 시 야후 폴백(그대로 진행)
+  }
   try {
     const j = await yahooFetch("https://query1.finance.yahoo.com/v8/finance/chart/" + encodeURIComponent(symbol) + "?interval=1d&range=max");
     const result = j && j.chart && j.chart.result && j.chart.result[0];
@@ -21544,6 +21592,16 @@ async function harvestDeepFetchNightly(DB, opts) {
     __deepFail = { throw: 0, noResult: 0, shortBars: 0, ok: 0, lastErr: "" };   // [V12.132] 이번 실행분 사유 계측
     let skippedIneligible = 0;   // [V12.133] 이번 실행에서 새로 '영구 자격미달'로 마킹한 수
     const now = Date.now();
+    // [V32.5] ★1회 마이그레이션★ 과거 야후 KR 딥이력 실패로 shortBars '자격미달'(90일 만료) 마킹된
+    //   한국 종목(.KS/.KQ)들을 해제해, 새로 추가된 네이버 원천으로 다시 시도되게 한다(로테이션·예산
+    //   가드는 그대로라 밤당 40종목씩 순차 재수집 — 과부하 없음). 플래그로 딱 1회만 실행.
+    try {
+      if (!(await getState(DB, "deep_kr_reeligible_v325", null))) {
+        await DB.prepare("DELETE FROM state WHERE k LIKE 'hist_meta:%.KS' OR k LIKE 'hist_meta:%.KQ'").run();
+        await setState(DB, "deep_kr_reeligible_v325", { ts: now });
+        try { await log(DB, "INFO", null, "[HIST] KR 딥이력 자격미달 마킹 초기화 — 네이버 원천으로 재수집 시작(V32.5)"); } catch (e) {}
+      }
+    } catch (e) {}
     // (1) 지수 딥 — alpha 라벨 정렬용(항상 갱신 시도, 소수)
     const idxSyms = ["^GSPC", "^KS11", "GC=F"];
     for (const isym of idxSyms) {
