@@ -272,35 +272,45 @@ def train_job(epochs: int = EPOCHS_DEFAULT, dry: bool = False):
     #   시드별로 쪼개 보내면 Worker는 회당 ~6MB만 파싱 → OOM 없이 6시드 그대로 반영.
     print("④ 업로드 (분할)")
 
-    def _post(params, obj, what, to=300, retries=0):
-        # [V32.3] commit 단계는 Worker가 6시드(~37MB)를 조립·청크저장하는 무거운 작업이라,
-        #   D1이 바쁜 장중엔 300s를 넘겨 ReadTimeout으로 학습결과 업로드가 통째로 실패했다
-        #   (실측: commit read timeout=300 → job 실패, 모델 미반영). 타임아웃을 늘리고 ReadTimeout
-        #   한정 재시도를 둔다(commit 재조립은 멱등 — 스테이징 net을 다시 읽어 저장).
+    def _post(params, obj, what, to=300, retries=0, retry_delay=30):
+        # [V32.3/V32.5] commit 단계는 Worker가 6시드(~37MB)를 조립·청크저장(~53청크)하는 무거운 작업이라
+        #   실패 유형이 둘이다: (a) 응답 지연 → ReadTimeout, (b) D1 과부하 → HTTP 500 "D1 DB is overloaded".
+        #   둘 다 일시적이므로 재시도한다. Worker의 commit은 멱등(스테이징 net 재조립·재저장, 또는 이미
+        #   반영됐으면 200 반환)이라 재시도가 안전하다. 재시도 사이에 delay를 둬 D1 큐가 빠지게 한다.
         last = None
         for attempt in range(retries + 1):
             try:
                 r = requests.post(BASE + "/api/dnn-import", params=params, headers=HDR,
                                   data=json.dumps(obj), timeout=to)
-                if r.status_code != 200:
-                    raise RuntimeError(f"{what} {r.status_code}: {r.text[:300]}")
-                return r.json()
+                if r.status_code == 200:
+                    return r.json()
+                body = r.text[:300]
+                retriable = (r.status_code >= 500) and (("D1" in body) or ("overloaded" in body) or ("queued" in body))
+                if retriable and attempt < retries:
+                    last = RuntimeError(f"{what} {r.status_code}: {body}")
+                    print(f"   {what} {r.status_code} D1 과부하 — {retry_delay}s 후 재시도 {attempt+1}/{retries}")
+                    time.sleep(retry_delay)
+                    continue
+                raise RuntimeError(f"{what} {r.status_code}: {body}")
             except requests.exceptions.ReadTimeout as e:
                 last = e
-                print(f"   {what} read timeout({to}s) — 재시도 {attempt+1}/{retries}")
-        raise RuntimeError(f"{what} read timeout after {retries+1} tries") from last
+                if attempt < retries:
+                    print(f"   {what} read timeout({to}s) — {retry_delay}s 후 재시도 {attempt+1}/{retries}")
+                    time.sleep(retry_delay)
+                    continue
+        raise RuntimeError(f"{what} 재시도 {retries+1}회 모두 실패") from last
 
-    # 1) begin — 메타(가중치 제외)만 전송
+    # 1) begin — 메타(가중치 제외)만 전송 (D1 과부하 대비 재시도)
     _post({"key": KEY, "stage": "begin"},
           {"featVer": featver, "mean": mean.tolist(), "std": std.tolist(), "dims": dims,
            "seeds": len(js_nets), "valAcc": round(acc, 4), "valAccLB": round(lb, 4), "valN": n_eval, "n": N},
-          "begin")
-    # 2) net — 시드별 개별 전송(회당 ~6MB)
+          "begin", retries=3)
+    # 2) net — 시드별 개별 전송(회당 ~6MB, 청크 D1 쓰기 → 과부하 시 재시도)
     for k, nt in enumerate(js_nets):
-        _post({"key": KEY, "stage": "net", "i": k}, nt, f"net[{k}]")
+        _post({"key": KEY, "stage": "net", "i": k}, nt, f"net[{k}]", to=300, retries=3)
         print(f"   시드 {k+1}/{len(js_nets)} 업로드")
-    # 3) commit — Worker가 조립·검증·게이트 (무거움: 넉넉한 타임아웃 + ReadTimeout 재시도)
-    res = _post({"key": KEY, "stage": "commit"}, {}, "commit", to=600, retries=2)
+    # 3) commit — Worker가 조립·검증·게이트 (무거움: 넉넉한 타임아웃 + D1과부하/타임아웃 재시도)
+    res = _post({"key": KEY, "stage": "commit"}, {}, "commit", to=600, retries=5, retry_delay=45)
     print("✅", json.dumps(res.get("trust", {}), ensure_ascii=False), res.get("note", ""))
     return {"ok": True, "valAcc": acc, "trust": res.get("trust")}
 
