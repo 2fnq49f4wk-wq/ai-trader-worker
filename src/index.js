@@ -3632,7 +3632,7 @@ const DEFAULT_CFG = {
   //   KR 슬리브가 BEAR장에 미국추종 ETF만 사서 사실상 레버리지 해외노출이 되던 문제 차단 → 실제 한국주식 매매.
   krExcludeForeignEtf: true,
   // === 사이클 락 ===
-  cycleLockTTL: 90000   // [V31] 90s — US 처리 지연 시 락 만료/이중체결 방지
+  cycleLockTTL: 180000   // [V32.1] 180s — 준비단계(FX·감성·모델로딩)가 길어도 락 만료로 탈취되지 않게. 매분 크론 중복은 여전히 "lock held" 스킵.
 };
 
 // === [V8.2] 시장별 독립 학습 — US/KR 따로 학습되는 매매 룰 키 목록 ===
@@ -3967,6 +3967,14 @@ function migrateCfgToMarkets(cfg) {
   }
   if (cfg.markets.kr && [undefined, 30, 15, 180].indexOf(cfg.markets.kr.dailyCacheMinutes) !== -1) {
     cfg.markets.kr.dailyCacheMinutes = 90;
+  }
+  // [V32.1] 사이클 락 TTL 상향(90s→180s). 락 획득 후 매매 직전까지의 준비단계
+  //   (FX·감성·애널리스트·시장컨텍스트·모델로딩)가 90s를 넘으면 락이 만료돼 다음 크론이
+  //   락을 탈취 → 원워커가 KR 매매 직전 "락 소유권 상실"로 스킵되어 아무것도 못 사던 문제.
+  //   180s면 정상 사이클 전체를 덮어 탈취를 막고, 매분 크론 중복은 여전히 "lock held"로 스킵됨.
+  //   (옛 기본 90000만 갱신, 사용자 커스텀은 보존.)
+  if (cfg.cycleLockTTL === undefined || cfg.cycleLockTTL === 90000) {
+    cfg.cycleLockTTL = 180000;
   }
   return cfg;
 }
@@ -11916,7 +11924,7 @@ async function runTradingCycle(env) {
   if (!engineEnabled) { await log(DB, "INFO", null, "engine disabled — 가격만 갱신, 거래 스킵"); }
 
   // [신규] Cycle Lock — 동시 실행 차단. [V31] pid로 소유권 추적, TTL 90s로 여유 확보
-  const myLockPid = await acquireCycleLock(DB, cfg.cycleLockTTL || 90000);
+  const myLockPid = await acquireCycleLock(DB, cfg.cycleLockTTL || 180000);
   if (!myLockPid) {
     await log(DB, "INFO", null, "cycle skipped: lock held");
     return;
@@ -12112,6 +12120,11 @@ async function runTradingCycle(env) {
       //   자체는 유지하되, 장중 매분 실행되는 이 핫패스가 아니라 장 마감 시간대(!_mktOpen)에만 도는
       //   캐치업 하베스트와 같은 저우선순위 구간으로 옮긴다(아래 scheduled 핸들러 참고).
     }
+
+    // [V32.1] 준비단계(FX·감성·애널리스트·시장컨텍스트)가 길어졌을 수 있으므로 매매 진입 직전에
+    //   락 TTL을 한 번 갱신 → 이 워커가 여전히 소유 중이면 만료 임박을 리셋해 탈취를 막는다.
+    //   (탈취됐다면 refresh는 무동작이고 아래 ownsCycleLock에서 정상 차단된다.)
+    await refreshCycleLock(DB, cfg.cycleLockTTL || 180000, myLockPid);
 
     for (const market of marketsForQuotes) {
       const mcfg = getMarketCfg(cfg, market);  // [V8.2] 시장별 독립 룰
@@ -12818,6 +12831,11 @@ async function runTradingCycle(env) {
           break;
         }
         evalProcessed++;
+        // [V32.1] 긴 평가 루프 중에도 주기적으로 락 TTL 갱신 — 한 시장 평가가 수십 초로 길어지면
+        //   그 사이 락이 만료돼 다음 크론에 탈취되고, 이후 시장/후처리가 소유권을 잃던 문제 예방.
+        if (evalProcessed % 20 === 0) {
+          try { await refreshCycleLock(DB, cfg.cycleLockTTL || 180000, myLockPid); } catch (e) {}
+        }
         const symbol = item.symbol;
         tried++;
         try {
@@ -13903,7 +13921,7 @@ async function runTradingCycle(env) {
       }
 
       // [V8.5] 시장 처리 완료 — 다음 시장 처리 전 락 TTL 갱신 (stale 진입 방지)
-      await refreshCycleLock(DB, cfg.cycleLockTTL || 90000, myLockPid);
+      await refreshCycleLock(DB, cfg.cycleLockTTL || 180000, myLockPid);
     }
 
     // [회계 재설계] cash는 trades 원장에서 항상 재계산되므로 별도 저장하지 않는다(죽은 코드 제거).
@@ -13916,7 +13934,11 @@ async function runTradingCycle(env) {
     // [실시간] fastWatch가 쓸 거래가능 시장 목록 기록 — 휴장/엔진OFF/윈도우 판정 재사용.
     try { await setState(DB, "fastwatch:markets", { list: marketsToTrade, ts: Date.now() }); } catch (e) {}
     await log(DB, "INFO", null, "Done: tried=" + tried + " skip=" + skipped + " buy=" + bought + " sell=" + sold + " fetchFail=" + fetchFail + " minBars=" + minuteFetchUsed + " scalp[elig=" + scalpEligible + " scan=" + scalpScanUsed + " sig=" + scalpSig + " gates=" + JSON.stringify(__scalpDiag) + "] cycleMs=" + cycleMs);
-    try { await DB.prepare("DELETE FROM logs WHERE id NOT IN (SELECT id FROM logs ORDER BY id DESC LIMIT 500)").run(); } catch (e) {}
+    // [V32.1] 로그 보존 확대 — 종전 500행 상한은 매분 쏟아지는 INFO에 밀려 ERROR/WARN이
+    //   금세 사라져 "에러가 안 보인다"던 문제. 이제 (1)전체 최근 1500행 유지 + (2)그와 별개로
+    //   ERROR/WARN은 최근 1000행까지 추가 보존 → 오류 이력이 훨씬 오래 남는다.
+    try { await DB.prepare("DELETE FROM logs WHERE id NOT IN (SELECT id FROM logs ORDER BY id DESC LIMIT 1500) AND level NOT IN ('ERROR','WARN')").run(); } catch (e) {}
+    try { await DB.prepare("DELETE FROM logs WHERE level IN ('ERROR','WARN') AND id NOT IN (SELECT id FROM logs WHERE level IN ('ERROR','WARN') ORDER BY id DESC LIMIT 1000)").run(); } catch (e) {}
     // [통계] 일별 엔진 통계 누적 (KST 05:00 리셋). 신호=signalCount, 거래=buy+sell, 에러=직전 집계 이후 누적분.
     try {
       const _dk = kstTradingDayKey(new Date());
@@ -15203,7 +15225,10 @@ async function handleRequest(request, env, ctx) {
            .catch(function () {});
        }).catch(function () {}).then(function () { globalThis.__stateBuilding = false; });
      };
-     const FRESH_MS = 8000, USABLE_MS = 150000;
+     // [V32.1] FRESH_MS 8s→12s — 프론트 폴링(10s)마다 백그라운드 재빌드가 돌아 D1을 계속
+     //   두드리던 것을 줄인다(재빌드가 quote LIKE 스캔·computeAllCash 등 무거워 다른 조회—positions·
+     //   logs—까지 느려졌다). 12s면 폴링 2회당 1회꼴로만 재빌드 → D1 부하 절감, 체감 속도 개선.
+     const FRESH_MS = 12000, USABLE_MS = 150000;
      // ── L1: 아이솔레이트 메모리 ──
      const __sc = globalThis.__stateCache;
      const __age = __sc ? Date.now() - __sc.ts : Infinity;
@@ -15483,8 +15508,16 @@ async function handleRequest(request, env, ctx) {
     }
     if (path === "/api/logs") {
       const limit = parseInt(url.searchParams.get("limit") || "200", 10);
+      // [V32.1] 로그창 폴링(7s)이 매번 D1 SELECT를 치면 D1이 바쁠 때 로그가 느리게 떴다.
+      //   3초 아이솔레이트 캐시로 연속 폴링을 흡수(로그는 초단위 신선도면 충분). limit별 캐시.
+      const __lc = globalThis.__logsCache;
+      if (__lc && __lc.limit === limit && (Date.now() - __lc.ts) < 3000) {
+        return new Response(__lc.str, { headers: Object.assign({ "content-type": "application/json" }, cors) });
+      }
       const res = await env.DB.prepare("SELECT * FROM logs ORDER BY id DESC LIMIT ?").bind(limit).all();
-      return Response.json(res.results, { headers: cors });
+      const __str = JSON.stringify(res.results || []);
+      globalThis.__logsCache = { limit: limit, ts: Date.now(), str: __str };
+      return new Response(__str, { headers: Object.assign({ "content-type": "application/json" }, cors) });
     }
     if (path === "/api/daily-stats") {
       const days = Math.max(1, Math.min(30, parseInt(url.searchParams.get("days") || "7", 10)));

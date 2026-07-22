@@ -8558,7 +8558,7 @@ html[data-theme="light"] .table tbody tr:hover{background:rgba(9,105,218,.045);}
   }
 
   function fetchLogs() {
-    return api('/api/logs?limit=500').then(function(logs){
+    return api('/api/logs?limit=1200').then(function(logs){
       allLogs = logs || [];
       renderLogs();
     })['catch'](function(){});
