@@ -272,12 +272,23 @@ def train_job(epochs: int = EPOCHS_DEFAULT, dry: bool = False):
     #   시드별로 쪼개 보내면 Worker는 회당 ~6MB만 파싱 → OOM 없이 6시드 그대로 반영.
     print("④ 업로드 (분할)")
 
-    def _post(params, obj, what):
-        r = requests.post(BASE + "/api/dnn-import", params=params, headers=HDR,
-                          data=json.dumps(obj), timeout=300)
-        if r.status_code != 200:
-            raise RuntimeError(f"{what} {r.status_code}: {r.text[:300]}")
-        return r.json()
+    def _post(params, obj, what, to=300, retries=0):
+        # [V32.3] commit 단계는 Worker가 6시드(~37MB)를 조립·청크저장하는 무거운 작업이라,
+        #   D1이 바쁜 장중엔 300s를 넘겨 ReadTimeout으로 학습결과 업로드가 통째로 실패했다
+        #   (실측: commit read timeout=300 → job 실패, 모델 미반영). 타임아웃을 늘리고 ReadTimeout
+        #   한정 재시도를 둔다(commit 재조립은 멱등 — 스테이징 net을 다시 읽어 저장).
+        last = None
+        for attempt in range(retries + 1):
+            try:
+                r = requests.post(BASE + "/api/dnn-import", params=params, headers=HDR,
+                                  data=json.dumps(obj), timeout=to)
+                if r.status_code != 200:
+                    raise RuntimeError(f"{what} {r.status_code}: {r.text[:300]}")
+                return r.json()
+            except requests.exceptions.ReadTimeout as e:
+                last = e
+                print(f"   {what} read timeout({to}s) — 재시도 {attempt+1}/{retries}")
+        raise RuntimeError(f"{what} read timeout after {retries+1} tries") from last
 
     # 1) begin — 메타(가중치 제외)만 전송
     _post({"key": KEY, "stage": "begin"},
@@ -288,8 +299,8 @@ def train_job(epochs: int = EPOCHS_DEFAULT, dry: bool = False):
     for k, nt in enumerate(js_nets):
         _post({"key": KEY, "stage": "net", "i": k}, nt, f"net[{k}]")
         print(f"   시드 {k+1}/{len(js_nets)} 업로드")
-    # 3) commit — Worker가 조립·검증·게이트
-    res = _post({"key": KEY, "stage": "commit"}, {}, "commit")
+    # 3) commit — Worker가 조립·검증·게이트 (무거움: 넉넉한 타임아웃 + ReadTimeout 재시도)
+    res = _post({"key": KEY, "stage": "commit"}, {}, "commit", to=600, retries=2)
     print("✅", json.dumps(res.get("trust", {}), ensure_ascii=False), res.get("note", ""))
     return {"ok": True, "valAcc": acc, "trust": res.get("trust")}
 

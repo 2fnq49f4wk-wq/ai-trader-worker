@@ -14742,7 +14742,23 @@ async function handleRequest(request, env, ctx) {
       }
       if (stage === "commit") {
         const stg = await getState(env.DB, "dnn_stage", null);
-        if (!stg) return Response.json({ error: "begin 먼저 호출" }, { status: 409, headers: cors });
+        if (!stg) {
+          // [V32.3] ★멱등 커밋★ 스테이징이 없다 = (a) begin 안 함, 또는 (b) 직전 commit이 서버측에선
+          //   성공(모델 저장+스테이징 삭제)했는데 클라이언트가 read timeout으로 재시도한 경우.
+          //   (b)를 409로 처리하면 실제로는 업로드가 됐는데 학습 job이 실패로 뜬다. 현재 featVer의
+          //   dnn_model이 최근(10분 내) 저장돼 있으면 이미 커밋 완료로 보고 성공 응답한다.
+          try {
+            // 21MB 모델 통째 로드 대신 가벼운 메타(ts·featVer)로 판정.
+            const _meta = await getState(env.DB, "dnn_model:meta", null);
+            if (_meta && _meta.ts && typeof _meta.featVer === "number" && _meta.featVer === LUXML.featVer
+                && (Date.now() - _meta.ts) < 600000) {
+              const _tr = await getState(env.DB, "dnn_trust", null);
+              return Response.json({ ok: true, idempotent: true, trust: _tr || null,
+                note: "이미 커밋 완료(멱등) — 직전 업로드가 서버측에서 반영됨" }, { headers: cors });
+            }
+          } catch (e) {}
+          return Response.json({ error: "begin 먼저 호출" }, { status: 409, headers: cors });
+        }
         // 모든 시드 net 원문 문자열을 이어붙여 최종 dnn_model JSON 문자열을 조립(객체 파싱 없음 → OOM 회피)
         let netsStr = "";
         for (let k = 0; k < stg.seeds; k++) {
