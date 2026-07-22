@@ -23650,6 +23650,16 @@ function _luxWriteReport(ym, D) {
 
 
 
+// [V32.2] 토요일 앵커 주(週) 키 — KST 기준 "가장 최근 토요일" 날짜(YYYY-MM-DD).
+//   리포트를 주 1회(토요일 경계)만 재생성하고 그 주 내내 같은 리포트를 재사용하기 위한 식별자.
+function _saturdayWeekKey(now) {
+  const kst = new Date((now || Date.now()) + 9 * 3600000);   // UTC+9
+  const dow = kst.getUTCDay();               // 0=일 … 6=토
+  const daysSinceSat = (dow + 1) % 7;         // 토→0, 일→1 … 금→6
+  const sat = new Date(kst.getTime() - daysSinceSat * 86400000);
+  return sat.toISOString().slice(0, 10);
+}
+
 async function mlMonthlyReport(DB, ym, force, env) {
   try {
     // ym = "YYYY-MM" (기본: 지난달)
@@ -23659,10 +23669,18 @@ async function mlMonthlyReport(DB, ym, force, env) {
       ym = d.toISOString().slice(0, 7);
     }
     const key = "report:" + ym;
-    if (!force) {
-      const cached = await getState(DB, key, null);
-      if (cached && cached.text) return cached;
+    // [V32.2] ★주 1회 생성·주중 재사용(CPU 절감)★ 종전엔 "이번달/지난달" 버튼이 매 클릭 refresh=1로
+    //   전체 리포트(수십 회 D1 조회+NLG)를 재생성해 CPU를 크게 썼다. 이제 force여도 이번 주(토요일 앵커)에
+    //   이미 생성된 리포트가 있으면 그대로 반환하고, 주가 바뀌었을 때(=새 토요일 경과)만 재생성한다.
+    //   → 실질적으로 토요일마다 1회 생성, 일주일 내내 동일 리포트 재사용.
+    const _wk = _saturdayWeekKey(Date.now());
+    const cached = await getState(DB, key, null);
+    // 이번 주(토요일 앵커)에 이미 생성된 리포트가 있으면 force든 아니든 그대로 재사용 → 주중 재생성 0.
+    if (cached && cached.text && cached.weekKey === _wk) {
+      return cached;
     }
+    // 여기 도달 = 이 주의 리포트가 아직 없음(콜드 or 새 토요일 경과). 이번 주 첫 요청 1회만 재생성.
+    // 재생성이 실패하면 옛 캐시라도 돌려주도록 참조를 보관해 아래 catch에서 사용.
     const start = Date.parse(ym + "-01T00:00:00Z");
     const endD = new Date(start); endD.setUTCMonth(endD.getUTCMonth() + 1);
     const end = endD.getTime();
@@ -23857,9 +23875,17 @@ async function mlMonthlyReport(DB, ym, force, env) {
         report.nlg = true;
       }
     } catch (e) { /* NLG 실패 → 원데이터 리포트 그대로 */ }
+    report.weekKey = _wk;   // [V32.2] 이 리포트가 생성된 주(토요일 앵커) — 다음 토요일까지 재사용 판정용
     await setState(DB, key, report);
     return report;
-  } catch (e) { return { ym: ym, error: e && e.message, text: "리포트 생성 실패: " + (e && e.message) }; }
+  } catch (e) {
+    // [V32.2] 재생성 실패 시 옛 캐시라도 반환(화면을 비우지 않음). 캐시도 없으면 에러 텍스트.
+    try {
+      const _old = await getState(DB, "report:" + ym, null);
+      if (_old && _old.text) return _old;
+    } catch (e2) {}
+    return { ym: ym, error: e && e.message, text: "리포트 생성 실패: " + (e && e.message) };
+  }
 }
 
 
