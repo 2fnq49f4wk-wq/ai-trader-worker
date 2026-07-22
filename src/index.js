@@ -12832,6 +12832,9 @@ async function runTradingCycle(env) {
         }
       } catch (e) {}
       evalStartedAt = Date.now();   // [V12.123] 모델 로딩이 끝난 실제 평가 시작 시점으로 예산 기준을 이동
+      // [V32.3] 프리페치(시세배치·일봉 일괄로드)와 모델 로딩이 D1 과부하 시 길어질 수 있어,
+      //   평가 루프 진입 직전 락 TTL을 한 번 더 갱신 → 여전히 소유 중이면 만료 임박을 리셋해 탈취 방지.
+      try { await refreshCycleLock(DB, cfg.cycleLockTTL || 180000, myLockPid); } catch (e) {}
       for (const item of orderedEval) {
         const _evalElapsed = Date.now() - evalStartedAt;
         if (_evalElapsed > evalBudgetMs || (Date.now() - cycleStartedAt > hardCapMs && _evalElapsed > evalMinMs)) {
@@ -15531,13 +15534,27 @@ async function handleRequest(request, env, ctx) {
     }
     if (path === "/api/daily-stats") {
       const days = Math.max(1, Math.min(30, parseInt(url.searchParams.get("days") || "7", 10)));
+      // [V32.3] ★설정창 "로딩 안됨" 수정★ 이 조회가 D1 과부하 때 워커 CPU 한도(1102)에 걸리면
+      //   프론트(.catch 없음)가 "로딩 중…"에 영구 고착됐다. 15초 아이솔레이트 캐시로 과부하 시에도
+      //   최근 성공값을 즉시 반환한다(일별 통계는 분 단위 신선도면 충분).
+      const __dsc = globalThis.__dailyStatsCache;
+      if (__dsc && __dsc.days === days && (Date.now() - __dsc.ts) < 15000) {
+        return new Response(__dsc.str, { headers: Object.assign({ "content-type": "application/json" }, cors) });
+      }
       let rows = [];
       try {
         await ensureSchema(env.DB);
         const res = await env.DB.prepare("SELECT day_key, signals, errors, trades FROM daily_stats ORDER BY day_key DESC LIMIT ?").bind(days).all();
         rows = (res.results || []).slice().reverse();   // 오래된→최신
-      } catch (e) {}
-      return Response.json({ today: kstTradingDayKey(new Date()), stats: rows }, { headers: cors });
+      } catch (e) {
+        // 과부하로 실패하면 직전 캐시(있으면)라도 반환 — 화면 고착 방지.
+        if (__dsc && __dsc.days === days) {
+          return new Response(__dsc.str, { headers: Object.assign({ "content-type": "application/json" }, cors) });
+        }
+      }
+      const __str = JSON.stringify({ today: kstTradingDayKey(new Date()), stats: rows });
+      globalThis.__dailyStatsCache = { days: days, ts: Date.now(), str: __str };
+      return new Response(__str, { headers: Object.assign({ "content-type": "application/json" }, cors) });
     }
     if (path === "/api/cfg" && request.method === "GET") {
       const cfg = migrateCfgToMarkets(Object.assign({}, DEFAULT_CFG, await getState(env.DB, "cfg", {})));
@@ -24847,11 +24864,16 @@ export default {
                   await setState(env.DB, "hv_catchup_dry", { n: 0, until: 0 });
                   await log(env.DB, "INFO", null, "[HV-CATCHUP] pool=" + _poolN + "→" + (_poolN + _gained) + "/" + _target + (_mktOpen ? " (장중 단축)" : ""));
                 } else {
+                  // [V32.3] ★원천 고갈 시 낭비 차단★ 종전엔 3회 0건 후 30분 쿨다운 → 30분마다 다시 3회
+                  //   0건을 재생산하며 장중 D1·CPU를 순수 낭비(pool 16만은 딥이력이 늘기 전엔 더 못 뽑음).
+                  //   이제 장중엔 1회만 0건이어도 즉시 장시간(6h) 쿨다운으로 진입 — 어차피 딥이력 커버리지가
+                  //   늘어야(별도 단계) 표본이 증가하므로, 그 전엔 캐치업을 돌릴 이유가 없다. 장외엔 종전대로 3회.
                   const _n = ((_cuDry && _cuDry.n) || 0) + 1;
-                  const _stop = _n >= 3;
-                  await setState(env.DB, "hv_catchup_dry", { n: _stop ? 0 : _n, until: _stop ? Date.now() + 1800000 : 0 });
-                  await log(env.DB, "WARN", null, "[HV-CATCHUP] 0건 생산(" + _n + "/3) pool=" + _poolN +
-                    " — 원천 데이터 고갈 추정" + (_stop ? " → 30분 쿨다운(딥이력 확대 필요)" : ""));
+                  const _stop = _mktOpen ? (_n >= 1) : (_n >= 3);
+                  const _coolMs = _mktOpen ? 6 * 3600000 : 1800000;   // 장중 6h / 장외 30분
+                  await setState(env.DB, "hv_catchup_dry", { n: _stop ? 0 : _n, until: _stop ? Date.now() + _coolMs : 0 });
+                  await log(env.DB, "WARN", null, "[HV-CATCHUP] 0건 생산(" + _n + (_mktOpen ? "/1" : "/3") + ") pool=" + _poolN +
+                    " — 원천 데이터 고갈 추정" + (_stop ? (" → " + (_mktOpen ? "6시간" : "30분") + " 쿨다운(딥이력 확대 필요)") : ""));
                 }
               }
               }
