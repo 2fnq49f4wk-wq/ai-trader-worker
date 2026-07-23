@@ -6836,7 +6836,11 @@ async function _fetchDeepDailyNaverKR(code, T) {
     const c = _n(row.closePrice);
     if (!(c > 0)) continue;
     closes.push(c);
-    const h = _n(row.highPrice), l = _n(row.lowPrice), o = _n(row.openPrice), v = _n(row.accumulatedTradingVolume);
+    // [V32.6b] ★거래량 필드 버그 수정★ 이 엔드포인트는 volume 필드를 주는데(라이브 fetchDailyFullNaver와
+    //   동일), 종전엔 accumulatedTradingVolume만 읽어 전 봉 volume=0 → KR 딥표본의 거래량 피처가 전부
+    //   0으로 오염 → DNN 검증정확도 하락 원인. 라이브 파서와 동일하게 volume 우선, 없으면 누적거래량.
+    const h = _n(row.highPrice), l = _n(row.lowPrice), o = _n(row.openPrice),
+          v = _n(row.volume != null ? row.volume : row.accumulatedTradingVolume);
     highs.push(h > 0 ? h : c); lows.push(l > 0 ? l : c); opens.push(o > 0 ? o : c); volumes.push(v > 0 ? v : 0);
     const ds = String(row.localDate || "");
     if (ds.length >= 8) { const t = Date.parse(ds.slice(0, 4) + "-" + ds.slice(4, 6) + "-" + ds.slice(6, 8) + "T00:00:00Z"); if (isFinite(t)) lastTs = t; }
@@ -21690,6 +21694,34 @@ async function harvestDeepFetchNightly(DB, opts) {
         await DB.prepare("DELETE FROM state WHERE k LIKE 'hist_meta:%.KS' OR k LIKE 'hist_meta:%.KQ'").run();
         await setState(DB, "deep_kr_reeligible_v325", { ts: now });
         try { await log(DB, "INFO", null, "[HIST] KR 딥이력 자격미달 마킹 초기화 — 네이버 원천으로 재수집 시작(V32.5)"); } catch (e) {}
+      }
+    } catch (e) {}
+    // [V32.6b] ★거래량=0 오염 KR 딥표본 정화(1회)★ V32.5 딥이력이 volume 필드 버그로 전 봉 거래량=0으로
+    //   수확돼 DNN 검증정확도를 떨어뜨렸다. 볼륨 파서 수정 후, (1)KR hist_meta 삭제→올바른 거래량으로
+    //   재수집, (2)KR 수확 진행오프셋(hv_seen) 초기화→처음부터 재수확, (3)기존 오염 KR hv 표본 배치삭제.
+    //   → 이후 야간 수확이 올바른 거래량으로 KR 표본을 재생성한다(예산가드 내, 밤에 걸쳐).
+    try {
+      if (!(await getState(DB, "deep_kr_volfix_v326", null))) {
+        await setState(DB, "deep_kr_volfix_v326", { ts: now });   // 먼저 마킹(중복실행/부분실패 무한반복 방지)
+        try { await DB.prepare("DELETE FROM state WHERE k LIKE 'hist_meta:%.KS' OR k LIKE 'hist_meta:%.KQ'").run(); } catch (e) {}
+        // KR 수확 진행오프셋(hv_seen) 초기화 — 삭제한 표본을 처음부터 다시 채우게.
+        try {
+          const _seenKey = "hv_seen:v" + LUXML.featVer;
+          const _seen = (await getState(DB, _seenKey, {})) || {};
+          let _changed = false;
+          for (const s in _seen) { if (/\.(KS|KQ)$/.test(s)) { delete _seen[s]; _changed = true; } }
+          if (_changed) await setState(DB, _seenKey, _seen);
+        } catch (e) {}
+        // 오염 KR hv 표본 삭제(배치) — timeout 방지로 5만씩 최대 20회.
+        let _del = 0;
+        for (let _p = 0; _p < 20; _p++) {
+          const _r = await DB.prepare(
+            "DELETE FROM ml_samples WHERE id IN (SELECT id FROM ml_samples WHERE strategy='hv' AND featver=? AND (symbol LIKE '%.KS' OR symbol LIKE '%.KQ') LIMIT 50000)"
+          ).bind(LUXML.featVer).run();
+          const _c = (_r && _r.meta && _r.meta.changes) || 0; _del += _c;
+          if (_c < 50000) break;
+        }
+        try { await log(DB, "INFO", null, "[HIST] KR 딥표본 거래량오염 정화 — 오염 KR hv표본 " + _del + "건 삭제, 올바른 거래량으로 재수집·재수확 시작(V32.6b)"); } catch (e) {}
       }
     } catch (e) {}
     // (1) 지수 딥 — alpha 라벨 정렬용(항상 갱신 시도, 소수)
