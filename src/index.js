@@ -21379,6 +21379,16 @@ async function mlGBDTLoad(DB) {
 async function mlGBDTTrainNightly(DB) {
   if (!GBDT.enabled) return null;
   try {
+    // [V32.7] 외부(Modal) GBDT가 라이브로 승격돼 신뢰 중이면 Worker 자체 학습 생략(CPU 절약 — DNN과 동일 패턴).
+    //   승격되지 않은 섀도우 단계에선 이 게이트가 통과되지 않아 Worker가 계속 학습(공백 없음).
+    try {
+      const _live = await getState(DB, "gbdt_model", null);
+      const _gt = await getState(DB, "gbdt_trust", null);
+      if (_live && _live.source === "external" && _live.featVer === LUXML.featVer && _live.trainedAt &&
+          (Date.now() - _live.trainedAt) < 36 * 3600000 && _gt && _gt.trusted) {
+        return "[GBDT] 외부GPU 학습모델 신뢰 중(valAcc " + ((_num(_live.valAcc, 0)) * 100).toFixed(1) + "%) — 야간 자가학습 생략(외부 소유)";
+      }
+    } catch (e) {}
     const rows = await DB.prepare(
       "SELECT ts, feat, label, pnl_pct, strategy FROM ml_samples WHERE featver = ? ORDER BY ts DESC LIMIT ?"
     ).bind(LUXML.featVer, LUXML.trainWindow).all();
