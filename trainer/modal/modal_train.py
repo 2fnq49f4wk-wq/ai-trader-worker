@@ -147,10 +147,15 @@ def train_job(epochs: int = EPOCHS_DEFAULT, dry: bool = False):
     Xva = torch.tensor(Xn[va], dtype=torch.float32, device=dev)
     Yva = torch.tensor(Y[va], dtype=torch.float32, device=dev)
 
+    # [V32.11] ★모델 축소 없이 강화 — BatchNorm★ 12층 평면 MLP는 정규화가 없어 깊이가 학습에 안 먹혔다
+    #   (심층 degradation·기울기 불안정 → valAcc 정체의 구조적 원인). 각 은닉층에 BatchNorm을 넣어 깊은
+    #   망이 '실제로' 학습되게 한다(용량 유지, 오히려 표현력 개방). 추론은 BN을 앞 선형층에 접어(fold)
+    #   내보내므로 Worker의 평면 relu(Wx+b) 추론이 그대로 동일 결과를 낸다(추론측 변경 0).
     class MLP(nn.Module):
         def __init__(self):
             super().__init__()
             self.lins = nn.ModuleList([nn.Linear(dims[l], dims[l + 1]) for l in range(len(dims) - 1)])
+            self.bns = nn.ModuleList([nn.BatchNorm1d(dims[l + 1]) for l in range(len(dims) - 2)])  # 은닉층만(출력층 제외)
             for lin in self.lins:
                 nn.init.kaiming_normal_(lin.weight, nonlinearity="relu"); nn.init.zeros_(lin.bias)
         def forward(self, x, train=True):
@@ -158,6 +163,7 @@ def train_job(epochs: int = EPOCHS_DEFAULT, dry: bool = False):
             for i, lin in enumerate(self.lins):
                 x = lin(x)
                 if i < n - 1:
+                    x = self.bns[i](x)                 # BatchNorm(선형 뒤·ReLU 앞) — 학습모드=배치통계, 평가모드=러닝통계
                     x = torch.relu(x)
                     if train and dropout > 0:
                         x = torch.nn.functional.dropout(x, p=dropout, training=True)
@@ -278,12 +284,29 @@ def train_job(epochs: int = EPOCHS_DEFAULT, dry: bool = False):
     if auc < 0.52:
         print("   ⚠️ AUC<0.52 — 현재 피처만으론 판별력 자체가 약함. 데이터 축적/피처 확장이 근본 해법")
 
+    # [V32.11] BatchNorm 접기(fold) — 각 은닉층 BN을 앞 선형층 가중치/바이어스에 흡수해
+    #   Worker 평면 추론 relu(W'x+b')이 relu(BN(Wx+b))와 정확히 동일해진다.
+    #   BN: y = gamma*(h-mean)/sqrt(var+eps)+beta = a*h + c,  a=gamma/sqrt(var+eps), c=beta-a*mean.
+    #   h=Wx+b → y=(a*W)x+(a*b+c). 접힌 계수가 커질 수 있어 정밀도 4→5자리로 상향(정확도 보존).
     js_nets = []
     for net in nets:
+        net.eval()
         Wl, bl = [], []
-        for lin in net.lins:
-            Wl.append(np.round(lin.weight.detach().cpu().numpy(), 4).tolist())
-            bl.append(np.round(lin.bias.detach().cpu().numpy(), 4).tolist())
+        L = len(net.lins)
+        for i, lin in enumerate(net.lins):
+            W = lin.weight.detach().cpu().numpy().astype(np.float64)   # (out,in)
+            b = lin.bias.detach().cpu().numpy().astype(np.float64)     # (out,)
+            if i < L - 1:   # 은닉층 → BN 접기
+                bn = net.bns[i]
+                gamma = bn.weight.detach().cpu().numpy().astype(np.float64)
+                beta = bn.bias.detach().cpu().numpy().astype(np.float64)
+                mean = bn.running_mean.detach().cpu().numpy().astype(np.float64)
+                var = bn.running_var.detach().cpu().numpy().astype(np.float64)
+                a = gamma / np.sqrt(var + bn.eps)
+                W = W * a[:, None]
+                b = a * b + (beta - a * mean)
+            Wl.append(np.round(W, 5).tolist())
+            bl.append(np.round(b, 5).tolist())
         js_nets.append({"W": Wl, "b": bl, "dims": dims})
 
     if dry:
