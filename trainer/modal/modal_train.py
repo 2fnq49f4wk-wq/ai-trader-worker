@@ -312,7 +312,143 @@ def train_job(epochs: int = EPOCHS_DEFAULT, dry: bool = False):
     # 3) commit — Worker가 조립·검증·게이트 (무거움: 넉넉한 타임아웃 + D1과부하/타임아웃 재시도)
     res = _post({"key": KEY, "stage": "commit"}, {}, "commit", to=600, retries=5, retry_delay=45)
     print("✅", json.dumps(res.get("trust", {}), ensure_ascii=False), res.get("note", ""))
+    # [V32.7] GBDT도 외부학습해 섀도우 업로드(같은 표본 재사용 — 추가 export 부하 0). 실패해도 DNN 결과엔 무영향.
+    if not dry:
+        print("⑤ GBDT 외부학습(섀도우)")
+        try:
+            _train_and_upload_gbdt(BASE, KEY, HDR, X, Y, TS, featver, D)
+        except Exception as e:
+            print("GBDT 학습/업로드 예외(무시):", e)
     return {"ok": True, "valAcc": acc, "trust": res.get("trust")}
+
+
+# ============================================================================
+# [V32.7] GBDT 외부학습(섀도우) — Worker GBDT와 동일한 트리 포맷/추론식으로 학습해 /api/gbdt-import 로
+#   업로드한다. Worker 추론: raw = bias + Σ eta·leaf, x[f] < t → left, score = sigmoid(raw),
+#   leaf w = -G/(H+λ). 여기선 그 포맷을 그대로 산출한다(독립 모델 — Worker가 채점만 하면 됨).
+#   기본 업로드는 섀도우(비활성) — Worker가 자체 표본으로 self-검증 후 수동 승격(?activate=1).
+# ============================================================================
+def _train_and_upload_gbdt(BASE, KEY, HDR, X, Y, TS, featver, D):
+    import numpy as np, math, json, time, requests
+    ETA, MAXDEPTH, LAM, GAMMA, MINCHILD = 0.06, 4, 1.0, 0.1, 5.0
+    MAXBINS, MAXTREES, PATIENCE, VALFRAC = 64, 200, 24, 0.2
+    N = len(Y)
+    if N < 400:
+        print(f"GBDT: 표본 부족 {N} — 생략"); return
+    order = np.argsort(TS)
+    Xs = X[order].astype(np.float64); Ys = Y[order].astype(np.float64)
+    nval = max(200, int(N * VALFRAC))
+    Xtr, Ytr, Xva, Yva = Xs[:-nval], Ys[:-nval], Xs[-nval:], Ys[-nval:]
+    Ntr = len(Ytr)
+    if Ntr < 200:
+        print("GBDT: train 부족 — 생략"); return
+    pos = float(Ytr.sum()); neg = Ntr - pos
+    wPos = Ntr / (2 * pos) if pos > 0 else 1.0
+    wNeg = Ntr / (2 * neg) if neg > 0 else 1.0
+    sw = np.where(Ytr > 0, wPos, wNeg)
+    bias = math.log(max(1.0, pos) / max(1.0, neg))
+    # 피처별 분위수 컷(≤63) — Worker _gbdtHistPrep과 동일 개념. bin = "x 이하인 컷 수"(searchsorted right).
+    step = max(1, Ntr // 6000)
+    edges = []
+    for f in range(D):
+        col = Xtr[::step, f]; col = col[np.isfinite(col)]
+        if len(col) == 0:
+            edges.append(np.array([])); continue
+        qs = np.quantile(col, np.linspace(0, 1, MAXBINS + 1)[1:-1])
+        edges.append(np.unique(qs))
+    binsT = np.zeros((Ntr, D), dtype=np.int32)
+    for f in range(D):
+        if len(edges[f]):
+            binsT[:, f] = np.searchsorted(edges[f], Xtr[:, f], side="right")
+
+    def sigmoid(z): return 1.0 / (1.0 + np.exp(-np.clip(z, -30, 30)))
+
+    def build(idx, depth, grad, hess):
+        G = float(grad[idx].sum()); H = float(hess[idx].sum())
+        if depth >= MAXDEPTH or H < 2 * MINCHILD or len(idx) < 4:
+            return {"w": float(-G / (H + LAM))}
+        base = G * G / (H + LAM); best = None
+        gi = grad[idx]; hi = hess[idx]
+        for f in range(D):
+            e = edges[f]
+            if len(e) == 0: continue
+            nb = len(e) + 1
+            b = binsT[idx, f]
+            gh = np.bincount(b, weights=gi, minlength=nb)
+            hh = np.bincount(b, weights=hi, minlength=nb)
+            GL = np.cumsum(gh)[:-1]; HL = np.cumsum(hh)[:-1]
+            GR = G - GL; HR = H - HL
+            with np.errstate(invalid="ignore", divide="ignore"):
+                gain = 0.5 * (GL * GL / (HL + LAM) + GR * GR / (HR + LAM) - base) - GAMMA
+            gain = np.where((HL >= MINCHILD) & (HR >= MINCHILD), gain, -1e18)
+            if gain.size == 0: continue
+            bi = int(np.argmax(gain))
+            if gain[bi] > 1e-7 and (best is None or gain[bi] > best[0]):
+                best = (float(gain[bi]), f, bi, float(e[bi]))
+        if best is None:
+            return {"w": float(-G / (H + LAM))}
+        _, bf, bb, bt = best
+        m = binsT[idx, bf] <= bb
+        li, ri = idx[m], idx[~m]
+        if len(li) == 0 or len(ri) == 0:
+            return {"w": float(-G / (H + LAM))}
+        return {"f": int(bf), "t": bt, "l": build(li, depth + 1, grad, hess), "r": build(ri, depth + 1, grad, hess)}
+
+    def apply_tree(node, Xm):
+        out = np.zeros(len(Xm))
+        def rec(nd, idx):
+            if "w" in nd:
+                out[idx] = nd["w"]; return
+            col = Xm[idx, nd["f"]]; lm = col < nd["t"]
+            rec(nd["l"], idx[lm]); rec(nd["r"], idx[~lm])
+        rec(node, np.arange(len(Xm)))
+        return out
+
+    raw = np.full(Ntr, bias); vraw = np.full(nval, bias)
+    trees = []; best_vloss = 1e18; best_k = 0; wait = 0
+    for k in range(MAXTREES):
+        p = sigmoid(raw)
+        grad = (p - Ytr) * sw
+        hess = np.maximum(p * (1.0 - p) * sw, 1e-6)
+        tree = build(np.arange(Ntr), 0, grad, hess)
+        trees.append(tree)
+        raw = raw + ETA * apply_tree(tree, Xtr)
+        vraw = vraw + ETA * apply_tree(tree, Xva)
+        vp = np.clip(sigmoid(vraw), 1e-6, 1 - 1e-6)
+        vloss = float(-np.mean(Yva * np.log(vp) + (1 - Yva) * np.log(1 - vp)))
+        if vloss < best_vloss - 1e-5:
+            best_vloss = vloss; best_k = len(trees); wait = 0
+        else:
+            wait += 1
+            if wait >= PATIENCE: break
+    if best_k > 0:
+        trees = trees[:best_k]
+    # 최종 트리로 val 정확도·Wilson 하한 재계산
+    vraw = np.full(nval, bias)
+    for t in trees:
+        vraw = vraw + ETA * apply_tree(t, Xva)
+    vacc = float(((sigmoid(vraw) >= 0.5).astype(np.float64) == Yva).mean())
+    z = 1.96; nn = float(nval); ph = vacc; denom = 1 + z * z / nn
+    center = (ph + z * z / (2 * nn)) / denom
+    half = (z * math.sqrt(ph * (1 - ph) / nn + z * z / (4 * nn * nn))) / denom
+    vlb = max(0.0, center - half)
+    model = {"trees": trees, "eta": ETA, "bias": float(bias), "valAcc": round(vacc, 4),
+             "valAccLB": round(vlb, 4), "valN": int(nval), "n": int(N), "featVer": featver}
+    print(f"GBDT: trees={len(trees)} valAcc={vacc:.3f} lb={vlb:.3f} → 업로드(섀도우)")
+    for attempt in range(4):
+        try:
+            r = requests.post(BASE + "/api/gbdt-import", params={"key": KEY}, headers=HDR,
+                              data=json.dumps(model), timeout=180)
+            if r.status_code == 200:
+                print("GBDT 업로드 OK:", json.dumps(r.json(), ensure_ascii=False)); return
+            b = r.text[:300]
+            if r.status_code >= 500 and (("D1" in b) or ("overloaded" in b) or ("queued" in b)) and attempt < 3:
+                print(f"GBDT 업로드 D1 과부하 — 30s 후 재시도 {attempt+1}/3"); time.sleep(30); continue
+            print("GBDT 업로드 실패:", r.status_code, b); return
+        except requests.exceptions.ReadTimeout:
+            if attempt < 3:
+                print(f"GBDT 업로드 타임아웃 — 20s 후 재시도 {attempt+1}/3"); time.sleep(20); continue
+    print("GBDT 업로드 최종 실패")
 
 
 @app.local_entrypoint()

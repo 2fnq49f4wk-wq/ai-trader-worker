@@ -14868,6 +14868,84 @@ async function handleRequest(request, env, ctx) {
       return Response.json({ ok: true, saved: saveInfo, trust: trust, activated: trust.trusted,
         note: trust.trusted ? "3M 딥넷이 위원회에서 가동됩니다(wDnn=" + trust.wDnn + ")" : "저장됐으나 검증성능이 trustFloor 미달 → 자동 억제(wDnn=0). 표본/에폭 늘려 재학습 권장." }, { headers: cors });
     }
+    // [V32.7] POST /api/gbdt-import — 외부(Modal)에서 학습한 GBDT 트리 앙상블 업로드.
+    //   body: { trees:[{f,t,l,r}|{w}], eta, bias, valAcc, valAccLB, valN, n, featVer }
+    //   ★안전(섀도우 모드)★ 기본은 gbdt_model_ext/gbdt_trust_ext에만 저장하고 라이브 위원회
+    //   (gbdt_model)엔 영향 0. 형식 오류가 있어도 실거래 무영향. ?activate=1 이면 검증 통과 시 라이브 승격.
+    //   업로드된 모델을 Worker 자체 최근 표본에 직접 채점해 self-검증(형식/추론 정합성 확인).
+    if (path === "/api/gbdt-import" && request.method === "POST") {
+      const au = _trainAuthed(); if (!au.ok) return Response.json({ error: au.msg }, { status: au.code, headers: cors });
+      let body; try { body = await request.json(); } catch (e) { return Response.json({ error: "bad json" }, { status: 400, headers: cors }); }
+      if (_num(body.featVer, -1) !== LUXML.featVer) return Response.json({ error: "featVer 불일치 (서버 " + LUXML.featVer + ")" }, { status: 400, headers: cors });
+      if (!Array.isArray(body.trees) || body.trees.length === 0) return Response.json({ error: "trees 없음" }, { status: 400, headers: cors });
+      if (body.trees.length > 2000) return Response.json({ error: "trees 과다(" + body.trees.length + ">2000)" }, { status: 400, headers: cors });
+      const D = LUXML.featNames.length;
+      // 트리 구조 검증 — 리프{w:number} 또는 내부{f:0..D-1, t:number, l, r}. 깊이·노드수 상한으로 남용 방지.
+      const _validTree = function (node, depth) {
+        if (!node || typeof node !== "object") return false;
+        if (typeof node.w === "number") return isFinite(node.w);
+        if (depth > 12) return false;
+        if (!(Number.isInteger(node.f) && node.f >= 0 && node.f < D)) return false;
+        if (typeof node.t !== "number" || !isFinite(node.t)) return false;
+        return _validTree(node.l, depth + 1) && _validTree(node.r, depth + 1);
+      };
+      for (let i = 0; i < body.trees.length; i++) {
+        if (!_validTree(body.trees[i], 0)) return Response.json({ error: "트리 " + i + " 구조 불일치" }, { status: 400, headers: cors });
+      }
+      const gAcc = _clamp(_num(body.valAcc, 0), 0, 1);
+      const valN = Math.max(1, Math.floor(_num(body.valN, 30)));
+      const gLB = (body.valAccLB != null) ? _clamp(_num(body.valAccLB, 0), 0, 1) : _wilsonLB(gAcc, valN);
+      const model = { trees: body.trees, eta: _num(body.eta, GBDT.eta), bias: _num(body.bias, 0),
+        nTrees: body.trees.length, featVer: LUXML.featVer, valAcc: +gAcc.toFixed(4), valAccLB: +gLB.toFixed(4),
+        valN: valN, n: Math.max(0, Math.floor(_num(body.n, 0))), trainedAt: Date.now(), source: "external" };
+      // ── self-검증: Worker 최근 표본에 직접 채점해 형식/추론 정합성 확인 ──
+      let selfAcc = null, selfN = 0;
+      try {
+        const rs = await env.DB.prepare("SELECT feat, label FROM ml_samples WHERE featver = ? ORDER BY ts DESC LIMIT 800").bind(LUXML.featVer).all();
+        let correct = 0, tot = 0;
+        for (const r of ((rs && rs.results) || [])) {
+          let v; try { v = JSON.parse(r.feat); } catch (e) { continue; }
+          if (!Array.isArray(v) || v.length !== D) continue;
+          const p = mlGBDTScore(model, v);
+          if (p == null) continue;
+          tot++; if ((p >= 0.5 ? 1 : 0) === (r.label ? 1 : 0)) correct++;
+        }
+        if (tot > 0) { selfAcc = correct / tot; selfN = tot; }
+      } catch (e) {}
+      // 형식 붕괴 감지: self-검증 정확도가 비정상(전부 한쪽)·또는 주장치와 크게 괴리면 승격 거부.
+      const _sane = (selfAcc != null) && (selfAcc > 0.02 && selfAcc < 0.98) && (Math.abs(selfAcc - gAcc) <= 0.20);
+      // 트러스트 계산(라이브 GBDT와 동일 로직).
+      let mindLB = 0.5;
+      try { const mm = await mlMindLoad(env.DB); if (mm) mindLB = (typeof mm.valAccLB === "number") ? mm.valAccLB : _wilsonLB(_num(mm.valAcc, 0.5), _num(mm.valN, 30)); } catch (e) {}
+      let trust = { wGbdt: 0, trusted: false, gbdtAcc: model.valAcc, gbdtAccLB: model.valAccLB, mindAcc: mindLB, source: "external", selfAcc: selfAcc != null ? +selfAcc.toFixed(4) : null, selfN: selfN };
+      if (gLB >= GBDT.trustFloor) {
+        const eG = Math.exp(GBDT.trustTemp * (gLB - 0.5)), eM = Math.exp(GBDT.trustTemp * (mindLB - 0.5));
+        trust.wGbdt = +(eG / (eG + eM)).toFixed(4); trust.trusted = true;
+      }
+      const activate = url.searchParams.get("activate") === "1";
+      // 승격은 (1)activate 요청 + (2)self-검증 통과일 때만. 그 외엔 섀도우 저장(라이브 무영향).
+      const promote = activate && _sane && trust.trusted;
+      try {
+        if (promote) {
+          await setState(env.DB, "gbdt_model", model);
+          await setState(env.DB, "gbdt_trust", trust);
+        } else {
+          await setState(env.DB, "gbdt_model_ext", model);
+          await setState(env.DB, "gbdt_trust_ext", trust);
+        }
+      } catch (e) { return Response.json({ error: "저장 실패: " + (e && e.message) }, { status: 500, headers: cors }); }
+      try {
+        await log(env.DB, "INFO", null, "[GBDT-EXT] 외부 업로드 trees=" + model.nTrees + " valAcc=" + (gAcc * 100).toFixed(1) +
+          "%(하한 " + (gLB * 100).toFixed(1) + "%) self=" + (selfAcc != null ? (selfAcc * 100).toFixed(1) + "%/" + selfN : "n/a") +
+          " → " + (promote ? "라이브 승격(wGbdt=" + trust.wGbdt + ")" : "섀도우 저장" + (activate && !_sane ? "(self-검증 실패로 승격 보류)" : "")));
+      } catch (e) {}
+      return Response.json({ ok: true, activated: promote, shadow: !promote, trusted: trust.trusted, sane: _sane,
+        valAcc: model.valAcc, valAccLB: model.valAccLB, selfAcc: trust.selfAcc, selfN: selfN, wGbdt: trust.wGbdt,
+        note: promote ? "외부 GBDT가 위원회에서 가동됩니다(wGbdt=" + trust.wGbdt + ")"
+          : (activate && !_sane ? "self-검증 실패(선형정합성/정확도 괴리) — 섀도우 유지, 형식 점검 필요"
+          : "섀도우 저장 완료 — 검증 후 ?activate=1 로 승격") }, { headers: cors });
+    }
+
     // POST /api/ai/harvest-now — 야간 수확을 지금 즉시 1회 실행(하루1회 ai_trained_day 게이트 무시).
     //   [V11.2] featVer가 바뀌면 구표본이 전부 필터링되어 total=0이 되는데, 원본 일봉(daily:/hist: 캐시)은
     //   그대로 있어 재계산만 하면 됨. 다음 UTC자정까지 기다리지 않고 캐시에서 즉시 재수확하기 위한 트리거.
