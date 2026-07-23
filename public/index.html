@@ -3232,11 +3232,13 @@ html[data-theme="light"] .table tbody tr:hover{background:rgba(9,105,218,.045);}
       <div class="page-header" style="margin-top:28px;">
         <span class="page-title">RECENT TRADES</span>
       </div>
+      <!-- [V32.8] 미국주식·한국주식 분리 + 종류별 승률·수익률 재계산 -->
       <div class="trades-filters">
-        <button type="button" class="trade-filter-btn active" data-filter="all">모두</button>
-        <button type="button" class="trade-filter-btn" data-filter="stocks">📈주식</button>
-        <button type="button" class="trade-filter-btn" data-filter="commodity">⛏원자재</button>
-        <button type="button" class="trade-filter-btn" data-filter="bonds">◈채권</button>
+        <button type="button" class="trade-filter-btn active" data-filter="all">전체</button>
+        <button type="button" class="trade-filter-btn" data-filter="us">🇺🇸 미국주식</button>
+        <button type="button" class="trade-filter-btn" data-filter="kr">🇰🇷 한국주식</button>
+        <button type="button" class="trade-filter-btn" data-filter="commodity">⛏ 원자재</button>
+        <button type="button" class="trade-filter-btn" data-filter="bonds">◈ 채권</button>
       </div>
       <div class="trades-toggle" id="tradesToggle">
         <div class="trades-summary" id="tradesSummary">
@@ -4033,6 +4035,14 @@ html[data-theme="light"] .table tbody tr:hover{background:rgba(9,105,218,.045);}
       <button type="button" class="btn" id="btnDownloadAll" style="flex:1;min-width:120px;">📥 전체 데이터</button>
       <button type="button" class="btn" id="btnDownloadRecent" style="flex:1;min-width:120px;">📥 최근 거래내역</button>
       <button type="button" class="btn" id="btnDownloadPositions" style="flex:1;min-width:120px;">📥 현재 포지션</button>
+    </div>
+    <!-- [V32.8] 자산종류별 거래내역 CSV 개별 다운로드 -->
+    <div style="font-size:10px;color:var(--t3);margin:10px 0 6px;">자산종류별 거래내역 (CSV):</div>
+    <div style="display:flex;gap:8px;flex-wrap:wrap;">
+      <button type="button" class="btn" id="btnDlCatUS" style="flex:1;min-width:110px;">🇺🇸 미국주식</button>
+      <button type="button" class="btn" id="btnDlCatKR" style="flex:1;min-width:110px;">🇰🇷 한국주식</button>
+      <button type="button" class="btn" id="btnDlCatCM" style="flex:1;min-width:110px;">⛏ 원자재</button>
+      <button type="button" class="btn" id="btnDlCatBD" style="flex:1;min-width:110px;">◈ 채권</button>
     </div>
 
     <div style="border-top:1px solid var(--bd);margin-top:16px;padding-top:14px;">
@@ -8268,15 +8278,24 @@ html[data-theme="light"] .table tbody tr:hover{background:rgba(9,105,218,.045);}
     if (changed) { saveAlerts(a); if ($('alertsModal').classList.contains('show')) renderAlerts(); }
   }
 
+  var recentTradesFull = [];   // [V32.8] Recent Trades 원본 — 종류 필터 재계산용
   function renderTrades(trades) {
-    renderTradesInto(trades, 'tradesBox', 'tradesTotalCount', 'tradesWinRate', 'tradesAvgPnl', 50);
+    recentTradesFull = trades || [];
+    renderRecentFiltered();
     // 거래 내역이 있으면 자동 펼치기
-    if (trades && trades.length > 0 && !tradesExpanded) {
+    if (recentTradesFull.length > 0 && !tradesExpanded) {
       var tableBox = $('tradesTableBox'), btn = $('tradesToggleBtn');
       tradesExpanded = true;
       if (tableBox) tableBox.classList.add('show');
       if (btn) btn.textContent = '접기';
     }
+  }
+  // [V32.8] 선택된 종류(tradeFilter)로 최근 거래를 걸러 표+요약(승률·평균수익률)을 그 종류만으로 재계산.
+  function renderRecentFiltered() {
+    var subset = (tradeFilter === 'all')
+      ? recentTradesFull
+      : recentTradesFull.filter(function(t){ return tradeCategoryOf(t.market) === tradeFilter; });
+    renderTradesInto(subset, 'tradesBox', 'tradesTotalCount', 'tradesWinRate', 'tradesAvgPnl', 50);
   }
 
   // [V32.8] ALL TRADE HISTORY 자산종류 분류 — 미국주식(us)/한국주식(kr)/원자재(commodity)/채권(bonds).
@@ -8365,6 +8384,17 @@ html[data-theme="light"] .table tbody tr:hover{background:rgba(9,105,218,.045);}
     api('/api/trades' + qs).then(function(trades){
       trades = trades || [];
       if (trades.length === 0) { toast('다운로드할 거래 기록이 없습니다'); return; }
+      var csv = tradesToCSV(trades);
+      var fn = filenamePrefix + '_' + new Date().toISOString().slice(0, 10) + '.csv';
+      downloadCSV(csv, fn);
+      toast(trades.length + '건 다운로드 완료');
+    })['catch'](function(e){ toast('다운로드 실패: ' + e.message); });
+  }
+  // [V32.8] 자산종류(us/kr/commodity/bonds)별 거래내역만 걸러 CSV 다운로드.
+  function downloadTradesCSVCat(cat, filenamePrefix) {
+    api('/api/trades?limit=100000').then(function(trades){
+      trades = (trades || []).filter(function(t){ return tradeCategoryOf(t.market) === cat; });
+      if (trades.length === 0) { toast('해당 종류 거래 기록이 없습니다'); return; }
       var csv = tradesToCSV(trades);
       var fn = filenamePrefix + '_' + new Date().toISOString().slice(0, 10) + '.csv';
       downloadCSV(csv, fn);
@@ -8474,7 +8504,7 @@ html[data-theme="light"] .table tbody tr:hover{background:rgba(9,105,218,.045);}
     });
     box.innerHTML = html + '</tbody></table></div>';
     updateTradesSummaryInto(trades, totalId, winId, avgId);
-    if (boxId === 'tradesBox') applyTradeFilter();
+    // [V32.8] 종류 필터는 이제 배열 서브셋(renderRecentFiltered/renderAllTradesFiltered)으로 처리 — DOM 숨김 불필요.
   }
 
   function updateTradesSummary(trades) {
@@ -10079,6 +10109,11 @@ html[data-theme="light"] .table tbody tr:hover{background:rgba(9,105,218,.045);}
   // [다운로드] 메인 UI 트레이드 기록 CSV 버튼
   $('btnDownloadRecent').addEventListener('click', function(){ downloadTradesCSV(50, 'recent_trades'); });
   $('btnDownloadAll').addEventListener('click', function(){ downloadTradesCSV(10000, 'all_trades'); });
+  // [V32.8] 자산종류별 거래내역 CSV
+  if ($('btnDlCatUS')) $('btnDlCatUS').addEventListener('click', function(){ downloadTradesCSVCat('us', 'trades_us'); });
+  if ($('btnDlCatKR')) $('btnDlCatKR').addEventListener('click', function(){ downloadTradesCSVCat('kr', 'trades_kr'); });
+  if ($('btnDlCatCM')) $('btnDlCatCM').addEventListener('click', function(){ downloadTradesCSVCat('commodity', 'trades_commodity'); });
+  if ($('btnDlCatBD')) $('btnDlCatBD').addEventListener('click', function(){ downloadTradesCSVCat('bonds', 'trades_bonds'); });
   // [신규] 백테스트 패널 — 현재 TREND 설정을 과거 2년에 적용해 성과 검증
   function runBacktestUI(market){
     var rd = $('backtestResult');
@@ -10230,13 +10265,14 @@ html[data-theme="light"] .table tbody tr:hover{background:rgba(9,105,218,.045);}
   }
   bindWlSort('sortChgUS', 'us'); bindWlSort('sortChgKR', 'kr');
 
-  // [V56] Recent Trades 자산유형 필터 (상단 박스 — data-filter 버튼만. 아래 카테고리바와 충돌 방지로 스코프 분리)
+  // [V32.8] Recent Trades 자산종류 필터 (상단 박스 — data-filter 버튼만. 아래 카테고리바와 스코프 분리)
+  //   미국주식/한국주식/원자재/채권으로 분리, 선택 시 표+승률·수익률을 그 종류만으로 재계산.
   document.querySelectorAll('.trade-filter-btn[data-filter]').forEach(function(btn){
     btn.addEventListener('click', function(){
       tradeFilter = this.getAttribute('data-filter');
       document.querySelectorAll('.trade-filter-btn[data-filter]').forEach(function(b){ b.classList.remove('active'); });
       this.classList.add('active');
-      applyTradeFilter();
+      renderRecentFiltered();
     });
   });
   // [V32.8] ALL TRADE HISTORY 자산종류 분류 버튼 — 미국주식/한국주식/원자재/채권. 종류별 승률·수익률 재계산.
