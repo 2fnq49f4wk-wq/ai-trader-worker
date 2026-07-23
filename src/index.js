@@ -14919,12 +14919,32 @@ async function handleRequest(request, env, ctx) {
         }
         if (tot > 0) { selfAcc = correct / tot; selfN = tot; }
       } catch (e) {}
-      // 형식 붕괴 감지: self-검증 정확도가 비정상(전부 한쪽)·또는 주장치와 크게 괴리면 승격 거부.
-      const _sane = (selfAcc != null) && (selfAcc > 0.02 && selfAcc < 0.98) && (Math.abs(selfAcc - gAcc) <= 0.20);
+      // [V32.15] ★변환정합성(conversion fidelity) 검증★ — 종전 sane체크는 in-sample selfAcc(최근800)를
+      //   holdout valAcc와 비교(|Δ|≤0.20)해, 트리모델의 정상적 과적합격차(예: XGB in-sample 0.82 vs
+      //   holdout 0.56)를 "형식붕괴"로 오판→승격 거부했다. 실제로 필요한 건 "Worker 추론이 라이브러리
+      //   확률을 재현하는가"뿐. 트레이너가 보낸 probe[{x, p:libProb}]로 max|score−p|를 재고, 그 값이
+      //   작으면 변환이 정확한 것(정합). probe가 없으면 종전 휴리스틱으로 폴백.
+      let convMaxDiff = null, convN = 0;
+      try {
+        if (Array.isArray(body.probe) && body.probe.length) {
+          let md = 0, cnt = 0;
+          for (const pr of body.probe) {
+            if (!pr || !Array.isArray(pr.x) || pr.x.length !== D || typeof pr.p !== "number") continue;
+            const sc = mlGBDTScore(model, pr.x.map(function (t) { return _num(t, 0); }));
+            if (sc == null) continue;
+            const d = Math.abs(sc - pr.p); if (d > md) md = d; cnt++;
+          }
+          if (cnt > 0) { convMaxDiff = md; convN = cnt; }
+        }
+      } catch (e) {}
+      // 형식 붕괴 감지: (a) probe 있으면 변환오차만으로 판정(과적합격차 무관), (b) 없으면 종전 휴리스틱.
+      const _sane = (convMaxDiff != null)
+        ? (convMaxDiff <= 0.03 && selfAcc != null && selfAcc > 0.02 && selfAcc < 0.999)
+        : ((selfAcc != null) && (selfAcc > 0.02 && selfAcc < 0.98) && (Math.abs(selfAcc - gAcc) <= 0.20));
       // 트러스트 계산(라이브 GBDT와 동일 로직).
       let mindLB = 0.5;
       try { const mm = await mlMindLoad(env.DB); if (mm) mindLB = (typeof mm.valAccLB === "number") ? mm.valAccLB : _wilsonLB(_num(mm.valAcc, 0.5), _num(mm.valN, 30)); } catch (e) {}
-      let trust = { wGbdt: 0, trusted: false, gbdtAcc: model.valAcc, gbdtAccLB: model.valAccLB, mindAcc: mindLB, source: "external", selfAcc: selfAcc != null ? +selfAcc.toFixed(4) : null, selfN: selfN };
+      let trust = { wGbdt: 0, trusted: false, gbdtAcc: model.valAcc, gbdtAccLB: model.valAccLB, mindAcc: mindLB, source: "external", selfAcc: selfAcc != null ? +selfAcc.toFixed(4) : null, selfN: selfN, convMaxDiff: convMaxDiff != null ? +convMaxDiff.toFixed(4) : null, convN: convN };
       if (gLB >= GBDT.trustFloor) {
         const eG = Math.exp(GBDT.trustTemp * (gLB - 0.5)), eM = Math.exp(GBDT.trustTemp * (mindLB - 0.5));
         trust.wGbdt = +(eG / (eG + eM)).toFixed(4); trust.trusted = true;
@@ -14944,10 +14964,12 @@ async function handleRequest(request, env, ctx) {
       try {
         await log(env.DB, "INFO", null, "[" + _mname.toUpperCase() + "-EXT] 외부 업로드 trees=" + model.nTrees + " valAcc=" + (gAcc * 100).toFixed(1) +
           "%(하한 " + (gLB * 100).toFixed(1) + "%) self=" + (selfAcc != null ? (selfAcc * 100).toFixed(1) + "%/" + selfN : "n/a") +
+          (convMaxDiff != null ? " conv=" + convMaxDiff.toFixed(4) + "/" + convN : "") +
           " → " + (promote ? "라이브 승격(w=" + trust.wGbdt + ")" : "섀도우 저장" + (activate && !_sane ? "(self-검증 실패로 승격 보류)" : "")));
       } catch (e) {}
       return Response.json({ ok: true, activated: promote, shadow: !promote, trusted: trust.trusted, sane: _sane,
         valAcc: model.valAcc, valAccLB: model.valAccLB, selfAcc: trust.selfAcc, selfN: selfN, wGbdt: trust.wGbdt,
+        convMaxDiff: trust.convMaxDiff, convN: convN,
         note: promote ? "외부 GBDT가 위원회에서 가동됩니다(wGbdt=" + trust.wGbdt + ")"
           : (activate && !_sane ? "self-검증 실패(선형정합성/정확도 괴리) — 섀도우 유지, 형식 점검 필요"
           : "섀도우 저장 완료 — 검증 후 ?activate=1 로 승격") }, { headers: cors });

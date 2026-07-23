@@ -496,12 +496,18 @@ def _train_and_upload_gbdt(BASE, KEY, HDR, X, Y, TS, featver, D):
     center = (ph + z * z / (2 * nn)) / denom
     half = (z * math.sqrt(ph * (1 - ph) / nn + z * z / (4 * nn * nn))) / denom
     vlb = max(0.0, center - half)
+    # [V32.15] 변환정합성 probe — Worker가 라이브러리 확률을 재현하는지 검증할 (x, p) 표본.
+    #   holdout val에서 최대 200행 추출(sigmoid(vraw)=이 트리앙상블의 확률).
+    _vp = sigmoid(vraw)
+    _pi = np.linspace(0, nval - 1, min(200, nval)).astype(int)
+    probe = [{"x": Xva[i].tolist(), "p": float(_vp[i])} for i in _pi]
     model = {"trees": trees, "eta": ETA, "bias": float(bias), "valAcc": round(vacc, 4),
-             "valAccLB": round(vlb, 4), "valN": int(nval), "n": int(N), "featVer": featver}
-    print(f"GBDT: trees={len(trees)} valAcc={vacc:.3f} lb={vlb:.3f} → 업로드(섀도우)")
+             "valAccLB": round(vlb, 4), "valN": int(nval), "n": int(N), "featVer": featver, "probe": probe}
+    print(f"GBDT: trees={len(trees)} valAcc={vacc:.3f} lb={vlb:.3f} → 업로드(activate)")
     for attempt in range(4):
         try:
-            r = requests.post(BASE + "/api/gbdt-import", params={"key": KEY}, headers=HDR,
+            # [V32.15] activate=1 — sane(변환정합)+trustFloor 통과 시 라이브 승격(DNN과 동일 정책).
+            r = requests.post(BASE + "/api/gbdt-import", params={"key": KEY, "activate": "1"}, headers=HDR,
                               data=json.dumps(model), timeout=180)
             if r.status_code == 200:
                 print("GBDT 업로드 OK:", json.dumps(r.json(), ensure_ascii=False)); return
@@ -547,7 +553,8 @@ def _train_and_upload_boosters(BASE, KEY, HDR, X, Y, TS, featver, D):
     def _upload(name, model):
         for attempt in range(4):
             try:
-                r = requests.post(BASE + "/api/gbdt-import", params={"key": KEY, "name": name},
+                # [V32.15] activate=1 — Worker가 변환정합·trustFloor 통과분만 라이브 승격, 약한 건 섀도우 유지.
+                r = requests.post(BASE + "/api/gbdt-import", params={"key": KEY, "name": name, "activate": "1"},
                                   headers=HDR, data=json.dumps(model), timeout=180)
                 if r.status_code == 200:
                     print(f"{name} 업로드 OK:", json.dumps(r.json(), ensure_ascii=False)); return
@@ -563,52 +570,70 @@ def _train_and_upload_boosters(BASE, KEY, HDR, X, Y, TS, featver, D):
         # val 정확도(캘리브 없이 0.5 컷) + Wilson 하한
         vacc = float(((proba_lib >= 0.5).astype(int) == Yva).mean())
         vlb = _wilson(vacc, nval)
+        # [V32.15] 변환정합성 probe — Worker 추론이 라이브러리 proba를 재현하는지 검증할 (x, p) 표본.
+        pi = np.linspace(0, nval - 1, min(200, nval)).astype(int)
+        probe = [{"x": Xva[i].tolist(), "p": float(proba_lib[i])} for i in pi]
         model = {"trees": trees, "eta": 1.0, "bias": bias, "valAcc": round(vacc, 4),
-                 "valAccLB": round(vlb, 4), "valN": int(nval), "n": int(N), "featVer": featver}
-        print(f"{name}: trees={len(trees)} valAcc={vacc:.3f} lb={vlb:.3f} → 업로드(섀도우)")
+                 "valAccLB": round(vlb, 4), "valN": int(nval), "n": int(N), "featVer": featver, "probe": probe}
+        print(f"{name}: trees={len(trees)} valAcc={vacc:.3f} lb={vlb:.3f} → 업로드(activate)")
         _upload(name, model)
 
     # ── XGBoost ──
     try:
         import xgboost as xgb
+        # [V32.15] 노이즈 큰 금융 holdout에서 depth5·patience30은 3~7트리에서 조기절단(≈랜덤)됐다.
+        #   얕은트리(depth4)+강한 규제(min_child·λ↑)+더 큰 patience(60)로 신호가 드러날 시간을 준다.
         dtr = xgb.DMatrix(Xtr, label=Ytr); dva = xgb.DMatrix(Xva, label=Yva)
-        bst = xgb.train({"objective": "binary:logistic", "max_depth": 5, "eta": 0.05,
-                         "lambda": 1.0, "subsample": 0.8, "colsample_bytree": 0.8, "base_score": 0.5},
-                        dtr, num_boost_round=400, evals=[(dva, "v")],
-                        early_stopping_rounds=30, verbose_eval=False)
+        bst = xgb.train({"objective": "binary:logistic", "max_depth": 4, "eta": 0.04,
+                         "lambda": 3.0, "min_child_weight": 8, "gamma": 0.1,
+                         "subsample": 0.8, "colsample_bytree": 0.8, "base_score": 0.5},
+                        dtr, num_boost_round=800, evals=[(dva, "v")],
+                        early_stopping_rounds=60, verbose_eval=False)
         def _pxgb(n):
             if "leaf" in n: return {"w": float(n["leaf"])}
             f = int(n["split"][1:]) if isinstance(n["split"], str) else int(n["split"])
             ch = {c["nodeid"]: c for c in n["children"]}
             return {"f": f, "t": float(n["split_condition"]), "l": _pxgb(ch[n["yes"]]), "r": _pxgb(ch[n["no"]])}
-        xt = [_pxgb(json.loads(d)) for d in bst.get_dump(dump_format="json")]
-        _finish("xgb", xt, bst.predict(xgb.DMatrix(Xva), output_margin=True), bst.predict(xgb.DMatrix(Xva)))
+        # ★조기종료 정합★ get_dump는 전체 트리를 주지만 predict는 best_iteration까지만 쓴다 →
+        #   업로드 트리와 라이브러리 확률을 같은 범위(best+1)로 맞춰야 probe(변환정합)가 통과한다.
+        _bit = int(getattr(bst, "best_iteration", None) if getattr(bst, "best_iteration", None) is not None else len(bst.get_dump()) - 1)
+        _rng = (0, _bit + 1)
+        xt = [_pxgb(json.loads(d)) for d in bst.get_dump(dump_format="json")[:_bit + 1]]
+        _finish("xgb", xt,
+                bst.predict(xgb.DMatrix(Xva), output_margin=True, iteration_range=_rng),
+                bst.predict(xgb.DMatrix(Xva), iteration_range=_rng))
     except Exception as e:
         print("XGB 실패(무시):", e)
 
     # ── LightGBM ──
     try:
         import lightgbm as lgb
+        # [V32.15] 얕은트리(depth4·leaves16)+강한 규제(min_data 60)+patience 60 — 조기절단 방지.
         ltr = lgb.Dataset(Xtr, label=Ytr); lva = lgb.Dataset(Xva, label=Yva, reference=ltr)
-        lbst = lgb.train({"objective": "binary", "max_depth": 5, "num_leaves": 24,
-                          "learning_rate": 0.05, "bagging_fraction": 0.8, "bagging_freq": 1,
-                          "feature_fraction": 0.8, "min_data_in_leaf": 30, "verbose": -1},
-                         ltr, num_boost_round=400, valid_sets=[lva],
-                         callbacks=[lgb.early_stopping(30, verbose=False)])
+        lbst = lgb.train({"objective": "binary", "max_depth": 4, "num_leaves": 16,
+                          "learning_rate": 0.04, "bagging_fraction": 0.8, "bagging_freq": 1,
+                          "feature_fraction": 0.8, "min_data_in_leaf": 60, "lambda_l2": 3.0, "verbose": -1},
+                         ltr, num_boost_round=800, valid_sets=[lva],
+                         callbacks=[lgb.early_stopping(60, verbose=False)])
         def _plgb(n):
             if "leaf_value" in n: return {"w": float(n["leaf_value"])}
             return {"f": int(n["split_feature"]), "t": float(n["threshold"]),
                     "l": _plgb(n["left_child"]), "r": _plgb(n["right_child"])}
-        lt = [_plgb(ti["tree_structure"]) for ti in lbst.dump_model()["tree_info"]]
-        _finish("lgb", lt, lbst.predict(Xva, raw_score=True), lbst.predict(Xva))
+        # ★조기종료 정합★ best_iteration까지만 추출·예측(업로드 트리 = 라이브러리 확률 범위 일치).
+        _lbit = int(lbst.best_iteration or lbst.num_trees())
+        lt = [_plgb(ti["tree_structure"]) for ti in lbst.dump_model(num_iteration=_lbit)["tree_info"]]
+        _finish("lgb", lt,
+                lbst.predict(Xva, raw_score=True, num_iteration=_lbit),
+                lbst.predict(Xva, num_iteration=_lbit))
     except Exception as e:
         print("LGB 실패(무시):", e)
 
     # ── CatBoost (oblivious → 이진트리 확장) ──
     try:
         from catboost import CatBoostClassifier
-        cb = CatBoostClassifier(depth=5, iterations=400, learning_rate=0.05, l2_leaf_reg=3.0,
-                                random_seed=42, verbose=0, early_stopping_rounds=30)
+        # [V32.15] depth4·lr0.04·l2 6·patience60 — 얕고 규제 강하게(3트리 조기절단 방지).
+        cb = CatBoostClassifier(depth=4, iterations=800, learning_rate=0.04, l2_leaf_reg=6.0,
+                                random_seed=42, verbose=0, early_stopping_rounds=60, use_best_model=True)
         cb.fit(Xtr, Ytr, eval_set=(Xva, Yva))
         tf = tempfile.mktemp(suffix=".json"); cb.save_model(tf, format="json")
         cbj = json.load(open(tf)); os.remove(tf)
