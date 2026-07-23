@@ -372,6 +372,11 @@ def train_job(epochs: int = EPOCHS_DEFAULT, dry: bool = False):
             _train_and_upload_boosters(BASE, KEY, HDR, X, Y, TS, featver, D)
         except Exception as e:
             print("부스팅 학습/업로드 예외(무시):", e)
+        print("⑦ MIND(FM) 외부학습 — 위원장 모델 GPU 완전수렴")
+        try:
+            _train_and_upload_fm(BASE, KEY, HDR, X, Y, TS, PNL, featver, D)
+        except Exception as e:
+            print("FM(MIND) 학습/업로드 예외(무시):", e)
     return {"ok": True, "valAcc": acc, "trust": res.get("trust")}
 
 
@@ -652,6 +657,117 @@ def _train_and_upload_boosters(BASE, KEY, HDR, X, Y, TS, featver, D):
             _finish("cat", ct, cb.predict(Xva, prediction_type="RawFormulaVal"), cb.predict_proba(Xva)[:, 1])
     except Exception as e:
         print("CatBoost 실패(무시):", e)
+
+
+# ============================================================================
+# [V32.16] MIND(FM=인수분해기계) 외부학습 — Worker의 _fmTrain은 CPU예산(20s) 안에 20에폭·
+#   50k표본을 못 돌려 39~57% 오실레이션·미수렴이었다(코드 주석 다수). GPU/여유 CPU에서 멀티시드·
+#   충분한 에폭으로 완전수렴시켜 업로드 → Worker는 추론(_fmRaw)만. Worker와 동일한 2차 FM 공식·
+#   표준화(z=(x-mean)/std)·K=8을 그대로 써서 업로드 가중이 그대로 작동한다. MIND는 FM단독(experts=["fm"],
+#   meta=항등)으로 조립돼 위원장(always-on)으로 즉시 가동. τ* 캘리브레이션을 b에 구워 0.5컷 정합.
+def _train_and_upload_fm(BASE, KEY, HDR, X, Y, TS, PNL, featver, D):
+    import numpy as np, math, json, time, requests
+    N = len(Y)
+    if N < 200:
+        print(f"FM: 표본 부족 {N} — 생략"); return
+    K = 8; L2W = 1e-3; L2V = 3e-3; EPOCHS = 80; SEEDS = 6
+    order = np.argsort(TS)
+    Xs = X[order].astype(np.float64); Ys = Y[order].astype(np.float64)
+    Ps = np.abs(PNL[order].astype(np.float64))
+    mean = Xs.mean(axis=0); std = Xs.std(axis=0); std[std < 1e-6] = 1.0
+    Z = (Xs - mean) / std
+    Z = np.clip(Z, -6, 6)
+    nval = max(60, int(N * 0.2))
+    Ztr, Ytr = Z[:-nval], Ys[:-nval]; Zva, Yva = Z[-nval:], Ys[-nval:]
+    # 표본가중: |pnl| 중앙값 정규화(0.3~3.0) × 균형 클래스가중
+    pscale = np.median(Ps[:-nval]) if np.median(Ps[:-nval]) > 1e-6 else 1.0
+    mw = np.clip(Ps[:-nval] / pscale, 0.3, 3.0)
+    pos = float(Ytr.sum()); ntr = len(Ytr)
+    wpos = ntr / (2 * pos) if pos > 0 else 1.0
+    wneg = ntr / (2 * (ntr - pos)) if (ntr - pos) > 0 else 1.0
+    cw = np.where(Ytr > 0.5, wpos, wneg) * mw
+    Ztr2 = Ztr ** 2
+
+    def sigmoid(a): return 1.0 / (1.0 + np.exp(-np.clip(a, -30, 30)))
+    def fm_raw(Zin, w, V, b):
+        A = Zin @ V                       # (n,K)
+        Bm = (Zin ** 2) @ (V ** 2)        # (n,K)
+        return b + Zin @ w + 0.5 * np.sum(A * A - Bm, axis=1)
+
+    def train_one(seed):
+        rng = np.random.default_rng(seed)
+        w = np.zeros(D); V = 0.01 * rng.standard_normal((D, K)); b = 0.0
+        # Adam
+        mw_, vw_ = np.zeros(D), np.zeros(D); mV, vV = np.zeros((D, K)), np.zeros((D, K))
+        mb, vb = 0.0, 0.0; b1, b2, eps, lr = 0.9, 0.999, 1e-8, 0.02
+        t = 0
+        for ep in range(EPOCHS):
+            A = Ztr @ V
+            raw = b + Ztr @ w + 0.5 * np.sum(A * A - Ztr2 @ (V ** 2), axis=1)
+            p = sigmoid(raw)
+            dLds = (p - Ytr) * cw
+            gb = dLds.mean()
+            gw = Ztr.T @ dLds / ntr + L2W * w
+            g2 = Ztr2.T @ dLds                    # (D,)
+            G1 = Ztr.T @ (dLds[:, None] * A)      # (D,K)
+            gV = G1 / ntr - V * (g2[:, None] / ntr) + L2V * V
+            t += 1
+            mb = b1 * mb + (1 - b1) * gb; vb = b2 * vb + (1 - b2) * gb * gb
+            b -= lr * (mb / (1 - b1 ** t)) / (math.sqrt(vb / (1 - b2 ** t)) + eps)
+            mw_ = b1 * mw_ + (1 - b1) * gw; vw_ = b2 * vw_ + (1 - b2) * gw * gw
+            w -= lr * (mw_ / (1 - b1 ** t)) / (np.sqrt(vw_ / (1 - b2 ** t)) + eps)
+            mV = b1 * mV + (1 - b1) * gV; vV = b2 * vV + (1 - b2) * gV * gV
+            V -= lr * (mV / (1 - b1 ** t)) / (np.sqrt(vV / (1 - b2 ** t)) + eps)
+        return w, V, b
+
+    # 멀티시드 — 검증 앞절반 균형정확도로 최고 선택(뒤절반은 정직측정 보존)
+    selN = max(20, nval // 2)
+    best = None; best_bal = -1
+    for s in range(SEEDS):
+        w, V, b = train_one(s)
+        praw = fm_raw(Zva[:selN], w, V, b); up = sigmoid(praw) >= 0.5
+        yv = Yva[:selN] > 0.5
+        tp = np.sum(up & yv); fn = np.sum(~up & yv); tn = np.sum(~up & ~yv); fp = np.sum(up & ~yv)
+        bal = 0.5 * ((tp / max(1, tp + fn)) + (tn / max(1, tn + fp)))
+        if bal > best_bal: best_bal = bal; best = (w, V, b)
+    w, V, b = best
+    # τ* 캘리브레이션 — 앞절반에서 정확도 최대 임계를 b에 구움(0.5컷 정합)
+    fps = sigmoid(fm_raw(Zva[:selN], w, V, b)); fsort = np.sort(fps)
+    bt, bs = 0.5, -1
+    for q in range(2, 37):
+        tau = fsort[int((q / 38) * (len(fsort) - 1))]
+        acc = np.mean((fps >= tau).astype(int) == (Yva[:selN] > 0.5).astype(int))
+        if acc > bs: bs = acc; bt = tau
+    bt = min(max(bt, 1e-4), 1 - 1e-4)
+    b -= math.log(bt / (1 - bt))
+    # 뒤절반 정직 홀드아웃 정확도 + Wilson 하한
+    hold = slice(selN, nval)
+    ph = sigmoid(fm_raw(Zva[hold], w, V, b))
+    yh = Yva[hold] > 0.5
+    vacc = float(np.mean((ph >= 0.5) == yh)); nh = int(nval - selN)
+    z16 = 1.64; den = 1 + z16 * z16 / nh
+    vlb = max(0.0, ((vacc + z16 * z16 / (2 * nh)) - z16 * math.sqrt((vacc * (1 - vacc) + z16 * z16 / (4 * nh)) / nh)) / den)
+    # 변환정합성 probe — Worker mlFMScore가 재현하는지(원본 x, 확률 p)
+    pi = np.linspace(0, nval - 1, min(200, nval)).astype(int)
+    probe = [{"x": Xs[-nval:][i].tolist(), "p": float(sigmoid(fm_raw(Z[-nval:][i:i+1], w, V, b))[0])} for i in pi]
+    model = {"w": w.tolist(), "V": V.tolist(), "b": float(b), "K": K,
+             "mean": mean.tolist(), "std": std.tolist(),
+             "valAcc": round(vacc, 4), "valAccLB": round(vlb, 4), "valN": nh, "n": int(N),
+             "featVer": featver, "probe": probe}
+    print(f"FM(MIND): K={K} seeds={SEEDS} valAcc={vacc:.3f} lb={vlb:.3f} (sel균형 {best_bal:.3f}) → 업로드(activate)")
+    for attempt in range(4):
+        try:
+            r = requests.post(BASE + "/api/fm-import", params={"key": KEY, "activate": "1"},
+                              headers=HDR, data=json.dumps(model), timeout=180)
+            if r.status_code == 200:
+                print("FM(MIND) 업로드 OK:", json.dumps(r.json(), ensure_ascii=False)); return
+            bdy = r.text[:200]
+            if r.status_code >= 500 and (("D1" in bdy) or ("overloaded" in bdy) or ("queued" in bdy)) and attempt < 3:
+                print(f"FM D1 과부하 재시도 {attempt+1}"); time.sleep(30); continue
+            print("FM 업로드 실패:", r.status_code, bdy); return
+        except requests.exceptions.ReadTimeout:
+            if attempt < 3: time.sleep(20); continue
+    print("FM 업로드 타임아웃")
 
 
 @app.local_entrypoint()

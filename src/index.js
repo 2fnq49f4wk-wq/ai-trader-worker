@@ -14975,6 +14975,70 @@ async function handleRequest(request, env, ctx) {
           : "섀도우 저장 완료 — 검증 후 ?activate=1 로 승격") }, { headers: cors });
     }
 
+    // [V32.16] POST /api/fm-import — 외부(Modal)에서 완전수렴시킨 MIND의 FM(인수분해기계) 업로드.
+    //   Worker의 _fmTrain은 CPU예산 안에 미수렴이라 MIND가 학습을 못 하던 근본문제 해결(FM만 GPU로 이관).
+    //   FM단독(experts=["fm"], meta=항등)으로 MIND 모델을 조립해 즉시 위원장 가동. ?activate=1 + probe정합 +
+    //   valAccLB 절대바닥 통과 시 라이브(mind_model) 승격, 아니면 섀도우(mind_fm_ext).
+    if (path === "/api/fm-import" && request.method === "POST") {
+      const au = _trainAuthed(); if (!au.ok) return Response.json({ error: au.msg }, { status: au.code, headers: cors });
+      let body; try { body = await request.json(); } catch (e) { return Response.json({ error: "bad json" }, { status: 400, headers: cors }); }
+      if (_num(body.featVer, -1) !== LUXML.featVer) return Response.json({ error: "featVer 불일치 (서버 " + LUXML.featVer + ")" }, { status: 400, headers: cors });
+      const D = LUXML.featNames.length;
+      const K = Math.max(1, Math.floor(_num(body.K, 8)));
+      if (!Array.isArray(body.w) || body.w.length !== D) return Response.json({ error: "w 차원 불일치 (" + D + " 필요)" }, { status: 400, headers: cors });
+      if (!Array.isArray(body.V) || body.V.length !== D || !Array.isArray(body.V[0]) || body.V[0].length !== K) return Response.json({ error: "V 형상 불일치 (" + D + "×" + K + " 필요)" }, { status: 400, headers: cors });
+      if (!Array.isArray(body.mean) || body.mean.length !== D || !Array.isArray(body.std) || body.std.length !== D) return Response.json({ error: "mean/std 차원 불일치 (" + D + " 필요)" }, { status: 400, headers: cors });
+      // 유한성 검증
+      for (const v of body.w) if (!isFinite(v)) return Response.json({ error: "w 비유한" }, { status: 400, headers: cors });
+      for (const row of body.V) { if (!Array.isArray(row) || row.length !== K) return Response.json({ error: "V 행 형상 불일치" }, { status: 400, headers: cors }); for (const v of row) if (!isFinite(v)) return Response.json({ error: "V 비유한" }, { status: 400, headers: cors }); }
+      const fm = { w: body.w.map(function (v) { return _num(v, 0); }), V: body.V.map(function (r) { return r.map(function (v) { return _num(v, 0); }); }),
+        b: _num(body.b, 0), K: K, mean: body.mean.map(function (v) { return _num(v, 0); }), std: body.std.map(function (v) { return _num(v, 1); }),
+        featVer: LUXML.featVer, n: Math.max(0, Math.floor(_num(body.n, 0))), trainedAt: Date.now(), source: "external" };
+      const vAcc = _clamp(_num(body.valAcc, 0), 0, 1);
+      const vN = Math.max(1, Math.floor(_num(body.valN, 30)));
+      const vLB = (body.valAccLB != null) ? _clamp(_num(body.valAccLB, 0), 0, 1) : _wilsonLB(vAcc, vN);
+      // 변환정합성 probe — Worker mlFMScore가 라이브러리 확률을 재현하는가.
+      let convMaxDiff = null, convN = 0;
+      try {
+        if (Array.isArray(body.probe) && body.probe.length) {
+          let md = 0, cnt = 0;
+          for (const pr of body.probe) {
+            if (!pr || !Array.isArray(pr.x) || pr.x.length !== D || typeof pr.p !== "number") continue;
+            const sc = mlFMScore(fm, pr.x.map(function (t) { return _num(t, 0); }));
+            if (sc == null) continue;
+            const dd = Math.abs(sc - pr.p); if (dd > md) md = dd; cnt++;
+          }
+          if (cnt > 0) { convMaxDiff = md; convN = cnt; }
+        }
+      } catch (e) {}
+      // 위원장(게이트 없음)이라 안전바닥을 둔다: 변환정합(≤0.03) + valAccLB ≥ trustFloor.
+      const convOK = (convMaxDiff == null) || (convMaxDiff <= 0.03);
+      const _sane = convOK && vLB >= MIND.trustFloor;
+      const activate = url.searchParams.get("activate") === "1";
+      const promote = activate && _sane;
+      // FM단독 MIND 조립 — experts=["fm"], meta 항등(w=[1],b=0) → mlMindScore가 캘리브FM 확률 그대로.
+      const mindModel = { fm: fm, meta: { w: [1], b: 0 }, experts: ["fm"], mean: fm.mean, std: fm.std,
+        featVer: LUXML.featVer, n: fm.n, valAcc: +vAcc.toFixed(4), valAccLB: +vLB.toFixed(4), valN: vN,
+        leakFree: true, fmAcc: +vAcc.toFixed(4), ruleAcc: null, ruleAccLB: null, ruleN: 0, ruleTau: 0.5,
+        source: "external", trainedAt: Date.now() };
+      try {
+        if (promote) {
+          await setState(env.DB, "mind_model", mindModel);
+          // 위원장 자기감시 가드 리셋 — 새 baseAcc로 라이브 추적 재시작.
+          await setState(env.DB, "mind_guard", { live: [], distrust: false, baseAcc: +vAcc.toFixed(4) });
+        } else {
+          await setState(env.DB, "mind_fm_ext", mindModel);
+        }
+      } catch (e) { return Response.json({ error: "저장 실패: " + (e && e.message) }, { status: 500, headers: cors }); }
+      try {
+        await log(env.DB, "INFO", null, "[FM-EXT] MIND FM 외부업로드 valAcc=" + (vAcc * 100).toFixed(1) + "%(하한 " + (vLB * 100).toFixed(1) + "%)" +
+          (convMaxDiff != null ? " conv=" + convMaxDiff.toFixed(4) + "/" + convN : "") + " → " + (promote ? "라이브 위원장 승격" : "섀도우 저장" + (activate && !_sane ? "(정합/바닥 미달)" : "")));
+      } catch (e) {}
+      return Response.json({ ok: true, activated: promote, shadow: !promote, sane: _sane, valAcc: +vAcc.toFixed(4), valAccLB: +vLB.toFixed(4),
+        convMaxDiff: convMaxDiff != null ? +convMaxDiff.toFixed(4) : null, convN: convN,
+        note: promote ? "외부 FM으로 MIND(위원장)가 가동됩니다" : (activate && !_sane ? "정합/검증바닥 미달 — 섀도우 유지" : "섀도우 저장 완료") }, { headers: cors });
+    }
+
     // POST /api/ai/harvest-now — 야간 수확을 지금 즉시 1회 실행(하루1회 ai_trained_day 게이트 무시).
     //   [V11.2] featVer가 바뀌면 구표본이 전부 필터링되어 total=0이 되는데, 원본 일봉(daily:/hist: 캐시)은
     //   그대로 있어 재계산만 하면 됨. 다음 UTC자정까지 기다리지 않고 캐시에서 즉시 재수확하기 위한 트리거.
@@ -19936,6 +20000,7 @@ const MIND = {
   //   예산 20s×5=100s(기존 60s 대비 +40s) — mind 스테이지는 독립 체크포인트라 여유 CPU 내.
   fmSeeds: 5,
   fmValFrac: 0.2, minTrainSamples: 80, regressGuardMargin: 0.08,
+  trustFloor: 0.505,   // [V32.16] 외부 FM(Modal) 승격 절대바닥 — 위원장이라 게이트는 없지만 미달 모델 발행은 차단.
   stackL2: 0.01, stackEpochs: 200, stackLr: 0.1,
   guardMinLive: 25, guardMargin: 0.08, guardWindow: 60,
   kellyGain: 1.6, kellyUCap: 0.15,
@@ -20053,6 +20118,14 @@ function _logit(p) { const q = _clamp(p, 1e-4, 1 - 1e-4); return Math.log(q / (1
 async function mlMindTrainNightly(DB) {
   if (!MIND.enabled) return null;
   try {
+    // [V32.16] 외부(Modal) FM으로 MIND가 라이브 승격돼 신선하면 Worker 자체 FM학습 생략(GBDT/DNN과 동일 패턴).
+    //   Worker _fmTrain은 CPU예산 안에 미수렴이라 오히려 외부 완전수렴 FM을 덮어써 악화시킬 위험 — 외부 소유.
+    try {
+      const _lm = await getState(DB, "mind_model", null);
+      if (_lm && _lm.source === "external" && _lm.featVer === LUXML.featVer && _lm.trainedAt && (Date.now() - _lm.trainedAt) < 36 * 3600000) {
+        return "[MIND] 외부GPU FM 위원장 가동 중(valAcc " + ((_num(_lm.valAcc, 0)) * 100).toFixed(1) + "%) — 야간 자가학습 생략(외부 소유)";
+      }
+    } catch (e) {}
     const data = await _mindLoadSamples(DB);
     const N = data.length;
     if (N < MIND.minTrainSamples) return "[MIND] 표본 " + N + "/" + MIND.minTrainSamples + " — 대기";
