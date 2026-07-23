@@ -14439,7 +14439,7 @@ async function handleRequest(request, env, ctx) {
     if (path === "/api/nn-viz") {
       const modelSel = url.searchParams.get("model") || "dnn";
       const data = modelSel === "mind" ? await mlMindVizData(env.DB)
-        : modelSel === "gbdt" ? await mlGBDTVizData(env.DB)
+        : (["gbdt", "xgb", "lgb", "cat"].indexOf(modelSel) !== -1) ? await mlTreeVizData(env.DB, modelSel)
         : await mlDNNVizData(env.DB);
       return Response.json(data, { headers: cors });
     }
@@ -14879,10 +14879,13 @@ async function handleRequest(request, env, ctx) {
     //   업로드된 모델을 Worker 자체 최근 표본에 직접 채점해 self-검증(형식/추론 정합성 확인).
     if (path === "/api/gbdt-import" && request.method === "POST") {
       const au = _trainAuthed(); if (!au.ok) return Response.json({ error: au.msg }, { status: au.code, headers: cors });
+      // [V32.13] name으로 부스팅 멤버 구분(gbdt/xgb/lgb/cat) — 전부 동일 트리포맷이라 mlGBDTScore로 채점.
+      const _mname = (url.searchParams.get("name") || "gbdt").toLowerCase();
+      if (["gbdt", "xgb", "lgb", "cat"].indexOf(_mname) === -1) return Response.json({ error: "name은 gbdt|xgb|lgb|cat" }, { status: 400, headers: cors });
       let body; try { body = await request.json(); } catch (e) { return Response.json({ error: "bad json" }, { status: 400, headers: cors }); }
       if (_num(body.featVer, -1) !== LUXML.featVer) return Response.json({ error: "featVer 불일치 (서버 " + LUXML.featVer + ")" }, { status: 400, headers: cors });
       if (!Array.isArray(body.trees) || body.trees.length === 0) return Response.json({ error: "trees 없음" }, { status: 400, headers: cors });
-      if (body.trees.length > 2000) return Response.json({ error: "trees 과다(" + body.trees.length + ">2000)" }, { status: 400, headers: cors });
+      if (body.trees.length > 4000) return Response.json({ error: "trees 과다(" + body.trees.length + ">4000)" }, { status: 400, headers: cors });
       const D = LUXML.featNames.length;
       // 트리 구조 검증 — 리프{w:number} 또는 내부{f:0..D-1, t:number, l, r}. 깊이·노드수 상한으로 남용 방지.
       const _validTree = function (node, depth) {
@@ -14931,17 +14934,17 @@ async function handleRequest(request, env, ctx) {
       const promote = activate && _sane && trust.trusted;
       try {
         if (promote) {
-          await setState(env.DB, "gbdt_model", model);
-          await setState(env.DB, "gbdt_trust", trust);
+          await setState(env.DB, _mname + "_model", model);
+          await setState(env.DB, _mname + "_trust", trust);
         } else {
-          await setState(env.DB, "gbdt_model_ext", model);
-          await setState(env.DB, "gbdt_trust_ext", trust);
+          await setState(env.DB, _mname + "_model_ext", model);
+          await setState(env.DB, _mname + "_trust_ext", trust);
         }
       } catch (e) { return Response.json({ error: "저장 실패: " + (e && e.message) }, { status: 500, headers: cors }); }
       try {
-        await log(env.DB, "INFO", null, "[GBDT-EXT] 외부 업로드 trees=" + model.nTrees + " valAcc=" + (gAcc * 100).toFixed(1) +
+        await log(env.DB, "INFO", null, "[" + _mname.toUpperCase() + "-EXT] 외부 업로드 trees=" + model.nTrees + " valAcc=" + (gAcc * 100).toFixed(1) +
           "%(하한 " + (gLB * 100).toFixed(1) + "%) self=" + (selfAcc != null ? (selfAcc * 100).toFixed(1) + "%/" + selfN : "n/a") +
-          " → " + (promote ? "라이브 승격(wGbdt=" + trust.wGbdt + ")" : "섀도우 저장" + (activate && !_sane ? "(self-검증 실패로 승격 보류)" : "")));
+          " → " + (promote ? "라이브 승격(w=" + trust.wGbdt + ")" : "섀도우 저장" + (activate && !_sane ? "(self-검증 실패로 승격 보류)" : "")));
       } catch (e) {}
       return Response.json({ ok: true, activated: promote, shadow: !promote, trusted: trust.trusted, sane: _sane,
         valAcc: model.valAcc, valAccLB: model.valAccLB, selfAcc: trust.selfAcc, selfN: selfN, wGbdt: trust.wGbdt,
@@ -20427,6 +20430,34 @@ async function mlGBDTVizData(DB) {
       trainedAt: m.trainedAt, featNames: fn, inputFeatures: inputFeatures, topFeatures: topFeatures,
       trust: trust ? { wGbdt: trust.wGbdt, trusted: !!trust.trusted, gbdtAcc: trust.gbdtAcc, gbdtAccLB: trust.gbdtAccLB, mindAcc: trust.mindAcc } : null };
   } catch (e) { return { kind: "gbdt", trained: false, error: e && e.message }; }
+}
+
+// [V32.13] 범용 부스팅 트리 시각화 — gbdt/xgb/lgb/cat 공통. 라이브 모델 우선, 없으면 섀도우(_ext).
+//   피처 중요도는 트리 분할 사용 빈도로 근사(모든 라이브러리 트리가 동일 {f,t,l,r} 포맷).
+async function mlTreeVizData(DB, name) {
+  const fn = LUXML.featNames;
+  const label = name.toUpperCase();
+  try {
+    let m = null, trust = null, shadow = false;
+    try { m = await getState(DB, name + "_model", null); trust = await getState(DB, name + "_trust", null); } catch (e) {}
+    if (!m || !Array.isArray(m.trees)) {
+      try { m = await getState(DB, name + "_model_ext", null); trust = await getState(DB, name + "_trust_ext", null); shadow = true; } catch (e) {}
+    }
+    if (!m || !Array.isArray(m.trees)) {
+      const _if = fn.map(function (nm, j) { return { i: j, name: nm, role: FEAT_ROLES[nm] || "", liveOnly: _LIVE_ONLY_FEATS.has(nm), strength: 0 }; });
+      let _sn = 0; try { const _r = await DB.prepare("SELECT COUNT(*) c FROM ml_samples WHERE featver=?").bind(LUXML.featVer).first(); _sn = (_r && _r.c) || 0; } catch (e) {}
+      return { kind: name, model: label, trained: false, shadow: shadow, samples: _sn, featVer: LUXML.featVer, featNames: fn, inputFeatures: _if, topFeatures: _if.slice(0, 20), trust: trust || null };
+    }
+    const imp = new Array(fn.length).fill(0);
+    const walk = function (nd) { if (!nd || nd.w !== undefined) return; if (Number.isInteger(nd.f) && nd.f < imp.length) imp[nd.f]++; walk(nd.l); walk(nd.r); };
+    for (const t of m.trees) { try { walk(t); } catch (e) {} }
+    let mx = 0; for (const v of imp) if (v > mx) mx = v;
+    const inputFeatures = fn.map(function (nm, j) { const s = mx > 0 ? +(imp[j] / mx).toFixed(3) : 0; return { i: j, name: nm, role: FEAT_ROLES[nm] || "", liveOnly: _LIVE_ONLY_FEATS.has(nm), strength: s, splits: imp[j] }; });
+    const topFeatures = inputFeatures.slice().sort(function (a, b) { return b.strength - a.strength; }).slice(0, 20);
+    return { kind: name, model: label, trained: true, shadow: shadow, n: m.n, valAcc: m.valAcc, valAccLB: m.valAccLB || null,
+      nTrees: (m.nTrees || m.trees.length), trainedAt: m.trainedAt, featNames: fn, inputFeatures: inputFeatures, topFeatures: topFeatures,
+      trust: trust ? { wGbdt: _num(trust.wGbdt, 0), trusted: !!trust.trusted, gbdtAcc: trust.gbdtAcc, gbdtAccLB: trust.gbdtAccLB, selfAcc: trust.selfAcc, mindAcc: trust.mindAcc } : null };
+  } catch (e) { return { kind: name, model: label, trained: false, error: e && e.message }; }
 }
 
 async function mlMindStatus(DB) {

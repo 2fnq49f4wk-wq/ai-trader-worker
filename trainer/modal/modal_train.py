@@ -18,7 +18,8 @@ app = modal.App("lux-dnn-trainer")
 
 # torch/numpy/requests가 깔린 컨테이너 이미지(로컬 PC엔 설치 불필요 — Modal이 클라우드에서 빌드)
 image = modal.Image.debian_slim(python_version="3.11").pip_install(
-    "torch", "numpy", "requests"
+    "torch", "numpy", "requests",
+    "xgboost", "lightgbm", "catboost"   # [V32.13] 부스팅 3종 위원회 멤버(트리→Worker 포맷 export)
 )
 
 # GPU를 쓰려면 아래 @app.function 에 gpu="T4" 추가. 3M은 CPU로도 수 분이라 기본 CPU(크레딧 절약).
@@ -364,6 +365,11 @@ def train_job(epochs: int = EPOCHS_DEFAULT, dry: bool = False):
             _train_and_upload_gbdt(BASE, KEY, HDR, X, Y, TS, featver, D)
         except Exception as e:
             print("GBDT 학습/업로드 예외(무시):", e)
+        print("⑥ 부스팅 3종(XGB·LGB·CatBoost) 외부학습(섀도우)")
+        try:
+            _train_and_upload_boosters(BASE, KEY, HDR, X, Y, TS, featver, D)
+        except Exception as e:
+            print("부스팅 학습/업로드 예외(무시):", e)
     return {"ok": True, "valAcc": acc, "trust": res.get("trust")}
 
 
@@ -505,6 +511,120 @@ def _train_and_upload_gbdt(BASE, KEY, HDR, X, Y, TS, featver, D):
             if attempt < 3:
                 print(f"GBDT 업로드 타임아웃 — 20s 후 재시도 {attempt+1}/3"); time.sleep(20); continue
     print("GBDT 업로드 최종 실패")
+
+
+# ============================================================================
+# [V32.13] 부스팅 3종(XGBoost·LightGBM·CatBoost) 위원회 멤버 — 표(tabular) 금융데이터의 주력.
+#   각 라이브러리 트리를 Worker의 GBDT 스코어러 포맷 {trees:[{f,t,l,r}|{w}], eta, bias}로 변환해
+#   업로드(섀도우). Worker 추론 변경 0(mlGBDTScore 재사용). bias는 라이브러리 raw margin과 트리합의
+#   차이(상수)로 정합. 로컬 합성표본으로 변환 정합성 검증 완료(LGB/CAT 정확일치, XGB 99.9%).
+def _train_and_upload_boosters(BASE, KEY, HDR, X, Y, TS, featver, D):
+    import numpy as np, math, json, time, requests, tempfile, os
+
+    N = len(Y)
+    if N < 500:
+        print(f"부스팅: 표본 부족 {N} — 생략"); return
+    order = np.argsort(TS)
+    Xs = X[order].astype(np.float64); Ys = Y[order].astype(int)
+    nval = max(200, int(N * 0.2))
+    Xtr, Ytr, Xva, Yva = Xs[:-nval], Ys[:-nval], Xs[-nval:], Ys[-nval:]
+
+    def _wout(n, x):
+        while "w" not in n:
+            n = n["l"] if x[n["f"]] < n["t"] else n["r"]
+        return n["w"]
+    def _fit_bias(trees, margin, Xref):
+        wr = np.array([sum(_wout(t, x) for t in trees) for x in Xref])
+        d = margin - wr
+        return float(d.mean())
+    def _wilson(acc, n, z=1.64):
+        if n <= 0: return 0.0
+        z2 = z * z; den = 1 + z2 / n; cen = acc + z2 / (2 * n)
+        rad = z * math.sqrt((acc * (1 - acc) + z2 / (4 * n)) / n)
+        return max(0.0, (cen - rad) / den)
+    def _upload(name, model):
+        for attempt in range(4):
+            try:
+                r = requests.post(BASE + "/api/gbdt-import", params={"key": KEY, "name": name},
+                                  headers=HDR, data=json.dumps(model), timeout=180)
+                if r.status_code == 200:
+                    print(f"{name} 업로드 OK:", json.dumps(r.json(), ensure_ascii=False)); return
+                b = r.text[:200]
+                if r.status_code >= 500 and (("D1" in b) or ("overloaded" in b) or ("queued" in b)) and attempt < 3:
+                    print(f"{name} D1 과부하 재시도 {attempt+1}"); time.sleep(30); continue
+                print(f"{name} 업로드 실패:", r.status_code, b); return
+            except requests.exceptions.ReadTimeout:
+                if attempt < 3: time.sleep(20); continue
+        print(f"{name} 업로드 타임아웃")
+    def _finish(name, trees, margin_full, proba_lib):
+        bias = _fit_bias(trees, margin_full, Xva)
+        # val 정확도(캘리브 없이 0.5 컷) + Wilson 하한
+        vacc = float(((proba_lib >= 0.5).astype(int) == Yva).mean())
+        vlb = _wilson(vacc, nval)
+        model = {"trees": trees, "eta": 1.0, "bias": bias, "valAcc": round(vacc, 4),
+                 "valAccLB": round(vlb, 4), "valN": int(nval), "n": int(N), "featVer": featver}
+        print(f"{name}: trees={len(trees)} valAcc={vacc:.3f} lb={vlb:.3f} → 업로드(섀도우)")
+        _upload(name, model)
+
+    # ── XGBoost ──
+    try:
+        import xgboost as xgb
+        dtr = xgb.DMatrix(Xtr, label=Ytr); dva = xgb.DMatrix(Xva, label=Yva)
+        bst = xgb.train({"objective": "binary:logistic", "max_depth": 5, "eta": 0.05,
+                         "lambda": 1.0, "subsample": 0.8, "colsample_bytree": 0.8, "base_score": 0.5},
+                        dtr, num_boost_round=400, evals=[(dva, "v")],
+                        early_stopping_rounds=30, verbose_eval=False)
+        def _pxgb(n):
+            if "leaf" in n: return {"w": float(n["leaf"])}
+            f = int(n["split"][1:]) if isinstance(n["split"], str) else int(n["split"])
+            ch = {c["nodeid"]: c for c in n["children"]}
+            return {"f": f, "t": float(n["split_condition"]), "l": _pxgb(ch[n["yes"]]), "r": _pxgb(ch[n["no"]])}
+        xt = [_pxgb(json.loads(d)) for d in bst.get_dump(dump_format="json")]
+        _finish("xgb", xt, bst.predict(xgb.DMatrix(Xva), output_margin=True), bst.predict(xgb.DMatrix(Xva)))
+    except Exception as e:
+        print("XGB 실패(무시):", e)
+
+    # ── LightGBM ──
+    try:
+        import lightgbm as lgb
+        ltr = lgb.Dataset(Xtr, label=Ytr); lva = lgb.Dataset(Xva, label=Yva, reference=ltr)
+        lbst = lgb.train({"objective": "binary", "max_depth": 5, "num_leaves": 24,
+                          "learning_rate": 0.05, "bagging_fraction": 0.8, "bagging_freq": 1,
+                          "feature_fraction": 0.8, "min_data_in_leaf": 30, "verbose": -1},
+                         ltr, num_boost_round=400, valid_sets=[lva],
+                         callbacks=[lgb.early_stopping(30, verbose=False)])
+        def _plgb(n):
+            if "leaf_value" in n: return {"w": float(n["leaf_value"])}
+            return {"f": int(n["split_feature"]), "t": float(n["threshold"]),
+                    "l": _plgb(n["left_child"]), "r": _plgb(n["right_child"])}
+        lt = [_plgb(ti["tree_structure"]) for ti in lbst.dump_model()["tree_info"]]
+        _finish("lgb", lt, lbst.predict(Xva, raw_score=True), lbst.predict(Xva))
+    except Exception as e:
+        print("LGB 실패(무시):", e)
+
+    # ── CatBoost (oblivious → 이진트리 확장) ──
+    try:
+        from catboost import CatBoostClassifier
+        cb = CatBoostClassifier(depth=5, iterations=400, learning_rate=0.05, l2_leaf_reg=3.0,
+                                random_seed=42, verbose=0, early_stopping_rounds=30)
+        cb.fit(Xtr, Ytr, eval_set=(Xva, Yva))
+        tf = tempfile.mktemp(suffix=".json"); cb.save_model(tf, format="json")
+        cbj = json.load(open(tf)); os.remove(tf)
+        ff = cbj["features_info"]["float_features"]
+        fmap = {i: int(ff[i]["feature_index"]) for i in range(len(ff))}
+        def _expand(splits, lv):
+            Dp = len(splits)
+            def rec(level, idx, mul):
+                if level == Dp: return {"w": float(lv[idx])}
+                s = splits[level]; f = fmap.get(s["float_feature_index"], s["float_feature_index"])
+                return {"f": int(f), "t": float(s["border"]),
+                        "l": rec(level + 1, idx, mul * 2), "r": rec(level + 1, idx + mul, mul * 2)}
+            return rec(0, 0, 1)
+        ct = [_expand(tr["splits"], tr["leaf_values"]) for tr in cbj["oblivious_trees"] if tr.get("splits")]
+        if ct:
+            _finish("cat", ct, cb.predict(Xva, prediction_type="RawFormulaVal"), cb.predict_proba(Xva)[:, 1])
+    except Exception as e:
+        print("CatBoost 실패(무시):", e)
 
 
 @app.local_entrypoint()

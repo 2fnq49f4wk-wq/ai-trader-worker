@@ -3542,6 +3542,9 @@ html[data-theme="light"] .table tbody tr:hover{background:rgba(9,105,218,.045);}
       <button class="nnv-tab active" data-model="dnn" onclick="switchNnModel('dnn')"><svg class="lux-star-svg lux-ico" viewBox="0 0 100 100" aria-hidden="true"><use href="#luxStarSym"/></svg> DNN (딥넷)</button>
       <button class="nnv-tab" data-model="mind" onclick="switchNnModel('mind')"><svg class="lux-star-svg lux-ico" viewBox="0 0 100 100" aria-hidden="true"><use href="#luxStarSym"/></svg> MIND (스태킹)</button>
       <button class="nnv-tab" data-model="gbdt" onclick="switchNnModel('gbdt')"><svg class="lux-star-svg lux-ico" viewBox="0 0 100 100" aria-hidden="true"><use href="#luxStarSym"/></svg> GBDT (부스팅트리)</button>
+      <button class="nnv-tab" data-model="xgb" onclick="switchNnModel('xgb')"><svg class="lux-star-svg lux-ico" viewBox="0 0 100 100" aria-hidden="true"><use href="#luxStarSym"/></svg> XGBoost</button>
+      <button class="nnv-tab" data-model="lgb" onclick="switchNnModel('lgb')"><svg class="lux-star-svg lux-ico" viewBox="0 0 100 100" aria-hidden="true"><use href="#luxStarSym"/></svg> LightGBM</button>
+      <button class="nnv-tab" data-model="cat" onclick="switchNnModel('cat')"><svg class="lux-star-svg lux-ico" viewBox="0 0 100 100" aria-hidden="true"><use href="#luxStarSym"/></svg> CatBoost</button>
     </div>
     <div class="nnv-sub" id="nnvSub">신경망 구조·가중치 강도를 실시간으로 관측합니다.</div>
     <div class="nnv-banner" id="nnvBanner" style="display:none;"></div>
@@ -11441,7 +11444,8 @@ html[data-theme="light"] #page-nnviz .nnv-title,html[data-theme="light"] #page-n
         ban=document.getElementById('nnvBanner'), roles=document.getElementById('nnvRoles');
     legend.style.display='none'; if(roles) roles.innerHTML='';
     var isMind = d.kind==='mind';
-    var label = isMind? 'MIND(스태킹)' : 'GBDT(부스팅트리)';
+    var _labelMap = { gbdt:'GBDT(부스팅트리)', xgb:'XGBoost', lgb:'LightGBM', cat:'CatBoost' };
+    var label = isMind? 'MIND(스태킹)' : (_labelMap[d.kind] || 'GBDT(부스팅트리)');
     if(!d || !d.trained){
       var _sn=(d&&d.samples!=null)?d.samples:null, _mn=(d&&d.minTrainSamples)||(isMind?80:120);
       var _prog=(_sn!=null)?(' · 표본 <b>'+_sn.toLocaleString()+'/'+_mn.toLocaleString()+'</b>'+(_sn>=_mn?' (문턱 충족 — 다음 학습에서 생성)':' (문턱 미달 — 수확 누적 중)')):'';
@@ -11473,17 +11477,20 @@ html[data-theme="light"] #page-nnviz .nnv-title,html[data-theme="light"] #page-n
         +'<div style="font-size:10px;color:#6f84aa;margin-top:6px;line-height:1.5;">막대 크기=영향력(|가중|). 가중이 <b>음수</b>면 메타러너가 그 전문가의 신호를 <b>역방향으로 활용</b> 중이라는 뜻 — 약세국면에서 흔한 정상 학습 결과입니다(고장 아님).'
         +(d.ruleAccLB!=null?' · 규칙엔진 전문가 검증정확도(하한) <b>'+pct(d.ruleAccLB)+'</b>'+(d.ruleAccLB>0.5?' → 위원회 합류 중':' → 0.5 이하라 미합류'):'')+'</div>';
     } else {
-      sub.textContent = '구조: 트리 '+(d.nTrees||'—')+'개 · 최대깊이 '+(d.maxDepth||'—')+' · 야간 자가학습';
+      var _extName = (d.kind && d.kind!=='gbdt');   // xgb/lgb/cat = 외부 부스팅 멤버
+      sub.textContent = label+' — 트리 '+(d.nTrees||'—')+'개'+(d.shadow?' · 🌓 섀도우(검증 중)':'')+(_extName?' · 외부 GPU 학습(Modal)':'')+' · tabular 주력';
       var wG = trust? trust.wGbdt : 0, trusted = trust && trust.trusted;
       chips.innerHTML =
         chip('트리 수', d.nTrees||'—','good') +
-        chip('최대 깊이', d.maxDepth||'—','') +
         chip('학습 표본', d.n? d.n.toLocaleString():'—','good') +
         chip('검증 정확도(하한)', pct(d.valAccLB!=null?d.valAccLB:d.valAcc), (d.valAccLB||d.valAcc)>=0.55?'good':'warn') +
-        chip('신뢰가중 wGBDT', (wG!=null?wG.toFixed(2):'—'), trusted?'good':'off');
+        (trust&&trust.selfAcc!=null? chip('self-검증', pct(trust.selfAcc), trust.selfAcc>=0.5?'good':'warn') : '') +
+        chip('신뢰가중', (wG!=null?wG.toFixed(2):'—'), (trusted&&!d.shadow)?'good':'off') +
+        chip('상태', d.shadow?'섀도우':(trusted?'가동':'억제'), d.shadow?'warn':(trusted?'good':'off'));
       if(ban){
-        if(trusted){ ban.className='nnv-banner on'; ban.innerHTML='✅ <b>가동 중</b> — GBDT가 위원회에서 실거래 결정에 반영됩니다 (wGBDT='+(wG||0).toFixed(2)+')'; }
-        else { ban.className='nnv-banner off'; ban.innerHTML='⚠️ <b>미반영</b> — 검증성능이 MIND(위원장) 기준에 못 미쳐 wGBDT=0으로 억제 중입니다'+(trust&&trust.mindAcc!=null?' (MIND 하한 '+pct(trust.mindAcc)+' vs GBDT 하한 '+pct(trust.gbdtAccLB)+')':'')+'.'; }
+        if(d.shadow){ ban.className='nnv-banner off'; ban.innerHTML='🌓 <b>섀도우(검증 중)</b> — '+label+'은 외부(Modal)에서 학습돼 저장·self검증까지 통과했지만, 아직 <b>라이브 위원회에 미반영</b>입니다. featVer13 재구축 후 성능이 확인되면 승격됩니다.'+(trust&&trust.selfAcc!=null?' (self 정확도 '+pct(trust.selfAcc)+')':''); }
+        else if(trusted){ ban.className='nnv-banner on'; ban.innerHTML='✅ <b>가동 중</b> — '+label+'이 위원회에서 실거래 결정에 반영됩니다 (신뢰가중 '+(wG||0).toFixed(2)+')'; }
+        else { ban.className='nnv-banner off'; ban.innerHTML='⚠️ <b>미반영</b> — 검증성능이 MIND(위원장) 기준에 못 미쳐 신뢰가중=0으로 억제 중입니다.'; }
         ban.style.display='block';
       }
       comm.innerHTML='';
