@@ -11503,7 +11503,35 @@ html[data-theme="light"] #page-nnviz .nnv-title,html[data-theme="light"] #page-n
         '<div class="nnv-feat-bar"><span style="width:'+w.toFixed(0)+'%;"></span></div>'+
         '<div class="nnv-feat-pct">'+w.toFixed(0)+'%</div></div>';
     }).join('');
-    stage.innerHTML = '<div style="padding:6px 4px;"><div style="font-family:Space Grotesk,sans-serif;font-size:12px;color:#9fb4dc;margin-bottom:8px;letter-spacing:.5px;">📊 피처 영향도 상위 20개</div>'+(rows||'<div class="nnv-empty">피처 데이터 없음</div>')+'</div>';
+    var barBlock = '<div style="padding:6px 4px;"><div style="font-family:Space Grotesk,sans-serif;font-size:12px;color:#9fb4dc;margin-bottom:8px;letter-spacing:.5px;">📊 피처 영향도 상위 20개 (트리 분기빈도)</div>'+(rows||'<div class="nnv-empty">피처 데이터 없음</div>')+'</div>';
+    if(isMind){
+      // MIND는 스태킹 구조(층 없음) — 종전대로 피처 막대를 스테이지에.
+      stage.innerHTML = barBlock;
+    } else {
+      // [V32.15] 트리 부스팅(GBDT/XGB/LGB/Cat) — DNN처럼 레이어 신경망 도식으로 그린다:
+      //   입력(피처) → 트리앙상블(대표 트리 노드) → Σ(부스팅 가중합·η) → σ(승률).
+      //   엣지 굵기/불투명도는 피처 중요도. 아래엔 피처 영향도 막대를 함께 유지.
+      NNV_drawSVG(stage, NNV_treeLayers(d));
+      legend.style.display='flex';
+      comm.innerHTML = barBlock;
+    }
+  }
+  // [V32.15] 트리 앙상블을 DNN과 동일한 레이어 도식으로 변환 — {kind,size,strength,names,tag,act} 층 배열.
+  //   입력=중요 피처(강도=분기빈도), 은닉1=대표 트리들, 은닉2=부스팅 합산, 출력=σ(승률).
+  function NNV_treeLayers(d){
+    var fs = (d.inputFeatures||d.topFeatures||[]).slice().sort(function(a,b){return (b.strength||0)-(a.strength||0);});
+    var topN = Math.min(fs.length, 30); var inF = fs.slice(0, topN);
+    var grad = function(n,base,span,pow){ var a=[]; for(var i=0;i<n;i++) a.push(base + span*Math.pow(1-(i/Math.max(1,n)),pow||0.7)); return a; };
+    var nT = d.nTrees || d.n || 24;
+    var t1 = Math.min(Math.max(nT, 8), 48);            // 대표 트리 노드(최대 48)
+    var aggN = Math.min(10, Math.max(4, Math.round(t1/6)));
+    return [
+      { kind:'input',  tag:'FEAT',  act:'입력피처',   size:inF.length, names: inF.map(function(f){return f.name;}),
+        strength: inF.map(function(f){ return Math.max(0.10, Math.min(1, f.strength||0)); }) },
+      { kind:'hidden', tag:'TREES', act:'분기 if x<t', size:t1,   strength: grad(t1,0.32,0.62,0.7) },
+      { kind:'hidden', tag:'Σ·η',   act:'부스팅 합산', size:aggN, strength: grad(aggN,0.5,0.45,0.6) },
+      { kind:'output', tag:'OUT',   act:'σ(승률)',    size:1,    strength:[0.95] }
+    ];
   }
   function NNV_render(d){
     // [V12.3] 노드 클릭 툴팁용 — 입력 피처명 → 역할 맵
@@ -11680,8 +11708,11 @@ html[data-theme="light"] #page-nnviz .nnv-title,html[data-theme="light"] #page-n
       var hd = kind==='input'?'#4aa3ff':(kind==='output'?'#00e676':'#9fc2ff');
       var depthT = cols>2 ? li/(cols-1) : 0;
       var fill = kind==='input'?'#7dc0ff':(kind==='output'?'#7dffb8':mixHex('#e6efff','#9fd2ff',depthT));
-      var tag = kind==='input'?'IN':(kind==='output'?'OUT':'H'+(++nHidden));
-      var act = kind==='input'?'FEAT':(kind==='output'?'σ':'ReLU');
+      var isHidden = (kind!=='input' && kind!=='output'); if(isHidden) nHidden++;
+      // [V32.15] 층별 tag/act 오버라이드 — 트리앙상블(GBDT/XGB/LGB/Cat)을 DNN과 같은 레이어 도식으로
+      //   그리되 배지·활성함수 라벨만 트리 의미(TREES/분기/Σ)로 바꾼다. 미지정이면 DNN 기본값.
+      var tag = layers[li].tag || (kind==='input'?'IN':(kind==='output'?'OUT':'H'+nHidden));
+      var act = layers[li].act || (kind==='input'?'FEAT':(kind==='output'?'σ':'ReLU'));
       // 층 헤더 배지: 층 태그 + 뉴런수 — 전 층이 "몇 번째 층인지" 즉시 보이게
       heads+='<rect x="'+(cx-21)+'" y="13" width="42" height="20" rx="10" fill="rgba(70,130,255,0.10)" stroke="'+hd+'" stroke-opacity="0.55" stroke-width="1"/>'
         +'<text x="'+cx+'" y="27" text-anchor="middle" font-family="IBM Plex Mono,monospace" font-size="10.5" font-weight="700" fill="'+hd+'">'+tag+'</text>'
