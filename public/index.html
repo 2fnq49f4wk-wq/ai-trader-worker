@@ -11511,7 +11511,7 @@ html[data-theme="light"] #page-nnviz .nnv-title,html[data-theme="light"] #page-n
       // [V32.15] 트리 부스팅(GBDT/XGB/LGB/Cat) — DNN처럼 레이어 신경망 도식으로 그린다:
       //   입력(피처) → 트리앙상블(대표 트리 노드) → Σ(부스팅 가중합·η) → σ(승률).
       //   엣지 굵기/불투명도는 피처 중요도. 아래엔 피처 영향도 막대를 함께 유지.
-      NNV_drawSVG(stage, NNV_treeLayers(d), {dxN:11, dyN:11, maxRows:12, padL:96, padR:20, headH:44, footH:28});
+      NNV_drawSVG(stage, NNV_treeLayers(d), {dxN:12, dyN:14, maxRows:12, padL:104, padR:20, headH:44, footH:28});
       legend.style.display='flex';
       comm.innerHTML = barBlock;
     }
@@ -11520,7 +11520,7 @@ html[data-theme="light"] #page-nnviz .nnv-title,html[data-theme="light"] #page-n
   //   입력=중요 피처(강도=분기빈도), 은닉1=대표 트리들, 은닉2=부스팅 합산, 출력=σ(승률).
   function NNV_treeLayers(d){
     var fs = (d.inputFeatures||d.topFeatures||[]).slice().sort(function(a,b){return (b.strength||0)-(a.strength||0);});
-    var topN = Math.min(fs.length, 16); var inF = fs.slice(0, topN);   // [V32.15b] 컴팩트: 상위 16피처
+    var topN = Math.min(fs.length, 12); var inF = fs.slice(0, topN);   // [V32.16b] 상위 12피처 — maxRows와 맞춰 입력 1열(라벨 겹침 방지)
     var grad = function(n,base,span,pow){ var a=[]; for(var i=0;i<n;i++) a.push(base + span*Math.pow(1-(i/Math.max(1,n)),pow||0.7)); return a; };
     var nT = d.nTrees || d.n || 24;
     var t1 = Math.min(Math.max(nT, 8), 24);            // [V32.15b] 대표 트리 노드(최대 24로 축소)
