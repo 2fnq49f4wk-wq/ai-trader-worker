@@ -254,6 +254,21 @@ def train_job(epochs: int = EPOCHS_DEFAULT, dry: bool = False):
     else:
         acc = float(((ps >= 0.5) == (ys > 0.5)).mean()); n_eval = len(ps)
     lb = wilson_lb(acc, n_eval)
+    # [V32.9] ★과적합 진단★ 학습셋 정확도를 검증셋과 비교 — 격차가 크면 과적합(→데이터·규제 필요),
+    #   격차가 작고 둘 다 낮으면 신호/피처 한계(→피처 품질·라벨 개선 필요). 캘리브레이션 반영 후 평가.
+    try:
+        with torch.no_grad():
+            ztr = torch.zeros(Xtr.shape[0], device=dev)
+            for net in nets:
+                net.eval(); ztr += net(Xtr, False).squeeze(-1)
+            ptr = torch.sigmoid(ztr / len(nets)).cpu().numpy()
+            ytr_np = Ytr.cpu().numpy()
+        train_acc = float(((ptr >= 0.5) == (ytr_np > 0.5)).mean())
+        gap = train_acc - acc
+        verdict = "과적합 경향(→표본·종류·규제↑ 필요)" if gap > 0.05 else "과적합 낮음(→신호·피처·라벨 품질이 병목)"
+        print(f"   [과적합진단] train {train_acc*100:.2f}% vs val {acc*100:.2f}% → 격차 {gap*100:+.2f}%p — {verdict}")
+    except Exception as _e:
+        print("   [과적합진단] train acc 계산 실패:", _e)
     print(f"③ 앙상블 valAcc {acc*100:.2f}% (Wilson하한 {lb*100:.2f}%, n={n_eval})")
     print(f"   진단: 기저율(양성비율) {base*100:.1f}% | 다수클래스 베이스라인 {majority*100:.1f}% | AUC {auc:.3f}")
     if acc < majority - 0.02:
@@ -335,8 +350,12 @@ def train_job(epochs: int = EPOCHS_DEFAULT, dry: bool = False):
 # ============================================================================
 def _train_and_upload_gbdt(BASE, KEY, HDR, X, Y, TS, featver, D):
     import numpy as np, math, json, time, requests
-    ETA, MAXDEPTH, LAM, GAMMA, MINCHILD = 0.06, 4, 1.0, 0.1, 5.0
-    MAXBINS, MAXTREES, PATIENCE, VALFRAC = 64, 200, 24, 0.2
+    # [V32.9] GBDT 강화: 학습률↓+트리↑(저LR·다트리=일반화 향상, 표준 부스팅 정석) + 행/열 서브샘플
+    #   (stochastic GBDT — 과적합↓·일반화↑). 표(tabular) 금융데이터엔 딥넷보다 GBDT가 보통 강함.
+    ETA, MAXDEPTH, LAM, GAMMA, MINCHILD = 0.04, 4, 1.0, 0.1, 5.0
+    MAXBINS, MAXTREES, PATIENCE, VALFRAC = 64, 400, 30, 0.2
+    SUBSAMPLE, COLSAMPLE = 0.8, 0.8
+    rng = np.random.default_rng(12345)
     N = len(Y)
     if N < 400:
         print(f"GBDT: 표본 부족 {N} — 생략"); return
@@ -368,13 +387,13 @@ def _train_and_upload_gbdt(BASE, KEY, HDR, X, Y, TS, featver, D):
 
     def sigmoid(z): return 1.0 / (1.0 + np.exp(-np.clip(z, -30, 30)))
 
-    def build(idx, depth, grad, hess):
+    def build(idx, depth, grad, hess, cols):
         G = float(grad[idx].sum()); H = float(hess[idx].sum())
         if depth >= MAXDEPTH or H < 2 * MINCHILD or len(idx) < 4:
             return {"w": float(-G / (H + LAM))}
         base = G * G / (H + LAM); best = None
         gi = grad[idx]; hi = hess[idx]
-        for f in range(D):
+        for f in cols:                       # [V32.9] 열 서브샘플 — 이 트리에 배정된 피처만 탐색
             e = edges[f]
             if len(e) == 0: continue
             nb = len(e) + 1
@@ -389,7 +408,7 @@ def _train_and_upload_gbdt(BASE, KEY, HDR, X, Y, TS, featver, D):
             if gain.size == 0: continue
             bi = int(np.argmax(gain))
             if gain[bi] > 1e-7 and (best is None or gain[bi] > best[0]):
-                best = (float(gain[bi]), f, bi, float(e[bi]))
+                best = (float(gain[bi]), int(f), bi, float(e[bi]))
         if best is None:
             return {"w": float(-G / (H + LAM))}
         _, bf, bb, bt = best
@@ -397,7 +416,7 @@ def _train_and_upload_gbdt(BASE, KEY, HDR, X, Y, TS, featver, D):
         li, ri = idx[m], idx[~m]
         if len(li) == 0 or len(ri) == 0:
             return {"w": float(-G / (H + LAM))}
-        return {"f": int(bf), "t": bt, "l": build(li, depth + 1, grad, hess), "r": build(ri, depth + 1, grad, hess)}
+        return {"f": int(bf), "t": bt, "l": build(li, depth + 1, grad, hess, cols), "r": build(ri, depth + 1, grad, hess, cols)}
 
     def apply_tree(node, Xm):
         out = np.zeros(len(Xm))
@@ -411,11 +430,18 @@ def _train_and_upload_gbdt(BASE, KEY, HDR, X, Y, TS, featver, D):
 
     raw = np.full(Ntr, bias); vraw = np.full(nval, bias)
     trees = []; best_vloss = 1e18; best_k = 0; wait = 0
+    ncol = max(1, int(round(D * COLSAMPLE)))
+    nrow = max(50, int(round(Ntr * SUBSAMPLE)))
+    allrows = np.arange(Ntr)
     for k in range(MAXTREES):
         p = sigmoid(raw)
         grad = (p - Ytr) * sw
         hess = np.maximum(p * (1.0 - p) * sw, 1e-6)
-        tree = build(np.arange(Ntr), 0, grad, hess)
+        # [V32.9] stochastic GBDT — 트리마다 행/열 서브샘플(과적합↓·일반화↑). 트리는 서브셋으로 성장,
+        #   raw 업데이트는 전체 행에 적용(표준 gradient boosting).
+        ridx = allrows if nrow >= Ntr else rng.choice(Ntr, size=nrow, replace=False)
+        cols = np.arange(D) if ncol >= D else rng.choice(D, size=ncol, replace=False)
+        tree = build(ridx, 0, grad, hess, cols)
         trees.append(tree)
         raw = raw + ETA * apply_tree(tree, Xtr)
         vraw = vraw + ETA * apply_tree(tree, Xva)
