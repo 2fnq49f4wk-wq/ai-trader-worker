@@ -301,11 +301,13 @@ def train_job(epochs: int = EPOCHS_DEFAULT, dry: bool = False):
                 bn = net.bns[i]
                 gamma = bn.weight.detach().cpu().numpy().astype(np.float64)
                 beta = bn.bias.detach().cpu().numpy().astype(np.float64)
-                mean = bn.running_mean.detach().cpu().numpy().astype(np.float64)
-                var = bn.running_var.detach().cpu().numpy().astype(np.float64)
-                a = gamma / np.sqrt(var + bn.eps)
+                # ★V32.14: 지역변수 이름을 bn_* 로 — 상단의 피처표준화 mean/std(길이 65)를
+                #   덮어써 업로드 시 "mean/std 차원 불일치" 400을 유발하던 버그 수정.
+                bn_mean = bn.running_mean.detach().cpu().numpy().astype(np.float64)
+                bn_var = bn.running_var.detach().cpu().numpy().astype(np.float64)
+                a = gamma / np.sqrt(bn_var + bn.eps)
                 W = W * a[:, None]
-                b = a * b + (beta - a * mean)
+                b = a * b + (beta - a * bn_mean)
             Wl.append(np.round(W, 5).tolist())
             bl.append(np.round(b, 5).tolist())
         js_nets.append({"W": Wl, "b": bl, "dims": dims})
