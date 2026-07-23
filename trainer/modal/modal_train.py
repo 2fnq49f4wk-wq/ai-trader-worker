@@ -95,12 +95,14 @@ def train_job(epochs: int = EPOCHS_DEFAULT, dry: bool = False):
     embargo_ms = cfg.get("embargoDays", 6) * 86400000; hv_w = cfg.get("hvSrcWeight", 1.0)
     hl_days = cfg.get("recencyHalfLifeDays", 45); rec_floor = cfg.get("recencyFloor", 0.35)
 
-    # [성능강화·적응형 정규화] 3M망은 표본이 적으면 과적합(검증<50%)한다. 표본 수에 따라 규제 강도를
-    #   자동 조절 → 데이터가 적을 땐 강하게 막고, 수확이 쌓이면 자동 완화(3M의 표현력을 점진 개방).
+    # [V32.10 성능강화·적응형 정규화] ★모델 축소 없이 과적합 방지★ 노이즈 큰 금융 tabular에선 3M망이
+    #   쉽게 과적합한다. 모델 크기는 유지(사용자 방침)하되 규제를 전반적으로 강화 — 특히 데이터가 많아도
+    #   가벼운 규제로 내려가지 않게(종전 dropout 0.42는 너무 약했음). 규제↑ + 정제된 피처(65종) +
+    #   데이터↑ 조합으로 큰 모델을 유지하면서 일반화를 지킨다.
     Nall = len([s for s in samples if isinstance(s.get("x"), list) and len(s["x"]) == D])
-    if Nall < 60000:      dropout, l2, mixup_p, input_noise = 0.60, 4e-3, 0.35, 0.10   # 데이터 기근 → 강한 규제
-    elif Nall < 150000:   dropout, l2, mixup_p, input_noise = 0.50, 2e-3, 0.28, 0.08   # 중간
-    else:                 dropout, l2, mixup_p, input_noise = 0.42, 9e-4, 0.20, 0.06   # 데이터 충분 → 기본(표현력 개방)
+    if Nall < 60000:      dropout, l2, mixup_p, input_noise = 0.62, 5e-3, 0.35, 0.12   # 데이터 기근 → 매우 강한 규제
+    elif Nall < 150000:   dropout, l2, mixup_p, input_noise = 0.55, 3e-3, 0.30, 0.10   # 중간 → 강한 규제
+    else:                 dropout, l2, mixup_p, input_noise = 0.50, 1.5e-3, 0.25, 0.08  # 데이터 충분해도 규제 유지(과적합 방지)
     # [V11.1] 배치·에폭도 데이터 규모에 맞춤 — 300k×에폭400×배치32면 GPU로도 timeout(3600s) 초과.
     #   대용량일수록 배치↑(스텝수↓)·에폭↓(1에폭당 갱신이 이미 많음). 조기종료가 최적점을 잡음.
     if Nall >= 150000:    batch, ep = 256, min(ep, 120)

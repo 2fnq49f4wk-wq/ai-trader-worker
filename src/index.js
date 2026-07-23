@@ -2493,7 +2493,7 @@ const AI_PARAMS = {
 
   // ── 예측 기간(Prediction Horizon) ── 진입 시점 피처로 "며칠 뒤" 방향을 예측/라벨링할지.
   //   (구현: HARVEST.horizon, 반사실 후보 라벨러, 백테스트 주입기가 모두 이 값을 사용)
-  predictionHorizonDays: 5,
+  predictionHorizonDays: 10,   // [V32.10] 5→10 — 5일 알파는 노이즈가 커 신호/노이즈비가 낮음. 10일로 늘려 라벨 순도↑.
 
   // ── 룩백 윈도우(Lookback Window) ── 과거 얼마만큼의 봉을 입력/학습에 쓸지.
   featureLookbackBars: 200,        // 피처 1건 계산에 필요한 최소 과거 봉(MA200 때문에 200 권장)
@@ -2688,9 +2688,9 @@ const AI_PARAMS = {
     target: "alpha",               // [V17] alpha(초과수익=지수 대비 잔차) 학습 전환. | "binary" | "logreturn" | "multiclass"
     logReturnWindowDays: 1,        // 로그수익률 타겟 계산 기간 ln(P_t / P_{t-k}) — 노이즈 감쇠
     alphaBenchmark: { us: "^GSPC", kr: "^KS11", cm: "GC=F" }, // 초과수익률(잔차) 기준지수
-    alphaTargetThresholdPct: 1.0,  // 지수 대비 이 %↑ 초과(잔차) 시 양(+) 라벨
+    alphaTargetThresholdPct: 1.5,  // [V32.10] 1.0→1.5 — 지평 10일로 확대에 맞춰 "승자" 기준 상향(라벨 순도↑)
     multiClass: { flatThresholdPct: 1.5 }, // 상승(1)/하락(-1)/횡보(0) — ±이 % 이내면 횡보 컷라인
-    horizonDays: 5                 // 타겟 예측 지평(AI_PARAMS.predictionHorizonDays와 정합)
+    horizonDays: 10                // [V32.10] 타겟 예측 지평(AI_PARAMS.predictionHorizonDays와 정합)
   },
 
   // ── [V12.64] AI 주도 진입(엔진 대체) ── 규칙엔진이 신호를 못 낸 종목도 AI 위원회가 스스로 진입 결정.
@@ -18179,11 +18179,9 @@ const LUXML = {
     "rsi14", "maGapPct", "atrPct", "dayPct", "distHighPct",
     "regBull", "regBear", "sigWeight", "confluence",
     "stratSwing", "stratDay", "stratMom", "stratMR",
-    // ── 구조적 이벤트 (9) ──
-    "earnBeat", "earnMiss", "earnDrift", "earnBarsAgo", "daysToEarn",
-    "has8K", "analystSig", "insiderBuy", "econShock",
-    // ── 로컬 뉴스 사건 (7) ──
-    "newsSent", "newsMnA", "newsReg", "newsGuide", "newsUpDn", "newsOther", "evPrior",
+    // ── [V13 제거] 구조적 이벤트(9)+로컬 뉴스(7) 16종 제거 — 라이브 전용이라 수확표본에서 항상 0이었고
+    //   (ev={}), 라이브 추론 땐 채워져 train/serve 분포 스큐를 유발(모델은 수확에서 0만 봐서 학습 못 함).
+    //   사건/뉴스 신호는 사이징 오버레이·LLM·게이트 등 다른 경로로 계속 반영됨 — DNN 입력에서만 배제.
     // ── [V4] 구체적 시장구조 (13) — 전부 가격/거래량 파생이라 수확표본과 라이브가 동일 분포 ──
     "ma200Gap",   // 장기추세: (가격-MA200)/가격 %
     "bollB",      // 볼린저 %B(20,2σ) — 밴드 내 위치 0~1
@@ -18236,9 +18234,18 @@ const LUXML = {
     //   AI가 '기술적 분석 중심으로 상승하는 패턴'을 직접 학습하도록 그래프분석을 피처화.
     "chartPat",    // 차트패턴 종합(-1..1) — 헤드앤숄더/채널/쐐기/이중천정 등(taDetectPatterns) bull(+)/bear(-)
     "tfConsBull",  // 다기간 기술 컨센서스(-1..1) — now·week·month(MA/RSI/스토캐스틱/MACD) 가중 강세도
-    "maStack"      // 이동평균 정배열(-1..1) — MA5>20>50>200 완전정배열(+1) … 완전역배열(-1), 상승추세 진위
+    "maStack",     // 이동평균 정배열(-1..1) — MA5>20>50>200 완전정배열(+1) … 완전역배열(-1), 상승추세 진위
+    // ── [V13 신규] 장기 모멘텀·변동성조정 (6) — 순수 종가 파생(수확·라이브 동일분포), 백필가능·강신호 ──
+    //   장기 모멘텀(6~12개월)은 학계에서 가장 견고한 이상현상 — 종전 ret5/ret20만으론 놓치던 신호.
+    "ret10",       // 10일 수익률 %
+    "ret60",       // 60일(≈3개월) 수익률 %
+    "ret120",      // 120일(≈6개월) 수익률 %
+    "mom12_1",     // 12-1 모멘텀 % — 252봉전 대비 21봉전(최근 1개월 제외) — 고전적 모멘텀 팩터
+    "volAdjMom",   // 변동성조정 모멘텀 — ret60 / (ATR%×√60) — 리스크 대비 추세강도
+    "dist52wHigh"  // 52주(252봉) 고점 대비 거리 %(0=신고가, 음수=조정) — 신고가 모멘텀
   ],
-  featVer: 12,  // ★V12.87: 기술 상승패턴 3종 추가(72→75). 구버전 표본 분리(WHERE featver=?)+전종목 재수확
+  featVer: 13,  // ★V32.10: 라이브전용 이벤트/뉴스 16종 제거(train/serve 스큐) + 장기모멘텀 6종 추가(75→65).
+                //   구버전(12) 표본은 featver 분리로 자동 정리·전종목 재수확. 라벨 지평 5→10, 임계 1.0→1.5.
 
   minSamplesGate: 150,
   minSamplesSize: 400,
@@ -18521,6 +18528,27 @@ function _mlPatternFeats(closes, highs, lows, opens) {
   } catch (e) {}
   return o;
 }
+// [V32.10] 장기 모멘텀·변동성조정 모멘텀 — 순수 종가 파생이라 수확(과거 복원)·라이브 동일분포. NaN 안전.
+function _mlMomFeats(closes, atrPct) {
+  const R = { ret10: 0, ret60: 0, ret120: 0, mom12_1: 0, volAdjMom: 0, dist52wHigh: 0 };
+  try {
+    const n = closes.length; if (n < 2) return R;
+    const c = closes[n - 1]; if (!(c > 0)) return R;
+    const at = function (k) { const i = n - 1 - k; return (i >= 0 && closes[i] > 0) ? closes[i] : null; };
+    const r = function (k) { const p = at(k); return (p != null) ? (c / p - 1) * 100 : 0; };
+    R.ret10 = _clamp(r(10), -80, 200);
+    R.ret60 = _clamp(r(60), -90, 400);
+    R.ret120 = _clamp(r(120), -95, 600);
+    const p252 = at(252), p21 = at(21);
+    R.mom12_1 = (p252 != null && p21 != null) ? _clamp((p21 / p252 - 1) * 100, -95, 600) : 0;
+    const denom = (atrPct > 0.05) ? atrPct * 7.746 : 1;   // √60 ≈ 7.746 — 변동성 스케일 근사
+    R.volAdjMom = _clamp(R.ret60 / denom, -10, 10);
+    let hi = c; for (let i = Math.max(0, n - 252); i < n; i++) if (closes[i] > hi) hi = closes[i];
+    R.dist52wHigh = hi > 0 ? _clamp((c / hi - 1) * 100, -95, 0) : 0;
+  } catch (e) {}
+  return R;
+}
+
 function mlBuildFeatures(args) {
   try {
     const closes = Array.isArray(args.closes) ? args.closes : [];
@@ -18555,10 +18583,7 @@ function mlBuildFeatures(args) {
       stratMom:    strat === "snap" ? 1 : 0,
       stratMR:     LEGACY_STRATEGIES.indexOf(strat) >= 0 ? 1 : 0
     };
-    for (let i = _EV_START; i < _EV_END; i++) {
-      const n = LUXML.featNames[i];
-      f[n] = _num(ev[n], 0);
-    }
+    // [V32.10] 이벤트/뉴스 16종은 featNames에서 제거됨(train/serve 스큐) — 채우는 루프 삭제.
     // [V4] 시장구조 13종
     const sx = _mlStructFeats(closes, args.volumes, args.opens, price, _num(args.prevClose, 0));
     f.ma200Gap = sx.ma200Gap; f.bollB = sx.bollB; f.macdH = sx.macdH;
@@ -18591,6 +18616,10 @@ function mlBuildFeatures(args) {
     // [V21] 유니버스 횡단면 랭크 2종 — 그 시점 분포 대비 z(패널·barsAgo로 수확·라이브 동일)
     const xp = _mlXSPanelFeats(closes, args.xsPanel, args.barsAgo);
     f.xsRet20z = xp.xsRet20z; f.xsRet5z = xp.xsRet5z;
+    // [V32.10] 장기 모멘텀·변동성조정 6종 — 순수 종가 파생(수확·라이브 동일분포)
+    const mom = _mlMomFeats(closes, f.atrPct);
+    f.ret10 = mom.ret10; f.ret60 = mom.ret60; f.ret120 = mom.ret120;
+    f.mom12_1 = mom.mom12_1; f.volAdjMom = mom.volAdjMom; f.dist52wHigh = mom.dist52wHigh;
     return LUXML.featNames.map(function(n){ return _num(f[n], 0); });
   } catch (e) {
     return LUXML.featNames.map(function(){ return 0; });
