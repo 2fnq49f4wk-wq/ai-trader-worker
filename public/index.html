@@ -11506,7 +11506,7 @@ html[data-theme="light"] #page-nnviz .nnv-title,html[data-theme="light"] #page-n
     if(d && d.kind && d.kind!=='dnn'){ NNV_renderSimple(d); return; }
     if(!d || !d.trained){
       // [V10] 미학습이어도 구조(dims)로 미리보기 시각화 — 영상처럼 지금 바로 신경망을 볼 수 있게.
-      var dims = (d && d.dims) || (d&&d.hidden? [d.inputDim||55].concat(d.hidden).concat([1]) : null);
+      var dims = (d && d.dims) || (d&&d.hidden? [d.inputDim||65].concat(d.hidden).concat([1]) : null);
       comm.innerHTML='';
       if(dims && dims.length>1){
         var params=0; for(var i2=0;i2<dims.length-1;i2++) params += dims[i2]*dims[i2+1] + dims[i2+1];
@@ -11548,7 +11548,8 @@ html[data-theme="light"] #page-nnviz .nnv-title,html[data-theme="light"] #page-n
       chip('검증 정확도', pct(d.valAcc), d.valAcc>=0.55?'good':(d.valAcc>=0.5?'warn':'off')) +
       chip('학습 표본', d.n? d.n.toLocaleString():'—','') +
       chip('신뢰가중 wDNN', (wDnn!=null?wDnn.toFixed(2):'—'), trusted?'good':'off') +
-      chip('옵티마이저', (d.config&&d.config.optimizer)||'Adam','');
+      chip('옵티마이저', (d.config&&d.config.optimizer)||'Adam','') +
+      ((d.config&&d.config.batchNorm)? chip('정규화', 'BatchNorm(fold)', 'good') : '');
     legend.style.display='flex';
     // [V11] 3M이 실거래에 실제 기여 중인지 명확히 표시(신뢰게이트 통과 여부)
     var ban=document.getElementById('nnvBanner');
@@ -11814,7 +11815,7 @@ html[data-theme="light"] #page-nnviz .nnv-title,html[data-theme="light"] #page-n
         +'<div class="nnv-role-bar"><span style="width:'+pctW+'%"></span></div>'
         +'<div class="nnv-role-v">'+(trained?pctW+'%':'—')+'</div></div>';
     }).join('');
-    if(anyLive) rows+='<div style="font-size:9px;color:#7c90b5;margin-top:6px;line-height:1.5;">※ <b style="color:#ffb060;">라이브 전용</b> 피처(뉴스·실적·공시·신호)는 과거 시장수확 표본엔 없어 영향력이 낮게 보입니다 — 버그가 아니라, 실거래·반사실 표본이 쌓일수록 실제 영향력을 얻습니다.</div>';
+    if(anyLive) rows+='<div style="font-size:9px;color:#7c90b5;margin-top:6px;line-height:1.5;">※ <b style="color:#ffb060;">라이브 컨텍스트</b> 피처(신호가중·합류도·전략 원핫)는 과거 수확 표본에선 중립값이라 영향력이 낮게 보입니다. <b>featVer13</b>에서 뉴스·실적·공시 등 백필 불가 피처는 DNN 입력에서 제거해 train/serve 스큐를 없앴습니다 — 나머지 65개 피처는 전부 백필 가능(수확·라이브 동일분포)입니다.</div>';
     host.innerHTML='<div class="nnv-role-h">🎛️ 입력 파라미터 역할 · 영향도'
       +(trained?' <small>(학습된 가중치 기준 상위 '+feats.length+')</small>':' <small>(미학습 — 영향도는 학습 후 표시)</small>')+'</div>'+rows;
   }

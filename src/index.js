@@ -21103,9 +21103,7 @@ const FEAT_ROLES = {
   rsi14: "RSI(14) 과매수/과매도", maGapPct: "가격-이동평균 괴리%", atrPct: "ATR 변동성%", dayPct: "당일 등락%", distHighPct: "전고점 대비 거리%",
   regBull: "강세 국면 플래그", regBear: "약세 국면 플래그", sigWeight: "신호 가중치", confluence: "신호 합류도",
   stratSwing: "trend 전략 신호", stratDay: "scalp 전략 신호", stratMom: "snap 전략 신호", stratMR: "구버전 전략명 호환",
-  earnBeat: "실적 서프라이즈 상회", earnMiss: "실적 하회", earnDrift: "실적후 표류(PEAD)", earnBarsAgo: "실적 경과 봉수", daysToEarn: "다음 실적까지 일수",
-  has8K: "8-K 공시 존재", analystSig: "애널리스트 신호", insiderBuy: "내부자 매수", econShock: "거시 쇼크",
-  newsSent: "뉴스 감성", newsMnA: "M&A 뉴스", newsReg: "규제 뉴스", newsGuide: "가이던스 뉴스", newsUpDn: "등급 상향/하향", newsOther: "기타 뉴스", evPrior: "이벤트 사전확률",
+  // [V32.10] 라이브전용 이벤트9+뉴스7(earnBeat…evPrior)은 featVer13에서 제거됨(train/serve 스큐) — 역할표에서도 삭제.
   ma200Gap: "장기추세(MA200 괴리%)", bollB: "볼린저 %B 위치", macdH: "MACD 히스토그램", volSurge: "거래량 서지", atrRegime: "변동성 국면 백분위",
   pos52w: "52주 밴드 내 위치", gapPct: "시가 갭%", streak: "연속 상승/하락일", ret5: "5일 수익률", ret20: "20일 수익률",
   mktUS: "미국시장 원핫", mktKR: "한국시장 원핫", mktCM: "원자재/기타 원핫",
@@ -21118,20 +21116,18 @@ const FEAT_ROLES = {
   idxTrend: "시장 추세(지수 vs MA50)", idxRsi: "시장 RSI(과열/과매도)", idxVol: "시장 변동성", idxMom20: "시장 모멘텀",
   sectorRs20: "섹터 상대강도", sectorBeta: "섹터 베타",
   xsRet20z: "유니버스 20일수익 랭크(z)", xsRet5z: "유니버스 5일수익 랭크(z)",
-  chartPat: "차트패턴 종합(그래프분석)", tfConsBull: "다기간 기술 컨센서스", maStack: "이동평균 정배열(추세)"
+  chartPat: "차트패턴 종합(그래프분석)", tfConsBull: "다기간 기술 컨센서스", maStack: "이동평균 정배열(추세)",
+  // [V32.10] 장기 모멘텀·변동성조정 6종 — 백필가능·강신호(수확·라이브 동일분포)
+  ret10: "10일 수익률", ret60: "60일(3개월) 모멘텀", ret120: "120일(6개월) 모멘텀",
+  mom12_1: "12-1 모멘텀(고전 팩터)", volAdjMom: "변동성조정 모멘텀", dist52wHigh: "52주 신고가 대비 거리"
 };
 
-// [V12.101] '라이브/실거래 전용' 피처 — 뉴스·실적·공시·신호 컨텍스트(16 이벤트 + sigWeight/confluence).
-//   과거 시장수확(harvest) 표본엔 원천적으로 없어(과거 뉴스/실적을 OHLCV로 복원 불가) ev:{}·기본값 1로
-//   상수가 된다 → 수확이 지배하는 풀에선 트리(GBDT)가 이들에 분할하지 못해 '영향력 0'으로 보인다.
-//   이는 코드 버그(구 전략 원핫 이름불일치 등)가 아니라 데이터 특성 — 억지 복원은 학습↔실거래 분포
-//   왜곡(train/serve skew)을 유발하므로 하지 않고, viz에서 '라이브 전용'으로 표기해 오해만 제거한다.
-//   실거래·반사실(CF) 표본이 누적될수록 이 피처들이 실제 영향력을 얻는다.
+// [V32.10] ★train/serve 스큐 근본 제거★ 종전엔 뉴스·실적·공시 16종이 라이브 전용(수확 복원 불가)이라
+//   수확 지배 풀에서 상수가 돼 스큐를 유발했고, viz에서 '라이브 전용'으로 표기만 했었다. featVer13에서
+//   그 16종을 DNN 입력에서 아예 제거해 이제 모든 피처가 백필가능(수확·라이브 동일분포)이다. 남은 것은
+//   신호 컨텍스트(sigWeight/confluence/전략 원핫)뿐 — 수확에선 중립값이라 '라이브 컨텍스트'로만 표기.
 const _LIVE_ONLY_FEATS = new Set([
-  "sigWeight", "confluence",
-  "earnBeat", "earnMiss", "earnDrift", "earnBarsAgo", "daysToEarn",
-  "has8K", "analystSig", "insiderBuy", "econShock",
-  "newsSent", "newsMnA", "newsReg", "newsGuide", "newsUpDn", "newsOther", "evPrior"
+  "sigWeight", "confluence", "stratSwing", "stratDay", "stratMom", "stratMR"
 ]);
 
 // ── [V9 시각화] 신경망 구조·가중치 강도를 프론트 시각화용으로 요약 반환 ──
@@ -21162,7 +21158,7 @@ async function mlDNNVizData(DB) {
         trust: trust ? { wDnn: trust.wDnn, trusted: !!trust.trusted, dnnAcc: trust.dnnAcc } : null,
         active: !!(trust && trust.trusted && _num(trust.wDnn, 0) > 0),
         committee: committeeC,
-        config: { dropout: DNN.dropout, adamW: !!DNN.adamW, cosineLR: !!DNN.cosineLR, optimizer: DNN.adamW ? "AdamW+cosine" : "Adam" }
+        config: { dropout: DNN.dropout, adamW: !!DNN.adamW, cosineLR: !!DNN.cosineLR, optimizer: DNN.adamW ? "AdamW+cosine" : "Adam", batchNorm: true, arch: "심층 MLP + BatchNorm(추론 fold)" }
       });
     }
     const m = await mlDNNLoad(DB);
@@ -21216,7 +21212,7 @@ async function mlDNNVizData(DB) {
     return Object.assign({}, heavy, {
       trust: trust ? { wDnn: trust.wDnn, trusted: !!trust.trusted, dnnAcc: trust.dnnAcc } : null,
       active: active, committee: committee,
-      config: { dropout: DNN.dropout, adamW: !!DNN.adamW, cosineLR: !!DNN.cosineLR, optimizer: DNN.adamW ? "AdamW+cosine" : "Adam" }
+      config: { dropout: DNN.dropout, adamW: !!DNN.adamW, cosineLR: !!DNN.cosineLR, optimizer: DNN.adamW ? "AdamW+cosine" : "Adam", batchNorm: true, arch: "심층 MLP + BatchNorm(추론 fold)" }
     });
   } catch (e) { return { trained: false, error: e && e.message }; }
 }
