@@ -4689,18 +4689,24 @@ async function _aiNarrate(env, facts, task, opts) {
   const prompt = "<사실>\n" + factsStr + "\n</사실>\n\n" + (task || "위 사실을 바탕으로 분석해줘.");
   const usedModel = opts.model || WORKERS_AI.model;
   const out = await callWorkersAI(env, sys, prompt, { maxTokens: opts.maxTokens || 768, model: opts.model, temperature: opts.temperature != null ? opts.temperature : 0.3 });
-  // [V32.28] 학습 코퍼스 적재 — (사실, 지시, 서술) 쌍을 LoRA 지식증류 데이터로 축적(베스트에포트).
+  // [V32.28/V32.29] 학습 코퍼스 적재 — (사실,지시,서술) 쌍을 LoRA 데이터로 축적. ★CPU/D1 안전★
+  //   삽입은 waitUntil로 응답을 막지 않고, prune는 PK 범위삭제(인덱스, 값쌈)로 아주 가끔만.
   if (out && opts.corpus && opts.corpus.DB) {
     try {
       const DB = opts.corpus.DB;
-      const _ins = DB.prepare("INSERT INTO ai_corpus (ts, kind, facts, task, output, model) VALUES (?,?,?,?,?,?)")
-        .bind(Date.now(), opts.corpus.kind || "qa", factsStr, String(task || "").slice(0, 800), out.slice(0, 4000), usedModel).run();
-      if (opts.corpus.ctx && typeof opts.corpus.ctx.waitUntil === "function") {
-        opts.corpus.ctx.waitUntil(_ins.then(async function () {
-          // 보존 상한 — 최근 8000행만 유지(가끔 정리)
-          try { if (Math.random() < 0.03) await DB.prepare("DELETE FROM ai_corpus WHERE id NOT IN (SELECT id FROM ai_corpus ORDER BY ts DESC LIMIT 8000)").run(); } catch (e) {}
-        }).catch(function () {}));
-      } else { await _ins; }
+      const _job = (async function () {
+        try {
+          await DB.prepare("INSERT INTO ai_corpus (ts, kind, facts, task, output, model) VALUES (?,?,?,?,?,?)")
+            .bind(Date.now(), opts.corpus.kind || "qa", factsStr, String(task || "").slice(0, 800), out.slice(0, 4000), usedModel).run();
+          // 보존 상한(최근 ~8000행) — PK가 오름차순이라 id 임계 미만을 값싸게 삭제(풀스캔 아님). 2%만 수행.
+          if (Math.random() < 0.02) {
+            const mx = await DB.prepare("SELECT MAX(id) m FROM ai_corpus").first();
+            if (mx && mx.m > 8000) await DB.prepare("DELETE FROM ai_corpus WHERE id < ?").bind(mx.m - 8000).run();
+          }
+        } catch (e) {}
+      })();
+      if (opts.corpus.ctx && typeof opts.corpus.ctx.waitUntil === "function") opts.corpus.ctx.waitUntil(_job);
+      else await _job;
     } catch (e) {}
   }
   return out;
@@ -14669,14 +14675,15 @@ async function handleRequest(request, env, ctx) {
             let _m = null; try { _m = await getState(env.DB, "wai_qa_meter", null); } catch (e) {}
             if (!_m || _m.day !== _day) _m = { day: _day, n: 0 };
             if (_m.n < 600) {
-              // [V32.27] 라이브 시장맥락 보강 — 위기게이지·국면·위원회·성과를 사실에 함께 제공(더 정확·구체적)
+              // [V32.27/29] 라이브 시장맥락 보강 — ★1회 배치 조회(getStates)★로 D1 왕복 1번만(CPU/D1 절약).
               let ctxBits = "";
               try {
-                const cg = await getState(env.DB, "crisis_gauge", null); if (cg) ctxBits += "\n[위기] " + cg.level + " " + cg.score + "/100" + (cg.vix != null ? ", VIX " + cg.vix.toFixed(1) : "");
-                const mc = await getState(env.DB, "mkt_context", null); if (mc) ctxBits += "\n[시장국면] " + mc.regime + ", 진입사이즈×" + (mc.sizeScale != null ? mc.sizeScale.toFixed(2) : "1");
-                const dt = await getState(env.DB, "dnn_trust", null), gt = await getState(env.DB, "gbdt_trust", null), mm = await mlMindLoad(env.DB);
-                ctxBits += "\n[위원회] MIND " + (mm ? "가동" : "대기") + ", DNN " + (dt && dt.trusted ? "신뢰" : "억제") + ", GBDT " + (gt && gt.trusted ? "신뢰" : "억제");
-                const sr = await getState(env.DB, "ai_selfreview", null); if (sr && sr.winRate != null) ctxBits += "\n[성과] 승률 " + (sr.winRate * 100).toFixed(0) + "%" + (sr.profitFactor != null ? ", PF " + Number(sr.profitFactor).toFixed(2) : "");
+                const _S = await getStates(env.DB, ["crisis_gauge", "mkt_context", "dnn_trust", "gbdt_trust", "ai_selfreview", "mind_model"]);
+                const cg = _S["crisis_gauge"]; if (cg) ctxBits += "\n[위기] " + cg.level + " " + cg.score + "/100" + (cg.vix != null ? ", VIX " + cg.vix.toFixed(1) : "");
+                const mc = _S["mkt_context"]; if (mc) ctxBits += "\n[시장국면] " + mc.regime + ", 진입사이즈×" + (mc.sizeScale != null ? mc.sizeScale.toFixed(2) : "1");
+                const dt = _S["dnn_trust"], gt = _S["gbdt_trust"], mm = _S["mind_model"];
+                ctxBits += "\n[위원회] MIND " + (mm && mm.featVer === LUXML.featVer ? "가동" : "대기") + ", DNN " + (dt && dt.trusted ? "신뢰" : "억제") + ", GBDT " + (gt && gt.trusted ? "신뢰" : "억제");
+                const sr = _S["ai_selfreview"]; if (sr && sr.winRate != null) ctxBits += "\n[성과] 승률 " + (sr.winRate * 100).toFixed(0) + "%" + (sr.profitFactor != null ? ", PF " + Number(sr.profitFactor).toFixed(2) : "");
               } catch (e) {}
               const facts = r.answer + (ctxBits ? "\n\n[시장 맥락]" + ctxBits : "");
               const polished = await _aiNarrate(env, facts, "위 <사실>만 근거로, 사용자 질문에 시니어 애널리스트처럼 구체적으로 답해줘. 핵심 결론을 먼저, 근거엔 수치를 인용해.\n\n질문: " + q, { style: "6~10문장. 핵심 결론 먼저, 마지막에 유의점 한 줄.", corpus: { DB: env.DB, kind: "qa", ctx: ctx } });
