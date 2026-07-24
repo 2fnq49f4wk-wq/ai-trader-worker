@@ -4650,29 +4650,43 @@ const EXTERNAL_LLM_DISABLED = true;
 const WORKERS_AI = { model: "@cf/meta/llama-3.3-70b-instruct-fp8-fast", fast: "@cf/meta/llama-3.1-8b-instruct" };
 async function callWorkersAI(env, system, prompt, opts) {
   opts = opts || {};
-  try {
-    if (!env || !env.AI || typeof env.AI.run !== "function") return null;
-    const messages = [];
-    if (system) messages.push({ role: "system", content: system });
-    messages.push({ role: "user", content: String(prompt || "").slice(0, 8000) });
-    const r = await env.AI.run(opts.model || WORKERS_AI.model, {
-      messages: messages, max_tokens: opts.maxTokens || 768, temperature: opts.temperature != null ? opts.temperature : 0.35
-    });
-    let out = "";
-    if (r) { if (typeof r === "string") out = r; else out = r.response || r.result || (r.output_text) || ""; }
-    out = String(out || "").trim();
-    return out || null;
-  } catch (e) { return null; }
+  if (!env || !env.AI || typeof env.AI.run !== "function") return null;
+  const messages = [];
+  if (system) messages.push({ role: "system", content: system });
+  if (Array.isArray(opts.fewshot)) for (const m of opts.fewshot) messages.push(m);
+  messages.push({ role: "user", content: String(prompt || "").slice(0, 9000) });
+  // [V32.27] 모델 폴백 — 고품질 70B 우선, 실패/미가용 시 빠른 8B로 폴백(무중단·품질 최대화).
+  const models = opts.model ? [opts.model] : [WORKERS_AI.model, WORKERS_AI.fast];
+  for (const mdl of models) {
+    try {
+      const r = await env.AI.run(mdl, {
+        messages: messages,
+        max_tokens: opts.maxTokens || 768,
+        temperature: opts.temperature != null ? opts.temperature : 0.35,
+        top_p: opts.top_p != null ? opts.top_p : 0.9
+      });
+      let out = "";
+      if (r) { if (typeof r === "string") out = r; else out = r.response || r.result || r.output_text || ""; }
+      out = String(out || "").trim();
+      if (out) return out;
+    } catch (e) { /* 다음 모델로 폴백 */ }
+  }
+  return null;
 }
 // 그라운딩 문장화 — <사실>(내부 계산치)만 근거로 자연스러운 분석 서술 생성. 사실에 없는 수치는 금지.
 async function _aiNarrate(env, facts, task, opts) {
   opts = opts || {};
-  const sys = "너는 자율 트레이딩 시스템 LUX-ENGINE의 한국어 애널리스트야. 아래 <사실>은 시스템이 방금 계산한 정확한 수치·판정이야. " +
-    "규칙: (1) 반드시 <사실> 안의 정보만 근거로 쓴다 — 사실에 없는 수치·종목·뉴스를 지어내지 마라. (2) 숫자는 <사실>의 값을 그대로 인용. " +
-    "(3) 확정적 미래단정·매수/매도 권유는 피하고 근거 기반 해석으로. (4) 자연스럽고 구체적인 분석 문장, 반말 톤, 군더더기 없이. " +
-    (opts.style || "6~10문장.");
-  const prompt = "<사실>\n" + (typeof facts === "string" ? facts : JSON.stringify(facts)).slice(0, 6500) + "\n</사실>\n\n" + (task || "위 사실을 바탕으로 분석해줘.");
-  return await callWorkersAI(env, sys, prompt, { maxTokens: opts.maxTokens || 768, model: opts.model, temperature: opts.temperature });
+  // [V32.27] 애널리스트 페르소나·구조·구체성 강화 — 결론 우선 + 근거에 실제 수치 인용 + 리스크 한 줄.
+  const sys = "너는 자율 트레이딩 시스템 LUX-ENGINE의 시니어 한국어 애널리스트야. 노련한 펀드매니저가 데스크에서 브리핑하듯 " +
+    "명료하고 구체적으로 쓴다.\n" +
+    "출력 원칙:\n" +
+    "1) 반드시 <사실> 안의 정보만 근거로 쓴다 — 사실에 없는 수치·종목·뉴스·재무지표를 절대 지어내지 마라(없으면 '데이터 없음'이라 명시).\n" +
+    "2) 숫자는 <사실>의 값을 그대로 인용하고, 주장마다 근거 수치를 붙인다(예: 'RSI 62·AI확률 68%라 …').\n" +
+    "3) 구조: 첫 문장에 핵심 결론 → 2~3개 근거(수치 인용) → 상충 신호가 있으면 그 긴장까지 짚기 → 마지막에 리스크/유의점 한 줄.\n" +
+    "4) 확정적 미래단정·매수/매도 단정 권유 금지(경향·조건부 해석은 OK). 일반론·상투어·군더더기 금지.\n" +
+    "5) 반말 톤, 마크다운 최소, " + (opts.style || "6~10문장.");
+  const prompt = "<사실>\n" + (typeof facts === "string" ? facts : JSON.stringify(facts)).slice(0, 6800) + "\n</사실>\n\n" + (task || "위 사실을 바탕으로 분석해줘.");
+  return await callWorkersAI(env, sys, prompt, { maxTokens: opts.maxTokens || 768, model: opts.model, temperature: opts.temperature != null ? opts.temperature : 0.3 });
 }
 
 async function callClaude(apiKey, model, prompt, maxTokens, timeoutMs, retryCfg) {
@@ -14619,20 +14633,37 @@ async function handleRequest(request, env, ctx) {
       if (!q || typeof q !== "string" || !q.trim()) return Response.json({ ok: false, msg: "질문을 입력해줘." }, { status: 400, headers: cors });
       if (q.length > 300) return Response.json({ ok: false, msg: "질문이 너무 길어(300자 이내)." }, { status: 400, headers: cors });
       let r; try { r = await mlAiAsk(env.DB, q); } catch (e) { r = { ok: false, msg: "답변 생성 중 오류: " + (e && e.message) }; }
-      // [V32.26] Workers AI 그라운딩 문장화 — 규칙엔진이 만든 '사실(수치)'을 온플랫폼 LLM이 자연스러운
-      //   분석 서술로 다듬는다(수치는 사실 그대로, 환각 방지). 순수 목록형(포지션/매매/시세/일정)은 원문 유지.
+      // [V32.26/27] Workers AI 그라운딩 문장화 — 규칙엔진 '사실' + 라이브 시장맥락을 온플랫폼 LLM이
+      //   구체적 분석으로 다듬는다(수치는 사실 그대로, 환각 방지). 순수 목록형은 원문 유지 + 짧은 캐시.
       try {
         const _skip = /포지션|보유|매매 내역|거래 내역|오늘.*(샀|팔)|일정|캘린더|시세|현재가/.test(q);
         if (env.AI && r && r.ok && r.answer && r.answer.length >= 40 && r.answer.length <= 1800 && !_skip) {
-          // 일일 캡(과금 방어) — Workers AI 무료 티어 보호
-          const _day = new Date().toISOString().slice(0, 10);
-          let _m = null; try { _m = await getState(env.DB, "wai_qa_meter", null); } catch (e) {}
-          if (!_m || _m.day !== _day) _m = { day: _day, n: 0 };
-          if (_m.n < 600) {
-            const polished = await _aiNarrate(env, r.answer, "위 사실만 근거로, 사용자 질문에 자연스럽고 구체적인 한국어 분석으로 답해줘.\n\n질문: " + q, { style: "6~10문장. 마크다운 최소, 핵심 결론 먼저." });
-            if (polished && polished.length > 30) {
-              _m.n++; try { await setState(env.DB, "wai_qa_meter", _m); } catch (e) {}
-              r = { ok: true, answer: polished, grounded: true, ai: "workers-ai" };
+          const _ck = q.trim().toLowerCase().replace(/\s+/g, " ").slice(0, 120);
+          if (!globalThis.__waiqaCache) globalThis.__waiqaCache = new Map();
+          const _cc = globalThis.__waiqaCache.get(_ck);
+          if (_cc && (Date.now() - _cc.ts) < 6 * 60000) {
+            r = { ok: true, answer: _cc.answer, grounded: true, ai: "workers-ai", cached: true };
+          } else {
+            const _day = new Date().toISOString().slice(0, 10);
+            let _m = null; try { _m = await getState(env.DB, "wai_qa_meter", null); } catch (e) {}
+            if (!_m || _m.day !== _day) _m = { day: _day, n: 0 };
+            if (_m.n < 600) {
+              // [V32.27] 라이브 시장맥락 보강 — 위기게이지·국면·위원회·성과를 사실에 함께 제공(더 정확·구체적)
+              let ctxBits = "";
+              try {
+                const cg = await getState(env.DB, "crisis_gauge", null); if (cg) ctxBits += "\n[위기] " + cg.level + " " + cg.score + "/100" + (cg.vix != null ? ", VIX " + cg.vix.toFixed(1) : "");
+                const mc = await getState(env.DB, "mkt_context", null); if (mc) ctxBits += "\n[시장국면] " + mc.regime + ", 진입사이즈×" + (mc.sizeScale != null ? mc.sizeScale.toFixed(2) : "1");
+                const dt = await getState(env.DB, "dnn_trust", null), gt = await getState(env.DB, "gbdt_trust", null), mm = await mlMindLoad(env.DB);
+                ctxBits += "\n[위원회] MIND " + (mm ? "가동" : "대기") + ", DNN " + (dt && dt.trusted ? "신뢰" : "억제") + ", GBDT " + (gt && gt.trusted ? "신뢰" : "억제");
+                const sr = await getState(env.DB, "ai_selfreview", null); if (sr && sr.winRate != null) ctxBits += "\n[성과] 승률 " + (sr.winRate * 100).toFixed(0) + "%" + (sr.profitFactor != null ? ", PF " + Number(sr.profitFactor).toFixed(2) : "");
+              } catch (e) {}
+              const facts = r.answer + (ctxBits ? "\n\n[시장 맥락]" + ctxBits : "");
+              const polished = await _aiNarrate(env, facts, "위 <사실>만 근거로, 사용자 질문에 시니어 애널리스트처럼 구체적으로 답해줘. 핵심 결론을 먼저, 근거엔 수치를 인용해.\n\n질문: " + q, { style: "6~10문장. 핵심 결론 먼저, 마지막에 유의점 한 줄." });
+              if (polished && polished.length > 30) {
+                _m.n++; try { await setState(env.DB, "wai_qa_meter", _m); } catch (e) {}
+                try { const C = globalThis.__waiqaCache; C.set(_ck, { answer: polished, ts: Date.now() }); if (C.size > 200) C.delete(C.keys().next().value); } catch (e) {}
+                r = { ok: true, answer: polished, grounded: true, ai: "workers-ai" };
+              }
             }
           }
         }
