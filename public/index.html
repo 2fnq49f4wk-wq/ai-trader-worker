@@ -7503,7 +7503,17 @@ html[data-theme="light"] .table tbody tr:hover{background:rgba(9,105,218,.045);}
     var q = '?ym=' + ym + (forceRefresh ? '&refresh=1' : '');
     fetch('/api/report/monthly' + q)
       .then(function(r){ return r.json(); })
-      .then(function(d){ body.textContent = _cleanReport((d && d.text) || '') || '리포트 없음 — 상단 버튼으로 생성하세요.'; })
+      .then(function(d){
+        body.textContent = _cleanReport((d && d.text) || '') || '리포트 없음 — 상단 버튼으로 생성하세요.';
+        // [V32.30] AI 총평이 백그라운드 생성 중(aiSummary 미포함)이면 ~9초 뒤 한 번만 조용히 재조회해 얹기
+        if (d && d.text && !d.aiSummary) {
+          setTimeout(function(){
+            fetch('/api/report/monthly?ym=' + ym).then(function(r){ return r.json(); }).then(function(d2){
+              if (d2 && d2.aiSummary && d2.text) body.textContent = _cleanReport(d2.text);
+            })['catch'](function(){});
+          }, 9000);
+        }
+      })
       ['catch'](function(){ body.textContent = '리포트 로딩 실패'; });
   }
   function openMonthlyReport() {

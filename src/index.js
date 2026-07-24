@@ -15602,14 +15602,14 @@ async function handleRequest(request, env, ctx) {
     if (path === "/api/report/monthly") {
       const ym = url.searchParams.get("ym") || null;
       const force = url.searchParams.get("refresh") === "1";
-      let rpt = await mlMonthlyReport(env.DB, ym, force, env);
+      let rpt = await mlMonthlyReport(env.DB, ym, force, env, ctx);
       // [V12.127] ★D1 과부하 재시도★ 리포트는 수십 회의 순차 D1 조회(거래내역·일봉·매크로 등)를
       //   묶어서 하는데, 트레이딩 사이클과 동시에 D1이 바쁠 때 "D1 is overloaded"로 통째 실패했다
       //   (사용자 리포트). 일시적 과부하일 가능성이 커 짧은 대기 후 1회만 재시도 — 그래도 실패하면
       //   있는 그대로(에러 텍스트 포함) 반환해 사용자가 재시도 버튼으로 다시 시도할 수 있게 한다.
       if (rpt && rpt.error && /D1_ERROR|overloaded|queued/i.test(String(rpt.error))) {
         try { await new Promise(function (res) { setTimeout(res, 1500); }); } catch (e) {}
-        try { rpt = await mlMonthlyReport(env.DB, ym, force, env); } catch (e) {}
+        try { rpt = await mlMonthlyReport(env.DB, ym, force, env, ctx); } catch (e) {}
       }
       return Response.json(rpt, { headers: cors });
     }
@@ -24750,7 +24750,7 @@ function _saturdayWeekKey(now) {
   return sat.toISOString().slice(0, 10);
 }
 
-async function mlMonthlyReport(DB, ym, force, env) {
+async function mlMonthlyReport(DB, ym, force, env, ctx) {
   try {
     // ym = "YYYY-MM" (기본: 지난달)
     if (!ym || !/^\d{4}-\d{2}$/.test(ym)) {
@@ -24966,19 +24966,36 @@ async function mlMonthlyReport(DB, ym, force, env) {
         report.text = _essay + "\n\n" + "─".repeat(30) + "\n[부록] 원데이터 리포트\n" + "─".repeat(30) + "\n" + report.textRaw;
         report.nlg = true;
       }
-      // [V32.26] Workers AI 총평 — 결정론 리포트(_essay, 모든 수치 실데이터)를 근거로 온플랫폼 LLM이
-      //   운용역 어조의 '총평'을 작성해 맨 앞에 얹는다(일 1회 캐시라 호출 1회/일). 실패 시 그대로 진행.
-      try {
-        if (env && env.AI && _essay && _essay.length > 300) {
-          const _sum = await _aiNarrate(env, _essay.slice(0, 6000),
-            "위 월간 리포트 사실을 근거로, 펀드 운용역이 쓰는 '이달의 총평'을 작성해줘. 성과·시장국면·리스크·다음 달 방침을 흐름 있게 짚되 수치는 사실 그대로 인용. 투자권유는 피해.",
-            { style: "8~12문장, 문단 2개 이내. 제목·머리말 없이 본문만.", maxTokens: 900, temperature: 0.4, corpus: { DB: DB, kind: "report" } });
-          if (_sum && _sum.length > 120) { report.text = "## 🧠 이달의 총평 (AI)\n" + _sum + "\n\n" + report.text; report.aiSummary = true; }
-        }
-      } catch (e) {}
+      // [V32.30] ★AI 총평 비차단(SWR)★ 속도개선 — 종전엔 70B 총평 호출(수~십수초)이 응답을 붙잡아
+      //   리포트 첫 로딩이 느렸다. 이제 결정론 리포트를 먼저 저장·반환하고, 총평은 백그라운드에서 생성해
+      //   같은 캐시에 얹는다 → 다음 조회 때 즉시 반영(사용자 대기 0). 스케줄 프리워밍(ctx 없음)은 인라인
+      //   생성해 캐시를 완성(그날 첫 유저 조회부터 총평 포함).
+      report.weekKey = _wk;
+      report._aiEssay = null;
+      if (env && env.AI && _essay && _essay.length > 300) report._aiEssay = _essay.slice(0, 6000);
     } catch (e) { /* NLG 실패 → 원데이터 리포트 그대로 */ }
     report.weekKey = _wk;   // [V32.25] 생성일(KST) — 같은 날 재사용, 날짜 바뀌면 재생성(일 1회 갱신)
-    await setState(DB, key, report);
+    const _aiEssay = report._aiEssay; delete report._aiEssay;
+    await setState(DB, key, report);   // 결정론 리포트 먼저 저장(총평 없이)
+    // 총평 백그라운드/인라인 생성 → 같은 키에 병합
+    if (_aiEssay) {
+      const _bgSummary = async function () {
+        try {
+          const _sum = await _aiNarrate(env, _aiEssay,
+            "위 월간 리포트 사실을 근거로, 펀드 운용역이 쓰는 '이달의 총평'을 작성해줘. 성과·시장국면·리스크·다음 달 방침을 흐름 있게 짚되 수치는 사실 그대로 인용. 투자권유는 피해.",
+            { style: "8~12문장, 문단 2개 이내. 제목·머리말 없이 본문만.", maxTokens: 900, temperature: 0.4, corpus: { DB: DB, kind: "report" } });
+          if (_sum && _sum.length > 120) {
+            const cur = await getState(DB, key, null);
+            if (cur && cur.weekKey === _wk && !cur.aiSummary) {
+              cur.text = "## 🧠 이달의 총평 (AI)\n" + _sum + "\n\n" + cur.text; cur.aiSummary = true;
+              await setState(DB, key, cur);
+            }
+          }
+        } catch (e) {}
+      };
+      if (ctx && typeof ctx.waitUntil === "function") ctx.waitUntil(_bgSummary());   // 유저 요청: 비차단
+      else await _bgSummary();                                                        // 스케줄 프리워밍: 인라인
+    }
     return report;
   } catch (e) {
     // [V32.2] 재생성 실패 시 옛 캐시라도 반환(화면을 비우지 않음). 캐시도 없으면 에러 텍스트.
