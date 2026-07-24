@@ -6346,14 +6346,18 @@ async function updateMarketContext(DB, cfg) {
 
 // === [섹터 뉴스] Yahoo Finance RSS 무료 뉴스 감성 분석 ===
 // API 키 불필요. 6개 섹터 그룹별 대표 티커 RSS 1 subreq/그룹. 키워드 감성 → sizeScale 조정.
+// [V32.37] 뉴스 대표종목 대폭 확대 — 반도체(NVDA·TSM·AVGO·AMD·ASML·MU…) 앞세워 커버리지↑.
+//   쿼리는 앞 8개까지 사용(updateSectorNewsSentiment). 종목 뉴스 매핑도 이 확장분으로 넓어짐.
 const SECTOR_NEWS_REP = {
-  TECH:       "NVDA,AAPL,MSFT,GOOGL,META",
-  FINANCE:    "JPM,GS,BAC,BRK-B,V",
-  HEALTH:     "LLY,JNJ,UNH,PFE,ISRG",
-  CONSUMER:   "AMZN,TSLA,WMT,KO,DIS",
-  INDUSTRIAL: "CAT,GE,RTX,BA,LMT",
-  RESOURCES:  "XOM,CVX,NEE,FCX,LIN"
+  TECH:       "NVDA,TSM,AVGO,AMD,ASML,MU,QCOM,ARM,AMAT,LRCX,MSFT,AAPL,GOOGL,META,MRVL,INTC",
+  FINANCE:    "JPM,GS,BAC,BRK-B,V,MA,MS,WFC,C,BLK,SCHW",
+  HEALTH:     "LLY,JNJ,UNH,PFE,ISRG,MRK,ABBV,TMO,AMGN,VRTX",
+  CONSUMER:   "AMZN,TSLA,WMT,KO,DIS,COST,MCD,NKE,HD,SBUX,PG",
+  INDUSTRIAL: "CAT,GE,RTX,BA,LMT,HON,DE,GD,UNP,UPS,MMM",
+  RESOURCES:  "XOM,CVX,NEE,FCX,LIN,COP,SLB,NEM,DUK,SO"
 };
+// 반도체 전용 뉴스 쿼리(그룹은 TECH이지만 칩 특화 뉴스를 별도로 더 긁어 감성 정확도↑)
+const _SEMI_NEWS_Q = "semiconductor OR chip OR foundry OR GPU OR HBM OR TSMC OR Nvidia OR AI chip export";
 // [V32.35] ★가중 감정 렉시콘 강화★ — 금융·거시·지정학 어휘 확장 + 강/약 가중(2/1) + 부정어 처리.
 //   기존 단순 포함검사(단어 하나=1점) → 토큰 기반 가중·부정 반영으로 정밀도↑. 하위호환(_scoreHeadlines 유지).
 const _NEWS_POS = ["beat","upgrade","strong","growth","record","bullish","surge","rally","above","exceed","profit","buyback","raise","outperform","positive","robust","momentum","rebound","recovery","boom","soar"];
@@ -6656,8 +6660,9 @@ async function updateSectorNewsSentiment(DB, cfg, force) {
     // 2차: [V12.96] Google News RSS — 폴백이 아니라 항상 병합 수집(야후가 됐어도 추가). 대표티커 검색 +
     //   그룹 키워드 검색 2쿼리를 합쳐 커버리지 극대화. 키 불필요·안정적.
     if (fetchBudgetLeft() > (sc.minBudgetReserve || 8)) {
-      const reps = SECTOR_NEWS_REP[grp].split(",").slice(0, 5).join(" OR ");
+      const reps = SECTOR_NEWS_REP[grp].split(",").slice(0, 8).join(" OR ");
       const queries = [reps + " stock", grp.toLowerCase() + " sector stocks earnings"];
+      if (grp === "TECH") queries.push(_SEMI_NEWS_Q);   // [V32.37] 반도체 특화 뉴스 추가 수집
       for (const q of queries) {
         if (fetchBudgetLeft() <= (sc.minBudgetReserve || 8)) break;
         try {
@@ -24070,7 +24075,7 @@ async function _luxCrisisGauge(DB, opts) {
   // [V32.33] ★지정학 뉴스 스캔 강화★ — 세계 톱뉴스(WORLD/BUSINESS) + 무력분쟁 전용쿼리 2개를 함께 스캔,
   //   strong/med 가중·핫스팟 조합·활성전쟁 클러스터 탐지로 진행 중인 전쟁을 확실히 포착(종전 1쿼리·상한30 한계 해소).
   let newsPts = 0, newsHits = 0, headHits = [];
-  let strongN = 0, medN = 0, hotN = 0;
+  let strongN = 0, medN = 0, hotN = 0, _wSenti = null;
   try {
     const _now = Date.now(), _seen = {}, cand = [];
     const _addItems = function (items) {
@@ -24083,7 +24088,7 @@ async function _luxCrisisGauge(DB, opts) {
       }
     };
     // (1) 세계·경제 톱뉴스(브로드) — 이란 전쟁 같은 톱스토리를 여기서 잡는다(SWR 캐시라 대개 fetch 0)
-    try { const wn = await _luxWorldNews(DB, {}); if (wn && wn.headlines) _addItems(wn.headlines.map(function (h) { return typeof h === "string" ? { title: h, pubTs: null } : { title: h.title, pubTs: h.pubTs != null ? (_now - h.ageH * 3600000) : null }; })); } catch (e) {}
+    try { const wn = await _luxWorldNews(DB, {}); if (wn && wn.headlines) { _addItems(wn.headlines.map(function (h) { return typeof h === "string" ? { title: h, pubTs: null } : { title: h.title, pubTs: h.pubTs != null ? (_now - h.ageH * 3600000) : null }; })); _wSenti = (typeof wn.marketSenti === "number") ? wn.marketSenti : null; } } catch (e) {}
     // (2) 무력분쟁 전용 쿼리(예산 있을 때) — 'markets' 제한 없이 넓게
     if (typeof fetchBudgetLeft === "function" ? fetchBudgetLeft() > 5 : true) {
       const queries = ["war OR airstrike OR missile OR invasion OR military conflict OR escalation",
@@ -24122,8 +24127,11 @@ async function _luxCrisisGauge(DB, opts) {
   // 기존 risk-off 국면(0~15)
   let roPts = 0, regime = null;
   try { const mc = await getState(DB, "mkt_context", null); if (mc) { regime = mc.regime; roPts = mc.regime === "risk_off" ? 15 : mc.regime === "caution" ? 8 : 0; if (roPts) drivers.push("시장 risk-off 국면(" + mc.regime + ")"); } } catch (e) {}
+  // [V32.37] 뉴스 심리(부정) 가점(0~10) — 확대된 뉴스풀의 가중감정이 강한 부정이면 방어 성향 반영
+  let sentiPts = 0;
+  if (_wSenti != null && _wSenti <= -0.15) { sentiPts = Math.min(10, Math.round((-_wSenti - 0.15) * 22)); if (sentiPts >= 3) drivers.push("뉴스 심리 부정(" + _wSenti.toFixed(2) + ")"); }
 
-  let score = _clamp(Math.round(mkt + newsPts + roPts), 0, 100);
+  let score = _clamp(Math.round(mkt + newsPts + roPts + sentiPts), 0, 100);
   if (geoFloor > score) score = geoFloor;   // [V32.33] 활성 전쟁이면 시장이 잠잠해도 최소 위험단계 보장
   const level = score >= 65 ? "위기" : score >= 40 ? "경계" : score >= 20 ? "주의" : "평시";
   const posture = level === "위기"
