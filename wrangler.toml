@@ -20,6 +20,11 @@ cpu_ms = 300000
 directory = "./public"
 binding = "ASSETS"
 
+# [V32.26] Cloudflare Workers AI — 플랫폼 내장 LLM(Anthropic/외부 3rd-party 아님).
+#   수치는 내부 결정론 엔진이 계산하고, 문장화(NLG)만 이 온플랫폼 모델이 담당(그라운딩→환각 방지).
+[ai]
+binding = "AI"
+
 # === AI Gateway 경유 LLM 호출 ===
 # 배포해도 안 지워지도록 여기에 박아둠.
 # 끝이 /anthropic/v1/messages 형식이어야 코드와 맞음 (compat/chat/completions 아님)

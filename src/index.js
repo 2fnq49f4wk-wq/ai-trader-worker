@@ -4643,6 +4643,38 @@ async function collectLLMContext(DB, env, market) {
 //   AI Gateway) 호출이 나가지 못하게 소스에서 봉쇄한다. 트레이딩은 내부 AI 위원회(MIND/DNN/GBDT)+규칙엔진,
 //   거시·리포트는 내부/무료데이터 폴백으로 동작. 다시 켜려면 이 상수만 false로.
 const EXTERNAL_LLM_DISABLED = true;
+
+// [V32.26] ★Cloudflare Workers AI — 온플랫폼 LLM 문장화 엔진★ Anthropic/외부 3rd-party 아님(Cloudflare 내장).
+//   설계원칙: 모든 수치·판단은 내부 결정론 엔진이 계산하고, 이 모델은 "주어진 사실만으로 자연스러운 한국어
+//   서술을 쓰는" 문장화만 맡는다 → 환각(없는 수치 생성) 차단. 실패/미바인딩이면 규칙기반 원문으로 폴백.
+const WORKERS_AI = { model: "@cf/meta/llama-3.3-70b-instruct-fp8-fast", fast: "@cf/meta/llama-3.1-8b-instruct" };
+async function callWorkersAI(env, system, prompt, opts) {
+  opts = opts || {};
+  try {
+    if (!env || !env.AI || typeof env.AI.run !== "function") return null;
+    const messages = [];
+    if (system) messages.push({ role: "system", content: system });
+    messages.push({ role: "user", content: String(prompt || "").slice(0, 8000) });
+    const r = await env.AI.run(opts.model || WORKERS_AI.model, {
+      messages: messages, max_tokens: opts.maxTokens || 768, temperature: opts.temperature != null ? opts.temperature : 0.35
+    });
+    let out = "";
+    if (r) { if (typeof r === "string") out = r; else out = r.response || r.result || (r.output_text) || ""; }
+    out = String(out || "").trim();
+    return out || null;
+  } catch (e) { return null; }
+}
+// 그라운딩 문장화 — <사실>(내부 계산치)만 근거로 자연스러운 분석 서술 생성. 사실에 없는 수치는 금지.
+async function _aiNarrate(env, facts, task, opts) {
+  opts = opts || {};
+  const sys = "너는 자율 트레이딩 시스템 LUX-ENGINE의 한국어 애널리스트야. 아래 <사실>은 시스템이 방금 계산한 정확한 수치·판정이야. " +
+    "규칙: (1) 반드시 <사실> 안의 정보만 근거로 쓴다 — 사실에 없는 수치·종목·뉴스를 지어내지 마라. (2) 숫자는 <사실>의 값을 그대로 인용. " +
+    "(3) 확정적 미래단정·매수/매도 권유는 피하고 근거 기반 해석으로. (4) 자연스럽고 구체적인 분석 문장, 반말 톤, 군더더기 없이. " +
+    (opts.style || "6~10문장.");
+  const prompt = "<사실>\n" + (typeof facts === "string" ? facts : JSON.stringify(facts)).slice(0, 6500) + "\n</사실>\n\n" + (task || "위 사실을 바탕으로 분석해줘.");
+  return await callWorkersAI(env, sys, prompt, { maxTokens: opts.maxTokens || 768, model: opts.model, temperature: opts.temperature });
+}
+
 async function callClaude(apiKey, model, prompt, maxTokens, timeoutMs, retryCfg) {
   if (EXTERNAL_LLM_DISABLED) throw new Error("외부 LLM 비활성화(EXTERNAL_LLM_DISABLED) — 외부 API 미사용 정책");
   retryCfg = retryCfg || {};
@@ -14587,6 +14619,24 @@ async function handleRequest(request, env, ctx) {
       if (!q || typeof q !== "string" || !q.trim()) return Response.json({ ok: false, msg: "질문을 입력해줘." }, { status: 400, headers: cors });
       if (q.length > 300) return Response.json({ ok: false, msg: "질문이 너무 길어(300자 이내)." }, { status: 400, headers: cors });
       let r; try { r = await mlAiAsk(env.DB, q); } catch (e) { r = { ok: false, msg: "답변 생성 중 오류: " + (e && e.message) }; }
+      // [V32.26] Workers AI 그라운딩 문장화 — 규칙엔진이 만든 '사실(수치)'을 온플랫폼 LLM이 자연스러운
+      //   분석 서술로 다듬는다(수치는 사실 그대로, 환각 방지). 순수 목록형(포지션/매매/시세/일정)은 원문 유지.
+      try {
+        const _skip = /포지션|보유|매매 내역|거래 내역|오늘.*(샀|팔)|일정|캘린더|시세|현재가/.test(q);
+        if (env.AI && r && r.ok && r.answer && r.answer.length >= 40 && r.answer.length <= 1800 && !_skip) {
+          // 일일 캡(과금 방어) — Workers AI 무료 티어 보호
+          const _day = new Date().toISOString().slice(0, 10);
+          let _m = null; try { _m = await getState(env.DB, "wai_qa_meter", null); } catch (e) {}
+          if (!_m || _m.day !== _day) _m = { day: _day, n: 0 };
+          if (_m.n < 600) {
+            const polished = await _aiNarrate(env, r.answer, "위 사실만 근거로, 사용자 질문에 자연스럽고 구체적인 한국어 분석으로 답해줘.\n\n질문: " + q, { style: "6~10문장. 마크다운 최소, 핵심 결론 먼저." });
+            if (polished && polished.length > 30) {
+              _m.n++; try { await setState(env.DB, "wai_qa_meter", _m); } catch (e) {}
+              r = { ok: true, answer: polished, grounded: true, ai: "workers-ai" };
+            }
+          }
+        }
+      } catch (e) {}
       return Response.json(r, { headers: cors });
     }
 
@@ -24606,7 +24656,7 @@ function _luxWriteReport(ym, D) {
   }
   p6 += "목표: 지수 대비 초과수익, 그리고 생존.";
   S.push(p6);
-  return "# LUX-AI 월간 운용 리포트 — " + ymKo + "\n(탑재 서사·전망엔진 자동 생성 · 외부 LLM 미사용 · 모든 수치는 원장·시세 실데이터)\n\n" + S.join("\n");
+  return "# LUX-AI 월간 운용 리포트 — " + ymKo + "\n(수치=내부 결정론 엔진 · 서술=온플랫폼 AI · 외부 Claude/3rd-party API 미사용 · 모든 수치는 원장·시세 실데이터)\n\n" + S.join("\n");
 }
 
 
@@ -24837,6 +24887,16 @@ async function mlMonthlyReport(DB, ym, force, env) {
         report.text = _essay + "\n\n" + "─".repeat(30) + "\n[부록] 원데이터 리포트\n" + "─".repeat(30) + "\n" + report.textRaw;
         report.nlg = true;
       }
+      // [V32.26] Workers AI 총평 — 결정론 리포트(_essay, 모든 수치 실데이터)를 근거로 온플랫폼 LLM이
+      //   운용역 어조의 '총평'을 작성해 맨 앞에 얹는다(일 1회 캐시라 호출 1회/일). 실패 시 그대로 진행.
+      try {
+        if (env && env.AI && _essay && _essay.length > 300) {
+          const _sum = await _aiNarrate(env, _essay.slice(0, 6000),
+            "위 월간 리포트 사실을 근거로, 펀드 운용역이 쓰는 '이달의 총평'을 작성해줘. 성과·시장국면·리스크·다음 달 방침을 흐름 있게 짚되 수치는 사실 그대로 인용. 투자권유는 피해.",
+            { style: "8~12문장, 문단 2개 이내. 제목·머리말 없이 본문만.", maxTokens: 900, temperature: 0.4 });
+          if (_sum && _sum.length > 120) { report.text = "## 🧠 이달의 총평 (AI)\n" + _sum + "\n\n" + report.text; report.aiSummary = true; }
+        }
+      } catch (e) {}
     } catch (e) { /* NLG 실패 → 원데이터 리포트 그대로 */ }
     report.weekKey = _wk;   // [V32.25] 생성일(KST) — 같은 날 재사용, 날짜 바뀌면 재생성(일 1회 갱신)
     await setState(DB, key, report);
