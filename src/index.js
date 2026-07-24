@@ -6354,18 +6354,33 @@ const SECTOR_NEWS_REP = {
   INDUSTRIAL: "CAT,GE,RTX,BA,LMT",
   RESOURCES:  "XOM,CVX,NEE,FCX,LIN"
 };
+// [V32.35] ★가중 감정 렉시콘 강화★ — 금융·거시·지정학 어휘 확장 + 강/약 가중(2/1) + 부정어 처리.
+//   기존 단순 포함검사(단어 하나=1점) → 토큰 기반 가중·부정 반영으로 정밀도↑. 하위호환(_scoreHeadlines 유지).
 const _NEWS_POS = ["beat","upgrade","strong","growth","record","bullish","surge","rally","above","exceed","profit","buyback","raise","outperform","positive","robust","momentum","rebound","recovery","boom","soar"];
 const _NEWS_NEG = ["miss","downgrade","cut","loss","warning","weak","bearish","crash","layoff","recall","concern","decline","drop","fell","tumble","below","disappoint","risk","lawsuit","probe","halt","fraud","slump"];
-
-function _scoreHeadlines(titles) {
-  let pos = 0, neg = 0;
-  for (const t of titles) {
-    const low = t.toLowerCase();
-    for (const w of _NEWS_POS) if (low.includes(w)) pos++;
-    for (const w of _NEWS_NEG) if (low.includes(w)) neg++;
+const _SENTI_POS = { surge:2, soar:2, rally:2, jump:2, beat:2, upgrade:2, record:2, boom:2, breakout:2, "all-time":2, outperform:2, buyback:2, wins:1, win:1, strong:1, growth:1, gains:1, gain:1, rise:1, rises:1, rose:1, climb:1, climbs:1, higher:1, above:1, exceed:1, profit:1, raise:1, raised:1, positive:1, robust:1, momentum:1, rebound:1, recovery:1, optimism:1, upbeat:1, expand:1, expands:1, boost:1, boosts:1, deal:1, approval:1, approved:1, demand:1, easing:1, cooling:1, "cuts rates":2, "rate cut":2, ceasefire:2, truce:2, resolve:1, "peace":1 };
+const _SENTI_NEG = { crash:2, plunge:2, plummet:2, collapse:2, slump:2, tumble:2, selloff:2, "sell-off":2, rout:2, recession:2, crisis:2, war:2, invasion:2, missile:2, airstrike:2, sanctions:2, default:2, bankruptcy:2, fraud:2, layoff:2, layoffs:2, downgrade:2, miss:1, cut:1, cuts:1, loss:1, losses:1, warning:1, warn:1, warns:1, weak:1, weakness:1, bearish:1, fall:1, falls:1, fell:1, drop:1, drops:1, decline:1, declines:1, lower:1, below:1, disappoint:1, concern:1, concerns:1, fears:1, fear:1, risk:1, risks:1, lawsuit:1, probe:1, halt:1, recall:1, tension:1, tensions:1, conflict:1, escalation:1, threat:1, threatens:1, strike:1, strikes:1, killed:1, dead:1, attack:1, slowdown:1, slowing:1, inflation:1, layoff2:0 };
+const _SENTI_NEGATORS = { no:1, not:1, never:1, without:1, fails:1, fail:1, "fails to":1, denies:1, deny:1, avoid:1, avoids:1, halts:1, ends:1, "no longer":1 };
+function _sentiOne(title) {
+  const toks = String(title || "").toLowerCase().replace(/[^a-z0-9 -]/g, " ").split(/\s+/).filter(Boolean);
+  let s = 0, negWin = 0;
+  for (const w of toks) {
+    if (_SENTI_NEGATORS[w]) { negWin = 3; continue; }
+    let v = 0;
+    if (_SENTI_POS[w]) v = _SENTI_POS[w];
+    else if (_SENTI_NEG[w]) v = -_SENTI_NEG[w];
+    if (v !== 0 && negWin > 0) v = -v * 0.8;   // 부정어 창(3토큰) 내면 반전(약화)
+    s += v;
+    if (negWin > 0) negWin--;
   }
+  return s;
+}
+// titles → -1..1 종합 감정(가중·부정 반영). n건 대비 정규화.
+function _scoreHeadlines(titles) {
+  let sum = 0, mag = 0;
+  for (const t of titles) { const v = _sentiOne(t); sum += v; mag += Math.abs(v); }
   const total = Math.max(titles.length, 1);
-  return _clamp((pos - neg) / (pos + neg + total * 0.3), -1, 1);
+  return _clamp(sum / (mag + total * 0.5), -1, 1);
 }
 
 // [V9.9 신규데이터] 애널리스트 컨센서스 — 목표가 상승여력·투자의견을 야후 v7에서 수집(US 한정).
@@ -14688,8 +14703,8 @@ async function handleRequest(request, env, ctx) {
                 const wn = _S["world_news"];
                 if (wn && wn.headlines && wn.headlines.length) {
                   const _fmtH = function (h) { if (typeof h === "string") return h; let s = h.title; if (h.ageH != null) s += " (" + h.ageH + "h" + (h.sources > 1 ? "·" + h.sources + "매체" : "") + ")"; return s; };
-                  const _hl = wn.headlines.slice(0, 15).map(_fmtH);
-                  ctxBits += "\n[세계·경제 톱뉴스 · 다매체·최신순 " + _hl.length + "건]\n- " + _hl.join("\n- ") + "\n(주의: '~h'가 큰 항목은 과거 이슈일 수 있으니 현재 원인으로 단정 금지, 다매체 보도를 우선 신뢰)";
+                  const _hl = wn.headlines.slice(0, 24).map(_fmtH);
+                  ctxBits += "\n[세계·경제 톱뉴스 · 다매체·최신순 " + _hl.length + "건" + (wn.marketSenti != null ? " · 뉴스심리 " + (wn.marketSenti >= 0 ? "+" : "") + wn.marketSenti : "") + "]\n- " + _hl.join("\n- ") + "\n(주의: '~h'가 큰 항목은 과거 이슈일 수 있으니 현재 원인으로 단정 금지, 다매체 보도를 우선 신뢰)";
                 }
                 try { if (ctx && ctx.waitUntil) ctx.waitUntil(_luxWorldNews(env.DB, {})); } catch (e) {}   // 백그라운드 신선도 갱신(SWR)
               } catch (e) {}
@@ -23911,15 +23926,22 @@ const _WNEWS_MAXAGE_H = 30;   // 이보다 오래된 헤드라인은 '현재 이
 const _WORLD_FEEDS = [
   { u: "https://news.google.com/rss/headlines/section/topic/WORLD?hl=en-US&gl=US&ceid=US:en", s: "GoogleWorld" },
   { u: "https://news.google.com/rss/headlines/section/topic/BUSINESS?hl=en-US&gl=US&ceid=US:en", s: "GoogleBiz" },
+  { u: "https://news.google.com/rss/headlines/section/topic/TECHNOLOGY?hl=en-US&gl=US&ceid=US:en", s: "GoogleTech" },
+  { u: "https://news.google.com/rss/search?q=stock%20market%20OR%20federal%20reserve%20OR%20oil%20prices&hl=en-US&gl=US&ceid=US:en", s: "GoogleMkt" },
   { u: "https://feeds.bbci.co.uk/news/world/rss.xml", s: "BBC" },
   { u: "https://feeds.bbci.co.uk/news/business/rss.xml", s: "BBCBiz" },
   { u: "https://www.aljazeera.com/xml/rss/all.xml", s: "AlJazeera" },
   { u: "http://feeds.marketwatch.com/marketwatch/topstories/", s: "MarketWatch" },
+  { u: "http://feeds.marketwatch.com/marketwatch/marketpulse/", s: "MWPulse" },
   { u: "https://search.cnbc.com/rs/search/combinedcms/view.xml?partnerId=wrss01&id=100003114", s: "CNBC" },
+  { u: "https://search.cnbc.com/rs/search/combinedcms/view.xml?partnerId=wrss01&id=10000664", s: "CNBCFin" },
   { u: "https://rss.nytimes.com/services/xml/rss/nyt/World.xml", s: "NYT" },
   { u: "https://rss.nytimes.com/services/xml/rss/nyt/Business.xml", s: "NYTBiz" },
   { u: "http://rss.cnn.com/rss/edition_world.rss", s: "CNN" },
-  { u: "https://feeds.a.dj.com/rss/RSSWorldNews.xml", s: "WSJ" }
+  { u: "https://feeds.a.dj.com/rss/RSSWorldNews.xml", s: "WSJ" },
+  { u: "https://www.theguardian.com/world/rss", s: "Guardian" },
+  { u: "https://moxie.foxbusiness.com/google-publisher/markets.xml", s: "FoxBiz" },
+  { u: "https://www.investing.com/rss/news.rss", s: "Investing" }
 ];
 async function _luxWorldNews(DB, opts) {
   opts = opts || {};
@@ -23932,10 +23954,18 @@ async function _luxWorldNews(DB, opts) {
   const now = Date.now(), maxAge = _WNEWS_MAXAGE_H * 3600000;
   const byKey = {};
   let rawSeen = 0, dropOld = 0, dropDup = 0, noDate = 0, okFeeds = 0;
-  const _norm = function (t) { return String(t || "").toLowerCase().replace(/[^a-z0-9가-힣 ]/g, "").replace(/\s+/g, " ").trim().slice(0, 70); };
+  // [V32.35] 근접중복(다른 매체의 재작성 제목) 탐지 — 불용어 제거 후 유의미 토큰 정렬 시그니처로 dedup.
+  const _STOP = { the:1,a:1,an:1,to:1,of:1,in:1,on:1,for:1,and:1,or:1,as:1,at:1,by:1,is:1,are:1,was:1,were:1,with:1,after:1,over:1,from:1,new:1,says:1,say:1,said:1,amid:1,its:1,his:1,her:1,how:1,why:1,what:1,will:1,be:1,has:1,have:1,this:1,that:1,into:1,about:1,could:1,would:1,than:1,more:1 };
+  const _sig = function (t) {
+    const w = String(t || "").toLowerCase().replace(/[^a-z0-9가-힣 ]/g, " ").split(/\s+/).filter(function (x) { return x.length >= 4 && !_STOP[x]; });
+    w.sort();
+    return w.slice(0, 6).join(" ") || String(t || "").toLowerCase().replace(/\s+/g, " ").trim().slice(0, 40);
+  };
+  const _norm = _sig;
   // 병렬 수집(지연↓) — 각 피드 독립, 실패 무시
+  const _sig6 = function () { try { return AbortSignal.timeout(6000); } catch (e) { return undefined; } };   // 피드당 6초 상한(행 방지)
   const results = await Promise.all(feeds.map(async function (f) {
-    try { const r = await fetch(f.u, { headers: { "User-Agent": "Mozilla/5.0 (compatible)" } }); if (!r.ok) return null; return { s: f.s, items: _parseRss(await r.text(), 30) }; } catch (e) { return null; }
+    try { const r = await fetch(f.u, { headers: { "User-Agent": "Mozilla/5.0 (compatible)" }, signal: _sig6() }); if (!r.ok) return null; return { s: f.s, items: _parseRss(await r.text(), 30) }; } catch (e) { return null; }
   }));
   for (const res of results) {
     if (!res || !res.items) continue;
@@ -23956,7 +23986,9 @@ async function _luxWorldNews(DB, opts) {
   const arr = Object.keys(byKey).map(function (k) { const v = byKey[k]; return { title: v.title, pubTs: v.pubTs, ageH: v.pubTs != null ? Math.round((now - v.pubTs) / 3600000) : null, sources: Object.keys(v.srcs).length, mentions: v.n }; });
   // 정렬: 다매체(교차검증) 우선 + 최신 — 신뢰도 높은 톱뉴스가 앞으로
   arr.sort(function (a, b) { const sd = (b.sources || 1) - (a.sources || 1); if (sd !== 0) return sd; return (b.pubTs || 0) - (a.pubTs || 0); });
-  const heads = arr.slice(0, 70);
+  const heads = arr.slice(0, 150);
+  // [V32.35] 시장 감정 — 상위 헤드라인 가중 감정(-1..1). 위기/Q&A가 심리 근거로 활용.
+  let marketSenti = null; try { marketSenti = +_scoreHeadlines(heads.slice(0, 60).map(function (h) { return h.title; })).toFixed(3); } catch (e) {}
   if (!heads.length) return cached;
   // 일일 뉴스량 집계 — 오늘 새로 관측된 고유 헤드라인 누적(대략치)
   let stats = null; try { stats = await getState(DB, "news_stats", null); } catch (e) {}
@@ -23969,6 +24001,7 @@ async function _luxWorldNews(DB, opts) {
   try { await setState(DB, "news_stats", stats); } catch (e) {}
   const out = { headlines: heads, ts: now, dedupN: heads.length, rawSeen: rawSeen, dropOld: dropOld, dropDup: dropDup, noDate: noDate,
     feedsOk: okFeeds, feedsTried: feeds.length, multiSource: heads.filter(function (h) { return (h.sources || 1) >= 2; }).length,
+    marketSenti: marketSenti,
     freshN: heads.filter(function (h) { return h.ageH != null && h.ageH <= 24; }).length, dayUniqSeen: stats.uniqSeen, day: dayKey };
   try { await setState(DB, "world_news", out); } catch (e) {}
   try { await log(DB, "INFO", null, "[WORLD-NEWS] 피드 " + okFeeds + "/" + feeds.length + " · 고유 " + heads.length + "건(다매체 " + out.multiSource + ") · 원시 " + rawSeen + " · 오늘누적 " + stats.uniqSeen); } catch (e) {}
@@ -24145,8 +24178,8 @@ async function mlAiAsk(DB, question) {
           // 세계·지정학 톱뉴스(원인 후보) — 최신순·발행경과 표시
           const wn = await _luxWorldNews(DB, {});
           if (wn && wn.headlines && wn.headlines.length) {
-            const _hl = wn.headlines.slice(0, 22).map(function (h) { return (typeof h === "string" ? h : (h.title + (h.ageH != null ? " (" + h.ageH + "시간 전" + (h.sources > 1 ? ", " + h.sources + "개 매체" : "") + ")" : " (시각미상)"))); });
-            F.push("[세계·경제 톱뉴스 · 다매체·최신순 " + _hl.length + "건]\n- " + _hl.join("\n- "));
+            const _hl = wn.headlines.slice(0, 35).map(function (h) { return (typeof h === "string" ? h : (h.title + (h.ageH != null ? " (" + h.ageH + "시간 전" + (h.sources > 1 ? ", " + h.sources + "개 매체" : "") + ")" : " (시각미상)"))); });
+            F.push("[세계·경제 톱뉴스 · 다매체·최신순 " + _hl.length + "건" + (wn.marketSenti != null ? " · 뉴스심리 " + (wn.marketSenti >= 0 ? "+" : "") + wn.marketSenti : "") + "]\n- " + _hl.join("\n- "));
             F.push("[뉴스량] 오늘 관측 고유 헤드라인 약 " + (wn.dayUniqSeen || 0) + "건, 이번 수집 최근24h " + (wn.freshN || 0) + "건");
           }
           // 거시/금리
@@ -24167,7 +24200,16 @@ async function mlAiAsk(DB, question) {
         }
         L.push("- 섹터/종목 뉴스 저장분: 약 " + secCnt + "건");
         if (wn && wn.headlines && wn.headlines.length) { const rec = wn.headlines.filter(function (h) { return typeof h !== "string" && h.ageH != null && h.ageH <= 24; }).slice(0, 5); if (rec.length) L.push("\n최근 24h 톱헤드라인:\n" + rec.map(function (h) { return "- " + h.title + " (" + h.ageH + "h" + (h.sources > 1 ? ", " + h.sources + "매체" : "") + ")"; }).join("\n")); }
-        L.push("\n_최신성 필터(30h 초과 제외)·중복제거·다매체 우선으로 노이즈·옛이슈 오판을 걸러._");
+        L.push("\n_최신성 필터(30h 초과 제외)·근접중복 제거(토큰 시그니처)·다매체 교차검증 우선으로 노이즈·가짜·옛이슈를 걸러._");
+        return { ok: true, answer: L.join("\n") };
+      }
+      // 0x) [V32.35] 스캔 주기 — AI 전종목 시장 스캔이 얼마나 자주 도는지
+      if (/스캔.*(주기|얼마나|언제|자주)|얼마나.*스캔|시장.*스캔.*(주기|언제)|스캔.*돌/.test(q)) {
+        let sc = null; try { sc = await getState(DB, "ai_picks:scan", null); } catch (e) {}
+        const L = ["**AI 시장 스캔 주기**"];
+        L.push("- 전종목 AI 스캔(승률예측→ai_picks)은 **야간 AI 파이프라인의 일부로 하루 1회** 실행돼(학습·보정·리포트와 함께). 한 번에 90초 예산 내 배치로 스캔하며 유니버스를 순환 커버.");
+        if (sc && sc.ts) { const hrs = Math.round((Date.now() - sc.ts) / 3600000); L.push("- 마지막 스캔: 약 " + hrs + "시간 전 · " + (sc.scanned || 0) + "/" + (sc.total || 0) + "종목 분석"); }
+        L.push("- 위기 게이지·뉴스는 이와 별개로 **20~30분 SWR**로 수시 갱신, 매매 판단(디렉티브)은 **매일 트리거**, 시세는 **매 사이클(분 단위)** 갱신이야.");
         return { ok: true, answer: L.join("\n") };
       }
       // 0a) 오늘의 AI 브리핑 — 국면·위기·픽·성과·알림 종합
