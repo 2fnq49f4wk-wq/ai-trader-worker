@@ -14678,12 +14678,15 @@ async function handleRequest(request, env, ctx) {
               // [V32.27/29] 라이브 시장맥락 보강 — ★1회 배치 조회(getStates)★로 D1 왕복 1번만(CPU/D1 절약).
               let ctxBits = "";
               try {
-                const _S = await getStates(env.DB, ["crisis_gauge", "mkt_context", "dnn_trust", "gbdt_trust", "ai_selfreview", "mind_model"]);
+                const _S = await getStates(env.DB, ["crisis_gauge", "mkt_context", "dnn_trust", "gbdt_trust", "ai_selfreview", "mind_model", "world_news"]);
                 const cg = _S["crisis_gauge"]; if (cg) ctxBits += "\n[위기] " + cg.level + " " + cg.score + "/100" + (cg.vix != null ? ", VIX " + cg.vix.toFixed(1) : "");
                 const mc = _S["mkt_context"]; if (mc) ctxBits += "\n[시장국면] " + mc.regime + ", 진입사이즈×" + (mc.sizeScale != null ? mc.sizeScale.toFixed(2) : "1");
                 const dt = _S["dnn_trust"], gt = _S["gbdt_trust"], mm = _S["mind_model"];
                 ctxBits += "\n[위원회] MIND " + (mm && mm.featVer === LUXML.featVer ? "가동" : "대기") + ", DNN " + (dt && dt.trusted ? "신뢰" : "억제") + ", GBDT " + (gt && gt.trusted ? "신뢰" : "억제");
                 const sr = _S["ai_selfreview"]; if (sr && sr.winRate != null) ctxBits += "\n[성과] 승률 " + (sr.winRate * 100).toFixed(0) + "%" + (sr.profitFactor != null ? ", PF " + Number(sr.profitFactor).toFixed(2) : "");
+                // [V32.31] 세계·지정학 톱뉴스 — 종목/시장 움직임을 외부 이슈와 엮을 근거(뉴스 있을 때만 인용)
+                const wn = _S["world_news"]; if (wn && wn.headlines && wn.headlines.length) ctxBits += "\n[세계·경제 톱뉴스]\n- " + wn.headlines.slice(0, 8).join("\n- ");
+                try { if (ctx && ctx.waitUntil) ctx.waitUntil(_luxWorldNews(env.DB, {})); } catch (e) {}   // 백그라운드 신선도 갱신(SWR)
               } catch (e) {}
               const facts = r.answer + (ctxBits ? "\n\n[시장 맥락]" + ctxBits : "");
               const polished = await _aiNarrate(env, facts, "위 <사실>만 근거로, 사용자 질문에 시니어 애널리스트처럼 구체적으로 답해줘. 핵심 결론을 먼저, 근거엔 수치를 인용해.\n\n질문: " + q, { style: "6~10문장. 핵심 결론 먼저, 마지막에 유의점 한 줄.", corpus: { DB: env.DB, kind: "qa", ctx: ctx } });
@@ -23861,6 +23864,48 @@ async function _aiAskSnapshot(DB, sym, scanCache) {
 const _CRISIS_KW = ["war", "invasion", "invade", "missile", "airstrike", "conflict", "sanction",
   "nuclear", "escalat", "military strike", "troops", "warfare", "ceasefire", "embargo", "blockade",
   "coup", "terror", "retaliat", "border clash", "shelling", "drone attack", "warship", "军事", "전쟁"];
+// [V32.31] ★전역 RSS 파서★ — 종전 _parseRssItems는 updateSectorNewsSentiment 내부 지역함수라
+//   crisis 게이지·world 뉴스에서 못 썼고(호출 시 ReferenceError→지정학 뉴스 스캔이 조용히 실패했다).
+//   전역으로 빼서 세 곳이 공유한다.
+function _parseRss(xml, max) {
+  const items = [];
+  try {
+    const blocks = String(xml || "").split(/<item[\s>]/);
+    for (const block of blocks.slice(1)) {
+      const tM = block.match(/<title>(?:<!\[CDATA\[)?([\s\S]*?)(?:\]\]>)?<\/title>/);
+      const lM = block.match(/<link>([\s\S]*?)<\/link>/);
+      const t = tM ? tM[1].trim() : null;
+      if (t) items.push({ title: t, link: lM ? lM[1].trim() : null });
+      if (items.length >= (max || 30)) break;
+    }
+  } catch (e) {}
+  return items;
+}
+// [V32.31] ★세계·지정학 톱뉴스 피드★ — 금융 RSS만으론 못 잡던 전쟁·분쟁·유가쇼크 등 거시/외부 이슈를
+//   구글뉴스 WORLD·BUSINESS 톱헤드라인으로 수집(무료·키불필요). SWR 30분·예산가드. Q&A가 종목/섹터
+//   급락 원인을 이 헤드라인과 엮어 설명할 수 있게 한다.
+async function _luxWorldNews(DB, opts) {
+  opts = opts || {};
+  const FRESH = 30 * 60000;
+  let cached = null; try { cached = await getState(DB, "world_news", null); } catch (e) {}
+  if (!opts.force && cached && cached.ts && (Date.now() - cached.ts) < FRESH) return cached;
+  try { if (typeof fetchBudgetLeft === "function" && fetchBudgetLeft() < 4) return cached; } catch (e) {}
+  const feeds = [
+    "https://news.google.com/rss/headlines/section/topic/WORLD?hl=en-US&gl=US&ceid=US:en",
+    "https://news.google.com/rss/headlines/section/topic/BUSINESS?hl=en-US&gl=US&ceid=US:en"
+  ];
+  const seen = {}, heads = [];
+  for (const url of feeds) {
+    try {
+      const r = await fetch(url, { headers: { "User-Agent": "Mozilla/5.0 (compatible)" } });
+      if (r.ok) { const it = _parseRss(await r.text(), 30); for (const x of it) { const k = String(x.title || "").toLowerCase().slice(0, 80); if (k && !seen[k]) { seen[k] = 1; heads.push(String(x.title).slice(0, 150)); } } }
+    } catch (e) {}
+  }
+  if (!heads.length) return cached;
+  const out = { headlines: heads.slice(0, 40), ts: Date.now() };
+  try { await setState(DB, "world_news", out); } catch (e) {}
+  return out;
+}
 async function _luxCrisisGauge(DB, opts) {
   opts = opts || {};
   const FRESH = 20 * 60000;
@@ -23901,7 +23946,7 @@ async function _luxCrisisGauge(DB, opts) {
       const gUrl = "https://news.google.com/rss/search?q=" + encodeURIComponent("war OR invasion OR military conflict OR sanctions markets") + "&hl=en-US&gl=US&ceid=US:en";
       const gr = await fetch(gUrl, { headers: { "User-Agent": "Mozilla/5.0 (compatible)" } });
       if (gr.ok) {
-        const items = _parseRssItems(await gr.text(), 40);
+        const items = _parseRss(await gr.text(), 40);
         for (const it of items) {
           const low = String(it.title || "").toLowerCase();
           for (const kw of _CRISIS_KW) { if (low.indexOf(kw) >= 0) { newsHits++; if (headHits.length < 4) headHits.push(String(it.title).slice(0, 90)); break; } }
@@ -23977,6 +24022,30 @@ async function mlAiAsk(DB, question) {
   // ═══ [V32.18] Q&A 확장 — 시스템 성능·모델·추천·매매내역·지수/환율/원자재/코인·일정 ═══
   if (!syms.length) {
     try {
+      // 0z) [V32.31] 왜 움직였나 — 시장/섹터 급등락 원인을 세계·지정학 뉴스 + 위기게이지 + 거시와 엮어 설명
+      if (/왜|이유|원인|무슨\s*일|때문/.test(q) && /떨어|하락|빠졌|내렸|폭락|급락|올랐|상승|급등|반등|튀|무슨일|증시|시장|섹터|반도체|주가/.test(q)) {
+        const F = ["[질문] " + q];
+        try {
+          // 대상 섹터 판별(있으면 섹터 모멘텀·감성)
+          let secHit = null; for (const k of Object.keys(SECTOR_Q_ALIAS).sort(function (a, b) { return b.length - a.length; })) { if (q.indexOf(k) >= 0) { secHit = SECTOR_Q_ALIAS[k]; break; } }
+          const md = await _luxMacroSectorData(DB);
+          if (secHit && md && md.sectors) { const sc = md.sectors.find(function (s) { return s.g === secHit; }); if (sc) F.push("[해당섹터] " + sc.name + " 20일모멘텀 " + (sc.mom20 != null ? (sc.mom20 >= 0 ? "+" : "") + sc.mom20 + "%" : "n/a") + ", 뉴스감성 " + (sc.senti != null ? sc.senti : "n/a")); }
+          if (md && md.sectors && md.sectors.length) { const top = md.sectors[0], bot = md.sectors[md.sectors.length - 1]; F.push("[섹터전반] 강 " + top.name + "(" + top.mom20 + "%) / 약 " + bot.name + "(" + bot.mom20 + "%)"); }
+          // 지수 당일 등락
+          const idxs = ["^GSPC", "^IXIC", "^KS11", "^KQ11"]; const _iq = await getStates(DB, idxs.map(function (s) { return "index:" + s; }));
+          const iNm = { "^GSPC": "S&P", "^IXIC": "나스닥", "^KS11": "코스피", "^KQ11": "코스닥" };
+          const iBits = []; for (const s of idxs) { const d = _iq["index:" + s]; if (d && d.dayPct != null) iBits.push(iNm[s] + " " + (d.dayPct >= 0 ? "+" : "") + d.dayPct.toFixed(1) + "%"); }
+          if (iBits.length) F.push("[지수 당일] " + iBits.join(", "));
+          // 위기 게이지(신선하게)
+          const cg = await _luxCrisisGauge(DB, {}); if (cg) { F.push("[위기게이지] " + cg.level + " " + cg.score + "/100" + (cg.vix != null ? ", VIX " + cg.vix.toFixed(1) : "") + (cg.drivers && cg.drivers.length ? " · " + cg.drivers.slice(0, 3).join("; ") : "")); if (cg.headlines && cg.headlines.length) F.push("[지정학 헤드라인] " + cg.headlines.slice(0, 3).join(" | ")); }
+          // 세계·지정학 톱뉴스(원인 후보)
+          const wn = await _luxWorldNews(DB, {}); if (wn && wn.headlines && wn.headlines.length) F.push("[세계·경제 톱뉴스]\n- " + wn.headlines.slice(0, 12).join("\n- "));
+          // 거시/금리
+          if (md && md.macro) { const m = md.macro; F.push("[거시] 10년물 " + (m.ten != null ? m.ten + "%" : "n/a") + (m.ten20 != null ? "(1달 " + (m.ten20 >= 0 ? "+" : "") + m.ten20 + "%p)" : "")); }
+        } catch (e) {}
+        F.push("\n[지시] 위 사실만 근거로, 오늘 시장/해당 섹터의 등락이 어떤 외부·지정학·거시 이슈와 연관될 수 있는지 설명해줘. 톱뉴스 중 관련 있어 보이는 것을 근거로 연결하되, 뉴스에 없는 원인은 단정하지 말고 '뉴스상 직접 근거는 제한적'이라고 밝혀. 상관≠인과임을 유의.");
+        return { ok: true, answer: F.join("\n"), whyMove: true };
+      }
       // 0a) 오늘의 AI 브리핑 — 국면·위기·픽·성과·알림 종합
       if (/브리핑|요약해|종합.*알려|오늘.*어때|오늘.*상황|한눈에|전체.*요약|현황.*요약/.test(q)) {
         const B = ["**📋 오늘의 AI 브리핑**"];
