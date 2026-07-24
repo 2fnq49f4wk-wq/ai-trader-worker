@@ -4685,8 +4685,25 @@ async function _aiNarrate(env, facts, task, opts) {
     "3) 구조: 첫 문장에 핵심 결론 → 2~3개 근거(수치 인용) → 상충 신호가 있으면 그 긴장까지 짚기 → 마지막에 리스크/유의점 한 줄.\n" +
     "4) 확정적 미래단정·매수/매도 단정 권유 금지(경향·조건부 해석은 OK). 일반론·상투어·군더더기 금지.\n" +
     "5) 반말 톤, 마크다운 최소, " + (opts.style || "6~10문장.");
-  const prompt = "<사실>\n" + (typeof facts === "string" ? facts : JSON.stringify(facts)).slice(0, 6800) + "\n</사실>\n\n" + (task || "위 사실을 바탕으로 분석해줘.");
-  return await callWorkersAI(env, sys, prompt, { maxTokens: opts.maxTokens || 768, model: opts.model, temperature: opts.temperature != null ? opts.temperature : 0.3 });
+  const factsStr = (typeof facts === "string" ? facts : JSON.stringify(facts)).slice(0, 6800);
+  const prompt = "<사실>\n" + factsStr + "\n</사실>\n\n" + (task || "위 사실을 바탕으로 분석해줘.");
+  const usedModel = opts.model || WORKERS_AI.model;
+  const out = await callWorkersAI(env, sys, prompt, { maxTokens: opts.maxTokens || 768, model: opts.model, temperature: opts.temperature != null ? opts.temperature : 0.3 });
+  // [V32.28] 학습 코퍼스 적재 — (사실, 지시, 서술) 쌍을 LoRA 지식증류 데이터로 축적(베스트에포트).
+  if (out && opts.corpus && opts.corpus.DB) {
+    try {
+      const DB = opts.corpus.DB;
+      const _ins = DB.prepare("INSERT INTO ai_corpus (ts, kind, facts, task, output, model) VALUES (?,?,?,?,?,?)")
+        .bind(Date.now(), opts.corpus.kind || "qa", factsStr, String(task || "").slice(0, 800), out.slice(0, 4000), usedModel).run();
+      if (opts.corpus.ctx && typeof opts.corpus.ctx.waitUntil === "function") {
+        opts.corpus.ctx.waitUntil(_ins.then(async function () {
+          // 보존 상한 — 최근 8000행만 유지(가끔 정리)
+          try { if (Math.random() < 0.03) await DB.prepare("DELETE FROM ai_corpus WHERE id NOT IN (SELECT id FROM ai_corpus ORDER BY ts DESC LIMIT 8000)").run(); } catch (e) {}
+        }).catch(function () {}));
+      } else { await _ins; }
+    } catch (e) {}
+  }
+  return out;
 }
 
 async function callClaude(apiKey, model, prompt, maxTokens, timeoutMs, retryCfg) {
@@ -5517,6 +5534,10 @@ async function ensureSchema(DB) {
   //   유발했다. logs도 동일 패턴(ts DESC)이라 함께 건다.
   try { await DB.prepare("CREATE INDEX IF NOT EXISTS idx_trades_ts ON trades(ts DESC)").run(); } catch (e) {}
   try { await DB.prepare("CREATE INDEX IF NOT EXISTS idx_logs_ts ON logs(ts DESC)").run(); } catch (e) {}
+  // [V32.28] ★AI 학습 코퍼스★ — Workers AI(70B teacher)가 만든 (사실→서술) 쌍을 축적해
+  //   나중에 Modal에서 우리 전용 LoRA(도메인 특화 소형모델)로 지식증류 학습하는 데이터셋.
+  try { await DB.prepare("CREATE TABLE IF NOT EXISTS ai_corpus (id INTEGER PRIMARY KEY AUTOINCREMENT, ts INTEGER, kind TEXT, facts TEXT, task TEXT, output TEXT, model TEXT)").run(); } catch (e) {}
+  try { await DB.prepare("CREATE INDEX IF NOT EXISTS idx_corpus_ts ON ai_corpus(ts DESC)").run(); } catch (e) {}
   __schemaReady = true;
 }
 
@@ -14658,7 +14679,7 @@ async function handleRequest(request, env, ctx) {
                 const sr = await getState(env.DB, "ai_selfreview", null); if (sr && sr.winRate != null) ctxBits += "\n[성과] 승률 " + (sr.winRate * 100).toFixed(0) + "%" + (sr.profitFactor != null ? ", PF " + Number(sr.profitFactor).toFixed(2) : "");
               } catch (e) {}
               const facts = r.answer + (ctxBits ? "\n\n[시장 맥락]" + ctxBits : "");
-              const polished = await _aiNarrate(env, facts, "위 <사실>만 근거로, 사용자 질문에 시니어 애널리스트처럼 구체적으로 답해줘. 핵심 결론을 먼저, 근거엔 수치를 인용해.\n\n질문: " + q, { style: "6~10문장. 핵심 결론 먼저, 마지막에 유의점 한 줄." });
+              const polished = await _aiNarrate(env, facts, "위 <사실>만 근거로, 사용자 질문에 시니어 애널리스트처럼 구체적으로 답해줘. 핵심 결론을 먼저, 근거엔 수치를 인용해.\n\n질문: " + q, { style: "6~10문장. 핵심 결론 먼저, 마지막에 유의점 한 줄.", corpus: { DB: env.DB, kind: "qa", ctx: ctx } });
               if (polished && polished.length > 30) {
                 _m.n++; try { await setState(env.DB, "wai_qa_meter", _m); } catch (e) {}
                 try { const C = globalThis.__waiqaCache; C.set(_ck, { answer: polished, ts: Date.now() }); if (C.size > 200) C.delete(C.keys().next().value); } catch (e) {}
@@ -14963,6 +14984,26 @@ async function handleRequest(request, env, ctx) {
       const got = url.searchParams.get("key") || (request.headers.get("x-train-key") || "");
       if (got !== want) return { ok: false, code: 401, msg: "unauthorized" };
       return { ok: true };
+    }
+
+    // [V32.28] GET /api/ai/corpus/stats — 코퍼스 수집 현황(공개, 읽기전용)
+    if (path === "/api/ai/corpus/stats") {
+      try {
+        const c = await env.DB.prepare("SELECT COUNT(*) n, MIN(ts) a, MAX(ts) b FROM ai_corpus").first();
+        const byKind = await env.DB.prepare("SELECT kind, COUNT(*) n FROM ai_corpus GROUP BY kind").all();
+        return Response.json({ total: (c && c.n) || 0, oldest: c && c.a, newest: c && c.b,
+          byKind: ((byKind && byKind.results) || []).reduce(function (o, r) { o[r.kind] = r.n; return o; }, {}),
+          readyForLoRA: ((c && c.n) || 0) >= 500 }, { headers: cors });
+      } catch (e) { return Response.json({ total: 0, error: e && e.message }, { headers: cors }); }
+    }
+    // [V32.28] GET /api/ai/corpus/export — LoRA 학습용 코퍼스 내보내기(train 키 필요). ?limit&offset. Modal이 당겨감.
+    if (path === "/api/ai/corpus/export") {
+      const au = _trainAuthed(); if (!au.ok) return Response.json({ error: au.msg }, { status: au.code, headers: cors });
+      const limit = Math.min(2000, Math.max(1, Number(url.searchParams.get("limit")) || 500));
+      const offset = Math.max(0, Number(url.searchParams.get("offset")) || 0);
+      let total = 0; try { const c = await env.DB.prepare("SELECT COUNT(*) n FROM ai_corpus").first(); total = (c && c.n) || 0; } catch (e) {}
+      const rows = await env.DB.prepare("SELECT id, ts, kind, facts, task, output, model FROM ai_corpus ORDER BY id ASC LIMIT ? OFFSET ?").bind(limit, offset).all();
+      return Response.json({ total: total, offset: offset, returned: ((rows && rows.results) || []).length, samples: (rows && rows.results) || [] }, { headers: cors });
     }
 
     // GET /api/ml-export — 학습표본 내보내기(현재 featVer만). 페이지네이션: ?limit&offset. 트레이너가 이걸 당겨감.
@@ -24924,7 +24965,7 @@ async function mlMonthlyReport(DB, ym, force, env) {
         if (env && env.AI && _essay && _essay.length > 300) {
           const _sum = await _aiNarrate(env, _essay.slice(0, 6000),
             "위 월간 리포트 사실을 근거로, 펀드 운용역이 쓰는 '이달의 총평'을 작성해줘. 성과·시장국면·리스크·다음 달 방침을 흐름 있게 짚되 수치는 사실 그대로 인용. 투자권유는 피해.",
-            { style: "8~12문장, 문단 2개 이내. 제목·머리말 없이 본문만.", maxTokens: 900, temperature: 0.4 });
+            { style: "8~12문장, 문단 2개 이내. 제목·머리말 없이 본문만.", maxTokens: 900, temperature: 0.4, corpus: { DB: DB, kind: "report" } });
           if (_sum && _sum.length > 120) { report.text = "## 🧠 이달의 총평 (AI)\n" + _sum + "\n\n" + report.text; report.aiSummary = true; }
         }
       } catch (e) {}
