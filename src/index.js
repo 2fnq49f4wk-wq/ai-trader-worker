@@ -23868,6 +23868,17 @@ async function _aiAskSnapshot(DB, sym, scanCache) {
 const _CRISIS_KW = ["war", "invasion", "invade", "missile", "airstrike", "conflict", "sanction",
   "nuclear", "escalat", "military strike", "troops", "warfare", "ceasefire", "embargo", "blockade",
   "coup", "terror", "retaliat", "border clash", "shelling", "drone attack", "warship", "军事", "전쟁"];
+// [V32.33] 지정학 위험 키워드 가중 2단 — strong(무력충돌 직접) / med(긴장·제재). 활성전쟁을 확실히 잡는다.
+const _GEO_STRONG = ["war", "invasion", "invade", "missile", "airstrike", "air strike", "strikes on",
+  "nuclear", "ballistic", "bombard", "bombing", "offensive", "killed", "casualties", "warplane",
+  "warship", "siege", "shelling", "rocket attack", "drone attack", "military strike", "attack on",
+  "troops enter", "ground assault", "combat", "warfare", "군사", "전쟁", "미사일", "공습"];
+const _GEO_MED = ["conflict", "sanction", "escalat", "troops", "tension", "clash", "retaliat",
+  "ceasefire", "embargo", "blockade", "coup", "terror", "hostage", "front line", "deploy",
+  "seized", "standoff", "provocation", "border", "hormuz", "제재", "분쟁", "긴장", "도발"];
+// 활성 무력분쟁 판별용 고신호 조합(행위자/지역 + 무력) — 있으면 강한 가중
+const _GEO_HOTSPOT = ["iran", "israel", "gaza", "lebanon", "hezbollah", "hamas", "ukraine", "russia",
+  "taiwan", "north korea", "houthi", "red sea", "strait of hormuz", "syria", "yemen"];
 // [V32.31] ★전역 RSS 파서★ — 종전 _parseRssItems는 updateSectorNewsSentiment 내부 지역함수라
 //   crisis 게이지·world 뉴스에서 못 썼고(호출 시 ReferenceError→지정학 뉴스 스캔이 조용히 실패했다).
 //   전역으로 빼서 세 곳이 공유한다.
@@ -23981,33 +23992,64 @@ async function _luxCrisisGauge(DB, opts) {
   if (usd != null && usd >= 1) { mkt += 4; drivers.push("달러지수 +" + usd.toFixed(1) + "% (달러 피난)"); }
   mkt = Math.min(55, mkt);
 
-  // 지정학 뉴스 스캔 — 구글뉴스 RSS 1쿼리(키 불필요). 위기 키워드 적중수로 0~30점.
+  // [V32.33] ★지정학 뉴스 스캔 강화★ — 세계 톱뉴스(WORLD/BUSINESS) + 무력분쟁 전용쿼리 2개를 함께 스캔,
+  //   strong/med 가중·핫스팟 조합·활성전쟁 클러스터 탐지로 진행 중인 전쟁을 확실히 포착(종전 1쿼리·상한30 한계 해소).
   let newsPts = 0, newsHits = 0, headHits = [];
+  let strongN = 0, medN = 0, hotN = 0;
   try {
-    if (typeof fetchBudgetLeft === "function" ? fetchBudgetLeft() > 4 : true) {
-      const gUrl = "https://news.google.com/rss/search?q=" + encodeURIComponent("war OR invasion OR military conflict OR sanctions markets") + "&hl=en-US&gl=US&ceid=US:en";
-      const gr = await fetch(gUrl, { headers: { "User-Agent": "Mozilla/5.0 (compatible)" } });
-      if (gr.ok) {
-        const items = _parseRss(await gr.text(), 40);
-        const _now = Date.now(), _seen = {};
-        for (const it of items) {
-          // [V32.32] 최신성 필터 — 30h 초과 옛 뉴스 제외(옛 전쟁 이슈가 현재 위기로 오판되는 것 방지) + 중복제거
-          if (it.pubTs != null && (_now - it.pubTs) > _WNEWS_MAXAGE_H * 3600000) continue;
-          const nk = String(it.title || "").toLowerCase().replace(/[^a-z0-9 ]/g, "").slice(0, 60); if (nk && _seen[nk]) continue; _seen[nk] = 1;
-          const low = String(it.title || "").toLowerCase();
-          for (const kw of _CRISIS_KW) { if (low.indexOf(kw) >= 0) { newsHits++; if (headHits.length < 4) headHits.push(String(it.title).slice(0, 90) + (it.pubTs != null ? " (" + Math.round((_now - it.pubTs) / 3600000) + "h)" : "")); break; } }
-        }
+    const _now = Date.now(), _seen = {}, cand = [];
+    const _addItems = function (items) {
+      for (const it of (items || [])) {
+        if (it.pubTs != null && (_now - it.pubTs) > _WNEWS_MAXAGE_H * 3600000) continue;   // 30h 초과 제외(옛 이슈 오판 방지)
+        const title = String(it.title || "");
+        const nk = title.toLowerCase().replace(/[^a-z0-9가-힣 ]/g, "").replace(/\s+/g, " ").slice(0, 60);
+        if (!nk || _seen[nk]) continue; _seen[nk] = 1;
+        cand.push({ title: title, low: title.toLowerCase(), ageH: it.pubTs != null ? Math.round((_now - it.pubTs) / 3600000) : null });
+      }
+    };
+    // (1) 세계·경제 톱뉴스(브로드) — 이란 전쟁 같은 톱스토리를 여기서 잡는다(SWR 캐시라 대개 fetch 0)
+    try { const wn = await _luxWorldNews(DB, {}); if (wn && wn.headlines) _addItems(wn.headlines.map(function (h) { return typeof h === "string" ? { title: h, pubTs: null } : { title: h.title, pubTs: h.pubTs != null ? (_now - h.ageH * 3600000) : null }; })); } catch (e) {}
+    // (2) 무력분쟁 전용 쿼리(예산 있을 때) — 'markets' 제한 없이 넓게
+    if (typeof fetchBudgetLeft === "function" ? fetchBudgetLeft() > 5 : true) {
+      const queries = ["war OR airstrike OR missile OR invasion OR military conflict OR escalation",
+        "Iran OR Israel OR Ukraine OR Taiwan OR Middle East conflict war"];
+      for (const qy of queries) {
+        try {
+          const gr = await fetch("https://news.google.com/rss/search?q=" + encodeURIComponent(qy) + "&hl=en-US&gl=US&ceid=US:en", { headers: { "User-Agent": "Mozilla/5.0 (compatible)" } });
+          if (gr.ok) _addItems(_parseRss(await gr.text(), 30));
+        } catch (e) {}
+        try { if (typeof fetchBudgetLeft === "function" && fetchBudgetLeft() <= 4) break; } catch (e) {}
       }
     }
+    // 분류·가중
+    for (const c of cand) {
+      let isStrong = false, isMed = false;
+      for (const kw of _GEO_STRONG) { if (c.low.indexOf(kw) >= 0) { isStrong = true; break; } }
+      if (!isStrong) for (const kw of _GEO_MED) { if (c.low.indexOf(kw) >= 0) { isMed = true; break; } }
+      if (!isStrong && !isMed) continue;
+      let isHot = false; for (const h of _GEO_HOTSPOT) { if (c.low.indexOf(h) >= 0) { isHot = true; break; } }
+      if (isStrong) strongN++; else medN++;
+      if (isHot && (isStrong || isMed)) hotN++;
+      newsHits++;
+      if (headHits.length < 6) headHits.push(c.title.slice(0, 100) + (c.ageH != null ? " (" + c.ageH + "h)" : ""));
+    }
   } catch (e) {}
-  newsPts = newsHits === 0 ? 0 : newsHits <= 2 ? 8 : newsHits <= 5 ? 16 : newsHits <= 10 ? 24 : 30;
-  if (newsHits >= 3) drivers.push("지정학 헤드라인 " + newsHits + "건 (전쟁·분쟁·제재 관련)");
+  // 점수: strong 가중 크게(활성 무력분쟁), hot(행위자+무력) 조합 보너스. 상한 55로 확대.
+  newsPts = Math.min(55, strongN * 7 + medN * 3 + hotN * 3);
+  // 활성 무력분쟁 클러스터 — strong 다수 or 핫스팟 결합이면 '평시' 방지 플로어
+  let geoFloor = 0;
+  if (strongN >= 5 || (strongN >= 3 && hotN >= 2)) geoFloor = 66;        // 위기
+  else if (strongN >= 3 || (strongN >= 2 && hotN >= 1)) geoFloor = 42;   // 경계
+  else if (strongN >= 1 || medN >= 3) geoFloor = 22;                     // 주의
+  if (newsHits >= 3) drivers.push("지정학 헤드라인 " + newsHits + "건(무력 " + strongN + "·긴장 " + medN + (hotN ? "·핫스팟 " + hotN : "") + ")");
+  if (geoFloor >= 42) drivers.unshift("활성 무력분쟁 신호 감지");
 
   // 기존 risk-off 국면(0~15)
   let roPts = 0, regime = null;
   try { const mc = await getState(DB, "mkt_context", null); if (mc) { regime = mc.regime; roPts = mc.regime === "risk_off" ? 15 : mc.regime === "caution" ? 8 : 0; if (roPts) drivers.push("시장 risk-off 국면(" + mc.regime + ")"); } } catch (e) {}
 
-  const score = _clamp(Math.round(mkt + newsPts + roPts), 0, 100);
+  let score = _clamp(Math.round(mkt + newsPts + roPts), 0, 100);
+  if (geoFloor > score) score = geoFloor;   // [V32.33] 활성 전쟁이면 시장이 잠잠해도 최소 위험단계 보장
   const level = score >= 65 ? "위기" : score >= 40 ? "경계" : score >= 20 ? "주의" : "평시";
   const posture = level === "위기"
     ? "신규 진입 대폭 축소·중단, 방어·헤지(인버스/VIX/금) 우선, 보유는 손절 타이트닝."
@@ -24017,10 +24059,11 @@ async function _luxCrisisGauge(DB, opts) {
     ? "평소보다 보수적으로 — 신규 진입 선별, 손절 준수."
     : "특이 위험신호 없음 — 정상 운용.";
   const out = { score: score, level: level, drivers: drivers.slice(0, 8), posture: posture,
-    vix: vix, spx: spx, gold: gold, oil: oil, newsHits: newsHits, headlines: headHits, regime: regime,
+    vix: vix, spx: spx, gold: gold, oil: oil, newsHits: newsHits, strongN: strongN, medN: medN, hotN: hotN, geoFloor: geoFloor,
+    headlines: headHits, regime: regime,
     defenseScale: level === "위기" ? 0.5 : level === "경계" ? 0.7 : level === "주의" ? 0.88 : 1.0, ts: Date.now() };
   try { await setState(DB, "crisis_gauge", out); } catch (e) {}
-  try { await log(DB, level === "평시" ? "INFO" : "WARN", null, "[CRISIS] " + level + " " + score + "/100 · VIX " + (vix != null ? vix.toFixed(1) : "?") + " · 지정학뉴스 " + newsHits + "건" + (drivers.length ? " · " + drivers.slice(0, 3).join("; ") : "")); } catch (e) {}
+  try { await log(DB, level === "평시" ? "INFO" : "WARN", null, "[CRISIS] " + level + " " + score + "/100 · VIX " + (vix != null ? vix.toFixed(1) : "?") + " · 무력 " + strongN + "/긴장 " + medN + "/핫 " + hotN + (geoFloor ? " · 플로어 " + geoFloor : "") + (drivers.length ? " · " + drivers.slice(0, 2).join("; ") : "")); } catch (e) {}
   return out;
 }
 
