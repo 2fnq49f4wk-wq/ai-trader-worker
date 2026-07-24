@@ -14446,6 +14446,43 @@ async function handleRequest(request, env, ctx) {
       return Response.json(r, { headers: cors });
     }
 
+    // [V32.19] GET /api/crisis — 지정학·위기 게이지(대시보드 패널/배너용). SWR: 캐시 즉시 반환 + 백그라운드 갱신.
+    if (path === "/api/crisis") {
+      let cached = null; try { cached = await getState(env.DB, "crisis_gauge", null); } catch (e) {}
+      if (cached && cached.ts && (Date.now() - cached.ts) < 20 * 60000) return Response.json(cached, { headers: cors });
+      // 만료/부재 시 백그라운드 갱신(응답은 있으면 캐시, 없으면 즉시 1회 산출)
+      if (cached) { try { ctx.waitUntil(_luxCrisisGauge(env.DB, {})); } catch (e) {} return Response.json(cached, { headers: cors }); }
+      let g; try { g = await _luxCrisisGauge(env.DB, {}); } catch (e) { g = null; }
+      return Response.json(g || { level: "평시", score: 0, drivers: [], posture: "데이터 수집 중", ts: Date.now() }, { headers: cors });
+    }
+
+    // [V32.19] GET /api/alerts — 실행가능 알림(보유종목 급변동·손절/익절 근접·위기). 기존 상태만 읽음(추가 fetch 0).
+    if (path === "/api/alerts") {
+      const alerts = [];
+      try {
+        const cg = await getState(env.DB, "crisis_gauge", null);
+        if (cg && (cg.level === "경계" || cg.level === "위기")) alerts.push({ level: cg.level === "위기" ? "high" : "mid", icon: cg.level === "위기" ? "🔴" : "🟠", text: "위기 게이지 " + cg.level + "(" + cg.score + "/100) — " + (cg.posture || "방어") });
+        const mkNm = { us: "미국", kr: "한국", cm: "원자재", bdus: "미국채", bdkr: "한국채" };
+        for (const mk of ["us", "kr", "cm", "bdus", "bdkr"]) {
+          let pos = {}; try { pos = await getPositions(env.DB, mk); } catch (e) {}
+          for (const k of Object.keys(pos)) {
+            const p = pos[k];
+            let dd = null; try { dd = await getState(env.DB, "daily:" + p.symbol, null); } catch (e) {}
+            const cur = dd ? (dd.price != null ? dd.price : (Array.isArray(dd.closes) ? dd.closes[dd.closes.length - 1] : null)) : null;
+            if (cur == null) continue;
+            const nm = (typeof NAME_MAP !== "undefined" && NAME_MAP[p.symbol]) || p.symbol;
+            const pnl = (p.avg > 0) ? ((cur / p.avg) - 1) * 100 : null;
+            let dayPct = null; if (dd && dd.prevClose) dayPct = ((cur - dd.prevClose) / dd.prevClose) * 100;
+            if (pnl != null && pnl <= -8) alerts.push({ level: "high", icon: "⚠️", text: nm + " 손실 " + pnl.toFixed(1) + "% — 손절 구간 점검" });
+            else if (pnl != null && pnl >= 15) alerts.push({ level: "mid", icon: "🎯", text: nm + " 수익 +" + pnl.toFixed(1) + "% — 익절 검토" });
+            else if (dayPct != null && Math.abs(dayPct) >= 6) alerts.push({ level: "mid", icon: dayPct >= 0 ? "🚀" : "🔻", text: nm + " 당일 " + (dayPct >= 0 ? "+" : "") + dayPct.toFixed(1) + "% 급" + (dayPct >= 0 ? "등" : "락") });
+          }
+        }
+      } catch (e) {}
+      alerts.sort(function (a, b) { return (a.level === "high" ? 0 : 1) - (b.level === "high" ? 0 : 1); });
+      return Response.json({ alerts: alerts.slice(0, 12), count: alerts.length, ts: Date.now() }, { headers: cors });
+    }
+
     // ── [V9 시각화] 신경망 구조·가중치 강도·위원회 신뢰 — 프론트 "AI 두뇌 관측" 패널용 ──
     //   [V12.36] ?model=dnn(기본)|mind|gbdt — 사이드바 두뇌 페이지에서 3개 모델 구조를 각각 관측.
     if (path === "/api/nn-viz") {
@@ -23762,7 +23799,91 @@ async function mlAiAsk(DB, question) {
         if (!L.length) return { ok: true, answer: "예정된 주요 일정 데이터가 아직 없어. 경제지표·실적 캘린더가 갱신되면 알려줄게." };
         return { ok: true, answer: L.join("\n") };
       }
+      // 7) 왜 안 샀어 — 신규 매수가 없는 이유를 게이트/국면/후보 기준으로 설명
+      if (/왜.*(안\s*사|안\s*샀|매수.*안|안\s*들어|진입.*안|못\s*사)/.test(q)) {
+        const R = ["**신규 매수가 없는(적은) 이유 진단**"];
+        try {
+          const ready = await mlAiReadyState(DB);
+          R.push(ready ? "- AI 위원회: 🟢 가동 중" : "- AI 위원회: 🟡 준비 중 → 규칙엔진이 보수적으로만 진입");
+          const cg = await getState(DB, "crisis_gauge", null);
+          if (cg && (cg.level === "경계" || cg.level === "위기")) R.push("- 위기 게이지 " + cg.level + "(" + cg.score + "/100) → 신규 진입 사이즈 축소·방어 우선");
+          const mc = await getState(DB, "mkt_context", null);
+          if (mc && (mc.regime === "risk_off" || mc.regime === "caution")) R.push("- 시장 국면 " + mc.regime + " → 진입 사이즈 ×" + (mc.sizeScale != null ? mc.sizeScale.toFixed(2) : "?") + "로 위축");
+          const sc = await getState(DB, "ai_picks:scan", null);
+          const picks = (sc && sc.picks) || [];
+          if (!picks.length) R.push("- 스캔 후보가 아직 없음(야간 전종목 스캔 대기)");
+          else {
+            const strong = picks.filter(function (p) { return (p.rankP != null ? p.rankP : p.p) >= 0.55; }).length;
+            R.push("- 스캔 후보 " + picks.length + "개 중 문턱(확률 55%+) 통과 " + strong + "개" + (strong === 0 ? " → 확신 종목이 없어 관망" : " → 이 중 게이트·현금·보유중복 통과분만 진입"));
+          }
+          R.push("\n요약: 후보가 있어도 위원회 확신·리스크 국면·현금/중복 게이트를 모두 통과해야 사. 확신이 약하거나 방어 국면이면 일부러 안 사는 게 정상 동작이야.");
+        } catch (e) {}
+        return { ok: true, answer: R.join("\n") };
+      }
+      // 8) 섹터 로테이션 — 모멘텀+뉴스감성으로 강/약 섹터 랭킹
+      if (/섹터.*(추천|좋|로테이션|강|어디|어느)|어느\s*섹터|강한\s*섹터|섹터\s*순환/.test(q)) {
+        try {
+          const md = await _luxMacroSectorData(DB);
+          const secs = (md && md.sectors) || [];
+          if (!secs.length) return { ok: true, answer: "섹터 데이터가 아직 충분치 않아." };
+          const scored = secs.map(function (s) { return { name: s.name, sc: (s.mom20 != null ? s.mom20 : 0) + (s.senti != null ? s.senti * 3 : 0), mom20: s.mom20, senti: s.senti }; }).sort(function (a, b) { return b.sc - a.sc; });
+          const fmtS = function (s) { return s.name + " (모멘텀 " + (s.mom20 != null ? (s.mom20 >= 0 ? "+" : "") + s.mom20 + "%" : "—") + (s.senti != null ? ", 감성 " + (s.senti >= 0 ? "+" : "") + s.senti : "") + ")"; };
+          const top = scored.slice(0, 3).map(function (s) { return "- " + fmtS(s); }).join("\n");
+          const bot = scored.slice(-2).map(function (s) { return "- " + fmtS(s); }).join("\n");
+          return { ok: true, answer: "**섹터 로테이션(모멘텀+뉴스감성)**\n\n💪 강한 섹터:\n" + top + "\n\n😴 약한 섹터:\n" + bot + "\n\n_강한 섹터 안에서 종목 선별이 유리해. 확정 예측이 아니라 현재 온도야._" };
+        } catch (e) { return { ok: true, answer: "섹터 데이터 조회 중 문제가 있었어." }; }
+      }
+      // 9) What-if 정성 — "금리/유가/달러/환율 오르면?" 대표적 파급 설명(+정량은 what-if 시뮬레이터 안내)
+      if (/오르면|내리면|상승하면|하락하면|급등하면|급락하면|터지면|나면|되면/.test(q) && /금리|유가|기름|달러|환율|원화|물가|인플레|전쟁|경기|침체/.test(q)) {
+        const up = /오르면|상승|급등|올라/.test(q);
+        let topic = "금리", body = "";
+        if (/유가|기름/.test(q)) { topic = "유가"; body = up ? "유가↑ → 에너지·정유주 수혜, 항공·운송·소비재 부담, 인플레·금리 재상승 압력. 중동·분쟁발이면 방산·금도 강세." : "유가↓ → 항공·운송·소비 수혜, 에너지주 부담, 인플레 완화(성장주 우호)."; }
+        else if (/달러|환율|원화/.test(q)) { topic = "환율/달러"; body = up ? "달러 강세(원화 약세) → 수출주(자동차·조선) 우호, 외국인 수급·원자재수입주 부담, 신흥국 자산 압력." : "달러 약세(원화 강세) → 수입·내수주 우호, 외국인 유입 기대, 수출주 환차손 주의."; }
+        else if (/물가|인플레/.test(q)) { topic = "물가"; body = up ? "인플레↑ → 금리 상승 압력(성장·기술주 역풍), 원자재·에너지·금융 상대 우위, 실질소비 둔화." : "인플레↓(디스인플레) → 금리 인하 기대(성장·장기듀레이션 우호), 소비 회복 기대."; }
+        else if (/전쟁|경기|침체/.test(q)) { topic = "위기/경기"; body = "전쟁·침체 리스크↑ → 안전자산(금·국채·달러)·방산 상대 강세, 고베타·성장·수출민감주 변동성↑. 시스템은 위기 게이지로 선제 방어(사이즈 축소·헤지)해."; }
+        else { topic = "금리"; body = up ? "금리↑ → 성장·기술주 역풍(할인율↑), 금융·가치주 상대 우위, 고배당·리츠 부담." : "금리↓ → 성장·장기듀레이션·리츠 우호, 금융 이자마진 부담."; }
+        return { ok: true, answer: "**" + topic + " 시나리오(정성)**\n" + body + "\n\n_정량 추정(내 포지션 영향 %)은 대시보드의 What-if 시뮬레이터에서 팩터·충격을 지정해 볼 수 있어._" };
+      }
     } catch (e) { /* 폴백: 아래 기존 경로 계속 */ }
+  }
+
+  // [V32.19] 종목 지정 + 이유/뉴스 질문 — 스냅샷 분석 전에 먼저 처리
+  if (syms.length) {
+    const s0 = syms[0];
+    // 왜 샀어/왜 팔았어 — trades의 reason + AI 픽 확률로 설명
+    if (/왜.*(샀|매수|팔|매도|보유|들고|담았)/.test(q)) {
+      try {
+        let row = null;
+        try { const r = await DB.prepare("SELECT ts,side,qty,price,pnl_pct,reason FROM trades WHERE symbol=? ORDER BY ts DESC LIMIT 1").bind(s0).all(); row = r && r.results && r.results[0]; } catch (e) {}
+        const nm = NAME_MAP[s0] || s0;
+        let pk = null; try { const sc = await getState(DB, "ai_picks:scan", null); if (sc && sc.picks) pk = sc.picks.find(function (p) { return (p.symbol || p.sym) === s0; }); } catch (e) {}
+        const L = ["**" + nm + " 매매 근거**"];
+        if (row) {
+          const side = row.side === "buy" ? "매수" : "매도";
+          L.push("- 최근 " + side + ": " + new Date(_num(row.ts, 0)).toISOString().slice(0, 10) + " @ " + row.price + (row.pnl_pct != null ? " (실현 " + (row.pnl_pct >= 0 ? "+" : "") + Number(row.pnl_pct).toFixed(1) + "%)" : ""));
+          if (row.reason) L.push("- 사유: " + String(row.reason).slice(0, 180));
+        } else L.push("- 이 종목의 체결 기록은 없어(보유/거래 이력 없음).");
+        if (pk) L.push("- 현재 AI 스캔 확률: " + ((pk.rankP != null ? pk.rankP : pk.p) * 100).toFixed(0) + "%" + (pk.techLabel ? " · 기술패턴 " + pk.techLabel : ""));
+        return { ok: true, answer: L.join("\n") };
+      } catch (e) {}
+    }
+    // 종목 뉴스/소식 — 섹터 뉴스 감성에서 해당 종목 그룹 헤드라인 요약
+    if (/뉴스|소식|헤드라인|이슈/.test(q)) {
+      try {
+        const sn = await getState(DB, "sector_news_sentiment", null);
+        const nm = NAME_MAP[s0] || s0;
+        let grp = null;
+        for (const g of Object.keys(SECTOR_NEWS_REP)) { if (SECTOR_NEWS_REP[g].split(",").indexOf(s0.replace(/\.(KS|KQ)$/, "")) >= 0 || SECTOR_NEWS_REP[g].indexOf(s0) >= 0) { grp = g; break; } }
+        const heads = (sn && sn.headlines && grp && sn.headlines[grp]) ? sn.headlines[grp] : null;
+        if (heads && heads.length) {
+          const rel = heads.filter(function (h) { const t = String((h && h.title) || h).toLowerCase(); return t.indexOf(s0.toLowerCase().split(".")[0]) >= 0 || t.indexOf((nm || "").toLowerCase()) >= 0; }).slice(0, 4);
+          const use = (rel.length ? rel : heads.slice(0, 4)).map(function (h) { return "- " + String((h && h.title) || h).slice(0, 110); });
+          const sci = sn.scores && grp ? sn.scores[grp] : null;
+          return { ok: true, answer: "**" + nm + " 관련 뉴스**" + (sci != null ? " (섹터 감성 " + (sci >= 0 ? "+" : "") + sci.toFixed(2) + ")" : "") + "\n" + use.join("\n") + (rel.length ? "" : "\n_해당 종목 직접 언급 헤드라인이 적어 섹터 뉴스로 대체._") };
+        }
+        return { ok: true, answer: nm + " 관련 뉴스 데이터가 아직 부족해. 섹터 뉴스 수집이 갱신되면 알려줄게." };
+      } catch (e) {}
+    }
   }
 
   const macroKw = ["금리", "연준", "fed", "cpi", "물가", "인플레", "고용", "실업률", "경기", "거시"];

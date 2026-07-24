@@ -2898,6 +2898,11 @@ html[data-theme="light"] .table tbody tr:hover{background:rgba(9,105,218,.045);}
           <div class="fv-panel-head">AI 운용 상태 <span class="fv-panel-sub" id="fvAiModeBadge">확인 중…</span></div>
           <div id="fvAiModeBody" style="padding:8px 10px;font-size:11px;line-height:1.6;color:var(--t2);">로딩 중…</div>
         </div>
+        <!-- [V32.19] 지정학·위기 게이지 패널 — 전쟁 등 국제이슈 대비 상태를 상시 시각화 -->
+        <div class="fv-panel" id="fvCrisisPanel" style="margin-bottom:8px;">
+          <div class="fv-panel-head">지정학·위기 게이지 <span class="fv-panel-sub" id="fvCrisisBadge">확인 중…</span></div>
+          <div id="fvCrisisBody" style="padding:9px 10px;font-size:11px;line-height:1.6;color:var(--t2);">로딩 중…</div>
+        </div>
         <!-- [V12.112] AI에게 물어보기 — 온보드 자연어 Q&A(외부 LLM API 미사용). 사용자 요청으로 대시보드에 유지. -->
         <div class="fv-panel" id="fvAiAskPanel" style="margin-bottom:8px;">
           <div class="fv-panel-head">AI에게 물어보기</div>
@@ -4512,9 +4517,56 @@ html[data-theme="light"] .table tbody tr:hover{background:rgba(9,105,218,.045);}
       inp.value = b.getAttribute('data-q') || ''; ask();
     });
   }
+  // [V32.19] 지정학·위기 게이지 패널 렌더 — /api/crisis 폴링(대시보드 표시 중 3분마다)
+  var __crisisTimer = null;
+  function renderCrisisPanel() {
+    var body = document.getElementById('fvCrisisBody'), badge = document.getElementById('fvCrisisBadge');
+    if (!body) return;
+    fetch('/api/crisis').then(function(r){ return r.json(); }).then(function(d){
+      if (!d) return;
+      var lv = d.level || '평시', sc = d.score != null ? d.score : 0;
+      var col = lv === '위기' ? '#ff4d4f' : lv === '경계' ? '#ff9800' : lv === '주의' ? '#ffd54f' : '#00e676';
+      var emo = lv === '위기' ? '🔴' : lv === '경계' ? '🟠' : lv === '주의' ? '🟡' : '🟢';
+      if (badge) { badge.textContent = emo + ' ' + lv + ' ' + sc + '/100'; badge.style.color = col; }
+      var baro = [];
+      if (d.vix != null) baro.push('VIX ' + d.vix.toFixed(1));
+      if (d.spx != null) baro.push('S&P ' + (d.spx>=0?'+':'') + d.spx.toFixed(1) + '%');
+      if (d.gold != null) baro.push('금 ' + (d.gold>=0?'+':'') + d.gold.toFixed(1) + '%');
+      if (d.oil != null) baro.push('유가 ' + (d.oil>=0?'+':'') + d.oil.toFixed(1) + '%');
+      var html = '';
+      html += '<div style="height:8px;border-radius:5px;background:rgba(255,255,255,.08);overflow:hidden;margin-bottom:7px;">'
+        + '<div style="height:100%;width:'+Math.max(3,Math.min(100,sc))+'%;background:'+col+';transition:width .4s;"></div></div>';
+      if (baro.length) html += '<div style="font-family:IBM Plex Mono,monospace;font-size:10px;color:var(--t3,#8fa6c8);margin-bottom:5px;">'+baro.join(' · ')+(d.newsHits?' · 지정학뉴스 '+d.newsHits+'건':'')+'</div>';
+      if (d.drivers && d.drivers.length) html += '<div style="margin-bottom:5px;">'+d.drivers.slice(0,4).map(function(x){return '• '+escapeHtml(x);}).join('<br>')+'</div>';
+      if (d.posture) html += '<div style="color:'+col+';font-weight:600;">▶ '+escapeHtml(d.posture)+'</div>';
+      html += '<div id="fvAlertsInline" style="margin-top:7px;"></div>';
+      body.innerHTML = html || '특이 위험신호 없음 — 정상 운용.';
+      // 보유종목 급변동·손절/익절 근접 알림
+      fetch('/api/alerts').then(function(r){return r.json();}).then(function(a){
+        var box = document.getElementById('fvAlertsInline'); if (!box) return;
+        if (badge && a && a.count) badge.textContent += ' · 🔔' + a.count;
+        if (!a || !a.alerts || !a.alerts.length) return;
+        box.innerHTML = '<div style="border-top:1px solid rgba(255,255,255,.08);padding-top:6px;margin-top:2px;font-size:10.5px;">'
+          + '<div style="color:var(--t3,#8fa6c8);margin-bottom:3px;">🔔 실행 알림</div>'
+          + a.alerts.map(function(x){ return '<div style="color:'+(x.level==='high'?'#ff6b6b':'var(--t2,#9fb4dc)')+';">'+x.icon+' '+escapeHtml(x.text)+'</div>'; }).join('')
+          + '</div>';
+      })['catch'](function(){});
+      // 상단 경고 배너 — 경계/위기일 때만
+      var ban = document.getElementById('fvCrisisBanner');
+      if (lv === '경계' || lv === '위기') {
+        if (!ban) { ban = document.createElement('div'); ban.id = 'fvCrisisBanner';
+          ban.style.cssText = 'position:sticky;top:0;z-index:50;padding:7px 12px;font-size:11.5px;font-weight:600;text-align:center;border-radius:6px;margin-bottom:8px;';
+          var host = document.getElementById('fvCrisisPanel'); if (host && host.parentNode) host.parentNode.insertBefore(ban, host); }
+        ban.style.background = 'rgba('+(lv==='위기'?'255,77,79':'255,152,0')+',.16)';
+        ban.style.border = '1px solid ' + col; ban.style.color = col;
+        ban.textContent = emo + ' 위기 경보: ' + lv + ' (' + sc + '/100) — ' + (d.posture||'방어 모드');
+      } else if (ban) { ban.remove(); }
+    })['catch'](function(){});
+  }
   function renderFvDeck(state) {
     try { renderAiModePanel(); } catch(e) {}
     try { bindAiAskPanel(); } catch(e) {}
+    try { renderCrisisPanel(); if (!__crisisTimer) __crisisTimer = setInterval(renderCrisisPanel, 180000); } catch(e) {}
     // ① 지수 패널 행
     var row = $('fvIndexRow');
     if (row && state.indices && state.indices.length) {
