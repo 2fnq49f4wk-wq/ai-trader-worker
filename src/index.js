@@ -4929,12 +4929,111 @@ function buildLLMPrompt(market, context, opts) {
     "JSON만 출력하세요. confidence는 0~1 사이. 설명/머리말/코드블록 표시 모두 금지.";
 }
 
+// [V32.23] ★내부 시장분석 엔진 — 외부 LLM 대체★ 종전 LLM이 만들던 매매지시(sentiment·sizing·
+//   신호비활성·회피종목·손절조정)를 시장데이터·성과통계·위기게이지로부터 결정론적으로 계산한다.
+//   LLM의 '판단'을 통계·규칙으로 치환 → 즉답·무료·재현가능·과금 0. 오히려 신호 disable/avoid는
+//   기대값(expectancy) 기반이라 LLM 추정보다 데이터 정합적이다.
+function computeInternalInstruction(context, cfg, extra) {
+  extra = extra || {};
+  const snap = context.marketSnapshot || {};
+  const l7 = context.last7days || {};
+  const worst = (typeof snap.worstIndexChangePct === "number") ? snap.worstIndexChangePct : 0;
+  const idx20 = (typeof l7.marketTrendIdx20 === "number") ? l7.marketTrendIdx20 : null;
+  const cg = extra.crisis || null;         // {level, score, defenseScale}
+  const mc = extra.mktCtx || null;         // {regime, sizeScale}
+
+  // ── 1) 국면·심리 판정 ──
+  let regime, sentiment;
+  const crisisHot = cg && (cg.level === "위기" || cg.level === "경계");
+  if ((idx20 != null && idx20 <= -4) || worst <= -2 || (cg && cg.level === "위기")) { regime = "강한 약세"; sentiment = "bearish"; }
+  else if ((idx20 != null && idx20 < 0) || worst <= -1 || (cg && cg.level === "경계")) { regime = "약세/조정"; sentiment = "bearish"; }
+  else if (idx20 != null && idx20 >= 3 && worst >= -0.2) { regime = "강세"; sentiment = "bullish"; }
+  else { regime = "중립/횡보"; sentiment = "neutral"; }
+
+  // ── 2) 포지션 사이징 배율 — 위기·국면·성과 결합(오직 방어적으로 축소) ──
+  let scale = 1.0;
+  if (mc && typeof mc.sizeScale === "number") scale *= mc.sizeScale;
+  if (cg && typeof cg.defenseScale === "number") scale *= cg.defenseScale;
+  // 최근 성과가 나쁘지만 '시장 탓'이 아니면 추가 축소(시스템 결함 신호)
+  if (l7.trades >= 10 && l7.winRate < 0.35 && !l7.lossLikelyMarketDriven) scale *= 0.85;
+  scale = Math.max(0.3, Math.min(1.3, scale));
+
+  // ── 3) 매수 허용 여부 — 위기/강한약세면 신규매수 중단 ──
+  const buyEnabled = !(cg && cg.level === "위기") && !(regime === "강한 약세" && worst <= -2);
+
+  // ── 4) 신호 비활성 — 기대값 음수 & 표본충분(데이터 기반) ──
+  const disable = [];
+  for (const s of (context.worstSignals || [])) {
+    if (s && typeof s.exp === "number" && s.exp < 0 && (s.count || 0) >= 8 && (s.avgPnl == null || s.avgPnl < 0)) disable.push(s.name);
+    if (disable.length >= 5) break;
+  }
+
+  // ── 5) 회피 종목 — 최근 최악 손실 종목이 심하면 ──
+  const avoid = [];
+  if (l7.worstTrade && l7.worstTrade.symbol && (l7.worstTrade.pnl_pct != null) && l7.worstTrade.pnl_pct <= -12) avoid.push(l7.worstTrade.symbol);
+
+  // ── 6) 확신도 — 국면 명확성·표본 ──
+  let conf = 0.5;
+  if (idx20 != null && Math.abs(idx20) >= 3) conf += 0.2;
+  if (crisisHot) conf += 0.15;
+  if (l7.trades >= 10) conf += 0.1;
+  conf = Math.max(0.1, Math.min(0.95, conf));
+
+  // ── 7) 손절 조정 — 위기국면이면 타이트닝 ──
+  let stop = null;
+  if (cg && cg.level === "위기") stop = { new_pct: -6 };
+  else if (cg && cg.level === "경계") stop = { new_pct: -8 };
+
+  // ── 8) 요약·근거(내러티브) ──
+  const perfTxt = l7.trades > 0 ? ("7일 " + l7.trades + "건, 승률 " + (l7.winRate * 100).toFixed(0) + "%, 평균 " + (l7.avgPnl >= 0 ? "+" : "") + l7.avgPnl.toFixed(1) + "%") : "최근 청산거래 적음";
+  const summary = "[내부분석] 국면 " + regime + "(지수20일 " + (idx20 != null ? (idx20 >= 0 ? "+" : "") + idx20 + "%" : "n/a") + ", 당일최저 " + worst + "%)" +
+    (cg ? " · 위기 " + cg.level + "(" + cg.score + ")" : "") + " → 사이즈×" + scale.toFixed(2) + (buyEnabled ? "" : ", 신규매수 중단") +
+    (disable.length ? ", 비활성 " + disable.length + "신호" : "") + ". " + perfTxt + ".";
+  const reasoning = {
+    market_regime: regime + " — 지수20일 " + (idx20 != null ? idx20 + "%" : "n/a") + ", 당일최저지수 " + worst + "%" + (cg ? ", 위기게이지 " + cg.level + "/" + cg.score : ""),
+    performance: perfTxt + (l7.lossLikelyMarketDriven ? " (손실은 시장하락 영향 가능 — 과잉 축소 자제)" : ""),
+    signal_quality: disable.length ? ("기대값 음수·표본충분 신호 " + disable.length + "개 비활성: " + disable.join(", ")) : "비활성 대상 신호 없음(전부 기대값 양호/표본부족)",
+    symbol_risk: avoid.length ? ("최근 대형손실 종목 회피: " + avoid.join(", ")) : "특정 종목 집중손실 없음",
+    macro_influence: mc ? ("시장 risk 국면 " + mc.regime + "(사이즈 기여 ×" + (mc.sizeScale != null ? mc.sizeScale.toFixed(2) : "1") + ")") : "거시/risk 컨텍스트 미확보"
+  };
+
+  return { sentiment: sentiment, summary: summary, reasoning: reasoning, confidence: conf,
+    buy_signals: { enabled: buyEnabled }, sell_signals: { enabled: true },
+    disable_signals: disable, avoid_symbols: avoid, position_sizing: { scale: scale }, stop_loss_adjustment: stop };
+}
+
+async function runInternalDailyAnalysis(env, market) {
+  const DB = env.DB;
+  try {
+    const cfg = migrateCfgToMarkets(Object.assign({}, DEFAULT_CFG, await getState(DB, "cfg", {})));
+    const llmCfg = cfg.llmHybrid || {};
+    const context = await collectLLMContext(DB, env, market);
+    let crisis = null, mktCtx = null;
+    try { crisis = await getState(DB, "crisis_gauge", null); } catch (e) {}
+    try { mktCtx = await getState(DB, "mkt_context", null); } catch (e) {}
+    const raw = computeInternalInstruction(context, cfg, { crisis: crisis, mktCtx: mktCtx });
+    const sanitized = sanitizeInstruction(raw, llmCfg, context);
+    const instruction = Object.assign({}, sanitized, { source: "internal", generatedAt: Date.now(), expiresAt: Date.now() + 24 * 3600000 });
+    await setState(DB, "llm_daily:" + market, instruction);
+    try {
+      await log(DB, "INFO", null, "[내부분석] " + market + " " + sanitized.sentiment + " sizing×" + sanitized.position_sizing.scale +
+        " buy=" + sanitized.buy_signals.enabled + " avoid=" + sanitized.avoid_symbols.length + " disable=" + sanitized.disable_signals.length +
+        " | " + (sanitized.reasoning ? sanitized.reasoning.market_regime.slice(0, 70) : ""));
+    } catch (e) {}
+    return { ok: true, internal: true, instruction: instruction };
+  } catch (e) {
+    try { await log(DB, "WARN", null, "[내부분석] 실패(" + market + "): " + (e && e.message)); } catch (e2) {}
+    return { ok: false, reason: "internal_error", error: e && e.message };
+  }
+}
+
 async function runLLMDailyAnalysis(env, market, forceRun = false) {
   const DB = env.DB;
   const cfg = migrateCfgToMarkets(Object.assign({}, DEFAULT_CFG, await getState(DB, "cfg", {})));
   const llmCfg = cfg.llmHybrid || {};
 
-  if (EXTERNAL_LLM_DISABLED) return { ok: false, reason: "external_llm_disabled" };   // [V32.22] 외부 API 금지 — AI 위원회+규칙엔진으로 운용
+  // [V32.23] 외부 LLM 금지 → 내부 시장분석 엔진으로 동일 매매지시 생성(무료·즉답·재현가능)
+  if (EXTERNAL_LLM_DISABLED) return await runInternalDailyAnalysis(env, market);
   if (!llmCfg.enabled) {
     return { ok: false, reason: "disabled" };
   }
@@ -5132,12 +5231,50 @@ function sanitizeMacroValue(rawVal, range) {
   return str;
 }
 
+// [V32.23] ★내부 거시/금리 엔진 — 외부 web_search 대체★ 무료 야후 금리·상품 심볼로 시중금리·수익률곡선·
+//   인플레 압력 프록시를 실시간 산출한다. 공식 CPI/실업률은 시세로 못 구하므로(외부발표) 기존 캐시 보존.
+//   대신 ^IRX(13주 T-bill)=정책금리 근사, ^FVX/^TNX/^TYX=수익률곡선, 곡선역전=침체신호를 제공한다.
+async function runInternalMacroUpdate(env, forceRun) {
+  const DB = env.DB;
+  try {
+    // 신선도 게이트 — 60분 이내 내부갱신본 있으면 스킵(매 사이클 batch quote 낭비 방지)
+    if (!forceRun) { try { const _p = await getState(DB, "macro_data", null); if (_p && _p.source === "internal_yahoo_rates" && _p.updatedAt && (Date.now() - _p.updatedAt) < 60 * 60000) return { ok: true, cached: true }; } catch (e) {} }
+    try { if (typeof fetchBudgetLeft === "function" && fetchBudgetLeft() < 4) return { ok: false, reason: "budget" }; } catch (e) {}
+    let q = null;
+    try { q = await fetchBatchQuotes(["^IRX", "^FVX", "^TNX", "^TYX", "GC=F", "CL=F", "HG=F", "DX-Y.NYB"], { DB: DB }); } catch (e) {}
+    if (!q) return { ok: false, reason: "no_quotes" };
+    const val = function (s) { return (q[s] && typeof q[s].price === "number") ? q[s].price : null; };
+    const irx = val("^IRX"), y5 = val("^FVX"), y10 = val("^TNX"), y30 = val("^TYX");
+    const gold = q["GC=F"] ? q["GC=F"].dayPct : null, oil = q["CL=F"] ? q["CL=F"].dayPct : null, copper = q["HG=F"] ? q["HG=F"].dayPct : null, dxy = q["DX-Y.NYB"] ? q["DX-Y.NYB"].dayPct : null;
+    const prev = await getState(DB, "macro_data", { us: {}, kr: {}, updatedAt: null });
+    const next = Object.assign({}, prev, { us: Object.assign({}, prev.us), kr: Object.assign({}, prev.kr), updatedAt: Date.now(), source: "internal_yahoo_rates" });
+    const today = new Date().toISOString().slice(0, 10);
+    const setRate = function (key, v, suffix) { if (v != null) next.us[key] = { value: v.toFixed(2) + (suffix || ""), asOf: today, released: "", source_url: "", fetchedAt: Date.now(), proxy: true }; };
+    // 정책금리 근사 = 13주 T-bill(^IRX) — 연준금리와 통상 ±0.2%p
+    setRate("fed_rate", irx, "% (시장금리 프록시·^IRX)");
+    setRate("ust5y", y5); setRate("ust10y", y10); setRate("ust30y", y30);
+    // 수익률곡선(10년-3개월) — 음수면 역전(침체 선행신호)
+    const curve = (y10 != null && irx != null) ? (y10 - irx) : null;
+    next.us._rates = { short3mo: irx, y5: y5, y10: y10, y30: y30, curve10_3mo: curve != null ? +curve.toFixed(2) : null, inverted: curve != null ? curve < 0 : null, ts: Date.now() };
+    // 인플레 압력 프록시(공식 CPI 아님) — 상품·달러 당일 흐름
+    next.us._inflationProxy = { gold: gold, oil: oil, copper: copper, dxy: dxy,
+      pressure: (oil != null && oil >= 2) || (gold != null && gold >= 1.5) ? "상승압력" : (oil != null && oil <= -2) ? "완화" : "중립", ts: Date.now() };
+    await setState(DB, "macro_data", next);
+    try { await log(DB, "INFO", null, "[내부거시] 정책금리≈" + (irx != null ? irx.toFixed(2) : "?") + "% · 10년 " + (y10 != null ? y10.toFixed(2) : "?") + "% · 곡선(10Y-3M) " + (curve != null ? (curve >= 0 ? "+" : "") + curve.toFixed(2) + "%p" + (curve < 0 ? " ⚠️역전" : "") : "?")); } catch (e) {}
+    return { ok: true, internal: true, short: irx, y10: y10, curve: curve };
+  } catch (e) {
+    try { await log(DB, "WARN", null, "[내부거시] 실패: " + (e && e.message)); } catch (e2) {}
+    return { ok: false, reason: "internal_error", error: e && e.message };
+  }
+}
+
 async function runMacroUpdate(env, forceRun = false) {
   const DB = env.DB;
   const cfg = migrateCfgToMarkets(Object.assign({}, DEFAULT_CFG, await getState(DB, "cfg", {})));
   const mCfg = cfg.macro || {};
 
-  if (EXTERNAL_LLM_DISABLED) return { ok: false, reason: "external_llm_disabled" };   // [V32.22] 외부 API(web_search) 금지 — 거시지표는 캐시/무료소스만
+  // [V32.23] 외부 web_search 금지 → 내부 야후 금리엔진으로 시중금리·수익률곡선 산출(공식 CPI/실업률은 캐시 보존)
+  if (EXTERNAL_LLM_DISABLED) return await runInternalMacroUpdate(env, forceRun);
   if (!mCfg.enabled && !forceRun) {
     return { ok: false, reason: "disabled" };
   }
@@ -23970,7 +24107,9 @@ async function mlAiAsk(DB, question) {
       if (mc.cpi != null) parts.push("CPI는 " + mc.cpi.toFixed(1) + "%로 " + (mc.cpi >= 3 ? "목표(2%)를 뚜렷이 웃돌아 조기·대폭 인하 기대는 제한적이야." : mc.cpi >= 2.3 ? "목표선에 근접해가는 디스인플레이션 흐름이야." : "목표를 밑도는 안정 국면이야."));
       if (mc.unemployment != null) parts.push("실업률은 " + mc.unemployment.toFixed(1) + "%로 " + (mc.unemployment >= 4.5 ? "완만한 둔화 신호가 보여." : "아직 견조해."));
       if (mc.ten != null) parts.push("미 10년물 금리는 " + mc.ten.toFixed(2) + "%" + (mc.ten20 != null ? "(최근 한 달 " + (mc.ten20 >= 0 ? "+" : "") + mc.ten20.toFixed(2) + "%p)" : "") + "야." + (mc.ten20 != null && mc.ten20 >= 0.15 ? " 금리 상승은 성장주엔 역풍, 금융·가치주엔 상대적 우호로 봐." : mc.ten20 != null && mc.ten20 <= -0.15 ? " 금리 하락은 성장주·장기듀레이션 자산에 우호적이야." : ""));
-      return { ok: true, answer: parts.join(" ") || "관련 거시 데이터를 아직 충분히 못 모았어." };
+      // [V32.23] 내부 금리엔진의 수익률곡선(10Y-3M) — 역전은 침체 선행신호
+      try { const _md = await getState(DB, "macro_data", null); const _r = _md && _md.us && _md.us._rates; if (_r && _r.curve10_3mo != null) parts.push("수익률곡선(10년-3개월)은 " + (_r.curve10_3mo >= 0 ? "+" : "") + _r.curve10_3mo + "%p로 " + (_r.inverted ? "**역전** 상태야 — 역사적으로 경기침체 선행신호로 읽혀." : "정상(우상향)이야.")); } catch (e) {}
+      return { ok: true, answer: (parts.join(" ") || "관련 거시 데이터를 아직 충분히 못 모았어.") + "\n_금리는 무료 시장데이터(야후) 기반이고, 공식 CPI·실업률은 외부발표라 최신값은 별도 확인이 필요해._" };
     } catch (e) { return { ok: true, answer: "거시 데이터 조회 중 문제가 있었어." }; }
   }
   // [V12.115] 포트폴리오 질의 — 종목 특정 없이 "내 포지션/보유종목" 등을 물으면 실제 보유현황으로 답변
@@ -25448,8 +25587,9 @@ export default {
         //   여기서 리셋해 컨텍스트 수집·LLM 호출이 예산 경쟁 없이 돈다.
         try { resetFetchBudget(400); } catch (e0) {}  // [PAID] LLM context 수집용 (Paid 여유 활용)
         const _cfg = migrateCfgToMarkets(Object.assign({}, DEFAULT_CFG, await getState(env.DB, "cfg", {})));
-        if (_cfg.llmHybrid && _cfg.llmHybrid.enabled) {
-          const cdMin = _cfg.llmHybrid.failCooldownMin || 15;
+        // [V32.23] 외부 LLM 비활성이어도 내부 분석엔진은 매일 동작 — 종전 enabled 플래그와 무관하게 실행
+        if (EXTERNAL_LLM_DISABLED || (_cfg.llmHybrid && _cfg.llmHybrid.enabled)) {
+          const cdMin = (_cfg.llmHybrid && _cfg.llmHybrid.failCooldownMin) || 15;
           // [V9.8] 선(先)차감 쿨다운: 호출 시작 전에 실패 쿨다운을 먼저 찍는다.
           //   LLM fetch가 매달려 invocation이 통째로 죽으면(markLLMFailed 도달 못함) 다음 cron이
           //   곧장 재시도해 매분 60s씩 폭주했다(로그에 2분 간격 타임아웃 반복). 미리 찍어두면
