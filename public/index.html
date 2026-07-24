@@ -3840,9 +3840,9 @@ html[data-theme="light"] .table tbody tr:hover{background:rgba(9,105,218,.045);}
       <span id="visionBudgetPreview" style="color:var(--pos);">계산 중...</span>
     </div>
     <div class="section-divider"></div>
-    <div class="section-title" style="margin-top:12px;">CLAUDE LLM HYBRID</div>
-    <div class="checkbox-row"><input type="checkbox" id="cfgLlmEnabled"><label for="cfgLlmEnabled"><b>LLM 일일 지시 사용</b></label></div>
-    <div class="hint" style="margin-bottom:8px;">켜면 매일 Claude가 시장을 분석해 sizing·손절·매수신호 ON/OFF를 조정합니다.</div>
+    <div class="section-title" style="margin-top:12px;">AI 일일 지시 (내부 엔진)</div>
+    <div class="checkbox-row"><input type="checkbox" id="cfgLlmEnabled"><label for="cfgLlmEnabled"><b>AI 일일 지시 사용</b></label></div>
+    <div class="hint" style="margin-bottom:8px;">매일 <b>내부 AI 엔진</b>이 시장국면·위기게이지·성과통계로 sizing·손절·매수신호 ON/OFF를 조정합니다. <b>외부 API(Claude) 미사용</b> — 체크 여부와 무관하게 내부 지시는 매일 생성됩니다.</div>
     <div class="section-title" style="margin-top:12px;">TREND STRATEGY</div>
     <!-- US / KR 탭 -->
     <div class="stab-bar">
@@ -9001,18 +9001,10 @@ html[data-theme="light"] .table tbody tr:hover{background:rgba(9,105,218,.045);}
     var meta = $('llmMeta');
     var headerRight = $('llmHeaderRight');
 
-    var enabled = cfg && cfg.llmHybrid && cfg.llmHybrid.enabled;
-    if (!enabled) {
-      chip.className = 'llm-status-chip off';
-      chip.textContent = 'DISABLED';
-      body.innerHTML = 'LLM Hybrid 비활성화됨. SETTINGS → CLAUDE LLM HYBRID에서 켜고 ANTHROPIC_API_KEY를 등록하세요.';
-      meta.style.display = 'none';
-      headerRight.textContent = '';
-      return;
-    }
-
+    // [V32.24] 내부 AI 엔진으로 상시 동작 — 외부 API(Claude) 미사용. 종전 enabled 플래그와 무관하게 매일 생성.
     chip.className = 'llm-status-chip on';
-    chip.textContent = 'ENABLED';
+    chip.textContent = '내부 AI';
+    if (headerRight) headerRight.textContent = '외부 API 미사용';
 
     var us = llmDaily && llmDaily.us;
     var kr = llmDaily && llmDaily.kr;
@@ -9020,9 +9012,8 @@ html[data-theme="light"] .table tbody tr:hover{background:rgba(9,105,218,.045);}
     var hasKr = kr && kr.instruction && (!kr.expiresAt || Date.now() < kr.expiresAt);
 
     if (!hasUs && !hasKr) {
-      body.innerHTML = '활성 지시 없음. 다음 트리거: KR 09:00 KST, US 09:20 ET';
+      body.innerHTML = '활성 지시 없음 — 내부 AI 엔진이 매일 KR 09:00 / US 09:20 트리거에 생성해. 지금 바로 만들려면 아래 ▶ 분석을 눌러.';
       meta.style.display = 'none';
-      headerRight.textContent = '';
       return;
     }
 
@@ -9074,7 +9065,7 @@ html[data-theme="light"] .table tbody tr:hover{background:rgba(9,105,218,.045);}
   }
 
   function llmRun(market) {
-    if (!confirm(market.toUpperCase() + ' 시장 LLM 분석을 지금 실행하시겠습니까?\n(API 키와 cfg.llmHybrid.enabled가 필요합니다)')) return;
+    if (!confirm(market.toUpperCase() + ' 시장 내부 AI 분석을 지금 실행할까요?\n(외부 API 없이 시장데이터·위기게이지·성과통계로 매매지시를 계산합니다)')) return;
     fetch('/api/llm/run', {
       method: 'POST',
       headers: {'content-type': 'application/json'},
