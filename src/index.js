@@ -4639,7 +4639,12 @@ async function collectLLMContext(DB, env, market) {
 //   • 429는 retry-after 헤더 존중
 //   • timeoutMs는 "시도당" 타임아웃 — 전체가 아니라 매 attempt마다 적용
 // 이 함수는 "Claude 서버를 찾을 수 없다" 류의 일시적 연결 실패에 견디도록 설계됨.
+// [V32.22] ★외부 API 전면 차단★ 사용자 지시(외부 API 이용 금지) — 어떤 경로로도 외부 LLM(Anthropic/
+//   AI Gateway) 호출이 나가지 못하게 소스에서 봉쇄한다. 트레이딩은 내부 AI 위원회(MIND/DNN/GBDT)+규칙엔진,
+//   거시·리포트는 내부/무료데이터 폴백으로 동작. 다시 켜려면 이 상수만 false로.
+const EXTERNAL_LLM_DISABLED = true;
 async function callClaude(apiKey, model, prompt, maxTokens, timeoutMs, retryCfg) {
+  if (EXTERNAL_LLM_DISABLED) throw new Error("외부 LLM 비활성화(EXTERNAL_LLM_DISABLED) — 외부 API 미사용 정책");
   retryCfg = retryCfg || {};
   const maxRetries = (typeof retryCfg.maxRetries === "number") ? retryCfg.maxRetries : 3;
   const baseBackoffMs = retryCfg.baseBackoffMs || 1000;
@@ -4929,6 +4934,7 @@ async function runLLMDailyAnalysis(env, market, forceRun = false) {
   const cfg = migrateCfgToMarkets(Object.assign({}, DEFAULT_CFG, await getState(DB, "cfg", {})));
   const llmCfg = cfg.llmHybrid || {};
 
+  if (EXTERNAL_LLM_DISABLED) return { ok: false, reason: "external_llm_disabled" };   // [V32.22] 외부 API 금지 — AI 위원회+규칙엔진으로 운용
   if (!llmCfg.enabled) {
     return { ok: false, reason: "disabled" };
   }
@@ -5131,6 +5137,7 @@ async function runMacroUpdate(env, forceRun = false) {
   const cfg = migrateCfgToMarkets(Object.assign({}, DEFAULT_CFG, await getState(DB, "cfg", {})));
   const mCfg = cfg.macro || {};
 
+  if (EXTERNAL_LLM_DISABLED) return { ok: false, reason: "external_llm_disabled" };   // [V32.22] 외부 API(web_search) 금지 — 거시지표는 캐시/무료소스만
   if (!mCfg.enabled && !forceRun) {
     return { ok: false, reason: "disabled" };
   }
