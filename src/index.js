@@ -24201,6 +24201,22 @@ async function mlAiAsk(DB, question) {
   const { nm, market, price, dayPct, tk, ts, pat, newsS, volConf, atrPct, levels, periodRet, earnReaction, aiP } = S;
   const lines = [];
   lines.push("**" + nm + "(" + sym + ")** 현재가 " + price.toLocaleString() + (market === "kr" ? "원" : "$") + " (" + (dayPct >= 0 ? "+" : "") + dayPct.toFixed(1) + "%)");
+  // [V32.25] ★종합 판단(내부 합성)★ — 기술컨센서스·AI위원회·뉴스·모멘텀·거래량을 0~100 점수로 결합해
+  //   구체적 한 줄 결론을 먼저 제시(Claude 없이도 '구체적' 답변). 전부 이미 로드된 스냅샷 산술 → CPU 0.
+  try {
+    let sc = 50; const drivers = [];
+    const tsAvg = (ts && ts.now && ts.week && ts.month) ? (_num(ts.now.score, 0) * 0.5 + _num(ts.week.score, 0) * 0.3 + _num(ts.month.score, 0) * 0.2) : null;
+    if (tsAvg != null) { sc += tsAvg * 25; drivers.push({ k: "기술추세", v: tsAvg, t: (tsAvg >= 0.2 ? "정배열·상승" : tsAvg <= -0.2 ? "약세·하락압력" : "중립") }); }
+    if (aiP != null) { sc += (aiP - 0.5) * 40; drivers.push({ k: "AI위원회", v: aiP - 0.5, t: "상승확률 " + (aiP * 100).toFixed(0) + "%" }); }
+    if (newsS != null) { sc += _clamp(newsS, -1, 1) * 8; drivers.push({ k: "뉴스심리", v: newsS, t: (newsS >= 0.15 ? "우호" : newsS <= -0.15 ? "부정" : "중립") }); }
+    if (periodRet && periodRet.d20 != null) { sc += _clamp(periodRet.d20, -15, 15) * 0.5; drivers.push({ k: "1달모멘텀", v: periodRet.d20, t: (periodRet.d20 >= 0 ? "+" : "") + periodRet.d20.toFixed(1) + "%" }); }
+    if (volConf != null) { const vb = volConf >= 1.5 ? 4 : volConf >= 1.1 ? 2 : volConf < 0.7 ? -3 : 0; sc += vb; if (Math.abs(vb) >= 2) drivers.push({ k: "거래량", v: vb, t: (volConf >= 1.1 ? "평소 대비 " + volConf.toFixed(1) + "배(관심↑)" : "거래 위축") }); }
+    sc = Math.max(2, Math.min(98, sc));
+    const verdict = sc >= 66 ? "강세 🟢" : sc >= 55 ? "완만한 강세 🟢" : sc >= 45 ? "중립 🟡" : sc >= 34 ? "완만한 약세 🟠" : "약세 🔴";
+    drivers.sort(function (a, b) { return Math.abs(b.v) - Math.abs(a.v); });
+    const drvTxt = drivers.slice(0, 3).map(function (d) { return d.k + " " + (d.v >= 0 ? "＋" : "－") + "(" + d.t + ")"; }).join(", ");
+    lines.push("**종합 판단: " + verdict + " " + Math.round(sc) + "/100** — " + (drvTxt || "데이터 제한적"));
+  } catch (e) {}
   if (ts && ts.now && ts.week && ts.month) {
     const nowS = _num(ts.now.score, 0), weekS = _num(ts.week.score, 0), monthS = _num(ts.month.score, 0), yearS = ts.year ? _num(ts.year.score, 0) : null;
     lines.push("기술 컨센서스 — 지금 " + ts.now.label + "(" + nowS.toFixed(2) + "), 1주 " + ts.week.label + ", 1달 " + ts.month.label + (ts.year ? ", 1년 " + ts.year.label : ""));
@@ -24473,6 +24489,17 @@ function _luxWriteReport(ym, D) {
     }
     S.push("_거시 판단은 자체 수집한 발표치에 근거한 해석이며, 예상 밖 지표·정책 이벤트가 전제를 뒤집을 수 있다._");
   }
+  // ══ 3.55) 지정학·위기 국면 ══ [V32.25] 위기 게이지를 리포트에 통합
+  const cg = D.crisis;
+  if (cg && cg.level) {
+    S.push("\n## 지정학·위기 국면");
+    S.push("현재 위기 게이지는 **" + cg.level + " (" + cg.score + "/100)**" + (cg.vix != null ? ", VIX " + cg.vix.toFixed(1) : "") + ".");
+    if (cg.drivers && cg.drivers.length) S.push("주요 요인: " + cg.drivers.slice(0, 4).join(", ") + ".");
+    S.push(cg.level === "위기" ? "전쟁·급락 등 시스템적 리스크가 높은 국면 — 신규 진입을 대폭 줄이고 방어·헤지를 우선하며, 시스템은 사이즈 자동 축소·손절 타이트닝으로 대응한다."
+      : cg.level === "경계" ? "지정학·변동성 경계 구간 — 고베타·성장주 비중을 관리하고 안전자산(금·국채)에 관심을 두는 것이 합리적이다. 시스템은 진입 사이즈를 축소해 운용한다."
+      : cg.level === "주의" ? "특이 위험은 제한적이나 평소보다 보수적 운용이 무난한 구간이다."
+      : "특이 지정학·시스템 리스크 신호는 낮은 평시 국면이다.");
+  }
   // ══ 3.6) 섹터 코멘트 ══
   const secs = D.sectors;
   if (secs && secs.length) {
@@ -24607,9 +24634,10 @@ async function mlMonthlyReport(DB, ym, force, env) {
     //   전체 리포트(수십 회 D1 조회+NLG)를 재생성해 CPU를 크게 썼다. 이제 force여도 이번 주(토요일 앵커)에
     //   이미 생성된 리포트가 있으면 그대로 반환하고, 주가 바뀌었을 때(=새 토요일 경과)만 재생성한다.
     //   → 실질적으로 토요일마다 1회 생성, 일주일 내내 동일 리포트 재사용.
-    const _wk = _saturdayWeekKey(Date.now());
+    // [V32.25] ★일 1회 갱신(AI 데일리 디렉티브와 동일 리듬)★ 종전 주1회 → KST 하루 단위 키로 변경.
+    //   같은 날엔 캐시 재사용(클릭마다 재생성 0 = CPU 안전), 날짜가 바뀌면 그날 첫 조회 1회만 재생성.
+    const _wk = localDateStr("kr");
     const cached = await getState(DB, key, null);
-    // 이번 주(토요일 앵커)에 이미 생성된 리포트가 있으면 force든 아니든 그대로 재사용 → 주중 재생성 0.
     if (cached && cached.text && cached.weekKey === _wk) {
       return cached;
     }
@@ -24800,8 +24828,9 @@ async function mlMonthlyReport(DB, ym, force, env) {
       } catch (e) {}
       let _olk = null; try { _olk = await mlMarketOutlook(DB); } catch (e) {}
       let _macsec = null; try { _macsec = await _luxMacroSectorData(DB); } catch (e) {}
+      let _crisis = null; try { _crisis = await getState(DB, "crisis_gauge", null); } catch (e) {}
       const _essay = _luxWriteReport(ym, { mkts: mkts, selfreview: _sr, idxRet: _idxRet, outlook: _olk,
-        macro: _macsec ? _macsec.macro : null, sectors: _macsec ? _macsec.sectors : null,
+        macro: _macsec ? _macsec.macro : null, sectors: _macsec ? _macsec.sectors : null, crisis: _crisis,
         mind: mind, dnnT: dnnT, gbdtT: gbdtT, picks: picks, newsTop: newsTop, scanMeta: scanMeta });
       if (_essay && _essay.length > 300) {
         report.textRaw = report.text;
@@ -24809,7 +24838,7 @@ async function mlMonthlyReport(DB, ym, force, env) {
         report.nlg = true;
       }
     } catch (e) { /* NLG 실패 → 원데이터 리포트 그대로 */ }
-    report.weekKey = _wk;   // [V32.2] 이 리포트가 생성된 주(토요일 앵커) — 다음 토요일까지 재사용 판정용
+    report.weekKey = _wk;   // [V32.25] 생성일(KST) — 같은 날 재사용, 날짜 바뀌면 재생성(일 1회 갱신)
     await setState(DB, key, report);
     return report;
   } catch (e) {
