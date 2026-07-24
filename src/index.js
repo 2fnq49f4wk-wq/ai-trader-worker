@@ -6346,18 +6346,15 @@ async function updateMarketContext(DB, cfg) {
 
 // === [섹터 뉴스] Yahoo Finance RSS 무료 뉴스 감성 분석 ===
 // API 키 불필요. 6개 섹터 그룹별 대표 티커 RSS 1 subreq/그룹. 키워드 감성 → sizeScale 조정.
-// [V32.37] 뉴스 대표종목 대폭 확대 — 반도체(NVDA·TSM·AVGO·AMD·ASML·MU…) 앞세워 커버리지↑.
-//   쿼리는 앞 8개까지 사용(updateSectorNewsSentiment). 종목 뉴스 매핑도 이 확장분으로 넓어짐.
+// [V32.38] 뉴스 대표종목 — 6개 분야 골고루 12종씩(어느 한쪽 치우침 없이 균형). 쿼리는 앞 8개 사용.
 const SECTOR_NEWS_REP = {
-  TECH:       "NVDA,TSM,AVGO,AMD,ASML,MU,QCOM,ARM,AMAT,LRCX,MSFT,AAPL,GOOGL,META,MRVL,INTC",
-  FINANCE:    "JPM,GS,BAC,BRK-B,V,MA,MS,WFC,C,BLK,SCHW",
-  HEALTH:     "LLY,JNJ,UNH,PFE,ISRG,MRK,ABBV,TMO,AMGN,VRTX",
-  CONSUMER:   "AMZN,TSLA,WMT,KO,DIS,COST,MCD,NKE,HD,SBUX,PG",
-  INDUSTRIAL: "CAT,GE,RTX,BA,LMT,HON,DE,GD,UNP,UPS,MMM",
-  RESOURCES:  "XOM,CVX,NEE,FCX,LIN,COP,SLB,NEM,DUK,SO"
+  TECH:       "NVDA,MSFT,AAPL,GOOGL,META,AVGO,TSM,AMD,ORCL,CRM,QCOM,ADBE",
+  FINANCE:    "JPM,BAC,GS,MS,V,MA,BRK-B,WFC,C,BLK,SCHW,AXP",
+  HEALTH:     "LLY,JNJ,UNH,MRK,ABBV,PFE,TMO,ABT,AMGN,ISRG,DHR,VRTX",
+  CONSUMER:   "AMZN,TSLA,WMT,COST,HD,MCD,NKE,KO,PG,PEP,DIS,SBUX",
+  INDUSTRIAL: "CAT,GE,RTX,BA,LMT,HON,DE,UNP,UPS,GD,MMM,EMR",
+  RESOURCES:  "XOM,CVX,LIN,COP,SLB,NEE,SO,DUK,FCX,NEM,NUE,PSX"
 };
-// 반도체 전용 뉴스 쿼리(그룹은 TECH이지만 칩 특화 뉴스를 별도로 더 긁어 감성 정확도↑)
-const _SEMI_NEWS_Q = "semiconductor OR chip OR foundry OR GPU OR HBM OR TSMC OR Nvidia OR AI chip export";
 // [V32.35] ★가중 감정 렉시콘 강화★ — 금융·거시·지정학 어휘 확장 + 강/약 가중(2/1) + 부정어 처리.
 //   기존 단순 포함검사(단어 하나=1점) → 토큰 기반 가중·부정 반영으로 정밀도↑. 하위호환(_scoreHeadlines 유지).
 const _NEWS_POS = ["beat","upgrade","strong","growth","record","bullish","surge","rally","above","exceed","profit","buyback","raise","outperform","positive","robust","momentum","rebound","recovery","boom","soar"];
@@ -6662,7 +6659,6 @@ async function updateSectorNewsSentiment(DB, cfg, force) {
     if (fetchBudgetLeft() > (sc.minBudgetReserve || 8)) {
       const reps = SECTOR_NEWS_REP[grp].split(",").slice(0, 8).join(" OR ");
       const queries = [reps + " stock", grp.toLowerCase() + " sector stocks earnings"];
-      if (grp === "TECH") queries.push(_SEMI_NEWS_Q);   // [V32.37] 반도체 특화 뉴스 추가 수집
       for (const q of queries) {
         if (fetchBudgetLeft() <= (sc.minBudgetReserve || 8)) break;
         try {
@@ -25035,9 +25031,9 @@ async function mlMonthlyReport(DB, ym, force, env, ctx) {
     //   전체 리포트(수십 회 D1 조회+NLG)를 재생성해 CPU를 크게 썼다. 이제 force여도 이번 주(토요일 앵커)에
     //   이미 생성된 리포트가 있으면 그대로 반환하고, 주가 바뀌었을 때(=새 토요일 경과)만 재생성한다.
     //   → 실질적으로 토요일마다 1회 생성, 일주일 내내 동일 리포트 재사용.
-    // [V32.25] ★일 1회 갱신(AI 데일리 디렉티브와 동일 리듬)★ 종전 주1회 → KST 하루 단위 키로 변경.
-    //   같은 날엔 캐시 재사용(클릭마다 재생성 0 = CPU 안전), 날짜가 바뀌면 그날 첫 조회 1회만 재생성.
-    const _wk = localDateStr("kr");
+    // [V32.38] ★주 1회 생성·주중 재사용(사용자 설정 복원)★ 토요일(KST) 앵커 주 단위 키.
+    //   같은 주엔 force여도 캐시 그대로 반환(클릭·조회마다 재생성 0). 주가 바뀌면 그 주 첫 조회 1회만 생성.
+    const _wk = _saturdayWeekKey(Date.now());
     const cached = await getState(DB, key, null);
     if (cached && cached.text && cached.weekKey === _wk) {
       return cached;
@@ -25246,7 +25242,7 @@ async function mlMonthlyReport(DB, ym, force, env, ctx) {
       report._aiEssay = null;
       if (env && env.AI && _essay && _essay.length > 300) report._aiEssay = _essay.slice(0, 6000);
     } catch (e) { /* NLG 실패 → 원데이터 리포트 그대로 */ }
-    report.weekKey = _wk;   // [V32.25] 생성일(KST) — 같은 날 재사용, 날짜 바뀌면 재생성(일 1회 갱신)
+    report.weekKey = _wk;   // [V32.38] 생성 주(토요일 앵커) — 다음 토요일까지 재사용(주 1회 생성)
     const _aiEssay = report._aiEssay; delete report._aiEssay;
     await setState(DB, key, report);   // 결정론 리포트 먼저 저장(총평 없이)
     // 총평 백그라운드/인라인 생성 → 같은 키에 병합
