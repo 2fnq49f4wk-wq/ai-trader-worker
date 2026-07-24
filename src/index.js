@@ -23704,6 +23704,70 @@ async function mlAiAsk(DB, question) {
   // ═══ [V32.18] Q&A 확장 — 시스템 성능·모델·추천·매매내역·지수/환율/원자재/코인·일정 ═══
   if (!syms.length) {
     try {
+      // 0a) 오늘의 AI 브리핑 — 국면·위기·픽·성과·알림 종합
+      if (/브리핑|요약해|종합.*알려|오늘.*어때|오늘.*상황|한눈에|전체.*요약|현황.*요약/.test(q)) {
+        const B = ["**📋 오늘의 AI 브리핑**"];
+        try {
+          const ready = await mlAiReadyState(DB);
+          B.push("· 운용: " + (ready ? "AI 자율운용 🟢" : "규칙엔진 폴백 🟡"));
+          const mc = await getState(DB, "mkt_context", null);
+          if (mc) B.push("· 시장 국면: " + (mc.regime || "neutral") + " (진입 사이즈 ×" + (mc.sizeScale != null ? mc.sizeScale.toFixed(2) : "1") + ")");
+          const cg = await getState(DB, "crisis_gauge", null);
+          if (cg) B.push("· 위기 게이지: " + cg.level + " (" + cg.score + "/100)" + (cg.vix != null ? " · VIX " + cg.vix.toFixed(1) : ""));
+          const sr = await getState(DB, "ai_selfreview", null);
+          if (sr && sr.winRate != null) B.push("· 성과: 승률 " + (sr.winRate * 100).toFixed(0) + "%" + (sr.profitFactor != null ? " · PF " + Number(sr.profitFactor).toFixed(2) : ""));
+          const sc = await getState(DB, "ai_picks:scan", null);
+          if (sc && sc.picks && sc.picks.length) { const t3 = sc.picks.slice(0, 3).map(function (p) { return (NAME_MAP[p.symbol] || p.symbol) + " " + ((p.rankP != null ? p.rankP : p.p) * 100).toFixed(0) + "%"; }); B.push("· 상위 후보: " + t3.join(", ")); }
+          // 보유 요약
+          let held = 0, worst = null; for (const mk of ["us", "kr", "cm", "bdus", "bdkr"]) { let pos = {}; try { pos = await getPositions(DB, mk); } catch (e) {} for (const k of Object.keys(pos)) { held++; const p = pos[k]; let dd = null; try { dd = await getState(DB, "daily:" + p.symbol, null); } catch (e) {} const cur = dd ? (dd.price != null ? dd.price : null) : null; if (cur && p.avg > 0) { const pnl = ((cur / p.avg) - 1) * 100; if (worst == null || pnl < worst.pnl) worst = { nm: NAME_MAP[p.symbol] || p.symbol, pnl: pnl }; } } }
+          B.push("· 보유: " + held + "종목" + (worst ? " · 최저 " + worst.nm + " " + (worst.pnl >= 0 ? "+" : "") + worst.pnl.toFixed(1) + "%" : ""));
+          B.push("\n자세히: '지금 시장 위험해?' · '지금 뭐 사?' · '내 포트폴리오 위험도' 로 물어봐.");
+        } catch (e) {}
+        return { ok: true, answer: B.join("\n") };
+      }
+      // 0b) 포트폴리오 위험 X-ray — 집중도·시장/섹터 분산·위기 노출
+      if (/포트폴리오.*(위험|리스크|분산|집중|건강|점검|진단)|분산.*(잘|돼|되|어때)|집중도|리스크.*점검|얼마나.*위험/.test(q)) {
+        try {
+          const rows = [];
+          let total = 0; const byMkt = {};
+          for (const mk of ["us", "kr", "cm", "bdus", "bdkr"]) {
+            let pos = {}; try { pos = await getPositions(DB, mk); } catch (e) {}
+            for (const k of Object.keys(pos)) {
+              const p = pos[k]; let dd = null; try { dd = await getState(DB, "daily:" + p.symbol, null); } catch (e) {}
+              const cur = dd ? (dd.price != null ? dd.price : (Array.isArray(dd.closes) ? dd.closes[dd.closes.length - 1] : null)) : null;
+              const val = (cur != null && p.qty) ? cur * p.qty : (p.avg && p.qty ? p.avg * p.qty : 0);
+              if (val > 0) { rows.push({ nm: NAME_MAP[p.symbol] || p.symbol, val: val, mk: mk }); total += val; byMkt[mk] = (byMkt[mk] || 0) + val; }
+            }
+          }
+          if (!rows.length) return { ok: true, answer: "보유 포지션이 없어서 분산 진단할 게 없어." };
+          rows.sort(function (a, b) { return b.val - a.val; });
+          const topShare = rows[0].val / total * 100;
+          const mkNm = { us: "미국주식", kr: "한국주식", cm: "원자재", bdus: "미국채", bdkr: "한국채" };
+          const mkLines = Object.keys(byMkt).sort(function (a, b) { return byMkt[b] - byMkt[a]; }).map(function (m) { return "  · " + mkNm[m] + " " + (byMkt[m] / total * 100).toFixed(0) + "%"; });
+          const hhi = rows.reduce(function (s, r) { return s + Math.pow(r.val / total, 2); }, 0);
+          const divLabel = hhi > 0.35 ? "🔴 집중(분산 부족)" : hhi > 0.2 ? "🟠 다소 집중" : "🟢 양호";
+          let cg = null; try { cg = await getState(DB, "crisis_gauge", null); } catch (e) {}
+          const L = ["**🩺 포트폴리오 위험 X-ray** (" + rows.length + "종목)"];
+          L.push("- 분산도(HHI): " + divLabel + " (" + hhi.toFixed(2) + ")");
+          L.push("- 최대 비중: " + rows[0].nm + " " + topShare.toFixed(0) + "%" + (topShare >= 35 ? " ⚠️ 단일종목 과다" : ""));
+          L.push("- 자산군 배분:\n" + mkLines.join("\n"));
+          if (cg && (cg.level === "경계" || cg.level === "위기")) L.push("- ⚠️ 현재 위기 게이지 " + cg.level + " — 고베타/성장 비중이 크면 변동성 주의");
+          L.push("\n_평가금액은 최근 저장 시세 기준 참고치야._");
+          return { ok: true, answer: L.join("\n") };
+        } catch (e) { return { ok: true, answer: "포트폴리오 진단 중 문제가 있었어." }; }
+      }
+      // 0c) 시장별 성과 / 내 vs 시장 — 청산거래 시장별 집계
+      if (/시장별.*(성과|수익|승률)|미국.*수익|한국.*수익|어느.*시장.*잘|시장.*비교|전략.*성과|전략.*승률|어떤.*전략/.test(q)) {
+        try {
+          let rows = []; try { const r = await DB.prepare("SELECT market, pnl_pct FROM trades WHERE pnl_pct IS NOT NULL").all(); rows = (r && r.results) || []; } catch (e) {}
+          if (!rows.length) return { ok: true, answer: "아직 청산된 거래가 없어 시장별 성과를 낼 수 없어." };
+          const agg = {}; for (const x of rows) { const m = x.market || "?"; if (!agg[m]) agg[m] = { n: 0, w: 0, sum: 0 }; agg[m].n++; if (_num(x.pnl_pct, 0) > 0) agg[m].w++; agg[m].sum += _num(x.pnl_pct, 0); }
+          const mkNm = { us: "미국주식", kr: "한국주식", cm: "원자재", bdus: "미국채", bdkr: "한국채" };
+          const L = ["**시장별 성과(청산 거래)**"];
+          Object.keys(agg).sort(function (a, b) { return (agg[b].sum / agg[b].n) - (agg[a].sum / agg[a].n); }).forEach(function (m) { const a = agg[m]; L.push("- " + (mkNm[m] || m) + ": 승률 " + (a.w / a.n * 100).toFixed(0) + "% · 평균 " + (a.sum / a.n >= 0 ? "+" : "") + (a.sum / a.n).toFixed(1) + "% (" + a.n + "건)"); });
+          return { ok: true, answer: L.join("\n") };
+        } catch (e) { return { ok: true, answer: "성과 집계 중 문제가 있었어." }; }
+      }
       // 1) 시스템 성능/자기 진단 — 승률·수익·프로핏팩터
       if (/승률|수익률|성과|성능|얼마.*벌|잘하고|잘 하고|프로핏|profit|수익 어때|돈 벌|잘\s*돼|잘\s*되/.test(q) && !/종목|이 주식/.test(q)) {
         const sr = await getState(DB, "ai_selfreview", null);
