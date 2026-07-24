@@ -14687,8 +14687,9 @@ async function handleRequest(request, env, ctx) {
                 // [V32.31/32] 세계·지정학 톱뉴스(최신순, 발행경과 표시) — 최근 것만 '현재 이슈'로 인용하게
                 const wn = _S["world_news"];
                 if (wn && wn.headlines && wn.headlines.length) {
-                  const _hl = wn.headlines.slice(0, 8).map(function (h) { return (typeof h === "string" ? h : (h.title + (h.ageH != null ? " (" + h.ageH + "시간 전)" : " (시각미상)"))); });
-                  ctxBits += "\n[세계·경제 톱뉴스 · 최신순]\n- " + _hl.join("\n- ") + "\n(주의: '~시간 전'이 큰 항목은 과거 이슈일 수 있으니 현재 원인으로 단정 금지)";
+                  const _fmtH = function (h) { if (typeof h === "string") return h; let s = h.title; if (h.ageH != null) s += " (" + h.ageH + "h" + (h.sources > 1 ? "·" + h.sources + "매체" : "") + ")"; return s; };
+                  const _hl = wn.headlines.slice(0, 15).map(_fmtH);
+                  ctxBits += "\n[세계·경제 톱뉴스 · 다매체·최신순 " + _hl.length + "건]\n- " + _hl.join("\n- ") + "\n(주의: '~h'가 큰 항목은 과거 이슈일 수 있으니 현재 원인으로 단정 금지, 다매체 보도를 우선 신뢰)";
                 }
                 try { if (ctx && ctx.waitUntil) ctx.waitUntil(_luxWorldNews(env.DB, {})); } catch (e) {}   // 백그라운드 신선도 갱신(SWR)
               } catch (e) {}
@@ -23905,45 +23906,57 @@ function _parseRss(xml, max) {
 //   구글뉴스 WORLD·BUSINESS 톱헤드라인으로 수집(무료·키불필요). SWR 30분·예산가드. Q&A가 종목/섹터
 //   급락 원인을 이 헤드라인과 엮어 설명할 수 있게 한다.
 const _WNEWS_MAXAGE_H = 30;   // 이보다 오래된 헤드라인은 '현재 이슈'에서 제외(낡은 이슈 오판 방지)
+// [V32.34] ★멀티소스 뉴스 피드★ 구글 단일 → 8+개 무료 RSS(세계·경제·지정학) 병합. 교차검증(다매체)으로
+//   신뢰도↑·수량↑·가짜뉴스 저항↑. 각 피드에 대표 출처명 태깅.
+const _WORLD_FEEDS = [
+  { u: "https://news.google.com/rss/headlines/section/topic/WORLD?hl=en-US&gl=US&ceid=US:en", s: "GoogleWorld" },
+  { u: "https://news.google.com/rss/headlines/section/topic/BUSINESS?hl=en-US&gl=US&ceid=US:en", s: "GoogleBiz" },
+  { u: "https://feeds.bbci.co.uk/news/world/rss.xml", s: "BBC" },
+  { u: "https://feeds.bbci.co.uk/news/business/rss.xml", s: "BBCBiz" },
+  { u: "https://www.aljazeera.com/xml/rss/all.xml", s: "AlJazeera" },
+  { u: "http://feeds.marketwatch.com/marketwatch/topstories/", s: "MarketWatch" },
+  { u: "https://search.cnbc.com/rs/search/combinedcms/view.xml?partnerId=wrss01&id=100003114", s: "CNBC" },
+  { u: "https://rss.nytimes.com/services/xml/rss/nyt/World.xml", s: "NYT" },
+  { u: "https://rss.nytimes.com/services/xml/rss/nyt/Business.xml", s: "NYTBiz" },
+  { u: "http://rss.cnn.com/rss/edition_world.rss", s: "CNN" },
+  { u: "https://feeds.a.dj.com/rss/RSSWorldNews.xml", s: "WSJ" }
+];
 async function _luxWorldNews(DB, opts) {
   opts = opts || {};
   const FRESH = 30 * 60000;
   let cached = null; try { cached = await getState(DB, "world_news", null); } catch (e) {}
   if (!opts.force && cached && cached.ts && (Date.now() - cached.ts) < FRESH) return cached;
-  try { if (typeof fetchBudgetLeft === "function" && fetchBudgetLeft() < 4) return cached; } catch (e) {}
-  const feeds = [
-    "https://news.google.com/rss/headlines/section/topic/WORLD?hl=en-US&gl=US&ceid=US:en",
-    "https://news.google.com/rss/headlines/section/topic/BUSINESS?hl=en-US&gl=US&ceid=US:en"
-  ];
+  // 예산 인지 — 남은 subrequest 안에서 가능한 만큼만(코어 거래 보호). 최소 6, 여유 있으면 전부.
+  let budget = 8; try { if (typeof fetchBudgetLeft === "function") { const bl = fetchBudgetLeft(); if (bl < 3) return cached; budget = Math.max(2, Math.min(_WORLD_FEEDS.length, bl - 2)); } } catch (e) {}
+  const feeds = _WORLD_FEEDS.slice(0, budget);
   const now = Date.now(), maxAge = _WNEWS_MAXAGE_H * 3600000;
-  const byKey = {};   // 정규화 제목 → {title, pubTs, srcs:Set, n}
-  let rawSeen = 0, dropOld = 0, dropDup = 0, noDate = 0;
+  const byKey = {};
+  let rawSeen = 0, dropOld = 0, dropDup = 0, noDate = 0, okFeeds = 0;
   const _norm = function (t) { return String(t || "").toLowerCase().replace(/[^a-z0-9가-힣 ]/g, "").replace(/\s+/g, " ").trim().slice(0, 70); };
-  for (const url of feeds) {
-    try {
-      const r = await fetch(url, { headers: { "User-Agent": "Mozilla/5.0 (compatible)" } });
-      if (!r.ok) continue;
-      const it = _parseRss(await r.text(), 40);
-      for (const x of it) {
-        rawSeen++;
-        const title = String(x.title || "").trim();
-        if (title.length < 18) { dropDup++; continue; }          // 너무 짧은 것(노이즈)
-        // 최신성: pubDate 있으면 maxAge 초과 제외. 날짜 없으면 보수적으로 유지하되 표시.
-        if (x.pubTs != null) { if (now - x.pubTs > maxAge) { dropOld++; continue; } }
-        else noDate++;
-        const k = _norm(title); if (!k) continue;
-        if (!byKey[k]) byKey[k] = { title: title.slice(0, 150), pubTs: x.pubTs || null, srcs: {}, n: 0 };
-        byKey[k].n++;
-        if (x.src) byKey[k].srcs[x.src] = 1;
-        if (x.pubTs != null && (byKey[k].pubTs == null || x.pubTs > byKey[k].pubTs)) byKey[k].pubTs = x.pubTs;
-        if (byKey[k].n > 1) dropDup++;
-      }
-    } catch (e) {}
+  // 병렬 수집(지연↓) — 각 피드 독립, 실패 무시
+  const results = await Promise.all(feeds.map(async function (f) {
+    try { const r = await fetch(f.u, { headers: { "User-Agent": "Mozilla/5.0 (compatible)" } }); if (!r.ok) return null; return { s: f.s, items: _parseRss(await r.text(), 30) }; } catch (e) { return null; }
+  }));
+  for (const res of results) {
+    if (!res || !res.items) continue;
+    okFeeds++;
+    for (const x of res.items) {
+      rawSeen++;
+      const title = String(x.title || "").trim();
+      if (title.length < 18) { dropDup++; continue; }
+      if (x.pubTs != null) { if (now - x.pubTs > maxAge) { dropOld++; continue; } } else noDate++;
+      const k = _norm(title); if (!k) continue;
+      if (!byKey[k]) byKey[k] = { title: title.slice(0, 150), pubTs: x.pubTs || null, srcs: {}, n: 0 };
+      byKey[k].n++;
+      byKey[k].srcs[x.src || res.s] = 1;   // 대표 출처(피드) 태깅 → 교차검증 카운트
+      if (x.pubTs != null && (byKey[k].pubTs == null || x.pubTs > byKey[k].pubTs)) byKey[k].pubTs = x.pubTs;
+      if (byKey[k].n > 1) dropDup++;
+    }
   }
   const arr = Object.keys(byKey).map(function (k) { const v = byKey[k]; return { title: v.title, pubTs: v.pubTs, ageH: v.pubTs != null ? Math.round((now - v.pubTs) / 3600000) : null, sources: Object.keys(v.srcs).length, mentions: v.n }; });
-  // 정렬: 최신 우선(날짜 없으면 뒤로)
-  arr.sort(function (a, b) { return (b.pubTs || 0) - (a.pubTs || 0); });
-  const heads = arr.slice(0, 40);
+  // 정렬: 다매체(교차검증) 우선 + 최신 — 신뢰도 높은 톱뉴스가 앞으로
+  arr.sort(function (a, b) { const sd = (b.sources || 1) - (a.sources || 1); if (sd !== 0) return sd; return (b.pubTs || 0) - (a.pubTs || 0); });
+  const heads = arr.slice(0, 70);
   if (!heads.length) return cached;
   // 일일 뉴스량 집계 — 오늘 새로 관측된 고유 헤드라인 누적(대략치)
   let stats = null; try { stats = await getState(DB, "news_stats", null); } catch (e) {}
@@ -23955,8 +23968,10 @@ async function _luxWorldNews(DB, opts) {
   stats.uniqSeen += newCnt; stats.refreshes++; stats.sampleKeys = keepKeys.slice(-1500); stats.lastTs = now;
   try { await setState(DB, "news_stats", stats); } catch (e) {}
   const out = { headlines: heads, ts: now, dedupN: heads.length, rawSeen: rawSeen, dropOld: dropOld, dropDup: dropDup, noDate: noDate,
+    feedsOk: okFeeds, feedsTried: feeds.length, multiSource: heads.filter(function (h) { return (h.sources || 1) >= 2; }).length,
     freshN: heads.filter(function (h) { return h.ageH != null && h.ageH <= 24; }).length, dayUniqSeen: stats.uniqSeen, day: dayKey };
   try { await setState(DB, "world_news", out); } catch (e) {}
+  try { await log(DB, "INFO", null, "[WORLD-NEWS] 피드 " + okFeeds + "/" + feeds.length + " · 고유 " + heads.length + "건(다매체 " + out.multiSource + ") · 원시 " + rawSeen + " · 오늘누적 " + stats.uniqSeen); } catch (e) {}
   return out;
 }
 async function _luxCrisisGauge(DB, opts) {
@@ -24130,8 +24145,8 @@ async function mlAiAsk(DB, question) {
           // 세계·지정학 톱뉴스(원인 후보) — 최신순·발행경과 표시
           const wn = await _luxWorldNews(DB, {});
           if (wn && wn.headlines && wn.headlines.length) {
-            const _hl = wn.headlines.slice(0, 12).map(function (h) { return (typeof h === "string" ? h : (h.title + (h.ageH != null ? " (" + h.ageH + "시간 전" + (h.sources > 1 ? ", " + h.sources + "개 매체" : "") + ")" : " (시각미상)"))); });
-            F.push("[세계·경제 톱뉴스 · 최신순]\n- " + _hl.join("\n- "));
+            const _hl = wn.headlines.slice(0, 22).map(function (h) { return (typeof h === "string" ? h : (h.title + (h.ageH != null ? " (" + h.ageH + "시간 전" + (h.sources > 1 ? ", " + h.sources + "개 매체" : "") + ")" : " (시각미상)"))); });
+            F.push("[세계·경제 톱뉴스 · 다매체·최신순 " + _hl.length + "건]\n- " + _hl.join("\n- "));
             F.push("[뉴스량] 오늘 관측 고유 헤드라인 약 " + (wn.dayUniqSeen || 0) + "건, 이번 수집 최근24h " + (wn.freshN || 0) + "건");
           }
           // 거시/금리
@@ -24146,7 +24161,10 @@ async function mlAiAsk(DB, question) {
         let sn = null; try { sn = await getState(DB, "sector_news_sentiment", null); } catch (e) {}
         let secCnt = 0; try { if (sn && sn.headlines) for (const g of Object.keys(sn.headlines)) secCnt += (sn.headlines[g] || []).length; } catch (e) {}
         const L = ["**오늘 뉴스 유입 현황**"];
-        if (wn) { L.push("- 세계·경제 톱뉴스: 오늘 관측 고유 헤드라인 약 " + (wn.dayUniqSeen || 0) + "건 (최근 수집 " + (wn.dedupN || 0) + "건 중 24h이내 " + (wn.freshN || 0) + "건)"); L.push("- 이번 수집 원시 " + (wn.rawSeen || 0) + "건 → 낡은뉴스 제외 " + (wn.dropOld || 0) + " · 중복 제외 " + (wn.dropDup || 0)); }
+        if (wn) {
+          L.push("- 세계·경제 톱뉴스: 오늘 관측 고유 헤드라인 약 " + (wn.dayUniqSeen || 0) + "건 (최근 수집 " + (wn.dedupN || 0) + "건 중 24h이내 " + (wn.freshN || 0) + "건" + (wn.multiSource != null ? ", 다매체 교차검증 " + wn.multiSource + "건" : "") + ")");
+          L.push("- 소스: " + (wn.feedsOk || 0) + "/" + (wn.feedsTried || _WORLD_FEEDS.length) + "개 매체(구글·BBC·CNBC·MarketWatch·Al Jazeera·NYT·CNN·WSJ 등) · 원시 " + (wn.rawSeen || 0) + "건 → 낡은뉴스 -" + (wn.dropOld || 0) + " · 중복 -" + (wn.dropDup || 0));
+        }
         L.push("- 섹터/종목 뉴스 저장분: 약 " + secCnt + "건");
         if (wn && wn.headlines && wn.headlines.length) { const rec = wn.headlines.filter(function (h) { return typeof h !== "string" && h.ageH != null && h.ageH <= 24; }).slice(0, 5); if (rec.length) L.push("\n최근 24h 톱헤드라인:\n" + rec.map(function (h) { return "- " + h.title + " (" + h.ageH + "h" + (h.sources > 1 ? ", " + h.sources + "매체" : "") + ")"; }).join("\n")); }
         L.push("\n_최신성 필터(30h 초과 제외)·중복제거·다매체 우선으로 노이즈·옛이슈 오판을 걸러._");
