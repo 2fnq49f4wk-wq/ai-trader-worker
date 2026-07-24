@@ -14442,7 +14442,7 @@ async function handleRequest(request, env, ctx) {
       const q = body && body.question;
       if (!q || typeof q !== "string" || !q.trim()) return Response.json({ ok: false, msg: "질문을 입력해줘." }, { status: 400, headers: cors });
       if (q.length > 300) return Response.json({ ok: false, msg: "질문이 너무 길어(300자 이내)." }, { status: 400, headers: cors });
-      let r; try { r = await mlAiAsk(env.DB, q, env); } catch (e) { r = { ok: false, msg: "답변 생성 중 오류: " + (e && e.message) }; }
+      let r; try { r = await mlAiAsk(env.DB, q); } catch (e) { r = { ok: false, msg: "답변 생성 중 오류: " + (e && e.message) }; }
       return Response.json(r, { headers: cors });
     }
 
@@ -23660,54 +23660,7 @@ async function _luxCrisisGauge(DB, opts) {
   return out;
 }
 
-// [V32.21] LLM 폴백 — 규칙엔진이 못 잡는 세부 질문을, 시스템의 실시간 데이터에만 근거해 답하게 한다.
-//   (온보드 규칙답변이 1차·무료·즉답, LLM은 "더 구체적인 질문" 커버용 2차). 사용자 요청 시에만 호출되고
-//   일일 캡·쿨다운으로 과금 방어. 데이터에 없는 확정예측·투자권유는 프롬프트에서 금지.
-async function _aiAskLLMFallback(DB, env, q, syms) {
-  try {
-    if (!env || !env.ANTHROPIC_API_KEY) return null;
-    // 일일 캡(기본 120회) + 4초 쿨다운
-    const today = new Date().toISOString().slice(0, 10);
-    let meter = null; try { meter = await getState(DB, "aiask_llm_meter", null); } catch (e) {}
-    if (!meter || meter.day !== today) meter = { day: today, n: 0, last: 0 };
-    if (meter.n >= 120) return { ok: true, answer: "오늘 상세답변(LLM) 한도를 다 썼어. 기본 질문은 계속 답할 수 있어 — 예: '오늘 브리핑', '지금 시장 위험해?'" };
-    if (Date.now() - (meter.last || 0) < 4000) return null;   // 너무 잦은 호출은 규칙 폴백으로
-
-    // ── 그라운딩 컨텍스트 수집(전부 기존 상태·계산만) ──
-    const ctxObj = {};
-    try { const cg = await getState(DB, "crisis_gauge", null); if (cg) ctxObj.위기게이지 = { 단계: cg.level, 점수: cg.score, VIX: cg.vix, 요인: (cg.drivers || []).slice(0, 4) }; } catch (e) {}
-    try { const mc = await getState(DB, "mkt_context", null); if (mc) ctxObj.시장국면 = { regime: mc.regime, 진입사이즈배율: mc.sizeScale }; } catch (e) {}
-    try { const md = await _luxMacroSectorData(DB); if (md && md.macro) ctxObj.거시 = { 연준금리: md.macro.fedRate, CPI: md.macro.cpi, 미10년물: md.macro.ten, 실업률: md.macro.unemployment }; if (md && md.sectors) ctxObj.섹터 = md.sectors.map(function (s) { return { 이름: s.name, 모멘텀20: s.mom20, 감성: s.senti }; }); } catch (e) {}
-    try { const ready = await mlAiReadyState(DB); const mind = await mlMindLoad(DB); const dt = await getState(DB, "dnn_trust", null); const gt = await getState(DB, "gbdt_trust", null); ctxObj.위원회 = { AI자율운용: ready, MIND검증: mind ? (mind.valAccLB != null ? mind.valAccLB : mind.valAcc) : null, DNN신뢰: dt && dt.trusted ? dt.wDnn : 0, GBDT신뢰: gt && gt.trusted }; } catch (e) {}
-    try { const sr = await getState(DB, "ai_selfreview", null); if (sr) ctxObj.성과 = { 승률: sr.winRate, 프로핏팩터: sr.profitFactor, 누적손익pct: sr.totalPnl }; } catch (e) {}
-    try { const sc = await getState(DB, "ai_picks:scan", null); if (sc && sc.picks) ctxObj.상위후보 = sc.picks.slice(0, 8).map(function (p) { return { 종목: (typeof NAME_MAP !== "undefined" && NAME_MAP[p.symbol]) || p.symbol, AI확률: (p.rankP != null ? p.rankP : p.p) }; }); } catch (e) {}
-    // 종목 스냅샷(있으면)
-    if (syms && syms.length) {
-      const snaps = [];
-      for (const s of syms.slice(0, 3)) { try { const sn = await _aiAskSnapshot(DB, s, null); if (sn) snaps.push({ 종목: sn.nm, 시장: sn.market, 현재가: sn.price, 당일pct: sn.dayPct, RSI: sn.tk && sn.tk.rsi, ATRpct: sn.atrPct, 뉴스감성: sn.newsS, 패턴: sn.pat, AI승률: sn.aiP, 기간수익: sn.periodRet }); } catch (e) {} }
-      if (snaps.length) ctxObj.종목데이터 = snaps;
-    }
-    // 보유 요약
-    try {
-      const held = []; for (const mk of ["us", "kr", "cm", "bdus", "bdkr"]) { let pos = {}; try { pos = await getPositions(DB, mk); } catch (e) {} for (const k of Object.keys(pos)) { const p = pos[k]; let dd = null; try { dd = await getState(DB, "daily:" + p.symbol, null); } catch (e) {} const cur = dd && dd.price != null ? dd.price : null; held.push({ 종목: (typeof NAME_MAP !== "undefined" && NAME_MAP[p.symbol]) || p.symbol, 수량: p.qty, 손익pct: (cur && p.avg > 0) ? +(((cur / p.avg) - 1) * 100).toFixed(1) : null }); } } if (held.length) ctxObj.보유 = held.slice(0, 20); } catch (e) {}
-
-    const sys = "너는 자율 트레이딩 시스템 'LUX-ENGINE'의 애널리스트 어시스턴트야. 아래 <데이터>는 시스템이 방금 계산한 실시간 상태야. " +
-      "규칙: (1) 반드시 이 데이터에 근거해 한국어로 간결·구체적으로 답한다. (2) 데이터에 없으면 '그 데이터는 없어'라고 솔직히 말한다. " +
-      "(3) 확정적 미래 예측·특정 종목 매수/매도 단정 권유는 금지(경향·근거 제시는 OK). (4) 반말 톤(기존 UI와 일치), 마크다운 최소. " +
-      "(5) 5~8문장 이내. 시스템은 가격·거래량·기술패턴·뉴스감성·거시만 쓰고 재무제표는 없음.";
-    const prompt = "<데이터>\n" + JSON.stringify(ctxObj).slice(0, 6000) + "\n</데이터>\n\n질문: " + q + "\n\n위 데이터에 근거해 구체적으로 답해줘.";
-
-    const llmCfg = {}; try { const cfg = await getState(DB, "cfg", {}); Object.assign(llmCfg, (cfg && cfg.llmHybrid) || {}); } catch (e) {}
-    const res = await callClaude(env.ANTHROPIC_API_KEY, llmCfg.model || "claude-haiku-4-5", prompt, 700, 22000,
-      { maxRetries: 1, baseURL: env.LLM_BASE_URL || llmCfg.baseURL || null, aigToken: env.AI_GATEWAY_TOKEN || null, system: sys });
-    const text = (res && res.text) ? res.text.trim() : "";
-    if (!text) return null;
-    meter.n++; meter.last = Date.now(); try { await setState(DB, "aiask_llm_meter", meter); } catch (e) {}
-    return { ok: true, answer: text, llm: true };
-  } catch (e) { return null; }
-}
-
-async function mlAiAsk(DB, question, env) {
+async function mlAiAsk(DB, question) {
   const q = String(question || "").trim().slice(0, 300);
   if (!q) return { ok: false, msg: "질문을 입력해줘." };
   const syms = _aiAskResolveSymbols(q);
@@ -24056,12 +24009,7 @@ async function mlAiAsk(DB, question, env) {
       } catch (e) { return { ok: true, answer: "섹터 데이터 조회 중 문제가 있었어." }; }
     }
   }
-  if (!syms.length) {
-    // [V32.21] 규칙엔진 미매칭 → 시스템 데이터 근거 LLM 폴백으로 세부 질문 대응
-    const llm = await _aiAskLLMFallback(DB, env, q, syms);
-    if (llm) return llm;
-    return { ok: true, answer: "어떤 종목인지 못 알아들었어. 티커(예: MU, 005930.KS)나 정확한 회사명, 섹터명, 또는 '내 포지션'처럼 적어줘.\n(상세 답변 기능이 일시적으로 꺼져 있을 수 있어 — '오늘 브리핑', '지금 시장 위험해?'는 바로 답해줄게.)" };
-  }
+  if (!syms.length) return { ok: true, answer: "어떤 종목인지 못 알아들었어. 티커(예: MU, 005930.KS)나 정확한 회사명, 섹터명, 또는 '내 포지션'처럼 적어줘." };
   const isTrendQ = /일시적|지속|계속|오래|반짝|단기|추세/.test(q);
   const isOutlookQ = /전망|오를까|떨어질까|매수|매도|사도|팔아|어떻게 될까|살까|살만/.test(q);
   const isWhyQ = /왜|이유|원인/.test(q);
@@ -24234,10 +24182,7 @@ async function mlAiAsk(DB, question, env) {
   if (isSizeQ && atrPct != null) {
     lines.push("사이트의 사이징 원칙은 '고정 리스크'야 — 종목당 손실한도(계좌의 약 0.7~0.9%)를 손절폭(대략 ATR×2, 지금 약 " + (atrPct * 2).toFixed(1) + "%)으로 나눠 수량을 정해. 변동성이 큰(지금 ATR " + atrPct.toFixed(1) + "%) 종목일수록 자동으로 더 작게 사서 손실금액을 종목마다 비슷하게 맞추는 방식이야. 구체적인 수량은 계좌 잔고에 따라 달라져서 여기선 원칙만 안내할게.");
   }
-  // [V32.21] 특정 의도에 안 걸린 종목 질문(더 구체적/복합) → 종목 스냅샷을 근거로 LLM 폴백
-  const _anyIntent = isTrendQ || isOutlookQ || isWhyQ || isRiskQ || isLevelQ || isPeriodQ || isExitQ || isSizeQ || isEarningsQ || isValuationQ || isForecastQ;
-  if (!_anyIntent) { const llm = await _aiAskLLMFallback(DB, env, q, syms); if (llm) return llm; }
-  lines.push("_규칙기반 기술분석 + AI위원회 확률을 조합한 참고용 해석이며, 투자판단의 책임은 본인에게 있어._");
+  lines.push("_규칙기반 기술분석 + AI위원회 확률을 조합한 참고용 해석이며, 투자판단의 책임은 본인에게 있어. 외부 AI API는 사용하지 않고 이 사이트 내부 데이터로만 답했어._");
   return { ok: true, symbol: sym, answer: lines.join("\n") };
 }
 
