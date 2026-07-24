@@ -23626,13 +23626,14 @@ async function _luxCrisisGauge(DB, opts) {
 async function mlAiAsk(DB, question) {
   const q = String(question || "").trim().slice(0, 300);
   if (!q) return { ok: false, msg: "질문을 입력해줘." };
+  const syms = _aiAskResolveSymbols(q);
+  const _qk = q.toLowerCase();
   // [V32.17] 지정학·위기·시장전반 질문 — 종목 특정 전에 먼저 처리(전쟁·폭락·헤지·"지금 시장 어때" 등).
   const _crisisKwKo = ["전쟁", "지정학", "폭락", "크래시", "위기", "리스크오프", "risk-off", "리스크 오프", "안전자산", "헤지", "헷지", "방어", "대비", "폭락장", "침체", "블랙스완", "공포", "vix", "변동성 장", "셧다운", "중동", "우크라", "대만", "분쟁", "침공", "미사일", "지정학적", "패닉", "제재"];
   const _mktOverviewKw = ["지금 시장", "시장 어때", "시장 상황", "장 어때", "시장 전반", "시황", "지금 사도", "사도 돼", "사도돼", "지금 위험", "시장 위험"];
-  const _qk = q.toLowerCase();
   const _isCrisisQ = _crisisKwKo.some(function (k) { return q.indexOf(k) >= 0 || _qk.indexOf(k) >= 0; });
   const _isOverviewQ = _mktOverviewKw.some(function (k) { return q.indexOf(k) >= 0; });
-  if (_isCrisisQ || _isOverviewQ) {
+  if (_isCrisisQ || (_isOverviewQ && !syms.length)) {
     try {
       const cg = await _luxCrisisGauge(DB, {});
       if (!cg) return { ok: true, answer: "위기 게이지 데이터를 아직 못 모았어(예산 여유 시 자동 수집돼). 잠시 뒤 다시 물어봐줘." };
@@ -23662,7 +23663,108 @@ async function mlAiAsk(DB, question) {
       return { ok: true, answer: lines.join("\n") };
     } catch (e) { return { ok: true, answer: "위기 게이지 조회 중 문제가 있었어." }; }
   }
-  const syms = _aiAskResolveSymbols(q);
+
+  // ═══ [V32.18] Q&A 확장 — 시스템 성능·모델·추천·매매내역·지수/환율/원자재/코인·일정 ═══
+  if (!syms.length) {
+    try {
+      // 1) 시스템 성능/자기 진단 — 승률·수익·프로핏팩터
+      if (/승률|수익률|성과|성능|얼마.*벌|잘하고|잘 하고|프로핏|profit|수익 어때|돈 벌|잘\s*돼|잘\s*되/.test(q) && !/종목|이 주식/.test(q)) {
+        const sr = await getState(DB, "ai_selfreview", null);
+        if (!sr || sr.winRate == null) return { ok: true, answer: "아직 성과 통계를 낼 만큼 청산된 거래가 충분하지 않아. 매매가 쌓이면 승률·수익률·프로핏팩터를 알려줄게." };
+        const parts = ["**시스템 성과(청산 거래 기준)**"];
+        if (sr.winRate != null) parts.push("- 승률: " + (sr.winRate * 100).toFixed(1) + "%");
+        if (sr.profitFactor != null) parts.push("- 프로핏팩터: " + Number(sr.profitFactor).toFixed(2) + " (1 초과면 이익>손실)");
+        if (sr.totalPnl != null) parts.push("- 누적 손익(추정): " + (sr.totalPnl >= 0 ? "+" : "") + Number(sr.totalPnl).toFixed(1) + "%");
+        if (sr.diagnosis) parts.push("\n자가진단: " + String(sr.diagnosis).slice(0, 220));
+        return { ok: true, answer: parts.join("\n") };
+      }
+      // 2) 모델/위원회 상태 — MIND/DNN/GBDT/부스팅
+      if (/모델|위원회|무슨 ai|어떤 ai|두뇌|신뢰가중|committee|딥러닝|신경망|무슨 모델|학습.*상태|ai.*상태/.test(q)) {
+        const ready = await mlAiReadyState(DB);
+        const mind = await mlMindLoad(DB);
+        const dt = await getState(DB, "dnn_trust", null);
+        const gt = await getState(DB, "gbdt_trust", null);
+        const pct1 = function (v) { return v == null ? "—" : (v * 100).toFixed(1) + "%"; };
+        const L = ["**AI 위원회 상태** — " + (ready ? "🟢 AI 자율운용 중" : "🟡 규칙엔진 폴백(모델 준비 중)")];
+        L.push("- MIND(위원장, FM+스태킹): " + (mind ? "가동 · 검증 " + pct1(mind.valAccLB != null ? mind.valAccLB : mind.valAcc) + (mind.source === "external" ? " · 외부GPU" : "") : "학습 대기"));
+        L.push("- DNN(3M 딥넷): " + (dt && dt.trusted ? "가동 · 신뢰 " + (dt.wDnn != null ? dt.wDnn.toFixed(2) : "—") + " · 검증 " + pct1(dt.dnnAccLB) : "억제/대기"));
+        L.push("- GBDT(부스팅트리): " + (gt && gt.trusted ? "가동 · 검증 " + pct1(gt.gbdtAccLB) : "억제/대기"));
+        for (const nm of ["xgb", "lgb", "cat"]) {
+          const t = await getState(DB, nm + "_trust", null);
+          if (t) L.push("- " + nm.toUpperCase() + ": " + (t.trusted ? "가동 · 검증 " + pct1(t.gbdtAccLB) : "섀도우/억제"));
+        }
+        L.push("\n최종 결정은 각 모델 검증정확도의 소프트맥스 가중으로 결합돼(잘하는 모델일수록 발언권↑).");
+        return { ok: true, answer: L.join("\n") };
+      }
+      // 3) 추천/뭐 사 — 야간 전종목 스캔 상위 픽
+      if (/뭐\s*사|추천|뭐가 좋|유망|살\s*만한|살만한|후보|top\s*pick|픽\s*알려|제일 좋|가장 좋|뭐 살/.test(q)) {
+        const sc = await getState(DB, "ai_picks:scan", null);
+        const picks = (sc && Array.isArray(sc.picks)) ? sc.picks : [];
+        if (!picks.length) return { ok: true, answer: "아직 최신 스캔 결과가 없어(야간 전종목 스캔에서 채워져). 잠시 뒤 다시 물어봐줘." };
+        const top = picks.slice(0, 8).map(function (p) {
+          const sy = p.sym || p.symbol || ""; const nm = NAME_MAP[sy] || sy;
+          const pr = (p.p != null ? p.p : (p.prob != null ? p.prob : null));
+          return "- " + nm + (pr != null ? " (AI 승률 " + (pr * 100).toFixed(0) + "%)" : "");
+        }).join("\n");
+        return { ok: true, answer: "**AI 스캔 상위 후보** (" + (sc.scanned || picks.length) + "종목 스캔)\n" + top + "\n\n_확정 추천이 아니라 모델 확률 상위야. 진입은 위원회·게이트·리스크국면을 함께 봐._" };
+      }
+      // 4) 오늘/최근 매매 내역
+      if (/오늘.*(샀|팔|거래|매수|매도)|최근.*(거래|매매|샀|팔)|뭐.*샀|뭐.*팔|매매\s*내역|거래\s*내역/.test(q)) {
+        const todayOnly = /오늘/.test(q);
+        let rows = [];
+        try { const r = await DB.prepare("SELECT ts,market,symbol,side,qty,price,pnl_pct,reason FROM trades ORDER BY ts DESC LIMIT 15").all(); rows = (r && r.results) || []; } catch (e) {}
+        if (todayOnly) { const d0 = new Date(); d0.setHours(0, 0, 0, 0); const t0 = d0.getTime(); rows = rows.filter(function (x) { return _num(x.ts, 0) >= t0; }); }
+        if (!rows.length) return { ok: true, answer: todayOnly ? "오늘 체결된 거래는 아직 없어." : "최근 거래 기록이 없어." };
+        const L = rows.slice(0, 10).map(function (x) {
+          const nm = NAME_MAP[x.symbol] || x.symbol; const side = x.side === "buy" ? "매수" : "매도";
+          const pnl = (x.pnl_pct != null) ? " (" + (x.pnl_pct >= 0 ? "+" : "") + Number(x.pnl_pct).toFixed(1) + "%)" : "";
+          const tm = new Date(_num(x.ts, 0)).toISOString().slice(5, 16).replace("T", " ");
+          return "- " + tm + " " + side + " " + nm + " x" + x.qty + pnl;
+        }).join("\n");
+        return { ok: true, answer: "**" + (todayOnly ? "오늘" : "최근") + " 매매 내역**\n" + L };
+      }
+      // 5) 지수·환율·원자재·코인 시세 — 실시간 1배치 조회
+      const _MKT = { "나스닥": "^IXIC", "나스닥100": "^NDX", "s&p": "^GSPC", "sp500": "^GSPC", "에스앤피": "^GSPC", "다우": "^DJI", "러셀": "^RUT",
+        "코스피": "^KS11", "코스닥": "^KQ11", "니케이": "^N225", "닛케이": "^N225", "항셍": "^HSI",
+        "환율": "KRW=X", "원달러": "KRW=X", "원/달러": "KRW=X", "달러지수": "DX-Y.NYB", "엔화": "JPY=X", "엔달러": "JPY=X", "유로": "EURUSD=X",
+        "유가": "CL=F", "wti": "CL=F", "국제유가": "CL=F", "금값": "GC=F", "금시세": "GC=F", "금 가격": "GC=F", "은값": "SI=F", "구리": "HG=F", "천연가스": "NG=F",
+        "비트코인": "BTC-USD", "비트": "BTC-USD", "btc": "BTC-USD", "이더리움": "ETH-USD", "이더": "ETH-USD" };
+      let hitSym = null, hitKey = null;
+      for (const k of Object.keys(_MKT).sort(function (a, b) { return b.length - a.length; })) { if (q.indexOf(k) >= 0 || _qk.indexOf(k) >= 0) { hitSym = _MKT[k]; hitKey = k; break; } }
+      if (hitSym) {
+        let qd = null; try { qd = await fetchBatchQuotes([hitSym], { DB: DB }); } catch (e) {}
+        let d = qd && qd[hitSym];
+        if (!d || d.price == null) { try { const cs = await getState(DB, "index:" + hitSym, null); if (cs && cs.price != null) d = cs; } catch (e) {} }
+        const px = d && d.price != null ? d.price : null; const ch = d && d.dayPct != null ? d.dayPct : null;
+        if (px == null) return { ok: true, answer: hitKey + " 시세를 지금 못 가져왔어(예산/네트워크). 잠시 뒤 다시 물어봐줘." };
+        const dir = ch == null ? "" : (ch >= 0 ? " (▲ +" + ch.toFixed(2) + "%)" : " (▼ " + ch.toFixed(2) + "%)");
+        let note = "";
+        if (hitSym === "GC=F") note = " 금은 위기·인플레 헤지 대표 안전자산이야.";
+        else if (hitSym === "CL=F") note = " 유가 급등은 중동·분쟁 리스크·인플레 압력 신호가 될 수 있어.";
+        else if (hitSym === "KRW=X") note = " 원달러 상승(원화 약세)은 수출주엔 우호, 외국인 수급엔 부담이야.";
+        else if (hitSym === "BTC-USD") note = " 비트코인은 위험선호(risk-on) 심리의 바로미터로도 참고돼.";
+        return { ok: true, answer: "**" + hitKey + "**: " + (px >= 100 ? px.toLocaleString(undefined, { maximumFractionDigits: 2 }) : px.toFixed(2)) + dir + "." + note };
+      }
+      // 6) 일정 — FOMC/금리결정·경제지표·실적 캘린더
+      if (/일정|언제.*발표|fomc|금리.*결정|금리.*언제|실적.*언제|어닝.*언제|캘린더|경제지표.*언제|지표.*발표/.test(q)) {
+        const L = []; const now = Date.now();
+        try {
+          const cal = await getState(DB, "econ_calendar", null); const evs = (cal && cal.events) || [];
+          const up = evs.filter(function (e) { return e && e.date && new Date(e.date).getTime() > now && (e.importance == null || e.importance >= 1); })
+            .sort(function (a, b) { return new Date(a.date) - new Date(b.date); }).slice(0, 5);
+          if (up.length) { L.push("**다가오는 주요 경제 이벤트**"); up.forEach(function (e) { L.push("- " + String(e.date).slice(0, 10) + " " + (e.title || e.event || "") + (e.country ? " (" + e.country + ")" : "")); }); }
+        } catch (e) {}
+        try {
+          const ec = await getState(DB, "earnings_calendar_v2", null); const items = (ec && (ec.items || ec.list || [])) || [];
+          const upe = items.filter(function (e) { return e && e.date && new Date(e.date).getTime() > now; }).slice(0, 5);
+          if (upe.length) { L.push("\n**다가오는 실적 발표**"); upe.forEach(function (e) { const sy = e.symbol || e.sym || ""; L.push("- " + String(e.date).slice(0, 10) + " " + (NAME_MAP[sy] || sy)); }); }
+        } catch (e) {}
+        if (!L.length) return { ok: true, answer: "예정된 주요 일정 데이터가 아직 없어. 경제지표·실적 캘린더가 갱신되면 알려줄게." };
+        return { ok: true, answer: L.join("\n") };
+      }
+    } catch (e) { /* 폴백: 아래 기존 경로 계속 */ }
+  }
+
   const macroKw = ["금리", "연준", "fed", "cpi", "물가", "인플레", "고용", "실업률", "경기", "거시"];
   const qLower = q.toLowerCase();
   const isMacroQ = !syms.length && macroKw.some(function (k) { return q.indexOf(k) >= 0 || qLower.indexOf(k) >= 0; });
