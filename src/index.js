@@ -6110,6 +6110,18 @@ async function updateMarketContext(DB, cfg) {
   }
   const detail = mc.symbols.map(function(s){ return s + (q[s] ? (q[s].dayPct >= 0 ? "+" : "") + q[s].dayPct.toFixed(1) : "?"); }).join(" ");
   const ctx = { riskScore: riskScore, regime: regime, sizeScale: _clamp(sizeScale, 0.5, 1.2), ts: Date.now(), detail: detail };
+  // [V32.17] 지정학·위기 게이지 선제 방어 — 전쟁·분쟁 등 국제이슈가 감지되면 시장 VIX가 다 튀기 전에도
+  //   신규 진입 사이즈를 추가 축소하고 국면을 방어적으로 당긴다(오직 조이기만 — 완화는 안 함). SWR 20분이라
+  //   mkt_context 갱신 주기(~12분)에 얹혀 추가 fetch는 대개 0. 위기 게이지 자체 예산가드가 코어를 보호.
+  try {
+    const cg = await _luxCrisisGauge(DB, {});
+    if (cg && typeof cg.defenseScale === "number" && cg.defenseScale < 1) {
+      ctx.sizeScale = _clamp(ctx.sizeScale * cg.defenseScale, 0.4, 1.2);
+      ctx.crisisLevel = cg.level; ctx.crisisScore = cg.score;
+      if (cg.level === "위기" && ctx.regime !== "risk_off") ctx.regime = "risk_off";
+      else if (cg.level === "경계" && (ctx.regime === "neutral" || ctx.regime === "mild_on" || ctx.regime === "risk_on")) ctx.regime = "caution";
+    }
+  } catch (e) {}
   try { await setState(DB, "mkt_context", ctx); } catch (e) {}
   try { await log(DB, "INFO", null, "[MKT-CTX] " + regime + " score=" + riskScore.toFixed(2) + " size×" + ctx.sizeScale.toFixed(2) + " · " + detail); } catch (e) {}
   return ctx;
@@ -23531,9 +23543,125 @@ async function _aiAskSnapshot(DB, sym, scanCache) {
   } catch (e) {}
   return { sym: sym, nm: nm, market: market, price: price, dayPct: dayPct, tk: tk, ts: ts, pat: pat, newsS: newsS, volConf: volConf, atrPct: atrPct, levels: levels, periodRet: periodRet, earnReaction: earnReaction, aiP: aiP };
 }
+// ═══════════ [V32.17] 지정학·위기 게이지 — 국제이슈(전쟁·분쟁·제재)로 증시가 흔들릴 때 선제 대비 ═══════════
+//   무료 데이터만 사용: (1) 시장 위기 바로미터(VIX·금·유가·S&P·美국채·달러 1배치 quote),
+//   (2) 지정학 뉴스 스캔(구글뉴스 RSS, 전쟁/분쟁 키워드), (3) 기존 mkt_context risk-off.
+//   → 0~100 점수 + 단계(평시/주의/경계/위기) + 방어 포스처. SWR 20분 캐시·예산가드(코어 거래 무영향).
+//   결과는 crisis_gauge 상태로 저장 → updateMarketContext가 선제 방어(사이즈 축소)에 활용 + Q&A가 설명.
+const _CRISIS_KW = ["war", "invasion", "invade", "missile", "airstrike", "conflict", "sanction",
+  "nuclear", "escalat", "military strike", "troops", "warfare", "ceasefire", "embargo", "blockade",
+  "coup", "terror", "retaliat", "border clash", "shelling", "drone attack", "warship", "军事", "전쟁"];
+async function _luxCrisisGauge(DB, opts) {
+  opts = opts || {};
+  const FRESH = 20 * 60000;
+  let cached = null; try { cached = await getState(DB, "crisis_gauge", null); } catch (e) {}
+  if (!opts.force && cached && cached.ts && (Date.now() - cached.ts) < FRESH) return cached;
+  try { if (typeof fetchBudgetLeft === "function" && fetchBudgetLeft() < 6) return cached; } catch (e) {}
+
+  const drivers = [];
+  let mkt = 0;   // 시장 바로미터 (0~55)
+  let vix = null, vixChg = null, gold = null, oil = null, spx = null, tlt = null, usd = null;
+  try {
+    const qq = await fetchBatchQuotes(["^VIX", "GC=F", "CL=F", "^GSPC", "TLT", "DX-Y.NYB"], { DB: DB });
+    const G = function (s) { return (qq && qq[s]) ? qq[s] : null; };
+    const v = G("^VIX"); if (v) { vix = _num(v.price, null); vixChg = _num(v.dayPct, null); }
+    const gd = G("GC=F"); if (gd) gold = _num(gd.dayPct, null);
+    const ol = G("CL=F"); if (ol) oil = _num(ol.dayPct, null);
+    const sp = G("^GSPC"); if (sp) spx = _num(sp.dayPct, null);
+    const tl = G("TLT"); if (tl) tlt = _num(tl.dayPct, null);
+    const dx = G("DX-Y.NYB"); if (dx) usd = _num(dx.dayPct, null);
+  } catch (e) {}
+  if (vix != null) {
+    const vc = vix < 15 ? 0 : vix < 20 ? 5 : vix < 25 ? 12 : vix < 30 ? 20 : vix < 40 ? 30 : 40;
+    mkt += vc;
+    if (vc >= 20) drivers.push("VIX(공포지수) " + vix.toFixed(1) + (vix >= 30 ? " — 패닉 구간" : " — 경계 구간"));
+    if (vixChg != null && vixChg >= 15) { mkt += 8; drivers.push("VIX 당일 +" + vixChg.toFixed(0) + "% 급등"); }
+  }
+  if (gold != null && gold >= 1.5) { const a = gold >= 3 ? 10 : 6; mkt += a; drivers.push("금값 +" + gold.toFixed(1) + "% (안전자산 쏠림)"); }
+  if (oil != null && Math.abs(oil) >= 4) { const a = Math.abs(oil) >= 8 ? 10 : 6; mkt += a; drivers.push("유가 " + (oil >= 0 ? "+" : "") + oil.toFixed(1) + "% (공급충격/분쟁 신호)"); }
+  if (spx != null && spx <= -1.5) { const a = spx <= -3 ? 15 : 8; mkt += a; drivers.push("S&P500 " + spx.toFixed(1) + "% 급락"); }
+  if (spx != null && spx <= -1 && tlt != null && tlt >= 0.8) { mkt += 5; drivers.push("주식↓·국채↑ 동시 (안전자산 회피성 이동)"); }
+  if (usd != null && usd >= 1) { mkt += 4; drivers.push("달러지수 +" + usd.toFixed(1) + "% (달러 피난)"); }
+  mkt = Math.min(55, mkt);
+
+  // 지정학 뉴스 스캔 — 구글뉴스 RSS 1쿼리(키 불필요). 위기 키워드 적중수로 0~30점.
+  let newsPts = 0, newsHits = 0, headHits = [];
+  try {
+    if (typeof fetchBudgetLeft === "function" ? fetchBudgetLeft() > 4 : true) {
+      const gUrl = "https://news.google.com/rss/search?q=" + encodeURIComponent("war OR invasion OR military conflict OR sanctions markets") + "&hl=en-US&gl=US&ceid=US:en";
+      const gr = await fetch(gUrl, { headers: { "User-Agent": "Mozilla/5.0 (compatible)" } });
+      if (gr.ok) {
+        const items = _parseRssItems(await gr.text(), 40);
+        for (const it of items) {
+          const low = String(it.title || "").toLowerCase();
+          for (const kw of _CRISIS_KW) { if (low.indexOf(kw) >= 0) { newsHits++; if (headHits.length < 4) headHits.push(String(it.title).slice(0, 90)); break; } }
+        }
+      }
+    }
+  } catch (e) {}
+  newsPts = newsHits === 0 ? 0 : newsHits <= 2 ? 8 : newsHits <= 5 ? 16 : newsHits <= 10 ? 24 : 30;
+  if (newsHits >= 3) drivers.push("지정학 헤드라인 " + newsHits + "건 (전쟁·분쟁·제재 관련)");
+
+  // 기존 risk-off 국면(0~15)
+  let roPts = 0, regime = null;
+  try { const mc = await getState(DB, "mkt_context", null); if (mc) { regime = mc.regime; roPts = mc.regime === "risk_off" ? 15 : mc.regime === "caution" ? 8 : 0; if (roPts) drivers.push("시장 risk-off 국면(" + mc.regime + ")"); } } catch (e) {}
+
+  const score = _clamp(Math.round(mkt + newsPts + roPts), 0, 100);
+  const level = score >= 65 ? "위기" : score >= 40 ? "경계" : score >= 20 ? "주의" : "평시";
+  const posture = level === "위기"
+    ? "신규 진입 대폭 축소·중단, 방어·헤지(인버스/VIX/금) 우선, 보유는 손절 타이트닝."
+    : level === "경계"
+    ? "신규 진입 사이즈 축소, 고베타·성장주 비중 관리, 안전자산(금·국채) 관심."
+    : level === "주의"
+    ? "평소보다 보수적으로 — 신규 진입 선별, 손절 준수."
+    : "특이 위험신호 없음 — 정상 운용.";
+  const out = { score: score, level: level, drivers: drivers.slice(0, 8), posture: posture,
+    vix: vix, spx: spx, gold: gold, oil: oil, newsHits: newsHits, headlines: headHits, regime: regime,
+    defenseScale: level === "위기" ? 0.5 : level === "경계" ? 0.7 : level === "주의" ? 0.88 : 1.0, ts: Date.now() };
+  try { await setState(DB, "crisis_gauge", out); } catch (e) {}
+  try { await log(DB, level === "평시" ? "INFO" : "WARN", null, "[CRISIS] " + level + " " + score + "/100 · VIX " + (vix != null ? vix.toFixed(1) : "?") + " · 지정학뉴스 " + newsHits + "건" + (drivers.length ? " · " + drivers.slice(0, 3).join("; ") : "")); } catch (e) {}
+  return out;
+}
+
 async function mlAiAsk(DB, question) {
   const q = String(question || "").trim().slice(0, 300);
   if (!q) return { ok: false, msg: "질문을 입력해줘." };
+  // [V32.17] 지정학·위기·시장전반 질문 — 종목 특정 전에 먼저 처리(전쟁·폭락·헤지·"지금 시장 어때" 등).
+  const _crisisKwKo = ["전쟁", "지정학", "폭락", "크래시", "위기", "리스크오프", "risk-off", "리스크 오프", "안전자산", "헤지", "헷지", "방어", "대비", "폭락장", "침체", "블랙스완", "공포", "vix", "변동성 장", "셧다운", "중동", "우크라", "대만", "분쟁", "침공", "미사일", "지정학적", "패닉", "제재"];
+  const _mktOverviewKw = ["지금 시장", "시장 어때", "시장 상황", "장 어때", "시장 전반", "시황", "지금 사도", "사도 돼", "사도돼", "지금 위험", "시장 위험"];
+  const _qk = q.toLowerCase();
+  const _isCrisisQ = _crisisKwKo.some(function (k) { return q.indexOf(k) >= 0 || _qk.indexOf(k) >= 0; });
+  const _isOverviewQ = _mktOverviewKw.some(function (k) { return q.indexOf(k) >= 0; });
+  if (_isCrisisQ || _isOverviewQ) {
+    try {
+      const cg = await _luxCrisisGauge(DB, {});
+      if (!cg) return { ok: true, answer: "위기 게이지 데이터를 아직 못 모았어(예산 여유 시 자동 수집돼). 잠시 뒤 다시 물어봐줘." };
+      const emo = cg.level === "위기" ? "🔴" : cg.level === "경계" ? "🟠" : cg.level === "주의" ? "🟡" : "🟢";
+      const lines = [];
+      lines.push("**" + emo + " 지정학·위기 게이지: " + cg.level + " (" + cg.score + "/100)**");
+      const baro = [];
+      if (cg.vix != null) baro.push("VIX " + cg.vix.toFixed(1));
+      if (cg.spx != null) baro.push("S&P " + (cg.spx >= 0 ? "+" : "") + cg.spx.toFixed(1) + "%");
+      if (cg.gold != null) baro.push("금 " + (cg.gold >= 0 ? "+" : "") + cg.gold.toFixed(1) + "%");
+      if (cg.oil != null) baro.push("유가 " + (cg.oil >= 0 ? "+" : "") + cg.oil.toFixed(1) + "%");
+      if (baro.length) lines.push("바로미터: " + baro.join(" · ") + (cg.newsHits ? " · 지정학뉴스 " + cg.newsHits + "건" : ""));
+      if (cg.drivers && cg.drivers.length) lines.push("주요 요인: " + cg.drivers.join(", "));
+      lines.push("");
+      lines.push("**대응 포스처**: " + cg.posture);
+      lines.push("**시스템이 자동으로 하는 방어**:");
+      lines.push("- VIX 28 초과 시 신규 매수 중단(급변동 회피)");
+      lines.push("- risk-off/위기 감지 시 신규 진입 사이즈 자동 축소(현재 배율 ×" + (cg.defenseScale != null ? cg.defenseScale.toFixed(2) : "1.00") + ")");
+      lines.push("- 상시 헤지 배분(인버스·VIX: SH·SQQQ·VIXY) — VIX 25+ 시 상향");
+      lines.push("- 급락(드로다운) 단계별 서킷브레이커 + 보유 손절/트레일 타이트닝");
+      if (cg.level === "위기" || cg.level === "경계") {
+        lines.push("");
+        lines.push("**전쟁·위기 국면 방어 아이디어**: 금(GLD/GC=F)·미 국채(TLT)·달러·방산주(LMT·RTX·한화에어로스페이스)는 통상 위기에 상대적으로 방어적. 성장·고베타·수출 민감주는 변동성 큼. 다만 확정 예측이 아니라 과거 경향이야.");
+      }
+      lines.push("");
+      lines.push("_시장 바로미터(VIX·금·유가·지수) + 지정학 뉴스 스캔을 20분마다 갱신한 값이야._");
+      return { ok: true, answer: lines.join("\n") };
+    } catch (e) { return { ok: true, answer: "위기 게이지 조회 중 문제가 있었어." }; }
+  }
   const syms = _aiAskResolveSymbols(q);
   const macroKw = ["금리", "연준", "fed", "cpi", "물가", "인플레", "고용", "실업률", "경기", "거시"];
   const qLower = q.toLowerCase();
