@@ -23485,8 +23485,11 @@ async function mlUniverseScanNightly(DB) {
     let scanned = 0;
     const scannedByMkt = { us: 0, kr: 0, cm: 0 };
     // [V32.41] 이벤트 정렬 컨텍스트 1회 로드 — 스캔 전종목에 동일 적용(활성이슈·시장확증)
-    let _evCtx = { evs: [], mc: 0.7, level: "평시" }; try { _evCtx = await _luxEventContext(DB); } catch (e) {}
-    const _evActive = _evCtx.evs && _evCtx.evs.length ? _evCtx.evs.map(function (e) { return e.code + "(" + e.intensity + ")"; }).join(",") : "";
+    let _evCtx = { evs: [], mc: 0.7, level: "평시", conf: {} }; try { _evCtx = await _luxEventContext(DB); } catch (e) {}
+    // [V32.42] 태그바스켓 실제수익률 계산(인메모리·이미 로드된 dailyMapAll에서) → 실증확증배율 갱신
+    let _tagRet = null, _conf = _evCtx.conf || {};
+    try { _tagRet = _computeTagReturns(dailyMapAll); await setState(DB, "tag_returns", { ts: Date.now(), tags: _tagRet }); _conf = _eventConfirmation(_evCtx.evs, _tagRet); } catch (e) {}
+    const _evActive = _evCtx.evs && _evCtx.evs.length ? _evCtx.evs.map(function (e) { return e.code + "(" + e.intensity + (_conf[e.code] != null ? "·확증" + _conf[e.code] : "") + ")"; }).join(",") : "";
     const deadline = Date.now() + 90000;   // 벽시계 가드(추론은 CPU 수 ms/심볼)
     const evstats = await getState(DB, "ml_evstats", null);
     const idxCache = {};   // [V7] 시장별 지수(상대강도) 1회 로드
@@ -23525,7 +23528,7 @@ async function mlUniverseScanNightly(DB) {
         const _bw = (LUXML.pickBlueWeight != null ? LUXML.pickBlueWeight : 0.10);
         const rankP = _clamp(p + (_pt.tech != null ? _tw * _pt.tech : 0) + _bw * _pt.blue, 0.01, 0.99);
         // [V32.41] ★AI 이벤트 정렬 틸트★ — 활성 이슈 수혜종목은 랭킹↑, 피해종목은 랭킹↓(주문로직 아님, 스캔점수 조정)
-        const _et = _luxEventTiltFor(sym, _evCtx.evs, _evCtx.mc);
+        const _et = _luxEventTiltFor(sym, _evCtx.evs, _evCtx.mc, _conf);
         const rankTilted = _et.tilt !== 0 ? _clamp(rankP * (1 + _et.tilt), 0.01, 0.99) : rankP;
         const _pk = { symbol: sym, market: mkt, p: +p.toFixed(3), rankP: +rankTilted.toFixed(3), rankBase: +rankP.toFixed(3), tech: _pt.tech, techLabel: _pt.label, blue: +_pt.blue.toFixed(2), strategy: "scan" };
         if (_et.tilt !== 0) { _pk.evTilt = _et.tilt; _pk.evTags = (_et.align[0] && _et.align[0].tags) ? _et.align.map(function (a) { return a.code; }).slice(0, 3) : undefined; }
@@ -23539,7 +23542,7 @@ async function mlUniverseScanNightly(DB) {
     const _tiltedN = picks.filter(function (p) { return p.evTilt; }).length;
     await setState(DB, "ai_picks:scan", { ts: Date.now(), scanned: scanned, total: syms.length, picks: picks.slice(0, 40),
       byMkt: { us: symsByMkt.us.length, kr: symsByMkt.kr.length, cm: symsByMkt.cm.length }, scannedByMkt: scannedByMkt,
-      events: _evCtx.evs.map(function (e) { return { code: e.code, label: e.play.label, intensity: e.intensity }; }), marketConfirm: _evCtx.mc, tiltedN: _tiltedN });
+      events: _evCtx.evs.map(function (e) { return { code: e.code, label: e.play.label, intensity: e.intensity, conf: _conf[e.code] != null ? _conf[e.code] : null }; }), marketConfirm: _evCtx.mc, tiltedN: _tiltedN });
     return "[SCAN] 전종목 " + scanned + "/" + syms.length + " 분석 — AI 픽 상위 " + Math.min(40, picks.length) + "종목" + (_evActive ? " · 이벤트틸트[" + _evActive + "] 반영 " + _tiltedN + "종목" : "");
   } catch (e) { return "[SCAN] fail: " + (e && e.message); }
 }
@@ -24275,31 +24278,120 @@ const _EVENT_TAG_W = {
   usdUp:     { export_kr: 1.2, staples: 0.3, materials: -1.1, china_exp: -0.6, semi_exp: 0.4 },
   tradeWar:  { defense: 1.0, china_exp: -2.0, semi_exp: -1.4, semi: -0.6, materials: -0.5 }
 };
-// 종목별 이벤트 정렬 틸트(-0.18~+0.18). evs=[{code,intensity}], mc=시장확증(0.35~1).
-function _luxEventTiltFor(symbol, evs, mc) {
+// ── [V32.42] 실증(empirical) 확인 계층 — "전쟁이 나도 방산주가 안 오를 수 있다"는 변수 대응 ──
+//   틸트를 이론 가중(_EVENT_TAG_W)만으로 걸지 않고, 실제 태그바스켓 수익률로 '확증'해 스케일한다.
+//   (a) dailyMapAll(이미 스캔에서 로드)에서 각 태그 종목바구니의 최근 r1/r5 평균수익을 계산,
+//   (b) 이벤트의 수혜(+)/피해(-) 태그가 실제로 기대 방향으로 움직였는지 상관 점수화 → 확증배율,
+//   (c) 이벤트 기여를 확증배율로 곱해 '이론상 수혜지만 시장이 안 따라오면' 틸트를 자동 감쇠.
+//   전부 인메모리(추가 fetch 0) — CPU 안전.
+function _dailyRet(dd, n) {
+  if (!dd || !Array.isArray(dd.closes)) return null;
+  const c = dd.closes, L = c.length; if (L < n + 1) return null;
+  const a = c[L - 1 - n], b = c[L - 1];
+  if (!(a > 0) || !(b > 0)) return null;
+  return (b / a - 1) * 100;
+}
+// 태그바스켓별 실제 수익률(r1·r5) 평균 + 유효표본수. dailyMap = {sym: dailyCache}.
+function _computeTagReturns(dailyMap) {
+  const out = {};
+  if (!dailyMap) return out;
+  for (const tag of Object.keys(_TAG_TICKERS)) {
+    let s1 = 0, n1 = 0, s5 = 0, n5 = 0;
+    for (const raw of _TAG_TICKERS[tag].split(",")) {
+      const sym = raw.trim(); if (!sym) continue;
+      const dd = dailyMap[sym]; if (!dd) continue;
+      const r1 = _dailyRet(dd, 1); if (r1 != null) { s1 += r1; n1++; }
+      const r5 = _dailyRet(dd, 5); if (r5 != null) { s5 += r5; n5++; }
+    }
+    if (n1 >= 2 || n5 >= 2) out[tag] = { r1: n1 ? +(s1 / n1).toFixed(2) : null, r5: n5 ? +(s5 / n5).toFixed(2) : null, n: Math.max(n1, n5) };
+  }
+  return out;
+}
+// 이벤트별 확증배율 conf[code]∈[0.05,1.25]: 수혜/피해 태그가 실제로 기대대로 움직였나.
+//   cs = Σ(sign(w) × basketRet) / Σ|w|  (기대방향과 실제 수익 방향 정렬도, %단위)
+//   war면 defense(w+)가 오르고 airline(w-)이 빠졌으면 cs>0 → 확증↑; 방산이 안 오르면 cs↓ → 틸트 감쇠.
+function _eventConfirmation(evs, tagRet) {
+  const conf = {};
+  if (!evs || !evs.length || !tagRet) return conf;
+  for (const e of evs) {
+    const w = _EVENT_TAG_W[e.code]; if (!w) continue;
+    let num = 0, den = 0, cover = 0, tot = 0;
+    for (const tag of Object.keys(w)) {
+      tot++;
+      const tr = tagRet[tag]; if (!tr) continue;
+      const r = (tr.r5 != null ? tr.r5 : tr.r1); if (r == null) continue;
+      cover++;
+      // 기대방향(부호 w) × 실제수익 r. 정렬되면 +, 어긋나면 -.
+      num += Math.sign(w[tag]) * r;
+      den += Math.abs(w[tag]);
+    }
+    if (den <= 0 || cover < 2) { conf[e.code] = 0.6; continue; }   // 관측 부족 → 중립(이론 60%만 반영)
+    const cs = num / den;                    // 정렬 점수(대략 %/가중 단위)
+    // cs>0(기대대로 움직임)→확증↑, cs<0(역행)→강한 감쇠. 0.35 기저 + 0.30/%p 기울기.
+    let m = 0.35 + 0.30 * cs;
+    // 커버리지가 낮으면 이론 쪽으로 당김(불확실성 축소)
+    const covFrac = cover / Math.max(1, tot);
+    m = 0.6 + (m - 0.6) * (0.5 + 0.5 * covFrac);
+    conf[e.code] = +Math.max(0.05, Math.min(1.25, m)).toFixed(3);
+  }
+  return conf;
+}
+// 종목별 이벤트 정렬 틸트(-0.18~+0.18). evs=[{code,intensity}], mc=시장확증(0.35~1), confMap=실증확증배율.
+function _luxEventTiltFor(symbol, evs, mc, confMap) {
   if (!evs || !evs.length) return { tilt: 0, align: [] };
   const tags = _tagsOf(symbol); if (!tags.length) return { tilt: 0, align: [] };
-  const tset = {}; for (const t of tags) tset[t] = 1;
   let raw = 0; const align = [];
   for (const e of evs) {
     const w = _EVENT_TAG_W[e.code]; if (!w) continue;
     let a = 0, hit = [];
     for (const t of tags) if (w[t] != null) { a += w[t]; hit.push(t); }
     if (a === 0) continue;
-    const contrib = a * (Math.min(3, e.intensity) / 3) * (mc != null ? mc : 0.7);
+    const cf = (confMap && confMap[e.code] != null) ? confMap[e.code] : 1;   // 실증 확증배율(없으면 이론 그대로)
+    const contrib = a * (Math.min(3, e.intensity) / 3) * (mc != null ? mc : 0.7) * cf;
     raw += contrib;
-    align.push({ code: e.code, a: +a.toFixed(2), tags: hit });
+    align.push({ code: e.code, a: +a.toFixed(2), tags: hit, conf: +cf.toFixed(2) });
   }
   // tanh 소프트캡 → 급격한 틸트 방지, ±0.18 상한
   const tilt = +(0.18 * Math.tanh(raw / 3.2)).toFixed(4);
   return { tilt: tilt, align: align };
 }
-// 활성 이벤트 + 시장확증을 함께 반환(틸트 계산용 공용)
+// [V32.42] 특정 종목이 왜 움직였나 — 후보 이슈를 (태그가중×강도×바스켓확증) 순으로 랭킹.
+//   해당 종목의 실제 등락 + 섹터바스켓 대비 초과분(idio)까지 나눠 "이슈 탓 vs 개별 이슈"를 구분.
+function _luxAttributeMove(symbol, dd, evs, tagRet, confMap) {
+  const tags = _tagsOf(symbol); if (!tags.length) return null;
+  const r1 = _dailyRet(dd, 1), r5 = _dailyRet(dd, 5);
+  const cands = [];
+  if (evs && evs.length) {
+    for (const e of evs) {
+      const w = _EVENT_TAG_W[e.code]; if (!w) continue;
+      let a = 0, hit = [];
+      for (const t of tags) if (w[t] != null) { a += w[t]; hit.push(t); }
+      if (a === 0) continue;
+      // 이 이벤트가 이 종목 태그에 준 실제 바스켓 움직임(수혜태그면 +, 피해태그면 - 기대)
+      let basket = 0, bc = 0;
+      for (const t of hit) { const tr = tagRet && tagRet[t]; if (tr) { const rr = (tr.r5 != null ? tr.r5 : tr.r1); if (rr != null) { basket += rr; bc++; } } }
+      const basketAvg = bc ? basket / bc : null;
+      const cf = (confMap && confMap[e.code] != null) ? confMap[e.code] : 0.6;
+      const strength = Math.abs(a) * (Math.min(3, e.intensity) / 3) * cf;
+      cands.push({ code: e.code, label: e.play ? e.play.label : e.code, dir: a > 0 ? "수혜" : "역풍", tags: hit, strength: +strength.toFixed(2), basket: basketAvg != null ? +basketAvg.toFixed(2) : null, conf: +cf.toFixed(2) });
+    }
+    cands.sort(function (x, y) { return y.strength - x.strength; });
+  }
+  // 섹터바스켓 대비 초과(idiosyncratic) — 종목 태그바스켓 평균과 비교
+  let peer = 0, pc = 0;
+  for (const t of tags) { const tr = tagRet && tagRet[t]; if (tr) { const rr = (tr.r5 != null ? tr.r5 : tr.r1); if (rr != null) { peer += rr; pc++; } } }
+  const peerAvg = pc ? +(peer / pc).toFixed(2) : null;
+  const idio = (r5 != null && peerAvg != null) ? +(r5 - peerAvg).toFixed(2) : null;
+  return { r1: r1, r5: r5, peer: peerAvg, idio: idio, causes: cands.slice(0, 3) };
+}
+// 활성 이벤트 + 시장확증 + 실증확증배율을 함께 반환(틸트 계산용 공용)
 async function _luxEventContext(DB) {
-  let evs = [], mc = 0.7, cgLevel = "평시";
+  let evs = [], mc = 0.7, cgLevel = "평시", tagRet = null, conf = {};
   try { evs = await _luxActiveEvents(DB); } catch (e) {}
   try { const cg = await getState(DB, "crisis_gauge", null); if (cg) { mc = (typeof cg.marketConfirm === "number") ? cg.marketConfirm : 0.7; cgLevel = cg.level || "평시"; } } catch (e) {}
-  return { evs: evs, mc: mc, level: cgLevel };
+  try { const tr = await getState(DB, "tag_returns", null); if (tr && tr.tags) tagRet = tr.tags; } catch (e) {}
+  try { conf = _eventConfirmation(evs, tagRet); } catch (e) { conf = {}; }
+  return { evs: evs, mc: mc, level: cgLevel, tagRet: tagRet, conf: conf };
 }
 
 async function mlAiAsk(DB, question) {
@@ -24402,8 +24494,20 @@ async function mlAiAsk(DB, question) {
           }
           // 거시/금리
           if (md && md.macro) { const m = md.macro; F.push("[거시] 10년물 " + (m.ten != null ? m.ten + "%" : "n/a") + (m.ten20 != null ? "(1달 " + (m.ten20 >= 0 ? "+" : "") + m.ten20 + "%p)" : "")); }
+          // [V32.42] 활성 이벤트 + 실증확증(태그바스켓이 실제 기대대로 움직였나)
+          try {
+            const _ev = await _luxEventContext(DB);
+            if (_ev.evs && _ev.evs.length) {
+              const eb = _ev.evs.slice(0, 4).map(function (e) { const c = _ev.conf && _ev.conf[e.code]; return e.play.label + "(강도" + e.intensity + (c != null ? "·실증확증 " + Math.round(c * 100) + "%" + (c < 0.5 ? "→시장미추종" : c > 0.9 ? "→강하게 확증" : "") : "") + ")"; });
+              F.push("[활성 이벤트·실증확증] " + eb.join(" / "));
+            }
+            if (_ev.tagRet) {
+              const keys = Object.keys(_ev.tagRet).filter(function (t) { return _ev.tagRet[t].r5 != null; }).sort(function (a, b) { return _ev.tagRet[b].r5 - _ev.tagRet[a].r5; });
+              if (keys.length) { const hi = keys.slice(0, 3).map(function (t) { return t + " " + (_ev.tagRet[t].r5 >= 0 ? "+" : "") + _ev.tagRet[t].r5 + "%"; }); const lo = keys.slice(-3).reverse().map(function (t) { return t + " " + (_ev.tagRet[t].r5 >= 0 ? "+" : "") + _ev.tagRet[t].r5 + "%"; }); F.push("[테마바스켓 5일수익 · 강] " + hi.join(", ") + " [약] " + lo.join(", ")); }
+            }
+          } catch (e) {}
         } catch (e) {}
-        F.push("\n[지시] 위 사실만 근거로, 오늘 시장/해당 섹터의 등락이 어떤 외부·지정학·거시 이슈와 연관될 수 있는지 설명해줘. 규칙: (1) '현재 원인'으로는 발행경과가 짧은(최근 수시간~하루) 헤드라인만 후보로 삼고, 오래된(수십시간 전) 뉴스는 배경으로만 언급하거나 제외해 — 옛 이슈를 오늘 원인으로 오판 금지. (2) 여러 매체가 보도한 항목을 우선 신뢰(단일 출처·미확인 주장은 신중히, 확정 아님을 명시). (3) 뉴스에 직접 근거가 없으면 '뉴스상 직접 근거는 제한적, 시장 전반/기술적 요인일 수 있음'이라고 솔직히 밝혀. (4) 상관≠인과임을 유의.");
+        F.push("\n[지시] 위 사실만 근거로, 오늘 시장/해당 섹터의 등락이 어떤 외부·지정학·거시 이슈와 연관될 수 있는지 설명해줘. 특히 활성 이벤트의 '실증확증'과 '테마바스켓 실제 수익'을 근거로, 이론상 수혜여도 실제 그 테마가 안 움직였으면(확증 낮음) 영향이 약하다고 판단해 — 예: 전쟁 국면이어도 방산바스켓이 실제 안 올랐으면 방산 수혜 논리를 과신하지 마. 규칙: (1) '현재 원인'으로는 발행경과가 짧은(최근 수시간~하루) 헤드라인만 후보로 삼고, 오래된(수십시간 전) 뉴스는 배경으로만 언급하거나 제외해 — 옛 이슈를 오늘 원인으로 오판 금지. (2) 여러 매체가 보도한 항목을 우선 신뢰(단일 출처·미확인 주장은 신중히, 확정 아님을 명시). (3) 뉴스에 직접 근거가 없으면 '뉴스상 직접 근거는 제한적, 시장 전반/기술적 요인일 수 있음'이라고 솔직히 밝혀. (4) 상관≠인과임을 유의.");
         return { ok: true, answer: F.join("\n"), whyMove: true };
       }
       // 0y) [V32.32] 뉴스량 — 오늘 들어온 뉴스 개수·최신 헤드라인
@@ -24534,7 +24638,7 @@ async function mlAiAsk(DB, question) {
         // 저장된 rankBase(틸트 이전)에 현재 이벤트 틸트를 라이브 재적용 → 실시간 이슈 반영
         picks = picks.map(function (p) {
           const sy = p.symbol || p.sym || ""; const base = (p.rankBase != null ? p.rankBase : (p.rankP != null ? p.rankP : p.p)) || 0;
-          const et = _luxEventTiltFor(sy, _ev.evs, _ev.mc);
+          const et = _luxEventTiltFor(sy, _ev.evs, _ev.mc, _ev.conf);
           return Object.assign({}, p, { _liveRank: _clamp(base * (1 + et.tilt), 0.01, 0.99), _tilt: et.tilt, _tcodes: et.align.map(function (a) { return a.code; }) });
         }).sort(function (a, b) { return b._liveRank - a._liveRank; });
         const top = picks.slice(0, 8).map(function (p) {
@@ -24543,7 +24647,7 @@ async function mlAiAsk(DB, question) {
           const tmark = p._tilt > 0.01 ? " ⬆수혜(" + (p._tcodes[0] || "") + ")" : p._tilt < -0.01 ? " ⬇역풍" : "";
           return "- " + nm + (pr != null ? " (AI 승률 " + (pr * 100).toFixed(0) + "%)" : "") + tmark;
         }).join("\n");
-        const evLine = (_ev.evs && _ev.evs.length) ? "\n활성 이슈: " + _ev.evs.slice(0, 3).map(function (e) { return e.play.label; }).join(", ") + " (시장확증 " + _ev.mc + " — 이슈 수혜/역풍을 랭킹에 반영)" : "";
+        const evLine = (_ev.evs && _ev.evs.length) ? "\n활성 이슈: " + _ev.evs.slice(0, 3).map(function (e) { const c = _ev.conf && _ev.conf[e.code]; return e.play.label + (c != null ? " (실증확증 " + Math.round(c * 100) + "%" + (c < 0.5 ? "·시장미추종→틸트감쇠" : "") + ")" : ""); }).join(", ") + " (시장확증 " + _ev.mc + " — 이슈 수혜/역풍을 실제 바스켓 수익으로 확증해 랭킹 반영)" : "";
         return { ok: true, answer: "**AI 스캔 상위 후보** (" + (sc.scanned || picks.length) + "종목 스캔)" + evLine + "\n" + top + "\n\n_확정 추천이 아니라 모델 확률 + 이벤트 정렬 랭킹이야. 진입은 위원회·게이트·리스크국면을 함께 봐._" };
       }
       // 4) 오늘/최근 매매 내역
@@ -24651,6 +24755,35 @@ async function mlAiAsk(DB, question) {
   // [V32.19] 종목 지정 + 이유/뉴스 질문 — 스냅샷 분석 전에 먼저 처리
   if (syms.length) {
     const s0 = syms[0];
+    // [V32.42] 왜 이 종목이 떨어졌나/올랐나 — 이슈 귀속(attribution): 어떤 활성이슈가 이 종목에 영향?
+    if (/왜|이유|원인|때문|무슨\s*일/.test(q) && /떨어|하락|빠졌|내렸|폭락|급락|올랐|상승|급등|반등|튀|약세|강세|부진/.test(q) && !/(샀|매수|팔|매도|담았)/.test(q)) {
+      try {
+        const nm = NAME_MAP[s0] || s0;
+        let dd = null; try { dd = await getState(DB, "daily:" + s0, null); } catch (e) {}
+        if (!dd || !Array.isArray(dd.closes)) return { ok: true, answer: nm + "의 일봉 데이터가 아직 부족해서 원인 분석이 어려워. 잠시 뒤 다시 물어봐줘." };
+        const _ev = await _luxEventContext(DB);
+        const at = _luxAttributeMove(s0, dd, _ev.evs, _ev.tagRet, _ev.conf);
+        const L = ["**" + nm + " 움직임 원인 분석**"];
+        if (at) {
+          if (at.r1 != null || at.r5 != null) L.push("- 실제 등락: 1일 " + (at.r1 != null ? (at.r1 >= 0 ? "+" : "") + at.r1 + "%" : "n/a") + " · 5일 " + (at.r5 != null ? (at.r5 >= 0 ? "+" : "") + at.r5 + "%" : "n/a"));
+          if (at.peer != null) L.push("- 동종 섹터바스켓 5일 평균: " + (at.peer >= 0 ? "+" : "") + at.peer + "%" + (at.idio != null ? " → 개별초과분(idio) " + (at.idio >= 0 ? "+" : "") + at.idio + "%p " + (Math.abs(at.idio) >= 3 ? "(종목 고유 이슈 가능성↑)" : "(대체로 섹터·이슈 동행)") : ""));
+          if (at.causes && at.causes.length) {
+            L.push("");
+            L.push("**후보 이슈(영향 강도순 · 실증 확증 반영):**");
+            for (const c of at.causes) {
+              L.push("· " + c.label + " → 이 종목엔 **" + c.dir + "** (태그 " + c.tags.join("/") + ", 강도 " + c.strength + ", 확증 " + Math.round(c.conf * 100) + "%)" + (c.basket != null ? " · 해당바스켓 실제 " + (c.basket >= 0 ? "+" : "") + c.basket + "%" : ""));
+            }
+            L.push("");
+            L.push("_이론 태그가중을 실제 바스켓 수익률로 '확증'해서 스코어링했어. 확증이 낮으면(예: 전쟁인데 방산이 실제론 안 오름) 그 이슈 영향은 약하게 봐야 해._");
+          } else {
+            L.push("- 현재 뚜렷한 활성 이슈와의 연관은 약해. 개별 실적·수급·기술적 요인일 수 있어.");
+          }
+          if (Math.abs(at.idio || 0) >= 3) L.push("- ⚠️ 섹터 대비 초과 움직임이 커 — 이 종목만의 뉴스(실적·가이던스·수급)를 함께 확인해봐.");
+        }
+        L.push("\n_상관≠인과. 과거 경향 기반 참고이고 확정 아님._");
+        return { ok: true, answer: L.join("\n"), attribution: true };
+      } catch (e) { return { ok: true, answer: "원인 분석 중 문제가 있었어." }; }
+    }
     // 왜 샀어/왜 팔았어 — trades의 reason + AI 픽 확률로 설명
     if (/왜.*(샀|매수|팔|매도|보유|들고|담았)/.test(q)) {
       try {
