@@ -14659,13 +14659,22 @@ async function handleRequest(request, env, ctx) {
           const _auto = (typeof AI_PARAMS !== "undefined" && AI_PARAMS.autonomy) || {};
           aiReady = !!(_auto.enabled && mindOk && (dnnOk || gbdtOk));
         } catch (e) {}
+        // [V32.50] 부스팅 3종(XGB/LGB/Cat)도 위원회 상태에 포함 — trusted=가동, 학습됐지만 미신뢰=섀도우
+        let xgb = null, lgb = null, cat = null;
+        try {
+          const [_x, _l, _c] = await Promise.all([
+            getState(env.DB, "xgb_trust", null), getState(env.DB, "lgb_trust", null), getState(env.DB, "cat_trust", null)
+          ]);
+          const _st = function (t) { return t ? { trusted: !!t.trusted, shadow: !!(t && !t.trusted), accLB: (t.gbdtAccLB || t.gbdtAcc || null) } : null; };
+          xgb = _st(_x); lgb = _st(_l); cat = _st(_c);
+        } catch (e) {}
         const [review, _s] = await Promise.all([
           getState(env.DB, "ai_selfreview", null),
           getState(env.DB, "ai_picks:scan", null)
         ]);
         const scan = _s ? { ts: _s.ts, scanned: _s.scanned, total: _s.total, top: (_s.picks || []).slice(0, 8) } : null;
         return { aiReady: aiReady, mode: aiReady ? "AI_AUTONOMOUS" : "RULE_FALLBACK",
-                 committee: { mind: mindOk, dnn: dnnOk, gbdt: gbdtOk }, selfreview: review, scan: scan };
+                 committee: { mind: mindOk, dnn: dnnOk, gbdt: gbdtOk, xgb: xgb, lgb: lgb, cat: cat }, selfreview: review, scan: scan };
       });
     }
 

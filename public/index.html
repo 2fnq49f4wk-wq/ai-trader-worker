@@ -2900,7 +2900,9 @@ html[data-theme="light"] .table tbody tr:hover{background:rgba(9,105,218,.045);}
         </div>
         <!-- [V32.19] 지정학·위기 게이지 패널 — 전쟁 등 국제이슈 대비 상태를 상시 시각화 -->
         <div class="fv-panel" id="fvCrisisPanel" style="margin-bottom:8px;">
-          <div class="fv-panel-head">지정학·위기 게이지 <span class="fv-panel-sub" id="fvCrisisBadge">확인 중…</span></div>
+          <div class="fv-panel-head" id="fvCrisisHead" style="cursor:pointer;" title="클릭하면 접거나 펼쳐요">
+            <span id="fvCrisisCaret">▾</span> 지정학·위기 게이지 <span class="fv-panel-sub" id="fvCrisisBadge">확인 중…</span>
+          </div>
           <div id="fvCrisisBody" style="padding:9px 10px;font-size:11px;line-height:1.6;color:var(--t2);">로딩 중…</div>
         </div>
         <!-- [V12.112] AI에게 물어보기 — 온보드 자연어 Q&A(외부 LLM API 미사용). 사용자 요청으로 대시보드에 유지. -->
@@ -2914,7 +2916,7 @@ html[data-theme="light"] .table tbody tr:hover{background:rgba(9,105,218,.045);}
               <button class="llm-btn" id="fvAiAskReset" title="답변을 지우고 질문창만 다시 띄워요" style="padding:6px 10px;background:transparent;border:1px solid var(--bd,#333);color:var(--t2,#9aa);">↺ 초기화</button>
             </div>
             <!-- [V32.17] 예시 질문 칩 — 지정학/위기 대비 질문을 전면에 노출 -->
-            <div id="fvAiAskChips" style="display:flex;flex-wrap:wrap;gap:5px;margin-top:7px;">
+            <div id="fvAiAskChips" style="display:none;flex-wrap:wrap;gap:5px;margin-top:7px;">
               <button class="fv-askchip" data-q="지금 시장 위험해?">🌐 지금 시장 위험해?</button>
               <button class="fv-askchip" data-q="전쟁 같은 지정학 리스크에 대비돼 있어?">⚠️ 전쟁 대비돼 있어?</button>
               <button class="fv-askchip" data-q="폭락에 어떻게 헤지해?">🛡️ 폭락 헤지</button>
@@ -4525,10 +4527,34 @@ html[data-theme="light"] .table tbody tr:hover{background:rgba(9,105,218,.045);}
       var b = e.target.closest && e.target.closest('.fv-askchip'); if (!b) return;
       inp.value = b.getAttribute('data-q') || ''; ask();
     });
+    // [V32.50] 예시 질문은 질문창을 클릭(포커스)했을 때만 표시 — 평소엔 숨김
+    if (chips) {
+      var __chipHideT = null;
+      var showChips = function(){ if (__chipHideT) { clearTimeout(__chipHideT); __chipHideT = null; } chips.style.display = 'flex'; };
+      var hideChips = function(){ __chipHideT = setTimeout(function(){ chips.style.display = 'none'; }, 200); };  // 칩 클릭이 blur보다 늦게 와도 반영되게 지연
+      inp.addEventListener('focus', showChips);
+      inp.addEventListener('click', showChips);
+      inp.addEventListener('blur', hideChips);
+      // 칩 위에서 마우스다운하면 blur로 숨겨지기 전에 유지
+      chips.addEventListener('mousedown', function(){ if (__chipHideT) { clearTimeout(__chipHideT); __chipHideT = null; } });
+    }
   }
   // [V32.19] 지정학·위기 게이지 패널 렌더 — /api/crisis 폴링(대시보드 표시 중 3분마다)
   var __crisisTimer = null;
+  var __crisisToggleBound = false;
+  function bindCrisisToggle() {
+    if (__crisisToggleBound) return;
+    var head = document.getElementById('fvCrisisHead'), body = document.getElementById('fvCrisisBody'), caret = document.getElementById('fvCrisisCaret');
+    if (!head || !body) return;
+    __crisisToggleBound = true;
+    head.addEventListener('click', function(){
+      var open = body.style.display !== 'none';
+      body.style.display = open ? 'none' : 'block';
+      if (caret) caret.textContent = open ? '▸' : '▾';
+    });
+  }
   function renderCrisisPanel() {
+    bindCrisisToggle();
     var body = document.getElementById('fvCrisisBody'), badge = document.getElementById('fvCrisisBadge');
     if (!body) return;
     fetch('/api/crisis').then(function(r){ return r.json(); }).then(function(d){
@@ -10743,18 +10769,32 @@ html[data-theme="light"] .table tbody tr:hover{background:rgba(9,105,218,.045);}
         ? '<span style="color:var(--pos);font-weight:700;">● AI 자율운용 중</span>'
         : '<span style="color:#e8b339;font-weight:700;">● 규칙엔진 비상운용 (AI 학습/신뢰 대기)</span>';
       var c = (d && d.committee) || {};
-      var html = '위원회: MIND ' + (c.mind?'✅':'⏳') + ' · DNN ' + (c.dnn?'✅':'⏳') + ' · GBDT ' + (c.gbdt?'✅':'⏳');
+      // [V32.50] 부스팅 3종 포함 — ✅가동 / 🌓섀도우(학습됐지만 미신뢰) / ⏳대기
+      var bst = function(o){ return !o ? '⏳' : (o.trusted ? '✅' : (o.shadow ? '🌓' : '⏳')); };
+      var html = '위원회: MIND ' + (c.mind?'✅':'⏳') + ' · DNN ' + (c.dnn?'✅':'⏳') + ' · GBDT ' + (c.gbdt?'✅':'⏳')
+        + ' · XGB ' + bst(c.xgb) + ' · LGB ' + bst(c.lgb) + ' · Cat ' + bst(c.cat)
+        + ' <span style="color:var(--t3);font-size:10px;">(✅가동·🌓섀도우·⏳대기)</span>';
       if (d && d.scan && d.scan.top && d.scan.top.length) {
         html += ' &nbsp;|&nbsp; 야간 AI픽: ' + d.scan.top.slice(0,5).map(function(p){ return p.symbol+'('+(p.p*100).toFixed(0)+'%)'; }).join(', ');
       }
       var rv = d && d.selfreview;
       if (rv && rv.diagnosis && rv.diagnosis.length) {
-        html += '<div style="margin-top:6px;padding-top:6px;border-top:1px solid var(--bd2);"><b style="color:var(--t1);">🔍 AI 자가진단</b> <span style="color:var(--t3);">(최근 '+rv.windowDays+'일 · '+rv.n+'건 · 승률 '+(rv.winRate*100).toFixed(0)+'% · PF '+rv.profitFactor+')</span><br>'
-          + rv.diagnosis.map(function(t){ return '· ' + t; }).join('<br>') + '</div>';
+        var diagHtml = rv.diagnosis.map(function(t){ return '· ' + t; }).join('<br>');
+        html += '<div style="margin-top:6px;padding-top:6px;border-top:1px solid var(--bd2);">'
+          + '<button id="fvSelfReviewToggle" style="background:transparent;border:none;color:var(--t1);font-weight:700;cursor:pointer;padding:0;font-size:11px;">▸ 🔍 AI 자가진단</button>'
+          + ' <span style="color:var(--t3);">(최근 '+rv.windowDays+'일 · '+rv.n+'건 · 승률 '+(rv.winRate*100).toFixed(0)+'% · PF '+rv.profitFactor+')</span>'
+          + '<div id="fvSelfReviewBody" style="display:none;margin-top:4px;">' + diagHtml + '</div></div>';
       } else {
         html += '<div style="margin-top:4px;color:var(--t3);">자가진단은 야간 파이프라인에서 생성됩니다.</div>';
       }
       body.innerHTML = html;
+      // 자가진단 접기/펼치기
+      var srt = $('fvSelfReviewToggle'), srb = $('fvSelfReviewBody');
+      if (srt && srb) srt.addEventListener('click', function(){
+        var open = srb.style.display !== 'none';
+        srb.style.display = open ? 'none' : 'block';
+        srt.textContent = (open ? '▸' : '▾') + ' 🔍 AI 자가진단';
+      });
     })['catch'](function(e){ badge.textContent = '조회 실패'; body.textContent = '조회 실패 — ' + (e && e.message || ''); });
   }
   try { bootAiModePanel(); setInterval(bootAiModePanel, 5 * 60 * 1000); } catch(e) {}
