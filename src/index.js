@@ -24223,25 +24223,25 @@ const _EVENT_PLAYBOOK = {
   rateDown: { label: "금리 하락", benefit: [["성장·반도체·소프트웨어", ""], ["리츠·채권프록시", "TLT"]], hurt: [["은행 마진(상대약세)", ""]], why: "할인율↓로 성장·장기듀레이션 우호, 위험선호 지지" }
 };
 // 현재 활성 이슈 감지(캐시 상태만 읽음 — 추가 fetch 0)
+//   [V32.45] D1 왕복 최소화: 독립 키를 getStates로 1배치 로드. tag_returns 신선도 가드(오래된 데이터로 이벤트 오탐 방지).
 async function _luxActiveEvents(DB) {
   const ev = [];
   try {
-    const cg = await getState(DB, "crisis_gauge", null);
+    let S = {}; try { S = await getStates(DB, ["crisis_gauge", "macro_data", "mkt_context", "daily:^TNX", "tag_returns"]); } catch (e) {}
+    const cg = S["crisis_gauge"] || null;
     if (cg && ((cg.strongN || 0) >= 2 || (cg.hotN || 0) >= 1 || (cg.geoFloor || 0) >= 42)) ev.push({ code: "war", intensity: cg.level === "위기" ? 3 : cg.level === "경계" ? 2 : 1 });
-    const md = await getState(DB, "macro_data", null);
+    const md = S["macro_data"] || null;
     const ip = md && md.us && md.us._inflationProxy, rt = md && md.us && md.us._rates;
     if (ip && ip.oil != null) { if (ip.oil >= 4) ev.push({ code: "oilUp", intensity: 2 }); else if (ip.oil <= -4) ev.push({ code: "oilDown", intensity: 1 }); }
     if (ip && ip.pressure === "상승압력") ev.push({ code: "inflation", intensity: 1 });
     if (rt && rt.inverted) ev.push({ code: "recession", intensity: 2 });
-    // 금리 방향(10년물 20일 변화)
-    try { const ten = md && md.us; } catch (e) {}
-    const mc2 = await getState(DB, "mkt_context", null);
+    const mc2 = S["mkt_context"] || null;
     if (mc2 && (mc2.regime === "risk_off")) { if (!ev.find(function (e) { return e.code === "recession"; })) ev.push({ code: "recession", intensity: 1 }); }
     // 달러
     if (ip && ip.dxy != null && ip.dxy >= 0.6) ev.push({ code: "usdUp", intensity: 1 });
     // [V32.43] 금리 방향(미 10년물 20거래일 변화) → rateUp/rateDown
     try {
-      const tnx = await getState(DB, "daily:^TNX", null);
+      const tnx = S["daily:^TNX"];
       if (tnx && Array.isArray(tnx.closes) && tnx.closes.length >= 21) {
         const c = tnx.closes, d = +(c[c.length - 1] - c[c.length - 21]).toFixed(2);
         if (d >= 0.15) ev.push({ code: "rateUp", intensity: d >= 0.35 ? 2 : 1 });
@@ -24252,7 +24252,10 @@ async function _luxActiveEvents(DB) {
     //   빅테크 실적 펑크(성장주 붕괴)·반도체 사이클·성장↔가치 로테이션·신용스트레스를
     //   전쟁과 동일한 이벤트로 취급 → 방어 회전/수혜주 재편(데이터 기반, 추가 fetch 0).
     try {
-      let tr = null; const t = await getState(DB, "tag_returns", null); if (t && t.tags) tr = t.tags;
+      const t = S["tag_returns"];
+      // [V32.45] 신선도 가드 — 36h 초과 태그수익은 오래된 국면일 수 있어 마이크로 이벤트 감지에서 제외.
+      const trFresh = t && t.tags && (t.ts == null || (Date.now() - t.ts) <= 36 * 3600000);
+      const tr = trFresh ? t.tags : null;
       if (tr) {
         const R = function (o) { return o ? (o.r5 != null ? o.r5 : o.r1) : null; };
         const avg = function (a) { const v = a.filter(function (x) { return x != null; }); return v.length ? v.reduce(function (s, x) { return s + x; }, 0) / v.length : null; };
@@ -24471,18 +24474,28 @@ async function _luxEventContext(DB) {
 async function _luxMarketShock(DB) {
   try {
     const idxs = ["^GSPC", "^IXIC", "^KS11", "^KQ11"];
-    let q = {}; try { q = await getStates(DB, idxs.map(function (s) { return "index:" + s; })); } catch (e) {}
-    let sum = 0, n = 0, worst = 0, best = 0;
-    for (const s of idxs) { const d = q["index:" + s]; if (d && d.dayPct != null) { sum += d.dayPct; n++; worst = Math.min(worst, d.dayPct); best = Math.max(best, d.dayPct); } }
+    // [V32.45] 지수·VIX·태그수익을 1배치로 로드(왕복 최소화)
+    let S = {}; try { S = await getStates(DB, idxs.map(function (s) { return "index:" + s; }).concat(["crisis_gauge", "tag_returns"])); } catch (e) {}
+    const nowT = Date.now();
+    let sum = 0, n = 0, worst = 0, staleN = 0;
+    for (const s of idxs) {
+      const d = S["index:" + s];
+      // [V32.45] 신선도 가드 — 30h 초과 지수 스냅샷은 전일 급락이 오늘로 오탐되지 않게 제외.
+      if (d && d.dayPct != null) { if (d.ts != null && (nowT - d.ts) > 30 * 3600000) { staleN++; continue; } sum += d.dayPct; n++; worst = Math.min(worst, d.dayPct); }
+    }
     const avg = n ? sum / n : null;
-    let vix = null; try { const cg = await getState(DB, "crisis_gauge", null); if (cg && cg.vix != null) vix = cg.vix; } catch (e) {}
-    // 시장 폭(breadth) — 태그바스켓 1일수익 중 하락 비율
-    let negFrac = null; try { const tr = await getState(DB, "tag_returns", null); if (tr && tr.tags) { const ks = Object.keys(tr.tags); let neg = 0, tot = 0; for (const k of ks) { const r = tr.tags[k].r1; if (r != null) { tot++; if (r < 0) neg++; } } if (tot >= 4) negFrac = neg / tot; } } catch (e) {}
-    if (avg == null && vix == null) return { mode: "none", sev: 0 };
-    const crashScore = (avg != null ? Math.max(0, (-avg - 1.2) / 3.3) : 0)
+    const cg = S["crisis_gauge"] || null;
+    let vix = (cg && cg.vix != null) ? cg.vix : null;
+    // 시장 폭(breadth) — 태그바스켓 1일수익 중 하락 비율(신선한 경우만)
+    let negFrac = null;
+    try { const tr = S["tag_returns"]; if (tr && tr.tags && (tr.ts == null || (nowT - tr.ts) <= 30 * 3600000)) { const ks = Object.keys(tr.tags); let neg = 0, tot = 0; for (const k of ks) { const r = tr.tags[k].r1; if (r != null) { tot++; if (r < 0) neg++; } } if (tot >= 4) negFrac = neg / tot; } } catch (e) {}
+    if (avg == null && vix == null) return { mode: "none", sev: 0, stale: staleN > 0 };
+    // [V32.45] 단일 지수만 신선하면 오탐 위험 → avg 가중 축소(2개 이상일 때만 완전 신뢰). 단독 지수로 레짐 발동 방지.
+    const avgW = (n >= 2) ? 1 : (n === 1 ? 0.5 : 0);
+    const crashScore = (avg != null ? Math.max(0, (-avg - 1.2) / 3.3) * avgW : 0)
       + (vix != null ? Math.max(0, (vix - 26) / 24) : 0)
       + (negFrac != null ? Math.max(0, (negFrac - 0.7) / 0.3) * 0.5 : 0);
-    const rallyScore = (avg != null ? Math.max(0, (avg - 1.2) / 3.3) : 0)
+    const rallyScore = (avg != null ? Math.max(0, (avg - 1.2) / 3.3) * avgW : 0)
       + (negFrac != null ? Math.max(0, (0.3 - negFrac) / 0.3) * 0.4 : 0)
       - (vix != null ? Math.max(0, (vix - 24) / 20) : 0);
     let mode = "none", sev = 0; const drivers = [];
@@ -24504,7 +24517,7 @@ async function _luxMarketShockCached(DB) {
   try {
     const g = (typeof globalThis !== "undefined") ? globalThis : {};
     const c = g.__shockCache;
-    if (c && (Date.now() - c.ts) < 300000) return c.val;
+    if (c && (Date.now() - c.ts) < 180000) return c.val;   // 3분 메모 — 급변 레짐 반응성 ↔ 종목별 재계산 방지 균형
     const val = await _luxMarketShock(DB);
     g.__shockCache = { ts: Date.now(), val: val };
     return val;
