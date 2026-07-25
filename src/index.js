@@ -23484,6 +23484,9 @@ async function mlUniverseScanNightly(DB) {
     const picks = [];
     let scanned = 0;
     const scannedByMkt = { us: 0, kr: 0, cm: 0 };
+    // [V32.41] 이벤트 정렬 컨텍스트 1회 로드 — 스캔 전종목에 동일 적용(활성이슈·시장확증)
+    let _evCtx = { evs: [], mc: 0.7, level: "평시" }; try { _evCtx = await _luxEventContext(DB); } catch (e) {}
+    const _evActive = _evCtx.evs && _evCtx.evs.length ? _evCtx.evs.map(function (e) { return e.code + "(" + e.intensity + ")"; }).join(",") : "";
     const deadline = Date.now() + 90000;   // 벽시계 가드(추론은 CPU 수 ms/심볼)
     const evstats = await getState(DB, "ml_evstats", null);
     const idxCache = {};   // [V7] 시장별 지수(상대강도) 1회 로드
@@ -23521,16 +23524,23 @@ async function mlUniverseScanNightly(DB) {
         const _tw = (LUXML.pickTechWeight != null ? LUXML.pickTechWeight : 0.22);
         const _bw = (LUXML.pickBlueWeight != null ? LUXML.pickBlueWeight : 0.10);
         const rankP = _clamp(p + (_pt.tech != null ? _tw * _pt.tech : 0) + _bw * _pt.blue, 0.01, 0.99);
-        picks.push({ symbol: sym, market: mkt, p: +p.toFixed(3), rankP: +rankP.toFixed(3), tech: _pt.tech, techLabel: _pt.label, blue: +_pt.blue.toFixed(2), strategy: "scan" });
+        // [V32.41] ★AI 이벤트 정렬 틸트★ — 활성 이슈 수혜종목은 랭킹↑, 피해종목은 랭킹↓(주문로직 아님, 스캔점수 조정)
+        const _et = _luxEventTiltFor(sym, _evCtx.evs, _evCtx.mc);
+        const rankTilted = _et.tilt !== 0 ? _clamp(rankP * (1 + _et.tilt), 0.01, 0.99) : rankP;
+        const _pk = { symbol: sym, market: mkt, p: +p.toFixed(3), rankP: +rankTilted.toFixed(3), rankBase: +rankP.toFixed(3), tech: _pt.tech, techLabel: _pt.label, blue: +_pt.blue.toFixed(2), strategy: "scan" };
+        if (_et.tilt !== 0) { _pk.evTilt = _et.tilt; _pk.evTags = (_et.align[0] && _et.align[0].tags) ? _et.align.map(function (a) { return a.code; }).slice(0, 3) : undefined; }
+        picks.push(_pk);
       }
     }
     picks.sort(function (a, b) { return (b.rankP != null ? b.rankP : b.p) - (a.rankP != null ? a.rankP : a.p); });   // [V12.85] 기술 반영 랭킹으로 정렬
     const newOffs = {};
     for (const m of ["us", "kr", "cm"]) newOffs[m] = symsByMkt[m].length ? (offs[m] + scannedByMkt[m]) % symsByMkt[m].length : 0;
     try { await setState(DB, "ai_scan_offset", newOffs); } catch (e) {}
+    const _tiltedN = picks.filter(function (p) { return p.evTilt; }).length;
     await setState(DB, "ai_picks:scan", { ts: Date.now(), scanned: scanned, total: syms.length, picks: picks.slice(0, 40),
-      byMkt: { us: symsByMkt.us.length, kr: symsByMkt.kr.length, cm: symsByMkt.cm.length }, scannedByMkt: scannedByMkt });
-    return "[SCAN] 전종목 " + scanned + "/" + syms.length + " 분석 — AI 픽 상위 " + Math.min(40, picks.length) + "종목 갱신";
+      byMkt: { us: symsByMkt.us.length, kr: symsByMkt.kr.length, cm: symsByMkt.cm.length }, scannedByMkt: scannedByMkt,
+      events: _evCtx.evs.map(function (e) { return { code: e.code, label: e.play.label, intensity: e.intensity }; }), marketConfirm: _evCtx.mc, tiltedN: _tiltedN });
+    return "[SCAN] 전종목 " + scanned + "/" + syms.length + " 분석 — AI 픽 상위 " + Math.min(40, picks.length) + "종목" + (_evActive ? " · 이벤트틸트[" + _evActive + "] 반영 " + _tiltedN + "종목" : "");
   } catch (e) { return "[SCAN] fail: " + (e && e.message); }
 }
 
@@ -24206,6 +24216,92 @@ async function _luxActiveEvents(DB) {
   return out;
 }
 
+// ═══════════ [V32.41] 이벤트 정렬 틸트 엔진 — 종목×이벤트 태그 가중으로 AI 픽 랭킹 조정 ═══════════
+//   ★거래 주문 로직이 아니라 자체 AI 스캔(ai_picks)의 확률랭킹을 이벤트 정렬도로 틸트★
+//   (1) 종목→이벤트태그(방산·에너지·금·항공·성장·은행·수출 등) 다중 매핑,
+//   (2) 이벤트→태그 가중 매트릭스(수혜+/피해-),
+//   (3) 정렬점수 = Σ 이벤트강도×시장확증×Σ태그가중 → 클램프 틸트,
+//   (4) 스캔 rankP에 (1+틸트) 곱 → AI가 스스로 이슈에 맞게 종목 순위를 재편.
+const _TAG_TICKERS = {
+  defense:   "LMT,RTX,NOC,GD,LHX,HII,GE,BA,012450.KS,064350.KS,047810.KS,079550.KS,042660.KS,272210.KS",
+  energy:    "XOM,CVX,COP,EOG,OXY,SLB,PSX,VLO,MPC,096770.KS,010950.KS,267250.KS",
+  gold:      "NEM,GOLD,AEM,GLD,FNV,051900.KS",
+  cyber:     "CRWD,PANW,ZS,FTNT,S,NET,OKTA",
+  airline:   "DAL,UAL,AAL,LUV,003490.KS,020560.KS",
+  travel:    "BKNG,ABNB,MAR,CCL,RCL,EXPE,039130.KS",
+  transport: "UPS,FDX,UNP,CSX,NSC,086280.KS",
+  chemical:  "DOW,LYB,051910.KS,011170.KS,285130.KS,010060.KS",
+  bank:      "JPM,BAC,WFC,C,USB,PNC,TFC,105560.KS,055550.KS,086790.KS,024110.KS,138040.KS,316140.KS",
+  insurer:   "MET,PRU,AIG,ALL,032830.KS,000810.KS,088350.KS",
+  reit:      "O,PLD,AMT,SPG,EQIX,VICI",
+  highdiv:   "T,VZ,MO,PM,KO,PG,033780.KS",
+  utility:   "NEE,DUK,SO,D,AEP,015760.KS",
+  staples:   "KO,PG,WMT,COST,PEP,CL,KMB,MDLZ,GIS,097950.KS,004370.KS",
+  health:    "LLY,JNJ,UNH,MRK,ABBV,PFE,TMO,ABT,AMGN,ISRG,VRTX,207940.KS,068270.KS,326030.KS,196170.KQ",
+  growth:    "NVDA,MSFT,GOOGL,META,CRM,ADBE,NOW,SNOW,PLTR,AMD,TSLA,SHOP,NET,MDB,DDOG,035420.KS,035720.KS",
+  semi:      "NVDA,AMD,AVGO,MU,QCOM,TSM,ASML,AMAT,LRCX,KLAC,MRVL,INTC,ARM,TXN,005930.KS,000660.KS,042700.KS,357780.KQ,000990.KS",
+  semi_exp:  "005930.KS,000660.KS,TSM,042700.KS,357780.KQ",
+  materials: "FCX,NEM,NUE,X,LIN,APD,SHW,MOS,CF,005490.KS,010130.KS,004020.KS",
+  export_kr: "005930.KS,000660.KS,005380.KS,000270.KS,005490.KS,042660.KS,009540.KS,010140.KS,012330.KS,373220.KS",
+  china_exp: "BABA,PDD,JD,NIO,MPWR,WYNN,LVS,QCOM,AAPL,TSLA",
+  consumer_d:"AMZN,TSLA,HD,NKE,SBUX,MCD,DIS,LOW,TGT,LULU,RCL,005380.KS,090430.KS",
+  industrial:"CAT,GE,HON,DE,MMM,EMR,UNP,ETN,PH,ITW,267260.KS,009150.KS,042670.KS",
+  bond_prox: "TLT,IEF,LQD,148070.KS"
+};
+const _SYM_TAG_MAP = (function () {
+  const m = {};
+  for (const tag of Object.keys(_TAG_TICKERS)) { for (const t of _TAG_TICKERS[tag].split(",")) { const k = t.trim(); if (!k) continue; (m[k] = m[k] || []).push(tag); } }
+  return m;
+})();
+function _tagsOf(symbol) {
+  const tags = (_SYM_TAG_MAP[symbol] || []).slice();
+  // 섹터그룹 폴백 태그(명시 태그 없어도 대분류 반영)
+  try {
+    const g = (typeof getSectorGroup === "function") ? getSectorGroup(symbol, null) : null;
+    const add = { TECH: ["growth"], FINANCE: ["bank"], HEALTH: ["health"], CONSUMER: ["consumer_d"], INDUSTRIAL: ["industrial"], RESOURCES: ["energy"] }[g];
+    if (add) for (const a of add) if (tags.indexOf(a) < 0) tags.push(a);
+  } catch (e) {}
+  return tags;
+}
+// 이벤트→태그 가중(수혜 +, 피해 -). 강도·시장확증으로 스케일됨.
+const _EVENT_TAG_W = {
+  war:       { defense: 2.4, energy: 1.0, gold: 1.6, cyber: 1.2, materials: 0.4, airline: -1.6, travel: -1.6, growth: -0.9, semi: -0.5, export_kr: -0.8, consumer_d: -1.0, china_exp: -0.6 },
+  oilUp:     { energy: 2.2, materials: 0.6, defense: 0.4, airline: -2.0, travel: -1.0, transport: -1.5, chemical: -1.4, consumer_d: -0.9 },
+  oilDown:   { airline: 1.6, travel: 1.0, transport: 1.2, chemical: 1.2, consumer_d: 0.8, energy: -2.0 },
+  rateUp:    { bank: 2.0, insurer: 1.5, growth: -1.6, semi: -1.0, reit: -1.6, highdiv: -1.0, utility: -0.6, bond_prox: -1.2 },
+  rateDown:  { growth: 1.6, semi: 1.0, reit: 1.2, bond_prox: 1.2, highdiv: 0.6, bank: -0.6, insurer: -0.4 },
+  inflation: { energy: 1.6, materials: 1.6, gold: 1.2, bank: 0.6, growth: -1.1, consumer_d: -0.9, reit: -0.5 },
+  recession: { staples: 1.6, health: 1.2, utility: 1.1, gold: 0.7, bond_prox: 1.0, defense: 0.5, industrial: -1.6, consumer_d: -1.5, semi: -1.1, materials: -1.1, bank: -0.6, airline: -1.0 },
+  usdUp:     { export_kr: 1.2, staples: 0.3, materials: -1.1, china_exp: -0.6, semi_exp: 0.4 },
+  tradeWar:  { defense: 1.0, china_exp: -2.0, semi_exp: -1.4, semi: -0.6, materials: -0.5 }
+};
+// 종목별 이벤트 정렬 틸트(-0.18~+0.18). evs=[{code,intensity}], mc=시장확증(0.35~1).
+function _luxEventTiltFor(symbol, evs, mc) {
+  if (!evs || !evs.length) return { tilt: 0, align: [] };
+  const tags = _tagsOf(symbol); if (!tags.length) return { tilt: 0, align: [] };
+  const tset = {}; for (const t of tags) tset[t] = 1;
+  let raw = 0; const align = [];
+  for (const e of evs) {
+    const w = _EVENT_TAG_W[e.code]; if (!w) continue;
+    let a = 0, hit = [];
+    for (const t of tags) if (w[t] != null) { a += w[t]; hit.push(t); }
+    if (a === 0) continue;
+    const contrib = a * (Math.min(3, e.intensity) / 3) * (mc != null ? mc : 0.7);
+    raw += contrib;
+    align.push({ code: e.code, a: +a.toFixed(2), tags: hit });
+  }
+  // tanh 소프트캡 → 급격한 틸트 방지, ±0.18 상한
+  const tilt = +(0.18 * Math.tanh(raw / 3.2)).toFixed(4);
+  return { tilt: tilt, align: align };
+}
+// 활성 이벤트 + 시장확증을 함께 반환(틸트 계산용 공용)
+async function _luxEventContext(DB) {
+  let evs = [], mc = 0.7, cgLevel = "평시";
+  try { evs = await _luxActiveEvents(DB); } catch (e) {}
+  try { const cg = await getState(DB, "crisis_gauge", null); if (cg) { mc = (typeof cg.marketConfirm === "number") ? cg.marketConfirm : 0.7; cgLevel = cg.level || "평시"; } } catch (e) {}
+  return { evs: evs, mc: mc, level: cgLevel };
+}
+
 async function mlAiAsk(DB, question) {
   const q = String(question || "").trim().slice(0, 300);
   if (!q) return { ok: false, msg: "질문을 입력해줘." };
@@ -24429,17 +24525,26 @@ async function mlAiAsk(DB, question) {
         L.push("\n최종 결정은 각 모델 검증정확도의 소프트맥스 가중으로 결합돼(잘하는 모델일수록 발언권↑).");
         return { ok: true, answer: L.join("\n") };
       }
-      // 3) 추천/뭐 사 — 야간 전종목 스캔 상위 픽
+      // 3) 추천/뭐 사 — 야간 전종목 스캔 상위 픽 + [V32.41] 현재 이벤트 정렬 틸트 라이브 재적용
       if (/뭐\s*사|추천|뭐가 좋|유망|살\s*만한|살만한|후보|top\s*pick|픽\s*알려|제일 좋|가장 좋|뭐 살/.test(q)) {
         const sc = await getState(DB, "ai_picks:scan", null);
-        const picks = (sc && Array.isArray(sc.picks)) ? sc.picks : [];
+        let picks = (sc && Array.isArray(sc.picks)) ? sc.picks.slice() : [];
         if (!picks.length) return { ok: true, answer: "아직 최신 스캔 결과가 없어(야간 전종목 스캔에서 채워져). 잠시 뒤 다시 물어봐줘." };
+        const _ev = await _luxEventContext(DB);
+        // 저장된 rankBase(틸트 이전)에 현재 이벤트 틸트를 라이브 재적용 → 실시간 이슈 반영
+        picks = picks.map(function (p) {
+          const sy = p.symbol || p.sym || ""; const base = (p.rankBase != null ? p.rankBase : (p.rankP != null ? p.rankP : p.p)) || 0;
+          const et = _luxEventTiltFor(sy, _ev.evs, _ev.mc);
+          return Object.assign({}, p, { _liveRank: _clamp(base * (1 + et.tilt), 0.01, 0.99), _tilt: et.tilt, _tcodes: et.align.map(function (a) { return a.code; }) });
+        }).sort(function (a, b) { return b._liveRank - a._liveRank; });
         const top = picks.slice(0, 8).map(function (p) {
-          const sy = p.sym || p.symbol || ""; const nm = NAME_MAP[sy] || sy;
-          const pr = (p.p != null ? p.p : (p.prob != null ? p.prob : null));
-          return "- " + nm + (pr != null ? " (AI 승률 " + (pr * 100).toFixed(0) + "%)" : "");
+          const sy = p.symbol || p.sym || ""; const nm = NAME_MAP[sy] || sy;
+          const pr = (p.p != null ? p.p : null);
+          const tmark = p._tilt > 0.01 ? " ⬆수혜(" + (p._tcodes[0] || "") + ")" : p._tilt < -0.01 ? " ⬇역풍" : "";
+          return "- " + nm + (pr != null ? " (AI 승률 " + (pr * 100).toFixed(0) + "%)" : "") + tmark;
         }).join("\n");
-        return { ok: true, answer: "**AI 스캔 상위 후보** (" + (sc.scanned || picks.length) + "종목 스캔)\n" + top + "\n\n_확정 추천이 아니라 모델 확률 상위야. 진입은 위원회·게이트·리스크국면을 함께 봐._" };
+        const evLine = (_ev.evs && _ev.evs.length) ? "\n활성 이슈: " + _ev.evs.slice(0, 3).map(function (e) { return e.play.label; }).join(", ") + " (시장확증 " + _ev.mc + " — 이슈 수혜/역풍을 랭킹에 반영)" : "";
+        return { ok: true, answer: "**AI 스캔 상위 후보** (" + (sc.scanned || picks.length) + "종목 스캔)" + evLine + "\n" + top + "\n\n_확정 추천이 아니라 모델 확률 + 이벤트 정렬 랭킹이야. 진입은 위원회·게이트·리스크국면을 함께 봐._" };
       }
       // 4) 오늘/최근 매매 내역
       if (/오늘.*(샀|팔|거래|매수|매도)|최근.*(거래|매매|샀|팔)|뭐.*샀|뭐.*팔|매매\s*내역|거래\s*내역/.test(q)) {
