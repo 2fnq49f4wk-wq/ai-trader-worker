@@ -24192,7 +24192,16 @@ const _EVENT_PLAYBOOK = {
   inflation:{ label: "인플레 급등", benefit: [["에너지·원자재", "XOM,FCX,금"], ["금융", ""]], hurt: [["성장주·소비", "실질구매력↓"]], why: "실물·원자재 우위, 금리 상승 압력으로 성장·소비 부담" },
   recession:{ label: "경기침체 우려", benefit: [["방어주(필수소비)", "KO,PG,WMT"], ["헬스케어·유틸", "JNJ,UNH,전력"]], hurt: [["경기민감(산업·소비재·반도체)", ""]], why: "방어·필수 수요 견조, 경기민감·고베타 타격" },
   usdUp:    { label: "달러 강세", benefit: [["미 내수·수입주", ""], ["한국 수출주(원화약세)", "자동차(005380.KS)·조선"]], hurt: [["원자재·신흥국", ""], ["미 다국적 실적", "환효과"]], why: "원화약세로 한국 수출주 우호, 달러표시 원자재·신흥국 압박" },
-  tradeWar: { label: "무역분쟁·반도체 규제", benefit: [["미 국내 생산·방산", ""], ["대체 공급망", ""]], hurt: [["중국 노출주·반도체 수출", ""]], why: "관세·수출규제로 중국 노출·수출 반도체 타격, 국내화 수혜" }
+  tradeWar: { label: "무역분쟁·반도체 규제", benefit: [["미 국내 생산·방산", ""], ["대체 공급망", ""]], hurt: [["중국 노출주·반도체 수출", ""]], why: "관세·수출규제로 중국 노출·수출 반도체 타격, 국내화 수혜" },
+  // ── [V32.43] 데이터로 감지되는 시장 내부(마이크로) 이벤트 — 전쟁처럼 '실적/성장주 충격'도 대응 ──
+  bigtechShock:   { label: "빅테크·성장주 실적/센티 충격", benefit: [["방어주(필수소비)", "KO,PG,WMT,COST"], ["헬스케어·유틸", "JNJ,UNH,전력"], ["고배당·채권프록시", "TLT,고배당"], ["금", "GLD,NEM"]], hurt: [["메가캡 기술(Mag7)", "AAPL,MSFT,NVDA,GOOGL,META,AMZN,TSLA"], ["반도체·소프트웨어", "AMD,MU,SNOW"], ["고베타 소비재", ""]], why: "빅테크 실적 펑크·밸류 부담 시 지수 전반이 눌리며 자금이 방어·저변동으로 회전(과거 경향)" },
+  bigtechStrength:{ label: "빅테크·AI 랠리", benefit: [["메가캡·반도체", "NVDA,MSFT,AVGO"], ["성장·소프트웨어", "PLTR,NOW"], ["AI 밸류체인", ""]], hurt: [["저변동 방어주(상대약세)", ""]], why: "실적 서프라이즈·AI 캐펙스 기대가 성장·반도체를 견인, 방어주는 상대적 소외" },
+  semiUp:         { label: "반도체 업사이클", benefit: [["반도체·장비", "NVDA,AMD,AVGO,ASML,삼성전자(005930.KS),SK하이닉스(000660.KS)"], ["한국 수출주", ""]], hurt: [["경기방어(상대약세)", ""]], why: "메모리·AI 수요·가격 반등이 반도체·장비·한국 수출주 견인" },
+  semiDown:       { label: "반도체 다운사이클", benefit: [["방어·헬스케어", "KO,PG,JNJ"]], hurt: [["반도체·수출주", "삼성전자·하이닉스·장비"]], why: "재고·가격 조정으로 반도체·한국 수출주 부진, 방어로 회전" },
+  rotationValue:  { label: "성장→가치 로테이션", benefit: [["은행·에너지·산업재", "JPM,XOM,CAT"], ["보험·고배당", ""]], hurt: [["성장·반도체·리츠", "고PER·장기듀레이션"]], why: "금리·밸류 부담으로 자금이 성장주에서 가치·경기민감으로 이동" },
+  creditStress:   { label: "신용·금융 스트레스", benefit: [["안전자산·채권·금", "TLT,GLD"], ["필수소비·헬스", "KO,PG,JNJ"]], hurt: [["은행·리츠·보험", "JPM,BAC,리츠"], ["고베타 소비재", ""]], why: "신용경색·유동성 우려 시 금융·리츠 타격, 국채·금·방어로 도피" },
+  rateUp:   { label: "금리 상승", benefit: [["은행·보험", "JPM,BAC,국내은행(105560.KS)"], ["가치주", ""]], hurt: [["성장·반도체(고PER)", "장기듀레이션"], ["리츠·고배당·채권", ""]], why: "순이자마진↑(금융), 할인율↑로 성장주·리츠·채권 부담" },
+  rateDown: { label: "금리 하락", benefit: [["성장·반도체·소프트웨어", ""], ["리츠·채권프록시", "TLT"]], hurt: [["은행 마진(상대약세)", ""]], why: "할인율↓로 성장·장기듀레이션 우호, 위험선호 지지" }
 };
 // 현재 활성 이슈 감지(캐시 상태만 읽음 — 추가 fetch 0)
 async function _luxActiveEvents(DB) {
@@ -24211,6 +24220,39 @@ async function _luxActiveEvents(DB) {
     if (mc2 && (mc2.regime === "risk_off")) { if (!ev.find(function (e) { return e.code === "recession"; })) ev.push({ code: "recession", intensity: 1 }); }
     // 달러
     if (ip && ip.dxy != null && ip.dxy >= 0.6) ev.push({ code: "usdUp", intensity: 1 });
+    // [V32.43] 금리 방향(미 10년물 20거래일 변화) → rateUp/rateDown
+    try {
+      const tnx = await getState(DB, "daily:^TNX", null);
+      if (tnx && Array.isArray(tnx.closes) && tnx.closes.length >= 21) {
+        const c = tnx.closes, d = +(c[c.length - 1] - c[c.length - 21]).toFixed(2);
+        if (d >= 0.15) ev.push({ code: "rateUp", intensity: d >= 0.35 ? 2 : 1 });
+        else if (d <= -0.15) ev.push({ code: "rateDown", intensity: d <= -0.35 ? 2 : 1 });
+      }
+    } catch (e) {}
+    // [V32.43] ★시장 내부(마이크로) 이벤트 — 태그바스켓 실제 수익률로 감지★
+    //   빅테크 실적 펑크(성장주 붕괴)·반도체 사이클·성장↔가치 로테이션·신용스트레스를
+    //   전쟁과 동일한 이벤트로 취급 → 방어 회전/수혜주 재편(데이터 기반, 추가 fetch 0).
+    try {
+      let tr = null; const t = await getState(DB, "tag_returns", null); if (t && t.tags) tr = t.tags;
+      if (tr) {
+        const R = function (o) { return o ? (o.r5 != null ? o.r5 : o.r1) : null; };
+        const avg = function (a) { const v = a.filter(function (x) { return x != null; }); return v.length ? v.reduce(function (s, x) { return s + x; }, 0) / v.length : null; };
+        const gr = R(tr.growth), mgr = R(tr.megacap), ser = R(tr.semi), bankR = R(tr.bank);
+        const lead = Math.min(mgr != null ? mgr : 99, gr != null ? gr : 99);
+        // 빅테크·성장주 충격(실적 펑크 등) — 지수 견인주 붕괴
+        if (lead <= -4) ev.push({ code: "bigtechShock", intensity: lead <= -8 ? 3 : lead <= -6 ? 2 : 1 });
+        else if (gr != null && gr >= 4 && (ser == null || ser >= 2)) ev.push({ code: "bigtechStrength", intensity: gr >= 8 ? 2 : 1 });
+        // 반도체 사이클
+        if (ser != null && ser >= 5) ev.push({ code: "semiUp", intensity: ser >= 9 ? 2 : 1 });
+        else if (ser != null && ser <= -5) ev.push({ code: "semiDown", intensity: ser <= -9 ? 2 : 1 });
+        // 성장→가치 로테이션
+        const valAvg = avg([tr.bank, tr.energy, tr.staples, tr.insurer].map(R));
+        const groAvg = avg([tr.growth, tr.semi, tr.megacap].map(R));
+        if (valAvg != null && groAvg != null && (valAvg - groAvg) >= 4 && groAvg < 0.5) ev.push({ code: "rotationValue", intensity: (valAvg - groAvg) >= 7 ? 2 : 1 });
+        // 신용·금융 스트레스(리스크오프 + 은행 급락)
+        if (mc2 && mc2.regime === "risk_off" && bankR != null && bankR <= -3) ev.push({ code: "creditStress", intensity: bankR <= -6 ? 2 : 1 });
+      }
+    } catch (e) {}
   } catch (e) {}
   // 중복 제거(강도 큰 것 우선)
   const seen = {}; const out = [];
@@ -24242,6 +24284,7 @@ const _TAG_TICKERS = {
   staples:   "KO,PG,WMT,COST,PEP,CL,KMB,MDLZ,GIS,097950.KS,004370.KS",
   health:    "LLY,JNJ,UNH,MRK,ABBV,PFE,TMO,ABT,AMGN,ISRG,VRTX,207940.KS,068270.KS,326030.KS,196170.KQ",
   growth:    "NVDA,MSFT,GOOGL,META,CRM,ADBE,NOW,SNOW,PLTR,AMD,TSLA,SHOP,NET,MDB,DDOG,035420.KS,035720.KS",
+  megacap:   "AAPL,MSFT,NVDA,GOOGL,AMZN,META,TSLA,AVGO",
   semi:      "NVDA,AMD,AVGO,MU,QCOM,TSM,ASML,AMAT,LRCX,KLAC,MRVL,INTC,ARM,TXN,005930.KS,000660.KS,042700.KS,357780.KQ,000990.KS",
   semi_exp:  "005930.KS,000660.KS,TSM,042700.KS,357780.KQ",
   materials: "FCX,NEM,NUE,X,LIN,APD,SHW,MOS,CF,005490.KS,010130.KS,004020.KS",
@@ -24276,7 +24319,14 @@ const _EVENT_TAG_W = {
   inflation: { energy: 1.6, materials: 1.6, gold: 1.2, bank: 0.6, growth: -1.1, consumer_d: -0.9, reit: -0.5 },
   recession: { staples: 1.6, health: 1.2, utility: 1.1, gold: 0.7, bond_prox: 1.0, defense: 0.5, industrial: -1.6, consumer_d: -1.5, semi: -1.1, materials: -1.1, bank: -0.6, airline: -1.0 },
   usdUp:     { export_kr: 1.2, staples: 0.3, materials: -1.1, china_exp: -0.6, semi_exp: 0.4 },
-  tradeWar:  { defense: 1.0, china_exp: -2.0, semi_exp: -1.4, semi: -0.6, materials: -0.5 }
+  tradeWar:  { defense: 1.0, china_exp: -2.0, semi_exp: -1.4, semi: -0.6, materials: -0.5 },
+  // [V32.43] 시장 내부(마이크로) 이벤트 가중
+  bigtechShock:    { megacap: -2.2, growth: -1.8, semi: -1.4, consumer_d: -0.9, china_exp: -0.6, staples: 1.5, health: 1.2, utility: 1.1, highdiv: 1.0, gold: 0.9, bond_prox: 1.1 },
+  bigtechStrength: { megacap: 2.2, growth: 1.8, semi: 1.5, consumer_d: 0.6, staples: -0.5, utility: -0.5, highdiv: -0.4 },
+  semiUp:          { semi: 2.4, semi_exp: 1.5, growth: 0.9, megacap: 0.8, materials: 0.4, export_kr: 0.7 },
+  semiDown:        { semi: -2.4, semi_exp: -1.5, growth: -0.9, megacap: -0.6, export_kr: -0.7, staples: 1.0, health: 0.9, utility: 0.6 },
+  rotationValue:   { bank: 1.6, energy: 1.2, industrial: 1.0, insurer: 1.0, staples: 0.8, highdiv: 0.8, materials: 0.5, growth: -1.7, semi: -1.2, megacap: -1.2, reit: -0.7 },
+  creditStress:    { bank: -2.2, reit: -1.7, insurer: -1.3, consumer_d: -1.0, growth: -0.7, staples: 1.5, gold: 1.3, bond_prox: 1.5, health: 1.1, utility: 0.9 }
 };
 // ── [V32.42] 실증(empirical) 확인 계층 — "전쟁이 나도 방산주가 안 오를 수 있다"는 변수 대응 ──
 //   틸트를 이론 가중(_EVENT_TAG_W)만으로 걸지 않고, 실제 태그바스켓 수익률로 '확증'해 스케일한다.
