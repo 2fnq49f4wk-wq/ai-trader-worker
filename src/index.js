@@ -14744,6 +14744,34 @@ async function handleRequest(request, env, ctx) {
       return Response.json(g || { level: "평시", score: 0, drivers: [], posture: "데이터 수집 중", ts: Date.now() }, { headers: cors });
     }
 
+    // [V32.51] GET /api/events — 현재 활성 이슈·레짐·순섹터선호·다음 FOMC(대시보드 "활성 이슈" 패널용). SWR 2분.
+    if (path === "/api/events") {
+      return await swrJson("events", 120000, 6 * 3600000, async function () {
+        let ev = { evs: [], mc: 0.7, level: "평시", conf: {}, eff: {} }; try { ev = await _luxEventContext(env.DB); } catch (e) {}
+        let shock = { mode: "none", sev: 0 }; try { shock = await _luxMarketShock(env.DB); } catch (e) {}
+        const fp = _fomcProximity(Date.now());
+        let nextFomc = null; const now = Date.now();
+        for (const d of _FOMC_DATES) { const t = Date.parse(d + "T18:00:00Z"); if (t && t > now) { const dd = Math.round((t - now) / 86400000); if (nextFomc == null || dd < nextFomc) nextFomc = dd; } }
+        const lean = _luxNetSectorLean(ev);
+        const events = (ev.evs || []).slice(0, 8).map(function (e) {
+          const p = e.play || {};
+          return {
+            code: e.code, label: p.label || e.code, intensity: e.intensity,
+            conf: (ev.conf && ev.conf[e.code] != null) ? ev.conf[e.code] : null,
+            eff: (ev.eff && ev.eff[e.code] != null) ? +ev.eff[e.code].toFixed(2) : null,
+            benefit: (p.benefit || []).map(function (b) { return b[0]; }),
+            hurt: (p.hurt || []).map(function (h) { return h[0]; }),
+            why: p.why || ""
+          };
+        });
+        return {
+          ts: Date.now(), level: ev.level, marketConfirm: ev.mc, events: events, lean: lean,
+          regime: (shock && shock.mode !== "none") ? { mode: shock.mode, sev: shock.sev, drivers: shock.drivers || [], trend: shock.trend || null } : null,
+          fomc: { pre: !!fp.pre, post: !!fp.post, nextDays: nextFomc }
+        };
+      });
+    }
+
     // [V32.19] GET /api/alerts — 실행가능 알림(보유종목 급변동·손절/익절 근접·위기). 기존 상태만 읽음(추가 fetch 0).
     if (path === "/api/alerts") {
       const alerts = [];
@@ -24652,6 +24680,30 @@ async function _luxEventContext(DB) {
   try { const S = await getStates(DB, ["crisis_gauge", "tag_returns", "event_efficacy"]); const cg = S["crisis_gauge"]; if (cg) { mc = (typeof cg.marketConfirm === "number") ? cg.marketConfirm : 0.7; cgLevel = cg.level || "평시"; } const tr = S["tag_returns"]; if (tr && tr.tags) tagRet = tr.tags; eff = _effFactorMap(S["event_efficacy"]); } catch (e) {}
   try { conf = _eventConfirmation(evs, tagRet); } catch (e) { conf = {}; }
   return { evs: evs, mc: mc, level: cgLevel, tagRet: tagRet, conf: conf, eff: eff };
+}
+
+// [V32.51] 태그 한글 라벨 + 활성 이벤트 종합 순(net) 섹터 선호도 — 여러 이슈를 합산해 '지금 어디가 유리/불리'인지.
+const _TAG_LABEL_KO = {
+  defense: "방산", energy: "에너지", gold: "금·귀금속", cyber: "사이버보안", airline: "항공", travel: "여행/레저", transport: "운송",
+  chemical: "화학", bank: "은행", insurer: "보험", reit: "리츠", highdiv: "고배당", utility: "유틸리티", staples: "필수소비",
+  health: "헬스케어", growth: "성장주", semi: "반도체", semi_exp: "반도체수출", materials: "소재", export_kr: "한국수출", china_exp: "중국노출",
+  consumer_d: "경기소비재", industrial: "산업재", bond_prox: "채권", megacap: "메가캡", ev_battery: "전기차·배터리", clean_energy: "클린에너지",
+  shipping: "해운·물류", homebuilder: "건설·주택", nuclear: "원자력", agriculture: "농산물"
+};
+function _luxNetSectorLean(evCtx) {
+  const net = {};
+  if (!evCtx || !evCtx.evs || !evCtx.evs.length) return { favored: [], hurt: [] };
+  for (const e of evCtx.evs) {
+    const w = _EVENT_TAG_W[e.code]; if (!w) continue;
+    const cf = (evCtx.conf && evCtx.conf[e.code] != null) ? evCtx.conf[e.code] : 0.7;
+    const ef = (evCtx.eff && evCtx.eff[e.code] != null) ? evCtx.eff[e.code] : 1;
+    const k = (Math.min(3, e.intensity) / 3) * cf * ef * (evCtx.mc != null ? evCtx.mc : 0.7);
+    for (const t of Object.keys(w)) net[t] = (net[t] || 0) + w[t] * k;
+  }
+  const arr = Object.keys(net).map(function (t) { return { tag: t, label: _TAG_LABEL_KO[t] || t, score: +net[t].toFixed(2) }; }).filter(function (x) { return Math.abs(x.score) >= 0.3; });
+  const favored = arr.filter(function (x) { return x.score > 0; }).sort(function (a, b) { return b.score - a.score; }).slice(0, 6);
+  const hurt = arr.filter(function (x) { return x.score < 0; }).sort(function (a, b) { return a.score - b.score; }).slice(0, 6);
+  return { favored: favored, hurt: hurt };
 }
 
 // ═══════════ [V32.44] 시장 충격 레짐 — 폭락/대형호재를 위원회(6모델) 결정에 직접 반영 ═══════════

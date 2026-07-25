@@ -2905,6 +2905,13 @@ html[data-theme="light"] .table tbody tr:hover{background:rgba(9,105,218,.045);}
           </div>
           <div id="fvCrisisBody" style="padding:9px 10px;font-size:11px;line-height:1.6;color:var(--t2);">로딩 중…</div>
         </div>
+        <!-- [V32.51] 활성 이슈 · 레짐 패널 — 이벤트 엔진(수혜/피해·확증·효능·순섹터선호)을 대시보드에 시각화 -->
+        <div class="fv-panel" id="fvEventsPanel" style="margin-bottom:8px;">
+          <div class="fv-panel-head" id="fvEventsHead" style="cursor:pointer;" title="클릭하면 접거나 펼쳐요">
+            <span id="fvEventsCaret">▾</span> 활성 이슈 · 레짐 <span class="fv-panel-sub" id="fvEventsBadge">확인 중…</span>
+          </div>
+          <div id="fvEventsBody" style="padding:9px 10px;font-size:11px;line-height:1.6;color:var(--t2);">로딩 중…</div>
+        </div>
         <!-- [V12.112] AI에게 물어보기 — 온보드 자연어 Q&A(외부 LLM API 미사용). 사용자 요청으로 대시보드에 유지. -->
         <div class="fv-panel" id="fvAiAskPanel" style="margin-bottom:8px;">
           <div class="fv-panel-head">AI에게 물어보기</div>
@@ -4598,10 +4605,75 @@ html[data-theme="light"] .table tbody tr:hover{background:rgba(9,105,218,.045);}
       } else if (ban) { ban.remove(); }
     })['catch'](function(){});
   }
+  // [V32.51] 활성 이슈 · 레짐 패널 — /api/events 폴링(4분)
+  var __eventsTimer = null, __eventsToggleBound = false;
+  function bindEventsToggle() {
+    if (__eventsToggleBound) return;
+    var head = document.getElementById('fvEventsHead'), body = document.getElementById('fvEventsBody'), caret = document.getElementById('fvEventsCaret');
+    if (!head || !body) return;
+    __eventsToggleBound = true;
+    head.addEventListener('click', function(){
+      var open = body.style.display !== 'none';
+      body.style.display = open ? 'none' : 'block';
+      if (caret) caret.textContent = open ? '▸' : '▾';
+    });
+  }
+  function renderEventsPanel() {
+    bindEventsToggle();
+    var body = document.getElementById('fvEventsBody'), badge = document.getElementById('fvEventsBadge');
+    if (!body) return;
+    fetch('/api/events').then(function(r){ return r.json(); }).then(function(d){
+      if (!d) return;
+      var evs = d.events || [];
+      var regTxt = '';
+      if (d.regime) {
+        var rm = d.regime.mode, rl = rm==='crash'?'🔴 폭락':rm==='rally'?'🟢 대형호재':rm==='rebound'?'🔵 반등(dip)':rm==='fomcPre'?'🟡 FOMC임박':rm;
+        regTxt = rl + ' ' + (d.regime.sev||'');
+      }
+      if (badge) badge.textContent = (evs.length ? '이슈 ' + evs.length + '건' : '특이 이슈 없음') + (regTxt ? ' · ' + regTxt : '');
+      var html = '';
+      if (d.regime) {
+        var rmode = d.regime.mode;
+        var rcol = rmode==='crash'?'#ff6b6b':rmode==='rally'?'#00e676':rmode==='rebound'?'#4aa3ff':rmode==='fomcPre'?'#ffd54f':'var(--t2)';
+        var rlbl = rmode==='crash'?('폭락 대응'+(d.regime.trend==='easing'?'·진정':d.regime.trend==='escalating'?'·심화':'')):rmode==='rally'?'대형 호재/급등':rmode==='rebound'?'워시아웃 후 반등':rmode==='fomcPre'?'FOMC 결정 임박':rmode;
+        html += '<div style="margin-bottom:7px;padding:6px 8px;border-radius:5px;background:rgba(255,255,255,.05);border-left:3px solid '+rcol+';">'
+          + '<b style="color:'+rcol+';">⚡ 레짐: '+escapeHtml(rlbl)+'</b> <span style="color:var(--t3);">(강도 '+(d.regime.sev||'')+')</span>'
+          + (d.regime.drivers&&d.regime.drivers.length?'<br><span style="color:var(--t3);font-size:10px;">'+escapeHtml(d.regime.drivers.join(', '))+'</span>':'')
+          + '<br><span style="color:var(--t3);font-size:10px;">→ 위원회(6모델) 진입확률·사이즈에 반영</span></div>';
+      }
+      // 순(net) 섹터 선호
+      var lean = d.lean || {};
+      if ((lean.favored&&lean.favored.length) || (lean.hurt&&lean.hurt.length)) {
+        html += '<div style="margin-bottom:7px;">';
+        if (lean.favored&&lean.favored.length) html += '<div><span style="color:var(--pos);font-weight:600;">▲ 순수혜:</span> '+lean.favored.map(function(x){return escapeHtml(x.label);}).join(' · ')+'</div>';
+        if (lean.hurt&&lean.hurt.length) html += '<div><span style="color:var(--neg);font-weight:600;">▼ 순역풍:</span> '+lean.hurt.map(function(x){return escapeHtml(x.label);}).join(' · ')+'</div>';
+        html += '<div style="color:var(--t3);font-size:10px;">여러 이슈를 확증·효능 가중으로 합산한 종합 방향</div></div>';
+      }
+      if (d.fomc && (d.fomc.pre || d.fomc.post || (d.fomc.nextDays!=null && d.fomc.nextDays<=10))) {
+        html += '<div style="margin-bottom:7px;color:#ffd54f;font-size:10.5px;">🏛️ FOMC ' + (d.fomc.pre?'결정 임박 — 사전 대비 모드':d.fomc.post?'발표 직후 — 매파/비둘기 반응 반영':'D-'+d.fomc.nextDays) + '</div>';
+      }
+      if (evs.length) {
+        html += evs.map(function(e){
+          var iBadge = '<span style="color:var(--t3);font-size:10px;">강도'+e.intensity+(e.conf!=null?'·확증'+Math.round(e.conf*100)+'%':'')+(e.eff!=null&&Math.abs(e.eff-1)>0.05?'·효능'+e.eff:'')+'</span>';
+          var ben = (e.benefit||[]).slice(0,2).join(', '), hrt = (e.hurt||[]).slice(0,2).join(', ');
+          return '<div style="margin-bottom:5px;padding-bottom:5px;border-bottom:1px solid rgba(255,255,255,.05);">'
+            + '<b style="color:var(--t1);">'+escapeHtml(e.label)+'</b> '+iBadge
+            + (ben?'<br><span style="color:var(--pos);">↗ '+escapeHtml(ben)+'</span>':'')
+            + (hrt?'  <span style="color:var(--neg);">↘ '+escapeHtml(hrt)+'</span>':'')
+            + '</div>';
+        }).join('');
+        html += '<div style="color:var(--t3);font-size:10px;margin-top:4px;">과거 경향 기반이며 확정 아님. 실제 바스켓 수익으로 확증·학습해 반영해요.</div>';
+      } else {
+        html += '<div style="color:var(--t3);">현재 뚜렷한 활성 이슈가 감지되지 않았어요(평시).</div>';
+      }
+      body.innerHTML = html;
+    })['catch'](function(){ if (badge) badge.textContent = '조회 실패'; });
+  }
   function renderFvDeck(state) {
     try { renderAiModePanel(); } catch(e) {}
     try { bindAiAskPanel(); } catch(e) {}
     try { renderCrisisPanel(); if (!__crisisTimer) __crisisTimer = setInterval(renderCrisisPanel, 180000); } catch(e) {}
+    try { renderEventsPanel(); if (!__eventsTimer) __eventsTimer = setInterval(renderEventsPanel, 240000); } catch(e) {}
     // ① 지수 패널 행
     var row = $('fvIndexRow');
     if (row && state.indices && state.indices.length) {
