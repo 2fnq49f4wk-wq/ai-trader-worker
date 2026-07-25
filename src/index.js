@@ -14708,6 +14708,8 @@ async function handleRequest(request, env, ctx) {
                   ctxBits += "\n[세계·경제 톱뉴스 · 다매체·최신순 " + _hl.length + "건" + (wn.marketSenti != null ? " · 뉴스심리 " + (wn.marketSenti >= 0 ? "+" : "") + wn.marketSenti : "") + "]\n- " + _hl.join("\n- ") + "\n(주의: '~h'가 큰 항목은 과거 이슈일 수 있으니 현재 원인으로 단정 금지, 다매체 보도를 우선 신뢰)";
                 }
                 try { if (ctx && ctx.waitUntil) ctx.waitUntil(_luxWorldNews(env.DB, {})); } catch (e) {}   // 백그라운드 신선도 갱신(SWR)
+                // [V32.40] 활성 이슈별 수혜/피해 — 악재에도 오르는 섹터를 근거로 제공(회전 판단)
+                try { const _evs = await _luxActiveEvents(env.DB); if (_evs && _evs.length) ctxBits += "\n[활성 이슈·수혜/피해]\n" + _evs.slice(0, 3).map(function (e) { return "· " + e.play.label + ": 수혜=" + e.play.benefit.map(function (b) { return b[0]; }).join("/") + " 피해=" + e.play.hurt.map(function (h) { return h[0]; }).join("/"); }).join("\n"); } catch (e) {}
               } catch (e) {}
               const facts = r.answer + (ctxBits ? "\n\n[시장 맥락]" + ctxBits : "");
               const polished = await _aiNarrate(env, facts, "위 <사실>만 근거로, 사용자 질문에 시니어 애널리스트처럼 구체적으로 답해줘. 핵심 결론을 먼저, 근거엔 수치를 인용해.\n\n질문: " + q, { style: "6~10문장. 핵심 결론 먼저, 마지막에 유의점 한 줄.", corpus: { DB: env.DB, kind: "qa", ctx: ctx } });
@@ -24165,6 +24167,45 @@ async function _luxCrisisGauge(DB, opts) {
   return out;
 }
 
+// ═══════════ [V32.40] 이벤트 플레이북 — 이슈별 수혜/피해 섹터·종목 매핑 ═══════════
+//   "악재=무조건 방어"가 아니라, 사건 유형별로 오히려 오르는 종목이 있다(전쟁→방산·에너지·금).
+//   현재 활성 이슈를 감지해 수혜/피해를 함께 제시 → 종합판단·이슈대응 능력 강화(외부 API 0).
+const _EVENT_PLAYBOOK = {
+  war:      { label: "전쟁·무력분쟁", benefit: [["방산", "LMT,RTX,NOC,GD,한화에어로(012450.KS),현대로템(064350.KS),한국항공우주(047810.KS)"], ["에너지·유가", "XOM,CVX,COP"], ["안전자산·금", "GLD,금광(NEM)"], ["사이버보안", "CRWD,PANW"]], hurt: [["항공·여행", "DAL,UAL,크루즈"], ["소비·성장주", "고베타 기술주"], ["신흥국·수출주", ""]], why: "지출·유가·안전자산 수요↑, 위험자산·소비·공급망 압박" },
+  oilUp:    { label: "유가 급등", benefit: [["에너지·정유", "XOM,CVX,COP,SLB,S-Oil(010950.KS)"], ["방산·원자재", ""]], hurt: [["항공·운송", "DAL,UAL,대한항공"], ["화학·소비재", "석유화학 원가↑"]], why: "에너지 이익↑, 원가·인플레 압박으로 항공·화학·소비 부담" },
+  oilDown:  { label: "유가 급락", benefit: [["항공·운송·소비", "DAL,UAL"], ["화학", "원가↓"]], hurt: [["에너지·정유", "XOM,CVX"]], why: "원가·인플레 완화(소비·항공 우호), 에너지 이익 감소" },
+  rateUp:   { label: "금리 상승", benefit: [["은행·금융", "JPM,BAC,WFC,국내은행(105560.KS)"], ["가치주·보험", ""]], hurt: [["성장·기술(고PER)", "장기듀레이션"], ["리츠·고배당", ""]], why: "순이자마진↑(금융), 할인율↑로 성장주 밸류 부담" },
+  rateDown: { label: "금리 하락", benefit: [["성장·기술", "반도체·소프트웨어"], ["리츠·장기듀레이션", ""]], hurt: [["은행 마진", ""]], why: "할인율↓로 성장주 우호, 위험선호 지지" },
+  inflation:{ label: "인플레 급등", benefit: [["에너지·원자재", "XOM,FCX,금"], ["금융", ""]], hurt: [["성장주·소비", "실질구매력↓"]], why: "실물·원자재 우위, 금리 상승 압력으로 성장·소비 부담" },
+  recession:{ label: "경기침체 우려", benefit: [["방어주(필수소비)", "KO,PG,WMT"], ["헬스케어·유틸", "JNJ,UNH,전력"]], hurt: [["경기민감(산업·소비재·반도체)", ""]], why: "방어·필수 수요 견조, 경기민감·고베타 타격" },
+  usdUp:    { label: "달러 강세", benefit: [["미 내수·수입주", ""], ["한국 수출주(원화약세)", "자동차(005380.KS)·조선"]], hurt: [["원자재·신흥국", ""], ["미 다국적 실적", "환효과"]], why: "원화약세로 한국 수출주 우호, 달러표시 원자재·신흥국 압박" },
+  tradeWar: { label: "무역분쟁·반도체 규제", benefit: [["미 국내 생산·방산", ""], ["대체 공급망", ""]], hurt: [["중국 노출주·반도체 수출", ""]], why: "관세·수출규제로 중국 노출·수출 반도체 타격, 국내화 수혜" }
+};
+// 현재 활성 이슈 감지(캐시 상태만 읽음 — 추가 fetch 0)
+async function _luxActiveEvents(DB) {
+  const ev = [];
+  try {
+    const cg = await getState(DB, "crisis_gauge", null);
+    if (cg && ((cg.strongN || 0) >= 2 || (cg.hotN || 0) >= 1 || (cg.geoFloor || 0) >= 42)) ev.push({ code: "war", intensity: cg.level === "위기" ? 3 : cg.level === "경계" ? 2 : 1 });
+    const md = await getState(DB, "macro_data", null);
+    const ip = md && md.us && md.us._inflationProxy, rt = md && md.us && md.us._rates;
+    if (ip && ip.oil != null) { if (ip.oil >= 4) ev.push({ code: "oilUp", intensity: 2 }); else if (ip.oil <= -4) ev.push({ code: "oilDown", intensity: 1 }); }
+    if (ip && ip.pressure === "상승압력") ev.push({ code: "inflation", intensity: 1 });
+    if (rt && rt.inverted) ev.push({ code: "recession", intensity: 2 });
+    // 금리 방향(10년물 20일 변화)
+    try { const ten = md && md.us; } catch (e) {}
+    const mc2 = await getState(DB, "mkt_context", null);
+    if (mc2 && (mc2.regime === "risk_off")) { if (!ev.find(function (e) { return e.code === "recession"; })) ev.push({ code: "recession", intensity: 1 }); }
+    // 달러
+    if (ip && ip.dxy != null && ip.dxy >= 0.6) ev.push({ code: "usdUp", intensity: 1 });
+  } catch (e) {}
+  // 중복 제거(강도 큰 것 우선)
+  const seen = {}; const out = [];
+  ev.sort(function (a, b) { return b.intensity - a.intensity; });
+  for (const e of ev) { if (seen[e.code]) continue; seen[e.code] = 1; if (_EVENT_PLAYBOOK[e.code]) out.push(Object.assign({}, e, { play: _EVENT_PLAYBOOK[e.code] })); }
+  return out;
+}
+
 async function mlAiAsk(DB, question) {
   const q = String(question || "").trim().slice(0, 300);
   if (!q) return { ok: false, msg: "질문을 입력해줘." };
@@ -24196,12 +24237,27 @@ async function mlAiAsk(DB, question) {
       lines.push("- risk-off/위기 감지 시 신규 진입 사이즈 자동 축소(현재 배율 ×" + (cg.defenseScale != null ? cg.defenseScale.toFixed(2) : "1.00") + ")");
       lines.push("- 상시 헤지 배분(인버스·VIX: SH·SQQQ·VIXY) — VIX 25+ 시 상향");
       lines.push("- 급락(드로다운) 단계별 서킷브레이커 + 보유 손절/트레일 타이트닝");
-      if (cg.level === "위기" || cg.level === "경계") {
-        lines.push("");
-        lines.push("**전쟁·위기 국면 방어 아이디어**: 금(GLD/GC=F)·미 국채(TLT)·달러·방산주(LMT·RTX·한화에어로스페이스)는 통상 위기에 상대적으로 방어적. 성장·고베타·수출 민감주는 변동성 큼. 다만 확정 예측이 아니라 과거 경향이야.");
-      }
+      // [V32.40] 이슈별 수혜/피해 — 활성 이벤트 플레이북(악재에도 오르는 종목까지 함께 제시)
+      try {
+        const evs = await _luxActiveEvents(DB);
+        if (evs && evs.length) {
+          lines.push("");
+          lines.push("**📌 현재 이슈별 수혜/피해 (이벤트 플레이북)**");
+          for (const e of evs.slice(0, 3)) {
+            const p = e.play;
+            lines.push("· **" + p.label + "**");
+            lines.push("  ↗ 수혜: " + p.benefit.map(function (b) { return b[0] + (b[1] ? "(" + b[1] + ")" : ""); }).join(", "));
+            lines.push("  ↘ 피해: " + p.hurt.map(function (h) { return h[0] + (h[1] ? "(" + h[1] + ")" : ""); }).join(", "));
+            lines.push("  — " + p.why);
+          }
+          lines.push("_악재라고 다 파는 게 아니라 사건 성격에 맞는 수혜 섹터로 회전하는 게 핵심. 과거 경향이며 확정 아님._");
+        } else if (cg.level === "위기" || cg.level === "경계") {
+          lines.push("");
+          lines.push("**전쟁·위기 국면 방어 아이디어**: 금·미 국채(TLT)·달러·방산주(LMT·RTX·한화에어로스페이스)는 통상 위기에 방어적, 유가 급등 시 에너지주 수혜. 성장·고베타·수출민감주는 변동성 큼(과거 경향).");
+        }
+      } catch (e) {}
       lines.push("");
-      lines.push("_시장 바로미터(VIX·금·유가·지수) + 지정학 뉴스 스캔을 20분마다 갱신한 값이야._");
+      lines.push("_시장 바로미터(VIX·금·유가·지수) + 뉴스 + 이벤트 플레이북을 결합한 판단이야. 뉴스는 시장이 실제 반응할 때 방어를 키우고(패닉 방지), 이슈별로 수혜주도 함께 봐._");
       return { ok: true, answer: lines.join("\n") };
     } catch (e) { return { ok: true, answer: "위기 게이지 조회 중 문제가 있었어." }; }
   }
@@ -24209,6 +24265,22 @@ async function mlAiAsk(DB, question) {
   // ═══ [V32.18] Q&A 확장 — 시스템 성능·모델·추천·매매내역·지수/환율/원자재/코인·일정 ═══
   if (!syms.length) {
     try {
+      // 0w) [V32.40] 이슈 수혜/피해 종목 — "이 악재에 오를 종목?", "전쟁 나면 뭐 사?", "수혜주"
+      if (/수혜|유리한|오를\s*종목|호재.*종목|반사이익|이득.*보는|뭐가\s*오르|어디가\s*올|어떤.*수혜|이럴\s*때.*사|이런.*때.*사|나면.*사/.test(q)) {
+        const evs = await _luxActiveEvents(DB);
+        const F = ["[질문] " + q];
+        if (evs && evs.length) {
+          F.push("[현재 감지된 활성 이슈]");
+          for (const e of evs.slice(0, 4)) { const p = e.play; F.push("· " + p.label + " (강도 " + e.intensity + "): 수혜=" + p.benefit.map(function (b) { return b[0] + (b[1] ? "[" + b[1] + "]" : ""); }).join(", ") + " / 피해=" + p.hurt.map(function (h) { return h[0]; }).join(", ") + " (" + p.why + ")"); }
+        } else {
+          F.push("[현재 뚜렷한 활성 이슈는 감지 안 됨 — 일반 원칙으로 답변]");
+          F.push("· 참고 플레이북: 전쟁→방산·에너지·금 / 유가급등→에너지, 항공·화학 피해 / 금리상승→금융 유리, 성장주 피해 / 침체→방어·필수소비·헬스 / 달러강세→한국 수출주 유리");
+        }
+        let cg = null; try { cg = await getState(DB, "crisis_gauge", null); } catch (e) {}
+        if (cg) F.push("[위기게이지] " + cg.level + " " + cg.score + "/100, 시장확증 " + (cg.marketConfirm != null ? cg.marketConfirm : "?"));
+        F.push("\n[지시] 위 사실만 근거로, 현재/가정 이슈에서 '오히려 수혜를 볼 섹터·종목'과 '피해 섹터'를 구체적으로 구분해 설명해줘. 악재라고 전부 파는 게 아니라 사건 성격에 맞는 회전이 핵심임을 짚되, 과거 경향이고 확정 예측·매수권유는 아님을 명시. 우리 유니버스에 있는 종목 위주로.");
+        return { ok: true, answer: F.join("\n"), playbook: true };
+      }
       // 0z) [V32.31] 왜 움직였나 — 시장/섹터 급등락 원인을 세계·지정학 뉴스 + 위기게이지 + 거시와 엮어 설명
       if (/왜|이유|원인|무슨\s*일|때문/.test(q) && /떨어|하락|빠졌|내렸|폭락|급락|올랐|상승|급등|반등|튀|무슨일|증시|시장|섹터|반도체|주가/.test(q)) {
         const F = ["[질문] " + q];
