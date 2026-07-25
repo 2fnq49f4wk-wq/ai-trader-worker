@@ -23564,8 +23564,8 @@ async function mlUniverseScanNightly(DB) {
       byMkt: { us: symsByMkt.us.length, kr: symsByMkt.kr.length, cm: symsByMkt.cm.length }, scannedByMkt: scannedByMkt,
       events: _evCtx.evs.map(function (e) { return { code: e.code, label: e.play.label, intensity: e.intensity, conf: _conf[e.code] != null ? _conf[e.code] : null }; }), marketConfirm: _evCtx.mc, tiltedN: _tiltedN,
       shock: (_shock && _shock.mode !== "none") ? _shock : null });
-    const _shockLbl = _shock.mode === "crash" ? "폭락" : _shock.mode === "rally" ? "대형호재" : _shock.mode === "rebound" ? "반등(dip)" : "";
-    const _shockTxt = (_shock && _shock.mode !== "none") ? " · 레짐[" + _shockLbl + " sev" + _shock.sev + "]→위원회 " + (_shock.mode === "crash" ? "방어" : "위험선호") + " 시프트" : "";
+    const _shockLbl = _shock.mode === "crash" ? "폭락" : _shock.mode === "rally" ? "대형호재" : _shock.mode === "rebound" ? "반등(dip)" : _shock.mode === "fomcPre" ? "FOMC임박" : "";
+    const _shockTxt = (_shock && _shock.mode !== "none") ? " · 레짐[" + _shockLbl + " sev" + _shock.sev + "]→위원회 " + (_shock.mode === "crash" ? "방어" : _shock.mode === "fomcPre" ? "대기·사이즈↓" : "위험선호") + " 시프트" : "";
     return "[SCAN] 전종목 " + scanned + "/" + syms.length + " 분석 — AI 픽 상위 " + Math.min(40, picks.length) + "종목" + (_evActive ? " · 이벤트틸트[" + _evActive + "] 반영 " + _tiltedN + "종목" : "") + _shockTxt;
   } catch (e) { return "[SCAN] fail: " + (e && e.message); }
 }
@@ -24203,6 +24203,46 @@ async function _luxCrisisGauge(DB, opts) {
   return out;
 }
 
+// ═══════════ [V32.47] FOMC 캘린더 — 예정 이벤트(금리결정) 사전대비·사후반응 ═══════════
+//   FOMC는 예정된 스케줄 이벤트라 뉴스 없이도 결정론적으로 감지 가능(공개 일정, 결정일 기준).
+//   사전(pre): 결정 직전 불확실성 → 사이즈 축소·고베타 억제. 사후(post): 금리·뉴스로 매파/비둘기 반응.
+const _FOMC_DATES = [
+  "2025-09-17", "2025-10-29", "2025-12-10",
+  "2026-01-28", "2026-03-18", "2026-04-29", "2026-06-17", "2026-07-29", "2026-09-16", "2026-10-28", "2026-12-09",
+  "2027-01-27", "2027-03-17"
+];
+// 가장 가까운 FOMC까지/이후 경과일. pre: 0~1일 전(결정일 포함), post: 0~1일 후.
+function _fomcProximity(nowMs) {
+  try {
+    const now = nowMs || Date.now();
+    let preDays = null, postDays = null;
+    for (const d of _FOMC_DATES) {
+      const t = Date.parse(d + "T18:00:00Z");   // 결정 발표 ≈ 미 동부 오후(대략 18:00~19:00 UTC)
+      if (!t) continue;
+      const diffDays = (t - now) / 86400000;
+      if (diffDays >= -0.05 && diffDays <= 1.6) { if (preDays == null || diffDays < preDays) preDays = diffDays; }   // 결정 직전 창
+      if (diffDays <= 0.05 && diffDays >= -1.6) { const ago = -diffDays; if (postDays == null || ago < postDays) postDays = ago; }   // 결정 직후 창
+    }
+    return { pre: preDays != null, preDays: preDays, post: postDays != null, postDays: postDays };
+  } catch (e) { return { pre: false, post: false }; }
+}
+// 뉴스 헤드라인에서 정책·사회 이슈 키워드 스캔(추가 fetch 0 — 이미 수집된 헤드라인만 사용).
+const _POLICY_KW = {
+  fomcHawkish: ["hawkish", "rate hike", "raise rates", "higher for longer", "매파", "금리 인상", "긴축", "인상 시사"],
+  fomcDovish:  ["dovish", "rate cut", "cut rates", "rate reduction", "비둘기", "금리 인하", "완화", "인하 시사", "pivot"],
+  stimulus:    ["stimulus", "rate cut", "quantitative easing", "부양책", "경기부양", "양적완화", "감세", "tax cut"],
+  shutdown:    ["government shutdown", "shutdown", "debt ceiling", "정부 셧다운", "셧다운", "부채한도"],
+  election:    ["election", "presidential", "campaign", "대선", "총선", "선거", "대통령 선거"],
+  regulation:  ["antitrust", "regulation", "regulatory", "probe", "lawsuit", "규제", "반독점", "제재안", "과징금"]
+};
+function _scanPolicyNews(headlines) {
+  const hits = {};
+  if (!headlines || !headlines.length) return hits;
+  const txt = headlines.map(function (h) { return (typeof h === "string" ? h : (h && h.title) || ""); }).join(" \n ").toLowerCase();
+  for (const code of Object.keys(_POLICY_KW)) { let c = 0; for (const kw of _POLICY_KW[code]) { if (txt.indexOf(kw.toLowerCase()) >= 0) c++; } if (c > 0) hits[code] = c; }
+  return hits;
+}
+
 // ═══════════ [V32.40] 이벤트 플레이북 — 이슈별 수혜/피해 섹터·종목 매핑 ═══════════
 //   "악재=무조건 방어"가 아니라, 사건 유형별로 오히려 오르는 종목이 있다(전쟁→방산·에너지·금).
 //   현재 활성 이슈를 감지해 수혜/피해를 함께 제시 → 종합판단·이슈대응 능력 강화(외부 API 0).
@@ -24224,14 +24264,22 @@ const _EVENT_PLAYBOOK = {
   rotationValue:  { label: "성장→가치 로테이션", benefit: [["은행·에너지·산업재", "JPM,XOM,CAT"], ["보험·고배당", ""]], hurt: [["성장·반도체·리츠", "고PER·장기듀레이션"]], why: "금리·밸류 부담으로 자금이 성장주에서 가치·경기민감으로 이동" },
   creditStress:   { label: "신용·금융 스트레스", benefit: [["안전자산·채권·금", "TLT,GLD"], ["필수소비·헬스", "KO,PG,JNJ"]], hurt: [["은행·리츠·보험", "JPM,BAC,리츠"], ["고베타 소비재", ""]], why: "신용경색·유동성 우려 시 금융·리츠 타격, 국채·금·방어로 도피" },
   rateUp:   { label: "금리 상승", benefit: [["은행·보험", "JPM,BAC,국내은행(105560.KS)"], ["가치주", ""]], hurt: [["성장·반도체(고PER)", "장기듀레이션"], ["리츠·고배당·채권", ""]], why: "순이자마진↑(금융), 할인율↑로 성장주·리츠·채권 부담" },
-  rateDown: { label: "금리 하락", benefit: [["성장·반도체·소프트웨어", ""], ["리츠·채권프록시", "TLT"]], hurt: [["은행 마진(상대약세)", ""]], why: "할인율↓로 성장·장기듀레이션 우호, 위험선호 지지" }
+  rateDown: { label: "금리 하락", benefit: [["성장·반도체·소프트웨어", ""], ["리츠·채권프록시", "TLT"]], hurt: [["은행 마진(상대약세)", ""]], why: "할인율↓로 성장·장기듀레이션 우호, 위험선호 지지" },
+  // ── [V32.47] 정책·사회 이벤트(FOMC·선거·셧다운·규제·부양책) ──
+  fomcHawkish: { label: "FOMC 매파(긴축 기조)", benefit: [["은행·보험", "JPM,BAC,국내은행"], ["가치주·달러", ""]], hurt: [["성장·반도체(고PER)", "장기듀레이션"], ["리츠·고배당·채권프록시", "TLT"]], why: "금리 인상/고금리 장기화 시사 → 할인율↑로 성장·리츠·채권 부담, 은행 마진 수혜" },
+  fomcDovish:  { label: "FOMC 비둘기(완화 기조)", benefit: [["성장·반도체·소프트웨어", "NVDA,MSFT"], ["리츠·채권프록시·금", "TLT,GLD"]], hurt: [["은행 마진(상대약세)", ""]], why: "금리 인하/완화 시사 → 위험선호·성장주·장기듀레이션 우호, 은행 마진은 상대 약세" },
+  fomcPre:     { label: "FOMC 임박(결정 대기)", benefit: [["저변동·방어(상대안정)", "KO,PG"]], hurt: [["고베타·레버리지(변동성 회피)", ""]], why: "결정 직전 불확실성 → 신규 진입 신중·사이즈 축소, 고베타 회피(방향성은 발표 후 확인)" },
+  stimulus:    { label: "경기부양·완화 정책", benefit: [["성장·경기민감·소비", "반도체·소비재"], ["원자재·금(인플레)", ""]], hurt: [["채권(금리반등)", ""]], why: "재정·통화 부양 → 위험자산·경기민감 우호, 인플레 기대로 원자재↑, 장기채 부담" },
+  shutdown:    { label: "정부 셧다운·부채한도", benefit: [["안전자산·금·필수소비", "GLD,KO,PG"]], hurt: [["방산(예산 지연)", ""], ["경기민감·소비", ""]], why: "정치 불확실성·지출 차질 → 방어·안전자산 선호, 방산 예산 지연·경기민감 부담" },
+  election:    { label: "선거·정치 불확실성", benefit: [["저변동 방어주", "KO,PG,JNJ"], ["금(헤지)", "GLD"]], hurt: [["고베타·정책민감주", ""]], why: "정책 방향 불확실 → 변동성↑, 방어·헤지 선호(정책 수혜 섹터는 결과 확정 후 반영)" },
+  regulation:  { label: "규제·반독점(빅테크)", benefit: [["규제 무풍 섹터", ""]], hurt: [["메가캡 빅테크·플랫폼", "AAPL,GOOGL,META,AMZN"]], why: "반독점·규제 리스크 → 대형 플랫폼·빅테크 밸류 부담, 여타 섹터 상대 수혜" }
 };
 // 현재 활성 이슈 감지(캐시 상태만 읽음 — 추가 fetch 0)
 //   [V32.45] D1 왕복 최소화: 독립 키를 getStates로 1배치 로드. tag_returns 신선도 가드(오래된 데이터로 이벤트 오탐 방지).
 async function _luxActiveEvents(DB) {
   const ev = [];
   try {
-    let S = {}; try { S = await getStates(DB, ["crisis_gauge", "macro_data", "mkt_context", "daily:^TNX", "tag_returns"]); } catch (e) {}
+    let S = {}; try { S = await getStates(DB, ["crisis_gauge", "macro_data", "mkt_context", "daily:^TNX", "tag_returns", "world_news"]); } catch (e) {}
     const cg = S["crisis_gauge"] || null;
     if (cg && ((cg.strongN || 0) >= 2 || (cg.hotN || 0) >= 1 || (cg.geoFloor || 0) >= 42)) ev.push({ code: "war", intensity: cg.level === "위기" ? 3 : cg.level === "경계" ? 2 : 1 });
     const md = S["macro_data"] || null;
@@ -24278,6 +24326,36 @@ async function _luxActiveEvents(DB) {
         // 신용·금융 스트레스(리스크오프 + 은행 급락)
         if (mc2 && mc2.regime === "risk_off" && bankR != null && bankR <= -3) ev.push({ code: "creditStress", intensity: bankR <= -6 ? 2 : 1 });
       }
+    } catch (e) {}
+    // [V32.47] ★정책·사회 이벤트★ — FOMC 캘린더(사전대비/사후반응) + 뉴스 키워드(선거·셧다운·규제·부양)
+    try {
+      // 뉴스 정책 스캔(이미 수집된 헤드라인만 — 추가 fetch 0)
+      let heads = [];
+      try { const wn = S["world_news"]; if (wn && Array.isArray(wn.headlines)) heads = heads.concat(wn.headlines); const cg2 = S["crisis_gauge"]; if (cg2 && Array.isArray(cg2.headlines)) heads = heads.concat(cg2.headlines); } catch (e) {}
+      const pol = _scanPolicyNews(heads);
+      // FOMC 캘린더 근접도
+      const fp = _fomcProximity(Date.now());
+      // ^TNX 단기(2일) 변화 — FOMC 사후 매파/비둘기 판별 보조
+      let tnxShort = null; try { const tnx = S["daily:^TNX"]; if (tnx && Array.isArray(tnx.closes) && tnx.closes.length >= 3) { const c = tnx.closes; tnxShort = +(c[c.length - 1] - c[c.length - 3]).toFixed(2); } } catch (e) {}
+      if (fp.post) {
+        // 사후 반응: 금리 단기변화 우선, 뉴스로 보강
+        const hawk = (tnxShort != null && tnxShort >= 0.06) || (pol.fomcHawkish || 0) > 0;
+        const dov = (tnxShort != null && tnxShort <= -0.06) || (pol.fomcDovish || 0) > 0;
+        if (hawk && !dov) ev.push({ code: "fomcHawkish", intensity: (tnxShort != null && tnxShort >= 0.12) ? 2 : 1 });
+        else if (dov && !hawk) ev.push({ code: "fomcDovish", intensity: (tnxShort != null && tnxShort <= -0.12) ? 2 : 1 });
+      } else if (fp.pre) {
+        // 사전: 결정 임박 불확실성(결정일 당일이 더 강함)
+        ev.push({ code: "fomcPre", intensity: (fp.preDays != null && fp.preDays <= 0.6) ? 2 : 1 });
+      } else {
+        // FOMC 창 밖이라도 매파/비둘기 뉴스가 강하면 반영
+        if ((pol.fomcHawkish || 0) >= 2) ev.push({ code: "fomcHawkish", intensity: 1 });
+        else if ((pol.fomcDovish || 0) >= 2) ev.push({ code: "fomcDovish", intensity: 1 });
+      }
+      // 사회·정책 뉴스 이벤트(키워드 2건 이상이면 신뢰)
+      if ((pol.shutdown || 0) >= 1) ev.push({ code: "shutdown", intensity: (pol.shutdown || 0) >= 2 ? 2 : 1 });
+      if ((pol.regulation || 0) >= 2) ev.push({ code: "regulation", intensity: (pol.regulation || 0) >= 3 ? 2 : 1 });
+      if ((pol.election || 0) >= 2) ev.push({ code: "election", intensity: 1 });
+      if ((pol.stimulus || 0) >= 2 && !ev.find(function (e) { return e.code === "fomcDovish"; })) ev.push({ code: "stimulus", intensity: 1 });
     } catch (e) {}
   } catch (e) {}
   // 중복 제거(강도 큰 것 우선)
@@ -24352,7 +24430,15 @@ const _EVENT_TAG_W = {
   semiUp:          { semi: 2.4, semi_exp: 1.5, growth: 0.9, megacap: 0.8, materials: 0.4, export_kr: 0.7 },
   semiDown:        { semi: -2.4, semi_exp: -1.5, growth: -0.9, megacap: -0.6, export_kr: -0.7, staples: 1.0, health: 0.9, utility: 0.6 },
   rotationValue:   { bank: 1.6, energy: 1.2, industrial: 1.0, insurer: 1.0, staples: 0.8, highdiv: 0.8, materials: 0.5, growth: -1.7, semi: -1.2, megacap: -1.2, reit: -0.7 },
-  creditStress:    { bank: -2.2, reit: -1.7, insurer: -1.3, consumer_d: -1.0, growth: -0.7, staples: 1.5, gold: 1.3, bond_prox: 1.5, health: 1.1, utility: 0.9 }
+  creditStress:    { bank: -2.2, reit: -1.7, insurer: -1.3, consumer_d: -1.0, growth: -0.7, staples: 1.5, gold: 1.3, bond_prox: 1.5, health: 1.1, utility: 0.9 },
+  // [V32.47] 정책·사회 이벤트 가중
+  fomcHawkish: { bank: 1.8, insurer: 1.3, growth: -1.8, semi: -1.2, megacap: -1.0, reit: -1.6, highdiv: -1.0, bond_prox: -1.4, utility: -0.6 },
+  fomcDovish:  { growth: 1.8, semi: 1.2, megacap: 1.0, reit: 1.4, bond_prox: 1.4, gold: 0.8, highdiv: 0.6, bank: -0.8, insurer: -0.5 },
+  fomcPre:     { growth: -0.7, semi: -0.6, megacap: -0.5, consumer_d: -0.5, airline: -0.4, staples: 0.5, health: 0.4, utility: 0.4, highdiv: 0.4 },
+  stimulus:    { growth: 1.5, semi: 1.2, consumer_d: 1.2, materials: 1.0, energy: 0.8, gold: 0.8, industrial: 0.9, bond_prox: -1.0, staples: -0.3 },
+  shutdown:    { staples: 1.4, gold: 1.3, health: 1.0, utility: 0.9, bond_prox: 1.0, defense: -1.0, consumer_d: -1.1, industrial: -0.8, growth: -0.6 },
+  election:    { staples: 1.2, gold: 1.2, health: 0.9, utility: 0.8, growth: -1.0, semi: -0.7, consumer_d: -0.7, china_exp: -0.6 },
+  regulation:  { megacap: -2.0, growth: -1.2, china_exp: -0.6, staples: 0.5, health: 0.5, bank: 0.3, industrial: 0.3 }
 };
 // ── [V32.42] 실증(empirical) 확인 계층 — "전쟁이 나도 방산주가 안 오를 수 있다"는 변수 대응 ──
 //   틸트를 이론 가중(_EVENT_TAG_W)만으로 걸지 않고, 실제 태그바스켓 수익률로 '확증'해 스케일한다.
@@ -24553,6 +24639,10 @@ async function _luxMarketShock(DB) {
       if (washout && stabilizing) {
         mode = "rebound"; sev = _clamp(0.4 + Math.min(0.5, Math.abs(dd10 != null ? dd10 : mom3) / 20), 0, 0.9);
         drivers.push("최근 낙폭 " + (dd10 != null ? dd10 : mom3) + "% 후 안정" + (avg != null && avg >= 0.3 ? "(오늘 +" + avg.toFixed(1) + "%)" : vix != null ? "(VIX " + vix.toFixed(0) + ")" : ""));
+      } else {
+        // [V32.47] FOMC 임박 — 크래시/랠리/반등이 아니면 사전 대비(사이즈↓·고베타 억제). 결정일 당일이 더 강함.
+        const fp = _fomcProximity(nowT);
+        if (fp.pre) { mode = "fomcPre"; sev = (fp.preDays != null && fp.preDays <= 0.6) ? 0.7 : 0.45; drivers.push("FOMC 금리결정 임박(" + (fp.preDays != null ? (fp.preDays <= 0.4 ? "당일" : "D-" + Math.ceil(fp.preDays)) : "임박") + ") — 결정 대기"); }
       }
     }
     // 추세 방향(escalating: 낙폭 심화 / easing: 진정)
@@ -24601,6 +24691,10 @@ function _shockLogitShift(shock, defAlign) {
     // [V32.46] 워시아웃 후 반등 — 완만한 리스크온(질 좋은 고베타 소폭 가점), 방어주는 중립~소폭 감점.
     return 0.55 * sev * (1 + 0.4 * Math.max(0, -da)) - 0.2 * sev * Math.max(0, da);
   }
+  if (shock.mode === "fomcPre") {
+    // [V32.47] FOMC 임박 — 방향성 베팅 자제. 고베타 소폭 억제, 방어주는 소폭 우호(변동성 회피).
+    return -0.5 * sev * Math.max(0, -da) + 0.25 * sev * Math.max(0, da);
+  }
   return 0;
 }
 // [V32.46] 레짐 기반 진입 사이즈 배율 — 폭락·불확실 국면엔 축소, 호재/반등엔 정상~소폭 확대.
@@ -24614,6 +24708,7 @@ function _shockSizeK(shock, defAlign) {
   }
   if (shock.mode === "rebound") return _clamp(0.8 + 0.1 * Math.max(0, -da), 0.75, 1);   // 반등 초기 — 보수적 정상화
   if (shock.mode === "rally") return _clamp(1 + 0.08 * sev * Math.max(0, -da), 1, 1.12); // 호재 — 고베타 소폭 확대
+  if (shock.mode === "fomcPre") return _clamp(1 - 0.25 * sev, 0.75, 1);   // [V32.47] FOMC 대기 — 진입 사이즈 축소
   return 1;
 }
 
@@ -24623,7 +24718,7 @@ async function mlAiAsk(DB, question) {
   const syms = _aiAskResolveSymbols(q);
   const _qk = q.toLowerCase();
   // [V32.17] 지정학·위기·시장전반 질문 — 종목 특정 전에 먼저 처리(전쟁·폭락·헤지·"지금 시장 어때" 등).
-  const _crisisKwKo = ["전쟁", "지정학", "폭락", "크래시", "위기", "리스크오프", "risk-off", "리스크 오프", "안전자산", "헤지", "헷지", "방어", "대비", "폭락장", "침체", "블랙스완", "공포", "vix", "변동성 장", "셧다운", "중동", "우크라", "대만", "분쟁", "침공", "미사일", "지정학적", "패닉", "제재"];
+  const _crisisKwKo = ["전쟁", "지정학", "폭락", "크래시", "위기", "리스크오프", "risk-off", "리스크 오프", "안전자산", "헤지", "헷지", "방어", "대비", "폭락장", "침체", "블랙스완", "공포", "vix", "변동성 장", "셧다운", "중동", "우크라", "대만", "분쟁", "침공", "미사일", "지정학적", "패닉", "제재", "fomc", "연준", "금리 발표", "금리발표", "금리 결정", "매파", "비둘기", "긴축", "완화", "정책 기조", "선거", "대선", "규제", "부양책"];
   const _mktOverviewKw = ["지금 시장", "시장 어때", "시장 상황", "장 어때", "시장 전반", "시황", "지금 사도", "사도 돼", "사도돼", "지금 위험", "시장 위험"];
   const _isCrisisQ = _crisisKwKo.some(function (k) { return q.indexOf(k) >= 0 || _qk.indexOf(k) >= 0; });
   const _isOverviewQ = _mktOverviewKw.some(function (k) { return q.indexOf(k) >= 0; });
@@ -24647,15 +24742,19 @@ async function mlAiAsk(DB, question) {
       try {
         const sk = await _luxMarketShockCached(DB);
         if (sk && sk.mode !== "none" && sk.sev >= 0.35) {
-          const _lbl = sk.mode === "crash" ? ("폭락 대응" + (sk.trend === "escalating" ? "·심화" : sk.trend === "easing" ? "·진정" : "")) : sk.mode === "rally" ? "대형 호재/급등" : "워시아웃 후 반등(dip-buy)";
+          const _lbl = sk.mode === "crash" ? ("폭락 대응" + (sk.trend === "escalating" ? "·심화" : sk.trend === "easing" ? "·진정" : "")) : sk.mode === "rally" ? "대형 호재/급등" : sk.mode === "fomcPre" ? "FOMC 금리결정 임박" : "워시아웃 후 반등(dip-buy)";
           lines.push("**⚡ 시장 충격 레짐: " + _lbl + " (강도 " + sk.sev + ")**" + (sk.drivers && sk.drivers.length ? " — " + sk.drivers.join(", ") : ""));
           lines.push(sk.mode === "crash"
             ? "→ 위원회(MIND·DNN·GBDT·XGB·LGB·Cat) 진입확률·사이즈 일괄 하향(방어 회전). 필수소비·헬스·금·채권 등 방어정렬 종목은 억제 완화/가점" + (sk.trend === "easing" ? ", 진정 국면이라 과방어 20% 완화." : ".")
             : sk.mode === "rally"
               ? "→ 위원회 진입확률 일괄 상향(위험선호). 성장·반도체·고베타 종목에 상대적 가점, 사이즈 소폭 확대."
-              : "→ 급락 워시아웃 후 안정 신호 — 방어 일변도 대신 '질(質) 위험선호'로 완만히 전환(방어만 하다 반등 놓침 방지). 사이즈는 보수적 정상화.");
+              : sk.mode === "fomcPre"
+                ? "→ 결정 발표 전까지 방향성 베팅 자제: 신규 진입 사이즈 축소·고베타 억제(방어주 상대 우호). 발표 후 매파/비둘기 반응으로 자동 전환."
+                : "→ 급락 워시아웃 후 안정 신호 — 방어 일변도 대신 '질(質) 위험선호'로 완만히 전환(방어만 하다 반등 놓침 방지). 사이즈는 보수적 정상화.");
           lines.push("");
         }
+        // [V32.47] 다음 FOMC 일정 안내(창 밖이어도)
+        try { const fp2 = _fomcProximity(Date.now()); if (!fp2.pre && !fp2.post) { const now = Date.now(); let nd = null; for (const d of _FOMC_DATES) { const t = Date.parse(d + "T18:00:00Z"); if (t && t > now) { const dd = Math.round((t - now) / 86400000); if (nd == null || dd < nd) nd = dd; } } if (nd != null && nd <= 10) lines.push("_다음 FOMC 금리결정까지 약 " + nd + "일 — 임박 시 자동으로 사전 대비 모드 전환._"); } } catch (e) {}
       } catch (e) {}
       lines.push("**시스템이 자동으로 하는 방어**:");
       lines.push("- VIX 28 초과 시 신규 매수 중단(급변동 회피)");
