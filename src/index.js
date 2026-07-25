@@ -24127,8 +24127,26 @@ async function _luxCrisisGauge(DB, opts) {
   let sentiPts = 0;
   if (_wSenti != null && _wSenti <= -0.15) { sentiPts = Math.min(10, Math.round((-_wSenti - 0.15) * 22)); if (sentiPts >= 3) drivers.push("뉴스 심리 부정(" + _wSenti.toFixed(2) + ")"); }
 
-  let score = _clamp(Math.round(mkt + newsPts + roPts + sentiPts), 0, 100);
-  if (geoFloor > score) score = geoFloor;   // [V32.33] 활성 전쟁이면 시장이 잠잠해도 최소 위험단계 보장
+  // [V32.39] ★뉴스 과잉반응(패닉) 방지 — 시장 확증 게이팅★ 뉴스·지정학 신호는 실제 시장(VIX·지수)이
+  //   반응할 때만 완전 반영. 시장이 잠잠하면 뉴스 단독으론 방어를 크게 못 키운다(헤드라인 노이즈로 인한 패닉 차단).
+  //   시장 바로미터(mkt)·risk-off(roPts)는 시장 실측이라 그대로 두고, 뉴스성 요소만 게이팅.
+  let stressFrac = 0;
+  try {
+    const vStress = (vix != null) ? _clamp((vix - 16) / 14, 0, 1) : 0;      // VIX 16→30 상승분
+    const sStress = (spx != null) ? _clamp((-spx) / 2.5, 0, 1) : 0;         // S&P 당일 -2.5%면 최대
+    stressFrac = Math.max(vStress, sStress);
+  } catch (e) {}
+  const marketConfirm = +(0.35 + 0.65 * stressFrac).toFixed(2);              // 시장 잠잠=0.35, 급락=1.0
+  const newsPtsAdj = Math.round(newsPts * marketConfirm);
+  const sentiAdj = Math.round(sentiPts * marketConfirm);
+  // 지정학 플로어: 시장 미확증(잠잠)이면 '주의'까지만, 부분확증이면 '경계'까지. 완전확증이라야 '위기' 플로어.
+  let floorCap = geoFloor;
+  if (stressFrac < 0.25) floorCap = Math.min(geoFloor, 25);
+  else if (stressFrac < 0.5) floorCap = Math.min(geoFloor, 50);
+  if (geoFloor >= 42 && stressFrac < 0.25) drivers.push("단, 시장은 아직 잠잠(지수·VIX 안정) — 과잉대응 자제");
+
+  let score = _clamp(Math.round(mkt + newsPtsAdj + roPts + sentiAdj), 0, 100);
+  if (floorCap > score) score = floorCap;   // 활성 전쟁이라도 시장 확증 정도에 맞춰 최소 위험단계
   const level = score >= 65 ? "위기" : score >= 40 ? "경계" : score >= 20 ? "주의" : "평시";
   const posture = level === "위기"
     ? "신규 진입 대폭 축소·중단, 방어·헤지(인버스/VIX/금) 우선, 보유는 손절 타이트닝."
@@ -24139,10 +24157,11 @@ async function _luxCrisisGauge(DB, opts) {
     : "특이 위험신호 없음 — 정상 운용.";
   const out = { score: score, level: level, drivers: drivers.slice(0, 8), posture: posture,
     vix: vix, spx: spx, gold: gold, oil: oil, newsHits: newsHits, strongN: strongN, medN: medN, hotN: hotN, geoFloor: geoFloor,
+    marketConfirm: marketConfirm, stressFrac: +stressFrac.toFixed(2),
     headlines: headHits, regime: regime,
     defenseScale: level === "위기" ? 0.5 : level === "경계" ? 0.7 : level === "주의" ? 0.88 : 1.0, ts: Date.now() };
   try { await setState(DB, "crisis_gauge", out); } catch (e) {}
-  try { await log(DB, level === "평시" ? "INFO" : "WARN", null, "[CRISIS] " + level + " " + score + "/100 · VIX " + (vix != null ? vix.toFixed(1) : "?") + " · 무력 " + strongN + "/긴장 " + medN + "/핫 " + hotN + (geoFloor ? " · 플로어 " + geoFloor : "") + (drivers.length ? " · " + drivers.slice(0, 2).join("; ") : "")); } catch (e) {}
+  try { await log(DB, level === "평시" ? "INFO" : "WARN", null, "[CRISIS] " + level + " " + score + "/100 · VIX " + (vix != null ? vix.toFixed(1) : "?") + " · 시장확증 " + marketConfirm + " · 무력 " + strongN + "/긴장 " + medN + (geoFloor ? " · 플로어 " + geoFloor : "") + (drivers.length ? " · " + drivers.slice(0, 2).join("; ") : "")); } catch (e) {}
   return out;
 }
 
