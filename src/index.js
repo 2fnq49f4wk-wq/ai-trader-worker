@@ -24296,6 +24296,8 @@ function _scanPolicyNews(headlines, kwMap) {
   for (const code of Object.keys(map)) { let c = 0; for (const kw of map[code]) { if (txt.indexOf(kw.toLowerCase()) >= 0) c++; } if (c > 0) hits[code] = c; }
   return hits;
 }
+// [V32.52] 정책+확장 이슈 키워드 통합 — 뉴스 스캔을 한 번의 패스로(join·lowercase 중복 제거 → CPU 절감).
+const _ALL_NEWS_KW = Object.assign({}, _POLICY_KW, _ISSUE_KW);
 
 // ═══════════ [V32.40] 이벤트 플레이북 — 이슈별 수혜/피해 섹터·종목 매핑 ═══════════
 //   "악재=무조건 방어"가 아니라, 사건 유형별로 오히려 오르는 종목이 있다(전쟁→방산·에너지·금).
@@ -24400,7 +24402,8 @@ async function _luxActiveEvents(DB) {
       // 뉴스 정책 스캔(이미 수집된 헤드라인만 — 추가 fetch 0)
       let heads = [];
       try { const wn = S["world_news"]; if (wn && Array.isArray(wn.headlines)) heads = heads.concat(wn.headlines); const cg2 = S["crisis_gauge"]; if (cg2 && Array.isArray(cg2.headlines)) heads = heads.concat(cg2.headlines); } catch (e) {}
-      const pol = _scanPolicyNews(heads);
+      const allHits = _scanPolicyNews(heads, _ALL_NEWS_KW);   // [V32.52] 정책+이슈를 1패스로 스캔
+      const pol = allHits;
       // FOMC 캘린더 근접도
       const fp = _fomcProximity(Date.now());
       // ^TNX 단기(2일) 변화 — FOMC 사후 매파/비둘기 판별 보조
@@ -24425,7 +24428,7 @@ async function _luxActiveEvents(DB) {
       if ((pol.election || 0) >= 2) ev.push({ code: "election", intensity: 1 });
       if ((pol.stimulus || 0) >= 2 && !ev.find(function (e) { return e.code === "fomcDovish"; })) ev.push({ code: "stimulus", intensity: 1 });
       // [V32.49] 확장 이슈 뉴스 감지 — 다양한 분야(팬데믹·재해·사이버·공급망·유가·제재·무역·금융·신흥국·AI·EV·파업)
-      const iss = _scanPolicyNews(heads, _ISSUE_KW);
+      const iss = allHits;   // [V32.52] 동일 1패스 결과 재사용(_ISSUE_KW 코드도 allHits에 포함)
       const _has = function (c) { return ev.find(function (e) { return e.code === c; }); };
       const _pushIss = function (code, min2) { const c = iss[code] || 0; if (c >= 2) ev.push({ code: code, intensity: (min2 && c >= 3) ? 2 : 1 }); };
       _pushIss("pandemic", true); _pushIss("disaster", true); _pushIss("cyberattack", false);
@@ -24562,37 +24565,50 @@ function _computeTagReturns(dailyMap) {
   const out = {};
   if (!dailyMap) return out;
   for (const tag of Object.keys(_TAG_TICKERS)) {
-    let s1 = 0, n1 = 0, s5 = 0, n5 = 0;
+    let s1 = 0, n1 = 0, s5 = 0, n5 = 0, s20 = 0, n20 = 0;
     for (const raw of _TAG_TICKERS[tag].split(",")) {
       const sym = raw.trim(); if (!sym) continue;
       const dd = dailyMap[sym]; if (!dd) continue;
       const r1 = _dailyRet(dd, 1); if (r1 != null) { s1 += r1; n1++; }
       const r5 = _dailyRet(dd, 5); if (r5 != null) { s5 += r5; n5++; }
+      const r20 = _dailyRet(dd, 20); if (r20 != null) { s20 += r20; n20++; }   // [V32.52] 중기 호라이즌 추가
     }
-    if (n1 >= 2 || n5 >= 2) out[tag] = { r1: n1 ? +(s1 / n1).toFixed(2) : null, r5: n5 ? +(s5 / n5).toFixed(2) : null, n: Math.max(n1, n5) };
+    if (n1 >= 2 || n5 >= 2) out[tag] = { r1: n1 ? +(s1 / n1).toFixed(2) : null, r5: n5 ? +(s5 / n5).toFixed(2) : null, r20: n20 ? +(s20 / n20).toFixed(2) : null, n: Math.max(n1, n5) };
   }
   return out;
 }
 // 이벤트별 확증배율 conf[code]∈[0.05,1.25]: 수혜/피해 태그가 실제로 기대대로 움직였나.
-//   cs = Σ(sign(w) × basketRet) / Σ|w|  (기대방향과 실제 수익 방향 정렬도, %단위)
-//   war면 defense(w+)가 오르고 airline(w-)이 빠졌으면 cs>0 → 확증↑; 방산이 안 오르면 cs↓ → 틸트 감쇠.
+//   [V32.52] 성능 강화 — (1)다중 호라이즌 블렌드(당일 r1·추세 r5·중기 r20)로 단일일 노이즈 완화,
+//   (2)확신도(|w|) 가중 평균 → 이벤트를 '정의하는' 핵심태그가 정렬점수를 지배(부수태그 잡음↓),
+//   (3)이상치 클램프(±8%)로 한 바스켓 폭주가 확증을 왜곡하지 않게.
 function _eventConfirmation(evs, tagRet) {
   const conf = {};
   if (!evs || !evs.length || !tagRet) return conf;
+  const _blend = function (tr) {
+    // 다중 호라이즌 가중 블렌드(가용한 것만) — 추세(r5) 우선, 당일(r1)·중기(r20) 보조.
+    const parts = []; let wsum = 0, acc = 0;
+    if (tr.r5 != null) { parts.push([tr.r5, 0.5]); }
+    if (tr.r1 != null) { parts.push([tr.r1, 0.3]); }
+    if (tr.r20 != null) { parts.push([tr.r20, 0.2]); }
+    if (!parts.length) return null;
+    for (const p of parts) { acc += Math.max(-8, Math.min(8, p[0])) * p[1]; wsum += p[1]; }   // 이상치 클램프
+    return wsum ? acc / wsum : null;
+  };
   for (const e of evs) {
     const w = _EVENT_TAG_W[e.code]; if (!w) continue;
     let num = 0, den = 0, cover = 0, tot = 0;
     for (const tag of Object.keys(w)) {
       tot++;
       const tr = tagRet[tag]; if (!tr) continue;
-      const r = (tr.r5 != null ? tr.r5 : tr.r1); if (r == null) continue;
+      const r = _blend(tr); if (r == null) continue;
       cover++;
-      // 기대방향(부호 w) × 실제수익 r. 정렬되면 +, 어긋나면 -.
-      num += Math.sign(w[tag]) * r;
-      den += Math.abs(w[tag]);
+      const aw = Math.abs(w[tag]);
+      // 확신도 가중: 기대방향(부호 w) × 실제수익 r × |w|(핵심태그 가중), 분모도 |w|로 정규화.
+      num += Math.sign(w[tag]) * r * aw;
+      den += aw;
     }
     if (den <= 0 || cover < 2) { conf[e.code] = 0.6; continue; }   // 관측 부족 → 중립(이론 60%만 반영)
-    const cs = num / den;                    // 정렬 점수(대략 %/가중 단위)
+    const cs = num / den;                    // 확신도 가중 정렬 점수(대략 %/가중 단위)
     // cs>0(기대대로 움직임)→확증↑, cs<0(역행)→강한 감쇠. 0.35 기저 + 0.30/%p 기울기.
     let m = 0.35 + 0.30 * cs;
     // 커버리지가 낮으면 이론 쪽으로 당김(불확실성 축소)
@@ -24785,7 +24801,10 @@ async function _luxMarketShockCached(DB) {
     const g = (typeof globalThis !== "undefined") ? globalThis : {};
     const c = g.__shockCache;
     if (c && (Date.now() - c.ts) < 180000) return c.val;   // 3분 메모 — 급변 레짐 반응성 ↔ 종목별 재계산 방지 균형
-    const val = await _luxMarketShock(DB);
+    let val = await _luxMarketShock(DB);
+    // [V32.52] 레짐 지속성(persistence) — 같은 레짐이 이어지면 sev를 평활(EWMA)해 강도 지터·휘프소 완화.
+    //   레짐 전환(mode 변경)은 즉시 반영(반응성 유지), 강도만 부드럽게.
+    try { const prev = g.__shockPrev; if (prev && prev.mode === val.mode && val.mode !== "none" && typeof prev.sev === "number") { val = Object.assign({}, val, { sev: +(0.6 * val.sev + 0.4 * prev.sev).toFixed(2) }); } g.__shockPrev = { mode: val.mode, sev: val.sev }; } catch (e) {}
     g.__shockCache = { ts: Date.now(), val: val };
     return val;
   } catch (e) { return { mode: "none", sev: 0 }; }
