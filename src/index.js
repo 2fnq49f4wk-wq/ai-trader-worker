@@ -13992,7 +13992,7 @@ async function runTradingCycle(env) {
                 } catch (e) {}
                 // 최상위 결정(deep) → 폴백(mind)
                 let _md = null;
-                try { _md = await mlDeepDecide(DB, signal.mlFeat, { mind: __mind, guard: __guard, ens: __ensemble, trust: __dnnTrust, dnn: __dnn, gbdtTrust: __gbdtTrust, gbdt: __gbdt, cal: __cal, evstats: __evStats }); } catch (e) {}
+                try { _md = await mlDeepDecide(DB, signal.mlFeat, { mind: __mind, guard: __guard, ens: __ensemble, trust: __dnnTrust, dnn: __dnn, gbdtTrust: __gbdtTrust, gbdt: __gbdt, cal: __cal, evstats: __evStats, shock: await _luxMarketShockCached(DB), sym: symbol }); } catch (e) {}
                 if (!_md) { try { _md = await mlMindDecide(DB, signal.mlFeat, { mind: __mind, guard: __guard, ens: __ensemble }); } catch (e) {} }
                 // [V5] AI 픽 수집 — 개입 여부와 무관하게 예측 자체는 기록(종목당 1회)
                 try {
@@ -21524,6 +21524,21 @@ async function mlDeepDecide(DB, featVec, opts) {
       }
     } catch (e) {}
 
+    // [V32.44] ★시장 충격 레짐 프라이어★ — 폭락/대형호재를 위원회 결합확률에 직접 반영(6모델 일괄).
+    //   opts.shock 우선(스캔에서 1회 계산 후 전달), 없으면 5분 메모 캐시로 로드. 종목 방어정렬도로 차등.
+    //   폭락 시 광범위 매수 억제(방어주는 완화/가점), 대형호재 시 위험선호↑(고베타 가점).
+    let _shockOut = null;
+    try {
+      // opts.shock가 명시된 진입 결정(스캔·엔트리)에만 적용 — 청산/모니터링 경로는 자체 로직 유지(폭락 바닥 투매 방지).
+      const _shock = (opts.shock !== undefined) ? opts.shock : null;
+      if (_shock && _shock.sev && _shock.mode !== "none") {
+        const _da = (opts.sym != null) ? _crashDefensiveness(opts.sym) : 0;
+        const _dz = _shockLogitShift(_shock, _da);
+        if (_dz !== 0) pCombined = _clamp(_sigmoid(_logitD(pCombined) + _dz), 0.001, 0.999);
+        _shockOut = { mode: _shock.mode, sev: _shock.sev, dz: +_dz.toFixed(3), defAlign: +_da.toFixed(2) };
+      }
+    } catch (e) {}
+
     // [V12.63] ★고도화 산식 — 위원회 합의도(cross-expert agreement)를 신뢰도에 반영★ 세 모델이
     //   서로 동의할수록(전문가 확률 분산↓) 확신을 키우고, 엇갈릴수록(분산↑) 불확실성으로 흡수해
     //   사이즈 축소·기권을 넓힌다. MIND/DNN/GBDT가 "조화롭게" 하나의 확신을 만들도록 결합(단일 모델
@@ -21556,7 +21571,7 @@ async function mlDeepDecide(DB, featVec, opts) {
       allow = pCombined >= gate;
     }
     const sizeMult = allow ? mlKellySize(pCombined, unc) : 1;
-    return { source: "deep", allow: allow, sizeMult: sizeMult, p: pCombined, uncertainty: unc, usedDnn: usedDnn, usedGbdt: usedGbdt, ev: evVal, experts: _expOut };
+    return { source: "deep", allow: allow, sizeMult: sizeMult, p: pCombined, uncertainty: unc, usedDnn: usedDnn, usedGbdt: usedGbdt, ev: evVal, experts: _expOut, shock: _shockOut };
   } catch (e) { return null; }
 }
 
@@ -23489,6 +23504,8 @@ async function mlUniverseScanNightly(DB) {
     // [V32.42] 태그바스켓 실제수익률 계산(인메모리·이미 로드된 dailyMapAll에서) → 실증확증배율 갱신
     let _tagRet = null, _conf = _evCtx.conf || {};
     try { _tagRet = _computeTagReturns(dailyMapAll); await setState(DB, "tag_returns", { ts: Date.now(), tags: _tagRet }); _conf = _eventConfirmation(_evCtx.evs, _tagRet); } catch (e) {}
+    // [V32.44] 시장 충격 레짐 1회 계산 → 위원회 결정에 일괄 반영(폭락/대형호재)
+    let _shock = { mode: "none", sev: 0 }; try { _shock = await _luxMarketShock(DB); } catch (e) {}
     const _evActive = _evCtx.evs && _evCtx.evs.length ? _evCtx.evs.map(function (e) { return e.code + "(" + e.intensity + (_conf[e.code] != null ? "·확증" + _conf[e.code] : "") + ")"; }).join(",") : "";
     const deadline = Date.now() + 90000;   // 벽시계 가드(추론은 CPU 수 ms/심볼)
     const evstats = await getState(DB, "ml_evstats", null);
@@ -23518,7 +23535,7 @@ async function mlUniverseScanNightly(DB) {
       let p = null;
       if (mind) {
         try {
-          const md = await mlDeepDecide(DB, feat, { mind: mind, guard: guard, ens: ens, trust: dnnT, dnn: dnn, gbdtTrust: gT, gbdt: g, cal: cal, evstats: evstats });
+          const md = await mlDeepDecide(DB, feat, { mind: mind, guard: guard, ens: ens, trust: dnnT, dnn: dnn, gbdtTrust: gT, gbdt: g, cal: cal, evstats: evstats, shock: _shock, sym: sym });
           if (md && typeof md.p === "number") p = md.p;
         } catch (e) {}
       } else { p = mlScore(l1, feat); }
@@ -23542,8 +23559,10 @@ async function mlUniverseScanNightly(DB) {
     const _tiltedN = picks.filter(function (p) { return p.evTilt; }).length;
     await setState(DB, "ai_picks:scan", { ts: Date.now(), scanned: scanned, total: syms.length, picks: picks.slice(0, 40),
       byMkt: { us: symsByMkt.us.length, kr: symsByMkt.kr.length, cm: symsByMkt.cm.length }, scannedByMkt: scannedByMkt,
-      events: _evCtx.evs.map(function (e) { return { code: e.code, label: e.play.label, intensity: e.intensity, conf: _conf[e.code] != null ? _conf[e.code] : null }; }), marketConfirm: _evCtx.mc, tiltedN: _tiltedN });
-    return "[SCAN] 전종목 " + scanned + "/" + syms.length + " 분석 — AI 픽 상위 " + Math.min(40, picks.length) + "종목" + (_evActive ? " · 이벤트틸트[" + _evActive + "] 반영 " + _tiltedN + "종목" : "");
+      events: _evCtx.evs.map(function (e) { return { code: e.code, label: e.play.label, intensity: e.intensity, conf: _conf[e.code] != null ? _conf[e.code] : null }; }), marketConfirm: _evCtx.mc, tiltedN: _tiltedN,
+      shock: (_shock && _shock.mode !== "none") ? _shock : null });
+    const _shockTxt = (_shock && _shock.mode !== "none") ? " · 레짐[" + (_shock.mode === "crash" ? "폭락" : "대형호재") + " sev" + _shock.sev + "]→위원회 " + (_shock.mode === "crash" ? "방어" : "위험선호") + " 시프트" : "";
+    return "[SCAN] 전종목 " + scanned + "/" + syms.length + " 분석 — AI 픽 상위 " + Math.min(40, picks.length) + "종목" + (_evActive ? " · 이벤트틸트[" + _evActive + "] 반영 " + _tiltedN + "종목" : "") + _shockTxt;
   } catch (e) { return "[SCAN] fail: " + (e && e.message); }
 }
 
@@ -24444,6 +24463,79 @@ async function _luxEventContext(DB) {
   return { evs: evs, mc: mc, level: cgLevel, tagRet: tagRet, conf: conf };
 }
 
+// ═══════════ [V32.44] 시장 충격 레짐 — 폭락/대형호재를 위원회(6모델) 결정에 직접 반영 ═══════════
+//   개별 이벤트 틸트가 '픽 랭킹'을 조정한다면, 이 계층은 '위원회 결합확률(pCombined)' 자체를
+//   레짐에 맞게 시프트한다 → MIND·DNN·GBDT·XGB·LGB·Cat 모두의 최종 판단에 일괄 적용.
+//   폭락: 광범위 매수 억제(방어정렬 종목은 완화/가점). 대형호재/급등: 위험선호↑(고베타 가점).
+//   전부 캐시 상태만 읽음(추가 fetch 0) + 5분 인메모리 메모.
+async function _luxMarketShock(DB) {
+  try {
+    const idxs = ["^GSPC", "^IXIC", "^KS11", "^KQ11"];
+    let q = {}; try { q = await getStates(DB, idxs.map(function (s) { return "index:" + s; })); } catch (e) {}
+    let sum = 0, n = 0, worst = 0, best = 0;
+    for (const s of idxs) { const d = q["index:" + s]; if (d && d.dayPct != null) { sum += d.dayPct; n++; worst = Math.min(worst, d.dayPct); best = Math.max(best, d.dayPct); } }
+    const avg = n ? sum / n : null;
+    let vix = null; try { const cg = await getState(DB, "crisis_gauge", null); if (cg && cg.vix != null) vix = cg.vix; } catch (e) {}
+    // 시장 폭(breadth) — 태그바스켓 1일수익 중 하락 비율
+    let negFrac = null; try { const tr = await getState(DB, "tag_returns", null); if (tr && tr.tags) { const ks = Object.keys(tr.tags); let neg = 0, tot = 0; for (const k of ks) { const r = tr.tags[k].r1; if (r != null) { tot++; if (r < 0) neg++; } } if (tot >= 4) negFrac = neg / tot; } } catch (e) {}
+    if (avg == null && vix == null) return { mode: "none", sev: 0 };
+    const crashScore = (avg != null ? Math.max(0, (-avg - 1.2) / 3.3) : 0)
+      + (vix != null ? Math.max(0, (vix - 26) / 24) : 0)
+      + (negFrac != null ? Math.max(0, (negFrac - 0.7) / 0.3) * 0.5 : 0);
+    const rallyScore = (avg != null ? Math.max(0, (avg - 1.2) / 3.3) : 0)
+      + (negFrac != null ? Math.max(0, (0.3 - negFrac) / 0.3) * 0.4 : 0)
+      - (vix != null ? Math.max(0, (vix - 24) / 20) : 0);
+    let mode = "none", sev = 0; const drivers = [];
+    if (crashScore >= 0.35 && crashScore >= rallyScore) {
+      mode = "crash"; sev = _clamp(crashScore, 0, 1.2);
+      if (avg != null && avg <= -1.2) drivers.push("지수 평균 " + avg.toFixed(1) + "%");
+      if (vix != null && vix >= 26) drivers.push("VIX " + vix.toFixed(0));
+      if (negFrac != null && negFrac >= 0.7) drivers.push("광범위 약세(하락바스켓 " + Math.round(negFrac * 100) + "%)");
+    } else if (rallyScore >= 0.35) {
+      mode = "rally"; sev = _clamp(rallyScore, 0, 1.2);
+      if (avg != null && avg >= 1.2) drivers.push("지수 평균 +" + avg.toFixed(1) + "%");
+      if (negFrac != null && negFrac <= 0.3) drivers.push("광범위 강세(상승바스켓 " + Math.round((1 - negFrac) * 100) + "%)");
+    }
+    return { mode: mode, sev: +sev.toFixed(2), avg: avg != null ? +avg.toFixed(2) : null, vix: vix, negFrac: negFrac != null ? +negFrac.toFixed(2) : null, drivers: drivers };
+  } catch (e) { return { mode: "none", sev: 0 }; }
+}
+// 5분 인메모리 메모(위원회 루프 내 종목마다 재계산 방지 — CPU 안전)
+async function _luxMarketShockCached(DB) {
+  try {
+    const g = (typeof globalThis !== "undefined") ? globalThis : {};
+    const c = g.__shockCache;
+    if (c && (Date.now() - c.ts) < 300000) return c.val;
+    const val = await _luxMarketShock(DB);
+    g.__shockCache = { ts: Date.now(), val: val };
+    return val;
+  } catch (e) { return { mode: "none", sev: 0 }; }
+}
+// 종목의 '폭락 방어정렬도' [-1,1]: +면 폭락 방어(필수·헬스·금·채권), -면 고베타(성장·반도체·경기민감).
+const _CRASH_DEF_TAGS = { staples: 1.0, health: 0.85, utility: 0.9, highdiv: 0.75, gold: 1.0, bond_prox: 1.0, defense: 0.45, insurer: 0.2 };
+const _CRASH_BETA_TAGS = { growth: -1.0, semi: -1.0, megacap: -0.9, consumer_d: -0.75, airline: -0.8, travel: -0.8, china_exp: -0.7, materials: -0.45, industrial: -0.35, energy: -0.25, reit: -0.3, semi_exp: -0.9 };
+function _crashDefensiveness(symbol) {
+  try {
+    const tags = _tagsOf(symbol); if (!tags.length) return 0;
+    let s = 0, n = 0;
+    for (const t of tags) { if (_CRASH_DEF_TAGS[t] != null) { s += _CRASH_DEF_TAGS[t]; n++; } else if (_CRASH_BETA_TAGS[t] != null) { s += _CRASH_BETA_TAGS[t]; n++; } }
+    return n ? _clamp(s / n, -1, 1) : 0;
+  } catch (e) { return 0; }
+}
+// 위원회 결합확률에 적용할 레짐 로짓 시프트(폭락/호재 × 방어정렬).
+function _shockLogitShift(shock, defAlign) {
+  if (!shock || !shock.sev || shock.mode === "none") return 0;
+  const sev = Math.min(1.2, shock.sev), da = _clamp(defAlign || 0, -1, 1);
+  if (shock.mode === "crash") {
+    // 매수확률 하향(방어). 방어정렬(da>0)은 억제 완화 + 소폭 가점, 고베타(da<0)는 추가 억제.
+    return -1.5 * sev * (1 - 0.75 * Math.max(0, da)) + 0.6 * sev * Math.max(0, da) - 0.55 * sev * Math.max(0, -da);
+  }
+  if (shock.mode === "rally") {
+    // 위험선호↑. 고베타(da<0=호재 수혜)에 가점, 방어주(da>0)는 상대적 소폭 감점.
+    return 0.85 * sev * (1 + 0.5 * Math.max(0, -da)) - 0.4 * sev * Math.max(0, da);
+  }
+  return 0;
+}
+
 async function mlAiAsk(DB, question) {
   const q = String(question || "").trim().slice(0, 300);
   if (!q) return { ok: false, msg: "질문을 입력해줘." };
@@ -24470,6 +24562,17 @@ async function mlAiAsk(DB, question) {
       if (cg.drivers && cg.drivers.length) lines.push("주요 요인: " + cg.drivers.join(", "));
       lines.push("");
       lines.push("**대응 포스처**: " + cg.posture);
+      // [V32.44] 시장 충격 레짐 — 위원회(6모델) 진입확률 시프트 상태
+      try {
+        const sk = await _luxMarketShockCached(DB);
+        if (sk && sk.mode !== "none" && sk.sev >= 0.35) {
+          lines.push("**⚡ 시장 충격 레짐: " + (sk.mode === "crash" ? "폭락 대응" : "대형 호재/급등") + " (강도 " + sk.sev + ")**" + (sk.drivers && sk.drivers.length ? " — " + sk.drivers.join(", ") : ""));
+          lines.push(sk.mode === "crash"
+            ? "→ 위원회(MIND·DNN·GBDT·XGB·LGB·Cat) 진입확률을 일괄 하향(방어 회전). 필수소비·헬스·금·채권 등 방어정렬 종목은 억제를 완화/가점."
+            : "→ 위원회 진입확률을 일괄 상향(위험선호). 성장·반도체·고베타 종목에 상대적 가점.");
+          lines.push("");
+        }
+      } catch (e) {}
       lines.push("**시스템이 자동으로 하는 방어**:");
       lines.push("- VIX 28 초과 시 신규 매수 중단(급변동 회피)");
       lines.push("- risk-off/위기 감지 시 신규 진입 사이즈 자동 축소(현재 배율 ×" + (cg.defenseScale != null ? cg.defenseScale.toFixed(2) : "1.00") + ")");
