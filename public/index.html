@@ -2911,6 +2911,7 @@ html[data-theme="light"] .table tbody tr:hover{background:rgba(9,105,218,.045);}
               <input id="fvAiAskInput" type="text" placeholder="예: 지금 시장 위험해? / 전쟁 나면 대비돼 있어? / 마이크론 상승은 일시적인가?" maxlength="300"
                 style="flex:1;font-size:11px;padding:6px 8px;background:var(--bg2,#161b22);color:var(--t1,#ddd);border:1px solid var(--bd,#333);border-radius:4px;">
               <button class="llm-btn" id="fvAiAskBtn" style="padding:6px 12px;">질문</button>
+              <button class="llm-btn" id="fvAiAskReset" title="답변을 지우고 질문창만 다시 띄워요" style="padding:6px 10px;background:transparent;border:1px solid var(--bd,#333);color:var(--t2,#9aa);">↺ 초기화</button>
             </div>
             <!-- [V32.17] 예시 질문 칩 — 지정학/위기 대비 질문을 전면에 노출 -->
             <div id="fvAiAskChips" style="display:flex;flex-wrap:wrap;gap:5px;margin-top:7px;">
@@ -4512,6 +4513,12 @@ html[data-theme="light"] .table tbody tr:hover{background:rgba(9,105,218,.045);}
     }
     btn.addEventListener('click', ask);
     inp.addEventListener('keydown', function(e){ if (e.key === 'Enter') ask(); });
+    // 초기화 — 답변(글) 지우고 질문창만 다시 띄움
+    var resetBtn = $('fvAiAskReset');
+    if (resetBtn) resetBtn.addEventListener('click', function(){
+      out.textContent = ''; inp.value = ''; busy = false; btn.disabled = false;
+      try { inp.focus(); } catch(e) {}
+    });
     // [V32.17] 예시 질문 칩 — 클릭 시 입력에 채우고 즉시 질의
     var chips = document.getElementById('fvAiAskChips');
     if (chips) chips.addEventListener('click', function(e){
