@@ -24235,11 +24235,28 @@ const _POLICY_KW = {
   election:    ["election", "presidential", "campaign", "대선", "총선", "선거", "대통령 선거"],
   regulation:  ["antitrust", "regulation", "regulatory", "probe", "lawsuit", "규제", "반독점", "제재안", "과징금"]
 };
-function _scanPolicyNews(headlines) {
+// [V32.49] 확장 이슈 키워드 — 팬데믹·재해·사이버·공급망·유가쇼크·제재·무역합의·뱅크런·신흥국·AI·전기차·파업
+const _ISSUE_KW = {
+  pandemic:    ["pandemic", "epidemic", "outbreak", "virus", "covid", "quarantine", "팬데믹", "감염병", "전염병", "바이러스", "봉쇄", "확산"],
+  disaster:    ["hurricane", "earthquake", "wildfire", "flood", "typhoon", "natural disaster", "지진", "허리케인", "태풍", "홍수", "산불", "자연재해"],
+  cyberattack: ["cyberattack", "cyber attack", "ransomware", "data breach", "hacked", "hacking", "사이버 공격", "해킹", "랜섬웨어", "정보유출", "디도스"],
+  supplyChain: ["supply chain", "chip shortage", "shortage", "bottleneck", "port congestion", "공급망", "부품난", "공급 차질", "물류 대란", "병목"],
+  oilShock:    ["opec", "oil supply", "production cut", "oil embargo", "strait of hormuz", "감산", "원유 공급", "유가 급등", "석유 금수", "호르무즈"],
+  sanctions:   ["sanction", "export control", "export ban", "embargo", "blacklist", "제재", "수출 통제", "수출 금지", "블랙리스트", "금수"],
+  tradeDeal:   ["trade deal", "trade agreement", "tariff cut", "tariff relief", "trade truce", "무역 합의", "관세 인하", "관세 완화", "무역 협정", "휴전"],
+  bankRun:     ["bank run", "bank failure", "bank collapse", "deposit flight", "contagion", "뱅크런", "은행 파산", "예금 인출", "금융 전염", "유동성 위기"],
+  emCrisis:    ["emerging market", "currency crisis", "default", "devaluation", "peso", "lira", "신흥국", "통화 위기", "국가 부도", "평가절하", "외환 위기"],
+  aiBoom:      ["ai boom", "ai chip", "ai demand", "data center", "capex", "ai spending", "인공지능", "ai 반도체", "데이터센터", "ai 투자", "ai 수요"],
+  evBoom:      ["ev sales surge", "ev demand", "battery demand", "ev subsidy", "전기차 수요", "배터리 수요", "전기차 판매", "ev 보조금"],
+  evBust:      ["ev slowdown", "ev demand slump", "battery glut", "ev cuts", "전기차 둔화", "전기차 수요 둔화", "배터리 공급 과잉", "전기차 감산"],
+  laborStrike: ["strike", "walkout", "labor union", "work stoppage", "파업", "노조", "총파업", "생산 중단"]
+};
+function _scanPolicyNews(headlines, kwMap) {
   const hits = {};
   if (!headlines || !headlines.length) return hits;
+  const map = kwMap || _POLICY_KW;
   const txt = headlines.map(function (h) { return (typeof h === "string" ? h : (h && h.title) || ""); }).join(" \n ").toLowerCase();
-  for (const code of Object.keys(_POLICY_KW)) { let c = 0; for (const kw of _POLICY_KW[code]) { if (txt.indexOf(kw.toLowerCase()) >= 0) c++; } if (c > 0) hits[code] = c; }
+  for (const code of Object.keys(map)) { let c = 0; for (const kw of map[code]) { if (txt.indexOf(kw.toLowerCase()) >= 0) c++; } if (c > 0) hits[code] = c; }
   return hits;
 }
 
@@ -24272,7 +24289,21 @@ const _EVENT_PLAYBOOK = {
   stimulus:    { label: "경기부양·완화 정책", benefit: [["성장·경기민감·소비", "반도체·소비재"], ["원자재·금(인플레)", ""]], hurt: [["채권(금리반등)", ""]], why: "재정·통화 부양 → 위험자산·경기민감 우호, 인플레 기대로 원자재↑, 장기채 부담" },
   shutdown:    { label: "정부 셧다운·부채한도", benefit: [["안전자산·금·필수소비", "GLD,KO,PG"]], hurt: [["방산(예산 지연)", ""], ["경기민감·소비", ""]], why: "정치 불확실성·지출 차질 → 방어·안전자산 선호, 방산 예산 지연·경기민감 부담" },
   election:    { label: "선거·정치 불확실성", benefit: [["저변동 방어주", "KO,PG,JNJ"], ["금(헤지)", "GLD"]], hurt: [["고베타·정책민감주", ""]], why: "정책 방향 불확실 → 변동성↑, 방어·헤지 선호(정책 수혜 섹터는 결과 확정 후 반영)" },
-  regulation:  { label: "규제·반독점(빅테크)", benefit: [["규제 무풍 섹터", ""]], hurt: [["메가캡 빅테크·플랫폼", "AAPL,GOOGL,META,AMZN"]], why: "반독점·규제 리스크 → 대형 플랫폼·빅테크 밸류 부담, 여타 섹터 상대 수혜" }
+  regulation:  { label: "규제·반독점(빅테크)", benefit: [["규제 무풍 섹터", ""]], hurt: [["메가캡 빅테크·플랫폼", "AAPL,GOOGL,META,AMZN"]], why: "반독점·규제 리스크 → 대형 플랫폼·빅테크 밸류 부담, 여타 섹터 상대 수혜" },
+  // ── [V32.49] 확장 이슈 — 팬데믹·재해·사이버·공급망·에너지·제재·무역·금융·신흥국·AI·전기차·파업 ──
+  pandemic:    { label: "팬데믹·감염병 확산", benefit: [["헬스케어·백신·진단", "LLY,MRK,PFE,MRNA"], ["필수소비·재택테크", "KO,PG,넷플릭스"]], hurt: [["항공·여행·오프라인 소비", "DAL,UAL,크루즈"], ["에너지(수요위축)", ""]], why: "이동제한 시 헬스·필수·재택 수혜, 항공·여행·대면소비·에너지 수요 타격" },
+  disaster:    { label: "자연재해·기상이변", benefit: [["건자재·건설(복구)", "홈빌더,자재"], ["농산물·필수", ""]], hurt: [["보험(지급부담)", "AIG,올스테이트"], ["피해지역 소비·유틸", ""]], why: "복구수요로 건자재·건설 수혜, 보험사 지급부담·피해지역 부담" },
+  cyberattack: { label: "대규모 사이버공격", benefit: [["사이버보안", "CRWD,PANW,ZS,S"]], hurt: [["피해 기업·금융·인프라", ""]], why: "보안 수요 급증으로 사이버보안 수혜, 피해 기업·금융·인프라 리스크" },
+  supplyChain: { label: "공급망 교란", benefit: [["물류·해운·국내생산", "해운,대체공급"], ["재고보유 기업", ""]], hurt: [["반도체·자동차·전자(부품난)", ""], ["소비재(원가↑)", ""]], why: "부품·물류 병목으로 제조·소비 원가↑·생산차질, 물류·국내화 수혜" },
+  oilShock:    { label: "유가 공급쇼크(OPEC·중동)", benefit: [["에너지·정유·원자재", "XOM,CVX,SLB"], ["방산", ""]], hurt: [["항공·운송·화학·소비", "원가 급등"]], why: "감산·공급차질로 유가 급등 → 에너지 수혜, 항공·운송·화학·소비 원가 타격" },
+  sanctions:   { label: "제재·수출통제", benefit: [["방산·국내생산·대체공급", ""], ["에너지(공급제약)", ""]], hurt: [["제재대상 노출주·중국 익스포저", ""]], why: "무역·기술 제재로 중국·제재대상 노출주 타격, 국내화·방산·에너지 수혜" },
+  tradeDeal:   { label: "무역합의·관세 완화(호재)", benefit: [["수출·반도체·중국노출", "삼성·하이닉스,반도체"], ["성장·경기민감", ""]], hurt: [["관세보호 수혜였던 국내한정주(상대약세)", ""]], why: "관세 완화·무역합의 → 수출·반도체·중국노출·경기민감 위험선호 회복" },
+  bankRun:     { label: "뱅크런·금융 전염", benefit: [["안전자산·금·국채", "GLD,TLT"], ["대형 우량은행(도피처)", ""]], hurt: [["중소형 은행·리츠·보험", "지역은행"]], why: "예금이탈·유동성 위기 → 중소은행·리츠·보험 급락, 금·국채·대형은행으로 도피" },
+  emCrisis:    { label: "신흥국·통화 위기", benefit: [["달러·미 국채·금", "TLT,GLD"], ["미 내수 방어주", ""]], hurt: [["신흥국 노출·원자재·수출주", ""]], why: "신흥국 자금이탈·통화약세 → 달러·안전자산 강세, 신흥국·원자재·수출주 부담" },
+  aiBoom:      { label: "AI 캐펙스 붐", benefit: [["반도체·메가캡·데이터센터전력", "NVDA,AVGO,원전·유틸"], ["AI 소프트웨어", "PLTR,NOW"]], hurt: [["AI 무관 저성장(상대약세)", ""]], why: "AI 투자 급증 → 반도체·메가캡·데이터센터 전력(원전·유틸) 수혜" },
+  evBoom:      { label: "전기차·배터리 사이클↑", benefit: [["전기차·2차전지·소재", "TSLA,LG엔솔,삼성SDI,에코프로"]], hurt: [["내연기관 부품(상대약세)", ""]], why: "EV 수요·정책 지원 → 전기차·배터리·양극재 소재 수혜" },
+  evBust:      { label: "전기차·배터리 사이클↓", benefit: [["방어·필수(회전)", ""]], hurt: [["전기차·2차전지·소재", "수요둔화·재고"]], why: "EV 수요 둔화·보조금 축소 → 전기차·배터리·소재 부진" },
+  laborStrike: { label: "대규모 파업·노동이슈", benefit: [["자동화·대체", ""]], hurt: [["해당 산업(자동차·물류·항공)", "생산차질"]], why: "파업·생산차질로 해당 산업 단기 타격, 자동화·대체 수혜" }
 };
 // 현재 활성 이슈 감지(캐시 상태만 읽음 — 추가 fetch 0)
 //   [V32.45] D1 왕복 최소화: 독립 키를 getStates로 1배치 로드. tag_returns 신선도 가드(오래된 데이터로 이벤트 오탐 방지).
@@ -24356,6 +24387,21 @@ async function _luxActiveEvents(DB) {
       if ((pol.regulation || 0) >= 2) ev.push({ code: "regulation", intensity: (pol.regulation || 0) >= 3 ? 2 : 1 });
       if ((pol.election || 0) >= 2) ev.push({ code: "election", intensity: 1 });
       if ((pol.stimulus || 0) >= 2 && !ev.find(function (e) { return e.code === "fomcDovish"; })) ev.push({ code: "stimulus", intensity: 1 });
+      // [V32.49] 확장 이슈 뉴스 감지 — 다양한 분야(팬데믹·재해·사이버·공급망·유가·제재·무역·금융·신흥국·AI·EV·파업)
+      const iss = _scanPolicyNews(heads, _ISSUE_KW);
+      const _has = function (c) { return ev.find(function (e) { return e.code === c; }); };
+      const _pushIss = function (code, min2) { const c = iss[code] || 0; if (c >= 2) ev.push({ code: code, intensity: (min2 && c >= 3) ? 2 : 1 }); };
+      _pushIss("pandemic", true); _pushIss("disaster", true); _pushIss("cyberattack", false);
+      _pushIss("supplyChain", true); _pushIss("sanctions", true); _pushIss("bankRun", true);
+      _pushIss("emCrisis", true); _pushIss("aiBoom", true); _pushIss("laborStrike", false);
+      // 유가 공급쇼크 — 뉴스 + (가능하면) 실제 유가 급등 확인
+      if ((iss.oilShock || 0) >= 2) { const oilUpAmt = (ip && ip.oil != null) ? ip.oil : null; ev.push({ code: "oilShock", intensity: (oilUpAmt != null && oilUpAmt >= 4) || (iss.oilShock || 0) >= 3 ? 2 : 1 }); }
+      // 무역: 합의(호재) vs 분쟁(악재) — 상호배타. 합의 우선 감지, 아니면 규제·수출통제성 무역분쟁.
+      if ((iss.tradeDeal || 0) >= 2) ev.push({ code: "tradeDeal", intensity: (iss.tradeDeal || 0) >= 3 ? 2 : 1 });
+      else if ((pol.regulation || 0) >= 1 && (iss.sanctions || 0) >= 2) { if (!_has("tradeWar")) ev.push({ code: "tradeWar", intensity: 1 }); }
+      // 전기차 사이클 — 붐 vs 버스트 상호배타(붐 우선)
+      if ((iss.evBoom || 0) >= 2) ev.push({ code: "evBoom", intensity: (iss.evBoom || 0) >= 3 ? 2 : 1 });
+      else if ((iss.evBust || 0) >= 2) ev.push({ code: "evBust", intensity: (iss.evBust || 0) >= 3 ? 2 : 1 });
     } catch (e) {}
   } catch (e) {}
   // 중복 제거(강도 큰 것 우선)
@@ -24396,7 +24442,14 @@ const _TAG_TICKERS = {
   china_exp: "BABA,PDD,JD,NIO,MPWR,WYNN,LVS,QCOM,AAPL,TSLA",
   consumer_d:"AMZN,TSLA,HD,NKE,SBUX,MCD,DIS,LOW,TGT,LULU,RCL,005380.KS,090430.KS",
   industrial:"CAT,GE,HON,DE,MMM,EMR,UNP,ETN,PH,ITW,267260.KS,009150.KS,042670.KS",
-  bond_prox: "TLT,IEF,LQD,148070.KS"
+  bond_prox: "TLT,IEF,LQD,148070.KS",
+  // [V32.49] 확장 테마 태그 — 더 다양한 이슈 대응
+  ev_battery:  "TSLA,RIVN,LCID,GM,F,373220.KS,006400.KS,051910.KS,247540.KQ,066970.KQ,096770.KS",
+  clean_energy:"ENPH,FSLR,SEDG,RUN,PLUG,BE,NEE,009830.KS",
+  shipping:    "ZIM,MATX,FDX,UPS,UNP,011200.KS,028670.KS",
+  homebuilder: "DHI,LEN,PHM,NVR,TOL,000720.KS",
+  nuclear:     "CCJ,LEU,SMR,BWXT,NEE,GEV",
+  agriculture: "ADM,BG,MOS,CF,NTR,DE"
 };
 const _SYM_TAG_MAP = (function () {
   const m = {};
@@ -24438,7 +24491,21 @@ const _EVENT_TAG_W = {
   stimulus:    { growth: 1.5, semi: 1.2, consumer_d: 1.2, materials: 1.0, energy: 0.8, gold: 0.8, industrial: 0.9, bond_prox: -1.0, staples: -0.3 },
   shutdown:    { staples: 1.4, gold: 1.3, health: 1.0, utility: 0.9, bond_prox: 1.0, defense: -1.0, consumer_d: -1.1, industrial: -0.8, growth: -0.6 },
   election:    { staples: 1.2, gold: 1.2, health: 0.9, utility: 0.8, growth: -1.0, semi: -0.7, consumer_d: -0.7, china_exp: -0.6 },
-  regulation:  { megacap: -2.0, growth: -1.2, china_exp: -0.6, staples: 0.5, health: 0.5, bank: 0.3, industrial: 0.3 }
+  regulation:  { megacap: -2.0, growth: -1.2, china_exp: -0.6, staples: 0.5, health: 0.5, bank: 0.3, industrial: 0.3 },
+  // [V32.49] 확장 이슈 가중
+  pandemic:    { health: 2.0, staples: 1.4, cyber: 0.8, growth: 0.4, airline: -2.2, travel: -2.2, energy: -1.2, consumer_d: -1.0, industrial: -0.6, reit: -0.6 },
+  disaster:    { homebuilder: 1.6, materials: 1.4, agriculture: 1.0, staples: 0.8, insurer: -2.0, reit: -0.8, utility: -0.6, consumer_d: -0.5 },
+  cyberattack: { cyber: 2.4, bank: -0.8, consumer_d: -0.4, megacap: -0.4 },
+  supplyChain: { shipping: 1.6, energy: 0.5, agriculture: 0.5, semi: -1.6, ev_battery: -1.2, consumer_d: -1.0, industrial: -0.8, china_exp: -0.7, export_kr: -0.6 },
+  oilShock:    { energy: 2.4, materials: 0.7, defense: 0.5, gold: 0.4, airline: -2.2, travel: -1.2, transport: -1.6, chemical: -1.6, consumer_d: -1.0, ev_battery: 0.5 },
+  sanctions:   { defense: 1.4, energy: 1.0, gold: 0.6, china_exp: -2.0, semi_exp: -1.2, export_kr: -0.6, materials: -0.5 },
+  tradeDeal:   { china_exp: 2.0, semi_exp: 1.4, export_kr: 1.2, semi: 1.0, growth: 0.9, consumer_d: 0.7, defense: -0.5, gold: -0.4 },
+  bankRun:     { gold: 1.8, bond_prox: 1.8, staples: 1.2, health: 0.8, bank: -2.4, reit: -1.8, insurer: -1.6, consumer_d: -1.0, growth: -0.6 },
+  emCrisis:    { gold: 1.4, bond_prox: 1.3, staples: 1.0, export_kr: -1.8, china_exp: -1.6, materials: -1.4, semi_exp: -0.8, energy: -0.5 },
+  aiBoom:      { semi: 2.2, megacap: 1.6, growth: 1.4, nuclear: 1.2, utility: 1.0, semi_exp: 1.0, clean_energy: 0.6, staples: -0.5, highdiv: -0.4 },
+  evBoom:      { ev_battery: 2.4, clean_energy: 1.0, materials: 0.8, growth: 0.5, energy: -0.5 },
+  evBust:      { ev_battery: -2.4, clean_energy: -1.0, materials: -0.6, staples: 0.6, health: 0.5, energy: 0.4 },
+  laborStrike: { industrial: -1.2, airline: -1.0, transport: -1.0, consumer_d: -0.8, ev_battery: -0.6 }
 };
 // ── [V32.42] 실증(empirical) 확인 계층 — "전쟁이 나도 방산주가 안 오를 수 있다"는 변수 대응 ──
 //   틸트를 이론 가중(_EVENT_TAG_W)만으로 걸지 않고, 실제 태그바스켓 수익률로 '확증'해 스케일한다.
@@ -24663,8 +24730,8 @@ async function _luxMarketShockCached(DB) {
   } catch (e) { return { mode: "none", sev: 0 }; }
 }
 // 종목의 '폭락 방어정렬도' [-1,1]: +면 폭락 방어(필수·헬스·금·채권), -면 고베타(성장·반도체·경기민감).
-const _CRASH_DEF_TAGS = { staples: 1.0, health: 0.85, utility: 0.9, highdiv: 0.75, gold: 1.0, bond_prox: 1.0, defense: 0.45, insurer: 0.2 };
-const _CRASH_BETA_TAGS = { growth: -1.0, semi: -1.0, megacap: -0.9, consumer_d: -0.75, airline: -0.8, travel: -0.8, china_exp: -0.7, materials: -0.45, industrial: -0.35, energy: -0.25, reit: -0.3, semi_exp: -0.9 };
+const _CRASH_DEF_TAGS = { staples: 1.0, health: 0.85, utility: 0.9, highdiv: 0.75, gold: 1.0, bond_prox: 1.0, defense: 0.45, insurer: 0.2, agriculture: 0.3 };
+const _CRASH_BETA_TAGS = { growth: -1.0, semi: -1.0, megacap: -0.9, consumer_d: -0.75, airline: -0.8, travel: -0.8, china_exp: -0.7, materials: -0.45, industrial: -0.35, energy: -0.25, reit: -0.3, semi_exp: -0.9, ev_battery: -0.95, clean_energy: -0.9, shipping: -0.6, homebuilder: -0.7, nuclear: -0.5 };
 function _crashDefensiveness(symbol) {
   try {
     const tags = _tagsOf(symbol); if (!tags.length) return 0;
@@ -24718,7 +24785,7 @@ async function mlAiAsk(DB, question) {
   const syms = _aiAskResolveSymbols(q);
   const _qk = q.toLowerCase();
   // [V32.17] 지정학·위기·시장전반 질문 — 종목 특정 전에 먼저 처리(전쟁·폭락·헤지·"지금 시장 어때" 등).
-  const _crisisKwKo = ["전쟁", "지정학", "폭락", "크래시", "위기", "리스크오프", "risk-off", "리스크 오프", "안전자산", "헤지", "헷지", "방어", "대비", "폭락장", "침체", "블랙스완", "공포", "vix", "변동성 장", "셧다운", "중동", "우크라", "대만", "분쟁", "침공", "미사일", "지정학적", "패닉", "제재", "fomc", "연준", "금리 발표", "금리발표", "금리 결정", "매파", "비둘기", "긴축", "완화", "정책 기조", "선거", "대선", "규제", "부양책"];
+  const _crisisKwKo = ["전쟁", "지정학", "폭락", "크래시", "위기", "리스크오프", "risk-off", "리스크 오프", "안전자산", "헤지", "헷지", "방어", "대비", "폭락장", "침체", "블랙스완", "공포", "vix", "변동성 장", "셧다운", "중동", "우크라", "대만", "분쟁", "침공", "미사일", "지정학적", "패닉", "제재", "fomc", "연준", "금리 발표", "금리발표", "금리 결정", "매파", "비둘기", "긴축", "완화", "정책 기조", "선거", "대선", "규제", "부양책", "팬데믹", "감염병", "사이버", "해킹", "공급망", "제재", "무역합의", "관세", "뱅크런", "신흥국", "자연재해", "지진", "파업"];
   const _mktOverviewKw = ["지금 시장", "시장 어때", "시장 상황", "장 어때", "시장 전반", "시황", "지금 사도", "사도 돼", "사도돼", "지금 위험", "시장 위험"];
   const _isCrisisQ = _crisisKwKo.some(function (k) { return q.indexOf(k) >= 0 || _qk.indexOf(k) >= 0; });
   const _isOverviewQ = _mktOverviewKw.some(function (k) { return q.indexOf(k) >= 0; });
