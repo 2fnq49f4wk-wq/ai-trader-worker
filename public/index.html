@@ -3720,27 +3720,27 @@ html[data-theme="light"] .table tbody tr:hover{background:rgba(9,105,218,.045);}
       <input type="text" class="logs-search" id="logsSearch" placeholder="검색 (심볼/메시지/RSI 등)...">
       <span class="logs-info" id="logsInfo">0 / 0</span>
     </div>
-    <!-- [V32.60/61] 종류별 그룹 필터 — 거래·판단·오류(레벨) + fetch·뉴스·AI(내용) -->
-    <div class="log-filter" style="margin-bottom:5px;">
+    <!-- [V32.60/61/62] 종류별 그룹 필터 — 거래·판단·오류·시스템(레벨) / 데이터 fetch / AI(내용) 섹션 분리 -->
+    <div class="log-filter" style="margin-bottom:6px;">
       <button data-levels="" data-label="전체" class="active">전체</button>
       <button data-levels="TRADE,BUY,SELL,CLOSED" data-label="💰 거래">💰 거래</button>
       <button data-levels="SIGNAL,NOBUY,SKIP" data-label="🎯 판단·신호">🎯 판단·신호</button>
       <button data-levels="ERROR,WARN" data-label="⚠️ 오류·경고">⚠️ 오류·경고</button>
+      <button data-levels="TUNE,INFO" data-label="🧠 시스템">🧠 시스템</button>
     </div>
-    <div class="log-filter" style="margin-bottom:5px;">
-      <span style="font-size:9px;color:var(--t3,#889);align-self:center;margin-right:2px;">데이터 fetch</span>
+    <div class="log-filter" style="margin-bottom:6px;padding-top:6px;border-top:1px solid var(--bd2,rgba(255,255,255,.08));">
+      <span style="font-size:9px;color:var(--t3,#889);align-self:center;margin-right:4px;font-weight:700;">📥 데이터 fetch</span>
       <button data-match="\[PX\]|batchQuotes|quote batch|시세|백필" data-label="📈 주식">📈 주식</button>
       <button data-match="\[CM\b|\[CM-|원자재|commodity" data-label="⛏ 원자재">⛏ 원자재</button>
       <button data-match="채권|bond|bdus|bdkr|국채|treasur|\[BD" data-label="◈ 채권">◈ 채권</button>
       <button data-match="\[WORLD-NEWS\]|\[SECTOR-NEWS\]|뉴스|SENTI|헤드라인" data-label="📰 뉴스">📰 뉴스</button>
     </div>
-    <div class="log-filter" style="margin-bottom:5px;">
-      <span style="font-size:9px;color:var(--t3,#889);align-self:center;margin-right:2px;">AI</span>
+    <div class="log-filter" style="margin-bottom:10px;padding-top:6px;border-top:1px solid var(--bd2,rgba(255,255,255,.08));">
+      <span style="font-size:9px;color:var(--t3,#889);align-self:center;margin-right:4px;font-weight:700;">🤖 AI</span>
       <button data-match="\[SCAN\]|LUX-AI|전종목|스캔" data-label="🔍 스캔">🔍 스캔</button>
       <button data-match="\[HV\]|HARVEST|\[HIST\]|TRAIN|\[MIND\]|\[DNN\]|\[GBDT\]|\[BRAIN\]|\[CAL\]|SELFREVIEW|\[XGB\]|\[LGB\]|\[CAT\]|MODAL|MLOPS|REFILL|학습|수확|훈련|보정" data-label="🧪 학습">🧪 학습</button>
-      <button data-levels="TUNE,INFO" data-label="🧠 시스템">🧠 시스템</button>
     </div>
-    <div class="log-filter log-filter-detail" style="margin-bottom:10px;opacity:.9;">
+    <div class="log-filter log-filter-detail" style="margin-bottom:10px;padding-top:6px;border-top:1px solid var(--bd2,rgba(255,255,255,.08));opacity:.9;">
       <span style="font-size:9px;color:var(--t3,#889);align-self:center;margin-right:2px;">세부레벨</span>
       <button data-levels="TRADE" data-label="TRADE">TRADE</button>
       <button data-levels="BUY" data-label="BUY">BUY</button>
