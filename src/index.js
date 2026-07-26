@@ -24756,7 +24756,7 @@ async function _luxSelfCheck(DB) {
   let perf = {};
   try {
     // [V32.55] fetch/로딩 속도 프록시 — 대표 상태 배치 read 왕복시간 측정
-    let S = {}, _sLoadMs = null; try { const _t = Date.now(); S = await getStates(DB, ["ai_picks:scan", "crisis_gauge", "world_news", "tag_returns", "macro_data", "mkt_context", "committee_cal", "event_efficacy", "dnn_trust", "gbdt_trust", "ai_selfreview", "news_stats", "sector_news_sentiment"]); _sLoadMs = Date.now() - _t; } catch (e) {}
+    let S = {}, _sLoadMs = null; try { const _t = Date.now(); S = await getStates(DB, ["ai_picks:scan", "crisis_gauge", "world_news", "tag_returns", "macro_data", "mkt_context", "committee_cal", "event_efficacy", "dnn_trust", "gbdt_trust", "ai_selfreview", "news_stats", "sector_news_sentiment", "mind_model", "modal_retrain_auto"]); _sLoadMs = Date.now() - _t; } catch (e) {}
     perf.dbReadMs = _sLoadMs;
     // 모델 준비 상태
     let mind = null; try { mind = await mlMindLoad(DB); } catch (e) {}
@@ -24820,6 +24820,8 @@ async function _luxSelfCheck(DB) {
           // 크론 6시간 → 두 사이클(>14h) 넘게 신규 수신 없으면 지연/고장 의심
           if (fr.ageH > 14) add(fr.ageH > 26 ? "error" : "warn", "Modal학습", "최근 Modal 학습 수신 " + fr.ageH.toFixed(0) + "h 전 — 6시간 주기 대비 지연(트레이너 다운/시크릿 만료/크론 미실행 의심)");
         }
+        // 자동 재트리거 상태
+        try { const rt = S["modal_retrain_auto"] || null; if (rt) { if (rt.ts && rt.triggered) { perf.modal.autoRetrain = { triggeredAgoH: +((nowT - rt.ts) / 3600000).toFixed(1), ok: true }; add("info", "Modal학습", "지연 감지로 자동 재학습 트리거됨(" + ((nowT - rt.ts) / 3600000).toFixed(1) + "h 전) — 배포+학습 진행 중"); } else if (rt.lastSkip === "no_github_token") { perf.modal.autoRetrain = { disabled: "no_github_token" }; add("info", "Modal학습", "자동 재트리거 비활성(GITHUB_TOKEN 미설정) — 수동 재배포만 가능"); } } } catch (e) {}
       } catch (e) {}
       // 성능 경고
       if (_sLoadMs != null && _sLoadMs > 800) add("warn", "속도", "상태 로딩 " + _sLoadMs + "ms — DB 응답 지연(일시적 부하 가능)");
@@ -24842,6 +24844,42 @@ async function _luxSelfCheck(DB) {
   const warnCnt = issues.filter(function (x) { return x.level === "warn"; }).length;
   const status = errCnt > 0 ? "error" : warnCnt > 0 ? "warn" : "ok";
   return { status: status, errCnt: errCnt, warnCnt: warnCnt, issues: issues, perf: perf, ts: nowT };
+}
+
+// ═══════════ [V32.57] Modal 학습 지연 자동 재트리거 — 외부학습이 6h 크론 대비 지연되면 워커가 재학습 워크플로 자동 실행 ═══════════
+//   스로틀: 30분마다 1회만 판정(대부분 상태 1건 read 후 리턴). 트리거 후 8h 쿨다운(스팸·중복 방지).
+//   조건: GITHUB_TOKEN 존재 + (외부 수신 이력 없음 or 최신 외부수신>14h) + 학습표본 충분(≥200).
+async function _luxAutoRetrainModal(env) {
+  try {
+    const DB = env.DB;
+    const meta = (await getState(DB, "modal_retrain_auto", null)) || {};
+    const now = Date.now();
+    if (meta.checkTs && (now - meta.checkTs) < 30 * 60000) return;   // 30분 재확인 스로틀(매분 부하 방지)
+    meta.checkTs = now;
+    if (!env.GITHUB_TOKEN) { meta.lastSkip = "no_github_token"; try { await setState(DB, "modal_retrain_auto", meta); } catch (e) {} return; }
+    if (meta.ts && (now - meta.ts) < 8 * 3600000) { try { await setState(DB, "modal_retrain_auto", meta); } catch (e) {} return; }   // 트리거 쿨다운 8h
+    // 외부(Modal) 수신 신선도
+    const S = await getStates(DB, ["mind_model", "dnn_trust", "gbdt_trust", "xgb_trust", "lgb_trust", "cat_trust"]);
+    let freshestAge = Infinity, anyExt = false;
+    for (const k of Object.keys(S)) { const o = S[k]; if (o && o.source === "external" && o.trainedAt) { anyExt = true; const a = (now - o.trainedAt) / 3600000; if (a < freshestAge) freshestAge = a; } }
+    if (anyExt && freshestAge <= 14) { meta.lastOk = now; meta.freshestAgeH = +freshestAge.toFixed(1); try { await setState(DB, "modal_retrain_auto", meta); } catch (e) {} return; }   // 정상 — 트리거 불필요
+    // 학습표본 충분 여부(부족하면 재학습해도 승격 안 됨 → 스킵)
+    let nSamp = 0; try { const r = await DB.prepare("SELECT COUNT(*) c FROM ml_samples WHERE featver=?").bind((typeof LUXML !== "undefined") ? LUXML.featVer : null).first(); nSamp = (r && r.c) || 0; } catch (e) {}
+    if (nSamp < 200) { meta.lastSkip = "insufficient_samples:" + nSamp; try { await setState(DB, "modal_retrain_auto", meta); } catch (e) {} return; }
+    // 워크플로 디스패치(재배포+즉시 학습 1회)
+    let ok = false, httpStatus = 0;
+    try {
+      const r = await fetch("https://api.github.com/repos/2fnq49f4wk-wq/ai-trader-worker/actions/workflows/modal-deploy.yml/dispatches", {
+        method: "POST",
+        headers: { "authorization": "Bearer " + env.GITHUB_TOKEN, "accept": "application/vnd.github+json", "user-agent": "lux-trader-worker", "x-github-api-version": "2022-11-28", "content-type": "application/json" },
+        body: JSON.stringify({ ref: "main", inputs: { run_now: "true" } })
+      });
+      httpStatus = r.status; ok = (r.status === 204);
+    } catch (e) { httpStatus = -1; }
+    meta.ts = now; meta.triggered = ok; meta.httpStatus = httpStatus; meta.freshestAgeH = isFinite(freshestAge) ? +freshestAge.toFixed(1) : null; meta.anyExt = anyExt; delete meta.lastSkip;
+    try { await setState(DB, "modal_retrain_auto", meta); } catch (e) {}
+    try { await log(DB, ok ? "INFO" : "WARN", null, "[MODAL-AUTO] 외부학습 지연 감지(최신수신 " + (isFinite(freshestAge) ? freshestAge.toFixed(1) + "h 전" : "이력없음") + ", 표본 " + nSamp + ") → 재학습 자동 트리거 " + (ok ? "성공(재배포+즉시학습)" : "실패(GitHub " + httpStatus + ")")); } catch (e) {}
+  } catch (e) { /* silent — 자동 재트리거는 부가기능이라 실패해도 본 사이클 무영향 */ }
 }
 
 // [V32.51] 태그 한글 라벨 + 활성 이벤트 종합 순(net) 섹터 선호도 — 여러 이슈를 합산해 '지금 어디가 유리/불리'인지.
@@ -27030,6 +27068,9 @@ export default {
           return;
         }
       } catch (e) {}
+
+      // [V32.57] Modal 학습 지연 자동 재트리거(30분 스로틀·8h 쿨다운 — 대부분 상태 1건 read 후 리턴)
+      try { await _luxAutoRetrainModal(env); } catch (e) {}
 
       // [V19] 0) LLM 일일 분석 — 거래 사이클보다 "먼저, 단독" 실행.
       //   293종목 거래 사이클(115s)과 같은 invocation에서 돌리면 LLM 외부 API fetch가
