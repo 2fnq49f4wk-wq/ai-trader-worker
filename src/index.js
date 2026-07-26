@@ -21459,6 +21459,17 @@ async function mlDNNLoad(DB) {
 // null 반환 시 상위 호출부는 mlMindDecide로 폴백.
 function _logitD(p) { const q = _clamp(p, 1e-4, 1 - 1e-4); return Math.log(q / (1 - q)); }
 
+// [V32.59] 전문가 실측정확도 5분 메모(위원회 루프에서 종목마다 재로딩 방지 — CPU 안전).
+async function _expertRelCached(DB) {
+  try {
+    const g = (typeof globalThis !== "undefined") ? globalThis : {};
+    const c = g.__expertRelCache;
+    if (c && (Date.now() - c.ts) < 300000) return c.val;
+    const val = await getState(DB, "expert_reliability", null);
+    g.__expertRelCache = { ts: Date.now(), val: val };
+    return val;
+  } catch (e) { return null; }
+}
 async function mlDeepDecide(DB, featVec, opts) {
   try {
     if (!DNN.enabled) return null;
@@ -21535,6 +21546,14 @@ async function mlDeepDecide(DB, featVec, opts) {
       }
     } catch (e) {}
     if (!experts.length) return null;   // [V12.62] 쓸 전문가 0 → 하위 폴백(밴딧/규칙엔진)
+    // [V32.59] ★적응형 앙상블★ — 야간 보정이 최근 라이브표본에서 잰 전문가별 실측정확도(expert_reliability)를
+    //   정적 검증정확도와 블렌드해 소프트맥스 가중에 반영 → '요즘 잘 맞히는 모델'의 발언권↑(레짐 적응).
+    let _relMap = null;
+    try { const _rel = (opts.rel !== undefined) ? opts.rel : await _expertRelCached(DB); if (_rel && _rel.featVer === LUXML.featVer && _rel.rel) _relMap = _rel.rel; } catch (e) {}
+    const _accBlend = function (ex) {
+      if (_relMap && _relMap[ex.name] && _relMap[ex.name].n >= 80 && _relMap[ex.name].accLB != null) return 0.5 * ex.acc + 0.5 * _relMap[ex.name].accLB;
+      return ex.acc;
+    };
     let pCombined = experts[0].p;        // 단일 전문가면 그 확률 그대로
     if (experts.length > 1) {
       const T = (typeof DNN !== "undefined" ? DNN.trustTemp : 12);
@@ -21542,7 +21561,7 @@ async function mlDeepDecide(DB, featVec, opts) {
       //   검증LB가 표를 독식하는 것을 차단. LB 0.85·T=12면 종전 97% 지배 → 참여 전문가가 사실상 무의미했다.
       const _cap = (typeof DNN !== "undefined" && DNN.committeeAccCap) ? DNN.committeeAccCap : 0.66;
       let wsum = 0, zsum = 0;
-      for (const ex of experts) { const _a = Math.min(ex.acc, _cap); const w = Math.exp(T * (_a - 0.5)); wsum += w; zsum += w * ex.z; }
+      for (const ex of experts) { const _a = Math.min(_accBlend(ex), _cap); const w = Math.exp(T * (_a - 0.5)); wsum += w; zsum += w * ex.z; }
       pCombined = _clamp(_sigmoid(zsum / (wsum || 1)), 0.001, 0.999);
     }
     // [V4] 위원회 확률 보정(야간 mlCalibrateCommittee가 학습한 온도)
@@ -22148,19 +22167,30 @@ async function mlCalibrateCommittee(DB) {
     const mindAccLB = (typeof mind.valAccLB === "number") ? mind.valAccLB : 0.5;
 
     const preds = [];
+    // [V32.59] 전문가별 최근 실측정확도 집계 — 이미 각 모델을 표본에 돌리므로 추가비용 ≈0.
+    //   라이브분포 최근표본 기준 '요즘 잘 맞히는 모델'을 재는 값(정적 홀드아웃 검증정확도와 블렌드).
+    const rel = { mind: { c: 0, n: 0 }, dnn: { c: 0, n: 0 }, gbdt: { c: 0, n: 0 } };
     for (const r of raw) {
       let v; try { v = JSON.parse(r.feat); } catch (e) { continue; }
       if (!Array.isArray(v) || v.length !== LUXML.featNames.length) continue;
       const ms = await mlMindScore(DB, mind, v, ens);
       if (!ms) continue;
+      const y = r.label ? 1 : 0;
       const ex = [{ z: _logitD(ms.p), acc: mindAccLB }];
-      if (dnn) { const pD = mlDNNScore(dnn, v); if (pD != null) ex.push({ z: _logitD(pD), acc: _num(dnnTrust.dnnAccLB, 0.5) }); }
-      if (gbdt) { const pG = mlGBDTScore(gbdt, v); if (pG != null) ex.push({ z: _logitD(pG), acc: _num(gTrust.gbdtAccLB, 0.5) }); }
+      rel.mind.n++; if ((ms.p >= 0.5 ? 1 : 0) === y) rel.mind.c++;
+      if (dnn) { const pD = mlDNNScore(dnn, v); if (pD != null) { ex.push({ z: _logitD(pD), acc: _num(dnnTrust.dnnAccLB, 0.5) }); rel.dnn.n++; if ((pD >= 0.5 ? 1 : 0) === y) rel.dnn.c++; } }
+      if (gbdt) { const pG = mlGBDTScore(gbdt, v); if (pG != null) { ex.push({ z: _logitD(pG), acc: _num(gTrust.gbdtAccLB, 0.5) }); rel.gbdt.n++; if ((pG >= 0.5 ? 1 : 0) === y) rel.gbdt.c++; } }
       let wsum = 0, zsum = 0;
       for (const e2 of ex) { const w = Math.exp(T0 * (e2.acc - 0.5)); wsum += w; zsum += w * e2.z; }
-      preds.push({ p: _clamp(_sigmoid(zsum / (wsum || 1)), 1e-6, 1 - 1e-6), y: r.label ? 1 : 0 });
+      preds.push({ p: _clamp(_sigmoid(zsum / (wsum || 1)), 1e-6, 1 - 1e-6), y: y });
     }
     if (preds.length < 60) return "[CAL] 유효예측 부족(" + preds.length + ")";
+    // 전문가 신뢰도 저장(Wilson 하한 — 표본수 반영 보수적 추정)
+    try {
+      const relOut = {};
+      for (const k of Object.keys(rel)) { const t = rel[k]; if (t.n >= 40) relOut[k] = { acc: +(t.c / t.n).toFixed(4), accLB: +_wilsonLB(t.c / t.n, t.n).toFixed(4), n: t.n }; }
+      await setState(DB, "expert_reliability", { rel: relOut, featVer: LUXML.featVer, ts: Date.now() });
+    } catch (e) {}
 
     // 온도 라인서치(NLL 최소)
     function nllAt(T) {
@@ -25337,7 +25367,16 @@ async function mlAiAsk(DB, question) {
           const t = await getState(DB, nm + "_trust", null);
           if (t) L.push("- " + nm.toUpperCase() + ": " + (t.trusted ? "가동 · 검증 " + pct1(t.gbdtAccLB) : "섀도우/억제"));
         }
-        L.push("\n최종 결정은 각 모델 검증정확도의 소프트맥스 가중으로 결합돼(잘하는 모델일수록 발언권↑).");
+        // [V32.59] 최근 실측정확도(라이브분포) — 적응형 가중에 반영
+        try {
+          const er = await getState(DB, "expert_reliability", null);
+          if (er && er.rel && er.featVer === LUXML.featVer) {
+            const parts = [];
+            for (const k of ["mind", "dnn", "gbdt"]) { const r = er.rel[k]; if (r && r.n >= 40) parts.push(k.toUpperCase() + " " + (r.acc * 100).toFixed(0) + "%(n" + r.n + ")"); }
+            if (parts.length) L.push("- 📈 최근 실측정확도(라이브표본): " + parts.join(" · ") + " — 이 값을 검증정확도와 블렌드해 발언권 적응 조정");
+          }
+        } catch (e) {}
+        L.push("\n최종 결정은 각 모델 검증정확도 + 최근 실측정확도의 소프트맥스 가중으로 결합돼(요즘 잘 맞히는 모델일수록 발언권↑).");
         return { ok: true, answer: L.join("\n") };
       }
       // 3) 추천/뭐 사 — 야간 전종목 스캔 상위 픽 + [V32.41] 현재 이벤트 정렬 틸트 라이브 재적용
