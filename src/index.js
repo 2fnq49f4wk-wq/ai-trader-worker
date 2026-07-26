@@ -13992,7 +13992,7 @@ async function runTradingCycle(env) {
                 } catch (e) {}
                 // 최상위 결정(deep) → 폴백(mind)
                 let _md = null;
-                try { _md = await mlDeepDecide(DB, signal.mlFeat, { mind: __mind, guard: __guard, ens: __ensemble, trust: __dnnTrust, dnn: __dnn, gbdtTrust: __gbdtTrust, gbdt: __gbdt, cal: __cal, evstats: __evStats, shock: await _luxMarketShockCached(DB), sym: symbol }); } catch (e) {}
+                try { _md = await mlDeepDecide(DB, signal.mlFeat, { mind: __mind, guard: __guard, ens: __ensemble, trust: __dnnTrust, dnn: __dnn, gbdtTrust: __gbdtTrust, gbdt: __gbdt, cal: __cal, evstats: __evStats, shock: await _luxMarketShockCached(DB), sym: symbol, evCtx: await _luxEventContextCached(DB), applyEventPrior: true }); } catch (e) {}
                 if (!_md) { try { _md = await mlMindDecide(DB, signal.mlFeat, { mind: __mind, guard: __guard, ens: __ensemble }); } catch (e) {} }
                 // [V5] AI 픽 수집 — 개입 여부와 무관하게 예측 자체는 기록(종목당 1회)
                 try {
@@ -21577,6 +21577,23 @@ async function mlDeepDecide(DB, featVec, opts) {
       }
     } catch (e) {}
 
+    // [V32.53] ★이벤트 정렬 프라이어(진입 결정 한정)★ — 그동안 스캔 랭킹에만 반영되던 이슈 수혜/역풍을
+    //   실제 진입 위원회 확률에도 소폭 반영해 '이슈를 아는 매매'로. 안전장치: (a)opts.applyEventPrior 명시된
+    //   진입 경로에서만(스캔은 rankP 배율로 별도 반영 → 이중계상 방지), (b)틸트는 이미 확증(conf)·효능(eff)으로
+    //   게이팅됨 → 안 먹히는 플레이북은 효능학습이 자동 감쇠, (c)보수적 상한(±0.5 로짓)으로 모델이 주도 유지.
+    let _evPriorOut = null;
+    try {
+      if (opts.applyEventPrior && opts.evCtx && opts.sym != null) {
+        const _ec = opts.evCtx;
+        const _et = _luxEventTiltFor(opts.sym, _ec.evs, _ec.mc, _ec.conf, _ec.eff);
+        if (_et && _et.tilt) {
+          const _evLogit = _clamp(2.6 * _et.tilt, -0.5, 0.5);   // 랭킹틸트(±0.18)→위원회 로짓 넛지(보수적)
+          pCombined = _clamp(_sigmoid(_logitD(pCombined) + _evLogit), 0.001, 0.999);
+          _evPriorOut = { tilt: +_et.tilt.toFixed(3), dz: +_evLogit.toFixed(3), codes: (_et.align || []).map(function (a) { return a.code; }).slice(0, 3) };
+        }
+      }
+    } catch (e) {}
+
     // [V12.63] ★고도화 산식 — 위원회 합의도(cross-expert agreement)를 신뢰도에 반영★ 세 모델이
     //   서로 동의할수록(전문가 확률 분산↓) 확신을 키우고, 엇갈릴수록(분산↑) 불확실성으로 흡수해
     //   사이즈 축소·기권을 넓힌다. MIND/DNN/GBDT가 "조화롭게" 하나의 확신을 만들도록 결합(단일 모델
@@ -21609,7 +21626,7 @@ async function mlDeepDecide(DB, featVec, opts) {
       allow = pCombined >= gate;
     }
     const sizeMult = allow ? +(mlKellySize(pCombined, unc) * _shkSizeK).toFixed(3) : 1;   // [V32.46] 레짐 사이즈 배율 반영
-    return { source: "deep", allow: allow, sizeMult: sizeMult, p: pCombined, uncertainty: unc, usedDnn: usedDnn, usedGbdt: usedGbdt, ev: evVal, experts: _expOut, shock: _shockOut };
+    return { source: "deep", allow: allow, sizeMult: sizeMult, p: pCombined, uncertainty: unc, usedDnn: usedDnn, usedGbdt: usedGbdt, ev: evVal, experts: _expOut, shock: _shockOut, evPrior: _evPriorOut };
   } catch (e) { return null; }
 }
 
@@ -24696,6 +24713,17 @@ async function _luxEventContext(DB) {
   try { const S = await getStates(DB, ["crisis_gauge", "tag_returns", "event_efficacy"]); const cg = S["crisis_gauge"]; if (cg) { mc = (typeof cg.marketConfirm === "number") ? cg.marketConfirm : 0.7; cgLevel = cg.level || "평시"; } const tr = S["tag_returns"]; if (tr && tr.tags) tagRet = tr.tags; eff = _effFactorMap(S["event_efficacy"]); } catch (e) {}
   try { conf = _eventConfirmation(evs, tagRet); } catch (e) { conf = {}; }
   return { evs: evs, mc: mc, level: cgLevel, tagRet: tagRet, conf: conf, eff: eff };
+}
+// [V32.53] 이벤트 컨텍스트 3분 메모 — 진입 위원회 루프에서 종목마다 재로딩 방지(CPU 안전).
+async function _luxEventContextCached(DB) {
+  try {
+    const g = (typeof globalThis !== "undefined") ? globalThis : {};
+    const c = g.__evCtxCache;
+    if (c && (Date.now() - c.ts) < 180000) return c.val;
+    const val = await _luxEventContext(DB);
+    g.__evCtxCache = { ts: Date.now(), val: val };
+    return val;
+  } catch (e) { return { evs: [], mc: 0.7, level: "평시", conf: {}, eff: {} }; }
 }
 
 // [V32.51] 태그 한글 라벨 + 활성 이벤트 종합 순(net) 섹터 선호도 — 여러 이슈를 합산해 '지금 어디가 유리/불리'인지.
