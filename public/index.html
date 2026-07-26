@@ -4502,30 +4502,10 @@ html[data-theme="light"] .table tbody tr:hover{background:rgba(9,105,218,.045);}
   }
   // [V12.73] AI 운용모드 + 자가평가 카드 — /api/ai-mode (5분 스로틀, 대시보드 렌더 시 갱신)
   var __aiModeTs = 0;
+  // [V32.64] 옛 버전이 renderFvDeck에서 최신 패널(XGB/LGB/Cat·자가진단 접기)을 덮어쓰던 문제 →
+  //   단일 소스(bootAiModePanel)로 위임. 45s 스로틀은 bootAiModePanel 내부에서 처리.
   function renderAiModePanel() {
-    if (Date.now() - __aiModeTs < 300000) return;
-    __aiModeTs = Date.now();
-    var badge = $('fvAiModeBadge'), body = $('fvAiModeBody');
-    if (!badge || !body) return;
-    fetch('/api/ai-mode').then(function(r){ return r.json(); }).then(function(d){
-      var ai = d && d.aiReady;
-      badge.innerHTML = ai
-        ? '<span style="color:var(--pos);font-weight:700;">● AI 자율운용 중</span>'
-        : '<span style="color:#e8b339;font-weight:700;">● 규칙엔진 비상운용 (AI 학습/신뢰 대기)</span>';
-      var c = (d && d.committee) || {};
-      var html = '위원회: MIND ' + (c.mind?'✅':'⏳') + ' · DNN ' + (c.dnn?'✅':'⏳') + ' · GBDT ' + (c.gbdt?'✅':'⏳');
-      if (d && d.scan && d.scan.top && d.scan.top.length) {
-        html += ' &nbsp;|&nbsp; 야간 AI픽: ' + d.scan.top.slice(0,5).map(function(p){ return p.symbol+'('+(p.p*100).toFixed(0)+'%)'; }).join(', ');
-      }
-      var rv = d && d.selfreview;
-      if (rv && rv.diagnosis && rv.diagnosis.length) {
-        html += '<div style="margin-top:6px;padding-top:6px;border-top:1px solid var(--bd2);"><b style="color:var(--t1);">🔍 AI 자가진단</b> <span style="color:var(--t3);">(최근 '+rv.windowDays+'일 · '+rv.n+'건 · 승률 '+(rv.winRate*100).toFixed(0)+'% · PF '+rv.profitFactor+')</span><br>'
-          + rv.diagnosis.map(function(t){ return '· ' + t; }).join('<br>') + '</div>';
-      } else {
-        html += '<div style="margin-top:4px;color:var(--t3);">자가진단은 야간 파이프라인에서 생성됩니다.</div>';
-      }
-      body.innerHTML = html;
-    })['catch'](function(){ body.textContent = '조회 실패'; });
+    try { bootAiModePanel(false); } catch(e) {}
   }
   // [V12.117] AI Q&A 페이지(사이드바 전용) — 1회만 리스너 등록
   var __aiAskBound = false;
@@ -10887,28 +10867,33 @@ html[data-theme="light"] .table tbody tr:hover{background:rgba(9,105,218,.045);}
   //   예외를 삼켜서 실패해도 콘솔에조차 안 남았다. 실측 결과 /api/ai-mode 요청 자체가 한 번도
   //   발생하지 않았다(PerformanceObserver로 확인). 렌더 경로 의존을 끊고 부팅 시 직접 호출한다.
   //   서버측 ai-mode는 SWR로 0.7초라 부팅 부담이 없고, 5분 주기로 갱신한다.
-  function bootAiModePanel() {
+  var __aiPanelTs = 0;
+  function bootAiModePanel(force) {
+    if (!force && Date.now() - __aiPanelTs < 45000) return;   // 잦은 렌더 덮어쓰기 방지(45s 스로틀)
+    __aiPanelTs = Date.now();
     var badge = $('fvAiModeBadge'), body = $('fvAiModeBody');
     if (!badge || !body) return;
     fetch('/api/ai-mode').then(function(r){ return r.json(); }).then(function(d){
       var ai = d && d.aiReady;
       badge.innerHTML = ai
-        ? '<span style="color:var(--pos);font-weight:700;">● AI 자율운용 중</span>'
-        : '<span style="color:#e8b339;font-weight:700;">● 규칙엔진 비상운용 (AI 학습/신뢰 대기)</span>';
+        ? '<span style="color:#2ec46b;font-weight:700;">◉ AI 자율운용</span>'
+        : '<span style="color:#e0a83a;font-weight:700;">◎ 규칙엔진 비상운용 (AI 학습·신뢰 대기)</span>';
       var c = (d && d.committee) || {};
-      // [V32.50] 부스팅 3종 포함 — ✅가동 / 🌓섀도우(학습됐지만 미신뢰) / ⏳대기
-      var bst = function(o){ return !o ? '⏳' : (o.trusted ? '✅' : (o.shadow ? '🌓' : '⏳')); };
-      var html = '위원회: MIND ' + (c.mind?'✅':'⏳') + ' · DNN ' + (c.dnn?'✅':'⏳') + ' · GBDT ' + (c.gbdt?'✅':'⏳')
-        + ' · XGB ' + bst(c.xgb) + ' · LGB ' + bst(c.lgb) + ' · Cat ' + bst(c.cat)
-        + ' <span style="color:var(--t3);font-size:10px;">(✅가동·🌓섀도우·⏳대기)</span>';
+      // [V32.64] 세련된 상태 인디케이터 — ● 가동 / ◐ 섀도우 / ○ 대기 (컬러 도트)
+      var ON = '<span style="color:#2ec46b;">●</span>', SH = '<span style="color:#e0a83a;">◐</span>', OFF = '<span style="color:#5b6472;">○</span>';
+      var st = function(b){ return b ? ON : OFF; };
+      var bst = function(o){ return !o ? OFF : (o.trusted ? ON : (o.shadow ? SH : OFF)); };
+      var models = 'MIND '+st(c.mind)+' &nbsp; DNN '+st(c.dnn)+' &nbsp; GBDT '+st(c.gbdt)+' &nbsp; XGB '+bst(c.xgb)+' &nbsp; LGB '+bst(c.lgb)+' &nbsp; Cat '+bst(c.cat);
+      var html = '<div style="letter-spacing:.2px;"><span style="color:var(--t3);">위원회</span> &nbsp; '+models+'</div>'
+        + '<div style="color:var(--t3,#889);font-size:9.5px;margin-top:2px;">● 가동 · ◐ 섀도우(학습완료·미신뢰) · ○ 대기</div>';
       if (d && d.scan && d.scan.top && d.scan.top.length) {
-        html += ' &nbsp;|&nbsp; 야간 AI픽: ' + d.scan.top.slice(0,5).map(function(p){ return p.symbol+'('+(p.p*100).toFixed(0)+'%)'; }).join(', ');
+        html += '<div style="margin-top:5px;"><span style="color:var(--t3);">야간 AI픽</span> &nbsp; ' + d.scan.top.slice(0,5).map(function(p){ return escapeHtml(p.symbol)+' <span style="color:var(--t3);">'+(p.p*100).toFixed(0)+'%</span>'; }).join(' · ') + '</div>';
       }
       var rv = d && d.selfreview;
       if (rv && rv.diagnosis && rv.diagnosis.length) {
-        var diagHtml = rv.diagnosis.map(function(t){ return '· ' + t; }).join('<br>');
-        html += '<div style="margin-top:6px;padding-top:6px;border-top:1px solid var(--bd2);">'
-          + '<button id="fvSelfReviewToggle" style="background:transparent;border:none;color:var(--t1);font-weight:700;cursor:pointer;padding:0;font-size:11px;">▸ 🔍 AI 자가진단</button>'
+        var diagHtml = rv.diagnosis.map(function(t){ return '· ' + escapeHtml(t); }).join('<br>');
+        html += '<div style="margin-top:6px;padding-top:6px;border-top:1px solid var(--bd2,rgba(255,255,255,.08));">'
+          + '<button id="fvSelfReviewToggle" style="background:transparent;border:none;color:var(--t1);font-weight:600;cursor:pointer;padding:0;font-size:11px;">▸ AI 자가진단</button>'
           + ' <span style="color:var(--t3);">(최근 '+rv.windowDays+'일 · '+rv.n+'건 · 승률 '+(rv.winRate*100).toFixed(0)+'% · PF '+rv.profitFactor+')</span>'
           + '<div id="fvSelfReviewBody" style="display:none;margin-top:4px;">' + diagHtml + '</div></div>';
       } else {
@@ -10920,11 +10905,11 @@ html[data-theme="light"] .table tbody tr:hover{background:rgba(9,105,218,.045);}
       if (srt && srb) srt.addEventListener('click', function(){
         var open = srb.style.display !== 'none';
         srb.style.display = open ? 'none' : 'block';
-        srt.textContent = (open ? '▸' : '▾') + ' 🔍 AI 자가진단';
+        srt.textContent = (open ? '▸' : '▾') + ' AI 자가진단';
       });
     })['catch'](function(e){ badge.textContent = '조회 실패'; body.textContent = '조회 실패 — ' + (e && e.message || ''); });
   }
-  try { bootAiModePanel(); setInterval(bootAiModePanel, 5 * 60 * 1000); } catch(e) {}
+  try { bootAiModePanel(true); setInterval(function(){ bootAiModePanel(true); }, 5 * 60 * 1000); } catch(e) {}
 
   try { loadEcon(false); setInterval(function(){ loadEcon(false); }, 30 * 60 * 1000); } catch(e) {}
   // [V60] 어닝스 캘린더 / 내부자 거래 / 지표 임팩트 — 초기 로드 + 주기 갱신 + 수동 새로고침
