@@ -14772,6 +14772,15 @@ async function handleRequest(request, env, ctx) {
       });
     }
 
+    // [V32.54] GET /api/selfcheck — 시스템 자가진단(사이트 오류·파이프라인 지연·모델 상태). SWR 1분.
+    if (path === "/api/selfcheck") {
+      return await swrJson("selfcheck", 60000, 3600000, async function () {
+        let chk = { status: "warn", errCnt: 0, warnCnt: 0, issues: [] };
+        try { chk = await _luxSelfCheck(env.DB); } catch (e) { chk = { status: "error", errCnt: 1, warnCnt: 0, issues: [{ level: "error", area: "점검", msg: "자가진단 실패: " + (e && e.message) }] }; }
+        return chk;
+      });
+    }
+
     // [V32.19] GET /api/alerts — 실행가능 알림(보유종목 급변동·손절/익절 근접·위기). 기존 상태만 읽음(추가 fetch 0).
     if (path === "/api/alerts") {
       const alerts = [];
@@ -21587,9 +21596,14 @@ async function mlDeepDecide(DB, featVec, opts) {
         const _ec = opts.evCtx;
         const _et = _luxEventTiltFor(opts.sym, _ec.evs, _ec.mc, _ec.conf, _ec.eff);
         if (_et && _et.tilt) {
-          const _evLogit = _clamp(2.6 * _et.tilt, -0.5, 0.5);   // 랭킹틸트(±0.18)→위원회 로짓 넛지(보수적)
+          // [V32.53→54] 위원회 합의도 기반 스케일 — 모델이 강하게 합의하면 이벤트 영향↓(합의 존중),
+          //   엇갈리면↑(이슈가 타이브레이커). disp=전문가 확률 표준편차(0~0.5).
+          let _disp = 0;
+          if (experts.length > 1) { let _mp = 0; for (const ex of experts) _mp += ex.p; _mp /= experts.length; let _v = 0; for (const ex of experts) _v += (ex.p - _mp) * (ex.p - _mp); _disp = Math.sqrt(_v / experts.length); }
+          const _evScale = _clamp(0.6 + 2.2 * _disp, 0.6, 1.4);
+          const _evLogit = _clamp(2.6 * _et.tilt * _evScale, -0.5, 0.5);   // 랭킹틸트(±0.18)→합의도 가중 위원회 로짓 넛지(보수적)
           pCombined = _clamp(_sigmoid(_logitD(pCombined) + _evLogit), 0.001, 0.999);
-          _evPriorOut = { tilt: +_et.tilt.toFixed(3), dz: +_evLogit.toFixed(3), codes: (_et.align || []).map(function (a) { return a.code; }).slice(0, 3) };
+          _evPriorOut = { tilt: +_et.tilt.toFixed(3), dz: +_evLogit.toFixed(3), scale: +_evScale.toFixed(2), codes: (_et.align || []).map(function (a) { return a.code; }).slice(0, 3) };
         }
       }
     } catch (e) {}
@@ -24726,6 +24740,53 @@ async function _luxEventContextCached(DB) {
   } catch (e) { return { evs: [], mc: 0.7, level: "평시", conf: {}, eff: {} }; }
 }
 
+// ═══════════ [V32.54] 시스템 자가진단(셀프체크) — 사이트 오류·파이프라인 지연·모델 상태 점검 ═══════════
+//   상태 신선도·모델 준비·최근 에러로그를 종합해 문제를 리스트로 반환(추가 fetch 0, 상태·로그만 읽음).
+async function _luxSelfCheck(DB) {
+  const issues = [];
+  const nowT = Date.now();
+  const add = function (level, area, msg) { issues.push({ level: level, area: area, msg: msg }); };
+  const ageH = function (ts) { return ts ? (nowT - ts) / 3600000 : null; };
+  try {
+    let S = {}; try { S = await getStates(DB, ["ai_picks:scan", "crisis_gauge", "world_news", "tag_returns", "macro_data", "mkt_context", "committee_cal", "event_efficacy", "dnn_trust", "gbdt_trust", "ai_selfreview"]); } catch (e) {}
+    // 모델 준비 상태
+    let mind = null; try { mind = await mlMindLoad(DB); } catch (e) {}
+    if (!mind) add("error", "모델", "MIND(위원장) 미로딩 — 위원회가 규칙엔진 폴백으로 동작 중일 수 있음");
+    const dt = S["dnn_trust"], gt = S["gbdt_trust"];
+    if (!(dt && dt.trusted)) add("warn", "모델", "DNN 미신뢰/대기(검증 정확도 축적 또는 featVer 재구축 대기)");
+    if (!(gt && gt.trusted)) add("warn", "모델", "GBDT 미신뢰/대기");
+    const cal = S["committee_cal"];
+    if (cal && cal.featVer != null && typeof LUXML !== "undefined" && cal.featVer !== LUXML.featVer) add("warn", "보정", "committee_cal featVer 불일치(" + cal.featVer + "≠" + LUXML.featVer + ") — 보정온도 무시 중");
+    // 파이프라인 신선도
+    const scan = S["ai_picks:scan"], scH = ageH(scan && scan.ts);
+    if (scH == null) add("warn", "스캔", "야간 전종목 스캔 결과 없음(초기/미실행)");
+    else if (scH > 30) add("warn", "스캔", "스캔 " + scH.toFixed(0) + "h 전 — 야간 파이프라인 지연 가능");
+    const cgH = ageH(S["crisis_gauge"] && S["crisis_gauge"].ts);
+    if (cgH == null) add("warn", "위기게이지", "데이터 없음(수집 대기)");
+    else if (cgH > 3) add("warn", "위기게이지", cgH.toFixed(1) + "h 전 갱신 — SWR/예산 지연 가능");
+    const wnH = ageH(S["world_news"] && S["world_news"].ts);
+    if (wnH == null) add("warn", "뉴스", "세계뉴스 수집 없음");
+    else if (wnH > 2) add("warn", "뉴스", "뉴스 " + wnH.toFixed(1) + "h 전 — 수집 지연 가능");
+    if (!S["tag_returns"]) add("info", "이벤트엔진", "tag_returns 없음(첫 스캔 전) — 이벤트 확증 대기");
+    const mdH = ageH(S["macro_data"] && S["macro_data"].ts);
+    if (mdH != null && mdH > 48) add("warn", "거시", "macro_data " + mdH.toFixed(0) + "h 전 — 금리/거시 갱신 지연");
+    // 최근 에러/경고 로그 집계(6h)
+    try {
+      const since = nowT - 6 * 3600000;
+      const r = await DB.prepare("SELECT level, COUNT(*) c FROM logs WHERE ts>=? AND level IN ('ERROR','WARN') GROUP BY level").bind(since).all();
+      let errN = 0, warnN = 0; for (const row of ((r && r.results) || [])) { if (row.level === "ERROR") errN = row.c; else if (row.level === "WARN") warnN = row.c; }
+      if (errN > 0) add(errN >= 10 ? "error" : "warn", "로그", "최근 6h ERROR " + errN + "건" + (warnN ? " · WARN " + warnN + "건" : ""));
+      else if (warnN >= 20) add("warn", "로그", "최근 6h WARN " + warnN + "건(에러 없음)");
+      // 대표 에러 메시지 1건(진단 힌트)
+      if (errN > 0) { try { const e1 = await DB.prepare("SELECT message FROM logs WHERE ts>=? AND level='ERROR' ORDER BY id DESC LIMIT 1").bind(since).all(); const m = e1 && e1.results && e1.results[0] && e1.results[0].message; if (m) add("info", "로그", "최근 에러: " + String(m).slice(0, 140)); } catch (e) {} }
+    } catch (e) { add("info", "로그", "로그 조회 불가"); }
+  } catch (e) { add("error", "점검", "자가진단 실행 중 예외 — " + (e && e.message)); }
+  const errCnt = issues.filter(function (x) { return x.level === "error"; }).length;
+  const warnCnt = issues.filter(function (x) { return x.level === "warn"; }).length;
+  const status = errCnt > 0 ? "error" : warnCnt > 0 ? "warn" : "ok";
+  return { status: status, errCnt: errCnt, warnCnt: warnCnt, issues: issues, ts: nowT };
+}
+
 // [V32.51] 태그 한글 라벨 + 활성 이벤트 종합 순(net) 섹터 선호도 — 여러 이슈를 합산해 '지금 어디가 유리/불리'인지.
 const _TAG_LABEL_KO = {
   defense: "방산", energy: "에너지", gold: "금·귀금속", cyber: "사이버보안", airline: "항공", travel: "여행/레저", transport: "운송",
@@ -24895,6 +24956,26 @@ async function mlAiAsk(DB, question) {
   // [V32.17] 지정학·위기·시장전반 질문 — 종목 특정 전에 먼저 처리(전쟁·폭락·헤지·"지금 시장 어때" 등).
   const _crisisKwKo = ["전쟁", "지정학", "폭락", "크래시", "위기", "리스크오프", "risk-off", "리스크 오프", "안전자산", "헤지", "헷지", "방어", "대비", "폭락장", "침체", "블랙스완", "공포", "vix", "변동성 장", "셧다운", "중동", "우크라", "대만", "분쟁", "침공", "미사일", "지정학적", "패닉", "제재", "fomc", "연준", "금리 발표", "금리발표", "금리 결정", "매파", "비둘기", "긴축", "완화", "정책 기조", "선거", "대선", "규제", "부양책", "팬데믹", "감염병", "사이버", "해킹", "공급망", "제재", "무역합의", "관세", "뱅크런", "신흥국", "자연재해", "지진", "파업"];
   const _mktOverviewKw = ["지금 시장", "시장 어때", "시장 상황", "장 어때", "시장 전반", "시황", "지금 사도", "사도 돼", "사도돼", "지금 위험", "시장 위험"];
+  // [V32.54] 사이트 오류 확인·디버깅·시스템 점검 — 자가진단 실행(종목·위기 라우팅보다 우선)
+  if (/사이트\s*오류|오류\s*(확인|있|없|점검)|디버깅|디버그|버그\s*(있|없|확인)|에러\s*(확인|있|없|점검|로그)|시스템\s*(점검|상태|이상|오류|진단)|서버\s*(오류|상태|점검)|사이트\s*(점검|상태|정상)|헬스\s*체크|헬스체크|정상\s*(작동|동작)|작동\s*(확인|하고)|self\s*check|셀프\s*체크/.test(q)) {
+    try {
+      const chk = await _luxSelfCheck(DB);
+      const emo = chk.status === "error" ? "🔴" : chk.status === "warn" ? "🟡" : "🟢";
+      const hd = chk.status === "error" ? "오류 감지" : chk.status === "warn" ? "경고(주의)" : "정상";
+      const L = ["**" + emo + " 시스템 자가진단: " + hd + "**"];
+      L.push("에러 " + chk.errCnt + "건 · 경고 " + chk.warnCnt + "건 (최근 6시간 로그·상태 신선도·모델 준비 기준)");
+      if (chk.issues.length) {
+        L.push("");
+        const ico = { error: "🔴", warn: "🟡", info: "ℹ️" };
+        for (const it of chk.issues.slice(0, 12)) L.push((ico[it.level] || "·") + " [" + it.area + "] " + it.msg);
+      } else {
+        L.push("\n특이사항 없음 — 파이프라인(스캔·뉴스·위기게이지·거시)·위원회 모델·최근 로그 모두 정상.");
+      }
+      L.push("");
+      L.push("_이 진단은 상태 신선도(스캔·뉴스·게이지)·모델 준비(MIND/DNN/GBDT)·최근 에러로그를 종합한 거야. 세부 관리로그는 관리자 화면에서 볼 수 있어._");
+      return { ok: true, answer: L.join("\n"), selfcheck: true };
+    } catch (e) { return { ok: true, answer: "자가진단 실행 중 문제가 있었어: " + (e && e.message || "unknown") }; }
+  }
   const _isCrisisQ = _crisisKwKo.some(function (k) { return q.indexOf(k) >= 0 || _qk.indexOf(k) >= 0; });
   const _isOverviewQ = _mktOverviewKw.some(function (k) { return q.indexOf(k) >= 0; });
   if (_isCrisisQ || (_isOverviewQ && !syms.length)) {
