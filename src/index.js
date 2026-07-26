@@ -21473,6 +21473,28 @@ async function mlDNNLoad(DB) {
 // null 반환 시 상위 호출부는 mlMindDecide로 폴백.
 function _logitD(p) { const q = _clamp(p, 1e-4, 1 - 1e-4); return Math.log(q / (1 - q)); }
 
+// [V32.65] 부스터(XGB/LGB/Cat) 5분 메모 로드 — 그동안 학습만 하고 위원회에 미사용이던 3모델을 활용.
+//   전부 GBDT와 동일 트리포맷(mlGBDTScore)이라 즉시 채점 가능. trusted(검증바닥 통과)인 것만.
+async function _boostersCached(DB) {
+  try {
+    const g = (typeof globalThis !== "undefined") ? globalThis : {};
+    const c = g.__boostersCache;
+    if (c && (Date.now() - c.ts) < 300000) return c.val;
+    const out = [];
+    try {
+      const T = await getStates(DB, ["xgb_trust", "lgb_trust", "cat_trust"]);
+      for (const nm of ["xgb", "lgb", "cat"]) {
+        const t = T[nm + "_trust"];
+        if (t && t.trusted && t.gbdtAccLB != null) {
+          let m = null; try { m = await getState(DB, nm + "_model", null); } catch (e) {}
+          if (m && m.featVer === LUXML.featVer && Array.isArray(m.trees) && m.trees.length) out.push({ name: nm, model: m, accLB: _num(t.gbdtAccLB, 0.5) });
+        }
+      }
+    } catch (e) {}
+    g.__boostersCache = { ts: Date.now(), val: out };
+    return out;
+  } catch (e) { return []; }
+}
 // [V32.59] 전문가 실측정확도 5분 메모(위원회 루프에서 종목마다 재로딩 방지 — CPU 안전).
 async function _expertRelCached(DB) {
   try {
@@ -21545,6 +21567,23 @@ async function mlDeepDecide(DB, featVec, opts) {
         if (pG != null) { experts.push({ name: "gbdt", p: pG, z: _logitD(pG), acc: _num(gtrust.gbdtAccLB, _num(gtrust.gbdtAcc, 0.5)) }); usedGbdt = true; }
       }
     } catch (e) {}
+    // [V32.65] ★부스터 합류(XGB/LGB/Cat)★ — 그동안 학습만 하고 안 쓰던 3모델을 위원회에 참여.
+    //   트리계열 상관성으로 개별 4표가 MIND/DNN을 압도하지 않게, 셋을 정확도가중 '합의' 1표(boost)로 묶고
+    //   가중 0.8로 소폭 감쇠(GBDT와 별개의 보조 관점). 검증바닥 통과 모델만.
+    try {
+      const boosters = (opts.boosters !== undefined) ? opts.boosters : await _boostersCached(DB);
+      if (boosters && boosters.length) {
+        let bz = 0, bw = 0, bAccMax = 0.5, bUsed = 0;
+        for (const b of boosters) {
+          const pB = mlGBDTScore(b.model, featVec);
+          if (pB == null) continue;
+          const wgt = Math.max(0.01, b.accLB - 0.5);
+          bz += wgt * _logitD(pB); bw += wgt; bUsed++;
+          if (b.accLB > bAccMax) bAccMax = b.accLB;
+        }
+        if (bw > 0 && bUsed > 0) { const pBoost = _clamp(_sigmoid(bz / bw), 0.001, 0.999); experts.push({ name: "boost", p: pBoost, z: _logitD(pBoost), acc: bAccMax, wMul: 0.8 }); }
+      }
+    } catch (e) {}
     // ── [V12.39 규칙엔진 전문가] 규칙엔진의 기술적 종합확률(taUpProb)을 위원회 정식 위원으로 합류 ──
     //   MIND 야간학습이 검증셋에서 측정한 규칙엔진 정확도(ruleAccLB)가 동전던지기(0.5)를 넘을 때만
     //   그 정확도의 소프트맥스 가중으로 투표. 규칙엔진이 AI 안에 "이식"되어 잘 맞는 국면엔 발언권이
@@ -21575,7 +21614,7 @@ async function mlDeepDecide(DB, featVec, opts) {
       //   검증LB가 표를 독식하는 것을 차단. LB 0.85·T=12면 종전 97% 지배 → 참여 전문가가 사실상 무의미했다.
       const _cap = (typeof DNN !== "undefined" && DNN.committeeAccCap) ? DNN.committeeAccCap : 0.66;
       let wsum = 0, zsum = 0;
-      for (const ex of experts) { const _a = Math.min(_accBlend(ex), _cap); const w = Math.exp(T * (_a - 0.5)); wsum += w; zsum += w * ex.z; }
+      for (const ex of experts) { const _a = Math.min(_accBlend(ex), _cap); const w = (ex.wMul || 1) * Math.exp(T * (_a - 0.5)); wsum += w; zsum += w * ex.z; }
       pCombined = _clamp(_sigmoid(zsum / (wsum || 1)), 0.001, 0.999);
     }
     // [V4] 위원회 확률 보정(야간 mlCalibrateCommittee가 학습한 온도)
@@ -22177,13 +22216,14 @@ async function mlCalibrateCommittee(DB) {
     const dnn = (dnnTrust && dnnTrust.trusted) ? await mlDNNLoad(DB) : null;
     const gTrust = await getState(DB, "gbdt_trust", null);
     const gbdt = (gTrust && gTrust.trusted) ? await mlGBDTLoad(DB) : null;
+    const boosters = await _boostersCached(DB);   // [V32.65] 부스터도 보정·신뢰도에 포함(라이브 위원회와 정합)
     const T0 = (typeof DNN !== "undefined" ? DNN.trustTemp : 12);
     const mindAccLB = (typeof mind.valAccLB === "number") ? mind.valAccLB : 0.5;
 
     const preds = [];
     // [V32.59] 전문가별 최근 실측정확도 집계 — 이미 각 모델을 표본에 돌리므로 추가비용 ≈0.
     //   라이브분포 최근표본 기준 '요즘 잘 맞히는 모델'을 재는 값(정적 홀드아웃 검증정확도와 블렌드).
-    const rel = { mind: { c: 0, n: 0 }, dnn: { c: 0, n: 0 }, gbdt: { c: 0, n: 0 } };
+    const rel = { mind: { c: 0, n: 0 }, dnn: { c: 0, n: 0 }, gbdt: { c: 0, n: 0 }, boost: { c: 0, n: 0 } };
     for (const r of raw) {
       let v; try { v = JSON.parse(r.feat); } catch (e) { continue; }
       if (!Array.isArray(v) || v.length !== LUXML.featNames.length) continue;
@@ -22194,8 +22234,14 @@ async function mlCalibrateCommittee(DB) {
       rel.mind.n++; if ((ms.p >= 0.5 ? 1 : 0) === y) rel.mind.c++;
       if (dnn) { const pD = mlDNNScore(dnn, v); if (pD != null) { ex.push({ z: _logitD(pD), acc: _num(dnnTrust.dnnAccLB, 0.5) }); rel.dnn.n++; if ((pD >= 0.5 ? 1 : 0) === y) rel.dnn.c++; } }
       if (gbdt) { const pG = mlGBDTScore(gbdt, v); if (pG != null) { ex.push({ z: _logitD(pG), acc: _num(gTrust.gbdtAccLB, 0.5) }); rel.gbdt.n++; if ((pG >= 0.5 ? 1 : 0) === y) rel.gbdt.c++; } }
+      // [V32.65] 부스터 합의(XGB/LGB/Cat) — 라이브와 동일하게 정확도가중 1표(wMul 0.8)로 반영
+      if (boosters && boosters.length) {
+        let bz = 0, bw = 0, bAccMax = 0.5, bUsed = 0;
+        for (const b of boosters) { const pB = mlGBDTScore(b.model, v); if (pB == null) continue; const wgt = Math.max(0.01, b.accLB - 0.5); bz += wgt * _logitD(pB); bw += wgt; bUsed++; if (b.accLB > bAccMax) bAccMax = b.accLB; }
+        if (bw > 0 && bUsed > 0) { const pBoost = _clamp(_sigmoid(bz / bw), 1e-6, 1 - 1e-6); ex.push({ z: _logitD(pBoost), acc: bAccMax, wMul: 0.8 }); rel.boost.n++; if ((pBoost >= 0.5 ? 1 : 0) === y) rel.boost.c++; }
+      }
       let wsum = 0, zsum = 0;
-      for (const e2 of ex) { const w = Math.exp(T0 * (e2.acc - 0.5)); wsum += w; zsum += w * e2.z; }
+      for (const e2 of ex) { const w = (e2.wMul || 1) * Math.exp(T0 * (e2.acc - 0.5)); wsum += w; zsum += w * e2.z; }
       preds.push({ p: _clamp(_sigmoid(zsum / (wsum || 1)), 1e-6, 1 - 1e-6), y: y });
     }
     if (preds.length < 60) return "[CAL] 유효예측 부족(" + preds.length + ")";
@@ -25377,10 +25423,12 @@ async function mlAiAsk(DB, question) {
         L.push("- MIND(위원장, FM+스태킹): " + (mind ? "가동 · 검증 " + pct1(mind.valAccLB != null ? mind.valAccLB : mind.valAcc) + (mind.source === "external" ? " · 외부GPU" : "") : "학습 대기"));
         L.push("- DNN(3M 딥넷): " + (dt && dt.trusted ? "가동 · 신뢰 " + (dt.wDnn != null ? dt.wDnn.toFixed(2) : "—") + " · 검증 " + pct1(dt.dnnAccLB) : "억제/대기"));
         L.push("- GBDT(부스팅트리): " + (gt && gt.trusted ? "가동 · 검증 " + pct1(gt.gbdtAccLB) : "억제/대기"));
+        let _boostOn = 0;
         for (const nm of ["xgb", "lgb", "cat"]) {
           const t = await getState(DB, nm + "_trust", null);
-          if (t) L.push("- " + nm.toUpperCase() + ": " + (t.trusted ? "가동 · 검증 " + pct1(t.gbdtAccLB) : "섀도우/억제"));
+          if (t) { if (t.trusted) _boostOn++; L.push("- " + nm.toUpperCase() + ": " + (t.trusted ? "가동 · 검증 " + pct1(t.gbdtAccLB) : "섀도우/억제")); }
         }
+        if (_boostOn > 0) L.push("  ↳ [V32.65] 신뢰된 부스터 " + _boostOn + "종은 '합의 1표(boost)'로 위원회에 합류(정확도가중·소폭 감쇠).");
         // [V32.59] 최근 실측정확도(라이브분포) — 적응형 가중에 반영
         try {
           const er = await getState(DB, "expert_reliability", null);
