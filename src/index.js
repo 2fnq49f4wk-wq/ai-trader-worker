@@ -14938,16 +14938,19 @@ async function handleRequest(request, env, ctx) {
           //   SSE로 잔차분산 σ²을 구해 se(bF)·t값을 계산하고, |t|가 작으면 베타를 0쪽으로 강하게 축소.
           const sse = Math.max(1e-9, syy - (bM * sy1 + bF * sy2));
           const sigma2 = sse / Math.max(1, N - 2);
-          varbF = usedMkt ? (sigma2 * s11 / det) : (s22 > 0 ? sigma2 / s22 : 0);
-          const tF = (varbF > 0) ? Math.abs(bF) / Math.sqrt(varbF) : 0;
+          // [V32.67] 수치안정: det는 |det|로(음수 방지), varbF 0/NaN·tF 발산 방어(NaN 출력 버그 차단)
+          varbF = usedMkt ? (sigma2 * s11 / Math.max(1e-12, Math.abs(det))) : (s22 > 0 ? sigma2 / s22 : 0);
+          let tF = (varbF > 0 && isFinite(varbF)) ? Math.abs(bF) / Math.sqrt(varbF) : 0;
+          if (!isFinite(tF)) tF = 0; tF = Math.min(20, tF);   // 발산 상한(sigShrink 최대 ~0.99)
           const sigShrink = (tF * tF) / (tF * tF + 4);   // |t|<2 → 강한 축소, |t|≈3 → 0.69, |t|≥5 → ~0.86
           // R²(설명력) 축소 × 유의성 축소 결합 — 노이즈 베타는 크게 줄고, 견고한 베타만 반영
           const w = Math.min(1, Math.sqrt(r2) * 1.3) * sigShrink;
           const volNow = stdv(s20.slice(-40)), volAll = stdv(s20.slice(-160));
           const regime = volAll > 0 ? Math.max(0.85, Math.min(1.3, volNow / volAll)) : 1;   // [V32.66] 국면승수 완화 0.8~1.4→0.85~1.3
           const sigS20 = volAll * 100;
-          return { bF: +(bF * w).toFixed(4), bM: +bM.toFixed(3), r2: +r2.toFixed(3), n: N, tF: +tF.toFixed(2),
-            sig20: +sigS20.toFixed(2), reg: +regime.toFixed(2), mk: usedMkt };
+          const _bf = isFinite(bF * w) ? bF * w : 0, _bm = isFinite(bM) ? bM : 0;   // [V32.67] 최종 유한성 방어
+          return { bF: +_bf.toFixed(4), bM: +_bm.toFixed(3), r2: +r2.toFixed(3), n: N, tF: +tF.toFixed(2),
+            sig20: +(isFinite(sigS20) ? sigS20 : 2).toFixed(2), reg: +regime.toFixed(2), mk: usedMkt };
         };
         // ── 팩터별 사전계산(시계열·충격·gF) + 종목 계수(팩터별 6h 캐시) ──
         let searchMiss = null;
