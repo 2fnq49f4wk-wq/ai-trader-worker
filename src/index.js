@@ -24857,6 +24857,27 @@ async function _luxEventContextCached(DB) {
   } catch (e) { return { evs: [], mc: 0.7, level: "평시", conf: {}, eff: {} }; }
 }
 
+// [V32.70] 로그 메시지 → "무슨 문제인지" 사람이 읽는 진단으로 해석(개수만이 아니라 원인·영향까지).
+function _diagnoseLogMessage(msg) {
+  const m = String(msg || "");
+  const rules = [
+    { re: /fetch fail|시세.*조회.*실패|조회.*실패|batchQuotes|quote.*fail|no data|데이터\s*없/i, d: "외부 데이터 수집 실패(야후/네이버 네트워크·티커 변경·상장폐지 가능) → 해당 종목 시세·신호가 최신이 아닐 수 있음" },
+    { re: /표본\s*부족|train\s*부족|샘플\s*부족|생략|N\s*<|표본 \d+/i, d: "학습 표본 부족 → 해당 모델 학습 대기(표본이 쌓이면 자동 재개, 조치 불필요)" },
+    { re: /예산|budget|subrequest|한도\s*초과|과부하|1102|cpu/i, d: "CPU/subrequest 예산 소진 → 이번 사이클 일부 작업 스킵(다음 사이클 보완). 반복되면 유니버스·주기 조정 검토" },
+    { re: /timeout|타임아웃|abort|시간\s*초과/i, d: "외부 요청 타임아웃 → 일시적 네트워크 지연(대개 자동 재시도로 해소)" },
+    { re: /featVer|피처.*불일치|차원.*불일치|mean\/std|65\s*필요/i, d: "피처 버전/차원 불일치 → featVer 재구축 또는 모델 재학습 대기(승격 보류 상태)" },
+    { re: /begin 400|형식.*불일치|트리.*불일치|bad json|파싱|parse|probe/i, d: "모델 업로드/데이터 형식 오류 → 트레이너↔워커 포맷 정합 점검 필요(섀도우 유지)" },
+    { re: /저장\s*실패|setState.*fail|SQLITE|D1|too\s*big|크기\s*한도/i, d: "DB 저장 실패 → 값 크기 한도 초과 또는 D1 일시 오류(대형 모델은 청크 저장 필요할 수 있음)" },
+    { re: /억제|미신뢰|distrust|trustFloor|미달|trust.*floor/i, d: "모델 검증성능이 신뢰바닥 미달 → 위원회 미반영(억제). 재학습·표본 확대로 개선 대기(정상 방어)" },
+    { re: /락|lock|동시|경쟁|겹/i, d: "파이프라인 동시실행 락 → 이전 실행과 겹침(15분 지나면 자동 해제)" },
+    { re: /휴장|holiday|마감|비거래/i, d: "시장 휴장 관련 → 정상(거래·수집 스킵)" },
+    { re: /rate.?limit|429|too many/i, d: "외부 API 레이트리밋(429) → 호출 빈도 초과, 잠시 후 자동 정상화" }
+  ];
+  for (const r of rules) if (r.re.test(m)) return r.d;
+  return "원인 자동분류 안 됨 — 로그 원문 확인 권장(반복 여부·컴포넌트 확인)";
+}
+function _errType(msg) { const m = String(msg || ""); if (/fail|실패/i.test(m)) return "실패"; if (/timeout|타임아웃|abort/i.test(m)) return "타임아웃"; if (/부족|미달|없음|생략/i.test(m)) return "부족"; if (/예산|budget|한도|1102/i.test(m)) return "예산"; if (/저장|save|D1|SQLITE/i.test(m)) return "저장"; if (/featVer|불일치|차원/i.test(m)) return "형식"; if (/억제|distrust|미신뢰/i.test(m)) return "억제"; return "기타"; }
+
 // ═══════════ [V32.54] 시스템 자가진단(셀프체크) — 사이트 오류·파이프라인 지연·모델 상태 점검 ═══════════
 //   상태 신선도·모델 준비·최근 에러로그를 종합해 문제를 리스트로 반환(추가 fetch 0, 상태·로그만 읽음).
 async function _luxSelfCheck(DB) {
@@ -24940,15 +24961,30 @@ async function _luxSelfCheck(DB) {
       if (scan && scan.total && scan.scanned / scan.total < 0.5 && scan.durMs != null && scan.durMs >= 80000) add("info", "스캔량", "이번 스캔 커버리지 " + Math.round(scan.scanned / scan.total * 100) + "% — 나머지는 다음 사이클 순환 커버(정상)");
       if (perf.news && perf.news.fresh24h != null && perf.news.fresh24h < 5 && wnH != null && wnH < 6) add("warn", "뉴스량", "최근24h 유입 뉴스 " + perf.news.fresh24h + "건으로 적음 — 소스/네트워크 점검 권장");
     } catch (e) {}
-    // 최근 에러/경고 로그 집계(6h)
+    // [V32.70] 최근 6h ERROR/WARN — 개수만이 아니라 실제 메시지를 유형·컴포넌트별로 묶어 '무슨 문제인지' 진단
     try {
       const since = nowT - 6 * 3600000;
-      const r = await DB.prepare("SELECT level, COUNT(*) c FROM logs WHERE ts>=? AND level IN ('ERROR','WARN') GROUP BY level").bind(since).all();
-      let errN = 0, warnN = 0; for (const row of ((r && r.results) || [])) { if (row.level === "ERROR") errN = row.c; else if (row.level === "WARN") warnN = row.c; }
-      if (errN > 0) add(errN >= 10 ? "error" : "warn", "로그", "최근 6h ERROR " + errN + "건" + (warnN ? " · WARN " + warnN + "건" : ""));
-      else if (warnN >= 20) add("warn", "로그", "최근 6h WARN " + warnN + "건(에러 없음)");
-      // 대표 에러 메시지 1건(진단 힌트)
-      if (errN > 0) { try { const e1 = await DB.prepare("SELECT message FROM logs WHERE ts>=? AND level='ERROR' ORDER BY id DESC LIMIT 1").bind(since).all(); const m = e1 && e1.results && e1.results[0] && e1.results[0].message; if (m) add("info", "로그", "최근 에러: " + String(m).slice(0, 140)); } catch (e) {} }
+      const er = ((await DB.prepare("SELECT level, message FROM logs WHERE ts>=? AND level IN ('ERROR','WARN') ORDER BY id DESC LIMIT 80").bind(since).all()).results) || [];
+      let errN = 0, warnN = 0;
+      const groups = {};
+      for (const row of er) {
+        if (row.level === "ERROR") errN++; else warnN++;
+        const msg = String(row.message || "");
+        const pre = (msg.match(/^\[([A-Z가-힣0-9-]+)\]/) || [])[1] || "기타";
+        const sig = pre + "|" + _errType(msg);
+        if (!groups[sig]) groups[sig] = { pre: pre, level: row.level, n: 0, sample: msg.slice(0, 150), diag: _diagnoseLogMessage(msg) };
+        groups[sig].n++;
+        if (row.level === "ERROR") groups[sig].level = "ERROR";
+      }
+      const gArr = Object.keys(groups).map(function (k) { return groups[k]; })
+        .sort(function (a, b) { return ((b.level === "ERROR" ? 1 : 0) - (a.level === "ERROR" ? 1 : 0)) || (b.n - a.n); });
+      // 유형별로 '무슨 문제인지' + 발생횟수 + 실제 로그 표기(상위 6그룹)
+      for (const g of gArr.slice(0, 6)) {
+        add(g.level === "ERROR" ? "error" : "warn", g.pre,
+          (g.n > 1 ? g.n + "회 반복 — " : "") + g.diag + " · 로그: " + g.sample);
+      }
+      if (gArr.length > 6) add("info", "로그", "그 외 " + (gArr.length - 6) + "종 유형 더 있음(전체 로그에서 확인)");
+      if (errN === 0 && warnN === 0) add("info", "로그", "최근 6시간 ERROR/WARN 없음 — 정상");
     } catch (e) { add("info", "로그", "로그 조회 불가"); }
     // [V32.69] ★전체 로그 휴리스틱 스캔★ — ERROR로 안 떠도 반복 패턴으로 잠재 문제를 추론(사용자 요청).
     try {
@@ -25216,9 +25252,16 @@ async function mlAiAsk(DB, question) {
       }
       const logInfer = chk.issues.filter(function (it) { return it.area === "로그추론"; });
       if (chk.issues.length) {
+        // [V32.70] 심각도순 정렬(에러→경고→정보)로 '진짜 문제'가 먼저 보이게 + 발견 문제 요약
+        const _rank = { error: 0, warn: 1, info: 2 };
+        const _sorted = chk.issues.slice().sort(function (a, b) { return (_rank[a.level] || 3) - (_rank[b.level] || 3); });
+        const _errs = _sorted.filter(function (it) { return it.level === "error"; });
+        const _warns = _sorted.filter(function (it) { return it.level === "warn"; });
         L.push("");
+        if (_errs.length || _warns.length) L.push("**🔍 발견된 문제 (" + _errs.length + " 오류 · " + _warns.length + " 경고) — 무엇이 문제인지:**");
+        else L.push("**점검 항목 (오류·경고 없음):**");
         const ico = { error: "🔴", warn: "🟡", info: "ℹ️" };
-        for (const it of chk.issues.slice(0, 16)) L.push((ico[it.level] || "·") + " [" + it.area + "] " + it.msg);
+        for (const it of _sorted.slice(0, 20)) L.push((ico[it.level] || "·") + " **[" + it.area + "]** " + it.msg);
       } else {
         L.push("\n특이사항 없음 — 파이프라인(스캔·뉴스·위기게이지·거시)·위원회 모델·최근 로그 모두 정상.");
       }
