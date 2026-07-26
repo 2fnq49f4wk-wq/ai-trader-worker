@@ -14838,6 +14838,12 @@ async function handleRequest(request, env, ctx) {
     //   팩터 일변화율에 OLS 회귀(최근 ≤120영업일)한 역사적 베타 × 시나리오 충격 = 예상 등락.
     //   베타는 6시간 캐시. R²(설명력)를 함께 반환해 신뢰도 표시. 과거 민감도 기반 근사이며 예측 보장 아님.
     if (path === "/api/whatif") {
+      // [V32.69] 성능: 동일 시나리오 응답 5분 인메모리 캐시(반복 조회·토글 즉시 응답)
+      try {
+        const _wc = (globalThis.__wifCache || (globalThis.__wifCache = {}));
+        const _hit = _wc[url.search];
+        if (_hit && (Date.now() - _hit.ts) < 300000) return Response.json(_hit.data, { headers: cors });
+      } catch (e) {}
       // [V12.95] 팩터 확대 — 변동성(VIX)·달러지수·구리·비트코인·단기금리·코스피 추가(사용자 요청: what-if 강화)
       const FACTORS = {
         rate:   { sym: "^TNX",       label: "미국 10년물 금리", unit: "pp", presets: [0.5, 1, -0.5, -1] },
@@ -15060,7 +15066,7 @@ async function handleRequest(request, env, ctx) {
         }
         const f0 = factorInfo[0];
         const scenarioOut = factorInfo.map(function (fi) { return { factor: fi.key, label: fi.F.label, sym: fi.F.sym, unit: fi.F.unit, shock: fi.shock, effShock: +fi.effShock.toFixed(3) }; });
-        return Response.json({
+        const _wifOut = {
           factor: f0.key, factorLabel: f0.F.label, factorSym: f0.F.sym, unit: f0.F.unit, presets: f0.F.presets,
           combo: isCombo, scenario: scenarioOut, factorsAvailable: Object.keys(FACTORS).map(function (k) { return { key: k, label: FACTORS[k].label, unit: FACTORS[k].unit, presets: FACTORS[k].presets }; }),
           searched: extraSym || null, searchMiss: searchMiss,
@@ -15074,7 +15080,9 @@ async function handleRequest(request, env, ctx) {
           items: items.slice(0, 70),
           note: (isCombo ? "복합 시나리오(" + scenarioOut.length + "개 팩터 동시 충격 합산): " : "방법론 v4: ") + "종목 5일수익 ~ (시장지수·팩터) 2변수 OLS 부분베타에 ★유의성(t-검정) 축소★ 적용(약한 우연 베타는 0으로 수렴 → 현실성↑) + √R² 축소 + 시장 경유 파급(bM×gF) + 변동성 국면 승수(0.85~1.3) — " + (speed === "fast" ? "5영업일 단기 쇼크" : "역사적 확산 속도(약 " + horizonDays + "영업일, 증폭 상한 1.8배)") + " 지평선의 3σ 소프트캡·잔차 예상범위 적용. 역사적 근사이며 예측 보장 아님.",
           ts: Date.now()
-        }, { headers: cors });
+        };
+        try { const _wc = (globalThis.__wifCache || (globalThis.__wifCache = {})); _wc[url.search] = { ts: Date.now(), data: _wifOut }; const _ks = Object.keys(_wc); if (_ks.length > 60) delete _wc[_ks[0]]; } catch (e) {}
+        return Response.json(_wifOut, { headers: cors });
       } catch (e) {
         return Response.json({ error: "whatif 실패: " + (e && e.message) }, { status: 500, headers: cors });
       }
@@ -24942,6 +24950,26 @@ async function _luxSelfCheck(DB) {
       // 대표 에러 메시지 1건(진단 힌트)
       if (errN > 0) { try { const e1 = await DB.prepare("SELECT message FROM logs WHERE ts>=? AND level='ERROR' ORDER BY id DESC LIMIT 1").bind(since).all(); const m = e1 && e1.results && e1.results[0] && e1.results[0].message; if (m) add("info", "로그", "최근 에러: " + String(m).slice(0, 140)); } catch (e) {} }
     } catch (e) { add("info", "로그", "로그 조회 불가"); }
+    // [V32.69] ★전체 로그 휴리스틱 스캔★ — ERROR로 안 떠도 반복 패턴으로 잠재 문제를 추론(사용자 요청).
+    try {
+      const since12 = nowT - 12 * 3600000;
+      const rows = ((await DB.prepare("SELECT level, message FROM logs WHERE ts>=? ORDER BY id DESC LIMIT 400").bind(since12).all()).results) || [];
+      const pats = [
+        { key: "수집·처리 실패", re: /실패|fail|에러|error|예외|exception/i, sev: "warn", thr: 6, hint: " (데이터 수집·처리 불안정 의심)" },
+        { key: "예산·한도 압박", re: /예산|budget|한도|초과|타임아웃|timeout|abort|1102|과부하/i, sev: "warn", thr: 4, hint: " (CPU/subrequest 예산 압박 의심)" },
+        { key: "데이터 부족·누락", re: /부족|미달|없음|없어|empty|no data|누락|0건/i, sev: "info", thr: 20, hint: " (표본·시세·뉴스 유입 점검)" },
+        { key: "모델 미비·억제", re: /미학습|억제|섀도우|shadow|distrust|불신|미신뢰/i, sev: "info", thr: 30, hint: " (위원회 일부 모델 대기 — 학습 축적/신뢰 게이트)" },
+        { key: "재시도·지연", re: /재시도|retry|지연|stale|늦|밀림|skip|스킵/i, sev: "info", thr: 30, hint: "" }
+      ];
+      const cnt = {}, samp = {};
+      for (const r of rows) { const msg = String(r.message || ""); for (const p of pats) { if (p.re.test(msg)) { cnt[p.key] = (cnt[p.key] || 0) + 1; if (!samp[p.key]) samp[p.key] = msg.slice(0, 110); } } }
+      for (const p of pats) { const n = cnt[p.key] || 0; if (n >= p.thr) add(p.sev, "로그추론", "최근12h '" + p.key + "' 패턴 " + n + "건" + p.hint + " · 예: " + (samp[p.key] || "")); }
+      // 컴포넌트별 실패 클러스터([PREFIX] 기준)
+      const compFail = {};
+      for (const r of rows) { const m = String(r.message || ""); const pre = (m.match(/^\[([A-Z가-힣0-9-]+)/) || [])[1]; if (pre && /실패|fail|에러|error|예외/i.test(m)) compFail[pre] = (compFail[pre] || 0) + 1; }
+      const topFail = Object.keys(compFail).sort(function (a, b) { return compFail[b] - compFail[a]; })[0];
+      if (topFail && compFail[topFail] >= 4) add("warn", "로그추론", "[" + topFail + "] 모듈 실패 " + compFail[topFail] + "건 반복 감지 — 해당 컴포넌트 집중 점검 권장");
+    } catch (e) {}
   } catch (e) { add("error", "점검", "자가진단 실행 중 예외 — " + (e && e.message)); }
   const errCnt = issues.filter(function (x) { return x.level === "error"; }).length;
   const warnCnt = issues.filter(function (x) { return x.level === "warn"; }).length;
@@ -25186,15 +25214,19 @@ async function mlAiAsk(DB, question) {
         if (md.received === 0) L.push("· 🛰️ Modal 외부학습: **수신 이력 없음** — 트레이너/시크릿/크론 점검 필요");
         else L.push("· 🛰️ Modal 외부학습: 최신 " + md.freshestModel + " " + md.freshestAgeH + "h 전 수신" + (md.freshestAgeH > 14 ? " ⚠️ 6h주기 대비 지연" : " (정상)") + " · 수신모델 " + md.models.map(function (m) { return m.name; }).join("/"));
       }
+      const logInfer = chk.issues.filter(function (it) { return it.area === "로그추론"; });
       if (chk.issues.length) {
         L.push("");
         const ico = { error: "🔴", warn: "🟡", info: "ℹ️" };
-        for (const it of chk.issues.slice(0, 12)) L.push((ico[it.level] || "·") + " [" + it.area + "] " + it.msg);
+        for (const it of chk.issues.slice(0, 16)) L.push((ico[it.level] || "·") + " [" + it.area + "] " + it.msg);
       } else {
         L.push("\n특이사항 없음 — 파이프라인(스캔·뉴스·위기게이지·거시)·위원회 모델·최근 로그 모두 정상.");
       }
       L.push("");
-      L.push("_이 진단은 상태 신선도(스캔·뉴스·게이지)·모델 준비(MIND/DNN/GBDT)·최근 에러로그를 종합한 거야. 세부 관리로그는 관리자 화면에서 볼 수 있어._");
+      L.push(logInfer.length
+        ? "_🔎 최근 12시간 **전체 로그**를 훑어 " + logInfer.length + "건의 의심 패턴을 추론했어(ERROR로 안 떠도 반복·이상 징후를 잡음). 위 [로그추론] 항목이 그거야._"
+        : "_🔎 최근 12시간 전체 로그를 훑었지만 반복·이상 패턴은 없었어(ERROR 미표기 잠재 문제도 미검출)._");
+      L.push("_상태 신선도·모델 준비·에러로그 + 전체 로그 추론을 종합한 진단이야. 세부 관리로그는 관리자 화면에서 볼 수 있어._");
       return { ok: true, answer: L.join("\n"), selfcheck: true };
     } catch (e) { return { ok: true, answer: "자가진단 실행 중 문제가 있었어: " + (e && e.message || "unknown") }; }
   }
