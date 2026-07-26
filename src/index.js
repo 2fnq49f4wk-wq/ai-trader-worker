@@ -25715,6 +25715,7 @@ async function mlAiAsk(DB, question) {
   const isPeriodQ = /이번\s*주|이번\s*달|올해|일주일|한\s*달|1개월|1년|최근\s*(\d+)\s*일|얼마나\s*올랐|얼마나\s*떨어졌|수익률/.test(q);
   const isExitQ = /언제\s*팔|매도\s*시점|익절|청산\s*시점|팔아야/.test(q);
   const isSizeQ = /몇\s*주|얼마나\s*사|몇\s*개\s*사|비중\s*얼마|얼마어치/.test(q);
+  const isPlanQ = /매매\s*플랜|트레이드\s*플랜|진입.*(전략|가격|시점)|손절.*목표|목표.*손절|손절가|스탑|stop|매매\s*전략|어떻게\s*사|진입\s*플랜|플랜\s*짜/.test(q);
   const isEarningsQ = /실적|어닝스|earnings/i.test(q);
   const isValuationQ = /per\b|pbr\b|배당|밸류에이션|저평가|고평가|이익률|매출/i.test(q);
   // [V12.121] 기간별 방향성 예측 질문 — "단기/중기/장기", "며칠 후", "1주일 후엔", "기간별로" 등
@@ -25891,9 +25892,58 @@ async function mlAiAsk(DB, question) {
     lines.push("일반적인 청산 트리거: **MA20 하향이탈** 또는 **ATR 기반 트레일링스탑**(고점 대비 일정폭 하락) 도달 시, 혹은 AI 위원회 성공확률이 42% 이하로 떨어지는 뚜렷한 약세전환 시야. 정해진 목표가보다는 추세 추종형(러너를 살리는) 청산 방식을 쓰고 있어.");
     if (levels && levels.support.length) lines.push("참고로 가까운 지지선(" + levels.support[0].label + " " + Math.round(levels.support[0].v).toLocaleString() + ")을 하향 이탈하면 경계 신호로 볼 만해.");
   }
-  // [V12.116] 사이즈/비중 질문 — 계좌 자체 사이징 규칙(리스크 기준) 설명
-  if (isSizeQ && atrPct != null) {
-    lines.push("사이트의 사이징 원칙은 '고정 리스크'야 — 종목당 손실한도(계좌의 약 0.7~0.9%)를 손절폭(대략 ATR×2, 지금 약 " + (atrPct * 2).toFixed(1) + "%)으로 나눠 수량을 정해. 변동성이 큰(지금 ATR " + atrPct.toFixed(1) + "%) 종목일수록 자동으로 더 작게 사서 손실금액을 종목마다 비슷하게 맞추는 방식이야. 구체적인 수량은 계좌 잔고에 따라 달라져서 여기선 원칙만 안내할게.");
+  // [V32.68] ★매매 플랜(진입·손절·목표·손익비)★ — 지지/저항·ATR로 구체 레벨을 산출해 제시(신규 기능)
+  if ((isPlanQ || (isLevelQ && /손절|스탑|목표|플랜/.test(q))) && atrPct != null && price > 0) {
+    try {
+      const cur = market === "kr" ? "원" : "$";
+      const atrAbs = price * atrPct / 100;
+      // 손절: 가까운 지지 바로 아래 or 진입가-1.5×ATR 중 합리적인 쪽(너무 타이트/과대 방지)
+      let stop = price - 1.5 * atrAbs;
+      if (levels && levels.support && levels.support.length) stop = Math.max(stop, Math.min(price - 0.8 * atrAbs, levels.support[0].v * 0.997));
+      stop = Math.min(stop, price * 0.995);   // 최소한 진입가 아래
+      const risk = Math.max(price - stop, price * 0.005);
+      // 목표: 가까운 저항 or 2R, 그리고 3R
+      const t1 = (levels && levels.resistance && levels.resistance.length) ? levels.resistance[0].v : price + 2 * risk;
+      const t2 = price + 3 * risk;
+      const rr1 = ((t1 - price) / risk);
+      const fmt = function (v) { return Math.round(v).toLocaleString() + cur; };
+      const pctOf = function (v) { return ((v - price) / price * 100).toFixed(1) + "%"; };
+      const L2 = ["**📐 매매 플랜(기술·변동성 기반, 참고용)**"];
+      L2.push("· 진입(현재가): " + fmt(price));
+      L2.push("· 손절: " + fmt(stop) + " (" + pctOf(stop) + " · ATR·지지 기반)");
+      L2.push("· 1차 목표: " + fmt(t1) + " (" + pctOf(t1) + ") · 2차 목표: " + fmt(t2) + " (" + pctOf(t2) + ")");
+      L2.push("· 손익비(1차): 약 " + rr1.toFixed(1) + " : 1" + (rr1 >= 2 ? " — 양호(2:1↑)" : rr1 >= 1.3 ? " — 무난" : " — 낮음, 진입가·손절 재점검 권장"));
+      if (aiP != null) L2.push("· AI 위원회 성공확률 " + (aiP * 100).toFixed(0) + "% → 확률·손익비 결합 기대값 " + (aiP >= 0.5 && rr1 >= 1 ? "우위" : "열위") + " 쪽");
+      lines.push(L2.join("\n"));
+    } catch (e) {}
+  }
+  // [V32.68] ★구체 수량 사이징★ — 실제 계좌 가용현금 × 고정리스크 ÷ 손절폭으로 매수 가능 수량 산출(신규 기능)
+  if (isSizeQ && atrPct != null && price > 0) {
+    try {
+      const cfg2 = migrateCfgToMarkets(Object.assign({}, DEFAULT_CFG, await getState(DB, "cfg", {})));
+      const rbs = cfg2.riskBasedSizing || {}; const riskPct = _num(rbs.riskPerTrade, 0.9);
+      let cash = {}; try { cash = await computeAllCash(DB, cfg2); } catch (e) {}
+      const mkey = market === "kr" ? "kr" : (market === "cm" ? "cm" : "us");
+      const avail = _num(cash[mkey], 0);
+      const cur = market === "kr" ? "원" : "$";
+      const stopDistPct = Math.max(2, atrPct * 2);   // 손절폭 ≈ ATR×2(하한 2%)
+      const riskBudget = avail * (riskPct / 100);
+      const posBudget = riskBudget / (stopDistPct / 100);   // 리스크예산 ÷ 손절폭 = 포지션 금액
+      const capBudget = Math.min(posBudget, avail * 0.4);    // 단일종목 포트 상한(40%)
+      const shares = price > 0 ? Math.floor(capBudget / price) : 0;
+      const L3 = ["**🧮 매수 수량(고정리스크 사이징)**"];
+      L3.push("· 가용 현금(" + (market === "kr" ? "한국" : market === "cm" ? "원자재" : "미국") + "): " + Math.round(avail).toLocaleString() + cur);
+      if (shares > 0) {
+        L3.push("· 제안 수량: 약 **" + shares.toLocaleString() + "주** (≈ " + Math.round(shares * price).toLocaleString() + cur + ", 포지션 비중 " + (avail > 0 ? (shares * price / avail * 100).toFixed(0) : "?") + "%)");
+        L3.push("· 근거: 종목당 손실한도 " + riskPct + "%(=" + Math.round(riskBudget).toLocaleString() + cur + ") ÷ 손절폭 " + stopDistPct.toFixed(1) + "%(ATR×2), 단일종목 40% 상한 적용");
+        if (aiP != null && aiP < 0.5) L3.push("· ⚠️ AI 확률 " + (aiP * 100).toFixed(0) + "%로 낮아 — 제안 수량보다 보수적으로(절반 이하) 가져가는 걸 권장");
+      } else {
+        L3.push("· 가용 현금이 부족하거나 데이터가 없어 구체 수량을 낼 수 없어. 원칙만: 손실한도 " + riskPct + "% ÷ 손절폭 " + stopDistPct.toFixed(1) + "%로 수량 결정.");
+      }
+      lines.push(L3.join("\n"));
+    } catch (e) {}
+  } else if (isSizeQ && atrPct != null) {
+    lines.push("사이트의 사이징 원칙은 '고정 리스크'야 — 종목당 손실한도(계좌의 약 0.7~0.9%)를 손절폭(대략 ATR×2, 지금 약 " + (atrPct * 2).toFixed(1) + "%)으로 나눠 수량을 정해. 변동성이 큰 종목일수록 자동으로 더 작게 사서 손실금액을 맞추는 방식이야.");
   }
   lines.push("_규칙기반 기술분석 + AI위원회 확률을 조합한 참고용 해석이며, 투자판단의 책임은 본인에게 있어. 외부 AI API는 사용하지 않고 이 사이트 내부 데이터로만 답했어._");
   return { ok: true, symbol: sym, answer: lines.join("\n") };
