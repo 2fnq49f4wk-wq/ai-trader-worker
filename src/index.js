@@ -23522,6 +23522,7 @@ async function mlNewsNextDayNightly(DB) {
 
 async function mlUniverseScanNightly(DB) {
   if (!LUXML.enabled) return null;
+  const _scanT0 = Date.now();   // [V32.55] 스캔 소요시간 측정
   try {
     const mind = await mlMindLoad(DB);
     const l1 = await mlLoadModel(DB);
@@ -23628,7 +23629,10 @@ async function mlUniverseScanNightly(DB) {
     for (const m of ["us", "kr", "cm"]) newOffs[m] = symsByMkt[m].length ? (offs[m] + scannedByMkt[m]) % symsByMkt[m].length : 0;
     try { await setState(DB, "ai_scan_offset", newOffs); } catch (e) {}
     const _tiltedN = picks.filter(function (p) { return p.evTilt; }).length;
+    const _scanDur = Date.now() - _scanT0;   // [V32.55] 스캔 소요시간(ms)
+    const _scanRate = _scanDur > 0 ? +(scanned / (_scanDur / 1000)).toFixed(1) : null;   // 초당 분석 종목수
     await setState(DB, "ai_picks:scan", { ts: Date.now(), scanned: scanned, total: syms.length, picks: picks.slice(0, 40),
+      durMs: _scanDur, rate: _scanRate,
       byMkt: { us: symsByMkt.us.length, kr: symsByMkt.kr.length, cm: symsByMkt.cm.length }, scannedByMkt: scannedByMkt,
       events: _evCtx.evs.map(function (e) { return { code: e.code, label: e.play.label, intensity: e.intensity, conf: _conf[e.code] != null ? _conf[e.code] : null }; }), marketConfirm: _evCtx.mc, tiltedN: _tiltedN,
       shock: (_shock && _shock.mode !== "none") ? _shock : null });
@@ -24097,9 +24101,11 @@ async function _luxWorldNews(DB, opts) {
   }
   // (2) 로테이션 창의 피드를 병렬 수집(피드당 6초 상한)
   const _sig6 = function () { try { return AbortSignal.timeout(6000); } catch (e) { return undefined; } };
+  const _fetchT0 = Date.now();   // [V32.55] 외부 뉴스 fetch 속도 측정
   const results = await Promise.all(feeds.map(async function (f) {
     try { const r = await fetch(f.u, { headers: { "User-Agent": "Mozilla/5.0 (compatible)" }, signal: _sig6() }); if (!r.ok) return null; return { s: f.s, items: _parseRss(await r.text(), 30) }; } catch (e) { return null; }
   }));
+  const _fetchMs = Date.now() - _fetchT0;
   for (const res of results) {
     if (!res || !res.items) continue;
     okFeeds++;
@@ -24133,7 +24139,7 @@ async function _luxWorldNews(DB, opts) {
   stats.uniqSeen += newCnt; stats.refreshes++; stats.sampleKeys = keepKeys.slice(-1500); stats.lastTs = now;
   try { await setState(DB, "news_stats", stats); } catch (e) {}
   const out = { headlines: heads, ts: now, dedupN: heads.length, rawSeen: rawSeen, dropOld: dropOld, dropDup: dropDup, noDate: noDate,
-    feedsOk: okFeeds, feedsWindow: feeds.length, feedsTotal: _WORLD_FEEDS.length, carried: carried,
+    feedsOk: okFeeds, feedsWindow: feeds.length, feedsTotal: _WORLD_FEEDS.length, carried: carried, fetchMs: _fetchMs,
     multiSource: heads.filter(function (h) { return (h.sources || 1) >= 2; }).length,
     marketSenti: marketSenti,
     freshN: heads.filter(function (h) { return h.ageH != null && h.ageH <= 24; }).length, dayUniqSeen: stats.uniqSeen, day: dayKey };
@@ -24747,8 +24753,11 @@ async function _luxSelfCheck(DB) {
   const nowT = Date.now();
   const add = function (level, area, msg) { issues.push({ level: level, area: area, msg: msg }); };
   const ageH = function (ts) { return ts ? (nowT - ts) / 3600000 : null; };
+  let perf = {};
   try {
-    let S = {}; try { S = await getStates(DB, ["ai_picks:scan", "crisis_gauge", "world_news", "tag_returns", "macro_data", "mkt_context", "committee_cal", "event_efficacy", "dnn_trust", "gbdt_trust", "ai_selfreview"]); } catch (e) {}
+    // [V32.55] fetch/로딩 속도 프록시 — 대표 상태 배치 read 왕복시간 측정
+    let S = {}, _sLoadMs = null; try { const _t = Date.now(); S = await getStates(DB, ["ai_picks:scan", "crisis_gauge", "world_news", "tag_returns", "macro_data", "mkt_context", "committee_cal", "event_efficacy", "dnn_trust", "gbdt_trust", "ai_selfreview", "news_stats", "sector_news_sentiment"]); _sLoadMs = Date.now() - _t; } catch (e) {}
+    perf.dbReadMs = _sLoadMs;
     // 모델 준비 상태
     let mind = null; try { mind = await mlMindLoad(DB); } catch (e) {}
     if (!mind) add("error", "모델", "MIND(위원장) 미로딩 — 위원회가 규칙엔진 폴백으로 동작 중일 수 있음");
@@ -24770,6 +24779,27 @@ async function _luxSelfCheck(DB) {
     if (!S["tag_returns"]) add("info", "이벤트엔진", "tag_returns 없음(첫 스캔 전) — 이벤트 확증 대기");
     const mdH = ageH(S["macro_data"] && S["macro_data"].ts);
     if (mdH != null && mdH > 48) add("warn", "거시", "macro_data " + mdH.toFixed(0) + "h 전 — 금리/거시 갱신 지연");
+    // [V32.55] ★성능·처리량 지표★ — fetch/로딩 속도, 유입 데이터량, AI 스캔 속도·스캔량
+    try {
+      if (scan) perf.scan = { scanned: scan.scanned || 0, total: scan.total || 0, durMs: scan.durMs != null ? scan.durMs : null, rate: scan.rate != null ? scan.rate : null, ageH: scH != null ? +scH.toFixed(1) : null, coverage: (scan.total ? Math.round((scan.scanned / scan.total) * 100) : null) };
+      const wn = S["world_news"];
+      if (wn) perf.news = { accum: wn.dedupN || 0, fresh24h: wn.freshN || 0, todaySeen: wn.dayUniqSeen || 0, multiSource: wn.multiSource != null ? wn.multiSource : null, feedsOk: wn.feedsOk != null ? wn.feedsOk : null, feedsTotal: wn.feedsTotal || (typeof _WORLD_FEEDS !== "undefined" ? _WORLD_FEEDS.length : null), senti: wn.marketSenti != null ? wn.marketSenti : null, fetchMs: wn.fetchMs != null ? wn.fetchMs : null };
+      const ns = S["news_stats"]; if (ns && ns.uniqSeen != null && (!perf.news || !perf.news.todaySeen)) { perf.news = perf.news || {}; perf.news.todaySeen = ns.uniqSeen; }
+      // 섹터/종목 뉴스 저장분
+      let secCnt = 0; try { const sn = S["sector_news_sentiment"]; if (sn && sn.headlines) for (const g of Object.keys(sn.headlines)) secCnt += (sn.headlines[g] || []).length; } catch (e) {}
+      perf.sectorNews = secCnt;
+      const tr = S["tag_returns"]; if (tr && tr.tags) perf.tagCovered = Object.keys(tr.tags).length;
+      // 시세(일봉) 저장 종목수 — 유입 데이터 규모
+      try { const r1 = await DB.prepare("SELECT COUNT(*) c FROM state WHERE k LIKE 'daily:%'").all(); perf.dailyStored = (r1 && r1.results && r1.results[0] && r1.results[0].c) || 0; } catch (e) {}
+      // 보유 포지션수
+      let held = 0; for (const mk of ["us", "kr", "cm", "bdus", "bdkr"]) { try { const pos = await getPositions(DB, mk); held += Object.keys(pos || {}).length; } catch (e) {} }
+      perf.positions = held;
+      // 성능 경고
+      if (_sLoadMs != null && _sLoadMs > 800) add("warn", "속도", "상태 로딩 " + _sLoadMs + "ms — DB 응답 지연(일시적 부하 가능)");
+      if (scan && scan.durMs != null && scan.durMs >= 88000) add("warn", "스캔속도", "스캔이 90s 벽시계 한도 근접(" + Math.round(scan.durMs / 1000) + "s) — 유니버스 대비 커버리지 확인");
+      if (scan && scan.total && scan.scanned / scan.total < 0.5 && scan.durMs != null && scan.durMs >= 80000) add("info", "스캔량", "이번 스캔 커버리지 " + Math.round(scan.scanned / scan.total * 100) + "% — 나머지는 다음 사이클 순환 커버(정상)");
+      if (perf.news && perf.news.fresh24h != null && perf.news.fresh24h < 5 && wnH != null && wnH < 6) add("warn", "뉴스량", "최근24h 유입 뉴스 " + perf.news.fresh24h + "건으로 적음 — 소스/네트워크 점검 권장");
+    } catch (e) {}
     // 최근 에러/경고 로그 집계(6h)
     try {
       const since = nowT - 6 * 3600000;
@@ -24784,7 +24814,7 @@ async function _luxSelfCheck(DB) {
   const errCnt = issues.filter(function (x) { return x.level === "error"; }).length;
   const warnCnt = issues.filter(function (x) { return x.level === "warn"; }).length;
   const status = errCnt > 0 ? "error" : warnCnt > 0 ? "warn" : "ok";
-  return { status: status, errCnt: errCnt, warnCnt: warnCnt, issues: issues, ts: nowT };
+  return { status: status, errCnt: errCnt, warnCnt: warnCnt, issues: issues, perf: perf, ts: nowT };
 }
 
 // [V32.51] 태그 한글 라벨 + 활성 이벤트 종합 순(net) 섹터 선호도 — 여러 이슈를 합산해 '지금 어디가 유리/불리'인지.
@@ -24964,6 +24994,21 @@ async function mlAiAsk(DB, question) {
       const hd = chk.status === "error" ? "오류 감지" : chk.status === "warn" ? "경고(주의)" : "정상";
       const L = ["**" + emo + " 시스템 자가진단: " + hd + "**"];
       L.push("에러 " + chk.errCnt + "건 · 경고 " + chk.warnCnt + "건 (최근 6시간 로그·상태 신선도·모델 준비 기준)");
+      // [V32.55] 성능·처리량 지표
+      const pf = chk.perf || {};
+      L.push("");
+      L.push("**⚡ 속도·처리량**");
+      if (pf.dbReadMs != null) L.push("· 데이터 로딩(DB 응답): " + pf.dbReadMs + "ms" + (pf.dbReadMs <= 300 ? " (빠름)" : pf.dbReadMs <= 800 ? " (보통)" : " (지연)"));
+      if (pf.news && pf.news.fetchMs != null) L.push("· 뉴스 fetch(외부 RSS " + (pf.news.feedsOk != null ? pf.news.feedsOk + "개" : "") + "): " + pf.news.fetchMs + "ms" + (pf.news.fetchMs <= 2000 ? " (빠름)" : pf.news.fetchMs <= 5000 ? " (보통)" : " (지연)"));
+      if (pf.scan) {
+        const sc = pf.scan;
+        L.push("· AI 스캔: " + sc.scanned + "/" + sc.total + "종목" + (sc.coverage != null ? " (커버 " + sc.coverage + "%)" : "") + (sc.durMs != null ? " · " + (sc.durMs / 1000).toFixed(1) + "초" : "") + (sc.rate != null ? " · " + sc.rate + "종목/초" : "") + (sc.ageH != null ? " · " + sc.ageH + "h 전" : ""));
+      }
+      if (pf.news) {
+        const n = pf.news;
+        L.push("· 뉴스 유입: 누적 " + (n.accum || 0) + "건 · 최근24h " + (n.fresh24h || 0) + "건 · 오늘관측 " + (n.todaySeen || 0) + "건" + (n.multiSource != null ? " · 다매체교차 " + n.multiSource + "건" : "") + (n.feedsOk != null ? " · 소스 " + n.feedsOk + "/" + (n.feedsTotal || "?") + "개" : "") + (n.senti != null ? " · 심리 " + (n.senti >= 0 ? "+" : "") + n.senti : ""));
+      }
+      if (pf.sectorNews != null || pf.dailyStored != null || pf.tagCovered != null) L.push("· 저장 데이터: 시세 " + (pf.dailyStored != null ? pf.dailyStored + "종목" : "?") + " · 섹터뉴스 " + (pf.sectorNews || 0) + "건" + (pf.tagCovered != null ? " · 테마바스켓 " + pf.tagCovered + "개" : "") + (pf.positions != null ? " · 보유 " + pf.positions + "종목" : ""));
       if (chk.issues.length) {
         L.push("");
         const ico = { error: "🔴", warn: "🟡", info: "ℹ️" };
