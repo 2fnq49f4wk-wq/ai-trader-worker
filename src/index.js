@@ -24794,6 +24794,33 @@ async function _luxSelfCheck(DB) {
       // 보유 포지션수
       let held = 0; for (const mk of ["us", "kr", "cm", "bdus", "bdkr"]) { try { const pos = await getPositions(DB, mk); held += Object.keys(pos || {}).length; } catch (e) {} }
       perf.positions = held;
+      // [V32.56] ★AI 학습표본 누적 속도·양★ — ml_samples(현재 featVer) 총량·최근 유입으로 적재 속도 산출
+      try {
+        const fv = (typeof LUXML !== "undefined") ? LUXML.featVer : null;
+        const t24 = nowT - 24 * 3600000, t7 = nowT - 7 * 86400000;
+        let total = null, d1 = null, d7 = null;
+        try { const r = await DB.prepare("SELECT COUNT(*) c FROM ml_samples WHERE featver=?").bind(fv).first(); total = (r && r.c) || 0; } catch (e) {}
+        try { const r = await DB.prepare("SELECT COUNT(*) c FROM ml_samples WHERE featver=? AND ts>=?").bind(fv, t24).first(); d1 = (r && r.c) || 0; } catch (e) {}
+        try { const r = await DB.prepare("SELECT COUNT(*) c FROM ml_samples WHERE featver=? AND ts>=?").bind(fv, t7).first(); d7 = (r && r.c) || 0; } catch (e) {}
+        perf.samples = { total: total, last24h: d1, last7d: d7, perDay: d7 != null ? Math.round(d7 / 7) : null, featVer: fv };
+        if (total != null && total < 300) add("info", "학습표본", "현재 featVer 표본 " + total + "건 — 위원회 신뢰 승격 표본 축적 중");
+        if (d1 === 0 && d7 === 0) add("warn", "학습표본", "최근 7일 신규 표본 0건 — 야간 수확/실거래 표본 적재 점검 필요");
+      } catch (e) {}
+      // [V32.56] ★Modal 외부학습 파이프라인 건강도★ — 외부(Modal) 학습결과 수신 신선도(6h 크론 대비)
+      try {
+        const ext = [];
+        const chkE = function (name, obj) { if (obj && obj.source === "external" && obj.trainedAt) ext.push({ name: name, ageH: (nowT - obj.trainedAt) / 3600000 }); };
+        chkE("MIND", S["mind_model"]); chkE("DNN", S["dnn_trust"]); chkE("GBDT", S["gbdt_trust"]);
+        try { const B = await getStates(DB, ["xgb_trust", "lgb_trust", "cat_trust"]); chkE("XGB", B["xgb_trust"]); chkE("LGB", B["lgb_trust"]); chkE("Cat", B["cat_trust"]); } catch (e) {}
+        if (!ext.length) { perf.modal = { received: 0 }; add("warn", "Modal학습", "외부(Modal) 학습결과 수신 이력 없음 — 트레이너 배포/시크릿(BASE_URL·TRAIN_KEY) 또는 크론 미실행 점검"); }
+        else {
+          ext.sort(function (a, b) { return a.ageH - b.ageH; });
+          const fr = ext[0];
+          perf.modal = { received: ext.length, freshestModel: fr.name, freshestAgeH: +fr.ageH.toFixed(1), models: ext.map(function (e) { return { name: e.name, ageH: +e.ageH.toFixed(1) }; }) };
+          // 크론 6시간 → 두 사이클(>14h) 넘게 신규 수신 없으면 지연/고장 의심
+          if (fr.ageH > 14) add(fr.ageH > 26 ? "error" : "warn", "Modal학습", "최근 Modal 학습 수신 " + fr.ageH.toFixed(0) + "h 전 — 6시간 주기 대비 지연(트레이너 다운/시크릿 만료/크론 미실행 의심)");
+        }
+      } catch (e) {}
       // 성능 경고
       if (_sLoadMs != null && _sLoadMs > 800) add("warn", "속도", "상태 로딩 " + _sLoadMs + "ms — DB 응답 지연(일시적 부하 가능)");
       if (scan && scan.durMs != null && scan.durMs >= 88000) add("warn", "스캔속도", "스캔이 90s 벽시계 한도 근접(" + Math.round(scan.durMs / 1000) + "s) — 유니버스 대비 커버리지 확인");
@@ -25009,6 +25036,15 @@ async function mlAiAsk(DB, question) {
         L.push("· 뉴스 유입: 누적 " + (n.accum || 0) + "건 · 최근24h " + (n.fresh24h || 0) + "건 · 오늘관측 " + (n.todaySeen || 0) + "건" + (n.multiSource != null ? " · 다매체교차 " + n.multiSource + "건" : "") + (n.feedsOk != null ? " · 소스 " + n.feedsOk + "/" + (n.feedsTotal || "?") + "개" : "") + (n.senti != null ? " · 심리 " + (n.senti >= 0 ? "+" : "") + n.senti : ""));
       }
       if (pf.sectorNews != null || pf.dailyStored != null || pf.tagCovered != null) L.push("· 저장 데이터: 시세 " + (pf.dailyStored != null ? pf.dailyStored + "종목" : "?") + " · 섹터뉴스 " + (pf.sectorNews || 0) + "건" + (pf.tagCovered != null ? " · 테마바스켓 " + pf.tagCovered + "개" : "") + (pf.positions != null ? " · 보유 " + pf.positions + "종목" : ""));
+      if (pf.samples) {
+        const sm = pf.samples;
+        L.push("· AI 학습표본: 누적 " + (sm.total != null ? sm.total.toLocaleString() : "?") + "건" + (sm.perDay != null ? " · 적재속도 ~" + sm.perDay.toLocaleString() + "건/일" : "") + " (최근24h " + (sm.last24h != null ? sm.last24h : "?") + "건 · 7일 " + (sm.last7d != null ? sm.last7d : "?") + "건)");
+      }
+      if (pf.modal) {
+        const md = pf.modal;
+        if (md.received === 0) L.push("· 🛰️ Modal 외부학습: **수신 이력 없음** — 트레이너/시크릿/크론 점검 필요");
+        else L.push("· 🛰️ Modal 외부학습: 최신 " + md.freshestModel + " " + md.freshestAgeH + "h 전 수신" + (md.freshestAgeH > 14 ? " ⚠️ 6h주기 대비 지연" : " (정상)") + " · 수신모델 " + md.models.map(function (m) { return m.name; }).join("/"));
+      }
       if (chk.issues.length) {
         L.push("");
         const ico = { error: "🔴", warn: "🟡", info: "ℹ️" };
