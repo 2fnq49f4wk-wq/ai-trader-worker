@@ -3571,6 +3571,7 @@ html[data-theme="light"] .table tbody tr:hover{background:rgba(9,105,218,.045);}
       </div>
       <div style="display:flex;gap:8px;align-items:center;">
         <button class="nnv-btn" onclick="redeployBrain()" title="Modal 학습기를 재배포하고 즉시 1회 재학습(GitHub Actions 수동 실행)">🚀 재학습·재배포</button>
+        <button class="nnv-btn" onclick="openModalActions()" title="관리 키 없이 GitHub Actions 페이지에서 직접 실행 — Run workflow → run_now 체크 → Run">🐙 GitHub에서 실행(키 불필요)</button>
         <button class="nnv-btn" onclick="openNnViz(1)">↻ 새로고침</button>
       </div>
     </div>
@@ -11592,11 +11593,20 @@ html[data-theme="light"] #page-nnviz .nnv-title,html[data-theme="light"] #page-n
   // [V12.42] 두뇌 재학습·재배포 — 버튼 한 번으로 GitHub Actions workflow_dispatch를 Worker가 대리
   //   호출(/api/ops/redeploy). 브라우저엔 GitHub 토큰이 없고 TRAIN_KEY만 최초 1회 입력받아 저장.
   //   Worker에 GITHUB_TOKEN 시크릿이 없으면(503) 종전처럼 GitHub 페이지를 여는 폴백.
+  // [V32.58] 관리 키 없이 GitHub Actions에서 바로 실행 — 저장소 소유자 GitHub 로그인만으로 실행(키 불필요)
+  window.openModalActions = function(){
+    if(!confirm('GitHub Actions 페이지를 엽니다.\n거기서 우측 "Run workflow" ▾ → run_now 체크 → "Run workflow" 를 누르면\nModal 학습기 재배포 + 즉시 1회 학습이 실행됩니다.\n(관리 키 불필요 — GitHub 로그인만 필요)\n\n계속할까요?')) return;
+    window.open('https://github.com/2fnq49f4wk-wq/ai-trader-worker/actions/workflows/modal-deploy.yml','_blank','noopener');
+  };
   window.redeployBrain = function(){
     var key = localStorage.getItem('luxTrainKey') || '';
     if(!key){
-      key = prompt('관리 키(TRAIN_KEY)를 입력하세요 — 이 브라우저에 1회만 저장됩니다.');
-      if(!key) return;
+      key = prompt('관리 키(TRAIN_KEY)를 입력하세요 — 이 브라우저에 1회만 저장됩니다.\n(키를 모르면 취소를 눌러 GitHub에서 직접 실행할 수 있어요)');
+      if(!key){
+        // 키를 모르면 GitHub Actions에서 직접 실행하도록 안내
+        if(confirm('관리 키 없이 GitHub Actions 페이지에서 직접 실행할까요?\n(Run workflow → run_now 체크 → Run)')) window.openModalActions();
+        return;
+      }
       localStorage.setItem('luxTrainKey', key);
     }
     if(!confirm('Modal 학습기를 재배포하고 즉시 1회 재학습합니다. 진행할까요?\n(약 5~8분 뒤 두뇌 갱신)')) return;
