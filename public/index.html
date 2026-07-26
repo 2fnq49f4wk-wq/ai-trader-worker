@@ -3720,16 +3720,28 @@ html[data-theme="light"] .table tbody tr:hover{background:rgba(9,105,218,.045);}
       <input type="text" class="logs-search" id="logsSearch" placeholder="검색 (심볼/메시지/RSI 등)...">
       <span class="logs-info" id="logsInfo">0 / 0</span>
     </div>
-    <!-- [V32.60] 종류별 그룹 필터 — 거래/판단/학습·시스템/오류로 분류 -->
-    <div class="log-filter" style="margin-bottom:6px;">
+    <!-- [V32.60/61] 종류별 그룹 필터 — 거래·판단·오류(레벨) + fetch·뉴스·AI(내용) -->
+    <div class="log-filter" style="margin-bottom:5px;">
       <button data-levels="" data-label="전체" class="active">전체</button>
       <button data-levels="TRADE,BUY,SELL,CLOSED" data-label="💰 거래">💰 거래</button>
       <button data-levels="SIGNAL,NOBUY,SKIP" data-label="🎯 판단·신호">🎯 판단·신호</button>
-      <button data-levels="TUNE,INFO" data-label="🧠 학습·시스템">🧠 학습·시스템</button>
       <button data-levels="ERROR,WARN" data-label="⚠️ 오류·경고">⚠️ 오류·경고</button>
     </div>
+    <div class="log-filter" style="margin-bottom:5px;">
+      <span style="font-size:9px;color:var(--t3,#889);align-self:center;margin-right:2px;">데이터 fetch</span>
+      <button data-match="\[PX\]|batchQuotes|quote batch|시세|백필" data-label="📈 주식">📈 주식</button>
+      <button data-match="\[CM\b|\[CM-|원자재|commodity" data-label="⛏ 원자재">⛏ 원자재</button>
+      <button data-match="채권|bond|bdus|bdkr|국채|treasur|\[BD" data-label="◈ 채권">◈ 채권</button>
+      <button data-match="\[WORLD-NEWS\]|\[SECTOR-NEWS\]|뉴스|SENTI|헤드라인" data-label="📰 뉴스">📰 뉴스</button>
+    </div>
+    <div class="log-filter" style="margin-bottom:5px;">
+      <span style="font-size:9px;color:var(--t3,#889);align-self:center;margin-right:2px;">AI</span>
+      <button data-match="\[SCAN\]|LUX-AI|전종목|스캔" data-label="🔍 스캔">🔍 스캔</button>
+      <button data-match="\[HV\]|HARVEST|\[HIST\]|TRAIN|\[MIND\]|\[DNN\]|\[GBDT\]|\[BRAIN\]|\[CAL\]|SELFREVIEW|\[XGB\]|\[LGB\]|\[CAT\]|MODAL|MLOPS|REFILL|학습|수확|훈련|보정" data-label="🧪 학습">🧪 학습</button>
+      <button data-levels="TUNE,INFO" data-label="🧠 시스템">🧠 시스템</button>
+    </div>
     <div class="log-filter log-filter-detail" style="margin-bottom:10px;opacity:.9;">
-      <span style="font-size:9px;color:var(--t3,#889);align-self:center;margin-right:2px;">세부</span>
+      <span style="font-size:9px;color:var(--t3,#889);align-self:center;margin-right:2px;">세부레벨</span>
       <button data-levels="TRADE" data-label="TRADE">TRADE</button>
       <button data-levels="BUY" data-label="BUY">BUY</button>
       <button data-levels="SELL" data-label="SELL">SELL</button>
@@ -4131,6 +4143,7 @@ html[data-theme="light"] .table tbody tr:hover{background:rgba(9,105,218,.045);}
   var allLogs = [];
   var logFilter = 'ALL';
   var logFilterLevels = [];   // [V32.60] 선택된 레벨 집합(빈 배열=전체)
+  var logFilterMatchRe = null;   // [V32.61] 내용 기반(정규식) 필터 — fetch/뉴스/AI 그룹용
   var logSearchText = '';
   var currentCfg = null;
   var currentSectorGroups = { stats: {}, weights: {} };  // [섹터그룹] 그룹별 성과·가중치
@@ -8741,8 +8754,10 @@ html[data-theme="light"] .table tbody tr:hover{background:rgba(9,105,218,.045);}
     document.querySelectorAll('.log-filter button').forEach(function(b){
       var label = b.getAttribute('data-label'); if (label == null) return;
       var lv = b.getAttribute('data-levels');
+      var mt = b.getAttribute('data-match');
       var n;
-      if (!lv || !lv.length) n = allLogs.length;
+      if (mt) { var re; try { re = new RegExp(mt, 'i'); } catch(e) { re = null; } n = re ? allLogs.filter(function(l){ return re.test((l.message||'') + ' ' + (l.level||'')); }).length : 0; }
+      else if (!lv || !lv.length) n = allLogs.length;
       else { n = 0; lv.split(',').forEach(function(k){ n += (counts[k] || 0); }); }
       b.textContent = label + ' (' + n + ')';
     });
@@ -8754,6 +8769,7 @@ html[data-theme="light"] .table tbody tr:hover{background:rgba(9,105,218,.045);}
     try { updateLogFilterCounts(); } catch(e) {}
     var filtered = allLogs;
     if (logFilterLevels && logFilterLevels.length) filtered = filtered.filter(function(l){return logFilterLevels.indexOf(l.level) >= 0;});
+    else if (logFilterMatchRe) filtered = filtered.filter(function(l){return logFilterMatchRe.test((l.message||'') + ' ' + (l.level||''));});
     if (logSearchText) {
       var q = logSearchText.toLowerCase();
       filtered = filtered.filter(function(l){
@@ -10614,7 +10630,10 @@ html[data-theme="light"] .table tbody tr:hover{background:rgba(9,105,218,.045);}
       document.querySelectorAll('.log-filter button').forEach(function(x){x.classList.remove('active');});
       b.classList.add('active');
       var lv = b.getAttribute('data-levels');
+      var mt = b.getAttribute('data-match');
       logFilterLevels = (lv && lv.length) ? lv.split(',') : [];
+      logFilterMatchRe = null;
+      if (!logFilterLevels.length && mt) { try { logFilterMatchRe = new RegExp(mt, 'i'); } catch(e) { logFilterMatchRe = null; } }
       renderLogs();
     });
   });
