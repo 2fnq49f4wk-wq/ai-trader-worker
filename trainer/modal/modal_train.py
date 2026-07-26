@@ -390,8 +390,10 @@ def _train_and_upload_gbdt(BASE, KEY, HDR, X, Y, TS, featver, D):
     import numpy as np, math, json, time, requests
     # [V32.9] GBDT 강화: 학습률↓+트리↑(저LR·다트리=일반화 향상, 표준 부스팅 정석) + 행/열 서브샘플
     #   (stochastic GBDT — 과적합↓·일반화↑). 표(tabular) 금융데이터엔 딥넷보다 GBDT가 보통 강함.
-    ETA, MAXDEPTH, LAM, GAMMA, MINCHILD = 0.04, 4, 1.0, 0.1, 5.0
-    MAXBINS, MAXTREES, PATIENCE, VALFRAC = 64, 400, 30, 0.2
+    # [V32.66] 부스터 강화: 학습률↓(0.04→0.03)·트리↑(400→600)·patience↑(30→50)
+    #   저LR·다트리·조기중단 = 더 세밀한 그래디언트로 일반화↑(과적합은 early-stop+홀드아웃 게이트가 방어).
+    ETA, MAXDEPTH, LAM, GAMMA, MINCHILD = 0.03, 4, 1.0, 0.1, 5.0
+    MAXBINS, MAXTREES, PATIENCE, VALFRAC = 64, 600, 50, 0.2
     SUBSAMPLE, COLSAMPLE = 0.8, 0.8
     rng = np.random.default_rng(12345)
     N = len(Y)
@@ -589,11 +591,12 @@ def _train_and_upload_boosters(BASE, KEY, HDR, X, Y, TS, featver, D):
         # [V32.15] 노이즈 큰 금융 holdout에서 depth5·patience30은 3~7트리에서 조기절단(≈랜덤)됐다.
         #   얕은트리(depth4)+강한 규제(min_child·λ↑)+더 큰 patience(60)로 신호가 드러날 시간을 준다.
         dtr = xgb.DMatrix(Xtr, label=Ytr); dva = xgb.DMatrix(Xva, label=Yva)
-        bst = xgb.train({"objective": "binary:logistic", "max_depth": 4, "eta": 0.04,
+        # [V32.66] 강화: eta 0.04→0.03, rounds 800→1200, patience 60→90 (저LR·다트리·조기중단)
+        bst = xgb.train({"objective": "binary:logistic", "max_depth": 4, "eta": 0.03,
                          "lambda": 3.0, "min_child_weight": 8, "gamma": 0.1,
                          "subsample": 0.8, "colsample_bytree": 0.8, "base_score": 0.5},
-                        dtr, num_boost_round=800, evals=[(dva, "v")],
-                        early_stopping_rounds=60, verbose_eval=False)
+                        dtr, num_boost_round=1200, evals=[(dva, "v")],
+                        early_stopping_rounds=90, verbose_eval=False)
         def _pxgb(n):
             if "leaf" in n: return {"w": float(n["leaf"])}
             f = int(n["split"][1:]) if isinstance(n["split"], str) else int(n["split"])
@@ -615,11 +618,12 @@ def _train_and_upload_boosters(BASE, KEY, HDR, X, Y, TS, featver, D):
         import lightgbm as lgb
         # [V32.15] 얕은트리(depth4·leaves16)+강한 규제(min_data 60)+patience 60 — 조기절단 방지.
         ltr = lgb.Dataset(Xtr, label=Ytr); lva = lgb.Dataset(Xva, label=Yva, reference=ltr)
+        # [V32.66] 강화: lr 0.04→0.03, rounds 800→1200, patience 60→90
         lbst = lgb.train({"objective": "binary", "max_depth": 4, "num_leaves": 16,
-                          "learning_rate": 0.04, "bagging_fraction": 0.8, "bagging_freq": 1,
+                          "learning_rate": 0.03, "bagging_fraction": 0.8, "bagging_freq": 1,
                           "feature_fraction": 0.8, "min_data_in_leaf": 60, "lambda_l2": 3.0, "verbose": -1},
-                         ltr, num_boost_round=800, valid_sets=[lva],
-                         callbacks=[lgb.early_stopping(60, verbose=False)])
+                         ltr, num_boost_round=1200, valid_sets=[lva],
+                         callbacks=[lgb.early_stopping(90, verbose=False)])
         def _plgb(n):
             if "leaf_value" in n: return {"w": float(n["leaf_value"])}
             return {"f": int(n["split_feature"]), "t": float(n["threshold"]),
@@ -637,8 +641,9 @@ def _train_and_upload_boosters(BASE, KEY, HDR, X, Y, TS, featver, D):
     try:
         from catboost import CatBoostClassifier
         # [V32.15] depth4·lr0.04·l2 6·patience60 — 얕고 규제 강하게(3트리 조기절단 방지).
-        cb = CatBoostClassifier(depth=4, iterations=800, learning_rate=0.04, l2_leaf_reg=6.0,
-                                random_seed=42, verbose=0, early_stopping_rounds=60, use_best_model=True)
+        # [V32.66] 강화: lr 0.04→0.03, iterations 800→1500, patience 60→90
+        cb = CatBoostClassifier(depth=4, iterations=1500, learning_rate=0.03, l2_leaf_reg=6.0,
+                                random_seed=42, verbose=0, early_stopping_rounds=90, use_best_model=True)
         cb.fit(Xtr, Ytr, eval_set=(Xva, Yva))
         tf = tempfile.mktemp(suffix=".json"); cb.save_model(tf, format="json")
         cbj = json.load(open(tf)); os.remove(tf)

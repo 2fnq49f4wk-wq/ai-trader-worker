@@ -14927,18 +14927,26 @@ async function handleRequest(request, env, ctx) {
             const dy = y[i] - m0, d1 = x1[i] - m1, d2 = x2[i] - m2;
             s11 += d1 * d1; s22 += d2 * d2; s12 += d1 * d2; sy1 += dy * d1; sy2 += dy * d2; syy += dy * dy;
           }
-          let bM = 0, bF = 0, r2 = 0, usedMkt = 1;
+          let bM = 0, bF = 0, r2 = 0, usedMkt = 1, varbF = 0;
           const det = s11 * s22 - s12 * s12;
           if (s11 > 0 && s22 > 0 && Math.abs(det) > 1e-6 * s11 * s22) {
             bM = (sy1 * s22 - sy2 * s12) / det;
             bF = (sy2 * s11 - sy1 * s12) / det;
           } else { usedMkt = 0; bM = 0; bF = s22 > 0 ? sy2 / s22 : 0; }
           if (syy > 0) r2 = Math.max(0, Math.min(1, (bM * sy1 + bF * sy2) / syy));
-          const w = Math.min(1, Math.sqrt(r2) * 1.5);
+          // [V32.66] ★유의성(t-검정) 기반 축소★ — 통계적으로 약한(우연) 팩터베타가 비현실적 예측을 만들던 문제 해결.
+          //   SSE로 잔차분산 σ²을 구해 se(bF)·t값을 계산하고, |t|가 작으면 베타를 0쪽으로 강하게 축소.
+          const sse = Math.max(1e-9, syy - (bM * sy1 + bF * sy2));
+          const sigma2 = sse / Math.max(1, N - 2);
+          varbF = usedMkt ? (sigma2 * s11 / det) : (s22 > 0 ? sigma2 / s22 : 0);
+          const tF = (varbF > 0) ? Math.abs(bF) / Math.sqrt(varbF) : 0;
+          const sigShrink = (tF * tF) / (tF * tF + 4);   // |t|<2 → 강한 축소, |t|≈3 → 0.69, |t|≥5 → ~0.86
+          // R²(설명력) 축소 × 유의성 축소 결합 — 노이즈 베타는 크게 줄고, 견고한 베타만 반영
+          const w = Math.min(1, Math.sqrt(r2) * 1.3) * sigShrink;
           const volNow = stdv(s20.slice(-40)), volAll = stdv(s20.slice(-160));
-          const regime = volAll > 0 ? Math.max(0.8, Math.min(1.4, volNow / volAll)) : 1;
+          const regime = volAll > 0 ? Math.max(0.85, Math.min(1.3, volNow / volAll)) : 1;   // [V32.66] 국면승수 완화 0.8~1.4→0.85~1.3
           const sigS20 = volAll * 100;
-          return { bF: +(bF * w).toFixed(4), bM: +bM.toFixed(3), r2: +r2.toFixed(3), n: N,
+          return { bF: +(bF * w).toFixed(4), bM: +bM.toFixed(3), r2: +r2.toFixed(3), n: N, tF: +tF.toFixed(2),
             sig20: +sigS20.toFixed(2), reg: +regime.toFixed(2), mk: usedMkt };
         };
         // ── 팩터별 사전계산(시계열·충격·gF) + 종목 계수(팩터별 6h 캐시) ──
@@ -14953,7 +14961,9 @@ async function handleRequest(request, env, ctx) {
           const sigF20 = stdv(f20.slice(-160));
           const shockUnit = isDiff ? sc.shock : sc.shock / 100;
           const X = sigF20 > 0 ? Math.abs(shockUnit) / sigF20 : 1;
-          const hDays = speed === "fast" ? 5 : Math.min(500, Math.max(20, Math.round(20 * X * X)));
+          // [V32.66] 지평선 확대를 X²→X(선형)로 완화하고 상한 500→120영업일 — 대형 충격이 예상등락을
+          //   비현실적으로 증폭(√(500/20)=5배)하던 문제 해결. 큰 쇼크도 과도한 장기 파급으로 뻥튀기 안 됨.
+          const hDays = speed === "fast" ? 5 : Math.min(120, Math.max(20, Math.round(20 * Math.min(3, X))));
           const gF = {};
           for (const isym of ["^GSPC", "^KS11"]) {
             if (sc.key === "spx" && isym === "^GSPC") { gF[isym] = 1; continue; }
@@ -14985,7 +14995,7 @@ async function handleRequest(request, env, ctx) {
         }
         if (!factorInfo.length) return Response.json({ error: "팩터 시계열 부족" }, { status: 503, headers: cors });
         const horizonDays = factorInfo.reduce(function (m, fi) { return Math.max(m, fi.horizonDays); }, 0);
-        const hScale = Math.sqrt(horizonDays / 20);
+        const hScale = Math.min(1.8, Math.sqrt(horizonDays / 20));   // [V32.66] 지평선 증폭 상한 1.8배(비현실적 뻥튀기 방지)
         // ── 포지션 평가액(quote: 캐시) ──
         const posBySym = {};
         for (const p of posRows) {
@@ -15059,7 +15069,7 @@ async function handleRequest(request, env, ctx) {
             KR: { value: Math.round(port.KR.value), expPnl: Math.round(port.KR.pnl), expPct: port.KR.value > 0 ? +(port.KR.pnl / port.KR.value * 100).toFixed(2) : null }
           },
           items: items.slice(0, 70),
-          note: (isCombo ? "복합 시나리오(" + scenarioOut.length + "개 팩터 동시 충격 합산): " : "방법론 v3: ") + "종목 5일수익 ~ (시장지수·팩터) 2변수 OLS 부분베타(√R² 축소) + 시장 경유 파급(bM×gF) + 변동성 국면 승수(0.8~1.4) — " + (speed === "fast" ? "5영업일 단기 쇼크" : "역사적 확산 속도(약 " + horizonDays + "영업일)") + " 지평선의 3σ 소프트캡·잔차 예상범위 적용. 역사적 근사이며 예측 보장 아님.",
+          note: (isCombo ? "복합 시나리오(" + scenarioOut.length + "개 팩터 동시 충격 합산): " : "방법론 v4: ") + "종목 5일수익 ~ (시장지수·팩터) 2변수 OLS 부분베타에 ★유의성(t-검정) 축소★ 적용(약한 우연 베타는 0으로 수렴 → 현실성↑) + √R² 축소 + 시장 경유 파급(bM×gF) + 변동성 국면 승수(0.85~1.3) — " + (speed === "fast" ? "5영업일 단기 쇼크" : "역사적 확산 속도(약 " + horizonDays + "영업일, 증폭 상한 1.8배)") + " 지평선의 3σ 소프트캡·잔차 예상범위 적용. 역사적 근사이며 예측 보장 아님.",
           ts: Date.now()
         }, { headers: cors });
       } catch (e) {
