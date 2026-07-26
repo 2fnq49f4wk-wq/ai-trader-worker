@@ -12026,7 +12026,21 @@ function _altSleeve(key, cfg) {
   return null;
 }
 // 슬리브 거래 시간 판정: cm=미국 또는 한국 장중(선물 유동성), bdus=미국장, bdkr=한국장.
+// [V32.63] 원자재(선물) 실거래 시간 — CME Globex 근사(ET 기준).
+//   개장: 일 18:00 ET ~ 금 17:00 ET, 매일 17:00~18:00 ET 정비 휴장, 토요일 종일 휴장.
+//   (금속·에너지 등 대다수 상품 공통 근사. 실제 상품별 미세차는 무시.)
+function isCommodityMarketOpen() {
+  const et = getUSEt(new Date());
+  const d = et.day;        // 0=Sun..6=Sat
+  const m = et.totalMin;   // ET 자정 이후 분
+  const inHalt = (m >= 1020 && m < 1080);   // 17:00(1020)~18:00(1080) 일일 정비 휴장
+  if (d === 6) return false;                 // 토요일 종일 휴장
+  if (d === 0) return m >= 1080;             // 일요일: 18:00 ET 개장 이후만
+  if (d === 5) return m < 1020;              // 금요일: 17:00 ET 마감
+  return !inHalt;                            // 월~목: 정비 휴장 제외 종일
+}
 function _altTradeWindow(sleeve) {
+  if (sleeve.key === "cm") return isCommodityMarketOpen();   // [V32.63] 원자재는 실제 선물 거래시간에 실시간 거래
   if (sleeve.hoursAny) return isTradingWindow("us") || isTradingWindow("kr");
   return isTradingWindow(sleeve.hoursMarket);
 }

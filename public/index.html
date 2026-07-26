@@ -3726,7 +3726,7 @@ html[data-theme="light"] .table tbody tr:hover{background:rgba(9,105,218,.045);}
       <button data-levels="TRADE,BUY,SELL,CLOSED" data-label="💰 거래">💰 거래</button>
       <button data-levels="SIGNAL,NOBUY,SKIP" data-label="🎯 판단·신호">🎯 판단·신호</button>
       <button data-levels="ERROR,WARN" data-label="⚠️ 오류·경고">⚠️ 오류·경고</button>
-      <button data-levels="TUNE,INFO" data-label="🧠 시스템">🧠 시스템</button>
+      <button data-levels="TUNE,INFO" data-exclude="\[PX\]|batchQuotes|quote batch|시세|백필|\[CM|원자재|commodity|채권|bond|bdus|bdkr|국채|treasur|\[BD|\[WORLD-NEWS\]|\[SECTOR-NEWS\]|뉴스|SENTI|헤드라인|\[SCAN\]|LUX-AI|전종목|스캔|\[HV\]|HARVEST|\[HIST\]|TRAIN|\[MIND\]|\[DNN\]|\[GBDT\]|\[BRAIN\]|\[CAL\]|SELFREVIEW|\[XGB\]|\[LGB\]|\[CAT\]|MODAL|MLOPS|REFILL|학습|수확|훈련|보정" data-label="⚙️ 시스템">⚙️ 시스템</button>
     </div>
     <div class="log-filter" style="margin-bottom:6px;padding-top:6px;border-top:1px solid var(--bd2,rgba(255,255,255,.08));">
       <span style="font-size:9px;color:var(--t3,#889);align-self:center;margin-right:4px;font-weight:700;">📥 데이터 fetch</span>
@@ -3736,7 +3736,7 @@ html[data-theme="light"] .table tbody tr:hover{background:rgba(9,105,218,.045);}
       <button data-match="\[WORLD-NEWS\]|\[SECTOR-NEWS\]|뉴스|SENTI|헤드라인" data-label="📰 뉴스">📰 뉴스</button>
     </div>
     <div class="log-filter" style="margin-bottom:10px;padding-top:6px;border-top:1px solid var(--bd2,rgba(255,255,255,.08));">
-      <span style="font-size:9px;color:var(--t3,#889);align-self:center;margin-right:4px;font-weight:700;">🤖 AI</span>
+      <span style="font-size:9px;color:var(--t3,#889);align-self:center;margin-right:4px;font-weight:700;display:inline-flex;align-items:center;gap:3px;"><svg class="lux-star-svg lux-ico" viewBox="0 0 100 100" aria-hidden="true" style="width:12px;height:12px;"><use href="#luxStarSym"/></svg>AI</span>
       <button data-match="\[SCAN\]|LUX-AI|전종목|스캔" data-label="🔍 스캔">🔍 스캔</button>
       <button data-match="\[HV\]|HARVEST|\[HIST\]|TRAIN|\[MIND\]|\[DNN\]|\[GBDT\]|\[BRAIN\]|\[CAL\]|SELFREVIEW|\[XGB\]|\[LGB\]|\[CAT\]|MODAL|MLOPS|REFILL|학습|수확|훈련|보정" data-label="🧪 학습">🧪 학습</button>
     </div>
@@ -4144,6 +4144,7 @@ html[data-theme="light"] .table tbody tr:hover{background:rgba(9,105,218,.045);}
   var logFilter = 'ALL';
   var logFilterLevels = [];   // [V32.60] 선택된 레벨 집합(빈 배열=전체)
   var logFilterMatchRe = null;   // [V32.61] 내용 기반(정규식) 필터 — fetch/뉴스/AI 그룹용
+  var logFilterExcludeRe = null; // [V32.63] 제외 정규식 — 시스템에서 fetch/뉴스/AI 로그 배제
   var logSearchText = '';
   var currentCfg = null;
   var currentSectorGroups = { stats: {}, weights: {} };  // [섹터그룹] 그룹별 성과·가중치
@@ -8755,10 +8756,15 @@ html[data-theme="light"] .table tbody tr:hover{background:rgba(9,105,218,.045);}
       var label = b.getAttribute('data-label'); if (label == null) return;
       var lv = b.getAttribute('data-levels');
       var mt = b.getAttribute('data-match');
+      var ex = b.getAttribute('data-exclude');
+      var exRe = null; if (ex) { try { exRe = new RegExp(ex, 'i'); } catch(e) { exRe = null; } }
       var n;
       if (mt) { var re; try { re = new RegExp(mt, 'i'); } catch(e) { re = null; } n = re ? allLogs.filter(function(l){ return re.test((l.message||'') + ' ' + (l.level||'')); }).length : 0; }
       else if (!lv || !lv.length) n = allLogs.length;
-      else { n = 0; lv.split(',').forEach(function(k){ n += (counts[k] || 0); }); }
+      else {
+        var lvArr = lv.split(',');
+        n = allLogs.filter(function(l){ return lvArr.indexOf(l.level) >= 0 && !(exRe && exRe.test((l.message||'') + ' ' + (l.level||''))); }).length;
+      }
       b.textContent = label + ' (' + n + ')';
     });
   }
@@ -8770,6 +8776,7 @@ html[data-theme="light"] .table tbody tr:hover{background:rgba(9,105,218,.045);}
     var filtered = allLogs;
     if (logFilterLevels && logFilterLevels.length) filtered = filtered.filter(function(l){return logFilterLevels.indexOf(l.level) >= 0;});
     else if (logFilterMatchRe) filtered = filtered.filter(function(l){return logFilterMatchRe.test((l.message||'') + ' ' + (l.level||''));});
+    if (logFilterExcludeRe) filtered = filtered.filter(function(l){return !logFilterExcludeRe.test((l.message||'') + ' ' + (l.level||''));});
     if (logSearchText) {
       var q = logSearchText.toLowerCase();
       filtered = filtered.filter(function(l){
@@ -10631,9 +10638,12 @@ html[data-theme="light"] .table tbody tr:hover{background:rgba(9,105,218,.045);}
       b.classList.add('active');
       var lv = b.getAttribute('data-levels');
       var mt = b.getAttribute('data-match');
+      var ex = b.getAttribute('data-exclude');
       logFilterLevels = (lv && lv.length) ? lv.split(',') : [];
       logFilterMatchRe = null;
+      logFilterExcludeRe = null;
       if (!logFilterLevels.length && mt) { try { logFilterMatchRe = new RegExp(mt, 'i'); } catch(e) { logFilterMatchRe = null; } }
+      if (ex) { try { logFilterExcludeRe = new RegExp(ex, 'i'); } catch(e) { logFilterExcludeRe = null; } }
       renderLogs();
     });
   });
