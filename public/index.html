@@ -3720,19 +3720,27 @@ html[data-theme="light"] .table tbody tr:hover{background:rgba(9,105,218,.045);}
       <input type="text" class="logs-search" id="logsSearch" placeholder="검색 (심볼/메시지/RSI 등)...">
       <span class="logs-info" id="logsInfo">0 / 0</span>
     </div>
-    <div class="log-filter" style="margin-bottom:10px;">
-      <button data-filter="ALL" class="active">ALL</button>
-      <button data-filter="TRADE">TRADE</button>
-      <button data-filter="TUNE">TUNE</button>
-      <button data-filter="ERROR">ERROR</button>
-      <button data-filter="WARN">WARN</button>
-      <button data-filter="BUY">BUY</button>
-      <button data-filter="SELL">SELL</button>
-      <button data-filter="SIGNAL">SIGNAL</button>
-      <button data-filter="NOBUY">NOBUY</button>
-      <button data-filter="SKIP">SKIP</button>
-      <button data-filter="CLOSED">CLOSED</button>
-      <button data-filter="INFO">INFO</button>
+    <!-- [V32.60] 종류별 그룹 필터 — 거래/판단/학습·시스템/오류로 분류 -->
+    <div class="log-filter" style="margin-bottom:6px;">
+      <button data-levels="" data-label="전체" class="active">전체</button>
+      <button data-levels="TRADE,BUY,SELL,CLOSED" data-label="💰 거래">💰 거래</button>
+      <button data-levels="SIGNAL,NOBUY,SKIP" data-label="🎯 판단·신호">🎯 판단·신호</button>
+      <button data-levels="TUNE,INFO" data-label="🧠 학습·시스템">🧠 학습·시스템</button>
+      <button data-levels="ERROR,WARN" data-label="⚠️ 오류·경고">⚠️ 오류·경고</button>
+    </div>
+    <div class="log-filter log-filter-detail" style="margin-bottom:10px;opacity:.9;">
+      <span style="font-size:9px;color:var(--t3,#889);align-self:center;margin-right:2px;">세부</span>
+      <button data-levels="TRADE" data-label="TRADE">TRADE</button>
+      <button data-levels="BUY" data-label="BUY">BUY</button>
+      <button data-levels="SELL" data-label="SELL">SELL</button>
+      <button data-levels="CLOSED" data-label="CLOSED">CLOSED</button>
+      <button data-levels="SIGNAL" data-label="SIGNAL">SIGNAL</button>
+      <button data-levels="NOBUY" data-label="NOBUY">NOBUY</button>
+      <button data-levels="SKIP" data-label="SKIP">SKIP</button>
+      <button data-levels="TUNE" data-label="TUNE">TUNE</button>
+      <button data-levels="INFO" data-label="INFO">INFO</button>
+      <button data-levels="ERROR" data-label="ERROR">ERROR</button>
+      <button data-levels="WARN" data-label="WARN">WARN</button>
     </div>
     <div class="log-box-modal" id="logsBox"><div class="empty">No logs yet</div></div>
   </div>
@@ -4122,6 +4130,7 @@ html[data-theme="light"] .table tbody tr:hover{background:rgba(9,105,218,.045);}
   var logsTimer = null;
   var allLogs = [];
   var logFilter = 'ALL';
+  var logFilterLevels = [];   // [V32.60] 선택된 레벨 집합(빈 배열=전체)
   var logSearchText = '';
   var currentCfg = null;
   var currentSectorGroups = { stats: {}, weights: {} };  // [섹터그룹] 그룹별 성과·가중치
@@ -8725,12 +8734,26 @@ html[data-theme="light"] .table tbody tr:hover{background:rgba(9,105,218,.045);}
     avgEl.className = 'trades-summary-value ' + (parseFloat(avgPnl) > 0 ? 'pos' : (parseFloat(avgPnl) < 0 ? 'neg' : ''));
   }
 
+  // [V32.60] 필터 버튼에 종류별 건수 표시 — 어느 종류가 얼마나 쌓였는지 한눈에
+  function updateLogFilterCounts() {
+    var counts = {};
+    for (var i = 0; i < allLogs.length; i++) { var lv = allLogs[i].level; counts[lv] = (counts[lv] || 0) + 1; }
+    document.querySelectorAll('.log-filter button').forEach(function(b){
+      var label = b.getAttribute('data-label'); if (label == null) return;
+      var lv = b.getAttribute('data-levels');
+      var n;
+      if (!lv || !lv.length) n = allLogs.length;
+      else { n = 0; lv.split(',').forEach(function(k){ n += (counts[k] || 0); }); }
+      b.textContent = label + ' (' + n + ')';
+    });
+  }
   function renderLogs() {
     var box = $('logsBox');
     var info = $('logsInfo');
     if (!box) return;
+    try { updateLogFilterCounts(); } catch(e) {}
     var filtered = allLogs;
-    if (logFilter !== 'ALL') filtered = filtered.filter(function(l){return l.level === logFilter;});
+    if (logFilterLevels && logFilterLevels.length) filtered = filtered.filter(function(l){return logFilterLevels.indexOf(l.level) >= 0;});
     if (logSearchText) {
       var q = logSearchText.toLowerCase();
       filtered = filtered.filter(function(l){
@@ -10590,7 +10613,8 @@ html[data-theme="light"] .table tbody tr:hover{background:rgba(9,105,218,.045);}
     b.addEventListener('click', function(){
       document.querySelectorAll('.log-filter button').forEach(function(x){x.classList.remove('active');});
       b.classList.add('active');
-      logFilter = b.getAttribute('data-filter');
+      var lv = b.getAttribute('data-levels');
+      logFilterLevels = (lv && lv.length) ? lv.split(',') : [];
       renderLogs();
     });
   });
