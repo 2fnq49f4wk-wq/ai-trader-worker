@@ -2894,7 +2894,9 @@ html[data-theme="light"] .table tbody tr:hover{background:rgba(9,105,218,.045);}
         </div>
         <!-- 헤드라인 + 선물 + 환율/채권 -->
         <!-- [V12.73] AI 운용모드 + 자가평가 — AI가 스스로 진단한 문제점을 대시보드에 노출 -->
-        <div class="fv-panel" id="fvAiModePanel" style="margin-bottom:8px;">
+        <!-- [V33.1] AI 운용 상태는 대시보드에서 내리고 "AI 두뇌" 페이지 우측 사이드바로 이동(사용자 요청).
+             DOM은 남겨둔다 — bootAiModePanel()이 이 요소들에 직접 쓰므로 제거하면 null 참조가 된다. -->
+        <div class="fv-panel" id="fvAiModePanel" style="margin-bottom:8px;display:none;">
           <div class="fv-panel-head">AI 운용 상태 <span class="fv-panel-sub" id="fvAiModeBadge">확인 중…</span></div>
           <div id="fvAiModeBody" style="padding:8px 10px;font-size:11px;line-height:1.6;color:var(--t2);">로딩 중…</div>
         </div>
@@ -3048,7 +3050,12 @@ html[data-theme="light"] .table tbody tr:hover{background:rgba(9,105,218,.045);}
         </div>
       </div>
 
-      <!-- ════ [V10.5] WATCHLIST — 대시보드 통합 ════ -->
+      <!-- ════ [V10.5] WATCHLIST — 대시보드 통합 ════
+           [V33.1] 대시보드에서 제거(사용자 요청) — 종목 목록은 "종목 상세" 페이지에서 본다.
+           DOM 자체는 남겨둔다: 검색/정렬/펼치기 버튼에 걸린 기존 이벤트 바인딩이 null 참조로
+           깨지지 않게 하기 위함. 대신 renderWatchlistMarket()이 이 래퍼가 숨겨져 있으면
+           즉시 반환하므로 카드 렌더 비용은 0이다. -->
+      <div id="dashWatchlist" style="display:none;">
       <div class="page-header" style="border-top:1px solid var(--bd);">
         <span class="page-title">WATCHLIST</span>
       </div>
@@ -3097,6 +3104,7 @@ html[data-theme="light"] .table tbody tr:hover{background:rgba(9,105,218,.045);}
         </div>
 
       </div>
+      </div><!-- /#dashWatchlist -->
 
       <!-- ════ [V9.11] 중복이던 COMMODITIES+BONDS 컴팩트 테이블 제거 — S&P맵 아래 FUTURES/COMMODITIES·FOREX&BONDS로 통합(RSI 포함) ════ -->
 
@@ -3606,6 +3614,9 @@ html[data-theme="light"] .table tbody tr:hover{background:rgba(9,105,218,.045);}
       </div>
     </div>
 
+    <!-- [V33.1] 구조 관측 뷰 — 기본 숨김. 우측 사이드바에서 "구조 관측"으로 전환할 때만 표시·로드된다.
+         (작동 화면만 볼 땐 무거운 /api/nn-viz 요청과 SVG 렌더가 아예 발생하지 않음) -->
+    <div id="nnvStruct" style="display:none;">
     <div class="nnv-tabs" id="nnvTabs" style="display:flex;gap:6px;margin:2px 0 10px;">
       <button class="nnv-tab active" data-model="dnn" onclick="switchNnModel('dnn')"><svg class="lux-star-svg lux-ico" viewBox="0 0 100 100" aria-hidden="true"><use href="#luxStarSym"/></svg> DNN (딥넷)</button>
       <button class="nnv-tab" data-model="mind" onclick="switchNnModel('mind')"><svg class="lux-star-svg lux-ico" viewBox="0 0 100 100" aria-hidden="true"><use href="#luxStarSym"/></svg> MIND (스태킹)</button>
@@ -3627,6 +3638,7 @@ html[data-theme="light"] .table tbody tr:hover{background:rgba(9,105,218,.045);}
       <span style="color:#9fb4dc;">👆 점 클릭/터치=뉴런 역할 + 연결 발광(밝은 파랑=직접, 옅은 파랑=2단계 확산)</span>
     </div>
     <div class="nnv-comm" id="nnvComm"></div>
+    </div><!-- /#nnvStruct -->
   </div>
 </div>
 
@@ -8122,6 +8134,9 @@ html[data-theme="light"] .table tbody tr:hover{background:rgba(9,105,218,.045);}
   }
 
   function renderWatchlistMarket(market, quotes) {
+    // [V33.1] 대시보드 워치리스트 제거 — 숨겨져 있으면 카드 생성 자체를 건너뛴다(폴링마다 수백 장 렌더 비용 제거).
+    var _wlHost = document.getElementById('dashWatchlist');
+    if (_wlHost && _wlHost.style.display === 'none') return;
     var containerId = market === 'us' ? 'watchlistUSContainer' : 'watchlistKRContainer';
     var expanded = market === 'us' ? usExpanded : krExpanded;
     var favorites = market === 'us' ? usFavorites : krFavorites;
@@ -11664,6 +11679,9 @@ html[data-theme="light"] #page-nnviz .nnv-title,html[data-theme="light"] #page-n
 /* ══════ [V33] AI 실시간 스캔·판정 형상화 ══════
    좌: 판정 코어(스캔 빔이 종목을 훑고 → 통과한 종목선이 코어로 수렴)
    우: 파이프라인 단계 + 판정 스트림(터미널 로그) */
+/* [V33.1] 두뇌 페이지가 콘텐츠 폭에 맞춰 줄어들던 문제(V32.70부터 있던 것) —
+   구조 관측이 독립 화면이 되면서 카드가 가운데 좁게 뜨는 게 눈에 띄어 폭을 고정한다. */
+#page-nnviz.active{align-self:stretch;width:100%;}
 #page-nnviz .nnv-live{display:grid;grid-template-columns:minmax(0,1.35fr) minmax(280px,.85fr);gap:14px;margin:4px 0 16px;}
 #page-nnviz .nlv-core,#page-nnviz .nlv-side{background:radial-gradient(120% 130% at 50% -10%,#0d1830,#060910 72%);border:1px solid #17233e;border-radius:14px;overflow:hidden;}
 #page-nnviz .nlv-side{display:flex;flex-direction:column;background:linear-gradient(180deg,#090e1a,#060910);}
@@ -11741,6 +11759,18 @@ html[data-theme="light"] #page-nnviz .nnv-title,html[data-theme="light"] #page-n
 #page-nnviz .nlv-ring{stroke:#17243c;}
 #page-nnviz .nlv-axis{fill:#33415c;}
 #page-nnviz .nlv-lab{fill:#9fd9bd;opacity:.9;}
+/* 코어 = 사이트 로고(8각 별) 워터마크 */
+#page-nnviz .nlv-logo-base{fill:#1fd98a;opacity:.72;stroke:#c9ffe6;stroke-width:.55;stroke-opacity:.45;}
+#page-nnviz .nlv-logo-facet{fill:#eafff4;opacity:.22;}
+#page-nnviz .nlv-logo{filter:drop-shadow(0 0 7px rgba(0,230,118,.45));}
+#page-nnviz .nlv-corerim{stroke:#1d3a2e;}
+/* opacity만 애니메이션한다 — transform-box/origin을 주면 group의 translate 기준점이 바뀌어
+   별이 중심에서 밀려난다(그래서 지정하지 않음). */
+#page-nnviz.active .nlv-logo{animation:nlvLogoBreath 6s ease-in-out infinite;}
+@keyframes nlvLogoBreath{0%,100%{opacity:.85;}50%{opacity:1;}}
+@media (prefers-reduced-motion:reduce){#page-nnviz.active .nlv-logo{animation:none;}}
+html[data-theme="light"] #page-nnviz .nlv-logo-base{fill:#1fa96a;opacity:.55;}
+html[data-theme="light"] #page-nnviz .nlv-corerim{stroke:#2b5f47;}
 html[data-theme="light"] #page-nnviz .nlv-core,html[data-theme="light"] #page-nnviz .nlv-side{background:linear-gradient(180deg,#eef3fb,#e6edf8);border-color:#cdd9ee;}
 html[data-theme="light"] #page-nnviz .nlv-step b,html[data-theme="light"] #page-nnviz .nlv-line .b em{color:#12233f;}
 html[data-theme="light"] #page-nnviz .nlv-line .b{color:#33455f;}
@@ -12424,6 +12454,32 @@ html[data-theme="light"] #page-nnviz .nlv-verdicthead,html[data-theme="light"] #
 }
 .rail-btn:hover{color:var(--t1);border-color:var(--acc);}
 .rail-btn.on{color:var(--acc);border-color:var(--acc);}
+/* 뷰 전환 — 작동 화면 / 구조 관측 */
+.rail-views{display:flex;flex-direction:column;gap:1px;padding:7px 7px 8px;border-bottom:1px solid var(--bd);flex:0 0 auto;}
+.rail-view{
+  cursor:pointer;text-align:left;background:transparent;border:1px solid transparent;border-radius:4px;
+  padding:7px 9px;color:var(--t3);font-family:'IBM Plex Mono',monospace;line-height:1.35;
+}
+.rail-view b{display:block;font-size:11px;font-weight:700;letter-spacing:.4px;color:var(--t2);}
+.rail-view b .ic{margin-right:5px;}
+.rail-view small{display:block;font-size:8.5px;color:var(--t3);margin-top:1px;}
+.rail-view:hover{background:var(--s2);}
+.rail-view.active{background:var(--s2);border-color:var(--acc);}
+.rail-view.active b{color:var(--acc);}
+/* 섹션 */
+.rail-sec{border-bottom:1px solid var(--bd2);}
+.rail-sec-h{
+  display:flex;align-items:center;gap:6px;padding:7px 10px 6px;
+  font-family:'IBM Plex Mono',monospace;font-size:8.5px;letter-spacing:1.6px;color:var(--t3);text-transform:uppercase;
+}
+.rail-ai{padding:0 10px 10px;font-size:10px;line-height:1.7;color:var(--t2);font-family:'IBM Plex Mono',monospace;}
+.rail-ai .badge{display:block;font-size:10.5px;font-weight:700;margin-bottom:5px;}
+.rail-ai .row{display:flex;flex-wrap:wrap;gap:2px 8px;margin-bottom:3px;}
+.rail-ai .row .m{white-space:nowrap;}
+.rail-ai .k{color:var(--t3);font-size:8.5px;letter-spacing:1px;text-transform:uppercase;display:block;margin:6px 0 2px;}
+.rail-ai .pick{color:var(--t1);}
+.rail-ai .pick i{font-style:normal;color:var(--t3);}
+.rail-ai .diag{color:var(--t3);font-size:9.5px;line-height:1.6;}
 .rail-body{flex:1 1 auto;min-height:0;overflow-y:auto;overflow-x:hidden;}
 .rail-body::-webkit-scrollbar{width:4px;}
 .rail-body::-webkit-scrollbar-thumb{background:var(--bd);border-radius:3px;}
@@ -12486,7 +12542,15 @@ html[data-theme="light"] #page-nnviz .nlv-verdicthead,html[data-theme="light"] #
 .rail.collapsed .rail-title,.rail.collapsed .rail-foot,.rail.collapsed .rail-cnt,
 .rail.collapsed .rail-item .r-name,.rail.collapsed .rail-item .r-px,
 .rail.collapsed .rail-item .r-foot,.rail.collapsed .rail-item .r-chg,
-.rail.collapsed .rail-empty,.rail.collapsed #railDensity{display:none;}
+.rail.collapsed .rail-empty,.rail.collapsed #railDensity,
+.rail.collapsed .rail-view small,.rail.collapsed .rail-sec-h,.rail.collapsed .rail-ai{display:none;}
+.rail.collapsed .rail-views{padding:5px 3px;}
+.rail.collapsed .rail-view{padding:6px 2px;text-align:center;}
+.rail.collapsed .rail-view b{font-size:13px;}
+.rail.collapsed .rail-view b .tx{display:none;}
+.rail.collapsed .rail-view b .ic{margin-right:0;}
+/* 레일은 "AI 두뇌" 페이지에서만 — 다른 페이지에선 완전히 빠진다(레이아웃 폭도 반환) */
+.rail[hidden]{display:none;}
 .rail.collapsed .rail-head{padding:9px 6px;justify-content:center;}
 .rail.collapsed .rail-item{grid-template-columns:1fr;padding:7px 2px;text-align:center;}
 .rail.collapsed .rail-item .r-sym{font-size:9px;}
@@ -12513,9 +12577,9 @@ html[data-theme="light"] .rail{background:#fff;}
   html[data-density="terminal"] .fv-deck>.fv-mid,
   html[data-density="terminal"] .fv-deck>.fv-bottom,
   html[data-density="terminal"] .fv-deck>#fvAiAskPanel{grid-column:1/-1;}
-  html[data-density="terminal"] .fv-deck>#fvAiModePanel{grid-column:span 2;}
+  /* AI 운용 상태는 두뇌 페이지 사이드바로 이동해 여기선 숨김 — 남은 두 패널이 폭을 나눠 갖는다 */
   html[data-density="terminal"] .fv-deck>#fvCrisisPanel,
-  html[data-density="terminal"] .fv-deck>#fvEventsPanel{grid-column:span 1;}
+  html[data-density="terminal"] .fv-deck>#fvEventsPanel{grid-column:span 2;}
   html[data-density="terminal"] .fv-deck>.fv-panel{margin-bottom:0!important;}
   html[data-density="terminal"] .fv-deck{padding:6px 6px 0;gap:6px;}
   html[data-density="terminal"] .dash-grid{gap:6px;padding:6px;}
@@ -12580,11 +12644,6 @@ html[data-theme="light"] .rail{background:#fff;}
     if(!ts) return '—';
     var d = new Date(ts);
     return ('0'+d.getHours()).slice(-2)+':'+('0'+d.getMinutes()).slice(-2);
-  }
-  function mmss(ts){
-    if(!ts) return '--:--';
-    var d = new Date(ts);
-    return ('0'+d.getMinutes()).slice(-2)+':'+('0'+d.getSeconds()).slice(-2);
   }
   function ago(ts){
     if(!ts) return '없음';
@@ -12666,8 +12725,20 @@ html[data-theme="light"] .rail{background:#fff;}
   }
   // 레일 실폭을 CSS 변수로 — 빠른검색 FAB 등 fixed 요소가 레일을 안 가리게 한다.
   function railWidthVar(){
-    var w = (!RAIL.el || window.innerWidth < 1100) ? 0 : (RAIL.collapsed ? 38 : 250);
+    var shown = RAIL.el && !RAIL.el.hidden && window.innerWidth >= 1100;
+    var w = shown ? (RAIL.collapsed ? 38 : 250) : 0;
     document.documentElement.style.setProperty('--rail-w', w + 'px');
+  }
+  // [V33.1] 우측 사이드바는 "AI 두뇌" 페이지 전용 — 다른 페이지에선 감춘다.
+  function railGate(pageId){
+    railBuild();
+    if(!RAIL.el) return;
+    if(!pageId){
+      var act = document.querySelector('.page.active');
+      pageId = act ? act.id.replace(/^page-/, '') : '';
+    }
+    RAIL.el.hidden = (pageId !== 'nnviz');
+    railWidthVar();
   }
   function railBuild(){
     if(RAIL.el) return;
@@ -12677,18 +12748,31 @@ html[data-theme="light"] .rail{background:#fff;}
     el.id = 'luxRail';
     el.innerHTML =
       '<div class="rail-head">'
-        +'<span class="rail-title"><b>열린 종목창</b></span>'
-        +'<span class="rail-cnt" id="railCnt">0</span>'
+        +'<span class="rail-title"><b>AI 두뇌</b></span>'
         +'<button type="button" class="rail-btn" id="railDensity" title="터미널 밀도 — 대시보드를 조밀한 터미널 그리드로 전환/해제">▮</button>'
         +'<button type="button" class="rail-btn" id="railToggle" title="사이드바 접기/펴기">❯</button>'
       +'</div>'
-      +'<div class="rail-body" id="railBody"></div>'
+      // ── 뷰 전환: 작동 화면 ↔ 구조 관측 (구조는 여기서 켤 때만 로드된다)
+      +'<div class="rail-views" id="railViews">'
+        +'<button type="button" class="rail-view active" data-view="live" title="작동 화면 — AI 스캔·판정"><b><span class="ic">◉</span><span class="tx">작동 화면</span></b><small>스캔·판정 실시간</small></button>'
+        +'<button type="button" class="rail-view" data-view="struct" title="구조 관측 — 모델 내부 구조·가중치"><b><span class="ic">◈</span><span class="tx">구조 관측</span></b><small>모델 내부·가중치</small></button>'
+      +'</div>'
+      +'<div class="rail-body" id="railBody">'
+        +'<div class="rail-sec"><div class="rail-sec-h">AI 운용 상태</div><div id="railAiMode" class="rail-ai">확인 중…</div></div>'
+        +'<div class="rail-sec"><div class="rail-sec-h">열린 종목창 <span class="rail-cnt" id="railCnt">0</span></div>'
+          +'<div id="railStocks"></div></div>'
+      +'</div>'
       +'<div class="rail-foot">'
         +'<button type="button" id="railAdd">＋ 종목 열기</button>'
         +'<button type="button" id="railClear">전체 닫기</button>'
       +'</div>';
     shell.appendChild(el);
-    RAIL.el = el; RAIL.body = $id('railBody'); RAIL.cnt = $id('railCnt');
+    RAIL.el = el; RAIL.body = $id('railStocks'); RAIL.cnt = $id('railCnt');
+
+    $id('railViews').addEventListener('click', function(e){
+      var b = e.target.closest ? e.target.closest('.rail-view') : null;
+      if(b) setBrainView(b.getAttribute('data-view'));
+    });
 
     $id('railToggle').addEventListener('click', function(){
       RAIL.collapsed = !RAIL.collapsed;
@@ -12824,6 +12908,38 @@ html[data-theme="light"] .rail{background:#fff;}
      ═════════════════════════════════════════════════════════════ */
   var LIVE = { timer:null, feedTimer:null, lines:[], idx:0, paused:false, active:false, data:null };
   var CX = 320, CY = 210;
+  // 두뇌 페이지 안의 뷰: 'live'(작동 화면) | 'struct'(구조 관측)
+  var BVIEW = 'live';
+  try{ if(localStorage.getItem('luxBrainView') === 'struct') BVIEW = 'struct'; }catch(e){}
+
+  // 사이트 로고(8각 별) — 코어 워터마크로 재사용. sb-brand-logo 와 동일한 path.
+  var LOGO_STAR = 'M50 2 L53.44 41.68 L73.33 26.67 L58.32 46.56 L98 50 L58.32 53.44 L73.33 73.33 '
+    + 'L53.44 58.32 L50 98 L46.56 58.32 L26.67 73.33 L41.68 53.44 L2 50 L41.68 46.56 L26.67 26.67 L46.56 41.68 Z';
+  var LOGO_FACET = 'M50 50 L50 2 L53.44 41.68 Z M50 50 L73.33 26.67 L58.32 46.56 Z M50 50 L98 50 L58.32 53.44 Z '
+    + 'M50 50 L73.33 73.33 L53.44 58.32 Z M50 50 L50 98 L46.56 58.32 Z M50 50 L26.67 73.33 L41.68 53.44 Z '
+    + 'M50 50 L2 50 L41.68 46.56 Z M50 50 L26.67 26.67 L46.56 41.68 Z';
+
+  // 작동 화면 ↔ 구조 관측 전환. 구조는 여기서 켤 때 비로소 /api/nn-viz 를 부른다.
+  function setBrainView(v){
+    if(v !== 'struct') v = 'live';
+    BVIEW = v;
+    try{ localStorage.setItem('luxBrainView', v); }catch(e){}
+    var live = $id('nnvLive'), struct = $id('nnvStruct');
+    if(live) live.style.display = (v === 'live') ? '' : 'none';
+    if(struct) struct.style.display = (v === 'struct') ? '' : 'none';
+    var btns = document.querySelectorAll('#railViews .rail-view');
+    for(var i=0;i<btns.length;i++) btns[i].classList.toggle('active', btns[i].getAttribute('data-view') === v);
+    var onBrain = !!document.querySelector('#page-nnviz.active');
+    if(!onBrain) return;
+    if(v === 'struct'){
+      stopFeed();                                     // 판정 스트림 타이머 정지(안 보이는 화면은 안 돌린다)
+      if(typeof window.openNnViz === 'function') window.openNnViz();   // 여기서 처음으로 구조 데이터 요청
+    } else {
+      try{ if(typeof window.closeNnViz === 'function') window.closeNnViz(); }catch(e){}
+      if(LIVE.data){ renderCore(LIVE.data); renderCenter(LIVE.data); startFeed(); }
+      else loadLive(false);
+    }
+  }
 
   function verdictOf(pk){
     var rank = (pk.rankP != null ? pk.rankP : pk.p);
@@ -12851,11 +12967,11 @@ html[data-theme="light"] .rail{background:#fff;}
       +'<linearGradient id="nlvBeamG" x1="0" y1="0" x2="1" y2="0">'
       +'<stop offset="0%" stop-color="#4a9dff" stop-opacity=".35"/><stop offset="100%" stop-color="#4a9dff" stop-opacity="0"/></linearGradient>'
       +'</defs>');
-    [104,142,180].forEach(function(r,i){
+    [108,144,180].forEach(function(r,i){
       parts.push('<circle class="nlv-ring" cx="'+CX+'" cy="'+CY+'" r="'+r+'" fill="none" stroke-width="1"'
         +(i===1?' stroke-dasharray="2 5"':'')+'/>');
     });
-    parts.push('<text class="nlv-axis" x="'+(CX+106)+'" y="'+(CY-4)+'" font-size="8" font-family="monospace">상위</text>');
+    parts.push('<text class="nlv-axis" x="'+(CX+110)+'" y="'+(CY-4)+'" font-size="8" font-family="monospace">상위</text>');
     parts.push('<text class="nlv-axis" x="'+(CX+182)+'" y="'+(CY-4)+'" font-size="8" font-family="monospace">하위</text>');
     // 스캔 빔(부채꼴)
     parts.push('<g class="nlv-beam"><path d="M '+CX+' '+CY+' L '+(CX+186)+' '+(CY-46)+' A 192 192 0 0 1 '+(CX+186)+' '+(CY+46)+' Z" fill="url(#nlvBeamG)"/>'
@@ -12873,15 +12989,15 @@ html[data-theme="light"] .rail{background:#fff;}
     var GA = Math.PI * (3 - Math.sqrt(5));   // 황금각 ≈137.5°
     picks.forEach(function(pk, i){
       var rank = (pk.rankP != null ? pk.rankP : pk.p);
-      var rad = 104 + (n > 1 ? (i / (n - 1)) : 0) * 76;
+      var rad = 108 + (n > 1 ? (i / (n - 1)) : 0) * 72;
       var ang = (-Math.PI/2) + i * GA;
       var x = CX + Math.cos(ang) * rad, y = CY + Math.sin(ang) * rad;
       var col = nodeColor(pk);
       var strong = rank >= 0.58 && !pk.abstain;
       var w = pk.abstain ? 0.5 : (0.45 + Math.max(0, rank-0.45) * 5.2);
       var op = pk.abstain ? 0.16 : (0.14 + Math.max(0, rank-0.42) * 1.9);
-      // 광선은 코어 링 바깥(r=72)에서 시작 — 중앙 판정 라벨 위를 지나가지 않게.
-      var sx = CX + Math.cos(ang) * 72, sy = CY + Math.sin(ang) * 72;
+      // 광선은 코어(로고 별) 바깥에서 시작 — 중앙 판정 라벨 위를 지나가지 않게.
+      var sx = CX + Math.cos(ang) * 78, sy = CY + Math.sin(ang) * 78;
       parts.push('<line class="nlv-ray'+(strong?' hot':'')+'" x1="'+sx.toFixed(1)+'" y1="'+sy.toFixed(1)+'" x2="'+x.toFixed(1)+'" y2="'+y.toFixed(1)
         +'" stroke="'+col+'" stroke-width="'+w.toFixed(2)+'" opacity="'+Math.min(0.95,op).toFixed(2)+'"/>');
       var r = pk.abstain ? 2.2 : (2.4 + Math.max(0, rank-0.45) * 13);
@@ -12896,11 +13012,19 @@ html[data-theme="light"] .rail{background:#fff;}
           +'font-size="9.5" font-family="monospace">'+esc(pk.symbol)+'</text>');
       }
     });
-    // 코어 — 판정 라벨이 얹히는 자리라 어두운 원판을 먼저 깔아 글씨 대비를 확보한다.
-    parts.push('<circle cx="'+CX+'" cy="'+CY+'" r="72" fill="#060a12" opacity=".9"/>');
-    parts.push('<circle cx="'+CX+'" cy="'+CY+'" r="72" fill="url(#nlvCoreG)" opacity=".22"/>');
+    // ── 판정 코어 = 사이트 로고(8각 별) ──
+    //   어두운 원판(글씨 대비) → 로고 별 워터마크 + 패싯 → 링. 광선이 별의 뿔로 모여드는 그림.
+    parts.push('<circle cx="'+CX+'" cy="'+CY+'" r="76" fill="#060a12" opacity=".92"/>');
+    parts.push('<circle cx="'+CX+'" cy="'+CY+'" r="76" fill="url(#nlvCoreG)" opacity=".18"/>');
+    var S = 2.06, off = 50 * S;   // 100×100 로고 path → 206px. 로고 별이 판정 수치를 감싸는 '프레임'이 된다
+    parts.push('<g class="nlv-logo" transform="translate('+(CX-off)+','+(CY-off)+') scale('+S+')">'
+      +'<path class="nlv-logo-base" d="'+LOGO_STAR+'"/>'
+      +'<path class="nlv-logo-facet" d="'+LOGO_FACET+'"/>'
+      +'</g>');
+    // 별의 몸통만 어두운 원판으로 덮어 8개 뿔을 남긴다 → 로고 실루엣이 판정 수치를 감싼다
+    parts.push('<circle cx="'+CX+'" cy="'+CY+'" r="48" fill="#060a12" opacity=".93"/>');
     parts.push('<circle class="nlv-corering" cx="'+CX+'" cy="'+CY+'" r="26" stroke="#00e676" stroke-width="1"/>');
-    parts.push('<circle cx="'+CX+'" cy="'+CY+'" r="72" fill="none" stroke="#1d3a2e" stroke-width="1"/>');
+    parts.push('<circle class="nlv-corerim" cx="'+CX+'" cy="'+CY+'" r="48" fill="none" stroke-width="1"/>');
     svg.innerHTML = parts.join('');
     // 노드 클릭 → 해당 종목 상세 열기(+ 우측 사이드바에 쌓임)
     var nodes = svg.querySelectorAll('.nlv-node');
@@ -12952,6 +13076,38 @@ html[data-theme="light"] .rail{background:#fff;}
     }
     var ck = $id('nlvClock');
     if(ck) ck.textContent = scan.ts ? ('최근 스캔 '+hhmm(scan.ts)+' · '+ago(scan.ts)+' 전') : '스캔 기록 없음';
+  }
+
+  // [V33.1] AI 운용 상태 — 대시보드에서 옮겨온 패널. 두뇌 페이지 우측 사이드바 전용.
+  function renderRailAiMode(mode, picks){
+    var el = $id('railAiMode'); if(!el) return;
+    if(!mode || mode.aiReady === undefined){ el.textContent = '조회 실패'; return; }
+    var c = mode.committee || {};
+    var ON = '<span style="color:var(--pos);">●</span>',
+        SH = '<span style="color:var(--amber,#fbbf24);">◐</span>',
+        OFF = '<span style="color:var(--t3);">○</span>';
+    var st = function(b){ return b ? ON : OFF; };
+    var bst = function(o){ return !o ? OFF : (o.trusted ? ON : (o.shadow ? SH : OFF)); };
+    var h = '<span class="badge" style="color:' + (mode.aiReady ? 'var(--pos)' : 'var(--amber,#fbbf24)') + ';">'
+      + (mode.aiReady ? '◉ AI 자율운용' : '◎ 규칙엔진 비상운용') + '</span>';
+    h += '<span class="k">위원회</span><div class="row">'
+      + '<span class="m">MIND '+st(c.mind)+'</span><span class="m">DNN '+st(c.dnn)+'</span><span class="m">GBDT '+st(c.gbdt)+'</span>'
+      + '<span class="m">XGB '+bst(c.xgb)+'</span><span class="m">LGB '+bst(c.lgb)+'</span><span class="m">Cat '+bst(c.cat)+'</span></div>'
+      + '<div class="diag" style="margin-top:2px;">● 가동 · ◐ 섀도우 · ○ 대기</div>';
+    var top = (picks || []).filter(function(p){ return !p.abstain; }).slice(0, 5);
+    if(top.length){
+      h += '<span class="k">야간 AI픽</span>'
+        + top.map(function(p){
+            return '<div class="pick">'+esc(p.symbol)+' <i>'+Math.round(p.p*100)+'%</i></div>';
+          }).join('');
+    }
+    var rv = mode.selfreview;
+    if(rv && rv.diagnosis && rv.diagnosis.length){
+      h += '<span class="k">AI 자가진단</span>'
+        + '<div class="diag">최근 '+esc(rv.windowDays)+'일 · '+esc(rv.n)+'건 · 승률 '+(rv.winRate*100).toFixed(0)+'% · PF '+esc(rv.profitFactor)+'</div>'
+        + '<div class="diag" style="margin-top:3px;">'+rv.diagnosis.slice(0,3).map(function(t){ return '· '+esc(t); }).join('<br>')+'</div>';
+    }
+    el.innerHTML = h;
   }
 
   function renderPipe(steps, d){
@@ -13011,7 +13167,7 @@ html[data-theme="light"] .rail{background:#fff;}
     if(feed.firstChild && feed.firstChild.className === 'nlv-empty') feed.innerHTML = '';
     var div = document.createElement('div');
     div.className = 'nlv-line ' + (ln.cls || '');
-    div.innerHTML = '<span class="t">'+mmss(ln.t)+'</span><span class="b">'+ln.html+'</span>';
+    div.innerHTML = '<span class="t">'+hhmm(ln.t)+'</span><span class="b">'+ln.html+'</span>';
     feed.insertBefore(div, feed.firstChild);
     while(feed.childNodes.length > 70) feed.removeChild(feed.lastChild);
   }
@@ -13029,7 +13185,7 @@ html[data-theme="light"] .rail{background:#fff;}
   function stopFeed(){ if(LIVE.feedTimer){ clearInterval(LIVE.feedTimer); LIVE.feedTimer = null; } }
 
   function loadLive(force){
-    if(!$id('nlvSvg')) return;
+    if(!$id('nlvSvg')) return Promise.resolve();
     return Promise.all([
       loadPicks(force),
       fetch('/api/ai-mode').then(function(r){ return r.json(); })['catch'](function(){ return {}; }),
@@ -13038,10 +13194,12 @@ html[data-theme="light"] .rail{background:#fff;}
       var pk = res[0] || {}, mode = res[1] || {}, pipe = res[2] || {};
       var d = { picks: pk.picks || [], scan: pk.scan || (mode.scan || {}), mode: mode };
       LIVE.data = d;
+      renderRailAiMode(mode, d.picks);   // 사이드바 "AI 운용 상태"는 뷰와 무관하게 항상 최신
+      LIVE.lines = buildLines(d);
+      if(BVIEW !== 'live') return;       // 구조 관측 중이면 무거운 코어 SVG·스트림은 그리지 않는다
       renderCore(d);
       renderCenter(d);
       renderPipe(pipe.steps, d);
-      LIVE.lines = buildLines(d);
       startFeed();
     })['catch'](function(){});
   }
@@ -13069,6 +13227,8 @@ html[data-theme="light"] .rail{background:#fff;}
       railLoad();
       railBuild();
       railRender();
+      setBrainView(BVIEW);   // 저장된 뷰 복원(기본 '작동 화면')
+      railGate();
       var pauseBtn = $id('nlvPause');
       if(pauseBtn) pauseBtn.addEventListener('click', function(){
         LIVE.paused = !LIVE.paused;
@@ -13083,8 +13243,12 @@ html[data-theme="light"] .rail{background:#fff;}
     }
     hookGlobals();
     // 새로고침 직후 이미 두뇌 페이지면 즉시 구동
+    railGate();
     var nn = $id('page-nnviz');
-    if(nn && nn.classList.contains('active')) liveStart();
+    if(nn && nn.classList.contains('active')){
+      liveStart();
+      if(BVIEW === 'struct' && typeof window.openNnViz === 'function') window.openNnViz();
+    }
   }
 
   // 메인 IIFE의 전역 노출 시점이 boot()보다 늦을 수 있어 여러 번 불러도 안전하게(플래그로 1회만 감쌈).
@@ -13106,11 +13270,25 @@ html[data-theme="light"] .rail{background:#fff;}
       var wrapped2 = function(id){
         var r = sp.apply(this, arguments);
         try{ if(id === 'nnviz') liveStart(); else liveStop(); }catch(e){}
-        try{ railRender(); }catch(e){}
+        try{ railGate(id); railRender(); }catch(e){}
         return r;
       };
       wrapped2.__luxLiveHooked = true;
       window.showPage = wrapped2;
+    }
+    // 구조 관측은 "구조 관측" 버튼을 눌렀을 때만 로드 — showPage('nnviz')가 자동 호출하는
+    // openNnViz()를 작동 화면 모드에서는 통과시키지 않는다.
+    var onv = window.openNnViz;
+    if(typeof onv === 'function' && !onv.__luxViewGated){
+      var gated = function(refreshOnly){
+        // 작동 화면에서는 구조를 로드하지 않는다. 다만 헤더 "↻ 새로고침"(openNnViz(1))은
+        // 지금 보고 있는 화면 — 즉 작동 화면 데이터 — 를 다시 불러오는 게 자연스럽다.
+        if(BVIEW !== 'struct'){ if(refreshOnly) loadLive(true); return; }
+        return onv.apply(this, arguments);
+      };
+      gated.__luxViewGated = true;
+      gated.__orig = onv;
+      window.openNnViz = gated;
     }
   }
 
@@ -13121,6 +13299,8 @@ html[data-theme="light"] .rail{background:#fff;}
   }
   // 메인 IIFE가 늦게 전역을 노출하는 경우를 위해 한 번 더(중복 훅은 플래그로 차단)
   document.addEventListener('lux:ready', function(){ setTimeout(boot, 0); });
+  // 저장된 페이지 복원(showPage)이 훅 설치보다 먼저 끝났을 수도 있어 마지막에 한 번 더 맞춘다
+  window.addEventListener('load', function(){ setTimeout(function(){ try{ boot(); }catch(e){} }, 0); });
 })();
 </script>
 
