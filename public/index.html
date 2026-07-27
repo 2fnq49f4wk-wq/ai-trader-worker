@@ -3941,28 +3941,48 @@ html[data-theme="light"] .m-brainbar button.active{color:#0b4f9e;background:rgba
          피처/위원회 투표 → 게이트 통과·기권 → 판정 코어로 수렴. 전부 실데이터 기반
          (/api/ai-picks · /api/ai-mode · /api/pipeline). 가짜 애니메이션 수치 없음. -->
     <div class="nnv-live" id="nnvLive">
-      <div class="nlv-core">
-        <div class="nlv-corehead">
-          <span class="nlv-tagline">LIVE · SCAN &amp; DECIDE</span>
-          <span class="nlv-clock" id="nlvClock">—</span>
-        </div>
-        <div class="nlv-canvaswrap">
-          <svg id="nlvSvg" viewBox="0 0 640 420" preserveAspectRatio="xMidYMid meet" aria-label="AI 스캔·판정 시각화"></svg>
-          <div class="nlv-centerlabel" id="nlvCenter">
-            <div class="k" id="nlvCenterK">SCANNING</div>
-            <div class="v" id="nlvCenterV">—</div>
-            <div class="m" id="nlvCenterM">두뇌 상태를 불러오는 중…</div>
-          </div>
-        </div>
-        <div class="nlv-corefoot" id="nlvCoreFoot"></div>
+
+      <!-- ① 상태 스트립 — 이번 스캔이 어떤 조건에서 돌았는지 한 줄로 -->
+      <div class="nlv-strip" id="nlvStrip">
+        <span class="nlv-tagline">LIVE · SCAN &amp; DECIDE</span>
+        <span class="nlv-clock" id="nlvClock">—</span>
+        <span class="nlv-strip-tags" id="nlvStripTags"></span>
       </div>
-      <div class="nlv-side">
-        <div class="nlv-pipe" id="nlvPipe"></div>
-        <div class="nlv-verdicthead">
-          <span>판정 스트림 · 최근 스캔 재생</span>
-          <button type="button" class="nlv-btn" id="nlvPause" title="스트림 일시정지/재개">⏸</button>
+
+      <!-- ② 히어로 — 좌: 판정 코어 / 우: 판정 깔때기(유니버스→진입후보) -->
+      <div class="nlv-hero">
+        <div class="nlv-core">
+          <div class="nlv-canvaswrap">
+            <svg id="nlvSvg" viewBox="0 0 460 460" preserveAspectRatio="xMidYMid meet" aria-label="AI 스캔·판정 시각화"></svg>
+            <div class="nlv-centerlabel" id="nlvCenter">
+              <div class="k" id="nlvCenterK">SCANNING</div>
+              <div class="v" id="nlvCenterV">—</div>
+              <div class="m" id="nlvCenterM">불러오는 중…</div>
+            </div>
+          </div>
+          <div class="nlv-toplist" id="nlvTopList"></div>
         </div>
-        <div class="nlv-feed" id="nlvFeed"><div class="nlv-empty">스캔 기록을 불러오는 중…</div></div>
+
+        <div class="nlv-funnel-wrap">
+          <div class="nlv-sec-h">판정 깔때기 <small>유니버스에서 진입후보까지</small></div>
+          <div class="nlv-funnel" id="nlvFunnel"></div>
+          <div class="nlv-kpi" id="nlvKpi"></div>
+        </div>
+      </div>
+
+      <!-- ③ 하단 — 좌: 판정 스트림 / 우: 파이프라인 -->
+      <div class="nlv-lower">
+        <div class="nlv-panel">
+          <div class="nlv-sec-h">
+            판정 스트림 <small>최근 스캔 재생</small>
+            <button type="button" class="nlv-btn" id="nlvPause" title="스트림 일시정지/재개">⏸</button>
+          </div>
+          <div class="nlv-feed" id="nlvFeed"><div class="nlv-empty">스캔 기록을 불러오는 중…</div></div>
+        </div>
+        <div class="nlv-panel">
+          <div class="nlv-sec-h">엔진 파이프라인 <small>단계별 최신도</small></div>
+          <div class="nlv-pipe" id="nlvPipe"></div>
+        </div>
       </div>
     </div>
 
@@ -12054,30 +12074,88 @@ html[data-theme="light"] #page-nnviz .nnv-title,html[data-theme="light"] #page-n
 /* [V33.1] 두뇌 페이지가 콘텐츠 폭에 맞춰 줄어들던 문제(V32.70부터 있던 것) —
    구조 관측이 독립 화면이 되면서 카드가 가운데 좁게 뜨는 게 눈에 띄어 폭을 고정한다. */
 #page-nnviz.active{align-self:stretch;width:100%;}
-#page-nnviz .nnv-live{display:grid;grid-template-columns:minmax(0,1.35fr) minmax(280px,.85fr);gap:14px;margin:4px 0 16px;}
-#page-nnviz .nlv-core,#page-nnviz .nlv-side{background:radial-gradient(120% 130% at 50% -10%,#0d1830,#060910 72%);border:1px solid #17233e;border-radius:14px;overflow:hidden;}
-#page-nnviz .nlv-side{display:flex;flex-direction:column;background:linear-gradient(180deg,#090e1a,#060910);}
-#page-nnviz .nlv-corehead{display:flex;align-items:center;justify-content:space-between;padding:9px 13px;border-bottom:1px solid #14203a;font-family:'IBM Plex Mono',monospace;}
-#page-nnviz .nlv-tagline{font-size:9.5px;letter-spacing:2.4px;color:#5f79a2;text-transform:uppercase;}
+#page-nnviz .nnv-live{display:flex;flex-direction:column;gap:12px;margin:4px 0 16px;}
+
+/* ① 상태 스트립 */
+#page-nnviz .nlv-strip{
+  display:flex;align-items:center;flex-wrap:wrap;gap:6px 14px;
+  padding:9px 14px;border:1px solid #17233e;border-radius:12px;
+  background:linear-gradient(90deg,rgba(56,189,248,.07),rgba(9,14,26,.6));
+  font-family:'IBM Plex Mono',monospace;
+}
+#page-nnviz .nlv-tagline{font-size:9.5px;letter-spacing:2.4px;color:#7fb6e6;text-transform:uppercase;}
 #page-nnviz .nlv-tagline::before{content:'';display:inline-block;width:6px;height:6px;border-radius:50%;background:#38bdf8;box-shadow:0 0 8px #38bdf8;margin-right:7px;vertical-align:middle;}
 #page-nnviz.active .nlv-tagline::before{animation:nnPulse 1.7s ease-in-out infinite;}
-#page-nnviz .nlv-clock{font-size:10px;color:#7c90b5;font-variant-numeric:tabular-nums;}
-#page-nnviz .nlv-canvaswrap{position:relative;}
+#page-nnviz .nlv-clock{font-size:10px;color:#8fa6c8;font-variant-numeric:tabular-nums;}
+#page-nnviz .nlv-strip-tags{display:flex;flex-wrap:wrap;gap:5px;margin-left:auto;}
+#page-nnviz .nlv-tag{
+  font-size:9px;padding:2px 8px;border-radius:20px;border:1px solid #22345a;color:#9fb4dc;white-space:nowrap;
+}
+#page-nnviz .nlv-tag.hot{border-color:rgba(56,189,248,.5);color:#7fe3f7;background:rgba(56,189,248,.1);}
+#page-nnviz .nlv-tag.warn{border-color:rgba(255,193,7,.45);color:#ffd98a;background:rgba(255,193,7,.08);}
+
+/* ② 히어로 */
+#page-nnviz .nlv-hero{display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1.08fr);gap:12px;}
+#page-nnviz .nlv-core,#page-nnviz .nlv-funnel-wrap,#page-nnviz .nlv-panel{
+  background:linear-gradient(180deg,#090e1a,#060910);border:1px solid #17233e;border-radius:14px;overflow:hidden;
+}
+#page-nnviz .nlv-core{display:flex;flex-direction:column;}
+#page-nnviz .nlv-canvaswrap{position:relative;flex:1 1 auto;}
 #page-nnviz .nlv-canvaswrap svg{display:block;width:100%;height:auto;}
-/* 코어 중앙 라벨 — 첫 번째 참고화면의 "수렴점" 느낌 */
-#page-nnviz .nlv-centerlabel{position:absolute;left:50%;top:50%;transform:translate(-50%,-50%);text-align:center;pointer-events:none;width:28%;min-width:150px;}
-#page-nnviz .nlv-centerlabel .k{font-family:'IBM Plex Mono',monospace;font-size:10px;letter-spacing:1.6px;color:#9fd0f5;text-transform:uppercase;font-weight:600;}
-#page-nnviz .nlv-centerlabel .v{font-family:'Space Grotesk',sans-serif;font-size:28px;font-weight:700;line-height:1.15;color:#eaf6ff;text-shadow:0 0 18px rgba(56,189,248,.75);margin-top:1px;}
+#page-nnviz .nlv-centerlabel{position:absolute;left:50%;top:50%;transform:translate(-50%,-50%);text-align:center;pointer-events:none;width:44%;min-width:130px;}
+#page-nnviz .nlv-centerlabel .k{font-family:'IBM Plex Mono',monospace;font-size:10.5px;letter-spacing:1.6px;color:#9fd0f5;text-transform:uppercase;font-weight:600;}
+#page-nnviz .nlv-centerlabel .v{font-family:'Space Grotesk',sans-serif;font-size:30px;font-weight:700;line-height:1.12;color:#eaf6ff;text-shadow:0 0 18px rgba(56,189,248,.75);margin-top:1px;}
 #page-nnviz .nlv-centerlabel .v.neg{color:#ff8aa5;text-shadow:0 0 20px rgba(255,92,122,.45);}
 #page-nnviz .nlv-centerlabel .v.idle{color:#8fa2bb;text-shadow:none;}
 #page-nnviz .nlv-centerlabel .m{font-family:'IBM Plex Mono',monospace;font-size:10.5px;color:#a9bcd8;margin-top:3px;line-height:1.45;}
-#page-nnviz .nlv-corefoot{display:flex;flex-wrap:wrap;gap:7px;padding:10px 13px 12px;border-top:1px solid #14203a;}
-#page-nnviz .nlv-stat{flex:1 1 auto;min-width:74px;}
-#page-nnviz .nlv-stat .k{font-family:'IBM Plex Mono',monospace;font-size:8.5px;letter-spacing:1.4px;color:#5f79a2;text-transform:uppercase;}
-#page-nnviz .nlv-stat .v{font-family:'Space Grotesk',sans-serif;font-size:14px;font-weight:700;color:#eaf2ff;margin-top:1px;}
+
+/* 코어 아래 상위 후보 3 */
+#page-nnviz .nlv-toplist{display:grid;grid-template-columns:repeat(3,1fr);gap:1px;background:#14203a;border-top:1px solid #14203a;}
+#page-nnviz .nlv-top{background:#080d18;padding:8px 9px;cursor:pointer;transition:background .12s;min-width:0;}
+#page-nnviz .nlv-top:hover{background:#0d1730;}
+#page-nnviz .nlv-top .r{font-family:'IBM Plex Mono',monospace;font-size:8px;letter-spacing:1.2px;color:#5f79a2;}
+#page-nnviz .nlv-top .s{font-family:'IBM Plex Mono',monospace;font-size:11.5px;font-weight:700;color:#eaf2ff;
+  white-space:nowrap;overflow:hidden;text-overflow:ellipsis;margin-top:1px;}
+#page-nnviz .nlv-top .p{font-family:'IBM Plex Mono',monospace;font-size:10px;color:#67e8f9;margin-top:1px;}
+
+/* 판정 깔때기 */
+#page-nnviz .nlv-funnel-wrap{display:flex;flex-direction:column;}
+#page-nnviz .nlv-sec-h{
+  display:flex;align-items:center;gap:8px;padding:9px 13px;border-bottom:1px solid #14203a;
+  font-family:'IBM Plex Mono',monospace;font-size:9.5px;letter-spacing:2.2px;color:#5f79a2;text-transform:uppercase;
+}
+#page-nnviz .nlv-sec-h small{letter-spacing:.3px;text-transform:none;font-size:9.5px;color:#4a5f82;}
+#page-nnviz .nlv-sec-h .nlv-btn{margin-left:auto;}
+#page-nnviz .nlv-funnel{flex:1 1 auto;display:flex;flex-direction:column;gap:7px;padding:12px 13px 6px;}
+#page-nnviz .nlv-fstep{display:grid;grid-template-columns:104px 1fr 78px;align-items:center;gap:9px;}
+#page-nnviz .nlv-fstep .fl{font-family:'IBM Plex Mono',monospace;font-size:10px;color:#a9bcd8;white-space:nowrap;
+  overflow:hidden;text-overflow:ellipsis;}
+#page-nnviz .nlv-fstep .fl i{font-style:normal;color:#4a5f82;margin-right:5px;}
+#page-nnviz .nlv-fbar{height:16px;border-radius:4px;background:rgba(255,255,255,.045);overflow:hidden;position:relative;}
+#page-nnviz .nlv-fbar>span{display:block;height:100%;border-radius:4px;transition:width .6s cubic-bezier(.2,.8,.2,1);
+  background:linear-gradient(90deg,#1e3a8a,#3b82f6);}
+#page-nnviz .nlv-fstep.s2 .nlv-fbar>span{background:linear-gradient(90deg,#2563eb,#38bdf8);}
+#page-nnviz .nlv-fstep.s3 .nlv-fbar>span{background:linear-gradient(90deg,#0891b2,#22d3ee);}
+#page-nnviz .nlv-fstep.s4 .nlv-fbar>span{background:linear-gradient(90deg,#22d3ee,#a5f3fc);}
+#page-nnviz .nlv-fstep.abst .nlv-fbar>span{background:linear-gradient(90deg,#475569,#94a3b8);}
+#page-nnviz .nlv-fstep .fv{font-family:'IBM Plex Mono',monospace;font-size:11.5px;font-weight:700;color:#eaf2ff;
+  text-align:right;font-variant-numeric:tabular-nums;white-space:nowrap;}
+#page-nnviz .nlv-fstep .fv small{display:block;font-size:8.5px;font-weight:400;color:#5f79a2;}
+
+/* KPI 타일 */
+#page-nnviz .nlv-kpi{display:grid;grid-template-columns:repeat(3,1fr);gap:1px;background:#14203a;border-top:1px solid #14203a;margin-top:auto;}
+#page-nnviz .nlv-stat{background:#080d18;padding:8px 11px 9px;min-width:0;}
+#page-nnviz .nlv-stat .k{font-family:'IBM Plex Mono',monospace;font-size:8.5px;letter-spacing:1.4px;color:#5f79a2;text-transform:uppercase;white-space:nowrap;}
+#page-nnviz .nlv-stat .v{font-family:'Space Grotesk',sans-serif;font-size:15px;font-weight:700;color:#eaf2ff;margin-top:1px;
+  white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
 #page-nnviz .nlv-stat .v.good{color:#38bdf8;} #page-nnviz .nlv-stat .v.warn{color:#ffc107;} #page-nnviz .nlv-stat .v.off{color:#ff5c7a;}
-/* 파이프라인 — 수집→피처→위원회→보정→게이트→판정 */
-#page-nnviz .nlv-pipe{display:flex;flex-direction:column;gap:1px;padding:10px 12px;border-bottom:1px solid #14203a;}
+
+/* ③ 하단 2열 */
+#page-nnviz .nlv-lower{display:grid;grid-template-columns:minmax(0,1.55fr) minmax(0,1fr);gap:12px;}
+#page-nnviz .nlv-panel{display:flex;flex-direction:column;}
+#page-nnviz .nlv-btn{cursor:pointer;background:rgba(56,189,248,.1);border:1px solid #22345a;border-radius:6px;color:#9fb4dc;font-size:10px;padding:2px 8px;line-height:1.5;}
+#page-nnviz .nlv-btn:hover{color:#eaf2ff;border-color:#38bdf8;}
+#page-nnviz .nlv-pipe{display:flex;flex-direction:column;gap:1px;padding:9px 12px 11px;}
 #page-nnviz .nlv-step{display:grid;grid-template-columns:14px 1fr auto;align-items:center;gap:8px;padding:4px 0;font-family:'IBM Plex Mono',monospace;font-size:10.5px;color:#93aace;}
 #page-nnviz .nlv-step i{width:8px;height:8px;border-radius:50%;background:#33415c;display:inline-block;margin-left:3px;}
 #page-nnviz .nlv-step.ok i{background:#38bdf8;box-shadow:0 0 7px rgba(56,189,248,.7);}
@@ -12085,13 +12163,9 @@ html[data-theme="light"] #page-nnviz .nnv-title,html[data-theme="light"] #page-n
 #page-nnviz .nlv-step.never i{background:#ff5c7a;}
 #page-nnviz .nlv-step b{font-weight:500;color:#cdddf7;}
 #page-nnviz .nlv-step span{font-size:9.5px;color:#5f79a2;font-variant-numeric:tabular-nums;}
-#page-nnviz .nlv-step.run b{color:#8fd0ff;}
-#page-nnviz .nlv-verdicthead{display:flex;align-items:center;justify-content:space-between;padding:8px 12px;border-bottom:1px solid #14203a;font-family:'IBM Plex Mono',monospace;font-size:9.5px;letter-spacing:2px;color:#5f79a2;text-transform:uppercase;}
-#page-nnviz .nlv-btn{cursor:pointer;background:rgba(70,130,255,.1);border:1px solid #22345a;border-radius:6px;color:#9fb4dc;font-size:10px;padding:2px 8px;line-height:1.5;}
-#page-nnviz .nlv-btn:hover{color:#eaf2ff;border-color:#3a63b0;}
-#page-nnviz .nlv-feed{flex:1 1 auto;min-height:210px;max-height:330px;overflow-y:auto;padding:6px 0 10px;font-family:'IBM Plex Mono',monospace;font-size:10.5px;line-height:1.55;}
+#page-nnviz .nlv-feed{flex:1 1 auto;min-height:200px;max-height:300px;overflow-y:auto;padding:6px 0 10px;font-family:'IBM Plex Mono',monospace;font-size:10.5px;line-height:1.55;}
 #page-nnviz .nlv-feed::-webkit-scrollbar{width:4px;} #page-nnviz .nlv-feed::-webkit-scrollbar-thumb{background:#22345a;border-radius:3px;}
-#page-nnviz .nlv-line{display:grid;grid-template-columns:46px 1fr;gap:8px;padding:3px 12px;border-left:2px solid transparent;animation:nlvIn .32s ease-out;}
+#page-nnviz .nlv-line{display:grid;grid-template-columns:58px 1fr;gap:8px;padding:3px 12px;border-left:2px solid transparent;animation:nlvIn .32s ease-out;}
 #page-nnviz .nlv-line .t{color:#4a5f82;font-variant-numeric:tabular-nums;}
 #page-nnviz .nlv-line .b{color:#a9bcd8;word-break:break-word;}
 #page-nnviz .nlv-line .b em{font-style:normal;color:#eaf2ff;font-weight:600;}
@@ -12103,8 +12177,9 @@ html[data-theme="light"] #page-nnviz .nnv-title,html[data-theme="light"] #page-n
 #page-nnviz .nlv-line.warn .b em{color:#ffd98a;}
 #page-nnviz .nlv-empty{padding:26px 14px;text-align:center;color:#5f79a2;font-size:11px;}
 @keyframes nlvIn{from{opacity:0;transform:translateY(-4px);}to{opacity:1;transform:none;}}
-/* 스캔 빔 — 코어를 도는 부채꼴. 페이지가 활성일 때만 회전(비활성 시 GPU 0) */
-#page-nnviz .nlv-beam{transform-origin:320px 210px;opacity:.5;}
+
+/* 코어 SVG 요소 */
+#page-nnviz .nlv-beam{transform-origin:230px 230px;opacity:.5;}
 #page-nnviz.active .nlv-beam{animation:nlvSweep 7.5s linear infinite;}
 @keyframes nlvSweep{from{transform:rotate(0deg);}to{transform:rotate(360deg);}}
 #page-nnviz .nlv-node{cursor:pointer;transition:r .3s ease;}
@@ -12114,19 +12189,50 @@ html[data-theme="light"] #page-nnviz .nnv-title,html[data-theme="light"] #page-n
 @keyframes nlvRay{0%,100%{opacity:.30;}50%{opacity:.95;}}
 #page-nnviz .nlv-corering{fill:none;}
 #page-nnviz.active .nlv-corering{animation:nlvRing 4.2s ease-out infinite;}
-@keyframes nlvRing{0%{r:26;opacity:.55;}100%{r:120;opacity:0;}}
+@keyframes nlvRing{0%{r:26;opacity:.55;}100%{r:110;opacity:0;}}
 @media (prefers-reduced-motion:reduce){
   #page-nnviz.active .nlv-beam,#page-nnviz.active .nlv-ray.hot,#page-nnviz.active .nlv-corering,#page-nnviz.active .nlv-tagline::before{animation:none;}
 }
-@media(max-width:1080px){
-  #page-nnviz .nnv-live{grid-template-columns:1fr;}
-  #page-nnviz .nlv-feed{max-height:220px;}
+@media(max-width:1180px){
+  #page-nnviz .nlv-hero,#page-nnviz .nlv-lower{grid-template-columns:1fr;}
+  #page-nnviz .nlv-feed{max-height:230px;}
 }
 @media(max-width:640px){
-  #page-nnviz .nlv-centerlabel .v{font-size:22px;}
-  #page-nnviz .nlv-corefoot{gap:5px;padding:8px 10px 10px;}
-  #page-nnviz .nlv-stat{min-width:62px;} #page-nnviz .nlv-stat .v{font-size:12px;}
+  #page-nnviz .nlv-centerlabel .v{font-size:24px;}
+  #page-nnviz .nlv-kpi{grid-template-columns:repeat(2,1fr);}
+  #page-nnviz .nlv-fstep{grid-template-columns:84px 1fr 62px;gap:7px;}
+  #page-nnviz .nlv-strip{padding:8px 10px;}
+  #page-nnviz .nlv-strip-tags{margin-left:0;flex-basis:100%;}
 }
+html[data-theme="light"] #page-nnviz .nlv-core,html[data-theme="light"] #page-nnviz .nlv-funnel-wrap,
+html[data-theme="light"] #page-nnviz .nlv-panel,html[data-theme="light"] #page-nnviz .nlv-strip{background:linear-gradient(180deg,#eef3fb,#e6edf8);border-color:#cdd9ee;}
+html[data-theme="light"] #page-nnviz .nlv-step b,html[data-theme="light"] #page-nnviz .nlv-line .b em{color:#12233f;}
+html[data-theme="light"] #page-nnviz .nlv-line .b,html[data-theme="light"] #page-nnviz .nlv-fstep .fl{color:#3a4b66;}
+html[data-theme="light"] #page-nnviz .nlv-stat .v,html[data-theme="light"] #page-nnviz .nlv-fstep .fv,
+html[data-theme="light"] #page-nnviz .nlv-top .s{color:#12233f;}
+html[data-theme="light"] #page-nnviz .nlv-stat .v.good{color:#0b6cd4;}
+html[data-theme="light"] #page-nnviz .nlv-stat .v.warn{color:#a5730a;}
+html[data-theme="light"] #page-nnviz .nlv-stat .v.off{color:#c62a45;}
+html[data-theme="light"] #page-nnviz .nlv-kpi,html[data-theme="light"] #page-nnviz .nlv-toplist{background:#cdd9ee;}
+html[data-theme="light"] #page-nnviz .nlv-stat,html[data-theme="light"] #page-nnviz .nlv-top{background:#fbfdff;}
+html[data-theme="light"] #page-nnviz .nlv-fbar{background:rgba(18,35,63,.08);}
+html[data-theme="light"] #page-nnviz .nlv-corehead,html[data-theme="light"] #page-nnviz .nlv-pipe,
+html[data-theme="light"] #page-nnviz .nlv-sec-h{border-color:#d5dfee;}
+/* 라이트에서 흐려지던 요소들 — 스트립 태그·상위3 수치·섹션 헤더 */
+html[data-theme="light"] #page-nnviz .nlv-tag{color:#3a4b66;border-color:#c2cfe4;background:#fbfdff;}
+html[data-theme="light"] #page-nnviz .nlv-tag.hot{color:#0b5f96;border-color:#7fc4e8;background:rgba(56,189,248,.14);}
+html[data-theme="light"] #page-nnviz .nlv-tag.warn{color:#8a5d05;border-color:#e2c37a;background:rgba(255,193,7,.16);}
+html[data-theme="light"] #page-nnviz .nlv-tagline{color:#2a6ea8;}
+html[data-theme="light"] #page-nnviz .nlv-clock{color:#3a4b66;}
+html[data-theme="light"] #page-nnviz .nlv-top .p{color:#0b6cd4;}
+html[data-theme="light"] #page-nnviz .nlv-top .r,
+html[data-theme="light"] #page-nnviz .nlv-sec-h,
+html[data-theme="light"] #page-nnviz .nlv-sec-h small,
+html[data-theme="light"] #page-nnviz .nlv-stat .k,
+html[data-theme="light"] #page-nnviz .nlv-fstep .fv small{color:#5a6c85;}
+html[data-theme="light"] #page-nnviz .nlv-line .t,
+html[data-theme="light"] #page-nnviz .nlv-step span{color:#66788f;}
+
 /* ── [V33.2] AI 후보 종목 그래프 ── */
 #page-nnviz .nlv-picks{margin:0 0 16px;background:linear-gradient(180deg,#090e1a,#060910);border:1px solid #17233e;border-radius:14px;overflow:hidden;}
 #page-nnviz .nlv-picks-head{
@@ -12846,13 +12952,12 @@ html[data-theme="light"] #page-nnviz .nlv-verdicthead,html[data-theme="light"] #
 <style>
 /* ══════ ① 우측 사이드바 — 지금 열어 둔 종목창 트레이 ══════ */
 .rail{
-  width:214px;flex:0 0 214px;order:99;
+  width:190px;flex:0 0 190px;order:99;
   background:var(--s1);border-left:1px solid var(--bd);
   display:flex;flex-direction:column;min-height:0;overflow:hidden;
   position:relative;z-index:9;
   transition:width .18s ease,flex-basis .18s ease;
 }
-.rail.collapsed{width:34px;flex-basis:34px;}
 .rail-head{
   display:flex;align-items:center;gap:6px;padding:10px 10px 9px;
   border-bottom:1px solid var(--bd);flex:0 0 auto;
@@ -13000,23 +13105,8 @@ html[data-theme="light"] #page-nnviz .nlv-verdicthead,html[data-theme="light"] #
   color:var(--t3);font-size:9.5px;padding:5px 4px;font-family:'IBM Plex Mono',monospace;letter-spacing:.4px;
 }
 .rail-foot button:hover{color:var(--t1);border-color:var(--acc);}
-/* 접힘 상태 — 세로 스트립에 티커 이니셜만 */
-.rail.collapsed .rail-title,.rail.collapsed .rail-foot,.rail.collapsed .rail-cnt,
-.rail.collapsed .rail-item .r-name,.rail.collapsed .rail-item .r-px,
-.rail.collapsed .rail-item .r-foot,.rail.collapsed .rail-item .r-chg,
-.rail.collapsed .rail-empty,.rail.collapsed #railDensity,
-.rail.collapsed .rail-view small,.rail.collapsed .rail-sec-h,.rail.collapsed .rail-ai,
-.rail.collapsed .rail-links,.rail.collapsed .rail-slot,.rail.collapsed #railModelsSec{display:none;}
-.rail.collapsed .rail-views{padding:5px 3px;}
-.rail.collapsed .rail-view{padding:6px 2px;text-align:center;}
-.rail.collapsed .rail-view b{font-size:13px;}
-.rail.collapsed .rail-view b .tx{display:none;}
-.rail.collapsed .rail-view b .ic{margin-right:0;}
 /* 레일은 "AI 두뇌" 페이지에서만 — 다른 페이지에선 완전히 빠진다(레이아웃 폭도 반환) */
 .rail[hidden]{display:none;}
-.rail.collapsed .rail-head{padding:9px 6px;justify-content:center;}
-.rail.collapsed .rail-item{grid-template-columns:1fr;padding:7px 2px;text-align:center;}
-.rail.collapsed .rail-item .r-sym{font-size:9px;}
 /* 열린 종목창이 없고 접힌 상태에서도 토글은 항상 보이게 */
 .rail-openbtn{display:none;}
 @media(max-width:1099px){ .rail{display:none;} }
@@ -13108,6 +13198,14 @@ html[data-theme="light"] .rail{background:#fff;}
     var d = new Date(ts);
     return ('0'+d.getHours()).slice(-2)+':'+('0'+d.getMinutes()).slice(-2);
   }
+  // [V33.5] ★판정 스트림 시각이 전부 같게 보이던 문제★
+  //   한 번의 스캔이 ~90초 안에 끝나므로 분 단위(HH:MM)로 찍으면 모든 줄이 같은 값이 된다.
+  //   초까지 찍어 종목별 처리 순서가 실제로 드러나게 한다.
+  function hms(ts){
+    if(!ts) return '--:--:--';
+    var d = new Date(ts);
+    return ('0'+d.getHours()).slice(-2)+':'+('0'+d.getMinutes()).slice(-2)+':'+('0'+d.getSeconds()).slice(-2);
+  }
   function ago(ts){
     if(!ts) return '없음';
     var m = Math.floor((Date.now()-ts)/60000);
@@ -13143,7 +13241,7 @@ html[data-theme="light"] .rail{background:#fff;}
     syms: [],            // [{sym, market, name, ts}]
     max: 14,
     el: null, body: null, cnt: null,
-    collapsed: false, lastHtml: null
+    lastHtml: null
   };
   function railLoad(){
     try{
@@ -13151,7 +13249,6 @@ html[data-theme="light"] .rail{background:#fff;}
       RAIL.syms = raw ? JSON.parse(raw) : [];
       if(!Array.isArray(RAIL.syms)) RAIL.syms = [];
     }catch(e){ RAIL.syms = []; }
-    try{ RAIL.collapsed = localStorage.getItem('luxRailCollapsed') === '1'; }catch(e){}
   }
   function railSave(){
     try{ localStorage.setItem('luxRailSyms', JSON.stringify(RAIL.syms.slice(0, RAIL.max))); }catch(e){}
@@ -13189,7 +13286,7 @@ html[data-theme="light"] .rail{background:#fff;}
   // 레일 실폭을 CSS 변수로 — 빠른검색 FAB 등 fixed 요소가 레일을 안 가리게 한다.
   function railWidthVar(){
     var shown = RAIL.el && !RAIL.el.hidden && window.innerWidth >= 1100;
-    var w = shown ? (RAIL.collapsed ? 34 : 214) : 0;
+    var w = shown ? RAIL_W : 0;
     document.documentElement.style.setProperty('--rail-w', w + 'px');
   }
   // [V33.1] 우측 사이드바는 "AI 두뇌" 페이지 전용 — 다른 페이지에선 감춘다.
@@ -13218,14 +13315,13 @@ html[data-theme="light"] .rail{background:#fff;}
     if(RAIL.el) return;
     var shell = document.querySelector('.shell'); if(!shell) return;
     var el = document.createElement('aside');
-    el.className = 'rail' + (RAIL.collapsed ? ' collapsed' : '');
+    el.className = 'rail';
     el.id = 'luxRail';
     el.innerHTML =
       '<div class="rail-head">'
         +'<button type="button" class="rail-btn" id="railBack" title="AI 두뇌로 돌아가기" style="display:none;">←</button>'
         +'<span class="rail-title"><b id="railWhere">AI 두뇌</b></span>'
         +'<button type="button" class="rail-btn" id="railDensity" title="터미널 밀도 — 대시보드를 조밀한 터미널 그리드로 전환/해제">▮</button>'
-        +'<button type="button" class="rail-btn" id="railToggle" title="사이드바 접기/펴기">❯</button>'
       +'</div>'
       // ── 뷰 전환: 작동 화면 ↔ 구조 관측 (구조는 여기서 켤 때만 로드된다)
       +'<div class="rail-views" id="railViews">'
@@ -13282,14 +13378,7 @@ html[data-theme="light"] .rail{background:#fff;}
       if(src && slot) slot.appendChild(src);
     });
 
-    $id('railToggle').addEventListener('click', function(){
-      RAIL.collapsed = !RAIL.collapsed;
-      el.classList.toggle('collapsed', RAIL.collapsed);
-      this.textContent = RAIL.collapsed ? '❮' : '❯';
-      try{ localStorage.setItem('luxRailCollapsed', RAIL.collapsed?'1':'0'); }catch(e){}
-      railWidthVar();
-    });
-    $id('railToggle').textContent = RAIL.collapsed ? '❮' : '❯';
+    // [V33.5] 접기/펼치기 제거 — 사이드바는 "AI 두뇌 관측" 화면에서만 뜨고 사라지는 것으로 통일(사용자 요청).
     railWidthVar();
     window.addEventListener('resize', railWidthVar);
     $id('railDensity').addEventListener('click', function(){ toggleDensity(); });
@@ -13397,6 +13486,7 @@ html[data-theme="light"] .rail{background:#fff;}
   var TABS = ['dashboard','detail','nnviz','positions'];
   // 우측 사이드바가 떠 있는 화면 — 두뇌 + 그 사이드바에서 여는 화면들
   var RAIL_PAGES = ['nnviz','report','whatif'];
+  var RAIL_W = 190;   // 우측 사이드바 폭(px) — CSS .rail 과 같이 유지
   // 구조 관측에서 고를 수 있는 모델 — 기존 nnv-tab 과 같은 목록(switchNnModel 인자와 동일)
   var MODELS = [['dnn','DNN 딥넷'],['mind','MIND 스태킹'],['gbdt','GBDT'],['xgb','XGBoost'],['lgb','LightGBM'],['cat','CatBoost']];
   // 모델 버튼은 항상 보인다(사용자 요청: DNN·신경망 구조 버튼 복구). 누르면 구조 화면으로 전환되며
@@ -13517,9 +13607,10 @@ html[data-theme="light"] .rail{background:#fff;}
         else setBrainView(b.getAttribute('data-view'));
       });
       host.insertBefore(bb, liveEl);
+      // 운용상태는 작동 화면 "뒤"에 — 시각화가 먼저 보여야 한다(앞에 두면 코어가 화면 밖으로 밀린다).
       var am = document.createElement('div');
       am.className = 'm-aimode'; am.id = 'mobAiMode'; am.textContent = '확인 중…';
-      host.insertBefore(am, liveEl);
+      liveEl.parentNode.insertBefore(am, liveEl.nextSibling);
     }
     syncMobile();
   }
@@ -13602,7 +13693,7 @@ html[data-theme="light"] .rail{background:#fff;}
         전부 서버 실데이터. 연출만 하고 수치는 만들지 않는다.
      ═════════════════════════════════════════════════════════════ */
   var LIVE = { timer:null, feedTimer:null, lines:[], idx:0, paused:false, active:false, data:null };
-  var CX = 320, CY = 210;
+  var CX = 230, CY = 230;   // 코어 SVG viewBox 460×460 의 중심
   // 두뇌 페이지 안의 뷰: 'live'(작동 화면) | 'struct'(구조 관측)
   var BVIEW = 'live';
   try{ if(localStorage.getItem('luxBrainView') === 'struct') BVIEW = 'struct'; }catch(e){}
@@ -13667,19 +13758,19 @@ html[data-theme="light"] .rail{background:#fff;}
       +'<linearGradient id="nlvBeamG" x1="0" y1="0" x2="1" y2="0">'
       +'<stop offset="0%" stop-color="#4a9dff" stop-opacity=".35"/><stop offset="100%" stop-color="#4a9dff" stop-opacity="0"/></linearGradient>'
       +'</defs>');
-    [108,144,180].forEach(function(r,i){
+    [100,134,168].forEach(function(r,i){
       parts.push('<circle class="nlv-ring" cx="'+CX+'" cy="'+CY+'" r="'+r+'" fill="none" stroke-width="1"'
         +(i===1?' stroke-dasharray="2 5"':'')+'/>');
     });
-    parts.push('<text class="nlv-axis" x="'+(CX+110)+'" y="'+(CY-4)+'" font-size="8" font-family="monospace">상위</text>');
-    parts.push('<text class="nlv-axis" x="'+(CX+182)+'" y="'+(CY-4)+'" font-size="8" font-family="monospace">하위</text>');
+    parts.push('<text class="nlv-axis" x="'+(CX+102)+'" y="'+(CY-4)+'" font-size="8" font-family="monospace">상위</text>');
+    parts.push('<text class="nlv-axis" x="'+(CX+170)+'" y="'+(CY-4)+'" font-size="8" font-family="monospace">하위</text>');
     // 스캔 빔(부채꼴)
-    parts.push('<g class="nlv-beam"><path d="M '+CX+' '+CY+' L '+(CX+186)+' '+(CY-46)+' A 192 192 0 0 1 '+(CX+186)+' '+(CY+46)+' Z" fill="url(#nlvBeamG)"/>'
-      +'<line x1="'+CX+'" y1="'+CY+'" x2="'+(CX+192)+'" y2="'+CY+'" stroke="#6cc0ff" stroke-width="1" opacity=".5"/></g>');
+    parts.push('<g class="nlv-beam"><path d="M '+CX+' '+CY+' L '+(CX+172)+' '+(CY-43)+' A 178 178 0 0 1 '+(CX+172)+' '+(CY+43)+' Z" fill="url(#nlvBeamG)"/>'
+      +'<line x1="'+CX+'" y1="'+CY+'" x2="'+(CX+178)+'" y2="'+CY+'" stroke="#6cc0ff" stroke-width="1" opacity=".5"/></g>');
 
     if(!picks.length){
-      parts.push('<text x="'+CX+'" y="'+(CY+150)+'" text-anchor="middle" fill="#5f79a2" font-size="11" font-family="monospace">'
-        +'스캔 결과 없음 — 야간 파이프라인이 1회 이상 돌아야 표시됩니다</text>');
+      parts.push('<text x="'+CX+'" y="'+(CY+200)+'" text-anchor="middle" fill="#5f79a2" font-size="10" font-family="monospace">'
+        +'스캔 결과 없음 — 야간 파이프라인 대기 중</text>');
       svg.innerHTML = parts.join('');
       return;
     }
@@ -13689,7 +13780,7 @@ html[data-theme="light"] .rail{background:#fff;}
     var GA = Math.PI * (3 - Math.sqrt(5));   // 황금각 ≈137.5°
     picks.forEach(function(pk, i){
       var rank = (pk.rankP != null ? pk.rankP : pk.p);
-      var rad = 108 + (n > 1 ? (i / (n - 1)) : 0) * 72;
+      var rad = 100 + (n > 1 ? (i / (n - 1)) : 0) * 68;
       var ang = (-Math.PI/2) + i * GA;
       var x = CX + Math.cos(ang) * rad, y = CY + Math.sin(ang) * rad;
       var col = nodeColor(pk);
@@ -13697,7 +13788,7 @@ html[data-theme="light"] .rail{background:#fff;}
       var w = pk.abstain ? 0.5 : (0.45 + Math.max(0, rank-0.45) * 5.2);
       var op = pk.abstain ? 0.16 : (0.14 + Math.max(0, rank-0.42) * 1.9);
       // 광선은 코어(로고 별) 바깥에서 시작 — 중앙 판정 라벨 위를 지나가지 않게.
-      var sx = CX + Math.cos(ang) * 78, sy = CY + Math.sin(ang) * 78;
+      var sx = CX + Math.cos(ang) * 72, sy = CY + Math.sin(ang) * 72;
       parts.push('<line class="nlv-ray'+(strong?' hot':'')+'" x1="'+sx.toFixed(1)+'" y1="'+sy.toFixed(1)+'" x2="'+x.toFixed(1)+'" y2="'+y.toFixed(1)
         +'" stroke="'+col+'" stroke-width="'+w.toFixed(2)+'" opacity="'+Math.min(0.95,op).toFixed(2)+'"/>');
       var r = pk.abstain ? 2.2 : (2.4 + Math.max(0, rank-0.45) * 13);
@@ -13706,7 +13797,7 @@ html[data-theme="light"] .rail{background:#fff;}
         +'<title>'+esc(pk.symbol)+' · 승률 '+Math.round(pk.p*100)+'%'+(pk.techLabel?(' · '+esc(pk.techLabel)):'')+'</title></circle>');
       if(strong && hot.length < 9){
         hot.push(1);
-        var lx = CX + Math.cos(ang) * (rad + 16), ly = CY + Math.sin(ang) * (rad + 16);
+        var lx = CX + Math.cos(ang) * (rad + 15), ly = CY + Math.sin(ang) * (rad + 15);
         var anchor = Math.cos(ang) > 0.25 ? 'start' : (Math.cos(ang) < -0.25 ? 'end' : 'middle');
         parts.push('<text class="nlv-lab" x="'+lx.toFixed(1)+'" y="'+(ly+3).toFixed(1)+'" text-anchor="'+anchor+'" '
           +'font-size="9.5" font-family="monospace">'+esc(pk.symbol)+'</text>');
@@ -13714,17 +13805,17 @@ html[data-theme="light"] .rail{background:#fff;}
     });
     // ── 판정 코어 = 사이트 로고(8각 별) ──
     //   어두운 원판(글씨 대비) → 로고 별 워터마크 + 패싯 → 링. 광선이 별의 뿔로 모여드는 그림.
-    parts.push('<circle cx="'+CX+'" cy="'+CY+'" r="76" fill="#060a12" opacity=".92"/>');
-    parts.push('<circle cx="'+CX+'" cy="'+CY+'" r="76" fill="url(#nlvCoreG)" opacity=".18"/>');
-    var S = 2.06, off = 50 * S;   // 100×100 로고 path → 206px. 로고 별이 판정 수치를 감싸는 '프레임'이 된다
+    parts.push('<circle cx="'+CX+'" cy="'+CY+'" r="70" fill="#060a12" opacity=".92"/>');
+    parts.push('<circle cx="'+CX+'" cy="'+CY+'" r="70" fill="url(#nlvCoreG)" opacity=".18"/>');
+    var S = 1.92, off = 50 * S;   // 100×100 로고 path → 192px. 로고 별이 판정 수치를 감싸는 '프레임'이 된다
     parts.push('<g class="nlv-logo" transform="translate('+(CX-off)+','+(CY-off)+') scale('+S+')">'
       +'<path class="nlv-logo-base" d="'+LOGO_STAR+'"/>'
       +'<path class="nlv-logo-facet" d="'+LOGO_FACET+'"/>'
       +'</g>');
     // 별의 몸통만 어두운 원판으로 덮어 8개 뿔을 남긴다 → 로고 실루엣이 판정 수치를 감싼다
-    parts.push('<circle cx="'+CX+'" cy="'+CY+'" r="48" fill="#060a12" opacity=".93"/>');
+    parts.push('<circle cx="'+CX+'" cy="'+CY+'" r="45" fill="#060a12" opacity=".93"/>');
     parts.push('<circle class="nlv-corering" cx="'+CX+'" cy="'+CY+'" r="26" stroke="#38bdf8" stroke-width="1"/>');
-    parts.push('<circle class="nlv-corerim" cx="'+CX+'" cy="'+CY+'" r="48" fill="none" stroke-width="1"/>');
+    parts.push('<circle class="nlv-corerim" cx="'+CX+'" cy="'+CY+'" r="45" fill="none" stroke-width="1"/>');
     svg.innerHTML = parts.join('');
     // 노드 클릭 → 해당 종목 상세 열기(+ 우측 사이드바에 쌓임)
     var nodes = svg.querySelectorAll('.nlv-node');
@@ -13736,46 +13827,119 @@ html[data-theme="light"] .rail{background:#fff;}
     }
   }
 
+  // 코어 중앙 라벨 — "지금 두뇌의 결론"만 크게. 나머지 수치는 깔때기/KPI로 분리했다.
   function renderCenter(d){
-    var kEl=$id('nlvCenterK'), vEl=$id('nlvCenterV'), mEl=$id('nlvCenterM'), foot=$id('nlvCoreFoot');
-    var picks = d.picks || [], scan = d.scan || {}, mode = d.mode || {};
+    var kEl=$id('nlvCenterK'), vEl=$id('nlvCenterV'), mEl=$id('nlvCenterM');
+    var picks = d.picks || [], scan = d.scan || {};
     var live = picks.filter(function(p){ return !p.abstain; });
     var top = live[0] || picks[0] || null;
     if(top){
       var rank = (top.rankP != null ? top.rankP : top.p);
-      if(kEl) kEl.textContent = esc(top.symbol);
+      if(kEl) kEl.textContent = top.symbol;
       if(vEl){
         vEl.textContent = (top.p*100).toFixed(1)+'%';
         vEl.className = 'v' + (top.p >= 0.5 ? '' : ' neg');
       }
       var vd = verdictOf(top);
-      if(mEl) mEl.innerHTML = esc(vd.label) + '<br><span style="color:#5f79a2;font-size:9px;">승률 예측 · 랭크 '+rank.toFixed(2)+'</span>';
+      if(mEl) mEl.innerHTML = esc(vd.label) + '<br><span style="color:#5f79a2;font-size:9px;">랭크 '+rank.toFixed(2)+'</span>';
     } else {
       if(kEl) kEl.textContent = 'IDLE';
       if(vEl){ vEl.textContent = '—'; vEl.className = 'v idle'; }
-      if(mEl) mEl.textContent = '아직 스캔 결과가 없습니다 — 야간 파이프라인 대기 중';
-    }
-    if(foot){
-      var c = (mode.committee || {});
-      var on = 0, tot = 6;
-      ['mind','dnn','gbdt'].forEach(function(k){ if(c[k]) on++; });
-      ['xgb','lgb','cat'].forEach(function(k){ if(c[k] && c[k].trusted) on++; });
-      var abst = picks.filter(function(p){ return p.abstain; }).length;
-      var cand = picks.filter(function(p){ return !p.abstain && (p.rankP!=null?p.rankP:p.p) >= 0.60; }).length;
-      var st = [
-        ['스캔', (scan.scanned!=null ? scan.scanned : '—') + (scan.total ? ' / '+scan.total : ''), ''],
-        ['진입후보', cand, cand>0?'good':''],
-        ['기권', abst, abst>0?'warn':''],
-        ['위원회', on+' / '+tot, on>=3?'good':(on>0?'warn':'off')],
-        ['처리속도', scan.rate!=null ? scan.rate+'/s' : '—', ''],
-        ['운용모드', mode.aiReady ? 'AI 자율' : '규칙 비상', mode.aiReady?'good':'warn']
-      ];
-      foot.innerHTML = st.map(function(s){
-        return '<div class="nlv-stat"><div class="k">'+s[0]+'</div><div class="v '+(s[2]||'')+'">'+esc(s[1])+'</div></div>';
-      }).join('');
+      if(mEl) mEl.textContent = '스캔 결과 대기';
     }
     var ck = $id('nlvClock');
     if(ck) ck.textContent = scan.ts ? ('최근 스캔 '+hhmm(scan.ts)+' · '+ago(scan.ts)+' 전') : '스캔 기록 없음';
+    renderTopList(picks);
+    renderStripTags(d);
+    renderFunnel(d);
+    renderKpi(d);
+  }
+
+  // 코어 아래 상위 후보 3종목
+  function renderTopList(picks){
+    var el = $id('nlvTopList'); if(!el) return;
+    var live = (picks || []).filter(function(p){ return !p.abstain; }).slice(0, 3);
+    if(!live.length){ el.innerHTML = ''; return; }
+    el.innerHTML = live.map(function(p, i){
+      return '<div class="nlv-top" data-sym="'+esc(p.symbol)+'" title="'+esc(p.symbol)+' 상세 열기">'
+        +'<div class="r">#'+(i+1)+'</div><div class="s">'+esc(p.symbol)+'</div>'
+        +'<div class="p">'+(p.p*100).toFixed(1)+'%</div></div>';
+    }).join('');
+    if(!el.__bound){
+      el.__bound = true;
+      el.addEventListener('click', function(e){
+        var t = e.target.closest ? e.target.closest('.nlv-top') : null;
+        if(t && typeof window.openStockDetail === 'function') window.openStockDetail(t.getAttribute('data-sym'));
+      });
+    }
+  }
+
+  // 상단 스트립 태그 — 레짐/이벤트/운용모드처럼 "이번 스캔의 조건"
+  function renderStripTags(d){
+    var el = $id('nlvStripTags'); if(!el) return;
+    var scan = d.scan || {}, mode = d.mode || {}, t = [];
+    t.push('<span class="nlv-tag '+(mode.aiReady?'hot':'warn')+'">'+(mode.aiReady?'AI 자율운용':'규칙 비상운용')+'</span>');
+    if(scan.shock && scan.shock.mode && scan.shock.mode !== 'none'){
+      var lbl = {crash:'폭락 방어',rally:'대형호재',rebound:'반등(dip)',fomcPre:'FOMC 임박'}[scan.shock.mode] || scan.shock.mode;
+      t.push('<span class="nlv-tag warn">레짐 '+esc(lbl)+' sev'+esc(scan.shock.sev)+'</span>');
+    }
+    (scan.events || []).slice(0, 3).forEach(function(e){
+      t.push('<span class="nlv-tag">이슈 '+esc(e.label || e.code)+'</span>');
+    });
+    if(scan.tiltedN) t.push('<span class="nlv-tag">이벤트틸트 '+esc(scan.tiltedN)+'종목</span>');
+    el.innerHTML = t.join('');
+  }
+
+  // [V33.5] 판정 깔때기 — 유니버스에서 진입후보까지 몇 종목이 남았는지.
+  //   "스캔하고 판단한다"를 가장 직관적으로 보여주는 뷰. 전부 실제 스캔 산출값.
+  function renderFunnel(d){
+    var el = $id('nlvFunnel'); if(!el) return;
+    var picks = d.picks || [], scan = d.scan || {};
+    var total = scan.total || 0;
+    var scanned = scan.scanned != null ? scan.scanned : 0;
+    var ranked = picks.length;
+    var abst = picks.filter(function(p){ return p.abstain; }).length;
+    var cand = picks.filter(function(p){ return !p.abstain && (p.rankP!=null?p.rankP:p.p) >= 0.60; }).length;
+    if(!total && !ranked){
+      el.innerHTML = '<div class="nlv-empty">스캔 산출물이 아직 없습니다</div>';
+      return;
+    }
+    var base = Math.max(total, scanned, ranked, 1);
+    var rows = [
+      ['universe', '① 유니버스', total, total, '전체 추적 종목', ''],
+      ['s2', '② 스캔 완료', scanned, total, '기술 프리스크린 통과분만 추론', 's2'],
+      ['s3', '③ 위원회 산출', ranked, scanned || base, '승률 예측이 나온 상위 종목', 's3'],
+      ['s4', '④ 진입후보', cand, ranked || base, '게이트 통과 (랭크 ≥ 0.60)', 's4'],
+      ['abst', '⑤ 기권', abst, ranked || base, '불확실 — 판단 보류', 'abst']
+    ];
+    el.innerHTML = rows.map(function(r){
+      var val = r[2] || 0, den = r[3] || base;
+      var w = Math.max(1.5, Math.min(100, (val / base) * 100));
+      var pctTxt = (den && den !== val) ? ((val / den) * 100).toFixed(0) + '%' : '';
+      return '<div class="nlv-fstep '+r[5]+'" title="'+esc(r[4])+'">'
+        +'<span class="fl">'+esc(r[1])+'</span>'
+        +'<span class="nlv-fbar"><span style="width:'+w.toFixed(1)+'%"></span></span>'
+        +'<span class="fv">'+val.toLocaleString('ko-KR')+(pctTxt?'<small>'+pctTxt+'</small>':'')+'</span>'
+      +'</div>';
+    }).join('');
+  }
+
+  // KPI 3타일 — 위원회 가동 / 처리속도 / 스캔 소요
+  function renderKpi(d){
+    var el = $id('nlvKpi'); if(!el) return;
+    var scan = d.scan || {}, mode = d.mode || {};
+    var c = mode.committee || {}, on = 0;
+    ['mind','dnn','gbdt'].forEach(function(k){ if(c[k]) on++; });
+    ['xgb','lgb','cat'].forEach(function(k){ if(c[k] && c[k].trusted) on++; });
+    var dur = scan.durMs ? (scan.durMs/1000).toFixed(0)+'초' : '—';
+    var st = [
+      ['위원회 가동', on+' / 6', on>=3?'good':(on>0?'warn':'off')],
+      ['처리 속도', scan.rate!=null ? scan.rate+' 종목/s' : '—', ''],
+      ['스캔 소요', dur, '']
+    ];
+    el.innerHTML = st.map(function(x){
+      return '<div class="nlv-stat"><div class="k">'+x[0]+'</div><div class="v '+(x[2]||'')+'">'+esc(x[1])+'</div></div>';
+    }).join('');
   }
 
   // [V33.1] AI 운용 상태 — 대시보드에서 옮겨온 패널. 두뇌 페이지 우측 사이드바 전용.
@@ -13891,7 +14055,8 @@ html[data-theme="light"] .rail{background:#fff;}
   function buildLines(d){
     var lines = [], picks = d.picks || [], scan = d.scan || {}, mode = d.mode || {};
     var t0 = scan.ts ? (scan.ts - (scan.durMs || 0)) : Date.now();
-    var stepMs = (scan.durMs && picks.length) ? (scan.durMs / picks.length) : 900;
+    // durMs 가 없으면(구버전 스캔 산출물) 종목당 1초로 가정 — 최소한 순서는 드러나게.
+    var stepMs = (scan.durMs && picks.length) ? Math.max(200, scan.durMs / picks.length) : 1000;
     var c = mode.committee || {};
     var onList = [];
     if(c.mind) onList.push('MIND'); if(c.dnn) onList.push('DNN'); if(c.gbdt) onList.push('GBDT');
@@ -13926,7 +14091,7 @@ html[data-theme="light"] .rail{background:#fff;}
     if(feed.firstChild && feed.firstChild.className === 'nlv-empty') feed.innerHTML = '';
     var div = document.createElement('div');
     div.className = 'nlv-line ' + (ln.cls || '');
-    div.innerHTML = '<span class="t">'+hhmm(ln.t)+'</span><span class="b">'+ln.html+'</span>';
+    div.innerHTML = '<span class="t">'+hms(ln.t)+'</span><span class="b">'+ln.html+'</span>';
     feed.insertBefore(div, feed.firstChild);
     while(feed.childNodes.length > 70) feed.removeChild(feed.lastChild);
   }

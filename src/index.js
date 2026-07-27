@@ -15629,11 +15629,17 @@ async function handleRequest(request, env, ctx) {
       return Response.json(out, { headers: cors });
     }
 
+    // [V33.5] ★두뇌 화면 로딩 속도★ — 종전엔 ai_picks:us/kr/cm/scan 을 각각 await 해
+    //   D1 왕복이 4번 직렬로 났다(콜드 시 체감의 대부분). getStates 로 한 번에 읽고,
+    //   swrJson 으로 감싸 colo 공유 Edge Cache(L2)를 태운다. 픽은 야간 스캔 산출물이라
+    //   60초 fresh / 6시간 stale 허용이 안전하다.
     if (path === "/api/ai-picks") {
+      return await swrJson("ai-picks", 60000, 6 * 3600000, async function () {
       const out = { ts: null, picks: [], scan: null };
+      const _S = await getStates(env.DB, ["ai_picks:us", "ai_picks:kr", "ai_picks:cm", "ai_picks:scan"]);
       for (const mk of ["us", "kr", "cm"]) {
         try {
-          const pk = await getState(env.DB, "ai_picks:" + mk, null);
+          const pk = _S["ai_picks:" + mk];
           if (pk && Array.isArray(pk.picks)) {
             out.ts = Math.max(out.ts || 0, pk.ts || 0);
             for (const p of pk.picks) out.picks.push(Object.assign({ market: mk }, p));
@@ -15642,7 +15648,7 @@ async function handleRequest(request, env, ctx) {
       }
       // [V6] 전종목 야간 스캔 병합(진입루프 TIME-CAP 밖 종목까지 커버, 심볼 중복은 높은 P)
       try {
-        const sc = await getState(env.DB, "ai_picks:scan", null);
+        const sc = _S["ai_picks:scan"];
         if (sc && Array.isArray(sc.picks)) {
           // [V33] 두뇌 "실시간 스캔·판정" 패널용 메타 확장 — 스캔 소요/속도·시장별 진척·
           //   활성 이벤트·레짐 쇼크까지 내려 프론트가 실제 판정 과정을 형상화할 수 있게 한다.
@@ -15658,7 +15664,8 @@ async function handleRequest(request, env, ctx) {
       for (const p of out.picks) if (!bySym[p.symbol] || p.p > bySym[p.symbol].p) bySym[p.symbol] = p;
       out.picks = Object.keys(bySym).map(function (k) { return bySym[k]; });
       out.picks.sort(function (a, b) { return (!!a.abstain === !!b.abstain ? b.p - a.p : (a.abstain ? 1 : -1)); });
-      return Response.json(out, { headers: cors });
+      return out;
+      });
     }
 
     // ── [V7] 보유 포지션 AI 진단: 위원회가 현재 시점 승률을 재평가(자문용, 자동청산 아님) ──
