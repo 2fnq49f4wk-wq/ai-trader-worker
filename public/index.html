@@ -2718,6 +2718,342 @@ html[data-theme="light"] .table tbody tr:hover{background:rgba(9,105,218,.045);}
   .detail-below .detail-fund{margin-bottom:0;height:100%;box-sizing:border-box;}
   .detail-below .detail-datawrap{height:100%;box-sizing:border-box;}
 }
+
+/* ═══════════════════════════════════════════════════════════════════════════
+   [V33.2] ① 좌측 사이드바 슬림화  ② 라이트 모드 가독성 전면 보정
+           ③ 모바일 전용 셸(상단 앱바 + 하단 탭바 + 드로어)
+   이 블록은 head 스타일의 마지막이라, 같은 특이도면 여기가 이긴다.
+   ③은 전부 max-width:767px 안에서만 — 태블릿·PC 화면은 건드리지 않는다.
+   ═══════════════════════════════════════════════════════════════════════════ */
+
+/* ── ① 좌측 사이드바 슬림화 (220 → 184) ── */
+@media(min-width:768px){
+  .sidebar{width:184px;}
+  .sb-brand{padding:13px 12px 11px;}
+  .sb-brand-logo{width:17px;height:17px;margin-right:6px;}
+  .sb-brand-name{font-size:11.5px;letter-spacing:1.3px;}
+  .sb-brand-sub{font-size:8px;letter-spacing:1px;}
+  .sb-status{padding:8px 12px;gap:5px;}
+  .sb-engine,.sb-market,.sb-live,.live-indicator{font-size:9.5px;}
+  .sb-pnl{font-size:10px;padding:2px 0;}
+  .sb-nav{padding:5px 0;}
+  .nav-item{padding:8px 12px;gap:8px;font-size:10px;letter-spacing:.5px;}
+  .nav-item-label{font-size:10px;}
+  .nav-item-icon{font-size:11px;width:14px;}
+  .sb-actions{padding:9px 9px;gap:5px;}
+  .sb-run-btn{padding:8px;font-size:10px;letter-spacing:1px;}
+  .sb-btn{padding:7px 2px;font-size:9px;}
+  .sb-theme-btn{font-size:9.5px;padding:7px 2px;}
+}
+/* [V33.3] 좌측 사이드바 자동 운용 배지 (RUN NOW·US·KR 대체) */
+.sb-auto{
+  display:flex;align-items:center;flex-wrap:wrap;gap:3px 6px;
+  padding:8px 9px;border:1px solid var(--bd);border-radius:9px;
+  font-family:'IBM Plex Mono',monospace;font-size:9.5px;color:var(--t2);
+}
+.sb-auto-dot{
+  width:6px;height:6px;border-radius:50%;background:var(--pos);flex:0 0 auto;
+  box-shadow:0 0 6px currentColor;color:var(--pos);animation:dotBlink 2.4s ease-in-out infinite;
+}
+.sb-auto-tx{font-weight:700;color:var(--t1);letter-spacing:.3px;}
+.sb-auto-sub{flex:1 1 100%;color:var(--t3);font-size:8.5px;letter-spacing:.2px;}
+.sb-auto.stale{border-color:var(--amber,#fbbf24);}
+.sb-auto.stale .sb-auto-dot{background:var(--amber,#fbbf24);color:var(--amber,#fbbf24);animation:none;}
+.sb-auto.stale .sb-auto-tx::after{content:' (지연)';color:var(--amber,#fbbf24);font-weight:400;}
+@media (prefers-reduced-motion:reduce){.sb-auto-dot{animation:none;}}
+
+/* [V33.3] 아이패드에서만 대시보드 지수 카드 6개를 축소 — PC/폰은 그대로 */
+@media (min-width:768px) and (max-width:1440px){
+  .fv-index-row{gap:6px;}
+  .fv-idx{flex-basis:150px;padding:6px 9px 5px;}
+  .fv-idx-name{font-size:10px;letter-spacing:.2px;}
+  .fv-idx-price{font-size:13px;}
+  .fv-idx-chg{font-size:9.5px;}
+  .fv-idx-chart{height:34px;margin-top:4px;}
+  .fv-breadth{padding:5px 9px;}
+  .fv-breadth-top{font-size:8.5px;margin-bottom:4px;}
+}
+
+/* [V33.3] PC — 지정학·위기 게이지 / 활성 이슈·레짐 패널 비율 교정.
+   가로로 길게 늘어난 얇은 바 하나만 있어 위아래 여백이 남던 문제. 두 패널을 같은 높이의
+   2열로 묶고, 내부는 "게이지 + 설명" 2단 그리드로 채운다. */
+@media(min-width:1280px){
+  #fvCrisisPanel,#fvEventsPanel{display:flex;flex-direction:column;}
+  /* 내용이 적을 땐 늘어나지 않게 — 빈 여백이 패널 절반을 먹던 문제 */
+  #fvCrisisBody,#fvEventsBody{flex:0 0 auto;display:block;}
+  #fvCrisisBody .crisis-wrap{display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1.15fr);gap:12px;align-items:start;}
+  #fvEventsBody{columns:2;column-gap:16px;}
+  #fvEventsBody>*{break-inside:avoid;}
+}
+
+/* iPad(768~1440) 확대 규칙도 같은 비율로 축소 — 기존 240/200 → 200/176 */
+@media (min-width:768px) and (max-width:1440px){
+  .sidebar{width:200px;}
+  .nav-item{padding:11px 14px;font-size:11px;}
+  .nav-item-icon{font-size:12px;}
+  .sb-run-btn{padding:11px;font-size:11px;}
+  .sb-btn-row .sb-btn{padding:8px 2px;font-size:9.5px;}
+}
+@media (min-width:768px) and (max-width:834px) and (orientation:portrait){
+  .sidebar{width:176px;}
+  .sb-btn-row .sb-btn{padding:7px 1px;font-size:9px;}
+}
+
+/* ── ② 라이트 모드 가독성 보정 ──
+   어두운 배경 전제로 하드코딩된 색들이 흰 배경에서 흐려지던 곳을 일괄 교정. */
+html[data-theme="light"]{
+  --lt-ink:#12233f;      /* 본문 진한 글자 */
+  --lt-ink2:#3a4b66;     /* 보조 글자 */
+  --lt-dim:#66788f;      /* 흐린 글자(그래도 읽히는 수준) */
+  --lt-panel:#ffffff;
+  --lt-panel2:#eef2f8;
+  --lt-line:#ccd6e6;
+}
+/* 사이드바 — 스킨 레이어들이 겹쳐 어두운 유리로 남던 것 정리 */
+html[data-theme="light"] .sidebar{
+  background:#ffffff!important;border-right:1px solid var(--lt-line);
+  backdrop-filter:none;-webkit-backdrop-filter:none;
+}
+/* 브랜드 플레이트가 라이트에서도 검정(#0d0d0d)으로 남아 있어, 글자색을 어둡게 맞추면
+   검정 위 검정이 된다. 플레이트를 흰색으로 되돌리고 로고 별을 어둡게 칠한다. */
+html[data-theme="light"] .sb-brand{background:#ffffff!important;border-bottom:1px solid var(--lt-line);}
+html[data-theme="light"] .sb-brand .lux-star-base{fill:#12233f;}
+html[data-theme="light"] .sb-brand .lux-star-facet{fill:#6b7d99;}
+html[data-theme="light"] .sb-brand-logo{filter:none;animation:none;}
+html[data-theme="light"] .sb-brand-name{color:var(--lt-ink)!important;text-shadow:none;}
+/* 네비·탭 안의 별 아이콘(흰색 고정)이 흰 배경에서 안 보이던 문제 */
+html[data-theme="light"] .nav-item .lux-ico .lux-star-base,
+html[data-theme="light"] .nav-item .lux-ico .lux-star-facet{fill:#5a6c85;}
+html[data-theme="light"] .nav-item.active .lux-ico .lux-star-base,
+html[data-theme="light"] .nav-item.active .lux-ico .lux-star-facet{fill:#0b6cd4;}
+html[data-theme="light"] #page-nnviz .nnv-tab .lux-ico .lux-star-base,
+html[data-theme="light"] #page-nnviz .nnv-tab .lux-ico .lux-star-facet{fill:#5a6c85;}
+html[data-theme="light"] #page-nnviz .nnv-tab.active .lux-ico .lux-star-base,
+html[data-theme="light"] #page-nnviz .nnv-tab.active .lux-ico .lux-star-facet{fill:#0b4f9e;}
+html[data-theme="light"] .sb-brand-sub,
+html[data-theme="light"] .sb-engine,
+html[data-theme="light"] .sb-live,
+html[data-theme="light"] .live-indicator{color:var(--lt-ink2);}
+html[data-theme="light"] .sb-market,
+html[data-theme="light"] .sb-market-row b,
+html[data-theme="light"] .sb-pnl{color:var(--lt-ink);}
+html[data-theme="light"] .nav-item{color:var(--lt-ink2);}
+html[data-theme="light"] .nav-item:hover{color:var(--lt-ink);background:var(--lt-panel2);}
+html[data-theme="light"] .nav-item-icon{color:var(--lt-dim);}
+html[data-theme="light"] .nav-item.active .nav-item-label{color:#0b6cd4;}
+html[data-theme="light"] .nav-item.active{background:rgba(11,108,212,.09);box-shadow:inset 0 0 0 1px rgba(11,108,212,.28);}
+html[data-theme="light"] .nav-item.active::before{background:#0b6cd4;}
+html[data-theme="light"] .sb-btn,html[data-theme="light"] .sb-theme-btn{
+  background:#f4f7fb;border-color:var(--lt-line);color:var(--lt-ink2);
+}
+html[data-theme="light"] .sb-btn:hover{color:var(--lt-ink);border-color:#94a7c2;background:#e9eff8;}
+/* 공통 흐린 글자 — 흰 배경에서 t3(#7d8893)가 거의 안 보이던 것 상향 */
+html[data-theme="light"] .hint,html[data-theme="light"] .empty,
+html[data-theme="light"] .fv-panel-sub,html[data-theme="light"] .fv-sig,
+html[data-theme="light"] .fv-table th,html[data-theme="light"] .table th,
+html[data-theme="light"] .dash-block-label,html[data-theme="light"] .page-title,
+html[data-theme="light"] .wl-count{color:var(--lt-ink2)!important;}
+html[data-theme="light"] .fv-table td,html[data-theme="light"] .table td{color:var(--lt-ink);}
+html[data-theme="light"] .fv-panel-head{background:var(--lt-panel2);color:var(--lt-ink);}
+/* AI 두뇌 페이지 — 어두운 전제 색이 가장 많이 남아 있던 곳 */
+html[data-theme="light"] #page-nnviz .nnv-sub,
+html[data-theme="light"] #page-nnviz .nnv-legend,
+html[data-theme="light"] #page-nnviz .nnv-empty,
+html[data-theme="light"] #page-nnviz .nnv-feat-role,
+html[data-theme="light"] #page-nnviz .nnv-role-n small,
+html[data-theme="light"] #page-nnviz .nnv-chip .k,
+html[data-theme="light"] #page-nnviz .nnv-comm-name small{color:var(--lt-ink2);}
+html[data-theme="light"] #page-nnviz .nnv-feat-name,
+html[data-theme="light"] #page-nnviz .nnv-comm-meta,
+html[data-theme="light"] #page-nnviz .nnv-feat-pct,
+html[data-theme="light"] #page-nnviz .nnv-role-v,
+html[data-theme="light"] #page-nnviz .nnv-role-h{color:var(--lt-ink);}
+html[data-theme="light"] #page-nnviz .nnv-tab{
+  background:#eef3fb;border-color:var(--lt-line);color:var(--lt-ink2);
+}
+html[data-theme="light"] #page-nnviz .nnv-tab:hover{color:var(--lt-ink);border-color:#7fa8dd;}
+html[data-theme="light"] #page-nnviz .nnv-tab.active{
+  background:rgba(11,108,212,.12);border-color:#0b6cd4;color:#0b4f9e;box-shadow:none;
+}
+html[data-theme="light"] #page-nnviz .nnv-btn{background:#eef3fb;border-color:var(--lt-line);color:var(--lt-ink2);}
+html[data-theme="light"] #page-nnviz .nnv-btn:hover{color:var(--lt-ink);border-color:#7fa8dd;background:#e2ebf8;}
+html[data-theme="light"] #page-nnviz .nnv-chip{background:#f2f6fc;border-color:var(--lt-line);}
+html[data-theme="light"] #page-nnviz .nnv-stage{background:#f4f8fd;border-color:var(--lt-line);}
+html[data-theme="light"] #page-nnviz .nnv-tip{background:#fff;border-color:var(--lt-line);color:var(--lt-ink);}
+html[data-theme="light"] #page-nnviz .nnv-bar,
+html[data-theme="light"] #page-nnviz .nnv-role-bar{background:rgba(18,35,63,.08);}
+/* WHAT-IF도 같은 계열 문제 */
+html[data-theme="light"] #page-whatif{--wi-ink:#12233f;--wi-dim:#3a4b66;--wi-faint:#66788f;--wi-line:#ccd6e6;}
+html[data-theme="light"] #page-whatif .nnviz-content{background:linear-gradient(180deg,#f8fbff,#eef3fa);border-color:var(--lt-line);}
+html[data-theme="light"] #page-whatif .wi-f,html[data-theme="light"] #page-whatif .wi-s,
+html[data-theme="light"] #page-whatif .wi-sp{background:#eef3fb;border-color:var(--lt-line);color:var(--lt-ink2);}
+html[data-theme="light"] #page-whatif .wi-table td{color:var(--lt-ink);}
+html[data-theme="light"] #page-whatif .wi-custom input{background:#fff;border-color:var(--lt-line);color:var(--lt-ink);}
+/* 우측 사이드바 */
+html[data-theme="light"] .rail-view b{color:var(--lt-ink);}
+html[data-theme="light"] .rail-view small,html[data-theme="light"] .rail-sec-h,
+html[data-theme="light"] .rail-item .r-name{color:var(--lt-ink2);}
+html[data-theme="light"] .rail-ai{color:var(--lt-ink2);}
+html[data-theme="light"] .rail-ai .pick,html[data-theme="light"] .rail-item .r-sym{color:var(--lt-ink);}
+html[data-theme="light"] .rail-ai .diag{color:#5a6c85;}
+/* 모달·입력 */
+html[data-theme="light"] input,html[data-theme="light"] select,html[data-theme="light"] textarea{color:var(--lt-ink);}
+html[data-theme="light"] ::placeholder{color:#8fa0b8;opacity:1;}
+
+/* ── ③ 모바일 전용 셸 (≤767px) ── */
+.m-appbar,.m-tabbar,.m-drawer,.m-drawer-scrim{display:none;}
+@media(max-width:767px){
+  html,body{overscroll-behavior-y:none;}
+  /* 기존 "사이드바를 상단바로 바꾸는" 규칙 무력화 — 사이드바는 완전히 숨긴다 */
+  .sidebar{display:none!important;}
+  .shell{flex-direction:column;height:100dvh;overflow:hidden;padding-top:50px;padding-bottom:58px;}
+  .content{flex:1 1 0%;min-height:0;}
+  .cmdk-fab{display:none!important;}
+
+  /* 상단 앱바 */
+  .m-appbar{
+    display:flex;align-items:center;gap:8px;position:fixed;top:0;left:0;right:0;height:50px;z-index:120;
+    padding:0 12px;background:var(--s1);border-bottom:1px solid var(--bd);
+  }
+  .m-ab-logo{width:19px;height:19px;flex:0 0 auto;}
+  .m-ab-logo svg{width:100%;height:100%;display:block;}
+  .m-ab-title{font-size:12px;font-weight:700;letter-spacing:1.4px;color:var(--t1);white-space:nowrap;}
+  .m-ab-sub{font-size:8.5px;color:var(--t3);letter-spacing:.6px;margin-top:1px;white-space:nowrap;}
+  .m-ab-mid{flex:1 1 auto;min-width:0;display:flex;flex-direction:column;justify-content:center;}
+  .m-ab-pnl{
+    font-family:'IBM Plex Mono',monospace;font-size:11px;font-weight:700;
+    font-variant-numeric:tabular-nums;white-space:nowrap;color:var(--t2);
+  }
+  .m-ab-btn{
+    width:34px;height:34px;flex:0 0 auto;border:1px solid var(--bd);border-radius:9px;
+    background:transparent;color:var(--t2);font-size:14px;line-height:1;cursor:pointer;
+    display:flex;align-items:center;justify-content:center;
+  }
+  .m-ab-btn:active{background:var(--s2);}
+
+  /* 하단 탭바 */
+  .m-tabbar{
+    display:flex;position:fixed;left:0;right:0;bottom:0;height:58px;z-index:120;
+    background:var(--s1);border-top:1px solid var(--bd);
+    padding-bottom:env(safe-area-inset-bottom,0);
+  }
+  .m-tab{
+    flex:1 1 0;min-width:0;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:3px;
+    background:transparent;border:none;cursor:pointer;color:var(--t3);padding:0;
+  }
+  .m-tab .ic{font-size:16px;line-height:1;}
+  .m-tab .tx{font-size:9px;letter-spacing:.2px;white-space:nowrap;}
+  .m-tab.active{color:var(--acc);}
+  .m-tab.active .ic{filter:drop-shadow(0 0 7px currentColor);}
+
+  /* 드로어 */
+  .m-drawer-scrim{display:block;position:fixed;inset:0;z-index:130;background:rgba(0,0,0,.55);
+    opacity:0;pointer-events:none;transition:opacity .18s ease;}
+  .m-drawer-scrim.show{opacity:1;pointer-events:auto;}
+  .m-drawer{
+    display:flex;flex-direction:column;position:fixed;z-index:131;top:0;bottom:0;right:0;width:min(84vw,320px);
+    background:var(--s1);border-left:1px solid var(--bd);
+    transform:translateX(100%);transition:transform .2s cubic-bezier(.2,.8,.2,1);
+    overflow-y:auto;
+  }
+  .m-drawer.show{transform:none;}
+  .m-dr-head{display:flex;align-items:center;justify-content:space-between;padding:14px 16px 12px;border-bottom:1px solid var(--bd);}
+  .m-dr-title{font-size:11px;letter-spacing:1.8px;color:var(--t3);text-transform:uppercase;font-family:'IBM Plex Mono',monospace;}
+  .m-dr-sec{padding:10px 12px;border-bottom:1px solid var(--bd2);}
+  .m-dr-sec-h{font-size:8.5px;letter-spacing:1.8px;color:var(--t3);text-transform:uppercase;
+    font-family:'IBM Plex Mono',monospace;margin:0 4px 7px;}
+  .m-dr-nav{display:grid;grid-template-columns:1fr 1fr;gap:6px;}
+  .m-dr-item{
+    display:flex;align-items:center;gap:8px;padding:11px 10px;border:1px solid var(--bd);border-radius:10px;
+    background:transparent;color:var(--t2);font-size:11px;cursor:pointer;text-align:left;
+  }
+  .m-dr-item.active{border-color:var(--acc);color:var(--acc);background:var(--s2);}
+  .m-dr-act{display:flex;flex-wrap:wrap;gap:6px;}
+  .m-dr-act button{
+    flex:1 1 30%;min-width:0;padding:11px 6px;border:1px solid var(--bd);border-radius:10px;
+    background:transparent;color:var(--t2);font-size:10.5px;cursor:pointer;
+    font-family:'IBM Plex Mono',monospace;letter-spacing:.4px;
+  }
+  .m-dr-act button.primary{background:var(--acc);color:var(--bg);border-color:transparent;font-weight:700;flex-basis:100%;}
+
+  /* 본문 밀도 — 폰에서 여백이 화면을 잡아먹지 않게 */
+  .page-body{padding:12px 12px 20px;}
+  .page-header{padding:12px 12px 9px;}
+  .fv-deck{padding:8px 8px 0;gap:8px;}
+  /* 지수 카드 — 폰에서 한 장이 화면 1/3을 먹던 것 → 2열 컴팩트 카드 */
+  .fv-index-row{display:grid;grid-template-columns:1fr 1fr;gap:6px;}
+  .fv-idx{flex:none;padding:7px 9px 6px;border-radius:8px;}
+  .fv-idx-top{flex-wrap:wrap;gap:2px 6px;}
+  .fv-idx-name{font-size:10px;letter-spacing:.2px;}
+  .fv-idx-chg{font-size:10px;margin-left:auto;}
+  .fv-idx-price{font-size:14px;margin-top:1px;}
+  .fv-idx-chart{height:30px;margin-top:4px;}
+  .fv-breadth-row{display:grid;grid-template-columns:1fr;gap:6px;}
+  .fv-breadth{flex:none;padding:6px 9px;}
+  /* 히트맵 — 인라인 height:360px 를 폰에서만 낮춘다 */
+  #fvHeatmap{height:250px!important;}
+  .fv-mid .fv-movers-grid{max-height:300px;}
+  .fv-movers-grid{grid-template-columns:1fr;}
+  .fv-movers-grid table:first-child{border-right:none;border-bottom:1px solid var(--bd2);}
+  .pipeline-grid{grid-template-columns:repeat(auto-fit,minmax(96px,1fr));}
+  /* 패널 헤더 툴바(맵 기간·시장 버튼 등)는 줄바꿈 대신 가로 스크롤 — 헤더가 3줄로 터지던 것 방지 */
+  .fv-panel-head{flex-wrap:wrap;row-gap:4px;}
+  .fv-panel-head>span[style*="margin-left:auto"]{
+    flex:1 1 100%;margin-left:0!important;overflow-x:auto;-webkit-overflow-scrolling:touch;
+    flex-wrap:nowrap!important;padding-bottom:2px;
+  }
+  .fv-panel-head>span[style*="margin-left:auto"]::-webkit-scrollbar{height:0;}
+  .fv-panel-head>span[style*="margin-left:auto"]>*{flex:0 0 auto;}
+  .dash-grid{gap:8px;padding:8px;}
+  .pipeline-bar{margin:0 8px;}
+  .fv-mid{grid-template-columns:1fr;}
+  .fv-bottom{grid-template-columns:1fr;}
+  .cmbd-grid,.fv3-grid{grid-template-columns:1fr!important;}
+  /* 폰에서는 터미널 밀도 레이어를 쓰지 않는다(글자가 너무 작아짐) */
+  html[data-density="terminal"] .fv-table{font-family:inherit;font-size:11px;}
+  html[data-density="terminal"] .fv-table td{padding:6px 8px;}
+
+  /* AI 두뇌 — 폰 레이아웃 */
+  #page-nnviz .nnviz-content{margin:8px 8px 12px;padding:12px 10px 14px;border-radius:12px;}
+  #page-nnviz .nnv-head{flex-wrap:wrap;gap:8px;}
+  /* 관리용 버튼(재학습·GitHub·새로고침)이 세 줄을 차지하던 것 → 한 줄로 압축 */
+  #page-nnviz .nnv-head>div:last-child{width:100%;display:flex;flex-wrap:nowrap;gap:5px;}
+  #page-nnviz .nnv-btn{
+    flex:1 1 0;min-width:0;text-align:center;padding:6px 4px;font-size:9.5px;
+    white-space:nowrap;overflow:hidden;text-overflow:ellipsis;
+  }
+  #page-nnviz .nnv-live{grid-template-columns:1fr;gap:10px;}
+  #page-nnviz .nlv-feed{max-height:240px;}
+  #page-nnviz .nnv-tabs{overflow-x:auto;flex-wrap:nowrap;-webkit-overflow-scrolling:touch;padding-bottom:4px;}
+  #page-nnviz .nnv-tabs::-webkit-scrollbar{height:0;}
+  #page-nnviz .nnv-tab{flex:0 0 auto;}
+  /* 모바일 전용 인라인 전환기 + 운용상태 (우측 사이드바가 없으므로) */
+  .m-brainbar{display:flex!important;}
+  .m-aimode{display:block!important;}
+}
+/* 모바일 전용 요소는 PC/패드에서 완전히 감춘다 */
+.m-brainbar,.m-aimode{display:none;}
+.m-brainbar{gap:6px;margin:0 0 12px;}
+.m-brainbar button{
+  flex:1 1 0;padding:9px 6px;border:1px solid #1e2c48;border-radius:10px;background:rgba(20,30,52,.6);
+  color:#7c90b5;font-family:'IBM Plex Mono',monospace;font-size:11px;cursor:pointer;
+}
+.m-brainbar button.active{color:#eaf2ff;background:rgba(56,189,248,.16);border-color:#38bdf8;}
+.m-aimode{
+  margin:0 0 12px;padding:10px 12px;border:1px solid #17233e;border-radius:12px;
+  background:linear-gradient(180deg,#090e1a,#060910);
+  font-family:'IBM Plex Mono',monospace;font-size:10.5px;line-height:1.7;color:#a9bcd8;
+}
+.m-aimode .badge{display:block;font-size:11px;font-weight:700;margin-bottom:5px;}
+.m-aimode .k{display:block;font-size:8.5px;letter-spacing:1.4px;color:#5f79a2;text-transform:uppercase;margin:7px 0 2px;}
+.m-aimode .row{display:flex;flex-wrap:wrap;gap:3px 12px;}
+.m-aimode .pick{display:inline-block;margin-right:10px;color:#eaf2ff;}
+.m-aimode .pick i{font-style:normal;color:#5f79a2;}
+.m-aimode .diag{color:#7c90b5;font-size:9.5px;}
+html[data-theme="light"] .m-aimode{background:linear-gradient(180deg,#eef3fb,#e6edf8);border-color:#cdd9ee;color:#3a4b66;}
+html[data-theme="light"] .m-aimode .pick{color:#12233f;}
+html[data-theme="light"] .m-brainbar button{background:#eef3fb;border-color:#ccd6e6;color:#3a4b66;}
+html[data-theme="light"] .m-brainbar button.active{color:#0b4f9e;background:rgba(11,108,212,.12);border-color:#0b6cd4;}
 </style>
 </head>
 <body>
@@ -2790,7 +3126,9 @@ html[data-theme="light"] .table tbody tr:hover{background:rgba(9,105,218,.045);}
         <span class="nav-item-icon">📊</span>
         <span class="nav-item-label">지표&amp;환율</span>
       </div>
-      <div class="nav-item" data-page="report">
+      <!-- [V33.3] AI 리포트는 좌측 네비에서 내리고 "AI 두뇌" 우측 사이드바 바로가기로 이동(사용자 요청).
+           요소는 숨겨서 남긴다 — showPage('report')·모바일 드로어가 data-page를 참조한다. -->
+      <div class="nav-item" data-page="report" style="display:none;">
         <span class="nav-item-icon">📊</span>
         <span class="nav-item-label">AI 리포트</span>
       </div>
@@ -2818,13 +3156,23 @@ html[data-theme="light"] .table tbody tr:hover{background:rgba(9,105,218,.045);}
 
     <!-- 액션 버튼 -->
     <div class="sb-actions">
-      <button type="button" class="sb-run-btn btn primary" id="btnTick">▶ RUN NOW</button>
-      <div class="sb-btn-row">
+      <!-- [V33.3] RUN NOW · US · KR 제거(사용자 요청).
+           엔진은 이미 Cloudflare cron(매 1분)이 scheduled()에서 runTradingCycle·시세갱신·
+           원자재/채권/환율/매크로·야간 학습까지 전부 자동 실행한다. 이 버튼들은 "수동 앞당기기"
+           용도였을 뿐이라 없애도 동작에 영향이 없다. 자동 상태는 아래 배지로 보여준다.
+           ※ 요소 자체는 숨겨서 남긴다 — 기존 addEventListener($('btnTick') 등)가 null 참조로
+             깨지지 않게 하고, 모바일 드로어의 프록시 호출도 그대로 살려두기 위함. -->
+      <div class="sb-auto" id="sbAuto" title="서버 cron이 매 1분 자동 실행합니다 — 수동 실행 버튼이 필요 없습니다">
+        <span class="sb-auto-dot"></span><span class="sb-auto-tx">자동 운용 중</span>
+        <span class="sb-auto-sub" id="sbAutoSub">—</span>
+      </div>
+      <div style="display:none;">
+        <button type="button" class="sb-run-btn btn primary" id="btnTick">▶ RUN NOW</button>
         <button type="button" class="sb-btn btn refresh" id="btnRefreshUS">US</button>
         <button type="button" class="sb-btn btn refresh" id="btnRefreshKR">KR</button>
-        <button type="button" class="sb-btn btn logs" id="btnLogs">LOG</button>
       </div>
       <div class="sb-btn-row">
+        <button type="button" class="sb-btn btn logs" id="btnLogs" style="flex:1;">LOG</button>
         <button type="button" class="sb-btn btn macro" id="btnHeatmap" style="flex:1;">MAP</button>
       </div>
       <div class="sb-btn-row">
@@ -2989,8 +3337,10 @@ html[data-theme="light"] .table tbody tr:hover{background:rgba(9,105,218,.045);}
           </div>
         </div>
 
-        <!-- ALT ASSETS (원자재·국채 요약) -->
-        <div class="dash-block">
+        <!-- ALT ASSETS (원자재·국채 요약)
+             [V33.3] 이 블록과 BUDGET ALLOCATION은 "AI 두뇌" 우측 사이드바로 옮겨진다(사용자 요청).
+             DOM 노드를 통째로 이동시키므로 기존 렌더 함수(altCMVal 등 id 참조)는 그대로 동작한다. -->
+        <div class="dash-block" id="blkAltAssets">
           <div class="dash-block-label">⬡ ALT ASSETS</div>
           <div class="alt-asset-row">
             <div class="alt-asset-item" id="altCM">
@@ -3015,7 +3365,7 @@ html[data-theme="light"] .table tbody tr:hover{background:rgba(9,105,218,.045);}
         </div>
 
         <!-- [V63] BUDGET ALLOCATION — 레짐 적응형 전략 예산 -->
-        <div class="dash-block">
+        <div class="dash-block" id="blkBudget">
           <div class="dash-block-label">◎ BUDGET ALLOCATION <span style="font-weight:400;letter-spacing:0;color:var(--t3);">· 레짐 적응형</span></div>
           <div id="budgetSplitBox" style="font-size:10px;"><div style="color:var(--t3);">다음 거래 사이클부터 집계됩니다</div></div>
         </div>
@@ -3612,6 +3962,15 @@ html[data-theme="light"] .table tbody tr:hover{background:rgba(9,105,218,.045);}
         </div>
         <div class="nlv-feed" id="nlvFeed"><div class="nlv-empty">스캔 기록을 불러오는 중…</div></div>
       </div>
+    </div>
+
+    <!-- [V33.2] AI 후보 종목 그래프 — 위원회가 진입후보로 올린 종목들의 최근 흐름 -->
+    <div class="nlv-picks" id="nlvPicksWrap">
+      <div class="nlv-picks-head">
+        <span>AI 후보 종목 · 최근 흐름</span>
+        <span class="nlv-picks-sub" id="nlvPicksSub">—</span>
+      </div>
+      <div class="nlv-picks-grid" id="nlvPicksGrid"><div class="nlv-empty">후보 종목을 불러오는 중…</div></div>
     </div>
 
     <!-- [V33.1] 구조 관측 뷰 — 기본 숨김. 우측 사이드바에서 "구조 관측"으로 전환할 때만 표시·로드된다.
@@ -4623,14 +4982,25 @@ html[data-theme="light"] .table tbody tr:hover{background:rgba(9,105,218,.045);}
       if (d.spx != null) baro.push('S&P ' + (d.spx>=0?'+':'') + d.spx.toFixed(1) + '%');
       if (d.gold != null) baro.push('금 ' + (d.gold>=0?'+':'') + d.gold.toFixed(1) + '%');
       if (d.oil != null) baro.push('유가 ' + (d.oil>=0?'+':'') + d.oil.toFixed(1) + '%');
-      var html = '';
-      html += '<div style="height:8px;border-radius:5px;background:rgba(255,255,255,.08);overflow:hidden;margin-bottom:7px;">'
-        + '<div style="height:100%;width:'+Math.max(3,Math.min(100,sc))+'%;background:'+col+';transition:width .4s;"></div></div>';
-      if (baro.length) html += '<div style="font-family:IBM Plex Mono,monospace;font-size:10px;color:var(--t3,#8fa6c8);margin-bottom:5px;">'+baro.join(' · ')+(d.newsHits?' · 지정학뉴스 '+d.newsHits+'건':'')+'</div>';
-      if (d.drivers && d.drivers.length) html += '<div style="margin-bottom:5px;">'+d.drivers.slice(0,4).map(function(x){return '• '+escapeHtml(x);}).join('<br>')+'</div>';
-      if (d.posture) html += '<div style="color:'+col+';font-weight:600;">▶ '+escapeHtml(d.posture)+'</div>';
-      html += '<div id="fvAlertsInline" style="margin-top:7px;"></div>';
-      body.innerHTML = html || '특이 위험신호 없음 — 정상 운용.';
+      // [V33.3] 넓은 화면에서 얇은 바 한 줄만 있어 좌우가 비던 레이아웃을 2단으로 재구성.
+      //   좌: 점수 + 게이지 + 바로미터 지표  /  우: 주요 동인 + 대응 자세 + 실행 알림
+      var left = '<div class="cw-l">'
+        + '<div style="display:flex;align-items:baseline;gap:8px;margin-bottom:6px;">'
+          + '<span style="font-family:\'Space Grotesk\',sans-serif;font-size:26px;font-weight:700;color:'+col+';line-height:1;">'+sc+'</span>'
+          + '<span style="font-size:10px;color:var(--t3,#8fa6c8);">/100 · '+escapeHtml(lv)+'</span></div>'
+        + '<div style="height:8px;border-radius:5px;background:rgba(255,255,255,.08);overflow:hidden;margin-bottom:8px;">'
+          + '<div style="height:100%;width:'+Math.max(3,Math.min(100,sc))+'%;background:'+col+';transition:width .4s;"></div></div>';
+      if (baro.length) {
+        left += '<div style="display:grid;grid-template-columns:1fr 1fr;gap:3px 10px;font-family:IBM Plex Mono,monospace;font-size:10px;color:var(--t3,#8fa6c8);">'
+          + baro.map(function(x){ return '<span>'+escapeHtml(x)+'</span>'; }).join('')
+          + (d.newsHits ? '<span>지정학뉴스 '+d.newsHits+'건</span>' : '') + '</div>';
+      }
+      left += '</div>';
+      var right = '<div class="cw-r">';
+      if (d.drivers && d.drivers.length) right += '<div style="margin-bottom:6px;">'+d.drivers.slice(0,4).map(function(x){return '• '+escapeHtml(x);}).join('<br>')+'</div>';
+      if (d.posture) right += '<div style="color:'+col+';font-weight:600;">▶ '+escapeHtml(d.posture)+'</div>';
+      right += '<div id="fvAlertsInline" style="margin-top:7px;"></div></div>';
+      body.innerHTML = '<div class="crisis-wrap">' + left + right + '</div>';
       // 보유종목 급변동·손절/익절 근접 알림
       fetch('/api/alerts').then(function(r){return r.json();}).then(function(a){
         var box = document.getElementById('fvAlertsInline'); if (!box) return;
@@ -11493,7 +11863,7 @@ setTimeout(function(){ var o=document.getElementById('lux-intro-overlay'); if(o&
 #page-nnviz .nnviz-content{position:relative;margin:14px 20px 20px;box-sizing:border-box;background:linear-gradient(180deg,#0a0e18,#070a12);border:1px solid #1c2740;border-radius:16px;padding:22px 24px 26px;box-shadow:0 30px 90px rgba(0,0,0,.7),0 0 0 1px rgba(70,130,255,.06) inset;overflow-x:hidden;}
 #page-nnviz .nnv-head{display:flex;align-items:center;justify-content:space-between;gap:12px;margin-bottom:4px;}
 #page-nnviz .nnv-title{font-family:'Space Grotesk',sans-serif;font-size:17px;font-weight:700;letter-spacing:.5px;color:#eaf2ff;display:flex;align-items:center;gap:9px;}
-#page-nnviz .nnv-title .dot{width:9px;height:9px;border-radius:50%;background:#00e676;box-shadow:0 0 10px #00e676;}
+#page-nnviz .nnv-title .dot{width:9px;height:9px;border-radius:50%;background:#38bdf8;box-shadow:0 0 10px #38bdf8;}
 /* [V9.12.1 성능] 무한 애니메이션은 이 페이지가 활성일 때만 — 안 볼 땐 GPU/배터리 소모 0 */
 #page-nnviz.active .nnv-title .dot{animation:nnPulse 1.6s ease-in-out infinite;}
 #page-nnviz .nnv-sub{font-size:11px;color:#7c90b5;margin:2px 0 14px;font-family:'IBM Plex Mono',monospace;}
@@ -11687,28 +12057,28 @@ html[data-theme="light"] #page-nnviz .nnv-title,html[data-theme="light"] #page-n
 #page-nnviz .nlv-side{display:flex;flex-direction:column;background:linear-gradient(180deg,#090e1a,#060910);}
 #page-nnviz .nlv-corehead{display:flex;align-items:center;justify-content:space-between;padding:9px 13px;border-bottom:1px solid #14203a;font-family:'IBM Plex Mono',monospace;}
 #page-nnviz .nlv-tagline{font-size:9.5px;letter-spacing:2.4px;color:#5f79a2;text-transform:uppercase;}
-#page-nnviz .nlv-tagline::before{content:'';display:inline-block;width:6px;height:6px;border-radius:50%;background:#00e676;box-shadow:0 0 8px #00e676;margin-right:7px;vertical-align:middle;}
+#page-nnviz .nlv-tagline::before{content:'';display:inline-block;width:6px;height:6px;border-radius:50%;background:#38bdf8;box-shadow:0 0 8px #38bdf8;margin-right:7px;vertical-align:middle;}
 #page-nnviz.active .nlv-tagline::before{animation:nnPulse 1.7s ease-in-out infinite;}
 #page-nnviz .nlv-clock{font-size:10px;color:#7c90b5;font-variant-numeric:tabular-nums;}
 #page-nnviz .nlv-canvaswrap{position:relative;}
 #page-nnviz .nlv-canvaswrap svg{display:block;width:100%;height:auto;}
 /* 코어 중앙 라벨 — 첫 번째 참고화면의 "수렴점" 느낌 */
 #page-nnviz .nlv-centerlabel{position:absolute;left:50%;top:50%;transform:translate(-50%,-50%);text-align:center;pointer-events:none;width:28%;min-width:150px;}
-#page-nnviz .nlv-centerlabel .k{font-family:'IBM Plex Mono',monospace;font-size:10px;letter-spacing:1.6px;color:#9fd9bd;text-transform:uppercase;font-weight:600;}
-#page-nnviz .nlv-centerlabel .v{font-family:'Space Grotesk',sans-serif;font-size:28px;font-weight:700;line-height:1.15;color:#eafff4;text-shadow:0 0 18px rgba(0,230,118,.7);margin-top:1px;}
-#page-nnviz .nlv-centerlabel .v.neg{color:#ff5c7a;text-shadow:0 0 24px rgba(255,92,122,.5);}
+#page-nnviz .nlv-centerlabel .k{font-family:'IBM Plex Mono',monospace;font-size:10px;letter-spacing:1.6px;color:#9fd0f5;text-transform:uppercase;font-weight:600;}
+#page-nnviz .nlv-centerlabel .v{font-family:'Space Grotesk',sans-serif;font-size:28px;font-weight:700;line-height:1.15;color:#eaf6ff;text-shadow:0 0 18px rgba(56,189,248,.75);margin-top:1px;}
+#page-nnviz .nlv-centerlabel .v.neg{color:#ff8aa5;text-shadow:0 0 20px rgba(255,92,122,.45);}
 #page-nnviz .nlv-centerlabel .v.idle{color:#8fa2bb;text-shadow:none;}
 #page-nnviz .nlv-centerlabel .m{font-family:'IBM Plex Mono',monospace;font-size:10.5px;color:#a9bcd8;margin-top:3px;line-height:1.45;}
 #page-nnviz .nlv-corefoot{display:flex;flex-wrap:wrap;gap:7px;padding:10px 13px 12px;border-top:1px solid #14203a;}
 #page-nnviz .nlv-stat{flex:1 1 auto;min-width:74px;}
 #page-nnviz .nlv-stat .k{font-family:'IBM Plex Mono',monospace;font-size:8.5px;letter-spacing:1.4px;color:#5f79a2;text-transform:uppercase;}
 #page-nnviz .nlv-stat .v{font-family:'Space Grotesk',sans-serif;font-size:14px;font-weight:700;color:#eaf2ff;margin-top:1px;}
-#page-nnviz .nlv-stat .v.good{color:#00e676;} #page-nnviz .nlv-stat .v.warn{color:#ffc107;} #page-nnviz .nlv-stat .v.off{color:#ff5c7a;}
+#page-nnviz .nlv-stat .v.good{color:#38bdf8;} #page-nnviz .nlv-stat .v.warn{color:#ffc107;} #page-nnviz .nlv-stat .v.off{color:#ff5c7a;}
 /* 파이프라인 — 수집→피처→위원회→보정→게이트→판정 */
 #page-nnviz .nlv-pipe{display:flex;flex-direction:column;gap:1px;padding:10px 12px;border-bottom:1px solid #14203a;}
 #page-nnviz .nlv-step{display:grid;grid-template-columns:14px 1fr auto;align-items:center;gap:8px;padding:4px 0;font-family:'IBM Plex Mono',monospace;font-size:10.5px;color:#93aace;}
 #page-nnviz .nlv-step i{width:8px;height:8px;border-radius:50%;background:#33415c;display:inline-block;margin-left:3px;}
-#page-nnviz .nlv-step.ok i{background:#00e676;box-shadow:0 0 7px rgba(0,230,118,.7);}
+#page-nnviz .nlv-step.ok i{background:#38bdf8;box-shadow:0 0 7px rgba(56,189,248,.7);}
 #page-nnviz .nlv-step.stale i{background:#ffc107;box-shadow:0 0 7px rgba(255,193,7,.55);}
 #page-nnviz .nlv-step.never i{background:#ff5c7a;}
 #page-nnviz .nlv-step b{font-weight:500;color:#cdddf7;}
@@ -11723,9 +12093,9 @@ html[data-theme="light"] #page-nnviz .nnv-title,html[data-theme="light"] #page-n
 #page-nnviz .nlv-line .t{color:#4a5f82;font-variant-numeric:tabular-nums;}
 #page-nnviz .nlv-line .b{color:#a9bcd8;word-break:break-word;}
 #page-nnviz .nlv-line .b em{font-style:normal;color:#eaf2ff;font-weight:600;}
-#page-nnviz .nlv-line.buy{border-left-color:#00e676;background:rgba(0,230,118,.05);}
-#page-nnviz .nlv-line.buy .b em{color:#6cf0a8;}
-#page-nnviz .nlv-line.hold{border-left-color:#4a83ff;}
+#page-nnviz .nlv-line.buy{border-left-color:#22d3ee;background:rgba(34,211,238,.06);}
+#page-nnviz .nlv-line.buy .b em{color:#7fe3f7;}
+#page-nnviz .nlv-line.hold{border-left-color:#3b82f6;}
 #page-nnviz .nlv-line.skip{border-left-color:#33415c;opacity:.72;}
 #page-nnviz .nlv-line.warn{border-left-color:#ffc107;background:rgba(255,193,7,.045);}
 #page-nnviz .nlv-line.warn .b em{color:#ffd98a;}
@@ -11755,32 +12125,78 @@ html[data-theme="light"] #page-nnviz .nnv-title,html[data-theme="light"] #page-n
   #page-nnviz .nlv-corefoot{gap:5px;padding:8px 10px 10px;}
   #page-nnviz .nlv-stat{min-width:62px;} #page-nnviz .nlv-stat .v{font-size:12px;}
 }
+/* ── [V33.2] AI 후보 종목 그래프 ── */
+#page-nnviz .nlv-picks{margin:0 0 16px;background:linear-gradient(180deg,#090e1a,#060910);border:1px solid #17233e;border-radius:14px;overflow:hidden;}
+#page-nnviz .nlv-picks-head{
+  display:flex;align-items:center;justify-content:space-between;gap:10px;padding:9px 13px;border-bottom:1px solid #14203a;
+  font-family:'IBM Plex Mono',monospace;font-size:9.5px;letter-spacing:2.2px;color:#5f79a2;text-transform:uppercase;
+}
+#page-nnviz .nlv-picks-sub{letter-spacing:.4px;text-transform:none;font-size:10px;color:#7c90b5;}
+#page-nnviz .nlv-picks-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(158px,1fr));gap:1px;background:#14203a;}
+#page-nnviz .nlv-pick{
+  background:#080d18;padding:9px 11px 10px;cursor:pointer;display:flex;flex-direction:column;gap:5px;
+  transition:background .12s;
+}
+#page-nnviz .nlv-pick:hover{background:#0d1730;}
+#page-nnviz .nlv-pick-top{display:flex;align-items:baseline;gap:6px;}
+#page-nnviz .nlv-pick-sym{font-family:'IBM Plex Mono',monospace;font-size:11.5px;font-weight:700;color:#eaf2ff;
+  white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
+#page-nnviz .nlv-pick-chg{margin-left:auto;font-family:'IBM Plex Mono',monospace;font-size:10.5px;font-weight:700;
+  font-variant-numeric:tabular-nums;white-space:nowrap;}
+#page-nnviz .nlv-pick-chg.up{color:#2ee6a8;} #page-nnviz .nlv-pick-chg.dn{color:#ff5c7a;}
+#page-nnviz .nlv-pick-name{font-size:9px;color:#5f79a2;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;margin-top:-3px;}
+#page-nnviz .nlv-pick-chart{height:38px;width:100%;}
+#page-nnviz .nlv-pick-chart svg{width:100%;height:100%;display:block;overflow:visible;}
+#page-nnviz .nlv-pick-chart polyline{fill:none;stroke-width:1.4;vector-effect:non-scaling-stroke;stroke-linejoin:round;}
+#page-nnviz .nlv-pick-nochart{height:38px;display:flex;align-items:center;justify-content:center;
+  font-size:9px;color:#3d4c66;font-family:'IBM Plex Mono',monospace;}
+#page-nnviz .nlv-pick-foot{display:flex;align-items:center;gap:6px;}
+#page-nnviz .nlv-pick-p{
+  font-family:'IBM Plex Mono',monospace;font-size:9px;font-weight:700;padding:1px 6px;border-radius:5px;
+  background:rgba(34,211,238,.14);color:#67e8f9;border:1px solid rgba(34,211,238,.4);white-space:nowrap;
+}
+#page-nnviz .nlv-pick-p.mid{background:rgba(59,130,246,.14);color:#93b8fb;border-color:rgba(59,130,246,.4);}
+#page-nnviz .nlv-pick-p.abst{background:rgba(148,163,184,.12);color:#94a3b8;border-color:rgba(148,163,184,.32);}
+#page-nnviz .nlv-pick-tech{font-size:8.5px;color:#5f79a2;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
+#page-nnviz .nlv-pick-bar{height:3px;border-radius:2px;background:rgba(255,255,255,.06);overflow:hidden;}
+#page-nnviz .nlv-pick-bar>span{display:block;height:100%;border-radius:2px;background:linear-gradient(90deg,#2f6bff,#22d3ee);}
+html[data-theme="light"] #page-nnviz .nlv-picks{background:linear-gradient(180deg,#eef3fb,#e6edf8);border-color:#cdd9ee;}
+html[data-theme="light"] #page-nnviz .nlv-picks-grid{background:#cdd9ee;}
+html[data-theme="light"] #page-nnviz .nlv-pick{background:#fbfdff;}
+html[data-theme="light"] #page-nnviz .nlv-pick:hover{background:#eef4fd;}
+html[data-theme="light"] #page-nnviz .nlv-pick-sym{color:#12233f;}
+html[data-theme="light"] #page-nnviz .nlv-pick-name,html[data-theme="light"] #page-nnviz .nlv-pick-tech{color:#5a6c85;}
+html[data-theme="light"] #page-nnviz .nlv-picks-head,html[data-theme="light"] #page-nnviz .nlv-picks-sub{color:#3a4b66;}
+@media(max-width:640px){
+  #page-nnviz .nlv-picks-grid{grid-template-columns:repeat(auto-fill,minmax(132px,1fr));}
+}
+
 /* SVG 링/라벨은 클래스로 색을 주어 라이트 모드에서 함께 뒤집힌다 */
 #page-nnviz .nlv-ring{stroke:#17243c;}
 #page-nnviz .nlv-axis{fill:#33415c;}
-#page-nnviz .nlv-lab{fill:#9fd9bd;opacity:.9;}
+#page-nnviz .nlv-lab{fill:#9ed4f5;opacity:.92;}
 /* 코어 = 사이트 로고(8각 별) 워터마크 */
-#page-nnviz .nlv-logo-base{fill:#1fd98a;opacity:.72;stroke:#c9ffe6;stroke-width:.55;stroke-opacity:.45;}
-#page-nnviz .nlv-logo-facet{fill:#eafff4;opacity:.22;}
-#page-nnviz .nlv-logo{filter:drop-shadow(0 0 7px rgba(0,230,118,.45));}
-#page-nnviz .nlv-corerim{stroke:#1d3a2e;}
+#page-nnviz .nlv-logo-base{fill:#2f9dfb;opacity:.72;stroke:#d6efff;stroke-width:.55;stroke-opacity:.5;}
+#page-nnviz .nlv-logo-facet{fill:#eaf6ff;opacity:.24;}
+#page-nnviz .nlv-logo{filter:drop-shadow(0 0 8px rgba(56,189,248,.5));}
+#page-nnviz .nlv-corerim{stroke:#1d3350;}
 /* opacity만 애니메이션한다 — transform-box/origin을 주면 group의 translate 기준점이 바뀌어
    별이 중심에서 밀려난다(그래서 지정하지 않음). */
 #page-nnviz.active .nlv-logo{animation:nlvLogoBreath 6s ease-in-out infinite;}
 @keyframes nlvLogoBreath{0%,100%{opacity:.85;}50%{opacity:1;}}
 @media (prefers-reduced-motion:reduce){#page-nnviz.active .nlv-logo{animation:none;}}
-html[data-theme="light"] #page-nnviz .nlv-logo-base{fill:#1fa96a;opacity:.55;}
-html[data-theme="light"] #page-nnviz .nlv-corerim{stroke:#2b5f47;}
+html[data-theme="light"] #page-nnviz .nlv-logo-base{fill:#2f8fe0;opacity:.6;}
+html[data-theme="light"] #page-nnviz .nlv-corerim{stroke:#39597f;}
 html[data-theme="light"] #page-nnviz .nlv-core,html[data-theme="light"] #page-nnviz .nlv-side{background:linear-gradient(180deg,#eef3fb,#e6edf8);border-color:#cdd9ee;}
 html[data-theme="light"] #page-nnviz .nlv-step b,html[data-theme="light"] #page-nnviz .nlv-line .b em{color:#12233f;}
 html[data-theme="light"] #page-nnviz .nlv-line .b{color:#33455f;}
 html[data-theme="light"] #page-nnviz .nlv-stat .v{color:#12233f;}
-html[data-theme="light"] #page-nnviz .nlv-stat .v.good{color:#0b8f4d;}
+html[data-theme="light"] #page-nnviz .nlv-stat .v.good{color:#0b6cd4;}
 html[data-theme="light"] #page-nnviz .nlv-stat .v.warn{color:#a5730a;}
 html[data-theme="light"] #page-nnviz .nlv-stat .v.off{color:#c62a45;}
 html[data-theme="light"] #page-nnviz .nlv-ring{stroke:#c2cfe4;}
 html[data-theme="light"] #page-nnviz .nlv-axis{fill:#8d9cb5;}
-html[data-theme="light"] #page-nnviz .nlv-lab{fill:#1c6b46;opacity:1;}
+html[data-theme="light"] #page-nnviz .nlv-lab{fill:#125a96;opacity:1;}
 html[data-theme="light"] #page-nnviz .nlv-corehead,html[data-theme="light"] #page-nnviz .nlv-pipe,
 html[data-theme="light"] #page-nnviz .nlv-verdicthead,html[data-theme="light"] #page-nnviz .nlv-corefoot{border-color:#d5dfee;}
 </style>
@@ -12472,6 +12888,34 @@ html[data-theme="light"] #page-nnviz .nlv-verdicthead,html[data-theme="light"] #
   display:flex;align-items:center;gap:6px;padding:7px 10px 6px;
   font-family:'IBM Plex Mono',monospace;font-size:8.5px;letter-spacing:1.6px;color:var(--t3);text-transform:uppercase;
 }
+/* 모델 구조 선택 버튼 (구조 관측 전용) */
+.rail-models{display:grid;grid-template-columns:1fr 1fr;gap:4px;padding:0 8px 9px;}
+.rail-model{
+  cursor:pointer;padding:7px 4px;border:1px solid var(--bd);border-radius:7px;background:transparent;
+  color:var(--t2);font-family:'IBM Plex Mono',monospace;font-size:9.5px;letter-spacing:.2px;
+  white-space:nowrap;overflow:hidden;text-overflow:ellipsis;
+}
+.rail-model:hover{color:var(--t1);border-color:var(--acc);}
+.rail-model.active{color:var(--acc);border-color:var(--acc);background:var(--s2);font-weight:700;}
+/* 바로가기 버튼 */
+.rail-links{display:flex;gap:5px;padding:0 10px 10px;}
+.rail-link{
+  flex:1 1 0;cursor:pointer;padding:8px 4px;border:1px solid var(--bd);border-radius:8px;background:transparent;
+  color:var(--t2);font-size:10px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;
+}
+.rail-link:hover{color:var(--t1);border-color:var(--acc);background:var(--s2);}
+/* 대시보드에서 옮겨온 블록(ALT ASSETS·BUDGET)을 좁은 레일 폭에 맞게 축소 */
+.rail-slot{padding:0;}
+.rail-slot .dash-block{border:none;background:transparent;padding:9px 10px 11px;margin:0;border-radius:0;}
+.rail-slot .dash-block:hover{border:none!important;background:transparent;}
+.rail-slot .dash-block-label{font-size:8.5px;letter-spacing:1.6px;margin-bottom:6px;}
+.rail-slot .dash-block-label span{display:none;}
+.rail-slot .alt-asset-row{display:grid;grid-template-columns:1fr;gap:4px;}
+.rail-slot .alt-asset-item{padding:6px 8px;min-height:0;}
+.rail-slot .alt-asset-label{font-size:8.5px;}
+.rail-slot .alt-asset-value{font-size:12px;}
+.rail-slot #stratPerfBox,.rail-slot #budgetSplitBox{font-size:9.5px;line-height:1.6;}
+.rail-slot .alt-sub{font-size:8.5px;}
 .rail-ai{padding:0 10px 10px;font-size:10px;line-height:1.7;color:var(--t2);font-family:'IBM Plex Mono',monospace;}
 .rail-ai .badge{display:block;font-size:10.5px;font-weight:700;margin-bottom:5px;}
 .rail-ai .row{display:flex;flex-wrap:wrap;gap:2px 8px;margin-bottom:3px;}
@@ -12543,7 +12987,8 @@ html[data-theme="light"] #page-nnviz .nlv-verdicthead,html[data-theme="light"] #
 .rail.collapsed .rail-item .r-name,.rail.collapsed .rail-item .r-px,
 .rail.collapsed .rail-item .r-foot,.rail.collapsed .rail-item .r-chg,
 .rail.collapsed .rail-empty,.rail.collapsed #railDensity,
-.rail.collapsed .rail-view small,.rail.collapsed .rail-sec-h,.rail.collapsed .rail-ai{display:none;}
+.rail.collapsed .rail-view small,.rail.collapsed .rail-sec-h,.rail.collapsed .rail-ai,
+.rail.collapsed .rail-links,.rail.collapsed .rail-slot,.rail.collapsed #railModelsSec{display:none;}
 .rail.collapsed .rail-views{padding:5px 3px;}
 .rail.collapsed .rail-view{padding:6px 2px;text-align:center;}
 .rail.collapsed .rail-view b{font-size:13px;}
@@ -12757,8 +13202,21 @@ html[data-theme="light"] .rail{background:#fff;}
         +'<button type="button" class="rail-view active" data-view="live" title="작동 화면 — AI 스캔·판정"><b><span class="ic">◉</span><span class="tx">작동 화면</span></b><small>스캔·판정 실시간</small></button>'
         +'<button type="button" class="rail-view" data-view="struct" title="구조 관측 — 모델 내부 구조·가중치"><b><span class="ic">◈</span><span class="tx">구조 관측</span></b><small>모델 내부·가중치</small></button>'
       +'</div>'
+      // ── 구조 관측 전용: 모델 선택(DNN·MIND·GBDT·XGB·LGB·Cat). 구조 뷰일 때만 펼쳐진다.
+      +'<div class="rail-sec" id="railModelsSec">'
+        +'<div class="rail-sec-h">신경망·모델 구조 <span style="letter-spacing:0;text-transform:none;">· 누르면 구조 화면</span></div>'
+        +'<div class="rail-models" id="railModels">'
+          + MODELS.map(function(m){
+              return '<button type="button" class="rail-model" data-model="'+m[0]+'">'+esc(m[1])+'</button>';
+            }).join('')
+      +'</div></div>'
       +'<div class="rail-body" id="railBody">'
         +'<div class="rail-sec"><div class="rail-sec-h">AI 운용 상태</div><div id="railAiMode" class="rail-ai">확인 중…</div></div>'
+        +'<div class="rail-sec"><div class="rail-sec-h">바로가기</div>'
+          +'<div class="rail-links"><button type="button" class="rail-link" data-page="report">📋 AI 리포트</button>'
+          +'<button type="button" class="rail-link" data-page="whatif">🧪 WHAT-IF</button></div></div>'
+        +'<div class="rail-sec rail-slot" id="railSlotAlt"></div>'
+        +'<div class="rail-sec rail-slot" id="railSlotBudget"></div>'
         +'<div class="rail-sec"><div class="rail-sec-h">열린 종목창 <span class="rail-cnt" id="railCnt">0</span></div>'
           +'<div id="railStocks"></div></div>'
       +'</div>'
@@ -12772,6 +13230,25 @@ html[data-theme="light"] .rail{background:#fff;}
     $id('railViews').addEventListener('click', function(e){
       var b = e.target.closest ? e.target.closest('.rail-view') : null;
       if(b) setBrainView(b.getAttribute('data-view'));
+    });
+    // 모델 구조 선택 — 작동 화면 중이면 구조 뷰로 넘어가면서 해당 모델을 연다.
+    $id('railModels').addEventListener('click', function(e){
+      var b = e.target.closest ? e.target.closest('.rail-model') : null;
+      if(!b) return;
+      var m = b.getAttribute('data-model');
+      if(BVIEW !== 'struct') setBrainView('struct');
+      try{ if(typeof window.switchNnModel === 'function') window.switchNnModel(m); }catch(err){}
+      syncRailModels(m);
+    });
+    // 바로가기(AI 리포트·WHAT-IF)
+    el.addEventListener('click', function(e){
+      var b = e.target.closest ? e.target.closest('.rail-link') : null;
+      if(b) go(b.getAttribute('data-page'));
+    });
+    // 대시보드에 있던 ALT ASSETS·BUDGET ALLOCATION 블록을 통째로 이 사이드바로 이동
+    ['blkAltAssets:railSlotAlt', 'blkBudget:railSlotBudget'].forEach(function(pair){
+      var kv = pair.split(':'), src = $id(kv[0]), slot = $id(kv[1]);
+      if(src && slot) slot.appendChild(src);
     });
 
     $id('railToggle').addEventListener('click', function(){
@@ -12873,6 +13350,185 @@ html[data-theme="light"] .rail{background:#fff;}
   }
 
   /* ═════════════════════════════════════════════════════════════
+     [V33.2] 모바일 셸 — 좌측 사이드바 대신 상단 앱바 + 하단 탭바 + 드로어.
+       · DOM만 추가하고, 실제 동작은 기존 요소(nav-item·sb-btn)를 그대로 클릭 위임한다.
+         → 로직 중복 0, PC/태블릿 동작에 영향 0(요소가 CSS로 완전히 숨겨짐).
+     ═════════════════════════════════════════════════════════════ */
+  var NAVS = [
+    { id:'dashboard', ic:'◈', tx:'대시보드' }, { id:'detail', ic:'📈', tx:'종목' },
+    { id:'positions', ic:'◉', tx:'포지션' },   { id:'macro', ic:'📊', tx:'지표&환율' },
+    { id:'report', ic:'📋', tx:'AI 리포트' },  { id:'nnviz', ic:'✦', tx:'AI 두뇌' },
+    { id:'whatif', ic:'🧪', tx:'WHAT-IF' },    { id:'news', ic:'📰', tx:'NEWS' },
+    { id:'trades', ic:'◷', tx:'TRADES' },      { id:'vision', ic:'◑', tx:'AI VISION' }
+  ];
+  var TABS = ['dashboard','detail','nnviz','positions'];
+  // 구조 관측에서 고를 수 있는 모델 — 기존 nnv-tab 과 같은 목록(switchNnModel 인자와 동일)
+  var MODELS = [['dnn','DNN 딥넷'],['mind','MIND 스태킹'],['gbdt','GBDT'],['xgb','XGBoost'],['lgb','LightGBM'],['cat','CatBoost']];
+  // 모델 버튼은 항상 보인다(사용자 요청: DNN·신경망 구조 버튼 복구). 누르면 구조 화면으로 전환되며
+  // 해당 모델이 열리고, 작동 화면일 땐 어떤 것도 활성 표시하지 않는다.
+  function syncRailModels(active){
+    if(BVIEW !== 'struct'){
+      var off = document.querySelectorAll('.rail-model');
+      for(var k=0;k<off.length;k++) off[k].classList.remove('active');
+      return;
+    }
+    if(!active){
+      var cur = document.querySelector('#nnvTabs .nnv-tab.active');
+      active = cur ? cur.getAttribute('data-model') : 'dnn';
+    }
+    var bs = document.querySelectorAll('.rail-model');
+    for(var i=0;i<bs.length;i++) bs[i].classList.toggle('active', bs[i].getAttribute('data-model') === active);
+  }
+  var MOB = { built:false, drawer:null, scrim:null };
+
+  function go(pageId){
+    if(typeof window.showPage === 'function') window.showPage(pageId);
+    else { var n = document.querySelector('.nav-item[data-page="'+pageId+'"]'); if(n) n.click(); }
+    closeDrawer();
+  }
+  function openDrawer(){
+    if(!MOB.drawer) return;
+    syncMobile();
+    MOB.drawer.classList.add('show'); MOB.scrim.classList.add('show');
+  }
+  function closeDrawer(){
+    if(!MOB.drawer) return;
+    MOB.drawer.classList.remove('show'); MOB.scrim.classList.remove('show');
+  }
+  // 기존 사이드바 버튼을 대신 눌러준다 — 실행 로직은 한 곳에만 존재.
+  function proxyClick(id){ var b = document.getElementById(id); if(b) b.click(); closeDrawer(); }
+
+  function buildMobileShell(){
+    if(MOB.built) return;
+    MOB.built = true;
+    var shell = document.querySelector('.shell'); if(!shell) return;
+
+    var bar = document.createElement('header');
+    bar.className = 'm-appbar';
+    bar.innerHTML =
+      '<span class="m-ab-logo"><svg viewBox="0 0 100 100" aria-hidden="true"><use href="#luxStarSym"/></svg></span>'
+      +'<span class="m-ab-mid"><span class="m-ab-title">LUX-ENGINE</span>'
+        +'<span class="m-ab-sub" id="mAbSub">—</span></span>'
+      +'<span class="m-ab-pnl" id="mAbPnl"></span>'
+      +'<button type="button" class="m-ab-btn" id="mAbSearch" aria-label="검색">🔍</button>'
+      +'<button type="button" class="m-ab-btn" id="mAbMenu" aria-label="메뉴">☰</button>';
+    document.body.appendChild(bar);
+
+    var tabs = document.createElement('nav');
+    tabs.className = 'm-tabbar';
+    tabs.innerHTML = TABS.map(function(id){
+      var n = NAVS.filter(function(x){ return x.id === id; })[0];
+      return '<button type="button" class="m-tab" data-page="'+id+'"><span class="ic">'+n.ic+'</span><span class="tx">'+esc(n.tx)+'</span></button>';
+    }).join('') + '<button type="button" class="m-tab" data-more="1"><span class="ic">☰</span><span class="tx">메뉴</span></button>';
+    document.body.appendChild(tabs);
+
+    var scrim = document.createElement('div'); scrim.className = 'm-drawer-scrim';
+    var dr = document.createElement('aside'); dr.className = 'm-drawer';
+    dr.innerHTML =
+      '<div class="m-dr-head"><span class="m-dr-title">메뉴</span>'
+        +'<button type="button" class="m-ab-btn" id="mDrClose" aria-label="닫기">✕</button></div>'
+      +'<div class="m-dr-sec"><div class="m-dr-sec-h">화면</div><div class="m-dr-nav" id="mDrNav">'
+        + NAVS.map(function(n){
+            return '<button type="button" class="m-dr-item" data-page="'+n.id+'"><span>'+n.ic+'</span><span>'+esc(n.tx)+'</span></button>';
+          }).join('')
+      +'</div></div>'
+      // [V33.3] RUN NOW·US·KR 제거 — 서버 cron이 전부 자동 실행하므로 수동 트리거를 두지 않는다.
+      +'<div class="m-dr-sec"><div class="m-dr-sec-h">실행</div><div class="m-dr-act">'
+        +'<button type="button" data-proxy="btnLogs">LOG</button>'
+        +'<button type="button" data-proxy="btnHeatmap">MAP</button>'
+        +'<button type="button" data-proxy="btnSettings">⚙ 설정</button>'
+        +'<button type="button" data-proxy="btnTheme">🌓 테마</button>'
+      +'</div></div>'
+      +'<div class="m-dr-sec"><div class="m-dr-sec-h">자동 운용</div>'
+        +'<div style="font-size:10.5px;line-height:1.7;color:var(--t2);font-family:\'IBM Plex Mono\',monospace;">'
+        +'<span style="color:var(--pos);">●</span> 서버가 1분마다 자동으로 거래 사이클·시세·학습을 실행합니다.<br>'
+        +'<span style="color:var(--t3);">수동 실행 버튼은 필요하지 않습니다.</span></div></div>'
+      +'<div class="m-dr-sec"><div class="m-dr-sec-h">상태</div>'
+        +'<div id="mDrStatus" style="font-size:10.5px;line-height:1.9;color:var(--t2);font-family:\'IBM Plex Mono\',monospace;"></div>'
+      +'</div>';
+    document.body.appendChild(scrim); document.body.appendChild(dr);
+    MOB.drawer = dr; MOB.scrim = scrim;
+
+    tabs.addEventListener('click', function(e){
+      var b = e.target.closest ? e.target.closest('.m-tab') : null; if(!b) return;
+      if(b.getAttribute('data-more')) openDrawer(); else go(b.getAttribute('data-page'));
+    });
+    dr.addEventListener('click', function(e){
+      var t = e.target.closest ? e.target.closest('[data-page],[data-proxy]') : null; if(!t) return;
+      if(t.getAttribute('data-page')) go(t.getAttribute('data-page'));
+      else proxyClick(t.getAttribute('data-proxy'));
+    });
+    scrim.addEventListener('click', closeDrawer);
+    $id('mDrClose').addEventListener('click', closeDrawer);
+    $id('mAbMenu').addEventListener('click', openDrawer);
+    $id('mAbSearch').addEventListener('click', function(){
+      var fab = $id('cmdkFab'); if(fab) fab.click();
+    });
+
+    // 두뇌 페이지: 폰에는 우측 사이드바가 없으므로 인라인 전환기 + 운용상태를 넣는다.
+    var host = document.querySelector('#page-nnviz .nnviz-content');
+    var liveEl = $id('nnvLive');
+    if(host && liveEl){
+      var bb = document.createElement('div');
+      bb.className = 'm-brainbar';
+      bb.innerHTML = '<button type="button" data-view="live" class="active">◉ 작동 화면</button>'
+        + '<button type="button" data-view="struct">◈ 구조 관측</button>';
+      bb.addEventListener('click', function(e){
+        var b = e.target.closest ? e.target.closest('button') : null;
+        if(b) setBrainView(b.getAttribute('data-view'));
+      });
+      host.insertBefore(bb, liveEl);
+      var am = document.createElement('div');
+      am.className = 'm-aimode'; am.id = 'mobAiMode'; am.textContent = '확인 중…';
+      host.insertBefore(am, liveEl);
+    }
+    syncMobile();
+  }
+
+  // 활성 페이지·손익·시장상태를 모바일 셸에 반영(원본 DOM에서 값만 미러링)
+  function syncMobile(){
+    if(!MOB.built) return;
+    var act = document.querySelector('.page.active');
+    var id = act ? act.id.replace(/^page-/, '') : '';
+    var tabEls = document.querySelectorAll('.m-tab[data-page]');
+    var known = false;
+    for(var i=0;i<tabEls.length;i++){
+      var on = tabEls[i].getAttribute('data-page') === id;
+      tabEls[i].classList.toggle('active', on);
+      if(on) known = true;
+    }
+    var more = document.querySelector('.m-tab[data-more]');
+    if(more) more.classList.toggle('active', !known);
+    var drEls = document.querySelectorAll('.m-dr-item');
+    for(var j=0;j<drEls.length;j++) drEls[j].classList.toggle('active', drEls[j].getAttribute('data-page') === id);
+    var pnlSrc = $id('positionsTotalPnl'), pnl = $id('mAbPnl');
+    if(pnlSrc && pnl && pnl.innerHTML !== pnlSrc.innerHTML) pnl.innerHTML = pnlSrc.innerHTML;
+    var sub = $id('mAbSub');
+    if(sub){
+      var us = $id('usMarketStatus'), kr = $id('krMarketStatus');
+      sub.textContent = '🇺🇸 ' + ((us && us.textContent) || '—') + '  ·  🇰🇷 ' + ((kr && kr.textContent) || '—');
+    }
+    var ds = $id('mDrStatus');
+    if(ds){
+      var eng = $id('engineText'), lv = $id('liveText');
+      ds.innerHTML = '엔진 · ' + esc((eng && eng.textContent) || '—') + '<br>'
+        + '연결 · ' + esc((lv && lv.textContent) || '—') + '<br>'
+        + (sub ? esc(sub.textContent) : '');
+    }
+  }
+
+  // [V33.3] 좌측 사이드바 "자동 운용 중" 배지 — 서버 cron의 마지막 사이클 시각을 보여준다.
+  //   (RUN NOW 버튼을 없앤 자리라, 사람이 안 눌러도 돌고 있다는 사실이 보여야 한다)
+  function syncAutoBadge(){
+    var sub = $id('sbAutoSub'), box = $id('sbAuto');
+    if(!sub) return;
+    var t = window.__serverLastTick || 0;
+    sub.textContent = t ? ('마지막 사이클 ' + ago(t) + ' 전') : '사이클 대기 중';
+    // 5분 넘게 사이클이 없으면 경고색 — 자동화가 멈춘 걸 숨기지 않는다.
+    if(box) box.classList.toggle('stale', !!t && (Date.now() - t) > 5 * 60000);
+  }
+
+  /* ═════════════════════════════════════════════════════════════
      ② 터미널 밀도 레이어
      ═════════════════════════════════════════════════════════════ */
   function applyDensity(mode, announce){
@@ -12924,11 +13580,14 @@ html[data-theme="light"] .rail{background:#fff;}
     if(v !== 'struct') v = 'live';
     BVIEW = v;
     try{ localStorage.setItem('luxBrainView', v); }catch(e){}
-    var live = $id('nnvLive'), struct = $id('nnvStruct');
+    var live = $id('nnvLive'), struct = $id('nnvStruct'), picks = $id('nlvPicksWrap');
     if(live) live.style.display = (v === 'live') ? '' : 'none';
+    if(picks) picks.style.display = (v === 'live') ? '' : 'none';
     if(struct) struct.style.display = (v === 'struct') ? '' : 'none';
-    var btns = document.querySelectorAll('#railViews .rail-view');
+    // 사이드바(PC)·인라인 바(모바일) 양쪽 버튼 상태를 함께 맞춘다
+    var btns = document.querySelectorAll('#railViews .rail-view, .m-brainbar button');
     for(var i=0;i<btns.length;i++) btns[i].classList.toggle('active', btns[i].getAttribute('data-view') === v);
+    try{ syncRailModels(); }catch(e){}
     var onBrain = !!document.querySelector('#page-nnviz.active');
     if(!onBrain) return;
     if(v === 'struct'){
@@ -12948,12 +13607,14 @@ html[data-theme="light"] .rail{background:#fff;}
     if(rank >= 0.52) return { cls:'hold', label:'관찰', why:'강도 부족 — 대기' };
     return { cls:'skip', label:'제외', why:'기대우위 없음' };
   }
+  // 색은 파란색 계열 한 축으로 — 밝은 시안(강한 후보) → 블루(관찰) → 흐린 네이비(제외).
+  //   기권만 슬레이트 회색으로 빼서 "판단 보류"임을 구분한다.
   function nodeColor(pk){
-    if(pk.abstain) return '#6f7f9c';
+    if(pk.abstain) return '#64748b';
     var rank = (pk.rankP != null ? pk.rankP : pk.p);
-    if(rank >= 0.60) return '#00e676';
-    if(rank >= 0.52) return '#4a9dff';
-    return '#3d4c66';
+    if(rank >= 0.60) return '#22d3ee';
+    if(rank >= 0.52) return '#3b82f6';
+    return '#31446b';
   }
 
   function renderCore(d){
@@ -12962,8 +13623,8 @@ html[data-theme="light"] .rail{background:#fff;}
     var parts = [];
     // 배경 링 — 승률 등고선(0.50 / 0.55 / 0.60)
     parts.push('<defs>'
-      +'<radialGradient id="nlvCoreG"><stop offset="0%" stop-color="#c8ffe4" stop-opacity=".95"/>'
-      +'<stop offset="55%" stop-color="#00e676" stop-opacity=".65"/><stop offset="100%" stop-color="#00e676" stop-opacity="0"/></radialGradient>'
+      +'<radialGradient id="nlvCoreG"><stop offset="0%" stop-color="#d6f2ff" stop-opacity=".95"/>'
+      +'<stop offset="55%" stop-color="#38bdf8" stop-opacity=".65"/><stop offset="100%" stop-color="#2f6bff" stop-opacity="0"/></radialGradient>'
       +'<linearGradient id="nlvBeamG" x1="0" y1="0" x2="1" y2="0">'
       +'<stop offset="0%" stop-color="#4a9dff" stop-opacity=".35"/><stop offset="100%" stop-color="#4a9dff" stop-opacity="0"/></linearGradient>'
       +'</defs>');
@@ -13023,7 +13684,7 @@ html[data-theme="light"] .rail{background:#fff;}
       +'</g>');
     // 별의 몸통만 어두운 원판으로 덮어 8개 뿔을 남긴다 → 로고 실루엣이 판정 수치를 감싼다
     parts.push('<circle cx="'+CX+'" cy="'+CY+'" r="48" fill="#060a12" opacity=".93"/>');
-    parts.push('<circle class="nlv-corering" cx="'+CX+'" cy="'+CY+'" r="26" stroke="#00e676" stroke-width="1"/>');
+    parts.push('<circle class="nlv-corering" cx="'+CX+'" cy="'+CY+'" r="26" stroke="#38bdf8" stroke-width="1"/>');
     parts.push('<circle class="nlv-corerim" cx="'+CX+'" cy="'+CY+'" r="48" fill="none" stroke-width="1"/>');
     svg.innerHTML = parts.join('');
     // 노드 클릭 → 해당 종목 상세 열기(+ 우측 사이드바에 쌓임)
@@ -13080,8 +13741,10 @@ html[data-theme="light"] .rail{background:#fff;}
 
   // [V33.1] AI 운용 상태 — 대시보드에서 옮겨온 패널. 두뇌 페이지 우측 사이드바 전용.
   function renderRailAiMode(mode, picks){
-    var el = $id('railAiMode'); if(!el) return;
-    if(!mode || mode.aiReady === undefined){ el.textContent = '조회 실패'; return; }
+    var el = $id('railAiMode'), mob = $id('mobAiMode');
+    if(!el && !mob) return;
+    var put = function(html){ if(el) el.innerHTML = html; if(mob) mob.innerHTML = html; };
+    if(!mode || mode.aiReady === undefined){ put('조회 실패'); return; }
     var c = mode.committee || {};
     var ON = '<span style="color:var(--pos);">●</span>',
         SH = '<span style="color:var(--amber,#fbbf24);">◐</span>',
@@ -13107,7 +13770,64 @@ html[data-theme="light"] .rail{background:#fff;}
         + '<div class="diag">최근 '+esc(rv.windowDays)+'일 · '+esc(rv.n)+'건 · 승률 '+(rv.winRate*100).toFixed(0)+'% · PF '+esc(rv.profitFactor)+'</div>'
         + '<div class="diag" style="margin-top:3px;">'+rv.diagnosis.slice(0,3).map(function(t){ return '· '+esc(t); }).join('<br>')+'</div>';
     }
-    el.innerHTML = h;
+    put(h);
+  }
+
+  // [V33.2] AI 후보 종목 그래프 — 위원회 상위 픽의 최근 흐름(워치리스트 일봉 spark)을 카드로.
+  //   spark 가 없는 종목(유니버스 밖)은 선 대신 안내만 — 없는 데이터를 그려내지 않는다.
+  function renderPicksGraph(d){
+    var grid = $id('nlvPicksGrid'), sub = $id('nlvPicksSub');
+    if(!grid) return;
+    var picks = (d.picks || []).slice(0, 14);
+    if(sub){
+      var cand = (d.picks || []).filter(function(p){ return !p.abstain && (p.rankP!=null?p.rankP:p.p) >= 0.60; }).length;
+      sub.textContent = picks.length ? ('상위 '+picks.length+'종목 · 진입후보 '+cand+'개') : '';
+    }
+    if(!picks.length){
+      grid.innerHTML = '<div class="nlv-empty">후보 종목이 아직 없습니다 — 야간 스캔 대기 중</div>';
+      return;
+    }
+    grid.innerHTML = picks.map(function(pk){
+      var q = quoteOf(pk.symbol);
+      var chg = (q && typeof q.dayPct === 'number') ? q.dayPct : null;
+      var rank = (pk.rankP != null ? pk.rankP : pk.p);
+      var pcls = pk.abstain ? 'abst' : (rank >= 0.60 ? '' : 'mid');
+      var chart = pickChart(q && q.spark);
+      var name = (q && q.name && q.name !== pk.symbol) ? q.name : '';
+      var w = Math.max(2, Math.min(100, (pk.p - 0.3) / 0.45 * 100));
+      return '<div class="nlv-pick" data-sym="'+esc(pk.symbol)+'" title="'+esc(pk.symbol)+' · 승률 '+Math.round(pk.p*100)+'%">'
+        +'<div class="nlv-pick-top"><span class="nlv-pick-sym">'+esc(pk.symbol)+'</span>'
+          +'<span class="nlv-pick-chg '+(chg==null?'':(chg>=0?'up':'dn'))+'">'+(chg==null?'—':pct1(chg))+'</span></div>'
+        +(name ? '<div class="nlv-pick-name">'+esc(name)+'</div>' : '')
+        + chart
+        +'<div class="nlv-pick-bar"><span style="width:'+w.toFixed(0)+'%"></span></div>'
+        +'<div class="nlv-pick-foot">'
+          +'<span class="nlv-pick-p '+pcls+'">'+(pk.abstain?'기권 ':'AI ')+Math.round(pk.p*100)+'%</span>'
+          +'<span class="nlv-pick-tech">'+esc(pk.techLabel || '—')+'</span>'
+        +'</div>'
+      +'</div>';
+    }).join('');
+    if(!grid.__bound){
+      grid.__bound = true;
+      grid.addEventListener('click', function(e){
+        var c = e.target.closest ? e.target.closest('.nlv-pick') : null;
+        if(c && typeof window.openStockDetail === 'function') window.openStockDetail(c.getAttribute('data-sym'));
+      });
+    }
+  }
+  function pickChart(spark){
+    if(!spark || spark.length < 2) return '<div class="nlv-pick-nochart">일봉 캐시 없음</div>';
+    var w = 100, h = 38, min = Math.min.apply(null, spark), max = Math.max.apply(null, spark);
+    var mid = (max + min) / 2 || 1;
+    var rng = Math.max(max - min, Math.abs(mid) * 0.02);
+    var lo = mid - rng / 2, hi = mid + rng / 2, step = w / (spark.length - 1);
+    var pts = spark.map(function(v, i){
+      return (i * step).toFixed(1) + ',' + (3 + (h - 6) * (1 - (v - lo) / (hi - lo))).toFixed(1);
+    }).join(' ');
+    var up = spark[spark.length - 1] >= spark[0];
+    var col = up ? '#22d3ee' : '#7c8db0';
+    return '<div class="nlv-pick-chart"><svg viewBox="0 0 '+w+' '+h+'" preserveAspectRatio="none">'
+      + '<polyline points="'+pts+'" stroke="'+col+'"/></svg></div>';
   }
 
   function renderPipe(steps, d){
@@ -13184,24 +13904,68 @@ html[data-theme="light"] .rail{background:#fff;}
   }
   function stopFeed(){ if(LIVE.feedTimer){ clearInterval(LIVE.feedTimer); LIVE.feedTimer = null; } }
 
+  // [V33.3] ★"SCANNING"에서 안 넘어가고 로딩이 길던 문제★
+  //   원인 두 가지를 같이 잡는다.
+  //   1) Promise.all — /api/ai-mode(위원회 모델 로드) 하나가 느리면 이미 도착한 ai-picks 까지
+  //      함께 묶여 화면이 통째로 대기했다. → 엔드포인트별로 도착하는 대로 부분 렌더.
+  //   2) 첫 진입 시 캐시가 없어 무조건 네트워크를 기다렸다. → 마지막 성공 데이터를
+  //      localStorage 에 저장해 두고 즉시 그린 뒤(체감 0ms) 최신값으로 덮어쓴다.
+  function paintLive(d, pipeSteps){
+    LIVE.data = d;
+    LIVE.lines = buildLines(d);
+    if(BVIEW !== 'live') return;   // 구조 관측 중이면 무거운 코어 SVG·스트림은 그리지 않는다
+    renderCore(d);
+    renderCenter(d);
+    renderPicksGraph(d);
+    if(pipeSteps) renderPipe(pipeSteps, d);
+    startFeed();
+  }
+  function cacheLive(d, pipeSteps){
+    try{ localStorage.setItem('luxLiveCache', JSON.stringify({ d:d, pipe:pipeSteps||null, ts:Date.now() })); }catch(e){}
+  }
   function loadLive(force){
     if(!$id('nlvSvg')) return Promise.resolve();
-    return Promise.all([
-      loadPicks(force),
-      fetch('/api/ai-mode').then(function(r){ return r.json(); })['catch'](function(){ return {}; }),
-      fetch('/api/pipeline').then(function(r){ return r.json(); })['catch'](function(){ return {}; })
-    ]).then(function(res){
-      var pk = res[0] || {}, mode = res[1] || {}, pipe = res[2] || {};
-      var d = { picks: pk.picks || [], scan: pk.scan || (mode.scan || {}), mode: mode };
-      LIVE.data = d;
-      renderRailAiMode(mode, d.picks);   // 사이드바 "AI 운용 상태"는 뷰와 무관하게 항상 최신
-      LIVE.lines = buildLines(d);
-      if(BVIEW !== 'live') return;       // 구조 관측 중이면 무거운 코어 SVG·스트림은 그리지 않는다
-      renderCore(d);
-      renderCenter(d);
-      renderPipe(pipe.steps, d);
-      startFeed();
+    var painted = false, acc = { picks:[], scan:{}, mode:{} }, pipeSteps = null;
+
+    if(!LIVE.data){
+      try{
+        var c = JSON.parse(localStorage.getItem('luxLiveCache') || 'null');
+        if(c && c.d){ acc = c.d; pipeSteps = c.pipe; paintLive(c.d, c.pipe); painted = true; }
+      }catch(e){}
+    }
+    if(!painted && !LIVE.data){
+      var ck = $id('nlvCenterK'), cm = $id('nlvCenterM');
+      if(ck) ck.textContent = 'SCANNING';
+      if(cm) cm.textContent = '스캔 결과를 불러오는 중…';
+    }
+
+    // ① 픽 — 코어/후보 그래프의 주 데이터. 오는 즉시 그린다.
+    var pPicks = loadPicks(force).then(function(pk){
+      if(!pk) return;
+      acc.picks = pk.picks || [];
+      if(pk.scan) acc.scan = pk.scan;
+      paintLive(acc, pipeSteps); cacheLive(acc, pipeSteps);
     })['catch'](function(){});
+
+    // ② 운용모드 — 위원회 상태(사이드바)와 하단 지표. 느려도 ①을 막지 않는다.
+    var pMode = fetch('/api/ai-mode').then(function(r){ return r.json(); }).then(function(mode){
+      if(!mode) return;
+      acc.mode = mode;
+      if(!acc.scan || acc.scan.ts == null) acc.scan = mode.scan || acc.scan;
+      renderRailAiMode(mode, acc.picks);
+      // 픽이 아직 없으면 코어를 그리지 않는다 — 빈 상태를 "IDLE"로 잘못 확정짓지 않기 위함.
+      if(acc.picks.length){ paintLive(acc, pipeSteps); cacheLive(acc, pipeSteps); }
+    })['catch'](function(){});
+
+    // ③ 파이프라인 — 우측 단계 표시만 담당.
+    var pPipe = fetch('/api/pipeline').then(function(r){ return r.json(); }).then(function(pipe){
+      if(!pipe || !pipe.steps) return;
+      pipeSteps = pipe.steps;
+      if(BVIEW === 'live') renderPipe(pipeSteps, acc);
+      cacheLive(acc, pipeSteps);
+    })['catch'](function(){});
+
+    return Promise.all([pPicks, pMode, pPipe])['catch'](function(){});
   }
 
   function liveStart(){
@@ -13227,6 +13991,7 @@ html[data-theme="light"] .rail{background:#fff;}
       railLoad();
       railBuild();
       railRender();
+      buildMobileShell();
       setBrainView(BVIEW);   // 저장된 뷰 복원(기본 '작동 화면')
       railGate();
       var pauseBtn = $id('nlvPause');
@@ -13234,11 +13999,14 @@ html[data-theme="light"] .rail{background:#fff;}
         LIVE.paused = !LIVE.paused;
         this.textContent = LIVE.paused ? '▶' : '⏸';
       });
-      // 시세/보유 갱신 반영 — 5초 주기로 우측 트레이만 다시 그린다(내용 변화 없으면 DOM 손 안 댐).
+      // 시세/보유 갱신 반영 — 5초 주기로 우측 트레이·모바일 앱바만 다시 맞춘다(변화 없으면 DOM 손 안 댐).
       setInterval(function(){
-        if(!RAIL.el || document.hidden) return;
-        railRender();
+        if(document.hidden) return;
+        if(RAIL.el) railRender();
+        syncMobile();
+        syncAutoBadge();
       }, 5000);
+      syncAutoBadge();
       loadPicks(false).then(function(){ try{ railRender(); }catch(e){} });
     }
     hookGlobals();
@@ -13270,7 +14038,7 @@ html[data-theme="light"] .rail{background:#fff;}
       var wrapped2 = function(id){
         var r = sp.apply(this, arguments);
         try{ if(id === 'nnviz') liveStart(); else liveStop(); }catch(e){}
-        try{ railGate(id); railRender(); }catch(e){}
+        try{ railGate(id); railRender(); syncMobile(); }catch(e){}
         return r;
       };
       wrapped2.__luxLiveHooked = true;

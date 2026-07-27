@@ -14626,7 +14626,10 @@ async function handleRequest(request, env, ctx) {
           { key: "mkt_context",         label: "시장 컨텍스트", staleMs: 24 * 3600000 },
           { key: "sector_news_sentiment", label: "뉴스 감성",   staleMs: 24 * 3600000 },
           { key: "xs_panel",            label: "횡단면 패널",   staleMs: 36 * 3600000 },
-          { key: "hv_offset:v12",       label: "표본 수확",     staleMs: 24 * 3600000 },
+          // [V33.3] ★"표본 수확"이 항상 노란불(STALE)이던 버그★ — 수확기는
+          //   "hv_offset:v" + LUXML.featVer 에 기록하는데(현재 v13) 여기만 v12로 굳어 있어
+          //   존재하지 않는 키를 보고 있었다. featVer를 따라가도록 수정.
+          { key: "hv_offset:v" + LUXML.featVer, label: "표본 수확", staleMs: 24 * 3600000 },
           { key: "cf_label_lock",       label: "반사실 라벨링", staleMs: 6 * 3600000 },
           { key: "ai_trained_day",      label: "AI 학습",       staleMs: 36 * 3600000 }
         ];
