@@ -2728,7 +2728,7 @@ html[data-theme="light"] .table tbody tr:hover{background:rgba(9,105,218,.045);}
 
 /* ── ① 좌측 사이드바 슬림화 (220 → 184) ── */
 @media(min-width:768px){
-  .sidebar{width:184px;}
+  .sidebar{width:168px;}
   .sb-brand{padding:13px 12px 11px;}
   .sb-brand-logo{width:17px;height:17px;margin-right:6px;}
   .sb-brand-name{font-size:11.5px;letter-spacing:1.3px;}
@@ -2788,14 +2788,14 @@ html[data-theme="light"] .table tbody tr:hover{background:rgba(9,105,218,.045);}
 
 /* iPad(768~1440) 확대 규칙도 같은 비율로 축소 — 기존 240/200 → 200/176 */
 @media (min-width:768px) and (max-width:1440px){
-  .sidebar{width:200px;}
+  .sidebar{width:184px;}
   .nav-item{padding:11px 14px;font-size:11px;}
   .nav-item-icon{font-size:12px;}
   .sb-run-btn{padding:11px;font-size:11px;}
   .sb-btn-row .sb-btn{padding:8px 2px;font-size:9.5px;}
 }
 @media (min-width:768px) and (max-width:834px) and (orientation:portrait){
-  .sidebar{width:176px;}
+  .sidebar{width:164px;}
   .sb-btn-row .sb-btn{padding:7px 1px;font-size:9px;}
 }
 
@@ -3136,7 +3136,9 @@ html[data-theme="light"] .m-brainbar button.active{color:#0b4f9e;background:rgba
         <span class="nav-item-icon"><svg class="lux-star-svg lux-ico" viewBox="0 0 100 100" aria-hidden="true"><use href="#luxStarSym"/></svg></span>
         <span class="nav-item-label">AI 두뇌</span>
       </div>
-      <div class="nav-item" data-page="whatif">
+      <!-- [V33.4] WHAT-IF는 좌측 네비에서 내리고 "AI 두뇌" 우측 사이드바 버튼으로만 연다(사용자 요청).
+           요소는 숨겨서 남긴다 — showPage('whatif')·모바일 드로어가 data-page를 참조한다. -->
+      <div class="nav-item" data-page="whatif" style="display:none;">
         <span class="nav-item-icon">🧪</span>
         <span class="nav-item-label">WHAT-IF</span>
       </div>
@@ -12844,13 +12846,13 @@ html[data-theme="light"] #page-nnviz .nlv-verdicthead,html[data-theme="light"] #
 <style>
 /* ══════ ① 우측 사이드바 — 지금 열어 둔 종목창 트레이 ══════ */
 .rail{
-  width:250px;flex:0 0 250px;order:99;
+  width:214px;flex:0 0 214px;order:99;
   background:var(--s1);border-left:1px solid var(--bd);
   display:flex;flex-direction:column;min-height:0;overflow:hidden;
   position:relative;z-index:9;
   transition:width .18s ease,flex-basis .18s ease;
 }
-.rail.collapsed{width:38px;flex-basis:38px;}
+.rail.collapsed{width:34px;flex-basis:34px;}
 .rail-head{
   display:flex;align-items:center;gap:6px;padding:10px 10px 9px;
   border-bottom:1px solid var(--bd);flex:0 0 auto;
@@ -12904,6 +12906,22 @@ html[data-theme="light"] #page-nnviz .nlv-verdicthead,html[data-theme="light"] #
   color:var(--t2);font-size:10px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;
 }
 .rail-link:hover{color:var(--t1);border-color:var(--acc);background:var(--s2);}
+.rail-link.active{color:var(--acc);border-color:var(--acc);background:var(--s2);font-weight:700;}
+/* 레일 폭이 줄어든 만큼 내부 요소도 한 단계 조밀하게 */
+.rail-head{padding:9px 8px 8px;gap:5px;}
+.rail-title{font-size:8.5px;letter-spacing:1.2px;}
+.rail-btn{padding:3px 5px;font-size:9.5px;}
+.rail-views{padding:6px 6px 7px;}
+.rail-view{padding:6px 8px;}
+.rail-view b{font-size:10.5px;}
+.rail-models{padding:0 6px 8px;gap:3px;}
+.rail-model{padding:6px 3px;font-size:9px;}
+.rail-links{padding:0 8px 9px;gap:4px;}
+.rail-link{padding:7px 3px;font-size:9.5px;}
+.rail-item{padding:7px 8px 8px;}
+.rail-foot{padding:6px 6px;gap:4px;}
+.rail-foot button{padding:5px 3px;font-size:9px;}
+.rail-slot .dash-block{padding:8px 8px 10px;}
 /* 대시보드에서 옮겨온 블록(ALT ASSETS·BUDGET)을 좁은 레일 폭에 맞게 축소 */
 .rail-slot{padding:0;}
 .rail-slot .dash-block{border:none;background:transparent;padding:9px 10px 11px;margin:0;border-radius:0;}
@@ -13171,7 +13189,7 @@ html[data-theme="light"] .rail{background:#fff;}
   // 레일 실폭을 CSS 변수로 — 빠른검색 FAB 등 fixed 요소가 레일을 안 가리게 한다.
   function railWidthVar(){
     var shown = RAIL.el && !RAIL.el.hidden && window.innerWidth >= 1100;
-    var w = shown ? (RAIL.collapsed ? 38 : 250) : 0;
+    var w = shown ? (RAIL.collapsed ? 34 : 214) : 0;
     document.documentElement.style.setProperty('--rail-w', w + 'px');
   }
   // [V33.1] 우측 사이드바는 "AI 두뇌" 페이지 전용 — 다른 페이지에선 감춘다.
@@ -13182,7 +13200,18 @@ html[data-theme="light"] .rail{background:#fff;}
       var act = document.querySelector('.page.active');
       pageId = act ? act.id.replace(/^page-/, '') : '';
     }
-    RAIL.el.hidden = (pageId !== 'nnviz');
+    // [V33.4] 레일은 "AI 두뇌" 화면 전용이되, 그 사이드바에서 여는 화면(AI 리포트·WHAT-IF)도
+    //   같은 맥락으로 본다. 안 그러면 리포트를 여는 순간 사이드바가 사라져 돌아갈 길이 없다.
+    RAIL.el.hidden = (RAIL_PAGES.indexOf(pageId) < 0);
+    // 현재 어떤 화면인지 사이드바가 스스로 표시하고, 두뇌가 아니면 "돌아가기"를 띄운다.
+    var back = $id('railBack');
+    if(back) back.style.display = (pageId === 'nnviz') ? 'none' : '';
+    var views = $id('railViews');
+    if(views) views.style.display = (pageId === 'nnviz') ? '' : 'none';
+    var lbl = $id('railWhere');
+    if(lbl) lbl.textContent = ({ report:'AI 리포트', whatif:'WHAT-IF' })[pageId] || 'AI 두뇌';
+    var links = document.querySelectorAll('.rail-link');
+    for(var i=0;i<links.length;i++) links[i].classList.toggle('active', links[i].getAttribute('data-page') === pageId);
     railWidthVar();
   }
   function railBuild(){
@@ -13193,7 +13222,8 @@ html[data-theme="light"] .rail{background:#fff;}
     el.id = 'luxRail';
     el.innerHTML =
       '<div class="rail-head">'
-        +'<span class="rail-title"><b>AI 두뇌</b></span>'
+        +'<button type="button" class="rail-btn" id="railBack" title="AI 두뇌로 돌아가기" style="display:none;">←</button>'
+        +'<span class="rail-title"><b id="railWhere">AI 두뇌</b></span>'
         +'<button type="button" class="rail-btn" id="railDensity" title="터미널 밀도 — 대시보드를 조밀한 터미널 그리드로 전환/해제">▮</button>'
         +'<button type="button" class="rail-btn" id="railToggle" title="사이드바 접기/펴기">❯</button>'
       +'</div>'
@@ -13236,6 +13266,7 @@ html[data-theme="light"] .rail{background:#fff;}
       var b = e.target.closest ? e.target.closest('.rail-model') : null;
       if(!b) return;
       var m = b.getAttribute('data-model');
+      if(!document.querySelector('#page-nnviz.active')) go('nnviz');
       if(BVIEW !== 'struct') setBrainView('struct');
       try{ if(typeof window.switchNnModel === 'function') window.switchNnModel(m); }catch(err){}
       syncRailModels(m);
@@ -13262,6 +13293,7 @@ html[data-theme="light"] .rail{background:#fff;}
     railWidthVar();
     window.addEventListener('resize', railWidthVar);
     $id('railDensity').addEventListener('click', function(){ toggleDensity(); });
+    $id('railBack').addEventListener('click', function(){ go('nnviz'); });
     $id('railAdd').addEventListener('click', function(){
       var fab = $id('cmdkFab'); if(fab) fab.click();
     });
@@ -13354,14 +13386,17 @@ html[data-theme="light"] .rail{background:#fff;}
        · DOM만 추가하고, 실제 동작은 기존 요소(nav-item·sb-btn)를 그대로 클릭 위임한다.
          → 로직 중복 0, PC/태블릿 동작에 영향 0(요소가 CSS로 완전히 숨겨짐).
      ═════════════════════════════════════════════════════════════ */
+  //  brain:true = "AI 두뇌"에 속한 화면. 좌측 네비/모바일 드로어에서 빼고 두뇌 화면에서만 연다.
   var NAVS = [
     { id:'dashboard', ic:'◈', tx:'대시보드' }, { id:'detail', ic:'📈', tx:'종목' },
     { id:'positions', ic:'◉', tx:'포지션' },   { id:'macro', ic:'📊', tx:'지표&환율' },
-    { id:'report', ic:'📋', tx:'AI 리포트' },  { id:'nnviz', ic:'✦', tx:'AI 두뇌' },
-    { id:'whatif', ic:'🧪', tx:'WHAT-IF' },    { id:'news', ic:'📰', tx:'NEWS' },
+    { id:'report', ic:'📋', tx:'AI 리포트', brain:true },  { id:'nnviz', ic:'✦', tx:'AI 두뇌' },
+    { id:'whatif', ic:'🧪', tx:'WHAT-IF', brain:true },    { id:'news', ic:'📰', tx:'NEWS' },
     { id:'trades', ic:'◷', tx:'TRADES' },      { id:'vision', ic:'◑', tx:'AI VISION' }
   ];
   var TABS = ['dashboard','detail','nnviz','positions'];
+  // 우측 사이드바가 떠 있는 화면 — 두뇌 + 그 사이드바에서 여는 화면들
+  var RAIL_PAGES = ['nnviz','report','whatif'];
   // 구조 관측에서 고를 수 있는 모델 — 기존 nnv-tab 과 같은 목록(switchNnModel 인자와 동일)
   var MODELS = [['dnn','DNN 딥넷'],['mind','MIND 스태킹'],['gbdt','GBDT'],['xgb','XGBoost'],['lgb','LightGBM'],['cat','CatBoost']];
   // 모델 버튼은 항상 보인다(사용자 요청: DNN·신경망 구조 버튼 복구). 누르면 구조 화면으로 전환되며
@@ -13428,7 +13463,7 @@ html[data-theme="light"] .rail{background:#fff;}
       '<div class="m-dr-head"><span class="m-dr-title">메뉴</span>'
         +'<button type="button" class="m-ab-btn" id="mDrClose" aria-label="닫기">✕</button></div>'
       +'<div class="m-dr-sec"><div class="m-dr-sec-h">화면</div><div class="m-dr-nav" id="mDrNav">'
-        + NAVS.map(function(n){
+        + NAVS.filter(function(n){ return !n.brain; }).map(function(n){
             return '<button type="button" class="m-dr-item" data-page="'+n.id+'"><span>'+n.ic+'</span><span>'+esc(n.tx)+'</span></button>';
           }).join('')
       +'</div></div>'
@@ -13472,10 +13507,14 @@ html[data-theme="light"] .rail{background:#fff;}
       var bb = document.createElement('div');
       bb.className = 'm-brainbar';
       bb.innerHTML = '<button type="button" data-view="live" class="active">◉ 작동 화면</button>'
-        + '<button type="button" data-view="struct">◈ 구조 관측</button>';
+        + '<button type="button" data-view="struct">◈ 구조 관측</button>'
+        + '<button type="button" data-goto="report">📋 리포트</button>'
+        + '<button type="button" data-goto="whatif">🧪 WHAT-IF</button>';
       bb.addEventListener('click', function(e){
         var b = e.target.closest ? e.target.closest('button') : null;
-        if(b) setBrainView(b.getAttribute('data-view'));
+        if(!b) return;
+        if(b.getAttribute('data-goto')) go(b.getAttribute('data-goto'));
+        else setBrainView(b.getAttribute('data-view'));
       });
       host.insertBefore(bb, liveEl);
       var am = document.createElement('div');
