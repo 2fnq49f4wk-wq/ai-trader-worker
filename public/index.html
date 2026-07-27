@@ -4888,7 +4888,7 @@ html[data-theme="light"] .m-brainbar button.active{color:#0b4f9e;background:rgba
     var ref = Math.max(lastTick || 0, lastHeartbeat || 0);
     if (!ref) {
       dot.className='dot unknown';
-      txt.textContent='엔진 상태 미확인 (RUN NOW를 한번 누르세요)';
+      txt.textContent='엔진 상태 미확인 — 서버 cron 첫 사이클 대기 중';
       if (tbEng) tbEng.textContent = '상태 미확인';
       return;
     }
@@ -9826,6 +9826,9 @@ html[data-theme="light"] .m-brainbar button.active{color:#0b4f9e;background:rgba
         // [V33] 데이터 수신 성공 — 라이브 인디케이터용 시각 기록
         window.__lastDataReceived = Date.now();
         window.__serverLastTick = state.lastTick || null;
+        // [V33.6] 하트비트 = "cron이 사이클에 진입했다"는 증거(장외 스킵 시에도 기록된다).
+        //   좌측 "자동 운용 중" 배지가 장외를 '지연'으로 오판하지 않도록 함께 노출.
+        window.__serverLastHeartbeat = state.lastHeartbeat || null;
         updateLiveIndicator();
         // [FIX V8.7] 서버 marketStatus(휴장일 반영) 저장 후 배너 재렌더.
         window.__serverMarketStatus = state.marketStatus || null;
@@ -13652,10 +13655,20 @@ html[data-theme="light"] .rail{background:#fff;}
   function syncAutoBadge(){
     var sub = $id('sbAutoSub'), box = $id('sbAuto');
     if(!sub) return;
-    var t = window.__serverLastTick || 0;
-    sub.textContent = t ? ('마지막 사이클 ' + ago(t) + ' 전') : '사이클 대기 중';
-    // 5분 넘게 사이클이 없으면 경고색 — 자동화가 멈춘 걸 숨기지 않는다.
-    if(box) box.classList.toggle('stale', !!t && (Date.now() - t) > 5 * 60000);
+    // [V33.6] 판정 기준을 last_tick 단독 → max(last_tick, last_heartbeat)로.
+    //   runTradingCycle 은 미국·한국이 모두 장외면 "사이클 스킵"으로 조기 종료해 last_tick 을
+    //   갱신하지 않는다. 그 시각에도 cron 은 정상 동작 중이므로 last_tick 만 보면 밤·주말마다
+    //   '지연' 경고가 뜬다. 하트비트는 사이클 진입 직후 무조건 기록되므로 생존 신호로 정확하다.
+    var t = Math.max(window.__serverLastTick || 0, window.__serverLastHeartbeat || 0);
+    if(!t){ sub.textContent = '첫 사이클 대기 중'; if(box) box.classList.remove('stale'); return; }
+    var age = Date.now() - t;
+    var idle = age > 5 * 60000;
+    // 장외(거래·시세 창이 모두 닫힘)면 사이클이 없는 게 정상 — 경고로 표시하지 않는다.
+    var srv = window.__serverMarketStatus || null;
+    var offHours = !!(srv && srv.us === false && srv.kr === false);
+    sub.textContent = (idle && offHours) ? '장외 대기 · 마지막 사이클 ' + ago(t) + ' 전'
+                                         : '마지막 사이클 ' + ago(t) + ' 전';
+    if(box) box.classList.toggle('stale', idle && !offHours);
   }
 
   /* ═════════════════════════════════════════════════════════════
@@ -14214,6 +14227,7 @@ html[data-theme="light"] .rail{background:#fff;}
       loadPicks(false).then(function(){ try{ railRender(); }catch(e){} });
     }
     hookGlobals();
+    watchPages();          // 페이지 활성 상태를 직접 관찰 — 누가 바꾸든 사이드바가 따라간다
     // 새로고침 직후 이미 두뇌 페이지면 즉시 구동
     railGate();
     var nn = $id('page-nnviz');
@@ -14221,6 +14235,38 @@ html[data-theme="light"] .rail{background:#fff;}
       liveStart();
       if(BVIEW === 'struct' && typeof window.openNnViz === 'function') window.openNnViz();
     }
+  }
+
+  /* [V33.6] ★우측 사이드바가 메뉴 클릭에 반응하지 않던 버그★
+     좌측 네비는 메인 IIFE 안의 "로컬" showPage 를 부른다(window.showPage 가 아니다).
+     그래서 window.showPage 를 감싸는 방식으로는 메뉴 클릭·openStockDetail 등
+     내부 호출 18곳을 전혀 잡지 못했다. 증상:
+       · AI 두뇌를 눌러도 사이드바가 안 뜸(게이팅이 안 돌아서)
+       · 새로고침하면 뜸(부팅 시 railGate 가 DOM 을 직접 읽으므로)
+       · 그 뒤 다른 메뉴로 가도 계속 떠 있음 → "모든 메뉴에서 다 뜬다"
+     → 호출자를 감싸는 대신 "누가 바꿨든" 페이지 활성 상태 자체를 관찰한다. */
+  var __lastPage = null;
+  function currentPage(){
+    var act = document.querySelector('.page.active');
+    return act ? act.id.replace(/^page-/, '') : '';
+  }
+  function onPageChanged(){
+    var id = currentPage();
+    if(id === __lastPage) return;
+    __lastPage = id;
+    try{ if(id === 'nnviz') liveStart(); else liveStop(); }catch(e){}
+    try{ railGate(id); }catch(e){}
+    try{ railRender(); }catch(e){}
+    try{ syncMobile(); }catch(e){}
+  }
+  function watchPages(){
+    if(watchPages.__on) return;
+    var pages = document.querySelectorAll('.page');
+    if(!pages.length) return;
+    watchPages.__on = true;
+    var mo = new MutationObserver(function(){ onPageChanged(); });
+    for(var i=0;i<pages.length;i++) mo.observe(pages[i], { attributes:true, attributeFilter:['class'] });
+    onPageChanged();
   }
 
   // 메인 IIFE의 전역 노출 시점이 boot()보다 늦을 수 있어 여러 번 불러도 안전하게(플래그로 1회만 감쌈).
@@ -14241,8 +14287,7 @@ html[data-theme="light"] .rail{background:#fff;}
     if(typeof sp === 'function' && !sp.__luxLiveHooked){
       var wrapped2 = function(id){
         var r = sp.apply(this, arguments);
-        try{ if(id === 'nnviz') liveStart(); else liveStop(); }catch(e){}
-        try{ railGate(id); railRender(); syncMobile(); }catch(e){}
+        try{ onPageChanged(); }catch(e){}   // 관찰자와 동일 경로 — 즉시 반영용(중복 호출은 무해)
         return r;
       };
       wrapped2.__luxLiveHooked = true;
