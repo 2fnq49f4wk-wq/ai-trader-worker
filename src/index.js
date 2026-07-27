@@ -15641,7 +15641,13 @@ async function handleRequest(request, env, ctx) {
       try {
         const sc = await getState(env.DB, "ai_picks:scan", null);
         if (sc && Array.isArray(sc.picks)) {
-          out.scan = { scanned: sc.scanned, total: sc.total, ts: sc.ts };
+          // [V33] 두뇌 "실시간 스캔·판정" 패널용 메타 확장 — 스캔 소요/속도·시장별 진척·
+          //   활성 이벤트·레짐 쇼크까지 내려 프론트가 실제 판정 과정을 형상화할 수 있게 한다.
+          out.scan = { scanned: sc.scanned, total: sc.total, ts: sc.ts,
+            durMs: sc.durMs != null ? sc.durMs : null, rate: sc.rate != null ? sc.rate : null,
+            byMkt: sc.byMkt || null, scannedByMkt: sc.scannedByMkt || null,
+            events: sc.events || null, marketConfirm: sc.marketConfirm != null ? sc.marketConfirm : null,
+            tiltedN: sc.tiltedN != null ? sc.tiltedN : null, shock: sc.shock || null };
           for (const p of sc.picks) out.picks.push(p);
         }
       } catch (e) {}
