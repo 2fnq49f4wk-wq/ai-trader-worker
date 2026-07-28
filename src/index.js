@@ -12039,8 +12039,23 @@ function isCommodityMarketOpen() {
   if (d === 5) return m < 1020;              // 금요일: 17:00 ET 마감
   return !inHalt;                            // 월~목: 정비 휴장 제외 종일
 }
+// [V33.10] 평일 24시간 창 — 토요일 종일 + 일요일 18:00 ET 이전만 제외(글로벌 주간 거래 주기).
+//   원자재(선물)는 실제로 이 시간대에 거래되고, 채권 ETF 는 정규장 밖엔 체결이 안 되지만
+//   "가격은 24시간 최신으로 보고 싶다"는 요구에 맞춰 시세 갱신 창을 여기로 넓힌다.
+function _altWeek24Open() {
+  const et = getUSEt(new Date());
+  if (et.day === 6) return false;                    // 토요일 휴장
+  if (et.day === 0) return et.totalMin >= 1080;      // 일요일 18:00 ET 이후 개장
+  if (et.day === 5) return et.totalMin < 1020;       // 금요일 17:00 ET 마감
+  return true;                                       // 월~목 종일(정비 휴장 포함 — 시세는 계속 갱신)
+}
+// 시세 갱신(=사이클 진입) 창 — 원자재·채권 모두 평일 24시간.
+function _altQuoteWindow(sleeve) { return _altWeek24Open(); }
+// ★체결 창★ — 실제로 그 상품이 거래되는 시간에만 주문을 낸다.
+//   채권 ETF 를 정규장 밖에 체결시키면 오래된 종가로 가짜 체결이 원장에 남아 손익이 왜곡된다.
+//   그래서 "가격 24시간 / 체결은 실거래 시간" 으로 분리한다.
 function _altTradeWindow(sleeve) {
-  if (sleeve.key === "cm") return isCommodityMarketOpen();   // [V32.63] 원자재는 실제 선물 거래시간에 실시간 거래
+  if (sleeve.key === "cm") return isCommodityMarketOpen();   // [V32.63] 원자재는 실제 선물 거래시간
   if (sleeve.hoursAny) return isTradingWindow("us") || isTradingWindow("kr");
   return isTradingWindow(sleeve.hoursMarket);
 }
@@ -12150,7 +12165,10 @@ async function runAltSleeveCycle(env, key) {
   const sleeve = _altSleeve(key, cfg);
   if (!sleeve) return;
   if (cfg.altRealtime === false) return;
-  if (!_altTradeWindow(sleeve)) return;            // 해당 시장 장중에만
+  // [V33.10] 종전엔 체결 가능 시간에만 사이클이 돌아, 그 밖에는 시세조차 갱신되지 않았다
+  //   (채권은 미국/한국 정규장에만 → 하루 대부분 가격이 멈춤). 이제 평일 24시간 갱신한다.
+  if (!_altQuoteWindow(sleeve)) return;
+  const _canExec = _altTradeWindow(sleeve);        // 주문은 실제 거래시간에만
   resetFetchBudget(120);
   let cash = await computeAllCash(DB, cfg);
   if (typeof cash[key] !== "number") cash[key] = (key === "bdkr") ? cfg.initialCashBDKR : (key === "bdus" ? cfg.initialCashBDUS : cfg.initialCashCM);
@@ -12191,13 +12209,14 @@ async function runAltSleeveCycle(env, key) {
         if (held.meta && held.meta.peakPrice != null && price > held.meta.peakPrice) { held.meta.peakPrice = price; try { await savePosition(DB, key, symbol, "swing", held); } catch (e) {} }
         else if (held.meta && held.meta.peakPrice == null) { held.meta.peakPrice = Math.max(held.avg, price); try { await savePosition(DB, key, symbol, "swing", held); } catch (e) {} }
         const sellDecision = evaluateSell(held, price, dd, dailyRsi, dailyMa, dailyMaShort, cfg, true, key);
-        if (sellDecision.sell) {
+        if (sellDecision.sell && _canExec) {
           await executeSellAlt(DB, sleeve, symbol, held, sellDecision.sellQty, price, sellDecision.reason, cfg, cash);
           sold++;
           if (sellDecision.sellQty >= held.qty) delete positions[posKey];
         }
       }
       if (positions[posKey]) continue;
+      if (!_canExec) continue;     // [V33.10] 체결 불가 시간 — 시세만 갱신하고 주문은 내지 않는다
       if (_aiReadyAlt) continue;   // [V12.106] AI 가동중 — 규칙엔진 신규매수 비상폴백 아님, 스킵
       const signals = evaluateBuySignals_swing(price, dayPct, dd, cfg);
       if (!signals || signals.length === 0) continue;
@@ -12226,6 +12245,20 @@ async function runAltSleeveCycle(env, key) {
     } catch (e) { await log(DB, "ERROR", symbol, "[" + sleeve.label + "] " + e.message); }
   }
   if (bought || sold) await log(DB, "INFO", null, "[" + sleeve.label + "] RT cycle: tried=" + tried + " buy=" + bought + " sell=" + sold + (fetchFail ? " fail=" + fetchFail : ""));
+  else {
+    // [V33.10] ★"로그에 원자재·채권 fetch 기록이 안 뜬다"★ — 종전엔 매수/매도가 있을 때만 로그를
+    //   남겨, 시세만 갱신한 사이클은 흔적이 전혀 없었다. 10분에 한 줄로 갱신 사실을 남긴다
+    //   (매분 남기면 로그가 시세 갱신으로 도배됨).
+    try {
+      const _lk = "alt_quote_log:" + key;
+      const _last = _num(await getState(DB, _lk, 0), 0);
+      if (Date.now() - _last > 600000) {
+        await setState(DB, _lk, Date.now());
+        await log(DB, "INFO", null, "[" + sleeve.label + "] 시세갱신 " + tried + "/" + sleeve.syms.length +
+          "종목" + (fetchFail ? " fail=" + fetchFail : "") + (_canExec ? " (체결창 열림)" : " (체결창 닫힘 — 가격만)"));
+      }
+    } catch (e) {}
+  }
 }
 
 async function runTradingCycle(env) {
@@ -22384,6 +22417,7 @@ const HARVEST_EXTRA_SYMS = [
 // [V18] 딥-히스토리 로테이션 수집 — 매일밤 N종목 range=max 장기이력을 hist:로 갱신.
 //   지수(^GSPC/^KS11/GC=F)도 매번 딥으로 갱신 — alpha 라벨(지수 대비 잔차)이 딥구간 정렬에 필요.
 //   deepRefreshDays 지난/없는 심볼 우선, 예산가드로 한도 보호. 딥이력은 거의 안변해 저빈도 OK.
+let __deepTodoLeft = 0;
 async function harvestDeepFetchNightly(DB, opts) {
   if (!HARVEST.useDeepHistory) return null;
   // [V12.133] ★시간 예산 추가★ 종전엔 fetch '개수' 예산만 있고 시간 상한이 없었다.
@@ -22393,6 +22427,7 @@ async function harvestDeepFetchNightly(DB, opts) {
   const __dlDeadline = Date.now() + (((opts && opts.budgetMs) || 25000));
   try {
     let fetched = 0, scanned = 0, attempted = 0;   // [V12.131d] attempted: 실제 외부 fetch 시도 수(진단용)
+    __deepTodoLeft = 0;                            // [V33.10] 아직 안 받은 잔여 종목 수(진단용)
     __deepFail = { throw: 0, noResult: 0, shortBars: 0, ok: 0, lastErr: "" };   // [V12.132] 이번 실행분 사유 계측
     let skippedIneligible = 0;   // [V12.133] 이번 실행에서 새로 '영구 자격미달'로 마킹한 수
     const now = Date.now();
@@ -22456,17 +22491,36 @@ async function harvestDeepFetchNightly(DB, opts) {
       const perNight = HARVEST.deepFetchPerNight || 30;
       const refreshMs = (HARVEST.deepRefreshDays || 30) * 86400000;
       let off = (await getState(DB, "hist_off", 0)) || 0;
-      for (let i = 0; i < syms.length && fetched < perNight + idxSyms.length; i++) {
+      // [V33.10] ★딥이력 커버리지가 멈춰 표본이 안 늘던 근본 원인★
+      //   아래 루프는 종목마다 getState("hist_meta:"+sym) 를 호출한다 = 종목당 D1 왕복 1회.
+      //   이미 수집된 종목(625개)·자격미달 종목을 건너뛰려면 그 메타를 읽어야 하는데,
+      //   장중 예산은 8초라 "메타 읽기"만으로 시간이 다 갔다.
+      //   실측 로그: scanned=65 attempted=1 budgetLeft=842 TIME-CAP
+      //   → 65종목을 훑는 동안 실제 fetch 는 단 1건. 예산(842)은 멀쩡히 남았는데 시간이 끝났다.
+      //   그래서 커버리지가 625→625 로 정체 → 원천이 안 늘어남 → HV-CATCHUP 이 0건만 생산 →
+      //   "원천 데이터 고갈" 로 6시간 쿨다운 → 표본 정체. 연쇄의 출발점이 여기다.
+      //   해결: hist_meta 전체를 쿼리 1회로 읽어 메모리에서 판정한다(왕복 N회 → 1회).
+      const _metaAll = {};
+      try {
+        const _mr = await DB.prepare("SELECT k, v FROM state WHERE k LIKE 'hist_meta:%'").all();
+        for (const r of ((_mr && _mr.results) || [])) {
+          try { _metaAll[r.k.slice(10)] = JSON.parse(r.v); } catch (e) {}
+        }
+      } catch (e) {}
+      // 아직 안 받은/만료된 종목만 후보로 추려 앞에 세운다 — 이미 채운 종목을 매번 훑지 않게.
+      const _todo = [];
+      for (let i = 0; i < syms.length; i++) {
+        const _s = syms[(off + i) % syms.length];
+        const _m = _metaAll[_s];
+        if (_m && _m.ts && (now - _m.ts) < refreshMs) continue;                       // 최신 — 통과
+        if (_m && _m.ineligible && _m.ts && (now - _m.ts) < refreshMs * 2) continue;  // 자격미달 — 통과
+        _todo.push(_s);
+      }
+      for (let i = 0; i < _todo.length && fetched < perNight + idxSyms.length; i++) {
         if (fetchBudgetLeft() < 20 || Date.now() > __dlDeadline) break;
-        const sym = syms[(off + i) % syms.length];
+        const sym = _todo[i];
         scanned++;
-        let meta = null; try { meta = await getState(DB, "hist_meta:" + sym, null); } catch (e) {}
-        if (meta && meta.ts && (now - meta.ts) < refreshMs) continue;
-        // [V12.133] ★영구 자격미달 종목 재시도 차단★ 진단 결과 실패 91건이 전부 shortBars였다
-        //   (throw=0 noResult=0 → rate limit이 아니라 '원본 봉수 300 미만'). 이런 종목은 몇 번을
-        //   다시 받아도 결과가 같은데, 종전엔 매 실행마다 다시 fetch해 20분마다 91회를 낭비했다.
-        //   ineligible로 마킹해 건너뛴다(상장 이력이 쌓이면 풀리도록 만료는 refreshMs의 2배).
-        if (meta && meta.ineligible && meta.ts && (now - meta.ts) < refreshMs * 2) continue;
+        // 자격 판정은 위 배치 로드(_todo 구성)에서 이미 끝났다 — 여기선 곧장 fetch 한다.
         const _sbBefore = __deepFail.shortBars;
         __fetchBudget.used++; attempted++;
         const dh = await fetchDeepDaily(sym, HARVEST.deepBars);
@@ -22477,12 +22531,14 @@ async function harvestDeepFetchNightly(DB, opts) {
           try { await setState(DB, "hist_meta:" + sym, { ts: now, ineligible: true, reason: "shortBars" }); skippedIneligible++; } catch (e) {}
         }
       }
+      // 남은 후보 수를 진단에 싣고, 오프셋은 이번에 훑은 만큼만 전진(다음 실행이 이어받음).
+      __deepTodoLeft = Math.max(0, _todo.length - scanned);
       try { await setState(DB, "hist_off", (off + Math.max(1, scanned)) % syms.length); } catch (e) {}
     }
     // [V12.131d] 종전엔 fetched=0이면 null만 반환해 "왜 0인지"를 알 수 없었다(호출부 로그가 빈 채로
     //   남아 진단 불가). 딥이력 확대는 표본을 늘리는 유일한 경로라 실패 원인 관측이 중요하다 —
     //   시도(attempted)·스캔·남은 fetch 예산을 함께 남겨 예산 소진인지 외부 API 실패인지 구분한다.
-    const _diag = "scanned=" + scanned + " attempted=" + attempted + " budgetLeft=" + fetchBudgetLeft() +
+    const _diag = "scanned=" + scanned + " attempted=" + attempted + " todoLeft=" + __deepTodoLeft + " budgetLeft=" + fetchBudgetLeft() +
       (Date.now() > __dlDeadline ? " TIME-CAP" : "") +
       " [실패내역 throw=" + __deepFail.throw + " noResult=" + __deepFail.noResult + " shortBars=" + __deepFail.shortBars +
       " ok=" + __deepFail.ok + " newIneligible=" + skippedIneligible +
@@ -22522,6 +22578,47 @@ async function aiSelfCheck(DB) {
   try {
     const health = await mlDataHealth(DB);
     R.data = { samples: health.samplesCurrentFeatVer, posRate: health.positiveRate, stale: health.staleSamples, featVer: health.featVer, deepSyms: health.deepHistorySymbols };
+    // [V33.10] ★"모달로 학습이 갔는지 / 모든 모델이 학습했는지"를 화면에서 확인 가능하게★
+    //   종전엔 이 정보가 어디에도 안 나와, 외부 학습이 도달했는지 추측만 가능했다.
+    try {
+      const _MS = await getStates(DB, ["modal_retrain_auto", "mind_model", "dnn_trust", "gbdt_trust", "xgb_trust", "lgb_trust", "cat_trust"]);
+      const _auto = _MS["modal_retrain_auto"] || {};
+      R.modal = {
+        githubTokenSet: _auto.lastSkip !== "no_github_token",
+        lastDispatchAgeH: ageH(_auto.ts), lastDispatchOk: _auto.triggered === true, httpStatus: _auto.httpStatus || null,
+        lastSkip: _auto.lastSkip || null, lastCheckAgeH: ageH(_auto.checkTs)
+      };
+      // 모델별 외부(Modal) 학습 도달 여부 — source==="external" 이면 Modal 산출물이 올라온 것.
+      const _mm = { mind: "mind_model", dnn: "dnn_trust", gbdt: "gbdt_trust", xgb: "xgb_trust", lgb: "lgb_trust", cat: "cat_trust" };
+      R.externalTrain = {};
+      let _extN = 0, _extStale = [];
+      for (const k of Object.keys(_mm)) {
+        const o = _MS[_mm[k]];
+        const ext = !!(o && o.source === "external");
+        const ah = o ? ageH(o.trainedAt) : null;
+        R.externalTrain[k] = { trained: !!o, external: ext, ageH: ah, valAcc: (o && (o.valAcc != null ? o.valAcc : o.gbdtAcc)) || null };
+        if (ext) _extN++;
+        if (!o) _extStale.push(k + "(미학습)"); else if (ah != null && ah > 24) _extStale.push(k + "(" + ah + "h)");
+      }
+      R.modal.externalModels = _extN + "/6";
+      if (_extN === 0) R.errors.push("외부(Modal) 학습 산출물 0개 — 학습이 Worker 로 도달하지 않음. modal-deploy 워크플로/시크릿 확인");
+      else if (_extStale.length) R.warnings.push("외부 학습 지연·누락: " + _extStale.join(", "));
+      if (_auto.lastSkip === "no_github_token") R.errors.push("GITHUB_TOKEN 미설정 — 학습 지연 시 자동 재트리거가 동작하지 않음(수동 실행만 가능)");
+    } catch (e) {}
+    // 딥이력 커버리지 — 표본 증가의 상한을 결정하는 값
+    try {
+      const _dc = await DB.prepare("SELECT (SELECT COUNT(*) FROM state WHERE k LIKE 'hist:%') h, (SELECT COUNT(*) FROM state WHERE k LIKE 'daily:%') d").first();
+      const _h = (_dc && _dc.h) || 0, _d = (_dc && _dc.d) || 0;
+      R.deepCoverage = { have: _h, total: _d, pct: _d > 0 ? +(_h / _d * 100).toFixed(1) : null };
+      const _dry = await getState(DB, "hv_catchup_dry", null);
+      R.harvestCooldownUntil = (_dry && _dry.until) || 0;
+      if (_d > 0 && _h < _d * 0.9) {
+        R.warnings.push("딥이력 커버리지 " + _h + "/" + _d + "(" + (_h / _d * 100).toFixed(0) + "%) — 표본 상한이 여기서 묶임(확대 진행 중)");
+      }
+      if (R.harvestCooldownUntil > nowT) {
+        R.warnings.push("표본 수확 쿨다운 " + Math.round((R.harvestCooldownUntil - nowT) / 60000) + "분 남음 — 딥이력이 늘면 자동 해제");
+      }
+    } catch (e) {}
     // 표본/클래스 건강
     if (!(health.samplesCurrentFeatVer > 0)) R.errors.push("표본 0건(현 featVer=" + health.featVer + ") — 수확 파이프라인 점검");
     else if (health.samplesCurrentFeatVer < (LUXML.minTrainSamples || 80)) R.warnings.push("표본 부족 " + health.samplesCurrentFeatVer + "/" + (LUXML.minTrainSamples || 80));
@@ -27618,8 +27715,10 @@ export default {
                 const _hn2 = (_hc2 && _hc2.h) || 0;
                 await log(env.DB, "INFO", null, "[DEEPHIST] 커버리지 " + _hn + "→" + _hn2 + "/" + _dn +
                   "(" + (_hn2 / _dn * 100).toFixed(0) + "%)" + (_mktOpen3 ? " [장중축소]" : "") + " " + (_dr || "(반환없음)"));
-                // 딥이력이 늘면 새 봉이 생기므로 수확 고갈 쿨다운을 해제한다.
-                try { await setState(env.DB, "hv_catchup_dry", { n: 0, until: 0 }); } catch (e0) {}
+                // [V33.10] 딥이력이 "실제로 늘었을 때만" 수확 쿨다운을 해제한다.
+                //   종전엔 커버리지가 그대로여도(625→625) 무조건 해제해, HV-CATCHUP 이 다시 0건을
+                //   생산하고 곧바로 재쿨다운되는 왕복만 반복했다.
+                if (_hn2 > _hn) { try { await setState(env.DB, "hv_catchup_dry", { n: 0, until: 0 }); } catch (e0) {} }
               }
             }
           } catch (e) { try { await log(env.DB, "ERROR", null, "[DEEPHIST] " + (e && e.message)); } catch (e2) {} }
