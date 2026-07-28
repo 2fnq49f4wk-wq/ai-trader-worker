@@ -2373,6 +2373,19 @@ html[data-theme="light"] .detail-tf-btn.active{color:#fff;}
 .detail-zoom-btn:hover{color:var(--t1);border-color:var(--acc);}
 .detail-chart .pc-grid{stroke:var(--bd2);stroke-width:.5;}
 .detail-chart .pc-axis{fill:var(--t3);font-size:9px;font-family:'IBM Plex Mono',monospace;}
+/* [V33.7] 구간 최고/최저 라벨 · 캔들 선택 커서 · 클릭 히트영역 */
+.detail-chart .pc-hilo{font-size:8.5px;font-family:'IBM Plex Mono',monospace;font-weight:700;paint-order:stroke;
+  stroke:var(--bg);stroke-width:2.5px;stroke-linejoin:round;}
+.detail-chart .pc-hilo.hi{fill:var(--pos);}
+.detail-chart .pc-hilo.lo{fill:var(--neg);}
+.detail-chart .pc-sel-line{stroke:var(--acc);stroke-width:.8;stroke-dasharray:2 3;opacity:.85;}
+.detail-chart .pc-sel-box{fill:none;stroke:var(--acc);stroke-width:1;rx:2;opacity:.95;}
+.detail-chart .pc-hit{fill:transparent;cursor:pointer;}
+.detail-chart .pc-hit:hover{fill:rgba(120,160,220,.10);}
+.detail-ohlc .oh.sel{color:var(--acc);}
+.detail-ohlc .oh.sel b{color:var(--acc);}
+.detail-ohlc .oh-clear{font-style:normal;cursor:pointer;margin-left:5px;opacity:.75;}
+.detail-ohlc .oh-clear:hover{opacity:1;color:var(--neg);}
 .detail-chart .pc-legend{font-size:9.5px;font-family:'IBM Plex Mono',monospace;font-weight:700;}
 .detail-chart .pc-panelbg{fill:transparent;}
 .detail-sec{font-size:10px;font-weight:700;color:var(--t3);text-transform:uppercase;letter-spacing:1px;
@@ -3951,15 +3964,22 @@ html[data-theme="light"] .m-brainbar button.active{color:#0b4f9e;background:rgba
 
       <!-- ② 히어로 — 좌: 판정 코어 / 우: 판정 깔때기(유니버스→진입후보) -->
       <div class="nlv-hero">
+        <!-- 최우선 후보 — 위원회가 가장 높게 본 종목의 실제 가격 흐름(선 그래프) -->
         <div class="nlv-core">
-          <div class="nlv-canvaswrap">
-            <svg id="nlvSvg" viewBox="0 0 460 460" preserveAspectRatio="xMidYMid meet" aria-label="AI 스캔·판정 시각화"></svg>
-            <div class="nlv-centerlabel" id="nlvCenter">
-              <div class="k" id="nlvCenterK">SCANNING</div>
-              <div class="v" id="nlvCenterV">—</div>
-              <div class="m" id="nlvCenterM">불러오는 중…</div>
+          <div class="nlv-sec-h">최우선 후보 <small>위원회 승률 1위</small>
+            <span class="nlv-tf" id="nlvTf"></span>
+          </div>
+          <div class="nlv-tp">
+            <div class="nlv-tp-id">
+              <span class="sym" id="nlvTpSym">—</span>
+              <span class="nm" id="nlvTpName"></span>
+            </div>
+            <div class="nlv-tp-num">
+              <span class="p" id="nlvTpP">—</span>
+              <span class="vd" id="nlvTpVd">불러오는 중</span>
             </div>
           </div>
+          <div class="nlv-tp-chart" id="nlvTpChart"><div class="nlv-empty">차트 불러오는 중…</div></div>
           <div class="nlv-toplist" id="nlvTopList"></div>
         </div>
 
@@ -3974,7 +3994,7 @@ html[data-theme="light"] .m-brainbar button.active{color:#0b4f9e;background:rgba
       <div class="nlv-lower">
         <div class="nlv-panel">
           <div class="nlv-sec-h">
-            판정 스트림 <small>최근 스캔 재생</small>
+            엔진 판정 로그 <small>실시간</small>
             <button type="button" class="nlv-btn" id="nlvPause" title="스트림 일시정지/재개">⏸</button>
           </div>
           <div class="nlv-feed" id="nlvFeed"><div class="nlv-empty">스캔 기록을 불러오는 중…</div></div>
@@ -7466,7 +7486,7 @@ html[data-theme="light"] .m-brainbar button.active{color:#0b4f9e;background:rgba
   // ════════════════════════════════════════════════════════════════════
   // [V85] 종목 상세 — 캔들차트(분/일/주봉) + 등락률 + 엔진 수신 데이터
   // ════════════════════════════════════════════════════════════════════
-  var detailState = { symbol: null, market: 'us', interval: '1d',
+  var detailState = { symbol: null, market: 'us', interval: '1d', selIdx: null,
     ind: { ma: true, boll: true, vol: true, rsi: true, macd: false }, lastCandles: null,
     view: { count: 150, off: 0 } };   // [V90] 줌(count)·팬(off)
 
@@ -7603,12 +7623,35 @@ html[data-theme="light"] .m-brainbar button.active{color:#0b4f9e;background:rgba
       svg += poly(bM, PY, 'rgba(150,167,189,.5)', 0.7);
       svg += poly(bL, PY, 'rgba(150,167,189,.65)', 0.8, '3 2');
     }
-    // 캔들
+    // 캔들 + [V33.7] 구간 최고/최저 캔들 표시
+    var hiI = 0, loI = 0;
+    for (i = 1; i < n; i++) {
+      if (show[i].h > show[hiI].h) hiI = i;
+      if (show[i].l < show[loI].l) loI = i;
+    }
     for (i = 0; i < n; i++) {
       var c = show[i], x = X(i), up = c.c >= c.o, col = up ? PC_UP : PC_DN;
       svg += '<line x1="' + x.toFixed(1) + '" y1="' + PY(c.h).toFixed(1) + '" x2="' + x.toFixed(1) + '" y2="' + PY(c.l).toFixed(1) + '" stroke="' + col + '" stroke-width="0.8"/>';
       var yo = PY(c.o), yc = PY(c.c), bh = Math.max(0.8, Math.abs(yc - yo));
       svg += '<rect x="' + (x - cw / 2).toFixed(1) + '" y="' + Math.min(yo, yc).toFixed(1) + '" width="' + cw.toFixed(1) + '" height="' + bh.toFixed(1) + '" fill="' + col + '"/>';
+    }
+    // [V33.7] 구간 최고가·최저가를 해당 캔들 위/아래에 작은 글씨로 — 어디가 고점/저점인지 바로 보이게
+    (function(){
+      var hx = X(hiI), hy = PY(show[hiI].h), lxx = X(loI), ly = PY(show[loI].l);
+      var ha = hx < 40 ? 'start' : (hx > W - padR - 40 ? 'end' : 'middle');
+      var la = lxx < 40 ? 'start' : (lxx > W - padR - 40 ? 'end' : 'middle');
+      svg += '<text class="pc-hilo hi" x="' + hx.toFixed(1) + '" y="' + (hy - 5).toFixed(1) + '" text-anchor="' + ha + '">▲ ' + fmtP(show[hiI].h) + '</text>';
+      svg += '<text class="pc-hilo lo" x="' + lxx.toFixed(1) + '" y="' + (ly + 11).toFixed(1) + '" text-anchor="' + la + '">▼ ' + fmtP(show[loI].l) + '</text>';
+    })();
+    // [V33.7] 선택된 캔들 강조 — 세로 커서 + 테두리
+    if (opts.selIdx != null) {
+      var si = opts.selIdx - start;
+      if (si >= 0 && si < n) {
+        var sx = X(si), sc = show[si];
+        svg += '<line class="pc-sel-line" x1="' + sx.toFixed(1) + '" y1="' + pTop + '" x2="' + sx.toFixed(1) + '" y2="' + (pTop + priceH).toFixed(1) + '"/>';
+        svg += '<rect class="pc-sel-box" x="' + (sx - cw / 2 - 1.5).toFixed(1) + '" y="' + (PY(sc.h) - 1.5).toFixed(1)
+             + '" width="' + (cw + 3).toFixed(1) + '" height="' + Math.max(3, PY(sc.l) - PY(sc.h) + 3).toFixed(1) + '"/>';
+      }
     }
     // MA 라인
     if (ind.ma) for (var m = 0; m < maArr.length; m++) svg += poly(maArr[m], PY, PC_MA[m].c, 1.1);
@@ -7683,6 +7726,12 @@ html[data-theme="light"] .m-brainbar button.active{color:#0b4f9e;background:rgba
       svg += '<line class="pc-grid" x1="' + lx2.toFixed(1) + '" y1="' + pTop + '" x2="' + lx2.toFixed(1) + '" y2="' + (pTop + priceH).toFixed(1) + '" opacity="0.5"/>';
       var anchor = i === 0 ? 'start' : i === labelN - 1 ? 'end' : 'middle';
       svg += '<text class="pc-axis" x="' + lx2.toFixed(1) + '" y="' + (H - 4).toFixed(1) + '" text-anchor="' + anchor + '">' + fmtDate(c2) + '</text>';
+    }
+    // [V33.7] 캔들 클릭 히트영역 — 봉 하나가 얇아도(1~2px) 누르기 쉽게 슬롯 전체를 덮는다.
+    //   data-ci 는 "전체 캔들 배열 기준" 인덱스라 줌·팬이 바뀌어도 같은 봉을 가리킨다.
+    for (i = 0; i < n; i++) {
+      svg += '<rect class="pc-hit" x="' + (X(i) - iw / 2).toFixed(1) + '" y="' + pTop
+           + '" width="' + iw.toFixed(2) + '" height="' + priceH.toFixed(1) + '" data-ci="' + (start + i) + '"/>';
     }
     svg += '</svg>';
     return svg;
@@ -8342,7 +8391,33 @@ html[data-theme="light"] .m-brainbar button.active{color:#0b4f9e;background:rgba
     box.innerHTML = buildProChart(detailState.lastCandles, {
       ind: detailState.ind, interval: detailState.interval,
       dec: detailState.market === 'kr' ? 0 : 2,
-      count: detailState.view.count, off: detailState.view.off
+      count: detailState.view.count, off: detailState.view.off,
+      selIdx: detailState.selIdx
+    });
+    bindCandleClick(box);
+  }
+  // [V33.7] 캔들 클릭 → 그 봉의 가격·등락률을 상단 OHLC 줄에 표시(다시 누르면 해제).
+  //   위임 바인딩이라 줌/팬으로 SVG가 다시 그려져도 유지된다.
+  //   ※ 차트 컨테이너는 팬/핀치용으로 setPointerCapture 를 쓴다 — 캡처 중에는 click 의 target 이
+  //     내부 <rect> 가 아니라 컨테이너로 잡히므로, target 이 비면 좌표로 다시 히트테스트한다.
+  //     또 드래그(팬) 끝에도 click 이 뜨므로 이동 거리가 작을 때만 "클릭"으로 취급한다.
+  function bindCandleClick(box) {
+    if (box.__ccBound) return;
+    box.__ccBound = true;
+    var down = null;
+    box.addEventListener('pointerdown', function(e){ down = { x: e.clientX, y: e.clientY }; });
+    box.addEventListener('click', function(e) {
+      if (down && (Math.abs(e.clientX - down.x) > 5 || Math.abs(e.clientY - down.y) > 5)) return;  // 드래그였음
+      var ci = (e.target && e.target.getAttribute) ? e.target.getAttribute('data-ci') : null;
+      if (ci == null) {
+        var el = document.elementFromPoint(e.clientX, e.clientY);
+        if (el && el.getAttribute) ci = el.getAttribute('data-ci');
+      }
+      if (ci == null) return;
+      var i = parseInt(ci, 10);
+      detailState.selIdx = (detailState.selIdx === i) ? null : i;
+      renderDetailChartFromCache();
+      renderDetailOhlc(detailState.lastCandles);
     });
   }
   // [V90] 줌/팬 조작 — count(보이는 봉 수)·off(끝에서 떨어진 위치) 조정 후 재렌더(rAF 스로틀)
@@ -8371,17 +8446,36 @@ html[data-theme="light"] .m-brainbar button.active{color:#0b4f9e;background:rgba
     var el = $('detailOhlc');
     if (!el) return;
     if (!cs || !cs.length) { el.innerHTML = ''; return; }
-    var last = cs[cs.length - 1], prev = cs.length > 1 ? cs[cs.length - 2] : last;
+    // [V33.7] 캔들을 클릭했으면 그 봉을, 아니면 마지막 봉을 보여준다.
+    var si = detailState.selIdx;
+    var useSel = (si != null && si >= 0 && si < cs.length);
+    var idx = useSel ? si : cs.length - 1;
+    var last = cs[idx], prev = idx > 0 ? cs[idx - 1] : last;
     var dec = detailState.market === 'kr' ? 0 : 2;
     function f(v) { return v != null ? fmtNum(v, v >= 1000 ? (dec > 0 ? 1 : 0) : dec) : '—'; }
     var chg = (last.c != null && prev.c) ? ((last.c - prev.c) / prev.c) * 100 : null;
-    el.innerHTML =
+    var selTag = '';
+    if (useSel) {
+      var _dt = new Date((last.t || 0) * 1000);
+      var _p2 = function(x){ return (x < 10 ? '0' : '') + x; };
+      var _intra = ['1m','2m','5m','15m','30m','60m','90m','1h'].indexOf(detailState.interval) >= 0;
+      var _lbl = _intra
+        ? ((_dt.getMonth()+1) + '/' + _dt.getDate() + ' ' + _p2(_dt.getHours()) + ':' + _p2(_dt.getMinutes()))
+        : (_dt.getFullYear() + '.' + _p2(_dt.getMonth()+1) + '.' + _p2(_dt.getDate()));
+      selTag = '<span class="oh sel">선택<b>' + escapeHtml(_lbl) + '</b>'
+             + '<i class="oh-clear" title="선택 해제">✕</i></span>';
+    }
+    el.innerHTML = selTag +
       '<span class="oh">시가<b>' + f(last.o) + '</b></span>' +
       '<span class="oh">고가<b class="pos">' + f(last.h) + '</b></span>' +
       '<span class="oh">저가<b class="neg">' + f(last.l) + '</b></span>' +
       '<span class="oh">종가<b>' + f(last.c) + '</b></span>' +
       '<span class="oh">변동<b class="' + (chg >= 0 ? 'pos' : 'neg') + '">' + (chg != null ? (chg >= 0 ? '+' : '') + chg.toFixed(2) + '%' : '—') + '</b></span>' +
       '<span class="oh">거래량<b>' + fvFmtVol(last.v || 0) + '</b></span>';
+    var clr = el.querySelector('.oh-clear');
+    if (clr) clr.addEventListener('click', function(){
+      detailState.selIdx = null; renderDetailChartFromCache(); renderDetailOhlc(detailState.lastCandles);
+    });
   }
   // [V91] 분봉(1m/5m/15m/30m/60m) 실시간 폴링 — 일/주/월봉은 폴링 안 함
   var _detailPoll = null;
@@ -8434,6 +8528,7 @@ html[data-theme="light"] .m-brainbar button.active{color:#0b4f9e;background:rgba
           st.__tfAutoSwapped = 1; loadDetailChart('60m'); return;
         }
         detailState.lastCandles = d.candles;
+        detailState.selIdx = null;   // [V33.7] 종목/기간이 바뀌면 캔들 선택 해제
         detailState.view = { count: Math.min(150, d.candles.length), off: 0 };  // [V90] 새 데이터 → 뷰 초기화
         renderDetailChartFromCache();
         renderDetailOhlc(d.candles);
@@ -12103,14 +12198,30 @@ html[data-theme="light"] #page-nnviz .nnv-title,html[data-theme="light"] #page-n
   background:linear-gradient(180deg,#090e1a,#060910);border:1px solid #17233e;border-radius:14px;overflow:hidden;
 }
 #page-nnviz .nlv-core{display:flex;flex-direction:column;}
-#page-nnviz .nlv-canvaswrap{position:relative;flex:1 1 auto;}
-#page-nnviz .nlv-canvaswrap svg{display:block;width:100%;height:auto;}
-#page-nnviz .nlv-centerlabel{position:absolute;left:50%;top:50%;transform:translate(-50%,-50%);text-align:center;pointer-events:none;width:44%;min-width:130px;}
-#page-nnviz .nlv-centerlabel .k{font-family:'IBM Plex Mono',monospace;font-size:10.5px;letter-spacing:1.6px;color:#9fd0f5;text-transform:uppercase;font-weight:600;}
-#page-nnviz .nlv-centerlabel .v{font-family:'Space Grotesk',sans-serif;font-size:30px;font-weight:700;line-height:1.12;color:#eaf6ff;text-shadow:0 0 18px rgba(56,189,248,.75);margin-top:1px;}
-#page-nnviz .nlv-centerlabel .v.neg{color:#ff8aa5;text-shadow:0 0 20px rgba(255,92,122,.45);}
-#page-nnviz .nlv-centerlabel .v.idle{color:#8fa2bb;text-shadow:none;}
-#page-nnviz .nlv-centerlabel .m{font-family:'IBM Plex Mono',monospace;font-size:10.5px;color:#a9bcd8;margin-top:3px;line-height:1.45;}
+/* 최우선 후보 — 티커/승률 + 선 그래프. 방사형 그래픽을 대신하는 실무형 패널. */
+#page-nnviz .nlv-tf{margin-left:auto;letter-spacing:.3px;text-transform:none;font-size:9.5px;color:#4a5f82;}
+#page-nnviz .nlv-tp{display:flex;align-items:flex-end;gap:12px;padding:12px 14px 6px;flex-wrap:wrap;}
+#page-nnviz .nlv-tp-id{min-width:0;}
+#page-nnviz .nlv-tp-id .sym{display:block;font-family:'IBM Plex Mono',monospace;font-size:21px;font-weight:700;
+  letter-spacing:.5px;color:#eaf2ff;line-height:1.1;}
+#page-nnviz .nlv-tp-id .nm{display:block;font-size:10.5px;color:#5f79a2;margin-top:2px;
+  white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:220px;}
+#page-nnviz .nlv-tp-num{margin-left:auto;text-align:right;}
+#page-nnviz .nlv-tp-num .p{display:block;font-family:'Space Grotesk',sans-serif;font-size:26px;font-weight:700;
+  line-height:1.05;color:#38bdf8;font-variant-numeric:tabular-nums;}
+#page-nnviz .nlv-tp-num .vd{display:block;font-family:'IBM Plex Mono',monospace;font-size:10px;color:#7c90b5;margin-top:2px;}
+#page-nnviz .nlv-tp-chart{flex:1 1 auto;min-height:170px;padding:2px 8px 8px;}
+#page-nnviz .nlv-tp-chart svg{display:block;width:100%;height:auto;}
+#page-nnviz .lc-grid{stroke:#16223c;stroke-width:.6;}
+#page-nnviz .lc-axis{fill:#4a5f82;font-size:8.5px;font-family:'IBM Plex Mono',monospace;}
+#page-nnviz .lc-line{fill:none;stroke:#38bdf8;stroke-width:1.5;stroke-linejoin:round;stroke-linecap:round;}
+#page-nnviz .lc-dot{fill:#eaf6ff;stroke:#38bdf8;stroke-width:1.5;}
+#page-nnviz .lc-hilo{font-size:8.5px;font-family:'IBM Plex Mono',monospace;font-weight:700;}
+#page-nnviz .lc-hilo.hi{fill:#2ee6a8;} #page-nnviz .lc-hilo.lo{fill:#ff5c7a;}
+html[data-theme="light"] #page-nnviz .lc-grid{stroke:#d5dfee;}
+html[data-theme="light"] #page-nnviz .lc-axis{fill:#66788f;}
+html[data-theme="light"] #page-nnviz .nlv-tp-id .sym{color:#12233f;}
+html[data-theme="light"] #page-nnviz .nlv-tp-num .p{color:#0b6cd4;}
 
 /* 코어 아래 상위 후보 3 */
 #page-nnviz .nlv-toplist{display:grid;grid-template-columns:repeat(3,1fr);gap:1px;background:#14203a;border-top:1px solid #14203a;}
@@ -12181,28 +12292,12 @@ html[data-theme="light"] #page-nnviz .nnv-title,html[data-theme="light"] #page-n
 #page-nnviz .nlv-empty{padding:26px 14px;text-align:center;color:#5f79a2;font-size:11px;}
 @keyframes nlvIn{from{opacity:0;transform:translateY(-4px);}to{opacity:1;transform:none;}}
 
-/* 코어 SVG 요소 */
-#page-nnviz .nlv-beam{transform-origin:230px 230px;opacity:.5;}
-#page-nnviz.active .nlv-beam{animation:nlvSweep 7.5s linear infinite;}
-@keyframes nlvSweep{from{transform:rotate(0deg);}to{transform:rotate(360deg);}}
-#page-nnviz .nlv-node{cursor:pointer;transition:r .3s ease;}
-#page-nnviz .nlv-node:hover{filter:drop-shadow(0 0 6px rgba(140,200,255,.9));}
-#page-nnviz .nlv-ray{stroke-linecap:round;}
-#page-nnviz.active .nlv-ray.hot{animation:nlvRay 3.4s ease-in-out infinite;}
-@keyframes nlvRay{0%,100%{opacity:.30;}50%{opacity:.95;}}
-#page-nnviz .nlv-corering{fill:none;}
-#page-nnviz.active .nlv-corering{animation:nlvRing 4.2s ease-out infinite;}
-@keyframes nlvRing{0%{r:26;opacity:.55;}100%{r:110;opacity:0;}}
-@media (prefers-reduced-motion:reduce){
-  #page-nnviz.active .nlv-beam,#page-nnviz.active .nlv-ray.hot,#page-nnviz.active .nlv-corering,#page-nnviz.active .nlv-tagline::before{animation:none;}
-}
 @media(max-width:1180px){
   #page-nnviz .nlv-hero,#page-nnviz .nlv-lower{grid-template-columns:1fr;}
   #page-nnviz .nlv-feed{max-height:230px;}
 }
 @media(max-width:640px){
-  #page-nnviz .nlv-centerlabel .v{font-size:24px;}
-  #page-nnviz .nlv-kpi{grid-template-columns:repeat(2,1fr);}
+    #page-nnviz .nlv-kpi{grid-template-columns:repeat(2,1fr);}
   #page-nnviz .nlv-fstep{grid-template-columns:84px 1fr 62px;gap:7px;}
   #page-nnviz .nlv-strip{padding:8px 10px;}
   #page-nnviz .nlv-strip-tags{margin-left:0;flex-basis:100%;}
@@ -12282,33 +12377,14 @@ html[data-theme="light"] #page-nnviz .nlv-picks-head,html[data-theme="light"] #p
   #page-nnviz .nlv-picks-grid{grid-template-columns:repeat(auto-fill,minmax(132px,1fr));}
 }
 
-/* SVG 링/라벨은 클래스로 색을 주어 라이트 모드에서 함께 뒤집힌다 */
-#page-nnviz .nlv-ring{stroke:#17243c;}
-#page-nnviz .nlv-axis{fill:#33415c;}
-#page-nnviz .nlv-lab{fill:#9ed4f5;opacity:.92;}
-/* 코어 = 사이트 로고(8각 별) 워터마크 */
-#page-nnviz .nlv-logo-base{fill:#2f9dfb;opacity:.72;stroke:#d6efff;stroke-width:.55;stroke-opacity:.5;}
-#page-nnviz .nlv-logo-facet{fill:#eaf6ff;opacity:.24;}
-#page-nnviz .nlv-logo{filter:drop-shadow(0 0 8px rgba(56,189,248,.5));}
-#page-nnviz .nlv-corerim{stroke:#1d3350;}
-/* opacity만 애니메이션한다 — transform-box/origin을 주면 group의 translate 기준점이 바뀌어
-   별이 중심에서 밀려난다(그래서 지정하지 않음). */
-#page-nnviz.active .nlv-logo{animation:nlvLogoBreath 6s ease-in-out infinite;}
-@keyframes nlvLogoBreath{0%,100%{opacity:.85;}50%{opacity:1;}}
-@media (prefers-reduced-motion:reduce){#page-nnviz.active .nlv-logo{animation:none;}}
-html[data-theme="light"] #page-nnviz .nlv-logo-base{fill:#2f8fe0;opacity:.6;}
-html[data-theme="light"] #page-nnviz .nlv-corerim{stroke:#39597f;}
-html[data-theme="light"] #page-nnviz .nlv-core,html[data-theme="light"] #page-nnviz .nlv-side{background:linear-gradient(180deg,#eef3fb,#e6edf8);border-color:#cdd9ee;}
+@media (prefers-reduced-motion:reduce){html[data-theme="light"] html[data-theme="light"] html[data-theme="light"] #page-nnviz .nlv-core,html[data-theme="light"] #page-nnviz .nlv-side{background:linear-gradient(180deg,#eef3fb,#e6edf8);border-color:#cdd9ee;}
 html[data-theme="light"] #page-nnviz .nlv-step b,html[data-theme="light"] #page-nnviz .nlv-line .b em{color:#12233f;}
 html[data-theme="light"] #page-nnviz .nlv-line .b{color:#33455f;}
 html[data-theme="light"] #page-nnviz .nlv-stat .v{color:#12233f;}
 html[data-theme="light"] #page-nnviz .nlv-stat .v.good{color:#0b6cd4;}
 html[data-theme="light"] #page-nnviz .nlv-stat .v.warn{color:#a5730a;}
 html[data-theme="light"] #page-nnviz .nlv-stat .v.off{color:#c62a45;}
-html[data-theme="light"] #page-nnviz .nlv-ring{stroke:#c2cfe4;}
-html[data-theme="light"] #page-nnviz .nlv-axis{fill:#8d9cb5;}
-html[data-theme="light"] #page-nnviz .nlv-lab{fill:#125a96;opacity:1;}
-html[data-theme="light"] #page-nnviz .nlv-corehead,html[data-theme="light"] #page-nnviz .nlv-pipe,
+html[data-theme="light"] html[data-theme="light"] html[data-theme="light"] html[data-theme="light"] #page-nnviz .nlv-corehead,html[data-theme="light"] #page-nnviz .nlv-pipe,
 html[data-theme="light"] #page-nnviz .nlv-verdicthead,html[data-theme="light"] #page-nnviz .nlv-corefoot{border-color:#d5dfee;}
 </style>
 <script>
@@ -13705,18 +13781,11 @@ html[data-theme="light"] .rail{background:#fff;}
         · 우: 파이프라인 단계(실제 state 신선도) + 판정 스트림(실제 스캔 결과 재생)
         전부 서버 실데이터. 연출만 하고 수치는 만들지 않는다.
      ═════════════════════════════════════════════════════════════ */
-  var LIVE = { timer:null, feedTimer:null, lines:[], idx:0, paused:false, active:false, data:null };
-  var CX = 230, CY = 230;   // 코어 SVG viewBox 460×460 의 중심
+  var LIVE = { timer:null, paused:false, active:false, data:null };
   // 두뇌 페이지 안의 뷰: 'live'(작동 화면) | 'struct'(구조 관측)
   var BVIEW = 'live';
   try{ if(localStorage.getItem('luxBrainView') === 'struct') BVIEW = 'struct'; }catch(e){}
 
-  // 사이트 로고(8각 별) — 코어 워터마크로 재사용. sb-brand-logo 와 동일한 path.
-  var LOGO_STAR = 'M50 2 L53.44 41.68 L73.33 26.67 L58.32 46.56 L98 50 L58.32 53.44 L73.33 73.33 '
-    + 'L53.44 58.32 L50 98 L46.56 58.32 L26.67 73.33 L41.68 53.44 L2 50 L41.68 46.56 L26.67 26.67 L46.56 41.68 Z';
-  var LOGO_FACET = 'M50 50 L50 2 L53.44 41.68 Z M50 50 L73.33 26.67 L58.32 46.56 Z M50 50 L98 50 L58.32 53.44 Z '
-    + 'M50 50 L73.33 73.33 L53.44 58.32 Z M50 50 L50 98 L46.56 58.32 Z M50 50 L26.67 73.33 L41.68 53.44 Z '
-    + 'M50 50 L2 50 L41.68 46.56 Z M50 50 L26.67 26.67 L46.56 41.68 Z';
 
   // 작동 화면 ↔ 구조 관측 전환. 구조는 여기서 켤 때 비로소 /api/nn-viz 를 부른다.
   function setBrainView(v){
@@ -13750,93 +13819,105 @@ html[data-theme="light"] .rail{background:#fff;}
     if(rank >= 0.52) return { cls:'hold', label:'관찰', why:'강도 부족 — 대기' };
     return { cls:'skip', label:'제외', why:'기대우위 없음' };
   }
-  // 색은 파란색 계열 한 축으로 — 밝은 시안(강한 후보) → 블루(관찰) → 흐린 네이비(제외).
-  //   기권만 슬레이트 회색으로 빼서 "판단 보류"임을 구분한다.
-  function nodeColor(pk){
-    if(pk.abstain) return '#64748b';
-    var rank = (pk.rankP != null ? pk.rankP : pk.p);
-    if(rank >= 0.60) return '#22d3ee';
-    if(rank >= 0.52) return '#3b82f6';
-    return '#31446b';
-  }
+
+  /* [V33.7] 방사형 별/광선 그래픽 폐기 — "장난감 같다"는 지적에 맞춰
+     최우선 후보의 실제 가격 흐름(선 그래프)을 보여주는 실무형 패널로 교체했다.
+     캔들이 아니라 종가 선 그래프이며, 구간 최고/최저를 표기한다. */
+  var TP = { sym:null, wait:null, cache:{} };
 
   function renderCore(d){
-    var svg = $id('nlvSvg'); if(!svg) return;
-    var picks = (d.picks || []).slice(0, 46);
-    var parts = [];
-    // 배경 링 — 승률 등고선(0.50 / 0.55 / 0.60)
-    parts.push('<defs>'
-      +'<radialGradient id="nlvCoreG"><stop offset="0%" stop-color="#d6f2ff" stop-opacity=".95"/>'
-      +'<stop offset="55%" stop-color="#38bdf8" stop-opacity=".65"/><stop offset="100%" stop-color="#2f6bff" stop-opacity="0"/></radialGradient>'
-      +'<linearGradient id="nlvBeamG" x1="0" y1="0" x2="1" y2="0">'
-      +'<stop offset="0%" stop-color="#4a9dff" stop-opacity=".35"/><stop offset="100%" stop-color="#4a9dff" stop-opacity="0"/></linearGradient>'
-      +'</defs>');
-    [100,134,168].forEach(function(r,i){
-      parts.push('<circle class="nlv-ring" cx="'+CX+'" cy="'+CY+'" r="'+r+'" fill="none" stroke-width="1"'
-        +(i===1?' stroke-dasharray="2 5"':'')+'/>');
-    });
-    parts.push('<text class="nlv-axis" x="'+(CX+102)+'" y="'+(CY-4)+'" font-size="8" font-family="monospace">상위</text>');
-    parts.push('<text class="nlv-axis" x="'+(CX+170)+'" y="'+(CY-4)+'" font-size="8" font-family="monospace">하위</text>');
-    // 스캔 빔(부채꼴)
-    parts.push('<g class="nlv-beam"><path d="M '+CX+' '+CY+' L '+(CX+172)+' '+(CY-43)+' A 178 178 0 0 1 '+(CX+172)+' '+(CY+43)+' Z" fill="url(#nlvBeamG)"/>'
-      +'<line x1="'+CX+'" y1="'+CY+'" x2="'+(CX+178)+'" y2="'+CY+'" stroke="#6cc0ff" stroke-width="1" opacity=".5"/></g>');
-
-    if(!picks.length){
-      parts.push('<text x="'+CX+'" y="'+(CY+200)+'" text-anchor="middle" fill="#5f79a2" font-size="10" font-family="monospace">'
-        +'스캔 결과 없음 — 야간 파이프라인 대기 중</text>');
-      svg.innerHTML = parts.join('');
+    var picks = (d.picks || []).filter(function(p){ return !p.abstain; });
+    var top = picks[0] || (d.picks || [])[0] || null;
+    var symEl=$id('nlvTpSym'), nmEl=$id('nlvTpName'), pEl=$id('nlvTpP'), vdEl=$id('nlvTpVd');
+    if(!top){
+      if(symEl) symEl.textContent = '—';
+      if(nmEl) nmEl.textContent = '';
+      if(pEl) pEl.textContent = '—';
+      if(vdEl) vdEl.textContent = '스캔 결과 대기';
+      var c0 = $id('nlvTpChart'); if(c0) c0.innerHTML = '<div class="nlv-empty">야간 스캔이 1회 이상 돌아야 표시됩니다</div>';
       return;
     }
-    // 노드 배치: 황금각 나선 — 랭킹이 높을수록 코어 가까이, 각도는 균등 분산되어
-    //   한쪽에 뭉치거나 라벨이 겹치지 않는다. 반경 하한(104)으로 중앙 판정 라벨 침범 방지.
-    var n = picks.length, hot = [];
-    var GA = Math.PI * (3 - Math.sqrt(5));   // 황금각 ≈137.5°
-    picks.forEach(function(pk, i){
-      var rank = (pk.rankP != null ? pk.rankP : pk.p);
-      var rad = 100 + (n > 1 ? (i / (n - 1)) : 0) * 68;
-      var ang = (-Math.PI/2) + i * GA;
-      var x = CX + Math.cos(ang) * rad, y = CY + Math.sin(ang) * rad;
-      var col = nodeColor(pk);
-      var strong = rank >= 0.58 && !pk.abstain;
-      var w = pk.abstain ? 0.5 : (0.45 + Math.max(0, rank-0.45) * 5.2);
-      var op = pk.abstain ? 0.16 : (0.14 + Math.max(0, rank-0.42) * 1.9);
-      // 광선은 코어(로고 별) 바깥에서 시작 — 중앙 판정 라벨 위를 지나가지 않게.
-      var sx = CX + Math.cos(ang) * 72, sy = CY + Math.sin(ang) * 72;
-      parts.push('<line class="nlv-ray'+(strong?' hot':'')+'" x1="'+sx.toFixed(1)+'" y1="'+sy.toFixed(1)+'" x2="'+x.toFixed(1)+'" y2="'+y.toFixed(1)
-        +'" stroke="'+col+'" stroke-width="'+w.toFixed(2)+'" opacity="'+Math.min(0.95,op).toFixed(2)+'"/>');
-      var r = pk.abstain ? 2.2 : (2.4 + Math.max(0, rank-0.45) * 13);
-      parts.push('<circle class="nlv-node" cx="'+x.toFixed(1)+'" cy="'+y.toFixed(1)+'" r="'+Math.min(7.5,r).toFixed(1)
-        +'" fill="'+col+'" opacity="'+(pk.abstain?0.45:0.92)+'" data-sym="'+esc(pk.symbol)+'">'
-        +'<title>'+esc(pk.symbol)+' · 승률 '+Math.round(pk.p*100)+'%'+(pk.techLabel?(' · '+esc(pk.techLabel)):'')+'</title></circle>');
-      if(strong && hot.length < 9){
-        hot.push(1);
-        var lx = CX + Math.cos(ang) * (rad + 15), ly = CY + Math.sin(ang) * (rad + 15);
-        var anchor = Math.cos(ang) > 0.25 ? 'start' : (Math.cos(ang) < -0.25 ? 'end' : 'middle');
-        parts.push('<text class="nlv-lab" x="'+lx.toFixed(1)+'" y="'+(ly+3).toFixed(1)+'" text-anchor="'+anchor+'" '
-          +'font-size="9.5" font-family="monospace">'+esc(pk.symbol)+'</text>');
-      }
-    });
-    // ── 판정 코어 = 사이트 로고(8각 별) ──
-    //   어두운 원판(글씨 대비) → 로고 별 워터마크 + 패싯 → 링. 광선이 별의 뿔로 모여드는 그림.
-    parts.push('<circle cx="'+CX+'" cy="'+CY+'" r="70" fill="#060a12" opacity=".92"/>');
-    parts.push('<circle cx="'+CX+'" cy="'+CY+'" r="70" fill="url(#nlvCoreG)" opacity=".18"/>');
-    var S = 1.92, off = 50 * S;   // 100×100 로고 path → 192px. 로고 별이 판정 수치를 감싸는 '프레임'이 된다
-    parts.push('<g class="nlv-logo" transform="translate('+(CX-off)+','+(CY-off)+') scale('+S+')">'
-      +'<path class="nlv-logo-base" d="'+LOGO_STAR+'"/>'
-      +'<path class="nlv-logo-facet" d="'+LOGO_FACET+'"/>'
-      +'</g>');
-    // 별의 몸통만 어두운 원판으로 덮어 8개 뿔을 남긴다 → 로고 실루엣이 판정 수치를 감싼다
-    parts.push('<circle cx="'+CX+'" cy="'+CY+'" r="45" fill="#060a12" opacity=".93"/>');
-    parts.push('<circle class="nlv-corering" cx="'+CX+'" cy="'+CY+'" r="26" stroke="#38bdf8" stroke-width="1"/>');
-    parts.push('<circle class="nlv-corerim" cx="'+CX+'" cy="'+CY+'" r="45" fill="none" stroke-width="1"/>');
-    svg.innerHTML = parts.join('');
-    // 노드 클릭 → 해당 종목 상세 열기(+ 우측 사이드바에 쌓임)
-    var nodes = svg.querySelectorAll('.nlv-node');
-    for(var i=0;i<nodes.length;i++){
-      nodes[i].addEventListener('click', function(){
-        var s = this.getAttribute('data-sym');
-        if(s && typeof window.openStockDetail === 'function') window.openStockDetail(s);
+    var q = quoteOf(top.symbol);
+    var vd = verdictOf(top);
+    var rank = (top.rankP != null ? top.rankP : top.p);
+    if(symEl) symEl.textContent = top.symbol;
+    if(nmEl) nmEl.textContent = (q && q.name && q.name !== top.symbol) ? q.name : '';
+    if(pEl) pEl.textContent = (top.p*100).toFixed(1) + '%';
+    if(vdEl) vdEl.innerHTML = esc(vd.label) + ' · 랭크 ' + rank.toFixed(2)
+      + (top.techLabel ? ' · ' + esc(top.techLabel) : '');
+    loadTopPickChart(top.symbol);
+  }
+
+  // 최우선 후보의 일봉 종가를 받아 선 그래프로. 종목이 바뀔 때만 새로 요청한다.
+  function loadTopPickChart(sym){
+    var box = $id('nlvTpChart'); if(!box) return;
+    if(TP.cache[sym]){ drawLineChart(box, TP.cache[sym], sym); return; }
+    if(TP.sym === sym && TP.wait) return;
+    TP.sym = sym;
+    box.innerHTML = '<div class="nlv-empty">차트 불러오는 중…</div>';
+    TP.wait = fetch('/api/chart?symbol=' + encodeURIComponent(sym) + '&interval=1d&range=6mo')
+      .then(function(r){ return r.json(); })
+      .then(function(dd){
+        TP.wait = null;
+        var cs = (dd && dd.candles) || [];
+        if(cs.length < 2){ box.innerHTML = '<div class="nlv-empty">일봉 데이터 없음</div>'; return; }
+        TP.cache[sym] = cs;
+        if(TP.sym === sym) drawLineChart(box, cs, sym);
+      })['catch'](function(){
+        TP.wait = null;
+        box.innerHTML = '<div class="nlv-empty">차트 조회 실패</div>';
       });
+  }
+
+  // 종가 선 그래프 — 그리드 + 면적 그라디언트 + 최고/최저 표기 + 현재가 마커
+  function drawLineChart(box, cs, sym){
+    var tf = $id('nlvTf');
+    var W = 460, H = 190, padL = 6, padR = 52, padT = 12, padB = 18;
+    var closes = cs.map(function(c){ return c.c; }).filter(function(v){ return typeof v === 'number'; });
+    if(closes.length < 2){ box.innerHTML = '<div class="nlv-empty">일봉 데이터 부족</div>'; return; }
+    var n = closes.length;
+    var min = Math.min.apply(null, closes), max = Math.max.apply(null, closes);
+    var span = Math.max(1e-9, max - min);
+    var lo = min - span * 0.10, hi = max + span * 0.12, rng = hi - lo;
+    var iw = (W - padL - padR) / (n - 1);
+    var X = function(i){ return padL + i * iw; };
+    var Y = function(v){ return padT + (1 - (v - lo) / rng) * (H - padT - padB); };
+    var kr = sym.indexOf('.K') >= 0;
+    var fmt = function(v){ return kr ? Math.round(v).toLocaleString('ko-KR')
+      : v.toLocaleString('en-US',{minimumFractionDigits:2,maximumFractionDigits:2}); };
+
+    var pts = [], i;
+    for(i=0;i<n;i++) pts.push(X(i).toFixed(1)+','+Y(closes[i]).toFixed(1));
+    var g = '<svg viewBox="0 0 '+W+' '+H+'" preserveAspectRatio="xMidYMid meet">';
+    g += '<defs><linearGradient id="lcFill" x1="0" y1="0" x2="0" y2="1">'
+      + '<stop offset="0%" stop-color="#38bdf8" stop-opacity=".28"/>'
+      + '<stop offset="100%" stop-color="#38bdf8" stop-opacity="0"/></linearGradient></defs>';
+    for(i=0;i<=3;i++){
+      var gv = hi - rng*(i/3), gy = Y(gv);
+      g += '<line class="lc-grid" x1="'+padL+'" y1="'+gy.toFixed(1)+'" x2="'+(W-padR)+'" y2="'+gy.toFixed(1)+'"/>';
+      g += '<text class="lc-axis" x="'+(W-padR+4)+'" y="'+(gy+3).toFixed(1)+'">'+fmt(gv)+'</text>';
+    }
+    g += '<polygon points="'+X(0).toFixed(1)+','+(H-padB).toFixed(1)+' '+pts.join(' ')+' '+X(n-1).toFixed(1)+','+(H-padB).toFixed(1)+'" fill="url(#lcFill)"/>';
+    g += '<polyline class="lc-line" points="'+pts.join(' ')+'"/>';
+    // 구간 최고/최저
+    var hiI = 0, loI = 0;
+    for(i=1;i<n;i++){ if(closes[i] > closes[hiI]) hiI = i; if(closes[i] < closes[loI]) loI = i; }
+    var anc = function(x){ return x < 44 ? 'start' : (x > W-padR-44 ? 'end' : 'middle'); };
+    g += '<text class="lc-hilo hi" x="'+X(hiI).toFixed(1)+'" y="'+(Y(closes[hiI])-5).toFixed(1)+'" text-anchor="'+anc(X(hiI))+'">▲ '+fmt(closes[hiI])+'</text>';
+    g += '<text class="lc-hilo lo" x="'+X(loI).toFixed(1)+'" y="'+(Y(closes[loI])+11).toFixed(1)+'" text-anchor="'+anc(X(loI))+'">▼ '+fmt(closes[loI])+'</text>';
+    // 현재가 마커
+    g += '<circle class="lc-dot" cx="'+X(n-1).toFixed(1)+'" cy="'+Y(closes[n-1]).toFixed(1)+'" r="3"/>';
+    // 날짜축(양끝)
+    var dl = function(c){ var t = new Date((c.t||0)*1000); return (t.getMonth()+1)+'/'+t.getDate(); };
+    g += '<text class="lc-axis" x="'+padL+'" y="'+(H-5)+'">'+dl(cs[cs.length-n])+'</text>';
+    g += '<text class="lc-axis" x="'+(W-padR)+'" y="'+(H-5)+'" text-anchor="end">'+dl(cs[cs.length-1])+'</text>';
+    g += '</svg>';
+    box.innerHTML = g;
+    box.style.cursor = 'pointer';
+    box.onclick = function(){ if(typeof window.openStockDetail === 'function') window.openStockDetail(sym); };
+    if(tf){
+      var chg = ((closes[n-1]/closes[0]) - 1) * 100;
+      tf.textContent = '일봉 ' + n + '봉 · 구간 ' + (chg>=0?'+':'') + chg.toFixed(1) + '%';
     }
   }
 
@@ -14065,38 +14146,36 @@ html[data-theme="light"] .rail{background:#fff;}
     el.innerHTML = rows.length ? rows.join('') : '<div class="nlv-step"><i></i><b>파이프라인 상태 조회 실패</b><span>—</span></div>';
   }
 
-  function buildLines(d){
-    var lines = [], picks = d.picks || [], scan = d.scan || {}, mode = d.mode || {};
-    var t0 = scan.ts ? (scan.ts - (scan.durMs || 0)) : Date.now();
-    // durMs 가 없으면(구버전 스캔 산출물) 종목당 1초로 가정 — 최소한 순서는 드러나게.
-    var stepMs = (scan.durMs && picks.length) ? Math.max(200, scan.durMs / picks.length) : 1000;
-    var c = mode.committee || {};
-    var onList = [];
-    if(c.mind) onList.push('MIND'); if(c.dnn) onList.push('DNN'); if(c.gbdt) onList.push('GBDT');
-    ['xgb','lgb','cat'].forEach(function(k){ if(c[k] && c[k].trusted) onList.push(k.toUpperCase()); });
-    lines.push({ t:t0, cls:'hold', html:'위원회 소집 — <em>'+(onList.length?esc(onList.join(' · ')):'가동 모델 없음')+'</em>'
-      +' · 운용모드 <em>'+(mode.aiReady?'AI 자율':'규칙 비상')+'</em>' });
-    if(scan.total) lines.push({ t:t0, cls:'hold', html:'유니버스 <em>'+esc(scan.total)+'</em>종목 로드 → 기술 프리스크린 통과분만 위원회 추론' });
-    if(scan.shock && scan.shock.mode && scan.shock.mode !== 'none')
-      lines.push({ t:t0, cls:'warn', html:'레짐 감지 <em>'+esc(scan.shock.mode)+' sev'+esc(scan.shock.sev)+'</em> — 위원회 판정 시프트 적용' });
-    picks.forEach(function(pk, i){
-      var vd = verdictOf(pk);
-      var rank = (pk.rankP != null ? pk.rankP : pk.p);
-      var extra = [];
-      if(pk.techLabel) extra.push(esc(pk.techLabel));
-      if(pk.evTilt) extra.push('이벤트틸트 '+(pk.evTilt>0?'+':'')+(pk.evTilt*100).toFixed(0)+'%');
-      lines.push({
-        t: t0 + i*stepMs, cls: vd.cls,
-        html: '<em>'+esc(pk.symbol)+'</em> 스캔 → 위원회 p=<em>'+pk.p.toFixed(2)+'</em>'
-          + (rank !== pk.p ? ' (랭크 '+rank.toFixed(2)+')' : '')
-          + (extra.length ? ' · '+extra.join(' · ') : '')
-          + ' → <em>'+vd.label+'</em> <span style="color:#5f79a2;">'+esc(vd.why)+'</span>'
-      });
-    });
-    var cand = picks.filter(function(p){ return !p.abstain && (p.rankP!=null?p.rankP:p.p) >= 0.60; }).length;
-    lines.push({ t: scan.ts || Date.now(), cls:'buy',
-      html:'스캔 종료 — <em>'+esc(scan.scanned!=null?scan.scanned:picks.length)+'</em>종목 분석 · 진입후보 <em>'+cand+'</em>종목 확정' });
-    return lines;
+  /* [V33.7] ★판정 스트림 로직 재작성★
+     종전 문제:
+       · 야간 스캔 결과(수십 종목)를 620ms 간격으로 한 줄씩 "재생"해 항상 밀려 있었고,
+       · 목록이 끝나면 인덱스를 0으로 되돌려 같은 내용이 무한 반복됐다.
+       · 실제로 지금 일어나는 일이 아니라 과거 배치의 재생이었다.
+     새 방식:
+       · 엔진이 D1 logs 테이블에 남기는 실제 기록(/api/logs)을 그대로 흘린다.
+       · 로그 id 로 중복을 차단해 이미 띄운 줄은 다시 안 뜬다(반복 없음).
+       · 폴링마다 "새로 생긴 것"만 시간순으로 덧붙인다(밀림 없음).
+     → 화면에 보이는 건 전부 실제로 방금 일어난 일이다. */
+  var FEED = { lastId: 0, timer: null, booted: false };
+
+  // 로그 한 줄을 판정 성격별로 분류 — 색과 의미를 맞춘다.
+  function classifyLog(row){
+    var lv = (row.level || '').toUpperCase();
+    var m = row.message || '';
+    if(lv === 'ERROR') return 'warn';
+    if(lv === 'CLOSED') return 'skip';
+    if(/BUY|진입|매수|ENTRY/i.test(m)) return 'buy';
+    if(/SELL|청산|매도|손절|익절|EXIT/i.test(m)) return 'hold';
+    if(/SCAN|픽|위원회|BRAIN|MIND|DNN|GBDT|학습|보정/i.test(m)) return 'hold';
+    if(/스킵|skip|대기|없음/i.test(m)) return 'skip';
+    return '';
+  }
+  function fmtLogLine(row){
+    var sym = row.symbol ? '<em>' + esc(row.symbol) + '</em> ' : '';
+    var msg = esc(row.message || '');
+    // 대괄호 태그([SCAN] 등)와 화살표를 살짝 강조해 읽기 쉽게
+    msg = msg.replace(/^\[([A-Z0-9_.\-]+)\]/, '<em>[$1]</em>');
+    return sym + msg;
   }
 
   function pushLine(ln){
@@ -14106,20 +14185,43 @@ html[data-theme="light"] .rail{background:#fff;}
     div.className = 'nlv-line ' + (ln.cls || '');
     div.innerHTML = '<span class="t">'+hms(ln.t)+'</span><span class="b">'+ln.html+'</span>';
     feed.insertBefore(div, feed.firstChild);
-    while(feed.childNodes.length > 70) feed.removeChild(feed.lastChild);
+    while(feed.childNodes.length > 120) feed.removeChild(feed.lastChild);
   }
+
+  function pollFeed(){
+    if(LIVE.paused) return;
+    return fetch('/api/logs?limit=' + (FEED.booted ? 40 : 25))
+      .then(function(r){ return r.json(); })
+      .then(function(rows){
+        if(!Array.isArray(rows)) return;
+        var feed = $id('nlvFeed'); if(!feed) return;
+        // 응답은 id DESC(최신 우선). 새 것만 골라 오래된 순으로 넣어야 위가 최신이 된다.
+        var fresh = rows.filter(function(r){ return (r.id || 0) > FEED.lastId; });
+        if(!fresh.length){
+          if(!FEED.booted && !feed.childNodes.length){
+            feed.innerHTML = '<div class="nlv-empty">아직 기록된 엔진 로그가 없습니다</div>';
+          }
+          FEED.booted = true;
+          return;
+        }
+        fresh.sort(function(a,b){ return (a.id||0) - (b.id||0); });
+        if(!FEED.booted) feed.innerHTML = '';
+        fresh.forEach(function(r){
+          FEED.lastId = Math.max(FEED.lastId, r.id || 0);
+          pushLine({ t: r.ts, cls: classifyLog(r), html: fmtLogLine(r) });
+        });
+        FEED.booted = true;
+      })['catch'](function(){});
+  }
+
   function startFeed(){
     stopFeed();
     var feed = $id('nlvFeed');
-    if(feed) feed.innerHTML = '<div class="nlv-empty">판정 스트림 재생 중…</div>';
-    LIVE.idx = 0;
-    LIVE.feedTimer = setInterval(function(){
-      if(LIVE.paused || !LIVE.lines.length) return;
-      pushLine(LIVE.lines[LIVE.idx]);
-      LIVE.idx = (LIVE.idx + 1) % LIVE.lines.length;
-    }, 620);
+    if(feed && !FEED.booted) feed.innerHTML = '<div class="nlv-empty">엔진 로그를 불러오는 중…</div>';
+    pollFeed();
+    FEED.timer = setInterval(pollFeed, 8000);   // 엔진 cron이 1분 주기라 8초면 충분히 실시간
   }
-  function stopFeed(){ if(LIVE.feedTimer){ clearInterval(LIVE.feedTimer); LIVE.feedTimer = null; } }
+  function stopFeed(){ if(FEED.timer){ clearInterval(FEED.timer); FEED.timer = null; } }
 
   // [V33.3] ★"SCANNING"에서 안 넘어가고 로딩이 길던 문제★
   //   원인 두 가지를 같이 잡는다.
@@ -14129,7 +14231,6 @@ html[data-theme="light"] .rail{background:#fff;}
   //      localStorage 에 저장해 두고 즉시 그린 뒤(체감 0ms) 최신값으로 덮어쓴다.
   function paintLive(d, pipeSteps){
     LIVE.data = d;
-    LIVE.lines = buildLines(d);
     if(BVIEW !== 'live') return;   // 구조 관측 중이면 무거운 코어 SVG·스트림은 그리지 않는다
     renderCore(d);
     renderCenter(d);
@@ -14141,7 +14242,7 @@ html[data-theme="light"] .rail{background:#fff;}
     try{ localStorage.setItem('luxLiveCache', JSON.stringify({ d:d, pipe:pipeSteps||null, ts:Date.now() })); }catch(e){}
   }
   function loadLive(force){
-    if(!$id('nlvSvg')) return Promise.resolve();
+    if(!$id('nlvTpChart')) return Promise.resolve();
     var painted = false, acc = { picks:[], scan:{}, mode:{} }, pipeSteps = null;
 
     if(!LIVE.data){
