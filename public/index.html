@@ -2787,6 +2787,23 @@ html[data-theme="light"] .table tbody tr:hover{background:rgba(9,105,218,.045);}
   .fv-breadth-top{font-size:8.5px;margin-bottom:4px;}
 }
 
+/* [V33.8] 아이패드 가로를 PC 화면과 같게 — 지수 6장 한 줄 + TOP MOVERS/MAP 2단.
+   기존 규칙 두 개가 여기서 걸렸다:
+     · @media(700~1280) .fv-idx{flex-basis:30%} → 한 줄 3장으로 강제
+     · @media(max-width:1100) .fv-mid{1열}      → 무버스와 히트맵이 세로로 쌓임
+   지수 행은 grid-auto-flow:column 으로 개수와 무관하게 항상 한 줄에 담는다. */
+@media(min-width:1000px) and (max-width:1279px){
+  .fv-index-row{display:grid;grid-auto-flow:column;grid-auto-columns:minmax(0,1fr);gap:5px;}
+  .fv-idx{flex-basis:auto;min-width:0;padding:5px 7px 4px;}
+  .fv-idx-name{font-size:9px;letter-spacing:0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
+  .fv-idx-price{font-size:12px;}
+  .fv-idx-chg{font-size:9px;}
+  .fv-idx-chart{height:30px;margin-top:3px;}
+  .fv-mid{grid-template-columns:1fr 1.1fr;}
+  #fvHeatmap{height:300px!important;}
+  .fv-mid .fv-movers-grid{max-height:352px;}
+}
+
 /* [V33.3] PC — 지정학·위기 게이지 / 활성 이슈·레짐 패널 비율 교정.
    가로로 길게 늘어난 얇은 바 하나만 있어 위아래 여백이 남던 문제. 두 패널을 같은 높이의
    2열로 묶고, 내부는 "게이지 + 설명" 2단 그리드로 채운다. */
@@ -2800,8 +2817,20 @@ html[data-theme="light"] .table tbody tr:hover{background:rgba(9,105,218,.045);}
 }
 
 /* iPad(768~1440) 확대 규칙도 같은 비율로 축소 — 기존 240/200 → 200/176 */
-@media (min-width:768px) and (max-width:1440px){
+/* [V33.8] 1280px 이상은 PC와 동일한 좌측 폭(168)을 쓴다 — 아이패드 Pro 13"도 PC 화면과 같게 */
+@media (min-width:768px) and (max-width:1279px){
   .sidebar{width:184px;}
+}
+/* 아이패드 가로에서 우측 레일까지 함께 뜨므로 좌측을 더 줄여 본문 폭을 남긴다 */
+@media (min-width:1000px) and (max-width:1279px){
+  .sidebar{width:152px;}
+  .nav-item{padding:9px 11px;font-size:10px;}
+  .nav-item-label{font-size:10px;}
+  .sb-brand-name{font-size:11px;letter-spacing:1px;}
+  .sb-status{padding:7px 10px;}
+  .sb-actions{padding:8px 7px;}
+}
+@media (min-width:768px) and (max-width:1279px){
   .nav-item{padding:11px 14px;font-size:11px;}
   .nav-item-icon{font-size:12px;}
   .sb-run-btn{padding:11px;font-size:11px;}
@@ -12292,9 +12321,31 @@ html[data-theme="light"] #page-nnviz .nlv-tp-num .p{color:#0b6cd4;}
 #page-nnviz .nlv-empty{padding:26px 14px;text-align:center;color:#5f79a2;font-size:11px;}
 @keyframes nlvIn{from{opacity:0;transform:translateY(-4px);}to{opacity:1;transform:none;}}
 
-@media(max-width:1180px){
+@media(max-width:999px){
   #page-nnviz .nlv-hero,#page-nnviz .nlv-lower{grid-template-columns:1fr;}
   #page-nnviz .nlv-feed{max-height:230px;}
+}
+/* 아이패드 가로 — 2단은 유지하되 내부를 조밀하게 (라벨/값 칸 축소, 폰트 한 단계 down) */
+@media(min-width:1000px) and (max-width:1279px){
+  #page-nnviz .nnviz-content{margin:10px 12px 14px;padding:14px 14px 16px;}
+  #page-nnviz .nlv-hero,#page-nnviz .nlv-lower{gap:9px;}
+  #page-nnviz .nlv-fstep{grid-template-columns:80px 1fr 62px;gap:7px;}
+  #page-nnviz .nlv-fstep .fl{font-size:9px;}
+  #page-nnviz .nlv-fstep .fv{font-size:10.5px;}
+  #page-nnviz .nlv-tp{padding:10px 11px 5px;gap:8px;}
+  #page-nnviz .nlv-tp-id .sym{font-size:17px;}
+  #page-nnviz .nlv-tp-id .nm{max-width:150px;font-size:9.5px;}
+  #page-nnviz .nlv-tp-num .p{font-size:21px;}
+  #page-nnviz .nlv-tp-num .vd{font-size:9px;}
+  #page-nnviz .nlv-stat .v{font-size:13px;}
+  #page-nnviz .nlv-stat .k{font-size:8px;letter-spacing:1px;}
+  #page-nnviz .nlv-top .s{font-size:10.5px;}
+  #page-nnviz .nlv-line{grid-template-columns:52px 1fr;font-size:10px;padding:3px 9px;}
+  #page-nnviz .nlv-step{font-size:9.5px;}
+  #page-nnviz .nlv-sec-h{padding:8px 11px;font-size:9px;letter-spacing:1.6px;}
+  #page-nnviz .nlv-picks-grid{grid-template-columns:repeat(auto-fill,minmax(132px,1fr));}
+  #page-nnviz .nnv-head>div:last-child{gap:5px;}
+  #page-nnviz .nnv-btn{font-size:10px;padding:5px 8px;}
 }
 @media(max-width:640px){
     #page-nnviz .nlv-kpi{grid-template-columns:repeat(2,1fr);}
@@ -12314,7 +12365,7 @@ html[data-theme="light"] #page-nnviz .nlv-stat .v.off{color:#c62a45;}
 html[data-theme="light"] #page-nnviz .nlv-kpi,html[data-theme="light"] #page-nnviz .nlv-toplist{background:#cdd9ee;}
 html[data-theme="light"] #page-nnviz .nlv-stat,html[data-theme="light"] #page-nnviz .nlv-top{background:#fbfdff;}
 html[data-theme="light"] #page-nnviz .nlv-fbar{background:rgba(18,35,63,.08);}
-html[data-theme="light"] #page-nnviz .nlv-corehead,html[data-theme="light"] #page-nnviz .nlv-pipe,
+html[data-theme="light"] #page-nnviz .nlv-pipe,
 html[data-theme="light"] #page-nnviz .nlv-sec-h{border-color:#d5dfee;}
 /* 라이트에서 흐려지던 요소들 — 스트립 태그·상위3 수치·섹션 헤더 */
 html[data-theme="light"] #page-nnviz .nlv-tag{color:#3a4b66;border-color:#c2cfe4;background:#fbfdff;}
@@ -12377,15 +12428,20 @@ html[data-theme="light"] #page-nnviz .nlv-picks-head,html[data-theme="light"] #p
   #page-nnviz .nlv-picks-grid{grid-template-columns:repeat(auto-fill,minmax(132px,1fr));}
 }
 
-@media (prefers-reduced-motion:reduce){html[data-theme="light"] html[data-theme="light"] html[data-theme="light"] #page-nnviz .nlv-core,html[data-theme="light"] #page-nnviz .nlv-side{background:linear-gradient(180deg,#eef3fb,#e6edf8);border-color:#cdd9ee;}
-html[data-theme="light"] #page-nnviz .nlv-step b,html[data-theme="light"] #page-nnviz .nlv-line .b em{color:#12233f;}
+/* [V33.8] ★깨져 있던 라이트 테마 블록 복구★
+   V33.7에서 구 방사형 그래픽 CSS를 정규식으로 걷어낼 때 한 줄짜리
+   @media (prefers-reduced-motion:reduce){...} 의 닫는 중괄호까지 지워져,
+   그 아래 라이트 테마 규칙 전체가 그 미디어쿼리 안에 갇힌 채 닫히지 않았다.
+   (선택자 앞에 html[data-theme="light"] 가 중복으로 붙는 손상도 함께 발생)
+   지금 존재하는 요소만으로 다시 정리한다. */
+@media (prefers-reduced-motion:reduce){
+  #page-nnviz.active .nlv-tagline::before{animation:none;}
+}
+html[data-theme="light"] #page-nnviz .nlv-step b,
+html[data-theme="light"] #page-nnviz .nlv-line .b em{color:#12233f;}
 html[data-theme="light"] #page-nnviz .nlv-line .b{color:#33455f;}
-html[data-theme="light"] #page-nnviz .nlv-stat .v{color:#12233f;}
-html[data-theme="light"] #page-nnviz .nlv-stat .v.good{color:#0b6cd4;}
-html[data-theme="light"] #page-nnviz .nlv-stat .v.warn{color:#a5730a;}
-html[data-theme="light"] #page-nnviz .nlv-stat .v.off{color:#c62a45;}
-html[data-theme="light"] html[data-theme="light"] html[data-theme="light"] html[data-theme="light"] #page-nnviz .nlv-corehead,html[data-theme="light"] #page-nnviz .nlv-pipe,
-html[data-theme="light"] #page-nnviz .nlv-verdicthead,html[data-theme="light"] #page-nnviz .nlv-corefoot{border-color:#d5dfee;}
+html[data-theme="light"] #page-nnviz .nlv-pipe,
+html[data-theme="light"] #page-nnviz .nlv-sec-h{border-color:#d5dfee;}
 </style>
 <script>
 (function(){
@@ -13188,9 +13244,21 @@ html[data-theme="light"] #page-nnviz .nlv-verdicthead,html[data-theme="light"] #
 .rail[hidden]{display:none;}
 /* 열린 종목창이 없고 접힌 상태에서도 토글은 항상 보이게 */
 .rail-openbtn{display:none;}
-@media(max-width:1099px){ .rail{display:none;} }
+/* [V33.8] 아이패드 가로(1024~1366)에서도 PC와 같은 화면이 되도록 임계값을 1000px로 낮춤.
+   세로(768~999)는 폭이 부족해 종전대로 레일을 감춘다. */
+@media(max-width:999px){ .rail{display:none;} }
+/* 아이패드 가로 구간 — 좌·우 사이드바를 한 단계 더 좁혀 본문 폭을 확보 */
+@media(min-width:1000px) and (max-width:1279px){
+  .rail{width:168px;flex-basis:168px;}
+  .rail-models{grid-template-columns:1fr 1fr;gap:3px;}
+  .rail-model{font-size:8.5px;padding:5px 2px;}
+  .rail-link{font-size:9px;padding:6px 2px;}
+  .rail-ai{font-size:9.5px;}
+  .rail-item .r-sym{font-size:10.5px;}
+  .rail-item .r-chg{font-size:10px;}
+}
 /* 빠른검색 FAB이 우측 사이드바 위에 겹치지 않게 — 레일 폭만큼 왼쪽으로 밀어준다 */
-@media(min-width:1100px){ .cmdk-fab{right:calc(var(--rail-w,0px) + 18px);} }
+@media(min-width:1000px){ .cmdk-fab{right:calc(var(--rail-w,0px) + 18px);} }
 html[data-theme="light"] .rail{background:#fff;}
 /* 우측 사이드바가 붙어도 본문이 안 눌리게 — 콘텐츠는 원래대로 flex:1 */
 .shell>.content{min-width:0;}
@@ -13198,7 +13266,7 @@ html[data-theme="light"] .rail{background:#fff;}
 /* ══════ ② 터미널 밀도 레이어 — PC(≥1280px)에서 블룸버그식 조밀 그리드 ══════
    html[data-density="terminal"] 일 때만 적용. 우측 사이드바 ▮ 버튼으로 즉시 on/off.
    기존 규칙을 지우지 않고 덮어쓰기만 하므로 끄면 100% 원래 화면으로 복귀. */
-@media(min-width:1280px){
+@media(min-width:1000px){
   /* 데크를 4열 그리드로 — 세로로 길게 늘어지던 패널들을 옆으로 붙여 한 화면에 담는다.
      (인라인 margin-bottom:8px 를 덮어야 해서 !important 필요) */
   html[data-density="terminal"] .fv-deck{
@@ -13364,8 +13432,10 @@ html[data-theme="light"] .rail{background:#fff;}
   }
   // 레일 실폭을 CSS 변수로 — 빠른검색 FAB 등 fixed 요소가 레일을 안 가리게 한다.
   function railWidthVar(){
-    var shown = RAIL.el && !RAIL.el.hidden && window.innerWidth >= 1100;
-    var w = shown ? RAIL_W : 0;
+    // [V33.8] 1000px 이상(아이패드 가로 포함)에서 레일을 띄운다. 실제 렌더 폭을 읽어
+    //   화면 구간별로 레일 폭이 달라져도(1000~1279는 168px) FAB 위치가 정확히 따라간다.
+    var shown = RAIL.el && !RAIL.el.hidden && window.innerWidth >= 1000;
+    var w = shown ? Math.round(RAIL.el.getBoundingClientRect().width) || RAIL_W : 0;
     document.documentElement.style.setProperty('--rail-w', w + 'px');
   }
   // [V33.1] 우측 사이드바는 "AI 두뇌" 페이지 전용 — 다른 페이지에선 감춘다.
@@ -13769,8 +13839,9 @@ html[data-theme="light"] .rail{background:#fff;}
   function initDensity(){
     var saved = null;
     try{ saved = localStorage.getItem('luxDensity'); }catch(e){}
-    // 저장값이 없으면 PC(≥1280px)에서 터미널 밀도를 기본값으로 — 요청대로 "컴퓨터에서 보면 조밀한 터미널"
-    if(!saved) saved = (window.innerWidth >= 1280) ? 'terminal' : 'normal';
+    // 저장값이 없으면 넓은 화면에서 터미널 밀도를 기본값으로.
+    // [V33.8] 임계값 1280 → 1000 — 아이패드 가로도 PC와 같은 조밀 그리드로 보이게(요청).
+    if(!saved) saved = (window.innerWidth >= 1000) ? 'terminal' : 'normal';
     applyDensity(saved, false);
   }
 
