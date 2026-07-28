@@ -22529,6 +22529,11 @@ async function harvestDeepFetchNightly(DB, opts) {
         } else if (__deepFail.shortBars > _sbBefore) {
           // 원본이 300봉 미만 — 구조적 자격미달이므로 마킹(다음 실행부터 fetch 자체를 건너뜀)
           try { await setState(DB, "hist_meta:" + sym, { ts: now, ineligible: true, reason: "shortBars" }); skippedIneligible++; } catch (e) {}
+        } else if (/404/.test(__deepFail.lastErr || "")) {
+          // [V33.11] 상장폐지·티커변경 등으로 404 가 나는 종목은 몇 번을 다시 받아도 같다.
+          //   종전엔 shortBars 만 마킹해 404 종목은 매 실행마다 재시도되며 예산을 태웠다.
+          //   만료는 짧게(refreshMs) — 티커가 되살아나면 다시 시도되도록.
+          try { await setState(DB, "hist_meta:" + sym, { ts: now, ineligible: true, reason: "http404" }); skippedIneligible++; } catch (e) {}
         }
       }
       // 남은 후보 수를 진단에 싣고, 오프셋은 이번에 훑은 만큼만 전진(다음 실행이 이어받음).
@@ -22609,14 +22614,31 @@ async function aiSelfCheck(DB) {
     try {
       const _dc = await DB.prepare("SELECT (SELECT COUNT(*) FROM state WHERE k LIKE 'hist:%') h, (SELECT COUNT(*) FROM state WHERE k LIKE 'daily:%') d").first();
       const _h = (_dc && _dc.h) || 0, _d = (_dc && _dc.d) || 0;
-      R.deepCoverage = { have: _h, total: _d, pct: _d > 0 ? +(_h / _d * 100).toFixed(1) : null };
+      // [V33.11] ★남은 종목을 "아직 못 받은 것"과 "받을 자격이 없는 것"으로 분리★
+      //   종전엔 커버리지 64%를 무조건 경고로 올렸는데, 실제로는 나머지가 전부 원본 봉수
+      //   300 미만(신규상장·짧은 이력)이거나 티커 소멸(HTTP 404)이라 딥이력이 생길 수 없다.
+      //   이 둘을 섞으면 "확대가 막혔다"는 잘못된 신호가 되므로 pending 을 따로 센다.
+      let _inelig = 0, _inelig404 = 0;
+      try {
+        const _mr = await DB.prepare("SELECT v FROM state WHERE k LIKE 'hist_meta:%'").all();
+        for (const r of ((_mr && _mr.results) || [])) {
+          try { const o = JSON.parse(r.v); if (o && o.ineligible) { _inelig++; if (o.reason === "http404") _inelig404++; } } catch (e) {}
+        }
+      } catch (e) {}
+      const _pending = Math.max(0, _d - _h - _inelig);
+      R.deepCoverage = { have: _h, total: _d, pct: _d > 0 ? +(_h / _d * 100).toFixed(1) : null,
+        ineligible: _inelig, ineligible404: _inelig404, pending: _pending, ceilingReached: _pending === 0 };
       const _dry = await getState(DB, "hv_catchup_dry", null);
       R.harvestCooldownUntil = (_dry && _dry.until) || 0;
-      if (_d > 0 && _h < _d * 0.9) {
-        R.warnings.push("딥이력 커버리지 " + _h + "/" + _d + "(" + (_h / _d * 100).toFixed(0) + "%) — 표본 상한이 여기서 묶임(확대 진행 중)");
+      if (_d > 0 && _h < _d * 0.9 && _pending > 0) {
+        R.warnings.push("딥이력 커버리지 " + _h + "/" + _d + "(" + (_h / _d * 100).toFixed(0) + "%) — 확대 대기 " + _pending + "종목(순환 수집 진행 중)");
+      } else if (_d > 0 && _h < _d) {
+        R.ok.push("딥이력 " + _h + "/" + _d + " — 확대 대기 0. 나머지 " + _inelig + "종목은 원본 봉수 부족(신규상장·짧은 이력)" +
+          (_inelig404 ? " 또는 티커 소멸 " + _inelig404 + "종목" : "") + "이라 딥이력 자격 미달이며, daily 320봉으로는 계속 수확되므로 학습에서 빠지지 않음. " +
+          "표본은 새 거래일이 쌓이는 만큼만 증가하는 게 정상 상태");
       }
       if (R.harvestCooldownUntil > nowT) {
-        R.warnings.push("표본 수확 쿨다운 " + Math.round((R.harvestCooldownUntil - nowT) / 60000) + "분 남음 — 딥이력이 늘면 자동 해제");
+        R.ok.push("표본 수확 쿨다운 " + Math.round((R.harvestCooldownUntil - nowT) / 60000) + "분 — 중복 수확 방지용 대기(자동 해제)");
       }
     } catch (e) {}
     // 표본/클래스 건강
@@ -24496,8 +24518,13 @@ async function _luxCrisisGauge(DB, opts) {
     marketConfirm: marketConfirm, stressFrac: +stressFrac.toFixed(2),
     headlines: headHits, regime: regime,
     defenseScale: level === "위기" ? 0.5 : level === "경계" ? 0.7 : level === "주의" ? 0.88 : 1.0, ts: Date.now() };
+  // [V33.11] ★위기 게이지는 "시장 상태"지 시스템 결함이 아니다★ — 종전엔 평시가 아니기만 하면
+  //   전부 WARN으로 남겨서, 주의/경계가 하루만 이어져도 자가진단이 "경고 17회 반복"으로 집계했다.
+  //   등급이 바뀐 순간의 경계/위기만 WARN(사람이 봐야 할 전이), 나머지는 INFO(정상 관측치).
+  let _prevLv = null; try { const _pg = await getState(DB, "crisis_gauge", null); if (_pg) _prevLv = _pg.level || null; } catch (e) {}
   try { await setState(DB, "crisis_gauge", out); } catch (e) {}
-  try { await log(DB, level === "평시" ? "INFO" : "WARN", null, "[CRISIS] " + level + " " + score + "/100 · VIX " + (vix != null ? vix.toFixed(1) : "?") + " · 시장확증 " + marketConfirm + " · 무력 " + strongN + "/긴장 " + medN + (geoFloor ? " · 플로어 " + geoFloor : "") + (drivers.length ? " · " + drivers.slice(0, 2).join("; ") : "")); } catch (e) {}
+  const _crLog = ((level === "경계" || level === "위기") && _prevLv !== level) ? "WARN" : "INFO";
+  try { await log(DB, _crLog, null, "[CRISIS] " + level + " " + score + "/100 · VIX " + (vix != null ? vix.toFixed(1) : "?") + " · 시장확증 " + marketConfirm + " · 무력 " + strongN + "/긴장 " + medN + (geoFloor ? " · 플로어 " + geoFloor : "") + (drivers.length ? " · " + drivers.slice(0, 2).join("; ") : "")); } catch (e) {}
   return out;
 }
 
@@ -24974,6 +25001,13 @@ async function _luxEventContextCached(DB) {
 function _diagnoseLogMessage(msg) {
   const m = String(msg || "");
   const rules = [
+    // [V33.11] ★컴포넌트 태그 우선 규칙★ — 아래 일반 규칙(실패/부족 등 단어 매칭)보다 먼저 걸러야
+    //   "정상 동작인데 원인 자동분류 안 됨"으로 떨어지지 않는다. 사용자 점검에서 이 셋이
+    //   전부 "원인 불명 경고"로 집계돼 진짜 문제를 가렸다.
+    { re: /^\[CRISIS\]/, d: "지정학·시장 위기 게이지 관측치(주의/경계/위기)입니다 — 시스템 결함이 아니라 시장 상태 기록. 등급이 바뀐 순간만 경고로 올라가고, 같은 등급이 이어지는 건 정상" },
+    { re: /^\[HV-CATCHUP\]/, d: "학습표본 캐치업 수확 — '0건'은 이미 수확한 구간을 중복 적재하지 않는다는 뜻(정상). 새 거래일이 쌓이거나 딥이력 커버리지가 늘어야 증가하며, 그 전엔 쿨다운으로 CPU를 아낍니다" },
+    { re: /^\[DEEPHIST\]|딥이력|todoLeft/i, d: "딥이력(장기 봉) 확대 작업 — 'todoLeft=0'이면 확대 대상이 남지 않았다는 뜻(원본 봉수 300 미만 신규상장·짧은 이력 종목은 자격 미달). 해당 종목도 daily 320봉으로는 계속 수확되므로 학습에서 빠지지 않습니다" },
+    { re: /TIME-CAP|시간\s*상한|벽시계.*한도/i, d: "이번 실행이 시간 상한에 걸려 중단 — 남은 작업은 다음 사이클이 이어받는 순환 구조(정상). 매 사이클 연속 발생하면 유니버스·주기 조정 검토" },
     { re: /fetch fail|시세.*조회.*실패|조회.*실패|batchQuotes|quote.*fail|no data|데이터\s*없/i, d: "외부 데이터 수집 실패(야후/네이버 네트워크·티커 변경·상장폐지 가능) → 해당 종목 시세·신호가 최신이 아닐 수 있음" },
     { re: /표본\s*부족|train\s*부족|샘플\s*부족|생략|N\s*<|표본 \d+/i, d: "학습 표본 부족 → 해당 모델 학습 대기(표본이 쌓이면 자동 재개, 조치 불필요)" },
     { re: /예산|budget|subrequest|한도\s*초과|과부하|1102|cpu/i, d: "CPU/subrequest 예산 소진 → 이번 사이클 일부 작업 스킵(다음 사이클 보완). 반복되면 유니버스·주기 조정 검토" },
@@ -27638,8 +27672,11 @@ export default {
                   const _stop = _mktOpen ? (_n >= 1) : (_n >= 3);
                   const _coolMs = _mktOpen ? 6 * 3600000 : 1800000;   // 장중 6h / 장외 30분
                   await setState(env.DB, "hv_catchup_dry", { n: _stop ? 0 : _n, until: _stop ? Date.now() + _coolMs : 0 });
-                  await log(env.DB, "WARN", null, "[HV-CATCHUP] 0건 생산(" + _n + (_mktOpen ? "/1" : "/3") + ") pool=" + _poolN +
-                    " — 원천 데이터 고갈 추정" + (_stop ? (" → " + (_mktOpen ? "6시간" : "30분") + " 쿨다운(딥이력 확대 필요)") : ""));
+                  // [V33.11] 레벨을 INFO로 내림 — "원천 고갈"은 고장이 아니라 설계상 정상 정상상태다.
+                  //   (이미 수확한 구간을 다시 뽑지 않으므로 새 거래일이 쌓이기 전엔 0건이 맞다.)
+                  //   WARN으로 남기면 자가진단이 이걸 매번 '경고 16회 반복'으로 올려 진짜 문제를 가린다.
+                  await log(env.DB, "INFO", null, "[HV-CATCHUP] 0건 생산(" + _n + (_mktOpen ? "/1" : "/3") + ") pool=" + _poolN +
+                    " — 기존 구간 수확 완료(새 거래일이 쌓여야 증가)" + (_stop ? (" → " + (_mktOpen ? "6시간" : "30분") + " 쿨다운") : ""));
                 }
               }
               }
@@ -27715,6 +27752,16 @@ export default {
                 const _hn2 = (_hc2 && _hc2.h) || 0;
                 await log(env.DB, "INFO", null, "[DEEPHIST] 커버리지 " + _hn + "→" + _hn2 + "/" + _dn +
                   "(" + (_hn2 / _dn * 100).toFixed(0) + "%)" + (_mktOpen3 ? " [장중축소]" : "") + " " + (_dr || "(반환없음)"));
+                // [V33.11] ★확대 후보가 0이면 쉬게★ 남은 종목이 전부 '수집완료 또는 자격미달'이면
+                //   더 받을 게 없는데도 커버리지가 90% 미만이라는 이유로 30분마다 계속 재진입해
+                //   fetch 예산과 D1 을 헛되이 태웠다(로그: todoLeft=0 인데 매번 실행).
+                //   후보가 없으면 6시간 쉬고, 그 사실을 로그에 분명히 남긴다.
+                if (__deepTodoLeft === 0 && _hn2 <= _hn) {
+                  await setState(env.DB, "deephist_lock", Date.now() + 6 * 3600000 - (_mktOpen3 ? 1800000 : 1200000));
+                  await log(env.DB, "INFO", null, "[DEEPHIST] 확대 후보 0 — 남은 " + (_dn - _hn2) +
+                    "종목은 원본 봉수 300 미만(신규상장·짧은 이력)이라 딥이력 자격 미달. 6시간 대기." +
+                    " 해당 종목도 daily(320봉)로는 계속 수확되므로 학습에서 빠지진 않음.");
+                }
                 // [V33.10] 딥이력이 "실제로 늘었을 때만" 수확 쿨다운을 해제한다.
                 //   종전엔 커버리지가 그대로여도(625→625) 무조건 해제해, HV-CATCHUP 이 다시 0건을
                 //   생산하고 곧바로 재쿨다운되는 왕복만 반복했다.
