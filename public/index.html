@@ -895,7 +895,8 @@ button.btn.loading::after{content:'조회 중…';position:absolute;inset:0;disp
 }
 
 /* ── iPad 최적화 (가로 1024~1440 / 세로 768~834) ── */
-@media (min-width:768px) and (max-width:1440px){
+/* [V33.9] 범위를 768~999(아이패드 세로)로 좁힘 — 1000px 이상(가로)은 PC와 완전히 동일해야 한다. */
+@media (min-width:768px) and (max-width:999px){
   .sidebar{width:240px;}
   /* 터치 타깃 확대 */
   .nav-item{padding:13px 18px;font-size:12px;}
@@ -932,7 +933,7 @@ button.btn.loading::after{content:'조회 중…';position:absolute;inset:0;disp
 }
 
 /* iPad 가로: 정보바 4열 유지, 대시보드 2열 */
-@media (min-width:1024px) and (max-width:1440px) and (orientation:landscape){
+@media (min-width:1024px) and (max-width:999px) and (orientation:landscape){
   .content-topbar{grid-template-columns:1fr 1fr 1fr 1fr;}
   .dash-grid{grid-template-columns:1fr 1fr;}
 }
@@ -1861,7 +1862,8 @@ html[data-theme="light"] .table tbody tr:nth-child(even){background:rgba(20,30,5
   flex:1 1 200px;min-width:0;}
 /* [V62] 아이패드 중간 폭(700~1280): 1줄 3개 기준 → 5개면 3+2 배치.
    기존엔 2+2+1이라 마지막(KOSDAQ) 카드 하나가 풀폭으로 늘어나 보였음 */
-@media(min-width:700px) and (max-width:1280px){
+/* [V33.9] 1000px 이상은 PC와 동일하게 한 줄에 전부 — 범위를 999px 까지로 좁힘 */
+@media(min-width:700px) and (max-width:999px){
   .fv-idx{flex-basis:30%;}
 }
 .fv-idx-top{display:flex;align-items:baseline;gap:8px;}
@@ -1885,7 +1887,7 @@ html[data-theme="light"] .table tbody tr:nth-child(even){background:rgba(20,30,5
 
 /* TOP MOVERS + 히트맵 */
 .fv-mid{display:grid;grid-template-columns:1fr 1.1fr;gap:8px;}
-@media(max-width:1100px){.fv-mid{grid-template-columns:1fr;}}
+@media(max-width:999px){.fv-mid{grid-template-columns:1fr;}}   /* [V33.9] 1000px 이상은 PC와 동일한 2단 */
 .fv-movers-grid{display:grid;grid-template-columns:1fr 1fr;}
 .fv-movers-grid table:first-child{border-right:1px solid var(--bd2);}
 .fv-table{width:100%;border-collapse:collapse;font-family:Verdana,Arial,sans-serif;font-size:10px;}
@@ -2776,7 +2778,8 @@ html[data-theme="light"] .table tbody tr:hover{background:rgba(9,105,218,.045);}
 @media (prefers-reduced-motion:reduce){.sb-auto-dot{animation:none;}}
 
 /* [V33.3] 아이패드에서만 대시보드 지수 카드 6개를 축소 — PC/폰은 그대로 */
-@media (min-width:768px) and (max-width:1440px){
+/* [V33.9] 지수 카드 축소도 아이패드 세로에만 — 가로는 PC와 동일 */
+@media (min-width:768px) and (max-width:999px){
   .fv-index-row{gap:6px;}
   .fv-idx{flex-basis:150px;padding:6px 9px 5px;}
   .fv-idx-name{font-size:10px;letter-spacing:.2px;}
@@ -2787,21 +2790,37 @@ html[data-theme="light"] .table tbody tr:hover{background:rgba(9,105,218,.045);}
   .fv-breadth-top{font-size:8.5px;margin-bottom:4px;}
 }
 
-/* [V33.8] 아이패드 가로를 PC 화면과 같게 — 지수 6장 한 줄 + TOP MOVERS/MAP 2단.
-   기존 규칙 두 개가 여기서 걸렸다:
-     · @media(700~1280) .fv-idx{flex-basis:30%} → 한 줄 3장으로 강제
-     · @media(max-width:1100) .fv-mid{1열}      → 무버스와 히트맵이 세로로 쌓임
-   지수 행은 grid-auto-flow:column 으로 개수와 무관하게 항상 한 줄에 담는다. */
-@media(min-width:1000px) and (max-width:1279px){
-  .fv-index-row{display:grid;grid-auto-flow:column;grid-auto-columns:minmax(0,1fr);gap:5px;}
-  .fv-idx{flex-basis:auto;min-width:0;padding:5px 7px 4px;}
-  .fv-idx-name{font-size:9px;letter-spacing:0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
-  .fv-idx-price{font-size:12px;}
-  .fv-idx-chg{font-size:9px;}
-  .fv-idx-chart{height:30px;margin-top:3px;}
+/* [V33.9] 768px 이상은 PC와 동일한 대시보드. 아이패드에서 다르게 보이게 만들던 옛 규칙 두 개를
+   여기서 되돌린다(둘 다 뒤에 선언돼 있어 이 블록이 이겨야 한다):
+     · @media(700~1280) .fv-idx{flex-basis:30%} → 지수가 한 줄 3장으로 강제되던 것
+     · @media(max-width:1100) .fv-mid{1열}      → 무버스와 히트맵이 세로로 쌓이던 것
+   지수 행은 grid-auto-flow:column 으로 개수와 무관하게 PC처럼 항상 한 줄에 담는다. */
+@media(min-width:768px){
+  .fv-index-row{display:grid;grid-auto-flow:column;grid-auto-columns:minmax(0,1fr);gap:8px;}
+  .fv-idx{flex-basis:auto;min-width:0;}
+  .fv-idx-name{white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
+}
+@media(min-width:1000px){
   .fv-mid{grid-template-columns:1fr 1.1fr;}
-  #fvHeatmap{height:300px!important;}
-  .fv-mid .fv-movers-grid{max-height:352px;}
+}
+/* [V33.9] ★지표&환율 표가 좁은 화면에서 잘려 우측 열을 볼 수 없던 버그★
+   .macro-table-wrap 은 overflow-x:auto 로 선언돼 있었지만, 이후 스킨 레이어 세 곳이
+   (모서리 라운딩 목적으로) overflow:hidden 을 덮어써 가로 스크롤이 죽어 있었다.
+   세로만 hidden 으로 두고 가로 스크롤을 되살린다 — 라운딩은 그대로 유지된다. */
+.macro-table-wrap{overflow-x:auto!important;overflow-y:hidden!important;-webkit-overflow-scrolling:touch;}
+.macro-table-wrap::-webkit-scrollbar{height:4px;}
+.macro-table-wrap::-webkit-scrollbar-thumb{background:var(--bd);border-radius:3px;}
+
+/* [V33.9] 패널 헤더 오른쪽 툴바(맵 기간·시장 버튼 등)가 패널 폭을 넘으면 .fv-panel{overflow:hidden}
+   때문에 잘려서 마지막 버튼을 누를 수 없었다(아이패드 1080px에서 ↻ 새로고침이 잘림).
+   PC와 같은 배치를 유지하되, 넘칠 때만 가로 스크롤되게 한다. */
+@media(min-width:768px) and (max-width:1400px){
+  .fv-panel-head>span[style*="margin-left:auto"]{
+    overflow-x:auto;-webkit-overflow-scrolling:touch;flex-wrap:nowrap;min-width:0;
+    scrollbar-width:none;
+  }
+  .fv-panel-head>span[style*="margin-left:auto"]::-webkit-scrollbar{height:0;}
+  .fv-panel-head>span[style*="margin-left:auto"]>*{flex:0 0 auto;}
 }
 
 /* [V33.3] PC — 지정학·위기 게이지 / 활성 이슈·레짐 패널 비율 교정.
@@ -2817,29 +2836,8 @@ html[data-theme="light"] .table tbody tr:hover{background:rgba(9,105,218,.045);}
 }
 
 /* iPad(768~1440) 확대 규칙도 같은 비율로 축소 — 기존 240/200 → 200/176 */
-/* [V33.8] 1280px 이상은 PC와 동일한 좌측 폭(168)을 쓴다 — 아이패드 Pro 13"도 PC 화면과 같게 */
-@media (min-width:768px) and (max-width:1279px){
-  .sidebar{width:184px;}
-}
-/* 아이패드 가로에서 우측 레일까지 함께 뜨므로 좌측을 더 줄여 본문 폭을 남긴다 */
-@media (min-width:1000px) and (max-width:1279px){
-  .sidebar{width:152px;}
-  .nav-item{padding:9px 11px;font-size:10px;}
-  .nav-item-label{font-size:10px;}
-  .sb-brand-name{font-size:11px;letter-spacing:1px;}
-  .sb-status{padding:7px 10px;}
-  .sb-actions{padding:8px 7px;}
-}
-@media (min-width:768px) and (max-width:1279px){
-  .nav-item{padding:11px 14px;font-size:11px;}
-  .nav-item-icon{font-size:12px;}
-  .sb-run-btn{padding:11px;font-size:11px;}
-  .sb-btn-row .sb-btn{padding:8px 2px;font-size:9.5px;}
-}
-@media (min-width:768px) and (max-width:834px) and (orientation:portrait){
-  .sidebar{width:164px;}
-  .sb-btn-row .sb-btn{padding:7px 1px;font-size:9px;}
-}
+/* [V33.9] 아이패드 전용 축소를 전부 제거 — 768px 이상은 PC와 완전히 동일한 값(사용자 요청:
+   "글씨가 작게 보여도 아이패드와 컴퓨터가 똑같이 보이게"). 좌측 168 / 우측 190 고정. */
 
 /* ── ② 라이트 모드 가독성 보정 ──
    어두운 배경 전제로 하드코딩된 색들이 흰 배경에서 흐려지던 곳을 일괄 교정. */
@@ -3070,17 +3068,36 @@ html[data-theme="light"] ::placeholder{color:#8fa0b8;opacity:1;}
   #page-nnviz .nnv-tabs::-webkit-scrollbar{height:0;}
   #page-nnviz .nnv-tab{flex:0 0 auto;}
   /* 모바일 전용 인라인 전환기 + 운용상태 (우측 사이드바가 없으므로) */
-  .m-brainbar{display:flex!important;}
+  .m-brainbar{display:grid!important;}
   .m-aimode{display:block!important;}
+  /* [V33.9] 관리 버튼(재학습·GitHub·새로고침)은 기본 접힘 — 평소엔 전환 버튼만 크게 보이게.
+     종전엔 이 3개가 한 줄에 눌려 글자가 잘리고 전환 버튼까지 밀려 조작이 어려웠다. */
+  /* 이 div 는 인라인 style="display:flex" 를 갖고 있어 !important 없이는 덮이지 않는다 */
+  #page-nnviz .nnv-head>div:last-child{display:none!important;}
+  #page-nnviz .nnv-head.tools-open>div:last-child{
+    display:grid!important;grid-template-columns:1fr 1fr;gap:6px;width:100%;margin-top:8px;
+  }
+  #page-nnviz .nnv-head.tools-open .nnv-btn{
+    flex:none;width:100%;padding:11px 8px;font-size:11px;white-space:normal;text-align:center;
+  }
+  #page-nnviz .nnv-head.tools-open .nnv-btn:last-child{grid-column:1/-1;}
 }
 /* 모바일 전용 요소는 PC/패드에서 완전히 감춘다 */
 .m-brainbar,.m-aimode{display:none;}
-.m-brainbar{gap:6px;margin:0 0 12px;}
+/* [V33.9] 모바일 전환 컨트롤 — 한 줄 4개(글자 잘림·화면 밖 삐져나감)에서 2×2 그리드로.
+   각 버튼 최소 44px 높이로 터치 타깃을 확보하고, 관리 도구는 마지막 줄 토글로 뺐다. */
+.m-brainbar{grid-template-columns:1fr 1fr;gap:6px;margin:0 0 12px;}
 .m-brainbar button{
-  flex:1 1 0;padding:9px 6px;border:1px solid #1e2c48;border-radius:10px;background:rgba(20,30,52,.6);
-  color:#7c90b5;font-family:'IBM Plex Mono',monospace;font-size:11px;cursor:pointer;
+  min-height:44px;padding:8px 6px;border:1px solid #1e2c48;border-radius:10px;background:rgba(20,30,52,.6);
+  color:#7c90b5;font-family:'IBM Plex Mono',monospace;font-size:11.5px;cursor:pointer;
+  display:flex;align-items:center;justify-content:center;gap:5px;
+  white-space:nowrap;overflow:hidden;text-overflow:ellipsis;
 }
-.m-brainbar button.active{color:#eaf2ff;background:rgba(56,189,248,.16);border-color:#38bdf8;}
+.m-brainbar button:active{transform:scale(.98);}
+.m-brainbar button.active{color:#eaf2ff;background:rgba(56,189,248,.16);border-color:#38bdf8;font-weight:700;}
+.m-brainbar button[data-tools]{grid-column:1/-1;min-height:38px;font-size:10.5px;color:#5f79a2;
+  background:transparent;border-style:dashed;}
+.m-brainbar button[data-tools].on{color:#8fd0ff;border-color:#38bdf8;border-style:solid;}
 .m-aimode{
   margin:0 0 12px;padding:10px 12px;border:1px solid #17233e;border-radius:12px;
   background:linear-gradient(180deg,#090e1a,#060910);
@@ -7653,10 +7670,12 @@ html[data-theme="light"] .m-brainbar button.active{color:#0b4f9e;background:rgba
       svg += poly(bL, PY, 'rgba(150,167,189,.65)', 0.8, '3 2');
     }
     // 캔들 + [V33.7] 구간 최고/최저 캔들 표시
-    var hiI = 0, loI = 0;
-    for (i = 1; i < n; i++) {
-      if (show[i].h > show[hiI].h) hiI = i;
-      if (show[i].l < show[loI].l) loI = i;
+    // [V33.9] h/l 이 없는 봉이 섞이면 비교가 NaN 이 되어 라벨 좌표가 깨진다 — 유효한 봉만 후보로.
+    var hiI = -1, loI = -1;
+    for (i = 0; i < n; i++) {
+      var _h = show[i] && show[i].h, _l = show[i] && show[i].l;
+      if (typeof _h === 'number' && isFinite(_h) && (hiI < 0 || _h > show[hiI].h)) hiI = i;
+      if (typeof _l === 'number' && isFinite(_l) && (loI < 0 || _l < show[loI].l)) loI = i;
     }
     for (i = 0; i < n; i++) {
       var c = show[i], x = X(i), up = c.c >= c.o, col = up ? PC_UP : PC_DN;
@@ -7665,7 +7684,7 @@ html[data-theme="light"] .m-brainbar button.active{color:#0b4f9e;background:rgba
       svg += '<rect x="' + (x - cw / 2).toFixed(1) + '" y="' + Math.min(yo, yc).toFixed(1) + '" width="' + cw.toFixed(1) + '" height="' + bh.toFixed(1) + '" fill="' + col + '"/>';
     }
     // [V33.7] 구간 최고가·최저가를 해당 캔들 위/아래에 작은 글씨로 — 어디가 고점/저점인지 바로 보이게
-    (function(){
+    if (hiI >= 0 && loI >= 0) (function(){
       var hx = X(hiI), hy = PY(show[hiI].h), lxx = X(loI), ly = PY(show[loI].l);
       var ha = hx < 40 ? 'start' : (hx > W - padR - 40 ? 'end' : 'middle');
       var la = lxx < 40 ? 'start' : (lxx > W - padR - 40 ? 'end' : 'middle');
@@ -12325,34 +12344,6 @@ html[data-theme="light"] #page-nnviz .nlv-tp-num .p{color:#0b6cd4;}
   #page-nnviz .nlv-hero,#page-nnviz .nlv-lower{grid-template-columns:1fr;}
   #page-nnviz .nlv-feed{max-height:230px;}
 }
-/* 아이패드 가로 — 2단은 유지하되 내부를 조밀하게 (라벨/값 칸 축소, 폰트 한 단계 down) */
-@media(min-width:1000px) and (max-width:1279px){
-  #page-nnviz .nnviz-content{margin:10px 12px 14px;padding:14px 14px 16px;}
-  #page-nnviz .nlv-hero,#page-nnviz .nlv-lower{gap:9px;}
-  #page-nnviz .nlv-fstep{grid-template-columns:80px 1fr 62px;gap:7px;}
-  #page-nnviz .nlv-fstep .fl{font-size:9px;}
-  #page-nnviz .nlv-fstep .fv{font-size:10.5px;}
-  #page-nnviz .nlv-tp{padding:10px 11px 5px;gap:8px;}
-  #page-nnviz .nlv-tp-id .sym{font-size:17px;}
-  #page-nnviz .nlv-tp-id .nm{max-width:150px;font-size:9.5px;}
-  #page-nnviz .nlv-tp-num .p{font-size:21px;}
-  #page-nnviz .nlv-tp-num .vd{font-size:9px;}
-  #page-nnviz .nlv-stat .v{font-size:13px;}
-  #page-nnviz .nlv-stat .k{font-size:8px;letter-spacing:1px;}
-  #page-nnviz .nlv-top .s{font-size:10.5px;}
-  #page-nnviz .nlv-line{grid-template-columns:52px 1fr;font-size:10px;padding:3px 9px;}
-  #page-nnviz .nlv-step{font-size:9.5px;}
-  #page-nnviz .nlv-sec-h{padding:8px 11px;font-size:9px;letter-spacing:1.6px;}
-  #page-nnviz .nlv-picks-grid{grid-template-columns:repeat(auto-fill,minmax(132px,1fr));}
-  #page-nnviz .nnv-head>div:last-child{gap:5px;}
-  #page-nnviz .nnv-btn{font-size:10px;padding:5px 8px;}
-}
-@media(max-width:640px){
-    #page-nnviz .nlv-kpi{grid-template-columns:repeat(2,1fr);}
-  #page-nnviz .nlv-fstep{grid-template-columns:84px 1fr 62px;gap:7px;}
-  #page-nnviz .nlv-strip{padding:8px 10px;}
-  #page-nnviz .nlv-strip-tags{margin-left:0;flex-basis:100%;}
-}
 html[data-theme="light"] #page-nnviz .nlv-core,html[data-theme="light"] #page-nnviz .nlv-funnel-wrap,
 html[data-theme="light"] #page-nnviz .nlv-panel,html[data-theme="light"] #page-nnviz .nlv-strip{background:linear-gradient(180deg,#eef3fb,#e6edf8);border-color:#cdd9ee;}
 html[data-theme="light"] #page-nnviz .nlv-step b,html[data-theme="light"] #page-nnviz .nlv-line .b em{color:#12233f;}
@@ -13017,6 +13008,16 @@ html[data-theme="light"] #page-nnviz .nlv-sec-h{border-color:#d5dfee;}
     fetch('/api/whatif?factor='+WI.factor+'&shock='+WI.shock+'&speed='+WI.speed+(WI.sym?'&sym='+encodeURIComponent(WI.sym):'')).then(function(r){return r.json();}).then(function(d){
       WI.busy=false; tbl.style.opacity='1';
       if(!d||d.error){ tbl.innerHTML='<div class="nnv-empty">실패: '+((d&&d.error)||'응답 없음')+'</div>'; sum.innerHTML=''; return; }
+      // [V33.9] ★"🌊 undefined undefined%p" 가 그대로 노출되던 문제★
+      //   error 없이 비어 있거나 필드가 빠진 응답(예: 민감도 산출 전)도 그대로 렌더돼
+      //   시나리오 카드와 안내문에 undefined 가 찍혔다. 필수 필드가 없으면 빈 상태로 처리한다.
+      if(d.factorLabel == null || d.factorLast == null || !Array.isArray(d.items)){
+        sum.innerHTML='<div class="wi-card"><div class="k">시나리오</div>'
+          +'<div class="v" style="color:var(--wi-faint);font-size:15px;">산출 대기</div>'
+          +'<div class="m">민감도 계산에 필요한 과거 데이터가 아직 모이지 않았습니다. 엔진이 일봉을 더 쌓으면 표시됩니다.</div></div>';
+        tbl.innerHTML='<div class="nnv-empty">아직 계산할 수 있는 종목이 없습니다</div>';
+        return;
+      }
       var u=WI.unit[WI.factor];
       var hd=d.horizonDays||20, months=(hd/21).toFixed(1);
       var fast=d.speed==='fast';
@@ -13247,16 +13248,7 @@ html[data-theme="light"] #page-nnviz .nlv-sec-h{border-color:#d5dfee;}
 /* [V33.8] 아이패드 가로(1024~1366)에서도 PC와 같은 화면이 되도록 임계값을 1000px로 낮춤.
    세로(768~999)는 폭이 부족해 종전대로 레일을 감춘다. */
 @media(max-width:999px){ .rail{display:none;} }
-/* 아이패드 가로 구간 — 좌·우 사이드바를 한 단계 더 좁혀 본문 폭을 확보 */
-@media(min-width:1000px) and (max-width:1279px){
-  .rail{width:168px;flex-basis:168px;}
-  .rail-models{grid-template-columns:1fr 1fr;gap:3px;}
-  .rail-model{font-size:8.5px;padding:5px 2px;}
-  .rail-link{font-size:9px;padding:6px 2px;}
-  .rail-ai{font-size:9.5px;}
-  .rail-item .r-sym{font-size:10.5px;}
-  .rail-item .r-chg{font-size:10px;}
-}
+
 /* 빠른검색 FAB이 우측 사이드바 위에 겹치지 않게 — 레일 폭만큼 왼쪽으로 밀어준다 */
 @media(min-width:1000px){ .cmdk-fab{right:calc(var(--rail-w,0px) + 18px);} }
 html[data-theme="light"] .rail{background:#fff;}
@@ -13747,11 +13739,21 @@ html[data-theme="light"] .rail{background:#fff;}
       bb.className = 'm-brainbar';
       bb.innerHTML = '<button type="button" data-view="live" class="active">◉ 작동 화면</button>'
         + '<button type="button" data-view="struct">◈ 구조 관측</button>'
-        + '<button type="button" data-goto="report">📋 리포트</button>'
-        + '<button type="button" data-goto="whatif">🧪 WHAT-IF</button>';
+        + '<button type="button" data-goto="report">📋 AI 리포트</button>'
+        + '<button type="button" data-goto="whatif">🧪 WHAT-IF</button>'
+        + '<button type="button" data-tools="1">⚙ 관리 도구</button>';
       bb.addEventListener('click', function(e){
         var b = e.target.closest ? e.target.closest('button') : null;
         if(!b) return;
+        if(b.getAttribute('data-tools')){
+          var head = document.querySelector('#page-nnviz .nnv-head');
+          if(head){
+            var open = head.classList.toggle('tools-open');
+            b.classList.toggle('on', open);
+            b.textContent = open ? '⚙ 관리 도구 닫기' : '⚙ 관리 도구';
+          }
+          return;
+        }
         if(b.getAttribute('data-goto')) go(b.getAttribute('data-goto'));
         else setBrainView(b.getAttribute('data-view'));
       });
@@ -13944,7 +13946,13 @@ html[data-theme="light"] .rail{background:#fff;}
   function drawLineChart(box, cs, sym){
     var tf = $id('nlvTf');
     var W = 460, H = 190, padL = 6, padR = 52, padT = 12, padB = 18;
-    var closes = cs.map(function(c){ return c.c; }).filter(function(v){ return typeof v === 'number'; });
+    // [V33.9] null 종가를 걸러낼 때 원본 인덱스도 같이 들고 간다.
+    //   종전엔 closes 만 걸러 쓰고 날짜 라벨은 cs[cs.length-n] 으로 역산해, 중간에 null 이
+    //   하나라도 있으면 축의 시작 날짜가 엉뚱한 봉을 가리켰다.
+    var closes = [], srcIdx = [];
+    for(var ci=0; ci<cs.length; ci++){
+      if(cs[ci] && typeof cs[ci].c === 'number' && isFinite(cs[ci].c)){ closes.push(cs[ci].c); srcIdx.push(ci); }
+    }
     if(closes.length < 2){ box.innerHTML = '<div class="nlv-empty">일봉 데이터 부족</div>'; return; }
     var n = closes.length;
     var min = Math.min.apply(null, closes), max = Math.max.apply(null, closes);
@@ -13980,8 +13988,8 @@ html[data-theme="light"] .rail{background:#fff;}
     g += '<circle class="lc-dot" cx="'+X(n-1).toFixed(1)+'" cy="'+Y(closes[n-1]).toFixed(1)+'" r="3"/>';
     // 날짜축(양끝)
     var dl = function(c){ var t = new Date((c.t||0)*1000); return (t.getMonth()+1)+'/'+t.getDate(); };
-    g += '<text class="lc-axis" x="'+padL+'" y="'+(H-5)+'">'+dl(cs[cs.length-n])+'</text>';
-    g += '<text class="lc-axis" x="'+(W-padR)+'" y="'+(H-5)+'" text-anchor="end">'+dl(cs[cs.length-1])+'</text>';
+    g += '<text class="lc-axis" x="'+padL+'" y="'+(H-5)+'">'+dl(cs[srcIdx[0]])+'</text>';
+    g += '<text class="lc-axis" x="'+(W-padR)+'" y="'+(H-5)+'" text-anchor="end">'+dl(cs[srcIdx[n-1]])+'</text>';
     g += '</svg>';
     box.innerHTML = g;
     box.style.cursor = 'pointer';
@@ -14286,7 +14294,9 @@ html[data-theme="light"] .rail{background:#fff;}
   }
 
   function startFeed(){
-    stopFeed();
+    // [V33.9] loadLive 가 픽·모드 두 경로에서 paintLive 를 부르므로 그대로 두면 타이머가
+    //   두 번 걸리고 폴링이 배로 났다. 이미 돌고 있으면 아무것도 하지 않는다.
+    if(FEED.timer) return;
     var feed = $id('nlvFeed');
     if(feed && !FEED.booted) feed.innerHTML = '<div class="nlv-empty">엔진 로그를 불러오는 중…</div>';
     pollFeed();
