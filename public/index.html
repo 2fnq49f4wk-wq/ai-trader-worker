@@ -14140,15 +14140,18 @@ html[data-theme="light"] .rail{background:#fff;}
     // [V33.13] ★오늘 늘어난 학습 표본★ — 표본이 실제로 자라는지 화면에서 바로 확인.
     var sm = mode.samples;
     if(sm && sm.total != null){
-      // [V33.31] 증가분은 총량 스냅샷의 차이로 낸다(적재 시각 컬럼이 없어서).
-      //   기준이 "어제"면 그렇게, 아직 하루가 안 모였으면 "N시간 전 대비"로 정직하게 표기한다.
-      var dl = sm.delta, dlab = sm.deltaLabel || '기준 대비';
-      var dtxt = (dl == null)
-        ? '<span style="color:var(--t3);">기준점 수집 중</span>'
-        : ('<b style="color:'+(dl>0?'var(--pos)':'var(--t3)')+';">'+(dl>0?'+':'')+dl.toLocaleString()+'</b>건');
+      // [V33.32] 이제 적재 시각(ins_ts) 컬럼으로 실측한다 — 추정 기준점이 없다.
+      var td = sm.today, yd = sm.yesterday;
+      var num = function(v){ return '<b style="color:'+(v>0?'var(--pos)':'var(--t3)')+';">'+(v>0?'+':'')+(v||0).toLocaleString()+'</b>'; };
+      // [V33.32] 캐시된 값을 "지금 값"처럼 보이지 않게 — 3분 넘게 묵었으면 기준 시각을 밝힌다.
+      var ageTxt = '';
+      if(sm.measuredAt){
+        var ageMin = Math.floor((Date.now() - sm.measuredAt) / 60000);
+        if(ageMin >= 3) ageTxt = ' <span style="color:var(--t3);">('+ageMin+'분 전 기준)</span>';
+      }
       h += '<span class="k">학습 표본</span>'
         + '<div class="diag">누적 <b>'+sm.total.toLocaleString()+'</b>건 · featVer '+esc(sm.featVer)+'</div>'
-        + '<div class="diag" style="margin-top:2px;">'+esc(dlab)+' '+dtxt+'</div>';
+        + '<div class="diag" style="margin-top:2px;">오늘 '+num(td)+'건 · 어제 '+num(yd)+'건'+ageTxt+'</div>';
     }
     h += '<span class="k">위원회</span><div class="row">'
       + '<span class="m">MIND '+st(c.mind)+'</span><span class="m">DNN '+st(c.dnn)+'</span><span class="m">GBDT '+st(c.gbdt)+'</span>'

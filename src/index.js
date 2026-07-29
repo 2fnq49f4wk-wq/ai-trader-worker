@@ -14893,7 +14893,7 @@ async function handleRequest(request, env, ctx) {
       //   같은 지역에서 누가 한 번 빌드하면 이후 요청은 아이솔레이트가 달라도 즉시 응답.
       //   관측용이라 stale 허용을 6시간으로 넉넉히 둬 콜드 빌드 빈도 자체를 낮춘다.
       const _safe = function (fn) { try { const p = fn(); return Promise.resolve(p)["catch"](function () { return null; }); } catch (e) { return Promise.resolve(null); } };
-      return await swrJson("ml-status", 30000, 6 * 3600000, async function () {
+      return await swrJson("ml-status", 30000, 3600000, async function () {
         const [a, b2, c2, d2, e2, f2, g2, h2, i2, j2, k2] = await Promise.all([
           _safe(function () { return (typeof mlStatus === "function") ? mlStatus(env.DB) : null; }),
           _safe(function () { return (typeof mlLoadEventMemory === "function") ? mlLoadEventMemory(env.DB) : null; }),
@@ -14956,7 +14956,7 @@ async function handleRequest(request, env, ctx) {
     //   부르지만 첫 호출이 끝나지 않아 배지가 영영 "확인 중…"에 머물렀다.
     //   병렬화 + SWR(L2 공유). 모델 신뢰상태는 야간 학습에서만 바뀌므로 stale 허용이 커도 안전.
     if (path === "/api/ai-mode") {
-      return await swrJson("ai-mode", 60000, 6 * 3600000, async function () {
+      return await swrJson("ai-mode", 60000, 3600000, async function () {
         // [V33.13] ★"AI 상태가 화면 전환할 때마다 다르고 규칙엔진 비상가동으로 뜨던" 근본원인★
         //   종전엔 배지 하나 그리려고 mlDNNLoad(32.3MB·85청크)를 요청 경로에서 통째로 읽었다.
         //   D1이 조금만 바쁘면 그중 한 청크가 실패 → null → dnnOk=false → RULE_FALLBACK.
@@ -15019,41 +15019,22 @@ async function handleRequest(request, env, ctx) {
           const _cc = await _mlCountsCached(env.DB);
           const _total = (_cc && _cc.curTotal) || 0;
           const _now = Date.now();
-          const _gk = "ml_growth:v" + _fv;
-          let _g = await getState(env.DB, _gk, null);
-          let _pts = (_g && Array.isArray(_g.pts)) ? _g.pts : [];
-          const _last = _pts.length ? _pts[_pts.length - 1] : null;
-          if (!_last || (_now - _last.t) > 600000) {          // 10분에 한 번만 기록(쓰기 부담 최소화)
-            _pts.push({ t: _now, n: _total });
-            _pts = _pts.filter(function (p) { return _now - p.t < 8 * 86400000; }).slice(-80);
-            try { ctx.waitUntil(setState(env.DB, _gk, { pts: _pts })); } catch (e) {}
-          }
           // [V33.31] ★"어제 대비 증가분"으로 표시★ 종전 "오늘" 기준은 배포 직후 첫 스냅샷이
           //   이미 증가분을 포함한 시점에 찍혀 0으로 보였다. 하루 단위 기준점을 따로 남겨
           //   "어제 같은 기준 대비 얼마나 늘었는지"를 보여준다.
           //   어제 기준점이 아직 없으면(첫날) 0 으로 단정하지 않고, 실제 확보된 가장 오래된
           //   스냅샷을 기준으로 "N시간 전 대비"로 정직하게 표기한다.
-          const _kstDay = Math.floor((_now + 9 * 3600000) / 86400000);   // KST 기준 일련일
-          const _dk = "ml_daily:v" + _fv;
-          let _dd = await getState(env.DB, _dk, null);
-          let _days = (_dd && _dd.d) ? _dd.d : {};                       // { kstDay: 그날 처음 관측된 총량 }
-          if (_days[_kstDay] == null) {
-            _days[_kstDay] = _total;
-            for (const k of Object.keys(_days)) if (_kstDay - _num(k, 0) > 10) delete _days[k];   // 10일치만 보관
-            try { ctx.waitUntil(setState(env.DB, _dk, { d: _days })); } catch (e) {}
-          }
-          const _yBase = _days[_kstDay - 1];
-          let _delta = null, _deltaLabel = null;
-          if (_yBase != null) {
-            _delta = Math.max(0, _total - _num(_yBase, 0));
-            _deltaLabel = "어제 대비";
-          } else if (_pts.length) {
-            const _oldest = _pts[0];
-            _delta = Math.max(0, _total - _num(_oldest.n, 0));
-            const _hrs = Math.max(1, Math.round((_now - _oldest.t) / 3600000));
-            _deltaLabel = _hrs + "시간 전 대비";
-          }
-          samples = { total: _total, featVer: _fv, delta: _delta, deltaLabel: _deltaLabel, tracking: _pts.length };
+          // [V33.32] ins_ts(적재 시각) 컬럼으로 정확히 센다 — 추정이 아니라 실측이다.
+          //   KST 자정 경계로 오늘/어제를 나눈다. 인덱스(idx_samples_insts)로 커버된다.
+          const _kstMid = Math.floor((_now + 9 * 3600000) / 86400000) * 86400000 - 9 * 3600000;
+          const [_rToday, _rYday] = await Promise.all([
+            env.DB.prepare("SELECT COUNT(*) c FROM ml_samples WHERE ins_ts >= ?").bind(_kstMid).first(),
+            env.DB.prepare("SELECT COUNT(*) c FROM ml_samples WHERE ins_ts >= ? AND ins_ts < ?").bind(_kstMid - 86400000, _kstMid).first()
+          ]);
+          samples = { total: _total, featVer: _fv,
+                      today: (_rToday && _rToday.c) || 0,
+                      yesterday: (_rYday && _rYday.c) || 0,
+                      measuredAt: _now };
         } catch (e) {}
         const _out = { aiReady: aiReady, mode: aiReady ? "AI_AUTONOMOUS" : "RULE_FALLBACK",
                  committee: { mind: mindOk, dnn: dnnOk, gbdt: gbdtOk, xgb: xgb, lgb: lgb, cat: cat },
@@ -15132,7 +15113,7 @@ async function handleRequest(request, env, ctx) {
 
     // [V32.51] GET /api/events — 현재 활성 이슈·레짐·순섹터선호·다음 FOMC(대시보드 "활성 이슈" 패널용). SWR 2분.
     if (path === "/api/events") {
-      return await swrJson("events", 120000, 6 * 3600000, async function () {
+      return await swrJson("events", 120000, 3600000, async function () {
         let ev = { evs: [], mc: 0.7, level: "평시", conf: {}, eff: {} }; try { ev = await _luxEventContext(env.DB); } catch (e) {}
         let shock = { mode: "none", sev: 0 }; try { shock = await _luxMarketShock(env.DB); } catch (e) {}
         const fp = _fomcProximity(Date.now());
@@ -16064,7 +16045,7 @@ async function handleRequest(request, env, ctx) {
     //   swrJson 으로 감싸 colo 공유 Edge Cache(L2)를 태운다. 픽은 야간 스캔 산출물이라
     //   60초 fresh / 6시간 stale 허용이 안전하다.
     if (path === "/api/ai-picks") {
-      return await swrJson("ai-picks", 60000, 6 * 3600000, async function () {
+      return await swrJson("ai-picks", 60000, 3600000, async function () {
       const out = { ts: null, picks: [], scan: null };
       const _S = await getStates(env.DB, ["ai_picks:us", "ai_picks:kr", "ai_picks:cm", "ai_picks:scan"]);
       for (const mk of ["us", "kr", "cm"]) {
@@ -19670,6 +19651,12 @@ async function mlEnsureTable(DB) {
     //   최대 120만행 풀스캔+정렬이었다 → D1 부하로 읽기 지연/실패 시 표본 0건으로 "학습 대기"가
     //   될 수 있었다. featver+ts 복합인덱스로 커버(정렬까지). 프루닝/카운트용 strategy 인덱스도 추가.
     if (!_samplesTableReady) {
+      // [V33.32] ★적재 시각 컬럼★ ts 는 "봉의 날짜"라 표본이 언제 들어왔는지 알 수 없었다.
+      //   그래서 증가분을 총량 스냅샷 차이로 추정했는데, 스냅샷이 밀리거나 겹쳐 쓰이면
+      //   기준점이 흔들려 "1시간 전 대비 +14" 같은 엉뚱한 값이 나왔다. 실제 컬럼으로 해결한다.
+      //   (기존 행은 NULL — 신규 적재분만 정확히 집계되며, 그게 우리가 보려는 값이다)
+      try { await DB.prepare("ALTER TABLE ml_samples ADD COLUMN ins_ts INTEGER").run(); } catch (e) {}
+      try { await DB.prepare("CREATE INDEX IF NOT EXISTS idx_samples_insts ON ml_samples(ins_ts)").run(); } catch (e) {}
       try { await DB.prepare("CREATE INDEX IF NOT EXISTS idx_samples_fv_ts ON ml_samples(featver, ts)").run(); } catch (e) {}
       try { await DB.prepare("CREATE INDEX IF NOT EXISTS idx_samples_strat_fv ON ml_samples(strategy, featver)").run(); } catch (e) {}
       _samplesTableReady = true;
@@ -19703,9 +19690,9 @@ async function mlLogSample(DB, market, symbol, strategy, featVec, pnlPct, idxRet
     if (label == null) return;   // [V17] alpha 모드에서 지수수익 없으면 편입 보류(라벨 순도)
     await mlEnsureTable(DB);
     await DB.prepare(
-      "INSERT INTO ml_samples (ts, market, symbol, strategy, feat, label, pnl_pct, featver) VALUES (?,?,?,?,?,?,?,?)"
+      "INSERT INTO ml_samples (ts, market, symbol, strategy, feat, label, pnl_pct, featver, ins_ts) VALUES (?,?,?,?,?,?,?,?,?)"
     ).bind(Date.now(), market, symbol, strategy || "swing", JSON.stringify(featVec),
-           label, _num(pnlPct, 0), LUXML.featVer).run();
+           label, _num(pnlPct, 0), LUXML.featVer, Date.now()).run();
   } catch (e) {}
 }
 
@@ -23433,8 +23420,8 @@ async function mlMarketHarvestNightly(DB, opts) {
         // ts는 봉 시점 근사(일봉 1개=1일)로 역산 — 시간순 검증분할의 정합 유지
         const ts = baseTs - (L - 1 - i) * 86400000;
         stmts.push(DB.prepare(
-          "INSERT INTO ml_samples (ts, market, symbol, strategy, feat, label, pnl_pct, featver) VALUES (?,?,?,?,?,?,?,?)"
-        ).bind(ts, mkt, sym, "hv", JSON.stringify(feat), _lab, +pnl.toFixed(3), LUXML.featVer));
+          "INSERT INTO ml_samples (ts, market, symbol, strategy, feat, label, pnl_pct, featver, ins_ts) VALUES (?,?,?,?,?,?,?,?,?)"
+        ).bind(ts, mkt, sym, "hv", JSON.stringify(feat), _lab, +pnl.toFixed(3), LUXML.featVer, Date.now()));
         made++; symMade++;
         if (made >= HARVEST.maxPerNight) { nextStart = i + HARVEST.strideBars; break; }
         if (symMade >= (HARVEST.maxPerSymbol || 400)) { nextStart = i + HARVEST.strideBars; break; }  // [V20] 종목당 상한 → 다음밤 이어감
