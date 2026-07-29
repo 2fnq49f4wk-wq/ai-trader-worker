@@ -22909,47 +22909,56 @@ async function mlMarketHarvestNightly(DB, opts) {
     // [V33.13] 종목 루프가 쓰는 두 가지를 미리 한 번에 읽는다 — 루프 안의 D1 왕복을 없애기 위함.
     //   daily: 전량(1쿼리)과 hist_meta 전량(1쿼리, 행이 작음). 이 둘만으로 "읽을 필요 있는 종목"을
     //   가려낼 수 있어, 예산이 실제로 새 봉이 생긴 종목에 쓰인다.
+    // ⚠️ [V33.17] V33.13 에서 여기를 "daily: 전량(k,v)"으로 읽게 바꿨는데, 그건 왕복은 줄지만
+    //   전송량을 977종목×약 15.6KB ≈ 15MB/실행 으로 키웠다(종전 예산제한 시 약 1.2MB). D1 과부하
+    //   관점에선 오히려 악화다. 이제 2단계로 나눈다:
+    //     1단계 — ts 만 뽑는다(json_extract, 행이 작아 전송량 약 30KB).
+    //     2단계 — 스킵 판정을 통과한 "실제 수확 후보"의 블롭만 IN 으로 가져온다(수십 종목).
+    //   왕복 수(적음)와 전송량(적음)을 동시에 만족한다.
     const _dailyAll = {}, _metaBySym = {}, _dailyTs = {};
     try {
       const _mr = await DB.prepare("SELECT k, v FROM state WHERE k >= 'hist_meta:' AND k < 'hist_meta;'").all();
       for (const r of ((_mr && _mr.results) || [])) { try { _metaBySym[r.k.slice(10)] = JSON.parse(r.v); } catch (e) {} }
     } catch (e) {}
     try {
-      // ⚠️ 일봉 전량을 파싱해 들고 있으면 약 30MB — hist: blob·표본 배열과 겹치면 Worker 128MB에
-      //   위험하다. 그래서 파싱 직후 "이번에 수확할 게 없는 종목"은 즉시 버리고 ts만 남긴다.
-      //   (버려도 스킵 판정에는 ts만 있으면 충분하고, 실제 수확 대상은 소수라 메모리가 평평하게 유지된다)
-      const _dr = await DB.prepare("SELECT k, v FROM state WHERE k >= 'daily:' AND k < 'daily;'").all();
-      for (const r of ((_dr && _dr.results) || [])) {
-        const s = r.k.slice(6);
-        let o = null; try { o = JSON.parse(r.v); } catch (e) { continue; }
-        if (!o) continue;
-        _dailyTs[s] = o.ts || 0;
-        const sv = seen[s];
-        const hm = _metaBySym[s];
-        const curTs = (hm && hm.dataTs) ? hm.dataTs : (o.ts || 0);
-        const skippable = !!(sv && typeof sv === "object" && sv.done && sv.srcTs && curTs && curTs === sv.srcTs);
-        if (!skippable) _dailyAll[s] = o;   // 수확 후보만 보관
-      }
+      const _dr = await DB.prepare("SELECT k, json_extract(v,'$.ts') ts FROM state WHERE k >= 'daily:' AND k < 'daily;'").all();
+      for (const r of ((_dr && _dr.results) || [])) _dailyTs[r.k.slice(6)] = _num(r.ts, 0);
     } catch (e) {}
-    for (let si = 0; si < takeN; si++) {
+    // 회전 순서로 스킵 판정을 먼저 돌려 "이번 실행에서 실제로 볼 종목"만 추린다.
+    const _CAND_CAP = 150;   // 한 실행이 소화할 수 있는 양보다 넉넉히 — 예산이 먼저 끝난다
+    const _cand = [];
+    for (let si = 0; si < takeN && _cand.length < _CAND_CAP; si++) {
+      const s = symsAll[(off + si) % symsAll.length];
+      const sv = seen[s];
+      if (sv && typeof sv === "object" && sv.done && sv.srcTs) {
+        const hm = _metaBySym[s];
+        const curTs = (hm && hm.dataTs) ? hm.dataTs : (_dailyTs[s] || 0);
+        if (curTs && curTs === sv.srcTs) continue;   // 원천 그대로 → 새 표본 0건 확정
+      }
+      _cand.push(s);
+    }
+    // 후보의 일봉만 일괄 로드(100개씩) — 전송량이 후보 수에 비례한다.
+    for (let i = 0; i < _cand.length; i += 100) {
+      const ck = _cand.slice(i, i + 100);
+      try {
+        const ph = ck.map(function () { return "?"; }).join(",");
+        const st = DB.prepare("SELECT k, v FROM state WHERE k IN (" + ph + ")");
+        const rw = await st.bind.apply(st, ck.map(function (s) { return "daily:" + s; })).all();
+        for (const r of ((rw && rw.results) || [])) { try { _dailyAll[r.k.slice(6)] = JSON.parse(r.v); } catch (e) {} }
+      } catch (e) {}
+    }
+    // [V33.17] 스킵 대상은 위 사전판정에서 이미 걸러졌으므로 후보만 순회한다.
+    for (let si = 0; si < _cand.length; si++) {
       if (made >= HARVEST.maxPerNight) break;
       if (Date.now() > hvDeadline) break;  // [V9.5] 예산 초과 — 여기까지 수확분 저장(seen/offset도 반영)
-      const sym = symsAll[(off + si) % symsAll.length];
+      const sym = _cand[si];
       scanned++;
       // [V33.13] ★"표본이 안 늘어나는" 실제 원인 — 예산이 D1 왕복에 다 소모됐다★
       //   종전엔 종목마다 hist: 와 daily: 를 각각 getState 했다(왕복 2회·약 100ms). 장중 예산 8초면
       //   980종목 중 80종목쯤 훑고 끝나, 새 봉이 실제로 생긴 종목(daily: 전용 352개)까지 순번이
-      //   거의 오지 않았다. 게다가 이미 완주한 딥종목은 읽어봐야 0건인데 매번 32MB급 blob을 읽었다.
-      //   → (1) 완주 표시가 있고 원천 스냅샷이 그대로면 아무것도 읽지 않고 즉시 스킵,
-      //     (2) daily: 는 사전 일괄로드(메모리)에서 꺼내 왕복 0회.
+      //   거의 오지 않았다. 이제 사전판정으로 "새 봉이 있는 종목"만 후보에 남아, 예산이 전부
+      //   실제 수확에 쓰인다. daily: 는 위에서 후보분만 일괄로드했으므로 여기선 왕복 0회.
       const _sv = seen[sym];
-      if (_sv && typeof _sv === "object" && _sv.done && _sv.srcTs) {
-        // 현재 원천의 스냅샷 시각을 D1 접근 없이 확인한다.
-        //   딥종목: hist_meta.dataTs(위에서 일괄로드) / 일봉전용: 메모리 일괄로드된 daily:.ts
-        const _hm = _metaBySym[sym];
-        const _curTs = (_hm && _hm.dataTs) ? _hm.dataTs : (_dailyTs[sym] || 0);
-        if (_curTs && _curTs === _sv.srcTs) continue;   // 원천이 그대로 → 새 표본 0건 확정, 읽지 않는다
-      }
       let dd = null;
       // 딥이력이 있을 만한 종목만 hist: 를 읽는다 — hist_meta 가 없거나 자격미달로 표시된 종목은
       // 어차피 null 이 돌아오므로, 그 왕복을 아껴 새 봉이 생긴 종목 쪽에 예산을 쓴다.
