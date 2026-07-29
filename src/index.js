@@ -20642,7 +20642,21 @@ function _mindStats(data, D) {
   for (let j = 0; j < D; j++) std[j] = Math.sqrt(std[j] / N) || 1;
   return { mean: mean, std: std };
 }
-function _mindStd(x, mean, std) { return x.map(function (v, j) { return (v - mean[j]) / (std[j] > 1e-6 ? std[j] : 1); }); }
+// [V33.14] ★MIND(위원장)가 계속 섀도우에 머물던 진짜 원인 — 표준화 정합 불일치★
+//   외부 트레이너는 z = clip((x-mean)/std, -6, 6) 으로 학습·추론하는데(modal_train.py),
+//   워커의 이 함수만 클리핑이 없었다. FM 은 2차 상호작용항 0.5*(Σ)² 이 있어 꼬리가 두꺼운
+//   금융 피처에서 z 가 ±6 을 크게 넘으면 제곱되어 raw 점수가 폭주하고 시그모이드가 포화한다.
+//   그 결과 업로드 시 변환정합 probe 가 convMaxDiff=0.6265 로 나와(문턱 0.03) 승격이 차단됐고,
+//   /api/ai-mode 는 aiReady 에 mindOk 를 필수로 요구하므로 → "규칙엔진 비상운용"으로 표시됐다.
+//   재현 실험: 클리핑 유무만 다르게 두면 최대 확률차 0.69 — 관측값과 같은 자릿수.
+//   트레이너와 동일하게 ±6 으로 맞춘다(워커 자체 FM 학습·추론도 같은 함수를 쓰므로 정합 유지).
+const MIND_STD_CLIP = 6;
+function _mindStd(x, mean, std) {
+  return x.map(function (v, j) {
+    const z = (v - mean[j]) / (std[j] > 1e-6 ? std[j] : 1);
+    return z > MIND_STD_CLIP ? MIND_STD_CLIP : (z < -MIND_STD_CLIP ? -MIND_STD_CLIP : z);
+  });
+}
 function _gaussM() { let u = 0, v = 0; while (u === 0) u = Math.random(); while (v === 0) v = Math.random(); return Math.sqrt(-2 * Math.log(u)) * Math.cos(2 * Math.PI * v); }
 
 // ── 1) 인수분해기계 (FM, 2차) ──────────────────────────────
