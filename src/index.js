@@ -22762,7 +22762,7 @@ async function mlCalibrateCommittee(DB) {
 //   • 야간 로테이션(오프셋) + 심볼별 마지막 수확봉 기억 → 중복 0, D1 폭증 0
 // ============================================================================
 
-const HARVEST_LOGIC_VER = 4;   // [V33.24] 수확 재개점 로직 세대 — 바뀌면 쿨다운 1회 해제
+const HARVEST_LOGIC_VER = 5;   // [V33.28] 후보 칸 분리(V33.26) 반영 — 배포 시 쿨다운 1회 해제
 const HARVEST = {
   enabled: true,
   symbolsPerNight: 1500, // [V11] 500→1500 — 전 유니버스(~900종목)를 매일밤 완전순회(커버리지 극대화)
@@ -23453,6 +23453,7 @@ async function mlMarketHarvestNightly(DB, opts) {
       " [탈락 진입조건=" + _hv.rejEntry + " 라벨=" + _hv.rejLabel + " 가격=" + _hv.rejPrice + " 봉수미달=" + _hv.symShort + "]" +
       " 준비=" + _hv.prologueMs + "ms 총=" + (Date.now() - _hvT0) + "ms/" + (opts.budgetMs || HARVEST.budgetMs || 45000) + "ms" +
       (_hv.budgetHit ? " 예산중단=" + _hv.budgetHit : "");
+    try { globalThis.__hvLast = { made: made, bars: _hv.bars, cand: _hv.cand, scanned: scanned, ts: Date.now() }; } catch (e) {}
     return made ? ("[HV] 시장수확 +" + made + "표본 (" + scanned + "종목, 오프셋 " + off + ") " + _diagHv)
                 : ("[HV] 0건 — " + _diagHv);
   } catch (e) { return "[HV] fail: " + (e && e.message); }
@@ -28322,14 +28323,19 @@ export default {
                   //   늘어야(별도 단계) 표본이 증가하므로, 그 전엔 캐치업을 돌릴 이유가 없다. 장외엔 종전대로 3회.
                   const _n = ((_cuDry && _cuDry.n) || 0) + 1;
                   const _stop = _mktOpen ? (_n >= 1) : (_n >= 3);
-                  const _coolMs = _mktOpen ? 6 * 3600000 : 1800000;   // 장중 6h / 장외 30분
+                  // [V33.28] 쿨다운을 원인별로 나눈다. "봉=0"은 루프에 진입조차 못한 것 = 구조적 버그
+                  //   의심이므로 6시간이나 묻어두면 진단이 늦어진다(실제로 그래서 수정본이 6시간 잠겼다).
+                  //   봉>0 인데 0건이면 필터가 정상 동작한 것이므로 종전대로 길게 쉰다.
+                  const _hvL = (typeof globalThis !== "undefined" && globalThis.__hvLast) || null;
+                  const _suspect = !!(_hvL && _hvL.bars === 0);
+                  const _coolMs = _suspect ? 1800000 : (_mktOpen ? 6 * 3600000 : 1800000);
                   await setState(env.DB, "hv_catchup_dry", { n: _stop ? 0 : _n, until: _stop ? Date.now() + _coolMs : 0 });
                   // [V33.11] 레벨을 INFO로 내림 — "원천 고갈"은 고장이 아니라 설계상 정상 정상상태다.
                   //   (이미 수확한 구간을 다시 뽑지 않으므로 새 거래일이 쌓이기 전엔 0건이 맞다.)
                   //   WARN으로 남기면 자가진단이 이걸 매번 '경고 16회 반복'으로 올려 진짜 문제를 가린다.
                   // [V33.25] 왜 0건인지 단계별 카운터를 그대로 실어 보낸다 — 다음 실행 로그 한 줄로 원인 확정.
                   await log(env.DB, "INFO", null, "[HV-CATCHUP] 0건 pool=" + _poolN + " " + (_cr || "(수확기 반환 없음)") +
-                    (_stop ? (" → " + (_mktOpen ? "6시간" : "30분") + " 쿨다운") : ""));
+                    (_stop ? (" → " + Math.round(_coolMs / 60000) + "분 쿨다운" + (_suspect ? "(봉=0 — 짧게)" : "")) : ""));
                 }
               }
               }
