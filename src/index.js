@@ -22988,15 +22988,27 @@ async function mlMarketHarvestNightly(DB, opts) {
       for (const r of ((_dr && _dr.results) || [])) _dailyTs[r.k.slice(6)] = _num(r.ts, 0);
     } catch (e) {}
     // 회전 순서로 스킵 판정을 먼저 돌려 "이번 실행에서 실제로 볼 종목"만 추린다.
+    // [V33.21] ★표본이 영원히 0이던 진짜 원인★ daily: 는 길이가 고정된 롤링 윈도우다(새 봉 1개
+    //   추가 + 가장 오래된 1개 제거 → L 불변). 그런데 재개점을 "배열 인덱스"로 저장했다.
+    //   첫 수확에서 seen.i = lastEnd+1 이 되면, 다음 날에도 lastEnd 가 그대로라
+    //   for (i = lastEnd+1; i <= lastEnd; ...) 가 처음부터 거짓 → 0건. 영원히.
+    //   (pool=173149 가 며칠째 1도 안 움직인 이유가 이것이다. 종전 로그 "새 거래일이 쌓여야 증가"는
+    //    내가 잘못 붙인 설명이었다 — 거래일이 쌓여도 구조상 절대 늘 수 없었다.)
+    //   → 롤링 윈도우 원천은 인덱스가 아니라 "날짜 도장"으로 재개점을 관리한다.
+    const _dayKey = Math.floor(Date.now() / 86400000);
     const _CAND_CAP = 150;   // 한 실행이 소화할 수 있는 양보다 넉넉히 — 예산이 먼저 끝난다
     const _cand = [], _candPos = [];   // _candPos[i] = 그 후보의 회전상 위치(오프셋 전진용)
     for (let si = 0; si < takeN && _cand.length < _CAND_CAP; si++) {
       const s = symsAll[(off + si) % symsAll.length];
       const sv = seen[s];
-      if (sv && typeof sv === "object" && sv.done && sv.srcTs) {
-        const hm = _metaBySym[s];
-        const curTs = (hm && hm.dataTs) ? hm.dataTs : (_dailyTs[s] || 0);
-        if (curTs && curTs === sv.srcTs) continue;   // 원천 그대로 → 새 표본 0건 확정
+      const hm = _metaBySym[s];
+      const isDeep = !!(hm && !hm.ineligible && hm.dataTs);
+      if (isDeep) {
+        // 딥이력(hist:)은 "찍은 시점의 스냅샷"이라 길이가 자란다 → 인덱스 재개점이 유효하다.
+        if (sv && typeof sv === "object" && sv.done && sv.srcTs === hm.dataTs) continue;
+      } else {
+        // 일봉(daily:)은 길이 고정 롤링 윈도우 → 날짜 도장으로 "오늘 몫" 완료 여부를 본다.
+        if (sv && typeof sv === "object" && _num(sv.day, 0) >= _dayKey) continue;
       }
       _cand.push(s); _candPos.push(si);
     }
@@ -23028,8 +23040,9 @@ async function mlMarketHarvestNightly(DB, opts) {
       // 어차피 null 이 돌아오므로, 그 왕복을 아껴 새 봉이 생긴 종목 쪽에 예산을 쓴다.
       const _hmS = _metaBySym[sym];
       const _mayDeep = !!(_hmS && !_hmS.ineligible) || !_dailyAll[sym];
+      let _srcKind = "hist";
       if (HARVEST.useDeepHistory && _mayDeep) { try { dd = await getState(DB, "hist:" + sym, null); } catch (e) {} }
-      if (!dd || !Array.isArray(dd.closes) || dd.closes.length < HARVEST.minBars) dd = _dailyAll[sym] || null;
+      if (!dd || !Array.isArray(dd.closes) || dd.closes.length < HARVEST.minBars) { dd = _dailyAll[sym] || null; _srcKind = "daily"; }
       const closes = dd && dd.closes;
       if (!Array.isArray(closes) || closes.length < HARVEST.minBars) continue;
       const mkt = /\.(KS|KQ)$/.test(sym) ? "kr" : ((/=F$|-USD$/.test(sym)) ? "cm" : "us");
@@ -23037,7 +23050,25 @@ async function mlMarketHarvestNightly(DB, opts) {
       const lastEnd = L - 1 - h;
       const baseTs = (dd.ts || Date.now());
       const _svIdx = (_sv && typeof _sv === "object") ? _num(_sv.i, 0) : _num(_sv, 0);   // 구형(숫자) 호환
-      const startI = Math.max(HARVEST.warmupBars, _svIdx);
+      // [V33.21] 원천 성격에 따라 재개점 계산을 나눈다.
+      //   hist:  길이가 자라는 스냅샷 → 인덱스 재개점이 유효(종전대로).
+      //   daily: 길이 고정 롤링 윈도우 → 인덱스는 무의미. 마지막 수확일 이후 미끄러진 만큼만
+      //          "끝쪽 프런티어 봉"을 수확한다(하루 1봉이 정상, 밀렸으면 최대 5봉까지 보충).
+      let startI;
+      if (_srcKind === "daily") {
+        const _lastDay = (_sv && typeof _sv === "object") ? _num(_sv.day, 0) : 0;
+        if (_lastDay > 0) {
+          const _missed = Math.min(Math.max(1, _dayKey - _lastDay), 5);
+          startI = Math.max(HARVEST.warmupBars, lastEnd - _missed + 1);
+        } else if (_svIdx > lastEnd) {
+          // 구(인덱스) 방식으로 이미 "완주" 처리된 종목 — 전환 첫 실행이므로 오늘 프런티어 1봉만.
+          startI = Math.max(HARVEST.warmupBars, lastEnd);
+        } else {
+          startI = Math.max(HARVEST.warmupBars, _svIdx);   // 아직 백필이 안 끝난 종목 → 이어서
+        }
+      } else {
+        startI = Math.max(HARVEST.warmupBars, _svIdx);
+      }
       let symMade = 0, nextStart = lastEnd + 1;   // [V20] 종목당 표본 카운터 + 재개 지점(캡에 걸리면 다음밤 이어감)
       // [V11.2] ★성능버그 수정★ getRSI/getMA 등 지표함수는 넘겨받은 배열 전체를 순회(O(n)).
       //   기존 hist=closes.slice(0,i+1)은 "처음부터 지금까지 전체"를 매 봉마다 재계산 → 딥히스토리
@@ -23131,7 +23162,9 @@ async function mlMarketHarvestNightly(DB, opts) {
       }
       // [V33.13] 재개 지점 + "완주 여부·원천 스냅샷 시각"을 함께 기록 — 다음 실행에서 원천이
       //   그대로면 blob을 읽지도 않고 건너뛴다(위 스킵 조건). 숫자만 저장하던 구형과 호환 유지.
-      seen[sym] = { i: nextStart, done: nextStart > lastEnd, srcTs: (dd && dd.ts) || 0 };
+      //   [V33.21] daily(롤링) 원천은 날짜 도장(day)이 재개 기준이다 — 인덱스는 참고용으로만 남긴다.
+      seen[sym] = { i: nextStart, done: nextStart > lastEnd, srcTs: (dd && dd.ts) || 0,
+                    day: (_srcKind === "daily") ? _dayKey : _num(_sv && _sv.day, 0) };
       // [V11.2] 중간 플러시 — maxPerNight 20000 확대로 마지막 일괄저장은 메모리·유실 위험.
       //   2000건마다 저장해 예산초과/강제종료가 나도 그 시점까지의 표본은 살린다.
       if (stmts.length >= 2000) {
