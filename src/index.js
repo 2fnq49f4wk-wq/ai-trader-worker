@@ -22796,6 +22796,34 @@ async function aiSelfCheck(DB) {
       else if (_extStale.length) R.warnings.push("외부 학습 지연·누락: " + _extStale.join(", "));
       if (_auto.lastSkip === "no_github_token") R.errors.push("GITHUB_TOKEN 미설정 — 학습 지연 시 자동 재트리거가 동작하지 않음(수동 실행만 가능)");
     } catch (e) {}
+    // [V33.20] ★D1 저장 구성 실측★ "무엇을 R2로 옮길 가치가 있나"를 추정이 아니라 숫자로 답한다.
+    //   SUM(LENGTH(v))는 해당 구간의 값을 실제로 읽으므로 가볍지 않다 → 6시간 캐시로 드물게만 잰다.
+    try {
+      const _cached = await getState(DB, "d1_size_cache", null);
+      if (_cached && _cached.v && (nowT - (_cached.ts || 0)) < 6 * 3600000) {
+        R.d1Size = _cached.v;
+      } else {
+        const _pfx = [["hist", "hist:"], ["daily", "daily:"], ["quote", "quote:"], ["chart", "chart:"], ["histMeta", "hist_meta:"]];
+        const _sz = {};
+        for (const _p of _pfx) {
+          try {
+            const _r = await DB.prepare("SELECT COUNT(*) n, COALESCE(SUM(LENGTH(v)),0) b FROM state WHERE k >= ? AND k < ?")
+              .bind(_p[1], _p[1].slice(0, -1) + ";").first();
+            _sz[_p[0]] = { rows: (_r && _r.n) || 0, mb: +(((_r && _r.b) || 0) / 1048576).toFixed(1) };
+          } catch (e) {}
+        }
+        try {
+          const _r = await DB.prepare("SELECT COUNT(*) n, COALESCE(SUM(LENGTH(feat)),0) b FROM ml_samples").first();
+          _sz.mlSamples = { rows: (_r && _r.n) || 0, mb: +(((_r && _r.b) || 0) / 1048576).toFixed(1) };
+        } catch (e) {}
+        _sz.totalMb = +Object.keys(_sz).reduce(function (s, k) { return s + ((_sz[k] && _sz[k].mb) || 0); }, 0).toFixed(1);
+        R.d1Size = _sz;
+        try { await setState(DB, "d1_size_cache", { ts: nowT, v: _sz }); } catch (e) {}
+      }
+      // 대형모델이 실제로 R2로 갔는지 함께 보고 — 남아 있으면 무엇이 D1을 점유 중인지 명확해진다.
+      const _dm = await getState(DB, "dnn_model:meta", null);
+      R.bigModelStore = _dm ? (_dm.r2 ? "R2" : ("D1 청크 " + (_dm.chunks || 0) + "행")) : "없음";
+    } catch (e) {}
     // 딥이력 커버리지 — 표본 증가의 상한을 결정하는 값
     try {
       const _dc = await DB.prepare("SELECT (SELECT COUNT(*) FROM state WHERE k >= 'hist:' AND k < 'hist;') h, (SELECT COUNT(*) FROM state WHERE k >= 'daily:' AND k < 'daily;') d").first();
