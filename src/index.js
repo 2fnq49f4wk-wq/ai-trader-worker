@@ -22645,7 +22645,7 @@ async function mlCalibrateCommittee(DB) {
 //   • 야간 로테이션(오프셋) + 심볼별 마지막 수확봉 기억 → 중복 0, D1 폭증 0
 // ============================================================================
 
-const HARVEST_LOGIC_VER = 3;   // [V33.24] 수확 재개점 로직 세대 — 바뀌면 쿨다운 1회 해제
+const HARVEST_LOGIC_VER = 4;   // [V33.24] 수확 재개점 로직 세대 — 바뀌면 쿨다운 1회 해제
 const HARVEST = {
   enabled: true,
   symbolsPerNight: 1500, // [V11] 500→1500 — 전 유니버스(~900종목)를 매일밤 완전순회(커버리지 극대화)
@@ -23050,7 +23050,11 @@ async function mlMarketHarvestNightly(DB, opts) {
     const seen = (await getState(DB, seenKey, {})) || {};
     const stmts = [];
     let made = 0, scanned = 0;
-    const hvDeadline = Date.now() + (opts.budgetMs || HARVEST.budgetMs || 45000);  // [V12.103] 예산 override(캐치업 수확용)
+    const hvDeadline = Date.now() + (opts.budgetMs || HARVEST.budgetMs || 45000);
+    const _hvT0 = Date.now();
+    // [V33.25] ★어느 단계에서 표본이 사라지는지 계측★ 두 번 원인을 잘못 짚었으므로 추측을 멈추고
+    //   단계별 카운터를 로그로 뽑는다. 0건일 때도 반드시 진단 문자열을 반환한다.
+    const _hv = { cand: 0, prologueMs: 0, symShort: 0, bars: 0, rejEntry: 0, rejLabel: 0, rejPrice: 0, budgetHit: 0 };  // [V12.103] 예산 override(캐치업 수확용)
     const idxCache = {};   // [V7] 시장별 지수 일봉(상대강도용) — 1회 로드
     for (const mk of ["us", "kr", "cm"]) {
       try {
@@ -23112,6 +23116,7 @@ async function mlMarketHarvestNightly(DB, opts) {
       }
       _cand.push(s); _candPos.push(si);
     }
+    _hv.cand = _cand.length; _hv.prologueMs = Date.now() - _hvT0;
     // 후보의 일봉만 일괄 로드(100개씩) — 전송량이 후보 수에 비례한다.
     for (let i = 0; i < _cand.length; i += 100) {
       const ck = _cand.slice(i, i + 100);
@@ -23144,7 +23149,7 @@ async function mlMarketHarvestNightly(DB, opts) {
       if (HARVEST.useDeepHistory && _mayDeep) { try { dd = await histGet(DB, sym); } catch (e) {} }
       if (!dd || !Array.isArray(dd.closes) || dd.closes.length < HARVEST.minBars) { dd = _dailyAll[sym] || null; _srcKind = "daily"; }
       const closes = dd && dd.closes;
-      if (!Array.isArray(closes) || closes.length < HARVEST.minBars) continue;
+      if (!Array.isArray(closes) || closes.length < HARVEST.minBars) { _hv.symShort++; continue; }
       const mkt = /\.(KS|KQ)$/.test(sym) ? "kr" : ((/=F$|-USD$/.test(sym)) ? "cm" : "us");
       const L = closes.length, h = HARVEST.horizon;
       const lastEnd = L - 1 - h;
@@ -23180,15 +23185,16 @@ async function mlMarketHarvestNightly(DB, opts) {
         //   (최대 2400봉)이 안쪽 루프를 다 돌 때까지 시간체크 없이 진행 → 한 종목이 200s 예산을
         //   통째로 잡아먹고 나머지 900여 종목이 그 밤 표본 0으로 굶는 편중이 발생(총량 정체 원인
         //   중 하나). 64봉마다 체크해 밤 예산을 종목 간 고르게 분산.
-        if (((i - startI) & 63) === 0 && Date.now() > hvDeadline) { nextStart = i; break; }
+        if (((i - startI) & 63) === 0 && Date.now() > hvDeadline) { nextStart = i; _hv.budgetHit++; break; }
         const c = closes[i];
-        if (!(c > 0)) continue;
+        _hv.bars++;
+        if (!(c > 0)) { _hv.rejPrice++; continue; }
         const winStart = Math.max(0, i + 1 - HIST_CAP);
         const hist = closes.slice(winStart, i + 1);
         if (HARVEST.entryLike) {
           // [V9.5] 완화: MA50 위(깊은 눌림 포함) + RSI 28~82(모멘텀 winner 포함) → 사전학습 커버리지 확대
           const maRef = _num(getMA(hist, HARVEST.maLen || 50), c), rsi = _num(getRSI(hist, 14), 50);
-          if (!(c > maRef) || rsi < (HARVEST.rsiLo || 28) || rsi > (HARVEST.rsiHi || 82)) continue;
+          if (!(c > maRef) || rsi < (HARVEST.rsiLo || 28) || rsi > (HARVEST.rsiHi || 82)) { _hv.rejEntry++; continue; }
         }
         const dayPct = (i > 0 && closes[i - 1] > 0) ? (c / closes[i - 1] - 1) * 100 : 0;
         // [V7] 지수 과거정렬: 봉 i 시점 = 지수 끝에서 (L-1-i)봉 전 — 지수/섹터도 동일 고정창 적용(끝 정렬 유지)
@@ -23250,7 +23256,7 @@ async function mlMarketHarvestNightly(DB, opts) {
           }
         }
         const _lab = _sampleLabel(pnl, idxRet);
-        if (_lab == null) continue;   // [V17] alpha 모드에서 지수 없으면 편입 보류(라벨 순도)
+        if (_lab == null) { _hv.rejLabel++; continue; }   // [V17] alpha 모드에서 지수 없으면 편입 보류(라벨 순도)
         // ts는 봉 시점 근사(일봉 1개=1일)로 역산 — 시간순 검증분할의 정합 유지
         const ts = baseTs - (L - 1 - i) * 86400000;
         stmts.push(DB.prepare(
@@ -23303,7 +23309,12 @@ async function mlMarketHarvestNightly(DB, opts) {
         if (!(_r && _r.meta && _r.meta.changes)) break;   // 더 지울 구 표본 없으면 조기 종료
       }
     } catch (e) {}
-    return made ? ("[HV] 시장수확 +" + made + "표본 (" + scanned + "종목, 오프셋 " + off + "→" + ((off + takeN) % symsAll.length) + ")") : null;
+    const _diagHv = "cand=" + _hv.cand + " 처리=" + scanned + " 봉=" + _hv.bars +
+      " [탈락 진입조건=" + _hv.rejEntry + " 라벨=" + _hv.rejLabel + " 가격=" + _hv.rejPrice + " 봉수미달=" + _hv.symShort + "]" +
+      " 준비=" + _hv.prologueMs + "ms 총=" + (Date.now() - _hvT0) + "ms/" + (opts.budgetMs || HARVEST.budgetMs || 45000) + "ms" +
+      (_hv.budgetHit ? " 예산중단=" + _hv.budgetHit : "");
+    return made ? ("[HV] 시장수확 +" + made + "표본 (" + scanned + "종목, 오프셋 " + off + ") " + _diagHv)
+                : ("[HV] 0건 — " + _diagHv);
   } catch (e) { return "[HV] fail: " + (e && e.message); }
 }
 
@@ -28161,8 +28172,9 @@ export default {
                   // [V33.11] 레벨을 INFO로 내림 — "원천 고갈"은 고장이 아니라 설계상 정상 정상상태다.
                   //   (이미 수확한 구간을 다시 뽑지 않으므로 새 거래일이 쌓이기 전엔 0건이 맞다.)
                   //   WARN으로 남기면 자가진단이 이걸 매번 '경고 16회 반복'으로 올려 진짜 문제를 가린다.
-                  await log(env.DB, "INFO", null, "[HV-CATCHUP] 0건 생산(" + _n + (_mktOpen ? "/1" : "/3") + ") pool=" + _poolN +
-                    " — 이번 실행에서 새 표본 없음" + (_stop ? (" → " + (_mktOpen ? "6시간" : "30분") + " 쿨다운") : ""));
+                  // [V33.25] 왜 0건인지 단계별 카운터를 그대로 실어 보낸다 — 다음 실행 로그 한 줄로 원인 확정.
+                  await log(env.DB, "INFO", null, "[HV-CATCHUP] 0건 pool=" + _poolN + " " + (_cr || "(수확기 반환 없음)") +
+                    (_stop ? (" → " + (_mktOpen ? "6시간" : "30분") + " 쿨다운") : ""));
                 }
               }
               }
