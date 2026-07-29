@@ -7559,15 +7559,30 @@ async function getBigStateRaw(DB, key) {
 //      크기도 작아 D1에 남겨두면 되기 때문이다. 덕분에 이관해도 커버리지·유니버스 로직이 그대로다.
 //   읽기는 R2 → 실패/부재 시 D1 폴백이라, 이관이 절반만 끝난 상태에서도 정상 동작한다.
 function _histKey(sym) { return "hist/" + sym + ".json"; }
+// [V33.23] ★이관 중 왕복 2배 방지★ 종전엔 항상 R2를 먼저 쳤는데, 이관이 끝나기 전에는
+//   대부분 미스라 "R2 GET(헛침) + D1 읽기" 로 왕복이 두 배가 됐다(거래 사이클·수확 양쪽에서).
+//   이관 완료 플래그를 아이솔레이트에 한 번만 캐시해 두고, 완료 전에는 D1을 먼저 본다.
+let __histR2Done = null;
+async function _histR2Ready(DB) {
+  if (__histR2Done !== null) return __histR2Done;
+  try { const m = await getState(DB, "r2_migrate:hist", null); __histR2Done = !!(m && m.done); }
+  catch (e) { __histR2Done = false; }
+  return __histR2Done;
+}
 async function histGet(DB, sym) {
   const R2 = _bigR2();
-  if (R2) {
-    try {
-      const o = await R2.get(_histKey(sym));
-      if (o) { try { return JSON.parse(await o.text()); } catch (e) { /* 손상 → D1 폴백 */ } }
-    } catch (e) { /* R2 오류 → D1 폴백 */ }
+  if (!R2) { try { return await getState(DB, "hist:" + sym, null); } catch (e) { return null; } }
+  const r2First = await _histR2Ready(DB);
+  if (!r2First) {
+    // 이관 진행 중 — 아직 D1에 있을 확률이 높다. 있으면 그대로 끝(왕복 1회).
+    try { const d = await getState(DB, "hist:" + sym, null); if (d) return d; } catch (e) {}
   }
-  try { return await getState(DB, "hist:" + sym, null); } catch (e) { return null; }
+  try {
+    const o = await R2.get(_histKey(sym));
+    if (o) { try { return JSON.parse(await o.text()); } catch (e) { /* 손상 → 아래 폴백 */ } }
+  } catch (e) { /* R2 오류 → 아래 폴백 */ }
+  if (r2First) { try { return await getState(DB, "hist:" + sym, null); } catch (e) { return null; } }
+  return null;
 }
 async function histPut(DB, sym, dh) {
   const R2 = _bigR2();
@@ -14908,18 +14923,22 @@ async function handleRequest(request, env, ctx) {
         const scan = _s ? { ts: _s.ts, scanned: _s.scanned, total: _s.total, top: (_s.picks || []).slice(0, 8) } : null;
         // [V33.13] ★"오늘 하루 늘어난 학습 표본"★ — 두뇌 화면에서 표본이 실제로 자라는지 눈으로
         //   확인할 수 있게 총량/오늘/24h 를 함께 싣는다(인덱스 idx_samples_fv_ts 로 커버되는 카운트).
+        // [V33.23] ★로딩 지연 회귀 수정★ V33.13c 에서 여기에 ml_samples COUNT 3개를 넣었는데,
+        //   총량 COUNT 는 17만 인덱스 엔트리를 훑는다. 5분마다 부르는 배지 하나 때문에 그 비용을
+        //   낼 이유가 없다 — 총량은 이미 있는 60초 공유 캐시(_mlCountsCached, GROUP BY 1회)를 쓰고,
+        //   오늘/24h 는 (featver, ts) 인덱스 범위라 값싸므로 그것만 직접 센다.
         let samples = null;
         try {
           const _fv = LUXML.featVer;
           const _d0 = new Date(); _d0.setUTCHours(0, 0, 0, 0);
           const _todayStart = _d0.getTime() - 9 * 3600000;   // KST 자정 기준
           const _t24 = Date.now() - 86400000;
-          const [_tot, _tod, _d24] = await Promise.all([
-            env.DB.prepare("SELECT COUNT(*) c FROM ml_samples WHERE featver=?").bind(_fv).first(),
+          const _cc = await _mlCountsCached(env.DB);
+          const [_tod, _d24] = await Promise.all([
             env.DB.prepare("SELECT COUNT(*) c FROM ml_samples WHERE featver=? AND ts>=?").bind(_fv, _todayStart).first(),
             env.DB.prepare("SELECT COUNT(*) c FROM ml_samples WHERE featver=? AND ts>=?").bind(_fv, _t24).first()
           ]);
-          samples = { total: (_tot && _tot.c) || 0, today: (_tod && _tod.c) || 0, last24h: (_d24 && _d24.c) || 0, featVer: _fv };
+          samples = { total: (_cc && _cc.curTotal) || 0, today: (_tod && _tod.c) || 0, last24h: (_d24 && _d24.c) || 0, featVer: _fv };
         } catch (e) {}
         const _out = { aiReady: aiReady, mode: aiReady ? "AI_AUTONOMOUS" : "RULE_FALLBACK",
                  committee: { mind: mindOk, dnn: dnnOk, gbdt: gbdtOk, xgb: xgb, lgb: lgb, cat: cat },
@@ -27906,7 +27925,11 @@ export default {
         if (_bigR2()) {
           const _hm = await getState(env.DB, "r2_migrate:hist", null);
           if (!_hm || !_hm.done) {
-            const _hr = await migrateHistBatch(env.DB, 12, Date.now() + 6000);
+            // [V33.23] 장중에는 거래 사이클을 먼저 보호한다 — 이관은 배치·시간을 절반 이하로 줄이고
+            //   장외에만 속도를 낸다. 이관이 하루쯤 늦어지는 것보다 매매·화면 지연이 훨씬 나쁘다.
+            let _mkOpen = false;
+            try { _mkOpen = isMarketOpen("us") || isMarketOpen("kr"); } catch (e) {}
+            const _hr = await migrateHistBatch(env.DB, _mkOpen ? 4 : 12, Date.now() + (_mkOpen ? 2000 : 6000));
             if (_hr.left === 0) {
               await setState(env.DB, "r2_migrate:hist", { done: true, ts: Date.now() });
               await log(env.DB, "INFO", null, "[R2] 딥이력 이관 완료 — D1에 남은 hist: 행 0");
