@@ -17408,9 +17408,11 @@ async function handleRequest(request, env, ctx) {
     // [신규] 진단 — 락 상태, 마지막 tick, 시세 수, 시장 오픈 여부
     // [신규] 거래 기록 다운로드 (CSV)
     if (path === "/api/download/trades") {
-      const res = await env.DB.prepare("SELECT * FROM trades ORDER BY ts DESC").all();
+      // [V33.18] 무제한 스캔 방지 — trades 는 프루닝이 없어 계속 누적된다. CSV 한 번 내려받는
+      //   요청이 테이블 전량을 워커 메모리로 끌어와 D1 을 점유하면 그 시간 동안 매매가 밀린다.
+      const res = await env.DB.prepare("SELECT * FROM trades ORDER BY ts DESC LIMIT 50000").all();
       const trades = res.results || [];
-      
+
       let csv = "타임스탠프,종목,전략,수량,평단가,거래종류,이유,손절가,목표가,신호,거래금액,현재가,손익,손익률,발생일시\n";
       trades.forEach(trade => {
         const ts = new Date(trade.ts).toLocaleString('ko-KR');
@@ -17505,8 +17507,9 @@ async function handleRequest(request, env, ctx) {
 
     // [신규] 통합 다운로드 (거래 + 로그 + 요약)
     if (path === "/api/download/report") {
-      const tradesRes = await env.DB.prepare("SELECT * FROM trades ORDER BY ts DESC").all();
-      const logsRes = await env.DB.prepare("SELECT * FROM logs ORDER BY id DESC").all();
+      // [V33.18] 위와 동일 — 통합 리포트도 상한을 둔다(로그는 프루닝으로 약 2,500행이지만 방어적으로).
+      const tradesRes = await env.DB.prepare("SELECT * FROM trades ORDER BY ts DESC LIMIT 50000").all();
+      const logsRes = await env.DB.prepare("SELECT * FROM logs ORDER BY id DESC LIMIT 20000").all();
       const trades = tradesRes.results || [];
       const logs = logsRes.results || [];
       const cfg = migrateCfgToMarkets(Object.assign({}, DEFAULT_CFG, await getState(env.DB, "cfg", {})));
@@ -22926,7 +22929,7 @@ async function mlMarketHarvestNightly(DB, opts) {
     } catch (e) {}
     // 회전 순서로 스킵 판정을 먼저 돌려 "이번 실행에서 실제로 볼 종목"만 추린다.
     const _CAND_CAP = 150;   // 한 실행이 소화할 수 있는 양보다 넉넉히 — 예산이 먼저 끝난다
-    const _cand = [];
+    const _cand = [], _candPos = [];   // _candPos[i] = 그 후보의 회전상 위치(오프셋 전진용)
     for (let si = 0; si < takeN && _cand.length < _CAND_CAP; si++) {
       const s = symsAll[(off + si) % symsAll.length];
       const sv = seen[s];
@@ -22935,7 +22938,7 @@ async function mlMarketHarvestNightly(DB, opts) {
         const curTs = (hm && hm.dataTs) ? hm.dataTs : (_dailyTs[s] || 0);
         if (curTs && curTs === sv.srcTs) continue;   // 원천 그대로 → 새 표본 0건 확정
       }
-      _cand.push(s);
+      _cand.push(s); _candPos.push(si);
     }
     // 후보의 일봉만 일괄 로드(100개씩) — 전송량이 후보 수에 비례한다.
     for (let i = 0; i < _cand.length; i += 100) {
@@ -22948,11 +22951,12 @@ async function mlMarketHarvestNightly(DB, opts) {
       } catch (e) {}
     }
     // [V33.17] 스킵 대상은 위 사전판정에서 이미 걸러졌으므로 후보만 순회한다.
+    let _lastPos = -1;   // 이번 실행이 회전상 어디까지 소화했는지(오프셋 전진 기준)
     for (let si = 0; si < _cand.length; si++) {
       if (made >= HARVEST.maxPerNight) break;
       if (Date.now() > hvDeadline) break;  // [V9.5] 예산 초과 — 여기까지 수확분 저장(seen/offset도 반영)
       const sym = _cand[si];
-      scanned++;
+      scanned++; _lastPos = _candPos[si];
       // [V33.13] ★"표본이 안 늘어나는" 실제 원인 — 예산이 D1 왕복에 다 소모됐다★
       //   종전엔 종목마다 hist: 와 daily: 를 각각 getState 했다(왕복 2회·약 100ms). 장중 예산 8초면
       //   980종목 중 80종목쯤 훑고 끝나, 새 봉이 실제로 생긴 종목(daily: 전용 352개)까지 순번이
@@ -23078,7 +23082,11 @@ async function mlMarketHarvestNightly(DB, opts) {
     }
     for (let i = 0; i < stmts.length; i += 100) { try { await DB.batch(stmts.slice(i, i + 100)); } catch (e) {} }
     // [V9.5] 실제 처리한 심볼 수(scanned)만큼만 오프셋 전진 — 예산/캡으로 조기중단 시 남은 심볼을 다음밤에 이어감(순회 누락 0)
-    try { await setState(DB, offKey, (off + Math.max(1, Math.min(takeN, scanned))) % symsAll.length); } catch (e) {}
+    // [V33.17] 종전엔 scanned(=훑은 종목 수)로 전진했는데, 이제 scanned 는 "후보 중 처리한 수"라
+    //   회전상 위치와 의미가 달라졌다. 실제로 소화한 회전 위치(_lastPos)만큼 전진시킨다.
+    //   후보가 하나도 없었으면 전 유니버스를 확인한 것이므로 takeN 만큼 통째로 넘긴다.
+    const _adv = (_lastPos >= 0) ? (_lastPos + 1) : Math.max(1, Math.min(takeN, symsAll.length));
+    try { await setState(DB, offKey, (off + _adv) % symsAll.length); } catch (e) {}
     try { await setState(DB, seenKey, seen); } catch (e) {}
     // [V12.95] ★표본 고갈 근본원인 수정★ 구 featVer 표본이 삭제되지 않은 채(후보 테이블만 정리됐다)
     //   총량 프루닝이 featver 구분 없이 strategy='hv' 전체를 maxTotal과 비교했다 → featVer 상향 직후엔
