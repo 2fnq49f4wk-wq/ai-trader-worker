@@ -14508,15 +14508,21 @@ async function runTradingCycle(env) {
       //   (후보 → 심사완료 두 줄이 한 사이클의 전후를 이룬다)
       if (__candLog.length) {
         try {
-          const _nbTot = nbKeys.reduce(function (s, k) { return s + nobuyCounts[k]; }, 0);
+          // [V33.29] ★내가 어제 넣은 줄의 계산 오류 수정★ 실제 로그가 "후보 27종목 → 보류 527"로
+          //   찍혔다. nobuyCounts 에는 no_signal(=애초에 신호가 없어 후보조차 아닌 종목)이 섞여 있어
+          //   후보 수보다 큰 값이 나온 것이다. no_signal 은 심사 결과가 아니므로 분리한다.
+          const _noSig = _num(nobuyCounts["no_signal"], 0);
+          const _holdN = nbKeys.reduce(function (s, k) { return s + (k === "no_signal" ? 0 : nobuyCounts[k]); }, 0);
           const _blTot = blKeys.reduce(function (s, k) { return s + blockCounts[k]; }, 0);
-          const _passN = Math.max(0, __candLog.length - _nbTot - _blTot);
-          const _top = nbKeys.concat(blKeys)
-            .sort(function (a, b) { return (nobuyCounts[b] || blockCounts[b] || 0) - (nobuyCounts[a] || blockCounts[a] || 0); })
-            .slice(0, 3)
-            .map(function (k) { return k + ":" + (nobuyCounts[k] || blockCounts[k] || 0); }).join(", ");
-          await log(DB, "SIGNAL", null, "[심사완료] " + market.toUpperCase() + " 후보 " + __candLog.length +
-            "종목 심사 → 진입 " + _passN + " · 보류 " + _nbTot + (_blTot ? " · 차단 " + _blTot : "") +
+          const _enterN = Math.max(0, __candLog.length - _holdN - _blTot);
+          const _reasons = {};
+          for (const k of nbKeys) if (k !== "no_signal") _reasons[k] = nobuyCounts[k];
+          for (const k of blKeys) _reasons[k] = (_reasons[k] || 0) + blockCounts[k];
+          const _top = Object.keys(_reasons).sort(function (a, b) { return _reasons[b] - _reasons[a]; })
+            .slice(0, 3).map(function (k) { return k + ":" + _reasons[k]; }).join(", ");
+          await log(DB, "SIGNAL", null, "[심사완료] " + market.toUpperCase() +
+            " 평가 " + (__candLog.length + _noSig) + "종목 → 후보 " + __candLog.length +
+            " → 진입 " + _enterN + " · 보류 " + _holdN + (_blTot ? " · 차단 " + _blTot : "") +
             (_top ? " — 주요사유 " + _top : ""));
         } catch (e) {}
       }
