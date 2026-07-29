@@ -14759,14 +14759,23 @@ async function handleRequest(request, env, ctx) {
         //     충분하며, 이러면 이 엔드포인트의 D1 부하가 85왕복 → 6왕복으로 떨어진다.
         let aiReady = false, mindOk = false, dnnOk = false, gbdtOk = false, degraded = false;
         try {
-          const S0 = await getStates(env.DB, ["mind_model", "dnn_trust", "gbdt_trust", "dnn_model:meta", "gbdt_model"]);
-          const _m = S0["mind_model"], _dt = S0["dnn_trust"], _gt = S0["gbdt_trust"];
-          const _dMeta = S0["dnn_model:meta"], _gModel = S0["gbdt_model"];
-          mindOk = !!(_m && _m.featVer === LUXML.featVer && _m.fm && _m.meta);
+          const S0 = await getStates(env.DB, ["dnn_trust", "gbdt_trust", "dnn_model:meta"]);
+          const _dt = S0["dnn_trust"], _gt = S0["gbdt_trust"], _dMeta = S0["dnn_model:meta"];
+          // mind_model / gbdt_model 은 단일 행이지만 본문이 MB급이다. 배지 판정에 필요한 건
+          // featVer 와 "구성요소가 있는가" 뿐이라, 본문을 워커로 끌어오지 않고 D1 안에서 뽑는다.
+          const _probe = await env.DB.prepare(
+            "SELECT " +
+            " (SELECT json_extract(v,'$.featVer') FROM state WHERE k='mind_model') mfv," +
+            " (SELECT json_type(v,'$.fm')         FROM state WHERE k='mind_model') mfm," +
+            " (SELECT json_type(v,'$.meta')       FROM state WHERE k='mind_model') mmeta," +
+            " (SELECT json_extract(v,'$.featVer') FROM state WHERE k='gbdt_model') gfv," +
+            " (SELECT json_array_length(v,'$.trees') FROM state WHERE k='gbdt_model') gtrees"
+          ).first();
+          mindOk = !!(_probe && _probe.mfv === LUXML.featVer && _probe.mfm && _probe.mmeta);
           // featVer 정합은 메타로 판정 — 본문을 읽지 않는다(구모델 오판 방지는 그대로 유지).
-          dnnOk = !!(_dt && _dt.trusted && _dMeta && _dMeta.chunks > 0 &&
+          dnnOk = !!(_dt && _dt.trusted && _dMeta && (_dMeta.chunks > 0 || _dMeta.r2) &&
                      (typeof _dMeta.featVer !== "number" || _dMeta.featVer === LUXML.featVer));
-          gbdtOk = !!(_gt && _gt.trusted && _gModel && _gModel.featVer === LUXML.featVer && Array.isArray(_gModel.trees));
+          gbdtOk = !!(_gt && _gt.trusted && _probe && _probe.gfv === LUXML.featVer && _probe.gtrees > 0);
           const _auto = (typeof AI_PARAMS !== "undefined" && AI_PARAMS.autonomy) || {};
           aiReady = !!(_auto.enabled && mindOk && (dnnOk || gbdtOk));
         } catch (e) { degraded = true; }
