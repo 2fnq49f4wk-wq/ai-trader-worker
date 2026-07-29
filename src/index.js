@@ -15957,7 +15957,27 @@ async function handleRequest(request, env, ctx) {
       const bySym = {};
       for (const p of out.picks) if (!bySym[p.symbol] || p.p > bySym[p.symbol].p) bySym[p.symbol] = p;
       out.picks = Object.keys(bySym).map(function (k) { return bySym[k]; });
-      out.picks.sort(function (a, b) { return (!!a.abstain === !!b.abstain ? b.p - a.p : (a.abstain ? 1 : -1)); });
+      // [V33.26] ★"미장 열렸는데 국장이 순위권"★ 종전 정렬은 확률(p)만 봤다. 야간 스캔이 매긴
+      //   점수를 그대로 쓰다 보니, 한국장이 닫힌 미국 정규장 시간에도 KR 종목이 상단을 차지해
+      //   "지금 살 수 없는 종목"이 후보 목록을 덮었다. 확률 순위는 그대로 두되,
+      //   "지금 체결 가능한 시장"을 먼저 배치한다(닫힌 시장 종목도 목록에는 남는다 — 분석은 유효).
+      const _openCache = {};
+      const _isOpenNow = function (mk) {
+        if (!mk) return false;
+        if (_openCache[mk] !== undefined) return _openCache[mk];
+        let o = false;
+        try {
+          if (mk === "cm") o = isCommodityMarketOpen();
+          else o = isMarketOpen(mk);
+        } catch (e) { o = false; }
+        _openCache[mk] = o; return o;
+      };
+      for (const p of out.picks) p.openNow = _isOpenNow(p.market);
+      out.picks.sort(function (a, b) {
+        if (!!a.abstain !== !!b.abstain) return a.abstain ? 1 : -1;      // 기권은 항상 뒤로
+        if (!!a.openNow !== !!b.openNow) return a.openNow ? -1 : 1;      // 지금 거래 가능한 시장 우선
+        return b.p - a.p;                                                // 그다음 확률 순
+      });
       return out;
       });
     }
@@ -23054,7 +23074,7 @@ async function mlMarketHarvestNightly(DB, opts) {
     const _hvT0 = Date.now();
     // [V33.25] ★어느 단계에서 표본이 사라지는지 계측★ 두 번 원인을 잘못 짚었으므로 추측을 멈추고
     //   단계별 카운터를 로그로 뽑는다. 0건일 때도 반드시 진단 문자열을 반환한다.
-    const _hv = { cand: 0, prologueMs: 0, symShort: 0, bars: 0, rejEntry: 0, rejLabel: 0, rejPrice: 0, budgetHit: 0 };  // [V12.103] 예산 override(캐치업 수확용)
+    const _hv = { cand: 0, candD: 0, candH: 0, prologueMs: 0, symShort: 0, bars: 0, rejEntry: 0, rejLabel: 0, rejPrice: 0, budgetHit: 0 };  // [V12.103] 예산 override(캐치업 수확용)
     const idxCache = {};   // [V7] 시장별 지수 일봉(상대강도용) — 1회 로드
     for (const mk of ["us", "kr", "cm"]) {
       try {
@@ -23101,21 +23121,38 @@ async function mlMarketHarvestNightly(DB, opts) {
     //   → 롤링 윈도우 원천은 인덱스가 아니라 "날짜 도장"으로 재개점을 관리한다.
     const _dayKey = Math.floor(Date.now() / 86400000);
     const _CAND_CAP = 150;   // 한 실행이 소화할 수 있는 양보다 넉넉히 — 예산이 먼저 끝난다
-    const _cand = [], _candPos = [];   // _candPos[i] = 그 후보의 회전상 위치(오프셋 전진용)
-    for (let si = 0; si < takeN && _cand.length < _CAND_CAP; si++) {
+    // [V33.26] ★계측이 지목한 실제 병목★ 로그: cand=150 처리=39 봉=0 준비=1880ms 총=8651ms/8000ms.
+    //   탈락 카운터가 전부 0인데 봉=0 이라는 건, 39종목 모두 startI > lastEnd 라 내부 루프에
+    //   아예 진입하지 못했다는 뜻이다. 원인은 딥종목의 완주 마커가 안 맞는 것이었다 —
+    //   seen.srcTs 에 과거 세대가 daily fetch 시각을 넣어둔 경우가 있어 hm.dataTs 와 영영 불일치,
+    //   그래서 딥종목이 매번 후보 150칸을 전부 차지하고 각각 120KB 를 읽다가 예산이 죽었다.
+    //   결과적으로 "하루 1봉이 확실히 있는" daily 전용 종목엔 순번이 오지 않았다.
+    //   → (1) 완주 판정을 srcTs 동등비교 대신 "그 이후"까지 인정하고,
+    //     (2) daily 전용 종목을 후보 앞쪽에 배치해 확실한 수확분을 먼저 소화한다.
+    //   ⚠️ 단순 우선배치로는 부족하다 — 회전 구간이 딥 영역에서 시작하면 딥종목이 상한을 먼저
+    //     다 채워, 일봉 종목은 후보에 들지도 못한다(시뮬레이션으로 확인). 칸을 따로 잡는다.
+    const _CAP_D = 120;   // 하루 1봉이 확실히 있는 일봉 전용 — 여기에 예산을 몰아준다
+    const _CAP_H = 30;    // 딥이력은 스냅샷 갱신 때만 수확분이 생기므로 소수만
+    const _candD = [], _candDPos = [], _candH = [], _candHPos = [];
+    for (let si = 0; si < takeN && (_candD.length < _CAP_D || _candH.length < _CAP_H); si++) {
       const s = symsAll[(off + si) % symsAll.length];
       const sv = seen[s];
       const hm = _metaBySym[s];
       const isDeep = !!(hm && !hm.ineligible && hm.dataTs);
       if (isDeep) {
-        // 딥이력(hist:)은 "찍은 시점의 스냅샷"이라 길이가 자란다 → 인덱스 재개점이 유효하다.
-        if (sv && typeof sv === "object" && sv.done && sv.srcTs === hm.dataTs) continue;
+        // 딥이력(hist:)은 스냅샷이라 갱신될 때만 새 봉이 생긴다. 완주했고 스냅샷이 그때 이후로
+        // 안 바뀌었으면 읽어봐야 0봉이다(>= 로 비교해 마커가 조금 어긋나도 헛읽지 않게 한다).
+        if (sv && typeof sv === "object" && sv.done && _num(sv.srcTs, 0) >= _num(hm.dataTs, 0)) continue;
+        if (_candH.length < _CAP_H) { _candH.push(s); _candHPos.push(si); }
       } else {
         // 일봉(daily:)은 길이 고정 롤링 윈도우 → 날짜 도장으로 "오늘 몫" 완료 여부를 본다.
         if (sv && typeof sv === "object" && _num(sv.day, 0) >= _dayKey) continue;
+        if (_candD.length < _CAP_D) { _candD.push(s); _candDPos.push(si); }
       }
-      _cand.push(s); _candPos.push(si);
     }
+    const _cand = _candD.concat(_candH);
+    const _candPos = _candDPos.concat(_candHPos);
+    _hv.candD = _candD.length; _hv.candH = _candH.length;
     _hv.cand = _cand.length; _hv.prologueMs = Date.now() - _hvT0;
     // 후보의 일봉만 일괄 로드(100개씩) — 전송량이 후보 수에 비례한다.
     for (let i = 0; i < _cand.length; i += 100) {
@@ -23269,7 +23306,13 @@ async function mlMarketHarvestNightly(DB, opts) {
       // [V33.13] 재개 지점 + "완주 여부·원천 스냅샷 시각"을 함께 기록 — 다음 실행에서 원천이
       //   그대로면 blob을 읽지도 않고 건너뛴다(위 스킵 조건). 숫자만 저장하던 구형과 호환 유지.
       //   [V33.21] daily(롤링) 원천은 날짜 도장(day)이 재개 기준이다 — 인덱스는 참고용으로만 남긴다.
-      seen[sym] = { i: nextStart, done: nextStart > lastEnd, srcTs: (dd && dd.ts) || 0,
+      // [V33.26] 마커를 원천별로 정확히 남긴다.
+      //   hist  : 비교 대상이 hist_meta.dataTs 이므로 그 값을 그대로 저장해야 다음 실행에서 스킵된다.
+      //           (종전엔 dd.ts 를 넣어, 과거 세대가 daily fetch 시각을 남긴 경우 영영 불일치했다)
+      //   daily : 날짜 도장이 재개 기준.
+      const _srcStamp = (_srcKind === "daily") ? ((dd && dd.ts) || 0)
+                                               : _num((_hmS && _hmS.dataTs) || (dd && dd.ts), 0);
+      seen[sym] = { i: nextStart, done: nextStart > lastEnd, srcTs: _srcStamp,
                     day: (_srcKind === "daily") ? _dayKey : _num(_sv && _sv.day, 0) };
       // [V11.2] 중간 플러시 — maxPerNight 20000 확대로 마지막 일괄저장은 메모리·유실 위험.
       //   2000건마다 저장해 예산초과/강제종료가 나도 그 시점까지의 표본은 살린다.
@@ -23309,7 +23352,7 @@ async function mlMarketHarvestNightly(DB, opts) {
         if (!(_r && _r.meta && _r.meta.changes)) break;   // 더 지울 구 표본 없으면 조기 종료
       }
     } catch (e) {}
-    const _diagHv = "cand=" + _hv.cand + " 처리=" + scanned + " 봉=" + _hv.bars +
+    const _diagHv = "cand=" + _hv.cand + "(일봉" + (_hv.candD||0) + "+딥" + (_hv.candH||0) + ") 처리=" + scanned + " 봉=" + _hv.bars +
       " [탈락 진입조건=" + _hv.rejEntry + " 라벨=" + _hv.rejLabel + " 가격=" + _hv.rejPrice + " 봉수미달=" + _hv.symShort + "]" +
       " 준비=" + _hv.prologueMs + "ms 총=" + (Date.now() - _hvT0) + "ms/" + (opts.budgetMs || HARVEST.budgetMs || 45000) + "ms" +
       (_hv.budgetHit ? " 예산중단=" + _hv.budgetHit : "");

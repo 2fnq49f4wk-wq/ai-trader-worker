@@ -12411,6 +12411,9 @@ html[data-theme="light"] #page-nnviz .nlv-step span{color:#66788f;}
 html[data-theme="light"] #page-nnviz .nlv-picks{background:linear-gradient(180deg,#eef3fb,#e6edf8);border-color:#cdd9ee;}
 html[data-theme="light"] #page-nnviz .nlv-picks-grid{background:#cdd9ee;}
 html[data-theme="light"] #page-nnviz .nlv-pick{background:#fbfdff;}
+/* [V33.26] 장이 닫힌 시장의 후보 — 목록에는 남기되 "지금 살 수 있는 것"과 시각적으로 구분 */
+#page-nnviz .nlv-pick-closed{opacity:.5;}
+#page-nnviz .nlv-pick-closed .nlv-pick-sym::after{content:" · 장종료";font-size:9px;color:var(--t3);font-weight:400;}
 html[data-theme="light"] #page-nnviz .nlv-pick:hover{background:#eef4fd;}
 html[data-theme="light"] #page-nnviz .nlv-pick-sym{color:#12233f;}
 html[data-theme="light"] #page-nnviz .nlv-pick-name,html[data-theme="light"] #page-nnviz .nlv-pick-tech{color:#5a6c85;}
@@ -14185,7 +14188,9 @@ html[data-theme="light"] .rail{background:#fff;}
       var chart = pickChart(q && q.spark);
       var name = (q && q.name && q.name !== pk.symbol) ? q.name : '';
       var w = Math.max(2, Math.min(100, (pk.p - 0.3) / 0.45 * 100));
-      return '<div class="nlv-pick" data-sym="'+esc(pk.symbol)+'" title="'+esc(pk.symbol)+' · 승률 '+Math.round(pk.p*100)+'%">'
+      // [V33.26] 지금 장이 닫힌 시장 종목은 흐리게 — "지금 살 수 있는 것"과 구분된다.
+      var _closed = (pk.openNow === false);
+      return '<div class="nlv-pick'+(_closed?' nlv-pick-closed':'')+'" data-sym="'+esc(pk.symbol)+'" title="'+esc(pk.symbol)+' · 승률 '+Math.round(pk.p*100)+'%'+(_closed?' · 장 종료':'')+'">'
         +'<div class="nlv-pick-top"><span class="nlv-pick-sym">'+esc(pk.symbol)+'</span>'
           +'<span class="nlv-pick-chg '+(chg==null?'':(chg>=0?'up':'dn'))+'">'+(chg==null?'—':pct1(chg))+'</span></div>'
         +(name ? '<div class="nlv-pick-name">'+esc(name)+'</div>' : '')
