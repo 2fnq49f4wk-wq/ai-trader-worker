@@ -22645,6 +22645,7 @@ async function mlCalibrateCommittee(DB) {
 //   • 야간 로테이션(오프셋) + 심볼별 마지막 수확봉 기억 → 중복 0, D1 폭증 0
 // ============================================================================
 
+const HARVEST_LOGIC_VER = 3;   // [V33.24] 수확 재개점 로직 세대 — 바뀌면 쿨다운 1회 해제
 const HARVEST = {
   enabled: true,
   symbolsPerNight: 1500, // [V11] 500→1500 — 전 유니버스(~900종목)를 매일밤 완전순회(커버리지 극대화)
@@ -23075,14 +23076,16 @@ async function mlMarketHarvestNightly(DB, opts) {
     //     1단계 — ts 만 뽑는다(json_extract, 행이 작아 전송량 약 30KB).
     //     2단계 — 스킵 판정을 통과한 "실제 수확 후보"의 블롭만 IN 으로 가져온다(수십 종목).
     //   왕복 수(적음)와 전송량(적음)을 동시에 만족한다.
-    const _dailyAll = {}, _metaBySym = {}, _dailyTs = {};
+    // [V33.24] ★수확이 계속 0건이던 원인 — 예산이 루프 시작 전에 다 타버렸다★
+    //   V33.17에서 넣은 "daily: 전량의 ts만 뽑기"(json_extract) 쿼리는 반환 데이터는 작아도
+    //   SQLite가 977행의 값을 전부 읽어야 해서 서버측 약 15MB 스캔이다. 게다가 V33.21에서
+    //   사전판정을 hist_meta.dataTs / seen.day 기준으로 바꾸면서 _dailyTs 는 읽는 곳이 아예
+    //   없어졌다(죽은 코드). 장중 예산 8초가 이 스캔에 소진돼 수확 루프가 한 번도 못 돌았다.
+    //   → 통째로 제거. 사전판정에 daily.ts 는 필요 없다.
+    const _dailyAll = {}, _metaBySym = {};
     try {
       const _mr = await DB.prepare("SELECT k, v FROM state WHERE k >= 'hist_meta:' AND k < 'hist_meta;'").all();
       for (const r of ((_mr && _mr.results) || [])) { try { _metaBySym[r.k.slice(10)] = JSON.parse(r.v); } catch (e) {} }
-    } catch (e) {}
-    try {
-      const _dr = await DB.prepare("SELECT k, json_extract(v,'$.ts') ts FROM state WHERE k >= 'daily:' AND k < 'daily;'").all();
-      for (const r of ((_dr && _dr.results) || [])) _dailyTs[r.k.slice(6)] = _num(r.ts, 0);
     } catch (e) {}
     // 회전 순서로 스킵 판정을 먼저 돌려 "이번 실행에서 실제로 볼 종목"만 추린다.
     // [V33.21] ★표본이 영원히 0이던 진짜 원인★ daily: 는 길이가 고정된 롤링 윈도우다(새 봉 1개
@@ -27923,7 +27926,9 @@ export default {
       //   읽기가 R2→D1 폴백이라 진행 중에도 전 종목이 정상 조회된다. 다 옮기면 로그 1회 남기고 멈춘다.
       try {
         if (_bigR2()) {
-          const _hm = await getState(env.DB, "r2_migrate:hist", null);
+          const _bo0 = await getState(env.DB, "r2_hist_backoff", null);
+          const _boActive = !!(_bo0 && (Date.now() - (_bo0.ts || 0)) < 1200000);   // 과부하 후 20분 휴지
+          const _hm = _boActive ? { done: true } : await getState(env.DB, "r2_migrate:hist", null);
           if (!_hm || !_hm.done) {
             // [V33.23] 장중에는 거래 사이클을 먼저 보호한다 — 이관은 배치·시간을 절반 이하로 줄이고
             //   장외에만 속도를 낸다. 이관이 하루쯤 늦어지는 것보다 매매·화면 지연이 훨씬 나쁘다.
@@ -27942,7 +27947,18 @@ export default {
             }
           }
         }
-      } catch (e) { try { await log(env.DB, "WARN", null, "[R2] 딥이력 이관 예외: " + (e && e.message) + " (D1 원본 유지)"); } catch (e2) {} }
+      } catch (e) {
+        // [V33.24] D1이 이미 과부하일 때 이관을 계속 밀어넣으면 불난 집에 부채질이다.
+        //   과부하성 오류를 만나면 20분 쉬고, 로그도 그 창에 1건만 남긴다(종전엔 겹친 실행마다
+        //   같은 줄이 9~10개씩 쌓여 진짜 원인을 가렸다).
+        try {
+          const _bo = await getState(env.DB, "r2_hist_backoff", null);
+          if (!_bo || (Date.now() - (_bo.ts || 0)) > 1200000) {
+            await setState(env.DB, "r2_hist_backoff", { ts: Date.now() });
+            await log(env.DB, "WARN", null, "[R2] 딥이력 이관 일시중단(20분) — " + (e && e.message) + " (D1 원본 유지, 서비스 영향 없음)");
+          }
+        } catch (e2) {}
+      }
 
       // 1) 주식/지수 가격 갱신 + 거래 (가장 무거움)
       try { await runTradingCycle(env); }
@@ -28106,6 +28122,16 @@ export default {
               //   계속 갱신되는데 표본은 163,667에서 3분간 증가 0). rebuildTarget(70만)은 현재 원천으론
               //   도달 불가능한 값이라 "목표 미달=계속 수확" 조건만으로는 영원히 멈추지 않는다.
               //   → 풀 크기가 직전 시도와 같으면(=0건 생산) 카운트를 올리고, 3회 연속이면 30분 쿨다운.
+              // [V33.24] 수확 로직이 바뀌면 이전 판정으로 걸린 쿨다운은 무효다 — 한 번만 해제한다.
+              //   (0건 판정 자체가 버그였으므로 6시간을 기다릴 이유가 없다)
+              try {
+                const _lv = await getState(env.DB, "hv_logic_ver", 0);
+                if (_num(_lv, 0) !== HARVEST_LOGIC_VER) {
+                  await setState(env.DB, "hv_catchup_dry", { n: 0, until: 0 });
+                  await setState(env.DB, "hv_logic_ver", HARVEST_LOGIC_VER);
+                  await log(env.DB, "INFO", null, "[HV-CATCHUP] 수확 로직 v" + HARVEST_LOGIC_VER + " 적용 — 이전 쿨다운 해제");
+                }
+              } catch (e0) {}
               const _cuDry = await getState(env.DB, "hv_catchup_dry", null);
               const _dryUntil = (_cuDry && _cuDry.until) || 0;
               if (Date.now() - _cuLock > _cuGap && Date.now() > _dryUntil) {
@@ -28136,7 +28162,7 @@ export default {
                   //   (이미 수확한 구간을 다시 뽑지 않으므로 새 거래일이 쌓이기 전엔 0건이 맞다.)
                   //   WARN으로 남기면 자가진단이 이걸 매번 '경고 16회 반복'으로 올려 진짜 문제를 가린다.
                   await log(env.DB, "INFO", null, "[HV-CATCHUP] 0건 생산(" + _n + (_mktOpen ? "/1" : "/3") + ") pool=" + _poolN +
-                    " — 기존 구간 수확 완료(새 거래일이 쌓여야 증가)" + (_stop ? (" → " + (_mktOpen ? "6시간" : "30분") + " 쿨다운") : ""));
+                    " — 이번 실행에서 새 표본 없음" + (_stop ? (" → " + (_mktOpen ? "6시간" : "30분") + " 쿨다운") : ""));
                 }
               }
               }
