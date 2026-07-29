@@ -22,6 +22,38 @@ jobs:
       # (wrangler-action@v3의 npx 자동설치가 4.86.0을 요구하며 실패하던 문제 회피)
       - name: Install wrangler
         run: npm install -g wrangler@4.100.0
+      # [V33.15] 대형모델(DNN 32MB) 전용 R2 버킷을 자동으로 준비한다 — 수동 작업 0.
+      #   버킷이 실제로 존재하는 것을 확인했을 때만 wrangler.toml 의 바인딩 주석을 푼다(러너 안에서만).
+      #   토큰에 R2 권한이 없거나 R2 미활성 계정이면 ok=false 로 떨어지고, 배포는 지금까지와
+      #   똑같이 D1 청크 경로로 진행된다 — 실패해도 서비스에 영향 없음.
+      - name: Prepare R2 bucket for big models
+        id: r2
+        continue-on-error: true
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+        run: |
+          set +e
+          wrangler r2 bucket create ai-trader-models 2>&1 | sed 's/^/[create] /'
+          wrangler r2 bucket list 2>&1 | sed 's/^/[list] /' | grep -q 'ai-trader-models'
+          if [ $? -eq 0 ]; then
+            echo "ok=true" >> "$GITHUB_OUTPUT"
+            echo "R2 버킷 확인됨 — 대형모델을 R2로 저장한다."
+          else
+            echo "ok=false" >> "$GITHUB_OUTPUT"
+            echo "R2 사용 불가(권한/미활성) — D1 청크 경로 유지. 서비스 영향 없음."
+          fi
+          exit 0
+      - name: Enable R2 binding
+        if: steps.r2.outputs.ok == 'true'
+        run: |
+          sed -i \
+            -e 's/^# \[\[r2_buckets\]\]$/[[r2_buckets]]/' \
+            -e 's/^# binding = "MODELS"$/binding = "MODELS"/' \
+            -e 's/^# bucket_name = "ai-trader-models"$/bucket_name = "ai-trader-models"/' \
+            wrangler.toml
+          echo '--- wrangler.toml (r2 구간) ---'
+          grep -A2 '^\[\[r2_buckets\]\]' wrangler.toml
       - name: Deploy
         run: wrangler deploy
         env:
