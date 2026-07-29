@@ -7609,6 +7609,65 @@ async function histSymbolKeys(DB, limit) {
   } catch (e) { return []; }
 }
 
+// [V33.27] ★학습표본을 R2로 — 단, "테이블 이관"이 아니라 "학습용 스냅샷"으로★
+//   ml_samples 자체는 R2로 못 옮긴다: 수확기는 행 단위 INSERT 를 하고, 트레이너는
+//   WHERE featver=? AND ts<=? ORDER BY ts DESC 로 인덱스 조회를 한다 — R2 는 조건검색·정렬·
+//   행삽입이 전부 불가능하고, 110MB 를 워커(128MB)로 통째로 들 수도 없다.
+//   그런데 D1 부하의 실제 원인은 "보관"이 아니라 "학습이 6시간마다 17만 행을 9페이지로 훑는 것"이다.
+//   → 표본을 파트 단위(2만건)로 R2 에 떠 두고, 트레이너는 그 스냅샷을 읽게 한다.
+//     INSERT 는 그대로 D1(정상), 읽기 부하만 R2 로 넘어간다. 이게 D1 폭주를 실제로 줄인다.
+// [V33.27] 트레이너에 내려보내는 학습 하이퍼파라미터 — D1/R2 경로가 동일한 값을 쓰도록 한 곳에 둔다.
+function _mlExportConfig() {
+  return { hidden: DNN.hidden, seeds: DNN.seeds, dropout: DNN.dropout, l2: DNN.l2, labelSmooth: DNN.labelSmooth,
+           inputNoise: DNN.inputNoise, mixupP: DNN.mixupP, stdClip: DNN.stdClip, valFrac: DNN.valFrac,
+           embargoDays: LUXML.embargoDays || 6, hvSrcWeight: (typeof HARVEST !== "undefined" ? HARVEST.srcWeight : 1),
+           recencyHalfLifeDays: LUXML.recencyHalfLifeDays || 45, recencyFloor: LUXML.recencyFloor || 0.35,
+           epochs: DNN.epochs, batch: DNN.batch, lr: DNN.lr, lrFloorFrac: DNN.lrFloorFrac,
+           trustFloor: DNN.trustFloor, trustTemp: DNN.trustTemp, trustMargin: DNN.trustMargin };
+}
+const MLSNAP_PART = 20000;
+function _mlSnapKey(fv, part) { return "ml/v" + fv + "/part-" + part + ".json"; }
+async function mlSnapshotBuildStep(DB, deadline) {
+  const R2 = _bigR2();
+  if (!R2) return { done: false, reason: "R2 미바인딩" };
+  const fv = LUXML.featVer;
+  let st = await getState(DB, "ml_snap:v" + fv, null);
+  const nowT = Date.now();
+  // 12시간마다 새로 뜬다. 진행 중이면 이어서.
+  if (st && st.done && (nowT - (st.ts || 0)) < 12 * 3600000) return { done: true, fresh: true };
+  if (!st || st.done) {
+    const c = await DB.prepare("SELECT COUNT(*) c FROM ml_samples WHERE featver=?").bind(fv).first();
+    const total = (c && c.c) || 0;
+    st = { done: false, ts: nowT, anchorTs: nowT, total: total, parts: Math.ceil(total / MLSNAP_PART), next: 0 };
+    await setState(DB, "ml_snap:v" + fv, st);
+  }
+  while (st.next < st.parts) {
+    if (deadline && Date.now() > deadline) break;
+    const off = st.next * MLSNAP_PART;
+    const rows = await DB.prepare(
+      "SELECT id, ts, feat, label, pnl_pct, strategy FROM ml_samples WHERE featver=? AND ts<=? ORDER BY ts DESC, id DESC LIMIT ? OFFSET ?"
+    ).bind(fv, st.anchorTs, MLSNAP_PART, off).all();
+    const raw = (rows && rows.results) || [];
+    const out = [];
+    for (const r of raw) {
+      let v; try { v = JSON.parse(r.feat); } catch (e) { continue; }
+      if (!Array.isArray(v) || v.length !== LUXML.featNames.length) continue;
+      out.push({ ts: _num(r.ts, 0), x: v.map(function (t) { return _num(t, 0); }), y: r.label ? 1 : 0,
+                 pnl: _num(r.pnl_pct, 0), hv: r.strategy === "hv" ? 1 : 0 });
+    }
+    await R2.put(_mlSnapKey(fv, st.next), JSON.stringify(out));
+    st.next++;
+    await setState(DB, "ml_snap:v" + fv, st);
+    if (raw.length < MLSNAP_PART) { st.parts = st.next; break; }
+  }
+  if (st.next >= st.parts) {
+    st.done = true; st.ts = Date.now();
+    await setState(DB, "ml_snap:v" + fv, st);
+    return { done: true, parts: st.parts, total: st.total };
+  }
+  return { done: false, progress: st.next + "/" + st.parts };
+}
+
 // [V33.22] 기존 D1의 hist: 행들을 R2로 조금씩 옮긴다(1회성). 한 틱에 몇 개씩만 처리해
 //   거래 사이클을 방해하지 않고, PUT → 재확인 → D1 행 삭제 순서라 중간에 죽어도 무손실이다.
 //   읽기가 R2→D1 폴백이므로 이관이 절반만 끝난 상태에서도 전 종목이 정상 조회된다.
@@ -14444,6 +14503,23 @@ async function runTradingCycle(env) {
           .map(function(k){ return k + ":" + blockCounts[k]; }).join(", ");
         await log(DB, "INFO", null, "BLOCK[" + market + "] " + summary);
       }
+      // [V33.27] ★"위원회 심사 전"만 보이던 문제★ 심사 결과는 이미 집계돼 있었지만 INFO 레벨이라
+      //   판정·신호 필터에 뜨지 않았다. 후보 로그와 짝이 되게 SIGNAL 로 "심사 완료" 줄을 남긴다.
+      //   (후보 → 심사완료 두 줄이 한 사이클의 전후를 이룬다)
+      if (__candLog.length) {
+        try {
+          const _nbTot = nbKeys.reduce(function (s, k) { return s + nobuyCounts[k]; }, 0);
+          const _blTot = blKeys.reduce(function (s, k) { return s + blockCounts[k]; }, 0);
+          const _passN = Math.max(0, __candLog.length - _nbTot - _blTot);
+          const _top = nbKeys.concat(blKeys)
+            .sort(function (a, b) { return (nobuyCounts[b] || blockCounts[b] || 0) - (nobuyCounts[a] || blockCounts[a] || 0); })
+            .slice(0, 3)
+            .map(function (k) { return k + ":" + (nobuyCounts[k] || blockCounts[k] || 0); }).join(", ");
+          await log(DB, "SIGNAL", null, "[심사완료] " + market.toUpperCase() + " 후보 " + __candLog.length +
+            "종목 심사 → 진입 " + _passN + " · 보류 " + _nbTot + (_blTot ? " · 차단 " + _blTot : "") +
+            (_top ? " — 주요사유 " + _top : ""));
+        } catch (e) {}
+      }
       if (stateSamples.length > 0) {
         await log(DB, "INFO", null, "STATE[" + market + "] " + stateSamples.join(" | "));
       }
@@ -15404,6 +15480,32 @@ async function handleRequest(request, env, ctx) {
       // [V11.1] 스냅샷 앵커 — 다페이지 수집 중 야간수확이 새 행을 삽입하면 OFFSET이 밀려 중복/누락.
       //   첫 페이지가 anchorTs(현재 최신 ts)를 반환하고, 이후 페이지는 beforeTs로 그 시점을 고정.
       const beforeTs = Number(url.searchParams.get("beforeTs")) || 0;
+      // [V33.27] R2 스냅샷이 신선하면 거기서 파트를 그대로 서빙한다 — D1 은 전혀 건드리지 않는다.
+      //   (학습 1회당 17만 행 × 9페이지 조회가 D1 폭주의 최대 유발원이었다)
+      try {
+        const _R2 = _bigR2();
+        if (_R2) {
+          const _snap = await getState(env.DB, "ml_snap:v" + LUXML.featVer, null);
+          if (_snap && _snap.done && (Date.now() - (_snap.ts || 0)) < 26 * 3600000) {
+            const _part = Math.floor(offset / MLSNAP_PART);
+            if (_part >= _snap.parts) {
+              return Response.json({ featVer: LUXML.featVer, featNames: LUXML.featNames, total: _snap.total,
+                offset: offset, returned: 0, anchorTs: _snap.anchorTs, source: "r2", samples: [],
+                config: _mlExportConfig() }, { headers: cors });
+            }
+            const _o = await _R2.get(_mlSnapKey(LUXML.featVer, _part));
+            if (_o) {
+              const _arr = JSON.parse(await _o.text());
+              if (offset === 0) {
+                try { ctx.waitUntil(log(env.DB, "INFO", null, "[ML-EXPORT] 외부 트레이너가 표본 수집 시작 — R2 스냅샷 " + _snap.parts + "파트/total=" + _snap.total)); } catch (e) {}
+              }
+              return Response.json({ featVer: LUXML.featVer, featNames: LUXML.featNames, total: _snap.total,
+                offset: offset, returned: _arr.length, anchorTs: _snap.anchorTs, source: "r2",
+                config: _mlExportConfig(), samples: _arr }, { headers: cors });
+            }
+          }
+        }
+      } catch (e) { /* 스냅샷 문제 시 아래 D1 경로로 폴백 */ }
       const anchorTs = beforeTs > 0 ? beforeTs : Date.now();
       let total = 0;
       try { const c = await env.DB.prepare("SELECT COUNT(*) AS c FROM ml_samples WHERE featver = ? AND ts <= ?").bind(LUXML.featVer, anchorTs).first(); total = (c && c.c) || 0; } catch (e) {}
@@ -15440,12 +15542,7 @@ async function handleRequest(request, env, ctx) {
       return Response.json({
         featVer: LUXML.featVer, featNames: LUXML.featNames, total: total, offset: offset, returned: out.length, anchorTs: anchorTs,
         nextCursorTs: _last ? _num(_last.ts, 0) : null, nextCursorId: _last ? _num(_last.id, 0) : null,
-        config: { hidden: DNN.hidden, seeds: DNN.seeds, dropout: DNN.dropout, l2: DNN.l2, labelSmooth: DNN.labelSmooth,
-                  inputNoise: DNN.inputNoise, mixupP: DNN.mixupP, stdClip: DNN.stdClip, valFrac: DNN.valFrac,
-                  embargoDays: LUXML.embargoDays || 6, hvSrcWeight: (typeof HARVEST !== "undefined" ? HARVEST.srcWeight : 1),
-                  recencyHalfLifeDays: LUXML.recencyHalfLifeDays || 45, recencyFloor: LUXML.recencyFloor || 0.35,
-                  epochs: DNN.epochs, batch: DNN.batch, lr: DNN.lr, lrFloorFrac: DNN.lrFloorFrac,
-                  trustFloor: DNN.trustFloor, trustTemp: DNN.trustTemp, trustMargin: DNN.trustMargin },
+        config: _mlExportConfig(),
         samples: out
       }, { headers: cors });
     }
@@ -28013,6 +28110,21 @@ export default {
           }
         } catch (e2) {}
       }
+
+      // 0.96) [V33.27] 학습표본 R2 스냅샷 — 트레이너가 D1을 17만 행 훑지 않게 미리 떠 둔다.
+      //   장중엔 절대 돌리지 않는다(거래 우선). 장외에 파트 단위로 조금씩 쌓고 12시간마다 갱신.
+      try {
+        if (_bigR2()) {
+          let _mko = false; try { _mko = isMarketOpen("us") || isMarketOpen("kr"); } catch (e) {}
+          if (!_mko) {
+            const _sr = await mlSnapshotBuildStep(env.DB, Date.now() + 5000);
+            if (_sr && _sr.done && !_sr.fresh) {
+              await log(env.DB, "INFO", null, "[R2] 학습표본 스냅샷 완료 — " + _sr.parts + "파트/" + _sr.total +
+                "건. 다음 학습부터 D1 대신 R2에서 읽는다.");
+            }
+          }
+        }
+      } catch (e) { try { await log(env.DB, "WARN", null, "[R2] 표본 스냅샷 예외: " + (e && e.message)); } catch (e2) {} }
 
       // 1) 주식/지수 가격 갱신 + 거래 (가장 무거움)
       try { await runTradingCycle(env); }
