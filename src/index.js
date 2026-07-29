@@ -7552,6 +7552,38 @@ async function getBigStateRaw(DB, key) {
   if (meta.len && str.length !== meta.len) return null;
   return str;
 }
+// [V33.19] ★D1 청크 → R2 이관★ 이미 D1에 85청크로 들어있는 모델을 R2로 옮긴다.
+//   순서가 중요하다: PUT → 재확인(길이 대조) → 메타 갱신 → 그 다음에만 D1 청크 삭제.
+//   중간에 실패하면 D1 청크가 그대로 남아 있어 기존 경로로 계속 읽힌다(무손실).
+//   멱등: 이미 meta.r2 면 즉시 반환하므로 몇 번 호출해도 안전하다.
+async function migrateBigStateToR2(DB, key) {
+  const R2 = _bigR2();
+  if (!R2) return { ok: false, reason: "R2 미바인딩" };
+  const meta = await getState(DB, key + ":meta", null);
+  if (!meta) return { ok: false, reason: "메타 없음" };
+  if (meta.r2) return { ok: true, already: true };
+  if (!meta.chunks) return { ok: false, reason: "청크 없음" };
+  const str = await _readChunks(DB, key, meta.chunks);
+  if (str == null) return { ok: false, reason: "청크 결손 — 이관 보류" };
+  if (meta.len && str.length !== meta.len) return { ok: false, reason: "길이 불일치 — 이관 보류" };
+  const wantBytes = new TextEncoder().encode(str).length;
+  await R2.put("big/" + key + ".json", str);
+  // 재확인 — 실제로 읽히고 크기가 맞을 때만 원본을 지운다.
+  const back = await R2.get("big/" + key + ".json");
+  if (!back) return { ok: false, reason: "R2 재확인 실패 — D1 원본 유지" };
+  const gotBytes = (back.size != null) ? back.size : new TextEncoder().encode(await back.text()).length;
+  if (gotBytes !== wantBytes) return { ok: false, reason: "R2 크기 불일치(" + gotBytes + "≠" + wantBytes + ") — D1 원본 유지" };
+  const newMeta = Object.assign({}, meta, { r2: true, chunks: 0, len: str.length, migratedAt: Date.now() });
+  await DB.prepare("INSERT INTO state (k, v, updated_ts) VALUES (?, ?, ?) ON CONFLICT(k) DO UPDATE SET v=excluded.v, updated_ts=excluded.updated_ts")
+    .bind(key + ":meta", JSON.stringify(newMeta), Date.now()).run();
+  // 메타가 R2를 가리킨 뒤에야 D1 청크 제거 — 이 시점부터 읽기는 R2로만 간다.
+  let freed = 0;
+  try {
+    const r = await DB.prepare("DELETE FROM state WHERE k >= ? AND k < ?").bind(key + ":chunk:", key + ":chunk;").run();
+    freed = (r && r.meta && r.meta.changes) || 0;
+  } catch (e) {}
+  return { ok: true, bytes: wantBytes, chunksFreed: freed };
+}
 async function setBigStateRaw(DB, key, str, metaExtra) {
   const up = "INSERT INTO state (k, v, updated_ts) VALUES (?, ?, ?) ON CONFLICT(k) DO UPDATE SET v=excluded.v, updated_ts=excluded.updated_ts";
   const R2 = _bigR2();
@@ -25220,6 +25252,7 @@ function _diagnoseLogMessage(msg) {
     //   "정상 동작인데 원인 자동분류 안 됨"으로 떨어지지 않는다. 사용자 점검에서 이 셋이
     //   전부 "원인 불명 경고"로 집계돼 진짜 문제를 가렸다.
     { re: /overloaded|queued for too long|too many api requests|D1_ERROR/i, d: "D1 순간 과부하(요청 큐 적체) — 무거운 전체 스캔 쿼리가 겹칠 때 발생. 전역 재시도(4회·지수백오프) 후에도 실패하면 그 요청만 빈 응답으로 떨어집니다. 반복되면 스캔 쿼리의 범위·빈도를 줄여야 함" },
+    { re: /^\[R2\]/, d: "대형모델(32MB DNN)의 D1→R2 이관 — R2로 옮기면 모델 입출력이 D1 큐를 쓰지 않아 매매·표본 쿼리와 경합하지 않습니다. '보류'로 뜨면 D1 원본이 그대로 유지되므로 서비스 영향은 없고 1시간 뒤 자동 재시도" },
     { re: /^\[TRAIN-AUTH\]/, d: "외부 트레이너(Modal) 인증 거절 — TRAIN_KEY 시크릿이 워커와 트레이너에서 다르거나 미설정. 이 상태면 학습 표본을 못 내려받아 Modal 학습이 통째로 실패합니다" },
     { re: /^\[ML-EXPORT\]/, d: "외부 트레이너가 학습 표본을 실제로 내려받는 중 — 정상(이 로그가 6시간마다 안 보이면 Modal 크론이 워커에 도달하지 않은 것)" },
     { re: /^\[CRISIS\]/, d: "지정학·시장 위기 게이지 관측치(주의/경계/위기)입니다 — 시스템 결함이 아니라 시장 상태 기록. 등급이 바뀐 순간만 경고로 올라가고, 같은 등급이 이어지는 건 정상" },
@@ -27707,6 +27740,26 @@ export default {
           }
         }
       } catch (e) { try { await log(env.DB, "ERROR", null, "[SCHED] LLM analysis fail: " + e.message); } catch (e2) {} }
+
+      // 0.9) [V33.19] D1에 남아 있는 대형모델을 R2로 1회 이관 — R2 바인딩이 붙은 뒤 자동 실행.
+      //   32MB를 읽고 쓰는 무거운 작업이라 거래 사이클 "앞"에서 한 번만 하고, 성공/실패 여부를
+      //   상태에 남겨 다시 시도하지 않는다. 실패해도 D1 원본이 그대로라 서비스 영향 없음.
+      try {
+        if (_bigR2()) {
+          const _mg = await getState(env.DB, "r2_migrate:dnn_model", null);
+          if (!_mg || (!_mg.done && (Date.now() - (_mg.ts || 0)) > 3600000)) {
+            await setState(env.DB, "r2_migrate:dnn_model", { done: false, ts: Date.now() });
+            const _r = await migrateBigStateToR2(env.DB, "dnn_model");
+            if (_r && _r.ok) {
+              await setState(env.DB, "r2_migrate:dnn_model", { done: true, ts: Date.now(), bytes: _r.bytes || 0, already: !!_r.already });
+              await log(env.DB, "INFO", null, "[R2] dnn_model 이관 " + (_r.already ? "불필요(이미 R2)" :
+                ("완료 — " + ((_r.bytes || 0) / 1048576).toFixed(1) + "MB, D1 청크 " + (_r.chunksFreed || 0) + "행 회수")));
+            } else {
+              await log(env.DB, "WARN", null, "[R2] dnn_model 이관 보류 — " + ((_r && _r.reason) || "알 수 없음") + " (D1 원본 유지, 1시간 후 재시도)");
+            }
+          }
+        }
+      } catch (e) { try { await log(env.DB, "WARN", null, "[R2] 이관 시도 중 예외: " + (e && e.message) + " (D1 원본 유지)"); } catch (e2) {} }
 
       // 1) 주식/지수 가격 갱신 + 거래 (가장 무거움)
       try { await runTradingCycle(env); }
