@@ -58,14 +58,37 @@ def train_job(epochs: int = EPOCHS_DEFAULT, dry: bool = False):
     def fetch_all():
         off, page, samples, cfg, fv, fn = 0, 20000, [], None, None, None
         anchor = 0  # [V11.1] 스냅샷 앵커 — 수집 중 신규 수확행이 OFFSET을 밀어 중복/누락되는 것 방지
+        cur_ts = cur_id = 0   # [V33.12] 커서 페이지네이션 — OFFSET 누적 스캔(표본^2) 제거
         while True:
-            params = {"key": KEY, "limit": page, "offset": off}
+            params = {"key": KEY, "limit": page}
+            if cur_ts:
+                params["cursorTs"], params["cursorId"] = cur_ts, cur_id
+            else:
+                params["offset"] = off
             if anchor:
                 params["beforeTs"] = anchor
-            r = requests.get(BASE + "/api/ml-export", params=params, headers=HDR, timeout=180)
-            if r.status_code != 200:
-                raise RuntimeError(f"export {r.status_code}: {r.text[:200]}")
-            j = r.json()
+            # [V33.12] D1 과부하로 export가 한 번 실패하면 학습 전체가 죽었다 — 지수백오프 재시도.
+            j = None
+            for attempt in range(5):
+                try:
+                    r = requests.get(BASE + "/api/ml-export", params=params, headers=HDR, timeout=180)
+                    if r.status_code == 200:
+                        j = r.json()
+                        break
+                    if r.status_code in (429, 500, 502, 503, 504) and attempt < 4:
+                        wait = 5 * (2 ** attempt)
+                        print(f"  export {r.status_code} — {wait}s 후 재시도({attempt+1}/4)")
+                        time.sleep(wait)
+                        continue
+                    raise RuntimeError(f"export {r.status_code}: {r.text[:200]}")
+                except requests.RequestException as e:
+                    if attempt >= 4:
+                        raise
+                    wait = 5 * (2 ** attempt)
+                    print(f"  export 통신오류({e}) — {wait}s 후 재시도({attempt+1}/4)")
+                    time.sleep(wait)
+            if j is None:
+                raise RuntimeError("export 재시도 소진")
             cfg, fv, fn = j["config"], j["featVer"], j["featNames"]
             anchor = j.get("anchorTs") or anchor
             got = j.get("samples", [])
@@ -73,6 +96,9 @@ def train_job(epochs: int = EPOCHS_DEFAULT, dry: bool = False):
             total = j.get("total", len(samples))
             print(f"  내려받음 {len(samples)}/{total}")
             off += len(got)
+            nxt_ts, nxt_id = j.get("nextCursorTs"), j.get("nextCursorId")
+            if nxt_ts:
+                cur_ts, cur_id = nxt_ts, nxt_id
             if len(got) < page or off >= total or not got:
                 break
         return samples, cfg, fv, fn

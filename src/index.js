@@ -7882,7 +7882,7 @@ async function computePortfolioValue(DB, market, cfg) {
   // quote 일괄 로드
   const quoteMap = {};
   try {
-    const qrows = await DB.prepare("SELECT k, v FROM state WHERE k LIKE 'quote:%'").all();
+    const qrows = await DB.prepare("SELECT k, v FROM state WHERE k >= 'quote:' AND k < 'quote;'").all();
     for (const r of (qrows.results || [])) {
       try { quoteMap[r.k.slice(6)] = JSON.parse(r.v); } catch (e) {}
     }
@@ -12784,11 +12784,19 @@ async function runTradingCycle(env) {
       await setState(DB, qpRrKey, (qpRr + 1) % qpSlices);
       // quote: 상태 저장 (UI 표시용). 일봉 지표는 기존 quote에서 보존(있으면).
       // [V10] D1 부하 최소화 — 기존 quote를 종목마다 읽지 않고 한 번의 쿼리로 일괄 로드.
+      // [V33.12] 종전엔 'quote:' 전량(약 980행)을 읽었지만, 아래 루프는 이번 슬라이스의
+      //   tickers(수십 개)만 조회한다 — 시장마다·사이클마다 반복돼 D1 과부하의 한 축이었다.
+      //   필요한 종목만 IN 으로 읽는다.
       const prevQuoteMap = {};
       try {
-        const rows = await DB.prepare("SELECT k, v FROM state WHERE k LIKE 'quote:%'").all();
-        for (const r of (rows.results || [])) {
-          try { prevQuoteMap[r.k.slice(6)] = JSON.parse(r.v); } catch (e) {}
+        for (let _i = 0; _i < tickers.length; _i += 100) {
+          const _ck = tickers.slice(_i, _i + 100);
+          const _ph = _ck.map(function () { return "?"; }).join(",");
+          const _st = DB.prepare("SELECT k, v FROM state WHERE k IN (" + _ph + ")");
+          const _rw = await _st.bind.apply(_st, _ck.map(function (s) { return "quote:" + s; })).all();
+          for (const r of ((_rw && _rw.results) || [])) {
+            try { prevQuoteMap[r.k.slice(6)] = JSON.parse(r.v); } catch (e) {}
+          }
         }
       } catch (e) { /* 일괄 로드 실패 시 빈 맵으로 진행 — 일봉값은 평가루프가 채움 */ }
       // [V10 HOTFIX] setState를 종목마다 호출하면 수백 쿼리 → cron 타임아웃(503).
@@ -12963,7 +12971,7 @@ async function runTradingCycle(env) {
           if (globalThis.__allDailyCache && Date.now() - globalThis.__allDailyCache.ts < 600000) {
             allDaily = globalThis.__allDailyCache.map;
           } else {
-            const drows = await DB.prepare("SELECT k, v FROM state WHERE k LIKE 'daily:%'").all();
+            const drows = await DB.prepare("SELECT k, v FROM state WHERE k >= 'daily:' AND k < 'daily;'").all();
             allDaily = {};
             for (const r of (drows.results || [])) {
               try { allDaily[r.k.slice(6)] = JSON.parse(r.v); } catch (e) {}
@@ -13041,7 +13049,7 @@ async function runTradingCycle(env) {
       // [재진입 쿨다운] 손절 손실 후 재진입이 차단된 종목 목록 일괄 로드
       const activeCooldowns = new Set();
       try {
-        const cdRows = await DB.prepare("SELECT k, v FROM state WHERE k LIKE 'cooldown:%'").all();
+        const cdRows = await DB.prepare("SELECT k, v FROM state WHERE k >= 'cooldown:' AND k < 'cooldown;'").all();
         const _now = Date.now();
         for (const r of (cdRows.results || [])) {
           try {
@@ -14352,17 +14360,34 @@ async function runFastWatch(env, cronStart) {
     const cash = await computeAllCash(DB, cfg);
 
     // 시장별 보유 포지션 + 캐시 일봉 사전 로드 (틱마다 재로드 안 함)
+    // [V33.12] ★D1 과부하("D1 DB is overloaded")의 최대 단일 원인★
+    //   종전엔 이 루프가 시장마다(us/kr/cm/bdus/bdkr) 'daily:' 전량(약 980종목·수십 MB)을
+    //   통째로 다시 읽었다 — 1분 크론마다 최대 5회 풀로드. 실제로 필요한 건 "보유 종목"의
+    //   일봉뿐이므로, 보유 심볼만 모아 단일 IN 쿼리 1회로 읽는다(읽는 행 980→보유 수십).
     const ctxByMarket = {};
+    const _posByMkt = {}, _needSyms = {};
     for (const market of markets) {
       const positions = await getPositions(DB, market);
       if (Object.keys(positions).length === 0) continue;
-      const mcfg = getMarketCfg(cfg, market);
-      const dailyMap = {};
-      try {
-        const drows = await DB.prepare("SELECT k, v FROM state WHERE k LIKE 'daily:%'").all();
-        for (const r of (drows.results || [])) { try { dailyMap[r.k.slice(6)] = JSON.parse(r.v); } catch (e) {} }
-      } catch (e) {}
-      ctxByMarket[market] = { positions: positions, mcfg: mcfg, dailyMap: dailyMap };
+      _posByMkt[market] = positions;
+      for (const pk of Object.keys(positions)) { const _s = positions[pk] && positions[pk].symbol; if (_s) _needSyms[_s] = 1; }
+    }
+    const _dailyHeld = {};
+    const _needArr = Object.keys(_needSyms);
+    if (_needArr.length) {
+      // 바인딩 한도를 넘지 않게 100개씩 끊어 조회
+      for (let i = 0; i < _needArr.length; i += 100) {
+        const _chunk = _needArr.slice(i, i + 100);
+        try {
+          const _ph = _chunk.map(function () { return "?"; }).join(",");
+          const _st = DB.prepare("SELECT k, v FROM state WHERE k IN (" + _ph + ")");
+          const _rw = await _st.bind.apply(_st, _chunk.map(function (s) { return "daily:" + s; })).all();
+          for (const r of ((_rw && _rw.results) || [])) { try { _dailyHeld[r.k.slice(6)] = JSON.parse(r.v); } catch (e) {} }
+        } catch (e) {}
+      }
+    }
+    for (const market of Object.keys(_posByMkt)) {
+      ctxByMarket[market] = { positions: _posByMkt[market], mcfg: getMarketCfg(cfg, market), dailyMap: _dailyHeld };
     }
     const activeMarkets = Object.keys(ctxByMarket);
     if (activeMarkets.length === 0) return;  // 보유 포지션 없음 → 감시 불필요
@@ -15128,11 +15153,30 @@ async function handleRequest(request, env, ctx) {
     //   3M 딥넷은 순수 JS Worker(CPU 300s)로는 완전학습 불가 → 표본을 외부(사용자 PC GPU·Colab)로 내보내
     //   PyTorch로 완전학습 후 가중치를 업로드. Worker는 추론·저장만. env.TRAIN_KEY 시크릿으로 인증.
     //   설정: wrangler secret put TRAIN_KEY   (미설정 시 503으로 차단 — 공개 노출 방지)
+    // [V33.12] ★"모달로 학습이 갔는지"를 로그로 증명 가능하게★ — 종전엔 인증 실패가 조용히
+    //   401로 반환돼, TRAIN_KEY 불일치·시크릿 만료로 트레이너가 문 앞에서 튕겨도 워커 로그에
+    //   흔적이 하나도 남지 않았다(자가진단은 "수신 이력 없음"만 표시). 5분에 1건으로 눌러 기록한다.
     function _trainAuthed() {
       const want = env.TRAIN_KEY;
-      if (!want) return { ok: false, code: 503, msg: "TRAIN_KEY 미설정 — 'wrangler secret put TRAIN_KEY' 후 사용" };
+      if (!want) {
+        try {
+          if (!globalThis.__trainAuthLogTs || Date.now() - globalThis.__trainAuthLogTs > 300000) {
+            globalThis.__trainAuthLogTs = Date.now();
+            ctx.waitUntil(log(env.DB, "ERROR", null, "[TRAIN-AUTH] TRAIN_KEY 시크릿 미설정 — 외부 트레이너 요청을 전부 503으로 거절 중(" + path + ")"));
+          }
+        } catch (e) {}
+        return { ok: false, code: 503, msg: "TRAIN_KEY 미설정 — 'wrangler secret put TRAIN_KEY' 후 사용" };
+      }
       const got = url.searchParams.get("key") || (request.headers.get("x-train-key") || "");
-      if (got !== want) return { ok: false, code: 401, msg: "unauthorized" };
+      if (got !== want) {
+        try {
+          if (!globalThis.__trainAuthLogTs || Date.now() - globalThis.__trainAuthLogTs > 300000) {
+            globalThis.__trainAuthLogTs = Date.now();
+            ctx.waitUntil(log(env.DB, "WARN", null, "[TRAIN-AUTH] 키 불일치로 401 거절(" + path + ") — 트레이너 시크릿(TRAIN_KEY)이 워커 시크릿과 다름"));
+          }
+        } catch (e) {}
+        return { ok: false, code: 401, msg: "unauthorized" };
+      }
       return { ok: true };
     }
 
@@ -15167,18 +15211,39 @@ async function handleRequest(request, env, ctx) {
       const anchorTs = beforeTs > 0 ? beforeTs : Date.now();
       let total = 0;
       try { const c = await env.DB.prepare("SELECT COUNT(*) AS c FROM ml_samples WHERE featver = ? AND ts <= ?").bind(LUXML.featVer, anchorTs).first(); total = (c && c.c) || 0; } catch (e) {}
-      const rows = await env.DB.prepare(
-        "SELECT ts, feat, label, pnl_pct, strategy FROM ml_samples WHERE featver = ? AND ts <= ? ORDER BY ts DESC LIMIT ? OFFSET ?"
-      ).bind(LUXML.featVer, anchorTs, limit, offset).all();
+      // [V33.12] ★OFFSET 페이지네이션 → 커서(keyset) 방식★ 종전엔 마지막 페이지가 OFFSET 160000이라
+      //   D1이 매 페이지마다 앞선 행을 전부 훑고 버렸다(9페이지 합계 약 78만 스텝). 표본이 늘수록
+      //   제곱으로 무거워져, D1이 조금만 바빠도 export가 실패 → Modal 학습 전체가 중단됐다.
+      //   (ts,id) 커서로 바꾸면 매 페이지가 인덱스에서 바로 이어붙는다. cursorTs 미전달 시 종전 OFFSET
+      //   경로를 그대로 써서 구버전 트레이너와도 호환된다.
+      const curTs = Number(url.searchParams.get("cursorTs")) || 0;
+      const curId = Number(url.searchParams.get("cursorId")) || 0;
+      let rows;
+      if (curTs > 0) {
+        rows = await env.DB.prepare(
+          "SELECT id, ts, feat, label, pnl_pct, strategy FROM ml_samples WHERE featver = ? AND ts <= ? AND (ts < ? OR (ts = ? AND id < ?)) ORDER BY ts DESC, id DESC LIMIT ?"
+        ).bind(LUXML.featVer, anchorTs, curTs, curTs, curId, limit).all();
+      } else {
+        rows = await env.DB.prepare(
+          "SELECT id, ts, feat, label, pnl_pct, strategy FROM ml_samples WHERE featver = ? AND ts <= ? ORDER BY ts DESC, id DESC LIMIT ? OFFSET ?"
+        ).bind(LUXML.featVer, anchorTs, limit, offset).all();
+      }
       const raw = (rows && rows.results) ? rows.results : [];
+      // [V33.12] 트레이너가 표본을 실제로 당겨갔다는 증거를 로그에 남긴다(첫 페이지 1건만).
+      //   이게 안 찍히면 Modal 크론이 아예 워커에 도달하지 않은 것 — 원인 분리에 결정적.
+      if (offset === 0) {
+        try { ctx.waitUntil(log(env.DB, "INFO", null, "[ML-EXPORT] 외부 트레이너가 표본 수집 시작 — featVer=" + LUXML.featVer + " total=" + total)); } catch (e) {}
+      }
       const out = [];
       for (const r of raw) {
         let v; try { v = JSON.parse(r.feat); } catch (e) { continue; }
         if (!Array.isArray(v) || v.length !== LUXML.featNames.length) continue;
         out.push({ ts: _num(r.ts, 0), x: v.map(function (t) { return _num(t, 0); }), y: r.label ? 1 : 0, pnl: _num(r.pnl_pct, 0), hv: r.strategy === "hv" ? 1 : 0 });
       }
+      const _last = raw.length ? raw[raw.length - 1] : null;
       return Response.json({
         featVer: LUXML.featVer, featNames: LUXML.featNames, total: total, offset: offset, returned: out.length, anchorTs: anchorTs,
+        nextCursorTs: _last ? _num(_last.ts, 0) : null, nextCursorId: _last ? _num(_last.id, 0) : null,
         config: { hidden: DNN.hidden, seeds: DNN.seeds, dropout: DNN.dropout, l2: DNN.l2, labelSmooth: DNN.labelSmooth,
                   inputNoise: DNN.inputNoise, mixupP: DNN.mixupP, stdClip: DNN.stdClip, valFrac: DNN.valFrac,
                   embargoDays: LUXML.embargoDays || 6, hvSrcWeight: (typeof HARVEST !== "undefined" ? HARVEST.srcWeight : 1),
@@ -15237,7 +15302,7 @@ async function handleRequest(request, env, ctx) {
         const seeds = Math.max(1, Math.floor(_num(body.seeds, 0)));
         if (!seeds) return Response.json({ error: "seeds 없음" }, { status: 400, headers: cors });
         // 이전 스테이징 잔여 제거
-        try { await env.DB.prepare("DELETE FROM state WHERE k = 'dnn_stage' OR k LIKE 'dnn_stage:net:%'").run(); } catch (e) {}
+        try { await env.DB.prepare("DELETE FROM state WHERE k = 'dnn_stage' OR (k >= 'dnn_stage:net:' AND k < 'dnn_stage:net;')").run(); } catch (e) {}
         const dnnAcc = _clamp(_num(body.valAcc, 0), 0, 1);
         const valN = Math.max(1, Math.floor(_num(body.valN, 30)));
         const dnnLB = (body.valAccLB != null) ? _clamp(_num(body.valAccLB, 0), 0, 1) : _wilsonLB(dnnAcc, valN);
@@ -15291,7 +15356,7 @@ async function handleRequest(request, env, ctx) {
         try { saveInfo = await setBigStateRaw(env.DB, "dnn_model", head, { featVer: LUXML.featVer }); }
         catch (e) { return Response.json({ error: "저장 실패: " + (e && e.message) }, { status: 500, headers: cors }); }
         // 스테이징 정리
-        try { await env.DB.prepare("DELETE FROM state WHERE k = 'dnn_stage' OR k LIKE 'dnn_stage:net:%'").run(); } catch (e) {}
+        try { await env.DB.prepare("DELETE FROM state WHERE k = 'dnn_stage' OR (k >= 'dnn_stage:net:' AND k < 'dnn_stage:net;')").run(); } catch (e) {}
         return await _finishImport(saveInfo, stg.valAcc, stg.valAccLB, stg.valN);
       }
 
@@ -15520,10 +15585,10 @@ async function handleRequest(request, env, ctx) {
       try {
         const bg = parseInt(url.searchParams.get("budget") || "200", 10);
         try { resetFetchBudget(bg); } catch (e) {}
-        const before = await env.DB.prepare("SELECT COUNT(*) n FROM state WHERE k LIKE 'hist:%'").first();
+        const before = await env.DB.prepare("SELECT COUNT(*) n FROM state WHERE k >= 'hist:' AND k < 'hist;'").first();
         const t0 = Date.now();
         const r = await harvestDeepFetchNightly(env.DB);
-        const after = await env.DB.prepare("SELECT COUNT(*) n FROM state WHERE k LIKE 'hist:%'").first();
+        const after = await env.DB.prepare("SELECT COUNT(*) n FROM state WHERE k >= 'hist:' AND k < 'hist;'").first();
         const out = { ok: true, result: r, ms: Date.now() - t0,
                       histBefore: (before && before.n) || 0, histAfter: (after && after.n) || 0,
                       gained: ((after && after.n) || 0) - ((before && before.n) || 0),
@@ -15851,7 +15916,7 @@ async function handleRequest(request, env, ctx) {
       //   quote: 전체를 단일 쿼리로 로드 후 메모리에서 매핑한다.
       const quoteRowMap = {};
       try {
-        const qrows = await env.DB.prepare("SELECT k, v FROM state WHERE k LIKE 'quote:%'").all();
+        const qrows = await env.DB.prepare("SELECT k, v FROM state WHERE k >= 'quote:' AND k < 'quote;'").all();
         for (const r of (qrows.results || [])) {
           try { quoteRowMap[r.k.slice(6)] = JSON.parse(r.v); } catch (e) {}
         }
@@ -16039,7 +16104,7 @@ async function handleRequest(request, env, ctx) {
         if (globalThis.__allDailyCache && Date.now() - globalThis.__allDailyCache.ts < 600000) {
           _hmDaily = globalThis.__allDailyCache.map;
         } else {
-          const rows0 = await env.DB.prepare("SELECT k, v FROM state WHERE k LIKE 'daily:%'").all();
+          const rows0 = await env.DB.prepare("SELECT k, v FROM state WHERE k >= 'daily:' AND k < 'daily;'").all();
           _hmDaily = {};
           for (const r of (rows0.results || [])) {
             try { _hmDaily[r.k.slice(6)] = JSON.parse(r.v); } catch (e) {}
@@ -16143,7 +16208,7 @@ async function handleRequest(request, env, ctx) {
       const quotes = [];
       const _qmap = {};
       try {
-        const _qr = await env.DB.prepare("SELECT k, v FROM state WHERE k LIKE 'quote:%'").all();
+        const _qr = await env.DB.prepare("SELECT k, v FROM state WHERE k >= 'quote:' AND k < 'quote;'").all();
         for (const r of (_qr.results || [])) { try { _qmap[r.k.slice(6)] = JSON.parse(r.v); } catch(e){} }
       } catch(e){}
       for (const sym of allSymbols) {
@@ -16474,7 +16539,7 @@ async function handleRequest(request, env, ctx) {
       if (addKr > 0) deposits.kr = Math.round((deposits.kr || 0) + addKr);
       else if (addKr < 0) outflows.kr = Math.round((outflows.kr || 0) - addKr);
       // deposits/outflows가 바뀌면 cash 체크포인트는 무효 → 삭제 후 재계산
-      try { await env.DB.prepare("DELETE FROM state WHERE k LIKE 'cash_ckpt:%'").run(); } catch (e) {}
+      try { await env.DB.prepare("DELETE FROM state WHERE k >= 'cash_ckpt:' AND k < 'cash_ckpt;'").run(); } catch (e) {}
       await setState(env.DB, "deposits", deposits);
       await setState(env.DB, "outflows", outflows);
       // TWR 구간 마감 (흐름 직전 평가액 → factor 누적, lastValue 갱신)
@@ -17151,7 +17216,7 @@ async function handleRequest(request, env, ctx) {
         } else {
           __allDaily = {};
           try {
-            const drows = await env.DB.prepare("SELECT k, v FROM state WHERE k LIKE 'daily:%'").all();
+            const drows = await env.DB.prepare("SELECT k, v FROM state WHERE k >= 'daily:' AND k < 'daily;'").all();
             for (const r of (drows.results || [])) { try { __allDaily[r.k.slice(6)] = JSON.parse(r.v); } catch (e) {} }
             globalThis.__allDailyCache = { ts: Date.now(), map: __allDaily };
           } catch (e) {}
@@ -17242,7 +17307,7 @@ async function handleRequest(request, env, ctx) {
         await log(env.DB, "INFO", null, "[LLM] cleared instruction: " + m);
         return Response.json({ ok: true, cleared: m }, { headers: cors });
       }
-      await env.DB.prepare("DELETE FROM state WHERE k LIKE 'llm_daily:%'").run();
+      await env.DB.prepare("DELETE FROM state WHERE k >= 'llm_daily:' AND k < 'llm_daily;'").run();
       await log(env.DB, "INFO", null, "[LLM] cleared all instructions");
       return Response.json({ ok: true, cleared: "all" }, { headers: cors });
     }
@@ -17508,7 +17573,7 @@ async function handleRequest(request, env, ctx) {
     if (path === "/api/chart-cache-clear") {
       try {
         // D1에서 chart: 로 시작하는 KR 관련 키 전체 삭제
-        const rows = await env.DB.prepare("SELECT k FROM state WHERE k LIKE 'chart:%' AND (k LIKE '%.KS%' OR k LIKE '%.KQ%' OR k LIKE '%^KS%' OR k LIKE '%^KQ%')").all();
+        const rows = await env.DB.prepare("SELECT k FROM state WHERE k >= 'chart:' AND k < 'chart;' AND (k LIKE '%.KS%' OR k LIKE '%.KQ%' OR k LIKE '%^KS%' OR k LIKE '%^KQ%')").all();
         const keys = (rows.results || []).map(function(r){ return r.k; });
         for (const k of keys) {
           try { await env.DB.prepare("DELETE FROM state WHERE k = ?").bind(k).run(); } catch(e2) {}
@@ -17662,7 +17727,7 @@ async function handleRequest(request, env, ctx) {
       //   (기존 방식은 diag 호출 자체가 수백 D1 쿼리라 매우 느렸음.)
       const quoteMap = {};
       try {
-        const rows = await env.DB.prepare("SELECT k, v FROM state WHERE k LIKE 'quote:%'").all();
+        const rows = await env.DB.prepare("SELECT k, v FROM state WHERE k >= 'quote:' AND k < 'quote;'").all();
         for (const r of (rows.results || [])) {
           try { quoteMap[r.k.slice(6)] = JSON.parse(r.v); } catch (e) {}
         }
@@ -21525,7 +21590,7 @@ async function mlDNNLoad(DB) {
         __dnnMemCache = null;
         // [V11.2] featVer 불일치 구모델은 재사용 불가 — 청크를 지워 다음 호출부터 메타 1read로 즉시 종료.
         if (m && m.featVer !== LUXML.featVer) {
-          try { await DB.prepare("DELETE FROM state WHERE k LIKE 'dnn_model:chunk:%' OR k = 'dnn_model:meta'").run(); } catch (e2) {}
+          try { await DB.prepare("DELETE FROM state WHERE (k >= 'dnn_model:chunk:' AND k < 'dnn_model:chunk;') OR k = 'dnn_model:meta'").run(); } catch (e2) {}
         }
         return null;
       }
@@ -22482,7 +22547,7 @@ async function harvestDeepFetchNightly(DB, opts) {
       }
     }
     // (2) 종목 딥 — HARVEST_EXTRA_SYMS(섹터ETF 우선 → 섹터피처 조기활성) + daily:(거래) 로테이션
-    const ks = await DB.prepare("SELECT k FROM state WHERE k LIKE 'daily:%' ORDER BY k").all();
+    const ks = await DB.prepare("SELECT k FROM state WHERE k >= 'daily:' AND k < 'daily;' ORDER BY k").all();
     const _sset = {};
     for (const s of HARVEST_EXTRA_SYMS) _sset[s] = 1;   // 먼저 삽입 → 로테이션 앞순위(섹터ETF 조기 확보)
     for (const r of ((ks && ks.results) || [])) { const s = r.k.slice(6); if (s && s[0] !== "^") _sset[s] = 1; }
@@ -22502,7 +22567,7 @@ async function harvestDeepFetchNightly(DB, opts) {
       //   해결: hist_meta 전체를 쿼리 1회로 읽어 메모리에서 판정한다(왕복 N회 → 1회).
       const _metaAll = {};
       try {
-        const _mr = await DB.prepare("SELECT k, v FROM state WHERE k LIKE 'hist_meta:%'").all();
+        const _mr = await DB.prepare("SELECT k, v FROM state WHERE k >= 'hist_meta:' AND k < 'hist_meta;'").all();
         for (const r of ((_mr && _mr.results) || [])) {
           try { _metaAll[r.k.slice(10)] = JSON.parse(r.v); } catch (e) {}
         }
@@ -22565,7 +22630,7 @@ async function mlDataHealth(DB) {
     out.positiveRate = c.curTotal > 0 ? +(c.curPosSum / c.curTotal).toFixed(3) : null;   // alpha 클래스 균형(~0.3~0.45 정상)
     out.byStrategy = Object.assign({}, c.byStrategyCur);
     out.staleSamples = c.stale;                // 구버전(정리 대상) 잔여
-    const dh = await DB.prepare("SELECT COUNT(*) n FROM state WHERE k LIKE 'hist:%'").first();
+    const dh = await DB.prepare("SELECT COUNT(*) n FROM state WHERE k >= 'hist:' AND k < 'hist;'").first();
     out.deepHistorySymbols = (dh && dh.n) || 0;
     out.deepBars = HARVEST.deepBars;
     try { out.drift = await getState(DB, "model_drift", null); } catch (e) {}
@@ -22612,7 +22677,7 @@ async function aiSelfCheck(DB) {
     } catch (e) {}
     // 딥이력 커버리지 — 표본 증가의 상한을 결정하는 값
     try {
-      const _dc = await DB.prepare("SELECT (SELECT COUNT(*) FROM state WHERE k LIKE 'hist:%') h, (SELECT COUNT(*) FROM state WHERE k LIKE 'daily:%') d").first();
+      const _dc = await DB.prepare("SELECT (SELECT COUNT(*) FROM state WHERE k >= 'hist:' AND k < 'hist;') h, (SELECT COUNT(*) FROM state WHERE k >= 'daily:' AND k < 'daily;') d").first();
       const _h = (_dc && _dc.h) || 0, _d = (_dc && _dc.d) || 0;
       // [V33.11] ★남은 종목을 "아직 못 받은 것"과 "받을 자격이 없는 것"으로 분리★
       //   종전엔 커버리지 64%를 무조건 경고로 올렸는데, 실제로는 나머지가 전부 원본 봉수
@@ -22620,7 +22685,7 @@ async function aiSelfCheck(DB) {
       //   이 둘을 섞으면 "확대가 막혔다"는 잘못된 신호가 되므로 pending 을 따로 센다.
       let _inelig = 0, _inelig404 = 0;
       try {
-        const _mr = await DB.prepare("SELECT v FROM state WHERE k LIKE 'hist_meta:%'").all();
+        const _mr = await DB.prepare("SELECT v FROM state WHERE k >= 'hist_meta:' AND k < 'hist_meta;'").all();
         for (const r of ((_mr && _mr.results) || [])) {
           try { const o = JSON.parse(r.v); if (o && o.ineligible) { _inelig++; if (o.reason === "http404") _inelig404++; } } catch (e) {}
         }
@@ -22683,10 +22748,10 @@ async function aiSelfCheck(DB) {
 async function mlBuildXSPanel(DB) {
   try {
     const PB = 252;   // 1년치 날짜별 분포
-    let ks = await DB.prepare("SELECT k FROM state WHERE k LIKE 'hist:%' ORDER BY k LIMIT 300").all();
+    let ks = await DB.prepare("SELECT k FROM state WHERE k >= 'hist:' AND k < 'hist;' ORDER BY k LIMIT 300").all();
     let syms = (((ks && ks.results) || []).map(function (r) { return r.k.slice(5); })).filter(function (s) { return s && s[0] !== "^"; });
     if (syms.length < 30) {
-      const dks = await DB.prepare("SELECT k FROM state WHERE k LIKE 'daily:%' ORDER BY k LIMIT 300").all();
+      const dks = await DB.prepare("SELECT k FROM state WHERE k >= 'daily:' AND k < 'daily;' ORDER BY k LIMIT 300").all();
       syms = (((dks && dks.results) || []).map(function (r) { return r.k.slice(6); })).filter(function (s) { return s && s[0] !== "^"; });
     }
     if (syms.length < 20) return null;
@@ -22720,12 +22785,12 @@ async function mlMarketHarvestNightly(DB, opts) {
   try {
     await mlEnsureTable(DB);
     // [V18] 수확 유니버스 = daily:(거래) ∪ hist:(수확전용 딥) — 거래 안 하는 종목도 학습표본으로 편입(다양성↑)
-    const dks = await DB.prepare("SELECT k FROM state WHERE k LIKE 'daily:%' ORDER BY k").all();
+    const dks = await DB.prepare("SELECT k FROM state WHERE k >= 'daily:' AND k < 'daily;' ORDER BY k").all();
     const _symset = {};
     for (const r of ((dks && dks.results) || [])) { const s = r.k.slice(6); if (s && s[0] !== "^") _symset[s] = 1; }
     if (HARVEST.useDeepHistory) {
       try {
-        const hks = await DB.prepare("SELECT k FROM state WHERE k LIKE 'hist:%' ORDER BY k").all();
+        const hks = await DB.prepare("SELECT k FROM state WHERE k >= 'hist:' AND k < 'hist;' ORDER BY k").all();
         for (const r of ((hks && hks.results) || [])) { const s = r.k.slice(5); if (s && s[0] !== "^") _symset[s] = 1; }
       } catch (e) {}
     }
@@ -23724,7 +23789,7 @@ async function mlNewsNextDayNightly(DB) {
     }
     // (2) 유니버스 스코어링(캐시된 재무만 사용 → 추가 fetch 0)
     // [V32.4] 일봉을 종목마다 getState하던 것을 단일 쿼리 일괄 로드로(D1 왕복 수백→1) — 스캔과 동일 최적화.
-    const ks = await DB.prepare("SELECT k, v FROM state WHERE k LIKE 'daily:%' ORDER BY k").all();
+    const ks = await DB.prepare("SELECT k, v FROM state WHERE k >= 'daily:' AND k < 'daily;' ORDER BY k").all();
     const _dMap = {};
     for (const r of ((ks && ks.results) || [])) { try { _dMap[r.k.slice(6)] = JSON.parse(r.v); } catch (e) {} }
     const syms = Object.keys(_dMap).filter(function (s) { return s && s[0] !== "^"; });
@@ -23785,7 +23850,7 @@ async function mlUniverseScanNightly(DB) {
     //   D1을 점유해 같은 시간대의 API 요청(어닝스·공시·지표·기술분석)까지 CPU 한도(1102)로
     //   밀어내 "로드 실패"를 유발한 주범. 이제 일봉 전체를 단일 쿼리로 한 번에 읽어 메모리 맵으로
     //   쓴다(왕복 수백→1). 12608행의 __allDailyCache(10분)와 동일 철학 — 야간 스캔은 신선도 무관.
-    const ks = await DB.prepare("SELECT k, v FROM state WHERE k LIKE 'daily:%' ORDER BY k").all();
+    const ks = await DB.prepare("SELECT k, v FROM state WHERE k >= 'daily:' AND k < 'daily;' ORDER BY k").all();
     const dailyMapAll = {};
     for (const r of ((ks && ks.results) || [])) {
       try { dailyMapAll[r.k.slice(6)] = JSON.parse(r.v); } catch (e) {}
@@ -25004,6 +25069,9 @@ function _diagnoseLogMessage(msg) {
     // [V33.11] ★컴포넌트 태그 우선 규칙★ — 아래 일반 규칙(실패/부족 등 단어 매칭)보다 먼저 걸러야
     //   "정상 동작인데 원인 자동분류 안 됨"으로 떨어지지 않는다. 사용자 점검에서 이 셋이
     //   전부 "원인 불명 경고"로 집계돼 진짜 문제를 가렸다.
+    { re: /overloaded|queued for too long|too many api requests|D1_ERROR/i, d: "D1 순간 과부하(요청 큐 적체) — 무거운 전체 스캔 쿼리가 겹칠 때 발생. 전역 재시도(4회·지수백오프) 후에도 실패하면 그 요청만 빈 응답으로 떨어집니다. 반복되면 스캔 쿼리의 범위·빈도를 줄여야 함" },
+    { re: /^\[TRAIN-AUTH\]/, d: "외부 트레이너(Modal) 인증 거절 — TRAIN_KEY 시크릿이 워커와 트레이너에서 다르거나 미설정. 이 상태면 학습 표본을 못 내려받아 Modal 학습이 통째로 실패합니다" },
+    { re: /^\[ML-EXPORT\]/, d: "외부 트레이너가 학습 표본을 실제로 내려받는 중 — 정상(이 로그가 6시간마다 안 보이면 Modal 크론이 워커에 도달하지 않은 것)" },
     { re: /^\[CRISIS\]/, d: "지정학·시장 위기 게이지 관측치(주의/경계/위기)입니다 — 시스템 결함이 아니라 시장 상태 기록. 등급이 바뀐 순간만 경고로 올라가고, 같은 등급이 이어지는 건 정상" },
     { re: /^\[HV-CATCHUP\]/, d: "학습표본 캐치업 수확 — '0건'은 이미 수확한 구간을 중복 적재하지 않는다는 뜻(정상). 새 거래일이 쌓이거나 딥이력 커버리지가 늘어야 증가하며, 그 전엔 쿨다운으로 CPU를 아낍니다" },
     { re: /^\[DEEPHIST\]|딥이력|todoLeft/i, d: "딥이력(장기 봉) 확대 작업 — 'todoLeft=0'이면 확대 대상이 남지 않았다는 뜻(원본 봉수 300 미만 신규상장·짧은 이력 종목은 자격 미달). 해당 종목도 daily 320봉으로는 계속 수확되므로 학습에서 빠지지 않습니다" },
@@ -25069,7 +25137,7 @@ async function _luxSelfCheck(DB) {
       perf.sectorNews = secCnt;
       const tr = S["tag_returns"]; if (tr && tr.tags) perf.tagCovered = Object.keys(tr.tags).length;
       // 시세(일봉) 저장 종목수 — 유입 데이터 규모
-      try { const r1 = await DB.prepare("SELECT COUNT(*) c FROM state WHERE k LIKE 'daily:%'").all(); perf.dailyStored = (r1 && r1.results && r1.results[0] && r1.results[0].c) || 0; } catch (e) {}
+      try { const r1 = await DB.prepare("SELECT COUNT(*) c FROM state WHERE k >= 'daily:' AND k < 'daily;'").all(); perf.dailyStored = (r1 && r1.results && r1.results[0] && r1.results[0].c) || 0; } catch (e) {}
       // 보유 포지션수
       let held = 0; for (const mk of ["us", "kr", "cm", "bdus", "bdkr"]) { try { const pos = await getPositions(DB, mk); held += Object.keys(pos || {}).length; } catch (e) {} }
       perf.positions = held;
@@ -27499,7 +27567,7 @@ export default {
       //     사이클당 60개씩 한 바퀴 다시 써서(기존 일봉 지표 보존 머지) 즉시 정상화. 1회성.
       try {
         const have = new Set();
-        const rows = await env.DB.prepare("SELECT k FROM state WHERE k LIKE 'quote:%'").all();
+        const rows = await env.DB.prepare("SELECT k FROM state WHERE k >= 'quote:' AND k < 'quote;'").all();
         for (const r of ((rows && rows.results) || [])) have.add(String(r.k).slice(6));
         const missing = DEFAULT_US.concat(DEFAULT_KR).filter(function (s) { return !have.has(s); });
         let remig = [];
@@ -27510,9 +27578,14 @@ export default {
           await setState(env.DB, "quote_remigrate_v129", (start + 60 >= DEFAULT_US.length) ? { done: true } : { idx: start + 60 });
         }
         // [V12.12] 스파크(그래프) 없는 종목도 대상 포함 — 신규 종목은 quote는 있으나 일봉/스파크가 빔
+        // [V33.12] json_extract 조건은 인덱스를 못 타고 quote: 구간의 값을 전부 읽는다.
+        //   1분 크론마다 돌 이유가 없는 1회성 백필이므로 아이솔레이트당 30분에 한 번으로 제한.
         let sparkless = [];
+        const _spOk = !globalThis.__sparklessProbeTs || (Date.now() - globalThis.__sparklessProbeTs > 1800000);
         try {
-          const sr = await env.DB.prepare("SELECT k FROM state WHERE k LIKE 'quote:%' AND json_extract(v,'$.spark') IS NULL LIMIT 15").all();
+          if (!_spOk) throw new Error("skip");
+          globalThis.__sparklessProbeTs = Date.now();
+          const sr = await env.DB.prepare("SELECT k FROM state WHERE k >= 'quote:' AND k < 'quote;' AND json_extract(v,'$.spark') IS NULL LIMIT 15").all();
           sparkless = ((sr && sr.results) || []).map(function (r) { return String(r.k).slice(6); })
             .filter(function (s) { return DEFAULT_US.indexOf(s) >= 0 || DEFAULT_KR.indexOf(s) >= 0; });
         } catch (e) {}
@@ -27737,7 +27810,7 @@ export default {
               }
             }
             if (_dhSkipOk) {
-              const _hc = await env.DB.prepare("SELECT (SELECT COUNT(*) FROM state WHERE k LIKE 'hist:%') h, (SELECT COUNT(*) FROM state WHERE k LIKE 'daily:%') d").first();
+              const _hc = await env.DB.prepare("SELECT (SELECT COUNT(*) FROM state WHERE k >= 'hist:' AND k < 'hist;') h, (SELECT COUNT(*) FROM state WHERE k >= 'daily:' AND k < 'daily;') d").first();
               const _hn = (_hc && _hc.h) || 0, _dn = (_hc && _hc.d) || 0;
               if (!(_dn > 0 && _hn < _dn * 0.9)) {
                 await log(env.DB, "INFO", null, "[DEEPHIST-SKIP] 커버리지 충족/데이터없음 h=" + _hn + " d=" + _dn);
@@ -27748,7 +27821,7 @@ export default {
                 // [V12.133] 시간 예산 명시 — 장중 12s / 장외 25s. 초과분은 다음 실행이 이어받는다
                 //   (hist_off 로테이션이 진행상태를 보존하므로 중단해도 손실 없음).
                 const _dr = await harvestDeepFetchNightly(env.DB, { budgetMs: _mktOpen3 ? 12000 : 25000 });
-                const _hc2 = await env.DB.prepare("SELECT COUNT(*) h FROM state WHERE k LIKE 'hist:%'").first();
+                const _hc2 = await env.DB.prepare("SELECT COUNT(*) h FROM state WHERE k >= 'hist:' AND k < 'hist;'").first();
                 const _hn2 = (_hc2 && _hc2.h) || 0;
                 await log(env.DB, "INFO", null, "[DEEPHIST] 커버리지 " + _hn + "→" + _hn2 + "/" + _dn +
                   "(" + (_hn2 / _dn * 100).toFixed(0) + "%)" + (_mktOpen3 ? " [장중축소]" : "") + " " + (_dr || "(반환없음)"));
@@ -27798,7 +27871,7 @@ export default {
             if (_pv !== _PIPE_VER) {
               await setState(env.DB, "ai_pipeline_ver", _PIPE_VER);
               try { await env.DB.prepare("DELETE FROM state WHERE k = 'ai_trained_day'").run(); } catch (e) {}
-              try { await env.DB.prepare("DELETE FROM state WHERE k LIKE 'ai_stage:%'").run(); } catch (e) {}
+              try { await env.DB.prepare("DELETE FROM state WHERE k >= 'ai_stage:' AND k < 'ai_stage;'").run(); } catch (e) {}
               try { await env.DB.prepare("DELETE FROM state WHERE k = 'ai_train_lock'").run(); } catch (e) {}
               _aiLast = null;   // 로컬 게이트값도 리셋 — 오늘 이미 학습했어도 이번 배포분은 재실행
               try { await log(env.DB, "INFO", null, "[SCHED] 재배포 감지(" + _PIPE_VER + ") — 야간 파이프라인 강제 재실행(수확+MIND/GBDT 포함)"); } catch (e) {}
