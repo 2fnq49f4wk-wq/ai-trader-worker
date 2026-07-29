@@ -15009,18 +15009,38 @@ async function handleRequest(request, env, ctx) {
         //   총량 COUNT 는 17만 인덱스 엔트리를 훑는다. 5분마다 부르는 배지 하나 때문에 그 비용을
         //   낼 이유가 없다 — 총량은 이미 있는 60초 공유 캐시(_mlCountsCached, GROUP BY 1회)를 쓰고,
         //   오늘/24h 는 (featver, ts) 인덱스 범위라 값싸므로 그것만 직접 센다.
+        // [V33.30] ★"오늘 +3"이 안 바뀌던 표기 버그★ ml_samples.ts 는 "적재 시각"이 아니라
+        //   "그 봉의 날짜"다(수확기: ts = baseTs - (L-1-i)*86400000). 수확 대상은 10거래일 전 봉이라
+        //   ts >= 오늘자정 조건에는 영원히 안 걸린다 — pool 이 +77 늘어도 화면은 3에 머물렀다.
+        //   적재 시각이 테이블에 없으므로, 총량 스냅샷을 주기적으로 남겨 그 차이로 증가분을 낸다.
         let samples = null;
         try {
           const _fv = LUXML.featVer;
-          const _d0 = new Date(); _d0.setUTCHours(0, 0, 0, 0);
-          const _todayStart = _d0.getTime() - 9 * 3600000;   // KST 자정 기준
-          const _t24 = Date.now() - 86400000;
           const _cc = await _mlCountsCached(env.DB);
-          const [_tod, _d24] = await Promise.all([
-            env.DB.prepare("SELECT COUNT(*) c FROM ml_samples WHERE featver=? AND ts>=?").bind(_fv, _todayStart).first(),
-            env.DB.prepare("SELECT COUNT(*) c FROM ml_samples WHERE featver=? AND ts>=?").bind(_fv, _t24).first()
-          ]);
-          samples = { total: (_cc && _cc.curTotal) || 0, today: (_tod && _tod.c) || 0, last24h: (_d24 && _d24.c) || 0, featVer: _fv };
+          const _total = (_cc && _cc.curTotal) || 0;
+          const _now = Date.now();
+          const _gk = "ml_growth:v" + _fv;
+          let _g = await getState(env.DB, _gk, null);
+          let _pts = (_g && Array.isArray(_g.pts)) ? _g.pts : [];
+          const _last = _pts.length ? _pts[_pts.length - 1] : null;
+          if (!_last || (_now - _last.t) > 600000) {          // 10분에 한 번만 기록(쓰기 부담 최소화)
+            _pts.push({ t: _now, n: _total });
+            _pts = _pts.filter(function (p) { return _now - p.t < 8 * 86400000; }).slice(-80);
+            try { ctx.waitUntil(setState(env.DB, _gk, { pts: _pts })); } catch (e) {}
+          }
+          // KST 자정 기준 기준점 — 자정 이후 첫 스냅샷(없으면 자정 직전 마지막 것)
+          const _kstNow = _now + 9 * 3600000;
+          const _kstMid = Math.floor(_kstNow / 86400000) * 86400000 - 9 * 3600000;
+          let _baseToday = null, _base24 = null;
+          for (const p of _pts) { if (p.t >= _kstMid) { _baseToday = p.n; break; } }   // 자정 이후 첫 스냅샷
+          if (_baseToday === null) {                                                    // 없으면 자정 직전 마지막 것
+            for (let i = _pts.length - 1; i >= 0; i--) if (_pts[i].t < _kstMid) { _baseToday = _pts[i].n; break; }
+          }
+          for (const p of _pts) { if (_now - p.t <= 86400000) { _base24 = p.n; break; } }
+          samples = { total: _total, featVer: _fv,
+                      today: (_baseToday != null) ? Math.max(0, _total - _baseToday) : null,
+                      last24h: (_base24 != null) ? Math.max(0, _total - _base24) : null,
+                      tracking: _pts.length };
         } catch (e) {}
         const _out = { aiReady: aiReady, mode: aiReady ? "AI_AUTONOMOUS" : "RULE_FALLBACK",
                  committee: { mind: mindOk, dnn: dnnOk, gbdt: gbdtOk, xgb: xgb, lgb: lgb, cat: cat },

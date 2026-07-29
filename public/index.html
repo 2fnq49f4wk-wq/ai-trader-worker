@@ -14140,11 +14140,16 @@ html[data-theme="light"] .rail{background:#fff;}
     // [V33.13] ★오늘 늘어난 학습 표본★ — 표본이 실제로 자라는지 화면에서 바로 확인.
     var sm = mode.samples;
     if(sm && sm.total != null){
-      var tdy = sm.today || 0;
+      // [V33.30] today/last24h 는 총량 스냅샷의 차이로 계산된다(적재 시각이 테이블에 없기 때문).
+      //   기준 스냅샷이 아직 없으면 0이 아니라 "집계 중"으로 — 없는 값을 0으로 단정하지 않는다.
+      var tdy = sm.today, d24 = sm.last24h;
+      var fmt = function(v){
+        if(v == null) return '<span style="color:var(--t3);">집계 중</span>';
+        return '<b style="color:'+(v>0?'var(--pos)':'var(--t3)')+';">'+(v>0?'+':'')+v.toLocaleString()+'</b>건';
+      };
       h += '<span class="k">학습 표본</span>'
         + '<div class="diag">누적 <b>'+sm.total.toLocaleString()+'</b>건 · featVer '+esc(sm.featVer)+'</div>'
-        + '<div class="diag" style="margin-top:2px;">오늘 <b style="color:'+(tdy>0?'var(--pos)':'var(--t3)')+';">'
-        + (tdy>0?'+':'')+tdy.toLocaleString()+'</b>건 · 최근 24h '+(sm.last24h||0).toLocaleString()+'건</div>';
+        + '<div class="diag" style="margin-top:2px;">오늘 '+fmt(tdy)+' · 최근 24h '+fmt(d24)+'</div>';
     }
     h += '<span class="k">위원회</span><div class="row">'
       + '<span class="m">MIND '+st(c.mind)+'</span><span class="m">DNN '+st(c.dnn)+'</span><span class="m">GBDT '+st(c.gbdt)+'</span>'
