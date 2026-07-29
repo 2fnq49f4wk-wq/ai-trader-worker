@@ -22886,14 +22886,27 @@ async function mlMarketHarvestNightly(DB, opts) {
     // [V33.13] 종목 루프가 쓰는 두 가지를 미리 한 번에 읽는다 — 루프 안의 D1 왕복을 없애기 위함.
     //   daily: 전량(1쿼리)과 hist_meta 전량(1쿼리, 행이 작음). 이 둘만으로 "읽을 필요 있는 종목"을
     //   가려낼 수 있어, 예산이 실제로 새 봉이 생긴 종목에 쓰인다.
-    const _dailyAll = {}, _metaBySym = {};
-    try {
-      const _dr = await DB.prepare("SELECT k, v FROM state WHERE k >= 'daily:' AND k < 'daily;'").all();
-      for (const r of ((_dr && _dr.results) || [])) { try { _dailyAll[r.k.slice(6)] = JSON.parse(r.v); } catch (e) {} }
-    } catch (e) {}
+    const _dailyAll = {}, _metaBySym = {}, _dailyTs = {};
     try {
       const _mr = await DB.prepare("SELECT k, v FROM state WHERE k >= 'hist_meta:' AND k < 'hist_meta;'").all();
       for (const r of ((_mr && _mr.results) || [])) { try { _metaBySym[r.k.slice(10)] = JSON.parse(r.v); } catch (e) {} }
+    } catch (e) {}
+    try {
+      // ⚠️ 일봉 전량을 파싱해 들고 있으면 약 30MB — hist: blob·표본 배열과 겹치면 Worker 128MB에
+      //   위험하다. 그래서 파싱 직후 "이번에 수확할 게 없는 종목"은 즉시 버리고 ts만 남긴다.
+      //   (버려도 스킵 판정에는 ts만 있으면 충분하고, 실제 수확 대상은 소수라 메모리가 평평하게 유지된다)
+      const _dr = await DB.prepare("SELECT k, v FROM state WHERE k >= 'daily:' AND k < 'daily;'").all();
+      for (const r of ((_dr && _dr.results) || [])) {
+        const s = r.k.slice(6);
+        let o = null; try { o = JSON.parse(r.v); } catch (e) { continue; }
+        if (!o) continue;
+        _dailyTs[s] = o.ts || 0;
+        const sv = seen[s];
+        const hm = _metaBySym[s];
+        const curTs = (hm && hm.dataTs) ? hm.dataTs : (o.ts || 0);
+        const skippable = !!(sv && typeof sv === "object" && sv.done && sv.srcTs && curTs && curTs === sv.srcTs);
+        if (!skippable) _dailyAll[s] = o;   // 수확 후보만 보관
+      }
     } catch (e) {}
     for (let si = 0; si < takeN; si++) {
       if (made >= HARVEST.maxPerNight) break;
@@ -22911,11 +22924,15 @@ async function mlMarketHarvestNightly(DB, opts) {
         // 현재 원천의 스냅샷 시각을 D1 접근 없이 확인한다.
         //   딥종목: hist_meta.dataTs(위에서 일괄로드) / 일봉전용: 메모리 일괄로드된 daily:.ts
         const _hm = _metaBySym[sym];
-        const _curTs = (_hm && _hm.dataTs) ? _hm.dataTs : ((_dailyAll[sym] && _dailyAll[sym].ts) || 0);
+        const _curTs = (_hm && _hm.dataTs) ? _hm.dataTs : (_dailyTs[sym] || 0);
         if (_curTs && _curTs === _sv.srcTs) continue;   // 원천이 그대로 → 새 표본 0건 확정, 읽지 않는다
       }
       let dd = null;
-      if (HARVEST.useDeepHistory) { try { dd = await getState(DB, "hist:" + sym, null); } catch (e) {} }
+      // 딥이력이 있을 만한 종목만 hist: 를 읽는다 — hist_meta 가 없거나 자격미달로 표시된 종목은
+      // 어차피 null 이 돌아오므로, 그 왕복을 아껴 새 봉이 생긴 종목 쪽에 예산을 쓴다.
+      const _hmS = _metaBySym[sym];
+      const _mayDeep = !!(_hmS && !_hmS.ineligible) || !_dailyAll[sym];
+      if (HARVEST.useDeepHistory && _mayDeep) { try { dd = await getState(DB, "hist:" + sym, null); } catch (e) {} }
       if (!dd || !Array.isArray(dd.closes) || dd.closes.length < HARVEST.minBars) dd = _dailyAll[sym] || null;
       const closes = dd && dd.closes;
       if (!Array.isArray(closes) || closes.length < HARVEST.minBars) continue;
