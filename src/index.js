@@ -7552,6 +7552,81 @@ async function getBigStateRaw(DB, key) {
   if (meta.len && str.length !== meta.len) return null;
   return str;
 }
+// [V33.22] ★딥이력(hist:) 저장소 추상화 — D1에서 R2로★
+//   hist: 는 종목당 2400봉×5배열(약 120KB) × 625종목 ≈ 71MB 로, D1 안에서 dnn_model(32MB)보다 크다.
+//   "통째로 읽고 통째로 쓰는" 접근 패턴이라 R2가 정확히 맞는다(쿼리·정렬이 전혀 필요 없다).
+//   ⚠️ 개수·목록 조회는 R2.list() 를 쓰지 않는다 — hist_meta: 가 hist: 쓰기와 항상 짝으로 기록되고
+//      크기도 작아 D1에 남겨두면 되기 때문이다. 덕분에 이관해도 커버리지·유니버스 로직이 그대로다.
+//   읽기는 R2 → 실패/부재 시 D1 폴백이라, 이관이 절반만 끝난 상태에서도 정상 동작한다.
+function _histKey(sym) { return "hist/" + sym + ".json"; }
+async function histGet(DB, sym) {
+  const R2 = _bigR2();
+  if (R2) {
+    try {
+      const o = await R2.get(_histKey(sym));
+      if (o) { try { return JSON.parse(await o.text()); } catch (e) { /* 손상 → D1 폴백 */ } }
+    } catch (e) { /* R2 오류 → D1 폴백 */ }
+  }
+  try { return await getState(DB, "hist:" + sym, null); } catch (e) { return null; }
+}
+async function histPut(DB, sym, dh) {
+  const R2 = _bigR2();
+  if (R2) {
+    await R2.put(_histKey(sym), JSON.stringify(dh));
+    // R2에 올라갔으면 D1 사본은 필요 없다(있으면 용량만 차지) — 실패해도 무해하므로 조용히 정리.
+    try { await DB.prepare("DELETE FROM state WHERE k = ?").bind("hist:" + sym).run(); } catch (e) {}
+    return true;
+  }
+  await setState(DB, "hist:" + sym, dh);
+  return true;
+}
+// 딥이력 보유 종목 = hist_meta 가 있고 자격미달이 아닌 종목. hist: 행을 세는 것과 동치이며,
+// 저장소(D1/R2)가 어디든 동일하게 동작한다.
+const _HM_OK = "k >= 'hist_meta:' AND k < 'hist_meta;' AND json_extract(v,'$.dataTs') IS NOT NULL";
+async function histSymbolCount(DB) {
+  try { const r = await DB.prepare("SELECT COUNT(*) n FROM state WHERE " + _HM_OK).first(); return (r && r.n) || 0; }
+  catch (e) { return 0; }
+}
+async function histSymbolKeys(DB, limit) {
+  try {
+    const r = await DB.prepare("SELECT k FROM state WHERE " + _HM_OK + " ORDER BY k" + (limit ? " LIMIT " + limit : "")).all();
+    return ((r && r.results) || []).map(function (x) { return String(x.k).slice(10); });
+  } catch (e) { return []; }
+}
+
+// [V33.22] 기존 D1의 hist: 행들을 R2로 조금씩 옮긴다(1회성). 한 틱에 몇 개씩만 처리해
+//   거래 사이클을 방해하지 않고, PUT → 재확인 → D1 행 삭제 순서라 중간에 죽어도 무손실이다.
+//   읽기가 R2→D1 폴백이므로 이관이 절반만 끝난 상태에서도 전 종목이 정상 조회된다.
+async function migrateHistBatch(DB, maxN, deadline) {
+  const R2 = _bigR2();
+  if (!R2) return { moved: 0, left: -1, reason: "R2 미바인딩" };
+  let rows = [];
+  try {
+    const r = await DB.prepare("SELECT k FROM state WHERE k >= 'hist:' AND k < 'hist;' ORDER BY k LIMIT ?").bind(maxN).all();
+    rows = ((r && r.results) || []).map(function (x) { return String(x.k).slice(5); });
+  } catch (e) { return { moved: 0, left: -1, reason: "목록 조회 실패" }; }
+  let moved = 0, bytes = 0;
+  for (const sym of rows) {
+    if (deadline && Date.now() > deadline) break;
+    try {
+      const row = await DB.prepare("SELECT v FROM state WHERE k = ?").bind("hist:" + sym).first();
+      if (!row || row.v == null) continue;
+      const str = String(row.v);
+      await R2.put(_histKey(sym), str);
+      const back = await R2.get(_histKey(sym));
+      if (!back) continue;                                   // 재확인 실패 → D1 원본 유지
+      const want = new TextEncoder().encode(str).length;
+      const got = (back.size != null) ? back.size : new TextEncoder().encode(await back.text()).length;
+      if (got !== want) continue;                            // 크기 불일치 → D1 원본 유지
+      await DB.prepare("DELETE FROM state WHERE k = ?").bind("hist:" + sym).run();
+      moved++; bytes += want;
+    } catch (e) { /* 이 종목만 건너뛴다 — 다음 틱에 재시도 */ }
+  }
+  let left = 0;
+  try { const r2 = await DB.prepare("SELECT COUNT(*) n FROM state WHERE k >= 'hist:' AND k < 'hist;'").first(); left = (r2 && r2.n) || 0; } catch (e) {}
+  return { moved: moved, bytes: bytes, left: left };
+}
+
 // [V33.19] ★D1 청크 → R2 이관★ 이미 D1에 85청크로 들어있는 모델을 R2로 옮긴다.
 //   순서가 중요하다: PUT → 재확인(길이 대조) → 메타 갱신 → 그 다음에만 D1 청크 삭제.
 //   중간에 실패하면 D1 청크가 그대로 남아 있어 기존 경로로 계속 읽힌다(무손실).
@@ -13201,10 +13276,13 @@ async function runTradingCycle(env) {
           try {
             __secCache = {};
             const _etfs = Object.keys(_SECTOR_ETF).map(function (g) { return _SECTOR_ETF[g]; });
-            const _hs = await getStates(DB, _etfs.map(function (e2) { return "hist:" + e2; }));
+            // [V33.22] hist: 가 R2로 이동했으므로 배치 조회 대신 종목별로 읽는다.
+            //   섹터 ETF는 11개뿐이라 순차 GET 비용이 무시할 수준이고, R2 미바인딩 시엔
+            //   histGet 이 D1 폴백을 타므로 동작이 종전과 동일하다.
             const _ds = await getStates(DB, _etfs.map(function (e2) { return "daily:" + e2; }));
             for (const e2 of _etfs) {
-              const sd = _hs["hist:" + e2] || _ds["daily:" + e2] || null;
+              let sd = null; try { sd = await histGet(DB, e2); } catch (e3) {}
+              if (!sd) sd = _ds["daily:" + e2] || null;
               __secCache[e2] = (sd && Array.isArray(sd.closes)) ? sd.closes : null;
             }
           } catch (e) { __secCache = {}; }
@@ -15684,10 +15762,10 @@ async function handleRequest(request, env, ctx) {
       try {
         const bg = parseInt(url.searchParams.get("budget") || "200", 10);
         try { resetFetchBudget(bg); } catch (e) {}
-        const before = await env.DB.prepare("SELECT COUNT(*) n FROM state WHERE k >= 'hist:' AND k < 'hist;'").first();
+        const before = { n: await histSymbolCount(env.DB) };
         const t0 = Date.now();
         const r = await harvestDeepFetchNightly(env.DB);
-        const after = await env.DB.prepare("SELECT COUNT(*) n FROM state WHERE k >= 'hist:' AND k < 'hist;'").first();
+        const after = { n: await histSymbolCount(env.DB) };
         const out = { ok: true, result: r, ms: Date.now() - t0,
                       histBefore: (before && before.n) || 0, histAfter: (after && after.n) || 0,
                       gained: ((after && after.n) || 0) - ((before && before.n) || 0),
@@ -22664,7 +22742,7 @@ async function harvestDeepFetchNightly(DB, opts) {
       __fetchBudget.used++; attempted++;
       const dh = await fetchDeepDaily(isym, HARVEST.deepBars);
       if (dh && dh.closes && dh.closes.length >= 300) {
-        try { await setState(DB, "hist:" + isym, dh); await setState(DB, "hist_meta:" + isym, { ts: now, bars: dh.bars, dataTs: dh.ts }); fetched++; } catch (e) {}
+        try { await histPut(DB, isym, dh); await setState(DB, "hist_meta:" + isym, { ts: now, bars: dh.bars, dataTs: dh.ts }); fetched++; } catch (e) {}
       }
     }
     // (2) 종목 딥 — HARVEST_EXTRA_SYMS(섹터ETF 우선 → 섹터피처 조기활성) + daily:(거래) 로테이션
@@ -22711,7 +22789,7 @@ async function harvestDeepFetchNightly(DB, opts) {
         __fetchBudget.used++; attempted++;
         const dh = await fetchDeepDaily(sym, HARVEST.deepBars);
         if (dh && dh.closes && dh.closes.length >= 300) {
-          try { await setState(DB, "hist:" + sym, dh); await setState(DB, "hist_meta:" + sym, { ts: now, bars: dh.bars, dataTs: dh.ts }); fetched++; } catch (e) {}
+          try { await histPut(DB, sym, dh); await setState(DB, "hist_meta:" + sym, { ts: now, bars: dh.bars, dataTs: dh.ts }); fetched++; } catch (e) {}
         } else if (__deepFail.shortBars > _sbBefore) {
           // 원본이 300봉 미만 — 구조적 자격미달이므로 마킹(다음 실행부터 fetch 자체를 건너뜀)
           try { await setState(DB, "hist_meta:" + sym, { ts: now, ineligible: true, reason: "shortBars" }); skippedIneligible++; } catch (e) {}
@@ -22751,8 +22829,7 @@ async function mlDataHealth(DB) {
     out.positiveRate = c.curTotal > 0 ? +(c.curPosSum / c.curTotal).toFixed(3) : null;   // alpha 클래스 균형(~0.3~0.45 정상)
     out.byStrategy = Object.assign({}, c.byStrategyCur);
     out.staleSamples = c.stale;                // 구버전(정리 대상) 잔여
-    const dh = await DB.prepare("SELECT COUNT(*) n FROM state WHERE k >= 'hist:' AND k < 'hist;'").first();
-    out.deepHistorySymbols = (dh && dh.n) || 0;
+    out.deepHistorySymbols = await histSymbolCount(DB);
     out.deepBars = HARVEST.deepBars;
     try { out.drift = await getState(DB, "model_drift", null); } catch (e) {}
   } catch (e) { out.error = String(e && e.message); }
@@ -22826,7 +22903,8 @@ async function aiSelfCheck(DB) {
     } catch (e) {}
     // 딥이력 커버리지 — 표본 증가의 상한을 결정하는 값
     try {
-      const _dc = await DB.prepare("SELECT (SELECT COUNT(*) FROM state WHERE k >= 'hist:' AND k < 'hist;') h, (SELECT COUNT(*) FROM state WHERE k >= 'daily:' AND k < 'daily;') d").first();
+      const _dcd = await DB.prepare("SELECT COUNT(*) d FROM state WHERE k >= 'daily:' AND k < 'daily;'").first();
+      const _dc = { h: await histSymbolCount(DB), d: (_dcd && _dcd.d) || 0 };
       const _h = (_dc && _dc.h) || 0, _d = (_dc && _dc.d) || 0;
       // [V33.11] ★남은 종목을 "아직 못 받은 것"과 "받을 자격이 없는 것"으로 분리★
       //   종전엔 커버리지 64%를 무조건 경고로 올렸는데, 실제로는 나머지가 전부 원본 봉수
@@ -22897,8 +22975,8 @@ async function aiSelfCheck(DB) {
 async function mlBuildXSPanel(DB) {
   try {
     const PB = 252;   // 1년치 날짜별 분포
-    let ks = await DB.prepare("SELECT k FROM state WHERE k >= 'hist:' AND k < 'hist;' ORDER BY k LIMIT 300").all();
-    let syms = (((ks && ks.results) || []).map(function (r) { return r.k.slice(5); })).filter(function (s) { return s && s[0] !== "^"; });
+    // [V33.22] hist: 페이로드가 R2로 갔으므로 목록은 hist_meta(D1)에서 뽑는다 — 결과 동치.
+    let syms = (await histSymbolKeys(DB, 300)).filter(function (s) { return s && s[0] !== "^"; });
     if (syms.length < 30) {
       const dks = await DB.prepare("SELECT k FROM state WHERE k >= 'daily:' AND k < 'daily;' ORDER BY k LIMIT 300").all();
       syms = (((dks && dks.results) || []).map(function (r) { return r.k.slice(6); })).filter(function (s) { return s && s[0] !== "^"; });
@@ -22908,7 +22986,7 @@ async function mlBuildXSPanel(DB) {
     const acc = [];
     for (let b = 0; b < PB; b++) acc.push({ r20s: 0, r20ss: 0, r5s: 0, r5ss: 0, n: 0 });
     for (const sym of syms) {
-      let dd = null; try { dd = await getState(DB, "hist:" + sym, null) || await getState(DB, "daily:" + sym, null); } catch (e) {}
+      let dd = null; try { dd = await histGet(DB, sym) || await getState(DB, "daily:" + sym, null); } catch (e) {}
       const c = dd && dd.closes; if (!Array.isArray(c) || c.length < 80) continue;
       const L = c.length;
       for (let b = 0; b < PB; b++) {
@@ -22939,8 +23017,8 @@ async function mlMarketHarvestNightly(DB, opts) {
     for (const r of ((dks && dks.results) || [])) { const s = r.k.slice(6); if (s && s[0] !== "^") _symset[s] = 1; }
     if (HARVEST.useDeepHistory) {
       try {
-        const hks = await DB.prepare("SELECT k FROM state WHERE k >= 'hist:' AND k < 'hist;' ORDER BY k").all();
-        for (const r of ((hks && hks.results) || [])) { const s = r.k.slice(5); if (s && s[0] !== "^") _symset[s] = 1; }
+        // [V33.22] 수확 유니버스의 딥이력 축도 hist_meta 기준으로 — 저장소 위치와 무관하게 동일.
+        for (const s of await histSymbolKeys(DB, 0)) { if (s && s[0] !== "^") _symset[s] = 1; }
       } catch (e) {}
     }
     const symsAll = Object.keys(_symset).sort();
@@ -22959,7 +23037,7 @@ async function mlMarketHarvestNightly(DB, opts) {
         let ic = null;
         if (HARVEST.useDeepHistory) {   // [V18] alpha 정렬용 딥 지수 우선(있으면 딥, 없으면 320봉 폴백)
           const isym = mk === "us" ? "^GSPC" : (mk === "kr" ? "^KS11" : "GC=F");
-          const hd = await getState(DB, "hist:" + isym, null);
+          const hd = await histGet(DB, isym);
           if (hd && Array.isArray(hd.closes) && hd.closes.length >= 300) ic = hd.closes;
         }
         idxCache[mk] = ic || await _mlLoadIndexCloses(DB, mk);
@@ -22967,7 +23045,7 @@ async function mlMarketHarvestNightly(DB, opts) {
     }
     // [V20] 섹터 ETF 종가 캐시(1회) — 섹터-상대강도 피처용. 딥(hist:) 우선.
     const secCache = {};
-    try { for (const etf of Object.keys(_SECTOR_ETF).map(function (g) { return _SECTOR_ETF[g]; })) { let sd = await getState(DB, "hist:" + etf, null); if (!sd) sd = await getState(DB, "daily:" + etf, null); secCache[etf] = (sd && Array.isArray(sd.closes)) ? sd.closes : null; } } catch (e) {}
+    try { for (const etf of Object.keys(_SECTOR_ETF).map(function (g) { return _SECTOR_ETF[g]; })) { let sd = await histGet(DB, etf); if (!sd) sd = await getState(DB, "daily:" + etf, null); secCache[etf] = (sd && Array.isArray(sd.closes)) ? sd.closes : null; } } catch (e) {}
     let xsPanel = null; try { xsPanel = await getState(DB, "xs_panel", null); } catch (e) {}   // [V21] 횡단면 랭크 패널(1회)
     // [V33.13] 종목 루프가 쓰는 두 가지를 미리 한 번에 읽는다 — 루프 안의 D1 왕복을 없애기 위함.
     //   daily: 전량(1쿼리)과 hist_meta 전량(1쿼리, 행이 작음). 이 둘만으로 "읽을 필요 있는 종목"을
@@ -23041,7 +23119,7 @@ async function mlMarketHarvestNightly(DB, opts) {
       const _hmS = _metaBySym[sym];
       const _mayDeep = !!(_hmS && !_hmS.ineligible) || !_dailyAll[sym];
       let _srcKind = "hist";
-      if (HARVEST.useDeepHistory && _mayDeep) { try { dd = await getState(DB, "hist:" + sym, null); } catch (e) {} }
+      if (HARVEST.useDeepHistory && _mayDeep) { try { dd = await histGet(DB, sym); } catch (e) {} }
       if (!dd || !Array.isArray(dd.closes) || dd.closes.length < HARVEST.minBars) { dd = _dailyAll[sym] || null; _srcKind = "daily"; }
       const closes = dd && dd.closes;
       if (!Array.isArray(closes) || closes.length < HARVEST.minBars) continue;
@@ -27822,6 +27900,27 @@ export default {
         }
       } catch (e) { try { await log(env.DB, "WARN", null, "[R2] 이관 시도 중 예외: " + (e && e.message) + " (D1 원본 유지)"); } catch (e2) {} }
 
+      // 0.95) [V33.22] 딥이력(hist:, 약 71MB)을 R2로 조금씩 이관 — 틱당 최대 12종목·6초.
+      //   읽기가 R2→D1 폴백이라 진행 중에도 전 종목이 정상 조회된다. 다 옮기면 로그 1회 남기고 멈춘다.
+      try {
+        if (_bigR2()) {
+          const _hm = await getState(env.DB, "r2_migrate:hist", null);
+          if (!_hm || !_hm.done) {
+            const _hr = await migrateHistBatch(env.DB, 12, Date.now() + 6000);
+            if (_hr.left === 0) {
+              await setState(env.DB, "r2_migrate:hist", { done: true, ts: Date.now() });
+              await log(env.DB, "INFO", null, "[R2] 딥이력 이관 완료 — D1에 남은 hist: 행 0");
+            } else if (_hr.moved > 0) {
+              await setState(env.DB, "r2_migrate:hist", { done: false, ts: Date.now(), left: _hr.left });
+              if (!_hm || (Date.now() - (_hm.ts || 0)) > 300000) {
+                await log(env.DB, "INFO", null, "[R2] 딥이력 이관 중 — 이번 " + _hr.moved + "종목(" +
+                  ((_hr.bytes || 0) / 1048576).toFixed(1) + "MB), 남은 " + _hr.left + "종목");
+              }
+            }
+          }
+        }
+      } catch (e) { try { await log(env.DB, "WARN", null, "[R2] 딥이력 이관 예외: " + (e && e.message) + " (D1 원본 유지)"); } catch (e2) {} }
+
       // 1) 주식/지수 가격 갱신 + 거래 (가장 무거움)
       try { await runTradingCycle(env); }
       catch (e) { try { await log(env.DB, "ERROR", null, "[SCHED] trading cycle fail: " + e.message); } catch (e2) {} }
@@ -28075,7 +28174,8 @@ export default {
               }
             }
             if (_dhSkipOk) {
-              const _hc = await env.DB.prepare("SELECT (SELECT COUNT(*) FROM state WHERE k >= 'hist:' AND k < 'hist;') h, (SELECT COUNT(*) FROM state WHERE k >= 'daily:' AND k < 'daily;') d").first();
+              const _hcd = await env.DB.prepare("SELECT COUNT(*) d FROM state WHERE k >= 'daily:' AND k < 'daily;'").first();
+              const _hc = { h: await histSymbolCount(env.DB), d: (_hcd && _hcd.d) || 0 };
               const _hn = (_hc && _hc.h) || 0, _dn = (_hc && _hc.d) || 0;
               if (!(_dn > 0 && _hn < _dn * 0.9)) {
                 await log(env.DB, "INFO", null, "[DEEPHIST-SKIP] 커버리지 충족/데이터없음 h=" + _hn + " d=" + _dn);
@@ -28086,7 +28186,7 @@ export default {
                 // [V12.133] 시간 예산 명시 — 장중 12s / 장외 25s. 초과분은 다음 실행이 이어받는다
                 //   (hist_off 로테이션이 진행상태를 보존하므로 중단해도 손실 없음).
                 const _dr = await harvestDeepFetchNightly(env.DB, { budgetMs: _mktOpen3 ? 12000 : 25000 });
-                const _hc2 = await env.DB.prepare("SELECT COUNT(*) h FROM state WHERE k >= 'hist:' AND k < 'hist;'").first();
+                const _hc2 = { h: await histSymbolCount(env.DB) };
                 const _hn2 = (_hc2 && _hc2.h) || 0;
                 await log(env.DB, "INFO", null, "[DEEPHIST] 커버리지 " + _hn + "→" + _hn2 + "/" + _dn +
                   "(" + (_hn2 / _dn * 100).toFixed(0) + "%)" + (_mktOpen3 ? " [장중축소]" : "") + " " + (_dr || "(반환없음)"));
