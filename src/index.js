@@ -15028,19 +15028,32 @@ async function handleRequest(request, env, ctx) {
             _pts = _pts.filter(function (p) { return _now - p.t < 8 * 86400000; }).slice(-80);
             try { ctx.waitUntil(setState(env.DB, _gk, { pts: _pts })); } catch (e) {}
           }
-          // KST 자정 기준 기준점 — 자정 이후 첫 스냅샷(없으면 자정 직전 마지막 것)
-          const _kstNow = _now + 9 * 3600000;
-          const _kstMid = Math.floor(_kstNow / 86400000) * 86400000 - 9 * 3600000;
-          let _baseToday = null, _base24 = null;
-          for (const p of _pts) { if (p.t >= _kstMid) { _baseToday = p.n; break; } }   // 자정 이후 첫 스냅샷
-          if (_baseToday === null) {                                                    // 없으면 자정 직전 마지막 것
-            for (let i = _pts.length - 1; i >= 0; i--) if (_pts[i].t < _kstMid) { _baseToday = _pts[i].n; break; }
+          // [V33.31] ★"어제 대비 증가분"으로 표시★ 종전 "오늘" 기준은 배포 직후 첫 스냅샷이
+          //   이미 증가분을 포함한 시점에 찍혀 0으로 보였다. 하루 단위 기준점을 따로 남겨
+          //   "어제 같은 기준 대비 얼마나 늘었는지"를 보여준다.
+          //   어제 기준점이 아직 없으면(첫날) 0 으로 단정하지 않고, 실제 확보된 가장 오래된
+          //   스냅샷을 기준으로 "N시간 전 대비"로 정직하게 표기한다.
+          const _kstDay = Math.floor((_now + 9 * 3600000) / 86400000);   // KST 기준 일련일
+          const _dk = "ml_daily:v" + _fv;
+          let _dd = await getState(env.DB, _dk, null);
+          let _days = (_dd && _dd.d) ? _dd.d : {};                       // { kstDay: 그날 처음 관측된 총량 }
+          if (_days[_kstDay] == null) {
+            _days[_kstDay] = _total;
+            for (const k of Object.keys(_days)) if (_kstDay - _num(k, 0) > 10) delete _days[k];   // 10일치만 보관
+            try { ctx.waitUntil(setState(env.DB, _dk, { d: _days })); } catch (e) {}
           }
-          for (const p of _pts) { if (_now - p.t <= 86400000) { _base24 = p.n; break; } }
-          samples = { total: _total, featVer: _fv,
-                      today: (_baseToday != null) ? Math.max(0, _total - _baseToday) : null,
-                      last24h: (_base24 != null) ? Math.max(0, _total - _base24) : null,
-                      tracking: _pts.length };
+          const _yBase = _days[_kstDay - 1];
+          let _delta = null, _deltaLabel = null;
+          if (_yBase != null) {
+            _delta = Math.max(0, _total - _num(_yBase, 0));
+            _deltaLabel = "어제 대비";
+          } else if (_pts.length) {
+            const _oldest = _pts[0];
+            _delta = Math.max(0, _total - _num(_oldest.n, 0));
+            const _hrs = Math.max(1, Math.round((_now - _oldest.t) / 3600000));
+            _deltaLabel = _hrs + "시간 전 대비";
+          }
+          samples = { total: _total, featVer: _fv, delta: _delta, deltaLabel: _deltaLabel, tracking: _pts.length };
         } catch (e) {}
         const _out = { aiReady: aiReady, mode: aiReady ? "AI_AUTONOMOUS" : "RULE_FALLBACK",
                  committee: { mind: mindOk, dnn: dnnOk, gbdt: gbdtOk, xgb: xgb, lgb: lgb, cat: cat },

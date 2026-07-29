@@ -14140,16 +14140,15 @@ html[data-theme="light"] .rail{background:#fff;}
     // [V33.13] ★오늘 늘어난 학습 표본★ — 표본이 실제로 자라는지 화면에서 바로 확인.
     var sm = mode.samples;
     if(sm && sm.total != null){
-      // [V33.30] today/last24h 는 총량 스냅샷의 차이로 계산된다(적재 시각이 테이블에 없기 때문).
-      //   기준 스냅샷이 아직 없으면 0이 아니라 "집계 중"으로 — 없는 값을 0으로 단정하지 않는다.
-      var tdy = sm.today, d24 = sm.last24h;
-      var fmt = function(v){
-        if(v == null) return '<span style="color:var(--t3);">집계 중</span>';
-        return '<b style="color:'+(v>0?'var(--pos)':'var(--t3)')+';">'+(v>0?'+':'')+v.toLocaleString()+'</b>건';
-      };
+      // [V33.31] 증가분은 총량 스냅샷의 차이로 낸다(적재 시각 컬럼이 없어서).
+      //   기준이 "어제"면 그렇게, 아직 하루가 안 모였으면 "N시간 전 대비"로 정직하게 표기한다.
+      var dl = sm.delta, dlab = sm.deltaLabel || '기준 대비';
+      var dtxt = (dl == null)
+        ? '<span style="color:var(--t3);">기준점 수집 중</span>'
+        : ('<b style="color:'+(dl>0?'var(--pos)':'var(--t3)')+';">'+(dl>0?'+':'')+dl.toLocaleString()+'</b>건');
       h += '<span class="k">학습 표본</span>'
         + '<div class="diag">누적 <b>'+sm.total.toLocaleString()+'</b>건 · featVer '+esc(sm.featVer)+'</div>'
-        + '<div class="diag" style="margin-top:2px;">오늘 '+fmt(tdy)+' · 최근 24h '+fmt(d24)+'</div>';
+        + '<div class="diag" style="margin-top:2px;">'+esc(dlab)+' '+dtxt+'</div>';
     }
     h += '<span class="k">위원회</span><div class="row">'
       + '<span class="m">MIND '+st(c.mind)+'</span><span class="m">DNN '+st(c.dnn)+'</span><span class="m">GBDT '+st(c.gbdt)+'</span>'
