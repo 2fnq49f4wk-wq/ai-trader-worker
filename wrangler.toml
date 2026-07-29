@@ -8,6 +8,17 @@ binding = "DB"
 database_name = "ai-trader-db"
 database_id = "77db8a94-9d85-473a-9f43-9659ee8374c0"
 
+# [V33.13] 대형 모델(DNN 32MB 등) 전용 오브젝트 스토리지.
+#   D1은 SQLite 한 인스턴스라 32MB blob 읽기/쓰기가 거래·표본 쿼리와 같은 큐를 써서
+#   "D1 DB is overloaded"를 유발한다. R2로 옮기면 GET/PUT 1회로 끝나고 D1 큐를 안 건드린다.
+#   활성화 2단계:
+#     1) wrangler r2 bucket create ai-trader-models
+#     2) 아래 3줄 주석 해제 후 push(= 자동 배포)
+#   바인딩이 없으면 코드가 자동으로 기존 D1 청크 경로를 쓰므로, 주석 상태여도 동작에 지장 없음.
+# [[r2_buckets]]
+# binding = "MODELS"
+# bucket_name = "ai-trader-models"
+
 [triggers]
 crons = ["*/1 * * * *"]
 

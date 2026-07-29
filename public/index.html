@@ -14129,6 +14129,20 @@ html[data-theme="light"] .rail{background:#fff;}
     var bst = function(o){ return !o ? OFF : (o.trusted ? ON : (o.shadow ? SH : OFF)); };
     var h = '<span class="badge" style="color:' + (mode.aiReady ? 'var(--pos)' : 'var(--amber,#fbbf24)') + ';">'
       + (mode.aiReady ? '◉ AI 자율운용' : '◎ 규칙엔진 비상운용') + '</span>';
+    // [V33.13] 조회가 일시적으로 실패해 마지막 정상 스냅샷을 보여주는 중이면 그렇다고 밝힌다.
+    //   (D1 일시 과부하를 "AI 고장"으로 오해하지 않도록 — 실제 위원회 구성은 아래 값 그대로)
+    if(mode.degraded){
+      h += '<div class="diag" style="color:var(--amber,#fbbf24);margin-top:3px;">⚠ 상태 조회 일시 실패 — 마지막 정상 스냅샷 표시 중</div>';
+    }
+    // [V33.13] ★오늘 늘어난 학습 표본★ — 표본이 실제로 자라는지 화면에서 바로 확인.
+    var sm = mode.samples;
+    if(sm && sm.total != null){
+      var tdy = sm.today || 0;
+      h += '<span class="k">학습 표본</span>'
+        + '<div class="diag">누적 <b>'+sm.total.toLocaleString()+'</b>건 · featVer '+esc(sm.featVer)+'</div>'
+        + '<div class="diag" style="margin-top:2px;">오늘 <b style="color:'+(tdy>0?'var(--pos)':'var(--t3)')+';">'
+        + (tdy>0?'+':'')+tdy.toLocaleString()+'</b>건 · 최근 24h '+(sm.last24h||0).toLocaleString()+'건</div>';
+    }
     h += '<span class="k">위원회</span><div class="row">'
       + '<span class="m">MIND '+st(c.mind)+'</span><span class="m">DNN '+st(c.dnn)+'</span><span class="m">GBDT '+st(c.gbdt)+'</span>'
       + '<span class="m">XGB '+bst(c.xgb)+'</span><span class="m">LGB '+bst(c.lgb)+'</span><span class="m">Cat '+bst(c.cat)+'</span></div>'

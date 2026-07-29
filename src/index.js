@@ -7485,30 +7485,46 @@ async function setState(DB, k, v) {
 //   숫자는 4자리 반올림(용량↓·정확도 무해), 문자열을 CHUNK 바이트씩 여러 행에 분할 + 메타(청크수/길이).
 async function setBigState(DB, key, v) {
   const str = JSON.stringify(v, function (k2, val) { return (typeof val === "number" && isFinite(val)) ? +val.toFixed(4) : val; });
-  const CHUNK = 400000;  // ~400KB/행 (D1 단일행 한계 안전 마진)
-  const n = Math.ceil(str.length / CHUNK);
-  // 이전 잔여 청크 삭제(개수 줄었을 때 유령 청크 방지)
-  try { await DB.prepare("DELETE FROM state WHERE k LIKE ?").bind(key + ":chunk:%").run(); } catch (e) {}
-  const up = "INSERT INTO state (k, v, updated_ts) VALUES (?, ?, ?) ON CONFLICT(k) DO UPDATE SET v=excluded.v, updated_ts=excluded.updated_ts";
-  // 청크 개별 저장(배치 대신 순차 — 배치 총 페이로드 한계 회피)
-  for (let i = 0; i < n; i++) await DB.prepare(up).bind(key + ":chunk:" + i, str.slice(i * CHUNK, (i + 1) * CHUNK), Date.now()).run();
   // [V11.2] 저장 객체에 featVer가 있으면 메타에도 기록 — 로더가 청크 전체를 읽기 전에 버전 선판정 가능(대형모델 헛로드 방지)
-  const _metaObj = { chunks: n, len: str.length, ts: Date.now() };
-  if (v && typeof v.featVer === "number") _metaObj.featVer = v.featVer;
-  await DB.prepare(up).bind(key + ":meta", JSON.stringify(_metaObj), Date.now()).run();
-  return { chunks: n, bytes: str.length };
+  // [V33.13] 저장 경로(R2/D1 청크) 판단을 setBigStateRaw 한 곳으로 통일.
+  const extra = (v && typeof v.featVer === "number") ? { featVer: v.featVer } : {};
+  return await setBigStateRaw(DB, key, str, extra);
+}
+// [V33.13] ★청크 순차 읽기 = 규칙엔진 폴백의 진짜 원인★
+//   DNN은 32.3MB/85청크다. 종전엔 청크마다 D1을 1회씩 왕복해 한 번 로드에 85 왕복이 걸렸고,
+//   그중 하나만 과부하로 실패해도 통째로 null → "모델 미로딩" → 위원회가 규칙엔진으로 폴백했다.
+//   요청마다·아이솔레이트마다 성공/실패가 갈리니 "화면 전환할 때마다 가동 모델이 달라 보이는" 증상도
+//   전부 여기서 나왔다. 이제 IN(...)으로 묶어 읽어 왕복을 1/8로 줄이고, "미학습"과 "로드 실패"를
+//   구분해 상위에서 폴백 여부를 올바르게 판단하게 한다.
+// [V33.13] ★대형 모델은 애초에 D1에 있으면 안 된다★
+//   DNN 1개가 32.3MB/85행이다. D1은 SQLite 한 인스턴스라 이런 대형 blob의 읽기·쓰기가
+//   같은 큐를 쓰는 거래·표본 쿼리를 통째로 밀어낸다("D1 DB is overloaded"의 구조적 원인).
+//   R2(객체 스토리지)는 이런 용도에 맞다 — 32MB를 GET/PUT 1회로 처리하고 D1 큐를 전혀 건드리지 않는다.
+//   바인딩(env.MODELS)이 있으면 R2를 쓰고, 없으면 기존 D1 청크 경로를 그대로 쓴다(무설정 = 무변화).
+//   활성화: wrangler.toml 의 [[r2_buckets]] 주석 해제 + `wrangler r2 bucket create ai-trader-models`.
+let __R2 = null;
+function _bigR2() { return __R2 || null; }
+const BIGSTATE_CHUNKS_PER_QUERY = 8;   // 8×400KB = 약 3.2MB/응답 — D1 응답 한도 안쪽
+async function _readChunks(DB, key, n) {
+  const parts = new Array(n);
+  for (let i = 0; i < n; i += BIGSTATE_CHUNKS_PER_QUERY) {
+    const ids = [];
+    for (let j = i; j < Math.min(n, i + BIGSTATE_CHUNKS_PER_QUERY); j++) ids.push(j);
+    const ph = ids.map(function () { return "?"; }).join(",");
+    const st = DB.prepare("SELECT k, v FROM state WHERE k IN (" + ph + ")");
+    const rw = await st.bind.apply(st, ids.map(function (j) { return key + ":chunk:" + j; })).all();
+    for (const r of ((rw && rw.results) || [])) {
+      const idx = parseInt(String(r.k).slice((key + ":chunk:").length), 10);
+      if (idx >= 0 && idx < n) parts[idx] = r.v;
+    }
+  }
+  for (let i = 0; i < n; i++) if (parts[i] == null) return null;   // 결손 청크 → 조립 불가
+  return parts.join("");
 }
 async function getBigState(DB, key, def) {
   try {
-    const meta = await getState(DB, key + ":meta", null);
-    if (!meta || !meta.chunks) return def;
-    let str = "";
-    for (let i = 0; i < meta.chunks; i++) {
-      const row = await DB.prepare("SELECT v FROM state WHERE k = ?").bind(key + ":chunk:" + i).first();
-      if (!row || row.v == null) return def;
-      str += row.v;
-    }
-    if (meta.len && str.length !== meta.len) return def;  // 무결성 체크
+    const str = await getBigStateRaw(DB, key);   // [V33.13] R2/D1 경로 판단을 한 곳으로 통일
+    if (str == null) return def;
     return JSON.parse(str);
   } catch (e) { return def; }
 }
@@ -7517,21 +7533,39 @@ async function getBigState(DB, key, def) {
 //   시드별로 이미 직렬화된 JSON 문자열을 이어붙여 dnn_model 청크를 만든다(문자열은 파싱보다 훨씬 가벼움).
 async function getBigStateRaw(DB, key) {
   const meta = await getState(DB, key + ":meta", null);
-  if (!meta || !meta.chunks) return null;
-  let str = "";
-  for (let i = 0; i < meta.chunks; i++) {
-    const row = await DB.prepare("SELECT v FROM state WHERE k = ?").bind(key + ":chunk:" + i).first();
-    if (!row || row.v == null) return null;
-    str += row.v;
+  if (!meta) return null;
+  // [V33.13] R2에 보관된 모델 — 객체 GET 1회로 끝(D1 큐를 전혀 쓰지 않음).
+  if (meta.r2) {
+    const R2 = _bigR2();
+    if (!R2) return null;                       // 바인딩이 사라졌으면 읽을 방법이 없다 — 조용한 오판 방지
+    try {
+      const obj = await R2.get("big/" + key + ".json");
+      if (!obj) return null;
+      const str = await obj.text();
+      if (meta.len && str.length !== meta.len) return null;
+      return str;
+    } catch (e) { return null; }
   }
+  if (!meta.chunks) return null;
+  const str = await _readChunks(DB, key, meta.chunks);   // [V33.13] 순차 왕복 → IN 묶음 읽기
+  if (str == null) return null;
   if (meta.len && str.length !== meta.len) return null;
   return str;
 }
 async function setBigStateRaw(DB, key, str, metaExtra) {
+  const up = "INSERT INTO state (k, v, updated_ts) VALUES (?, ?, ?) ON CONFLICT(k) DO UPDATE SET v=excluded.v, updated_ts=excluded.updated_ts";
+  const R2 = _bigR2();
+  if (R2) {
+    // R2 우선 — 32MB PUT 1회. 성공하면 D1에 남아 있던 옛 청크를 지워 용량·부하를 함께 회수한다.
+    await R2.put("big/" + key + ".json", str);
+    try { await DB.prepare("DELETE FROM state WHERE k >= ? AND k < ?").bind(key + ":chunk:", key + ":chunk;").run(); } catch (e) {}
+    const _m = Object.assign({ r2: true, chunks: 0, len: str.length, ts: Date.now() }, metaExtra || {});
+    await DB.prepare(up).bind(key + ":meta", JSON.stringify(_m), Date.now()).run();
+    return { chunks: 0, bytes: str.length, r2: true };
+  }
   const CHUNK = 400000;
   const n = Math.ceil(str.length / CHUNK);
   try { await DB.prepare("DELETE FROM state WHERE k LIKE ?").bind(key + ":chunk:%").run(); } catch (e) {}
-  const up = "INSERT INTO state (k, v, updated_ts) VALUES (?, ?, ?) ON CONFLICT(k) DO UPDATE SET v=excluded.v, updated_ts=excluded.updated_ts";
   for (let i = 0; i < n; i++) await DB.prepare(up).bind(key + ":chunk:" + i, str.slice(i * CHUNK, (i + 1) * CHUNK), Date.now()).run();
   const _metaObj = Object.assign({ chunks: n, len: str.length, ts: Date.now() }, metaExtra || {});
   await DB.prepare(up).bind(key + ":meta", JSON.stringify(_metaObj), Date.now()).run();
@@ -14716,40 +14750,64 @@ async function handleRequest(request, env, ctx) {
     //   병렬화 + SWR(L2 공유). 모델 신뢰상태는 야간 학습에서만 바뀌므로 stale 허용이 커도 안전.
     if (path === "/api/ai-mode") {
       return await swrJson("ai-mode", 60000, 6 * 3600000, async function () {
-        let aiReady = false, mindOk = false, dnnOk = false, gbdtOk = false;
+        // [V33.13] ★"AI 상태가 화면 전환할 때마다 다르고 규칙엔진 비상가동으로 뜨던" 근본원인★
+        //   종전엔 배지 하나 그리려고 mlDNNLoad(32.3MB·85청크)를 요청 경로에서 통째로 읽었다.
+        //   D1이 조금만 바쁘면 그중 한 청크가 실패 → null → dnnOk=false → RULE_FALLBACK.
+        //   게다가 그 잘못된 스냅샷이 SWR에 캐시돼 최대 6시간 stale 로 재배포됐고, 아이솔레이트마다
+        //   성공/실패가 갈려 새로고침마다 위원회 구성이 달라 보였다.
+        //   → 상태 판정에 모델 본문은 필요 없다. trust 플래그 + <model>:meta.featVer(작은 행 1개)로
+        //     충분하며, 이러면 이 엔드포인트의 D1 부하가 85왕복 → 6왕복으로 떨어진다.
+        let aiReady = false, mindOk = false, dnnOk = false, gbdtOk = false, degraded = false;
         try {
-          const [_m, _dt, _gt] = await Promise.all([
-            mlMindLoad(env.DB),
-            getState(env.DB, "dnn_trust", null),
-            getState(env.DB, "gbdt_trust", null)
-          ]);
-          mindOk = !!_m;
-          // [V12.92] 실제 현재 featVer로 로드되는지까지 확인(trust 플래그만 보면 featVer 상향 직후 오판).
-          const [_dn, _gb] = await Promise.all([
-            (_dt && _dt.trusted) ? mlDNNLoad(env.DB) : Promise.resolve(null),
-            (_gt && _gt.trusted) ? mlGBDTLoad(env.DB) : Promise.resolve(null)
-          ]);
-          dnnOk = !!(_dt && _dt.trusted && _dn);
-          gbdtOk = !!(_gt && _gt.trusted && _gb);
+          const S0 = await getStates(env.DB, ["mind_model", "dnn_trust", "gbdt_trust", "dnn_model:meta", "gbdt_model"]);
+          const _m = S0["mind_model"], _dt = S0["dnn_trust"], _gt = S0["gbdt_trust"];
+          const _dMeta = S0["dnn_model:meta"], _gModel = S0["gbdt_model"];
+          mindOk = !!(_m && _m.featVer === LUXML.featVer && _m.fm && _m.meta);
+          // featVer 정합은 메타로 판정 — 본문을 읽지 않는다(구모델 오판 방지는 그대로 유지).
+          dnnOk = !!(_dt && _dt.trusted && _dMeta && _dMeta.chunks > 0 &&
+                     (typeof _dMeta.featVer !== "number" || _dMeta.featVer === LUXML.featVer));
+          gbdtOk = !!(_gt && _gt.trusted && _gModel && _gModel.featVer === LUXML.featVer && Array.isArray(_gModel.trees));
           const _auto = (typeof AI_PARAMS !== "undefined" && AI_PARAMS.autonomy) || {};
           aiReady = !!(_auto.enabled && mindOk && (dnnOk || gbdtOk));
-        } catch (e) {}
+        } catch (e) { degraded = true; }
+        // [V33.13] 조회 자체가 실패했으면 "규칙엔진 폴백"으로 단정하지 않는다 — 마지막 정상 스냅샷을
+        //   그대로 돌려주고 degraded 플래그만 세운다(일시적 D1 장애를 AI 고장으로 오표시하지 않기 위함).
+        if (degraded) {
+          try {
+            const _last = await getState(env.DB, "ai_mode_last_ok", null);
+            if (_last) return Object.assign({}, _last, { degraded: true, degradedAt: Date.now() });
+          } catch (e) {}
+        }
         // [V32.50] 부스팅 3종(XGB/LGB/Cat)도 위원회 상태에 포함 — trusted=가동, 학습됐지만 미신뢰=섀도우
         let xgb = null, lgb = null, cat = null;
+        const S1 = await getStates(env.DB, ["xgb_trust", "lgb_trust", "cat_trust", "ai_selfreview", "ai_picks:scan"]);
         try {
-          const [_x, _l, _c] = await Promise.all([
-            getState(env.DB, "xgb_trust", null), getState(env.DB, "lgb_trust", null), getState(env.DB, "cat_trust", null)
-          ]);
           const _st = function (t) { return t ? { trusted: !!t.trusted, shadow: !!(t && !t.trusted), accLB: (t.gbdtAccLB || t.gbdtAcc || null) } : null; };
-          xgb = _st(_x); lgb = _st(_l); cat = _st(_c);
+          xgb = _st(S1["xgb_trust"]); lgb = _st(S1["lgb_trust"]); cat = _st(S1["cat_trust"]);
         } catch (e) {}
-        const [review, _s] = await Promise.all([
-          getState(env.DB, "ai_selfreview", null),
-          getState(env.DB, "ai_picks:scan", null)
-        ]);
+        const review = S1["ai_selfreview"] || null, _s = S1["ai_picks:scan"] || null;
         const scan = _s ? { ts: _s.ts, scanned: _s.scanned, total: _s.total, top: (_s.picks || []).slice(0, 8) } : null;
-        return { aiReady: aiReady, mode: aiReady ? "AI_AUTONOMOUS" : "RULE_FALLBACK",
-                 committee: { mind: mindOk, dnn: dnnOk, gbdt: gbdtOk, xgb: xgb, lgb: lgb, cat: cat }, selfreview: review, scan: scan };
+        // [V33.13] ★"오늘 하루 늘어난 학습 표본"★ — 두뇌 화면에서 표본이 실제로 자라는지 눈으로
+        //   확인할 수 있게 총량/오늘/24h 를 함께 싣는다(인덱스 idx_samples_fv_ts 로 커버되는 카운트).
+        let samples = null;
+        try {
+          const _fv = LUXML.featVer;
+          const _d0 = new Date(); _d0.setUTCHours(0, 0, 0, 0);
+          const _todayStart = _d0.getTime() - 9 * 3600000;   // KST 자정 기준
+          const _t24 = Date.now() - 86400000;
+          const [_tot, _tod, _d24] = await Promise.all([
+            env.DB.prepare("SELECT COUNT(*) c FROM ml_samples WHERE featver=?").bind(_fv).first(),
+            env.DB.prepare("SELECT COUNT(*) c FROM ml_samples WHERE featver=? AND ts>=?").bind(_fv, _todayStart).first(),
+            env.DB.prepare("SELECT COUNT(*) c FROM ml_samples WHERE featver=? AND ts>=?").bind(_fv, _t24).first()
+          ]);
+          samples = { total: (_tot && _tot.c) || 0, today: (_tod && _tod.c) || 0, last24h: (_d24 && _d24.c) || 0, featVer: _fv };
+        } catch (e) {}
+        const _out = { aiReady: aiReady, mode: aiReady ? "AI_AUTONOMOUS" : "RULE_FALLBACK",
+                 committee: { mind: mindOk, dnn: dnnOk, gbdt: gbdtOk, xgb: xgb, lgb: lgb, cat: cat },
+                 selfreview: review, scan: scan, samples: samples, degraded: false };
+        // 마지막 정상 스냅샷 보관 — 다음에 조회가 실패해도 "규칙엔진 폴백"으로 오표시하지 않기 위해.
+        try { ctx.waitUntil(setState(env.DB, "ai_mode_last_ok", _out)); } catch (e) {}
+        return _out;
       });
     }
 
@@ -22457,7 +22515,12 @@ const HARVEST = {
   //   소량씩 자주(20~30분 주기) 받아 누적한다. 555종목이면 ~14회 실행이면 채워진다.
   deepFetchPerNight: 40, // [V12.95] 180→260 — 딥이력(주식 장기데이터) 수집 확대(사용자 요청). 실제 상한은
                          //   fetchBudgetLeft 예산가드(아래 deephist 스테이지 resetFetchBudget)라 초과분은 다음밤 이어감(안전).
-  deepRefreshDays: 45,  // [V12.32] 30→45 — 재수집 주기 연장: 예산을 재갱신 대신 신규 종목 커버리지에 사용
+  // [V33.13] 45→21. hist:는 "찍은 시점의 스냅샷"이라 갱신 전까지 자라지 않는다. 딥종목(625개)은
+  //   수확 재개점이 스냅샷 끝에 붙어 있어, 갱신 주기 동안 새 봉이 하나도 안 생기고 표본도 안 늘었다.
+  //   이제 신규 편입 대상이 0(todoLeft=0)이라 딥 fetch 예산이 통째로 남으므로, 그 예산을 재갱신에
+  //   돌려 최근 봉이 학습에 반영되는 주기를 절반으로 줄인다. 40종목/밤 × 625종목 ≈ 16일이 물리적
+  //   하한이라 21일이 실질적으로 가장 짧은 현실 주기다.
+  deepRefreshDays: 21,
   maxPerSymbol: 1200,   // [V12.96] 800→1200 — alpha 지수정렬 수정으로 유효표본 회복분 수용(딥 2400봉 활용↑, 예산가드가 편중 방지)
   srcWeight: 0.6        // 학습 가중(실거래=1.0 대비)
 };
@@ -22820,22 +22883,48 @@ async function mlMarketHarvestNightly(DB, opts) {
     const secCache = {};
     try { for (const etf of Object.keys(_SECTOR_ETF).map(function (g) { return _SECTOR_ETF[g]; })) { let sd = await getState(DB, "hist:" + etf, null); if (!sd) sd = await getState(DB, "daily:" + etf, null); secCache[etf] = (sd && Array.isArray(sd.closes)) ? sd.closes : null; } } catch (e) {}
     let xsPanel = null; try { xsPanel = await getState(DB, "xs_panel", null); } catch (e) {}   // [V21] 횡단면 랭크 패널(1회)
+    // [V33.13] 종목 루프가 쓰는 두 가지를 미리 한 번에 읽는다 — 루프 안의 D1 왕복을 없애기 위함.
+    //   daily: 전량(1쿼리)과 hist_meta 전량(1쿼리, 행이 작음). 이 둘만으로 "읽을 필요 있는 종목"을
+    //   가려낼 수 있어, 예산이 실제로 새 봉이 생긴 종목에 쓰인다.
+    const _dailyAll = {}, _metaBySym = {};
+    try {
+      const _dr = await DB.prepare("SELECT k, v FROM state WHERE k >= 'daily:' AND k < 'daily;'").all();
+      for (const r of ((_dr && _dr.results) || [])) { try { _dailyAll[r.k.slice(6)] = JSON.parse(r.v); } catch (e) {} }
+    } catch (e) {}
+    try {
+      const _mr = await DB.prepare("SELECT k, v FROM state WHERE k >= 'hist_meta:' AND k < 'hist_meta;'").all();
+      for (const r of ((_mr && _mr.results) || [])) { try { _metaBySym[r.k.slice(10)] = JSON.parse(r.v); } catch (e) {} }
+    } catch (e) {}
     for (let si = 0; si < takeN; si++) {
       if (made >= HARVEST.maxPerNight) break;
       if (Date.now() > hvDeadline) break;  // [V9.5] 예산 초과 — 여기까지 수확분 저장(seen/offset도 반영)
       const sym = symsAll[(off + si) % symsAll.length];
       scanned++;
-      // [V18] 딥-히스토리(hist:) 우선 — 폭락장 포함 장기이력으로 수확. 없으면 320봉 daily: 폴백.
+      // [V33.13] ★"표본이 안 늘어나는" 실제 원인 — 예산이 D1 왕복에 다 소모됐다★
+      //   종전엔 종목마다 hist: 와 daily: 를 각각 getState 했다(왕복 2회·약 100ms). 장중 예산 8초면
+      //   980종목 중 80종목쯤 훑고 끝나, 새 봉이 실제로 생긴 종목(daily: 전용 352개)까지 순번이
+      //   거의 오지 않았다. 게다가 이미 완주한 딥종목은 읽어봐야 0건인데 매번 32MB급 blob을 읽었다.
+      //   → (1) 완주 표시가 있고 원천 스냅샷이 그대로면 아무것도 읽지 않고 즉시 스킵,
+      //     (2) daily: 는 사전 일괄로드(메모리)에서 꺼내 왕복 0회.
+      const _sv = seen[sym];
+      if (_sv && typeof _sv === "object" && _sv.done && _sv.srcTs) {
+        // 현재 원천의 스냅샷 시각을 D1 접근 없이 확인한다.
+        //   딥종목: hist_meta.dataTs(위에서 일괄로드) / 일봉전용: 메모리 일괄로드된 daily:.ts
+        const _hm = _metaBySym[sym];
+        const _curTs = (_hm && _hm.dataTs) ? _hm.dataTs : ((_dailyAll[sym] && _dailyAll[sym].ts) || 0);
+        if (_curTs && _curTs === _sv.srcTs) continue;   // 원천이 그대로 → 새 표본 0건 확정, 읽지 않는다
+      }
       let dd = null;
       if (HARVEST.useDeepHistory) { try { dd = await getState(DB, "hist:" + sym, null); } catch (e) {} }
-      if (!dd || !Array.isArray(dd.closes) || dd.closes.length < HARVEST.minBars) { try { dd = await getState(DB, "daily:" + sym, null); } catch (e) {} }
+      if (!dd || !Array.isArray(dd.closes) || dd.closes.length < HARVEST.minBars) dd = _dailyAll[sym] || null;
       const closes = dd && dd.closes;
       if (!Array.isArray(closes) || closes.length < HARVEST.minBars) continue;
       const mkt = /\.(KS|KQ)$/.test(sym) ? "kr" : ((/=F$|-USD$/.test(sym)) ? "cm" : "us");
       const L = closes.length, h = HARVEST.horizon;
       const lastEnd = L - 1 - h;
       const baseTs = (dd.ts || Date.now());
-      const startI = Math.max(HARVEST.warmupBars, _num(seen[sym], 0));
+      const _svIdx = (_sv && typeof _sv === "object") ? _num(_sv.i, 0) : _num(_sv, 0);   // 구형(숫자) 호환
+      const startI = Math.max(HARVEST.warmupBars, _svIdx);
       let symMade = 0, nextStart = lastEnd + 1;   // [V20] 종목당 표본 카운터 + 재개 지점(캡에 걸리면 다음밤 이어감)
       // [V11.2] ★성능버그 수정★ getRSI/getMA 등 지표함수는 넘겨받은 배열 전체를 순회(O(n)).
       //   기존 hist=closes.slice(0,i+1)은 "처음부터 지금까지 전체"를 매 봉마다 재계산 → 딥히스토리
@@ -22927,7 +23016,9 @@ async function mlMarketHarvestNightly(DB, opts) {
         if (made >= HARVEST.maxPerNight) { nextStart = i + HARVEST.strideBars; break; }
         if (symMade >= (HARVEST.maxPerSymbol || 400)) { nextStart = i + HARVEST.strideBars; break; }  // [V20] 종목당 상한 → 다음밤 이어감
       }
-      seen[sym] = nextStart;   // 다음 수확 재개 지점(완주=lastEnd+1, 캡=중단봉)
+      // [V33.13] 재개 지점 + "완주 여부·원천 스냅샷 시각"을 함께 기록 — 다음 실행에서 원천이
+      //   그대로면 blob을 읽지도 않고 건너뛴다(위 스킵 조건). 숫자만 저장하던 구형과 호환 유지.
+      seen[sym] = { i: nextStart, done: nextStart > lastEnd, srcTs: (dd && dd.ts) || 0 };
       // [V11.2] 중간 플러시 — maxPerNight 20000 확대로 마지막 일괄저장은 메모리·유실 위험.
       //   2000건마다 저장해 예산초과/강제종료가 나도 그 시점까지의 표본은 살린다.
       if (stmts.length >= 2000) {
@@ -27500,8 +27591,9 @@ async function sentiStatus(DB) {
 }
 export default {
   // [V12.128] 모든 D1 접근을 과부하 재시도 래퍼로 감싼다(호출부 160여 곳을 건드리지 않고 일괄 적용).
-  async fetch(request, env, ctx) { return handleRequest(request, Object.assign({}, env, { DB: wrapD1(env.DB) }), ctx); },
+  async fetch(request, env, ctx) { __R2 = env.MODELS || null; return handleRequest(request, Object.assign({}, env, { DB: wrapD1(env.DB) }), ctx); },
   async scheduled(event, env, ctx) {
+    __R2 = env.MODELS || null;   // [V33.13] 대형모델 저장소 바인딩(없으면 D1 청크 경로 유지)
     env = Object.assign({}, env, { DB: wrapD1(env.DB) });
     // [FIX V8.8] 기존엔 runTradingCycle / refreshCommodityQuotes / runCommodityCycle을
     //   각각 ctx.waitUntil로 "동시" 실행했는데, 이들이 전역 __fetchBudget(yahoo fetch
