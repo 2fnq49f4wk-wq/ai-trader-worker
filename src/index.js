@@ -12719,7 +12719,11 @@ async function runTradingCycle(env) {
     let scalpScanUsed = 0;    // [V65] scalp 스캔 전용 분봉 카운터 — 진입확인과 분리(단타 굶김 방지)
     let aiPrimaryUsed = 0;    // [V12.64] AI 주도 진입 후보 카운터(사이클당 상한 통제)
     let scalpEligible = 0, scalpSig = 0;  // [진단] scalp 진입 병목 추적: 후보(no-trend)·스캔·신호 카운트
+    let __stinPend = null, __stinObs = 0;   // [V33.40] 장중 단타 학습표본 버퍼(R2)·관측 카운터
+    const __stinPx = {};                    // 사이클 전체에서 모은 현재가(라벨링용) — batchQuotes 는 시장 루프 지역변수라 밖에서 못 쓴다
     __scalpDiag = {};  // [진단] 게이트 탈락 사유 집계 리셋
+    // [V33.40] 장중 단타 표본 버퍼를 R2 에서 1회 로드(장중에만). 실패해도 매매엔 영향 없다.
+    try { if (_bigR2() && (isMarketOpen("us") || isMarketOpen("kr"))) __stinPend = await _stinLoadPend(); } catch (e) { __stinPend = null; }
 
     // [V8.1.1] 장 열린 시장만 처리 — 마감된 시장은 시세도 fetch 안 함
     // [V23] 가격 갱신 대상 = 정규장 시간 시장 / 거래 대상 = 거래가능(윈도우+휴장통과) 시장
@@ -13053,6 +13057,14 @@ async function runTradingCycle(env) {
         });
       } catch (e) {
         await log(DB, "ERROR", null, "[V11] batchQuotes fail " + market + ": " + e.message);
+      }
+      // [V33.40] 라벨링에 쓸 현재가를 사이클 레벨 맵에 모아둔다(추가 fetch 0).
+      try {
+        for (const _k in batchQuotes) {
+          const _q = batchQuotes[_k];
+          if (_q && typeof _q.price === "number" && _q.price > 0) __stinPx[_k] = _q.price;
+        }
+      } catch (e) {
       }
       const qpSlices = Math.max(1, Math.ceil(tickers.length / priceBudget));
       await setState(DB, qpRrKey, (qpRr + 1) % qpSlices);
@@ -13832,6 +13844,22 @@ async function runTradingCycle(env) {
                 //   1m봉은 형성중 봉의 부분거래량으로 relvol_low를 과다유발(라이브: scan 50중 relvol_low 25)하고
                 //   모멘텀도 과소계상해 트리거를 막았다. 5m봉으로 노이즈↓·임계 정합 → 단타 신호 발생률 상승.
                 const _scalpMb = await fetchMinuteBars(symbol, { interval: "5m", range: "1d" });
+                // [V33.40] ★장중 단타 학습표본 관측★ 이미 받아온 분봉을 그대로 재사용하므로 추가
+                //   fetch 가 0이다. 피처는 라이브 판정과 같은 mlBuildFeatures 로 만들어 학습/추론
+                //   정합을 유지한다. 저장은 전량 R2(대기 버퍼도 R2) — D1 은 건드리지 않는다.
+                try {
+                  if (__stinPend && _scalpMb && Array.isArray(_scalpMb.closes) && _scalpMb.closes.length >= 12) {
+                    const _sf = mlBuildFeatures({
+                      closes: daily.closes, volumes: daily.volumes, opens: daily.opens,
+                      highs: daily.highs, lows: daily.lows,
+                      idxCloses: null, sectorCloses: null, xsPanel: null, barsAgo: 0,
+                      price: price, prevClose: daily.closes[daily.closes.length - 2] || price,
+                      dayPct: dayPct, regime: (regime && regime.regime) || "NEUTRAL",
+                      strategy: "scalp", market: market, ev: {}
+                    });
+                    if (stinObserve(__stinPend, symbol, market, _sf, price)) __stinObs++;
+                  }
+                } catch (e) {}
                 const _scalpSig = evaluateScalpEntry(_scalpMb, daily, mcfg, market, regime, _sigTypeStats);
                 if (_scalpSig) scalpSig++;  // [진단] 게이트 통과해 신호 발생
                 // [V9.10 합성함수] SCALP 일봉 컨텍스트 직교 강화 — 분봉 진입을 일봉 추세/매집/실적/애널리스트로 사이즈 차등.
@@ -14627,6 +14655,22 @@ async function runTradingCycle(env) {
     const cycleMs = Date.now() - cycleStartedAt;
     // [실시간] fastWatch가 쓸 거래가능 시장 목록 기록 — 휴장/엔진OFF/윈도우 판정 재사용.
     try { await setState(DB, "fastwatch:markets", { list: marketsToTrade, ts: Date.now() }); } catch (e) {}
+    // [V33.40] 사이클 끝에서 라벨링 → flush → 버퍼 저장. 가격은 이번 사이클 quote 맵에서 얻는다
+    //   (추가 fetch 0). flush 주기가 안 됐으면 done 을 버퍼에 그대로 두고 다음에 내보낸다.
+    if (__stinPend) {
+      try {
+        const _lab = stinLabel(__stinPend, function (sym) { return _num(__stinPx[sym], 0); });
+        let _fl = 0;
+        if (__stinPend.done.length >= 50 || (Date.now() - (__stinPend.ts || 0)) > STIN.flushMin * 60000) {
+          _fl = await stinFlush(__stinPend);
+        }
+        await _stinSavePend(__stinPend);
+        if (__stinObs || _lab || _fl) {
+          await log(DB, "INFO", null, "[ST-INTRADAY] 관측 +" + __stinObs + " 라벨 +" + _lab +
+            (_fl ? " R2저장 " + _fl + "건" : "") + " 대기 " + __stinPend.items.length);
+        }
+      } catch (e) {}
+    }
     await log(DB, "INFO", null, "Done: tried=" + tried + " skip=" + skipped + " buy=" + bought + " sell=" + sold + " fetchFail=" + fetchFail + " minBars=" + minuteFetchUsed + " scalp[elig=" + scalpEligible + " scan=" + scalpScanUsed + " sig=" + scalpSig + " gates=" + JSON.stringify(__scalpDiag) + "] cycleMs=" + cycleMs);
     // [V32.1] 로그 보존 확대 — 종전 500행 상한은 매분 쏟아지는 INFO에 밀려 ERROR/WARN이
     //   금세 사라져 "에러가 안 보인다"던 문제. 이제 (1)전체 최근 1500행 유지 + (2)그와 별개로
@@ -15687,6 +15731,37 @@ async function handleRequest(request, env, ctx) {
       const _sc = (typeof AI_PARAMS !== "undefined" && AI_PARAMS.aiScalp) || {};
       return Response.json({ featVer: LUXML.featVer, featNames: LUXML.featNames, total: total,
         offset: offset, returned: out.length, horizonDays: _sc.horizonDays || 2,
+        liveEnabled: !!_sc.enabled, config: _mlExportConfig(), samples: out }, { headers: cors });
+    }
+
+    // [V33.40] GET /api/ml-export-intraday?day=YYYY-MM-DD — 장중 단타 표본(R2)만 내보낸다.
+    //   D1 을 전혀 조회하지 않는다. R2 list 로 그날 오브젝트를 모아 합쳐 준다.
+    if (path === "/api/ml-export-intraday") {
+      const au = _trainAuthed(); if (!au.ok) return Response.json({ error: au.msg }, { status: au.code, headers: cors });
+      const R2 = _bigR2();
+      if (!R2) return Response.json({ error: "R2 미바인딩 — 장중 표본은 R2 전용" }, { status: 503, headers: cors });
+      const day = (url.searchParams.get("day") || _stinDay()).slice(0, 10);
+      const out = [];
+      try {
+        let cursor = undefined;
+        for (let page = 0; page < 20; page++) {
+          const lr = await R2.list({ prefix: "st/intraday/" + day + "/", cursor: cursor, limit: 200 });
+          for (const o of (lr.objects || [])) {
+            try {
+              const g = await R2.get(o.key);
+              if (!g) continue;
+              const j = JSON.parse(await g.text());
+              for (const sm of (j.samples || [])) out.push(sm);
+            } catch (e) {}
+            if (out.length > 60000) break;
+          }
+          if (!lr.truncated || out.length > 60000) break;
+          cursor = lr.cursor;
+        }
+      } catch (e) { return Response.json({ error: "R2 조회 실패: " + (e && e.message) }, { status: 500, headers: cors }); }
+      const _sc = (typeof AI_PARAMS !== "undefined" && AI_PARAMS.aiScalp) || {};
+      return Response.json({ featVer: LUXML.featVer, featNames: LUXML.featNames, day: day,
+        horizonBars: STIN.horizonBars, barMin: 5, total: out.length,
         liveEnabled: !!_sc.enabled, config: _mlExportConfig(), samples: out }, { headers: cors });
     }
 
@@ -19780,7 +19855,73 @@ async function mlEnsureTable(DB) {
       //   (기존 행은 NULL — 신규 적재분만 정확히 집계되며, 그게 우리가 보려는 값이다)
       try { await DB.prepare("ALTER TABLE ml_samples ADD COLUMN ins_ts INTEGER").run(); } catch (e) {}
       try { await DB.prepare("CREATE INDEX IF NOT EXISTS idx_samples_insts ON ml_samples(ins_ts)").run(); } catch (e) {}
-      // [V33.38] 단타(짧은 지평) 전용 표본 — 피처는 동일, 라벨 지평만 다르다.
+      // ═══════════ [V33.40] 장중(분봉) 단타 학습 파이프라인 — 전량 R2, D1 미사용 ═══════════
+//   설계 요지: 분봉 원본을 창고에 쌓지 않는다. 학습이 실제로 쓰는 건 65차원 피처벡터 + 라벨이라
+//   OHLCV 를 보관할 이유가 없다(실측 추정: 원본 4.4MB/일 → 표본만 0.8MB/일, 약 1/60).
+//   수집도 새 fetch 를 만들지 않는다 — 단타 스캔이 이미 받아오는 5분봉에 얹는다(추가 fetch 0).
+//   흐름: 관측(피처 기록) → N분 뒤 실현수익으로 라벨 → R2 에 append-only 오브젝트로 flush.
+//   D1 은 전혀 건드리지 않는다(대기 버퍼도 R2 오브젝트 하나를 read-modify-write).
+const STIN = {
+  pendKey: "st/intraday/pending.json",
+  horizonBars: 12,        // 5분봉 12개 = 60분 뒤 실현수익으로 라벨
+  minGapMin: 25,          // 같은 종목을 이 간격보다 자주 관측하지 않는다(중복 표본 억제)
+  tpPct: 1.2, stopPct: 1.2, // 장중 배리어(일봉 3%보다 타이트 — 60분 지평에 맞춤)
+  maxPend: 400,           // 대기 버퍼 상한(오브젝트 크기 통제)
+  flushMin: 10            // 라벨 완료분을 R2 로 내보내는 주기(분)
+};
+function _stinDay() { const d = new Date(Date.now() + 9 * 3600000); return d.toISOString().slice(0, 10); }
+async function _stinLoadPend() {
+  const R2 = _bigR2(); if (!R2) return null;
+  try { const o = await R2.get(STIN.pendKey); if (!o) return { items: [], done: [], ts: 0 };
+        const j = JSON.parse(await o.text()); return { items: j.items || [], done: j.done || [], ts: j.ts || 0 }; }
+  catch (e) { return { items: [], done: [], ts: 0 }; }
+}
+async function _stinSavePend(p) {
+  const R2 = _bigR2(); if (!R2) return;
+  try { await R2.put(STIN.pendKey, JSON.stringify({ items: p.items, done: p.done, ts: Date.now() })); } catch (e) {}
+}
+// 관측 — 단타 스캔이 이미 받아온 5분봉으로 피처를 만들어 대기 버퍼에 넣는다.
+function stinObserve(pend, symbol, market, mb, feat, price) {
+  if (!pend || !Array.isArray(feat) || !(price > 0)) return false;
+  const now = Date.now();
+  for (const it of pend.items) {
+    if (it.s === symbol && (now - it.t) < STIN.minGapMin * 60000) return false;   // 너무 잦은 중복 관측
+  }
+  if (pend.items.length >= STIN.maxPend) return false;
+  pend.items.push({ s: symbol, m: market, t: now, p: price,
+                    x: feat.map(function (v) { return +(_num(v, 0)).toFixed(4); }) });   // 4자리 반올림 = 용량 절감
+  return true;
+}
+// 라벨 — 관측 후 지평이 지난 항목을 현재가로 채점해 done 으로 옮긴다.
+function stinLabel(pend, priceOf) {
+  if (!pend) return 0;
+  const now = Date.now(), horizonMs = STIN.horizonBars * 5 * 60000;
+  const keep = [];
+  let labeled = 0;
+  for (const it of pend.items) {
+    if (now - it.t < horizonMs) { keep.push(it); continue; }
+    const px = priceOf(it.s);
+    if (!(px > 0)) { if (now - it.t < horizonMs * 3) keep.push(it); continue; }   // 가격 미확보면 잠시 더 보관
+    const ret = (px / it.p - 1) * 100;
+    const y = ret >= STIN.tpPct ? 1 : (ret <= -STIN.stopPct ? 0 : (ret > 0 ? 1 : 0));
+    pend.done.push({ ts: it.t, x: it.x, y: y, pnl: +ret.toFixed(3), s: it.s, m: it.m });
+    labeled++;
+  }
+  pend.items = keep;
+  return labeled;
+}
+// flush — 라벨 완료분을 날짜별 append-only 오브젝트로 내보낸다(R2 는 append 가 없어 키를 매번 새로).
+async function stinFlush(pend) {
+  const R2 = _bigR2();
+  if (!R2 || !pend || !pend.done.length) return 0;
+  const n = pend.done.length;
+  const key = "st/intraday/" + _stinDay() + "/" + Date.now() + ".json";
+  try { await R2.put(key, JSON.stringify({ n: n, samples: pend.done })); } catch (e) { return 0; }
+  pend.done = [];
+  return n;
+}
+
+// [V33.38] 단타(짧은 지평) 전용 표본 — 피처는 동일, 라벨 지평만 다르다.
       //   반드시 별도 테이블이어야 한다. 같은 테이블에 섞으면 기존 10일 모델이 서로 다른
       //   지평의 라벨을 한꺼번에 학습하게 되어 지금 잘 돌아가는 위원회가 망가진다.
       try {
