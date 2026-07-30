@@ -2712,7 +2712,17 @@ const AI_PARAMS = {
     enabled: false,         // ★실매매 스위치★ — 단타 전용 모델이 학습·신뢰될 때까지 false 유지.
                             //   10일 모델로 단타를 돌리면 안 되므로 코드가 준비돼도 켜지 않는다.
     threshold: 0.60,        // 켠 뒤 진입 문턱(스윙 0.55보다 높게 — 회전이 빠른 만큼 보수적)
-    maxPerCycle: 8          // 사이클당 단타 후보 상한
+    maxPerCycle: 8,         // 사이클당 단타 후보 상한
+    // [V33.45] ★거부권은 실매매 스위치와 분리★ — enabled=false 여도 모델이 신뢰되면
+    //   '규칙엔진 단타 신호를 기각'하는 것만은 허용한다. 거부는 거래를 늘리지 않으므로
+    //   위험이 오직 감소 방향이고, 실거래에서 규칙 단타가 명확히 지고 있었기 때문이다:
+    //     SCALP 청산 148건 -17.8% / SC_VWAP 94건 승률 42.6% / SC_PULLBACK 36건 승률 30.6%
+    //   AI 가 아니라고 하는 단타를 규칙엔진이 그냥 치던 구조를 끊는다.
+    vetoWhenTrusted: true,
+    vetoBelow: 0.45,        // 이 확률 미만이면 규칙엔진 단타 신호를 기각
+    // 모델이 신뢰되면 AI 가 스스로 단타 후보를 만든다(규칙신호 없이) — enabled=true 일 때만.
+    aiEntry: true,
+    baseWeight: 0.5         // AI 단타 진입 사이즈 가중(규칙신호 대비 보수)
   },
 
   aiPrimary: {
@@ -10715,6 +10725,8 @@ function evaluateSell(pos, price, daily, dailyRsi, dailyMa, dailyMaShort, cfg, m
   else if (_phase === "MELTUP")  { trailScale *= 1.30; _tsMult = 1.6; }
   else if (_phase === "TREND_UP"){ trailScale *= 1.10; _tsMult = 1.2; }
   else if (_phase === "TREND_DOWN") { trailScale *= 0.85; _tsMult = 0.75; }
+  // [V33.45] 미국 반도체 급락이 확정된 날 — 한국 보유분 이익 조기 확정(손절폭 불변, 상방만 축소).
+  if (deRiskOpts && deRiskOpts.xmktTight) trailScale *= 0.7;
 
   // 1) 하드 손절 — 진입 시 정한 stopPrice (entry − 2×ATR or −5% 중 타이트, BE락 시 본전)
   const stopPrice = (typeof meta.stopPrice === "number") ? meta.stopPrice : null;
@@ -10734,11 +10746,19 @@ function evaluateSell(pos, price, daily, dailyRsi, dailyMa, dailyMaShort, cfg, m
   // 2) 1R 분할익절 — +tp1AtR×R 도달 시 절반 매도 (executeSell이 손절을 본전으로 올림=BE락)
   //   [레버리지/인버스] 변동성이 커 이익이 빠르게 났다 사라짐 → 더 빠른 R(×0.7)에 절반 확정.
   if (!tp1Done) {
-    const tp1Pct = rPct * (r.tp1AtR || 1.0) * (isLevETF ? 0.7 : 1.0);
+    // [V33.45] ★폭등장 러너 보존★ — TP1은 +1R에서 물량의 40%를 덜어낸다. 보합장에선 옳지만
+    //   폭등 국면에선 가장 강한 종목의 상승 초입에서 지분을 깎아 수익 상한을 스스로 낮춘다.
+    //   (실증: 수익의 대부분이 TP 98건 +821.8%·TRAIL 24건 +120.8% 즉 '끝까지 태운' 포지션에서 났다.)
+    //   → 폭등이면 TP1을 늦추고 덜 팔며, 보합이면 반대로 앞당기고 더 판다(추세가 안 이어지므로).
+    let _tp1RM = 1, _tp1FM = 1;
+    if (_phase === "MELTUP")        { _tp1RM = 1.6;  _tp1FM = 0.6; }
+    else if (_phase === "TREND_UP") { _tp1RM = 1.25; _tp1FM = 0.8; }
+    else if (_phase === "RANGE")    { _tp1RM = 0.8;  _tp1FM = 1.3; }
+    const tp1Pct = rPct * (r.tp1AtR || 1.0) * _tp1RM * (isLevETF ? 0.7 : 1.0);
     if (pnlRate >= tp1Pct) {
       // [V51] 익절 비율 파라미터화 — 절반(0.5)은 추세 초입에 너무 많이 덜어내 평균수익을 깎았다.
       //   기본 0.4로 줄여 잔량(60%)을 트레일로 더 길게 추종 → 손익비 개선(손절은 불변).
-      const _f = (typeof r.tp1SellFrac === "number" && r.tp1SellFrac > 0 && r.tp1SellFrac < 1) ? r.tp1SellFrac : 0.4;
+      const _f = _clamp(((typeof r.tp1SellFrac === "number" && r.tp1SellFrac > 0 && r.tp1SellFrac < 1) ? r.tp1SellFrac : 0.4) * _tp1FM, 0.2, 0.7);
       const half = Math.floor(pos.qty * _f);
       if (half > 0) return { sell: true, sellQty: half, reason: "TP1 +" + pnlRate.toFixed(2) + "% (1R)" };
       return { sell: true, sellQty: pos.qty, reason: "TP1-FULL +" + pnlRate.toFixed(2) + "%" };
@@ -12868,6 +12888,12 @@ async function runTradingCycle(env) {
     // [V33.44] 시장×전략 성과 롤업(2시간 캐시) — 구조적으로 지는 조합의 신규 진입을 막는다.
     let __mktStratStats = null;
     try { const _mss = await getState(DB, "mkt_strat_stats", null); __mktStratStats = (_mss && _mss.m) ? _mss.m : null; } catch (e) {}
+    // [V33.45] 미국 반도체 → 한국 기술주 선행지표. 30분마다 갱신(daily: 종가만 읽어 fetch 0).
+    let __xmktLead = null;
+    try {
+      const _xl = await getState(DB, "xmkt_lead", null);
+      __xmktLead = (_xl && (Date.now() - (_xl.ts || 0)) < 30 * 60000) ? _xl : (await updateCrossMarketLead(DB)) || _xl;
+    } catch (e) {}
     const visionPreds = await getState(DB, "vision_predictions", {});  // [Vision AI]
     const secData = await getState(DB, "sec_filings", {});  // [SEC 공시] 미국 종목 보수화
     const eventData = await buildEventRiskData(DB);  // [V62] 어닝스·경제지표·내부자 이벤트 리스크 (캐시 read만)
@@ -12920,6 +12946,7 @@ async function runTradingCycle(env) {
     let minuteFetchUsed = 0;  // [분봉] 진입확인(intradayConfirm) 분봉 조회 횟수 (subrequest 캡 통제)
     let scalpScanUsed = 0;    // [V65] scalp 스캔 전용 분봉 카운터 — 진입확인과 분리(단타 굶김 방지)
     let aiPrimaryUsed = 0;    // [V12.64] AI 주도 진입 후보 카운터(사이클당 상한 통제)
+    let aiScalpUsed = 0;      // [V33.45] AI 단타 진입 후보 카운터(사이클당 상한 통제)
     let scalpEligible = 0, scalpSig = 0;  // [진단] scalp 진입 병목 추적: 후보(no-trend)·스캔·신호 카운트
     let __stinPend = null, __stinObs = 0;   // [V33.40] 장중 단타 학습표본 버퍼(R2)·관측 카운터
     // [V33.42] 실제 실적 서프라이즈 맵 — 사이클당 1회만 읽어 평가 루프에서 재사용(D1 왕복 1회).
@@ -13166,7 +13193,10 @@ async function runTradingCycle(env) {
 
       // [V33.44] 국면 위상(phase)을 청산 규칙까지 내려보낸다 — 보합장은 빨리 정리, 폭등장은 길게 태운다.
       const deRiskOpts = { active: crashGate.deRisk, vixValue: crashGate.vixValue || 0,
-        phase: (regime && regime.phase) ? regime.phase : null };
+        phase: (regime && regime.phase) ? regime.phase : null,
+        // [V33.45] 미국 반도체가 크게 밀린 날은 한국장 전체가 따라 밀린다(삼성·하이닉스가 지수를 지배).
+        //   한국 보유분의 트레일을 조여 이익을 먼저 확정한다 — 손절폭은 건드리지 않는다.
+        xmktTight: !!(market === "kr" && __xmktLead && typeof __xmktLead.semi1d === "number" && __xmktLead.semi1d <= -3) };
 
       // [V12.60] 꼬리위험 상시헤지 집행(VIX 트리거형) — 일반 매매 전에 헤지 배분을 먼저 조정한다.
       //   평상시(VIX<activateVixAbove)엔 목표 0이라 무동작(드래그 0), 공포구간에서만 인버스/VIX 매수.
@@ -14054,9 +14084,10 @@ async function runTradingCycle(env) {
                 // [V33.40] ★장중 단타 학습표본 관측★ 이미 받아온 분봉을 그대로 재사용하므로 추가
                 //   fetch 가 0이다. 피처는 라이브 판정과 같은 mlBuildFeatures 로 만들어 학습/추론
                 //   정합을 유지한다. 저장은 전량 R2(대기 버퍼도 R2) — D1 은 건드리지 않는다.
+                let _sf = null;   // [V33.45] AI 단타 판정에서 재사용하므로 블록 밖으로 뺀다
                 try {
-                  if (__stinPend && _scalpMb && Array.isArray(_scalpMb.closes) && _scalpMb.closes.length >= 12) {
-                    const _sf = mlBuildFeatures({
+                  if (_scalpMb && Array.isArray(_scalpMb.closes) && _scalpMb.closes.length >= 12) {
+                    _sf = mlBuildFeatures({
                       closes: daily.closes, volumes: daily.volumes, opens: daily.opens,
                       highs: daily.highs, lows: daily.lows,
                       idxCloses: null, sectorCloses: null, xsPanel: null, barsAgo: 0,
@@ -14064,10 +14095,10 @@ async function runTradingCycle(env) {
                       dayPct: dayPct, regime: (regime && regime.regime) || "NEUTRAL",
                       strategy: "scalp", market: market, ev: {}
                     });
-                    if (stinObserve(__stinPend, symbol, market, _sf, price)) __stinObs++;
+                    if (__stinPend && stinObserve(__stinPend, symbol, market, _sf, price)) __stinObs++;
                   }
                 } catch (e) {}
-                const _scalpSig = evaluateScalpEntry(_scalpMb, daily, mcfg, market, regime, _sigTypeStats);
+                let _scalpSig = evaluateScalpEntry(_scalpMb, daily, mcfg, market, regime, _sigTypeStats);
                 if (_scalpSig) scalpSig++;  // [진단] 게이트 통과해 신호 발생
                 // [V9.10 합성함수] SCALP 일봉 컨텍스트 직교 강화 — 분봉 진입을 일봉 추세/매집/실적/애널리스트로 사이즈 차등.
                 //   곱셈 아닌 가중평균. 패닉·인버스 진입은 추세역행이 정상이라 추세정렬 팩터 제외.
@@ -14099,6 +14130,37 @@ async function runTradingCycle(env) {
                     _scalpSig.fuseNote = "FUSE " + _kff.note;
                   }
                 }
+                // [V33.45] ★단타 판단을 규칙엔진에서 AI로 이관★ (사용자 방침: 규칙엔진은 비상용)
+                //   지금까지 mlScalpDecide 는 정의만 돼 있고 어디서도 호출되지 않는 죽은 코드였다 —
+                //   단타 모델을 학습·업로드·신뢰판정까지 다 만들어놓고 정작 매매 경로에 연결이 없었다.
+                //   두 방향으로 연결한다:
+                //     (1) 거부권 — 규칙 단타 신호가 나와도 AI 가 낮게 보면 기각(모델 신뢰만으로 동작).
+                //         실거래 근거: SCALP 148건 -17.8%, SC_VWAP 승률 42.6%, SC_PULLBACK 30.6%.
+                //     (2) 자체 진입 — 규칙신호가 없어도 AI 가 스스로 단타 후보를 만든다(실매매 스위치 필요).
+                //   판정에 쓰는 피처는 위에서 표본수집용으로 이미 만든 _sf 를 재사용한다(추가 비용 0).
+                let _aiScalpNote = null;
+                try {
+                  const _scp = (typeof AI_PARAMS !== "undefined") ? AI_PARAMS.aiScalp : null;
+                  const _sfNow = (typeof _sf !== "undefined") ? _sf : null;
+                  if (_scp && _sfNow) {
+                    if (_scalpSig) {
+                      const _sd = await mlScalpDecide(DB, _sfNow, { forVeto: true });
+                      if (_sd && typeof _sd.p === "number" && _sd.p < (_scp.vetoBelow != null ? _scp.vetoBelow : 0.45)) {
+                        __scalpDiag.ai_veto = (__scalpDiag.ai_veto || 0) + 1;
+                        _scalpSig = null;   // AI 거부 → 규칙 단타 진입 취소
+                      }
+                    } else if (_scp.aiEntry !== false && aiScalpUsed < (_scp.maxPerCycle || 8)) {
+                      const _sd2 = await mlScalpDecide(DB, _sfNow, null);   // enabled=true 일 때만 non-null
+                      if (_sd2 && _sd2.pass) {
+                        aiScalpUsed++;
+                        _aiScalpNote = "p=" + (_sd2.p * 100).toFixed(0) + "%";
+                        _scalpSig = { name: "AI_SCALP", members: ["AI_SCALP"], detail: "AI 단타 " + _aiScalpNote,
+                                      isAiScalp: true, confidence: _clamp(_sd2.p, 0.5, 1),
+                                      weight: (_scp.baseWeight || 0.5) };
+                      }
+                    }
+                  }
+                } catch (e) {}
                 if (_scalpSig && !strategiesHeldNow.has("scalp") && !heldSymbols.has(symbol)) {
                   stratResults = [{ strategy: "scalp", signal: _scalpSig, rawCount: 1 }];
                 }
@@ -14455,6 +14517,14 @@ async function runTradingCycle(env) {
               if (sizeScale < _floor) sizeScale = _floor;
             }
             if (_symInverse && regime && (regime.regime === "BEAR" || (typeof regime.worstDayPct === "number" && regime.worstDayPct <= -1.0))) sizeScale = (mcfg.inversePanicBoost || 1.3);
+            // [V33.45] ★시장 간 전이(리드-래그)★ — 미국 반도체가 무너진 다음날 한국 기술주를 사지 않는다.
+            //   2026년 7월 코스피 -23%(사상 최악)는 미국 반도체 조정이 넘어온 것이고, 미국장은
+            //   한국장보다 4시간 먼저 끝나므로 그 정보는 진입 시점에 이미 확정돼 있었다.
+            try {
+              const _xa = crossMarketAdjust(__xmktLead, market, getSectorGroup(symbol, mcfg));
+              if (_xa.block) { incBlock("XMKT_SEMI[" + (_xa.note || "") + "]"); continue; }
+              if (_xa.mult !== 1) { sizeScale *= _xa.mult; if (_xa.note) signal.xmktNote = _xa.note; }
+            } catch (e) {}
             // [V33.44] ★국면 위상 적응★ — 국면 자체의 사이즈 배수 + 신호 성격(돌파/되돌림) 적합도.
             //   보합장에서 돌파신호는 휩쏘 확률이 높고(실거래 SC_VWAP 94건 -12.5%),
             //   폭등장에서 되돌림 대기는 기회를 통째로 놓친다 — 둘을 국면별로 반대 방향으로 조정한다.
@@ -15543,9 +15613,12 @@ async function handleRequest(request, env, ctx) {
         // [V33.44] 국면 위상(보합/추세/폭등) — 진입 문턱·사이즈·청산 규율이 이 값으로 갈린다.
         let _phase = null;
         try { const _ps = await getState(env.DB, "mkt_phase", null); if (_ps) _phase = { us: _ps.us, kr: _ps.kr, erUs: _ps.erUs, erKr: _ps.erKr, ts: _ps.ts }; } catch (e) {}
+        // [V33.45] 미국 반도체 → 한국 기술주 선행지표(전이 감시).
+        let _xmkt = null;
+        try { const _xl = await getState(env.DB, "xmkt_lead", null); if (_xl) _xmkt = { semi1d: _xl.semi1d, semi5d: _xl.semi5d, n: _xl.n, ts: _xl.ts }; } catch (e) {}
         const _out = { aiReady: aiReady, mode: aiReady ? "AI_AUTONOMOUS" : "RULE_FALLBACK", scalp: _scalp,
                  committee: { mind: mindOk, dnn: dnnOk, gbdt: gbdtOk, xgb: xgb, lgb: lgb, cat: cat },
-                 phase: _phase,
+                 phase: _phase, xmkt: _xmkt,
                  selfreview: review, scan: scan, samples: samples, degraded: false };
         // 마지막 정상 스냅샷 보관 — 다음에 조회가 실패해도 "규칙엔진 폴백"으로 오표시하지 않기 위해.
         try { ctx.waitUntil(setState(env.DB, "ai_mode_last_ok", _out)); } catch (e) {}
@@ -19632,6 +19705,46 @@ function _mlMarketRegimeFeats(idxCloses) {
 // [V20] 그룹 → 섹터 ETF(미국) — 섹터-상대강도 벤치마크. ETF는 HARVEST_EXTRA_SYMS로 딥캐시됨.
 const _SECTOR_ETF = { TECH: "XLK", FINANCE: "XLF", HEALTH: "XLV", CONSUMER: "XLY", INDUSTRIAL: "XLI", RESOURCES: "XLE" };
 
+// ═══════════ [V33.45] 시장 간 리드-래그(전이) — 미국 반도체 → 한국 반도체 ═══════════
+//   2026년 7월 코스피는 한 달 -23%(사상 최악)로 무너졌고, 원인은 AI 반도체 수요 재평가였다.
+//   삼성전자·SK하이닉스가 코스피 시총을 지배하므로 사실상 '미국 반도체 조정'이 그대로 넘어온 것이다.
+//   그런데 실제로 미국 반도체는 먼저 무너지고 있었다 — 6월 5일 나스닥 -4%(반도체 슬라이드로 시총 $1T 증발),
+//   7월 SMH 4주 중 3주 하락(누적 -9%). 미국장은 한국장보다 먼저 끝난다(마감 05:00 KST → 개장 09:00 KST).
+//   즉 '이미 확정된 정보'가 4시간 전에 있었는데 시스템은 그걸 한 번도 보지 않았다.
+//   → 미국 반도체 복합체의 직전 세션 수익률을 산출해 한국 기술주 진입·청산에 선행지표로 쓴다.
+//     새 fetch 는 없다(이미 daily: 상태에 저장된 종가만 사용).
+const _SEMI_US = ["NVDA", "AMD", "AVGO", "MU", "TSM", "INTC", "QCOM", "AMAT", "LRCX", "KLAC"];
+async function updateCrossMarketLead(DB) {
+  try {
+    const rows = await DB.prepare(
+      "SELECT k, v FROM state WHERE k IN (" + _SEMI_US.map(function () { return "?"; }).join(",") + ")"
+    ).bind.apply(null, _SEMI_US.map(function (s) { return "daily:" + s; })).all();
+    let r1Sum = 0, r1N = 0, r5Sum = 0, r5N = 0;
+    for (const row of (rows.results || [])) {
+      let d = null; try { d = JSON.parse(row.v); } catch (e) { continue; }
+      const c = d && d.closes;
+      if (!Array.isArray(c) || c.length < 6) continue;
+      const last = c[c.length - 1], p1 = c[c.length - 2], p5 = c[c.length - 6];
+      if (last > 0 && p1 > 0) { r1Sum += (last - p1) / p1 * 100; r1N++; }
+      if (last > 0 && p5 > 0) { r5Sum += (last - p5) / p5 * 100; r5N++; }
+    }
+    if (r1N < 4) return null;   // 표본 부족 — 판단 보류(중립)
+    const out = { semi1d: +(r1Sum / r1N).toFixed(2), semi5d: r5N ? +(r5Sum / r5N).toFixed(2) : null, n: r1N, ts: Date.now() };
+    await setState(DB, "xmkt_lead", out);
+    return out;
+  } catch (e) { return null; }
+}
+// 한국 기술주에 적용할 배수/차단 판정. 미국 반도체가 무너진 다음날 한국 반도체를 사지 않는다.
+function crossMarketAdjust(lead, market, group) {
+  if (!lead || market !== "kr" || group !== "TECH") return { mult: 1, note: null, block: false };
+  const s1 = (typeof lead.semi1d === "number") ? lead.semi1d : 0;
+  const s5 = (typeof lead.semi5d === "number") ? lead.semi5d : 0;
+  if (s1 <= -4 || (s1 <= -2 && s5 <= -6)) return { mult: 0.4, note: "美반도체 " + s1.toFixed(1) + "%", block: true };
+  if (s1 <= -2)                            return { mult: 0.6, note: "美반도체 " + s1.toFixed(1) + "%", block: false };
+  if (s1 >= 2.5 && s5 >= 0)                return { mult: 1.15, note: "美반도체 +" + s1.toFixed(1) + "%", block: false };
+  return { mult: 1, note: null, block: false };
+}
+
 // [V20] 섹터-상대강도 — 종목 vs 소속 섹터 ETF(더 정밀한 횡단면 알파). sectorCloses 없으면 중립.
 function _mlSectorFeats(closes, sectorCloses) {
   const o = { sectorRs20: 0, sectorBeta: 1 };
@@ -20302,9 +20415,12 @@ async function mlScalpLoad(DB) {
   } catch (e) { return null; }
 }
 // 단타 판정 — 모델이 신뢰될 때만 확률을 낸다. null 이면 호출부는 단타 진입을 하지 않는다.
-async function mlScalpDecide(DB, featVec) {
+async function mlScalpDecide(DB, featVec, opts) {
   const sc = (typeof AI_PARAMS !== "undefined" && AI_PARAMS.aiScalp) || {};
-  if (!sc.enabled) return null;                       // 실매매 스위치(모델 신뢰 전엔 false)
+  // [V33.45] 진입은 실매매 스위치(enabled)를 요구하지만, '거부권'은 모델 신뢰만으로 동작한다.
+  //   거부는 거래를 늘리지 않으므로 위험이 감소 방향뿐이라 별도 스위치로 분리했다.
+  const _forVeto = !!(opts && opts.forVeto);
+  if (!sc.enabled && !(_forVeto && sc.vetoWhenTrusted !== false)) return null;
   const L = await mlScalpLoad(DB);
   if (!L) return null;                                // 미학습/미신뢰 → 단타 진입 없음
   try {

@@ -14183,6 +14183,16 @@ html[data-theme="light"] .rail{background:#fff;}
       h += '<span class="k">시장 국면</span>'
         + '<div class="diag">US '+phTxt(mode.phase.us, mode.phase.erUs)
         + ' · KR '+phTxt(mode.phase.kr, mode.phase.erKr)+'</div>';
+      // [V33.45] 미국 반도체 → 한국 기술주 전이 감시(코스피는 삼성·하이닉스가 지수를 지배).
+      if(mode.xmkt && mode.xmkt.semi1d != null){
+        var s1 = mode.xmkt.semi1d;
+        var xc = s1 <= -3 ? 'var(--neg)' : (s1 <= -1.5 ? 'var(--amber,#fbbf24)' : (s1 >= 2 ? 'var(--pos)' : 'var(--t2)'));
+        h += '<div class="diag" style="margin-top:2px;">美반도체 <span style="color:'+xc+';">'
+          + (s1>0?'+':'')+s1.toFixed(1)+'%</span>'
+          + (mode.xmkt.semi5d!=null ? ' <span style="color:var(--t3);">(5일 '+(mode.xmkt.semi5d>0?'+':'')+mode.xmkt.semi5d.toFixed(1)+'%)</span>' : '')
+          + (s1 <= -3 ? ' <span style="color:var(--neg);">→ KR 기술주 진입차단</span>' : '')
+          + '</div>';
+      }
     }
     // [V33.13] ★오늘 늘어난 학습 표본★ — 표본이 실제로 자라는지 화면에서 바로 확인.
     var sm = mode.samples;
