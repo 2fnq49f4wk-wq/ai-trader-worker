@@ -2697,6 +2697,24 @@ const AI_PARAMS = {
   //   규칙엔진=1차 필터에서 → AI가 독립적 1차 결정자로 승격(점진적 엔진 대체). 안전: 상승추세 사전필터 +
   //   높은 확신 문턱 + 사이클당 상한 + 축소 사이즈 + 기존 전 가드(감성·재무·예산·섹터·히트·크래시게이트) 통과.
   //   합성신호(AI_PRIMARY)를 기존 진입 파이프라인에 주입 → 코드 중복 없이 모든 안전장치 재사용.
+  // ── [V33.38] ★AI 단타(짧은 지평) — 데이터 기반 준비 단계★ ──
+  //   AI 가 단타를 못 치는 근본 이유는 로직이 아니라 라벨 지평이다. 위원회 모델은 전부
+  //   predictionHorizonDays=10 으로 학습돼 있어, 그 확률 p 의 의미가 "10거래일 뒤 초과수익
+  //   확률"이다. 그 값으로 당일 매매를 결정하면 범주 오류이고 실제로 손실로 이어진다.
+  //   → 짧은 지평 라벨을 별도 스트림으로 모으고(같은 피처, 다른 라벨), 그것으로 전용 모델이
+  //     학습돼 신뢰를 얻은 뒤에야 AI 단타 진입을 켠다. 아래 enabled 는 그 스위치다.
+  //   표본은 지금부터 쌓인다 — 이게 가장 오래 걸리는 선행조건이라 먼저 심는다.
+  aiScalp: {
+    collect: true,          // 짧은 지평 표본 수집(안전 — 기존 10일 모델·테이블과 완전 분리)
+    horizonDays: 2,         // 단타 지평(거래일). 10일 스윙과 명확히 구분되는 길이.
+    stopPct: 3,             // 단타 라벨용 하방 배리어(스윙 5%보다 타이트)
+    tpPct: 3,               // 단타 라벨용 상방 배리어
+    enabled: false,         // ★실매매 스위치★ — 단타 전용 모델이 학습·신뢰될 때까지 false 유지.
+                            //   10일 모델로 단타를 돌리면 안 되므로 코드가 준비돼도 켜지 않는다.
+    threshold: 0.60,        // 켠 뒤 진입 문턱(스윙 0.55보다 높게 — 회전이 빠른 만큼 보수적)
+    maxPerCycle: 8          // 사이클당 단타 후보 상한
+  },
+
   aiPrimary: {
     enabled: true,          // AI 주도 진입 활성(끄려면 false → 규칙엔진 전용으로 복귀)
     threshold: 0.55,        // [V12.89] 0.60→0.55 — 블렌드확률 기준 0.60은 과도(매수 정체). 기술 드라이버와 함께 완화(규칙신호 없는 종목이라 보수적)
@@ -15625,6 +15643,34 @@ async function handleRequest(request, env, ctx) {
       }, { headers: cors });
     }
 
+    // [V33.38] GET /api/ml-export-st — 단타(짧은 지평) 표본 내보내기. 기존 /api/ml-export 와 완전 분리.
+    //   트레이너가 이 스트림으로 단타 전용 모델을 학습한다. 표본이 충분해지기 전엔 total 이 작게 나오며,
+    //   그 상태에서는 AI_PARAMS.aiScalp.enabled 를 켜지 않는다(10일 모델로 단타를 돌리면 안 되므로).
+    if (path === "/api/ml-export-st") {
+      const au = _trainAuthed(); if (!au.ok) return Response.json({ error: au.msg }, { status: au.code, headers: cors });
+      const limit = Math.min(20000, Math.max(1, Number(url.searchParams.get("limit")) || 10000));
+      const offset = Math.max(0, Number(url.searchParams.get("offset")) || 0);
+      let total = 0;
+      try { const c = await env.DB.prepare("SELECT COUNT(*) c FROM ml_samples_st WHERE featver=?").bind(LUXML.featVer).first(); total = (c && c.c) || 0; } catch (e) {}
+      let rows = { results: [] };
+      try {
+        rows = await env.DB.prepare(
+          "SELECT ts, feat, label, pnl_pct, horizon FROM ml_samples_st WHERE featver=? ORDER BY ts DESC, id DESC LIMIT ? OFFSET ?"
+        ).bind(LUXML.featVer, limit, offset).all();
+      } catch (e) {}
+      const out = [];
+      for (const r of ((rows && rows.results) || [])) {
+        let v; try { v = JSON.parse(r.feat); } catch (e) { continue; }
+        if (!Array.isArray(v) || v.length !== LUXML.featNames.length) continue;
+        out.push({ ts: _num(r.ts, 0), x: v.map(function (t) { return _num(t, 0); }), y: r.label ? 1 : 0,
+                   pnl: _num(r.pnl_pct, 0), h: _num(r.horizon, 2) });
+      }
+      const _sc = (typeof AI_PARAMS !== "undefined" && AI_PARAMS.aiScalp) || {};
+      return Response.json({ featVer: LUXML.featVer, featNames: LUXML.featNames, total: total,
+        offset: offset, returned: out.length, horizonDays: _sc.horizonDays || 2,
+        liveEnabled: !!_sc.enabled, config: _mlExportConfig(), samples: out }, { headers: cors });
+    }
+
     // POST /api/dnn-import — 외부에서 학습한 3M 가중치 업로드 → 검증 → 청크저장 → 신뢰게이트 갱신.
     //   body: { nets:[{W,b,dims}], mean, std, dims, valAcc, valAccLB, valN, n, featVer }
     if (path === "/api/dnn-import" && request.method === "POST") {
@@ -19715,6 +19761,17 @@ async function mlEnsureTable(DB) {
       //   (기존 행은 NULL — 신규 적재분만 정확히 집계되며, 그게 우리가 보려는 값이다)
       try { await DB.prepare("ALTER TABLE ml_samples ADD COLUMN ins_ts INTEGER").run(); } catch (e) {}
       try { await DB.prepare("CREATE INDEX IF NOT EXISTS idx_samples_insts ON ml_samples(ins_ts)").run(); } catch (e) {}
+      // [V33.38] 단타(짧은 지평) 전용 표본 — 피처는 동일, 라벨 지평만 다르다.
+      //   반드시 별도 테이블이어야 한다. 같은 테이블에 섞으면 기존 10일 모델이 서로 다른
+      //   지평의 라벨을 한꺼번에 학습하게 되어 지금 잘 돌아가는 위원회가 망가진다.
+      try {
+        await DB.prepare(
+          "CREATE TABLE IF NOT EXISTS ml_samples_st (" +
+          "id INTEGER PRIMARY KEY AUTOINCREMENT, ts INTEGER, market TEXT, symbol TEXT, " +
+          "strategy TEXT, feat TEXT, label INTEGER, pnl_pct REAL, featver INTEGER, ins_ts INTEGER, horizon INTEGER)"
+        ).run();
+        await DB.prepare("CREATE INDEX IF NOT EXISTS idx_st_fv_ts ON ml_samples_st(featver, ts)").run();
+      } catch (e) {}
       try { await DB.prepare("CREATE INDEX IF NOT EXISTS idx_samples_fv_ts ON ml_samples(featver, ts)").run(); } catch (e) {}
       try { await DB.prepare("CREATE INDEX IF NOT EXISTS idx_samples_strat_fv ON ml_samples(strategy, featver)").run(); } catch (e) {}
       _samplesTableReady = true;
@@ -23253,9 +23310,13 @@ async function mlMarketHarvestNightly(DB, opts) {
     let made = 0, scanned = 0;
     const hvDeadline = Date.now() + (opts.budgetMs || HARVEST.budgetMs || 45000);
     const _hvT0 = Date.now();
+    // [V33.38] 단타 표본 파라미터(루프 안에서 매번 조회하지 않도록 밖에서 1회)
+    const _scCfg = (typeof AI_PARAMS !== "undefined" && AI_PARAMS.aiScalp) || {};
+    const _scH = Math.max(1, Math.floor(_num(_scCfg.horizonDays, 2)));
+    const _scStop = _num(_scCfg.stopPct, 3), _scTp = _num(_scCfg.tpPct, 3);
     // [V33.25] ★어느 단계에서 표본이 사라지는지 계측★ 두 번 원인을 잘못 짚었으므로 추측을 멈추고
     //   단계별 카운터를 로그로 뽑는다. 0건일 때도 반드시 진단 문자열을 반환한다.
-    const _hv = { cand: 0, candD: 0, candH: 0, prologueMs: 0, symShort: 0, bars: 0, rejEntry: 0, rejLabel: 0, rejPrice: 0, budgetHit: 0 };  // [V12.103] 예산 override(캐치업 수확용)
+    const _hv = { cand: 0, candD: 0, candH: 0, stMade: 0, prologueMs: 0, symShort: 0, bars: 0, rejEntry: 0, rejLabel: 0, rejPrice: 0, budgetHit: 0 };  // [V12.103] 예산 override(캐치업 수확용)
     const idxCache = {};   // [V7] 시장별 지수 일봉(상대강도용) — 1회 로드
     for (const mk of ["us", "kr", "cm"]) {
       try {
@@ -23477,9 +23538,36 @@ async function mlMarketHarvestNightly(DB, opts) {
         if (_lab == null) { _hv.rejLabel++; continue; }   // [V17] alpha 모드에서 지수 없으면 편입 보류(라벨 순도)
         // ts는 봉 시점 근사(일봉 1개=1일)로 역산 — 시간순 검증분할의 정합 유지
         const ts = baseTs - (L - 1 - i) * 86400000;
+        const _featJson = JSON.stringify(feat);
         stmts.push(DB.prepare(
           "INSERT INTO ml_samples (ts, market, symbol, strategy, feat, label, pnl_pct, featver, ins_ts) VALUES (?,?,?,?,?,?,?,?,?)"
-        ).bind(ts, mkt, sym, "hv", JSON.stringify(feat), _lab, +pnl.toFixed(3), LUXML.featVer, Date.now()));
+        ).bind(ts, mkt, sym, "hv", _featJson, _lab, +pnl.toFixed(3), LUXML.featVer, Date.now()));
+        // [V33.38] ★AI 단타용 짧은 지평 라벨★ 피처는 위와 동일하고 라벨만 다르게 계산해
+        //   별도 테이블에 적재한다. 같은 봉을 재사용하므로 추가 계산은 배리어 루프 하나뿐이다.
+        //   (이 스트림이 쌓여야 단타 전용 모델을 학습할 수 있다 — 가장 오래 걸리는 선행조건)
+        if (_scCfg.collect !== false && i + _scH <= L - 1) {
+          let _sPnl = null;
+          for (let k3 = i + 1; k3 <= i + _scH; k3++) {
+            const r3 = (closes[k3] / c - 1) * 100;
+            if (r3 <= -_scStop) { _sPnl = -_scStop; break; }
+            if (_scTp > 0 && r3 >= _scTp) { _sPnl = _scTp; break; }
+          }
+          if (_sPnl === null) _sPnl = (closes[i + _scH] / c - 1) * 100;
+          let _sIdxRet = null;
+          if (idxAll && idxAll.length > _scH) {
+            const _ba = L - 1 - i, _ie = idxAll.length - 1 - _ba, _ix = _ie + _scH;
+            if (_ie >= 0 && _ix < idxAll.length && idxAll[_ie] > 0 && idxAll[_ix] > 0) {
+              _sIdxRet = (idxAll[_ix] / idxAll[_ie] - 1) * 100;
+            }
+          }
+          const _sLab = _sampleLabel(_sPnl, _sIdxRet);
+          if (_sLab != null) {
+            stmts.push(DB.prepare(
+              "INSERT INTO ml_samples_st (ts, market, symbol, strategy, feat, label, pnl_pct, featver, ins_ts, horizon) VALUES (?,?,?,?,?,?,?,?,?,?)"
+            ).bind(ts, mkt, sym, "hvs", _featJson, _sLab, +_sPnl.toFixed(3), LUXML.featVer, Date.now(), _scH));
+            _hv.stMade++;
+          }
+        }
         made++; symMade++;
         if (made >= HARVEST.maxPerNight) { nextStart = i + HARVEST.strideBars; break; }
         if (symMade >= (HARVEST.maxPerSymbol || 400)) { nextStart = i + HARVEST.strideBars; break; }  // [V20] 종목당 상한 → 다음밤 이어감
@@ -23535,7 +23623,7 @@ async function mlMarketHarvestNightly(DB, opts) {
     } catch (e) {}
     const _diagHv = "cand=" + _hv.cand + "(일봉" + (_hv.candD||0) + "+딥" + (_hv.candH||0) + ") 처리=" + scanned + " 봉=" + _hv.bars +
       " [탈락 진입조건=" + _hv.rejEntry + " 라벨=" + _hv.rejLabel + " 가격=" + _hv.rejPrice + " 봉수미달=" + _hv.symShort + "]" +
-      " 준비=" + _hv.prologueMs + "ms 총=" + (Date.now() - _hvT0) + "ms/" + (opts.budgetMs || HARVEST.budgetMs || 45000) + "ms" +
+      " 단타표본=" + _hv.stMade + " 준비=" + _hv.prologueMs + "ms 총=" + (Date.now() - _hvT0) + "ms/" + (opts.budgetMs || HARVEST.budgetMs || 45000) + "ms" +
       (_hv.budgetHit ? " 예산중단=" + _hv.budgetHit : "");
     try { globalThis.__hvLast = { made: made, bars: _hv.bars, cand: _hv.cand, scanned: scanned, ts: Date.now() }; } catch (e) {}
     return made ? ("[HV] 시장수확 +" + made + "표본 (" + scanned + "종목, 오프셋 " + off + ") " + _diagHv)
