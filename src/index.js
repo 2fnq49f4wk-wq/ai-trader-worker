@@ -4353,10 +4353,23 @@ async function markLLMFailed(DB, market, cooldownMin) {
 // [V9 매크로] 경제지표 자동 갱신 트리거 — 매일 아침 07:00 KST 1회.
 //   주말 포함 매일 도는 이유: 발표가 미국 새벽(한국 밤)에 자주 나므로
 //   아침에 한 번 긁으면 전날 발표분까지 모두 반영됨. cron 1분 간격이라 07:00 정각에 매치.
+// [V33.34] ★지표가 하루 종일 안 갱신될 수 있던 버그★ 종전 조건은 "정확히 07:00 딱 1분"이라,
+//   그 한 틱이 락 경쟁(cycle skipped: lock held — 실측 시간당 45회)이나 크론 누락으로 밀리면
+//   그날 갱신이 통째로 날아갔다. 같은 파일의 원자재 트리거는 이미 V8.9 에서 같은 이유로 창을
+//   넓혀뒀는데 매크로만 남아 있었다. 07:00~08:59 창으로 넓힌다 — 중복 실행은 runMacroUpdate
+//   내부의 macro_last_run(일자 비교) 가드가 이미 막아준다.
 function isMacroTriggerTime() {
-  const now = new Date();
-  const kst = getKST(now);
-  return kst.totalMin === 420;  // 07:00 KST = 420분
+  const kst = getKST(new Date());
+  return kst.totalMin >= 420 && kst.totalMin < 540;   // 07:00~08:59 KST
+}
+// [V33.34] 안전망 — 창을 넓혀도 놓쳤다면(장애·재배포 등) 묵은 값을 방치하지 않는다.
+//   26시간 넘게 갱신이 없으면 시각과 무관하게 한 번 시도한다(일일 가드가 중복은 막는다).
+async function isMacroStale(DB) {
+  try {
+    const md = await getState(DB, "macro_data", null);
+    if (!md || !md.updatedAt) return true;
+    return (Date.now() - md.updatedAt) > 26 * 3600000;
+  } catch (e) { return false; }
 }
 
 // [COMMODITY] 원자재 거래 트리거 — 매일 16:00 KST 이후 1회, 평일만.
@@ -12518,12 +12531,11 @@ async function runTradingCycle(env) {
     //   같은 invocation 안에서 LLM 외부 API fetch(20s)가 시간/예산 경쟁에 밀려 타임아웃났다.
     //   → runLLMDailyAnalysis를 scheduled에서 깨끗한 예산으로 먼저 돌린다(아래 export default 참고).
 
-    // [V9 매크로] 경제지표 자동 갱신 — 매일 07:00 KST 1회 (web_search)
-    //   try-catch 격리: 실패해도 매매 사이클은 정상 진행.
-    if (isMacroTriggerTime()) {
-      try { await runMacroUpdate(env); }
-      catch (e) { await log(DB, "ERROR", null, "[MACRO] trigger fail: " + e.message); }
-    }
+    // [V33.34] 매크로 갱신을 사이클에서 제거 — scheduled() 가 전담한다.
+    //   V33.34 에서 트리거 창을 07:00 1분 → 07:00~08:59 로 넓혔는데, 이 자리에 두면 그 2시간 동안
+    //   매 사이클(1분)마다 20초짜리 LLM 호출을 시도하게 된다. 바로 위 주석이 경고한 그 패턴
+    //   (사이클 안 LLM fetch 가 예산 경쟁에 밀려 타임아웃)이라 여기서는 아예 하지 않는다.
+    //   scheduled() 쪽 트리거는 엔진 disabled 상태에서도 동작하므로 커버리지 손실도 없다.
 
     // [V58] 거래 윈도우 기준 — KR 네이버 실시간, 정규장 09:00~15:30 KST
     let usCanTrade = isTradingWindow("us");
@@ -28272,7 +28284,9 @@ export default {
 
       // 5) 경제지표 갱신 (매일 07:00 KST) — runTradingCycle 내부에도 트리거가 있으나
       //    엔진 disabled 상태에서도 매크로는 갱신되도록 여기서도 안전하게 한 번 더 보장.
-      if (isMacroTriggerTime()) {
+      // [V33.34] 정규 창(07:00~08:59) 또는 26시간 넘게 묵었으면 갱신 시도.
+      //   중복은 runMacroUpdate 내부의 macro_last_run 일일 가드가 막는다.
+      if (isMacroTriggerTime() || await isMacroStale(env.DB)) {
         try { await runMacroUpdate(env); }
         catch (e) { try { await log(env.DB, "ERROR", null, "[SCHED] macro fail: " + e.message); } catch (e2) {} }
       }
