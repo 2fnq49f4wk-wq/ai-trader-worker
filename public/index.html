@@ -9591,9 +9591,14 @@ html[data-theme="light"] .m-brainbar button.active{color:#0b4f9e;background:rgba
     if (stamp) {
       if (macroAutoUpdatedAt) {
         var d = new Date(macroAutoUpdatedAt);
+        // [V33.33] 얼마나 묵은 값인지 함께 — "최신인지"를 눈으로 확인할 수 있게.
+        //   지표 원자료는 월·분기 단위 발표라 서버가 하루 1회(07:00 KST) 갱신하는 게 정상이다.
+        var ageH = Math.floor((Date.now() - macroAutoUpdatedAt) / 3600000);
+        var ageTxt = ageH < 1 ? '방금' : (ageH < 48 ? (ageH + '시간 전') : (Math.floor(ageH/24) + '일 전'));
         stamp.innerHTML = '🔄 수치 자동갱신: ' + (d.getMonth()+1) + '/' + d.getDate() + ' ' +
-          ('0'+d.getHours()).slice(-2) + ':' + ('0'+d.getMinutes()).slice(-2);
-        stamp.style.color = 'var(--green)';
+          ('0'+d.getHours()).slice(-2) + ':' + ('0'+d.getMinutes()).slice(-2) +
+          ' <span style="opacity:.7;">(' + ageTxt + ' · 매일 07:00 KST 갱신)</span>';
+        stamp.style.color = ageH >= 48 ? 'var(--amber,#fbbf24)' : 'var(--green)';
       } else {
         stamp.innerHTML = '⚠ 자동갱신 대기중 (기본값 표시) — 매일 07:00 KST 갱신';
         stamp.style.color = 'var(--dim)';
@@ -9615,8 +9620,24 @@ html[data-theme="light"] .m-brainbar button.active{color:#0b4f9e;background:rgba
   }
 
   // [V9.12] 팝업→페이지 전환 — 표시는 showPage()가 담당, 여기선 데이터 로드만.
-  function openMacro() {
+  // [V33.33] ★지표가 갱신되지 않던 이유★ 여기서 딱 한 번만 fetch 하고 폴링이 없었다.
+  //   페이지를 켜둔 채로 있으면 서버 값이 바뀌어도 화면은 영영 그대로였다.
+  //   페이지가 보이는 동안만 60초 주기로 다시 받고, 벗어나면 타이머를 끈다(불필요한 호출 방지).
+  var __macroTimer = null;
+  function macroStartLive() {
     macroLoadAndRender();
+    if (__macroTimer) return;
+    __macroTimer = setInterval(function () {
+      var pg = document.getElementById('page-macro');
+      if (!pg || !pg.classList.contains('active') || document.hidden) return;   // 안 보이면 건너뜀
+      macroLoadAndRender();
+    }, 60000);
+  }
+  function macroStopLive() { if (__macroTimer) { clearInterval(__macroTimer); __macroTimer = null; } }
+  // 페이지 감시자(onPageChanged)는 다른 IIFE 에 있어 window 경유로만 접근할 수 있다.
+  try { window.macroStartLive = macroStartLive; window.macroStopLive = macroStopLive; } catch (e) {}
+  function openMacro() {
+    macroStartLive();
   }
 
   // 수동 즉시 갱신 (페이지 내 새로고침 버튼)
@@ -9683,8 +9704,21 @@ html[data-theme="light"] .m-brainbar button.active{color:#0b4f9e;background:rgba
       .catch(function(){ fxRender(null); });
   }
   // [V9.12] 팝업→페이지 전환 — 표시는 showPage()가 담당, 여기선 데이터 로드만.
-  function openFx() {
+  // [V33.33] 환율은 시세성이라 30초 주기로 — 지표(월간 발표치)보다 자주 바뀐다.
+  var __fxTimer = null;
+  function fxStartLive() {
     fxLoadAndRender();
+    if (__fxTimer) return;
+    __fxTimer = setInterval(function () {
+      var pg = document.getElementById('page-fx');
+      if (!pg || !pg.classList.contains('active') || document.hidden) return;
+      fxLoadAndRender();
+    }, 30000);
+  }
+  function fxStopLive() { if (__fxTimer) { clearInterval(__fxTimer); __fxTimer = null; } }
+  try { window.fxStartLive = fxStartLive; window.fxStopLive = fxStopLive; } catch (e) {}
+  function openFx() {
+    fxStartLive();
   }
   function fxRunNow() {
     var btn = $('btnFxRefresh');
@@ -14463,6 +14497,14 @@ html[data-theme="light"] .rail{background:#fff;}
     if(id === __lastPage) return;
     __lastPage = id;
     try{ if(id === 'nnviz') liveStart(); else liveStop(); }catch(e){}
+    // [V33.33] 지표·환율 페이지의 실시간 폴링을 페이지 전환에 맞춰 켜고 끈다
+    //   (다른 페이지에 있을 때 헛호출하지 않도록).
+    try{
+      if(id === 'macro'){ if(window.macroStartLive) window.macroStartLive(); }
+      else if(window.macroStopLive) window.macroStopLive();
+      if(id === 'fx'){ if(window.fxStartLive) window.fxStartLive(); }
+      else if(window.fxStopLive) window.fxStopLive();
+    }catch(e){}
     try{ railGate(id); }catch(e){}
     try{ railRender(); }catch(e){}
     try{ syncMobile(); }catch(e){}
