@@ -15175,7 +15175,17 @@ async function handleRequest(request, env, ctx) {
                       trackHours: Math.max(0, Math.round((_now - _num(_trk.ts, _now)) / 3600000)),
                       measuredAt: _now };
         } catch (e) {}
-        const _out = { aiReady: aiReady, mode: aiReady ? "AI_AUTONOMOUS" : "RULE_FALLBACK",
+        // [V33.41] 단타 모델 준비 상태 — 위원회와 별개 슬롯이라 별도로 보고한다.
+        let _scalp = null;
+        try {
+          const _sc = (typeof AI_PARAMS !== "undefined" && AI_PARAMS.aiScalp) || {};
+          const _st = await getState(env.DB, "scalp_trust", null);
+          _scalp = { collect: _sc.collect !== false, live: !!_sc.enabled,
+                     trained: !!_st, trusted: !!(_st && _st.trusted),
+                     valAccLB: _st ? _st.valAccLB : null, baseline: _st ? _st.baseline : null,
+                     n: _st ? _st.n : 0, reason: _st ? _st.reason : "미학습" };
+        } catch (e) {}
+        const _out = { aiReady: aiReady, mode: aiReady ? "AI_AUTONOMOUS" : "RULE_FALLBACK", scalp: _scalp,
                  committee: { mind: mindOk, dnn: dnnOk, gbdt: gbdtOk, xgb: xgb, lgb: lgb, cat: cat },
                  selfreview: review, scan: scan, samples: samples, degraded: false };
         // 마지막 정상 스냅샷 보관 — 다음에 조회가 실패해도 "규칙엔진 폴백"으로 오표시하지 않기 위해.
@@ -15918,6 +15928,69 @@ async function handleRequest(request, env, ctx) {
     //   ★안전(섀도우 모드)★ 기본은 gbdt_model_ext/gbdt_trust_ext에만 저장하고 라이브 위원회
     //   (gbdt_model)엔 영향 0. 형식 오류가 있어도 실거래 무영향. ?activate=1 이면 검증 통과 시 라이브 승격.
     //   업로드된 모델을 Worker 자체 최근 표본에 직접 채점해 self-검증(형식/추론 정합성 확인).
+    // [V33.41] POST /api/scalp-import — 장중 단타 전용 모델 업로드.
+    //   기존 부스팅과 동일한 트리 포맷이라 채점기(mlGBDTScore)를 그대로 재사용한다.
+    //   ★핵심: 위원회(10일 지평)와 완전히 분리된 슬롯에 저장한다. 스윙 성능에 영향을 주지 않기 위함.
+    //   신뢰 판정도 독립: 장중 라벨은 클래스 균형이 달라 스윙 기준을 그대로 쓰면 안 된다.
+    if (path === "/api/scalp-import" && request.method === "POST") {
+      const au = _trainAuthed(); if (!au.ok) return Response.json({ error: au.msg }, { status: au.code, headers: cors });
+      let body; try { body = await request.json(); } catch (e) { return Response.json({ error: "bad json" }, { status: 400, headers: cors }); }
+      if (_num(body.featVer, -1) !== LUXML.featVer) return Response.json({ error: "featVer 불일치 (서버 " + LUXML.featVer + ")" }, { status: 400, headers: cors });
+      if (!Array.isArray(body.trees) || !body.trees.length) return Response.json({ error: "trees 없음" }, { status: 400, headers: cors });
+      if (body.trees.length > 2000) return Response.json({ error: "trees 과다" }, { status: 400, headers: cors });
+      const _D = LUXML.featNames.length;
+      const _vt = function (node, depth) {
+        if (!node || typeof node !== "object" || depth > 12) return false;
+        if (typeof node.w === "number") return isFinite(node.w);
+        if (typeof node.f !== "number" || node.f < 0 || node.f >= _D) return false;
+        if (typeof node.t !== "number" || !isFinite(node.t)) return false;
+        return _vt(node.l, depth + 1) && _vt(node.r, depth + 1);
+      };
+      for (const t of body.trees) if (!_vt(t, 0)) return Response.json({ error: "트리 형식 오류" }, { status: 400, headers: cors });
+      const vAcc = _clamp(_num(body.valAcc, 0), 0, 1);
+      const vN = Math.max(1, Math.floor(_num(body.valN, 30)));
+      const vLB = (body.valAccLB != null) ? _clamp(_num(body.valAccLB, 0), 0, 1) : _wilsonLB(vAcc, vN);
+      const model = { trees: body.trees, base: _num(body.base, 0), lr: _num(body.lr, 0.1),
+                      featVer: LUXML.featVer, valAcc: +vAcc.toFixed(4), valAccLB: +vLB.toFixed(4), valN: vN,
+                      n: Math.max(0, Math.floor(_num(body.n, 0))), horizonBars: _num(body.horizonBars, 12),
+                      posRate: _num(body.posRate, null), source: "external", trainedAt: Date.now() };
+      // 변환정합 probe — 워커 채점이 트레이너 확률을 재현하는지(스윙과 동일한 안전장치).
+      let convMaxDiff = null, convN = 0;
+      try {
+        if (Array.isArray(body.probe) && body.probe.length) {
+          let md = 0, cnt = 0;
+          for (const pr of body.probe) {
+            if (!pr || !Array.isArray(pr.x) || pr.x.length !== _D || typeof pr.p !== "number") continue;
+            const sc = mlGBDTScore(model, pr.x.map(function (t) { return _num(t, 0); }));
+            if (sc == null) continue;
+            const dd = Math.abs(sc - pr.p); if (dd > md) md = dd; cnt++;
+          }
+          if (cnt > 0) { convMaxDiff = md; convN = cnt; }
+        }
+      } catch (e) {}
+      // 신뢰 게이트 — 정합(≤0.03) + 다수클래스 대비 우위 + 표본 하한.
+      //   장중 라벨은 양성비율이 치우칠 수 있어 "다수클래스 베이스라인 + 1.5%p" 를 요구한다.
+      const _pos = (model.posRate != null) ? model.posRate : 0.5;
+      const _baseline = Math.max(_pos, 1 - _pos);
+      const convOK = (convMaxDiff == null) || (convMaxDiff <= 0.03);
+      const trusted = convOK && model.n >= 3000 && vLB >= _baseline + 0.015;
+      const trust = { trusted: trusted, valAcc: model.valAcc, valAccLB: model.valAccLB, n: model.n,
+                      baseline: +_baseline.toFixed(4), convMaxDiff: convMaxDiff != null ? +convMaxDiff.toFixed(4) : null,
+                      source: "external", trainedAt: Date.now(),
+                      reason: trusted ? "ok" : (!convOK ? "정합 미달" : (model.n < 3000 ? "표본 부족(" + model.n + "/3000)" : "베이스라인 미달")) };
+      try {
+        await setState(env.DB, "scalp_model", model);
+        await setState(env.DB, "scalp_trust", trust);
+      } catch (e) { return Response.json({ error: "저장 실패: " + (e && e.message) }, { status: 500, headers: cors }); }
+      try {
+        await log(env.DB, "INFO", null, "[SCALP-MODEL] 단타모델 수신 트리=" + body.trees.length +
+          " valAcc=" + (vAcc * 100).toFixed(1) + "%(하한 " + (vLB * 100).toFixed(1) + "%) n=" + model.n +
+          " 베이스라인 " + (_baseline * 100).toFixed(1) + "% → " + (trusted ? "신뢰(단타 진입 가능)" : "보류: " + trust.reason));
+      } catch (e) {}
+      return Response.json({ ok: true, trusted: trusted, valAcc: model.valAcc, valAccLB: model.valAccLB,
+        baseline: trust.baseline, convMaxDiff: trust.convMaxDiff, n: model.n, reason: trust.reason }, { headers: cors });
+    }
+
     if (path === "/api/gbdt-import" && request.method === "POST") {
       const au = _trainAuthed(); if (!au.ok) return Response.json({ error: au.msg }, { status: au.code, headers: cors });
       // [V32.13] name으로 부스팅 멤버 구분(gbdt/xgb/lgb/cat) — 전부 동일 트리포맷이라 mlGBDTScore로 채점.
@@ -19855,7 +19928,36 @@ async function mlEnsureTable(DB) {
       //   (기존 행은 NULL — 신규 적재분만 정확히 집계되며, 그게 우리가 보려는 값이다)
       try { await DB.prepare("ALTER TABLE ml_samples ADD COLUMN ins_ts INTEGER").run(); } catch (e) {}
       try { await DB.prepare("CREATE INDEX IF NOT EXISTS idx_samples_insts ON ml_samples(ins_ts)").run(); } catch (e) {}
-      // ═══════════ [V33.40] 장중(분봉) 단타 학습 파이프라인 — 전량 R2, D1 미사용 ═══════════
+      // [V33.41] 단타 모델 로더·판정 — 위원회(10일)와 완전히 분리된 슬롯을 쓴다.
+//   5분 메모 캐시: 사이클마다 D1을 치지 않게(모델은 6시간마다만 갱신된다).
+let __scalpMemo = null;
+async function mlScalpLoad(DB) {
+  try {
+    if (__scalpMemo && (Date.now() - __scalpMemo.at) < 300000) return __scalpMemo.v;
+    const S = await getStates(DB, ["scalp_model", "scalp_trust"]);
+    const m = S["scalp_model"], t = S["scalp_trust"];
+    const ok = !!(m && t && t.trusted && m.featVer === LUXML.featVer && Array.isArray(m.trees) && m.trees.length);
+    const v = ok ? { model: m, trust: t } : null;
+    __scalpMemo = { at: Date.now(), v: v };
+    return v;
+  } catch (e) { return null; }
+}
+// 단타 판정 — 모델이 신뢰될 때만 확률을 낸다. null 이면 호출부는 단타 진입을 하지 않는다.
+async function mlScalpDecide(DB, featVec) {
+  const sc = (typeof AI_PARAMS !== "undefined" && AI_PARAMS.aiScalp) || {};
+  if (!sc.enabled) return null;                       // 실매매 스위치(모델 신뢰 전엔 false)
+  const L = await mlScalpLoad(DB);
+  if (!L) return null;                                // 미학습/미신뢰 → 단타 진입 없음
+  try {
+    const p = mlGBDTScore(L.model, featVec);
+    if (p == null || !isFinite(p)) return null;
+    const thr = _num(sc.threshold, 0.6);
+    return { p: +p.toFixed(4), pass: p >= thr, thr: thr,
+             valAccLB: L.trust.valAccLB, n: L.model.n, horizonBars: L.model.horizonBars };
+  } catch (e) { return null; }
+}
+
+// ═══════════ [V33.40] 장중(분봉) 단타 학습 파이프라인 — 전량 R2, D1 미사용 ═══════════
 //   설계 요지: 분봉 원본을 창고에 쌓지 않는다. 학습이 실제로 쓰는 건 65차원 피처벡터 + 라벨이라
 //   OHLCV 를 보관할 이유가 없다(실측 추정: 원본 4.4MB/일 → 표본만 0.8MB/일, 약 1/60).
 //   수집도 새 fetch 를 만들지 않는다 — 단타 스캔이 이미 받아오는 5분봉에 얹는다(추가 fetch 0).

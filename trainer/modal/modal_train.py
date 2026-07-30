@@ -403,6 +403,12 @@ def train_job(epochs: int = EPOCHS_DEFAULT, dry: bool = False):
             _train_and_upload_fm(BASE, KEY, HDR, X, Y, TS, PNL, featver, D)
         except Exception as e:
             print("FM(MIND) 학습/업로드 예외(무시):", e)
+        # [V33.41] 장중 단타 모델 — 표본 소스·라벨 지평·업로드 슬롯이 전부 위원회와 분리돼 있어
+        #   여기서 실패해도 위 스윙 모델들에는 영향이 없다(그래서 맨 마지막에, 예외도 삼킨다).
+        try:
+            _train_and_upload_scalp(BASE, KEY, HDR, featver)
+        except Exception as e:
+            print("단타 학습/업로드 예외(무시):", e)
     return {"ok": True, "valAcc": acc, "trust": res.get("trust")}
 
 
@@ -799,6 +805,105 @@ def _train_and_upload_fm(BASE, KEY, HDR, X, Y, TS, PNL, featver, D):
         except requests.exceptions.ReadTimeout:
             if attempt < 3: time.sleep(20); continue
     print("FM 업로드 타임아웃")
+
+
+def _train_and_upload_scalp(BASE, KEY, HDR, featver):
+    """[V33.41] 장중(분봉) 단타 전용 모델.
+
+    위원회(10일 지평)와 완전히 분리된 파이프라인이다:
+      · 표본 소스가 다르다 — /api/ml-export-intraday (R2 전용, D1 미조회)
+      · 라벨 지평이 다르다 — 5분봉 12개(60분), ±1.2% 배리어
+      · 업로드 슬롯이 다르다 — /api/scalp-import → scalp_model/scalp_trust
+    따라서 이 잡이 실패하거나 성능이 나빠도 스윙 성능에는 영향이 없다.
+    """
+    import numpy as np, math, json, time, requests
+    from datetime import datetime, timedelta, timezone
+
+    # 최근 며칠치 장중 표본을 모은다(하루 1개 엔드포인트 호출).
+    KST = timezone(timedelta(hours=9))
+    days, X, Y, TS = 14, [], [], []
+    for i in range(days):
+        d = (datetime.now(KST) - timedelta(days=i)).strftime("%Y-%m-%d")
+        try:
+            r = requests.get(BASE + "/api/ml-export-intraday", params={"key": KEY, "day": d},
+                             headers=HDR, timeout=120)
+            if r.status_code != 200:
+                continue
+            j = r.json()
+            for sm in j.get("samples", []):
+                x = sm.get("x")
+                if not isinstance(x, list):
+                    continue
+                X.append(x); Y.append(1 if sm.get("y") else 0); TS.append(sm.get("ts", 0))
+        except Exception as e:
+            print(f"  장중표본 {d} 수집 실패: {e}")
+    N = len(Y)
+    print(f"⑧ 단타(장중) 학습 — 표본 {N}건 / 최근 {days}일")
+    if N < 1500:
+        print(f"   표본 부족({N}/1500) — 생략. 더 쌓이면 자동으로 학습된다."); return
+
+    X = np.array(X, dtype=np.float64); Y = np.array(Y, dtype=int); TS = np.array(TS)
+    D = X.shape[1]
+    order = np.argsort(TS)
+    Xs, Ys = X[order], Y[order]
+    nval = max(300, int(N * 0.25))
+    Xtr, Ytr, Xva, Yva = Xs[:-nval], Ys[:-nval], Xs[-nval:], Ys[-nval:]
+    pos_rate = float(Ys.mean())
+    baseline = max(pos_rate, 1 - pos_rate)
+    print(f"   양성비율 {pos_rate:.3f} / 다수클래스 베이스라인 {baseline:.3f}")
+
+    import lightgbm as lgb
+    ltr = lgb.Dataset(Xtr, label=Ytr); lva = lgb.Dataset(Xva, label=Yva, reference=ltr)
+    bst = lgb.train({"objective": "binary", "max_depth": 4, "num_leaves": 16,
+                     "learning_rate": 0.05, "min_data_in_leaf": 40, "verbose": -1,
+                     "feature_fraction": 0.8, "bagging_fraction": 0.8, "bagging_freq": 1},
+                    ltr, num_boost_round=400, valid_sets=[lva],
+                    callbacks=[lgb.early_stopping(60, verbose=False)])
+    best = bst.best_iteration or 400
+
+    def _plgb(n):
+        if "leaf_value" in n:
+            return {"w": float(n["leaf_value"])}
+        return {"f": int(n["split_feature"]), "t": float(n["threshold"]),
+                "l": _plgb(n["left_child"]), "r": _plgb(n["right_child"])}
+    trees = [_plgb(ti["tree_structure"]) for ti in bst.dump_model(num_iteration=best)["tree_info"]]
+
+    # 워커 채점(mlGBDTScore)과 맞추기 위한 base 보정 — 라이브러리 margin 과 트리합의 차이를 상수로 흡수.
+    def _wout(node, x):
+        while "w" not in node:
+            node = node["l"] if x[node["f"]] < node["t"] else node["r"]
+        return node["w"]
+    ref = Xva[:200]
+    margin = bst.predict(ref, num_iteration=best, raw_score=True)
+    wsum = np.array([sum(_wout(t, x) for t in trees) for x in ref])
+    base = float((margin - wsum).mean())
+
+    proba = bst.predict(Xva, num_iteration=best)
+    acc = float(((proba >= 0.5).astype(int) == Yva).mean())
+    z = 1.64; n = len(Yva); z2 = z * z
+    lb = max(0.0, ((acc + z2 / (2 * n)) - z * math.sqrt((acc * (1 - acc) + z2 / (4 * n)) / n)) / (1 + z2 / n))
+    print(f"   valAcc {acc:.4f} (하한 {lb:.4f}, n={n}) / 트리 {len(trees)}")
+
+    # 변환정합 probe — 워커가 같은 확률을 재현하는지 검증(스윙과 동일한 안전장치)
+    pi = np.linspace(0, len(Xva) - 1, min(200, len(Xva))).astype(int)
+    probe = [{"x": Xva[i].tolist(), "p": float(proba[i])} for i in pi]
+
+    model = {"featVer": featver, "trees": trees, "base": base, "lr": 1.0,
+             "valAcc": round(acc, 4), "valAccLB": round(lb, 4), "valN": int(n), "n": int(N),
+             "posRate": round(pos_rate, 4), "horizonBars": 12, "probe": probe}
+    for attempt in range(4):
+        try:
+            r = requests.post(BASE + "/api/scalp-import", params={"key": KEY},
+                              headers=HDR, data=json.dumps(model), timeout=180)
+            if r.status_code == 200:
+                print("   단타모델 업로드 OK:", json.dumps(r.json(), ensure_ascii=False)); return
+            b = r.text[:200]
+            if r.status_code >= 500 and (("D1" in b) or ("overloaded" in b) or ("queued" in b)) and attempt < 3:
+                print(f"   D1 과부하 재시도 {attempt+1}"); time.sleep(30); continue
+            print("   단타모델 업로드 실패:", r.status_code, b); return
+        except requests.exceptions.ReadTimeout:
+            if attempt < 3: time.sleep(20); continue
+    print("   단타모델 업로드 타임아웃")
 
 
 @app.local_entrypoint()

@@ -14194,6 +14194,21 @@ html[data-theme="light"] .rail{background:#fff;}
       } else {
         line2 = '<span style="color:var(--t3);">집계 준비 중</span>';
       }
+      // [V33.41] 단타 모델 진행 상황 — 언제 실매매가 켜지는지 눈으로 확인 가능하게.
+      var sc = mode.scalp;
+      if(sc){
+        var scTxt, scCol;
+        if(sc.live && sc.trusted){ scTxt='\u25c9 단타 가동'; scCol='var(--pos)'; }
+        else if(sc.trusted){ scTxt='\u25d0 모델 신뢰 \u2014 실매매 대기'; scCol='var(--amber,#fbbf24)'; }
+        else if(sc.trained){ scTxt='\u25cc 학습됨 \u00b7 '+esc(sc.reason); scCol='var(--t3)'; }
+        else { scTxt='\u25cc 표본 수집 중'; scCol='var(--t3)'; }
+        h += '<span class="k">단타 모델</span>'
+          + '<div class="diag" style="color:'+scCol+';">'+scTxt+'</div>'
+          + (sc.trained ? ('<div class="diag" style="margin-top:2px;">정확도하한 '
+              + (sc.valAccLB!=null?(sc.valAccLB*100).toFixed(1)+'%':'\u2014')
+              + ' \u00b7 기준선 ' + (sc.baseline!=null?(sc.baseline*100).toFixed(1)+'%':'\u2014')
+              + ' \u00b7 표본 ' + (sc.n||0).toLocaleString() + '</div>') : '');
+      }
       h += '<span class="k">학습 표본</span>'
         + '<div class="diag">누적 <b>'+sm.total.toLocaleString()+'</b>건 · featVer '+esc(sm.featVer)+'</div>'
         + '<div class="diag" style="margin-top:2px;">'+line2+ageTxt+'</div>';
