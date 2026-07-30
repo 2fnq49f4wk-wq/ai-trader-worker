@@ -2726,6 +2726,11 @@ const AI_PARAMS = {
     baseWeight: 0.6,        // 합성신호 기본 가중(규칙신호 1.0 대비 축소 → 사이즈 보수화)
     maxDisagree: 0.30,      // [V12.89] 0.22→0.30 — 표본부족기 전문가 불일치가 커 과도차단되던 것 완화(합의 없는 진입 차단)
     rsiMin: 45, rsiMax: 72, // 사전필터 RSI 밴드(상승추세 정렬 종목만 위원회 평가)
+    // [V33.42] ★폭등장에서 주도주를 못 사던 구조★ 폭등장 주도주의 RSI 는 통상 75~85 라
+    //   상한 72 에 걸려 위원회 평가 대상에서 아예 제외됐다 — "가장 강한 종목"이 후보에 못 드는 역설.
+    //   RSI>70 은 과매수 신호이기도 하지만 확인된 상승 국면에서는 추세 지속 신호에 가깝다.
+    //   그래서 국면이 확인된 강세(BULL)일 때만 상한을 올린다. 약세·중립에서는 종전 그대로.
+    rsiMaxBull: 84,
     // [V32.3] ★사용자 지시로 완화(2026-07-22)★ true였을 때 DNN/GBDT가 재학습 중(미신뢰)이면
     //   AI 단독진입이 전량 ai_primary_gate에서 차단돼 "매수가 아예 안 됨". 사용자가 위험을 감수하고
     //   즉시 매수를 원해 false로 전환 — MIND 단독 결정으로도 진입 허용. (모델이 다시 신뢰되면
@@ -6443,6 +6448,21 @@ function _scoreHeadlines(items) {
 
 // [V9.9 신규데이터] 애널리스트 컨센서스 — 목표가 상승여력·투자의견을 야후 v7에서 수집(US 한정).
 //   가격독립 펀더멘털 정보. 6h 캐시, 예산 가드, 1배치=1 subrequest 묶음. 실패해도 기존 캐시 유지.
+// [V33.42] 나스닥 EPS 값 파서 — "$1.23", "(0.45)"(음수 표기), "N/A", 숫자 혼재를 안전하게 처리.
+function _epsNum(v) {
+  if (v == null) return null;
+  if (typeof v === "number") return isFinite(v) ? v : null;
+  var t = String(v).trim();
+  if (!t) return null;
+  if (/^(n\/a|--|-)$/i.test(t)) return null;
+  var neg = false;
+  if (t.charAt(0) === "(" && t.charAt(t.length - 1) === ")") { neg = true; t = t.slice(1, -1); }
+  t = t.replace(/[$,]/g, "").replace(/\s/g, "");
+  var n = parseFloat(t);
+  if (!isFinite(n)) return null;
+  return neg ? -n : n;
+}
+
 async function updateAnalystConsensus(DB, cfg, force) {
   const ac = Object.assign({ enabled: true, refreshHours: 6, minBudgetReserve: 10, chunk: 40 }, (cfg && cfg.analyst) || {});
   if (ac.enabled === false) return null;
@@ -6592,6 +6612,53 @@ async function updateEarningsCalendarNow(DB, cfg) {
         } catch (e) {}
       }
     }
+    // [V33.42] ★예상 vs 실제 실적 — 진짜 서프라이즈 수집★
+    //   종전엔 미래 날짜만 조회해 epsForecast(예상)만 받았고 실제 발표치는 어디에도 없었다.
+    //   그래서 PEAD 판정이 "가격 반응"을 서프라이즈의 대용치로 썼다 — 원인과 결과가 뒤바뀐 셈이라
+    //   "실적이 좋았는데 반응 못 한다"는 증상이 여기서 나왔다.
+    //   나스닥 캘린더는 과거 날짜에 대해 eps(실제)와 epsForecast(예상)를 함께 준다. 최근 며칠을
+    //   조회해 실제 서프라이즈율을 계산·저장한다(추가 소스 없이 이미 쓰는 API 재사용).
+    try {
+      if (fetchBudgetLeft() >= 3) {
+        const nUA2 = { "User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.0 Safari/605.1.15",
+          "Accept": "application/json", "Origin": "https://www.nasdaq.com", "Referer": "https://www.nasdaq.com/" };
+        const _prevS = (await getState(DB, "earnings_surprise", null)) || { m: {}, ts: 0 };
+        const _map = _prevS.m || {};
+        let _got = 0;
+        for (let back = 1; back <= 4 && fetchBudgetLeft() >= 2; back++) {
+          const dt2 = new Date(Date.now() - back * 86400000);
+          const dw2 = dt2.getUTCDay();
+          if (dw2 === 0 || dw2 === 6) continue;
+          const ds2 = dt2.toISOString().slice(0, 10);
+          try {
+            __fetchBudget.used++;
+            const r2 = await fetch("https://api.nasdaq.com/api/calendar/earnings?date=" + ds2, { headers: nUA2 });
+            if (!r2.ok) continue;
+            const j3 = await r2.json();
+            const rows3 = ((j3 && j3.data && j3.data.rows) || []).slice(0, 120);
+            for (const rw of rows3) {
+              if (!rw || !rw.symbol) continue;
+              const _act = _epsNum(rw.eps), _est = _epsNum(rw.epsForecast);
+              if (_act == null || _est == null) continue;
+              // 예상치가 0 근처면 비율이 폭주하므로 분모에 절대값 하한을 둔다.
+              const _den = Math.max(Math.abs(_est), 0.05);
+              const _sp = ((_act - _est) / _den) * 100;
+              _map[String(rw.symbol).toUpperCase()] =
+                { act: _act, est: _est, sp: +_sp.toFixed(1), ts: new Date(ds2 + "T12:00:00Z").getTime() };
+              _got++;
+            }
+          } catch (e) {}
+          if (_got >= 60) break;
+        }
+        const _cut = Date.now() - 30 * 86400000;
+        for (const k of Object.keys(_map)) if (!(_map[k] && _map[k].ts > _cut)) delete _map[k];
+        if (_got) {
+          await setState(DB, "earnings_surprise", { m: _map, ts: Date.now() });
+          await log(DB, "INFO", null, "[EARNINGS] 실제 서프라이즈 " + _got + "건 수집(누적 " + Object.keys(_map).length + "종목)");
+        }
+      }
+    } catch (e) {}
+
     const lo = Date.now() - 3 * 86400000, hi = Date.now() + 30 * 86400000;
     items = items.filter(function (it) { return it.ts >= lo && it.ts <= hi; });
     items.sort(function (a, b) { return a.ts - b.ts || (b.watch ? 1 : 0) - (a.watch ? 1 : 0); });
@@ -12720,6 +12787,9 @@ async function runTradingCycle(env) {
     let aiPrimaryUsed = 0;    // [V12.64] AI 주도 진입 후보 카운터(사이클당 상한 통제)
     let scalpEligible = 0, scalpSig = 0;  // [진단] scalp 진입 병목 추적: 후보(no-trend)·스캔·신호 카운트
     let __stinPend = null, __stinObs = 0;   // [V33.40] 장중 단타 학습표본 버퍼(R2)·관측 카운터
+    // [V33.42] 실제 실적 서프라이즈 맵 — 사이클당 1회만 읽어 평가 루프에서 재사용(D1 왕복 1회).
+    let __earnSurp = null;
+    try { const _esS = await getState(DB, "earnings_surprise", null); __earnSurp = (_esS && _esS.m) || null; } catch (e) {}
     const __stinPx = {};                    // 사이클 전체에서 모은 현재가(라벨링용) — batchQuotes 는 시장 루프 지역변수라 밖에서 못 쓴다
     __scalpDiag = {};  // [진단] 게이트 탈락 사유 집계 리셋
     // [V33.40] 장중 단타 표본 버퍼를 R2 에서 1회 로드(장중에만). 실패해도 매매엔 영향 없다.
@@ -13929,8 +13999,12 @@ async function runTradingCycle(env) {
                 && closes.length >= 55) {
               const _picked = !!(__aiPickPool && __aiPickPool.has(symbol));   // AI가 야간 전종목 스캔에서 스스로 고른 종목
               const _ma20 = getMA(closes, 20), _ma50 = getMA(closes, 50);
+              // [V33.42] 확인된 강세 국면에서만 RSI 상한을 올린다(폭등장 주도주 편입).
+              //   약세·중립에서는 종전 상한(72) 그대로 — 과열 추격 위험을 늘리지 않는다.
+              const _apRsiMax = (regime && regime.regime === "BULL")
+                ? (_ap.rsiMaxBull || 84) : (_ap.rsiMax || 72);
               const _uptrend = (_ma20 != null && _ma50 != null && _ma20 > _ma50 && price > _ma20 &&
-                                (dailyRsi == null || (dailyRsi >= (_ap.rsiMin || 45) && dailyRsi <= (_ap.rsiMax || 72))));
+                                (dailyRsi == null || (dailyRsi >= (_ap.rsiMin || 45) && dailyRsi <= _apRsiMax)));
               // [V12.89] ★다기간 기술요약을 매수 드라이버로★ (사용자 요청) — 시기별(단기·1주·1달·1년)
               //   컨센서스가 3개 이상 매수면 AI가 이 기술신호만으로도 진입 후보에 올린다. 그래프 중심 매수.
               let _techBuy = false, _tfBull = 0;
@@ -14030,6 +14104,25 @@ async function runTradingCycle(env) {
                 //   사라졌다(차단선 -4 는 쉽게 닿고 부스트선 +3 은 거의 못 닿는 구조).
                 if (_erc && _erc.verdict === "beat") { ctxScore += 3; ctxWhy.push("PEAD-BEAT+" + _erc.reactPct.toFixed(0) + "%"); }
                 else if (_erc && _erc.verdict === "miss") { ctxScore -= 3; ctxWhy.push("PEAD-MISS" + _erc.reactPct.toFixed(0) + "%"); }
+                // [V33.42] ★실제 서프라이즈(예상 vs 발표) 반영★ 위 PEAD 는 "가격 반응"을 대용치로 쓴다.
+                //   이제 실제 EPS 예상·발표를 비교한 서프라이즈율이 있으면 그것을 우선한다(원인 자체).
+                //   ★시총 가중★ 대형주는 같은 서프라이즈라도 지수·섹터 파급이 크고 유동성이 두터워
+                //   반응이 더 신뢰할 만하다 → 시총 상위일수록 가중을 키운다(요청 반영).
+                try {
+                  const _es = __earnSurp && __earnSurp[String(symbol).toUpperCase()];
+                  if (_es && (Date.now() - _es.ts) <= (_prc.driftDays || 10) * 86400000) {
+                    const _rank = MCAP_RANK[symbol] || 99999;
+                    const _mcW = _rank <= 50 ? 1.5 : _rank <= 200 ? 1.2 : _rank <= 800 ? 1.0 : 0.7;
+                    // 서프라이즈율 → 점수. ±5% 미만은 노이즈로 보고 무시, ±25% 에서 포화.
+                    const _sp = _es.sp;
+                    if (Math.abs(_sp) >= 5) {
+                      const _mag = Math.min(Math.abs(_sp) / 25, 1);       // 0~1
+                      const _pts = Math.round(_mag * 4 * _mcW);            // 최대 6점(대형주)
+                      if (_sp > 0) { ctxScore += _pts; ctxWhy.push("EPS+" + _sp.toFixed(0) + "%x" + _mcW); }
+                      else { ctxScore -= _pts; ctxWhy.push("EPS" + _sp.toFixed(0) + "%x" + _mcW); }
+                    }
+                  }
+                } catch (e) {}
               }
             }
             const _ctxStr = ctxWhy.length ? (" [" + ctxWhy.join(" ") + "]") : "";
@@ -25517,7 +25610,13 @@ async function _luxCrisisGauge(DB, opts) {
     stressFrac = Math.max(vStress, sStress);
   } catch (e) {}
   const marketConfirm = +(0.35 + 0.65 * stressFrac).toFixed(2);              // 시장 잠잠=0.35, 급락=1.0
-  const newsPtsAdj = Math.round(newsPts * marketConfirm);
+  // [V33.42] ★뉴스 과민반응 억제★ 종전엔 marketConfirm 배율만 곱했다. 그런데 지정학 플로어에는
+  //   "시장이 잠잠하면 주의까지만"이라는 규율(floorCap)이 있는데 정작 뉴스 본체(newsPts)에는 없어,
+  //   지수·VIX 가 멀쩡한데도 헤드라인 수만으로 경계 등급까지 올라가 매수가 막히곤 했다.
+  //   → 뉴스 기여에도 같은 규율을 적용한다: 시장이 확증하지 않으면 뉴스만으로 방어모드에 가지 않는다.
+  let newsPtsAdj = Math.round(newsPts * marketConfirm);
+  if (stressFrac < 0.25) newsPtsAdj = Math.min(newsPtsAdj, 18);        // 시장 잠잠 → '주의' 문턱(20) 아래로
+  else if (stressFrac < 0.5) newsPtsAdj = Math.min(newsPtsAdj, 32);    // 부분 확증 → '경계'(40) 아래로
   const sentiAdj = Math.round(sentiPts * marketConfirm);
   // 지정학 플로어: 시장 미확증(잠잠)이면 '주의'까지만, 부분확증이면 '경계'까지. 완전확증이라야 '위기' 플로어.
   let floorCap = geoFloor;
