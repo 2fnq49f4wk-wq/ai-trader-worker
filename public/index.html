@@ -14183,9 +14183,20 @@ html[data-theme="light"] .rail{background:#fff;}
         var ageMin = Math.floor((Date.now() - sm.measuredAt) / 60000);
         if(ageMin >= 3) ageTxt = ' <span style="color:var(--t3);">('+ageMin+'분 전 기준)</span>';
       }
+      // [V33.35] ins_ts 이력이 하루치 쌓이기 전에는 "오늘 0건"이 실제 증가를 가리므로,
+      //   그동안은 추적 시작 이후 누적 증가분을 보여준다(기준 시각을 함께 밝힘).
+      var line2;
+      if((yd || 0) > 0 || (td || 0) > 0){
+        line2 = '오늘 '+num(td)+'건 · 어제 '+num(yd)+'건';
+      } else if(sm.sinceTrack != null){
+        line2 = '추적 시작 이후 '+num(sm.sinceTrack)+'건'
+              + ' <span style="opacity:.7;">('+(sm.trackHours||0)+'시간 집계)</span>';
+      } else {
+        line2 = '<span style="color:var(--t3);">집계 준비 중</span>';
+      }
       h += '<span class="k">학습 표본</span>'
         + '<div class="diag">누적 <b>'+sm.total.toLocaleString()+'</b>건 · featVer '+esc(sm.featVer)+'</div>'
-        + '<div class="diag" style="margin-top:2px;">오늘 '+num(td)+'건 · 어제 '+num(yd)+'건'+ageTxt+'</div>';
+        + '<div class="diag" style="margin-top:2px;">'+line2+ageTxt+'</div>';
     }
     h += '<span class="k">위원회</span><div class="row">'
       + '<span class="m">MIND '+st(c.mind)+'</span><span class="m">DNN '+st(c.dnn)+'</span><span class="m">GBDT '+st(c.gbdt)+'</span>'

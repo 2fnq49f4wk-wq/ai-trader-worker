@@ -13426,7 +13426,13 @@ async function runTradingCycle(env) {
         if (_evalElapsed > evalBudgetMs || (Date.now() - cycleStartedAt > hardCapMs && _evalElapsed > evalMinMs)) {
           evalTimedOut = true;
           try { await setState(DB, "eval_offset:" + market, (evalOffset + evalProcessed) % fetched.length); } catch (e) {}
-          await log(DB, "WARN", null, "[TIME-CAP] " + market.toUpperCase() + " 평가 " + evalProcessed + "/" + fetched.length + "종목 후 중단 — 다음 사이클이 이어서 평가");
+          // [V33.35] TIME-CAP 은 고장이 아니라 설계된 안전장치다(한도 초과 전에 끊고 다음
+          //   사이클이 eval_offset 부터 이어받는다 — 위 주석 참조). 종전엔 무조건 WARN 이라
+          //   정상 순환이 "오류·경고"로 집계됐다. 커버리지가 30% 미만일 때만 경고로 올린다.
+          const _covPct = fetched.length ? (evalProcessed / fetched.length) : 1;
+          await log(DB, _covPct < 0.3 ? "WARN" : "INFO", null,
+            "[TIME-CAP] " + market.toUpperCase() + " 평가 " + evalProcessed + "/" + fetched.length +
+            "종목(" + Math.round(_covPct * 100) + "%) 후 중단 — 다음 사이클이 이어서 평가(라운드로빈)");
           break;
         }
         evalProcessed++;
@@ -15043,9 +15049,20 @@ async function handleRequest(request, env, ctx) {
             env.DB.prepare("SELECT COUNT(*) c FROM ml_samples WHERE ins_ts >= ?").bind(_kstMid).first(),
             env.DB.prepare("SELECT COUNT(*) c FROM ml_samples WHERE ins_ts >= ? AND ins_ts < ?").bind(_kstMid - 86400000, _kstMid).first()
           ]);
+          // [V33.35] ins_ts 는 V33.32 배포 시점부터만 채워진다. 그 이전 적재분은 NULL 이라
+          //   "오늘"이 0 으로 보인다(실제로는 +397 늘었는데도). 하루치 ins_ts 이력이 쌓이기
+          //   전까지는 "추적 시작 이후 누적 증가"를 대신 보여줘 사용자가 증가를 확인할 수 있게 한다.
+          const _tk = "ml_track:v" + _fv;
+          let _trk = await getState(env.DB, _tk, null);
+          if (!_trk || !_trk.ts) {
+            _trk = { ts: _now, total: _total };
+            try { ctx.waitUntil(setState(env.DB, _tk, _trk)); } catch (e) {}
+          }
           samples = { total: _total, featVer: _fv,
                       today: (_rToday && _rToday.c) || 0,
                       yesterday: (_rYday && _rYday.c) || 0,
+                      sinceTrack: Math.max(0, _total - _num(_trk.total, _total)),
+                      trackHours: Math.max(0, Math.round((_now - _num(_trk.ts, _now)) / 3600000)),
                       measuredAt: _now };
         } catch (e) {}
         const _out = { aiReady: aiReady, mode: aiReady ? "AI_AUTONOMOUS" : "RULE_FALLBACK",
