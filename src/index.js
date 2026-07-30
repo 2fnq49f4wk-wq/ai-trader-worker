@@ -10151,7 +10151,10 @@ async function executeBuy(DB, market, symbol, strategy, qty, price, signal, dail
       ts: Date.now(), market: market, symbol: symbol, side: "BUY",
       qty: qty, price: price, pnl: null, pnl_pct: null,
       // [V12.88] 원장에 매수 주체 태그 — AI 주도(AI_PRIMARY) vs 규칙엔진 신호 구분
-      reason: "[" + ((signal && signal.isAiPrimary) ? "AI" : "RULE") + "][" + strategy.toUpperCase() + "] " + signal.name + " " + signal.detail
+      // [V33.39] AI 단타를 별도 표기(AI-SCALP)로 분리 — 지평이 다른 매매를 원장·화면에서
+      //   같은 "AI"로 뭉뚱그리면 성과 분석이 섞여 어느 쪽이 버는지 알 수 없다.
+      reason: "[" + ((signal && signal.isAiScalp) ? "AI-SCALP" : (signal && signal.isAiPrimary) ? "AI" : "RULE") +
+              "][" + strategy.toUpperCase() + "] " + signal.name + " " + signal.detail
     });
     const stmtPos = stmtSavePosition(DB, market, symbol, strategy, posToSave);
     await DB.batch([stmtTrade, stmtPos]);
@@ -13912,8 +13915,24 @@ async function runTradingCycle(env) {
               } catch (e) {}
               if (_picked || _uptrend || _techBuy) {
                 aiPrimaryUsed++;
-                stratResults.push({ strategy: "trend", weight: (_ap.baseWeight || 0.6),
-                  signal: { name: "AI_PRIMARY", members: ["AI_PRIMARY"], picked: _picked, techBuy: _techBuy, tfBull: _tfBull, isAiPrimary: true, weight: (_ap.baseWeight || 0.6) } });
+                // [V33.39] ★AI 가 전략을 하나만 쓰던 문제★ 종전엔 무조건 strategy:"trend" 로 넣었다.
+                //   규칙엔진은 trend/scalp/snap 세 버킷을 쓰는데 AI 진입만 전부 trend 로 몰려서
+                //   (a) 포트폴리오가 추세추종 100% 로 편중되고
+                //   (b) trend 버킷 포지션 상한에 먼저 닿아 그 뒤 AI 진입이 통째로 막혔다
+                //       (로그 실증: MAXPOS[trend]:25 로 진입 0).
+                //   셋업 성격에 따라 버킷을 나눈다 — 전략별 손절·목표·트레일 규칙이 이미
+                //   분리돼 있으므로(getStrategyRules) 라우팅만으로 실제 운용이 달라진다.
+                //   · snap : 상승추세 안의 눌림(과매도) — 되돌림 노림, 짧은 보유
+                //   · trend: 추세 정렬 + 다중 타임프레임 매수 — 추종, 긴 보유
+                let _aiStrat = "trend";
+                try {
+                  const _rsiNow = (dailyRsi != null) ? dailyRsi : null;
+                  if (_uptrend && _rsiNow != null && _rsiNow <= 45) _aiStrat = "snap";
+                } catch (e) {}
+                // 이미 그 버킷을 보유 중이면 다른 빈 버킷으로 — 한 종목이 같은 전략을 중복 점유하지 않게.
+                if (strategiesHeldNow.has(_aiStrat)) _aiStrat = (_aiStrat === "snap") ? "trend" : "snap";
+                stratResults.push({ strategy: _aiStrat, weight: (_ap.baseWeight || 0.6),
+                  signal: { name: "AI_PRIMARY", members: ["AI_PRIMARY"], picked: _picked, techBuy: _techBuy, tfBull: _tfBull, isAiPrimary: true, aiStrat: _aiStrat, weight: (_ap.baseWeight || 0.6) } });
               }
             }
           } catch (e) {}
@@ -25007,7 +25026,10 @@ function _parseRss(xml, max) {
 // [V32.31] ★세계·지정학 톱뉴스 피드★ — 금융 RSS만으론 못 잡던 전쟁·분쟁·유가쇼크 등 거시/외부 이슈를
 //   구글뉴스 WORLD·BUSINESS 톱헤드라인으로 수집(무료·키불필요). SWR 30분·예산가드. Q&A가 종목/섹터
 //   급락 원인을 이 헤드라인과 엮어 설명할 수 있게 한다.
-const _WNEWS_MAXAGE_H = 30;   // 이보다 오래된 헤드라인은 '현재 이슈'에서 제외(낡은 이슈 오판 방지)
+// [V33.39] 30 → 14시간. 감정 반감기가 5시간(V33.37)이라 14시간 넘은 기사는 가중치가 0.14 이하로
+//   떨어져 사실상 기여하지 않는데, 보관만 하며 상위 260건 자리를 차지해 최신 기사를 밀어냈다.
+//   빨리 버리고 그 자리를 최신으로 채운다 = 회전율 상승.
+const _WNEWS_MAXAGE_H = 14;
 // [V32.34] ★멀티소스 뉴스 피드★ 구글 단일 → 8+개 무료 RSS(세계·경제·지정학) 병합. 교차검증(다매체)으로
 //   신뢰도↑·수량↑·가짜뉴스 저항↑. 각 피드에 대표 출처명 태깅.
 const _WORLD_FEEDS = [
@@ -25029,6 +25051,15 @@ const _WORLD_FEEDS = [
   { u: "https://www.theguardian.com/world/rss", s: "Guardian" },
   { u: "https://moxie.foxbusiness.com/google-publisher/markets.xml", s: "FoxBiz" },
   { u: "https://www.investing.com/rss/news.rss", s: "Investing" },
+  // [V33.39] 인베스팅닷컴 세부 피드 추가 — 종합(news.rss)만으로는 시장·경제 속보가 묽어진다.
+  //   전부 공개 RSS 라 키·인증 불필요. 실패해도 해당 피드만 건너뛴다(피드별 try/catch).
+  { u: "https://www.investing.com/rss/news_25.rss", s: "Investing-Econ" },      // 경제지표
+  { u: "https://www.investing.com/rss/news_1.rss", s: "Investing-Mkt" },        // 시장 개요
+  { u: "https://www.investing.com/rss/stock_Stocks.rss", s: "Investing-Stock" },// 주식
+  { u: "https://www.investing.com/rss/market_overview_Fundamental.rss", s: "Investing-Fund" },
+  // 로이터·야후 파이낸스 계열(구글뉴스 경유 — 직접 RSS 는 차단되는 경우가 있어 우회)
+  { u: "https://news.google.com/rss/search?q=when:1d+site:reuters.com+markets&hl=en-US&gl=US&ceid=US:en", s: "GN-Reuters" },
+  { u: "https://news.google.com/rss/search?q=when:1d+site:finance.yahoo.com&hl=en-US&gl=US&ceid=US:en", s: "GN-Yahoo" },
   // 구글뉴스 검색 피드(무료·안정·차단없음) — 주제/지역별로 다량의 최신 헤드라인 공급
   { u: "https://news.google.com/rss/search?q=federal%20reserve%20OR%20interest%20rates%20OR%20inflation&hl=en-US&gl=US&ceid=US:en", s: "GN-Macro" },
   { u: "https://news.google.com/rss/search?q=oil%20OR%20opec%20OR%20energy%20prices&hl=en-US&gl=US&ceid=US:en", s: "GN-Oil" },
@@ -25046,7 +25077,10 @@ const _WORLD_FEEDS = [
 ];
 async function _luxWorldNews(DB, opts) {
   opts = opts || {};
-  const FRESH = 18 * 60000;   // [V32.36] 18분 — 로테이션이 전 소스를 더 빨리 순회
+  // [V33.39] 18분 → 9분. 31개 피드를 회당 14개씩 도는 구조라 전 소스 순회에 종전 약 40분이
+  //   걸렸다(그만큼 특정 소스의 속보가 늦게 들어온다). 9분으로 줄여 순회를 약 20분으로 단축한다.
+  //   외부 fetch 사용량이 늘지만 아래 fetchBudgetLeft 가드가 예산 부족 시 WIN 을 자동 축소한다.
+  const FRESH = 9 * 60000;
   let cached = null; try { cached = await getState(DB, "world_news", null); } catch (e) {}
   if (!opts.force && cached && cached.ts && (Date.now() - cached.ts) < FRESH) return cached;
   const now = Date.now(), maxAge = _WNEWS_MAXAGE_H * 3600000;
