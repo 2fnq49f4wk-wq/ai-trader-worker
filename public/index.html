@@ -14171,6 +14171,19 @@ html[data-theme="light"] .rail{background:#fff;}
     if(mode.degraded){
       h += '<div class="diag" style="color:var(--amber,#fbbf24);margin-top:3px;">⚠ 상태 조회 일시 실패 — 마지막 정상 스냅샷 표시 중</div>';
     }
+    // [V33.44] 국면 위상 — 진입 문턱·사이즈·청산 규율이 이 값에 따라 달라지므로 눈에 보이게 둔다.
+    if(mode.phase && (mode.phase.us || mode.phase.kr)){
+      var PH = { MELTUP:['폭등','var(--pos)'], TREND_UP:['상승추세','var(--pos)'], RANGE:['보합','var(--amber,#fbbf24)'],
+                 TREND_DOWN:['하락추세','var(--neg)'], CRASH:['급락','var(--neg)'] };
+      var phTxt = function(p, er){
+        var d = PH[p] || ['—','var(--t3)'];
+        return '<span style="color:'+d[1]+';">'+d[0]+'</span>'
+             + (er!=null ? ' <span style="color:var(--t3);">ER '+er+'</span>' : '');
+      };
+      h += '<span class="k">시장 국면</span>'
+        + '<div class="diag">US '+phTxt(mode.phase.us, mode.phase.erUs)
+        + ' · KR '+phTxt(mode.phase.kr, mode.phase.erKr)+'</div>';
+    }
     // [V33.13] ★오늘 늘어난 학습 표본★ — 표본이 실제로 자라는지 화면에서 바로 확인.
     var sm = mode.samples;
     if(sm && sm.total != null){

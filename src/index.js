@@ -2738,6 +2738,39 @@ const AI_PARAMS = {
     requireTrustedModel: false // (구 기본 true: DNN/GBDT 신뢰 필요) — 사용자 요청으로 완화
   },
 
+  // ── [V33.44] ★국면 위상(phase) 적응★ — "지수가 MA20 위냐"만 보던 BULL/BEAR 2분법의 한계 보정.
+  //   ER(효율비)로 '추세의 질'을 재서 보합(RANGE)/추세(TREND_UP)/폭등(MELTUP)/하락(TREND_DOWN)/
+  //   급락(CRASH)을 구분하고, 진입 문턱·사이즈·신호 적합도를 국면에 맞춘다.
+  //   근거(실거래 811건): 수익은 TP(+821.8%)·TRAIL(+120.8%) 즉 '추세가 이어진 구간'에서만 났고,
+  //   손실은 TIME(-35.4%)·SCALP(-17.8%) 즉 '방향이 없던 구간'에 집중됐다.
+  //   → 방향 없는 국면에선 덜·엄격하게 들어가고, 추세 국면에선 더·길게 태운다.
+  phaseAdapt: {
+    enabled: true,
+    // 진입 사이즈 배수
+    sizeMult:  { RANGE: 0.85, MELTUP: 1.15, TREND_UP: 1.05, TREND_DOWN: 0.8, CRASH: 1.0 },
+    // AI 주도진입(AI_PRIMARY) 확률 문턱 가감 — 보합장은 확신 높은 것만.
+    threshDelta: { RANGE: 0.05, MELTUP: -0.03, TREND_UP: -0.01, TREND_DOWN: 0.04, CRASH: 0.06 },
+    // 신호 성격 분류 — 돌파(추세추종형) vs 되돌림(평균회귀형).
+    //   보합장에서 돌파는 휩쏘로 죽고, 폭등장에서 되돌림은 기다리다 못 산다. 서로 반대로 눌러준다.
+    breakoutSigs: ["TR_BREAKOUT", "SW_VOL_SPK", "SC_VBURST", "SC_MOMENTUM", "SC_VWAP", "TR_52W"],
+    revertSigs:   ["TR_PULLBACK", "SC_PULLBACK", "SW_GOLDEN", "SN_OVERSOLD", "SC_PANIC_INV"],
+    // 국면×성격 부적합 시 사이즈 배수(0 이면 진입 자체를 막지 않고 축소만 — 안전 우선)
+    mismatchMult: 0.6,
+    matchMult: 1.1
+  },
+
+  // ── [V33.44] ★오버나이트 갭 리스크★ — 손절이 지켜지지 않는 유일한 경로에 대한 방어.
+  //   손절은 '장중 가격이 손절가에 닿으면' 작동한다. 갭하락으로 손절가 아래에서 시가가 형성되면
+  //   손절은 그 아래 아무 가격에서나 체결된다 — 설계 리스크의 3~6배 손실이 발생한다.
+  //   실거래 STOP 75건 중앙값 -2.13% / 꼬리 -8~-13.5%, 그 꼬리는 전부 개장 직후 체결이었다.
+  //   손절폭 조정으로는 못 막고, 수량 축소만이 유효한 대응이다.
+  gapRisk: {
+    enabled: true,
+    lookback: 60,      // 갭 분포 관측 봉수
+    minScale: 0.45,    // 수량 축소 하한(과도 위축 방지)
+    earnScale: 0.5     // 실적발표 임박(D-1.5~D+0.3) 추가 축소 배수
+  },
+
   // ── [V12.71] ★AI 자율운용 컨트롤러★ — "AI가 스스로 시장 스캔 → 종목 선정 → 투자" ──
   //   운용 주체를 AI 준비상태에 따라 자동 전환한다:
   //     • aiReady(위원장 MIND 존재 + DNN/GBDT 중 최소 하나 '신뢰') → AI가 단독 드라이버.
@@ -2770,7 +2803,9 @@ const AI_PARAMS = {
     enabled: true,
     targetVolPct: { us: 15, kr: 17, cm: 20 },  // 시장별 목표 연율 변동성(%)
     lookback: 20,                              // 실현변동성 창(일)
-    scaleMin: 0.5, scaleMax: 1.2               // 스케일 클램프(과도 증폭/축소 방지)
+    scaleMin: 0.5, scaleMax: 1.2,              // 스케일 클램프(과도 증폭/축소 방지)
+    useDownsideVol: true                       // [V33.44] 하방 반편차 사용 — 상승 변동성으로 스로틀 걸리는 것 방지
+
   },
 
   // ── [V12.88] ★AI 결정 핵심 = 그래프(기술)+최근이슈(뉴스) 중심★ — 사용자 방침.
@@ -8287,12 +8322,48 @@ async function analyzeMarketRegime(DB, market) {
   if (idxReturns.length > 0) {
     avgIdxReturn = idxReturns.reduce(function(a,b){ return a+b; }, 0) / idxReturns.length;
   }
-  if (validIdx === 0) return { regime: "UNKNOWN", avgDayPct: 0, worstDayPct: 0, idxReturn20: null };
+  if (validIdx === 0) return { regime: "UNKNOWN", avgDayPct: 0, worstDayPct: 0, idxReturn20: null, phase: "RANGE", er: null };
   const avgDayPct = totalDayPct / validIdx;
   let regime = "NEUTRAL";
   if (aboveMa > belowMa) regime = "BULL";
   else if (belowMa > aboveMa) regime = "BEAR";
-  return { regime: regime, avgDayPct: avgDayPct, worstDayPct: worstDayPct, aboveMa: aboveMa, belowMa: belowMa, idxReturn20: avgIdxReturn };
+  // [V33.44] ★국면 '위상(phase)' 분류 — 방향뿐 아니라 추세의 질을 본다★
+  //   종전 regime 은 지수가 MA20 위/아래냐만 봤다(BULL/BEAR/NEUTRAL). 그래서
+  //     · 톱질하며 제자리인 보합장도 지수가 MA20 살짝 위면 BULL
+  //     · 일직선으로 오르는 폭등장도 똑같이 BULL
+  //   로 같게 취급됐다 — 두 장세는 정반대 운용이 필요한데도 완전히 동일한 규칙이 적용됐다.
+  //   실거래 811건에서 TIME-STOP 82건(승률 45.1%, 합계 -35.4%)이 나온 게 그 결과다:
+  //   보합장에서 추세추종 규칙(넓은 트레일·긴 타임스톱)으로 들어가 방향 없이 만기 청산된 것.
+  //   ER(효율비, Kaufman) = |20일 순변화| / 20일 경로합. 1에 가까울수록 일직선 추세,
+  //   0에 가까울수록 같은 자리를 왕복하는 톱질(=보합).
+  let er = null;
+  try {
+    const ers = [];
+    for (const sym of indices) {
+      const idx = await getState(DB, "index:" + sym, null);
+      const h = idx && idx.history;
+      if (!Array.isArray(h) || h.length < 21) continue;
+      const seg = h.slice(-21).map(function (x) { return (x && typeof x === "object") ? (x.c != null ? x.c : x.close) : x; });
+      let path = 0, ok = true;
+      for (let i = 1; i < seg.length; i++) {
+        if (!(seg[i] > 0) || !(seg[i - 1] > 0)) { ok = false; break; }
+        path += Math.abs(seg[i] - seg[i - 1]);
+      }
+      if (!ok || !(path > 0)) continue;
+      ers.push(Math.abs(seg[seg.length - 1] - seg[0]) / path);
+    }
+    if (ers.length) er = ers.reduce(function (a, b) { return a + b; }, 0) / ers.length;
+  } catch (e) {}
+  const _r20 = (avgIdxReturn != null) ? avgIdxReturn : 0;
+  const _erv = (er != null) ? er : 0.25;   // 산출 실패 시 중립값(어느 쪽으로도 치우치지 않게)
+  let phase;
+  if (worstDayPct <= -2.5 || _r20 <= -8) phase = "CRASH";
+  else if (_erv >= 0.34 && _r20 >= 6 && aboveMa >= belowMa) phase = "MELTUP";
+  else if (_erv >= 0.22 && _r20 >= 1.5 && aboveMa >= belowMa) phase = "TREND_UP";
+  else if (_erv >= 0.22 && _r20 <= -1.5) phase = "TREND_DOWN";
+  else phase = "RANGE";
+  return { regime: regime, avgDayPct: avgDayPct, worstDayPct: worstDayPct, aboveMa: aboveMa, belowMa: belowMa,
+    idxReturn20: avgIdxReturn, phase: phase, er: (er != null) ? +er.toFixed(3) : null };
 }
 
 // ============================================================
@@ -10630,6 +10701,21 @@ function evaluateSell(pos, price, daily, dailyRsi, dailyMa, dailyMaShort, cfg, m
   const isLevETF = pos.symbol && LEVERAGED_ETF.has(pos.symbol);
   if (isLevETF) trailScale *= 0.65;
 
+  // [V33.44] ★국면 위상별 청산 규율★ — 811건 실거래에서 드러난 구조적 손실 구간을 정면으로 잡는다.
+  //   · 보합(RANGE): 추세가 이어지지 않으므로 트레일을 좁혀 이익을 조기 확정하고,
+  //     타임스톱을 앞당겨 '죽은 돈'을 빨리 회수한다(TIME-STOP 82건 -35.4%의 정체).
+  //   · 폭등(MELTUP): 반대로 트레일을 넓히고 타임스톱을 늦춰 러너를 끝까지 태운다
+  //     (TP 98건 +821.8% / TRAIL 24건 +120.8% — 수익은 전부 여기서 나왔다).
+  let _phase = (deRiskOpts && deRiskOpts.phase) || null;
+  if (!_phase && deRiskOpts && deRiskOpts.phaseByMarket) {
+    _phase = deRiskOpts.phaseByMarket[market] || deRiskOpts.phaseByMarket[(market === "cm" ? "us" : market)] || null;
+  }
+  let _tsMult = 1;   // 타임스톱 배수
+  if (_phase === "RANGE")        { trailScale *= 0.80; _tsMult = 0.6; }
+  else if (_phase === "MELTUP")  { trailScale *= 1.30; _tsMult = 1.6; }
+  else if (_phase === "TREND_UP"){ trailScale *= 1.10; _tsMult = 1.2; }
+  else if (_phase === "TREND_DOWN") { trailScale *= 0.85; _tsMult = 0.75; }
+
   // 1) 하드 손절 — 진입 시 정한 stopPrice (entry − 2×ATR or −5% 중 타이트, BE락 시 본전)
   const stopPrice = (typeof meta.stopPrice === "number") ? meta.stopPrice : null;
   if (stopPrice != null && price <= stopPrice) {
@@ -10699,11 +10785,12 @@ function evaluateSell(pos, price, daily, dailyRsi, dailyMa, dailyMaShort, cfg, m
 
   // 5) 시간 손절 — N거래일 내 +0.5R 미달이면 청산 (죽은 돈 회수)
   //   [레버리지/인버스] decay(시간가치 손실) 회피 → 보유기간 상한을 절반으로 (장기 보유 금지).
-  const timeStopD = isLevETF ? Math.max(3, Math.ceil((r.timeStopDays || 10) * 0.5)) : (r.timeStopDays || 10);
+  let timeStopD = isLevETF ? Math.max(3, Math.ceil((r.timeStopDays || 10) * 0.5)) : (r.timeStopDays || 10);
+  if (_tsMult !== 1) timeStopD = Math.max(2, Math.round(timeStopD * _tsMult));   // [V33.44] 보합=조기회수 / 폭등=연장
   if (heldDays >= timeStopD) {
     const minR = rPct * (r.timeStopMinR != null ? r.timeStopMinR : 0.5);
     if (pnlRate < minR) {
-      return { sell: true, sellQty: pos.qty, reason: "TIME-STOP " + heldDays.toFixed(0) + "d " + pnlRate.toFixed(2) + "%" + (isLevETF ? " (LEV)" : "") };
+      return { sell: true, sellQty: pos.qty, reason: "TIME-STOP " + heldDays.toFixed(0) + "d " + pnlRate.toFixed(2) + "%" + (isLevETF ? " (LEV)" : "") + (_phase === "RANGE" ? " (보합조기)" : "") };
     }
   }
 
@@ -11408,6 +11495,46 @@ async function autoTune(DB, cfg, regimes) {
     }
     await setState(DB, "signal_stats", signalStats);
     await setState(DB, "signal_stats_strat", signalStatsByStrat);
+
+    // [V33.44] ★시장×전략 성과 롤업★ — 실거래 811건에서 가장 큰 단일 누수는 '신호'가 아니라
+    //   '시장×전략' 조합이었다:
+    //     KR/SCALP 84건 승률 34.5% 합계 -19.7%   ← 최대 손실원
+    //     US/SCALP 67건 승률 47.8% 합계  +1.6%   ← 같은 전략인데 미국은 본전
+    //     KR/TREND 56건 승률 51.8% 합계 +54.3%   ← 같은 시장인데 추세는 정상 수익
+    //   즉 "한국 단타"라는 조합만 구조적으로 진다(지연시세·호가 얇음·수수료/세금 구조).
+    //   신호 단위(signal_stats)도 전략 단위(strategyAutoDisable)도 시장을 안 봐서 이걸 못 잡는다.
+    //   → 시장×전략 축을 새로 만들어 자체 통계로 스스로 끄게 한다. 롤링 창이라 성과가
+    //     회복되면 자동으로 다시 켜진다(영구 하드코딩 아님).
+    //   D1 부하를 감안해 2시간에 1번만 재계산한다.
+    try {
+      const _msPrev = await getState(DB, "mkt_strat_stats", null);
+      if (!_msPrev || (nowTs - (_msPrev.ts || 0)) >= 2 * 3600 * 1000) {
+        const _msRes = await DB.prepare("SELECT market, pnl_pct, reason FROM trades WHERE side = ? ORDER BY ts DESC LIMIT 400").bind("SELL").all();
+        const _agg = {};
+        for (const t of (_msRes.results || [])) {
+          const _rs = t.reason || "";
+          const _sm = _rs.match(/^\[([A-Z]+)\]/);
+          if (!_sm) continue;
+          const _st = _sm[1].toLowerCase();
+          if (["trend", "scalp", "snap"].indexOf(_st) < 0) continue;
+          const _mk = String(t.market || "").toLowerCase();
+          if (!_mk) continue;
+          const _k = _mk + "/" + _st;
+          if (!_agg[_k]) _agg[_k] = { n: 0, wins: 0, sum: 0 };
+          _agg[_k].n++; _agg[_k].sum += (t.pnl_pct || 0);
+          if (t.pnl_pct > 0) _agg[_k].wins++;
+        }
+        for (const _k in _agg) {
+          const a = _agg[_k];
+          a.winRate = a.n > 0 ? a.wins / a.n : 0;
+          a.avgPnl = a.n > 0 ? a.sum / a.n : 0;
+        }
+        await setState(DB, "mkt_strat_stats", { m: _agg, ts: nowTs });
+        const _off = [];
+        for (const _k in _agg) { const a = _agg[_k]; if (a.n >= 40 && a.winRate < 0.42 && a.avgPnl < 0) _off.push(_k + "(n" + a.n + " WR" + (a.winRate * 100).toFixed(0) + "% 평균" + a.avgPnl.toFixed(2) + "%)"); }
+        if (_off.length) await log(DB, "TUNE", null, "[V33.44] 시장×전략 진입차단 대상: " + _off.join(", "));
+      }
+    } catch (e) {}
 
     // [V8.2] 시장별 독립 학습 — US/KR 각각 거래만 따로 보고 따로 조정
     const newCfg = JSON.parse(JSON.stringify(cfg));  // deep clone (markets 객체 안전)
@@ -12729,10 +12856,18 @@ async function runTradingCycle(env) {
       us: await analyzeMarketRegime(DB, "us"),
       kr: await analyzeMarketRegime(DB, "kr")
     };
-    await log(DB, "INFO", null, "Regime US:" + regimes.us.regime + " (worst " + regimes.us.worstDayPct.toFixed(2) + "%, idx20=" + (regimes.us.idxReturn20 != null ? regimes.us.idxReturn20.toFixed(1) : "?") + "%), KR:" + regimes.kr.regime + " (worst " + regimes.kr.worstDayPct.toFixed(2) + "%, idx20=" + (regimes.kr.idxReturn20 != null ? regimes.kr.idxReturn20.toFixed(1) : "?") + "%)");
+    await log(DB, "INFO", null, "Regime US:" + regimes.us.regime + "/" + regimes.us.phase + " (worst " + regimes.us.worstDayPct.toFixed(2) + "%, idx20=" + (regimes.us.idxReturn20 != null ? regimes.us.idxReturn20.toFixed(1) : "?") + "%, ER=" + (regimes.us.er != null ? regimes.us.er : "?") + "), KR:" + regimes.kr.regime + "/" + regimes.kr.phase + " (worst " + regimes.kr.worstDayPct.toFixed(2) + "%, idx20=" + (regimes.kr.idxReturn20 != null ? regimes.kr.idxReturn20.toFixed(1) : "?") + "%, ER=" + (regimes.kr.er != null ? regimes.kr.er : "?") + ")");
+    // [V33.44] 위상을 상태로 남긴다 — runFastWatch(청산 전담 루프)와 대시보드가 같은 국면을 공유.
+    try {
+      await setState(DB, "mkt_phase", { us: regimes.us.phase, kr: regimes.kr.phase, cm: regimes.us.phase,
+        erUs: regimes.us.er, erKr: regimes.kr.er, ts: Date.now() });
+    } catch (e) {}
 
     cfg = await autoTune(DB, cfg, regimes);
     const signalStats = await getState(DB, "signal_stats", {});
+    // [V33.44] 시장×전략 성과 롤업(2시간 캐시) — 구조적으로 지는 조합의 신규 진입을 막는다.
+    let __mktStratStats = null;
+    try { const _mss = await getState(DB, "mkt_strat_stats", null); __mktStratStats = (_mss && _mss.m) ? _mss.m : null; } catch (e) {}
     const visionPreds = await getState(DB, "vision_predictions", {});  // [Vision AI]
     const secData = await getState(DB, "sec_filings", {});  // [SEC 공시] 미국 종목 보수화
     const eventData = await buildEventRiskData(DB);  // [V62] 어닝스·경제지표·내부자 이벤트 리스크 (캐시 read만)
@@ -13029,7 +13164,9 @@ async function runTradingCycle(env) {
         }
       } catch (e) {}
 
-      const deRiskOpts = { active: crashGate.deRisk, vixValue: crashGate.vixValue || 0 };
+      // [V33.44] 국면 위상(phase)을 청산 규칙까지 내려보낸다 — 보합장은 빨리 정리, 폭등장은 길게 태운다.
+      const deRiskOpts = { active: crashGate.deRisk, vixValue: crashGate.vixValue || 0,
+        phase: (regime && regime.phase) ? regime.phase : null };
 
       // [V12.60] 꼬리위험 상시헤지 집행(VIX 트리거형) — 일반 매매 전에 헤지 배분을 먼저 조정한다.
       //   평상시(VIX<activateVixAbove)엔 목표 0이라 무동작(드래그 0), 공포구간에서만 인버스/VIX 매수.
@@ -14273,6 +14410,40 @@ async function runTradingCycle(env) {
               }
             }
 
+            // [V33.43] ★실적 기반 신호 자동 차단 — 지시문 경로와 무관한 하드 게이트★
+            //   실거래 811건 분석에서 특정 진입신호가 장기 마이너스인데도 계속 실행되고 있었다:
+            //     SC_VWAP     94건 승률 42.6% 합계 -12.5%
+            //     SC_PULLBACK 36건 승률 30.6% 합계  -9.5%
+            //   기존 자동 비활성은 (a) 전략 단위라 문턱을 아슬아슬하게 피하고
+            //   (승률 39.9% > 33%, 평균 -0.12% > -0.5%), (b) 신호 단위는 지시문(disable_signals)
+            //   경로에 의존해 그 체인 어디가 끊겨도 조용히 무력화된다.
+            //   → 신호 자신의 통계만 보고 판단하는 독립 게이트를 둔다. 표본이 충분하고
+            //     기대값·합계손익이 모두 음수일 때만 차단하므로 우연한 연패로는 꺼지지 않는다.
+            //   ※ llmInstr 유무와 무관하게 항상 동작해야 하므로 지시문 블록 '밖'에 둔다.
+            try {
+              const _ss = signalStats && signalStats[signal.name];
+              if (_ss && (_ss.count || 0) >= 30) {
+                const _exp = (typeof _ss.expectancy === "number") ? _ss.expectancy : null;
+                const _avg = (typeof _ss.avgPnl === "number") ? _ss.avgPnl : null;
+                if (_exp != null && _exp < 0 && _avg != null && _avg < 0) {
+                  incBlock("NEGEXP_SIG[" + signal.name + "]");
+                  continue;
+                }
+              }
+            } catch (e) {}
+
+            // [V33.44] ★시장×전략 게이트★ — 같은 전략이라도 시장에 따라 성과가 정반대다.
+            //   (실증: KR/SCALP 84건 WR 34.5% -19.7% vs US/SCALP 67건 WR 47.8% +1.6%)
+            //   신호·전략 단위 게이트는 시장 축이 없어 이 조합을 영원히 못 잡는다.
+            //   롤링 400건 기준이라 성과가 회복되면 자동 해제된다.
+            try {
+              const _ms = __mktStratStats && __mktStratStats[market + "/" + strategy];
+              if (_ms && _ms.n >= 40 && _ms.winRate < 0.42 && _ms.avgPnl < 0) {
+                incBlock("NEGEXP_MS[" + market + "/" + strategy + "]");
+                continue;
+              }
+            } catch (e) {}
+
             // [V12] VIX/드로다운 사이즈 스케일 — riskPct에 직접 반영 (패닉 시 포지션 축소)
             //   [패닉 헤지] 인버스는 면제·부스트 — 패닉이 인버스엔 호재.
             let sizeScale = 1.0;
@@ -14284,6 +14455,27 @@ async function runTradingCycle(env) {
               if (sizeScale < _floor) sizeScale = _floor;
             }
             if (_symInverse && regime && (regime.regime === "BEAR" || (typeof regime.worstDayPct === "number" && regime.worstDayPct <= -1.0))) sizeScale = (mcfg.inversePanicBoost || 1.3);
+            // [V33.44] ★국면 위상 적응★ — 국면 자체의 사이즈 배수 + 신호 성격(돌파/되돌림) 적합도.
+            //   보합장에서 돌파신호는 휩쏘 확률이 높고(실거래 SC_VWAP 94건 -12.5%),
+            //   폭등장에서 되돌림 대기는 기회를 통째로 놓친다 — 둘을 국면별로 반대 방향으로 조정한다.
+            let _phBuy = null;
+            try {
+              const _pa = (typeof AI_PARAMS !== "undefined") ? AI_PARAMS.phaseAdapt : null;
+              _phBuy = (regime && regime.phase) ? regime.phase : null;
+              if (_pa && _pa.enabled !== false && _phBuy && !_symInverse) {
+                const _pm = _pa.sizeMult && _pa.sizeMult[_phBuy];
+                if (typeof _pm === "number") sizeScale *= _pm;
+                const _isBrk = (_pa.breakoutSigs || []).indexOf(signal.name) >= 0;
+                const _isRev = (_pa.revertSigs || []).indexOf(signal.name) >= 0;
+                if (_phBuy === "RANGE") {
+                  if (_isBrk) sizeScale *= (_pa.mismatchMult != null ? _pa.mismatchMult : 0.6);
+                  else if (_isRev) sizeScale *= (_pa.matchMult != null ? _pa.matchMult : 1.1);
+                } else if (_phBuy === "MELTUP" || _phBuy === "TREND_UP") {
+                  if (_isBrk) sizeScale *= (_pa.matchMult != null ? _pa.matchMult : 1.1);
+                  else if (_isRev && _phBuy === "MELTUP") sizeScale *= (_pa.mismatchMult != null ? _pa.mismatchMult : 0.6);
+                }
+              }
+            } catch (e) {}
             // [신규·인터마켓] 시장 컨텍스트(risk-on/off) 반영 — risk-off면 축소, risk-on이면 소폭 확대.
             //   인버스 ETF는 risk-off가 호재라 면제(이미 부스트됨). 곱연산이라 크래시/패닉 축소와 안전하게 결합.
             if (mktCtx && typeof mktCtx.sizeScale === "number" && !_symInverse) {
@@ -14309,19 +14501,33 @@ async function runTradingCycle(env) {
               const _vt = (typeof AI_PARAMS !== "undefined" && AI_PARAMS.volTarget) || null;
               if (_vt && _vt.enabled && !_symInverse && Array.isArray(__idxCloses) && __idxCloses.length >= (_vt.lookback || 20) + 1) {
                 const _lb = _vt.lookback || 20, _ic = __idxCloses;
-                let _sum = 0, _sum2 = 0, _cnt = 0;
+                let _sum = 0, _sum2 = 0, _cnt = 0, _dn2 = 0, _dnN = 0;
                 for (let _i = _ic.length - _lb; _i < _ic.length; _i++) {
                   const _r = Math.log(_ic[_i] / _ic[_i - 1]);
-                  if (isFinite(_r)) { _sum += _r; _sum2 += _r * _r; _cnt++; }
+                  if (isFinite(_r)) {
+                    _sum += _r; _sum2 += _r * _r; _cnt++;
+                    if (_r < 0) { _dn2 += _r * _r; _dnN++; }   // [V33.44] 하방 편차만 별도 집계
+                  }
                 }
                 if (_cnt >= 10) {
                   const _mu = _sum / _cnt, _varr = Math.max(0, _sum2 / _cnt - _mu * _mu);
-                  const _realVol = Math.sqrt(_varr) * Math.sqrt(252) * 100;   // 연율화(%)
+                  let _realVol = Math.sqrt(_varr) * Math.sqrt(252) * 100;   // 연율화(%)
+                  // [V33.44] ★폭등장에서 시스템이 스스로 브레이크를 밟던 구조★
+                  //   표준편차는 '위로 크게 튄 날'과 '아래로 크게 빠진 날'을 똑같이 위험으로 센다.
+                  //   그래서 지수가 강하게 오르면 실현변동성이 함께 올라가고 → 목표변동성 스로틀이
+                  //   작동해 진입 사이즈를 줄인다. 정확히 가장 잘 벌 국면에서 베팅을 줄여온 것이다.
+                  //   → 리스크는 '손실 쪽 변동'이다(Sortino 관점). 하방 반편차로 재산정해서,
+                  //     상승 변동성만 커진 국면에서는 스로틀이 걸리지 않게 한다. 하락 변동이 실제로
+                  //     커지면(급락장) 종전과 동일하게 그대로 작동한다.
+                  if ((_vt.useDownsideVol !== false) && _dnN >= 5) {
+                    const _dnVol = Math.sqrt(_dn2 / _dnN * 2) * Math.sqrt(252) * 100;   // ×2: 대칭분포 기준 정규화
+                    _realVol = Math.min(_realVol, _dnVol);
+                  }
                   const _tgt = (_vt.targetVolPct && _vt.targetVolPct[market]) || 15;
                   if (_realVol > 1) {
                     const _vs = _clamp(_tgt / _realVol, _vt.scaleMin || 0.5, _vt.scaleMax || 1.2);
                     sizeScale *= _vs;
-                    if (_vs < 0.85) signal.volTargetNote = "VOLTGT ×" + _vs.toFixed(2) + " (실현 " + _realVol.toFixed(0) + "%>목표 " + _tgt + "%)";
+                    if (_vs < 0.85) signal.volTargetNote = "VOLTGT ×" + _vs.toFixed(2) + " (하방실현 " + _realVol.toFixed(0) + "%>목표 " + _tgt + "%)";
                   }
                 }
               }
@@ -14356,6 +14562,50 @@ async function runTradingCycle(env) {
               stopDist = price * (signal.intradayStopPct / 100);
             }
             if (!(stopDist > 0)) stopDist = price * 0.05;
+
+            // [V33.44] ★오버나이트 갭 리스크 사이징 — 실거래에서 확인된 최대 손실원★
+            //   STOP 청산 75건 합계 -278.2%인데 중앙값은 -2.13%다. 즉 평소엔 설계대로 -2% 근처에서
+            //   끊기는데, 꼬리(-8%~-13.5%)가 손실 대부분을 만든다. 그 꼬리의 체결시각을 보면:
+            //     09:33 ET / 09:31 ET / 09:34 ET / 09:35 ET (미국 개장 09:30)
+            //     09:02 KST / 09:18 KST (한국 개장 09:00)
+            //   전부 '개장 직후'다 — 손절가는 지켜졌는데 시장이 갭하락으로 그 아래에서 열려
+            //   손절이 무력화된 것이다. 손절폭을 넓히거나 좁히는 걸로는 절대 못 막는다.
+            //   → 손절이 물리적으로 작동 못 하는 크기의 갭이 일상인 종목은 '수량'을 줄여야 한다.
+            //     최근 60봉의 시가-전일종가 갭 분포에서 상위 10% 갭(gapP90)을 재고,
+            //     그게 손절폭보다 크면 그 비율만큼 수량을 축소한다(리스크예산 실질 유지).
+            let _gapAdj = 1;
+            try {
+              const _gr = (typeof AI_PARAMS !== "undefined") ? AI_PARAMS.gapRisk : null;
+              if ((!_gr || _gr.enabled !== false) && daily && Array.isArray(daily.opens) && Array.isArray(daily.closes)
+                  && daily.opens.length >= 25 && daily.closes.length === daily.opens.length) {
+                const _lb = Math.min((_gr && _gr.lookback) || 60, daily.opens.length - 1);
+                const _gaps = [];
+                for (let _i = daily.opens.length - _lb; _i < daily.opens.length; _i++) {
+                  const _o = daily.opens[_i], _pc = daily.closes[_i - 1];
+                  if (!(_o > 0) || !(_pc > 0)) continue;
+                  _gaps.push(Math.abs(_o - _pc) / _pc * 100);
+                }
+                if (_gaps.length >= 20) {
+                  _gaps.sort(function (a, b) { return a - b; });
+                  const _p90 = _gaps[Math.floor(_gaps.length * 0.9)];
+                  const _stopPct = stopDist / price * 100;
+                  if (_p90 > _stopPct && _stopPct > 0) {
+                    _gapAdj = _clamp(_stopPct / _p90, (_gr && _gr.minScale != null) ? _gr.minScale : 0.45, 1);
+                  }
+                }
+              }
+              // 실적발표가 코앞이면 갭 위험이 배가된다 — 이벤트 갭은 통상 분포의 몇 배다.
+              //   단타/스냅은 애초에 이벤트를 넘겨 보유할 이유가 없으므로 아예 진입을 막는다.
+              const _etsG = eventData && eventData.earningsBySym && eventData.earningsBySym[symbol];
+              if (_etsG) {
+                const _dG = (_etsG - Date.now()) / 86400000;
+                if (_dG >= -0.3 && _dG <= 1.5) {
+                  if (strategy === "scalp" || strategy === "snap") { incBlock("EARN_BLACKOUT[" + strategy + "]"); continue; }
+                  _gapAdj *= ((_gr && _gr.earnScale != null) ? _gr.earnScale : 0.5);
+                }
+              }
+            } catch (e) {}
+
             // [확실성] 신호 confidence(0.5~1.0)로 리스크 축소 — 약추세는 작게(악화 방어). 최대 1.0(그대로).
             const sigConf = (signal && typeof signal.confidence === "number") ? Math.max(0, Math.min(1, signal.confidence)) : 1.0;
             // [섹터그룹] 그룹 성과 가중치(0.6~1.3) 반영 — 잘 되는 섹터그룹은 사이즈↑, 안 되는 그룹은 ↓
@@ -14365,7 +14615,8 @@ async function runTradingCycle(env) {
             const _stw = mcfg.signalTypeWeights || {};
             const sigTypeW = (_stw.enabled !== false && _stw.weights && signal && signal.name) ? (_stw.weights[signal.name] || 1.0) : 1.0;
             // 다층 가중치(confidence×그룹×신호타입) 곱 + 전체 하한(너무 작아 거래 누락되는 것 방지)
-            let combW = sigConf * grpW * sigTypeW;
+            //   [V33.44] 갭 리스크 축소도 여기에 합류(riskPct는 이미 확정돼 있어 combW로 반영해야 실효).
+            let combW = sigConf * grpW * sigTypeW * _gapAdj;
             const wFloor = mcfg.weightFloor != null ? mcfg.weightFloor : 0.3;
             if (combW < wFloor) combW = wFloor;
             // 리스크 기반 수량
@@ -14504,8 +14755,17 @@ async function runTradingCycle(env) {
                   const _ap2 = (AI_PARAMS && AI_PARAMS.aiPrimary) || {};
                   const _dis = (_md && typeof _md.uncertainty === "number") ? _md.uncertainty : 1;
                   const _trustedModel = !!(_md && (_md.usedDnn || _md.usedGbdt));
+                  // [V33.44] 국면 위상별 문턱 가감 — 방향 없는 보합장은 확신 높은 것만, 추세장은 소폭 완화.
+                  let _thrAI = (_ap2.threshold || 0.6);
+                  try {
+                    const _pa2 = (typeof AI_PARAMS !== "undefined") ? AI_PARAMS.phaseAdapt : null;
+                    const _ph2 = (regime && regime.phase) ? regime.phase : null;
+                    if (_pa2 && _pa2.enabled !== false && _ph2 && _pa2.threshDelta && typeof _pa2.threshDelta[_ph2] === "number") {
+                      _thrAI = _clamp(_thrAI + _pa2.threshDelta[_ph2], 0.4, 0.9);
+                    }
+                  } catch (e) {}
                   if (!_md || !_md.allow || _md.observe || _md.abstain
-                      || !(typeof _md.p === "number" && _md.p >= (_ap2.threshold || 0.6))
+                      || !(typeof _md.p === "number" && _md.p >= _thrAI)
                       || (_ap2.maxDisagree != null && _dis > _ap2.maxDisagree)
                       || (_ap2.requireTrustedModel && !_trustedModel)) {
                     incNobuy("ai_primary_gate");
@@ -14818,7 +15078,9 @@ async function runFastWatch(env, cronStart) {
     const visionPreds = await getState(DB, "vision_predictions", {});
     const vixState = await getState(DB, "vix", null);
     const vixVal = (vixState && typeof vixState.value === "number" && vixState.value > 0) ? vixState.value : 0;
-    const deRiskOpts = { active: false, vixValue: vixVal };
+    // [V33.44] 메인 사이클이 저장한 국면 위상을 청산 루프에서도 그대로 쓴다(시장별).
+    let _phaseState = null; try { _phaseState = await getState(DB, "mkt_phase", null); } catch (e) {}
+    const deRiskOpts = { active: false, vixValue: vixVal, phase: null, phaseByMarket: _phaseState };
     const cash = await computeAllCash(DB, cfg);
 
     // 시장별 보유 포지션 + 캐시 일봉 사전 로드 (틱마다 재로드 안 함)
@@ -15278,8 +15540,12 @@ async function handleRequest(request, env, ctx) {
                      valAccLB: _st ? _st.valAccLB : null, baseline: _st ? _st.baseline : null,
                      n: _st ? _st.n : 0, reason: _st ? _st.reason : "미학습" };
         } catch (e) {}
+        // [V33.44] 국면 위상(보합/추세/폭등) — 진입 문턱·사이즈·청산 규율이 이 값으로 갈린다.
+        let _phase = null;
+        try { const _ps = await getState(env.DB, "mkt_phase", null); if (_ps) _phase = { us: _ps.us, kr: _ps.kr, erUs: _ps.erUs, erKr: _ps.erKr, ts: _ps.ts }; } catch (e) {}
         const _out = { aiReady: aiReady, mode: aiReady ? "AI_AUTONOMOUS" : "RULE_FALLBACK", scalp: _scalp,
                  committee: { mind: mindOk, dnn: dnnOk, gbdt: gbdtOk, xgb: xgb, lgb: lgb, cat: cat },
+                 phase: _phase,
                  selfreview: review, scan: scan, samples: samples, degraded: false };
         // 마지막 정상 스냅샷 보관 — 다음에 조회가 실패해도 "규칙엔진 폴백"으로 오표시하지 않기 위해.
         try { ctx.waitUntil(setState(env.DB, "ai_mode_last_ok", _out)); } catch (e) {}
@@ -25583,15 +25849,49 @@ async function _luxCrisisGauge(DB, opts) {
       if (headHits.length < 6) headHits.push(c.title.slice(0, 100) + (c.ageH != null ? " (" + c.ageH + "h)" : ""));
     }
   } catch (e) {}
+  // [V33.44] ★지정학 대응이 과도했던 진짜 이유 — '수준'을 재고 '변화'를 안 쟀다★
+  //   위 스캔은 "war OR airstrike OR missile OR invasion..." 전용 쿼리로 구글뉴스를 긁는다.
+  //   즉 결과가 30건 나오는 건 사건이 터져서가 아니라 쿼리가 그렇게 생겨서다. 게다가
+  //   _GEO_STRONG 에는 killed·casualties·combat·bombing 같이 어느 날 세계뉴스에도 있는 단어가 들어있다.
+  //   → strongN 은 사실상 상시 5 이상 → geoFloor 66(위기) 이 상시 성립 → floorCap 으로 눌러도
+  //     최소 '주의'(defenseScale 0.88)가 영구 고정되고, VIX 가 조금만 들썩이면 '경계'(0.7)까지 갔다.
+  //     우크라이나·중동처럼 몇 년째 이어지는 만성 분쟁 뉴스가 매일 신규 충격으로 재계산된 것이다.
+  //   시장에 실제로 영향을 주는 건 분쟁의 '존재'가 아니라 '악화(신규 확전)'다.
+  //   → 최근 관측치의 중앙값을 기준선으로 잡고, 기준선을 넘는 '초과분'으로만 점수·플로어를 만든다.
+  //     만성 전쟁 = 초과분 0 = 방어 없음 / 갑작스러운 확전 = 초과분 급증 = 즉시 방어.
+  let _geoBase = { s: 4, m: 3, h: 2 }, _geoBaseN = 0;
+  try {
+    const _gb = await getState(DB, "geo_baseline", null);
+    const _hist = (_gb && Array.isArray(_gb.h)) ? _gb.h : [];
+    // 3시간에 1개만 표본으로 — SWR 20분 주기로 과표집되면 '오늘 상태'가 기준선이 되어 버린다.
+    const _last = _hist.length ? _hist[_hist.length - 1] : null;
+    const _hist2 = (!_last || (Date.now() - (_last.t || 0)) >= 3 * 3600000)
+      ? _hist.concat([{ t: Date.now(), s: +strongW.toFixed(2), m: +medW.toFixed(2), h: +hotW.toFixed(2) }])
+      : _hist;
+    const _keep = _hist2.slice(-40);   // 40표본 ≈ 5일
+    if (_keep !== _hist) { try { await setState(DB, "geo_baseline", { h: _keep, ts: Date.now() }); } catch (e) {} }
+    _geoBaseN = _keep.length;
+    if (_geoBaseN >= 6) {
+      const _med = function (arr) { const a = arr.slice().sort(function (x, y) { return x - y; }); return a[Math.floor(a.length / 2)]; };
+      _geoBase = { s: _med(_keep.map(function (x) { return x.s || 0; })),
+                   m: _med(_keep.map(function (x) { return x.m || 0; })),
+                   h: _med(_keep.map(function (x) { return x.h || 0; })) };
+    }
+  } catch (e) {}
+  // 초과분(기준선 대비) — 만성 배경 소음은 0으로 상쇄된다.
+  const sX = Math.max(0, strongW - _geoBase.s);
+  const mX = Math.max(0, medW - _geoBase.m);
+  const hX = Math.max(0, hotW - _geoBase.h);
   // 점수: strong 가중 크게(활성 무력분쟁), hot(행위자+무력) 조합 보너스. 상한 55로 확대.
-  newsPts = Math.min(55, strongW * 7 + medW * 3 + hotW * 3);   // [V33.37] 개수 → 나이가중 합
-  // 활성 무력분쟁 클러스터 — strong 다수 or 핫스팟 결합이면 '평시' 방지 플로어
+  newsPts = Math.min(55, sX * 7 + mX * 3 + hX * 3);   // [V33.37] 개수 → 나이가중 합 / [V33.44] 기준선 초과분
+  // 활성 무력분쟁 '악화' 클러스터 — 평소보다 얼마나 더 터졌는지로 판정(절대 건수가 아님).
   let geoFloor = 0;
-  if (strongN >= 5 || (strongN >= 3 && hotN >= 2)) geoFloor = 66;        // 위기
-  else if (strongN >= 3 || (strongN >= 2 && hotN >= 1)) geoFloor = 42;   // 경계
-  else if (strongN >= 1 || medN >= 3) geoFloor = 22;                     // 주의
-  if (newsHits >= 3) drivers.push("지정학 헤드라인 " + newsHits + "건(무력 " + strongN + "·긴장 " + medN + (hotN ? "·핫스팟 " + hotN : "") + ")");
-  if (geoFloor >= 42) drivers.unshift("활성 무력분쟁 신호 감지");
+  if (sX >= 5 || (sX >= 3 && hX >= 2)) geoFloor = 66;        // 위기
+  else if (sX >= 3 || (sX >= 2 && hX >= 1)) geoFloor = 42;   // 경계
+  else if (sX >= 1.5 || mX >= 3) geoFloor = 22;              // 주의
+  if (newsHits >= 3) drivers.push("지정학 헤드라인 " + newsHits + "건(무력 " + strongN + "·긴장 " + medN + (hotN ? "·핫스팟 " + hotN : "") + ")" +
+    (_geoBaseN >= 6 ? " · 평소대비 초과 " + sX.toFixed(1) : " · 기준선 학습중 " + _geoBaseN + "/6"));
+  if (geoFloor >= 42) drivers.unshift("지정학 급악화 신호(평소 수준 초과)");
 
   // 기존 risk-off 국면(0~15)
   let roPts = 0, regime = null;
@@ -25636,6 +25936,8 @@ async function _luxCrisisGauge(DB, opts) {
     : "특이 위험신호 없음 — 정상 운용.";
   const out = { score: score, level: level, drivers: drivers.slice(0, 8), posture: posture,
     vix: vix, spx: spx, gold: gold, oil: oil, newsHits: newsHits, strongN: strongN, medN: medN, hotN: hotN, geoFloor: geoFloor,
+    geoBase: { s: +(_geoBase.s || 0).toFixed(1), m: +(_geoBase.m || 0).toFixed(1), h: +(_geoBase.h || 0).toFixed(1), n: _geoBaseN },
+    geoExcess: { s: +sX.toFixed(1), m: +mX.toFixed(1), h: +hX.toFixed(1) },
     marketConfirm: marketConfirm, stressFrac: +stressFrac.toFixed(2),
     headlines: headHits, regime: regime,
     defenseScale: level === "위기" ? 0.5 : level === "경계" ? 0.7 : level === "주의" ? 0.88 : 1.0, ts: Date.now() };
@@ -25645,7 +25947,7 @@ async function _luxCrisisGauge(DB, opts) {
   let _prevLv = null; try { const _pg = await getState(DB, "crisis_gauge", null); if (_pg) _prevLv = _pg.level || null; } catch (e) {}
   try { await setState(DB, "crisis_gauge", out); } catch (e) {}
   const _crLog = ((level === "경계" || level === "위기") && _prevLv !== level) ? "WARN" : "INFO";
-  try { await log(DB, _crLog, null, "[CRISIS] " + level + " " + score + "/100 · VIX " + (vix != null ? vix.toFixed(1) : "?") + " · 시장확증 " + marketConfirm + " · 무력 " + strongN + "/긴장 " + medN + (geoFloor ? " · 플로어 " + geoFloor : "") + (drivers.length ? " · " + drivers.slice(0, 2).join("; ") : "")); } catch (e) {}
+  try { await log(DB, _crLog, null, "[CRISIS] " + level + " " + score + "/100 · VIX " + (vix != null ? vix.toFixed(1) : "?") + " · 시장확증 " + marketConfirm + " · 무력 " + strongN + "(기준 " + (_geoBase.s || 0).toFixed(1) + " 초과 " + sX.toFixed(1) + ")/긴장 " + medN + (geoFloor ? " · 플로어 " + geoFloor : "") + (drivers.length ? " · " + drivers.slice(0, 2).join("; ") : "")); } catch (e) {}
   return out;
 }
 
