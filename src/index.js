@@ -6403,11 +6403,24 @@ function _sentiOne(title) {
   return s;
 }
 // titles → -1..1 종합 감정(가중·부정 반영). n건 대비 정규화.
-function _scoreHeadlines(titles) {
-  let sum = 0, mag = 0;
-  for (const t of titles) { const v = _sentiOne(t); sum += v; mag += Math.abs(v); }
-  const total = Math.max(titles.length, 1);
-  return _clamp(sum / (mag + total * 0.5), -1, 1);
+// [V33.37] ★"몇 시간 전 뉴스에 반응"하던 원인★ 종전엔 30시간 창 안의 헤드라인을 전부
+//   동등 가중으로 평균했다. 아침 악재와 10분 전 호재의 무게가 같으니, 장 마감 무렵에도
+//   오전 분위기가 그대로 남아 "아직 폭락 중"으로 보였다.
+//   → 반감기 5시간의 시간 감쇠를 준다(5h 전 0.5배, 10h 전 0.25배, 20h 전 0.06배).
+//     items 는 문자열 배열(구형 호출부 호환) 또는 {title, ageH} 배열 둘 다 받는다.
+const _SENTI_HALFLIFE_H = 5;
+function _scoreHeadlines(items) {
+  let sum = 0, mag = 0, wsum = 0;
+  for (const it of (items || [])) {
+    const t = (typeof it === "string") ? it : (it && it.title);
+    if (!t) continue;
+    const ageH = (typeof it === "object" && it && typeof it.ageH === "number") ? Math.max(0, it.ageH) : 0;
+    const w = Math.pow(0.5, ageH / _SENTI_HALFLIFE_H);
+    const v = _sentiOne(t);
+    sum += v * w; mag += Math.abs(v) * w; wsum += w;
+  }
+  if (wsum <= 0) return 0;
+  return _clamp(sum / (mag + wsum * 0.5), -1, 1);
 }
 
 // [V9.9 신규데이터] 애널리스트 컨센서스 — 목표가 상승여력·투자의견을 야후 v7에서 수집(US 한정).
@@ -24999,10 +25012,19 @@ async function _luxWorldNews(DB, opts) {
   }
   const arr = Object.keys(byKey).map(function (k) { const v = byKey[k]; return { title: v.title, pubTs: v.pubTs, ageH: v.pubTs != null ? Math.round((now - v.pubTs) / 3600000) : null, sources: (v.srcList || []).length || 1, srcList: v.srcList || [], mentions: v.n }; });
   // 정렬: 다매체(교차검증) 우선 + 최신
-  arr.sort(function (a, b) { const sd = (b.sources || 1) - (a.sources || 1); if (sd !== 0) return sd; return (b.pubTs || 0) - (a.pubTs || 0); });
+  // [V33.37] 종전엔 다매체(sources) 내림차순이 절대 우선이라, 아침 악재가 여러 매체에 실리면
+  //   상위를 온종일 점유하고 저녁 속보(아직 1~2개 매체)는 뒤로 밀려 감정 계산(상위 60건)에
+  //   들어가지도 못했다. 교차검증 가치는 유지하되 "시간 크레딧"으로 환산해 최신성과 겨루게 한다.
+  //   (다매체 1개 추가 ≈ 3시간 더 최신인 것과 동급 — 낡은 이슈가 영원히 상위를 잡지 못한다)
+  const _rankScore = function (x) {
+    const ageH = (x.ageH != null) ? x.ageH : 999;
+    return (Math.min(x.sources || 1, 4) - 1) * 3 - ageH;
+  };
+  arr.sort(function (a, b) { return _rankScore(b) - _rankScore(a); });
   const heads = arr.slice(0, 260);
   // [V32.35] 시장 감정 — 상위 헤드라인 가중 감정(-1..1). 위기/Q&A가 심리 근거로 활용.
-  let marketSenti = null; try { marketSenti = +_scoreHeadlines(heads.slice(0, 60).map(function (h) { return h.title; })).toFixed(3); } catch (e) {}
+  // [V33.37] 제목만이 아니라 ageH 를 함께 넘겨 시간 감쇠가 걸리게 한다.
+  let marketSenti = null; try { marketSenti = +_scoreHeadlines(heads.slice(0, 60)).toFixed(3); } catch (e) {}
   if (!heads.length) return cached;
   // 일일 뉴스량 집계 — 오늘 새로 관측된 고유 헤드라인 누적(대략치)
   let stats = null; try { stats = await getState(DB, "news_stats", null); } catch (e) {}
@@ -25058,6 +25080,7 @@ async function _luxCrisisGauge(DB, opts) {
   // [V32.33] ★지정학 뉴스 스캔 강화★ — 세계 톱뉴스(WORLD/BUSINESS) + 무력분쟁 전용쿼리 2개를 함께 스캔,
   //   strong/med 가중·핫스팟 조합·활성전쟁 클러스터 탐지로 진행 중인 전쟁을 확실히 포착(종전 1쿼리·상한30 한계 해소).
   let newsPts = 0, newsHits = 0, headHits = [];
+  let strongW = 0, medW = 0, hotW = 0;   // [V33.37] 나이 감쇠를 반영한 가중 카운트(점수 계산용)
   let strongN = 0, medN = 0, hotN = 0, _wSenti = null;
   try {
     const _now = Date.now(), _seen = {}, cand = [];
@@ -25091,14 +25114,19 @@ async function _luxCrisisGauge(DB, opts) {
       if (!isStrong) for (const kw of _GEO_MED) { if (c.low.indexOf(kw) >= 0) { isMed = true; break; } }
       if (!isStrong && !isMed) continue;
       let isHot = false; for (const h of _GEO_HOTSPOT) { if (c.low.indexOf(h) >= 0) { isHot = true; break; } }
-      if (isStrong) strongN++; else medN++;
-      if (isHot && (isStrong || isMed)) hotN++;
+      // [V33.37] 지정학 헤드라인도 나이 가중 없이 동등 카운트였다 — 30시간 전 기사가 방금 속보와
+      //   같은 무게로 위기 점수를 올려, 상황이 진정된 뒤에도 게이지가 내려오지 않았다.
+      //   단 지정학 리스크는 시장심리보다 오래 유효하므로 반감기를 길게(12h) 잡는다.
+      //   표시용 개수(strongN 등)는 그대로 두고, 점수 계산에만 가중치를 쓴다.
+      const _w = Math.pow(0.5, Math.max(0, (c.ageH == null ? 12 : c.ageH)) / 12);
+      if (isStrong) { strongN++; strongW += _w; } else { medN++; medW += _w; }
+      if (isHot && (isStrong || isMed)) { hotN++; hotW += _w; }
       newsHits++;
       if (headHits.length < 6) headHits.push(c.title.slice(0, 100) + (c.ageH != null ? " (" + c.ageH + "h)" : ""));
     }
   } catch (e) {}
   // 점수: strong 가중 크게(활성 무력분쟁), hot(행위자+무력) 조합 보너스. 상한 55로 확대.
-  newsPts = Math.min(55, strongN * 7 + medN * 3 + hotN * 3);
+  newsPts = Math.min(55, strongW * 7 + medW * 3 + hotW * 3);   // [V33.37] 개수 → 나이가중 합
   // 활성 무력분쟁 클러스터 — strong 다수 or 핫스팟 결합이면 '평시' 방지 플로어
   let geoFloor = 0;
   if (strongN >= 5 || (strongN >= 3 && hotN >= 2)) geoFloor = 66;        // 위기
