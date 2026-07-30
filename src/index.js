@@ -5027,9 +5027,16 @@ function computeInternalInstruction(context, cfg, extra) {
   // ── 1) 국면·심리 판정 ──
   let regime, sentiment;
   const crisisHot = cg && (cg.level === "위기" || cg.level === "경계");
+  // [V33.36] ★폭등장에 대응 못 하던 구조적 편향★ 종전 임계값이 비대칭이었다.
+  //   약세: idx20 < 0        → 20일 수익률이 -0.01%만 돼도 약세(로그 실측: idx20 -1.1%에 BEAR)
+  //   강세: idx20 >= +3 AND worst >= -0.2 → 훨씬 엄격
+  //   결과적으로 약세 구간이 (-∞,0), 강세 구간이 [+3,∞) 라 시장 대부분이 "약세"로 묶였고,
+  //   반등이 시작돼 지수가 오르는 중에도 idx20 이 아직 음수면 계속 약세 → 진입 차단 →
+  //   상승 초입을 통째로 놓쳤다. 완충대(deadband)를 넣어 대칭에 가깝게 만든다.
+  //   ※ 하방 방어(강한 약세·위기)는 그대로 둔다 — 완화하는 건 상승 참여 쪽뿐이다.
   if ((idx20 != null && idx20 <= -4) || worst <= -2 || (cg && cg.level === "위기")) { regime = "강한 약세"; sentiment = "bearish"; }
-  else if ((idx20 != null && idx20 < 0) || worst <= -1 || (cg && cg.level === "경계")) { regime = "약세/조정"; sentiment = "bearish"; }
-  else if (idx20 != null && idx20 >= 3 && worst >= -0.2) { regime = "강세"; sentiment = "bullish"; }
+  else if ((idx20 != null && idx20 <= -1.5) || worst <= -1 || (cg && cg.level === "경계")) { regime = "약세/조정"; sentiment = "bearish"; }
+  else if (idx20 != null && idx20 >= 1.5 && worst >= -1 && !crisisHot) { regime = "강세"; sentiment = "bullish"; }
   else { regime = "중립/횡보"; sentiment = "neutral"; }
 
   // ── 2) 포지션 사이징 배율 — 위기·국면·성과 결합(오직 방어적으로 축소) ──
@@ -5038,6 +5045,12 @@ function computeInternalInstruction(context, cfg, extra) {
   if (cg && typeof cg.defenseScale === "number") scale *= cg.defenseScale;
   // 최근 성과가 나쁘지만 '시장 탓'이 아니면 추가 축소(시스템 결함 신호)
   if (l7.trades >= 10 && l7.winRate < 0.35 && !l7.lossLikelyMarketDriven) scale *= 0.85;
+  // [V33.36] 종전 주석대로 이 배율은 "오직 축소"만 했다 — 확인된 강세장에서도 사이즈를 키울
+  //   수단이 전혀 없어 상승장 수익이 구조적으로 제한됐다. 위기게이지가 평시이고 국면이 강세일
+  //   때만, 그리고 최근 성과가 나쁘지 않을 때만 완만히(최대 +20%) 키운다. 상한 1.3은 그대로.
+  if (regime === "강세" && (!cg || cg.level === "평시") && !(l7.trades >= 10 && l7.winRate < 0.4)) {
+    scale *= 1.2;
+  }
   scale = Math.max(0.3, Math.min(1.3, scale));
 
   // ── 3) 매수 허용 여부 — 위기/강한약세면 신규매수 중단 ──
@@ -13934,7 +13947,10 @@ async function runTradingCycle(env) {
               if (_prc.enabled !== false && (!_prc.requireCalendar || _recC) &&
                   (!_recC || (Date.now() - _recC) / 86400000 <= (_prc.driftDays || 10))) {
                 const _erc = classifyEarningsReaction(daily, mcfg);
-                if (_erc && _erc.verdict === "beat") { ctxScore += 2; ctxWhy.push("PEAD-BEAT+" + _erc.reactPct.toFixed(0) + "%"); }
+                // [V33.36] beat +2 → +3 으로 miss(-3)와 대칭. 종전엔 음수 기여 항목이 5종(-11까지)인데
+                //   양수는 2종(+3)뿐이라, 어닝 서프라이즈가 나와도 다른 음수 하나면 상쇄돼 반응이
+                //   사라졌다(차단선 -4 는 쉽게 닿고 부스트선 +3 은 거의 못 닿는 구조).
+                if (_erc && _erc.verdict === "beat") { ctxScore += 3; ctxWhy.push("PEAD-BEAT+" + _erc.reactPct.toFixed(0) + "%"); }
                 else if (_erc && _erc.verdict === "miss") { ctxScore -= 3; ctxWhy.push("PEAD-MISS" + _erc.reactPct.toFixed(0) + "%"); }
               }
             }
