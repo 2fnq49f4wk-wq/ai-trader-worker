@@ -2476,7 +2476,7 @@ async function applySignalTypeWeights(DB, cfg) {
 // ============================================================================
 // [V33.55] 빌드 버전 — SWR L2 캐시 키에 섞어 '배포 = 판단 캐시 자동 무효화'를 만든다.
 //   판정 로직을 고쳐도 옛 캐시가 최대 1시간 재배포되던 문제를 구조적으로 없앤다.
-const _BUILD_VER = "V33.58";
+const _BUILD_VER = "V33.59";
 
 const AI_PARAMS = {
   // ── OHLCV 타임프레임 ── 시가/고가/저가/종가/거래량을 어떤 봉 주기로 볼지.
@@ -3316,6 +3316,9 @@ const DEFAULT_CFG = {
     haltVixAbove: 28,        // crashGate.vixValue(또는 VIX9D)가 이 값 초과면 scalp 중단 (고변동 구간 회피)
     reEntryCooldownMin: 45,  // [V65완화] 60→45 같은 종목 scalp 손절 후 재진입 차단 (연속 칼날 방지)
     scanMaxPerCycle: 50,     // [V65] scalp 스캔 전용 분봉 fetch 상한/사이클 — 진입확인(intradayConfirm)과 분리
+    // [V33.59] 표본 '관측 전용' 분봉 스캔 상한. 규칙 사전필터를 통과 못 한 종목도 이 한도 안에서
+    //   분봉을 받아 학습표본을 만든다(모델 신뢰 여부와 무관 — 순환 의존 차단).
+    obsMaxPerCycle: 40,
     requireVwapSlopeUp: true,// SC_VWAP/SC_MOMENTUM 진입 시 VWAP 기울기 ≥ 0 요구 (하락 VWAP 추격 차단; 눌림목/패닉은 면제)
     // === [V67] 단타 품질 강화 — "늦은 추격"과 "고변동 휩쏘"가 scalp 손실의 양대 원인 ===
     momMax: 2.5,             // 분봉 모멘텀 ≥ N%면 진입 자체 금지 (이미 달린 차 추격 = 평균 진입가 최악)
@@ -13052,6 +13055,7 @@ async function runTradingCycle(env) {
     let aiScalpUsed = 0;      // [V33.45] AI 단타 진입 후보 카운터(사이클당 상한 통제)
     let scalpEligible = 0, scalpSig = 0;  // [진단] scalp 진입 병목 추적: 후보(no-trend)·스캔·신호 카운트
     let __stinPend = null, __stinObs = 0;   // [V33.40] 장중 단타 학습표본 버퍼(R2)·관측 카운터
+    let __stinObsScan = 0;                 // [V33.59] 관측 전용 분봉 스캔 사용량(사이클당 상한)
     // [V33.48] 단타 모델이 실제로 '가동 중'인가 — 스캔 예산 배분에 쓴다(사이클당 1회 판정).
     let __scalpLive = false;
     try {
@@ -14302,7 +14306,22 @@ async function runTradingCycle(env) {
             //   (예: RSI 85 의 폭등 주도주나 MA20 아래 평균회귀 자리는 AI 가 아예 보지도 못했다)
             //   → 모델이 가동 중이면 규칙 사전필터와 무관하게 분봉을 확보해 AI 가 스스로 판단한다.
             //     규칙 신호 생성은 여전히 _scAligned 를 따르므로 규칙엔진 동작은 그대로다.
-            if ((_scAligned || __scalpLive) && scalpScanUsed < _scanMax && _scalpTimeLeft && fetchBudgetLeft() > 5) {
+            // [V33.59] ★단타 표본이 한 건도 안 쌓이던 진짜 원인 — 순환 의존★
+            //   표본 관측(stinObserve)은 이 블록 '안'에서만 일어난다. 그런데 블록 진입 조건이
+            //     _scAligned(규칙엔진 사전필터: MA20>MA50 & 가격>MA20 & RSI 38~70)  ||  __scalpLive
+            //   였다. __scalpLive 는 '모델이 학습·신뢰된 상태'를 뜻한다.
+            //   → 모델을 학습하려면 표본이 필요한데, 표본을 넓게 모으려면 모델이 이미 신뢰돼야 한다.
+            //     서로가 서로의 선행조건이라 영원히 시작되지 않는다(닭-달걀).
+            //   게다가 남은 통로인 _scAligned 는 하락장에서 통과 종목이 극소수라
+            //   BEAR 국면에서는 관측이 사실상 0 이 된다 — 지금이 정확히 그 상태다.
+            //   → 표본 수집은 모델 상태와 무관해야 한다. R2 버퍼가 살아있으면(=장중) 관측 목적으로
+            //     사전필터와 무관하게 분봉을 확보한다. 대신 전용 예산(obsMax)으로 상한을 둬
+            //     규칙엔진 스캔 예산을 잠식하지 않게 한다.
+            const _obsMax = (mcfg.scalpRules && mcfg.scalpRules.obsMaxPerCycle != null)
+              ? mcfg.scalpRules.obsMaxPerCycle : 40;
+            const _obsWanted = !!(__stinPend && __stinObsScan < _obsMax);
+            if ((_scAligned || __scalpLive || _obsWanted) && scalpScanUsed < _scanMax && _scalpTimeLeft && fetchBudgetLeft() > 5) {
+              if (!_scAligned && !__scalpLive) __stinObsScan++;   // 관측 전용 소비분 계측
               try {
                 scalpScanUsed++;
                 // [개선] 1m→5m: evaluateScalpEntry의 VWAP/상대거래량/모멘텀 임계는 5분봉 기준 설계(함수 docstring).
@@ -30464,7 +30483,7 @@ export default {
               if (_ir) await log(env.DB, "INFO", null, _ir);
             }
           } catch (e) {}
-          const _PIPE_VER = "V33.58-scalp-2d";   // 배포 시 파이프라인 1회 강제 재실행(국면·판단 즉시 재산출)   // 배포 시 파이프라인 1회 강제 재실행(신규 스키마 반영)
+          const _PIPE_VER = "V33.59-obs-unblock";   // 배포 시 파이프라인 1회 강제 재실행(국면·판단 즉시 재산출)   // 배포 시 파이프라인 1회 강제 재실행(신규 스키마 반영)
           try {
             const _pv = await getState(env.DB, "ai_pipeline_ver", null);
             if (_pv !== _PIPE_VER) {
