@@ -15655,7 +15655,7 @@ async function handleRequest(request, env, ctx) {
         //   성공/실패가 갈려 새로고침마다 위원회 구성이 달라 보였다.
         //   → 상태 판정에 모델 본문은 필요 없다. trust 플래그 + <model>:meta.featVer(작은 행 1개)로
         //     충분하며, 이러면 이 엔드포인트의 D1 부하가 85왕복 → 6왕복으로 떨어진다.
-        let aiReady = false, mindOk = false, dnnOk = false, gbdtOk = false, degraded = false;
+        let aiReady = false, mindOk = false, dnnOk = false, gbdtOk = false, degraded = false, _diag = null;
         try {
           const S0 = await getStates(env.DB, ["dnn_trust", "gbdt_trust", "dnn_model:meta"]);
           const _dt = S0["dnn_trust"], _gt = S0["gbdt_trust"], _dMeta = S0["dnn_model:meta"];
@@ -15676,6 +15676,41 @@ async function handleRequest(request, env, ctx) {
           gbdtOk = !!(_gt && _gt.trusted && _probe && _probe.gfv === LUXML.featVer && _probe.gtrees > 0);
           const _auto = (typeof AI_PARAMS !== "undefined" && AI_PARAMS.autonomy) || {};
           aiReady = !!(_auto.enabled && mindOk && (dnnOk || gbdtOk));
+          // [V33.49] ★"왜 DNN만 학습 대기냐"를 화면에서 바로 알 수 있게★
+          //   종전엔 committee 가 true/false 뿐이라, 미가동 이유가 (a) 학습 자체가 안 됐는지
+          //   (b) 학습은 됐는데 검증성능이 문턱 미달인지 (c) 모델 본문 저장이 깨졌는지
+          //   (d) featVer 가 안 맞는지 구분이 불가능했다. 실제 원인을 그대로 실어 보낸다.
+          //   ※ Modal 은 DNN 만 학습하는 게 아니다 — DNN·GBDT·XGB·LGB·Cat·MIND·단타를 모두 학습한다.
+          //     source 필드로 어느 모델이 외부(Modal) 산출물인지도 함께 드러낸다.
+          const _fmtAcc = function (x) { return (typeof x === "number") ? +(x * 100).toFixed(1) : null; };
+          _diag = {
+            dnn: {
+              stored: !!(_dMeta && (_dMeta.chunks > 0 || _dMeta.r2)),
+              where: _dMeta ? (_dMeta.r2 ? "R2" : (_dMeta.chunks > 0 ? "D1×" + _dMeta.chunks : "없음")) : "없음",
+              featVerOk: !!(_dMeta && (typeof _dMeta.featVer !== "number" || _dMeta.featVer === LUXML.featVer)),
+              featVer: _dMeta ? _dMeta.featVer : null,
+              trusted: !!(_dt && _dt.trusted),
+              accLB: _fmtAcc(_dt && (_dt.dnnAccLB != null ? _dt.dnnAccLB : _dt.valAccLB)),
+              floor: _fmtAcc(DNN.trustFloor),
+              w: _dt ? _dt.wDnn : null,
+              source: _dt ? (_dt.source || "worker") : null,
+              reason: _dt ? _dt.reason : null,
+              trainedAt: _dMeta ? _dMeta.ts : null
+            },
+            gbdt: {
+              stored: !!(_probe && _probe.gtrees > 0), trees: _probe ? _probe.gtrees : null,
+              featVerOk: !!(_probe && _probe.gfv === LUXML.featVer), featVer: _probe ? _probe.gfv : null,
+              trusted: !!(_gt && _gt.trusted),
+              accLB: _fmtAcc(_gt && (_gt.gbdtAccLB != null ? _gt.gbdtAccLB : _gt.valAccLB)),
+              w: _gt ? _gt.wGbdt : null, source: _gt ? (_gt.source || "worker") : null,
+              reason: _gt ? _gt.reason : null
+            },
+            mind: {
+              stored: !!(_probe && _probe.mfm && _probe.mmeta),
+              featVerOk: !!(_probe && _probe.mfv === LUXML.featVer), featVer: _probe ? _probe.mfv : null,
+              trusted: mindOk
+            }
+          };
         } catch (e) { degraded = true; }
         // [V33.13] 조회 자체가 실패했으면 "규칙엔진 폴백"으로 단정하지 않는다 — 마지막 정상 스냅샷을
         //   그대로 돌려주고 degraded 플래그만 세운다(일시적 D1 장애를 AI 고장으로 오표시하지 않기 위함).
@@ -15746,7 +15781,32 @@ async function handleRequest(request, env, ctx) {
           _scalp = { collect: _sc.collect !== false, live: !!_sc.enabled,
                      trained: !!_st, trusted: !!(_st && _st.trusted),
                      valAccLB: _st ? _st.valAccLB : null, baseline: _st ? _st.baseline : null,
-                     n: _st ? _st.n : 0, reason: _st ? _st.reason : "미학습" };
+                     n: _st ? _st.n : 0, reason: _st ? _st.reason : "미학습",
+                     // [V33.49] 단타 표본이 실제로 쌓이는지 별도로 본다(스윙 표본과 완전히 다른 저장소다).
+                     //   스윙: D1 ml_samples / 단타: R2 st/intraday/<날짜>/*.json + 대기버퍼.
+                     //   V33.46 에서 수집 자체가 죽어 있던 버그를 고쳤으므로 이 숫자가 그 검증치다.
+                     need: 3000, threshold: _num(_sc.threshold, 0.6),
+                     convOK: _st ? (_st.convMaxDiff == null || _st.convMaxDiff <= 0.03) : null,
+                     trainedAt: _st ? _st.trainedAt : null,
+                     ifeatVer: STIN_FEATVER, ifeatN: STIN_IFEAT_N, horizonMin: STIN.horizonBars * 5 };
+          // R2 대기버퍼 + 오늘 저장분 집계 — D1 은 전혀 건드리지 않는다.
+          try {
+            const _R2 = _bigR2();
+            if (_R2) {
+              let _pendN = 0, _todayN = 0, _objs = 0;
+              try { const _o = await _R2.get(STIN.pendKey); if (_o) { const _j = JSON.parse(await _o.text()); _pendN = (_j.items || []).length + (_j.done || []).length; } } catch (e) {}
+              try {
+                let _cur;
+                for (let _pg = 0; _pg < 5; _pg++) {
+                  const _lr = await _R2.list({ prefix: "st/intraday/" + _stinDay() + "/", cursor: _cur, limit: 200 });
+                  for (const _ob of (_lr.objects || [])) { _objs++; }
+                  if (!_lr.truncated) break;
+                  _cur = _lr.cursor;
+                }
+              } catch (e) {}
+              _scalp.pending = _pendN; _scalp.filesToday = _objs; _scalp.store = "R2";
+            } else { _scalp.store = "R2 미바인딩"; }
+          } catch (e) {}
         } catch (e) {}
         // [V33.44] 국면 위상(보합/추세/폭등) — 진입 문턱·사이즈·청산 규율이 이 값으로 갈린다.
         let _phase = null;
@@ -15756,6 +15816,7 @@ async function handleRequest(request, env, ctx) {
         try { const _xl = await getState(env.DB, "xmkt_lead", null); if (_xl) _xmkt = { semi1d: _xl.semi1d, semi5d: _xl.semi5d, n: _xl.n, ts: _xl.ts }; } catch (e) {}
         const _out = { aiReady: aiReady, mode: aiReady ? "AI_AUTONOMOUS" : "RULE_FALLBACK", scalp: _scalp,
                  committee: { mind: mindOk, dnn: dnnOk, gbdt: gbdtOk, xgb: xgb, lgb: lgb, cat: cat },
+                 diag: _diag,
                  phase: _phase, xmkt: _xmkt,
                  selfreview: review, scan: scan, samples: samples, degraded: false };
         // 마지막 정상 스냅샷 보관 — 다음에 조회가 실패해도 "규칙엔진 폴백"으로 오표시하지 않기 위해.
