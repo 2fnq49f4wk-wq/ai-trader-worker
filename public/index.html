@@ -14175,14 +14175,21 @@ html[data-theme="light"] .rail{background:#fff;}
     if(mode.phase && (mode.phase.us || mode.phase.kr)){
       var PH = { MELTUP:['폭등','var(--pos)'], TREND_UP:['상승추세','var(--pos)'], RANGE:['보합','var(--amber,#fbbf24)'],
                  TREND_DOWN:['하락추세','var(--neg)'], CRASH:['급락','var(--neg)'] };
-      var phTxt = function(p, er){
+      // [V33.54] 판정 근거(오늘 등락률·5일)를 함께 보여준다 — 국면이 왜 그렇게 나왔는지 즉시 확인.
+      var phTxt = function(p, er, day, r5){
         var d = PH[p] || ['—','var(--t3)'];
-        return '<span style="color:'+d[1]+';">'+d[0]+'</span>'
-             + (er!=null ? ' <span style="color:var(--t3);">ER '+er+'</span>' : '');
+        var ev = [];
+        if(day != null) ev.push('오늘 '+(day>0?'+':'')+day+'%');
+        if(r5 != null)  ev.push('5일 '+(r5>0?'+':'')+r5+'%');
+        if(er != null)  ev.push('ER '+er);
+        return '<span style="color:'+d[1]+';font-weight:600;">'+d[0]+'</span>'
+             + (ev.length ? ' <span style="color:var(--t3);">'+ev.join(' · ')+'</span>' : '');
       };
+      var phAge = mode.phase.ts ? Math.floor((Date.now()-mode.phase.ts)/60000) : null;
       h += '<span class="k">시장 국면</span>'
-        + '<div class="diag">US '+phTxt(mode.phase.us, mode.phase.erUs)
-        + ' · KR '+phTxt(mode.phase.kr, mode.phase.erKr)+'</div>';
+        + '<div class="diag">US '+phTxt(mode.phase.us, mode.phase.erUs, mode.phase.dayUs, mode.phase.r5Us)+'</div>'
+        + '<div class="diag" style="margin-top:2px;">KR '+phTxt(mode.phase.kr, mode.phase.erKr, mode.phase.dayKr, mode.phase.r5Kr)+'</div>'
+        + (phAge != null && phAge >= 3 ? '<div class="diag" style="color:var(--amber,#fbbf24);margin-top:2px;">⚠ '+phAge+'분 전 판정 — 갱신 지연</div>' : '');
       // [V33.45] 미국 반도체 → 한국 기술주 전이 감시(코스피는 삼성·하이닉스가 지수를 지배).
       if(mode.xmkt && mode.xmkt.semi1d != null){
         var s1 = mode.xmkt.semi1d;

@@ -6504,7 +6504,7 @@ function _sentiOne(title) {
 //   오전 분위기가 그대로 남아 "아직 폭락 중"으로 보였다.
 //   → 반감기 5시간의 시간 감쇠를 준다(5h 전 0.5배, 10h 전 0.25배, 20h 전 0.06배).
 //     items 는 문자열 배열(구형 호출부 호환) 또는 {title, ageH} 배열 둘 다 받는다.
-const _SENTI_HALFLIFE_H = 3;   // [V33.48] 5h → 3h: 감정 반감기 단축(아침 악재가 저녁까지 끌지 않게)
+const _SENTI_HALFLIFE_H = 2;   // [V33.54] 3h → 2h: 최신 심리가 지배하도록(과거 기사 영향 빠르게 소멸)
 function _scoreHeadlines(items) {
   let sum = 0, mag = 0, wsum = 0;
   for (const it of (items || [])) {
@@ -8394,9 +8394,9 @@ async function analyzeMarketRegime(DB, market) {
   //   보합장에서 추세추종 규칙(넓은 트레일·긴 타임스톱)으로 들어가 방향 없이 만기 청산된 것.
   //   ER(효율비, Kaufman) = |20일 순변화| / 20일 경로합. 1에 가까울수록 일직선 추세,
   //   0에 가까울수록 같은 자리를 왕복하는 톱질(=보합).
-  let er = null;
+  let er = null, r5 = null;
   try {
-    const ers = [];
+    const ers = [], r5s = [];
     for (const sym of indices) {
       const idx = await getState(DB, "index:" + sym, null);
       const h = idx && idx.history;
@@ -8409,19 +8409,35 @@ async function analyzeMarketRegime(DB, market) {
       }
       if (!ok || !(path > 0)) continue;
       ers.push(Math.abs(seg[seg.length - 1] - seg[0]) / path);
+      // [V33.54] 5일 수익률 — 20일은 너무 느려 국면 전환을 며칠씩 늦게 인식한다.
+      const a5 = seg[seg.length - 6], b5 = seg[seg.length - 1];
+      if (a5 > 0 && b5 > 0) r5s.push((b5 - a5) / a5 * 100);
     }
     if (ers.length) er = ers.reduce(function (a, b) { return a + b; }, 0) / ers.length;
+    if (r5s.length) r5 = r5s.reduce(function (a, b) { return a + b; }, 0) / r5s.length;
   } catch (e) {}
   const _r20 = (avgIdxReturn != null) ? avgIdxReturn : 0;
+  const _r5 = (r5 != null) ? r5 : 0;
   const _erv = (er != null) ? er : 0.25;   // 산출 실패 시 중립값(어느 쪽으로도 치우치지 않게)
+  const _today = avgDayPct;                // ★오늘 지수 평균 등락률 — 가장 실시간한 신호
+  // [V33.54] ★국면 판단이 며칠씩 늦던 구조적 원인★
+  //   종전 분기는 사실상 20일 수익률(_r20) 하나가 지배했다. 그래서
+  //     · 코스피가 한 달 -23% 였다면 _r20 는 -20% 대 → "_r20 <= -8" 이 항상 참 →
+  //       오늘 지수가 +5% 폭등해도 국면은 계속 CRASH.
+  //     · 미국처럼 20일 등락이 작으면 오늘 +2.8% 가 나와도 계속 RANGE(보합).
+  //   즉 '오늘 무슨 일이 일어나고 있는가'가 판정에 전혀 반영되지 않았다.
+  //   → 오늘 등락률을 1급 신호로 올리고, 5일 수익률을 중간 속도 신호로 추가한다.
+  //     20일·ER 은 '추세의 질'을 보는 배경 신호로 남긴다(장기 문맥은 유지).
+  //   ★CRASH 는 '지금 무너지는 중'일 때만★ — 과거에 무너졌다는 사실만으로는 CRASH 가 아니다.
   let phase;
-  if (worstDayPct <= -2.5 || _r20 <= -8) phase = "CRASH";
-  else if (_erv >= 0.34 && _r20 >= 6 && aboveMa >= belowMa) phase = "MELTUP";
-  else if (_erv >= 0.22 && _r20 >= 1.5 && aboveMa >= belowMa) phase = "TREND_UP";
-  else if (_erv >= 0.22 && _r20 <= -1.5) phase = "TREND_DOWN";
+  if (worstDayPct <= -2.5 || _today <= -2 || (_today <= -1 && _r5 <= -4)) phase = "CRASH";
+  else if (_today >= 2 || (_today >= 1 && _r5 >= 3) || (_erv >= 0.34 && _r20 >= 6 && aboveMa >= belowMa)) phase = "MELTUP";
+  else if (_today >= 0.8 || (_r5 >= 2 && _today >= 0) || (_erv >= 0.22 && _r20 >= 1.5 && aboveMa >= belowMa)) phase = "TREND_UP";
+  else if (_today <= -0.8 || (_r5 <= -2 && _today <= 0) || (_erv >= 0.22 && _r20 <= -1.5)) phase = "TREND_DOWN";
   else phase = "RANGE";
   return { regime: regime, avgDayPct: avgDayPct, worstDayPct: worstDayPct, aboveMa: aboveMa, belowMa: belowMa,
-    idxReturn20: avgIdxReturn, phase: phase, er: (er != null) ? +er.toFixed(3) : null };
+    idxReturn20: avgIdxReturn, idxReturn5: (r5 != null) ? +r5.toFixed(2) : null,
+    phase: phase, er: (er != null) ? +er.toFixed(3) : null };
 }
 
 // ============================================================
@@ -12927,8 +12943,12 @@ async function runTradingCycle(env) {
     await log(DB, "INFO", null, "Regime US:" + regimes.us.regime + "/" + regimes.us.phase + " (worst " + regimes.us.worstDayPct.toFixed(2) + "%, idx20=" + (regimes.us.idxReturn20 != null ? regimes.us.idxReturn20.toFixed(1) : "?") + "%, ER=" + (regimes.us.er != null ? regimes.us.er : "?") + "), KR:" + regimes.kr.regime + "/" + regimes.kr.phase + " (worst " + regimes.kr.worstDayPct.toFixed(2) + "%, idx20=" + (regimes.kr.idxReturn20 != null ? regimes.kr.idxReturn20.toFixed(1) : "?") + "%, ER=" + (regimes.kr.er != null ? regimes.kr.er : "?") + ")");
     // [V33.44] 위상을 상태로 남긴다 — runFastWatch(청산 전담 루프)와 대시보드가 같은 국면을 공유.
     try {
+      // [V33.54] 판정 근거(오늘 등락·5일)를 함께 저장 — 화면에서 '왜 그 국면인지' 즉시 확인.
       await setState(DB, "mkt_phase", { us: regimes.us.phase, kr: regimes.kr.phase, cm: regimes.us.phase,
-        erUs: regimes.us.er, erKr: regimes.kr.er, ts: Date.now() });
+        erUs: regimes.us.er, erKr: regimes.kr.er,
+        dayUs: (typeof regimes.us.avgDayPct === "number") ? +regimes.us.avgDayPct.toFixed(2) : null,
+        dayKr: (typeof regimes.kr.avgDayPct === "number") ? +regimes.kr.avgDayPct.toFixed(2) : null,
+        r5Us: regimes.us.idxReturn5, r5Kr: regimes.kr.idxReturn5, ts: Date.now() });
     } catch (e) {}
 
     cfg = await autoTune(DB, cfg, regimes);
@@ -15913,7 +15933,8 @@ async function handleRequest(request, env, ctx) {
         } catch (e) {}
         // [V33.44] 국면 위상(보합/추세/폭등) — 진입 문턱·사이즈·청산 규율이 이 값으로 갈린다.
         let _phase = null;
-        try { const _ps = await getState(env.DB, "mkt_phase", null); if (_ps) _phase = { us: _ps.us, kr: _ps.kr, erUs: _ps.erUs, erKr: _ps.erKr, ts: _ps.ts }; } catch (e) {}
+        try { const _ps = await getState(env.DB, "mkt_phase", null); if (_ps) _phase = { us: _ps.us, kr: _ps.kr, erUs: _ps.erUs, erKr: _ps.erKr,
+          dayUs: _ps.dayUs, dayKr: _ps.dayKr, r5Us: _ps.r5Us, r5Kr: _ps.r5Kr, ts: _ps.ts }; } catch (e) {}
         // [V33.45] 미국 반도체 → 한국 기술주 선행지표(전이 감시).
         let _xmkt = null;
         try { const _xl = await getState(env.DB, "xmkt_lead", null); if (_xl) _xmkt = { semi1d: _xl.semi1d, semi5d: _xl.semi5d, n: _xl.n, ts: _xl.ts }; } catch (e) {}
@@ -26634,7 +26655,7 @@ function _parseRss(xml, max) {
 // [V33.39] 30 → 14시간. 감정 반감기가 5시간(V33.37)이라 14시간 넘은 기사는 가중치가 0.14 이하로
 //   떨어져 사실상 기여하지 않는데, 보관만 하며 상위 260건 자리를 차지해 최신 기사를 밀어냈다.
 //   빨리 버리고 그 자리를 최신으로 채운다 = 회전율 상승.
-const _WNEWS_MAXAGE_H = 8;    // [V33.48] 14h → 8h: 오래된 뉴스를 더 빨리 퇴출(최신 소식만 회전)
+const _WNEWS_MAXAGE_H = 6;    // [V33.54] 8h → 6h: 6시간 지난 기사는 '현재 이슈'가 아니다 — 즉시 퇴출
 // [V32.34] ★멀티소스 뉴스 피드★ 구글 단일 → 8+개 무료 RSS(세계·경제·지정학) 병합. 교차검증(다매체)으로
 //   신뢰도↑·수량↑·가짜뉴스 저항↑. 각 피드에 대표 출처명 태깅.
 const _WORLD_FEEDS = [
@@ -26685,7 +26706,7 @@ async function _luxWorldNews(DB, opts) {
   // [V33.39] 18분 → 9분. 31개 피드를 회당 14개씩 도는 구조라 전 소스 순회에 종전 약 40분이
   //   걸렸다(그만큼 특정 소스의 속보가 늦게 들어온다). 9분으로 줄여 순회를 약 20분으로 단축한다.
   //   외부 fetch 사용량이 늘지만 아래 fetchBudgetLeft 가드가 예산 부족 시 WIN 을 자동 축소한다.
-  const FRESH = 5 * 60000;   // [V33.48] 9분 → 5분: 뉴스 순환 가속(전 소스 순회 약 20분 → 11분)
+  const FRESH = 3 * 60000;   // [V33.54] 5분 → 3분: 전 소스 순회 약 7분 — 속보 반영 지연을 최소화
   let cached = null; try { cached = await getState(DB, "world_news", null); } catch (e) {}
   if (!opts.force && cached && cached.ts && (Date.now() - cached.ts) < FRESH) return cached;
   const now = Date.now(), maxAge = _WNEWS_MAXAGE_H * 3600000;
@@ -26748,7 +26769,11 @@ async function _luxWorldNews(DB, opts) {
     return (Math.min(x.sources || 1, 4) - 1) * 3 - ageH;
   };
   arr.sort(function (a, b) { return _rankScore(b) - _rankScore(a); });
-  const heads = arr.slice(0, 260);
+  // [V33.54] ★D1 부하 = 이 행의 크기★ world_news 는 갱신마다 통째로 다시 쓰인다(단일 행).
+  //   순환주기를 3분으로 줄인 만큼 쓰기 횟수가 늘어나므로, 보관 건수를 줄여 회당 쓰기량을 낮춘다.
+  //   어차피 6시간 넘은 기사는 위에서 이미 버려지고, 실제 판단에는 상위 수십 건만 쓴다.
+  //   260 → 150: 최신 것만 남기고 오래된 것은 새 뉴스가 들어올 때 자연히 밀려난다.
+  const heads = arr.slice(0, 150);
   // [V32.35] 시장 감정 — 상위 헤드라인 가중 감정(-1..1). 위기/Q&A가 심리 근거로 활용.
   // [V33.37] 제목만이 아니라 ageH 를 함께 넘겨 시간 감쇠가 걸리게 한다.
   let marketSenti = null; try { marketSenti = +_scoreHeadlines(heads.slice(0, 60)).toFixed(3); } catch (e) {}
@@ -26758,9 +26783,9 @@ async function _luxWorldNews(DB, opts) {
   const dayKey = localDateStr("kr");
   if (!stats || stats.day !== dayKey) stats = { day: dayKey, uniqSeen: 0, refreshes: 0, sampleKeys: [] };
   const prevKeys = {}; for (const kk of (stats.sampleKeys || [])) prevKeys[kk] = 1;
-  let newCnt = 0; const keepKeys = (stats.sampleKeys || []).slice(-1500);
+  let newCnt = 0; const keepKeys = (stats.sampleKeys || []).slice(-600);   // [V33.54] 1500→600(행 크기 축소)
   for (const k of Object.keys(byKey)) { if (!prevKeys[k]) { newCnt++; keepKeys.push(k); } }
-  stats.uniqSeen += newCnt; stats.refreshes++; stats.sampleKeys = keepKeys.slice(-1500); stats.lastTs = now;
+  stats.uniqSeen += newCnt; stats.refreshes++; stats.sampleKeys = keepKeys.slice(-600); stats.lastTs = now;
   try { await setState(DB, "news_stats", stats); } catch (e) {}
   const out = { headlines: heads, ts: now, dedupN: heads.length, rawSeen: rawSeen, dropOld: dropOld, dropDup: dropDup, noDate: noDate,
     feedsOk: okFeeds, feedsWindow: feeds.length, feedsTotal: _WORLD_FEEDS.length, carried: carried, fetchMs: _fetchMs,
