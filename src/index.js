@@ -13674,8 +13674,66 @@ async function runTradingCycle(env) {
       const hardCapMs = (typeof cfg.cycleHardCapMs === "number") ? cfg.cycleHardCapMs : 55000;
       let evalOffset = await getState(DB, "eval_offset:" + market, 0);
       if (!(typeof evalOffset === "number" && evalOffset >= 0 && evalOffset < fetched.length)) evalOffset = 0;
-      const orderedEval = evalOffset > 0 ? fetched.slice(evalOffset).concat(fetched.slice(0, evalOffset)) : fetched;
+      let orderedEval = evalOffset > 0 ? fetched.slice(evalOffset).concat(fetched.slice(0, evalOffset)) : fetched;
+      // ═══ [V33.50] ★실시간 차트형태 트리거 — 라운드로빈의 구조적 사각지대 제거★ ═══
+      //   문제: 평가 루프는 예산(40s) 안에서 도는 만큼만 보고 다음 사이클이 이어받는다(TIME-CAP).
+      //   순서가 고정 라운드로빈이라, '지금 이 순간 신고가를 뚫은 종목'이 하필 순번 뒤쪽이면
+      //   그 돌파를 몇 분 뒤에야 본다 — 단타·돌파 진입에서 그 몇 분이 전부다.
+      //   해결: 평가 전에 전 종목의 차트 형태를 훑어 '지금 조건이 맞는' 종목을 앞으로 당긴다.
+      //   ★부하 0★ — 시세(batchQuotes)와 일봉(dailyMap)은 이미 메모리에 다 올라와 있다.
+      //   추가 D1 조회도, 추가 네트워크 fetch 도 없다. 순수 산술이라 수 ms 로 끝난다.
+      //   (라운드로빈 자체는 유지된다 — 트리거가 없는 종목들은 종전 순서 그대로 뒤를 잇는다)
+      let _trigN = 0, _trigTop = [];
+      try {
+        const _LB = 60;   // 형태 판정 창(봉) — 길수록 비싸지므로 60봉으로 제한
+        const _scored = [];
+        for (const it of orderedEval) {
+          const c = it.daily && it.daily.closes;
+          const px = it.intra && it.intra.price;
+          if (!Array.isArray(c) || c.length < 25 || !(px > 0)) { _scored.push({ it: it, s: 0 }); continue; }
+          const n = c.length, from = Math.max(0, n - _LB);
+          let hi = -Infinity, lo = Infinity, sum = 0, cnt = 0;
+          for (let i = from; i < n; i++) { const v = c[i]; if (!(v > 0)) continue; if (v > hi) hi = v; if (v < lo) lo = v; sum += v; cnt++; }
+          if (cnt < 20) { _scored.push({ it: it, s: 0 }); continue; }
+          // MA20 과 표준편차(볼린저) — 최근 20봉만
+          let s20 = 0, k20 = 0;
+          for (let i = Math.max(0, n - 20); i < n; i++) { const v = c[i]; if (v > 0) { s20 += v; k20++; } }
+          const ma20 = k20 ? s20 / k20 : null;
+          let sd = 0;
+          if (ma20) { let q = 0, kk = 0; for (let i = Math.max(0, n - 20); i < n; i++) { const v = c[i]; if (v > 0) { q += (v - ma20) * (v - ma20); kk++; } } sd = kk ? Math.sqrt(q / kk) : 0; }
+          const prev = c[n - 1];                                    // 직전 확정 종가
+          const dayPct = (it.intra.prevClose > 0) ? ((px - it.intra.prevClose) / it.intra.prevClose * 100) : 0;
+          let s = 0, tags = [];
+          // (1) 구간 신고가 돌파 — 돌파 순간을 놓치면 진입가가 크게 나빠진다
+          if (px > hi) { s += 5; tags.push("신고가"); }
+          else if (px > hi * 0.995) { s += 2; tags.push("신고가근접"); }
+          // (2) MA20 상향 재돌파(눌림목 반등) — 직전 종가는 아래, 지금은 위
+          if (ma20 && prev < ma20 && px > ma20) { s += 4; tags.push("MA20회복"); }
+          // (3) 볼린저 상단 돌파 — 변동성 확장 시작점
+          if (ma20 && sd > 0 && px > ma20 + 2 * sd) { s += 3; tags.push("BB상단"); }
+          // (4) 당일 강세 — 실시간 등락률 자체가 가장 직접적인 '지금 움직인다' 신호
+          if (dayPct >= 4) { s += 4; tags.push("급등" + dayPct.toFixed(1) + "%"); }
+          else if (dayPct >= 2) { s += 2; tags.push("강세"); }
+          // (5) 급락 — 반등·인버스 후보로 즉시 보게 한다(방향 무관, '지금 봐야 할 종목'이면 앞으로)
+          if (dayPct <= -4) { s += 3; tags.push("급락" + dayPct.toFixed(1) + "%"); }
+          // (6) 구간 저점 이탈 — 손절·회피 판단도 늦으면 손해다
+          if (px < lo) { s += 2; tags.push("신저가"); }
+          if (s > 0) { _trigN++; if (_trigTop.length < 6) _trigTop.push(it.symbol + "(" + tags.join("+") + ")"); }
+          it.__trig = s;   // 아래 오프셋 회계에서 '승격분'을 구분하기 위한 표시
+          _scored.push({ it: it, s: s });
+        }
+        if (_trigN > 0) {
+          // 안정 정렬: 점수 내림차순, 동점이면 기존 라운드로빈 순서 유지
+          const _idx = new Map(); orderedEval.forEach(function (v, i) { _idx.set(v, i); });
+          _scored.sort(function (a, b) { return (b.s - a.s) || (_idx.get(a.it) - _idx.get(b.it)); });
+          orderedEval = _scored.map(function (x) { return x.it; });
+        }
+      } catch (e) {}
+      if (_trigN > 0) {
+        try { await log(DB, "INFO", null, "[LIVE-TRIG] " + market.toUpperCase() + " 형태트리거 " + _trigN + "종목 우선평가 — " + _trigTop.join(", ")); } catch (e) {}
+      }
       let evalProcessed = 0, evalTimedOut = false;
+      let _evalBaseDone = 0;   // [V33.50] 트리거 승격분을 제외한 '라운드로빈 진도' 카운터
       const __candLog = [];   // [V12.130] 후보 신호를 모아 사이클 끝에 1회만 기록(D1 write 절감)
       // [성능] 평가 중 quote 지표 갱신을 종목당 D1 write(saveQuote) 대신 batch로 모아
       //   루프 끝에 일괄 커밋 → 종목당 ~419ms였던 평가 속도를 ms 단위로 단축(커버리지 확대 가능).
@@ -13784,7 +13842,10 @@ async function runTradingCycle(env) {
         const _evalElapsed = Date.now() - evalStartedAt;
         if (_evalElapsed > evalBudgetMs || (Date.now() - cycleStartedAt > hardCapMs && _evalElapsed > evalMinMs)) {
           evalTimedOut = true;
-          try { await setState(DB, "eval_offset:" + market, (evalOffset + evalProcessed) % fetched.length); } catch (e) {}
+          // [V33.50] ★오프셋 회계 정정★ 트리거로 앞당겨진 종목은 '라운드로빈 진도'가 아니다.
+          //   그걸 포함해 오프셋을 밀면 그만큼의 종목이 이번 바퀴에서 통째로 건너뛰어진다.
+          //   기본 순환분(승격되지 않은 것)만 세어 진도를 옮긴다 — 어떤 종목도 굶지 않는다.
+          try { await setState(DB, "eval_offset:" + market, (evalOffset + Math.max(1, _evalBaseDone)) % fetched.length); } catch (e) {}
           // [V33.35] TIME-CAP 은 고장이 아니라 설계된 안전장치다(한도 초과 전에 끊고 다음
           //   사이클이 eval_offset 부터 이어받는다 — 위 주석 참조). 종전엔 무조건 WARN 이라
           //   정상 순환이 "오류·경고"로 집계됐다. 커버리지가 30% 미만일 때만 경고로 올린다.
@@ -13795,6 +13856,7 @@ async function runTradingCycle(env) {
           break;
         }
         evalProcessed++;
+        if (!(item.__trig > 0)) _evalBaseDone++;   // [V33.50] 승격되지 않은 종목만 순환 진도로 계산
         // [V32.1] 긴 평가 루프 중에도 주기적으로 락 TTL 갱신 — 한 시장 평가가 수십 초로 길어지면
         //   그 사이 락이 만료돼 다음 크론에 탈취되고, 이후 시장/후처리가 소유권을 잃던 문제 예방.
         if (evalProcessed % 20 === 0) {
@@ -23160,8 +23222,21 @@ async function mlDNNTrainNightly(DB) {
     //   낭비였는데 표본창 확대로 5배 커짐). 조기 리턴을 판정 앞단으로 이동.
     let prevModelEarly = null;
     try { prevModelEarly = await mlDNNLoad(DB); } catch (e) {}
+    // [V33.50] ★DNN 이 영구히 '학습 대기'에 갇히던 버그★
+    //   이 가드는 source === "external" 이기만 하면 무조건 조기 리턴했다. GBDT·MIND 의 같은
+    //   가드는 (a) trusted 이고 (b) 36시간 내 학습분일 때만 생략하는데 DNN 만 두 조건이 없었다.
+    //   결과: Modal 이 trustFloor(50.5%) 미달 DNN 을 올리면 → 워커는 "외부 모델 있음"으로 자가학습을
+    //   건너뛰고 → 미달 모델이 그대로 남아 → 다음 Modal 실행 전까지 DNN 은 계속 미가동.
+    //   게다가 신선도 검사도 없어 며칠 지난 외부 모델도 영구히 자가학습을 막았다.
+    //   → 외부 모델이 '신뢰되고 신선할 때만' 생략한다. 미달·노후면 워커가 폴백으로 자가학습한다.
     if (prevModelEarly && prevModelEarly.source === "external") {
-      return "[DNN] 외부GPU 학습모델 존재(valAcc " + ((_num(prevModelEarly.valAcc, 0)) * 100).toFixed(1) + "%) — 야간 자가학습 생략(외부 소유, 12h마다 재학습)";
+      let _dTrusted = false;
+      try { const _dt2 = await getState(DB, "dnn_trust", null); _dTrusted = !!(_dt2 && _dt2.trusted); } catch (e) {}
+      const _fresh = !!(prevModelEarly.trainedAt && (Date.now() - prevModelEarly.trainedAt) < 36 * 3600000);
+      if (_dTrusted && _fresh) {
+        return "[DNN] 외부GPU 학습모델 신뢰 중(valAcc " + ((_num(prevModelEarly.valAcc, 0)) * 100).toFixed(1) + "%) — 야간 자가학습 생략(외부 소유)";
+      }
+      await log(DB, "INFO", null, "[DNN] 외부모델 " + (!_dTrusted ? "미신뢰(valAcc " + ((_num(prevModelEarly.valAcc, 0)) * 100).toFixed(1) + "%)" : "노후") + " — 워커 자가학습으로 폴백");
     }
     // [V12.100] ★DNN 완주 신뢰성★ 종전엔 trainWindow(90000)만큼 다 읽어 JSON.parse·표준화했는데
     //   실제 학습엔 최근 dnnMaxSamples(2000)만 쓴다 — 표본이 커질수록(37k+) 읽기·파싱만으로 CPU를 태워
@@ -23237,6 +23312,15 @@ async function mlDNNTrainNightly(DB) {
                   valAcc: +dnnAcc.toFixed(4), valAccLB: +dnnLB.toFixed(4), valN: val.length,
                   dims: dims, n: N, trainedAt: Date.now(), source: "worker",
                   warmResumed: !!warmNets };   // [V11] 웜스타트 여부(누적학습 추적)
+    // [V33.50] 폴백 자가학습이 '더 좋은 외부 모델'을 덮어쓰지 않게 한다.
+    //   워커 학습은 CPU 예산(300s) 안에서만 도는 축소 학습이라 Modal GPU 산출물보다 대개 약하다.
+    //   외부 모델이 아직 문턱 미달이더라도 이번 워커 결과보다 낫다면 그대로 둔다(둘 다 미신뢰면
+    //   운용상 차이는 없지만, 다음 Modal 실행 때 웜스타트/비교 기준으로 더 나은 쪽이 유용하다).
+    if (prevModelEarly && prevModelEarly.source === "external" &&
+        _num(prevModelEarly.valAccLB, 0) >= dnnLB) {
+      return "[DNN] 워커 자가학습 " + (dnnAcc * 100).toFixed(1) + "% ≤ 외부 " +
+             (_num(prevModelEarly.valAccLB, 0) * 100).toFixed(1) + "% — 외부 모델 유지(덮어쓰기 생략)";
+    }
     // [V10] 대형 모델(최대 3M) 청크 저장 — D1 단일행 한계 우회. 메모리 캐시 무효화.
     const _saveInfo = await setBigState(DB, "dnn_model", net);
     __dnnMemCache = null;
