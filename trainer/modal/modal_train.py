@@ -821,7 +821,13 @@ def _train_and_upload_scalp(BASE, KEY, HDR, featver):
 
     # 최근 며칠치 장중 표본을 모은다(하루 1개 엔드포인트 호출).
     KST = timezone(timedelta(hours=9))
-    days, X, Y, TS = 14, [], [], []
+    # [V33.46] 장중 미시구조 피처(ix)를 x 뒤에 이어붙여 학습한다.
+    #   종전엔 x(일봉 피처 65차원)만 썼는데 라벨은 60분 뒤 수익이었다 — 하루짜리 정보로
+    #   한 시간 뒤를 맞히라는 구조라 스윙 모델과 입력이 같았고, 단타로서 배울 게 거의 없었다.
+    #   ix 스키마 버전(fv)이 서버와 다른 표본은 섞지 않는다(피처 인덱스 어긋남 방지).
+    days, X, Y, TS, PNL = 14, [], [], [], []
+    ifeatver, ifeatn, ifeatnames = None, 0, []
+    skipped_old = 0
     for i in range(days):
         d = (datetime.now(KST) - timedelta(days=i)).strftime("%Y-%m-%d")
         try:
@@ -830,36 +836,78 @@ def _train_and_upload_scalp(BASE, KEY, HDR, featver):
             if r.status_code != 200:
                 continue
             j = r.json()
+            if ifeatver is None:
+                ifeatver = j.get("ifeatVer"); ifeatn = int(j.get("ifeatN") or 0)
+                ifeatnames = j.get("ifeatNames") or []
             for sm in j.get("samples", []):
                 x = sm.get("x")
                 if not isinstance(x, list):
                     continue
-                X.append(x); Y.append(1 if sm.get("y") else 0); TS.append(sm.get("ts", 0))
+                ix = sm.get("ix")
+                if ifeatver and (not isinstance(ix, list) or len(ix) != ifeatn or sm.get("fv") != ifeatver):
+                    skipped_old += 1     # 장중 피처 없는 구표본 — 차원이 달라 섞을 수 없다
+                    continue
+                X.append(x + (ix if ifeatver else []))
+                Y.append(1 if sm.get("y") else 0)
+                TS.append(sm.get("ts", 0))
+                PNL.append(float(sm.get("pnl") or 0.0))
         except Exception as e:
             print(f"  장중표본 {d} 수집 실패: {e}")
     N = len(Y)
-    print(f"⑧ 단타(장중) 학습 — 표본 {N}건 / 최근 {days}일")
+    print(f"⑧ 단타(장중) 학습 — 표본 {N}건 / 최근 {days}일"
+          + (f" (구스키마 {skipped_old}건 제외)" if skipped_old else "")
+          + (f" / 장중피처 v{ifeatver}×{ifeatn}" if ifeatver else " / 장중피처 없음"))
     if N < 1500:
         print(f"   표본 부족({N}/1500) — 생략. 더 쌓이면 자동으로 학습된다."); return
 
     X = np.array(X, dtype=np.float64); Y = np.array(Y, dtype=int); TS = np.array(TS)
+    PNL = np.array(PNL, dtype=np.float64)
     D = X.shape[1]
     order = np.argsort(TS)
-    Xs, Ys = X[order], Y[order]
+    Xs, Ys, TSs, PNLs = X[order], Y[order], TS[order], PNL[order]
     nval = max(300, int(N * 0.25))
-    Xtr, Ytr, Xva, Yva = Xs[:-nval], Ys[:-nval], Xs[-nval:], Ys[-nval:]
+    Xva, Yva = Xs[-nval:], Ys[-nval:]
+    # [V33.46] ★엠바고(purge)★ — 라벨 지평이 60분이라, 검증 시작 직전 60분 안의 학습표본은
+    #   검증구간과 같은 가격움직임을 라벨로 공유한다(누출). 그만큼 잘라내야 검증 정확도가 정직하다.
+    horizon_ms = 60 * 60 * 1000
+    va_start = TSs[-nval]
+    tr_mask = TSs[:-nval] < (va_start - horizon_ms)
+    Xtr, Ytr, PNLtr = Xs[:-nval][tr_mask], Ys[:-nval][tr_mask], PNLs[:-nval][tr_mask]
+    print(f"   엠바고 적용 — 학습 {len(Ytr)}건(제외 {(~tr_mask).sum()}건) / 검증 {nval}건")
+    if len(Ytr) < 800:
+        print(f"   엠바고 후 학습표본 부족({len(Ytr)}/800) — 생략."); return
     pos_rate = float(Ys.mean())
     baseline = max(pos_rate, 1 - pos_rate)
     print(f"   양성비율 {pos_rate:.3f} / 다수클래스 베이스라인 {baseline:.3f}")
 
+    # [V33.46] ★수익크기 가중★ — +0.05% 로 끝난 표본과 +3% 로 끝난 표본을 같은 무게로
+    #   배우면 모델이 '거의 안 움직인 다수'에 맞춰진다. 단타에서 중요한 건 크게 움직인 쪽이다.
+    Wtr = 1.0 + np.clip(np.abs(PNLtr), 0, 3.0) / 1.5     # 가중 [1.0, 3.0]
+
     import lightgbm as lgb
-    ltr = lgb.Dataset(Xtr, label=Ytr); lva = lgb.Dataset(Xva, label=Yva, reference=ltr)
-    bst = lgb.train({"objective": "binary", "max_depth": 4, "num_leaves": 16,
-                     "learning_rate": 0.05, "min_data_in_leaf": 40, "verbose": -1,
-                     "feature_fraction": 0.8, "bagging_fraction": 0.8, "bagging_freq": 1},
-                    ltr, num_boost_round=400, valid_sets=[lva],
-                    callbacks=[lgb.early_stopping(60, verbose=False)])
-    best = bst.best_iteration or 400
+    # 피처가 65 → 77 로 늘고 정보량이 실제로 커졌으므로 용량도 함께 키운다(과적합은 조기중단으로 통제).
+    ltr = lgb.Dataset(Xtr, label=Ytr, weight=Wtr)
+    lva = lgb.Dataset(Xva, label=Yva, reference=ltr)
+    bst = lgb.train({"objective": "binary", "max_depth": 5, "num_leaves": 31,
+                     "learning_rate": 0.04, "min_data_in_leaf": 30, "verbose": -1,
+                     "feature_fraction": 0.75, "bagging_fraction": 0.8, "bagging_freq": 1,
+                     "lambda_l2": 1.0},
+                    ltr, num_boost_round=700, valid_sets=[lva],
+                    callbacks=[lgb.early_stopping(80, verbose=False)])
+    best = bst.best_iteration or 700
+
+    # 무엇을 배웠는지 사람이 확인할 수 있게 상위 피처를 남긴다(장중 피처가 실제로 쓰이는지 검증).
+    try:
+        gains = bst.feature_importance(importance_type="gain", iteration=best)
+        names = [f"f{i}" for i in range(D)]
+        for k, nm in enumerate(ifeatnames or []):
+            if D - ifeatn + k < D:
+                names[D - ifeatn + k] = nm
+        top = sorted(zip(names, gains), key=lambda t: -t[1])[:10]
+        tot = float(sum(gains)) or 1.0
+        print("   상위 피처: " + ", ".join(f"{n}({g/tot*100:.1f}%)" for n, g in top))
+    except Exception as e:
+        print(f"   피처 중요도 산출 실패: {e}")
 
     def _plgb(n):
         if "leaf_value" in n:
@@ -888,7 +936,8 @@ def _train_and_upload_scalp(BASE, KEY, HDR, featver):
     pi = np.linspace(0, len(Xva) - 1, min(200, len(Xva))).astype(int)
     probe = [{"x": Xva[i].tolist(), "p": float(proba[i])} for i in pi]
 
-    model = {"featVer": featver, "trees": trees, "base": base, "lr": 1.0,
+    model = {"featVer": featver, "ifeatVer": (ifeatver or 0),
+             "trees": trees, "base": base, "lr": 1.0,
              "valAcc": round(acc, 4), "valAccLB": round(lb, 4), "valN": int(n), "n": int(N),
              "posRate": round(pos_rate, 4), "horizonBars": 12, "probe": probe}
     for attempt in range(4):

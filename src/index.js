@@ -12952,6 +12952,13 @@ async function runTradingCycle(env) {
     // [V33.42] 실제 실적 서프라이즈 맵 — 사이클당 1회만 읽어 평가 루프에서 재사용(D1 왕복 1회).
     let __earnSurp = null;
     try { const _esS = await getState(DB, "earnings_surprise", null); __earnSurp = (_esS && _esS.m) || null; } catch (e) {}
+    // [V33.46] 메가캡 실적 파급 — 시총 상위 종목의 큰 서프라이즈를 섹터 전체 재평가로 확장.
+    let __megaSpill = null;
+    try {
+      const _msS = await getState(DB, "mega_spill", null);
+      if (_msS && (Date.now() - (_msS.ts || 0)) < 60 * 60000) __megaSpill = _msS.g || null;
+      else { const _c = await computeMegaSpill(DB, __earnSurp, cfg); if (_c) { await setState(DB, "mega_spill", _c); __megaSpill = _c.g; } }
+    } catch (e) {}
     const __stinPx = {};                    // 사이클 전체에서 모은 현재가(라벨링용) — batchQuotes 는 시장 루프 지역변수라 밖에서 못 쓴다
     __scalpDiag = {};  // [진단] 게이트 탈락 사유 집계 리셋
     // [V33.40] 장중 단타 표본 버퍼를 R2 에서 1회 로드(장중에만). 실패해도 매매엔 영향 없다.
@@ -13102,12 +13109,33 @@ async function runTradingCycle(env) {
           try {
             const _dll = (typeof AI_PARAMS !== "undefined" && AI_PARAMS.riskOps && AI_PARAMS.riskOps.dailyLossLimitPct) || 2.5;
             if (portfolioValue > 0) {
+              // [V33.46] ★"일일" 한도가 실제로는 롤링 24시간이었다★
+              //   프랍 데스크의 일일 손실한도는 매 거래일 리셋된다(주석이 인용한 표준이 그것이다).
+              //   그런데 구현은 now-24h 롤링이라, 어제 오후의 손실이 오늘 장 전체를 막았다.
+              //   실제 사례: 2026-07-29 연준 매파적 동결로 다우 -1,100p → 다음날 7/30 은
+              //   MSFT +16%(사상 최대 시총 증가)에 나스닥 +2.8% 였는데, 롤링창 때문에 그
+              //   반등일 내내 신규진입이 전면 차단됐을 구조다. 정확히 "폭등장 대응 실패"의 원인.
+              //   → 시장 현지 자정 기준으로 리셋한다(그 이전 손실은 어제의 일이다).
+              const _mn = new Date();
+              const _loc = (market === "kr") ? getKST(_mn) : getUSEt(_mn);
+              const _sessStart = Date.now() - ((_loc.totalMin || 0) * 60000)
+                                 - (_mn.getSeconds() * 1000 + _mn.getMilliseconds());
+              const _since = Math.max(_sessStart, Date.now() - 24 * 3600 * 1000);
               const _dr = await DB.prepare("SELECT COALESCE(SUM(pnl),0) AS p FROM trades WHERE market = ? AND side = 'SELL' AND ts >= ?")
-                .bind(market, Date.now() - 24 * 3600 * 1000).first();
+                .bind(market, _since).first();
               const _dp = _dr ? _num(_dr.p, 0) : 0;
               if (_dp < 0 && Math.abs(_dp) / portfolioValue * 100 >= _dll) {
-                crashGate.blockNew = true;
-                crashGate.reasons.push("DAILY_LOSS " + (_dp / portfolioValue * 100).toFixed(1) + "%≤-" + _dll + "%");
+                // 회복장 예외 — 한도의 목적은 '틸트(연속 뇌동매매) 차단'이지 반등을 통째로 포기하는 게 아니다.
+                //   시장이 실제로 강하게 반등 중이고 급락 국면이 아니면, 전면차단 대신 사이즈를 크게 줄여 참여한다.
+                const _rebound = (regime && typeof regime.avgDayPct === "number" && regime.avgDayPct >= 1.0
+                                  && regime.phase !== "CRASH" && regime.phase !== "TREND_DOWN");
+                if (_rebound) {
+                  crashGate.sizeScale *= 0.5;
+                  crashGate.reasons.push("DAILY_LOSS " + (_dp / portfolioValue * 100).toFixed(1) + "% but 반등장 +" + regime.avgDayPct.toFixed(1) + "% → size×0.5");
+                } else {
+                  crashGate.blockNew = true;
+                  crashGate.reasons.push("DAILY_LOSS " + (_dp / portfolioValue * 100).toFixed(1) + "%≤-" + _dll + "% (당일)");
+                }
               }
             }
           } catch (e) {}
@@ -14084,9 +14112,11 @@ async function runTradingCycle(env) {
                 // [V33.40] ★장중 단타 학습표본 관측★ 이미 받아온 분봉을 그대로 재사용하므로 추가
                 //   fetch 가 0이다. 피처는 라이브 판정과 같은 mlBuildFeatures 로 만들어 학습/추론
                 //   정합을 유지한다. 저장은 전량 R2(대기 버퍼도 R2) — D1 은 건드리지 않는다.
-                let _sf = null;   // [V33.45] AI 단타 판정에서 재사용하므로 블록 밖으로 뺀다
+                let _sf = null, _sfi = null;   // [V33.45/46] AI 단타 판정에서 재사용하므로 블록 밖으로
                 try {
                   if (_scalpMb && Array.isArray(_scalpMb.closes) && _scalpMb.closes.length >= 12) {
+                    // [V33.46] 장중 미시구조 피처(5분봉) — 단타 모델 전용 확장. 추가 fetch 0.
+                    _sfi = stinIntradayFeat(_scalpMb, price, daily.closes[daily.closes.length - 2]);
                     _sf = mlBuildFeatures({
                       closes: daily.closes, volumes: daily.volumes, opens: daily.opens,
                       highs: daily.highs, lows: daily.lows,
@@ -14095,7 +14125,7 @@ async function runTradingCycle(env) {
                       dayPct: dayPct, regime: (regime && regime.regime) || "NEUTRAL",
                       strategy: "scalp", market: market, ev: {}
                     });
-                    if (__stinPend && stinObserve(__stinPend, symbol, market, _sf, price)) __stinObs++;
+                    if (__stinPend && stinObserve(__stinPend, symbol, market, _sf, price, _sfi)) __stinObs++;
                   }
                 } catch (e) {}
                 let _scalpSig = evaluateScalpEntry(_scalpMb, daily, mcfg, market, regime, _sigTypeStats);
@@ -14141,7 +14171,10 @@ async function runTradingCycle(env) {
                 let _aiScalpNote = null;
                 try {
                   const _scp = (typeof AI_PARAMS !== "undefined") ? AI_PARAMS.aiScalp : null;
-                  const _sfNow = (typeof _sf !== "undefined") ? _sf : null;
+                  // [V33.46] 판정 벡터 = 일봉 피처 + 장중 미시구조 피처(학습과 동일 순서로 연결).
+                  //   장중 피처가 없으면(분봉 부족) 단타 판단 자체를 하지 않는다 — 학습 입력과
+                  //   다른 모양의 벡터로 추론하면 조용히 틀린 확률이 나오기 때문.
+                  const _sfNow = (_sf && _sfi) ? _sf.concat(_sfi) : null;
                   if (_scp && _sfNow) {
                     if (_scalpSig) {
                       const _sd = await mlScalpDecide(DB, _sfNow, { forVeto: true });
@@ -14324,6 +14357,18 @@ async function runTradingCycle(env) {
                 } catch (e) {}
               }
             }
+            // [V33.46] 메가캡 실적 파급 — 같은 섹터 대형주가 큰 서프라이즈를 내면 섹터 전체를 재평가한다.
+            //   (2026-07-30 MSFT +16%·클라우드 43% 성장 → 나스닥 +2.8%, AMZN 동반 급등이 실제 사례)
+            let _spillMult = 1;
+            try {
+              const _sg2 = (typeof getSectorGroup === "function") ? getSectorGroup(symbol, mcfg) : null;
+              const _sp2 = _sg2 && __megaSpill && __megaSpill[_sg2];
+              if (_sp2 && typeof _sp2.mult === "number") {
+                _spillMult = _sp2.mult;
+                ctxScore += (_sp2.mult > 1 ? 2 : -2);
+                ctxWhy.push("MEGA" + (_sp2.mult > 1 ? "+" : "-") + "(" + _sp2.why + ")");
+              }
+            } catch (e) {}
             const _ctxStr = ctxWhy.length ? (" [" + ctxWhy.join(" ") + "]") : "";
             if (ctxScore <= -4) {
               incBlock("CTX_NEG");
@@ -14525,6 +14570,8 @@ async function runTradingCycle(env) {
               if (_xa.block) { incBlock("XMKT_SEMI[" + (_xa.note || "") + "]"); continue; }
               if (_xa.mult !== 1) { sizeScale *= _xa.mult; if (_xa.note) signal.xmktNote = _xa.note; }
             } catch (e) {}
+            // [V33.46] 메가캡 실적 파급 사이즈 반영(위 ctxScore 가점과 함께 곱연산).
+            if (typeof _spillMult === "number" && _spillMult !== 1 && !_symInverse) sizeScale *= _spillMult;
             // [V33.44] ★국면 위상 적응★ — 국면 자체의 사이즈 배수 + 신호 성격(돌파/되돌림) 적합도.
             //   보합장에서 돌파신호는 휩쏘 확률이 높고(실거래 SC_VWAP 94건 -12.5%),
             //   폭등장에서 되돌림 대기는 기회를 통째로 놓친다 — 둘을 국면별로 반대 방향으로 조정한다.
@@ -16203,6 +16250,9 @@ async function handleRequest(request, env, ctx) {
       } catch (e) { return Response.json({ error: "R2 조회 실패: " + (e && e.message) }, { status: 500, headers: cors }); }
       const _sc = (typeof AI_PARAMS !== "undefined" && AI_PARAMS.aiScalp) || {};
       return Response.json({ featVer: LUXML.featVer, featNames: LUXML.featNames, day: day,
+        // [V33.46] 장중 미시구조 피처 스키마 — 트레이너는 x 뒤에 ix 를 이어붙여 학습하고,
+        //   업로드 시 ifeatVer 를 되돌려줘야 서버가 차원을 검증할 수 있다.
+        ifeatVer: STIN_FEATVER, ifeatN: STIN_IFEAT_N, ifeatNames: STIN_IFEAT_NAMES,
         horizonBars: STIN.horizonBars, barMin: 5, total: out.length,
         liveEnabled: !!_sc.enabled, config: _mlExportConfig(), samples: out }, { headers: cors });
     }
@@ -16370,7 +16420,11 @@ async function handleRequest(request, env, ctx) {
       if (_num(body.featVer, -1) !== LUXML.featVer) return Response.json({ error: "featVer 불일치 (서버 " + LUXML.featVer + ")" }, { status: 400, headers: cors });
       if (!Array.isArray(body.trees) || !body.trees.length) return Response.json({ error: "trees 없음" }, { status: 400, headers: cors });
       if (body.trees.length > 2000) return Response.json({ error: "trees 과다" }, { status: 400, headers: cors });
-      const _D = LUXML.featNames.length;
+      // [V33.46] 단타 벡터 = 일봉 피처(65) + 장중 미시구조 피처(12). 트레이너가 어느 스키마로
+      //   학습했는지 ifeatVer 로 밝히고, 서버는 그에 맞는 차원만 허용한다(모양 불일치 추론 차단).
+      const _ifv = _num(body.ifeatVer, 0);
+      if (_ifv !== 0 && _ifv !== STIN_FEATVER) return Response.json({ error: "ifeatVer 불일치 (서버 " + STIN_FEATVER + ")" }, { status: 400, headers: cors });
+      const _D = LUXML.featNames.length + (_ifv === STIN_FEATVER ? STIN_IFEAT_N : 0);
       const _vt = function (node, depth) {
         if (!node || typeof node !== "object" || depth > 12) return false;
         if (typeof node.w === "number") return isFinite(node.w);
@@ -16383,7 +16437,8 @@ async function handleRequest(request, env, ctx) {
       const vN = Math.max(1, Math.floor(_num(body.valN, 30)));
       const vLB = (body.valAccLB != null) ? _clamp(_num(body.valAccLB, 0), 0, 1) : _wilsonLB(vAcc, vN);
       const model = { trees: body.trees, base: _num(body.base, 0), lr: _num(body.lr, 0.1),
-                      featVer: LUXML.featVer, valAcc: +vAcc.toFixed(4), valAccLB: +vLB.toFixed(4), valN: vN,
+                      featVer: LUXML.featVer, ifeatVer: _ifv, dim: _D,
+                      valAcc: +vAcc.toFixed(4), valAccLB: +vLB.toFixed(4), valN: vN,
                       n: Math.max(0, Math.floor(_num(body.n, 0))), horizonBars: _num(body.horizonBars, 12),
                       posRate: _num(body.posRate, null), source: "external", trainedAt: Date.now() };
       // 변환정합 probe — 워커 채점이 트레이너 확률을 재현하는지(스윙과 동일한 안전장치).
@@ -19714,6 +19769,51 @@ const _SECTOR_ETF = { TECH: "XLK", FINANCE: "XLF", HEALTH: "XLV", CONSUMER: "XLY
 //   → 미국 반도체 복합체의 직전 세션 수익률을 산출해 한국 기술주 진입·청산에 선행지표로 쓴다.
 //     새 fetch 는 없다(이미 daily: 상태에 저장된 종가만 사용).
 const _SEMI_US = ["NVDA", "AMD", "AVGO", "MU", "TSM", "INTC", "QCOM", "AMAT", "LRCX", "KLAC"];
+
+// ═══════════ [V33.46] 메가캡 실적 파급(spillover) — 한 종목의 서프라이즈가 시장 전체를 끌어올릴 때 ═══════════
+//   2026-07-30 실제 사례: MSFT 가 클라우드 매출 43% 성장으로 하루 +16%(단일종목 하루 시가총액
+//   증가 사상 최대 ≈ $450B). 같은 날 S&P +1.7%, 나스닥 +2.8%, AMZN 도 클라우드 가속으로 급등.
+//   전날(7/29)은 연준 매파적 동결로 다우 -1,100p 였다 — 이틀 만에 완전히 뒤집힌 것이다.
+//   기존 구조는 종목을 하나씩 독립적으로만 본다. 그래서 "MSFT 실적이 좋았다"는 사실이
+//   MSFT 점수에만 반영되고, 같은 테마(클라우드·AI capex) 전체가 재평가되는 현상을 놓친다.
+//   → 시총 상위 종목이 큰 폭의 서프라이즈 + 큰 상승을 내면, 그 섹터 전체의 진입 문턱을 며칠간 낮춘다.
+//     반대로 대형주가 크게 미스하면 같은 논리로 섹터 전체를 조인다(대칭).
+const MEGA_SPILL = { rankMax: 20, minSurprisePct: 8, minDayPct: 4, days: 3, boost: 1.2, cut: 0.75 };
+async function computeMegaSpill(DB, earnSurp, mcfg) {
+  try {
+    if (!earnSurp) return null;
+    const now = Date.now(), bySector = {};
+    for (const sym in earnSurp) {
+      const rank = MCAP_RANK[sym] || 99999;
+      if (rank > MEGA_SPILL.rankMax) continue;
+      const es = earnSurp[sym];
+      if (!es || typeof es.sp !== "number") continue;
+      const ageD = (now - (es.ts || 0)) / 86400000;
+      if (ageD < 0 || ageD > MEGA_SPILL.days) continue;
+      if (Math.abs(es.sp) < MEGA_SPILL.minSurprisePct) continue;
+      // 가격이 실제로 반응했는가 — 서프라이즈만으로는 부족하다(시장이 이미 반영했을 수 있다).
+      let day = null;
+      try { const q = await getState(DB, "quote:" + sym, null); if (q && typeof q.dayPct === "number") day = q.dayPct; } catch (e) {}
+      const grp = (typeof getSectorGroup === "function") ? getSectorGroup(sym, mcfg) : null;
+      if (!grp) continue;
+      const up = es.sp > 0 && (day == null || day >= 0);
+      const strongMove = (day != null) ? Math.abs(day) >= MEGA_SPILL.minDayPct : true;
+      if (!strongMove) continue;
+      const cur = bySector[grp] || { dir: 0, syms: [], mag: 0 };
+      cur.dir += up ? 1 : -1;
+      cur.mag = Math.max(cur.mag, Math.abs(es.sp));
+      cur.syms.push(sym + (day != null ? (day > 0 ? " +" : " ") + day.toFixed(1) + "%" : ""));
+      bySector[grp] = cur;
+    }
+    const out = {};
+    for (const g in bySector) {
+      const b = bySector[g];
+      if (b.dir > 0) out[g] = { mult: MEGA_SPILL.boost, why: b.syms.slice(0, 3).join(", ") };
+      else if (b.dir < 0) out[g] = { mult: MEGA_SPILL.cut, why: b.syms.slice(0, 3).join(", ") };
+    }
+    return Object.keys(out).length ? { g: out, ts: now } : null;
+  } catch (e) { return null; }
+}
 async function updateCrossMarketLead(DB) {
   try {
     const rows = await DB.prepare(
@@ -20408,7 +20508,11 @@ async function mlScalpLoad(DB) {
     if (__scalpMemo && (Date.now() - __scalpMemo.at) < 300000) return __scalpMemo.v;
     const S = await getStates(DB, ["scalp_model", "scalp_trust"]);
     const m = S["scalp_model"], t = S["scalp_trust"];
-    const ok = !!(m && t && t.trusted && m.featVer === LUXML.featVer && Array.isArray(m.trees) && m.trees.length);
+    // [V33.46] 장중 피처 스키마까지 일치해야 신뢰한다 — 구(일봉 전용) 모델은 자동 폐기된다.
+    //   판정 벡터는 항상 65+12차원으로 만들어지므로, 65차원으로 학습된 구모델을 그대로 쓰면
+    //   피처 인덱스가 어긋나 조용히 엉뚱한 확률이 나온다. 모양 불일치는 반드시 거부해야 한다.
+    const ok = !!(m && t && t.trusted && m.featVer === LUXML.featVer && m.ifeatVer === STIN_FEATVER &&
+                  Array.isArray(m.trees) && m.trees.length);
     const v = ok ? { model: m, trust: t } : null;
     __scalpMemo = { at: Date.now(), v: v };
     return v;
@@ -20447,6 +20551,68 @@ const STIN = {
   flushMin: 10            // 라벨 완료분을 R2 로 내보내는 주기(분)
 };
 function _stinDay() { const d = new Date(Date.now() + 9 * 3600000); return d.toISOString().slice(0, 10); }
+
+// ═══════════ [V33.46] ★단타 모델 고도화 — 장중 미시구조 피처★ ═══════════
+//   종전 단타 표본의 피처는 mlBuildFeatures(daily.closes …) 즉 100% '일봉' 피처였다.
+//   그런데 라벨은 60분 뒤 실현수익이다. 하루짜리 정보로 한 시간 뒤를 맞히라는 구조라
+//   모델이 배울 수 있는 신호가 애초에 거의 없었다(스윙 모델과 입력이 같으니 결과도 스윙과 같아진다).
+//   이미 받아온 5분봉(_scalpMb)에 단타가 실제로 쓰는 정보가 전부 들어있는데 한 번도 안 썼다.
+//   → 5분봉에서 12개 미시구조 피처를 뽑아 기존 벡터 뒤에 이어붙인다. 추가 fetch 0.
+//   ※ 스윙 위원회 벡터(featVer)는 절대 건드리지 않는다 — 단타 전용 확장이라 서로 영향 없음.
+const STIN_IFEAT_N = 12;
+const STIN_FEATVER = 1;                                   // 장중 피처 스키마 버전
+const STIN_IFEAT_NAMES = ["i_r5m", "i_r15m", "i_r30m", "i_r60m", "i_vwapDev", "i_relVol",
+                          "i_rangePos", "i_vol5m", "i_gap", "i_sessFrac", "i_upStreak", "i_volTrend"];
+function stinIntradayFeat(mb, price, prevClose) {
+  try {
+    if (!mb || !Array.isArray(mb.closes)) return null;
+    const c = mb.closes, h = mb.highs || [], l = mb.lows || [], v = mb.volumes || [];
+    const n = c.length;
+    if (n < 12 || !(price > 0)) return null;
+    const rp = function (a, b) { return (a > 0 && b > 0) ? (a / b - 1) * 100 : 0; };
+    // 1~4) 다중 구간 모멘텀 — 1봉(5분)·3봉(15분)·6봉(30분)·12봉(60분)
+    const r1 = rp(c[n - 1], c[n - 2]);
+    const r3 = rp(c[n - 1], c[n - 4] != null ? c[n - 4] : c[0]);
+    const r6 = rp(c[n - 1], c[n - 7] != null ? c[n - 7] : c[0]);
+    const r12 = rp(c[n - 1], c[n - 13] != null ? c[n - 13] : c[0]);
+    // 5) VWAP 이격 — 장중 평균단가 대비 현재가 위치(단타의 핵심 기준선)
+    let pv = 0, vv = 0;
+    for (let i = 0; i < n; i++) {
+      const tp = ((h[i] != null ? h[i] : c[i]) + (l[i] != null ? l[i] : c[i]) + c[i]) / 3;
+      const vol = _num(v[i], 0);
+      if (tp > 0 && vol > 0) { pv += tp * vol; vv += vol; }
+    }
+    const vwap = vv > 0 ? pv / vv : c[n - 1];
+    const vwapDev = rp(price, vwap);
+    // 6) 상대거래량 — 최근 3봉 평균 / 전체 평균(수급 급변 감지)
+    let vAll = 0, vAllN = 0, vRec = 0, vRecN = 0;
+    for (let i = 0; i < n; i++) { const vo = _num(v[i], 0); if (vo > 0) { vAll += vo; vAllN++; if (i >= n - 3) { vRec += vo; vRecN++; } } }
+    const relVol = (vAllN > 0 && vRecN > 0 && vAll > 0) ? _clamp((vRec / vRecN) / (vAll / vAllN), 0, 6) : 1;
+    // 7) 당일 레인지 내 위치 — 0=저가권 1=고가권
+    let dh = -Infinity, dl = Infinity;
+    for (let i = 0; i < n; i++) { const hi = h[i] != null ? h[i] : c[i], lo = l[i] != null ? l[i] : c[i]; if (hi > dh) dh = hi; if (lo < dl) dl = lo; }
+    const rangePos = (dh > dl) ? _clamp((price - dl) / (dh - dl), 0, 1) : 0.5;
+    // 8) 5분봉 실현변동성(%) — 단타 손절폭·기대이동폭의 척도
+    let s2 = 0, sN = 0;
+    for (let i = 1; i < n; i++) { const rr = rp(c[i], c[i - 1]); if (isFinite(rr)) { s2 += rr * rr; sN++; } }
+    const vol5 = sN > 0 ? Math.sqrt(s2 / sN) : 0;
+    // 9) 시가 갭 — 오버나이트 이벤트의 잔존 영향
+    const gapPct = (prevClose > 0 && c[0] > 0) ? rp(c[0], prevClose) : 0;
+    // 10) 장중 경과 비율 — 개장 직후와 마감 직전은 성격이 완전히 다르다(단타의 필수 조건변수)
+    const sessFrac = _clamp(n / 78, 0, 1.2);   // 미국 정규장 ≈ 78개(5분봉)
+    // 11) 연속 상승봉 — 모멘텀 지속성
+    let streak = 0;
+    for (let i = n - 1; i > 0 && streak < 8; i--) { if (c[i] > c[i - 1]) streak++; else break; }
+    // 12) 거래량 추세 — 최근 6봉 / 직전 6봉(신규 수급 유입 여부)
+    let v1 = 0, v2 = 0;
+    for (let i = Math.max(0, n - 6); i < n; i++) v1 += _num(v[i], 0);
+    for (let i = Math.max(0, n - 12); i < n - 6; i++) v2 += _num(v[i], 0);
+    const volTrend = (v2 > 0) ? _clamp(v1 / v2, 0, 6) : 1;
+    const out = [r1, r3, r6, r12, vwapDev, relVol, rangePos, vol5, gapPct, sessFrac, streak / 8, volTrend];
+    for (const x of out) if (!isFinite(x)) return null;
+    return out;
+  } catch (e) { return null; }
+}
 async function _stinLoadPend() {
   const R2 = _bigR2(); if (!R2) return null;
   try { const o = await R2.get(STIN.pendKey); if (!o) return { items: [], done: [], ts: 0 };
@@ -20458,15 +20624,28 @@ async function _stinSavePend(p) {
   try { await R2.put(STIN.pendKey, JSON.stringify({ items: p.items, done: p.done, ts: Date.now() })); } catch (e) {}
 }
 // 관측 — 단타 스캔이 이미 받아온 5분봉으로 피처를 만들어 대기 버퍼에 넣는다.
-function stinObserve(pend, symbol, market, mb, feat, price) {
+// [V33.46] ★버그 — 장중 표본이 한 건도 안 쌓이던 원인★
+//   시그니처는 (pend, symbol, market, mb, feat, price) 6개인데 호출부는 5개만 넘겼다:
+//     stinObserve(__stinPend, symbol, market, _sf, price)
+//   → mb 에 피처배열이, feat 에 가격(숫자)이 들어가고 price 는 undefined 가 됐다.
+//     첫 줄 Array.isArray(feat) 가 항상 false → 무조건 return false.
+//   즉 V33.40 이후 장중 학습 파이프라인은 관측 0건이었고(로그의 "관측 +0"이 그 증거),
+//   그래서 단타 모델이 학습될 표본 자체가 없었다. mb 는 함수 본문에서 쓰이지도 않으므로 제거한다.
+function stinObserve(pend, symbol, market, feat, price, ifeat) {
   if (!pend || !Array.isArray(feat) || !(price > 0)) return false;
   const now = Date.now();
   for (const it of pend.items) {
     if (it.s === symbol && (now - it.t) < STIN.minGapMin * 60000) return false;   // 너무 잦은 중복 관측
   }
   if (pend.items.length >= STIN.maxPend) return false;
-  pend.items.push({ s: symbol, m: market, t: now, p: price,
-                    x: feat.map(function (v) { return +(_num(v, 0)).toFixed(4); }) });   // 4자리 반올림 = 용량 절감
+  const rec = { s: symbol, m: market, t: now, p: price,
+                x: feat.map(function (v) { return +(_num(v, 0)).toFixed(4); }) };   // 4자리 반올림 = 용량 절감
+  // [V33.46] 장중 미시구조 피처 — 아래 STIN_IFEAT_N 개. 없으면 구버전 표본으로 남는다.
+  if (Array.isArray(ifeat) && ifeat.length === STIN_IFEAT_N) {
+    rec.ix = ifeat.map(function (v) { return +(_num(v, 0)).toFixed(4); });
+    rec.fv = STIN_FEATVER;
+  }
+  pend.items.push(rec);
   return true;
 }
 // 라벨 — 관측 후 지평이 지난 항목을 현재가로 채점해 done 으로 옮긴다.
@@ -20481,7 +20660,9 @@ function stinLabel(pend, priceOf) {
     if (!(px > 0)) { if (now - it.t < horizonMs * 3) keep.push(it); continue; }   // 가격 미확보면 잠시 더 보관
     const ret = (px / it.p - 1) * 100;
     const y = ret >= STIN.tpPct ? 1 : (ret <= -STIN.stopPct ? 0 : (ret > 0 ? 1 : 0));
-    pend.done.push({ ts: it.t, x: it.x, y: y, pnl: +ret.toFixed(3), s: it.s, m: it.m });
+    const d = { ts: it.t, x: it.x, y: y, pnl: +ret.toFixed(3), s: it.s, m: it.m };
+    if (it.ix) { d.ix = it.ix; d.fv = it.fv; }   // [V33.46] 장중 피처 동반 저장
+    pend.done.push(d);
     labeled++;
   }
   pend.items = keep;
