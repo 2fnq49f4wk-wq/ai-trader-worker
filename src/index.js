@@ -2709,8 +2709,12 @@ const AI_PARAMS = {
     horizonDays: 2,         // 단타 지평(거래일). 10일 스윙과 명확히 구분되는 길이.
     stopPct: 3,             // 단타 라벨용 하방 배리어(스윙 5%보다 타이트)
     tpPct: 3,               // 단타 라벨용 상방 배리어
-    enabled: false,         // ★실매매 스위치★ — 단타 전용 모델이 학습·신뢰될 때까지 false 유지.
-                            //   10일 모델로 단타를 돌리면 안 되므로 코드가 준비돼도 켜지 않는다.
+    // [V33.48] ★실매매 스위치 ON★ (사용자 지시: "단타 모델 작동시켜")
+    //   켜도 곧바로 매매하지는 않는다 — mlScalpLoad 의 신뢰 게이트(학습완료 + 스키마 일치 +
+    //   표본 3000건 + 검증정확도 하한 > 베이스라인+1.5%p)를 통과해야 확률이 나온다.
+    //   즉 이 스위치는 "모델이 준비되면 즉시 매매 시작"을 뜻하고, 준비 전에는 자동으로 휴면이다.
+    //   V33.46 에서 표본 수집 버그를 고쳤으므로 이제부터 표본이 실제로 쌓인다.
+    enabled: true,
     threshold: 0.60,        // 켠 뒤 진입 문턱(스윙 0.55보다 높게 — 회전이 빠른 만큼 보수적)
     maxPerCycle: 8,         // 사이클당 단타 후보 상한
     // [V33.45] ★거부권은 실매매 스위치와 분리★ — enabled=false 여도 모델이 신뢰되면
@@ -3299,7 +3303,11 @@ const DEFAULT_CFG = {
     pullbackVolMult: 1.05,   // SC_PULLBACK 반등봉 상대거래량 문턱 — 거래량 없는 데드캣 반등 걸러냄
     // [성과개선] KR 스캘프 지속 손실(최근14일 n=53 WR34% 기대값-0.25% PF0.36) → US 전용으로 KR 단타 차단.
     //   us:SCALP은 본전(무해)이라 유지. 되돌리려면 usOnly=false. (migrate가 더 이상 강제 false로 덮지 않음)
-    usOnly: true
+    //   ※ [V33.48] 이 차단은 '규칙 신호'에만 적용된다 — AI 단타 모델은 KR 에서도 판단한다.
+    usOnly: true,
+    // [V33.48] 국면별 RSI 상한 — 폭등장 주도주(RSI 75~85)가 사전필터에서 잘리던 문제.
+    rsiMaxBull: 80,
+    rsiMaxMeltup: 88
   },
   // === [SC_VBURST] VWAP 돌파 + 거래량 폭증 + RSI 밴드 — 사용자 정의 순수 분봉 스캘핑 ===
   //   진입(분봉): ① 종가가 VWAP 상향 돌파  ② 현재봉 거래량 ≥ 직전 volLen봉 평균 × volMult
@@ -6482,7 +6490,7 @@ function _sentiOne(title) {
 //   오전 분위기가 그대로 남아 "아직 폭락 중"으로 보였다.
 //   → 반감기 5시간의 시간 감쇠를 준다(5h 전 0.5배, 10h 전 0.25배, 20h 전 0.06배).
 //     items 는 문자열 배열(구형 호출부 호환) 또는 {title, ageH} 배열 둘 다 받는다.
-const _SENTI_HALFLIFE_H = 5;
+const _SENTI_HALFLIFE_H = 3;   // [V33.48] 5h → 3h: 감정 반감기 단축(아침 악재가 저녁까지 끌지 않게)
 function _scoreHeadlines(items) {
   let sum = 0, mag = 0, wsum = 0;
   for (const it of (items || [])) {
@@ -6612,7 +6620,22 @@ async function updateEarningsCalendarNow(DB, cfg) {
   try {
     const ck = "earnings_calendar_v2";
     const cached = await getState(DB, ck, null);
-    if (cached && cached.ts && (Date.now() - cached.ts) < 6 * 3600000) return cached;
+    // [V33.48] ★실적 결과를 더 빨리 받는다★ 종전 6시간 캐시로는, 미국 실적이 통상
+    //   장 마감 직후(16:05~16:30 ET)에 나오는데 그걸 최대 6시간 뒤에야 반영했다.
+    //   그 사이 시간외에서 이미 다 움직이고 다음날 시가에 반영이 끝난다 — 대응할 시간이 없다.
+    //   → 90분으로 단축. 실적 시즌(다가오는 발표가 임박)엔 30분까지 더 줄인다.
+    let _ttl = 90 * 60000;
+    try {
+      const _items = (cached && cached.items) || [];
+      const _now2 = Date.now();
+      // 24시간 안에 발표 예정이거나 6시간 내 발표된 종목이 있으면 = 결과가 곧/막 나온다 → 고속 갱신
+      const _hot = _items.some(function (it) {
+        const d = it && it.ts ? (it.ts - _now2) / 3600000 : null;
+        return d != null && d <= 24 && d >= -6;
+      });
+      if (_hot) _ttl = 30 * 60000;
+    } catch (e) {}
+    if (cached && cached.ts && (Date.now() - cached.ts) < _ttl) return cached;
     if (fetchBudgetLeft() < 10) return cached;
     const usTickers = (cfg.usTickers || []).filter(function (s) { return s.indexOf(".") === -1; });
     const watchSet = {};
@@ -12955,6 +12978,12 @@ async function runTradingCycle(env) {
     let aiScalpUsed = 0;      // [V33.45] AI 단타 진입 후보 카운터(사이클당 상한 통제)
     let scalpEligible = 0, scalpSig = 0;  // [진단] scalp 진입 병목 추적: 후보(no-trend)·스캔·신호 카운트
     let __stinPend = null, __stinObs = 0;   // [V33.40] 장중 단타 학습표본 버퍼(R2)·관측 카운터
+    // [V33.48] 단타 모델이 실제로 '가동 중'인가 — 스캔 예산 배분에 쓴다(사이클당 1회 판정).
+    let __scalpLive = false;
+    try {
+      const _sc0 = (typeof AI_PARAMS !== "undefined") ? AI_PARAMS.aiScalp : null;
+      if (_sc0 && _sc0.enabled) { const _L0 = await mlScalpLoad(DB); __scalpLive = !!_L0; }
+    } catch (e) {}
     // [V33.42] 실제 실적 서프라이즈 맵 — 사이클당 1회만 읽어 평가 루프에서 재사용(D1 왕복 1회).
     let __earnSurp = null;
     try { const _esS = await getState(DB, "earnings_surprise", null); __earnSurp = (_esS && _esS.m) || null; } catch (e) {}
@@ -14080,13 +14109,25 @@ async function runTradingCycle(env) {
           })();
           // [V58] KR 단타 가능 — 네이버 분봉 실시간. (단, 거래세·스프레드 고려해 US보다 보수적)
           //   (일봉/스윙은 거래윈도우 시프트로 데이터-가격 일치가 보장되지만, 분봉 단타는 시프트로도 못 고침)
+          // [V33.48] ★한국장 단타가 아예 안 돌던 이유★ usOnly=true 로 KR 이 통째로 차단돼 있었다.
+          //   그 설정의 근거는 "KR 규칙단타가 지속 손실(WR34%)"이었고 그건 사실이다 —
+          //   하지만 그건 '규칙엔진 신호'(SC_VWAP 26.5% 등)의 성적이지 AI 단타 모델의 성적이 아니다.
+          //   AI 경로는 유동성·스프레드·점프 게이트(V33.47)를 통과해야만 진입하므로,
+          //   KR 단타가 죽던 원인(얇은 호가·넓은 스프레드)을 진입 조건 자체로 걸러낸다.
+          //   → 시장 차단은 '규칙 신호'에만 적용하고, AI 단타는 KR 에서도 판단하게 한다.
           const _srUsOnly = (mcfg.scalpRules && mcfg.scalpRules.usOnly !== undefined) ? mcfg.scalpRules.usOnly : true;
-          const _scalpMarketOk = (!_srUsOnly) || market === "us";
+          const _ruleScalpOk = (!_srUsOnly) || market === "us";
+          const _aiScalpOk = !!((typeof AI_PARAMS !== "undefined") && AI_PARAMS.aiScalp &&
+                                (AI_PARAMS.aiScalp.enabled || AI_PARAMS.aiScalp.vetoWhenTrusted !== false));
+          const _scalpMarketOk = _ruleScalpOk || _aiScalpOk;
           if (_scalpMarketOk && (_scalpOn || _panicScalpOn) && !scalpDailyBlocked && stratResults.length === 0 && !strategiesHeldNow.has("scalp")) {
             scalpEligible++;  // [진단] no-trend·미보유 → scalp 후보 도달
             // [V65] scalp 전용 스캔 예산 — 기존엔 intradayConfirm.maxPerCycle(60)을 공유해
             //   진입확인 fetch가 단타 스캔을 굶겼다(단타 거래량 저하의 주원인). 별도 카운터로 분리.
-            const _scanMax = (mcfg.scalpRules && mcfg.scalpRules.scanMaxPerCycle != null) ? mcfg.scalpRules.scanMaxPerCycle : 50;
+            let _scanMax = (mcfg.scalpRules && mcfg.scalpRules.scanMaxPerCycle != null) ? mcfg.scalpRules.scanMaxPerCycle : 50;
+            // [V33.48] AI 단타 모델이 신뢰 상태면 스캔 한도를 넓힌다 — 이때는 분봉 fetch 가
+            //   '모델 입력 확보'라서 값을 하므로(미신뢰 땐 규칙신호용일 뿐). 실시간성 강화.
+            if (__scalpLive) _scanMax = Math.max(_scanMax, 80);
             // [핵심개선] 평시 scalp은 분봉 fetch 전에 "상승추세 정렬"을 일봉(이미 보유)으로 사전판정 →
             //   추세역행 후보(no-trend 잔여의 대다수: 라이브 진단상 downtrend 25/below_ma20 8 = 50중 33)에
             //   분봉 스캔을 낭비하던 것을 차단. 50회 스캔을 전부 유효 후보(상승추세)에 집중 → 단타 신호 발생률 급증.
@@ -14096,7 +14137,17 @@ async function runTradingCycle(env) {
               const _ma20s = getMA(closes, (mcfg.scalpRules && mcfg.scalpRules.maFastPeriod) || 20);
               const _ma50s = getMA(closes, (mcfg.scalpRules && mcfg.scalpRules.maSlowPeriod) || 50);
               const _rMin = (mcfg.scalpRules && mcfg.scalpRules.rsiMin != null) ? mcfg.scalpRules.rsiMin : 38;
-              const _rMax = (mcfg.scalpRules && mcfg.scalpRules.rsiMax) || 70;
+              // [V33.48] ★폭등장에서 단타가 한 건도 안 나가던 구조★ RSI 상한 70 은 평시 기준이다.
+              //   지수가 급등하는 날 주도주 RSI 는 통상 75~85 라, 정작 그날 움직이는 종목이 전부
+              //   사전필터에서 잘려 분봉 스캔조차 못 받았다. 추세 진입(V33.42)에는 같은 문제를
+              //   이미 고쳤는데 단타 경로에는 그대로 남아 있었다.
+              //   → 확인된 강세·폭등 국면에서만 상한을 올린다(약세·중립은 종전 그대로).
+              const _phSc = (regime && regime.phase) ? regime.phase : null;
+              const _rMaxBase = (mcfg.scalpRules && mcfg.scalpRules.rsiMax) || 70;
+              const _rMax = (_phSc === "MELTUP") ? ((mcfg.scalpRules && mcfg.scalpRules.rsiMaxMeltup) || 88)
+                          : (_phSc === "TREND_UP" || (regime && regime.regime === "BULL"))
+                            ? ((mcfg.scalpRules && mcfg.scalpRules.rsiMaxBull) || 80)
+                            : _rMaxBase;
               _scAligned = (_ma20s != null && _ma50s != null && _ma20s > _ma50s && price > _ma20s &&
                             (dailyRsi == null || (dailyRsi >= _rMin && dailyRsi <= _rMax)));
               if (!_scAligned) { __scalpDiag.prefilter_skip = (__scalpDiag.prefilter_skip || 0) + 1; }
@@ -14107,7 +14158,7 @@ async function runTradingCycle(env) {
             //   그쳤다(로그: 평가 9/557인데 scalp scan=53). D1이 아니라 네트워크 I/O가 병목이었다.
             //   → 스캘프에 쓸 시간을 평가 예산의 35%로 제한. 나머지 65%는 종목 평가가 확보한다.
             //   스캘프 기회는 라운드로빈으로 다음 사이클에 이어서 스캔되므로 기능 손실은 없다.
-            const _scalpTimeLeft = (Date.now() - evalStartedAt) < (evalBudgetMs * 0.35);
+            const _scalpTimeLeft = (Date.now() - evalStartedAt) < (evalBudgetMs * (__scalpLive ? 0.45 : 0.35));
             if (_scAligned && scalpScanUsed < _scanMax && _scalpTimeLeft && fetchBudgetLeft() > 5) {
               try {
                 scalpScanUsed++;
@@ -14134,7 +14185,8 @@ async function runTradingCycle(env) {
                     if (__stinPend && stinObserve(__stinPend, symbol, market, _sf, price, _sfi)) __stinObs++;
                   }
                 } catch (e) {}
-                let _scalpSig = evaluateScalpEntry(_scalpMb, daily, mcfg, market, regime, _sigTypeStats);
+                // [V33.48] 규칙 단타 신호는 시장 허용(usOnly)일 때만 생성한다. AI 단타는 아래에서 별도 판단.
+                let _scalpSig = _ruleScalpOk ? evaluateScalpEntry(_scalpMb, daily, mcfg, market, regime, _sigTypeStats) : null;
                 if (_scalpSig) scalpSig++;  // [진단] 게이트 통과해 신호 발생
                 // [V9.10 합성함수] SCALP 일봉 컨텍스트 직교 강화 — 분봉 진입을 일봉 추세/매집/실적/애널리스트로 사이즈 차등.
                 //   곱셈 아닌 가중평균. 패닉·인버스 진입은 추세역행이 정상이라 추세정렬 팩터 제외.
@@ -14355,9 +14407,27 @@ async function runTradingCycle(env) {
                     const _sp = _es.sp;
                     if (Math.abs(_sp) >= 5) {
                       const _mag = Math.min(Math.abs(_sp) / 25, 1);       // 0~1
-                      const _pts = Math.round(_mag * 4 * _mcW);            // 최대 6점(대형주)
-                      if (_sp > 0) { ctxScore += _pts; ctxWhy.push("EPS+" + _sp.toFixed(0) + "%x" + _mcW); }
-                      else { ctxScore -= _pts; ctxWhy.push("EPS" + _sp.toFixed(0) + "%x" + _mcW); }
+                      let _pts = Math.round(_mag * 4 * _mcW);              // 최대 6점(대형주)
+                      // [V33.48] ★서프라이즈가 나도 주가는 빠질 수 있다 — 실시간 등락률로 대조★
+                      //   "예상보다 잘 나왔다"와 "시장이 그걸 호재로 받아들였다"는 완전히 다른 사건이다.
+                      //   컨센서스를 이겨도 가이던스가 나쁘거나 이미 선반영됐으면 발표 후 급락한다
+                      //   (실제 2026-07-30 애플: 실적 발표 후 중국 매출 부진으로 시간외 하락).
+                      //   가격은 모든 정보의 최종 집계치다 — 서프라이즈와 가격이 어긋나면 가격을 믿는다.
+                      const _conf = (typeof dayPct === "number") ? dayPct : null;
+                      let _cw = "";
+                      if (_conf != null) {
+                        const _agree = (_sp > 0 && _conf > 0) || (_sp < 0 && _conf < 0);
+                        if (_agree && Math.abs(_conf) >= 1.5) { _pts = Math.round(_pts * 1.4); _cw = "↑확증" + _conf.toFixed(1) + "%"; }
+                        else if (!_agree && Math.abs(_conf) >= 1.5) {
+                          // 서프라이즈와 가격이 정면으로 어긋남 → 가점을 없애고 오히려 감점(역방향 신호)
+                          if (_sp > 0) { ctxScore -= Math.min(3, _pts); ctxWhy.push("EPS+" + _sp.toFixed(0) + "% 이나 가격 " + _conf.toFixed(1) + "% 역행"); _pts = 0; }
+                          else { _pts = 0; _cw = "가격역행" + _conf.toFixed(1) + "%"; }   // 미스인데 가격은 상승 → 감점 취소
+                        } else { _pts = Math.round(_pts * 0.6); _cw = "가격 무반응"; }   // 가격이 안 움직임 = 시장이 대수롭지 않게 봄
+                      }
+                      if (_pts > 0) {
+                        if (_sp > 0) { ctxScore += _pts; ctxWhy.push("EPS+" + _sp.toFixed(0) + "%x" + _mcW + _cw); }
+                        else { ctxScore -= _pts; ctxWhy.push("EPS" + _sp.toFixed(0) + "%x" + _mcW + _cw); }
+                      }
                     }
                   }
                 } catch (e) {}
@@ -14549,9 +14619,14 @@ async function runTradingCycle(env) {
             //   (실증: KR/SCALP 84건 WR 34.5% -19.7% vs US/SCALP 67건 WR 47.8% +1.6%)
             //   신호·전략 단위 게이트는 시장 축이 없어 이 조합을 영원히 못 잡는다.
             //   롤링 400건 기준이라 성과가 회복되면 자동 해제된다.
+            //   [V33.48] 단, AI 단타(AI_SCALP)는 예외다 — 이 통계는 '규칙엔진 신호'가 만든 성적이고
+            //   (KR/SCALP 손실의 실체는 SC_VWAP 승률 26.5%·SC_PULLBACK 32.3%),
+            //   AI 경로는 판단 로직도 진입 조건(유동성·스프레드·점프 게이트)도 완전히 다르다.
+            //   과거 규칙신호의 성적으로 새 모델의 진입을 막으면 검증 자체가 불가능해진다.
             try {
               const _ms = __mktStratStats && __mktStratStats[market + "/" + strategy];
-              if (_ms && _ms.n >= 40 && _ms.winRate < 0.42 && _ms.avgPnl < 0) {
+              const _isAiSc = !!(signal && signal.isAiScalp);
+              if (!_isAiSc && _ms && _ms.n >= 40 && _ms.winRate < 0.42 && _ms.avgPnl < 0) {
                 incBlock("NEGEXP_MS[" + market + "/" + strategy + "]");
                 continue;
               }
@@ -15147,7 +15222,17 @@ async function runTradingCycle(env) {
         }
       } catch (e) {}
     }
-    await log(DB, "INFO", null, "Done: tried=" + tried + " skip=" + skipped + " buy=" + bought + " sell=" + sold + " fetchFail=" + fetchFail + " minBars=" + minuteFetchUsed + " scalp[elig=" + scalpEligible + " scan=" + scalpScanUsed + " sig=" + scalpSig + " gates=" + JSON.stringify(__scalpDiag) + "] cycleMs=" + cycleMs);
+    // [V33.48] 단타 모델 상태를 로그에 명시 — "왜 단타가 안 도는가"를 로그만 보고 판단할 수 있게.
+    let _scDiagTxt = "";
+    try {
+      const _sc9 = (typeof AI_PARAMS !== "undefined") ? AI_PARAMS.aiScalp : null;
+      const _t9 = await getState(DB, "scalp_trust", null);
+      _scDiagTxt = " aiScalp[sw=" + (_sc9 && _sc9.enabled ? "ON" : "OFF") +
+        " live=" + (__scalpLive ? "Y" : "N") +
+        " trust=" + (_t9 ? (_t9.trusted ? "OK" : (_t9.reason || "no")) : "미학습") +
+        " obs=" + __stinObs + " aiEntry=" + aiScalpUsed + "]";
+    } catch (e) {}
+    await log(DB, "INFO", null, "Done: tried=" + tried + " skip=" + skipped + " buy=" + bought + " sell=" + sold + " fetchFail=" + fetchFail + " minBars=" + minuteFetchUsed + " scalp[elig=" + scalpEligible + " scan=" + scalpScanUsed + " sig=" + scalpSig + " gates=" + JSON.stringify(__scalpDiag) + "]" + _scDiagTxt + " cycleMs=" + cycleMs);
     // [V32.1] 로그 보존 확대 — 종전 500행 상한은 매분 쏟아지는 INFO에 밀려 ERROR/WARN이
     //   금세 사라져 "에러가 안 보인다"던 문제. 이제 (1)전체 최근 1500행 유지 + (2)그와 별개로
     //   ERROR/WARN은 최근 1000행까지 추가 보존 → 오류 이력이 훨씬 오래 남는다.
@@ -25579,8 +25664,16 @@ async function mlNewsNextDayNightly(DB) {
   } catch (e) { return "[NNEWS] fail: " + (e && e.message); }
 }
 
-async function mlUniverseScanNightly(DB) {
+// [V33.48] ★스캔 주기 단축 — 단, D1 부하는 늘리지 않는다★
+//   사용자 지적: "최근 스캔이 9시로 뜬다"(하루 1회 야간 파이프라인에서만 실행).
+//   그런데 이 함수는 daily: 전체를 단일 쿼리로 읽는다(약 15MB). 그대로 2시간마다 돌리면
+//   D1 전송량이 12배가 되어 예전의 과부하가 그대로 재현된다 — 주기만 늘리면 안 된다.
+//   → 장중 증분 스캔 모드를 추가한다: 이미 있는 라운드로빈 오프셋으로 '구간만' 읽어
+//     (LIMIT 로 상한) 픽을 갱신·병합한다. 회당 읽는 양이 상한이라 주기를 줄여도 부하가 평평하다.
+//   opts.slice = N 이면 증분 모드(N행만 읽음), 없으면 종전 전량 야간 스캔.
+async function mlUniverseScanNightly(DB, opts) {
   if (!LUXML.enabled) return null;
+  const _slice = (opts && opts.slice > 0) ? Math.floor(opts.slice) : 0;
   const _scanT0 = Date.now();   // [V32.55] 스캔 소요시간 측정
   try {
     const mind = await mlMindLoad(DB);
@@ -25598,7 +25691,19 @@ async function mlUniverseScanNightly(DB) {
     //   D1을 점유해 같은 시간대의 API 요청(어닝스·공시·지표·기술분석)까지 CPU 한도(1102)로
     //   밀어내 "로드 실패"를 유발한 주범. 이제 일봉 전체를 단일 쿼리로 한 번에 읽어 메모리 맵으로
     //   쓴다(왕복 수백→1). 12608행의 __allDailyCache(10분)와 동일 철학 — 야간 스캔은 신선도 무관.
-    const ks = await DB.prepare("SELECT k, v FROM state WHERE k >= 'daily:' AND k < 'daily;' ORDER BY k").all();
+    // [V33.48] 증분 모드는 커서(마지막 키) 이후로 LIMIT 만큼만 읽는다 → 회당 D1 전송량 상한.
+    let ks;
+    if (_slice > 0) {
+      let _cur = "daily:";
+      try { const _cs = await getState(DB, "ai_scan_cursor", null); if (_cs && typeof _cs.k === "string" && _cs.k >= "daily:" && _cs.k < "daily;") _cur = _cs.k; } catch (e) {}
+      ks = await DB.prepare("SELECT k, v FROM state WHERE k > ? AND k < 'daily;' ORDER BY k LIMIT ?").bind(_cur, _slice).all();
+      const _rows = (ks && ks.results) || [];
+      // 끝에 닿으면 처음으로 되감아 전 유니버스를 순환 커버한다.
+      const _next = _rows.length ? _rows[_rows.length - 1].k : "daily:";
+      try { await setState(DB, "ai_scan_cursor", { k: (_rows.length < _slice) ? "daily:" : _next, ts: Date.now() }); } catch (e) {}
+    } else {
+      ks = await DB.prepare("SELECT k, v FROM state WHERE k >= 'daily:' AND k < 'daily;' ORDER BY k").all();
+    }
     const dailyMapAll = {};
     for (const r of ((ks && ks.results) || [])) {
       try { dailyMapAll[r.k.slice(6)] = JSON.parse(r.v); } catch (e) {}
@@ -25690,7 +25795,27 @@ async function mlUniverseScanNightly(DB) {
     const _tiltedN = picks.filter(function (p) { return p.evTilt; }).length;
     const _scanDur = Date.now() - _scanT0;   // [V32.55] 스캔 소요시간(ms)
     const _scanRate = _scanDur > 0 ? +(scanned / (_scanDur / 1000)).toFixed(1) : null;   // 초당 분석 종목수
-    await setState(DB, "ai_picks:scan", { ts: Date.now(), scanned: scanned, total: syms.length, picks: picks.slice(0, 40),
+    // [V33.48] 증분 스캔은 이번 구간의 픽을 기존 픽에 '병합'한다(구간만 봤으니 통째로 덮으면
+    //   나머지 유니버스의 픽이 사라진다). 같은 종목은 새 값으로 갱신, 오래된 픽은 12시간 후 만료.
+    let _mergedPicks = picks, _mergedTotal = syms.length;
+    if (_slice > 0) {
+      try {
+        const _prev = await getState(DB, "ai_picks:scan", null);
+        const _now3 = Date.now(), _seen2 = {};
+        const _all = [];
+        for (const p of picks) { _seen2[p.symbol] = 1; _all.push(Object.assign({}, p, { at: _now3 })); }
+        for (const p of ((_prev && _prev.picks) || [])) {
+          if (_seen2[p.symbol]) continue;
+          if (p.at && (_now3 - p.at) > 12 * 3600000) continue;   // 12시간 지난 픽은 만료
+          _all.push(p);
+        }
+        _all.sort(function (a, b) { return (b.rankP != null ? b.rankP : b.p) - (a.rankP != null ? a.rankP : a.p); });
+        _mergedPicks = _all;
+        _mergedTotal = Math.max(_num(_prev && _prev.total, 0), syms.length);
+      } catch (e) {}
+    }
+    await setState(DB, "ai_picks:scan", { ts: Date.now(), mode: _slice > 0 ? "incr" : "full",
+      scanned: scanned, total: _mergedTotal, picks: _mergedPicks.slice(0, 40),
       durMs: _scanDur, rate: _scanRate,
       byMkt: { us: symsByMkt.us.length, kr: symsByMkt.kr.length, cm: symsByMkt.cm.length }, scannedByMkt: scannedByMkt,
       events: _evCtx.evs.map(function (e) { return { code: e.code, label: e.play.label, intensity: e.intensity, conf: _conf[e.code] != null ? _conf[e.code] : null }; }), marketConfirm: _evCtx.mc, tiltedN: _tiltedN,
@@ -26093,7 +26218,7 @@ function _parseRss(xml, max) {
 // [V33.39] 30 → 14시간. 감정 반감기가 5시간(V33.37)이라 14시간 넘은 기사는 가중치가 0.14 이하로
 //   떨어져 사실상 기여하지 않는데, 보관만 하며 상위 260건 자리를 차지해 최신 기사를 밀어냈다.
 //   빨리 버리고 그 자리를 최신으로 채운다 = 회전율 상승.
-const _WNEWS_MAXAGE_H = 14;
+const _WNEWS_MAXAGE_H = 8;    // [V33.48] 14h → 8h: 오래된 뉴스를 더 빨리 퇴출(최신 소식만 회전)
 // [V32.34] ★멀티소스 뉴스 피드★ 구글 단일 → 8+개 무료 RSS(세계·경제·지정학) 병합. 교차검증(다매체)으로
 //   신뢰도↑·수량↑·가짜뉴스 저항↑. 각 피드에 대표 출처명 태깅.
 const _WORLD_FEEDS = [
@@ -26144,7 +26269,7 @@ async function _luxWorldNews(DB, opts) {
   // [V33.39] 18분 → 9분. 31개 피드를 회당 14개씩 도는 구조라 전 소스 순회에 종전 약 40분이
   //   걸렸다(그만큼 특정 소스의 속보가 늦게 들어온다). 9분으로 줄여 순회를 약 20분으로 단축한다.
   //   외부 fetch 사용량이 늘지만 아래 fetchBudgetLeft 가드가 예산 부족 시 WIN 을 자동 축소한다.
-  const FRESH = 9 * 60000;
+  const FRESH = 5 * 60000;   // [V33.48] 9분 → 5분: 뉴스 순환 가속(전 소스 순회 약 20분 → 11분)
   let cached = null; try { cached = await getState(DB, "world_news", null); } catch (e) {}
   if (!opts.force && cached && cached.ts && (Date.now() - cached.ts) < FRESH) return cached;
   const now = Date.now(), maxAge = _WNEWS_MAXAGE_H * 3600000;
@@ -29765,11 +29890,15 @@ export default {
           try {
             const _ieLock = _num(await getState(env.DB, "insider_earn_lock", 0), 0);
             const _mktOpen2 = (typeof isTradingWindow === "function") && (isTradingWindow("us") || isTradingWindow("kr"));
-            if (!_mktOpen2 && (Date.now() - _ieLock > 600000)) {
+            // [V33.48] ★실적 갱신이 '장이 닫혀 있을 때만' 돌던 제약 해제★
+            //   실적은 장중·마감 직후에도 쏟아지는데 그 시간대엔 아예 갱신을 시도조차 안 했다.
+            //   인사이더 피드는 급하지 않으니 종전대로 휴장 때만, 실적 캘린더는 상시 갱신한다.
+            //   (updateEarningsCalendarNow 자체가 TTL·예산 가드를 갖고 있어 과호출되지 않는다)
+            if (Date.now() - _ieLock > 300000) {
               await setState(env.DB, "insider_earn_lock", Date.now());
               try {
                 const _icfg = migrateCfgToMarkets(Object.assign({}, DEFAULT_CFG, await getState(env.DB, "cfg", {})));
-                try { await updateInsiderFeedNow(env.DB); } catch (e0) {}
+                if (!_mktOpen2) { try { await updateInsiderFeedNow(env.DB); } catch (e0) {} }
                 try { await updateEarningsCalendarNow(env.DB, _icfg); } catch (e0) {}
               } catch (e0) {}
             }
@@ -29781,7 +29910,18 @@ export default {
           //   단계별 체크포인트가 300s 한도를 여러 cron에 걸쳐 처리하므로 안전하게 완주. 무한루프 방지:
           //   마커를 먼저 갱신하고 게이트/스테이지 체크포인트만 리셋(다음부터는 정상 하루1회 게이트).
           //   → harvest-now/train-now를 수동으로 칠 필요 없이, 배포만으로 MIND/GBDT가 재학습된다.
-          const _PIPE_VER = "V12.122-refill";   // [V12.122] GBDT 일일게이트로 인한 재학습 지연 수정 — 즉시 강제 전체 재학습
+          // [V33.48] ★장중 증분 스캔★ — 하루 1회(야간)였던 전종목 스캔을 20분마다 '구간 단위'로
+          //   이어 돌린다. 회당 300행 상한이라 D1 전송량은 종전 야간 1회분과 비슷한 수준으로 유지되고,
+          //   픽은 계속 갱신된다(사용자 지적: "최근 스캔이 9시로 뜬다").
+          try {
+            const _isLock = _num(await getState(env.DB, "ai_incrscan_lock", 0), 0);
+            if (Date.now() - _isLock > 20 * 60000) {
+              await setState(env.DB, "ai_incrscan_lock", Date.now());
+              const _ir = await mlUniverseScanNightly(env.DB, { slice: 300 });
+              if (_ir) await log(env.DB, "INFO", null, _ir);
+            }
+          } catch (e) {}
+          const _PIPE_VER = "V33.48-scalp-kr";   // 배포 시 파이프라인 1회 강제 재실행(신규 스키마 반영)
           try {
             const _pv = await getState(env.DB, "ai_pipeline_ver", null);
             if (_pv !== _PIPE_VER) {
