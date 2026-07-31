@@ -2722,7 +2722,13 @@ const AI_PARAMS = {
     vetoBelow: 0.45,        // 이 확률 미만이면 규칙엔진 단타 신호를 기각
     // 모델이 신뢰되면 AI 가 스스로 단타 후보를 만든다(규칙신호 없이) — enabled=true 일 때만.
     aiEntry: true,
-    baseWeight: 0.5         // AI 단타 진입 사이즈 가중(규칙신호 대비 보수)
+    baseWeight: 0.5,        // AI 단타 진입 사이즈 가중(규칙신호 대비 보수)
+    // [V33.47] 미시구조 거부 문턱 — 확률이 높아도 '손댈 시장이 아닌' 조건을 먼저 걸러낸다.
+    //   추세모델에는 없는 축이다(추세는 며칠을 보므로 장중 유동성·스프레드가 희석된다).
+    maxAmihud: 3.0,         // Amihud 비유동성 상한(정규화 거래량당 절대수익률)
+    maxSpreadFrac: 0.5,     // Roll 유효스프레드 / 기대이동폭 상한 — 넘으면 비용이 알파를 먹는다
+    maxJumpFrac: 0.6,       // BNS 점프비중 상한 — 점프장은 손절가가 건너뛰어진다
+    midSessionThreshAdd: 0.05  // 한산한 장중반(U자 저점)에서 문턱 가산
   },
 
   aiPrimary: {
@@ -20508,9 +20514,9 @@ async function mlScalpLoad(DB) {
     if (__scalpMemo && (Date.now() - __scalpMemo.at) < 300000) return __scalpMemo.v;
     const S = await getStates(DB, ["scalp_model", "scalp_trust"]);
     const m = S["scalp_model"], t = S["scalp_trust"];
-    // [V33.46] 장중 피처 스키마까지 일치해야 신뢰한다 — 구(일봉 전용) 모델은 자동 폐기된다.
-    //   판정 벡터는 항상 65+12차원으로 만들어지므로, 65차원으로 학습된 구모델을 그대로 쓰면
-    //   피처 인덱스가 어긋나 조용히 엉뚱한 확률이 나온다. 모양 불일치는 반드시 거부해야 한다.
+    // [V33.46/47] 장중 피처 스키마까지 일치해야 신뢰한다 — 구 스키마 모델은 자동 폐기된다.
+    //   판정 벡터는 항상 일봉 65 + 장중 STIN_IFEAT_N 차원으로 만들어지므로, 다른 차원으로
+    //   학습된 모델을 그대로 쓰면 피처 인덱스가 어긋나 조용히 엉뚱한 확률이 나온다.
     const ok = !!(m && t && t.trusted && m.featVer === LUXML.featVer && m.ifeatVer === STIN_FEATVER &&
                   Array.isArray(m.trees) && m.trees.length);
     const v = ok ? { model: m, trust: t } : null;
@@ -20530,8 +20536,31 @@ async function mlScalpDecide(DB, featVec, opts) {
   try {
     const p = mlGBDTScore(L.model, featVec);
     if (p == null || !isFinite(p)) return null;
-    const thr = _num(sc.threshold, 0.6);
-    return { p: +p.toFixed(4), pass: p >= thr, thr: thr,
+    let thr = _num(sc.threshold, 0.6);
+    // [V33.47] ★미시구조 게이트 — 추세모델과 근본적으로 다른 판단 축★
+    //   추세모델은 "방향이 맞는가"만 본다. 단타는 방향이 맞아도 유동성·비용·점프 때문에 진다.
+    //   확률이 높아도 아래 조건에서는 애초에 손댈 시장이 아니다(문헌의 표준 결론).
+    const D0 = LUXML.featNames.length;
+    const iAt = function (k) { return (featVec.length === D0 + STIN_IFEAT_N) ? _num(featVec[D0 + k], 0) : null; };
+    const _amihud = iAt(15), _roll = iAt(16), _jump = iAt(17), _u = iAt(20), _vol5 = iAt(7);
+    const veto = [];
+    // (1) 비유동 — Amihud 가 크면 정규화 거래량당 가격변화가 커서 체결이 곧 손실이다.
+    if (_amihud != null && _amihud >= _num(sc.maxAmihud, 3.0)) veto.push("비유동");
+    // (2) 비용 — Roll 유효스프레드가 기대이동폭(σ×√지평)의 절반을 넘으면 남는 게 없다.
+    if (_roll != null && _vol5 != null) {
+      const expMove = Math.abs(_vol5) * Math.sqrt(STIN.horizonBars);
+      if (expMove > 0 && _roll >= expMove * _num(sc.maxSpreadFrac, 0.5)) veto.push("비용>기대이동");
+    }
+    // (3) 점프장 — 점프성분 비중이 크면 손절가가 건너뛰어져 리스크 통제가 성립하지 않는다.
+    if (_jump != null && _jump >= _num(sc.maxJumpFrac, 0.6)) veto.push("점프장");
+    if (veto.length) {
+      return { p: +p.toFixed(4), pass: false, thr: thr, veto: veto.join("·"),
+               valAccLB: L.trust.valAccLB, n: L.model.n, horizonBars: L.model.horizonBars };
+    }
+    // (4) 세션 시간 — 장중 거래는 U자형이라 한산한 중반부는 같은 확률이어도 실현이 나쁘다.
+    //     문턱을 올려 '개장·마감 근처'로 자연히 집중시킨다(하드 차단이 아니라 선별 강화).
+    if (_u != null && _u < 0.35) thr += _num(sc.midSessionThreshAdd, 0.05);
+    return { p: +p.toFixed(4), pass: p >= thr, thr: +thr.toFixed(3),
              valAccLB: L.trust.valAccLB, n: L.model.n, horizonBars: L.model.horizonBars };
   } catch (e) { return null; }
 }
@@ -20559,10 +20588,26 @@ function _stinDay() { const d = new Date(Date.now() + 9 * 3600000); return d.toI
 //   이미 받아온 5분봉(_scalpMb)에 단타가 실제로 쓰는 정보가 전부 들어있는데 한 번도 안 썼다.
 //   → 5분봉에서 12개 미시구조 피처를 뽑아 기존 벡터 뒤에 이어붙인다. 추가 fetch 0.
 //   ※ 스윙 위원회 벡터(featVer)는 절대 건드리지 않는다 — 단타 전용 확장이라 서로 영향 없음.
-const STIN_IFEAT_N = 12;
-const STIN_FEATVER = 1;                                   // 장중 피처 스키마 버전
+// [V33.47] ★시장미시구조 이론 적용 — 추세모델과 '다른 정보'로 돌아가게 만든다★
+//   추세모델은 일봉 추세·모멘텀·상대강도를 본다. 단타는 그걸 봐선 안 된다 —
+//   60분 지평에서 실제로 예측력이 있는 건 '주문흐름과 유동성'이라는 게 미시구조 문헌의 결론이다.
+//   호가창(LOB)은 없지만 5분봉 OHLCV 만으로도 아래 이론량들의 표준 추정치를 만들 수 있다:
+//     · OFI(주문흐름 불균형)   — 틱룰 기반 부호부 거래량
+//     · VPIN                   — Easley·López de Prado·O'Hara. 정보거래자 비중 프록시.
+//                                대량 거래량 분류(bulk volume classification)로 매수/매도량 추정.
+//     · Kyle λ                 — Kyle(1985). 단위 주문흐름당 가격충격 = 시장조성자의 역선택 인식.
+//     · Amihud 비유동성        — 거래대금당 가격변화. 얇은 장에서 단타가 죽는 이유를 직접 잰다.
+//     · Roll 스프레드          — 수익률 1차 자기공분산에서 유효 스프레드를 역산(비용의 하한).
+//     · BNS 점프비율           — 실현변동성 vs 바이파워변동. 연속변동과 '점프'를 분리.
+//     · ρ1(1차 자기상관)       — 지금 테이프가 평균회귀인지 모멘텀인지. 단타 로직의 모드 선택 그 자체.
+const STIN_IFEAT_N = 24;
+const STIN_FEATVER = 2;                                   // 장중 피처 스키마 버전
 const STIN_IFEAT_NAMES = ["i_r5m", "i_r15m", "i_r30m", "i_r60m", "i_vwapDev", "i_relVol",
-                          "i_rangePos", "i_vol5m", "i_gap", "i_sessFrac", "i_upStreak", "i_volTrend"];
+                          "i_rangePos", "i_vol5m", "i_gap", "i_sessFrac", "i_upStreak", "i_volTrend",
+                          "i_ofi", "i_vpin", "i_kyleLam", "i_amihud", "i_rollSpr", "i_jumpFrac",
+                          "i_acf1", "i_volOfVol", "i_uShape", "i_openFlag", "i_closeFlag", "i_vwapSlope"];
+// 표준정규 CDF 근사(로지스틱) — VPIN 의 대량 거래량 분류에 쓴다.
+function _ncdf(x) { return 1 / (1 + Math.exp(-1.702 * x)); }
 function stinIntradayFeat(mb, price, prevClose) {
   try {
     if (!mb || !Array.isArray(mb.closes)) return null;
@@ -20608,7 +20653,95 @@ function stinIntradayFeat(mb, price, prevClose) {
     for (let i = Math.max(0, n - 6); i < n; i++) v1 += _num(v[i], 0);
     for (let i = Math.max(0, n - 12); i < n - 6; i++) v2 += _num(v[i], 0);
     const volTrend = (v2 > 0) ? _clamp(v1 / v2, 0, 6) : 1;
-    const out = [r1, r3, r6, r12, vwapDev, relVol, rangePos, vol5, gapPct, sessFrac, streak / 8, volTrend];
+
+    // ── [V33.47] 미시구조 이론량 ──────────────────────────────────────────────
+    // 봉별 수익률·거래량 시계열(정규화) 준비
+    const rets = [], vols = [];
+    for (let i = 1; i < n; i++) {
+      const rr = rp(c[i], c[i - 1]);
+      if (!isFinite(rr)) continue;
+      rets.push(rr); vols.push(Math.max(_num(v[i], 0), 0));
+    }
+    const m = rets.length;
+    if (m < 8) return null;
+    const vMean = vols.reduce(function (a, b) { return a + b; }, 0) / m || 1;
+    const rMean = rets.reduce(function (a, b) { return a + b; }, 0) / m;
+    let rVar = 0; for (const x of rets) rVar += (x - rMean) * (x - rMean);
+    const rSd = Math.sqrt(rVar / m) || 1e-6;
+
+    // 12) OFI — 틱룰(Lee-Ready 대용): 부호부 거래량 합 / 총 거래량. [-1, 1]
+    let sv = 0, tv = 0;
+    for (let i = 0; i < m; i++) { const sg = rets[i] > 0 ? 1 : (rets[i] < 0 ? -1 : 0); sv += sg * vols[i]; tv += vols[i]; }
+    const ofi = tv > 0 ? _clamp(sv / tv, -1, 1) : 0;
+
+    // 13) VPIN — 대량 거래량 분류로 매수/매도량을 추정하고 그 불균형 비율을 낸다. [0, 1]
+    //   Φ(Δp/σ) 가 매수비중. 정보거래가 몰릴수록 한쪽으로 쏠려 1에 가까워진다.
+    //   ★척도는 표준편차가 아니라 MAD 기반 강건추정을 쓴다★ — 원 VPIN 은 거래량 버킷으로
+    //   이상치를 흡수하지만 우리는 고정 봉을 쓰므로, 점프 한 개가 σ 를 부풀려 나머지 모든 봉의
+    //   Φ 를 0.5 로 눌러버린다(검증에서 점프 시나리오 VPIN 0.08 로 오히려 급락하는 것을 확인).
+    const _absDev = rets.map(function (x) { return Math.abs(x - rMean); }).sort(function (a, b) { return a - b; });
+    const _mad = _absDev[Math.floor(_absDev.length / 2)] || 0;
+    const rScale = Math.max(_mad * 1.4826, rSd * 0.25, 1e-6);   // 1.4826 = 정규분포에서 MAD→σ 환산
+    let imb = 0;
+    for (let i = 0; i < m; i++) imb += vols[i] * Math.abs(2 * _ncdf(rets[i] / rScale) - 1);
+    const vpin = tv > 0 ? _clamp(imb / tv, 0, 1) : 0;
+
+    // 14) Kyle λ — 부호부 주문흐름에 대한 수익률 회귀기울기(원점 통과). 단위 유동성당 가격충격.
+    //   거래량을 평균으로 정규화해 종목 간 비교가 가능하게 만든다.
+    let num2 = 0, den2 = 0;
+    for (let i = 0; i < m; i++) {
+      const s = (rets[i] > 0 ? 1 : rets[i] < 0 ? -1 : 0) * (vols[i] / vMean);
+      num2 += rets[i] * s; den2 += s * s;
+    }
+    const kyleLam = den2 > 0 ? _clamp(num2 / den2, -5, 5) : 0;
+
+    // 15) Amihud 비유동성 — 정규화 거래량당 절대수익률. 크면 얇은 장(단타 불리).
+    let am = 0, amN = 0;
+    for (let i = 0; i < m; i++) { const vn = vols[i] / vMean; if (vn > 0.05) { am += Math.abs(rets[i]) / vn; amN++; } }
+    const amihud = amN > 0 ? _clamp(am / amN, 0, 10) : 0;
+
+    // 16) Roll 유효스프레드 — 2√(-Cov(r_t, r_{t-1})). 음의 자기공분산이 없으면 0(추정 불가).
+    let cov1 = 0, cN = 0;
+    for (let i = 1; i < m; i++) { cov1 += (rets[i] - rMean) * (rets[i - 1] - rMean); cN++; }
+    cov1 = cN > 0 ? cov1 / cN : 0;
+    const rollSpr = cov1 < 0 ? _clamp(2 * Math.sqrt(-cov1), 0, 5) : 0;
+
+    // 17) BNS 점프비율 — RV(실현변동) 대비 점프성분 비중. 점프장은 단타 손절이 무력화된다.
+    let rv = 0, bpv = 0;
+    for (let i = 0; i < m; i++) rv += rets[i] * rets[i];
+    for (let i = 1; i < m; i++) bpv += Math.abs(rets[i]) * Math.abs(rets[i - 1]);
+    bpv *= (Math.PI / 2);
+    const jumpFrac = rv > 0 ? _clamp((rv - bpv) / rv, 0, 1) : 0;
+
+    // 18) ρ1 — 1차 자기상관. 음수면 평균회귀 테이프, 양수면 모멘텀 테이프.
+    const acf1 = (rVar > 0 && cN > 0) ? _clamp(cov1 / (rVar / m), -1, 1) : 0;
+
+    // 19) 변동성의 변동성 — 전·후반 실현변동성 비율. 국면 불안정도.
+    const half = Math.floor(m / 2);
+    let s1 = 0, s2b = 0;
+    for (let i = 0; i < half; i++) s1 += rets[i] * rets[i];
+    for (let i = half; i < m; i++) s2b += rets[i] * rets[i];
+    const sd1 = Math.sqrt(s1 / Math.max(half, 1)), sd2 = Math.sqrt(s2b / Math.max(m - half, 1));
+    const volOfVol = sd1 > 1e-9 ? _clamp(sd2 / sd1, 0, 6) : 1;
+
+    // 20~22) 세션 시간 구조 — 장중 거래는 U자형(개장·마감 집중)이라 시간대가 곧 조건변수다.
+    const uShape = _clamp(Math.abs(sessFrac - 0.5) * 2, 0, 1);
+    const openFlag = sessFrac <= 0.08 ? 1 : 0;    // 개장 후 ~30분
+    const closeFlag = sessFrac >= 0.92 ? 1 : 0;   // 마감 전 ~30분
+
+    // 23) VWAP 기울기 — 장중 공정가 기준선 자체의 방향(가격-VWAP 이격과는 다른 정보).
+    let pv2 = 0, vv2 = 0;
+    const hp = Math.max(1, Math.floor(n / 2));
+    for (let i = 0; i < hp; i++) {
+      const tp = ((h[i] != null ? h[i] : c[i]) + (l[i] != null ? l[i] : c[i]) + c[i]) / 3;
+      const vo = _num(v[i], 0); if (tp > 0 && vo > 0) { pv2 += tp * vo; vv2 += vo; }
+    }
+    const vwapEarly = vv2 > 0 ? pv2 / vv2 : vwap;
+    const vwapSlope = _clamp(rp(vwap, vwapEarly), -20, 20);
+
+    const out = [r1, r3, r6, r12, vwapDev, relVol, rangePos, vol5, gapPct, sessFrac, streak / 8, volTrend,
+                 ofi, vpin, kyleLam, amihud, rollSpr, jumpFrac, acf1, volOfVol, uShape, openFlag, closeFlag, vwapSlope];
+    if (out.length !== STIN_IFEAT_N) return null;
     for (const x of out) if (!isFinite(x)) return null;
     return out;
   } catch (e) { return null; }
@@ -20644,24 +20777,56 @@ function stinObserve(pend, symbol, market, feat, price, ifeat) {
   if (Array.isArray(ifeat) && ifeat.length === STIN_IFEAT_N) {
     rec.ix = ifeat.map(function (v) { return +(_num(v, 0)).toFixed(4); });
     rec.fv = STIN_FEATVER;
+    // [V33.47] ★변동성 스케일 배리어(de Prado)★ — 고정 ±1.2% 는 종목마다 의미가 다르다.
+    //   저변동 종목은 60분 안에 1.2% 를 아예 못 가서 라벨이 전부 '실패'가 되고,
+    //   고변동 종목은 5분 만에 닿아 라벨이 사실상 동전던지기가 된다. 즉 같은 라벨이
+    //   종목마다 다른 사건을 뜻해 모델이 배울 수 없는 잡음이 된다.
+    //   → 배리어를 그 종목의 장중 실현변동성에 비례시킨다(지평 12봉 → σ×√12).
+    const _sig = _num(ifeat[7], 0) * Math.sqrt(STIN.horizonBars);   // ifeat[7] = i_vol5m(%)
+    rec.b = +_clamp(1.5 * _sig, 0.4, 3.0).toFixed(3);
   }
+  rec.hit = 0;    // 0=미접촉 1=상단(TP) -1=하단(SL) — 경로상 '먼저 닿은' 배리어를 기록
   pend.items.push(rec);
   return true;
 }
 // 라벨 — 관측 후 지평이 지난 항목을 현재가로 채점해 done 으로 옮긴다.
+// [V33.47] ★삼중배리어 '최초 접촉' 라벨링(de Prado)★
+//   종전엔 지평이 끝난 '그 순간의 가격'만 봤다. 그래서 관측 10분 뒤 +1.5% 를 찍고
+//   60분 뒤 -0.8% 로 끝난 경로가 '실패(0)'로 라벨됐다 — 실제 단타라면 +1.5% 에서
+//   익절해 성공한 거래인데도. 즉 라벨이 전략의 실제 청산 방식과 어긋나 있었고,
+//   모델은 '있지도 않은 매매규칙'을 학습하고 있었다.
+//   → 매 사이클 현재가로 배리어 접촉을 추적해 '먼저 닿은 쪽'을 라벨로 삼는다.
+//     상단·하단 어느 것도 안 닿으면 수직배리어(시간만료) → 종료 수익률 부호.
 function stinLabel(pend, priceOf) {
   if (!pend) return 0;
   const now = Date.now(), horizonMs = STIN.horizonBars * 5 * 60000;
   const keep = [];
   let labeled = 0;
   for (const it of pend.items) {
-    if (now - it.t < horizonMs) { keep.push(it); continue; }
     const px = priceOf(it.s);
-    if (!(px > 0)) { if (now - it.t < horizonMs * 3) keep.push(it); continue; }   // 가격 미확보면 잠시 더 보관
-    const ret = (px / it.p - 1) * 100;
-    const y = ret >= STIN.tpPct ? 1 : (ret <= -STIN.stopPct ? 0 : (ret > 0 ? 1 : 0));
-    const d = { ts: it.t, x: it.x, y: y, pnl: +ret.toFixed(3), s: it.s, m: it.m };
-    if (it.ix) { d.ix = it.ix; d.fv = it.fv; }   // [V33.46] 장중 피처 동반 저장
+    // ── 경로 추적: 아직 어느 배리어에도 안 닿았다면 이번 가격으로 확인 ──
+    if (px > 0 && !it.hit && it.p > 0) {
+      const bar = (typeof it.b === "number" && it.b > 0) ? it.b : STIN.tpPct;
+      const r = (px / it.p - 1) * 100;
+      if (r >= bar) { it.hit = 1; it.hp = +r.toFixed(3); }
+      else if (r <= -bar) { it.hit = -1; it.hp = +r.toFixed(3); }
+    }
+    // 배리어를 이미 쳤으면 시간이 남았어도 그 시점에 매매가 끝난 것 — 즉시 라벨 확정.
+    const expired = (now - it.t) >= horizonMs;
+    if (!it.hit && !expired) { keep.push(it); continue; }
+    let ret, y;
+    if (it.hit) {
+      ret = (typeof it.hp === "number") ? it.hp : 0;
+      y = it.hit > 0 ? 1 : 0;
+    } else {
+      if (!(px > 0)) { if (now - it.t < horizonMs * 3) keep.push(it); continue; }   // 가격 미확보면 잠시 더 보관
+      ret = (px / it.p - 1) * 100;
+      y = ret > 0 ? 1 : 0;               // 수직배리어(시간만료) — 방향만 본다
+    }
+    const d = { ts: it.t, x: it.x, y: y, pnl: +ret.toFixed(3), s: it.s, m: it.m,
+                bar: it.hit ? (it.hit > 0 ? "tp" : "sl") : "time",   // 어느 배리어로 끝났는지(학습 가중용)
+                hm: (now - it.t) / 60000 | 0 };                       // 결착까지 걸린 분(빠를수록 강한 신호)
+    if (it.ix) { d.ix = it.ix; d.fv = it.fv; d.b = it.b; }   // [V33.46/47] 장중 피처 + 배리어폭
     pend.done.push(d);
     labeled++;
   }

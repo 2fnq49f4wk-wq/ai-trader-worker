@@ -825,7 +825,7 @@ def _train_and_upload_scalp(BASE, KEY, HDR, featver):
     #   종전엔 x(일봉 피처 65차원)만 썼는데 라벨은 60분 뒤 수익이었다 — 하루짜리 정보로
     #   한 시간 뒤를 맞히라는 구조라 스윙 모델과 입력이 같았고, 단타로서 배울 게 거의 없었다.
     #   ix 스키마 버전(fv)이 서버와 다른 표본은 섞지 않는다(피처 인덱스 어긋남 방지).
-    days, X, Y, TS, PNL = 14, [], [], [], []
+    days, X, Y, TS, PNL, BAR, HM = 14, [], [], [], [], [], []
     ifeatver, ifeatn, ifeatnames = None, 0, []
     skipped_old = 0
     for i in range(days):
@@ -851,6 +851,8 @@ def _train_and_upload_scalp(BASE, KEY, HDR, featver):
                 Y.append(1 if sm.get("y") else 0)
                 TS.append(sm.get("ts", 0))
                 PNL.append(float(sm.get("pnl") or 0.0))
+                BAR.append(sm.get("bar") or "time")            # tp / sl / time — 어느 배리어로 끝났나
+                HM.append(float(sm.get("hm") or 60.0))         # 결착까지 걸린 분
         except Exception as e:
             print(f"  장중표본 {d} 수집 실패: {e}")
     N = len(Y)
@@ -862,9 +864,13 @@ def _train_and_upload_scalp(BASE, KEY, HDR, featver):
 
     X = np.array(X, dtype=np.float64); Y = np.array(Y, dtype=int); TS = np.array(TS)
     PNL = np.array(PNL, dtype=np.float64)
+    BAR = np.array(BAR); HM = np.array(HM, dtype=np.float64)
     D = X.shape[1]
+    bar_mix = {b: int((BAR == b).sum()) for b in ("tp", "sl", "time")}
+    print(f"   배리어 결착: TP {bar_mix['tp']} / SL {bar_mix['sl']} / 시간만료 {bar_mix['time']}")
     order = np.argsort(TS)
     Xs, Ys, TSs, PNLs = X[order], Y[order], TS[order], PNL[order]
+    BARs, HMs = BAR[order], HM[order]
     nval = max(300, int(N * 0.25))
     Xva, Yva = Xs[-nval:], Ys[-nval:]
     # [V33.46] ★엠바고(purge)★ — 라벨 지평이 60분이라, 검증 시작 직전 60분 안의 학습표본은
@@ -873,6 +879,7 @@ def _train_and_upload_scalp(BASE, KEY, HDR, featver):
     va_start = TSs[-nval]
     tr_mask = TSs[:-nval] < (va_start - horizon_ms)
     Xtr, Ytr, PNLtr = Xs[:-nval][tr_mask], Ys[:-nval][tr_mask], PNLs[:-nval][tr_mask]
+    TStr, BARtr, HMtr = TSs[:-nval][tr_mask], BARs[:-nval][tr_mask], HMs[:-nval][tr_mask]
     print(f"   엠바고 적용 — 학습 {len(Ytr)}건(제외 {(~tr_mask).sum()}건) / 검증 {nval}건")
     if len(Ytr) < 800:
         print(f"   엠바고 후 학습표본 부족({len(Ytr)}/800) — 생략."); return
@@ -883,6 +890,37 @@ def _train_and_upload_scalp(BASE, KEY, HDR, featver):
     # [V33.46] ★수익크기 가중★ — +0.05% 로 끝난 표본과 +3% 로 끝난 표본을 같은 무게로
     #   배우면 모델이 '거의 안 움직인 다수'에 맞춰진다. 단타에서 중요한 건 크게 움직인 쪽이다.
     Wtr = 1.0 + np.clip(np.abs(PNLtr), 0, 3.0) / 1.5     # 가중 [1.0, 3.0]
+
+    # [V33.47] ★평균 고유도 가중(de Prado)★ — 라벨 구간이 겹치는 표본은 서로 독립이 아니다.
+    #   같은 시각대에 200종목을 동시 관측하면 그들은 같은 시장 움직임을 라벨로 공유한다.
+    #   그대로 학습하면 '표본 N건'이 실제로는 훨씬 적은 정보량인데도 모델이 과신하게 된다.
+    #   각 표본의 라벨구간과 동시에 살아있던 표본 수(concurrency)의 역수를 가중으로 준다.
+    try:
+        ends = TStr + horizon_ms
+        conc = np.ones(len(TStr), dtype=np.float64)
+        srt = np.argsort(TStr)
+        ts_sorted = TStr[srt]
+        for i in range(len(TStr)):
+            # [t_i, t_i+H) 와 겹치는 표본 수 = 시작이 그 구간 안에 있는 표본 수(양방향 근사)
+            lo = np.searchsorted(ts_sorted, TStr[i] - horizon_ms, side="left")
+            hi = np.searchsorted(ts_sorted, ends[i], side="right")
+            conc[i] = max(1.0, float(hi - lo))
+        uniq = 1.0 / conc
+        uniq = uniq / uniq.mean()                 # 평균 1로 정규화 — 전체 스케일은 유지
+        Wtr = Wtr * np.clip(uniq, 0.25, 4.0)
+        print(f"   고유도 가중 — 평균 동시성 {conc.mean():.1f}건 (유효표본 ≈ {len(TStr)/max(conc.mean(),1):.0f}건)")
+    except Exception as e:
+        print(f"   고유도 가중 생략: {e}")
+
+    # [V33.47] 배리어 결착 가중 — 배리어를 실제로 '친' 표본(TP/SL)이 시간만료보다 정보가 많다.
+    #   시간만료는 "60분 동안 아무 일도 없었다"는 뜻이라 방향 라벨의 신뢰도가 낮다.
+    #   또 빨리 결착될수록 신호가 강했다는 뜻이므로 소요시간의 역수로 가중을 더한다.
+    try:
+        hit = (BARtr != "time").astype(np.float64)
+        speed = np.clip(60.0 / np.clip(HMtr, 5.0, 60.0), 1.0, 3.0)   # 빠를수록 최대 3배
+        Wtr = Wtr * (0.6 + 0.4 * hit) * (1.0 + 0.3 * (speed - 1.0))
+    except Exception as e:
+        print(f"   배리어 가중 생략: {e}")
 
     import lightgbm as lgb
     # 피처가 65 → 77 로 늘고 정보량이 실제로 커졌으므로 용량도 함께 키운다(과적합은 조기중단으로 통제).
