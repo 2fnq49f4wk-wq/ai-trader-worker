@@ -2732,7 +2732,12 @@ const AI_PARAMS = {
     maxAmihud: 3.0,         // Amihud 비유동성 상한(정규화 거래량당 절대수익률)
     maxSpreadFrac: 0.5,     // Roll 유효스프레드 / 기대이동폭 상한 — 넘으면 비용이 알파를 먹는다
     maxJumpFrac: 0.6,       // BNS 점프비중 상한 — 점프장은 손절가가 건너뛰어진다
-    midSessionThreshAdd: 0.05  // 한산한 장중반(U자 저점)에서 문턱 가산
+    midSessionThreshAdd: 0.05, // 한산한 장중반(U자 저점)에서 문턱 가산
+    // [V33.51] 분봉 차트 기술적 판단 게이트 — 사람이 화면에서 즉시 거르는 자리를 명시화.
+    resHeadroomMult: 0.8,   // 상단 저항까지 여유 < 기대이동폭×이 값 → 진입 금지(먹을 게 없다)
+    taRsiMax: 0.85,         // 분봉 RSI 과열 상한(0~1 정규화)
+    taAdxMin: 0.3,          // ADX 최소 추세강도 — 미만이면 배리어까지 갈 힘이 없다
+    chartBonus: 0.04        // 정배열+골든전환+RSI상승+눌림 조합이면 문턱 완화
   },
 
   aiPrimary: {
@@ -6961,11 +6966,13 @@ async function fetchMinuteBars(symbol, opts) {
     let rows;
     try { rows = await r.json(); } catch(e) { throw new Error("naver candle/minute parse"); }
     if (!Array.isArray(rows)) throw new Error("naver candle/minute bad format");
-    const closes = [], highs = [], lows = [], volumes = [], times = [];
+    // [V33.51] opens 추가 — 분봉 캔들 형태(몸통/꼬리) 판정에 필요. 종전엔 응답에 있어도 버렸다.
+    const closes = [], highs = [], lows = [], volumes = [], times = [], opens = [];
     for (const row of rows) {
       const c = Number(row.currentPrice != null ? row.currentPrice : row.closePrice);
       if (!(c > 0)) continue;
       const h = Number(row.highPrice), l = Number(row.lowPrice);
+      const op = Number(row.openPrice);
       const v = Number(row.volume != null ? row.volume : row.accumulatedTradingVolume);
       const dt = String(row.localDateTime || row.localDate || "");
       let ts = 0;
@@ -6979,6 +6986,7 @@ async function fetchMinuteBars(symbol, opts) {
       lows.push(l > 0 ? l : c);
       volumes.push(v >= 0 ? v : 0);
       times.push(ts);
+      opens.push(op > 0 ? op : c);
     }
     if (closes.length === 0) throw new Error("naver candle/minute empty for " + code);
     const price = closes[closes.length - 1];
@@ -7005,7 +7013,7 @@ async function fetchMinuteBars(symbol, opts) {
     return {
       symbol: symbol, interval: "5m", price: price, vwap: vwap, vwapSlope: vwapSlope,
       recentMom: recentMom, dayHigh: Math.max.apply(null, highs), dayLow: Math.min.apply(null, lows),
-      closes: closes, highs: highs, lows: lows, volumes: volumes, times: times
+      closes: closes, highs: highs, lows: lows, volumes: volumes, times: times, opens: opens
     };
   }
 
@@ -7019,8 +7027,9 @@ async function fetchMinuteBars(symbol, opts) {
   const meta = result.meta || {};
   const q = (result.indicators && result.indicators.quote && result.indicators.quote[0]) || {};
   const tarr = result.timestamp || [];
-  const rc = q.close || [], rh = q.high || [], rl = q.low || [], rv = q.volume || [];
-  const closes = [], highs = [], lows = [], volumes = [], times = [];
+  const rc = q.close || [], rh = q.high || [], rl = q.low || [], rv = q.volume || [], ro = q.open || [];
+  // [V33.51] opens 추가 — 분봉 캔들 형태(몸통/꼬리) 판정에 필요.
+  const closes = [], highs = [], lows = [], volumes = [], times = [], opens = [];
   for (let i = 0; i < rc.length; i++) {
     const c = rc[i];
     if (typeof c !== "number" || isNaN(c) || c <= 0) continue;
@@ -7029,6 +7038,7 @@ async function fetchMinuteBars(symbol, opts) {
     lows.push((typeof rl[i] === "number" && rl[i] > 0) ? rl[i] : c);
     volumes.push((typeof rv[i] === "number" && rv[i] > 0) ? rv[i] : 0);
     times.push(tarr[i] || 0);
+    opens.push((typeof ro[i] === "number" && ro[i] > 0) ? ro[i] : c);
   }
   if (closes.length === 0) throw new Error("no minute close");
   const price = (typeof meta.regularMarketPrice === "number" && meta.regularMarketPrice > 0)
@@ -7060,7 +7070,7 @@ async function fetchMinuteBars(symbol, opts) {
   return {
     symbol: symbol, interval: interval, price: price, vwap: vwap, vwapSlope: vwapSlope,
     recentMom: recentMom, dayHigh: dayHigh, dayLow: dayLow,
-    closes: closes, highs: highs, lows: lows, volumes: volumes, times: times
+    closes: closes, highs: highs, lows: lows, volumes: volumes, times: times, opens: opens
   };
 }
 
@@ -20768,6 +20778,38 @@ async function mlScalpDecide(DB, featVec, opts) {
     // (4) 세션 시간 — 장중 거래는 U자형이라 한산한 중반부는 같은 확률이어도 실현이 나쁘다.
     //     문턱을 올려 '개장·마감 근처'로 자연히 집중시킨다(하드 차단이 아니라 선별 강화).
     if (_u != null && _u < 0.35) thr += _num(sc.midSessionThreshAdd, 0.05);
+
+    // [V33.51] ★분봉 차트 기술적 판단 게이트★ (사용자 지시: 분봉으로 그래프 보고 진입)
+    //   모델 확률이 높아도 '차트가 살 자리가 아닌' 경우가 있다. 사람이 화면에서 즉시 거르는
+    //   상황들 — 저항 코앞, 역배열+데드크로스, 약세 다이버전스, 과열 꼭지 — 을 명시적으로 본다.
+    //   T0 = 분봉 기술지표 블록 시작 인덱스.
+    const T0 = D0 + STIN_IFEAT_N - STIN_TA_N;
+    const tAt = function (k) { return (featVec.length === D0 + STIN_IFEAT_N) ? _num(featVec[T0 + k], 0) : null; };
+    const _rsi = tAt(0), _rsiSl = tAt(1), _mHist = tAt(2), _mX = tAt(3), _stoch = tAt(4),
+          _pctB = tAt(5), _adx = tAt(7), _diD = tAt(8), _ema = tAt(9), _div = tAt(10), _res = tAt(11), _cdl = tAt(13);
+    const chartVeto = [];
+    if (_rsi != null) {
+      // (a) 역배열 + MACD 음전 + RSI 하락 — 셋이 동시면 하락 추세 한복판이다(칼날잡기 금지)
+      if (_ema < -0.15 && _mHist < 0 && _rsiSl < 0) chartVeto.push("역배열·하락추세");
+      // (b) 약세 다이버전스 — 가격은 올라가는데 RSI 가 못 따라온다(꼭지 신호)
+      if (_div <= -0.35) chartVeto.push("약세다이버전스");
+      // (c) 저항 코앞 — 상단 저항까지 여유가 배리어보다 좁으면 먹을 게 없다
+      if (_res != null && _res >= 0 && _vol5 != null) {
+        const need = Math.abs(_vol5) * Math.sqrt(STIN.horizonBars) * _num(sc.resHeadroomMult, 0.8);
+        if (need > 0 && _res < need) chartVeto.push("저항근접" + _res.toFixed(1) + "%");
+      }
+      // (d) 과열 꼭지 — 분봉 RSI 극단 + 볼린저 상단 밖 + 캔들 윗꼬리(매도 압력)
+      if (_rsi >= _num(sc.taRsiMax, 0.85) && _pctB > 1.0 && _cdl < 0) chartVeto.push("과열꼭지");
+      // (e) 방향 없는 무추세 — ADX 바닥이면 배리어까지 갈 힘 자체가 없다(시간만료 라벨의 원천)
+      if (_adx != null && _adx < _num(sc.taAdxMin, 0.3) && Math.abs(_diD) < 0.15) chartVeto.push("무추세");
+    }
+    if (chartVeto.length) {
+      return { p: +p.toFixed(4), pass: false, thr: +thr.toFixed(3), veto: chartVeto.join("·"), chart: true,
+               valAccLB: L.trust.valAccLB, n: L.model.n, horizonBars: L.model.horizonBars };
+    }
+    // 차트가 확실히 좋은 조합이면 문턱을 소폭 낮춘다 — 확률만으로 못 잡는 '모양'의 가치를 인정.
+    //   (정배열 + MACD 골든전환 + RSI 상승 + 스토캐스틱 중단 이하 = 눌림 후 재출발 형태)
+    if (_ema > 0.1 && _mX > 0 && _rsiSl > 0 && _stoch < 0.75) thr -= _num(sc.chartBonus, 0.04);
     return { p: +p.toFixed(4), pass: p >= thr, thr: +thr.toFixed(3),
              valAccLB: L.trust.valAccLB, n: L.model.n, horizonBars: L.model.horizonBars };
   } catch (e) { return null; }
@@ -20808,12 +20850,109 @@ function _stinDay() { const d = new Date(Date.now() + 9 * 3600000); return d.toI
 //     · Roll 스프레드          — 수익률 1차 자기공분산에서 유효 스프레드를 역산(비용의 하한).
 //     · BNS 점프비율           — 실현변동성 vs 바이파워변동. 연속변동과 '점프'를 분리.
 //     · ρ1(1차 자기상관)       — 지금 테이프가 평균회귀인지 모멘텀인지. 단타 로직의 모드 선택 그 자체.
-const STIN_IFEAT_N = 24;
-const STIN_FEATVER = 2;                                   // 장중 피처 스키마 버전
+// [V33.51] ★분봉 차트 기술적 판단★ — 미시구조(주문흐름·유동성)와는 또 다른 축.
+//   미시구조는 "지금 시장이 어떤 상태인가"를 재고, 기술적 지표는 "차트 모양이 살 자리인가"를 본다.
+//   단타 트레이더가 실제로 화면에서 보는 것이 바로 이 분봉 지표들이다 — RSI·MACD·스토캐스틱·
+//   볼린저·ADX·EMA 정배열·다이버전스·캔들형태·지지저항. 전부 5분봉에 대해 계산한다.
+//   ※ 일봉으로 같은 지표를 보는 추세모델과 '지표 이름'은 같아도 대상 시계열이 완전히 다르다.
+//     일봉 RSI 는 며칠의 과열을, 분봉 RSI 는 몇십 분의 과열을 말한다 — 단타에 쓸 수 있는 건 후자다.
+const STIN_TA_N = 14;
+const STIN_IFEAT_N = 38;                                  // 미시구조 24 + 분봉 기술 14
+const STIN_FEATVER = 3;                                   // 장중 피처 스키마 버전
 const STIN_IFEAT_NAMES = ["i_r5m", "i_r15m", "i_r30m", "i_r60m", "i_vwapDev", "i_relVol",
                           "i_rangePos", "i_vol5m", "i_gap", "i_sessFrac", "i_upStreak", "i_volTrend",
                           "i_ofi", "i_vpin", "i_kyleLam", "i_amihud", "i_rollSpr", "i_jumpFrac",
-                          "i_acf1", "i_volOfVol", "i_uShape", "i_openFlag", "i_closeFlag", "i_vwapSlope"];
+                          "i_acf1", "i_volOfVol", "i_uShape", "i_openFlag", "i_closeFlag", "i_vwapSlope",
+                          // ── 분봉 기술적 지표(차트 판단) ──
+                          "t_rsi", "t_rsiSlope", "t_macdHist", "t_macdCross", "t_stochK", "t_bbPctB",
+                          "t_bbWidth", "t_adx", "t_diDiff", "t_emaGap", "t_diverg", "t_resDist",
+                          "t_supDist", "t_candle"];
+// 분봉 기술적 지표 산출 — 전부 5분봉 배열에 대해 계산한다(일봉 지표 함수를 그대로 재사용).
+function stinChartFeat(mb, price) {
+  try {
+    if (!mb || !Array.isArray(mb.closes)) return null;
+    const c = mb.closes, h = mb.highs || [], l = mb.lows || [], v = mb.volumes || [];
+    const n = c.length;
+    if (n < 35 || !(price > 0)) return null;   // MACD(26+9)·ADX(14×2+1) 최소 길이
+    const px = price;
+    // 1) 분봉 RSI(14) — 몇십 분 단위 과열/침체
+    const rsi = getRSI(c, 14);
+    if (rsi == null) return null;
+    // 2) RSI 기울기 — 지금 식는 중인가 달아오르는 중인가(수준보다 방향이 더 중요하다)
+    const rsiPrev = getRSI(c.slice(0, n - 6), 14);
+    const rsiSlope = (rsiPrev != null) ? _clamp((rsi - rsiPrev) / 20, -2, 2) : 0;
+    // 3~4) MACD 히스토그램(가격 정규화) + 교차 전환
+    const mk = getMACD(c, 12, 26, 9);
+    const macdHist = (mk && px > 0) ? _clamp(mk.hist / px * 100, -5, 5) : 0;
+    const mkPrev = getMACD(c.slice(0, n - 1), 12, 26, 9);
+    let macdCross = 0;
+    if (mk && mkPrev) {
+      if (mkPrev.hist <= 0 && mk.hist > 0) macdCross = 1;        // 골든(상향 전환)
+      else if (mkPrev.hist >= 0 && mk.hist < 0) macdCross = -1;  // 데드(하향 전환)
+    }
+    // 5) 스토캐스틱 %K(14) — 최근 구간 내 현재가 위치
+    let hh = -Infinity, ll = Infinity;
+    for (let i = Math.max(0, n - 14); i < n; i++) {
+      const hi = (h[i] != null ? h[i] : c[i]), lo = (l[i] != null ? l[i] : c[i]);
+      if (hi > hh) hh = hi; if (lo < ll) ll = lo;
+    }
+    const stochK = (hh > ll) ? _clamp((px - ll) / (hh - ll), 0, 1) : 0.5;
+    // 6~7) 볼린저 %B(밴드 내 위치) + 밴드폭(스퀴즈=변동성 확장 직전)
+    const bb = getBollingerBands(c, 20, 2.0);
+    const bbPctB = (bb && bb.upper > bb.lower) ? _clamp((px - bb.lower) / (bb.upper - bb.lower), -0.5, 1.5) : 0.5;
+    const bbWidth = (bb && bb.mid > 0) ? _clamp((bb.upper - bb.lower) / bb.mid * 100, 0, 20) : 0;
+    // 8~9) ADX(추세 강도) + DI 차이(방향)
+    //   ※ getADX 는 '숫자'만 돌려준다(객체 아님) — +DI/−DI 는 여기서 직접 Wilder 평활로 낸다.
+    //     (객체인 줄 알고 a.plusDI 를 읽으면 항상 undefined 라 방향 피처가 통째로 죽는다)
+    let adx = 0, diDiff = 0;
+    try {
+      const hh2 = (h.length === n) ? h : c, ll2 = (l.length === n) ? l : c;
+      const a = getADX(hh2, ll2, c, 14);
+      if (a != null && isFinite(a)) adx = _clamp(a / 50, 0, 2);
+      const P = 14;
+      if (n >= P + 2) {
+        let trS = 0, pS = 0, mS = 0;
+        for (let i = n - P; i < n; i++) {
+          const tr = Math.max(hh2[i] - ll2[i], Math.abs(hh2[i] - c[i - 1]), Math.abs(ll2[i] - c[i - 1]));
+          const up = hh2[i] - hh2[i - 1], dn = ll2[i - 1] - ll2[i];
+          trS += (isFinite(tr) ? tr : 0);
+          pS += (up > dn && up > 0) ? up : 0;
+          mS += (dn > up && dn > 0) ? dn : 0;
+        }
+        if (trS > 0) {
+          const pDI = 100 * pS / trS, mDI = 100 * mS / trS;
+          diDiff = _clamp((pDI - mDI) / 40, -2, 2);
+        }
+      }
+    } catch (e) {}
+    // 10) EMA9 vs EMA21 이격(%) — 단기 정배열/역배열 강도
+    const e9 = getMA(c, 9), e21 = getMA(c, 21);
+    const emaGap = (e9 != null && e21 != null && e21 > 0) ? _clamp((e9 - e21) / e21 * 100, -10, 10) : 0;
+    // 11) RSI 다이버전스 — 가격은 고점인데 RSI 는 못 따라오는(또는 그 반대) 반전 신호
+    const diverg = _clamp(_rsiDivergence(c, 12), -1, 1);
+    // 12~13) 지지·저항까지 거리(%) — 저항 코앞에서 사면 곧바로 막힌다
+    let rHi = -Infinity, sLo = Infinity;
+    for (let i = Math.max(0, n - 60); i < n; i++) {
+      const hi = (h[i] != null ? h[i] : c[i]), lo = (l[i] != null ? l[i] : c[i]);
+      if (hi > rHi) rHi = hi; if (lo < sLo) sLo = lo;
+    }
+    const resDist = (rHi > 0) ? _clamp((rHi - px) / px * 100, -10, 10) : 0;
+    const supDist = (sLo > 0) ? _clamp((px - sLo) / px * 100, -10, 10) : 0;
+    // 14) 캔들 형태 — 최근 봉의 몸통/전체범위 비율에 방향 부호(장대양봉 +1 … 긴윗꼬리 -1)
+    let candle = 0;
+    try {
+      const o = (mb.opens && mb.opens[n - 1] != null) ? mb.opens[n - 1] : c[n - 2];
+      const hi = (h[n - 1] != null ? h[n - 1] : c[n - 1]), lo = (l[n - 1] != null ? l[n - 1] : c[n - 1]);
+      const rng = hi - lo;
+      if (rng > 0 && o > 0) candle = _clamp((c[n - 1] - o) / rng, -1, 1);
+    } catch (e) {}
+    const out = [_clamp(rsi / 100, 0, 1), rsiSlope, macdHist, macdCross, stochK, bbPctB,
+                 bbWidth, adx, diDiff, emaGap, diverg, resDist, supDist, candle];
+    if (out.length !== STIN_TA_N) return null;
+    for (const x of out) if (!isFinite(x)) return null;
+    return out;
+  } catch (e) { return null; }
+}
 // 표준정규 CDF 근사(로지스틱) — VPIN 의 대량 거래량 분류에 쓴다.
 function _ncdf(x) { return 1 / (1 + Math.exp(-1.702 * x)); }
 function stinIntradayFeat(mb, price, prevClose) {
@@ -20947,8 +21086,12 @@ function stinIntradayFeat(mb, price, prevClose) {
     const vwapEarly = vv2 > 0 ? pv2 / vv2 : vwap;
     const vwapSlope = _clamp(rp(vwap, vwapEarly), -20, 20);
 
+    // [V33.51] 분봉 차트 기술적 판단 블록을 뒤에 이어붙인다(순서 고정 — 학습/추론 정합).
+    const ta = stinChartFeat(mb, price);
+    if (!ta) return null;   // 차트 지표를 못 내면 단타 판단 자체를 하지 않는다(불완전 벡터 금지)
     const out = [r1, r3, r6, r12, vwapDev, relVol, rangePos, vol5, gapPct, sessFrac, streak / 8, volTrend,
-                 ofi, vpin, kyleLam, amihud, rollSpr, jumpFrac, acf1, volOfVol, uShape, openFlag, closeFlag, vwapSlope];
+                 ofi, vpin, kyleLam, amihud, rollSpr, jumpFrac, acf1, volOfVol, uShape, openFlag, closeFlag, vwapSlope]
+                .concat(ta);
     if (out.length !== STIN_IFEAT_N) return null;
     for (const x of out) if (!isFinite(x)) return null;
     return out;
