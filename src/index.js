@@ -2474,6 +2474,10 @@ async function applySignalTypeWeights(DB, cfg) {
 //   horizon/lookback 등 코드가 직접 읽는 항목은 이 객체가 단일 출처(single source)다.
 //   ※ visionUp(차트 비전AI 상승신호)은 V12에서 모델 입력 피처에서 제거됨.
 // ============================================================================
+// [V33.55] 빌드 버전 — SWR L2 캐시 키에 섞어 '배포 = 판단 캐시 자동 무효화'를 만든다.
+//   판정 로직을 고쳐도 옛 캐시가 최대 1시간 재배포되던 문제를 구조적으로 없앤다.
+const _BUILD_VER = "V33.55";
+
 const AI_PARAMS = {
   // ── OHLCV 타임프레임 ── 시가/고가/저가/종가/거래량을 어떤 봉 주기로 볼지.
   //   진입필터 AI(LUXML/DNN)는 일봉(D1) 기준으로 학습·추론. 분봉(5m/1m)은 스캘프 실행 전용.
@@ -15624,7 +15628,11 @@ async function handleRequest(request, env, ctx) {
   const swrJson = async function (key, freshMs, staleMs, build) {
     const store = (globalThis.__swr || (globalThis.__swr = {}));
     const jhdr = Object.assign({ "content-type": "application/json" }, cors);
-    const ekey = new Request("https://swr-cache.internal/" + encodeURIComponent(key));
+    // [V33.55] ★배포하면 판단이 즉시 갱신되게★ L1(아이솔레이트 메모리)은 재배포로 사라지지만
+    //   L2(caches.default)는 남아, 판정 로직을 고쳐 배포해도 최대 staleMs(1시간) 동안 옛 판단이
+    //   그대로 재배포됐다. 국면 분류를 고쳐도 화면이 안 바뀌던 원인.
+    //   → 캐시 키에 빌드 버전을 섞는다. 배포 = 새 키 = 자동 무효화(수동 조작 불필요).
+    const ekey = new Request("https://swr-cache.internal/" + _BUILD_VER + "/" + encodeURIComponent(key));
     const put = function (str, ts) {
       try {
         return caches.default.put(ekey, new Response(str, { headers: {
@@ -30362,7 +30370,7 @@ export default {
               if (_ir) await log(env.DB, "INFO", null, _ir);
             }
           } catch (e) {}
-          const _PIPE_VER = "V33.48-scalp-kr";   // 배포 시 파이프라인 1회 강제 재실행(신규 스키마 반영)
+          const _PIPE_VER = "V33.55-phase-realtime";   // 배포 시 파이프라인 1회 강제 재실행(국면·판단 즉시 재산출)   // 배포 시 파이프라인 1회 강제 재실행(신규 스키마 반영)
           try {
             const _pv = await getState(env.DB, "ai_pipeline_ver", null);
             if (_pv !== _PIPE_VER) {
