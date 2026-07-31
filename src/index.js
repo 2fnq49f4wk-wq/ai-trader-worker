@@ -2476,7 +2476,7 @@ async function applySignalTypeWeights(DB, cfg) {
 // ============================================================================
 // [V33.55] 빌드 버전 — SWR L2 캐시 키에 섞어 '배포 = 판단 캐시 자동 무효화'를 만든다.
 //   판정 로직을 고쳐도 옛 캐시가 최대 1시간 재배포되던 문제를 구조적으로 없앤다.
-const _BUILD_VER = "V33.55";
+const _BUILD_VER = "V33.57";
 
 const AI_PARAMS = {
   // ── OHLCV 타임프레임 ── 시가/고가/저가/종가/거래량을 어떤 봉 주기로 볼지.
@@ -2747,6 +2747,8 @@ const AI_PARAMS = {
     taRsiMax: 0.85,         // 분봉 RSI 과열 상한(0~1 정규화)
     taAdxMin: 0.3,          // ADX 최소 추세강도 — 미만이면 배리어까지 갈 힘이 없다
     chartBonus: 0.04,       // 지표 합류가 강하면 문턱 완화(최대치)
+    // [V33.57] 차트 합류를 확률에 반영하는 강도(로그오즈 가산). 0 이면 종전처럼 문턱만 조정.
+    chartWeight: 0.5,
     // [V33.52] 다지표 합류 최소 순표차 — 매수표 − 매도표가 이 값 이상이어야 진입.
     //   MA·볼린저·거래량·RSI·MACD·스토캐스틱·ADX·다이버전스·주문흐름·지지저항을 한꺼번에 표로 본다.
     //   [V33.53] 지표를 늘렸으므로(최대 11표) 최소 순표차도 2 → 3 으로 함께 올린다.
@@ -15849,10 +15851,26 @@ async function handleRequest(request, env, ctx) {
         }
         // [V32.50] 부스팅 3종(XGB/LGB/Cat)도 위원회 상태에 포함 — trusted=가동, 학습됐지만 미신뢰=섀도우
         let xgb = null, lgb = null, cat = null;
-        const S1 = await getStates(env.DB, ["xgb_trust", "lgb_trust", "cat_trust", "ai_selfreview", "ai_picks:scan"]);
+        // [V33.57] ★부스팅 3종이 화면에서 '빈칸' 또는 아예 안 뜨던 원인★
+        //   /api/boost-import 는 승격(activate=1 + self검증 + trusted)일 때만 <name>_trust 에 쓰고,
+        //   그 외에는 <name>_trust_ext(섀도우)에 저장한다. 그런데 화면은 _trust 만 읽고 있었다.
+        //   → 섀도우로만 존재하는 모델(대개 CatBoost)은 상태가 통째로 null → "안 뜬다".
+        //   승격본을 우선 보고, 없으면 섀도우본을 읽어 '섀도우'로 표시한다(정확도도 함께).
+        const S1 = await getStates(env.DB, ["xgb_trust", "lgb_trust", "cat_trust",
+          "xgb_trust_ext", "lgb_trust_ext", "cat_trust_ext", "ai_selfreview", "ai_picks:scan"]);
         try {
-          const _st = function (t) { return t ? { trusted: !!t.trusted, shadow: !!(t && !t.trusted), accLB: (t.gbdtAccLB || t.gbdtAcc || null) } : null; };
-          xgb = _st(S1["xgb_trust"]); lgb = _st(S1["lgb_trust"]); cat = _st(S1["cat_trust"]);
+          const _st = function (nm) {
+            const live = S1[nm + "_trust"], ext = S1[nm + "_trust_ext"];
+            const t = live || ext;
+            if (!t) return null;
+            const acc = (typeof t.gbdtAccLB === "number") ? t.gbdtAccLB
+                      : (typeof t.gbdtAcc === "number") ? t.gbdtAcc : null;
+            return { trusted: !!(live && t.trusted), shadow: !live || !t.trusted,
+                     accLB: acc, w: (typeof t.wGbdt === "number") ? t.wGbdt : null,
+                     source: t.source || null, promoted: !!live,
+                     reason: (!live ? "섀도우(미승격)" : (!t.trusted ? "검증 미달" : null)) };
+          };
+          xgb = _st("xgb"); lgb = _st("lgb"); cat = _st("cat");
         } catch (e) {}
         const review = S1["ai_selfreview"] || null, _s = S1["ai_picks:scan"] || null;
         const scan = _s ? { ts: _s.ts, scanned: _s.scanned, total: _s.total, top: (_s.picks || []).slice(0, 8) } : null;
@@ -20948,7 +20966,19 @@ async function mlScalpDecide(DB, featVec, opts) {
     }
     // 합류가 강할수록 문턱을 더 낮춘다(최대 chartBonus 까지) — 지표가 한목소리일 때가 진짜 자리.
     if (net >= minNet) thr -= Math.min(_num(sc.chartBonus, 0.04), 0.012 * net);
-    return { p: +p.toFixed(4), pass: p >= thr, thr: +thr.toFixed(3),
+    // [V33.57] ★차트 합류를 '확률 자체'에 반영 — 방향 예측 강화★
+    //   종전엔 합류가 문턱만 깎았다. 그러면 "지표가 전부 상승을 가리킨다"는 정보가
+    //   진입 여부에만 쓰이고 '얼마나 확신하는가'(=사이징·랭킹)에는 전혀 반영되지 않았다.
+    //   → 로그오즈 공간에서 더한다(확률 공간 덧셈은 0·1 근처에서 깨진다).
+    //     모델 확률이 이미 극단이면 이동폭이 자연히 작아져 과보정되지 않는다.
+    const _cw = _num(sc.chartWeight, 0.5);
+    let pAdj = p;
+    if (_cw > 0 && votes.length >= 3) {
+      const _p0 = _clamp(p, 0.001, 0.999);
+      const _lo = Math.log(_p0 / (1 - _p0)) + _cw * Math.tanh(net / 4);
+      pAdj = _clamp(1 / (1 + Math.exp(-_lo)), 0.001, 0.999);
+    }
+    return { p: +pAdj.toFixed(4), pRaw: +p.toFixed(4), pass: pAdj >= thr, thr: +thr.toFixed(3),
              confluence: net, buyVotes: buyV, sellVotes: sellV,
              votes: votes.filter(function (q) { return q.v > 0; }).map(function (q) { return q.n; }).slice(0, 5).join(","),
              valAccLB: L.trust.valAccLB, n: L.model.n, horizonBars: L.model.horizonBars };

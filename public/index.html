@@ -14287,6 +14287,20 @@ html[data-theme="light"] .rail{background:#fff;}
       if(v && v.shadow)  return col('◐', C.amb);
       return col('○', C.dim);
     };
+    // [V33.57] 부스팅 3종도 값 칸을 채운다 — 종전엔 ● 는 켜지는데 옆이 항상 빈칸이라
+    //   "불은 들어왔는데 작동 안 하는 것 아니냐"는 오해를 샀다(실제로는 UI 가 값을 안 넘겼을 뿐).
+    //   섀도우(미승격)면 그렇다고 명시하고, 정확도·가중치를 함께 보여준다.
+    var brow = function(nm, o){
+      if(!o) return [ico(null)+' '+nm, '<span class="sub">미학습</span>'];
+      var parts = [];
+      if(has(o.accLB)) parts.push('검증 '+(o.accLB*100).toFixed(1)+'%');
+      if(has(o.w) && o.w > 0) parts.push('w='+o.w);
+      var body = parts.length ? parts.join(' · ') : null;
+      var tag = o.trusted ? col('가동', C.pos)
+              : (o.promoted ? col('검증 미달', C.amb) : col('섀도우', C.amb));
+      return [ico(o)+' '+nm, tag + (body ? ' <span class="sub">'+body+'</span>' : '')
+        + (o.source ? ' <span class="sub">·'+(o.source==='external'?'Modal':'Worker')+'</span>' : '')];
+    };
     var mrow = function(nm, on, d, floor){
       var msg = null;
       if(d){
@@ -14304,9 +14318,7 @@ html[data-theme="light"] .rail{background:#fff;}
           mrow('MIND', c.mind, dg.mind, null),
           mrow('DNN',  c.dnn,  dg.dnn,  dg.dnn && dg.dnn.floor),
           mrow('GBDT', c.gbdt, dg.gbdt, null),
-          [ico(c.xgb)+' XGB', null],
-          [ico(c.lgb)+' LGB', null],
-          [ico(c.cat)+' Cat', null]
+          brow('XGB', c.xgb), brow('LGB', c.lgb), brow('Cat', c.cat)
         ]);
 
     // ⑥ AI 픽 — 없으면 빈 행

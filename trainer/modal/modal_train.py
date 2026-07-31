@@ -689,11 +689,21 @@ def _train_and_upload_boosters(BASE, KEY, HDR, X, Y, TS, featver, D):
                 return {"f": int(f), "t": float(s["border"]),
                         "l": rec(level + 1, idx, mul * 2), "r": rec(level + 1, idx + mul, mul * 2)}
             return rec(0, 0, 1)
-        ct = [_expand(tr["splits"], tr["leaf_values"]) for tr in cbj["oblivious_trees"] if tr.get("splits")]
+        _all = cbj.get("oblivious_trees") or []
+        ct = [_expand(tr["splits"], tr["leaf_values"]) for tr in _all if tr.get("splits")]
+        # [V33.57] CatBoost 가 화면에 아예 안 뜨던 원인 추적용 진단.
+        #   splits 가 없는 트리(상수 트리)만 나오면 ct 가 비어 업로드가 조용히 생략되고,
+        #   그러면 cat_trust/_ext 가 만들어지지 않아 상태가 통째로 null 이 된다.
+        print(f"   CatBoost 트리 {len(ct)}/{len(_all)} (splits 있는 것만 변환)")
         if ct:
             _finish("cat", ct, cb.predict(Xva, prediction_type="RawFormulaVal"), cb.predict_proba(Xva)[:, 1])
+        else:
+            print("   CatBoost 업로드 생략 — 변환 가능한 트리 0개"
+                  + (" (전체 트리도 0개: 조기중단이 즉시 걸렸을 수 있음)" if not _all else ""))
     except Exception as e:
-        print("CatBoost 실패(무시):", e)
+        import traceback
+        print("CatBoost 실패(무시):", repr(e))
+        traceback.print_exc()
 
 
 # ============================================================================
