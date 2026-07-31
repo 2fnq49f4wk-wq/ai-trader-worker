@@ -2744,8 +2744,9 @@ const AI_PARAMS = {
     taAdxMin: 0.3,          // ADX 최소 추세강도 — 미만이면 배리어까지 갈 힘이 없다
     chartBonus: 0.04,       // 지표 합류가 강하면 문턱 완화(최대치)
     // [V33.52] 다지표 합류 최소 순표차 — 매수표 − 매도표가 이 값 이상이어야 진입.
-    //   볼린저·MACD·RSI·스토캐스틱·EMA·ADX·다이버전스·지지저항을 한꺼번에 표로 환산해 본다.
-    minConfluence: 2
+    //   MA·볼린저·거래량·RSI·MACD·스토캐스틱·ADX·다이버전스·주문흐름·지지저항을 한꺼번에 표로 본다.
+    //   [V33.53] 지표를 늘렸으므로(최대 11표) 최소 순표차도 2 → 3 으로 함께 올린다.
+    minConfluence: 3
   },
 
   aiPrimary: {
@@ -14239,7 +14240,14 @@ async function runTradingCycle(env) {
             //   → 스캘프에 쓸 시간을 평가 예산의 35%로 제한. 나머지 65%는 종목 평가가 확보한다.
             //   스캘프 기회는 라운드로빈으로 다음 사이클에 이어서 스캔되므로 기능 손실은 없다.
             const _scalpTimeLeft = (Date.now() - evalStartedAt) < (evalBudgetMs * (__scalpLive ? 0.45 : 0.35));
-            if (_scAligned && scalpScanUsed < _scanMax && _scalpTimeLeft && fetchBudgetLeft() > 5) {
+            // [V33.53] ★규칙엔진과 AI 단타의 분리 오류 수정★
+            //   _scAligned 는 '규칙엔진'의 사전필터다(MA20>MA50 & 가격>MA20 & RSI 밴드).
+            //   그런데 이 조건이 블록 전체를 막고 있어서, AI 단타도 규칙엔진이 통과시킨 종목만
+            //   볼 수 있었다 — "AI 가 다른 로직으로 움직인다"는 설계가 성립하지 않는다.
+            //   (예: RSI 85 의 폭등 주도주나 MA20 아래 평균회귀 자리는 AI 가 아예 보지도 못했다)
+            //   → 모델이 가동 중이면 규칙 사전필터와 무관하게 분봉을 확보해 AI 가 스스로 판단한다.
+            //     규칙 신호 생성은 여전히 _scAligned 를 따르므로 규칙엔진 동작은 그대로다.
+            if ((_scAligned || __scalpLive) && scalpScanUsed < _scanMax && _scalpTimeLeft && fetchBudgetLeft() > 5) {
               try {
                 scalpScanUsed++;
                 // [개선] 1m→5m: evaluateScalpEntry의 VWAP/상대거래량/모멘텀 임계는 5분봉 기준 설계(함수 docstring).
@@ -14265,8 +14273,10 @@ async function runTradingCycle(env) {
                     if (__stinPend && stinObserve(__stinPend, symbol, market, _sf, price, _sfi)) __stinObs++;
                   }
                 } catch (e) {}
-                // [V33.48] 규칙 단타 신호는 시장 허용(usOnly)일 때만 생성한다. AI 단타는 아래에서 별도 판단.
-                let _scalpSig = _ruleScalpOk ? evaluateScalpEntry(_scalpMb, daily, mcfg, market, regime, _sigTypeStats) : null;
+                // [V33.48/53] 규칙 단타 신호는 (a) 시장 허용(usOnly) 이고 (b) 규칙 사전필터(_scAligned)를
+                //   통과했을 때만 생성한다. AI 단타는 아래에서 완전히 독립적으로 판단한다.
+                let _scalpSig = (_ruleScalpOk && _scAligned)
+                  ? evaluateScalpEntry(_scalpMb, daily, mcfg, market, regime, _sigTypeStats) : null;
                 if (_scalpSig) scalpSig++;  // [진단] 게이트 통과해 신호 발생
                 // [V9.10 합성함수] SCALP 일봉 컨텍스트 직교 강화 — 분봉 진입을 일봉 추세/매집/실적/애널리스트로 사이즈 차등.
                 //   곱셈 아닌 가중평균. 패닉·인버스 진입은 추세역행이 정상이라 추세정렬 팩터 제외.
@@ -15868,6 +15878,9 @@ async function handleRequest(request, env, ctx) {
                      need: 3000, threshold: _num(_sc.threshold, 0.6),
                      // [V33.52] 실제 적재된 장중 표본 수(누적/오늘) — 학습 전에도 증가가 보인다.
                      collected: 0, collectedToday: 0,
+                     // [V33.53] 규칙엔진과의 역할 구분을 화면에서 명시하기 위한 상태값.
+                     veto: _sc.vetoWhenTrusted !== false, aiEntry: _sc.aiEntry !== false,
+                     minConfluence: _num(_sc.minConfluence, 3),
                      convOK: _st ? (_st.convMaxDiff == null || _st.convMaxDiff <= 0.03) : null,
                      trainedAt: _st ? _st.trainedAt : null,
                      ifeatVer: STIN_FEATVER, ifeatN: STIN_IFEAT_N, horizonMin: STIN.horizonBars * 5 };
@@ -20854,7 +20867,28 @@ async function mlScalpDecide(DB, featVec, opts) {
       if (_stoch < 0.25) votes.push({ n: "스토과매도", v: 1 });
       else if (_stoch > 0.9) votes.push({ n: "스토과열", v: -1 });
     }
-    if (_ema != null) votes.push({ n: _ema > 0 ? "정배열" : "역배열", v: _ema > 0 ? 1 : -1 });
+    // MA — 단기 이평 정배열(EMA5>EMA13) + 가격이 볼린저 중심선(=MA14) 위/아래 어디인가.
+    //   "MA 도 같이 봐라"(사용자) → 이평 방향과 가격의 이평 대비 위치를 각각 표로 센다.
+    if (_ema != null) votes.push({ n: _ema > 0 ? "MA정배열" : "MA역배열", v: _ema > 0 ? 1 : -1 });
+    if (_pctB != null) {
+      // %B 0.5 = 중심선(MA14). 위면 이평 위, 아래면 이평 아래.
+      if (_pctB > 0.55) votes.push({ n: "MA위", v: 1 });
+      else if (_pctB < 0.45) votes.push({ n: "MA아래", v: -1 });
+    }
+    // VOL — 거래량 확인. 상대거래량(최근3봉/전체)과 거래량 추세(최근6봉/직전6봉)를 같이 본다.
+    //   거래량 없는 상승은 못 믿는다("거래량은 가격에 선행한다"는 기본 원칙).
+    const _relV = iAt(5), _volT = iAt(11), _ofiV = iAt(12);
+    if (_relV != null && _volT != null) {
+      const rising = (_mHist != null && _mHist > 0) || (_rsiSl != null && _rsiSl > 0);
+      if (_relV >= 1.5 && _volT >= 1.2 && rising) votes.push({ n: "VOL급증동반", v: 1 });
+      else if (_relV <= 0.6 && rising) votes.push({ n: "VOL없는상승", v: -1 });   // 거래량 없는 상승 = 신뢰 불가
+      else if (_relV >= 1.5 && !rising) votes.push({ n: "VOL급증하락", v: -1 });  // 매도 물량 급증
+    }
+    // 주문흐름(OFI) — 거래량의 '방향' 확인. 같은 거래량이라도 매수 우위인지 매도 우위인지.
+    if (_ofiV != null) {
+      if (_ofiV >= 0.35) votes.push({ n: "매수우위", v: 1 });
+      else if (_ofiV <= -0.35) votes.push({ n: "매도우위", v: -1 });
+    }
     if (_adx != null && _diD != null && _adx >= 0.4) votes.push({ n: _diD > 0 ? "ADX상승추세" : "ADX하락추세", v: _diD > 0 ? 1 : -1 });
     if (_div != null && Math.abs(_div) >= 0.25) votes.push({ n: _div > 0 ? "강세다이버전스" : "약세다이버전스", v: _div > 0 ? 1 : -1 });
     if (_sup != null && _res != null && _res > 0 && _sup > 0) {
@@ -20939,32 +20973,38 @@ function stinChartFeat(mb, price) {
     if (!mb || !Array.isArray(mb.closes)) return null;
     const c = mb.closes, h = mb.highs || [], l = mb.lows || [], v = mb.volumes || [];
     const n = c.length;
-    if (n < 35 || !(price > 0)) return null;   // MACD(26+9)·ADX(14×2+1) 최소 길이
+    // [V33.53] ★개장 후 3시간 공백 버그 수정★ 종전 최소 35봉은 MACD(26+9) 때문이었는데,
+    //   5분봉 35개 = 175분이라 '개장 직후 ~3시간' 동안 이 블록이 통째로 null 을 반환했다.
+    //   그러면 stinIntradayFeat 도 null → 표본 관측도, AI 단타 판단도 아예 못 했다.
+    //   단타에 가장 중요한 시간대가 정확히 그 구간이다.
+    //   → 지평이 60분(12봉)인데 26봉 EMA 를 쓰는 것 자체가 과했다. 분봉용 짧은 주기로 교체:
+    //     RSI 9 · MACD 6/13/5 · BB 14 · ADX 7 · Stoch 9 · EMA 5/13 → 최소 20봉(100분)이면 산출.
+    if (n < 20 || !(price > 0)) return null;
     const px = price;
-    // 1) 분봉 RSI(14) — 몇십 분 단위 과열/침체
-    const rsi = getRSI(c, 14);
+    // 1) 분봉 RSI(9) — 몇십 분 단위 과열/침체
+    const rsi = getRSI(c, 9);
     if (rsi == null) return null;
     // 2) RSI 기울기 — 지금 식는 중인가 달아오르는 중인가(수준보다 방향이 더 중요하다)
-    const rsiPrev = getRSI(c.slice(0, n - 6), 14);
+    const rsiPrev = getRSI(c.slice(0, n - 4), 9);
     const rsiSlope = (rsiPrev != null) ? _clamp((rsi - rsiPrev) / 20, -2, 2) : 0;
     // 3~4) MACD 히스토그램(가격 정규화) + 교차 전환
-    const mk = getMACD(c, 12, 26, 9);
+    const mk = getMACD(c, 6, 13, 5);
     const macdHist = (mk && px > 0) ? _clamp(mk.hist / px * 100, -5, 5) : 0;
-    const mkPrev = getMACD(c.slice(0, n - 1), 12, 26, 9);
+    const mkPrev = getMACD(c.slice(0, n - 1), 6, 13, 5);
     let macdCross = 0;
     if (mk && mkPrev) {
       if (mkPrev.hist <= 0 && mk.hist > 0) macdCross = 1;        // 골든(상향 전환)
       else if (mkPrev.hist >= 0 && mk.hist < 0) macdCross = -1;  // 데드(하향 전환)
     }
-    // 5) 스토캐스틱 %K(14) — 최근 구간 내 현재가 위치
+    // 5) 스토캐스틱 %K(9) — 최근 구간 내 현재가 위치
     let hh = -Infinity, ll = Infinity;
-    for (let i = Math.max(0, n - 14); i < n; i++) {
+    for (let i = Math.max(0, n - 9); i < n; i++) {
       const hi = (h[i] != null ? h[i] : c[i]), lo = (l[i] != null ? l[i] : c[i]);
       if (hi > hh) hh = hi; if (lo < ll) ll = lo;
     }
     const stochK = (hh > ll) ? _clamp((px - ll) / (hh - ll), 0, 1) : 0.5;
     // 6~7) 볼린저 %B(밴드 내 위치) + 밴드폭(스퀴즈=변동성 확장 직전)
-    const bb = getBollingerBands(c, 20, 2.0);
+    const bb = getBollingerBands(c, 14, 2.0);
     const bbPctB = (bb && bb.upper > bb.lower) ? _clamp((px - bb.lower) / (bb.upper - bb.lower), -0.5, 1.5) : 0.5;
     const bbWidth = (bb && bb.mid > 0) ? _clamp((bb.upper - bb.lower) / bb.mid * 100, 0, 20) : 0;
     // 8~9) ADX(추세 강도) + DI 차이(방향)
@@ -20973,9 +21013,9 @@ function stinChartFeat(mb, price) {
     let adx = 0, diDiff = 0;
     try {
       const hh2 = (h.length === n) ? h : c, ll2 = (l.length === n) ? l : c;
-      const a = getADX(hh2, ll2, c, 14);
+      const a = getADX(hh2, ll2, c, 7);
       if (a != null && isFinite(a)) adx = _clamp(a / 50, 0, 2);
-      const P = 14;
+      const P = 7;
       if (n >= P + 2) {
         let trS = 0, pS = 0, mS = 0;
         for (let i = n - P; i < n; i++) {
@@ -20992,13 +21032,13 @@ function stinChartFeat(mb, price) {
       }
     } catch (e) {}
     // 10) EMA9 vs EMA21 이격(%) — 단기 정배열/역배열 강도
-    const e9 = getMA(c, 9), e21 = getMA(c, 21);
+    const e9 = getMA(c, 5), e21 = getMA(c, 13);
     const emaGap = (e9 != null && e21 != null && e21 > 0) ? _clamp((e9 - e21) / e21 * 100, -10, 10) : 0;
     // 11) RSI 다이버전스 — 가격은 고점인데 RSI 는 못 따라오는(또는 그 반대) 반전 신호
-    const diverg = _clamp(_rsiDivergence(c, 12), -1, 1);
+    const diverg = _clamp(_rsiDivergence(c, 8), -1, 1);
     // 12~13) 지지·저항까지 거리(%) — 저항 코앞에서 사면 곧바로 막힌다
     let rHi = -Infinity, sLo = Infinity;
-    for (let i = Math.max(0, n - 60); i < n; i++) {
+    for (let i = Math.max(0, n - 40); i < n; i++) {
       const hi = (h[i] != null ? h[i] : c[i]), lo = (l[i] != null ? l[i] : c[i]);
       if (hi > rHi) rHi = hi; if (lo < sLo) sLo = lo;
     }

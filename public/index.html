@@ -14221,45 +14221,62 @@ html[data-theme="light"] .rail{background:#fff;}
         + '<div class="diag">누적 <b>'+sm.total.toLocaleString()+'</b>건 · featVer '+esc(sm.featVer)+'</div>'
         + '<div class="diag" style="margin-top:2px;">'+line2+ageTxt+'</div>';
     }
-    // [V33.49] ★단타 모델 — 전용 패널★ 스윙과 저장소·라벨·피처가 전부 달라 따로 봐야 한다.
-    //   (스윙 표본: D1 ml_samples / 단타 표본: R2 st/intraday). 진행 단계를 눈으로 확인.
+    // ═══ [V33.53] 단타 엔진 패널 — 규칙엔진 / AI 를 명확히 구분해서 보여준다 ═══
+    //   두 엔진은 판단 근거가 완전히 다르다:
+    //     규칙엔진 = 분봉 임계값 규칙(SC_VWAP 등). AI 미준비 시의 비상 경로.
+    //     AI 단타  = 5분봉 미시구조 24 + 기술지표 14 = 38차원 모델 + 다지표 합류 게이트.
     var sc = mode.scalp;
     if(sc){
-      var scTxt, scCol;
-      if(sc.live && sc.trusted){ scTxt='\u25c9 단타 가동 중'; scCol='var(--pos)'; }
-      else if(sc.trusted){ scTxt='\u25d0 모델 신뢰 \u2014 실매매 스위치 대기'; scCol='var(--amber,#fbbf24)'; }
-      else if(sc.trained){ scTxt='\u25cc 학습됨 \u00b7 '+esc(sc.reason); scCol='var(--t3)'; }
-      else { scTxt='\u25cc 표본 수집 중 \u2014 미학습'; scCol='var(--t3)'; }
-      h += '<span class="k">단타 모델</span>'
-        + '<div class="diag" style="color:'+scCol+';">'+scTxt+'</div>';
-      // [V33.52] 진행률은 '실제 적재된 표본(collected)' 기준. sc.n 은 학습이 끝난 모델이 쓴
-      //   표본 수라 첫 학습 전까지 영원히 0 이라, 쌓이는 중인데도 0/3000 으로만 보였다.
       var need = sc.need || 3000;
       var got = (sc.collected != null && sc.collected > 0) ? sc.collected : (sc.n || 0);
       var pct = Math.max(0, Math.min(100, Math.round(got / need * 100)));
-      h += '<div class="diag" style="margin-top:3px;">수집 표본 <b>'+got.toLocaleString()+'</b> / '+need.toLocaleString()
+      // 4단계 진행 — 어디까지 왔는지 한눈에
+      var stage = sc.live && sc.trusted ? 4 : (sc.trusted ? 3 : (sc.trained ? 2 : 1));
+      var stNames = ['표본 수집', '학습 완료', '신뢰 획득', '실매매 가동'];
+      var stHtml = '';
+      for(var si=0; si<4; si++){
+        var on = (si < stage);
+        stHtml += '<span style="display:inline-block;padding:1px 6px;margin:0 3px 3px 0;border-radius:3px;font-size:10px;'
+          + 'background:'+(on?'var(--pos)':'var(--bd,#2a2a2a)')+';color:'+(on?'#000':'var(--t3)')+';">'
+          + (si+1)+'. '+stNames[si]+'</span>';
+      }
+      h += '<span class="k">단타 엔진 (AI)</span>'
+        + '<div style="margin:2px 0 4px;">'+stHtml+'</div>';
+      // 진행 게이지
+      h += '<div class="diag">수집 표본 <b>'+got.toLocaleString()+'</b> / '+need.toLocaleString()
         + ' <span style="color:var(--t3);">('+pct+'%)</span>'
         + (sc.collectedToday ? ' <b style="color:var(--pos);">+'+sc.collectedToday.toLocaleString()+'</b> 오늘' : '')
         + '</div>'
-        + (sc.n ? ('<div class="diag" style="margin-top:2px;color:var(--t3);">학습에 쓰인 표본 '+sc.n.toLocaleString()+'</div>') : '')
         + '<div style="height:4px;background:var(--bd,#2a2a2a);border-radius:2px;margin:3px 0;overflow:hidden;">'
         + '<div style="height:100%;width:'+pct+'%;background:'+(pct>=100?'var(--pos)':'var(--amber,#fbbf24)')+';"></div></div>';
+      if(sc.n) h += '<div class="diag" style="color:var(--t3);">학습에 쓰인 표본 '+sc.n.toLocaleString()+'</div>';
+      // 수집 현황(R2) — 스윙 표본(D1)과 저장소가 다르다는 점을 명시
       if(sc.pending != null || sc.filesToday != null){
-        h += '<div class="diag" style="margin-top:2px;">수집 '+esc(sc.store||'R2')
-          + ' \u00b7 대기 <b>'+(sc.pending||0).toLocaleString()+'</b>건'
-          + ' \u00b7 오늘 저장 '+(sc.filesToday||0)+'파일</div>';
-        if((sc.pending||0) === 0 && (sc.filesToday||0) === 0){
-          h += '<div class="diag" style="color:var(--amber,#fbbf24);margin-top:2px;">\u26a0 수집 0 \u2014 장중이 아니거나 분봉 스캔 미도달</div>';
+        h += '<div class="diag" style="margin-top:2px;">저장 '+esc(sc.store||'R2')
+          + ' · 대기 <b>'+(sc.pending||0).toLocaleString()+'</b>건'
+          + ' · 오늘 '+(sc.filesToday||0)+'파일</div>';
+        if((sc.pending||0) === 0 && (sc.filesToday||0) === 0 && !sc.collectedToday){
+          h += '<div class="diag" style="color:var(--amber,#fbbf24);margin-top:2px;">⚠ 수집 0 — 장중이 아니거나 분봉 스캔 미도달</div>';
         }
       }
+      // 역할 구분 — 지금 AI 가 무엇을 할 수 있는 상태인가
+      var roleTxt, roleCol;
+      if(sc.live && sc.trusted){ roleTxt='AI 자체 진입 + 규칙신호 거부권'; roleCol='var(--pos)'; }
+      else if(sc.trusted){ roleTxt='규칙신호 거부권만 (자체 진입 대기)'; roleCol='var(--amber,#fbbf24)'; }
+      else { roleTxt='판단 없음 — 규칙엔진 단독 (모델 미신뢰)'; roleCol='var(--t3)'; }
+      h += '<div class="diag" style="margin-top:3px;">역할 <span style="color:'+roleCol+';">'+roleTxt+'</span></div>';
       if(sc.trained){
-        h += '<div class="diag" style="margin-top:2px;">정확도하한 '
-          + (sc.valAccLB!=null?(sc.valAccLB*100).toFixed(1)+'%':'\u2014')
-          + ' vs 기준선 ' + (sc.baseline!=null?(sc.baseline*100).toFixed(1)+'%':'\u2014')
-          + (sc.convOK===false?' <span style="color:var(--neg);">\u00b7정합실패</span>':'') + '</div>';
+        h += '<div class="diag" style="margin-top:2px;">검증 정확도하한 '
+          + (sc.valAccLB!=null?'<b>'+(sc.valAccLB*100).toFixed(1)+'%</b>':'—')
+          + ' vs 기준선 ' + (sc.baseline!=null?(sc.baseline*100).toFixed(1)+'%':'—')
+          + (sc.convOK===false?' <span style="color:var(--neg);">·정합실패</span>':'')
+          + (sc.reason && !sc.trusted ? ' <span style="color:var(--amber,#fbbf24);">('+esc(sc.reason)+')</span>' : '')
+          + '</div>';
       }
-      h += '<div class="diag" style="margin-top:2px;color:var(--t3);">지평 '+(sc.horizonMin||60)+'분 \u00b7 장중피처 v'
-        + (sc.ifeatVer||'?')+'\u00d7'+(sc.ifeatN||'?')+' \u00b7 문턱 '+((sc.threshold||0.6)*100).toFixed(0)+'%</div>';
+      h += '<div class="diag" style="margin-top:2px;color:var(--t3);">지평 '+(sc.horizonMin||60)+'분 · 피처 v'
+        + (sc.ifeatVer||'?')+'×'+(sc.ifeatN||'?')+'(미시구조+기술지표) · 문턱 '+((sc.threshold||0.6)*100).toFixed(0)+'%'
+        + ' · 합류 '+(sc.minConfluence||3)+'표</div>'
+        + '<div class="diag" style="color:var(--t3);">판단 지표: MA·BOLL·VOL·RSI·MACD·Stoch·ADX·다이버전스·주문흐름·지지저항</div>';
     }
     h += '<span class="k">위원회</span><div class="row">'
       + '<span class="m">MIND '+st(c.mind)+'</span><span class="m">DNN '+st(c.dnn)+'</span><span class="m">GBDT '+st(c.gbdt)+'</span>'
