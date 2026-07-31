@@ -2476,7 +2476,7 @@ async function applySignalTypeWeights(DB, cfg) {
 // ============================================================================
 // [V33.55] 빌드 버전 — SWR L2 캐시 키에 섞어 '배포 = 판단 캐시 자동 무효화'를 만든다.
 //   판정 로직을 고쳐도 옛 캐시가 최대 1시간 재배포되던 문제를 구조적으로 없앤다.
-const _BUILD_VER = "V33.57";
+const _BUILD_VER = "V33.58";
 
 const AI_PARAMS = {
   // ── OHLCV 타임프레임 ── 시가/고가/저가/종가/거래량을 어떤 봉 주기로 볼지.
@@ -7044,7 +7044,12 @@ async function fetchMinuteBars(symbol, opts) {
   const tarr = result.timestamp || [];
   const rc = q.close || [], rh = q.high || [], rl = q.low || [], rv = q.volume || [], ro = q.open || [];
   // [V33.51] opens 추가 — 분봉 캔들 형태(몸통/꼬리) 판정에 필요.
+  // [V33.58] range=2d 로 받아도 규칙엔진 동작이 변하면 안 된다.
+  //   · closes/highs/... (세션 배열) = 오늘 봉만 → VWAP·dayHigh·상대거래량 등 규칙 의미 그대로 유지
+  //   · all* (전체 배열)            = 2일치 연속 시계열 → AI 지표(RSI·MACD·볼린저·ADX) 전용
+  //   이렇게 나눠야 개장 직후에도 지표가 나오면서 규칙엔진은 종전과 동일하게 돈다.
   const closes = [], highs = [], lows = [], volumes = [], times = [], opens = [];
+  const aC = [], aH = [], aL = [], aV = [], aO = [], aT = [];
   for (let i = 0; i < rc.length; i++) {
     const c = rc[i];
     if (typeof c !== "number" || isNaN(c) || c <= 0) continue;
@@ -7055,6 +7060,21 @@ async function fetchMinuteBars(symbol, opts) {
     times.push(tarr[i] || 0);
     opens.push((typeof ro[i] === "number" && ro[i] > 0) ? ro[i] : c);
   }
+  // 전체(최대 2일) 시계열 사본 — 세션 분리 전에 통째로 보관한다.
+  for (let i = 0; i < closes.length; i++) { aC.push(closes[i]); aH.push(highs[i]); aL.push(lows[i]); aV.push(volumes[i]); aO.push(opens[i]); aT.push(times[i]); }
+  // 오늘(마지막 봉과 같은 ET 날짜) 구간만 남겨 세션 배열을 만든다 — 규칙엔진 의미 보존.
+  try {
+    if (times.length) {
+      const _dayOf = function (ts) { const d = getUSEt(new Date(ts * 1000)); return d.year * 10000 + d.month * 100 + d.date; };
+      const _last = _dayOf(times[times.length - 1]);
+      let cut = 0;
+      for (let i = times.length - 1; i >= 0; i--) { if (times[i] > 0 && _dayOf(times[i]) !== _last) { cut = i + 1; break; } }
+      if (cut > 0 && cut < closes.length) {
+        closes.splice(0, cut); highs.splice(0, cut); lows.splice(0, cut);
+        volumes.splice(0, cut); times.splice(0, cut); opens.splice(0, cut);
+      }
+    }
+  } catch (e) {}
   if (closes.length === 0) throw new Error("no minute close");
   const price = (typeof meta.regularMarketPrice === "number" && meta.regularMarketPrice > 0)
     ? meta.regularMarketPrice : closes[closes.length - 1];
@@ -7085,7 +7105,9 @@ async function fetchMinuteBars(symbol, opts) {
   return {
     symbol: symbol, interval: interval, price: price, vwap: vwap, vwapSlope: vwapSlope,
     recentMom: recentMom, dayHigh: dayHigh, dayLow: dayLow,
-    closes: closes, highs: highs, lows: lows, volumes: volumes, times: times, opens: opens
+    closes: closes, highs: highs, lows: lows, volumes: volumes, times: times, opens: opens,
+    // [V33.58] AI 지표 전용 연속 시계열(최대 2일). 규칙엔진은 위 세션 배열만 쓴다.
+    allCloses: aC, allHighs: aH, allLows: aL, allVolumes: aV, allOpens: aO, allTimes: aT
   };
 }
 
@@ -14286,7 +14308,11 @@ async function runTradingCycle(env) {
                 // [개선] 1m→5m: evaluateScalpEntry의 VWAP/상대거래량/모멘텀 임계는 5분봉 기준 설계(함수 docstring).
                 //   1m봉은 형성중 봉의 부분거래량으로 relvol_low를 과다유발(라이브: scan 50중 relvol_low 25)하고
                 //   모멘텀도 과소계상해 트리거를 막았다. 5m봉으로 노이즈↓·임계 정합 → 단타 신호 발생률 상승.
-                const _scalpMb = await fetchMinuteBars(symbol, { interval: "5m", range: "1d" });
+                // [V33.58] ★개장 직후 100분 공백 축소★ 5분봉을 2일치로 받는다(요청 수는 동일 1회).
+                //   지표(RSI·MACD·볼린저·ADX)는 연속 시계열만 있으면 되므로 전일 봉이 붙는 순간
+                //   개장 첫 봉부터 산출이 가능해진다. 단, 규칙엔진이 쓰는 세션값(VWAP·dayHigh/Low)은
+                //   오늘 봉 기준이어야 하므로 fetchMinuteBars 가 그 필드들을 오늘분으로 유지한다.
+                const _scalpMb = await fetchMinuteBars(symbol, { interval: "5m", range: "2d" });
                 // [V33.40] ★장중 단타 학습표본 관측★ 이미 받아온 분봉을 그대로 재사용하므로 추가
                 //   fetch 가 0이다. 피처는 라이브 판정과 같은 mlBuildFeatures 로 만들어 학습/추론
                 //   정합을 유지한다. 저장은 전량 R2(대기 버퍼도 R2) — D1 은 건드리지 않는다.
@@ -21041,7 +21067,14 @@ const STIN_IFEAT_NAMES = ["i_r5m", "i_r15m", "i_r30m", "i_r60m", "i_vwapDev", "i
 function stinChartFeat(mb, price) {
   try {
     if (!mb || !Array.isArray(mb.closes)) return null;
-    const c = mb.closes, h = mb.highs || [], l = mb.lows || [], v = mb.volumes || [];
+    // [V33.58] 지표는 '연속 시계열'만 있으면 된다 — 2일치(all*)가 있으면 그걸 쓴다.
+    //   개장 직후에도 전일 봉이 붙어 있어 첫 봉부터 RSI·MACD·볼린저·ADX 산출이 가능해진다.
+    //   (세션 전용 값은 stinIntradayFeat 의 오늘 배열이 따로 담당한다 — 역할 분리)
+    const useAll = Array.isArray(mb.allCloses) && mb.allCloses.length > (mb.closes || []).length;
+    const c = useAll ? mb.allCloses : mb.closes;
+    const h = (useAll ? mb.allHighs : mb.highs) || [];
+    const l = (useAll ? mb.allLows : mb.lows) || [];
+    const v = (useAll ? mb.allVolumes : mb.volumes) || [];
     const n = c.length;
     // [V33.53] ★개장 후 3시간 공백 버그 수정★ 종전 최소 35봉은 MACD(26+9) 때문이었는데,
     //   5분봉 35개 = 175분이라 '개장 직후 ~3시간' 동안 이 블록이 통째로 null 을 반환했다.
@@ -21117,7 +21150,8 @@ function stinChartFeat(mb, price) {
     // 14) 캔들 형태 — 최근 봉의 몸통/전체범위 비율에 방향 부호(장대양봉 +1 … 긴윗꼬리 -1)
     let candle = 0;
     try {
-      const o = (mb.opens && mb.opens[n - 1] != null) ? mb.opens[n - 1] : c[n - 2];
+      const _op = (useAll ? mb.allOpens : mb.opens);
+      const o = (_op && _op[n - 1] != null) ? _op[n - 1] : c[n - 2];
       const hi = (h[n - 1] != null ? h[n - 1] : c[n - 1]), lo = (l[n - 1] != null ? l[n - 1] : c[n - 1]);
       const rng = hi - lo;
       if (rng > 0 && o > 0) candle = _clamp((c[n - 1] - o) / rng, -1, 1);
@@ -25279,7 +25313,9 @@ async function mlMarketHarvestNightly(DB, opts) {
       " [탈락 진입조건=" + _hv.rejEntry + " 라벨=" + _hv.rejLabel + " 가격=" + _hv.rejPrice + " 봉수미달=" + _hv.symShort + "]" +
       " 단타표본=" + _hv.stMade + " 준비=" + _hv.prologueMs + "ms 총=" + (Date.now() - _hvT0) + "ms/" + (opts.budgetMs || HARVEST.budgetMs || 45000) + "ms" +
       (_hv.budgetHit ? " 예산중단=" + _hv.budgetHit : "");
-    try { globalThis.__hvLast = { made: made, bars: _hv.bars, cand: _hv.cand, scanned: scanned, ts: Date.now() }; } catch (e) {}
+    // [V33.58] 탈락 사유까지 실어 보낸다 — 캐치업 쿨다운이 원인별로 판단할 수 있게.
+    try { globalThis.__hvLast = { made: made, bars: _hv.bars, cand: _hv.cand, scanned: scanned,
+      symShort: _hv.symShort || 0, rejEntry: _hv.rejEntry || 0, ts: Date.now() }; } catch (e) {}
     return made ? ("[HV] 시장수확 +" + made + "표본 (" + scanned + "종목, 오프셋 " + off + ") " + _diagHv)
                 : ("[HV] 0건 — " + _diagHv);
   } catch (e) { return "[HV] fail: " + (e && e.message); }
@@ -30271,15 +30307,30 @@ export default {
                   //   의심이므로 6시간이나 묻어두면 진단이 늦어진다(실제로 그래서 수정본이 6시간 잠겼다).
                   //   봉>0 인데 0건이면 필터가 정상 동작한 것이므로 종전대로 길게 쉰다.
                   const _hvL = (typeof globalThis !== "undefined" && globalThis.__hvLast) || null;
-                  const _suspect = !!(_hvL && _hvL.bars === 0);
-                  const _coolMs = _suspect ? 1800000 : (_mktOpen ? 6 * 3600000 : 1800000);
-                  await setState(env.DB, "hv_catchup_dry", { n: _stop ? 0 : _n, until: _stop ? Date.now() + _coolMs : 0 });
+                  // [V33.58] ★692회 반복 낭비 제거★ 실측 로그:
+                  //   "cand=3(일봉3+딥0) 처리=3 봉=0 [탈락 ... 봉수미달=3] 총=5656ms" 가 6일간 692회 반복.
+                  //   후보 전원이 '봉수미달'로 탈락한다는 건 원천(딥이력 커버리지)이 커지기 전에는
+                  //   같은 입력으로 몇 번을 돌려도 결과가 절대 안 바뀐다는 뜻이다 — 결정론적 실패다.
+                  //   그런데 종전 _suspect 규칙은 "봉=0 = 구조적 버그 의심 → 30분만 쉬고 재시도"라
+                  //   진단이 이미 끝난 상황에서도 30분마다 3회씩(회당 5~6초) 계속 태웠다.
+                  //   → 원인이 '봉수미달'이면 진단 목적이 없으므로 즉시 장시간(6h) 쿨다운으로 보낸다.
+                  //     봉=0 이면서 후보 자체가 0(cand=0) 인 경우만 '구조 의심'으로 짧게 유지한다.
+                  const _allShort = !!(_hvL && _hvL.bars === 0 && (_hvL.cand || 0) > 0 &&
+                                       (_hvL.symShort || 0) >= (_hvL.cand || 0));
+                  const _suspect = !!(_hvL && _hvL.bars === 0 && !_allShort);
+                  const _coolMs = _allShort ? 6 * 3600000
+                                : _suspect ? 1800000
+                                : (_mktOpen ? 6 * 3600000 : 1800000);
+                  // 결정론적 실패(_allShort)면 3회 재시도 규칙도 건너뛰고 곧바로 쉰다.
+                  const _stop2 = _stop || _allShort;
+                  await setState(env.DB, "hv_catchup_dry", { n: _stop2 ? 0 : _n, until: _stop2 ? Date.now() + _coolMs : 0 });
                   // [V33.11] 레벨을 INFO로 내림 — "원천 고갈"은 고장이 아니라 설계상 정상 정상상태다.
                   //   (이미 수확한 구간을 다시 뽑지 않으므로 새 거래일이 쌓이기 전엔 0건이 맞다.)
                   //   WARN으로 남기면 자가진단이 이걸 매번 '경고 16회 반복'으로 올려 진짜 문제를 가린다.
                   // [V33.25] 왜 0건인지 단계별 카운터를 그대로 실어 보낸다 — 다음 실행 로그 한 줄로 원인 확정.
                   await log(env.DB, "INFO", null, "[HV-CATCHUP] 0건 pool=" + _poolN + " " + (_cr || "(수확기 반환 없음)") +
-                    (_stop ? (" → " + Math.round(_coolMs / 60000) + "분 쿨다운" + (_suspect ? "(봉=0 — 짧게)" : "")) : ""));
+                    (_stop2 ? (" → " + Math.round(_coolMs / 60000) + "분 쿨다운"
+                      + (_allShort ? "(전원 봉수미달 — 원천 증가 전엔 불변)" : (_suspect ? "(봉=0 — 짧게)" : ""))) : ""));
                 }
               }
               }
@@ -30413,7 +30464,7 @@ export default {
               if (_ir) await log(env.DB, "INFO", null, _ir);
             }
           } catch (e) {}
-          const _PIPE_VER = "V33.55-phase-realtime";   // 배포 시 파이프라인 1회 강제 재실행(국면·판단 즉시 재산출)   // 배포 시 파이프라인 1회 강제 재실행(신규 스키마 반영)
+          const _PIPE_VER = "V33.58-scalp-2d";   // 배포 시 파이프라인 1회 강제 재실행(국면·판단 즉시 재산출)   // 배포 시 파이프라인 1회 강제 재실행(신규 스키마 반영)
           try {
             const _pv = await getState(env.DB, "ai_pipeline_ver", null);
             if (_pv !== _PIPE_VER) {
