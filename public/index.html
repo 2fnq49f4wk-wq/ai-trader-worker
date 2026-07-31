@@ -11535,7 +11535,10 @@ html[data-theme="light"] .m-brainbar button.active{color:#0b4f9e;background:rgba
       });
     })['catch'](function(e){ badge.textContent = '조회 실패'; body.textContent = '조회 실패 — ' + (e && e.message || ''); });
   }
-  try { bootAiModePanel(true); setInterval(function(){ bootAiModePanel(true); }, 5 * 60 * 1000); } catch(e) {}
+  // [V33.56] ★화면 지연의 실제 병목★ 서버는 국면을 매 사이클(1분) 재계산하는데
+  //   프론트가 5분에 한 번만 물어봐 사이드바가 최대 5분 늦게 갱신됐다.
+  //   /api/ai-mode 는 SWR(fresh 20s) 캐시라 자주 불러도 대부분 캐시 히트 — 서버 부하 거의 없음.
+  try { bootAiModePanel(true); setInterval(function(){ bootAiModePanel(true); }, 45 * 1000); } catch(e) {}
 
   try { loadEcon(false); setInterval(function(){ loadEcon(false); }, 30 * 60 * 1000); } catch(e) {}
   // [V60] 어닝스 캘린더 / 내부자 거래 / 지표 임팩트 — 초기 로드 + 주기 갱신 + 수동 새로고침
@@ -13220,6 +13223,20 @@ html[data-theme="light"] #page-nnviz .nlv-sec-h{border-color:#d5dfee;}
 .rail-ai .pick{color:var(--t1);}
 .rail-ai .pick i{font-style:normal;color:var(--t3);}
 .rail-ai .diag{color:var(--t3);font-size:9.5px;line-height:1.6;}
+/* ── [V33.56] AI 운용상태 표 레이아웃 — 값이 없어도 행은 항상 유지(빈칸 표시) ── */
+.rail-ai .tbl{width:100%;border-collapse:collapse;font-size:9.5px;margin:2px 0 4px;}
+.rail-ai .tbl td{padding:2.5px 0;vertical-align:top;border-bottom:1px solid rgba(128,128,128,.13);}
+.rail-ai .tbl tr:last-child td{border-bottom:0;}
+.rail-ai .tbl td.lb{color:var(--t3);white-space:nowrap;width:52px;padding-right:6px;letter-spacing:.2px;}
+.rail-ai .tbl td.vl{color:var(--t2);word-break:break-word;}
+.rail-ai .tbl td.vl .em{color:var(--t1);font-weight:700;}
+.rail-ai .tbl td.vl .nil{color:var(--t3);opacity:.45;}
+.rail-ai .sub{color:var(--t3);font-size:9px;}
+.rail-ai .gauge{height:3px;background:var(--bd,#2a2a2a);border-radius:2px;margin:3px 0 1px;overflow:hidden;}
+.rail-ai .gauge>i{display:block;height:100%;font-style:normal;}
+html[data-theme="light"] .rail-ai .tbl td{border-bottom-color:rgba(0,0,0,.09);}
+html[data-theme="light"] .rail-ai .tbl td.vl{color:var(--lt-ink2);}
+html[data-theme="light"] .rail-ai .tbl td.vl .em{color:var(--lt-ink);}
 .rail-body{flex:1 1 auto;min-height:0;overflow-y:auto;overflow-x:hidden;}
 .rail-body::-webkit-scrollbar{width:4px;}
 .rail-body::-webkit-scrollbar-thumb{background:var(--bd);border-radius:3px;}
@@ -14157,141 +14174,150 @@ html[data-theme="light"] .rail{background:#fff;}
     var el = $id('railAiMode'), mob = $id('mobAiMode');
     if(!el && !mob) return;
     var put = function(html){ if(el) el.innerHTML = html; if(mob) mob.innerHTML = html; };
-    if(!mode || mode.aiReady === undefined){ put('조회 실패'); return; }
-    // ═══ [V33.55] AI 운용 상태 패널 재구성 — 위에서 아래로 "지금 상태 → 시장 → 단타 → 위원회 → 픽" ═══
-    //   기존엔 항목이 순서 없이 붙어 스캔이 어려웠다. 4개 구획으로 나누고 각 구획은 헤더 1줄 + 본문으로 통일.
-    var C = { pos:'var(--pos)', neg:'var(--neg)', amb:'var(--amber,#fbbf24)', dim:'var(--t3)', ink:'var(--t1)' };
-    var num = function(v){ return (v||0).toLocaleString(); };
-    var sec = function(t){ return '<span class="k">'+t+'</span>'; };
-    var line = function(html, col, mt){
-      return '<div class="diag"'+(col||mt?' style="'+(col?'color:'+col+';':'')+(mt?'margin-top:'+mt+'px;':'')+'"':'')+'>'+html+'</div>';
+    // ═══ [V33.56] AI 운용 상태 — 표 레이아웃 ═══
+    //   원칙: 값이 없어도 행은 항상 그린다(빈칸 "—"). 있다/없다가 아니라 '무엇이 비었는가'가 보여야
+    //   지금 무엇을 기다리는 중인지 판단할 수 있다. 항목 유무에 따라 레이아웃이 흔들리지도 않는다.
+    var C = { pos:'var(--pos)', neg:'var(--neg)', amb:'var(--amber,#fbbf24)', dim:'var(--t3)' };
+    var NIL = '<span class="nil">—</span>';
+    var has = function(v){ return v !== null && v !== undefined && v !== '' && !(typeof v === 'number' && isNaN(v)); };
+    var n0  = function(v){ return has(v) ? Number(v).toLocaleString() : null; };
+    // 표: [[라벨, 값HTML|null], ...] — null 이면 빈칸으로 렌더
+    var tbl = function(rows){
+      return '<table class="tbl">' + rows.map(function(r){
+        return '<tr><td class="lb">'+r[0]+'</td><td class="vl">'+(has(r[1]) ? r[1] : NIL)+'</td></tr>';
+      }).join('') + '</table>';
     };
-    var bar = function(pct, col){
-      return '<div style="height:4px;background:var(--bd,#2a2a2a);border-radius:2px;margin:3px 0;overflow:hidden;">'
-        + '<div style="height:100%;width:'+pct+'%;background:'+col+';"></div></div>';
+    var sec = function(t, right){
+      return '<span class="k">'+t+(right?' <span style="float:right;letter-spacing:0;text-transform:none;">'+right+'</span>':'')+'</span>';
     };
+    var em = function(v){ return '<span class="em">'+v+'</span>'; };
+    var col = function(v, c){ return '<span style="color:'+c+';">'+v+'</span>'; };
+
+    if(!mode || mode.aiReady === undefined){
+      put('<span class="badge" style="color:'+C.dim+';">◌ 상태 조회 실패</span>'
+        + tbl([['운용',null],['국면',null],['단타',null],['위원회',null]]));
+      return;
+    }
     var h = '';
 
-    // ── ① 운용 모드 ──────────────────────────────────────────────
+    // ① 운용 모드
     h += '<span class="badge" style="color:'+(mode.aiReady?C.pos:C.amb)+';">'
       + (mode.aiReady ? '◉ AI 자율운용' : '◎ 규칙엔진 비상운용') + '</span>';
-    if(mode.degraded) h += line('⚠ 상태 조회 일시 실패 — 마지막 정상 스냅샷', C.amb, 3);
+    if(mode.degraded) h += '<div class="diag" style="color:'+C.amb+';">⚠ 조회 실패 — 마지막 스냅샷</div>';
 
-    // ── ② 시장 국면 ──────────────────────────────────────────────
-    if(mode.phase && (mode.phase.us || mode.phase.kr)){
-      var PH = { MELTUP:['폭등',C.pos], TREND_UP:['상승추세',C.pos], RANGE:['보합',C.amb],
-                 TREND_DOWN:['하락추세',C.neg], CRASH:['급락',C.neg] };
-      var ph = function(lbl, p, day, r5, er){
-        var d = PH[p] || ['—',C.dim], ev = [];
-        if(day != null) ev.push('오늘 '+(day>0?'+':'')+day+'%');
-        if(r5  != null) ev.push('5일 '+(r5>0?'+':'')+r5+'%');
-        if(er  != null) ev.push('ER '+er);
-        return '<div class="diag" style="margin-top:2px;"><span style="display:inline-block;width:22px;color:'+C.dim+';">'+lbl+'</span>'
-          + '<b style="color:'+d[1]+';">'+d[0]+'</b>'
-          + (ev.length?' <span style="color:'+C.dim+';">'+ev.join(' · ')+'</span>':'') + '</div>';
-      };
-      h += sec('시장 국면')
-        + ph('US', mode.phase.us, mode.phase.dayUs, mode.phase.r5Us, mode.phase.erUs)
-        + ph('KR', mode.phase.kr, mode.phase.dayKr, mode.phase.r5Kr, mode.phase.erKr);
-      var age = mode.phase.ts ? Math.floor((Date.now()-mode.phase.ts)/60000) : null;
-      if(age != null && age >= 3) h += line('⚠ '+age+'분 전 판정 — 갱신 지연', C.amb, 2);
-      if(mode.xmkt && mode.xmkt.semi1d != null){
-        var s1 = mode.xmkt.semi1d;
-        var xc = s1<=-3?C.neg:(s1<=-1.5?C.amb:(s1>=2?C.pos:C.ink));
-        h += line('美반도체 <span style="color:'+xc+';">'+(s1>0?'+':'')+s1.toFixed(1)+'%</span>'
-          + (mode.xmkt.semi5d!=null?' <span style="color:'+C.dim+';">(5일 '+(mode.xmkt.semi5d>0?'+':'')+mode.xmkt.semi5d.toFixed(1)+'%)</span>':'')
-          + (s1<=-3?' <span style="color:'+C.neg+';">→ KR 기술주 차단</span>':''), null, 2);
+    // ② 시장 국면 (US/KR 항상 두 줄)
+    var ph = mode.phase || {};
+    var PH = { MELTUP:['폭등',C.pos], TREND_UP:['상승추세',C.pos], RANGE:['보합',C.amb],
+               TREND_DOWN:['하락추세',C.neg], CRASH:['급락',C.neg] };
+    var phCell = function(p, day, r5, er){
+      if(!has(p)) return null;
+      var d = PH[p] || [String(p), C.dim], ev = [];
+      if(has(day)) ev.push('오늘 '+(day>0?'+':'')+day+'%');
+      if(has(r5))  ev.push('5일 '+(r5>0?'+':'')+r5+'%');
+      if(has(er))  ev.push('ER '+er);
+      return col('<b>'+d[0]+'</b>', d[1]) + (ev.length ? ' <span class="sub">'+ev.join(' · ')+'</span>' : '');
+    };
+    var semi = null;
+    if(has(ph) && has(mode.xmkt) && has(mode.xmkt.semi1d)){
+      var s1 = mode.xmkt.semi1d;
+      var xc = s1<=-3?C.neg:(s1<=-1.5?C.amb:(s1>=2?C.pos:'var(--t2)'));
+      semi = col((s1>0?'+':'')+s1.toFixed(1)+'%', xc)
+        + (has(mode.xmkt.semi5d)?' <span class="sub">5일 '+(mode.xmkt.semi5d>0?'+':'')+mode.xmkt.semi5d.toFixed(1)+'%</span>':'')
+        + (s1<=-3?' '+col('→ KR 기술주 차단', C.neg):'');
+    }
+    var phAge = has(ph.ts) ? Math.floor((Date.now()-ph.ts)/60000) : null;
+    h += sec('시장 국면', (phAge!=null && phAge>=3) ? '<span style="color:'+C.amb+';">'+phAge+'분 전</span>' : null)
+      + tbl([
+          ['US',      phCell(ph.us, ph.dayUs, ph.r5Us, ph.erUs)],
+          ['KR',      phCell(ph.kr, ph.dayKr, ph.r5Kr, ph.erKr)],
+          ['美반도체', semi]
+        ]);
+
+    // ③ 단타 엔진 — 표본이 0이어도 항상 표시
+    var sc = mode.scalp || {};
+    var need = sc.need || 3000;
+    var got  = has(sc.collected) && sc.collected > 0 ? sc.collected : (sc.n || 0);
+    var pct  = Math.max(0, Math.min(100, Math.round(got/need*100)));
+    var stage = (sc.live && sc.trusted) ? 4 : (sc.trusted ? 3 : (sc.trained ? 2 : 1));
+    var stTxt = ['표본 수집 중','학습 완료','신뢰 획득','실매매 가동'][stage-1];
+    var stCol = stage>=4?C.pos:(stage>=2?C.amb:C.dim);
+    var samCell = em(n0(got)||'0') + ' <span class="sub">/ '+n0(need)+' ('+pct+'%)</span>'
+      + (sc.collectedToday ? ' '+col('+'+n0(sc.collectedToday), C.pos)+'<span class="sub"> 오늘</span>' : '')
+      + '<div class="gauge"><i style="width:'+pct+'%;background:'+(pct>=100?C.pos:C.amb)+';"></i></div>';
+    var storeCell = null;
+    if(has(sc.pending) || has(sc.filesToday)){
+      storeCell = (has(sc.store)?esc(sc.store):'R2')
+        + ' <span class="sub">대기 '+(n0(sc.pending)||'0')+' · 오늘 '+(has(sc.filesToday)?sc.filesToday:'0')+'파일</span>';
+      if(!got && !(sc.pending||0) && !(sc.filesToday||0)) storeCell += ' '+col('⚠ 수집 0', C.amb);
+    }
+    var roleCell = (sc.live&&sc.trusted) ? col('AI 자체 진입 + 규칙 거부권', C.pos)
+                 : (sc.trusted ? col('규칙 거부권만', C.amb) : col('판단 없음 — 규칙엔진 단독', C.dim));
+    var accCell = sc.trained
+      ? (em(has(sc.valAccLB)?(sc.valAccLB*100).toFixed(1)+'%':'—')
+         + ' <span class="sub">vs 기준선 '+(has(sc.baseline)?(sc.baseline*100).toFixed(1)+'%':'—')+'</span>'
+         + (sc.reason && !sc.trusted ? ' '+col('('+esc(sc.reason)+')', C.amb) : ''))
+      : null;
+    h += sec('단타 엔진 (AI)', col(stage+'/4 '+stTxt, stCol))
+      + tbl([
+          ['표본',  samCell],
+          ['저장',  storeCell],
+          ['역할',  roleCell],
+          ['검증',  accCell],
+          ['설정',  '<span class="sub">지평 '+(sc.horizonMin||60)+'분 · 피처 v'+(has(sc.ifeatVer)?sc.ifeatVer:'?')
+                    +'×'+(has(sc.ifeatN)?sc.ifeatN:'?')+' · 합류 '+(sc.minConfluence||3)+'표</span>'],
+          ['지표',  '<span class="sub">MA·BOLL·VOL·RSI·MACD·Stoch·ADX·다이버전스·주문흐름</span>']
+        ]);
+
+    // ④ 스윙 표본
+    var sm = mode.samples || {};
+    var swTotal = has(sm.total) ? em(n0(sm.total)) + ' <span class="sub">featVer '+esc(sm.featVer)+'</span>' : null;
+    var g = function(v){ return has(v) ? col('<b>'+(v>0?'+':'')+n0(v)+'</b>', v>0?C.pos:C.dim) : NIL; };
+    var swDelta = null;
+    if(has(sm.total)){
+      if((sm.yesterday||0)>0 || (sm.today||0)>0) swDelta = '오늘 '+g(sm.today)+' · 어제 '+g(sm.yesterday);
+      else if(has(sm.sinceTrack)) swDelta = '추적 이후 '+g(sm.sinceTrack)+' <span class="sub">('+(sm.trackHours||0)+'h)</span>';
+    }
+    h += sec('스윙 표본') + tbl([['누적', swTotal], ['증가', swDelta]]);
+
+    // ⑤ 위원회 — 6모델 항상 표시
+    var c = mode.committee || {}, dg = mode.diag || {};
+    var ico = function(v){
+      if(v === true) return col('●', C.pos);
+      if(v && v.trusted) return col('●', C.pos);
+      if(v && v.shadow)  return col('◐', C.amb);
+      return col('○', C.dim);
+    };
+    var mrow = function(nm, on, d, floor){
+      var msg = null;
+      if(d){
+        if(!d.stored)          msg = '<span class="sub">모델 없음 — 학습 미완료</span>';
+        else if(!d.featVerOk)  msg = col('featVer 불일치('+esc(d.featVer)+')', C.neg);
+        else if(!d.trusted)    msg = col(has(d.accLB) ? ('검증 '+d.accLB+'% &lt; 문턱 '+(has(floor)?floor:'?')+'% → 억제')
+                                                      : ('미신뢰'+(d.reason?' ('+esc(d.reason)+')':'')), C.amb);
+        else                   msg = col('가동'+(has(d.w)?' w='+d.w:''), C.pos);
+        if(d.source) msg += ' <span class="sub">·'+(d.source==='external'?'Modal':'Worker')+'</span>';
       }
-    }
+      return [ico(on)+' '+nm, msg];
+    };
+    h += sec('위원회')
+      + tbl([
+          mrow('MIND', c.mind, dg.mind, null),
+          mrow('DNN',  c.dnn,  dg.dnn,  dg.dnn && dg.dnn.floor),
+          mrow('GBDT', c.gbdt, dg.gbdt, null),
+          [ico(c.xgb)+' XGB', null],
+          [ico(c.lgb)+' LGB', null],
+          [ico(c.cat)+' Cat', null]
+        ]);
 
-    // ── ③ 단타 엔진(AI) — 표본 증가가 한눈에 ──────────────────────
-    var sc = mode.scalp;
-    if(sc){
-      var need = sc.need || 3000;
-      var got  = (sc.collected != null && sc.collected > 0) ? sc.collected : (sc.n || 0);
-      var pct  = Math.max(0, Math.min(100, Math.round(got/need*100)));
-      var stage = (sc.live && sc.trusted) ? 4 : (sc.trusted ? 3 : (sc.trained ? 2 : 1));
-      var stCol = stage>=4?C.pos:(stage>=2?C.amb:C.dim);
-      var stTxt = ['표본 수집 중','학습 완료','신뢰 획득','실매매 가동'][stage-1];
-      h += sec('단타 엔진 (AI)')
-        + line('<b style="color:'+stCol+';">'+stage+'/4 '+stTxt+'</b>');
-      // ★표본 증가★ — 이 패널의 핵심 지표
-      h += line('학습 표본 <b style="color:'+C.ink+';font-size:11px;">'+num(got)+'</b>'
-        + ' <span style="color:'+C.dim+';">/ '+num(need)+' ('+pct+'%)</span>'
-        + (sc.collectedToday ? ' <b style="color:'+C.pos+';">+'+num(sc.collectedToday)+'</b><span style="color:'+C.dim+';"> 오늘</span>' : ''), null, 3)
-        + bar(pct, pct>=100?C.pos:C.amb);
-      var det = [];
-      if(sc.pending != null)    det.push('대기 '+num(sc.pending));
-      if(sc.filesToday != null) det.push('오늘 '+sc.filesToday+'파일');
-      det.push(esc(sc.store||'R2'));
-      h += line(det.join(' · '), C.dim, 1);
-      if(!got && !(sc.pending||0) && !(sc.filesToday||0))
-        h += line('⚠ 수집 0 — 장중이 아니거나 분봉 스캔 미도달', C.amb, 2);
-      var roleTxt = (sc.live&&sc.trusted) ? ['AI 자체 진입 + 규칙 거부권', C.pos]
-                  : (sc.trusted ? ['규칙 거부권만', C.amb] : ['판단 없음 — 규칙엔진 단독', C.dim]);
-      h += line('역할 <span style="color:'+roleTxt[1]+';">'+roleTxt[0]+'</span>', null, 2);
-      if(sc.trained){
-        h += line('검증 <b>'+(sc.valAccLB!=null?(sc.valAccLB*100).toFixed(1)+'%':'—')+'</b>'
-          + ' vs 기준선 '+(sc.baseline!=null?(sc.baseline*100).toFixed(1)+'%':'—')
-          + (sc.reason && !sc.trusted ? ' <span style="color:'+C.amb+';">('+esc(sc.reason)+')</span>' : ''), null, 2);
-      }
-      h += line('지평 '+(sc.horizonMin||60)+'분 · 피처 v'+(sc.ifeatVer||'?')+'×'+(sc.ifeatN||'?')
-        + ' · 합류 '+(sc.minConfluence||3)+'표', C.dim, 2)
-        + line('MA·BOLL·VOL·RSI·MACD·Stoch·ADX·다이버전스·주문흐름', C.dim, 0);
-    }
-
-    // ── ④ 스윙 표본 ──────────────────────────────────────────────
-    var sm = mode.samples;
-    if(sm && sm.total != null){
-      var td = sm.today, yd = sm.yesterday;
-      var g = function(v){ return '<b style="color:'+(v>0?C.pos:C.dim)+';">'+(v>0?'+':'')+num(v)+'</b>'; };
-      var l2;
-      if((yd||0)>0 || (td||0)>0)      l2 = '오늘 '+g(td)+' · 어제 '+g(yd);
-      else if(sm.sinceTrack != null)  l2 = '추적 이후 '+g(sm.sinceTrack)+' <span style="color:'+C.dim+';">('+(sm.trackHours||0)+'h)</span>';
-      else                            l2 = '<span style="color:'+C.dim+';">집계 준비 중</span>';
-      var at = '';
-      if(sm.measuredAt){ var am = Math.floor((Date.now()-sm.measuredAt)/60000); if(am>=3) at = ' <span style="color:'+C.dim+';">('+am+'분 전)</span>'; }
-      h += sec('스윙 표본')
-        + line('누적 <b>'+num(sm.total)+'</b> · featVer '+esc(sm.featVer))
-        + line(l2+at, null, 1);
-    }
-
-    // ── ⑤ 위원회 ────────────────────────────────────────────────
-    var c = mode.committee || {};
-    var ON='<span style="color:'+C.pos+';">●</span>', SH='<span style="color:'+C.amb+';">◐</span>', OFF='<span style="color:'+C.dim+';">○</span>';
-    var st = function(b){ return b?ON:OFF; };
-    var bst = function(o){ return !o?OFF:(o.trusted?ON:(o.shadow?SH:OFF)); };
-    h += sec('위원회') + '<div class="row">'
-      + '<span class="m">MIND '+st(c.mind)+'</span><span class="m">DNN '+st(c.dnn)+'</span><span class="m">GBDT '+st(c.gbdt)+'</span>'
-      + '<span class="m">XGB '+bst(c.xgb)+'</span><span class="m">LGB '+bst(c.lgb)+'</span><span class="m">Cat '+bst(c.cat)+'</span></div>';
-    // 미가동 사유 — 학습 미완료/성능 미달/저장 깨짐/featVer 불일치를 구분
-    var dg = mode.diag;
-    if(dg){
-      var why = function(nm, d, floor){
-        if(!d) return '';
-        var msg, col=C.dim;
-        if(!d.stored)         msg='모델 없음 — 학습 미완료';
-        else if(!d.featVerOk){ msg='featVer 불일치('+esc(d.featVer)+')'; col=C.neg; }
-        else if(!d.trusted){   msg=(d.accLB!=null)?('검증 '+d.accLB+'% &lt; 문턱 '+(floor!=null?floor:'?')+'% → 억제')
-                                                  :('미신뢰'+(d.reason?' ('+esc(d.reason)+')':'')); col=C.amb; }
-        else                 { msg='가동'+(d.w!=null?' w='+d.w:''); col=C.pos; }
-        return line('<b>'+nm+'</b> <span style="color:'+col+';">'+msg+'</span>'
-          + (d.source?' <span style="color:'+C.dim+';">·'+(d.source==='external'?'Modal':'Worker')+'</span>':''), null, 2);
-      };
-      h += why('DNN', dg.dnn, dg.dnn && dg.dnn.floor) + why('GBDT', dg.gbdt, null) + why('MIND', dg.mind, null);
-    } else {
-      h += line('● 가동 · ◐ 섀도우 · ○ 대기', C.dim, 2);
-    }
-
-    // ── ⑥ AI 픽 ────────────────────────────────────────────────
+    // ⑥ AI 픽 — 없으면 빈 행
     var top = (picks || []).filter(function(p){ return !p.abstain; }).slice(0, 5);
-    if(top.length){
-      h += sec('AI 픽')
-        + top.map(function(p){
-            var pv = (p.rankP != null ? p.rankP : p.p);
-            return '<div class="pick">'+esc(p.symbol||p.sym)+' <i>'+(pv!=null?(pv*100).toFixed(0)+'%':'—')+'</i></div>';
-          }).join('');
-    }
+    h += sec('AI 픽')
+      + tbl(top.length
+          ? top.map(function(p){
+              var pv = (p.rankP != null ? p.rankP : p.p);
+              return [esc(p.symbol||p.sym), has(pv) ? em((pv*100).toFixed(0)+'%') : null];
+            })
+          : [['', null]]);
     put(h);
   }
 

@@ -8365,8 +8365,15 @@ async function analyzeMarketRegime(DB, market) {
   let worstDayPct = 999;
   // [신규] 지수 평균 20일 수익률 → RS 비교 기준
   let idxReturns = [];
+  // [V33.56] ★지수 상태를 1회만 읽는다★ V33.44 에서 ER·5일 수익률 루프를 추가하면서
+  //   같은 index: 행을 두 번째로 다시 읽고 있었다(호출당 D1 왕복 6 → 12).
+  //   국면 판단 주기를 올리려면 먼저 이 낭비부터 없애야 한다 — 한 번 읽어 두 계산이 공유한다.
+  const _idxCache = {};
   for (const sym of indices) {
-    const idx = await getState(DB, "index:" + sym, null);
+    try { _idxCache[sym] = await getState(DB, "index:" + sym, null); } catch (e) { _idxCache[sym] = null; }
+  }
+  for (const sym of indices) {
+    const idx = _idxCache[sym];
     if (!idx || typeof idx.dayPct !== "number") continue;
     totalDayPct += idx.dayPct;
     validIdx++;
@@ -8402,7 +8409,7 @@ async function analyzeMarketRegime(DB, market) {
   try {
     const ers = [], r5s = [];
     for (const sym of indices) {
-      const idx = await getState(DB, "index:" + sym, null);
+      const idx = _idxCache[sym];          // [V33.56] 위에서 읽은 것을 재사용(추가 D1 조회 0)
       const h = idx && idx.history;
       if (!Array.isArray(h) || h.length < 21) continue;
       const seg = h.slice(-21).map(function (x) { return (x && typeof x === "object") ? (x.c != null ? x.c : x.close) : x; });
@@ -15702,7 +15709,8 @@ async function handleRequest(request, env, ctx) {
       //   같은 지역에서 누가 한 번 빌드하면 이후 요청은 아이솔레이트가 달라도 즉시 응답.
       //   관측용이라 stale 허용을 6시간으로 넉넉히 둬 콜드 빌드 빈도 자체를 낮춘다.
       const _safe = function (fn) { try { const p = fn(); return Promise.resolve(p)["catch"](function () { return null; }); } catch (e) { return Promise.resolve(null); } };
-      return await swrJson("ml-status", 30000, 3600000, async function () {
+      // [V33.56] 30s→15s
+      return await swrJson("ml-status", 15000, 3600000, async function () {
         const [a, b2, c2, d2, e2, f2, g2, h2, i2, j2, k2] = await Promise.all([
           _safe(function () { return (typeof mlStatus === "function") ? mlStatus(env.DB) : null; }),
           _safe(function () { return (typeof mlLoadEventMemory === "function") ? mlLoadEventMemory(env.DB) : null; }),
@@ -15765,7 +15773,8 @@ async function handleRequest(request, env, ctx) {
     //   부르지만 첫 호출이 끝나지 않아 배지가 영영 "확인 중…"에 머물렀다.
     //   병렬화 + SWR(L2 공유). 모델 신뢰상태는 야간 학습에서만 바뀌므로 stale 허용이 커도 안전.
     if (path === "/api/ai-mode") {
-      return await swrJson("ai-mode", 60000, 3600000, async function () {
+      // [V33.56] 60s→20s — meta probe 6왕복뿐이라 값싼 판정
+      return await swrJson("ai-mode", 20000, 3600000, async function () {
         // [V33.13] ★"AI 상태가 화면 전환할 때마다 다르고 규칙엔진 비상가동으로 뜨던" 근본원인★
         //   종전엔 배지 하나 그리려고 mlDNNLoad(32.3MB·85청크)를 요청 경로에서 통째로 읽었다.
         //   D1이 조금만 바쁘면 그중 한 청크가 실패 → null → dnnOk=false → RULE_FALLBACK.
@@ -16025,7 +16034,8 @@ async function handleRequest(request, env, ctx) {
 
     // [V32.51] GET /api/events — 현재 활성 이슈·레짐·순섹터선호·다음 FOMC(대시보드 "활성 이슈" 패널용). SWR 2분.
     if (path === "/api/events") {
-      return await swrJson("events", 120000, 3600000, async function () {
+      // [V33.56] 120s→60s
+      return await swrJson("events", 60000, 3600000, async function () {
         let ev = { evs: [], mc: 0.7, level: "평시", conf: {}, eff: {} }; try { ev = await _luxEventContext(env.DB); } catch (e) {}
         let shock = { mode: "none", sev: 0 }; try { shock = await _luxMarketShock(env.DB); } catch (e) {}
         const fp = _fomcProximity(Date.now());
@@ -17087,7 +17097,8 @@ async function handleRequest(request, env, ctx) {
     //   swrJson 으로 감싸 colo 공유 Edge Cache(L2)를 태운다. 픽은 야간 스캔 산출물이라
     //   60초 fresh / 6시간 stale 허용이 안전하다.
     if (path === "/api/ai-picks") {
-      return await swrJson("ai-picks", 60000, 3600000, async function () {
+      // [V33.56] 60s→20s — 상태 1행 조회
+      return await swrJson("ai-picks", 20000, 3600000, async function () {
       const out = { ts: null, picks: [], scan: null };
       const _S = await getStates(env.DB, ["ai_picks:us", "ai_picks:kr", "ai_picks:cm", "ai_picks:scan"]);
       for (const mk of ["us", "kr", "cm"]) {
@@ -26806,7 +26817,7 @@ async function _luxWorldNews(DB, opts) {
 }
 async function _luxCrisisGauge(DB, opts) {
   opts = opts || {};
-  const FRESH = 20 * 60000;
+  const FRESH = 12 * 60000;   // [V33.56] 20분→12분 (외부 RSS 이지만 world_news SWR 재사용 + 예산가드)
   let cached = null; try { cached = await getState(DB, "crisis_gauge", null); } catch (e) {}
   if (!opts.force && cached && cached.ts && (Date.now() - cached.ts) < FRESH) return cached;
   try { if (typeof fetchBudgetLeft === "function" && fetchBudgetLeft() < 6) return cached; } catch (e) {}
@@ -30363,10 +30374,12 @@ export default {
           //   이어 돌린다. 회당 300행 상한이라 D1 전송량은 종전 야간 1회분과 비슷한 수준으로 유지되고,
           //   픽은 계속 갱신된다(사용자 지적: "최근 스캔이 9시로 뜬다").
           try {
+            // [V33.56] 20분×300행 → 10분×150행. 시간당 읽는 행수는 900 으로 동일한데
+            //   픽 갱신 빈도만 2배가 된다 — 부하를 늘리지 않고 신선도만 올리는 교환.
             const _isLock = _num(await getState(env.DB, "ai_incrscan_lock", 0), 0);
-            if (Date.now() - _isLock > 20 * 60000) {
+            if (Date.now() - _isLock > 10 * 60000) {
               await setState(env.DB, "ai_incrscan_lock", Date.now());
-              const _ir = await mlUniverseScanNightly(env.DB, { slice: 300 });
+              const _ir = await mlUniverseScanNightly(env.DB, { slice: 150 });
               if (_ir) await log(env.DB, "INFO", null, _ir);
             }
           } catch (e) {}
