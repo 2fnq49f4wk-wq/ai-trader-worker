@@ -14232,10 +14232,16 @@ html[data-theme="light"] .rail{background:#fff;}
       else { scTxt='\u25cc 표본 수집 중 \u2014 미학습'; scCol='var(--t3)'; }
       h += '<span class="k">단타 모델</span>'
         + '<div class="diag" style="color:'+scCol+';">'+scTxt+'</div>';
-      var need = sc.need || 3000, got = sc.n || 0;
+      // [V33.52] 진행률은 '실제 적재된 표본(collected)' 기준. sc.n 은 학습이 끝난 모델이 쓴
+      //   표본 수라 첫 학습 전까지 영원히 0 이라, 쌓이는 중인데도 0/3000 으로만 보였다.
+      var need = sc.need || 3000;
+      var got = (sc.collected != null && sc.collected > 0) ? sc.collected : (sc.n || 0);
       var pct = Math.max(0, Math.min(100, Math.round(got / need * 100)));
-      h += '<div class="diag" style="margin-top:3px;">학습 표본 <b>'+got.toLocaleString()+'</b> / '+need.toLocaleString()
-        + ' <span style="color:var(--t3);">('+pct+'%)</span></div>'
+      h += '<div class="diag" style="margin-top:3px;">수집 표본 <b>'+got.toLocaleString()+'</b> / '+need.toLocaleString()
+        + ' <span style="color:var(--t3);">('+pct+'%)</span>'
+        + (sc.collectedToday ? ' <b style="color:var(--pos);">+'+sc.collectedToday.toLocaleString()+'</b> 오늘' : '')
+        + '</div>'
+        + (sc.n ? ('<div class="diag" style="margin-top:2px;color:var(--t3);">학습에 쓰인 표본 '+sc.n.toLocaleString()+'</div>') : '')
         + '<div style="height:4px;background:var(--bd,#2a2a2a);border-radius:2px;margin:3px 0;overflow:hidden;">'
         + '<div style="height:100%;width:'+pct+'%;background:'+(pct>=100?'var(--pos)':'var(--amber,#fbbf24)')+';"></div></div>';
       if(sc.pending != null || sc.filesToday != null){

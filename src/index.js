@@ -2705,10 +2705,15 @@ const AI_PARAMS = {
   //     학습돼 신뢰를 얻은 뒤에야 AI 단타 진입을 켠다. 아래 enabled 는 그 스위치다.
   //   표본은 지금부터 쌓인다 — 이게 가장 오래 걸리는 선행조건이라 먼저 심는다.
   aiScalp: {
-    collect: true,          // 짧은 지평 표본 수집(안전 — 기존 10일 모델·테이블과 완전 분리)
-    horizonDays: 2,         // 단타 지평(거래일). 10일 스윙과 명확히 구분되는 길이.
-    stopPct: 3,             // 단타 라벨용 하방 배리어(스윙 5%보다 타이트)
-    tpPct: 3,               // 단타 라벨용 상방 배리어
+    // [V33.52] ★false 로 전환★ — 이건 '일봉 2거래일' 스트림(V33.38)이라 단타와 무관하다.
+    //   단타 지평은 60분이고 피처는 5분봉 38차원인데, 이 스트림은 일봉 65차원에 2거래일 라벨이라
+    //   스키마부터 달라 단타 모델이 쓸 수 없다. 그런데도 수확마다 D1 쓰기를 늘리고,
+    //   '2거래일 대기'라는 단타에 불필요한 거래일 지연을 만들었다.
+    //   실제 단타 표본은 R2 장중 파이프라인(STIN)이 60분 만에 만든다.
+    collect: false,
+    horizonDays: 2,         // (구 스트림 잔여 파라미터 — collect=false 라 미사용)
+    stopPct: 3,             // (동일)
+    tpPct: 3,               // (동일)
     // [V33.48] ★실매매 스위치 ON★ (사용자 지시: "단타 모델 작동시켜")
     //   켜도 곧바로 매매하지는 않는다 — mlScalpLoad 의 신뢰 게이트(학습완료 + 스키마 일치 +
     //   표본 3000건 + 검증정확도 하한 > 베이스라인+1.5%p)를 통과해야 확률이 나온다.
@@ -2737,7 +2742,10 @@ const AI_PARAMS = {
     resHeadroomMult: 0.8,   // 상단 저항까지 여유 < 기대이동폭×이 값 → 진입 금지(먹을 게 없다)
     taRsiMax: 0.85,         // 분봉 RSI 과열 상한(0~1 정규화)
     taAdxMin: 0.3,          // ADX 최소 추세강도 — 미만이면 배리어까지 갈 힘이 없다
-    chartBonus: 0.04        // 정배열+골든전환+RSI상승+눌림 조합이면 문턱 완화
+    chartBonus: 0.04,       // 지표 합류가 강하면 문턱 완화(최대치)
+    // [V33.52] 다지표 합류 최소 순표차 — 매수표 − 매도표가 이 값 이상이어야 진입.
+    //   볼린저·MACD·RSI·스토캐스틱·EMA·ADX·다이버전스·지지저항을 한꺼번에 표로 환산해 본다.
+    minConfluence: 2
   },
 
   aiPrimary: {
@@ -15285,7 +15293,7 @@ async function runTradingCycle(env) {
         const _lab = stinLabel(__stinPend, function (sym) { return _num(__stinPx[sym], 0); });
         let _fl = 0;
         if (__stinPend.done.length >= 50 || (Date.now() - (__stinPend.ts || 0)) > STIN.flushMin * 60000) {
-          _fl = await stinFlush(__stinPend);
+          _fl = await stinFlush(__stinPend, DB);
         }
         await _stinSavePend(__stinPend);
         if (__stinObs || _lab || _fl) {
@@ -15858,6 +15866,8 @@ async function handleRequest(request, env, ctx) {
                      //   스윙: D1 ml_samples / 단타: R2 st/intraday/<날짜>/*.json + 대기버퍼.
                      //   V33.46 에서 수집 자체가 죽어 있던 버그를 고쳤으므로 이 숫자가 그 검증치다.
                      need: 3000, threshold: _num(_sc.threshold, 0.6),
+                     // [V33.52] 실제 적재된 장중 표본 수(누적/오늘) — 학습 전에도 증가가 보인다.
+                     collected: 0, collectedToday: 0,
                      convOK: _st ? (_st.convMaxDiff == null || _st.convMaxDiff <= 0.03) : null,
                      trainedAt: _st ? _st.trainedAt : null,
                      ifeatVer: STIN_FEATVER, ifeatN: STIN_IFEAT_N, horizonMin: STIN.horizonBars * 5 };
@@ -15878,6 +15888,14 @@ async function handleRequest(request, env, ctx) {
               } catch (e) {}
               _scalp.pending = _pendN; _scalp.filesToday = _objs; _scalp.store = "R2";
             } else { _scalp.store = "R2 미바인딩"; }
+            // [V33.52] 실적재 누적 카운터 — 첫 학습 전에도 표본이 자라는 게 보여야 한다.
+            try {
+              const _ss2 = await getState(env.DB, "stin_stats", null);
+              if (_ss2) {
+                _scalp.collected = _num(_ss2.total, 0);
+                _scalp.collectedToday = (_ss2.day === _stinDay()) ? _num(_ss2.today, 0) : 0;
+              }
+            } catch (e) {}
           } catch (e) {}
         } catch (e) {}
         // [V33.44] 국면 위상(보합/추세/폭등) — 진입 문턱·사이즈·청산 규율이 이 값으로 갈린다.
@@ -20807,10 +20825,58 @@ async function mlScalpDecide(DB, featVec, opts) {
       return { p: +p.toFixed(4), pass: false, thr: +thr.toFixed(3), veto: chartVeto.join("·"), chart: true,
                valAccLB: L.trust.valAccLB, n: L.model.n, horizonBars: L.model.horizonBars };
     }
-    // 차트가 확실히 좋은 조합이면 문턱을 소폭 낮춘다 — 확률만으로 못 잡는 '모양'의 가치를 인정.
-    //   (정배열 + MACD 골든전환 + RSI 상승 + 스토캐스틱 중단 이하 = 눌림 후 재출발 형태)
-    if (_ema > 0.1 && _mX > 0 && _rsiSl > 0 && _stoch < 0.75) thr -= _num(sc.chartBonus, 0.04);
+    // [V33.52] ★다지표 합류(confluence) 채점 — 지표를 따로 보지 않고 한꺼번에 본다★
+    //   사용자 지시: "다른 지표들도 같이 판단하면서 볼린저밴드 같은것도 다 보면서 판단해서 매수".
+    //   단일 지표는 어느 것이든 거짓신호가 많다. 실제로 이기는 자리는 '여러 지표가 같은 말을 할 때'다.
+    //   각 지표를 매수/매도 표로 환산해 합산하고, 최소 표 수를 충족해야 진입을 허용한다.
+    const _bbW = tAt(6), _sup = tAt(12);
+    const votes = [];   // {n, v} v>0 매수 / v<0 매도
+    // 볼린저 — 하단 근처에서 반등(과매도 회복)이거나, 스퀴즈 후 상단 돌파(변동성 확장 초입)
+    if (_pctB != null) {
+      if (_pctB <= 0.2 && _rsiSl > 0) votes.push({ n: "BB하단반등", v: 1 });
+      else if (_pctB >= 0.98 && _bbW != null && _bbW < 3 && _mHist > 0) votes.push({ n: "BB스퀴즈돌파", v: 1 });
+      else if (_pctB >= 1.15) votes.push({ n: "BB상단이탈", v: -1 });          // 밴드 밖 과열
+      else if (_pctB <= -0.1) votes.push({ n: "BB하단이탈", v: -1 });          // 밴드 밖 붕괴
+    }
+    if (_mHist != null && _mX != null) {
+      if (_mX > 0) votes.push({ n: "MACD골든", v: 1 });
+      else if (_mX < 0) votes.push({ n: "MACD데드", v: -1 });
+      else if (_mHist > 0) votes.push({ n: "MACD양전", v: 1 });
+      else if (_mHist < 0) votes.push({ n: "MACD음전", v: -1 });
+    }
+    if (_rsi != null) {
+      if (_rsi < 0.35 && _rsiSl > 0) votes.push({ n: "RSI반등", v: 1 });
+      else if (_rsi > 0.75 && _rsiSl < 0) votes.push({ n: "RSI꺾임", v: -1 });
+      else if (_rsiSl > 0.1) votes.push({ n: "RSI상승", v: 1 });
+      else if (_rsiSl < -0.1) votes.push({ n: "RSI하락", v: -1 });
+    }
+    if (_stoch != null) {
+      if (_stoch < 0.25) votes.push({ n: "스토과매도", v: 1 });
+      else if (_stoch > 0.9) votes.push({ n: "스토과열", v: -1 });
+    }
+    if (_ema != null) votes.push({ n: _ema > 0 ? "정배열" : "역배열", v: _ema > 0 ? 1 : -1 });
+    if (_adx != null && _diD != null && _adx >= 0.4) votes.push({ n: _diD > 0 ? "ADX상승추세" : "ADX하락추세", v: _diD > 0 ? 1 : -1 });
+    if (_div != null && Math.abs(_div) >= 0.25) votes.push({ n: _div > 0 ? "강세다이버전스" : "약세다이버전스", v: _div > 0 ? 1 : -1 });
+    if (_sup != null && _res != null && _res > 0 && _sup > 0) {
+      // 손익비 구조 — 위(저항)가 아래(지지)보다 넉넉해야 살 자리다
+      if (_res >= _sup * 1.5) votes.push({ n: "상방여유", v: 1 });
+      else if (_sup >= _res * 1.5) votes.push({ n: "하방취약", v: -1 });
+    }
+    let buyV = 0, sellV = 0;
+    for (const q of votes) { if (q.v > 0) buyV++; else sellV++; }
+    const net = buyV - sellV;
+    const minNet = _num(sc.minConfluence, 2);
+    if (votes.length >= 4 && net < minNet) {
+      return { p: +p.toFixed(4), pass: false, thr: +thr.toFixed(3), chart: true,
+               veto: "합류부족(매수 " + buyV + "/매도 " + sellV + ")",
+               votes: votes.filter(function (q) { return q.v < 0; }).map(function (q) { return q.n; }).slice(0, 4).join(","),
+               valAccLB: L.trust.valAccLB, n: L.model.n, horizonBars: L.model.horizonBars };
+    }
+    // 합류가 강할수록 문턱을 더 낮춘다(최대 chartBonus 까지) — 지표가 한목소리일 때가 진짜 자리.
+    if (net >= minNet) thr -= Math.min(_num(sc.chartBonus, 0.04), 0.012 * net);
     return { p: +p.toFixed(4), pass: p >= thr, thr: +thr.toFixed(3),
+             confluence: net, buyVotes: buyV, sellVotes: sellV,
+             votes: votes.filter(function (q) { return q.v > 0; }).map(function (q) { return q.n; }).slice(0, 5).join(","),
              valAccLB: L.trust.valAccLB, n: L.model.n, horizonBars: L.model.horizonBars };
   } catch (e) { return null; }
 }
@@ -21185,13 +21251,29 @@ function stinLabel(pend, priceOf) {
   return labeled;
 }
 // flush — 라벨 완료분을 날짜별 append-only 오브젝트로 내보낸다(R2 는 append 가 없어 키를 매번 새로).
-async function stinFlush(pend) {
+async function stinFlush(pend, DB) {
   const R2 = _bigR2();
   if (!R2 || !pend || !pend.done.length) return 0;
   const n = pend.done.length;
   const key = "st/intraday/" + _stinDay() + "/" + Date.now() + ".json";
   try { await R2.put(key, JSON.stringify({ n: n, samples: pend.done })); } catch (e) { return 0; }
   pend.done = [];
+  // [V33.52] ★단타 표본수가 화면에 안 보이던 이유★ 패널의 "표본 N"은 scalp_trust.n 을 썼는데
+  //   그건 '학습이 끝난 모델이 쓴 표본 수'라 첫 학습 전까지 영원히 0 이었다. 즉 실제로 쌓이는
+  //   중인데도 0/3000 으로만 보였다. 저장 시점에 실적재 건수를 직접 누적해 둔다(R2 재조회 없음).
+  if (DB) {
+    try {
+      const day = _stinDay();
+      const prev = (await getState(DB, "stin_stats", null)) || { total: 0, today: 0, day: day, files: 0 };
+      const sameDay = (prev.day === day);
+      await setState(DB, "stin_stats", {
+        total: _num(prev.total, 0) + n,
+        today: (sameDay ? _num(prev.today, 0) : 0) + n,
+        files: (sameDay ? _num(prev.files, 0) : 0) + 1,
+        day: day, ts: Date.now()
+      });
+    } catch (e) {}
+  }
   return n;
 }
 
@@ -25001,7 +25083,13 @@ async function mlMarketHarvestNightly(DB, opts) {
         // [V33.38] ★AI 단타용 짧은 지평 라벨★ 피처는 위와 동일하고 라벨만 다르게 계산해
         //   별도 테이블에 적재한다. 같은 봉을 재사용하므로 추가 계산은 배리어 루프 하나뿐이다.
         //   (이 스트림이 쌓여야 단타 전용 모델을 학습할 수 있다 — 가장 오래 걸리는 선행조건)
-        if (_scCfg.collect !== false && i + _scH <= L - 1) {
+        // [V33.52] ★폐기★ 이 스트림(V33.38)은 '일봉'에서 2거래일 배리어로 라벨을 만들어
+        //   D1(ml_samples_st)에 적재했다. 단타 모델은 일봉을 쓰지 않는다 — 지평이 60분이고
+        //   피처도 5분봉 미시구조·기술지표(38차원)다. 즉 이 표본은 스키마부터 달라 단타 모델이
+        //   쓸 수 없고(장중 피처 ix 가 없다), 그러면서 수확 때마다 D1 쓰기를 계속 늘리고 있었다.
+        //   게다가 '2거래일 뒤'를 기다려야 라벨이 생겨, 단타에는 필요 없는 거래일 지연을 만들었다.
+        //   실제 단타 표본은 V33.40 의 R2 장중 파이프라인이 60분 만에 만든다 → 이 경로는 끈다.
+        if (_scCfg.collect === true && i + _scH <= L - 1) {
           let _sPnl = null;
           for (let k3 = i + 1; k3 <= i + _scH; k3++) {
             const r3 = (closes[k3] / c - 1) * 100;
