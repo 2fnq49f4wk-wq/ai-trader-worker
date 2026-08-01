@@ -18,6 +18,11 @@ jobs:
       # 배포 전 안전게이트 — 깨진 코드 push 시 구문오류면 배포 차단(라이브 보호)
       - name: Syntax check
         run: node --check src/index.js
+      # [V33.61] 프론트(public/index.html)의 인라인 <script> 도 반드시 검사한다.
+      #   위 검사는 src/index.js 만 본다 — 실제로 V33.60 에서 HTML 인라인 스크립트의
+      #   중괄호가 어긋나 우측 사이드바·AI두뇌 창이 통째로 죽었는데 게이트를 그대로 통과했다.
+      - name: Frontend inline script check
+        run: node tools/check-html-js.mjs
       # cloudflare/wrangler-action 대신 로컬에서 검증된 방식 그대로 실행
       # (wrangler-action@v3의 npx 자동설치가 4.86.0을 요구하며 실패하던 문제 회피)
       - name: Install wrangler
