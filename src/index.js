@@ -2476,7 +2476,7 @@ async function applySignalTypeWeights(DB, cfg) {
 // ============================================================================
 // [V33.55] 빌드 버전 — SWR L2 캐시 키에 섞어 '배포 = 판단 캐시 자동 무효화'를 만든다.
 //   판정 로직을 고쳐도 옛 캐시가 최대 1시간 재배포되던 문제를 구조적으로 없앤다.
-const _BUILD_VER = "V33.65";
+const _BUILD_VER = "V33.66";
 
 const AI_PARAMS = {
   // ── OHLCV 타임프레임 ── 시가/고가/저가/종가/거래량을 어떤 봉 주기로 볼지.
@@ -13389,7 +13389,15 @@ async function runTradingCycle(env) {
         if (!scalpDailyBlocked && market !== "cm") {
           const _vix = (crashGate && crashGate.vixValue) || 0;
           const _regime = (mktCtx && mktCtx.regime) || null;
-          const _riskOff = _vr.skipWhenRiskOff && (crashGate.deRisk || _regime === "risk_off" || _regime === "caution");
+          // [V33.66] ★caution 만으로 하루를 통째로 막는 건 과했다★
+          //   실측: 7/27~7/31 거의 매 세션 이 차단이 발동했다(regime=caution, vix=0.0).
+          //   그런데 vix=0.0 은 'VIX 급등'이 아니라 'VIX 값을 못 받았다'는 뜻이다 —
+          //   즉 실제 변동성 근거 없이 레짐 라벨 하나로 단타가 상시 정지돼 있었다.
+          //   차단의 원래 근거는 "추세 없는 고변동장"인데 caution 은 그보다 훨씬 약한 신호다.
+          //   → risk_off(강한 신호)와 crashGate.deRisk 는 종전대로 차단하고,
+          //     caution 은 VIX 가 실제로 확인될 때만(>0) 차단 사유로 인정한다.
+          const _cautionOk = (_regime === "caution") && (_vix > 0);
+          const _riskOff = _vr.skipWhenRiskOff && (crashGate.deRisk || _regime === "risk_off" || _cautionOk);
           const _vixHot = _vr.haltVixAbove > 0 && _vix > _vr.haltVixAbove;
           if (_riskOff || _vixHot) {
             scalpDailyBlocked = true;
@@ -14265,7 +14273,18 @@ async function runTradingCycle(env) {
           const _aiScalpOk = !!((typeof AI_PARAMS !== "undefined") && AI_PARAMS.aiScalp &&
                                 (AI_PARAMS.aiScalp.enabled || AI_PARAMS.aiScalp.vetoWhenTrusted !== false));
           const _scalpMarketOk = _ruleScalpOk || _aiScalpOk;
-          if (_scalpMarketOk && (_scalpOn || _panicScalpOn) && !scalpDailyBlocked && stratResults.length === 0 && !strategiesHeldNow.has("scalp")) {
+          // [V33.66] ★관측(학습표본 수집)을 '신규진입 차단'과 분리한다★
+          //   scalpDailyBlocked 는 (a) 당일 단타 손실한도 (b) V9.8 변동성 레짐 차단으로 켜지는데,
+          //   둘 다 '오늘 단타를 더 사지 마라'는 뜻이지 '학습 데이터를 모으지 마라'가 아니다.
+          //   그런데 이 플래그가 외곽 게이트에 있어서 관측 코드까지 통째로 건너뛰었다.
+          //   실측: V9.8 차단이 7/27~7/31 거의 매 세션 발동 → elig=0 → obs=0 이 계속된 직접 원인.
+          //   (V33.59 에서 순환 의존을 풀었지만 그 우회로도 이 게이트 '안'에 있어 무력했다)
+          //   → 진입 가능 여부와 관측 가능 여부를 따로 계산한다. 진입 규칙은 종전 그대로.
+          const _scEntryOk = _scalpMarketOk && (_scalpOn || _panicScalpOn) && !scalpDailyBlocked
+                             && stratResults.length === 0 && !strategiesHeldNow.has("scalp");
+          const _scObsOk = !!__stinPend && stratResults.length === 0;   // 관측은 차단 플래그와 무관
+          if (_scEntryOk || _scObsOk) {
+            const _entryAllowed = _scEntryOk;
             scalpEligible++;  // [진단] no-trend·미보유 → scalp 후보 도달
             // [V65] scalp 전용 스캔 예산 — 기존엔 intradayConfirm.maxPerCycle(60)을 공유해
             //   진입확인 fetch가 단타 스캔을 굶겼다(단타 거래량 저하의 주원인). 별도 카운터로 분리.
@@ -14364,7 +14383,7 @@ async function runTradingCycle(env) {
                 } catch (e) {}
                 // [V33.48/53] 규칙 단타 신호는 (a) 시장 허용(usOnly) 이고 (b) 규칙 사전필터(_scAligned)를
                 //   통과했을 때만 생성한다. AI 단타는 아래에서 완전히 독립적으로 판단한다.
-                let _scalpSig = (_ruleScalpOk && _scAligned)
+                let _scalpSig = (_entryAllowed && _ruleScalpOk && _scAligned)
                   ? evaluateScalpEntry(_scalpMb, daily, mcfg, market, regime, _sigTypeStats) : null;
                 if (_scalpSig) scalpSig++;  // [진단] 게이트 통과해 신호 발생
                 // [V9.10 합성함수] SCALP 일봉 컨텍스트 직교 강화 — 분봉 진입을 일봉 추세/매집/실적/애널리스트로 사이즈 차등.
@@ -14419,7 +14438,7 @@ async function runTradingCycle(env) {
                         __scalpDiag.ai_veto = (__scalpDiag.ai_veto || 0) + 1;
                         _scalpSig = null;   // AI 거부 → 규칙 단타 진입 취소
                       }
-                    } else if (_scp.aiEntry !== false && aiScalpUsed < (_scp.maxPerCycle || 8)) {
+                    } else if (_entryAllowed && _scp.aiEntry !== false && aiScalpUsed < (_scp.maxPerCycle || 8)) {
                       const _sd2 = await mlScalpDecide(DB, _sfNow, null);   // enabled=true 일 때만 non-null
                       if (_sd2 && _sd2.pass) {
                         aiScalpUsed++;
@@ -30691,8 +30710,13 @@ export default {
           try {
             const _bfLock = _num(await getState(env.DB, "stin_bf_lock", 0), 0);
             let _mkoBf = false; try { _mkoBf = isMarketOpen("us") || isMarketOpen("kr"); } catch (e) {}
-            if (!_mkoBf && (Date.now() - _bfLock > 30 * 60000) && fetchBudgetLeft() > 40) {
+            if (!_mkoBf && (Date.now() - _bfLock > 30 * 60000)) {
               await setState(env.DB, "stin_bf_lock", Date.now());
+              // [V33.66] ★백필이 한 번도 안 돌던 이유★ 종전엔 fetchBudgetLeft() > 40 을 요구했는데,
+              //   이 지점에 오기 전 여러 단계가 예산을 소진해 그 조건이 거의 늘 거짓이었다
+              //   (실측: [ST-BACKFILL] 로그 0건). 다른 무거운 단계들과 동일하게 전용 예산을 부여한다
+              //   — 이 코드베이스의 기존 관례(resetFetchBudget(_mktOpen ? 40 : 200))와 같은 방식.
+              try { resetFetchBudget(60); } catch (e0) {}
               const _bfr = await stinBackfill(env.DB, { maxSyms: 8, maxSamples: 4000 });
               if (_bfr) await log(env.DB, "INFO", null, _bfr);
             }
@@ -30711,7 +30735,7 @@ export default {
               if (_ir) await log(env.DB, "INFO", null, _ir);
             }
           } catch (e) {}
-          const _PIPE_VER = "V33.65-backfill";   // 배포 시 파이프라인 1회 강제 재실행(국면·판단 즉시 재산출)   // 배포 시 파이프라인 1회 강제 재실행(신규 스키마 반영)
+          const _PIPE_VER = "V33.66-obs-gate";   // 배포 시 파이프라인 1회 강제 재실행(국면·판단 즉시 재산출)   // 배포 시 파이프라인 1회 강제 재실행(신규 스키마 반영)
           try {
             const _pv = await getState(env.DB, "ai_pipeline_ver", null);
             if (_pv !== _PIPE_VER) {
