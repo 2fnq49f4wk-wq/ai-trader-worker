@@ -2500,7 +2500,7 @@ async function applySignalTypeWeights(DB, cfg) {
 // ============================================================================
 // [V33.55] 빌드 버전 — SWR L2 캐시 키에 섞어 '배포 = 판단 캐시 자동 무효화'를 만든다.
 //   판정 로직을 고쳐도 옛 캐시가 최대 1시간 재배포되던 문제를 구조적으로 없앤다.
-const _BUILD_VER = "V33.76";
+const _BUILD_VER = "V33.77";
 
 const AI_PARAMS = {
   // ── OHLCV 타임프레임 ── 시가/고가/저가/종가/거래량을 어떤 봉 주기로 볼지.
@@ -6657,6 +6657,18 @@ async function sentiLexLearnStep(DB) {
             const e = lex.w[w] || { n: 0, s: 0 };
             e.n += 1; e.s += ret; lex.w[w] = e; updated++; symHit++; symHitTotal++;
           }
+          // [V33.77] 범주(불확실·소송·제약·강한양태·약한양태)도 같은 라벨로 학습한다.
+          //   단어별 학습은 표본이 흩어지지만 범주는 5개뿐이라 훨씬 빨리 수렴한다 —
+          //   "불확실 어휘가 붙은 뉴스는 실제로 다음날 수익률이 어땠나"를 직접 재는 셈.
+          const cm = (pend.symCat || {})[sy];
+          if (cm) {
+            lex.cat = lex.cat || {};
+            for (const c in cm) {
+              if (!cm[c]) continue;
+              const ce = lex.cat[c] || { n: 0, s: 0 };
+              ce.n += 1; ce.s += ret; lex.cat[c] = ce;
+            }
+          }
         }
         // 2순위(폴백): 종목 귀속이 안 된 기사는 섹터 라벨로 배운다.
         for (const g in (pend.g || {})) {
@@ -6684,16 +6696,19 @@ async function sentiLexLearnStep(DB) {
     // (2) 오늘치 단어를 pending 에 기록(내일 라벨링 대상)
     try {
       const sn = await getState(DB, "sector_news_sentiment", null);
-      const g = {}, bySym = {};
+      const g = {}, bySym = {}, bySymCat = {};
       const _absorb = function (titles, grp) {
         for (const t of (titles || [])) {
           const syms = _newsSymbols(t);
           if (syms.length) {
             // 기사에 회사가 명시됨 → 그 회사 앞으로 귀속(섹터로는 안 보낸다)
             const wm = _sentiWords([t]);
+            const cm2 = _sentiCategories(String(t).toLowerCase());   // [V33.77] 범주 히트도 함께 기록
             for (const sy of syms) {
               bySym[sy] = bySym[sy] || {};
               for (const w in wm) bySym[sy][w] = (bySym[sy][w] || 0) + 1;
+              bySymCat[sy] = bySymCat[sy] || {};
+              for (const c in cm2) if (cm2[c]) bySymCat[sy][c] = (bySymCat[sy][c] || 0) + cm2[c];
             }
           } else if (grp) {
             const wm = _sentiWords([t]);
@@ -6705,7 +6720,7 @@ async function sentiLexLearnStep(DB) {
       if (sn && sn.headlinesByGroup) { for (const k in sn.headlinesByGroup) _absorb(sn.headlinesByGroup[k], k); }
       else if (sn && sn.headlines) { _absorb(sn.headlines, "TECH"); }
       if (Object.keys(g).length || Object.keys(bySym).length) {
-        await setState(DB, "senti_lex_pend", { day: today, g: g, sym: bySym, ts: Date.now() });
+        await setState(DB, "senti_lex_pend", { day: today, g: g, sym: bySym, symCat: bySymCat, ts: Date.now() });
       }
     } catch (e) {}
     return updated ? ("[SENTI-LEARN] 갱신 " + updated + "건(종목귀속 " + symHitTotal + ") · 어휘 " + words + "개") : null;
@@ -6801,12 +6816,90 @@ async function sentiLexGet(DB) {
         m[w] = _clamp(e.s / e.n, -SENTI_LEARN.clip, SENTI_LEARN.clip);
       }
     }
+    // [V33.77] 범주가중도 함께 산출해 전역에 싣는다. 범주는 5개뿐이라 minN 을 높게 잡아도
+    //   금방 채워지고, 채워지기 전엔 SENTI_CAT_W 초기값이 그대로 쓰인다.
+    try {
+      const cw = {};
+      if (lex && lex.cat) {
+        for (const c in lex.cat) {
+          const e = lex.cat[c];
+          if (!e || (e.n || 0) < Math.max(20, SENTI_LEARN.minN * 3)) continue;
+          cw[c] = _clamp(e.s / e.n, -SENTI_LEARN.clip, SENTI_LEARN.clip);
+        }
+      }
+      __sentiCatW = cw;
+    } catch (e) { __sentiCatW = {}; }
     __sentiLexMemo = { at: Date.now(), v: m };
     return m;
   } catch (e) { return {}; }
 }
 
 const _SENTI_NEGATORS = { no:1, not:1, never:1, without:1, fails:1, fail:1, "fails to":1, denies:1, deny:1, avoid:1, avoids:1, halts:1, ends:1, "no longer":1 };
+
+// ══ [V33.77] Loughran-McDonald 금융 어휘 범주 확장 ══
+//   기존엔 긍정/부정 2범주뿐이었다. 회계·재무 텍스트 분석의 표준 사전인
+//   Loughran-McDonald(2011) 는 금융 문서에서 의미 있는 범주를 7개로 나눈다:
+//     Positive · Negative · Uncertainty · Litigious · StrongModal · WeakModal · Constraining
+//   일반 감정사전을 금융에 쓰면 오분류가 심하다는 것이 이 사전의 출발점이다
+//   (예: "liability"·"tax"·"cost"·"vice" 는 일반 사전에서 부정이지만 재무 문서에선 중립).
+//   우리에게 특히 중요한 건 부정어가 아니라 ★불확실성·소송·양태(modal)★ 범주다 —
+//   "may", "could", "expects" 같은 약한 양태어가 붙은 호재는 실현 확률이 낮고,
+//   소송·규제 어휘는 방향보다 변동성을 키운다. 2범주로는 이 구분이 통째로 사라진다.
+//   범주별 가중은 고정하지 않고 sentiLexLearnStep 이 실제 주가와의 상관으로 학습한다
+//   (아래 SENTI_CAT_W 는 학습 전 초기값일 뿐이다).
+const _SENTI_UNCERTAIN = {
+  may:1, might:1, could:1, possible:1, possibly:1, uncertain:1, uncertainty:1, unclear:1,
+  appears:1, seems:1, believe:1, believes:1, anticipate:1, anticipates:1, assume:1, assumes:1,
+  approximately:1, roughly:1, tentative:1, preliminary:1, speculative:1, rumor:1, rumors:1,
+  reportedly:1, "may be":1, unpredictable:1, volatile:1, volatility:1, ambiguous:1, pending:1
+};
+const _SENTI_LITIGIOUS = {
+  lawsuit:1, lawsuits:1, litigation:1, sue:1, sues:1, sued:1, subpoena:1, indictment:1,
+  plaintiff:1, defendant:1, court:1, judge:1, ruling:1, settlement:1, antitrust:1,
+  regulator:1, regulators:1, regulatory:1, investigation:1, investigate:1, probe:1, probes:1,
+  sec:1, doj:1, ftc:1, fine:1, fined:1, penalty:1, penalties:1, violation:1, violations:1,
+  compliance:1, breach:1, allegation:1, allegations:1, "class action":1
+};
+// 강한 양태 — 확언(will, must, definitely). 호재/악재의 실현 확률을 높인다.
+const _SENTI_STRONGMODAL = {
+  will:1, must:1, definitely:1, always:1, never:1, clearly:1, undoubtedly:1,
+  "will be":1, certain:1, certainly:1, confident:1, committed:1, guarantee:1, guarantees:1
+};
+// 약한 양태 — 유보(could, perhaps). 방향은 있으나 실현이 불확실하다.
+const _SENTI_WEAKMODAL = {
+  could:1, perhaps:1, maybe:1, sometimes:1, occasionally:1, "depending on":1,
+  suggests:1, hints:1, considering:1, exploring:1, weighing:1, mulls:1, mulling:1, eyeing:1
+};
+// 제약 — 부채약정·한도·규제제약. 재무 유연성 축소 신호.
+const _SENTI_CONSTRAINING = {
+  covenant:1, covenants:1, restricted:1, restriction:1, restrictions:1, obligation:1,
+  obligations:1, mandatory:1, requirement:1, requirements:1, limit:1, limits:1, limited:1,
+  ceiling:1, cap:1, quota:1, moratorium:1, ban:1, banned:1, embargo:1, curb:1, curbs:1,
+  tariff:1, tariffs:1, restrict:1, restricts:1
+};
+// 범주별 초기 가중 — 학습(sentiLexLearnStep)이 실측으로 덮어쓴다.
+//   uncertainty/weakModal 은 방향이 아니라 '신뢰도 감쇠'로 쓰고, litigious/constraining 은 약한 악재,
+//   strongModal 은 이미 잡힌 방향의 증폭으로 쓴다.
+const SENTI_CAT_W = { uncertainty: -0.25, litigious: -0.6, constraining: -0.4, strongModal: 0.15, weakModal: -0.15 };
+
+// 헤드라인에서 5개 보조범주의 히트 수를 센다(토큰·구절 모두).
+function _sentiCategories(lowerText) {
+  const out = { uncertainty: 0, litigious: 0, constraining: 0, strongModal: 0, weakModal: 0 };
+  try {
+    const t = " " + String(lowerText || "").replace(/[^a-z0-9 -]/g, " ").replace(/\s+/g, " ") + " ";
+    const dicts = [["uncertainty", _SENTI_UNCERTAIN], ["litigious", _SENTI_LITIGIOUS],
+                   ["constraining", _SENTI_CONSTRAINING], ["strongModal", _SENTI_STRONGMODAL],
+                   ["weakModal", _SENTI_WEAKMODAL]];
+    for (const pair of dicts) {
+      const cat = pair[0], d = pair[1];
+      for (const k in d) {
+        if (k.indexOf(" ") >= 0) { if (t.indexOf(" " + k + " ") >= 0) out[cat]++; }
+        else if (t.indexOf(" " + k + " ") >= 0) out[cat]++;
+      }
+    }
+  } catch (e) {}
+  return out;
+}
 // [V33.69] ★감정 판정 정확도 실측 후 수정★ 실제 금융 헤드라인 15건으로 재보니 정확도 73%였고,
 //   실패 원인이 네 가지로 갈렸다. 하나씩 고친다.
 //   (a) 활용형 미매칭 — 사전에 beat 는 있는데 beats 가 없고, jump 는 있는데 jumps 가 없다.
@@ -6892,6 +6985,8 @@ const _SENTI_HALFLIFE_H = 2;   // [V33.54] 3h → 2h: 최신 심리가 지배하
 // [V33.67] 학습된 어휘가중 — sentiLexGet 이 채우는 전역 메모(비동기 조회를 동기 경로에서 쓰기 위함).
 //   비어 있으면 종전과 100% 동일하게 동작한다(사전가중만 사용).
 let __sentiLexW = {};
+// [V33.77] 학습된 범주가중 — sentiLexGet 이 함께 채운다. 비면 SENTI_CAT_W 초기값을 쓴다.
+let __sentiCatW = {};
 function _scoreHeadlines(items) {
   let sum = 0, mag = 0, wsum = 0;
   for (const it of (items || [])) {
@@ -6910,6 +7005,26 @@ function _scoreHeadlines(items) {
         for (const q of ws) { if (_lw[q] !== undefined) { add += _lw[q]; hit++; } }
         if (hit > 0) v = _clamp(v + SENTI_LEARN.blend * (add / hit), -3, 3);
       }
+    } catch (e) {}
+    // ── [V33.77] Loughran-McDonald 보조범주 반영 ──
+    //   긍정/부정만 보면 "Apple may face antitrust probe over App Store" 같은 헤드라인이
+    //   probe(-1) 하나로만 잡힌다. 실제로는 ①불확실(may) ②소송/규제(antitrust, probe) 가
+    //   겹친 상태고, 이 조합은 단순 악재보다 방향은 약하되 변동성은 크다.
+    //   · uncertainty/weakModal → 방향 신뢰도를 깎는다(부호 유지, 크기 축소)
+    //   · strongModal          → 이미 잡힌 방향을 증폭한다
+    //   · litigious/constraining → 약한 악재를 더한다
+    try {
+      const _cat = _sentiCategories(String(t).toLowerCase());
+      const _cw = (__sentiCatW && Object.keys(__sentiCatW).length) ? __sentiCatW : SENTI_CAT_W;
+      // 신뢰도 감쇠 — 불확실·약한 양태가 많을수록 방향 확신을 줄인다(0.4 하한).
+      const _damp = _clamp(1 + (_cat.uncertainty * _num(_cw.uncertainty, -0.25)
+                              + _cat.weakModal * _num(_cw.weakModal, -0.15)), 0.4, 1);
+      // 증폭 — 확언 양태(will/must)는 실현 확률을 높인다(1.4 상한).
+      const _amp = _clamp(1 + _cat.strongModal * _num(_cw.strongModal, 0.15), 1, 1.4);
+      v = v * _damp * _amp;
+      // 소송·제약은 방향과 별개로 더해지는 악재.
+      v += _cat.litigious * _num(_cw.litigious, -0.6) + _cat.constraining * _num(_cw.constraining, -0.4);
+      v = _clamp(v, -3, 3);
     } catch (e) {}
     sum += v * w; mag += Math.abs(v) * w; wsum += w;
   }
@@ -17611,9 +17726,13 @@ async function handleRequest(request, env, ctx) {
       const gAcc = _clamp(_num(body.valAcc, 0), 0, 1);
       const valN = Math.max(1, Math.floor(_num(body.valN, 30)));
       const gLB = (body.valAccLB != null) ? _clamp(_num(body.valAccLB, 0), 0, 1) : _wilsonLB(gAcc, valN);
+      // [V33.77] valIC/valRankIC 수용 — 위원회 가중의 새 기준. 없으면 null 로 두고 정확도 환산 폴백.
+      const _vIC = (typeof body.valIC === "number" && isFinite(body.valIC)) ? _clamp(body.valIC, -0.5, 0.5) : null;
+      const _vRIC = (typeof body.valRankIC === "number" && isFinite(body.valRankIC)) ? _clamp(body.valRankIC, -0.5, 0.5) : null;
       const model = { trees: body.trees, eta: _num(body.eta, GBDT.eta), bias: _num(body.bias, 0),
         nTrees: body.trees.length, featVer: LUXML.featVer, valAcc: +gAcc.toFixed(4), valAccLB: +gLB.toFixed(4),
-        valN: valN, n: Math.max(0, Math.floor(_num(body.n, 0))), trainedAt: Date.now(), source: "external" };
+        valN: valN, n: Math.max(0, Math.floor(_num(body.n, 0))), trainedAt: Date.now(), source: "external",
+        valIC: _vIC, valRankIC: _vRIC, algo: (typeof body.algo === "string" ? body.algo.slice(0, 24) : null) };
       // ── self-검증: Worker 최근 표본에 직접 채점해 형식/추론 정합성 확인 ──
       let selfAcc = null, selfN = 0;
       try {
@@ -17659,9 +17778,20 @@ async function handleRequest(request, env, ctx) {
       let mindLB = 0.5;
       try { const mm = await mlMindLoad(env.DB); if (mm) mindLB = (typeof mm.valAccLB === "number") ? mm.valAccLB : _wilsonLB(_num(mm.valAcc, 0.5), _num(mm.valN, 30)); } catch (e) {}
       let trust = { wGbdt: 0, trusted: false, gbdtAcc: model.valAcc, gbdtAccLB: model.valAccLB, mindAcc: mindLB, source: "external", selfAcc: selfAcc != null ? +selfAcc.toFixed(4) : null, selfN: selfN, convMaxDiff: convMaxDiff != null ? +convMaxDiff.toFixed(4) : null, convN: convN };
-      if (gLB >= GBDT.trustFloor) {
+      trust.valIC = _vIC; trust.valRankIC = _vRIC;
+      // [V33.77] ★신뢰 문턱을 IC 로도 열어준다★
+      //   종전엔 정확도 하한(valAccLB ≥ 0.505)만 봤다. Wilson 하한 특성상 검증표본이 작으면
+      //   요구 정확도가 급격히 올라간다 — n=2,000 이면 raw 52.3%(≈IC 0.058)가 필요하다.
+      //   업계에서 IC 0.058 은 '아주 좋은 모델'이라, 사실상 정상 모델이 전부 불신 처리됐다.
+      //   IC 가 실려 오면 icFloor(0.015)만 넘어도 신뢰한다 — 정확도로는 안 보이던 랭킹 능력을
+      //   가진 모델이 위원회에 들어올 수 있게 된다.
+      const _icFloor = (GBDT.icFloor != null) ? GBDT.icFloor : 0.015;
+      const _passAcc = gLB >= GBDT.trustFloor;
+      const _passIC = (_vIC != null && _vIC >= _icFloor);
+      if (_passAcc || _passIC) {
         const eG = Math.exp(GBDT.trustTemp * (gLB - 0.5)), eM = Math.exp(GBDT.trustTemp * (mindLB - 0.5));
         trust.wGbdt = +(eG / (eG + eM)).toFixed(4); trust.trusted = true;
+        trust.passedBy = _passAcc ? (_passIC ? "acc+ic" : "acc") : "ic";
       }
       const activate = url.searchParams.get("activate") === "1";
       // 승격은 (1)activate 요청 + (2)self-검증 통과일 때만. 그 외엔 섀도우 저장(라이브 무영향).
@@ -24332,6 +24462,9 @@ const DNN = {
   stdClip: 6,            // [V9.1] 윈저화 표준화 클램프(±σ) — 팬테일 이상치 안정화
   valFrac: 0.2,
   trustFloor: 0.505,     // 검증정확도 이 미만이면 신뢰 0
+  // [V33.77] IC 대체 문턱 — 정확도로는 못 보던 랭킹 능력을 인정한다.
+  //   업계 기준 IC 0.02~0.08 이 "좋은" 모델이므로 0.015 는 '쓸모 있음'의 최소선이다.
+  icFloor: 0.015,
   diThreshold: 2.6,      // [V12.104] 2.2→2.6 — featVer-12 재구축기엔 mean/std 추정이 아직 불안정해 정상입력도
                           //   OOD로 오판되어 기권이 과도했다(거래 정체 원인 중 하나). 표본풀이 커지며 분포추정이
                           //   안정되면 다시 낮출 수 있음(진짜 이상치 컷 목적 자체는 유지).
@@ -24892,16 +25025,18 @@ async function mlDeepDecide(DB, featVec, opts) {
       if (pDnn != null) {
         const accBase = _num(trust.dnnAccLB, _num(trust.dnnAcc, 0.5));
         const accEff = 0.5 + (accBase - 0.5) / (1 + (DNN.disagreeK || 3.0) * dnnStd);  // 불일치↑ → 소프트맥스 가중↓
-        experts.push({ name: "dnn", p: pDnn, z: _logitD(pDnn), acc: accEff }); usedDnn = true;
+        experts.push({ name: "dnn", p: pDnn, z: _logitD(pDnn), acc: accEff, ic: (dnn && typeof dnn.valIC === "number") ? dnn.valIC : null }); usedDnn = true;
         if (!mind) _committeeUnc = Math.max(_committeeUnc, dnnStd);  // [V12.62] MIND 없을 땐 DNN 시드불일치를 위원회 불확실성으로
       }
     }
     try {
       const gtrust = (opts.gbdtTrust !== undefined) ? opts.gbdtTrust : await getState(DB, "gbdt_trust", null);
       if (gtrust && gtrust.trusted && gtrust.wGbdt > 0) {
-        const gm = (opts.gbdt !== undefined) ? opts.gbdt : await mlGBDTLoad(DB);
+        const gm = (opts.gbdt !== undefined) ? opts.gbdt : await mlGBDTLoad(DB, opts.market);
         const pG = gm ? mlGBDTScore(gm, featVec) : null;
-        if (pG != null) { experts.push({ name: "gbdt", p: pG, z: _logitD(pG), acc: _num(gtrust.gbdtAccLB, _num(gtrust.gbdtAcc, 0.5)) }); usedGbdt = true; }
+        // [V33.77] 모델이 실어 온 valIC 를 그대로 위원회 가중에 쓴다(없으면 정확도 환산 폴백).
+        const _gIC = (gm && typeof gm.valIC === "number") ? gm.valIC : null;
+        if (pG != null) { experts.push({ name: "gbdt", p: pG, z: _logitD(pG), acc: _num(gtrust.gbdtAccLB, _num(gtrust.gbdtAcc, 0.5)), ic: _gIC }); usedGbdt = true; }
       }
     } catch (e) {}
     // [V32.65] ★부스터 합류(XGB/LGB/Cat)★ — 그동안 학습만 하고 안 쓰던 3모델을 위원회에 참여.
@@ -24910,15 +25045,19 @@ async function mlDeepDecide(DB, featVec, opts) {
     try {
       const boosters = (opts.boosters !== undefined) ? opts.boosters : await _boostersCached(DB);
       if (boosters && boosters.length) {
-        let bz = 0, bw = 0, bAccMax = 0.5, bUsed = 0;
+        let bz = 0, bw = 0, bAccMax = 0.5, bUsed = 0, bICMax = null;
         for (const b of boosters) {
           const pB = mlGBDTScore(b.model, featVec);
           if (pB == null) continue;
-          const wgt = Math.max(0.01, b.accLB - 0.5);
+          // [V33.77] 부스터 3종 내부 합의도 IC 로 가중한다 — 정확도 차이(0.005 수준)로는
+          //   셋을 사실상 균등하게 섞어, 잘하는 부스터가 못하는 부스터에 희석됐다.
+          const _bIC = (b.model && typeof b.model.valIC === "number") ? b.model.valIC : null;
+          const wgt = (_bIC != null) ? Math.max(0.002, _bIC) : Math.max(0.01, b.accLB - 0.5);
           bz += wgt * _logitD(pB); bw += wgt; bUsed++;
           if (b.accLB > bAccMax) bAccMax = b.accLB;
+          if (_bIC != null && (bICMax == null || _bIC > bICMax)) bICMax = _bIC;
         }
-        if (bw > 0 && bUsed > 0) { const pBoost = _clamp(_sigmoid(bz / bw), 0.001, 0.999); experts.push({ name: "boost", p: pBoost, z: _logitD(pBoost), acc: bAccMax, wMul: 0.8 }); }
+        if (bw > 0 && bUsed > 0) { const pBoost = _clamp(_sigmoid(bz / bw), 0.001, 0.999); experts.push({ name: "boost", p: pBoost, z: _logitD(pBoost), acc: bAccMax, ic: bICMax, wMul: 0.8 }); }
       }
     } catch (e) {}
     // ── [V12.39 규칙엔진 전문가] 규칙엔진의 기술적 종합확률(taUpProb)을 위원회 정식 위원으로 합류 ──
@@ -24946,12 +25085,33 @@ async function mlDeepDecide(DB, featVec, opts) {
     };
     let pCombined = experts[0].p;        // 단일 전문가면 그 확률 그대로
     if (experts.length > 1) {
+      // ══ [V33.77] ★위원회 가중을 정확도에서 IC 로 바꾼다★ ══
+      //   문제: 종전 가중은 softmax(trustTemp×(accLB−0.5)), trustTemp=12 였다.
+      //   10거래일 초과수익 예측에서 "좋은" 모델의 IC 는 0.02~0.08(업계 기준)이고 이는 이진
+      //   정확도로 51~54% 다. 즉 실력 차이가 전부 accLB 0.505~0.535 라는 좁은 구간에 몰린다.
+      //   실측: IC 0.05 짜리와 IC 0.02 짜리(실력 2.5배 차)의 가중이 53.6% : 46.4%,
+      //         IC 0.075 와 0.0125(6배 차)조차 57.4% : 42.6%.
+      //   → 사용자가 지적한 "투표로 하면 오히려 부정확하다"가 정확히 이것이다. 위원회가
+      //     사실상 단순평균이라 좋은 모델이 약한 모델에 희석된다.
+      //   해결: IC 는 0 근처에서 시작해 배수 차이가 그대로 드러나므로 소프트맥스 입력으로 적합하다.
+      //         같은 조합이 IC 가중에서는 85.8% : 14.2%, 97.7% : 2.3% 가 된다.
+      //   IC 가 없는 전문가(구모델·워커 자체학습)는 정확도에서 IC 를 근사 환산해 섞는다
+      //   (acc 0.5 = IC 0, 0.4%p 정확도 ≈ IC 0.01 — 실측 회귀 근사).
       const T = (typeof DNN !== "undefined" ? DNN.trustTemp : 12);
-      // [V12.54] 가중용 정확도에 상한(committeeAccCap) 적용 — 한 전문가(특히 in-sample 누수로 부푼 MIND)의
-      //   검증LB가 표를 독식하는 것을 차단. LB 0.85·T=12면 종전 97% 지배 → 참여 전문가가 사실상 무의미했다.
       const _cap = (typeof DNN !== "undefined" && DNN.committeeAccCap) ? DNN.committeeAccCap : 0.66;
+      const _icT = (typeof DNN !== "undefined" && DNN.icTemp != null) ? DNN.icTemp : 60;
+      const _icOf = function (ex) {
+        if (typeof ex.ic === "number" && isFinite(ex.ic)) return _clamp(ex.ic, -0.05, 0.25);
+        return _clamp((Math.min(_accBlend(ex), _cap) - 0.5) / 0.4, -0.05, 0.25);   // 정확도 → IC 근사
+      };
+      const _useIC = experts.some(function (ex) { return typeof ex.ic === "number" && isFinite(ex.ic); });
       let wsum = 0, zsum = 0;
-      for (const ex of experts) { const _a = Math.min(_accBlend(ex), _cap); const w = (ex.wMul || 1) * Math.exp(T * (_a - 0.5)); wsum += w; zsum += w * ex.z; }
+      for (const ex of experts) {
+        const w = _useIC
+          ? (ex.wMul || 1) * Math.exp(_icT * _icOf(ex))
+          : (ex.wMul || 1) * Math.exp(T * (Math.min(_accBlend(ex), _cap) - 0.5));
+        wsum += w; zsum += w * ex.z;
+      }
       pCombined = _clamp(_sigmoid(zsum / (wsum || 1)), 0.001, 0.999);
     }
     // [V4] 위원회 확률 보정(야간 mlCalibrateCommittee가 학습한 온도)
@@ -25212,6 +25372,9 @@ const GBDT = {
                          //   미달 모델은 wGbdt=0으로 자동 억제되어 위원회에 영향 없이 표시상 "학습됨"으로 전환.
   valFrac: 0.2,
   trustFloor: 0.505, trustTemp: 12,
+  // [V33.77] IC 소프트맥스 온도 — IC 0.05 vs 0.02 를 86:14 로 벌린다(정확도 기반은 54:46 이었다).
+  //   업계 기준 좋은 모델 IC 0.02~0.08 구간이 의미 있게 분리되도록 잡은 값.
+  icTemp: 60,
   // [V12.54] trustSlack 제거 — MIND 상대비교 게이트 폐기로 죽은 파라미터가 됨.
   trainBudgetMs: 90000, // [V12.42] 25s→90s — trainWindow 60000 확대 후 25s로는 트리 20개만 자라
                         //   시장국면 피처 4종에 중요도 87%가 편중(개별종목 피처 전멸)되던 문제.

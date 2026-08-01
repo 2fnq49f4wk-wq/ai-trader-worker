@@ -578,6 +578,28 @@ def _train_and_upload_gbdt(BASE, KEY, HDR, X, Y, TS, featver, D):
 #   업로드(섀도우). Worker 추론 변경 0(mlGBDTScore 재사용). bias는 라이브러리 raw margin과 트리합의
 #   차이(상수)로 정합. 로컬 합성표본으로 변환 정합성 검증 완료(LGB/CAT 정확일치, XGB 99.9%).
 # ============================================================================
+# [V33.77] IC / RankIC — 퀀트 업계의 표준 평가지표.
+#   왜 정확도를 버리는가: 10거래일 초과수익 예측에서 "좋은" 모델의 IC 는 0.02~0.08 이고
+#   0.1 이상은 드물다. 이는 이진 정확도로 51~54% 에 해당한다. 즉 우리가 쓰던 정확도 척도는
+#   좋은 모델과 쓸모없는 모델을 거의 구분하지 못하는 구간에 몰려 있다.
+#   더 심각한 건 위원회 가중이다 — softmax(12*(acc−0.5)) 는 실력이 2~6배 차이나는 모델에도
+#   55:45 ~ 57:43 을 준다(사실상 단순평균). IC 로 바꾸면 같은 차이가 86:14 ~ 98:2 가 된다.
+#   랭킹 능력(어느 종목이 더 오를지)이 매매에서 실제로 쓰는 정보이므로 RankIC 를 함께 본다.
+def _calc_ic(pred, y):
+    import numpy as np
+    try:
+        p = np.asarray(pred, dtype=np.float64); t = np.asarray(y, dtype=np.float64)
+        if len(p) < 30 or p.std() < 1e-12 or t.std() < 1e-12: return 0.0, 0.0
+        ic = float(np.corrcoef(p, t)[0, 1])
+        rp = np.argsort(np.argsort(p)).astype(np.float64)
+        rt = np.argsort(np.argsort(t)).astype(np.float64)
+        ric = float(np.corrcoef(rp, rt)[0, 1]) if rp.std() > 0 and rt.std() > 0 else 0.0
+        return (0.0 if not np.isfinite(ic) else ic), (0.0 if not np.isfinite(ric) else ric)
+    except Exception:
+        return 0.0, 0.0
+
+
+# ============================================================================
 # [V33.76] ★미국장·한국장 분리학습★ (사용자 지시)
 #   두 시장은 거래시간(연속 vs 상하한가 ±30%), 세금(국내 증권거래세), 투자자 구성(외국인·기관
 #   비중), 변동성 구조가 전부 다르다. 한 모델에 뭉치면 표본이 많은 쪽(미국)의 통계가 다른 쪽을
@@ -713,10 +735,12 @@ def _train_per_market(BASE, KEY, HDR, MKT, X, Y, TS, PNL, featver, D):
         vlb = _wilson(vacc, nval)
         pi = np.linspace(0, nval - 1, min(200, nval)).astype(int)
         probe = [{"x": Xva[i].tolist(), "p": float(pva[i])} for i in pi]
+        _ic, _ric = _calc_ic(pva, Yva)
         model = {"trees": trees, "eta": eta, "bias": bias, "valAcc": round(vacc, 4),
                  "valAccLB": round(vlb, 4), "valN": int(nval), "n": int(n),
-                 "featVer": featver, "probe": probe, "market": mk, "algo": algo}
-        print(f"   {mk.upper()}: trees={len(trees)} eta={eta:.3f} valAcc={vacc:.3f} lb={vlb:.3f}")
+                 "featVer": featver, "probe": probe, "market": mk, "algo": algo,
+                 "valIC": round(_ic, 5), "valRankIC": round(_ric, 5)}
+        print(f"   {mk.upper()}: trees={len(trees)} eta={eta:.3f} valAcc={vacc:.3f} lb={vlb:.3f} IC={_ic:.4f} RankIC={_ric:.4f}")
         _upload("gbdt_" + mk, model)
 
 
@@ -943,10 +967,12 @@ def _train_and_upload_boosters(BASE, KEY, HDR, X, Y, TS, featver, D, PNL=None):
         # [V32.15] 변환정합성 probe — Worker 추론이 라이브러리 proba를 재현하는지 검증할 (x, p) 표본.
         pi = np.linspace(0, nval - 1, min(200, nval)).astype(int)
         probe = [{"x": Xva[i].tolist(), "p": float(proba_lib[i])} for i in pi]
+        _ic, _ric = _calc_ic(proba_lib, Yva)
         model = {"trees": trees, "eta": 1.0, "bias": bias, "valAcc": round(vacc, 4),
-                 "valAccLB": round(vlb, 4), "valN": int(nval), "n": int(N), "featVer": featver, "probe": probe}
+                 "valAccLB": round(vlb, 4), "valN": int(nval), "n": int(N), "featVer": featver, "probe": probe,
+                 "valIC": round(_ic, 5), "valRankIC": round(_ric, 5)}
         if vaccW is not None: model["valAccW"] = round(vaccW, 4)
-        print(f"{name}: trees={len(trees)} valAcc={vacc:.3f} lb={vlb:.3f}"
+        print(f"{name}: trees={len(trees)} valAcc={vacc:.3f} lb={vlb:.3f} IC={_ic:.4f} RankIC={_ric:.4f}"
               + (f" 수익가중acc={vaccW:.3f}" if vaccW is not None else "") + " → 업로드(activate)")
         _upload(name, model)
 
