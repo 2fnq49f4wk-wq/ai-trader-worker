@@ -2476,7 +2476,7 @@ async function applySignalTypeWeights(DB, cfg) {
 // ============================================================================
 // [V33.55] 빌드 버전 — SWR L2 캐시 키에 섞어 '배포 = 판단 캐시 자동 무효화'를 만든다.
 //   판정 로직을 고쳐도 옛 캐시가 최대 1시간 재배포되던 문제를 구조적으로 없앤다.
-const _BUILD_VER = "V33.74";
+const _BUILD_VER = "V33.75";
 
 const AI_PARAMS = {
   // ── OHLCV 타임프레임 ── 시가/고가/저가/종가/거래량을 어떤 봉 주기로 볼지.
@@ -11088,6 +11088,26 @@ async function executeSell(DB, market, symbol, pos, sellQty, price, reason, cfg,
 //   기존 보유 포지션(strategy=swing 등)도 strategy 무관하게 이 로직으로 관리한다.
 //   우선순위: 하드손절 → 1R 분할익절(+BE락) → 2R 분할익절 → 트레일링 → 추세이탈 → 시간손절
 //   반환: { sell, sellQty, reason }
+// [V33.75] 래칫 지시를 포지션에 반영 — 분할익절을 대체하는 유일한 '이익 확정' 수단.
+//   파는 게 아니라 손절선만 올린다. 수량이 안 변하므로 원장과 갈라질 여지가 애초에 없다.
+//   (분할익절이 유령매도 19건의 발생 지점이었다 — 그 구조를 없애는 것이 이 함수의 목적이다.)
+async function applyRatchet(DB, market, symbol, strategy, pos, decision) {
+  if (!decision || !(decision.ratchetStop > 0) || !pos) return false;
+  pos.meta = pos.meta || {};
+  const cur = (typeof pos.meta.stopPrice === "number") ? pos.meta.stopPrice : null;
+  if (cur != null && decision.ratchetStop <= cur) return false;   // 스톱은 내리지 않는다
+  pos.meta.stopPrice = decision.ratchetStop;
+  pos.meta.breakEvenLocked = true;
+  // 하위 로직 호환 — 이 플래그의 뜻이 '절반 팔았다'에서 '1차 목표 도달·스톱 상향됨'으로 바뀐다.
+  pos.meta.tp1Done = true;
+  try { await savePosition(DB, market, symbol, strategy, pos); } catch (e) { return false; }
+  try {
+    await log(DB, "INFO", symbol, "[래칫] 손절 상향 → " + decision.ratchetStop.toFixed(2) +
+      " (미실현 " + (decision.ratchetR || 0).toFixed(1) + "R, 수량 유지 " + pos.qty + ")");
+  } catch (e) {}
+  return true;
+}
+
 function evaluateSell(pos, price, daily, dailyRsi, dailyMa, dailyMaShort, cfg, marketOpenForThis, market, deRiskOpts, visionHint) {
   const strategyName = pos.strategy || (pos.meta && pos.meta.strategy) || "trend";
 
@@ -11145,12 +11165,12 @@ function evaluateSell(pos, price, daily, dailyRsi, dailyMa, dailyMaShort, cfg, m
     if (!(stopDist > 0)) stopDist = slPct;
     var tpScale = Math.max(1, stopDist / slPct);   // 손절이 2.2%면 ≈1.83배
 
-    // 2) TP1 분할익절 — +tp1Pct 도달 시 절반 익절(executeSell이 손절을 본전으로 올림=BE락)
+    // 2) [V33.75] 분할익절 폐지 — 파는 대신 손절선을 본전으로 올린다(래칫).
+    //    수량을 쪼개지 않으므로 원장↔포지션이 갈라질 틈이 없고, 잔량이 아니라 전량이 트레일을 탄다.
     const tp1Pct = (sr.tp1Pct != null ? sr.tp1Pct : 1.2) * tpScale;
-    if (!tp1Done && tp1Pct > 0 && pnlPct >= tp1Pct) {
-      const half = Math.floor(pos.qty / 2);
-      if (half > 0) return { sell: true, sellQty: half, reason: "SCALP-TP1 +" + pnlPct.toFixed(2) + "%" };
-      return { sell: true, sellQty: pos.qty, reason: "SCALP-TP1-FULL +" + pnlPct.toFixed(2) + "%" };
+    if (tp1Pct > 0 && pnlPct >= tp1Pct && pos.avg > 0) {
+      const _beS = pos.avg * (1 + ((sr.breakEvenLock || 0) / 100));
+      if (sprice == null || _beS > sprice) return { ratchetStop: _beS, ratchetR: pnlPct / Math.max(0.01, stopDist) };
     }
 
     // 3) 최종 익절 — 잔량 takeProfit 도달
@@ -11207,12 +11227,11 @@ function evaluateSell(pos, price, daily, dailyRsi, dailyMa, dailyMaShort, cfg, m
     if (pnlS >= (sn.takeProfitPct || 5.0)) {
       return { sell: true, sellQty: pos.qty, reason: "SNAP-TP +" + pnlS.toFixed(2) + "%" };
     }
-    // 3) TP1 분할익절 — +tp1Pct 도달 시 절반 + 본전락 (executeSell이 BE락 처리)
+    // 3) [V33.75] 분할익절 폐지 — 본전락 래칫으로 대체(수량은 끝까지 유지).
     const tp1S = sn.tp1Pct != null ? sn.tp1Pct : 2.0;
-    if (!tp1DoneS && tp1S > 0 && pnlS >= tp1S) {
-      const halfS = Math.floor(pos.qty / 2);
-      if (halfS > 0) return { sell: true, sellQty: halfS, reason: "SNAP-TP1 +" + pnlS.toFixed(2) + "%" };
-      return { sell: true, sellQty: pos.qty, reason: "SNAP-TP1-FULL +" + pnlS.toFixed(2) + "%" };
+    if (tp1S > 0 && pnlS >= tp1S && pos.avg > 0) {
+      const _beSn = pos.avg * (1 + ((sn.breakEvenLock || 0) / 100));
+      if (spS == null || _beSn > spS) return { ratchetStop: _beSn, ratchetR: pnlS / Math.max(0.01, (sn.stopLossPct || 3.5)) };
     }
     // 4) 평균회귀 완료 — [V9.11] TP1 "전"에만 전량 청산. TP1 후 잔량(런너)은 BE락으로 보호되므로
     //    조기 MR청산하지 않고 트레일로 주행시켜 큰 반등을 포착(평균 수익↑, 추가 리스크 0).
@@ -11329,9 +11348,11 @@ function evaluateSell(pos, price, daily, dailyRsi, dailyMa, dailyMaShort, cfg, m
           return { sell: true, sellQty: pos.qty,
                    reason: "EOD-GAP 레버리지 전량 (스톱여유 " + (_ratio * 100).toFixed(0) + "%)" };
         }
-        if (_ratio < 0.35 && pos.qty >= 2) {
-          return { sell: true, sellQty: Math.floor(pos.qty / 2),
-                   reason: "EOD-GAP 절반축소 (스톱여유 " + (_ratio * 100).toFixed(0) + "%)" };
+        // [V33.75] 분할매도 폐지에 맞춰 절반축소 → 전량청산. 어차피 손절선 코앞이라
+        //   갭다운이면 다음 개장에 손절될 자리다. 밤을 넘기지 않고 종가에 정리한다.
+        if (_ratio < 0.35) {
+          return { sell: true, sellQty: pos.qty,
+                   reason: "EOD-GAP 전량 (스톱여유 " + (_ratio * 100).toFixed(0) + "%)" };
         }
       }
     }
@@ -11340,42 +11361,6 @@ function evaluateSell(pos, price, daily, dailyRsi, dailyMa, dailyMaShort, cfg, m
   // R(손절거리%) — 분할익절/시간손절 기준
   let rPct = (stopPrice != null && pos.avg > 0) ? ((pos.avg - stopPrice) / pos.avg) * 100 : null;
   if (rPct == null || rPct <= 0) rPct = (r.stopLossPct || cfg.stopLoss || 5);
-
-  // 2) 1R 분할익절 — +tp1AtR×R 도달 시 절반 매도 (executeSell이 손절을 본전으로 올림=BE락)
-  //   [레버리지/인버스] 변동성이 커 이익이 빠르게 났다 사라짐 → 더 빠른 R(×0.7)에 절반 확정.
-  if (!tp1Done) {
-    // [V33.45] ★폭등장 러너 보존★ — TP1은 +1R에서 물량의 40%를 덜어낸다. 보합장에선 옳지만
-    //   폭등 국면에선 가장 강한 종목의 상승 초입에서 지분을 깎아 수익 상한을 스스로 낮춘다.
-    //   (실증: 수익의 대부분이 TP 98건 +821.8%·TRAIL 24건 +120.8% 즉 '끝까지 태운' 포지션에서 났다.)
-    //   → 폭등이면 TP1을 늦추고 덜 팔며, 보합이면 반대로 앞당기고 더 판다(추세가 안 이어지므로).
-    let _tp1RM = 1, _tp1FM = 1;
-    if (_phase === "MELTUP")        { _tp1RM = 1.6;  _tp1FM = 0.6; }
-    else if (_phase === "TREND_UP") { _tp1RM = 1.25; _tp1FM = 0.8; }
-    else if (_phase === "RANGE")    { _tp1RM = 0.8;  _tp1FM = 1.3; }
-    const tp1Pct = rPct * (r.tp1AtR || 1.0) * _tp1RM * (isLevETF ? 0.7 : 1.0);
-    if (pnlRate >= tp1Pct) {
-      // [V51] 익절 비율 파라미터화 — 절반(0.5)은 추세 초입에 너무 많이 덜어내 평균수익을 깎았다.
-      //   기본 0.4로 줄여 잔량(60%)을 트레일로 더 길게 추종 → 손익비 개선(손절은 불변).
-      const _f = _clamp(((typeof r.tp1SellFrac === "number" && r.tp1SellFrac > 0 && r.tp1SellFrac < 1) ? r.tp1SellFrac : 0.4) * _tp1FM, 0.2, 0.7);
-      const half = Math.floor(pos.qty * _f);
-      if (half > 0) return { sell: true, sellQty: half, reason: "TP1 +" + pnlRate.toFixed(2) + "% (1R)" };
-      return { sell: true, sellQty: pos.qty, reason: "TP1-FULL +" + pnlRate.toFixed(2) + "%" };
-    }
-  }
-
-  // 2b) 2R 분할익절 — TP1 이후 +tp2AtR×R 도달 시 잔량의 절반 추가 매도 (트렌드 지속 수익 극대화)
-  //   tp2AtR=0 으로 설정하면 비활성. 레버리지는 동일하게 ×0.7 적용.
-  const tp2Done = !!meta.tp2Done;
-  if (tp1Done && !tp2Done) {
-    const tp2R = r.tp2AtR != null ? r.tp2AtR : 2.0;
-    if (tp2R > 0) {
-      const tp2Pct = rPct * tp2R * (isLevETF ? 0.7 : 1.0);
-      if (pnlRate >= tp2Pct) {
-        const half = Math.floor(pos.qty / 2);
-        if (half > 0) return { sell: true, sellQty: half, reason: "TP2 +" + pnlRate.toFixed(2) + "% (2R)" };
-      }
-    }
-  }
 
   // [강화·승자보유] 수익이 깊을수록(R배수 큼) 트레일을 넓혀 큰 추세를 끝까지 태운다.
   //   이미 충분히 번 포지션에만 적용 → 손절폭은 절대 안 넓어짐(상방만 확대). 추세추종의 핵심 알파(팻테일).
@@ -11409,6 +11394,34 @@ function evaluateSell(pos, price, daily, dailyRsi, dailyMa, dailyMaShort, cfg, m
     const minR = rPct * (r.timeStopMinR != null ? r.timeStopMinR : 0.5);
     if (pnlRate < minR) {
       return { sell: true, sellQty: pos.qty, reason: "TIME-STOP " + heldDays.toFixed(0) + "d " + pnlRate.toFixed(2) + "%" + (isLevETF ? " (LEV)" : "") + (_phase === "RANGE" ? " (보합조기)" : "") };
+    }
+  }
+
+  // 2) [V33.75] ★분할익절(TP1/TP2) 폐지 — 스톱 래칫으로 대체★ (사용자 지시)
+  //   폐지 근거 ①(사고): 유령매도 19건이 전부 TP1/TP2 부분청산에서 났다. 수량을 쪼개는 순간
+  //     "포지션 수량"과 "원장"이 갈라질 틈이 생기고, 중복 실행이 그 틈으로 들어왔다.
+  //     전량청산만 남기면 팔면 포지션이 사라지므로 그 틈 자체가 없어진다.
+  //   폐지 근거 ②(수익): 원장 실측 — 분할청산으로 끝난 66사이클의 가중평균 +3.91% vs
+  //     같은 포지션을 마지막 청산가까지 전량 보유했을 때 +3.49%. 즉 분할의 수익 기여는
+  //     0.4%p 수준이고, 그 대가로 회계가 두 달 망가졌다. 교환비가 맞지 않는다.
+  //   대체 설계(래칫): 파는 대신 손절선을 올린다. 미실현 R이 커질수록 스톱을 계단식으로 끌어올려
+  //     "이미 번 것"을 지키면서 수량은 끝까지 유지 → 러너의 팻테일을 자르지 않는다.
+  //     Minervini(US Investing Championship 1997·2021 우승) 의 "손실은 짧게, 승자는 스톱을 올려
+  //     끝까지" 규율과 같은 형태이며, 분할익절이 추세추종의 비대칭 엣지를 깎는다는 지적
+  //     (full-exit 대비 성능 10~25% 저하)과도 방향이 일치한다.
+  // (모든 실제 청산 규칙을 통과한 뒤에만 본다 — 매도 판정을 절대 가리지 않는다)
+  if (rPct > 0 && pnlRate > 0) {
+    const _rNow = pnlRate / rPct;            // 지금 미실현이 손절거리의 몇 배(R)인가
+    let _lockR = null;                       // 스톱을 진입가 대비 +몇 R 로 올릴 것인가
+    if (_rNow >= 3.0)      _lockR = 1.75;
+    else if (_rNow >= 2.0) _lockR = 1.00;
+    else if (_rNow >= 1.0) _lockR = (r.breakEvenLock || 0) / 100 / (rPct / 100) || 0;  // 본전(+lock)
+    if (_lockR != null && pos.avg > 0) {
+      const _target = pos.avg * (1 + (_lockR * rPct) / 100);
+      // 스톱은 올리기만 한다(내리지 않는다) — 손절폭이 넓어지는 일은 절대 없다.
+      if (_target > (stopPrice != null ? stopPrice : -Infinity)) {
+        return { ratchetStop: _target, ratchetR: _rNow };   // 매도가 아니라 '스톱 상향' 지시
+      }
     }
   }
 
@@ -11541,6 +11554,17 @@ function backtestSymbol(fullData, cfg, market, opts) {
         const pos = openPositions[strat];
         if (!pos.meta.peakPrice || price > pos.meta.peakPrice) pos.meta.peakPrice = price;
         const decision = evaluateSell(pos, price, daily, dailyRsi, dailyMa, dailyMaShort, cfgBt, true, market);
+        // [V33.75] 백테스트도 라이브와 동일하게 래칫을 적용한다(둘이 다르면 검증이 무의미하다).
+        if (decision && decision.ratchetStop > 0) {
+          const _cs = (pos.meta && typeof pos.meta.stopPrice === "number") ? pos.meta.stopPrice : null;
+          if (_cs == null || decision.ratchetStop > _cs) {
+            pos.meta = pos.meta || {};
+            pos.meta.stopPrice = decision.ratchetStop;
+            pos.meta.breakEvenLocked = true;
+            pos.meta.tp1Done = true;
+          }
+          continue;
+        }
         if (decision && decision.sell) {
           const sellQty = decision.sellQty || pos.qty;
           const execPrice = price * (1 - slippagePct / 100);
@@ -13054,6 +13078,8 @@ async function runCommodityCycle(env, forceTrade) {
         const sellDecision = evaluateSell(held, price, daily, dailyRsi, dailyMa, dailyMaShort, cfg, true, "cm");
         if (sellDecision.minHoldLock) {
           // 최소 보유시간 미달 — 보류
+        } else if (sellDecision.ratchetStop) {
+          await applyRatchet(DB, "cm", symbol, "swing", held, sellDecision);
         } else if (sellDecision.sell) {
           await executeSellCM(DB, symbol, held, sellDecision.sellQty, price, sellDecision.reason, cfg, cash);
           sold++;
@@ -13334,7 +13360,9 @@ async function runAltSleeveCycle(env, key) {
         if (held.meta && held.meta.peakPrice != null && price > held.meta.peakPrice) { held.meta.peakPrice = price; try { await savePosition(DB, key, symbol, "swing", held); } catch (e) {} }
         else if (held.meta && held.meta.peakPrice == null) { held.meta.peakPrice = Math.max(held.avg, price); try { await savePosition(DB, key, symbol, "swing", held); } catch (e) {} }
         const sellDecision = evaluateSell(held, price, dd, dailyRsi, dailyMa, dailyMaShort, cfg, true, key);
-        if (sellDecision.sell && _canExec) {
+        if (sellDecision.ratchetStop) {
+          await applyRatchet(DB, key, symbol, "swing", held, sellDecision);
+        } else if (sellDecision.sell && _canExec) {
           await executeSellAlt(DB, sleeve, symbol, held, sellDecision.sellQty, price, sellDecision.reason, cfg, cash);
           sold++;
           if (sellDecision.sellQty >= held.qty) delete positions[posKey];
@@ -14754,6 +14782,10 @@ async function runTradingCycle(env) {
               const heldHours = held.opened_ts ? (Date.now() - held.opened_ts) / 3600000 : 0;
               const pnlRate = ((price - held.avg) / held.avg) * 100;
               await log(DB, "INFO", symbol, "MIN-HOLD lock [" + stratName + "] (" + heldHours.toFixed(1) + "h, PnL " + pnlRate.toFixed(2) + "%)");
+              continue;
+            }
+            if (sellDecision.ratchetStop) {   // [V33.75] 분할익절 대체 — 팔지 않고 스톱만 올린다
+              await applyRatchet(DB, market, symbol, stratName, held, sellDecision);
               continue;
             }
             if (sellDecision.sell) {
@@ -16191,9 +16223,11 @@ async function runFastWatch(env, cronStart) {
           }
           const _vHint = visionPreds && visionPreds[held.symbol] ? visionPreds[held.symbol] : null;
           const sellDecision = evaluateSell(held, price, daily, dailyRsi, dailyMa, dailyMaShort, mcfg, true, market, deRiskOpts, _vHint);
-          if (sellDecision.sell) {
+          if (sellDecision.ratchetStop) {
+            await applyRatchet(DB, market, held.symbol, stratName, held, sellDecision);
+          } else if (sellDecision.sell) {
             try {
-              // 원본 reason 그대로 전달 — executeSell의 TP1/TP2/STOP·쿨다운 판정이 reason 접두에 의존.
+              // 원본 reason 그대로 전달 — executeSell의 STOP·쿨다운 판정이 reason 접두에 의존.
               const wasFull = sellDecision.sellQty >= held.qty;
               await executeSell(DB, market, held.symbol, held, sellDecision.sellQty, price, sellDecision.reason, mcfg, cash);
               fastSells++;

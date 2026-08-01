@@ -395,7 +395,7 @@ def train_job(epochs: int = EPOCHS_DEFAULT, dry: bool = False):
             print("GBDT 학습/업로드 예외(무시):", e)
         print("⑥ 부스팅 3종(XGB·LGB·CatBoost) 외부학습(섀도우)")
         try:
-            _train_and_upload_boosters(BASE, KEY, HDR, X, Y, TS, featver, D)
+            _train_and_upload_boosters(BASE, KEY, HDR, X, Y, TS, featver, D, PNL)
         except Exception as e:
             print("부스팅 학습/업로드 예외(무시):", e)
         print("⑦ MIND(FM) 외부학습 — 위원장 모델 GPU 완전수렴")
@@ -565,7 +565,7 @@ def _train_and_upload_gbdt(BASE, KEY, HDR, X, Y, TS, featver, D):
 #   각 라이브러리 트리를 Worker의 GBDT 스코어러 포맷 {trees:[{f,t,l,r}|{w}], eta, bias}로 변환해
 #   업로드(섀도우). Worker 추론 변경 0(mlGBDTScore 재사용). bias는 라이브러리 raw margin과 트리합의
 #   차이(상수)로 정합. 로컬 합성표본으로 변환 정합성 검증 완료(LGB/CAT 정확일치, XGB 99.9%).
-def _train_and_upload_boosters(BASE, KEY, HDR, X, Y, TS, featver, D):
+def _train_and_upload_boosters(BASE, KEY, HDR, X, Y, TS, featver, D, PNL=None):
     import numpy as np, math, json, time, requests, tempfile, os
 
     N = len(Y)
@@ -575,6 +575,30 @@ def _train_and_upload_boosters(BASE, KEY, HDR, X, Y, TS, featver, D):
     Xs = X[order].astype(np.float64); Ys = Y[order].astype(int)
     nval = max(200, int(N * 0.2))
     Xtr, Ytr, Xva, Yva = Xs[:-nval], Ys[:-nval], Xs[-nval:], Ys[-nval:]
+
+    # ── [V33.75] 변동성 스케일 크기가중 (Lim·Zohren·Roberts 2019 / Moskowitz·Ooi·Pedersen 2012) ──
+    #   종전엔 모든 표본이 동일 가중이었다. +12% 날 거래와 +0.1% 날 거래를 똑같이 세면
+    #   모델은 '자주 맞히는 법'을 배우지 '크게 버는 법'을 못 배운다. 실제로 우리 원장이 딱 그 모습이다
+    #   (TREND 승률 64.4%·평균 +4.72%인데 금액은 −$204 — 맞히는 건 잘하고 크게 버는 걸 못한다).
+    #   Deep Momentum Networks 는 손실함수를 Sharpe 로 바꿔 기존 대비 2배 이상 개선을 보고했다.
+    #   부스팅 분류기에서 그 취지를 옮기는 표준 방법이 '수익 크기 ÷ 변동성' 표본가중이다.
+    #   변동성으로 나누는 이유는 시계열 모멘텀의 vol-scaling 과 같다 — 고변동 구간의 큰 수익이
+    #   가중을 독식하지 않게 해, 위험조정 후 기여가 큰 표본에 학습을 집중시킨다.
+    Wtr = None; Wva = None
+    try:
+        if PNL is not None and len(PNL) == N:
+            Ps = np.abs(np.asarray(PNL, dtype=np.float64)[order])
+            # 국소 변동성 = 최근 250표본 |수익| 중앙값(로버스트). 0 방어.
+            k = min(250, max(30, N // 10))
+            loc = np.array([max(1e-6, np.median(Ps[max(0, i - k):i + 1])) for i in range(N)])
+            raw = Ps / loc                                  # 변동성 대비 크기
+            raw = np.clip(raw, 0.0, 4.0)                    # 이상치 상한
+            W = 1.0 + raw                                   # [1.0, 5.0]
+            W = W / W.mean()                                # 평균 1로 정규화(학습률 영향 제거)
+            Wtr, Wva = W[:-nval], W[-nval:]
+            print(f"   크기가중 적용: 평균 {W.mean():.2f} 최대 {W.max():.2f} (표본 {N})")
+    except Exception as e:
+        print("   크기가중 생략:", e); Wtr = None; Wva = None
 
     def _wout(n, x):
         while "w" not in n:
@@ -607,14 +631,25 @@ def _train_and_upload_boosters(BASE, KEY, HDR, X, Y, TS, featver, D):
     def _finish(name, trees, margin_full, proba_lib):
         bias = _fit_bias(trees, margin_full, Xva)
         # val 정확도(캘리브 없이 0.5 컷) + Wilson 하한
-        vacc = float(((proba_lib >= 0.5).astype(int) == Yva).mean())
+        _pred = (proba_lib >= 0.5).astype(int)
+        vacc = float((_pred == Yva).mean())
         vlb = _wilson(vacc, nval)
+        # [V33.75] 수익가중 정확도 — '맞힌 비율'이 아니라 '맞힌 것들이 얼마나 큰 건이었나'.
+        #   승격 판정은 기존 vacc 로 유지하고(회귀 위험 차단) 지표만 함께 찍어 비교 가능하게 한다.
+        vaccW = None
+        try:
+            if Wva is not None:
+                vaccW = float(((_pred == Yva) * Wva).sum() / max(1e-9, Wva.sum()))
+        except Exception:
+            vaccW = None
         # [V32.15] 변환정합성 probe — Worker 추론이 라이브러리 proba를 재현하는지 검증할 (x, p) 표본.
         pi = np.linspace(0, nval - 1, min(200, nval)).astype(int)
         probe = [{"x": Xva[i].tolist(), "p": float(proba_lib[i])} for i in pi]
         model = {"trees": trees, "eta": 1.0, "bias": bias, "valAcc": round(vacc, 4),
                  "valAccLB": round(vlb, 4), "valN": int(nval), "n": int(N), "featVer": featver, "probe": probe}
-        print(f"{name}: trees={len(trees)} valAcc={vacc:.3f} lb={vlb:.3f} → 업로드(activate)")
+        if vaccW is not None: model["valAccW"] = round(vaccW, 4)
+        print(f"{name}: trees={len(trees)} valAcc={vacc:.3f} lb={vlb:.3f}"
+              + (f" 수익가중acc={vaccW:.3f}" if vaccW is not None else "") + " → 업로드(activate)")
         _upload(name, model)
 
     # ── XGBoost ──
@@ -622,7 +657,7 @@ def _train_and_upload_boosters(BASE, KEY, HDR, X, Y, TS, featver, D):
         import xgboost as xgb
         # [V32.15] 노이즈 큰 금융 holdout에서 depth5·patience30은 3~7트리에서 조기절단(≈랜덤)됐다.
         #   얕은트리(depth4)+강한 규제(min_child·λ↑)+더 큰 patience(60)로 신호가 드러날 시간을 준다.
-        dtr = xgb.DMatrix(Xtr, label=Ytr); dva = xgb.DMatrix(Xva, label=Yva)
+        dtr = xgb.DMatrix(Xtr, label=Ytr, weight=Wtr); dva = xgb.DMatrix(Xva, label=Yva, weight=Wva)
         # [V32.66] 강화: eta 0.04→0.03, rounds 800→1000, patience 60→90(조기중단 지배) (저LR·다트리·조기중단)
         bst = xgb.train({"objective": "binary:logistic", "max_depth": 4, "eta": 0.03,
                          "lambda": 3.0, "min_child_weight": 8, "gamma": 0.1,
@@ -649,7 +684,7 @@ def _train_and_upload_boosters(BASE, KEY, HDR, X, Y, TS, featver, D):
     try:
         import lightgbm as lgb
         # [V32.15] 얕은트리(depth4·leaves16)+강한 규제(min_data 60)+patience 60 — 조기절단 방지.
-        ltr = lgb.Dataset(Xtr, label=Ytr); lva = lgb.Dataset(Xva, label=Yva, reference=ltr)
+        ltr = lgb.Dataset(Xtr, label=Ytr, weight=Wtr); lva = lgb.Dataset(Xva, label=Yva, weight=Wva, reference=ltr)
         # [V32.66] 강화: lr 0.04→0.03, rounds 800→1000, patience 60→90(조기중단 지배)
         lbst = lgb.train({"objective": "binary", "max_depth": 4, "num_leaves": 16,
                           "learning_rate": 0.03, "bagging_fraction": 0.8, "bagging_freq": 1,
@@ -676,7 +711,7 @@ def _train_and_upload_boosters(BASE, KEY, HDR, X, Y, TS, featver, D):
         # [V32.66] 강화: lr 0.04→0.03, iterations 800→1000, patience 60→90
         cb = CatBoostClassifier(depth=4, iterations=1000, learning_rate=0.03, l2_leaf_reg=6.0,
                                 random_seed=42, verbose=0, early_stopping_rounds=90, use_best_model=True)
-        cb.fit(Xtr, Ytr, eval_set=(Xva, Yva))
+        cb.fit(Xtr, Ytr, sample_weight=Wtr, eval_set=(Xva, Yva))
         tf = tempfile.mktemp(suffix=".json"); cb.save_model(tf, format="json")
         cbj = json.load(open(tf)); os.remove(tf)
         ff = cbj["features_info"]["float_features"]
