@@ -2476,7 +2476,7 @@ async function applySignalTypeWeights(DB, cfg) {
 // ============================================================================
 // [V33.55] 빌드 버전 — SWR L2 캐시 키에 섞어 '배포 = 판단 캐시 자동 무효화'를 만든다.
 //   판정 로직을 고쳐도 옛 캐시가 최대 1시간 재배포되던 문제를 구조적으로 없앤다.
-const _BUILD_VER = "V33.69";
+const _BUILD_VER = "V33.70";
 
 const AI_PARAMS = {
   // ── OHLCV 타임프레임 ── 시가/고가/저가/종가/거래량을 어떤 봉 주기로 볼지.
@@ -14727,7 +14727,12 @@ async function runTradingCycle(env) {
                     //   대기버퍼(maxPend) 슬롯만 차지해, 정작 쓸 수 있는 표본을 밀어냈다.
                     //   개장 후 첫 구간(분봉 20개 미만)이 바로 그 상태다 — 그 시간대 관측이
                     //   버퍼를 채워버리면 이후 세션 전체의 수집이 막힌다.
-                    if (__stinPend && _sfi && stinObserve(__stinPend, symbol, market, _sf, price, _sfi)) __stinObs++;
+                    // [V33.70] 관측이 왜 안 되는지 단계별로 계측한다 — elig·scan 은 오르는데
+                    //   obs 가 0 이면 이 세 조건 중 하나에서 막힌 것이다(로그로 즉시 특정).
+                    if (!__stinPend) __scalpDiag.obs_nopend = (__scalpDiag.obs_nopend || 0) + 1;
+                    else if (!_sfi) __scalpDiag.obs_noifeat = (__scalpDiag.obs_noifeat || 0) + 1;
+                    else if (stinObserve(__stinPend, symbol, market, _sf, price, _sfi)) __stinObs++;
+                    else __scalpDiag.obs_reject = (__scalpDiag.obs_reject || 0) + 1;
                   }
                 } catch (e) {}
                 // [V33.48/53] 규칙 단타 신호는 (a) 시장 허용(usOnly) 이고 (b) 규칙 사전필터(_scAligned)를
@@ -21487,6 +21492,20 @@ async function mlScalpDecide(DB, featVec, opts) {
       if (_ofiV >= 0.35) votes.push({ n: "매수우위", v: 1 });
       else if (_ofiV <= -0.35) votes.push({ n: "매도우위", v: -1 });
     }
+    // [V33.70] ★상위 타임프레임 정렬 — 단타에서 가장 비싼 실수를 막는다★
+    //   5분봉만 보고 들어가면 15분 흐름을 거스르는 자리를 반복해서 잡는다(역추세 스캘핑).
+    //   정렬이면 표를 주고, 역행이면 표를 뺀다. 명백한 역행은 아예 진입을 막는다.
+    const _hAlign = tAt(19), _hEma = tAt(16), _hAdx = tAt(17);
+    if (_hAlign != null) {
+      if (_hAlign > 0) votes.push({ n: "상위TF정렬", v: 1 });
+      else if (_hAlign < 0) votes.push({ n: "상위TF역행", v: -1 });
+    }
+    // 상위 추세가 뚜렷한 하락(ADX 충분 + EMA 역배열)인데 5분봉만 반등이면 잡지 않는다.
+    if (_hAdx != null && _hEma != null && _hAdx >= 0.5 && _hEma <= -0.15) {
+      return { p: +p.toFixed(4), pass: false, thr: +thr.toFixed(3), chart: true,
+               veto: "상위TF 하락추세(15분 EMA " + _hEma.toFixed(2) + ")",
+               valAccLB: L.trust.valAccLB, n: L.model.n, horizonBars: L.model.horizonBars };
+    }
     if (_adx != null && _diD != null && _adx >= 0.4) votes.push({ n: _diD > 0 ? "ADX상승추세" : "ADX하락추세", v: _diD > 0 ? 1 : -1 });
     if (_div != null && Math.abs(_div) >= 0.25) votes.push({ n: _div > 0 ? "강세다이버전스" : "약세다이버전스", v: _div > 0 ? 1 : -1 });
     if (_sup != null && _res != null && _res > 0 && _sup > 0) {
@@ -21572,9 +21591,9 @@ function _stinDay() { const d = new Date(Date.now() + 9 * 3600000); return d.toI
 //   볼린저·ADX·EMA 정배열·다이버전스·캔들형태·지지저항. 전부 5분봉에 대해 계산한다.
 //   ※ 일봉으로 같은 지표를 보는 추세모델과 '지표 이름'은 같아도 대상 시계열이 완전히 다르다.
 //     일봉 RSI 는 며칠의 과열을, 분봉 RSI 는 몇십 분의 과열을 말한다 — 단타에 쓸 수 있는 건 후자다.
-const STIN_TA_N = 14;
-const STIN_IFEAT_N = 38;                                  // 미시구조 24 + 분봉 기술 14
-const STIN_FEATVER = 3;                                   // 장중 피처 스키마 버전
+const STIN_TA_N = 20;   // [V33.70] 14 → 20 (상위 타임프레임 6종 추가)
+const STIN_IFEAT_N = 44;   // 미시구조 24 + 분봉 기술 20                                  // 미시구조 24 + 분봉 기술 14
+const STIN_FEATVER = 4;                                   // 장중 피처 스키마 버전
 const STIN_IFEAT_NAMES = ["i_r5m", "i_r15m", "i_r30m", "i_r60m", "i_vwapDev", "i_relVol",
                           "i_rangePos", "i_vol5m", "i_gap", "i_sessFrac", "i_upStreak", "i_volTrend",
                           "i_ofi", "i_vpin", "i_kyleLam", "i_amihud", "i_rollSpr", "i_jumpFrac",
@@ -21582,7 +21601,9 @@ const STIN_IFEAT_NAMES = ["i_r5m", "i_r15m", "i_r30m", "i_r60m", "i_vwapDev", "i
                           // ── 분봉 기술적 지표(차트 판단) ──
                           "t_rsi", "t_rsiSlope", "t_macdHist", "t_macdCross", "t_stochK", "t_bbPctB",
                           "t_bbWidth", "t_adx", "t_diDiff", "t_emaGap", "t_diverg", "t_resDist",
-                          "t_supDist", "t_candle"];
+                          "t_supDist", "t_candle",
+                          // ── [V33.70] 상위 타임프레임(15분봉 재표본) — 스캘핑의 기본 원칙 ──
+                          "h_rsi", "h_macdHist", "h_emaGap", "h_adx", "h_bbPctB", "h_align"];
 // 분봉 기술적 지표 산출 — 전부 5분봉 배열에 대해 계산한다(일봉 지표 함수를 그대로 재사용).
 function stinChartFeat(mb, price) {
   try {
@@ -21676,8 +21697,38 @@ function stinChartFeat(mb, price) {
       const rng = hi - lo;
       if (rng > 0 && o > 0) candle = _clamp((c[n - 1] - o) / rng, -1, 1);
     } catch (e) {}
+    // ── [V33.70] ★상위 타임프레임 정렬 — 단타 기술분석의 핵심 원칙★ ──
+    //   5분봉만 보면 상위 흐름을 거스르는 자리를 계속 잡는다("역추세 스캘핑"이 지는 이유).
+    //   실전 스캘퍼는 반드시 한 단계 위 타임프레임과 방향이 맞는지 먼저 본다.
+    //   추가 fetch 없이 같은 5분봉을 3개씩 묶어 15분봉으로 재표본해 같은 지표를 다시 계산한다.
+    const H3 = [], H3h = [], H3l = [];
+    for (let i = n % 3; i + 2 < n; i += 3) {
+      H3.push(c[i + 2]);
+      let hi = -Infinity, lo = Infinity;
+      for (let k = 0; k < 3; k++) {
+        const _h = (h[i + k] != null ? h[i + k] : c[i + k]), _l = (l[i + k] != null ? l[i + k] : c[i + k]);
+        if (_h > hi) hi = _h; if (_l < lo) lo = _l;
+      }
+      H3h.push(hi); H3l.push(lo);
+    }
+    let hRsi = 0.5, hMacd = 0, hEma = 0, hAdx = 0, hBb = 0.5, hAlign = 0;
+    if (H3.length >= 15) {
+      hRsi = _clamp(_num(getRSI(H3, 9), 50) / 100, 0, 1);
+      const mk3 = getMACD(H3, 6, 13, 5);
+      hMacd = (mk3 && px > 0) ? _clamp(mk3.hist / px * 100, -5, 5) : 0;
+      const e5 = getMA(H3, 5), e13 = getMA(H3, 13);
+      hEma = (e5 != null && e13 != null && e13 > 0) ? _clamp((e5 - e13) / e13 * 100, -10, 10) : 0;
+      try { const a3 = getADX(H3h, H3l, H3, 7); if (a3 != null && isFinite(a3)) hAdx = _clamp(a3 / 50, 0, 2); } catch (e) {}
+      const bb3 = getBollingerBands(H3, 14, 2.0);
+      hBb = (bb3 && bb3.upper > bb3.lower) ? _clamp((px - bb3.lower) / (bb3.upper - bb3.lower), -0.5, 1.5) : 0.5;
+      // 정렬도 — 5분봉 방향과 15분봉 방향이 같은가(+1 일치 / -1 역행 / 0 중립)
+      const s5 = (emaGap > 0.02 ? 1 : (emaGap < -0.02 ? -1 : 0));
+      const s15 = (hEma > 0.02 ? 1 : (hEma < -0.02 ? -1 : 0));
+      hAlign = (s5 === 0 || s15 === 0) ? 0 : (s5 === s15 ? 1 : -1);
+    }
     const out = [_clamp(rsi / 100, 0, 1), rsiSlope, macdHist, macdCross, stochK, bbPctB,
-                 bbWidth, adx, diDiff, emaGap, diverg, resDist, supDist, candle];
+                 bbWidth, adx, diDiff, emaGap, diverg, resDist, supDist, candle,
+                 hRsi, hMacd, hEma, hAdx, hBb, hAlign];
     if (out.length !== STIN_TA_N) return null;
     for (const x of out) if (!isFinite(x)) return null;
     return out;
@@ -21688,7 +21739,18 @@ function _ncdf(x) { return 1 / (1 + Math.exp(-1.702 * x)); }
 function stinIntradayFeat(mb, price, prevClose) {
   try {
     if (!mb || !Array.isArray(mb.closes)) return null;
-    const c = mb.closes, h = mb.highs || [], l = mb.lows || [], v = mb.volumes || [];
+    // [V33.70] ★obs=0 의 유력 원인★ V33.58 에서 closes 를 '오늘 세션'만으로 자르고
+    //   연속 시계열은 allCloses 로 분리했는데, 이 함수는 여전히 세션 배열(closes)만 봤다.
+    //   그래서 개장 직후처럼 세션 봉이 12개 미만이면 통째로 null → 관측 자체가 안 됐다.
+    //   (stinChartFeat 만 allCloses 를 쓰도록 고쳤고 여기는 빠뜨렸다)
+    //   → 여기서도 연속 배열이 있으면 그걸 쓴다. 세션 전용 값(VWAP·레인지·경과율)은
+    //     아래에서 '오늘 구간'만 따로 계산하므로 의미가 흐려지지 않는다.
+    const _useAll = Array.isArray(mb.allCloses) && mb.allCloses.length > mb.closes.length;
+    const c = _useAll ? mb.allCloses : mb.closes;
+    const h = (_useAll ? mb.allHighs : mb.highs) || [];
+    const l = (_useAll ? mb.allLows : mb.lows) || [];
+    const v = (_useAll ? mb.allVolumes : mb.volumes) || [];
+    const _sessN = mb.closes.length;   // 오늘 세션 봉 수(세션 전용 지표에 사용)
     const n = c.length;
     if (n < 12 || !(price > 0)) return null;
     const rp = function (a, b) { return (a > 0 && b > 0) ? (a / b - 1) * 100 : 0; };
@@ -21721,7 +21783,7 @@ function stinIntradayFeat(mb, price, prevClose) {
     // 9) 시가 갭 — 오버나이트 이벤트의 잔존 영향
     const gapPct = (prevClose > 0 && c[0] > 0) ? rp(c[0], prevClose) : 0;
     // 10) 장중 경과 비율 — 개장 직후와 마감 직전은 성격이 완전히 다르다(단타의 필수 조건변수)
-    const sessFrac = _clamp(n / 78, 0, 1.2);   // 미국 정규장 ≈ 78개(5분봉)
+    const sessFrac = _clamp(_sessN / 78, 0, 1.2);   // [V33.70] 오늘 세션 봉 수 기준(연속배열 아님)
     // 11) 연속 상승봉 — 모멘텀 지속성
     let streak = 0;
     for (let i = n - 1; i > 0 && streak < 8; i--) { if (c[i] > c[i - 1]) streak++; else break; }
@@ -30743,6 +30805,26 @@ export default {
         } catch (e2) {}
       }
 
+      // 0.955) [V33.70] ★과거 분봉 백필 수확 — 위치 재배치★
+      //   V33.65/66 에서 야간 파이프라인 안쪽에 뒀는데 [ST-BACKFILL] 로그가 계속 0건이었다.
+      //   그 블록은 하루1회 게이트·락·앞단계 예산소진의 영향을 받아 실제로는 거의 도달하지 않는다.
+      //   → 매 크론에서 확실히 도달하는 이 지점으로 옮기고, 전용 예산을 준다.
+      //   장중에도 돌리되(코어 매매 예산과 분리된 자체 예산) 회당 종목 수를 줄여 부담을 낮춘다.
+      //   저장된 봉만 읽어 표본을 만드는 경로라, 라이브 수집이 막혀도 이쪽은 독립적으로 쌓인다.
+      try {
+        if (_bigR2()) {
+          const _bfLock = _num(await getState(env.DB, "stin_bf_lock", 0), 0);
+          let _mkoBf = false; try { _mkoBf = isMarketOpen("us") || isMarketOpen("kr"); } catch (e) {}
+          const _gap = _mkoBf ? 60 * 60000 : 20 * 60000;   // 장중엔 뜸하게, 장외엔 자주
+          if (Date.now() - _bfLock > _gap) {
+            await setState(env.DB, "stin_bf_lock", Date.now());
+            try { resetFetchBudget(_mkoBf ? 20 : 60); } catch (e0) {}
+            const _bfr = await stinBackfill(env.DB, { maxSyms: _mkoBf ? 3 : 8, maxSamples: 4000 });
+            if (_bfr) await log(env.DB, "INFO", null, _bfr);
+          }
+        }
+      } catch (e) {}
+
       // 0.96) [V33.27] 학습표본 R2 스냅샷 — 트레이너가 D1을 17만 행 훑지 않게 미리 떠 둔다.
       //   장중엔 절대 돌리지 않는다(거래 우선). 장외에 파트 단위로 조금씩 쌓고 12시간마다 갱신.
       try {
@@ -31104,24 +31186,6 @@ export default {
           //   단계별 체크포인트가 300s 한도를 여러 cron에 걸쳐 처리하므로 안전하게 완주. 무한루프 방지:
           //   마커를 먼저 갱신하고 게이트/스테이지 체크포인트만 리셋(다음부터는 정상 하루1회 게이트).
           //   → harvest-now/train-now를 수동으로 칠 필요 없이, 배포만으로 MIND/GBDT가 재학습된다.
-          // [V33.65] ★과거 분봉 백필 수확★ — 라이브 수집을 기다리지 않고 표본을 즉시 만든다.
-          //   장중에는 코어 매매가 분봉 fetch 예산을 써야 하므로 휴장 때만 돌린다.
-          //   30분 간격, 회당 8종목 × 5분봉 1개월 → 한 번에 약 1,000표본.
-          try {
-            const _bfLock = _num(await getState(env.DB, "stin_bf_lock", 0), 0);
-            let _mkoBf = false; try { _mkoBf = isMarketOpen("us") || isMarketOpen("kr"); } catch (e) {}
-            if (!_mkoBf && (Date.now() - _bfLock > 30 * 60000)) {
-              await setState(env.DB, "stin_bf_lock", Date.now());
-              // [V33.66] ★백필이 한 번도 안 돌던 이유★ 종전엔 fetchBudgetLeft() > 40 을 요구했는데,
-              //   이 지점에 오기 전 여러 단계가 예산을 소진해 그 조건이 거의 늘 거짓이었다
-              //   (실측: [ST-BACKFILL] 로그 0건). 다른 무거운 단계들과 동일하게 전용 예산을 부여한다
-              //   — 이 코드베이스의 기존 관례(resetFetchBudget(_mktOpen ? 40 : 200))와 같은 방식.
-              try { resetFetchBudget(60); } catch (e0) {}
-              const _bfr = await stinBackfill(env.DB, { maxSyms: 8, maxSamples: 4000 });
-              if (_bfr) await log(env.DB, "INFO", null, _bfr);
-            }
-          } catch (e) {}
-
           // [V33.48] ★장중 증분 스캔★ — 하루 1회(야간)였던 전종목 스캔을 20분마다 '구간 단위'로
           //   이어 돌린다. 회당 300행 상한이라 D1 전송량은 종전 야간 1회분과 비슷한 수준으로 유지되고,
           //   픽은 계속 갱신된다(사용자 지적: "최근 스캔이 9시로 뜬다").
@@ -31135,7 +31199,7 @@ export default {
               if (_ir) await log(env.DB, "INFO", null, _ir);
             }
           } catch (e) {}
-          const _PIPE_VER = "V33.69-senti-acc";   // 배포 시 파이프라인 1회 강제 재실행(국면·판단 즉시 재산출)   // 배포 시 파이프라인 1회 강제 재실행(신규 스키마 반영)
+          const _PIPE_VER = "V33.70-obs-htf";   // 배포 시 파이프라인 1회 강제 재실행(국면·판단 즉시 재산출)   // 배포 시 파이프라인 1회 강제 재실행(신규 스키마 반영)
           try {
             const _pv = await getState(env.DB, "ai_pipeline_ver", null);
             if (_pv !== _PIPE_VER) {
