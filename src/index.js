@@ -2476,7 +2476,7 @@ async function applySignalTypeWeights(DB, cfg) {
 // ============================================================================
 // [V33.55] 빌드 버전 — SWR L2 캐시 키에 섞어 '배포 = 판단 캐시 자동 무효화'를 만든다.
 //   판정 로직을 고쳐도 옛 캐시가 최대 1시간 재배포되던 문제를 구조적으로 없앤다.
-const _BUILD_VER = "V33.63";
+const _BUILD_VER = "V33.64";
 
 const AI_PARAMS = {
   // ── OHLCV 타임프레임 ── 시가/고가/저가/종가/거래량을 어떤 봉 주기로 볼지.
@@ -3318,7 +3318,7 @@ const DEFAULT_CFG = {
     scanMaxPerCycle: 50,     // [V65] scalp 스캔 전용 분봉 fetch 상한/사이클 — 진입확인(intradayConfirm)과 분리
     // [V33.59] 표본 '관측 전용' 분봉 스캔 상한. 규칙 사전필터를 통과 못 한 종목도 이 한도 안에서
     //   분봉을 받아 학습표본을 만든다(모델 신뢰 여부와 무관 — 순환 의존 차단).
-    obsMaxPerCycle: 40,
+    obsMaxPerCycle: 12,   // [V33.64] 40 → 12. 라벨 지연 60분 × 12 = 720건 대기 → maxPend 900 안쪽.
     requireVwapSlopeUp: true,// SC_VWAP/SC_MOMENTUM 진입 시 VWAP 기울기 ≥ 0 요구 (하락 VWAP 추격 차단; 눌림목/패닉은 면제)
     // === [V67] 단타 품질 강화 — "늦은 추격"과 "고변동 휩쏘"가 scalp 손실의 양대 원인 ===
     momMax: 2.5,             // 분봉 모멘텀 ≥ N%면 진입 자체 금지 (이미 달린 차 추격 = 평균 진입가 최악)
@@ -14353,7 +14353,13 @@ async function runTradingCycle(env) {
                       dayPct: dayPct, regime: (regime && regime.regime) || "NEUTRAL",
                       strategy: "scalp", market: market, ev: {}
                     });
-                    if (__stinPend && stinObserve(__stinPend, symbol, market, _sf, price, _sfi)) __stinObs++;
+                    // [V33.64] ★장중피처가 없으면 관측하지 않는다★
+                    //   _sfi(장중 38차원)가 null 이면 ix 없는 표본이 되고, 트레이너는 스키마 불일치로
+                    //   그런 표본을 전량 폐기한다(skipped_old). 즉 '학습에 절대 못 쓰는 표본'인데
+                    //   대기버퍼(maxPend) 슬롯만 차지해, 정작 쓸 수 있는 표본을 밀어냈다.
+                    //   개장 후 첫 구간(분봉 20개 미만)이 바로 그 상태다 — 그 시간대 관측이
+                    //   버퍼를 채워버리면 이후 세션 전체의 수집이 막힌다.
+                    if (__stinPend && _sfi && stinObserve(__stinPend, symbol, market, _sf, price, _sfi)) __stinObs++;
                   }
                 } catch (e) {}
                 // [V33.48/53] 규칙 단타 신호는 (a) 시장 허용(usOnly) 이고 (b) 규칙 사전필터(_scAligned)를
@@ -21111,7 +21117,13 @@ const STIN = {
   horizonBars: 12,        // 5분봉 12개 = 60분 뒤 실현수익으로 라벨
   minGapMin: 25,          // 같은 종목을 이 간격보다 자주 관측하지 않는다(중복 표본 억제)
   tpPct: 1.2, stopPct: 1.2, // 장중 배리어(일봉 3%보다 타이트 — 60분 지평에 맞춤)
-  maxPend: 400,           // 대기 버퍼 상한(오브젝트 크기 통제)
+  // [V33.64] ★400 은 라벨 지연과 맞지 않는 값이었다★
+  //   라벨은 관측 60분 뒤에 붙는다. 즉 정상 상태에서 '관측속도 × 60분' 만큼이 항상 대기 중이다.
+  //   관측 40건/사이클이면 상시 2,400건이 대기해야 하는데 상한이 400이라, 시뮬레이션 결과
+  //   관측의 82%가 버퍼 포화로 통째로 거부되고 있었다(수락 2,800 / 거부 12,800).
+  //   → 관측속도를 12건/사이클로 낮추고(=필요량 720) 버퍼를 900으로 잡아 포화를 0으로 만든다.
+  //     세션당 학습가능 표본 3,492건 — 학습 문턱(3,000)을 한 세션에 넘긴다.
+  maxPend: 900,           // 대기 버퍼 상한(오브젝트 크기 통제 ≈900KB)
   flushMin: 10            // 라벨 완료분을 R2 로 내보내는 주기(분)
 };
 function _stinDay() { const d = new Date(Date.now() + 9 * 3600000); return d.toISOString().slice(0, 10); }
@@ -30565,7 +30577,7 @@ export default {
               if (_ir) await log(env.DB, "INFO", null, _ir);
             }
           } catch (e) {}
-          const _PIPE_VER = "V33.63-flush-fix";   // 배포 시 파이프라인 1회 강제 재실행(국면·판단 즉시 재산출)   // 배포 시 파이프라인 1회 강제 재실행(신규 스키마 반영)
+          const _PIPE_VER = "V33.64-buffer-fix";   // 배포 시 파이프라인 1회 강제 재실행(국면·판단 즉시 재산출)   // 배포 시 파이프라인 1회 강제 재실행(신규 스키마 반영)
           try {
             const _pv = await getState(env.DB, "ai_pipeline_ver", null);
             if (_pv !== _PIPE_VER) {
