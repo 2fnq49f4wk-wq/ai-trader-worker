@@ -2476,7 +2476,7 @@ async function applySignalTypeWeights(DB, cfg) {
 // ============================================================================
 // [V33.55] 빌드 버전 — SWR L2 캐시 키에 섞어 '배포 = 판단 캐시 자동 무효화'를 만든다.
 //   판정 로직을 고쳐도 옛 캐시가 최대 1시간 재배포되던 문제를 구조적으로 없앤다.
-const _BUILD_VER = "V33.66";
+const _BUILD_VER = "V33.67";
 
 const AI_PARAMS = {
   // ── OHLCV 타임프레임 ── 시가/고가/저가/종가/거래량을 어떤 봉 주기로 볼지.
@@ -6492,6 +6492,104 @@ const _NEWS_POS = ["beat","upgrade","strong","growth","record","bullish","surge"
 const _NEWS_NEG = ["miss","downgrade","cut","loss","warning","weak","bearish","crash","layoff","recall","concern","decline","drop","fell","tumble","below","disappoint","risk","lawsuit","probe","halt","fraud","slump"];
 const _SENTI_POS = { surge:2, soar:2, rally:2, jump:2, beat:2, upgrade:2, record:2, boom:2, breakout:2, "all-time":2, outperform:2, buyback:2, wins:1, win:1, strong:1, growth:1, gains:1, gain:1, rise:1, rises:1, rose:1, climb:1, climbs:1, higher:1, above:1, exceed:1, profit:1, raise:1, raised:1, positive:1, robust:1, momentum:1, rebound:1, recovery:1, optimism:1, upbeat:1, expand:1, expands:1, boost:1, boosts:1, deal:1, approval:1, approved:1, demand:1, easing:1, cooling:1, "cuts rates":2, "rate cut":2, ceasefire:2, truce:2, resolve:1, "peace":1 };
 const _SENTI_NEG = { crash:2, plunge:2, plummet:2, collapse:2, slump:2, tumble:2, selloff:2, "sell-off":2, rout:2, recession:2, crisis:2, war:2, invasion:2, missile:2, airstrike:2, sanctions:2, default:2, bankruptcy:2, fraud:2, layoff:2, layoffs:2, downgrade:2, miss:1, cut:1, cuts:1, loss:1, losses:1, warning:1, warn:1, warns:1, weak:1, weakness:1, bearish:1, fall:1, falls:1, fell:1, drop:1, drops:1, decline:1, declines:1, lower:1, below:1, disappoint:1, concern:1, concerns:1, fears:1, fear:1, risk:1, risks:1, lawsuit:1, probe:1, halt:1, recall:1, tension:1, tensions:1, conflict:1, escalation:1, threat:1, threatens:1, strike:1, strikes:1, killed:1, dead:1, attack:1, slowdown:1, slowing:1, inflation:1, layoff2:0 };
+// ═══════════ [V33.67] ★뉴스 어휘 ↔ 주가 상관 자가학습★ ═══════════
+//   사용자 요청: "긍정어·부정어 판단이 주가 상승과 얼마나 상관있는지 스스로 학습하게 해줘".
+//   위 _SENTI_POS/_SENTI_NEG 는 사람이 손으로 매긴 고정 가중치다 — 실제로 그 단어가 주가와
+//   어떤 관계인지는 검증된 적이 없다. 예컨대 "inflation"이 정말 하락 선행어인지,
+//   "buyback"이 정말 상승 선행어인지는 시장이 답을 갖고 있다.
+//   ★라벨을 어떻게 붙이나★ 섹터 단위로 붙인다. sector_news_sentiment 가 헤드라인을 섹터로
+//   묶고, sector_pulse(V33.60)가 섹터 ETF의 익일 수익률을 준다 — 둘을 이으면
+//   "오늘 이 섹터 뉴스에 나온 단어들 → 내일 그 섹터가 올랐나"라는 지도학습이 성립한다.
+//   시장 전체로 라벨링하면 모든 단어가 같은 라벨을 받아 배울 게 없지만, 섹터 단위는 변별력이 있다.
+const SENTI_LEARN = {
+  enabled: true,
+  minN: 8,          // 이 횟수 이상 관측된 단어만 학습가중 반영(우연 방지)
+  maxWords: 400,    // 저장 어휘 상한(행 크기 통제)
+  blend: 0.5,       // 최종가중 = 사전가중 + blend × 학습가중(사전을 완전히 대체하지 않는다)
+  clip: 2.0         // 학습가중 절대값 상한
+};
+// 헤드라인에서 학습 대상 단어 추출 — 사전에 있는 단어만(신조어 폭증 방지).
+function _sentiWords(titles) {
+  const out = {};
+  for (const t of (titles || [])) {
+    const ws = String(t || "").toLowerCase().replace(/[^a-z0-9가-힣 ]/g, " ").split(/\s+/);
+    for (const w of ws) {
+      if (!w || w.length < 3) continue;
+      if (_SENTI_POS[w] === undefined && _SENTI_NEG[w] === undefined) continue;
+      out[w] = (out[w] || 0) + 1;
+    }
+  }
+  return out;
+}
+// 학습 1스텝 — 어제 섹터별 단어 → 오늘 섹터 ETF 수익률로 갱신.
+async function sentiLexLearnStep(DB) {
+  if (!SENTI_LEARN.enabled) return null;
+  try {
+    const today = localDateStr("kr");
+    const pend = await getState(DB, "senti_lex_pend", null);
+    let updated = 0, words = 0;
+    // (1) 어제치 pending 이 있으면 오늘 섹터 수익률로 라벨링해 학습
+    if (pend && pend.day && pend.day !== today && pend.g) {
+      let pulse = null;
+      try { const sp = await getState(DB, "sector_pulse", null); pulse = sp && sp.g; } catch (e) {}
+      if (pulse) {
+        const lex = (await getState(DB, "senti_lex", null)) || { w: {} };
+        for (const g in pend.g) {
+          const ret = pulse[g] && typeof pulse[g].d1 === "number" ? pulse[g].d1 : null;
+          if (ret == null) continue;
+          const wm = pend.g[g];
+          for (const w in wm) {
+            const e = lex.w[w] || { n: 0, s: 0 };
+            e.n += 1; e.s += ret;          // 단어 등장 → 그 섹터 익일 수익률 누적
+            lex.w[w] = e; updated++;
+          }
+        }
+        // 어휘 상한 — 관측 횟수 많은 것 우선 보존
+        const keys = Object.keys(lex.w);
+        if (keys.length > SENTI_LEARN.maxWords) {
+          keys.sort(function (a, b) { return (lex.w[b].n || 0) - (lex.w[a].n || 0); });
+          const keep = {}; for (const k of keys.slice(0, SENTI_LEARN.maxWords)) keep[k] = lex.w[k];
+          lex.w = keep;
+        }
+        words = Object.keys(lex.w).length;
+        lex.ts = Date.now();
+        await setState(DB, "senti_lex", lex);
+      }
+    }
+    // (2) 오늘치 단어를 pending 에 기록(내일 라벨링 대상)
+    try {
+      const sn = await getState(DB, "sector_news_sentiment", null);
+      const g = {};
+      if (sn && sn.headlinesByGroup) {
+        for (const k in sn.headlinesByGroup) g[k] = _sentiWords(sn.headlinesByGroup[k]);
+      } else if (sn && sn.headlines) {
+        g.TECH = _sentiWords(sn.headlines);   // 그룹별 분리가 없으면 단일 버킷
+      }
+      if (Object.keys(g).length) await setState(DB, "senti_lex_pend", { day: today, g: g, ts: Date.now() });
+    } catch (e) {}
+    return updated ? ("[SENTI-LEARN] 갱신 " + updated + "건 · 어휘 " + words + "개") : null;
+  } catch (e) { return "[SENTI-LEARN] fail: " + (e && e.message); }
+}
+// 학습된 단어가중 조회 — 사전가중에 더해 쓴다(±clip 로 제한).
+let __sentiLexMemo = null;
+async function sentiLexGet(DB) {
+  try {
+    if (__sentiLexMemo && (Date.now() - __sentiLexMemo.at) < 600000) return __sentiLexMemo.v;
+    const lex = await getState(DB, "senti_lex", null);
+    const m = {};
+    if (lex && lex.w) {
+      for (const w in lex.w) {
+        const e = lex.w[w];
+        if (!e || (e.n || 0) < SENTI_LEARN.minN) continue;
+        // 평균 익일 수익률(%) → 가중. ±1% 를 ±1.0 으로 스케일.
+        m[w] = _clamp(e.s / e.n, -SENTI_LEARN.clip, SENTI_LEARN.clip);
+      }
+    }
+    __sentiLexMemo = { at: Date.now(), v: m };
+    return m;
+  } catch (e) { return {}; }
+}
+
 const _SENTI_NEGATORS = { no:1, not:1, never:1, without:1, fails:1, fail:1, "fails to":1, denies:1, deny:1, avoid:1, avoids:1, halts:1, ends:1, "no longer":1 };
 function _sentiOne(title) {
   const toks = String(title || "").toLowerCase().replace(/[^a-z0-9 -]/g, " ").split(/\s+/).filter(Boolean);
@@ -6514,6 +6612,9 @@ function _sentiOne(title) {
 //   → 반감기 5시간의 시간 감쇠를 준다(5h 전 0.5배, 10h 전 0.25배, 20h 전 0.06배).
 //     items 는 문자열 배열(구형 호출부 호환) 또는 {title, ageH} 배열 둘 다 받는다.
 const _SENTI_HALFLIFE_H = 2;   // [V33.54] 3h → 2h: 최신 심리가 지배하도록(과거 기사 영향 빠르게 소멸)
+// [V33.67] 학습된 어휘가중 — sentiLexGet 이 채우는 전역 메모(비동기 조회를 동기 경로에서 쓰기 위함).
+//   비어 있으면 종전과 100% 동일하게 동작한다(사전가중만 사용).
+let __sentiLexW = {};
 function _scoreHeadlines(items) {
   let sum = 0, mag = 0, wsum = 0;
   for (const it of (items || [])) {
@@ -6521,7 +6622,18 @@ function _scoreHeadlines(items) {
     if (!t) continue;
     const ageH = (typeof it === "object" && it && typeof it.ageH === "number") ? Math.max(0, it.ageH) : 0;
     const w = Math.pow(0.5, ageH / _SENTI_HALFLIFE_H);
-    const v = _sentiOne(t);
+    let v = _sentiOne(t);
+    // [V33.67] 시장이 검증한 어휘가중을 더한다 — 사전값을 대체하지 않고 보정한다.
+    //   (섹터 뉴스 단어 → 그 섹터 ETF 익일 수익률로 학습된 값)
+    try {
+      const _lw = __sentiLexW;
+      if (_lw && SENTI_LEARN.blend > 0) {
+        const ws = String(t).toLowerCase().replace(/[^a-z0-9가-힣 ]/g, " ").split(/\s+/);
+        let add = 0, hit = 0;
+        for (const q of ws) { if (_lw[q] !== undefined) { add += _lw[q]; hit++; } }
+        if (hit > 0) v = _clamp(v + SENTI_LEARN.blend * (add / hit), -3, 3);
+      }
+    } catch (e) {}
     sum += v * w; mag += Math.abs(v) * w; wsum += w;
   }
   if (wsum <= 0) return 0;
@@ -13068,6 +13180,8 @@ async function runTradingCycle(env) {
       if (_sc0 && _sc0.enabled) { const _L0 = await mlScalpLoad(DB); __scalpLive = !!_L0; }
     } catch (e) {}
     // [V33.42] 실제 실적 서프라이즈 맵 — 사이클당 1회만 읽어 평가 루프에서 재사용(D1 왕복 1회).
+    // [V33.67] 학습된 뉴스 어휘가중을 사이클 1회 로드(10분 메모) — 동기 스코어러가 참조한다.
+    try { __sentiLexW = await sentiLexGet(DB); } catch (e) { __sentiLexW = {}; }
     let __earnSurp = null;
     try { const _esS = await getState(DB, "earnings_surprise", null); __earnSurp = (_esS && _esS.m) || null; } catch (e) {}
     // [V33.46] 메가캡 실적 파급 — 시총 상위 종목의 큰 서프라이즈를 섹터 전체 재평가로 확장.
@@ -14702,6 +14816,43 @@ async function runTradingCycle(env) {
             if (boughtThisSymbol) break;
             const strategy = sr.strategy;
             const signal = sr.signal;
+
+            // ═══ [V33.67] ★장타에도 같은 구조가 있었다 — 반사실 후보가 진입 게이트 뒤에 있었다★ ═══
+            //   반사실(counterfactual) 후보 적재의 존재 이유는 "안 산 종목이 어떻게 됐는지"를 배우는 것이다.
+            //   그런데 적재 지점이 진입 게이트 13개(LLM_DISABLE·NEGEXP_SIG·NEGEXP_MS·XMKT_SEMI·
+            //   FUND-GATE·CTX_NEG·EARN_BLACKOUT·max_concurrent …) 뒤에 있어서,
+            //   게이트에 막힌 종목은 후보로도 안 남았다 — 즉 '차단이 옳았는지'를 영원히 검증 못 한다.
+            //   게다가 내가 최근 추가한 게이트들이 늘어날수록 학습 표본의 선택편향이 심해진다
+            //   (통과한 것만 배우므로 게이트가 틀렸을 때 스스로 교정할 근거가 사라진다).
+            //   단타에서 발견한 것과 정확히 같은 구조다: '매매 차단'이 '학습 차단'을 겸하고 있었다.
+            //   → 게이트 이전에 후보를 먼저 적재한다. 매수 여부와 무관하게 관측만 남기므로 거래 영향 0.
+            //     아래 기존 적재는 __candSyms 중복가드가 있어 이중 적재되지 않는다.
+            try {
+              if (typeof LUXML !== "undefined" && LUXML.enabled && daily && daily.closes
+                  && daily.closes.length >= 55 && !__candSyms.has(symbol)) {
+                const _cday0 = Math.floor(Date.now() / 86400000);
+                if (__candDayGuard.day !== _cday0) __candDayGuard = { day: _cday0, set: new Set() };
+                if (!__candDayGuard.set.has(symbol)) {
+                  const _f0 = mlBuildFeatures({
+                    closes: daily.closes, volumes: daily.volumes, opens: daily.opens,
+                    highs: daily.highs, lows: daily.lows, idxCloses: __idxCloses, xsPanel: __xsPanel, barsAgo: 0,
+                    price: price, prevClose: daily.prevClose, dayPct: dayPct,
+                    regime: (regime && regime.regime) ? regime.regime : "NEUTRAL",
+                    sigWeight: (typeof signal.weight === "number") ? signal.weight : 1,
+                    confluence: (signal.members) ? signal.members.length : 1,
+                    strategy: strategy, market: market, ev: {}
+                  });
+                  // 손절폭은 이 시점에 아직 확정 전이라 ATR 기반 근사치를 쓴다(라벨 시 손절 반영용).
+                  let _sp0 = 5;
+                  try {
+                    const _a0 = getATR(daily.closes, mcfg.atrPeriod || 14, daily.highs, daily.lows);
+                    if (_a0 > 0 && price > 0) _sp0 = _clamp(_a0 * 2 / price * 100, 2, 12);
+                  } catch (e) {}
+                  const _cs0 = mlCandidateStmt(DB, market, symbol, strategy, _f0, price, _sp0, AI_PARAMS.predictionHorizonDays);
+                  if (_cs0) { __candBatch.push(_cs0); __candSyms.add(symbol); __candDayGuard.set.add(symbol); }
+                }
+              }
+            } catch (e) {}
 
             // 같은 (종목, 전략) 보유중이면 스킵
             if (strategiesHeldNow.has(strategy)) {
@@ -30735,7 +30886,7 @@ export default {
               if (_ir) await log(env.DB, "INFO", null, _ir);
             }
           } catch (e) {}
-          const _PIPE_VER = "V33.66-obs-gate";   // 배포 시 파이프라인 1회 강제 재실행(국면·판단 즉시 재산출)   // 배포 시 파이프라인 1회 강제 재실행(신규 스키마 반영)
+          const _PIPE_VER = "V33.67-swing-cf-sentilex";   // 배포 시 파이프라인 1회 강제 재실행(국면·판단 즉시 재산출)   // 배포 시 파이프라인 1회 강제 재실행(신규 스키마 반영)
           try {
             const _pv = await getState(env.DB, "ai_pipeline_ver", null);
             if (_pv !== _PIPE_VER) {
@@ -30834,6 +30985,9 @@ export default {
             await _stg("selfreview", async function () { return await mlSelfReview(env.DB); });
             // (4.6) [V9.6] 뉴스·여론 기반 "내일 오를 종목" 예측(온라인학습) + 재무 저가중 하방가드
             await _stg("newsnext", async function () { return await mlNewsNextDayNightly(env.DB); });
+            // [V33.67] 뉴스 어휘 ↔ 주가 상관 자가학습(하루 1회) — 섹터 뉴스 단어를 그 섹터 ETF
+            //   익일 수익률로 라벨링해 단어별 평균 선행수익을 누적한다.
+            await _stg("sentilex", async function () { return await sentiLexLearnStep(env.DB); });
             // (5) [V5] 매월 1일: 지난달 투자 리포트 자동 생성(캐시라 중복 무해)
             try {
               if (new Date().getUTCDate() === 1) {
