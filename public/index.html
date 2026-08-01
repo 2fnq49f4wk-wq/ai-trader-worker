@@ -14263,9 +14263,11 @@ html[data-theme="light"] .rail{background:#fff;}
     //   저장(collected)은 관측 60분 뒤 라벨이 끝나야 오르므로, 관측만 오르는 구간이 정상이다.
     var stepCell = null;
     if(has(sc.observed) || has(sc.labeled)){
-      stepCell = '관측 <b>'+num(sc.observed||0)+'</b>'
-        + (sc.observedToday ? ' '+col('+'+num(sc.observedToday), C.pos)+'<span class="sub"> 오늘</span>' : '')
-        + ' <span class="sub">→ 라벨 '+num(sc.labeled||0)+' → 저장 '+num(got)+'</span>';
+      // [V33.62] num() 은 존재하지 않는 헬퍼였다(V33.56 표 재작성 때 n0() 로 바뀜).
+      //   실데이터가 들어오는 순간 ReferenceError 로 패널 전체가 죽었다 — 문법검사로는 안 잡힌다.
+      stepCell = '관측 <b>'+(n0(sc.observed||0)||'0')+'</b>'
+        + (sc.observedToday ? ' '+col('+'+(n0(sc.observedToday)||'0'), C.pos)+'<span class="sub"> 오늘</span>' : '')
+        + ' <span class="sub">→ 라벨 '+(n0(sc.labeled||0)||'0')+' → 저장 '+(n0(got)||'0')+'</span>';
     }
     var storeCell = null;
     if(has(sc.pending) || has(sc.filesToday)){

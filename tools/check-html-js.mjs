@@ -24,4 +24,57 @@ while ((m = re.exec(html)) !== null) {
   }
 }
 console.log(`\ninline scripts: ${checked} ok, ${bad} failed`);
-process.exit(bad ? 1 : 0);
+
+// ── [V33.62] 문법만으로는 부족하다 — 핵심 렌더 함수를 실제로 '실행'해 본다 ──
+//   실제 사고: stepCell 에서 존재하지 않는 헬퍼 num() 을 호출했다. 문법은 완벽했고
+//   파싱 검사도 통과했지만, 실데이터가 들어오는 순간 ReferenceError 로 패널 전체가 죽었다.
+//   (빈 데이터에서는 그 분기를 안 타서 증상이 안 보이는 것도 발견을 늦췄다)
+//   → 대표 입력 몇 가지로 렌더 함수를 직접 호출해 예외가 나는지 본다.
+let rtBad = 0;
+try {
+  const m = html.match(/function renderRailAiMode[\s\S]*?\n  \}/);
+  if (!m) { console.error("  WARN renderRailAiMode 추출 실패 — 런타임 검사 생략"); }
+  else {
+    const harness = `
+      var STORE = {};
+      function esc(x){ return String(x==null?'':x); }
+      function $id(id){ return { set innerHTML(v){ STORE[id] = v; } }; }
+      ${m[0]}
+      var CASES = {
+        empty:   [{ aiReady:false }, []],
+        partial: [{ aiReady:true, phase:{us:'RANGE'}, scalp:{}, samples:{}, committee:{} }, []],
+        full:    [{ aiReady:true,
+          phase:{us:'TREND_UP',kr:'MELTUP',dayUs:1.2,dayKr:11.7,r5Us:0.4,r5Kr:6,erUs:0.1,erKr:0.2,ts:Date.now()},
+          xmkt:{semi1d:-3.2,semi5d:-8.1},
+          sectors:{TECH:{etf:'XLK',d1:-1.4,d5:-3.2}},
+          scalp:{need:3000,collected:0,n:0,observed:412,observedToday:412,labeled:180,
+                 pending:232,filesToday:0,store:'R2',live:true,trusted:false,trained:false,
+                 horizonMin:60,ifeatVer:3,ifeatN:38,minConfluence:3},
+          samples:{total:173955,featVer:13,today:0,yesterday:0},
+          committee:{mind:true,dnn:true,gbdt:true,
+            xgb:{trusted:true,accLB:0.53,w:0.39,source:'external',promoted:true},lgb:null,cat:null},
+          diag:{dnn:{stored:true,featVerOk:true,trusted:true,w:0.41,source:'external'}}},
+          [{symbol:'NVDA',rankP:0.71}]],
+        nullMode: [null, null]
+      };
+      var errs = [];
+      for (var k in CASES) {
+        try { renderRailAiMode(CASES[k][0], CASES[k][1]); }
+        catch (e) { errs.push(k + ': ' + e.message); }
+      }
+      errs;
+    `;
+    const errs = new vm.Script(harness, { filename: "renderRailAiMode-runtime" })
+      .runInNewContext({ Date, Math, JSON, Number, String, Object, Array, isNaN, parseInt, parseFloat });
+    if (errs && errs.length) {
+      rtBad = errs.length;
+      for (const e of errs) console.error(`  FAIL runtime ${e}`);
+    } else {
+      console.log("  ok   renderRailAiMode 런타임 4케이스");
+    }
+  }
+} catch (e) {
+  console.error("  WARN 런타임 검사 자체 실패:", e.message);
+}
+
+process.exit((bad + rtBad) ? 1 : 0);
