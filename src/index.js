@@ -2476,7 +2476,7 @@ async function applySignalTypeWeights(DB, cfg) {
 // ============================================================================
 // [V33.55] 빌드 버전 — SWR L2 캐시 키에 섞어 '배포 = 판단 캐시 자동 무효화'를 만든다.
 //   판정 로직을 고쳐도 옛 캐시가 최대 1시간 재배포되던 문제를 구조적으로 없앤다.
-const _BUILD_VER = "V33.67";
+const _BUILD_VER = "V33.68";
 
 const AI_PARAMS = {
   // ── OHLCV 타임프레임 ── 시가/고가/저가/종가/거래량을 어떤 봉 주기로 볼지.
@@ -6508,6 +6508,65 @@ const SENTI_LEARN = {
   blend: 0.5,       // 최종가중 = 사전가중 + blend × 학습가중(사전을 완전히 대체하지 않는다)
   clip: 2.0         // 학습가중 절대값 상한
 };
+// [V33.68] ★헤드라인 → 종목 직접 매칭★ (사용자 지시)
+//   섹터 ETF 로 라벨을 붙이면 "그 뉴스가 말하는 회사"가 아니라 섹터 평균으로 배운다 —
+//   예컨대 애플 악재 기사인데 XLK 가 엔비디아 덕에 오르면 그 단어는 '상승어'로 잘못 학습된다.
+//   기사에 회사가 명시돼 있으면 ★그 회사 주가의 등락★으로 배우는 게 정확하다.
+//   매칭 규칙: (a) 티커가 대문자 토큰으로 등장  (b) NAME_MAP 의 회사명이 등장.
+//   둘 다 없으면 종목 귀속 불가 → 섹터 라벨로 폴백(종전 경로 유지).
+// 티커로 오인되기 쉬운 대문자 약어·일반어 — 뉴스에서 종목이 아님.
+const _NEWS_TICKER_STOP = { CEO:1, CFO:1, CPI:1, PPI:1, GDP:1, FED:1, FOMC:1, ECB:1, IPO:1, ETF:1,
+  AI:1, EPS:1, USD:1, EUR:1, OPEC:1, UN:1, US:1, UK:1, EU:1, ADR:1, SEC:1, IRS:1, FDA:1, DOJ:1,
+  NYSE:1, SP:1, DJIA:1, Q1:1, Q2:1, Q3:1, Q4:1, YOY:1, ATH:1, PMI:1, ISM:1, BOJ:1, PBOC:1 };
+let __symNameIdx = null;
+function _newsSymbolIndex() {
+  if (__symNameIdx) return __symNameIdx;
+  const idx = { byName: [], tickers: {} };
+  try {
+    for (const sym in NAME_MAP) {
+      const nm = String(NAME_MAP[sym] || "").trim();
+      idx.tickers[sym.toUpperCase()] = sym;
+      // 괄호·접미사 제거 후 3자 이상만(짧은 이름은 오탐이 많다)
+      const base = nm.replace(/\([^)]*\)/g, "").trim().toLowerCase();
+      // [V33.68b] 이름은 4자 이상만 — 3자는 다른 단어 안에 우연히 들어간다
+      //   (검증에서 "Apple" 안의 부분문자열이 다른 종목으로 잘못 매칭됐다).
+      if (base.length >= 4) idx.byName.push({ n: base, s: sym });
+    }
+    idx.byName.sort(function (a, b) { return b.n.length - a.n.length; });   // 긴 이름 우선(부분매칭 방지)
+  } catch (e) {}
+  __symNameIdx = idx;
+  return idx;
+}
+function _newsSymbols(title) {
+  const out = [];
+  try {
+    const t = String(title || "");
+    if (!t) return out;
+    const idx = _newsSymbolIndex();
+    const low = t.toLowerCase();
+    // (a) 대문자 티커 토큰 — 원문에서 '전부 대문자'인 토큰만 인정한다.
+    //   "Dow plunges" 의 Dow 처럼 첫 글자만 대문자인 일반 명사는 티커로 보지 않는다
+    //   (검증에서 지수 이름 Dow 가 화학회사 DOW 로 잘못 귀속됐다).
+    const toks = t.match(/\b[A-Z]{2,5}\b/g) || [];
+    for (const tk of toks) {
+      if (_NEWS_TICKER_STOP[tk]) continue;
+      const s2 = idx.tickers[tk];
+      if (s2 && out.indexOf(s2) < 0) out.push(s2);
+    }
+    // (b) 회사명 — 단어경계로만 매칭(부분문자열 오탐 차단)
+    for (const e of idx.byName) {
+      if (out.length >= 3) break;
+      if (out.indexOf(e.s) >= 0) continue;
+      const _i = low.indexOf(e.n);
+      if (_i < 0) continue;
+      const _pre = _i === 0 ? " " : low[_i - 1];
+      const _post = (_i + e.n.length >= low.length) ? " " : low[_i + e.n.length];
+      if (/[a-z0-9]/.test(_pre) || /[a-z0-9]/.test(_post)) continue;   // 단어 내부면 무시
+      out.push(e.s);
+    }
+  } catch (e) {}
+  return out.slice(0, 3);
+}
 // 헤드라인에서 학습 대상 단어 추출 — 사전에 있는 단어만(신조어 폭증 방지).
 function _sentiWords(titles) {
   const out = {};
@@ -6527,20 +6586,41 @@ async function sentiLexLearnStep(DB) {
   try {
     const today = localDateStr("kr");
     const pend = await getState(DB, "senti_lex_pend", null);
-    let updated = 0, words = 0;
+    let updated = 0, words = 0, symHitTotal = 0;
     // (1) 어제치 pending 이 있으면 오늘 섹터 수익률로 라벨링해 학습
-    if (pend && pend.day && pend.day !== today && pend.g) {
+    if (pend && pend.day && pend.day !== today && (pend.g || pend.sym)) {
       let pulse = null;
       try { const sp = await getState(DB, "sector_pulse", null); pulse = sp && sp.g; } catch (e) {}
-      if (pulse) {
+      {
         const lex = (await getState(DB, "senti_lex", null)) || { w: {} };
-        for (const g in pend.g) {
-          const ret = pulse[g] && typeof pulse[g].d1 === "number" ? pulse[g].d1 : null;
+        // [V33.68] ★1순위: 기사에 명시된 그 회사의 등락으로 배운다★
+        //   종목 단위 라벨이 섹터 평균보다 훨씬 정확하다(반대 방향으로 잘못 배우는 일이 없다).
+        let symHit = 0;
+        for (const sy in (pend.sym || {})) {
+          let ret = null;
+          try {
+            const dd = await getState(DB, "daily:" + sy, null);
+            const c = dd && dd.closes;
+            if (Array.isArray(c) && c.length >= 2) {
+              const a1 = c[c.length - 2], b1 = c[c.length - 1];
+              if (a1 > 0 && b1 > 0) ret = (b1 - a1) / a1 * 100;
+            }
+          } catch (e) {}
+          if (ret == null) continue;
+          const wm = pend.sym[sy];
+          for (const w in wm) {
+            const e = lex.w[w] || { n: 0, s: 0 };
+            e.n += 1; e.s += ret; lex.w[w] = e; updated++; symHit++; symHitTotal++;
+          }
+        }
+        // 2순위(폴백): 종목 귀속이 안 된 기사는 섹터 라벨로 배운다.
+        for (const g in (pend.g || {})) {
+          const ret = (pulse && pulse[g] && typeof pulse[g].d1 === "number") ? pulse[g].d1 : null;
           if (ret == null) continue;
           const wm = pend.g[g];
           for (const w in wm) {
             const e = lex.w[w] || { n: 0, s: 0 };
-            e.n += 1; e.s += ret;          // 단어 등장 → 그 섹터 익일 수익률 누적
+            e.n += 1; e.s += ret;
             lex.w[w] = e; updated++;
           }
         }
@@ -6559,17 +6639,108 @@ async function sentiLexLearnStep(DB) {
     // (2) 오늘치 단어를 pending 에 기록(내일 라벨링 대상)
     try {
       const sn = await getState(DB, "sector_news_sentiment", null);
-      const g = {};
-      if (sn && sn.headlinesByGroup) {
-        for (const k in sn.headlinesByGroup) g[k] = _sentiWords(sn.headlinesByGroup[k]);
-      } else if (sn && sn.headlines) {
-        g.TECH = _sentiWords(sn.headlines);   // 그룹별 분리가 없으면 단일 버킷
+      const g = {}, bySym = {};
+      const _absorb = function (titles, grp) {
+        for (const t of (titles || [])) {
+          const syms = _newsSymbols(t);
+          if (syms.length) {
+            // 기사에 회사가 명시됨 → 그 회사 앞으로 귀속(섹터로는 안 보낸다)
+            const wm = _sentiWords([t]);
+            for (const sy of syms) {
+              bySym[sy] = bySym[sy] || {};
+              for (const w in wm) bySym[sy][w] = (bySym[sy][w] || 0) + 1;
+            }
+          } else if (grp) {
+            const wm = _sentiWords([t]);
+            g[grp] = g[grp] || {};
+            for (const w in wm) g[grp][w] = (g[grp][w] || 0) + 1;
+          }
+        }
+      };
+      if (sn && sn.headlinesByGroup) { for (const k in sn.headlinesByGroup) _absorb(sn.headlinesByGroup[k], k); }
+      else if (sn && sn.headlines) { _absorb(sn.headlines, "TECH"); }
+      if (Object.keys(g).length || Object.keys(bySym).length) {
+        await setState(DB, "senti_lex_pend", { day: today, g: g, sym: bySym, ts: Date.now() });
       }
-      if (Object.keys(g).length) await setState(DB, "senti_lex_pend", { day: today, g: g, ts: Date.now() });
     } catch (e) {}
-    return updated ? ("[SENTI-LEARN] 갱신 " + updated + "건 · 어휘 " + words + "개") : null;
+    return updated ? ("[SENTI-LEARN] 갱신 " + updated + "건(종목귀속 " + symHitTotal + ") · 어휘 " + words + "개") : null;
   } catch (e) { return "[SENTI-LEARN] fail: " + (e && e.message); }
 }
+// ═══════════ [V33.68] ★실적 서프라이즈 ↔ 주가 상관 자가학습★ ═══════════
+//   사용자 요청: "실적발표·어닝서프라이즈·어닝쇼크가 주식이랑 얼마나 상관있는지 학습하게".
+//   V33.42 는 서프라이즈율을 점수로 바꿀 때 사람이 정한 상수를 썼다(_mag × 4 × 시총가중).
+//   그 4가 맞는 숫자인지, 시총가중 1.5가 맞는지는 아무도 검증하지 않았다.
+//   → 실제로 재본다. 서프라이즈 구간별로 '발표 후 실현수익'을 누적해 평균을 낸다.
+//     구간(bucket): 큰쇼크(≤-25) · 쇼크(-25~-5) · 중립(-5~5) · 서프(5~25) · 큰서프(≥25)
+//     시총대(대형 rank≤200 / 중소형)로도 나눠, "대형주가 실적에 더 반응한다"는 가설도 데이터로 검증한다.
+const EARN_LEARN = { enabled: true, minN: 6, horizonDays: 3, clip: 8 };
+function _earnBucket(sp) {
+  if (sp <= -25) return "shockBig";
+  if (sp <= -5)  return "shock";
+  if (sp <  5)   return "flat";
+  if (sp <  25)  return "surp";
+  return "surpBig";
+}
+async function earnCorrLearnStep(DB) {
+  if (!EARN_LEARN.enabled) return null;
+  try {
+    const es = await getState(DB, "earnings_surprise", null);
+    const map = (es && es.m) || null;
+    if (!map) return null;
+    const st = (await getState(DB, "earn_corr", null)) || { b: {}, seen: {}, ts: 0 };
+    const H = EARN_LEARN.horizonDays;
+    const now = Date.now();
+    let learned = 0;
+    for (const sym in map) {
+      const e = map[sym];
+      if (!e || typeof e.sp !== "number" || !e.ts) continue;
+      const ageD = (now - e.ts) / 86400000;
+      if (ageD < H || ageD > H + 6) continue;              // 지평 도달분만, 너무 오래된 건 제외
+      const key = sym + ":" + Math.floor(e.ts / 86400000);
+      if (st.seen[key]) continue;                           // 같은 발표를 두 번 배우지 않는다
+      let dd = null; try { dd = await getState(DB, "daily:" + sym, null); } catch (e2) {}
+      const c = dd && dd.closes;
+      if (!Array.isArray(c) || c.length < H + 2) continue;
+      // 발표 시점(대략 H거래일 전)부터 지금까지의 실현수익
+      const a1 = c[c.length - 1 - H], b1 = c[c.length - 1];
+      if (!(a1 > 0) || !(b1 > 0)) continue;
+      const ret = _clamp((b1 - a1) / a1 * 100, -EARN_LEARN.clip * 4, EARN_LEARN.clip * 4);
+      const rank = (typeof MCAP_RANK !== "undefined" && MCAP_RANK[sym]) || 99999;
+      const size = rank <= 200 ? "big" : "small";
+      const bk = _earnBucket(e.sp) + ":" + size;
+      const cur = st.b[bk] || { n: 0, s: 0 };
+      cur.n += 1; cur.s += ret; st.b[bk] = cur;
+      st.seen[key] = now; learned++;
+    }
+    // seen 정리(30일 초과分 제거 — 행 크기 통제)
+    try { for (const k in st.seen) { if (now - st.seen[k] > 30 * 86400000) delete st.seen[k]; } } catch (e2) {}
+    if (!learned) return null;
+    st.ts = now;
+    await setState(DB, "earn_corr", st);
+    const parts = [];
+    for (const k in st.b) { const v = st.b[k]; if (v.n >= EARN_LEARN.minN) parts.push(k + " " + (v.s / v.n).toFixed(2) + "%(n" + v.n + ")"); }
+    return "[EARN-LEARN] +" + learned + "건 · " + (parts.length ? parts.join(" / ") : "표본 축적 중");
+  } catch (e) { return "[EARN-LEARN] fail: " + (e && e.message); }
+}
+// 학습된 상관을 점수 배수로 환산 — 표본이 충분한 구간만. 없으면 1(종전 동작 그대로).
+let __earnCorrMemo = null;
+async function earnCorrGet(DB) {
+  try {
+    if (__earnCorrMemo && (Date.now() - __earnCorrMemo.at) < 900000) return __earnCorrMemo.v;
+    const st = await getState(DB, "earn_corr", null);
+    const out = {};
+    if (st && st.b) {
+      for (const k in st.b) {
+        const v = st.b[k];
+        if (!v || (v.n || 0) < EARN_LEARN.minN) continue;
+        out[k] = +(v.s / v.n).toFixed(3);   // 구간별 평균 실현수익(%)
+      }
+    }
+    __earnCorrMemo = { at: Date.now(), v: out };
+    return out;
+  } catch (e) { return {}; }
+}
+
 // 학습된 단어가중 조회 — 사전가중에 더해 쓴다(±clip 로 제한).
 let __sentiLexMemo = null;
 async function sentiLexGet(DB) {
@@ -13182,6 +13353,9 @@ async function runTradingCycle(env) {
     // [V33.42] 실제 실적 서프라이즈 맵 — 사이클당 1회만 읽어 평가 루프에서 재사용(D1 왕복 1회).
     // [V33.67] 학습된 뉴스 어휘가중을 사이클 1회 로드(10분 메모) — 동기 스코어러가 참조한다.
     try { __sentiLexW = await sentiLexGet(DB); } catch (e) { __sentiLexW = {}; }
+    // [V33.68] 학습된 실적↔주가 상관(15분 메모) — 실적 점수 보정에 쓴다.
+    let __earnCorr = null;
+    try { __earnCorr = await earnCorrGet(DB); } catch (e) { __earnCorr = null; }
     let __earnSurp = null;
     try { const _esS = await getState(DB, "earnings_surprise", null); __earnSurp = (_esS && _esS.m) || null; } catch (e) {}
     // [V33.46] 메가캡 실적 파급 — 시총 상위 종목의 큰 서프라이즈를 섹터 전체 재평가로 확장.
@@ -14720,6 +14894,20 @@ async function runTradingCycle(env) {
                     if (Math.abs(_sp) >= 5) {
                       const _mag = Math.min(Math.abs(_sp) / 25, 1);       // 0~1
                       let _pts = Math.round(_mag * 4 * _mcW);              // 최대 6점(대형주)
+                      // [V33.68] ★학습된 실적↔주가 상관으로 보정★
+                      //   위 상수(4 · 시총가중)는 사람이 정한 값이다. 실제로 그 구간의 발표가
+                      //   평균적으로 얼마나 움직였는지를 earn_corr 이 실측해 두었다면 그걸로 조정한다.
+                      //   표본이 부족한 구간은 건드리지 않는다(1배 = 종전 동작).
+                      try {
+                        const _ec = __earnCorr && __earnCorr[_earnBucket(_sp) + ":" + (_rank <= 200 ? "big" : "small")];
+                        if (typeof _ec === "number") {
+                          // 실측 평균수익의 부호가 서프라이즈 방향과 같으면 강화, 반대면 축소.
+                          const _agreeE = (_sp > 0 && _ec > 0) || (_sp < 0 && _ec < 0);
+                          const _sc = _clamp(Math.abs(_ec) / 2, 0.3, 1.8);   // ±2% 를 1배 기준으로
+                          _pts = Math.round(_pts * (_agreeE ? _sc : Math.min(_sc, 0.4)));
+                          ctxWhy.push("EC" + _ec.toFixed(1) + "%");
+                        }
+                      } catch (e) {}
                       // [V33.48] ★서프라이즈가 나도 주가는 빠질 수 있다 — 실시간 등락률로 대조★
                       //   "예상보다 잘 나왔다"와 "시장이 그걸 호재로 받아들였다"는 완전히 다른 사건이다.
                       //   컨센서스를 이겨도 가이던스가 나쁘거나 이미 선반영됐으면 발표 후 급락한다
@@ -30886,7 +31074,7 @@ export default {
               if (_ir) await log(env.DB, "INFO", null, _ir);
             }
           } catch (e) {}
-          const _PIPE_VER = "V33.67-swing-cf-sentilex";   // 배포 시 파이프라인 1회 강제 재실행(국면·판단 즉시 재산출)   // 배포 시 파이프라인 1회 강제 재실행(신규 스키마 반영)
+          const _PIPE_VER = "V33.68-earncorr-symnews";   // 배포 시 파이프라인 1회 강제 재실행(국면·판단 즉시 재산출)   // 배포 시 파이프라인 1회 강제 재실행(신규 스키마 반영)
           try {
             const _pv = await getState(env.DB, "ai_pipeline_ver", null);
             if (_pv !== _PIPE_VER) {
@@ -30988,6 +31176,9 @@ export default {
             // [V33.67] 뉴스 어휘 ↔ 주가 상관 자가학습(하루 1회) — 섹터 뉴스 단어를 그 섹터 ETF
             //   익일 수익률로 라벨링해 단어별 평균 선행수익을 누적한다.
             await _stg("sentilex", async function () { return await sentiLexLearnStep(env.DB); });
+            // [V33.68] 실적 서프라이즈 ↔ 주가 상관 학습(하루 1회) — 발표 후 3거래일 실현수익을
+            //   서프라이즈 구간·시총대별로 누적해 "실적이 실제로 얼마나 주가를 움직이나"를 실측한다.
+            await _stg("earncorr", async function () { return await earnCorrLearnStep(env.DB); });
             // (5) [V5] 매월 1일: 지난달 투자 리포트 자동 생성(캐시라 중복 무해)
             try {
               if (new Date().getUTCDate() === 1) {
