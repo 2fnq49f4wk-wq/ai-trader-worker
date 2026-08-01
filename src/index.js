@@ -2476,7 +2476,7 @@ async function applySignalTypeWeights(DB, cfg) {
 // ============================================================================
 // [V33.55] 빌드 버전 — SWR L2 캐시 키에 섞어 '배포 = 판단 캐시 자동 무효화'를 만든다.
 //   판정 로직을 고쳐도 옛 캐시가 최대 1시간 재배포되던 문제를 구조적으로 없앤다.
-const _BUILD_VER = "V33.60";
+const _BUILD_VER = "V33.63";
 
 const AI_PARAMS = {
   // ── OHLCV 타임프레임 ── 시가/고가/저가/종가/거래량을 어떤 봉 주기로 볼지.
@@ -15385,7 +15385,10 @@ async function runTradingCycle(env) {
       try {
         const _lab = stinLabel(__stinPend, function (sym) { return _num(__stinPx[sym], 0); });
         let _fl = 0;
-        if (__stinPend.done.length >= 50 || (Date.now() - (__stinPend.ts || 0)) > STIN.flushMin * 60000) {
+        // [V33.63] 판정은 '마지막 플러시(fts)' 기준. 저장시각(ts)은 매 사이클 갱신돼 쓸 수 없다.
+        //   done 이 하나라도 있으면 flushMin(10분) 안에 반드시 내보낸다 — 버퍼에 갇히지 않게.
+        if (__stinPend.done.length >= 50 ||
+            (__stinPend.done.length > 0 && (Date.now() - _num(__stinPend.fts, 0)) > STIN.flushMin * 60000)) {
           _fl = await stinFlush(__stinPend, DB);
         }
         await _stinSavePend(__stinPend);
@@ -21395,13 +21398,21 @@ function stinIntradayFeat(mb, price, prevClose) {
 }
 async function _stinLoadPend() {
   const R2 = _bigR2(); if (!R2) return null;
-  try { const o = await R2.get(STIN.pendKey); if (!o) return { items: [], done: [], ts: 0 };
-        const j = JSON.parse(await o.text()); return { items: j.items || [], done: j.done || [], ts: j.ts || 0 }; }
-  catch (e) { return { items: [], done: [], ts: 0 }; }
+  try { const o = await R2.get(STIN.pendKey); if (!o) return { items: [], done: [], ts: 0, fts: 0 };
+        const j = JSON.parse(await o.text());
+        return { items: j.items || [], done: j.done || [], ts: j.ts || 0, fts: j.fts || 0 }; }
+  catch (e) { return { items: [], done: [], ts: 0, fts: 0 }; }
 }
 async function _stinSavePend(p) {
   const R2 = _bigR2(); if (!R2) return;
-  try { await R2.put(STIN.pendKey, JSON.stringify({ items: p.items, done: p.done, ts: Date.now() })); } catch (e) {}
+  // [V33.63] ★표본이 R2 로 나가지 못하고 버퍼에 갇히던 버그★
+  //   flush 조건은 (done >= 50) || (now - pend.ts > flushMin) 인데, pend.ts 를 여기서
+  //   '저장할 때마다' 현재시각으로 덮어썼다. 저장은 매 사이클 일어나므로 now - ts 는 늘 ~0 이라
+  //   두 번째 조건이 영원히 성립하지 않았다 → 사실상 "50건 모여야만 저장" 이 됐고,
+  //   minGapMin(25분) 때문에 50건이 잘 안 모여 라벨까지 끝난 표본이 R2 에 안 실렸다.
+  //   → 마지막 '플러시' 시각(fts)을 따로 보존한다. ts 는 저장시각 그대로 두되 판정에는 안 쓴다.
+  try { await R2.put(STIN.pendKey, JSON.stringify({ items: p.items, done: p.done,
+    ts: Date.now(), fts: _num(p.fts, 0) })); } catch (e) {}
 }
 // 관측 — 단타 스캔이 이미 받아온 5분봉으로 피처를 만들어 대기 버퍼에 넣는다.
 // [V33.46] ★버그 — 장중 표본이 한 건도 안 쌓이던 원인★
@@ -21488,6 +21499,7 @@ async function stinFlush(pend, DB) {
   const key = "st/intraday/" + _stinDay() + "/" + Date.now() + ".json";
   try { await R2.put(key, JSON.stringify({ n: n, samples: pend.done })); } catch (e) { return 0; }
   pend.done = [];
+  pend.fts = Date.now();   // [V33.63] 마지막 플러시 시각 기록(다음 주기 판정 기준)
   // [V33.52] ★단타 표본수가 화면에 안 보이던 이유★ 패널의 "표본 N"은 scalp_trust.n 을 썼는데
   //   그건 '학습이 끝난 모델이 쓴 표본 수'라 첫 학습 전까지 영원히 0 이었다. 즉 실제로 쌓이는
   //   중인데도 0/3000 으로만 보였다. 저장 시점에 실적재 건수를 직접 누적해 둔다(R2 재조회 없음).
@@ -30553,7 +30565,7 @@ export default {
               if (_ir) await log(env.DB, "INFO", null, _ir);
             }
           } catch (e) {}
-          const _PIPE_VER = "V33.60-sector-pulse";   // 배포 시 파이프라인 1회 강제 재실행(국면·판단 즉시 재산출)   // 배포 시 파이프라인 1회 강제 재실행(신규 스키마 반영)
+          const _PIPE_VER = "V33.63-flush-fix";   // 배포 시 파이프라인 1회 강제 재실행(국면·판단 즉시 재산출)   // 배포 시 파이프라인 1회 강제 재실행(신규 스키마 반영)
           try {
             const _pv = await getState(env.DB, "ai_pipeline_ver", null);
             if (_pv !== _PIPE_VER) {
