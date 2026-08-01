@@ -2476,7 +2476,7 @@ async function applySignalTypeWeights(DB, cfg) {
 // ============================================================================
 // [V33.55] 빌드 버전 — SWR L2 캐시 키에 섞어 '배포 = 판단 캐시 자동 무효화'를 만든다.
 //   판정 로직을 고쳐도 옛 캐시가 최대 1시간 재배포되던 문제를 구조적으로 없앤다.
-const _BUILD_VER = "V33.73";
+const _BUILD_VER = "V33.74";
 
 const AI_PARAMS = {
   // ── OHLCV 타임프레임 ── 시가/고가/저가/종가/거래량을 어떤 봉 주기로 볼지.
@@ -4343,6 +4343,27 @@ function isMarketOpen(market) {
     return kst.day >= 1 && kst.day <= 5 && kst.totalMin >= 540 && kst.totalMin < 930;
   }
   return false;
+}
+
+// [V33.74] 정규장 마감까지 남은 분. 개장 중이 아니면 null.
+//   원장 실증: 손절 37건 −$18,201 중 개장 30분 이내 12건이 손실의 64%를 차지했고,
+//   그 평균 손절률이 −9.46%(장중 손절은 −5.72%)였다. 즉 손실의 핵심은 오버나이트 갭이다.
+//   갭 자체는 못 막으니 '마감 전 노출'을 줄이는 데 쓴다.
+function minutesToClose(market) {
+  const now = new Date();
+  if (market === "us") {
+    const et = getUSEt(now);
+    if (!(et.day >= 1 && et.day <= 5)) return null;
+    if (et.totalMin < 570 || et.totalMin >= 960) return null;
+    return 960 - et.totalMin;
+  }
+  if (market === "kr") {
+    const kst = getKST(now);
+    if (!(kst.day >= 1 && kst.day <= 5)) return null;
+    if (kst.totalMin < 540 || kst.totalMin >= 930) return null;
+    return 930 - kst.totalMin;
+  }
+  return null;   // 원자재·채권은 거래시간 구조가 달라 적용하지 않는다
 }
 
 // [V9.0] 가격 갱신 전용 창 — UI/휴장판정용 isMarketOpen과 분리.
@@ -8431,6 +8452,60 @@ async function isDuplicateRecentTrade(DB, market, symbol, side, qty, price, wind
   } catch (e) { return false; }   // 조회 실패 시 보수적으로 진행(기존 동작)
 }
 
+// ═══════════════════════════════════════════════════════════════════
+// [V33.74 더블체크] 체결 전·후로 '원장(trades)'과 '포지션 테이블'을 교차 검증한다.
+//   두 달째 같은 회계 오류가 반복된 이유는 진실의 출처가 둘인데(현금은 원장 파생,
+//   수량은 positions 테이블) 서로 맞는지 아무도 확인하지 않았기 때문이다.
+//   한쪽만 보고 팔면 유령매도가 나고, 사후에도 모른다.
+//   → 팔기 전에 양쪽을 다 읽어 작은 쪽으로 자르고, 쓴 뒤에 다시 읽어 일치를 확인한다.
+
+// 원장 기준 특정 종목의 순보유 수량(매수−매도). 인덱스 한 번 타는 집계 1회.
+async function ledgerNetQty(DB, market, symbol) {
+  try {
+    const r = await DB.prepare(
+      "SELECT SUM(CASE WHEN side='BUY' THEN qty ELSE -qty END) AS n FROM trades WHERE market=? AND symbol=?"
+    ).bind(market, symbol).first();
+    const n = r && r.n != null ? Number(r.n) : null;
+    return (n != null && isFinite(n)) ? n : null;   // null = 조회 실패 → 호출부는 기존 동작 유지
+  } catch (e) { return null; }
+}
+
+// 매도 전 더블체크 — 포지션 수량과 원장 순보유 중 작은 쪽까지만 판다.
+//   반환: 실제로 팔아도 되는 수량(0이면 팔면 안 됨).
+async function sellQtyDoubleCheck(DB, market, symbol, posQty, sellQty, tag) {
+  let q = sellQty;
+  if (q > posQty) q = posQty;
+  const led = await ledgerNetQty(DB, market, symbol);
+  if (led != null) {
+    if (Math.abs(led - posQty) > 1e-6) {
+      // 원장과 포지션이 어긋났다 — 이 자체가 사고다. 즉시 남기고 보수적으로 작은 쪽을 쓴다.
+      await log(DB, "ERROR", symbol, "[정합성] " + tag + " 포지션↔원장 불일치: 포지션 " + posQty +
+        " vs 원장 " + led + " → 작은 쪽 기준으로 매도");
+    }
+    if (q > led) q = led;
+  }
+  if (!(q > 0)) return 0;
+  return q;
+}
+
+// 체결 후 검증 — 원장 순보유와 포지션 테이블이 같은지 확인하고 어긋나면 남긴다.
+//   (자동 수정은 하지 않는다. 원인을 덮으면 또 두 달을 잃는다 — 일일 감사가 집계한다.)
+async function verifyAfterTrade(DB, market, symbol, tag) {
+  try {
+    const led = await ledgerNetQty(DB, market, symbol);
+    if (led == null) return;
+    const row = await DB.prepare("SELECT SUM(qty) AS q FROM positions WHERE market=? AND symbol=?")
+      .bind(market, symbol).first();
+    const tbl = (row && row.q != null) ? Number(row.q) : 0;
+    if (Math.abs(led - tbl) > 1e-6) {
+      await log(DB, "ERROR", symbol, "[정합성] " + tag + " 체결 후 불일치: 원장 " + led + " vs 포지션 " + tbl);
+    }
+    if (led < -1e-6) {
+      await log(DB, "ERROR", symbol, "[정합성] " + tag + " 원장 순보유가 음수(" + led + ") — 유령매도 발생");
+    }
+  } catch (e) {}
+}
+
 async function savePosition(DB, market, symbol, strategy, pos) {
   await stmtSavePosition(DB, market, symbol, strategy, pos).run();
 }
@@ -8643,6 +8718,28 @@ async function dedupePhantomTrades(DB, cfg, opts) {
     }
   }
   const removeIds = Array.from(removeSet);
+  // [V33.74] ★지우기 전에 백업★ 원장 삭제는 되돌릴 수 없다. 지울 행 전체를 R2에 먼저 떠 둔다.
+  //   오탐이었을 때 복구할 수 있어야 "신뢰할 수 있는 정리"가 된다.
+  let backupKey = null;
+  if (removeIds.length) {
+    try {
+      const R2 = _bigR2();
+      if (R2) {
+        const idSet = new Set(removeIds);
+        const full = (await DB.prepare("SELECT * FROM trades ORDER BY id ASC").all()).results || [];
+        const dump = full.filter(function (t) { return idSet.has(t.id); });
+        backupKey = "audit/removed-trades-" + Date.now() + ".json";
+        await R2.put(backupKey, JSON.stringify({ removedAt: Date.now(), n: dump.length, rows: dump }));
+      }
+    } catch (e) {
+      await log(DB, "ERROR", null, "[AUDIT] 백업 실패 — 삭제를 중단한다: " + (e && e.message));
+      return { ok: false, error: "backup failed", removedCount: 0 };
+    }
+    if (!backupKey) {
+      await log(DB, "ERROR", null, "[AUDIT] R2 미바인딩 — 백업 없이 원장을 지우지 않는다");
+      return { ok: false, error: "no backup target", removedCount: 0 };
+    }
+  }
   for (const id of removeIds) {
     try { await DB.prepare("DELETE FROM trades WHERE id = ?").bind(id).run(); } catch (e) {}
   }
@@ -8679,8 +8776,8 @@ async function dedupePhantomTrades(DB, cfg, opts) {
     }
   }
   const after = await runLedgerAudit(DB, cfg);
-  await log(DB, "WARN", null, "[AUDIT] dedupe: 유령거래 " + removeIds.length + "건 삭제, 시장 " + Array.from(affectedMarkets).join(",") + ", 포지션 동기화 " + rebuilt.length + "건");
-  return { ok: true, removedIds: removeIds, removedCount: removeIds.length, affectedMarkets: Array.from(affectedMarkets), rebuilt: rebuilt, auditAfter: after };
+  await log(DB, "WARN", null, "[AUDIT] dedupe: 유령거래 " + removeIds.length + "건 삭제, 시장 " + Array.from(affectedMarkets).join(",") + ", 포지션 동기화 " + rebuilt.length + "건" + (backupKey ? " (백업 " + backupKey + ")" : ""));
+  return { ok: true, removedIds: removeIds, removedCount: removeIds.length, affectedMarkets: Array.from(affectedMarkets), rebuilt: rebuilt, backupKey: backupKey, auditAfter: after };
 }
 
 // ─────────────────────────────────────────────────────────────
@@ -10766,6 +10863,7 @@ async function executeBuy(DB, market, symbol, strategy, qty, price, signal, dail
     });
     const stmtPos = stmtSavePosition(DB, market, symbol, strategy, posToSave);
     await DB.batch([stmtTrade, stmtPos]);
+    await verifyAfterTrade(DB, market, symbol, "BUY");   // [V33.74] 매수도 쓴 뒤 원장↔포지션 확인
   } catch (e) {
     await log(DB, "ERROR", symbol, "BUY transaction aborted (롤백됨, cash·포지션 무변동): " + e.message);
     return cash;
@@ -10819,7 +10917,7 @@ function getPositionSizeRatio(cfg, strategy, regimeName) {
 async function executeSell(DB, market, symbol, pos, sellQty, price, reason, cfg, cash) {
   const strategy = pos.strategy || (pos.meta && pos.meta.strategy) || "swing";
   // [수정] 전량청산 여부를 pos.qty 감소 전에 판정 (부분청산 통계 오집계 방지)
-  const fullClose = sellQty >= pos.qty;
+  let fullClose = sellQty >= pos.qty;
   // [V63 결함수정] 라이브 executeBuy는 meta.signal에, 백테스트는 meta.signalName에 신호명을 저장한다.
   //   기존엔 signalName만 읽어 라이브 청산이 신호타입 통계에 한 건도 누적되지 않았다(학습 레이어 死문).
   const entrySignalName = (pos.meta && (pos.meta.signalName || pos.meta.signal)) || null;
@@ -10833,6 +10931,10 @@ async function executeSell(DB, market, symbol, pos, sellQty, price, reason, cfg,
   sellQty = Math.floor(sellQty);
   if (sellQty <= 0) { return { cash: cash, pnlPct: 0 }; }
   if (sellQty > pos.qty) sellQty = pos.qty;   // 보유 초과 매도 방지
+  // [V33.74] 포지션 테이블만 믿지 않는다 — 원장과 교차 검증해 작은 쪽까지만 판다.
+  sellQty = await sellQtyDoubleCheck(DB, market, symbol, pos.qty, sellQty, "SELL");
+  if (!(sellQty > 0)) { return { cash: cash, pnlPct: 0 }; }
+  fullClose = sellQty >= pos.qty;   // 교차검증으로 수량이 줄었을 수 있어 재판정
 
   const feeRate = market === "us" ? cfg.feeUS : cfg.feeKR;
   const gross = price * sellQty;
@@ -10896,9 +10998,15 @@ async function executeSell(DB, market, symbol, pos, sellQty, price, reason, cfg,
     let stmtPos;
     if (sellQty < pos.qty) {
       pos.qty = pos.qty - sellQty;
+      pos.meta.feeRemaining = Math.max(0, feeRemaining - entryFeeForThisSell);
+      // [V33.74] EOD 갭축소는 '익절'이 아니다 — tp1Done·본전락을 걸면 안 된다.
+      //   손실 구간에서 손절을 본전으로 올려버려 다음 개장에 남은 절반까지 즉시 털린다.
+      const _isEodTrim = !!(reason && reason.indexOf("EOD-GAP") === 0);
+      if (_isEodTrim) {
+        pos.meta.eodTrimDay = Math.floor(Date.now() / 86400000);   // 그날 한 번만 축소(다음날 다시 판정)
+      } else {
       pos.meta.tp1Done = true;
       if (reason && reason.startsWith("TP2")) pos.meta.tp2Done = true;
-      pos.meta.feeRemaining = Math.max(0, feeRemaining - entryFeeForThisSell);
       // [V9.7] TP1 부분익절 직후, 남은 런너의 손절을 본전+lock으로 즉시 상향.
       try {
         const beRules = getStrategyRules(cfg, strategy, market);
@@ -10907,6 +11015,7 @@ async function executeSell(DB, market, symbol, pos, sellQty, price, reason, cfg,
         if (pos.meta.stopPrice == null || pos.meta.stopPrice < beStop) pos.meta.stopPrice = beStop;
         pos.meta.breakEvenLocked = true;
       } catch (e) {}
+      }
       stmtPos = stmtUpdatePositionGuarded(DB, market, symbol, strategy, pos, origQty);
     } else {
       stmtPos = stmtDeletePositionGuarded(DB, symbol, strategy, market, origQty);
@@ -10920,6 +11029,7 @@ async function executeSell(DB, market, symbol, pos, sellQty, price, reason, cfg,
       return { cash: cash, pnlPct: 0, duplicate: true };
     }
     await stmtRecordTrade(DB, { ts: Date.now(), market: market, symbol: symbol, side: "SELL", qty: sellQty, price: price, pnl: pnl, pnl_pct: pnlPct, reason: enrichedReason }).run();
+    await verifyAfterTrade(DB, market, symbol, "SELL");   // [V33.74] 쓴 뒤에도 확인한다
   } catch (e) {
     await log(DB, "ERROR", symbol, "SELL transaction aborted: " + e.message);
     return { cash: cash, pnlPct: 0 };
@@ -11197,6 +11307,34 @@ function evaluateSell(pos, price, daily, dailyRsi, dailyMa, dailyMaShort, cfg, m
   const stopPct = (r.stopLossPct || cfg.stopLoss || 5) * (dr ? (dr.hardStopScale || 1) : 1);
   if (stopPrice == null && pnlRate <= -stopPct) {
     return { sell: true, sellQty: pos.qty, reason: "STOP " + pnlRate.toFixed(2) + "%" };
+  }
+
+  // 1-b) [V33.74] ★오버나이트 갭 방어★ — 마감 전 '손절 코앞' 포지션 축소.
+  //   실증: 손절 손실의 64%가 개장 30분 이내에 났고(평균 −9.46%), 장중 손절은 −5.72%였다.
+  //   손절선을 4.5%로 잡아도 갭다운은 그 밑에서 시작하니 손절선이 무의미해진다.
+  //   그래서 '손절선까지 여유가 거의 없는 상태로 밤을 넘기는 것' 자체를 막는다.
+  //   · 일반 종목: 여유가 진입 R의 35% 미만이면 절반만 남긴다 → 갭 손실 절반.
+  //   · 레버리지/인버스 ETF: 갭이 2~3배로 증폭된다(실제 252670.KS −19.42%) → 60% 미만이면 전량.
+  //   손절·익절 판정을 다 통과한 뒤에만 본다(정상 청산 규칙을 가리지 않는다).
+  {
+    const _mtc = minutesToClose(market);
+    const _eodDay = Math.floor(Date.now() / 86400000);
+    if (_mtc != null && _mtc > 0 && _mtc <= 25 && stopPrice != null && pos.avg > 0 && meta.eodTrimDay !== _eodDay) {
+      const _rDist = (pos.avg - stopPrice) / pos.avg;      // 진입 시 손절거리(R)
+      const _left = (price - stopPrice) / pos.avg;         // 지금 손절까지 남은 여유
+      if (_rDist > 0.0001) {
+        const _ratio = _left / _rDist;                     // 1=진입가 부근, 0=손절선
+        const _lev = pos.symbol && LEVERAGED_ETF.has(pos.symbol);
+        if (_lev && _ratio < 0.60) {
+          return { sell: true, sellQty: pos.qty,
+                   reason: "EOD-GAP 레버리지 전량 (스톱여유 " + (_ratio * 100).toFixed(0) + "%)" };
+        }
+        if (_ratio < 0.35 && pos.qty >= 2) {
+          return { sell: true, sellQty: Math.floor(pos.qty / 2),
+                   reason: "EOD-GAP 절반축소 (스톱여유 " + (_ratio * 100).toFixed(0) + "%)" };
+        }
+      }
+    }
   }
 
   // R(손절거리%) — 분할익절/시간손절 기준
@@ -12619,6 +12757,7 @@ async function executeBuyCM(DB, symbol, qty, price, signal, dailyAtr, cfg, cash)
     });
     const stmtPos = stmtSavePosition(DB, "cm", symbol, "swing", posToSave);
     await DB.batch([stmtTrade, stmtPos]);
+    await verifyAfterTrade(DB, "cm", symbol, "CM BUY");
   } catch (e) {
     await log(DB, "ERROR", symbol, "[CM] BUY transaction aborted (롤백됨): " + e.message);
     return cash;
@@ -12646,6 +12785,9 @@ async function executeSellCM(DB, symbol, pos, sellQty, price, reason, cfg, cash)
     await log(DB, "WARN", symbol, "[CM] 보유초과 매도 클램프: " + sellQty + " → " + pos.qty + " (" + reason + ")");
     sellQty = pos.qty;                       // 보유 초과 매도 방지
   }
+  // [V33.74] 원장 교차 검증 — 포지션 테이블과 원장 중 작은 쪽까지만.
+  sellQty = await sellQtyDoubleCheck(DB, "cm", symbol, pos.qty, sellQty, "CM SELL");
+  if (!(sellQty > 0)) return { pnlPct: 0, cash: cash };
   const feeRate = cfg.feeUS || 0.0001;
   const gross = price * sellQty;
   const fee = gross * feeRate;
@@ -12681,6 +12823,7 @@ async function executeSellCM(DB, symbol, pos, sellQty, price, reason, cfg, cash)
       return { pnlPct: 0, cash: cash, duplicate: true };
     }
     await stmtRecordTrade(DB, { ts: Date.now(), market: "cm", symbol: symbol, side: "SELL", qty: sellQty, price: price, pnl: pnl, pnl_pct: pnlPct, reason: enrichedReason }).run();
+    await verifyAfterTrade(DB, "cm", symbol, "CM SELL");
   } catch (e) {
     await log(DB, "ERROR", symbol, "[CM] SELL transaction aborted: " + e.message);
     return { pnlPct: 0, cash: cash };
@@ -13084,6 +13227,7 @@ async function executeBuyAlt(DB, sleeve, symbol, qty, price, signal, dailyAtr, c
     const stmtTrade = stmtRecordTrade(DB, { ts: Date.now(), market: mk, symbol: symbol, side: "BUY", qty: qty, price: price, pnl: null, pnl_pct: null, reason: "[RULE][" + sleeve.label + "-SWING] " + signal.name + " " + signal.detail });
     const stmtPos = stmtSavePosition(DB, mk, symbol, "swing", posToSave);
     await DB.batch([stmtTrade, stmtPos]);
+    await verifyAfterTrade(DB, mk, symbol, sleeve.label + " BUY");
   } catch (e) { await log(DB, "ERROR", symbol, "[" + sleeve.label + "] BUY 롤백: " + e.message); return cash; }
   if (cash && typeof cash === "object") cash[mk] = availCash - total;
   await log(DB, "TRADE", symbol, "[" + sleeve.label + "] BUY x" + qty + " @" + price.toFixed(2) + " " + signal.name + " " + signal.detail + " stop=" + stopPrice.toFixed(2));
@@ -13105,6 +13249,9 @@ async function executeSellAlt(DB, sleeve, symbol, pos, sellQty, price, reason, c
     await log(DB, "WARN", symbol, "[" + sleeve.label + "] 보유초과 매도 클램프: " + sellQty + " → " + pos.qty + " (" + reason + ")");
     sellQty = pos.qty;
   }
+  // [V33.74] 원장 교차 검증.
+  sellQty = await sellQtyDoubleCheck(DB, mk, symbol, pos.qty, sellQty, sleeve.label + " SELL");
+  if (!(sellQty > 0)) return { pnlPct: 0, cash: cash };
   const feeRate = sleeve.isKRW ? (cfg.feeKR || 0) : (cfg.feeUS || 0.0001);
   const sellTax = _krSellTaxRate(cfg, symbol, mk);
   const gross = price * sellQty, fee = gross * feeRate;
@@ -13130,6 +13277,7 @@ async function executeSellAlt(DB, sleeve, symbol, pos, sellQty, price, reason, c
       return { pnlPct: 0, cash: cash, duplicate: true };
     }
     await stmtRecordTrade(DB, { ts: Date.now(), market: mk, symbol: symbol, side: "SELL", qty: sellQty, price: price, pnl: pnl, pnl_pct: pnlPct, reason: enrichedReason }).run();
+    await verifyAfterTrade(DB, mk, symbol, sleeve.label + " SELL");
   } catch (e) { await log(DB, "ERROR", symbol, "[" + sleeve.label + "] SELL aborted: " + e.message); return { pnlPct: 0, cash: cash }; }
   if (cash && typeof cash[mk] === "number") cash[mk] += proceeds;
   await log(DB, "TRADE", symbol, "[" + sleeve.label + "] SELL x" + sellQty + " @" + price.toFixed(2) + " PnL " + pnlPct.toFixed(2) + "% (held " + heldMin + "min, " + reason + ")");
@@ -30928,6 +31076,37 @@ export default {
         }
       } catch (e) { try { await log(env.DB, "WARN", null, "[ST-BACKFILL] 예외: " + (e && e.message)); } catch (e2) {} }
 
+      // 0.954) [V33.74] ★유령거래 1회성 정리★ — 사용자 지시("유령 거래 정리해서 실제 수치로 맞춰").
+      //   배포 후 크론에서 딱 한 번 돈다(버전 키로 고정). 지우기 전에 R2로 전량 백업한다.
+      //   정리하면 US +5.87%→+0.3%대, 원자재 +1.22%→−9%대로 내려간다 — 실제 수치다.
+      try {
+        const _REPAIR_VER = "V33.74-oversell";
+        const _rv = await getState(env.DB, "ledger_repair_ver", null);
+        let _mkoRp = false; try { _mkoRp = isMarketOpen("us") || isMarketOpen("kr"); } catch (e) {}
+        if (_rv !== _REPAIR_VER && !_mkoRp) {   // 장중엔 안 돈다(원장 전량 재생 + 삭제라 무겁다)
+          const _cfgR = migrateCfgToMarkets(Object.assign({}, DEFAULT_CFG, await getState(env.DB, "cfg", {})));
+          const _before = await runLedgerAudit(env.DB, _cfgR);
+          await log(env.DB, "WARN", null, "[원장정리] 시작 — 유령매도 " + ((_before && _before.phantomSellIds) || []).length +
+            "건 / 드리프트 " + ((_before && _before.drift) || []).length + "건");
+          const _res = await dedupePhantomTrades(env.DB, _cfgR);
+          if (_res && _res.ok) {
+            await setState(env.DB, "ledger_repair_ver", _REPAIR_VER);
+            // 정리 직후 일일감사까지 같은 사이클에 돌면 원장 전량 재생이 3번 겹친다 — 하루 미룬다.
+            await setState(env.DB, "ledger_audit_lock", Date.now());
+            // 현금 체크포인트는 dedupe 안에서 무효화됨 — 재계산된 현금을 남겨 결과를 눈으로 확인한다.
+            const _cashNow = await computeAllCash(env.DB, _cfgR);
+            await log(env.DB, "WARN", null, "[원장정리] 완료 — " + _res.removedCount + "건 삭제 / 포지션 " +
+              (_res.rebuilt || []).length + "건 동기화 / 백업 " + (_res.backupKey || "없음") +
+              " · 정리 후 현금 US " + _num(_cashNow.us, 0).toFixed(2) +
+              " KR " + Math.round(_num(_cashNow.kr, 0)) +
+              " CM " + _num(_cashNow.cm, 0).toFixed(2) +
+              " · 잔여이상 " + (((_res.auditAfter && _res.auditAfter.phantomSellIds) || []).length) + "건");
+          } else {
+            await log(env.DB, "ERROR", null, "[원장정리] 중단 — " + ((_res && _res.error) || "알 수 없음") + " (원장 무변동)");
+          }
+        }
+      } catch (e) { try { await log(env.DB, "ERROR", null, "[원장정리] 예외: " + (e && e.message)); } catch (e2) {} }
+
       // 0.956) [V33.73] ★원장 정합성 자동감사★
       //   runLedgerAudit 는 유령매도(보유초과 매도)·포지션 드리프트를 정확히 잡아내는데
       //   /api/audit 수동 호출에만 걸려 있어, 실제로 CM 17건·US 2건이 몇 주 동안 아무도 모르게
@@ -31331,7 +31510,7 @@ export default {
               if (_ir) await log(env.DB, "INFO", null, _ir);
             }
           } catch (e) {}
-          const _PIPE_VER = "V33.72-bf-all";   // 배포 시 파이프라인 1회 강제 재실행(국면·판단 즉시 재산출)   // 배포 시 파이프라인 1회 강제 재실행(신규 스키마 반영)
+          const _PIPE_VER = "V33.74-acct";   // 배포 시 파이프라인 1회 강제 재실행(국면·판단 즉시 재산출)   // 배포 시 파이프라인 1회 강제 재실행(신규 스키마 반영)
           try {
             const _pv = await getState(env.DB, "ai_pipeline_ver", null);
             if (_pv !== _PIPE_VER) {
