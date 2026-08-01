@@ -2476,7 +2476,7 @@ async function applySignalTypeWeights(DB, cfg) {
 // ============================================================================
 // [V33.55] 빌드 버전 — SWR L2 캐시 키에 섞어 '배포 = 판단 캐시 자동 무효화'를 만든다.
 //   판정 로직을 고쳐도 옛 캐시가 최대 1시간 재배포되던 문제를 구조적으로 없앤다.
-const _BUILD_VER = "V33.72";
+const _BUILD_VER = "V33.73";
 
 const AI_PARAMS = {
   // ── OHLCV 타임프레임 ── 시가/고가/저가/종가/거래량을 어떤 봉 주기로 볼지.
@@ -8445,6 +8445,19 @@ async function deletePosition(DB, symbol, strategy, market) {
   }
 }
 
+// [V33.73] 국내 증권거래세(0.18%)는 ETF 매도에 붙지 않는다 — 집합투자기구는 면제 대상이다.
+//   종전엔 종목을 안 보고 KR/BDKR 매도 전부에 물렸다. 채권 슬리브(BDKR)는 전 종목이 국고채 ETF라
+//   누적 33.4만원이 통째로 가공 세금이었고, 화면의 BDKR −0.31% 손실은 사실상 이 세금이 전부였다.
+//   현금은 원장 재생으로 파생되지만 체크포인트가 앞서 있어 과거분은 대부분 그대로 두고 이후부터 적용된다.
+function _krSellTaxRate(cfg, symbol, market) {
+  const base = cfg.krSellTax || 0;
+  if (!base) return 0;
+  if (market !== "kr" && market !== "bdkr") return 0;   // USD 슬리브(us/cm/bdus)는 매도세 없음
+  if (market === "bdkr") return 0;                      // 채권 슬리브 = 전부 국고채 ETF
+  if (symbol && ETF_SYMBOLS.has(symbol)) return 0;      // KR 주식 슬리브 안의 ETF
+  return base;
+}
+
 // [V29 새 회계 — 단일 원장] cash를 별도 저장하지 않고 trades에서 실시간 계산.
 //   가용현금 = 초기자본 + 입금 − Σ매수금액(수수료포함) + Σ매도대금(수수료·세금차감)
 //   trades 테이블이 유일한 진실. cash와 positions가 구조적으로 어긋날 수 없음.
@@ -8454,7 +8467,6 @@ async function computeCashFromTrades(DB, market, cfg) {
   const initial = (_initMap[market] != null) ? _initMap[market] : cfg.initialCashCM;
   const _isKRW = (market === "kr" || market === "bdkr");
   const feeRate = _isKRW ? (cfg.feeKR || 0) : (cfg.feeUS || 0);
-  const sellTaxRate = _isKRW ? (cfg.krSellTax || 0) : 0;
   // [회계 재설계] deposits = 누적 입금액(inflows), outflows = 누적 출금액.
   //   실제 가용현금 = 초기자본 + 입금 − 출금 + 거래손익. (수익률 계산은 TWR로 별도 처리)
   const deposits = await getState(DB, "deposits", { us: 0, kr: 0, cm: 0 });
@@ -8477,7 +8489,7 @@ async function computeCashFromTrades(DB, market, cfg) {
     sinceRowid = 0;
   }
 
-  const rows = await DB.prepare("SELECT rowid AS rid, side, qty, price FROM trades WHERE market = ? AND rowid > ? ORDER BY rowid ASC").bind(market, sinceRowid).all();
+  const rows = await DB.prepare("SELECT rowid AS rid, symbol, side, qty, price FROM trades WHERE market = ? AND rowid > ? ORDER BY rowid ASC").bind(market, sinceRowid).all();
   const list = rows.results || [];
   let cash = baseCash;
   let maxRowid = sinceRowid;
@@ -8485,6 +8497,8 @@ async function computeCashFromTrades(DB, market, cfg) {
     const qty = typeof t.qty === 'number' ? t.qty : parseFloat(t.qty) || 0;
     const price = typeof t.price === 'number' ? t.price : parseFloat(t.price) || 0;
     const gross = qty * price;
+    // 매도세는 종목별로 갈린다(ETF 면제) — 체결 때와 같은 함수를 써 원장 재생과 실행이 어긋나지 않게 한다.
+    const sellTaxRate = _krSellTaxRate(cfg, t.symbol, market);
     if (t.side === "BUY") cash -= gross * (1 + feeRate);
     else if (t.side === "SELL") cash += gross * (1 - feeRate - sellTaxRate);
     if (t.rid > maxRowid) maxRowid = t.rid;
@@ -10823,7 +10837,7 @@ async function executeSell(DB, market, symbol, pos, sellQty, price, reason, cfg,
   const feeRate = market === "us" ? cfg.feeUS : cfg.feeKR;
   const gross = price * sellQty;
   const fee = gross * feeRate;
-  const sellTax = market === "kr" ? gross * (cfg.krSellTax || 0) : 0;
+  const sellTax = gross * _krSellTaxRate(cfg, symbol, market);   // [V33.73] ETF 는 증권거래세 면제
   const proceeds = gross - fee - sellTax;
   if (!(typeof cash[market] === "number" && isFinite(cash[market]))) {
     await log(DB, "ERROR", symbol, "SELL aborted: cash state invalid"); return { cash: cash, pnlPct: 0 };
@@ -12617,6 +12631,21 @@ async function executeBuyCM(DB, symbol, qty, price, signal, dailyAtr, cfg, cash)
 
 // 원자재 전용 매도 — USD·무세금. 부분/전량 청산 지원.
 async function executeSellCM(DB, symbol, pos, sellQty, price, reason, cfg, cash) {
+  // [V33.73 ★회계버그 수정★] 여기엔 executeSell 에 있는 입력검증·보유초과 클램프가 통째로 없었다.
+  //   그 결과 잔량보다 많이 파는 '유령 매도'가 원장에 그대로 기록돼(실측 CM 17건 50계약 $11,049.82)
+  //   있지도 않은 주식의 매도대금과 실현손익이 현금·수익률에 더해졌다.
+  //   (TP2 가 남은 수량을 넘겨 반복 체결 → 보유가 음수로 내려간 뒤에도 계속 팔렸다. 최근 2026-07-31 ZW=F)
+  if (!(typeof price === "number" && isFinite(price) && price > 0)) {
+    await log(DB, "WARN", symbol, "[CM] SELL aborted: bad price " + price); return { pnlPct: 0, cash: cash };
+  }
+  if (!(typeof pos.qty === "number" && isFinite(pos.qty) && pos.qty > 0)) {
+    await log(DB, "WARN", symbol, "[CM] SELL aborted: bad pos.qty " + (pos && pos.qty)); return { pnlPct: 0, cash: cash };
+  }
+  if (!(typeof sellQty === "number" && isFinite(sellQty)) || sellQty <= 0) return { pnlPct: 0, cash: cash };
+  if (sellQty > pos.qty) {
+    await log(DB, "WARN", symbol, "[CM] 보유초과 매도 클램프: " + sellQty + " → " + pos.qty + " (" + reason + ")");
+    sellQty = pos.qty;                       // 보유 초과 매도 방지
+  }
   const feeRate = cfg.feeUS || 0.0001;
   const gross = price * sellQty;
   const fee = gross * feeRate;
@@ -13063,8 +13092,21 @@ async function executeBuyAlt(DB, sleeve, symbol, qty, price, signal, dailyAtr, c
 // 매도 — executeSellCM 일반화(KR 슬리브는 거래세 차감).
 async function executeSellAlt(DB, sleeve, symbol, pos, sellQty, price, reason, cfg, cash) {
   const mk = sleeve.key;
+  // [V33.73] executeSellCM 과 동일한 구멍 — 검증·클램프가 없었다. 채권 슬리브는 아직 초과매도가
+  //   발생하지 않았지만 같은 구조라 언제든 난다.
+  if (!(typeof price === "number" && isFinite(price) && price > 0)) {
+    await log(DB, "WARN", symbol, "[" + sleeve.label + "] SELL aborted: bad price " + price); return { pnlPct: 0, cash: cash };
+  }
+  if (!(typeof pos.qty === "number" && isFinite(pos.qty) && pos.qty > 0)) {
+    await log(DB, "WARN", symbol, "[" + sleeve.label + "] SELL aborted: bad pos.qty " + (pos && pos.qty)); return { pnlPct: 0, cash: cash };
+  }
+  if (!(typeof sellQty === "number" && isFinite(sellQty)) || sellQty <= 0) return { pnlPct: 0, cash: cash };
+  if (sellQty > pos.qty) {
+    await log(DB, "WARN", symbol, "[" + sleeve.label + "] 보유초과 매도 클램프: " + sellQty + " → " + pos.qty + " (" + reason + ")");
+    sellQty = pos.qty;
+  }
   const feeRate = sleeve.isKRW ? (cfg.feeKR || 0) : (cfg.feeUS || 0.0001);
-  const sellTax = sleeve.isKRW ? (cfg.krSellTax || 0) : 0;
+  const sellTax = _krSellTaxRate(cfg, symbol, mk);
   const gross = price * sellQty, fee = gross * feeRate;
   const proceeds = gross - fee - gross * sellTax;
   pos.meta = pos.meta || {};
@@ -30885,6 +30927,35 @@ export default {
           }
         }
       } catch (e) { try { await log(env.DB, "WARN", null, "[ST-BACKFILL] 예외: " + (e && e.message)); } catch (e2) {} }
+
+      // 0.956) [V33.73] ★원장 정합성 자동감사★
+      //   runLedgerAudit 는 유령매도(보유초과 매도)·포지션 드리프트를 정확히 잡아내는데
+      //   /api/audit 수동 호출에만 걸려 있어, 실제로 CM 17건·US 2건이 몇 주 동안 아무도 모르게
+      //   원장에 남아 현금과 수익률을 부풀렸다. 하루 1회 스스로 돌려 이상이 있으면 로그로 띄운다.
+      //   (전량 재생이라 8~12s — 장외에만, 하루 한 번만.)
+      try {
+        const _adLock = _num(await getState(env.DB, "ledger_audit_lock", 0), 0);
+        let _mkoAd = false; try { _mkoAd = isMarketOpen("us") || isMarketOpen("kr"); } catch (e) {}
+        if (!_mkoAd && (Date.now() - _adLock) > 24 * 3600000) {
+          await setState(env.DB, "ledger_audit_lock", Date.now());
+          const _cfgAd = migrateCfgToMarkets(Object.assign({}, DEFAULT_CFG, await getState(env.DB, "cfg", {})));
+          const _rep = await runLedgerAudit(env.DB, _cfgAd);
+          if (_rep && _rep.ok) {
+            await log(env.DB, "INFO", null, "[원장감사] 정상 — 유령매도 0건 / 드리프트 0건");
+          } else if (_rep) {
+            const _ph = _rep.phantomSellIds || [], _df = _rep.drift || [];
+            let _phVal = 0;
+            for (const p of _ph) _phVal += _num(p.oversellBy, 0) * _num(p.price, 0);
+            const _top = _ph.slice(-4).map(function (p) {
+              return p.market + " " + p.symbol + " 초과" + p.oversellBy + "주";
+            }).join(", ");
+            await log(env.DB, "ERROR", null,
+              "[원장감사] ★이상★ 유령매도 " + _ph.length + "건(초과대금 약 " + _phVal.toFixed(2) + ")" +
+              " / 포지션 드리프트 " + _df.length + "건" + (_top ? " — 최근: " + _top : "") +
+              " · 원인 점검 후 /api/audit 로 상세 확인");
+          }
+        }
+      } catch (e) { try { await log(env.DB, "WARN", null, "[원장감사] 예외: " + (e && e.message)); } catch (e2) {} }
 
       // 0.96) [V33.27] 학습표본 R2 스냅샷 — 트레이너가 D1을 17만 행 훑지 않게 미리 떠 둔다.
       //   장중엔 절대 돌리지 않는다(거래 우선). 장외에 파트 단위로 조금씩 쌓고 12시간마다 갱신.

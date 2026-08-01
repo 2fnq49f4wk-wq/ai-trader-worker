@@ -6199,8 +6199,19 @@ html[data-theme="light"] .m-brainbar button.active{color:#0b4f9e;background:rgba
     var useCompact = market === 'kr';
     var fmt = useCompact ? fmtCompact : function(n){ return fmtNum(n, 2); };
     $('total'+up).textContent = s.symbol + fmt(s.total);
-    $('invested'+up).textContent = s.symbol + fmt(s.invested);
+    // [V33.73 회계표시 수정] 종전엔 '투자금'에 원가(qty×평단)를 찍었는데 TOTAL 은 (현금+평가액)이라
+    //   투자금+현금 ≠ TOTAL 이 됐다(차이 = 평가손익. 실측 US $839.63 / KR 60만원 어긋남).
+    //   원자재·채권 카드는 평가액 기준이라 정확히 합이 맞아, 카드끼리 기준도 달랐다.
+    //   → 평가액으로 통일한다. 원가는 툴팁으로 남긴다.
+    $('invested'+up).textContent = s.symbol + fmt(s.marketVal);
     $('cash'+up).textContent = s.symbol + fmt(s.cash);
+    var invEl = $('invested'+up);
+    if (invEl && invEl.parentNode) {
+      var _ur = s.marketVal - s.invested;
+      invEl.parentNode.title = '평가액 ' + s.symbol + fmtNum(s.marketVal, 2)
+        + ' = 원가 ' + s.symbol + fmtNum(s.invested, 2)
+        + ' ' + (_ur >= 0 ? '+' : '−') + s.symbol + fmtNum(Math.abs(_ur), 2) + ' (평가손익)';
+    }
     var changeEl = $('change'+up);
     var sign = s.changePct >= 0 ? '+' : '';
     changeEl.textContent = sign + fmtNum(s.changePct, 2) + '%';
@@ -6208,8 +6219,10 @@ html[data-theme="light"] .m-brainbar button.active{color:#0b4f9e;background:rgba
     // [V62] 투자/현금 배분 바
     var ab = $('allocBar'+up);
     if (ab) {
-      var tot = s.invested + s.cash;
-      var pct = tot > 0 ? Math.max(0, Math.min(100, s.invested / tot * 100)) : 0;
+      // [V33.73] 분모를 s.total(=현금+평가액)로 맞춘다 — 종전 s.invested+s.cash 는 위에 찍힌
+      //   총액과 다른 기준이라 바의 비율이 카드 숫자와 어긋났다.
+      var tot = s.total;
+      var pct = tot > 0 ? Math.max(0, Math.min(100, s.marketVal / tot * 100)) : 0;
       var inv = ab.querySelector('.inv');
       if (inv) inv.style.width = pct.toFixed(1) + '%';
       ab.title = '투자 ' + pct.toFixed(0) + '% · 현금 ' + (100-pct).toFixed(0) + '%';
