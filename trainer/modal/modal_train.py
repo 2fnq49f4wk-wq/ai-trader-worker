@@ -838,6 +838,12 @@ def _train_and_upload_scalp(BASE, KEY, HDR, featver):
     days, X, Y, TS, PNL, BAR, HM = 14, [], [], [], [], [], []
     ifeatver, ifeatn, ifeatnames = None, 0, []
     skipped_old = 0
+    # [V33.72] 같은 (종목, 봉시각) 표본은 한 번만 쓴다.
+    #   백필이 전 종목을 회전하며 도는데 야후 5분봉은 1개월 롤링 창이라, 워터마크가 없던
+    #   시기에 만들어진 파일에는 같은 봉이 여러 번 들어있을 수 있다. 사본이 섞이면
+    #   검증셋으로 새는 데다 그 구간에만 가중치가 쏠린다.
+    seen_keys = set()
+    dup_drop = 0
     for i in range(days):
         d = (datetime.now(KST) - timedelta(days=i)).strftime("%Y-%m-%d")
         try:
@@ -857,6 +863,11 @@ def _train_and_upload_scalp(BASE, KEY, HDR, featver):
                 if ifeatver and (not isinstance(ix, list) or len(ix) != ifeatn or sm.get("fv") != ifeatver):
                     skipped_old += 1     # 장중 피처 없는 구표본 — 차원이 달라 섞을 수 없다
                     continue
+                k_dup = (sm.get("s") or "?", int(sm.get("ts") or 0))
+                if k_dup[1] and k_dup in seen_keys:
+                    dup_drop += 1
+                    continue
+                seen_keys.add(k_dup)
                 X.append(x + (ix if ifeatver else []))
                 Y.append(1 if sm.get("y") else 0)
                 TS.append(sm.get("ts", 0))
@@ -868,6 +879,7 @@ def _train_and_upload_scalp(BASE, KEY, HDR, featver):
     N = len(Y)
     print(f"⑧ 단타(장중) 학습 — 표본 {N}건 / 최근 {days}일"
           + (f" (구스키마 {skipped_old}건 제외)" if skipped_old else "")
+          + (f" (중복 {dup_drop}건 제외)" if dup_drop else "")
           + (f" / 장중피처 v{ifeatver}×{ifeatn}" if ifeatver else " / 장중피처 없음"))
     if N < 1500:
         print(f"   표본 부족({N}/1500) — 생략. 더 쌓이면 자동으로 학습된다."); return

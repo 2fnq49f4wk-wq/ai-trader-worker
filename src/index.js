@@ -2476,7 +2476,7 @@ async function applySignalTypeWeights(DB, cfg) {
 // ============================================================================
 // [V33.55] 빌드 버전 — SWR L2 캐시 키에 섞어 '배포 = 판단 캐시 자동 무효화'를 만든다.
 //   판정 로직을 고쳐도 옛 캐시가 최대 1시간 재배포되던 문제를 구조적으로 없앤다.
-const _BUILD_VER = "V33.71";
+const _BUILD_VER = "V33.72";
 
 const AI_PARAMS = {
   // ── OHLCV 타임프레임 ── 시가/고가/저가/종가/거래량을 어떤 봉 주기로 볼지.
@@ -22020,26 +22020,41 @@ async function stinBackfill(DB, opts) {
   const H = STIN.horizonBars;                     // 12봉(60분)
   const stride = _num(cfg.stride, H);             // 라벨 구간 비중첩(누출 방지)
   try {
-    // 대상 심볼 — daily: 캐시가 있는 미국 종목만(야후 분봉 이력이 안정적). 오프셋 회전으로 전 종목 순회.
+    // 대상 심볼 — daily: 캐시가 있는 전 종목(미국·한국·원자재). 오프셋 회전으로 순차 전수 순회.
     const dr = await DB.prepare("SELECT k FROM state WHERE k >= 'daily:' AND k < 'daily;' ORDER BY k").all();
     const all = [];
     for (const r of ((dr && dr.results) || [])) {
       const sy = String(r.k).slice(6);
-      if (!sy || sy[0] === "^") continue;
-      if (/\.(KS|KQ)$/.test(sy)) continue;        // KR 은 네이버가 과거 분봉을 길게 안 준다
-      if (/=F$|-USD$/.test(sy)) continue;
+      if (!sy || sy[0] === "^") continue;   // 지수(^…)만 제외 — 거래 대상이 아니다
       all.push(sy);
     }
     if (!all.length) return "[ST-BACKFILL] 대상 없음";
+    // [V33.72] ★선별하지 않는다★ (사용자 지시)
+    //   종전엔 KR(.KS/.KQ)과 선물/코인(=F,-USD)을 제외했다. 근거는 "네이버가 과거 분봉을 길게
+    //   안 준다"였는데, 짧으면 종목당 표본이 적게 나올 뿐이지 못 만드는 게 아니다.
+    //   한국장·원자재는 실제 운용 대상인데 학습에서 통째로 빼는 건 잘못된 선택이었다.
+    //   지수만 빼고 전 종목을 오프셋 회전으로 돌린다.
     let off = 0;
     try { const o = await getState(DB, "stin_bf_offset", null); off = _num(o && o.v, 0) % all.length; } catch (e) {}
     const picked = [];
     for (let i = 0; i < maxSyms && i < all.length; i++) picked.push(all[(off + i) % all.length]);
+    // 전수 커버 진행률 — "선별한다"는 오해가 없게 매번 남긴다(오프셋 회전으로 전 종목을 순회한다).
+    const _cov = "전체 " + all.length + "종목 중 " + off + "~" + ((off + picked.length) % all.length) + " 구간";
 
+    // [V33.72] ★중복 수확 차단★ 종목별 '마지막으로 표본을 만든 봉 시각' 워터마크.
+    //   야후 5m 는 1개월 롤링 창, 네이버 minute5 는 당일치를 준다. 전 종목을 계속 회전하면
+    //   같은 봉을 매 바퀴 다시 표본으로 만들어 사본이 무한 증식한다(표본수만 부풀고 과적합).
+    //   그 봉 시각보다 새로운 봉만 표본으로 만든다.
+    let wm = {};
+    try { const w = await getState(DB, "stin_bf_wm", null); if (w && typeof w === "object" && w.v) wm = w.v; } catch (e) {}
     const made = [];
-    let symOk = 0, symFail = 0, skipShort = 0;
+    let symOk = 0, symFail = 0, skipShort = 0, skipDup = 0;
     for (const sym of picked) {
       if (fetchBudgetLeft() < 6) break;
+      // [V33.72] 시장을 심볼에서 판정한다 — KR 이 대상에 들어왔으므로 "us" 고정은 오라벨이 된다.
+      const _mkt = /\.(KS|KQ)$/i.test(sym) ? "kr" : "us";
+      const _wmTs = _num(wm[sym], 0);
+      let _newWm = _wmTs;
       let mb = null;
       try { mb = await fetchMinuteBars(sym, { interval: "5m", range: "1mo" }); } catch (e) { symFail++; continue; }
       const c = mb && (mb.allCloses && mb.allCloses.length ? mb.allCloses : mb.closes);
@@ -22053,6 +22068,9 @@ async function stinBackfill(DB, opts) {
       const dCloses = (dd && Array.isArray(dd.closes)) ? dd.closes : null;
       let n0 = 0;
       for (let i = 24; i + H < c.length; i += stride) {
+        // 이미 표본으로 만든 봉은 건너뛴다(사본 증식 차단).
+        const _bts = t[i] ? t[i] * 1000 : 0;
+        if (_bts && _wmTs && _bts <= _wmTs) { skipDup++; continue; }
         // ── 피처: 0..i 까지만 본다(그 시점의 정보) ──
         const win = { closes: c.slice(0, i + 1), highs: h.slice(0, i + 1), lows: l.slice(0, i + 1),
                       volumes: v.slice(0, i + 1), opens: o2.slice(0, i + 1) };
@@ -22076,7 +22094,7 @@ async function stinBackfill(DB, opts) {
             highs: (dd.highs || []).slice(0, dSlice.length), lows: (dd.lows || []).slice(0, dSlice.length),
             idxCloses: null, sectorCloses: null, xsPanel: null, barsAgo: 0,
             price: px, prevClose: dSlice[dSlice.length - 2] || px, dayPct: 0,
-            regime: "NEUTRAL", strategy: "scalp", market: "us", ev: {}
+            regime: "NEUTRAL", strategy: "scalp", market: _mkt, ev: {}
           });
         } catch (e) { continue; }
         if (!Array.isArray(base) || base.length !== LUXML.featNames.length) continue;
@@ -22091,20 +22109,30 @@ async function stinBackfill(DB, opts) {
           if (dn <= -bar) { hit = -1; ret = -bar; hm = k * 5; break; }
         }
         if (!hit) ret = (c[i + H] / px - 1) * 100;
-        made.push({ ts: (t[i] ? t[i] * 1000 : Date.now()), s: sym, m: "us",
+        made.push({ ts: (t[i] ? t[i] * 1000 : Date.now()), s: sym, m: _mkt,
           x: base.map(function (z) { return +(_num(z, 0)).toFixed(4); }),
           ix: ifeat.map(function (z) { return +(_num(z, 0)).toFixed(4); }),
           fv: STIN_FEATVER, b: +bar.toFixed(3),
           y: hit > 0 ? 1 : (hit < 0 ? 0 : (ret > 0 ? 1 : 0)),
           pnl: +ret.toFixed(3), bar: hit ? (hit > 0 ? "tp" : "sl") : "time", hm: hm });
         n0++;
+        if (_bts > _newWm) _newWm = _bts;
         if (made.length >= _num(cfg.maxSamples, 4000)) break;
       }
       if (n0 > 0) symOk++;
+      if (_newWm > _wmTs) wm[sym] = _newWm;
       if (made.length >= _num(cfg.maxSamples, 4000)) break;
     }
     try { await setState(DB, "stin_bf_offset", { v: (off + picked.length) % all.length, ts: Date.now() }); } catch (e) {}
-    if (!made.length) return "[ST-BACKFILL] 0건 — 종목 " + picked.length + "(성공 " + symOk + " 실패 " + symFail + " 짧음 " + skipShort + ")";
+    // 워터마크 저장 — 유니버스에서 빠진 종목은 정리해 무한 증가를 막는다.
+    try {
+      const live = new Set(all);
+      const wm2 = {};
+      for (const k2 in wm) if (live.has(k2)) wm2[k2] = wm[k2];
+      await setState(DB, "stin_bf_wm", { v: wm2, ts: Date.now() });
+    } catch (e) {}
+    if (!made.length) return "[ST-BACKFILL] 0건 — " + _cov +
+      " (성공 " + symOk + " 실패 " + symFail + " 짧음 " + skipShort + " 기수확 " + skipDup + ")";
     // R2 로 내보낸다 — 라이브와 같은 폴더/스키마라 트레이너가 그대로 읽는다.
     const key = "st/intraday/" + _stinDay() + "/bf-" + Date.now() + ".json";
     await R2.put(key, JSON.stringify({ n: made.length, samples: made, src: "backfill" }));
@@ -22120,7 +22148,8 @@ async function stinBackfill(DB, opts) {
         bfTotal: _num(pv.bfTotal, 0) + made.length, ts: Date.now()
       }));
     } catch (e) {}
-    return "[ST-BACKFILL] +" + made.length + "표본 / 종목 " + symOk + "개(오프셋 " + off + ") — 과거 5분봉 1개월";
+    return "[ST-BACKFILL] +" + made.length + "표본 / " + _cov +
+           " (성공 " + symOk + " 실패 " + symFail + " 짧음 " + skipShort + " 기수확 " + skipDup + ") — 저장된 5분봉";
   } catch (e) { return "[ST-BACKFILL] fail: " + (e && e.message); }
 }
 
@@ -30838,8 +30867,10 @@ export default {
         const _due = (Date.now() - _bfLock) > _gap;
         if (_r2ok && _due) {
           await setState(env.DB, "stin_bf_lock", Date.now());
-          try { resetFetchBudget(_mkoBf ? 20 : 60); } catch (e0) {}
-          const _bfr = await stinBackfill(env.DB, { maxSyms: _mkoBf ? 3 : 8, maxSamples: 4000 });
+          try { resetFetchBudget(_mkoBf ? 30 : 120); } catch (e0) {}
+          // [V33.72] 전 종목을 빨리 한 바퀴 돌기 위해 회당 종목 수를 늘린다.
+          //   장외 20종목/10분 → 900종목 기준 약 7.5시간이면 전수 커버(종전 8종목이면 19시간).
+          const _bfr = await stinBackfill(env.DB, { maxSyms: _mkoBf ? 5 : 20, maxSamples: 8000 });
           await log(env.DB, "INFO", null, _bfr || "[ST-BACKFILL] 반환 없음");
         } else {
           // [V33.71] ★"안 돌았다"를 추측하지 않게 스킵 사유를 남긴다★
@@ -31229,7 +31260,7 @@ export default {
               if (_ir) await log(env.DB, "INFO", null, _ir);
             }
           } catch (e) {}
-          const _PIPE_VER = "V33.71-bf-force";   // 배포 시 파이프라인 1회 강제 재실행(국면·판단 즉시 재산출)   // 배포 시 파이프라인 1회 강제 재실행(신규 스키마 반영)
+          const _PIPE_VER = "V33.72-bf-all";   // 배포 시 파이프라인 1회 강제 재실행(국면·판단 즉시 재산출)   // 배포 시 파이프라인 1회 강제 재실행(신규 스키마 반영)
           try {
             const _pv = await getState(env.DB, "ai_pipeline_ver", null);
             if (_pv !== _PIPE_VER) {
