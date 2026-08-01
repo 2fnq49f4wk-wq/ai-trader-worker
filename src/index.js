@@ -2476,7 +2476,7 @@ async function applySignalTypeWeights(DB, cfg) {
 // ============================================================================
 // [V33.55] 빌드 버전 — SWR L2 캐시 키에 섞어 '배포 = 판단 캐시 자동 무효화'를 만든다.
 //   판정 로직을 고쳐도 옛 캐시가 최대 1시간 재배포되던 문제를 구조적으로 없앤다.
-const _BUILD_VER = "V33.59";
+const _BUILD_VER = "V33.60";
 
 const AI_PARAMS = {
   // ── OHLCV 타임프레임 ── 시가/고가/저가/종가/거래량을 어떤 봉 주기로 볼지.
@@ -13000,6 +13000,11 @@ async function runTradingCycle(env) {
       const _xl = await getState(DB, "xmkt_lead", null);
       __xmktLead = (_xl && (Date.now() - (_xl.ts || 0)) < 30 * 60000) ? _xl : (await updateCrossMarketLead(DB)) || _xl;
     } catch (e) {}
+    // [V33.60] 섹터 6종 온도(30분 캐시) — 섹터 ETF 종가만 읽으므로 추가 fetch 0.
+    try {
+      const _sp0 = await getState(DB, "sector_pulse", null);
+      if (!_sp0 || (Date.now() - (_sp0.ts || 0)) >= 30 * 60000) await computeSectorPulse(DB);
+    } catch (e) {}
     const visionPreds = await getState(DB, "vision_predictions", {});  // [Vision AI]
     const secData = await getState(DB, "sec_filings", {});  // [SEC 공시] 미국 종목 보수화
     const eventData = await buildEventRiskData(DB);  // [V62] 어닝스·경제지표·내부자 이벤트 리스크 (캐시 read만)
@@ -15384,9 +15389,29 @@ async function runTradingCycle(env) {
           _fl = await stinFlush(__stinPend, DB);
         }
         await _stinSavePend(__stinPend);
+        // [V33.60] ★진행이 화면에서 안 보이던 이유★ stin_stats 는 flush 시점(=관측 60분 뒤
+        //   라벨 완료 + 50건/10분 조건 충족)에만 올라간다. 그래서 관측이 정상이어도 최소 1시간은
+        //   "0 / 3,000" 으로 보이고, 어디서 끊겼는지(관측/라벨/저장) 구분도 안 됐다.
+        //   → 관측·라벨 누적도 함께 기록해 단계별로 진행을 볼 수 있게 한다.
         if (__stinObs || _lab || _fl) {
+          try {
+            const _d0 = _stinDay();
+            const _p0 = (await getState(DB, "stin_stats", null)) || {};
+            const _same = (_p0.day === _d0);
+            await setState(DB, "stin_stats", Object.assign({}, _p0, {
+              day: _d0,
+              obsTotal: _num(_p0.obsTotal, 0) + __stinObs,
+              obsToday: (_same ? _num(_p0.obsToday, 0) : 0) + __stinObs,
+              labTotal: _num(_p0.labTotal, 0) + _lab,
+              total: _same ? _num(_p0.total, 0) : _num(_p0.total, 0),
+              today: _same ? _num(_p0.today, 0) : 0,
+              files: _same ? _num(_p0.files, 0) : 0,
+              ts: Date.now()
+            }));
+          } catch (e) {}
           await log(DB, "INFO", null, "[ST-INTRADAY] 관측 +" + __stinObs + " 라벨 +" + _lab +
-            (_fl ? " R2저장 " + _fl + "건" : "") + " 대기 " + __stinPend.items.length);
+            (_fl ? " R2저장 " + _fl + "건" : "") + " 대기 " + __stinPend.items.length +
+            " 관측스캔 " + __stinObsScan);
         }
       } catch (e) {}
     }
@@ -16007,6 +16032,10 @@ async function handleRequest(request, env, ctx) {
               if (_ss2) {
                 _scalp.collected = _num(_ss2.total, 0);
                 _scalp.collectedToday = (_ss2.day === _stinDay()) ? _num(_ss2.today, 0) : 0;
+                // [V33.60] 관측→라벨→저장 단계별 진행(어디서 끊겼는지 구분용)
+                _scalp.observed = _num(_ss2.obsTotal, 0);
+                _scalp.observedToday = (_ss2.day === _stinDay()) ? _num(_ss2.obsToday, 0) : 0;
+                _scalp.labeled = _num(_ss2.labTotal, 0);
               }
             } catch (e) {}
           } catch (e) {}
@@ -16018,10 +16047,13 @@ async function handleRequest(request, env, ctx) {
         // [V33.45] 미국 반도체 → 한국 기술주 선행지표(전이 감시).
         let _xmkt = null;
         try { const _xl = await getState(env.DB, "xmkt_lead", null); if (_xl) _xmkt = { semi1d: _xl.semi1d, semi5d: _xl.semi5d, n: _xl.n, ts: _xl.ts }; } catch (e) {}
+        // [V33.60] 섹터 6종 온도 — 반도체 외 섹터도 화면에 보이게(사용자 요청).
+        let _sect = null;
+        try { const _sp = await getState(env.DB, "sector_pulse", null); if (_sp && _sp.g) _sect = _sp.g; } catch (e) {}
         const _out = { aiReady: aiReady, mode: aiReady ? "AI_AUTONOMOUS" : "RULE_FALLBACK", scalp: _scalp,
                  committee: { mind: mindOk, dnn: dnnOk, gbdt: gbdtOk, xgb: xgb, lgb: lgb, cat: cat },
                  diag: _diag,
-                 phase: _phase, xmkt: _xmkt,
+                 phase: _phase, xmkt: _xmkt, sectors: _sect,
                  selfreview: review, scan: scan, samples: samples, degraded: false };
         // 마지막 정상 스냅샷 보관 — 다음에 조회가 실패해도 "규칙엔진 폴백"으로 오표시하지 않기 위해.
         try { ctx.waitUntil(setState(env.DB, "ai_mode_last_ok", _out)); } catch (e) {}
@@ -20172,6 +20204,41 @@ async function computeMegaSpill(DB, earnSurp, mcfg) {
     return Object.keys(out).length ? { g: out, ts: now } : null;
   } catch (e) { return null; }
 }
+// [V33.60] ★섹터 전반 온도 — 반도체만 보던 것을 6개 섹터로 확장★
+//   종전엔 미국 반도체(→한국 기술주 전이)만 별도 계산해 화면에 띄웠다. 사용자 지적대로
+//   나머지 섹터도 같은 방식으로 볼 수 있어야 시장 전체 그림이 잡힌다.
+//   섹터 ETF 종가는 이미 daily: 에 있으므로 추가 fetch 0 — 한 번의 IN 조회로 6개를 다 읽는다.
+async function computeSectorPulse(DB) {
+  try {
+    const keys = [], names = [];
+    for (const g in _SECTOR_ETF) { keys.push("daily:" + _SECTOR_ETF[g]); names.push(g); }
+    const rows = await DB.prepare(
+      "SELECT k, v FROM state WHERE k IN (" + keys.map(function () { return "?"; }).join(",") + ")"
+    ).bind.apply(null, keys).all();
+    const bySym = {};
+    for (const r of ((rows && rows.results) || [])) {
+      try { bySym[String(r.k).slice(6)] = JSON.parse(r.v); } catch (e) {}
+    }
+    const out = {};
+    for (let i = 0; i < names.length; i++) {
+      const g = names[i], d = bySym[_SECTOR_ETF[g]];
+      const c = d && d.closes;
+      if (!Array.isArray(c) || c.length < 6) continue;
+      const last = c[c.length - 1], p1 = c[c.length - 2], p5 = c[c.length - 6];
+      if (!(last > 0)) continue;
+      out[g] = {
+        etf: _SECTOR_ETF[g],
+        d1: (p1 > 0) ? +((last - p1) / p1 * 100).toFixed(2) : null,
+        d5: (p5 > 0) ? +((last - p5) / p5 * 100).toFixed(2) : null
+      };
+    }
+    if (!Object.keys(out).length) return null;
+    const res = { g: out, ts: Date.now() };
+    await setState(DB, "sector_pulse", res);
+    return res;
+  } catch (e) { return null; }
+}
+
 async function updateCrossMarketLead(DB) {
   try {
     const rows = await DB.prepare(
@@ -24609,7 +24676,10 @@ const HARVEST = {
   enabled: true,
   symbolsPerNight: 1500, // [V11] 500→1500 — 전 유니버스(~900종목)를 매일밤 완전순회(커버리지 극대화)
   strideBars: 1,        // [V12.31] 2→1 — 매 봉 표본화로 종목당 표본 ~2배(한 번에 받는 표본 극대화. 라벨 겹침은 엠바고가 방어)
-  minBars: 120, warmupBars: 60,
+  // [V33.60] 120 → 90. 실측 로그의 캐치업 실패가 매번 '봉수미달=전원' 이었다.
+  //   필요치는 warmupBars(60) + horizon(10) ≈ 70 봉이라 120 은 과했고, 그 사이 구간(90~119봉)의
+  //   신규상장·짧은이력 종목이 통째로 수확에서 빠져 있었다(딥이력 자격미달 354종목과 겹친다).
+  minBars: 90, warmupBars: 60,
   horizon: AI_PARAMS.predictionHorizonDays, stopPct: 5,  // [V12] 예측지평은 AI_PARAMS 단일출처
   tpPct: 8,             // [V9.9] Triple-Barrier(de Prado) 익절 배리어 — 기간내 +8% 선도달 시 승 확정.
                         //   기존 2중(손절+시간)의 "중간에 크게 올랐다가 되돌린 승리 패턴"을 패로 오분류하던 편향 제거.
@@ -30483,7 +30553,7 @@ export default {
               if (_ir) await log(env.DB, "INFO", null, _ir);
             }
           } catch (e) {}
-          const _PIPE_VER = "V33.59-obs-unblock";   // 배포 시 파이프라인 1회 강제 재실행(국면·판단 즉시 재산출)   // 배포 시 파이프라인 1회 강제 재실행(신규 스키마 반영)
+          const _PIPE_VER = "V33.60-sector-pulse";   // 배포 시 파이프라인 1회 강제 재실행(국면·판단 즉시 재산출)   // 배포 시 파이프라인 1회 강제 재실행(신규 스키마 반영)
           try {
             const _pv = await getState(env.DB, "ai_pipeline_ver", null);
             if (_pv !== _PIPE_VER) {

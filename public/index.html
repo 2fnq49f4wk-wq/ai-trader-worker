@@ -14232,6 +14232,23 @@ html[data-theme="light"] .rail{background:#fff;}
           ['KR',      phCell(ph.kr, ph.dayKr, ph.r5Kr, ph.erKr)],
           ['美반도체', semi]
         ]);
+    }
+    // [V33.60] 섹터 6종 온도 — 반도체만 보이던 것을 확장(사용자 요청).
+    //   값이 없는 섹터도 행을 남겨 어디가 비었는지 보이게 한다.
+    {
+      var SEC_KO = { TECH:'기술', FINANCE:'금융', HEALTH:'헬스케어', CONSUMER:'소비재',
+                     INDUSTRIAL:'산업재', RESOURCES:'에너지' };
+      var sp = mode.sectors;
+      var sRows = ['TECH','FINANCE','HEALTH','CONSUMER','INDUSTRIAL','RESOURCES'].map(function(g){
+        var o = sp && sp[g];
+        if(!o || !has(o.d1)) return [SEC_KO[g], null];
+        var c1 = o.d1 >= 1 ? C.pos : (o.d1 <= -1 ? C.neg : 'var(--t2)');
+        return [SEC_KO[g],
+          col('<b>'+(o.d1>0?'+':'')+o.d1.toFixed(1)+'%</b>', c1)
+          + (has(o.d5) ? ' <span class="sub">5일 '+(o.d5>0?'+':'')+o.d5.toFixed(1)+'%</span>' : '')
+          + (o.etf ? ' <span class="sub">'+esc(o.etf)+'</span>' : '')];
+      });
+      h += sec('섹터 온도') + tbl(sRows);
 
     // ③ 단타 엔진 — 표본이 0이어도 항상 표시
     var sc = mode.scalp || {};
@@ -14244,6 +14261,14 @@ html[data-theme="light"] .rail{background:#fff;}
     var samCell = em(n0(got)||'0') + ' <span class="sub">/ '+n0(need)+' ('+pct+'%)</span>'
       + (sc.collectedToday ? ' '+col('+'+n0(sc.collectedToday), C.pos)+'<span class="sub"> 오늘</span>' : '')
       + '<div class="gauge"><i style="width:'+pct+'%;background:'+(pct>=100?C.pos:C.amb)+';"></i></div>';
+    // [V33.60] 관측→라벨→저장 단계 — 어디서 끊겼는지 한 줄로 보인다.
+    //   저장(collected)은 관측 60분 뒤 라벨이 끝나야 오르므로, 관측만 오르는 구간이 정상이다.
+    var stepCell = null;
+    if(has(sc.observed) || has(sc.labeled)){
+      stepCell = '관측 <b>'+num(sc.observed||0)+'</b>'
+        + (sc.observedToday ? ' '+col('+'+num(sc.observedToday), C.pos)+'<span class="sub"> 오늘</span>' : '')
+        + ' <span class="sub">→ 라벨 '+num(sc.labeled||0)+' → 저장 '+num(got)+'</span>';
+    }
     var storeCell = null;
     if(has(sc.pending) || has(sc.filesToday)){
       storeCell = (has(sc.store)?esc(sc.store):'R2')
@@ -14260,6 +14285,7 @@ html[data-theme="light"] .rail{background:#fff;}
     h += sec('단타 엔진 (AI)', col(stage+'/4 '+stTxt, stCol))
       + tbl([
           ['표본',  samCell],
+          ['진행',  stepCell],
           ['저장',  storeCell],
           ['역할',  roleCell],
           ['검증',  accCell],
