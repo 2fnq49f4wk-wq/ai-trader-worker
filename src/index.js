@@ -2500,7 +2500,7 @@ async function applySignalTypeWeights(DB, cfg) {
 // ============================================================================
 // [V33.55] 빌드 버전 — SWR L2 캐시 키에 섞어 '배포 = 판단 캐시 자동 무효화'를 만든다.
 //   판정 로직을 고쳐도 옛 캐시가 최대 1시간 재배포되던 문제를 구조적으로 없앤다.
-const _BUILD_VER = "V33.77";
+const _BUILD_VER = "V33.78";
 
 const AI_PARAMS = {
   // ── OHLCV 타임프레임 ── 시가/고가/저가/종가/거래량을 어떤 봉 주기로 볼지.
@@ -2713,7 +2713,14 @@ const AI_PARAMS = {
   // ── 예측 타겟 설계(Target Variable) ── AI가 '무엇을' 예측할지 정교화(정답지 설계).
   //   (구현: labelTarget 라벨러 — binary는 현행, alpha/logreturn/multiclass는 opt-in)
   prediction: {
-    target: "alpha",               // [V17] alpha(초과수익=지수 대비 잔차) 학습 전환. | "binary" | "logreturn" | "multiclass"
+    // [V33.78] ★alpha → binary(절대수익) 전환★ (사용자 지시)
+    //   왜 바꾸는가: 라벨은 "지수 대비 +1.5%p 초과수익"인데 실제 매매는 절대 방향으로 한다.
+    //   모델이 주는 p 의 뜻이 "이 종목이 지수를 이길 확률"인데 그걸 "오를 확률"로 써왔다.
+    //   하락장에서 지수를 이기는 종목은 여전히 떨어진다 — 지수보다 낮은 수익이 난 구조적 이유다.
+    //   ★기존 17만 표본은 버리지 않는다★ ml_samples 에 pnl_pct 가 그대로 저장돼 있어
+    //   절대수익 라벨(pnl>0)을 그 값에서 다시 계산할 수 있다. featVer 를 올리지 않으므로
+    //   재수집·재학습 없이 같은 표본이 새 라벨로 즉시 쓰인다(트레이너가 Y 를 pnl 에서 재계산).
+    target: "binary",              // 절대수익(pnl>0) | "alpha" | "logreturn" | "multiclass"
     logReturnWindowDays: 1,        // 로그수익률 타겟 계산 기간 ln(P_t / P_{t-k}) — 노이즈 감쇠
     alphaBenchmark: { us: "^GSPC", kr: "^KS11", cm: "GC=F" }, // 초과수익률(잔차) 기준지수
     alphaTargetThresholdPct: 1.5,  // [V32.10] 1.0→1.5 — 지평 10일로 확대에 맞춰 "승자" 기준 상향(라벨 순도↑)
@@ -8375,7 +8382,11 @@ function _mlExportConfig() {
            embargoDays: LUXML.embargoDays || 6, hvSrcWeight: (typeof HARVEST !== "undefined" ? HARVEST.srcWeight : 1),
            recencyHalfLifeDays: LUXML.recencyHalfLifeDays || 45, recencyFloor: LUXML.recencyFloor || 0.35,
            epochs: DNN.epochs, batch: DNN.batch, lr: DNN.lr, lrFloorFrac: DNN.lrFloorFrac,
-           trustFloor: DNN.trustFloor, trustTemp: DNN.trustTemp, trustMargin: DNN.trustMargin };
+           trustFloor: DNN.trustFloor, trustTemp: DNN.trustTemp, trustMargin: DNN.trustMargin,
+           // [V33.78] 라벨 정의를 트레이너에 알려준다 — 트레이너가 pnl 에서 Y 를 재계산할지 판단한다.
+           prediction: { target: (AI_PARAMS.prediction && AI_PARAMS.prediction.target) || "binary",
+                         horizonDays: (AI_PARAMS.prediction && AI_PARAMS.prediction.horizonDays) || 10 },
+           icFloor: (typeof GBDT !== "undefined" && GBDT.icFloor != null) ? GBDT.icFloor : 0.015 };
 }
 const MLSNAP_PART = 20000;
 function _mlSnapKey(fv, part) { return "ml/v" + fv + "/part-" + part + ".json"; }
@@ -10978,6 +10989,8 @@ async function executeBuy(DB, market, symbol, strategy, qty, price, signal, dail
           entryFeatures: (signal && Array.isArray(signal.mlFeat)) ? signal.mlFeat : null,
           mlEvKeys: (signal && Array.isArray(signal.mlEvKeys)) ? signal.mlEvKeys : null,
           mlMindP: (signal && typeof signal.mlMindP === "number") ? signal.mlMindP : null,
+          // [V33.78] 진입 시점 FLOW 피처 스냅샷 — 청산 때 라벨을 붙여 표본이 된다.
+          flowFeat: (signal && Array.isArray(signal.flowFeat)) ? signal.flowFeat : null,
           banditArmIdx: (signal && signal.mlBanditArmIdx != null) ? signal.mlBanditArmIdx : null,
           banditCtxX: (signal && Array.isArray(signal.mlBanditCtxX)) ? signal.mlBanditCtxX : null,
           // [V12.47] ★버그수정★ target:"alpha" 모드에선 idxRetPct 없으면 mlLogSample이 표본을
@@ -11123,6 +11136,11 @@ async function executeSell(DB, market, symbol, pos, sellQty, price, reason, cfg,
           }
         } catch (e) {}
         await mlLogSample(DB, market, symbol, strategy, pos.meta.entryFeatures, pnlPct, __idxRetPct);
+        // [V33.78] FLOW 표본 — 진입 시 스냅샷해 둔 FLOW 피처를 같은 결과로 라벨링한다.
+        //   기존 표본 스트림과 완전히 분리돼 있어 LUXML 에 아무 영향이 없다.
+        try {
+          if (Array.isArray(pos.meta.flowFeat)) await flowLogSample(DB, market, symbol, pos.meta.flowFeat, pnlPct);
+        } catch (e) {}
       }
       if (Array.isArray(pos.meta.mlEvKeys) && pos.meta.mlEvKeys.length && typeof mlUpdateEventExpectancy === "function") {
         await mlUpdateEventExpectancy(DB, pos.meta.mlEvKeys, pnlPct);
@@ -14565,6 +14583,9 @@ async function runTradingCycle(env) {
           __dnn = null, __dnnTrust = null, __noiseFilter = null, __evMem = {}, __sectorNews = null,
           __gbdt = null, __gbdtTrust = null, __cal = null, __evStats = null, __idxCloses = null, __xsPanel = null,
           __secCache = {}, __fundCache = {};   // [V12.130] 사이클당 1회 프리로드(종목별 중복 D1 read 제거)
+      // [V33.78] FLOW — 모델과 피어계산용 일봉캐시를 사이클당 1회만 준비한다.
+      //   일봉캐시는 이미 daily: 로 D1 에 있으니 한 번 훑어 메모리에 올린다(종목마다 재조회 금지).
+      let __flowModel = null, __dailyCacheForFlow = {}, __flowCollect = false;
       let __mlDrift = { drift: false, action: "none", acc: null };  // [V16] 모델 열화 감지(사이클 1회)
       const __sentiOvrMemo = {};  // [V14] 종목별 감성 오버라이드 판정 사이클 캐시(매도·매수 루프 공유)
       const __candBatch = [], __candSyms = new Set();  // [LUX-AI] 반사실 후보 배치(사이클당 1커밋)
@@ -14583,6 +14604,28 @@ async function runTradingCycle(env) {
           try { __evStats = await getState(DB, "ml_evstats", null); } catch (e) {}
           try { __idxCloses = await _mlLoadIndexCloses(DB, market); } catch (e) {}
           try { __xsPanel = await getState(DB, "xs_panel", null); } catch (e) {}   // [V21] 횡단면 랭크 패널
+          // [V33.78] FLOW 모델 + 피어용 일봉 스냅샷(사이클 1회). 모델이 없어도 표본 수집을 위해 캐시는 만든다.
+          try {
+            if (FLOWML.enabled) {
+              __flowModel = await getState(DB, "flow_model", null);
+              const _fs = await getState(DB, "flow_samples_n", null);
+              __flowCollect = true;   // 표본이 없을수록 수집이 급하다 — 항상 켠다(피어는 네트워크 0)
+              const _dr = await DB.prepare("SELECT k, v FROM state WHERE k >= 'daily:' AND k < 'daily;'").all();
+              let _n = 0;
+              for (const _r of ((_dr && _dr.results) || [])) {
+                if (_n >= 900) break;
+                const _sy = String(_r.k).slice(6);
+                if (!_sy || _sy[0] === "^") continue;
+                try {
+                  const _v = (typeof _r.v === "string") ? JSON.parse(_r.v) : _r.v;
+                  if (_v && Array.isArray(_v.closes) && _v.closes.length >= 25) {
+                    __dailyCacheForFlow[_sy] = { closes: _v.closes.slice(-70) };   // 60일치만 — 메모리 절약
+                    _n++;
+                  }
+                } catch (e2) {}
+              }
+            }
+          } catch (e) { __dailyCacheForFlow = {}; }
           // [V12.130] ★TIME-CAP 근본원인 수정★ 섹터ETF 종가를 종목마다 getState로 다시 읽고 있었다
           //   (hist: 없으면 daily:까지 최대 2 read × 557종목). 섹터ETF는 6종뿐이라 사이클당 1회면 충분한데
           //   이 중복 read가 종목당 평가시간을 수백 ms로 부풀려 16s 예산에 2~95종목밖에 못 돌았다
@@ -15897,7 +15940,18 @@ async function runTradingCycle(env) {
                 } catch (e) {}
                 // 최상위 결정(deep) → 폴백(mind)
                 let _md = null;
-                try { _md = await mlDeepDecide(DB, signal.mlFeat, { mind: __mind, guard: __guard, ens: __ensemble, trust: __dnnTrust, dnn: __dnn, gbdtTrust: __gbdtTrust, gbdt: __gbdt, cal: __cal, evstats: __evStats, shock: await _luxMarketShockCached(DB), sym: symbol, evCtx: await _luxEventContextCached(DB), applyEventPrior: true }); } catch (e) {}
+                // [V33.78] FLOW 피처 조립 — 모델이 신뢰 상태일 때만 만든다(불필요한 fetch 방지).
+                //   피어 계산은 캐시된 일봉만 쓰므로 네트워크 0, 포지셔닝/옵션은 종목당 하루 1회 캐시.
+                let __flowFeat = null;
+                try {
+                  if (FLOWML.enabled && __flowModel && __flowModel.trusted) {
+                    __flowFeat = await flowBuildFeat(DB, symbol, market, __dailyCacheForFlow);
+                  } else if (FLOWML.enabled && __flowCollect) {
+                    __flowFeat = await flowBuildFeat(DB, symbol, market, __dailyCacheForFlow);   // 학습 전엔 표본 수집만
+                  }
+                  if (__flowFeat) signal.flowFeat = __flowFeat;
+                } catch (e) {}
+                try { _md = await mlDeepDecide(DB, signal.mlFeat, { mind: __mind, guard: __guard, ens: __ensemble, trust: __dnnTrust, dnn: __dnn, gbdtTrust: __gbdtTrust, gbdt: __gbdt, cal: __cal, evstats: __evStats, shock: await _luxMarketShockCached(DB), sym: symbol, evCtx: await _luxEventContextCached(DB), applyEventPrior: true, market: market, flowFeat: __flowFeat, flowModel: __flowModel }); } catch (e) {}
                 if (!_md) { try { _md = await mlMindDecide(DB, signal.mlFeat, { mind: __mind, guard: __guard, ens: __ensemble }); } catch (e) {} }
                 // [V5] AI 픽 수집 — 개입 여부와 무관하게 예측 자체는 기록(종목당 1회)
                 try {
@@ -17946,12 +18000,12 @@ async function handleRequest(request, env, ctx) {
     if (path === "/api/ai/train-now" && request.method === "POST") {
       const au = _trainAuthed(); if (!au.ok) return Response.json({ error: au.msg }, { status: au.code, headers: cors });
       const target = url.searchParams.get("target") || "mind";
-      const FN = { mind: mlMindTrainNightly, gbdt: mlGBDTTrainNightly, brain: mlBrainTrainNightly, dnn: mlDNNTrainNightly, l1: mlTrainNightly, calibrate: mlCalibrateCommittee, selfreview: mlSelfReview };
+      const FN = { mind: mlMindTrainNightly, gbdt: mlGBDTTrainNightly, brain: mlBrainTrainNightly, dnn: mlDNNTrainNightly, l1: mlTrainNightly, calibrate: mlCalibrateCommittee, selfreview: mlSelfReview, flow: flowTrainNightly };
       // [V12.63] target=all — 재배포 직후 "한 방에" 전체 파이프라인을 정확한 순서로 재실행(하루1회 게이트 무시).
       //   순서 고정: harvest → l1 → brain → mind → dnn → gbdt → calibrate (뒤 단계가 앞 단계 산출물 의존).
       //   각 단계 자체 CPU예산 가드가 있어 안전. 재학습 즉시 모든 수정이 반영되게 하는 원클릭 경로.
       if (target === "all") {
-        const _order = [["harvest", mlMarketHarvestNightly], ["l1", mlTrainNightly], ["brain", mlBrainTrainNightly], ["mind", mlMindTrainNightly], ["gbdt", mlGBDTTrainNightly], ["dnn", mlDNNTrainNightly], ["calibrate", mlCalibrateCommittee]];
+        const _order = [["harvest", mlMarketHarvestNightly], ["l1", mlTrainNightly], ["brain", mlBrainTrainNightly], ["mind", mlMindTrainNightly], ["gbdt", mlGBDTTrainNightly], ["dnn", mlDNNTrainNightly], ["flow", flowTrainNightly], ["calibrate", mlCalibrateCommittee]];
         const out = {};
         for (const [nm, fn] of _order) {
           try { out[nm] = await fn(env.DB); } catch (e) { out[nm] = "FAIL: " + (e && e.message); }
@@ -21278,6 +21332,310 @@ function statArbSignal(a, b, params) {
 // 이벤트 피처는 lux_news.txt의 mlCollectEvents(...)가 만들어 ev 객체로 넘김(없으면 0).
 // 안전: 미학습/저정확도면 자동 observe(거래 영향 0). 모든 함수 try/catch 폴백.
 // ============================================================
+
+// ════════════════════════════════════════════════════════════════════════════
+// [V33.78] ★FLOW 전문가 — 새 데이터 축을 담당하는 추가 모델★ (사용자 지시)
+//
+//  문제 인식: 지금까지 AI 가 보는 것은 사실상 ①봉차트 ②뉴스 둘뿐이다.
+//    수익률 좋은 공개 모델들이 무엇을 더 보는지 조사한 결과 두 갈래가 뚜렷했다.
+//    (a) ★종목 간 관계★ — Qlib 벤치마크 상위권인 HIST(arXiv:2110.13716)·GRU-PFG
+//        (arXiv:2411.18997)의 핵심이 "개별 종목을 따로 보지 말고 종목 사이 공유 정보를
+//        그래프로 엮어라"다. 우리는 900종목 일봉을 이미 캐시하고 있어 ★추가 fetch 0★ 으로
+//        피어 상관구조를 만들 수 있다.
+//    (b) ★포지셔닝/수급 대체데이터★ — 공매도 잔고, 내부자 매매, 기관 보유, 옵션 풋콜비.
+//        내부자 군집매수(30일 내 3인 이상)는 학계에서 가장 신뢰도 높은 강세 신호로 꼽히고,
+//        공매도 잔고·풋콜비는 가격에 선행하는 포지셔닝 정보다. 전부 봉차트에 없는 정보다.
+//
+//  ★왜 기존 모델에 피처를 더하지 않고 모델을 새로 만드는가★ (사용자 지시)
+//    LUXML.featVer 를 올리면 지금 쌓인 17만 표본이 전부 무효가 된다. 재학습·재수집이
+//    불가능하므로, 새 데이터는 ★독립된 피처벡터·독립된 표본 스트림·독립된 모델★ 로 두고
+//    위원회에 전문가 한 명으로 합류시킨다. 기존 모델은 아무 영향을 받지 않는다.
+//
+//  학습: 워커 자체 야간학습(로지스틱 + L2). 피처 12차원이라 표본 3천이면 수렴한다.
+//        Modal 업로드 경로를 새로 뚫지 않아 배포 리스크가 없다.
+const FLOWML = {
+  enabled: true,
+  featVer: 1,
+  featNames: [
+    // ── 피어 그래프(추가 fetch 0) ──
+    "peerRet5",      // 상관 상위 피어들의 5일 수익률 평균(%)
+    "peerRet20",     // 피어 20일 수익률 평균(%)
+    "peerDisp",      // 피어 수익률 분산(코히런스 낮으면 개별요인 우세)
+    "peerRel5",      // 자기 5일 − 피어 5일 (피어 대비 상대 모멘텀)
+    "peerCorrAvg",   // 상위 피어 평균 상관(구조 강도)
+    "peerLead",      // 피어가 먼저 움직였나(피어 1일 − 자기 1일)
+    // ── 포지셔닝/수급 ──
+    "shortPctFloat", // 유동주식 대비 공매도 비율(0~1 클램프)
+    "shortRatio",    // 커버까지 일수(days-to-cover) / 10 정규화
+    "shortChg",      // 공매도 전월 대비 변화율
+    "insiderNet",    // 최근 90일 내부자 순매수 점수(−1~1)
+    "instOwn",       // 기관 보유 비율(0~1)
+    "putCallOI"      // 풋/콜 미결제약정 비율(로그, 0 중심)
+  ],
+  minTrainSamples: 800,
+  trainWindow: 40000,
+  l2: 1.0,
+  icFloor: 0.012
+};
+
+// 피어 상관 구조 — 캐시된 일봉만 사용한다(네트워크 호출 0).
+//   같은 시장 종목 중 상관 상위 K개를 골라 그들의 최근 움직임을 요약한다.
+//   HIST/GRU-PFG 가 그래프로 푸는 "종목 간 공유 정보"를 가벼운 통계로 근사한 것.
+async function flowPeerFeat(DB, symbol, market, dailyCache) {
+  try {
+    const me = dailyCache && dailyCache[symbol];
+    if (!me || !Array.isArray(me.closes) || me.closes.length < 25) return null;
+    const _ret = function (c, n) {
+      if (!Array.isArray(c) || c.length < n + 1) return null;
+      const a = c[c.length - 1 - n], b = c[c.length - 1];
+      return (a > 0 && b > 0) ? (b / a - 1) * 100 : null;
+    };
+    const _logret = function (c, n) {
+      const out = [];
+      for (let i = Math.max(1, c.length - n); i < c.length; i++) {
+        if (c[i] > 0 && c[i - 1] > 0) out.push(Math.log(c[i] / c[i - 1]));
+      }
+      return out;
+    };
+    const mine = _logret(me.closes, 60);
+    if (mine.length < 25) return null;
+    const _corr = function (a, b) {
+      const n = Math.min(a.length, b.length);
+      if (n < 20) return 0;
+      const A = a.slice(a.length - n), B = b.slice(b.length - n);
+      let ma = 0, mb = 0;
+      for (let i = 0; i < n; i++) { ma += A[i]; mb += B[i]; }
+      ma /= n; mb /= n;
+      let sa = 0, sb = 0, sab = 0;
+      for (let i = 0; i < n; i++) { const x = A[i] - ma, y = B[i] - mb; sa += x * x; sb += y * y; sab += x * y; }
+      return (sa > 1e-12 && sb > 1e-12) ? sab / Math.sqrt(sa * sb) : 0;
+    };
+    const cands = [];
+    for (const sy in dailyCache) {
+      if (sy === symbol) continue;
+      const isKR = /\.(KS|KQ)$/.test(sy);
+      if ((market === "kr") !== isKR) continue;      // 같은 시장끼리만
+      const d = dailyCache[sy];
+      if (!d || !Array.isArray(d.closes) || d.closes.length < 25) continue;
+      const c = _corr(mine, _logret(d.closes, 60));
+      if (c > 0.25) cands.push({ sy: sy, c: c });
+      if (cands.length > 400) break;                  // 상한 — CPU 보호
+    }
+    if (cands.length < 3) return null;
+    cands.sort(function (a, b) { return b.c - a.c; });
+    const top = cands.slice(0, 12);
+    let r5 = 0, r20 = 0, r1 = 0, cs = 0, n5 = 0;
+    const r5arr = [];
+    for (const t of top) {
+      const c = dailyCache[t.sy].closes;
+      const a5 = _ret(c, 5), a20 = _ret(c, 20), a1 = _ret(c, 1);
+      if (a5 != null) { r5 += a5; r5arr.push(a5); n5++; }
+      if (a20 != null) r20 += a20;
+      if (a1 != null) r1 += a1;
+      cs += t.c;
+    }
+    if (!n5) return null;
+    r5 /= n5; r20 /= n5; r1 /= n5; cs /= top.length;
+    let disp = 0;
+    for (const v of r5arr) disp += (v - r5) * (v - r5);
+    disp = Math.sqrt(disp / r5arr.length);
+    const my5 = _ret(me.closes, 5), my1 = _ret(me.closes, 1);
+    return {
+      peerRet5: _clamp(r5, -30, 30), peerRet20: _clamp(r20, -60, 60),
+      peerDisp: _clamp(disp, 0, 30),
+      peerRel5: _clamp((my5 != null ? my5 : 0) - r5, -30, 30),
+      peerCorrAvg: _clamp(cs, 0, 1),
+      peerLead: _clamp(r1 - (my1 != null ? my1 : 0), -15, 15),
+      nPeers: top.length
+    };
+  } catch (e) { return null; }
+}
+
+// 포지셔닝 데이터 — 야후 quoteSummary 모듈. 종목당 하루 1회만 받고 D1 에 캐시한다.
+//   실패해도 null 만 반환(기존 동작 무영향). 예산 가드 필수.
+async function flowFetchPositioning(DB, symbol) {
+  try {
+    const key = "flowpos:" + symbol;
+    const cached = await getState(DB, key, null);
+    if (cached && (Date.now() - _num(cached.ts, 0)) < 20 * 3600000) return cached.v;
+    if (fetchBudgetLeft() < 3) return cached ? cached.v : null;
+    const mods = "defaultKeyStatistics,majorHoldersBreakdown,insiderTransactions";
+    const j = await yahooFetch("https://query1.finance.yahoo.com/v10/finance/quoteSummary/" +
+      encodeURIComponent(symbol) + "?modules=" + mods);
+    const r = j && j.quoteSummary && j.quoteSummary.result && j.quoteSummary.result[0];
+    if (!r) return cached ? cached.v : null;
+    const ks = r.defaultKeyStatistics || {}, mh = r.majorHoldersBreakdown || {};
+    const _raw = function (o) { return (o && typeof o.raw === "number" && isFinite(o.raw)) ? o.raw : null; };
+    const shPct = _raw(ks.shortPercentOfFloat);
+    const shRat = _raw(ks.shortRatio);
+    const shNow = _raw(ks.sharesShort), shPrev = _raw(ks.sharesShortPriorMonth);
+    const inst = _raw(mh.institutionsPercentHeld);
+    // 내부자 — 최근 90일 매수/매도 건수로 순매수 점수. 군집매수가 강세신호라는 학계 결과 반영.
+    let insNet = null;
+    try {
+      const tr = (r.insiderTransactions && r.insiderTransactions.transactions) || [];
+      const cut = Date.now() / 1000 - 90 * 86400;
+      let buy = 0, sell = 0;
+      for (const t of tr) {
+        const ts = _raw(t.startDate); if (ts == null || ts < cut) continue;
+        const txt = String(t.transactionText || "").toLowerCase();
+        if (txt.indexOf("purchase") >= 0 || txt.indexOf("buy") >= 0) buy++;
+        else if (txt.indexOf("sale") >= 0 || txt.indexOf("sold") >= 0) sell++;
+      }
+      if (buy + sell > 0) insNet = (buy - sell) / (buy + sell);
+      // 군집매수(3인 이상) 가점 — 단일 매수보다 훨씬 강한 신호다.
+      if (insNet != null && buy >= 3) insNet = _clamp(insNet + 0.3, -1, 1);
+    } catch (e) {}
+    const v = {
+      shortPctFloat: shPct != null ? _clamp(shPct, 0, 1) : null,
+      shortRatio: shRat != null ? _clamp(shRat / 10, 0, 3) : null,
+      shortChg: (shNow != null && shPrev > 0) ? _clamp(shNow / shPrev - 1, -1, 3) : null,
+      insiderNet: insNet,
+      instOwn: inst != null ? _clamp(inst, 0, 1) : null
+    };
+    await setState(DB, key, { v: v, ts: Date.now() });
+    return v;
+  } catch (e) { return null; }
+}
+
+// 옵션 풋/콜 미결제약정 비율 — 포지셔닝의 직접 관측. US 만 제공된다.
+async function flowFetchPutCall(DB, symbol) {
+  try {
+    if (/\.(KS|KQ)$/.test(symbol) || /=F$/.test(symbol)) return null;
+    const key = "flowopt:" + symbol;
+    const cached = await getState(DB, key, null);
+    if (cached && (Date.now() - _num(cached.ts, 0)) < 20 * 3600000) return cached.v;
+    if (fetchBudgetLeft() < 3) return cached ? cached.v : null;
+    const j = await yahooFetch("https://query1.finance.yahoo.com/v7/finance/options/" + encodeURIComponent(symbol));
+    const r = j && j.optionChain && j.optionChain.result && j.optionChain.result[0];
+    const o = r && r.options && r.options[0];
+    if (!o) return null;
+    let cOI = 0, pOI = 0;
+    for (const c of (o.calls || [])) cOI += _num(c.openInterest, 0);
+    for (const p of (o.puts || [])) pOI += _num(p.openInterest, 0);
+    // 로그비율 — 0 중심 대칭(1.0 배면 0). 극단값 클램프.
+    const v = (cOI > 0 && pOI > 0) ? _clamp(Math.log(pOI / cOI), -2, 2) : null;
+    await setState(DB, key, { v: v, ts: Date.now() });
+    return v;
+  } catch (e) { return null; }
+}
+
+// FLOW 피처벡터 조립 — 없는 값은 0(중립)으로 채운다. 결측이 학습을 막지 않게 한다.
+async function flowBuildFeat(DB, symbol, market, dailyCache) {
+  try {
+    if (!FLOWML.enabled) return null;
+    const peer = await flowPeerFeat(DB, symbol, market, dailyCache);
+    const pos = await flowFetchPositioning(DB, symbol);
+    const pc = await flowFetchPutCall(DB, symbol);
+    if (!peer && !pos && pc == null) return null;   // 아무 정보도 없으면 표본으로 만들지 않는다
+    const g = function (o, k) { return (o && typeof o[k] === "number" && isFinite(o[k])) ? o[k] : 0; };
+    return [
+      g(peer, "peerRet5"), g(peer, "peerRet20"), g(peer, "peerDisp"),
+      g(peer, "peerRel5"), g(peer, "peerCorrAvg"), g(peer, "peerLead"),
+      g(pos, "shortPctFloat"), g(pos, "shortRatio"), g(pos, "shortChg"),
+      g(pos, "insiderNet"), g(pos, "instOwn"),
+      (typeof pc === "number" && isFinite(pc)) ? pc : 0
+    ];
+  } catch (e) { return null; }
+}
+
+// 표본 적재 — 청산 시 mlLogSample 과 같은 자리에서 호출한다(같은 결과, 다른 피처).
+async function flowLogSample(DB, market, symbol, featVec, pnlPct) {
+  try {
+    if (!FLOWML.enabled || !Array.isArray(featVec) || featVec.length !== FLOWML.featNames.length) return;
+    await DB.prepare("CREATE TABLE IF NOT EXISTS flow_samples (id INTEGER PRIMARY KEY AUTOINCREMENT, ts INTEGER, market TEXT, symbol TEXT, feat TEXT, label INTEGER, pnl_pct REAL, featver INTEGER)").run();
+    await DB.prepare("INSERT INTO flow_samples (ts, market, symbol, feat, label, pnl_pct, featver) VALUES (?,?,?,?,?,?,?)")
+      .bind(Date.now(), market, symbol, JSON.stringify(featVec), _num(pnlPct, 0) > 0 ? 1 : 0, _num(pnlPct, 0), FLOWML.featVer).run();
+  } catch (e) {}
+}
+
+// 야간 자체학습 — 로지스틱 회귀(L2). 12차원이라 워커 CPU 예산 안에서 충분히 수렴한다.
+//   IC 를 함께 재서 위원회 가중에 바로 쓴다(V33.77 기준과 동일).
+async function flowTrainNightly(DB) {
+  if (!FLOWML.enabled) return null;
+  try {
+    const rows = await DB.prepare(
+      "SELECT ts, feat, label, pnl_pct FROM flow_samples WHERE featver = ? ORDER BY ts DESC LIMIT ?"
+    ).bind(FLOWML.featVer, FLOWML.trainWindow).all();
+    const raw = (rows && rows.results) || [];
+    if (raw.length < FLOWML.minTrainSamples) {
+      return "[FLOW] 표본 " + raw.length + "/" + FLOWML.minTrainSamples + " — 학습 대기";
+    }
+    const D = FLOWML.featNames.length;
+    const X = [], Y = [], P = [];
+    for (const r of raw) {
+      let v; try { v = JSON.parse(r.feat); } catch (e) { continue; }
+      if (!Array.isArray(v) || v.length !== D) continue;
+      X.push(v.map(function (t) { return _num(t, 0); }));
+      Y.push(r.label ? 1 : 0);
+      P.push(_num(r.pnl_pct, 0));
+    }
+    const N = X.length;
+    if (N < FLOWML.minTrainSamples) return "[FLOW] 유효표본 " + N + " — 학습 대기";
+    // 시간순(최신이 앞) → 뒤집어 오래된 것부터. 마지막 20% 를 홀드아웃(시간 분리).
+    X.reverse(); Y.reverse(); P.reverse();
+    const mean = new Array(D).fill(0), std = new Array(D).fill(0);
+    for (const x of X) for (let j = 0; j < D; j++) mean[j] += x[j];
+    for (let j = 0; j < D; j++) mean[j] /= N;
+    for (const x of X) for (let j = 0; j < D; j++) std[j] += (x[j] - mean[j]) * (x[j] - mean[j]);
+    for (let j = 0; j < D; j++) { std[j] = Math.sqrt(std[j] / N); if (!(std[j] > 1e-6)) std[j] = 1; }
+    const Z = X.map(function (x) { return x.map(function (v, j) { return _clamp((v - mean[j]) / std[j], -4, 4); }); });
+    const nval = Math.max(100, Math.floor(N * 0.2));
+    const ntr = N - nval;
+    const w = new Array(D).fill(0); let b = 0;
+    const lr = 0.08, epochs = 220, lam = FLOWML.l2 / Math.max(1, ntr);
+    for (let ep = 0; ep < epochs; ep++) {
+      const gw = new Array(D).fill(0); let gb = 0;
+      for (let i = 0; i < ntr; i++) {
+        let z = b; for (let j = 0; j < D; j++) z += w[j] * Z[i][j];
+        const p = 1 / (1 + Math.exp(-_clamp(z, -30, 30)));
+        const e = p - Y[i];
+        for (let j = 0; j < D; j++) gw[j] += e * Z[i][j];
+        gb += e;
+      }
+      for (let j = 0; j < D; j++) w[j] -= lr * (gw[j] / ntr + lam * w[j]);
+      b -= lr * (gb / ntr);
+    }
+    // 검증 — 정확도와 IC 를 함께 잰다.
+    let correct = 0; const pv = [], yv = [];
+    for (let i = ntr; i < N; i++) {
+      let z = b; for (let j = 0; j < D; j++) z += w[j] * Z[i][j];
+      const p = 1 / (1 + Math.exp(-_clamp(z, -30, 30)));
+      pv.push(p); yv.push(Y[i]);
+      if ((p >= 0.5 ? 1 : 0) === Y[i]) correct++;
+    }
+    const acc = correct / Math.max(1, nval);
+    let ic = 0;
+    try {
+      let mp = 0, my = 0;
+      for (let i = 0; i < pv.length; i++) { mp += pv[i]; my += yv[i]; }
+      mp /= pv.length; my /= yv.length;
+      let sa = 0, sb = 0, sab = 0;
+      for (let i = 0; i < pv.length; i++) { const dx = pv[i] - mp, dy = yv[i] - my; sa += dx * dx; sb += dy * dy; sab += dx * dy; }
+      ic = (sa > 1e-12 && sb > 1e-12) ? sab / Math.sqrt(sa * sb) : 0;
+    } catch (e) {}
+    const model = { w: w, b: b, mean: mean, std: std, featVer: FLOWML.featVer,
+      valAcc: +acc.toFixed(4), valIC: +ic.toFixed(5), valN: nval, n: N, ts: Date.now(),
+      trusted: ic >= FLOWML.icFloor };
+    await setState(DB, "flow_model", model);
+    return "[FLOW] 학습완료 표본 " + N + " valAcc " + (acc * 100).toFixed(1) + "% IC " + ic.toFixed(4) +
+           (model.trusted ? " → 위원회 합류" : " → IC 미달, 대기");
+  } catch (e) { return "[FLOW] 학습 실패: " + (e && e.message); }
+}
+
+function flowScore(model, featVec) {
+  try {
+    if (!model || !Array.isArray(model.w) || !Array.isArray(featVec)) return null;
+    const D = model.w.length;
+    if (featVec.length !== D) return null;
+    let z = _num(model.b, 0);
+    for (let j = 0; j < D; j++) {
+      const v = _clamp((_num(featVec[j], 0) - _num(model.mean[j], 0)) / (_num(model.std[j], 1) || 1), -4, 4);
+      z += model.w[j] * v;
+    }
+    return _clamp(1 / (1 + Math.exp(-_clamp(z, -30, 30))), 0.001, 0.999);
+  } catch (e) { return null; }
+}
 
 const LUXML = {
   enabled: true,
@@ -25058,6 +25416,21 @@ async function mlDeepDecide(DB, featVec, opts) {
           if (_bIC != null && (bICMax == null || _bIC > bICMax)) bICMax = _bIC;
         }
         if (bw > 0 && bUsed > 0) { const pBoost = _clamp(_sigmoid(bz / bw), 0.001, 0.999); experts.push({ name: "boost", p: pBoost, z: _logitD(pBoost), acc: bAccMax, ic: bICMax, wMul: 0.8 }); }
+      }
+    } catch (e) {}
+    // ── [V33.78] FLOW 전문가 합류 — 봉차트·뉴스에 없는 축(피어그래프·공매도·내부자·풋콜) ──
+    //   기존 위원들과 정보원이 겹치지 않아 앙상블 다양성 측면에서 기여가 크다.
+    //   IC 가 icFloor 를 넘을 때만 참여하고, 가중은 V33.77 의 IC 소프트맥스가 자동 처리한다.
+    try {
+      if (opts.flowFeat && Array.isArray(opts.flowFeat)) {
+        const fm = (opts.flowModel !== undefined) ? opts.flowModel : await getState(DB, "flow_model", null);
+        if (fm && fm.trusted && fm.featVer === FLOWML.featVer) {
+          const pF = flowScore(fm, opts.flowFeat);
+          if (pF != null && Math.abs(pF - 0.5) > 1e-4) {
+            experts.push({ name: "flow", p: pF, z: _logitD(pF),
+                           acc: _num(fm.valAcc, 0.5), ic: _num(fm.valIC, null), wMul: 0.9 });
+          }
+        }
       }
     } catch (e) {}
     // ── [V12.39 규칙엔진 전문가] 규칙엔진의 기술적 종합확률(taUpProb)을 위원회 정식 위원으로 합류 ──
@@ -31783,7 +32156,7 @@ export default {
               if (_ir) await log(env.DB, "INFO", null, _ir);
             }
           } catch (e) {}
-          const _PIPE_VER = "V33.74-acct";   // 배포 시 파이프라인 1회 강제 재실행(국면·판단 즉시 재산출)   // 배포 시 파이프라인 1회 강제 재실행(신규 스키마 반영)
+          const _PIPE_VER = "V33.78-label";   // 배포 시 파이프라인 1회 강제 재실행(국면·판단 즉시 재산출)   // 배포 시 파이프라인 1회 강제 재실행(신규 스키마 반영)
           try {
             const _pv = await getState(env.DB, "ai_pipeline_ver", null);
             if (_pv !== _PIPE_VER) {

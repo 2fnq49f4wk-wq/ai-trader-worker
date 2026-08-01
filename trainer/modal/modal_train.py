@@ -143,7 +143,22 @@ def train_job(epochs: int = EPOCHS_DEFAULT, dry: bool = False):
     samples.sort(key=lambda s: s.get("ts", 0))
     N = len(samples)
     X = np.array([s["x"] for s in samples], dtype=np.float64)
-    Y = np.array([1.0 if s["y"] else 0.0 for s in samples], dtype=np.float64)
+    # [V33.78] ★라벨을 절대수익으로 재계산★ (사용자 지시)
+    #   워커가 저장한 y 는 수집 당시 설정(alpha=지수 대비 초과수익)으로 매긴 값이다.
+    #   라벨 정의를 절대수익으로 바꾸면 과거 표본을 통째로 버려야 할 것 같지만, pnl 이 함께
+    #   저장돼 있어 여기서 다시 매기면 된다 — 17만 표본을 재수집 없이 새 정의로 그대로 쓴다.
+    #   labelMode 는 워커 /api/ml-export-* 의 config 에서 내려온다(없으면 절대수익).
+    _lm = "binary"
+    try:
+        _lm = str((cfg or {}).get("prediction", {}).get("target") or "binary")
+    except Exception:
+        _lm = "binary"
+    if _lm == "binary" or _lm == "logreturn":
+        Y = np.array([1.0 if float(s.get("pnl", 0.0)) > 0 else 0.0 for s in samples], dtype=np.float64)
+        print(f"   라벨: 절대수익(pnl>0) 로 재계산 — 양성비율 {Y.mean():.3f}")
+    else:
+        Y = np.array([1.0 if s["y"] else 0.0 for s in samples], dtype=np.float64)
+        print(f"   라벨: 워커 저장값({_lm}) 사용 — 양성비율 {Y.mean():.3f}")
     PNL = np.array([s.get("pnl", 0.0) for s in samples], dtype=np.float64)
     # [V33.76] 시장 라벨 — 워커가 이제 표본마다 m("us"/"kr"/"cm")을 내려준다.
     MKT = np.array([str(s.get("m") or "us") for s in samples])
