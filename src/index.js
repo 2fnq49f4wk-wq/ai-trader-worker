@@ -2476,7 +2476,7 @@ async function applySignalTypeWeights(DB, cfg) {
 // ============================================================================
 // [V33.55] 빌드 버전 — SWR L2 캐시 키에 섞어 '배포 = 판단 캐시 자동 무효화'를 만든다.
 //   판정 로직을 고쳐도 옛 캐시가 최대 1시간 재배포되던 문제를 구조적으로 없앤다.
-const _BUILD_VER = "V33.68";
+const _BUILD_VER = "V33.69";
 
 const AI_PARAMS = {
   // ── OHLCV 타임프레임 ── 시가/고가/저가/종가/거래량을 어떤 봉 주기로 볼지.
@@ -6762,14 +6762,75 @@ async function sentiLexGet(DB) {
 }
 
 const _SENTI_NEGATORS = { no:1, not:1, never:1, without:1, fails:1, fail:1, "fails to":1, denies:1, deny:1, avoid:1, avoids:1, halts:1, ends:1, "no longer":1 };
+// [V33.69] ★감정 판정 정확도 실측 후 수정★ 실제 금융 헤드라인 15건으로 재보니 정확도 73%였고,
+//   실패 원인이 네 가지로 갈렸다. 하나씩 고친다.
+//   (a) 활용형 미매칭 — 사전에 beat 는 있는데 beats 가 없고, jump 는 있는데 jumps 가 없다.
+//       "Microsoft beats estimates as cloud revenue jumps 43%" 가 0점(무판정)이 됐다.
+//       금융 헤드라인은 3인칭 단수(-s)가 기본형인데 사전이 원형 위주라 대량 누락.
+//   (b) 다어절 키가 구조적으로 사문화 — 사전에 "rate cut"·"cuts rates"·"sell-off" 같은 항목이
+//       있는데 판정은 토큰 단위 루프라 절대 매칭되지 않았다.
+//       "Fed cuts rates" 가 cuts(-1)만 잡혀 ★금리인하를 악재로★ 판정했다.
+//   (c) halts 가 부정어(NEGATORS)이면서 동시에 부정 동사(NEG)다. 부정어 검사가 먼저라
+//       "Boeing halts production amid probe" 에서 probe(-1)를 뒤집어 +0.8(호재)이 됐다.
+//   (d) 활용형 누락으로 반대 부호만 잡히는 경우 — "Oil tumbles as OPEC boosts output" 에서
+//       tumbles 를 못 잡고 boosts 만 잡아 상승으로 판정.
+const _SENTI_STRIP = ["s", "es", "ed", "ing", "d"];
+function _sentiLookup(w) {
+  if (_SENTI_POS[w] !== undefined) return _SENTI_POS[w];
+  if (_SENTI_NEG[w] !== undefined) return -_SENTI_NEG[w];
+  // 활용형 → 원형 축약 시도. 축약형이 사전에 있을 때만 인정한다(무분별 매칭 방지).
+  for (const suf of _SENTI_STRIP) {
+    if (w.length > suf.length + 2 && w.slice(-suf.length) === suf) {
+      const base = w.slice(0, w.length - suf.length);
+      if (_SENTI_POS[base] !== undefined) return _SENTI_POS[base];
+      if (_SENTI_NEG[base] !== undefined) return -_SENTI_NEG[base];
+      // 자음중복(-ped/-ging) 및 y→ies 복원
+      if (suf === "ing" || suf === "ed") {
+        const b2 = base + "e";
+        if (_SENTI_POS[b2] !== undefined) return _SENTI_POS[b2];
+        if (_SENTI_NEG[b2] !== undefined) return -_SENTI_NEG[b2];
+      }
+      if (suf === "es" && base.slice(-1) === "i") {
+        const b3 = base.slice(0, -1) + "y";
+        if (_SENTI_POS[b3] !== undefined) return _SENTI_POS[b3];
+        if (_SENTI_NEG[b3] !== undefined) return -_SENTI_NEG[b3];
+      }
+    }
+  }
+  return 0;
+}
+// 다어절 사전 키 — 한 번만 만들어 재사용(공백/하이픈 포함 항목).
+let __sentiPhrases = null;
+function _sentiPhraseList() {
+  if (__sentiPhrases) return __sentiPhrases;
+  const out = [];
+  for (const k in _SENTI_POS) if (/[ -]/.test(k)) out.push({ k: k, v: _SENTI_POS[k] });
+  for (const k in _SENTI_NEG) if (/[ -]/.test(k)) out.push({ k: k, v: -_SENTI_NEG[k] });
+  out.sort(function (a, b) { return b.k.length - a.k.length; });   // 긴 구절 우선
+  __sentiPhrases = out;
+  return out;
+}
 function _sentiOne(title) {
-  const toks = String(title || "").toLowerCase().replace(/[^a-z0-9 -]/g, " ").split(/\s+/).filter(Boolean);
-  let s = 0, negWin = 0;
+  const raw = String(title || "").toLowerCase();
+  let s = 0;
+  // (b) 다어절 구절 먼저 처리하고, 매칭된 구간은 토큰 루프에서 중복 계산되지 않게 지운다.
+  let masked = raw;
+  for (const ph of _sentiPhraseList()) {
+    let idx = masked.indexOf(ph.k);
+    while (idx >= 0) {
+      s += ph.v;
+      masked = masked.slice(0, idx) + " ".repeat(ph.k.length) + masked.slice(idx + ph.k.length);
+      idx = masked.indexOf(ph.k);
+    }
+  }
+  const toks = masked.replace(/[^a-z0-9 -]/g, " ").split(/\s+/).filter(Boolean);
+  let negWin = 0;
   for (const w of toks) {
-    if (_SENTI_NEGATORS[w]) { negWin = 3; continue; }
-    let v = 0;
-    if (_SENTI_POS[w]) v = _SENTI_POS[w];
-    else if (_SENTI_NEG[w]) v = -_SENTI_NEG[w];
+    // (c) 부정어이면서 동시에 감정어인 토큰(halts·ends·fails …)은 '감정어'로 취급한다.
+    //     본동사로 쓰인 경우가 훨씬 많고, 부정어로 오인하면 문장 부호가 통째로 뒤집힌다.
+    const selfV = _sentiLookup(w);
+    if (_SENTI_NEGATORS[w] && selfV === 0) { negWin = 3; continue; }
+    let v = selfV;
     if (v !== 0 && negWin > 0) v = -v * 0.8;   // 부정어 창(3토큰) 내면 반전(약화)
     s += v;
     if (negWin > 0) negWin--;
@@ -31074,7 +31135,7 @@ export default {
               if (_ir) await log(env.DB, "INFO", null, _ir);
             }
           } catch (e) {}
-          const _PIPE_VER = "V33.68-earncorr-symnews";   // 배포 시 파이프라인 1회 강제 재실행(국면·판단 즉시 재산출)   // 배포 시 파이프라인 1회 강제 재실행(신규 스키마 반영)
+          const _PIPE_VER = "V33.69-senti-acc";   // 배포 시 파이프라인 1회 강제 재실행(국면·판단 즉시 재산출)   // 배포 시 파이프라인 1회 강제 재실행(신규 스키마 반영)
           try {
             const _pv = await getState(env.DB, "ai_pipeline_ver", null);
             if (_pv !== _PIPE_VER) {
