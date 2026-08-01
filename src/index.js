@@ -1,4 +1,28 @@
 // ============================================================
+// ██ 운영 방침 (2026-08-02 사용자 지시 — 다음 편집자는 반드시 먼저 읽을 것) ██
+//
+//  ① 규칙엔진은 "비상용"이다.
+//     evaluateBuySignals_* / evaluateSell 의 규칙 분기, TR_*/SC_*/SW_*/SN_* 신호는
+//     ★자체 탑재 AI 가 가동되지 않을 때만★ 쓰는 폴백이다. AI 가 정상 가동 중이면
+//     (mlAiReadyState() 가 참) 규칙엔진 신규매수는 스킵된다 — 이미 코드에 _aiReady* 게이트로
+//     구현돼 있다. 규칙엔진 파라미터를 튜닝해 성능을 올리려 하지 말 것. 그건 비상 낙하산을
+//     더 예쁘게 접는 일이다.
+//
+//  ② 앞으로 성능 강화는 전부 "자체 탑재 AI" 쪽에 한다.
+//     대상: LUXML(일봉 65차원 위원회) · MIND(FM 위원장) · DNN · GBDT/XGB/LGB/Cat ·
+//           STIN(분봉 단타) · 감성학습(sentiLex) · 실적상관학습(earnCorr) · 밴딧 · 캘리브레이션.
+//     새 기능·논문·공개모델을 붙일 자리는 위 목록이지 규칙엔진이 아니다.
+//     (근거: 원장 2개월 실측에서 규칙엔진 신호들은 승률·평균수익률이 양수여도 금액 기준
+//      순손실이었다 — SW_VOL_SPK −$1,945, SC_PULLBACK −$705, SC_VWAP −$1,059. 개별 규칙을
+//      더 깎는 것보다 사이징·확률추정을 학습으로 푸는 편이 구조적으로 옳다.)
+//
+//  ③ 미국장·한국장은 따로 판단한다. (V33.76)
+//     표본에 m(시장)을 실어 내보내고, 트레이너가 gbdt_us / gbdt_kr 전용 모델을 만든다.
+//     추론은 mlGBDTLoad(DB, market) 이 시장 전용 → 통합 순으로 폴백한다.
+//     두 시장은 거래시간·상하한가·세금·투자자구성이 달라 한 모델로 묶으면
+//     표본 많은 쪽(미국)의 통계가 다른 쪽을 덮어쓴다.
+// ============================================================
+//
 // LUX-engine V9.0 Hybrid (V8.5 규칙 매매 + Claude 일일 지시)
 // 
 // 핵심 구조:
@@ -2476,7 +2500,7 @@ async function applySignalTypeWeights(DB, cfg) {
 // ============================================================================
 // [V33.55] 빌드 버전 — SWR L2 캐시 키에 섞어 '배포 = 판단 캐시 자동 무효화'를 만든다.
 //   판정 로직을 고쳐도 옛 캐시가 최대 1시간 재배포되던 문제를 구조적으로 없앤다.
-const _BUILD_VER = "V33.75";
+const _BUILD_VER = "V33.76";
 
 const AI_PARAMS = {
   // ── OHLCV 타임프레임 ── 시가/고가/저가/종가/거래량을 어떤 봉 주기로 볼지.
@@ -8258,14 +8282,18 @@ async function mlSnapshotBuildStep(DB, deadline) {
     if (deadline && Date.now() > deadline) break;
     const off = st.next * MLSNAP_PART;
     const rows = await DB.prepare(
-      "SELECT id, ts, feat, label, pnl_pct, strategy FROM ml_samples WHERE featver=? AND ts<=? ORDER BY ts DESC, id DESC LIMIT ? OFFSET ?"
+      "SELECT id, ts, market, feat, label, pnl_pct, strategy FROM ml_samples WHERE featver=? AND ts<=? ORDER BY ts DESC, id DESC LIMIT ? OFFSET ?"
     ).bind(fv, st.anchorTs, MLSNAP_PART, off).all();
     const raw = (rows && rows.results) || [];
     const out = [];
     for (const r of raw) {
       let v; try { v = JSON.parse(r.feat); } catch (e) { continue; }
       if (!Array.isArray(v) || v.length !== LUXML.featNames.length) continue;
-      out.push({ ts: _num(r.ts, 0), x: v.map(function (t) { return _num(t, 0); }), y: r.label ? 1 : 0,
+      // [V33.76] market 을 내보낸다 — 종전엔 SELECT 에 없어 트레이너가 시장을 전혀 알 수 없었고,
+      //   그래서 미국·한국 표본이 한 모델에 뭉쳐 학습됐다(피처에 mktUS/mktKR 원핫은 있으나
+      //   depth4 얕은 트리로는 시장별 상호작용을 거의 못 잡는다). 시장별 분리학습의 전제 조건.
+      out.push({ ts: _num(r.ts, 0), m: String(r.market || "us"),
+                 x: v.map(function (t) { return _num(t, 0); }), y: r.label ? 1 : 0,
                  pnl: _num(r.pnl_pct, 0), hv: r.strategy === "hv" ? 1 : 0 });
     }
     await R2.put(_mlSnapKey(fv, st.next), JSON.stringify(out));
@@ -9143,6 +9171,11 @@ function getNDayHigh(closes, n) {
 
 
 // === [V8] SWING 전략 — 기존 V7 로직 ===
+// ██ [비상용] 규칙엔진 매수신호 생성기 — AI 미가동 시에만 쓰인다 ██
+//   호출부에 _aiReady* 게이트가 있어 자체 탑재 AI 가 가동 중이면 여기서 만든 신호로
+//   신규매수하지 않는다(청산 규칙은 계속 쓴다 — 보유분을 방치할 수는 없으므로).
+//   ★여기 파라미터를 튜닝해 수익률을 올리려 하지 말 것★ — 파일 상단 운영방침 ①②를 볼 것.
+//   성능 강화는 자체 탑재 AI(LUXML/MIND/DNN/GBDT/STIN) 쪽에서 한다.
 function evaluateBuySignals_swing(price, dayPct, dailyData, cfg) {
   const closes = dailyData.closes;
   const volumes = dailyData.volumes || [];
@@ -11108,6 +11141,11 @@ async function applyRatchet(DB, market, symbol, strategy, pos, decision) {
   return true;
 }
 
+// ██ 청산 규칙 — 여기는 규칙엔진이지만 "비상용"이 아니다 ██
+//   매수는 AI 가 하지만, 손절·트레일·타임스톱·래칫 같은 리스크 관리는 AI 가동 여부와 무관하게
+//   항상 돌아야 한다(보유분을 방치할 수 없다). 즉 운영방침 ①의 "비상용"은 매수 신호에 대한 것이고,
+//   이 함수의 청산 규율은 상시 적용이다.
+//   단, 청산 '타이밍 예측'을 더 잘하게 만드는 작업은 AI 쪽(STIN/LUXML)에서 한다.
 function evaluateSell(pos, price, daily, dailyRsi, dailyMa, dailyMaShort, cfg, marketOpenForThis, market, deRiskOpts, visionHint) {
   const strategyName = pos.strategy || (pos.meta && pos.meta.strategy) || "trend";
 
@@ -14425,7 +14463,7 @@ async function runTradingCycle(env) {
           try { __dnnTrust = await getState(DB, "dnn_trust", null); } catch (e) {}
           try { if (__dnnTrust && __dnnTrust.trusted) __dnn = await mlDNNLoad(DB); } catch (e) {}
           try { __gbdtTrust = await getState(DB, "gbdt_trust", null); } catch (e) {}
-          try { if (__gbdtTrust && __gbdtTrust.trusted) __gbdt = await mlGBDTLoad(DB); } catch (e) {}
+          try { if (__gbdtTrust && __gbdtTrust.trusted) __gbdt = await mlGBDTLoad(DB, market); } catch (e) {}   // [V33.76] 시장 전용 모델 우선
           try { __cal = await getState(DB, "committee_cal", null); } catch (e) {}
           try { __evStats = await getState(DB, "ml_evstats", null); } catch (e) {}
           try { __idxCloses = await _mlLoadIndexCloses(DB, market); } catch (e) {}
@@ -17213,11 +17251,11 @@ async function handleRequest(request, env, ctx) {
       let rows;
       if (curTs > 0) {
         rows = await env.DB.prepare(
-          "SELECT id, ts, feat, label, pnl_pct, strategy FROM ml_samples WHERE featver = ? AND ts <= ? AND (ts < ? OR (ts = ? AND id < ?)) ORDER BY ts DESC, id DESC LIMIT ?"
+          "SELECT id, ts, market, feat, label, pnl_pct, strategy FROM ml_samples WHERE featver = ? AND ts <= ? AND (ts < ? OR (ts = ? AND id < ?)) ORDER BY ts DESC, id DESC LIMIT ?"
         ).bind(LUXML.featVer, anchorTs, curTs, curTs, curId, limit).all();
       } else {
         rows = await env.DB.prepare(
-          "SELECT id, ts, feat, label, pnl_pct, strategy FROM ml_samples WHERE featver = ? AND ts <= ? ORDER BY ts DESC, id DESC LIMIT ? OFFSET ?"
+          "SELECT id, ts, market, feat, label, pnl_pct, strategy FROM ml_samples WHERE featver = ? AND ts <= ? ORDER BY ts DESC, id DESC LIMIT ? OFFSET ?"
         ).bind(LUXML.featVer, anchorTs, limit, offset).all();
       }
       const raw = (rows && rows.results) ? rows.results : [];
@@ -17230,7 +17268,7 @@ async function handleRequest(request, env, ctx) {
       for (const r of raw) {
         let v; try { v = JSON.parse(r.feat); } catch (e) { continue; }
         if (!Array.isArray(v) || v.length !== LUXML.featNames.length) continue;
-        out.push({ ts: _num(r.ts, 0), x: v.map(function (t) { return _num(t, 0); }), y: r.label ? 1 : 0, pnl: _num(r.pnl_pct, 0), hv: r.strategy === "hv" ? 1 : 0 });
+        out.push({ ts: _num(r.ts, 0), m: String(r.market || "us"), x: v.map(function (t) { return _num(t, 0); }), y: r.label ? 1 : 0, pnl: _num(r.pnl_pct, 0), hv: r.strategy === "hv" ? 1 : 0 });
       }
       const _last = raw.length ? raw[raw.length - 1] : null;
       return Response.json({
@@ -17546,8 +17584,13 @@ async function handleRequest(request, env, ctx) {
     if (path === "/api/gbdt-import" && request.method === "POST") {
       const au = _trainAuthed(); if (!au.ok) return Response.json({ error: au.msg }, { status: au.code, headers: cors });
       // [V32.13] name으로 부스팅 멤버 구분(gbdt/xgb/lgb/cat) — 전부 동일 트리포맷이라 mlGBDTScore로 채점.
+      // [V33.76] gbdt_us / gbdt_kr 추가 — 미국장·한국장 분리학습 모델 슬롯.
+      //   저장 키는 각각 gbdt_us_model / gbdt_kr_model 이고, 추론 시 mlGBDTLoad(DB, market) 가
+      //   시장 전용 모델을 먼저 찾고 없으면 통합 gbdt_model 로 폴백한다.
       const _mname = (url.searchParams.get("name") || "gbdt").toLowerCase();
-      if (["gbdt", "xgb", "lgb", "cat"].indexOf(_mname) === -1) return Response.json({ error: "name은 gbdt|xgb|lgb|cat" }, { status: 400, headers: cors });
+      if (["gbdt", "xgb", "lgb", "cat", "gbdt_us", "gbdt_kr"].indexOf(_mname) === -1) {
+        return Response.json({ error: "name은 gbdt|xgb|lgb|cat|gbdt_us|gbdt_kr" }, { status: 400, headers: cors });
+      }
       let body; try { body = await request.json(); } catch (e) { return Response.json({ error: "bad json" }, { status: 400, headers: cors }); }
       if (_num(body.featVer, -1) !== LUXML.featVer) return Response.json({ error: "featVer 불일치 (서버 " + LUXML.featVer + ")" }, { status: 400, headers: cors });
       if (!Array.isArray(body.trees) || body.trees.length === 0) return Response.json({ error: "trees 없음" }, { status: 400, headers: cors });
@@ -17574,7 +17617,12 @@ async function handleRequest(request, env, ctx) {
       // ── self-검증: Worker 최근 표본에 직접 채점해 형식/추론 정합성 확인 ──
       let selfAcc = null, selfN = 0;
       try {
-        const rs = await env.DB.prepare("SELECT feat, label FROM ml_samples WHERE featver = ? ORDER BY ts DESC LIMIT 800").bind(LUXML.featVer).all();
+        // [V33.76] 시장 전용 모델은 그 시장 표본으로만 self-검증한다 —
+        //   다른 시장 표본으로 채점하면 정상 모델도 떨어져 승격이 막힌다.
+        const _selfMkt = (_mname === "gbdt_us") ? "us" : (_mname === "gbdt_kr") ? "kr" : null;
+        const rs = _selfMkt
+          ? await env.DB.prepare("SELECT feat, label FROM ml_samples WHERE featver = ? AND market = ? ORDER BY ts DESC LIMIT 800").bind(LUXML.featVer, _selfMkt).all()
+          : await env.DB.prepare("SELECT feat, label FROM ml_samples WHERE featver = ? ORDER BY ts DESC LIMIT 800").bind(LUXML.featVer).all();
         let correct = 0, tot = 0;
         for (const r of ((rs && rs.results) || [])) {
           let v; try { v = JSON.parse(r.feat); } catch (e) { continue; }
@@ -17617,7 +17665,24 @@ async function handleRequest(request, env, ctx) {
       }
       const activate = url.searchParams.get("activate") === "1";
       // 승격은 (1)activate 요청 + (2)self-검증 통과일 때만. 그 외엔 섀도우 저장(라이브 무영향).
-      const promote = activate && _sane && trust.trusted;
+      let promote = activate && _sane && trust.trusted;
+      // [V33.76] ★시장 전용 모델 비교승격★ 통합 모델보다 나쁜 전용 모델이 라이브를 차지하면
+      //   분리학습이 오히려 성능을 떨어뜨린다. 통합 gbdt_model 의 검증하한을 넘을 때만 승격하고,
+      //   못 넘으면 섀도우에 남긴다 → 추론은 mlGBDTLoad 폴백으로 통합 모델을 계속 쓴다.
+      let _cmpNote = "";
+      if (promote && (_mname === "gbdt_us" || _mname === "gbdt_kr")) {
+        try {
+          const _pooled = await getState(env.DB, "gbdt_model", null);
+          const _pLB = (_pooled && _pooled.featVer === LUXML.featVer)
+            ? _num(_pooled.valAccLB, _wilsonLB(_num(_pooled.valAcc, 0.5), _num(_pooled.valN, 30))) : null;
+          if (_pLB != null && gLB < _pLB) {
+            promote = false;
+            _cmpNote = " (통합모델 하한 " + (_pLB * 100).toFixed(1) + "% 미달 → 승격보류, 통합 모델 계속 사용)";
+          } else if (_pLB != null) {
+            _cmpNote = " (통합모델 " + (_pLB * 100).toFixed(1) + "% 초과)";
+          }
+        } catch (e) {}
+      }
       try {
         if (promote) {
           await setState(env.DB, _mname + "_model", model);
@@ -17630,7 +17695,7 @@ async function handleRequest(request, env, ctx) {
       try {
         await log(env.DB, "INFO", null, "[" + _mname.toUpperCase() + "-EXT] 외부 업로드 trees=" + model.nTrees + " valAcc=" + (gAcc * 100).toFixed(1) +
           "%(하한 " + (gLB * 100).toFixed(1) + "%) self=" + (selfAcc != null ? (selfAcc * 100).toFixed(1) + "%/" + selfN : "n/a") +
-          (convMaxDiff != null ? " conv=" + convMaxDiff.toFixed(4) + "/" + convN : "") +
+          (convMaxDiff != null ? " conv=" + convMaxDiff.toFixed(4) + "/" + convN : "") + _cmpNote +
           " → " + (promote ? "라이브 승격(w=" + trust.wGbdt + ")" : "섀도우 저장" + (activate && !_sane ? "(self-검증 실패로 승격 보류)" : "")));
       } catch (e) {}
       return Response.json({ ok: true, activated: promote, shadow: !promote, trusted: trust.trusted, sane: _sane,
@@ -25303,8 +25368,19 @@ function mlGBDTScore(model, featVec) {
     return _clamp(_sigmoid(_gbdtRaw(model, x)), 0.001, 0.999);
   } catch (e) { return null; }
 }
-async function mlGBDTLoad(DB) {
-  try { const m = await getState(DB, "gbdt_model", null); if (!m || m.featVer !== LUXML.featVer || !Array.isArray(m.trees)) return null; return m; } catch (e) { return null; }
+// [V33.76] ★시장 분리 판단★ market 을 주면 그 시장 전용 모델(gbdt_us_model / gbdt_kr_model)을
+//   먼저 찾고, 없거나 featVer 가 안 맞으면 통합 gbdt_model 로 폴백한다.
+//   시장별 표본이 임계치를 넘기 전까지는 자동으로 통합 모델이 쓰이므로 공백 구간이 없다.
+async function mlGBDTLoad(DB, market) {
+  try {
+    if (market === "us" || market === "kr") {
+      const mm = await getState(DB, "gbdt_" + market + "_model", null);
+      if (mm && mm.featVer === LUXML.featVer && Array.isArray(mm.trees) && mm.trees.length) return mm;
+    }
+    const m = await getState(DB, "gbdt_model", null);
+    if (!m || m.featVer !== LUXML.featVer || !Array.isArray(m.trees)) return null;
+    return m;
+  } catch (e) { return null; }
 }
 
 async function mlGBDTTrainNightly(DB) {

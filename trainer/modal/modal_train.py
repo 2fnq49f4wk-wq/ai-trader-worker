@@ -145,6 +145,8 @@ def train_job(epochs: int = EPOCHS_DEFAULT, dry: bool = False):
     X = np.array([s["x"] for s in samples], dtype=np.float64)
     Y = np.array([1.0 if s["y"] else 0.0 for s in samples], dtype=np.float64)
     PNL = np.array([s.get("pnl", 0.0) for s in samples], dtype=np.float64)
+    # [V33.76] 시장 라벨 — 워커가 이제 표본마다 m("us"/"kr"/"cm")을 내려준다.
+    MKT = np.array([str(s.get("m") or "us") for s in samples])
     HV = np.array([1.0 if s.get("hv") else 0.0 for s in samples], dtype=np.float64)
     TS = np.array([s.get("ts", 0) for s in samples], dtype=np.float64)
     now = float(TS.max()) if N else time.time() * 1000
@@ -398,6 +400,16 @@ def train_job(epochs: int = EPOCHS_DEFAULT, dry: bool = False):
             _train_and_upload_boosters(BASE, KEY, HDR, X, Y, TS, featver, D, PNL)
         except Exception as e:
             print("부스팅 학습/업로드 예외(무시):", e)
+        # [V33.76] ★미국장·한국장 분리학습★ (사용자 지시)
+        #   종전엔 두 시장 표본을 한 모델에 뭉쳐 학습했다. 피처에 mktUS/mktKR 원핫이 있긴 하나
+        #   depth4 얕은 트리가 65개 피처 위에서 시장별 상호작용을 잡아내기는 사실상 불가능하다.
+        #   두 시장은 거래시간·상하한가·세금·투자자구성·변동성 구조가 전부 다르므로 조건부가 아니라
+        #   아예 별도 모델이 맞다. 표본이 충분한 시장만 전용 모델을 올리고, 부족하면 통합 모델을
+        #   그대로 쓴다(워커가 <이름>_<시장> → <이름> 순으로 폴백).
+        try:
+            _train_per_market(BASE, KEY, HDR, MKT, X, Y, TS, PNL, featver, D)
+        except Exception as e:
+            print("시장별 분리학습 예외(무시):", e)
         print("⑦ MIND(FM) 외부학습 — 위원장 모델 GPU 완전수렴")
         try:
             _train_and_upload_fm(BASE, KEY, HDR, X, Y, TS, PNL, featver, D)
@@ -565,6 +577,292 @@ def _train_and_upload_gbdt(BASE, KEY, HDR, X, Y, TS, featver, D):
 #   각 라이브러리 트리를 Worker의 GBDT 스코어러 포맷 {trees:[{f,t,l,r}|{w}], eta, bias}로 변환해
 #   업로드(섀도우). Worker 추론 변경 0(mlGBDTScore 재사용). bias는 라이브러리 raw margin과 트리합의
 #   차이(상수)로 정합. 로컬 합성표본으로 변환 정합성 검증 완료(LGB/CAT 정확일치, XGB 99.9%).
+# ============================================================================
+# [V33.76] ★미국장·한국장 분리학습★ (사용자 지시)
+#   두 시장은 거래시간(연속 vs 상하한가 ±30%), 세금(국내 증권거래세), 투자자 구성(외국인·기관
+#   비중), 변동성 구조가 전부 다르다. 한 모델에 뭉치면 표본이 많은 쪽(미국)의 통계가 다른 쪽을
+#   덮어쓴다. 시장별로 따로 학습해 각자의 조건을 배우게 한다.
+#   업로드 이름: gbdt_us / gbdt_kr (워커는 "<이름>_<시장>" 이 있으면 그걸, 없으면 통합 모델 사용).
+#   표본이 MIN_PER_MARKET 미만인 시장은 아예 올리지 않는다 — 적은 표본의 전용 모델은
+#   통합 모델보다 나쁘다(과적합). 그때는 워커가 자동으로 통합 모델로 폴백한다.
+MIN_PER_MARKET = 4000
+
+def _train_per_market(BASE, KEY, HDR, MKT, X, Y, TS, PNL, featver, D):
+    import numpy as np, json, time, requests, math
+
+    if MKT is None or len(MKT) != len(Y):
+        print("   시장 라벨 없음 — 분리학습 생략(워커가 아직 m 필드를 안 내려주는 구버전)"); return
+
+    def _wilson(acc, n, z=1.64):
+        if n <= 0: return 0.0
+        z2 = z * z; den = 1 + z2 / n; cen = acc + z2 / (2 * n)
+        rad = z * math.sqrt((acc * (1 - acc) + z2 / (4 * n)) / n)
+        return max(0.0, (cen - rad) / den)
+
+    def _upload(name, model):
+        for attempt in range(4):
+            try:
+                r = requests.post(BASE + "/api/gbdt-import", params={"key": KEY, "name": name, "activate": "1"},
+                                  headers=HDR, data=json.dumps(model), timeout=180)
+                if r.status_code == 200:
+                    print(f"   {name} 업로드 OK:", json.dumps(r.json(), ensure_ascii=False)); return True
+                b = r.text[:200]
+                if r.status_code >= 500 and (("D1" in b) or ("overloaded" in b)) and attempt < 3:
+                    time.sleep(30); continue
+                print(f"   {name} 업로드 실패:", r.status_code, b); return False
+            except requests.exceptions.ReadTimeout:
+                if attempt < 3: time.sleep(20); continue
+        return False
+
+    counts = {m: int((MKT == m).sum()) for m in sorted(set(MKT.tolist()))}
+    print(f"   시장별 표본: {counts}")
+
+    for mk in ("us", "kr"):
+        sel = (MKT == mk)
+        n = int(sel.sum())
+        if n < MIN_PER_MARKET:
+            print(f"   {mk.upper()}: 표본 {n} < {MIN_PER_MARKET} — 전용 모델 생략(통합 모델로 폴백)")
+            continue
+        Xm, Ym, TSm = X[sel], Y[sel], TS[sel]
+        PNLm = PNL[sel] if PNL is not None and len(PNL) == len(Y) else None
+        order = np.argsort(TSm)
+        Xs, Ys = Xm[order].astype(np.float64), Ym[order].astype(int)
+        nval = max(200, int(n * 0.2))
+        Xtr, Ytr, Xva, Yva = Xs[:-nval], Ys[:-nval], Xs[-nval:], Ys[-nval:]
+
+        # 수익크기 가중(V33.75)을 시장별로 다시 산출 — 시장마다 변동성 스케일이 달라 공유하면 안 된다.
+        Wtr = None
+        if PNLm is not None:
+            Ps = np.abs(PNLm[order])
+            k = min(250, max(30, n // 10))
+            loc = np.array([max(1e-6, np.median(Ps[max(0, i - k):i + 1])) for i in range(n)])
+            W = 1.0 + np.clip(Ps / loc, 0.0, 4.0)
+            W = W / W.mean()
+            Wtr = W[:-nval]
+
+        print(f"   ── {mk.upper()} 전용 모델 (표본 {n}, 검증 {nval}) ──")
+        # ★A/B★ 단일 LGBM 과 DoubleEnsemble 을 나란히 학습해 이 시장의 홀드아웃에서 이긴 쪽만 쓴다.
+        #   합성 검증에서 DoubleEnsemble 의 이득이 확인되지 않았으므로(위 주석 참고) 믿고 갈아끼우지
+        #   않는다. 시장마다 데이터 성격이 다르니 시장별로 각자 판정하게 둔다.
+        cand = []
+        try:
+            import lightgbm as lgb
+            _p = {"objective": "binary", "max_depth": 4, "num_leaves": 16, "learning_rate": 0.03,
+                  "feature_fraction": 0.8, "bagging_fraction": 0.8, "bagging_freq": 1,
+                  "min_data_in_leaf": 20, "lambda_l2": 3.0, "verbose": -1}
+            _d1 = lgb.Dataset(Xtr, label=Ytr, weight=Wtr)
+            _d2 = lgb.Dataset(Xva, label=Yva, reference=_d1)
+            _b = lgb.train(_p, _d1, num_boost_round=600, valid_sets=[_d2],
+                           callbacks=[lgb.early_stopping(90, verbose=False)])
+            _nit = _b.best_iteration or 600
+            _pv = _b.predict(Xva, num_iteration=_nit)
+            cand.append(("lgbm", lambda Z, _b=_b, _nit=_nit: _b.predict(Z, num_iteration=_nit),
+                         [(_b, np.arange(Xtr.shape[1]))], _pv, _nit))
+        except Exception as e:
+            print("   단일 LGBM 실패:", e)
+        de = _train_double_ensemble(Xtr, Ytr, Xva, Yva, Wbase=Wtr)
+        if de is not None:
+            _pv2 = de[0](Xva)
+            cand.append(("double_ensemble", de[0], de[1], _pv2, None))
+        if not cand:
+            continue
+
+        def _ic(pv):
+            try:
+                c = np.corrcoef(pv, Yva)[0, 1]
+                return 0.0 if not np.isfinite(c) else float(c)
+            except Exception:
+                return 0.0
+        for nm, _, _, pv, _ in cand:
+            print(f"   {mk.upper()} 후보 {nm}: acc={float(((pv>=0.5).astype(int)==Yva).mean()):.4f} IC={_ic(pv):.4f}")
+        algo, predict, subs, _pvbest, _ = max(cand, key=lambda c: _ic(c[3]))
+        print(f"   {mk.upper()} 채택: {algo}")
+
+        # 워커 트리 포맷으로 변환 — 서브모델들의 트리를 전부 이어붙이고 eta 로 평균을 낸다.
+        #   워커 추론: raw = bias + Σ eta·leaf → sigmoid. 서브모델 평균은 eta = 1/K 로 표현된다.
+        #   ★피처 인덱스 복원★ 서브모델마다 피처 부분집합을 쓰므로, 트리의 f 를 원래 인덱스로 되돌린다.
+        def _conv(node, fmap):
+            if "leaf_value" in node and "split_feature" not in node:
+                return {"w": float(node["leaf_value"])}
+            f = int(fmap[int(node["split_feature"])])
+            return {"f": f, "t": float(node["threshold"]),
+                    "l": _conv(node["left_child"], fmap), "r": _conv(node["right_child"], fmap)}
+        trees, ok = [], True
+        try:
+            for bst, fi in subs:
+                dump = bst.dump_model()
+                nit = bst.best_iteration or len(dump["tree_info"])
+                for t in dump["tree_info"][:nit]:
+                    trees.append(_conv(t["tree_structure"], fi))
+        except Exception as e:
+            print(f"   {mk.upper()} 트리 변환 실패(생략):", e); ok = False
+        if not ok or not trees:
+            continue
+
+        eta = 1.0 if algo == "lgbm" else 1.0 / max(1, len(subs))
+        # bias 보정 — 변환식 출력과 라이브러리 확률의 로짓 차이를 검증셋 평균으로 맞춘다.
+        def _wout(nd, x):
+            while "w" not in nd:
+                nd = nd["l"] if x[nd["f"]] < nd["t"] else nd["r"]
+            return nd["w"]
+        pva = np.clip(predict(Xva), 1e-6, 1 - 1e-6)
+        margin = np.log(pva / (1 - pva))
+        wr = np.array([eta * sum(_wout(t, x) for t in trees) for x in Xva])
+        bias = float((margin - wr).mean())
+        vacc = float(((pva >= 0.5).astype(int) == Yva).mean())
+        vlb = _wilson(vacc, nval)
+        pi = np.linspace(0, nval - 1, min(200, nval)).astype(int)
+        probe = [{"x": Xva[i].tolist(), "p": float(pva[i])} for i in pi]
+        model = {"trees": trees, "eta": eta, "bias": bias, "valAcc": round(vacc, 4),
+                 "valAccLB": round(vlb, 4), "valN": int(nval), "n": int(n),
+                 "featVer": featver, "probe": probe, "market": mk, "algo": algo}
+        print(f"   {mk.upper()}: trees={len(trees)} eta={eta:.3f} valAcc={vacc:.3f} lb={vlb:.3f}")
+        _upload("gbdt_" + mk, model)
+
+
+# ============================================================================
+# [V33.76] DoubleEnsemble (Zhang·Li·Xu 2020, arXiv:2010.01265) — 우리 데이터형(정형 피처표)에
+#   가장 잘 맞는 공개 모델. Microsoft Qlib 공식 벤치마크에서 Alpha158(정형 피처 158종) 기준
+#   1위다: 연수익 11.58% / IR 1.34 / MDD −9.2%, 같은 데이터의 XGBoost 는 7.80% / IR 0.91.
+#   우리 표본도 65차원 정형 피처표라 Alpha158 과 성격이 같아 그대로 이식할 수 있다.
+#
+#   원 논문의 두 축을 그대로 옮긴다:
+#   ① 학습궤적 기반 표본 재가중(SR) — 금융데이터의 낮은 신호대잡음비 대응.
+#      h1 = rank(−현재손실)   … 지금 잘 맞히는 표본
+#      h2 = rank(loss_end / loss_start) … 학습하면서 개선된 표본
+#      h  = α1·h1 + α2·h2 → B개 구간으로 나눠 구간평균 h로 가중
+#      w  = 1 / (decay^k · h_avg + 0.1)
+#      즉 "이미 쉬운 표본"과 "아무리 해도 안 되는 잡음 표본" 양쪽의 비중을 줄이고
+#      경계에 있는 정보량 큰 표본에 집중한다.
+#   ② 셔플 기반 피처선택(FS) — 피처 수가 많아질수록 커지는 과적합 대응.
+#      g = mean(손실증가) / (std(손실증가)+eps) 로 피처 중요도를 재고, D개 구간으로 나눠
+#      상위 구간일수록 높은 비율로 샘플링해 서브모델마다 다른 피처집합을 준다.
+#
+#   구현 메모: 원본은 매 서브모델마다 전체 재학습(K=6)이라 무겁다. 우리 크론 예산에 맞춰 K=4.
+#
+#   ★검증 결과와 그에 따른 운영 방침★ (합성 14,000표본×3seed, 구간별 신호소멸 데이터로 실측)
+#     LGBM 단일          IC 0.2771 (기준)
+#     현재구현(FS 켬)     IC 0.2698  −0.0072   ← 피처선택이 깎는다
+#     decay=1.0          IC 0.2711  −0.0060
+#     재가중만(FS 끔)     IC 0.2768  −0.0002   ← 재가중은 중립
+#     배깅앙상블만        IC 0.2771  ±0.0000
+#   즉 우리 합성 데이터에서는 이득이 확인되지 않았다. 원 논문의 Alpha158 은 158개 팩터가 서로
+#   강하게 상관된 표라 셔플 기반 피처선택이 먹히지만, 우리 65차원은 이미 중복을 걷어낸 상태라
+#   피처를 더 떨어뜨리면 손해만 난다. 그래서:
+#     · 피처선택 하한(fs_floor)을 둬 최소 70%는 남긴다.
+#     · ★기본값으로 쓰지 않는다★ — 시장별 학습에서 '단일 LGBM'과 나란히 학습해 그 시장의
+#       홀드아웃에서 실제로 이긴 쪽만 업로드한다(아래 _train_per_market 의 A/B).
+#     신뢰할 수 없는 개선을 믿고 갈아끼우지 않는다 — 그게 지난 두 달의 실패 패턴이었다.
+def _train_double_ensemble(Xtr, Ytr, Xva, Yva, Wbase=None, K=4, bins_sr=10, bins_fs=5,
+                           alpha1=1.0, alpha2=1.0, decay=1.0, fs_floor=0.70,
+                           sample_ratios=(0.9, 0.85, 0.8, 0.75, 0.7)):
+    """반환: (predict_proba(Xnew) -> np.ndarray, 서브모델 리스트, 정보 dict). lightgbm 없으면 None."""
+    import numpy as np
+    try:
+        import lightgbm as lgb
+    except Exception as e:
+        print("   DoubleEnsemble 생략 — lightgbm 없음:", e); return None
+
+    Ntr, Dfeat = Xtr.shape
+    if Ntr < 800:
+        print(f"   DoubleEnsemble 생략 — 표본 부족 {Ntr}"); return None
+
+    def _rank_pct(v):
+        # 백분위 순위 [0,1] — 논문의 rank(..., pct=True)
+        o = np.argsort(np.argsort(v))
+        return o / max(1, len(v) - 1)
+
+    def _logloss(p, y):
+        p = np.clip(p, 1e-6, 1 - 1e-6)
+        return -(y * np.log(p) + (1 - y) * np.log(1 - p))
+
+    params = {"objective": "binary", "max_depth": 4, "num_leaves": 16, "learning_rate": 0.03,
+              "feature_fraction": 0.8, "bagging_fraction": 0.8, "bagging_freq": 1,
+              "min_data_in_leaf": 20, "lambda_l2": 3.0, "verbose": -1}
+
+    w = np.ones(Ntr) if Wbase is None else np.asarray(Wbase, dtype=np.float64).copy()
+    w = w / w.mean()
+    feat_idx = np.arange(Dfeat)
+    subs = []          # (booster, 사용피처 인덱스)
+    loss_curve_prev = None
+
+    for k in range(K):
+        ds = lgb.Dataset(Xtr[:, feat_idx], label=Ytr, weight=w)
+        dv = lgb.Dataset(Xva[:, feat_idx], label=Yva, reference=ds)
+        # 학습곡선을 얻기 위해 표본별 손실을 여러 시점에서 기록한다(논문의 loss curve).
+        snaps, curve = [], []
+        bst = lgb.train(params, ds, num_boost_round=400, valid_sets=[dv],
+                        callbacks=[lgb.early_stopping(60, verbose=False)])
+        best = bst.best_iteration or 400
+        for it in range(max(1, best // 10), best + 1, max(1, best // 10)):
+            curve.append(_logloss(bst.predict(Xtr[:, feat_idx], num_iteration=it), Ytr))
+        if not curve:
+            curve = [_logloss(bst.predict(Xtr[:, feat_idx], num_iteration=best), Ytr)]
+        loss_curve_prev = np.vstack(curve)          # (시점, 표본)
+        subs.append((bst, feat_idx.copy()))
+
+        if k == K - 1:
+            break
+
+        # ── ① 학습궤적 기반 재가중 ──
+        ens = np.mean([b.predict(Xtr[:, fi]) for b, fi in subs], axis=0)
+        cur_loss = _logloss(ens, Ytr)
+        n_edge = max(1, int(loss_curve_prev.shape[0] * 0.1))
+        l_start = loss_curve_prev[:n_edge].mean(axis=0)
+        l_end = loss_curve_prev[-n_edge:].mean(axis=0)
+        h1 = _rank_pct(-cur_loss)
+        h2 = _rank_pct(l_end / np.maximum(1e-6, l_start))
+        h = alpha1 * h1 + alpha2 * h2
+        bins = np.clip((h - h.min()) / max(1e-9, (h.max() - h.min())) * bins_sr, 0, bins_sr - 1e-9).astype(int)
+        w_new = np.ones(Ntr)
+        for b in range(bins_sr):
+            m = bins == b
+            if not m.any():
+                continue
+            w_new[m] = 1.0 / ((decay ** k) * h[m].mean() + 0.1)
+        if Wbase is not None:
+            w_new = w_new * (np.asarray(Wbase, dtype=np.float64))   # 수익크기 가중과 곱해 함께 반영
+        w = w_new / w_new.mean()
+
+        # ── ② 셔플 기반 피처선택 ──
+        rng = np.random.default_rng(42 + k)
+        base_loss = cur_loss
+        g = np.zeros(Dfeat)
+        probe = rng.choice(Ntr, size=min(2000, Ntr), replace=False)
+        for f in range(Dfeat):
+            Xp = Xtr[probe].copy()
+            Xp[:, f] = Xp[rng.permutation(len(probe)), f]
+            lp = np.mean([b.predict(Xp[:, fi]) for b, fi in subs], axis=0)
+            d = _logloss(lp, Ytr[probe]) - base_loss[probe]
+            g[f] = d.mean() / (d.std() + 1e-7)
+        order_f = np.argsort(-g)                      # 중요한 피처부터
+        chosen = []
+        per = max(1, Dfeat // bins_fs)
+        for bi in range(bins_fs):
+            grp = order_f[bi * per: (bi + 1) * per] if bi < bins_fs - 1 else order_f[bi * per:]
+            if len(grp) == 0:
+                continue
+            ratio = sample_ratios[min(bi, len(sample_ratios) - 1)]
+            take = max(1, int(round(len(grp) * ratio)))
+            chosen.extend(rng.choice(grp, size=take, replace=False).tolist())
+        # 하한 — 최소 fs_floor 비율은 남긴다(실측: 과하게 떨어뜨리면 IC 가 깎였다).
+        need = max(1, int(round(Dfeat * fs_floor)))
+        if len(set(chosen)) < need:
+            for f in order_f:
+                if len(set(chosen)) >= need: break
+                chosen.append(int(f))
+        feat_idx = np.array(sorted(set(chosen))) if chosen else np.arange(Dfeat)
+
+    def _predict(Xnew):
+        import numpy as _np
+        return _np.mean([b.predict(Xnew[:, fi]) for b, fi in subs], axis=0)
+
+    pv = _predict(Xva)
+    vacc = float(((pv >= 0.5).astype(int) == Yva).mean())
+    print(f"   DoubleEnsemble: 서브모델 {len(subs)}개 valAcc={vacc:.3f} (최종 피처 {len(subs[-1][1])}/{Dfeat})")
+    return _predict, subs, {"valAcc": vacc}
+
+
 def _train_and_upload_boosters(BASE, KEY, HDR, X, Y, TS, featver, D, PNL=None):
     import numpy as np, math, json, time, requests, tempfile, os
 
