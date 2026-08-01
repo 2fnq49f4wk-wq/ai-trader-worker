@@ -2476,7 +2476,7 @@ async function applySignalTypeWeights(DB, cfg) {
 // ============================================================================
 // [V33.55] 빌드 버전 — SWR L2 캐시 키에 섞어 '배포 = 판단 캐시 자동 무효화'를 만든다.
 //   판정 로직을 고쳐도 옛 캐시가 최대 1시간 재배포되던 문제를 구조적으로 없앤다.
-const _BUILD_VER = "V33.64";
+const _BUILD_VER = "V33.65";
 
 const AI_PARAMS = {
   // ── OHLCV 타임프레임 ── 시가/고가/저가/종가/거래량을 어떤 봉 주기로 볼지.
@@ -21503,6 +21503,127 @@ function stinLabel(pend, priceOf) {
   pend.items = keep;
   return labeled;
 }
+// ═══════════ [V33.65] ★과거 분봉 백필 수확 — 라이브 수집을 기다리지 않는다★ ═══════════
+//   사용자 지적: "종목상세에서 옛날 분봉을 볼 수 있는데 이건 학습에 못 쓰냐?"
+//   맞는 지적이다. /api/chart 가 이미 5분봉 1개월치를 가져온다(야후는 5m 을 최대 60일 제공).
+//   라이브 수집은 구조적으로 느리다 — 관측 후 60분을 기다려야 라벨이 붙고, 그동안 버퍼를 점유한다.
+//   반면 과거 분봉은 '미래 경로가 이미 손에 있다'. 같은 삼중배리어 라벨을 그 자리에서 확정할 수 있다.
+//   한 종목 1개월치 ≈ 22거래일 × 78봉 ≈ 1,700봉 → 60분 간격(12봉) 스트라이드로 약 140표본.
+//   즉 종목 몇 개만으로도 라이브 하루치를 능가한다.
+//   ★룩어헤드 금지★ 피처는 반드시 그 시점까지의 봉(0..i)만으로 만들고,
+//     라벨은 그 이후 봉(i+1..i+H)으로만 매긴다 — 라이브와 동일한 함수를 그대로 쓴다.
+async function stinBackfill(DB, opts) {
+  const R2 = _bigR2();
+  if (!R2) return "[ST-BACKFILL] R2 미바인딩 — 생략";
+  const cfg = opts || {};
+  const maxSyms = _num(cfg.maxSyms, 8);
+  const H = STIN.horizonBars;                     // 12봉(60분)
+  const stride = _num(cfg.stride, H);             // 라벨 구간 비중첩(누출 방지)
+  try {
+    // 대상 심볼 — daily: 캐시가 있는 미국 종목만(야후 분봉 이력이 안정적). 오프셋 회전으로 전 종목 순회.
+    const dr = await DB.prepare("SELECT k FROM state WHERE k >= 'daily:' AND k < 'daily;' ORDER BY k").all();
+    const all = [];
+    for (const r of ((dr && dr.results) || [])) {
+      const sy = String(r.k).slice(6);
+      if (!sy || sy[0] === "^") continue;
+      if (/\.(KS|KQ)$/.test(sy)) continue;        // KR 은 네이버가 과거 분봉을 길게 안 준다
+      if (/=F$|-USD$/.test(sy)) continue;
+      all.push(sy);
+    }
+    if (!all.length) return "[ST-BACKFILL] 대상 없음";
+    let off = 0;
+    try { const o = await getState(DB, "stin_bf_offset", null); off = _num(o && o.v, 0) % all.length; } catch (e) {}
+    const picked = [];
+    for (let i = 0; i < maxSyms && i < all.length; i++) picked.push(all[(off + i) % all.length]);
+
+    const made = [];
+    let symOk = 0, symFail = 0, skipShort = 0;
+    for (const sym of picked) {
+      if (fetchBudgetLeft() < 6) break;
+      let mb = null;
+      try { mb = await fetchMinuteBars(sym, { interval: "5m", range: "1mo" }); } catch (e) { symFail++; continue; }
+      const c = mb && (mb.allCloses && mb.allCloses.length ? mb.allCloses : mb.closes);
+      if (!Array.isArray(c) || c.length < 60 + H) { skipShort++; continue; }
+      const h = (mb.allHighs && mb.allHighs.length ? mb.allHighs : mb.highs) || [];
+      const l = (mb.allLows && mb.allLows.length ? mb.allLows : mb.lows) || [];
+      const v = (mb.allVolumes && mb.allVolumes.length ? mb.allVolumes : mb.volumes) || [];
+      const o2 = (mb.allOpens && mb.allOpens.length ? mb.allOpens : mb.opens) || [];
+      const t = (mb.allTimes && mb.allTimes.length ? mb.allTimes : mb.times) || [];
+      let dd = null; try { dd = await getState(DB, "daily:" + sym, null); } catch (e) {}
+      const dCloses = (dd && Array.isArray(dd.closes)) ? dd.closes : null;
+      let n0 = 0;
+      for (let i = 24; i + H < c.length; i += stride) {
+        // ── 피처: 0..i 까지만 본다(그 시점의 정보) ──
+        const win = { closes: c.slice(0, i + 1), highs: h.slice(0, i + 1), lows: l.slice(0, i + 1),
+                      volumes: v.slice(0, i + 1), opens: o2.slice(0, i + 1) };
+        const px = c[i];
+        if (!(px > 0)) continue;
+        const ifeat = stinIntradayFeat(win, px, c[Math.max(0, i - 1)]);
+        if (!ifeat) continue;
+        // 일봉 피처 — 그 분봉 시점에 해당하는 '과거 일봉'까지만 잘라 쓴다(룩어헤드 차단).
+        let base = null;
+        try {
+          let dSlice = dCloses;
+          if (dCloses && t[i]) {
+            const daysBack = Math.max(0, Math.floor((Date.now() / 1000 - t[i]) / 86400));
+            const cut = Math.max(30, dCloses.length - daysBack);
+            dSlice = dCloses.slice(0, cut);
+          }
+          if (!dSlice || dSlice.length < 30) continue;
+          base = mlBuildFeatures({
+            closes: dSlice, volumes: (dd.volumes || []).slice(0, dSlice.length),
+            opens: (dd.opens || []).slice(0, dSlice.length),
+            highs: (dd.highs || []).slice(0, dSlice.length), lows: (dd.lows || []).slice(0, dSlice.length),
+            idxCloses: null, sectorCloses: null, xsPanel: null, barsAgo: 0,
+            price: px, prevClose: dSlice[dSlice.length - 2] || px, dayPct: 0,
+            regime: "NEUTRAL", strategy: "scalp", market: "us", ev: {}
+          });
+        } catch (e) { continue; }
+        if (!Array.isArray(base) || base.length !== LUXML.featNames.length) continue;
+        // ── 라벨: i+1..i+H 의 실제 경로로 삼중배리어 '최초 접촉' 판정(라이브와 동일 규칙) ──
+        const bar = _clamp(1.5 * _num(ifeat[7], 0) * Math.sqrt(H), 0.4, 3.0);
+        let hit = 0, ret = 0, hm = H * 5;
+        for (let k = 1; k <= H; k++) {
+          const hi = (h[i + k] != null ? h[i + k] : c[i + k]);
+          const lo = (l[i + k] != null ? l[i + k] : c[i + k]);
+          const up = (hi / px - 1) * 100, dn = (lo / px - 1) * 100;
+          if (up >= bar) { hit = 1; ret = bar; hm = k * 5; break; }
+          if (dn <= -bar) { hit = -1; ret = -bar; hm = k * 5; break; }
+        }
+        if (!hit) ret = (c[i + H] / px - 1) * 100;
+        made.push({ ts: (t[i] ? t[i] * 1000 : Date.now()), s: sym, m: "us",
+          x: base.map(function (z) { return +(_num(z, 0)).toFixed(4); }),
+          ix: ifeat.map(function (z) { return +(_num(z, 0)).toFixed(4); }),
+          fv: STIN_FEATVER, b: +bar.toFixed(3),
+          y: hit > 0 ? 1 : (hit < 0 ? 0 : (ret > 0 ? 1 : 0)),
+          pnl: +ret.toFixed(3), bar: hit ? (hit > 0 ? "tp" : "sl") : "time", hm: hm });
+        n0++;
+        if (made.length >= _num(cfg.maxSamples, 4000)) break;
+      }
+      if (n0 > 0) symOk++;
+      if (made.length >= _num(cfg.maxSamples, 4000)) break;
+    }
+    try { await setState(DB, "stin_bf_offset", { v: (off + picked.length) % all.length, ts: Date.now() }); } catch (e) {}
+    if (!made.length) return "[ST-BACKFILL] 0건 — 종목 " + picked.length + "(성공 " + symOk + " 실패 " + symFail + " 짧음 " + skipShort + ")";
+    // R2 로 내보낸다 — 라이브와 같은 폴더/스키마라 트레이너가 그대로 읽는다.
+    const key = "st/intraday/" + _stinDay() + "/bf-" + Date.now() + ".json";
+    await R2.put(key, JSON.stringify({ n: made.length, samples: made, src: "backfill" }));
+    try {
+      const d0 = _stinDay();
+      const pv = (await getState(DB, "stin_stats", null)) || {};
+      const same = (pv.day === d0);
+      await setState(DB, "stin_stats", Object.assign({}, pv, {
+        day: d0,
+        total: _num(pv.total, 0) + made.length,
+        today: (same ? _num(pv.today, 0) : 0) + made.length,
+        files: (same ? _num(pv.files, 0) : 0) + 1,
+        bfTotal: _num(pv.bfTotal, 0) + made.length, ts: Date.now()
+      }));
+    } catch (e) {}
+    return "[ST-BACKFILL] +" + made.length + "표본 / 종목 " + symOk + "개(오프셋 " + off + ") — 과거 5분봉 1개월";
+  } catch (e) { return "[ST-BACKFILL] fail: " + (e && e.message); }
+}
+
 // flush — 라벨 완료분을 날짜별 append-only 오브젝트로 내보낸다(R2 는 append 가 없어 키를 매번 새로).
 async function stinFlush(pend, DB) {
   const R2 = _bigR2();
@@ -30564,6 +30685,19 @@ export default {
           //   단계별 체크포인트가 300s 한도를 여러 cron에 걸쳐 처리하므로 안전하게 완주. 무한루프 방지:
           //   마커를 먼저 갱신하고 게이트/스테이지 체크포인트만 리셋(다음부터는 정상 하루1회 게이트).
           //   → harvest-now/train-now를 수동으로 칠 필요 없이, 배포만으로 MIND/GBDT가 재학습된다.
+          // [V33.65] ★과거 분봉 백필 수확★ — 라이브 수집을 기다리지 않고 표본을 즉시 만든다.
+          //   장중에는 코어 매매가 분봉 fetch 예산을 써야 하므로 휴장 때만 돌린다.
+          //   30분 간격, 회당 8종목 × 5분봉 1개월 → 한 번에 약 1,000표본.
+          try {
+            const _bfLock = _num(await getState(env.DB, "stin_bf_lock", 0), 0);
+            let _mkoBf = false; try { _mkoBf = isMarketOpen("us") || isMarketOpen("kr"); } catch (e) {}
+            if (!_mkoBf && (Date.now() - _bfLock > 30 * 60000) && fetchBudgetLeft() > 40) {
+              await setState(env.DB, "stin_bf_lock", Date.now());
+              const _bfr = await stinBackfill(env.DB, { maxSyms: 8, maxSamples: 4000 });
+              if (_bfr) await log(env.DB, "INFO", null, _bfr);
+            }
+          } catch (e) {}
+
           // [V33.48] ★장중 증분 스캔★ — 하루 1회(야간)였던 전종목 스캔을 20분마다 '구간 단위'로
           //   이어 돌린다. 회당 300행 상한이라 D1 전송량은 종전 야간 1회분과 비슷한 수준으로 유지되고,
           //   픽은 계속 갱신된다(사용자 지적: "최근 스캔이 9시로 뜬다").
@@ -30577,7 +30711,7 @@ export default {
               if (_ir) await log(env.DB, "INFO", null, _ir);
             }
           } catch (e) {}
-          const _PIPE_VER = "V33.64-buffer-fix";   // 배포 시 파이프라인 1회 강제 재실행(국면·판단 즉시 재산출)   // 배포 시 파이프라인 1회 강제 재실행(신규 스키마 반영)
+          const _PIPE_VER = "V33.65-backfill";   // 배포 시 파이프라인 1회 강제 재실행(국면·판단 즉시 재산출)   // 배포 시 파이프라인 1회 강제 재실행(신규 스키마 반영)
           try {
             const _pv = await getState(env.DB, "ai_pipeline_ver", null);
             if (_pv !== _PIPE_VER) {
