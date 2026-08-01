@@ -2476,7 +2476,7 @@ async function applySignalTypeWeights(DB, cfg) {
 // ============================================================================
 // [V33.55] 빌드 버전 — SWR L2 캐시 키에 섞어 '배포 = 판단 캐시 자동 무효화'를 만든다.
 //   판정 로직을 고쳐도 옛 캐시가 최대 1시간 재배포되던 문제를 구조적으로 없앤다.
-const _BUILD_VER = "V33.70";
+const _BUILD_VER = "V33.71";
 
 const AI_PARAMS = {
   // ── OHLCV 타임프레임 ── 시가/고가/저가/종가/거래량을 어떤 봉 주기로 볼지.
@@ -17236,6 +17236,25 @@ async function handleRequest(request, env, ctx) {
     //   기존 부스팅과 동일한 트리 포맷이라 채점기(mlGBDTScore)를 그대로 재사용한다.
     //   ★핵심: 위원회(10일 지평)와 완전히 분리된 슬롯에 저장한다. 스윙 성능에 영향을 주지 않기 위함.
     //   신뢰 판정도 독립: 장중 라벨은 클래스 균형이 달라 스윙 기준을 그대로 쓰면 안 된다.
+    // [V33.71] GET /api/scalp-backfill-now — 저장된 봉으로 단타 표본을 즉시 생성(수동 트리거).
+    //   자동 스케줄이 어떤 이유로든 안 돌 때 사람이 직접 눌러 표본을 만들 수 있게 한다.
+    //   ?syms=N (기본 8, 최대 30) 으로 이번 실행에서 처리할 종목 수를 지정.
+    //   응답에 생성 건수·실패 사유가 그대로 들어와 진단이 바로 된다.
+    if (path === "/api/scalp-backfill-now") {
+      if (!_bigR2()) return Response.json({ ok: false, error: "R2 미바인딩 — 장중표본은 R2 전용" }, { status: 503, headers: cors });
+      const _ns = _clamp(Math.floor(_num(url.searchParams.get("syms"), 8)), 1, 30);
+      try { resetFetchBudget(Math.max(30, _ns * 4)); } catch (e) {}
+      let _r = null;
+      try { _r = await stinBackfill(env.DB, { maxSyms: _ns, maxSamples: 6000 }); }
+      catch (e) { return Response.json({ ok: false, error: String((e && e.message) || e) }, { status: 500, headers: cors }); }
+      try { await setState(env.DB, "stin_bf_lock", Date.now()); } catch (e) {}
+      let _stats = null; try { _stats = await getState(env.DB, "stin_stats", null); } catch (e) {}
+      try { await log(env.DB, "INFO", null, (_r || "[ST-BACKFILL] 반환 없음") + " (수동)"); } catch (e) {}
+      return Response.json({ ok: true, result: _r,
+        total: _stats ? _num(_stats.total, 0) : 0, today: _stats ? _num(_stats.today, 0) : 0,
+        bfTotal: _stats ? _num(_stats.bfTotal, 0) : 0,
+        need: 3000, featVer: LUXML.featVer, ifeatVer: STIN_FEATVER, ifeatN: STIN_IFEAT_N }, { headers: cors });
+    }
     if (path === "/api/scalp-import" && request.method === "POST") {
       const au = _trainAuthed(); if (!au.ok) return Response.json({ error: au.msg }, { status: au.code, headers: cors });
       let body; try { body = await request.json(); } catch (e) { return Response.json({ error: "bad json" }, { status: 400, headers: cors }); }
@@ -30812,18 +30831,29 @@ export default {
       //   장중에도 돌리되(코어 매매 예산과 분리된 자체 예산) 회당 종목 수를 줄여 부담을 낮춘다.
       //   저장된 봉만 읽어 표본을 만드는 경로라, 라이브 수집이 막혀도 이쪽은 독립적으로 쌓인다.
       try {
-        if (_bigR2()) {
-          const _bfLock = _num(await getState(env.DB, "stin_bf_lock", 0), 0);
-          let _mkoBf = false; try { _mkoBf = isMarketOpen("us") || isMarketOpen("kr"); } catch (e) {}
-          const _gap = _mkoBf ? 60 * 60000 : 20 * 60000;   // 장중엔 뜸하게, 장외엔 자주
-          if (Date.now() - _bfLock > _gap) {
-            await setState(env.DB, "stin_bf_lock", Date.now());
-            try { resetFetchBudget(_mkoBf ? 20 : 60); } catch (e0) {}
-            const _bfr = await stinBackfill(env.DB, { maxSyms: _mkoBf ? 3 : 8, maxSamples: 4000 });
-            if (_bfr) await log(env.DB, "INFO", null, _bfr);
+        const _r2ok = !!_bigR2();
+        const _bfLock = _num(await getState(env.DB, "stin_bf_lock", 0), 0);
+        let _mkoBf = false; try { _mkoBf = isMarketOpen("us") || isMarketOpen("kr"); } catch (e) {}
+        const _gap = _mkoBf ? 30 * 60000 : 10 * 60000;   // [V33.71] 더 자주 — 표본이 급하다
+        const _due = (Date.now() - _bfLock) > _gap;
+        if (_r2ok && _due) {
+          await setState(env.DB, "stin_bf_lock", Date.now());
+          try { resetFetchBudget(_mkoBf ? 20 : 60); } catch (e0) {}
+          const _bfr = await stinBackfill(env.DB, { maxSyms: _mkoBf ? 3 : 8, maxSamples: 4000 });
+          await log(env.DB, "INFO", null, _bfr || "[ST-BACKFILL] 반환 없음");
+        } else {
+          // [V33.71] ★"안 돌았다"를 추측하지 않게 스킵 사유를 남긴다★
+          //   지금까지 [ST-BACKFILL] 로그가 0건이었는데, 그게 '호출 안 됨'인지 '호출됐지만 0건'인지
+          //   구분할 수 없었다. 30분에 한 번만 남겨 로그 폭주는 막는다.
+          const _sk = _num(await getState(env.DB, "stin_bf_skiplog", 0), 0);
+          if (Date.now() - _sk > 30 * 60000) {
+            await setState(env.DB, "stin_bf_skiplog", Date.now());
+            await log(env.DB, "INFO", null, "[ST-BACKFILL] 대기 — R2=" + (_r2ok ? "OK" : "미바인딩") +
+              " 다음실행까지 " + Math.max(0, Math.round((_gap - (Date.now() - _bfLock)) / 60000)) + "분" +
+              (_mkoBf ? " (장중)" : " (장외)"));
           }
         }
-      } catch (e) {}
+      } catch (e) { try { await log(env.DB, "WARN", null, "[ST-BACKFILL] 예외: " + (e && e.message)); } catch (e2) {} }
 
       // 0.96) [V33.27] 학습표본 R2 스냅샷 — 트레이너가 D1을 17만 행 훑지 않게 미리 떠 둔다.
       //   장중엔 절대 돌리지 않는다(거래 우선). 장외에 파트 단위로 조금씩 쌓고 12시간마다 갱신.
@@ -31199,7 +31229,7 @@ export default {
               if (_ir) await log(env.DB, "INFO", null, _ir);
             }
           } catch (e) {}
-          const _PIPE_VER = "V33.70-obs-htf";   // 배포 시 파이프라인 1회 강제 재실행(국면·판단 즉시 재산출)   // 배포 시 파이프라인 1회 강제 재실행(신규 스키마 반영)
+          const _PIPE_VER = "V33.71-bf-force";   // 배포 시 파이프라인 1회 강제 재실행(국면·판단 즉시 재산출)   // 배포 시 파이프라인 1회 강제 재실행(신규 스키마 반영)
           try {
             const _pv = await getState(env.DB, "ai_pipeline_ver", null);
             if (_pv !== _PIPE_VER) {
