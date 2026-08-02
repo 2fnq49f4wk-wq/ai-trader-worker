@@ -23,6 +23,11 @@ jobs:
       #   중괄호가 어긋나 우측 사이드바·AI두뇌 창이 통째로 죽었는데 게이트를 그대로 통과했다.
       - name: Frontend inline script check
         run: node tools/check-html-js.mjs
+      # [V33.84] 선언·사용 순서 계약 — node --check 가 못 잡는 TDZ 를 막는다.
+      #   실제로 V33.83 켈리 블록이 stopDist 선언보다 앞에 놓여 매 진입마다 ReferenceError 가
+      #   났고, 자기 try/catch 에 삼켜져 '기능이 있는데 전혀 안 도는' 상태로 배포됐다.
+      - name: Declaration order contract check
+        run: node tools/check-order.mjs
       # cloudflare/wrangler-action 대신 로컬에서 검증된 방식 그대로 실행
       # (wrangler-action@v3의 npx 자동설치가 4.86.0을 요구하며 실패하던 문제 회피)
       - name: Install wrangler

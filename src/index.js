@@ -2630,7 +2630,7 @@ async function applySignalTypeWeights(DB, cfg) {
 // ============================================================================
 // [V33.55] 빌드 버전 — SWR L2 캐시 키에 섞어 '배포 = 판단 캐시 자동 무효화'를 만든다.
 //   판정 로직을 고쳐도 옛 캐시가 최대 1시간 재배포되던 문제를 구조적으로 없앤다.
-const _BUILD_VER = "V33.83";
+const _BUILD_VER = "V33.84";
 
 const AI_PARAMS = {
   // ── OHLCV 타임프레임 ── 시가/고가/저가/종가/거래량을 어떤 봉 주기로 볼지.
@@ -14796,7 +14796,13 @@ async function runTradingCycle(env) {
               try { __pDistCache = await getState(DB, "ai_pdist:" + market, null); } catch (e2) {}
           // [V33.82] 단타 실측 엣지(켈리) + 현재 드로다운 — 레버리지 개방 판단의 두 축.
           try {
-            const _stTrust = await getState(DB, "stin_trust", null);
+            // [V33.84 ★버그수정★] 종전엔 "stin_trust" 를 읽었는데 그 키는 코드 어디에서도
+            //   기록하지 않는다(읽기 2곳, 쓰기 0곳). 항상 null → trusted:false →
+            //   ★단타 레버리지 게이트가 영원히 열리지 않는 죽은 코드였다★.
+            //   실제 단타 모델 신뢰 판정은 mlScalpLoad(scalp_model + scalp_trust + 스키마 일치)다.
+            const _stTrust = await (async function () {
+              try { const _L = await mlScalpLoad(DB); return _L ? { trusted: true } : null; } catch (e) { return null; }
+            })();
             const _ss = await getState(DB, "signal_type_stats", {});
             // 단타 계열 신호(SC_*)를 합쳐 하나의 켈리로 본다 — 개별 신호는 표본이 얇다.
             let nW = 0, nL = 0, sW = 0, sL = 0;
@@ -14827,7 +14833,6 @@ async function runTradingCycle(env) {
           } catch (e) {}
           try {
             if (FLOWML.enabled) {
-              const _fs = await getState(DB, "flow_samples_n", null);
               __flowCollect = true;   // 표본이 없을수록 수집이 급하다 — 항상 켠다(피어는 네트워크 0)
               const _dr = await DB.prepare("SELECT k, v FROM state WHERE k >= 'daily:' AND k < 'daily;'").all();
               let _n = 0;
@@ -16044,6 +16049,16 @@ async function runTradingCycle(env) {
               riskPct = riskPct * _scLev;   // [V33.82] 단타 레버리지 — 거래당 리스크 확대
               try { await log(DB, "INFO", symbol, "[단타레버리지] " + _scLevWhy); } catch (e0) {}
             }
+            const equity = (typeof portfolioValue === "number" && portfolioValue > 0) ? portfolioValue : cash[market];
+            const tr = getStrategyRules(mcfg, strategy, market);
+            // 손절 거리(주당) — executeBuy와 동일 규칙: min(N×ATR, price×stopLoss%)
+            const atrStopDist = (dailyAtr && dailyAtr > 0) ? dailyAtr * (tr.atrStopMult || mcfg.atrStopMult || 2.0) : null;
+            const pctStopDist = price * ((tr.stopLossPct || mcfg.stopLoss || 5) / 100);
+            let stopDist = (atrStopDist != null) ? Math.min(atrStopDist, pctStopDist) : pctStopDist;
+            // [V10.1] 단타는 분봉 적응형 손절폭으로 수량 산정 → 실제 손절가와 리스크/주 일치(손익비 일관).
+            if (strategy === "scalp" && signal && typeof signal.intradayStopPct === "number" && signal.intradayStopPct > 0) {
+              stopDist = price * (signal.intradayStopPct / 100);
+            }
             // ══ [V33.83] 거래별 켈리 — 이 거래 하나의 p·b 로 베팅 크기를 정한다 ══
             //   riskPerTrade(고정 %)를 켈리가 산출한 비율로 대체한다. 신호 평균이 아니라
             //   위원회가 이 종목에 준 확률과 실제 목표/손절 거리비를 쓴다.
@@ -16091,16 +16106,7 @@ async function runTradingCycle(env) {
                 }
               }
             } catch (e) {}
-            const equity = (typeof portfolioValue === "number" && portfolioValue > 0) ? portfolioValue : cash[market];
-            const tr = getStrategyRules(mcfg, strategy, market);
-            // 손절 거리(주당) — executeBuy와 동일 규칙: min(N×ATR, price×stopLoss%)
-            const atrStopDist = (dailyAtr && dailyAtr > 0) ? dailyAtr * (tr.atrStopMult || mcfg.atrStopMult || 2.0) : null;
-            const pctStopDist = price * ((tr.stopLossPct || mcfg.stopLoss || 5) / 100);
-            let stopDist = (atrStopDist != null) ? Math.min(atrStopDist, pctStopDist) : pctStopDist;
-            // [V10.1] 단타는 분봉 적응형 손절폭으로 수량 산정 → 실제 손절가와 리스크/주 일치(손익비 일관).
-            if (strategy === "scalp" && signal && typeof signal.intradayStopPct === "number" && signal.intradayStopPct > 0) {
-              stopDist = price * (signal.intradayStopPct / 100);
-            }
+
             if (!(stopDist > 0)) stopDist = price * 0.05;
 
             // [V33.44] ★오버나이트 갭 리스크 사이징 — 실거래에서 확인된 최대 손실원★
@@ -17311,7 +17317,11 @@ async function handleRequest(request, env, ctx) {
           // [V33.82] 단타 레버리지 게이트 실황 — 왜 열렸는지/왜 닫혔는지 화면에서 보이게.
           try {
             const _lvc = (DEFAULT_CFG.scalpLeverage || {});
-            const _stT = await getState(env.DB, "stin_trust", null);
+            // [V33.84] 화면 표시도 같은 출처를 쓴다 — 게이트와 화면이 다른 키를 보면
+            //   "열렸다는데 안 열린다" 같은 오진이 또 난다.
+            const _stT = await (async function () {
+              try { const _L = await mlScalpLoad(env.DB); return _L ? { trusted: true } : null; } catch (e) { return null; }
+            })();
             const _ss3 = await getState(env.DB, "signal_type_stats", {});
             let nW = 0, nL = 0, sW = 0, sL = 0;
             for (const k in (_ss3 || {})) {
