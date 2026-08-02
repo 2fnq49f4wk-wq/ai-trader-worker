@@ -11525,6 +11525,31 @@ html[data-theme="light"] .m-brainbar button.active{color:#0b4f9e;background:rgba
       var models = 'MIND '+st(c.mind)+' &nbsp; DNN '+st(c.dnn)+' &nbsp; GBDT '+st(c.gbdt)+' &nbsp; XGB '+bst(c.xgb)+' &nbsp; LGB '+bst(c.lgb)+' &nbsp; Cat '+bst(c.cat);
       var html = '<div style="letter-spacing:.2px;"><span style="color:var(--t3);">위원회</span> &nbsp; '+models+'</div>'
         + '<div style="color:var(--t3,#889);font-size:9.5px;margin-top:2px;">● 가동 · ◐ 섀도우(학습완료·미신뢰) · ○ 대기</div>';
+      // [V33.81] 신규 3모델 — 학습 대기 중이어도 표본 진행이 보이게 한다.
+      try {
+        var A = (d && d.alt) || {};
+        var am = function(nm, o){
+          if (!o) return nm + ' ' + OFF;
+          if (o.trusted) return nm + ' ' + ON + ' <span style="color:var(--t3);">IC ' + (o.ic != null ? o.ic.toFixed(3) : '—') + '</span>';
+          if (o.trained) return nm + ' ' + SH + ' <span style="color:var(--t3);">IC ' + (o.ic != null ? o.ic.toFixed(3) : '—') + ' 미달</span>';
+          return nm + ' ' + OFF + ' <span style="color:var(--t3);">' + (o.samples || 0) + '/' + (o.minN || 0) + '</span>';
+        };
+        html += '<div style="margin-top:5px;letter-spacing:.2px;"><span style="color:var(--t3);">신규모델</span> &nbsp; '
+              + am('FLOW', A.flow) + ' &nbsp; ' + am('XALPHA', A.xalpha) + ' &nbsp; ' + am('STACK', A.stack) + '</div>';
+        if (A.backfill && A.backfill.made) {
+          html += '<div style="color:var(--t3,#889);font-size:9.5px;margin-top:2px;">기존표본 소급생성 '
+                + A.backfill.made.toLocaleString() + '건 — 새 거래를 기다리지 않고 과거 결과로 학습 중</div>';
+        }
+        var TH = (d && d.thr) || {};
+        var tt = function(nm, o){
+          if (!o) return null;
+          if (o.thr == null) return nm + ' 고정 ' + (o.fixed != null ? o.fixed.toFixed(2) : '—') + ' <span style="color:var(--t3);">(분포 ' + (o.n||0) + '/200)</span>';
+          var used = Math.min(Math.max(o.floor != null ? o.floor : 0.53, o.thr), o.fixed);
+          return nm + ' <b>' + used.toFixed(3) + '</b> <span style="color:var(--t3);">상위' + Math.round((o.topPct||0.18)*100) + '% ' + o.thr.toFixed(3) + '</span>';
+        };
+        var t1 = tt('US', TH.us), t2 = tt('KR', TH.kr);
+        if (t1 || t2) html += '<div style="margin-top:4px;"><span style="color:var(--t3);">진입문턱</span> &nbsp; ' + [t1, t2].filter(Boolean).join(' &nbsp; ') + '</div>';
+      } catch (e) {}
       if (d && d.scan && d.scan.top && d.scan.top.length) {
         html += '<div style="margin-top:5px;"><span style="color:var(--t3);">야간 AI픽</span> &nbsp; ' + d.scan.top.slice(0,5).map(function(p){ return escapeHtml(p.symbol)+' <span style="color:var(--t3);">'+(p.p*100).toFixed(0)+'%</span>'; }).join(' · ') + '</div>';
       }
@@ -14359,6 +14384,40 @@ html[data-theme="light"] .rail{background:#fff;}
           mrow('GBDT', c.gbdt, dg.gbdt, null),
           brow('XGB', c.xgb), brow('LGB', c.lgb), brow('Cat', c.cat)
         ]);
+
+    // [V33.81] 신규 3모델(FLOW·XALPHA·STACK) — 학습 대기 중에도 표본 진행이 보이게 한다.
+    //   "만들어놨는데 화면에 안 보인다"가 반복돼서, 값이 없어도 행은 항상 그린다.
+    var alt = mode.alt || {};
+    var arow = function(nm, o, desc){
+      if(!o) return [ico(null)+' '+nm, '<span class="sub">'+desc+'</span>'];
+      var body;
+      if(o.trusted && has(o.ic))      body = col('가동', C.pos)+' <span class="sub">IC '+o.ic.toFixed(3)+' · 정확도 '+(has(o.acc)?(o.acc*100).toFixed(1)+'%':'—')+'</span>';
+      else if(o.trained)              body = col('IC 미달 대기', C.amb)+' <span class="sub">IC '+(has(o.ic)?o.ic.toFixed(3):'—')+' · 표본 '+n0(o.n)+'</span>';
+      else                            body = col('표본수집', C.amb)+' <span class="sub">'+n0(o.samples)+' / '+n0(o.minN)+'</span>';
+      return [ico(o.trusted ? true : null)+' '+nm, body];
+    };
+    var bfTxt = alt.backfill && alt.backfill.made
+      ? '<span class="sub">소급생성 '+n0(alt.backfill.made)+'건 (커서 '+n0(alt.backfill.cursor)+')</span>'
+      : '<span class="sub">대기</span>';
+    h += sec('신규 모델')
+      + tbl([
+          arow('FLOW', alt.flow, '피어그래프·공매도·내부자'),
+          arow('XALPHA', alt.xalpha, '형식알파·횡단면 랭크'),
+          arow('STACK', alt.stack, '전문가 통합(투표 대체)'),
+          ['기존표본 소급', bfTxt]
+        ]);
+
+    // [V33.81] 진입 문턱 실황 — 백분위 문턱이 실제로 어디 걸려 있는지.
+    var th = mode.thr || {};
+    var trow = function(nm, o){
+      if(!o) return [nm, null];
+      if(o.thr == null) return [nm, '<span class="sub">고정 '+(has(o.fixed)?o.fixed.toFixed(2):'—')+' · 분포 '+n0(o.n)+'/200</span>'];
+      var eff = Math.max(o.floor != null ? o.floor : 0.53, o.thr);
+      var used = Math.min(eff, o.fixed);
+      return [nm, em(used.toFixed(3)) + ' <span class="sub">상위 '+Math.round((o.topPct||0.18)*100)+'% 기준 '+o.thr.toFixed(3)+' · 고정 '+o.fixed.toFixed(2)+'</span>'];
+    };
+    h += sec('진입 문턱')
+      + tbl([ trow('미국장', th.us), trow('한국장', th.kr) ]);
 
     // ⑥ AI 픽 — 없으면 빈 행
     var top = (picks || []).filter(function(p){ return !p.abstain; }).slice(0, 5);

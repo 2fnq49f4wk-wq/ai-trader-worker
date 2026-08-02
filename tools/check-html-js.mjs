@@ -53,8 +53,20 @@ try {
           samples:{total:173955,featVer:13,today:0,yesterday:0},
           committee:{mind:true,dnn:true,gbdt:true,
             xgb:{trusted:true,accLB:0.53,w:0.39,source:'external',promoted:true},lgb:null,cat:null},
-          diag:{dnn:{stored:true,featVerOk:true,trusted:true,w:0.41,source:'external'}}},
+          diag:{dnn:{stored:true,featVerOk:true,trusted:true,w:0.41,source:'external'}},
+          alt:{flow:{samples:412,minN:800,trained:false,trusted:false,acc:null,ic:null,n:null},
+               xalpha:{samples:9200,minN:800,trained:true,trusted:true,acc:0.552,ic:0.041,n:9200},
+               stack:{samples:120,minN:600,trained:false,trusted:false},
+               backfill:{made:18400,cursor:52310,ts:Date.now()}},
+          thr:{us:{n:2000,thr:0.612,fixed:0.55,floor:0.53,topPct:0.18},
+               kr:{n:37,thr:null,fixed:0.55}}},
           [{symbol:'NVDA',rankP:0.71}]],
+        // [V33.81] 신규 3모델 표시 — 값이 부분적으로 비어도 그려져야 한다.
+        altPartial: [{ aiReady:true, scalp:{}, samples:{}, committee:{},
+          alt:{flow:null, xalpha:{samples:0,minN:800,trained:false,trusted:false},
+               stack:{samples:600,minN:600,trained:true,trusted:false,ic:0.004,n:600},
+               backfill:null},
+          thr:{us:null, kr:{n:0,thr:null,fixed:0.55}} }, []],
         nullMode: [null, null]
       };
       var errs = [];
@@ -62,15 +74,16 @@ try {
         try { renderRailAiMode(CASES[k][0], CASES[k][1]); }
         catch (e) { errs.push(k + ': ' + e.message); }
       }
-      errs;
+      ({ errs: errs, n: Object.keys(CASES).length });
     `;
-    const errs = new vm.Script(harness, { filename: "renderRailAiMode-runtime" })
+    const res = new vm.Script(harness, { filename: "renderRailAiMode-runtime" })
       .runInNewContext({ Date, Math, JSON, Number, String, Object, Array, isNaN, parseInt, parseFloat });
-    if (errs && errs.length) {
+    const errs = (res && res.errs) || [];
+    if (errs.length) {
       rtBad = errs.length;
       for (const e of errs) console.error(`  FAIL runtime ${e}`);
     } else {
-      console.log("  ok   renderRailAiMode 런타임 4케이스");
+      console.log("  ok   renderRailAiMode 런타임 " + ((res && res.n) || 0) + "케이스");
     }
   }
 } catch (e) {

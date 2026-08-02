@@ -2500,7 +2500,7 @@ async function applySignalTypeWeights(DB, cfg) {
 // ============================================================================
 // [V33.55] 빌드 버전 — SWR L2 캐시 키에 섞어 '배포 = 판단 캐시 자동 무효화'를 만든다.
 //   판정 로직을 고쳐도 옛 캐시가 최대 1시간 재배포되던 문제를 구조적으로 없앤다.
-const _BUILD_VER = "V33.80";
+const _BUILD_VER = "V33.81";
 
 const AI_PARAMS = {
   // ── OHLCV 타임프레임 ── 시가/고가/저가/종가/거래량을 어떤 봉 주기로 볼지.
@@ -16983,8 +16983,53 @@ async function handleRequest(request, env, ctx) {
         // [V33.60] 섹터 6종 온도 — 반도체 외 섹터도 화면에 보이게(사용자 요청).
         let _sect = null;
         try { const _sp = await getState(env.DB, "sector_pulse", null); if (_sp && _sp.g) _sect = _sp.g; } catch (e) {}
+        // [V33.81] 신규 3모델(FLOW·XALPHA·STACK) 상태 — AI 두뇌·운용상태에서 보이게 한다.
+        //   표본이 문턱에 못 미쳐 학습 대기 중인 것도 "몇/몇"으로 보여야 진행이 눈에 보인다.
+        let _alt = null;
+        try {
+          const _mk = async function (key, table, minN, featVer) {
+            const m = await getState(env.DB, key, null);
+            let n = 0;
+            try {
+              const r = await env.DB.prepare("SELECT COUNT(*) c FROM " + table + " WHERE featver = ?").bind(featVer).first();
+              n = _num(r && r.c, 0);
+            } catch (e) {}
+            return {
+              samples: n, minN: minN,
+              trained: !!(m && m.featVer === featVer),
+              trusted: !!(m && m.trusted),
+              acc: m ? _num(m.valAcc, null) : null,
+              ic: m ? _num(m.valIC, null) : null,
+              valN: m ? _num(m.valN, null) : null,
+              n: m ? _num(m.n, null) : null,
+              ts: m ? _num(m.ts, null) : null
+            };
+          };
+          const _bf = await getState(env.DB, "alt_bf_cursor", null);
+          _alt = {
+            flow: await _mk("flow_model", "flow_samples", FLOWML.minTrainSamples, FLOWML.featVer),
+            xalpha: await _mk("xalpha_model", "xalpha_samples", XALPHA.minTrainSamples, XALPHA.featVer),
+            stack: await _mk("stack_model", "stack_samples", STACKML.minTrainSamples, STACKML.featVer),
+            backfill: _bf ? { made: _num(_bf.made, 0), cursor: _num(_bf.lastId, 0), ts: _num(_bf.ts, 0) } : null
+          };
+        } catch (e) {}
+        // [V33.81] 진입 문턱 실황 — 백분위 문턱이 실제로 어디에 걸려 있는지.
+        let _thr = null;
+        try {
+          const _ap = (AI_PARAMS && AI_PARAMS.aiPrimary) || {};
+          const _mkThr = async function (mkt) {
+            const d = await getState(env.DB, "ai_pdist:" + mkt, null);
+            if (!d || !Array.isArray(d.v) || d.v.length < 200) return { n: d && d.v ? d.v.length : 0, thr: null, fixed: _num(_ap.threshold, 0.55) };
+            const srt = d.v.slice().sort(function (x, y) { return x - y; });
+            const idx = Math.min(srt.length - 1, Math.max(0, Math.floor(srt.length * (1 - _num(_ap.topPct, 0.18)))));
+            return { n: srt.length, thr: +srt[idx].toFixed(4), fixed: _num(_ap.threshold, 0.55),
+                     floor: _num(_ap.absFloor, 0.53), topPct: _num(_ap.topPct, 0.18) };
+          };
+          _thr = { us: await _mkThr("us"), kr: await _mkThr("kr") };
+        } catch (e) {}
         const _out = { aiReady: aiReady, mode: aiReady ? "AI_AUTONOMOUS" : "RULE_FALLBACK", scalp: _scalp,
                  committee: { mind: mindOk, dnn: dnnOk, gbdt: gbdtOk, xgb: xgb, lgb: lgb, cat: cat },
+                 alt: _alt, thr: _thr,
                  diag: _diag,
                  phase: _phase, xmkt: _xmkt, sectors: _sect,
                  selfreview: review, scan: scan, samples: samples, degraded: false };
@@ -21734,6 +21779,125 @@ function flowScore(model, featVec) {
 //
 //  ★왜 또 새 모델인가★ 기존 LUXML featVer 를 올리면 17만 표본이 무효가 된다(사용자 지시).
 //    FLOW 와 마찬가지로 독립 피처벡터·독립 표본·독립 모델로 두고 위원회에 합류시킨다.
+// ════════════════════════════════════════════════════════════════════════════
+// [V33.81] ★기존 표본으로 XALPHA·FLOW 를 소급 학습★ (사용자 질문: "이미 있는 표본으로 학습 가능한가")
+//
+//  가능하다. 근거:
+//   · ml_samples 에 (ts, market, symbol, pnl_pct) 가 전부 남아 있다 — 언제 어느 종목을 사서
+//     결과가 어땠는지가 그대로 있다.
+//   · daily:<종목> 캐시가 320거래일치 OHLCV 를 들고 있다 — 과거 어느 날 시점으로 잘라낼 수 있다.
+//   즉 "그 날 그 종목의 XALPHA/FLOW 피처"를 다시 만들어 이미 아는 결과에 붙이면
+//   표본이 생긴다. 새 거래를 기다릴 필요가 없다.
+//
+//  ★룩어헤드 금지★ 봉 인덱스는 항상 '내림'으로 잡는다. 하루라도 미래 봉이 섞이면
+//    학습이 오염되고 그건 백테스트 사기가 된다. 캘린더일→거래일 환산은 252/365 로 하되
+//    보수적으로 floor 를 쓰고, 인덱스가 창 길이에 못 미치면 그 표본은 버린다.
+//
+//  ★STACK 은 소급 생성하지 않는다★ 스택 입력은 '그 시점 전문가들의 확률'인데, 지금 모델로
+//    과거 표본을 채점하면 그 모델들이 바로 그 표본으로 학습돼 있어 in-sample 확률이 나온다.
+//    실제보다 훨씬 잘 맞는 값으로 메타모델을 가르치게 되고, 라이브에서 무너진다.
+//    STACK 만은 새 거래로 정직하게 모아야 한다.
+const ALTBF = { batchDates: 6, maxPerRun: 1200, minIdx: 30 };
+
+// ts(ms) → 종가배열 인덱스. 오늘이 마지막 봉이라는 가정 하에 거래일 수만큼 되돌린다.
+function _altBarIdx(len, ts, nowTs) {
+  const calDays = Math.max(0, (nowTs - ts) / 86400000);
+  const tradingBack = Math.ceil(calDays * (252 / 365));   // ★올림★ = 과거로 더 감 = 안전
+  const idx = len - 1 - tradingBack;
+  return idx;
+}
+function _sliceTo(arr, idx) { return Array.isArray(arr) ? arr.slice(0, idx + 1) : null; }
+
+async function altSampleBackfill(DB, opts) {
+  const cfg = opts || {};
+  try {
+    if (!XALPHA.enabled && !FLOWML.enabled) return "[ALT-BF] 비활성";
+    // 진행 커서 — 오래된 표본부터 처리하고 이어서 돈다.
+    const st = (await getState(DB, "alt_bf_cursor", null)) || { lastId: 0, made: 0 };
+    const rows = (await DB.prepare(
+      "SELECT id, ts, market, symbol, pnl_pct FROM ml_samples WHERE id > ? AND featver = ? ORDER BY id ASC LIMIT ?"
+    ).bind(_num(st.lastId, 0), LUXML.featVer, ALTBF.maxPerRun).all()).results || [];
+    if (!rows.length) return "[ALT-BF] 남은 표본 없음 (커서 " + st.lastId + ", 누적생성 " + _num(st.made, 0) + ")";
+
+    // 날짜(YYYY-MM-DD)별로 묶는다 — 횡단면 패널을 날짜마다 한 번만 만들기 위해서.
+    const byDay = {};
+    for (const r of rows) {
+      const d = new Date(_num(r.ts, 0));
+      const key = d.getUTCFullYear() + "-" + String(d.getUTCMonth() + 1).padStart(2, "0") + "-" + String(d.getUTCDate()).padStart(2, "0");
+      (byDay[key] = byDay[key] || []).push(r);
+    }
+    const days = Object.keys(byDay).sort().slice(0, ALTBF.batchDates);
+
+    // 필요한 종목의 일봉만 로드(전 종목이 아니라 이 배치에 등장한 종목만).
+    const need = new Set();
+    for (const dk of days) for (const r of byDay[dk]) if (r.symbol) need.add(r.symbol);
+    const dailyAll = {};
+    for (const sy of need) {
+      try { const dd = await getState(DB, "daily:" + sy, null); if (dd && Array.isArray(dd.closes)) dailyAll[sy] = dd; } catch (e) {}
+    }
+    // 패널용 — 같은 시장 전 종목이 필요하므로 daily: 전체를 한 번 훑는다(배치당 1회).
+    const universe = {};
+    try {
+      const dr = await DB.prepare("SELECT k, v FROM state WHERE k >= 'daily:' AND k < 'daily;'").all();
+      for (const r of ((dr && dr.results) || [])) {
+        const sy = String(r.k).slice(6);
+        if (!sy || sy[0] === "^") continue;
+        try {
+          const v = (typeof r.v === "string") ? JSON.parse(r.v) : r.v;
+          if (v && Array.isArray(v.closes) && v.closes.length >= 60) universe[sy] = v;
+        } catch (e) {}
+      }
+    } catch (e) {}
+
+    const now = Date.now();
+    let madeX = 0, madeF = 0, skipped = 0, lastId = _num(st.lastId, 0);
+    for (const dk of days) {
+      const list = byDay[dk];
+      const ts0 = _num(list[0].ts, now);
+      // 이 날짜 시점으로 잘라낸 우주 — 패널과 피어 계산에 함께 쓴다.
+      const snap = {};
+      for (const sy in universe) {
+        const u = universe[sy];
+        const idx = _altBarIdx(u.closes.length, ts0, now);
+        if (idx < ALTBF.minIdx) continue;
+        snap[sy] = {
+          closes: _sliceTo(u.closes, idx), opens: _sliceTo(u.opens, idx),
+          highs: _sliceTo(u.highs, idx), lows: _sliceTo(u.lows, idx),
+          volumes: _sliceTo(u.volumes, idx)
+        };
+      }
+      if (Object.keys(snap).length < 20) { for (const r of list) lastId = Math.max(lastId, r.id); skipped += list.length; continue; }
+      const panelUS = XALPHA.enabled ? xalphaBuildPanel(snap, "us") : null;
+      const panelKR = XALPHA.enabled ? xalphaBuildPanel(snap, "kr") : null;
+      for (const r of list) {
+        lastId = Math.max(lastId, r.id);
+        const sy = r.symbol, mk = String(r.market || "us");
+        if (!sy || !snap[sy]) { skipped++; continue; }
+        if (XALPHA.enabled) {
+          const f = xalphaBuildFeat(sy, snap, mk === "kr" ? panelKR : panelUS);
+          if (f) { await xalphaLogSample(DB, mk, sy, f, _num(r.pnl_pct, 0)); madeX++; }
+        }
+        if (FLOWML.enabled) {
+          // 포지셔닝(공매도·내부자·풋콜)은 시점 데이터라 과거 값을 알 수 없다 → 0(중립).
+          //   피어 그래프만으로도 6/12 차원이 채워지고, 그 부분은 완전히 정직한 소급 계산이다.
+          const peer = await flowPeerFeat(DB, sy, mk, snap);
+          if (peer) {
+            const g = function (o, k) { return (o && typeof o[k] === "number" && isFinite(o[k])) ? o[k] : 0; };
+            const fv = [g(peer, "peerRet5"), g(peer, "peerRet20"), g(peer, "peerDisp"),
+                        g(peer, "peerRel5"), g(peer, "peerCorrAvg"), g(peer, "peerLead"),
+                        0, 0, 0, 0, 0, 0];
+            await flowLogSample(DB, mk, sy, fv, _num(r.pnl_pct, 0));
+            madeF++;
+          }
+        }
+      }
+    }
+    await setState(DB, "alt_bf_cursor", { lastId: lastId, made: _num(st.made, 0) + madeX + madeF, ts: Date.now() });
+    return "[ALT-BF] 날짜 " + days.length + "일 처리 — XALPHA +" + madeX + " / FLOW +" + madeF +
+           " (건너뜀 " + skipped + ", 커서 " + lastId + ")";
+  } catch (e) { return "[ALT-BF] 실패: " + (e && e.message); }
+}
+
 // [V33.80] STACK — 전문가 확률을 입력으로 받아 최종 확률을 내는 메타모델(스태킹).
 //   입력: 전문가 7명의 확률 7개 + 참여마스크 7개 = 14차원.
 //   참여마스크를 함께 넣는 이유: "그 전문가가 오늘 없었다"와 "있었는데 0.5였다"는 다른 정보다.
@@ -32165,6 +32329,19 @@ export default {
           }
         }
       } catch (e) { try { await log(env.DB, "ERROR", null, "[원장정리] 예외: " + (e && e.message)); } catch (e2) {} }
+
+      // 0.955) [V33.81] ★기존 표본으로 XALPHA·FLOW 소급 학습표본 생성★
+      //   새 거래를 기다리지 않고 이미 아는 결과(17만건)에 새 피처를 붙인다.
+      //   장외에만, 10분에 한 번, 배치 크기를 작게 — 거래 사이클을 방해하지 않는다.
+      try {
+        let _mkoBf2 = false; try { _mkoBf2 = isMarketOpen("us") || isMarketOpen("kr"); } catch (e) {}
+        const _abLock = _num(await getState(env.DB, "alt_bf_lock", 0), 0);
+        if (!_mkoBf2 && (Date.now() - _abLock) > 10 * 60000) {
+          await setState(env.DB, "alt_bf_lock", Date.now());
+          const _abr = await altSampleBackfill(env.DB, {});
+          if (_abr) await log(env.DB, "INFO", null, _abr);
+        }
+      } catch (e) { try { await log(env.DB, "WARN", null, "[ALT-BF] 예외: " + (e && e.message)); } catch (e2) {} }
 
       // 0.956) [V33.73] ★원장 정합성 자동감사★
       //   runLedgerAudit 는 유령매도(보유초과 매도)·포지션 드리프트를 정확히 잡아내는데
