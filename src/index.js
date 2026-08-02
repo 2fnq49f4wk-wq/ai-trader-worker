@@ -2500,7 +2500,7 @@ async function applySignalTypeWeights(DB, cfg) {
 // ============================================================================
 // [V33.55] 빌드 버전 — SWR L2 캐시 키에 섞어 '배포 = 판단 캐시 자동 무효화'를 만든다.
 //   판정 로직을 고쳐도 옛 캐시가 최대 1시간 재배포되던 문제를 구조적으로 없앤다.
-const _BUILD_VER = "V33.79";
+const _BUILD_VER = "V33.80";
 
 const AI_PARAMS = {
   // ── OHLCV 타임프레임 ── 시가/고가/저가/종가/거래량을 어떤 봉 주기로 볼지.
@@ -2789,6 +2789,11 @@ const AI_PARAMS = {
   aiPrimary: {
     enabled: true,          // AI 주도 진입 활성(끄려면 false → 규칙엔진 전용으로 복귀)
     threshold: 0.55,        // [V12.89] 0.60→0.55 — 블렌드확률 기준 0.60은 과도(매수 정체). 기술 드라이버와 함께 완화(규칙신호 없는 종목이라 보수적)
+    // [V33.80] 횡단면 백분위 문턱 — 고정 확률문턱의 '모델이 좋아질수록 거래가 마르는' 역설을 없앤다.
+    //   topPct: 최근 후보 p 분포에서 상위 몇 %를 진입 후보로 볼 것인가.
+    //   absFloor: 그래도 이 확률 미만이면 안 산다(동전던지기 매수 차단).
+    topPct: 0.18,
+    absFloor: 0.53,
     // [V12.132] 8→30. 평가가 3.6%만 돌던 시절엔 8이 합리적이었으나, 이제 557종목을 100% 완주하므로
     //   8은 명백한 병목이었다(로그: NOBUY no_signal 549 — 평가한 549종목이 상한 때문에 후보조차 못 됨).
     //   실제 진입은 아래 위원회(p>=threshold·metaHardFilter·합의도)가 결정하므로 후보 확대가
@@ -10992,6 +10997,7 @@ async function executeBuy(DB, market, symbol, strategy, qty, price, signal, dail
           // [V33.78] 진입 시점 FLOW 피처 스냅샷 — 청산 때 라벨을 붙여 표본이 된다.
           flowFeat: (signal && Array.isArray(signal.flowFeat)) ? signal.flowFeat : null,
           xaFeat: (signal && Array.isArray(signal.xaFeat)) ? signal.xaFeat : null,
+          stackFeat: (signal && Array.isArray(signal.stackFeat)) ? signal.stackFeat : null,
           banditArmIdx: (signal && signal.mlBanditArmIdx != null) ? signal.mlBanditArmIdx : null,
           banditCtxX: (signal && Array.isArray(signal.mlBanditCtxX)) ? signal.mlBanditCtxX : null,
           // [V12.47] ★버그수정★ target:"alpha" 모드에선 idxRetPct 없으면 mlLogSample이 표본을
@@ -11142,6 +11148,7 @@ async function executeSell(DB, market, symbol, pos, sellQty, price, reason, cfg,
         try {
           if (Array.isArray(pos.meta.flowFeat)) await flowLogSample(DB, market, symbol, pos.meta.flowFeat, pnlPct);
           if (Array.isArray(pos.meta.xaFeat)) await xalphaLogSample(DB, market, symbol, pos.meta.xaFeat, pnlPct);
+          if (Array.isArray(pos.meta.stackFeat)) await stackLogSample(DB, market, symbol, pos.meta.stackFeat, pnlPct);
         } catch (e) {}
       }
       if (Array.isArray(pos.meta.mlEvKeys) && pos.meta.mlEvKeys.length && typeof mlUpdateEventExpectancy === "function") {
@@ -14589,6 +14596,8 @@ async function runTradingCycle(env) {
       //   일봉캐시는 이미 daily: 로 D1 에 있으니 한 번 훑어 메모리에 올린다(종목마다 재조회 금지).
       let __flowModel = null, __dailyCacheForFlow = {}, __flowCollect = false;
       let __xaModel = null, __xaPanel = null;   // [V33.79] XALPHA — 형식알파 + 횡단면 랭크
+      let __stackModel = null;   // [V33.80] STACK 메타모델(투표 대체)
+      let __pDistCache = null, __pDistNew = [];   // [V33.80] 후보 p 분포(백분위 문턱용)
       let __mlDrift = { drift: false, action: "none", acc: null };  // [V16] 모델 열화 감지(사이클 1회)
       const __sentiOvrMemo = {};  // [V14] 종목별 감성 오버라이드 판정 사이클 캐시(매도·매수 루프 공유)
       const __candBatch = [], __candSyms = new Set();  // [LUX-AI] 반사실 후보 배치(사이클당 1커밋)
@@ -14612,6 +14621,8 @@ async function runTradingCycle(env) {
             if (FLOWML.enabled) {
               __flowModel = await getState(DB, "flow_model", null);
               try { __xaModel = await getState(DB, "xalpha_model", null); } catch (e2) {}
+              try { __stackModel = await getState(DB, "stack_model", null); } catch (e2) {}
+              try { __pDistCache = await getState(DB, "ai_pdist:" + market, null); } catch (e2) {}
               const _fs = await getState(DB, "flow_samples_n", null);
               __flowCollect = true;   // 표본이 없을수록 수집이 급하다 — 항상 켠다(피어는 네트워크 0)
               const _dr = await DB.prepare("SELECT k, v FROM state WHERE k >= 'daily:' AND k < 'daily;'").all();
@@ -15973,7 +15984,7 @@ async function runTradingCycle(env) {
                     if (__xaFeat) signal.xaFeat = __xaFeat;
                   }
                 } catch (e) {}
-                try { _md = await mlDeepDecide(DB, signal.mlFeat, { mind: __mind, guard: __guard, ens: __ensemble, trust: __dnnTrust, dnn: __dnn, gbdtTrust: __gbdtTrust, gbdt: __gbdt, cal: __cal, evstats: __evStats, shock: await _luxMarketShockCached(DB), sym: symbol, evCtx: await _luxEventContextCached(DB), applyEventPrior: true, market: market, flowFeat: __flowFeat, flowModel: __flowModel, xaFeat: __xaFeat, xaModel: __xaModel }); } catch (e) {}
+                try { _md = await mlDeepDecide(DB, signal.mlFeat, { mind: __mind, guard: __guard, ens: __ensemble, trust: __dnnTrust, dnn: __dnn, gbdtTrust: __gbdtTrust, gbdt: __gbdt, cal: __cal, evstats: __evStats, shock: await _luxMarketShockCached(DB), sym: symbol, evCtx: await _luxEventContextCached(DB), applyEventPrior: true, market: market, flowFeat: __flowFeat, flowModel: __flowModel, xaFeat: __xaFeat, xaModel: __xaModel, stackModel: __stackModel }); } catch (e) {}
                 if (!_md) { try { _md = await mlMindDecide(DB, signal.mlFeat, { mind: __mind, guard: __guard, ens: __ensemble }); } catch (e) {} }
                 // [V5] AI 픽 수집 — 개입 여부와 무관하게 예측 자체는 기록(종목당 1회)
                 try {
@@ -16016,6 +16027,28 @@ async function runTradingCycle(env) {
                       _thrAI = _clamp(_thrAI + _pa2.threshDelta[_ph2], 0.4, 0.9);
                     }
                   } catch (e) {}
+                  // ══ [V33.80] ★고정 확률문턱 → 횡단면 백분위 문턱★ ══
+                  //   실측: 전문가가 1명→7명이 되면 판별력(AUC)은 0.69→0.82 로 좋아지는데
+                  //   결합확률 분포가 좁아져(σ 0.149→0.098) 고정 0.60 을 넘는 건이 26.9%→16.1% 로 준다.
+                  //   모델을 잘 만들수록 거래가 마르는 역설이다. 문턱이 확률의 절대값에 걸려 있어서다.
+                  //   JPX Tokyo(Kaggle 2022)가 "상위 200 − 하위 200"으로 평가한 것처럼, 실전에서
+                  //   중요한 건 "p가 0.6을 넘었나"가 아니라 "오늘 후보 중 상위 몇 %인가"다.
+                  //   → 최근 후보들의 p 분포에서 목표 백분위에 해당하는 값을 문턱으로 쓴다.
+                  //     분포가 좁아지면 문턱도 같이 내려가 진입 빈도가 유지된다.
+                  //     단, 절대 하한(0.5 + floor)은 유지해 '동전던지기 매수'는 막는다.
+                  try {
+                    const _pd = __pDistCache;   // 사이클 1회 로드
+                    if (_pd && Array.isArray(_pd.v) && _pd.v.length >= 200) {
+                      const _tgtPct = (_ap2.topPct != null ? _ap2.topPct : 0.18);   // 상위 18% 목표
+                      const _srt = _pd.v.slice().sort(function (x, y) { return x - y; });
+                      const _idx = Math.min(_srt.length - 1, Math.max(0, Math.floor(_srt.length * (1 - _tgtPct))));
+                      const _pctThr = _srt[_idx];
+                      const _floor = (_ap2.absFloor != null ? _ap2.absFloor : 0.53);
+                      const _newThr = _clamp(Math.max(_floor, _pctThr), 0.5, 0.9);
+                      // 고정문턱보다 낮아질 때만 적용한다(문턱을 올려 거래를 더 막지는 않는다).
+                      if (_newThr < _thrAI) _thrAI = _newThr;
+                    }
+                  } catch (e) {}
                   if (!_md || !_md.allow || _md.observe || _md.abstain
                       || !(typeof _md.p === "number" && _md.p >= _thrAI)
                       || (_ap2.maxDisagree != null && _dis > _ap2.maxDisagree)
@@ -16056,6 +16089,10 @@ async function runTradingCycle(env) {
                     if (_sm !== 1) qty = Math.max(0, Math.floor(qty * _sm));
                   }
                   signal.mlMindP = (typeof _md.p === "number") ? _md.p : null;
+                  // [V33.80] 후보 확률을 모아 둔다 — 다음 사이클의 백분위 문턱 기준이 된다.
+                  if (typeof _md.p === "number" && isFinite(_md.p)) __pDistNew.push(+_md.p.toFixed(4));
+                  // [V33.80] 스태킹 표본용 — 전문가 확률 스냅샷을 진입 메타에 싣는다.
+                  if (Array.isArray(_md.stackFeat)) signal.stackFeat = _md.stackFeat;
                 } else {
                   // MIND/DEEP 미준비 → 톰슨 밴딧 사이징 폴백
                   let _bd = null;
@@ -16176,6 +16213,16 @@ async function runTradingCycle(env) {
         try {
           __aiPicks.sort(function (a, b) { return (a.abstain === b.abstain ? b.p - a.p : (a.abstain ? 1 : -1)); });
           await setState(DB, "ai_picks:" + market, { ts: Date.now(), picks: __aiPicks.slice(0, 20) });
+          // [V33.80] 후보 p 분포 갱신 — 최근 2,000건만 유지(백분위 문턱 기준).
+          //   D1 write 는 시장당 사이클 1회뿐이라 부하가 없다.
+          try {
+            if (__pDistNew.length) {
+              const _old = (__pDistCache && Array.isArray(__pDistCache.v)) ? __pDistCache.v : [];
+              const _merged = _old.concat(__pDistNew);
+              const _keep = _merged.length > 2000 ? _merged.slice(_merged.length - 2000) : _merged;
+              await setState(DB, "ai_pdist:" + market, { v: _keep, ts: Date.now() });
+            }
+          } catch (e) {}
           __aiPicks.length = 0; __candSyms.clear();
         } catch (e) {}
       }
@@ -18022,12 +18069,12 @@ async function handleRequest(request, env, ctx) {
     if (path === "/api/ai/train-now" && request.method === "POST") {
       const au = _trainAuthed(); if (!au.ok) return Response.json({ error: au.msg }, { status: au.code, headers: cors });
       const target = url.searchParams.get("target") || "mind";
-      const FN = { mind: mlMindTrainNightly, gbdt: mlGBDTTrainNightly, brain: mlBrainTrainNightly, dnn: mlDNNTrainNightly, l1: mlTrainNightly, calibrate: mlCalibrateCommittee, selfreview: mlSelfReview, flow: flowTrainNightly, xalpha: xalphaTrainNightly };
+      const FN = { mind: mlMindTrainNightly, gbdt: mlGBDTTrainNightly, brain: mlBrainTrainNightly, dnn: mlDNNTrainNightly, l1: mlTrainNightly, calibrate: mlCalibrateCommittee, selfreview: mlSelfReview, flow: flowTrainNightly, xalpha: xalphaTrainNightly, stack: stackTrainNightly };
       // [V12.63] target=all — 재배포 직후 "한 방에" 전체 파이프라인을 정확한 순서로 재실행(하루1회 게이트 무시).
       //   순서 고정: harvest → l1 → brain → mind → dnn → gbdt → calibrate (뒤 단계가 앞 단계 산출물 의존).
       //   각 단계 자체 CPU예산 가드가 있어 안전. 재학습 즉시 모든 수정이 반영되게 하는 원클릭 경로.
       if (target === "all") {
-        const _order = [["harvest", mlMarketHarvestNightly], ["l1", mlTrainNightly], ["brain", mlBrainTrainNightly], ["mind", mlMindTrainNightly], ["gbdt", mlGBDTTrainNightly], ["dnn", mlDNNTrainNightly], ["flow", flowTrainNightly], ["xalpha", xalphaTrainNightly], ["calibrate", mlCalibrateCommittee]];
+        const _order = [["harvest", mlMarketHarvestNightly], ["l1", mlTrainNightly], ["brain", mlBrainTrainNightly], ["mind", mlMindTrainNightly], ["gbdt", mlGBDTTrainNightly], ["dnn", mlDNNTrainNightly], ["flow", flowTrainNightly], ["xalpha", xalphaTrainNightly], ["stack", stackTrainNightly], ["calibrate", mlCalibrateCommittee]];
         const out = {};
         for (const [nm, fn] of _order) {
           try { out[nm] = await fn(env.DB); } catch (e) { out[nm] = "FAIL: " + (e && e.message); }
@@ -21687,6 +21734,37 @@ function flowScore(model, featVec) {
 //
 //  ★왜 또 새 모델인가★ 기존 LUXML featVer 를 올리면 17만 표본이 무효가 된다(사용자 지시).
 //    FLOW 와 마찬가지로 독립 피처벡터·독립 표본·독립 모델로 두고 위원회에 합류시킨다.
+// [V33.80] STACK — 전문가 확률을 입력으로 받아 최종 확률을 내는 메타모델(스태킹).
+//   입력: 전문가 7명의 확률 7개 + 참여마스크 7개 = 14차원.
+//   참여마스크를 함께 넣는 이유: "그 전문가가 오늘 없었다"와 "있었는데 0.5였다"는 다른 정보다.
+//   마스크가 없으면 결측을 중립값으로 채우는 순간 두 경우가 구분되지 않아 메타모델이 헷갈린다.
+const STACKML = {
+  enabled: true,
+  featVer: 1,
+  minTrainSamples: 600,     // 14차원이라 600건이면 수렴한다
+  trainWindow: 40000,
+  l2: 1.5,                  // 전문가 확률끼리 상관이 높아 규제를 조금 세게
+  icFloor: 0.015            // 투표를 대체하는 자리라 문턱을 FLOW/XALPHA 보다 높게
+};
+
+async function stackLogSample(DB, market, symbol, featVec, pnlPct) {
+  try {
+    if (!STACKML.enabled || !Array.isArray(featVec) || featVec.length !== 14) return;
+    await DB.prepare("CREATE TABLE IF NOT EXISTS stack_samples (id INTEGER PRIMARY KEY AUTOINCREMENT, ts INTEGER, market TEXT, symbol TEXT, feat TEXT, label INTEGER, pnl_pct REAL, featver INTEGER)").run();
+    await DB.prepare("INSERT INTO stack_samples (ts, market, symbol, feat, label, pnl_pct, featver) VALUES (?,?,?,?,?,?,?)")
+      .bind(Date.now(), market, symbol, JSON.stringify(featVec), _num(pnlPct, 0) > 0 ? 1 : 0, _num(pnlPct, 0), STACKML.featVer).run();
+  } catch (e) {}
+}
+async function stackTrainNightly(DB) {
+  if (!STACKML.enabled) return null;
+  return await _miniLogisticTrain(DB, {
+    table: "stack_samples", stateKey: "stack_model", tag: "STACK",
+    featVer: STACKML.featVer, D: 14,
+    minN: STACKML.minTrainSamples, window: STACKML.trainWindow,
+    l2: STACKML.l2, icFloor: STACKML.icFloor
+  });
+}
+
 const XALPHA = {
   enabled: true,
   featVer: 1,
@@ -25627,6 +25705,7 @@ async function mlDeepDecide(DB, featVec, opts) {
     //   [V4] 각 전문가의 검증정확도 "Wilson 하한" 소프트맥스(T=12)로 로짓 가중평균.
     //   신뢰 못 받은 전문가는 불참. 결합확률은 야간 보정 온도(committee_cal.T)로 캘리브레이션.
     let usedDnn = false, usedGbdt = false;
+    let _usedStack = false;   // [V33.80] STACK 메타모델이 결합확률을 냈는가
     let _diVal = null;   // [V12.73] FreqAI식 Dissimilarity Index — 입력이 학습분포에서 얼마나 먼지(평균|z|)
     if (trust && trust.trusted && trust.wDnn > 0) {
       const net = (opts.dnn !== undefined) ? opts.dnn : await mlDNNLoad(DB);
@@ -25733,6 +25812,28 @@ async function mlDeepDecide(DB, featVec, opts) {
       if (_relMap && _relMap[ex.name] && _relMap[ex.name].n >= 80 && _relMap[ex.name].accLB != null) return 0.5 * ex.acc + 0.5 * _relMap[ex.name].accLB;
       return ex.acc;
     };
+    // ══ [V33.80] ★STACK — 위원회를 대체하는 단일 통합 모델★ (사용자 지시) ══
+    //   지적이 맞다. 실측하면 전문가가 늘수록 판별력(AUC 0.69→0.82)은 좋아지는데
+    //   결합확률의 분포가 좁아져(σ 0.149→0.098) 고정문턱 0.60 을 넘는 건이
+    //   26.9% → 16.1% 로 줄었다. 즉 "판단은 좋아졌는데 아무것도 안 사는" 상태가 실제로 생긴다.
+    //   원인은 투표 자체가 아니라 ①소프트맥스 가중을 사람이 손으로 정한 것 ②고정 확률문턱이다.
+    //
+    //   해법(스태킹): 전문가들의 확률을 ★입력★ 으로 받아 최종 확률을 내는 메타모델을 학습한다.
+    //   가중을 사람이 정하지 않고 실제 결과로부터 배운다 — 어떤 전문가를 언제 믿을지,
+    //   전문가끼리 겹치는 정보가 얼마나 되는지까지 데이터가 정한다.
+    //   Numerai 메타모델·Kaggle 상위 해법이 공통으로 쓰는 표준 결합 방식이고,
+    //   "여러 모델을 하나의 정교한 모델로 통합"이라는 요구에 정확히 대응한다.
+    //   학습 전에는 기존 IC 가중 투표를 그대로 쓴다(공백 없음).
+    const _EXPERT_SLOTS = ["mind", "dnn", "gbdt", "boost", "flow", "xalpha", "rule"];
+    let _stackFeat = null;
+    try {
+      const _byName = {};
+      for (const ex of experts) _byName[ex.name] = ex;
+      _stackFeat = [];
+      for (const nm of _EXPERT_SLOTS) _stackFeat.push(_byName[nm] ? _clamp(_byName[nm].p, 0.001, 0.999) : 0.5);
+      for (const nm of _EXPERT_SLOTS) _stackFeat.push(_byName[nm] ? 1 : 0);   // 참여 여부 마스크
+    } catch (e) { _stackFeat = null; }
+
     let pCombined = experts[0].p;        // 단일 전문가면 그 확률 그대로
     if (experts.length > 1) {
       // ══ [V33.77] ★위원회 가중을 정확도에서 IC 로 바꾼다★ ══
@@ -25784,6 +25885,17 @@ async function mlDeepDecide(DB, featVec, opts) {
             if (Math.abs(_pTrim - pCombined) > 0.12) {
               pCombined = _clamp(pCombined * 0.5 + _pTrim * 0.5, 0.001, 0.999);
             }
+          }
+        }
+      } catch (e) {}
+      // [V33.80] 학습된 STACK 메타모델이 있으면 그 출력으로 대체한다(투표 → 통합모델).
+      //   IC 검증을 통과한 모델만 쓰고, 미달이면 위 투표 결과를 그대로 유지한다.
+      try {
+        if (_stackFeat) {
+          const sm = (opts.stackModel !== undefined) ? opts.stackModel : await getState(DB, "stack_model", null);
+          if (sm && sm.trusted && sm.featVer === STACKML.featVer) {
+            const pS = flowScore(sm, _stackFeat);
+            if (pS != null) { pCombined = pS; _usedStack = true; }
           }
         }
       } catch (e) {}
@@ -25883,7 +25995,7 @@ async function mlDeepDecide(DB, featVec, opts) {
       allow = pCombined >= gate;
     }
     const sizeMult = allow ? +(mlKellySize(pCombined, unc) * _shkSizeK).toFixed(3) : 1;   // [V32.46] 레짐 사이즈 배율 반영
-    return { source: "deep", allow: allow, sizeMult: sizeMult, p: pCombined, uncertainty: unc, usedDnn: usedDnn, usedGbdt: usedGbdt, ev: evVal, experts: _expOut, shock: _shockOut, evPrior: _evPriorOut };
+    return { source: "deep", allow: allow, sizeMult: sizeMult, p: pCombined, uncertainty: unc, usedDnn: usedDnn, usedGbdt: usedGbdt, ev: evVal, experts: _expOut, shock: _shockOut, evPrior: _evPriorOut, stackFeat: _stackFeat, usedStack: _usedStack };
   } catch (e) { return null; }
 }
 
