@@ -57,7 +57,8 @@ try {
           alt:{flow:{samples:412,minN:800,trained:false,trusted:false,acc:null,ic:null,n:null},
                xalpha:{samples:9200,minN:800,trained:true,trusted:true,acc:0.552,ic:0.041,n:9200},
                stack:{samples:120,minN:600,trained:false,trusted:false},
-               backfill:{made:18400,cursor:52310,ts:Date.now()}},
+               backfill:{made:18400,cursor:52310,ts:Date.now()},
+               scalpLev:{enabled:true,trusted:true,kelly:0.11,n:340,minKelly:0.05,maxMult:2,concMult:2,ddCut:6}},
           thr:{us:{n:2000,thr:0.612,fixed:0.55,floor:0.53,topPct:0.18},
                kr:{n:37,thr:null,fixed:0.55}}},
           [{symbol:'NVDA',rankP:0.71}]],
@@ -65,7 +66,7 @@ try {
         altPartial: [{ aiReady:true, scalp:{}, samples:{}, committee:{},
           alt:{flow:null, xalpha:{samples:0,minN:800,trained:false,trusted:false},
                stack:{samples:600,minN:600,trained:true,trusted:false,ic:0.004,n:600},
-               backfill:null},
+               backfill:null, scalpLev:{enabled:true,trusted:false,kelly:null,n:0,minKelly:0.05,maxMult:2,concMult:2,ddCut:6}},
           thr:{us:null, kr:{n:0,thr:null,fixed:0.55}} }, []],
         nullMode: [null, null]
       };

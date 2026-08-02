@@ -14404,7 +14404,18 @@ html[data-theme="light"] .rail{background:#fff;}
           arow('FLOW', alt.flow, '피어그래프·공매도·내부자'),
           arow('XALPHA', alt.xalpha, '형식알파·횡단면 랭크'),
           arow('STACK', alt.stack, '전문가 통합(투표 대체)'),
-          ['기존표본 소급', bfTxt]
+          ['기존표본 소급', bfTxt],
+          (function(){
+            // [V33.82] 단타 레버리지 게이트 — 왜 열렸는지/닫혔는지 한 줄로.
+            var L = alt.scalpLev;
+            if(!L) return ['단타 레버리지', '<span class="sub">—</span>'];
+            if(!L.enabled) return ['단타 레버리지', '<span class="sub">비활성</span>'];
+            if(!L.trusted) return [ico(null)+' 단타 레버리지', col('닫힘', C.amb)+' <span class="sub">단타모델 미신뢰</span>'];
+            if(!has(L.kelly)) return [ico(null)+' 단타 레버리지', col('닫힘', C.amb)+' <span class="sub">켈리 미측정 (표본 '+n0(L.n)+')</span>'];
+            if(L.kelly < L.minKelly) return [ico(null)+' 단타 레버리지', col('닫힘', C.neg)+' <span class="sub">켈리 '+L.kelly.toFixed(3)+' &lt; '+L.minKelly+'</span>'];
+            var mult = Math.min(L.maxMult, 1 + (Math.min(L.kelly,0.4)/0.20)*(L.maxMult-1));
+            return [ico(true)+' 단타 레버리지', col('×'+mult.toFixed(2), C.pos)+' <span class="sub">켈리 '+L.kelly.toFixed(3)+' · 집중 ×'+L.concMult+' · DD컷 '+L.ddCut+'%</span>'];
+          })()
         ]);
 
     // [V33.81] 진입 문턱 실황 — 백분위 문턱이 실제로 어디 걸려 있는지.

@@ -2437,6 +2437,23 @@ const SIGNAL_TYPES = [
   "SN_RSI2",
   "SC_VWAP", "SC_MOMENTUM", "SC_PULLBACK", "SC_PANIC_INV", "SC_PANIC_BOUNCE", "SC_VBURST"
 ];
+// [V33.82] ★켈리 기준 신호별 베팅 비중★ (사용자 지시: 집중투자)
+//   종전 가중은 [0.7, 1.3] 범위였다. 즉 아무리 좋은 신호도 30% 더 사는 게 전부고,
+//   아무리 나쁜 신호도 30%만 줄였다. 원장 실측 켈리를 보면 이 범위가 완전히 잘못됐다:
+//     SN_RSI2      승률 80.0% 손익비 0.73 → f* 0.525
+//     SW_GOLDEN    승률 60.4% 손익비 4.67 → f* 0.519
+//     TR_BREAKOUT  승률 75.0% 손익비 1.00 → f* 0.501
+//     TR_PULLBACK  승률 65.7% 손익비 1.25 → f* 0.382
+//     AI_PRIMARY   승률 56.2% 손익비 1.00 → f* 0.124
+//     SC_VWAP      승률 42.6% 손익비 0.95 → f* −0.181   ← 걸수록 손해
+//     SC_PULLBACK  승률 30.6% 손익비 1.41 → f* −0.188   ← 걸수록 손해
+//   좋은 신호는 나쁜 신호의 4배 이상 걸어야 하고, 음수 켈리는 아예 걸면 안 된다.
+//   그런데 실제로는 전부 비슷하게 걸고 있었다 — "리스크 관리를 많이 했는데 성과가 나쁘다"의
+//   진짜 원인은 과도한 보수성이 아니라 ★엣지에 비례하지 않는 균등 베팅★이다.
+//
+//   켈리 f* = (p·b − q) / b     (p=승률, q=1−p, b=평균익/평균손)
+//   ★표본 축소★ 12건짜리 신호의 켈리를 그대로 믿으면 파산한다. 표본수로 0 쪽으로 수축시킨다.
+//   ★분수 켈리★ 전액 켈리는 변동성이 감당 불가라 실무 표준인 1/2 켈리를 쓴다.
 function computeSignalWeight(stat, cfg) {
   const sw = (cfg && cfg.signalTypeWeights) || {};
   const n0 = sw.shrinkN != null ? sw.shrinkN : 15;
@@ -2444,10 +2461,31 @@ function computeSignalWeight(stat, cfg) {
   const wMax = sw.weightMax != null ? sw.weightMax : 1.3;
   if (!stat || !stat.trades || stat.trades < 1) return 1.0;
   const n = stat.trades;
+  const shrink = n / (n + n0);           // 표본이 적을수록 중립(1.0)에 가깝게
+
+  // 이익/손실 분리 누적이 있으면 켈리, 없으면 종전 휴리스틱(하위호환).
+  const hasKelly = (typeof stat.sumWin === "number" && typeof stat.sumLoss === "number"
+                    && stat.nWin > 0 && stat.nLoss > 0);
+  if (hasKelly && sw.kelly !== false) {
+    const p = stat.nWin / (stat.nWin + stat.nLoss);
+    const aw = stat.sumWin / stat.nWin;
+    const al = stat.sumLoss / stat.nLoss;
+    if (aw > 0 && al > 0) {
+      const b = aw / al;
+      const f = (p * b - (1 - p)) / b;                     // 켈리 f*
+      const frac = (sw.kellyFraction != null) ? sw.kellyFraction : 0.5;   // 1/2 켈리
+      const fShrunk = f * shrink * frac;
+      // 기준 켈리(baseKelly) 대비 배수로 환산 — 기준을 넘으면 크게, 못 미치면 작게.
+      const base = (sw.baseKelly != null) ? sw.baseKelly : 0.10;
+      if (fShrunk <= 0) return (sw.negKellyWeight != null) ? sw.negKellyWeight : 0;   // 음수 켈리 = 베팅 금지
+      const kMin = (sw.kellyWeightMin != null) ? sw.kellyWeightMin : 0.35;
+      const kMax = (sw.kellyWeightMax != null) ? sw.kellyWeightMax : 2.5;
+      return Math.max(kMin, Math.min(kMax, fShrunk / base));
+    }
+  }
   const winRate = stat.wins / n;
   const avgPnl = (typeof stat.sumPnlPct === "number") ? (stat.sumPnlPct / n) : 0;
   let raw = 1 + 0.6 * (winRate - 0.5) + 0.05 * avgPnl;
-  const shrink = n / (n + n0);
   const w = 1 + (raw - 1) * shrink;
   return Math.max(wMin, Math.min(wMax, w));
 }
@@ -2500,7 +2538,7 @@ async function applySignalTypeWeights(DB, cfg) {
 // ============================================================================
 // [V33.55] 빌드 버전 — SWR L2 캐시 키에 섞어 '배포 = 판단 캐시 자동 무효화'를 만든다.
 //   판정 로직을 고쳐도 옛 캐시가 최대 1시간 재배포되던 문제를 구조적으로 없앤다.
-const _BUILD_VER = "V33.81";
+const _BUILD_VER = "V33.82";
 
 const AI_PARAMS = {
   // ── OHLCV 타임프레임 ── 시가/고가/저가/종가/거래량을 어떤 봉 주기로 볼지.
@@ -3585,10 +3623,30 @@ const DEFAULT_CFG = {
   },
   // === [신호타입 가중치] 진입신호 종류별(돌파/풀백) 성과로 베팅 차등 — autoTune 자동조정 ===
   //   데이터상 TR_BREAKOUT(PF 2.05) > TR_PULLBACK(PF 1.17). 잘 되는 신호에 더 베팅(사이즈만).
+  // [V33.82] ★단타 전용 집중투자·레버리지★ (사용자 지시)
+  //   장타(trend)에는 적용하지 않는다 — 장타는 오버나이트 갭을 맞으므로 레버리지 위험이 비대칭이다.
+  //   단타는 60분 지평이라 갭 노출이 없어 레버리지를 감당할 수 있는 유일한 자리다.
+  //   게이트가 셋 다 열려야 배수가 올라간다(모델 신뢰 + 실측 켈리 양수 + 드로다운 이내).
+  scalpLeverage: {
+    enabled: true,
+    maxMult: 2.0,        // 거래당 리스크 최대 2배
+    concMult: 2.0,       // 종목당 비중 상한 2배 (집중투자) — 단타 6% → 12%
+    minKelly: 0.05,      // 실측 켈리가 이 이상일 때만 배수 개방
+    ddCut: 6             // 계좌 고점 대비 −6% 넘게 밀리면 배수 즉시 1.0
+  },
+
   signalTypeWeights: {
     enabled: true,
     weightMin: 0.7, weightMax: 1.3,
     shrinkN: 15,
+    // [V33.82] 켈리 기준 베팅 — 원장 실측으로 신호별 f* 를 구해 비중을 정한다.
+    //   종전 [0.7,1.3] 은 "좋은 신호도 30% 더" 라는 뜻이라 엣지 차이를 반영하지 못했다.
+    kelly: true,
+    kellyFraction: 0.5,        // 1/2 켈리 — 전액 켈리는 변동성이 감당 불가
+    baseKelly: 0.10,           // 이 켈리를 가중 1.0 으로 본다
+    kellyWeightMin: 0.35,      // 양수 켈리인데 약한 신호도 완전히 죽이지는 않는다
+    kellyWeightMax: 2.5,       // 강한 신호는 기준의 2.5배까지 (집중투자)
+    negKellyWeight: 0,         // ★음수 켈리 = 베팅 금지★ (SC_VWAP·SC_PULLBACK 이 여기 해당)
     minTradesToWeight: 10,             // 신호 거래가 이 미만이면 가중치 1.0
     // [V63] 전 신호 학습 — applySignalTypeWeights가 SIGNAL_TYPES 전체를 갱신
     weights: { TR_PULLBACK: 1.0, TR_BREAKOUT: 1.0, TR_SQUEEZE: 1.0, TR_RS_LEADER: 1.0, TR_VISION_UP: 1.0,
@@ -11248,10 +11306,17 @@ async function executeSell(DB, market, symbol, pos, sellQty, price, reason, cfg,
       if (entrySignalName && SIGNAL_TYPES.indexOf(entrySignalName) >= 0) {
         const ss = await getState(DB, "signal_type_stats", {});
         if (!ss[entrySignalName]) ss[entrySignalName] = { trades: 0, wins: 0, sumPnlPct: 0 };
-        if (ss[entrySignalName].trades >= 120) { ss[entrySignalName].trades = Math.round(ss[entrySignalName].trades / 2); ss[entrySignalName].wins = Math.round(ss[entrySignalName].wins / 2); ss[entrySignalName].sumPnlPct = ss[entrySignalName].sumPnlPct / 2; }
-        ss[entrySignalName].trades++;
-        if (pnlPct > 0) ss[entrySignalName].wins++;
-        ss[entrySignalName].sumPnlPct += pnlPct;
+        const _e0 = ss[entrySignalName];
+        // [V33.82] 켈리 계산에 필요한 이익/손실 분리 누적 — 종전엔 합계만 있어 손익비(b)를 못 구했다.
+        if (_e0.sumWin == null) { _e0.sumWin = 0; _e0.sumLoss = 0; _e0.nWin = 0; _e0.nLoss = 0; }
+        if (_e0.trades >= 120) {
+          _e0.trades = Math.round(_e0.trades / 2); _e0.wins = Math.round(_e0.wins / 2); _e0.sumPnlPct = _e0.sumPnlPct / 2;
+          _e0.sumWin /= 2; _e0.sumLoss /= 2; _e0.nWin = Math.round(_e0.nWin / 2); _e0.nLoss = Math.round(_e0.nLoss / 2);
+        }
+        _e0.trades++;
+        if (pnlPct > 0) { _e0.wins++; _e0.nWin++; _e0.sumWin += pnlPct; }
+        else { _e0.nLoss++; _e0.sumLoss += Math.abs(pnlPct); }
+        _e0.sumPnlPct += pnlPct;
         await setState(DB, "signal_type_stats", ss);
       }
     }
@@ -14598,6 +14663,8 @@ async function runTradingCycle(env) {
       let __xaModel = null, __xaPanel = null;   // [V33.79] XALPHA — 형식알파 + 횡단면 랭크
       let __stackModel = null;   // [V33.80] STACK 메타모델(투표 대체)
       let __pDistCache = null, __pDistNew = [];   // [V33.80] 후보 p 분포(백분위 문턱용)
+      // [V33.82] 단타 레버리지 게이트 입력 — 사이클당 1회만 만든다.
+      let __scalpEdge = null, __ddPctNow = 0;
       let __mlDrift = { drift: false, action: "none", acc: null };  // [V16] 모델 열화 감지(사이클 1회)
       const __sentiOvrMemo = {};  // [V14] 종목별 감성 오버라이드 판정 사이클 캐시(매도·매수 루프 공유)
       const __candBatch = [], __candSyms = new Set();  // [LUX-AI] 반사실 후보 배치(사이클당 1커밋)
@@ -14623,6 +14690,39 @@ async function runTradingCycle(env) {
               try { __xaModel = await getState(DB, "xalpha_model", null); } catch (e2) {}
               try { __stackModel = await getState(DB, "stack_model", null); } catch (e2) {}
               try { __pDistCache = await getState(DB, "ai_pdist:" + market, null); } catch (e2) {}
+          // [V33.82] 단타 실측 엣지(켈리) + 현재 드로다운 — 레버리지 개방 판단의 두 축.
+          try {
+            const _stTrust = await getState(DB, "stin_trust", null);
+            const _ss = await getState(DB, "signal_type_stats", {});
+            // 단타 계열 신호(SC_*)를 합쳐 하나의 켈리로 본다 — 개별 신호는 표본이 얇다.
+            let nW = 0, nL = 0, sW = 0, sL = 0;
+            for (const k in (_ss || {})) {
+              if (k.indexOf("SC_") !== 0) continue;
+              const e3 = _ss[k];
+              if (!e3 || e3.nWin == null) continue;
+              nW += _num(e3.nWin, 0); nL += _num(e3.nLoss, 0);
+              sW += _num(e3.sumWin, 0); sL += _num(e3.sumLoss, 0);
+            }
+            let _k = null;
+            if (nW > 0 && nL > 0 && sW > 0 && sL > 0) {
+              const p2 = nW / (nW + nL), b2v = (sW / nW) / (sL / nL);
+              const raw = (p2 * b2v - (1 - p2)) / b2v;
+              const shrink = (nW + nL) / ((nW + nL) + 30);   // 표본 축소 — 얇은 표본의 켈리는 믿지 않는다
+              _k = raw * shrink;
+            }
+            __scalpEdge = { trusted: !!(_stTrust && _stTrust.trusted), kelly: _k, n: nW + nL };
+          } catch (e) {}
+          try {
+            const _pk = await getState(DB, "equity_peak:" + market, null);
+            const _eqNow = (typeof portfolioValue === "number" && portfolioValue > 0) ? portfolioValue : null;
+            if (_eqNow) {
+              const _peak = Math.max(_num(_pk && _pk.v, 0), _eqNow);
+              if (!_pk || _peak > _num(_pk.v, 0)) { try { await setState(DB, "equity_peak:" + market, { v: _peak, ts: Date.now() }); } catch (e3) {} }
+              __ddPctNow = _peak > 0 ? Math.max(0, (1 - _eqNow / _peak) * 100) : 0;
+            }
+          } catch (e) {}
+          try {
+            if (FLOWML.enabled) {
               const _fs = await getState(DB, "flow_samples_n", null);
               __flowCollect = true;   // 표본이 없을수록 수집이 급하다 — 항상 켠다(피어는 네트워크 0)
               const _dr = await DB.prepare("SELECT k, v FROM state WHERE k >= 'daily:' AND k < 'daily;'").all();
@@ -15791,10 +15891,49 @@ async function runTradingCycle(env) {
             if (_scalpSz)      _baseRisk = (_scalpSz.riskPerTrade != null ? _scalpSz.riskPerTrade : 0.5);
             else if (_snapSz)  _baseRisk = (_snapSz.riskPerTrade != null ? _snapSz.riskPerTrade : 0.5) * (market === "kr" ? (_snapSz.krRiskScale != null ? _snapSz.krRiskScale : 0.7) : 1.0);
             else               _baseRisk = (tsz.riskPerTrade != null ? tsz.riskPerTrade : 0.75);
-            const riskPct = _baseRisk * (signal.visionBoost || 1.0) * sizeScale;
-            const maxPosPct = _scalpSz ? (_scalpSz.maxPositionPct != null ? _scalpSz.maxPositionPct : 6)
+            let riskPct = _baseRisk * (signal.visionBoost || 1.0) * sizeScale;
+            let maxPosPct = _scalpSz ? (_scalpSz.maxPositionPct != null ? _scalpSz.maxPositionPct : 6)
                             : _snapSz ? (_snapSz.maxPositionPct != null ? _snapSz.maxPositionPct : 8)
                             : (tsz.maxPositionPct != null ? tsz.maxPositionPct : 15);
+            // ══ [V33.82] ★단타 집중투자·레버리지★ (사용자 지시) ══
+            //   방침: 장타(trend)는 지금 리스크 규율을 그대로 두고, 단타에만 집중·레버리지를 건다.
+            //   단타에 거는 이유가 타당한 근거: 보유지평이 60분이라 ★오버나이트 갭 노출이 없다★.
+            //   원장에서 손실의 64%가 갭이었으므로, 갭을 안 맞는 단타가 레버리지를 감당하기 가장 낫다.
+            //
+            //   ★그러나 지금 켜면 안 된다★ 원장 실측 단타 켈리가 음수다
+            //     SC_VWAP    승률 42.6% 손익비 0.95 → f* −0.181
+            //     SC_PULLBACK 승률 30.6% 손익비 1.41 → f* −0.188
+            //   음수 엣지에 레버리지를 걸면 손실만 배가된다. 그래서 '켜고 끄는 스위치'가 아니라
+            //   ★측정된 엣지가 양수일 때만 자동으로 열리는 게이트★ 로 만든다.
+            //   조건 3개를 모두 만족해야 배수가 올라간다:
+            //     ① 학습된 단타 모델이 신뢰 상태(stin trusted)   — 규칙엔진 단타에는 절대 안 건다
+            //     ② 최근 실현 켈리 f* ≥ minKelly(양의 엣지 실측)
+            //     ③ 계좌 고점 대비 드로다운이 ddCut 이내       — 무너지는 중엔 자동 축소
+            //   조건이 깨지면 배수는 즉시 1.0 으로 돌아간다.
+            let _scLev = 1.0, _scLevWhy = null;
+            if (_scalpSz) {
+              const _lv = (mcfg.scalpLeverage || DEFAULT_CFG.scalpLeverage || {});
+              if (_lv.enabled !== false) {
+                const _st = __scalpEdge || {};
+                const _okModel = !!_st.trusted;
+                const _okEdge = (typeof _st.kelly === "number") && _st.kelly >= _num(_lv.minKelly, 0.05);
+                const _dd = _num(__ddPctNow, 0);
+                const _okDd = _dd <= _num(_lv.ddCut, 6);
+                if (_okModel && _okEdge && _okDd) {
+                  // 켈리에 비례해 배수를 올린다(선형), 상한은 maxMult.
+                  const _k = _clamp(_st.kelly, 0, 0.4);
+                  _scLev = _clamp(1 + (_k / 0.20) * (_num(_lv.maxMult, 2.0) - 1), 1, _num(_lv.maxMult, 2.0));
+                  maxPosPct = maxPosPct * _clamp(_num(_lv.concMult, 2.0), 1, 4);   // 집중투자 — 종목당 상한 확대
+                  _scLevWhy = "켈리 " + _k.toFixed(3) + " → ×" + _scLev.toFixed(2) + " 집중 " + maxPosPct.toFixed(0) + "%";
+                } else {
+                  _scLevWhy = "대기(" + (!_okModel ? "모델 미신뢰" : !_okEdge ? "켈리 " + (typeof _st.kelly === "number" ? _st.kelly.toFixed(3) : "미측정") + " < " + _num(_lv.minKelly, 0.05) : "DD " + _dd.toFixed(1) + "% 초과") + ")";
+                }
+              }
+            }
+            if (_scLev > 1) {
+              riskPct = riskPct * _scLev;   // [V33.82] 단타 레버리지 — 거래당 리스크 확대
+              try { await log(DB, "INFO", symbol, "[단타레버리지] " + _scLevWhy); } catch (e0) {}
+            }
             const equity = (typeof portfolioValue === "number" && portfolioValue > 0) ? portfolioValue : cash[market];
             const tr = getStrategyRules(mcfg, strategy, market);
             // 손절 거리(주당) — executeBuy와 동일 규칙: min(N×ATR, price×stopLoss%)
@@ -17012,6 +17151,28 @@ async function handleRequest(request, env, ctx) {
             stack: await _mk("stack_model", "stack_samples", STACKML.minTrainSamples, STACKML.featVer),
             backfill: _bf ? { made: _num(_bf.made, 0), cursor: _num(_bf.lastId, 0), ts: _num(_bf.ts, 0) } : null
           };
+          // [V33.82] 단타 레버리지 게이트 실황 — 왜 열렸는지/왜 닫혔는지 화면에서 보이게.
+          try {
+            const _lvc = (DEFAULT_CFG.scalpLeverage || {});
+            const _stT = await getState(env.DB, "stin_trust", null);
+            const _ss3 = await getState(env.DB, "signal_type_stats", {});
+            let nW = 0, nL = 0, sW = 0, sL = 0;
+            for (const k in (_ss3 || {})) {
+              if (k.indexOf("SC_") !== 0) continue;
+              const e4 = _ss3[k]; if (!e4 || e4.nWin == null) continue;
+              nW += _num(e4.nWin, 0); nL += _num(e4.nLoss, 0); sW += _num(e4.sumWin, 0); sL += _num(e4.sumLoss, 0);
+            }
+            let _kk = null;
+            if (nW > 0 && nL > 0 && sW > 0 && sL > 0) {
+              const p3 = nW / (nW + nL), b3 = (sW / nW) / (sL / nL);
+              _kk = ((p3 * b3 - (1 - p3)) / b3) * ((nW + nL) / ((nW + nL) + 30));
+            }
+            let _ddU = null;
+            try { const _pk2 = await getState(env.DB, "equity_peak:us", null); if (_pk2) _ddU = _num(_pk2.v, 0); } catch (e) {}
+            _alt.scalpLev = { enabled: _lvc.enabled !== false, trusted: !!(_stT && _stT.trusted),
+              kelly: _kk, n: nW + nL, minKelly: _num(_lvc.minKelly, 0.05),
+              maxMult: _num(_lvc.maxMult, 2), concMult: _num(_lvc.concMult, 2), ddCut: _num(_lvc.ddCut, 6) };
+          } catch (e) {}
         } catch (e) {}
         // [V33.81] 진입 문턱 실황 — 백분위 문턱이 실제로 어디에 걸려 있는지.
         let _thr = null;
