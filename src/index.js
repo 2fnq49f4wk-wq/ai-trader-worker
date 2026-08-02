@@ -2630,7 +2630,7 @@ async function applySignalTypeWeights(DB, cfg) {
 // ============================================================================
 // [V33.55] 빌드 버전 — SWR L2 캐시 키에 섞어 '배포 = 판단 캐시 자동 무효화'를 만든다.
 //   판정 로직을 고쳐도 옛 캐시가 최대 1시간 재배포되던 문제를 구조적으로 없앤다.
-const _BUILD_VER = "V33.85";
+const _BUILD_VER = "V33.86";
 
 const AI_PARAMS = {
   // ── OHLCV 타임프레임 ── 시가/고가/저가/종가/거래량을 어떤 봉 주기로 볼지.
@@ -11678,10 +11678,25 @@ function evaluateSell(pos, price, daily, dailyRsi, dailyMa, dailyMaShort, cfg, m
   // (모든 실제 청산 규칙을 통과한 뒤에만 본다 — 매도 판정을 절대 가리지 않는다)
   if (rPct > 0 && pnlRate > 0) {
     const _rNow = pnlRate / rPct;            // 지금 미실현이 손절거리의 몇 배(R)인가
+    // ══ [V33.86] ★국면별 래칫 적응 — V33.75 에서 실수로 잃은 폭등 대응을 되살린다★ ══
+    //   종전 TP1/TP2 에는 국면 적응이 있었다(MELTUP 이면 익절을 늦추고 덜 팔아 러너를 살림).
+    //   분할익절을 폐지하면서 그 적응까지 같이 사라졌고, 래칫은 국면과 무관하게 고정이었다.
+    //   래칫은 '파는 것'이 아니라 '스톱을 올리는 것'이지만 효과는 같다 — 스톱을 빨리 올리면
+    //   폭등장에서 정상적인 눌림에 털려 러너를 못 태운다. 국면별로 다르게 조여야 한다.
+    //   · MELTUP  : 늦게·느슨하게 (발동 R 을 뒤로 밀고, 잠그는 수준도 낮춘다) → 러너 보존
+    //   · TREND_UP: 소폭 완화
+    //   · RANGE   : 빨리·타이트하게 (추세가 안 이어지므로 번 것을 먼저 지킨다)
+    //   · TREND_DOWN/CRASH: 가장 타이트 (반등은 오래 못 간다)
+    let _trg = [3.0, 2.0, 1.0];      // 발동 R (3단계)
+    let _lk  = [1.75, 1.00, null];   // 각 단계에서 잠글 R (null = 본전+lock)
+    if (_phase === "MELTUP")            { _trg = [4.0, 2.8, 1.5]; _lk = [1.60, 0.80, null]; }
+    else if (_phase === "TREND_UP")     { _trg = [3.5, 2.4, 1.2]; _lk = [1.70, 0.90, null]; }
+    else if (_phase === "RANGE")        { _trg = [2.4, 1.6, 0.8]; _lk = [1.85, 1.15, null]; }
+    else if (_phase === "TREND_DOWN" || _phase === "CRASH") { _trg = [2.0, 1.4, 0.7]; _lk = [1.90, 1.25, null]; }
     let _lockR = null;                       // 스톱을 진입가 대비 +몇 R 로 올릴 것인가
-    if (_rNow >= 3.0)      _lockR = 1.75;
-    else if (_rNow >= 2.0) _lockR = 1.00;
-    else if (_rNow >= 1.0) _lockR = (r.breakEvenLock || 0) / 100 / (rPct / 100) || 0;  // 본전(+lock)
+    if (_rNow >= _trg[0])      _lockR = _lk[0];
+    else if (_rNow >= _trg[1]) _lockR = _lk[1];
+    else if (_rNow >= _trg[2]) _lockR = (r.breakEvenLock || 0) / 100 / (rPct / 100) || 0;  // 본전(+lock)
     if (_lockR != null && pos.avg > 0) {
       const _target = pos.avg * (1 + (_lockR * rPct) / 100);
       // 스톱은 올리기만 한다(내리지 않는다) — 손절폭이 넓어지는 일은 절대 없다.
