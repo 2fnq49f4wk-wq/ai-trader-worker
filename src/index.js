@@ -2454,6 +2454,98 @@ const SIGNAL_TYPES = [
 //   켈리 f* = (p·b − q) / b     (p=승률, q=1−p, b=평균익/평균손)
 //   ★표본 축소★ 12건짜리 신호의 켈리를 그대로 믿으면 파산한다. 표본수로 0 쪽으로 수축시킨다.
 //   ★분수 켈리★ 전액 켈리는 변동성이 감당 불가라 실무 표준인 1/2 켈리를 쓴다.
+// ════════════════════════════════════════════════════════════════════════════
+// [V33.83] ★거래별 켈리 — 신호 평균이 아니라 이 거래 하나의 엣지로 베팅한다★
+//
+//  V33.82 의 켈리는 '신호 타입별 과거 평균'이었다. 같은 TR_PULLBACK 이어도 위원회가
+//  0.72 를 주는 거래와 0.54 를 주는 거래가 같은 크기로 나가면, 켈리를 쓴 의미가 절반은 사라진다.
+//  이 거래의 p(위원회 확률)와 이 거래의 b(실제 목표/손절 거리비)로 f* 를 직접 계산한다.
+//
+//  네 가지 보정을 함께 건다:
+//   ① ★M6 대회의 교훈 — 추세 회귀(regression to the trend)★
+//      M6 금융예측대회(5위 해법)의 핵심이 '예측을 평균 쪽으로 되돌리는' 축소였다.
+//      켈리는 p 에 극도로 민감해서(p=0.8 이면 거의 전액 베팅) 확률이 조금만 과대평가돼도
+//      파산 경로로 간다. p 를 기저확률 쪽으로 축소해 과신을 구조적으로 깎는다.
+//   ② ★동시 베팅 상관 보정★
+//      고전 켈리는 '한 번에 한 판'을 가정한다. 상관된 N개를 동시에 들면 실효 레버리지가
+//      의도보다 훨씬 커진다(전부 같은 거래를 N번 한 셈). 보유 종목의 평균 상관을 재서
+//      √(1+(N−1)ρ̄) 로 나눈다. 진짜 분산돼 있으면 크게, 다 같은 방향이면 작게.
+//   ③ ★드로다운 적응 분수★ 고점 대비 밀릴수록 켈리 분수를 줄인다(회복하면 되돌린다).
+//   ④ ★신호 실적과의 결합★ 거래별 이론 켈리와 신호별 실현 켈리를 기하평균으로 섞는다.
+//      이론만 쓰면 체결 슬리피지·실패 패턴을 못 보고, 실적만 쓰면 이 거래의 특수성을 못 본다.
+function kellyPerTrade(opts) {
+  try {
+    const o = opts || {};
+    const cfg = o.cfg || {};
+    const sw = cfg.signalTypeWeights || {};
+    const p0 = _num(o.p, null);
+    const b = _num(o.b, null);
+    if (!(p0 > 0 && p0 < 1) || !(b > 0)) return null;
+
+    // ① 추세 회귀 — 기저확률(base) 쪽으로 축소. shrink=0.35 면 과신의 35% 를 깎는다.
+    const base = _num(sw.kellyBaseP, 0.5);
+    const sh = _clamp(_num(sw.kellyPShrink, 0.35), 0, 0.9);
+    const p = _clamp(base + (p0 - base) * (1 - sh), 0.01, 0.99);
+
+    let f = (p * b - (1 - p)) / b;              // 켈리 f*
+    if (!(f > 0)) return { f: 0, p: p, b: b, reason: "음수켈리" };
+
+    // ② 동시 베팅 상관 보정
+    const n = Math.max(1, Math.floor(_num(o.nOpen, 1) + 1));   // 이 거래 포함
+    const rho = _clamp(_num(o.rho, 0.5), 0, 0.95);             // 보유분 평균 상관(모르면 0.5 보수적)
+    const corrDiv = Math.sqrt(1 + (n - 1) * rho);
+    f = f / corrDiv;
+
+    // ③ 드로다운 적응 분수
+    let frac = _clamp(_num(sw.kellyFraction, 0.5), 0.05, 1);
+    const dd = _num(o.ddPct, 0);
+    const ddK = _num(sw.kellyDdCut, 10);
+    if (dd > 0 && ddK > 0) frac = frac * _clamp(1 - dd / ddK, 0.25, 1);
+    f = f * frac;
+
+    // ④ 신호별 실현 켈리와 기하평균 결합
+    const fSig = _num(o.signalKelly, null);
+    if (fSig != null && fSig > 0) f = Math.sqrt(f * (fSig * frac));
+    else if (fSig != null && fSig <= 0) f = f * 0.5;   // 실적이 나쁜 신호면 이론값을 반만 믿는다
+
+    return { f: _clamp(f, 0, _num(sw.kellyMaxF, 0.25)), p: p, b: b, corrDiv: corrDiv, frac: frac, n: n, rho: rho };
+  } catch (e) { return null; }
+}
+
+// 보유 포지션의 평균 쌍상관 — 캐시된 일봉만 쓴다(네트워크 0).
+//   상관이 높을수록 "분산된 것처럼 보이지만 실은 한 판"이므로 켈리를 더 깎아야 한다.
+function portfolioRho(symbols, dailyCache) {
+  try {
+    if (!Array.isArray(symbols) || symbols.length < 2 || !dailyCache) return null;
+    const lr = {};
+    for (const sy of symbols) {
+      const d = dailyCache[sy];
+      if (!d || !Array.isArray(d.closes) || d.closes.length < 25) continue;
+      const c = d.closes, out = [];
+      for (let i = Math.max(1, c.length - 40); i < c.length; i++) if (c[i] > 0 && c[i - 1] > 0) out.push(Math.log(c[i] / c[i - 1]));
+      if (out.length >= 20) lr[sy] = out;
+    }
+    const keys = Object.keys(lr);
+    if (keys.length < 2) return null;
+    let sum = 0, cnt = 0;
+    for (let i = 0; i < keys.length; i++) {
+      for (let j = i + 1; j < keys.length; j++) {
+        const A = lr[keys[i]], B = lr[keys[j]];
+        const m = Math.min(A.length, B.length);
+        if (m < 20) continue;
+        const a = A.slice(A.length - m), b2 = B.slice(B.length - m);
+        let ma = 0, mb = 0;
+        for (let k = 0; k < m; k++) { ma += a[k]; mb += b2[k]; }
+        ma /= m; mb /= m;
+        let sa = 0, sb = 0, sab = 0;
+        for (let k = 0; k < m; k++) { const x = a[k] - ma, y = b2[k] - mb; sa += x * x; sb += y * y; sab += x * y; }
+        if (sa > 1e-12 && sb > 1e-12) { sum += sab / Math.sqrt(sa * sb); cnt++; }
+      }
+    }
+    return cnt > 0 ? _clamp(sum / cnt, -1, 1) : null;
+  } catch (e) { return null; }
+}
+
 function computeSignalWeight(stat, cfg) {
   const sw = (cfg && cfg.signalTypeWeights) || {};
   const n0 = sw.shrinkN != null ? sw.shrinkN : 15;
@@ -2538,7 +2630,7 @@ async function applySignalTypeWeights(DB, cfg) {
 // ============================================================================
 // [V33.55] 빌드 버전 — SWR L2 캐시 키에 섞어 '배포 = 판단 캐시 자동 무효화'를 만든다.
 //   판정 로직을 고쳐도 옛 캐시가 최대 1시간 재배포되던 문제를 구조적으로 없앤다.
-const _BUILD_VER = "V33.82";
+const _BUILD_VER = "V33.83";
 
 const AI_PARAMS = {
   // ── OHLCV 타임프레임 ── 시가/고가/저가/종가/거래량을 어떤 봉 주기로 볼지.
@@ -3647,6 +3739,17 @@ const DEFAULT_CFG = {
     kellyWeightMin: 0.35,      // 양수 켈리인데 약한 신호도 완전히 죽이지는 않는다
     kellyWeightMax: 2.5,       // 강한 신호는 기준의 2.5배까지 (집중투자)
     negKellyWeight: 0,         // ★음수 켈리 = 베팅 금지★ (SC_VWAP·SC_PULLBACK 이 여기 해당)
+    // [V33.83] 거래별 켈리 — 신호 평균이 아니라 이 거래의 p·b 로 크기를 정한다.
+    perTradeKelly: true,
+    kellyBaseP: 0.5,           // 추세회귀 기준 확률(M6 5위 해법의 '평균 회귀' 축소)
+    kellyPShrink: 0.35,        // 위원회 확률의 과신을 35% 깎는다 — 켈리는 p 에 극도로 민감하다
+    kellyDdCut: 10,            // 고점 대비 −10% 에서 켈리 분수가 0 쪽으로 (하한 0.25배)
+    kellyMaxF: 0.25,           // 단일 거래 자본 리스크 상한 25%(켈리 원값 기준)
+    kellyRefF: 0.08,           // '평범한 거래'의 켈리 — 이 값이면 기존 riskPerTrade 그대로 간다
+    kellyMultMin: 0.3,         // 엣지 약한 거래는 기존 대비 0.3배까지 축소
+    kellyMultMax: 3.0,         // 엣지 강한 거래는 3배까지 확대 (집중투자)
+    kellyRiskMin: 0.2,         // 환산 후 거래당 리스크 하한 %
+    kellyRiskMax: 3.0,         // 환산 후 거래당 리스크 상한 % (종전 고정 0.9% 대비 확대)
     minTradesToWeight: 10,             // 신호 거래가 이 미만이면 가중치 1.0
     // [V63] 전 신호 학습 — applySignalTypeWeights가 SIGNAL_TYPES 전체를 갱신
     weights: { TR_PULLBACK: 1.0, TR_BREAKOUT: 1.0, TR_SQUEEZE: 1.0, TR_RS_LEADER: 1.0, TR_VISION_UP: 1.0,
@@ -14665,6 +14768,7 @@ async function runTradingCycle(env) {
       let __pDistCache = null, __pDistNew = [];   // [V33.80] 후보 p 분포(백분위 문턱용)
       // [V33.82] 단타 레버리지 게이트 입력 — 사이클당 1회만 만든다.
       let __scalpEdge = null, __ddPctNow = 0;
+      let __portRho = null;   // [V33.83] 보유 포지션 평균 상관 — 켈리 동시베팅 보정
       let __mlDrift = { drift: false, action: "none", acc: null };  // [V16] 모델 열화 감지(사이클 1회)
       const __sentiOvrMemo = {};  // [V14] 종목별 감성 오버라이드 판정 사이클 캐시(매도·매수 루프 공유)
       const __candBatch = [], __candSyms = new Set();  // [LUX-AI] 반사실 후보 배치(사이클당 1커밋)
@@ -14750,6 +14854,12 @@ async function runTradingCycle(env) {
             }
             // [V33.79] 횡단면 패널 — 시장 단위로 1회만 만든다(종목마다 돌면 O(N²)).
             try { if (XALPHA.enabled) __xaPanel = xalphaBuildPanel(__dailyCacheForFlow, market); } catch (e2) {}
+            // [V33.83] 보유분 평균 상관 — 켈리의 동시베팅 보정에 쓴다(네트워크 0).
+            try {
+              const _held = [];
+              for (const _k2 in positions) { const _p2 = positions[_k2]; if (_p2 && _p2.symbol) _held.push(_p2.symbol); }
+              if (_held.length >= 2) __portRho = portfolioRho(_held, __dailyCacheForFlow);
+            } catch (e2) {}
           } catch (e) { __dailyCacheForFlow = {}; }
           // [V12.130] ★TIME-CAP 근본원인 수정★ 섹터ETF 종가를 종목마다 getState로 다시 읽고 있었다
           //   (hist: 없으면 daily:까지 최대 2 read × 557종목). 섹터ETF는 6종뿐이라 사이클당 1회면 충분한데
@@ -15934,6 +16044,53 @@ async function runTradingCycle(env) {
               riskPct = riskPct * _scLev;   // [V33.82] 단타 레버리지 — 거래당 리스크 확대
               try { await log(DB, "INFO", symbol, "[단타레버리지] " + _scLevWhy); } catch (e0) {}
             }
+            // ══ [V33.83] 거래별 켈리 — 이 거래 하나의 p·b 로 베팅 크기를 정한다 ══
+            //   riskPerTrade(고정 %)를 켈리가 산출한 비율로 대체한다. 신호 평균이 아니라
+            //   위원회가 이 종목에 준 확률과 실제 목표/손절 거리비를 쓴다.
+            try {
+              const _swc = mcfg.signalTypeWeights || {};
+              if (_swc.perTradeKelly !== false) {
+                const _pK = (signal && typeof signal.mlMindP === "number") ? signal.mlMindP : null;
+                if (_pK != null && stopDist > 0) {
+                  // b = 목표거리/손절거리. 래칫 구조상 실현 목표는 트레일이 결정하므로
+                  //   전략별 tp1AtR(도달 R배수)을 목표 대용치로 쓴다(보수적으로 1.0 하한).
+                  const _trR = getStrategyRules(mcfg, strategy, market);
+                  const _bR = Math.max(1.0, _num(_trR.tp1AtR, 1.0) * 1.6);   // 래칫으로 러너를 태우므로 1.6배
+                  // 신호별 실현 켈리(있으면) — signalTypeWeights.weights 는 기준켈리 대비 배수다.
+                  let _sigK = null;
+                  try {
+                    const _wv = (_swc.weights || {})[signal.name];
+                    if (typeof _wv === "number") _sigK = _wv * _num(_swc.baseKelly, 0.10);
+                  } catch (e0) {}
+                  const _kk = kellyPerTrade({
+                    cfg: mcfg, p: _pK, b: _bR, signalKelly: _sigK,
+                    nOpen: (typeof heldSymbols !== "undefined" && heldSymbols.size) ? heldSymbols.size : 0,
+                    rho: __portRho, ddPct: __ddPctNow
+                  });
+                  if (_kk && _kk.f > 0) {
+                    // ★켈리를 '절대 리스크%'로 쓰지 않는다★
+                    //   f 를 그대로 %로 환산하면 10~25% 가 나온다. 이는 켈리의 알려진 공격성이고
+                    //   (추정오차까지 얹히면 파산 경로다) 상한에 걸려 전부 최대치로 뭉개진다 —
+                    //   그러면 "모든 거래를 최대로" 가 되어 켈리를 쓴 의미가 사라진다.
+                    //   대신 ★기준 켈리 대비 배수★ 로 쓴다. 평범한 거래는 기존 riskPerTrade 그대로,
+                    //   엣지가 큰 거래만 그 배수만큼 키운다. 상대 순서(켈리의 본질)는 보존되고
+                    //   절대 크기는 기존 규율 안에 머문다.
+                    const _ref = _num(_swc.kellyRefF, 0.08);
+                    const _mult = _clamp(_kk.f / _ref, _num(_swc.kellyMultMin, 0.3),
+                                                       _num(_swc.kellyMultMax, 3.0));
+                    const _kPct = _clamp(riskPct * _mult, _num(_swc.kellyRiskMin, 0.2),
+                                                          _num(_swc.kellyRiskMax, 3.0));
+                    signal.kellyNote = "K f=" + _kk.f.toFixed(4) + " p=" + _kk.p.toFixed(3) +
+                                       " b=" + _kk.b.toFixed(2) + " ÷상관" + _kk.corrDiv.toFixed(2) +
+                                       " ×" + _mult.toFixed(2) + " → risk " + _kPct.toFixed(2) + "%";
+                    riskPct = _kPct;
+                  } else if (_kk && _kk.f === 0) {
+                    incNobuy("kelly_zero[" + strategy + "]");
+                    continue;   // 켈리 0 = 걸면 손해 — 진입하지 않는다
+                  }
+                }
+              }
+            } catch (e) {}
             const equity = (typeof portfolioValue === "number" && portfolioValue > 0) ? portfolioValue : cash[market];
             const tr = getStrategyRules(mcfg, strategy, market);
             // 손절 거리(주당) — executeBuy와 동일 규칙: min(N×ATR, price×stopLoss%)
