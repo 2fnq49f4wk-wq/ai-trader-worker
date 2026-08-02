@@ -2500,7 +2500,7 @@ async function applySignalTypeWeights(DB, cfg) {
 // ============================================================================
 // [V33.55] 빌드 버전 — SWR L2 캐시 키에 섞어 '배포 = 판단 캐시 자동 무효화'를 만든다.
 //   판정 로직을 고쳐도 옛 캐시가 최대 1시간 재배포되던 문제를 구조적으로 없앤다.
-const _BUILD_VER = "V33.78";
+const _BUILD_VER = "V33.79";
 
 const AI_PARAMS = {
   // ── OHLCV 타임프레임 ── 시가/고가/저가/종가/거래량을 어떤 봉 주기로 볼지.
@@ -10991,6 +10991,7 @@ async function executeBuy(DB, market, symbol, strategy, qty, price, signal, dail
           mlMindP: (signal && typeof signal.mlMindP === "number") ? signal.mlMindP : null,
           // [V33.78] 진입 시점 FLOW 피처 스냅샷 — 청산 때 라벨을 붙여 표본이 된다.
           flowFeat: (signal && Array.isArray(signal.flowFeat)) ? signal.flowFeat : null,
+          xaFeat: (signal && Array.isArray(signal.xaFeat)) ? signal.xaFeat : null,
           banditArmIdx: (signal && signal.mlBanditArmIdx != null) ? signal.mlBanditArmIdx : null,
           banditCtxX: (signal && Array.isArray(signal.mlBanditCtxX)) ? signal.mlBanditCtxX : null,
           // [V12.47] ★버그수정★ target:"alpha" 모드에선 idxRetPct 없으면 mlLogSample이 표본을
@@ -11140,6 +11141,7 @@ async function executeSell(DB, market, symbol, pos, sellQty, price, reason, cfg,
         //   기존 표본 스트림과 완전히 분리돼 있어 LUXML 에 아무 영향이 없다.
         try {
           if (Array.isArray(pos.meta.flowFeat)) await flowLogSample(DB, market, symbol, pos.meta.flowFeat, pnlPct);
+          if (Array.isArray(pos.meta.xaFeat)) await xalphaLogSample(DB, market, symbol, pos.meta.xaFeat, pnlPct);
         } catch (e) {}
       }
       if (Array.isArray(pos.meta.mlEvKeys) && pos.meta.mlEvKeys.length && typeof mlUpdateEventExpectancy === "function") {
@@ -14586,6 +14588,7 @@ async function runTradingCycle(env) {
       // [V33.78] FLOW — 모델과 피어계산용 일봉캐시를 사이클당 1회만 준비한다.
       //   일봉캐시는 이미 daily: 로 D1 에 있으니 한 번 훑어 메모리에 올린다(종목마다 재조회 금지).
       let __flowModel = null, __dailyCacheForFlow = {}, __flowCollect = false;
+      let __xaModel = null, __xaPanel = null;   // [V33.79] XALPHA — 형식알파 + 횡단면 랭크
       let __mlDrift = { drift: false, action: "none", acc: null };  // [V16] 모델 열화 감지(사이클 1회)
       const __sentiOvrMemo = {};  // [V14] 종목별 감성 오버라이드 판정 사이클 캐시(매도·매수 루프 공유)
       const __candBatch = [], __candSyms = new Set();  // [LUX-AI] 반사실 후보 배치(사이클당 1커밋)
@@ -14608,6 +14611,7 @@ async function runTradingCycle(env) {
           try {
             if (FLOWML.enabled) {
               __flowModel = await getState(DB, "flow_model", null);
+              try { __xaModel = await getState(DB, "xalpha_model", null); } catch (e2) {}
               const _fs = await getState(DB, "flow_samples_n", null);
               __flowCollect = true;   // 표본이 없을수록 수집이 급하다 — 항상 켠다(피어는 네트워크 0)
               const _dr = await DB.prepare("SELECT k, v FROM state WHERE k >= 'daily:' AND k < 'daily;'").all();
@@ -14619,12 +14623,22 @@ async function runTradingCycle(env) {
                 try {
                   const _v = (typeof _r.v === "string") ? JSON.parse(_r.v) : _r.v;
                   if (_v && Array.isArray(_v.closes) && _v.closes.length >= 25) {
-                    __dailyCacheForFlow[_sy] = { closes: _v.closes.slice(-70) };   // 60일치만 — 메모리 절약
+                    // [V33.79] OHLCV 전체를 싣는다 — WorldQuant 형식알파는 시가/고가/저가/거래량이 필요하다.
+                    const _cut = -70;   // 60일치면 모든 알파의 최장 창(20일)을 충분히 덮는다
+                    __dailyCacheForFlow[_sy] = {
+                      closes: _v.closes.slice(_cut),
+                      opens: Array.isArray(_v.opens) ? _v.opens.slice(_cut) : null,
+                      highs: Array.isArray(_v.highs) ? _v.highs.slice(_cut) : null,
+                      lows: Array.isArray(_v.lows) ? _v.lows.slice(_cut) : null,
+                      volumes: Array.isArray(_v.volumes) ? _v.volumes.slice(_cut) : null
+                    };
                     _n++;
                   }
                 } catch (e2) {}
               }
             }
+            // [V33.79] 횡단면 패널 — 시장 단위로 1회만 만든다(종목마다 돌면 O(N²)).
+            try { if (XALPHA.enabled) __xaPanel = xalphaBuildPanel(__dailyCacheForFlow, market); } catch (e2) {}
           } catch (e) { __dailyCacheForFlow = {}; }
           // [V12.130] ★TIME-CAP 근본원인 수정★ 섹터ETF 종가를 종목마다 getState로 다시 읽고 있었다
           //   (hist: 없으면 daily:까지 최대 2 read × 557종목). 섹터ETF는 6종뿐이라 사이클당 1회면 충분한데
@@ -15951,7 +15965,15 @@ async function runTradingCycle(env) {
                   }
                   if (__flowFeat) signal.flowFeat = __flowFeat;
                 } catch (e) {}
-                try { _md = await mlDeepDecide(DB, signal.mlFeat, { mind: __mind, guard: __guard, ens: __ensemble, trust: __dnnTrust, dnn: __dnn, gbdtTrust: __gbdtTrust, gbdt: __gbdt, cal: __cal, evstats: __evStats, shock: await _luxMarketShockCached(DB), sym: symbol, evCtx: await _luxEventContextCached(DB), applyEventPrior: true, market: market, flowFeat: __flowFeat, flowModel: __flowModel }); } catch (e) {}
+                // [V33.79] XALPHA 피처 — 전부 캐시된 OHLCV + 패널에서 나온다(네트워크 0).
+                let __xaFeat = null;
+                try {
+                  if (XALPHA.enabled) {
+                    __xaFeat = xalphaBuildFeat(symbol, __dailyCacheForFlow, __xaPanel);
+                    if (__xaFeat) signal.xaFeat = __xaFeat;
+                  }
+                } catch (e) {}
+                try { _md = await mlDeepDecide(DB, signal.mlFeat, { mind: __mind, guard: __guard, ens: __ensemble, trust: __dnnTrust, dnn: __dnn, gbdtTrust: __gbdtTrust, gbdt: __gbdt, cal: __cal, evstats: __evStats, shock: await _luxMarketShockCached(DB), sym: symbol, evCtx: await _luxEventContextCached(DB), applyEventPrior: true, market: market, flowFeat: __flowFeat, flowModel: __flowModel, xaFeat: __xaFeat, xaModel: __xaModel }); } catch (e) {}
                 if (!_md) { try { _md = await mlMindDecide(DB, signal.mlFeat, { mind: __mind, guard: __guard, ens: __ensemble }); } catch (e) {} }
                 // [V5] AI 픽 수집 — 개입 여부와 무관하게 예측 자체는 기록(종목당 1회)
                 try {
@@ -18000,12 +18022,12 @@ async function handleRequest(request, env, ctx) {
     if (path === "/api/ai/train-now" && request.method === "POST") {
       const au = _trainAuthed(); if (!au.ok) return Response.json({ error: au.msg }, { status: au.code, headers: cors });
       const target = url.searchParams.get("target") || "mind";
-      const FN = { mind: mlMindTrainNightly, gbdt: mlGBDTTrainNightly, brain: mlBrainTrainNightly, dnn: mlDNNTrainNightly, l1: mlTrainNightly, calibrate: mlCalibrateCommittee, selfreview: mlSelfReview, flow: flowTrainNightly };
+      const FN = { mind: mlMindTrainNightly, gbdt: mlGBDTTrainNightly, brain: mlBrainTrainNightly, dnn: mlDNNTrainNightly, l1: mlTrainNightly, calibrate: mlCalibrateCommittee, selfreview: mlSelfReview, flow: flowTrainNightly, xalpha: xalphaTrainNightly };
       // [V12.63] target=all — 재배포 직후 "한 방에" 전체 파이프라인을 정확한 순서로 재실행(하루1회 게이트 무시).
       //   순서 고정: harvest → l1 → brain → mind → dnn → gbdt → calibrate (뒤 단계가 앞 단계 산출물 의존).
       //   각 단계 자체 CPU예산 가드가 있어 안전. 재학습 즉시 모든 수정이 반영되게 하는 원클릭 경로.
       if (target === "all") {
-        const _order = [["harvest", mlMarketHarvestNightly], ["l1", mlTrainNightly], ["brain", mlBrainTrainNightly], ["mind", mlMindTrainNightly], ["gbdt", mlGBDTTrainNightly], ["dnn", mlDNNTrainNightly], ["flow", flowTrainNightly], ["calibrate", mlCalibrateCommittee]];
+        const _order = [["harvest", mlMarketHarvestNightly], ["l1", mlTrainNightly], ["brain", mlBrainTrainNightly], ["mind", mlMindTrainNightly], ["gbdt", mlGBDTTrainNightly], ["dnn", mlDNNTrainNightly], ["flow", flowTrainNightly], ["xalpha", xalphaTrainNightly], ["calibrate", mlCalibrateCommittee]];
         const out = {};
         for (const [nm, fn] of _order) {
           try { out[nm] = await fn(env.DB); } catch (e) { out[nm] = "FAIL: " + (e && e.message); }
@@ -21551,17 +21573,19 @@ async function flowLogSample(DB, market, symbol, featVec, pnlPct) {
 
 // 야간 자체학습 — 로지스틱 회귀(L2). 12차원이라 워커 CPU 예산 안에서 충분히 수렴한다.
 //   IC 를 함께 재서 위원회 가중에 바로 쓴다(V33.77 기준과 동일).
-async function flowTrainNightly(DB) {
-  if (!FLOWML.enabled) return null;
+// [V33.79] FLOW·XALPHA 공용 야간학습기 — 두 모델이 같은 구조라 구현을 하나로 둔다.
+//   서로 다른 코드 두 벌을 두면 한쪽만 고치는 사고가 난다(이 프로젝트에서 이미 겪었다).
+//   opts: { table, stateKey, tag, featVer, D, minN, window, l2, icFloor }
+async function _miniLogisticTrain(DB, opts) {
   try {
     const rows = await DB.prepare(
-      "SELECT ts, feat, label, pnl_pct FROM flow_samples WHERE featver = ? ORDER BY ts DESC LIMIT ?"
-    ).bind(FLOWML.featVer, FLOWML.trainWindow).all();
+      "SELECT ts, feat, label, pnl_pct FROM " + opts.table + " WHERE featver = ? ORDER BY ts DESC LIMIT ?"
+    ).bind(opts.featVer, opts.window).all();
     const raw = (rows && rows.results) || [];
-    if (raw.length < FLOWML.minTrainSamples) {
-      return "[FLOW] 표본 " + raw.length + "/" + FLOWML.minTrainSamples + " — 학습 대기";
+    if (raw.length < opts.minN) {
+      return "[" + opts.tag + "] 표본 " + raw.length + "/" + opts.minN + " — 학습 대기";
     }
-    const D = FLOWML.featNames.length;
+    const D = opts.D;
     const X = [], Y = [], P = [];
     for (const r of raw) {
       let v; try { v = JSON.parse(r.feat); } catch (e) { continue; }
@@ -21571,7 +21595,7 @@ async function flowTrainNightly(DB) {
       P.push(_num(r.pnl_pct, 0));
     }
     const N = X.length;
-    if (N < FLOWML.minTrainSamples) return "[FLOW] 유효표본 " + N + " — 학습 대기";
+    if (N < opts.minN) return "[" + opts.tag + "] 유효표본 " + N + " — 학습 대기";
     // 시간순(최신이 앞) → 뒤집어 오래된 것부터. 마지막 20% 를 홀드아웃(시간 분리).
     X.reverse(); Y.reverse(); P.reverse();
     const mean = new Array(D).fill(0), std = new Array(D).fill(0);
@@ -21583,7 +21607,7 @@ async function flowTrainNightly(DB) {
     const nval = Math.max(100, Math.floor(N * 0.2));
     const ntr = N - nval;
     const w = new Array(D).fill(0); let b = 0;
-    const lr = 0.08, epochs = 220, lam = FLOWML.l2 / Math.max(1, ntr);
+    const lr = 0.08, epochs = 220, lam = _num(opts.l2, 1) / Math.max(1, ntr);
     for (let ep = 0; ep < epochs; ep++) {
       const gw = new Array(D).fill(0); let gb = 0;
       for (let i = 0; i < ntr; i++) {
@@ -21614,13 +21638,23 @@ async function flowTrainNightly(DB) {
       for (let i = 0; i < pv.length; i++) { const dx = pv[i] - mp, dy = yv[i] - my; sa += dx * dx; sb += dy * dy; sab += dx * dy; }
       ic = (sa > 1e-12 && sb > 1e-12) ? sab / Math.sqrt(sa * sb) : 0;
     } catch (e) {}
-    const model = { w: w, b: b, mean: mean, std: std, featVer: FLOWML.featVer,
+    const model = { w: w, b: b, mean: mean, std: std, featVer: opts.featVer,
       valAcc: +acc.toFixed(4), valIC: +ic.toFixed(5), valN: nval, n: N, ts: Date.now(),
-      trusted: ic >= FLOWML.icFloor };
-    await setState(DB, "flow_model", model);
-    return "[FLOW] 학습완료 표본 " + N + " valAcc " + (acc * 100).toFixed(1) + "% IC " + ic.toFixed(4) +
+      trusted: ic >= _num(opts.icFloor, 0.012) };
+    await setState(DB, opts.stateKey, model);
+    return "[" + opts.tag + "] 학습완료 표본 " + N + " valAcc " + (acc * 100).toFixed(1) + "% IC " + ic.toFixed(4) +
            (model.trusted ? " → 위원회 합류" : " → IC 미달, 대기");
-  } catch (e) { return "[FLOW] 학습 실패: " + (e && e.message); }
+  } catch (e) { return "[" + opts.tag + "] 학습 실패: " + (e && e.message); }
+}
+
+async function flowTrainNightly(DB) {
+  if (!FLOWML.enabled) return null;
+  return await _miniLogisticTrain(DB, {
+    table: "flow_samples", stateKey: "flow_model", tag: "FLOW",
+    featVer: FLOWML.featVer, D: FLOWML.featNames.length,
+    minN: FLOWML.minTrainSamples, window: FLOWML.trainWindow,
+    l2: FLOWML.l2, icFloor: FLOWML.icFloor
+  });
 }
 
 function flowScore(model, featVec) {
@@ -21635,6 +21669,236 @@ function flowScore(model, featVec) {
     }
     return _clamp(1 / (1 + Math.exp(-_clamp(z, -30, 30))), 0.001, 0.999);
   } catch (e) { return null; }
+}
+
+// ════════════════════════════════════════════════════════════════════════════
+// [V33.79] ★XALPHA 전문가 — 형식알파(Formulaic Alpha) + 횡단면 랭크★
+//
+//  출처 ①: WorldQuant "101 Formulaic Alphas" (Kakushadze 2015, arXiv:1601.00991)
+//    실제 운용에 쓰인 101개 알파를 수식 그대로 공개한 논문. 대부분이 price-volume 기반이라
+//    ★우리가 이미 캐시하고 있는 OHLCV만으로 계산된다 — 추가 데이터 수집 0★.
+//    핵심 아이디어는 개별 지표가 아니라 "횡단면 랭크(rank)"와 "시계열 랭크(ts_rank)"의 조합이다.
+//    같은 지표라도 절대값이 아니라 '오늘 전 종목 중 몇 등인가'로 바꾸면 레짐 변화에 훨씬 강하다.
+//
+//  출처 ②: JPX Tokyo Stock Exchange Prediction (Kaggle, 2022)
+//    2,000종목을 수익률 순으로 세워 상위 200 − 하위 200 의 수익 차로 평가한 대회.
+//    즉 대회 자체가 "절대 예측이 아니라 순위 예측"이 실전 지표임을 설계로 못박았다.
+//    → 우리 피처에도 시장 내 횡단면 랭크를 직접 넣는다.
+//
+//  ★왜 또 새 모델인가★ 기존 LUXML featVer 를 올리면 17만 표본이 무효가 된다(사용자 지시).
+//    FLOW 와 마찬가지로 독립 피처벡터·독립 표본·독립 모델로 두고 위원회에 합류시킨다.
+const XALPHA = {
+  enabled: true,
+  featVer: 1,
+  featNames: [
+    // ── WorldQuant 형식알파(논문 번호 표기) ──
+    "a101",      // #101 (close−open)/((high−low)+.001) — 당일 몸통 방향
+    "a54",       // #54  −((low−close)·open^5)/((low−high)·close^5) — 종가 위치 왜도
+    "a12",       // #12  sign(Δvolume)·(−Δclose) — 거래량 변화와 가격 변화의 불일치
+    "a41",       // #41  sqrt(high·low) − vwap — 기하중심 대비 체결가 위치
+    "a53",       // #53  −Δ(((close−low)−(high−close))/(close−low)), 9) — 종가위치 모멘텀
+    "a6",        // #6   −corr(open, volume, 10) — 시가·거래량 역상관
+    "a4",        // #4   −ts_rank(rank(low), 9) — 저가 랭크의 시계열 랭크
+    "a33",       // #33  rank(−(1 − open/close))
+    "a23",       // #23  20일 고가평균 < 고가면 −Δ(high,2), 아니면 0
+    "a2",        // #2   −corr(rank(Δlog(volume),2), rank((close−open)/open), 6)
+    // ── 횡단면 랭크(JPX 방식) — 같은 시장 안에서의 상대 순위 ──
+    "xsRet5",    // 5일 수익률 랭크(0~1)
+    "xsRet20",   // 20일 수익률 랭크
+    "xsVolSurge",// 거래량 서지 랭크
+    "xsVolat",   // 변동성 랭크
+    "xsAmihud"   // 비유동성(Amihud) 랭크 — 유동성 프리미엄
+  ],
+  minTrainSamples: 800,
+  trainWindow: 40000,
+  l2: 1.0,
+  icFloor: 0.012
+};
+
+// ── 형식알파 계산 유틸 ──
+function _xaDelta(arr, d) {
+  if (!Array.isArray(arr) || arr.length <= d) return 0;
+  const a = arr[arr.length - 1 - d], b = arr[arr.length - 1];
+  return (isFinite(a) && isFinite(b)) ? b - a : 0;
+}
+function _xaCorr(a, b, n) {
+  if (!Array.isArray(a) || !Array.isArray(b)) return 0;
+  const m = Math.min(n, a.length, b.length);
+  if (m < 5) return 0;
+  const A = a.slice(a.length - m), B = b.slice(b.length - m);
+  let ma = 0, mb = 0;
+  for (let i = 0; i < m; i++) { ma += A[i]; mb += B[i]; }
+  ma /= m; mb /= m;
+  let sa = 0, sb = 0, sab = 0;
+  for (let i = 0; i < m; i++) { const x = A[i] - ma, y = B[i] - mb; sa += x * x; sb += y * y; sab += x * y; }
+  return (sa > 1e-12 && sb > 1e-12) ? _clamp(sab / Math.sqrt(sa * sb), -1, 1) : 0;
+}
+// 시계열 랭크 — 최근 값이 지난 n개 중 몇 번째 백분위인가(0~1). 논문의 Ts_Rank.
+function _xaTsRank(arr, n) {
+  if (!Array.isArray(arr) || arr.length < 3) return 0.5;
+  const m = Math.min(n, arr.length);
+  const w = arr.slice(arr.length - m);
+  const last = w[w.length - 1];
+  let cnt = 0;
+  for (const v of w) if (v < last) cnt++;
+  return m > 1 ? cnt / (m - 1) : 0.5;
+}
+// 횡단면 백분위 랭크 — 값 배열에서 target 이 몇 등인가(0~1). 논문의 rank.
+function _xaXsRank(vals, target) {
+  if (!Array.isArray(vals) || vals.length < 3 || !isFinite(target)) return 0.5;
+  let cnt = 0, n = 0;
+  for (const v of vals) { if (!isFinite(v)) continue; n++; if (v < target) cnt++; }
+  return n > 1 ? cnt / (n - 1) : 0.5;
+}
+
+// 횡단면 통계를 시장 단위로 1회만 만든다(종목마다 다시 돌면 O(N²) 가 된다).
+//   반환: { ret5:[], ret20:[], volSurge:[], volat:[], amihud:[], bySym:{sym:{...}} }
+function xalphaBuildPanel(dailyCache, market) {
+  const panel = { ret5: [], ret20: [], volSurge: [], volat: [], amihud: [], bySym: {} };
+  try {
+    for (const sy in dailyCache) {
+      const isKR = /\.(KS|KQ)$/.test(sy);
+      if ((market === "kr") !== isKR) continue;
+      const d = dailyCache[sy];
+      const c = d && d.closes;
+      if (!Array.isArray(c) || c.length < 25) continue;
+      const _r = function (n) {
+        const a = c[c.length - 1 - n], b = c[c.length - 1];
+        return (a > 0 && b > 0) ? (b / a - 1) * 100 : null;
+      };
+      const r5 = _r(5), r20 = _r(20);
+      // 거래량 서지 = 당일 / 20일 평균
+      let vs = null;
+      const v = d.volumes;
+      if (Array.isArray(v) && v.length >= 21) {
+        let sum = 0, k = 0;
+        for (let i = v.length - 21; i < v.length - 1; i++) { if (v[i] > 0) { sum += v[i]; k++; } }
+        const avg = k > 0 ? sum / k : 0;
+        if (avg > 0 && v[v.length - 1] > 0) vs = _clamp(v[v.length - 1] / avg, 0, 10);
+      }
+      // 20일 실현변동성
+      let vol = null;
+      {
+        const lr = [];
+        for (let i = Math.max(1, c.length - 20); i < c.length; i++) if (c[i] > 0 && c[i - 1] > 0) lr.push(Math.log(c[i] / c[i - 1]));
+        if (lr.length >= 10) {
+          let m = 0; for (const x of lr) m += x; m /= lr.length;
+          let s2 = 0; for (const x of lr) s2 += (x - m) * (x - m);
+          vol = Math.sqrt(s2 / lr.length) * Math.sqrt(252) * 100;
+        }
+      }
+      // Amihud 비유동성 = |수익률| / 거래대금 (평균). 유동성 프리미엄의 표준 대용치.
+      let ami = null;
+      if (Array.isArray(v) && v.length >= 21) {
+        let sum = 0, k = 0;
+        for (let i = Math.max(1, c.length - 20); i < c.length; i++) {
+          const dv = v[i] * c[i];
+          if (dv > 0 && c[i - 1] > 0) { sum += Math.abs(c[i] / c[i - 1] - 1) / dv; k++; }
+        }
+        if (k >= 10) ami = Math.log(1 + sum / k * 1e9);
+      }
+      panel.bySym[sy] = { r5: r5, r20: r20, vs: vs, vol: vol, ami: ami };
+      if (r5 != null) panel.ret5.push(r5);
+      if (r20 != null) panel.ret20.push(r20);
+      if (vs != null) panel.volSurge.push(vs);
+      if (vol != null) panel.volat.push(vol);
+      if (ami != null) panel.amihud.push(ami);
+    }
+  } catch (e) {}
+  return panel;
+}
+
+// XALPHA 피처벡터 — 캐시된 OHLCV + 시장 패널만 쓴다(네트워크 0).
+function xalphaBuildFeat(symbol, dailyCache, panel) {
+  try {
+    if (!XALPHA.enabled) return null;
+    const d = dailyCache && dailyCache[symbol];
+    if (!d || !Array.isArray(d.closes) || d.closes.length < 25) return null;
+    const c = d.closes;
+    const o = Array.isArray(d.opens) && d.opens.length === c.length ? d.opens : c;
+    const h = Array.isArray(d.highs) && d.highs.length === c.length ? d.highs : c;
+    const l = Array.isArray(d.lows) && d.lows.length === c.length ? d.lows : c;
+    const v = Array.isArray(d.volumes) && d.volumes.length === c.length ? d.volumes : null;
+    const n = c.length - 1;
+    const C = c[n], O = o[n], H = h[n], L = l[n];
+    if (!(C > 0)) return null;
+    // vwap 근사 — 일봉만 있으므로 전형가격(typical price)을 쓴다. 논문의 vwap 대용.
+    const vwap = (H + L + C) / 3;
+
+    // #101 — (close − open) / ((high − low) + .001)
+    const a101 = _clamp((C - O) / ((H - L) + 0.001 * C), -3, 3);
+    // #54 — −((low − close)·open^5) / ((low − high)·close^5).
+    //   5제곱은 스케일이 폭발하므로 논문의 의도(종가가 고−저 구간 어디인가)를 보존한 정규화형으로 쓴다.
+    const a54 = (H > L) ? _clamp(-((L - C) / (L - H)), -2, 2) : 0;
+    // #12 — sign(Δvolume)·(−Δclose)
+    const dv = v ? _xaDelta(v, 1) : 0;
+    const a12 = _clamp((dv > 0 ? 1 : dv < 0 ? -1 : 0) * (-_xaDelta(c, 1) / C) * 100, -10, 10);
+    // #41 — sqrt(high·low) − vwap  (가격으로 정규화)
+    const a41 = _clamp((Math.sqrt(Math.max(0, H * L)) - vwap) / C * 100, -5, 5);
+    // #53 — −Δ(((close−low)−(high−close))/(close−low)), 9)
+    const _pos = [];
+    for (let i = Math.max(0, c.length - 12); i < c.length; i++) {
+      const den = (c[i] - l[i]);
+      _pos.push(Math.abs(den) > 1e-9 ? ((c[i] - l[i]) - (h[i] - c[i])) / den : 0);
+    }
+    const a53 = _clamp(-_xaDelta(_pos, Math.min(9, _pos.length - 1)), -5, 5);
+    // #6 — −corr(open, volume, 10)
+    const a6 = v ? -_xaCorr(o, v, 10) : 0;
+    // #4 — −ts_rank(rank(low), 9). rank(low) 는 횡단면이지만 패널이 당일치뿐이라
+    //   시계열 랭크만 쓰되 부호는 논문대로 반전한다.
+    const a4 = -( _xaTsRank(l, 9) - 0.5) * 2;
+    // #33 — rank(−(1 − open/close)) → 종목 단위에선 −(1 − open/close) 자체를 쓴다
+    const a33 = _clamp(-(1 - O / C) * 100, -10, 10);
+    // #23 — sum(high,20)/20 < high 이면 −Δ(high,2), 아니면 0
+    let ma20h = 0, k20 = 0;
+    for (let i = Math.max(0, h.length - 20); i < h.length; i++) { ma20h += h[i]; k20++; }
+    ma20h = k20 > 0 ? ma20h / k20 : H;
+    const a23 = (ma20h < H) ? _clamp(-_xaDelta(h, 2) / C * 100, -10, 10) : 0;
+    // #2 — −corr(rank(Δlog(volume),2), rank((close−open)/open), 6)
+    let a2 = 0;
+    if (v) {
+      const dlv = [], co = [];
+      for (let i = Math.max(2, c.length - 8); i < c.length; i++) {
+        if (v[i] > 0 && v[i - 2] > 0) dlv.push(Math.log(v[i] / v[i - 2]));
+        else dlv.push(0);
+        co.push(o[i] > 0 ? (c[i] - o[i]) / o[i] : 0);
+      }
+      a2 = -_xaCorr(dlv, co, 6);
+    }
+
+    // ── 횡단면 랭크(JPX) ──
+    const b = (panel && panel.bySym && panel.bySym[symbol]) || {};
+    const xsRet5 = _xaXsRank(panel ? panel.ret5 : [], b.r5);
+    const xsRet20 = _xaXsRank(panel ? panel.ret20 : [], b.r20);
+    const xsVolSurge = _xaXsRank(panel ? panel.volSurge : [], b.vs);
+    const xsVolat = _xaXsRank(panel ? panel.volat : [], b.vol);
+    const xsAmihud = _xaXsRank(panel ? panel.amihud : [], b.ami);
+
+    const out = [a101, a54, a12, a41, a53, a6, a4, a33, a23, a2,
+                 xsRet5, xsRet20, xsVolSurge, xsVolat, xsAmihud];
+    for (let i = 0; i < out.length; i++) if (!isFinite(out[i])) out[i] = 0;
+    return out;
+  } catch (e) { return null; }
+}
+
+async function xalphaLogSample(DB, market, symbol, featVec, pnlPct) {
+  try {
+    if (!XALPHA.enabled || !Array.isArray(featVec) || featVec.length !== XALPHA.featNames.length) return;
+    await DB.prepare("CREATE TABLE IF NOT EXISTS xalpha_samples (id INTEGER PRIMARY KEY AUTOINCREMENT, ts INTEGER, market TEXT, symbol TEXT, feat TEXT, label INTEGER, pnl_pct REAL, featver INTEGER)").run();
+    await DB.prepare("INSERT INTO xalpha_samples (ts, market, symbol, feat, label, pnl_pct, featver) VALUES (?,?,?,?,?,?,?)")
+      .bind(Date.now(), market, symbol, JSON.stringify(featVec), _num(pnlPct, 0) > 0 ? 1 : 0, _num(pnlPct, 0), XALPHA.featVer).run();
+  } catch (e) {}
+}
+
+// FLOW 와 동일한 야간 자체학습(로지스틱+L2, IC 측정). 구조를 맞춰 유지보수를 단순하게 둔다.
+async function xalphaTrainNightly(DB) {
+  if (!XALPHA.enabled) return null;
+  return await _miniLogisticTrain(DB, {
+    table: "xalpha_samples", stateKey: "xalpha_model", tag: "XALPHA",
+    featVer: XALPHA.featVer, D: XALPHA.featNames.length,
+    minN: XALPHA.minTrainSamples, window: XALPHA.trainWindow,
+    l2: XALPHA.l2, icFloor: XALPHA.icFloor
+  });
 }
 
 const LUXML = {
@@ -25433,6 +25697,19 @@ async function mlDeepDecide(DB, featVec, opts) {
         }
       }
     } catch (e) {}
+    // ── [V33.79] XALPHA 전문가 합류 — 형식알파(WorldQuant 101) + 횡단면 랭크(JPX) ──
+    try {
+      if (opts.xaFeat && Array.isArray(opts.xaFeat)) {
+        const xm = (opts.xaModel !== undefined) ? opts.xaModel : await getState(DB, "xalpha_model", null);
+        if (xm && xm.trusted && xm.featVer === XALPHA.featVer) {
+          const pX = flowScore(xm, opts.xaFeat);   // 같은 로지스틱 포맷이라 채점기를 공유한다
+          if (pX != null && Math.abs(pX - 0.5) > 1e-4) {
+            experts.push({ name: "xalpha", p: pX, z: _logitD(pX),
+                           acc: _num(xm.valAcc, 0.5), ic: _num(xm.valIC, null), wMul: 0.9 });
+          }
+        }
+      }
+    } catch (e) {}
     // ── [V12.39 규칙엔진 전문가] 규칙엔진의 기술적 종합확률(taUpProb)을 위원회 정식 위원으로 합류 ──
     //   MIND 야간학습이 검증셋에서 측정한 규칙엔진 정확도(ruleAccLB)가 동전던지기(0.5)를 넘을 때만
     //   그 정확도의 소프트맥스 가중으로 투표. 규칙엔진이 AI 안에 "이식"되어 잘 맞는 국면엔 발언권이
@@ -25479,13 +25756,37 @@ async function mlDeepDecide(DB, featVec, opts) {
       };
       const _useIC = experts.some(function (ex) { return typeof ex.ic === "number" && isFinite(ex.ic); });
       let wsum = 0, zsum = 0;
+      const _wl = [];
       for (const ex of experts) {
         const w = _useIC
           ? (ex.wMul || 1) * Math.exp(_icT * _icOf(ex))
           : (ex.wMul || 1) * Math.exp(T * (Math.min(_accBlend(ex), _cap) - 0.5));
         wsum += w; zsum += w * ex.z;
+        _wl.push({ w: w, z: ex.z, name: ex.name });
       }
       pCombined = _clamp(_sigmoid(zsum / (wsum || 1)), 0.001, 0.999);
+      // [V33.79] ★절사평균 안전장치★ (Jane Street Market Prediction 우승 해법의 블렌딩 기법)
+      //   가중평균은 한 전문가가 폭주하면(버그·분포 이탈·학습 붕괴) 그 극단값이 결합확률을
+      //   그대로 끌고 간다. 대회 우승 해법들은 모델을 모아 ★가운데 60%만 평균★ 내는 절사평균을
+      //   썼다 — 이상치 한 명이 전체를 못 흔들게 하는 표준 처리다.
+      //   여기서는 가중평균을 버리지 않고(우리는 IC 가중이 의미 있다) 절사평균과 크게 어긋날 때만
+      //   절사 쪽으로 끌어당긴다. 전문가가 5명 이상일 때만 적용한다(3~4명이면 절사가 과하다).
+      try {
+        if (_wl.length >= 5) {
+          const _sorted = _wl.slice().sort(function (a2, b2) { return a2.z - b2.z; });
+          const _cut = Math.floor(_sorted.length * 0.2);          // 위아래 20%씩 제거 → 가운데 60%
+          const _mid = _sorted.slice(_cut, _sorted.length - _cut);
+          if (_mid.length >= 2) {
+            let _mw = 0, _mz = 0;
+            for (const e2 of _mid) { _mw += e2.w; _mz += e2.w * e2.z; }
+            const _pTrim = _clamp(_sigmoid(_mz / (_mw || 1)), 0.001, 0.999);
+            // 두 값이 12%p 넘게 벌어지면 한 명이 끌고 간 것으로 보고 절사평균 쪽으로 절반 이동.
+            if (Math.abs(_pTrim - pCombined) > 0.12) {
+              pCombined = _clamp(pCombined * 0.5 + _pTrim * 0.5, 0.001, 0.999);
+            }
+          }
+        }
+      } catch (e) {}
     }
     // [V4] 위원회 확률 보정(야간 mlCalibrateCommittee가 학습한 온도)
     try {
