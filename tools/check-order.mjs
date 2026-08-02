@@ -52,5 +52,22 @@ for (const k of reads) {
   if (/^(daily|quote|hist|index|ai_picks|sector_|xs_|mkt_|xmkt_|equity_peak)/.test(k)) continue;
   console.error(`  WARN 죽은 state 키: "${k}" — 읽기만 하고 기록하는 곳이 없다(게이트가 영원히 닫힐 수 있음)`);
 }
+// [V33.85] 호출되지 않는 함수 = 죽은 코드. 감사에서 18건(연쇄 1건 포함)이 나왔다.
+//   죽은 코드는 그냥 용량이 아니라 ★사람을 속인다★ — "그 기능 있잖아"라고 믿게 만든다.
+//   실제로 computeCrashGate(폭락방어 39줄)는 메인 사이클에 재구현돼 있는데도 남아 있었고,
+//   taPredictMultiTF(멀티타임프레임 확률결합)는 아무도 안 부르는 채로 방치돼 있었다.
+{
+  const defs = new Map();
+  for (const m of src.matchAll(/^(?:async\s+)?function\s+([A-Za-z_$][\w$]*)\s*\(/gm)) defs.set(m[1], m.index);
+  const deadFns = [];
+  for (const [name, pos] of defs) {
+    const re = new RegExp("(?<![\\w$.])" + name.replace(/\$/g, "\\$") + "(?![\\w$])", "g");
+    if ([...src.matchAll(re)].length - 1 <= 0) deadFns.push({ name, line: ln(pos) });
+  }
+  if (deadFns.length) {
+    for (const d of deadFns) console.error(`  FAIL 죽은코드: 호출되지 않는 함수 '${d.name}' @${d.line}`);
+    bad += deadFns.length;
+  }
+}
 if (bad) { console.error(`\n순서계약 위반 ${bad}건 — 배포 차단`); process.exit(1); }
 console.log("  ok   선언·사용 순서 계약 통과");
