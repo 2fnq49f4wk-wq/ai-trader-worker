@@ -1406,7 +1406,13 @@ def _train_and_upload_scalp(BASE, KEY, HDR, featver):
     acc = float(((proba >= 0.5).astype(int) == Yva).mean())
     z = 1.64; n = len(Yva); z2 = z * z
     lb = max(0.0, ((acc + z2 / (2 * n)) - z * math.sqrt((acc * (1 - acc) + z2 / (4 * n)) / n)) / (1 + z2 / n))
-    print(f"   valAcc {acc:.4f} (하한 {lb:.4f}, n={n}) / 트리 {len(trees)}")
+    # [V33.97] ★단타 모델도 IC 를 보낸다★
+    #   워커의 단타 신뢰 게이트는 종전에 정확도 하한 하나뿐이었다. Wilson 하한 특성상
+    #   검증 2,000건이면 원시 정확도 55.3% 를 요구하는데, 60분 지평 배리어 라벨에서 그건
+    #   사실상 불가능하다 — 그래서 학습이 성공해도 영원히 신뢰되지 않았다.
+    #   GBDT 와 같은 IC 경로를 열어주려면 IC 와 그 유의성(블록 IC + t)을 함께 보내야 한다.
+    _sic, _sric = _calc_ic(proba, Yva)
+    print(f"   valAcc {acc:.4f} (하한 {lb:.4f}, n={n}) IC {_sic:.4f} RankIC {_sric:.4f} / 트리 {len(trees)}")
 
     # 변환정합 probe — 워커가 같은 확률을 재현하는지 검증(스윙과 동일한 안전장치)
     pi = np.linspace(0, len(Xva) - 1, min(200, len(Xva))).astype(int)
@@ -1415,7 +1421,11 @@ def _train_and_upload_scalp(BASE, KEY, HDR, featver):
     model = {"featVer": featver, "ifeatVer": (ifeatver or 0),
              "trees": trees, "base": base, "lr": 1.0,
              "valAcc": round(acc, 4), "valAccLB": round(lb, 4), "valN": int(n), "n": int(N),
-             "posRate": round(pos_rate, 4), "horizonBars": 12, "probe": probe}
+             "posRate": round(pos_rate, 4), "horizonBars": 12, "probe": probe,
+             "valIC": round(_sic, 5), "valRankIC": round(_sric, 5)}
+    model.update(_ic_block_fields(proba, Yva))
+    if "valICt" in model:
+        print(f"   blockIC {model['valICBlock']:.4f} t {model['valICt']:.2f} (유의성 게이트용)")
     for attempt in range(4):
         try:
             r = requests.post(BASE + "/api/scalp-import", params={"key": KEY},

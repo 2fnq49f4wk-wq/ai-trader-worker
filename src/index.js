@@ -2760,7 +2760,7 @@ async function applySignalTypeWeights(DB, cfg) {
 // ============================================================================
 // [V33.55] 빌드 버전 — SWR L2 캐시 키에 섞어 '배포 = 판단 캐시 자동 무효화'를 만든다.
 //   판정 로직을 고쳐도 옛 캐시가 최대 1시간 재배포되던 문제를 구조적으로 없앤다.
-const _BUILD_VER = "V33.96";
+const _BUILD_VER = "V33.97";
 
 const AI_PARAMS = {
   // ── OHLCV 타임프레임 ── 시가/고가/저가/종가/거래량을 어떤 봉 주기로 볼지.
@@ -11663,6 +11663,8 @@ async function executeBuy(DB, market, symbol, strategy, qty, price, signal, dail
           mlPPreCal2: (signal && typeof signal.mlPPreCal2 === "number") ? signal.mlPPreCal2 : null,   // [V33.94] 최종보정 학습용
           mlTechRaw: (signal && typeof signal.mlTechRaw === "number") ? signal.mlTechRaw : null,   // [V33.96] 블렌드 계수 학습용
           mlNewsRaw: (signal && typeof signal.mlNewsRaw === "number") ? signal.mlNewsRaw : null,
+          mlShockDz: (signal && typeof signal.mlShockDz === "number") ? signal.mlShockDz : null,     // [V33.97]
+          mlShockMode: (signal && signal.mlShockMode) ? signal.mlShockMode : null,
           // [V33.78] 진입 시점 FLOW 피처 스냅샷 — 청산 때 라벨을 붙여 표본이 된다.
           flowFeat: (signal && Array.isArray(signal.flowFeat)) ? signal.flowFeat : null,
           xaFeat: (signal && Array.isArray(signal.xaFeat)) ? signal.xaFeat : null,
@@ -11835,6 +11837,17 @@ async function executeSell(DB, market, symbol, pos, sellQty, price, reason, cfg,
           // [V33.96] 결정블렌드 계수 학습 — (기술점수, 뉴스점수, 위원회확률, 승패)
           if (typeof pos.meta.mlTechRaw === "number" || typeof pos.meta.mlNewsRaw === "number")
             await blendObserve(DB, pos.meta.mlTechRaw, pos.meta.mlNewsRaw, _pPre, pnlPct > 0);
+          // [V33.97] 충격 프라이어 관측 적립 — 계수 실측은 사건 표본이 쌓인 뒤(지금은 수집만).
+          if (typeof pos.meta.mlShockDz === "number" && pos.meta.mlShockDz !== 0) {
+            try {
+              let sb2 = await getState(DB, "shock_cal_buf", null);
+              if (!sb2 || !Array.isArray(sb2.v)) sb2 = { v: [] };
+              sb2.v = sb2.v.concat([[pos.meta.mlShockMode || "?", +pos.meta.mlShockDz.toFixed(3),
+                                     +_num(_pPre, 0.5).toFixed(4), pnlPct > 0 ? 1 : 0]]).slice(-500);
+              sb2.ts = Date.now();
+              await setState(DB, "shock_cal_buf", sb2);
+            } catch (e3) {}
+          }
         } catch (e2) {}
       }
     }
@@ -17012,6 +17025,9 @@ async function runTradingCycle(env) {
                   signal.mlPPreCal2 = (typeof _md.pPreCal2 === "number") ? _md.pPreCal2 : null;   // [V33.94]
                   signal.mlTechRaw = (typeof _md.techRaw === "number") ? _md.techRaw : null;   // [V33.96]
                   signal.mlNewsRaw = (typeof _md.newsRaw === "number") ? _md.newsRaw : null;
+                  // [V33.97] 충격 프라이어 실측용(모드·적용 로짓) — 사건이 쌓이면 계수를 적합한다.
+                  signal.mlShockDz = (_md.shock && typeof _md.shock.dz === "number") ? _md.shock.dz : null;
+                  signal.mlShockMode = (_md.shock && _md.shock.mode) ? String(_md.shock.mode) : null;
                   // [V33.92] 후보 p 분포 수집은 게이트 앞으로 옮겼다(위 참조) — 여기서 모으면
                   //   통과분만 담겨 문턱이 스스로를 끌어올리는 절단 분포가 된다.
                   // [V33.80] 스태킹 표본용 — 전문가 확률 스냅샷을 진입 메타에 싣는다.
@@ -18919,11 +18935,31 @@ async function handleRequest(request, env, ctx) {
       const _pos = (model.posRate != null) ? model.posRate : 0.5;
       const _baseline = Math.max(_pos, 1 - _pos);
       const convOK = (convMaxDiff == null) || (convMaxDiff <= 0.03);
-      const trusted = convOK && model.n >= 3000 && vLB >= _baseline + 0.015;
+      // ══ [V33.97] ★단타 모델이 학습돼도 절대 신뢰될 수 없던 두 번째 벽★ ══
+      //   종전 조건은 `valAccLB >= 다수클래스 베이스라인 + 1.5%p` 하나뿐이었다.
+      //   Wilson 하한 특성상 검증 2,000건이면 ★원시 정확도 55.3%★ 가 필요하다(실측 계산).
+      //   60분 지평 배리어 라벨에서 55~58% 는 사실상 불가능한 수치다.
+      //   V33.77 에서 GBDT 신뢰게이트를 정확히 같은 이유로 IC 경로로 열어줬는데
+      //   (정확도 하한만으로는 정상 모델이 전부 불신 처리된다), 단타에는 그 조치가 빠져 있었다.
+      //   → 정확도 경로 ★또는★ IC 경로 중 하나만 통과하면 신뢰한다.
+      //     IC 경로는 다른 모델과 동일한 유의성 기준을 쓴다(블록 IC + t, 점추정 금지).
+      const _sIC = (typeof body.valIC === "number" && isFinite(body.valIC)) ? _clamp(body.valIC, -0.5, 0.5) : null;
+      const _sICb = (typeof body.valICBlock === "number" && isFinite(body.valICBlock)) ? _clamp(body.valICBlock, -0.5, 0.5) : null;
+      const _sICt = (typeof body.valICt === "number" && isFinite(body.valICt)) ? _clamp(body.valICt, -20, 20) : null;
+      model.valIC = _sIC; model.valICBlock = _sICb; model.valICt = _sICt;
+      const _scIcFloor = 0.015;
+      const _passAccS = vLB >= _baseline + 0.015;
+      const _passICs = (_sICb != null && _sICt != null)
+        ? (_sICb >= _scIcFloor && _sICt >= ICGATE.tMin)
+        : (_sIC != null && _num(_icEffective({ valIC: _sIC, valN: vN }), 0) >= _scIcFloor);
+      const trusted = convOK && model.n >= 3000 && (_passAccS || _passICs);
       const trust = { trusted: trusted, valAcc: model.valAcc, valAccLB: model.valAccLB, n: model.n,
+                      valIC: _sIC, valICBlock: _sICb, valICt: _sICt, valN: vN,
+                      passedBy: trusted ? (_passAccS ? (_passICs ? "acc+ic" : "acc") : "ic") : null,
                       baseline: +_baseline.toFixed(4), convMaxDiff: convMaxDiff != null ? +convMaxDiff.toFixed(4) : null,
                       source: "external", trainedAt: Date.now(),
-                      reason: trusted ? "ok" : (!convOK ? "정합 미달" : (model.n < 3000 ? "표본 부족(" + model.n + "/3000)" : "베이스라인 미달")) };
+                      reason: trusted ? "ok" : (!convOK ? "정합 미달" : (model.n < 3000 ? "표본 부족(" + model.n + "/3000)"
+                        : (_sICb == null && _sIC == null ? "정확도 미달(IC 미전송)" : "정확도·IC 모두 미달"))) };
       try {
         await setState(env.DB, "scalp_model", model);
         await setState(env.DB, "scalp_trust", trust);
@@ -28209,6 +28245,11 @@ async function mlDeepDecide(DB, featVec, opts) {
         if (_dz !== 0) pCombined = _clamp(_sigmoid(_logitD(pCombined) + _dz), 0.001, 0.999);
         _shkSizeK = _shockSizeK(_shock, _da);
         _shockOut = { mode: _shock.mode, sev: _shock.sev, dz: +_dz.toFixed(3), defAlign: +_da.toFixed(2), sizeK: +_shkSizeK.toFixed(2), trend: _shock.trend || null };
+        // [V33.97] ★충격 프라이어는 아직 실측 불가 — 대신 '잴 수 있게' 남긴다★
+        //   _shockLogitShift 의 계수(−1.5·0.85·0.55·0.5 …)는 전부 손으로 정한 값이고,
+        //   crash 최대치는 −1.8 로짓(확률 0.80 → 0.40)으로 체인에서 가장 큰 개입이다.
+        //   폭락·급등은 드문 사건이라 지금 표본으로는 계수를 적합할 수 없다.
+        //   → 적용된 dz 와 모드를 진입 메타에 실어, 사건이 쌓이면 나중에 실측할 수 있게 한다.
       }
     } catch (e) {}
 
@@ -30265,11 +30306,19 @@ function _luxDecisionBlend(committeeP, techScore, newsScore, w, kTbl) {
   w = w || {};
   const base = _clamp(_num(committeeP, 0.5), 0.001, 0.999);
   let z = Math.log(base / (1 - base));
-  // 계수: 실측값 우선. 기본값은 techScore=±1 일 때 로짓 ±0.9(≈ 확률 0.5→0.71) 수준.
+  // 계수: 실측값 우선.
+  // ★기본값을 작게 잡는 이유 — 이중 계상 위험★
+  //   위원회 확률(committeeP)에는 이미 ⑦ 기술 프라이어가 들어가 있고, 그 프라이어의 입력은
+  //   featVec 의 tfConsBull(다기간 컨센서스)·chartPat(차트패턴)이다.
+  //   여기 techScore(_luxPickTech)도 ★같은 두 가지★ 를 다시 계산한 값이다 — 같은 증거를 두 번 더하면
+  //   확률이 부풀려진다.
+  //   실측 계수(decision_blend_k)는 이 문제가 없다: 적합할 때 위원회 확률을 오프셋으로 고정하므로
+  //   kTech 가 '기술 프라이어를 이미 반영한 뒤 남은 잔여 효과' 로 추정된다.
+  //   따라서 ★측정 전 기본값만★ 보수적으로 둔다(측정되면 그 값이 그대로 쓰인다).
   const kT = (kTbl && typeof kTbl.kTech === "number" && isFinite(kTbl.kTech))
-    ? _clamp(kTbl.kTech, -2, 2) : _num(w.kTech, 0.90);
+    ? _clamp(kTbl.kTech, -2, 2) : _num(w.kTech, 0.35);
   const kN = (kTbl && typeof kTbl.kNews === "number" && isFinite(kTbl.kNews))
-    ? _clamp(kTbl.kNews, -2, 2) : _num(w.kNews, 0.45);
+    ? _clamp(kTbl.kNews, -2, 2) : _num(w.kNews, 0.20);
   if (techScore != null) z += kT * _clamp(_num(techScore, 0), -1, 1);
   if (newsScore != null) z += kN * _clamp(_num(newsScore, 0), -1, 1);
   return _clamp(1 / (1 + Math.exp(-_clamp(z, -30, 30))), 0.02, 0.98);
