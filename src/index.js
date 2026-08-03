@@ -2760,7 +2760,7 @@ async function applySignalTypeWeights(DB, cfg) {
 // ============================================================================
 // [V33.55] 빌드 버전 — SWR L2 캐시 키에 섞어 '배포 = 판단 캐시 자동 무효화'를 만든다.
 //   판정 로직을 고쳐도 옛 캐시가 최대 1시간 재배포되던 문제를 구조적으로 없앤다.
-const _BUILD_VER = "V33.100";
+const _BUILD_VER = "V33.101";
 
 const AI_PARAMS = {
   // ── OHLCV 타임프레임 ── 시가/고가/저가/종가/거래량을 어떤 봉 주기로 볼지.
@@ -17721,6 +17721,69 @@ async function handleRequest(request, env, ctx) {
     //   서버에 라우트가 없어 404 → r.json() 실패 → catch로 조용히 삼켜져 대시보드의
     //   "ENGINE PIPELINE · 8 SUBSYSTEMS 로딩 중…"이 영원히 로딩 상태로 남아 있었다.
     //   각 서브시스템의 최종 실행시각(state.updated_ts)으로 OK/STALE/NEVER를 판정해 돌려준다.
+    // ════════════════════════════════════════════════════════════════════════
+    // [V33.101] GET /api/r2-status — R2 상태를 사이트에서 바로 본다(사용자 요청).
+    //   지금까지 R2 가 붙었는지 확인하려면 GitHub Actions 로그를 봐야 했다. 그게 불편할 뿐 아니라
+    //   ★배포 로그는 '배포 시점' 이야기라 지금 실제로 쓰이고 있는지는 알 수 없다★.
+    //   여기서는 워커가 지금 이 순간 들고 있는 바인딩과 실제 오브젝트를 직접 센다.
+    //   list 는 Class A 과금이라 5분 캐시를 둔다(오브젝트 수백 개면 1회 호출로 끝난다).
+    if (path === "/api/r2-status") {
+      const R2 = _bigR2();
+      if (!R2) {
+        return Response.json({ bound: false, note: "R2 미바인딩 — 장중 표본은 D1 폴백(stin_samples), 대형모델은 D1 청크",
+          fallback: "D1" }, { headers: cors });
+      }
+      let cached = null;
+      try { cached = await getState(env.DB, "r2_status_cache", null); } catch (e) {}
+      if (cached && (Date.now() - _num(cached.ts, 0)) < 300000 && !url.searchParams.get("fresh"))
+        return Response.json(Object.assign({ cachedAgeSec: Math.round((Date.now() - cached.ts) / 1000) }, cached.v), { headers: cors });
+      const groups = {};
+      let total = 0, bytes = 0, newest = 0, truncated = false;
+      try {
+        let cursor = undefined;
+        for (let pg = 0; pg < 12; pg++) {
+          const lr = await R2.list({ cursor: cursor, limit: 1000 });
+          for (const o of (lr.objects || [])) {
+            total++; bytes += _num(o.size, 0);
+            const ts = o.uploaded ? new Date(o.uploaded).getTime() : 0;
+            if (ts > newest) newest = ts;
+            // 접두사별 분류 — 키 규칙이 바뀌면 여기서 '기타' 로 뜨므로 바로 눈에 띈다.
+            const k = String(o.key);
+            let g = "기타";
+            if (k.indexOf("st/intraday/") === 0) g = k === STIN.pendKey ? "단타 대기버퍼" : "단타 표본";
+            else if (k.indexOf("hist/") === 0) g = "일봉 이력";
+            else if (k.indexOf("big/") === 0) g = "대형모델";
+            const e = groups[g] || (groups[g] = { n: 0, bytes: 0, newest: 0 });
+            e.n++; e.bytes += _num(o.size, 0); if (ts > e.newest) e.newest = ts;
+          }
+          if (!lr.truncated) { truncated = false; break; }
+          cursor = lr.cursor; truncated = true;
+        }
+      } catch (e) {
+        return Response.json({ bound: true, error: "R2 조회 실패: " + (e && e.message) }, { status: 500, headers: cors });
+      }
+      // 오늘치 단타 표본이 실제로 쌓이는지 — 파이프라인이 도는지 판단하는 핵심 지표.
+      let todayFiles = 0, todayBytes = 0;
+      try {
+        const day = _stinDay();
+        let cursor = undefined;
+        for (let pg = 0; pg < 6; pg++) {
+          const lr = await R2.list({ prefix: "st/intraday/" + day + "/", cursor: cursor, limit: 500 });
+          for (const o of (lr.objects || [])) { todayFiles++; todayBytes += _num(o.size, 0); }
+          if (!lr.truncated) break;
+          cursor = lr.cursor;
+        }
+      } catch (e) {}
+      let pendN = null;
+      try { const g = await R2.get(STIN.pendKey); if (g) { const j = JSON.parse(await g.text()); pendN = (j.items || []).length; } } catch (e) {}
+      const out = { bound: true, total: total, bytes: bytes, listTruncated: truncated,
+        newestTs: newest || null, groups: groups,
+        today: { day: _stinDay(), files: todayFiles, bytes: todayBytes, pending: pendN },
+        ts: Date.now() };
+      try { await setState(env.DB, "r2_status_cache", { v: out, ts: Date.now() }); } catch (e) {}
+      return Response.json(out, { headers: cors });
+    }
+
     if (path === "/api/pipeline") {
       try {
         const SUBS = [
@@ -18045,6 +18108,25 @@ async function handleRequest(request, env, ctx) {
           try { _alt.audit = await getState(env.DB, "ledger_audit", null); } catch (e) {}
           // [V33.95] 게이트 감사 — 고확률 차단이 실제로 손해였는지.
           try { _alt.gate = await getState(env.DB, "gate_audit", null); } catch (e) {}
+          // [V33.101] 전략별 신호 성과 — 계산·저장까지 해놓고 읽는 곳이 없던 값을 노출한다.
+          try {
+            const _sss = await getState(env.DB, "signal_stats_strat", null);
+            if (_sss) {
+              const _rows = Object.keys(_sss).map(function (k) {
+                const s = _sss[k];
+                return { k: k, n: _num(s.count, 0), win: _num(s.winRate, null), avg: _num(s.avgPnl, null) };
+              }).filter(function (x) { return x.n >= 10; })
+                .sort(function (a, b) { return (b.avg || -9) - (a.avg || -9); });
+              _alt.sigStrat = { top: _rows.slice(0, 4), worst: _rows.slice(-3).reverse(), n: _rows.length };
+            }
+          } catch (e) {}
+          // [V33.101] R2 상태 — 사이트에서 바로 보이게(캐시된 값만 읽는다, 여기서 list 하지 않는다).
+          try {
+            const _r2c = await getState(env.DB, "r2_status_cache", null);
+            _alt.r2 = { bound: !!_bigR2(),
+              v: (_r2c && _r2c.v) ? _r2c.v : null,
+              ageSec: (_r2c && _r2c.ts) ? Math.round((Date.now() - _r2c.ts) / 1000) : null };
+          } catch (e) {}
           // [V33.94] 확률 체인의 '측정된 계수' 들 — 상수를 실측으로 바꾼 자리를 화면에서 확인.
           try {
             const _tk = await getState(env.DB, "tech_prior_k", null);
@@ -19256,12 +19338,12 @@ async function handleRequest(request, env, ctx) {
     if (path === "/api/ai/train-now" && request.method === "POST") {
       const au = _trainAuthed(); if (!au.ok) return Response.json({ error: au.msg }, { status: au.code, headers: cors });
       const target = url.searchParams.get("target") || "mind";
-      const FN = { mind: mlMindTrainNightly, gbdt: mlGBDTTrainNightly, brain: mlBrainTrainNightly, dnn: mlDNNTrainNightly, l1: mlTrainNightly, calibrate: mlCalibrateCommittee, selfreview: mlSelfReview, flow: flowTrainNightly, xalpha: xalphaTrainNightly, stack: stackTrainNightly, dual: dualHeadTrainNightly, memo: memoTrainNightly, techk: techPriorFitNightly, finalcal: finalCalFitNightly, gateaudit: gateAuditNightly, blendk: decisionBlendFitNightly, confk: scalpConfluenceFitNightly, portstats: portfolioStatsNightly, ledgeraudit: ledgerCheckIntegrity };
+      const FN = { mind: mlMindTrainNightly, gbdt: mlGBDTTrainNightly, brain: mlBrainTrainNightly, dnn: mlDNNTrainNightly, l1: mlTrainNightly, calibrate: mlCalibrateCommittee, selfreview: mlSelfReview, flow: flowTrainNightly, xalpha: xalphaTrainNightly, stack: stackTrainNightly, dual: dualHeadTrainNightly, memo: memoTrainNightly, techk: techPriorFitNightly, finalcal: finalCalFitNightly, gateaudit: gateAuditNightly, blendk: decisionBlendFitNightly, confk: scalpConfluenceFitNightly, mindshadow: mindShadowPromoteNightly, portstats: portfolioStatsNightly, ledgeraudit: ledgerCheckIntegrity };
       // [V12.63] target=all — 재배포 직후 "한 방에" 전체 파이프라인을 정확한 순서로 재실행(하루1회 게이트 무시).
       //   순서 고정: harvest → l1 → brain → mind → dnn → gbdt → calibrate (뒤 단계가 앞 단계 산출물 의존).
       //   각 단계 자체 CPU예산 가드가 있어 안전. 재학습 즉시 모든 수정이 반영되게 하는 원클릭 경로.
       if (target === "all") {
-        const _order = [["harvest", mlMarketHarvestNightly], ["l1", mlTrainNightly], ["brain", mlBrainTrainNightly], ["mind", mlMindTrainNightly], ["gbdt", mlGBDTTrainNightly], ["dnn", mlDNNTrainNightly], ["flow", flowTrainNightly], ["xalpha", xalphaTrainNightly], ["memo", memoTrainNightly], ["techk", techPriorFitNightly], ["finalcal", finalCalFitNightly], ["gateaudit", gateAuditNightly], ["blendk", decisionBlendFitNightly], ["confk", scalpConfluenceFitNightly], ["stack", stackTrainNightly], ["dual", dualHeadTrainNightly], ["portstats", portfolioStatsNightly], ["ledgeraudit", ledgerCheckIntegrity], ["calibrate", mlCalibrateCommittee]];
+        const _order = [["harvest", mlMarketHarvestNightly], ["l1", mlTrainNightly], ["brain", mlBrainTrainNightly], ["mind", mlMindTrainNightly], ["gbdt", mlGBDTTrainNightly], ["dnn", mlDNNTrainNightly], ["flow", flowTrainNightly], ["xalpha", xalphaTrainNightly], ["memo", memoTrainNightly], ["techk", techPriorFitNightly], ["finalcal", finalCalFitNightly], ["gateaudit", gateAuditNightly], ["blendk", decisionBlendFitNightly], ["confk", scalpConfluenceFitNightly], ["mindshadow", mindShadowPromoteNightly], ["stack", stackTrainNightly], ["dual", dualHeadTrainNightly], ["portstats", portfolioStatsNightly], ["ledgeraudit", ledgerCheckIntegrity], ["calibrate", mlCalibrateCommittee]];
         const out = {};
         for (const [nm, fn] of _order) {
           try { out[nm] = await fn(env.DB); } catch (e) { out[nm] = "FAIL: " + (e && e.message); }
@@ -27374,6 +27456,64 @@ async function scalpConfluenceFitNightly(DB) {
   } catch (e) { return "[CONFK] fail: " + (e && e.message); }
 }
 
+// ════════════════════════════════════════════════════════════════════════════
+// [V33.101] ★섀도우 MIND 를 다시 평가한다 — 저장만 하고 아무도 안 읽던 키★
+//   /api/mind-fm-import 는 승격 바(변환정합 + valAccLB ≥ trustFloor)를 못 넘으면
+//   모델을 "mind_fm_ext" 에 넣어 둔다. 그런데 ★그 키를 읽는 코드가 어디에도 없다★ —
+//   섀도우로 보관한다고 해놓고 실제로는 버리는 것과 같았다.
+//   업로드 시점의 바는 그 모델이 '그때 홀드아웃'에서 못 넘은 것뿐이고,
+//   이후 새 표본에서 잘 맞을 수도 있다. 그걸 확인할 방법이 있어야 섀도우가 의미를 갖는다.
+//   → 야간에 섀도우를 ★업로드 이후 도착한 표본★ 으로 채점해(전진검증), 통과하면 승격한다.
+//     같은 데이터를 다시 쪼개 재채점하는 게 아니라 새 데이터로만 판단한다(V33.93 원칙).
+async function mindShadowPromoteNightly(DB) {
+  try {
+    const sh = await getState(DB, "mind_fm_ext", null);
+    if (!sh) return null;                                   // 섀도우 없음 — 조용히 넘어간다
+    if (sh.featVer !== LUXML.featVer) return "[MIND-SHADOW] featVer 불일치 — 폐기 대기";
+    const since = _num(sh.trainedAt, 0);
+    if (!(since > 0)) return "[MIND-SHADOW] 업로드 시각 없음 — 판정 불가";
+    const rs = await DB.prepare(
+      "SELECT ts, feat, label, pnl_pct FROM ml_samples WHERE featver = ? AND ts > ? ORDER BY ts ASC LIMIT 4000"
+    ).bind(LUXML.featVer, since).all();
+    const rows = (rs && rs.results) || [];
+    if (rows.length < ICGATE.minForward)
+      return "[MIND-SHADOW] 전진표본 " + rows.length + "/" + ICGATE.minForward + " — 대기";
+    const pv = [], yv = [];
+    for (const r of rows) {
+      let v; try { v = JSON.parse(r.feat); } catch (e) { continue; }
+      if (!Array.isArray(v) || v.length !== LUXML.featNames.length) continue;
+      const sc = await mlMindScore(DB, sh, v, null);
+      if (!sc || typeof sc.p !== "number") continue;
+      pv.push(sc.p); yv.push(_labelOfRow(r));
+    }
+    if (pv.length < ICGATE.minForward)
+      return "[MIND-SHADOW] 유효 전진표본 " + pv.length + "/" + ICGATE.minForward + " — 대기";
+    let hit = 0; for (let i = 0; i < pv.length; i++) if ((pv[i] >= 0.5 ? 1 : 0) === yv[i]) hit++;
+    const acc = hit / pv.length;
+    const accLB = _wilsonLB(acc, pv.length);
+    const st = _icBlockStats(pv, yv, 5);
+    const icOK = (st.blockIC != null && st.t != null) && st.blockIC >= 0.012 && st.t >= ICGATE.tMin;
+    const accOK = accLB >= MIND.trustFloor;
+    if (!(icOK || accOK))
+      return "[MIND-SHADOW] 전진검증 미달 (정확도하한 " + (accLB * 100).toFixed(1) + "% / 블록IC " +
+             (st.blockIC != null ? st.blockIC.toFixed(4) : "—") + " t " + (st.t != null ? st.t.toFixed(2) : "—") + ") — 섀도우 유지";
+    // 승격 — 전진검증 수치로 메타를 갱신해서 올린다(업로드 당시 수치를 그대로 쓰지 않는다).
+    const promoted = Object.assign({}, sh, {
+      valAcc: +acc.toFixed(4), valAccLB: +accLB.toFixed(4), valN: pv.length,
+      valIC: +_num(st.ic, 0).toFixed(5),
+      valICBlock: st.blockIC != null ? +st.blockIC.toFixed(5) : null,
+      valICt: st.t != null ? +st.t.toFixed(3) : null,
+      promotedBy: "forward", promotedAt: Date.now()
+    });
+    await setState(DB, "mind_model", promoted);
+    await setState(DB, "mind_guard", { live: [], distrust: false, baseAcc: +acc.toFixed(4) });
+    await setState(DB, "mind_fm_ext", null);
+    return "[MIND-SHADOW] ★전진검증 통과 → 위원장 승격★ 정확도 " + (acc * 100).toFixed(1) +
+           "%(하한 " + (accLB * 100).toFixed(1) + "%) 블록IC " + (st.blockIC != null ? st.blockIC.toFixed(4) : "—") +
+           " t " + (st.t != null ? st.t.toFixed(2) : "—") + " · 전진표본 " + pv.length;
+  } catch (e) { return "[MIND-SHADOW] fail: " + (e && e.message); }
+}
+
 async function mlGuardState(DB) { try { return (await getState(DB, "mind_guard", null)) || { distrust: false }; } catch (e) { return { distrust: false }; } }
 
 // ── 4) 불확실성-조정 프랙셔널 켈리 사이징 ──────────────────
@@ -35246,6 +35386,8 @@ export default {
             await _stg("blendk", async function () { return await decisionBlendFitNightly(env.DB); });
             // [V33.98] 단타 합류 로짓 계수 실측(모델 확률을 오프셋으로 고정한 잔여효과).
             await _stg("confk", async function () { return await scalpConfluenceFitNightly(env.DB); });
+            // [V33.101] 섀도우 MIND 재평가 — 저장만 하고 아무도 안 읽던 키를 살린다.
+            await _stg("mindshadow", async function () { return await mindShadowPromoteNightly(env.DB); });
             await _stg("stack", async function () { return await stackTrainNightly(env.DB); });
             await _stg("dual", async function () { return await dualHeadTrainNightly(env.DB); });
             // [V33.90] 실제 원장 기준 포트폴리오 통계(NautilusTrader PortfolioAnalyzer) —

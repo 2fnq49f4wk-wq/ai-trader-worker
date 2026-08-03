@@ -65,7 +65,7 @@ try {
                port:{all:{ready:true,n:212,winRate:0.523,nWin:111,nLoss:101,avgWin:3.42,avgLoss:2.61,
                           expectancy:0.544,profitFactor:1.31,riskReturn:0.118,maxLossStreak:6}},
                tradeState:{us:'REDUCING',kr:'ACTIVE',reason:'DAILY_LOSS 2.7%'},
-               chain:{techK:{k:0.412,kEff:0.395,t:6.2,n:18400},finalCal:{T:1.35,ece:0.021,eceRaw:0.048,n:400},blendK:{kTech:0.72,kNews:0.18,tTech:3.4,n:380},confK:{k:0.11,kEff:0.04,t:1.9,n:4200},dualShift:{shift:{bull:0.31,bear:-0.52,volatile:-0.07,dead:-0.09,mixed:0},n:7200},evByVol:4,protect:{cooldownMin:90,lowProfitLockMin:360,enabled:true}},gate:{rows:[{reason:"ai_primary_gate",n:42,avgRet:2.31,winRate:0.62},{reason:"max_concurrent",n:18,avgRet:0.44,winRate:0.55},{reason:"senti_override",n:9,avgRet:-1.8,winRate:0.33}],byP:[{reason:"ai_primary_gate",n:820,avgP:0.58,hi:310,maxP:0.81}],scored:69},audit:{ok:false,checked:912,nIssues:3,issues:[{code:'QTY_MISMATCH',symbol:'us|NVDA',detail:'원장 10 vs 포지션 8'},{code:'LEDGER_NET_NEGATIVE',symbol:'kr|005930.KS',detail:'원장 순보유 -5'}]}},
+               chain:{techK:{k:0.412,kEff:0.395,t:6.2,n:18400},finalCal:{T:1.35,ece:0.021,eceRaw:0.048,n:400},blendK:{kTech:0.72,kNews:0.18,tTech:3.4,n:380},confK:{k:0.11,kEff:0.04,t:1.9,n:4200},dualShift:{shift:{bull:0.31,bear:-0.52,volatile:-0.07,dead:-0.09,mixed:0},n:7200},evByVol:4,protect:{cooldownMin:90,lowProfitLockMin:360,enabled:true}},r2:{bound:true,ageSec:42,v:{total:642,bytes:263914000,groups:{"대형모델":{n:12,bytes:210000000},"일봉 이력":{n:600,bytes:52000000},"단타 표본":{n:29,bytes:1900000},"단타 대기버퍼":{n:1,bytes:14000}},today:{day:"2026-08-04",files:29,pending:412}}},gate:{rows:[{reason:"ai_primary_gate",n:42,avgRet:2.31,winRate:0.62},{reason:"max_concurrent",n:18,avgRet:0.44,winRate:0.55},{reason:"senti_override",n:9,avgRet:-1.8,winRate:0.33}],byP:[{reason:"ai_primary_gate",n:820,avgP:0.58,hi:310,maxP:0.81}],scored:69},audit:{ok:false,checked:912,nIssues:3,issues:[{code:'QTY_MISMATCH',symbol:'us|NVDA',detail:'원장 10 vs 포지션 8'},{code:'LEDGER_NET_NEGATIVE',symbol:'kr|005930.KS',detail:'원장 순보유 -5'}]}},
           thr:{us:{n:2000,thr:0.612,fixed:0.55,floor:0.53,topPct:0.18},
                kr:{n:37,thr:null,fixed:0.55}}},
           [{symbol:'NVDA',rankP:0.71}]],
@@ -77,7 +77,7 @@ try {
                backfill:null, scalpLev:{enabled:true,trusted:false,kelly:null,n:0,minKelly:0.05,maxMult:2,concMult:2,ddCut:6},
                dual:{samples:400,minN:1200,bull:null,bear:null},
                port:{all:{ready:false,n:4}}, tradeState:{us:'HALTED',kr:'ACTIVE',reason:null},
-               chain:{techK:null,finalCal:null,dualShift:null,evByVol:0,protect:{cooldownMin:90,lowProfitLockMin:360,enabled:true}},gate:{rows:[],byP:[],scored:0},audit:{ok:true,checked:0,nIssues:0,issues:[]}},
+               chain:{techK:null,finalCal:null,dualShift:null,evByVol:0,protect:{cooldownMin:90,lowProfitLockMin:360,enabled:true}},r2:{bound:false,v:null,ageSec:null},gate:{rows:[],byP:[],scored:0},audit:{ok:true,checked:0,nIssues:0,issues:[]}},
           thr:{us:null, kr:{n:0,thr:null,fixed:0.55}} }, []],
         nullMode: [null, null]
       };

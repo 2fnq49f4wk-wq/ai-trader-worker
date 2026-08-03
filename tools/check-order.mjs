@@ -293,5 +293,61 @@ for (const k of reads) {
   }
 }
 
+
+// ══ [V33.101] ★괄호 균형 · 야간 등록 · state 키 정합★ ══
+//   이번 세션에서 반복 확인된 패턴: "만들어 놓고 안 도는 코드".
+//   중괄호는 check-syntax 가 보고, 여기서는 나머지 세 가지를 계약으로 못 박는다.
+{
+  const stripped = (function (s) {
+    let o = "", i = 0, n = s.length, prev = "";
+    while (i < n) {
+      const c = s[i];
+      if (c === "/" && s[i + 1] === "/") { const j = s.indexOf("\n", i); const t2 = j < 0 ? n : j; for (; i < t2; i++) o += " "; continue; }
+      if (c === "/" && s[i + 1] === "*") { const j = s.indexOf("*/", i + 2); const t2 = j < 0 ? n : j + 2; for (; i < t2; i++) o += (s[i] === "\n" ? "\n" : " "); continue; }
+      if (c === '"' || c === "'") { const q = c; o += " "; i++; while (i < n) { if (s[i] === "\\") { o += "  "; i += 2; continue; } if (s[i] === q) { o += " "; i++; break; } o += (s[i] === "\n" ? "\n" : " "); i++; } prev = "x"; continue; }
+      if (c === "`") { o += " "; i++; let d = 0; while (i < n) { if (s[i] === "\\") { o += "  "; i += 2; continue; } if (s[i] === "$" && s[i + 1] === "{") { d++; o += "  "; i += 2; continue; } if (s[i] === "}" && d > 0) { d--; o += " "; i++; continue; } if (s[i] === "`" && d === 0) { o += " "; i++; break; } o += (s[i] === "\n" ? "\n" : " "); i++; } prev = "x"; continue; }
+      if (c === "/") {
+        const isDiv = ")]}".includes(prev) || (prev && /[\w$]/.test(prev));
+        if (!isDiv) { o += " "; i++; let cls = false; while (i < n) { if (s[i] === "\\") { o += "  "; i += 2; continue; } if (s[i] === "[") cls = true; else if (s[i] === "]") cls = false; else if (s[i] === "/" && !cls) { o += " "; i++; while (i < n && /[a-z]/.test(s[i])) { o += " "; i++; } break; } else if (s[i] === "\n") break; o += " "; i++; } prev = "x"; continue; }
+        o += c; prev = "/"; i++; continue;
+      }
+      o += c; if (!/\s/.test(c)) prev = c; i++;
+    }
+    return o;
+  })(src);
+
+  for (const [open, close, name] of [["(", ")", "소괄호"], ["[", "]", "대괄호"]]) {
+    const st = []; let neg = null;
+    for (let i = 0; i < stripped.length; i++) {
+      if (stripped[i] === open) st.push(i);
+      else if (stripped[i] === close) { if (!st.length) { neg = i; break; } st.pop(); }
+    }
+    if (neg != null) { console.error(`  FAIL ${name}: 여는 짝 없는 '${close}' @L${ln(neg)}`); bad++; }
+    else if (st.length) { console.error(`  FAIL ${name}: 안 닫힌 '${open}' ${st.length}개 — 첫 줄 L${ln(st[0])}`); bad++; }
+  }
+
+  // 야간 학습·측정 함수는 반드시 크론 파이프라인에 등록돼야 한다.
+  //   FLOW·XALPHA·STACK·DUAL 이 정의만 되고 크론에 없어 영영 학습 안 되던 사고(V33.90)의 재발 방지.
+  {
+    const defs = [...src.matchAll(/^async function (\w*(?:TrainNightly|FitNightly|PromoteNightly|Nightly))\s*\(/gm)].map((m) => m[1]);
+    const reg = new Set();
+    for (const m of src.matchAll(/_stg\(\s*"[a-z0-9]+"\s*,\s*async function \(\)\s*\{\s*return await (\w+)\(/g)) reg.add(m[1]);
+    const missing = defs.filter((f) => !reg.has(f));
+    if (missing.length) { console.error(`  FAIL 야간 미등록: ${missing.join(", ")} — 정의만 있고 크론이 안 돌린다`); bad += missing.length; }
+  }
+
+  // setState 로 쓰기만 하고 아무도 안 읽는 키 = 죽은 기록.
+  {
+    const w = new Set(), r = new Set();
+    for (const m of src.matchAll(/setState\([^,]+,\s*"([a-zA-Z0-9_:.]+)"/g)) w.add(m[1]);
+    for (const m of src.matchAll(/getState\([^,]+,\s*"([a-zA-Z0-9_:.]+)"/g)) r.add(m[1]);
+    for (const m of src.matchAll(/getStates\([^,]+,\s*\[([^\]]*)\]/g))
+      for (const k of m[1].matchAll(/"([a-zA-Z0-9_:.]+)"/g)) r.add(k[1]);
+    const skip = /^(cash_ckpt|last_|equity_peak|ai_picks|daily|quote|hist|index|twr|cooldown|r2_status)/;
+    const dead = [...w].filter((k) => !r.has(k) && !skip.test(k));
+    if (dead.length) { console.error(`  FAIL 죽은 state 기록(쓰기만 하고 아무도 안 읽음): ${dead.join(", ")}`); bad += dead.length; }
+  }
+}
+
 if (bad) { console.error(`\n순서계약 위반 ${bad}건 — 배포 차단`); process.exit(1); }
-console.log("  ok   순서계약 · 미선언 참조 · opts 배선 · 티커 접미사 검사 통과");
+console.log("  ok   순서계약 · 미선언 참조 · opts 배선 · 티커 접미사 · 괄호 · 야간등록 · state 정합 통과");

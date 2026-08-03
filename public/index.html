@@ -14544,6 +14544,33 @@ html[data-theme="light"] .rail{background:#fff;}
       h += sec('게이트 감사 (막힌 강신호의 실제 결과)') + tbl(rows4);
     })();
 
+    // [V33.101] R2 저장소 상태 — GitHub Actions 로그를 안 봐도 여기서 확인된다.
+    //   배포 로그는 '배포 시점' 이야기라, 지금 실제로 쓰이고 있는지는 이 값으로만 알 수 있다.
+    (function(){
+      var R = alt.r2;
+      if(!R) return;
+      var rows5 = [];
+      if(!R.bound){
+        rows5.push(['R2 바인딩', col('미바인딩', C.amb) + ' <span class="sub">D1 폴백으로 동작 중 (표본 수집·학습 가능)</span>']);
+      } else if(!R.v){
+        rows5.push(['R2 바인딩', col('활성', C.pos) + ' <span class="sub">상세 미집계 — /api/r2-status 최초 호출 시 채워진다</span>']);
+      } else {
+        var v = R.v;
+        var mb = function(b){ return b >= 1048576 ? (b/1048576).toFixed(1)+'MB' : Math.round(b/1024)+'KB'; };
+        rows5.push(['R2 바인딩', col('활성', C.pos) + ' <span class="sub">오브젝트 '+n0(v.total)+'개 · '+mb(v.bytes)
+          + (R.ageSec != null ? ' · '+n0(R.ageSec)+'초 전 집계' : '')+'</span>']);
+        var gk = Object.keys(v.groups || {});
+        if(gk.length) rows5.push(['용도별', '<span class="sub">'
+          + gk.map(function(k){ return esc(k)+' '+n0(v.groups[k].n)+'개('+mb(v.groups[k].bytes)+')'; }).join(' · ')+'</span>']);
+        var td = v.today || {};
+        var live = (td.files || 0) > 0 || (td.pending || 0) > 0;
+        rows5.push(['오늘 단타 수집', (live ? col(n0(td.files)+'파일', C.pos) : col('0파일', C.amb))
+          + ' <span class="sub">대기버퍼 '+(td.pending == null ? '—' : n0(td.pending))+'건 · '+esc(td.day || '')+'</span>'
+          + (live ? '' : ' '+col('⚠ 장중이 아니거나 수집이 멈춤', C.amb))]);
+      }
+      h += sec('R2 저장소') + tbl(rows5);
+    })();
+
     // ⑥ AI 픽 — 없으면 빈 행
     var top = (picks || []).filter(function(p){ return !p.abstain; }).slice(0, 5);
     h += sec('AI 픽')
