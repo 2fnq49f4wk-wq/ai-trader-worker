@@ -14510,6 +14510,28 @@ html[data-theme="light"] .rail{background:#fff;}
       h += sec('확률 체인 (측정된 계수)') + tbl(rows3);
     })();
 
+    // [V33.95] 게이트 감사 — AI 가 강하게 사라고 한 자리(p≥0.60)를 막은 게이트가
+    //   실제로 손해였는지 캐시된 일봉으로 실측한 결과. 양수면 그 게이트가 돈을 막고 있는 것이다.
+    (function(){
+      var G = alt.gate;
+      if(!G) return;
+      var rows4 = [];
+      var rr = (G.rows || []).slice(0, 5);
+      if(rr.length){
+        rr.forEach(function(r){
+          var c = r.avgRet > 1.0 ? C.neg : (r.avgRet > 0 ? C.amb : C.pos);
+          rows4.push([esc(r.reason), col((r.avgRet>=0?'+':'')+r.avgRet.toFixed(2)+'%', c)
+            + ' <span class="sub">차단 후 실현 · 승률 '+(r.winRate*100).toFixed(0)+'% · n '+n0(r.n)+'</span>']);
+        });
+      } else {
+        rows4.push(['고확률 차단 실측', '<span class="sub">누적 대기 (결과 확정까지 1일 이상)</span>']);
+      }
+      var bp = (G.byP || []).slice(0, 3);
+      if(bp.length) rows4.push(['고확률을 가장 많이 막는 게이트',
+        '<span class="sub">'+bp.map(function(b){ return esc(b.reason)+' '+n0(b.hi)+'건(평균 p '+b.avgP.toFixed(2)+')'; }).join(' · ')+'</span>']);
+      h += sec('게이트 감사 (막힌 강신호의 실제 결과)') + tbl(rows4);
+    })();
+
     // ⑥ AI 픽 — 없으면 빈 행
     var top = (picks || []).filter(function(p){ return !p.abstain; }).slice(0, 5);
     h += sec('AI 픽')

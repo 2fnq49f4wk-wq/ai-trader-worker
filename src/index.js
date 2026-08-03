@@ -2760,7 +2760,7 @@ async function applySignalTypeWeights(DB, cfg) {
 // ============================================================================
 // [V33.55] 빌드 버전 — SWR L2 캐시 키에 섞어 '배포 = 판단 캐시 자동 무효화'를 만든다.
 //   판정 로직을 고쳐도 옛 캐시가 최대 1시간 재배포되던 문제를 구조적으로 없앤다.
-const _BUILD_VER = "V33.94";
+const _BUILD_VER = "V33.95";
 
 const AI_PARAMS = {
   // ── OHLCV 타임프레임 ── 시가/고가/저가/종가/거래량을 어떤 봉 주기로 볼지.
@@ -5110,12 +5110,21 @@ async function collectLLMContext(DB, env, market) {
 //   거시·리포트는 내부/무료데이터 폴백으로 동작. 다시 켜려면 이 상수만 false로.
 const EXTERNAL_LLM_DISABLED = true;
 
+// [V33.95] ★외부 AI API 전면 금지 — 스위치 하나로 묶는다(사용자 지시)★
+//   종전엔 차단이 흩어져 있었다: 외부 LLM 은 EXTERNAL_LLM_DISABLED 로 막혀 있었지만
+//   ★Roboflow(외부 비전 추론 API)와 Cloudflare Workers AI 는 그대로 살아 있었다★.
+//   Workers AI 는 Anthropic/3rd-party 는 아니지만 '우리가 학습시킨 자체 모델' 도 아니다 —
+//   운영 방침(② 성능 강화는 전부 자체 탑재 AI)에 비추면 같은 범주다.
+//   판단·수치는 전부 내부 엔진이 내고, 문장화도 규칙기반 폴백이 이미 있으므로 끄면 그대로 대체된다.
+const EXTERNAL_AI_API_DISABLED = true;
+
 // [V32.26] ★Cloudflare Workers AI — 온플랫폼 LLM 문장화 엔진★ Anthropic/외부 3rd-party 아님(Cloudflare 내장).
 //   설계원칙: 모든 수치·판단은 내부 결정론 엔진이 계산하고, 이 모델은 "주어진 사실만으로 자연스러운 한국어
 //   서술을 쓰는" 문장화만 맡는다 → 환각(없는 수치 생성) 차단. 실패/미바인딩이면 규칙기반 원문으로 폴백.
 const WORKERS_AI = { model: "@cf/meta/llama-3.3-70b-instruct-fp8-fast", fast: "@cf/meta/llama-3.1-8b-instruct" };
 async function callWorkersAI(env, system, prompt, opts) {
   opts = opts || {};
+  if (EXTERNAL_AI_API_DISABLED) return null;   // [V33.95] 외부/온플랫폼 AI 추론 금지 → 규칙기반 문장으로 폴백
   if (!env || !env.AI || typeof env.AI.run !== "function") return null;
   const messages = [];
   if (system) messages.push({ role: "system", content: system });
@@ -14510,7 +14519,13 @@ async function runTradingCycle(env) {
     const __stinPx = {};                    // 사이클 전체에서 모은 현재가(라벨링용) — batchQuotes 는 시장 루프 지역변수라 밖에서 못 쓴다
     __scalpDiag = {};  // [진단] 게이트 탈락 사유 집계 리셋
     // [V33.40] 장중 단타 표본 버퍼를 R2 에서 1회 로드(장중에만). 실패해도 매매엔 영향 없다.
-    try { if (_bigR2() && (isMarketOpen("us") || isMarketOpen("kr"))) __stinPend = await _stinLoadPend(); } catch (e) { __stinPend = null; }
+    // [V33.95] R2 가 없으면 D1 대기버퍼로 폴백한다 — 종전엔 여기서 null 이 되어
+    //   관측·라벨·플러시가 통째로 죽었고, 그게 "단타 표본 0" 의 원인이었다.
+    try {
+      if (isMarketOpen("us") || isMarketOpen("kr")) {
+        __stinPend = _bigR2() ? await _stinLoadPend() : await _stinLoadPendD1(DB);
+      }
+    } catch (e) { __stinPend = null; }
 
     // [V8.1.1] 장 열린 시장만 처리 — 마감된 시장은 시세도 fetch 안 함
     // [V23] 가격 갱신 대상 = 정규장 시간 시장 / 거래 대상 = 거래가능(윈도우+휴장통과) 시장
@@ -15169,8 +15184,29 @@ async function runTradingCycle(env) {
       const nobuyCounts = {};
       const blockCounts = {};     // [V8.1.2] BLOCK 사유 별도 카운트
       const stateSamples = [];    // [V8.1.2] 종목 상태 샘플 (진단용)
-      function incNobuy(reason) { nobuyCounts[reason] = (nobuyCounts[reason] || 0) + 1; }
+      // [V33.95] ★게이트가 '좋은 신호'를 막고 있는지 재려면 개수만으로는 부족하다★
+      //   종전엔 사유별 카운트만 남겼다. 그러면 "13개 게이트가 각각 몇 건 막았다"는 알아도
+      //   ★막힌 게 확률 0.42 짜리였는지 0.75 짜리였는지★ 를 알 수 없다.
+      //   AI 가 강하게 사라고 한 자리를 다른 게이트가 계속 막고 있으면 그건 방어가 아니라 손해다.
+      //   → 사유별로 확률 통계를 함께 쌓고, 고확률(≥0.60) 차단은 종목·시각·가격까지 남겨
+      //     야간에 '그때 샀으면 어떻게 됐나'를 캐시된 일봉으로 실측한다(추가 fetch 0).
+      const nobuyP = {};    // reason → { n, sumP, hi, maxP }
+      const __gateHi = [];  // 고확률 차단 표본(야간 실측 대상)
+      function incNobuy(reason, p) {
+        nobuyCounts[reason] = (nobuyCounts[reason] || 0) + 1;
+        const _p = _num(p, null);
+        if (_p == null) return;
+        const s = nobuyP[reason] || (nobuyP[reason] = { n: 0, sumP: 0, hi: 0, maxP: 0 });
+        s.n++; s.sumP += _p; if (_p >= 0.60) s.hi++; if (_p > s.maxP) s.maxP = _p;
+      }
       function incBlock(reason) { blockCounts[reason] = (blockCounts[reason] || 0) + 1; }
+      function noteGateBlock(reason, symbol, p, price) {
+        try {
+          const _p = _num(p, null);
+          if (_p == null || _p < 0.60 || !(price > 0) || __gateHi.length >= 60) return;
+          __gateHi.push({ r: reason, s: symbol, p: +_p.toFixed(3), px: +price.toFixed(4), t: Date.now(), m: market });
+        } catch (e) {}
+      }
 
       // [V8.6 Hybrid] 시장별 LLM 일일 지시 로드 — 없거나 만료면 null (V8.5 동작)
       const llmInstr = (cfg.llmHybrid && cfg.llmHybrid.enabled)
@@ -16330,7 +16366,7 @@ async function runTradingCycle(env) {
               const _tszC = getTrendSizing(mcfg, market);
               const maxConc = (_tszC.maxConcurrent != null) ? _tszC.maxConcurrent : 8;
               if (heldSymbols.size >= maxConc) {
-                incNobuy("max_concurrent");
+                incNobuy("max_concurrent", (_md && typeof _md.p === "number") ? _md.p : null); noteGateBlock("max_concurrent", symbol, (_md && typeof _md.p === "number") ? _md.p : null, price);
                 continue;
               }
               if (strategy === "snap") {
@@ -16338,7 +16374,7 @@ async function runTradingCycle(env) {
                 let _snHeld = 0;
                 for (const _pk in positions) { if ((positions[_pk].strategy || "") === "snap") _snHeld++; }
                 if (_snHeld >= _snMax) {
-                  incNobuy("snap_max_concurrent");
+                  incNobuy("snap_max_concurrent", (_md && typeof _md.p === "number") ? _md.p : null); noteGateBlock("snap_max_concurrent", symbol, (_md && typeof _md.p === "number") ? _md.p : null, price);
                   continue;
                 }
               }
@@ -16652,7 +16688,7 @@ async function runTradingCycle(env) {
                                        " ×" + _mult.toFixed(2) + " → risk " + _kPct.toFixed(2) + "%";
                     riskPct = _kPct;
                   } else if (_kk && _kk.f === 0) {
-                    incNobuy("kelly_zero[" + strategy + "]");
+                    incNobuy("kelly_zero[" + strategy + "]", (_md && typeof _md.p === "number") ? _md.p : null); noteGateBlock("kelly_zero[" + strategy + "]", symbol, (_md && typeof _md.p === "number") ? _md.p : null, price);
                     continue;   // 켈리 0 = 걸면 손해 — 진입하지 않는다
                   }
                 }
@@ -16764,7 +16800,7 @@ async function runTradingCycle(env) {
                 // [V14] 감성 오버라이드 매수차단 — 치명 악재 감지 시 기술신호 무시하고 진입 금지(최상위 권한)
                 if (_sentiAdv && _sentiAdv.override && AI_PARAMS.sentiment && AI_PARAMS.sentiment.overrideEnabled !== false) {
                   await log(DB, "WARN", symbol, "[SENTI-OVERRIDE] 치명악재 '" + _sentiAdv.overrideKw + "' 감지 → 매수금지");
-                  incNobuy("senti_override");
+                  incNobuy("senti_override", (_md && typeof _md.p === "number") ? _md.p : null); noteGateBlock("senti_override", symbol, (_md && typeof _md.p === "number") ? _md.p : null, price);
                   continue;
                 }
                 // [V15] 재무 건전성 하드필터 — 깡통·흑자도산·이익조작 기업은 차트·뉴스 무관 매수금지(펀더 캐시 있을 때만)
@@ -16778,7 +16814,7 @@ async function runTradingCycle(env) {
                       const _hg = financialHealthGate(evaluateFundamentals(_fc, null), _fp);
                       if (_hg.block) {
                         await log(DB, "INFO", symbol, "[FUND-GATE] 재무 미달 매수금지: " + _hg.reasons.join(", "));
-                        incNobuy("fund_health");
+                        incNobuy("fund_health", (_md && typeof _md.p === "number") ? _md.p : null); noteGateBlock("fund_health", symbol, (_md && typeof _md.p === "number") ? _md.p : null, price);
                         continue;
                       }
                     }
@@ -16930,7 +16966,7 @@ async function runTradingCycle(env) {
                       || !(typeof _md.p === "number" && _md.p >= _thrAI)
                       || (_ap2.maxDisagree != null && _dis > _ap2.maxDisagree)
                       || (_ap2.requireTrustedModel && !_trustedModel)) {
-                    incNobuy("ai_primary_gate");
+                    incNobuy("ai_primary_gate", (_md && typeof _md.p === "number") ? _md.p : null); noteGateBlock("ai_primary_gate", symbol, (_md && typeof _md.p === "number") ? _md.p : null, price);
                     continue;
                   }
                 }
@@ -16938,25 +16974,25 @@ async function runTradingCycle(env) {
                   // 자기불신 / 기권 → 규칙엔진 수량 유지(ML 개입 안 함)
                 } else if (_md && _md.allow === false) {
                   await log(DB, "INFO", symbol, "[LUX-AI] 진입차단 P=" + (_md.p != null ? (_md.p * 100).toFixed(0) + "%" : "?") + " src=" + (_md.source || "?"));
-                  incNobuy("ml_gate");
+                  incNobuy("ml_gate", (_md && typeof _md.p === "number") ? _md.p : null); noteGateBlock("ml_gate", symbol, (_md && typeof _md.p === "number") ? _md.p : null, price);
                   continue;
                 } else if (_md && _md.allow) {
                   // [V17] 메타 라벨링(de Prado) — 2차 메타모델(위원회) 성공확률 하한. metaHardFilter면 미달 진입 차단.
                   const _mlab = AI_PARAMS.metaLabeling || {};
                   if (_mlab.enabled !== false && _mlab.metaHardFilter && typeof _md.p === "number" && _md.p < (_mlab.metaThreshold != null ? _mlab.metaThreshold : 0.5)) {
                     await log(DB, "INFO", symbol, "[META] 성공확률 " + (_md.p * 100).toFixed(0) + "% < 메타컷 " + ((_mlab.metaThreshold || 0.5) * 100).toFixed(0) + "% → 진입보류");
-                    incNobuy("meta_gate");
+                    incNobuy("meta_gate", (_md && typeof _md.p === "number") ? _md.p : null); noteGateBlock("meta_gate", symbol, (_md && typeof _md.p === "number") ? _md.p : null, price);
                     continue;
                   }
                   // [V16] 모델 열화 시 ML 개입 보수화 — halt면 신규진입 차단, observe면 사이즈 증폭 억제(축소만 허용)
                   if (__mlDrift.drift) {
-                    if (__mlDrift.action === "halt") { await log(DB, "INFO", symbol, "[MLOPS] 열화-halt 진입차단"); incNobuy("model_drift"); continue; }
+                    if (__mlDrift.action === "halt") { await log(DB, "INFO", symbol, "[MLOPS] 열화-halt 진입차단"); incNobuy("model_drift", (_md && typeof _md.p === "number") ? _md.p : null); continue; } noteGateBlock("model_drift", symbol, (_md && typeof _md.p === "number") ? _md.p : null, price);
                   }
                   // [V16] 예측 확신도 하한 — p가 confidenceFloor 미만이면 비중 축소(저확신 주문 안전계수)
                   const _mo = AI_PARAMS.mlops || {};
                   if (typeof _md.p === "number" && _mo.confidenceFloor != null && _md.p < _mo.confidenceFloor) {
                     const _rs = (_mo.confidenceReduceScale != null) ? _mo.confidenceReduceScale : 0.5;
-                    if (_rs <= 0) { await log(DB, "INFO", symbol, "[MLOPS] 확신도 " + (_md.p * 100).toFixed(0) + "% 미달 진입무시"); incNobuy("low_confidence"); continue; }
+                    if (_rs <= 0) { await log(DB, "INFO", symbol, "[MLOPS] 확신도 " + (_md.p * 100).toFixed(0) + "% 미달 진입무시"); incNobuy("low_confidence", (_md && typeof _md.p === "number") ? _md.p : null); continue; } noteGateBlock("low_confidence", symbol, (_md && typeof _md.p === "number") ? _md.p : null, price);
                     qty = Math.max(0, Math.floor(qty * _rs));
                     signal.mlLowConf = true;
                   }
@@ -17013,7 +17049,7 @@ async function runTradingCycle(env) {
             const wouldSpend = _spentSoFar + totalCost;
             if (qty > 0 && wouldSpend > _budgetCap + epsilon) {
               await log(DB, "INFO", symbol, "[예산] " + market.toUpperCase() + " " + _bk + "버킷 한도 도달: 누적=" + Math.round(_spentSoFar) + "+" + Math.round(totalCost) + " > " + Math.round(_budgetCap) + " (" + strategy + ")");
-              incNobuy("budget_" + _bk);
+              incNobuy("budget_" + _bk, (_md && typeof _md.p === "number") ? _md.p : null); noteGateBlock("budget_" + _bk, symbol, (_md && typeof _md.p === "number") ? _md.p : null, price);
             } else if (qty > 0 && totalCost <= cash[market] + epsilon) {
               // [분봉] 진입 직전 장중 타이밍 확인 — 확정 후보에만 분봉 1회 조회.
               //   장중 급락(칼날)·VWAP 추격 진입을 차단. 조회 실패/예산초과 시 통과(기존 동작 보존).
@@ -17082,10 +17118,10 @@ async function runTradingCycle(env) {
             } else if (qty > 0 && totalCost > cash[market] + epsilon) {
               // 예산 초과 매수 시도 — 차단하고 기록 (회계 붕괴 방지)
               await log(DB, "ERROR", symbol, "[CRITICAL] 예산초과 매수차단: 필요=" + Math.round(totalCost) + " 가용=" + Math.round(cash[market]) + " (" + strategy + ")");
-              incNobuy("cash_short[" + strategy + "]");
+              incNobuy("cash_short[" + strategy + "]", (_md && typeof _md.p === "number") ? _md.p : null); noteGateBlock("cash_short[" + strategy + "]", symbol, (_md && typeof _md.p === "number") ? _md.p : null, price);
             } else {
               if (qty === 0) {
-                incNobuy("price_too_high[" + strategy + "]");
+                incNobuy("price_too_high[" + strategy + "]", (_md && typeof _md.p === "number") ? _md.p : null); noteGateBlock("price_too_high[" + strategy + "]", symbol, (_md && typeof _md.p === "number") ? _md.p : null, price);
               } else {
                 incNobuy("cash_short[" + strategy + "]");
               }
@@ -17158,6 +17194,18 @@ async function runTradingCycle(env) {
           .map(function(k){ return k + ":" + nobuyCounts[k]; }).join(", ");
         await log(DB, "INFO", null, "NOBUY[" + market + "] " + summary);
       }
+      // [V33.95] 게이트별 확률 통계 + 고확률 차단 표본을 적립한다(야간에 실측한다).
+      try {
+        const _gs = (await getState(DB, "gate_stats", null)) || { by: {}, hi: [], ts: 0 };
+        _gs.by = _gs.by || {};
+        for (const k of Object.keys(nobuyP)) {
+          const s = nobuyP[k], o = _gs.by[k] || (_gs.by[k] = { n: 0, sumP: 0, hi: 0, maxP: 0 });
+          o.n += s.n; o.sumP += s.sumP; o.hi += s.hi; if (s.maxP > o.maxP) o.maxP = s.maxP;
+        }
+        if (__gateHi.length) _gs.hi = (_gs.hi || []).concat(__gateHi).slice(-600);
+        _gs.ts = Date.now();
+        if (Object.keys(nobuyP).length || __gateHi.length) await setState(DB, "gate_stats", _gs);
+      } catch (e) {}
       const blKeys = Object.keys(blockCounts);
       if (blKeys.length > 0) {
         const summary = blKeys.sort(function(a,b){ return blockCounts[b]-blockCounts[a]; })
@@ -17214,9 +17262,9 @@ async function runTradingCycle(env) {
         //   done 이 하나라도 있으면 flushMin(10분) 안에 반드시 내보낸다 — 버퍼에 갇히지 않게.
         if (__stinPend.done.length >= 50 ||
             (__stinPend.done.length > 0 && (Date.now() - _num(__stinPend.fts, 0)) > STIN.flushMin * 60000)) {
-          _fl = await stinFlush(__stinPend, DB);
+          _fl = __stinPend.d1 ? await _stinFlushD1(DB, __stinPend) : await stinFlush(__stinPend, DB);
         }
-        await _stinSavePend(__stinPend);
+        if (__stinPend.d1) await _stinSavePendD1(DB, __stinPend); else await _stinSavePend(__stinPend);   // [V33.95]
         // [V33.60] ★진행이 화면에서 안 보이던 이유★ stin_stats 는 flush 시점(=관측 60분 뒤
         //   라벨 완료 + 50건/10분 조건 충족)에만 올라간다. 그래서 관측이 정상이어도 최소 1시간은
         //   "0 / 3,000" 으로 보이고, 어디서 끊겼는지(관측/라벨/저장) 구분도 안 됐다.
@@ -17942,6 +17990,8 @@ async function handleRequest(request, env, ctx) {
           try { _alt.port = await getState(env.DB, "port_stats", null); } catch (e) {}
           // [V33.91] 원장 전수 정합성 감사 결과 — 회계가 지금 맞는지 화면에서 바로 보이게.
           try { _alt.audit = await getState(env.DB, "ledger_audit", null); } catch (e) {}
+          // [V33.95] 게이트 감사 — 고확률 차단이 실제로 손해였는지.
+          try { _alt.gate = await getState(env.DB, "gate_audit", null); } catch (e) {}
           // [V33.94] 확률 체인의 '측정된 계수' 들 — 상수를 실측으로 바꾼 자리를 화면에서 확인.
           try {
             const _tk = await getState(env.DB, "tech_prior_k", null);
@@ -18573,9 +18623,27 @@ async function handleRequest(request, env, ctx) {
     if (path === "/api/ml-export-intraday") {
       const au = _trainAuthed(); if (!au.ok) return Response.json({ error: au.msg }, { status: au.code, headers: cors });
       const R2 = _bigR2();
-      if (!R2) return Response.json({ error: "R2 미바인딩 — 장중 표본은 R2 전용" }, { status: 503, headers: cors });
       const day = (url.searchParams.get("day") || _stinDay()).slice(0, 10);
       const out = [];
+      // [V33.95] R2 미바인딩이면 D1 표본 테이블에서 읽는다 — 종전엔 503 이라
+      //   외부 트레이너가 받아갈 표본이 영원히 0 이었고 단타 모델이 학습된 적이 없다.
+      if (!R2) {
+        try {
+          await stinEnsureD1(env.DB);
+          const rs = await env.DB.prepare(
+            "SELECT ts, market, symbol, feat, ifeat, fv, label, pnl_pct, bar, hm, barw FROM stin_samples WHERE day = ? ORDER BY ts ASC LIMIT 60000"
+          ).bind(day).all();
+          for (const r of ((rs && rs.results) || [])) {
+            let x, ix = null;
+            try { x = JSON.parse(r.feat); } catch (e) { continue; }
+            if (r.ifeat) { try { ix = JSON.parse(r.ifeat); } catch (e) {} }
+            const sm = { ts: _num(r.ts, 0), s: r.symbol, m: r.market, x: x,
+                         y: _num(r.label, 0), pnl: _num(r.pnl_pct, 0), bar: r.bar, hm: _num(r.hm, 0) };
+            if (ix) { sm.ix = ix; sm.fv = _num(r.fv, 0); sm.b = _num(r.barw, 0); }
+            out.push(sm);
+          }
+        } catch (e) { return Response.json({ error: "D1 조회 실패: " + (e && e.message) }, { status: 500, headers: cors }); }
+      } else
       try {
         let cursor = undefined;
         for (let page = 0; page < 20; page++) {
@@ -18764,7 +18832,7 @@ async function handleRequest(request, env, ctx) {
     //   ?syms=N (기본 8, 최대 30) 으로 이번 실행에서 처리할 종목 수를 지정.
     //   응답에 생성 건수·실패 사유가 그대로 들어와 진단이 바로 된다.
     if (path === "/api/scalp-backfill-now") {
-      if (!_bigR2()) return Response.json({ ok: false, error: "R2 미바인딩 — 장중표본은 R2 전용" }, { status: 503, headers: cors });
+      // [V33.95] R2 없어도 D1 로 적재하므로 여기서 막지 않는다.
       const _ns = _clamp(Math.floor(_num(url.searchParams.get("syms"), 8)), 1, 30);
       try { resetFetchBudget(Math.max(30, _ns * 4)); } catch (e) {}
       let _r = null;
@@ -19103,12 +19171,12 @@ async function handleRequest(request, env, ctx) {
     if (path === "/api/ai/train-now" && request.method === "POST") {
       const au = _trainAuthed(); if (!au.ok) return Response.json({ error: au.msg }, { status: au.code, headers: cors });
       const target = url.searchParams.get("target") || "mind";
-      const FN = { mind: mlMindTrainNightly, gbdt: mlGBDTTrainNightly, brain: mlBrainTrainNightly, dnn: mlDNNTrainNightly, l1: mlTrainNightly, calibrate: mlCalibrateCommittee, selfreview: mlSelfReview, flow: flowTrainNightly, xalpha: xalphaTrainNightly, stack: stackTrainNightly, dual: dualHeadTrainNightly, memo: memoTrainNightly, techk: techPriorFitNightly, finalcal: finalCalFitNightly, portstats: portfolioStatsNightly, ledgeraudit: ledgerCheckIntegrity };
+      const FN = { mind: mlMindTrainNightly, gbdt: mlGBDTTrainNightly, brain: mlBrainTrainNightly, dnn: mlDNNTrainNightly, l1: mlTrainNightly, calibrate: mlCalibrateCommittee, selfreview: mlSelfReview, flow: flowTrainNightly, xalpha: xalphaTrainNightly, stack: stackTrainNightly, dual: dualHeadTrainNightly, memo: memoTrainNightly, techk: techPriorFitNightly, finalcal: finalCalFitNightly, gateaudit: gateAuditNightly, portstats: portfolioStatsNightly, ledgeraudit: ledgerCheckIntegrity };
       // [V12.63] target=all — 재배포 직후 "한 방에" 전체 파이프라인을 정확한 순서로 재실행(하루1회 게이트 무시).
       //   순서 고정: harvest → l1 → brain → mind → dnn → gbdt → calibrate (뒤 단계가 앞 단계 산출물 의존).
       //   각 단계 자체 CPU예산 가드가 있어 안전. 재학습 즉시 모든 수정이 반영되게 하는 원클릭 경로.
       if (target === "all") {
-        const _order = [["harvest", mlMarketHarvestNightly], ["l1", mlTrainNightly], ["brain", mlBrainTrainNightly], ["mind", mlMindTrainNightly], ["gbdt", mlGBDTTrainNightly], ["dnn", mlDNNTrainNightly], ["flow", flowTrainNightly], ["xalpha", xalphaTrainNightly], ["memo", memoTrainNightly], ["techk", techPriorFitNightly], ["finalcal", finalCalFitNightly], ["stack", stackTrainNightly], ["dual", dualHeadTrainNightly], ["portstats", portfolioStatsNightly], ["ledgeraudit", ledgerCheckIntegrity], ["calibrate", mlCalibrateCommittee]];
+        const _order = [["harvest", mlMarketHarvestNightly], ["l1", mlTrainNightly], ["brain", mlBrainTrainNightly], ["mind", mlMindTrainNightly], ["gbdt", mlGBDTTrainNightly], ["dnn", mlDNNTrainNightly], ["flow", flowTrainNightly], ["xalpha", xalphaTrainNightly], ["memo", memoTrainNightly], ["techk", techPriorFitNightly], ["finalcal", finalCalFitNightly], ["gateaudit", gateAuditNightly], ["stack", stackTrainNightly], ["dual", dualHeadTrainNightly], ["portstats", portfolioStatsNightly], ["ledgeraudit", ledgerCheckIntegrity], ["calibrate", mlCalibrateCommittee]];
         const out = {};
         for (const [nm, fn] of _order) {
           try { out[nm] = await fn(env.DB); } catch (e) { out[nm] = "FAIL: " + (e && e.message); }
@@ -21702,6 +21770,11 @@ async function runVisionScanBackend(env, force) {
   scored.sort((a, b) => a.group - b.group || b.age - a.age);
 
   // ── Roboflow 호출 ──
+  //   [V33.95] ★외부 AI API 전면 금지(사용자 지시)★ Roboflow 는 외부 비전 추론 API 다.
+  //   차트 이미지를 외부로 보내 분류를 받아오는 구조라 '자체 탑재 AI' 원칙과 정면으로 어긋난다.
+  //   기능적으로도 대체재가 이미 있다 — 차트패턴은 chartPat/tfConsBull 피처와 STIN 분봉 기술판정이
+  //   자체 계산으로 커버한다. 여기서 원천 차단한다(호출 지점에서 즉시 반환).
+  if (EXTERNAL_AI_API_DISABLED) return force ? { scanned: 0, callsUsed: 0, skipped: "external_ai_disabled" } : undefined;
   async function rfCall(closes, win) {
     const pixels = drawChartPixels(closes.slice(-win), 224, 224);
     const bmp    = pixelsToBMP(pixels, 224, 224);
@@ -24681,6 +24754,129 @@ function stinIntradayFeat(mb, price, prevClose) {
     return out;
   } catch (e) { return null; }
 }
+// ════════════════════════════════════════════════════════════════════════════
+// [V33.95] ★단타 표본이 한 건도 안 쌓이던 진짜 원인 — R2 바인딩이 꺼져 있다★
+//
+//   장중(분봉) 학습 파이프라인은 설계상 "전량 R2, D1 미사용" 이다. 그런데 wrangler.toml 의
+//   r2_buckets 블록은 ★주석 처리된 상태★ 다. 그래서 실제로는:
+//     · _bigR2() = null → __stinPend = null → ★관측 0건★
+//     · stinBackfill → "R2 미바인딩 — 생략" → ★백필 0건★
+//     · /api/ml-export-intraday → 503 → ★트레이너가 받을 표본 0건★
+//     · → scalp_model 미학습 → mlScalpLoad null → AI 단타가 영원히 가동 안 됨
+//   wrangler.toml 주석은 "바인딩 없으면 D1 청크로 폴백하니 지장 없음" 이라고 적혀 있는데,
+//   그건 ★모델 저장★ 얘기다. 장중 표본 경로에는 폴백이 아예 없다 — 그래서 통째로 죽어 있었다.
+//
+//   → R2 가 없으면 D1 테이블로 같은 일을 한다. 표본은 피처벡터 + 라벨이라 크지 않고
+//     (65+44 실수 ≈ 0.8KB), ml_samples 가 이미 같은 방식으로 수십만 건을 다루고 있다.
+//     R2 가 켜지면 종전 경로가 그대로 우선한다(코드 변경 없이 성능 경로 복귀).
+const STIN_D1 = { pend: "stin_pend", samples: "stin_samples", maxSamples: 300000 };
+let __stinD1Ready = false;
+async function stinEnsureD1(DB) {
+  if (__stinD1Ready || !DB) return;
+  try {
+    await DB.prepare("CREATE TABLE IF NOT EXISTS stin_pend (id INTEGER PRIMARY KEY AUTOINCREMENT, ts INTEGER, symbol TEXT, market TEXT, price REAL, feat TEXT, ifeat TEXT, fv INTEGER, bar REAL, hit INTEGER, hp REAL)").run();
+    await DB.prepare("CREATE INDEX IF NOT EXISTS idx_stin_pend_sym ON stin_pend(symbol, ts)").run();
+    await DB.prepare("CREATE TABLE IF NOT EXISTS stin_samples (id INTEGER PRIMARY KEY AUTOINCREMENT, ts INTEGER, day TEXT, market TEXT, symbol TEXT, feat TEXT, ifeat TEXT, fv INTEGER, label INTEGER, pnl_pct REAL, bar TEXT, hm INTEGER, barw REAL, featver INTEGER)").run();
+    await DB.prepare("CREATE INDEX IF NOT EXISTS idx_stin_samples_day ON stin_samples(day, ts)").run();
+    __stinD1Ready = true;
+  } catch (e) {}
+}
+// 대기버퍼를 D1 에서 읽어 R2 판(pend.items/done)과 같은 모양으로 만든다.
+//   done 은 곧바로 stin_samples 로 나가므로 메모리에만 둔다(빈 배열로 시작).
+async function _stinLoadPendD1(DB) {
+  await stinEnsureD1(DB);
+  try {
+    const rs = await DB.prepare("SELECT id, ts, symbol, market, price, feat, ifeat, fv, bar, hit, hp FROM stin_pend ORDER BY ts ASC LIMIT ?")
+      .bind(STIN.maxPend).all();
+    const items = [];
+    for (const r of ((rs && rs.results) || [])) {
+      let x, ix = null;
+      try { x = JSON.parse(r.feat); } catch (e) { continue; }
+      if (r.ifeat) { try { ix = JSON.parse(r.ifeat); } catch (e) {} }
+      const it = { _id: r.id, s: r.symbol, m: r.market, t: _num(r.ts, 0), p: _num(r.price, 0), x: x,
+                   hit: _num(r.hit, 0) | 0 };
+      if (ix) { it.ix = ix; it.fv = _num(r.fv, 0); it.b = _num(r.bar, 0); }
+      if (r.hp != null) it.hp = _num(r.hp, 0);
+      items.push(it);
+    }
+    return { items: items, done: [], ts: 0, fts: 0, d1: true };
+  } catch (e) { return { items: [], done: [], ts: 0, fts: 0, d1: true }; }
+}
+// 저장 — 새로 생긴 관측만 INSERT, 사라진(라벨된) 항목만 DELETE. 전체 재기록을 하지 않는다.
+async function _stinSavePendD1(DB, p) {
+  try {
+    await stinEnsureD1(DB);
+    const keepIds = new Set();
+    const ins = [];
+    for (const it of p.items) {
+      if (it._id != null) { keepIds.add(it._id); continue; }
+      ins.push(it);
+    }
+    for (const it of ins) {
+      await DB.prepare("INSERT INTO stin_pend (ts, symbol, market, price, feat, ifeat, fv, bar, hit, hp) VALUES (?,?,?,?,?,?,?,?,?,?)")
+        .bind(it.t, it.s, it.m, it.p, JSON.stringify(it.x), it.ix ? JSON.stringify(it.ix) : null,
+              _num(it.fv, 0), _num(it.b, 0), _num(it.hit, 0), it.hp != null ? it.hp : null).run();
+    }
+    // 라벨이 끝나 items 에서 빠진 행 삭제
+    if (Array.isArray(p._removed) && p._removed.length) {
+      for (let i = 0; i < p._removed.length; i += 40) {
+        const ids = p._removed.slice(i, i + 40).filter(function (v) { return v != null; });
+        if (!ids.length) continue;
+        const ph = ids.map(function () { return "?"; }).join(",");
+        const st = DB.prepare("DELETE FROM stin_pend WHERE id IN (" + ph + ")");
+        await st.bind.apply(st, ids).run();
+      }
+      p._removed = [];
+    }
+    // 경로 추적으로 hit 가 갱신된 행 반영(라벨 확정 전 배리어 접촉 기록)
+    if (Array.isArray(p._touched) && p._touched.length) {
+      for (const it of p._touched) {
+        if (it._id == null) continue;
+        await DB.prepare("UPDATE stin_pend SET hit=?, hp=? WHERE id=?").bind(_num(it.hit, 0), it.hp != null ? it.hp : null, it._id).run();
+      }
+      p._touched = [];
+    }
+  } catch (e) {}
+}
+// 라벨 완료분을 D1 표본 테이블로 내보낸다(R2 판 stinFlush 와 같은 역할).
+async function _stinFlushD1(DB, pend) {
+  if (!pend || !pend.done.length) return 0;
+  await stinEnsureD1(DB);
+  const day = _stinDay();
+  let n = 0;
+  try {
+    for (const d of pend.done) {
+      await DB.prepare("INSERT INTO stin_samples (ts, day, market, symbol, feat, ifeat, fv, label, pnl_pct, bar, hm, barw, featver) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)")
+        .bind(_num(d.ts, Date.now()), day, d.m || null, d.s || null, JSON.stringify(d.x),
+              d.ix ? JSON.stringify(d.ix) : null, _num(d.fv, 0), _num(d.y, 0), _num(d.pnl, 0),
+              d.bar || null, _num(d.hm, 0), _num(d.b, 0), LUXML.featVer).run();
+      n++;
+    }
+    pend.done = [];
+    pend.fts = Date.now();
+    // 화면 카운터도 R2 판과 같게 올린다(패널의 "표본 N/3000").
+    try {
+      const prev = (await getState(DB, "stin_stats", null)) || { total: 0, today: 0, day: day, files: 0 };
+      const sameDay = (prev.day === day);
+      await setState(DB, "stin_stats", Object.assign({}, prev, {
+        total: _num(prev.total, 0) + n,
+        today: (sameDay ? _num(prev.today, 0) : 0) + n,
+        files: (sameDay ? _num(prev.files, 0) : 0) + 1,
+        store: "D1", day: day, ts: Date.now()
+      }));
+    } catch (e) {}
+    // 상한 유지 — 오래된 것부터 정리(ml_samples 와 같은 방식).
+    try {
+      const c = await DB.prepare("SELECT COUNT(*) AS n FROM stin_samples").first();
+      const tot = _num(c && c.n, 0);
+      if (tot > STIN_D1.maxSamples)
+        await DB.prepare("DELETE FROM stin_samples WHERE id IN (SELECT id FROM stin_samples ORDER BY ts ASC LIMIT ?)")
+          .bind(tot - STIN_D1.maxSamples).run();
+    } catch (e) {}
+  } catch (e) {}
+  return n;
+}
+
 async function _stinLoadPend() {
   const R2 = _bigR2(); if (!R2) return null;
   try { const o = await R2.get(STIN.pendKey); if (!o) return { items: [], done: [], ts: 0, fts: 0 };
@@ -24745,14 +24941,16 @@ function stinLabel(pend, priceOf) {
   const now = Date.now(), horizonMs = STIN.horizonBars * 5 * 60000;
   const keep = [];
   let labeled = 0;
+  // [V33.95] D1 폴백일 때 어떤 행을 지우고 어떤 행의 배리어 접촉을 갱신할지 모아 둔다.
+  if (pend.d1) { pend._removed = pend._removed || []; pend._touched = pend._touched || []; }
   for (const it of pend.items) {
     const px = priceOf(it.s);
     // ── 경로 추적: 아직 어느 배리어에도 안 닿았다면 이번 가격으로 확인 ──
     if (px > 0 && !it.hit && it.p > 0) {
       const bar = (typeof it.b === "number" && it.b > 0) ? it.b : STIN.tpPct;
       const r = (px / it.p - 1) * 100;
-      if (r >= bar) { it.hit = 1; it.hp = +r.toFixed(3); }
-      else if (r <= -bar) { it.hit = -1; it.hp = +r.toFixed(3); }
+      if (r >= bar) { it.hit = 1; it.hp = +r.toFixed(3); if (pend.d1) pend._touched.push(it); }
+      else if (r <= -bar) { it.hit = -1; it.hp = +r.toFixed(3); if (pend.d1) pend._touched.push(it); }
     }
     // 배리어를 이미 쳤으면 시간이 남았어도 그 시점에 매매가 끝난 것 — 즉시 라벨 확정.
     const expired = (now - it.t) >= horizonMs;
@@ -24771,6 +24969,7 @@ function stinLabel(pend, priceOf) {
                 hm: (now - it.t) / 60000 | 0 };                       // 결착까지 걸린 분(빠를수록 강한 신호)
     if (it.ix) { d.ix = it.ix; d.fv = it.fv; d.b = it.b; }   // [V33.46/47] 장중 피처 + 배리어폭
     pend.done.push(d);
+    if (pend.d1 && it._id != null) pend._removed.push(it._id);   // [V33.95] D1 행 정리 대상
     labeled++;
   }
   pend.items = keep;
@@ -24787,7 +24986,9 @@ function stinLabel(pend, priceOf) {
 //     라벨은 그 이후 봉(i+1..i+H)으로만 매긴다 — 라이브와 동일한 함수를 그대로 쓴다.
 async function stinBackfill(DB, opts) {
   const R2 = _bigR2();
-  if (!R2) return "[ST-BACKFILL] R2 미바인딩 — 생략";
+  // [V33.95] R2 가 없어도 D1 로 적재한다 — 종전엔 여기서 바로 빠져나가
+  //   백필 표본이 단 한 건도 만들어지지 않았다(단타 학습이 시작조차 못 한 원인).
+  const _useD1 = !R2;
   const cfg = opts || {};
   const maxSyms = _num(cfg.maxSyms, 8);
   const H = STIN.horizonBars;                     // 12봉(60분)
@@ -24907,13 +25108,21 @@ async function stinBackfill(DB, opts) {
     if (!made.length) return "[ST-BACKFILL] 0건 — " + _cov +
       " (성공 " + symOk + " 실패 " + symFail + " 짧음 " + skipShort + " 기수확 " + skipDup + ")";
     // R2 로 내보낸다 — 라이브와 같은 폴더/스키마라 트레이너가 그대로 읽는다.
-    const key = "st/intraday/" + _stinDay() + "/bf-" + Date.now() + ".json";
-    await R2.put(key, JSON.stringify({ n: made.length, samples: made, src: "backfill" }));
+    // [V33.95] R2 가 있으면 종전 경로(오브젝트 1개), 없으면 D1 표본 테이블로.
+    if (_useD1) {
+      await _stinFlushD1(DB, { done: made, d1: true });
+    } else {
+      const key = "st/intraday/" + _stinDay() + "/bf-" + Date.now() + ".json";
+      await R2.put(key, JSON.stringify({ n: made.length, samples: made, src: "backfill" }));
+    }
     try {
       const d0 = _stinDay();
       const pv = (await getState(DB, "stin_stats", null)) || {};
       const same = (pv.day === d0);
-      await setState(DB, "stin_stats", Object.assign({}, pv, {
+      // D1 경로는 _stinFlushD1 이 이미 total/today/files 를 올렸다 — 중복 가산 금지.
+      await setState(DB, "stin_stats", Object.assign({}, pv, _useD1 ? {
+        day: d0, bfTotal: _num(pv.bfTotal, 0) + made.length, ts: Date.now()
+      } : {
         day: d0,
         total: _num(pv.total, 0) + made.length,
         today: (same ? _num(pv.today, 0) : 0) + made.length,
@@ -26811,6 +27020,75 @@ async function techPriorFitNightly(DB) {
     return "[TECHK] 기술 프라이어 계수 실측 k=" + k.toFixed(3) + " (t " + tval.toFixed(2) + ") → 적용 " + kEff.toFixed(3) +
            " · 종전 상수 0.66";
   } catch (e) { return "[TECHK] fail: " + (e && e.message); }
+}
+
+// ════════════════════════════════════════════════════════════════════════════
+// [V33.95] ★게이트 감사 — "AI 가 강하게 사라고 한 자리를 다른 게이트가 막아 손해가 아닌가"★
+//   사용자 질문에 숫자로 답하기 위한 계측이다. 추측하지 않는다.
+//   고확률(p≥0.60) 로 차단된 종목의 그 시점 가격을 남겨 뒀다가, 캐시된 일봉으로
+//   ★그때 샀으면 어떻게 됐는지★ 를 실제로 잰다(추가 fetch 0).
+//   결과가 양수면 그 게이트는 돈을 막고 있는 것이고, 음수면 제 역할을 한 것이다.
+async function gateAuditNightly(DB) {
+  try {
+    const gs = await getState(DB, "gate_stats", null);
+    if (!gs || !Array.isArray(gs.hi) || !gs.hi.length) return "[GATE] 고확률 차단 표본 없음";
+    const H = _num((AI_PARAMS && AI_PARAMS.predictionHorizonDays) || 10, 10);
+    const byR = {};
+    let scored = 0, tooNew = 0, noPx = 0;
+    for (const it of gs.hi) {
+      const ageD = (Date.now() - _num(it.t, 0)) / 86400000;
+      if (ageD < 1) { tooNew++; continue; }                 // 아직 결과가 안 나온 건 세지 않는다
+      let d = null;
+      try { d = await getState(DB, "daily:" + it.s, null); } catch (e) {}
+      if (!d || !Array.isArray(d.closes) || d.closes.length < 3) { noPx++; continue; }
+      // 지평(H거래일) 또는 현재까지 — 둘 중 짧은 쪽의 실현수익.
+      const bars = Math.max(1, Math.min(Math.floor(ageD), H));
+      const c = d.closes, px = _num(c[c.length - 1], 0);
+      const ref = _num(c[Math.max(0, c.length - 1 - bars)], 0);
+      void ref;
+      if (!(px > 0) || !(it.px > 0)) { noPx++; continue; }
+      const ret = (px / it.px - 1) * 100;
+      const o = byR[it.r] || (byR[it.r] = { n: 0, sum: 0, win: 0 });
+      o.n++; o.sum += ret; if (ret > 0) o.win++;
+      scored++;
+    }
+    // 결과가 확정된 표본은 버퍼에서 뺀다(같은 건을 계속 다시 세지 않게).
+    try {
+      const keep = gs.hi.filter(function (it) { return (Date.now() - _num(it.t, 0)) / 86400000 < 1; });
+      await setState(DB, "gate_stats", Object.assign({}, gs, { hi: keep }));
+    } catch (e) {}
+    const rows = Object.keys(byR).map(function (r) {
+      const o = byR[r];
+      return { reason: r, n: o.n, avgRet: +(o.sum / o.n).toFixed(2), winRate: +(o.win / o.n).toFixed(3) };
+    }).filter(function (x) { return x.n >= 5; }).sort(function (a, b) { return b.avgRet - a.avgRet; });
+    const prev = (await getState(DB, "gate_audit", null)) || { rows: [] };
+    // 누적 — 밤마다 표본이 조금씩 붙으므로 합쳐 간다.
+    const merged = {};
+    for (const r of (prev.rows || [])) merged[r.reason] = { n: r.n, sum: r.avgRet * r.n, win: r.winRate * r.n };
+    for (const r of rows) {
+      const m = merged[r.reason] || (merged[r.reason] = { n: 0, sum: 0, win: 0 });
+      m.n += r.n; m.sum += r.avgRet * r.n; m.win += r.winRate * r.n;
+    }
+    const out = Object.keys(merged).map(function (r) {
+      const m = merged[r];
+      return { reason: r, n: m.n, avgRet: +(m.sum / m.n).toFixed(2), winRate: +(m.win / m.n).toFixed(3) };
+    }).sort(function (a, b) { return b.avgRet - a.avgRet; }).slice(0, 20);
+    // 게이트별 확률 통계도 함께 보관(어떤 게이트가 고확률을 많이 막는가).
+    const byP = [];
+    try {
+      for (const k of Object.keys((gs.by || {}))) {
+        const o = gs.by[k];
+        if (_num(o.n, 0) < 20) continue;
+        byP.push({ reason: k, n: o.n, avgP: +(o.sumP / o.n).toFixed(3), hi: o.hi, maxP: +_num(o.maxP, 0).toFixed(3) });
+      }
+      byP.sort(function (a, b) { return b.hi - a.hi; });
+    } catch (e) {}
+    await setState(DB, "gate_audit", { rows: out, byP: byP.slice(0, 20), scored: scored, ts: Date.now() });
+    if (!out.length) return "[GATE] 채점 " + scored + "건(신규 " + tooNew + " 가격없음 " + noPx + ") — 누적 대기";
+    const worst = out[0];
+    return "[GATE] 고확률 차단 실측 " + scored + "건 · 가장 비싼 게이트 " + worst.reason +
+           " 평균 " + (worst.avgRet >= 0 ? "+" : "") + worst.avgRet + "% (n=" + worst.n + ")";
+  } catch (e) { return "[GATE] fail: " + (e && e.message); }
 }
 
 async function mlGuardState(DB) { try { return (await getState(DB, "mind_guard", null)) || { distrust: false }; } catch (e) { return { distrust: false }; } }
@@ -34068,7 +34346,7 @@ export default {
       //   장중에도 돌리되(코어 매매 예산과 분리된 자체 예산) 회당 종목 수를 줄여 부담을 낮춘다.
       //   저장된 봉만 읽어 표본을 만드는 경로라, 라이브 수집이 막혀도 이쪽은 독립적으로 쌓인다.
       try {
-        const _r2ok = !!_bigR2();
+        const _r2ok = true;   // [V33.95] R2 없으면 D1 로 적재 — 더는 바인딩에 묶이지 않는다
         const _bfLock = _num(await getState(env.DB, "stin_bf_lock", 0), 0);
         let _mkoBf = false; try { _mkoBf = isMarketOpen("us") || isMarketOpen("kr"); } catch (e) {}
         const _gap = _mkoBf ? 30 * 60000 : 10 * 60000;   // [V33.71] 더 자주 — 표본이 급하다
@@ -34645,6 +34923,8 @@ export default {
             // [V33.94] 기술 프라이어 계수 실측 + 최종 확률 보정(T2) — 상수를 측정으로 대체.
             await _stg("techk", async function () { return await techPriorFitNightly(env.DB); });
             await _stg("finalcal", async function () { return await finalCalFitNightly(env.DB); });
+            // [V33.95] 게이트 감사 — 고확률로 막힌 자리가 실제로 올랐는지 실측(추가 fetch 0).
+            await _stg("gateaudit", async function () { return await gateAuditNightly(env.DB); });
             await _stg("stack", async function () { return await stackTrainNightly(env.DB); });
             await _stg("dual", async function () { return await dualHeadTrainNightly(env.DB); });
             // [V33.90] 실제 원장 기준 포트폴리오 통계(NautilusTrader PortfolioAnalyzer) —
