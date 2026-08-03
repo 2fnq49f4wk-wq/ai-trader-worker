@@ -2760,7 +2760,7 @@ async function applySignalTypeWeights(DB, cfg) {
 // ============================================================================
 // [V33.55] 빌드 버전 — SWR L2 캐시 키에 섞어 '배포 = 판단 캐시 자동 무효화'를 만든다.
 //   판정 로직을 고쳐도 옛 캐시가 최대 1시간 재배포되던 문제를 구조적으로 없앤다.
-const _BUILD_VER = "V33.97";
+const _BUILD_VER = "V33.98";
 
 const AI_PARAMS = {
   // ── OHLCV 타임프레임 ── 시가/고가/저가/종가/거래량을 어떤 봉 주기로 볼지.
@@ -18042,6 +18042,8 @@ async function handleRequest(request, env, ctx) {
             _alt.chain = {
               techK: _tk ? { k: _num(_tk.k, null), kEff: _num(_tk.kEff, null), t: _num(_tk.t, null), n: _num(_tk.n, 0) } : null,
               finalCal: _fc ? { T: _num(_fc.T, null), ece: _num(_fc.ece, null), eceRaw: _num(_fc.eceRaw, null), n: _num(_fc.n, 0) } : null,
+              confK: await (async function () { try { const c = await getState(env.DB, "scalp_conf_k", null);
+                return c ? { k: _num(c.k, null), kEff: _num(c.kEff, null), t: _num(c.t, null), n: _num(c.n, 0) } : null; } catch (e) { return null; } })(),
               blendK: await (async function () { try { const b = await getState(env.DB, "decision_blend_k", null);
                 return b ? { kTech: _num(b.kTech, null), kNews: _num(b.kNews, null), tTech: _num(b.tTech, null), n: _num(b.n, 0) } : null; } catch (e) { return null; } })(),
               dualShift: _ds ? { shift: _ds.shift || null, n: _num(_ds.n, 0) } : null,
@@ -18670,12 +18672,18 @@ async function handleRequest(request, env, ctx) {
       const out = [];
       // [V33.95] R2 미바인딩이면 D1 표본 테이블에서 읽는다 — 종전엔 503 이라
       //   외부 트레이너가 받아갈 표본이 영원히 0 이었고 단타 모델이 학습된 적이 없다.
+      // [V33.98] ★페이징★ — 백필은 하루에 수만 건을 만든다. 종전엔 LIMIT 60000 고정이라
+      //   그 날 버킷이 넘치면 뒤쪽(최신) 표본이 통째로 잘려 트레이너가 영영 못 봤다.
+      //   offset 을 받아 트레이너가 끝까지 넘겨받게 한다.
+      const _pgSize = 20000;
+      const _off = Math.max(0, Math.floor(_num(url.searchParams.get("offset"), 0)));
+      let _hasMore = false;
       if (!R2) {
         try {
           await stinEnsureD1(env.DB);
           const rs = await env.DB.prepare(
-            "SELECT ts, market, symbol, feat, ifeat, fv, label, pnl_pct, bar, hm, barw FROM stin_samples WHERE day = ? ORDER BY ts ASC LIMIT 60000"
-          ).bind(day).all();
+            "SELECT ts, market, symbol, feat, ifeat, fv, label, pnl_pct, bar, hm, barw FROM stin_samples WHERE day = ? ORDER BY ts ASC LIMIT ? OFFSET ?"
+          ).bind(day, _pgSize + 1, _off).all();
           for (const r of ((rs && rs.results) || [])) {
             let x, ix = null;
             try { x = JSON.parse(r.feat); } catch (e) { continue; }
@@ -18685,6 +18693,7 @@ async function handleRequest(request, env, ctx) {
             if (ix) { sm.ix = ix; sm.fv = _num(r.fv, 0); sm.b = _num(r.barw, 0); }
             out.push(sm);
           }
+          if (out.length > _pgSize) { _hasMore = true; out.length = _pgSize; }
         } catch (e) { return Response.json({ error: "D1 조회 실패: " + (e && e.message) }, { status: 500, headers: cors }); }
       } else
       try {
@@ -18710,6 +18719,7 @@ async function handleRequest(request, env, ctx) {
         //   업로드 시 ifeatVer 를 되돌려줘야 서버가 차원을 검증할 수 있다.
         ifeatVer: STIN_FEATVER, ifeatN: STIN_IFEAT_N, ifeatNames: STIN_IFEAT_NAMES,
         horizonBars: STIN.horizonBars, barMin: 5, total: out.length,
+        offset: _off, hasMore: _hasMore, pageSize: _pgSize,   // [V33.98] 트레이너 페이징
         liveEnabled: !!_sc.enabled, config: _mlExportConfig(), samples: out }, { headers: cors });
     }
 
@@ -19234,12 +19244,12 @@ async function handleRequest(request, env, ctx) {
     if (path === "/api/ai/train-now" && request.method === "POST") {
       const au = _trainAuthed(); if (!au.ok) return Response.json({ error: au.msg }, { status: au.code, headers: cors });
       const target = url.searchParams.get("target") || "mind";
-      const FN = { mind: mlMindTrainNightly, gbdt: mlGBDTTrainNightly, brain: mlBrainTrainNightly, dnn: mlDNNTrainNightly, l1: mlTrainNightly, calibrate: mlCalibrateCommittee, selfreview: mlSelfReview, flow: flowTrainNightly, xalpha: xalphaTrainNightly, stack: stackTrainNightly, dual: dualHeadTrainNightly, memo: memoTrainNightly, techk: techPriorFitNightly, finalcal: finalCalFitNightly, gateaudit: gateAuditNightly, blendk: decisionBlendFitNightly, portstats: portfolioStatsNightly, ledgeraudit: ledgerCheckIntegrity };
+      const FN = { mind: mlMindTrainNightly, gbdt: mlGBDTTrainNightly, brain: mlBrainTrainNightly, dnn: mlDNNTrainNightly, l1: mlTrainNightly, calibrate: mlCalibrateCommittee, selfreview: mlSelfReview, flow: flowTrainNightly, xalpha: xalphaTrainNightly, stack: stackTrainNightly, dual: dualHeadTrainNightly, memo: memoTrainNightly, techk: techPriorFitNightly, finalcal: finalCalFitNightly, gateaudit: gateAuditNightly, blendk: decisionBlendFitNightly, confk: scalpConfluenceFitNightly, portstats: portfolioStatsNightly, ledgeraudit: ledgerCheckIntegrity };
       // [V12.63] target=all — 재배포 직후 "한 방에" 전체 파이프라인을 정확한 순서로 재실행(하루1회 게이트 무시).
       //   순서 고정: harvest → l1 → brain → mind → dnn → gbdt → calibrate (뒤 단계가 앞 단계 산출물 의존).
       //   각 단계 자체 CPU예산 가드가 있어 안전. 재학습 즉시 모든 수정이 반영되게 하는 원클릭 경로.
       if (target === "all") {
-        const _order = [["harvest", mlMarketHarvestNightly], ["l1", mlTrainNightly], ["brain", mlBrainTrainNightly], ["mind", mlMindTrainNightly], ["gbdt", mlGBDTTrainNightly], ["dnn", mlDNNTrainNightly], ["flow", flowTrainNightly], ["xalpha", xalphaTrainNightly], ["memo", memoTrainNightly], ["techk", techPriorFitNightly], ["finalcal", finalCalFitNightly], ["gateaudit", gateAuditNightly], ["blendk", decisionBlendFitNightly], ["stack", stackTrainNightly], ["dual", dualHeadTrainNightly], ["portstats", portfolioStatsNightly], ["ledgeraudit", ledgerCheckIntegrity], ["calibrate", mlCalibrateCommittee]];
+        const _order = [["harvest", mlMarketHarvestNightly], ["l1", mlTrainNightly], ["brain", mlBrainTrainNightly], ["mind", mlMindTrainNightly], ["gbdt", mlGBDTTrainNightly], ["dnn", mlDNNTrainNightly], ["flow", flowTrainNightly], ["xalpha", xalphaTrainNightly], ["memo", memoTrainNightly], ["techk", techPriorFitNightly], ["finalcal", finalCalFitNightly], ["gateaudit", gateAuditNightly], ["blendk", decisionBlendFitNightly], ["confk", scalpConfluenceFitNightly], ["stack", stackTrainNightly], ["dual", dualHeadTrainNightly], ["portstats", portfolioStatsNightly], ["ledgeraudit", ledgerCheckIntegrity], ["calibrate", mlCalibrateCommittee]];
         const out = {};
         for (const [nm, fn] of _order) {
           try { out[nm] = await fn(env.DB); } catch (e) { out[nm] = "FAIL: " + (e && e.message); }
@@ -24302,6 +24312,98 @@ async function mlScalpLoad(DB) {
     return v;
   } catch (e) { return null; }
 }
+// ════════════════════════════════════════════════════════════════════════════
+// [V33.98] ★단타 합류표를 함수로 분리★ — 종전엔 mlScalpDecide 안에 인라인이라
+//   야간에 같은 계산을 재현할 방법이 없었다(계수를 실측하려면 재현이 필수다).
+//   판정 경로와 측정 경로가 ★같은 코드★ 를 쓰게 만든다 — 갈라지면 그 순간 측정이 거짓말이 된다.
+function _scalpConfluenceVotes(iAt, tAt) {
+  const _rsi = tAt(0), _rsiSl = tAt(1), _mHist = tAt(2), _mX = tAt(3), _stoch = tAt(4),
+        _pctB = tAt(5), _adx = tAt(7), _diD = tAt(8), _ema = tAt(9), _div = tAt(10), _res = tAt(11);
+  const _bbW = tAt(6), _sup = tAt(12);
+  const _hAlign = tAt(19), _hEma = tAt(16), _hAdx = tAt(17);
+  const _relV = iAt(5), _volT = iAt(11), _ofiV = iAt(12);
+    const votes = [];   // {n, v} v>0 매수 / v<0 매도
+  // 볼린저 — 하단 근처에서 반등(과매도 회복)이거나, 스퀴즈 후 상단 돌파(변동성 확장 초입)
+  let _bbVoted = false;   // [V33.90] %B 가 이미 표를 냈는지 — 아래 'MA위/아래' 이중계상 방지
+  if (_pctB != null) {
+    if (_pctB <= 0.2 && _rsiSl > 0) { votes.push({ n: "BB하단반등", v: 1 }); _bbVoted = true; }
+    else if (_pctB >= 0.98 && _bbW != null && _bbW < 3 && _mHist > 0) { votes.push({ n: "BB스퀴즈돌파", v: 1 }); _bbVoted = true; }
+    else if (_pctB >= 1.15) { votes.push({ n: "BB상단이탈", v: -1 }); _bbVoted = true; }          // 밴드 밖 과열
+    else if (_pctB <= -0.1) { votes.push({ n: "BB하단이탈", v: -1 }); _bbVoted = true; }          // 밴드 밖 붕괴
+  }
+  if (_mHist != null && _mX != null) {
+    if (_mX > 0) votes.push({ n: "MACD골든", v: 1 });
+    else if (_mX < 0) votes.push({ n: "MACD데드", v: -1 });
+    else if (_mHist > 0) votes.push({ n: "MACD양전", v: 1 });
+    else if (_mHist < 0) votes.push({ n: "MACD음전", v: -1 });
+  }
+  if (_rsi != null) {
+    if (_rsi < 0.35 && _rsiSl > 0) votes.push({ n: "RSI반등", v: 1 });
+    else if (_rsi > 0.75 && _rsiSl < 0) votes.push({ n: "RSI꺾임", v: -1 });
+    else if (_rsiSl > 0.1) votes.push({ n: "RSI상승", v: 1 });
+    else if (_rsiSl < -0.1) votes.push({ n: "RSI하락", v: -1 });
+  }
+  if (_stoch != null) {
+    if (_stoch < 0.25) votes.push({ n: "스토과매도", v: 1 });
+    else if (_stoch > 0.9) votes.push({ n: "스토과열", v: -1 });
+  }
+  // MA — 단기 이평 정배열(EMA5>EMA13) + 가격이 볼린저 중심선(=MA14) 위/아래 어디인가.
+  //   "MA 도 같이 봐라"(사용자) → 이평 방향과 가격의 이평 대비 위치를 각각 표로 센다.
+  // [V33.98] ★중립에는 표를 주지 않는다★ — 종전엔 _ema 가 정확히 0(=이평이 겹친 무추세)이어도
+  //   `> 0` 이 거짓이라 '역배열' 한 표가 나갔다. 중립 증거가 방향 표를 만들면 안 된다.
+  //   다른 지표들은 전부 밴드(예: |_diD| >= 0.15)를 두는데 여기만 빠져 있었다.
+  if (_ema != null && Math.abs(_ema) >= 0.02) votes.push({ n: _ema > 0 ? "MA정배열" : "MA역배열", v: _ema > 0 ? 1 : -1 });
+  // [V33.90] ★같은 변수(%B)를 두 표로 세던 논리오류 수정 — 매수자리만 골라서 상쇄되고 있었다★
+  //   %B 는 위 BB 블록과 이 MA 블록에 동시에 들어가 한 지표가 두 번 계상됐고,
+  //   그 결과가 방향별로 비대칭이었다(실측):
+  //     · 과매도 반등(%B≤0.2, 전형적 매수자리) → BB하단반등 +1 / MA아래 −1 = ★순표 0★
+  //     · 밴드 상단이탈(과열)               → BB상단이탈 −1 / MA위  +1 = ★순표 0★
+  //     · 밴드 하단붕괴(급락)               → BB하단이탈 −1 / MA아래 −1 = ★순표 −2★
+  //   즉 매수 신호는 전부 0 으로 지워지고 매도 신호만 두 배가 됐다. minConfluence=2 게이트에서
+  //   이건 '단타가 사실상 사지 못하는' 구조적 편향이다.
+  //   → %B 가 이미 BB 표를 냈으면 MA 위치 표는 내지 않는다(밴드 중립구간에서만 이평 위치로 계산).
+  if (_pctB != null && !_bbVoted) {
+    // %B 0.5 = 중심선(MA14). 위면 이평 위, 아래면 이평 아래.
+    if (_pctB > 0.55) votes.push({ n: "MA위", v: 1 });
+    else if (_pctB < 0.45) votes.push({ n: "MA아래", v: -1 });
+  }
+  // VOL — 거래량 확인. 상대거래량(최근3봉/전체)과 거래량 추세(최근6봉/직전6봉)를 같이 본다.
+  //   거래량 없는 상승은 못 믿는다("거래량은 가격에 선행한다"는 기본 원칙).
+  if (_relV != null && _volT != null) {
+    const rising = (_mHist != null && _mHist > 0) || (_rsiSl != null && _rsiSl > 0);
+    if (_relV >= 1.5 && _volT >= 1.2 && rising) votes.push({ n: "VOL급증동반", v: 1 });
+    else if (_relV <= 0.6 && rising) votes.push({ n: "VOL없는상승", v: -1 });   // 거래량 없는 상승 = 신뢰 불가
+    else if (_relV >= 1.5 && !rising) votes.push({ n: "VOL급증하락", v: -1 });  // 매도 물량 급증
+  }
+  // 주문흐름(OFI) — 거래량의 '방향' 확인. 같은 거래량이라도 매수 우위인지 매도 우위인지.
+  if (_ofiV != null) {
+    if (_ofiV >= 0.35) votes.push({ n: "매수우위", v: 1 });
+    else if (_ofiV <= -0.35) votes.push({ n: "매도우위", v: -1 });
+  }
+  // [V33.70] ★상위 타임프레임 정렬 — 단타에서 가장 비싼 실수를 막는다★
+  //   5분봉만 보고 들어가면 15분 흐름을 거스르는 자리를 반복해서 잡는다(역추세 스캘핑).
+  //   정렬이면 표를 주고, 역행이면 표를 뺀다. 명백한 역행은 아예 진입을 막는다.
+  if (_hAlign != null) {
+    if (_hAlign > 0) votes.push({ n: "상위TF정렬", v: 1 });
+    else if (_hAlign < 0) votes.push({ n: "상위TF역행", v: -1 });
+  }
+  // 상위 추세가 뚜렷한 하락(ADX 충분 + EMA 역배열)인데 5분봉만 반등이면 잡지 않는다.
+  //   [V33.98] 이건 '표' 가 아니라 하드 거부다 — 함수는 판정만 돌려주고 반환은 호출부가 한다
+  //   (측정 경로에서는 거부와 무관하게 표를 세야 하므로 분리한다).
+  let hardVeto = null;
+  if (_hAdx != null && _hEma != null && _hAdx >= 0.5 && _hEma <= -0.15)
+    hardVeto = "상위TF 하락추세(15분 EMA " + _hEma.toFixed(2) + ")";
+  if (_adx != null && _diD != null && _adx >= 0.4) votes.push({ n: _diD > 0 ? "ADX상승추세" : "ADX하락추세", v: _diD > 0 ? 1 : -1 });
+  if (_div != null && Math.abs(_div) >= 0.25) votes.push({ n: _div > 0 ? "강세다이버전스" : "약세다이버전스", v: _div > 0 ? 1 : -1 });
+  if (_sup != null && _res != null && _res > 0 && _sup > 0) {
+    // 손익비 구조 — 위(저항)가 아래(지지)보다 넉넉해야 살 자리다
+    if (_res >= _sup * 1.5) votes.push({ n: "상방여유", v: 1 });
+    else if (_sup >= _res * 1.5) votes.push({ n: "하방취약", v: -1 });
+  }
+  let buyV = 0, sellV = 0;
+  for (const q of votes) { if (q.v > 0) buyV++; else sellV++; }
+  return { votes: votes, buyV: buyV, sellV: sellV, net: buyV - sellV, hardVeto: hardVeto };
+}
 // 단타 판정 — 모델이 신뢰될 때만 확률을 낸다. null 이면 호출부는 단타 진입을 하지 않는다.
 async function mlScalpDecide(DB, featVec, opts) {
   const sc = (typeof AI_PARAMS !== "undefined" && AI_PARAMS.aiScalp) || {};
@@ -24372,86 +24474,13 @@ async function mlScalpDecide(DB, featVec, opts) {
     //   단일 지표는 어느 것이든 거짓신호가 많다. 실제로 이기는 자리는 '여러 지표가 같은 말을 할 때'다.
     //   각 지표를 매수/매도 표로 환산해 합산하고, 최소 표 수를 충족해야 진입을 허용한다.
     const _bbW = tAt(6), _sup = tAt(12);
-    const votes = [];   // {n, v} v>0 매수 / v<0 매도
-    // 볼린저 — 하단 근처에서 반등(과매도 회복)이거나, 스퀴즈 후 상단 돌파(변동성 확장 초입)
-    let _bbVoted = false;   // [V33.90] %B 가 이미 표를 냈는지 — 아래 'MA위/아래' 이중계상 방지
-    if (_pctB != null) {
-      if (_pctB <= 0.2 && _rsiSl > 0) { votes.push({ n: "BB하단반등", v: 1 }); _bbVoted = true; }
-      else if (_pctB >= 0.98 && _bbW != null && _bbW < 3 && _mHist > 0) { votes.push({ n: "BB스퀴즈돌파", v: 1 }); _bbVoted = true; }
-      else if (_pctB >= 1.15) { votes.push({ n: "BB상단이탈", v: -1 }); _bbVoted = true; }          // 밴드 밖 과열
-      else if (_pctB <= -0.1) { votes.push({ n: "BB하단이탈", v: -1 }); _bbVoted = true; }          // 밴드 밖 붕괴
-    }
-    if (_mHist != null && _mX != null) {
-      if (_mX > 0) votes.push({ n: "MACD골든", v: 1 });
-      else if (_mX < 0) votes.push({ n: "MACD데드", v: -1 });
-      else if (_mHist > 0) votes.push({ n: "MACD양전", v: 1 });
-      else if (_mHist < 0) votes.push({ n: "MACD음전", v: -1 });
-    }
-    if (_rsi != null) {
-      if (_rsi < 0.35 && _rsiSl > 0) votes.push({ n: "RSI반등", v: 1 });
-      else if (_rsi > 0.75 && _rsiSl < 0) votes.push({ n: "RSI꺾임", v: -1 });
-      else if (_rsiSl > 0.1) votes.push({ n: "RSI상승", v: 1 });
-      else if (_rsiSl < -0.1) votes.push({ n: "RSI하락", v: -1 });
-    }
-    if (_stoch != null) {
-      if (_stoch < 0.25) votes.push({ n: "스토과매도", v: 1 });
-      else if (_stoch > 0.9) votes.push({ n: "스토과열", v: -1 });
-    }
-    // MA — 단기 이평 정배열(EMA5>EMA13) + 가격이 볼린저 중심선(=MA14) 위/아래 어디인가.
-    //   "MA 도 같이 봐라"(사용자) → 이평 방향과 가격의 이평 대비 위치를 각각 표로 센다.
-    if (_ema != null) votes.push({ n: _ema > 0 ? "MA정배열" : "MA역배열", v: _ema > 0 ? 1 : -1 });
-    // [V33.90] ★같은 변수(%B)를 두 표로 세던 논리오류 수정 — 매수자리만 골라서 상쇄되고 있었다★
-    //   %B 는 위 BB 블록과 이 MA 블록에 동시에 들어가 한 지표가 두 번 계상됐고,
-    //   그 결과가 방향별로 비대칭이었다(실측):
-    //     · 과매도 반등(%B≤0.2, 전형적 매수자리) → BB하단반등 +1 / MA아래 −1 = ★순표 0★
-    //     · 밴드 상단이탈(과열)               → BB상단이탈 −1 / MA위  +1 = ★순표 0★
-    //     · 밴드 하단붕괴(급락)               → BB하단이탈 −1 / MA아래 −1 = ★순표 −2★
-    //   즉 매수 신호는 전부 0 으로 지워지고 매도 신호만 두 배가 됐다. minConfluence=2 게이트에서
-    //   이건 '단타가 사실상 사지 못하는' 구조적 편향이다.
-    //   → %B 가 이미 BB 표를 냈으면 MA 위치 표는 내지 않는다(밴드 중립구간에서만 이평 위치로 계산).
-    if (_pctB != null && !_bbVoted) {
-      // %B 0.5 = 중심선(MA14). 위면 이평 위, 아래면 이평 아래.
-      if (_pctB > 0.55) votes.push({ n: "MA위", v: 1 });
-      else if (_pctB < 0.45) votes.push({ n: "MA아래", v: -1 });
-    }
-    // VOL — 거래량 확인. 상대거래량(최근3봉/전체)과 거래량 추세(최근6봉/직전6봉)를 같이 본다.
-    //   거래량 없는 상승은 못 믿는다("거래량은 가격에 선행한다"는 기본 원칙).
-    const _relV = iAt(5), _volT = iAt(11), _ofiV = iAt(12);
-    if (_relV != null && _volT != null) {
-      const rising = (_mHist != null && _mHist > 0) || (_rsiSl != null && _rsiSl > 0);
-      if (_relV >= 1.5 && _volT >= 1.2 && rising) votes.push({ n: "VOL급증동반", v: 1 });
-      else if (_relV <= 0.6 && rising) votes.push({ n: "VOL없는상승", v: -1 });   // 거래량 없는 상승 = 신뢰 불가
-      else if (_relV >= 1.5 && !rising) votes.push({ n: "VOL급증하락", v: -1 });  // 매도 물량 급증
-    }
-    // 주문흐름(OFI) — 거래량의 '방향' 확인. 같은 거래량이라도 매수 우위인지 매도 우위인지.
-    if (_ofiV != null) {
-      if (_ofiV >= 0.35) votes.push({ n: "매수우위", v: 1 });
-      else if (_ofiV <= -0.35) votes.push({ n: "매도우위", v: -1 });
-    }
-    // [V33.70] ★상위 타임프레임 정렬 — 단타에서 가장 비싼 실수를 막는다★
-    //   5분봉만 보고 들어가면 15분 흐름을 거스르는 자리를 반복해서 잡는다(역추세 스캘핑).
-    //   정렬이면 표를 주고, 역행이면 표를 뺀다. 명백한 역행은 아예 진입을 막는다.
-    const _hAlign = tAt(19), _hEma = tAt(16), _hAdx = tAt(17);
-    if (_hAlign != null) {
-      if (_hAlign > 0) votes.push({ n: "상위TF정렬", v: 1 });
-      else if (_hAlign < 0) votes.push({ n: "상위TF역행", v: -1 });
-    }
-    // 상위 추세가 뚜렷한 하락(ADX 충분 + EMA 역배열)인데 5분봉만 반등이면 잡지 않는다.
-    if (_hAdx != null && _hEma != null && _hAdx >= 0.5 && _hEma <= -0.15) {
-      return { p: +p.toFixed(4), pass: false, thr: +thr.toFixed(3), chart: true,
-               veto: "상위TF 하락추세(15분 EMA " + _hEma.toFixed(2) + ")",
+    const _cv = _scalpConfluenceVotes(iAt, tAt);
+    const votes = _cv.votes;
+    if (_cv.hardVeto) {
+      return { p: +p.toFixed(4), pass: false, thr: +thr.toFixed(3), chart: true, veto: _cv.hardVeto,
                valAccLB: L.trust.valAccLB, n: L.model.n, horizonBars: L.model.horizonBars };
     }
-    if (_adx != null && _diD != null && _adx >= 0.4) votes.push({ n: _diD > 0 ? "ADX상승추세" : "ADX하락추세", v: _diD > 0 ? 1 : -1 });
-    if (_div != null && Math.abs(_div) >= 0.25) votes.push({ n: _div > 0 ? "강세다이버전스" : "약세다이버전스", v: _div > 0 ? 1 : -1 });
-    if (_sup != null && _res != null && _res > 0 && _sup > 0) {
-      // 손익비 구조 — 위(저항)가 아래(지지)보다 넉넉해야 살 자리다
-      if (_res >= _sup * 1.5) votes.push({ n: "상방여유", v: 1 });
-      else if (_sup >= _res * 1.5) votes.push({ n: "하방취약", v: -1 });
-    }
-    let buyV = 0, sellV = 0;
-    for (const q of votes) { if (q.v > 0) buyV++; else sellV++; }
-    const net = buyV - sellV;
+    const buyV = _cv.buyV, sellV = _cv.sellV, net = _cv.net;
     const minNet = _num(sc.minConfluence, 2);
     if (votes.length >= 4 && net < minNet) {
       return { p: +p.toFixed(4), pass: false, thr: +thr.toFixed(3), chart: true,
@@ -24466,9 +24495,16 @@ async function mlScalpDecide(DB, featVec, opts) {
     //   진입 여부에만 쓰이고 '얼마나 확신하는가'(=사이징·랭킹)에는 전혀 반영되지 않았다.
     //   → 로그오즈 공간에서 더한다(확률 공간 덧셈은 0·1 근처에서 깨진다).
     //     모델 확률이 이미 극단이면 이동폭이 자연히 작아져 과보정되지 않는다.
-    const _cw = _num(sc.chartWeight, 0.5);
+    // [V33.98] ★합류 로짓 가중도 실측값으로★ — 0.5 는 출처가 없다.
+    //   게다가 합류표는 ix(장중 피처)로 계산되는데 ★모델도 그 ix 로 학습된다★ —
+    //   같은 증거를 두 번 더하는 구조다. 그래서 '모델 확률을 오프셋으로 고정한' 잔여효과만 재야 한다.
+    //   scalpConfluenceFitNightly 가 저장된 표본으로 그 잔여 계수를 적합한다.
+    //   실측 전에는 보수적으로 절반(0.25)만 쓴다.
+    const _ck = (opts && opts.confK !== undefined) ? opts.confK : await getState(DB, "scalp_conf_k", null);
+    const _cw = (_ck && typeof _ck.kEff === "number" && isFinite(_ck.kEff))
+      ? _clamp(_ck.kEff, -1.5, 1.5) : _num(sc.chartWeight, 0.5) * 0.5;
     let pAdj = p;
-    if (_cw > 0 && votes.length >= 3) {
+    if (_cw !== 0 && votes.length >= 3) {
       const _p0 = _clamp(p, 0.001, 0.999);
       const _lo = Math.log(_p0 / (1 - _p0)) + _cw * Math.tanh(net / 4);
       pAdj = _clamp(1 / (1 + Math.exp(-_lo)), 0.001, 0.999);
@@ -27224,6 +27260,74 @@ async function decisionBlendFitNightly(DB) {
     return "[BLENDK] 기술 k=" + kTe.toFixed(3) + "(t " + tT.toFixed(2) + ") 뉴스 k=" + kNe.toFixed(3) +
            "(t " + tN.toFixed(2) + ") n=" + N + " · 기본값 0.90/0.45";
   } catch (e) { return "[BLENDK] fail: " + (e && e.message); }
+}
+
+// ════════════════════════════════════════════════════════════════════════════
+// [V33.98] ★단타 합류 로짓 계수 실측★
+//   mlScalpDecide 는 모델 확률에 `chartWeight × tanh(net/4)` 를 로그오즈로 더한다.
+//   0.5 라는 값도 근거가 없지만, 더 큰 문제는 ★합류표가 ix(장중 피처)로 계산되는데
+//   모델도 같은 ix 로 학습된다★ 는 것이다 — 같은 증거를 두 번 더하고 있다.
+//   → 저장된 표본으로 '모델 확률을 오프셋으로 고정한' 잔여 계수를 적합한다.
+//     모델이 이미 다 설명했다면 k 는 0 근처로 나오고, 남는 게 있으면 그만큼만 더한다.
+//   판정과 측정이 ★같은 _scalpConfluenceVotes★ 를 쓴다 — 갈라지면 측정이 거짓말이 된다.
+async function scalpConfluenceFitNightly(DB) {
+  try {
+    const L = await mlScalpLoad(DB);
+    if (!L) return "[CONFK] 단타모델 미신뢰 — 측정 대기";
+    const D0 = LUXML.featNames.length;
+    let rows = [];
+    if (_bigR2()) {
+      // R2 경로는 오브젝트를 훑어야 해 비용이 크다 — D1 경로에서만 측정한다(같은 표본 스키마).
+      return "[CONFK] R2 경로 — 측정 생략(D1 표본 필요)";
+    }
+    await stinEnsureD1(DB);
+    const rs = await DB.prepare(
+      "SELECT feat, ifeat, fv, label FROM stin_samples WHERE fv = ? ORDER BY ts DESC LIMIT 8000"
+    ).bind(STIN_FEATVER).all();
+    rows = (rs && rs.results) || [];
+    const P = [], NET = [], Y = [];
+    for (const r of rows) {
+      let x, ix;
+      try { x = JSON.parse(r.feat); ix = r.ifeat ? JSON.parse(r.ifeat) : null; } catch (e) { continue; }
+      if (!Array.isArray(x) || x.length !== D0 || !Array.isArray(ix) || ix.length !== STIN_IFEAT_N) continue;
+      const fv = x.concat(ix);
+      const p = mlGBDTScore(L.model, fv);
+      if (p == null) continue;
+      const iAt = function (k) { return _num(fv[D0 + k], 0); };
+      const T0 = D0 + STIN_IFEAT_N - STIN_TA_N;
+      const tAt = function (k) { return _num(fv[T0 + k], 0); };
+      const cv = _scalpConfluenceVotes(iAt, tAt);
+      if (!cv || cv.votes.length < 3) continue;
+      P.push(_clamp(p, 1e-4, 1 - 1e-4)); NET.push(Math.tanh(cv.net / 4)); Y.push(r.label ? 1 : 0);
+    }
+    const N = P.length;
+    if (N < 600) return "[CONFK] 유효표본 " + N + "/600 — 대기";
+    let pos = 0; for (const y of Y) pos += y;
+    if (pos < 60 || N - pos < 60) return "[CONFK] 라벨 편중(" + pos + "/" + N + ") — 대기";
+    let k = 0;
+    const lr = 0.4, epochs = 500;
+    for (let ep = 0; ep < epochs; ep++) {
+      let g = 0;
+      for (let i = 0; i < N; i++) {
+        const off = Math.log(P[i] / (1 - P[i]));
+        const q = 1 / (1 + Math.exp(-_clamp(off + k * NET[i], -30, 30)));
+        g += (q - Y[i]) * NET[i];
+      }
+      k -= lr * (g / N);
+    }
+    let fi = 0;
+    for (let i = 0; i < N; i++) {
+      const off = Math.log(P[i] / (1 - P[i]));
+      const q = 1 / (1 + Math.exp(-_clamp(off + k * NET[i], -30, 30)));
+      fi += q * (1 - q) * NET[i] * NET[i];
+    }
+    const se = fi > 1e-9 ? 1 / Math.sqrt(fi) : Infinity;
+    const tval = isFinite(se) && se > 0 ? k / se : 0;
+    const kEff = +_clamp(k * _coefShrink(tval), -1.5, 1.5).toFixed(4);
+    await setState(DB, "scalp_conf_k", { k: +k.toFixed(4), t: +tval.toFixed(2), kEff: kEff, n: N, ts: Date.now() });
+    return "[CONFK] 합류 로짓 계수 실측 k=" + k.toFixed(3) + " (t " + tval.toFixed(2) + ") → 적용 " + kEff.toFixed(3) +
+           " · 종전 상수 0.5 · n=" + N;
+  } catch (e) { return "[CONFK] fail: " + (e && e.message); }
 }
 
 async function mlGuardState(DB) { try { return (await getState(DB, "mind_guard", null)) || { distrust: false }; } catch (e) { return { distrust: false }; } }
@@ -35091,6 +35195,8 @@ export default {
             await _stg("gateaudit", async function () { return await gateAuditNightly(env.DB); });
             // [V33.96] 결정블렌드 계수 실측 — 기술·뉴스 점수의 로그오즈 기여를 데이터로 정한다.
             await _stg("blendk", async function () { return await decisionBlendFitNightly(env.DB); });
+            // [V33.98] 단타 합류 로짓 계수 실측(모델 확률을 오프셋으로 고정한 잔여효과).
+            await _stg("confk", async function () { return await scalpConfluenceFitNightly(env.DB); });
             await _stg("stack", async function () { return await stackTrainNightly(env.DB); });
             await _stg("dual", async function () { return await dualHeadTrainNightly(env.DB); });
             // [V33.90] 실제 원장 기준 포트폴리오 통계(NautilusTrader PortfolioAnalyzer) —

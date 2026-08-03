@@ -1262,16 +1262,30 @@ def _train_and_upload_scalp(BASE, KEY, HDR, featver):
     dup_drop = 0
     for i in range(days):
         d = (datetime.now(KST) - timedelta(days=i)).strftime("%Y-%m-%d")
-        try:
-            r = requests.get(BASE + "/api/ml-export-intraday", params={"key": KEY, "day": d},
-                             headers=HDR, timeout=120)
+        # [V33.98] ★페이징★ — 백필이 하루에 수만 건을 만들면 한 번의 응답으로는 다 못 받는다.
+        #   종전엔 첫 페이지만 받고 끝내서, 그 날 표본의 상당수를 아예 못 봤다.
+        _page_samples = []
+        _off = 0
+        for _pg in range(20):
+            try:
+                r = requests.get(BASE + "/api/ml-export-intraday",
+                                 params={"key": KEY, "day": d, "offset": _off},
+                                 headers=HDR, timeout=120)
+            except Exception:
+                break
             if r.status_code != 200:
-                continue
+                break
             j = r.json()
             if ifeatver is None:
                 ifeatver = j.get("ifeatVer"); ifeatn = int(j.get("ifeatN") or 0)
                 ifeatnames = j.get("ifeatNames") or []
-            for sm in j.get("samples", []):
+            _batch = j.get("samples", []) or []
+            _page_samples.extend(_batch)
+            if not j.get("hasMore"):
+                break
+            _off += int(j.get("pageSize") or len(_batch) or 1)
+        try:
+            for sm in _page_samples:
                 x = sm.get("x")
                 if not isinstance(x, list):
                     continue
@@ -1297,8 +1311,10 @@ def _train_and_upload_scalp(BASE, KEY, HDR, featver):
           + (f" (구스키마 {skipped_old}건 제외)" if skipped_old else "")
           + (f" (중복 {dup_drop}건 제외)" if dup_drop else "")
           + (f" / 장중피처 v{ifeatver}×{ifeatn}" if ifeatver else " / 장중피처 없음"))
-    if N < 1500:
-        print(f"   표본 부족({N}/1500) — 생략. 더 쌓이면 자동으로 학습된다."); return
+    # [V33.98] 워커의 신뢰 문턱이 n>=3000 이다. 1500 에서 학습해 올리면 서버가 무조건
+    #   "표본 부족" 으로 거부한다 — 학습 성공 → 신뢰 거부 churn 만 생긴다. 문턱을 맞춘다.
+    if N < 3000:
+        print(f"   표본 부족({N}/3000) — 생략. 더 쌓이면 자동으로 학습된다."); return
 
     X = np.array(X, dtype=np.float64); Y = np.array(Y, dtype=int); TS = np.array(TS)
     PNL = np.array(PNL, dtype=np.float64)

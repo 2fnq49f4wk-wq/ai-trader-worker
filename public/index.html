@@ -14508,6 +14508,9 @@ html[data-theme="light"] .rail{background:#fff;}
       rows3.push(['결정블렌드 계수', CH.blendK && has(CH.blendK.kTech)
         ? em('기술 '+CH.blendK.kTech.toFixed(2)) + ' <span class="sub">뉴스 '+(has(CH.blendK.kNews)?CH.blendK.kNews.toFixed(2):'—')+' · t '+(has(CH.blendK.tTech)?CH.blendK.tTech.toFixed(2):'—')+' · n '+n0(CH.blendK.n)+' (기본 0.90/0.45)</span>'
         : '<span class="sub">미측정 → 보수 기본 0.35/0.20 (로그오즈 덧셈)</span>']);
+      rows3.push(['단타 합류 로짓 계수', CH.confK && has(CH.confK.kEff)
+        ? em(CH.confK.kEff.toFixed(3)) + ' <span class="sub">실측 '+CH.confK.k.toFixed(3)+' · t '+(has(CH.confK.t)?CH.confK.t.toFixed(2):'—')+' · n '+n0(CH.confK.n)+' (종전 상수 0.50)</span>'
+        : '<span class="sub">미측정 → 보수 0.25 (모델이 이미 본 증거라 잔여효과만 재야 함)</span>']);
       rows3.push(['최종 확률보정 T2', CH.finalCal && has(CH.finalCal.T)
         ? em(CH.finalCal.T.toFixed(2)) + ' <span class="sub">ECE '+(CH.finalCal.eceRaw*100).toFixed(1)+'% → '+(CH.finalCal.ece*100).toFixed(1)+'% · n '+n0(CH.finalCal.n)+'</span>'
         : '<span class="sub">미측정 → 보정 없음 (표본 대기)</span>']);
