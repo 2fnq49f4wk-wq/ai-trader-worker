@@ -2760,7 +2760,7 @@ async function applySignalTypeWeights(DB, cfg) {
 // ============================================================================
 // [V33.55] 빌드 버전 — SWR L2 캐시 키에 섞어 '배포 = 판단 캐시 자동 무효화'를 만든다.
 //   판정 로직을 고쳐도 옛 캐시가 최대 1시간 재배포되던 문제를 구조적으로 없앤다.
-const _BUILD_VER = "V33.101";
+const _BUILD_VER = "V33.102";
 
 const AI_PARAMS = {
   // ── OHLCV 타임프레임 ── 시가/고가/저가/종가/거래량을 어떤 봉 주기로 볼지.
@@ -18980,15 +18980,27 @@ async function handleRequest(request, env, ctx) {
     //   응답에 생성 건수·실패 사유가 그대로 들어와 진단이 바로 된다.
     if (path === "/api/scalp-backfill-now") {
       // [V33.95] R2 없어도 D1 로 적재하므로 여기서 막지 않는다.
-      const _ns = _clamp(Math.floor(_num(url.searchParams.get("syms"), 8)), 1, 30);
-      try { resetFetchBudget(Math.max(30, _ns * 4)); } catch (e) {}
+      // [V33.102] ★수동 대량 투입★ — 한 번에 종목 수를 늘리고, rounds 로 연속 실행까지 지원한다.
+      //   종전엔 최대 30종목 1회라 3,000표본까지 사람이 여러 번 눌러야 했다.
+      //   Worker CPU 300s 안에서 도는 만큼만 돌리고, 예산이 떨어지면 그 시점까지 저장하고 멈춘다.
+      //   사용: /api/scalp-backfill-now?syms=40&rounds=6   (기본 8종목 1회 — 종전과 동일)
+      const _ns = _clamp(Math.floor(_num(url.searchParams.get("syms"), 8)), 1, 60);
+      const _rounds = _clamp(Math.floor(_num(url.searchParams.get("rounds"), 1)), 1, 12);
+      const _deadline = Date.now() + 240000;   // 240s — cpu_ms 300s 안쪽
+      const _msgs = [];
       let _r = null;
-      try { _r = await stinBackfill(env.DB, { maxSyms: _ns, maxSamples: 6000 }); }
-      catch (e) { return Response.json({ ok: false, error: String((e && e.message) || e) }, { status: 500, headers: cors }); }
+      for (let _rd = 0; _rd < _rounds; _rd++) {
+        if (Date.now() > _deadline) { _msgs.push("(예산 소진 — " + _rd + "회차에서 중단)"); break; }
+        try { resetFetchBudget(Math.max(30, _ns * 4)); } catch (e) {}
+        try { _r = await stinBackfill(env.DB, { maxSyms: _ns, maxSamples: 8000 }); _msgs.push(_r); }
+        catch (e) { _msgs.push("실패: " + String((e && e.message) || e)); break; }
+        if (_r && _r.indexOf("남은") >= 0) break;
+      }
+      _r = _msgs.join(" | ");
       try { await setState(env.DB, "stin_bf_lock", Date.now()); } catch (e) {}
       let _stats = null; try { _stats = await getState(env.DB, "stin_stats", null); } catch (e) {}
       try { await log(env.DB, "INFO", null, (_r || "[ST-BACKFILL] 반환 없음") + " (수동)"); } catch (e) {}
-      return Response.json({ ok: true, result: _r,
+      return Response.json({ ok: true, result: _r, rounds: _msgs.length, symsPerRound: _ns,
         total: _stats ? _num(_stats.total, 0) : 0, today: _stats ? _num(_stats.today, 0) : 0,
         bfTotal: _stats ? _num(_stats.bfTotal, 0) : 0,
         need: 3000, featVer: LUXML.featVer, ifeatVer: STIN_FEATVER, ifeatN: STIN_IFEAT_N }, { headers: cors });
@@ -19338,12 +19350,12 @@ async function handleRequest(request, env, ctx) {
     if (path === "/api/ai/train-now" && request.method === "POST") {
       const au = _trainAuthed(); if (!au.ok) return Response.json({ error: au.msg }, { status: au.code, headers: cors });
       const target = url.searchParams.get("target") || "mind";
-      const FN = { mind: mlMindTrainNightly, gbdt: mlGBDTTrainNightly, brain: mlBrainTrainNightly, dnn: mlDNNTrainNightly, l1: mlTrainNightly, calibrate: mlCalibrateCommittee, selfreview: mlSelfReview, flow: flowTrainNightly, xalpha: xalphaTrainNightly, stack: stackTrainNightly, dual: dualHeadTrainNightly, memo: memoTrainNightly, techk: techPriorFitNightly, finalcal: finalCalFitNightly, gateaudit: gateAuditNightly, blendk: decisionBlendFitNightly, confk: scalpConfluenceFitNightly, mindshadow: mindShadowPromoteNightly, portstats: portfolioStatsNightly, ledgeraudit: ledgerCheckIntegrity };
+      const FN = { mind: mlMindTrainNightly, gbdt: mlGBDTTrainNightly, brain: mlBrainTrainNightly, dnn: mlDNNTrainNightly, l1: mlTrainNightly, calibrate: mlCalibrateCommittee, selfreview: mlSelfReview, flow: flowTrainNightly, xalpha: xalphaTrainNightly, stack: stackTrainNightly, dual: dualHeadTrainNightly, memo: memoTrainNightly, techk: techPriorFitNightly, finalcal: finalCalFitNightly, gateaudit: gateAuditNightly, blendk: decisionBlendFitNightly, confk: scalpConfluenceFitNightly, mindshadow: mindShadowPromoteNightly, stackbf: stackSampleBackfill, portstats: portfolioStatsNightly, ledgeraudit: ledgerCheckIntegrity };
       // [V12.63] target=all — 재배포 직후 "한 방에" 전체 파이프라인을 정확한 순서로 재실행(하루1회 게이트 무시).
       //   순서 고정: harvest → l1 → brain → mind → dnn → gbdt → calibrate (뒤 단계가 앞 단계 산출물 의존).
       //   각 단계 자체 CPU예산 가드가 있어 안전. 재학습 즉시 모든 수정이 반영되게 하는 원클릭 경로.
       if (target === "all") {
-        const _order = [["harvest", mlMarketHarvestNightly], ["l1", mlTrainNightly], ["brain", mlBrainTrainNightly], ["mind", mlMindTrainNightly], ["gbdt", mlGBDTTrainNightly], ["dnn", mlDNNTrainNightly], ["flow", flowTrainNightly], ["xalpha", xalphaTrainNightly], ["memo", memoTrainNightly], ["techk", techPriorFitNightly], ["finalcal", finalCalFitNightly], ["gateaudit", gateAuditNightly], ["blendk", decisionBlendFitNightly], ["confk", scalpConfluenceFitNightly], ["mindshadow", mindShadowPromoteNightly], ["stack", stackTrainNightly], ["dual", dualHeadTrainNightly], ["portstats", portfolioStatsNightly], ["ledgeraudit", ledgerCheckIntegrity], ["calibrate", mlCalibrateCommittee]];
+        const _order = [["harvest", mlMarketHarvestNightly], ["l1", mlTrainNightly], ["brain", mlBrainTrainNightly], ["mind", mlMindTrainNightly], ["gbdt", mlGBDTTrainNightly], ["dnn", mlDNNTrainNightly], ["flow", flowTrainNightly], ["xalpha", xalphaTrainNightly], ["memo", memoTrainNightly], ["techk", techPriorFitNightly], ["finalcal", finalCalFitNightly], ["gateaudit", gateAuditNightly], ["blendk", decisionBlendFitNightly], ["confk", scalpConfluenceFitNightly], ["mindshadow", mindShadowPromoteNightly], ["stackbf", stackSampleBackfill], ["stack", stackTrainNightly], ["dual", dualHeadTrainNightly], ["portstats", portfolioStatsNightly], ["ledgeraudit", ledgerCheckIntegrity], ["calibrate", mlCalibrateCommittee]];
         const out = {};
         for (const [nm, fn] of _order) {
           try { out[nm] = await fn(env.DB); } catch (e) { out[nm] = "FAIL: " + (e && e.message); }
@@ -23500,6 +23512,90 @@ async function stackLogSample(DB, market, symbol, featVec, pnlPct) {
       .bind(Date.now(), market, symbol, JSON.stringify(featVec), _num(pnlPct, 0) > 0 ? 1 : 0, _num(pnlPct, 0), STACKML.featVer).run();
   } catch (e) {}
 }
+// ════════════════════════════════════════════════════════════════════════════
+// [V33.102] ★STACK 표본이 0 인 이유와 해결★
+//   stackLogSample 은 ★청산 시점★ 에만 불린다(executeSell 안). 즉 STACK 표본은
+//   '실제로 사서 판 거래' 에서만 나온다. 거래가 하루 몇 건이면 minTrainSamples(600)까지
+//   몇 달이 걸린다 — 사용자가 본 "표본 0" 이 그것이다.
+//   게다가 그렇게 모은 표본은 ★전부 진입 문턱을 넘은 고확률 구간★ 이라, 위원회를 대체할
+//   메타모델을 그 좁은 구간만 보고 학습시키게 된다(선택 편향).
+//
+//   해결: ml_samples(17만)로 소급 생성한다. 저장된 65차원 피처벡터만 있으면
+//   mind·dnn·gbdt·boost·memo·rule 을 그 자리에서 다시 채점할 수 있다 — 그게 STACK 의 입력이다.
+//   ★flow·xalpha 는 자기 피처가 따로 필요해 소급이 안 된다★ → 참여마스크를 0 으로 둔다.
+//   마스크 차원을 처음부터 넣어 둔 이유가 정확히 이것이다("그 전문가가 없었다"는 유효한 정보).
+const STACKBF = { maxPerRun: 600, minIdx: 0 };
+async function stackSampleBackfill(DB, opts) {
+  const cfg = opts || {};
+  try {
+    if (!STACKML.enabled) return "[STACK-BF] 비활성";
+    const st = (await getState(DB, "stack_bf_cursor", null)) || { lastId: 0, made: 0 };
+    const lim = Math.max(50, Math.floor(_num(cfg.maxPerRun, STACKBF.maxPerRun)));
+    const rows = (await DB.prepare(
+      "SELECT id, market, symbol, feat, label, pnl_pct FROM ml_samples WHERE id > ? AND featver = ? ORDER BY id ASC LIMIT ?"
+    ).bind(_num(st.lastId, 0), LUXML.featVer, lim).all()).results || [];
+    if (!rows.length) {
+      // 끝까지 돌았으면 커서를 되감아 새 표본을 다시 훑는다(무한 대기 방지).
+      await setState(DB, "stack_bf_cursor", { lastId: 0, made: _num(st.made, 0), ts: Date.now() });
+      return "[STACK-BF] 한 바퀴 완료 — 커서 되감음 (누적생성 " + _num(st.made, 0) + ")";
+    }
+    // 채점기는 사이클 1회만 로드한다(표본마다 다시 읽으면 D1 이 죽는다).
+    const mind = await mlMindLoad(DB);
+    const ens = await mlBrainLoad(DB);
+    const dnnT = await getState(DB, "dnn_trust", null);
+    const dnn = (dnnT && dnnT.trusted) ? await mlDNNLoad(DB) : null;
+    const gT = await getState(DB, "gbdt_trust", null);
+    const gbdt = (gT && gT.trusted) ? await mlGBDTLoad(DB) : null;
+    let boosters = null; try { boosters = await _boostersCached(DB); } catch (e) {}
+    const memo = await getState(DB, "memo_model", null);
+    const _iR = LUXML.featNames.indexOf("taUpProb");
+    if (!mind && !dnn && !gbdt && !(boosters && boosters.length) && !memo)
+      return "[STACK-BF] 채점 가능한 전문가가 없다 — 위원회 학습 먼저";
+
+    let made = 0, lastId = _num(st.lastId, 0), skipped = 0;
+    for (const r of rows) {
+      lastId = _num(r.id, lastId);
+      let v; try { v = JSON.parse(r.feat); } catch (e) { skipped++; continue; }
+      if (!Array.isArray(v) || v.length !== LUXML.featNames.length) { skipped++; continue; }
+      const P = {}, M = {};
+      try { if (mind) { const s = await mlMindScore(DB, mind, v, ens); if (s && typeof s.p === "number") { P.mind = s.p; M.mind = 1; } } } catch (e) {}
+      try { if (dnn) { const p = mlDNNScore(dnn, v); if (p != null) { P.dnn = p; M.dnn = 1; } } } catch (e) {}
+      try { if (gbdt) { const p = mlGBDTScore(gbdt, v); if (p != null) { P.gbdt = p; M.gbdt = 1; } } } catch (e) {}
+      try {
+        if (boosters && boosters.length) {
+          let bz = 0, bw = 0, n2 = 0;
+          for (const b of boosters) {
+            const pB = mlGBDTScore(b.model, v); if (pB == null) continue;
+            const ic = _icEffective(b.model);
+            const w = (ic != null) ? Math.max(0.002, ic) : Math.max(0.01, b.accLB - 0.5);
+            bz += w * _logit(_clamp(pB, 1e-4, 1 - 1e-4)); bw += w; n2++;
+          }
+          if (bw > 0 && n2 > 0) { P.boost = _clamp(_sigmoid(bz / bw), 0.001, 0.999); M.boost = 1; }
+        }
+      } catch (e) {}
+      try { if (memo && memo.trusted && memo.luxFeatVer === LUXML.featVer) { const p = memoScore(memo, v); if (p != null) { P.memo = p; M.memo = 1; } } } catch (e) {}
+      try {
+        if (mind && _iR >= 0 && typeof mind.ruleAccLB === "number" && mind.ruleAccLB > 0.5) {
+          const raw = _clamp(_num(v[_iR], 0.5), 0.01, 0.99);
+          const tau = _clamp(_num(mind.ruleTau, 0.5), 0.01, 0.99);
+          P.rule = _clamp(_sigmoid(_logit(raw) - _logit(tau)), 0.01, 0.99); M.rule = 1;
+        }
+      } catch (e) {}
+      // 전문가가 2명 미만이면 스태킹 표본으로 의미가 없다.
+      const nExp = Object.keys(P).length;
+      if (nExp < 2) { skipped++; continue; }
+      const SLOTS = ["mind", "dnn", "gbdt", "boost", "flow", "xalpha", "memo", "rule"];
+      const fv = [];
+      for (const k of SLOTS) fv.push(P[k] != null ? _clamp(P[k], 0.001, 0.999) : 0.5);
+      for (const k of SLOTS) fv.push(M[k] ? 1 : 0);
+      await stackLogSample(DB, r.market || "us", r.symbol || null, fv, _num(r.pnl_pct, 0));
+      made++;
+    }
+    await setState(DB, "stack_bf_cursor", { lastId: lastId, made: _num(st.made, 0) + made, ts: Date.now() });
+    return "[STACK-BF] +" + made + "표본 (건너뜀 " + skipped + ", 커서 " + lastId + ", 누적 " + (_num(st.made, 0) + made) + ")";
+  } catch (e) { return "[STACK-BF] fail: " + (e && e.message); }
+}
+
 async function stackTrainNightly(DB) {
   if (!STACKML.enabled) return null;
   return await _miniLogisticTrain(DB, {
@@ -24269,11 +24365,16 @@ const ICGATE = {
   //     1500     1.00 │  18.7%      48.6%       80.1%       99.4%
   //     1500     1.65 │   8.3%      28.7%       59.5%       96.4%
   //   → tMin 을 1.65 로 올리면 잡음이 절반이 되는 대신 ★보통 실력의 통과율이 80%→60% 로 무너진다★.
-  //     표본을 늘려 검정력을 얻는 쪽이 낫다. (1500, 1.0) 을 쓴다.
-  //   홀드아웃 t≥2.50(잡음 3.2%)과 곱해져 하룻밤 오합류율 ≈ 0.6%.
-  //   대가: 표본이 느리게 쌓이는 표(flow/xalpha/stack)는 신뢰까지 시간이 더 걸린다.
-  //         근거 없이 먼저 믿는 것보다 늦게 믿는 쪽이 낫다 — 이 스레드 내내 문제가 그것이었다.
-  minForward: 1500,
+  //     표본을 늘려 검정력을 얻는 쪽이 낫다. tMin 은 1.0 을 쓴다.
+  //
+  //   [V33.102] ★minForward 를 1500 → 400 으로 내린다★
+  //   위 표를 다시 보면 ★잡음 통과율은 표본 수와 거의 무관하다★(400→17.4%, 1500→18.7%).
+  //   t 통계량의 성질상 그렇다 — 표본이 늘어도 귀무가설 하의 분포는 그대로다.
+  //   즉 1500 을 요구해서 얻는 건 '안전' 이 아니라 ★진짜 실력의 검정력★ 뿐이고(강함 81%→99%),
+  //   대신 표본이 느리게 쌓이는 표(flow/xalpha/stack)는 영영 신뢰를 못 받는다.
+  //   실제로 사용자가 "표본 범위 안에 들어왔는데 계속 학습 대기" 라고 관측한 게 이것이다.
+  //   오합류율은 3.2% × 17.4% ≈ 0.56% 로 사실상 그대로 유지되면서 대기만 풀린다.
+  minForward: 400,
   forwardFloor: 0,
   forwardTMin: 1.0
 };
@@ -34813,7 +34914,9 @@ export default {
           try { resetFetchBudget(_mkoBf ? 30 : 120); } catch (e0) {}
           // [V33.72] 전 종목을 빨리 한 바퀴 돌기 위해 회당 종목 수를 늘린다.
           //   장외 20종목/10분 → 900종목 기준 약 7.5시간이면 전수 커버(종전 8종목이면 19시간).
-          const _bfr = await stinBackfill(env.DB, { maxSyms: _mkoBf ? 5 : 20, maxSamples: 8000 });
+          // [V33.102] 장외 회당 20 → 45 종목. 900종목 전수 커버가 7.5시간 → 3.3시간으로 줄어든다.
+          //   장중(5종목)은 그대로 — 거래 사이클 예산을 잠식하면 안 된다.
+          const _bfr = await stinBackfill(env.DB, { maxSyms: _mkoBf ? 5 : 45, maxSamples: 8000 });
           await log(env.DB, "INFO", null, _bfr || "[ST-BACKFILL] 반환 없음");
         } else {
           // [V33.71] ★"안 돌았다"를 추측하지 않게 스킵 사유를 남긴다★
@@ -35388,6 +35491,8 @@ export default {
             await _stg("confk", async function () { return await scalpConfluenceFitNightly(env.DB); });
             // [V33.101] 섀도우 MIND 재평가 — 저장만 하고 아무도 안 읽던 키를 살린다.
             await _stg("mindshadow", async function () { return await mindShadowPromoteNightly(env.DB); });
+            // [V33.102] STACK 표본 소급생성 — 청산에서만 나와서 영영 안 쌓이던 것을 푼다(학습 앞에 둔다).
+            await _stg("stackbf", async function () { return await stackSampleBackfill(env.DB, {}); });
             await _stg("stack", async function () { return await stackTrainNightly(env.DB); });
             await _stg("dual", async function () { return await dualHeadTrainNightly(env.DB); });
             // [V33.90] 실제 원장 기준 포트폴리오 통계(NautilusTrader PortfolioAnalyzer) —
