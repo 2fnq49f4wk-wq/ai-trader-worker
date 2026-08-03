@@ -44,19 +44,39 @@ jobs:
           CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
         run: |
           set +e
-          wrangler r2 bucket create ai-trader-models 2>&1 | sed 's/^/[create] /'
-          wrangler r2 bucket list 2>&1 | sed 's/^/[list] /' | grep -q 'ai-trader-models'
-          if [ $? -eq 0 ]; then
+          echo "::group::wrangler r2 bucket create"
+          wrangler r2 bucket create ai-trader-models 2>&1 | tee /tmp/r2create.txt
+          echo "::endgroup::"
+          # [V33.96] 존재 확인을 두 가지 방식으로 한다.
+          #   종전엔 `bucket list | grep` 하나에만 의존했는데, wrangler 4.x 는 출력 형식이
+          #   버전마다 달라(테이블/JSON) grep 이 빗나가면 '버킷은 있는데 없다고 판정' 된다.
+          #   그러면 조용히 D1 경로로 배포되고, 왜 R2 가 안 붙었는지 아무 단서가 안 남는다.
+          FOUND=0
+          echo "::group::wrangler r2 bucket list"
+          wrangler r2 bucket list --json 2>/dev/null | tee /tmp/r2list.json
+          wrangler r2 bucket list 2>&1 | tee /tmp/r2list.txt
+          echo "::endgroup::"
+          grep -q 'ai-trader-models' /tmp/r2list.json 2>/dev/null && FOUND=1
+          grep -q 'ai-trader-models' /tmp/r2list.txt  2>/dev/null && FOUND=1
+          # create 가 "already exists" 로 실패한 경우도 존재로 친다.
+          grep -qi 'already exists\|already owned' /tmp/r2create.txt 2>/dev/null && FOUND=1
+          # create 가 성공했으면 당연히 존재.
+          grep -qi 'created bucket\|Success' /tmp/r2create.txt 2>/dev/null && FOUND=1
+          if [ "$FOUND" = "1" ]; then
             echo "ok=true" >> "$GITHUB_OUTPUT"
-            echo "R2 버킷 확인됨 — 대형모델을 R2로 저장한다."
+            echo "✅ R2 버킷 확인됨 — 대형모델·장중 표본을 R2 로 저장한다."
           else
             echo "ok=false" >> "$GITHUB_OUTPUT"
-            echo "R2 사용 불가(권한/미활성) — D1 청크 경로 유지. 서비스 영향 없음."
+            echo "⚠️ R2 사용 불가 — D1 경로로 진행한다(서비스 영향 없음)."
+            echo "   원인 후보: ① API 토큰에 'Workers R2 Storage: Edit' 권한 없음"
+            echo "              ② 계정에 R2 미활성(대시보드에서 R2 활성화 필요)"
+            echo "   위 [create]/[list] 원문 출력을 보면 어느 쪽인지 바로 나온다."
           fi
           exit 0
       - name: Enable R2 binding
         if: steps.r2.outputs.ok == 'true'
         run: |
+          set -e
           sed -i \
             -e 's/^# \[\[r2_buckets\]\]$/[[r2_buckets]]/' \
             -e 's/^# binding = "MODELS"$/binding = "MODELS"/' \
@@ -64,6 +84,27 @@ jobs:
             wrangler.toml
           echo '--- wrangler.toml (r2 구간) ---'
           grep -A2 '^\[\[r2_buckets\]\]' wrangler.toml
+          # [V33.96] sed 가 실제로 먹었는지 확인한다 — 주석 형식이 조금만 바뀌어도
+          #   패턴이 빗나가 '켰다고 생각했는데 안 켜진' 상태로 배포된다(지금까지가 그 상태일 수 있다).
+          grep -q '^\[\[r2_buckets\]\]' wrangler.toml || {
+            echo "::error::R2 바인딩 주석 해제 실패 — wrangler.toml 의 주석 형식이 sed 패턴과 다르다."
+            exit 1
+          }
+          grep -q '^binding = "MODELS"' wrangler.toml || { echo "::error::binding 줄 해제 실패"; exit 1; }
+          grep -q '^bucket_name = "ai-trader-models"' wrangler.toml || { echo "::error::bucket_name 줄 해제 실패"; exit 1; }
+          echo "✅ R2 바인딩 활성화 확인"
+      - name: R2 status summary
+        if: always()
+        run: |
+          if grep -q '^\[\[r2_buckets\]\]' wrangler.toml; then
+            echo "### ✅ R2 바인딩 활성 — 장중 표본이 R2 경로로 쌓인다" >> "$GITHUB_STEP_SUMMARY"
+          else
+            echo "### ⚠️ R2 바인딩 비활성 — 장중 표본은 D1 폴백 경로(stin_samples)로 쌓인다" >> "$GITHUB_STEP_SUMMARY"
+            echo "" >> "$GITHUB_STEP_SUMMARY"
+            echo "D1 폴백은 V33.95 부터 정상 동작한다(표본 수집·학습 모두 가능)." >> "$GITHUB_STEP_SUMMARY"
+            echo "R2 를 켜려면 CLOUDFLARE_API_TOKEN 에 **Workers R2 Storage: Edit** 권한을 주고," >> "$GITHUB_STEP_SUMMARY"
+            echo "Cloudflare 대시보드에서 R2 를 활성화한 뒤 다시 push 하면 자동으로 붙는다." >> "$GITHUB_STEP_SUMMARY"
+          fi
       - name: Deploy
         run: wrangler deploy
         env:
