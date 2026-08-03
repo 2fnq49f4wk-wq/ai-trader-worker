@@ -203,5 +203,95 @@ for (const k of reads) {
   }
 }
 
+
+// ══ [V33.94] ★배선 감사 — opts 키 오타로 기능이 조용히 죽는 것 방지★ ══
+//   호출부가 넘기는 키를 함수가 안 읽으면 그 기능은 '있는데 안 도는' 상태가 된다.
+//   V33.90~93 에서 opts 키를 10개 넘게 추가했다. 오타 하나면 전부 기본값으로 지나간다.
+{
+  const bodyOf = (sig) => {
+    const s = src.indexOf(sig); if (s < 0) return null;
+    let i = src.indexOf("{", s), d = 0, e = -1;
+    for (let k = i; k < src.length; k++) { if (src[k] === "{") d++; else if (src[k] === "}") { d--; if (d === 0) { e = k + 1; break; } } }
+    return src.slice(s, e);
+  };
+  const TARGETS = [
+    ["async function mlDeepDecide(DB, featVec, opts) {", "opts", "mlDeepDecide("],
+    ["async function riskPreTradeCheck(DB, o) {", "o", "riskPreTradeCheck("],
+    ["async function icForwardCheck(DB, opts) {", "opts", "icForwardCheck("],
+    ["async function _miniLogisticTrain(DB, opts) {", "opts", "_miniLogisticTrain("],
+    ["async function portfolioStatistics(DB, opts) {", "opts", "portfolioStatistics("],
+  ];
+  for (const [sig, pname, callPat] of TARGETS) {
+    const b = bodyOf(sig);
+    if (!b) { console.error(`  FAIL 배선: 함수 시그니처 변경됨 — ${sig.slice(0, 46)}`); bad++; continue; }
+    const fname = sig.match(/function (\w+)/)[1];
+    const aliases = new Set([pname]);
+    for (const m of b.matchAll(new RegExp("(?:const|let|var)\\s+([A-Za-z_$][\\w$]*)\\s*=\\s*" + pname + "\\s*(?:\\|\\||;|,)", "g"))) aliases.add(m[1]);
+    const read = new Set();
+    for (const a of aliases)
+      for (const m of b.matchAll(new RegExp("\\b" + a.replace(/\$/g, "\\$") + "\\.([A-Za-z_$][\\w$]*)", "g"))) read.add(m[1]);
+    for (const m of b.matchAll(new RegExp("\\{([^}]*)\\}\\s*=\\s*" + pname, "g")))
+      for (const n of m[1].matchAll(/([A-Za-z_$][\w$]*)/g)) read.add(n[1]);
+    let idx = -1;
+    while ((idx = src.indexOf(callPat, idx + 1)) !== -1) {
+      if (/function\s*$/.test(src.slice(Math.max(0, idx - 20), idx))) continue;
+      let i = idx + callPat.length, d = 1, args = "";
+      for (; i < src.length && d > 0; i++) { const c = src[i]; if (c === "(") d++; else if (c === ")") { d--; if (d === 0) break; } args += c; }
+      const oi = args.indexOf("{"); if (oi < 0) continue;
+      let dd = 0, seg = "";
+      for (let k = oi; k < args.length; k++) { const c = args[k];
+        if (c === "{" || c === "[" || c === "(") dd++;
+        else if (c === "}" || c === "]" || c === ")") { dd--; if (dd === 0) { seg = args.slice(oi, k + 1); break; } } }
+      if (!seg) continue;
+      let dep = 0;
+      for (let k = 1; k < seg.length; k++) {
+        const c = seg[k];
+        if (c === "{" || c === "[" || c === "(") dep++;
+        else if (c === "}" || c === "]" || c === ")") dep--;
+        else if (dep === 0) {
+          const mm = seg.slice(k).match(/^([A-Za-z_$][\w$]*)\s*:/);
+          if (mm && /[,{]\s*$/.test(seg.slice(0, k)) && !read.has(mm[1])) {
+            console.error(`  FAIL 배선: ${fname}(@L${ln(idx)}) 에 '${mm[1]}' 를 넘기는데 함수는 읽지 않는다 — 오타 또는 죽은 인자`);
+            bad++;
+          }
+        }
+      }
+    }
+  }
+}
+
+// ══ [V33.94] ★한국 티커 접미사 계약★ (CLAUDE.md 규칙) ══
+//   KOSPI = .KS / KOSDAQ = .KQ. 접미사가 틀리면 시세를 영영 못 받아오는데 조용히 실패한다.
+//   DEFAULT_KR 의 모든 종목은 NAME_MAP·MCAP_RANK 에도 있어야 한다(운영 지침).
+{
+  const grabArr = (name) => {
+    const s = src.indexOf(name); if (s < 0) return null;
+    const o = src.indexOf("[", s); let d = 0, e = -1;
+    for (let k = o; k < src.length; k++) { if (src[k] === "[") d++; else if (src[k] === "]") { d--; if (d === 0) { e = k + 1; break; } } }
+    try { return JSON.parse(src.slice(o, e).replace(/\/\/[^\n]*/g, "").replace(/,(\s*])/, "$1").replace(/'/g, '"')); } catch (e2) { return null; }
+  };
+  const KR = grabArr("const DEFAULT_KR = [");
+  const US = grabArr("const DEFAULT_US = [");
+  if (!KR) console.error("  WARN 티커: DEFAULT_KR 파싱 실패 — 접미사 검사 생략");
+  else {
+    const badSfx = KR.filter((s) => !/\.(KS|KQ)$/.test(s));
+    if (badSfx.length) { console.error(`  FAIL 티커: KR 접미사 규칙 위반(.KS/.KQ 아님) — ${badSfx.slice(0, 6).join(", ")}`); bad += badSfx.length; }
+    if (US) {
+      const mixed = US.filter((s) => /\.(KS|KQ)$/.test(s));
+      if (mixed.length) { console.error(`  FAIL 티커: DEFAULT_US 안에 KR 접미사 — ${mixed.join(", ")}`); bad += mixed.length; }
+      const dup = US.filter((s) => KR.indexOf(s) >= 0);
+      if (dup.length) { console.error(`  FAIL 티커: US↔KR 중복 등재 — ${dup.join(", ")}`); bad += dup.length; }
+    }
+    for (const [nm, label] of [["const NAME_MAP = {", "NAME_MAP"], ["const MCAP_RANK = {", "MCAP_RANK"]]) {
+      const s = src.indexOf(nm); if (s < 0) continue;
+      const o = src.indexOf("{", s); let d = 0, e = -1;
+      for (let k = o; k < src.length; k++) { if (src[k] === "{") d++; else if (src[k] === "}") { d--; if (d === 0) { e = k + 1; break; } } }
+      const seg = src.slice(o, e);
+      const missing = KR.filter((sym) => seg.indexOf('"' + sym + '"') < 0 && seg.indexOf("'" + sym + "'") < 0);
+      if (missing.length) { console.error(`  FAIL 티커: ${label} 누락 ${missing.length}종목 — ${missing.slice(0, 6).join(", ")}`); bad += missing.length; }
+    }
+  }
+}
+
 if (bad) { console.error(`\n순서계약 위반 ${bad}건 — 배포 차단`); process.exit(1); }
-console.log("  ok   선언·사용 순서 계약 + 미선언 참조 검사 통과");
+console.log("  ok   순서계약 · 미선언 참조 · opts 배선 · 티커 접미사 검사 통과");

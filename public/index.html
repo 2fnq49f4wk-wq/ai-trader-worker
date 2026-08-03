@@ -14490,6 +14490,26 @@ html[data-theme="light"] .rail{background:#fff;}
       h += sec('실적 · 거래상태') + tbl(rows2);
     })();
 
+    // [V33.94] 확률 체인의 '측정된 계수' — 상수로 박아뒀던 자리를 실측으로 바꾼 결과.
+    //   여기 '—' 가 뜨면 아직 못 잰 것이고, 그 자리는 0(중립)으로 지나간다(근거 없이 밀지 않는다).
+    (function(){
+      var CH = alt.chain;
+      if(!CH) return;
+      var rows3 = [];
+      rows3.push(['기술 프라이어 계수', CH.techK && has(CH.techK.kEff)
+        ? em(CH.techK.kEff.toFixed(3)) + ' <span class="sub">실측 '+CH.techK.k.toFixed(3)+' · t '+(has(CH.techK.t)?CH.techK.t.toFixed(2):'—')+' · n '+n0(CH.techK.n)+' (종전 상수 0.66)</span>'
+        : '<span class="sub">미측정 → 0 적용 (표본 대기)</span>']);
+      rows3.push(['최종 확률보정 T2', CH.finalCal && has(CH.finalCal.T)
+        ? em(CH.finalCal.T.toFixed(2)) + ' <span class="sub">ECE '+(CH.finalCal.eceRaw*100).toFixed(1)+'% → '+(CH.finalCal.ece*100).toFixed(1)+'% · n '+n0(CH.finalCal.n)+'</span>'
+        : '<span class="sub">미측정 → 보정 없음 (표본 대기)</span>']);
+      rows3.push(['이중헤드 사분면 로짓', CH.dualShift && CH.dualShift.shift
+        ? '<span class="sub">'+Object.keys(CH.dualShift.shift).map(function(k){ return esc(k)+' '+(CH.dualShift.shift[k]>=0?'+':'')+CH.dualShift.shift[k]; }).join(' · ')+' (n '+n0(CH.dualShift.n)+')</span>'
+        : '<span class="sub">미측정 → 0 적용 (종전 상수 ±0.35)</span>']);
+      rows3.push(['EV 문턱 · 종목보호', '<span class="sub">변동성 구간 '+n0(CH.evByVol)+'개'
+        + (CH.protect && CH.protect.enabled ? ' · 손절쿨다운 '+n0(CH.protect.cooldownMin)+'분 · 저수익잠금 '+n0(CH.protect.lowProfitLockMin)+'분' : ' · 종목보호 꺼짐')+'</span>']);
+      h += sec('확률 체인 (측정된 계수)') + tbl(rows3);
+    })();
+
     // ⑥ AI 픽 — 없으면 빈 행
     var top = (picks || []).filter(function(p){ return !p.abstain; }).slice(0, 5);
     h += sec('AI 픽')

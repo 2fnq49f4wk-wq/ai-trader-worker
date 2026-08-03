@@ -2760,7 +2760,7 @@ async function applySignalTypeWeights(DB, cfg) {
 // ============================================================================
 // [V33.55] 빌드 버전 — SWR L2 캐시 키에 섞어 '배포 = 판단 캐시 자동 무효화'를 만든다.
 //   판정 로직을 고쳐도 옛 캐시가 최대 1시간 재배포되던 문제를 구조적으로 없앤다.
-const _BUILD_VER = "V33.93";
+const _BUILD_VER = "V33.94";
 
 const AI_PARAMS = {
   // ── OHLCV 타임프레임 ── 시가/고가/저가/종가/거래량을 어떤 봉 주기로 볼지.
@@ -9013,6 +9013,8 @@ const _RISK_DENY = {
   MAX_ORDER_SUBMIT_RATE: "주문제출 레이트 초과",
   TRADING_HALTED: "거래중단 상태",
   TRADING_REDUCING_ONLY: "축소전용 상태(신규진입 금지)",
+  SYMBOL_COOLDOWN: "종목 쿨다운(손절 직후)",
+  SYMBOL_LOW_PROFIT: "종목 잠금(최근 누적손실)",
   GROSS_EXPOSURE_EXCEEDED: "총 노출 상한 초과",
   ADV_PARTICIPATION_EXCEEDED: "일평균거래대금 대비 과대주문"
 };
@@ -9071,6 +9073,12 @@ async function riskPreTradeCheck(DB, o) {
     const st = await riskTradingState(DB, market);
     if (st === TRADESTATE.HALTED) return deny("TRADING_HALTED");
     if (st === TRADESTATE.REDUCING) return deny("TRADING_REDUCING_ONLY");
+    // ①-b [V33.94] 종목 단위 보호(freqtrade protections) — 계좌 게이트가 못 잡는 '한 종목 반복 손실'.
+    if (!o.skipProtect) {
+      const lock = await protectSymbolLocked(DB, market, symbol);
+      if (lock) return deny(lock.code === "COOLDOWN" ? "SYMBOL_COOLDOWN" : "SYMBOL_LOW_PROFIT",
+        lock.reason + " · 잔여 " + lock.leftMin + "분" + (lock.n ? " (거래 " + lock.n + "회 " + lock.pnl + ")" : ""));
+    }
     // ② 제출 레이트
     const rate = await riskSubmitRateOk(DB, market);
     if (!rate.ok) return deny("MAX_ORDER_SUBMIT_RATE", rate.n + "/" + RISKENG.submitLimit);
@@ -9271,6 +9279,52 @@ async function ledgerCheckIntegrity(DB, opts) {
     out.ok = false; out.error = e && e.message;
     return out;
   }
+}
+
+// ════════════════════════════════════════════════════════════════════════════
+// [V33.94] ★종목별 보호장치 (freqtrade `protections` 이식)★
+//   출처: freqtrade/freqtrade — CooldownPeriod / LowProfitPairs / StoplossGuard
+//
+//   우리 방어는 전부 ★계좌 단위★ 다(드로다운·연속손실·일손실한도·폭락게이트).
+//   그런데 실제로 돈이 새는 흔한 경로는 ★특정 종목 하나에 반복해서 당하는 것★ 이다 —
+//   손절 직후 같은 종목을 다시 잡고, 또 손절하고, 또 잡는다. 계좌 전체로는 한도에 안 걸리는데
+//   그 종목에서만 조용히 깎여 나간다. freqtrade 가 pair 단위 잠금을 따로 두는 이유가 이것이다.
+//     · CooldownPeriod  — 손절 직후 그 종목은 N분간 재진입 금지
+//     · LowProfitPairs  — 최근 창에서 그 종목 누적손익이 음수면 더 긴 시간 잠금
+//   ★청산은 절대 막지 않는다★ — 이 게이트는 신규 진입에만 걸린다.
+const PROTECT = {
+  enabled: true,
+  cooldownMin: 90,          // 손절 직후 재진입 금지(분)
+  lowProfitLookbackH: 24,   // 저수익 판정 창(시간)
+  lowProfitMinTrades: 3,    // 이 횟수 이상 거래했고
+  lowProfitLockMin: 360     // 누적손익이 음수면 이만큼 잠금(분)
+};
+async function protectSymbolLocked(DB, market, symbol) {
+  try {
+    if (!PROTECT.enabled) return null;
+    const now = Date.now();
+    // ① 쿨다운 — 가장 최근 매도가 손실이었고 그게 cooldownMin 이내인가
+    const last = await DB.prepare(
+      "SELECT ts, pnl_pct FROM trades WHERE market=? AND symbol=? AND side='SELL' ORDER BY ts DESC LIMIT 1"
+    ).bind(market, symbol).first();
+    if (last && _num(last.pnl_pct, 0) < 0) {
+      const ageMin = (now - _num(last.ts, 0)) / 60000;
+      if (ageMin < PROTECT.cooldownMin)
+        return { code: "COOLDOWN", reason: "손절 직후 쿨다운", leftMin: Math.ceil(PROTECT.cooldownMin - ageMin) };
+    }
+    // ② 저수익 종목 — 최근 창에서 여러 번 거래했는데 합이 마이너스
+    const since = now - PROTECT.lowProfitLookbackH * 3600000;
+    const agg = await DB.prepare(
+      "SELECT COUNT(*) AS n, COALESCE(SUM(pnl),0) AS p, MAX(ts) AS last FROM trades WHERE market=? AND symbol=? AND side='SELL' AND ts>=?"
+    ).bind(market, symbol, since).first();
+    if (agg && _num(agg.n, 0) >= PROTECT.lowProfitMinTrades && _num(agg.p, 0) < 0) {
+      const ageMin = (now - _num(agg.last, 0)) / 60000;
+      if (ageMin < PROTECT.lowProfitLockMin)
+        return { code: "LOW_PROFIT", reason: "최근 " + PROTECT.lowProfitLookbackH + "h 누적손실 종목",
+                 n: _num(agg.n, 0), pnl: Math.round(_num(agg.p, 0)), leftMin: Math.ceil(PROTECT.lowProfitLockMin - ageMin) };
+    }
+    return null;
+  } catch (e) { return null; }   // 조회 실패 시 막지 않는다(기존 동작 유지)
 }
 
 async function savePosition(DB, market, symbol, strategy, pos) {
@@ -11597,6 +11651,7 @@ async function executeBuy(DB, market, symbol, strategy, qty, price, signal, dail
           entryFeatures: (signal && Array.isArray(signal.mlFeat)) ? signal.mlFeat : null,
           mlEvKeys: (signal && Array.isArray(signal.mlEvKeys)) ? signal.mlEvKeys : null,
           mlMindP: (signal && typeof signal.mlMindP === "number") ? signal.mlMindP : null,
+          mlPPreCal2: (signal && typeof signal.mlPPreCal2 === "number") ? signal.mlPPreCal2 : null,   // [V33.94] 최종보정 학습용
           // [V33.78] 진입 시점 FLOW 피처 스냅샷 — 청산 때 라벨을 붙여 표본이 된다.
           flowFeat: (signal && Array.isArray(signal.flowFeat)) ? signal.flowFeat : null,
           xaFeat: (signal && Array.isArray(signal.xaFeat)) ? signal.xaFeat : null,
@@ -11762,6 +11817,11 @@ async function executeSell(DB, market, symbol, pos, sellQty, price, reason, cfg,
       }
       if (typeof pos.meta.mlMindP === "number" && typeof mlGuardObserve === "function") {
         await mlGuardObserve(DB, pos.meta.mlMindP, pnlPct > 0);
+        // [V33.94] 최종보정(T2) 학습 버퍼 — ★T2 적용 전★ 확률을 넣는다(되먹임 방지).
+        try {
+          const _pPre = (typeof pos.meta.mlPPreCal2 === "number") ? pos.meta.mlPPreCal2 : pos.meta.mlMindP;
+          await finalCalObserve(DB, _pPre, pnlPct > 0);
+        } catch (e2) {}
       }
     }
   } catch (_e) {}
@@ -15243,6 +15303,7 @@ async function runTradingCycle(env) {
       let __xaModel = null, __xaPanel = null;   // [V33.79] XALPHA — 형식알파 + 횡단면 랭크
       let __stackModel = null;   // [V33.80] STACK 메타모델(투표 대체)
       let __memoModel = null;    // [V33.92] MEMO 유사상황 기억 전문가
+      let __techK = null, __finalCal = null;   // [V33.94] 실측 기술계수 · 최종보정 온도(사이클 1회)
       let __dualBull = null, __dualBear = null, __dualShift = null;   // [V33.89] 강세/약세 이중 헤드 (+V33.93 실측 사분면 로짓)
       let __pDistCache = null, __pDistNew = [];   // [V33.80] 후보 p 분포(백분위 문턱용)
       // [V33.82] 단타 레버리지 게이트 입력 — 사이클당 1회만 만든다.
@@ -15276,6 +15337,7 @@ async function runTradingCycle(env) {
               try { __xaModel = await getState(DB, "xalpha_model", null); } catch (e2) {}
               try { __stackModel = await getState(DB, "stack_model", null); } catch (e2) {}
               try { if (MEMOML.enabled) __memoModel = await getState(DB, "memo_model", null); } catch (e2) {}
+              try { __techK = await getState(DB, "tech_prior_k", null); __finalCal = await getState(DB, "final_cal", null); } catch (e2) {}
               try { if (DUALHEAD.enabled) { __dualBull = await getState(DB, "dual_bull_model", null); __dualBear = await getState(DB, "dual_bear_model", null); __dualShift = await getState(DB, "dual_quad_shift", null); } } catch (e2) {}
               try { __pDistCache = await getState(DB, "ai_pdist:" + market, null); } catch (e2) {}
           // [V33.82] 단타 실측 엣지(켈리) + 현재 드로다운 — 레버리지 개방 판단의 두 축.
@@ -16776,7 +16838,7 @@ async function runTradingCycle(env) {
                     if (__xaFeat) signal.xaFeat = __xaFeat;
                   }
                 } catch (e) {}
-                try { _md = await mlDeepDecide(DB, signal.mlFeat, { mind: __mind, guard: __guard, ens: __ensemble, trust: __dnnTrust, dnn: __dnn, gbdtTrust: __gbdtTrust, gbdt: __gbdt, cal: __cal, evstats: __evStats, portStats: __portStats, shock: await _luxMarketShockCached(DB), sym: symbol, evCtx: await _luxEventContextCached(DB), applyEventPrior: true, market: market, flowFeat: __flowFeat, flowModel: __flowModel, xaFeat: __xaFeat, xaModel: __xaModel, stackModel: __stackModel, memoModel: __memoModel, dualBull: __dualBull, dualBear: __dualBear, dualShift: __dualShift }); } catch (e) {}
+                try { _md = await mlDeepDecide(DB, signal.mlFeat, { mind: __mind, guard: __guard, ens: __ensemble, trust: __dnnTrust, dnn: __dnn, gbdtTrust: __gbdtTrust, gbdt: __gbdt, cal: __cal, evstats: __evStats, portStats: __portStats, shock: await _luxMarketShockCached(DB), sym: symbol, evCtx: await _luxEventContextCached(DB), applyEventPrior: true, market: market, flowFeat: __flowFeat, flowModel: __flowModel, xaFeat: __xaFeat, xaModel: __xaModel, stackModel: __stackModel, memoModel: __memoModel, dualBull: __dualBull, dualBear: __dualBear, dualShift: __dualShift, techK: __techK, finalCal: __finalCal }); } catch (e) {}
                 if (!_md) { try { _md = await mlMindDecide(DB, signal.mlFeat, { mind: __mind, guard: __guard, ens: __ensemble }); } catch (e) {} }
                 // [V5] AI 픽 수집 — 개입 여부와 무관하게 예측 자체는 기록(종목당 1회)
                 try {
@@ -16904,6 +16966,7 @@ async function runTradingCycle(env) {
                     if (_sm !== 1) qty = Math.max(0, Math.floor(qty * _sm));
                   }
                   signal.mlMindP = (typeof _md.p === "number") ? _md.p : null;
+                  signal.mlPPreCal2 = (typeof _md.pPreCal2 === "number") ? _md.pPreCal2 : null;   // [V33.94]
                   // [V33.92] 후보 p 분포 수집은 게이트 앞으로 옮겼다(위 참조) — 여기서 모으면
                   //   통과분만 담겨 문턱이 스스로를 끌어올리는 절단 분포가 된다.
                   // [V33.80] 스태킹 표본용 — 전문가 확률 스냅샷을 진입 메타에 싣는다.
@@ -17879,6 +17942,20 @@ async function handleRequest(request, env, ctx) {
           try { _alt.port = await getState(env.DB, "port_stats", null); } catch (e) {}
           // [V33.91] 원장 전수 정합성 감사 결과 — 회계가 지금 맞는지 화면에서 바로 보이게.
           try { _alt.audit = await getState(env.DB, "ledger_audit", null); } catch (e) {}
+          // [V33.94] 확률 체인의 '측정된 계수' 들 — 상수를 실측으로 바꾼 자리를 화면에서 확인.
+          try {
+            const _tk = await getState(env.DB, "tech_prior_k", null);
+            const _fc = await getState(env.DB, "final_cal", null);
+            const _ds = await getState(env.DB, "dual_quad_shift", null);
+            const _ev = await getState(env.DB, "ml_evstats", null);
+            _alt.chain = {
+              techK: _tk ? { k: _num(_tk.k, null), kEff: _num(_tk.kEff, null), t: _num(_tk.t, null), n: _num(_tk.n, 0) } : null,
+              finalCal: _fc ? { T: _num(_fc.T, null), ece: _num(_fc.ece, null), eceRaw: _num(_fc.eceRaw, null), n: _num(_fc.n, 0) } : null,
+              dualShift: _ds ? { shift: _ds.shift || null, n: _num(_ds.n, 0) } : null,
+              evByVol: (_ev && Array.isArray(_ev.byVol)) ? _ev.byVol.length : 0,
+              protect: { cooldownMin: PROTECT.cooldownMin, lowProfitLockMin: PROTECT.lowProfitLockMin, enabled: PROTECT.enabled !== false }
+            };
+          } catch (e) {}
           try {
             const _ts2 = await getState(env.DB, "trade_state", null);
             _alt.tradeState = (_ts2 && (!_ts2.until || Date.now() <= _ts2.until))
@@ -19026,12 +19103,12 @@ async function handleRequest(request, env, ctx) {
     if (path === "/api/ai/train-now" && request.method === "POST") {
       const au = _trainAuthed(); if (!au.ok) return Response.json({ error: au.msg }, { status: au.code, headers: cors });
       const target = url.searchParams.get("target") || "mind";
-      const FN = { mind: mlMindTrainNightly, gbdt: mlGBDTTrainNightly, brain: mlBrainTrainNightly, dnn: mlDNNTrainNightly, l1: mlTrainNightly, calibrate: mlCalibrateCommittee, selfreview: mlSelfReview, flow: flowTrainNightly, xalpha: xalphaTrainNightly, stack: stackTrainNightly, dual: dualHeadTrainNightly, memo: memoTrainNightly, portstats: portfolioStatsNightly, ledgeraudit: ledgerCheckIntegrity };
+      const FN = { mind: mlMindTrainNightly, gbdt: mlGBDTTrainNightly, brain: mlBrainTrainNightly, dnn: mlDNNTrainNightly, l1: mlTrainNightly, calibrate: mlCalibrateCommittee, selfreview: mlSelfReview, flow: flowTrainNightly, xalpha: xalphaTrainNightly, stack: stackTrainNightly, dual: dualHeadTrainNightly, memo: memoTrainNightly, techk: techPriorFitNightly, finalcal: finalCalFitNightly, portstats: portfolioStatsNightly, ledgeraudit: ledgerCheckIntegrity };
       // [V12.63] target=all — 재배포 직후 "한 방에" 전체 파이프라인을 정확한 순서로 재실행(하루1회 게이트 무시).
       //   순서 고정: harvest → l1 → brain → mind → dnn → gbdt → calibrate (뒤 단계가 앞 단계 산출물 의존).
       //   각 단계 자체 CPU예산 가드가 있어 안전. 재학습 즉시 모든 수정이 반영되게 하는 원클릭 경로.
       if (target === "all") {
-        const _order = [["harvest", mlMarketHarvestNightly], ["l1", mlTrainNightly], ["brain", mlBrainTrainNightly], ["mind", mlMindTrainNightly], ["gbdt", mlGBDTTrainNightly], ["dnn", mlDNNTrainNightly], ["flow", flowTrainNightly], ["xalpha", xalphaTrainNightly], ["memo", memoTrainNightly], ["stack", stackTrainNightly], ["dual", dualHeadTrainNightly], ["portstats", portfolioStatsNightly], ["ledgeraudit", ledgerCheckIntegrity], ["calibrate", mlCalibrateCommittee]];
+        const _order = [["harvest", mlMarketHarvestNightly], ["l1", mlTrainNightly], ["brain", mlBrainTrainNightly], ["mind", mlMindTrainNightly], ["gbdt", mlGBDTTrainNightly], ["dnn", mlDNNTrainNightly], ["flow", flowTrainNightly], ["xalpha", xalphaTrainNightly], ["memo", memoTrainNightly], ["techk", techPriorFitNightly], ["finalcal", finalCalFitNightly], ["stack", stackTrainNightly], ["dual", dualHeadTrainNightly], ["portstats", portfolioStatsNightly], ["ledgeraudit", ledgerCheckIntegrity], ["calibrate", mlCalibrateCommittee]];
         const out = {};
         for (const [nm, fn] of _order) {
           try { out[nm] = await fn(env.DB); } catch (e) { out[nm] = "FAIL: " + (e && e.message); }
@@ -25167,7 +25244,35 @@ async function mlTrainNightly(DB) {
         else { lSum += Math.abs(d.pnl); lN++; }
       }
       if (wN >= 20 && lN >= 20) {
-        await setState(DB, "ml_evstats", { avgWin: +(wSum / wN).toFixed(3), avgLoss: +(lSum / lN).toFixed(3), n: N, ts: Date.now() });
+        // [V33.94] ★변동성 4분위별 손익 비대칭을 따로 잰다★ — EV 게이트가 종목 성격을 반영하게.
+        //   전체 평균 하나로는 저변동/고변동 종목에 같은 문턱을 물린다.
+        let _byVol = null;
+        try {
+          const _ia = LUXML.featNames.indexOf("atrPct");
+          if (_ia >= 0) {
+            const _av = [];
+            for (const d of data) { const v = _num(d.x[_ia], null); if (v != null && isFinite(v)) _av.push(v); }
+            if (_av.length >= 1200) {
+              const _srt = _av.slice().sort(function (a, b) { return a - b; });
+              const _q = [-Infinity, _srt[Math.floor(_srt.length * 0.25)], _srt[Math.floor(_srt.length * 0.5)], _srt[Math.floor(_srt.length * 0.75)], Infinity];
+              _byVol = [];
+              for (let bi = 0; bi < 4; bi++) {
+                let ws = 0, wn = 0, ls = 0, lnn = 0;
+                for (const d of data) {
+                  const v = _num(d.x[_ia], null);
+                  if (v == null || !(v >= _q[bi] && v < _q[bi + 1])) continue;
+                  if (d.y === 1) { ws += Math.abs(d.pnl); wn++; } else { ls += Math.abs(d.pnl); lnn++; }
+                }
+                if (wn >= 100 && lnn >= 100) _byVol.push({
+                  lo: isFinite(_q[bi]) ? +_q[bi].toFixed(4) : null,
+                  hi: isFinite(_q[bi + 1]) ? +_q[bi + 1].toFixed(4) : null,
+                  avgWin: +(ws / wn).toFixed(3), avgLoss: +(ls / lnn).toFixed(3), n: wn + lnn });
+              }
+              if (_byVol.length < 2) _byVol = null;
+            }
+          }
+        } catch (e2) {}
+        await setState(DB, "ml_evstats", { avgWin: +(wSum / wN).toFixed(3), avgLoss: +(lSum / lN).toFixed(3), n: N, byVol: _byVol, ts: Date.now() });
       }
     } catch (e) {}
 
@@ -26591,6 +26696,123 @@ async function mlGuardObserve(DB, predP, won) {
     return g.distrust;
   } catch (e) { return false; }
 }
+// ════════════════════════════════════════════════════════════════════════════
+// [V33.94] ★최종 확률 보정(T2) — 체인 끝에 남은 상수들의 오차를 통째로 흡수한다★
+//
+//   확률 체인에는 아직 손으로 정한 상수가 남아 있다(이벤트 프라이어 계수, 불일치 수축 k,
+//   절사평균 발동폭 등). 하나하나 실측으로 대체하는 게 정석이지만, 어떤 것은 그 값이 저장된
+//   표본이 없어 지금 당장은 잴 수 없다.
+//   그래도 ★그 상수들이 만든 오차의 합★ 은 잴 수 있다 — 최종 확률과 실제 승패를 모으면 된다.
+//   committee_cal(T)은 체인 중간(②IC가중 평균) 분포에서 학습한 값이라 그 뒤에 붙는 프라이어들의
+//   왜곡은 못 잡는다. 그래서 ★끝에서 한 번 더★ 온도를 재서 잔여 과신/과소신을 교정한다.
+//
+//   ※ 되먹임 방지 — 버퍼에는 반드시 ★T2 적용 전★ 확률을 넣는다.
+//     T2 적용 후 확률을 넣으면 자기가 고친 결과를 다시 학습해 온도가 1로 붕괴한다.
+const FINALCAL = { window: 400, minN: 120, tLo: 0.5, tHi: 4.0 };
+async function finalCalObserve(DB, pPreCal, won) {
+  try {
+    const p = _num(pPreCal, null);
+    if (p == null || !(p > 0 && p < 1)) return;
+    let b = await getState(DB, "final_cal_buf", null);
+    if (!b || !Array.isArray(b.v)) b = { v: [] };
+    b.v = b.v.concat([[+p.toFixed(4), won ? 1 : 0]]).slice(-FINALCAL.window);
+    b.ts = Date.now();
+    await setState(DB, "final_cal_buf", b);
+  } catch (e) {}
+}
+async function finalCalFitNightly(DB) {
+  try {
+    const b = await getState(DB, "final_cal_buf", null);
+    const v = (b && Array.isArray(b.v)) ? b.v : [];
+    if (v.length < FINALCAL.minN) return "[CAL2] 최종보정 표본 " + v.length + "/" + FINALCAL.minN + " — 대기";
+    let pos = 0; for (const r of v) pos += r[1];
+    if (pos < 10 || v.length - pos < 10) return "[CAL2] 승/패 편중(" + pos + "/" + v.length + ") — 대기";
+    const nll = function (T) {
+      let s = 0;
+      for (const r of v) {
+        const pc = _clamp(_sigmoid(_logit(_clamp(r[0], 1e-4, 1 - 1e-4)) / T), 1e-6, 1 - 1e-6);
+        s += -(r[1] * Math.log(pc) + (1 - r[1]) * Math.log(1 - pc));
+      }
+      return s / v.length;
+    };
+    let bT = 1, bL = nll(1);
+    for (let T = FINALCAL.tLo; T <= FINALCAL.tHi + 1e-9; T += 0.05) { const x = nll(T); if (x < bL) { bL = x; bT = T; } }
+    bT = +bT.toFixed(2);
+    // 보정 전후 ECE 로 개선 여부를 남긴다(적용 근거).
+    const ece = function (T) {
+      const bins = []; for (let i = 0; i < 10; i++) bins.push({ n: 0, p: 0, y: 0 });
+      for (const r of v) {
+        const pc = _clamp(_sigmoid(_logit(_clamp(r[0], 1e-4, 1 - 1e-4)) / T), 1e-6, 1 - 1e-6);
+        const i = Math.min(9, Math.floor(pc * 10));
+        bins[i].n++; bins[i].p += pc; bins[i].y += r[1];
+      }
+      let e = 0; for (const x of bins) if (x.n > 0) e += (x.n / v.length) * Math.abs(x.p / x.n - x.y / x.n);
+      return e;
+    };
+    const e0 = ece(1), e1 = ece(bT);
+    await setState(DB, "final_cal", { T: bT, n: v.length, ece: +e1.toFixed(4), eceRaw: +e0.toFixed(4), ts: Date.now() });
+    return "[CAL2] 최종보정 T=" + bT + " ECE " + (e0 * 100).toFixed(1) + "% → " + (e1 * 100).toFixed(1) + "% (n=" + v.length + ")";
+  } catch (e) { return "[CAL2] fail: " + (e && e.message); }
+}
+
+// ════════════════════════════════════════════════════════════════════════════
+// [V33.94] ★기술 프라이어 계수를 '측정' 한다 — 2.2 는 출처가 없는 숫자였다★
+//   V33.85 는 기술점수(−1~1)를 로그오즈에 `score × 0.30 × 2.2` 만큼 더했다.
+//   로그오즈에 계수를 곱해 더한다는 건 "기술점수 1점당 승산이 e^0.66 = 1.93배" 라는 주장인데
+//   그 배수를 잰 적이 없다. 이중헤드 ±0.35 와 정확히 같은 계열의 비약이다.
+//   → 기술점수를 유일한 설명변수로 놓고 1차원 로지스틱을 적합한다. 기울기가 곧 그 계수다.
+//     표본이 적으면 0 쪽으로 수축하고, 부호가 뒤집히면(기술점수가 역방향) 그대로 반영된다.
+async function techPriorFitNightly(DB) {
+  try {
+    const iTC = LUXML.featNames.indexOf("tfConsBull"), iMS = LUXML.featNames.indexOf("maStack"), iCP = LUXML.featNames.indexOf("chartPat");
+    if (iTC < 0 && iMS < 0 && iCP < 0) return "[TECHK] 기술 피처 없음";
+    const rs = await DB.prepare(
+      "SELECT feat, label, pnl_pct FROM ml_samples WHERE featver = ? ORDER BY ts DESC LIMIT 20000"
+    ).bind(LUXML.featVer).all();
+    const rows = (rs && rs.results) || [];
+    const X = [], Y = [];
+    for (const r of rows) {
+      let v; try { v = JSON.parse(r.feat); } catch (e) { continue; }
+      if (!Array.isArray(v) || v.length !== LUXML.featNames.length) continue;
+      const b = [], w = [];
+      if (iTC >= 0) { b.push(_num(v[iTC], 0)); w.push(0.5); }
+      if (iMS >= 0) { b.push(_num(v[iMS], 0)); w.push(0.3); }
+      if (iCP >= 0) { b.push(_num(v[iCP], 0)); w.push(0.2); }
+      let s = 0, tw = 0; for (let i = 0; i < b.length; i++) { s += w[i] * b[i]; tw += w[i]; }
+      if (!(tw > 0)) continue;
+      X.push(_clamp(s / tw, -1, 1)); Y.push(_labelOfRow(r));
+    }
+    const N = X.length;
+    if (N < 2000) return "[TECHK] 표본 " + N + "/2000 — 대기";
+    // 1차원 로지스틱: logit(p) = b + k·x. k 가 우리가 찾는 계수다.
+    let k = 0, b0 = 0;
+    const lr = 0.5, epochs = 400;
+    for (let ep = 0; ep < epochs; ep++) {
+      let gk = 0, gb = 0;
+      for (let i = 0; i < N; i++) {
+        const z = b0 + k * X[i];
+        const p = 1 / (1 + Math.exp(-_clamp(z, -30, 30)));
+        const e = p - Y[i];
+        gk += e * X[i]; gb += e;
+      }
+      k -= lr * (gk / N); b0 -= lr * (gb / N);
+    }
+    // 기울기의 표준오차 → 유의하지 않으면 0 쪽으로 수축(다른 게이트와 같은 원칙).
+    let fi = 0;
+    for (let i = 0; i < N; i++) {
+      const p = 1 / (1 + Math.exp(-_clamp(b0 + k * X[i], -30, 30)));
+      fi += p * (1 - p) * X[i] * X[i];
+    }
+    const se = fi > 1e-9 ? 1 / Math.sqrt(fi) : Infinity;
+    const tval = isFinite(se) && se > 0 ? k / se : 0;
+    const kEff = +_clamp(k * _clamp(Math.abs(tval) / 2, 0, 1), -1.5, 1.5).toFixed(4);
+    await setState(DB, "tech_prior_k", { k: +k.toFixed(4), se: +(isFinite(se) ? se : 9).toFixed(4),
+      t: +tval.toFixed(2), kEff: kEff, n: N, ts: Date.now() });
+    return "[TECHK] 기술 프라이어 계수 실측 k=" + k.toFixed(3) + " (t " + tval.toFixed(2) + ") → 적용 " + kEff.toFixed(3) +
+           " · 종전 상수 0.66";
+  } catch (e) { return "[TECHK] fail: " + (e && e.message); }
+}
+
 async function mlGuardState(DB) { try { return (await getState(DB, "mind_guard", null)) || { distrust: false }; } catch (e) { return { distrust: false }; } }
 
 // ── 4) 불확실성-조정 프랙셔널 켈리 사이징 ──────────────────
@@ -27347,7 +27569,8 @@ async function mlDeepDecide(DB, featVec, opts) {
           if (b.accLB > bAccMax) bAccMax = b.accLB;
           if (_bIC != null && (bICMax == null || _bIC > bICMax)) bICMax = _bIC;
         }
-        if (bw > 0 && bUsed > 0) { const pBoost = _clamp(_sigmoid(bz / bw), 0.001, 0.999); experts.push({ name: "boost", p: pBoost, z: _logitD(pBoost), acc: bAccMax, ic: bICMax, wMul: 0.8 }); }
+        // [V33.94] wMul 제거 — IC 가중이 이미 신뢰도를 반영한다(손으로 0.8 을 또 곱하면 이중 계상).
+        if (bw > 0 && bUsed > 0) { const pBoost = _clamp(_sigmoid(bz / bw), 0.001, 0.999); experts.push({ name: "boost", p: pBoost, z: _logitD(pBoost), acc: bAccMax, ic: bICMax }); }
       }
     } catch (e) {}
     // ── [V33.78] FLOW 전문가 합류 — 봉차트·뉴스에 없는 축(피어그래프·공매도·내부자·풋콜) ──
@@ -27360,7 +27583,7 @@ async function mlDeepDecide(DB, featVec, opts) {
           const pF = flowScore(fm, opts.flowFeat);
           if (pF != null && Math.abs(pF - 0.5) > 1e-4) {
             experts.push({ name: "flow", p: pF, z: _logitD(pF),
-                           acc: _num(fm.valAcc, 0.5), ic: _icEffective(fm), wMul: 0.9 });
+                           acc: _num(fm.valAcc, 0.5), ic: _icEffective(fm) });   // [V33.94] wMul 제거
           }
         }
       }
@@ -27373,7 +27596,7 @@ async function mlDeepDecide(DB, featVec, opts) {
           const pX = flowScore(xm, opts.xaFeat);   // 같은 로지스틱 포맷이라 채점기를 공유한다
           if (pX != null && Math.abs(pX - 0.5) > 1e-4) {
             experts.push({ name: "xalpha", p: pX, z: _logitD(pX),
-                           acc: _num(xm.valAcc, 0.5), ic: _icEffective(xm), wMul: 0.9 });
+                           acc: _num(xm.valAcc, 0.5), ic: _icEffective(xm) });   // [V33.94] wMul 제거
           }
         }
       }
@@ -27387,7 +27610,7 @@ async function mlDeepDecide(DB, featVec, opts) {
         const pM = memoScore(mm2, featVec);
         if (pM != null && Math.abs(pM - 0.5) > 1e-4) {
           experts.push({ name: "memo", p: pM, z: _logitD(pM),
-                         acc: _num(mm2.valAcc, 0.5), ic: _icEffective(mm2), wMul: 0.9 });
+                         acc: _num(mm2.valAcc, 0.5), ic: _icEffective(mm2) });   // [V33.94] wMul 제거
         }
       }
     } catch (e) {}
@@ -27586,10 +27809,13 @@ async function mlDeepDecide(DB, featVec, opts) {
       if (_b.length) {
         let _ts = 0, _tw = 0; for (let _i = 0; _i < _b.length; _i++) { _ts += _bw[_i] * _b[_i]; _tw += _bw[_i]; }
         const _techScore = _clamp(_ts / _tw, -1, 1);                 // [-1, 1]
-        const _w = (typeof DNN !== "undefined" && DNN.techPriorW != null) ? DNN.techPriorW : 0.30;
-        // 기술점수를 로짓 기여로 환산 — ±1 이면 ±(w×2.2) 로짓(≈확률 ±0.16 상당, 중립이면 0).
-        const _dzTech = _techScore * _w * 2.2;
-        pCombined = _clamp(_sigmoid(_logitD(pCombined) + _dzTech), 0.001, 0.999);
+        // [V33.94] ★계수를 실측값으로 바꾼다★ — 종전 `_w(0.30) × 2.2 = 0.66` 은 출처가 없었다.
+        //   로그오즈에 0.66 을 더한다는 건 "기술점수 1점이면 승산 1.93배" 라는 주장인데 잰 적이 없다.
+        //   techPriorFitNightly 가 1차원 로지스틱으로 기울기를 재고 유의성으로 수축해 둔다.
+        //   실측표가 없으면 0 — 근거 없이 밀지 않는다(이중헤드와 같은 원칙).
+        const _tk = (opts.techK !== undefined) ? opts.techK : await getState(DB, "tech_prior_k", null);
+        const _kEff = _tk ? _num(_tk.kEff, 0) : 0;
+        if (_kEff !== 0) pCombined = _clamp(_sigmoid(_logitD(pCombined) + _techScore * _kEff), 0.001, 0.999);
       }
     } catch (e) {}
 
@@ -27649,6 +27875,20 @@ async function mlDeepDecide(DB, featVec, opts) {
       if (_dual && _dual.dz) pCombined = _clamp(_sigmoid(_logitD(pCombined) + _dual.dz), 0.001, 0.999);
     } catch (e) {}
 
+    // ══ [V33.94] ★최종 확률 보정(T2)★ — 체인 끝에 남은 상수들의 잔여 오차를 통째로 흡수 ══
+    //   committee_cal(T) 은 체인 중간(②IC가중 평균) 분포에서 배운 값이라 그 뒤에 붙는
+    //   기술·충격·이벤트·이중헤드 프라이어가 만든 왜곡은 못 잡는다.
+    //   최종 확률과 실제 승패만 모으면 그 왜곡의 ★합★ 은 잴 수 있다 — 여기서 한 번 더 편다.
+    //   ★순서 주의★ 반드시 모든 프라이어 뒤, allow/sizeMult 앞이어야 한다.
+    //   pPreCal2 는 학습 버퍼용으로 따로 남긴다(자기가 고친 값을 다시 배우면 T2 가 1로 붕괴한다).
+    const _pPreCal2 = pCombined;
+    try {
+      const _fc = (opts.finalCal !== undefined) ? opts.finalCal : await getState(DB, "final_cal", null);
+      if (_fc && typeof _fc.T === "number" && _fc.T > 0.4 && _fc.T < 5 && _num(_fc.n, 0) >= FINALCAL.minN) {
+        pCombined = _clamp(_sigmoid(_logitD(pCombined) / _fc.T), 0.001, 0.999);
+      }
+    } catch (e) {}
+
     // [V12.63] ★고도화 산식 — 위원회 합의도(cross-expert agreement)를 신뢰도에 반영★ 세 모델이
     //   서로 동의할수록(전문가 확률 분산↓) 확신을 키우고, 엇갈릴수록(분산↑) 불확실성으로 흡수해
     //   사이즈 축소·기권을 넓힌다. MIND/DNN/GBDT가 "조화롭게" 하나의 확신을 만들도록 결합(단일 모델
@@ -27689,6 +27929,34 @@ async function mlDeepDecide(DB, featVec, opts) {
         _evSrc = "ledger:" + (_pick.market || "all");
       }
     } catch (e) {}
+    // ══ [V33.94] ★기대이동폭을 종목별로 맞춘다 (QuantConnect Lean 의 Insight magnitude 분리)★ ══
+    //   Lean 의 Insight 는 direction·confidence·magnitude 를 따로 들고 다닌다.
+    //   우리 EV 게이트는 확신(p)만 종목별이고 ★기대이동폭은 포트폴리오 평균 하나★ 였다 —
+    //   변동성 0.8% 유틸리티와 4% 반도체에 같은 avgWin/avgLoss 를 물린 셈이다.
+    //
+    //   ※ 처음엔 "그 종목 변동성 비율로 양쪽을 스케일" 하려 했는데, 그건 ★아무 효과가 없다★.
+    //     EV = s·(p·W − (1−p)·L) 이라 s 는 부호를 못 바꾼다 — 숫자만 달라 보이고 판단은 그대로다.
+    //     실제로 의미 있는 건 ★변동성 구간마다 손익 비대칭(W/L)이 다르다★ 는 것이고,
+    //     그건 가정할 게 아니라 재면 된다. 저변동 종목은 고정 손절이 멀어 잘 안 맞고(패배 작음),
+    //     고변동 종목은 손절이 가까워 자주 맞는다(패배 큼) — 비율이 실제로 달라진다.
+    //   → ml_evstats.byVol 에 ATR% 4분위별 avgWin/avgLoss 를 저장하고 그 구간 값을 쓴다.
+    let _evBucket = null;
+    try {
+      const _iAtr = LUXML.featNames.indexOf("atrPct");
+      if (_iAtr >= 0 && evs && Array.isArray(evs.byVol) && evs.byVol.length) {
+        const _atr = _num(featVec[_iAtr], null);
+        if (_atr != null) {
+          for (const bk of evs.byVol) {
+            if (_atr >= _num(bk.lo, -Infinity) && _atr < _num(bk.hi, Infinity)) { _evBucket = bk; break; }
+          }
+          if (!_evBucket) _evBucket = evs.byVol[evs.byVol.length - 1];
+        }
+      }
+    } catch (e) {}
+    if (_evBucket && _evBucket.avgWin > 0 && _evBucket.avgLoss > 0 && _num(_evBucket.n, 0) >= 200) {
+      evs = { avgWin: _evBucket.avgWin, avgLoss: _evBucket.avgLoss, n: _evBucket.n };
+      _evSrc = (_evSrc || "samples") + "+vol";
+    }
     if (evs && evs.avgWin > 0 && evs.avgLoss > 0) {
       evVal = +(pCombined * evs.avgWin - (1 - pCombined) * evs.avgLoss).toFixed(3);
       allow = evVal > 0;
@@ -27714,6 +27982,7 @@ async function mlDeepDecide(DB, featVec, opts) {
       if (_dual && (_dual.quadrant === "volatile" || _dual.quadrant === "dead")) _contested = true;
     } catch (e) {}
     return { source: "deep", allow: (allow && !_contested), sizeMult: sizeMult, p: pCombined, uncertainty: unc, usedDnn: usedDnn, usedGbdt: usedGbdt, ev: evVal, evSrc: _evSrc, experts: _expOut, shock: _shockOut, evPrior: _evPriorOut, stackFeat: _stackFeat, usedStack: _usedStack,
+             pPreCal2: +_pPreCal2.toFixed(4),
              bull: +_bull.toFixed(3), bear: +_bear.toFixed(3), conviction: +_conv.toFixed(3), conflict: +_conflict.toFixed(3), contested: _contested, dual: _dual };
   } catch (e) { return null; }
 }
@@ -34373,6 +34642,9 @@ export default {
             await _stg("xalpha", async function () { return await xalphaTrainNightly(env.DB); });
             // [V33.92] MEMO(유사상황 기억)를 STACK 앞에 둔다 — STACK 입력에 memo 확률이 들어간다.
             await _stg("memo", async function () { return await memoTrainNightly(env.DB); });
+            // [V33.94] 기술 프라이어 계수 실측 + 최종 확률 보정(T2) — 상수를 측정으로 대체.
+            await _stg("techk", async function () { return await techPriorFitNightly(env.DB); });
+            await _stg("finalcal", async function () { return await finalCalFitNightly(env.DB); });
             await _stg("stack", async function () { return await stackTrainNightly(env.DB); });
             await _stg("dual", async function () { return await dualHeadTrainNightly(env.DB); });
             // [V33.90] 실제 원장 기준 포트폴리오 통계(NautilusTrader PortfolioAnalyzer) —
