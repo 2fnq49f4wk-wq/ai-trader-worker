@@ -2630,7 +2630,7 @@ async function applySignalTypeWeights(DB, cfg) {
 // ============================================================================
 // [V33.55] 빌드 버전 — SWR L2 캐시 키에 섞어 '배포 = 판단 캐시 자동 무효화'를 만든다.
 //   판정 로직을 고쳐도 옛 캐시가 최대 1시간 재배포되던 문제를 구조적으로 없앤다.
-const _BUILD_VER = "V33.87";
+const _BUILD_VER = "V33.88";
 
 const AI_PARAMS = {
   // ── OHLCV 타임프레임 ── 시가/고가/저가/종가/거래량을 어떤 봉 주기로 볼지.
@@ -26313,6 +26313,26 @@ async function mlDeepDecide(DB, featVec, opts) {
       }
     } catch (e) {}
 
+    // ══ [V33.88] ★강세/약세 증거를 분리해 본다 (TradingAgents, arXiv:2412.20138)★ ══
+    //   우리 위원회는 모든 증거를 하나의 확률로 뭉갠다. 그러면 강세근거와 약세근거가 상쇄되면서
+    //   ★"근거가 없어서 0.5"와 "양쪽 근거가 팽팽해서 0.5"가 구분되지 않는다★.
+    //   앞의 것은 그냥 정보 부족이고, 뒤의 것은 실제로 논쟁 중인 위험한 자리다 — 전혀 다른 상황인데
+    //   같은 숫자로 나가면 같은 크기로 베팅하게 된다.
+    //   TradingAgents 는 이걸 강세 연구원 ↔ 약세 연구원의 '변증법적 토론'으로 푼다(평균이 아니라 논쟁).
+    //   LLM 토론을 종목마다 돌릴 수는 없으니, 그 구조의 핵심만 가져온다 —
+    //   ★증거를 방향별로 따로 적립해 '확신(양쪽 합)'과 '대립(작은 쪽 비중)'을 따로 재는 것★.
+    //   (V33.85 의 불일치 수축은 '전문가끼리 얼마나 갈렸나'이고, 이건 '증거가 양방향으로 얼마나 쌓였나'다.
+    //    전문가 1명이 0.5 를 주면 불일치는 0 이지만 확신도 0 이다 — 둘은 다른 것을 잰다.)
+    let _bull = 0, _bear = 0;
+    try {
+      for (const ex of experts) {
+        const w = (ex.wMul || 1) * (typeof ex.ic === "number" && isFinite(ex.ic) ? Math.exp(60 * _clamp(ex.ic, -0.05, 0.25)) : 1);
+        if (ex.z > 0) _bull += w * ex.z; else _bear += w * (-ex.z);
+      }
+    } catch (e) {}
+    const _conv = _bull + _bear;                                  // 총 확신(양쪽 증거의 크기 합)
+    const _conflict = _conv > 1e-9 ? (2 * Math.min(_bull, _bear) / _conv) : 0;   // 0=한쪽뿐, 1=완전 팽팽
+
     // ══ [V33.85] ★전문가 불일치를 확률에 반영★ ══
     //   투표의 약점은 '평균은 같은데 신뢰도가 전혀 다른 경우'를 구분하지 못하는 것이다.
     //   전원이 0.62 를 준 것과, 0.95 와 0.29 가 섞여 평균 0.62 가 된 것은 완전히 다른 상황인데
@@ -26426,7 +26446,20 @@ async function mlDeepDecide(DB, featVec, opts) {
       allow = pCombined >= gate;
     }
     const sizeMult = allow ? +(mlKellySize(pCombined, unc) * _shkSizeK).toFixed(3) : 1;   // [V32.46] 레짐 사이즈 배율 반영
-    return { source: "deep", allow: allow, sizeMult: sizeMult, p: pCombined, uncertainty: unc, usedDnn: usedDnn, usedGbdt: usedGbdt, ev: evVal, experts: _expOut, shock: _shockOut, evPrior: _evPriorOut, stackFeat: _stackFeat, usedStack: _usedStack };
+    // [V33.88] ★대립 구간 기권★ — 양쪽 증거가 팽팽한데 결론이 애매하면 매매하지 않는다.
+    //   "근거 없음"이 아니라 "논쟁 중"인 자리다. 이런 곳은 확률이 0.5 근처라 어차피 문턱에 걸리지만,
+    //   백분위 문턱(V33.80)은 상대 순위로 뽑기 때문에 후보가 마르면 이런 종목이 뽑혀 올라온다.
+    //   확신이 충분히 쌓였는데(conv) 그게 양방향으로 갈라져 있으면(conflict) 명시적으로 기권한다.
+    let _contested = false;
+    try {
+      const _cf = (typeof DNN !== "undefined" && DNN.contested) ? DNN.contested : { minConv: 1.2, maxConflict: 0.62, pBand: 0.07 };
+      if (_conv >= _num(_cf.minConv, 1.2) && _conflict >= _num(_cf.maxConflict, 0.62)
+          && Math.abs(pCombined - 0.5) <= _num(_cf.pBand, 0.07)) {
+        _contested = true;
+      }
+    } catch (e) {}
+    return { source: "deep", allow: (allow && !_contested), sizeMult: sizeMult, p: pCombined, uncertainty: unc, usedDnn: usedDnn, usedGbdt: usedGbdt, ev: evVal, experts: _expOut, shock: _shockOut, evPrior: _evPriorOut, stackFeat: _stackFeat, usedStack: _usedStack,
+             bull: +_bull.toFixed(3), bear: +_bear.toFixed(3), conviction: +_conv.toFixed(3), conflict: +_conflict.toFixed(3), contested: _contested };
   } catch (e) { return null; }
 }
 
@@ -26592,6 +26625,9 @@ const GBDT = {
   // [V33.85] 전문가 불일치 수축 계수 — 로짓 표준편차가 이 값이면 로짓을 약 절반으로 줄인다.
   //   작을수록 불일치에 민감(더 세게 0.5 로 끌어당김).
   dispShrinkK: 1.2,
+  // [V33.88] 대립 기권 문턱 — 증거가 충분히 쌓였는데(minConv) 양방향으로 갈라져(maxConflict)
+  //   결론이 0.5 근처(pBand)면 진입하지 않는다. "정보 부족"과 "논쟁 중"을 구분한다.
+  contested: { minConv: 1.2, maxConflict: 0.62, pBand: 0.07 },
   // [V33.77] IC 소프트맥스 온도 — IC 0.05 vs 0.02 를 86:14 로 벌린다(정확도 기반은 54:46 이었다).
   //   업계 기준 좋은 모델 IC 0.02~0.08 구간이 의미 있게 분리되도록 잡은 값.
   icTemp: 60,
