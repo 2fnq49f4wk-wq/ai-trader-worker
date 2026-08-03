@@ -15,9 +15,15 @@ jobs:
         uses: actions/setup-node@v4
         with:
           node-version: '22'
-      # 배포 전 안전게이트 — 깨진 코드 push 시 구문오류면 배포 차단(라이브 보호)
+      # [V33.99] ★구문 게이트 재작성★ — 종전 `node --check src/index.js` 는 무력했다.
+      #   Node 22 의 --check 는 `export` 가 있는 .js 파일의 구문오류를 삼킨다(2줄로 재현됨).
+      #   그 결과 V33.82 의 중괄호 누락이 통과했고 ★배포가 17커밋 연속 실패★ 했는데
+      #   게이트는 매번 "통과" 라고 했다. 이제 .mjs 모듈 파싱 + esbuild(wrangler 와 동일 파서)
+      #   + 독립 중괄호 균형 검사를 함께 돌린다.
+      - name: Install esbuild (구문 게이트용 — wrangler 와 동일 파서)
+        run: npm install --no-save esbuild@0.28.1
       - name: Syntax check
-        run: node --check src/index.js
+        run: node tools/check-syntax.mjs src/index.js
       # [V33.61] 프론트(public/index.html)의 인라인 <script> 도 반드시 검사한다.
       #   위 검사는 src/index.js 만 본다 — 실제로 V33.60 에서 HTML 인라인 스크립트의
       #   중괄호가 어긋나 우측 사이드바·AI두뇌 창이 통째로 죽었는데 게이트를 그대로 통과했다.

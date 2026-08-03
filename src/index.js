@@ -2760,7 +2760,7 @@ async function applySignalTypeWeights(DB, cfg) {
 // ============================================================================
 // [V33.55] 빌드 버전 — SWR L2 캐시 키에 섞어 '배포 = 판단 캐시 자동 무효화'를 만든다.
 //   판정 로직을 고쳐도 옛 캐시가 최대 1시간 재배포되던 문제를 구조적으로 없앤다.
-const _BUILD_VER = "V33.98";
+const _BUILD_VER = "V33.99";
 
 const AI_PARAMS = {
   // ── OHLCV 타임프레임 ── 시가/고가/저가/종가/거래량을 어떤 봉 주기로 볼지.
@@ -15395,6 +15395,12 @@ async function runTradingCycle(env) {
               try { __techK = await getState(DB, "tech_prior_k", null); __finalCal = await getState(DB, "final_cal", null); __blendK = await getState(DB, "decision_blend_k", null); } catch (e2) {}
               try { if (DUALHEAD.enabled) { __dualBull = await getState(DB, "dual_bull_model", null); __dualBear = await getState(DB, "dual_bear_model", null); __dualShift = await getState(DB, "dual_quad_shift", null); } } catch (e2) {}
               try { __pDistCache = await getState(DB, "ai_pdist:" + market, null); } catch (e2) {}
+            }
+          } catch (e) { __flowModel = __flowModel || null; }
+          // ↑ [V33.99] ★배포를 17커밋 동안 막고 있던 중괄호 누락★
+          //   V33.82 가 이 자리에 블록을 끼워 넣으면서 위의 `try {` + `if (FLOWML.enabled) {`
+          //   짝을 닫지 않았고, 아래에 같은 헤더를 새로 열었다(중복). 파일 전체 중괄호가 2개 모자란다.
+          //   node --check 가 이걸 못 잡은 이유는 아래 게이트 주석 참조 — 게이트가 무력했다.
           // [V33.82] 단타 실측 엣지(켈리) + 현재 드로다운 — 레버리지 개방 판단의 두 축.
           try {
             // [V33.84 ★버그수정★] 종전엔 "stin_trust" 를 읽었는데 그 키는 코드 어디에서도
