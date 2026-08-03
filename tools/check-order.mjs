@@ -45,7 +45,7 @@ const writes = new Set([...src.matchAll(/setState\([A-Za-z.]*DB,\s*"([a-z_][a-z0
 //   flow/xalpha/stack_model: _miniLogisticTrain 이 setState(DB, opts.stateKey, ...) 로 기록
 //   dnn_model / gbdt_*: 청크·시장별 동적 키로 기록
 const KNOWN_EXTERNAL = new Set(["cfg","deposits","outflows","daily","quote","hist","index",
-  "flow_model","xalpha_model","stack_model","dnn_model","gbdt_",
+  "flow_model","xalpha_model","stack_model","dual_bull_model","dual_bear_model","dnn_model","gbdt_",
   "earnings_calendar_v2","econ_calendar"]);
 for (const k of reads) {
   if (writes.has(k) || KNOWN_EXTERNAL.has(k)) continue;

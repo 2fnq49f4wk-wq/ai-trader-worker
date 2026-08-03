@@ -2630,7 +2630,7 @@ async function applySignalTypeWeights(DB, cfg) {
 // ============================================================================
 // [V33.55] 빌드 버전 — SWR L2 캐시 키에 섞어 '배포 = 판단 캐시 자동 무효화'를 만든다.
 //   판정 로직을 고쳐도 옛 캐시가 최대 1시간 재배포되던 문제를 구조적으로 없앤다.
-const _BUILD_VER = "V33.88";
+const _BUILD_VER = "V33.89";
 
 const AI_PARAMS = {
   // ── OHLCV 타임프레임 ── 시가/고가/저가/종가/거래량을 어떤 봉 주기로 볼지.
@@ -7179,15 +7179,34 @@ function _scoreHeadlines(items) {
     //   · litigious/constraining → 약한 악재를 더한다
     try {
       const _cat = _sentiCategories(String(t).toLowerCase());
-      const _cw = (__sentiCatW && Object.keys(__sentiCatW).length) ? __sentiCatW : SENTI_CAT_W;
+      // ── [V33.89 ★논리 오류 수정 ①★] 범주 히트를 원시 개수로 곱하면 안 된다 ──
+      //   "Amazon sued by FTC in class action lawsuit" 는 litigious 4 히트가 잡히는데
+      //   sued·FTC·class action·lawsuit 는 ★하나의 사건★을 가리키는 동의어다.
+      //   이걸 독립 증거 4개로 세면 같은 사건에 4배 벌점이 간다 —
+      //   "Amazon faces lawsuit"(1히트) 대비 4배다. 헤드라인이 어휘를 많이 썼다는 이유만으로.
+      //   → 포화 변환(√n)을 쓴다. 첫 히트는 온전히, 추가 히트는 체감으로 반영한다.
+      //     n=1→1.00, 2→1.41, 3→1.73, 4→2.00
+      const _sat = function (n) { return n > 0 ? Math.sqrt(n) : 0; };
+      // ── [V33.89 ★논리 오류 수정 ②★] 학습가중과 사전가중의 단위가 다르다 ──
+      //   학습값(__sentiCatW)은 '익일 수익률 %' 단위로 ±2.0 까지 나오고,
+      //   사전 초기값(SENTI_CAT_W)은 감성 점수 단위로 ±0.6 수준이다.
+      //   학습이 붙는 순간 범주항이 사전값의 3배 넘게 커져 모든 헤드라인이 ±3 에 포화됐다.
+      //   → 학습값은 '방향과 상대 크기'로만 쓰고, 크기는 사전 스케일의 2배 이내로 사상한다.
+      const _cwOf = function (k, dflt) {
+        const learned = (__sentiCatW && typeof __sentiCatW[k] === "number") ? __sentiCatW[k] : null;
+        if (learned == null) return dflt;
+        const cap = Math.abs(dflt) * 2;                       // 사전값의 2배까지만
+        const scaled = (learned / (SENTI_LEARN.clip || 2)) * cap;   // [-clip,clip] → [-cap,cap]
+        return _clamp(scaled, -cap, cap);
+      };
       // 신뢰도 감쇠 — 불확실·약한 양태가 많을수록 방향 확신을 줄인다(0.4 하한).
-      const _damp = _clamp(1 + (_cat.uncertainty * _num(_cw.uncertainty, -0.25)
-                              + _cat.weakModal * _num(_cw.weakModal, -0.15)), 0.4, 1);
+      const _damp = _clamp(1 + (_sat(_cat.uncertainty) * _cwOf("uncertainty", -0.25)
+                              + _sat(_cat.weakModal) * _cwOf("weakModal", -0.15)), 0.4, 1);
       // 증폭 — 확언 양태(will/must)는 실현 확률을 높인다(1.4 상한).
-      const _amp = _clamp(1 + _cat.strongModal * _num(_cw.strongModal, 0.15), 1, 1.4);
+      const _amp = _clamp(1 + _sat(_cat.strongModal) * _cwOf("strongModal", 0.15), 1, 1.4);
       v = v * _damp * _amp;
       // 소송·제약은 방향과 별개로 더해지는 악재.
-      v += _cat.litigious * _num(_cw.litigious, -0.6) + _cat.constraining * _num(_cw.constraining, -0.4);
+      v += _sat(_cat.litigious) * _cwOf("litigious", -0.6) + _sat(_cat.constraining) * _cwOf("constraining", -0.4);
       v = _clamp(v, -3, 3);
     } catch (e) {}
     sum += v * w; mag += Math.abs(v) * w; wsum += w;
@@ -14709,6 +14728,7 @@ async function runTradingCycle(env) {
       let __flowModel = null, __dailyCacheForFlow = {}, __flowCollect = false;
       let __xaModel = null, __xaPanel = null;   // [V33.79] XALPHA — 형식알파 + 횡단면 랭크
       let __stackModel = null;   // [V33.80] STACK 메타모델(투표 대체)
+      let __dualBull = null, __dualBear = null;   // [V33.89] 강세/약세 이중 헤드
       let __pDistCache = null, __pDistNew = [];   // [V33.80] 후보 p 분포(백분위 문턱용)
       // [V33.82] 단타 레버리지 게이트 입력 — 사이클당 1회만 만든다.
       let __scalpEdge = null, __ddPctNow = 0;
@@ -14737,6 +14757,7 @@ async function runTradingCycle(env) {
               __flowModel = await getState(DB, "flow_model", null);
               try { __xaModel = await getState(DB, "xalpha_model", null); } catch (e2) {}
               try { __stackModel = await getState(DB, "stack_model", null); } catch (e2) {}
+              try { if (DUALHEAD.enabled) { __dualBull = await getState(DB, "dual_bull_model", null); __dualBear = await getState(DB, "dual_bear_model", null); } } catch (e2) {}
               try { __pDistCache = await getState(DB, "ai_pdist:" + market, null); } catch (e2) {}
           // [V33.82] 단타 실측 엣지(켈리) + 현재 드로다운 — 레버리지 개방 판단의 두 축.
           try {
@@ -16230,7 +16251,7 @@ async function runTradingCycle(env) {
                     if (__xaFeat) signal.xaFeat = __xaFeat;
                   }
                 } catch (e) {}
-                try { _md = await mlDeepDecide(DB, signal.mlFeat, { mind: __mind, guard: __guard, ens: __ensemble, trust: __dnnTrust, dnn: __dnn, gbdtTrust: __gbdtTrust, gbdt: __gbdt, cal: __cal, evstats: __evStats, shock: await _luxMarketShockCached(DB), sym: symbol, evCtx: await _luxEventContextCached(DB), applyEventPrior: true, market: market, flowFeat: __flowFeat, flowModel: __flowModel, xaFeat: __xaFeat, xaModel: __xaModel, stackModel: __stackModel }); } catch (e) {}
+                try { _md = await mlDeepDecide(DB, signal.mlFeat, { mind: __mind, guard: __guard, ens: __ensemble, trust: __dnnTrust, dnn: __dnn, gbdtTrust: __gbdtTrust, gbdt: __gbdt, cal: __cal, evstats: __evStats, shock: await _luxMarketShockCached(DB), sym: symbol, evCtx: await _luxEventContextCached(DB), applyEventPrior: true, market: market, flowFeat: __flowFeat, flowModel: __flowModel, xaFeat: __xaFeat, xaModel: __xaModel, stackModel: __stackModel, dualBull: __dualBull, dualBear: __dualBear }); } catch (e) {}
                 if (!_md) { try { _md = await mlMindDecide(DB, signal.mlFeat, { mind: __mind, guard: __guard, ens: __ensemble }); } catch (e) {} }
                 // [V5] AI 픽 수집 — 개입 여부와 무관하게 예측 자체는 기록(종목당 1회)
                 try {
@@ -18386,12 +18407,12 @@ async function handleRequest(request, env, ctx) {
     if (path === "/api/ai/train-now" && request.method === "POST") {
       const au = _trainAuthed(); if (!au.ok) return Response.json({ error: au.msg }, { status: au.code, headers: cors });
       const target = url.searchParams.get("target") || "mind";
-      const FN = { mind: mlMindTrainNightly, gbdt: mlGBDTTrainNightly, brain: mlBrainTrainNightly, dnn: mlDNNTrainNightly, l1: mlTrainNightly, calibrate: mlCalibrateCommittee, selfreview: mlSelfReview, flow: flowTrainNightly, xalpha: xalphaTrainNightly, stack: stackTrainNightly };
+      const FN = { mind: mlMindTrainNightly, gbdt: mlGBDTTrainNightly, brain: mlBrainTrainNightly, dnn: mlDNNTrainNightly, l1: mlTrainNightly, calibrate: mlCalibrateCommittee, selfreview: mlSelfReview, flow: flowTrainNightly, xalpha: xalphaTrainNightly, stack: stackTrainNightly, dual: dualHeadTrainNightly };
       // [V12.63] target=all — 재배포 직후 "한 방에" 전체 파이프라인을 정확한 순서로 재실행(하루1회 게이트 무시).
       //   순서 고정: harvest → l1 → brain → mind → dnn → gbdt → calibrate (뒤 단계가 앞 단계 산출물 의존).
       //   각 단계 자체 CPU예산 가드가 있어 안전. 재학습 즉시 모든 수정이 반영되게 하는 원클릭 경로.
       if (target === "all") {
-        const _order = [["harvest", mlMarketHarvestNightly], ["l1", mlTrainNightly], ["brain", mlBrainTrainNightly], ["mind", mlMindTrainNightly], ["gbdt", mlGBDTTrainNightly], ["dnn", mlDNNTrainNightly], ["flow", flowTrainNightly], ["xalpha", xalphaTrainNightly], ["stack", stackTrainNightly], ["calibrate", mlCalibrateCommittee]];
+        const _order = [["harvest", mlMarketHarvestNightly], ["l1", mlTrainNightly], ["brain", mlBrainTrainNightly], ["mind", mlMindTrainNightly], ["gbdt", mlGBDTTrainNightly], ["dnn", mlDNNTrainNightly], ["flow", flowTrainNightly], ["xalpha", xalphaTrainNightly], ["stack", stackTrainNightly], ["dual", dualHeadTrainNightly], ["calibrate", mlCalibrateCommittee]];
         const out = {};
         for (const [nm, fn] of _order) {
           try { out[nm] = await fn(env.DB); } catch (e) { out[nm] = "FAIL: " + (e && e.message); }
@@ -21935,13 +21956,23 @@ async function _miniLogisticTrain(DB, opts) {
     for (const r of raw) {
       let v; try { v = JSON.parse(r.feat); } catch (e) { continue; }
       if (!Array.isArray(v) || v.length !== D) continue;
+      // [V33.89] opts.labelFn 이 있으면 그것으로 라벨을 만든다 — 같은 표본, 다른 질문.
+      //   null 을 돌려주면 그 표본은 건너뛴다(라벨을 만들 수 없는 행).
+      let _y;
+      if (typeof opts.labelFn === "function") {
+        _y = opts.labelFn(r);
+        if (_y == null) continue;
+      } else {
+        _y = r.label ? 1 : 0;
+      }
       X.push(v.map(function (t) { return _num(t, 0); }));
-      // [V33.87] ★여기는 _labelOfRow 를 쓰지 않는다★
+      // [V33.87] ★기본 경로는 _labelOfRow 를 쓰지 않는다★
       //   _labelOfRow 는 'ml_samples 의 라벨 정의가 V33.78 에 바뀐 것'을 보정하는 함수다.
       //   flow_samples/xalpha_samples/stack_samples 는 적재 시점에 이미 pnl>0 으로 고정 기록되고
       //   alpha·multiclass 같은 다른 정의를 가진 적이 없다. 여기에 전역 라벨모드를 끼워 넣으면
       //   나중에 target 을 multiclass 로 바꾸는 순간 이 세 모델의 라벨이 조용히 달라진다.
-      Y.push(r.label ? 1 : 0);
+      //   (ml_samples 를 쓰는 이중헤드는 opts.labelFn 으로 pnl 에서 직접 만든다 — 위 참조)
+      Y.push(_y);
       P.push(_num(r.pnl_pct, 0));
     }
     const N = X.length;
@@ -21988,7 +22019,12 @@ async function _miniLogisticTrain(DB, opts) {
       for (let i = 0; i < pv.length; i++) { const dx = pv[i] - mp, dy = yv[i] - my; sa += dx * dx; sb += dy * dy; sab += dx * dy; }
       ic = (sa > 1e-12 && sb > 1e-12) ? sab / Math.sqrt(sa * sb) : 0;
     } catch (e) {}
-    const model = { w: w, b: b, mean: mean, std: std, featVer: opts.featVer,
+    // [V33.89] 기저확률(양성비율)을 함께 저장한다 — 이중헤드 사분면 경계를 절대값이 아니라
+    //   각 헤드의 기저확률 기준으로 잡기 위해서다. 문턱을 절대값으로 두면 라벨 희소도가 다른
+    //   두 헤드(예: 상승 30% vs 하락 22%)에 같은 잣대를 대는 셈이 된다.
+    let _base = 0;
+    try { for (const yy of Y) _base += yy; _base = Y.length ? _base / Y.length : 0; } catch (e) {}
+    const model = { w: w, b: b, mean: mean, std: std, featVer: opts.featVer, baseRate: +_base.toFixed(4),
       valAcc: +acc.toFixed(4), valIC: +ic.toFixed(5), valN: nval, n: N, ts: Date.now(),
       trusted: ic >= _num(opts.icFloor, 0.012) };
     await setState(DB, opts.stateKey, model);
@@ -22154,6 +22190,92 @@ async function altSampleBackfill(DB, opts) {
     return "[ALT-BF] 날짜 " + days.length + "일 처리 — XALPHA +" + madeX + " / FLOW +" + madeF +
            " (건너뜀 " + skipped + ", 커서 " + lastId + ")";
   } catch (e) { return "[ALT-BF] 실패: " + (e && e.message); }
+}
+
+// ════════════════════════════════════════════════════════════════════════════
+// [V33.89] ★강세/약세 이중 헤드 — LLM 토론을 자체 AI 로 900종목에 구현한다★
+//
+//  질문: TradingAgents 의 '강세 연구원 ↔ 약세 연구원 토론'을 LLM 없이 할 수 있나?
+//  답: 토론의 값어치는 말이 오가는 데 있는 게 아니라 ★상승 근거와 하락 근거를 따로 세운다★는
+//      데 있다. 그건 라벨을 둘로 나누면 그대로 재현된다 — LLM 호출 0 회로.
+//
+//  현행 이진 분류의 구조적 한계:
+//    p = P(오른다) 하나만 내면 P(내린다) = 1 − p 로 강제된다.
+//    그래서 "크게 오를 수도 크게 내릴 수도 있는 고변동 종목"과
+//         "아무 데도 안 가는 죽은 종목"이 똑같이 p≈0.5 로 나온다. 완전히 다른데.
+//
+//  이중 헤드(강세 연구원 = bullHead, 약세 연구원 = bearHead):
+//    bullHead: P(pnl ≥ +thr)  — 상승 근거만 보고 학습
+//    bearHead: P(pnl ≤ −thr)  — 하락 근거만 보고 학습
+//    두 확률은 서로의 여집합이 아니다. 합이 1 을 넘지 않고, 남는 몫이 '횡보'다.
+//    네 사분면이 처음으로 구분된다:
+//      bull↑ bear↓ → 매수 (비대칭 상방)
+//      bull↓ bear↑ → 회피
+//      bull↑ bear↑ → 고변동·논쟁 (V33.88 의 contested 와 같은 자리 — 진입 금지)
+//      bull↓ bear↓ → 죽은 돈 (타임스톱만 소모, 진입 가치 없음)
+//    이게 토론이 만들어내는 정보다. 평균 하나로는 절대 나오지 않는다.
+//
+//  학습: ml_samples 에 pnl_pct 가 남아 있어 같은 표본으로 라벨만 둘로 나누면 된다.
+//        재수집 0, featVer 변경 0 — 기존 17만 표본을 그대로 쓴다.
+const DUALHEAD = {
+  enabled: true,
+  featVer: 1,
+  thrPct: 2.0,            // 상승/하락 판정 문턱(%) — ±2% 를 '의미 있는 움직임'으로 본다
+  minTrainSamples: 1200,
+  trainWindow: 60000,
+  l2: 1.2,
+  icFloor: 0.012
+};
+
+// 두 헤드를 같은 표본에서 서로 다른 라벨로 학습한다.
+async function dualHeadTrainNightly(DB) {
+  if (!DUALHEAD.enabled) return null;
+  const out = [];
+  for (const side of ["bull", "bear"]) {
+    const r = await _miniLogisticTrain(DB, {
+      table: "ml_samples", stateKey: "dual_" + side + "_model", tag: "DUAL-" + side.toUpperCase(),
+      featVer: LUXML.featVer, D: LUXML.featNames.length,
+      minN: DUALHEAD.minTrainSamples, window: DUALHEAD.trainWindow,
+      l2: DUALHEAD.l2, icFloor: DUALHEAD.icFloor,
+      // ★라벨만 바꾼다★ — 같은 피처, 같은 표본, 다른 질문.
+      labelFn: function (row) {
+        const pnl = _num(row && row.pnl_pct, null);
+        if (pnl == null) return null;
+        return side === "bull" ? (pnl >= DUALHEAD.thrPct ? 1 : 0)
+                               : (pnl <= -DUALHEAD.thrPct ? 1 : 0);
+      }
+    });
+    out.push(r);
+  }
+  return out.filter(Boolean).join(" | ");
+}
+
+// 두 헤드 확률로 사분면을 판정한다.
+//   반환 { pUp, pDown, quadrant, edge } · edge = pUp − pDown (비대칭 상방)
+function dualHeadJudge(bullM, bearM, featVec) {
+  try {
+    if (!DUALHEAD.enabled || !bullM || !bearM) return null;
+    if (bullM.featVer !== LUXML.featVer || bearM.featVer !== LUXML.featVer) return null;
+    if (!bullM.trusted || !bearM.trusted) return null;
+    const pUp = flowScore(bullM, featVec), pDown = flowScore(bearM, featVec);
+    if (pUp == null || pDown == null) return null;
+    // [V33.89] ★경계는 각 헤드의 기저확률 배수로 잡는다★
+    //   절대값(0.45/0.28)으로 두면 라벨 희소도가 다른 두 헤드에 같은 잣대를 대게 된다.
+    //   상승 라벨이 30%, 하락 라벨이 20% 인 데이터에서 0.45 는 한쪽엔 1.5배, 다른 쪽엔 2.25배다.
+    //   기저 대비 몇 배인가로 보면 두 헤드가 대등하게 비교된다.
+    const bU = _clamp(_num(bullM.baseRate, 0.3), 0.02, 0.9);
+    const bD = _clamp(_num(bearM.baseRate, 0.3), 0.02, 0.9);
+    const HI = 1.35, LO = 0.75;          // 기저의 1.35배 이상 = 강함 / 0.75배 미만 = 약함
+    const upHi = pUp >= bU * HI, upLo = pUp < bU * LO;
+    const dnHi = pDown >= bD * HI, dnLo = pDown < bD * LO;
+    let q;
+    if (upHi && dnLo)       q = "bull";       // 비대칭 상방 — 가장 좋은 자리
+    else if (upLo && dnHi)  q = "bear";       // 회피
+    else if (upHi && dnHi)  q = "volatile";   // 양방향 — 논쟁/고변동
+    else if (upLo && dnLo)  q = "dead";       // 죽은 돈
+    else                    q = "mixed";
+    return { pUp: +pUp.toFixed(4), pDown: +pDown.toFixed(4), quadrant: q, edge: +(pUp - pDown).toFixed(4) };
+  } catch (e) { return null; }
 }
 
 // [V33.80] STACK — 전문가 확률을 입력으로 받아 최종 확률을 내는 메타모델(스태킹).
@@ -26446,6 +26568,20 @@ async function mlDeepDecide(DB, featVec, opts) {
       allow = pCombined >= gate;
     }
     const sizeMult = allow ? +(mlKellySize(pCombined, unc) * _shkSizeK).toFixed(3) : 1;   // [V32.46] 레짐 사이즈 배율 반영
+    // [V33.89] ★이중 헤드 사분면 판정★ — 상승/하락 확률을 따로 받아 네 상황을 구분한다.
+    //   volatile(양방향 강함)·dead(양방향 약함)는 진입 대상이 아니다.
+    //   bull 사분면이면 비대칭 상방이므로 확률에 소폭 가점(로그오즈).
+    let _dual = null;
+    try {
+      const _bm = (opts.dualBull !== undefined) ? opts.dualBull : await getState(DB, "dual_bull_model", null);
+      const _rm = (opts.dualBear !== undefined) ? opts.dualBear : await getState(DB, "dual_bear_model", null);
+      _dual = dualHeadJudge(_bm, _rm, featVec);
+      if (_dual) {
+        if (_dual.quadrant === "bull")      pCombined = _clamp(_sigmoid(_logitD(pCombined) + 0.35), 0.001, 0.999);
+        else if (_dual.quadrant === "bear") pCombined = _clamp(_sigmoid(_logitD(pCombined) - 0.35), 0.001, 0.999);
+      }
+    } catch (e) {}
+
     // [V33.88] ★대립 구간 기권★ — 양쪽 증거가 팽팽한데 결론이 애매하면 매매하지 않는다.
     //   "근거 없음"이 아니라 "논쟁 중"인 자리다. 이런 곳은 확률이 0.5 근처라 어차피 문턱에 걸리지만,
     //   백분위 문턱(V33.80)은 상대 순위로 뽑기 때문에 후보가 마르면 이런 종목이 뽑혀 올라온다.
@@ -26457,9 +26593,12 @@ async function mlDeepDecide(DB, featVec, opts) {
           && Math.abs(pCombined - 0.5) <= _num(_cf.pBand, 0.07)) {
         _contested = true;
       }
+      // [V33.89] 이중 헤드가 volatile(양방향 강함)/dead(양방향 약함)로 보면 진입하지 않는다.
+      //   전자는 논쟁 자리, 후자는 타임스톱만 소모하는 죽은 돈이다.
+      if (_dual && (_dual.quadrant === "volatile" || _dual.quadrant === "dead")) _contested = true;
     } catch (e) {}
     return { source: "deep", allow: (allow && !_contested), sizeMult: sizeMult, p: pCombined, uncertainty: unc, usedDnn: usedDnn, usedGbdt: usedGbdt, ev: evVal, experts: _expOut, shock: _shockOut, evPrior: _evPriorOut, stackFeat: _stackFeat, usedStack: _usedStack,
-             bull: +_bull.toFixed(3), bear: +_bear.toFixed(3), conviction: +_conv.toFixed(3), conflict: +_conflict.toFixed(3), contested: _contested };
+             bull: +_bull.toFixed(3), bear: +_bear.toFixed(3), conviction: +_conv.toFixed(3), conflict: +_conflict.toFixed(3), contested: _contested, dual: _dual };
   } catch (e) { return null; }
 }
 
