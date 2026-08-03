@@ -69,5 +69,139 @@ for (const k of reads) {
     bad += deadFns.length;
   }
 }
+
+// ══ [V33.90] ★스코프에 없는 식별자 검사 (미선언 참조 = 실행시 ReferenceError)★ ══
+//   배경: mlDeepDecide 안에서 선언이 없는 `dnn` 을 읽고 있었다(V33.77~V33.89).
+//   ESM 에서 미선언 식별자 읽기는 즉시 ReferenceError 이고, 그 함수의 최상위 try/catch 가
+//   그걸 삼켜 ★null 반환★ 했다 — 즉 DNN 이 신뢰 상태가 되는 순간마다 위원회 전체가
+//   조용히 죽고 규칙엔진으로 폴백했다. node --check 는 문법만 보므로 절대 못 잡는다.
+//   V33.84 주석이 "파서 없이는 오탐 151건" 이라고 적었던 그 검사를, 주석·문자열·정규식
+//   리터럴을 정확히 걷어내고 선언을 깊이인식으로 수집해 ★오탐 0★ 으로 만들었다.
+{
+  function strip(s) {
+    let o = "", i = 0, n = s.length;
+    while (i < n) {
+      const c = s[i], c2 = s[i + 1];
+      if (c === "/" && c2 === "/") { while (i < n && s[i] !== "\n") { o += " "; i++; } continue; }
+      if (c === "/" && c2 === "*") { const e = s.indexOf("*/", i + 2); const t = (e < 0 ? n : e + 2); for (; i < t; i++) o += (s[i] === "\n" ? "\n" : " "); continue; }
+      if (c === "/") {
+        // 정규식 리터럴 판정 — 직전 유효토큰이 값이 아니면 정규식이다.
+        let j = o.length - 1;
+        while (j >= 0 && /\s/.test(o[j])) j--;
+        const prev = j >= 0 ? o[j] : "";
+        const prevWord = /[\w$)\]]/.test(prev);
+        let isKw = false;
+        if (prevWord) { const w = o.slice(Math.max(0, j - 11), j + 1).match(/([A-Za-z_$][\w$]*)$/); if (w && ["return","typeof","case","in","of","new","delete","void","instanceof","do","else","yield","await"].indexOf(w[1]) >= 0) isKw = true; }
+        if (!prevWord || isKw) {
+          o += " "; i++;
+          let cls = false;
+          while (i < n) {
+            if (s[i] === "\\") { o += "  "; i += 2; continue; }
+            if (s[i] === "[") cls = true; else if (s[i] === "]") cls = false;
+            else if (s[i] === "/" && !cls) { o += " "; i++; while (i < n && /[a-z]/.test(s[i])) { o += " "; i++; } break; }
+            if (s[i] === "\n") break;
+            o += " "; i++;
+          }
+          continue;
+        }
+      }
+      if (c === '"' || c === "'" || c === "`") {
+        const q = c; o += " "; i++;
+        while (i < n) { if (s[i] === "\\") { o += "  "; i += 2; continue; } if (s[i] === q) { o += " "; i++; break; } o += (s[i] === "\n" ? "\n" : " "); i++; }
+        continue;
+      }
+      o += c; i++;
+    }
+    return o;
+  }
+  const S = strip(src);
+  const GLOBALS = new Set(["Math","Date","JSON","Number","String","Array","Object","Boolean","Promise","Map","Set","WeakMap","RegExp","Error","TypeError","isFinite","isNaN","parseFloat","parseInt","console","undefined","NaN","Infinity","Response","Request","Headers","URL","URLSearchParams","TextEncoder","TextDecoder","crypto","fetch","atob","btoa","AbortController","setTimeout","clearTimeout","Symbol","BigInt","globalThis","structuredClone","encodeURIComponent","decodeURIComponent","Intl","arguments","this","AbortSignal","ReadableStream","Uint8Array","Float64Array","Int32Array","performance","caches","DataView","ArrayBuffer","URLPattern","WebSocket","FormData","Blob","EventTarget","queueMicrotask","process"]);
+  const KW = new Set("if else for while do switch case default break continue return function async await var let const new typeof instanceof delete void in of try catch finally throw class extends super yield static get set true false null this import export from as".split(" "));
+  
+  // 선언 수집기(주어진 텍스트 범위에서)
+  function collectDecls(text) {
+    const d = new Set();
+    // const/let/var 선언 — 깊이 0 의 세미콜론까지 스캔해 바인딩 이름만 수집.
+    //   (초기화식 안에 함수본문·객체리터럴이 있어 세미콜론/줄바꿈이 섞여도 정확히 끝을 찾는다.)
+    for (const m of text.matchAll(/\b(?:const|let|var)\s/g)) {
+      let i = m.index + m[0].length, depth = 0, expectName = true;
+      while (i < text.length) {
+        const c = text[i];
+        if (c === "(" || c === "[" || c === "{") {
+          if (expectName && depth === 0) {           // 구조분해 바인딩 — 그룹 안 이름을 전부 수집
+            let dd = 0, j = i;
+            for (; j < text.length; j++) {
+              if ("([{".indexOf(text[j]) >= 0) dd++;
+              else if (")]}".indexOf(text[j]) >= 0) { dd--; if (dd === 0) break; }
+            }
+            for (const nm of text.slice(i, j + 1).matchAll(/([A-Za-z_$][\w$]*)/g)) d.add(nm[1]);
+            i = j + 1; expectName = false; continue;
+          }
+          depth++; i++; continue;
+        }
+        if (c === ")" || c === "]" || c === "}") { depth--; if (depth < 0) break; i++; continue; }
+        if (depth === 0) {
+          if (c === ";") break;
+          if (c === ",") { expectName = true; i++; continue; }
+          if (c === "=") { expectName = false; i++; continue; }
+          if (expectName && /[A-Za-z_$]/.test(c)) {
+            const w = text.slice(i).match(/^([A-Za-z_$][\w$]*)/);
+            d.add(w[1]); i += w[1].length; expectName = false; continue;
+          }
+        }
+        i++;
+      }
+    }
+    for (const m of text.matchAll(/\bfunction\s*\*?\s*([A-Za-z_$][\w$]*)/g)) d.add(m[1]);
+    for (const m of text.matchAll(/\bcatch\s*\(\s*([A-Za-z_$][\w$]*)/g)) d.add(m[1]);
+    for (const m of text.matchAll(/\bclass\s+([A-Za-z_$][\w$]*)/g)) d.add(m[1]);
+    // 함수/화살표 파라미터
+    for (const m of text.matchAll(/(?:function\s*\*?\s*[A-Za-z_$\w]*\s*)\(([^)]*)\)/g))
+      for (const nm of m[1].matchAll(/([A-Za-z_$][\w$]*)/g)) d.add(nm[1]);
+    for (const m of text.matchAll(/\(([^()]*)\)\s*=>/g))
+      for (const nm of m[1].matchAll(/([A-Za-z_$][\w$]*)/g)) d.add(nm[1]);
+    for (const m of text.matchAll(/(?:^|[^\w$.])([A-Za-z_$][\w$]*)\s*=>/gm)) d.add(m[1]);
+    for (const m of text.matchAll(/\bfor\s*(?:await\s*)?\(\s*(?:const|let|var)?\s*([A-Za-z_$][\w$]*)/g)) d.add(m[1]);
+    return d;
+  }
+  
+  // 최상위 선언(들여쓰기 0~1)
+  const TOP = new Set();
+  src.split("\n").forEach((l) => {
+    let m = l.match(/^\s{0,1}(?:export\s+)?(?:async\s+)?function\s*\*?\s*([A-Za-z_$][\w$]*)/); if (m) TOP.add(m[1]);
+    m = l.match(/^\s{0,1}(?:export\s+)?(?:const|let|var)\s+([A-Za-z_$][\w$]*)/); if (m) TOP.add(m[1]);
+    m = l.match(/^\s{0,1}(?:export\s+)?class\s+([A-Za-z_$][\w$]*)/); if (m) TOP.add(m[1]);
+  });
+  
+  // 최상위 함수들을 순회
+  const findings = [];
+  const fnRe = /^(?:export\s+)?(?:async\s+)?function\s*\*?\s*([A-Za-z_$][\w$]*)\s*\(/gm;
+  let fm;
+  while ((fm = fnRe.exec(S)) !== null) {
+    const start = fm.index;
+    let i = S.indexOf("{", fm.index), d = 0, end = -1;
+    if (i < 0) continue;
+    for (let k = i; k < S.length; k++) { if (S[k] === "{") d++; else if (S[k] === "}") { d--; if (d === 0) { end = k + 1; break; } } }
+    if (end < 0) continue;
+    const body = S.slice(start, end);
+    const decls = collectDecls(body);
+    const seen = new Map();
+    // 식별자 참조 위치 — 프로퍼티 접근/객체키/선언 제외
+    for (const m of body.matchAll(/([.?]\s*)?\b([A-Za-z_$][\w$]*)\b(\s*:)?/g)) {
+      if (m[1]) continue;                       // .foo / ?.foo
+      if (m[3]) continue;                       // { foo: ... } 객체키·라벨
+      const nm = m[2];
+      if (KW.has(nm) || GLOBALS.has(nm) || decls.has(nm) || TOP.has(nm)) continue;
+      if (!seen.has(nm)) seen.set(nm, start + m.index);
+    }
+    for (const [nm, pos] of seen) findings.push({ fn: fm[1], name: nm, line: ln(pos) });
+  }
+
+  if (findings.length) {
+    for (const f of findings) console.error(`  FAIL 미선언 참조: ${f.fn}() 안의 '${f.name}' @${f.line} — 실행 시 ReferenceError`);
+    bad += findings.length;
+  }
+}
+
 if (bad) { console.error(`\n순서계약 위반 ${bad}건 — 배포 차단`); process.exit(1); }
-console.log("  ok   선언·사용 순서 계약 통과");
+console.log("  ok   선언·사용 순서 계약 + 미선언 참조 검사 통과");

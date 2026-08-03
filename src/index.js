@@ -2630,7 +2630,7 @@ async function applySignalTypeWeights(DB, cfg) {
 // ============================================================================
 // [V33.55] 빌드 버전 — SWR L2 캐시 키에 섞어 '배포 = 판단 캐시 자동 무효화'를 만든다.
 //   판정 로직을 고쳐도 옛 캐시가 최대 1시간 재배포되던 문제를 구조적으로 없앤다.
-const _BUILD_VER = "V33.89";
+const _BUILD_VER = "V33.90";
 
 const AI_PARAMS = {
   // ── OHLCV 타임프레임 ── 시가/고가/저가/종가/거래량을 어떤 봉 주기로 볼지.
@@ -8830,6 +8830,204 @@ async function verifyAfterTrade(DB, market, symbol, tag) {
   } catch (e) {}
 }
 
+// ════════════════════════════════════════════════════════════════════════════
+// [V33.90] ★NautilusTrader 이식 — 사전거래 리스크엔진 + 포트폴리오 통계★
+//
+//   출처: nautechsystems/nautilus_trader (LGPL-3.0, GitHub 공개)
+//     · nautilus_trader/risk/engine.pyx  — RiskEngine 의 사전거래 검사 체인
+//     · nautilus_trader/analysis/        — PortfolioAnalyzer + PortfolioStatistic
+//
+//   왜 이걸 가져오는가(우리 문제와 정확히 맞물린다):
+//     ① 두 달간 반복된 회계 사고(유령매도·현금 이중차감·수량 증발)의 공통 원인은
+//        "검사가 실행 코드 여기저기에 흩어져 있고, 거부된 주문이 왜 거부됐는지 이름이 없다"였다.
+//        NautilusTrader 는 모든 주문을 ★단일 체크 체인★에 통과시키고 거부마다
+//        ★고정된 사유 코드★(NOTIONAL_EXCEEDS_FREE_BALANCE 등)를 남긴다. 사후 감사가 가능해진다.
+//     ② TradingState(ACTIVE/HALTED/REDUCING) — 전역 상태 하나로 "신규금지/축소만허용"을 표현한다.
+//        우리는 폭락방어·일손실한도·VIX 게이트가 서로 다른 곳에서 각자 continue 를 때려서
+//        무엇이 왜 막혔는지 알 수 없었다.
+//     ③ 주문 제출 레이트 리밋(throttler) — 크론이 1분마다 도는 구조에서 루프 폭주가 나면
+//        원장이 순식간에 오염된다. 상한을 명시적으로 건다.
+//     ④ PortfolioAnalyzer — 승률·기대값(expectancy)·손익비(profit factor)·위험대비수익을
+//        ★실제 원장★ 에서 계산한다. 지금 EV 게이트가 쓰는 avgWin/avgLoss 는 학습표본 풀
+//        (17만 중 대부분이 수확표본)에서 나온 값이라 실제 체결 분포와 다르다 — 대표적 train/serve 스큐.
+//
+//   ※ 이식은 개념·검사항목·사유코드 체계이고, 코드는 우리 구조(D1 원장·Worker)에 맞게 다시 썼다.
+
+const TRADESTATE = { ACTIVE: "ACTIVE", HALTED: "HALTED", REDUCING: "REDUCING" };
+const RISKENG = {
+  enabled: true,
+  // 주문 제출 레이트(시장별) — 이 창 안에서 이만큼 넘게 신규매수가 나가면 거부한다.
+  submitLimit: 45, submitWindowMs: 60000,
+  // 주문 1건 명목가 상한/하한 — 상한은 '한 종목에 계좌가 통째로 실리는' 사고 방지,
+  //   하한은 수수료가 기대수익을 먹는 티끌주문 방지(NautilusTrader 의 min/max notional 과 동일 취지).
+  minNotional: { us: 20, kr: 20000, cm: 20, bd: 20000 },
+  maxNotionalFrac: 0.35,        // 총자산 대비 1주문 명목가 상한(35%)
+  reduceOnlyOnHalt: true
+};
+const _RISK_DENY = {
+  PRICE_INVALID: "가격 비정상",
+  QUANTITY_INVALID: "수량 비정상",
+  NOTIONAL_LESS_THAN_MIN: "명목가 최소미달",
+  NOTIONAL_EXCEEDS_MAX_PER_ORDER: "1주문 명목가 상한초과",
+  NOTIONAL_EXCEEDS_FREE_BALANCE: "가용현금 초과",
+  MAX_ORDER_SUBMIT_RATE: "주문제출 레이트 초과",
+  TRADING_HALTED: "거래중단 상태",
+  TRADING_REDUCING_ONLY: "축소전용 상태(신규진입 금지)"
+};
+
+// 주문 제출 스로틀러 — 상태 저장 없이 원장(trades)에서 최근 창의 BUY 건수를 센다.
+//   (별도 카운터를 두면 그 카운터가 또 하나의 '진실의 출처'가 되어 어긋난다. 원장이 유일 출처다.)
+async function riskSubmitRateOk(DB, market) {
+  try {
+    if (!RISKENG.enabled) return { ok: true, n: 0 };
+    const since = Date.now() - RISKENG.submitWindowMs;
+    const r = await DB.prepare("SELECT COUNT(*) AS n FROM trades WHERE market=? AND side='BUY' AND ts>=?")
+      .bind(market, since).first();
+    const n = (r && r.n != null) ? Number(r.n) : 0;
+    return { ok: n < RISKENG.submitLimit, n: n };
+  } catch (e) { return { ok: true, n: 0 }; }   // 조회 실패 시 기존 동작 유지(보수적으로 막지 않는다)
+}
+
+// 전역 거래상태 — HALTED(신규·증액 금지, 청산만) / REDUCING(노출 증가 금지) / ACTIVE.
+//   상태는 상위 로직(폭락게이트·일손실한도)이 setState 로 올려두고, 여기서는 읽기만 한다.
+//   읽기 전용으로 둔 이유: 상태를 세우는 판단과 상태를 집행하는 지점을 분리해야
+//   "왜 막혔나"가 한 곳에서 답이 나온다.
+async function riskTradingState(DB, market) {
+  try {
+    const s = await getState(DB, "trade_state", null);
+    if (!s) return TRADESTATE.ACTIVE;
+    if (s.until && Date.now() > s.until) return TRADESTATE.ACTIVE;   // 만료된 상태는 자동 해제
+    const v = (s.byMarket && s.byMarket[market]) || s.state;
+    return (v === TRADESTATE.HALTED || v === TRADESTATE.REDUCING) ? v : TRADESTATE.ACTIVE;
+  } catch (e) { return TRADESTATE.ACTIVE; }
+}
+async function riskSetTradingState(DB, state, opts) {
+  try {
+    const o = opts || {};
+    const cur = (await getState(DB, "trade_state", null)) || {};
+    const next = { state: state, reason: o.reason || null, ts: Date.now(),
+                   until: o.ttlMs ? Date.now() + o.ttlMs : null,
+                   byMarket: o.byMarket || cur.byMarket || null };
+    await setState(DB, "trade_state", next);
+    return next;
+  } catch (e) { return null; }
+}
+
+// ★사전거래 검사 체인★ — 신규매수는 전부 여기를 통과해야 한다.
+//   반환: { ok:true, qty } 또는 { ok:false, code, reason }
+//   NautilusTrader 와 같이 ①상태 ②레이트 ③가격 ④수량 ⑤명목가(최소/최대/잔고) 순서로 본다.
+async function riskPreTradeCheck(DB, o) {
+  const market = o.market, symbol = o.symbol;
+  let qty = o.qty;
+  const price = o.price;
+  const deny = function (code, extra) {
+    return { ok: false, code: code, reason: _RISK_DENY[code] || code, detail: extra || null };
+  };
+  try {
+    if (!RISKENG.enabled) return { ok: true, qty: qty };
+    // ① 거래상태
+    const st = await riskTradingState(DB, market);
+    if (st === TRADESTATE.HALTED) return deny("TRADING_HALTED");
+    if (st === TRADESTATE.REDUCING) return deny("TRADING_REDUCING_ONLY");
+    // ② 제출 레이트
+    const rate = await riskSubmitRateOk(DB, market);
+    if (!rate.ok) return deny("MAX_ORDER_SUBMIT_RATE", rate.n + "/" + RISKENG.submitLimit);
+    // ③ 가격
+    if (!(typeof price === "number" && isFinite(price) && price > 0)) return deny("PRICE_INVALID", String(price));
+    // ④ 수량
+    if (!(typeof qty === "number" && isFinite(qty) && qty > 0)) return deny("QUANTITY_INVALID", String(qty));
+    qty = Math.floor(qty);
+    if (qty <= 0) return deny("QUANTITY_INVALID", "floor→0");
+    // ⑤ 명목가 — 최소
+    const notional = price * qty;
+    const minN = _num(RISKENG.minNotional[o.sleeve || market], 0);
+    if (minN > 0 && notional < minN) return deny("NOTIONAL_LESS_THAN_MIN", Math.round(notional) + "<" + minN);
+    // ⑤ 명목가 — 1주문 상한(총자산 대비)
+    if (o.equity > 0 && RISKENG.maxNotionalFrac > 0) {
+      const cap = o.equity * RISKENG.maxNotionalFrac;
+      if (notional > cap) {
+        const q2 = Math.floor(cap / price);
+        if (q2 <= 0) return deny("NOTIONAL_EXCEEDS_MAX_PER_ORDER", Math.round(notional) + ">" + Math.round(cap));
+        qty = q2;
+      }
+    }
+    // ⑤ 명목가 — 가용현금(수수료 포함). executeBuy 가 다시 clamp 하지만,
+    //   '왜 줄었는가'를 사유코드로 남기려면 여기서 먼저 판정해야 한다.
+    if (o.availCash != null) {
+      const unit = price * (1 + _num(o.feeRate, 0));
+      const q3 = Math.floor(o.availCash / unit);
+      if (q3 <= 0) return deny("NOTIONAL_EXCEEDS_FREE_BALANCE", Math.round(o.availCash) + "<" + unit.toFixed(2));
+      if (qty > q3) qty = q3;
+    }
+    return { ok: true, qty: qty, state: st };
+  } catch (e) {
+    return { ok: true, qty: qty };   // 검사 자체가 실패하면 기존 경로에 맡긴다(이중 클램프가 뒤에 있다)
+  }
+}
+
+// ★PortfolioAnalyzer 이식★ — 실제 원장(체결된 매도)에서 성과통계를 계산한다.
+//   NautilusTrader 의 PortfolioStatistic 들(Expectancy, ProfitFactor, WinRate, RiskReturnRatio)을
+//   우리 원장 스키마에 맞춰 다시 쓴 것. 반환 단위: 수익률(%)과 통화금액을 분리해 둘 다 낸다.
+async function portfolioStatistics(DB, opts) {
+  try {
+    const o = opts || {};
+    const lim = Math.max(30, Math.floor(_num(o.limit, 400)));
+    const q = o.market
+      ? DB.prepare("SELECT pnl, pnl_pct, ts FROM trades WHERE side='SELL' AND market=? AND pnl_pct IS NOT NULL ORDER BY ts DESC LIMIT ?").bind(o.market, lim)
+      : DB.prepare("SELECT pnl, pnl_pct, ts FROM trades WHERE side='SELL' AND pnl_pct IS NOT NULL ORDER BY ts DESC LIMIT ?").bind(lim);
+    const rs = await q.all();
+    const rows = (rs && rs.results) ? rs.results : [];
+    if (rows.length < 10) return { n: rows.length, ready: false };
+    let nWin = 0, nLoss = 0, sumWinPct = 0, sumLossPct = 0, sumWinAmt = 0, sumLossAmt = 0;
+    let sumR = 0, maxLossStreak = 0, curStreak = 0;
+    const R = [];
+    for (const r of rows) {
+      const pct = _num(r.pnl_pct, null);
+      if (pct == null) continue;
+      const amt = Math.abs(_num(r.pnl, 0));
+      R.push(pct); sumR += pct;
+      if (pct > 0) { nWin++; sumWinPct += pct; sumWinAmt += amt; curStreak = 0; }
+      else { nLoss++; sumLossPct += Math.abs(pct); sumLossAmt += amt; curStreak++; if (curStreak > maxLossStreak) maxLossStreak = curStreak; }
+    }
+    const n = R.length;
+    if (n < 10) return { n: n, ready: false };
+    const winRate = nWin / n;
+    const avgWin = nWin > 0 ? sumWinPct / nWin : 0;
+    const avgLoss = nLoss > 0 ? sumLossPct / nLoss : 0;
+    // Expectancy = (평균이익 × 승률) − (평균손실 × 패률) — 1거래당 기대수익률(%)
+    const expectancy = avgWin * winRate - avgLoss * (1 - winRate);
+    // ProfitFactor = 총이익금 / 총손실금. 1 미만이면 구조적 적자.
+    const profitFactor = sumLossAmt > 1e-9 ? sumWinAmt / sumLossAmt : (sumWinAmt > 0 ? 99 : 0);
+    // RiskReturnRatio = 평균수익 / 수익 표준편차 (거래단위 샤프의 원형)
+    const mean = sumR / n;
+    let varSum = 0; for (const x of R) varSum += (x - mean) * (x - mean);
+    const sd = Math.sqrt(varSum / n);
+    const riskReturn = sd > 1e-9 ? mean / sd : 0;
+    return {
+      ready: true, n: n, market: o.market || "all",
+      winRate: +winRate.toFixed(4), nWin: nWin, nLoss: nLoss,
+      avgWin: +avgWin.toFixed(3), avgLoss: +avgLoss.toFixed(3),
+      expectancy: +expectancy.toFixed(4), profitFactor: +profitFactor.toFixed(3),
+      riskReturn: +riskReturn.toFixed(4), sd: +sd.toFixed(3),
+      maxLossStreak: maxLossStreak, ts: Date.now()
+    };
+  } catch (e) { return { n: 0, ready: false, error: e && e.message }; }
+}
+
+// 야간 1회 갱신 — 전체/시장별을 함께 저장한다(AI 두뇌 표시 + EV 게이트가 읽는다).
+async function portfolioStatsNightly(DB) {
+  try {
+    const all = await portfolioStatistics(DB, { limit: 400 });
+    const us = await portfolioStatistics(DB, { market: "us", limit: 300 });
+    const kr = await portfolioStatistics(DB, { market: "kr", limit: 300 });
+    await setState(DB, "port_stats", { all: all, us: us, kr: kr, ts: Date.now() });
+    if (!all.ready) return "[PORT] 종결거래 " + all.n + "/10 — 통계 대기";
+    return "[PORT] n=" + all.n + " 승률 " + (all.winRate * 100).toFixed(1) + "% 기대값 " +
+           all.expectancy.toFixed(3) + "%/건 손익비 " + all.profitFactor.toFixed(2) +
+           " 위험대비 " + all.riskReturn.toFixed(3);
+  } catch (e) { return "[PORT] fail: " + (e && e.message); }
+}
+
 async function savePosition(DB, market, symbol, strategy, pos) {
   await stmtSavePosition(DB, market, symbol, strategy, pos).run();
 }
@@ -10990,6 +11188,25 @@ async function executeBuy(DB, market, symbol, strategy, qty, price, signal, dail
   if (!(typeof availCash === "number" && isFinite(availCash)) || availCash <= 0) {
     await log(DB, "WARN", symbol, "BUY aborted: 가용현금 없음 (" + Math.round(availCash) + ")"); return cash;
   }
+
+  // [V33.90] ★사전거래 리스크 체인(NautilusTrader RiskEngine 이식)★
+  //   흩어져 있던 검사를 하나의 체인에 모으고, 거부에 고정 사유코드를 붙인다.
+  //   여기서 통과한 뒤에도 아래의 예산 clamp 는 그대로 남긴다 — 이중 방어는 유지한다.
+  try {
+    const _pre = await riskPreTradeCheck(DB, {
+      market: market, sleeve: (opts && opts.sleeve) || market, symbol: symbol,
+      qty: qty, price: price, availCash: availCash, feeRate: feeRate,
+      equity: (opts && _num(opts.equity, null)) || null
+    });
+    if (!_pre.ok) {
+      await log(DB, "WARN", symbol, "BUY 거부 [" + _pre.code + "] " + _pre.reason + (_pre.detail ? " (" + _pre.detail + ")" : ""));
+      return cash;
+    }
+    if (_pre.qty < qty) {
+      await log(DB, "INFO", symbol, "BUY 수량 사전조정 " + qty + "→" + _pre.qty + " (리스크엔진)");
+      qty = _pre.qty;
+    }
+  } catch (e) {}
 
   // ★ 살 수 있는 최대 수량으로 clamp — "예산 안에서만 거래"
   const maxQty = Math.floor(availCash / unitCost);
@@ -14139,6 +14356,28 @@ async function runTradingCycle(env) {
         if (crashGate.reasons.length > 0) {
           await log(DB, "INFO", null, "[V12 CRASH-GATE " + market.toUpperCase() + "] dd=" + crashGate.ddPct.toFixed(1) + "% L" + crashGate.ddLevel + (crashGate.blockNew ? " BLOCK-NEW" : (crashGate.sizeScale < 1 ? " size×" + crashGate.sizeScale : "")) + (crashGate.heatBlock ? " HEAT-BLOCK(scalp면제)" : "") + (crashGate.deRisk ? " DE-RISK" : "") + " · " + crashGate.reasons.join(", "));
         }
+        // [V33.90] ★크래시게이트 결론을 전역 거래상태로 승격 (NautilusTrader TradingState)★
+        //   종전엔 blockNew/deRisk 가 이 함수 안의 지역 플래그라, 하위 실행경로(executeBuy 등)는
+        //   자기가 왜 막혔는지 알 수 없었고 경로마다 각자 continue 를 때렸다.
+        //   하나의 상태(ACTIVE/REDUCING/HALTED)로 올려두면 사전거래 체인이 한 곳에서 집행하고,
+        //   거부 사유가 원장 로그에 고정 코드로 남는다.
+        //   TTL 은 사이클 주기(1분)의 여유배수 — 사이클이 멈추면 자동으로 ACTIVE 로 풀린다.
+        try {
+          const _prev = (await getState(DB, "trade_state", null)) || {};
+          const _bm = Object.assign({}, _prev.byMarket || {});
+          const _next = crashGate.deRisk ? TRADESTATE.HALTED
+                      : (crashGate.blockNew ? TRADESTATE.REDUCING : TRADESTATE.ACTIVE);
+          if (_bm[market] !== _next) {
+            await log(DB, "INFO", null, "[RISK-STATE " + market.toUpperCase() + "] " +
+              (_bm[market] || TRADESTATE.ACTIVE) + " → " + _next +
+              (crashGate.reasons.length ? " (" + crashGate.reasons.join(", ") + ")" : ""));
+          }
+          _bm[market] = _next;
+          await riskSetTradingState(DB, _next, {
+            reason: crashGate.reasons.join(", ") || null,
+            byMarket: _bm, ttlMs: 15 * 60000
+          });
+        } catch (e) {}
       } catch (e) {
         await log(DB, "WARN", null, "[V12] crashGate fail " + market + ": " + e.message);
       }
@@ -14721,7 +14960,7 @@ async function runTradingCycle(env) {
       // === [LUX-AI] 사이클당 1회 모델/보조데이터 로드(후보마다 재로딩 방지) ===
       let __mlModel = null, __ensemble = null, __mind = null, __guard = { distrust: false },
           __dnn = null, __dnnTrust = null, __noiseFilter = null, __evMem = {}, __sectorNews = null,
-          __gbdt = null, __gbdtTrust = null, __cal = null, __evStats = null, __idxCloses = null, __xsPanel = null,
+          __gbdt = null, __gbdtTrust = null, __cal = null, __evStats = null, __portStats = null, __idxCloses = null, __xsPanel = null,
           __secCache = {}, __fundCache = {};   // [V12.130] 사이클당 1회 프리로드(종목별 중복 D1 read 제거)
       // [V33.78] FLOW — 모델과 피어계산용 일봉캐시를 사이클당 1회만 준비한다.
       //   일봉캐시는 이미 daily: 로 D1 에 있으니 한 번 훑어 메모리에 올린다(종목마다 재조회 금지).
@@ -14749,6 +14988,8 @@ async function runTradingCycle(env) {
           try { if (__gbdtTrust && __gbdtTrust.trusted) __gbdt = await mlGBDTLoad(DB, market); } catch (e) {}   // [V33.76] 시장 전용 모델 우선
           try { __cal = await getState(DB, "committee_cal", null); } catch (e) {}
           try { __evStats = await getState(DB, "ml_evstats", null); } catch (e) {}
+          // [V33.90] 실제 원장 기준 성과통계 — EV 게이트가 표본풀 대신 이 값을 우선한다(사이클 1회).
+          try { __portStats = await getState(DB, "port_stats", null); } catch (e) {}
           try { __idxCloses = await _mlLoadIndexCloses(DB, market); } catch (e) {}
           try { __xsPanel = await getState(DB, "xs_panel", null); } catch (e) {}   // [V21] 횡단면 랭크 패널
           // [V33.78] FLOW 모델 + 피어용 일봉 스냅샷(사이클 1회). 모델이 없어도 표본 수집을 위해 캐시는 만든다.
@@ -16251,7 +16492,7 @@ async function runTradingCycle(env) {
                     if (__xaFeat) signal.xaFeat = __xaFeat;
                   }
                 } catch (e) {}
-                try { _md = await mlDeepDecide(DB, signal.mlFeat, { mind: __mind, guard: __guard, ens: __ensemble, trust: __dnnTrust, dnn: __dnn, gbdtTrust: __gbdtTrust, gbdt: __gbdt, cal: __cal, evstats: __evStats, shock: await _luxMarketShockCached(DB), sym: symbol, evCtx: await _luxEventContextCached(DB), applyEventPrior: true, market: market, flowFeat: __flowFeat, flowModel: __flowModel, xaFeat: __xaFeat, xaModel: __xaModel, stackModel: __stackModel, dualBull: __dualBull, dualBear: __dualBear }); } catch (e) {}
+                try { _md = await mlDeepDecide(DB, signal.mlFeat, { mind: __mind, guard: __guard, ens: __ensemble, trust: __dnnTrust, dnn: __dnn, gbdtTrust: __gbdtTrust, gbdt: __gbdt, cal: __cal, evstats: __evStats, portStats: __portStats, shock: await _luxMarketShockCached(DB), sym: symbol, evCtx: await _luxEventContextCached(DB), applyEventPrior: true, market: market, flowFeat: __flowFeat, flowModel: __flowModel, xaFeat: __xaFeat, xaModel: __xaModel, stackModel: __stackModel, dualBull: __dualBull, dualBear: __dualBear }); } catch (e) {}
                 if (!_md) { try { _md = await mlMindDecide(DB, signal.mlFeat, { mind: __mind, guard: __guard, ens: __ensemble }); } catch (e) {} }
                 // [V5] AI 픽 수집 — 개입 여부와 무관하게 예측 자체는 기록(종목당 1회)
                 try {
@@ -16427,8 +16668,12 @@ async function runTradingCycle(env) {
                 } catch (e) { /* 분봉 조회 실패는 무시 — 일봉 신호로 진입 진행 */ }
               }
               // [V8.6 Hybrid] LLM stop_loss_adjustment 적용 (지시 있으면)
-              const buyOpts = (llmInstr && llmInstr.stop_loss_adjustment && typeof llmInstr.stop_loss_adjustment.new_pct === "number")
-                ? { stopPctOverride: llmInstr.stop_loss_adjustment.new_pct } : null;
+              // [V33.90] equity 를 함께 넘긴다 — 사전거래 체인의 '1주문 명목가 상한(총자산 35%)'
+              //   검사는 총자산을 모르면 아예 성립하지 않는다(넘기지 않으면 그 검사가 죽은 코드가 된다).
+              const buyOpts = Object.assign(
+                { equity: (typeof portfolioValue === "number" && portfolioValue > 0) ? portfolioValue : cash[market] },
+                (llmInstr && llmInstr.stop_loss_adjustment && typeof llmInstr.stop_loss_adjustment.new_pct === "number")
+                  ? { stopPctOverride: llmInstr.stop_loss_adjustment.new_pct } : null);
               const cashBefore = cash[market];
               cash = await executeBuy(DB, market, symbol, strategy, qty, price, signal, dailyAtr, mcfg, cash, buyOpts) || cash;
               // [V28] executeBuy가 실제로 cash를 차감했을 때만 매수 성공으로 카운트.
@@ -17279,6 +17524,25 @@ async function handleRequest(request, env, ctx) {
             stack: await _mk("stack_model", "stack_samples", STACKML.minTrainSamples, STACKML.featVer),
             backfill: _bf ? { made: _num(_bf.made, 0), cursor: _num(_bf.lastId, 0), ts: _num(_bf.ts, 0) } : null
           };
+          // [V33.89] 이중헤드(강세/약세) — ml_samples 를 그대로 쓰므로 표본은 스윙 풀과 같다.
+          try {
+            const _dbm = await getState(env.DB, "dual_bull_model", null);
+            const _drm = await getState(env.DB, "dual_bear_model", null);
+            let _dn = 0;
+            try { const r = await env.DB.prepare("SELECT COUNT(*) c FROM ml_samples WHERE featver = ?").bind(LUXML.featVer).first(); _dn = _num(r && r.c, 0); } catch (e) {}
+            const _one = function (m) { return m ? { trained: m.featVer === LUXML.featVer, trusted: !!m.trusted, ic: _num(m.valIC, null), acc: _num(m.valAcc, null), base: _num(m.baseRate, null), n: _num(m.n, null) } : null; };
+            _alt.dual = { samples: _dn, minN: DUALHEAD.minTrainSamples, bull: _one(_dbm), bear: _one(_drm) };
+          } catch (e) {}
+          // [V33.90] 실제 원장 기준 성과통계(NautilusTrader PortfolioAnalyzer) + 전역 거래상태.
+          try { _alt.port = await getState(env.DB, "port_stats", null); } catch (e) {}
+          try {
+            const _ts2 = await getState(env.DB, "trade_state", null);
+            _alt.tradeState = (_ts2 && (!_ts2.until || Date.now() <= _ts2.until))
+              ? { us: (_ts2.byMarket && _ts2.byMarket.us) || _ts2.state || "ACTIVE",
+                  kr: (_ts2.byMarket && _ts2.byMarket.kr) || _ts2.state || "ACTIVE",
+                  reason: _ts2.reason || null }
+              : { us: "ACTIVE", kr: "ACTIVE", reason: null };
+          } catch (e) {}
           // [V33.82] 단타 레버리지 게이트 실황 — 왜 열렸는지/왜 닫혔는지 화면에서 보이게.
           try {
             const _lvc = (DEFAULT_CFG.scalpLeverage || {});
@@ -18407,12 +18671,12 @@ async function handleRequest(request, env, ctx) {
     if (path === "/api/ai/train-now" && request.method === "POST") {
       const au = _trainAuthed(); if (!au.ok) return Response.json({ error: au.msg }, { status: au.code, headers: cors });
       const target = url.searchParams.get("target") || "mind";
-      const FN = { mind: mlMindTrainNightly, gbdt: mlGBDTTrainNightly, brain: mlBrainTrainNightly, dnn: mlDNNTrainNightly, l1: mlTrainNightly, calibrate: mlCalibrateCommittee, selfreview: mlSelfReview, flow: flowTrainNightly, xalpha: xalphaTrainNightly, stack: stackTrainNightly, dual: dualHeadTrainNightly };
+      const FN = { mind: mlMindTrainNightly, gbdt: mlGBDTTrainNightly, brain: mlBrainTrainNightly, dnn: mlDNNTrainNightly, l1: mlTrainNightly, calibrate: mlCalibrateCommittee, selfreview: mlSelfReview, flow: flowTrainNightly, xalpha: xalphaTrainNightly, stack: stackTrainNightly, dual: dualHeadTrainNightly, portstats: portfolioStatsNightly };
       // [V12.63] target=all — 재배포 직후 "한 방에" 전체 파이프라인을 정확한 순서로 재실행(하루1회 게이트 무시).
       //   순서 고정: harvest → l1 → brain → mind → dnn → gbdt → calibrate (뒤 단계가 앞 단계 산출물 의존).
       //   각 단계 자체 CPU예산 가드가 있어 안전. 재학습 즉시 모든 수정이 반영되게 하는 원클릭 경로.
       if (target === "all") {
-        const _order = [["harvest", mlMarketHarvestNightly], ["l1", mlTrainNightly], ["brain", mlBrainTrainNightly], ["mind", mlMindTrainNightly], ["gbdt", mlGBDTTrainNightly], ["dnn", mlDNNTrainNightly], ["flow", flowTrainNightly], ["xalpha", xalphaTrainNightly], ["stack", stackTrainNightly], ["dual", dualHeadTrainNightly], ["calibrate", mlCalibrateCommittee]];
+        const _order = [["harvest", mlMarketHarvestNightly], ["l1", mlTrainNightly], ["brain", mlBrainTrainNightly], ["mind", mlMindTrainNightly], ["gbdt", mlGBDTTrainNightly], ["dnn", mlDNNTrainNightly], ["flow", flowTrainNightly], ["xalpha", xalphaTrainNightly], ["stack", stackTrainNightly], ["dual", dualHeadTrainNightly], ["portstats", portfolioStatsNightly], ["calibrate", mlCalibrateCommittee]];
         const out = {};
         for (const [nm, fn] of _order) {
           try { out[nm] = await fn(env.DB); } catch (e) { out[nm] = "FAIL: " + (e && e.message); }
@@ -23130,11 +23394,12 @@ async function mlScalpDecide(DB, featVec, opts) {
     const _bbW = tAt(6), _sup = tAt(12);
     const votes = [];   // {n, v} v>0 매수 / v<0 매도
     // 볼린저 — 하단 근처에서 반등(과매도 회복)이거나, 스퀴즈 후 상단 돌파(변동성 확장 초입)
+    let _bbVoted = false;   // [V33.90] %B 가 이미 표를 냈는지 — 아래 'MA위/아래' 이중계상 방지
     if (_pctB != null) {
-      if (_pctB <= 0.2 && _rsiSl > 0) votes.push({ n: "BB하단반등", v: 1 });
-      else if (_pctB >= 0.98 && _bbW != null && _bbW < 3 && _mHist > 0) votes.push({ n: "BB스퀴즈돌파", v: 1 });
-      else if (_pctB >= 1.15) votes.push({ n: "BB상단이탈", v: -1 });          // 밴드 밖 과열
-      else if (_pctB <= -0.1) votes.push({ n: "BB하단이탈", v: -1 });          // 밴드 밖 붕괴
+      if (_pctB <= 0.2 && _rsiSl > 0) { votes.push({ n: "BB하단반등", v: 1 }); _bbVoted = true; }
+      else if (_pctB >= 0.98 && _bbW != null && _bbW < 3 && _mHist > 0) { votes.push({ n: "BB스퀴즈돌파", v: 1 }); _bbVoted = true; }
+      else if (_pctB >= 1.15) { votes.push({ n: "BB상단이탈", v: -1 }); _bbVoted = true; }          // 밴드 밖 과열
+      else if (_pctB <= -0.1) { votes.push({ n: "BB하단이탈", v: -1 }); _bbVoted = true; }          // 밴드 밖 붕괴
     }
     if (_mHist != null && _mX != null) {
       if (_mX > 0) votes.push({ n: "MACD골든", v: 1 });
@@ -23155,7 +23420,16 @@ async function mlScalpDecide(DB, featVec, opts) {
     // MA — 단기 이평 정배열(EMA5>EMA13) + 가격이 볼린저 중심선(=MA14) 위/아래 어디인가.
     //   "MA 도 같이 봐라"(사용자) → 이평 방향과 가격의 이평 대비 위치를 각각 표로 센다.
     if (_ema != null) votes.push({ n: _ema > 0 ? "MA정배열" : "MA역배열", v: _ema > 0 ? 1 : -1 });
-    if (_pctB != null) {
+    // [V33.90] ★같은 변수(%B)를 두 표로 세던 논리오류 수정 — 매수자리만 골라서 상쇄되고 있었다★
+    //   %B 는 위 BB 블록과 이 MA 블록에 동시에 들어가 한 지표가 두 번 계상됐고,
+    //   그 결과가 방향별로 비대칭이었다(실측):
+    //     · 과매도 반등(%B≤0.2, 전형적 매수자리) → BB하단반등 +1 / MA아래 −1 = ★순표 0★
+    //     · 밴드 상단이탈(과열)               → BB상단이탈 −1 / MA위  +1 = ★순표 0★
+    //     · 밴드 하단붕괴(급락)               → BB하단이탈 −1 / MA아래 −1 = ★순표 −2★
+    //   즉 매수 신호는 전부 0 으로 지워지고 매도 신호만 두 배가 됐다. minConfluence=2 게이트에서
+    //   이건 '단타가 사실상 사지 못하는' 구조적 편향이다.
+    //   → %B 가 이미 BB 표를 냈으면 MA 위치 표는 내지 않는다(밴드 중립구간에서만 이평 위치로 계산).
+    if (_pctB != null && !_bbVoted) {
       // %B 0.5 = 중심선(MA14). 위면 이평 위, 아래면 이평 아래.
       if (_pctB > 0.55) votes.push({ n: "MA위", v: 1 });
       else if (_pctB < 0.45) votes.push({ n: "MA아래", v: -1 });
@@ -26248,7 +26522,14 @@ async function mlDeepDecide(DB, featVec, opts) {
       if (pDnn != null) {
         const accBase = _num(trust.dnnAccLB, _num(trust.dnnAcc, 0.5));
         const accEff = 0.5 + (accBase - 0.5) / (1 + (DNN.disagreeK || 3.0) * dnnStd);  // 불일치↑ → 소프트맥스 가중↓
-        experts.push({ name: "dnn", p: pDnn, z: _logitD(pDnn), acc: accEff, ic: (dnn && typeof dnn.valIC === "number") ? dnn.valIC : null }); usedDnn = true;
+        // [V33.90] ★치명 버그 수정★ 여기서 참조하던 `dnn` 은 이 함수 어디에도 선언이 없다
+        //   (로드된 모델의 변수명은 `net` 이다). 선언 없는 식별자를 읽으면 ReferenceError 가 나고,
+        //   mlDeepDecide 의 최상위 try/catch 가 그걸 삼켜 ★null 을 반환★ 한다.
+        //   즉 DNN 이 신뢰 상태로 확률을 내는 순간마다 위원회 전체(MIND·GBDT·부스터·FLOW·XALPHA·
+        //   STACK·이중헤드)가 통째로 죽고 밴딧/규칙엔진으로 폴백해 왔다. V33.77 부터 존재한 버그다.
+        const _dnnIC = (net && typeof net.valIC === "number" && isFinite(net.valIC)) ? net.valIC
+                     : ((trust && typeof trust.valIC === "number" && isFinite(trust.valIC)) ? trust.valIC : null);
+        experts.push({ name: "dnn", p: pDnn, z: _logitD(pDnn), acc: accEff, ic: _dnnIC }); usedDnn = true;
         if (!mind) _committeeUnc = Math.max(_committeeUnc, dnnStd);  // [V12.62] MIND 없을 땐 DNN 시드불일치를 위원회 불확실성으로
       }
     }
@@ -26373,9 +26654,17 @@ async function mlDeepDecide(DB, featVec, opts) {
       const T = (typeof DNN !== "undefined" ? DNN.trustTemp : 12);
       const _cap = (typeof DNN !== "undefined" && DNN.committeeAccCap) ? DNN.committeeAccCap : 0.66;
       const _icT = (typeof DNN !== "undefined" && DNN.icTemp != null) ? DNN.icTemp : 60;
+      // [V33.90] ★환산 IC 의 상한을 실측 IC 와 같은 눈금으로 낮춘다★
+      //   문제: 환산식 (acc−0.5)/0.4 는 accLB 0.55 를 IC 0.125, 캡값 0.66 을 IC 0.25 로 만든다.
+      //   그런데 실제 모델이 싣고 오는 valIC 는 10일 지평에서 0.02~0.08 이 정상 범위다.
+      //   icTemp=60 이라 exp(60×0.25)=3.3e6 vs exp(60×0.06)=36.6 — ★환산 전문가 한 명이
+      //   진짜 IC 를 가진 전문가 전원을 9만 배로 압도★ 한다. 이건 뉴스 감성에서 잡았던
+      //   '학습가중(±2.0 %단위) vs 사전기본(±0.6 감성점)' 과 정확히 같은 눈금 불일치다.
+      //   → 환산 경로는 실측 IC 의 현실 범위(≤0.10)로 잘라 같은 자에서 겨루게 한다.
+      //     실측 IC 를 싣고 온 전문가는 종전대로 0.25 까지 인정한다(진짜로 잰 값이므로).
       const _icOf = function (ex) {
         if (typeof ex.ic === "number" && isFinite(ex.ic)) return _clamp(ex.ic, -0.05, 0.25);
-        return _clamp((Math.min(_accBlend(ex), _cap) - 0.5) / 0.4, -0.05, 0.25);   // 정확도 → IC 근사
+        return _clamp((Math.min(_accBlend(ex), _cap) - 0.5) / 0.4, -0.02, 0.10);   // 정확도 → IC 근사(현실범위)
       };
       const _useIC = experts.some(function (ex) { return typeof ex.ic === "number" && isFinite(ex.ic); });
       let wsum = 0, zsum = 0;
@@ -26430,7 +26719,11 @@ async function mlDeepDecide(DB, featVec, opts) {
     try {
       const cal = (opts.cal !== undefined) ? opts.cal : await getState(DB, "committee_cal", null);
       // [V12.93] featVer 불일치 보정온도는 무시 — featVer 상향 직후 구버전 T가 신버전 확률을 왜곡하던 것 방지.
-      if (cal && (cal.featVer == null || cal.featVer === LUXML.featVer) && typeof cal.T === "number" && cal.T > 0.3 && cal.T < 8) {
+      // [V33.90] ★STACK 이 확률을 냈으면 온도보정을 하지 않는다★
+      //   committee_cal.T 는 '투표 결합확률' 분포에서 학습한 값이다. STACK 메타모델은 라벨에
+      //   직접 로지스틱으로 적합돼 이미 그 자체로 보정돼 있고 분포도 다르다. 그 위에 투표용 T 를
+      //   덧씌우면 잘 맞던 확률을 일부러 흐리는 꼴이 된다(이중 보정).
+      if (!_usedStack && cal && (cal.featVer == null || cal.featVer === LUXML.featVer) && typeof cal.T === "number" && cal.T > 0.3 && cal.T < 8) {
         pCombined = _clamp(_sigmoid(_logitD(pCombined) / cal.T), 0.001, 0.999);
       }
     } catch (e) {}
@@ -26536,6 +26829,25 @@ async function mlDeepDecide(DB, featVec, opts) {
       }
     } catch (e) {}
 
+    // ══ [V33.89] ★이중 헤드 사분면 판정★ — 상승/하락 확률을 따로 받아 네 상황을 구분한다. ══
+    //   volatile(양방향 강함)·dead(양방향 약함)는 진입 대상이 아니다.
+    //   bull 사분면이면 비대칭 상방이므로 확률에 소폭 가점(로그오즈).
+    // [V33.90] ★위치 이동 — 종전엔 이 블록이 allow·sizeMult 계산 뒤에 있었다★
+    //   그래서 이중헤드가 준 ±0.35 로짓은 반환되는 p 에만 반영되고 ★진입 여부(allow)와
+    //   사이즈(sizeMult)에는 전혀 영향이 없었다★. 켈리도 이동 전 확률로 돌았다.
+    //   확률 체인의 마지막 증거이므로 게이트·사이징보다 반드시 앞에 와야 한다.
+    //   (V33.85 의 캘리브레이션 위치 사고와 같은 계열 — 순서가 곧 의미다.)
+    let _dual = null;
+    try {
+      const _bm = (opts.dualBull !== undefined) ? opts.dualBull : await getState(DB, "dual_bull_model", null);
+      const _rm = (opts.dualBear !== undefined) ? opts.dualBear : await getState(DB, "dual_bear_model", null);
+      _dual = dualHeadJudge(_bm, _rm, featVec);
+      if (_dual) {
+        if (_dual.quadrant === "bull")      pCombined = _clamp(_sigmoid(_logitD(pCombined) + 0.35), 0.001, 0.999);
+        else if (_dual.quadrant === "bear") pCombined = _clamp(_sigmoid(_logitD(pCombined) - 0.35), 0.001, 0.999);
+      }
+    } catch (e) {}
+
     // [V12.63] ★고도화 산식 — 위원회 합의도(cross-expert agreement)를 신뢰도에 반영★ 세 모델이
     //   서로 동의할수록(전문가 확률 분산↓) 확신을 키우고, 엇갈릴수록(분산↑) 불확실성으로 흡수해
     //   사이즈 축소·기권을 넓힌다. MIND/DNN/GBDT가 "조화롭게" 하나의 확신을 만들도록 결합(단일 모델
@@ -26558,8 +26870,24 @@ async function mlDeepDecide(DB, featVec, opts) {
     if (Math.abs(pCombined - 0.5) < (typeof MIND !== "undefined" ? MIND.abstainBand : 0.05)) return { source: "deep", abstain: true, reason: "ambiguous", p: pCombined, experts: _expOut };
     // [V7] 기대값(EV) 게이트: 통계 있으면 p·평균이익 − (1−p)·평균손실 > 0 로 판단
     //   (손익 비대칭 반영 — 고정 확률 임계보다 수익률 정렬적). 통계 없으면 종전 임계.
-    let allow, evVal = null;
-    const evs = (opts.evstats !== undefined) ? opts.evstats : await getState(DB, "ml_evstats", null);
+    let allow, evVal = null, _evSrc = null;
+    let evs = (opts.evstats !== undefined) ? opts.evstats : await getState(DB, "ml_evstats", null);
+    _evSrc = evs ? "samples" : null;
+    // [V33.90] ★EV 게이트의 손익 비대칭을 '실제 원장'에서 가져온다 (NautilusTrader PortfolioAnalyzer)★
+    //   ml_evstats 의 avgWin/avgLoss 는 학습표본 풀에서 잰 값인데, 그 풀은 17만 중 대부분이
+    //   수확표본(아무 봉에서나 진입했다고 가정한 반사실 표본)이다. 실제로 우리가 체결하는 거래는
+    //   진입필터·손절·익절·타임스톱을 다 통과한 것이라 손익 분포가 다르다.
+    //   ★즉 EV 게이트가 우리 거래가 아닌 남의 분포로 문턱을 잡고 있었다★ — 전형적 train/serve 스큐.
+    //   종결거래가 40건 이상 쌓이면 원장 실측값을 우선한다(그 전엔 표본값으로 공백 없이 운용).
+    try {
+      const _ps = (opts.portStats !== undefined) ? opts.portStats : await getState(DB, "port_stats", null);
+      const _pm = _ps && ((opts.market === "us" || opts.market === "kr") ? _ps[opts.market] : null);
+      const _pick = (_pm && _pm.ready && _pm.n >= 40) ? _pm : ((_ps && _ps.all && _ps.all.ready && _ps.all.n >= 40) ? _ps.all : null);
+      if (_pick && _pick.avgWin > 0 && _pick.avgLoss > 0) {
+        evs = { avgWin: _pick.avgWin, avgLoss: _pick.avgLoss, n: _pick.n };
+        _evSrc = "ledger:" + (_pick.market || "all");
+      }
+    } catch (e) {}
     if (evs && evs.avgWin > 0 && evs.avgLoss > 0) {
       evVal = +(pCombined * evs.avgWin - (1 - pCombined) * evs.avgLoss).toFixed(3);
       allow = evVal > 0;
@@ -26568,19 +26896,6 @@ async function mlDeepDecide(DB, featVec, opts) {
       allow = pCombined >= gate;
     }
     const sizeMult = allow ? +(mlKellySize(pCombined, unc) * _shkSizeK).toFixed(3) : 1;   // [V32.46] 레짐 사이즈 배율 반영
-    // [V33.89] ★이중 헤드 사분면 판정★ — 상승/하락 확률을 따로 받아 네 상황을 구분한다.
-    //   volatile(양방향 강함)·dead(양방향 약함)는 진입 대상이 아니다.
-    //   bull 사분면이면 비대칭 상방이므로 확률에 소폭 가점(로그오즈).
-    let _dual = null;
-    try {
-      const _bm = (opts.dualBull !== undefined) ? opts.dualBull : await getState(DB, "dual_bull_model", null);
-      const _rm = (opts.dualBear !== undefined) ? opts.dualBear : await getState(DB, "dual_bear_model", null);
-      _dual = dualHeadJudge(_bm, _rm, featVec);
-      if (_dual) {
-        if (_dual.quadrant === "bull")      pCombined = _clamp(_sigmoid(_logitD(pCombined) + 0.35), 0.001, 0.999);
-        else if (_dual.quadrant === "bear") pCombined = _clamp(_sigmoid(_logitD(pCombined) - 0.35), 0.001, 0.999);
-      }
-    } catch (e) {}
 
     // [V33.88] ★대립 구간 기권★ — 양쪽 증거가 팽팽한데 결론이 애매하면 매매하지 않는다.
     //   "근거 없음"이 아니라 "논쟁 중"인 자리다. 이런 곳은 확률이 0.5 근처라 어차피 문턱에 걸리지만,
@@ -26597,7 +26912,7 @@ async function mlDeepDecide(DB, featVec, opts) {
       //   전자는 논쟁 자리, 후자는 타임스톱만 소모하는 죽은 돈이다.
       if (_dual && (_dual.quadrant === "volatile" || _dual.quadrant === "dead")) _contested = true;
     } catch (e) {}
-    return { source: "deep", allow: (allow && !_contested), sizeMult: sizeMult, p: pCombined, uncertainty: unc, usedDnn: usedDnn, usedGbdt: usedGbdt, ev: evVal, experts: _expOut, shock: _shockOut, evPrior: _evPriorOut, stackFeat: _stackFeat, usedStack: _usedStack,
+    return { source: "deep", allow: (allow && !_contested), sizeMult: sizeMult, p: pCombined, uncertainty: unc, usedDnn: usedDnn, usedGbdt: usedGbdt, ev: evVal, evSrc: _evSrc, experts: _expOut, shock: _shockOut, evPrior: _evPriorOut, stackFeat: _stackFeat, usedStack: _usedStack,
              bull: +_bull.toFixed(3), bear: +_bear.toFixed(3), conviction: +_conv.toFixed(3), conflict: +_conflict.toFixed(3), contested: _contested, dual: _dual };
   } catch (e) { return null; }
 }
@@ -27125,6 +27440,14 @@ async function mlCalibrateCommittee(DB) {
     const boosters = await _boostersCached(DB);   // [V32.65] 부스터도 보정·신뢰도에 포함(라이브 위원회와 정합)
     const T0 = (typeof DNN !== "undefined" ? DNN.trustTemp : 12);
     const mindAccLB = (typeof mind.valAccLB === "number") ? mind.valAccLB : 0.5;
+    // [V33.90] 모델별 실측 IC — 라이브 위원회 가중과 같은 재료를 쓰기 위해 루프 밖에서 1회 확보.
+    const _icPick = function (m, t) {
+      if (m && typeof m.valIC === "number" && isFinite(m.valIC)) return m.valIC;
+      if (t && typeof t.valIC === "number" && isFinite(t.valIC)) return t.valIC;
+      return null;
+    };
+    const _dnnIC0 = _icPick(dnn, dnnTrust);
+    const _gbdtIC0 = _icPick(gbdt, gTrust);
 
     const preds = [];
     // [V32.59] 전문가별 최근 실측정확도 집계 — 이미 각 모델을 표본에 돌리므로 추가비용 ≈0.
@@ -27138,17 +27461,56 @@ async function mlCalibrateCommittee(DB) {
       const y = _labelOfRow(r);   // [V33.87] 현행 라벨 규칙으로 재판정(옛 alpha 라벨 무시)
       const ex = [{ z: _logitD(ms.p), acc: mindAccLB }];
       rel.mind.n++; if ((ms.p >= 0.5 ? 1 : 0) === y) rel.mind.c++;
-      if (dnn) { const pD = mlDNNScore(dnn, v); if (pD != null) { ex.push({ z: _logitD(pD), acc: _num(dnnTrust.dnnAccLB, 0.5) }); rel.dnn.n++; if ((pD >= 0.5 ? 1 : 0) === y) rel.dnn.c++; } }
-      if (gbdt) { const pG = mlGBDTScore(gbdt, v); if (pG != null) { ex.push({ z: _logitD(pG), acc: _num(gTrust.gbdtAccLB, 0.5) }); rel.gbdt.n++; if ((pG >= 0.5 ? 1 : 0) === y) rel.gbdt.c++; } }
+      // [V33.90] 라이브와 동일하게 모델이 싣고 온 valIC 를 함께 넘긴다(가중식 정합).
+      if (dnn) { const pD = mlDNNScore(dnn, v); if (pD != null) { ex.push({ z: _logitD(pD), acc: _num(dnnTrust.dnnAccLB, 0.5), ic: _dnnIC0 }); rel.dnn.n++; if ((pD >= 0.5 ? 1 : 0) === y) rel.dnn.c++; } }
+      if (gbdt) { const pG = mlGBDTScore(gbdt, v); if (pG != null) { ex.push({ z: _logitD(pG), acc: _num(gTrust.gbdtAccLB, 0.5), ic: _gbdtIC0 }); rel.gbdt.n++; if ((pG >= 0.5 ? 1 : 0) === y) rel.gbdt.c++; } }
       // [V32.65] 부스터 합의(XGB/LGB/Cat) — 라이브와 동일하게 정확도가중 1표(wMul 0.8)로 반영
       if (boosters && boosters.length) {
-        let bz = 0, bw = 0, bAccMax = 0.5, bUsed = 0;
-        for (const b of boosters) { const pB = mlGBDTScore(b.model, v); if (pB == null) continue; const wgt = Math.max(0.01, b.accLB - 0.5); bz += wgt * _logitD(pB); bw += wgt; bUsed++; if (b.accLB > bAccMax) bAccMax = b.accLB; }
-        if (bw > 0 && bUsed > 0) { const pBoost = _clamp(_sigmoid(bz / bw), 1e-6, 1 - 1e-6); ex.push({ z: _logitD(pBoost), acc: bAccMax, wMul: 0.8 }); rel.boost.n++; if ((pBoost >= 0.5 ? 1 : 0) === y) rel.boost.c++; }
+        // [V33.90] 부스터 내부 합의도 라이브와 동일하게 IC 우선 가중(없으면 정확도)으로 맞춘다.
+        let bz = 0, bw = 0, bAccMax = 0.5, bUsed = 0, bICMax = null;
+        for (const b of boosters) {
+          const pB = mlGBDTScore(b.model, v); if (pB == null) continue;
+          const _bIC = (b.model && typeof b.model.valIC === "number") ? b.model.valIC : null;
+          const wgt = (_bIC != null) ? Math.max(0.002, _bIC) : Math.max(0.01, b.accLB - 0.5);
+          bz += wgt * _logitD(pB); bw += wgt; bUsed++;
+          if (b.accLB > bAccMax) bAccMax = b.accLB;
+          if (_bIC != null && (bICMax == null || _bIC > bICMax)) bICMax = _bIC;
+        }
+        if (bw > 0 && bUsed > 0) { const pBoost = _clamp(_sigmoid(bz / bw), 1e-6, 1 - 1e-6); ex.push({ z: _logitD(pBoost), acc: bAccMax, ic: bICMax, wMul: 0.8 }); rel.boost.n++; if ((pBoost >= 0.5 ? 1 : 0) === y) rel.boost.c++; }
       }
-      let wsum = 0, zsum = 0;
-      for (const e2 of ex) { const w = (e2.wMul || 1) * Math.exp(T0 * (e2.acc - 0.5)); wsum += w; zsum += w * e2.z; }
-      preds.push({ p: _clamp(_sigmoid(zsum / (wsum || 1)), 1e-6, 1 - 1e-6), y: y });
+      // [V33.90] ★보정 온도를 '실제로 쓰는 결합식' 위에서 학습한다★
+      //   종전엔 여기서 정확도 소프트맥스 exp(12×(acc−0.5)) 로 결합해 T 를 찾았는데,
+      //   라이브(mlDeepDecide)는 V33.77 부터 IC 소프트맥스 exp(60×IC) 로 결합한다.
+      //   ★T 를 A 분포에서 배워 B 분포에 적용★ 하고 있었던 셈이다 — 결합확률의 산포가
+      //   두 방식에서 크게 달라(IC 가중은 승자독식에 가까워 더 극단) 보정이 오히려 왜곡을 넣는다.
+      //   → 라이브와 같은 가중식으로 통일한다. 환산 IC 상한도 라이브와 같은 0.10 을 쓴다.
+      const _icT0 = (typeof DNN !== "undefined" && DNN.icTemp != null) ? DNN.icTemp : 60;
+      const _cap0 = (typeof DNN !== "undefined" && DNN.committeeAccCap) ? DNN.committeeAccCap : 0.66;
+      const _icOf0 = function (e2) {
+        if (typeof e2.ic === "number" && isFinite(e2.ic)) return _clamp(e2.ic, -0.05, 0.25);
+        return _clamp((Math.min(e2.acc, _cap0) - 0.5) / 0.4, -0.02, 0.10);
+      };
+      const _useIC0 = ex.some(function (e2) { return typeof e2.ic === "number" && isFinite(e2.ic); });
+      let wsum = 0, zsum = 0; const _wl0 = [];
+      for (const e2 of ex) {
+        const w = _useIC0 ? (e2.wMul || 1) * Math.exp(_icT0 * _icOf0(e2))
+                          : (e2.wMul || 1) * Math.exp(T0 * (Math.min(e2.acc, _cap0) - 0.5));
+        wsum += w; zsum += w * e2.z; _wl0.push({ w: w, z: e2.z });
+      }
+      let _pc0 = _clamp(_sigmoid(zsum / (wsum || 1)), 1e-6, 1 - 1e-6);
+      // 라이브의 절사평균 가드(전문가 5명 이상)도 동일하게 재현 — 분포를 맞추기 위함.
+      if (_wl0.length >= 5) {
+        const _s0 = _wl0.slice().sort(function (a2, b2) { return a2.z - b2.z; });
+        const _c0 = Math.floor(_s0.length * 0.2);
+        const _m0 = _s0.slice(_c0, _s0.length - _c0);
+        if (_m0.length >= 2) {
+          let _mw0 = 0, _mz0 = 0;
+          for (const e3 of _m0) { _mw0 += e3.w; _mz0 += e3.w * e3.z; }
+          const _pt0 = _clamp(_sigmoid(_mz0 / (_mw0 || 1)), 1e-6, 1 - 1e-6);
+          if (Math.abs(_pt0 - _pc0) > 0.12) _pc0 = _clamp(_pc0 * 0.5 + _pt0 * 0.5, 1e-6, 1 - 1e-6);
+        }
+      }
+      preds.push({ p: _pc0, y: y });
     }
     if (preds.length < 60) return "[CAL] 유효예측 부족(" + preds.length + ")";
     // 전문가 신뢰도 저장(Wilson 하한 — 표본수 반영 보수적 추정)
@@ -33199,6 +33561,19 @@ export default {
             //   먼저 완주해 학습되게(종전 순서는 DNN 실패 시 뒤의 GBDT가 영영 못 돌던 원인).
             await _stg("gbdt", async function () { return await mlGBDTTrainNightly(env.DB); });
             await _stg("dnn", async function () { return await mlDNNTrainNightly(env.DB); });
+            // [V33.90] ★신규 4모델을 야간 파이프라인에 정식 편입 — 그동안 학습된 적이 없다★
+            //   FLOW(V33.78)·XALPHA(V33.79)·STACK(V33.80)·DUAL(V33.89) 은 /api/ai/train-now 의
+            //   수동 목록(FN·_order)에만 있고 ★크론 야간 파이프라인에는 등록되지 않았다★.
+            //   즉 사람이 API 를 직접 때리지 않는 한 영원히 미학습이고, 위원회 합류 조건
+            //   (model.trusted)이 성립할 수 없었다 — 만들어만 두고 안 돌던 코드다.
+            //   순서: 전문가 3종(flow·xalpha) → STACK(전문가 확률을 입력으로 받으므로 뒤) → DUAL.
+            await _stg("flow", async function () { return await flowTrainNightly(env.DB); });
+            await _stg("xalpha", async function () { return await xalphaTrainNightly(env.DB); });
+            await _stg("stack", async function () { return await stackTrainNightly(env.DB); });
+            await _stg("dual", async function () { return await dualHeadTrainNightly(env.DB); });
+            // [V33.90] 실제 원장 기준 포트폴리오 통계(NautilusTrader PortfolioAnalyzer) —
+            //   EV 게이트가 이 값을 읽으므로 보정(calibrate)보다 앞에서 갱신한다.
+            await _stg("portstats", async function () { return await portfolioStatsNightly(env.DB); });
             // (4) [V4] 위원회 확률 보정(온도 스케일링) — 결합확률의 과신/과소신 교정
             await _stg("calibrate", async function () { return await mlCalibrateCommittee(env.DB); });
             // (4.5) [V6] 전 종목 야간 AI 스캔 — 유니버스 전체 승률예측(AI 픽·리포트 커버리지)
