@@ -2630,7 +2630,7 @@ async function applySignalTypeWeights(DB, cfg) {
 // ============================================================================
 // [V33.55] 빌드 버전 — SWR L2 캐시 키에 섞어 '배포 = 판단 캐시 자동 무효화'를 만든다.
 //   판정 로직을 고쳐도 옛 캐시가 최대 1시간 재배포되던 문제를 구조적으로 없앤다.
-const _BUILD_VER = "V33.91";
+const _BUILD_VER = "V33.92";
 
 const AI_PARAMS = {
   // ── OHLCV 타임프레임 ── 시가/고가/저가/종가/거래량을 어떤 봉 주기로 볼지.
@@ -8867,6 +8867,11 @@ const RISKENG = {
   //   넣을 수 있다" 는 구멍이 남는다. 계좌 전체가 실리는 건 그쪽이다.
   //   레버리지 운용을 하므로 100% 초과를 허용하되(현금 이상으로 실릴 수 있다) 상한은 둔다.
   maxGrossFrac: 1.60,
+  // [V33.92] 일평균 거래대금(ADV) 참여율 상한 — NautilusTrader 백테스트 현실성 계열.
+  //   호가창에 없는 물량을 "샀다"고 기록하면 그 수익률은 애초에 존재하지 않는 것이다.
+  //   실제 기관 집행에서도 일중 참여율 10~20% 를 넘기면 자기 주문이 가격을 밀어 올린다.
+  //   우리는 종가 단일가 체결을 가정하므로 더 보수적으로 5% 로 잡고, 넘으면 수량을 깎는다.
+  maxAdvParticipation: 0.05,
   reduceOnlyOnHalt: true
 };
 const _RISK_DENY = {
@@ -8878,7 +8883,8 @@ const _RISK_DENY = {
   MAX_ORDER_SUBMIT_RATE: "주문제출 레이트 초과",
   TRADING_HALTED: "거래중단 상태",
   TRADING_REDUCING_ONLY: "축소전용 상태(신규진입 금지)",
-  GROSS_EXPOSURE_EXCEEDED: "총 노출 상한 초과"
+  GROSS_EXPOSURE_EXCEEDED: "총 노출 상한 초과",
+  ADV_PARTICIPATION_EXCEEDED: "일평균거래대금 대비 과대주문"
 };
 
 // 주문 제출 스로틀러 — 상태 저장 없이 원장(trades)에서 최근 창의 BUY 건수를 센다.
@@ -8968,6 +8974,17 @@ async function riskPreTradeCheck(DB, o) {
       const q4 = Math.floor(room / price);
       if (q4 <= 0) return deny("GROSS_EXPOSURE_EXCEEDED", "잔여여유 " + Math.round(room));
       if (qty > q4) qty = q4;
+    }
+    // ⑤ 유동성 — 이 종목의 하루 거래대금 대비 우리 주문이 얼마나 큰가.
+    //   여기서 안 걸러지면 '체결될 리 없는 주문'이 원장에 남아 성과통계까지 오염시킨다.
+    if (o.advNotional > 0 && RISKENG.maxAdvParticipation > 0) {
+      const cap = o.advNotional * RISKENG.maxAdvParticipation;
+      if (price * qty > cap) {
+        const q5 = Math.floor(cap / price);
+        if (q5 <= 0) return deny("ADV_PARTICIPATION_EXCEEDED",
+          "주문 " + Math.round(price * qty) + " > 한도 " + Math.round(cap) + " (ADV " + Math.round(o.advNotional) + ")");
+        qty = q5;
+      }
     }
     // ⑤ 명목가 — 가용현금(수수료 포함). executeBuy 가 다시 clamp 하지만,
     //   '왜 줄었는가'를 사유코드로 남기려면 여기서 먼저 판정해야 한다.
@@ -9157,6 +9174,28 @@ function _krSellTaxRate(cfg, symbol, market, ts) {
   return base;
 }
 
+// ════════════════════════════════════════════════════════════════════════════
+// [V33.92] ★NautilusTrader FillModel 이식 — 체결 현실성★
+//
+//   NautilusTrader 의 백테스트 엔진은 체결을 '호가 그대로'로 처리하지 않는다. FillModel 이
+//   스프레드·슬리피지를 확률적으로 물려 백테스트와 실거래의 간극을 좁힌다.
+//   우리는 지금 ★마지막 호가에 수수료만 붙여 체결★ 하고 있다 — 실제로는 매수는 호가보다
+//   비싸게, 매도는 싸게 체결된다(스프레드의 절반 + 시장충격). 그만큼 화면 수익률이 낙관적이다.
+//   "화면 수치와 실제가 다르다"는 문제의 남은 한 축이 이것이다.
+//
+//   ※ 회계 결정성 원칙(V33.87 에서 세운 것)을 그대로 지킨다 —
+//     현금은 원장 재생으로 파생되므로, 비용 규칙 변경은 ★시행일 이후 체결에만★ 적용한다.
+//     그래야 체크포인트가 지워져 전 구간을 재생해도 같은 잔고가 나온다.
+//   ※ 체결가(price) 자체는 건드리지 않는다. 원장의 price 는 '그때의 시장가'라는 뜻을 유지하고,
+//     비용은 수수료와 같은 방식으로 현금에서 차감한다(재생식과 실행식이 같은 함수를 쓴다).
+const SLIPPAGE_FROM = Date.UTC(2026, 7, 3);   // 2026-08-03 이후 체결부터 적용
+function _slipRate(market, ts) {
+  if (!(typeof ts === "number" && isFinite(ts) && ts >= SLIPPAGE_FROM)) return 0;
+  // 반스프레드 + 소액 시장충격의 보수적 근사. 한국장이 호가단위·유동성 때문에 더 크다.
+  //   us/cm/bdus = 5bp, kr/bdkr = 8bp. (대형주 기준 실측 스프레드의 절반 수준)
+  return (market === "kr" || market === "bdkr") ? 0.0008 : 0.0005;
+}
+
 // [V29 새 회계 — 단일 원장] cash를 별도 저장하지 않고 trades에서 실시간 계산.
 //   가용현금 = 초기자본 + 입금 − Σ매수금액(수수료포함) + Σ매도대금(수수료·세금차감)
 //   trades 테이블이 유일한 진실. cash와 positions가 구조적으로 어긋날 수 없음.
@@ -9198,8 +9237,9 @@ async function computeCashFromTrades(DB, market, cfg) {
     const gross = qty * price;
     // 매도세는 종목별로 갈린다(ETF 면제) — 체결 때와 같은 함수를 써 원장 재생과 실행이 어긋나지 않게 한다.
     const sellTaxRate = _krSellTaxRate(cfg, t.symbol, market, _num(t.ts, 0));   // [V33.87] 체결 시각 기준 세율
-    if (t.side === "BUY") cash -= gross * (1 + feeRate);
-    else if (t.side === "SELL") cash += gross * (1 - feeRate - sellTaxRate);
+    const slip = _slipRate(market, _num(t.ts, 0));                              // [V33.92] 체결 시각 기준 슬리피지
+    if (t.side === "BUY") cash -= gross * (1 + feeRate + slip);
+    else if (t.side === "SELL") cash += gross * (1 - feeRate - sellTaxRate - slip);
     if (t.rid > maxRowid) maxRowid = t.rid;
   }
   // 합산 건수가 많아지면 체크포인트 전진 (다음 호출부터 합산량 축소)
@@ -11274,7 +11314,12 @@ async function executeBuy(DB, market, symbol, strategy, qty, price, signal, dail
   if (qty <= 0) { return cash; }
 
   const feeRate = market === "us" ? cfg.feeUS : cfg.feeKR;
-  const unitCost = price * (1 + feeRate);   // 1주당 총비용(수수료 포함)
+  // [V33.92] 슬리피지(FillModel)를 수수료와 같은 방식의 비용률로 얹는다.
+  //   ★반드시 원장 재생(computeCashFromTrades)과 같은 함수·같은 시각 기준을 써야 한다★ —
+  //   실행과 재생이 다른 비용을 쓰면 현금이 어긋나고, 그게 두 달간 쫓던 그 사고다.
+  const slipRate = _slipRate(market, Date.now());
+  const costRate = feeRate + slipRate;
+  const unitCost = price * (1 + costRate);   // 1주당 총비용(수수료+슬리피지 포함)
 
   // ★ 단일 진실: 매수 직전 trades 원장에서 실제 가용현금을 재계산한다.
   let availCash;
@@ -11295,7 +11340,8 @@ async function executeBuy(DB, market, symbol, strategy, qty, price, signal, dail
       market: market, sleeve: (opts && opts.sleeve) || market, symbol: symbol,
       qty: qty, price: price, availCash: availCash, feeRate: feeRate,
       equity: (opts && _num(opts.equity, null)) || null,
-      cashNow: (opts && _num(opts.cashNow, null)) != null ? _num(opts.cashNow, null) : availCash
+      cashNow: (opts && _num(opts.cashNow, null)) != null ? _num(opts.cashNow, null) : availCash,
+      advNotional: (opts && _num(opts.advNotional, null)) || null
     });
     if (!_pre.ok) {
       await log(DB, "WARN", symbol, "BUY 거부 [" + _pre.code + "] " + _pre.reason + (_pre.detail ? " (" + _pre.detail + ")" : ""));
@@ -11319,7 +11365,7 @@ async function executeBuy(DB, market, symbol, strategy, qty, price, signal, dail
   }
 
   const gross = price * qty;
-  const fee = gross * feeRate;
+  const fee = gross * costRate;              // [V33.92] 수수료 + 슬리피지
   const total = gross + fee;
   // 이 시점에서 total <= availCash 가 maxQty 정의상 수학적으로 보장된다.
 
@@ -11533,7 +11579,7 @@ async function executeSell(DB, market, symbol, pos, sellQty, price, reason, cfg,
 
   const feeRate = market === "us" ? cfg.feeUS : cfg.feeKR;
   const gross = price * sellQty;
-  const fee = gross * feeRate;
+  const fee = gross * (feeRate + _slipRate(market, Date.now()));   // [V33.92] 수수료 + 슬리피지(FillModel)
   const sellTax = gross * _krSellTaxRate(cfg, symbol, market, Date.now());   // [V33.73] ETF 면제 / [V33.87] 시행일 기준
   const proceeds = gross - fee - sellTax;
   if (!(typeof cash[market] === "number" && isFinite(cash[market]))) {
@@ -13351,7 +13397,7 @@ async function executeBuyCM(DB, symbol, qty, price, signal, dailyAtr, cfg, cash)
   if (qty <= 0) return cash;
 
   const feeRate = cfg.feeUS || 0.0001;
-  const unitCost = price * (1 + feeRate);
+  const unitCost = price * (1 + feeRate + _slipRate("cm", Date.now()));   // [V33.92] 슬리피지 포함
   // ★ 단일 진실: 매수 직전 trades 원장에서 실제 가용현금 재계산 후 살 수 있는 만큼만 clamp
   let availCash;
   try {
@@ -13371,7 +13417,7 @@ async function executeBuyCM(DB, symbol, qty, price, signal, dailyAtr, cfg, cash)
     qty = maxQty;
   }
   const gross = price * qty;
-  const fee = gross * feeRate;
+  const fee = gross * (feeRate + _slipRate("cm", Date.now()));   // [V33.92]
   const total = gross + fee;
 
   const rules = cfg.swingRules || {};
@@ -13441,7 +13487,7 @@ async function executeSellCM(DB, symbol, pos, sellQty, price, reason, cfg, cash)
   if (!(sellQty > 0)) return { pnlPct: 0, cash: cash };
   const feeRate = cfg.feeUS || 0.0001;
   const gross = price * sellQty;
-  const fee = gross * feeRate;
+  const fee = gross * (feeRate + _slipRate("cm", Date.now()));   // [V33.92]
   const proceeds = gross - fee;   // 원자재: 매도세 없음
 
   pos.meta = pos.meta || {};
@@ -13854,7 +13900,7 @@ async function executeBuyAlt(DB, sleeve, symbol, qty, price, signal, dailyAtr, c
   if (!(typeof qty === "number" && isFinite(qty) && qty > 0)) return cash;
   qty = Math.floor(qty); if (qty <= 0) return cash;
   const feeRate = sleeve.isKRW ? (cfg.feeKR || 0) : (cfg.feeUS || 0.0001);
-  const unitCost = price * (1 + feeRate);
+  const unitCost = price * (1 + feeRate + _slipRate(mk, Date.now()));   // [V33.92]
   let availCash;
   try { availCash = await computeCashFromTrades(DB, mk, cfg); }
   catch (e) { await log(DB, "ERROR", symbol, "[" + sleeve.label + "] BUY 현금계산 실패 " + e.message); return cash; }
@@ -13862,7 +13908,7 @@ async function executeBuyAlt(DB, sleeve, symbol, qty, price, signal, dailyAtr, c
   const maxQty = Math.floor(availCash / unitCost);
   if (maxQty <= 0) return cash;
   if (qty > maxQty) qty = maxQty;
-  const gross = price * qty, fee = gross * feeRate, total = gross + fee;
+  const gross = price * qty, fee = gross * (feeRate + _slipRate(mk, Date.now())), total = gross + fee;   // [V33.92]
   const rules = cfg.swingRules || {};
   const stopPct = rules.stopLossPct || cfg.stopLoss || 5.0;
   const atrMult = rules.atrStopMult || cfg.atrStopMult || 2.0;
@@ -13907,7 +13953,7 @@ async function executeSellAlt(DB, sleeve, symbol, pos, sellQty, price, reason, c
   if (!(sellQty > 0)) return { pnlPct: 0, cash: cash };
   const feeRate = sleeve.isKRW ? (cfg.feeKR || 0) : (cfg.feeUS || 0.0001);
   const sellTax = _krSellTaxRate(cfg, symbol, mk, Date.now());   // [V33.87] 시행일 기준
-  const gross = price * sellQty, fee = gross * feeRate;
+  const gross = price * sellQty, fee = gross * (feeRate + _slipRate(mk, Date.now()));   // [V33.92]
   const proceeds = gross - fee - gross * sellTax;
   pos.meta = pos.meta || {};
   const feeRemaining = (typeof pos.meta.feeRemaining === "number") ? pos.meta.feeRemaining : (pos.meta.feePaid || 0);
@@ -15066,6 +15112,7 @@ async function runTradingCycle(env) {
       let __flowModel = null, __dailyCacheForFlow = {}, __flowCollect = false;
       let __xaModel = null, __xaPanel = null;   // [V33.79] XALPHA — 형식알파 + 횡단면 랭크
       let __stackModel = null;   // [V33.80] STACK 메타모델(투표 대체)
+      let __memoModel = null;    // [V33.92] MEMO 유사상황 기억 전문가
       let __dualBull = null, __dualBear = null;   // [V33.89] 강세/약세 이중 헤드
       let __pDistCache = null, __pDistNew = [];   // [V33.80] 후보 p 분포(백분위 문턱용)
       // [V33.82] 단타 레버리지 게이트 입력 — 사이클당 1회만 만든다.
@@ -15097,6 +15144,7 @@ async function runTradingCycle(env) {
               __flowModel = await getState(DB, "flow_model", null);
               try { __xaModel = await getState(DB, "xalpha_model", null); } catch (e2) {}
               try { __stackModel = await getState(DB, "stack_model", null); } catch (e2) {}
+              try { if (MEMOML.enabled) __memoModel = await getState(DB, "memo_model", null); } catch (e2) {}
               try { if (DUALHEAD.enabled) { __dualBull = await getState(DB, "dual_bull_model", null); __dualBear = await getState(DB, "dual_bear_model", null); } } catch (e2) {}
               try { __pDistCache = await getState(DB, "ai_pdist:" + market, null); } catch (e2) {}
           // [V33.82] 단타 실측 엣지(켈리) + 현재 드로다운 — 레버리지 개방 판단의 두 축.
@@ -16591,7 +16639,7 @@ async function runTradingCycle(env) {
                     if (__xaFeat) signal.xaFeat = __xaFeat;
                   }
                 } catch (e) {}
-                try { _md = await mlDeepDecide(DB, signal.mlFeat, { mind: __mind, guard: __guard, ens: __ensemble, trust: __dnnTrust, dnn: __dnn, gbdtTrust: __gbdtTrust, gbdt: __gbdt, cal: __cal, evstats: __evStats, portStats: __portStats, shock: await _luxMarketShockCached(DB), sym: symbol, evCtx: await _luxEventContextCached(DB), applyEventPrior: true, market: market, flowFeat: __flowFeat, flowModel: __flowModel, xaFeat: __xaFeat, xaModel: __xaModel, stackModel: __stackModel, dualBull: __dualBull, dualBear: __dualBear }); } catch (e) {}
+                try { _md = await mlDeepDecide(DB, signal.mlFeat, { mind: __mind, guard: __guard, ens: __ensemble, trust: __dnnTrust, dnn: __dnn, gbdtTrust: __gbdtTrust, gbdt: __gbdt, cal: __cal, evstats: __evStats, portStats: __portStats, shock: await _luxMarketShockCached(DB), sym: symbol, evCtx: await _luxEventContextCached(DB), applyEventPrior: true, market: market, flowFeat: __flowFeat, flowModel: __flowModel, xaFeat: __xaFeat, xaModel: __xaModel, stackModel: __stackModel, memoModel: __memoModel, dualBull: __dualBull, dualBear: __dualBear }); } catch (e) {}
                 if (!_md) { try { _md = await mlMindDecide(DB, signal.mlFeat, { mind: __mind, guard: __guard, ens: __ensemble }); } catch (e) {} }
                 // [V5] AI 픽 수집 — 개입 여부와 무관하게 예측 자체는 기록(종목당 1회)
                 try {
@@ -16617,6 +16665,29 @@ async function runTradingCycle(env) {
                     // 사이징도 통합확률로 켈리 재계산(확신도 정합).
                     try { _md.sizeMult = _md.allow ? mlKellySize(_md.p, _md.uncertainty) : 1; } catch (e) {}
                     if (_tk.tech != null && _tk.tech <= -0.5) { _md.allow = false; _md.techVeto = true; }   // 그래프 강한 약세 → 진입 거부
+                  }
+                } catch (e) {}
+                // ══ [V33.92] ★백분위 문턱의 표본을 여기서 모은다 — 종전 위치는 기능을 통째로 죽였다★ ══
+                //   종전엔 이 push 가 AI_PRIMARY 게이트·메타컷·저확신컷을 전부 통과한 ★뒤★ 에 있었다.
+                //   그러면 분포에 들어가는 값이 전부 '이미 문턱을 넘은 p' 뿐이라, 그 분포의 상위 18%
+                //   지점은 언제나 문턱보다 높다 → `if (_newThr < _thrAI)` 가 성립할 수 없다 →
+                //   ★V33.80 백분위 문턱이 한 번도 발동하지 못했다★.
+                //   (JPX Kaggle 방식을 들여온 목적이 "모델이 좋아질수록 분포가 좁아져 아무것도 못 사는
+                //    역설"을 푸는 것이었는데, 정작 그 상황에서 절대 작동하지 않는 자리에 있었다.)
+                //   → 게이트 이전, 최종 p(그래프·뉴스 블렌드까지 끝난 값)가 정해진 직후로 옮긴다.
+                //     기권·관망 건은 제외한다(그건 확률 판단 자체를 안 한 것이다).
+                try {
+                  if (_md && typeof _md.p === "number" && isFinite(_md.p) && !_md.observe && !_md.abstain
+                      && !__candSyms.has(symbol + ":pdist")) {
+                    __candSyms.add(symbol + ":pdist");
+                    __pDistNew.push(+_md.p.toFixed(4));
+                  }
+                  // [V33.92] AI 픽 표시도 블렌드 뒤 최종 확률로 맞춘다 —
+                  //   종전엔 블렌드 전 위원회 원시 p 를 저장해, 화면 확률과 실제 판단 확률이 달랐다.
+                  if (_md && _md.blended && typeof _md.p === "number") {
+                    for (let _k = __aiPicks.length - 1; _k >= 0; _k--) {
+                      if (__aiPicks[_k].symbol === symbol) { __aiPicks[_k].p = +_md.p.toFixed(3); __aiPicks[_k].pRaw = +_num(_md.pRaw, _md.p).toFixed(3); break; }
+                    }
                   }
                 } catch (e) {}
                 // [V12.64] ★AI 주도 진입 안전문★ 규칙 폴백 수량이 없는 AI_PRIMARY는 위원회의 명시적 강승인
@@ -16696,8 +16767,8 @@ async function runTradingCycle(env) {
                     if (_sm !== 1) qty = Math.max(0, Math.floor(qty * _sm));
                   }
                   signal.mlMindP = (typeof _md.p === "number") ? _md.p : null;
-                  // [V33.80] 후보 확률을 모아 둔다 — 다음 사이클의 백분위 문턱 기준이 된다.
-                  if (typeof _md.p === "number" && isFinite(_md.p)) __pDistNew.push(+_md.p.toFixed(4));
+                  // [V33.92] 후보 p 분포 수집은 게이트 앞으로 옮겼다(위 참조) — 여기서 모으면
+                  //   통과분만 담겨 문턱이 스스로를 끌어올리는 절단 분포가 된다.
                   // [V33.80] 스태킹 표본용 — 전문가 확률 스냅샷을 진입 메타에 싣는다.
                   if (Array.isArray(_md.stackFeat)) signal.stackFeat = _md.stackFeat;
                 } else {
@@ -16771,7 +16842,21 @@ async function runTradingCycle(env) {
               //   검사는 총자산을 모르면 아예 성립하지 않는다(넘기지 않으면 그 검사가 죽은 코드가 된다).
               const buyOpts = Object.assign(
                 { equity: (typeof portfolioValue === "number" && portfolioValue > 0) ? portfolioValue : cash[market],
-                  cashNow: cash[market] },
+                  cashNow: cash[market],
+                  // [V33.92] 20일 평균 거래대금 — 유동성 대비 주문 크기 검사에 쓴다.
+                  //   daily 캐시에 이미 있는 값이라 추가 조회 0.
+                  advNotional: (function () {
+                    try {
+                      const v = daily && daily.volumes, c = daily && daily.closes;
+                      if (!Array.isArray(v) || !Array.isArray(c) || v.length < 21) return null;
+                      let s = 0, n = 0;
+                      for (let i = v.length - 21; i < v.length - 1; i++) {
+                        const q = _num(v[i], 0), px = _num(c[i], 0);
+                        if (q > 0 && px > 0) { s += q * px; n++; }
+                      }
+                      return n >= 10 ? s / n : null;
+                    } catch (e) { return null; }
+                  })() },
                 (llmInstr && llmInstr.stop_loss_adjustment && typeof llmInstr.stop_loss_adjustment.new_pct === "number")
                   ? { stopPctOverride: llmInstr.stop_loss_adjustment.new_pct } : null);
               const cashBefore = cash[market];
@@ -17628,6 +17713,17 @@ async function handleRequest(request, env, ctx) {
             stack: await _mk("stack_model", "stack_samples", STACKML.minTrainSamples, STACKML.featVer),
             backfill: _bf ? { made: _num(_bf.made, 0), cursor: _num(_bf.lastId, 0), ts: _num(_bf.ts, 0) } : null
           };
+          // [V33.92] MEMO — ml_samples 를 원형으로 압축해 쓰므로 표본 풀은 스윙과 같다.
+          try {
+            const _mo = await getState(env.DB, "memo_model", null);
+            let _mn = 0;
+            try { const r = await env.DB.prepare("SELECT COUNT(*) c FROM ml_samples WHERE featver = ?").bind(LUXML.featVer).first(); _mn = _num(r && r.c, 0); } catch (e) {}
+            _alt.memo = { samples: _mn, minN: MEMOML.minTrainSamples,
+              trained: !!(_mo && _mo.luxFeatVer === LUXML.featVer), trusted: !!(_mo && _mo.trusted),
+              acc: _mo ? _num(_mo.valAcc, null) : null, ic: _mo ? _num(_mo.valIC, null) : null,
+              icBlock: _mo ? _num(_mo.valICBlock, null) : null, icT: _mo ? _num(_mo.valICt, null) : null,
+              protos: _mo && Array.isArray(_mo.protos) ? _mo.protos.length : null, n: _mo ? _num(_mo.n, null) : null };
+          } catch (e) {}
           // [V33.89] 이중헤드(강세/약세) — ml_samples 를 그대로 쓰므로 표본은 스윙 풀과 같다.
           try {
             const _dbm = await getState(env.DB, "dual_bull_model", null);
@@ -18788,12 +18884,12 @@ async function handleRequest(request, env, ctx) {
     if (path === "/api/ai/train-now" && request.method === "POST") {
       const au = _trainAuthed(); if (!au.ok) return Response.json({ error: au.msg }, { status: au.code, headers: cors });
       const target = url.searchParams.get("target") || "mind";
-      const FN = { mind: mlMindTrainNightly, gbdt: mlGBDTTrainNightly, brain: mlBrainTrainNightly, dnn: mlDNNTrainNightly, l1: mlTrainNightly, calibrate: mlCalibrateCommittee, selfreview: mlSelfReview, flow: flowTrainNightly, xalpha: xalphaTrainNightly, stack: stackTrainNightly, dual: dualHeadTrainNightly, portstats: portfolioStatsNightly, ledgeraudit: ledgerCheckIntegrity };
+      const FN = { mind: mlMindTrainNightly, gbdt: mlGBDTTrainNightly, brain: mlBrainTrainNightly, dnn: mlDNNTrainNightly, l1: mlTrainNightly, calibrate: mlCalibrateCommittee, selfreview: mlSelfReview, flow: flowTrainNightly, xalpha: xalphaTrainNightly, stack: stackTrainNightly, dual: dualHeadTrainNightly, memo: memoTrainNightly, portstats: portfolioStatsNightly, ledgeraudit: ledgerCheckIntegrity };
       // [V12.63] target=all — 재배포 직후 "한 방에" 전체 파이프라인을 정확한 순서로 재실행(하루1회 게이트 무시).
       //   순서 고정: harvest → l1 → brain → mind → dnn → gbdt → calibrate (뒤 단계가 앞 단계 산출물 의존).
       //   각 단계 자체 CPU예산 가드가 있어 안전. 재학습 즉시 모든 수정이 반영되게 하는 원클릭 경로.
       if (target === "all") {
-        const _order = [["harvest", mlMarketHarvestNightly], ["l1", mlTrainNightly], ["brain", mlBrainTrainNightly], ["mind", mlMindTrainNightly], ["gbdt", mlGBDTTrainNightly], ["dnn", mlDNNTrainNightly], ["flow", flowTrainNightly], ["xalpha", xalphaTrainNightly], ["stack", stackTrainNightly], ["dual", dualHeadTrainNightly], ["portstats", portfolioStatsNightly], ["ledgeraudit", ledgerCheckIntegrity], ["calibrate", mlCalibrateCommittee]];
+        const _order = [["harvest", mlMarketHarvestNightly], ["l1", mlTrainNightly], ["brain", mlBrainTrainNightly], ["mind", mlMindTrainNightly], ["gbdt", mlGBDTTrainNightly], ["dnn", mlDNNTrainNightly], ["flow", flowTrainNightly], ["xalpha", xalphaTrainNightly], ["memo", memoTrainNightly], ["stack", stackTrainNightly], ["dual", dualHeadTrainNightly], ["portstats", portfolioStatsNightly], ["ledgeraudit", ledgerCheckIntegrity], ["calibrate", mlCalibrateCommittee]];
         const out = {};
         for (const [nm, fn] of _order) {
           try { out[nm] = await fn(env.DB); } catch (e) { out[nm] = "FAIL: " + (e && e.message); }
@@ -22606,6 +22702,155 @@ async function altSampleBackfill(DB, opts) {
 //
 //  학습: ml_samples 에 pnl_pct 가 남아 있어 같은 표본으로 라벨만 둘로 나누면 된다.
 //        재수집 0, featVer 변경 0 — 기존 17만 표본을 그대로 쓴다.
+// ════════════════════════════════════════════════════════════════════════════
+// [V33.92] ★MEMO — 유사 상황 기억 전문가 (TradingAgents 의 reflection/memory 이식)★
+//
+//   TradingAgents(arXiv:2412.20138) 의 세 축 중 우리가 아직 안 가져온 게 memory 다.
+//   그 에이전트는 손실이 난 판단을 되짚어 "그때 상황"을 저장해 두고, 나중에 비슷한 상황이
+//   오면 그 기억을 꺼내 함께 판단한다. 논문은 이걸 임베딩 검색(LLM)으로 한다.
+//
+//   LLM 없이 같은 것을 한다: ★우리에겐 17만 개의 '그때 상황과 결과'가 이미 있다★(ml_samples).
+//   피처벡터가 곧 상황 임베딩이고, pnl 이 곧 그때의 결말이다. 필요한 건 검색뿐이다.
+//   다만 종목마다 17만 건을 훑을 수는 없으니, 야간에 상황을 K 개 원형(prototype)으로 압축해 두고
+//   추론 때는 가장 가까운 몇 개만 본다(K=128 × 65차원 = 8,320 곱셈, 종목당 무시할 수준).
+//
+//   ★왜 위원회에 보탬이 되는가★ — 기존 위원 전원(로지스틱·FM·딥넷·부스팅·형식알파)은
+//   전역 파라미터를 하나 학습해 모든 상황에 같은 함수를 적용하는 ★모수적★ 모델이다.
+//   MEMO 는 국소적·비모수적이다. "이 근방에서 실제로 어떤 일이 있었나"만 본다.
+//   전역 모델이 놓치는 국소 구조(특정 국면에서만 성립하는 관계)를 잡을 수 있어
+//   앙상블 다양성 기여가 크다(대회 상위 해법이 k-NN 을 스태킹에 섞는 이유가 이것이다).
+const MEMOML = {
+  enabled: true,
+  featVer: 1,
+  K: 128,                  // 원형 개수
+  neighbors: 8,            // 추론 시 참조할 최근접 원형 수
+  minTrainSamples: 4000,
+  trainWindow: 24000,      // Worker 메모리·CPU 예산 안에서 도는 크기
+  iters: 6,                // 온라인 k-means 반복
+  shrinkN: 40,             // 원형 표본이 적으면 기저확률로 수축
+  icFloor: 0.012,
+  icTMin: 1.65
+};
+
+// 원형 책 만들기 — 표준화 → k-means(고정 반복) → 원형별 승률·평균손익 집계.
+//   야간 1회. 마지막 20% 는 홀드아웃으로 남겨 IC 유의성을 잰다(다른 모델과 같은 잣대).
+async function memoTrainNightly(DB) {
+  if (!MEMOML.enabled) return null;
+  try {
+    const D = LUXML.featNames.length;
+    const rows = await DB.prepare(
+      "SELECT ts, feat, label, pnl_pct FROM ml_samples WHERE featver = ? ORDER BY ts DESC LIMIT ?"
+    ).bind(LUXML.featVer, MEMOML.trainWindow).all();
+    const raw = (rows && rows.results) || [];
+    const X = [], Y = [], P = [];
+    for (let i = raw.length - 1; i >= 0; i--) {          // 오래된 것부터(시간순)
+      let v; try { v = JSON.parse(raw[i].feat); } catch (e) { continue; }
+      if (!Array.isArray(v) || v.length !== D) continue;
+      X.push(v.map(function (t) { return _num(t, 0); }));
+      Y.push(_labelOfRow(raw[i]));
+      P.push(_num(raw[i].pnl_pct, 0));
+    }
+    const N = X.length;
+    if (N < MEMOML.minTrainSamples) return "[MEMO] 표본 " + N + "/" + MEMOML.minTrainSamples + " — 대기";
+    const mean = new Array(D).fill(0), std = new Array(D).fill(0);
+    const nval = Math.max(200, Math.floor(N * 0.2)), ntr = N - nval;
+    for (let i = 0; i < ntr; i++) for (let j = 0; j < D; j++) mean[j] += X[i][j];
+    for (let j = 0; j < D; j++) mean[j] /= ntr;
+    for (let i = 0; i < ntr; i++) for (let j = 0; j < D; j++) std[j] += (X[i][j] - mean[j]) * (X[i][j] - mean[j]);
+    for (let j = 0; j < D; j++) { std[j] = Math.sqrt(std[j] / ntr); if (!(std[j] > 1e-6)) std[j] = 1; }
+    const Z = X.map(function (x) { return x.map(function (v, j) { return _clamp((v - mean[j]) / std[j], -4, 4); }); });
+
+    // k-means++ 대신 결정적 초기화(고르게 뽑기) — 워커에서 재현 가능해야 진단이 된다.
+    const K = Math.min(MEMOML.K, Math.floor(ntr / 20));
+    if (K < 8) return "[MEMO] 학습표본 부족(원형 " + K + "개)";
+    const C = [];
+    for (let k = 0; k < K; k++) C.push(Z[Math.floor(k * ntr / K)].slice());
+    const assign = new Array(ntr).fill(0);
+    for (let it = 0; it < MEMOML.iters; it++) {
+      for (let i = 0; i < ntr; i++) {
+        let bi = 0, bd = Infinity;
+        for (let k = 0; k < K; k++) {
+          let d2 = 0; const c = C[k], z = Z[i];
+          for (let j = 0; j < D; j++) { const t = z[j] - c[j]; d2 += t * t; if (d2 >= bd) break; }
+          if (d2 < bd) { bd = d2; bi = k; }
+        }
+        assign[i] = bi;
+      }
+      const sum = [], cnt = new Array(K).fill(0);
+      for (let k = 0; k < K; k++) sum.push(new Array(D).fill(0));
+      for (let i = 0; i < ntr; i++) { const k = assign[i], z = Z[i], s = sum[k]; for (let j = 0; j < D; j++) s[j] += z[j]; cnt[k]++; }
+      for (let k = 0; k < K; k++) if (cnt[k] > 0) for (let j = 0; j < D; j++) C[k][j] = sum[k][j] / cnt[k];
+    }
+    // 원형별 결과 집계
+    const nk = new Array(K).fill(0), wk = new Array(K).fill(0), pk = new Array(K).fill(0);
+    for (let i = 0; i < ntr; i++) { const k = assign[i]; nk[k]++; wk[k] += Y[i]; pk[k] += P[i]; }
+    let base = 0; for (let i = 0; i < ntr; i++) base += Y[i]; base /= ntr;
+    const protos = [];
+    for (let k = 0; k < K; k++) {
+      if (nk[k] < 5) continue;                     // 표본 너무 적은 원형은 버린다
+      const wr = wk[k] / nk[k];
+      // 표본수 수축 — 20건짜리 원형의 승률 0.8 을 그대로 믿으면 안 된다.
+      const sh = nk[k] / (nk[k] + MEMOML.shrinkN);
+      protos.push({ c: C[k].map(function (v) { return +v.toFixed(3); }), n: nk[k],
+                    p: +(base + (wr - base) * sh).toFixed(4), pnl: +(pk[k] / nk[k]).toFixed(3) });
+    }
+    if (protos.length < 8) return "[MEMO] 유효 원형 " + protos.length + "개 — 대기";
+    const model = { protos: protos, mean: mean, std: std, base: +base.toFixed(4),
+                    featVer: MEMOML.featVer, luxFeatVer: LUXML.featVer, n: ntr, ts: Date.now() };
+    // 홀드아웃 채점 → IC 유의성(다른 모델과 같은 기준)
+    const pv = [], yv = [];
+    for (let i = ntr; i < N; i++) { const p = memoScore(model, X[i]); if (p == null) continue; pv.push(p); yv.push(Y[i]); }
+    const st = _icBlockStats(pv, yv, 5);
+    let correct = 0; for (let i = 0; i < pv.length; i++) if ((pv[i] >= 0.5 ? 1 : 0) === yv[i]) correct++;
+    model.valAcc = +(correct / Math.max(1, pv.length)).toFixed(4);
+    model.valN = pv.length;
+    model.valIC = +_num(st.ic, 0).toFixed(5);
+    model.valICBlock = st.blockIC != null ? +st.blockIC.toFixed(5) : null;
+    model.valICIR = st.icir != null ? +st.icir.toFixed(3) : null;
+    model.valICt = st.t != null ? +st.t.toFixed(3) : null;
+    model.trusted = (model.valICBlock != null && model.valICt != null)
+      ? (model.valICBlock >= MEMOML.icFloor && model.valICt >= MEMOML.icTMin)
+      : false;
+    await setState(DB, "memo_model", model);
+    return "[MEMO] 원형 " + protos.length + "개 (표본 " + ntr + ") valAcc " + (model.valAcc * 100).toFixed(1) +
+           "% IC " + model.valIC.toFixed(4) + (model.valICt != null ? " t " + model.valICt.toFixed(2) : "") +
+           (model.trusted ? " → 위원회 합류" : " → 유의성 미달, 대기");
+  } catch (e) { return "[MEMO] 학습 실패: " + (e && e.message); }
+}
+
+// 추론 — 가장 가까운 이웃 원형들의 결과를 거리가중 평균. "비슷한 상황에서 실제로 어땠나".
+function memoScore(model, featVec) {
+  try {
+    if (!model || !Array.isArray(model.protos) || !Array.isArray(featVec)) return null;
+    const D = model.mean.length;
+    if (featVec.length !== D) return null;
+    const z = new Array(D);
+    for (let j = 0; j < D; j++) z[j] = _clamp((_num(featVec[j], 0) - model.mean[j]) / (model.std[j] || 1), -4, 4);
+    // 최근접 M개 — 부분정렬 대신 삽입으로 상위 M만 유지(할당 최소화)
+    const M = Math.max(1, MEMOML.neighbors);
+    const bestD = new Array(M).fill(Infinity), bestI = new Array(M).fill(-1);
+    for (let k = 0; k < model.protos.length; k++) {
+      const c = model.protos[k].c;
+      let d2 = 0;
+      for (let j = 0; j < D; j++) { const t = z[j] - c[j]; d2 += t * t; if (d2 >= bestD[M - 1]) break; }
+      if (d2 < bestD[M - 1]) {
+        let q = M - 1;
+        while (q > 0 && bestD[q - 1] > d2) { bestD[q] = bestD[q - 1]; bestI[q] = bestI[q - 1]; q--; }
+        bestD[q] = d2; bestI[q] = k;
+      }
+    }
+    let ws = 0, ps = 0;
+    for (let m = 0; m < M; m++) {
+      if (bestI[m] < 0) continue;
+      const pr = model.protos[bestI[m]];
+      const w = 1 / (1 + bestD[m]);              // 거리가 멀수록 발언권↓
+      ws += w; ps += w * pr.p;
+    }
+    if (!(ws > 0)) return null;
+    return _clamp(ps / ws, 0.001, 0.999);
+  } catch (e) { return null; }
+}
+
 const DUALHEAD = {
   enabled: true,
   featVer: 1,
@@ -22673,7 +22918,7 @@ function dualHeadJudge(bullM, bearM, featVec) {
 //   마스크가 없으면 결측을 중립값으로 채우는 순간 두 경우가 구분되지 않아 메타모델이 헷갈린다.
 const STACKML = {
   enabled: true,
-  featVer: 1,
+  featVer: 2,               // [V33.92] MEMO 합류로 14 → 16차원. 옛 표본과 섞이지 않게 버전 상향.
   minTrainSamples: 600,     // 14차원이라 600건이면 수렴한다
   trainWindow: 40000,
   l2: 1.5,                  // 전문가 확률끼리 상관이 높아 규제를 조금 세게
@@ -22682,7 +22927,7 @@ const STACKML = {
 
 async function stackLogSample(DB, market, symbol, featVec, pnlPct) {
   try {
-    if (!STACKML.enabled || !Array.isArray(featVec) || featVec.length !== 14) return;
+    if (!STACKML.enabled || !Array.isArray(featVec) || featVec.length !== 16) return;
     await DB.prepare("CREATE TABLE IF NOT EXISTS stack_samples (id INTEGER PRIMARY KEY AUTOINCREMENT, ts INTEGER, market TEXT, symbol TEXT, feat TEXT, label INTEGER, pnl_pct REAL, featver INTEGER)").run();
     await DB.prepare("INSERT INTO stack_samples (ts, market, symbol, feat, label, pnl_pct, featver) VALUES (?,?,?,?,?,?,?)")
       .bind(Date.now(), market, symbol, JSON.stringify(featVec), _num(pnlPct, 0) > 0 ? 1 : 0, _num(pnlPct, 0), STACKML.featVer).run();
@@ -22692,7 +22937,7 @@ async function stackTrainNightly(DB) {
   if (!STACKML.enabled) return null;
   return await _miniLogisticTrain(DB, {
     table: "stack_samples", stateKey: "stack_model", tag: "STACK",
-    featVer: STACKML.featVer, D: 14,
+    featVer: STACKML.featVer, D: 16,
     minN: STACKML.minTrainSamples, window: STACKML.trainWindow,
     l2: STACKML.l2, icFloor: STACKML.icFloor,
     // [V33.91] STACK 은 위원회 결합확률을 ★통째로 대체★ 하는 자리다. 잘못 들어오면
@@ -26790,6 +27035,19 @@ async function mlDeepDecide(DB, featVec, opts) {
         }
       }
     } catch (e) {}
+    // ── [V33.92] MEMO 전문가 합류 — "비슷했던 과거 상황에서 실제로 어땠나"(비모수·국소) ──
+    //   나머지 위원 전원이 전역 파라미터 하나로 모든 상황을 설명하는 모수적 모델이라,
+    //   국소 구조를 보는 위원이 하나도 없었다. 앙상블 다양성 기여가 큰 자리다.
+    try {
+      const mm2 = (opts.memoModel !== undefined) ? opts.memoModel : await getState(DB, "memo_model", null);
+      if (mm2 && mm2.trusted && mm2.luxFeatVer === LUXML.featVer) {
+        const pM = memoScore(mm2, featVec);
+        if (pM != null && Math.abs(pM - 0.5) > 1e-4) {
+          experts.push({ name: "memo", p: pM, z: _logitD(pM),
+                         acc: _num(mm2.valAcc, 0.5), ic: _icEffective(mm2), wMul: 0.9 });
+        }
+      }
+    } catch (e) {}
     // ── [V12.39 규칙엔진 전문가] 규칙엔진의 기술적 종합확률(taUpProb)을 위원회 정식 위원으로 합류 ──
     //   MIND 야간학습이 검증셋에서 측정한 규칙엔진 정확도(ruleAccLB)가 동전던지기(0.5)를 넘을 때만
     //   그 정확도의 소프트맥스 가중으로 투표. 규칙엔진이 AI 안에 "이식"되어 잘 맞는 국면엔 발언권이
@@ -26825,7 +27083,9 @@ async function mlDeepDecide(DB, featVec, opts) {
     //   Numerai 메타모델·Kaggle 상위 해법이 공통으로 쓰는 표준 결합 방식이고,
     //   "여러 모델을 하나의 정교한 모델로 통합"이라는 요구에 정확히 대응한다.
     //   학습 전에는 기존 IC 가중 투표를 그대로 쓴다(공백 없음).
-    const _EXPERT_SLOTS = ["mind", "dnn", "gbdt", "boost", "flow", "xalpha", "rule"];
+    // [V33.92] MEMO 합류로 슬롯이 8개가 된다 → STACK 입력은 8확률+8마스크 = 16차원.
+    //   STACKML.featVer 를 올려 옛 14차원 표본·모델과 섞이지 않게 한다(차원 불일치 사고 방지).
+    const _EXPERT_SLOTS = ["mind", "dnn", "gbdt", "boost", "flow", "xalpha", "memo", "rule"];
     let _stackFeat = null;
     try {
       const _byName = {};
@@ -33767,6 +34027,8 @@ export default {
             //   순서: 전문가 3종(flow·xalpha) → STACK(전문가 확률을 입력으로 받으므로 뒤) → DUAL.
             await _stg("flow", async function () { return await flowTrainNightly(env.DB); });
             await _stg("xalpha", async function () { return await xalphaTrainNightly(env.DB); });
+            // [V33.92] MEMO(유사상황 기억)를 STACK 앞에 둔다 — STACK 입력에 memo 확률이 들어간다.
+            await _stg("memo", async function () { return await memoTrainNightly(env.DB); });
             await _stg("stack", async function () { return await stackTrainNightly(env.DB); });
             await _stg("dual", async function () { return await dualHeadTrainNightly(env.DB); });
             // [V33.90] 실제 원장 기준 포트폴리오 통계(NautilusTrader PortfolioAnalyzer) —

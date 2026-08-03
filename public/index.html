@@ -14408,6 +14408,14 @@ html[data-theme="light"] .rail{background:#fff;}
           arow('XALPHA', alt.xalpha, '형식알파·횡단면 랭크'),
           arow('STACK', alt.stack, '전문가 통합(투표 대체)'),
           (function(){
+            // [V33.92] MEMO — 유사했던 과거 상황의 실제 결과를 꺼내 보는 비모수 전문가.
+            var m = alt.memo;
+            if(!m) return ['MEMO(유사상황 기억)', '<span class="sub">—</span>'];
+            var r = arow('MEMO(유사상황 기억)', m, '과거 유사국면 실측결과');
+            if(m.trusted && m.protos) r[1] += ' <span class="sub">· 원형 '+n0(m.protos)+'개</span>';
+            return r;
+          })(),
+          (function(){
             // [V33.89] 이중헤드 — 상승확률/하락확률을 따로 학습(LLM 토론의 구조만 이식).
             var d = alt.dual;
             if(!d) return ['이중헤드(강세/약세)', '<span class="sub">—</span>'];
