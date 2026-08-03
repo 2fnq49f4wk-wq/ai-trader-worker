@@ -2630,7 +2630,7 @@ async function applySignalTypeWeights(DB, cfg) {
 // ============================================================================
 // [V33.55] 빌드 버전 — SWR L2 캐시 키에 섞어 '배포 = 판단 캐시 자동 무효화'를 만든다.
 //   판정 로직을 고쳐도 옛 캐시가 최대 1시간 재배포되던 문제를 구조적으로 없앤다.
-const _BUILD_VER = "V33.86";
+const _BUILD_VER = "V33.87";
 
 const AI_PARAMS = {
   // ── OHLCV 타임프레임 ── 시가/고가/저가/종가/거래량을 어떤 봉 주기로 볼지.
@@ -8576,7 +8576,7 @@ async function mlSnapshotBuildStep(DB, deadline) {
       //   그래서 미국·한국 표본이 한 모델에 뭉쳐 학습됐다(피처에 mktUS/mktKR 원핫은 있으나
       //   depth4 얕은 트리로는 시장별 상호작용을 거의 못 잡는다). 시장별 분리학습의 전제 조건.
       out.push({ ts: _num(r.ts, 0), m: String(r.market || "us"),
-                 x: v.map(function (t) { return _num(t, 0); }), y: r.label ? 1 : 0,
+                 x: v.map(function (t) { return _num(t, 0); }), y: _labelOfRow(r),
                  pnl: _num(r.pnl_pct, 0), hv: r.strategy === "hv" ? 1 : 0 });
     }
     await R2.put(_mlSnapKey(fv, st.next), JSON.stringify(out));
@@ -8820,10 +8820,23 @@ async function savePosition(DB, market, symbol, strategy, pos) {
 //   종전엔 종목을 안 보고 KR/BDKR 매도 전부에 물렸다. 채권 슬리브(BDKR)는 전 종목이 국고채 ETF라
 //   누적 33.4만원이 통째로 가공 세금이었고, 화면의 BDKR −0.31% 손실은 사실상 이 세금이 전부였다.
 //   현금은 원장 재생으로 파생되지만 체크포인트가 앞서 있어 과거분은 대부분 그대로 두고 이후부터 적용된다.
-function _krSellTaxRate(cfg, symbol, market) {
+// [V33.87 ★회계 결정성 수정★] 세율 규칙 변경에 '시행일'을 둔다.
+//   문제: V33.73 에서 ETF 매도세 면제를 넣었는데, 이 규칙을 원장 재생에도 그대로 적용하면
+//   ★같은 원장이 서로 다른 현금을 낸다★.
+//     · 현금은 체크포인트(cash_ckpt) 이후 구간만 재합산한다.
+//     · 체크포인트가 살아 있으면 과거분은 옛 세율로 굳은 값을 쓰고, 이후분만 새 규칙.
+//     · 그런데 체크포인트는 자가치유(음수현금/자산팽창)·유령거래 정리·리셋 API 로 언제든 삭제된다.
+//       삭제되면 전 구간이 새 규칙으로 재생돼 현금이 갑자기 뛴다(KR 기준 약 74만원).
+//   즉 "체크포인트가 언제 지워졌는가"에 따라 계좌 잔고가 달라진다 — 회계에서 있으면 안 되는 일이다.
+//   해결: 회계 규칙 변경은 소급하지 않는다(실제 회계와 같다). 시행일 이전 체결은 그때의 규칙으로,
+//   이후 체결은 새 규칙으로 계산한다. 이러면 체크포인트 유무와 무관하게 같은 답이 나온다.
+const ETF_TAX_EXEMPT_FROM = Date.UTC(2026, 7, 2);   // 2026-08-02 (V33.73 배포일) 이후 체결부터 면제
+function _krSellTaxRate(cfg, symbol, market, ts) {
   const base = cfg.krSellTax || 0;
   if (!base) return 0;
   if (market !== "kr" && market !== "bdkr") return 0;   // USD 슬리브(us/cm/bdus)는 매도세 없음
+  // 시행일 이전 체결은 종전 규칙(ETF 도 과세) 그대로 — 과거를 다시 쓰지 않는다.
+  if (typeof ts === "number" && isFinite(ts) && ts > 0 && ts < ETF_TAX_EXEMPT_FROM) return base;
   if (market === "bdkr") return 0;                      // 채권 슬리브 = 전부 국고채 ETF
   if (symbol && ETF_SYMBOLS.has(symbol)) return 0;      // KR 주식 슬리브 안의 ETF
   return base;
@@ -8860,7 +8873,7 @@ async function computeCashFromTrades(DB, market, cfg) {
     sinceRowid = 0;
   }
 
-  const rows = await DB.prepare("SELECT rowid AS rid, symbol, side, qty, price FROM trades WHERE market = ? AND rowid > ? ORDER BY rowid ASC").bind(market, sinceRowid).all();
+  const rows = await DB.prepare("SELECT rowid AS rid, ts, symbol, side, qty, price FROM trades WHERE market = ? AND rowid > ? ORDER BY rowid ASC").bind(market, sinceRowid).all();
   const list = rows.results || [];
   let cash = baseCash;
   let maxRowid = sinceRowid;
@@ -8869,7 +8882,7 @@ async function computeCashFromTrades(DB, market, cfg) {
     const price = typeof t.price === 'number' ? t.price : parseFloat(t.price) || 0;
     const gross = qty * price;
     // 매도세는 종목별로 갈린다(ETF 면제) — 체결 때와 같은 함수를 써 원장 재생과 실행이 어긋나지 않게 한다.
-    const sellTaxRate = _krSellTaxRate(cfg, t.symbol, market);
+    const sellTaxRate = _krSellTaxRate(cfg, t.symbol, market, _num(t.ts, 0));   // [V33.87] 체결 시각 기준 세율
     if (t.side === "BUY") cash -= gross * (1 + feeRate);
     else if (t.side === "SELL") cash += gross * (1 - feeRate - sellTaxRate);
     if (t.rid > maxRowid) maxRowid = t.rid;
@@ -11186,7 +11199,7 @@ async function executeSell(DB, market, symbol, pos, sellQty, price, reason, cfg,
   const feeRate = market === "us" ? cfg.feeUS : cfg.feeKR;
   const gross = price * sellQty;
   const fee = gross * feeRate;
-  const sellTax = gross * _krSellTaxRate(cfg, symbol, market);   // [V33.73] ETF 는 증권거래세 면제
+  const sellTax = gross * _krSellTaxRate(cfg, symbol, market, Date.now());   // [V33.73] ETF 면제 / [V33.87] 시행일 기준
   const proceeds = gross - fee - sellTax;
   if (!(typeof cash[market] === "number" && isFinite(cash[market]))) {
     await log(DB, "ERROR", symbol, "SELL aborted: cash state invalid"); return { cash: cash, pnlPct: 0 };
@@ -13558,7 +13571,7 @@ async function executeSellAlt(DB, sleeve, symbol, pos, sellQty, price, reason, c
   sellQty = await sellQtyDoubleCheck(DB, mk, symbol, pos.qty, sellQty, sleeve.label + " SELL");
   if (!(sellQty > 0)) return { pnlPct: 0, cash: cash };
   const feeRate = sleeve.isKRW ? (cfg.feeKR || 0) : (cfg.feeUS || 0.0001);
-  const sellTax = _krSellTaxRate(cfg, symbol, mk);
+  const sellTax = _krSellTaxRate(cfg, symbol, mk, Date.now());   // [V33.87] 시행일 기준
   const gross = price * sellQty, fee = gross * feeRate;
   const proceeds = gross - fee - gross * sellTax;
   pos.meta = pos.meta || {};
@@ -17810,7 +17823,7 @@ async function handleRequest(request, env, ctx) {
       for (const r of raw) {
         let v; try { v = JSON.parse(r.feat); } catch (e) { continue; }
         if (!Array.isArray(v) || v.length !== LUXML.featNames.length) continue;
-        out.push({ ts: _num(r.ts, 0), m: String(r.market || "us"), x: v.map(function (t) { return _num(t, 0); }), y: r.label ? 1 : 0, pnl: _num(r.pnl_pct, 0), hv: r.strategy === "hv" ? 1 : 0 });
+        out.push({ ts: _num(r.ts, 0), m: String(r.market || "us"), x: v.map(function (t) { return _num(t, 0); }), y: _labelOfRow(r), pnl: _num(r.pnl_pct, 0), hv: r.strategy === "hv" ? 1 : 0 });
       }
       const _last = raw.length ? raw[raw.length - 1] : null;
       return Response.json({
@@ -17840,7 +17853,7 @@ async function handleRequest(request, env, ctx) {
       for (const r of ((rows && rows.results) || [])) {
         let v; try { v = JSON.parse(r.feat); } catch (e) { continue; }
         if (!Array.isArray(v) || v.length !== LUXML.featNames.length) continue;
-        out.push({ ts: _num(r.ts, 0), x: v.map(function (t) { return _num(t, 0); }), y: r.label ? 1 : 0,
+        out.push({ ts: _num(r.ts, 0), x: v.map(function (t) { return _num(t, 0); }), y: _labelOfRow(r),
                    pnl: _num(r.pnl_pct, 0), h: _num(r.horizon, 2) });
       }
       const _sc = (typeof AI_PARAMS !== "undefined" && AI_PARAMS.aiScalp) || {};
@@ -18167,15 +18180,15 @@ async function handleRequest(request, env, ctx) {
         //   다른 시장 표본으로 채점하면 정상 모델도 떨어져 승격이 막힌다.
         const _selfMkt = (_mname === "gbdt_us") ? "us" : (_mname === "gbdt_kr") ? "kr" : null;
         const rs = _selfMkt
-          ? await env.DB.prepare("SELECT feat, label FROM ml_samples WHERE featver = ? AND market = ? ORDER BY ts DESC LIMIT 800").bind(LUXML.featVer, _selfMkt).all()
-          : await env.DB.prepare("SELECT feat, label FROM ml_samples WHERE featver = ? ORDER BY ts DESC LIMIT 800").bind(LUXML.featVer).all();
+          ? await env.DB.prepare("SELECT feat, label, pnl_pct FROM ml_samples WHERE featver = ? AND market = ? ORDER BY ts DESC LIMIT 800").bind(LUXML.featVer, _selfMkt).all()
+          : await env.DB.prepare("SELECT feat, label, pnl_pct FROM ml_samples WHERE featver = ? ORDER BY ts DESC LIMIT 800").bind(LUXML.featVer).all();
         let correct = 0, tot = 0;
         for (const r of ((rs && rs.results) || [])) {
           let v; try { v = JSON.parse(r.feat); } catch (e) { continue; }
           if (!Array.isArray(v) || v.length !== D) continue;
           const p = mlGBDTScore(model, v);
           if (p == null) continue;
-          tot++; if ((p >= 0.5 ? 1 : 0) === (r.label ? 1 : 0)) correct++;
+          tot++; if ((p >= 0.5 ? 1 : 0) === _labelOfRow(r)) correct++;   // [V33.87] 현행 라벨 규칙
         }
         if (tot > 0) { selfAcc = correct / tot; selfN = tot; }
       } catch (e) {}
@@ -21923,6 +21936,11 @@ async function _miniLogisticTrain(DB, opts) {
       let v; try { v = JSON.parse(r.feat); } catch (e) { continue; }
       if (!Array.isArray(v) || v.length !== D) continue;
       X.push(v.map(function (t) { return _num(t, 0); }));
+      // [V33.87] ★여기는 _labelOfRow 를 쓰지 않는다★
+      //   _labelOfRow 는 'ml_samples 의 라벨 정의가 V33.78 에 바뀐 것'을 보정하는 함수다.
+      //   flow_samples/xalpha_samples/stack_samples 는 적재 시점에 이미 pnl>0 으로 고정 기록되고
+      //   alpha·multiclass 같은 다른 정의를 가진 적이 없다. 여기에 전역 라벨모드를 끼워 넣으면
+      //   나중에 target 을 multiclass 로 바꾸는 순간 이 세 모델의 라벨이 조용히 달라진다.
       Y.push(r.label ? 1 : 0);
       P.push(_num(r.pnl_pct, 0));
     }
@@ -23740,6 +23758,32 @@ function _sampleLabel(stockPnlPct, idxRetPct) {
   } catch (e) { return (stockPnlPct > 0) ? 1 : 0; }
 }
 
+// [V33.87] ★저장된 label 을 그대로 믿으면 안 된다★
+//   V33.78 에서 라벨 정의를 alpha(지수 대비 초과수익) → binary(절대수익 pnl>0) 로 바꿨다.
+//   트레이너는 config.prediction.target 을 보고 pnl 에서 Y 를 다시 계산하도록 고쳤지만,
+//   ★워커 쪽(캘리브레이션·업로드 self검증·L1 자체학습)은 저장된 label 컬럼을 그대로 읽고 있었다★.
+//   그 컬럼에는 17만 건의 옛 alpha 라벨이 들어 있다. 결과적으로
+//     · 모델은 절대수익으로 학습되는데
+//     · 온도 캘리브레이션은 alpha 라벨에 맞춰 T 를 잡고
+//     · 업로드 self검증도 alpha 라벨로 채점해 멀쩡한 모델을 떨어뜨린다.
+//   → 저장 시점의 라벨 규칙과 무관하게, 지금 규칙으로 pnl 에서 다시 판정한다.
+//     (pnl_pct 는 모든 행에 남아 있으므로 재계산이 항상 가능하다. 트레이너와 같은 방식이다.)
+function _labelOfRow(row) {
+  try {
+    const P = (typeof AI_PARAMS !== "undefined" && AI_PARAMS.prediction) || {};
+    const mode = P.target || "binary";
+    // alpha 모드는 지수수익이 있어야 재계산되는데 행에 없다 → 그 땐 저장값을 쓴다(종전 동작).
+    if (mode === "alpha") return row && row.label ? 1 : 0;
+    const pnl = _num(row && row.pnl_pct, null);
+    if (pnl == null) return row && row.label ? 1 : 0;
+    if (mode === "multiclass") {
+      const flat = (P.multiClass && P.multiClass.flatThresholdPct != null) ? P.multiClass.flatThresholdPct : 1.5;
+      return pnl > flat ? 1 : 0;
+    }
+    return pnl > 0 ? 1 : 0;
+  } catch (e) { return row && row.label ? 1 : 0; }
+}
+
 async function mlLogSample(DB, market, symbol, strategy, featVec, pnlPct, idxRetPct) {
   if (!LUXML.enabled) return;
   try {
@@ -23841,7 +23885,7 @@ async function mlTrainNightly(DB) {
     for (let i = raw.length - 1; i >= 0; i--) {
       let v; try { v = JSON.parse(raw[i].feat); } catch (e) { continue; }
       if (!Array.isArray(v) || v.length !== LUXML.featNames.length) continue;
-      data.push({ ts: _num(raw[i].ts, 0), x: v.map(function(t){ return _num(t, 0); }), y: raw[i].label ? 1 : 0, pnl: _num(raw[i].pnl_pct, 0), hv: raw[i].strategy === "hv" });
+      data.push({ ts: _num(raw[i].ts, 0), x: v.map(function(t){ return _num(t, 0); }), y: _labelOfRow(raw[i]), pnl: _num(raw[i].pnl_pct, 0), hv: raw[i].strategy === "hv" });
     }
     const N = data.length;
     if (N < LUXML.minTrainSamples) return "[ML] 유효표본 부족(" + N + ")";
@@ -24339,7 +24383,7 @@ async function mlBanditNoiseNightly(DB) {
     for (let i = raw.length - 1; i >= 0; i--) {
       let v; try { v = JSON.parse(raw[i].feat); } catch (e) { continue; }
       if (!Array.isArray(v) || v.length !== LUXML.featNames.length) continue;
-      data.push({ x: v.map(function (t) { return _num(t, 0); }), y: raw[i].label ? 1 : 0 });
+      data.push({ x: v.map(function (t) { return _num(t, 0); }), y: _labelOfRow(raw[i]) });
     }
     const N = data.length;
     if (N < LUXML.minTrainSamples) return "[BANDIT] 유효표본 부족(" + N + ")";
@@ -24622,7 +24666,7 @@ async function mlBrainTrainNightly(DB) {
     for (let i = raw.length - 1; i >= 0; i--) {
       let v; try { v = JSON.parse(raw[i].feat); } catch (e) { continue; }
       if (!Array.isArray(v) || v.length !== LUXML.featNames.length) continue;
-      data.push({ ts: _num(raw[i].ts, 0), x: v.map(function (t) { return _num(t, 0); }), y: raw[i].label ? 1 : 0, pnl: _num(raw[i].pnl_pct, 0), hv: raw[i].strategy === "hv" });
+      data.push({ ts: _num(raw[i].ts, 0), x: v.map(function (t) { return _num(t, 0); }), y: _labelOfRow(raw[i]), pnl: _num(raw[i].pnl_pct, 0), hv: raw[i].strategy === "hv" });
     }
     let N = data.length;
     if (N < BRAIN.minTrainSamples) return "[BRAIN] 유효표본 부족(" + N + ")";
@@ -24935,7 +24979,7 @@ async function _mindLoadSamples(DB) {
   for (let i = raw.length - 1; i >= 0; i--) {
     let v; try { v = JSON.parse(raw[i].feat); } catch (e) { continue; }
     if (!Array.isArray(v) || v.length !== LUXML.featNames.length) continue;
-    data.push({ ts: _num(raw[i].ts, 0), x: v.map(function (t) { return _num(t, 0); }), y: raw[i].label ? 1 : 0, pnl: _num(raw[i].pnl_pct, 0), hv: raw[i].strategy === "hv" });
+    data.push({ ts: _num(raw[i].ts, 0), x: v.map(function (t) { return _num(t, 0); }), y: _labelOfRow(raw[i]), pnl: _num(raw[i].pnl_pct, 0), hv: raw[i].strategy === "hv" });
   }
   return data;
 }
@@ -25858,7 +25902,7 @@ async function mlDNNTrainNightly(DB) {
     for (let i = raw.length - 1; i >= 0; i--) {
       let v; try { v = JSON.parse(raw[i].feat); } catch (e) { continue; }
       if (!Array.isArray(v) || v.length !== LUXML.featNames.length) continue;
-      data.push({ ts: _num(raw[i].ts, 0), x: v.map(function (t) { return _num(t, 0); }), y: raw[i].label ? 1 : 0, pnl: _num(raw[i].pnl_pct, 0), hv: raw[i].strategy === "hv" });
+      data.push({ ts: _num(raw[i].ts, 0), x: v.map(function (t) { return _num(t, 0); }), y: _labelOfRow(raw[i]), pnl: _num(raw[i].pnl_pct, 0), hv: raw[i].strategy === "hv" });
     }
     const N = data.length;
     if (N < DNN.minTrainSamples) {
@@ -26744,7 +26788,7 @@ async function mlGBDTTrainNightly(DB) {
     for (let i = raw.length - 1; i >= 0; i--) {
       let v; try { v = JSON.parse(raw[i].feat); } catch (e) { continue; }
       if (!Array.isArray(v) || v.length !== LUXML.featNames.length) continue;
-      data.push({ ts: _num(raw[i].ts, 0), x: v.map(function (t) { return _num(t, 0); }), y: raw[i].label ? 1 : 0,
+      data.push({ ts: _num(raw[i].ts, 0), x: v.map(function (t) { return _num(t, 0); }), y: _labelOfRow(raw[i]),
                   pnl: _num(raw[i].pnl_pct, 0), hv: raw[i].strategy === "hv" });
     }
     const N = data.length;
@@ -26894,7 +26938,7 @@ async function mlCalibrateCommittee(DB) {
     const mind = await mlMindLoad(DB);
     if (!mind) { return null; }   // 위원회 자체가 없으면 보정 없음
     const rows = await DB.prepare(
-      "SELECT ts, feat, label FROM ml_samples WHERE featver = ? ORDER BY ts DESC LIMIT 400"
+      "SELECT ts, feat, label, pnl_pct FROM ml_samples WHERE featver = ? ORDER BY ts DESC LIMIT 400"
     ).bind(LUXML.featVer).all();
     const raw = (rows && rows.results) ? rows.results : [];
     if (raw.length < 60) return "[CAL] 표본 " + raw.length + "/60 — 보정 대기";
@@ -26916,7 +26960,7 @@ async function mlCalibrateCommittee(DB) {
       if (!Array.isArray(v) || v.length !== LUXML.featNames.length) continue;
       const ms = await mlMindScore(DB, mind, v, ens);
       if (!ms) continue;
-      const y = r.label ? 1 : 0;
+      const y = _labelOfRow(r);   // [V33.87] 현행 라벨 규칙으로 재판정(옛 alpha 라벨 무시)
       const ex = [{ z: _logitD(ms.p), acc: mindAccLB }];
       rel.mind.n++; if ((ms.p >= 0.5 ? 1 : 0) === y) rel.mind.c++;
       if (dnn) { const pD = mlDNNScore(dnn, v); if (pD != null) { ex.push({ z: _logitD(pD), acc: _num(dnnTrust.dnnAccLB, 0.5) }); rel.dnn.n++; if ((pD >= 0.5 ? 1 : 0) === y) rel.dnn.c++; } }
