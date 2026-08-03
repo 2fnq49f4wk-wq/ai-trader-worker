@@ -2546,6 +2546,136 @@ function portfolioRho(symbols, dailyCache) {
   } catch (e) { return null; }
 }
 
+// ════════════════════════════════════════════════════════════════════════════
+// [V33.93] ★HRP — Hierarchical Risk Parity (López de Prado 2016)★
+//   "Building Diversified Portfolios that Outperform Out-of-Sample", J. Portfolio Management
+//
+//   왜 필요한가: 지금 상관 보정은 ★평균 상관 하나(스칼라)★ 다 — kellyPerTrade 의 ÷√(1+(N−1)ρ).
+//   그런데 평균이 같아도 구조가 전혀 다를 수 있다. 반도체 8종 + 금 1종 포트폴리오와
+//   서로 무관한 9종 포트폴리오가 평균 상관이 같게 나올 수 있는데, 앞의 것은 사실상 한 판이다.
+//   ★평균으로 뭉개면 '분산된 것처럼 보이는 집중' 을 못 본다.★
+//
+//   HRP 는 상관행렬을 계층군집으로 묶어 비슷한 것끼리 클러스터를 만들고, 재귀 이분으로
+//   클러스터 사이에 역분산 배분한다. 공분산 역행렬을 쓰지 않아(마코위츠의 고질적 불안정성 회피)
+//   표본이 짧고 잡음이 많은 실데이터에서 안정적이다 — 논문의 핵심 결과가 그것이다.
+//
+//   우리 쓰임: 신규 후보가 '이미 들고 있는 것들과 얼마나 겹치는가' 를 구조적으로 재서
+//   켈리 크기에 배수로 곱한다. 겹치면 축소, 진짜 분산이면 그대로/약간 확대.
+function _hrpCorrMatrix(symbols, dailyCache, lookback) {
+  const lr = {}, keys = [];
+  for (const sy of symbols) {
+    const d = dailyCache && dailyCache[sy];
+    if (!d || !Array.isArray(d.closes) || d.closes.length < 25) continue;
+    const c = d.closes, out = [];
+    for (let i = Math.max(1, c.length - (lookback || 60)); i < c.length; i++)
+      if (c[i] > 0 && c[i - 1] > 0) out.push(Math.log(c[i] / c[i - 1]));
+    if (out.length >= 20) { lr[sy] = out; keys.push(sy); }
+  }
+  const n = keys.length;
+  if (n < 2) return null;
+  const m = Math.min.apply(null, keys.map(function (k) { return lr[k].length; }));
+  const S = keys.map(function (k) { return lr[k].slice(lr[k].length - m); });
+  const mu = S.map(function (a) { let s = 0; for (const v of a) s += v; return s / m; });
+  const sd = S.map(function (a, i) { let s = 0; for (const v of a) s += (v - mu[i]) * (v - mu[i]); return Math.sqrt(s / m); });
+  const C = [];
+  for (let i = 0; i < n; i++) {
+    C.push(new Array(n).fill(0));
+    for (let j = 0; j < n; j++) {
+      if (i === j) { C[i][j] = 1; continue; }
+      if (!(sd[i] > 1e-12 && sd[j] > 1e-12)) { C[i][j] = 0; continue; }
+      let s = 0; for (let k = 0; k < m; k++) s += (S[i][k] - mu[i]) * (S[j][k] - mu[j]);
+      C[i][j] = _clamp((s / m) / (sd[i] * sd[j]), -1, 1);
+    }
+  }
+  return { keys: keys, corr: C, sd: sd };
+}
+// 준대각화 — 단일연결 계층군집의 병합 순서를 따라 상관 높은 것끼리 인접시킨다.
+function _hrpQuasiDiag(C) {
+  const n = C.length;
+  // 거리 d = sqrt(0.5(1−ρ)) 로 단일연결 군집화(간단·결정적 구현).
+  const clusters = []; for (let i = 0; i < n; i++) clusters.push([i]);
+  const dist = function (a, b) {
+    let best = Infinity;
+    for (const x of a) for (const y of b) { const d = Math.sqrt(Math.max(0, 0.5 * (1 - C[x][y]))); if (d < best) best = d; }
+    return best;
+  };
+  while (clusters.length > 1) {
+    let bi = 0, bj = 1, bd = Infinity;
+    for (let i = 0; i < clusters.length; i++)
+      for (let j = i + 1; j < clusters.length; j++) {
+        const d = dist(clusters[i], clusters[j]);
+        if (d < bd) { bd = d; bi = i; bj = j; }
+      }
+    const merged = clusters[bi].concat(clusters[bj]);
+    clusters.splice(bj, 1); clusters.splice(bi, 1); clusters.push(merged);
+  }
+  return clusters[0];
+}
+// 재귀 이분 배분 — 클러스터 분산의 역수 비율로 좌우에 나눠 준다.
+function _hrpRecursiveBisect(order, C, sd) {
+  const n = order.length;
+  const w = new Array(n).fill(1);
+  const idxOf = {}; order.forEach(function (v, i) { idxOf[v] = i; });
+  const varOf = function (grp) {
+    // 역분산 가중 클러스터의 분산 (논문의 getClusterVar)
+    let iv = 0; const ivs = [];
+    for (const g of grp) { const v = Math.max(1e-12, sd[g] * sd[g]); ivs.push(1 / v); iv += 1 / v; }
+    const wq = ivs.map(function (x) { return x / iv; });
+    let s = 0;
+    for (let a = 0; a < grp.length; a++)
+      for (let b = 0; b < grp.length; b++)
+        s += wq[a] * wq[b] * C[grp[a]][grp[b]] * sd[grp[a]] * sd[grp[b]];
+    return Math.max(1e-12, s);
+  };
+  const stack = [order.slice()];
+  while (stack.length) {
+    const grp = stack.pop();
+    if (grp.length <= 1) continue;
+    const h = Math.floor(grp.length / 2);
+    const L = grp.slice(0, h), R = grp.slice(h);
+    const vL = varOf(L), vR = varOf(R);
+    const aL = 1 - vL / (vL + vR);          // 분산이 큰 쪽에 덜 준다
+    for (const g of L) w[idxOf[g]] *= aL;
+    for (const g of R) w[idxOf[g]] *= (1 - aL);
+    stack.push(L); stack.push(R);
+  }
+  const out = {};
+  let sum = 0; for (const v of w) sum += v;
+  order.forEach(function (orig, i) { out[orig] = sum > 0 ? w[i] / sum : 1 / n; });
+  return out;
+}
+// 공개 진입점 — 종목 리스트 → HRP 비중 { symbol: weight }.
+function hrpWeights(symbols, dailyCache, lookback) {
+  try {
+    const M = _hrpCorrMatrix(symbols, dailyCache, lookback);
+    if (!M) return null;
+    const order = _hrpQuasiDiag(M.corr);
+    const wIdx = _hrpRecursiveBisect(order, M.corr, M.sd);
+    const out = {};
+    for (let i = 0; i < M.keys.length; i++) out[M.keys[i]] = +_num(wIdx[i], 0).toFixed(5);
+    return out;
+  } catch (e) { return null; }
+}
+// 신규 후보의 사이즈 배수 — HRP 가 준 비중 ÷ 균등비중.
+//   1보다 크면 "이 종목은 진짜 분산 기여", 작으면 "이미 들고 있는 것과 겹친다".
+function hrpSizeMult(symbol, heldSymbols, dailyCache, cfg) {
+  try {
+    const sw = (cfg && cfg.signalTypeWeights) || {};
+    if (sw.hrp === false) return 1;
+    const held = (heldSymbols || []).filter(function (s) { return s !== symbol; });
+    if (held.length < 2) return 1;                       // 비교 대상이 없으면 판단 보류
+    const syms = held.concat([symbol]);
+    const w = hrpWeights(syms, dailyCache, 60);
+    if (!w || w[symbol] == null) return 1;
+    const n = Object.keys(w).length;
+    if (n < 3) return 1;
+    const eq = 1 / n;
+    const mult = w[symbol] / eq;
+    // 상·하한 — 배분기가 사이징을 통째로 뒤집지 않게 한다(켈리가 주도, HRP 는 보정).
+    return _clamp(mult, _num(sw.hrpMin, 0.55), _num(sw.hrpMax, 1.45));
+  } catch (e) { return 1; }
+}
+
 function computeSignalWeight(stat, cfg) {
   const sw = (cfg && cfg.signalTypeWeights) || {};
   const n0 = sw.shrinkN != null ? sw.shrinkN : 15;
@@ -2630,7 +2760,7 @@ async function applySignalTypeWeights(DB, cfg) {
 // ============================================================================
 // [V33.55] 빌드 버전 — SWR L2 캐시 키에 섞어 '배포 = 판단 캐시 자동 무효화'를 만든다.
 //   판정 로직을 고쳐도 옛 캐시가 최대 1시간 재배포되던 문제를 구조적으로 없앤다.
-const _BUILD_VER = "V33.92";
+const _BUILD_VER = "V33.93";
 
 const AI_PARAMS = {
   // ── OHLCV 타임프레임 ── 시가/고가/저가/종가/거래량을 어떤 봉 주기로 볼지.
@@ -15113,11 +15243,12 @@ async function runTradingCycle(env) {
       let __xaModel = null, __xaPanel = null;   // [V33.79] XALPHA — 형식알파 + 횡단면 랭크
       let __stackModel = null;   // [V33.80] STACK 메타모델(투표 대체)
       let __memoModel = null;    // [V33.92] MEMO 유사상황 기억 전문가
-      let __dualBull = null, __dualBear = null;   // [V33.89] 강세/약세 이중 헤드
+      let __dualBull = null, __dualBear = null, __dualShift = null;   // [V33.89] 강세/약세 이중 헤드 (+V33.93 실측 사분면 로짓)
       let __pDistCache = null, __pDistNew = [];   // [V33.80] 후보 p 분포(백분위 문턱용)
       // [V33.82] 단타 레버리지 게이트 입력 — 사이클당 1회만 만든다.
       let __scalpEdge = null, __ddPctNow = 0;
       let __portRho = null;   // [V33.83] 보유 포지션 평균 상관 — 켈리 동시베팅 보정
+      let __heldForHrp = [];  // [V33.93] HRP(계층 리스크 패리티) 입력 — 보유 종목
       let __mlDrift = { drift: false, action: "none", acc: null };  // [V16] 모델 열화 감지(사이클 1회)
       const __sentiOvrMemo = {};  // [V14] 종목별 감성 오버라이드 판정 사이클 캐시(매도·매수 루프 공유)
       const __candBatch = [], __candSyms = new Set();  // [LUX-AI] 반사실 후보 배치(사이클당 1커밋)
@@ -15145,7 +15276,7 @@ async function runTradingCycle(env) {
               try { __xaModel = await getState(DB, "xalpha_model", null); } catch (e2) {}
               try { __stackModel = await getState(DB, "stack_model", null); } catch (e2) {}
               try { if (MEMOML.enabled) __memoModel = await getState(DB, "memo_model", null); } catch (e2) {}
-              try { if (DUALHEAD.enabled) { __dualBull = await getState(DB, "dual_bull_model", null); __dualBear = await getState(DB, "dual_bear_model", null); } } catch (e2) {}
+              try { if (DUALHEAD.enabled) { __dualBull = await getState(DB, "dual_bull_model", null); __dualBear = await getState(DB, "dual_bear_model", null); __dualShift = await getState(DB, "dual_quad_shift", null); } } catch (e2) {}
               try { __pDistCache = await getState(DB, "ai_pdist:" + market, null); } catch (e2) {}
           // [V33.82] 단타 실측 엣지(켈리) + 현재 드로다운 — 레버리지 개방 판단의 두 축.
           try {
@@ -15217,6 +15348,7 @@ async function runTradingCycle(env) {
               const _held = [];
               for (const _k2 in positions) { const _p2 = positions[_k2]; if (_p2 && _p2.symbol) _held.push(_p2.symbol); }
               if (_held.length >= 2) __portRho = portfolioRho(_held, __dailyCacheForFlow);
+              __heldForHrp = _held;   // [V33.93] HRP 구조 배분 입력
             } catch (e2) {}
           } catch (e) { __dailyCacheForFlow = {}; }
           // [V12.130] ★TIME-CAP 근본원인 수정★ 섹터ETF 종가를 종목마다 getState로 다시 읽고 있었다
@@ -16444,11 +16576,16 @@ async function runTradingCycle(env) {
                     //   엣지가 큰 거래만 그 배수만큼 키운다. 상대 순서(켈리의 본질)는 보존되고
                     //   절대 크기는 기존 규율 안에 머문다.
                     const _ref = _num(_swc.kellyRefF, 0.08);
-                    const _mult = _clamp(_kk.f / _ref, _num(_swc.kellyMultMin, 0.3),
-                                                       _num(_swc.kellyMultMax, 3.0));
+                    // [V33.93] ★HRP 구조 배분★ — 평균 상관(스칼라)은 '분산된 것처럼 보이는 집중'을
+                    //   못 본다. 이미 들고 있는 것들과 이 후보의 상관 ★구조★ 를 계층군집으로 보고,
+                    //   겹치면 줄이고 진짜 분산이면 그대로 둔다(de Prado 2016).
+                    let _hrpM = 1;
+                    try { _hrpM = hrpSizeMult(symbol, __heldForHrp, __dailyCacheForFlow, mcfg); } catch (e0) {}
+                    const _mult = _clamp((_kk.f / _ref) * _hrpM, _num(_swc.kellyMultMin, 0.3),
+                                                                 _num(_swc.kellyMultMax, 3.0));
                     const _kPct = _clamp(riskPct * _mult, _num(_swc.kellyRiskMin, 0.2),
                                                           _num(_swc.kellyRiskMax, 3.0));
-                    signal.kellyNote = "K f=" + _kk.f.toFixed(4) + " p=" + _kk.p.toFixed(3) +
+                    signal.kellyNote = "K f=" + _kk.f.toFixed(4) + " HRP×" + _hrpM.toFixed(2) + " p=" + _kk.p.toFixed(3) +
                                        " b=" + _kk.b.toFixed(2) + " ÷상관" + _kk.corrDiv.toFixed(2) +
                                        " ×" + _mult.toFixed(2) + " → risk " + _kPct.toFixed(2) + "%";
                     riskPct = _kPct;
@@ -16639,7 +16776,7 @@ async function runTradingCycle(env) {
                     if (__xaFeat) signal.xaFeat = __xaFeat;
                   }
                 } catch (e) {}
-                try { _md = await mlDeepDecide(DB, signal.mlFeat, { mind: __mind, guard: __guard, ens: __ensemble, trust: __dnnTrust, dnn: __dnn, gbdtTrust: __gbdtTrust, gbdt: __gbdt, cal: __cal, evstats: __evStats, portStats: __portStats, shock: await _luxMarketShockCached(DB), sym: symbol, evCtx: await _luxEventContextCached(DB), applyEventPrior: true, market: market, flowFeat: __flowFeat, flowModel: __flowModel, xaFeat: __xaFeat, xaModel: __xaModel, stackModel: __stackModel, memoModel: __memoModel, dualBull: __dualBull, dualBear: __dualBear }); } catch (e) {}
+                try { _md = await mlDeepDecide(DB, signal.mlFeat, { mind: __mind, guard: __guard, ens: __ensemble, trust: __dnnTrust, dnn: __dnn, gbdtTrust: __gbdtTrust, gbdt: __gbdt, cal: __cal, evstats: __evStats, portStats: __portStats, shock: await _luxMarketShockCached(DB), sym: symbol, evCtx: await _luxEventContextCached(DB), applyEventPrior: true, market: market, flowFeat: __flowFeat, flowModel: __flowModel, xaFeat: __xaFeat, xaModel: __xaModel, stackModel: __stackModel, memoModel: __memoModel, dualBull: __dualBull, dualBear: __dualBear, dualShift: __dualShift }); } catch (e) {}
                 if (!_md) { try { _md = await mlMindDecide(DB, signal.mlFeat, { mind: __mind, guard: __guard, ens: __ensemble }); } catch (e) {} }
                 // [V5] AI 픽 수집 — 개입 여부와 무관하게 예측 자체는 기록(종목당 1회)
                 try {
@@ -17701,6 +17838,9 @@ async function handleRequest(request, env, ctx) {
               //   운으로 높은 IC 와 실력으로 높은 IC 가 같아 보인다.
               icBlock: m ? _num(m.valICBlock, null) : null,
               icT: m ? _num(m.valICt, null) : null,
+              // [V33.93] 전진검증 — 학습 이후 도착한 표본에서의 성적.
+              fwdIC: m ? _num(m.fwdIC, null) : null, fwdN: m ? _num(m.fwdN, 0) : 0,
+              fwdReady: !!(m && m.fwdReady), holdPass: !!(m && m.holdPass), minFwd: ICGATE.minForward,
               valN: m ? _num(m.valN, null) : null,
               n: m ? _num(m.n, null) : null,
               ts: m ? _num(m.ts, null) : null
@@ -17722,6 +17862,8 @@ async function handleRequest(request, env, ctx) {
               trained: !!(_mo && _mo.luxFeatVer === LUXML.featVer), trusted: !!(_mo && _mo.trusted),
               acc: _mo ? _num(_mo.valAcc, null) : null, ic: _mo ? _num(_mo.valIC, null) : null,
               icBlock: _mo ? _num(_mo.valICBlock, null) : null, icT: _mo ? _num(_mo.valICt, null) : null,
+              fwdIC: _mo ? _num(_mo.fwdIC, null) : null, fwdN: _mo ? _num(_mo.fwdN, 0) : 0,
+              fwdReady: !!(_mo && _mo.fwdReady), holdPass: !!(_mo && _mo.holdPass), minFwd: ICGATE.minForward,
               protos: _mo && Array.isArray(_mo.protos) ? _mo.protos.length : null, n: _mo ? _num(_mo.n, null) : null };
           } catch (e) {}
           // [V33.89] 이중헤드(강세/약세) — ml_samples 를 그대로 쓰므로 표본은 스윙 풀과 같다.
@@ -22421,6 +22563,17 @@ async function flowLogSample(DB, market, symbol, featVec, pnlPct) {
 //   opts: { table, stateKey, tag, featVer, D, minN, window, l2, icFloor }
 async function _miniLogisticTrain(DB, opts) {
   try {
+    // [V33.93] ★재학습으로 덮어쓰기 전에★ 어제 모델을 그 이후 도착한 표본으로 채점한다.
+    //   이게 유일하게 다중검정·행운창(lucky window)에 오염되지 않은 증거다.
+    let _fwd = null;
+    try {
+      _fwd = await icForwardCheck(DB, {
+        stateKey: opts.stateKey, table: opts.table, featVer: opts.featVer,
+        sampleFeatVer: opts.sampleFeatVer != null ? opts.sampleFeatVer : opts.featVer,
+        scoreFn: function (m, v) { return flowScore(m, v); },
+        labelFn: opts.labelFn
+      });
+    } catch (e) {}
     const rows = await DB.prepare(
       "SELECT ts, feat, label, pnl_pct FROM " + opts.table + " WHERE featver = ? ORDER BY ts DESC LIMIT ?"
     ).bind(opts.featVer, opts.window).all();
@@ -22497,24 +22650,36 @@ async function _miniLogisticTrain(DB, opts) {
     let _base = 0;
     try { for (const yy of Y) _base += yy; _base = Y.length ? _base / Y.length : 0; } catch (e) {}
     const _floor = _num(opts.icFloor, 0.012);
-    const _tMin = _num(opts.icTMin, 1.65);          // 단측 5% — 블록 IC 가 우연이 아닐 것
+    // [V33.93] 본페로니 보정 문턱 — 전문가 8종을 매일 밤 동시검정하므로 1.65 는 근거가 없다.
+    const _tMin = _num(opts.icTMin, ICGATE.tMin);
     const _bIC = (_st.blockIC != null) ? _st.blockIC : null;
     const _tv = (_st.t != null) ? _st.t : null;
     // 블록 통계를 못 구할 만큼 홀드아웃이 작으면(블록당 20건 미만) 유의성을 확인할 수 없다 →
     //   그 땐 Fisher z 하한으로 보수 판정한다("모르면 안 믿는다").
-    const _trusted = (_bIC != null && _tv != null)
+    const _holdPass = (_bIC != null && _tv != null)
       ? (_bIC >= _floor && _tv >= _tMin)
       : (Math.tanh(Math.atanh(_clamp(ic, -0.999, 0.999)) - 1.64 / Math.sqrt(Math.max(9, nval) - 3)) >= _floor);
+    // [V33.93] 전진검증 — 학습 이후 도착한 표본에서도 방향이 맞아야 한다.
+    //   아직 전진표본이 모자라면(_fwd 미준비) 신뢰하지 않는다. 확인 못 한 건 안 믿는다.
+    const _fwdPass = !!(_fwd && _fwd.ready && _num(_fwd.ic, -1) > ICGATE.forwardFloor
+                       && _num(_fwd.t, -9) >= ICGATE.forwardTMin);
+    const _trusted = _holdPass && _fwdPass;
     const model = { w: w, b: b, mean: mean, std: std, featVer: opts.featVer, baseRate: +_base.toFixed(4),
       valAcc: +acc.toFixed(4), valIC: +ic.toFixed(5), valN: nval, n: N, ts: Date.now(),
       valICBlock: _bIC != null ? +_bIC.toFixed(5) : null,
       valICIR: _st.icir != null ? +_st.icir.toFixed(3) : null,
       valICt: _tv != null ? +_tv.toFixed(3) : null, valICK: _st.K,
+      fwdIC: _fwd ? _fwd.ic : null, fwdICt: _fwd ? _fwd.t : null,
+      fwdN: _fwd ? _fwd.n : 0, fwdReady: !!(_fwd && _fwd.ready),
+      holdPass: _holdPass,
       trusted: _trusted };
     await setState(DB, opts.stateKey, model);
     return "[" + opts.tag + "] 학습완료 표본 " + N + " valAcc " + (acc * 100).toFixed(1) + "% IC " + ic.toFixed(4) +
            (_bIC != null ? " 블록IC " + _bIC.toFixed(4) + " t " + (_tv || 0).toFixed(2) : " (블록 부족)") +
-           (model.trusted ? " → 위원회 합류" : " → 유의성 미달, 대기");
+           (_fwd && _fwd.ready ? " 전진IC " + _num(_fwd.ic, 0).toFixed(4) + "(n" + _fwd.n + ")"
+                               : " 전진" + (_fwd ? _fwd.n : 0) + "/" + ICGATE.minForward) +
+           (model.trusted ? " → 위원회 합류"
+                          : (!_holdPass ? " → 유의성 미달, 대기" : " → 전진검증 미통과, 대기"));
   } catch (e) { return "[" + opts.tag + "] 학습 실패: " + (e && e.message); }
 }
 
@@ -22729,7 +22894,7 @@ const MEMOML = {
   iters: 6,                // 온라인 k-means 반복
   shrinkN: 40,             // 원형 표본이 적으면 기저확률로 수축
   icFloor: 0.012,
-  icTMin: 1.65
+  icTMin: 2.50              // [V33.93] 본페로니 — 전문가 8종 동시검정
 };
 
 // 원형 책 만들기 — 표준화 → k-means(고정 반복) → 원형별 승률·평균손익 집계.
@@ -22738,6 +22903,16 @@ async function memoTrainNightly(DB) {
   if (!MEMOML.enabled) return null;
   try {
     const D = LUXML.featNames.length;
+    // [V33.93] 재학습 전 전진검증 — 어제 원형책을 그 이후 도착한 표본으로 채점한다.
+    let _fwd = null;
+    try {
+      _fwd = await icForwardCheck(DB, {
+        stateKey: "memo_model", table: "ml_samples", featVer: MEMOML.featVer,
+        sampleFeatVer: LUXML.featVer,
+        scoreFn: function (m, v) { return memoScore(m, v); },
+        labelFn: function (r) { return _labelOfRow(r); }
+      });
+    } catch (e) {}
     const rows = await DB.prepare(
       "SELECT ts, feat, label, pnl_pct FROM ml_samples WHERE featver = ? ORDER BY ts DESC LIMIT ?"
     ).bind(LUXML.featVer, MEMOML.trainWindow).all();
@@ -22808,13 +22983,20 @@ async function memoTrainNightly(DB) {
     model.valICBlock = st.blockIC != null ? +st.blockIC.toFixed(5) : null;
     model.valICIR = st.icir != null ? +st.icir.toFixed(3) : null;
     model.valICt = st.t != null ? +st.t.toFixed(3) : null;
-    model.trusted = (model.valICBlock != null && model.valICt != null)
-      ? (model.valICBlock >= MEMOML.icFloor && model.valICt >= MEMOML.icTMin)
-      : false;
+    model.fwdIC = _fwd ? _fwd.ic : null; model.fwdICt = _fwd ? _fwd.t : null;
+    model.fwdN = _fwd ? _fwd.n : 0; model.fwdReady = !!(_fwd && _fwd.ready);
+    model.holdPass = (model.valICBlock != null && model.valICt != null)
+      && model.valICBlock >= MEMOML.icFloor && model.valICt >= MEMOML.icTMin;
+    // [V33.93] 홀드아웃 유의성 ★그리고★ 전진검증(학습 이후 표본)을 함께 요구한다.
+    model.trusted = !!(model.holdPass && _fwd && _fwd.ready && _num(_fwd.ic, -1) > ICGATE.forwardFloor
+                       && _num(_fwd.t, -9) >= ICGATE.forwardTMin);
     await setState(DB, "memo_model", model);
     return "[MEMO] 원형 " + protos.length + "개 (표본 " + ntr + ") valAcc " + (model.valAcc * 100).toFixed(1) +
            "% IC " + model.valIC.toFixed(4) + (model.valICt != null ? " t " + model.valICt.toFixed(2) : "") +
-           (model.trusted ? " → 위원회 합류" : " → 유의성 미달, 대기");
+           (model.fwdReady ? " 전진IC " + _num(model.fwdIC, 0).toFixed(4) + "(n" + model.fwdN + ")"
+                           : " 전진" + model.fwdN + "/" + ICGATE.minForward) +
+           (model.trusted ? " → 위원회 합류"
+                          : (!model.holdPass ? " → 유의성 미달, 대기" : " → 전진검증 미통과, 대기"));
   } catch (e) { return "[MEMO] 학습 실패: " + (e && e.message); }
 }
 
@@ -22881,12 +23063,77 @@ async function dualHeadTrainNightly(DB) {
     });
     out.push(r);
   }
+  // ══ [V33.93] ★사분면 로짓 가점을 '측정' 한다 — ±0.35 는 근거 없는 상수였다★ ══
+  //   V33.89 는 bull 사분면에 +0.35, bear 에 −0.35 로짓을 더했다. 그 숫자의 출처는 아무데도 없다.
+  //   로그오즈에 상수를 더하는 건 "이 사분면이면 승산이 e^0.35 = 1.42배" 라고 단정하는 것인데,
+  //   그게 사실인지 잰 적이 없다. 확률 체인에서 근거 없는 상수는 논리 비약이다.
+  //   → 홀드아웃에서 사분면별 실제 승률을 재고, 전체 기저 대비 ★실측 로그오즈 차★ 를 쓴다.
+  //     표본이 적은 사분면은 0 쪽으로 수축(작은 표본의 큰 차이를 그대로 믿지 않는다).
+  try {
+    const bm = await getState(DB, "dual_bull_model", null);
+    const rm = await getState(DB, "dual_bear_model", null);
+    if (bm && rm && bm.featVer === LUXML.featVer && rm.featVer === LUXML.featVer) {
+      const rs = await DB.prepare(
+        "SELECT feat, label, pnl_pct FROM ml_samples WHERE featver = ? ORDER BY ts DESC LIMIT 8000"
+      ).bind(LUXML.featVer).all();
+      const rows = (rs && rs.results) || [];
+      const agg = {}; let nAll = 0, wAll = 0;
+      for (const r of rows) {
+        let v; try { v = JSON.parse(r.feat); } catch (e) { continue; }
+        if (!Array.isArray(v) || v.length !== LUXML.featNames.length) continue;
+        const q = _dualQuadrant(bm, rm, v);
+        if (!q) continue;
+        const y = _labelOfRow(r);
+        nAll++; wAll += y;
+        if (!agg[q]) agg[q] = { n: 0, w: 0 };
+        agg[q].n++; agg[q].w += y;
+      }
+      if (nAll >= 500 && wAll > 0 && wAll < nAll) {
+        const base = wAll / nAll;
+        const bz = Math.log(base / (1 - base));
+        const shift = {};
+        for (const q of Object.keys(agg)) {
+          const a = agg[q];
+          if (a.n < 60) { shift[q] = 0; continue; }
+          const wr = _clamp(a.w / a.n, 0.01, 0.99);
+          const raw = Math.log(wr / (1 - wr)) - bz;
+          // 표본수 수축 — n=60 이면 절반만, n≥600 이면 거의 그대로.
+          const sh = a.n / (a.n + 240);
+          shift[q] = +_clamp(raw * sh, -1.2, 1.2).toFixed(3);
+        }
+        await setState(DB, "dual_quad_shift", { shift: shift, base: +base.toFixed(4), n: nAll,
+          counts: Object.keys(agg).reduce(function (o, k) { o[k] = agg[k].n; return o; }, {}), ts: Date.now() });
+        out.push("사분면 실측 로짓 " + Object.keys(shift).map(function (k) {
+          return k + " " + (shift[k] >= 0 ? "+" : "") + shift[k] + "(n" + agg[k].n + ")"; }).join(" "));
+      } else {
+        out.push("사분면 실측 대기(유효 " + nAll + "/500)");
+      }
+    }
+  } catch (e) {}
   return out.filter(Boolean).join(" | ");
+}
+
+// 사분면만 판정(신뢰 여부와 무관 — 측정용). dualHeadJudge 와 같은 경계 규칙을 쓴다.
+function _dualQuadrant(bullM, bearM, featVec) {
+  try {
+    const pUp = flowScore(bullM, featVec), pDown = flowScore(bearM, featVec);
+    if (pUp == null || pDown == null) return null;
+    const bU = _clamp(_num(bullM.baseRate, 0.3), 0.02, 0.9);
+    const bD = _clamp(_num(bearM.baseRate, 0.3), 0.02, 0.9);
+    const HI = 1.35, LO = 0.75;
+    const upHi = pUp >= bU * HI, upLo = pUp < bU * LO;
+    const dnHi = pDown >= bD * HI, dnLo = pDown < bD * LO;
+    if (upHi && dnLo) return "bull";
+    if (upLo && dnHi) return "bear";
+    if (upHi && dnHi) return "volatile";
+    if (upLo && dnLo) return "dead";
+    return "mixed";
+  } catch (e) { return null; }
 }
 
 // 두 헤드 확률로 사분면을 판정한다.
 //   반환 { pUp, pDown, quadrant, edge } · edge = pUp − pDown (비대칭 상방)
-function dualHeadJudge(bullM, bearM, featVec) {
+function dualHeadJudge(bullM, bearM, featVec, opts) {
   try {
     if (!DUALHEAD.enabled || !bullM || !bearM) return null;
     if (bullM.featVer !== LUXML.featVer || bearM.featVer !== LUXML.featVer) return null;
@@ -22908,7 +23155,10 @@ function dualHeadJudge(bullM, bearM, featVec) {
     else if (upHi && dnHi)  q = "volatile";   // 양방향 — 논쟁/고변동
     else if (upLo && dnLo)  q = "dead";       // 죽은 돈
     else                    q = "mixed";
-    return { pUp: +pUp.toFixed(4), pDown: +pDown.toFixed(4), quadrant: q, edge: +(pUp - pDown).toFixed(4) };
+    // [V33.93] 로짓 가점은 호출부가 실측표(dual_quad_shift)에서 가져온다. 상수는 쓰지 않는다.
+    const shiftTbl = (opts && opts.shift) || null;
+    const dz = (shiftTbl && typeof shiftTbl[q] === "number" && isFinite(shiftTbl[q])) ? shiftTbl[q] : 0;
+    return { pUp: +pUp.toFixed(4), pDown: +pDown.toFixed(4), quadrant: q, edge: +(pUp - pDown).toFixed(4), dz: dz };
   } catch (e) { return null; }
 }
 
@@ -23665,6 +23915,72 @@ function _icBlockStats(pv, yv, K) {
     return { ic: all, blockIC: m, icir: icir, t: icir * Math.sqrt(ics.length), K: ics.length };
   } catch (e) { return { ic: 0, blockIC: null, icir: null, t: null, K: 0 }; }
 }
+// ════════════════════════════════════════════════════════════════════════════
+// [V33.93] ★전진검증 — V33.91 이 세운 t 게이트의 논리 비약을 메운다★
+//
+//   V33.91 은 "블록 IC 의 t ≥ 1.65" 를 신뢰 조건으로 걸었다. 그 문턱의 뜻은
+//   ★모델 하나를 한 번 검정할 때 거짓양성 5%★ 다. 그런데 우리는
+//     ① 전문가를 8종 동시에 검정하고 ② 그걸 매일 밤 다시 검정한다.
+//   실측: 순수 잡음이 하룻밤에 통과할 확률 51.9%, 1년 누적 100%.
+//
+//   더 나쁜 건 '연속 N회 통과' 로는 못 막는다는 것이다. trainWindow 24,000 에
+//   하루 신규가 200 건이면 창의 99% 가 어제와 같아, 밤마다 재는 t 가 거의 그대로다
+//   (실측: 잡음 모델 10일치 t = 1.48 1.24 1.49 2.12 3.01 1.54 1.81 1.61 2.19 2.20).
+//   ★같은 시험을 같은 답안지로 N번 보는 것★ 이라 독립 시행이 아니다.
+//   같은 데이터를 다시 쪼개는 어떤 방법으로도 이 문제는 풀리지 않는다.
+//
+//   유일하게 정직한 검정은 ★학습 이후에 도착한 표본★ 으로 채점하는 것이다.
+//   그 표본은 모델이 만들어질 때 존재하지도 않았으므로 운으로 맞출 수 없다.
+//   → 야간 재학습 전에 '어제의 모델' 을 그 이후 쌓인 표본으로 채점해 전진 IC 를 남기고,
+//     신뢰 조건에 (홀드아웃 t ≥ 본페로니 문턱) ★그리고★ (전진 IC > 0) 을 함께 요구한다.
+//   전진 표본이 아직 부족하면 신뢰하지 않는다 — "확인 못 한 건 안 믿는다"가 원칙이다.
+const ICGATE = {
+  tMin: 2.50,        // 본페로니: 전문가 8종 동시검정 → α 0.05/8 ≈ 0.006 (단측 z ≈ 2.5)
+  // 전진표본 수와 t 문턱은 ★검정력 시뮬레이션으로 정했다★ (추측으로 정하면 그게 또 비약이다).
+  //   전진검증 통과율 (IC>0 그리고 t≥tMin):
+  //     전진표본  tMin │   잡음   약함(IC~.03)  보통(IC~.06)  강함(IC~.12)
+  //      400     1.00 │  17.4%      32.3%       50.7%       81.4%
+  //      800     1.00 │  18.1%      40.3%       64.2%       94.3%
+  //     1500     1.00 │  18.7%      48.6%       80.1%       99.4%
+  //     1500     1.65 │   8.3%      28.7%       59.5%       96.4%
+  //   → tMin 을 1.65 로 올리면 잡음이 절반이 되는 대신 ★보통 실력의 통과율이 80%→60% 로 무너진다★.
+  //     표본을 늘려 검정력을 얻는 쪽이 낫다. (1500, 1.0) 을 쓴다.
+  //   홀드아웃 t≥2.50(잡음 3.2%)과 곱해져 하룻밤 오합류율 ≈ 0.6%.
+  //   대가: 표본이 느리게 쌓이는 표(flow/xalpha/stack)는 신뢰까지 시간이 더 걸린다.
+  //         근거 없이 먼저 믿는 것보다 늦게 믿는 쪽이 낫다 — 이 스레드 내내 문제가 그것이었다.
+  minForward: 1500,
+  forwardFloor: 0,
+  forwardTMin: 1.0
+};
+async function icForwardCheck(DB, opts) {
+  try {
+    const o = opts || {};
+    const prev = await getState(DB, o.stateKey, null);
+    if (!prev || !(_num(prev.ts, 0) > 0)) return null;         // 어제 모델이 없으면 전진검증 불가
+    if (o.featVer != null && prev.featVer !== o.featVer) return null;
+    const rs = await DB.prepare(
+      "SELECT ts, feat, label, pnl_pct FROM " + o.table + " WHERE featver = ? AND ts > ? ORDER BY ts ASC LIMIT 4000"
+    ).bind(o.sampleFeatVer != null ? o.sampleFeatVer : o.featVer, _num(prev.ts, 0)).all();
+    const rows = (rs && rs.results) || [];
+    if (rows.length < ICGATE.minForward) return { n: rows.length, ic: null, t: null, ready: false };
+    const pv = [], yv = [];
+    for (const r of rows) {
+      let v; try { v = JSON.parse(r.feat); } catch (e) { continue; }
+      if (!Array.isArray(v)) continue;
+      const p = o.scoreFn(prev, v);
+      if (p == null || !isFinite(p)) continue;
+      const y = (typeof o.labelFn === "function") ? o.labelFn(r) : (r.label ? 1 : 0);
+      if (y == null) continue;
+      pv.push(p); yv.push(y);
+    }
+    if (pv.length < ICGATE.minForward) return { n: pv.length, ic: null, t: null, ready: false };
+    const st = _icBlockStats(pv, yv, 5);
+    return { n: pv.length, ic: +_num(st.ic, 0).toFixed(5),
+             blockIC: st.blockIC != null ? +st.blockIC.toFixed(5) : null,
+             t: st.t != null ? +st.t.toFixed(3) : null, ready: true };
+  } catch (e) { return null; }
+}
+
 // 위원회 가중에 넣을 '유효 IC' — 유의성으로 수축된 값.
 //   t 를 못 구한 구모델은 Fisher z 하한(상관계수 표준오차 1/√(n−3))으로 보수 처리한다.
 function _icEffective(model) {
@@ -26065,6 +26381,7 @@ async function mlMindTrainNightly(DB) {
     let accLB = _wilsonLB(valAcc, evalR.length);
     let valN = evalR.length;
     let leakFree = false;
+    let mindIC = null, mindICBlock = null, mindICt = null;   // [V33.93] 측정된 IC
 
     // ── [V12.56] ★MIND 누수 완전제거(OOF)★ 위 valAcc는 l1(mlLoadModel)·ens(mlBrainLoad)가 val구간
     //   포함 전체표본으로 학습돼 in-sample 예측을 쓰므로 과대추정된다. 여기서 l1·ens를 MIND의 train
@@ -26124,6 +26441,18 @@ async function mlMindTrainNightly(DB) {
         valN = _lfEval.length;
         leakFree = true;
       }
+      // [V33.93] ★MIND 의 IC 를 '재서' 저장한다 — 그동안 위원회는 이 값을 몰라서 정확도에서 환산했다★
+      //   환산식 (accLB−0.5)/0.4 는 accLB 0.56 을 IC 0.10 으로 만든다. 가중이 exp(60×IC) 라
+      //   ★측정된 IC 0.05 짜리 전문가의 20배★ 발언권이 근거 없이 위원장에게 갔다.
+      //   여기 _lfEval 은 누수 제거된 정직 홀드아웃이라 그대로 재면 된다 — 추측할 이유가 없었다.
+      try {
+        const _pv = [], _yv = [];
+        for (const r of _lfEval) { _pv.push(_metaPredict(_lfMeta, r.e)); _yv.push(r.y); }
+        const _s = _icBlockStats(_pv, _yv, 5);
+        mindIC = _num(_s.ic, null);
+        mindICBlock = _s.blockIC != null ? +_s.blockIC.toFixed(5) : null;
+        mindICt = _s.t != null ? +_s.t.toFixed(3) : null;
+      } catch (e) {}
     } catch (e) { /* OOF 실패 시 위의 보수 폴백(누수 포함) 유지 */ }
 
     // FM 단독 성능(상호작용 기여 확인용) — [V12.42] τ* 선택에 쓴 앞절반 제외, 뒤절반만(정직 홀드아웃)
@@ -26139,6 +26468,7 @@ async function mlMindTrainNightly(DB) {
     //   원값 0.5컷은 약세장에서 42%로 붕괴(합류 불가). 앞절반에서 최적 임계 τ*(균형정확도)를 찾아
     //   저장(ruleTau)하고 뒤절반에서 τ* 반영 정확도를 측정 → 규칙엔진을 정직하게 위원회에 통합.
     let ruleAcc = null, ruleAccLB = null, ruleN = 0, ruleTau = 0.5;
+    let ruleIC = null, ruleICBlock = null, ruleICt = null;   // [V33.93] 측정된 IC
     const _tiR = LUXML.featNames.indexOf("taUpProb");
     if (_tiR >= 0) {
       const rv = val.filter(function (t) { return _num(t.x[_tiR], 0.5) !== 0.5; });
@@ -26161,6 +26491,15 @@ async function mlMindTrainNightly(DB) {
         const hold = rv.slice(half);
         let rc = 0; for (const t of hold) if ((_num(t.x[_tiR], 0.5) >= ruleTau ? 1 : 0) === t.y) rc++;
         ruleN = hold.length; ruleAcc = +(rc / ruleN).toFixed(4); ruleAccLB = +_wilsonLB(rc / ruleN, ruleN).toFixed(4);
+        // [V33.93] 규칙엔진 전문가도 IC 를 측정한다(같은 홀드아웃, 같은 잣대).
+        try {
+          const _rp = [], _ry = [];
+          for (const t2 of hold) { _rp.push(_clamp(_sigmoid(_logit(_clamp(_num(t2.x[_tiR], 0.5), 0.01, 0.99)) - _logit(ruleTau)), 0.001, 0.999)); _ry.push(t2.y); }
+          const _rs = _icBlockStats(_rp, _ry, 5);
+          ruleIC = _num(_rs.ic, null);
+          ruleICBlock = _rs.blockIC != null ? +_rs.blockIC.toFixed(5) : null;
+          ruleICt = _rs.t != null ? +_rs.t.toFixed(3) : null;
+        } catch (e) {}
       }
     }
 
@@ -26168,6 +26507,8 @@ async function mlMindTrainNightly(DB) {
       featVer: LUXML.featVer, n: N, valAcc: +valAcc.toFixed(4), valAccLB: +accLB.toFixed(4), valN: valN,
       leakFree: leakFree,   // [V12.56] true=OOF 누수제거 정직수치 / false=폴백(누수포함 보수치)
       fmAcc: +fmAcc.toFixed(4), ruleAcc: ruleAcc, ruleAccLB: ruleAccLB, ruleN: ruleN, ruleTau: ruleTau,
+      valIC: mindIC != null ? +mindIC.toFixed(5) : null, valICBlock: mindICBlock, valICt: mindICt,
+      ruleIC: ruleIC != null ? +ruleIC.toFixed(5) : null, ruleICBlock: ruleICBlock, ruleICt: ruleICt, ruleValN: ruleN,
       valLogLoss: +(ll / evalR.length).toFixed(4), trainedAt: Date.now() };
     // [V12.37] 회귀 가드 — MIND는 위원장(게이트 없이 항상 가동)이라 DNN·GBDT와 달리 자기 자신을
     //   지켜줄 신뢰게이트가 없다. CPU예산 초과로 미수렴 모델이 만들어져도 그대로 덮어쓰면 즉시
@@ -26934,7 +27275,9 @@ async function mlDeepDecide(DB, featVec, opts) {
       if (mindScore) {
         mindAccLB = (typeof mind.valAccLB === "number") ? mind.valAccLB
           : ((typeof mind.valAcc === "number") ? _wilsonLB(mind.valAcc, _num(mind.valN, 30)) : 0.5);
-        experts.push({ name: "mind", p: mindScore.p, z: _logitD(mindScore.p), acc: mindAccLB });
+        // [V33.93] 측정된 IC 를 넘긴다(없으면 null → 정확도 환산 폴백, 상한 0.10 유지).
+        experts.push({ name: "mind", p: mindScore.p, z: _logitD(mindScore.p), acc: mindAccLB,
+                       ic: _icEffective({ valICBlock: mind.valICBlock, valICt: mind.valICt, valIC: mind.valIC, valN: mind.valN }) });
         _committeeUnc = mindScore.uncertainty || 0;
       }
     }
@@ -27059,7 +27402,8 @@ async function mlDeepDecide(DB, featVec, opts) {
         // [V12.45] 학습 때 찾은 τ*(ruleTau)로 임계 시프트 적용 → 0.5 기준 판단이 캘리브레이션 반영
         const _rt = _clamp(_num(mind.ruleTau, 0.5), 0.01, 0.99);
         pR = _clamp(_sigmoid(_logitD(pR) - _logitD(_rt)), 0.01, 0.99);
-        if (Math.abs(pR - 0.5) > 1e-4) experts.push({ name: "rule", p: pR, z: _logitD(pR), acc: mind.ruleAccLB });
+        if (Math.abs(pR - 0.5) > 1e-4) experts.push({ name: "rule", p: pR, z: _logitD(pR), acc: mind.ruleAccLB,
+          ic: _icEffective({ valICBlock: mind.ruleICBlock, valICt: mind.ruleICt, valIC: mind.ruleIC, valN: mind.ruleValN }) });
       }
     } catch (e) {}
     if (!experts.length) return null;   // [V12.62] 쓸 전문가 0 → 하위 폴백(밴딧/규칙엔진)
@@ -27299,11 +27643,10 @@ async function mlDeepDecide(DB, featVec, opts) {
     try {
       const _bm = (opts.dualBull !== undefined) ? opts.dualBull : await getState(DB, "dual_bull_model", null);
       const _rm = (opts.dualBear !== undefined) ? opts.dualBear : await getState(DB, "dual_bear_model", null);
-      _dual = dualHeadJudge(_bm, _rm, featVec);
-      if (_dual) {
-        if (_dual.quadrant === "bull")      pCombined = _clamp(_sigmoid(_logitD(pCombined) + 0.35), 0.001, 0.999);
-        else if (_dual.quadrant === "bear") pCombined = _clamp(_sigmoid(_logitD(pCombined) - 0.35), 0.001, 0.999);
-      }
+      const _qs = (opts.dualShift !== undefined) ? opts.dualShift : await getState(DB, "dual_quad_shift", null);
+      _dual = dualHeadJudge(_bm, _rm, featVec, { shift: _qs && _qs.shift });
+      // [V33.93] 실측 로그오즈 차만큼만 민다. 실측표가 없으면 0 — 근거 없이 밀지 않는다.
+      if (_dual && _dual.dz) pCombined = _clamp(_sigmoid(_logitD(pCombined) + _dual.dz), 0.001, 0.999);
     } catch (e) {}
 
     // [V12.63] ★고도화 산식 — 위원회 합의도(cross-expert agreement)를 신뢰도에 반영★ 세 모델이
@@ -27904,6 +28247,7 @@ async function mlCalibrateCommittee(DB) {
       const a = _icEffective(m); if (a != null) return a;
       return _icEffective(t);
     };
+    const _mindIC0 = _icEffective({ valICBlock: mind.valICBlock, valICt: mind.valICt, valIC: mind.valIC, valN: mind.valN });
     const _dnnIC0 = _icPick(dnn, dnnTrust);
     const _gbdtIC0 = _icPick(gbdt, gTrust);
 
@@ -27917,7 +28261,7 @@ async function mlCalibrateCommittee(DB) {
       const ms = await mlMindScore(DB, mind, v, ens);
       if (!ms) continue;
       const y = _labelOfRow(r);   // [V33.87] 현행 라벨 규칙으로 재판정(옛 alpha 라벨 무시)
-      const ex = [{ z: _logitD(ms.p), acc: mindAccLB }];
+      const ex = [{ z: _logitD(ms.p), acc: mindAccLB, ic: _mindIC0 }];   // [V33.93] 측정 IC(라이브와 동일)
       rel.mind.n++; if ((ms.p >= 0.5 ? 1 : 0) === y) rel.mind.c++;
       // [V33.90] 라이브와 동일하게 모델이 싣고 온 valIC 를 함께 넘긴다(가중식 정합).
       if (dnn) { const pD = mlDNNScore(dnn, v); if (pD != null) { ex.push({ z: _logitD(pD), acc: _num(dnnTrust.dnnAccLB, 0.5), ic: _dnnIC0 }); rel.dnn.n++; if ((pD >= 0.5 ? 1 : 0) === y) rel.dnn.c++; } }
