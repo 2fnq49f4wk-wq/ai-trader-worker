@@ -2630,7 +2630,7 @@ async function applySignalTypeWeights(DB, cfg) {
 // ============================================================================
 // [V33.55] 빌드 버전 — SWR L2 캐시 키에 섞어 '배포 = 판단 캐시 자동 무효화'를 만든다.
 //   판정 로직을 고쳐도 옛 캐시가 최대 1시간 재배포되던 문제를 구조적으로 없앤다.
-const _BUILD_VER = "V33.90";
+const _BUILD_VER = "V33.91";
 
 const AI_PARAMS = {
   // ── OHLCV 타임프레임 ── 시가/고가/저가/종가/거래량을 어떤 봉 주기로 볼지.
@@ -8862,6 +8862,11 @@ const RISKENG = {
   //   하한은 수수료가 기대수익을 먹는 티끌주문 방지(NautilusTrader 의 min/max notional 과 동일 취지).
   minNotional: { us: 20, kr: 20000, cm: 20, bd: 20000 },
   maxNotionalFrac: 0.35,        // 총자산 대비 1주문 명목가 상한(35%)
+  // [V33.91] 총 노출 상한 — NautilusTrader Portfolio.net_exposure 계열의 사후 리스크 감시를
+  //   사전 체인으로 끌어온 것. 1주문 상한만 보면 "한 종목에 35% 는 못 넣지만 세 종목에 30% 씩은
+  //   넣을 수 있다" 는 구멍이 남는다. 계좌 전체가 실리는 건 그쪽이다.
+  //   레버리지 운용을 하므로 100% 초과를 허용하되(현금 이상으로 실릴 수 있다) 상한은 둔다.
+  maxGrossFrac: 1.60,
   reduceOnlyOnHalt: true
 };
 const _RISK_DENY = {
@@ -8872,7 +8877,8 @@ const _RISK_DENY = {
   NOTIONAL_EXCEEDS_FREE_BALANCE: "가용현금 초과",
   MAX_ORDER_SUBMIT_RATE: "주문제출 레이트 초과",
   TRADING_HALTED: "거래중단 상태",
-  TRADING_REDUCING_ONLY: "축소전용 상태(신규진입 금지)"
+  TRADING_REDUCING_ONLY: "축소전용 상태(신규진입 금지)",
+  GROSS_EXPOSURE_EXCEEDED: "총 노출 상한 초과"
 };
 
 // 주문 제출 스로틀러 — 상태 저장 없이 원장(trades)에서 최근 창의 BUY 건수를 센다.
@@ -8951,6 +8957,18 @@ async function riskPreTradeCheck(DB, o) {
         qty = q2;
       }
     }
+    // ⑤ 총 노출 — 이미 실린 금액 + 이번 주문이 상한을 넘는가.
+    //   총노출 = 총자산 − 현금 (총자산은 현금 + 보유 시가평가라서 뺄셈 하나로 나온다).
+    if (o.equity > 0 && o.cashNow != null && RISKENG.maxGrossFrac > 0) {
+      const grossNow = Math.max(0, o.equity - _num(o.cashNow, 0));
+      const cap = o.equity * RISKENG.maxGrossFrac;
+      const room = cap - grossNow;
+      if (room <= 0) return deny("GROSS_EXPOSURE_EXCEEDED",
+        Math.round(grossNow) + "/" + Math.round(cap) + " (" + (grossNow / o.equity * 100).toFixed(0) + "%)");
+      const q4 = Math.floor(room / price);
+      if (q4 <= 0) return deny("GROSS_EXPOSURE_EXCEEDED", "잔여여유 " + Math.round(room));
+      if (qty > q4) qty = q4;
+    }
     // ⑤ 명목가 — 가용현금(수수료 포함). executeBuy 가 다시 clamp 하지만,
     //   '왜 줄었는가'를 사유코드로 남기려면 여기서 먼저 판정해야 한다.
     if (o.availCash != null) {
@@ -9026,6 +9044,86 @@ async function portfolioStatsNightly(DB) {
            all.expectancy.toFixed(3) + "%/건 손익비 " + all.profitFactor.toFixed(2) +
            " 위험대비 " + all.riskReturn.toFixed(3);
   } catch (e) { return "[PORT] fail: " + (e && e.message); }
+}
+
+// ════════════════════════════════════════════════════════════════════════════
+// [V33.91] ★NautilusTrader Cache.check_integrity() / check_residuals() 이식★
+//
+//   NautilusTrader 는 캐시(주문·포지션·계좌의 단일 진실)가 스스로 모순되지 않는지
+//   검사하는 함수를 따로 둔다. check_integrity() 는 내부 정합성을, check_residuals() 는
+//   "남아 있으면 안 되는 열린 상태"를 찾는다. 둘 다 ★고치지 않고 보고만 한다★ —
+//   자동 수정은 원인을 덮어 같은 사고를 반복시키기 때문이다.
+//
+//   우리에게 왜 필요한가: 두 달째 회계 오류가 반복된 구조적 이유는 진실의 출처가 둘
+//   (현금=trades 원장 파생 / 수량=positions 테이블)인데, ★전수 대조를 아무도 안 했다★는 것이다.
+//   V33.74 의 sellQtyDoubleCheck·verifyAfterTrade 는 '거래하는 그 종목'만 본다.
+//   거래가 일어나지 않는 종목의 어긋남은 영원히 발견되지 않는다.
+//   → 전 종목·전 시장을 한 번에 훑어 불일치를 목록으로 낸다. 수정은 하지 않는다.
+async function ledgerCheckIntegrity(DB, opts) {
+  const o = opts || {};
+  const out = { ok: true, checked: 0, issues: [], ts: Date.now() };
+  const add = function (code, sym, detail) {
+    out.ok = false;
+    if (out.issues.length < 60) out.issues.push({ code: code, symbol: sym, detail: detail });
+  };
+  try {
+    // ① 원장 순보유 전수 집계 (한 번의 GROUP BY — 종목마다 조회하지 않는다)
+    const lr = await DB.prepare(
+      "SELECT market, symbol, SUM(CASE WHEN side='BUY' THEN qty ELSE -qty END) AS net FROM trades GROUP BY market, symbol"
+    ).all();
+    const led = new Map();
+    for (const r of ((lr && lr.results) || [])) led.set(r.market + "|" + r.symbol, Number(r.net) || 0);
+    // ② 포지션 테이블 전수 집계
+    const pr = await DB.prepare(
+      "SELECT market, symbol, SUM(qty) AS q FROM positions GROUP BY market, symbol"
+    ).all();
+    const tbl = new Map();
+    for (const r of ((pr && pr.results) || [])) tbl.set(r.market + "|" + r.symbol, Number(r.q) || 0);
+
+    const keys = new Set([...led.keys(), ...tbl.keys()]);
+    out.checked = keys.size;
+    for (const k of keys) {
+      const L = _num(led.get(k), 0), T = _num(tbl.get(k), 0);
+      const sym = k.split("|")[1];
+      // (a) 원장 순보유가 음수 = 산 것보다 많이 팔았다(유령매도). 가장 심각하다.
+      if (L < -1e-6) add("LEDGER_NET_NEGATIVE", k, "원장 순보유 " + L);
+      // (b) 원장 ↔ 포지션 불일치
+      else if (Math.abs(L - T) > 1e-6) add("QTY_MISMATCH", k, "원장 " + L + " vs 포지션 " + T);
+      // (c) 잔여 열린 상태(check_residuals) — 포지션은 있는데 원장엔 흔적이 없다
+      if (T > 1e-6 && !led.has(k)) add("RESIDUAL_POSITION", k, "포지션 " + T + " 인데 원장 기록 없음");
+      // (d) 수량 0 인데 포지션 행이 남아 있다
+      if (Math.abs(T) < 1e-9 && tbl.has(k) && Math.abs(L) < 1e-9) add("ZERO_QTY_ROW", k, "수량 0 포지션 행 잔존");
+      void sym;
+    }
+    // ③ 체결가·수량 위생 — 0 이하이거나 비정상인 원장 행
+    try {
+      const bad = await DB.prepare(
+        "SELECT COUNT(*) AS n FROM trades WHERE qty IS NULL OR qty <= 0 OR price IS NULL OR price <= 0"
+      ).first();
+      const n = _num(bad && bad.n, 0);
+      if (n > 0) add("BAD_TRADE_ROW", null, n + "건 (수량·가격이 0 이하)");
+    } catch (e) {}
+    // ④ 매도인데 손익이 비어 있는 행 — 성과통계(PortfolioAnalyzer)가 통째로 빠뜨린다
+    try {
+      const nl = await DB.prepare(
+        "SELECT COUNT(*) AS n FROM trades WHERE side='SELL' AND pnl_pct IS NULL"
+      ).first();
+      const n = _num(nl && nl.n, 0);
+      if (n > 0) add("SELL_WITHOUT_PNL", null, n + "건 (매도인데 손익 미기록)");
+    } catch (e) {}
+    if (o.log !== false) {
+      if (out.ok) await log(DB, "INFO", null, "[정합성감사] 전수 " + out.checked + "종목 이상 없음");
+      else {
+        const head = out.issues.slice(0, 8).map(function (i) { return "[" + i.code + "] " + (i.symbol || "-") + " " + i.detail; }).join(" · ");
+        await log(DB, "ERROR", null, "[정합성감사] 전수 " + out.checked + "종목 중 " + out.issues.length + "건 불일치 — " + head);
+      }
+    }
+    await setState(DB, "ledger_audit", { ok: out.ok, checked: out.checked, nIssues: out.issues.length, issues: out.issues.slice(0, 20), ts: out.ts });
+    return out;
+  } catch (e) {
+    out.ok = false; out.error = e && e.message;
+    return out;
+  }
 }
 
 async function savePosition(DB, market, symbol, strategy, pos) {
@@ -11196,7 +11294,8 @@ async function executeBuy(DB, market, symbol, strategy, qty, price, signal, dail
     const _pre = await riskPreTradeCheck(DB, {
       market: market, sleeve: (opts && opts.sleeve) || market, symbol: symbol,
       qty: qty, price: price, availCash: availCash, feeRate: feeRate,
-      equity: (opts && _num(opts.equity, null)) || null
+      equity: (opts && _num(opts.equity, null)) || null,
+      cashNow: (opts && _num(opts.cashNow, null)) != null ? _num(opts.cashNow, null) : availCash
     });
     if (!_pre.ok) {
       await log(DB, "WARN", symbol, "BUY 거부 [" + _pre.code + "] " + _pre.reason + (_pre.detail ? " (" + _pre.detail + ")" : ""));
@@ -16671,7 +16770,8 @@ async function runTradingCycle(env) {
               // [V33.90] equity 를 함께 넘긴다 — 사전거래 체인의 '1주문 명목가 상한(총자산 35%)'
               //   검사는 총자산을 모르면 아예 성립하지 않는다(넘기지 않으면 그 검사가 죽은 코드가 된다).
               const buyOpts = Object.assign(
-                { equity: (typeof portfolioValue === "number" && portfolioValue > 0) ? portfolioValue : cash[market] },
+                { equity: (typeof portfolioValue === "number" && portfolioValue > 0) ? portfolioValue : cash[market],
+                  cashNow: cash[market] },
                 (llmInstr && llmInstr.stop_loss_adjustment && typeof llmInstr.stop_loss_adjustment.new_pct === "number")
                   ? { stopPctOverride: llmInstr.stop_loss_adjustment.new_pct } : null);
               const cashBefore = cash[market];
@@ -17512,6 +17612,10 @@ async function handleRequest(request, env, ctx) {
               trusted: !!(m && m.trusted),
               acc: m ? _num(m.valAcc, null) : null,
               ic: m ? _num(m.valIC, null) : null,
+              // [V33.91] 유의성 — 블록 IC 와 t 값. 화면이 "IC 가 높다"만 보여주면
+              //   운으로 높은 IC 와 실력으로 높은 IC 가 같아 보인다.
+              icBlock: m ? _num(m.valICBlock, null) : null,
+              icT: m ? _num(m.valICt, null) : null,
               valN: m ? _num(m.valN, null) : null,
               n: m ? _num(m.n, null) : null,
               ts: m ? _num(m.ts, null) : null
@@ -17535,6 +17639,8 @@ async function handleRequest(request, env, ctx) {
           } catch (e) {}
           // [V33.90] 실제 원장 기준 성과통계(NautilusTrader PortfolioAnalyzer) + 전역 거래상태.
           try { _alt.port = await getState(env.DB, "port_stats", null); } catch (e) {}
+          // [V33.91] 원장 전수 정합성 감사 결과 — 회계가 지금 맞는지 화면에서 바로 보이게.
+          try { _alt.audit = await getState(env.DB, "ledger_audit", null); } catch (e) {}
           try {
             const _ts2 = await getState(env.DB, "trade_state", null);
             _alt.tradeState = (_ts2 && (!_ts2.until || Date.now() <= _ts2.until))
@@ -18457,7 +18563,11 @@ async function handleRequest(request, env, ctx) {
       const model = { trees: body.trees, eta: _num(body.eta, GBDT.eta), bias: _num(body.bias, 0),
         nTrees: body.trees.length, featVer: LUXML.featVer, valAcc: +gAcc.toFixed(4), valAccLB: +gLB.toFixed(4),
         valN: valN, n: Math.max(0, Math.floor(_num(body.n, 0))), trainedAt: Date.now(), source: "external",
-        valIC: _vIC, valRankIC: _vRIC, algo: (typeof body.algo === "string" ? body.algo.slice(0, 24) : null) };
+        valIC: _vIC, valRankIC: _vRIC, algo: (typeof body.algo === "string" ? body.algo.slice(0, 24) : null),
+        // [V33.91] 외부 트레이너가 보낸 블록 IC 유의성(있으면). 없으면 null → Fisher z 하한으로 폴백.
+        valICBlock: (typeof body.valICBlock === "number" && isFinite(body.valICBlock)) ? _clamp(body.valICBlock, -0.5, 0.5) : null,
+        valICt: (typeof body.valICt === "number" && isFinite(body.valICt)) ? _clamp(body.valICt, -20, 20) : null,
+        valICIR: (typeof body.valICIR === "number" && isFinite(body.valICIR)) ? _clamp(body.valICIR, -20, 20) : null };
       // ── self-검증: Worker 최근 표본에 직접 채점해 형식/추론 정합성 확인 ──
       let selfAcc = null, selfN = 0;
       try {
@@ -18504,6 +18614,8 @@ async function handleRequest(request, env, ctx) {
       try { const mm = await mlMindLoad(env.DB); if (mm) mindLB = (typeof mm.valAccLB === "number") ? mm.valAccLB : _wilsonLB(_num(mm.valAcc, 0.5), _num(mm.valN, 30)); } catch (e) {}
       let trust = { wGbdt: 0, trusted: false, gbdtAcc: model.valAcc, gbdtAccLB: model.valAccLB, mindAcc: mindLB, source: "external", selfAcc: selfAcc != null ? +selfAcc.toFixed(4) : null, selfN: selfN, convMaxDiff: convMaxDiff != null ? +convMaxDiff.toFixed(4) : null, convN: convN };
       trust.valIC = _vIC; trust.valRankIC = _vRIC;
+      trust.valN = valN;                                   // [V33.91] Fisher z 하한 계산에 필요
+      trust.valICBlock = model.valICBlock; trust.valICt = model.valICt; trust.valICIR = model.valICIR;
       // [V33.77] ★신뢰 문턱을 IC 로도 열어준다★
       //   종전엔 정확도 하한(valAccLB ≥ 0.505)만 봤다. Wilson 하한 특성상 검증표본이 작으면
       //   요구 정확도가 급격히 올라간다 — n=2,000 이면 raw 52.3%(≈IC 0.058)가 필요하다.
@@ -18512,7 +18624,12 @@ async function handleRequest(request, env, ctx) {
       //   가진 모델이 위원회에 들어올 수 있게 된다.
       const _icFloor = (GBDT.icFloor != null) ? GBDT.icFloor : 0.015;
       const _passAcc = gLB >= GBDT.trustFloor;
-      const _passIC = (_vIC != null && _vIC >= _icFloor);
+      // [V33.91] ★점추정 IC 로 신뢰 문턱을 열지 않는다★
+      //   순수 잡음 모델이 raw IC 게이트를 43~49% 통과한다는 걸 실측했다(_icBlockStats 주석).
+      //   외부 트레이너가 블록 통계(valICBlock/valICt)를 실어 보내면 그 유의성으로,
+      //   안 보내면 검증표본 수 기반 Fisher z 하한으로 보수 판정한다.
+      const _icEff = _icEffective(model);
+      const _passIC = (_icEff != null && _icEff >= _icFloor);
       if (_passAcc || _passIC) {
         const eG = Math.exp(GBDT.trustTemp * (gLB - 0.5)), eM = Math.exp(GBDT.trustTemp * (mindLB - 0.5));
         trust.wGbdt = +(eG / (eG + eM)).toFixed(4); trust.trusted = true;
@@ -18671,12 +18788,12 @@ async function handleRequest(request, env, ctx) {
     if (path === "/api/ai/train-now" && request.method === "POST") {
       const au = _trainAuthed(); if (!au.ok) return Response.json({ error: au.msg }, { status: au.code, headers: cors });
       const target = url.searchParams.get("target") || "mind";
-      const FN = { mind: mlMindTrainNightly, gbdt: mlGBDTTrainNightly, brain: mlBrainTrainNightly, dnn: mlDNNTrainNightly, l1: mlTrainNightly, calibrate: mlCalibrateCommittee, selfreview: mlSelfReview, flow: flowTrainNightly, xalpha: xalphaTrainNightly, stack: stackTrainNightly, dual: dualHeadTrainNightly, portstats: portfolioStatsNightly };
+      const FN = { mind: mlMindTrainNightly, gbdt: mlGBDTTrainNightly, brain: mlBrainTrainNightly, dnn: mlDNNTrainNightly, l1: mlTrainNightly, calibrate: mlCalibrateCommittee, selfreview: mlSelfReview, flow: flowTrainNightly, xalpha: xalphaTrainNightly, stack: stackTrainNightly, dual: dualHeadTrainNightly, portstats: portfolioStatsNightly, ledgeraudit: ledgerCheckIntegrity };
       // [V12.63] target=all — 재배포 직후 "한 방에" 전체 파이프라인을 정확한 순서로 재실행(하루1회 게이트 무시).
       //   순서 고정: harvest → l1 → brain → mind → dnn → gbdt → calibrate (뒤 단계가 앞 단계 산출물 의존).
       //   각 단계 자체 CPU예산 가드가 있어 안전. 재학습 즉시 모든 수정이 반영되게 하는 원클릭 경로.
       if (target === "all") {
-        const _order = [["harvest", mlMarketHarvestNightly], ["l1", mlTrainNightly], ["brain", mlBrainTrainNightly], ["mind", mlMindTrainNightly], ["gbdt", mlGBDTTrainNightly], ["dnn", mlDNNTrainNightly], ["flow", flowTrainNightly], ["xalpha", xalphaTrainNightly], ["stack", stackTrainNightly], ["dual", dualHeadTrainNightly], ["portstats", portfolioStatsNightly], ["calibrate", mlCalibrateCommittee]];
+        const _order = [["harvest", mlMarketHarvestNightly], ["l1", mlTrainNightly], ["brain", mlBrainTrainNightly], ["mind", mlMindTrainNightly], ["gbdt", mlGBDTTrainNightly], ["dnn", mlDNNTrainNightly], ["flow", flowTrainNightly], ["xalpha", xalphaTrainNightly], ["stack", stackTrainNightly], ["dual", dualHeadTrainNightly], ["portstats", portfolioStatsNightly], ["ledgeraudit", ledgerCheckIntegrity], ["calibrate", mlCalibrateCommittee]];
         const out = {};
         for (const [nm, fn] of _order) {
           try { out[nm] = await fn(env.DB); } catch (e) { out[nm] = "FAIL: " + (e && e.message); }
@@ -22274,26 +22391,34 @@ async function _miniLogisticTrain(DB, opts) {
       if ((p >= 0.5 ? 1 : 0) === Y[i]) correct++;
     }
     const acc = correct / Math.max(1, nval);
-    let ic = 0;
-    try {
-      let mp = 0, my = 0;
-      for (let i = 0; i < pv.length; i++) { mp += pv[i]; my += yv[i]; }
-      mp /= pv.length; my /= yv.length;
-      let sa = 0, sb = 0, sab = 0;
-      for (let i = 0; i < pv.length; i++) { const dx = pv[i] - mp, dy = yv[i] - my; sa += dx * dx; sb += dy * dy; sab += dx * dy; }
-      ic = (sa > 1e-12 && sb > 1e-12) ? sab / Math.sqrt(sa * sb) : 0;
-    } catch (e) {}
+    // [V33.91] IC 를 한 덩어리로 재지 않고 홀드아웃을 5블록으로 나눠 유의성까지 잰다.
+    //   순수 잡음 모델이 raw IC 게이트를 43~49% 통과하던 것을 7~8% 로 낮춘다(_icBlockStats 주석 참조).
+    const _st = _icBlockStats(pv, yv, 5);
+    const ic = _num(_st.ic, 0);
     // [V33.89] 기저확률(양성비율)을 함께 저장한다 — 이중헤드 사분면 경계를 절대값이 아니라
     //   각 헤드의 기저확률 기준으로 잡기 위해서다. 문턱을 절대값으로 두면 라벨 희소도가 다른
     //   두 헤드(예: 상승 30% vs 하락 22%)에 같은 잣대를 대는 셈이 된다.
     let _base = 0;
     try { for (const yy of Y) _base += yy; _base = Y.length ? _base / Y.length : 0; } catch (e) {}
+    const _floor = _num(opts.icFloor, 0.012);
+    const _tMin = _num(opts.icTMin, 1.65);          // 단측 5% — 블록 IC 가 우연이 아닐 것
+    const _bIC = (_st.blockIC != null) ? _st.blockIC : null;
+    const _tv = (_st.t != null) ? _st.t : null;
+    // 블록 통계를 못 구할 만큼 홀드아웃이 작으면(블록당 20건 미만) 유의성을 확인할 수 없다 →
+    //   그 땐 Fisher z 하한으로 보수 판정한다("모르면 안 믿는다").
+    const _trusted = (_bIC != null && _tv != null)
+      ? (_bIC >= _floor && _tv >= _tMin)
+      : (Math.tanh(Math.atanh(_clamp(ic, -0.999, 0.999)) - 1.64 / Math.sqrt(Math.max(9, nval) - 3)) >= _floor);
     const model = { w: w, b: b, mean: mean, std: std, featVer: opts.featVer, baseRate: +_base.toFixed(4),
       valAcc: +acc.toFixed(4), valIC: +ic.toFixed(5), valN: nval, n: N, ts: Date.now(),
-      trusted: ic >= _num(opts.icFloor, 0.012) };
+      valICBlock: _bIC != null ? +_bIC.toFixed(5) : null,
+      valICIR: _st.icir != null ? +_st.icir.toFixed(3) : null,
+      valICt: _tv != null ? +_tv.toFixed(3) : null, valICK: _st.K,
+      trusted: _trusted };
     await setState(DB, opts.stateKey, model);
     return "[" + opts.tag + "] 학습완료 표본 " + N + " valAcc " + (acc * 100).toFixed(1) + "% IC " + ic.toFixed(4) +
-           (model.trusted ? " → 위원회 합류" : " → IC 미달, 대기");
+           (_bIC != null ? " 블록IC " + _bIC.toFixed(4) + " t " + (_tv || 0).toFixed(2) : " (블록 부족)") +
+           (model.trusted ? " → 위원회 합류" : " → 유의성 미달, 대기");
   } catch (e) { return "[" + opts.tag + "] 학습 실패: " + (e && e.message); }
 }
 
@@ -22569,7 +22694,10 @@ async function stackTrainNightly(DB) {
     table: "stack_samples", stateKey: "stack_model", tag: "STACK",
     featVer: STACKML.featVer, D: 14,
     minN: STACKML.minTrainSamples, window: STACKML.trainWindow,
-    l2: STACKML.l2, icFloor: STACKML.icFloor
+    l2: STACKML.l2, icFloor: STACKML.icFloor,
+    // [V33.91] STACK 은 위원회 결합확률을 ★통째로 대체★ 하는 자리다. 잘못 들어오면
+    //   다른 전문가와 섞여 희석되는 게 아니라 혼자 결정한다 → 유의성 문턱을 더 높게 잡는다.
+    icTMin: 2.2
   });
 }
 
@@ -23244,6 +23372,76 @@ function mlBuildFeatures(args) {
 // ── [V4] 신뢰학습 공통 유틸 ────────────────────────────────
 // Wilson 신뢰하한(z=1.64≈90%): 검증표본이 적을수록 정확도를 보수적으로 깎아
 //   소표본 과신(운좋은 valAcc)으로 신뢰가중이 튀는 것을 차단.
+// ════════════════════════════════════════════════════════════════════════════
+// [V33.91] ★IC 유의성 검정 — 위원회 가중의 근본 결함★
+//
+//   V33.77 에서 위원회 가중을 정확도 → IC 로 바꿨다. 방향은 옳았는데 한 가지를 빠뜨렸다:
+//   ★정확도는 Wilson 하한을 쓰면서, IC 는 점추정을 그대로 썼다★.
+//   IC 는 홀드아웃 한 덩어리에서 잰 상관계수 하나다. 표본이 적으면 엄청나게 흔들린다.
+//
+//   실측(진짜 IC = 0 인 순수 잡음 데이터로 200회 학습):
+//     · 현행 게이트(raw IC ≥ 0.012) 통과율 ★43~49%★ — 잡음 모델의 절반이 위원회에 들어온다.
+//     · 그 중 최대 IC 0.51 까지 나온다 → exp(60×0.25 클램프) = 3.3e6 → ★위원회 독재★.
+//   즉 지금 위원회에 앉아 있는 전문가 중 상당수가 실력이 아니라 운으로 들어왔을 수 있고,
+//   운으로 큰 IC 를 받은 모델이 나머지 전원을 압도하는 구조다.
+//
+//   해결(업계 표준 — Qlib·Numerai·팩터 리서치가 공통으로 쓰는 방식):
+//     IC 를 하나로 재지 말고 ★홀드아웃을 K 블록으로 나눠 블록별 IC 를 재고,
+//     그 평균과 표준편차로 ICIR = mean/std, t = ICIR×√K 를 계산한다★.
+//     · 합격 조건: 블록평균 IC ≥ icFloor ★그리고★ t ≥ 1.65 (단측 5%)
+//     · 가중 입력: 유효IC = 블록평균 × clamp(t/2, 0, 1) — 못 믿을 IC 는 0 쪽으로 수축
+//   실측 효과: 잡음 통과율 43~49% → ★7~8%★. 진짜 실력(강)은 100% → 96% 로 거의 그대로.
+//   유효IC 로 보면 잡음 0.024 vs 실력 0.29 — 12배 분리(현행은 잡음도 0.3 이 나온다).
+function _icBlockStats(pv, yv, K) {
+  try {
+    const n = Math.min(pv.length, yv.length);
+    const _c = function (a, b) {
+      const m = a.length; if (m < 8) return null;
+      let ma = 0, mb = 0; for (let i = 0; i < m; i++) { ma += a[i]; mb += b[i]; }
+      ma /= m; mb /= m;
+      let sa = 0, sb = 0, sab = 0;
+      for (let i = 0; i < m; i++) { const x = a[i] - ma, y = b[i] - mb; sa += x * x; sb += y * y; sab += x * y; }
+      return (sa > 1e-12 && sb > 1e-12) ? sab / Math.sqrt(sa * sb) : null;
+    };
+    const all = _c(pv.slice(0, n), yv.slice(0, n));
+    const k = Math.max(2, Math.floor(K || 5));
+    const bs = Math.floor(n / k);
+    if (bs < 20 || all == null) return { ic: all == null ? 0 : all, blockIC: null, icir: null, t: null, K: 0 };
+    const ics = [];
+    for (let i = 0; i < k; i++) {
+      const c = _c(pv.slice(i * bs, (i + 1) * bs), yv.slice(i * bs, (i + 1) * bs));
+      if (c != null) ics.push(c);
+    }
+    if (ics.length < 2) return { ic: all, blockIC: null, icir: null, t: null, K: 0 };
+    let m = 0; for (const v of ics) m += v; m /= ics.length;
+    let s2 = 0; for (const v of ics) s2 += (v - m) * (v - m);
+    const sd = Math.sqrt(s2 / Math.max(1, ics.length - 1));
+    const icir = sd > 1e-9 ? m / sd : (m > 0 ? 9 : 0);
+    return { ic: all, blockIC: m, icir: icir, t: icir * Math.sqrt(ics.length), K: ics.length };
+  } catch (e) { return { ic: 0, blockIC: null, icir: null, t: null, K: 0 }; }
+}
+// 위원회 가중에 넣을 '유효 IC' — 유의성으로 수축된 값.
+//   t 를 못 구한 구모델은 Fisher z 하한(상관계수 표준오차 1/√(n−3))으로 보수 처리한다.
+function _icEffective(model) {
+  try {
+    if (!model) return null;
+    const bIC = (typeof model.valICBlock === "number" && isFinite(model.valICBlock)) ? model.valICBlock : null;
+    const t = (typeof model.valICt === "number" && isFinite(model.valICt)) ? model.valICt : null;
+    if (bIC != null && t != null) return Math.max(0, bIC) * _clamp(t / 2, 0, 1);
+    const ic = (typeof model.valIC === "number" && isFinite(model.valIC)) ? model.valIC : null;
+    if (ic == null) return null;
+    const nv = _num(model.valN, 0);
+    if (!(nv > 8)) return 0;                       // 검증표본을 모르면 신뢰하지 않는다
+    const z = Math.atanh(_clamp(ic, -0.999, 0.999));
+    const lb = Math.max(0, Math.tanh(z - 1.64 / Math.sqrt(nv - 3)));
+    // ★블록 유의성이 없는 모델은 '독재 구간'에 못 들어간다★
+    //   Fisher z 하한은 표본이 작을수록 관대해진다(n=120 이면 IC 0.29 도 0.146 이 남는다).
+    //   그러면 검증 120건짜리 운 좋은 모델이 exp(60×0.146)=6.3e3 으로 위원회를 지배한다.
+    //   일관성을 보인 적이 없는 모델의 상한은 '좋은 모델' 대역 상단(0.06)으로 묶는다.
+    //   블록통계를 싣고 오면(신규 학습분) 이 제한 없이 실측값 그대로 쓴다.
+    return Math.min(lb, 0.06);
+  } catch (e) { return null; }
+}
 function _wilsonLB(acc, n, z) {
   if (!(n > 0)) return 0;
   z = z || 1.64;
@@ -26527,8 +26725,8 @@ async function mlDeepDecide(DB, featVec, opts) {
         //   mlDeepDecide 의 최상위 try/catch 가 그걸 삼켜 ★null 을 반환★ 한다.
         //   즉 DNN 이 신뢰 상태로 확률을 내는 순간마다 위원회 전체(MIND·GBDT·부스터·FLOW·XALPHA·
         //   STACK·이중헤드)가 통째로 죽고 밴딧/규칙엔진으로 폴백해 왔다. V33.77 부터 존재한 버그다.
-        const _dnnIC = (net && typeof net.valIC === "number" && isFinite(net.valIC)) ? net.valIC
-                     : ((trust && typeof trust.valIC === "number" && isFinite(trust.valIC)) ? trust.valIC : null);
+        // [V33.91] 점추정 IC 대신 '유의성으로 수축된 유효 IC' 를 위원회 가중에 넘긴다.
+        const _dnnIC = _icEffective(net) != null ? _icEffective(net) : _icEffective(trust);
         experts.push({ name: "dnn", p: pDnn, z: _logitD(pDnn), acc: accEff, ic: _dnnIC }); usedDnn = true;
         if (!mind) _committeeUnc = Math.max(_committeeUnc, dnnStd);  // [V12.62] MIND 없을 땐 DNN 시드불일치를 위원회 불확실성으로
       }
@@ -26539,7 +26737,7 @@ async function mlDeepDecide(DB, featVec, opts) {
         const gm = (opts.gbdt !== undefined) ? opts.gbdt : await mlGBDTLoad(DB, opts.market);
         const pG = gm ? mlGBDTScore(gm, featVec) : null;
         // [V33.77] 모델이 실어 온 valIC 를 그대로 위원회 가중에 쓴다(없으면 정확도 환산 폴백).
-        const _gIC = (gm && typeof gm.valIC === "number") ? gm.valIC : null;
+        const _gIC = _icEffective(gm) != null ? _icEffective(gm) : _icEffective(gtrust);   // [V33.91] 유효 IC
         if (pG != null) { experts.push({ name: "gbdt", p: pG, z: _logitD(pG), acc: _num(gtrust.gbdtAccLB, _num(gtrust.gbdtAcc, 0.5)), ic: _gIC }); usedGbdt = true; }
       }
     } catch (e) {}
@@ -26555,7 +26753,7 @@ async function mlDeepDecide(DB, featVec, opts) {
           if (pB == null) continue;
           // [V33.77] 부스터 3종 내부 합의도 IC 로 가중한다 — 정확도 차이(0.005 수준)로는
           //   셋을 사실상 균등하게 섞어, 잘하는 부스터가 못하는 부스터에 희석됐다.
-          const _bIC = (b.model && typeof b.model.valIC === "number") ? b.model.valIC : null;
+          const _bIC = _icEffective(b.model);   // [V33.91] 유효 IC
           const wgt = (_bIC != null) ? Math.max(0.002, _bIC) : Math.max(0.01, b.accLB - 0.5);
           bz += wgt * _logitD(pB); bw += wgt; bUsed++;
           if (b.accLB > bAccMax) bAccMax = b.accLB;
@@ -26574,7 +26772,7 @@ async function mlDeepDecide(DB, featVec, opts) {
           const pF = flowScore(fm, opts.flowFeat);
           if (pF != null && Math.abs(pF - 0.5) > 1e-4) {
             experts.push({ name: "flow", p: pF, z: _logitD(pF),
-                           acc: _num(fm.valAcc, 0.5), ic: _num(fm.valIC, null), wMul: 0.9 });
+                           acc: _num(fm.valAcc, 0.5), ic: _icEffective(fm), wMul: 0.9 });
           }
         }
       }
@@ -26587,7 +26785,7 @@ async function mlDeepDecide(DB, featVec, opts) {
           const pX = flowScore(xm, opts.xaFeat);   // 같은 로지스틱 포맷이라 채점기를 공유한다
           if (pX != null && Math.abs(pX - 0.5) > 1e-4) {
             experts.push({ name: "xalpha", p: pX, z: _logitD(pX),
-                           acc: _num(xm.valAcc, 0.5), ic: _num(xm.valIC, null), wMul: 0.9 });
+                           acc: _num(xm.valAcc, 0.5), ic: _icEffective(xm), wMul: 0.9 });
           }
         }
       }
@@ -27441,10 +27639,10 @@ async function mlCalibrateCommittee(DB) {
     const T0 = (typeof DNN !== "undefined" ? DNN.trustTemp : 12);
     const mindAccLB = (typeof mind.valAccLB === "number") ? mind.valAccLB : 0.5;
     // [V33.90] 모델별 실측 IC — 라이브 위원회 가중과 같은 재료를 쓰기 위해 루프 밖에서 1회 확보.
+    // [V33.91] 라이브와 같은 '유효 IC'(유의성 수축) 를 쓴다 — 여기만 점추정이면 또 분포가 어긋난다.
     const _icPick = function (m, t) {
-      if (m && typeof m.valIC === "number" && isFinite(m.valIC)) return m.valIC;
-      if (t && typeof t.valIC === "number" && isFinite(t.valIC)) return t.valIC;
-      return null;
+      const a = _icEffective(m); if (a != null) return a;
+      return _icEffective(t);
     };
     const _dnnIC0 = _icPick(dnn, dnnTrust);
     const _gbdtIC0 = _icPick(gbdt, gTrust);
@@ -27470,7 +27668,7 @@ async function mlCalibrateCommittee(DB) {
         let bz = 0, bw = 0, bAccMax = 0.5, bUsed = 0, bICMax = null;
         for (const b of boosters) {
           const pB = mlGBDTScore(b.model, v); if (pB == null) continue;
-          const _bIC = (b.model && typeof b.model.valIC === "number") ? b.model.valIC : null;
+          const _bIC = _icEffective(b.model);   // [V33.91] 유효 IC — 라이브와 동일
           const wgt = (_bIC != null) ? Math.max(0.002, _bIC) : Math.max(0.01, b.accLB - 0.5);
           bz += wgt * _logitD(pB); bw += wgt; bUsed++;
           if (b.accLB > bAccMax) bAccMax = b.accLB;
@@ -33574,6 +33772,14 @@ export default {
             // [V33.90] 실제 원장 기준 포트폴리오 통계(NautilusTrader PortfolioAnalyzer) —
             //   EV 게이트가 이 값을 읽으므로 보정(calibrate)보다 앞에서 갱신한다.
             await _stg("portstats", async function () { return await portfolioStatsNightly(env.DB); });
+            // [V33.91] 원장↔포지션 전수 정합성 감사(NautilusTrader Cache.check_integrity 이식).
+            //   V33.74 의 더블체크는 '거래하는 그 종목' 만 본다 — 거래가 없는 종목의 어긋남은
+            //   영원히 안 보인다. 하루 한 번 전수로 훑어 목록으로 남긴다(자동수정 없음).
+            await _stg("ledgeraudit", async function () {
+              const r = await ledgerCheckIntegrity(env.DB, {});
+              return r.ok ? "[감사] 전수 " + r.checked + "종목 이상 없음"
+                          : "[감사] " + r.checked + "종목 중 " + r.issues.length + "건 불일치";
+            });
             // (4) [V4] 위원회 확률 보정(온도 스케일링) — 결합확률의 과신/과소신 교정
             await _stg("calibrate", async function () { return await mlCalibrateCommittee(env.DB); });
             // (4.5) [V6] 전 종목 야간 AI 스캔 — 유니버스 전체 승률예측(AI 픽·리포트 커버리지)

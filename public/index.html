@@ -14391,8 +14391,11 @@ html[data-theme="light"] .rail{background:#fff;}
     var arow = function(nm, o, desc){
       if(!o) return [ico(null)+' '+nm, '<span class="sub">'+desc+'</span>'];
       var body;
-      if(o.trusted && has(o.ic))      body = col('가동', C.pos)+' <span class="sub">IC '+o.ic.toFixed(3)+' · 정확도 '+(has(o.acc)?(o.acc*100).toFixed(1)+'%':'—')+'</span>';
-      else if(o.trained)              body = col('IC 미달 대기', C.amb)+' <span class="sub">IC '+(has(o.ic)?o.ic.toFixed(3):'—')+' · 표본 '+n0(o.n)+'</span>';
+      // [V33.91] IC 옆에 유의성(t)을 같이 보여준다 — 운으로 높은 IC 와 실력을 구분해야 한다.
+      var sig = has(o.icT) ? ' · t '+o.icT.toFixed(2)+(o.icT>=1.65?'':' <span class="sub">(유의성 미달)</span>')
+                           : ' <span class="sub">(유의성 미측정)</span>';
+      if(o.trusted && has(o.ic))      body = col('가동', C.pos)+' <span class="sub">IC '+(has(o.icBlock)?o.icBlock.toFixed(3):o.ic.toFixed(3))+sig+' · 정확도 '+(has(o.acc)?(o.acc*100).toFixed(1)+'%':'—')+'</span>';
+      else if(o.trained)              body = col('유의성 미달 대기', C.amb)+' <span class="sub">IC '+(has(o.ic)?o.ic.toFixed(3):'—')+sig+' · 표본 '+n0(o.n)+'</span>';
       else                            body = col('표본수집', C.amb)+' <span class="sub">'+n0(o.samples)+' / '+n0(o.minN)+'</span>';
       return [ico(o.trusted ? true : null)+' '+nm, body];
     };
@@ -14463,6 +14466,14 @@ html[data-theme="light"] .rail{background:#fff;}
         var sc = function(v){ return v === 'HALTED' ? col('중단', C.neg) : (v === 'REDUCING' ? col('축소전용', C.amb) : col('정상', C.pos)); };
         rows2.push(['거래상태', sc(TS.us) + ' <span class="sub">미국</span> · ' + sc(TS.kr) + ' <span class="sub">한국</span>'
           + (TS.reason ? ' <span class="sub">— '+esc(String(TS.reason).slice(0,60))+'</span>' : '')]);
+      }
+      // [V33.91] 원장 전수 정합성 감사 — 두 달째 회계 오류를 쫓았으니 상태가 늘 보여야 한다.
+      var AU = alt.audit;
+      if(AU){
+        rows2.push(['원장 정합성', AU.ok
+          ? col('이상 없음', C.pos) + ' <span class="sub">전수 '+n0(AU.checked)+'종목</span>'
+          : col(n0(AU.nIssues)+'건 불일치', C.neg) + ' <span class="sub">전수 '+n0(AU.checked)+'종목 · '
+            + esc(((AU.issues||[]).slice(0,2).map(function(i){ return i.code+' '+(i.symbol||''); }).join(', ')))+'</span>']);
       }
       h += sec('실적 · 거래상태') + tbl(rows2);
     })();

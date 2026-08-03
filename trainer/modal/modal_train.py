@@ -614,6 +614,44 @@ def _calc_ic(pred, y):
         return 0.0, 0.0
 
 
+# [V33.91] ★IC 유의성 — 점추정 IC 는 위원회 가중의 근거가 되기엔 너무 흔들린다★
+#   워커에서 실측했다: 진짜 IC 가 0 인 순수 잡음 모델이 raw IC ≥ 0.012 게이트를
+#   ★43~49%★ 통과하고, 그중 최대 IC 는 0.5 까지 나온다. 위원회 가중이 exp(60×IC) 라
+#   운 좋게 큰 IC 를 받은 잡음 모델 하나가 나머지 전원을 압도한다.
+#   → 홀드아웃을 K 블록으로 나눠 블록별 IC 를 재고 ICIR = mean/std, t = ICIR×√K 를 함께 보낸다.
+#     워커는 블록평균 IC ≥ 문턱 ★그리고★ t ≥ 1.65 일 때만 신뢰하고,
+#     가중 입력으로는 blockIC × clamp(t/2, 0, 1) 을 쓴다(못 믿을 IC 는 0 쪽으로 수축).
+#   이건 Qlib·Numerai·팩터 리서치가 공통으로 쓰는 표준 유의성 척도다.
+def _calc_ic_blocks(pred, y, K=5):
+    import numpy as np
+    try:
+        p = np.asarray(pred, dtype=np.float64); t = np.asarray(y, dtype=np.float64)
+        n = min(len(p), len(t))
+        bs = n // max(2, int(K))
+        if bs < 20: return None, None, None, 0
+        ics = []
+        for k in range(int(K)):
+            a = p[k * bs:(k + 1) * bs]; b = t[k * bs:(k + 1) * bs]
+            if a.std() < 1e-12 or b.std() < 1e-12: continue
+            c = float(np.corrcoef(a, b)[0, 1])
+            if np.isfinite(c): ics.append(c)
+        if len(ics) < 2: return None, None, None, 0
+        arr = np.asarray(ics, dtype=np.float64)
+        m = float(arr.mean()); sd = float(arr.std(ddof=1))
+        icir = (m / sd) if sd > 1e-9 else (9.0 if m > 0 else 0.0)
+        return m, icir, icir * (len(ics) ** 0.5), len(ics)
+    except Exception:
+        return None, None, None, 0
+
+
+def _ic_block_fields(pred, y, K=5):
+    """모델 dict 에 그대로 합칠 블록 IC 필드."""
+    bic, icir, tv, k = _calc_ic_blocks(pred, y, K)
+    if bic is None: return {}
+    return {"valICBlock": round(bic, 5), "valICIR": round(icir, 3),
+            "valICt": round(tv, 3), "valICK": int(k)}
+
+
 # ============================================================================
 # [V33.76] ★미국장·한국장 분리학습★ (사용자 지시)
 #   두 시장은 거래시간(연속 vs 상하한가 ±30%), 세금(국내 증권거래세), 투자자 구성(외국인·기관
@@ -755,7 +793,9 @@ def _train_per_market(BASE, KEY, HDR, MKT, X, Y, TS, PNL, featver, D):
                  "valAccLB": round(vlb, 4), "valN": int(nval), "n": int(n),
                  "featVer": featver, "probe": probe, "market": mk, "algo": algo,
                  "valIC": round(_ic, 5), "valRankIC": round(_ric, 5)}
-        print(f"   {mk.upper()}: trees={len(trees)} eta={eta:.3f} valAcc={vacc:.3f} lb={vlb:.3f} IC={_ic:.4f} RankIC={_ric:.4f}")
+        model.update(_ic_block_fields(pva, Yva))
+        print(f"   {mk.upper()}: trees={len(trees)} eta={eta:.3f} valAcc={vacc:.3f} lb={vlb:.3f} IC={_ic:.4f} RankIC={_ric:.4f}"
+              + (f" blockIC={model['valICBlock']:.4f} t={model['valICt']:.2f}" if "valICt" in model else " (블록 부족)"))
         _upload("gbdt_" + mk, model)
 
 
@@ -986,8 +1026,10 @@ def _train_and_upload_boosters(BASE, KEY, HDR, X, Y, TS, featver, D, PNL=None):
         model = {"trees": trees, "eta": 1.0, "bias": bias, "valAcc": round(vacc, 4),
                  "valAccLB": round(vlb, 4), "valN": int(nval), "n": int(N), "featVer": featver, "probe": probe,
                  "valIC": round(_ic, 5), "valRankIC": round(_ric, 5)}
+        model.update(_ic_block_fields(proba_lib, Yva))
         if vaccW is not None: model["valAccW"] = round(vaccW, 4)
         print(f"{name}: trees={len(trees)} valAcc={vacc:.3f} lb={vlb:.3f} IC={_ic:.4f} RankIC={_ric:.4f}"
+              + (f" blockIC={model['valICBlock']:.4f} t={model['valICt']:.2f}" if "valICt" in model else "")
               + (f" 수익가중acc={vaccW:.3f}" if vaccW is not None else "") + " → 업로드(activate)")
         _upload(name, model)
 
