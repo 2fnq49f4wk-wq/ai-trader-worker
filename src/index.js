@@ -2760,7 +2760,7 @@ async function applySignalTypeWeights(DB, cfg) {
 // ============================================================================
 // [V33.55] 빌드 버전 — SWR L2 캐시 키에 섞어 '배포 = 판단 캐시 자동 무효화'를 만든다.
 //   판정 로직을 고쳐도 옛 캐시가 최대 1시간 재배포되던 문제를 구조적으로 없앤다.
-const _BUILD_VER = "V33.99";
+const _BUILD_VER = "V33.100";
 
 const AI_PARAMS = {
   // ── OHLCV 타임프레임 ── 시가/고가/저가/종가/거래량을 어떤 봉 주기로 볼지.
@@ -16922,7 +16922,13 @@ async function runTradingCycle(env) {
                     _md.techRaw = _tk.tech; _md.newsRaw = _ns;   // [V33.96] 계수 실측용
                     _md.blended = true; _md.techScore = _tk.tech; _md.newsScore = _ns;
                     // allow 재계산 — 통합확률이 게이트문턱 이상이면 허용(원시 p 기준 stale allow 정정).
-                    _md.allow = _md.p >= (typeof MIND !== "undefined" ? MIND.gateThresh : 0.42);
+                    // [V33.100] 실측 EV 손익분기가 있으면 그걸 쓴다(없을 때만 고정 문턱).
+                    //   종전엔 무조건 0.42 라, 저변동 종목(손익분기 36.4%)은 필요 이상으로 막히고
+                    //   고변동 종목(46.5%)은 손해 구간인데도 통과했다.
+                    const _gt = (typeof _md.evThr === "number" && _md.evThr > 0.2 && _md.evThr < 0.8)
+                      ? _md.evThr : (typeof MIND !== "undefined" ? MIND.gateThresh : 0.42);
+                    _md.allow = _md.p >= _gt;
+                    _md.gateThrUsed = +_gt.toFixed(4);
                     // 사이징도 통합확률로 켈리 재계산(확신도 정합).
                     try { _md.sizeMult = _md.allow ? mlKellySize(_md.p, _md.uncertainty) : 1; } catch (e) {}
                     if (_tk.tech != null && _tk.tech <= -0.5) { _md.allow = false; _md.techVeto = true; }   // 그래프 강한 약세 → 진입 거부
@@ -27281,20 +27287,52 @@ async function scalpConfluenceFitNightly(DB) {
     const L = await mlScalpLoad(DB);
     if (!L) return "[CONFK] 단타모델 미신뢰 — 측정 대기";
     const D0 = LUXML.featNames.length;
-    let rows = [];
-    if (_bigR2()) {
-      // R2 경로는 오브젝트를 훑어야 해 비용이 크다 — D1 경로에서만 측정한다(같은 표본 스키마).
-      return "[CONFK] R2 경로 — 측정 생략(D1 표본 필요)";
+    // [V33.100] ★R2 경로에서도 측정한다★
+    //   V33.98 은 R2 면 그냥 생략했는데, 실제 운영은 R2 바인딩이 켜진 상태다
+    //   (배포 로그 확인: env.MODELS → R2 Bucket). 즉 그 조건이면 이 측정이 영영 안 돈다 —
+    //   "만들어 놓고 안 도는 코드" 를 또 만든 셈이다. 두 경로 모두에서 표본을 읽는다.
+    const samples = [];
+    const R2 = _bigR2();
+    if (R2) {
+      try {
+        // 최근 며칠치 오브젝트만 훑는다(전체 순회 금지 — 야간 예산 보호).
+        for (let d = 0; d < 3 && samples.length < 8000; d++) {
+          const day = new Date(Date.now() + 9 * 3600000 - d * 86400000).toISOString().slice(0, 10);
+          let cursor = undefined;
+          for (let pg = 0; pg < 6 && samples.length < 8000; pg++) {
+            const lr = await R2.list({ prefix: "st/intraday/" + day + "/", cursor: cursor, limit: 60 });
+            for (const o of (lr.objects || [])) {
+              if (samples.length >= 8000) break;
+              try {
+                const g = await R2.get(o.key); if (!g) continue;
+                const j = JSON.parse(await g.text());
+                for (const sm of (j.samples || [])) {
+                  if (samples.length >= 8000) break;
+                  if (Array.isArray(sm.x) && Array.isArray(sm.ix) && sm.fv === STIN_FEATVER)
+                    samples.push({ x: sm.x, ix: sm.ix, y: sm.y ? 1 : 0 });
+                }
+              } catch (e2) {}
+            }
+            if (!lr.truncated) break;
+            cursor = lr.cursor;
+          }
+        }
+      } catch (e) {}
+    } else {
+      await stinEnsureD1(DB);
+      const rs = await DB.prepare(
+        "SELECT feat, ifeat, fv, label FROM stin_samples WHERE fv = ? ORDER BY ts DESC LIMIT 8000"
+      ).bind(STIN_FEATVER).all();
+      for (const r of ((rs && rs.results) || [])) {
+        try {
+          const x = JSON.parse(r.feat), ix = r.ifeat ? JSON.parse(r.ifeat) : null;
+          if (Array.isArray(x) && Array.isArray(ix)) samples.push({ x: x, ix: ix, y: r.label ? 1 : 0 });
+        } catch (e) {}
+      }
     }
-    await stinEnsureD1(DB);
-    const rs = await DB.prepare(
-      "SELECT feat, ifeat, fv, label FROM stin_samples WHERE fv = ? ORDER BY ts DESC LIMIT 8000"
-    ).bind(STIN_FEATVER).all();
-    rows = (rs && rs.results) || [];
     const P = [], NET = [], Y = [];
-    for (const r of rows) {
-      let x, ix;
-      try { x = JSON.parse(r.feat); ix = r.ifeat ? JSON.parse(r.ifeat) : null; } catch (e) { continue; }
+    for (const r of samples) {
+      const x = r.x, ix = r.ix;
       if (!Array.isArray(x) || x.length !== D0 || !Array.isArray(ix) || ix.length !== STIN_IFEAT_N) continue;
       const fv = x.concat(ix);
       const p = mlGBDTScore(L.model, fv);
@@ -27304,7 +27342,7 @@ async function scalpConfluenceFitNightly(DB) {
       const tAt = function (k) { return _num(fv[T0 + k], 0); };
       const cv = _scalpConfluenceVotes(iAt, tAt);
       if (!cv || cv.votes.length < 3) continue;
-      P.push(_clamp(p, 1e-4, 1 - 1e-4)); NET.push(Math.tanh(cv.net / 4)); Y.push(r.label ? 1 : 0);
+      P.push(_clamp(p, 1e-4, 1 - 1e-4)); NET.push(Math.tanh(cv.net / 4)); Y.push(r.y ? 1 : 0);
     }
     const N = P.length;
     if (N < 600) return "[CONFK] 유효표본 " + N + "/600 — 대기";
@@ -28439,7 +28477,7 @@ async function mlDeepDecide(DB, featVec, opts) {
     if (Math.abs(pCombined - 0.5) < (typeof MIND !== "undefined" ? MIND.abstainBand : 0.05)) return { source: "deep", abstain: true, reason: "ambiguous", p: pCombined, experts: _expOut };
     // [V7] 기대값(EV) 게이트: 통계 있으면 p·평균이익 − (1−p)·평균손실 > 0 로 판단
     //   (손익 비대칭 반영 — 고정 확률 임계보다 수익률 정렬적). 통계 없으면 종전 임계.
-    let allow, evVal = null, _evSrc = null;
+    let allow, evVal = null, _evSrc = null, _evThr = null;
     let evs = (opts.evstats !== undefined) ? opts.evstats : await getState(DB, "ml_evstats", null);
     _evSrc = evs ? "samples" : null;
     // [V33.90] ★EV 게이트의 손익 비대칭을 '실제 원장'에서 가져온다 (NautilusTrader PortfolioAnalyzer)★
@@ -28485,9 +28523,14 @@ async function mlDeepDecide(DB, featVec, opts) {
       evs = { avgWin: _evBucket.avgWin, avgLoss: _evBucket.avgLoss, n: _evBucket.n };
       _evSrc = (_evSrc || "samples") + "+vol";
     }
+    // [V33.100] ★EV 손익분기 확률을 함께 내보낸다★
+    //   allow 는 아래 결정블렌드(decisionCore)에서 다시 계산되는데, 거기서는 고정 0.42 를 썼다.
+    //   그러면 V33.94 에서 ATR% 구간별로 실측한 손익분기(36.4%~46.5%)가 통째로 버려진다 —
+    //   측정해 놓고 상수로 덮는 꼴이다. 문턱 자체를 넘겨 블렌드 뒤에도 같은 기준을 쓰게 한다.
     if (evs && evs.avgWin > 0 && evs.avgLoss > 0) {
       evVal = +(pCombined * evs.avgWin - (1 - pCombined) * evs.avgLoss).toFixed(3);
       allow = evVal > 0;
+      _evThr = +(evs.avgLoss / (evs.avgWin + evs.avgLoss)).toFixed(4);
     } else {
       const gate = (typeof MIND !== "undefined") ? MIND.gateThresh : 0.42;
       allow = pCombined >= gate;
@@ -28509,7 +28552,7 @@ async function mlDeepDecide(DB, featVec, opts) {
       //   전자는 논쟁 자리, 후자는 타임스톱만 소모하는 죽은 돈이다.
       if (_dual && (_dual.quadrant === "volatile" || _dual.quadrant === "dead")) _contested = true;
     } catch (e) {}
-    return { source: "deep", allow: (allow && !_contested), sizeMult: sizeMult, p: pCombined, uncertainty: unc, usedDnn: usedDnn, usedGbdt: usedGbdt, ev: evVal, evSrc: _evSrc, experts: _expOut, shock: _shockOut, evPrior: _evPriorOut, stackFeat: _stackFeat, usedStack: _usedStack,
+    return { source: "deep", allow: (allow && !_contested), sizeMult: sizeMult, p: pCombined, uncertainty: unc, usedDnn: usedDnn, usedGbdt: usedGbdt, ev: evVal, evSrc: _evSrc, evThr: _evThr, experts: _expOut, shock: _shockOut, evPrior: _evPriorOut, stackFeat: _stackFeat, usedStack: _usedStack,
              pPreCal2: +_pPreCal2.toFixed(4),
              bull: +_bull.toFixed(3), bear: +_bear.toFixed(3), conviction: +_conv.toFixed(3), conflict: +_conflict.toFixed(3), contested: _contested, dual: _dual };
   } catch (e) { return null; }
