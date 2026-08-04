@@ -62,6 +62,10 @@ jobs:
       #   읽히거나(WIRED) 사유와 함께 은퇴하거나(RETIRED) — 둘 다 아닌 키가 새로 생기면 차단한다.
       - name: Dead config check
         run: node tools/check-dead-config.mjs
+      # [V33.110] 소셜 최신성 계약 — 반감기 상수 하나가 잘못 들어가도 결과는 여전히
+      #   '그럴듯한 점수'로 나온다. 시각을 아는 합성 스트림으로 계약을 못 박는다.
+      - name: Social freshness contract check
+        run: node tools/check-social.mjs
       # cloudflare/wrangler-action 대신 로컬에서 검증된 방식 그대로 실행
       # (wrangler-action@v3의 npx 자동설치가 4.86.0을 요구하며 실패하던 문제 회피)
       - name: Install wrangler

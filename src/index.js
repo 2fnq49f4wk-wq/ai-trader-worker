@@ -2760,7 +2760,7 @@ async function applySignalTypeWeights(DB, cfg) {
 // ============================================================================
 // [V33.55] 빌드 버전 — SWR L2 캐시 키에 섞어 '배포 = 판단 캐시 자동 무효화'를 만든다.
 //   판정 로직을 고쳐도 옛 캐시가 최대 1시간 재배포되던 문제를 구조적으로 없앤다.
-const _BUILD_VER = "V33.109";
+const _BUILD_VER = "V33.110";
 
 const AI_PARAMS = {
   // ── OHLCV 타임프레임 ── 시가/고가/저가/종가/거래량을 어떤 봉 주기로 볼지.
@@ -14588,7 +14588,20 @@ async function runTradingCycle(env) {
     //   관측·라벨·플러시가 통째로 죽었고, 그게 "단타 표본 0" 의 원인이었다.
     try {
       if (isMarketOpen("us") || isMarketOpen("kr")) {
-        __stinPend = _bigR2() ? await _stinLoadPend() : await _stinLoadPendD1(DB);
+        // [V33.110] R2 가 없으면 폴백하지 않는다 — 대신 그 사실을 크게 남긴다.
+        //   조용한 폴백이 'R2 가 꺼져 있는데 잘 돌고 있는 줄 아는' 상태를 만들었다.
+        if (_bigR2()) __stinPend = await _stinLoadPend();
+        else {
+          __stinPend = null;
+          try {
+            const _w = _num(await getState(DB, "stin_r2_warn", 0), 0);
+            if (Date.now() - _w > 3600000) {
+              await setState(DB, "stin_r2_warn", Date.now());
+              await log(DB, "ERROR", null, "[ST-INTRADAY] R2 미바인딩 — 장중 표본 수집 중단. " +
+                "wrangler.toml 의 r2_buckets 와 배포 로그의 'Enable R2 binding' 단계를 확인할 것.");
+            }
+          } catch (e2) {}
+        }
       }
     } catch (e) { __stinPend = null; }
 
@@ -17375,9 +17388,9 @@ async function runTradingCycle(env) {
         //   done 이 하나라도 있으면 flushMin(10분) 안에 반드시 내보낸다 — 버퍼에 갇히지 않게.
         if (__stinPend.done.length >= 50 ||
             (__stinPend.done.length > 0 && (Date.now() - _num(__stinPend.fts, 0)) > STIN.flushMin * 60000)) {
-          _fl = __stinPend.d1 ? await _stinFlushD1(DB, __stinPend) : await stinFlush(__stinPend, DB);
+          _fl = await stinFlush(__stinPend, DB);
         }
-        if (__stinPend.d1) await _stinSavePendD1(DB, __stinPend); else await _stinSavePend(__stinPend);   // [V33.95]
+        await _stinSavePend(__stinPend);
         // [V33.60] ★진행이 화면에서 안 보이던 이유★ stin_stats 는 flush 시점(=관측 60분 뒤
         //   라벨 완료 + 50건/10분 조건 충족)에만 올라간다. 그래서 관측이 정상이어도 최소 1시간은
         //   "0 / 3,000" 으로 보이고, 어디서 끊겼는지(관측/라벨/저장) 구분도 안 됐다.
@@ -18094,19 +18107,9 @@ async function handleRequest(request, env, ctx) {
               // [V33.96] ★어느 저장 경로로 쌓이는지 화면에 명시한다★
               //   V33.95 이전엔 R2 미바인딩이면 표본이 0 인데 화면엔 "store: R2" 로만 떠서
               //   "왜 안 쌓이는지" 가 전혀 안 보였다. 실제 바인딩 상태를 그대로 보여준다.
-              _scalp.store = _bigR2() ? "R2" : "D1(폴백)";
+              // [V33.110] 폴백을 없앴으므로 상태도 단순해진다 — R2 가 없으면 수집이 멈춘 것이다.
               _scalp.r2Bound = !!_bigR2();
-              if (!_bigR2()) {
-                try {
-                  await stinEnsureD1(env.DB);
-                  const _c = await env.DB.prepare("SELECT COUNT(*) AS n FROM stin_samples").first();
-                  const _p = await env.DB.prepare("SELECT COUNT(*) AS n FROM stin_pend").first();
-                  _scalp.d1Samples = _num(_c && _c.n, 0);
-                  _scalp.d1Pending = _num(_p && _p.n, 0);
-                  // D1 경로에서는 이 값이 진짜 표본 수다(stin_stats 는 누적 카운터).
-                  _scalp.collected = _scalp.d1Samples;
-                } catch (e) {}
-              }
+              _scalp.store = _scalp.r2Bound ? "R2" : "R2 미바인딩 — 수집 중단";
             } catch (e) {}
           } catch (e) {}
         } catch (e) {}
@@ -18875,24 +18878,8 @@ async function handleRequest(request, env, ctx) {
       const _pgSize = 20000;
       const _off = Math.max(0, Math.floor(_num(url.searchParams.get("offset"), 0)));
       let _hasMore = false;
-      if (!R2) {
-        try {
-          await stinEnsureD1(env.DB);
-          const rs = await env.DB.prepare(
-            "SELECT ts, market, symbol, feat, ifeat, fv, label, pnl_pct, bar, hm, barw FROM stin_samples WHERE day = ? ORDER BY ts ASC LIMIT ? OFFSET ?"
-          ).bind(day, _pgSize + 1, _off).all();
-          for (const r of ((rs && rs.results) || [])) {
-            let x, ix = null;
-            try { x = JSON.parse(r.feat); } catch (e) { continue; }
-            if (r.ifeat) { try { ix = JSON.parse(r.ifeat); } catch (e) {} }
-            const sm = { ts: _num(r.ts, 0), s: r.symbol, m: r.market, x: x,
-                         y: _num(r.label, 0), pnl: _num(r.pnl_pct, 0), bar: r.bar, hm: _num(r.hm, 0) };
-            if (ix) { sm.ix = ix; sm.fv = _num(r.fv, 0); sm.b = _num(r.barw, 0); }
-            out.push(sm);
-          }
-          if (out.length > _pgSize) { _hasMore = true; out.length = _pgSize; }
-        } catch (e) { return Response.json({ error: "D1 조회 실패: " + (e && e.message) }, { status: 500, headers: cors }); }
-      } else
+      // [V33.110] D1 폴백 제거 — R2 가 없으면 내보낼 표본이 없다(폴백이 아니라 명시적 실패).
+      if (!R2) return Response.json({ error: "R2 미바인딩 — 장중 표본 없음", samples: [], hasMore: false }, { status: 503, headers: cors });
       try {
         let cursor = undefined;
         for (let page = 0; page < 20; page++) {
@@ -25388,128 +25375,16 @@ function stinIntradayFeat(mb, price, prevClose) {
     return out;
   } catch (e) { return null; }
 }
-// ════════════════════════════════════════════════════════════════════════════
-// [V33.95] ★단타 표본이 한 건도 안 쌓이던 진짜 원인 — R2 바인딩이 꺼져 있다★
-//
-//   장중(분봉) 학습 파이프라인은 설계상 "전량 R2, D1 미사용" 이다. 그런데 wrangler.toml 의
-//   r2_buckets 블록은 ★주석 처리된 상태★ 다. 그래서 실제로는:
-//     · _bigR2() = null → __stinPend = null → ★관측 0건★
-//     · stinBackfill → "R2 미바인딩 — 생략" → ★백필 0건★
-//     · /api/ml-export-intraday → 503 → ★트레이너가 받을 표본 0건★
-//     · → scalp_model 미학습 → mlScalpLoad null → AI 단타가 영원히 가동 안 됨
-//   wrangler.toml 주석은 "바인딩 없으면 D1 청크로 폴백하니 지장 없음" 이라고 적혀 있는데,
-//   그건 ★모델 저장★ 얘기다. 장중 표본 경로에는 폴백이 아예 없다 — 그래서 통째로 죽어 있었다.
-//
-//   → R2 가 없으면 D1 테이블로 같은 일을 한다. 표본은 피처벡터 + 라벨이라 크지 않고
-//     (65+44 실수 ≈ 0.8KB), ml_samples 가 이미 같은 방식으로 수십만 건을 다루고 있다.
-//     R2 가 켜지면 종전 경로가 그대로 우선한다(코드 변경 없이 성능 경로 복귀).
-const STIN_D1 = { pend: "stin_pend", samples: "stin_samples", maxSamples: 300000 };
-let __stinD1Ready = false;
-async function stinEnsureD1(DB) {
-  if (__stinD1Ready || !DB) return;
-  try {
-    await DB.prepare("CREATE TABLE IF NOT EXISTS stin_pend (id INTEGER PRIMARY KEY AUTOINCREMENT, ts INTEGER, symbol TEXT, market TEXT, price REAL, feat TEXT, ifeat TEXT, fv INTEGER, bar REAL, hit INTEGER, hp REAL)").run();
-    await DB.prepare("CREATE INDEX IF NOT EXISTS idx_stin_pend_sym ON stin_pend(symbol, ts)").run();
-    await DB.prepare("CREATE TABLE IF NOT EXISTS stin_samples (id INTEGER PRIMARY KEY AUTOINCREMENT, ts INTEGER, day TEXT, market TEXT, symbol TEXT, feat TEXT, ifeat TEXT, fv INTEGER, label INTEGER, pnl_pct REAL, bar TEXT, hm INTEGER, barw REAL, featver INTEGER)").run();
-    await DB.prepare("CREATE INDEX IF NOT EXISTS idx_stin_samples_day ON stin_samples(day, ts)").run();
-    __stinD1Ready = true;
-  } catch (e) {}
-}
-// 대기버퍼를 D1 에서 읽어 R2 판(pend.items/done)과 같은 모양으로 만든다.
-//   done 은 곧바로 stin_samples 로 나가므로 메모리에만 둔다(빈 배열로 시작).
-async function _stinLoadPendD1(DB) {
-  await stinEnsureD1(DB);
-  try {
-    const rs = await DB.prepare("SELECT id, ts, symbol, market, price, feat, ifeat, fv, bar, hit, hp FROM stin_pend ORDER BY ts ASC LIMIT ?")
-      .bind(STIN.maxPend).all();
-    const items = [];
-    for (const r of ((rs && rs.results) || [])) {
-      let x, ix = null;
-      try { x = JSON.parse(r.feat); } catch (e) { continue; }
-      if (r.ifeat) { try { ix = JSON.parse(r.ifeat); } catch (e) {} }
-      const it = { _id: r.id, s: r.symbol, m: r.market, t: _num(r.ts, 0), p: _num(r.price, 0), x: x,
-                   hit: _num(r.hit, 0) | 0 };
-      if (ix) { it.ix = ix; it.fv = _num(r.fv, 0); it.b = _num(r.bar, 0); }
-      if (r.hp != null) it.hp = _num(r.hp, 0);
-      items.push(it);
-    }
-    return { items: items, done: [], ts: 0, fts: 0, d1: true };
-  } catch (e) { return { items: [], done: [], ts: 0, fts: 0, d1: true }; }
-}
-// 저장 — 새로 생긴 관측만 INSERT, 사라진(라벨된) 항목만 DELETE. 전체 재기록을 하지 않는다.
-async function _stinSavePendD1(DB, p) {
-  try {
-    await stinEnsureD1(DB);
-    const keepIds = new Set();
-    const ins = [];
-    for (const it of p.items) {
-      if (it._id != null) { keepIds.add(it._id); continue; }
-      ins.push(it);
-    }
-    for (const it of ins) {
-      await DB.prepare("INSERT INTO stin_pend (ts, symbol, market, price, feat, ifeat, fv, bar, hit, hp) VALUES (?,?,?,?,?,?,?,?,?,?)")
-        .bind(it.t, it.s, it.m, it.p, JSON.stringify(it.x), it.ix ? JSON.stringify(it.ix) : null,
-              _num(it.fv, 0), _num(it.b, 0), _num(it.hit, 0), it.hp != null ? it.hp : null).run();
-    }
-    // 라벨이 끝나 items 에서 빠진 행 삭제
-    if (Array.isArray(p._removed) && p._removed.length) {
-      for (let i = 0; i < p._removed.length; i += 40) {
-        const ids = p._removed.slice(i, i + 40).filter(function (v) { return v != null; });
-        if (!ids.length) continue;
-        const ph = ids.map(function () { return "?"; }).join(",");
-        const st = DB.prepare("DELETE FROM stin_pend WHERE id IN (" + ph + ")");
-        await st.bind.apply(st, ids).run();
-      }
-      p._removed = [];
-    }
-    // 경로 추적으로 hit 가 갱신된 행 반영(라벨 확정 전 배리어 접촉 기록)
-    if (Array.isArray(p._touched) && p._touched.length) {
-      for (const it of p._touched) {
-        if (it._id == null) continue;
-        await DB.prepare("UPDATE stin_pend SET hit=?, hp=? WHERE id=?").bind(_num(it.hit, 0), it.hp != null ? it.hp : null, it._id).run();
-      }
-      p._touched = [];
-    }
-  } catch (e) {}
-}
-// 라벨 완료분을 D1 표본 테이블로 내보낸다(R2 판 stinFlush 와 같은 역할).
-async function _stinFlushD1(DB, pend) {
-  if (!pend || !pend.done.length) return 0;
-  await stinEnsureD1(DB);
-  const day = _stinDay();
-  let n = 0;
-  try {
-    for (const d of pend.done) {
-      await DB.prepare("INSERT INTO stin_samples (ts, day, market, symbol, feat, ifeat, fv, label, pnl_pct, bar, hm, barw, featver) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)")
-        .bind(_num(d.ts, Date.now()), day, d.m || null, d.s || null, JSON.stringify(d.x),
-              d.ix ? JSON.stringify(d.ix) : null, _num(d.fv, 0), _num(d.y, 0), _num(d.pnl, 0),
-              d.bar || null, _num(d.hm, 0), _num(d.b, 0), LUXML.featVer).run();
-      n++;
-    }
-    pend.done = [];
-    pend.fts = Date.now();
-    // 화면 카운터도 R2 판과 같게 올린다(패널의 "표본 N/3000").
-    try {
-      const prev = (await getState(DB, "stin_stats", null)) || { total: 0, today: 0, day: day, files: 0 };
-      const sameDay = (prev.day === day);
-      await setState(DB, "stin_stats", Object.assign({}, prev, {
-        total: _num(prev.total, 0) + n,
-        today: (sameDay ? _num(prev.today, 0) : 0) + n,
-        files: (sameDay ? _num(prev.files, 0) : 0) + 1,
-        store: "D1", day: day, ts: Date.now()
-      }));
-    } catch (e) {}
-    // 상한 유지 — 오래된 것부터 정리(ml_samples 와 같은 방식).
-    try {
-      const c = await DB.prepare("SELECT COUNT(*) AS n FROM stin_samples").first();
-      const tot = _num(c && c.n, 0);
-      if (tot > STIN_D1.maxSamples)
-        await DB.prepare("DELETE FROM stin_samples WHERE id IN (SELECT id FROM stin_samples ORDER BY ts ASC LIMIT ?)")
-          .bind(tot - STIN_D1.maxSamples).run();
-    } catch (e) {}
-  } catch (e) {}
-  return n;
-}
+// ══════════════════════════════════════════════════════════════════════════
+// [V33.110] ★D1 폴백 제거★ — 틀린 진단 위에 지은 코드였다.
+//   V33.95 는 '단타 표본 0' 의 원인을 R2 미바인딩으로 보고 D1 미러(stin_pend/stin_samples)를
+//   통째로 만들었다. 그런데 진짜 원인은 V33.103 에서 밝혀진 ★스코프 사고★ 였고,
+//   R2 는 그때도 정상 바인딩돼 있었다(사용자 대시보드로 확인 — 642 오브젝트).
+//   즉 이 폴백은 ★한 번도 실행된 적이 없는 130여 줄★ 이면서,
+//   장중 표본은 전량 R2 로 간다는 설계와 정면으로 어긋난다(D1 에 30만 행을 쓰는 경로).
+//   두 개의 스키마·두 개의 라벨 경로를 유지하는 비용이 폴백의 값어치보다 크다.
+//   → 걷어낸다. 대신 R2 가 없으면 ★조용히 넘어가지 않고★ 그 사실을 크게 남긴다
+//     (조용한 폴백보다 시끄러운 실패가 낫다 — 이번 사고의 교훈이 정확히 그것이다).
 
 async function _stinLoadPend() {
   const R2 = _bigR2(); if (!R2) return null;
@@ -25579,16 +25454,14 @@ function stinLabel(pend, priceOf) {
   const now = Date.now(), horizonMs = STIN.horizonBars * 5 * 60000;
   const keep = [];
   let labeled = 0;
-  // [V33.95] D1 폴백일 때 어떤 행을 지우고 어떤 행의 배리어 접촉을 갱신할지 모아 둔다.
-  if (pend.d1) { pend._removed = pend._removed || []; pend._touched = pend._touched || []; }
   for (const it of pend.items) {
     const px = priceOf(it.s);
     // ── 경로 추적: 아직 어느 배리어에도 안 닿았다면 이번 가격으로 확인 ──
     if (px > 0 && !it.hit && it.p > 0) {
       const bar = (typeof it.b === "number" && it.b > 0) ? it.b : STIN.tpPct;
       const r = (px / it.p - 1) * 100;
-      if (r >= bar) { it.hit = 1; it.hp = +r.toFixed(3); if (pend.d1) pend._touched.push(it); }
-      else if (r <= -bar) { it.hit = -1; it.hp = +r.toFixed(3); if (pend.d1) pend._touched.push(it); }
+      if (r >= bar) { it.hit = 1; it.hp = +r.toFixed(3); }
+      else if (r <= -bar) { it.hit = -1; it.hp = +r.toFixed(3); }
     }
     // 배리어를 이미 쳤으면 시간이 남았어도 그 시점에 매매가 끝난 것 — 즉시 라벨 확정.
     const expired = (now - it.t) >= horizonMs;
@@ -25607,7 +25480,6 @@ function stinLabel(pend, priceOf) {
                 hm: (now - it.t) / 60000 | 0 };                       // 결착까지 걸린 분(빠를수록 강한 신호)
     if (it.ix) { d.ix = it.ix; d.fv = it.fv; d.b = it.b; }   // [V33.46/47] 장중 피처 + 배리어폭
     pend.done.push(d);
-    if (pend.d1 && it._id != null) pend._removed.push(it._id);   // [V33.95] D1 행 정리 대상
     labeled++;
   }
   pend.items = keep;
@@ -25624,9 +25496,8 @@ function stinLabel(pend, priceOf) {
 //     라벨은 그 이후 봉(i+1..i+H)으로만 매긴다 — 라이브와 동일한 함수를 그대로 쓴다.
 async function stinBackfill(DB, opts) {
   const R2 = _bigR2();
-  // [V33.95] R2 가 없어도 D1 로 적재한다 — 종전엔 여기서 바로 빠져나가
-  //   백필 표본이 단 한 건도 만들어지지 않았다(단타 학습이 시작조차 못 한 원인).
-  const _useD1 = !R2;
+  // [V33.110] R2 가 없으면 백필도 하지 않는다 — 폴백 대신 명시적 실패.
+  if (!R2) return "[ST-BACKFILL] R2 미바인딩 — 수집 중단(배포의 'Enable R2 binding' 단계 확인)";
   const cfg = opts || {};
   const maxSyms = _num(cfg.maxSyms, 8);
   const H = STIN.horizonBars;                     // 12봉(60분)
@@ -25689,11 +25560,8 @@ async function stinBackfill(DB, opts) {
     let _flushed = 0, _files = 0;
     const _flushChunk = async function (arr) {
       if (!arr.length) return;
-      if (_useD1) { await _stinFlushD1(DB, { done: arr, d1: true }); }
-      else {
-        const k2 = "st/intraday/" + _stinDay() + "/bf-" + Date.now() + "-" + _files + ".json";
-        await R2.put(k2, JSON.stringify({ n: arr.length, samples: arr, src: "backfill" }));
-      }
+      const k2 = "st/intraday/" + _stinDay() + "/bf-" + Date.now() + "-" + _files + ".json";
+      await R2.put(k2, JSON.stringify({ n: arr.length, samples: arr, src: "backfill" }));
       _flushed += arr.length; _files++; arr.length = 0;
     };
     const made = [];
@@ -25843,10 +25711,7 @@ async function stinBackfill(DB, opts) {
       const d0 = _stinDay();
       const pv = (await getState(DB, "stin_stats", null)) || {};
       const same = (pv.day === d0);
-      // D1 경로는 _stinFlushD1 이 이미 total/today/files 를 올렸다 — 중복 가산 금지.
-      await setState(DB, "stin_stats", Object.assign({}, pv, _useD1 ? {
-        day: d0, bfTotal: _num(pv.bfTotal, 0) + _total, ts: Date.now()
-      } : {
+      await setState(DB, "stin_stats", Object.assign({}, pv, {
         day: d0,
         total: _num(pv.total, 0) + _total,
         today: (same ? _num(pv.today, 0) : 0) + _total,
@@ -27911,18 +27776,7 @@ async function scalpConfluenceFitNightly(DB) {
           }
         }
       } catch (e) {}
-    } else {
-      await stinEnsureD1(DB);
-      const rs = await DB.prepare(
-        "SELECT feat, ifeat, fv, label FROM stin_samples WHERE fv = ? ORDER BY ts DESC LIMIT 8000"
-      ).bind(STIN_FEATVER).all();
-      for (const r of ((rs && rs.results) || [])) {
-        try {
-          const x = JSON.parse(r.feat), ix = r.ifeat ? JSON.parse(r.ifeat) : null;
-          if (Array.isArray(x) && Array.isArray(ix)) samples.push({ x: x, ix: ix, y: r.label ? 1 : 0 });
-        } catch (e) {}
-      }
-    }
+    }   // [V33.110] D1 폴백 제거 — R2 가 없으면 표본이 없다(위 R2 분기 하나뿐).
     const P = [], NET = [], Y = [];
     for (const r of samples) {
       const x = r.x, ix = r.ix;
@@ -31437,34 +31291,61 @@ function _luxPickTech(dd, sym, market) {
 //
 //   ※ Reddit 은 데이터센터 IP 를 막는 경우가 있다. 실패를 조용히 넘기지 않고
 //     social_health 에 HTTP 코드와 함께 남겨, '0건' 이 수집실패인지 진짜 0인지 구분한다.
+// [V33.110] ★StockTwits 중심으로 개편 + 최신 위주★ (사용자 지시)
+//   근거: StockTwits 는 게시자가 Bullish/Bearish 를 ★직접 붙인다★ — 추정이 아니라 선언이다.
+//   Reddit 은 언급량(강도)만 주고 방향은 우리가 추정해야 하므로 보조로 내린다.
+//
+//   ★오래된 글을 쓰지 않는다★ — 두 겹으로 막는다.
+//     ① 하드 컷오프: freshH(6시간) 밖의 글은 아예 세지 않는다.
+//     ② 반감기 가중: 그 안에서도 halfLifeH(2시간)로 지수감쇠한다.
+//   장중 소셜 감정은 몇 시간이면 낡는다. 24시간 평균은 '어제 뉴스'를 오늘 신호로 쓰는 셈이다.
 const SOCIAL = {
   enabled: true,
-  symsPerRound: 12,          // 회차당 StockTwits 조회 종목 수(전용 예산 안쪽)
-  gapMin: 20,                // 회차 간격(분)
-  maxAgeH: 24,               // 이 시간 안의 글만 집계
-  minMsgs: 5,                // 이보다 적으면 점수를 내지 않는다(표본 부족)
+  symsPerRound: 30,          // 12 → 30. StockTwits 가 주축이므로 회전을 크게 돌린다.
+  pagesPerSym: 3,            // 종목당 페이지(30건/페이지) → 최대 90건. 오래된 페이지는 조기중단.
+  gapMin: 10,                // 20 → 10분. 최신성이 핵심이라 자주 돈다.
+  freshH: 6,                 // ★하드 컷오프★ — 이보다 오래된 글은 세지 않는다(24 → 6).
+  halfLifeH: 2,              // ★반감기★ — 2시간마다 가중치 절반.
+  minMsgs: 8,                // 신선구간 글이 이보다 적으면 점수를 내지 않는다(표본 부족)
+  minLabeled: 5,             // Bullish/Bearish 라벨이 이만큼은 있어야 방향을 말한다
   redditSubs: "wallstreetbets+stocks+investing+StockMarket",
+  redditFreshH: 6,           // Reddit 도 같은 신선도 기준
   bufWindow: 3000            // 계수 측정용 관측 버퍼 크기
 };
 const SOCIAL_SOURCES = [
   {
     id: "stocktwits", ko: "StockTwits", perSymbol: true,
-    url: function (sym) { return "https://api.stocktwits.com/api/2/streams/symbol/" + encodeURIComponent(sym) + ".json"; },
+    // limit=30 이 상한이고, 더 받으려면 max=<가장오래된id> 로 이어 받는다.
+    url: function (sym, maxId) {
+      return "https://api.stocktwits.com/api/2/streams/symbol/" + encodeURIComponent(sym) +
+             ".json?limit=30" + (maxId ? "&max=" + encodeURIComponent(maxId) : "");
+    },
     // 게시자가 붙인 Bullish/Bearish 라벨을 그대로 센다. 라벨 없는 글은 분모에서 뺀다
     //   ('무의견'을 중립으로 세면 표본이 희석돼 신호가 죽는다).
-    parse: function (js, cutoffMs) {
+    // [V33.110] ★최신 위주★ — 하드 컷오프 밖은 버리고, 안쪽은 반감기로 감쇠 가중한다.
+    //   가중 없이 평균 내면 6시간 전 글과 5분 전 글이 같은 표가 된다.
+    parse: function (js, cutoffMs, _uni, nowMs) {
       const ms = (js && js.messages) || [];
-      let bull = 0, bear = 0, n = 0;
+      const now = nowMs || Date.now();
+      const hl = SOCIAL.halfLifeH * 3600000;
+      let bull = 0, bear = 0, n = 0, wBull = 0, wBear = 0, minId = null, oldest = 0, ageSum = 0;
       for (const m of ms) {
+        const id = _num(m && m.id, 0);
+        if (id > 0 && (minId === null || id < minId)) minId = id;
         const t = Date.parse(m && m.created_at || "");
-        if (isFinite(t) && t < cutoffMs) continue;
-        n++;
+        if (!isFinite(t)) continue;
+        if (t < cutoffMs) { oldest++; continue; }        // 신선구간 밖 — 세지 않는다
+        n++; ageSum += (now - t);
+        const w = Math.pow(0.5, (now - t) / hl);          // 반감기 가중
         const b = m && m.entities && m.entities.sentiment && m.entities.sentiment.basic;
-        if (b === "Bullish") bull++; else if (b === "Bearish") bear++;
+        if (b === "Bullish") { bull++; wBull += w; }
+        else if (b === "Bearish") { bear++; wBear += w; }
       }
-      const lab = bull + bear;
-      return { n: n, bull: bull, bear: bear,
-               score: lab >= 1 ? +(((bull - bear) / lab)).toFixed(4) : null };
+      const lab = bull + bear, wLab = wBull + wBear;
+      return { n: n, bull: bull, bear: bear, minId: minId, oldSkipped: oldest,
+               avgAgeMin: n > 0 ? Math.round(ageSum / n / 60000) : null,
+               // 방향은 ★가중★ 비율로, 표본 충분성은 ★원 개수★ 로 판정한다(가중값으로 개수를 재면 안 된다).
+               score: (lab >= SOCIAL.minLabeled && wLab > 0) ? +(((wBull - wBear) / wLab)).toFixed(4) : null };
     }
   },
   {
@@ -31511,7 +31392,9 @@ async function _socialHealth(DB, id, patch) {
 async function socialFetchStep(DB) {
   if (!SOCIAL.enabled) return null;
   try {
-    const cutoff = Date.now() - SOCIAL.maxAgeH * 3600000;
+    const now0 = Date.now();
+    const cutoff = now0 - SOCIAL.freshH * 3600000;              // StockTwits 하드 컷오프
+    const rdCut = now0 - SOCIAL.redditFreshH * 3600000;         // Reddit 하드 컷오프
     // 미국 티커만 대상 — StockTwits·Reddit 둘 다 KR 종목을 다루지 않는다.
     const dr = await DB.prepare("SELECT k FROM state WHERE k >= 'daily:' AND k < 'daily;' ORDER BY k").all();
     const us = [];
@@ -31523,7 +31406,7 @@ async function socialFetchStep(DB) {
     }
     if (!us.length) return "[SOCIAL] 대상 없음";
     const uni = new Set(us);
-    let stOk = 0, stFail = 0, rdN = 0;
+    let stOk = 0, stFail = 0, rdN = 0, stMsgs = 0;
 
     // ── Reddit: 1회 fetch 로 전 종목 언급을 얻는다(가성비가 가장 높다) ──
     try {
@@ -31533,7 +31416,7 @@ async function socialFetchStep(DB) {
       if (!rr.ok) { await _socialHealth(DB, "reddit", { ok: false, http: rr.status, err: "http" }); }
       else {
         const rj = await rr.json();
-        const parsed = rsrc.parse(rj, cutoff, uni);
+        const parsed = rsrc.parse(rj, rdCut, uni, now0);
         rdN = Object.keys(parsed.by).length;
         for (const sy of Object.keys(parsed.by)) {
           const cur = (await getState(DB, "social:" + sy, null)) || {};
@@ -31555,23 +31438,45 @@ async function socialFetchStep(DB) {
       if (fetchBudgetLeft() < 4) break;
       proc++;
       try {
-        __fetchBudget.used++;
-        const r = await fetch(ssrc.url(sy), { headers: { "User-Agent": "Mozilla/5.0", "accept": "application/json" } });
-        lastHttp = r.status;
-        if (!r.ok) { stFail++; lastErr = "http " + r.status; continue; }
-        const js = await r.json();
-        const p = ssrc.parse(js, cutoff);
-        if (p.n < SOCIAL.minMsgs) { stOk++; continue; }   // 조회는 됐으나 표본 부족 — 점수 없음
+        // [V33.110] 페이지네이션 — 종목당 최대 pagesPerSym 장(30건/장).
+        //   ★신선구간 밖 글이 나오기 시작하면 즉시 중단한다★ — 스트림은 최신순이라
+        //   그 뒤는 전부 오래된 글이다. 오래된 페이지를 더 받는 건 예산 낭비다.
+        let agg = null, maxId = null, pages = 0;
+        for (let pg = 0; pg < SOCIAL.pagesPerSym; pg++) {
+          if (fetchBudgetLeft() < 3) break;
+          __fetchBudget.used++;
+          const r = await fetch(ssrc.url(sy, maxId), { headers: { "User-Agent": "Mozilla/5.0", "accept": "application/json" } });
+          lastHttp = r.status;
+          if (!r.ok) { if (pg === 0) { stFail++; lastErr = "http " + r.status; } break; }
+          const js = await r.json();
+          const p = ssrc.parse(js, cutoff, null, now0);
+          pages++;
+          if (!agg) agg = p;
+          else {
+            agg.n += p.n; agg.bull += p.bull; agg.bear += p.bear; agg.oldSkipped += p.oldSkipped;
+            // 가중 점수는 개수 비율로 재결합한다(페이지별 점수를 평균하면 표본수가 무시된다).
+            const a = agg.bull + agg.bear;
+            agg.score = a >= SOCIAL.minLabeled ? +(((agg.bull - agg.bear) / a)).toFixed(4) : null;
+            if (p.avgAgeMin != null) agg.avgAgeMin = p.avgAgeMin;
+          }
+          if (p.oldSkipped > 0) break;            // 신선구간을 넘어섰다 — 더 받을 이유 없음
+          if (p.minId == null) break;             // 더 이어받을 커서 없음
+          maxId = p.minId - 1;
+        }
+        if (!agg) { continue; }
+        agg.pages = pages;
+        if (agg.n < SOCIAL.minMsgs) { stOk++; continue; }   // 조회는 됐으나 신선 표본 부족 — 점수 없음
         const cur = (await getState(DB, "social:" + sy, null)) || {};
-        cur.st = p; cur.stTs = Date.now();
+        cur.st = agg; cur.stTs = Date.now();
         await setState(DB, "social:" + sy, cur);
-        stOk++;
+        stOk++; stMsgs += agg.n;
       } catch (e) { stFail++; lastErr = String((e && e.message) || e).slice(0, 60); }
     }
     try { await setState(DB, "social_off", { v: (off + Math.max(1, proc)) % us.length, ts: Date.now() }); } catch (e) {}
-    await _socialHealth(DB, "stocktwits", { ok: stOk > 0, http: lastHttp, done: stOk, fail: stFail, err: lastErr });
-    return "[SOCIAL] StockTwits " + stOk + "성공/" + stFail + "실패 · Reddit 언급종목 " + rdN +
-           " (구간 " + off + "~" + ((off + proc) % us.length) + "/" + us.length + ")";
+    await _socialHealth(DB, "stocktwits", { ok: stOk > 0, http: lastHttp, done: stOk, fail: stFail,
+                                            msgs: stMsgs, freshH: SOCIAL.freshH, err: lastErr });
+    return "[SOCIAL] StockTwits " + stOk + "성공/" + stFail + "실패 · 신선글 " + stMsgs + "건(" + SOCIAL.freshH + "h내)" +
+           " · Reddit 언급종목 " + rdN + " (구간 " + off + "~" + ((off + proc) % us.length) + "/" + us.length + ")";
   } catch (e) { return "[SOCIAL] fail: " + (e && e.message); }
 }
 // 종목별 소셜 점수 — StockTwits 라벨비율을 주축으로, Reddit 언급량을 강도로 쓴다.
@@ -31580,12 +31485,15 @@ function socialScoreOf(rec) {
   try {
     if (!rec) return null;
     const st = rec.st, rd = rec.rd;
-    const fresh = function (ts) { return ts && (Date.now() - ts) < 36 * 3600000; };
+    // [V33.110] 수집 자체가 오래됐으면 쓰지 않는다 — 36시간은 '어제 감정'을 오늘 신호로 쓰는 것이었다.
+    //   수집 주기가 10분이므로 2시간이면 충분히 여유롭다(장 마감 후 자연 소멸).
+    const fresh = function (ts) { return ts && (Date.now() - ts) < 2 * 3600000; };
     let s = null;
-    if (st && fresh(rec.stTs) && typeof st.score === "number" && (st.bull + st.bear) >= 3) s = st.score;
+    if (st && fresh(rec.stTs) && typeof st.score === "number" && (st.bull + st.bear) >= SOCIAL.minLabeled) s = st.score;
     if (s == null) return null;
     // Reddit 언급이 많을수록 그 감정이 '많은 사람의 것' 이라는 뜻 — 강도만 키운다(방향은 안 바꾼다).
     let amp = 1;
+    // Reddit 은 ★강도만★ 키운다(방향은 StockTwits 라벨이 정한다) — 보조 소스로 내린 이유.
     if (rd && fresh(rec.rdTs) && rd.mentions > 0) amp = _clamp(1 + Math.log(1 + rd.mentions) * 0.15, 1, 1.5);
     return _clamp(s * amp, -1, 1);
   } catch (e) { return null; }
@@ -36032,7 +35940,7 @@ export default {
           const _slk = _num(await getState(env.DB, "social_lock", 0), 0);
           if (Date.now() - _slk > SOCIAL.gapMin * 60000) {
             await setState(env.DB, "social_lock", Date.now());
-            try { resetFetchBudget(40); } catch (e0) {}
+            try { resetFetchBudget(120); } catch (e0) {}   // [V33.110] 30종목×최대3페이지 + Reddit
             const _sr = await socialFetchStep(env.DB);
             if (_sr) await log(env.DB, "INFO", null, _sr);
           }
@@ -36678,5 +36586,7 @@ export {
   // [V33.107] 상황별 반성기억(TradingAgents) 검증용
   _expRegBucket, _expRegIC, EXPREG,
   // [V33.108] 재무제표 툴킷 검증용 — tools/check-fin-tools.mjs
-  FIN_TOOLS, finToolsRun
+  FIN_TOOLS, finToolsRun,
+  // [V33.110] 소셜 멀티소스 검증용 — tools/check-social.mjs
+  SOCIAL, SOCIAL_SOURCES, socialScoreOf
 };

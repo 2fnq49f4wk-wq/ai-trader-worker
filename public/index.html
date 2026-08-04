@@ -14550,7 +14550,8 @@ html[data-theme="light"] .rail{background:#fff;}
         ['stocktwits','reddit'].forEach(function(id){
           var x = h[id];
           if(!x) { parts.push(esc(id)+' 대기'); return; }
-          parts.push(esc(id)+' '+(x.ok?'OK':'실패'+(x.http?' HTTP'+x.http:'')+(x.err?' '+esc(String(x.err).slice(0,24)):'')));
+          if(!x.ok){ parts.push(esc(id)+' 실패'+(x.http?' HTTP'+x.http:'')+(x.err?' '+esc(String(x.err).slice(0,24)):'')); return; }
+          parts.push(esc(id)+' OK'+(has(x.msgs)?' 신선글 '+n0(x.msgs)+'건/'+n0(x.freshH)+'h':'')+(has(x.syms)?' 언급 '+n0(x.syms)+'종':''));
         });
         var coef = has(S.k) && S.k !== 0
           ? em('계수 '+S.k.toFixed(3))+' <span class="sub">t '+(has(S.t)?S.t.toFixed(2):'—')+' · n '+n0(S.n)+'</span>'
