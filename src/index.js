@@ -2760,7 +2760,7 @@ async function applySignalTypeWeights(DB, cfg) {
 // ============================================================================
 // [V33.55] 빌드 버전 — SWR L2 캐시 키에 섞어 '배포 = 판단 캐시 자동 무효화'를 만든다.
 //   판정 로직을 고쳐도 옛 캐시가 최대 1시간 재배포되던 문제를 구조적으로 없앤다.
-const _BUILD_VER = "V33.102";
+const _BUILD_VER = "V33.103";
 
 const AI_PARAMS = {
   // ── OHLCV 타임프레임 ── 시가/고가/저가/종가/거래량을 어떤 봉 주기로 볼지.
@@ -8578,6 +8578,9 @@ async function setBigState(DB, key, v) {
 //   활성화: wrangler.toml 의 [[r2_buckets]] 주석 해제 + `wrangler r2 bucket create ai-trader-models`.
 let __R2 = null;
 function _bigR2() { return __R2 || null; }
+// [V33.103] 로컬 검증 전용 — R2 바인딩을 주입해 표본 파이프라인을 오프라인에서 재현한다.
+//   Worker 런타임은 이 함수를 호출하지 않는다(named export 만 참조).
+function _setR2ForTest(r2) { __R2 = r2 || null; }
 const BIGSTATE_CHUNKS_PER_QUERY = 8;   // 8×400KB = 약 3.2MB/응답 — D1 응답 한도 안쪽
 async function _readChunks(DB, key, n) {
   const parts = new Array(n);
@@ -19350,18 +19353,72 @@ async function handleRequest(request, env, ctx) {
     if (path === "/api/ai/train-now" && request.method === "POST") {
       const au = _trainAuthed(); if (!au.ok) return Response.json({ error: au.msg }, { status: au.code, headers: cors });
       const target = url.searchParams.get("target") || "mind";
-      const FN = { mind: mlMindTrainNightly, gbdt: mlGBDTTrainNightly, brain: mlBrainTrainNightly, dnn: mlDNNTrainNightly, l1: mlTrainNightly, calibrate: mlCalibrateCommittee, selfreview: mlSelfReview, flow: flowTrainNightly, xalpha: xalphaTrainNightly, stack: stackTrainNightly, dual: dualHeadTrainNightly, memo: memoTrainNightly, techk: techPriorFitNightly, finalcal: finalCalFitNightly, gateaudit: gateAuditNightly, blendk: decisionBlendFitNightly, confk: scalpConfluenceFitNightly, mindshadow: mindShadowPromoteNightly, stackbf: stackSampleBackfill, portstats: portfolioStatsNightly, ledgeraudit: ledgerCheckIntegrity };
+      // [V33.103] ★수동 파이프라인이 실제로 '전체'가 되도록★ — 종전 FN 맵과 target=all 목록은
+      //   야간 크론 32단계 중 21개만 담고 있었다(bandit·cflabel·deephist·earncorr·newsnext·
+      //   selfreview·senti·sentilearn·sentilex·uniscan·xspanel 누락). 수동 1회 실행이 곧 야간
+      //   1회와 같아야 검증이 되므로, 크론과 동일한 순서·동일한 함수로 전 단계를 채운다.
+      //   각 단계는 (DB) 하나만 받는 얇은 래퍼로 감싸 시그니처를 통일한다.
+      const _PIPE = [
+        ["cflabel", function (DB) { return cfLabelNightly(DB); }],
+        ["senti", async function (DB) { const _se = await sentiFetchAndStore(DB, null, null); return (_se && !/스킵/.test(_se)) ? _se : "[SENTI] 스킵"; }],
+        ["sentilearn", function (DB) { return sentiLearnNightly(DB); }],
+        // deephist 는 크론과 동일하게 전용 fetch 예산을 새로 부여하고 들어간다(앞 단계 잔량으로 돌면 조기중단).
+        ["deephist", function (DB) { try { resetFetchBudget(380); } catch (e) {} return harvestDeepFetchNightly(DB); }],
+        ["xspanel", function (DB) { return mlBuildXSPanel(DB); }],
+        ["harvest", function (DB) { return mlMarketHarvestNightly(DB); }],
+        ["l1", function (DB) { return mlTrainNightly(DB); }],
+        ["bandit", function (DB) { return mlBanditNoiseNightly(DB); }],
+        ["brain", function (DB) { return mlBrainTrainNightly(DB); }],
+        ["mind", function (DB) { return mlMindTrainNightly(DB); }],
+        ["gbdt", function (DB) { return mlGBDTTrainNightly(DB); }],
+        ["dnn", function (DB) { return mlDNNTrainNightly(DB); }],
+        ["flow", function (DB) { return flowTrainNightly(DB); }],
+        ["xalpha", function (DB) { return xalphaTrainNightly(DB); }],
+        ["memo", function (DB) { return memoTrainNightly(DB); }],
+        ["techk", function (DB) { return techPriorFitNightly(DB); }],
+        ["finalcal", function (DB) { return finalCalFitNightly(DB); }],
+        ["gateaudit", function (DB) { return gateAuditNightly(DB); }],
+        ["blendk", function (DB) { return decisionBlendFitNightly(DB); }],
+        ["confk", function (DB) { return scalpConfluenceFitNightly(DB); }],
+        ["mindshadow", function (DB) { return mindShadowPromoteNightly(DB); }],
+        ["stackbf", function (DB) { return stackSampleBackfill(DB, {}); }],
+        ["stack", function (DB) { return stackTrainNightly(DB); }],
+        ["dual", function (DB) { return dualHeadTrainNightly(DB); }],
+        ["portstats", function (DB) { return portfolioStatsNightly(DB); }],
+        ["ledgeraudit", async function (DB) { const r = await ledgerCheckIntegrity(DB, {}); return r.ok ? "[감사] 전수 " + r.checked + "종목 이상 없음" : "[감사] " + r.checked + "종목 중 " + r.issues.length + "건 불일치"; }],
+        ["calibrate", function (DB) { return mlCalibrateCommittee(DB); }],
+        ["uniscan", function (DB) { return mlUniverseScanNightly(DB); }],
+        ["selfreview", function (DB) { return mlSelfReview(DB); }],
+        ["newsnext", function (DB) { return mlNewsNextDayNightly(DB); }],
+        ["sentilex", function (DB) { return sentiLexLearnStep(DB); }],
+        ["earncorr", function (DB) { return earnCorrLearnStep(DB); }]
+      ];
+      const FN = {}; for (const _p of _PIPE) FN[_p[0]] = _p[1];
       // [V12.63] target=all — 재배포 직후 "한 방에" 전체 파이프라인을 정확한 순서로 재실행(하루1회 게이트 무시).
-      //   순서 고정: harvest → l1 → brain → mind → dnn → gbdt → calibrate (뒤 단계가 앞 단계 산출물 의존).
-      //   각 단계 자체 CPU예산 가드가 있어 안전. 재학습 즉시 모든 수정이 반영되게 하는 원클릭 경로.
+      //   순서는 크론과 동일하게 고정(뒤 단계가 앞 단계 산출물 의존). 각 단계 자체 CPU예산 가드가 있어 안전.
+      // [V33.103] 워커 1요청 CPU 상한(cpu_ms=300000)을 넘기면 남은 단계가 통째로 날아간다.
+      //   deadlineMs(기본 240s, 최대 280s)를 넘기면 남은 단계를 skipped 로 표기하고 정상 응답한다 —
+      //   그러면 사용자가 &from=<다음단계> 로 이어서 돌릴 수 있다(진행상황이 보이는 재개형 실행).
       if (target === "all") {
-        const _order = [["harvest", mlMarketHarvestNightly], ["l1", mlTrainNightly], ["brain", mlBrainTrainNightly], ["mind", mlMindTrainNightly], ["gbdt", mlGBDTTrainNightly], ["dnn", mlDNNTrainNightly], ["flow", flowTrainNightly], ["xalpha", xalphaTrainNightly], ["memo", memoTrainNightly], ["techk", techPriorFitNightly], ["finalcal", finalCalFitNightly], ["gateaudit", gateAuditNightly], ["blendk", decisionBlendFitNightly], ["confk", scalpConfluenceFitNightly], ["mindshadow", mindShadowPromoteNightly], ["stackbf", stackSampleBackfill], ["stack", stackTrainNightly], ["dual", dualHeadTrainNightly], ["portstats", portfolioStatsNightly], ["ledgeraudit", ledgerCheckIntegrity], ["calibrate", mlCalibrateCommittee]];
-        const out = {};
-        for (const [nm, fn] of _order) {
+        const _t00 = Date.now();
+        const _deadline = _clamp(Number(url.searchParams.get("deadlineMs")) || 240000, 30000, 280000);
+        const _from = (url.searchParams.get("from") || "").trim();
+        const _only = (url.searchParams.get("skip") || "").split(",").map(function (s) { return s.trim(); }).filter(Boolean);
+        let _started = !_from;
+        const out = {}; const _skipped = [];
+        for (const [nm, fn] of _PIPE) {
+          if (!_started) { if (nm === _from) _started = true; else { out[nm] = "skipped(before from)"; continue; } }
+          if (_only.indexOf(nm) >= 0) { out[nm] = "skipped(skip=)"; continue; }
+          if (Date.now() - _t00 > _deadline) { out[nm] = "skipped(deadline)"; _skipped.push(nm); continue; }
+          const _s0 = Date.now();
           try { out[nm] = await fn(env.DB); } catch (e) { out[nm] = "FAIL: " + (e && e.message); }
+          if (out[nm] == null) out[nm] = "(no-op)";
+          out[nm] = String(out[nm]).slice(0, 400) + " [" + (Date.now() - _s0) + "ms]";
           try { await log(env.DB, "INFO", null, "[수동트리거:all:" + nm + "] " + out[nm]); } catch (e) {}
         }
-        return Response.json({ ok: true, target: "all", results: out }, { headers: cors });
+        return Response.json({ ok: true, target: "all", stages: _PIPE.length, ms: Date.now() - _t00,
+          resume: _skipped.length ? ("/api/ai/train-now?target=all&from=" + _skipped[0]) : null,
+          results: out }, { headers: cors });
       }
       if (!FN[target]) return Response.json({ error: "target은 all|" + Object.keys(FN).join("|") + " 중 하나" }, { status: 400, headers: cors });
       try {
@@ -19454,7 +19511,19 @@ async function handleRequest(request, env, ctx) {
       for (const mk of ["us", "kr", "cm"]) {
         try {
           const pk = await getState(env.DB, "news_picks:" + mk, null);
-          if (pk && Array.isArray(pk.picks)) { out.ts = Math.max(out.ts || 0, pk.ts || 0); for (const p of pk.picks) out.picks.push(Object.assign({ market: mk }, p)); }
+          // [V33.103] ★뉴스픽 종목명이 undefined로만 뜨던 버그★ — 저장 스키마는 `sym`인데
+          //   화면(public/index.html)은 `p.symbol`을 읽었다. 저장 쪽을 바꾸면 이미 D1에 들어있는
+          //   news_picks:* 상태가 전부 깨지므로, 응답에서 두 키를 모두 채우고 종목명(name)까지
+          //   서버에서 해석해 내려준다(KR은 접미사 제거 폴백). 화면은 name→symbol 순으로 쓴다.
+          if (pk && Array.isArray(pk.picks)) {
+            out.ts = Math.max(out.ts || 0, pk.ts || 0);
+            for (const p of pk.picks) {
+              const sy = p && (p.symbol || p.sym) ? String(p.symbol || p.sym) : "";
+              if (!sy) continue;
+              const nm = (typeof NAME_MAP !== "undefined" && NAME_MAP[sy]) ? NAME_MAP[sy] : sy.replace(/\.(KS|KQ)$/, "");
+              out.picks.push(Object.assign({}, p, { market: mk, sym: sy, symbol: sy, name: nm }));
+            }
+          }
         } catch (e) {}
       }
       out.picks.sort(function (a, b) { return (b.p || 0) - (a.p || 0); });
@@ -19497,6 +19566,11 @@ async function handleRequest(request, env, ctx) {
       const bySym = {};
       for (const p of out.picks) if (!bySym[p.symbol] || p.p > bySym[p.symbol].p) bySym[p.symbol] = p;
       out.picks = Object.keys(bySym).map(function (k) { return bySym[k]; });
+      // [V33.103] AI픽 칩이 KR을 "005930.KS" 코드로 보여주던 것 — 서버에서 종목명을 해석해 내려준다.
+      //   (뉴스픽과 동일 규약: name 우선, 없으면 symbol)
+      for (const p of out.picks) {
+        try { p.name = (typeof NAME_MAP !== "undefined" && NAME_MAP[p.symbol]) ? NAME_MAP[p.symbol] : String(p.symbol || "").replace(/\.(KS|KQ)$/, ""); } catch (e) {}
+      }
       // [V33.26] ★"미장 열렸는데 국장이 순위권"★ 종전 정렬은 확률(p)만 봤다. 야간 스캔이 매긴
       //   점수를 그대로 쓰다 보니, 한국장이 닫힌 미국 정규장 시간에도 KR 종목이 상단을 차지해
       //   "지금 살 수 없는 종목"이 후보 목록을 덮었다. 확률 순위는 그대로 두되,
@@ -24489,7 +24563,38 @@ async function mlEnsureTable(DB) {
       //   (기존 행은 NULL — 신규 적재분만 정확히 집계되며, 그게 우리가 보려는 값이다)
       try { await DB.prepare("ALTER TABLE ml_samples ADD COLUMN ins_ts INTEGER").run(); } catch (e) {}
       try { await DB.prepare("CREATE INDEX IF NOT EXISTS idx_samples_insts ON ml_samples(ins_ts)").run(); } catch (e) {}
-      // [V33.41] 단타 모델 로더·판정 — 위원회(10일)와 완전히 분리된 슬롯을 쓴다.
+      // [V33.38] 단타(짧은 지평) 전용 표본 — 피처는 동일, 라벨 지평만 다르다.
+      //   반드시 별도 테이블이어야 한다. 같은 테이블에 섞으면 기존 10일 모델이 서로 다른
+      //   지평의 라벨을 한꺼번에 학습하게 되어 지금 잘 돌아가는 위원회가 망가진다.
+      try {
+        await DB.prepare(
+          "CREATE TABLE IF NOT EXISTS ml_samples_st (" +
+          "id INTEGER PRIMARY KEY AUTOINCREMENT, ts INTEGER, market TEXT, symbol TEXT, " +
+          "strategy TEXT, feat TEXT, label INTEGER, pnl_pct REAL, featver INTEGER, ins_ts INTEGER, horizon INTEGER)"
+        ).run();
+        await DB.prepare("CREATE INDEX IF NOT EXISTS idx_st_fv_ts ON ml_samples_st(featver, ts)").run();
+      } catch (e) {}
+      try { await DB.prepare("CREATE INDEX IF NOT EXISTS idx_samples_fv_ts ON ml_samples(featver, ts)").run(); } catch (e) {}
+      try { await DB.prepare("CREATE INDEX IF NOT EXISTS idx_samples_strat_fv ON ml_samples(strategy, featver)").run(); } catch (e) {}
+      _samplesTableReady = true;
+    }
+  } catch (e) {}
+}
+
+// [V33.103] ★단타 표본이 영원히 0 건이던 진짜 원인 — 스코프 사고★
+//   아래 단타(STIN) 블록 전체(약 970줄)이 mlEnsureTable() 안의
+//   `if (!_samplesTableReady) { … }` 블록 속에 통째로 들어가 있었다.
+//   ESM 은 strict 모드라 블록 안 function/let/const 는 ★블록 스코프★ 다 —
+//   그래서 크론·핸들러가 stinBackfill / stinObserve / mlScalpLoad / STIN 을
+//   부를 때마다 ReferenceError 가 났고, 그게 전부 try/catch 에 삼켜졌다.
+//     · __stinPend 로드 → catch → null → 관측 0건
+//     · stinBackfill → catch → 백필 0건
+//     · mlScalpLoad → null → AI 단타 영원히 미가동
+//   V33.40/46/59/63/64/95/102 에서 고친 것들은 전부 이 블록 안의 코드라
+//   단 한 번도 실행된 적이 없다. 모듈 최상위로 돌려놓는다(코드 내용 변경 없음).
+//   재발 방지: tools/check-order.mjs 의 스코프 게이트가 이제 이걸 잡는다.
+
+// [V33.41] 단타 모델 로더·판정 — 위원회(10일)와 완전히 분리된 슬롯을 쓴다.
 //   5분 메모 캐시: 사이클마다 D1을 치지 않게(모델은 6시간마다만 갱신된다).
 let __scalpMemo = null;
 async function mlScalpLoad(DB) {
@@ -25348,8 +25453,25 @@ async function stinBackfill(DB, opts) {
         const _bts = t[i] ? t[i] * 1000 : 0;
         if (_bts && _wmTs && _bts <= _wmTs) { skipDup++; continue; }
         // ── 피처: 0..i 까지만 본다(그 시점의 정보) ──
-        const win = { closes: c.slice(0, i + 1), highs: h.slice(0, i + 1), lows: l.slice(0, i + 1),
-                      volumes: v.slice(0, i + 1), opens: o2.slice(0, i + 1) };
+        // [V33.103] ★train/serve 스큐 제거★ 종전엔 창을 0..i(한 달치 전부)로 줬다.
+        //   stinIntradayFeat 의 세션 스코프 피처(VWAP 이격·당일 레인지 위치·장중 경과율)는
+        //   '오늘 하루' 를 전제로 만든 값인데, 한 달 창에서는 전혀 다른 뜻이 된다
+        //   (실측: vwapDev 백필 −6.97 vs 라이브 −1.03, sessFrac 백필 1.20 vs 라이브 1.00).
+        //   같은 시장 상태에 서로 다른 입력을 주는 셈이라, 백필로 학습한 모델은 라이브에서
+        //   작동할 수 없다 — 표본만 쌓이고 성적이 안 나오던 이유다.
+        //   → 라이브(fetchMinuteBars)와 같은 모양으로 창을 만든다:
+        //     · 세션 배열(closes 등) = 이 봉이 속한 '그날' 구간
+        //     · 연속 배열(all*)      = 직전 세션까지 2일치(지표 연속성 확보)
+        //   세션 경계는 봉 간격이 1시간을 넘는 지점(야간 공백)으로 판정한다 — 미국·한국 공통.
+        let _sStart = i, _pStart = i;
+        for (let k = i; k > 0; k--) { if (t[k] && t[k - 1] && (t[k] - t[k - 1]) > 3600) { _sStart = k; break; } _sStart = 0; }
+        for (let k = _sStart - 1; k > 0; k--) { if (t[k] && t[k - 1] && (t[k] - t[k - 1]) > 3600) { _pStart = k; break; } _pStart = 0; }
+        if (_pStart > _sStart) _pStart = _sStart;
+        const win = { closes: c.slice(_sStart, i + 1), highs: h.slice(_sStart, i + 1), lows: l.slice(_sStart, i + 1),
+                      volumes: v.slice(_sStart, i + 1), opens: o2.slice(_sStart, i + 1),
+                      allCloses: c.slice(_pStart, i + 1), allHighs: h.slice(_pStart, i + 1),
+                      allLows: l.slice(_pStart, i + 1), allVolumes: v.slice(_pStart, i + 1),
+                      allOpens: o2.slice(_pStart, i + 1) };
         const px = c[i];
         if (!(px > 0)) continue;
         const ifeat = stinIntradayFeat(win, px, c[Math.max(0, i - 1)]);
@@ -25454,34 +25576,20 @@ async function stinFlush(pend, DB) {
       const day = _stinDay();
       const prev = (await getState(DB, "stin_stats", null)) || { total: 0, today: 0, day: day, files: 0 };
       const sameDay = (prev.day === day);
-      await setState(DB, "stin_stats", {
+      // [V33.103] Object.assign 으로 병합한다 — 종전엔 객체를 통째로 갈아끼워
+      //   obsTotal·obsToday·labTotal·bfTotal(관측·라벨·백필 누적)이 flush 때마다 지워졌다.
+      //   화면의 "관측 N · 라벨 N" 이 주기적으로 0 으로 되돌아가 진행이 안 보이던 원인.
+      await setState(DB, "stin_stats", Object.assign({}, prev, {
         total: _num(prev.total, 0) + n,
         today: (sameDay ? _num(prev.today, 0) : 0) + n,
         files: (sameDay ? _num(prev.files, 0) : 0) + 1,
         day: day, ts: Date.now()
-      });
+      }));
     } catch (e) {}
   }
   return n;
 }
 
-// [V33.38] 단타(짧은 지평) 전용 표본 — 피처는 동일, 라벨 지평만 다르다.
-      //   반드시 별도 테이블이어야 한다. 같은 테이블에 섞으면 기존 10일 모델이 서로 다른
-      //   지평의 라벨을 한꺼번에 학습하게 되어 지금 잘 돌아가는 위원회가 망가진다.
-      try {
-        await DB.prepare(
-          "CREATE TABLE IF NOT EXISTS ml_samples_st (" +
-          "id INTEGER PRIMARY KEY AUTOINCREMENT, ts INTEGER, market TEXT, symbol TEXT, " +
-          "strategy TEXT, feat TEXT, label INTEGER, pnl_pct REAL, featver INTEGER, ins_ts INTEGER, horizon INTEGER)"
-        ).run();
-        await DB.prepare("CREATE INDEX IF NOT EXISTS idx_st_fv_ts ON ml_samples_st(featver, ts)").run();
-      } catch (e) {}
-      try { await DB.prepare("CREATE INDEX IF NOT EXISTS idx_samples_fv_ts ON ml_samples(featver, ts)").run(); } catch (e) {}
-      try { await DB.prepare("CREATE INDEX IF NOT EXISTS idx_samples_strat_fv ON ml_samples(strategy, featver)").run(); } catch (e) {}
-      _samplesTableReady = true;
-    }
-  } catch (e) {}
-}
 
 // [V17] 표본 라벨 산출 — AI_PARAMS.prediction.target에 따라 승/패·초과수익(alpha)·3분류.
 //   alpha 모드: 라벨 = (종목수익 − 지수수익) ≥ 임계 → 1. 지수수익(idxRetPct) 없으면 null 반환
@@ -31055,7 +31163,9 @@ async function mlNewsNextDayNightly(DB) {
     const top = scored.slice(0, NNEWS.topN);
     // (3) 저장: 시장별 picks + pending(내일 학습) + senti_prev + 사이징 부스트맵
     const byMkt = {};
-    for (const s of top) { (byMkt[s.market] = byMkt[s.market] || []).push({ sym: s.sym, p: s.p, tech: s.tech, techLabel: s.techLabel, blue: s.blue, senti: s.senti, fund: s.fund }); }
+    // [V33.103] symbol 키도 함께 저장 — 사이트/리포트가 p.symbol 로 읽는 경로가 여럿이라
+    //   sym 단일 키였던 탓에 종목명이 undefined 로 렌더됐다. 두 키를 같이 둔다.
+    for (const s of top) { (byMkt[s.market] = byMkt[s.market] || []).push({ sym: s.sym, symbol: s.sym, p: s.p, tech: s.tech, techLabel: s.techLabel, blue: s.blue, senti: s.senti, fund: s.fund }); }
     for (const mk of Object.keys(byMkt)) { try { await setState(DB, "news_picks:" + mk, { ts: Date.now(), picks: byMkt[mk] }); } catch (e) {} }
     await setState(DB, "nnews_pending", { date: today, items: scored.slice(0, 80).map(function (s) { return { sym: s.sym, price: s.price, f: s.f }; }) });
     const sp = {}; for (const g of Object.keys(sentiment)) sp[g] = _num(sentiment[g].compound, 0); await setState(DB, "nnews_senti_prev", sp);
@@ -34664,6 +34774,25 @@ async function mlFlushCandidates(DB, stmts) {
   } catch (e) { return 0; }
 }
 
+// [V33.103] ★반사실 라벨링 단계를 top-level 함수로 분리★ — 종전엔 cron 스케줄러 안의
+//   익명 클로저로만 존재해, 수동 파이프라인(/api/ai/train-now?target=all)에서 호출할 수가 없었다.
+//   그 결과 `all`이 cron 32단계 중 21단계만 돌아 "수동 1회 전체 실행"이 실제로는 전체가 아니었다.
+//   본문은 cron 쪽과 완전히 동일하다(경로 조회 + 지수 경로 정렬 → mlLabelCandidates).
+async function cfLabelNightly(DB) {
+  return await mlLabelCandidates(DB, async (sym, mkt, entryTs, horizon) => {
+    try {
+      const dd = await getState(DB, "daily:" + sym, null);
+      if (!dd || !dd.closes || !dd.closes.length) return null;
+      // 진입 이후 경로가 필요 — 최근 (horizon+2)봉을 경로로 제공(손절선 도달 판정용).
+      const n = Math.max(1, horizon || 5) + 2;
+      // [V17] alpha 라벨용 지수 경로(동일 창) — 종목 경로와 같은 최근 n봉으로 정렬
+      let idxCloses = null;
+      try { const ic = await _mlLoadIndexCloses(DB, mkt); if (ic && ic.length >= 2) idxCloses = ic.slice(-n); } catch (e) {}
+      return { closes: dd.closes.slice(-n), idxCloses: idxCloses };
+    } catch (e) { return null; }
+  }, {});
+}
+
 // 야간 호출. priceLookup(symbol, market, entryTs, horizon) → 숫자(종가) 또는 {closes:[...]}(경로).
 //   경로가 오면 horizon 구간 내 손절선 도달 여부를 판정해 손절가로 라벨(실거래와 정합) —
 //   단순 buy&hold 낙관편향 제거. 라벨된 후보는 ml_samples로 편입 후 즉시 DELETE(테이블 정리).
@@ -35414,20 +35543,7 @@ export default {
               } catch (e) { try { await log(env.DB, "ERROR", null, "[STAGE:" + nm + "] " + (e && e.message)); } catch (e2) {} }
             };
             // (1) 반사실 후보 라벨링 — 성숙분(N일 경과)을 손절반영 경로로 라벨링해 표본 편입
-            await _stg("cflabel", async function () {
-              return await mlLabelCandidates(env.DB, async (sym, mkt, entryTs, horizon) => {
-                try {
-                  const dd = await getState(env.DB, "daily:" + sym, null);
-                  if (!dd || !dd.closes || !dd.closes.length) return null;
-                  // 진입 이후 경로가 필요 — 최근 (horizon+2)봉을 경로로 제공(손절선 도달 판정용).
-                  const n = Math.max(1, horizon || 5) + 2;
-                  // [V17] alpha 라벨용 지수 경로(동일 창) — 종목 경로와 같은 최근 n봉으로 정렬
-                  let idxCloses = null;
-                  try { const ic = await _mlLoadIndexCloses(env.DB, mkt); if (ic && ic.length >= 2) idxCloses = ic.slice(-n); } catch (e) {}
-                  return { closes: dd.closes.slice(-n), idxCloses: idxCloses };
-                } catch (e) { return null; }
-              }, {});
-            });
+            await _stg("cflabel", async function () { return await cfLabelNightly(env.DB); });
             // (2) 외부 감성 수집 — SENTI_SOURCES에 URL이 채워진 경우만 동작(없으면 스킵)
             await _stg("senti", async function () { const _se = await sentiFetchAndStore(env.DB, null, null); return (_se && !/스킵/.test(_se)) ? _se : null; });
             // [V12.78] 감성 자가학습 — 어제 헤드라인×오늘 섹터등락으로 토큰 극성 온라인 학습(외부 API 0)
@@ -35557,5 +35673,9 @@ export {
   DEFAULT_CFG, migrateCfgToMarkets, evaluateAllStrategies, evaluateTrendEntry, evaluateSnapEntry,
   evaluateSell, backtestSymbol, backtestStats, backtestStatsBySignal,
   getRSI, getMA, getATR, getNDayHigh, getStrategyRules, fetchDailyForBacktest,
-  fetchMinuteBars, confirmIntradayEntry
+  fetchMinuteBars, confirmIntradayEntry,
+  // [V33.103] 단타 표본 파이프라인 로컬 검증용 — tools/check-scalp-pipeline.mjs 가 쓴다.
+  //   프로덕션 코드 경로에는 영향이 없다(named export 는 Worker 가 읽지 않는다).
+  stinBackfill, stinIntradayFeat, stinChartFeat, stinObserve, stinLabel, mlBuildFeatures,
+  STIN, STIN_IFEAT_N, STIN_FEATVER, LUXML, _setR2ForTest
 };

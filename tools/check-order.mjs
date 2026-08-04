@@ -336,6 +336,34 @@ for (const k of reads) {
     if (missing.length) { console.error(`  FAIL 야간 미등록: ${missing.join(", ")} — 정의만 있고 크론이 안 돌린다`); bad += missing.length; }
   }
 
+  // ══ [V33.103] ★모듈 스코프 계약★ ══════════════════════════════════════════
+  //   실제 사고: 단타(STIN) 서브시스템 970줄이 mlEnsureTable() 안의
+  //   `if (!_samplesTableReady) { … }` 블록 속에 통째로 들어가 있었다.
+  //   ESM 은 strict 모드라 블록 안 function/let/const 는 블록 스코프다 →
+  //   크론이 stinBackfill/stinObserve/mlScalpLoad 를 부를 때마다 ReferenceError,
+  //   그게 전부 try/catch 에 삼켜져 "표본 0건" 이 몇 달간 원인 불명이었다.
+  //   구문은 완벽히 유효해서 파서 게이트로는 절대 안 잡힌다.
+  //   → 이 저장소 규약: 열 0 에서 시작하는 선언은 반드시 모듈 최상위(depth 0)여야 한다.
+  //     들여쓴 선언(블록 안 지역 선언)은 종전대로 자유롭다.
+  {
+    const offend = [];
+    let depth = 0, atLineStart = true;
+    const lines = stripped.split("\n");
+    // stripped 는 문자열·주석이 공백으로 치환돼 있어 중괄호만 정확히 남는다.
+    for (let li = 0; li < lines.length; li++) {
+      const raw = lines[li];
+      if (depth > 0 && /^(async function|function|const|let|var|class)\s+[A-Za-z_$]/.test(raw)) {
+        offend.push(`L${li + 1}: ${raw.slice(0, 60).trim()} (depth ${depth})`);
+      }
+      for (const ch of raw) { if (ch === "{") depth++; else if (ch === "}") depth--; }
+    }
+    if (offend.length) {
+      console.error(`  FAIL 모듈 스코프 위반 ${offend.length}건 — 열 0 선언이 블록 안에 갇혀 있다(호출 시 ReferenceError):\n    ` +
+        offend.slice(0, 8).join("\n    "));
+      bad += offend.length;
+    }
+  }
+
   // setState 로 쓰기만 하고 아무도 안 읽는 키 = 죽은 기록.
   {
     const w = new Set(), r = new Set();

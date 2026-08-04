@@ -34,6 +34,11 @@ jobs:
       #   났고, 자기 try/catch 에 삼켜져 '기능이 있는데 전혀 안 도는' 상태로 배포됐다.
       - name: Declaration order contract check
         run: node tools/check-order.mjs
+      # [V33.103] 단타 표본 파이프라인 오프라인 재현 — 실제 코드를 합성 5분봉으로 돌린다.
+      #   "표본 0건" 이 V33.40 이후 반복됐고, 원인은 매번 달랐다(스코프 사고·피처 null·플러시 조건).
+      #   프로덕션 로그로 추적하는 대신 CI 에서 표본이 실제로 나오는지 매 배포마다 확인한다.
+      - name: Scalp sample pipeline check
+        run: node tools/check-scalp-pipeline.mjs
       # cloudflare/wrangler-action 대신 로컬에서 검증된 방식 그대로 실행
       # (wrangler-action@v3의 npx 자동설치가 4.86.0을 요구하며 실패하던 문제 회피)
       - name: Install wrangler

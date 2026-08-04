@@ -8090,8 +8090,12 @@ html[data-theme="light"] .m-brainbar button.active{color:#0b4f9e;background:rgba
       var mkIc = { us: '🇺🇸', kr: '🇰🇷', cm: '🛢' };
       el.innerHTML = picks.map(function(p) {
         var cls = p.p >= 0.6 ? 'hot' : (p.p >= 0.52 ? 'warm' : 'cool');
-        return '<button type="button" class="aipick-chip ' + cls + '" data-sym="' + escapeAttr(p.symbol) + '" data-mkt="' + escapeAttr(p.market) + '">' +
-          (mkIc[p.market] || '') + ' ' + escapeHtml(p.symbol) + ' <b>' + Math.round(p.p * 100) + '%</b></button>';
+        // [V33.103] KR은 코드가 아니라 종목명으로 — 서버 name 우선, 없으면 krLabel, 최후엔 접미사 제거
+        var sy2 = p.symbol || p.sym || '';
+        if (!sy2) return '';
+        var d2 = p.name || (p.market === 'kr' ? (krLabel(sy2) || sy2.replace(/\.(KS|KQ)$/, '')) : sy2);
+        return '<button type="button" class="aipick-chip ' + cls + '" data-sym="' + escapeAttr(sy2) + '" data-mkt="' + escapeAttr(p.market) + '" title="' + escapeAttr(sy2) + '">' +
+          (mkIc[p.market] || '') + ' ' + escapeHtml(d2) + ' <b>' + Math.round(p.p * 100) + '%</b></button>';
       }).join('');
       el.querySelectorAll('.aipick-chip').forEach(function(b) {
         b.addEventListener('click', function(){ openStockDetail(b.getAttribute('data-sym'), b.getAttribute('data-mkt')); });
@@ -8112,9 +8116,13 @@ html[data-theme="light"] .m-brainbar button.active{color:#0b4f9e;background:rgba
         var fundWarn = (typeof p.fund === 'number' && p.fund < 40) ? ' ⚠️' : '';  // 재무 취약 경고
         var senti = (typeof p.senti === 'number') ? (p.senti > 0 ? '📈' : (p.senti < 0 ? '📉' : '')) : '';
         // [V10] KR은 코드(005930.KS) 대신 종목명(삼성전자) 표시 — krLabel 해석기 사용
-        var disp = p.symbol;
-        if (p.market === 'kr') { var nm = krLabel(p.symbol); disp = nm || p.symbol.replace(/\.(KS|KQ)$/, ''); }
-        return '<button type="button" class="aipick-chip ' + cls + '" data-sym="' + escapeAttr(p.symbol) + '" data-mkt="' + escapeAttr(p.market) + '" title="' + escapeAttr(p.symbol) + ' · 다음날 상승확률 · 감성 ' + (p.senti != null ? p.senti : '?') + (p.fund != null ? ' · 재무점수 ' + p.fund : '') + '">' +
+        // [V33.103] 저장 스키마는 sym, 여기선 symbol을 읽어 전부 undefined로 찍혔다(사용자 신고).
+        //   두 키를 모두 받고, 서버가 내려주는 name을 우선 쓴다. sy가 비면 그 칩은 건너뛴다.
+        var sy = p.symbol || p.sym || '';
+        if (!sy) return '';
+        var disp = p.name || sy;
+        if (p.market === 'kr') { var nm = p.name || krLabel(sy); disp = nm || sy.replace(/\.(KS|KQ)$/, ''); }
+        return '<button type="button" class="aipick-chip ' + cls + '" data-sym="' + escapeAttr(sy) + '" data-mkt="' + escapeAttr(p.market) + '" title="' + escapeAttr(sy) + ' · 다음날 상승확률 · 감성 ' + (p.senti != null ? p.senti : '?') + (p.fund != null ? ' · 재무점수 ' + p.fund : '') + '">' +
           (mkIc[p.market] || '') + ' ' + senti + escapeHtml(disp) + ' <b>' + Math.round(p.p * 100) + '%</b>' + fundWarn + '</button>';
       }).join('');
       el.querySelectorAll('.aipick-chip').forEach(function(b) {
