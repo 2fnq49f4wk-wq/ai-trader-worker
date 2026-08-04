@@ -2760,7 +2760,7 @@ async function applySignalTypeWeights(DB, cfg) {
 // ============================================================================
 // [V33.55] 빌드 버전 — SWR L2 캐시 키에 섞어 '배포 = 판단 캐시 자동 무효화'를 만든다.
 //   판정 로직을 고쳐도 옛 캐시가 최대 1시간 재배포되던 문제를 구조적으로 없앤다.
-const _BUILD_VER = "V33.113";
+const _BUILD_VER = "V33.114";
 
 const AI_PARAMS = {
   // ── OHLCV 타임프레임 ── 시가/고가/저가/종가/거래량을 어떤 봉 주기로 볼지.
@@ -18031,6 +18031,8 @@ async function handleRequest(request, env, ctx) {
               fwdIC: m ? _num(m.fwdIC, null) : null, fwdN: m ? _num(m.fwdN, 0) : 0,
               fwdReady: !!(m && m.fwdReady), holdPass: !!(m && m.holdPass), minFwd: ICGATE.minForward,
               valN: m ? _num(m.valN, null) : null,
+              // [V33.114] 유효표본수(고유도 가중합)와 평균 고유도 — 명목 n 과의 차이를 보이게.
+              valNRaw: m ? _num(m.valNRaw, null) : null, uniq: m ? _num(m.valUniq, null) : null,
               n: m ? _num(m.n, null) : null,
               ts: m ? _num(m.ts, null) : null
             };
@@ -22435,7 +22437,7 @@ async function _miniLogisticTrain(DB, opts) {
       });
     } catch (e) {}
     const rows = await DB.prepare(
-      "SELECT id, ts, feat, label, pnl_pct FROM " + opts.table + " WHERE featver = ? ORDER BY ts DESC LIMIT ?"
+      "SELECT id, ts, symbol, feat, label, pnl_pct FROM " + opts.table + " WHERE featver = ? ORDER BY ts DESC LIMIT ?"
     ).bind(opts.featVer, opts.window).all();
     const raw = (rows && rows.results) || [];
     // [V33.104] 적합에 실제로 들어간 행의 최대 id — 다음 밤 전진검증이 "학습에 안 쓰인 행"을
@@ -22445,7 +22447,7 @@ async function _miniLogisticTrain(DB, opts) {
       return "[" + opts.tag + "] 표본 " + raw.length + "/" + opts.minN + " — 학습 대기";
     }
     const D = opts.D;
-    const X = [], Y = [], P = [];
+    const X = [], Y = [], P = [], T = [], S = [];
     for (const r of raw) {
       let v; try { v = JSON.parse(r.feat); } catch (e) { continue; }
       if (!Array.isArray(v) || v.length !== D) continue;
@@ -22467,32 +22469,46 @@ async function _miniLogisticTrain(DB, opts) {
       //   (ml_samples 를 쓰는 이중헤드는 opts.labelFn 으로 pnl 에서 직접 만든다 — 위 참조)
       Y.push(_y);
       P.push(_num(r.pnl_pct, 0));
+      T.push(_num(r.ts, 0)); S.push(String(r.symbol || ""));
     }
     const N = X.length;
     if (N < opts.minN) return "[" + opts.tag + "] 유효표본 " + N + " — 학습 대기";
     // 시간순(최신이 앞) → 뒤집어 오래된 것부터. 마지막 20% 를 홀드아웃(시간 분리).
-    X.reverse(); Y.reverse(); P.reverse();
-    const mean = new Array(D).fill(0), std = new Array(D).fill(0);
-    for (const x of X) for (let j = 0; j < D; j++) mean[j] += x[j];
-    for (let j = 0; j < D; j++) mean[j] /= N;
-    for (const x of X) for (let j = 0; j < D; j++) std[j] += (x[j] - mean[j]) * (x[j] - mean[j]);
-    for (let j = 0; j < D; j++) { std[j] = Math.sqrt(std[j] / N); if (!(std[j] > 1e-6)) std[j] = 1; }
-    const Z = X.map(function (x) { return x.map(function (v, j) { return _clamp((v - mean[j]) / std[j], -4, 4); }); });
+    X.reverse(); Y.reverse(); P.reverse(); T.reverse(); S.reverse();
     const nval = Math.max(100, Math.floor(N * 0.2));
     const ntr = N - nval;
+    // ══ [V33.114] ★표준화 누출 수정★ ══
+    //   종전엔 평균·표준편차를 ★홀드아웃을 포함한 전체★ 로 계산한 뒤 그 자로 홀드아웃을 채점했다.
+    //   검증표본의 분포가 변환에 스며들어 검증성적이 실제보다 좋게 나온다(전형적 train/test 누출).
+    //   같은 파일의 MEMO 는 이미 학습분(ntr)만 쓰고 있었다 — 두 곳이 달랐다.
+    const mean = new Array(D).fill(0), std = new Array(D).fill(0);
+    for (let i = 0; i < ntr; i++) for (let j = 0; j < D; j++) mean[j] += X[i][j];
+    for (let j = 0; j < D; j++) mean[j] /= Math.max(1, ntr);
+    for (let i = 0; i < ntr; i++) for (let j = 0; j < D; j++) std[j] += (X[i][j] - mean[j]) * (X[i][j] - mean[j]);
+    for (let j = 0; j < D; j++) { std[j] = Math.sqrt(std[j] / Math.max(1, ntr)); if (!(std[j] > 1e-6)) std[j] = 1; }
+    const Z = X.map(function (x) { return x.map(function (v, j) { return _clamp((v - mean[j]) / std[j], -4, 4); }); });
+    // ══ [V33.114] ★표본 고유도(de Prado, AFML 4장) — 겹치는 라벨을 한 건으로 세지 않는다★ ══
+    //   수확은 ★매 봉★ 을 표본으로 만들고 라벨 지평은 10일이다. 즉 이웃한 표본끼리
+    //   결과 구간이 9/10 겹친다 — 명목 1,000건이 실질 100건일 수 있다.
+    //   그대로 두면 (a) 학습이 같은 사건을 열 번 본 것처럼 과적합하고
+    //   (b) Wilson 하한이 √n 만큼 과신해 '정확도 게이트'가 헐거워진다.
+    //   → 동시성(concurrency)의 역수를 표본 가중으로 쓰고, 통계의 n 은 가중합(유효표본)으로 센다.
+    const uw = _uniqWeights(T, S, _num(opts.labelSpanMs, AI_PARAMS.predictionHorizonDays * 86400000));
+    let sumWtr = 0; for (let i = 0; i < ntr; i++) sumWtr += uw[i];
+    if (!(sumWtr > 0)) { for (let i = 0; i < N; i++) uw[i] = 1; sumWtr = ntr; }
     const w = new Array(D).fill(0); let b = 0;
-    const lr = 0.08, epochs = 220, lam = _num(opts.l2, 1) / Math.max(1, ntr);
+    const lr = 0.08, epochs = 220, lam = _num(opts.l2, 1) / Math.max(1, sumWtr);
     for (let ep = 0; ep < epochs; ep++) {
       const gw = new Array(D).fill(0); let gb = 0;
       for (let i = 0; i < ntr; i++) {
         let z = b; for (let j = 0; j < D; j++) z += w[j] * Z[i][j];
         const p = 1 / (1 + Math.exp(-_clamp(z, -30, 30)));
-        const e = p - Y[i];
+        const e = (p - Y[i]) * uw[i];        // 고유도 가중 — 겹친 표본의 발언권을 나눈다
         for (let j = 0; j < D; j++) gw[j] += e * Z[i][j];
         gb += e;
       }
-      for (let j = 0; j < D; j++) w[j] -= lr * (gw[j] / ntr + lam * w[j]);
-      b -= lr * (gb / ntr);
+      for (let j = 0; j < D; j++) w[j] -= lr * (gw[j] / sumWtr + lam * w[j]);
+      b -= lr * (gb / sumWtr);
     }
     // 검증 — 정확도와 IC 를 함께 잰다.
     let correct = 0; const pv = [], yv = [];
@@ -22503,6 +22519,11 @@ async function _miniLogisticTrain(DB, opts) {
       if ((p >= 0.5 ? 1 : 0) === Y[i]) correct++;
     }
     const acc = correct / Math.max(1, nval);
+    // [V33.114] ★유효표본수★ — 홀드아웃의 고유도 가중합. 겹친 표본을 한 건으로 세지 않는다.
+    //   Wilson 하한·저장되는 valN 이 모두 이 값을 쓴다(명목 n 을 쓰면 과신한다).
+    let _nEff = 0; for (let i = ntr; i < N; i++) _nEff += uw[i];
+    _nEff = Math.max(8, Math.round(_nEff));
+    const _uBar = +(_nEff / Math.max(1, nval)).toFixed(3);   // 평균 고유도(0~1)
     // [V33.91] IC 를 한 덩어리로 재지 않고 홀드아웃을 5블록으로 나눠 유의성까지 잰다.
     //   순수 잡음 모델이 raw IC 게이트를 43~49% 통과하던 것을 7~8% 로 낮춘다(_icBlockStats 주석 참조).
     const _st = _icBlockStats(pv, yv, 5);
@@ -22528,7 +22549,10 @@ async function _miniLogisticTrain(DB, opts) {
                        && _num(_fwd.t, -9) >= ICGATE.forwardTMin);
     const _trusted = _holdPass && _fwdPass;
     const model = { w: w, b: b, mean: mean, std: std, featVer: opts.featVer, baseRate: +_base.toFixed(4),
-      valAcc: +acc.toFixed(4), valIC: +ic.toFixed(5), valN: nval, n: N, ts: Date.now(),
+      // [V33.114] valN 은 ★유효표본수★ 다(고유도 가중합). 이 값이 Wilson 하한의 n 이 되고,
+      //   화면·전진검증도 같은 값을 본다. 명목 nval 은 valNRaw 로 따로 남겨 비교 가능하게 둔다.
+      valAcc: +acc.toFixed(4), valIC: +ic.toFixed(5), valN: _nEff, valNRaw: nval, valUniq: _uBar,
+      n: N, ts: Date.now(),
       valICBlock: _bIC != null ? +_bIC.toFixed(5) : null,
       valICIR: _st.icir != null ? +_st.icir.toFixed(3) : null,
       valICt: _tv != null ? +_tv.toFixed(3) : null, valICK: _st.K,
@@ -24152,6 +24176,46 @@ function _icEffective(model) {
     //   블록통계를 싣고 오면(신규 학습분) 이 제한 없이 실측값 그대로 쓴다.
     return Math.min(lb, 0.06);
   } catch (e) { return null; }
+}
+// ════════════════════════════════════════════════════════════════════════════
+// [V33.114] ★표본 고유도(average uniqueness) — de Prado, AFML 4장★
+//
+//   우리 표본은 라벨 구간이 겹친다. 수확은 ★매 봉★ 을 표본으로 만드는데(strideBars:1)
+//   라벨 지평은 10일이라, 이웃한 표본끼리 결과 구간이 9/10 겹친다.
+//   겹친 표본은 ★독립 관측이 아니다★ — 같은 사건을 열 번 세는 것에 가깝다.
+//   그대로 두면 두 가지가 동시에 망가진다:
+//     (a) 학습: 같은 패턴을 반복해서 보고 과적합한다
+//     (b) 통계: n 이 부풀어 Wilson 하한이 과신해진다(√n 만큼) → 정확도 게이트가 헐거워진다
+//
+//   해법(원문 그대로): 각 표본의 ★동시성(concurrency)★ = 자기 라벨 구간과 겹치는 표본 수.
+//   가중 = 1/동시성. 평균 가중이 곧 평균 고유도이고, 가중의 합이 ★유효표본수★ 다.
+//   같은 종목 안에서만 센다 — 다른 종목의 같은 기간은 상관은 있어도 같은 사건이 아니다.
+function _uniqWeights(ts, syms, spanMs) {
+  const n = Math.min(ts.length, syms.length);
+  const w = new Array(n).fill(1);
+  try {
+    if (!(spanMs > 0) || n < 2) return w;
+    const by = {};
+    for (let i = 0; i < n; i++) {
+      const k = syms[i] || "";
+      (by[k] = by[k] || []).push(i);
+    }
+    for (const k of Object.keys(by)) {
+      const idx = by[k];
+      idx.sort(function (a, b) { return _num(ts[a], 0) - _num(ts[b], 0); });
+      // 정렬된 인덱스에서 [t, t+span) 창에 들어오는 개수를 슬라이딩으로 센다.
+      //   양방향(자기 앞뒤 모두)으로 겹치므로 창을 t±span 로 잡는다.
+      let lo = 0, hi = 0;
+      for (let a = 0; a < idx.length; a++) {
+        const t0 = _num(ts[idx[a]], 0);
+        while (lo < idx.length && _num(ts[idx[lo]], 0) < t0 - spanMs) lo++;
+        while (hi < idx.length && _num(ts[idx[hi]], 0) <= t0 + spanMs) hi++;
+        const c = Math.max(1, hi - lo);
+        w[idx[a]] = 1 / c;
+      }
+    }
+  } catch (e) {}
+  return w;
 }
 function _wilsonLB(acc, n, z) {
   if (!(n > 0)) return 0;
@@ -36018,6 +36082,8 @@ export {
   _expRegBucket, _expRegIC, EXPREG,
   // [V33.113] 유의성 자유도 보정 검증용
   _tSf, _normInv, _tToZ, _icBlockStats,
+  // [V33.114] 표본 고유도(de Prado) 검증용
+  _uniqWeights, _wilsonLB,
   // [V33.108] 재무제표 툴킷 검증용 — tools/check-fin-tools.mjs
   FIN_TOOLS, finToolsRun,
   // [V33.110] 소셜 멀티소스 검증용 — tools/check-social.mjs

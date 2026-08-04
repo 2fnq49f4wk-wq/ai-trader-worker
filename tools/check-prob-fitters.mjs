@@ -7,7 +7,7 @@
 
 import { shockPriorFitNightly, decisionBlendFitNightly, _shockLogitShift, _coefShrink, SHOCKCAL,
          _expRegBucket, _expRegIC, EXPREG, LUXML,
-         _tSf, _normInv, _tToZ, _icBlockStats }
+         _tSf, _normInv, _tToZ, _icBlockStats, _uniqWeights, _wilsonLB }
   from "../src/index.js";
 
 function fakeDB(init) {
@@ -217,6 +217,47 @@ async function shockCase(kTrue, n, label) {
   if (rZ <= rRaw + 1e-9 && rZ <= 0.05)
     ok("잡음 통과율(모델 1개·양측 |·|≥2.50): 보정전 " + (rRaw * 100).toFixed(1) + "% → 보정후 " + (rZ * 100).toFixed(1) + "%");
   else bad("보정이 잡음 통과를 못 줄였다: 전 " + (rRaw * 100).toFixed(1) + "% / 후 " + (rZ * 100).toFixed(1) + "%");
+}
+
+// ══ 7) 표본 고유도(de Prado AFML 4장) — 겹치는 라벨을 한 건으로 세지 않는가 ══
+//   수확은 매 봉을 표본으로 만들고 라벨 지평은 10일이다. 이웃 표본끼리 결과 구간이 9/10 겹친다.
+//   그대로 세면 명목 n 이 실질의 10배가 되고, Wilson 하한이 √10 ≈ 3.2배만큼 과신한다.
+{
+  const DAY = 86400000, SPAN = 10 * DAY;
+  // (a) 완전히 떨어진 표본 — 전부 고유(가중 1)
+  const tsFar = [0, 30 * DAY, 60 * DAY, 90 * DAY];
+  const wFar = _uniqWeights(tsFar, ["A", "A", "A", "A"], SPAN);
+  if (wFar.every((x) => Math.abs(x - 1) < 1e-9)) ok("겹치지 않는 표본 → 고유도 1.0");
+  else bad("독립 표본인데 가중이 1이 아니다: " + wFar.join(","));
+
+  // (b) 매일 1건 × 21일, 지평 10일 → 가운데 표본은 앞뒤 10일씩 겹쳐 동시성 21
+  const tsDense = [], symDense = [];
+  for (let i = 0; i < 21; i++) { tsDense.push(i * DAY); symDense.push("A"); }
+  const wD = _uniqWeights(tsDense, symDense, SPAN);
+  const mid = wD[10];
+  if (Math.abs(mid - 1 / 21) < 1e-9) ok("조밀 표본 가운데 동시성 21 → 가중 " + mid.toFixed(4));
+  else bad("동시성 계산이 틀렸다: 가운데 가중 " + mid);
+  const nEff = wD.reduce((a, b) => a + b, 0);
+  if (nEff < 21 * 0.35) ok("명목 21건 → 유효 " + nEff.toFixed(1) + "건 (겹침 반영)");
+  else bad("유효표본이 줄지 않았다: " + nEff.toFixed(1));
+
+  // (c) ★종목이 다르면 겹쳐도 같은 사건이 아니다★ — 종목별로만 센다
+  const wSep = _uniqWeights([0, DAY, 2 * DAY], ["A", "B", "C"], SPAN);
+  if (wSep.every((x) => Math.abs(x - 1) < 1e-9)) ok("서로 다른 종목은 동시성에 안 섞인다");
+  else bad("다른 종목끼리 겹침으로 셌다: " + wSep.join(","));
+
+  // (d) 실제 영향 — Wilson 하한이 얼마나 달라지나(정확도 게이트의 헐거움)
+  const lbNom = _wilsonLB(0.55, 2000), lbEff = _wilsonLB(0.55, 200);
+  if (lbNom > lbEff + 0.02)
+    ok("정확도 0.55 · Wilson 하한: 명목 n2000 " + lbNom.toFixed(4) + " → 유효 n200 " + lbEff.toFixed(4) +
+       " (명목으로 재면 " + ((lbNom - lbEff) * 100).toFixed(1) + "%p 과신)");
+  else bad("유효표본 반영이 하한을 바꾸지 못했다");
+
+  // (e) 인자가 비면 안전하게 전부 1 (기능 정지 없음)
+  const wNone = _uniqWeights([], [], SPAN);
+  const wNoSpan = _uniqWeights([0, DAY], ["A", "A"], 0);
+  if (wNone.length === 0 && wNoSpan.every((x) => x === 1)) ok("빈 입력·지평 0 → 가중 1 폴백(종전 동작)");
+  else bad("폴백이 깨졌다");
 }
 
 console.log(fails ? "\n확률 계수 검증 실패 " + fails + "건" : "\n  ok   확률 계수 적합기 통과");

@@ -13790,7 +13790,8 @@ html[data-theme="light"] .rail{background:#fff;}
                            : ' <span class="sub">· 전진검증 '+n0(o.fwdN)+'/'+n0(o.minFwd)+'</span>';
       if(o.trusted && has(o.ic))      body = col('가동', C.pos)+' <span class="sub">IC '+(has(o.icBlock)?o.icBlock.toFixed(3):o.ic.toFixed(3))+sig+fwd+'</span>';
       else if(o.trained && o.holdPass) body = col('전진검증 대기', C.amb)+' <span class="sub">IC '+(has(o.icBlock)?o.icBlock.toFixed(3):(has(o.ic)?o.ic.toFixed(3):'—'))+sig+fwd+'</span>';
-      else if(o.trained)              body = col('유의성 미달 대기', C.amb)+' <span class="sub">IC '+(has(o.ic)?o.ic.toFixed(3):'—')+sig+' · 표본 '+n0(o.n)+'</span>';
+      else if(o.trained)              body = col('유의성 미달 대기', C.amb)+' <span class="sub">IC '+(has(o.ic)?o.ic.toFixed(3):'—')+sig+' · 표본 '+n0(o.n)
+                                        +(has(o.uniq)&&has(o.valNRaw)?' · 검증 유효 '+n0(o.valN)+'/'+n0(o.valNRaw)+'(고유도 '+o.uniq.toFixed(2)+')':'')+'</span>';
       else                            body = col('표본수집', C.amb)+' <span class="sub">'+n0(o.samples)+' / '+n0(o.minN)+'</span>';
       return [ico(o.trusted ? true : null)+' '+nm, body];
     };
