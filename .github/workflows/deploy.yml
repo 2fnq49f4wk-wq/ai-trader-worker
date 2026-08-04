@@ -66,14 +66,19 @@ jobs:
       #   '그럴듯한 점수'로 나온다. 시각을 아는 합성 스트림으로 계약을 못 박는다.
       - name: Social freshness contract check
         run: node tools/check-social.mjs
+      # [V33.111] 외부 AI API 금지 정책을 기계가 강제한다. 스위치는 지워질 수 있고
+      #   새 호출은 스위치 없이 추가될 수 있다 — 실제로 /api/rf-test 가 인증 없이
+      #   Roboflow API 키를 5개 외부 호스트로 보내고 있었다(이번에 삭제).
+      - name: No external AI policy check
+        run: node tools/check-no-external-ai.mjs
       # cloudflare/wrangler-action 대신 로컬에서 검증된 방식 그대로 실행
       # (wrangler-action@v3의 npx 자동설치가 4.86.0을 요구하며 실패하던 문제 회피)
       - name: Install wrangler
         run: npm install -g wrangler@4.100.0
       # [V33.15] 대형모델(DNN 32MB) 전용 R2 버킷을 자동으로 준비한다 — 수동 작업 0.
       #   버킷이 실제로 존재하는 것을 확인했을 때만 wrangler.toml 의 바인딩 주석을 푼다(러너 안에서만).
-      #   토큰에 R2 권한이 없거나 R2 미활성 계정이면 ok=false 로 떨어지고, 배포는 지금까지와
-      #   똑같이 D1 청크 경로로 진행된다 — 실패해도 서비스에 영향 없음.
+      #   토큰에 R2 권한이 없거나 R2 미활성 계정이면 ok=false 로 떨어진다. 대형모델은 D1 청크로
+      #   폴백하지만(그 경로는 실제로 동작한다), ★장중 표본 수집은 V33.110 부터 중단된다★.
       - name: Prepare R2 bucket for big models
         id: r2
         continue-on-error: true
@@ -137,9 +142,10 @@ jobs:
           if grep -q '^\[\[r2_buckets\]\]' wrangler.toml; then
             echo "### ✅ R2 바인딩 활성 — 장중 표본이 R2 경로로 쌓인다" >> "$GITHUB_STEP_SUMMARY"
           else
-            echo "### ⚠️ R2 바인딩 비활성 — 장중 표본은 D1 폴백 경로(stin_samples)로 쌓인다" >> "$GITHUB_STEP_SUMMARY"
+            echo "### 🔴 R2 바인딩 비활성 — 장중 표본 수집이 ★중단★ 된다" >> "$GITHUB_STEP_SUMMARY"
             echo "" >> "$GITHUB_STEP_SUMMARY"
-            echo "D1 폴백은 V33.95 부터 정상 동작한다(표본 수집·학습 모두 가능)." >> "$GITHUB_STEP_SUMMARY"
+            echo "V33.110 에서 D1 폴백을 제거했다(틀린 진단 위에 지은 코드였고 한 번도 실행된 적이 없다)." >> "$GITHUB_STEP_SUMMARY"
+            echo "이제 R2 가 없으면 조용히 우회하지 않고 멈춘다 — 워커 로그에 ERROR 로 남는다." >> "$GITHUB_STEP_SUMMARY"
             echo "R2 를 켜려면 CLOUDFLARE_API_TOKEN 에 **Workers R2 Storage: Edit** 권한을 주고," >> "$GITHUB_STEP_SUMMARY"
             echo "Cloudflare 대시보드에서 R2 를 활성화한 뒤 다시 push 하면 자동으로 붙는다." >> "$GITHUB_STEP_SUMMARY"
           fi

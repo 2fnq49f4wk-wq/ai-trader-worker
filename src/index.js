@@ -2760,7 +2760,7 @@ async function applySignalTypeWeights(DB, cfg) {
 // ============================================================================
 // [V33.55] 빌드 버전 — SWR L2 캐시 키에 섞어 '배포 = 판단 캐시 자동 무효화'를 만든다.
 //   판정 로직을 고쳐도 옛 캐시가 최대 1시간 재배포되던 문제를 구조적으로 없앤다.
-const _BUILD_VER = "V33.110";
+const _BUILD_VER = "V33.111";
 
 const AI_PARAMS = {
   // ── OHLCV 타임프레임 ── 시가/고가/저가/종가/거래량을 어떤 봉 주기로 볼지.
@@ -12448,7 +12448,18 @@ const _btRealNow = Date.now;
 function backtestSymbol(fullData, cfg, market, opts) {
   opts = opts || {};
   const warmup = opts.warmup || 30;
-  const slippagePct = opts.slippagePct != null ? opts.slippagePct : 0.1;
+  // [V33.111] ★백테스트 비용모델을 라이브·원장과 통일★
+  //   종전엔 슬리피지를 ★체결가 자체★ 에 0.1%(고정) 물렸다. 라이브는 _slipRate(시장·시각)를
+  //   ★수수료와 같은 비용률★ 로 현금에서 차감한다(체결가는 시장가 그대로 둔다).
+  //   둘은 크기도 다르고(0.10% vs us 0.05% / kr 0.08%) 계산 방식도 다르다 —
+  //   체결가를 흔들면 진입가·손절가·pnl% 분모까지 전부 달라져 백테스트가 실거래와
+  //   ★다른 규칙★ 을 재게 된다(매도세·MA주기에서 이미 같은 부류를 두 번 잡았다).
+  //   → 라이브와 같은 함수·같은 방식으로 바꾼다. opts.slippagePct 를 명시하면 그 값을
+  //     비용률(%)로 쓴다(민감도 분석용 손잡이는 유지 — 기능을 없애지 않는다).
+  const _slipOverride = (opts.slippagePct != null) ? _num(opts.slippagePct, 0) / 100 : null;
+  const _slipAt = function (ts) {
+    return _slipOverride != null ? _slipOverride : _slipRate(market, ts);
+  };
   const feeRate = market === "us" ? (cfg.feeUS || 0) : (cfg.feeKR || 0);
   // [V33.107] ★백테스트 비용모델이 실거래·원장과 어긋나 있었다★
   //   여긴 `market === "kr" ? cfg.krSellTax : 0` 플랫 세율이었다. 그런데 체결(executeSell)과
@@ -12505,9 +12516,9 @@ function backtestSymbol(fullData, cfg, market, opts) {
         }
         if (decision && decision.sell) {
           const sellQty = decision.sellQty || pos.qty;
-          const execPrice = price * (1 - slippagePct / 100);
+          const execPrice = price;                       // 체결가 = 시장가(라이브와 동일)
           const gross = execPrice * sellQty;
-          const proceeds = gross - gross * feeRate - gross * _sellTaxAt(barTime);
+          const proceeds = gross * (1 - feeRate - _slipAt(barTime) - _sellTaxAt(barTime));
           const entryCost = pos.avg * sellQty;
           const entryFee = (pos.meta.feeRemaining || 0) * (sellQty / pos.qty);
           const pnl = proceeds - entryCost - entryFee;
@@ -12529,8 +12540,9 @@ function backtestSymbol(fullData, cfg, market, opts) {
         const sigConf = (signal && typeof signal.confidence === "number") ? Math.max(0, Math.min(1, signal.confidence)) : 1.0;
         const budget = (opts.capitalPerTrade || 1000000) * ratio / 0.25 * sigConf;
         const qty = Math.max(1, Math.floor(budget / price));
-        const entryPrice = price * (1 + slippagePct / 100);
-        const entryFee = entryPrice * qty * feeRate;
+        // 체결가는 시장가 그대로(라이브 원장과 동일 규약). 비용은 아래 entryFee 에 비용률로 싣는다.
+        const entryPrice = price;
+        const entryFee = entryPrice * qty * (feeRate + _slipAt(barTime));
         const rules = getStrategyRules(cfgBt, strat, market);
         const atr = getATR(daily.closes, 14, daily.highs, daily.lows);
         let stopPrice = null;
@@ -12551,7 +12563,7 @@ function backtestSymbol(fullData, cfg, market, opts) {
     for (const strat of Object.keys(openPositions)) {
       const pos = openPositions[strat];
       const _lastTs = fullData.dates ? fullData.dates[n - 1] : _btRealNow();
-      const proceeds = lastPrice * pos.qty * (1 - feeRate - _sellTaxAt(_lastTs));
+      const proceeds = lastPrice * pos.qty * (1 - feeRate - _slipAt(_lastTs) - _sellTaxAt(_lastTs));
       const entryCost = pos.avg * pos.qty;
       const pnl = proceeds - entryCost - (pos.meta.feeRemaining || 0);
       const pnlPct = entryCost > 0 ? (pnl / entryCost) * 100 : 0;
@@ -12660,7 +12672,7 @@ async function runBacktest(env, opts) {
   }
 
   return {
-    config: { market: market, range: range, symbols: symbols, slippagePct: opts.slippagePct != null ? opts.slippagePct : 0.1, note: "day 전략 제외(분봉), 일봉 종가 체결" },
+    config: { market: market, range: range, symbols: symbols, slippagePct: opts.slippagePct != null ? opts.slippagePct : 0.1, note: "day 전략 제외(분봉), 일봉 종가 체결 · 비용모델=라이브 동일(_slipRate 비용률)" },
     overall: backtestStats(allTrades),
     byStrategy: backtestStatsByStrategy(allTrades),
     bySignal: backtestStatsBySignal(allTrades),
@@ -21562,37 +21574,14 @@ async function handleRequest(request, env, ctx) {
       return Response.json(out, { headers: cors });
     }
     // [V53] VISION AI: 수동 전체 스캔 트리거 — cron 시각 게이트를 우회(force)해 즉시 1배치 실행
-    // [V66 임시진단] 네이버 증권 API Workers 접근성 테스트
-    if (path === "/api/naver-test" && request.method === "POST") {
-      const out = {};
-      try {
-        const r1 = await fetch("https://polling.finance.naver.com/api/realtime?query=SERVICE_ITEM:005930,000660,035420",
-          { headers: { "User-Agent": "Mozilla/5.0", "Referer": "https://finance.naver.com" } });
-        out.polling = r1.status + " " + (await r1.text()).slice(0, 200).replace(/\n/g, "");
-      } catch (e) { out.polling = "ERR " + e.message; }
-      try {
-        const r2 = await fetch("https://m.stock.naver.com/api/stock/005930/basic", { headers: { "User-Agent": "Mozilla/5.0" } });
-        out.mstock = r2.status + " " + (await r2.text()).slice(0, 150).replace(/\n/g, "");
-      } catch (e) { out.mstock = "ERR " + e.message; }
-      return Response.json(out, { headers: cors });
-    }
-    // [V65 임시진단] Roboflow 호스트별 Workers 접근성 테스트
-    if (path === "/api/rf-test" && request.method === "POST") {
-      const cfg0 = Object.assign({}, DEFAULT_CFG, await getState(env.DB, "cfg", {}));
-      const key = (cfg0.visionAI || {}).rfApiKey;
-      const out = {};
-      const tiny = "Qk1GAAAAAAAAAD4AAAAoAAAAAgAAAAIAAAABAAEAAAAAAAgAAAAAAAAAAAAAAAAAAAAAAAAAAAAA/wD/AAAAwAAAAMAAAAA=";
-      for (const host of ["serverless.roboflow.com", "classify.roboflow.com", "detect.roboflow.com", "infer.roboflow.com", "api.roboflow.com"]) {
-        try {
-          const r0 = await fetch("https://" + host + "/stock-updown-classifier/11?api_key=" + key,
-            { method: "POST", headers: { "Content-Type": "application/x-www-form-urlencoded" }, body: tiny });
-          let body = "";
-          try { body = (await r0.text()).slice(0, 80).replace(/\n/g, " "); } catch (e) {}
-          out[host] = r0.status + " " + body;
-        } catch (e) { out[host] = "ERR " + e.message; }
-      }
-      return Response.json(out, { headers: cors });
-    }
+    // [V33.111] ★임시진단 엔드포인트 2개 삭제★ — 최신 설계와 정면으로 어긋났다.
+    //   · /api/rf-test  : 인증 없이 POST 만 하면 ★Roboflow API 키를 5개 외부 호스트로 전송★ 했다.
+    //     외부 AI API 전면 금지(EXTERNAL_AI_API_DISABLED) 를 우회하는 유일한 경로였고,
+     //    키가 URL 쿼리로 나가 로그·리퍼러에 남는다. 진단 목적의 임시코드가 그대로 남은 것이다.
+    //   · /api/naver-test: 네이버 접근성 임시 진단. 실제 수집 경로(fetchDailyFull/fetchMinuteBars)가
+    //     같은 호스트를 매 사이클 때리므로 진단 가치가 없고, 로그로 이미 드러난다.
+    //   기능 손실 없음 — 둘 다 진단 전용이고 대체 경로가 이미 상시 동작 중이다.
+    //   재발 방지: tools/check-no-external-ai.mjs 가 차단 스위치 없는 AI 호출을 배포 단계에서 막는다.
     // [V65] 브라우저 추론 결과 수신 — Roboflow가 Workers IP를 403 차단하므로
     //   추론은 브라우저가 수행하고 결과만 여기로 POST(검증 후 vision_predictions에 머지).
     //   엔진(거래)·UI 는 기존과 동일하게 이 state를 읽는다.

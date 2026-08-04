@@ -11,7 +11,7 @@
 //     ④ ETF 매도세 면제·시행일 경계가 재생에도 그대로 적용된다
 //     ⑤ 왕복거래의 손실은 '비용의 합' 과 정확히 일치한다(유령 손익 0)
 
-import { computeCashFromTrades, _krSellTaxRate, _slipRate } from "../src/index.js";
+import { computeCashFromTrades, _krSellTaxRate, _slipRate, backtestSymbol } from "../src/index.js";
 
 let fails = 0;
 const ok = (m) => console.log("  ok   " + m);
@@ -174,6 +174,40 @@ const NOW = Date.now();
   const cm = await computeCashFromTrades(db, "cm", CFG);
   if (near(cm, CFG.initialCashCM, 1e-9)) ok("시장 격리 — cm 현금이 us/kr 거래에 영향 없음");
   else bad("시장 격리 깨짐: cm " + cm + " ≠ " + CFG.initialCashCM);
+}
+
+// ══ ⑦ 백테스트 비용모델 == 라이브 비용모델 ═══════════════════════════════════
+//   [V33.111] 종전 백테스트는 슬리피지를 ★체결가★ 에 0.1% 고정으로 물렸다.
+//   라이브는 _slipRate(시장·시각)를 ★비용률★ 로 현금에서 뺀다(체결가는 시장가).
+//   체결가를 흔들면 진입가·손절가·pnl% 분모까지 달라져 백테스트가 다른 규칙을 재게 된다.
+//   여기서는 "백테스트가 기록한 체결가가 시장 종가와 정확히 같은가" 로 그 통일을 확인한다
+//   — 같지 않으면 비용을 다시 가격에 섞고 있다는 뜻이다.
+{
+  const n = 260;
+  const closes = [], highs = [], lows = [], opens = [], vols = [], dates = [];
+  let px = 100;
+  for (let i = 0; i < n; i++) {
+    px = px * (1 + Math.sin(i / 9) * 0.02 + 0.0012);
+    opens.push(px * 0.998); closes.push(px); highs.push(px * 1.015); lows.push(px * 0.985);
+    vols.push(1000000 + (i % 17) * 5000);
+    dates.push(Date.UTC(2025, 0, 1) + i * 86400000);
+  }
+  const data = { symbol: "BT", closes, highs, lows, opens, volumes: vols, dates };
+  let res = null;
+  try { res = backtestSymbol(data, Object.assign({}, CFG), "us", { capitalPerTrade: 1000000 }); } catch (e) { res = { error: String(e && e.message) }; }
+  if (!res || res.error) bad("백테스트 실행 실패: " + (res && res.error));
+  else if (!Array.isArray(res.trades)) bad("백테스트가 trades 를 돌려주지 않았다");
+  else if (!res.trades.length) console.log("  info 합성 데이터에서 체결 0건 — 비용모델 비교는 건너뜀");
+  else {
+    let priceSkew = 0;
+    for (const t of res.trades) {
+      const e = closes[t.entryIdx], x = closes[t.exitIdx];
+      if (e != null && Math.abs(t.entryPrice - e) > 1e-9) priceSkew++;
+      if (x != null && t.reason !== "BT-END-MTM" && Math.abs(t.exitPrice - x) > 1e-9) priceSkew++;
+    }
+    if (priceSkew === 0) ok("백테스트 체결가 == 시장 종가 (" + res.trades.length + "건) — 비용은 가격이 아니라 비용률로 처리됨");
+    else bad("체결가가 시장가와 다르다 " + priceSkew + "건 — 슬리피지를 가격에 섞고 있다(라이브와 불일치)");
+  }
 }
 
 console.log(fails ? "\n회계 불변식 위반 " + fails + "건" : "\n  ok   회계 불변식 통과");
