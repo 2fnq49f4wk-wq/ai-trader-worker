@@ -57,6 +57,11 @@ jobs:
       #   답을 아는 합성 재무제표로 각 툴이 그 답을 되찾는지 확인한다.
       - name: Financial statement toolkit check
         run: node tools/check-fin-tools.mjs
+      # [V33.109] "주석으로만 존재하는 설정" — DEFAULT_CFG 492개 중 82개를 코드가 안 읽고 있었다.
+      #   화면에서 바꿔도 아무 일이 없는 손잡이는 없는 것보다 나쁘다("설정했으니 그렇게 돌겠지").
+      #   읽히거나(WIRED) 사유와 함께 은퇴하거나(RETIRED) — 둘 다 아닌 키가 새로 생기면 차단한다.
+      - name: Dead config check
+        run: node tools/check-dead-config.mjs
       # cloudflare/wrangler-action 대신 로컬에서 검증된 방식 그대로 실행
       # (wrangler-action@v3의 npx 자동설치가 4.86.0을 요구하며 실패하던 문제 회피)
       - name: Install wrangler

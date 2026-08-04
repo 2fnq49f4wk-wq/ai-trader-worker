@@ -14542,6 +14542,21 @@ html[data-theme="light"] .rail{background:#fff;}
           + (CH.expReg.top || []).map(function(x){ return esc(x.nm)+'·'+esc(x.bk)+' IC '+x.ic.toFixed(3)+'(t'+x.t+')'; }).join(' · ')
           + ' · 채점 '+n0(CH.expReg.rows)+'행</span>'
         : '<span class="sub">미측정 → 전역 IC 그대로 (버킷당 '+n0(CH.expReg?CH.expReg.minN:250)+'표본 필요)</span>']);
+      // [V33.109] 소셜 멀티소스(StockTwits·Reddit) — 수집 성패와 측정 계수를 함께 보여준다.
+      //   수집이 막혀 0건인 것과 진짜로 신호가 0인 것은 완전히 다른 상황이다.
+      rows3.push(['소셜 멀티소스', (function(){
+        var S = CH.social; if(!S) return '<span class="sub">미수집</span>';
+        var h = S.health || {}, parts = [];
+        ['stocktwits','reddit'].forEach(function(id){
+          var x = h[id];
+          if(!x) { parts.push(esc(id)+' 대기'); return; }
+          parts.push(esc(id)+' '+(x.ok?'OK':'실패'+(x.http?' HTTP'+x.http:'')+(x.err?' '+esc(String(x.err).slice(0,24)):'')));
+        });
+        var coef = has(S.k) && S.k !== 0
+          ? em('계수 '+S.k.toFixed(3))+' <span class="sub">t '+(has(S.t)?S.t.toFixed(2):'—')+' · n '+n0(S.n)+'</span>'
+          : '<span class="sub">계수 미측정 → 개입 0 (관측 '+n0(S.obs)+'/'+n0(S.needN)+')</span>';
+        return coef + ' <span class="sub">· ' + parts.join(' · ') + '</span>';
+      })()]);
       rows3.push(['EV 문턱 · 종목보호', '<span class="sub">변동성 구간 '+n0(CH.evByVol)+'개'
         + (CH.protect && CH.protect.enabled ? ' · 손절쿨다운 '+n0(CH.protect.cooldownMin)+'분 · 저수익잠금 '+n0(CH.protect.lowProfitLockMin)+'분' : ' · 종목보호 꺼짐')+'</span>']);
       h += sec('확률 체인 (측정된 계수)') + tbl(rows3);

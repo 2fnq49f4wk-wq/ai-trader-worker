@@ -2760,7 +2760,7 @@ async function applySignalTypeWeights(DB, cfg) {
 // ============================================================================
 // [V33.55] 빌드 버전 — SWR L2 캐시 키에 섞어 '배포 = 판단 캐시 자동 무효화'를 만든다.
 //   판정 로직을 고쳐도 옛 캐시가 최대 1시간 재배포되던 문제를 구조적으로 없앤다.
-const _BUILD_VER = "V33.108";
+const _BUILD_VER = "V33.109";
 
 const AI_PARAMS = {
   // ── OHLCV 타임프레임 ── 시가/고가/저가/종가/거래량을 어떤 봉 주기로 볼지.
@@ -3313,11 +3313,23 @@ const DEFAULT_CFG = {
   //   기존 riskBasedSizing은 budget을 "현금" 기준으로만 잡아, signal.weight가 낮으면
   //   floor(0.25%)로 떨어져 포트의 3~4%로 잘게 쪼개졌다(현금 66% 방치).
   //   여기서는 "포트폴리오 총액" 기준으로 종목당 목표/상한 비중을 강제한다.
+  // ══ [V33.109] ★이 블록은 대부분 '주석으로만 존재' 했다★ ═══════════════════
+  //   실측: portfolioSizing 은 마이그레이션(옛 cfg 보강)에서만 참조되고, 매매 로직 어디서도
+  //   읽지 않았다. 즉 화면에서 값을 바꿔도 아무 일이 일어나지 않는 손잡이였다.
+  //   · minPortfolioPct / maxPortfolioPct → ★대체됨★. 종목 비중 상한은 전략별 sizing.maxPositionPct
+  //     (trend 15 / snap 8 / scalp 6)와 RISKENG.maxNotionalFrac 이 실제로 강제한다.
+  //     여기에 두 번째 상한을 살리면 두 규칙이 서로 다투므로 ★되살리지 않고 은퇴시킨다★.
+  //   · cashReservePct → ★되살렸다★. cashCap 이 0.85 하드코딩이었는데 이제 이 값을 읽는다.
+  //   은퇴 키는 tools/check-dead-config.mjs 의 RETIRED 목록에 사유와 함께 등재된다 —
+  //   "조용히 죽어 있음" 과 "의도적으로 은퇴" 를 구분하기 위해서다.
   portfolioSizing: {
     enabled: true,
-    minPortfolioPct: 7,    // 종목당 최소 포트의 7% (이보다 작게 계산되면 끌어올림)
-    maxPortfolioPct: 13,   // 종목당 최대 포트의 13% (과집중 방지 상한)
-    cashReservePct: 12,    // 현금을 포트의 12%까지 소진 허용 → cashCap 동적 산정
+    minPortfolioPct: 7,    // [은퇴] sizing.maxPositionPct 로 대체 — 읽지 않음
+    maxPortfolioPct: 13,   // [은퇴] sizing.maxPositionPct + RISKENG.maxNotionalFrac 로 대체
+    // [V33.109] ★주석만 있고 코드가 안 읽던 설정★ — cashCap 은 0.85 하드코딩이었다.
+    //   이제 실제로 읽는다. 기본값을 현행 동작(0.85 = 15% 유보)과 같게 맞춰 두므로
+    //   이번 배포로 리스크 태세가 바뀌지 않는다 — 손잡이가 '생겼을' 뿐이다.
+    cashReservePct: 15,    // 현금의 N% 는 남긴다(주문 실패·슬리피지 여유). cashCap = cash × (1 − N/100)
     // day 전략은 회전이 빨라 비중 절반만 — 약전략 과집중 방지
     dayScale: 0.5
   },
@@ -9359,6 +9371,16 @@ async function savePosition(DB, market, symbol, strategy, pos) {
 //   해결: 회계 규칙 변경은 소급하지 않는다(실제 회계와 같다). 시행일 이전 체결은 그때의 규칙으로,
 //   이후 체결은 새 규칙으로 계산한다. 이러면 체크포인트 유무와 무관하게 같은 답이 나온다.
 const ETF_TAX_EXEMPT_FROM = Date.UTC(2026, 7, 2);   // 2026-08-02 (V33.73 배포일) 이후 체결부터 면제
+// [V33.109] 현금 사용가능 비율 — cashReservePct 를 실제로 읽는 유일한 지점.
+//   설정이 없거나 이상하면 종전 하드코딩(0.85)으로 폴백한다.
+function _cashUseFrac(cfg) {
+  try {
+    const sz = (cfg && cfg.portfolioSizing) || {};
+    const r = _num(sz.cashReservePct, null);
+    if (r == null || !(r >= 0 && r <= 60)) return 0.85;
+    return _clamp(1 - r / 100, 0.4, 1);
+  } catch (e) { return 0.85; }
+}
 function _krSellTaxRate(cfg, symbol, market, ts) {
   const base = cfg.krSellTax || 0;
   if (!base) return 0;
@@ -12261,8 +12283,20 @@ function evaluateSell(pos, price, daily, dailyRsi, dailyMa, dailyMaShort, cfg, m
     }
   }
 
-  // 4) 추세 이탈 — 종가가 MA20 하향 이탈 (분할익절 후 잔량 보호)
-  if (tp1Done && dailyMa != null && price < dailyMa) {
+  // 4) 추세 이탈 — 종가가 MA 하향 이탈 (분할익절 후 잔량 보호)
+  // [V33.109] ★전략별 exitBelowMa 가 주석으로만 존재했다★
+  //   설정에는 `exitBelowMa: 20` ("종가가 MA20 하향 이탈 시 청산")이 있는데 코드는
+  //   전역 cfg.maPeriod 로 계산된 dailyMa 만 봤다 — 이 값을 50 으로 바꿔도 아무 일도
+  //   일어나지 않는다. 설정이 실제로 동작하게 한다(기본 20 == maPeriod 20 이라 오늘 동작 동일).
+  let _exitMa = dailyMa;
+  try {
+    const _emP = _num(r.exitBelowMa, null);
+    if (_emP != null && _emP >= 3 && daily && Array.isArray(daily.closes) && daily.closes.length >= _emP) {
+      const _m2 = getMA(daily.closes, Math.floor(_emP));
+      if (_m2 != null) _exitMa = _m2;
+    }
+  } catch (e) {}
+  if (tp1Done && _exitMa != null && price < _exitMa) {
     return { sell: true, sellQty: pos.qty, reason: "TREND-EXIT <MA " + pnlRate.toFixed(2) + "%" };
   }
 
@@ -12447,8 +12481,11 @@ function backtestSymbol(fullData, cfg, market, opts) {
       _btNow = barTime;
 
       const dailyRsi = getRSI(daily.closes, cfg.rsiPeriod || 14);
-      const dailyMa = getMA(daily.closes, 20);
-      const dailyMaShort = getMA(daily.closes, 5);
+      // [V33.109] ★설정을 무시하고 20/5 를 박아 두면 라이브와 백테스트가 갈린다★
+      //   라이브는 cfg.maPeriod / cfg.maShortPeriod 로 계산한다. 지금은 값이 같아 우연히
+      //   일치하지만, 설정을 바꾸는 순간 백테스트 결과가 실거래와 다른 규칙을 재는 게 된다.
+      const dailyMa = getMA(daily.closes, _num(cfgBt.maPeriod, 20));
+      const dailyMaShort = getMA(daily.closes, _num(cfgBt.maShortPeriod, 5));
 
       // 매도 평가
       for (const strat of Object.keys(openPositions)) {
@@ -14013,7 +14050,7 @@ async function runCommodityCycle(env, forceTrade) {
       if (riskPct < minR) riskPct = minR;
       if (riskPct > maxR) riskPct = maxR;
 
-      const cashCap = cash.cm * 0.85;
+      const cashCap = cash.cm * _cashUseFrac(cfg);   // [V33.109] 설정(cashReservePct) 반영
       // 원자재 한 거래 캡: 가용현금 25% (분산 위해)
       const maxBudget = cash.cm * 0.25;
       const rawBudget = cash.cm * (riskPct / 100) / (stopDistPct / 100);
@@ -14282,7 +14319,7 @@ async function runAltSleeveCycle(env, key) {
       const rbs = cfg.riskBasedSizing || {};
       let riskPct = (rbs.riskPerTrade != null ? rbs.riskPerTrade : 0.6) * (best.weight || 1.0);
       riskPct = Math.max(rbs.minRisk != null ? rbs.minRisk : 0.3, Math.min(rbs.maxRisk != null ? rbs.maxRisk : 1.2, riskPct));
-      const cashCap = cash[key] * 0.85;
+      const cashCap = cash[key] * _cashUseFrac(cfg);   // [V33.109] 설정(cashReservePct) 반영
       const maxBudget = cash[key] * 0.25;
       const rawBudget = cash[key] * (riskPct / 100) / (stopDistPct / 100);
       let budget = Math.min(rawBudget, maxBudget, cashCap);
@@ -15364,6 +15401,7 @@ async function runTradingCycle(env) {
       // [V33.78] FLOW — 모델과 피어계산용 일봉캐시를 사이클당 1회만 준비한다.
       //   일봉캐시는 이미 daily: 로 D1 에 있으니 한 번 훑어 메모리에 올린다(종목마다 재조회 금지).
       let __flowModel = null, __dailyCacheForFlow = {}, __flowCollect = false;
+      let __socialK = null;   // [V33.109] 소셜 로그오즈 계수(social_k) — 미측정이면 개입 0
       let __xaModel = null, __xaPanel = null;   // [V33.79] XALPHA — 형식알파 + 횡단면 랭크
       let __stackModel = null;   // [V33.80] STACK 메타모델(투표 대체)
       let __memoModel = null;    // [V33.92] MEMO 유사상황 기억 전문가
@@ -15409,6 +15447,8 @@ async function runTradingCycle(env) {
           try { if (STACKML.enabled) __stackModel = await getState(DB, "stack_model", null); } catch (e2) {}
           try { if (MEMOML.enabled) __memoModel = await getState(DB, "memo_model", null); } catch (e2) {}
           try { __techK = await getState(DB, "tech_prior_k", null); __finalCal = await getState(DB, "final_cal", null); __blendK = await getState(DB, "decision_blend_k", null); } catch (e2) {}
+          // [V33.109] 소셜 계수(측정 전엔 0) — 사이클 1회 로드.
+          try { __socialK = await getState(DB, "social_k", null); } catch (e2) {}
           try { if (DUALHEAD.enabled) { __dualBull = await getState(DB, "dual_bull_model", null); __dualBear = await getState(DB, "dual_bear_model", null); __dualShift = await getState(DB, "dual_quad_shift", null); } } catch (e2) {}
           try { __pDistCache = await getState(DB, "ai_pdist:" + market, null); } catch (e2) {}
           // ↑ [V33.99] ★배포를 17커밋 동안 막고 있던 중괄호 누락★
@@ -16944,7 +16984,17 @@ async function runTradingCycle(env) {
                     const _tk = _luxPickTech(daily, symbol, market);
                     let _ns = null; try { _ns = await _luxSymNewsScore(DB, symbol); } catch (e) {}
                     _md.pRaw = _md.p;
-                    _md.p = _luxDecisionBlend(_md.p, _tk.tech, _ns, _dc, __blendK);
+                    // [V33.109] 소셜 점수를 계수와 함께 넘긴다 — 계수가 0(미측정)이면 무해하다.
+                    let _kb = __blendK;
+                    try {
+                      const _sk = _num(__socialK && __socialK.k, 0);
+                      if (_sk !== 0) {
+                        const _srec = await getState(DB, "social:" + symbol, null);
+                        const _ssc = socialScoreOf(_srec);
+                        if (_ssc != null) _kb = Object.assign({}, __blendK || {}, { kSocial: _sk, socialScore: _ssc });
+                      }
+                    } catch (e) {}
+                    _md.p = _luxDecisionBlend(_md.p, _tk.tech, _ns, _dc, _kb);
                     _md.techRaw = _tk.tech; _md.newsRaw = _ns;   // [V33.96] 계수 실측용
                     _md.blended = true; _md.techScore = _tk.tech; _md.newsScore = _ns;
                     // allow 재계산 — 통합확률이 게이트문턱 이상이면 허용(원시 p 기준 stale allow 정정).
@@ -18167,6 +18217,14 @@ async function handleRequest(request, env, ctx) {
               blendK: await (async function () { try { const b = await getState(env.DB, "decision_blend_k", null);
                 return b ? { kTech: _num(b.kTech, null), kNews: _num(b.kNews, null), tTech: _num(b.tTech, null), n: _num(b.n, 0) } : null; } catch (e) { return null; } })(),
               dualShift: _ds ? { shift: _ds.shift || null, n: _num(_ds.n, 0) } : null,
+              // [V33.109] 소셜 멀티소스 — 소스별 건강과 측정 계수. '0건' 이 실패인지 진짜 0인지 보이게.
+              social: await (async function () { try {
+                const h = await getState(env.DB, "social_health", null);
+                const k = await getState(env.DB, "social_k", null);
+                let buf = 0; try { const b = await getState(env.DB, "social_cal_buf", null); buf = (b && Array.isArray(b.v)) ? b.v.length : 0; } catch (e) {}
+                return { health: h || null, k: k ? _num(k.k, 0) : null, t: k ? _num(k.t, null) : null,
+                         n: k ? _num(k.n, 0) : 0, obs: buf, needN: 300 };
+              } catch (e) { return null; } })(),
               // [V33.107] 상황별 반성기억(TradingAgents) — 레짐×변동성 버킷별 전문가 신뢰도.
               expReg: await (async function () { try {
                 const e = await getState(env.DB, "expert_regime_ic", null);
@@ -19425,6 +19483,8 @@ async function handleRequest(request, env, ctx) {
         ["finalcal", function (DB) { return finalCalFitNightly(DB); }],
         ["gateaudit", function (DB) { return gateAuditNightly(DB); }],
         ["blendk", function (DB) { return decisionBlendFitNightly(DB); }],
+        ["socialobs", function (DB) { return socialObserveNightly(DB); }],
+        ["socialk", function (DB) { return socialCoefFitNightly(DB); }],
         ["confk", function (DB) { return scalpConfluenceFitNightly(DB); }],
         ["shockk", function (DB) { return shockPriorFitNightly(DB); }],
         ["mindshadow", function (DB) { return mindShadowPromoteNightly(DB); }],
@@ -19509,6 +19569,20 @@ async function handleRequest(request, env, ctx) {
       const fund = await fetchFundamentals(env.DB, sym);
       const ev = evaluateFundamentals(fund, mcap);
       return Response.json({ symbol: sym, years: fund.years || {}, order: fund.order || [], ts: fund.ts || null, eval: ev }, { headers: cors });
+    }
+
+    // ── [V33.109] 소셜 멀티소스 상태·종목별 점수 ──
+    if (path === "/api/social") {
+      const sym = (url.searchParams.get("symbol") || "").trim();
+      const health = await getState(env.DB, "social_health", null);
+      const k = await getState(env.DB, "social_k", null);
+      const out = { sources: SOCIAL_SOURCES.map(function (x) { return { id: x.id, ko: x.ko, perSymbol: !!x.perSymbol }; }),
+                    health: health || {}, coef: k || { k: 0, n: 0 }, cfg: { gapMin: SOCIAL.gapMin, symsPerRound: SOCIAL.symsPerRound, maxAgeH: SOCIAL.maxAgeH } };
+      if (sym && /^[A-Za-z0-9.^=\-]{1,16}$/.test(sym)) {
+        const rec = await getState(env.DB, "social:" + sym, null);
+        out.symbol = sym; out.record = rec || null; out.score = socialScoreOf(rec);
+      }
+      return Response.json(out, { headers: cors });
     }
 
     // ── [V33.108] 재무제표 툴킷 — LangChain Tool 규약(이름·설명·needs·run)으로 균일 호출 ──
@@ -31346,6 +31420,238 @@ function _luxPickTech(dd, sym, market) {
 //     중립 증거(0)는 기여 0 — 확신을 깎지 않는다. 강한 증거는 여전히 민다.
 //     계수는 추측하지 않는다: decisionBlendFitNightly 가 실측한 값을 쓰고,
 //     아직 못 쟀으면 보수적 기본값(강신호에서 종전과 비슷한 이동폭)을 쓴다.
+// ════════════════════════════════════════════════════════════════════════════
+// [V33.109] ★소셜 멀티소스 — StockTwits · Reddit★ (외부 AI API 0, 키 0)
+//
+//   TradingAgents 의 Social Media Analyst 가 쓰는 소스를 우리도 직접 받는다.
+//   둘 다 공개 JSON 이라 API 키가 필요 없다:
+//     · StockTwits  api.stocktwits.com/api/2/streams/symbol/{SYM}.json
+//         ★게시자가 직접 Bullish/Bearish 를 붙인다★ — NLP 없이 라벨이 이미 있다.
+//         이건 뉴스 헤드라인 감성보다 질이 좋은 신호다(추정이 아니라 선언이다).
+//     · Reddit      reddit.com/r/{subs}/new.json
+//         종목 언급량과 업보트를 본다. 본문 감성은 우리 학습 어휘(sentiLex)로 매긴다.
+//
+//   ★믿기 전에 잰다★ — 이 저장소의 규칙 그대로다. 수집만 먼저 하고,
+//   다음날 수익률로 라벨링해 IC 와 t 를 측정한 뒤에야 확률에 개입시킨다.
+//   측정 전 계수는 0 이다(수집은 하되 판단은 바뀌지 않는다).
+//
+//   ※ Reddit 은 데이터센터 IP 를 막는 경우가 있다. 실패를 조용히 넘기지 않고
+//     social_health 에 HTTP 코드와 함께 남겨, '0건' 이 수집실패인지 진짜 0인지 구분한다.
+const SOCIAL = {
+  enabled: true,
+  symsPerRound: 12,          // 회차당 StockTwits 조회 종목 수(전용 예산 안쪽)
+  gapMin: 20,                // 회차 간격(분)
+  maxAgeH: 24,               // 이 시간 안의 글만 집계
+  minMsgs: 5,                // 이보다 적으면 점수를 내지 않는다(표본 부족)
+  redditSubs: "wallstreetbets+stocks+investing+StockMarket",
+  bufWindow: 3000            // 계수 측정용 관측 버퍼 크기
+};
+const SOCIAL_SOURCES = [
+  {
+    id: "stocktwits", ko: "StockTwits", perSymbol: true,
+    url: function (sym) { return "https://api.stocktwits.com/api/2/streams/symbol/" + encodeURIComponent(sym) + ".json"; },
+    // 게시자가 붙인 Bullish/Bearish 라벨을 그대로 센다. 라벨 없는 글은 분모에서 뺀다
+    //   ('무의견'을 중립으로 세면 표본이 희석돼 신호가 죽는다).
+    parse: function (js, cutoffMs) {
+      const ms = (js && js.messages) || [];
+      let bull = 0, bear = 0, n = 0;
+      for (const m of ms) {
+        const t = Date.parse(m && m.created_at || "");
+        if (isFinite(t) && t < cutoffMs) continue;
+        n++;
+        const b = m && m.entities && m.entities.sentiment && m.entities.sentiment.basic;
+        if (b === "Bullish") bull++; else if (b === "Bearish") bear++;
+      }
+      const lab = bull + bear;
+      return { n: n, bull: bull, bear: bear,
+               score: lab >= 1 ? +(((bull - bear) / lab)).toFixed(4) : null };
+    }
+  },
+  {
+    id: "reddit", ko: "Reddit", perSymbol: false,
+    url: function () { return "https://www.reddit.com/r/" + SOCIAL.redditSubs + "/new.json?limit=100&raw_json=1"; },
+    // 종목 언급량 + 업보트. 티커는 $TSLA 형태와 유니버스에 있는 대문자 토큰만 인정한다
+    //   (아무 대문자나 티커로 보면 'A','IT','ON' 같은 단어가 전부 종목이 된다).
+    parse: function (js, cutoffMs, universe) {
+      const ch = (js && js.data && js.data.children) || [];
+      const by = {};
+      let posts = 0;
+      for (const c of ch) {
+        const d = c && c.data; if (!d) continue;
+        const t = _num(d.created_utc, 0) * 1000;
+        if (t && t < cutoffMs) continue;
+        posts++;
+        const text = String(d.title || "") + " " + String(d.selftext || "").slice(0, 400);
+        const w = 1 + Math.log(1 + Math.max(0, _num(d.score, 0)));   // 업보트 가중(로그)
+        const seen = {};
+        for (const m of text.matchAll(/\$([A-Za-z]{1,5})\b/g)) {
+          const sy = m[1].toUpperCase(); if (seen[sy]) continue; seen[sy] = 1;
+          if (universe && !universe.has(sy)) continue;
+          (by[sy] = by[sy] || { mentions: 0, weight: 0 }); by[sy].mentions++; by[sy].weight += w;
+        }
+        for (const m of text.matchAll(/\b([A-Z]{2,5})\b/g)) {
+          const sy = m[1]; if (seen[sy]) continue;
+          if (!universe || !universe.has(sy)) continue;
+          seen[sy] = 1;
+          (by[sy] = by[sy] || { mentions: 0, weight: 0 }); by[sy].mentions++; by[sy].weight += w;
+        }
+      }
+      return { posts: posts, by: by };
+    }
+  }
+];
+// 소스 건강 기록 — '0건' 이 수집실패인지 진짜 0인지 구분하기 위한 최소한의 장치.
+async function _socialHealth(DB, id, patch) {
+  try {
+    const h = (await getState(DB, "social_health", null)) || {};
+    h[id] = Object.assign({}, h[id] || {}, patch, { ts: Date.now() });
+    await setState(DB, "social_health", h);
+  } catch (e) {}
+}
+async function socialFetchStep(DB) {
+  if (!SOCIAL.enabled) return null;
+  try {
+    const cutoff = Date.now() - SOCIAL.maxAgeH * 3600000;
+    // 미국 티커만 대상 — StockTwits·Reddit 둘 다 KR 종목을 다루지 않는다.
+    const dr = await DB.prepare("SELECT k FROM state WHERE k >= 'daily:' AND k < 'daily;' ORDER BY k").all();
+    const us = [];
+    for (const r of ((dr && dr.results) || [])) {
+      const sy = String(r.k).slice(6);
+      if (!sy || sy[0] === "^") continue;
+      if (/\.(KS|KQ)$/i.test(sy) || /=F$|-USD$/.test(sy)) continue;
+      us.push(sy);
+    }
+    if (!us.length) return "[SOCIAL] 대상 없음";
+    const uni = new Set(us);
+    let stOk = 0, stFail = 0, rdN = 0;
+
+    // ── Reddit: 1회 fetch 로 전 종목 언급을 얻는다(가성비가 가장 높다) ──
+    try {
+      const rsrc = SOCIAL_SOURCES.find(function (x) { return x.id === "reddit"; });
+      __fetchBudget.used++;
+      const rr = await fetch(rsrc.url(), { headers: { "User-Agent": "lux-trader/1.0 (research)" } });
+      if (!rr.ok) { await _socialHealth(DB, "reddit", { ok: false, http: rr.status, err: "http" }); }
+      else {
+        const rj = await rr.json();
+        const parsed = rsrc.parse(rj, cutoff, uni);
+        rdN = Object.keys(parsed.by).length;
+        for (const sy of Object.keys(parsed.by)) {
+          const cur = (await getState(DB, "social:" + sy, null)) || {};
+          cur.rd = parsed.by[sy]; cur.rdTs = Date.now();
+          await setState(DB, "social:" + sy, cur);
+        }
+        await _socialHealth(DB, "reddit", { ok: true, http: 200, posts: parsed.posts, syms: rdN });
+      }
+    } catch (e) { await _socialHealth(DB, "reddit", { ok: false, err: String((e && e.message) || e).slice(0, 80) }); }
+
+    // ── StockTwits: 종목별 1회 — 오프셋 회전으로 전 종목을 순회한다 ──
+    let off = 0;
+    try { const o = await getState(DB, "social_off", null); off = _num(o && o.v, 0) % us.length; } catch (e) {}
+    const picked = [];
+    for (let i = 0; i < SOCIAL.symsPerRound && i < us.length; i++) picked.push(us[(off + i) % us.length]);
+    const ssrc = SOCIAL_SOURCES.find(function (x) { return x.id === "stocktwits"; });
+    let lastErr = null, lastHttp = null, proc = 0;
+    for (const sy of picked) {
+      if (fetchBudgetLeft() < 4) break;
+      proc++;
+      try {
+        __fetchBudget.used++;
+        const r = await fetch(ssrc.url(sy), { headers: { "User-Agent": "Mozilla/5.0", "accept": "application/json" } });
+        lastHttp = r.status;
+        if (!r.ok) { stFail++; lastErr = "http " + r.status; continue; }
+        const js = await r.json();
+        const p = ssrc.parse(js, cutoff);
+        if (p.n < SOCIAL.minMsgs) { stOk++; continue; }   // 조회는 됐으나 표본 부족 — 점수 없음
+        const cur = (await getState(DB, "social:" + sy, null)) || {};
+        cur.st = p; cur.stTs = Date.now();
+        await setState(DB, "social:" + sy, cur);
+        stOk++;
+      } catch (e) { stFail++; lastErr = String((e && e.message) || e).slice(0, 60); }
+    }
+    try { await setState(DB, "social_off", { v: (off + Math.max(1, proc)) % us.length, ts: Date.now() }); } catch (e) {}
+    await _socialHealth(DB, "stocktwits", { ok: stOk > 0, http: lastHttp, done: stOk, fail: stFail, err: lastErr });
+    return "[SOCIAL] StockTwits " + stOk + "성공/" + stFail + "실패 · Reddit 언급종목 " + rdN +
+           " (구간 " + off + "~" + ((off + proc) % us.length) + "/" + us.length + ")";
+  } catch (e) { return "[SOCIAL] fail: " + (e && e.message); }
+}
+// 종목별 소셜 점수 — StockTwits 라벨비율을 주축으로, Reddit 언급량을 강도로 쓴다.
+//   둘 다 없으면 null(0 이 아니다 — '모름'과 '중립'을 구분한다).
+function socialScoreOf(rec) {
+  try {
+    if (!rec) return null;
+    const st = rec.st, rd = rec.rd;
+    const fresh = function (ts) { return ts && (Date.now() - ts) < 36 * 3600000; };
+    let s = null;
+    if (st && fresh(rec.stTs) && typeof st.score === "number" && (st.bull + st.bear) >= 3) s = st.score;
+    if (s == null) return null;
+    // Reddit 언급이 많을수록 그 감정이 '많은 사람의 것' 이라는 뜻 — 강도만 키운다(방향은 안 바꾼다).
+    let amp = 1;
+    if (rd && fresh(rec.rdTs) && rd.mentions > 0) amp = _clamp(1 + Math.log(1 + rd.mentions) * 0.15, 1, 1.5);
+    return _clamp(s * amp, -1, 1);
+  } catch (e) { return null; }
+}
+// 관측 적립 — 오늘 점수와 오늘 종가를 남겨 두고, 내일 수익률로 라벨링한다.
+async function socialObserveNightly(DB) {
+  if (!SOCIAL.enabled) return null;
+  try {
+    const b = (await getState(DB, "social_cal_buf", null)) || { v: [], pend: [] };
+    if (!Array.isArray(b.v)) b.v = [];
+    if (!Array.isArray(b.pend)) b.pend = [];
+    // (1) 어제 적립분 라벨링
+    let labeled = 0;
+    const keep = [];
+    for (const it of b.pend) {
+      let dd = null; try { dd = await getState(DB, "daily:" + it.s, null); } catch (e) {}
+      const px = dd && _num(dd.price, 0);
+      if (!(px > 0) || !(it.p > 0)) continue;
+      if (Date.now() - _num(it.t, 0) < 20 * 3600000) { keep.push(it); continue; }   // 아직 하루 안 지남
+      const ret = (px / it.p - 1) * 100;
+      b.v.push([+_num(it.sc, 0).toFixed(4), ret > 0 ? 1 : 0, +ret.toFixed(3)]);
+      labeled++;
+    }
+    b.v = b.v.slice(-SOCIAL.bufWindow);
+    // (2) 오늘 점수 적립
+    const dr = await DB.prepare("SELECT k FROM state WHERE k >= 'social:' AND k < 'social;' LIMIT 400").all();
+    let added = 0;
+    for (const r of ((dr && dr.results) || [])) {
+      const sy = String(r.k).slice(7);
+      const rec = await getState(DB, "social:" + sy, null);
+      const sc = socialScoreOf(rec);
+      if (sc == null) continue;
+      let dd = null; try { dd = await getState(DB, "daily:" + sy, null); } catch (e) {}
+      const px = dd && _num(dd.price, 0);
+      if (!(px > 0)) continue;
+      keep.push({ s: sy, sc: sc, p: px, t: Date.now() });
+      added++;
+    }
+    b.pend = keep.slice(-1500);
+    b.ts = Date.now();
+    await setState(DB, "social_cal_buf", b);
+    return "[SOCIAL-OBS] 라벨 +" + labeled + " 적립 +" + added + " (누적 " + b.v.length + "/" + SOCIAL.bufWindow + ")";
+  } catch (e) { return "[SOCIAL-OBS] fail: " + (e && e.message); }
+}
+// 계수 실측 — 소셜 점수가 실제로 다음날 방향을 맞히는가. 유의하지 않으면 0(개입 없음).
+async function socialCoefFitNightly(DB) {
+  if (!SOCIAL.enabled) return null;
+  try {
+    const b = await getState(DB, "social_cal_buf", null);
+    const v = (b && Array.isArray(b.v)) ? b.v : [];
+    if (v.length < 300) return "[SOCIALK] 관측 " + v.length + "/300 — 대기";
+    const pv = v.map(function (r) { return _num(r[0], 0); });
+    const yv = v.map(function (r) { return r[1] ? 1 : 0; });
+    let pos = 0; for (const y of yv) pos += y;
+    if (pos < 40 || v.length - pos < 40) return "[SOCIALK] 승/패 편중(" + pos + "/" + v.length + ") — 대기";
+    const st = _icBlockStats(pv, yv, 5);
+    const t = _num(st.t, 0);
+    // 로그오즈 계수로 환산: IC 를 그대로 쓰지 않고 유의성으로 수축한다(다른 계수와 같은 원칙).
+    const k = _clamp(_num(st.blockIC != null ? st.blockIC : st.ic, 0) * 4, -0.6, 0.6) * _coefShrink(t);
+    await setState(DB, "social_k", { k: +k.toFixed(4), ic: st.ic != null ? +st.ic.toFixed(5) : null,
+      blockIC: st.blockIC != null ? +st.blockIC.toFixed(5) : null, t: +t.toFixed(2), n: v.length, ts: Date.now() });
+    return "[SOCIALK] IC " + _num(st.ic, 0).toFixed(4) + " t " + t.toFixed(2) + " → 로그오즈 계수 " +
+           k.toFixed(4) + " (n " + v.length + ")" + (Math.abs(k) < 1e-6 ? " — 유의성 미달, 개입 없음" : "");
+  } catch (e) { return "[SOCIALK] fail: " + (e && e.message); }
+}
+
 function _luxDecisionBlend(committeeP, techScore, newsScore, w, kTbl) {
   w = w || {};
   const base = _clamp(_num(committeeP, 0.5), 0.001, 0.999);
@@ -31365,6 +31671,12 @@ function _luxDecisionBlend(committeeP, techScore, newsScore, w, kTbl) {
     ? _clamp(kTbl.kNews, -2, 2) : _num(w.kNews, 0.20);
   if (techScore != null) z += kT * _clamp(_num(techScore, 0), -1, 1);
   if (newsScore != null) z += kN * _clamp(_num(newsScore, 0), -1, 1);
+  // [V33.109] 소셜(StockTwits 라벨 + Reddit 언급) — ★측정된 계수만★ 개입한다.
+  //   social_k 는 socialCoefFitNightly 가 유의성 수축까지 마친 값이라, 미측정이면 0 이다
+  //   (수집은 하되 판단은 바뀌지 않는다 — 뉴스·기술 계수와 완전히 같은 규약).
+  const kS = (kTbl && typeof kTbl.kSocial === "number" && isFinite(kTbl.kSocial)) ? _clamp(kTbl.kSocial, -1, 1) : 0;
+  if (kS !== 0 && kTbl && typeof kTbl.socialScore === "number" && isFinite(kTbl.socialScore))
+    z += kS * _clamp(kTbl.socialScore, -1, 1);
   return _clamp(1 / (1 + Math.exp(-_clamp(z, -30, 30))), 0.02, 0.98);
 }
 // 종목 섹터의 최근 뉴스 감성(-1..1) — 없으면 null.
@@ -35712,6 +36024,21 @@ export default {
         }
       } catch (e) { try { await log(env.DB, "WARN", null, "[ST-BACKFILL] 예외: " + (e && e.message)); } catch (e2) {} }
 
+      // 0.9555) [V33.109] ★소셜 멀티소스 수집(StockTwits · Reddit)★
+      //   전용 예산·간격을 쓰고 실패해도 매매엔 영향이 없다. 실패는 social_health 에 남는다
+      //   — '0건' 이 수집실패인지 진짜 0인지 구분할 수 없으면 원인을 영영 못 찾는다.
+      try {
+        if (SOCIAL.enabled) {
+          const _slk = _num(await getState(env.DB, "social_lock", 0), 0);
+          if (Date.now() - _slk > SOCIAL.gapMin * 60000) {
+            await setState(env.DB, "social_lock", Date.now());
+            try { resetFetchBudget(40); } catch (e0) {}
+            const _sr = await socialFetchStep(env.DB);
+            if (_sr) await log(env.DB, "INFO", null, _sr);
+          }
+        }
+      } catch (e) { try { await log(env.DB, "WARN", null, "[SOCIAL] 예외: " + (e && e.message)); } catch (e2) {} }
+
       // 0.954) [V33.74] ★유령거래 1회성 정리★ — 사용자 지시("유령 거래 정리해서 실제 수치로 맞춰").
       //   배포 후 크론에서 딱 한 번 돈다(버전 키로 고정). 지우기 전에 R2로 전량 백업한다.
       //   정리하면 US +5.87%→+0.3%대, 원자재 +1.22%→−9%대로 내려간다 — 실제 수치다.
@@ -36264,6 +36591,10 @@ export default {
             await _stg("gateaudit", async function () { return await gateAuditNightly(env.DB); });
             // [V33.96] 결정블렌드 계수 실측 — 기술·뉴스 점수의 로그오즈 기여를 데이터로 정한다.
             await _stg("blendk", async function () { return await decisionBlendFitNightly(env.DB); });
+            // [V33.109] 소셜 관측 적립 → 계수 실측. 반드시 이 순서다(오늘 점수를 적립하고,
+            //   어제 적립분을 오늘 종가로 라벨링한 뒤에야 계수를 잰다).
+            await _stg("socialobs", async function () { return await socialObserveNightly(env.DB); });
+            await _stg("socialk", async function () { return await socialCoefFitNightly(env.DB); });
             // [V33.98] 단타 합류 로짓 계수 실측(모델 확률을 오프셋으로 고정한 잔여효과).
             await _stg("confk", async function () { return await scalpConfluenceFitNightly(env.DB); });
             // [V33.105] 충격 프라이어 잔여계수 실측 — 확률 체인에서 가장 큰 개입(최대 −1.8 로짓)이
