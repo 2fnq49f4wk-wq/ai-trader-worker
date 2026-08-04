@@ -2760,7 +2760,7 @@ async function applySignalTypeWeights(DB, cfg) {
 // ============================================================================
 // [V33.55] 빌드 버전 — SWR L2 캐시 키에 섞어 '배포 = 판단 캐시 자동 무효화'를 만든다.
 //   판정 로직을 고쳐도 옛 캐시가 최대 1시간 재배포되던 문제를 구조적으로 없앤다.
-const _BUILD_VER = "V33.103";
+const _BUILD_VER = "V33.104";
 
 const AI_PARAMS = {
   // ── OHLCV 타임프레임 ── 시가/고가/저가/종가/거래량을 어떤 봉 주기로 볼지.
@@ -15962,7 +15962,18 @@ async function runTradingCycle(env) {
             const _obsMax = (mcfg.scalpRules && mcfg.scalpRules.obsMaxPerCycle != null)
               ? mcfg.scalpRules.obsMaxPerCycle : 40;
             const _obsWanted = !!(__stinPend && __stinObsScan < _obsMax);
-            if ((_scAligned || __scalpLive || _obsWanted) && scalpScanUsed < _scanMax && _scalpTimeLeft && fetchBudgetLeft() > 5) {
+            // [V33.104] ★관측이 거래 평가루프의 시간초과에 통째로 휩쓸리던 문제★
+            //   라이브 로그: scalp[elig=200 scan=2] — 후보는 200인데 분봉을 받은 건 2건뿐이다.
+            //   _scalpTimeLeft 는 '평가예산의 35%' 인데, 사이클이 85초까지 늘어나면 그 창은
+            //   앞쪽 몇 종목에서 이미 소진된다. 그러면 관측(학습표본 수집)이 0 이 된다 —
+            //   진입 기회를 놓치는 건 다음 사이클에 만회되지만, 그 시각의 분봉은 다시 안 온다.
+            //   → 관측 전용으로 사이클당 최소 몇 건은 시간창과 무관하게 보장한다.
+            //     fetch 예산 가드는 그대로 지킨다(예산이 없으면 어차피 못 받는다).
+            const _obsFloor = (mcfg.scalpRules && mcfg.scalpRules.obsFloorPerCycle != null)
+              ? mcfg.scalpRules.obsFloorPerCycle : 4;
+            const _obsGuaranteed = _obsWanted && __stinObsScan < _obsFloor;
+            if ((_scAligned || __scalpLive || _obsWanted) && scalpScanUsed < _scanMax &&
+                (_scalpTimeLeft || _obsGuaranteed) && fetchBudgetLeft() > 5) {
               if (!_scAligned && !__scalpLive) __stinObsScan++;   // 관측 전용 소비분 계측
               try {
                 scalpScanUsed++;
@@ -16001,7 +16012,8 @@ async function runTradingCycle(env) {
                     if (!__stinPend) __scalpDiag.obs_nopend = (__scalpDiag.obs_nopend || 0) + 1;
                     else if (!_sfi) __scalpDiag.obs_noifeat = (__scalpDiag.obs_noifeat || 0) + 1;
                     else if (stinObserve(__stinPend, symbol, market, _sf, price, _sfi)) __stinObs++;
-                    else __scalpDiag.obs_reject = (__scalpDiag.obs_reject || 0) + 1;
+                    else { const _w = "obs_rej_" + (__stinPend._why || "etc");
+                           __scalpDiag[_w] = (__scalpDiag[_w] || 0) + 1; }
                   }
                 } catch (e) {}
                 // [V33.48/53] 규칙 단타 신호는 (a) 시장 허용(usOnly) 이고 (b) 규칙 사전필터(_scAligned)를
@@ -19366,6 +19378,9 @@ async function handleRequest(request, env, ctx) {
         ["deephist", function (DB) { try { resetFetchBudget(380); } catch (e) {} return harvestDeepFetchNightly(DB); }],
         ["xspanel", function (DB) { return mlBuildXSPanel(DB); }],
         ["harvest", function (DB) { return mlMarketHarvestNightly(DB); }],
+        // [V33.104] 전문가 재학습 앞 — 누출없는 STACK 표본 생성 후 기준선 갱신(크론과 동일 순서).
+        ["stackbf", function (DB) { return stackSampleBackfill(DB, {}); }],
+        ["stackepoch", function (DB) { return stackExpertEpochStamp(DB); }],
         ["l1", function (DB) { return mlTrainNightly(DB); }],
         ["bandit", function (DB) { return mlBanditNoiseNightly(DB); }],
         ["brain", function (DB) { return mlBrainTrainNightly(DB); }],
@@ -19381,7 +19396,6 @@ async function handleRequest(request, env, ctx) {
         ["blendk", function (DB) { return decisionBlendFitNightly(DB); }],
         ["confk", function (DB) { return scalpConfluenceFitNightly(DB); }],
         ["mindshadow", function (DB) { return mindShadowPromoteNightly(DB); }],
-        ["stackbf", function (DB) { return stackSampleBackfill(DB, {}); }],
         ["stack", function (DB) { return stackTrainNightly(DB); }],
         ["dual", function (DB) { return dualHeadTrainNightly(DB); }],
         ["portstats", function (DB) { return portfolioStatsNightly(DB); }],
@@ -22765,7 +22779,9 @@ function statArbSignal(a, b, params) {
 //        Modal 업로드 경로를 새로 뚫지 않아 배포 리스크가 없다.
 const FLOWML = {
   enabled: true,
-  featVer: 1,
+  // [V33.104] 1 → 2: 결측마스크(posAvail) 추가로 차원 12 → 13.
+  //   옛 표본은 마스크가 없어 섞이면 다시 '0=중립' 오염이 생긴다 → 버전으로 분리.
+  featVer: 2,
   featNames: [
     // ── 피어 그래프(추가 fetch 0) ──
     "peerRet5",      // 상관 상위 피어들의 5일 수익률 평균(%)
@@ -22780,7 +22796,15 @@ const FLOWML = {
     "shortChg",      // 공매도 전월 대비 변화율
     "insiderNet",    // 최근 90일 내부자 순매수 점수(−1~1)
     "instOwn",       // 기관 보유 비율(0~1)
-    "putCallOI"      // 풋/콜 미결제약정 비율(로그, 0 중심)
+    "putCallOI",     // 풋/콜 미결제약정 비율(로그, 0 중심)
+    // [V33.104] ★"과거 값을 알 수 없다 → 0(중립)" 은 논리 비약이다★
+    //   소급생성(ALT-BF)은 공매도·내부자·풋콜을 알 수 없어 6칸을 전부 0 으로 채웠다.
+    //   그런데 0 은 '중립' 이 아니라 ★결측★ 이다. 실거래 표본에는 진짜 값이 들어가므로
+    //   같은 0 이 어떤 행에선 "공매도 0%", 어떤 행에선 "모름" 을 뜻하게 된다.
+    //   모델은 이 둘을 구분할 방법이 없어 포지셔닝 6차원을 통째로 잡음으로 학습한다
+    //   (FLOW 표본 1,489건 중 대부분이 소급분 → 사실상 6차원짜리 피어모델이었다).
+    //   → 가용 여부를 별도 차원으로 알려준다. STACK 이 참여마스크를 두는 이유와 같다.
+    "posAvail"       // 포지셔닝 6종이 실제 관측값인가(1) 결측대체인가(0)
   ],
   minTrainSamples: 800,
   trainWindow: 40000,
@@ -22944,7 +22968,9 @@ async function flowBuildFeat(DB, symbol, market, dailyCache) {
       g(peer, "peerRel5"), g(peer, "peerCorrAvg"), g(peer, "peerLead"),
       g(pos, "shortPctFloat"), g(pos, "shortRatio"), g(pos, "shortChg"),
       g(pos, "insiderNet"), g(pos, "instOwn"),
-      (typeof pc === "number" && isFinite(pc)) ? pc : 0
+      (typeof pc === "number" && isFinite(pc)) ? pc : 0,
+      // [V33.104] 포지셔닝을 실제로 관측했나 — pos 나 풋콜 중 하나라도 있으면 1.
+      (pos || (typeof pc === "number" && isFinite(pc))) ? 1 : 0
     ];
   } catch (e) { return null; }
 }
@@ -22978,9 +23004,12 @@ async function _miniLogisticTrain(DB, opts) {
       });
     } catch (e) {}
     const rows = await DB.prepare(
-      "SELECT ts, feat, label, pnl_pct FROM " + opts.table + " WHERE featver = ? ORDER BY ts DESC LIMIT ?"
+      "SELECT id, ts, feat, label, pnl_pct FROM " + opts.table + " WHERE featver = ? ORDER BY ts DESC LIMIT ?"
     ).bind(opts.featVer, opts.window).all();
     const raw = (rows && rows.results) || [];
+    // [V33.104] 적합에 실제로 들어간 행의 최대 id — 다음 밤 전진검증이 "학습에 안 쓰인 행"을
+    //   집합적으로 정확히 고르는 기준이 된다(ts 의미가 표마다 달라 시각 비교는 못 믿는다).
+    let _maxId = 0; for (const r of raw) { const _i = _num(r.id, 0); if (_i > _maxId) _maxId = _i; }
     if (raw.length < opts.minN) {
       return "[" + opts.tag + "] 표본 " + raw.length + "/" + opts.minN + " — 학습 대기";
     }
@@ -23074,6 +23103,7 @@ async function _miniLogisticTrain(DB, opts) {
       valICt: _tv != null ? +_tv.toFixed(3) : null, valICK: _st.K,
       fwdIC: _fwd ? _fwd.ic : null, fwdICt: _fwd ? _fwd.t : null,
       fwdN: _fwd ? _fwd.n : 0, fwdReady: !!(_fwd && _fwd.ready),
+      fwdMode: _fwd ? (_fwd.mode || null) : null, maxId: _maxId,
       holdPass: _holdPass,
       trusted: _trusted };
     await setState(DB, opts.stateKey, model);
@@ -23160,11 +23190,25 @@ async function altSampleBackfill(DB, opts) {
   try {
     if (!XALPHA.enabled && !FLOWML.enabled) return "[ALT-BF] 비활성";
     // 진행 커서 — 오래된 표본부터 처리하고 이어서 돈다.
-    const st = (await getState(DB, "alt_bf_cursor", null)) || { lastId: 0, made: 0 };
+    // [V33.104] ★모델별 커서로 분리★ 종전엔 커서가 하나였다. 한쪽 피처 버전이 바뀌어
+    //   되감으면 다른 쪽은 이미 처리한 행을 다시 적재해 ★같은 표본이 두 벌★ 이 된다
+    //   (중복표본은 유효표본 수를 부풀리고 검증 분할을 오염시킨다).
+    //   → FLOW·XALPHA 각각 '어디까지 처리했나' 를 따로 들고, 자기 버전이 바뀔 때만 되감는다.
+    const _st0 = (await getState(DB, "alt_bf_cursor", null)) || {};
+    const _fDone0 = (_st0.fvF === FLOWML.featVer) ? _num(_st0.fDone, 0) : 0;
+    const _xDone0 = (_st0.fvX === XALPHA.featVer) ? _num(_st0.xDone, 0) : 0;
+    // 구버전 상태(lastId 단일 커서)에서 올라온 경우 — 그 값을 양쪽 시작점으로 승계한다.
+    const _legacy = (_st0.fvF === undefined && _st0.fvX === undefined) ? _num(_st0.lastId, 0) : 0;
+    const fDone = _fDone0 || (FLOWML.featVer === 1 ? _legacy : 0);
+    const xDone = _xDone0 || (_legacy || 0);
+    const st = { lastId: Math.min(FLOWML.enabled ? fDone : Infinity, XALPHA.enabled ? xDone : Infinity),
+                 made: _num(_st0.made, 0) };
+    if (!isFinite(st.lastId)) st.lastId = 0;
     const rows = (await DB.prepare(
       "SELECT id, ts, market, symbol, pnl_pct FROM ml_samples WHERE id > ? AND featver = ? ORDER BY id ASC LIMIT ?"
     ).bind(_num(st.lastId, 0), LUXML.featVer, ALTBF.maxPerRun).all()).results || [];
-    if (!rows.length) return "[ALT-BF] 남은 표본 없음 (커서 " + st.lastId + ", 누적생성 " + _num(st.made, 0) + ")";
+    if (!rows.length) return "[ALT-BF] 남은 표본 없음 (FLOW커서 " + fDone + " XALPHA커서 " + xDone +
+                             ", 누적생성 " + _num(st.made, 0) + ")";
 
     // 날짜(YYYY-MM-DD)별로 묶는다 — 횡단면 패널을 날짜마다 한 번만 만들기 위해서.
     const byDay = {};
@@ -23220,26 +23264,31 @@ async function altSampleBackfill(DB, opts) {
         lastId = Math.max(lastId, r.id);
         const sy = r.symbol, mk = String(r.market || "us");
         if (!sy || !snap[sy]) { skipped++; continue; }
-        if (XALPHA.enabled) {
+        if (XALPHA.enabled && _num(r.id, 0) > xDone) {
           const f = xalphaBuildFeat(sy, snap, mk === "kr" ? panelKR : panelUS);
           if (f) { await xalphaLogSample(DB, mk, sy, f, _num(r.pnl_pct, 0)); madeX++; }
         }
-        if (FLOWML.enabled) {
+        if (FLOWML.enabled && _num(r.id, 0) > fDone) {
           // 포지셔닝(공매도·내부자·풋콜)은 시점 데이터라 과거 값을 알 수 없다 → 0(중립).
           //   피어 그래프만으로도 6/12 차원이 채워지고, 그 부분은 완전히 정직한 소급 계산이다.
           const peer = await flowPeerFeat(DB, sy, mk, snap);
           if (peer) {
             const g = function (o, k) { return (o && typeof o[k] === "number" && isFinite(o[k])) ? o[k] : 0; };
+            //   [V33.104] 마지막 0 = posAvail 마스크 — "이 행의 포지셔닝 6칸은 결측대체다".
             const fv = [g(peer, "peerRet5"), g(peer, "peerRet20"), g(peer, "peerDisp"),
                         g(peer, "peerRel5"), g(peer, "peerCorrAvg"), g(peer, "peerLead"),
-                        0, 0, 0, 0, 0, 0];
+                        0, 0, 0, 0, 0, 0, 0];
             await flowLogSample(DB, mk, sy, fv, _num(r.pnl_pct, 0));
             madeF++;
           }
         }
       }
     }
-    await setState(DB, "alt_bf_cursor", { lastId: lastId, made: _num(st.made, 0) + madeX + madeF, ts: Date.now() });
+    await setState(DB, "alt_bf_cursor", {
+      lastId: lastId, made: _num(st.made, 0) + madeX + madeF,
+      fDone: FLOWML.enabled ? Math.max(fDone, lastId) : fDone, fvF: FLOWML.featVer,
+      xDone: XALPHA.enabled ? Math.max(xDone, lastId) : xDone, fvX: XALPHA.featVer,
+      ts: Date.now() });
     return "[ALT-BF] 날짜 " + days.length + "일 처리 — XALPHA +" + madeX + " / FLOW +" + madeF +
            " (건너뜀 " + skipped + ", 커서 " + lastId + ")";
   } catch (e) { return "[ALT-BF] 실패: " + (e && e.message); }
@@ -23311,15 +23360,17 @@ async function memoTrainNightly(DB) {
     try {
       _fwd = await icForwardCheck(DB, {
         stateKey: "memo_model", table: "ml_samples", featVer: MEMOML.featVer,
-        sampleFeatVer: LUXML.featVer,
+        sampleFeatVer: LUXML.featVer, hasInsTs: true,   // [V33.104] ml_samples.ts 는 봉 날짜라 못 쓴다
         scoreFn: function (m, v) { return memoScore(m, v); },
         labelFn: function (r) { return _labelOfRow(r); }
       });
     } catch (e) {}
     const rows = await DB.prepare(
-      "SELECT ts, feat, label, pnl_pct FROM ml_samples WHERE featver = ? ORDER BY ts DESC LIMIT ?"
+      "SELECT id, ts, feat, label, pnl_pct FROM ml_samples WHERE featver = ? ORDER BY ts DESC LIMIT ?"
     ).bind(LUXML.featVer, MEMOML.trainWindow).all();
     const raw = (rows && rows.results) || [];
+    // [V33.104] 적합에 들어간 행의 최대 id — 다음 밤 전진검증의 배타 기준.
+    let _maxId = 0; for (const r of raw) { const _i = _num(r.id, 0); if (_i > _maxId) _maxId = _i; }
     const X = [], Y = [], P = [];
     for (let i = raw.length - 1; i >= 0; i--) {          // 오래된 것부터(시간순)
       let v; try { v = JSON.parse(raw[i].feat); } catch (e) { continue; }
@@ -23388,6 +23439,7 @@ async function memoTrainNightly(DB) {
     model.valICt = st.t != null ? +st.t.toFixed(3) : null;
     model.fwdIC = _fwd ? _fwd.ic : null; model.fwdICt = _fwd ? _fwd.t : null;
     model.fwdN = _fwd ? _fwd.n : 0; model.fwdReady = !!(_fwd && _fwd.ready);
+    model.fwdMode = _fwd ? (_fwd.mode || null) : null; model.maxId = _maxId;
     model.holdPass = (model.valICBlock != null && model.valICt != null)
       && model.valICBlock >= MEMOML.icFloor && model.valICt >= MEMOML.icTMin;
     // [V33.93] 홀드아웃 유의성 ★그리고★ 전진검증(학습 이후 표본)을 함께 요구한다.
@@ -23571,7 +23623,12 @@ function dualHeadJudge(bullM, bearM, featVec, opts) {
 //   마스크가 없으면 결측을 중립값으로 채우는 순간 두 경우가 구분되지 않아 메타모델이 헷갈린다.
 const STACKML = {
   enabled: true,
-  featVer: 2,               // [V33.92] MEMO 합류로 14 → 16차원. 옛 표본과 섞이지 않게 버전 상향.
+  // [V33.104] 2 → 3. 차원은 그대로 16 이지만 ★표본의 성질★ 이 바뀌었다 —
+  //   종전 소급표본은 전문가들이 이미 학습한 행을 그 전문가로 다시 채점한 것이라
+  //   전부 in-sample 이었다(그래서 IC 0.566, t 7.51 이라는 비현실적 수치가 나왔다).
+  //   이제 '전문가가 학습한 적 없는 행' 만 쓴다. 옛 표본과 섞으면 그 오염이 그대로
+  //   남으므로 버전으로 갈라 자연 소멸시킨다(DELETE 불필요 — 조회가 featver 로 걸린다).
+  featVer: 3,
   minTrainSamples: 600,     // 14차원이라 600건이면 수렴한다
   trainWindow: 40000,
   l2: 1.5,                  // 전문가 확률끼리 상관이 높아 규제를 조금 세게
@@ -23603,15 +23660,34 @@ async function stackSampleBackfill(DB, opts) {
   const cfg = opts || {};
   try {
     if (!STACKML.enabled) return "[STACK-BF] 비활성";
+    // ══ [V33.104] ★STACK IC 0.566 · t 7.51 은 실력이 아니라 누출이었다★ ══
+    //   소급생성은 ml_samples 의 행을 mind·dnn·gbdt·boost·memo 로 다시 채점해 STACK 입력을
+    //   만든다. 그런데 그 전문가들은 ★바로 그 행들로 학습됐다★ — 즉 P.mind 등이 이미 정답을
+    //   알고 있는 in-sample 예측이다. 스태킹은 "전문가 확률을 얼마나 믿을까"를 배우는 자리라,
+    //   in-sample 확률로 학습하면 "전문가를 전적으로 믿어라"를 배운다. 실전에서 전문가가
+    //   처음 보는 데이터를 만나는 순간 그 가중치는 과신 그 자체가 된다.
+    //   → 전문가가 ★학습한 적 없는 행★ 만 쓴다. 기준선은 '지난 밤 전문가 재학습 직전의
+    //     ml_samples 최대 id'(stack_expert_epoch). 그 이후 들어온 행은 어느 전문가도 못 봤다.
+    //   파이프라인 순서도 이에 맞춰 조정했다: harvest → stackbf → (에폭 갱신) → 전문가 재학습.
+    const _ep = _num((await getState(DB, "stack_expert_epoch", null) || {}).id, 0);
+    if (!(_ep > 0)) {
+      try {
+        const r0 = await DB.prepare("SELECT MAX(id) AS m FROM ml_samples").first();
+        await setState(DB, "stack_expert_epoch", { id: _num(r0 && r0.m, 0), ts: Date.now() });
+      } catch (e) {}
+      return "[STACK-BF] 누출없는 기준선 최초 기록 — 다음 수확분부터 수집";
+    }
     const st = (await getState(DB, "stack_bf_cursor", null)) || { lastId: 0, made: 0 };
     const lim = Math.max(50, Math.floor(_num(cfg.maxPerRun, STACKBF.maxPerRun)));
+    // 커서와 에폭 중 큰 쪽부터 — 되감아도 누출 구간으로는 절대 못 돌아간다.
+    const _from = Math.max(_num(st.lastId, 0), _ep);
     const rows = (await DB.prepare(
       "SELECT id, market, symbol, feat, label, pnl_pct FROM ml_samples WHERE id > ? AND featver = ? ORDER BY id ASC LIMIT ?"
-    ).bind(_num(st.lastId, 0), LUXML.featVer, lim).all()).results || [];
+    ).bind(_from, LUXML.featVer, lim).all()).results || [];
     if (!rows.length) {
-      // 끝까지 돌았으면 커서를 되감아 새 표본을 다시 훑는다(무한 대기 방지).
-      await setState(DB, "stack_bf_cursor", { lastId: 0, made: _num(st.made, 0), ts: Date.now() });
-      return "[STACK-BF] 한 바퀴 완료 — 커서 되감음 (누적생성 " + _num(st.made, 0) + ")";
+      // 되감기 없음 — 되감으면 전문가가 이미 학습한 행으로 돌아가 누출이 재발한다.
+      //   새 수확분이 들어올 때까지 기다린다(하루 수천 건이 들어오므로 곧 재개된다).
+      return "[STACK-BF] 새 표본 대기 (에폭 " + _ep + " 이후 미도착, 누적생성 " + _num(st.made, 0) + ")";
     }
     // 채점기는 사이클 1회만 로드한다(표본마다 다시 읽으면 D1 이 죽는다).
     const mind = await mlMindLoad(DB);
@@ -23666,8 +23742,21 @@ async function stackSampleBackfill(DB, opts) {
       made++;
     }
     await setState(DB, "stack_bf_cursor", { lastId: lastId, made: _num(st.made, 0) + made, ts: Date.now() });
-    return "[STACK-BF] +" + made + "표본 (건너뜀 " + skipped + ", 커서 " + lastId + ", 누적 " + (_num(st.made, 0) + made) + ")";
+    return "[STACK-BF] +" + made + "표본 (건너뜀 " + skipped + ", 커서 " + lastId + ", 에폭 " + _ep +
+           ", 누적 " + (_num(st.made, 0) + made) + ") — 누출없음";
   } catch (e) { return "[STACK-BF] fail: " + (e && e.message); }
+}
+
+// [V33.104] 전문가 재학습 직전의 ml_samples 최대 id 를 못 박는다.
+//   이 시점 이후 들어오는 행은 오늘 밤 학습되는 전문가들이 본 적 없는 데이터다 —
+//   내일 밤 STACK 소급생성이 그 구간만 쓰면 in-sample 누출이 원천적으로 불가능해진다.
+async function stackExpertEpochStamp(DB) {
+  try {
+    const r = await DB.prepare("SELECT MAX(id) AS m FROM ml_samples").first();
+    const id = _num(r && r.m, 0);
+    await setState(DB, "stack_expert_epoch", { id: id, ts: Date.now() });
+    return "[STACK-EPOCH] 전문가 학습 기준선 id " + id;
+  } catch (e) { return "[STACK-EPOCH] fail: " + (e && e.message); }
 }
 
 async function stackTrainNightly(DB) {
@@ -24458,11 +24547,26 @@ async function icForwardCheck(DB, opts) {
     const prev = await getState(DB, o.stateKey, null);
     if (!prev || !(_num(prev.ts, 0) > 0)) return null;         // 어제 모델이 없으면 전진검증 불가
     if (o.featVer != null && prev.featVer !== o.featVer) return null;
+    // ══ [V33.104] ★전진검증이 영원히 0/400 이던 이유 — ts 의 의미가 표마다 다르다★ ══
+    //   ml_samples 의 ts 는 ★봉의 날짜★ 다(수확기가 baseTs − k일 로 역산해 넣는다).
+    //   그런데 여기선 "학습 이후 도착한 표본" 을 ts > 모델학습시각 으로 골랐다.
+    //   수확 표본은 ts 가 전부 과거라 이 조건에 걸리는 행이 사실상 0 이다
+    //   → MEMO 는 minForward(400)를 구조적으로 못 채우고 영원히 '전진검증 대기' 가 된다
+    //     (사용자 화면의 STACK/MEMO "전진검증 0/400" 이 정확히 이것이다).
+    //   우리가 필요한 성질은 '시간순으로 뒤' 가 아니라 ★학습 당시 존재하지 않았던 행★ 이다
+    //   — 그래야 적합에 쓰이지 않았음이 보장된다.
+    //   → 1순위: 학습 때 기록해 둔 maxId 보다 큰 id (집합적으로 완벽히 배타적)
+    //     2순위: 도착시각 ins_ts (V33.32 부터 모든 신규 행에 기록된다)
+    //     3순위: 종전 ts (ts 가 곧 적재시각인 표 — flow/xalpha/stack_samples)
+    let _where, _bindVal, _mode;
+    if (_num(prev.maxId, 0) > 0) { _where = "id > ?"; _bindVal = _num(prev.maxId, 0); _mode = "id"; }
+    else if (o.hasInsTs) { _where = "COALESCE(ins_ts, ts) > ?"; _bindVal = _num(prev.ts, 0); _mode = "ins_ts"; }
+    else { _where = "ts > ?"; _bindVal = _num(prev.ts, 0); _mode = "ts"; }
     const rs = await DB.prepare(
-      "SELECT ts, feat, label, pnl_pct FROM " + o.table + " WHERE featver = ? AND ts > ? ORDER BY ts ASC LIMIT 4000"
-    ).bind(o.sampleFeatVer != null ? o.sampleFeatVer : o.featVer, _num(prev.ts, 0)).all();
+      "SELECT ts, feat, label, pnl_pct FROM " + o.table + " WHERE featver = ? AND " + _where + " ORDER BY ts ASC LIMIT 4000"
+    ).bind(o.sampleFeatVer != null ? o.sampleFeatVer : o.featVer, _bindVal).all();
     const rows = (rs && rs.results) || [];
-    if (rows.length < ICGATE.minForward) return { n: rows.length, ic: null, t: null, ready: false };
+    if (rows.length < ICGATE.minForward) return { n: rows.length, ic: null, t: null, ready: false, mode: _mode };
     const pv = [], yv = [];
     for (const r of rows) {
       let v; try { v = JSON.parse(r.feat); } catch (e) { continue; }
@@ -24473,11 +24577,11 @@ async function icForwardCheck(DB, opts) {
       if (y == null) continue;
       pv.push(p); yv.push(y);
     }
-    if (pv.length < ICGATE.minForward) return { n: pv.length, ic: null, t: null, ready: false };
+    if (pv.length < ICGATE.minForward) return { n: pv.length, ic: null, t: null, ready: false, mode: _mode };
     const st = _icBlockStats(pv, yv, 5);
     return { n: pv.length, ic: +_num(st.ic, 0).toFixed(5),
              blockIC: st.blockIC != null ? +st.blockIC.toFixed(5) : null,
-             t: st.t != null ? +st.t.toFixed(3) : null, ready: true };
+             t: st.t != null ? +st.t.toFixed(3) : null, ready: true, mode: _mode };
   } catch (e) { return null; }
 }
 
@@ -25311,12 +25415,16 @@ async function _stinSavePend(p) {
 //   즉 V33.40 이후 장중 학습 파이프라인은 관측 0건이었고(로그의 "관측 +0"이 그 증거),
 //   그래서 단타 모델이 학습될 표본 자체가 없었다. mb 는 함수 본문에서 쓰이지도 않으므로 제거한다.
 function stinObserve(pend, symbol, market, feat, price, ifeat) {
-  if (!pend || !Array.isArray(feat) || !(price > 0)) return false;
+  // [V33.104] 왜 거부됐는지 남긴다 — 종전엔 전부 false 라 "obs_reject:2" 만 보이고
+  //   중복간격(minGapMin) 때문인지 버퍼포화(maxPend) 때문인지 구분이 안 됐다.
+  //   진단 카운터는 호출부(__scalpDiag)가 읽는다.
+  if (pend) pend._why = null;
+  if (!pend || !Array.isArray(feat) || !(price > 0)) { if (pend) pend._why = "badarg"; return false; }
   const now = Date.now();
   for (const it of pend.items) {
-    if (it.s === symbol && (now - it.t) < STIN.minGapMin * 60000) return false;   // 너무 잦은 중복 관측
+    if (it.s === symbol && (now - it.t) < STIN.minGapMin * 60000) { pend._why = "gap"; return false; }   // 너무 잦은 중복 관측
   }
-  if (pend.items.length >= STIN.maxPend) return false;
+  if (pend.items.length >= STIN.maxPend) { pend._why = "full"; return false; }
   const rec = { s: symbol, m: market, t: now, p: price,
                 x: feat.map(function (v) { return +(_num(v, 0)).toFixed(4); }) };   // 4자리 반올림 = 용량 절감
   // [V33.46] 장중 미시구조 피처 — 아래 STIN_IFEAT_N 개. 없으면 구버전 표본으로 남는다.
@@ -25403,11 +25511,25 @@ async function stinBackfill(DB, opts) {
   try {
     // 대상 심볼 — daily: 캐시가 있는 전 종목(미국·한국·원자재). 오프셋 회전으로 순차 전수 순회.
     const dr = await DB.prepare("SELECT k FROM state WHERE k >= 'daily:' AND k < 'daily;' ORDER BY k").all();
-    const all = [];
+    // ══ [V33.104] ★백필이 하루에 표본 1건만 만들던 이유 — 알파벳 정렬 회전★ ══
+    //   대상은 'daily:' 키를 ORDER BY k 로 읽는다. 한국 티커는 숫자로 시작해(005930.KS)
+    //   ASCII 상 영문보다 앞이라 ★유니버스 앞쪽 전부가 KR★ 이다. 회당 5~45종목씩 도는
+    //   회전이 한동안 KR 만 훑는다는 뜻이다.
+    //   그런데 KR 분봉은 네이버 minute5 라 ★당일 세션(최대 78봉)★ 밖에 못 준다.
+    //   최소 봉 요건이 60+12=72 였으니 장 초·중반엔 전부 skipShort 로 버려졌다.
+    //   반면 US 는 야후 5m 1개월(약 1,700봉)이라 종목당 ~140표본이 나온다.
+    //   → (1) 시장별로 나눠 라운드로빈 병합한다(매 라운드에 US 가 반드시 섞인다)
+    //     (2) 최소 봉 요건을 루프가 실제로 필요로 하는 값으로 내린다(아래 40)
+    const _us = [], _kr = [];
     for (const r of ((dr && dr.results) || [])) {
       const sy = String(r.k).slice(6);
       if (!sy || sy[0] === "^") continue;   // 지수(^…)만 제외 — 거래 대상이 아니다
-      all.push(sy);
+      (/\.(KS|KQ)$/i.test(sy) ? _kr : _us).push(sy);
+    }
+    const all = [];
+    for (let i = 0; i < Math.max(_us.length, _kr.length); i++) {
+      if (i < _us.length) all.push(_us[i]);
+      if (i < _kr.length) all.push(_kr[i]);
     }
     if (!all.length) return "[ST-BACKFILL] 대상 없음";
     // [V33.72] ★선별하지 않는다★ (사용자 지시)
@@ -25439,7 +25561,10 @@ async function stinBackfill(DB, opts) {
       let mb = null;
       try { mb = await fetchMinuteBars(sym, { interval: "5m", range: "1mo" }); } catch (e) { symFail++; continue; }
       const c = mb && (mb.allCloses && mb.allCloses.length ? mb.allCloses : mb.closes);
-      if (!Array.isArray(c) || c.length < 60 + H) { skipShort++; continue; }
+      // [V33.104] 60+H(=72) → 40. 루프는 i=24 에서 시작해 i+H 까지 필요하므로 37봉이면
+      //   표본이 나온다. 72 는 근거 없이 높았고, 그 탓에 KR 은 장 마감 직전이 아니면
+      //   무조건 버려졌다(당일 세션이 78봉뿐). 40 이면 개장 3시간 뒤부터 KR 도 기여한다.
+      if (!Array.isArray(c) || c.length < 40) { skipShort++; continue; }
       const h = (mb.allHighs && mb.allHighs.length ? mb.allHighs : mb.highs) || [];
       const l = (mb.allLows && mb.allLows.length ? mb.allLows : mb.lows) || [];
       const v = (mb.allVolumes && mb.allVolumes.length ? mb.allVolumes : mb.volumes) || [];
@@ -35045,7 +35170,9 @@ export default {
           //   장외 20종목/10분 → 900종목 기준 약 7.5시간이면 전수 커버(종전 8종목이면 19시간).
           // [V33.102] 장외 회당 20 → 45 종목. 900종목 전수 커버가 7.5시간 → 3.3시간으로 줄어든다.
           //   장중(5종목)은 그대로 — 거래 사이클 예산을 잠식하면 안 된다.
-          const _bfr = await stinBackfill(env.DB, { maxSyms: _mkoBf ? 5 : 45, maxSamples: 8000 });
+          // [V33.104] 장중 5 → 12. 이 단계는 전용 예산(30)을 따로 받으므로 거래 사이클을
+          //   잠식하지 않는다. US 가 라운드로빈으로 섞이면서 회당 수백 표본이 나온다.
+          const _bfr = await stinBackfill(env.DB, { maxSyms: _mkoBf ? 12 : 45, maxSamples: 8000 });
           await log(env.DB, "INFO", null, _bfr || "[ST-BACKFILL] 반환 없음");
         } else {
           // [V33.71] ★"안 돌았다"를 추측하지 않게 스킵 사유를 남긴다★
@@ -35577,6 +35704,13 @@ export default {
                 }
               }
             } catch (e) {}
+            // [V33.104] ★STACK 소급생성은 전문가 재학습 '앞' 이어야 누출이 없다★
+            //   수확이 방금 넣은 행들은 어제 학습된 전문가들이 본 적 없는 데이터다.
+            //   지금 그 행들을 어제 전문가로 채점해야 out-of-sample STACK 표본이 된다.
+            //   아래 l1~memo 가 돌고 나면 그 행들은 in-sample 이 되어 못 쓴다.
+            await _stg("stackbf", async function () { return await stackSampleBackfill(env.DB, {}); });
+            // 채점이 끝났으면 '오늘 전문가가 학습할 구간' 의 상한을 못 박는다 — 내일 기준선.
+            await _stg("stackepoch", async function () { return await stackExpertEpochStamp(env.DB); });
             // (3) 7단 학습 파이프라인(순서 고정: L1→노이즈→앙상블→MIND→DNN→GBDT)
             await _stg("l1", async function () { return await mlTrainNightly(env.DB); });
             await _stg("bandit", async function () { return await mlBanditNoiseNightly(env.DB); });
@@ -35607,8 +35741,6 @@ export default {
             await _stg("confk", async function () { return await scalpConfluenceFitNightly(env.DB); });
             // [V33.101] 섀도우 MIND 재평가 — 저장만 하고 아무도 안 읽던 키를 살린다.
             await _stg("mindshadow", async function () { return await mindShadowPromoteNightly(env.DB); });
-            // [V33.102] STACK 표본 소급생성 — 청산에서만 나와서 영영 안 쌓이던 것을 푼다(학습 앞에 둔다).
-            await _stg("stackbf", async function () { return await stackSampleBackfill(env.DB, {}); });
             await _stg("stack", async function () { return await stackTrainNightly(env.DB); });
             await _stg("dual", async function () { return await dualHeadTrainNightly(env.DB); });
             // [V33.90] 실제 원장 기준 포트폴리오 통계(NautilusTrader PortfolioAnalyzer) —

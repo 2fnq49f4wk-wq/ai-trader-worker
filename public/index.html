@@ -14181,14 +14181,18 @@ html[data-theme="light"] .rail{background:#fff;}
     var rows = [
       ['universe', '① 유니버스', total, total, '전체 추적 종목', ''],
       ['s2', '② 스캔 완료', scanned, total, '기술 프리스크린 통과분만 추론', 's2'],
-      ['s3', '③ 위원회 산출', ranked, scanned || base, '승률 예측이 나온 상위 종목', 's3'],
+      // [V33.104] 종전 분모는 '직전 증분 스캔분(scanned)' 이었는데, ranked 는 12시간 동안
+      //   여러 증분 회차에서 누적·병합된 픽이라 모집단이 다르다 → 60/52 = 115% 처럼
+      //   100%를 넘는 값이 표시됐다(분수의 분자·분모가 다른 집단). 분모를 유니버스로 맞춘다.
+      ['s3', '③ 위원회 산출', ranked, total || base, '승률 예측이 나온 상위 종목(12시간 누적)', 's3'],
       ['s4', '④ 진입후보', cand, ranked || base, '게이트 통과 (랭크 ≥ 0.60)', 's4'],
       ['abst', '⑤ 기권', abst, ranked || base, '불확실 — 판단 보류', 'abst']
     ];
     el.innerHTML = rows.map(function(r){
       var val = r[2] || 0, den = r[3] || base;
       var w = Math.max(1.5, Math.min(100, (val / base) * 100));
-      var pctTxt = (den && den !== val) ? ((val / den) * 100).toFixed(0) + '%' : '';
+      // 비율은 100%를 넘을 수 없다 — 넘으면 분모 선택이 틀린 것이므로 눈에 띄게 두지 않는다.
+      var pctTxt = (den && den !== val) ? Math.min(100, (val / den) * 100).toFixed(0) + '%' : '';
       return '<div class="nlv-fstep '+r[5]+'" title="'+esc(r[4])+'">'
         +'<span class="fl">'+esc(r[1])+'</span>'
         +'<span class="nlv-fbar"><span style="width:'+w.toFixed(1)+'%"></span></span>'
