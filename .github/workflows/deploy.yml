@@ -71,6 +71,12 @@ jobs:
       #   Roboflow API 키를 5개 외부 호스트로 보내고 있었다(이번에 삭제).
       - name: No external AI policy check
         run: node tools/check-no-external-ai.mjs
+      # [V33.115] 표본 고유도 — 워커와 Modal 트레이너가 ★같은 자★ 로 재는지 확인한다.
+      #   V33.114 직후가 실제로 어긋난 상태였다: 워커 자체학습만 유효표본수로 하한을 재고
+      #   외부 업로드(DNN·GBDT·MIND·단타)는 명목 n 이라, 같은 성적이어도 외부 모델만 승격됐다.
+      #   실제 파이썬 함수 본문을 실행해 워커 결과와 원소별로 비교한다(재구현 비교 아님).
+      - name: Sample uniqueness contract check
+        run: node tools/check-uniqueness.mjs
       # cloudflare/wrangler-action 대신 로컬에서 검증된 방식 그대로 실행
       # (wrangler-action@v3의 npx 자동설치가 4.86.0을 요구하며 실패하던 문제 회피)
       - name: Install wrangler

@@ -164,15 +164,31 @@ def train_job(epochs: int = EPOCHS_DEFAULT, dry: bool = False):
     MKT = np.array([str(s.get("m") or "us") for s in samples])
     HV = np.array([1.0 if s.get("hv") else 0.0 for s in samples], dtype=np.float64)
     TS = np.array([s.get("ts", 0) for s in samples], dtype=np.float64)
+    # [V33.115] 심볼 — 워커 /api/ml-export 가 s 로 내려준다(고유도 계산에 필요).
+    SYM = np.array([str(s.get("s") or "") for s in samples])
     now = float(TS.max()) if N else time.time() * 1000
 
-    mean = X.mean(axis=0); std = X.std(axis=0); std[std < 1e-6] = 1.0
+    # [V33.115] ★표준화 누출 수정★ — 종전엔 평균·표준편차를 ★검증분 포함 전체★ 로 계산한 뒤
+    #   그 자로 검증분을 채점했다. 검증표본의 분포가 변환에 스며들어 검증성적이 실제보다 좋게 나온다.
+    #   워커의 _miniLogisticTrain 에서도 같은 버그를 잡았다(V33.114) — 두 곳이 같은 실수를 했다.
+    #   분할이 아래에서 정해지므로 여기서는 '검증 꼬리'를 미리 떼고 학습 구간만으로 잡는다.
+    _nval0 = max(20, int(N * val_frac))
+    _ntr0 = max(1, N - _nval0)
+    mean = X[:_ntr0].mean(axis=0); std = X[:_ntr0].std(axis=0); std[std < 1e-6] = 1.0
     Xn = np.clip((X - mean) / std, -std_clip, std_clip)
     absp = np.abs(PNL); pnl_scale = np.median(absp) if len(absp) else 1.0
     pnl_scale = pnl_scale if pnl_scale > 1e-6 else 1.0
     days = np.maximum(0.0, (now - TS) / 86400000.0)
     recency = np.maximum(rec_floor, np.power(0.5, days / hl_days))
-    mw = np.clip(absp / pnl_scale, 0.3, 3.0) * np.where(HV > 0, hv_w, 1.0) * recency
+    # [V33.115] 고유도 가중 — 겹친 표본의 발언권을 동시성만큼 나눈다(과적합 완화).
+    _hor_d = 10.0
+    try:
+        _hor_d = float((cfg or {}).get("prediction", {}).get("horizonDays") or 10)
+    except Exception:
+        _hor_d = 10.0
+    UNIQ = _uniq_weights(TS, SYM, _hor_d * 86400000.0)
+    print(f"   표본 고유도: 평균 {UNIQ.mean():.3f} · 유효 {UNIQ.sum():.0f}/{N} (라벨지평 {_hor_d:.0f}일)")
+    mw = np.clip(absp / pnl_scale, 0.3, 3.0) * np.where(HV > 0, hv_w, 1.0) * recency * UNIQ
 
     n_val = max(20, int(N * val_frac))
     cut_ts = TS[N - n_val] - embargo_ms
@@ -305,7 +321,15 @@ def train_job(epochs: int = EPOCHS_DEFAULT, dry: bool = False):
         print(f"   캘리브레이션: τ*={tau:.3f} (logit 시프트 {delta:+.3f}) — 검증 전반 {half}건으로 선택, 후반 {n_eval}건으로 평가")
     else:
         acc = float(((ps >= 0.5) == (ys > 0.5)).mean()); n_eval = len(ps)
-    lb = wilson_lb(acc, n_eval)
+    # [V33.115] ★Wilson 하한을 유효표본수로 잰다★
+    #   n_eval 은 ★명목★ 이다. 10일 지평 라벨은 같은 종목에서 겹치므로 독립 관측이 아니고,
+    #   명목 n 으로 재면 하한이 실제보다 좁게(=낙관적으로) 나온다. 겹침의 역수를 합한
+    #   유효표본수로 재야 "정확도 하한 X% 이상" 이라는 승격 게이트가 제 뜻을 가진다.
+    _dnn_uw = UNIQ[va[len(va) - n_eval:]]
+    _dnn_neff = max(8, int(round(float(_dnn_uw.sum()))))
+    lb = wilson_lb(acc, _dnn_neff)
+    if _dnn_neff < n_eval:
+        print(f"   유효표본 {_dnn_neff}/{n_eval} (평균 고유도 {_dnn_uw.mean():.3f}) — 하한을 유효표본으로 산출 {lb:.4f}")
     # [V32.9] ★과적합 진단★ 학습셋 정확도를 검증셋과 비교 — 격차가 크면 과적합(→데이터·규제 필요),
     #   격차가 작고 둘 다 낮으면 신호/피처 한계(→피처 품질·라벨 개선 필요). 캘리브레이션 반영 후 평가.
     try:
@@ -392,10 +416,16 @@ def train_job(epochs: int = EPOCHS_DEFAULT, dry: bool = False):
         raise RuntimeError(f"{what} 재시도 {retries+1}회 모두 실패") from last
 
     # 1) begin — 메타(가중치 제외)만 전송 (D1 과부하 대비 재시도)
-    _post({"key": KEY, "stage": "begin"},
-          {"featVer": featver, "mean": mean.tolist(), "std": std.tolist(), "dims": dims,
-           "seeds": len(js_nets), "valAcc": round(acc, 4), "valAccLB": round(lb, 4), "valN": n_eval, "n": N},
-          "begin", retries=3)
+    # [V33.115] 고유도 필드 동봉 — 정확도를 잰 구간(검증 뒤절반)의 유효표본수를 함께 보낸다.
+    #   워커가 valN(명목) 대신 valNEff 로 Wilson 하한을 재게 하려면 이 값이 있어야 한다.
+    _dnn_meta = {"featVer": featver, "mean": mean.tolist(), "std": std.tolist(), "dims": dims,
+                 "seeds": len(js_nets), "valAcc": round(acc, 4), "valAccLB": round(lb, 4),
+                 "valN": n_eval, "n": N}
+    try:
+        _dnn_meta.update(_uniq_fields(_dnn_uw))
+    except Exception as _e:
+        print("   고유도 필드 생략:", _e)
+    _post({"key": KEY, "stage": "begin"}, _dnn_meta, "begin", retries=3)
     # 2) net — 시드별 개별 전송(회당 ~6MB, 청크 D1 쓰기 → 과부하 시 재시도)
     for k, nt in enumerate(js_nets):
         _post({"key": KEY, "stage": "net", "i": k}, nt, f"net[{k}]", to=300, retries=3)
@@ -407,12 +437,12 @@ def train_job(epochs: int = EPOCHS_DEFAULT, dry: bool = False):
     if not dry:
         print("⑤ GBDT 외부학습(섀도우)")
         try:
-            _train_and_upload_gbdt(BASE, KEY, HDR, X, Y, TS, featver, D)
+            _train_and_upload_gbdt(BASE, KEY, HDR, X, Y, TS, featver, D, UNIQ)
         except Exception as e:
             print("GBDT 학습/업로드 예외(무시):", e)
         print("⑥ 부스팅 3종(XGB·LGB·CatBoost) 외부학습(섀도우)")
         try:
-            _train_and_upload_boosters(BASE, KEY, HDR, X, Y, TS, featver, D, PNL)
+            _train_and_upload_boosters(BASE, KEY, HDR, X, Y, TS, featver, D, PNL, UNIQ)
         except Exception as e:
             print("부스팅 학습/업로드 예외(무시):", e)
         # [V33.76] ★미국장·한국장 분리학습★ (사용자 지시)
@@ -422,12 +452,12 @@ def train_job(epochs: int = EPOCHS_DEFAULT, dry: bool = False):
         #   아예 별도 모델이 맞다. 표본이 충분한 시장만 전용 모델을 올리고, 부족하면 통합 모델을
         #   그대로 쓴다(워커가 <이름>_<시장> → <이름> 순으로 폴백).
         try:
-            _train_per_market(BASE, KEY, HDR, MKT, X, Y, TS, PNL, featver, D)
+            _train_per_market(BASE, KEY, HDR, MKT, X, Y, TS, PNL, featver, D, UNIQ)
         except Exception as e:
             print("시장별 분리학습 예외(무시):", e)
         print("⑦ MIND(FM) 외부학습 — 위원장 모델 GPU 완전수렴")
         try:
-            _train_and_upload_fm(BASE, KEY, HDR, X, Y, TS, PNL, featver, D)
+            _train_and_upload_fm(BASE, KEY, HDR, X, Y, TS, PNL, featver, D, UNIQ)
         except Exception as e:
             print("FM(MIND) 학습/업로드 예외(무시):", e)
         # [V33.41] 장중 단타 모델 — 표본 소스·라벨 지평·업로드 슬롯이 전부 위원회와 분리돼 있어
@@ -445,7 +475,7 @@ def train_job(epochs: int = EPOCHS_DEFAULT, dry: bool = False):
 #   leaf w = -G/(H+λ). 여기선 그 포맷을 그대로 산출한다(독립 모델 — Worker가 채점만 하면 됨).
 #   기본 업로드는 섀도우(비활성) — Worker가 자체 표본으로 self-검증 후 수동 승격(?activate=1).
 # ============================================================================
-def _train_and_upload_gbdt(BASE, KEY, HDR, X, Y, TS, featver, D):
+def _train_and_upload_gbdt(BASE, KEY, HDR, X, Y, TS, featver, D, UNIQ=None):
     import numpy as np, math, json, time, requests
     # [V32.9] GBDT 강화: 학습률↓+트리↑(저LR·다트리=일반화 향상, 표준 부스팅 정석) + 행/열 서브샘플
     #   (stochastic GBDT — 과적합↓·일반화↑). 표(tabular) 금융데이터엔 딥넷보다 GBDT가 보통 강함.
@@ -462,6 +492,8 @@ def _train_and_upload_gbdt(BASE, KEY, HDR, X, Y, TS, featver, D):
     Xs = X[order].astype(np.float64); Ys = Y[order].astype(np.float64)
     nval = max(200, int(N * VALFRAC))
     Xtr, Ytr, Xva, Yva = Xs[:-nval], Ys[:-nval], Xs[-nval:], Ys[-nval:]
+    # [V33.115] 검증구간 고유도 — 정렬 후 뒤 nval 개의 ★원본 인덱스★ 로 뽑아야 한다.
+    UWva = _uw_pick(UNIQ, N, order[-nval:])
     Ntr = len(Ytr)
     if Ntr < 200:
         print("GBDT: train 부족 — 생략"); return
@@ -558,7 +590,9 @@ def _train_and_upload_gbdt(BASE, KEY, HDR, X, Y, TS, featver, D):
     for t in trees:
         vraw = vraw + ETA * apply_tree(t, Xva)
     vacc = float(((sigmoid(vraw) >= 0.5).astype(np.float64) == Yva).mean())
-    z = 1.96; nn = float(nval); ph = vacc; denom = 1 + z * z / nn
+    # [V33.115] 명목 nval 이 아니라 유효표본수로 Wilson 하한을 잰다(겹친 라벨은 독립 관측이 아니다).
+    _neff = _neff_of(UWva)
+    z = 1.96; nn = float(_neff); ph = vacc; denom = 1 + z * z / nn
     center = (ph + z * z / (2 * nn)) / denom
     half = (z * math.sqrt(ph * (1 - ph) / nn + z * z / (4 * nn * nn))) / denom
     vlb = max(0.0, center - half)
@@ -569,7 +603,8 @@ def _train_and_upload_gbdt(BASE, KEY, HDR, X, Y, TS, featver, D):
     probe = [{"x": Xva[i].tolist(), "p": float(_vp[i])} for i in _pi]
     model = {"trees": trees, "eta": ETA, "bias": float(bias), "valAcc": round(vacc, 4),
              "valAccLB": round(vlb, 4), "valN": int(nval), "n": int(N), "featVer": featver, "probe": probe}
-    print(f"GBDT: trees={len(trees)} valAcc={vacc:.3f} lb={vlb:.3f} → 업로드(activate)")
+    model.update(_uniq_fields(UWva))
+    print(f"GBDT: trees={len(trees)} valAcc={vacc:.3f} lb={vlb:.3f} (유효 {_neff}/{nval}) → 업로드(activate)")
     for attempt in range(4):
         try:
             # [V32.15] activate=1 — sane(변환정합)+trustFloor 통과 시 라이브 승격(DNN과 동일 정책).
@@ -622,6 +657,86 @@ def _calc_ic(pred, y):
 #     워커는 블록평균 IC ≥ 문턱 ★그리고★ t ≥ 1.65 일 때만 신뢰하고,
 #     가중 입력으로는 blockIC × clamp(t/2, 0, 1) 을 쓴다(못 믿을 IC 는 0 쪽으로 수축).
 #   이건 Qlib·Numerai·팩터 리서치가 공통으로 쓰는 표준 유의성 척도다.
+# ============================================================================
+# [V33.115] ★표본 고유도(average uniqueness) — de Prado, AFML 4장★
+#   우리 표본은 라벨 구간이 겹친다. 수확은 ★매 봉★ 을 표본으로 만드는데(strideBars:1)
+#   라벨 지평은 10일이라 이웃 표본끼리 결과 구간이 9/10 겹친다.
+#   겹친 표본은 독립 관측이 아니다 — 같은 사건을 열 번 세는 것에 가깝다.
+#     · 학습: 같은 패턴을 반복해 보고 과적합한다
+#     · 통계: n 이 부풀어 Wilson 하한·IC 유의성이 과신한다
+#   → 각 표본의 동시성(자기 라벨 구간과 겹치는 표본 수)의 역수를 가중으로 쓴다.
+#     가중의 합이 ★유효표본수★ 이고, 평균이 평균 고유도다.
+#   ★같은 종목 안에서만 센다★ — 다른 종목의 같은 기간은 상관은 있어도 같은 사건이 아니다.
+#   (워커 _uniqWeights 와 같은 정의 — 두 곳이 갈리면 같은 모델을 서로 다른 자로 재게 된다)
+def _uniq_weights(TS, SYM, span_ms):
+    import numpy as np
+    n = len(TS)
+    w = np.ones(n, dtype=np.float64)
+    if n < 2 or not (span_ms > 0):
+        return w
+    try:
+        by = {}
+        for i in range(n):
+            by.setdefault(str(SYM[i]) if SYM is not None else "", []).append(i)
+        for _k, idx in by.items():
+            idx = sorted(idx, key=lambda j: TS[j])
+            m = len(idx)
+            lo = hi = 0
+            for a in range(m):
+                t0 = TS[idx[a]]
+                while lo < m and TS[idx[lo]] < t0 - span_ms:
+                    lo += 1
+                while hi < m and TS[idx[hi]] <= t0 + span_ms:
+                    hi += 1
+                w[idx[a]] = 1.0 / max(1, hi - lo)
+    except Exception:
+        return np.ones(n, dtype=np.float64)
+    return w
+
+
+def _uniq_fields(w_val):
+    """유효표본수·평균 고유도 — 워커의 신뢰 게이트가 이 값으로 Wilson 하한을 잰다."""
+    import numpy as np
+    try:
+        a = np.asarray(w_val, dtype=np.float64)
+        if a.size == 0:
+            return {}
+        n_eff = int(max(8, round(float(a.sum()))))
+        return {"valNEff": n_eff, "valUniq": round(float(a.mean()), 4)}
+    except Exception:
+        return {}
+
+
+def _uw_pick(UNIQ, n_total, idx):
+    """train_job 이 한 번 계산한 고유도 벡터에서 검증구간만 뽑는다.
+
+    고유도는 ★표본 전체★ 기준으로 쟀다 — 검증표본이 학습표본과 겹친 것도 세므로
+    검증표본끼리만 셌을 때보다 유효 n 이 작게(=보수적으로) 나온다. 그게 맞다:
+    학습구간과 라벨을 공유하는 검증표본은 독립 증거가 아니다.
+    길이가 안 맞으면(호출측 변경·구버전) 조용히 균등가중으로 떨어뜨린다 — 고유도 보정이
+    빠질 뿐 학습·업로드는 그대로 돈다.
+    """
+    import numpy as np
+    idx = np.asarray(idx)
+    try:
+        if UNIQ is None:
+            return np.ones(idx.size, dtype=np.float64)
+        a = np.asarray(UNIQ, dtype=np.float64)
+        if a.size != int(n_total):
+            return np.ones(idx.size, dtype=np.float64)
+        return a[idx]
+    except Exception:
+        return np.ones(idx.size, dtype=np.float64)
+
+
+def _neff_of(w):
+    import numpy as np
+    try:
+        return max(8, int(round(float(np.asarray(w, dtype=np.float64).sum()))))
+    except Exception:
+        return 8
+
+
 def _calc_ic_blocks(pred, y, K=5):
     import numpy as np
     try:
@@ -662,7 +777,7 @@ def _ic_block_fields(pred, y, K=5):
 #   통합 모델보다 나쁘다(과적합). 그때는 워커가 자동으로 통합 모델로 폴백한다.
 MIN_PER_MARKET = 4000
 
-def _train_per_market(BASE, KEY, HDR, MKT, X, Y, TS, PNL, featver, D):
+def _train_per_market(BASE, KEY, HDR, MKT, X, Y, TS, PNL, featver, D, UNIQ=None):
     import numpy as np, json, time, requests, math
 
     if MKT is None or len(MKT) != len(Y):
@@ -704,6 +819,9 @@ def _train_per_market(BASE, KEY, HDR, MKT, X, Y, TS, PNL, featver, D):
         Xs, Ys = Xm[order].astype(np.float64), Ym[order].astype(int)
         nval = max(200, int(n * 0.2))
         Xtr, Ytr, Xva, Yva = Xs[:-nval], Ys[:-nval], Xs[-nval:], Ys[-nval:]
+        # [V33.115] 검증구간 고유도 — sel(부분집합) → order(정렬) 두 번 접혔으므로
+        #   원본 인덱스로 되돌려서 뽑는다. 겹침은 같은 종목 안에서만 세므로 시장별로 나눠도 값이 같다.
+        UWva = _uw_pick(UNIQ, len(Y), np.flatnonzero(sel)[order][-nval:])
 
         # 수익크기 가중(V33.75)을 시장별로 다시 산출 — 시장마다 변동성 스케일이 달라 공유하면 안 된다.
         Wtr = None
@@ -785,7 +903,8 @@ def _train_per_market(BASE, KEY, HDR, MKT, X, Y, TS, PNL, featver, D):
         wr = np.array([eta * sum(_wout(t, x) for t in trees) for x in Xva])
         bias = float((margin - wr).mean())
         vacc = float(((pva >= 0.5).astype(int) == Yva).mean())
-        vlb = _wilson(vacc, nval)
+        _neff = _neff_of(UWva)
+        vlb = _wilson(vacc, _neff)          # [V33.115] 명목 nval → 유효표본수
         pi = np.linspace(0, nval - 1, min(200, nval)).astype(int)
         probe = [{"x": Xva[i].tolist(), "p": float(pva[i])} for i in pi]
         _ic, _ric = _calc_ic(pva, Yva)
@@ -794,7 +913,8 @@ def _train_per_market(BASE, KEY, HDR, MKT, X, Y, TS, PNL, featver, D):
                  "featVer": featver, "probe": probe, "market": mk, "algo": algo,
                  "valIC": round(_ic, 5), "valRankIC": round(_ric, 5)}
         model.update(_ic_block_fields(pva, Yva))
-        print(f"   {mk.upper()}: trees={len(trees)} eta={eta:.3f} valAcc={vacc:.3f} lb={vlb:.3f} IC={_ic:.4f} RankIC={_ric:.4f}"
+        model.update(_uniq_fields(UWva))
+        print(f"   {mk.upper()}: trees={len(trees)} eta={eta:.3f} valAcc={vacc:.3f} lb={vlb:.3f}(유효 {_neff}/{nval}) IC={_ic:.4f} RankIC={_ric:.4f}"
               + (f" blockIC={model['valICBlock']:.4f} t={model['valICt']:.2f}" if "valICt" in model else " (블록 부족)"))
         _upload("gbdt_" + mk, model)
 
@@ -942,7 +1062,7 @@ def _train_double_ensemble(Xtr, Ytr, Xva, Yva, Wbase=None, K=4, bins_sr=10, bins
     return _predict, subs, {"valAcc": vacc}
 
 
-def _train_and_upload_boosters(BASE, KEY, HDR, X, Y, TS, featver, D, PNL=None):
+def _train_and_upload_boosters(BASE, KEY, HDR, X, Y, TS, featver, D, PNL=None, UNIQ=None):
     import numpy as np, math, json, time, requests, tempfile, os
 
     N = len(Y)
@@ -952,6 +1072,7 @@ def _train_and_upload_boosters(BASE, KEY, HDR, X, Y, TS, featver, D, PNL=None):
     Xs = X[order].astype(np.float64); Ys = Y[order].astype(int)
     nval = max(200, int(N * 0.2))
     Xtr, Ytr, Xva, Yva = Xs[:-nval], Ys[:-nval], Xs[-nval:], Ys[-nval:]
+    UWva = _uw_pick(UNIQ, N, order[-nval:])     # [V33.115] 검증구간 고유도
 
     # ── [V33.75] 변동성 스케일 크기가중 (Lim·Zohren·Roberts 2019 / Moskowitz·Ooi·Pedersen 2012) ──
     #   종전엔 모든 표본이 동일 가중이었다. +12% 날 거래와 +0.1% 날 거래를 똑같이 세면
@@ -1010,7 +1131,8 @@ def _train_and_upload_boosters(BASE, KEY, HDR, X, Y, TS, featver, D, PNL=None):
         # val 정확도(캘리브 없이 0.5 컷) + Wilson 하한
         _pred = (proba_lib >= 0.5).astype(int)
         vacc = float((_pred == Yva).mean())
-        vlb = _wilson(vacc, nval)
+        _neff = _neff_of(UWva)
+        vlb = _wilson(vacc, _neff)          # [V33.115] 명목 nval → 유효표본수
         # [V33.75] 수익가중 정확도 — '맞힌 비율'이 아니라 '맞힌 것들이 얼마나 큰 건이었나'.
         #   승격 판정은 기존 vacc 로 유지하고(회귀 위험 차단) 지표만 함께 찍어 비교 가능하게 한다.
         vaccW = None
@@ -1027,8 +1149,9 @@ def _train_and_upload_boosters(BASE, KEY, HDR, X, Y, TS, featver, D, PNL=None):
                  "valAccLB": round(vlb, 4), "valN": int(nval), "n": int(N), "featVer": featver, "probe": probe,
                  "valIC": round(_ic, 5), "valRankIC": round(_ric, 5)}
         model.update(_ic_block_fields(proba_lib, Yva))
+        model.update(_uniq_fields(UWva))
         if vaccW is not None: model["valAccW"] = round(vaccW, 4)
-        print(f"{name}: trees={len(trees)} valAcc={vacc:.3f} lb={vlb:.3f} IC={_ic:.4f} RankIC={_ric:.4f}"
+        print(f"{name}: trees={len(trees)} valAcc={vacc:.3f} lb={vlb:.3f}(유효 {_neff}/{nval}) IC={_ic:.4f} RankIC={_ric:.4f}"
               + (f" blockIC={model['valICBlock']:.4f} t={model['valICt']:.2f}" if "valICt" in model else "")
               + (f" 수익가중acc={vaccW:.3f}" if vaccW is not None else "") + " → 업로드(activate)")
         _upload(name, model)
@@ -1128,7 +1251,7 @@ def _train_and_upload_boosters(BASE, KEY, HDR, X, Y, TS, featver, D, PNL=None):
 #   충분한 에폭으로 완전수렴시켜 업로드 → Worker는 추론(_fmRaw)만. Worker와 동일한 2차 FM 공식·
 #   표준화(z=(x-mean)/std)·K=8을 그대로 써서 업로드 가중이 그대로 작동한다. MIND는 FM단독(experts=["fm"],
 #   meta=항등)으로 조립돼 위원장(always-on)으로 즉시 가동. τ* 캘리브레이션을 b에 구워 0.5컷 정합.
-def _train_and_upload_fm(BASE, KEY, HDR, X, Y, TS, PNL, featver, D):
+def _train_and_upload_fm(BASE, KEY, HDR, X, Y, TS, PNL, featver, D, UNIQ=None):
     import numpy as np, math, json, time, requests
     N = len(Y)
     if N < 200:
@@ -1137,11 +1260,16 @@ def _train_and_upload_fm(BASE, KEY, HDR, X, Y, TS, PNL, featver, D):
     order = np.argsort(TS)
     Xs = X[order].astype(np.float64); Ys = Y[order].astype(np.float64)
     Ps = np.abs(PNL[order].astype(np.float64))
-    mean = Xs.mean(axis=0); std = Xs.std(axis=0); std[std < 1e-6] = 1.0
+    nval = max(60, int(N * 0.2))
+    # [V33.115] ★표준화 누출 수정★ — 종전엔 평균·표준편차를 검증분 포함 전체로 잡았다.
+    #   MIND 는 이 mean/std 를 그대로 업로드해 워커 추론에 쓰므로, 검증분포가 스며들면
+    #   검증성적이 부풀 뿐 아니라 그 편향이 라이브 추론까지 따라간다. 학습구간만으로 잡는다.
+    #   (train_job·_miniLogisticTrain 에서 잡은 것과 같은 실수 — 세 곳이 같았다)
+    mean = Xs[:-nval].mean(axis=0); std = Xs[:-nval].std(axis=0); std[std < 1e-6] = 1.0
     Z = (Xs - mean) / std
     Z = np.clip(Z, -6, 6)
-    nval = max(60, int(N * 0.2))
     Ztr, Ytr = Z[:-nval], Ys[:-nval]; Zva, Yva = Z[-nval:], Ys[-nval:]
+    UWva = _uw_pick(UNIQ, N, order[-nval:])     # [V33.115] 검증구간 고유도
     # 표본가중: |pnl| 중앙값 정규화(0.3~3.0) × 균형 클래스가중
     pscale = np.median(Ps[:-nval]) if np.median(Ps[:-nval]) > 1e-6 else 1.0
     mw = np.clip(Ps[:-nval] / pscale, 0.3, 3.0)
@@ -1208,8 +1336,11 @@ def _train_and_upload_fm(BASE, KEY, HDR, X, Y, TS, PNL, featver, D):
     ph = sigmoid(fm_raw(Zva[hold], w, V, b))
     yh = Yva[hold] > 0.5
     vacc = float(np.mean((ph >= 0.5) == yh)); nh = int(nval - selN)
-    z16 = 1.64; den = 1 + z16 * z16 / nh
-    vlb = max(0.0, ((vacc + z16 * z16 / (2 * nh)) - z16 * math.sqrt((vacc * (1 - vacc) + z16 * z16 / (4 * nh)) / nh)) / den)
+    # [V33.115] 하한은 유효표본수로 — 홀드아웃(뒤절반)에 해당하는 고유도만 쓴다.
+    _uwh = UWva[selN:nval]
+    _neff = _neff_of(_uwh)
+    z16 = 1.64; den = 1 + z16 * z16 / _neff
+    vlb = max(0.0, ((vacc + z16 * z16 / (2 * _neff)) - z16 * math.sqrt((vacc * (1 - vacc) + z16 * z16 / (4 * _neff)) / _neff)) / den)
     # 변환정합성 probe — Worker mlFMScore가 재현하는지(원본 x, 확률 p)
     pi = np.linspace(0, nval - 1, min(200, nval)).astype(int)
     probe = [{"x": Xs[-nval:][i].tolist(), "p": float(sigmoid(fm_raw(Z[-nval:][i:i+1], w, V, b))[0])} for i in pi]
@@ -1217,7 +1348,8 @@ def _train_and_upload_fm(BASE, KEY, HDR, X, Y, TS, PNL, featver, D):
              "mean": mean.tolist(), "std": std.tolist(),
              "valAcc": round(vacc, 4), "valAccLB": round(vlb, 4), "valN": nh, "n": int(N),
              "featVer": featver, "probe": probe}
-    print(f"FM(MIND): K={K} seeds={SEEDS} valAcc={vacc:.3f} lb={vlb:.3f} (sel균형 {best_bal:.3f}) → 업로드(activate)")
+    model.update(_uniq_fields(_uwh))
+    print(f"FM(MIND): K={K} seeds={SEEDS} valAcc={vacc:.3f} lb={vlb:.3f}(유효 {_neff}/{nh}) (sel균형 {best_bal:.3f}) → 업로드(activate)")
     for attempt in range(4):
         try:
             r = requests.post(BASE + "/api/fm-import", params={"key": KEY, "activate": "1"},
@@ -1252,6 +1384,7 @@ def _train_and_upload_scalp(BASE, KEY, HDR, featver):
     #   한 시간 뒤를 맞히라는 구조라 스윙 모델과 입력이 같았고, 단타로서 배울 게 거의 없었다.
     #   ix 스키마 버전(fv)이 서버와 다른 표본은 섞지 않는다(피처 인덱스 어긋남 방지).
     days, X, Y, TS, PNL, BAR, HM = 14, [], [], [], [], [], []
+    SYM = []                                   # [V33.115] 고유도용 종목 — 겹침은 같은 종목 안에서만 센다
     ifeatver, ifeatn, ifeatnames = None, 0, []
     skipped_old = 0
     # [V33.72] 같은 (종목, 봉시각) 표본은 한 번만 쓴다.
@@ -1302,6 +1435,7 @@ def _train_and_upload_scalp(BASE, KEY, HDR, featver):
                 Y.append(1 if sm.get("y") else 0)
                 TS.append(sm.get("ts", 0))
                 PNL.append(float(sm.get("pnl") or 0.0))
+                SYM.append(str(sm.get("s") or ""))
                 BAR.append(sm.get("bar") or "time")            # tp / sl / time — 어느 배리어로 끝났나
                 HM.append(float(sm.get("hm") or 60.0))         # 결착까지 걸린 분
         except Exception as e:
@@ -1319,17 +1453,23 @@ def _train_and_upload_scalp(BASE, KEY, HDR, featver):
     X = np.array(X, dtype=np.float64); Y = np.array(Y, dtype=int); TS = np.array(TS)
     PNL = np.array(PNL, dtype=np.float64)
     BAR = np.array(BAR); HM = np.array(HM, dtype=np.float64)
+    SYM = np.array(SYM)
     D = X.shape[1]
     bar_mix = {b: int((BAR == b).sum()) for b in ("tp", "sl", "time")}
     print(f"   배리어 결착: TP {bar_mix['tp']} / SL {bar_mix['sl']} / 시간만료 {bar_mix['time']}")
     order = np.argsort(TS)
     Xs, Ys, TSs, PNLs = X[order], Y[order], TS[order], PNL[order]
     BARs, HMs = BAR[order], HM[order]
+    SYMs = SYM[order] if SYM.size == N else None
     nval = max(300, int(N * 0.25))
     Xva, Yva = Xs[-nval:], Ys[-nval:]
     # [V33.46] ★엠바고(purge)★ — 라벨 지평이 60분이라, 검증 시작 직전 60분 안의 학습표본은
     #   검증구간과 같은 가격움직임을 라벨로 공유한다(누출). 그만큼 잘라내야 검증 정확도가 정직하다.
     horizon_ms = 60 * 60 * 1000
+    # [V33.115] ★고유도★ — 5분봉 표본이 60분 지평 라벨을 달고 있으니 같은 종목의 인접 12봉은
+    #   거의 같은 가격움직임을 라벨로 공유한다. 검증 3,000건이 실제로는 몇백 건어치 증거일 수
+    #   있고, 명목 n 으로 잰 Wilson 하한은 그만큼 낙관적이다. 겹침의 역수를 합해 유효 n 을 쓴다.
+    UWva = _uniq_weights(TSs[-nval:], SYMs[-nval:] if SYMs is not None else None, horizon_ms)
     va_start = TSs[-nval]
     tr_mask = TSs[:-nval] < (va_start - horizon_ms)
     Xtr, Ytr, PNLtr = Xs[:-nval][tr_mask], Ys[:-nval][tr_mask], PNLs[:-nval][tr_mask]
@@ -1345,24 +1485,23 @@ def _train_and_upload_scalp(BASE, KEY, HDR, featver):
     #   배우면 모델이 '거의 안 움직인 다수'에 맞춰진다. 단타에서 중요한 건 크게 움직인 쪽이다.
     Wtr = 1.0 + np.clip(np.abs(PNLtr), 0, 3.0) / 1.5     # 가중 [1.0, 3.0]
 
-    # [V33.47] ★평균 고유도 가중(de Prado)★ — 라벨 구간이 겹치는 표본은 서로 독립이 아니다.
-    #   같은 시각대에 200종목을 동시 관측하면 그들은 같은 시장 움직임을 라벨로 공유한다.
-    #   그대로 학습하면 '표본 N건'이 실제로는 훨씬 적은 정보량인데도 모델이 과신하게 된다.
-    #   각 표본의 라벨구간과 동시에 살아있던 표본 수(concurrency)의 역수를 가중으로 준다.
+    # [V33.47→V33.115] ★평균 고유도 가중(de Prado AFML 4장)★
+    #   종전 구현은 동시성을 ★전 종목에 걸쳐★ 셌다. 그런데 5분봉 표본은 매 시각 수백 종목이
+    #   동시에 만들어지므로 conc 가 어느 표본이든 거의 같은 큰 수(≈종목수×12)로 나왔고,
+    #   평균 1 정규화까지 거치면 가중이 사실상 균등해졌다 — 즉 ★거의 아무 일도 하지 않는 코드★
+    #   였다. 게다가 로그의 "유효표본 ≈ N/동시성" 은 자릿수가 틀린 숫자를 찍고 있었다
+    #   (표본 3만 건이 12건어치라는 뜻이 되는데, 그건 사실이 아니다).
+    #   de Prado 의 고유도는 ★같은 상품(종목) 안에서★ 라벨 구간이 겹치는 정도다. 다른 종목의
+    #   같은 시각은 상관이 있을 뿐 같은 사건이 아니고, 그건 상관구조로 다룰 문제지 표본가중이
+    #   아니다. 워커 _uniqWeights·스윙 트레이너와 같은 정의(_uniq_weights)로 통일한다.
     try:
-        ends = TStr + horizon_ms
-        conc = np.ones(len(TStr), dtype=np.float64)
-        srt = np.argsort(TStr)
-        ts_sorted = TStr[srt]
-        for i in range(len(TStr)):
-            # [t_i, t_i+H) 와 겹치는 표본 수 = 시작이 그 구간 안에 있는 표본 수(양방향 근사)
-            lo = np.searchsorted(ts_sorted, TStr[i] - horizon_ms, side="left")
-            hi = np.searchsorted(ts_sorted, ends[i], side="right")
-            conc[i] = max(1.0, float(hi - lo))
-        uniq = 1.0 / conc
-        uniq = uniq / uniq.mean()                 # 평균 1로 정규화 — 전체 스케일은 유지
-        Wtr = Wtr * np.clip(uniq, 0.25, 4.0)
-        print(f"   고유도 가중 — 평균 동시성 {conc.mean():.1f}건 (유효표본 ≈ {len(TStr)/max(conc.mean(),1):.0f}건)")
+        SYMtr = SYMs[:-nval][tr_mask] if SYMs is not None else None
+        uniq = _uniq_weights(TStr, SYMtr, horizon_ms)
+        _conc = 1.0 / np.clip(uniq, 1e-9, None)
+        Wtr = Wtr * np.clip(uniq / max(1e-9, uniq.mean()), 0.25, 4.0)
+        print(f"   고유도 가중 — 종목내 평균 동시성 {_conc.mean():.1f}봉 · 평균 고유도 {uniq.mean():.3f}"
+              f" (유효표본 ≈ {uniq.sum():.0f}/{len(TStr)}건)"
+              + ("" if SYMtr is not None else "  ※종목 없음 — 균등가중 폴백"))
     except Exception as e:
         print(f"   고유도 가중 생략: {e}")
 
@@ -1420,15 +1559,18 @@ def _train_and_upload_scalp(BASE, KEY, HDR, featver):
 
     proba = bst.predict(Xva, num_iteration=best)
     acc = float(((proba >= 0.5).astype(int) == Yva).mean())
-    z = 1.64; n = len(Yva); z2 = z * z
-    lb = max(0.0, ((acc + z2 / (2 * n)) - z * math.sqrt((acc * (1 - acc) + z2 / (4 * n)) / n)) / (1 + z2 / n))
+    # [V33.115] 하한은 ★유효표본수★ 로 잰다. 5분봉 검증 3,000건은 60분 지평 라벨이 겹쳐
+    #   실제로는 그보다 훨씬 적은 독립 증거다 — 명목 n 으로 재던 하한은 그만큼 낙관적이었다.
+    z = 1.64; n = len(Yva); _neff = _neff_of(UWva); z2 = z * z
+    _nb = float(_neff)
+    lb = max(0.0, ((acc + z2 / (2 * _nb)) - z * math.sqrt((acc * (1 - acc) + z2 / (4 * _nb)) / _nb)) / (1 + z2 / _nb))
     # [V33.97] ★단타 모델도 IC 를 보낸다★
     #   워커의 단타 신뢰 게이트는 종전에 정확도 하한 하나뿐이었다. Wilson 하한 특성상
     #   검증 2,000건이면 원시 정확도 55.3% 를 요구하는데, 60분 지평 배리어 라벨에서 그건
     #   사실상 불가능하다 — 그래서 학습이 성공해도 영원히 신뢰되지 않았다.
     #   GBDT 와 같은 IC 경로를 열어주려면 IC 와 그 유의성(블록 IC + t)을 함께 보내야 한다.
     _sic, _sric = _calc_ic(proba, Yva)
-    print(f"   valAcc {acc:.4f} (하한 {lb:.4f}, n={n}) IC {_sic:.4f} RankIC {_sric:.4f} / 트리 {len(trees)}")
+    print(f"   valAcc {acc:.4f} (하한 {lb:.4f}, 유효 n={_neff}/{n}) IC {_sic:.4f} RankIC {_sric:.4f} / 트리 {len(trees)}")
 
     # 변환정합 probe — 워커가 같은 확률을 재현하는지 검증(스윙과 동일한 안전장치)
     pi = np.linspace(0, len(Xva) - 1, min(200, len(Xva))).astype(int)
@@ -1440,6 +1582,7 @@ def _train_and_upload_scalp(BASE, KEY, HDR, featver):
              "posRate": round(pos_rate, 4), "horizonBars": 12, "probe": probe,
              "valIC": round(_sic, 5), "valRankIC": round(_sric, 5)}
     model.update(_ic_block_fields(proba, Yva))
+    model.update(_uniq_fields(UWva))
     if "valICt" in model:
         print(f"   blockIC {model['valICBlock']:.4f} t {model['valICt']:.2f} (유의성 게이트용)")
     for attempt in range(4):

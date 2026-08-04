@@ -84,16 +84,47 @@ function fnRanges() {
   return out;
 }
 const R = fnRanges();
-function channels(fn) {
+// 한 함수 ★본문에 직접 적힌★ 채널.
+function ownChannels(fn) {
   const rg = R[fn];
   if (!rg) return null;
   const body = lines.slice(rg[0], rg[1]).join("\n");
-  const reads = new Set(), writes = new Set();
+  const reads = new Set(), writes = new Set(), calls = new Set();
   for (const m of body.matchAll(/setState\([^,]+,\s*"([a-zA-Z0-9_:.]+)"/g)) writes.add(m[1]);
   for (const m of body.matchAll(/getState\([^,]+,\s*"([a-zA-Z0-9_:.]+)"/g)) reads.add(m[1]);
   for (const m of body.matchAll(/getStates\([^,]+,\s*\[([^\]]*)\]/g))
     for (const k of m[1].matchAll(/"([a-zA-Z0-9_:.]+)"/g)) reads.add(k[1]);
-  return { reads, writes };
+  // 최상위 헬퍼 호출 — 채널 전파에 쓴다.
+  for (const m of body.matchAll(/\b([A-Za-z_$][\w$]*)\s*\(/g)) if (R[m[1]] && m[1] !== fn) calls.add(m[1]);
+  return { reads, writes, calls };
+}
+// [V33.115] ★헬퍼를 타고 넘어가 채널을 모은다.★
+//   종전엔 단계 본문에 ★직접 적힌★ getState/setState 만 봤다. 그런데 실제 코드는 조회를
+//   헬퍼로 감싸는 게 보통이다 — 예: mlPoolUniqGet(DB) 안에서 ml_pool_uniq 를 읽는다.
+//   그러면 그 의존관계가 그래프에서 통째로 사라지고, 순서가 뒤집혀도 게이트가 통과한다.
+//   "검사했는데 못 잡았다" 는 이 저장소가 이미 여러 번 겪은 실패 형태다(V33.111 주석 참조).
+//   깊이 제한 + 순환 방지로 전이 폐포를 구한다.
+const _chCache = new Map();
+function channels(fn, depth, seen) {
+  depth = depth == null ? 3 : depth;
+  seen = seen || new Set();
+  if (depth === 3 && _chCache.has(fn)) return _chCache.get(fn);
+  const own = ownChannels(fn);
+  if (!own) return null;
+  const reads = new Set(own.reads), writes = new Set(own.writes);
+  if (depth > 0 && !seen.has(fn)) {
+    seen.add(fn);
+    for (const c of own.calls) {
+      const sub = channels(c, depth - 1, seen);
+      if (!sub) continue;
+      for (const k of sub.reads) reads.add(k);
+      for (const k of sub.writes) writes.add(k);
+    }
+    seen.delete(fn);
+  }
+  const out = { reads, writes };
+  if (depth === 3) _chCache.set(fn, out);
+  return out;
 }
 
 // ── 4) 의도된 역방향(어제 산출물을 쓰는 자리) ─────────────────────────────────
@@ -113,7 +144,19 @@ const INTENDED = {
   "stackepoch<-mind": "설계: 전문가 학습 직전 기준선",
   "stackepoch<-gbdt": "설계: 전문가 학습 직전 기준선",
   "stackepoch<-dnn": "설계: 전문가 학습 직전 기준선",
-  "stackepoch<-memo": "설계: 전문가 학습 직전 기준선"
+  "stackepoch<-memo": "설계: 전문가 학습 직전 기준선",
+  // ── 아래는 헬퍼 추적(V33.115)으로 새로 드러난 간선이다. 전부 확인 후 의도된 것으로 판정했다.
+  //   종전 게이트는 이 간선들을 ★보지도 못했다★ — 통과가 아니라 사각지대였다.
+  // 감성 학습은 '수집된 뉴스'로 어휘 계수를 적합한다. 수집기는 그 계수로 오늘 뉴스를 점수화하는데,
+  // 오늘 뉴스로 학습한 계수로 오늘 뉴스를 채점하면 그건 자기참조다 — 어제 계수를 쓰는 게 맞다.
+  "senti<-sentilearn": "설계: 어제 학습한 어휘로 오늘 뉴스를 채점(자기참조 방지)",
+  // mind_model 은 ★두 곳★ 이 쓴다: mind(#12, 야간 재학습)와 mindshadow(#27, 섀도우 승격).
+  // 아래 독자들의 실제 생산자는 mind(#12)이고 그건 정방향이다. mindshadow 는 같은 채널에
+  // 조건부로 덧쓰는 두 번째 기록자라 역방향으로 보일 뿐이다(승격은 그 다음날부터 반영된다).
+  "gbdt<-mindshadow": "채널 이중기록: 실제 생산자는 mind(#12) — 정방향",
+  "dnn<-mindshadow": "채널 이중기록: 실제 생산자는 mind(#12) — 정방향",
+  "expreg<-mindshadow": "채널 이중기록: 실제 생산자는 mind(#12) — 정방향",
+  "stackbf<-mindshadow": "누출방지: 어제 전문가로 채점(stackbf<-mind 와 같은 이유)"
 };
 
 // ── 5) 그래프 구성 + 순서 검증 ────────────────────────────────────────────────

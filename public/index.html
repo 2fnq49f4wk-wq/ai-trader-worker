@@ -13761,6 +13761,12 @@ html[data-theme="light"] .rail{background:#fff;}
                                                       : ('미신뢰'+(d.reason?' ('+esc(d.reason)+')':'')), C.amb);
         else                   msg = col('가동'+(has(d.w)?' w='+d.w:''), C.pos);
         if(d.source) msg += ' <span class="sub">·'+(d.source==='external'?'Modal':'Worker')+'</span>';
+        // [V33.115] 검증 n 은 ★유효표본수★ 다. 10일 지평 라벨이 같은 종목 안에서 겹치므로
+        //   "검증 3,000건" 은 3,000건어치 독립 증거가 아니다. 명목과 함께 보여 왜 문턱이
+        //   빡빡해졌는지 화면에서 바로 읽히게 한다(자가학습·Modal 업로드 모두 같은 자).
+        if(has(d.valN) && has(d.valNRaw) && d.valNRaw > d.valN)
+          msg += ' <span class="sub">· 검증 유효 '+n0(d.valN)+'/'+n0(d.valNRaw)
+               + (has(d.uniq)?'(고유도 '+d.uniq.toFixed(2)+')':'')+'</span>';
       }
       return [ico(on)+' '+nm, msg];
     };

@@ -2760,7 +2760,7 @@ async function applySignalTypeWeights(DB, cfg) {
 // ============================================================================
 // [V33.55] 빌드 버전 — SWR L2 캐시 키에 섞어 '배포 = 판단 캐시 자동 무효화'를 만든다.
 //   판정 로직을 고쳐도 옛 캐시가 최대 1시간 재배포되던 문제를 구조적으로 없앤다.
-const _BUILD_VER = "V33.114";
+const _BUILD_VER = "V33.115";
 
 const AI_PARAMS = {
   // ── OHLCV 타임프레임 ── 시가/고가/저가/종가/거래량을 어떤 봉 주기로 볼지.
@@ -17842,6 +17842,9 @@ async function handleRequest(request, env, ctx) {
               w: _dt ? _dt.wDnn : null,
               source: _dt ? (_dt.source || "worker") : null,
               reason: _dt ? _dt.reason : null,
+              // [V33.115] 검증 유효표본수/명목/평균 고유도 — "검증 3,000건" 이 실제로 몇 건어치인지.
+              valN: _dt ? _num(_dt.valN, null) : null, valNRaw: _dt ? _num(_dt.valNRaw, null) : null,
+              uniq: _dt ? _num(_dt.valUniq, null) : null,
               trainedAt: _dMeta ? _dMeta.ts : null
             },
             gbdt: {
@@ -17850,7 +17853,9 @@ async function handleRequest(request, env, ctx) {
               trusted: !!(_gt && _gt.trusted),
               accLB: _fmtAcc(_gt && (_gt.gbdtAccLB != null ? _gt.gbdtAccLB : _gt.valAccLB)),
               w: _gt ? _gt.wGbdt : null, source: _gt ? (_gt.source || "worker") : null,
-              reason: _gt ? _gt.reason : null
+              reason: _gt ? _gt.reason : null,
+              valN: _gt ? _num(_gt.valN, null) : null, valNRaw: _gt ? _num(_gt.valNRaw, null) : null,
+              uniq: _gt ? _num(_gt.valUniq, null) : null
             },
             mind: {
               stored: !!(_probe && _probe.mfm && _probe.mmeta),
@@ -18692,11 +18697,11 @@ async function handleRequest(request, env, ctx) {
       let rows;
       if (curTs > 0) {
         rows = await env.DB.prepare(
-          "SELECT id, ts, market, feat, label, pnl_pct, strategy FROM ml_samples WHERE featver = ? AND ts <= ? AND (ts < ? OR (ts = ? AND id < ?)) ORDER BY ts DESC, id DESC LIMIT ?"
+          "SELECT id, ts, market, symbol, feat, label, pnl_pct, strategy FROM ml_samples WHERE featver = ? AND ts <= ? AND (ts < ? OR (ts = ? AND id < ?)) ORDER BY ts DESC, id DESC LIMIT ?"
         ).bind(LUXML.featVer, anchorTs, curTs, curTs, curId, limit).all();
       } else {
         rows = await env.DB.prepare(
-          "SELECT id, ts, market, feat, label, pnl_pct, strategy FROM ml_samples WHERE featver = ? AND ts <= ? ORDER BY ts DESC, id DESC LIMIT ? OFFSET ?"
+          "SELECT id, ts, market, symbol, feat, label, pnl_pct, strategy FROM ml_samples WHERE featver = ? AND ts <= ? ORDER BY ts DESC, id DESC LIMIT ? OFFSET ?"
         ).bind(LUXML.featVer, anchorTs, limit, offset).all();
       }
       const raw = (rows && rows.results) ? rows.results : [];
@@ -18709,7 +18714,10 @@ async function handleRequest(request, env, ctx) {
       for (const r of raw) {
         let v; try { v = JSON.parse(r.feat); } catch (e) { continue; }
         if (!Array.isArray(v) || v.length !== LUXML.featNames.length) continue;
-        out.push({ ts: _num(r.ts, 0), m: String(r.market || "us"), x: v.map(function (t) { return _num(t, 0); }), y: _labelOfRow(r), pnl: _num(r.pnl_pct, 0), hv: r.strategy === "hv" ? 1 : 0 });
+        // [V33.115] s(심볼) 추가 — 트레이너가 표본 고유도(동시성)를 계산하려면 종목이 필요하다.
+        //   겹침은 ★같은 종목 안에서만★ 의미가 있다(다른 종목의 같은 기간은 상관은 있어도 같은 사건이 아니다).
+        out.push({ ts: _num(r.ts, 0), m: String(r.market || "us"), s: String(r.symbol || ""),
+                   x: v.map(function (t) { return _num(t, 0); }), y: _labelOfRow(r), pnl: _num(r.pnl_pct, 0), hv: r.strategy === "hv" ? 1 : 0 });
       }
       const _last = raw.length ? raw[raw.length - 1] : null;
       return Response.json({
@@ -18815,7 +18823,8 @@ async function handleRequest(request, env, ctx) {
         __dnnMemCache = null;
         let mindLB = 0.5;
         try { const mm = await mlMindLoad(env.DB); if (mm) mindLB = (typeof mm.valAccLB === "number") ? mm.valAccLB : _wilsonLB(_num(mm.valAcc, 0.5), _num(mm.valN, 30)); } catch (e) {}
-        let trust = { wDnn: 0, trusted: false, dnnAcc: valAcc, dnnAccLB: valAccLB, mindAcc: mindLB, source: "external" };
+        let trust = { wDnn: 0, trusted: false, dnnAcc: valAcc, dnnAccLB: valAccLB, mindAcc: mindLB, source: "external",
+                      valN: valN, valNRaw: _num(stg.valNRaw, valN), valUniq: _num(stg.valUniq, null) };
         // [V12.54] 절대실력 게이트 — MIND 상대비교 폐기. 외부학습분은 val 라벨이 없어 다수클래스 기저를
         //   못 구하므로 trustFloor 절대문턱만 적용(외부 학습기가 자체 홀드아웃으로 valAccLB를 보고).
         if (valAccLB >= DNN.trustFloor) {
@@ -18842,11 +18851,13 @@ async function handleRequest(request, env, ctx) {
         // 이전 스테이징 잔여 제거
         try { await env.DB.prepare("DELETE FROM state WHERE k = 'dnn_stage' OR (k >= 'dnn_stage:net:' AND k < 'dnn_stage:net;')").run(); } catch (e) {}
         const dnnAcc = _clamp(_num(body.valAcc, 0), 0, 1);
-        const valN = Math.max(1, Math.floor(_num(body.valN, 30)));
+        const _vn = _importedValN(body, 30);       // [V33.115] 유효표본수 우선
+        const valN = _vn.n;
         const dnnLB = (body.valAccLB != null) ? _clamp(_num(body.valAccLB, 0), 0, 1) : _wilsonLB(dnnAcc, valN);
         await setState(env.DB, "dnn_stage", { featVer: LUXML.featVer, mean: body.mean.map(function (v) { return _num(v, 0); }),
           std: body.std.map(function (v) { return _num(v, 1); }), dims: dims, seeds: seeds, valAcc: +dnnAcc.toFixed(4),
-          valAccLB: +dnnLB.toFixed(4), valN: valN, n: Math.max(0, Math.floor(_num(body.n, 0))), ts: Date.now() });
+          valAccLB: +dnnLB.toFixed(4), valN: valN, valNRaw: _vn.raw, valUniq: _vn.uniq,
+          n: Math.max(0, Math.floor(_num(body.n, 0))), ts: Date.now() });
         return Response.json({ ok: true, staged: "begin", seeds: seeds }, { headers: cors });
       }
       if (stage === "net") {
@@ -18888,6 +18899,7 @@ async function handleRequest(request, env, ctx) {
         }
         const head = '{"nets":[' + netsStr + '],"mean":' + JSON.stringify(stg.mean) + ',"std":' + JSON.stringify(stg.std) +
           ',"featVer":' + LUXML.featVer + ',"valAcc":' + stg.valAcc + ',"valAccLB":' + stg.valAccLB + ',"valN":' + stg.valN +
+          ',"valNRaw":' + (_num(stg.valNRaw, 0) || stg.valN) + ',"valUniq":' + (_num(stg.valUniq, 0) || "null") +
           ',"dims":' + JSON.stringify(stg.dims) + ',"n":' + (stg.n || 0) + ',"trainedAt":' + Date.now() + ',"source":"external"}';
         netsStr = null;
         let saveInfo;
@@ -18918,10 +18930,12 @@ async function handleRequest(request, env, ctx) {
         for (const v of nt.W[nt.W.length - 1][0]) if (!isFinite(v)) return Response.json({ error: "비유한 가중치" }, { status: 400, headers: cors });
       }
       const dnnAcc = _clamp(_num(body.valAcc, 0), 0, 1);
-      const valN = Math.max(1, Math.floor(_num(body.valN, 30)));
+      const _vn = _importedValN(body, 30);         // [V33.115] 유효표본수 우선
+      const valN = _vn.n;
       const dnnLB = (body.valAccLB != null) ? _clamp(_num(body.valAccLB, 0), 0, 1) : _wilsonLB(dnnAcc, valN);
       const net = { nets: body.nets, mean: body.mean.map(function (v) { return _num(v, 0); }), std: body.std.map(function (v) { return _num(v, 1); }),
                     featVer: LUXML.featVer, valAcc: +dnnAcc.toFixed(4), valAccLB: +dnnLB.toFixed(4), valN: valN,
+                    valNRaw: _vn.raw, valUniq: _vn.uniq,
                     dims: dims, n: Math.max(0, Math.floor(_num(body.n, 0))), trainedAt: Date.now(), source: "external" };
       let saveInfo;
       try { saveInfo = await setBigState(env.DB, "dnn_model", net); } catch (e) { return Response.json({ error: "저장 실패: " + (e && e.message) }, { status: 500, headers: cors }); }
@@ -18929,7 +18943,8 @@ async function handleRequest(request, env, ctx) {
       // ── 신뢰게이트: mind 대비 Wilson 하한 비교(야간학습과 동일 로직) ──
       let mindLB = 0.5;
       try { const mm = await mlMindLoad(env.DB); if (mm) mindLB = (typeof mm.valAccLB === "number") ? mm.valAccLB : _wilsonLB(_num(mm.valAcc, 0.5), _num(mm.valN, 30)); } catch (e) {}
-      let trust = { wDnn: 0, trusted: false, dnnAcc: net.valAcc, dnnAccLB: net.valAccLB, mindAcc: mindLB, source: "external" };
+      let trust = { wDnn: 0, trusted: false, dnnAcc: net.valAcc, dnnAccLB: net.valAccLB, mindAcc: mindLB, source: "external",
+                    valN: net.valN, valNRaw: net.valNRaw, valUniq: net.valUniq };
       // [V12.54] 절대실력 게이트 — MIND 상대비교 폐기(외부학습분은 val 라벨 부재로 trustFloor만 적용).
       if (dnnLB >= DNN.trustFloor) {
         const eD = Math.exp(DNN.trustTemp * (dnnLB - 0.5)), eM = Math.exp(DNN.trustTemp * (mindLB - 0.5));
@@ -19000,11 +19015,13 @@ async function handleRequest(request, env, ctx) {
       };
       for (const t of body.trees) if (!_vt(t, 0)) return Response.json({ error: "트리 형식 오류" }, { status: 400, headers: cors });
       const vAcc = _clamp(_num(body.valAcc, 0), 0, 1);
-      const vN = Math.max(1, Math.floor(_num(body.valN, 30)));
+      const _vn = _importedValN(body, 30);         // [V33.115] 유효표본수 우선
+      const vN = _vn.n;
       const vLB = (body.valAccLB != null) ? _clamp(_num(body.valAccLB, 0), 0, 1) : _wilsonLB(vAcc, vN);
       const model = { trees: body.trees, base: _num(body.base, 0), lr: _num(body.lr, 0.1),
                       featVer: LUXML.featVer, ifeatVer: _ifv, dim: _D,
                       valAcc: +vAcc.toFixed(4), valAccLB: +vLB.toFixed(4), valN: vN,
+                      valNRaw: _vn.raw, valUniq: _vn.uniq,
                       n: Math.max(0, Math.floor(_num(body.n, 0))), horizonBars: _num(body.horizonBars, 12),
                       posRate: _num(body.posRate, null), source: "external", trainedAt: Date.now() };
       // 변환정합 probe — 워커 채점이 트레이너 확률을 재현하는지(스윙과 동일한 안전장치).
@@ -19092,14 +19109,16 @@ async function handleRequest(request, env, ctx) {
         if (!_validTree(body.trees[i], 0)) return Response.json({ error: "트리 " + i + " 구조 불일치" }, { status: 400, headers: cors });
       }
       const gAcc = _clamp(_num(body.valAcc, 0), 0, 1);
-      const valN = Math.max(1, Math.floor(_num(body.valN, 30)));
+      const _vn = _importedValN(body, 30);         // [V33.115] 유효표본수 우선
+      const valN = _vn.n;
       const gLB = (body.valAccLB != null) ? _clamp(_num(body.valAccLB, 0), 0, 1) : _wilsonLB(gAcc, valN);
       // [V33.77] valIC/valRankIC 수용 — 위원회 가중의 새 기준. 없으면 null 로 두고 정확도 환산 폴백.
       const _vIC = (typeof body.valIC === "number" && isFinite(body.valIC)) ? _clamp(body.valIC, -0.5, 0.5) : null;
       const _vRIC = (typeof body.valRankIC === "number" && isFinite(body.valRankIC)) ? _clamp(body.valRankIC, -0.5, 0.5) : null;
       const model = { trees: body.trees, eta: _num(body.eta, GBDT.eta), bias: _num(body.bias, 0),
         nTrees: body.trees.length, featVer: LUXML.featVer, valAcc: +gAcc.toFixed(4), valAccLB: +gLB.toFixed(4),
-        valN: valN, n: Math.max(0, Math.floor(_num(body.n, 0))), trainedAt: Date.now(), source: "external",
+        valN: valN, valNRaw: _vn.raw, valUniq: _vn.uniq,
+        n: Math.max(0, Math.floor(_num(body.n, 0))), trainedAt: Date.now(), source: "external",
         valIC: _vIC, valRankIC: _vRIC, algo: (typeof body.algo === "string" ? body.algo.slice(0, 24) : null),
         // [V33.91] 외부 트레이너가 보낸 블록 IC 유의성(있으면). 없으면 null → Fisher z 하한으로 폴백.
         valICBlock: (typeof body.valICBlock === "number" && isFinite(body.valICBlock)) ? _clamp(body.valICBlock, -0.5, 0.5) : null,
@@ -19149,7 +19168,8 @@ async function handleRequest(request, env, ctx) {
       // 트러스트 계산(라이브 GBDT와 동일 로직).
       let mindLB = 0.5;
       try { const mm = await mlMindLoad(env.DB); if (mm) mindLB = (typeof mm.valAccLB === "number") ? mm.valAccLB : _wilsonLB(_num(mm.valAcc, 0.5), _num(mm.valN, 30)); } catch (e) {}
-      let trust = { wGbdt: 0, trusted: false, gbdtAcc: model.valAcc, gbdtAccLB: model.valAccLB, mindAcc: mindLB, source: "external", selfAcc: selfAcc != null ? +selfAcc.toFixed(4) : null, selfN: selfN, convMaxDiff: convMaxDiff != null ? +convMaxDiff.toFixed(4) : null, convN: convN };
+      let trust = { wGbdt: 0, trusted: false, gbdtAcc: model.valAcc, gbdtAccLB: model.valAccLB, mindAcc: mindLB, source: "external", selfAcc: selfAcc != null ? +selfAcc.toFixed(4) : null, selfN: selfN, convMaxDiff: convMaxDiff != null ? +convMaxDiff.toFixed(4) : null, convN: convN,
+        valN: model.valN, valNRaw: model.valNRaw, valUniq: model.valUniq };
       trust.valIC = _vIC; trust.valRankIC = _vRIC;
       trust.valN = valN;                                   // [V33.91] Fisher z 하한 계산에 필요
       trust.valICBlock = model.valICBlock; trust.valICt = model.valICt; trust.valICIR = model.valICIR;
@@ -19235,7 +19255,8 @@ async function handleRequest(request, env, ctx) {
         b: _num(body.b, 0), K: K, mean: body.mean.map(function (v) { return _num(v, 0); }), std: body.std.map(function (v) { return _num(v, 1); }),
         featVer: LUXML.featVer, n: Math.max(0, Math.floor(_num(body.n, 0))), trainedAt: Date.now(), source: "external" };
       const vAcc = _clamp(_num(body.valAcc, 0), 0, 1);
-      const vN = Math.max(1, Math.floor(_num(body.valN, 30)));
+      const _vn = _importedValN(body, 30);         // [V33.115] 유효표본수 우선
+      const vN = _vn.n;
       const vLB = (body.valAccLB != null) ? _clamp(_num(body.valAccLB, 0), 0, 1) : _wilsonLB(vAcc, vN);
       // 변환정합성 probe — Worker mlFMScore가 라이브러리 확률을 재현하는가.
       let convMaxDiff = null, convN = 0;
@@ -19259,6 +19280,7 @@ async function handleRequest(request, env, ctx) {
       // FM단독 MIND 조립 — experts=["fm"], meta 항등(w=[1],b=0) → mlMindScore가 캘리브FM 확률 그대로.
       const mindModel = { fm: fm, meta: { w: [1], b: 0 }, experts: ["fm"], mean: fm.mean, std: fm.std,
         featVer: LUXML.featVer, n: fm.n, valAcc: +vAcc.toFixed(4), valAccLB: +vLB.toFixed(4), valN: vN,
+        valNRaw: _vn.raw, valUniq: _vn.uniq,
         leakFree: true, fmAcc: +vAcc.toFixed(4), ruleAcc: null, ruleAccLB: null, ruleN: 0, ruleTau: 0.5,
         source: "external", trainedAt: Date.now() };
       try {
@@ -19341,6 +19363,9 @@ async function handleRequest(request, env, ctx) {
         // [V33.104] 전문가 재학습 앞 — 누출없는 STACK 표본 생성 후 기준선 갱신(크론과 동일 순서).
         ["stackbf", function (DB) { return stackSampleBackfill(DB, {}); }],
         ["stackepoch", function (DB) { return stackExpertEpochStamp(DB); }],
+        // [V33.115] 표본 풀의 평균 고유도 — 수확 직후·전 학습기 앞. 아래 학습기들이 이 값으로
+        //   유효표본수를 구해 Wilson 하한을 잰다(명목 n 을 쓰면 겹친 라벨을 독립으로 세게 된다).
+        ["pooluniq", function (DB) { return mlPoolUniqNightly(DB); }],
         ["l1", function (DB) { return mlTrainNightly(DB); }],
         ["bandit", function (DB) { return mlBanditNoiseNightly(DB); }],
         ["brain", function (DB) { return mlBrainTrainNightly(DB); }],
@@ -24157,6 +24182,22 @@ function _importedICz(body) {
   const K = Math.max(2, Math.floor(_num(body.valICK, 5)));
   return +_tToZ(t, K - 1).toFixed(3);
 }
+// [V33.115] 업로드 메타에서 ★유효표본수★ 를 고른다.
+//   V33.114 에서 워커 자체학습(_miniLogisticTrain)만 고유도로 valN 을 깎았고, Modal 트레이너가
+//   올리는 모델(DNN·GBDT·MIND·단타)의 valN 은 ★명목★ 그대로였다. 같은 위원회 안에서
+//   외부 모델만 √(1/고유도) 배 관대한 자로 재는 비대칭이 생긴다 — 고유도 0.1 이면 표본이
+//   10배 부풀고 Wilson 하한이 3.2배 좁아진다. 트레이너가 valNEff 를 보내기 시작했으니
+//   있으면 그걸 쓰고, 없으면(구 트레이너) 명목으로 폴백한다.
+//   반환: { n: 게이트가 쓸 n, raw: 명목 n, uniq: 평균 고유도 또는 null }
+function _importedValN(body, dflt) {
+  const raw = Math.max(1, Math.floor(_num(body && body.valN, dflt)));
+  const eff = Math.floor(_num(body && body.valNEff, 0));
+  if (eff >= 1 && eff <= raw) {
+    const u = _num(body && body.valUniq, 0);
+    return { n: eff, raw: raw, uniq: (u > 0 && u <= 1) ? +u.toFixed(4) : +(eff / raw).toFixed(4) };
+  }
+  return { n: raw, raw: raw, uniq: null };
+}
 function _icEffective(model) {
   try {
     if (!model) return null;
@@ -24216,6 +24257,67 @@ function _uniqWeights(ts, syms, spanMs) {
     }
   } catch (e) {}
   return w;
+}
+// ════════════════════════════════════════════════════════════════════════════
+// [V33.115] ★표본 풀의 평균 고유도★ — 워커 자체학습 모델들이 공유하는 하나의 자.
+//
+//   V33.114 에서 _miniLogisticTrain 만 홀드아웃 고유도로 valN 을 깎았다. 그런데 워커는
+//   MIND·GBDT·DNN·L1/BRAIN 도 직접 학습하고, 그쪽은 전부 ★명목 n★ 으로 Wilson 하한을 쟀다.
+//   같은 위원회 안에서 어떤 전문가는 유효표본수로, 어떤 전문가는 명목으로 재면
+//   문턱이 모델마다 다른 것과 같다 — 고유도 0.1 이면 하한이 √10≈3.2배 좁아진다.
+//
+//   전 학습기가 각자 종목·시각을 다시 읽어 고유도를 계산하게 하면 D1 왕복이 학습기 수만큼
+//   늘어난다(야간 CPU 예산이 300s 다). 우리 표본 풀은 균질하다 — 유니버스 전 종목을 매 봉
+//   수확하므로 어느 홀드아웃 구간을 잘라도 평균 고유도가 거의 같다. 그래서 ★풀 수준에서
+//   한 번★ 재고(de Prado 의 "유효표본수 = n × 평균고유도"), 학습기들은 그 값을 곱해 쓴다.
+//   근사인 것을 숨기지 않는다: 정확한 슬라이스별 고유도가 필요한 곳(_miniLogisticTrain,
+//   Modal 트레이너)은 지금도 자기 홀드아웃에서 직접 센다.
+const POOLUNIQ = { sampleLimit: 20000, minN: 200, staleH: 72 };
+async function mlPoolUniqNightly(DB) {
+  try {
+    const H = _num((AI_PARAMS.prediction && AI_PARAMS.prediction.horizonDays), 10);
+    const span = Math.max(1, H) * 86400000;
+    const rs = await DB.prepare(
+      "SELECT ts, symbol FROM ml_samples WHERE featver = ? ORDER BY id DESC LIMIT ?"
+    ).bind(LUXML.featVer, POOLUNIQ.sampleLimit).all();
+    const rows = (rs && rs.results) ? rs.results : [];
+    if (rows.length < POOLUNIQ.minN) {
+      await setState(DB, "ml_pool_uniq", { uBar: 1, n: rows.length, ts: Date.now(), note: "표본부족" });
+      return "[고유도] 표본 " + rows.length + "/" + POOLUNIQ.minN + " — 보정 없음(uBar=1)";
+    }
+    const ts = rows.map(function (r) { return _num(r.ts, 0); });
+    const sy = rows.map(function (r) { return String(r.symbol || ""); });
+    const w = _uniqWeights(ts, sy, span);
+    let s = 0; for (const v of w) s += v;
+    const uBar = _clamp(s / Math.max(1, w.length), 0.02, 1);
+    await setState(DB, "ml_pool_uniq", { uBar: +uBar.toFixed(4), n: rows.length,
+                                         nEff: Math.round(s), spanDays: H, ts: Date.now() });
+    return "[고유도] 평균 " + uBar.toFixed(3) + " — 표본 " + rows.length + "건이 실제로는 " +
+           Math.round(s) + "건어치 (라벨지평 " + H + "일)";
+  } catch (e) {
+    try { await setState(DB, "ml_pool_uniq", { uBar: 1, n: 0, ts: Date.now(), err: String(e && e.message).slice(0, 120) }); } catch (e2) {}
+    return "[고유도] 실패: " + (e && e.message);
+  }
+}
+// 학습기들이 부르는 조회기 — 없거나 오래됐으면 1(보정 없음)로 떨어진다.
+//   "모르면 보수적으로" 가 아니라 "모르면 종전과 같게" 다. 유효표본수를 모르는데 임의로
+//   깎으면 그건 측정이 아니라 손맛이다.
+async function mlPoolUniqGet(DB) {
+  try {
+    const s = await getState(DB, "ml_pool_uniq", null);
+    if (!s) return 1;
+    if (_num(s.ts, 0) > 0 && (Date.now() - _num(s.ts, 0)) > POOLUNIQ.staleH * 3600000) return 1;
+    const u = _num(s.uBar, 1);
+    return (u > 0 && u <= 1) ? u : 1;
+  } catch (e) { return 1; }
+}
+// 명목 n → 유효 n. uBar 가 1 이면 항등이므로 호출부는 분기가 필요 없다.
+function _effN(n, uBar) {
+  const nn = Math.max(0, Math.floor(_num(n, 0)));
+  const u = _num(uBar, 1);
+  if (!(nn > 0)) return 0;
+  if (!(u > 0) || u >= 1) return nn;
+  return Math.max(8, Math.round(nn * u));
 }
 function _wilsonLB(acc, n, z) {
   if (!(n > 0)) return 0;
@@ -25492,7 +25594,12 @@ async function mlTrainNightly(DB) {
       }
       valAcc = hv2.length ? c / hv2.length : 0; valLL = hv2.length ? ll / hv2.length : 0; valN = hv2.length;
     }
-    const accLB = _wilsonLB(valAcc, valN);   // ★신뢰하한 — 승급은 이 값으로
+    // [V33.115] ★신뢰하한 — 승급은 이 값으로.★ n 은 명목이 아니라 ★유효표본수★ 다.
+    //   10일 지평 라벨이 종목 안에서 겹치므로 검증 N 건은 N 건어치 독립 증거가 아니다.
+    const _uBar = await mlPoolUniqGet(DB);
+    const _valNRaw = valN;
+    valN = _effN(valN, _uBar);
+    const accLB = _wilsonLB(valAcc, valN);
 
     // ── 최종 모델: 전체 표본으로 재학습(웜스타트) ──
     let prevM = await mlLoadModel(DB);
@@ -25515,6 +25622,7 @@ async function mlTrainNightly(DB) {
       w: w, b: b, mean: mean, std: std,
       featVer: LUXML.featVer, mode: mode,
       n: N, valAcc: +valAcc.toFixed(4), valAccLB: +accLB.toFixed(4), valN: valN,
+      valNRaw: _valNRaw, valUniq: +_uBar.toFixed(4),
       cvFolds: folds.length, valLogLoss: +valLL.toFixed(4),
       posRate: +fit.posRate.toFixed(3), aliveCount: alive.length,
       trainedAt: Date.now()
@@ -26302,7 +26410,10 @@ async function mlBrainTrainNightly(DB) {
       ll += -(r.y * Math.log(pc) + (1 - r.y) * Math.log(1 - pc));
     }
     const valAcc = correct / _evalRows.length;
-    const accLB = _wilsonLB(valAcc, _evalRows.length);   // [V4] 신뢰하한
+    // [V4] 신뢰하한 — [V33.115] 명목이 아니라 유효표본수로 잰다(겹친 라벨은 독립 관측이 아니다).
+    const _uBar = await mlPoolUniqGet(DB);
+    const _valNEff = _effN(_evalRows.length, _uBar);
+    const accLB = _wilsonLB(valAcc, _valNEff);
 
     // 살아있는 피처 합집합
     const aliveSet = {};
@@ -26312,7 +26423,8 @@ async function mlBrainTrainNightly(DB) {
     const ensemble = {
       members: members, T: T, tauShift: +tauShift.toFixed(4), mean: mean, std: std,
       featVer: LUXML.featVer, K: members.length,
-      n: N, valAcc: +valAcc.toFixed(4), valAccLB: +accLB.toFixed(4), valN: _evalRows.length,
+      n: N, valAcc: +valAcc.toFixed(4), valAccLB: +accLB.toFixed(4), valN: _valNEff,
+      valNRaw: _evalRows.length, valUniq: +_uBar.toFixed(4),
       valLogLoss: +(ll / _evalRows.length).toFixed(4),
       aliveCount: aliveCount, trainedAt: Date.now()
     };
@@ -26769,8 +26881,11 @@ async function mlMindTrainNightly(DB) {
       ll += -(r.y * Math.log(_clamp(p, 1e-6, 1 - 1e-6)) + (1 - r.y) * Math.log(_clamp(1 - p, 1e-6, 1 - 1e-6)));
     }
     let valAcc = correct / evalR.length;
-    let accLB = _wilsonLB(valAcc, evalR.length);
-    let valN = evalR.length;
+    // [V33.115] 하한은 ★유효표본수★ 로 잰다 — 겹친 라벨은 독립 관측이 아니다.
+    const _uBar = await mlPoolUniqGet(DB);
+    let valNRaw = evalR.length;
+    let valN = _effN(evalR.length, _uBar);
+    let accLB = _wilsonLB(valAcc, valN);
     let leakFree = false;
     let mindIC = null, mindICBlock = null, mindICt = null;   // [V33.93] 측정된 IC
 
@@ -26828,8 +26943,9 @@ async function mlMindTrainNightly(DB) {
       let _lc = 0; for (const r of _lfEval) if ((_metaPredict(_lfMeta, r.e) >= 0.5 ? 1 : 0) === r.y) _lc++;
       if (_lfEval.length >= 20) {
         valAcc = _lc / _lfEval.length;
-        accLB = _wilsonLB(valAcc, _lfEval.length);
-        valN = _lfEval.length;
+        valNRaw = _lfEval.length;
+        valN = _effN(_lfEval.length, _uBar);
+        accLB = _wilsonLB(valAcc, valN);
         leakFree = true;
       }
       // [V33.93] ★MIND 의 IC 를 '재서' 저장한다 — 그동안 위원회는 이 값을 몰라서 정확도에서 환산했다★
@@ -26881,7 +26997,10 @@ async function mlMindTrainNightly(DB) {
         ruleTau = _clamp(bT, 1e-4, 1 - 1e-4);
         const hold = rv.slice(half);
         let rc = 0; for (const t of hold) if ((_num(t.x[_tiR], 0.5) >= ruleTau ? 1 : 0) === t.y) rc++;
-        ruleN = hold.length; ruleAcc = +(rc / ruleN).toFixed(4); ruleAccLB = +_wilsonLB(rc / ruleN, ruleN).toFixed(4);
+        // [V33.115] 규칙엔진 전문가도 같은 자로 잰다 — hold 는 ml_samples 라 라벨이 겹친다.
+        //   여기만 명목이면 규칙엔진만 하한이 넓어져 위원회에서 부당하게 유리해진다.
+        ruleN = _effN(hold.length, _uBar); ruleAcc = +(rc / hold.length).toFixed(4);
+        ruleAccLB = +_wilsonLB(rc / hold.length, ruleN).toFixed(4);
         // [V33.93] 규칙엔진 전문가도 IC 를 측정한다(같은 홀드아웃, 같은 잣대).
         try {
           const _rp = [], _ry = [];
@@ -26896,6 +27015,7 @@ async function mlMindTrainNightly(DB) {
 
     const mind = { fm: fm, meta: meta, experts: expertNames, mean: st.mean, std: st.std,
       featVer: LUXML.featVer, n: N, valAcc: +valAcc.toFixed(4), valAccLB: +accLB.toFixed(4), valN: valN,
+      valNRaw: valNRaw, valUniq: +_uBar.toFixed(4),
       leakFree: leakFree,   // [V12.56] true=OOF 누수제거 정직수치 / false=폴백(누수포함 보수치)
       fmAcc: +fmAcc.toFixed(4), ruleAcc: ruleAcc, ruleAccLB: ruleAccLB, ruleN: ruleN, ruleTau: ruleTau,
       valIC: mindIC != null ? +mindIC.toFixed(5) : null, valICBlock: mindICBlock, valICt: mindICt,
@@ -27355,7 +27475,11 @@ async function mindShadowPromoteNightly(DB) {
       return "[MIND-SHADOW] 유효 전진표본 " + pv.length + "/" + ICGATE.minForward + " — 대기";
     let hit = 0; for (let i = 0; i < pv.length; i++) if ((pv[i] >= 0.5 ? 1 : 0) === yv[i]) hit++;
     const acc = hit / pv.length;
-    const accLB = _wilsonLB(acc, pv.length);
+    // [V33.115] 전진표본도 겹친다 — '학습 이후 도착' 이 '서로 독립' 을 뜻하지는 않는다.
+    //   승격 판정에 쓰는 하한이므로 여기가 관대하면 섀도우가 쉽게 위원장 자리를 가져간다.
+    const _uBar = await mlPoolUniqGet(DB);
+    const _nEff = _effN(pv.length, _uBar);
+    const accLB = _wilsonLB(acc, _nEff);
     const st = _icBlockStats(pv, yv, 5);
     const icOK = (st.blockIC != null && st.t != null) && st.blockIC >= 0.012 && st.t >= ICGATE.tMin;
     const accOK = accLB >= MIND.trustFloor;
@@ -27925,10 +28049,14 @@ async function mlDNNTrainNightly(DB) {
     let correct = 0;
     for (const t of val) { const p = _dnnEnsembleP(nets, t.x); if ((p >= 0.5 ? 1 : 0) === t.y) correct++; }
     const dnnAcc = correct / val.length;
-    const dnnLB = _wilsonLB(dnnAcc, val.length);
+    // [V33.115] 유효표본수로 하한을 잰다 — 외부(Modal) 업로드와 같은 자를 써야 공정 비교다.
+    const _uBar = await mlPoolUniqGet(DB);
+    const _dnnNEff = _effN(val.length, _uBar);
+    const dnnLB = _wilsonLB(dnnAcc, _dnnNEff);
 
     const net = { nets: nets, mean: mean, std: std, featVer: LUXML.featVer,
-                  valAcc: +dnnAcc.toFixed(4), valAccLB: +dnnLB.toFixed(4), valN: val.length,
+                  valAcc: +dnnAcc.toFixed(4), valAccLB: +dnnLB.toFixed(4), valN: _dnnNEff,
+                  valNRaw: val.length, valUniq: +_uBar.toFixed(4),
                   dims: dims, n: N, trainedAt: Date.now(), source: "worker",
                   warmResumed: !!warmNets };   // [V11] 웜스타트 여부(누적학습 추적)
     // [V33.50] 폴백 자가학습이 '더 좋은 외부 모델'을 덮어쓰지 않게 한다.
@@ -27955,7 +28083,8 @@ async function mlDNNTrainNightly(DB) {
     //   trustFloor를 넘으면 위원회 합류. wDnn은 참고용(실제 표는 mlDeepDecide가 결정시 재계산).
     let _dnnPos = 0; for (const t of val) _dnnPos += (t.y ? 1 : 0);
     const _dnnBase = val.length ? Math.max(_dnnPos / val.length, 1 - _dnnPos / val.length) : 0.5;
-    let trust = { wDnn: 0, trusted: false, dnnAcc: net.valAcc, dnnAccLB: +dnnLB.toFixed(4), mindAcc: mindLB, base: +_dnnBase.toFixed(4) };
+    let trust = { wDnn: 0, trusted: false, dnnAcc: net.valAcc, dnnAccLB: +dnnLB.toFixed(4), mindAcc: mindLB, base: +_dnnBase.toFixed(4),
+                  valN: net.valN, valNRaw: net.valNRaw, valUniq: net.valUniq };
     if (dnnLB >= DNN.trustFloor && dnnLB >= _dnnBase + (DNN.trustBaselineMargin || 0)) {
       const eD = Math.exp(DNN.trustTemp * (dnnLB - 0.5));
       const eM = Math.exp(DNN.trustTemp * (mindLB - 0.5));
@@ -29107,6 +29236,10 @@ async function mlGBDTTrainNightly(DB) {
       acc = c / Math.max(1, vl.length); valN = vl.length; cvMode = "홀드아웃";
       fixedTrees = Math.max(20, m.nTrees);
     }
+    // [V33.115] 유효표본수로 하한을 잰다. CV(OOF) 든 홀드아웃이든 겹친 라벨은 독립이 아니다.
+    const _uBar = await mlPoolUniqGet(DB);
+    let valNRaw = valN;
+    valN = _effN(valN, _uBar);
     let accLB = _wilsonLB(acc, valN);
 
     // ── 최종 모델: 전체 표본, CV가 정한 트리 수로 학습 + 피처 중요도 수집 ──
@@ -29138,14 +29271,16 @@ async function mlGBDTTrainNightly(DB) {
         const delta = Math.log(bestTau / (1 - bestTau));
         model.bias -= delta;   // 임계값을 bias에 영구 반영(추론 0.5 컷 = τ* 컷)
         let ce = 0; for (const d of calB) { const p = mlGBDTScore(model, d.x); if (((p >= 0.5) ? 1 : 0) === d.y) ce++; }
-        const accC = ce / calB.length, accLBC = _wilsonLB(accC, calB.length);
-        if (accLBC > accLB) { acc = accC; accLB = accLBC; valN = calB.length; cvMode += "+τ*"; }
+        const _calNEff = _effN(calB.length, _uBar);
+        const accC = ce / calB.length, accLBC = _wilsonLB(accC, _calNEff);
+        if (accLBC > accLB) { acc = accC; accLB = accLBC; valN = _calNEff; valNRaw = calB.length; cvMode += "+τ*"; }
         calNote = " τ*=" + bestTau.toFixed(3);
       }
     } catch (e) { calNote = ""; }
 
     model.featVer = LUXML.featVer; model.valAcc = +acc.toFixed(4); model.valAccLB = +accLB.toFixed(4);
-    model.valN = valN; model.n = N; model.trainedAt = Date.now();
+    model.valN = valN; model.valNRaw = valNRaw; model.valUniq = +_uBar.toFixed(4);
+    model.n = N; model.trainedAt = Date.now();
     // 중요도 상위 저장(설명가능성 — /api/ml-status·crowd 근거 표시용)
     if (model.importance) {
       const tot = model.importance.reduce(function (a, b) { return a + b; }, 0) || 1;
@@ -29166,7 +29301,8 @@ async function mlGBDTTrainNightly(DB) {
     // [V12.54] 절대실력 게이트 — MIND 상대비교 폐기(DNN config 주석 참조).
     let _gPos = 0; for (const d of data) _gPos += (d.y ? 1 : 0);
     const _gBase = data.length ? Math.max(_gPos / data.length, 1 - _gPos / data.length) : 0.5;
-    let trust = { wGbdt: 0, trusted: false, gbdtAcc: model.valAcc, gbdtAccLB: +accLB.toFixed(4), mindAcc: mindLB, base: +_gBase.toFixed(4) };
+    let trust = { wGbdt: 0, trusted: false, gbdtAcc: model.valAcc, gbdtAccLB: +accLB.toFixed(4), mindAcc: mindLB, base: +_gBase.toFixed(4),
+                  valN: model.valN, valNRaw: model.valNRaw, valUniq: model.valUniq };
     if (accLB >= GBDT.trustFloor && accLB >= _gBase + (DNN.trustBaselineMargin || 0)) {
       const eG = Math.exp(GBDT.trustTemp * (accLB - 0.5));
       const eM = Math.exp(GBDT.trustTemp * (mindLB - 0.5));
@@ -29295,7 +29431,14 @@ async function mlCalibrateCommittee(DB) {
     // 전문가 신뢰도 저장(Wilson 하한 — 표본수 반영 보수적 추정)
     try {
       const relOut = {};
-      for (const k of Object.keys(rel)) { const t = rel[k]; if (t.n >= 40) relOut[k] = { acc: +(t.c / t.n).toFixed(4), accLB: +_wilsonLB(t.c / t.n, t.n).toFixed(4), n: t.n }; }
+      // [V33.115] 전문가 신뢰도 하한도 유효표본수로 — 이 값이 위원회 가중에 그대로 들어간다.
+      const _uBarR = await mlPoolUniqGet(DB);
+      for (const k of Object.keys(rel)) {
+        const t = rel[k];
+        if (t.n < 40) continue;
+        const _nE = _effN(t.n, _uBarR);
+        relOut[k] = { acc: +(t.c / t.n).toFixed(4), accLB: +_wilsonLB(t.c / t.n, _nE).toFixed(4), n: _nE, nRaw: t.n };
+      }
       await setState(DB, "expert_reliability", { rel: relOut, featVer: LUXML.featVer, ts: Date.now() });
     } catch (e) {}
 
@@ -35965,6 +36108,9 @@ export default {
             await _stg("stackbf", async function () { return await stackSampleBackfill(env.DB, {}); });
             // 채점이 끝났으면 '오늘 전문가가 학습할 구간' 의 상한을 못 박는다 — 내일 기준선.
             await _stg("stackepoch", async function () { return await stackExpertEpochStamp(env.DB); });
+            // [V33.115] 표본 풀의 평균 고유도 — 수확 직후·전 학습기 앞에서 한 번만 잰다.
+            //   아래 학습기 전부가 이 값으로 유효표본수를 구해 Wilson 하한을 잰다.
+            await _stg("pooluniq", async function () { return await mlPoolUniqNightly(env.DB); });
             // (3) 7단 학습 파이프라인(순서 고정: L1→노이즈→앙상블→MIND→DNN→GBDT)
             await _stg("l1", async function () { return await mlTrainNightly(env.DB); });
             await _stg("bandit", async function () { return await mlBanditNoiseNightly(env.DB); });
@@ -36083,7 +36229,8 @@ export {
   // [V33.113] 유의성 자유도 보정 검증용
   _tSf, _normInv, _tToZ, _icBlockStats,
   // [V33.114] 표본 고유도(de Prado) 검증용
-  _uniqWeights, _wilsonLB,
+  // [V33.115] _importedValN — 외부 트레이너 업로드의 유효표본수 선택기(tools/check-uniqueness.mjs)
+  _uniqWeights, _wilsonLB, _importedValN, mlPoolUniqNightly, mlPoolUniqGet, _effN,
   // [V33.108] 재무제표 툴킷 검증용 — tools/check-fin-tools.mjs
   FIN_TOOLS, finToolsRun,
   // [V33.110] 소셜 멀티소스 검증용 — tools/check-social.mjs
