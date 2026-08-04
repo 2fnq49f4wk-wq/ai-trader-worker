@@ -2433,7 +2433,7 @@ async function applySectorGroupWeights(DB, cfg) {
 //   applySignalTypeWeights가 가중치(0.7~1.3)를 계산, 매수 사이징(sigTypeW)에서 신호 이름으로 조회한다.
 //   잘 버는 신호에 더 베팅, 못 버는 신호는 자동 축소 — 사이즈만 조절(차단 없음)이라 악화 불가.
 const SIGNAL_TYPES = [
-  "TR_PULLBACK", "TR_BREAKOUT", "TR_SQUEEZE", "TR_RS_LEADER", "TR_VISION_UP",
+  "TR_PULLBACK", "TR_BREAKOUT", "TR_SQUEEZE", "TR_RS_LEADER",
   "SN_RSI2",
   "SC_VWAP", "SC_MOMENTUM", "SC_PULLBACK", "SC_PANIC_INV", "SC_PANIC_BOUNCE", "SC_VBURST"
 ];
@@ -2760,7 +2760,7 @@ async function applySignalTypeWeights(DB, cfg) {
 // ============================================================================
 // [V33.55] 빌드 버전 — SWR L2 캐시 키에 섞어 '배포 = 판단 캐시 자동 무효화'를 만든다.
 //   판정 로직을 고쳐도 옛 캐시가 최대 1시간 재배포되던 문제를 구조적으로 없앤다.
-const _BUILD_VER = "V33.111";
+const _BUILD_VER = "V33.112";
 
 const AI_PARAMS = {
   // ── OHLCV 타임프레임 ── 시가/고가/저가/종가/거래량을 어떤 봉 주기로 볼지.
@@ -3455,19 +3455,7 @@ const DEFAULT_CFG = {
     negativeThreshold: -2.0,  // 공시후 -2%↓ → 악재로 보고 축소
     positiveBoostMax: 1.2     // 호재 부스트 상한 (postReturn 비례, 최대 ×1.2)
   },
-  // === [Vision AI] Roboflow 차트예측 — 백엔드/거래 기본값 (프론트도 동일 키 저장) ===
-  visionAI: {
-    enabled: false,          // [V9.9] Vision AI 제거 — 신뢰도는 높으나 실측 적중률 41%(역신호 수준). 기술적 분석으로 전면 대체.
-    rfApiKey: "WLMMRNV8GDpmbjEcrFar",
-    rfVersion: 7,
-    confMin: 0.6,
-    // [V84] Vision 영향 상한 — 아직 성능이 검증 단계라 "다른 변수보다 작게" 반영.
-    //   UP 부스트 최대치(기존 1.50 → 1.15). 기술적 팩터(TA패턴·알파·ADX)보다 항상 작게 유지.
-    maxBoost: 1.15,
-    requireTAConfirm: true,  // [V84] Vision UP 부스트는 기술적 추세가 우호적일 때만 적용(앙상블=오신호↓=실적중률↑)
-    minPnlForExit: -2.0,     // [V9.8] VISION_EXIT(≥90% conf) 즉시청산 하한 손익(%). 이보다 손실이 크면 하드손절에 위임(패닉 저점 투매 방지)
-    monthlyBudget: 10000   // 무료 Public 플랜 월 한도
-  },
+  // [V33.112] visionAI 설정 삭제 — Vision 서브시스템 전체 제거(생성·수신·소비).
   // [V84] 기술적 분석 강조 계수 — 사이징의 기술적 팩터(TA패턴·알파품질·ADX) 영향을 증폭.
   //   effectiveScale = 1 + (scale-1)×emphasis. 1.0=기존, >1=기술적 분석 비중↑.
   technicalEmphasis: 1.5,
@@ -3894,7 +3882,7 @@ const DEFAULT_CFG = {
     kellyRiskMax: 3.0,         // 환산 후 거래당 리스크 상한 % (종전 고정 0.9% 대비 확대)
     minTradesToWeight: 10,             // 신호 거래가 이 미만이면 가중치 1.0
     // [V63] 전 신호 학습 — applySignalTypeWeights가 SIGNAL_TYPES 전체를 갱신
-    weights: { TR_PULLBACK: 1.0, TR_BREAKOUT: 1.0, TR_SQUEEZE: 1.0, TR_RS_LEADER: 1.0, TR_VISION_UP: 1.0,
+    weights: { TR_PULLBACK: 1.0, TR_BREAKOUT: 1.0, TR_SQUEEZE: 1.0, TR_RS_LEADER: 1.0,
                SN_RSI2: 1.0, SC_VWAP: 1.0, SC_MOMENTUM: 1.0, SC_PULLBACK: 1.0, SC_PANIC_INV: 1.0, SC_PANIC_BOUNCE: 1.0, SC_VBURST: 1.0 }
   },
   // 다층 가중치(confidence×그룹×신호) 곱이 너무 작아져 거래 누락되는 것 방지 — 전체 하한
@@ -4365,14 +4353,7 @@ function migrateCfgToMarkets(cfg) {
   if (cfg.trendSizingKR && cfg.trendSizingKR.maxConcurrent === 6) cfg.trendSizingKR.maxConcurrent = 9;
 
   // [Vision/SEC 보강] 부분 저장된 경우 누락 키를 DEFAULT로 채움 (얕은병합 한계 보완)
-  if (!cfg.visionAI || typeof cfg.visionAI !== "object") {
-    cfg.visionAI = JSON.parse(JSON.stringify(DEFAULT_CFG.visionAI));
-  } else {
-    for (const k in DEFAULT_CFG.visionAI) {
-      if (cfg.visionAI[k] === undefined) cfg.visionAI[k] = DEFAULT_CFG.visionAI[k];
-    }
-  }
-  cfg.visionAI.enabled = false;  // [V9.9] 저장된 enabled:true를 덮어써 Vision을 코드 레벨에서 영구 차단
+  delete cfg.visionAI;   // [V33.112] Vision 제거 — 저장된 옛 설정도 걷어낸다
   if (!cfg.secFilings || typeof cfg.secFilings !== "object") {
     cfg.secFilings = JSON.parse(JSON.stringify(DEFAULT_CFG.secFilings));
   } else {
@@ -4864,13 +4845,9 @@ async function markCommodityTradedToday(DB) {
   try { await setState(DB, "cm_last_trade", { date: today, ts: Date.now() }); } catch (e) {}
 }
 
-// [FX] 환율 조회 트리거 — 매일 06:30 KST 1회 (주말 포함, 조회 전용).
-//   06:30 KST = 390분. cron 1분 간격이라 06:30 정각에 정확히 매치.
-function isFxTriggerTime() {
-  const now = new Date();
-  const kst = getKST(now);
-  return kst.totalMin === 390;  // 06:30 KST = 390분
-}
+// [V33.112] isFxTriggerTime 삭제 — 유일한 사용처가 runVisionScanBackend 의 '스케줄 충돌 회피'
+//   가드였다(Vision 과 같은 분에 안 돌게). Vision 을 지우면서 함께 죽었다.
+//   ※ 실제 환율 갱신은 isFxMarketOpen() 경로가 담당하므로 기능 손실 없다.
 
 // [V9.1] FX 시장 개장 추정 — 글로벌 FX는 월요일 새벽(시드니)~토요일 새벽(뉴욕 마감) 24시간.
 //   UTC 기준 휴장: 토요일 전체, 일요일 21:00 이전, 금요일 22:00 이후.
@@ -10918,50 +10895,22 @@ function classifyEarningsReaction(dailyData, cfg) {
   return { verdict: verdict, reactPct: reactPct, volRatio: volRatio, clv: clv, driftPct: driftPct, barsAgo: barsAgo };
 }
 
-function evaluateAllStrategies(price, dayPct, dailyData, cfg, signalStats, regime, market, intraday, visionPreds, secData, eventData) {
+function evaluateAllStrategies(price, dayPct, dailyData, cfg, signalStats, regime, market, intraday, secData, eventData) {
   if (cfg.strategies && cfg.strategies.trend === false) return [];
   let sig = evaluateTrendEntry(price, dayPct, dailyData, cfg, regime, market);
 
-  // [Vision 강화 — 진입 보조] 트렌드 트리거(풀백/돌파)가 미충족이어도,
-  //   추세 정렬(MA20>MA50>MA200, price>MA50) + Vision UP 고신뢰(≥78%) + 적중률 신뢰 시
-  //   "작은 사이즈"로 진입한다(confidence 0.5). Vision을 보조 진입신호로 직접 활용 → 거래·데이터↑.
-  //   (적중률 미검증/낮으면 trust로 자동 차단되어 무분별 진입 방지)
-  if (!sig && visionPreds && dailyData && dailyData.symbol) {
-    const vp = visionPreds[dailyData.symbol];
-    const va = cfg.visionAI || {};
-    const acc = visionPreds.__accuracy;
-    const prc = (acc && acc.total >= 20) ? acc.precision : null;
-    const tr2 = (prc == null) ? 1 : (prc < 0.5 ? 0 : Math.min(1, (prc - 0.45) / 0.2));
-    // [V84] Vision 단독 진입 — 성능 검증 단계라 더 보수적으로(임계 0.78→0.80, trust≥0.6,
-    //   가중치 0.8→0.7, confidence 0.5→0.45, RSI≤70). 추세정렬·OBV 매집까지 동반될 때만.
-    if (va.enabled && vp && vp.pred === "up" && vp.conf >= 0.80 && tr2 >= 0.6) {
-      const c = dailyData.closes;
-      if (c && c.length >= 50) {
-        const ma20v = getMA(c, 20), ma50v = getMA(c, 50);
-        const ma200v = c.length >= 200 ? getMA(c, 200) : null;
-        const aligned = ma20v != null && ma50v != null && ma20v > ma50v && price > ma50v && (ma200v == null || ma50v > ma200v);
-        const rsiv = getRSI(c, cfg.rsiPeriod || 14);
-        // [V84] 기술적 동의 추가 — 알파품질이 우호적(≥0.55)일 때만 단독 진입(오신호↓)
-        const aqv = computeAlphaQuality(dailyData, regime);
-        const taAgree = aqv && aqv.score >= 0.55;
-        if (aligned && taAgree && rsiv != null && rsiv <= 70) {
-          sig = { name: "TR_VISION_UP", weight: 0.7, type: "TREND", confidence: 0.45,
-            detail: "VISION_UP " + Math.round(vp.conf * 100) + "% 추세정렬+알파동의 보조진입 RSI" + rsiv.toFixed(0),
-            members: ["TR_VISION_UP"] };
-        }
-      }
-    }
-  }
+
+  // [V33.112] ★Vision 단독 진입 삭제★ — 인증 없는 외부 입력이 매수를 일으킬 수 있었다.
+  //   vision_predictions 는 /api/vision · /api/vision-results 로 ★누구나 인증 없이★ 쓸 수 있었고,
+  //   그 값이 여기서 TR_VISION_UP 신호를 만들어 실제 매수로 이어졌다.
+  //   Vision 은 V9.9 부터 cfg 레벨에서 영구 차단(enabled=false)이고 V33.95 부터 외부 AI 호출도
+  //   금지라 ★생성은 이미 죽어 있었는데 소비 경로만 살아 있었던★ 구조다.
+  //   사용자 확인: AI 비전은 쓰지 않는다 → 소비·수신·생성 전부 제거한다.
   // [V52 신규 전략] SNAP — trend 신호가 없을 때만 평가 (같은 종목 중복진입 방지, 추세진입 우선)
   if (!sig) {
     if (!(cfg.strategies && cfg.strategies.snap === false)) {
       const snapSig = evaluateSnapEntry(price, dayPct, dailyData, cfg, regime, market);
       if (snapSig) {
-        // [Vision-down 게이트] 고신뢰 하락 예측 + 떨어지는 칼 중첩 → 진입 보류(하드 게이트)
-        if (visionPreds && dailyData.symbol) {
-          const vps = visionPreds[dailyData.symbol];
-          if (vps && vps.pred === "down" && vps.conf >= 0.70) return [];
-        }
         // [V10 개혁] SNAP 엣지 점수 게이트 — 과매도 깊이·추세·반전·PEAD·OBV·실현기대값을 합성해 임계 미달 시 진입 거부.
         const _snE = cfg.snapEdge || DEFAULT_CFG.snapEdge || {};
         if (_snE.enabled !== false) {
@@ -11042,7 +10991,7 @@ function evaluateAllStrategies(price, dayPct, dailyData, cfg, signalStats, regim
 
         if (_sf.length) {
           const _ff = fuseFactors(_sf, { gain: 0.40 });   // SNAP은 약간 보수적 gain
-          snapSig.visionBoost = (snapSig.visionBoost || 1.0) * _ff.mult;
+          snapSig.sizeBoost = (snapSig.sizeBoost || 1.0) * _ff.mult;
           snapSig.fuseNote = "FUSE " + _ff.note;
         }
         // [하드 게이트] 어닝 발표 D-2 이내 — 양방향 갭 도박 → 강축소(합성과 별도)
@@ -11051,7 +11000,7 @@ function evaluateAllStrategies(price, dayPct, dailyData, cfg, signalStats, regim
           if (_ets2) {
             const _dd2 = (_ets2 - Date.now()) / 86400000;
             if (_dd2 >= -0.5 && _dd2 <= 2) {
-              snapSig.visionBoost = (snapSig.visionBoost || 1.0) * 0.5;
+              snapSig.sizeBoost = (snapSig.sizeBoost || 1.0) * 0.5;
               snapSig.earnNote = "EARNINGS D-" + Math.max(0, _dd2).toFixed(1) + "×0.5";
             }
           }
@@ -11062,54 +11011,10 @@ function evaluateAllStrategies(price, dayPct, dailyData, cfg, signalStats, regim
     return [];
   }
 
-  // [Vision AI] 예측 결과를 실제 거래에 직접 반영 (적중률 자기보정 포함)
-  //   DOWN ≥70% → 매수 신호 완전 차단
-  //   UP  ≥65% → 신뢰도 비례 포지션 부스트 (65%→×1.10 ~ 90%→×1.50)
-  //   [성능 B] 롤링 적중률(precision)로 영향 강도 자동 스케일:
-  //     precision<50% → Vision 무력화(trust=0), 50~65% 선형, 65%+ 완전 적용
-  if (visionPreds && dailyData && dailyData.symbol) {
-    const vp = visionPreds[dailyData.symbol];
-    const va = cfg.visionAI || {};
-    const accObj = visionPreds.__accuracy;
-    const prec = (accObj && accObj.total >= 20) ? accObj.precision : null;
-    const trust = (prec == null) ? 1 : (prec < 0.5 ? 0 : Math.min(1, (prec - 0.45) / 0.2));
-    if (va.enabled && vp && vp.conf >= (va.confMin || 0.6) && trust > 0) {
-      if (vp.pred === "down" && vp.conf >= 0.70 && trust >= 0.5) {
-        // [데이터 축적] 적중률이 충분히 검증(precision≥55%)됐을 때만 완전 차단.
-        //   미검증/표본부족 단계에선 차단 대신 사이즈만 대폭 축소 → 거래·학습 데이터는 계속 쌓음.
-        if (prec != null && prec >= 0.55) {
-          return [];
-        } else {
-          sig.visionBoost = (sig.visionBoost || 1.0) * 0.4;
-          sig.visionNote = "VISION_DOWN " + Math.round(vp.conf * 100) + "% 축소(미검증)";
-        }
-      } else if (vp.pred === "up" && vp.conf >= 0.65) {
-        // [V84] Vision UP 부스트 — "다른 변수보다 작게". 상한은 cfg.visionAI.maxBoost(기본 1.15).
-        //   기술적 추세가 우호적일 때만 적용(앙상블): requireTAConfirm + 알파품질/추세정렬 확인 →
-        //   Vision 단독 오신호로 인한 사이즈 과대 방지 = 실현 적중률↑.
-        const vmax = (typeof va.maxBoost === "number" && va.maxBoost > 1) ? va.maxBoost : 1.15;
-        let taOk = true;
-        if (va.requireTAConfirm !== false) {
-          const _aqv = computeAlphaQuality(dailyData, regime);
-          const _cv = dailyData.closes;
-          const _ma20 = (_cv && _cv.length >= 20) ? getMA(_cv, 20) : null;
-          const _ma50 = (_cv && _cv.length >= 50) ? getMA(_cv, 50) : null;
-          const _aligned = (_ma20 != null && _ma50 != null && _ma20 > _ma50 && price > _ma50);
-          taOk = (_aqv && _aqv.score >= 0.5) || _aligned;   // 알파 우호 또는 추세정렬 시에만 부스트
-        }
-        if (taOk) {
-          // conf 90%→vmax, 80%→70%, 70%→45%, 65%→25% (편차 비례 후 trust 가중)
-          const frac = vp.conf >= 0.90 ? 1.0 : vp.conf >= 0.80 ? 0.7 : vp.conf >= 0.70 ? 0.45 : 0.25;
-          const boost = 1 + (vmax - 1) * frac * trust;
-          sig.visionBoost = (sig.visionBoost || 1.0) * boost;
-          sig.visionNote = "VISION_UP " + Math.round(vp.conf * 100) + "% ×" + boost.toFixed(2) + (prec != null ? " p" + Math.round(prec * 100) : "");
-        } else {
-          sig.visionNote = "VISION_UP " + Math.round(vp.conf * 100) + "% 보류(TA 비우호)";
-        }
-      }
-    }
-  }
-
+  // [V33.112] ★Vision 사이즈 스케일 삭제★ — 위 진입신호와 같은 이유다.
+  //   인증 없는 외부 입력이 포지션 크기를 최대 1.15배까지 키우고, down 예측이면 줄였다.
+  //   생성기는 이미 죽어 있었으므로(cfg enabled=false + 외부 AI 금지) 실효는 '외부에서
+  //   POST 한 값만' 반영되는 상태였다 — 있는 것보다 없는 게 안전하다.
   // [SEC 공시] 미국 종목 한정 — 무조건 보수화 X, 공시 후 주가 반응으로 호재/악재 판단.
   //   긍정 공시(상승 반영)는 보수화하지 않음. 악재(하락)만 축소. 불확실(중립/미상)은 약하게.
   //   [ETF 세분화] ETF는 바스켓이라 개별 기업 공시 영향이 분산됨 → SEC 보수화 면제.
@@ -11130,7 +11035,7 @@ function evaluateAllStrategies(price, dayPct, dailyData, cfg, signalStats, regim
       }
       else if (pr <= dnThr){ scale = negScale; tag = "NEGATIVE " + pr.toFixed(1) + "%"; } // 악재 → 축소
       else                 { scale = 0.85; tag = "NEUTRAL " + pr.toFixed(1) + "%"; }      // 중립 → 약한 축소
-      if (scale !== 1.0) sig.visionBoost = (sig.visionBoost || 1.0) * scale; // 부스트/축소 모두 반영
+      if (scale !== 1.0) sig.sizeBoost = (sig.sizeBoost || 1.0) * scale; // 부스트/축소 모두 반영
       sig.secNote = "SEC_" + sd.filingType + " " + tag;
     }
   }
@@ -11180,7 +11085,7 @@ function evaluateAllStrategies(price, dayPct, dailyData, cfg, signalStats, regim
       else if (adx < 18) _taFavor = Math.max(0, _taFavor - 0.1);
       if (aScale !== 1.0) {
         const eff = _te(aScale);
-        sig.visionBoost = (sig.visionBoost || 1.0) * eff;
+        sig.sizeBoost = (sig.sizeBoost || 1.0) * eff;
         sig.adxNote = "ADX " + adx.toFixed(0) + "×" + eff.toFixed(2) + (isLevETF2 ? " LEV" : "");
       }
     }
@@ -11209,7 +11114,7 @@ function evaluateAllStrategies(price, dayPct, dailyData, cfg, signalStats, regim
       const _dDays = (_ets - Date.now()) / 86400000;
       if (_dDays >= -0.5 && _dDays <= 2) {
         const _es = _dDays <= 1 ? 0.5 : 0.7;
-        sig.visionBoost = (sig.visionBoost || 1.0) * _es;
+        sig.sizeBoost = (sig.sizeBoost || 1.0) * _es;
         sig.earnNote = "EARNINGS D-" + Math.max(0, _dDays).toFixed(1) + "×" + _es;
       }
     }
@@ -11238,21 +11143,21 @@ function evaluateAllStrategies(price, dayPct, dailyData, cfg, signalStats, regim
     const _er = eventData.econ && eventData.econ[market];
     if (_er) {
       if (_er.preHigh) {
-        sig.visionBoost = (sig.visionBoost || 1.0) * 0.85;
+        sig.sizeBoost = (sig.sizeBoost || 1.0) * 0.85;
         sig.econNote = "ECON-PRE " + String(_er.preHigh).slice(0, 24) + "×0.85";
       }
       if (_er.shock <= -2) {
-        sig.visionBoost = (sig.visionBoost || 1.0) * 0.8;
+        sig.sizeBoost = (sig.sizeBoost || 1.0) * 0.8;
         sig.econNote = (sig.econNote ? sig.econNote + " " : "") + "ECON-NEG×0.8";
       } else if (_er.shock >= 2) {
-        sig.visionBoost = (sig.visionBoost || 1.0) * 1.05;
+        sig.sizeBoost = (sig.sizeBoost || 1.0) * 1.05;
         sig.econNote = (sig.econNote ? sig.econNote + " " : "") + "ECON-POS×1.05";
       }
     }
     // (3) 내부자 Form 4 클러스터 — 3일 내 2건 이상 공시(매수/매도 방향 미상) → 불확실성 보수화
     const _ic = eventData.insiderCount && eventData.insiderCount[_sym];
     if (_ic >= 2 && market === "us") {
-      sig.visionBoost = (sig.visionBoost || 1.0) * 0.9;
+      sig.sizeBoost = (sig.sizeBoost || 1.0) * 0.9;
       sig.insiderNote = "INSIDER F4×" + _ic + "×0.9";
     }
   }
@@ -11268,7 +11173,7 @@ function evaluateAllStrategies(price, dayPct, dailyData, cfg, signalStats, regim
       const gapPct = ((_o[_n - 1] - _c[_n - 2]) / _c[_n - 2]) * 100;
       if (gapPct > (r52.gapMaxPct != null ? r52.gapMaxPct : 3.0)) {
         const gs = r52.gapScale != null ? r52.gapScale : 0.7;
-        sig.visionBoost = (sig.visionBoost || 1.0) * gs;
+        sig.sizeBoost = (sig.sizeBoost || 1.0) * gs;
         sig.gapNote = "GAP+" + gapPct.toFixed(1) + "%×" + gs;
       }
     }
@@ -11323,7 +11228,7 @@ function evaluateAllStrategies(price, dayPct, dailyData, cfg, signalStats, regim
         // leverage/inverse/other는 기존 전용 로직(ADX·패닉헤지·decay)에서 처리
       }
       if (eScale !== 1.0) {
-        sig.visionBoost = (sig.visionBoost || 1.0) * eScale;
+        sig.sizeBoost = (sig.sizeBoost || 1.0) * eScale;
         sig.etfNote = "ETF:" + eNote + "×" + eScale.toFixed(2) + (rs != null ? " RS" + rs.toFixed(1) : "");
       }
     }
@@ -11361,7 +11266,7 @@ function evaluateAllStrategies(price, dayPct, dailyData, cfg, signalStats, regim
             return [];  // 극저유동 → 진입 차단(슬리피지·갭 리스크 과다)
           }
           if (_m.advUsd < _floor) {
-            sig.visionBoost = (sig.visionBoost || 1.0) * (_mf.liqThinScale != null ? _mf.liqThinScale : 0.7);
+            sig.sizeBoost = (sig.sizeBoost || 1.0) * (_mf.liqThinScale != null ? _mf.liqThinScale : 0.7);
             sig.liqNote = "LIQ thin×" + (_mf.liqThinScale || 0.7);
           }
         }
@@ -11400,13 +11305,13 @@ function evaluateAllStrategies(price, dayPct, dailyData, cfg, signalStats, regim
   //   기술강조(emphasis)는 gain에 흡수. 단일 mult = clamp(exp(gain·composite), 0.55, 1.6).
   if (_fuse.length) {
     const _f = fuseFactors(_fuse, { gain: 0.42 * _emph });
-    sig.visionBoost = (sig.visionBoost || 1.0) * _f.mult;
+    sig.sizeBoost = (sig.sizeBoost || 1.0) * _f.mult;
     sig.fuseNote = "FUSE " + _f.note;
   }
 
   // [안전장치] 여러 부스트(vision×sec×alpha×etf) 누적이 극단값이 되지 않게 상하한 clamp.
   //   (최종 사이즈는 maxPositionPct·가용현금으로 한 번 더 제한됨)
-  if (sig.visionBoost) sig.visionBoost = Math.min(2.0, Math.max(0.2, sig.visionBoost));
+  if (sig.sizeBoost) sig.sizeBoost = Math.min(2.0, Math.max(0.2, sig.sizeBoost));
 
   return [{ strategy: "trend", signal: sig, rawCount: 1 }];
 }
@@ -12010,7 +11915,7 @@ async function applyRatchet(DB, market, symbol, strategy, pos, decision) {
 //   항상 돌아야 한다(보유분을 방치할 수 없다). 즉 운영방침 ①의 "비상용"은 매수 신호에 대한 것이고,
 //   이 함수의 청산 규율은 상시 적용이다.
 //   단, 청산 '타이밍 예측'을 더 잘하게 만드는 작업은 AI 쪽(STIN/LUXML)에서 한다.
-function evaluateSell(pos, price, daily, dailyRsi, dailyMa, dailyMaShort, cfg, marketOpenForThis, market, deRiskOpts, visionHint) {
+function evaluateSell(pos, price, daily, dailyRsi, dailyMa, dailyMaShort, cfg, marketOpenForThis, market, deRiskOpts) {
   const strategyName = pos.strategy || (pos.meta && pos.meta.strategy) || "trend";
 
   // === [SCALP] 단타 전략 전용 청산 — 빠른 손절 / 분할익절+본전락 / 트레일 / 타임스톱 ===
@@ -12185,12 +12090,6 @@ function evaluateSell(pos, price, daily, dailyRsi, dailyMa, dailyMaShort, cfg, m
   // [디리스킹] 패닉/딥드로다운 시 손절·트레일 타이트닝 (인프라 유지)
   const dr = (deRiskOpts && deRiskOpts.active && cfg.crashSurvival && cfg.crashSurvival.deRisk) ? cfg.crashSurvival.deRisk : null;
   let trailScale = dr ? (dr.trailDropScale || 1) : 1;
-  // [Vision 활용] 보유 종목 예측으로 트레일 폭 동적 조정 (추가 fetch 없이 기존 예측 사용).
-  //   UP 고신뢰 → 트레일 느슨(추세 지속 신뢰 → 수익 더 키움) / DOWN → 타이트(이익 조기 보호).
-  if (visionHint && typeof visionHint.conf === "number" && visionHint.conf >= 0.65) {
-    if (visionHint.pred === "up")        trailScale *= 1.3;
-    else if (visionHint.pred === "down") trailScale *= 0.7;
-  }
   // [VIX 적응 트레일] 고변동(VIX↑) → 트레일 넓게(노이즈 손절 방지), 저변동(VIX↓) → 좁게(이익 보호)
   //   VIX 28+ : 시장 불안 → 작은 되돌림에 청산되지 않도록 여유 확대
   //   VIX 14미만: 안정장 → 트레일 타이트하게 유지해 이익 최대 보존
@@ -14516,7 +14415,6 @@ async function runTradingCycle(env) {
       const _sp0 = await getState(DB, "sector_pulse", null);
       if (!_sp0 || (Date.now() - (_sp0.ts || 0)) >= 30 * 60000) await computeSectorPulse(DB);
     } catch (e) {}
-    const visionPreds = await getState(DB, "vision_predictions", {});  // [Vision AI]
     const secData = await getState(DB, "sec_filings", {});  // [SEC 공시] 미국 종목 보수화
     const eventData = await buildEventRiskData(DB);  // [V62] 어닝스·경제지표·내부자 이벤트 리스크 (캐시 read만)
     // [V10] 스캘프 적응형 엣지 — 신호별 실현 성과(승률·평균손익) 캐시 1회 로드. 지는 신호 자동 가지치기에 사용.
@@ -15867,40 +15765,11 @@ async function runTradingCycle(env) {
               }
             }
 
-            // [Vision AI] DOWN 고신뢰 보유 포지션 조기 청산 (적중률 게이팅)
-            //   ≥90% → 즉시 전량 청산 (손익 무관)
-            //   ≥80% → 이익 중이면 즉시 이익 실현 (손실 중이면 기존 손절 로직에 맡김)
-            //   [성능 B] 적중률 50% 미만이면 조기 청산 안 함 (오신호로 인한 손절 방지)
-            {
-              const _vp = visionPreds && visionPreds[symbol];
-              const _va = mcfg.visionAI || {};
-              const _acc = visionPreds && visionPreds.__accuracy;
-              const _prec = (_acc && _acc.total >= 20) ? _acc.precision : null;
-              const _trusted = (_prec == null) || (_prec >= 0.5);
-              if (_trusted && _va.enabled && _vp && _vp.pred === "down") {
-                const _vc = _vp.conf;
-                const _pnl = held.avg > 0 ? ((price - held.avg) / held.avg) * 100 : 0;
-                if (_vc >= 0.90 && _pnl > (_va.minPnlForExit != null ? _va.minPnlForExit : -2.0)) {
-                  // [V9.8] 손실 -2% 초과 구간에서만 즉시청산. 그 이하면 패닉 저점 투매가 되므로(검증: 033780 VISION_EXIT -50만)
-                  //   하드 손절(ATR/스탑가)에 위임 → 반등 시 회복 여지 확보.
-                  await executeSell(DB, market, symbol, held, held.qty, price, "VISION_EXIT " + Math.round(_vc * 100) + "%", mcfg, cash);
-                  sold++;
-                  const _sk = Object.keys(positions).some(k => positions[k].symbol === symbol && k !== posKey);
-                  if (!_sk) { heldSymbols.delete(symbol); const _sc = SECTOR_MAP[symbol]; if (_sc && sectorCounts[_sc]) sectorCounts[_sc]--; }
-                  continue;
-                } else if (_vc >= 0.80 && _pnl > 0) {
-                  await executeSell(DB, market, symbol, held, held.qty, price, "VISION_PROFIT_LOCK " + Math.round(_vc * 100) + "% +" + _pnl.toFixed(1) + "%", mcfg, cash);
-                  sold++;
-                  const _sk = Object.keys(positions).some(k => positions[k].symbol === symbol && k !== posKey);
-                  if (!_sk) { heldSymbols.delete(symbol); const _sc = SECTOR_MAP[symbol]; if (_sc && sectorCounts[_sc]) sectorCounts[_sc]--; }
-                  continue;
-                }
-              }
-            }
-
+            // [V33.112] ★Vision DOWN 조기청산 삭제★ — 인증 없는 외부 입력이 ★전량 청산★ 까지
+            //   일으킬 수 있었다(conf≥0.90 → 즉시 전량). 생성기는 이미 죽어 있어 실효는
+            //   '외부에서 POST 한 값' 뿐이었다. 소비·수신·생성 전부 제거한다.
             // 매도 판단 ([V12] crashGate.deRisk → 손절·트레일 타이트닝)
-            const _vHint = (visionPreds && visionPreds[symbol]) ? visionPreds[symbol] : null; // [Vision] 트레일 동적 조정용
-            const sellDecision = evaluateSell(held, price, daily, dailyRsi, dailyMa, dailyMaShort, mcfg, canTrade, market, deRiskOpts, _vHint);
+            const sellDecision = evaluateSell(held, price, daily, dailyRsi, dailyMa, dailyMaShort, mcfg, canTrade, market, deRiskOpts);
             if (sellDecision.minHoldLock) {
               const heldHours = held.opened_ts ? (Date.now() - held.opened_ts) / 3600000 : 0;
               const pnlRate = ((price - held.avg) / held.avg) * 100;
@@ -15940,7 +15809,7 @@ async function runTradingCycle(env) {
             const _ef = sessionElapsedFraction(market);
             daily.volPaceMult = (_ef != null && _ef > 0 && _ef < 0.95) ? Math.min(2.5, 1 / Math.max(0.4, _ef)) : 1;
           }
-          let stratResults = evaluateAllStrategies(price, dayPct, daily, mcfg, signalStats, regime, market, intra, visionPreds, secData, eventData);
+          let stratResults = evaluateAllStrategies(price, dayPct, daily, mcfg, signalStats, regime, market, intra, secData, eventData);
 
           // === [SCALP] 분봉 단타 전략 평가 ===
           //   scalp 활성화 + trend 신호 없을 때만 평가 (같은 종목 중복진입 방지)
@@ -16123,7 +15992,7 @@ async function runTradingCycle(env) {
                   }
                   if (_kf.length) {
                     const _kff = fuseFactors(_kf, { gain: 0.30, lo: 0.6, hi: 1.4 });  // scalp은 ATR 사이징이라 보수적
-                    _scalpSig.visionBoost = (_scalpSig.visionBoost || 1.0) * _kff.mult;
+                    _scalpSig.sizeBoost = (_scalpSig.sizeBoost || 1.0) * _kff.mult;
                     _scalpSig.fuseNote = "FUSE " + _kff.note;
                   }
                 }
@@ -16253,8 +16122,8 @@ async function runTradingCycle(env) {
             for (const _sr of stratResults) {
               const _s = _sr.signal;
               if (!_s) continue;
-              if (_sr.strategy === "trend") _s.visionBoost = (_s.visionBoost || 1.0) * 0.8;
-              else _s.visionBoost = (_s.visionBoost || 1.0) * 1.1;
+              if (_sr.strategy === "trend") _s.sizeBoost = (_s.sizeBoost || 1.0) * 0.8;
+              else _s.sizeBoost = (_s.sizeBoost || 1.0) * 1.1;
             }
           }
 
@@ -16383,7 +16252,7 @@ async function runTradingCycle(env) {
                 continue;
               }
               if (_sr.signal) {
-                _sr.signal.visionBoost = (_sr.signal.visionBoost || 1.0) * _ctxMult;
+                _sr.signal.sizeBoost = (_sr.signal.sizeBoost || 1.0) * _ctxMult;
                 if (ctxWhy.length) _sr.signal.ctxNote = "CTX" + (ctxScore >= 0 ? "+" : "") + ctxScore + "×" + _ctxMult + _ctxStr;
               }
               _kept.push(_sr);
@@ -16700,12 +16569,14 @@ async function runTradingCycle(env) {
             const _scalpSz = (strategy === "scalp") ? Object.assign({}, mcfg.scalpRules || DEFAULT_CFG.scalpRules || {}) : null;
             // [V52 SNAP] 스냅백 전용 사이징 — 역추세성이라 trend보다 작게. KR은 지연시세 → 추가 축소.
             const _snapSz = (strategy === "snap") ? Object.assign({}, DEFAULT_CFG.snapRules || {}, mcfg.snapRules || {}) : null;
-            // [Vision AI] UP 고신뢰 신호면 포지션 크기 부스트 (visionBoost=1.25). sizeScale = VIX/드로다운 스케일.
+            // [V33.112] 이 필드는 더 이상 Vision 과 무관하다 — visionBoost → sizeBoost 로 개명했다.
+            //   실제 기여자는 SEC 공시·알파품질·ETF·유동성·이벤트·신뢰도 등이고 Vision 은 제거됐다.
+            //   이름이 실제와 어긋나면 다음 사람이 "비전이 사이즈를 키우네" 로 잘못 읽는다.
             let _baseRisk;
             if (_scalpSz)      _baseRisk = (_scalpSz.riskPerTrade != null ? _scalpSz.riskPerTrade : 0.5);
             else if (_snapSz)  _baseRisk = (_snapSz.riskPerTrade != null ? _snapSz.riskPerTrade : 0.5) * (market === "kr" ? (_snapSz.krRiskScale != null ? _snapSz.krRiskScale : 0.7) : 1.0);
             else               _baseRisk = (tsz.riskPerTrade != null ? tsz.riskPerTrade : 0.75);
-            let riskPct = _baseRisk * (signal.visionBoost || 1.0) * sizeScale;
+            let riskPct = _baseRisk * (signal.sizeBoost || 1.0) * sizeScale;
             let maxPosPct = _scalpSz ? (_scalpSz.maxPositionPct != null ? _scalpSz.maxPositionPct : 6)
                             : _snapSz ? (_snapSz.maxPositionPct != null ? _snapSz.maxPositionPct : 8)
                             : (tsz.maxPositionPct != null ? tsz.maxPositionPct : 15);
@@ -17206,7 +17077,7 @@ async function runTradingCycle(env) {
                   }
                   // [강화] VWAP 근접 + 상승 모멘텀 최적 타이밍 → signal confidence 부스트
                   if (_conf.confidenceBoost && _conf.confidenceBoost > 0 && signal) {
-                    signal.visionBoost = (signal.visionBoost || 1.0) * (1 + _conf.confidenceBoost);
+                    signal.sizeBoost = (signal.sizeBoost || 1.0) * (1 + _conf.confidenceBoost);
                     if (!signal.intradayNote) signal.intradayNote = "VWAP_OPT +" + (_conf.confidenceBoost * 100).toFixed(0) + "%";
                   }
                 } catch (e) { /* 분봉 조회 실패는 무시 — 일봉 신호로 진입 진행 */ }
@@ -17490,7 +17361,6 @@ async function runFastWatch(env, cronStart) {
     if ((Date.now() - cronStart) + interval > maxElapsed) return;
 
     resetFetchBudget(100);  // fastWatch 전용 깨끗한 subrequest 예산
-    const visionPreds = await getState(DB, "vision_predictions", {});
     const vixState = await getState(DB, "vix", null);
     const vixVal = (vixState && typeof vixState.value === "number" && vixState.value > 0) ? vixState.value : 0;
     // [V33.44] 메인 사이클이 저장한 국면 위상을 청산 루프에서도 그대로 쓴다(시장별).
@@ -17580,8 +17450,7 @@ async function runFastWatch(env, cronStart) {
               held.meta.breakEvenLocked = true; posDirty = true;
             }
           }
-          const _vHint = visionPreds && visionPreds[held.symbol] ? visionPreds[held.symbol] : null;
-          const sellDecision = evaluateSell(held, price, daily, dailyRsi, dailyMa, dailyMaShort, mcfg, true, market, deRiskOpts, _vHint);
+          const sellDecision = evaluateSell(held, price, daily, dailyRsi, dailyMa, dailyMaShort, mcfg, true, market, deRiskOpts);
           if (sellDecision.ratchetStop) {
             await applyRatchet(DB, market, held.symbol, stratName, held, sellDecision);
           } else if (sellDecision.sell) {
@@ -19827,7 +19696,7 @@ async function handleRequest(request, env, ctx) {
         "sector_group_stats", "signal_type_stats", "deposits", "outflows",
         "twr:us", "twr:kr", "last_tick", "last_heartbeat", "mcap_shares",
         "signal_stats", "budget_split_applied", "llm_daily:us", "llm_daily:kr",
-        "mkt_context", "sector_news_sentiment", "vision_predictions"
+        "mkt_context", "sector_news_sentiment"
       ]);
       const sectorGroupStats = __S["sector_group_stats"] || {};
       const sectorGroups = { stats: sectorGroupStats, weights: (cfg.sectorGroups && cfg.sectorGroups.weights) || {} };
@@ -19947,7 +19816,6 @@ async function handleRequest(request, env, ctx) {
         indices: indices,
         signalStats: signalStats,
         strategies: STRATEGIES,   // [V8]
-        visionPredictions: __S["vision_predictions"] || {},
         // [강제 락 & 사용량] UI 표시용
         forceLock: !!cfg.forceLock,
         usageState: await (async () => {
@@ -21493,48 +21361,7 @@ async function handleRequest(request, env, ctx) {
     }
 
     // ── VISION AI: 예측 결과 저장 ──
-    if (path === "/api/vision" && request.method === "POST") {
-      const body = await request.json().catch(() => ({}));
-      if (body && typeof body === "object") {
-        await setState(env.DB, "vision_predictions", body);
-      }
-      return Response.json({ ok: true }, { headers: cors });
-    }
 
-    // [V53] VISION AI: 진단 상태 — 작동 여부를 UI에서 한눈에 파악
-    if (path === "/api/vision-status" && request.method === "GET") {
-      const cfg = migrateCfgToMarkets(Object.assign({}, DEFAULT_CFG, await getState(env.DB, "cfg", {})));
-      const va = cfg.visionAI || {};
-      const nowD = new Date();
-      const todayKey = "vision_usage:" + nowD.toISOString().slice(0, 10);
-      const todayUsage = (await getState(env.DB, todayKey, 0)) || 0;
-      const MONTHLY_BUDGET = va.monthlyBudget || 10000;
-      const DAILY_BUDGET = Math.floor(MONTHLY_BUDGET / 22 * 0.85);
-      const preds = await getState(env.DB, "vision_predictions", {});
-      const acc = (await getState(env.DB, "vision_accuracy", null)) || { hits: 0, total: 0 };
-      let predCount = 0, lastTs = 0, upN = 0, downN = 0;
-      for (const k in preds) {
-        if (k.indexOf("__") === 0) continue;
-        predCount++;
-        const p = preds[k];
-        if (p && p.ts > lastTs) lastTs = p.ts;
-        if (p && p.pred === "up") upN++; else downN++;
-      }
-      return Response.json({
-        enabled: !!va.enabled,
-        hasApiKey: !!va.rfApiKey,
-        todayUsage: todayUsage,
-        dailyBudget: DAILY_BUDGET,
-        monthlyBudget: MONTHLY_BUDGET,
-        predCount: predCount, upCount: upN, downCount: downN,
-        lastScanTs: lastTs || null,
-        accuracy: { hits: Math.round(acc.hits), total: Math.round(acc.total), precision: acc.total > 0 ? acc.hits / acc.total : null },
-        notRunningReason: !va.enabled ? "Settings에서 Vision AI가 꺼져 있음"
-          : !va.rfApiKey ? "Roboflow API Key 미설정"
-          : (todayUsage >= DAILY_BUDGET) ? "일일 예산 소진 (내일 자동 재개)"
-          : null
-      }, { headers: cors });
-    }
 
     // [진단] 네이버 차트(분봉/일봉) Workers 접근성·포맷 확인 — 분봉 무지연 소스 후보 검증용
     // [V58b] KR 차트 캐시 강제 초기화 — "차트 데이터 없음" 고착 시 호출
@@ -21573,7 +21400,6 @@ async function handleRequest(request, env, ctx) {
       await probe("yahoo_ks", "https://query1.finance.yahoo.com/v8/finance/chart/" + code + ".KS?interval=1d&range=1mo");
       return Response.json(out, { headers: cors });
     }
-    // [V53] VISION AI: 수동 전체 스캔 트리거 — cron 시각 게이트를 우회(force)해 즉시 1배치 실행
     // [V33.111] ★임시진단 엔드포인트 2개 삭제★ — 최신 설계와 정면으로 어긋났다.
     //   · /api/rf-test  : 인증 없이 POST 만 하면 ★Roboflow API 키를 5개 외부 호스트로 전송★ 했다.
     //     외부 AI API 전면 금지(EXTERNAL_AI_API_DISABLED) 를 우회하는 유일한 경로였고,
@@ -21582,43 +21408,10 @@ async function handleRequest(request, env, ctx) {
     //     같은 호스트를 매 사이클 때리므로 진단 가치가 없고, 로그로 이미 드러난다.
     //   기능 손실 없음 — 둘 다 진단 전용이고 대체 경로가 이미 상시 동작 중이다.
     //   재발 방지: tools/check-no-external-ai.mjs 가 차단 스위치 없는 AI 호출을 배포 단계에서 막는다.
-    // [V65] 브라우저 추론 결과 수신 — Roboflow가 Workers IP를 403 차단하므로
-    //   추론은 브라우저가 수행하고 결과만 여기로 POST(검증 후 vision_predictions에 머지).
-    //   엔진(거래)·UI 는 기존과 동일하게 이 state를 읽는다.
-    if (path === "/api/vision-results" && request.method === "POST") {
-      let body;
-      try { body = await request.json(); } catch (e) { return Response.json({ ok: false, error: "bad json" }, { status: 400, headers: cors }); }
-      if (!body || typeof body !== "object") return Response.json({ ok: false, error: "bad body" }, { status: 400, headers: cors });
-      const keys = Object.keys(body).filter(k => k.indexOf("__") !== 0).slice(0, 120);
-      const store = (await getState(env.DB, "vision_predictions", {})) || {};
-      let merged = 0;
-      const nowTs = Date.now();
-      for (const sym of keys) {
-        const v = body[sym];
-        if (!v || typeof v !== "object") continue;
-        if (v.pred !== "up" && v.pred !== "down") continue;
-        const conf = Number(v.conf);
-        if (!(conf > 0.06 && conf <= 1)) continue;
-        if (!/^[A-Z0-9.\-=^]{1,12}$/i.test(sym)) continue;
-        store[sym] = {
-          pred: v.pred, conf: conf,
-          upConf: Math.max(0, Math.min(1, Number(v.upConf) || 0)),
-          downConf: Math.max(0, Math.min(1, Number(v.downConf) || 0)),
-          predClose: (typeof v.predClose === "number" && v.predClose > 0) ? v.predClose : undefined,
-          src: "browser", ts: nowTs
-        };
-        merged++;
-      }
-      if (merged > 0) await setState(env.DB, "vision_predictions", store);
-      return Response.json({ ok: true, merged: merged }, { headers: cors });
-    }
-    if (path === "/api/vision-scan" && request.method === "POST") {
-      let r = null;
-      try { r = await runVisionScanBackend(env, true); } catch (e) {
-        return Response.json({ ok: false, error: String(e && e.message || e) }, { headers: cors });
-      }
-      return Response.json(Object.assign({ ok: true }, r || {}), { headers: cors });
-    }
+    // [V33.112] ★VISION 엔드포인트 4종 삭제★ (/api/vision, /api/vision-status,
+    //   /api/vision-results, /api/vision-scan). 앞의 둘은 ★인증 없이 vision_predictions 를
+    //   쓸 수 있었고★, 그 값이 매수신호·사이즈·트레일·전량청산까지 좌우했다.
+    //   즉 URL 만 알면 외부에서 우리 매매를 움직일 수 있는 상태였다.
 
     if (path === "/api/macro" && request.method === "GET") {
       const data = await getState(env.DB, "macro_data", null);
@@ -21746,135 +21539,6 @@ async function handleRequest(request, env, ctx) {
     return Response.json({ error: e.message }, { status: 500, headers: cors });
   }
 }
-
-// ══════════════════════════════════════════════════════════════════════════
-// VISION AI BACKEND — Canvas 없이 순수 JS로 BMP 차트 생성 → Roboflow 예측
-// ══════════════════════════════════════════════════════════════════════════
-
-// 종가 배열로 픽셀 버퍼(RGB, top-to-bottom) 생성
-function drawChartPixels(closes, width, height) {
-  const buf = new Uint8Array(width * height * 3).fill(8); // 어두운 배경 #080808
-  if (!closes || closes.length < 5) return buf;
-
-  const n = Math.min(closes.length, 60);
-  const data = closes.slice(-n);
-  const minV = Math.min(...data);
-  const maxV = Math.max(...data);
-  const range = maxV - minV || minV * 0.01 || 1;
-  const pad = Math.round(width * 0.06);
-  const w = width - pad * 2;
-  const h = height - pad * 2;
-
-  function setPixel(x, y, r, g, b) {
-    x = Math.round(x); y = Math.round(y);
-    if (x < 0 || x >= width || y < 0 || y >= height) return;
-    const i = (y * width + x) * 3;
-    buf[i] = r; buf[i + 1] = g; buf[i + 2] = b;
-  }
-
-  // thick: 선 두께(세로 오프셋). 가격선은 굵게 → 모델 인식률↑
-  function drawLine(x0, y0, x1, y1, r, g, b, thick) {
-    x0 = Math.round(x0); y0 = Math.round(y0);
-    x1 = Math.round(x1); y1 = Math.round(y1);
-    const dx = Math.abs(x1 - x0), dy = Math.abs(y1 - y0);
-    const sx = x0 < x1 ? 1 : -1, sy = y0 < y1 ? 1 : -1;
-    let err = dx - dy;
-    const t = thick ? Math.floor(thick / 2) : 0;
-    for (let steps = 0; steps < 1000; steps++) {
-      for (let o = -t; o <= t; o++) setPixel(x0, y0 + o, r, g, b);
-      if (x0 === x1 && y0 === y1) break;
-      const e2 = 2 * err;
-      if (e2 > -dy) { err -= dy; x0 += sx; }
-      if (e2 < dx)  { err += dx; y0 += sy; }
-    }
-  }
-
-  const px = i => pad + (i / (data.length - 1)) * w;
-  const py = v => pad + h - ((v - minV) / range) * h;
-
-  // 그리드 (어두운 회색)
-  for (let g = 1; g <= 3; g++) {
-    const gy = Math.round(pad + (h / 4) * g);
-    for (let x = pad; x < pad + w; x++) setPixel(x, gy, 30, 30, 30);
-  }
-
-  const isUp = data[data.length - 1] >= data[0];
-  const [lr, lg, lb] = isUp ? [0, 230, 118] : [255, 23, 68];
-
-  // 가격선 (3px 굵기 — 모델 입력 선명도 향상)
-  for (let i = 1; i < data.length; i++) {
-    drawLine(px(i - 1), py(data[i - 1]), px(i), py(data[i]), lr, lg, lb, 3);
-  }
-
-  // MA20 (황색)
-  if (data.length >= 20) {
-    let prevMx = null, prevMy = null;
-    for (let i = 19; i < data.length; i++) {
-      let sum = 0;
-      for (let j = i - 19; j <= i; j++) sum += data[j];
-      const ma = sum / 20;
-      const mx = px(i), my = py(ma);
-      if (prevMx !== null) drawLine(prevMx, prevMy, mx, my, 255, 193, 7, 2);
-      prevMx = mx; prevMy = my;
-    }
-  }
-
-  return buf;
-}
-
-// RGB 픽셀 버퍼 → BMP 바이너리 (Canvas 불필요)
-function pixelsToBMP(pixels, width, height) {
-  const rowSize = Math.ceil(width * 3 / 4) * 4; // 4바이트 정렬
-  const pixelDataSize = rowSize * height;
-  const fileSize = 54 + pixelDataSize;
-  const buf = new Uint8Array(fileSize);
-  const view = new DataView(buf.buffer);
-
-  // 파일 헤더
-  buf[0] = 0x42; buf[1] = 0x4D;
-  view.setUint32(2, fileSize, true);
-  view.setUint32(10, 54, true);
-
-  // DIB 헤더
-  view.setUint32(14, 40, true);
-  view.setInt32(18, width, true);
-  view.setInt32(22, height, true);
-  view.setUint16(26, 1, true);
-  view.setUint16(28, 24, true);
-  view.setUint32(34, pixelDataSize, true);
-
-  // 픽셀 데이터 (BMP는 아래→위, BGR)
-  for (let y = 0; y < height; y++) {
-    const bmpRow = height - 1 - y;
-    for (let x = 0; x < width; x++) {
-      const src = (y * width + x) * 3;
-      const dst = 54 + bmpRow * rowSize + x * 3;
-      buf[dst] = pixels[src + 2]; buf[dst + 1] = pixels[src + 1]; buf[dst + 2] = pixels[src];
-    }
-  }
-  return buf;
-}
-
-// Uint8Array → base64 (btoa는 Workers에서 지원)
-function uint8ToBase64(bytes) {
-  let b = '';
-  for (let i = 0; i < bytes.length; i++) b += String.fromCharCode(bytes[i]);
-  return btoa(b);
-}
-
-// ── SEC EDGAR 공시 스캔 ─────────────────────────────────────────────────────
-//
-//  [목적] 미국 종목의 최근 material 공시를 거래에 보수적으로 반영.
-//    · 8-K(수시공시: 실적/M&A/경영진변동 등) 최근 2거래일 내 → 변동성·갭 리스크 큼
-//      → 신규 진입 사이즈 0.5x로 보수화 (추세전략은 안정적 추세를 노리므로 이벤트 직후 회피)
-//    · 10-Q/10-K(분기/연간 실적) 최근 1거래일 내 → 어닝 직후 → 동일 보수화
-//
-//  [무료/안전] SEC EDGAR API는 무료·무인증. User-Agent 헤더만 필수, 10req/s 제한.
-//    · CIK 매핑(company_tickers.json)은 주 1회만 fetch → 캐시
-//    · 실시간 불필요 → 거래 fetch와 안 겹치게 "미국 프리마켓 직전"(UTC 08:00~08:30, 분%5)만 실행
-//    · cron당 최대 8종목, 24h 캐시 → subrequest 소량
-//
-// ────────────────────────────────────────────────────────────────────────────
 async function fetchSecFilings(env) {
   const DB = env.DB;
   const now = Date.now();
@@ -21974,349 +21638,15 @@ async function fetchSecFilings(env) {
     await log(DB, "INFO", null, "[SEC] " + scanned + "종목 스캔 | 주의 " + cautionCount + "종목 | 큐 " + (toScan.length - scanned));
   }
 }
+// [V33.112] ★VISION AI 백엔드 전체 삭제★ (사용자 확인: AI 비전은 쓰지 않는다)
+//   · 생성: cfg.visionAI.enabled 가 V9.9 부터 코드에서 false 로 강제됐고,
+//     V33.95 부터 EXTERNAL_AI_API_DISABLED 로 Roboflow 호출도 막혀 있었다 — 이미 죽은 코드.
+//   · 그런데 ★소비 경로는 살아 있었다★: vision_predictions 가 매수신호(TR_VISION_UP)·
+//     사이즈 배수(≤1.15)·트레일 폭·전량 조기청산까지 좌우했고,
+//     그 값은 /api/vision · /api/vision-results 로 ★인증 없이★ 쓸 수 있었다.
+//   · 차트 픽셀 → BMP → base64 인코더도 Roboflow 전송 전용이라 함께 제거.
+//   기능 대체: 차트패턴은 chartPat·tfConsBull 피처와 STIN 분봉 기술판정이 자체 계산으로 커버한다.
 
-// ── Vision AI 백엔드 스캔 ──────────────────────────────────────────────────
-//
-//  [설계 원칙]
-//   1) 거래를 절대 막지 않는다
-//       · 3분에 1번만 실행 → cron 2/3는 순수 거래, subrequest 충돌 회피
-//       · cron당 최대 6 API 호출 → 거래 fetch budget 침범 안 함
-//       · 전체 try/catch 격리 → Vision 실패해도 거래 영향 0
-//
-//   2) 거래 발생 시 콜 폭증 방지
-//       · 예산 cap으로 보유 0~16개 무관 월 콜수 일정
-//       · 매수 직후 GRACE(12h)는 재스캔 스킵
-//
-//   3) Roboflow 무료 Public(월 10,000콜) 한도 엄수
-//       · 일일예산 = 월한도 ÷ 22 × 0.85, 일일 사용량 DB 추적, 주말 스킵, 429 즉시 중단
-//
-//  [성능 강화]
-//   A) 거래 후보 우선 — 추세 정렬(MA20>MA50>MA200) 종목 = 실제 매수 후보.
-//      이들을 최우선 + 3TF(20/40/60) 앙상블로 정밀 예측. 비추세는 trend 전략이
-//      어차피 거르므로 1TF 저빈도. → 예산을 "거래에 실제 쓰이는 종목"에 집중.
-//   B) 적중률 자기보정 — 예측 시점 종가를 기록, 재스캔 때 실제 등락과 대조해
-//      롤링 적중률(precision)을 누적. evaluateAllStrategies가 이 값을 읽어
-//      적중률 낮으면 Vision 영향을 자동 축소(50% 미만이면 무력화).
-//   C) 입력 품질 — 차트 가격선 3px·MA 2px 굵기로 모델 인식률↑ (EMA 평활 병행)
-//
-// ────────────────────────────────────────────────────────────────────────────
-async function runVisionScanBackend(env, force) {
-  const DB = env.DB;
-  const now = Date.now();
-  const nowD = new Date(now);
-
-  // ── (1) 거래 보호: 주말 스킵 + 3분에 1번만 (force=수동 트리거 시 시각 게이트 우회) ──
-  if (!force) {
-    const utcDay = nowD.getUTCDay();
-    if (utcDay === 0 || utcDay === 6) return;
-    if (nowD.getUTCMinutes() % 3 !== 0) return;
-  }
-
-  // [한도 보호] 무거운 외부 fetch가 몰리는 트리거 시각(원자재청산·환율·지표 갱신)엔
-  //   Vision을 양보 → 같은 invocation의 Cloudflare subrequest 피크 회피. 다음 cron(3분 후) 재개.
-  if (!force && (isCommodityTriggerTime() || isFxTriggerTime() || isMacroTriggerTime())) return;
-  // [fetch 분산] SEC 스캔 시간대(UTC 08:00~08:30)도 양보 → 외부 fetch 완전 분리
-  if (!force) {
-    const _um = nowD.getUTCHours() * 60 + nowD.getUTCMinutes();
-    if (_um >= 480 && _um <= 510) return;
-  }
-
-  const cfg = migrateCfgToMarkets(Object.assign({}, DEFAULT_CFG, await getState(DB, "cfg", {})));
-  const va = cfg.visionAI || {};
-  if (!va.enabled || !va.rfApiKey) return force ? { scanned: 0, callsUsed: 0, skipped: !va.enabled ? "disabled" : "no_api_key" } : undefined;
-
-  const apiKey  = va.rfApiKey;
-  const version = va.rfVersion || 7;
-  const RF_PROJECT = "stock-updown-classifier";
-
-  // ── 예산 설정 ──
-  const MONTHLY_BUDGET = va.monthlyBudget || 10000;
-  const SAFETY         = 0.85;
-  const DAILY_BUDGET   = Math.floor(MONTHLY_BUDGET / 22 * SAFETY);
-  const MAX_CALLS_CRON = 6;     // cron당 최대 콜 (3TF면 2종목, 1TF면 6종목)
-  const DELAY_MS       = 300;
-  const GRACE_MS       = 12 * 3600000;
-
-  const todayKey = "vision_usage:" + nowD.toISOString().slice(0, 10);
-  const todayUsage = (await getState(DB, todayKey, 0)) || 0;
-  if (todayUsage >= DAILY_BUDGET) return force ? { scanned: 0, callsUsed: 0, skipped: "daily_budget" } : undefined;
-
-  // ── 보유 종목 + 매수시각 ──
-  const heldOpened = {};
-  try {
-    const rows = await DB.prepare("SELECT symbol, opened_ts FROM positions").all();
-    for (const r of (rows.results || [])) {
-      heldOpened[r.symbol] = Math.max(heldOpened[r.symbol] || 0, r.opened_ts || 0);
-    }
-  } catch (e) {}
-  const isHeld = sym => Object.prototype.hasOwnProperty.call(heldOpened, sym);
-  const heldCount = Object.keys(heldOpened).length;
-
-  // ── [성능 A] 추세 정렬 판정 — 거래 후보 식별 ──
-  //   MA20 > MA50 > MA200 정렬 = trend 전략의 매수 후보. 이들에 예산 집중.
-  function isTrendCandidate(daily) {
-    if (!daily || !daily.closes || daily.closes.length < 50) return false;
-    const c = daily.closes;
-    const ma20 = getMA(c, 20), ma50 = getMA(c, 50);
-    if (ma20 == null || ma50 == null) return false;
-    const ma200 = c.length >= 200 ? getMA(c, 200) : null;
-    return ma200 != null ? (ma20 > ma50 && ma50 > ma200) : (ma20 > ma50);
-  }
-
-  const HELD_AGE   = 6  * 3600000;  // 보유: 6h
-  const CAND_AGE   = 12 * 3600000;  // 추세후보: 12h (3TF라 콜 많음)
-  const FLAT_AGE   = 72 * 3600000;  // 비추세: 72h (거래 안 쓰니 저빈도)
-
-  const allSymbols = [...(cfg.usTickers || []), ...(cfg.krTickers || [])];
-  const existing = await getState(DB, "vision_predictions", {});
-  // [V65] 구파서 버그가 남긴 쓰레기 예측 정리 — conf≤6%·up/down 합≤5%는 무효 → 삭제(즉시 재스캔 대상化)
-  for (const k in existing) {
-    if (k.indexOf("__") === 0) continue;
-    const e = existing[k];
-    if (e && typeof e === "object" && (e.conf || 0) <= 0.06 && ((e.upConf || 0) + (e.downConf || 0)) < 0.05) {
-      delete existing[k];
-    }
-  }
-
-  // daily 캐시(우선순위 판정에 재사용 → 추가 쿼리 없음)
-  const dailyCache = {};
-  async function getDaily(sym) {
-    if (dailyCache[sym] !== undefined) return dailyCache[sym];
-    const d = await getState(DB, "daily:" + sym.toUpperCase(), null);
-    dailyCache[sym] = d;
-    return d;
-  }
-
-  // ── 우선순위 큐 구성 (보유 → 추세후보 → 비추세, 각 그룹 내 오래된 순) ──
-  //   판정에 daily가 필요하나 829개 전부 읽으면 느림 → 후보군만 단계적 평가.
-  //   1차: age 필터(메타만) → 2차: 통과분만 daily 읽어 추세 판정.
-  const aged = allSymbols.filter(sym => {
-    const p = existing[sym];
-    const age = p ? now - (p.ts || 0) : Infinity;
-    if (isHeld(sym)) {
-      if (now - heldOpened[sym] < GRACE_MS) return false;
-      return age > HELD_AGE;
-    }
-    // 비보유는 일단 가장 짧은 후보 주기 기준으로 통과시키고 2차에서 세분
-    return age > CAND_AGE;
-  });
-  if (aged.length === 0) return force ? { scanned: 0, callsUsed: 0, skipped: "all_fresh" } : undefined;
-
-  // aged 정렬: 보유 먼저 → 오래된 순 (제한된 평가 횟수 안에서 중요 종목 우선)
-  aged.sort((a, b) => {
-    const aH = isHeld(a) ? 0 : 1, bH = isHeld(b) ? 0 : 1;
-    if (aH !== bH) return aH - bH;
-    const aAge = existing[a] ? now - (existing[a].ts || 0) : Infinity;
-    const bAge = existing[b] ? now - (existing[b].ts || 0) : Infinity;
-    return bAge - aAge;
-  });
-
-  // 2차: 그룹/우선순위 계산 (daily 읽기를 MAX_EVAL로 제한 → D1 부하 제어)
-  const scored = [];
-  let evalCount = 0;
-  const MAX_EVAL = 80;
-  for (const sym of aged) {
-    if (scored.length >= 40) break;
-    if (evalCount >= MAX_EVAL) break;
-    const p = existing[sym];
-    const age = p ? now - (p.ts || 0) : Infinity;
-    let group, tf;
-    if (isHeld(sym)) { group = 0; tf = [20, 40, 60]; }       // 보유: 청산 정밀
-    else {
-      const d = await getDaily(sym); evalCount++;
-      if (isTrendCandidate(d)) { group = 1; tf = [20, 40, 60]; } // 거래 후보: 정밀
-      else {
-        if (age <= FLAT_AGE) continue;                        // 비추세: 저빈도
-        group = 2; tf = [60];
-      }
-    }
-    scored.push({ sym, group, tf, age });
-  }
-  if (scored.length === 0) return force ? { scanned: 0, callsUsed: 0, skipped: "no_candidates" } : undefined;
-  scored.sort((a, b) => a.group - b.group || b.age - a.age);
-
-  // ── Roboflow 호출 ──
-  //   [V33.95] ★외부 AI API 전면 금지(사용자 지시)★ Roboflow 는 외부 비전 추론 API 다.
-  //   차트 이미지를 외부로 보내 분류를 받아오는 구조라 '자체 탑재 AI' 원칙과 정면으로 어긋난다.
-  //   기능적으로도 대체재가 이미 있다 — 차트패턴은 chartPat/tfConsBull 피처와 STIN 분봉 기술판정이
-  //   자체 계산으로 커버한다. 여기서 원천 차단한다(호출 지점에서 즉시 반환).
-  if (EXTERNAL_AI_API_DISABLED) return force ? { scanned: 0, callsUsed: 0, skipped: "external_ai_disabled" } : undefined;
-  async function rfCall(closes, win) {
-    const pixels = drawChartPixels(closes.slice(-win), 224, 224);
-    const bmp    = pixelsToBMP(pixels, 224, 224);
-    const b64    = uint8ToBase64(bmp);
-    // [V65 FIX] classify.roboflow.com이 Workers IP를 403(봇챌린지)으로 차단 →
-    //   serverless.roboflow.com 신형 엔드포인트 + 브라우저 UA로 우회. 실패 시 구형으로 폴백.
-    const _rfHeaders = {
-      "Content-Type": "application/x-www-form-urlencoded",
-      "User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0 Safari/537.36"
-    };
-    let resp = await fetch(
-      `https://serverless.roboflow.com/${RF_PROJECT}/${version}?api_key=${apiKey}`,
-      { method: "POST", headers: _rfHeaders, body: b64 }
-    );
-    if (resp.status === 403 || resp.status === 404) {
-      resp = await fetch(
-        `https://classify.roboflow.com/${RF_PROJECT}/${version}?api_key=${apiKey}`,
-        { method: "POST", headers: _rfHeaders, body: b64 }
-      );
-    }
-    if (resp.status === 429) return { rateLimited: true };
-    if (!resp.ok) { let _t = ""; try { _t = (await resp.text()).slice(0, 120); } catch (e) {} return { fail: resp.status + ":" + _t }; }
-    const d = await resp.json();
-    // [V65 FIX] 신모델(v11+) 응답은 predictions가 "배열"([{class,confidence}]) + top/confidence.
-    //   구형 파서가 객체 맵(p["up"].confidence)만 읽어 upC=downC=0 → 전종목 "up"/신뢰도 0~5% 버그.
-    let upC = 0, downC = 0;
-    const p = d.predictions;
-    if (Array.isArray(p)) {
-      for (const pr of p) {
-        if (pr && pr.class === "up") upC = pr.confidence || 0;
-        else if (pr && pr.class === "down") downC = pr.confidence || 0;
-      }
-    } else if (p && typeof p === "object") {
-      upC   = (p["up"]   && p["up"].confidence)   || 0;
-      downC = (p["down"] && p["down"].confidence) || 0;
-    }
-    // top/confidence가 있으면 우선 신뢰 (배열에 top 클래스만 담겨 와도 보완됨)
-    if (d.top === "up"   && typeof d.confidence === "number") { upC = Math.max(upC, d.confidence); if (!downC) downC = 1 - d.confidence; }
-    if (d.top === "down" && typeof d.confidence === "number") { downC = Math.max(downC, d.confidence); if (!upC) upC = 1 - d.confidence; }
-    if (!upC && !downC) return { fail: "parse:" + JSON.stringify(d).slice(0, 120) };  // 파싱 실패 → 쓰레기 저장 방지
-    return { pred: upC >= downC ? "up" : "down", upConf: upC, downConf: downC };
-  }
-
-  const results = Object.assign({}, existing);
-  let scanned = 0, callsUsed = 0, rateLimited = false, lastFail = null;
-
-  // ── [성능 B] 적중률 통계 로드 ──
-  const acc = (await getState(DB, "vision_accuracy", null)) || { hits: 0, total: 0 };
-
-  for (const item of scored) {
-    if (rateLimited) break;
-    if (todayUsage + callsUsed >= DAILY_BUDGET) break;
-    if (callsUsed >= MAX_CALLS_CRON) break;
-    try {
-      const daily = await getDaily(item.sym);
-      if (!daily || !daily.closes || daily.closes.length < 20) continue;
-      const lastClose = daily.closes[daily.closes.length - 1];
-
-      // [성능 B] 직전 예측 적중 검증 (재스캔 시점에 실제 등락과 대조)
-      const prev = existing[item.sym];
-      if (prev && typeof prev.predClose === "number" && prev.predClose > 0) {
-        const moved = lastClose - prev.predClose;
-        if (Math.abs(moved / prev.predClose) > 0.001) { // 0.1% 이상 움직였을 때만 채점
-          const hit = (prev.pred === "up" && moved > 0) || (prev.pred === "down" && moved < 0);
-          acc.total += 1;
-          if (hit) acc.hits += 1;
-          // 롤링 윈도우: 표본 과다 시 감쇠(최근 가중)
-          if (acc.total > 500) { acc.hits *= 0.9; acc.total *= 0.9; }
-        }
-      }
-
-      // 멀티프레임 앙상블 호출
-      const frames = [];
-      for (const win of item.tf) {
-        if (todayUsage + callsUsed >= DAILY_BUDGET) break;
-        if (callsUsed >= MAX_CALLS_CRON) break;
-        if (daily.closes.length < win) continue;
-        await new Promise(r => setTimeout(r, DELAY_MS));
-        const r = await rfCall(daily.closes, win);
-        callsUsed++;
-        if (!r) continue;
-        if (r.rateLimited) { rateLimited = true; break; }
-        if (r.fail) { lastFail = r.fail; continue; }  // [V65 debug]
-        frames.push(r);
-      }
-      if (frames.length === 0) continue;
-
-      const upVotes   = frames.filter(f => f.pred === "up").length;
-      const finalPred = upVotes >= frames.length - upVotes ? "up" : "down";
-      const matched   = frames.filter(f => f.pred === finalPred);
-      let conf = matched.reduce((s, f) => s + Math.max(f.upConf, f.downConf), 0) / matched.length;
-      if (matched.length === item.tf.length && item.tf.length > 1) conf = Math.min(0.99, conf + 0.05); // 만장일치 보너스
-
-      // [EMA 평활] 같은 방향 직전 예측과 혼합
-      if (prev && prev.pred === finalPred && typeof prev.conf === "number") {
-        conf = Math.min(0.99, prev.conf * 0.4 + conf * 0.6);
-      }
-
-      results[item.sym] = {
-        pred: finalPred, conf: conf,
-        upConf:   frames.reduce((s, f) => s + f.upConf,   0) / frames.length,
-        downConf: frames.reduce((s, f) => s + f.downConf, 0) / frames.length,
-        votes: { up: upVotes, down: frames.length - upVotes, total: frames.length },
-        tier: item.group === 0 ? 1 : 2,
-        predClose: lastClose,   // [성능 B] 다음 채점용
-        ts: now
-      };
-      scanned++;
-    } catch (e) { continue; }
-  }
-
-  // ── 저장 ──
-  if (callsUsed > 0) {
-    // [성능 B] 적중률 메타를 예측 객체에 동봉 → 거래 사이클이 함께 로드
-    results.__accuracy = {
-      hits: acc.hits, total: acc.total,
-      precision: acc.total > 0 ? acc.hits / acc.total : null
-    };
-    await setState(DB, "vision_accuracy", { hits: acc.hits, total: acc.total });
-    await setState(DB, todayKey, todayUsage + callsUsed);
-    await setState(DB, "vision_predictions", results);
-    const pct = Math.round((todayUsage + callsUsed) / DAILY_BUDGET * 100);
-    const precStr = acc.total > 20 ? ` | 적중률 ${Math.round(acc.hits / acc.total * 100)}%(n=${Math.round(acc.total)})` : "";
-    await log(DB, "INFO", null,
-      `[VISION] ${scanned}종목 (${callsUsed}콜) | 일일 ${todayUsage + callsUsed}/${DAILY_BUDGET} (${pct}%) | 보유 ${heldCount}${precStr}`
-    );
-  }
-  if (rateLimited) {
-    await log(DB, "WARN", null, "[VISION] Roboflow 429 — 다음 cron 재개");
-  }
-  return { scanned: scanned, callsUsed: callsUsed, rateLimited: rateLimited, lastFail: lastFail, todayUsage: todayUsage + callsUsed, dailyBudget: DAILY_BUDGET };
-}
-
-
-// ############################################################################
-// ############################################################################
-// ##                                                                        ##
-// ##   LUX-AI  자가학습 거래 지능 (통합 삽입 블록)                            ##
-// ##   아래부터 export default 전까지가 AI 레이어. 위 거래봇 본체와 독립.      ##
-// ##   중복되는 _clamp/_sigmoid는 여기 정의가 최신순으로 우선 적용됨(안전).     ##
-// ##                                                                        ##
-// ############################################################################
-// ############################################################################
-
-// ============================================================================
-// LUX-AI  — 통합 자가학습 거래 지능 (단일 파일)
-// ============================================================================
-//  구성(위→아래 학습·추론 레이어):
-//    1) CORE      L1 자동피처선택 로지스틱 + PnL가중            [lux_ml]
-//    2) NEWS/NLP  사건 태거 + VADER식 감성엔진 + 외부수집        [lux_news + SENTIMENT]
-//    3) NOISE     순열검정 노이즈판별 + LinUCB 밴딧               [lux_bandit]
-//    4) BRAIN     배깅앙상블 + 기권 + 온도보정 + 드리프트 + 톰슨   [lux_brain]
-//    5) MIND      FM 상호작용 + 스태킹 전문가혼합 + 자기감시 + 켈리 [lux_mind]
-//    6) DNN       진짜 MLP(입력·은닉다층·출력, 역전파·Adam)       [lux_dnn]
-//    +) DATA      반사실 후보라벨링 + 백테스트 표본주입기          [신규]
-//
-//  전부 순수 JS · 외부 라이브러리 0 · Cloudflare Worker 안에서 동작.
-//  호스트 프로젝트 재사용 함수: getRSI getMA getATR getNDayHigh
-//    getState setState log classifyEarningsReaction (index_*.js에 이미 존재).
-//
-//  결정 사다리(진입): 자기불신→관망 / DEEP(mind⊕dnn)→켈리 / mind→톰슨밴딧
-//    / L1공식 / 규칙엔진 원수량. 각 단계 준비 미달이면 자동 폴백(거래로직 불변).
-// ============================================================================
-
-// ============================================================================
-// [V13] 기술적 분석 상승/하락 예측기 + 피보나치 되돌림 (순수 OHLCV, LLM 0, fetch 0)
-//   • taPredictDirection : 추세(기울기/ADX)·모멘텀(RSI/MACD)·변동성(볼밴/스퀴즈)·
-//       거래량(돌파확인)·차트패턴(도지/해머/장악/쌍바닥)·피보나치를 가중결합 →
-//       상승확률(0~1) + 신뢰도 + 근거. 멀티타임프레임(일/시간/분봉) 가중 종합 지원.
-//   • fibAnalyze        : 스윙 고저 → 되돌림 레벨(0.382/0.5/0.618 등) → 현재가 근접·반전 신호.
-//   • _mlTaFibFeats     : 위 결과를 6개 ML 피처(maSlope20/disparity20/rsiDiverg/bbSqueeze/
-//       fibSig/taUpProb)로 압축 → 모델이 "학습"해 게이트·사이징에 반영(라이브·수확 동일 분포).
-//   파라미터는 AI_PARAMS.technical / fibonacci / multiTimeframe 에서 조회(없으면 안전 기본값).
-// ============================================================================
-
-// 20일선 기울기(%/봉) — 최근 win봉 동안 MA(maP)의 상승 각도. 상승추세 진위 판별.
 function _maSlopePct(closes, maP, win) {
   try {
     if (!Array.isArray(closes) || closes.length < maP + win + 1) return 0;
@@ -36149,11 +35479,6 @@ export default {
         try { await runMacroUpdate(env); }
         catch (e) { try { await log(env.DB, "ERROR", null, "[SCHED] macro fail: " + e.message); } catch (e2) {} }
       }
-
-      // 6) Vision AI 백엔드 스캔 — 매 cron에서 5개씩 처리 (24h 캐시, rate limit 안전)
-      //    브라우저 없이도 차트 예측 결과가 항상 최신 상태 유지됨.
-      try { await runVisionScanBackend(env); }
-      catch (e) { try { await log(env.DB, "ERROR", null, "[SCHED] vision scan fail: " + e.message); } catch (e2) {} }
 
       // 7) SEC EDGAR 공시 스캔 — 미국 프리마켓 직전(UTC 08:00~08:30)에만, 거래 fetch와 분리
       //    최근 8-K/어닝 직후 미국 종목의 신규 진입을 보수화 (변동성 회피)

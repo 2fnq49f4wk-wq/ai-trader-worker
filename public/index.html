@@ -1063,27 +1063,6 @@ html[data-theme="light"] .sb-brand-sub{ color:#888; }
 .estat-chart .empty{color:var(--t3);font-size:11px;align-self:center;margin:auto;}
 
 /* ── VISION AI ── */
-.vision-badge{display:inline-flex;align-items:center;gap:3px;padding:1px 6px;font-size:9px;font-weight:700;border:1px solid;letter-spacing:.5px;vertical-align:middle;}
-.vision-up{border-color:rgba(0,230,118,.4);color:var(--pos);background:rgba(0,230,118,.05);}
-.vision-down{border-color:rgba(255,23,68,.4);color:var(--neg);background:rgba(255,23,68,.05);}
-.vision-neutral{border-color:var(--bd);color:var(--t3);}
-.vision-loading{border-color:rgba(68,136,255,.4);color:var(--blue);animation:pulse 1.5s infinite;}
-.vision-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(200px,1fr));gap:10px;padding:16px 20px;}
-.vision-card{border:1px solid var(--bd);background:var(--s1);transition:background .1s;overflow:hidden;}
-.vision-card:hover{background:var(--s2);}
-.vision-card-top{display:flex;justify-content:space-between;align-items:center;padding:10px 12px 6px;}
-.vision-card-sym{font-size:13px;font-weight:700;color:var(--acc);}
-.vision-card-conf{font-size:10px;color:var(--t3);}
-.vision-canvas-wrap{background:#000;display:block;width:100%;line-height:0;}
-.vision-card-bottom{padding:6px 12px 10px;display:flex;justify-content:space-between;align-items:center;}
-.vision-card-ts{font-size:9px;color:var(--t3);}
-.vision-scan-bar{display:flex;align-items:center;gap:8px;padding:10px 20px;border-bottom:1px solid var(--bd);flex-wrap:wrap;background:var(--s1);}
-.vision-scan-status{font-size:10px;color:var(--t3);margin-left:auto;}
-.vision-empty{padding:40px 20px;text-align:center;color:var(--t3);font-size:11px;line-height:1.8;}
-.vision-summary-row{display:flex;gap:20px;flex-wrap:wrap;padding:12px 20px;border-bottom:1px solid var(--bd);background:var(--s1);}
-.vision-summary-item{display:flex;flex-direction:column;gap:2px;}
-.vision-summary-label{font-size:9px;font-weight:700;color:var(--t3);text-transform:uppercase;letter-spacing:1px;}
-.vision-summary-value{font-size:16px;font-weight:700;font-variant-numeric:tabular-nums;}
 
 /* ── POSITIONS 미국/한국 카드 분리 ── */
 .pos-market-card{margin:0 0 4px;border-bottom:1px solid var(--bd);}
@@ -1171,14 +1150,6 @@ body{background:radial-gradient(1200px 600px at 70% -10%,rgba(76,194,255,0.05),t
 .cm-rsi-bar > i{display:block;height:100%;border-radius:2px;}
 
 /* ── [V53] Vision 상태 패널 ── */
-.vision-status-panel{display:flex;gap:18px;flex-wrap:wrap;align-items:center;padding:12px 20px;border-bottom:1px solid var(--bd);background:linear-gradient(180deg,var(--s2),var(--s1));font-size:10px;}
-.vision-stat{display:flex;flex-direction:column;gap:2px;}
-.vision-stat-label{font-size:8.5px;font-weight:700;letter-spacing:1px;color:var(--t3);text-transform:uppercase;}
-.vision-stat-value{font-size:13px;font-weight:700;font-variant-numeric:tabular-nums;}
-.vision-budget-bar{width:110px;height:5px;background:var(--bd2);border-radius:3px;overflow:hidden;}
-.vision-budget-bar > i{display:block;height:100%;background:var(--acc);border-radius:3px;}
-.vision-alert{font-size:10px;font-weight:700;color:var(--amber);padding:2px 8px;border:1px solid rgba(251,191,36,.35);border-radius:5px;background:rgba(251,191,36,.07);}
-.vision-ok{color:var(--grn);border-color:rgba(74,222,128,.35);background:rgba(74,222,128,.07);}
 
 /* ════════════════════════════════════════════════════════════════════
    [V54 NEON FUTURE] 전체 리스킨 — 미래지향 투자앱
@@ -1363,11 +1334,6 @@ html[data-theme="light"] .modal-content{background:linear-gradient(180deg,#fff,#
 .trades-summary-value{font-family:'IBM Plex Mono',monospace;}
 
 /* ── Vision ── */
-.vision-card{border:1px solid var(--glass-bd);border-radius:12px;background:var(--glass);backdrop-filter:blur(10px);transition:all .16s;}
-.vision-card:hover{transform:translateY(-2px);border-color:rgba(34,211,238,.32);box-shadow:var(--glow-acc);}
-.vision-status-panel{background:var(--glass);backdrop-filter:blur(10px);border-bottom:1px solid var(--glass-bd);}
-.vision-up{box-shadow:0 0 10px rgba(52,211,153,.12);}
-.vision-down{box-shadow:0 0 10px rgba(251,77,109,.12);}
 
 /* ── 원자재/채권/뉴스 ── */
 .cm-watch-card{border:1px solid var(--glass-bd);border-radius:12px;
@@ -1637,8 +1603,6 @@ input[type="range"]{accent-color:#dfe7f4!important;}
 .modal-actions{border-top:1px solid rgba(238,243,252,.07);padding-top:14px;margin-top:18px;}
 
 /* ── 전략/배지 모노톤 조정 ── */
-.vision-up{border-color:rgba(143,227,189,.4);color:var(--pos);background:rgba(143,227,189,.06);box-shadow:none;}
-.vision-down{border-color:rgba(245,163,179,.4);color:var(--neg);background:rgba(245,163,179,.06);box-shadow:none;}
 .pos-market-head{background:linear-gradient(90deg, rgba(238,243,252,.05), transparent 70%);}
 .cm-watch-card{background:linear-gradient(165deg, rgba(20,24,34,.72), rgba(8,10,16,.85))!important;}
 
@@ -1789,8 +1753,6 @@ input[type="range"]{accent-color:var(--pos)!important;}
 .toast{border:1px solid rgba(0,232,127,.3);background:#101317;box-shadow:0 8px 30px rgba(0,0,0,.55);}
 .cm-watch-card{background:var(--s1)!important;}
 .pos-market-head{background:var(--s2);}
-.vision-up{border-color:rgba(0,232,127,.4);color:var(--pos);background:rgba(0,232,127,.05);}
-.vision-down{border-color:rgba(255,128,149,.4);color:var(--neg);background:rgba(255,128,149,.05);}
 .wl-card.held{border-left:2px solid var(--pos);box-shadow:none;}
 ::selection{background:rgba(0,232,127,.25);}
 
@@ -3209,10 +3171,6 @@ html[data-theme="light"] .m-brainbar button.active{color:#0b4f9e;background:rgba
         <span class="nav-item-icon">◷</span>
         <span class="nav-item-label">TRADES</span>
       </div>
-      <div class="nav-item" data-page="vision">
-        <span class="nav-item-icon">◑</span>
-        <span class="nav-item-label">AI VISION</span>
-      </div>
     </div>
 
     <!-- 액션 버튼 -->
@@ -3850,7 +3808,6 @@ html[data-theme="light"] .m-brainbar button.active{color:#0b4f9e;background:rgba
               <div class="detail-sec">기술적 요약 · 시기별</div>
               <div class="detail-tfsum" id="detailTfSum"><div class="empty">로딩…</div></div>
               <div class="detail-vt">
-                <div class="detail-vcard" id="detailVision"></div>
                 <div class="detail-vcard" id="detailTA"></div>
               </div>
               <div class="detail-earn" id="detailEarn"></div>
@@ -3870,60 +3827,6 @@ html[data-theme="light"] .m-brainbar button.active{color:#0b4f9e;background:rgba
       </div>
     </div>
 
-    <div class="page" id="page-vision">
-      <div class="page-header">
-        <span class="page-title">◑ AI VISION · 차트 예측</span>
-        <div class="page-actions">
-          <span id="visionModelInfo" style="font-size:10px;color:var(--t3);">stock-updown-classifier</span>
-          <button type="button" class="btn" id="btnVisionScanAll">▶ 전체 스캔</button>
-          <button type="button" class="btn" id="btnVisionClear">✕ 초기화</button>
-          <button type="button" class="btn watchlist-toggle-btn" id="btnVisionCollapse">접기</button>
-        </div>
-      </div>
-      <!-- 스캔 상태 바 -->
-      <div class="vision-scan-bar">
-        <span id="visionScanLabel" style="font-size:11px;color:var(--t2);font-weight:600;">Roboflow Vision AI</span>
-        <span id="visionScanProgress" class="vision-progress"></span>
-        <span id="visionScanStatus" class="vision-scan-status">API Key를 Settings에서 설정하세요</span>
-      </div>
-      <!-- [V53] 백엔드 작동 상태 패널 — Vision이 실제로 도는지 한눈에 -->
-      <div class="vision-status-panel" id="visionStatusPanel" style="display:none;">
-        <div class="vision-stat"><div class="vision-stat-label">엔진 상태</div><div class="vision-stat-value" id="vsEngine">—</div></div>
-        <div class="vision-stat"><div class="vision-stat-label">오늘 API 사용</div><div class="vision-stat-value"><span id="vsUsage">—</span><div class="vision-budget-bar" style="margin-top:3px;"><i id="vsUsageBar" style="width:0%;"></i></div></div></div>
-        <div class="vision-stat"><div class="vision-stat-label">예측 보유</div><div class="vision-stat-value" id="vsPreds">—</div></div>
-        <div class="vision-stat"><div class="vision-stat-label">적중률</div><div class="vision-stat-value" id="vsAcc">—</div></div>
-        <div class="vision-stat"><div class="vision-stat-label">마지막 스캔</div><div class="vision-stat-value" id="vsLast" style="font-size:11px;">—</div></div>
-        <span id="vsAlert" class="vision-alert" style="display:none;"></span>
-      </div>
-      <!-- 요약 -->
-      <div class="vision-summary-row" id="visionSummaryRow" style="display:none;">
-        <div class="vision-summary-item">
-          <div class="vision-summary-label">전체</div>
-          <div class="vision-summary-value" id="visionTotalCount">0</div>
-        </div>
-        <div class="vision-summary-item">
-          <div class="vision-summary-label">상승 예측</div>
-          <div class="vision-summary-value pos" id="visionUpCount">0</div>
-        </div>
-        <div class="vision-summary-item">
-          <div class="vision-summary-label">하락 예측</div>
-          <div class="vision-summary-value neg" id="visionDownCount">0</div>
-        </div>
-        <div class="vision-summary-item">
-          <div class="vision-summary-label">평균 신뢰도</div>
-          <div class="vision-summary-value" id="visionAvgConf">—</div>
-        </div>
-      </div>
-      <!-- 예측 그리드 -->
-      <div id="visionGrid">
-        <div class="vision-empty">
-          <b>AI VISION</b>이 아직 실행되지 않았습니다.<br>
-          Settings에서 Roboflow API Key를 입력한 후<br>
-          <b>▶ 전체 스캔</b>을 눌러 차트 예측을 시작하세요.<br><br>
-          <span style="font-size:10px;color:var(--t3);">모델: stock-updown-classifier · Roboflow Hosted Inference</span>
-        </div>
-      </div>
-    </div><!-- /vision -->
 
 <!-- ══ [V12.117] 지표&환율 — 경제지표+환율 통합 페이지(종전 별도 두 페이지를 병합) ══ -->
 <div class="page" id="page-macro">
@@ -4340,28 +4243,6 @@ html[data-theme="light"] .m-brainbar button.active{color:#0b4f9e;background:rgba
       </div>
       <div class="hint" style="margin-top:6px;">세 슬라이더의 상대 비율로 배정됩니다(예: 35/30/35). 특정 전략 신호가 적으면 해당 예산이 남을 수 있습니다(미사용분은 다음 사이클로 이월).</div>
     </div>
-    <div class="section-title" style="margin-top:12px;">VISION AI (Roboflow 차트 예측)</div>
-    <div class="checkbox-row"><input type="checkbox" id="cfgVisionEnabled"><label for="cfgVisionEnabled"><b>Vision AI 활성화</b></label></div>
-    <div class="hint" style="margin-bottom:8px;">백엔드가 차트를 자동 분석해 매수 신호 강화·차단·보유 포지션 조기 청산에 직접 활용합니다. 주말 스킵. 일일 예산 자동 분배.</div>
-    <div class="field-row-2">
-      <div class="field"><label>Roboflow API Key</label><input type="text" id="cfgRfApiKey" placeholder="API Key 입력" autocomplete="off"></div>
-      <div class="field"><label>Model Version</label><input type="number" id="cfgRfVersion" value="7" min="1" max="99" step="1"></div>
-    </div>
-    <div class="field-row-2">
-      <div class="field"><label>Vision 신뢰도 최소</label><input type="number" id="cfgVisionConfMin" value="0.60" min="0.50" max="0.99" step="0.05"></div>
-      <div class="field"><label>월 API 한도 (Roboflow 플랜)</label><input type="number" id="cfgVisionMonthlyBudget" value="10000" min="100" max="100000" step="100"></div>
-    </div>
-    <div class="field-row-2">
-      <div class="field"><label>Vision 영향 상한 (×배수)</label><input type="number" id="cfgVisionMaxBoost" value="1.15" min="1.00" max="1.50" step="0.01"></div>
-      <div class="field"><label>기술적 분석 강조 (TA 비중)</label><input type="number" id="cfgTechnicalEmphasis" value="1.35" min="1.00" max="2.00" step="0.05"></div>
-    </div>
-    <div class="hint" style="margin-bottom:8px;">Vision 영향 상한이 낮을수록 AI 차트예측을 더 작게 반영(아직 성능 검증 단계). 기술적 분석 강조가 높을수록 TA 지표(MACD·ADX·패턴·알파)가 매수 사이즈를 더 크게 좌우합니다.</div>
-    <div class="hint" style="margin-bottom:4px;">
-      📊 <b>한도 자동 분배:</b> 월한도 ÷ 22일 = 일일예산 |
-      보유종목(3타임프레임·8h캐시) → 나머지(1타임프레임·순환) |
-      <span id="visionBudgetPreview" style="color:var(--pos);">계산 중...</span>
-    </div>
-    <div class="section-divider"></div>
     <div class="section-title" style="margin-top:12px;">AI 일일 지시 (내부 엔진)</div>
     <div class="checkbox-row"><input type="checkbox" id="cfgLlmEnabled"><label for="cfgLlmEnabled"><b>AI 일일 지시 사용</b></label></div>
     <div class="hint" style="margin-bottom:8px;">매일 <b>내부 AI 엔진</b>이 시장국면·위기게이지·성과통계로 sizing·손절·매수신호 ON/OFF를 조정합니다. <b>외부 API(Claude) 미사용</b> — 체크 여부와 무관하게 내부 지시는 매일 생성됩니다.</div>
@@ -4651,15 +4532,6 @@ html[data-theme="light"] .m-brainbar button.active{color:#0b4f9e;background:rgba
   var usFavorites = [];
   var krFavorites = [];
   var logsModalOpen = false;
-  // Vision AI 상태
-  var visionResults = {};     // {symbol: {pred:'up'|'down', conf, upConf, downConf, ts}}
-  // [V65] 구파서 버그(전종목 up·신뢰도 0~5%)가 남긴 무효 예측 판별
-  function isGarbagePred(v) {
-    return !v || typeof v !== 'object' ||
-      ((v.conf || 0) <= 0.06 && ((v.upConf || 0) + (v.downConf || 0)) < 0.05);
-  }
-  var visionScanning = false;
-  var visionScanQueue = [];
   // [V10] 대규모 종목 UI 상태
   var usSearch = '';
   var krSearch = '';
@@ -7850,21 +7722,6 @@ html[data-theme="light"] .m-brainbar button.active{color:#0b4f9e;background:rgba
       '<div class="dp-desc">' + escapeHtml(top.desc || '정석 패턴 형태') + '</div></div></div>';
   }
 
-  // AI Vision 예측 카드
-  function renderDetailVision() {
-    var el = $('detailVision'); if (!el) return;
-    var r = (typeof visionResults !== 'undefined') ? visionResults[detailState.symbol] : null;
-    if (!r || !r.pred || isGarbagePred(r)) {
-      el.innerHTML = '<div class="vt-h">'+(window.LUX_ICO||'')+' AI VISION</div><div class="vt-big neu">—</div><div class="vt-sub">예측 데이터 없음</div>';
-      return;
-    }
-    var up = r.pred === 'up';
-    var conf = Math.round((r.conf || 0) * 100);
-    el.innerHTML = '<div class="vt-h">'+(window.LUX_ICO||'')+' AI VISION</div>' +
-      '<div class="vt-big ' + (up ? 'pos' : 'neg') + '">' + (up ? '▲ 상승' : '▼ 하락') + '</div>' +
-      '<div class="vt-sub">신뢰도 ' + conf + '%' + (r.ts ? ' · ' + fmtAgo(r.ts) : '') + '</div>';
-  }
-
   // 기술적 분석 카드 (현재 차트 캔들 기반) + 정석 패턴 예시
   function renderDetailTA(cs) {
     var el = $('detailTA'); if (!el) return;
@@ -8328,7 +8185,6 @@ html[data-theme="light"] .m-brainbar button.active{color:#0b4f9e;background:rgba
     if (rbtn) rbtn.style.display = isIdx ? 'none' : '';
     renderDetailHeaderData();
     if (!isIdx) {
-      renderDetailVision();
       renderDetailEarn();
       renderDetailNews();
       loadDetailCrowd();   // [V15] 투자심리(투표+AI 의견) — 2분 클라 캐시
@@ -8974,7 +8830,6 @@ html[data-theme="light"] .m-brainbar button.active{color:#0b4f9e;background:rgba
     { t: '포지션', s: 'POSITIONS', ic: '◉', act: function(){ showPage('positions'); } },
     { t: '뉴스', s: 'NEWS', ic: '📰', act: function(){ showPage('news'); } },
     { t: '거래내역', s: 'TRADES', ic: '◷', act: function(){ showPage('trades'); } },
-    { t: 'AI 비전', s: 'VISION', ic: '◑', act: function(){ showPage('vision'); } },
     { t: '가격 알림', s: 'ALERTS', ic: '🔔', act: function(){ openAlerts(); } },
     { t: '설정', s: 'SETTINGS', ic: '⚙', act: function(){ openSettings(); } }
   ];
@@ -10036,14 +9891,9 @@ html[data-theme="light"] .m-brainbar button.active{color:#0b4f9e;background:rgba
         currentCfg = state.cfg;
         // [V65] 적용 예산분배 — 포트폴리오 카드(renderSummary)가 참조하므로 summary 렌더 전에 저장
         if (state.budgetSplitApplied) window.__budgetSplitApplied = state.budgetSplitApplied;
-        // ── Vision AI 자동 설정: API 키가 없으면 기본값 주입 ──
-        if (!currentCfg.visionAI) currentCfg.visionAI = {};
-        if (!currentCfg.visionAI.rfApiKey) {
-          currentCfg.visionAI.rfApiKey = 'WLMMRNV8GDpmbjEcrFar';
-          currentCfg.visionAI.enabled = true;
-          currentCfg.visionAI.rfVersion = currentCfg.visionAI.rfVersion || 7;
-          currentCfg.visionAI.confMin = currentCfg.visionAI.confMin || 0.6;
-        }
+        // [V33.112] ★Roboflow API 키 하드코딩 삭제★ — 이 파일은 모든 방문자에게 그대로
+        //   내려가므로 키가 공개돼 있었다. 게다가 visionAI.enabled 를 true 로 되살려
+        //   서버가 영구 차단한 설정을 저장 시 다시 켜고 있었다. Vision 제거와 함께 삭제한다.
         usFavorites = (state.cfg && state.cfg.usFavorites) || [];
         krFavorites = (state.cfg && state.cfg.krFavorites) || [];
         try { renderIndices(indices); } catch(e){ console.error('[render:indices]', e); }
@@ -10051,8 +9901,6 @@ html[data-theme="light"] .m-brainbar button.active{color:#0b4f9e;background:rgba
         lastQuotes = {};
         quotes.forEach(function(q){ lastQuotes[q.symbol] = q; });
         window.__lastQuotesArr = quotes;
-        // ── Vision AI: 백엔드 예측을 표시용으로 머지 (프론트 직접 스캔 안 함) ──
-        if (state.visionPredictions && window._visionApplyBackend) window._visionApplyBackend(state.visionPredictions);
         // [V8] positions는 array — 하위호환으로 object도 허용
         var posUS = (state.positions && state.positions.us) || [];
         var posKR = (state.positions && state.positions.kr) || [];
@@ -10088,7 +9936,7 @@ html[data-theme="light"] .m-brainbar button.active{color:#0b4f9e;background:rgba
         }
         // [V85→V88] 상세 페이지가 열려 있으면 헤더/데이터/예측/뉴스/실적 갱신(워치리스트 게이팅과 무관)
         if (isPage('detail')) {
-          if (detailState.symbol) { try { renderDetailHeaderData(); renderDetailVision(); renderDetailEarn(); renderDetailNews(); } catch(e){} }
+          if (detailState.symbol) { try { renderDetailHeaderData(); renderDetailEarn(); renderDetailNews(); } catch(e){} }
           // [V96] 조회 전 전체목록 — 전 종목 재빌드는 무거워 20초 스로틀
           else if (Date.now() - (window.__detailBrowseTs || 0) > 20000) { try { renderDetailBrowse(); } catch(e){} }
         }
@@ -10404,14 +10252,6 @@ html[data-theme="light"] .m-brainbar button.active{color:#0b4f9e;background:rgba
       updateBudgetSplitLabels();
     }
 
-    // Vision AI 현재값
-    var _va = currentCfg.visionAI || {};
-    if ($('cfgVisionEnabled')) $('cfgVisionEnabled').checked = _va.enabled === true;
-    if ($('cfgRfApiKey')) $('cfgRfApiKey').value = _va.rfApiKey || '';
-    if ($('cfgRfVersion')) $('cfgRfVersion').value = _va.rfVersion || 7;
-    if ($('cfgVisionConfMin')) $('cfgVisionConfMin').value = _va.confMin || 0.6;
-    if ($('cfgVisionMonthlyBudget')) $('cfgVisionMonthlyBudget').value = _va.monthlyBudget || 10000;
-    if ($('cfgVisionMaxBoost')) $('cfgVisionMaxBoost').value = _va.maxBoost != null ? _va.maxBoost : 1.15;
     if ($('cfgTechnicalEmphasis')) $('cfgTechnicalEmphasis').value = currentCfg.technicalEmphasis != null ? currentCfg.technicalEmphasis : 1.35;
     updateVisionBudgetPreview();
 
@@ -10724,16 +10564,6 @@ html[data-theme="light"] .m-brainbar button.active{color:#0b4f9e;background:rgba
       krTickers: parseTickers($('cfgKR').value),
       // [재작성] 단일 TREND 전략 (백엔드 migrate가 어차피 강제하지만 명시 저장)
       strategies: { trend: true },
-      // Vision AI
-      visionAI: {
-        enabled: $('cfgVisionEnabled') ? $('cfgVisionEnabled').checked : false,
-        rfApiKey: $('cfgRfApiKey') ? $('cfgRfApiKey').value.trim() : '',
-        rfVersion: parseInt($('cfgRfVersion') ? $('cfgRfVersion').value : '7', 10) || 7,
-        confMin: parseFloat($('cfgVisionConfMin') ? $('cfgVisionConfMin').value : '0.6') || 0.6,
-        maxBoost: parseFloat($('cfgVisionMaxBoost') ? $('cfgVisionMaxBoost').value : '1.15') || 1.15,
-        requireTAConfirm: true,
-        monthlyBudget: parseInt($('cfgVisionMonthlyBudget') ? $('cfgVisionMonthlyBudget').value : '10000', 10) || 10000
-      },
       technicalEmphasis: parseFloat($('cfgTechnicalEmphasis') ? $('cfgTechnicalEmphasis').value : '1.35') || 1.35,
       // [V11] LLM Hybrid — 기존 설정(model/maxTokens 등) 보존하고 enabled만 갱신
       llmHybrid: Object.assign({}, (currentCfg && currentCfg.llmHybrid) || {}, {
@@ -11615,474 +11445,13 @@ html[data-theme="light"] .m-brainbar button.active{color:#0b4f9e;background:rgba
     if (bar && bar.querySelector && bar.querySelector('#taSymbol')) bar.style.display = hidden ? '' : 'none';
     _btnTaCol.textContent = hidden ? '접기' : '펼치기';
   });
-  // [V63] AI VISION 접기/펼치기
-  var _btnVCol = $('btnVisionCollapse');
-  if (_btnVCol) _btnVCol.addEventListener('click', function(){
-    var ids = ['visionGrid', 'visionSummaryRow', 'visionStatusPanel'];
-    var grid = $('visionGrid');
-    var hidden = grid && grid.style.display === 'none';
-    ids.forEach(function(id){
-      var el = $(id);
-      if (!el) return;
-      if (hidden) { el.style.display = (id === 'visionGrid') ? '' : el.__prevDisp || ''; }
-      else { el.__prevDisp = el.style.display; el.style.display = 'none'; }
-    });
-    _btnVCol.textContent = hidden ? '접기' : '펼치기';
-  });
   try{var _lp=localStorage.getItem('luxPage')||'dashboard'; if(_lp==='fx')_lp='macro'; showPage(_lp);}catch(e){showPage('dashboard');}
 
-  // ══════════════════════════════════════════════
-  // VISION AI MODULE — Roboflow Chart Prediction
-  // ══════════════════════════════════════════════
-  var RF_PROJECT = 'stock-updown-classifier';
+  // [V33.112] ★VISION AI 프론트 모듈 전체 삭제★ (사용자 확인: AI 비전은 쓰지 않는다)
+  //   브라우저가 차트를 그려 Roboflow 로 추론하고 결과를 /api/vision-results 로 올리던 경로다.
+  //   백엔드에서 그 수신구와 소비(매수신호·사이즈·트레일·조기청산)를 전부 제거했으므로
+  //   여기 남겨두면 존재하지 않는 API 를 계속 두드리는 코드가 된다.
 
-  // localStorage에서 이전 결과 복원
-  try {
-    var _savedVision = localStorage.getItem('visionResults');
-    if (_savedVision) {
-      visionResults = JSON.parse(_savedVision);
-      Object.keys(visionResults).forEach(function(k){ if (isGarbagePred(visionResults[k])) delete visionResults[k]; });  // [V65]
-    }
-  } catch(e) {}
-
-  // 차트 이미지를 Canvas에 그려 base64로 반환
-  function drawVisionCanvas(closes, size) {
-    var canvas = document.createElement('canvas');
-    canvas.width = size; canvas.height = size;
-    var ctx = canvas.getContext('2d');
-
-    // 배경
-    ctx.fillStyle = '#080808';
-    ctx.fillRect(0, 0, size, size);
-    if (!closes || closes.length < 5) return canvas;
-
-    var n = Math.min(closes.length, 60);
-    var data = closes.slice(-n);
-    var minV = Math.min.apply(null, data);
-    var maxV = Math.max.apply(null, data);
-    var range = maxV - minV || minV * 0.01 || 1;
-
-    var pad = Math.round(size * 0.06);
-    var w = size - pad * 2;
-    var h = size - pad * 2;
-
-    // 그리드
-    ctx.strokeStyle = '#1e1e1e';
-    ctx.lineWidth = 0.8;
-    for (var g = 1; g <= 3; g++) {
-      var gy = pad + (h / 4) * g;
-      ctx.beginPath(); ctx.moveTo(pad, gy); ctx.lineTo(size - pad, gy); ctx.stroke();
-    }
-
-    var isUp = data[data.length - 1] >= data[0];
-    var lineColor = isUp ? '#00e676' : '#ff1744';
-    var fillColor = isUp ? 'rgba(0,230,118,0.07)' : 'rgba(255,23,68,0.07)';
-
-    function px(i) { return pad + (i / (data.length - 1)) * w; }
-    function py(v) { return pad + h - ((v - minV) / range) * h; }
-
-    // 면적 채우기
-    ctx.beginPath();
-    ctx.moveTo(px(0), py(data[0]));
-    for (var i = 1; i < data.length; i++) ctx.lineTo(px(i), py(data[i]));
-    ctx.lineTo(px(data.length - 1), pad + h);
-    ctx.lineTo(pad, pad + h);
-    ctx.closePath();
-    ctx.fillStyle = fillColor;
-    ctx.fill();
-
-    // 가격선
-    ctx.beginPath();
-    ctx.moveTo(px(0), py(data[0]));
-    for (var i = 1; i < data.length; i++) ctx.lineTo(px(i), py(data[i]));
-    ctx.strokeStyle = lineColor;
-    ctx.lineWidth = 1.8;
-    ctx.shadowColor = lineColor;
-    ctx.shadowBlur = 5;
-    ctx.stroke();
-    ctx.shadowBlur = 0;
-
-    // MA20 선
-    if (data.length >= 20) {
-      ctx.beginPath();
-      var maStarted = false;
-      for (var i = 0; i < data.length; i++) {
-        if (i < 19) continue;
-        var sum = 0;
-        for (var j = i - 19; j <= i; j++) sum += data[j];
-        var ma = sum / 20;
-        var mx = px(i), my = py(ma);
-        if (!maStarted) { ctx.moveTo(mx, my); maStarted = true; }
-        else ctx.lineTo(mx, my);
-      }
-      ctx.strokeStyle = 'rgba(255,193,7,0.55)';
-      ctx.lineWidth = 1;
-      ctx.stroke();
-    }
-
-    return canvas;
-  }
-
-  // Roboflow Hosted Inference API 호출
-  async function rfPredict(symbol, closes) {
-    var va = (currentCfg && currentCfg.visionAI) || {};
-    var apiKey = va.rfApiKey || '';
-    var ver = va.rfVersion || 7;
-    if (!apiKey) return null;
-
-    try {
-      var canvas = drawVisionCanvas(closes, 224);
-      var b64 = canvas.toDataURL('image/jpeg', 0.92).split(',')[1];
-      var url = 'https://classify.roboflow.com/' + RF_PROJECT + '/' + ver + '?api_key=' + apiKey;
-      var r = await fetch(url, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-        body: b64
-      });
-      if (!r.ok) return null;
-      var data = await r.json();
-      var preds = data.predictions || {};
-      var upC = (preds['up'] && preds['up'].confidence) || 0;
-      var downC = (preds['down'] && preds['down'].confidence) || 0;
-      var pred = upC >= downC ? 'up' : 'down';
-      var conf = Math.max(upC, downC);
-      return { pred: pred, conf: conf, upConf: upC, downConf: downC, ts: Date.now() };
-    } catch(e) {
-      return null;
-    }
-  }
-
-  // 단일 티커 스캔
-  async function visionScanOne(symbol) {
-    // 백엔드에서 일봉 데이터 가져오기
-    try {
-      var r = await fetch('/api/daily?symbol=' + encodeURIComponent(symbol));
-      if (!r.ok) return;
-      var daily = await r.json();
-      if (!daily || !daily.closes || daily.closes.length < 10) return;
-      var result = await rfPredict(symbol, daily.closes);
-      if (result) {
-        visionResults[symbol] = result;
-        try { localStorage.setItem('visionResults', JSON.stringify(visionResults)); } catch(e) {}
-        renderVisionPage();
-      }
-    } catch(e) {}
-  }
-
-  // [V53] Vision 백엔드 상태 패널 로드 — 작동 여부 진단 표시
-  function loadVisionStatus() {
-    return fetch('/api/vision-status').then(function(r){ return r.json(); }).then(function(d){
-      var panel = $('visionStatusPanel');
-      if (!panel) return d;
-      panel.style.display = '';
-      var eng = $('vsEngine');
-      if (eng) {
-        eng.textContent = d.enabled && d.hasApiKey ? '● 작동 중' : '○ 정지';
-        eng.style.color = d.enabled && d.hasApiKey ? 'var(--grn)' : 'var(--neg)';
-      }
-      if ($('vsUsage')) $('vsUsage').textContent = d.todayUsage + ' / ' + d.dailyBudget + '콜';
-      if ($('vsUsageBar')) $('vsUsageBar').style.width = Math.min(100, d.todayUsage / Math.max(1, d.dailyBudget) * 100) + '%';
-      if ($('vsPreds')) $('vsPreds').textContent = d.predCount + '종목 (▲' + d.upCount + ' ▼' + d.downCount + ')';
-      if ($('vsAcc')) {
-        var a = d.accuracy;
-        $('vsAcc').textContent = (a && a.total >= 20) ? Math.round(a.precision * 100) + '% (n=' + a.total + ')' : '표본 부족';
-      }
-      if ($('vsLast')) $('vsLast').textContent = d.lastScanTs ? fmtAgo(d.lastScanTs) : '없음';
-      var alertEl = $('vsAlert');
-      if (alertEl) {
-        if (d.notRunningReason) {
-          alertEl.style.display = '';
-          alertEl.className = 'vision-alert';
-          alertEl.textContent = '⚠ ' + d.notRunningReason;
-        } else {
-          alertEl.style.display = '';
-          alertEl.className = 'vision-alert vision-ok';
-          alertEl.textContent = '✓ 정상 — 3분마다 자동 스캔';
-        }
-      }
-      return d;
-    })['catch'](function(){ return null; });
-  }
-
-  // [V53] 전체 스캔 = 백엔드 강제 스캔 트리거 + 결과 반영
-  //   기존엔 저장된 예측만 다시 읽어 "눌러도 아무 일 없음"처럼 보였음.
-  //   이제 POST /api/vision-scan으로 백엔드가 즉시 1배치(최대 6콜)를 돌리고,
-  //   완료되면 새 예측을 불러온다. 일일예산은 백엔드가 동일하게 추적한다.
-  async function runVisionScanAll() {
-    if (visionScanning) return;
-    visionScanning = true;
-    var stat = $('visionScanStatus');
-    var btn = $('btnVisionScanAll');
-    if (btn) { btn.disabled = true; btn.textContent = '⏳ 스캔 중...'; }
-    if (stat) stat.textContent = '백엔드 스캔 실행 중... (최대 30초)';
-    try {
-      var sr = await fetch('/api/vision-scan', { method: 'POST' });
-      var sd = await sr.json();
-      if (sd && sd.skipped) {
-        var msg = { disabled: 'Vision AI가 Settings에서 꺼져 있음', no_api_key: 'Roboflow API Key 미설정',
-                    daily_budget: '오늘 API 예산 소진 — 내일 자동 재개', all_fresh: '모든 예측이 최신 — 스캔 불필요',
-                    no_candidates: '스캔 대상 없음' }[sd.skipped] || sd.skipped;
-        if (stat) stat.textContent = '⚠ ' + msg;
-      } else if (sd && sd.ok === false) {
-        if (stat) stat.textContent = '스캔 실패: ' + (sd.error || '알 수 없는 오류');
-      } else {
-        if (stat) stat.textContent = '✓ ' + (sd.scanned || 0) + '종목 스캔 (' + (sd.callsUsed || 0) + '콜)' + (sd.rateLimited ? ' · 일부 429 제한' : '');
-      }
-      // [V65] 백엔드가 0종목(Roboflow가 Workers IP 차단)이면 브라우저 추론으로 폴백
-      if (!sd || !sd.scanned) {
-        if (stat) stat.textContent = '브라우저 추론으로 스캔 중... (Roboflow가 서버 IP 차단)';
-        var bn = await browserVisionScan(60);
-        if (stat) stat.textContent = bn > 0 ? ('✓ 브라우저 추론 ' + bn + '종목 완료') : '⚠ 스캔 실패 — API Key/일일캡 확인';
-      }
-      // 새 예측 반영
-      var r = await fetch('/api/state');
-      var s = await r.json();
-      if (s && s.visionPredictions) {
-        Object.keys(s.visionPredictions).forEach(function(k){
-          if (k.indexOf('__') === 0) return;
-          if (isGarbagePred(s.visionPredictions[k])) { delete visionResults[k]; return; }  // [V65]
-          visionResults[k] = s.visionPredictions[k];
-        });
-        try { localStorage.setItem('visionResults', JSON.stringify(visionResults)); } catch(e) {}
-      }
-    } catch(e) {
-      if (stat) stat.textContent = '스캔 실패: ' + e.message;
-    }
-    visionScanning = false;
-    if (btn) { btn.disabled = false; btn.textContent = '▶ 전체 스캔'; }
-    loadVisionStatus();
-    renderVisionPage();
-    applyVisionBadges();
-  }
-
-  // Vision 페이지 렌더링
-  function renderVisionPage() {
-    var grid = $('visionGrid');
-    if (!grid) return;
-
-    var keys = Object.keys(visionResults).filter(function(k){ return k.indexOf('__') !== 0; });
-    if (keys.length === 0) {
-      grid.innerHTML = '<div class="vision-empty"><b>AI VISION</b>이 아직 실행되지 않았습니다.<br>Settings에서 Roboflow API Key를 입력한 후<br><b>▶ 전체 스캔</b>을 눌러 차트 예측을 시작하세요.<br><br><span style="font-size:10px;color:var(--t3);">모델: ' + RF_PROJECT + ' · Roboflow Hosted Inference</span></div>';
-      if ($('visionSummaryRow')) $('visionSummaryRow').style.display = 'none';
-      return;
-    }
-
-    // [V63 렉 해소] 데이터 변화 없으면 재렌더 스킵 (페이지 재진입마다 전체 리빌드하던 것 방지)
-    var _maxTs = 0;
-    keys.forEach(function(k){ var t = visionResults[k] && visionResults[k].ts; if (t && t > _maxTs) _maxTs = t; });
-    var _vSig = keys.length + '|' + _maxTs;
-    if (grid.__vSig === _vSig && grid.querySelector('.vision-grid')) return;
-    grid.__vSig = _vSig;
-
-    var upList = [], downList = [];
-    var totalConf = 0;
-    keys.forEach(function(sym) {
-      var r = visionResults[sym];
-      if (r.pred === 'up') upList.push(sym); else downList.push(sym);
-      totalConf += r.conf;
-    });
-
-    // 요약
-    if ($('visionSummaryRow')) $('visionSummaryRow').style.display = '';
-    if ($('visionTotalCount')) $('visionTotalCount').textContent = keys.length;
-    if ($('visionUpCount')) $('visionUpCount').textContent = upList.length;
-    if ($('visionDownCount')) $('visionDownCount').textContent = downList.length;
-    if ($('visionAvgConf')) $('visionAvgConf').textContent = (totalConf / keys.length * 100).toFixed(0) + '%';
-
-    // 카드 그리드 — 상승 먼저, 내림차순 confidence
-    var sorted = keys.slice().sort(function(a, b) {
-      var ra = visionResults[a], rb = visionResults[b];
-      if (ra.pred !== rb.pred) return ra.pred === 'up' ? -1 : 1;
-      return rb.conf - ra.conf;
-    });
-
-    // [V63 렉 해소] 카드 페이지네이션 — 수백 장을 한 번에 innerHTML 하던 것이 렉의 원인.
-    //   상위 48개만 먼저 렌더, "더 보기" 클릭 시 48개씩 추가.
-    function cardHtml(sym) {
-      var r = visionResults[sym];
-      var isUp = r.pred === 'up';
-      var confPct = (r.conf * 100).toFixed(1) + '%';
-      var tsStr = r.ts ? new Date(r.ts).toLocaleTimeString('ko-KR', {hour:'2-digit',minute:'2-digit'}) : '';
-      var badgeCls = isUp ? 'vision-up' : 'vision-down';
-      var label = isUp ? '▲ UP' : '▼ DOWN';
-      return '<div class="vision-card">'+
-        '<div class="vision-card-top">'+
-        '<span class="vision-card-sym">' + sym + '</span>'+
-        '<span class="vision-badge ' + badgeCls + '">' + label + '</span>'+
-        '</div>'+
-        '<div class="vision-canvas-wrap" id="vcanvas_' + sym + '"></div>'+
-        '<div class="vision-card-bottom">'+
-        '<span style="font-size:10px;color:var(--t2);">신뢰도 <b>' + confPct + '</b> &nbsp; UP ' + (r.upConf*100).toFixed(0) + '% / DN ' + (r.downConf*100).toFixed(0) + '%</span>'+
-        '<span class="vision-card-ts">' + tsStr + '</span>'+
-        '</div></div>';
-    }
-    var PAGE = 48;
-    var firstChunk = sorted.slice(0, PAGE);
-    var html = '<div class="vision-grid" id="visionGridInner">';
-    firstChunk.forEach(function(sym){ html += cardHtml(sym); });
-    html += '</div>';
-    if (sorted.length > PAGE) {
-      html += '<div style="padding:10px;text-align:center;"><button type="button" class="btn" id="btnVisionMore">더 보기 (+' + (sorted.length - PAGE) + ')</button></div>';
-    }
-    grid.innerHTML = html;
-    var _vShown = PAGE;
-    var _vMore = document.getElementById('btnVisionMore');
-    if (_vMore) _vMore.addEventListener('click', function(){
-      var inner = document.getElementById('visionGridInner');
-      if (!inner) return;
-      var next = sorted.slice(_vShown, _vShown + PAGE);
-      var frag = document.createElement('div');
-      frag.innerHTML = next.map(cardHtml).join('');
-      while (frag.firstChild) inner.appendChild(frag.firstChild);
-      _vShown += next.length;
-      if (_vShown >= sorted.length) _vMore.parentNode.removeChild(_vMore);
-      else _vMore.textContent = '더 보기 (+' + (sorted.length - _vShown) + ')';
-    });
-
-    // [V53 랙 해소] 차트 이미지 — 기존엔 모든 카드가 동시에 /api/daily를 fetch해
-    //   수백 요청이 한꺼번에 나가 브라우저/워커가 멈췄음. 상위 24개만, 4개씩 순차 로드.
-    var chartTargets = sorted.slice(0, 24);
-    (function loadCharts(idx) {
-      if (idx >= chartTargets.length) return;
-      var batch = chartTargets.slice(idx, idx + 4);
-      Promise.all(batch.map(function(sym) {
-        var wrap = document.getElementById('vcanvas_' + sym);
-        if (!wrap) return Promise.resolve();
-        return fetch('/api/daily?symbol=' + encodeURIComponent(sym))
-          .then(function(r){ return r.ok ? r.json() : null; })
-          .then(function(daily) {
-            if (!daily || !daily.closes) return;
-            var cv = drawVisionCanvas(daily.closes, 200);
-            cv.style.width = '100%';
-            cv.style.height = 'auto';
-            wrap.appendChild(cv);
-          })['catch'](function(){});
-      })).then(function(){ setTimeout(function(){ loadCharts(idx + 4); }, 120); });
-    })(0);
-  }
-
-  // Watchlist 카드에 Vision badge 추가 (렌더 후 호출)
-  function applyVisionBadges() {
-    var va = (currentCfg && currentCfg.visionAI) || {};
-    var confMin = va.confMin || 0.6;
-    if (!va.enabled) return;
-    document.querySelectorAll('.wl-card').forEach(function(card) {
-      var sym = card.querySelector('.wl-sym');
-      if (!sym) return;
-      var symbol = sym.textContent.replace(/\s.*/, '').trim();
-      var r = visionResults[symbol];
-      if (!r || r.conf < confMin) return;
-      // 이미 badge가 있으면 스킵
-      if (card.querySelector('.vision-badge')) return;
-      var badge = document.createElement('span');
-      badge.className = 'vision-badge ' + (r.pred === 'up' ? 'vision-up' : 'vision-down');
-      badge.title = '신뢰도 ' + (r.conf * 100).toFixed(0) + '%';
-      badge.textContent = r.pred === 'up' ? '▲' : '▼';
-      sym.appendChild(badge);
-    });
-  }
-
-  // 버튼 이벤트
-  var _bvsa = $('btnVisionScanAll');
-  if (_bvsa) _bvsa.addEventListener('click', function() { runVisionScanAll(); });
-
-  var _bvc = $('btnVisionClear');
-  if (_bvc) _bvc.addEventListener('click', function() {
-    visionResults = {};
-    try { localStorage.removeItem('visionResults'); } catch(e) {}
-    renderVisionPage();
-    toast('Vision 결과 초기화됨');
-  });
-
-  // AI VISION 페이지 진입 시 렌더
-  var _origShowPage = showPage;  // showPage는 위에서 이미 정의됨
-  // 페이지 변경 감지 — 나브 클릭 후 vision 페이지면 렌더
-  document.querySelectorAll('.nav-item').forEach(function(item) {
-    item.addEventListener('click', function() {
-      if (this.getAttribute('data-page') === 'vision') {
-        setTimeout(function() { renderVisionPage(); loadVisionStatus(); }, 50);
-      }
-    });
-  });
-
-  // 초기 렌더 (이미 결과 있을 경우)
-  if (Object.keys(visionResults).length > 0) renderVisionPage();
-
-  // ── [V65] 브라우저 추론 스캐너 ──
-  //   Roboflow가 Cloudflare Workers IP를 403으로 차단 → 백엔드 스캔 불가.
-  //   브라우저(차단 안 됨)가 차트를 그려 직접 추론하고 결과를 /api/vision-results로 저장.
-  //   엔진 거래 로직은 동일 state를 읽으므로 자동 연동. 일일 브라우저 호출 캡 300.
-  var _bvsBusy = false;
-  function _bvsBudget() {
-    var key = 'bvs_' + new Date().toISOString().slice(0, 10);
-    return { key: key, used: parseInt(localStorage.getItem(key) || '0', 10) };
-  }
-  async function browserVisionScan(maxCalls) {
-    if (_bvsBusy) return 0;
-    var va = (currentCfg && currentCfg.visionAI) || {};
-    if (!va.enabled || !va.rfApiKey) return 0;
-    var bud = _bvsBudget();
-    if (bud.used >= 300) return 0;
-    maxCalls = Math.min(maxCalls || 20, 300 - bud.used);
-    _bvsBusy = true;
-    var ver = va.rfVersion || 11;
-    // 대상: 워치리스트 중 예측이 없거나 가장 오래된 순
-    var syms = Object.keys(lastQuotes);
-    syms.sort(function(a, b){ return ((visionResults[a]||{}).ts||0) - ((visionResults[b]||{}).ts||0); });
-    var out = {}, calls = 0;
-    for (var i = 0; i < syms.length && calls < maxCalls; i++) {
-      var sym = syms[i];
-      try {
-        var d = await fetch('/api/daily?symbol=' + encodeURIComponent(sym)).then(function(r){ return r.ok ? r.json() : null; });
-        if (!d || !d.closes || d.closes.length < 20) continue;
-        var cv = drawVisionCanvas(d.closes.slice(-60), 224);
-        var b64 = cv.toDataURL('image/jpeg', 0.92).split(',')[1];
-        var r = await fetch('https://serverless.roboflow.com/stock-updown-classifier/' + ver + '?api_key=' + encodeURIComponent(va.rfApiKey),
-          { method: 'POST', headers: { 'Content-Type': 'application/x-www-form-urlencoded' }, body: b64 });
-        calls++;
-        if (r.status === 429) break;
-        if (!r.ok) continue;
-        var j = await r.json();
-        var up = 0, dn = 0;
-        (Array.isArray(j.predictions) ? j.predictions : []).forEach(function(p){
-          if (p.class === 'up') up = p.confidence || 0;
-          else if (p.class === 'down') dn = p.confidence || 0;
-        });
-        if (j.top === 'up' && typeof j.confidence === 'number') { up = Math.max(up, j.confidence); if (!dn) dn = 1 - up; }
-        if (j.top === 'down' && typeof j.confidence === 'number') { dn = Math.max(dn, j.confidence); if (!up) up = 1 - dn; }
-        if (!up && !dn) continue;
-        out[sym] = { pred: up >= dn ? 'up' : 'down', conf: Math.max(up, dn), upConf: up, downConf: dn,
-                     predClose: d.closes[d.closes.length - 1], ts: Date.now() };
-        await new Promise(function(res){ setTimeout(res, 250); });
-      } catch (e) {}
-    }
-    try { localStorage.setItem(bud.key, String(bud.used + calls)); } catch (e) {}
-    var n = Object.keys(out).length;
-    if (n) {
-      try { await fetch('/api/vision-results', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(out) }); } catch (e) {}
-      window._visionApplyBackend(out);
-    }
-    _bvsBusy = false;
-    return n;
-  }
-  // 자동: 페이지 열려있는 동안 5분마다 20종목씩 (일일 300 캡)
-  setInterval(function(){ browserVisionScan(20).then(null, function(){}); }, 5 * 60 * 1000);
-  setTimeout(function(){ browserVisionScan(20).then(null, function(){}); }, 15000);
-
-  // ── Vision AI: 백엔드 예측을 표시용으로 머지 (프론트는 Roboflow 직접 호출 안 함) ──
-  //   [한도 보호] 스캔은 백엔드 cron이 일일예산 추적 하에 전담. 프론트는 결과만 반영.
-  window._visionApplyBackend = function(preds) {
-    if (!preds) return;
-    Object.keys(preds).forEach(function(k){
-      if (k.indexOf('__') === 0) return;            // __accuracy 등 메타 제외
-      if (isGarbagePred(preds[k])) { delete visionResults[k]; return; }  // [V65]
-      visionResults[k] = preds[k];
-    });
-    try { localStorage.setItem('visionResults', JSON.stringify(visionResults)); } catch(e) {}
-    renderVisionPage();
-    applyVisionBadges();
-  };
-  // (구) 프론트 60분 자동 스캔 제거 — 백엔드가 전담하므로 이중 호출 없음
 
   // ── 테마 토글 (다크 ↔ 라이트 색반전) ──
   function applyThemeLabel(){
