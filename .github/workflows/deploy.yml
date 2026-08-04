@@ -44,6 +44,10 @@ jobs:
       #   검토하는 대신 회복력을 직접 잰다(과대적용·적정·소표본잡음·강효과 4케이스).
       - name: Probability coefficient fitter check
         run: node tools/check-prob-fitters.mjs
+      # [V33.107] 회계 불변식 — 체결식과 원장 재생식이 어긋나면 현금이 조용히 표류한다.
+      #   실제로 두 달을 쫓았던 사고라, 식을 손으로 다시 적어 계약으로 못 박는다.
+      - name: Accounting invariant check
+        run: node tools/check-accounting.mjs
       # cloudflare/wrangler-action 대신 로컬에서 검증된 방식 그대로 실행
       # (wrangler-action@v3의 npx 자동설치가 4.86.0을 요구하며 실패하던 문제 회피)
       - name: Install wrangler

@@ -14535,6 +14535,13 @@ html[data-theme="light"] .rail{background:#fff;}
         ? em(CH.shockK.mult.toFixed(3)) + ' <span class="sub">잔여 k '+(has(CH.shockK.rawK)?CH.shockK.rawK.toFixed(3):'—')+' · t '+(has(CH.shockK.t)?CH.shockK.t.toFixed(2):'—')+' · n '+n0(CH.shockK.n)
           + (CH.shockK.byMode ? ' · '+Object.keys(CH.shockK.byMode).map(function(k){ return esc(k)+' '+n0(CH.shockK.byMode[k]); }).join(' ') : '')+'</span>'
         : '<span class="sub">미측정 → 배율 1.00 (종전 상수 그대로) · 사건표본 '+n0(CH.shockK?CH.shockK.n:0)+'/'+n0(CH.shockK?CH.shockK.minN:60)+'</span>']);
+      // [V33.107] TradingAgents 의 '반성기억' — 상황(레짐×변동성)별로 어느 전문가가 맞았나.
+      //   위원회는 종전엔 전문가마다 전역 IC 하나로 발언권을 줬다(추세장·횡보장 평균).
+      rows3.push(['상황별 전문가 신뢰도', CH.expReg && CH.expReg.usable > 0
+        ? em(CH.expReg.usable + '/' + CH.expReg.cells + ' 셀') + ' <span class="sub">'
+          + (CH.expReg.top || []).map(function(x){ return esc(x.nm)+'·'+esc(x.bk)+' IC '+x.ic.toFixed(3)+'(t'+x.t+')'; }).join(' · ')
+          + ' · 채점 '+n0(CH.expReg.rows)+'행</span>'
+        : '<span class="sub">미측정 → 전역 IC 그대로 (버킷당 '+n0(CH.expReg?CH.expReg.minN:250)+'표본 필요)</span>']);
       rows3.push(['EV 문턱 · 종목보호', '<span class="sub">변동성 구간 '+n0(CH.evByVol)+'개'
         + (CH.protect && CH.protect.enabled ? ' · 손절쿨다운 '+n0(CH.protect.cooldownMin)+'분 · 저수익잠금 '+n0(CH.protect.lowProfitLockMin)+'분' : ' · 종목보호 꺼짐')+'</span>']);
       h += sec('확률 체인 (측정된 계수)') + tbl(rows3);

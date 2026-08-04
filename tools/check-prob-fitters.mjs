@@ -5,7 +5,8 @@
 //   그래서 적합기는 ★참값을 아는 합성자료★ 로 되찾아지는지 매 배포마다 확인한다.
 //   되찾지 못하면 그 계수는 확률 체인에 넣을 자격이 없다.
 
-import { shockPriorFitNightly, decisionBlendFitNightly, _shockLogitShift, _coefShrink, SHOCKCAL }
+import { shockPriorFitNightly, decisionBlendFitNightly, _shockLogitShift, _coefShrink, SHOCKCAL,
+         _expRegBucket, _expRegIC, EXPREG, LUXML }
   from "../src/index.js";
 
 function fakeDB(init) {
@@ -116,6 +117,54 @@ async function shockCase(kTrue, n, label) {
   let allOk = true;
   for (const [t, want] of cases) if (Math.abs(_coefShrink(t) - want) > 1e-9) { allOk = false; bad("_coefShrink(" + t + ") = " + _coefShrink(t) + " ≠ " + want); }
   if (allOk) ok("_coefShrink 계약 (|t|≤1.65 → 0, |t|≥2.65 → 1)");
+}
+
+// ══ 5) 상황별 반성기억(TradingAgents 이식) — 버킷 판정과 수축 계약 ═══════════
+//   위원회 가중을 바꾸는 자리라, "표본이 없으면 종전과 완전히 같아야" 한다는 게 핵심 계약이다.
+{
+  const D = LUXML.featNames.length;
+  const mk = (reg, atr) => {
+    const v = new Array(D).fill(0);
+    v[LUXML.featNames.indexOf("regBull")] = reg === "BULL" ? 1 : 0;
+    v[LUXML.featNames.indexOf("regBear")] = reg === "BEAR" ? 1 : 0;
+    v[LUXML.featNames.indexOf("atrPct")] = atr;
+    return v;
+  };
+  const cases = [["BULL", 1.0, "BULL_LO"], ["BULL", 5.0, "BULL_HI"],
+                 ["BEAR", 1.0, "BEAR_LO"], ["NEUT", 5.0, "NEUT_HI"]];
+  let allOk = true;
+  for (const [reg, atr, want] of cases) {
+    const got = _expRegBucket(mk(reg, atr));
+    if (got !== want) { allOk = false; bad("버킷 판정 " + reg + "/" + atr + " → " + got + " ≠ " + want); }
+  }
+  if (allOk) ok("레짐×변동성 버킷 판정 4케이스");
+  if (_expRegBucket(null) === null && _expRegBucket([1, 2]) === null) ok("잘못된 벡터는 버킷 null (호출부가 전역 IC 로 폴백)");
+  else bad("잘못된 벡터에서 버킷이 나왔다");
+
+  // 표본 부족 → 전역 IC 그대로 (종전 동작 보존)
+  const few = { mind: { BULL_LO: { n: EXPREG.minBucketN - 1, ic: 0.30, t: 9 } } };
+  if (_expRegIC(0.04, few, "mind", "BULL_LO") === 0.04) ok("버킷 표본 부족 시 전역 IC 유지 (0.040)");
+  else bad("표본 부족인데 버킷 IC 를 썼다: " + _expRegIC(0.04, few, "mind", "BULL_LO"));
+
+  // t 가 작으면(잡음) 전역 IC 그대로
+  const noisy = { mind: { BULL_LO: { n: 5000, ic: 0.30, t: 1.2 } } };
+  if (_expRegIC(0.04, noisy, "mind", "BULL_LO") === 0.04) ok("t 1.2(유의성 미달) → 전역 IC 유지");
+  else bad("잡음 버킷을 반영했다: " + _expRegIC(0.04, noisy, "mind", "BULL_LO"));
+
+  // t 가 충분히 크면 버킷 IC 로 완전히 이동
+  const solid = { mind: { BULL_LO: { n: 5000, ic: 0.12, t: 4.0 } } };
+  if (Math.abs(_expRegIC(0.04, solid, "mind", "BULL_LO") - 0.12) < 1e-9) ok("t 4.0(유의) → 버킷 IC 0.120 로 이동");
+  else bad("유의한 버킷이 반영되지 않았다: " + _expRegIC(0.04, solid, "mind", "BULL_LO"));
+
+  // 중간 t 는 부분 이동(선형 보간)
+  const mid = { mind: { BULL_LO: { n: 5000, ic: 0.12, t: 2.15 } } };  // shrink = (2.15-1.65)/1 = 0.5
+  const got = _expRegIC(0.04, mid, "mind", "BULL_LO");
+  if (Math.abs(got - (0.04 + 0.5 * (0.12 - 0.04))) < 1e-9) ok("중간 유의성 t 2.15 → 절반만 이동 (" + got.toFixed(3) + ")");
+  else bad("부분 이동이 틀렸다: " + got);
+
+  // 표 자체가 없으면(미측정) 전역 IC 그대로 — 배포 직후의 정상 상태
+  if (_expRegIC(0.04, null, "mind", "BULL_LO") === 0.04) ok("미측정 상태에서 종전 동작 보존");
+  else bad("미측정인데 값이 바뀌었다");
 }
 
 console.log(fails ? "\n확률 계수 검증 실패 " + fails + "건" : "\n  ok   확률 계수 적합기 통과");

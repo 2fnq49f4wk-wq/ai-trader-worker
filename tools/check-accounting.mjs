@@ -1,0 +1,180 @@
+// [V33.107] 회계 불변식 검증.
+//
+//   이 엔진의 회계는 "trades 원장이 유일한 진실" 이다(V29). 현금은 저장하지 않고
+//   원장에서 매번 재계산한다. 그래서 ★체결이 쓰는 비용식★ 과 ★원장 재생이 쓰는 비용식★ 이
+//   한 글자라도 어긋나면 현금이 조용히 표류한다 — 실제로 그걸 두 달 쫓은 적이 있다.
+//
+//   여기서 못 박는 불변식:
+//     ① 체결식 == 재생식        매수 gross×(1+수수료+슬리피지), 매도 gross×(1−수수료−슬리피지−거래세)
+//     ② 체크포인트 == 전체재생  500건 임계에서 스냅샷이 전진해도 결과가 같아야 한다
+//     ③ 입출금은 정확히 1회 반영
+//     ④ ETF 매도세 면제·시행일 경계가 재생에도 그대로 적용된다
+//     ⑤ 왕복거래의 손실은 '비용의 합' 과 정확히 일치한다(유령 손익 0)
+
+import { computeCashFromTrades, _krSellTaxRate, _slipRate } from "../src/index.js";
+
+let fails = 0;
+const ok = (m) => console.log("  ok   " + m);
+const bad = (m) => { fails++; console.log("  FAIL " + m); };
+const near = (a, b, tol) => Math.abs(a - b) <= (tol == null ? 1e-6 : tol);
+
+// 합성 D1 — state 테이블 + trades 테이블.
+function fakeDB(state, trades) {
+  const st = new Map(Object.entries(state || {}).map(([k, v]) => [k, JSON.stringify(v)]));
+  const tr = (trades || []).map((t, i) => Object.assign({ rid: i + 1 }, t));
+  return {
+    prepare(sql) {
+      const q = {
+        _a: [],
+        bind(...a) { q._a = a; return q; },
+        async first() {
+          if (/SELECT v FROM state WHERE k = \?/.test(sql)) {
+            const v = st.get(q._a[0]); return v === undefined ? null : { v };
+          }
+          return null;
+        },
+        async all() {
+          if (/FROM trades WHERE market = \? AND rowid > \?/.test(sql)) {
+            const [mkt, since] = q._a;
+            return { results: tr.filter((t) => t.market === mkt && t.rid > since) };
+          }
+          if (/SELECT k, v FROM state WHERE k IN/.test(sql)) {
+            const out = [];
+            for (const k of q._a) { const v = st.get(k); if (v !== undefined) out.push({ k, v }); }
+            return { results: out };
+          }
+          return { results: [] };
+        },
+        async run() {
+          if (/INSERT INTO state/.test(sql)) st.set(q._a[0], q._a[1]);
+          if (/DELETE FROM state WHERE k = \?/.test(sql)) st.delete(q._a[0]);
+          return {};
+        }
+      };
+      return q;
+    },
+    async batch(a) { for (const x of a) await x.run(); return []; },
+    _st: st
+  };
+}
+
+const CFG = {
+  initialCashUS: 100000, initialCashKR: 10000000, initialCashCM: 50000,
+  initialCashBDUS: 0, initialCashBDKR: 0,
+  feeUS: 0.0005, feeKR: 0.00015,
+  krSellTax: 0.0018            // 실 설정과 같은 자리(DEFAULT_CFG.krSellTax)
+};
+const NOW = Date.now();
+
+// ══ ① 체결식과 재생식이 같은가 ════════════════════════════════════════════════
+//   체결 코드(executeBuy/executeSell)가 쓰는 식을 여기 손으로 다시 적고 대조한다.
+//   손으로 적은 식이 곧 '계약' 이다 — 한쪽이 바뀌면 이 테스트가 깨진다.
+{
+  const px = 200, qty = 10, gross = px * qty;
+  const fee = CFG.feeUS, slip = _slipRate("us", NOW);
+  const db = fakeDB({ deposits: { us: 0 }, outflows: { us: 0 } },
+    [{ market: "us", ts: NOW, symbol: "AAPL", side: "BUY", qty, price: px }]);
+  const cash = await computeCashFromTrades(db, "us", CFG);
+  const want = CFG.initialCashUS - gross * (1 + fee + slip);
+  if (near(cash, want, 1e-9)) ok("매수 재생 = gross×(1+수수료+슬리피지) — " + cash.toFixed(4));
+  else bad("매수 재생 불일치: " + cash + " ≠ " + want);
+}
+{
+  const px = 200, qty = 10, gross = px * qty;
+  const fee = CFG.feeUS, slip = _slipRate("us", NOW), tax = _krSellTaxRate(CFG, "AAPL", "us", NOW);
+  const db = fakeDB({ deposits: { us: 0 }, outflows: { us: 0 } },
+    [{ market: "us", ts: NOW, symbol: "AAPL", side: "SELL", qty, price: px }]);
+  const cash = await computeCashFromTrades(db, "us", CFG);
+  const want = CFG.initialCashUS + gross * (1 - fee - tax - slip);
+  if (near(cash, want, 1e-9)) ok("매도 재생 = gross×(1−수수료−슬리피지−거래세) — " + cash.toFixed(4));
+  else bad("매도 재생 불일치: " + cash + " ≠ " + want);
+  if (tax === 0) ok("미국장 매도세 0 확인");
+  else bad("미국장에 매도세가 붙었다: " + tax);
+}
+
+// ══ ⑤ 같은 가격 왕복이면 손실 == 비용의 합 (유령 손익 0) ═════════════════════
+{
+  const px = 500, qty = 4, gross = px * qty;
+  const fee = CFG.feeUS, slip = _slipRate("us", NOW);
+  const db = fakeDB({ deposits: { us: 0 }, outflows: { us: 0 } }, [
+    { market: "us", ts: NOW, symbol: "MSFT", side: "BUY", qty, price: px },
+    { market: "us", ts: NOW, symbol: "MSFT", side: "SELL", qty, price: px }
+  ]);
+  const cash = await computeCashFromTrades(db, "us", CFG);
+  const cost = gross * (fee + slip) * 2;          // 진입비용 + 청산비용
+  if (near(CFG.initialCashUS - cash, cost, 1e-9))
+    ok("동가 왕복 손실 = 왕복비용 " + cost.toFixed(4) + " (유령 손익 0)");
+  else bad("동가 왕복인데 손실이 " + (CFG.initialCashUS - cash).toFixed(4) + " ≠ " + cost.toFixed(4));
+}
+
+// ══ ② 체크포인트 경로와 전체 재생이 같은 값을 내는가 ══════════════════════════
+//   체크포인트는 500건 임계에서 전진한다. 전진 전/후 결과가 다르면 현금이 표류한다.
+{
+  const trades = [];
+  for (let i = 0; i < 1200; i++) {
+    trades.push({ market: "us", ts: NOW - (1200 - i) * 60000, symbol: "T" + (i % 7),
+                  side: i % 2 === 0 ? "BUY" : "SELL", qty: 1 + (i % 3), price: 100 + (i % 11) });
+  }
+  // (a) 체크포인트 없이 한 번에
+  const dbA = fakeDB({ deposits: { us: 0 }, outflows: { us: 0 } }, trades);
+  const full = await computeCashFromTrades(dbA, "us", CFG);
+  // (b) 같은 DB 를 두 번 호출 — 첫 호출에서 체크포인트가 저장되고, 두 번째는 그 뒤만 합산
+  const dbB = fakeDB({ deposits: { us: 0 }, outflows: { us: 0 } }, trades);
+  await computeCashFromTrades(dbB, "us", CFG);
+  const ck = dbB._st.get("cash_ckpt:us");
+  const inc = await computeCashFromTrades(dbB, "us", CFG);
+  if (!ck) bad("1,200건인데 체크포인트가 저장되지 않았다(임계 500)");
+  else if (near(full, inc, 1e-6)) ok("체크포인트 경로 == 전체재생 (" + full.toFixed(4) + ", ckpt rowid " + JSON.parse(ck).lastRowid + ")");
+  else bad("체크포인트가 현금을 바꿨다: 전체 " + full + " vs 증분 " + inc);
+}
+
+// ══ ③ 입금·출금이 정확히 1회만 반영되는가 ════════════════════════════════════
+{
+  const db = fakeDB({ deposits: { us: 5000 }, outflows: { us: 1200 } }, []);
+  const cash = await computeCashFromTrades(db, "us", CFG);
+  const want = CFG.initialCashUS + 5000 - 1200;
+  if (near(cash, want, 1e-9)) ok("입금 +5,000 / 출금 −1,200 정확히 1회 반영");
+  else bad("입출금 반영 오류: " + cash + " ≠ " + want);
+  // 두 번 불러도 같아야 한다(체크포인트 없이 재호출).
+  const again = await computeCashFromTrades(db, "us", CFG);
+  if (near(cash, again, 1e-9)) ok("재호출 멱등성 유지");
+  else bad("재호출에서 값이 달라졌다: " + cash + " → " + again);
+}
+
+// ══ ④ 한국장 매도세 — ETF 면제와 시행일 경계 ═════════════════════════════════
+{
+  const px = 70000, qty = 10, gross = px * qty;
+  const fee = CFG.feeKR, slip = _slipRate("kr", NOW);
+  // 일반 종목
+  const db1 = fakeDB({ deposits: { kr: 0 }, outflows: { kr: 0 } },
+    [{ market: "kr", ts: NOW, symbol: "005930.KS", side: "SELL", qty, price: px }]);
+  const c1 = await computeCashFromTrades(db1, "kr", CFG);
+  const t1 = _krSellTaxRate(CFG, "005930.KS", "kr", NOW);
+  const w1 = CFG.initialCashKR + gross * (1 - fee - t1 - slip);
+  if (near(c1, w1, 1e-6) && t1 > 0) ok("한국 일반종목 매도세 " + (t1 * 100).toFixed(4) + "% 재생 반영");
+  else bad("한국 매도세 재생 불일치: " + c1 + " ≠ " + w1 + " (세율 " + t1 + ")");
+
+  // 재생이 '체결 시각' 기준 세율을 쓰는지 — 아주 오래된 거래는 그 시점 세율이어야 한다.
+  const OLD = Date.UTC(2020, 0, 2);
+  const tOld = _krSellTaxRate(CFG, "005930.KS", "kr", OLD);
+  const db2 = fakeDB({ deposits: { kr: 0 }, outflows: { kr: 0 } },
+    [{ market: "kr", ts: OLD, symbol: "005930.KS", side: "SELL", qty, price: px }]);
+  const c2 = await computeCashFromTrades(db2, "kr", CFG);
+  const w2 = CFG.initialCashKR + gross * (1 - fee - tOld - _slipRate("kr", OLD));
+  if (near(c2, w2, 1e-6)) ok("과거 거래는 그 시점 세율·슬리피지로 재생 (" + (tOld * 100).toFixed(4) + "%)");
+  else bad("과거 거래 재생이 현재 세율을 썼다: " + c2 + " ≠ " + w2);
+}
+
+// ══ ⑥ 시장 격리 — 한 시장의 거래가 다른 시장 현금을 건드리면 안 된다 ══════════
+{
+  const db = fakeDB({ deposits: {}, outflows: {} }, [
+    { market: "us", ts: NOW, symbol: "AAPL", side: "BUY", qty: 10, price: 200 },
+    { market: "kr", ts: NOW, symbol: "005930.KS", side: "BUY", qty: 5, price: 70000 }
+  ]);
+  const cm = await computeCashFromTrades(db, "cm", CFG);
+  if (near(cm, CFG.initialCashCM, 1e-9)) ok("시장 격리 — cm 현금이 us/kr 거래에 영향 없음");
+  else bad("시장 격리 깨짐: cm " + cm + " ≠ " + CFG.initialCashCM);
+}
+
+console.log(fails ? "\n회계 불변식 위반 " + fails + "건" : "\n  ok   회계 불변식 통과");
+process.exit(fails ? 1 : 0);

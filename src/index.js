@@ -2760,7 +2760,7 @@ async function applySignalTypeWeights(DB, cfg) {
 // ============================================================================
 // [V33.55] 빌드 버전 — SWR L2 캐시 키에 섞어 '배포 = 판단 캐시 자동 무효화'를 만든다.
 //   판정 로직을 고쳐도 옛 캐시가 최대 1시간 재배포되던 문제를 구조적으로 없앤다.
-const _BUILD_VER = "V33.106";
+const _BUILD_VER = "V33.107";
 
 const AI_PARAMS = {
   // ── OHLCV 타임프레임 ── 시가/고가/저가/종가/거래량을 어떤 봉 주기로 볼지.
@@ -12416,7 +12416,13 @@ function backtestSymbol(fullData, cfg, market, opts) {
   const warmup = opts.warmup || 30;
   const slippagePct = opts.slippagePct != null ? opts.slippagePct : 0.1;
   const feeRate = market === "us" ? (cfg.feeUS || 0) : (cfg.feeKR || 0);
-  const sellTaxRate = market === "kr" ? (cfg.krSellTax || 0) : 0;
+  // [V33.107] ★백테스트 비용모델이 실거래·원장과 어긋나 있었다★
+  //   여긴 `market === "kr" ? cfg.krSellTax : 0` 플랫 세율이었다. 그런데 체결(executeSell)과
+  //   원장 재생(computeCashFromTrades)은 둘 다 _krSellTaxRate 를 쓴다 — ETF 매도세 면제와
+  //   시행일 경계가 반영된 함수다. 즉 ★KR ETF 백테스트만 실거래엔 없는 세금을 물고 있었다★
+  //   (왕복 0.15~0.23%p). 단타·중기처럼 회전이 잦은 전략에선 그 차이가 전략 채택·폐기를
+  //   뒤집을 수 있는 크기다. 셋이 같은 함수를 쓰게 통일한다(봉 시각 기준 — 과거는 과거 규칙).
+  const _sellTaxAt = function (ts) { return _krSellTaxRate(cfg, fullData.symbol, market, ts); };
   const n = fullData.closes.length;
   if (n < warmup + 5) return { trades: [], skipped: "too_short" };
 
@@ -12464,7 +12470,7 @@ function backtestSymbol(fullData, cfg, market, opts) {
           const sellQty = decision.sellQty || pos.qty;
           const execPrice = price * (1 - slippagePct / 100);
           const gross = execPrice * sellQty;
-          const proceeds = gross - gross * feeRate - gross * sellTaxRate;
+          const proceeds = gross - gross * feeRate - gross * _sellTaxAt(barTime);
           const entryCost = pos.avg * sellQty;
           const entryFee = (pos.meta.feeRemaining || 0) * (sellQty / pos.qty);
           const pnl = proceeds - entryCost - entryFee;
@@ -12507,7 +12513,8 @@ function backtestSymbol(fullData, cfg, market, opts) {
     const lastPrice = fullData.closes[n - 1];
     for (const strat of Object.keys(openPositions)) {
       const pos = openPositions[strat];
-      const proceeds = lastPrice * pos.qty * (1 - feeRate - sellTaxRate);
+      const _lastTs = fullData.dates ? fullData.dates[n - 1] : _btRealNow();
+      const proceeds = lastPrice * pos.qty * (1 - feeRate - _sellTaxAt(_lastTs));
       const entryCost = pos.avg * pos.qty;
       const pnl = proceeds - entryCost - (pos.meta.feeRemaining || 0);
       const pnlPct = entryCost > 0 ? (pnl / entryCost) * 100 : 0;
@@ -15389,17 +15396,21 @@ async function runTradingCycle(env) {
           try { __idxCloses = await _mlLoadIndexCloses(DB, market); } catch (e) {}
           try { __xsPanel = await getState(DB, "xs_panel", null); } catch (e) {}   // [V21] 횡단면 랭크 패널
           // [V33.78] FLOW 모델 + 피어용 일봉 스냅샷(사이클 1회). 모델이 없어도 표본 수집을 위해 캐시는 만든다.
-          try {
-            if (FLOWML.enabled) {
-              __flowModel = await getState(DB, "flow_model", null);
-              try { __xaModel = await getState(DB, "xalpha_model", null); } catch (e2) {}
-              try { __stackModel = await getState(DB, "stack_model", null); } catch (e2) {}
-              try { if (MEMOML.enabled) __memoModel = await getState(DB, "memo_model", null); } catch (e2) {}
-              try { __techK = await getState(DB, "tech_prior_k", null); __finalCal = await getState(DB, "final_cal", null); __blendK = await getState(DB, "decision_blend_k", null); } catch (e2) {}
-              try { if (DUALHEAD.enabled) { __dualBull = await getState(DB, "dual_bull_model", null); __dualBear = await getState(DB, "dual_bear_model", null); __dualShift = await getState(DB, "dual_quad_shift", null); } } catch (e2) {}
-              try { __pDistCache = await getState(DB, "ai_pdist:" + market, null); } catch (e2) {}
-            }
-          } catch (e) { __flowModel = __flowModel || null; }
+          // [V33.107] ★연결 버그 — FLOW 스위치 하나에 무관한 8종이 묶여 있었다★
+          //   XALPHA·STACK·MEMO·이중헤드·측정계수(techK/finalCal/blendK)·후보 p 분포는
+          //   FLOW 와 아무 관계가 없는데 전부 `if (FLOWML.enabled)` 안에 들어가 있었다.
+          //   FLOWML.enabled 를 false 로 두는 순간(성능 문제로 끄는 건 언제든 있을 수 있다)
+          //   위원회 전문가 3종과 확률 체인의 측정계수 전부가 조용히 null 이 된다 —
+          //   그러면 '왜 갑자기 상수로 돌아갔지' 를 추적할 단서가 어디에도 안 남는다.
+          //   각자 자기 스위치로만 걸리게 분리한다.
+          try { if (FLOWML.enabled) __flowModel = await getState(DB, "flow_model", null); }
+          catch (e) { __flowModel = __flowModel || null; }
+          try { if (XALPHA.enabled) __xaModel = await getState(DB, "xalpha_model", null); } catch (e2) {}
+          try { if (STACKML.enabled) __stackModel = await getState(DB, "stack_model", null); } catch (e2) {}
+          try { if (MEMOML.enabled) __memoModel = await getState(DB, "memo_model", null); } catch (e2) {}
+          try { __techK = await getState(DB, "tech_prior_k", null); __finalCal = await getState(DB, "final_cal", null); __blendK = await getState(DB, "decision_blend_k", null); } catch (e2) {}
+          try { if (DUALHEAD.enabled) { __dualBull = await getState(DB, "dual_bull_model", null); __dualBear = await getState(DB, "dual_bear_model", null); __dualShift = await getState(DB, "dual_quad_shift", null); } } catch (e2) {}
+          try { __pDistCache = await getState(DB, "ai_pdist:" + market, null); } catch (e2) {}
           // ↑ [V33.99] ★배포를 17커밋 동안 막고 있던 중괄호 누락★
           //   V33.82 가 이 자리에 블록을 끼워 넣으면서 위의 `try {` + `if (FLOWML.enabled) {`
           //   짝을 닫지 않았고, 아래에 같은 헤더를 새로 열었다(중복). 파일 전체 중괄호가 2개 모자란다.
@@ -18156,6 +18167,20 @@ async function handleRequest(request, env, ctx) {
               blendK: await (async function () { try { const b = await getState(env.DB, "decision_blend_k", null);
                 return b ? { kTech: _num(b.kTech, null), kNews: _num(b.kNews, null), tTech: _num(b.tTech, null), n: _num(b.n, 0) } : null; } catch (e) { return null; } })(),
               dualShift: _ds ? { shift: _ds.shift || null, n: _num(_ds.n, 0) } : null,
+              // [V33.107] 상황별 반성기억(TradingAgents) — 레짐×변동성 버킷별 전문가 신뢰도.
+              expReg: await (async function () { try {
+                const e = await getState(env.DB, "expert_regime_ic", null);
+                if (!e || !e.tbl) return { cells: 0, usable: 0, rows: 0, minN: EXPREG.minBucketN };
+                let cells = 0, usable = 0; const top = [];
+                for (const nm of Object.keys(e.tbl)) for (const bk of Object.keys(e.tbl[nm])) {
+                  cells++;
+                  const c = e.tbl[nm][bk];
+                  if (c && c.ic != null && c.t != null) { usable++; top.push({ nm: nm, bk: bk, ic: c.ic, t: c.t, n: c.n }); }
+                }
+                top.sort(function (a, b) { return Math.abs(b.ic) - Math.abs(a.ic); });
+                return { cells: cells, usable: usable, rows: _num(e.rows, 0), ts: _num(e.ts, 0),
+                         minN: EXPREG.minBucketN, top: top.slice(0, 4) };
+              } catch (e) { return null; } })(),
               // [V33.105] 충격 프라이어 배율 — 마지막까지 미측정으로 남아 있던 상수.
               shockK: await (async function () { try { const k = await getState(env.DB, "shock_prior_k", null);
                 return k ? { mult: _num(k.mult, null), rawK: _num(k.rawK, null), t: _num(k.t, null),
@@ -19395,6 +19420,7 @@ async function handleRequest(request, env, ctx) {
         ["flow", function (DB) { return flowTrainNightly(DB); }],
         ["xalpha", function (DB) { return xalphaTrainNightly(DB); }],
         ["memo", function (DB) { return memoTrainNightly(DB); }],
+        ["expreg", function (DB) { return expertRegimeFitNightly(DB); }],
         ["techk", function (DB) { return techPriorFitNightly(DB); }],
         ["finalcal", function (DB) { return finalCalFitNightly(DB); }],
         ["gateaudit", function (DB) { return gateAuditNightly(DB); }],
@@ -28563,6 +28589,128 @@ async function _boostersCached(DB) {
   } catch (e) { return []; }
 }
 // [V32.59] 전문가 실측정확도 5분 메모(위원회 루프에서 종목마다 재로딩 방지 — CPU 안전).
+// ════════════════════════════════════════════════════════════════════════════
+// [V33.107] ★TradingAgents 이식 — 상황별 반성기억(Reflection Memory)★
+//
+//   출처: TradingAgents: Multi-Agents LLM Financial Trading Framework (arXiv:2412.20138)
+//   그 프레임워크의 핵심 중 하나는 ★반성(reflection)★ 이다. 거래가 끝나면 각 에이전트가
+//   "무엇이 나를 틀리게 했나" 를 되짚고, 그 교훈을 ★상황(situation)을 키로★ 저장한다.
+//   다음에 비슷한 상황을 만나면 그 교훈을 먼저 꺼내 본다.
+//
+//   우리 구조에 이미 들어온 것: MEMO(상황 → 실제 결과)가 그 절반이다.
+//   ★빠져 있던 절반★: "그 상황에서 ★어느 전문가★ 가 틀렸나" 는 아무도 기록하지 않는다.
+//   지금 위원회는 전문가마다 ★전역 IC 하나★ 로 발언권을 준다. 그런데 추세장에서 뛰어난
+//   모델이 횡보장에서는 형편없는 건 흔한 일이고(그게 레짐 의존성이다), 전역 IC 는 그 둘을
+//   평균 내 버린다 — 두 국면 모두에서 잘못된 가중을 쓰게 된다.
+//   (V33.x 의 _expertRelCached 는 '최근에 잘 맞혔나'(시간축)만 본다. 상황축은 비어 있었다.)
+//
+//   → 전문가별 IC 를 ★레짐 × 변동성★ 버킷으로 나눠 잰다. 버킷 표본이 적으면 전역 IC 쪽으로
+//     수축시켜(유의성 기반) 잡음을 그대로 믿지 않는다. 버킷을 못 채우면 종전 동작 그대로다.
+//
+//   ★누출 방지★: 채점 대상은 전문가들이 학습한 적 없는 구간(stack_expert_epoch 이후)만 쓴다.
+//     STACK 소급생성이 같은 기준선을 쓰는 것과 같은 이유다 — 자기가 배운 행으로 자기를
+//     평가하면 IC 가 실력이 아니라 암기력이 된다(V33.104 에서 IC 0.566 로 겪었다).
+const EXPREG = {
+  enabled: true,
+  minBucketN: 250,      // 버킷 IC 를 쳐다보기 시작하는 최소 표본
+  maxRows: 6000,        // 야간 1회 채점 상한(CPU 예산)
+  volSplit: 3.0         // atrPct 중앙값 근사 — 이 위가 고변동
+};
+// 피처벡터에서 바로 버킷을 뽑는다 — 별도 배선이 필요 없다(regBull/regBear/atrPct 가 벡터 안에 있다).
+function _expRegBucket(featVec) {
+  try {
+    // [V33.107] 길이까지 확인한다 — 짧은/깨진 벡터에 _num(undefined,0)=0 이 먹으면
+    //   조용히 "NEUT_LO" 로 분류돼 엉뚱한 버킷 가중이 적용된다(전역 IC 폴백이 정상 동작).
+    if (!Array.isArray(featVec) || featVec.length !== LUXML.featNames.length) return null;
+    const iB = LUXML.featNames.indexOf("regBull"), iR = LUXML.featNames.indexOf("regBear");
+    const iA = LUXML.featNames.indexOf("atrPct");
+    if (iB < 0 || iR < 0 || iA < 0) return null;
+    const reg = _num(featVec[iB], 0) > 0.5 ? "BULL" : (_num(featVec[iR], 0) > 0.5 ? "BEAR" : "NEUT");
+    const vol = _num(featVec[iA], 0) >= EXPREG.volSplit ? "HI" : "LO";
+    return reg + "_" + vol;
+  } catch (e) { return null; }
+}
+// 버킷 IC 와 전역 IC 를 유의성으로 섞는다. 버킷이 확실할수록 버킷 쪽으로 간다.
+//   t 가 작으면(잡음) 전역값이 그대로 남는다 — "안 잰 것을 잰 척" 하지 않는다.
+function _expRegIC(icGlobal, tbl, name, bucket) {
+  try {
+    if (!tbl || !name || !bucket) return icGlobal;
+    const e = tbl[name] && tbl[name][bucket];
+    if (!e || _num(e.n, 0) < EXPREG.minBucketN) return icGlobal;
+    const w = _coefShrink(_num(e.t, 0));
+    if (!(w > 0)) return icGlobal;
+    const g = (typeof icGlobal === "number" && isFinite(icGlobal)) ? icGlobal : 0;
+    return g + w * (_num(e.ic, g) - g);
+  } catch (e) { return icGlobal; }
+}
+let __expRegMemo = null;
+async function _expertRegimeCached(DB) {
+  try {
+    if (__expRegMemo && (Date.now() - __expRegMemo.at) < 600000) return __expRegMemo.v;
+    const v = await getState(DB, "expert_regime_ic", null);
+    const ok = (v && v.featVer === LUXML.featVer && v.tbl) ? v.tbl : null;
+    __expRegMemo = { at: Date.now(), v: ok };
+    return ok;
+  } catch (e) { return null; }
+}
+async function expertRegimeFitNightly(DB) {
+  if (!EXPREG.enabled) return null;
+  try {
+    const _ep = _num((await getState(DB, "stack_expert_epoch", null) || {}).id, 0);
+    if (!(_ep > 0)) return "[EXPREG] 누출없는 기준선 미설정 — stackepoch 이후 시작";
+    const rows = (await DB.prepare(
+      "SELECT id, feat, label, pnl_pct FROM ml_samples WHERE id > ? AND featver = ? ORDER BY id ASC LIMIT ?"
+    ).bind(_ep, LUXML.featVer, EXPREG.maxRows).all()).results || [];
+    if (rows.length < EXPREG.minBucketN) return "[EXPREG] 누출없는 표본 " + rows.length + "/" + EXPREG.minBucketN + " — 대기";
+    // 채점기 1회 로드(표본마다 다시 읽으면 D1 이 죽는다 — STACK 소급생성과 같은 규약).
+    const mind = await mlMindLoad(DB), ens = await mlBrainLoad(DB);
+    const dnnT = await getState(DB, "dnn_trust", null);
+    const dnn = (dnnT && dnnT.trusted) ? await mlDNNLoad(DB) : null;
+    const gT = await getState(DB, "gbdt_trust", null);
+    const gbdt = (gT && gT.trusted) ? await mlGBDTLoad(DB) : null;
+    const memo = await getState(DB, "memo_model", null);
+    if (!mind && !dnn && !gbdt && !memo) return "[EXPREG] 채점 가능한 전문가 없음";
+    // 버킷별 (p, y) 수집
+    const acc = {};   // name → bucket → { p:[], y:[] }
+    const put = function (nm, bk, p, y) {
+      if (p == null || !isFinite(p)) return;
+      (acc[nm] = acc[nm] || {});
+      (acc[nm][bk] = acc[nm][bk] || { p: [], y: [] });
+      acc[nm][bk].p.push(p); acc[nm][bk].y.push(y);
+    };
+    for (const r of rows) {
+      let v; try { v = JSON.parse(r.feat); } catch (e) { continue; }
+      if (!Array.isArray(v) || v.length !== LUXML.featNames.length) continue;
+      const bk = _expRegBucket(v); if (!bk) continue;
+      const y = _labelOfRow(r); if (y == null) continue;
+      try { if (mind) { const sc = await mlMindScore(DB, mind, v, ens); if (sc && typeof sc.p === "number") put("mind", bk, sc.p, y); } } catch (e) {}
+      try { if (dnn) put("dnn", bk, mlDNNScore(dnn, v), y); } catch (e) {}
+      try { if (gbdt) put("gbdt", bk, mlGBDTScore(gbdt, v), y); } catch (e) {}
+      try { if (memo && memo.luxFeatVer === LUXML.featVer) put("memo", bk, memoScore(memo, v), y); } catch (e) {}
+    }
+    const tbl = {}; let nCells = 0, nUsable = 0;
+    for (const nm of Object.keys(acc)) {
+      tbl[nm] = {};
+      for (const bk of Object.keys(acc[nm])) {
+        const c = acc[nm][bk]; nCells++;
+        if (c.p.length < EXPREG.minBucketN) { tbl[nm][bk] = { n: c.p.length, ic: null, t: null }; continue; }
+        const st = _icBlockStats(c.p, c.y, 5);
+        tbl[nm][bk] = { n: c.p.length,
+                        ic: st.blockIC != null ? +st.blockIC.toFixed(5) : (st.ic != null ? +st.ic.toFixed(5) : null),
+                        t: st.t != null ? +st.t.toFixed(3) : null };
+        if (tbl[nm][bk].ic != null && tbl[nm][bk].t != null) nUsable++;
+      }
+    }
+    await setState(DB, "expert_regime_ic", { featVer: LUXML.featVer, tbl: tbl, rows: rows.length, ts: Date.now() });
+    __expRegMemo = null;   // 즉시 반영
+    const brief = Object.keys(tbl).map(function (nm) {
+      const bs = Object.keys(tbl[nm]).filter(function (b) { return tbl[nm][b].ic != null; });
+      return nm + "[" + bs.map(function (b) { return b + " " + tbl[nm][b].ic.toFixed(3) + "/t" + tbl[nm][b].t; }).join(" ") + "]";
+    }).join(" ");
+    return "[EXPREG] 누출없는 " + rows.length + "행 채점 · 유효셀 " + nUsable + "/" + nCells + " — " + (brief || "버킷 미충족");
+  } catch (e) { return "[EXPREG] fail: " + (e && e.message); }
+}
+
 async function _expertRelCached(DB) {
   try {
     const g = (typeof globalThis !== "undefined") ? globalThis : {};
@@ -28729,6 +28877,9 @@ async function mlDeepDecide(DB, featVec, opts) {
     //   정적 검증정확도와 블렌드해 소프트맥스 가중에 반영 → '요즘 잘 맞히는 모델'의 발언권↑(레짐 적응).
     let _relMap = null;
     try { const _rel = (opts.rel !== undefined) ? opts.rel : await _expertRelCached(DB); if (_rel && _rel.featVer === LUXML.featVer && _rel.rel) _relMap = _rel.rel; } catch (e) {}
+    // [V33.107] 상황별(레짐×변동성) 전문가 신뢰도 — 10분 메모 캐시라 핫패스 D1 왕복 없음.
+    let _expRegTbl = null;
+    try { _expRegTbl = (opts.expReg !== undefined) ? opts.expReg : await _expertRegimeCached(DB); } catch (e) {}
     const _accBlend = function (ex) {
       if (_relMap && _relMap[ex.name] && _relMap[ex.name].n >= 80 && _relMap[ex.name].accLB != null) return 0.5 * ex.acc + 0.5 * _relMap[ex.name].accLB;
       return ex.acc;
@@ -28782,9 +28933,16 @@ async function mlDeepDecide(DB, featVec, opts) {
       //   '학습가중(±2.0 %단위) vs 사전기본(±0.6 감성점)' 과 정확히 같은 눈금 불일치다.
       //   → 환산 경로는 실측 IC 의 현실 범위(≤0.10)로 잘라 같은 자에서 겨루게 한다.
       //     실측 IC 를 싣고 온 전문가는 종전대로 0.25 까지 인정한다(진짜로 잰 값이므로).
+      // [V33.107] ★상황별 반성기억 적용★ — 전역 IC 를 그 종목의 현재 레짐·변동성 버킷에서
+      //   실측된 IC 쪽으로 (유의성만큼) 옮긴다. 버킷 표본이 모자라거나 t 가 작으면
+      //   전역값이 그대로 남으므로 종전 동작과 완전히 같다(공백 없음).
+      const _regBucket = _expRegBucket(featVec);
       const _icOf = function (ex) {
-        if (typeof ex.ic === "number" && isFinite(ex.ic)) return _clamp(ex.ic, -0.05, 0.25);
-        return _clamp((Math.min(_accBlend(ex), _cap) - 0.5) / 0.4, -0.02, 0.10);   // 정확도 → IC 근사(현실범위)
+        let base;
+        if (typeof ex.ic === "number" && isFinite(ex.ic)) base = _clamp(ex.ic, -0.05, 0.25);
+        else base = _clamp((Math.min(_accBlend(ex), _cap) - 0.5) / 0.4, -0.02, 0.10);   // 정확도 → IC 근사(현실범위)
+        const adj = _expRegIC(base, _expRegTbl, ex.name, _regBucket);
+        return _clamp((typeof adj === "number" && isFinite(adj)) ? adj : base, -0.05, 0.25);
       };
       const _useIC = experts.some(function (ex) { return typeof ex.ic === "number" && isFinite(ex.ic); });
       let wsum = 0, zsum = 0;
@@ -35880,6 +36038,9 @@ export default {
             // [V33.92] MEMO(유사상황 기억)를 STACK 앞에 둔다 — STACK 입력에 memo 확률이 들어간다.
             await _stg("memo", async function () { return await memoTrainNightly(env.DB); });
             // [V33.94] 기술 프라이어 계수 실측 + 최종 확률 보정(T2) — 상수를 측정으로 대체.
+            // [V33.107] 상황별 반성기억 — 전문가 재학습이 끝난 뒤, 그들이 학습하지 않은
+            //   구간으로만 레짐별 IC 를 잰다(누출 방지). memo 다음 자리가 맞다.
+            await _stg("expreg", async function () { return await expertRegimeFitNightly(env.DB); });
             await _stg("techk", async function () { return await techPriorFitNightly(env.DB); });
             await _stg("finalcal", async function () { return await finalCalFitNightly(env.DB); });
             // [V33.95] 게이트 감사 — 고확률로 막힌 자리가 실제로 올랐는지 실측(추가 fetch 0).
@@ -35963,5 +36124,9 @@ export {
   stinBackfill, stinIntradayFeat, stinChartFeat, stinObserve, stinLabel, mlBuildFeatures,
   STIN, STIN_IFEAT_N, STIN_FEATVER, LUXML, _setR2ForTest,
   // [V33.105] 확률 계수 적합기 검증용 — tools/check-prob-fitters.mjs
-  shockPriorFitNightly, decisionBlendFitNightly, _shockLogitShift, _coefShrink, SHOCKCAL
+  shockPriorFitNightly, decisionBlendFitNightly, _shockLogitShift, _coefShrink, SHOCKCAL,
+  // [V33.107] 회계 불변식 검증용 — tools/check-accounting.mjs
+  computeCashFromTrades, _krSellTaxRate, _slipRate,
+  // [V33.107] 상황별 반성기억(TradingAgents) 검증용
+  _expRegBucket, _expRegIC, EXPREG
 };
