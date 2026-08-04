@@ -39,6 +39,11 @@ jobs:
       #   프로덕션 로그로 추적하는 대신 CI 에서 표본이 실제로 나오는지 매 배포마다 확인한다.
       - name: Scalp sample pipeline check
         run: node tools/check-scalp-pipeline.mjs
+      # [V33.105] 확률 계수 적합기 — 참값을 아는 합성자료로 되찾아지는지 확인한다.
+      #   이 프로젝트의 확률 사고는 전부 "식은 그럴듯한데 안 맞는" 형태였다. 식을 눈으로
+      #   검토하는 대신 회복력을 직접 잰다(과대적용·적정·소표본잡음·강효과 4케이스).
+      - name: Probability coefficient fitter check
+        run: node tools/check-prob-fitters.mjs
       # cloudflare/wrangler-action 대신 로컬에서 검증된 방식 그대로 실행
       # (wrangler-action@v3의 npx 자동설치가 4.86.0을 요구하며 실패하던 문제 회피)
       - name: Install wrangler

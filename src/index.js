@@ -2760,7 +2760,7 @@ async function applySignalTypeWeights(DB, cfg) {
 // ============================================================================
 // [V33.55] 빌드 버전 — SWR L2 캐시 키에 섞어 '배포 = 판단 캐시 자동 무효화'를 만든다.
 //   판정 로직을 고쳐도 옛 캐시가 최대 1시간 재배포되던 문제를 구조적으로 없앤다.
-const _BUILD_VER = "V33.104";
+const _BUILD_VER = "V33.105";
 
 const AI_PARAMS = {
   // ── OHLCV 타임프레임 ── 시가/고가/저가/종가/거래량을 어떤 봉 주기로 볼지.
@@ -18156,6 +18156,11 @@ async function handleRequest(request, env, ctx) {
               blendK: await (async function () { try { const b = await getState(env.DB, "decision_blend_k", null);
                 return b ? { kTech: _num(b.kTech, null), kNews: _num(b.kNews, null), tTech: _num(b.tTech, null), n: _num(b.n, 0) } : null; } catch (e) { return null; } })(),
               dualShift: _ds ? { shift: _ds.shift || null, n: _num(_ds.n, 0) } : null,
+              // [V33.105] 충격 프라이어 배율 — 마지막까지 미측정으로 남아 있던 상수.
+              shockK: await (async function () { try { const k = await getState(env.DB, "shock_prior_k", null);
+                return k ? { mult: _num(k.mult, null), rawK: _num(k.rawK, null), t: _num(k.t, null),
+                             n: _num(k.n, 0), byMode: k.byMode || null, minN: SHOCKCAL.minN }
+                         : { mult: null, n: 0, minN: SHOCKCAL.minN }; } catch (e) { return null; } })(),
               evByVol: (_ev && Array.isArray(_ev.byVol)) ? _ev.byVol.length : 0,
               protect: { cooldownMin: PROTECT.cooldownMin, lowProfitLockMin: PROTECT.lowProfitLockMin, enabled: PROTECT.enabled !== false }
             };
@@ -19395,6 +19400,7 @@ async function handleRequest(request, env, ctx) {
         ["gateaudit", function (DB) { return gateAuditNightly(DB); }],
         ["blendk", function (DB) { return decisionBlendFitNightly(DB); }],
         ["confk", function (DB) { return scalpConfluenceFitNightly(DB); }],
+        ["shockk", function (DB) { return shockPriorFitNightly(DB); }],
         ["mindshadow", function (DB) { return mindShadowPromoteNightly(DB); }],
         ["stack", function (DB) { return stackTrainNightly(DB); }],
         ["dual", function (DB) { return dualHeadTrainNightly(DB); }],
@@ -28863,7 +28869,7 @@ async function mlDeepDecide(DB, featVec, opts) {
       const _shock = (opts.shock !== undefined) ? opts.shock : null;
       if (_shock && _shock.sev && _shock.mode !== "none") {
         const _da = (opts.sym != null) ? _crashDefensiveness(opts.sym) : 0;
-        const _dz = _shockLogitShift(_shock, _da);
+        const _dz = _shockLogitShift(_shock, _da, await _shockKEnsure(DB));
         if (_dz !== 0) pCombined = _clamp(_sigmoid(_logitD(pCombined) + _dz), 0.001, 0.999);
         _shkSizeK = _shockSizeK(_shock, _da);
         _shockOut = { mode: _shock.mode, sev: _shock.sev, dz: +_dz.toFixed(3), defAlign: +_da.toFixed(2), sizeK: +_shkSizeK.toFixed(2), trend: _shock.trend || null };
@@ -32960,9 +32966,12 @@ function _crashDefensiveness(symbol) {
   } catch (e) { return 0; }
 }
 // 위원회 결합확률에 적용할 레짐 로짓 시프트(폭락/호재/반등 × 방어정렬).
-function _shockLogitShift(shock, defAlign) {
+function _shockLogitShift(shock, defAlign, kMult) {
   if (!shock || !shock.sev || shock.mode === "none") return 0;
-  const sev = Math.min(1.2, shock.sev), da = _clamp(defAlign || 0, -1, 1);
+  // [V33.105] 실측 배율 — shockPriorFitNightly 가 오프셋 로지스틱으로 잰 잔여계수.
+  //   미측정(또는 유의성 미달)이면 1 이라 종전 상수 동작 그대로다.
+  const KM = _clamp(_num(kMult, 1), SHOCKCAL.kMin, SHOCKCAL.kMax);
+  const sev = Math.min(1.2, shock.sev) * KM, da = _clamp(defAlign || 0, -1, 1);
   if (shock.mode === "crash") {
     // 매수확률 하향(방어). 방어정렬(da>0)은 억제 완화 + 소폭 가점, 고베타(da<0)는 추가 억제.
     //   [V32.46] 진정(easing) 국면이면 억제 20% 완화(과방어→반등놓침 방지).
@@ -32983,6 +32992,82 @@ function _shockLogitShift(shock, defAlign) {
   }
   return 0;
 }
+// ════════════════════════════════════════════════════════════════════════════
+// [V33.105] ★마지막 남은 미측정 상수 — 충격 프라이어 계수★
+//   _shockLogitShift 의 −1.5 / 0.85 / 0.55 / 0.5 … 는 전부 손으로 정한 값이고,
+//   crash 최대치는 −1.8 로짓(확률 0.80 → 0.40)으로 확률 체인에서 가장 큰 개입이다.
+//   V33.97 이 관측만 적립하고(shock_cal_buf) 계수는 재지 않았다 — 즉 버퍼는 쌓이는데
+//   아무도 읽지 않는 죽은 기록이었다.
+//
+//   재는 방법은 다른 계수(BLENDK·CONFK)와 같다 — ★오프셋 로지스틱★.
+//     logit(P(승)) = logit(p_적용후) + k · dz
+//   p_적용후 에는 이미 dz 가 반영돼 있으므로, 여기서 나오는 k 는 ★잔여★ 효과다:
+//     · k ≈ 0  → 적용량이 적절했다(더 밀 것도, 되돌릴 것도 없다)
+//     · k > 0  → 덜 밀었다(같은 방향으로 더 밀어야 한다) → 배율 1+k
+//     · k < 0  → 과했다(되돌려야 한다) → 배율 1+k (<1)
+//   유의하지 않으면 _coefShrink 로 0 쪽으로 수축해 배율이 1(= 종전 상수)로 남는다.
+//   즉 표본이 없을 땐 지금 동작 그대로이고, 사건이 쌓이는 만큼만 실측이 개입한다.
+//   폭락·급등은 드문 사건이라 minN 을 낮게(60) 잡되 배율 상한을 [0.3, 1.7] 로 묶는다.
+const SHOCKCAL = { minN: 60, kMin: 0.3, kMax: 1.7 };
+async function shockPriorFitNightly(DB) {
+  try {
+    const b = await getState(DB, "shock_cal_buf", null);
+    const v = (b && Array.isArray(b.v)) ? b.v : [];
+    // 행 = [mode, dz, pPre, won]
+    const rows = v.filter(function (r) {
+      return Array.isArray(r) && r.length >= 4 && isFinite(_num(r[1], NaN)) && _num(r[1], 0) !== 0
+             && _num(r[2], 0) > 0 && _num(r[2], 0) < 1;
+    });
+    if (rows.length < SHOCKCAL.minN) return "[SHOCKK] 사건표본 " + rows.length + "/" + SHOCKCAL.minN + " — 대기(충격 국면은 드물다)";
+    let pos = 0; for (const r of rows) pos += (r[3] ? 1 : 0);
+    if (pos < 10 || rows.length - pos < 10) return "[SHOCKK] 승/패 편중(" + pos + "/" + rows.length + ") — 대기";
+    let k = 0;
+    const N = rows.length, lr = 0.5, epochs = 3000;   // [V33.105] 수렴 여유 — 스칼라 1개라 CPU 무시할 수준
+    for (let ep = 0; ep < epochs; ep++) {
+      let g = 0;
+      for (const r of rows) {
+        const pc = _clamp(_num(r[2], 0.5), 1e-4, 1 - 1e-4);
+        const off = Math.log(pc / (1 - pc));
+        const dz = _num(r[1], 0);
+        const p = 1 / (1 + Math.exp(-_clamp(off + k * dz, -30, 30)));
+        g += (p - (r[3] ? 1 : 0)) * dz;
+      }
+      k -= lr * (g / N);
+    }
+    let fi = 0;
+    for (const r of rows) {
+      const pc = _clamp(_num(r[2], 0.5), 1e-4, 1 - 1e-4);
+      const off = Math.log(pc / (1 - pc));
+      const dz = _num(r[1], 0);
+      const p = 1 / (1 + Math.exp(-_clamp(off + k * dz, -30, 30)));
+      fi += p * (1 - p) * dz * dz;
+    }
+    const se = fi > 1e-9 ? 1 / Math.sqrt(fi) : Infinity;
+    const t = isFinite(se) ? k / se : 0;
+    const kEff = k * _coefShrink(t);
+    const mult = +_clamp(1 + kEff, SHOCKCAL.kMin, SHOCKCAL.kMax).toFixed(4);
+    // 모드별 표본 수도 남긴다 — crash 표본 없이 rally 만으로 잰 배율을 crash 에 쓰면 안 된다.
+    const byMode = {};
+    for (const r of rows) { const m = String(r[0] || "?"); byMode[m] = (byMode[m] || 0) + 1; }
+    await setState(DB, "shock_prior_k", { mult: mult, rawK: +k.toFixed(4), t: +t.toFixed(2),
+                                          n: N, byMode: byMode, ts: Date.now() });
+    return "[SHOCKK] 잔여 k=" + k.toFixed(3) + "(t " + t.toFixed(2) + ") → 충격 프라이어 배율 " +
+           mult.toFixed(3) + " n=" + N + " " + JSON.stringify(byMode);
+  } catch (e) { return "[SHOCKK] fail: " + (e && e.message); }
+}
+// 측정된 배율의 메모 캐시 — _shockLogitShift 는 동기 함수라 DB 를 못 친다.
+//   야간에 한 번 갱신되는 값이므로 10분 캐시로 충분하다(미측정이면 1 = 종전 동작).
+let __shockKMemo = null;
+async function _shockKEnsure(DB) {
+  try {
+    if (__shockKMemo && (Date.now() - __shockKMemo.at) < 600000) return __shockKMemo.v;
+    const s2 = await getState(DB, "shock_prior_k", null);
+    const m = (s2 && isFinite(_num(s2.mult, NaN))) ? _clamp(_num(s2.mult, 1), SHOCKCAL.kMin, SHOCKCAL.kMax) : 1;
+    __shockKMemo = { at: Date.now(), v: m };
+    return m;
+  } catch (e) { return 1; }
+}
+
 // [V32.46] 레짐 기반 진입 사이즈 배율 — 폭락·불확실 국면엔 축소, 호재/반등엔 정상~소폭 확대.
 function _shockSizeK(shock, defAlign) {
   if (!shock || !shock.sev || shock.mode === "none") return 1;
@@ -35739,6 +35824,9 @@ export default {
             await _stg("blendk", async function () { return await decisionBlendFitNightly(env.DB); });
             // [V33.98] 단타 합류 로짓 계수 실측(모델 확률을 오프셋으로 고정한 잔여효과).
             await _stg("confk", async function () { return await scalpConfluenceFitNightly(env.DB); });
+            // [V33.105] 충격 프라이어 잔여계수 실측 — 확률 체인에서 가장 큰 개입(최대 −1.8 로짓)이
+            //   유일하게 미측정 상수로 남아 있었다. 사건 표본이 쌓이는 만큼만 배율이 움직인다.
+            await _stg("shockk", async function () { return await shockPriorFitNightly(env.DB); });
             // [V33.101] 섀도우 MIND 재평가 — 저장만 하고 아무도 안 읽던 키를 살린다.
             await _stg("mindshadow", async function () { return await mindShadowPromoteNightly(env.DB); });
             await _stg("stack", async function () { return await stackTrainNightly(env.DB); });
@@ -35809,5 +35897,7 @@ export {
   // [V33.103] 단타 표본 파이프라인 로컬 검증용 — tools/check-scalp-pipeline.mjs 가 쓴다.
   //   프로덕션 코드 경로에는 영향이 없다(named export 는 Worker 가 읽지 않는다).
   stinBackfill, stinIntradayFeat, stinChartFeat, stinObserve, stinLabel, mlBuildFeatures,
-  STIN, STIN_IFEAT_N, STIN_FEATVER, LUXML, _setR2ForTest
+  STIN, STIN_IFEAT_N, STIN_FEATVER, LUXML, _setR2ForTest,
+  // [V33.105] 확률 계수 적합기 검증용 — tools/check-prob-fitters.mjs
+  shockPriorFitNightly, decisionBlendFitNightly, _shockLogitShift, _coefShrink, SHOCKCAL
 };

@@ -14529,6 +14529,12 @@ html[data-theme="light"] .rail{background:#fff;}
       rows3.push(['이중헤드 사분면 로짓', CH.dualShift && CH.dualShift.shift
         ? '<span class="sub">'+Object.keys(CH.dualShift.shift).map(function(k){ return esc(k)+' '+(CH.dualShift.shift[k]>=0?'+':'')+CH.dualShift.shift[k]; }).join(' · ')+' (n '+n0(CH.dualShift.n)+')</span>'
         : '<span class="sub">미측정 → 0 적용 (종전 상수 ±0.35)</span>']);
+      // [V33.105] 충격 프라이어(폭락·급등) 배율 — 확률 체인에서 가장 큰 개입(최대 −1.8 로짓)이었고
+      //   마지막까지 손으로 정한 상수였다. 사건이 드물어 표본이 늦게 찬다.
+      rows3.push(['충격 프라이어 배율', CH.shockK && has(CH.shockK.mult)
+        ? em(CH.shockK.mult.toFixed(3)) + ' <span class="sub">잔여 k '+(has(CH.shockK.rawK)?CH.shockK.rawK.toFixed(3):'—')+' · t '+(has(CH.shockK.t)?CH.shockK.t.toFixed(2):'—')+' · n '+n0(CH.shockK.n)
+          + (CH.shockK.byMode ? ' · '+Object.keys(CH.shockK.byMode).map(function(k){ return esc(k)+' '+n0(CH.shockK.byMode[k]); }).join(' ') : '')+'</span>'
+        : '<span class="sub">미측정 → 배율 1.00 (종전 상수 그대로) · 사건표본 '+n0(CH.shockK?CH.shockK.n:0)+'/'+n0(CH.shockK?CH.shockK.minN:60)+'</span>']);
       rows3.push(['EV 문턱 · 종목보호', '<span class="sub">변동성 구간 '+n0(CH.evByVol)+'개'
         + (CH.protect && CH.protect.enabled ? ' · 손절쿨다운 '+n0(CH.protect.cooldownMin)+'분 · 저수익잠금 '+n0(CH.protect.lowProfitLockMin)+'분' : ' · 종목보호 꺼짐')+'</span>']);
       h += sec('확률 체인 (측정된 계수)') + tbl(rows3);
