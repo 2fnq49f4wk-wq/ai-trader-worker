@@ -2760,7 +2760,7 @@ async function applySignalTypeWeights(DB, cfg) {
 // ============================================================================
 // [V33.55] 빌드 버전 — SWR L2 캐시 키에 섞어 '배포 = 판단 캐시 자동 무효화'를 만든다.
 //   판정 로직을 고쳐도 옛 캐시가 최대 1시간 재배포되던 문제를 구조적으로 없앤다.
-const _BUILD_VER = "V33.115";
+const _BUILD_VER = "V33.116";
 
 const AI_PARAMS = {
   // ── OHLCV 타임프레임 ── 시가/고가/저가/종가/거래량을 어떤 봉 주기로 볼지.
@@ -9139,6 +9139,40 @@ async function riskPreTradeCheck(DB, o) {
   }
 }
 
+// ════════════════════════════════════════════════════════════════════════════
+// [V33.116] ★거래 성과의 유의성 — Van Tharp SQN★
+//
+//   별 많은 공개 엔진들(QuantStats·vectorbt·Backtrader)이 공통으로 내는 지표 중
+//   우리에게 정말로 없던 것은 "이 성적이 운과 구별되는가" 하나다. 우리는 모델 검증
+//   쪽에는 블록 IC·t·본페로니까지 깔아놨으면서, ★실제 원장★ 쪽 판정은 전부
+//   "승률 35% 미만" 같은 맨 문턱이었다. 원장이야말로 표본이 가장 적은 곳인데도.
+//
+//   SQN(System Quality Number, Van Tharp) = √n × 평균 / 표준편차.
+//   이건 사실 "거래당 기대값이 0인가" 에 대한 t 통계량과 같은 수다. 이름이 둘일 뿐이다.
+//   그래서 한 번 계산해 두 용도로 쓴다 — 화면에는 SQN 으로, 게이트에는 t 로.
+//   df = n−1 인 Student-t 로 단측 p 를 낸다(_tSf 는 V33.113 에서 이미 깔아뒀다).
+function _edgeStats(rets) {
+  const n = Array.isArray(rets) ? rets.length : 0;
+  if (n < 2) return { n: n, mean: 0, sd: 0, t: 0, df: Math.max(0, n - 1), pNeg: 1, sqn: 0 };
+  let s = 0; for (const r of rets) s += _num(r, 0);
+  const mean = s / n;
+  let v = 0; for (const r of rets) { const d = _num(r, 0) - mean; v += d * d; }
+  const sd = Math.sqrt(v / (n - 1));
+  const t = sd > 1e-12 ? mean / (sd / Math.sqrt(n)) : 0;
+  const df = n - 1;
+  // pNeg = P(이만큼 나쁜 결과 | 진짜 기대값은 0) — 단측. 손절 판정은 이 값으로 한다.
+  const pNeg = _tSf(-t, df);
+  return { n: n, mean: mean, sd: sd, t: +t.toFixed(3), df: df, pNeg: pNeg, sqn: +t.toFixed(3) };
+}
+// 백분위(선형보간) — 꼬리비율(tail ratio) 산출용.
+function _pctile(sorted, q) {
+  const n = sorted.length;
+  if (!n) return 0;
+  if (n === 1) return sorted[0];
+  const i = _clamp(q, 0, 1) * (n - 1);
+  const lo = Math.floor(i), hi = Math.ceil(i);
+  return lo === hi ? sorted[lo] : sorted[lo] + (sorted[hi] - sorted[lo]) * (i - lo);
+}
 // ★PortfolioAnalyzer 이식★ — 실제 원장(체결된 매도)에서 성과통계를 계산한다.
 //   NautilusTrader 의 PortfolioStatistic 들(Expectancy, ProfitFactor, WinRate, RiskReturnRatio)을
 //   우리 원장 스키마에 맞춰 다시 쓴 것. 반환 단위: 수익률(%)과 통화금액을 분리해 둘 다 낸다.
@@ -9150,7 +9184,10 @@ async function portfolioStatistics(DB, opts) {
       ? DB.prepare("SELECT pnl, pnl_pct, ts FROM trades WHERE side='SELL' AND market=? AND pnl_pct IS NOT NULL ORDER BY ts DESC LIMIT ?").bind(o.market, lim)
       : DB.prepare("SELECT pnl, pnl_pct, ts FROM trades WHERE side='SELL' AND pnl_pct IS NOT NULL ORDER BY ts DESC LIMIT ?").bind(lim);
     const rs = await q.all();
-    const rows = (rs && rs.results) ? rs.results : [];
+    // [V33.116] ★시간 오름차순으로 뒤집는다★ — 아래 자산곡선(Ulcer·MDD)은 순서에 의존한다.
+    //   질의는 '최근 N건' 을 뽑느라 DESC 인데, 그 순서 그대로 누적하면 거래를 거꾸로 재생하는 셈이다.
+    //   종전 지표(승률·기대값·손익비)는 순서무관이라 문제가 안 드러났을 뿐이다.
+    const rows = ((rs && rs.results) ? rs.results : []).slice().reverse();
     if (rows.length < 10) return { n: rows.length, ready: false };
     let nWin = 0, nLoss = 0, sumWinPct = 0, sumLossPct = 0, sumWinAmt = 0, sumLossAmt = 0;
     let sumR = 0, maxLossStreak = 0, curStreak = 0;
@@ -9177,13 +9214,65 @@ async function portfolioStatistics(DB, opts) {
     let varSum = 0; for (const x of R) varSum += (x - mean) * (x - mean);
     const sd = Math.sqrt(varSum / n);
     const riskReturn = sd > 1e-9 ? mean / sd : 0;
+    // ── [V33.116] 공개 엔진(QuantStats·vectorbt·Van Tharp) 지표 이식 ──────────
+    //   전부 R(거래별 수익률 %)만으로 정의가 닫히는 것들만 넣는다. 정의가 애매하거나
+    //   자본곡선 가정이 필요한 것(위험파산확률 등)은 넣지 않았다 — 그럴듯한 숫자를
+    //   화면에 띄우는 건 없느니만 못하다는 걸 이 저장소가 이미 여러 번 배웠다.
+    const _edge = _edgeStats(R);          // SQN = t = √n·평균/표준편차
+    // Sortino — 하방편차만으로 나눈다(상방 변동은 위험이 아니다). 목표수익률 0 기준.
+    let dnSum = 0; for (const x of R) { if (x < 0) dnSum += x * x; }
+    const dnDev = Math.sqrt(dnSum / n);
+    const sortino = dnDev > 1e-9 ? mean / dnDev : (mean > 0 ? 99 : 0);
+    // Omega(0) — 이익 총합 / 손실 총합(수익률 기준). profitFactor 는 ★금액★ 기준이라
+    //   사이징이 섞인다. 둘이 갈리면 "맞히는 건 잘하는데 크게 못 번다" 를 뜻한다.
+    const omega = sumLossPct > 1e-9 ? sumWinPct / sumLossPct : (sumWinPct > 0 ? 99 : 0);
+    // 꼬리비율 — 상위 5% 이익 / 하위 5% 손실. 1 미만이면 꼬리가 손실 쪽으로 두껍다.
+    const _srt = R.slice().sort(function (a, b) { return a - b; });
+    const p95 = _pctile(_srt, 0.95), p05 = Math.abs(_pctile(_srt, 0.05));
+    const tailRatio = p05 > 1e-9 ? p95 / p05 : null;
+    // Kelly(QuantStats 정의) = 승률 − 패률/손익비. 사이징 상한 판단의 참고치.
+    const payoff = avgLoss > 1e-9 ? avgWin / avgLoss : null;
+    const kelly = payoff ? winRate - (1 - winRate) / payoff : null;
+    // Ulcer Index(Martin) — 낙폭의 ★깊이와 지속★ 을 함께 벌한다. MDD 는 최악 한 점만 본다.
+    //   거래 순서 자산곡선(복리)에서 산출한다.
+    let eq = 1, peak = 1, ddSq = 0, maxDD = 0;
+    for (const x of R) {
+      eq *= (1 + x / 100);
+      if (eq > peak) peak = eq;
+      const dd = peak > 1e-12 ? (eq / peak - 1) * 100 : 0;
+      ddSq += dd * dd;
+      if (dd < maxDD) maxDD = dd;
+    }
+    const ulcer = Math.sqrt(ddSq / n);
+    const totalRet = (eq - 1) * 100;
+    // UPI(Martin ratio) = 연환산 수익 / Ulcer. 기간이 짧으면 연환산이 거짓말을 하므로 null.
+    let upi = null, spanDays = null;
+    try {
+      const t0 = _num(rows[0].ts, 0), t1 = _num(rows[rows.length - 1].ts, 0);
+      if (t1 > t0) {
+        spanDays = (t1 - t0) / 86400000;
+        if (spanDays >= 60 && ulcer > 1e-9 && eq > 0) {
+          const annual = (Math.pow(eq, 365 / spanDays) - 1) * 100;
+          upi = +(annual / ulcer).toFixed(3);
+        }
+      }
+    } catch (e) {}
     return {
       ready: true, n: n, market: o.market || "all",
       winRate: +winRate.toFixed(4), nWin: nWin, nLoss: nLoss,
       avgWin: +avgWin.toFixed(3), avgLoss: +avgLoss.toFixed(3),
       expectancy: +expectancy.toFixed(4), profitFactor: +profitFactor.toFixed(3),
       riskReturn: +riskReturn.toFixed(4), sd: +sd.toFixed(3),
-      maxLossStreak: maxLossStreak, ts: Date.now()
+      maxLossStreak: maxLossStreak,
+      // [V33.116] 신규 — 유의성과 꼬리·낙폭 품질
+      sqn: _edge.sqn, edgeT: _edge.t, edgeDf: _edge.df, edgePNeg: +_edge.pNeg.toFixed(4),
+      sortino: +sortino.toFixed(3), omega: +omega.toFixed(3),
+      tailRatio: tailRatio != null ? +tailRatio.toFixed(3) : null,
+      payoff: payoff != null ? +payoff.toFixed(3) : null,
+      kelly: kelly != null ? +kelly.toFixed(4) : null,
+      ulcer: +ulcer.toFixed(3), upi: upi, maxDD: +maxDD.toFixed(2),
+      totalRet: +totalRet.toFixed(2), spanDays: spanDays != null ? Math.round(spanDays) : null,
+      ts: Date.now()
     };
   } catch (e) { return { n: 0, ready: false, error: e && e.message }; }
 }
@@ -9198,7 +9287,10 @@ async function portfolioStatsNightly(DB) {
     if (!all.ready) return "[PORT] 종결거래 " + all.n + "/10 — 통계 대기";
     return "[PORT] n=" + all.n + " 승률 " + (all.winRate * 100).toFixed(1) + "% 기대값 " +
            all.expectancy.toFixed(3) + "%/건 손익비 " + all.profitFactor.toFixed(2) +
-           " 위험대비 " + all.riskReturn.toFixed(3);
+           " 위험대비 " + all.riskReturn.toFixed(3) +
+           " · SQN " + all.sqn.toFixed(2) + "(df" + all.edgeDf + ")" +
+           " Sortino " + all.sortino.toFixed(2) + " Ulcer " + all.ulcer.toFixed(2) +
+           (all.upi != null ? " UPI " + all.upi.toFixed(2) : "");
   } catch (e) { return "[PORT] fail: " + (e && e.message); }
 }
 
@@ -12932,9 +13024,12 @@ async function autoTune(DB, cfg, regimes) {
       const memberShare = members.length > 0 ? (1 / members.length) : 1;
       for (const sigName of members) {
         // 1) signal-only
-        if (!signalStats[sigName]) signalStats[sigName] = { wins: 0, count: 0, totalPnl: 0, weightedWins: 0, weightedCount: 0, stops: 0, winSum: 0, lossSum: 0 };
+        if (!signalStats[sigName]) signalStats[sigName] = { wins: 0, count: 0, totalPnl: 0, weightedWins: 0, weightedCount: 0, stops: 0, winSum: 0, lossSum: 0, R: [] };
         signalStats[sigName].count++;
         signalStats[sigName].totalPnl += (t.pnl_pct || 0) * memberShare;
+        // [V33.116] 유의성 검정용 원자료 — avgPnl 이 평균내는 것과 ★같은 값★ 을 모은다.
+        //   (아래에서 검정을 끝낸 뒤 저장 직전에 지운다 — state 행이 부풀지 않게)
+        signalStats[sigName].R.push((t.pnl_pct || 0) * memberShare);
         signalStats[sigName].weightedCount += recencyWeight;
         // [V9.6] 손절 추적 — reason에 STOP 포함 시 손절로 카운팅
         if (reason && reason.indexOf("STOP") !== -1) {
@@ -12949,9 +13044,11 @@ async function autoTune(DB, cfg, regimes) {
         }
         // 2) [V8.5] strategy:signal
         const sKey = stratKey + ":" + sigName;
-        if (!signalStatsByStrat[sKey]) signalStatsByStrat[sKey] = { wins: 0, count: 0, totalPnl: 0, weightedWins: 0, weightedCount: 0, stops: 0 };
+        if (!signalStatsByStrat[sKey]) signalStatsByStrat[sKey] = { wins: 0, count: 0, totalPnl: 0, weightedWins: 0, weightedCount: 0, stops: 0, sumSq: 0 };
         signalStatsByStrat[sKey].count++;
         signalStatsByStrat[sKey].totalPnl += (t.pnl_pct || 0) * memberShare;
+        // [V33.116] 전략 단위 자동 비활성화의 t검정용 제곱합(원자료 없이 분산을 구한다)
+        signalStatsByStrat[sKey].sumSq += Math.pow((t.pnl_pct || 0) * memberShare, 2);
         signalStatsByStrat[sKey].weightedCount += recencyWeight;
         // [V9.6] 손절 추적
         if (reason && reason.indexOf("STOP") !== -1) {
@@ -12976,6 +13073,9 @@ async function autoTune(DB, cfg, regimes) {
       s.stopRate = s.count > 0 ? (s.stops || 0) / s.count : 0;
       // expectancy = WR×avgWin + (1-WR)×avgLoss  (avgLoss는 음수)
       s.expectancy = s.winRate * s.avgWin + (1 - s.winRate) * s.avgLoss;
+      // [V33.116] 유의성 — SQN(=t) 과 단측 p. 아래 비활성화 판정이 이걸 쓴다.
+      const _es = _edgeStats(s.R || []);
+      s.sqn = _es.sqn; s.edgeDf = _es.df; s.pNeg = +_es.pNeg.toFixed(4);
     }
     for (const k in signalStatsByStrat) {
       const s = signalStatsByStrat[k];
@@ -12983,6 +13083,8 @@ async function autoTune(DB, cfg, regimes) {
       s.avgPnl = s.count > 0 ? s.totalPnl / s.count : 0;
       s.weightedWinRate = s.weightedCount > 0 ? s.weightedWins / s.weightedCount : s.winRate;
     }
+    // [V33.116] 검정을 끝냈으니 원자료는 버린다 — 저장 목적이 아니라 계산 중간물이다.
+    for (const k in signalStats) delete signalStats[k].R;
     await setState(DB, "signal_stats", signalStats);
     await setState(DB, "signal_stats_strat", signalStatsByStrat);
 
@@ -13010,19 +13112,37 @@ async function autoTune(DB, cfg, regimes) {
           const _mk = String(t.market || "").toLowerCase();
           if (!_mk) continue;
           const _k = _mk + "/" + _st;
-          if (!_agg[_k]) _agg[_k] = { n: 0, wins: 0, sum: 0 };
-          _agg[_k].n++; _agg[_k].sum += (t.pnl_pct || 0);
+          if (!_agg[_k]) _agg[_k] = { n: 0, wins: 0, sum: 0, sumSq: 0 };
+          const _p = _num(t.pnl_pct, 0);
+          _agg[_k].n++; _agg[_k].sum += _p; _agg[_k].sumSq += _p * _p;   // [V33.116] 분산용
           if (t.pnl_pct > 0) _agg[_k].wins++;
         }
+        // [V33.116] ★진입차단 판정에 유의성을 붙인다.★
+        //   이 통계는 로그용이 아니다 — 아래 진입 루프가 NEGEXP_MS 로 ★실제로 매수를 막는다★.
+        //   종전 조건 「n≥40 · 승률<42% · 평균<0」 은 진짜 승률 50% 인 조합도 26.8% 확률로
+        //   걸린다(이항분포 실측). 시장×전략 조합이 6개이므로 대부분의 조합이 언젠가 한 번은
+        //   부당하게 막혔다는 뜻이다. 방향 조건은 그대로 두고 t검정을 필요조건으로 추가한다.
+        //   (평균·분산은 누적합으로 구한다 — 원자료를 들고 있지 않아도 되므로 메모리 O(1))
         for (const _k in _agg) {
           const a = _agg[_k];
           a.winRate = a.n > 0 ? a.wins / a.n : 0;
           a.avgPnl = a.n > 0 ? a.sum / a.n : 0;
+          const _v = a.n > 1 ? Math.max(0, (a.sumSq - a.n * a.avgPnl * a.avgPnl) / (a.n - 1)) : 0;
+          a.sd = +Math.sqrt(_v).toFixed(4);
+          a.sqn = a.sd > 1e-9 ? +(a.avgPnl / (a.sd / Math.sqrt(a.n))).toFixed(3) : 0;
+          a.pNeg = +_tSf(-a.sqn, Math.max(1, a.n - 1)).toFixed(4);
         }
-        await setState(DB, "mkt_strat_stats", { m: _agg, ts: nowTs });
+        const _msAlpha = 0.10 / Math.max(1, Object.keys(_agg).length);   // 조합 수만큼 본페로니
+        for (const _k in _agg) _agg[_k].blockAlpha = +_msAlpha.toFixed(5);
+        await setState(DB, "mkt_strat_stats", { m: _agg, ts: nowTs, alpha: +_msAlpha.toFixed(5) });
         const _off = [];
-        for (const _k in _agg) { const a = _agg[_k]; if (a.n >= 40 && a.winRate < 0.42 && a.avgPnl < 0) _off.push(_k + "(n" + a.n + " WR" + (a.winRate * 100).toFixed(0) + "% 평균" + a.avgPnl.toFixed(2) + "%)"); }
-        if (_off.length) await log(DB, "TUNE", null, "[V33.44] 시장×전략 진입차단 대상: " + _off.join(", "));
+        for (const _k in _agg) {
+          const a = _agg[_k];
+          if (a.n >= 40 && a.winRate < 0.42 && a.avgPnl < 0 && a.pNeg <= _msAlpha)
+            _off.push(_k + "(n" + a.n + " WR" + (a.winRate * 100).toFixed(0) + "% 평균" + a.avgPnl.toFixed(2) +
+                      "% SQN" + a.sqn.toFixed(2) + " p" + a.pNeg.toFixed(4) + ")");
+        }
+        if (_off.length) await log(DB, "TUNE", null, "[V33.44] 시장×전략 진입차단 대상(유의성 확인): " + _off.join(", "));
       }
     } catch (e) {}
 
@@ -13042,21 +13162,33 @@ async function autoTune(DB, cfg, regimes) {
     const nowTs = Date.now();
     // 1) 신규 비활성화
     //   [V9.7] 기준 강화 — 기존 (WR<40% & avgPnL<0) AND 조건은 둔감해서 SW_RSI_REV 같은
-    //   명백한 손실 신호(26건 WR31% avgPnL-2.49)도 살아남았다. 아래 셋 중 하나라도 걸리면 비활성화:
-    //     (a) 기존: WR<40% & avgPnL<0   (b) expectancy<0 (손익비 반영 기대값 음수)
-    //     (c) 손절률>55% & avgPnL<0     — 손절로 자주 끝나면서 평균도 마이너스
-    for (const sigName in signalStats) {
+    //   명백한 손실 신호(26건 WR31% avgPnL-2.49)도 살아남았다.
+    // [V33.116] ★그런데 반대편 오류가 훨씬 컸다.★
+    //   조건 (b) 는 「기대값<0 & n≥25」 였다. 진짜 기대값이 ★정확히 0★ 인 무해한 신호도
+    //   표본이 유한한 이상 절반은 음수로 관측된다 — 즉 (b) 하나만으로 ★무해한 신호의 약 50%★
+    //   가 비활성화된다. (a)·(c) 도 문턱일 뿐 유의성이 없다. 신호가 수십 종이고 이 판정이
+    //   반복 실행되므로, 실제로는 "언젠가 대부분의 신호가 한 번씩 꺼지는" 장치였다.
+    //   → 세 조건을 ★필요조건(방향)★ 으로만 남기고, 실제 차단은 ★단측 t검정★ 이 결정한다.
+    //     동시검정 개수만큼 본페로니 보정한다(α=0.10 — 오차단은 재평가로 되돌아오지만
+    //     놓친 손실신호는 계속 돈이 나가므로 대칭 0.05 보다 무른 쪽이 맞다).
+    //   신호는 여러 개가 한 거래에 함께 붙으므로(memberShare) 완전히 독립적인 검정은
+    //   아니다. 본페로니는 그 상관을 무시하는 ★보수적★ 보정이라 이 방향으로 안전하다.
+    const _sigCand = Object.keys(signalStats).filter(function (k) { return signalStats[k].count >= 20; });
+    const _sigAlpha = _sigCand.length ? 0.10 / _sigCand.length : 0.10;
+    for (const sigName of _sigCand) {
       const s = signalStats[sigName];
-      if (s.count < 20) continue;
+      // 방향 조건 — "무엇이 나쁜가" 의 정의는 종전 그대로 둔다(회귀 없음).
       const condA = s.weightedWinRate < 0.40 && s.avgPnl < 0;
-      const condB = s.expectancy < 0 && s.count >= 25;        // 기대값 음수(표본 약간 더 요구)
+      const condB = s.expectancy < 0 && s.count >= 25;        // 기대값 음수(손익비 반영)
       const condC = s.stopRate > 0.55 && s.avgPnl < 0;        // 손절 빈발 + 평균 손실
-      if (condA || condB || condC) {
-        if (newCfg.disabledSignals.indexOf(sigName) === -1) {
-          newCfg.disabledSignals.push(sigName);
-          newCfg.disabledSignalsAt[sigName] = nowTs;
-          newlyDisabled.push(sigName + "(" + (condA?"WR":condB?"EXP":"STOP") + ")");
-        }
+      if (!(condA || condB || condC)) continue;
+      // 유의성 조건 — 그 나쁨이 운으로 설명되지 않아야 한다.
+      if (!(_num(s.pNeg, 1) <= _sigAlpha)) continue;
+      if (newCfg.disabledSignals.indexOf(sigName) === -1) {
+        newCfg.disabledSignals.push(sigName);
+        newCfg.disabledSignalsAt[sigName] = nowTs;
+        newlyDisabled.push(sigName + "(" + (condA ? "WR" : condB ? "EXP" : "STOP") +
+                           " SQN" + _num(s.sqn, 0).toFixed(2) + " p" + _num(s.pNeg, 1).toFixed(4) + ")");
       }
     }
     // 2) 재활성화 — 비활성화 후 reviewDays 경과 + [V9.7] 성과 실제 회복 확인.
@@ -13337,10 +13469,22 @@ async function autoTune(DB, cfg, regimes) {
         const st = sKey.split(":")[0];
         if (!st || st === "unknown") continue;
         const s = signalStatsByStrat[sKey];
-        if (!stratRollup[st]) stratRollup[st] = { count: 0, wins: 0, totalPnl: 0 };
+        if (!stratRollup[st]) stratRollup[st] = { count: 0, wins: 0, totalPnl: 0, sumSq: 0 };
         stratRollup[st].count += s.count;
         stratRollup[st].wins += s.wins;
         stratRollup[st].totalPnl += s.totalPnl;
+        stratRollup[st].sumSq += _num(s.sumSq, 0);
+      }
+      // [V33.116] 전략 단위 t 통계 — 누적합에서 분산을 복원한다.
+      const _stratKeys = Object.keys(stratRollup);
+      const _stratAlpha = 0.10 / Math.max(1, _stratKeys.length);
+      for (const st of _stratKeys) {
+        const r = stratRollup[st];
+        const m = r.count > 0 ? r.totalPnl / r.count : 0;
+        const v = r.count > 1 ? Math.max(0, (r.sumSq - r.count * m * m) / (r.count - 1)) : 0;
+        const sd = Math.sqrt(v);
+        r.sqn = sd > 1e-9 ? +(m / (sd / Math.sqrt(r.count))).toFixed(3) : 0;
+        r.pNeg = +_tSf(-r.sqn, Math.max(1, r.count - 1)).toFixed(4);
       }
       const reviewMs2 = (sadCfg.reviewDays || 21) * 24 * 3600 * 1000;
       const stratDisabledNow = [], stratReenabledNow = [];
@@ -13358,10 +13502,16 @@ async function autoTune(DB, cfg, regimes) {
         // 활성 중이면 비활성 판단
         if (newCfg.strategies[st] !== false && r && r.count >= sadCfg.minTrades) {
           const wr = r.wins / r.count, exp = r.totalPnl / r.count;
-          if (exp <= sadCfg.expectancyOff && wr <= sadCfg.winRateOff) {
+          // [V33.116] 효과크기(exp ≤ −0.5%/건, WR ≤ 33%)에 ★유의성★ 을 더한다.
+          //   거래당 표준편차가 4% 정도인 우리 원장에서 n=25·exp=−0.5% 는 t≈−0.63 이다
+          //   — 즉 종전 조건만으로는 순전한 우연도 전략 하나를 통째로 끌 수 있었다.
+          //   전략을 끄는 건 되돌릴 수 있지만(21일 재평가) 그동안의 기회비용은 돌아오지 않는다.
+          const _sig = _num(r.pNeg, 1) <= _stratAlpha;
+          if (exp <= sadCfg.expectancyOff && wr <= sadCfg.winRateOff && _sig) {
             newCfg.strategies[st] = false;
             newCfg.strategyDisabledAt[st] = nowTs;
-            stratDisabledNow.push(st + "(exp" + exp.toFixed(2) + "/WR" + (wr*100).toFixed(0) + ")");
+            stratDisabledNow.push(st + "(exp" + exp.toFixed(2) + "/WR" + (wr * 100).toFixed(0) +
+                                  "/SQN" + _num(r.sqn, 0).toFixed(2) + " p" + _num(r.pNeg, 1).toFixed(4) + ")");
           }
         }
       }
@@ -16455,7 +16605,11 @@ async function runTradingCycle(env) {
             try {
               const _ms = __mktStratStats && __mktStratStats[market + "/" + strategy];
               const _isAiSc = !!(signal && signal.isAiScalp);
-              if (!_isAiSc && _ms && _ms.n >= 40 && _ms.winRate < 0.42 && _ms.avgPnl < 0) {
+              // [V33.116] 방향 조건 + ★유의성★ 을 모두 만족할 때만 막는다.
+              //   pNeg 가 없는 구 스냅샷(2시간 캐시)에는 종전 동작을 유지한다 — 갱신되면 자동 전환.
+              const _msSig = (_ms && typeof _ms.pNeg === "number")
+                ? (_ms.pNeg <= _num(_ms.blockAlpha, 0.02)) : true;
+              if (!_isAiSc && _ms && _ms.n >= 40 && _ms.winRate < 0.42 && _ms.avgPnl < 0 && _msSig) {
                 incBlock("NEGEXP_MS[" + market + "/" + strategy + "]");
                 continue;
               }
@@ -31779,7 +31933,7 @@ async function mlSelfReview(DB) {
     for (const r of rows) {
       const pnl = _num(r.pnl, 0), pct = _num(r.pnl_pct, 0);
       tot += pnl; if (pnl > 0) { wins++; gW += pnl; } else gL += Math.abs(pnl);
-      const e = entryTag(r); (byEntry[e] = byEntry[e] || { n: 0, pnl: 0, w: 0 }); byEntry[e].n++; byEntry[e].pnl += pnl; if (pnl > 0) byEntry[e].w++;
+      const e = entryTag(r); (byEntry[e] = byEntry[e] || { n: 0, pnl: 0, w: 0, R: [] }); byEntry[e].n++; byEntry[e].pnl += pnl; byEntry[e].R.push(pct); if (pnl > 0) byEntry[e].w++;
       (byMkt[r.market] = byMkt[r.market] || { n: 0, pnl: 0, w: 0 }); byMkt[r.market].n++; byMkt[r.market].pnl += pnl; if (pnl > 0) byMkt[r.market].w++;
       const sm = /STOP (-?\d+\.\d+)%/.exec(r.reason || ""); if (sm && pct < parseFloat(sm[1]) - 0.05) slip++;
     }
@@ -31791,16 +31945,43 @@ async function mlSelfReview(DB) {
     for (const mk of Object.keys(byMkt)) if (byMkt[mk].pnl < 0) diagnosis.push(mk.toUpperCase() + " 시장 손익 " + byMkt[mk].pnl.toFixed(0) + " → 해당 시장 진입 보수화 필요");
     if (slip >= 5) diagnosis.push("손절 슬리피지 " + slip + "건 → 갭 리스크(사이즈 축소·스탑 버퍼 검토)");
     if (!diagnosis.length) diagnosis.push("특이 문제 없음 — 현 정책 유지");
-    // [V12.75] ★자가치유(Self-Healing)★ 진단에 그치지 않고 행동 — 표본 충분(n≥15)한데 승률<35%·
-    //   손익 음수인 진입전략을 자동 차단 목록에 올림. 다음 자가평가에서 성과가 회복되면 자동 해제.
-    const autoDisable = Object.keys(byEntry)
-      .filter(function (e) { return e !== "?" && byEntry[e].n >= 15 && byEntry[e].w / byEntry[e].n < 0.35 && byEntry[e].pnl < 0; });
-    if (autoDisable.length) diagnosis.push("자동조치: " + autoDisable.join(",") + " 진입 차단(자가치유 — 성과 회복 시 자동 해제)");
+    // [V12.75] ★자가치유(Self-Healing)★ 진단에 그치지 않고 행동.
+    // [V33.116] ★차단 조건을 유의성으로 바꾼다★
+    //   종전 조건은 「n≥15 · 승률<35% · 손익<0」 이었다. 이건 실측했을 때 다음과 같다:
+    //     · 진짜 승률이 50% 인 ★공정한★ 전략도 n=15 에서 15.1% 확률로 걸린다
+    //     · 전략 6종을 동시에 재면 그중 하나가 억울하게 걸릴 확률이 ★62.5%★
+    //     · 매일 밤 반복하므로 사실상 언젠가는 전부 한 번씩 차단된다
+    //   게다가 판정 기준이 ★승률★ 이라, 승률 30%·손익비 4:1 인 훌륭한 추세전략을
+    //   "나쁜 전략" 으로 읽는다. 이 저장소는 모델 검증 쪽엔 블록 IC·t·본페로니까지
+    //   깔아놓고 정작 ★실제 돈이 걸린 원장★ 판정은 맨 문턱이었다.
+    //   → 승률이 아니라 ★거래당 기대값★ 을, 문턱이 아니라 ★단측 t검정★ 으로 본다.
+    //     동시에 K종을 재므로 본페로니로 α 를 나눈다. α 는 0.10 으로 잡았다 —
+    //     오차단은 재평가로 되돌릴 수 있지만 놓친 손실전략은 돈이 계속 나가므로,
+    //     대칭적인 0.05 보다 조금 무른 쪽이 이 비용구조에 맞는다.
+    const _cand = Object.keys(byEntry).filter(function (e) { return e !== "?" && byEntry[e].n >= 20; });
+    const _alpha = _cand.length ? 0.10 / _cand.length : 0.10;
+    const autoDisable = [];
+    const _edgeNote = [];
+    for (const e of _cand) {
+      const st = _edgeStats(byEntry[e].R);
+      if (byEntry[e].pnl < 0 && st.pNeg <= _alpha) autoDisable.push(e);
+      _edgeNote.push({ strategy: e, n: st.n, sqn: st.sqn, pNeg: +st.pNeg.toFixed(4),
+                       expectancy: +st.mean.toFixed(3) });
+    }
+    if (autoDisable.length)
+      diagnosis.push("자동조치: " + autoDisable.join(",") + " 진입 차단 — 기대값이 0 이라는 가정을 " +
+                     "단측 t검정으로 기각(α=" + _alpha.toFixed(4) + ", " + _cand.length + "종 동시검정 본페로니 보정). 회복 시 자동 해제");
+    else if (_cand.length)
+      diagnosis.push("자동차단 없음 — 손실전략이 있어도 표본이 운과 구별될 만큼 쌓이지 않았다(" +
+                     _cand.length + "종 검정, α=" + _alpha.toFixed(4) + ")");
     const review = { ts: Date.now(), windowDays: 60, n: n, winRate: +winRate.toFixed(3), profitFactor: +pf.toFixed(2),
       totalPnl: +tot.toFixed(0), stopSlippage: slip,
       byMarket: Object.keys(byMkt).map(function (m) { return { market: m, trades: byMkt[m].n, pnl: +byMkt[m].pnl.toFixed(0), winRate: +(byMkt[m].w / byMkt[m].n).toFixed(2) }; }),
       worstStrategies: worst.map(function (w) { return { strategy: w.e, trades: w.n, pnl: +w.pnl.toFixed(0), winRate: +(w.w / w.n).toFixed(2) }; }),
       autoDisable: autoDisable,
+      // [V33.116] 검정 결과를 그대로 남긴다 — "왜 차단했나/왜 안 했나" 가 화면에서 읽혀야 한다.
+      edgeTests: _edgeNote.sort(function (a, b) { return a.sqn - b.sqn; }).slice(0, 8),
+      edgeAlpha: +_alpha.toFixed(5),
       diagnosis: diagnosis };
     await setState(DB, "ai_selfreview", review);
     return "[SELFREVIEW] n=" + n + " 승률" + (winRate * 100).toFixed(0) + "% PF" + pf.toFixed(2) + " 손익" + tot.toFixed(0) + " | 진단: " + diagnosis.join(" / ");
@@ -36232,6 +36413,8 @@ export {
   // [V33.115] _importedValN — 외부 트레이너 업로드의 유효표본수 선택기(tools/check-uniqueness.mjs)
   _uniqWeights, _wilsonLB, _importedValN, mlPoolUniqNightly, mlPoolUniqGet, _effN,
   // [V33.108] 재무제표 툴킷 검증용 — tools/check-fin-tools.mjs
+  // [V33.116] 원장 성과 유의성(SQN/t)·확장 지표 검증용 — tools/check-edge-stats.mjs
+  _edgeStats, _pctile, portfolioStatistics, mlSelfReview,
   FIN_TOOLS, finToolsRun,
   // [V33.110] 소셜 멀티소스 검증용 — tools/check-social.mjs
   SOCIAL, SOCIAL_SOURCES, socialScoreOf

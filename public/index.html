@@ -13869,6 +13869,35 @@ html[data-theme="light"] .rail{background:#fff;}
           + ' <span class="sub">평균이익 +'+P.avgWin.toFixed(2)+'% / 평균손실 −'+P.avgLoss.toFixed(2)+'%</span>']);
         rows2.push(['손익비 · 위험대비', col(P.profitFactor.toFixed(2), pfCol)
           + ' <span class="sub">위험대비수익 '+P.riskReturn.toFixed(3)+' · 최대연속손실 '+n0(P.maxLossStreak)+'</span>']);
+        // [V33.116] ★이 성적이 운과 구별되는가★ — SQN(Van Tharp) = √n×평균/표준편차 = 기대값 t검정.
+        //   모델 쪽엔 IC 의 t 를 늘 띄우면서 정작 실제 원장은 승률·손익비만 보여줬다.
+        //   Van Tharp 대역: <1.6 미흡 / 1.6~2.0 보통 / 2.0~2.5 양호 / >2.5 우수.
+        if(has(P.sqn)){
+          var sqCol = P.sqn >= 2.0 ? C.pos : (P.sqn >= 1.6 ? C.amb : C.neg);
+          var sqTag = P.sqn >= 2.5 ? '우수' : P.sqn >= 2.0 ? '양호' : P.sqn >= 1.6 ? '보통' : '운과 구별 어려움';
+          rows2.push(['성적 유의성 (SQN)', col(P.sqn.toFixed(2), sqCol)
+            + ' <span class="sub">'+sqTag+' · df'+n0(P.edgeDf)
+            + (has(P.edgePNeg)?' · 손실측 p '+P.edgePNeg.toFixed(3):'')+'</span>']);
+        }
+        // 하방·꼬리 — 평균과 표준편차만 보면 "크게 한 번 터지는" 구조가 안 보인다.
+        if(has(P.sortino) || has(P.omega) || has(P.tailRatio)){
+          var tail = has(P.tailRatio) ? P.tailRatio : null;
+          rows2.push(['하방 · 꼬리', (has(P.sortino)?'Sortino '+P.sortino.toFixed(2):'—')
+            + ' <span class="sub">'
+            + (has(P.omega)?'Omega '+P.omega.toFixed(2):'')
+            + (tail!=null?' · 꼬리비율 '+col(tail.toFixed(2), tail>=1?C.pos:C.neg):'')
+            + (has(P.payoff)?' · 손익비(수익률) '+P.payoff.toFixed(2):'')
+            + (has(P.kelly)?' · Kelly '+(P.kelly*100).toFixed(1)+'%':'')
+            + '</span>']);
+        }
+        // 낙폭 품질 — 최대낙폭은 최악 한 점만 본다. Ulcer 는 깊이×지속을 함께 벌한다.
+        if(has(P.ulcer)){
+          rows2.push(['낙폭 (Ulcer)', P.ulcer.toFixed(2)
+            + ' <span class="sub">최대낙폭 '+(has(P.maxDD)?P.maxDD.toFixed(2)+'%':'—')
+            + (has(P.upi)?' · UPI '+P.upi.toFixed(2):' · UPI 기간부족')
+            + (has(P.totalRet)?' · 누적 '+(P.totalRet>0?'+':'')+P.totalRet.toFixed(1)+'%':'')
+            + (has(P.spanDays)?' / '+n0(P.spanDays)+'일':'')+'</span>']);
+        }
       } else {
         rows2.push(['실적 통계', '<span class="sub">종결거래 '+n0(P && P.n)+'/10 — 집계 대기</span>']);
       }

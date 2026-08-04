@@ -77,6 +77,12 @@ jobs:
       #   실제 파이썬 함수 본문을 실행해 워커 결과와 원소별로 비교한다(재구현 비교 아님).
       - name: Sample uniqueness contract check
         run: node tools/check-uniqueness.mjs
+      # [V33.116] 원장 판정의 유의성 — 모델 검증엔 t·본페로니를 깔아놓고 정작 ★실제 돈이
+      #   걸린★ 자동차단(신호·전략·시장×전략·자가평가)은 맨 문턱이었다. 이항분포로 실측하면
+      #   공정한 전략도 n=40·WR<42% 조건에 26.8% 확률로 걸린다 — 사실상 언젠가 전부 꺼졌다.
+      #   몬테카를로로 오차단률과 검정력을 매 배포마다 함께 잰다(둘 중 하나만 좋으면 실패).
+      - name: Ledger edge significance check
+        run: node tools/check-edge-stats.mjs
       # cloudflare/wrangler-action 대신 로컬에서 검증된 방식 그대로 실행
       # (wrangler-action@v3의 npx 자동설치가 4.86.0을 요구하며 실패하던 문제 회피)
       - name: Install wrangler

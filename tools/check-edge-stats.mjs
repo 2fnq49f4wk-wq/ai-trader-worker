@@ -1,0 +1,181 @@
+// [V33.116] 원장 성과 통계와 ★자동차단의 유의성★ 계약 검증.
+//
+//   이 저장소는 모델 검증 쪽(블록 IC·t·본페로니·전진검증)에는 계약을 촘촘히 깔아놓고,
+//   정작 ★실제 돈이 걸린 원장 판정★ 은 전부 맨 문턱이었다:
+//     · mlSelfReview     n≥15 · 승률<35% · 손익<0   → 진입전략 차단
+//     · 신호 자동비활성  기대값<0 & n≥25            → 신호 차단
+//     · 전략 자동비활성  exp≤−0.5 & WR≤33 & n≥25    → 전략 차단
+//     · 시장×전략 차단   n≥40 · 승률<42% · 평균<0   → ★라이브 매수 차단★
+//   이항분포로 실측하면 진짜 승률 50% 인 ★공정한★ 전략도
+//     n=15 에서 15.1% / n=40·WR<42% 에서 26.8% 확률로 걸린다.
+//   전략·신호·조합이 여럿이고 판정이 매일 반복되므로, 사실상 "언젠가 전부 한 번씩
+//   부당하게 꺼지는" 장치였다. V33.116 에서 방향 조건은 그대로 두고 단측 t검정 +
+//   본페로니를 필요조건으로 추가했다.
+//
+//   여기서 못 박는 것:
+//     ① _edgeStats 의 t/SQN/p 가 참값을 되찾는가 (Van Tharp SQN = √n·평균/표준편차 = t)
+//     ② 순수 잡음(진짜 기대값 0)에서 오차단률이 실제로 떨어졌는가 — 몬테카를로
+//     ③ 진짜 나쁜 전략은 여전히 잡히는가 (검정력을 잃으면 그건 고친 게 아니라 끈 것이다)
+//     ④ 확장 지표(Sortino·Omega·꼬리비율·Ulcer·SQN)가 답을 아는 자료에서 맞는가
+//     ⑤ 자산곡선 지표가 ★시간순★ 으로 계산되는가 (질의는 DESC 다)
+
+import { _edgeStats, _pctile, portfolioStatistics, _tSf } from "../src/index.js";
+
+let fails = 0;
+const ok = (m) => console.log("  ok   " + m);
+const bad = (m) => { fails++; console.log("  FAIL " + m); };
+const near = (a, b, e) => Math.abs(a - b) <= (e == null ? 1e-6 : e);
+
+// 결정적 정규난수 — CI 에서 흔들리면 게이트가 아니라 소음이 된다.
+let _s = 20260804;
+function rnd() { _s = (_s * 1664525 + 1013904223) >>> 0; return (_s + 0.5) / 4294967296; }
+function gauss() { return Math.sqrt(-2 * Math.log(rnd())) * Math.cos(2 * Math.PI * rnd()); }
+
+// ══ ① _edgeStats 참값 회복 ══════════════════════════════════════════════════
+{
+  // 손으로 계산 가능한 자료: [1,2,3,4,5] → 평균 3, 표본표준편차 √2.5, t = 3/(√2.5/√5)
+  const e = _edgeStats([1, 2, 3, 4, 5]);
+  const sd = Math.sqrt(2.5), t = 3 / (sd / Math.sqrt(5));
+  if (e.n === 5 && near(e.mean, 3) && near(e.sd, sd, 1e-9) && near(e.t, +t.toFixed(3), 1e-3))
+    ok("_edgeStats 손계산 일치 (평균 3 · sd " + sd.toFixed(4) + " · t " + e.t + ")");
+  else bad("_edgeStats 불일치: " + JSON.stringify(e) + " (기대 t=" + t.toFixed(3) + ")");
+  if (e.df === 4) ok("df = n−1 = 4"); else bad("df 가 " + e.df);
+  if (e.sqn === e.t) ok("SQN == t (같은 수를 두 이름으로 쓴다)");
+  else bad("SQN " + e.sqn + " != t " + e.t);
+  // 강한 양의 성적은 pNeg 가 1 에 가까워야 한다(나쁠 확률이 없다)
+  if (e.pNeg > 0.98) ok("좋은 성적의 pNeg " + e.pNeg.toFixed(4) + " ≈ 1");
+  else bad("좋은 성적인데 pNeg 가 " + e.pNeg);
+  // 부호 대칭
+  const eN = _edgeStats([-1, -2, -3, -4, -5]);
+  if (near(eN.t, -e.t, 1e-3) && eN.pNeg < 0.02) ok("부호 반전 시 t 반전 · pNeg " + eN.pNeg.toFixed(4) + " 로 유의");
+  else bad("부호 대칭 실패: " + JSON.stringify(eN));
+  // 표본 부족 방어
+  const e1 = _edgeStats([5]);
+  if (e1.pNeg === 1 && e1.t === 0) ok("n=1 이면 판정 불가(pNeg=1) — 차단으로 이어지지 않는다");
+  else bad("n=1 처리: " + JSON.stringify(e1));
+}
+
+// ══ ② 순수 잡음에서 오차단률 — 몬테카를로 ══════════════════════════════════
+//   "진짜 기대값 0" 인 전략을 만들어 종전 규칙과 새 규칙이 각각 몇 번 차단하는지 센다.
+{
+  const TRIALS = 4000, N = 20, SD = 4;          // 거래당 표준편차 4% (우리 원장 대략치)
+  const K = 6;                                   // 동시검정 전략 수
+  const alpha = 0.10 / K;
+  let oldFire = 0, newFire = 0;
+  for (let it = 0; it < TRIALS; it++) {
+    const R = []; let wins = 0, sum = 0;
+    for (let i = 0; i < N; i++) { const x = gauss() * SD; R.push(x); sum += x; if (x > 0) wins++; }
+    // 종전 규칙(mlSelfReview): n≥15 · 승률<35% · 손익<0
+    if (N >= 15 && wins / N < 0.35 && sum < 0) oldFire++;
+    // 새 규칙: 손익<0 이고 단측 t 가 본페로니 α 이하
+    const st = _edgeStats(R);
+    if (sum < 0 && st.pNeg <= alpha) newFire++;
+  }
+  const oldPct = oldFire / TRIALS * 100, newPct = newFire / TRIALS * 100;
+  console.log("  info 잡음 " + TRIALS + "회 · n=" + N + " · 전략 " + K + "종 동시검정(α=" + alpha.toFixed(4) + ")");
+  if (oldPct > 2) ok("종전 규칙 오차단률 " + oldPct.toFixed(1) + "% — 실제로 높았다");
+  else bad("종전 규칙 오차단률이 " + oldPct.toFixed(1) + "% 밖에 안 된다 — 이 시험의 전제가 틀렸다");
+  // 기대치는 ★α 자체★ 다 — 단측 검정이 제대로면 오차단률이 α 근방에서 멈춘다.
+  //   (손익<0 조건은 유의한 음의 t 에 이미 함의돼 있어 추가로 깎지 않는다)
+  //   4,000회 몬테카를로의 표준오차는 약 0.2%p 이므로 α 의 1.5배를 상한으로 둔다.
+  const aPct = alpha * 100;
+  if (newPct <= aPct * 1.5) ok("새 규칙 오차단률 " + newPct.toFixed(2) + "% ≤ α " + aPct.toFixed(2) + "% × 1.5 — 본페로니와 정합");
+  else bad("새 규칙 오차단률이 " + newPct.toFixed(2) + "% (α " + aPct.toFixed(2) + "%) — 유의성 보정이 듣지 않는다");
+  if (newPct < oldPct) ok("오차단 " + oldPct.toFixed(1) + "% → " + newPct.toFixed(2) + "% 로 감소");
+  else bad("오차단이 줄지 않았다");
+}
+
+// ══ ③ 검정력 — 진짜 나쁜 전략은 여전히 잡히는가 ════════════════════════════
+//   유의성을 붙여 오차단만 줄이고 진짜 손실전략을 놓치면, 고친 게 아니라 끈 것이다.
+{
+  const TRIALS = 2000, SD = 4, alpha = 0.10 / 6;
+  for (const [N, MU, want] of [[60, -2.0, 0.90], [120, -1.5, 0.95], [40, -3.0, 0.90]]) {
+    let fire = 0;
+    for (let it = 0; it < TRIALS; it++) {
+      const R = []; let sum = 0;
+      for (let i = 0; i < N; i++) { const x = MU + gauss() * SD; R.push(x); sum += x; }
+      const st = _edgeStats(R);
+      if (sum < 0 && st.pNeg <= alpha) fire++;
+    }
+    const pw = fire / TRIALS;
+    if (pw >= want) ok("검정력 n=" + N + " 기대값 " + MU + "%/건 → " + (pw * 100).toFixed(1) + "% 검출 (≥" + (want * 100) + "%)");
+    else bad("검정력 부족: n=" + N + " 기대값 " + MU + " 에서 " + (pw * 100).toFixed(1) + "% 만 검출 — 진짜 손실전략을 놓친다");
+  }
+}
+
+// ══ ④ 확장 지표 — 답을 아는 자료 ═══════════════════════════════════════════
+{
+  // 백분위
+  const s = [1, 2, 3, 4, 5];
+  if (near(_pctile(s, 0), 1) && near(_pctile(s, 1), 5) && near(_pctile(s, 0.5), 3)) ok("_pctile 경계·중앙값");
+  else bad("_pctile: " + [_pctile(s, 0), _pctile(s, 0.5), _pctile(s, 1)].join(","));
+  if (near(_pctile(s, 0.25), 2)) ok("_pctile 선형보간 (0.25 → 2)");
+  else bad("_pctile 보간이 " + _pctile(s, 0.25));
+
+  // 합성 원장으로 portfolioStatistics 를 실제로 돌린다.
+  //   설계: 수익 +2% 6건, 손실 −1% 4건 → 승률 0.6, 평균 +0.8, Omega = 12/4 = 3
+  const R = [2, 2, 2, 2, 2, 2, -1, -1, -1, -1];
+  const T0 = Date.UTC(2026, 0, 1);
+  // 질의는 ts DESC 로 돌려주므로, 우리가 넘겨줄 rows 도 ★역순★ 이어야 실제와 같다.
+  const rowsDesc = R.map((p, i) => ({ pnl: p * 100, pnl_pct: p, ts: T0 + i * 5 * 86400000 }))
+                    .slice().reverse();
+  const db = {
+    prepare() {
+      const st = { bind() { return st; }, async all() { return { results: rowsDesc }; },
+                   async first() { return null; }, async run() { return {}; } };
+      return st;
+    }
+  };
+  const ps = await portfolioStatistics(db, { limit: 400 });
+  if (!ps.ready) { bad("portfolioStatistics 가 ready=false: " + JSON.stringify(ps)); }
+  else {
+    if (near(ps.winRate, 0.6, 1e-4)) ok("승률 0.6"); else bad("승률 " + ps.winRate);
+    if (near(ps.expectancy, 0.8, 1e-3)) ok("기대값 +0.8%/건"); else bad("기대값 " + ps.expectancy);
+    if (near(ps.omega, 3, 1e-3)) ok("Omega(0) = 이익합/손실합 = 12/4 = 3"); else bad("Omega " + ps.omega);
+    if (near(ps.payoff, 2, 1e-3)) ok("손익비 2.0"); else bad("손익비 " + ps.payoff);
+    // Kelly = 0.6 − 0.4/2 = 0.4
+    if (near(ps.kelly, 0.4, 1e-3)) ok("Kelly 0.4"); else bad("Kelly " + ps.kelly);
+    // Sortino = 평균 / √(Σ음수² / n) = 0.8 / √(4/10) = 0.8/0.63246 = 1.2649
+    if (near(ps.sortino, 1.265, 2e-3)) ok("Sortino 1.265 (하방편차만)"); else bad("Sortino " + ps.sortino);
+    // SQN = √10 × 0.8 / sd,  sd = 표본표준편차
+    const e = _edgeStats(R);
+    if (near(ps.sqn, e.sqn, 1e-3)) ok("SQN " + ps.sqn + " == _edgeStats 와 동일한 자");
+    else bad("SQN 불일치: " + ps.sqn + " vs " + e.sqn);
+    if (ps.edgeDf === 9) ok("df 9"); else bad("df " + ps.edgeDf);
+    // ★순서 의존★ — 질의는 ts DESC 다. 시간순으로 뒤집지 않으면 거래를 거꾸로 재생하는 셈이라
+    //   자산곡선(Ulcer)이 달라진다. 여기 자료는 이익 6건 뒤 손실 4건 순서이므로:
+    //     시간순  → 고점 뒤 4연속 손실, 낙폭 0,0,0,0,0,0,−1,−1.99,−2.97,−3.94 → Ulcer 1.712
+    //     역순    → 손실이 먼저 나고 이후 회복,               → Ulcer 1.827
+    //   (최대낙폭은 이 자료에서 우연히 양쪽 −3.94% 로 같다 — 그래서 판별에 쓰지 않는다)
+    if (near(ps.ulcer, 1.712, 2e-3)) ok("Ulcer 1.712 — 자산곡선이 시간순으로 재생된다");
+    else bad("Ulcer 가 " + ps.ulcer + " (시간순 기대 1.712 / 역순이면 1.827) — 질의 DESC 를 안 뒤집었다");
+    if (near(ps.maxDD, -3.94, 0.02)) ok("최대낙폭 " + ps.maxDD + "%"); else bad("최대낙폭 " + ps.maxDD);
+    if (ps.spanDays === 45) ok("기간 45일"); else bad("기간 " + ps.spanDays);
+    // 45일 < 60일이므로 UPI 는 연환산하지 않는다(짧은 기간의 연환산은 거짓말이다)
+    if (ps.upi === null) ok("기간 60일 미만 → UPI 생략(짧은 기간 연환산 금지)");
+    else bad("45일인데 UPI 를 냈다: " + ps.upi);
+  }
+}
+
+// ══ ⑤ 회귀 차단 — 맨 문턱 차단이 되살아나지 않는가 ═════════════════════════
+{
+  const fs = await import("node:fs");
+  const src = fs.readFileSync(new URL("../src/index.js", import.meta.url), "utf8");
+  const need = [
+    [/_ms\.avgPnl < 0 && _msSig/, "시장×전략 라이브 차단이 유의성을 확인한다"],
+    [/if \(!\(_num\(s\.pNeg, 1\) <= _sigAlpha\)\) continue;/, "신호 자동비활성이 유의성을 확인한다"],
+    [/wr <= sadCfg\.winRateOff && _sig/, "전략 자동비활성이 유의성을 확인한다"],
+    [/byEntry\[e\]\.pnl < 0 && st\.pNeg <= _alpha/, "mlSelfReview 자동차단이 유의성을 확인한다"]
+  ];
+  for (const [re, what] of need) {
+    if (re.test(src)) ok(what);
+    else bad(what + " — 유의성 조건이 사라졌다(맨 문턱으로 회귀)");
+  }
+  // 본페로니 보정이 네 경로 모두에 있는가
+  const nAlpha = (src.match(/0\.10 \/ (?:Math\.max\(1, )?_?\w+/g) || []).length;
+  if (nAlpha >= 4) ok("본페로니 α 분모가 " + nAlpha + "곳 — 네 경로 모두 동시검정 수로 나눈다");
+  else bad("본페로니 보정이 " + nAlpha + "곳뿐");
+}
+
+console.log(fails ? "\n원장 유의성 계약 위반 " + fails + "건" : "\n  ok   원장 유의성 계약 통과");
+process.exit(fails ? 1 : 0);
