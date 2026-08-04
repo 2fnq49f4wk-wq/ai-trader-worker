@@ -6,7 +6,8 @@
 //   되찾지 못하면 그 계수는 확률 체인에 넣을 자격이 없다.
 
 import { shockPriorFitNightly, decisionBlendFitNightly, _shockLogitShift, _coefShrink, SHOCKCAL,
-         _expRegBucket, _expRegIC, EXPREG, LUXML }
+         _expRegBucket, _expRegIC, EXPREG, LUXML,
+         _tSf, _normInv, _tToZ, _icBlockStats }
   from "../src/index.js";
 
 function fakeDB(init) {
@@ -165,6 +166,57 @@ async function shockCase(kTrue, n, label) {
   // 표 자체가 없으면(미측정) 전역 IC 그대로 — 배포 직후의 정상 상태
   if (_expRegIC(0.04, null, "mind", "BULL_LO") === 0.04) ok("미측정 상태에서 종전 동작 보존");
   else bad("미측정인데 값이 바뀌었다");
+}
+
+// ══ 6) 유의성 자유도 보정 — 문턱의 '원래 의도' 가 복원되는가 ═════════════════
+//   블록 IC 의 t 는 자유도 K−1 인 Student-t 인데 문턱은 정규 값(1.65/2.50)이었다.
+//   df=4 에서 t 2.50 의 실제 p 는 0.0334 로, 8모델 본페로니가 밤당 23.8% 로 새고 있었다.
+{
+  // (a) t 꼬리확률이 알려진 값과 맞는가 (scipy 로 검산한 참값)
+  const cases = [[1.65, 4, 0.0871], [2.50, 4, 0.0334], [1.65, 9, 0.0667], [2.50, 9, 0.0169],
+                 [2.50, 11, 0.0148], [1.96, 1000, 0.0250]];
+  let allOk = true;
+  for (const [t, df, want] of cases) {
+    const got = _tSf(t, df);
+    if (Math.abs(got - want) > 0.0015) { allOk = false; bad("_tSf(" + t + "," + df + ") = " + got.toFixed(4) + " ≠ " + want); }
+  }
+  if (allOk) ok("Student-t 꼬리확률 6케이스 (참값 대조)");
+
+  // (b) 정규 역누적분포
+  const ni = [[0.975, 1.959964], [0.95, 1.644854], [0.99, 2.326348], [0.5, 0]];
+  let niOk = true;
+  for (const [p, want] of ni) if (Math.abs(_normInv(p) - want) > 1e-4) { niOk = false; bad("_normInv(" + p + ") = " + _normInv(p) + " ≠ " + want); }
+  if (niOk) ok("정규 역누적분포 4케이스");
+
+  // (c) ★핵심 계약★ — df 가 작으면 z 가 t 보다 작아야 한다(문턱을 넘기 어려워진다).
+  const z4 = _tToZ(2.50, 4), z9 = _tToZ(2.50, 9), zBig = _tToZ(2.50, 5000);
+  if (z4 < z9 && z9 < zBig && Math.abs(zBig - 2.50) < 0.01)
+    ok("자유도 보정: t 2.50 → z " + z4.toFixed(2) + "(df4) < " + z9.toFixed(2) + "(df9) < " + zBig.toFixed(2) + "(대표본)");
+  else bad("자유도 보정 방향이 틀렸다: " + [z4, z9, zBig].map((x) => x.toFixed(3)).join(" / "));
+  // df=4 에서 t 2.50 의 동등 z 는 약 1.83 이어야 한다(위 실측표).
+  if (Math.abs(z4 - 1.83) < 0.03) ok("df4 · t2.50 → z " + z4.toFixed(2) + " (본페로니 문턱 2.50 을 이제 못 넘는다)");
+  else bad("df4 환산값이 어긋난다: " + z4);
+  // 부호 보존
+  if (_tToZ(-2.50, 4) === -z4) ok("음수 t 부호 보존");
+  else bad("음수 t 부호가 깨졌다: " + _tToZ(-2.50, 4));
+
+  // (d) 순수 잡음이 게이트를 통과하는 비율 — 보정 전/후 비교(회복력의 실측)
+  let sN = 424242;
+  const rnd2 = () => { sN = (sN * 1664525 + 1013904223) >>> 0; return sN / 4294967296; };
+  const gauss = () => { let u = 0, v = 0; while (u === 0) u = rnd2(); while (v === 0) v = rnd2();
+                        return Math.sqrt(-2 * Math.log(u)) * Math.cos(2 * Math.PI * v); };
+  let passRaw = 0, passZ = 0; const TRIALS = 600, N = 1000;
+  for (let it = 0; it < TRIALS; it++) {
+    const pv = [], yv = [];
+    for (let i = 0; i < N; i++) { pv.push(gauss()); yv.push(rnd2() < 0.5 ? 1 : 0); }   // 완전 무관
+    const st = _icBlockStats(pv, yv, 5);
+    if (st.tRaw != null && Math.abs(st.tRaw) >= 2.50) passRaw++;
+    if (st.t != null && Math.abs(st.t) >= 2.50) passZ++;
+  }
+  const rRaw = passRaw / TRIALS, rZ = passZ / TRIALS;
+  if (rZ <= rRaw + 1e-9 && rZ <= 0.05)
+    ok("잡음 통과율(모델 1개·양측 |·|≥2.50): 보정전 " + (rRaw * 100).toFixed(1) + "% → 보정후 " + (rZ * 100).toFixed(1) + "%");
+  else bad("보정이 잡음 통과를 못 줄였다: 전 " + (rRaw * 100).toFixed(1) + "% / 후 " + (rZ * 100).toFixed(1) + "%");
 }
 
 console.log(fails ? "\n확률 계수 검증 실패 " + fails + "건" : "\n  ok   확률 계수 적합기 통과");

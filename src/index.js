@@ -2760,7 +2760,7 @@ async function applySignalTypeWeights(DB, cfg) {
 // ============================================================================
 // [V33.55] 빌드 버전 — SWR L2 캐시 키에 섞어 '배포 = 판단 캐시 자동 무효화'를 만든다.
 //   판정 로직을 고쳐도 옛 캐시가 최대 1시간 재배포되던 문제를 구조적으로 없앤다.
-const _BUILD_VER = "V33.112";
+const _BUILD_VER = "V33.113";
 
 const AI_PARAMS = {
   // ── OHLCV 타임프레임 ── 시가/고가/저가/종가/거래량을 어떤 봉 주기로 볼지.
@@ -18025,6 +18025,8 @@ async function handleRequest(request, env, ctx) {
               //   운으로 높은 IC 와 실력으로 높은 IC 가 같아 보인다.
               icBlock: m ? _num(m.valICBlock, null) : null,
               icT: m ? _num(m.valICt, null) : null,
+              // [V33.113] 자유도 보정 전 원값과 df — "왜 t 가 낮아졌나" 를 화면에서 설명한다.
+              icTRaw: m ? _num(m.valICtRaw, null) : null, icDf: m ? _num(m.valICdf, null) : null,
               // [V33.93] 전진검증 — 학습 이후 도착한 표본에서의 성적.
               fwdIC: m ? _num(m.fwdIC, null) : null, fwdN: m ? _num(m.fwdN, 0) : 0,
               fwdReady: !!(m && m.fwdReady), holdPass: !!(m && m.holdPass), minFwd: ICGATE.minForward,
@@ -19032,7 +19034,7 @@ async function handleRequest(request, env, ctx) {
       //     IC 경로는 다른 모델과 동일한 유의성 기준을 쓴다(블록 IC + t, 점추정 금지).
       const _sIC = (typeof body.valIC === "number" && isFinite(body.valIC)) ? _clamp(body.valIC, -0.5, 0.5) : null;
       const _sICb = (typeof body.valICBlock === "number" && isFinite(body.valICBlock)) ? _clamp(body.valICBlock, -0.5, 0.5) : null;
-      const _sICt = (typeof body.valICt === "number" && isFinite(body.valICt)) ? _clamp(body.valICt, -20, 20) : null;
+      const _sICt = _importedICz(body);   // [V33.113] 자유도 보정된 z (문턱과 같은 자)
       model.valIC = _sIC; model.valICBlock = _sICb; model.valICt = _sICt;
       const _scIcFloor = 0.015;
       const _passAccS = vLB >= _baseline + 0.015;
@@ -19099,7 +19101,7 @@ async function handleRequest(request, env, ctx) {
         valIC: _vIC, valRankIC: _vRIC, algo: (typeof body.algo === "string" ? body.algo.slice(0, 24) : null),
         // [V33.91] 외부 트레이너가 보낸 블록 IC 유의성(있으면). 없으면 null → Fisher z 하한으로 폴백.
         valICBlock: (typeof body.valICBlock === "number" && isFinite(body.valICBlock)) ? _clamp(body.valICBlock, -0.5, 0.5) : null,
-        valICt: (typeof body.valICt === "number" && isFinite(body.valICt)) ? _clamp(body.valICt, -20, 20) : null,
+        valICt: _importedICz(body),   // [V33.113] 자유도 보정된 z
         valICIR: (typeof body.valICIR === "number" && isFinite(body.valICIR)) ? _clamp(body.valICIR, -20, 20) : null };
       // ── self-검증: Worker 최근 표본에 직접 채점해 형식/추론 정합성 확인 ──
       let selfAcc = null, selfN = 0;
@@ -22530,6 +22532,7 @@ async function _miniLogisticTrain(DB, opts) {
       valICBlock: _bIC != null ? +_bIC.toFixed(5) : null,
       valICIR: _st.icir != null ? +_st.icir.toFixed(3) : null,
       valICt: _tv != null ? +_tv.toFixed(3) : null, valICK: _st.K,
+      valICtRaw: _st.tRaw != null ? _st.tRaw : null, valICdf: _st.df != null ? _st.df : null,
       fwdIC: _fwd ? _fwd.ic : null, fwdICt: _fwd ? _fwd.t : null,
       fwdN: _fwd ? _fwd.n : 0, fwdReady: !!(_fwd && _fwd.ready),
       fwdMode: _fwd ? (_fwd.mode || null) : null, maxId: _maxId,
@@ -23900,6 +23903,104 @@ function _coefShrink(tval) {
   const a = Math.abs(_num(tval, 0));
   return _clamp((a - 1.65) / 1.0, 0, 1);
 }
+// ════════════════════════════════════════════════════════════════════════════
+// [V33.113] ★유의성 게이트의 자유도 오류 — 본페로니가 의도의 1/5 로 약했다★
+//
+//   블록 IC 의 t 는 t = ICIR × √K 로, ★자유도 K−1(기본 4)★ 인 Student-t 통계량이다.
+//   그런데 문턱(1.65 / 2.50)은 ★정규분포★ 값이었다. 꼬리가 훨씬 두꺼운 t 를 정규 자로 재면
+//   실제 오탐률이 의도보다 크게 높아진다. 실측(df=4):
+//     · t 1.65 → 실제 p 0.0871 (의도 0.05)
+//     · t 2.50 → 실제 p 0.0334 (의도 0.00625) → 8모델 중 하나라도 통과할 확률 ★23.8%★
+//   즉 "본페로니로 밤당 5% 로 묶었다" 던 V33.93 의 계산이 사실이 아니었다.
+//   이 저장소가 반복해 잡아온 실패와 같은 형태다 — 식은 맞는데 자(눈금)가 틀렸다.
+//
+//   ★해결: 문턱을 바꾸지 않는다★. t 를 같은 p 를 갖는 정규 z 로 환산해서 넘긴다.
+//   그러면 기존 문턱(1.65·2.50·2.65)의 ★원래 의도★ 가 그대로 복원되고, 호출부는 손댈 게 없다.
+//   더불어 표본이 많으면 블록 수 K 를 늘려 자유도 자체를 키운다(df 4 → 최대 11).
+//   (참고: Bailey & López de Prado, "The Deflated Sharpe Ratio" — 다중검정에서
+//    자유도·시행횟수를 함께 보정해야 한다는 것이 요지다.)
+
+// 정규화 불완전베타 — Student-t 꼬리확률에 쓴다(Numerical Recipes 연분수).
+function _betacf(a, b, x) {
+  const MAXIT = 200, EPS = 3e-16, FPMIN = 1e-300;
+  const qab = a + b, qap = a + 1, qam = a - 1;
+  let c = 1, d = 1 - qab * x / qap;
+  if (Math.abs(d) < FPMIN) d = FPMIN;
+  d = 1 / d; let h = d;
+  for (let m = 1; m <= MAXIT; m++) {
+    const m2 = 2 * m;
+    let aa = m * (b - m) * x / ((qam + m2) * (a + m2));
+    d = 1 + aa * d; if (Math.abs(d) < FPMIN) d = FPMIN;
+    c = 1 + aa / c;  if (Math.abs(c) < FPMIN) c = FPMIN;
+    d = 1 / d; h *= d * c;
+    aa = -(a + m) * (qab + m) * x / ((a + m2) * (qap + m2));
+    d = 1 + aa * d; if (Math.abs(d) < FPMIN) d = FPMIN;
+    c = 1 + aa / c;  if (Math.abs(c) < FPMIN) c = FPMIN;
+    d = 1 / d; const del = d * c; h *= del;
+    if (Math.abs(del - 1) < EPS) break;
+  }
+  return h;
+}
+function _lnGamma(z) {
+  // Lanczos 근사(g=7, n=9) — 배정밀도에서 상대오차 1e-15 수준.
+  const g = [676.5203681218851, -1259.1392167224028, 771.32342877765313,
+             -176.61502916214059, 12.507343278686905, -0.13857109526572012,
+             9.9843695780195716e-6, 1.5056327351493116e-7];
+  if (z < 0.5) return Math.log(Math.PI / Math.sin(Math.PI * z)) - _lnGamma(1 - z);
+  z -= 1;
+  let x = 0.99999999999980993;
+  for (let i = 0; i < g.length; i++) x += g[i] / (z + i + 1);
+  const t = z + g.length - 0.5;
+  return 0.5 * Math.log(2 * Math.PI) + (z + 0.5) * Math.log(t) - t + Math.log(x);
+}
+function _betai(a, b, x) {
+  if (!(x > 0)) return 0;
+  if (x >= 1) return 1;
+  const bt = Math.exp(_lnGamma(a + b) - _lnGamma(a) - _lnGamma(b) + a * Math.log(x) + b * Math.log(1 - x));
+  return (x < (a + 1) / (a + b + 2)) ? bt * _betacf(a, b, x) / a
+                                     : 1 - bt * _betacf(b, a, 1 - x) / b;
+}
+// P(T_df > t) — 한쪽 꼬리.
+function _tSf(t, df) {
+  if (!isFinite(t) || !(df > 0)) return 0.5;
+  const x = df / (df + t * t);
+  const half = 0.5 * _betai(df / 2, 0.5, x);
+  return t >= 0 ? half : 1 - half;
+}
+// 표준정규 역누적분포(Acklam) — |오차| < 1.15e-9.
+function _normInv(p) {
+  if (!(p > 0 && p < 1)) return p <= 0 ? -Infinity : Infinity;
+  const a = [-3.969683028665376e+01, 2.209460984245205e+02, -2.759285104469687e+02,
+             1.383577518672690e+02, -3.066479806614716e+01, 2.506628277459239e+00];
+  const b = [-5.447609879822406e+01, 1.615858368580409e+02, -1.556989798598866e+02,
+             6.680131188771972e+01, -1.328068155288572e+01];
+  const c = [-7.784894002430293e-03, -3.223964580411365e-01, -2.400758277161838e+00,
+             -2.549732539343734e+00, 4.374664141464968e+00, 2.938163982698783e+00];
+  const d = [7.784695709041462e-03, 3.224671290700398e-01, 2.445134137142996e+00, 3.754408661907416e+00];
+  const pl = 0.02425;
+  let q, r;
+  if (p < pl) { q = Math.sqrt(-2 * Math.log(p));
+    return (((((c[0]*q+c[1])*q+c[2])*q+c[3])*q+c[4])*q+c[5]) / ((((d[0]*q+d[1])*q+d[2])*q+d[3])*q+1); }
+  if (p > 1 - pl) { q = Math.sqrt(-2 * Math.log(1 - p));
+    return -(((((c[0]*q+c[1])*q+c[2])*q+c[3])*q+c[4])*q+c[5]) / ((((d[0]*q+d[1])*q+d[2])*q+d[3])*q+1); }
+  q = p - 0.5; r = q * q;
+  return (((((a[0]*r+a[1])*r+a[2])*r+a[3])*r+a[4])*r+a[5])*q /
+         (((((b[0]*r+b[1])*r+b[2])*r+b[3])*r+b[4])*r+1);
+}
+// ★t 통계량 → 같은 p 를 갖는 정규 z★. 기존 문턱의 의미를 자유도와 무관하게 복원한다.
+//   df 가 커지면 t≈z 이므로 큰 표본에서는 값이 그대로 통과한다(회귀 없음).
+function _tToZ(t, df) {
+  try {
+    if (!isFinite(t)) return 0;
+    if (!(df > 0)) return t;
+    if (df >= 200) return t;                      // 사실상 정규 — 변환 비용 생략
+    const p = _tSf(Math.abs(t), df);
+    const z = _normInv(1 - Math.min(0.5 - 1e-12, Math.max(1e-12, p)));
+    if (!isFinite(z)) return t;
+    return t >= 0 ? z : -z;
+  } catch (e) { return t; }
+}
+
 function _icBlockStats(pv, yv, K) {
   try {
     const n = Math.min(pv.length, yv.length);
@@ -23912,7 +24013,10 @@ function _icBlockStats(pv, yv, K) {
       return (sa > 1e-12 && sb > 1e-12) ? sab / Math.sqrt(sa * sb) : null;
     };
     const all = _c(pv.slice(0, n), yv.slice(0, n));
-    const k = Math.max(2, Math.floor(K || 5));
+    // [V33.113] 표본이 많으면 블록을 더 쪼갠다 — 자유도(K−1)가 커질수록 t 문턱이 정직해진다.
+    //   블록은 최소 200표본을 유지해 블록 자체의 독립성 가정을 깨지 않는다.
+    const kWant = Math.max(2, Math.floor(K || 5));
+    const k = Math.max(kWant, Math.min(12, Math.floor(n / 200)));
     const bs = Math.floor(n / k);
     if (bs < 20 || all == null) return { ic: all == null ? 0 : all, blockIC: null, icir: null, t: null, K: 0 };
     const ics = [];
@@ -23925,7 +24029,11 @@ function _icBlockStats(pv, yv, K) {
     let s2 = 0; for (const v of ics) s2 += (v - m) * (v - m);
     const sd = Math.sqrt(s2 / Math.max(1, ics.length - 1));
     const icir = sd > 1e-9 ? m / sd : (m > 0 ? 9 : 0);
-    return { ic: all, blockIC: m, icir: icir, t: icir * Math.sqrt(ics.length), K: ics.length };
+    const tRaw = icir * Math.sqrt(ics.length);
+    // [V33.113] 게이트가 쓰는 값은 ★자유도 보정된 z★ 다. t 를 그대로 정규 문턱과 비교하면
+    //   df=4 에서 오탐률이 의도의 5배가 된다(실측 23.8% vs 5%).
+    const z = _tToZ(tRaw, Math.max(1, ics.length - 1));
+    return { ic: all, blockIC: m, icir: icir, t: z, tRaw: +tRaw.toFixed(3), df: ics.length - 1, K: ics.length };
   } catch (e) { return { ic: 0, blockIC: null, icir: null, t: null, K: 0 }; }
 }
 // ════════════════════════════════════════════════════════════════════════════
@@ -24016,6 +24124,15 @@ async function icForwardCheck(DB, opts) {
 
 // 위원회 가중에 넣을 '유효 IC' — 유의성으로 수축된 값.
 //   t 를 못 구한 구모델은 Fisher z 하한(상관계수 표준오차 1/√(n−3))으로 보수 처리한다.
+// [V33.113] 외부 트레이너가 보낸 t 도 같은 자로 맞춘다.
+//   트레이너는 K=5 블록의 raw t 를 보낸다(valICK 동봉). 워커 쪽만 z 로 고치고 업로드 경로를
+//   놔두면 ★외부 모델만 5배 관대한 문턱★ 으로 신뢰되는 비대칭이 생긴다.
+function _importedICz(body) {
+  const t = (typeof body.valICt === "number" && isFinite(body.valICt)) ? _clamp(body.valICt, -20, 20) : null;
+  if (t == null) return null;
+  const K = Math.max(2, Math.floor(_num(body.valICK, 5)));
+  return +_tToZ(t, K - 1).toFixed(3);
+}
 function _icEffective(model) {
   try {
     if (!model) return null;
@@ -35899,6 +36016,8 @@ export {
   computeCashFromTrades, _krSellTaxRate, _slipRate,
   // [V33.107] 상황별 반성기억(TradingAgents) 검증용
   _expRegBucket, _expRegIC, EXPREG,
+  // [V33.113] 유의성 자유도 보정 검증용
+  _tSf, _normInv, _tToZ, _icBlockStats,
   // [V33.108] 재무제표 툴킷 검증용 — tools/check-fin-tools.mjs
   FIN_TOOLS, finToolsRun,
   // [V33.110] 소셜 멀티소스 검증용 — tools/check-social.mjs
