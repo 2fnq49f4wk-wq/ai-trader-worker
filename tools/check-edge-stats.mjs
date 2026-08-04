@@ -19,7 +19,8 @@
 //     ④ 확장 지표(Sortino·Omega·꼬리비율·Ulcer·SQN)가 답을 아는 자료에서 맞는가
 //     ⑤ 자산곡선 지표가 ★시간순★ 으로 계산되는가 (질의는 DESC 다)
 
-import { _edgeStats, _pctile, portfolioStatistics, _tSf } from "../src/index.js";
+import { _edgeStats, _pctile, portfolioStatistics, _tSf,
+         computeSignalWeight, SIGNAL_TYPES, DEFAULT_CFG } from "../src/index.js";
 
 let fails = 0;
 const ok = (m) => console.log("  ok   " + m);
@@ -175,6 +176,75 @@ function gauss() { return Math.sqrt(-2 * Math.log(rnd())) * Math.cos(2 * Math.PI
   const nAlpha = (src.match(/0\.10 \/ (?:Math\.max\(1, )?_?\w+/g) || []).length;
   if (nAlpha >= 4) ok("본페로니 α 분모가 " + nAlpha + "곳 — 네 경로 모두 동시검정 수로 나눈다");
   else bad("본페로니 보정이 " + nAlpha + "곳뿐");
+}
+
+// ══ ⑥ 신호별 켈리 — "음수 켈리 = 매수 완전 금지" 도 유의성으로 판정하는가 ══════
+//   여기서 반환값 0 은 ★그 신호로는 아예 사지 않는다★ 는 뜻이다. 가장 센 조치인데
+//   종전엔 점추정 켈리의 ★부호★ 하나로 결정됐다. 부호는 표본이 아무리 늘어도
+//   진짜 엣지가 0 이면 50% 확률로 음수다 — 축소로도 못 고치는 종류의 오류다.
+{
+  const cfg = JSON.parse(JSON.stringify(DEFAULT_CFG));
+  const sw = cfg.signalTypeWeights;
+  const kMin = sw.kellyWeightMin;
+
+  // 진짜 엣지 0 인 신호를 만들어 '완전 금지'가 몇 번 나오는지 센다.
+  function synth(N, mu, sd) {
+    let nW = 0, nL = 0, sW = 0, sL = 0, sumSq = 0, sum = 0;
+    for (let i = 0; i < N; i++) {
+      const x = mu + gauss() * sd;
+      if (x > 0) { nW++; sW += x; } else { nL++; sL += -x; }
+      sum += x; sumSq += x * x;
+    }
+    return { trades: N, wins: nW, sumPnlPct: sum, sumWin: sW, sumLoss: sL, nWin: nW, nLoss: nL,
+             sumSq: sumSq, nSq: N, sumSqPnl: sum };
+  }
+  const TR = 4000, SD = 4;
+  for (const N of [20, 40]) {
+    let zero = 0, zeroNoSq = 0;
+    for (let it = 0; it < TR; it++) {
+      const st = synth(N, 0, SD);
+      if (st.nWin === 0 || st.nLoss === 0) continue;
+      if (computeSignalWeight(st, cfg) === 0) zero++;
+      // 구 상태(제곱합 없음) — 종전 동작이 유지되는지도 함께 본다
+      const stOld = Object.assign({}, st); delete stOld.sumSq; delete stOld.nSq; delete stOld.sumSqPnl;
+      if (computeSignalWeight(stOld, cfg) === 0) zeroNoSq++;
+    }
+    const pct = zero / TR * 100, pctOld = zeroNoSq / TR * 100;
+    const alpha = 0.10 / SIGNAL_TYPES.length * 100;
+    if (pctOld > 20) ok("n=" + N + " 구 상태(제곱합 없음): 엣지 0 인 신호를 " + pctOld.toFixed(1) + "% 완전금지 — 종전 동작 유지");
+    else bad("n=" + N + " 구 상태 오차단률이 " + pctOld.toFixed(1) + "% — 종전 동작이 아니다(하위호환 깨짐)");
+    if (pct <= Math.max(1.0, alpha * 2))
+      ok("n=" + N + " 유의성 적용 후: " + pct.toFixed(2) + "% (α=" + alpha.toFixed(2) + "%, 신호 " + SIGNAL_TYPES.length + "종 본페로니)");
+    else bad("n=" + N + " 유의성 적용 후에도 " + pct.toFixed(2) + "% 가 완전금지된다 (α=" + alpha.toFixed(2) + "%)");
+  }
+  // 진짜 나쁜 신호는 여전히 완전금지되는가 — 검정력을 잃으면 고친 게 아니다.
+  {
+    let zero = 0; const TR2 = 2000, N = 60, MU = -2.5;
+    for (let it = 0; it < TR2; it++) {
+      const st = synth(N, MU, SD);
+      if (st.nWin === 0 || st.nLoss === 0) continue;
+      if (computeSignalWeight(st, cfg) === 0) zero++;
+    }
+    const pw = zero / TR2;
+    if (pw >= 0.85) ok("진짜 손실신호(n=60, 기대값 " + MU + "%/건) → " + (pw * 100).toFixed(1) + "% 완전금지 (검정력 유지)");
+    else bad("진짜 손실신호를 " + (pw * 100).toFixed(1) + "% 만 막는다 — 유의성을 붙이며 검정력을 잃었다");
+  }
+  // 표본 부족(제곱합은 있으나 minN 미만)이면 죽이지 않고 최소가중
+  {
+    const st = synth(12, -3, SD);
+    st.nSq = 12;
+    const w = computeSignalWeight(st, cfg);
+    if (w === 0) bad("nSq=12 · 기대값 −3%/건(t≈−2.6, df11, p≈0.012 > α) 인데 완전금지했다 — 근거가 부족한데 죽였다");
+    else ok("nSq 12 · 근거 부족(p≈0.012 > α=0.0091) → 완전금지 대신 가중 " + w.toFixed(2));
+  }
+  // 좋은 신호는 가중이 커지는가(회귀 확인)
+  {
+    const st = synth(60, 1.5, SD);
+    const w = computeSignalWeight(st, cfg);
+    if (w > 1) ok("좋은 신호(기대값 +1.5%/건) → 가중 " + w.toFixed(2) + " > 1");
+    else bad("좋은 신호인데 가중이 " + w.toFixed(2));
+  }
+  if (kMin > 0) ok("최소가중 " + kMin + " — '모르겠다' 는 0 이 아니다");
 }
 
 console.log(fails ? "\n원장 유의성 계약 위반 " + fails + "건" : "\n  ok   원장 유의성 계약 통과");

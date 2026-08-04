@@ -2694,14 +2694,42 @@ function computeSignalWeight(stat, cfg) {
     const al = stat.sumLoss / stat.nLoss;
     if (aw > 0 && al > 0) {
       const b = aw / al;
-      const f = (p * b - (1 - p)) / b;                     // 켈리 f*
-      const frac = (sw.kellyFraction != null) ? sw.kellyFraction : 0.5;   // 1/2 켈리
-      const fShrunk = f * shrink * frac;
-      // 기준 켈리(baseKelly) 대비 배수로 환산 — 기준을 넘으면 크게, 못 미치면 작게.
-      const base = (sw.baseKelly != null) ? sw.baseKelly : 0.10;
-      if (fShrunk <= 0) return (sw.negKellyWeight != null) ? sw.negKellyWeight : 0;   // 음수 켈리 = 베팅 금지
       const kMin = (sw.kellyWeightMin != null) ? sw.kellyWeightMin : 0.35;
       const kMax = (sw.kellyWeightMax != null) ? sw.kellyWeightMax : 2.5;
+      const frac = (sw.kellyFraction != null) ? sw.kellyFraction : 0.5;   // 1/2 켈리
+      const base = (sw.baseKelly != null) ? sw.baseKelly : 0.10;
+      // [V33.117] ① 축소를 ★결과가 아니라 모수에★ 건다.
+      //   종전엔 점추정 f 를 구한 뒤 결과에 shrink 를 곱했다. 크기는 줄지만 모수의 과신은
+      //   그대로 남는다. p 와 b 를 각각 중립값(0.5, 1.0)으로 당긴 뒤 켈리를 구하는 게 맞다.
+      const pS = 0.5 + (p - 0.5) * shrink;
+      const bS = 1 + (b - 1) * shrink;
+      const f = (pS * bS - (1 - pS)) / bS;                 // 축소모수 켈리 f*
+      const fShrunk = f * frac;
+      if (fShrunk <= 0) {
+        // ② ★하드 0(= 이 신호 매수 완전 금지)은 유의할 때만.★
+        //   중요한 사실: 축소는 부호를 거의 못 바꾼다. 몬테카를로로 재보면 ★진짜 엣지가
+        //   정확히 0★ 인 신호의 표본 켈리는 n 이 10이든 50이든 약 50% 확률로 음수다
+        //   (모수축소를 넣어도 47~50%). 즉 종전 규칙은 무해한 신호의 ★절반★ 을 영구 차단하는
+        //   장치였고, 표본을 더 모아도 나아지지 않는 종류의 오류였다. 축소로는 못 고친다 —
+        //   부호가 아니라 ★유의성★ 을 물어야 한다(V33.116 에서 자동차단 4경로에 한 것과 같다).
+        //   구 상태에는 제곱합이 없으므로(nSq 부족) 그때는 종전 동작을 그대로 둔다:
+        //   확인할 수 없는 것을 근거로 리스크 통제를 푸는 건 고치는 게 아니다.
+        //   표본이 작다고 검정을 건너뛸 이유는 없다 — df=n−1 인 Student-t 가 바로 그 일을 한다.
+        //   여기 문턱은 "분산을 아예 못 구하는" 최소치일 뿐이다(그 아래는 종전 동작).
+        const minN = _num(sw.kellyMinNForZero, 5);
+        const nSq = _num(stat.nSq, 0);
+        if (nSq >= Math.max(2, minN)) {
+          const mS = _num(stat.sumSqPnl, 0) / nSq;
+          const vS = Math.max(0, (_num(stat.sumSq, 0) - nSq * mS * mS) / (nSq - 1));
+          const sdS = Math.sqrt(vS);
+          const tS = sdS > 1e-9 ? mS / (sdS / Math.sqrt(nSq)) : 0;
+          // 신호 전체를 동시에 재므로 개수만큼 본페로니 보정(V33.116 과 같은 자).
+          const alphaS = 0.10 / Math.max(1, SIGNAL_TYPES.length);
+          if (_tSf(-tS, nSq - 1) > alphaS) return kMin;     // 나쁘다고 말할 근거 부족 → 최소가중
+        }
+        return (sw.negKellyWeight != null) ? sw.negKellyWeight : 0;
+      }
+      // 기준 켈리(baseKelly) 대비 배수로 환산 — 기준을 넘으면 크게, 못 미치면 작게.
       return Math.max(kMin, Math.min(kMax, fShrunk / base));
     }
   }
@@ -2760,7 +2788,7 @@ async function applySignalTypeWeights(DB, cfg) {
 // ============================================================================
 // [V33.55] 빌드 버전 — SWR L2 캐시 키에 섞어 '배포 = 판단 캐시 자동 무효화'를 만든다.
 //   판정 로직을 고쳐도 옛 캐시가 최대 1시간 재배포되던 문제를 구조적으로 없앤다.
-const _BUILD_VER = "V33.116";
+const _BUILD_VER = "V33.117";
 
 const AI_PARAMS = {
   // ── OHLCV 타임프레임 ── 시가/고가/저가/종가/거래량을 어떤 봉 주기로 볼지.
@@ -3869,6 +3897,10 @@ const DEFAULT_CFG = {
     kellyWeightMin: 0.35,      // 양수 켈리인데 약한 신호도 완전히 죽이지는 않는다
     kellyWeightMax: 2.5,       // 강한 신호는 기준의 2.5배까지 (집중투자)
     negKellyWeight: 0,         // ★음수 켈리 = 베팅 금지★ (SC_VWAP·SC_PULLBACK 이 여기 해당)
+    kellyMinNForZero: 5,       // [V33.117] '완전 금지'를 유의성으로 판정하기 위한 최소 제곱합 건수.
+                               //   표본 크기 보정은 Student-t 의 df 가 하므로 문턱은 낮게 둔다 —
+                               //   이건 "분산을 아예 못 구하는" 하한일 뿐이다. 제곱합이 없는
+                               //   구 상태에서는 종전 동작을 유지한다(확인 못 한 걸로 통제를 풀지 않는다).
     // [V33.83] 거래별 켈리 — 신호 평균이 아니라 이 거래의 p·b 로 크기를 정한다.
     perTradeKelly: true,
     kellyBaseP: 0.5,           // 추세회귀 기준 확률(M6 5위 해법의 '평균 회귀' 축소)
@@ -11963,14 +11995,21 @@ async function executeSell(DB, market, symbol, pos, sellQty, price, reason, cfg,
         const _e0 = ss[entrySignalName];
         // [V33.82] 켈리 계산에 필요한 이익/손실 분리 누적 — 종전엔 합계만 있어 손익비(b)를 못 구했다.
         if (_e0.sumWin == null) { _e0.sumWin = 0; _e0.sumLoss = 0; _e0.nWin = 0; _e0.nLoss = 0; }
+        // [V33.117] 제곱합 — 신호의 기대값이 ★유의하게★ 음수인지 재려면 분산이 필요하다.
+        //   nSq 를 따로 센다: 구 상태에는 sumSq 가 없으므로 trades 를 쓰면 지금부터 쌓이는
+        //   제곱합을 옛 거래수로 나누게 된다. 자기가 실제로 담은 건수를 스스로 들고 있어야 한다.
+        if (_e0.sumSq == null) { _e0.sumSq = 0; _e0.nSq = 0; _e0.sumSqPnl = 0; }
         if (_e0.trades >= 120) {
           _e0.trades = Math.round(_e0.trades / 2); _e0.wins = Math.round(_e0.wins / 2); _e0.sumPnlPct = _e0.sumPnlPct / 2;
           _e0.sumWin /= 2; _e0.sumLoss /= 2; _e0.nWin = Math.round(_e0.nWin / 2); _e0.nLoss = Math.round(_e0.nLoss / 2);
+          // 절반 감쇠는 n·Σx·Σx² 를 함께 반으로 줄여야 평균·평균제곱이 보존된다.
+          _e0.sumSq /= 2; _e0.sumSqPnl /= 2; _e0.nSq = Math.round(_e0.nSq / 2);
         }
         _e0.trades++;
         if (pnlPct > 0) { _e0.wins++; _e0.nWin++; _e0.sumWin += pnlPct; }
         else { _e0.nLoss++; _e0.sumLoss += Math.abs(pnlPct); }
         _e0.sumPnlPct += pnlPct;
+        _e0.nSq++; _e0.sumSq += pnlPct * pnlPct; _e0.sumSqPnl += pnlPct;
         await setState(DB, "signal_type_stats", ss);
       }
     }
@@ -36415,6 +36454,8 @@ export {
   // [V33.108] 재무제표 툴킷 검증용 — tools/check-fin-tools.mjs
   // [V33.116] 원장 성과 유의성(SQN/t)·확장 지표 검증용 — tools/check-edge-stats.mjs
   _edgeStats, _pctile, portfolioStatistics, mlSelfReview,
+  // [V33.117] 신호별 켈리 가중 — '음수 켈리 = 매수 금지' 의 유의성 검증용
+  computeSignalWeight, SIGNAL_TYPES,
   FIN_TOOLS, finToolsRun,
   // [V33.110] 소셜 멀티소스 검증용 — tools/check-social.mjs
   SOCIAL, SOCIAL_SOURCES, socialScoreOf
