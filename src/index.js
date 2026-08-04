@@ -2760,7 +2760,7 @@ async function applySignalTypeWeights(DB, cfg) {
 // ============================================================================
 // [V33.55] 빌드 버전 — SWR L2 캐시 키에 섞어 '배포 = 판단 캐시 자동 무효화'를 만든다.
 //   판정 로직을 고쳐도 옛 캐시가 최대 1시간 재배포되던 문제를 구조적으로 없앤다.
-const _BUILD_VER = "V33.107";
+const _BUILD_VER = "V33.108";
 
 const AI_PARAMS = {
   // ── OHLCV 타임프레임 ── 시가/고가/저가/종가/거래량을 어떤 봉 주기로 볼지.
@@ -19511,6 +19511,23 @@ async function handleRequest(request, env, ctx) {
       return Response.json({ symbol: sym, years: fund.years || {}, order: fund.order || [], ts: fund.ts || null, eval: ev }, { headers: cors });
     }
 
+    // ── [V33.108] 재무제표 툴킷 — LangChain Tool 규약(이름·설명·needs·run)으로 균일 호출 ──
+    //   외부 API 0. 이미 받아 둔 fundamentals-timeseries 캐시만으로 전부 계산한다.
+    if (path === "/api/fin-tools") {
+      const sym = (url.searchParams.get("symbol") || "").trim();
+      if (!sym || sym.length > 16 || !/^[A-Za-z0-9.^=\-]+$/.test(sym)) {
+        return Response.json({ error: "bad symbol" }, { status: 400, headers: cors });
+      }
+      const mcap = Number(url.searchParams.get("mcap")) || null;
+      let px = Number(url.searchParams.get("price")) || null;
+      if (!px) { try { const dd = await getState(env.DB, "daily:" + sym, null); if (dd && dd.price > 0) px = dd.price; } catch (e) {} }
+      const fund = await fetchFundamentals(env.DB, sym);
+      const r = finToolsRun(fund, mcap, px);
+      return Response.json({ symbol: sym, name: (typeof NAME_MAP !== "undefined" && NAME_MAP[sym]) ? NAME_MAP[sym] : sym,
+                             price: px, mcap: mcap, registry: FIN_TOOLS.map(function (t) { return { name: t.name, ko: t.ko, desc: t.desc, needs: t.needs }; }),
+                             result: r }, { headers: cors });
+    }
+
     // ── [V8] 다기간 기술요약: 지금/1주/1달/1년 매수·매도 컨센서스(daily 캐시 기반) ──
     if (path === "/api/tech-summary") {
       const sym = (url.searchParams.get("symbol") || "").trim();
@@ -30840,6 +30857,188 @@ function evaluateFundamentals(fund, marketCap) {
   } catch (e) { return null; }
 }
 
+// ════════════════════════════════════════════════════════════════════════════
+// [V33.108] ★LangChain 식 툴 레지스트리 — 재무제표 툴킷★
+//
+//   LangChain 의 Tool 은 "이름 · 설명 · 입력요건 · run()" 을 가진 균일한 객체다.
+//   에이전트는 함수를 아는 게 아니라 ★레지스트리를 훑어 필요한 툴을 고른다★.
+//   그 형태가 우리에게 실질적으로 주는 것:
+//     · 새 재무지표를 함수 하나 추가로 끼워 넣을 수 있다(호출부 수정 0)
+//     · 각 툴이 '어떤 재무항목이 있어야 도는지(needs)' 를 스스로 밝히므로,
+//       데이터가 없어서 못 낸 것과 계산했는데 결과가 나쁜 것이 구분된다
+//       — 지금까지 이 구분이 없어서 "N/A" 와 "위험" 이 같아 보였다
+//     · 화면·리포트·게이트가 같은 목록을 쓰므로 셋이 어긋날 수 없다
+//
+//   ★TradingAgents 의 Fundamentals Analyst 가 쓰는 도구를 우리가 직접 갖는다★ —
+//   외부 API 없이, 이미 받아 둔 fundamentals-timeseries 캐시만으로 전부 계산된다.
+//
+//   기존 evaluateFundamentals(F-Score·Altman Z·Beneish M·Ohlson O·Sloan 발생액)는
+//   그대로 두고, 그것이 다루지 않는 축을 툴로 채운다(중복 계산 없음).
+//   ※ 점수에 새 상수를 더하지 않는다 — 근거 없는 가중을 확률 체인에 끼워 넣지 않는다는
+//     이 저장소의 원칙 그대로다. 툴은 ★관측·경고★ 를 내고, 판단은 기존 경로가 한다.
+const FIN_TOOLS = [
+  {
+    name: "ncav", ko: "그레이엄 넷넷(NCAV)",
+    desc: "유동자산−총부채 로 계산한 청산가치 대비 시가. 0.67 미만이면 고전적 넷넷.",
+    needs: ["CurrentAssets", "TotalLiabilitiesNetMinorityInterest", "BasicAverageShares"],
+    run: function (c) {
+      const ncav = c.n(c.cur.CurrentAssets) - c.n(c.cur.TotalLiabilitiesNetMinorityInterest);
+      const sh = c.n(c.cur.BasicAverageShares);
+      if (!(sh > 0) || ncav == null) return null;
+      const ps = ncav / sh;
+      if (!(c.price > 0)) return { value: +ps.toFixed(2), unit: "주당", verdict: "가격없음" };
+      const r = c.price / ps;
+      return { value: +(ps).toFixed(2), unit: "주당", ratio: +(r).toFixed(2),
+               verdict: ps <= 0 ? "청산가치 음수" : (r < 0.67 ? "넷넷(심층가치)" : (r < 1.5 ? "청산가치 근접" : "청산가치 대비 고가")) };
+    }
+  },
+  {
+    name: "fcfYield", ko: "FCF 수익률",
+    desc: "잉여현금흐름 / 시가총액. 채권금리와 직접 비교 가능한 현금 기준 수익률.",
+    needs: ["FreeCashFlow"],
+    run: function (c) {
+      const fcf = c.n(c.cur.FreeCashFlow);
+      if (fcf == null || !(c.mcap > 0)) return null;
+      const y = fcf / c.mcap;
+      return { value: +(y * 100).toFixed(2), unit: "%",
+               verdict: y >= 0.08 ? "현금수익률 높음" : (y >= 0.04 ? "양호" : (y > 0 ? "낮음" : "현금흐름 적자")) };
+    }
+  },
+  {
+    name: "ownerEarnings", ko: "오너 어닝스 수익률",
+    desc: "버핏식 (영업현금흐름 − 유지보수 자본지출) / 시총. 감가상각을 유지capex 대용으로 쓴다.",
+    needs: ["OperatingCashFlow", "ReconciledDepreciation"],
+    run: function (c) {
+      const cfo = c.n(c.cur.OperatingCashFlow), dep = c.n(c.cur.ReconciledDepreciation);
+      if (cfo == null || dep == null || !(c.mcap > 0)) return null;
+      const oe = cfo - dep, y = oe / c.mcap;
+      return { value: +(y * 100).toFixed(2), unit: "%",
+               verdict: y >= 0.07 ? "우수" : (y >= 0.035 ? "양호" : (y > 0 ? "낮음" : "음수")) };
+    }
+  },
+  {
+    name: "cashConversion", ko: "현금전환(CFO/NI)",
+    desc: "장부이익이 실제 현금으로 들어오는 비율. 1 미만이 지속되면 이익의 질이 낮다.",
+    needs: ["OperatingCashFlow", "NetIncome"],
+    run: function (c) {
+      const cfo = c.n(c.cur.OperatingCashFlow), ni = c.n(c.cur.NetIncome);
+      if (cfo == null || ni == null || !(Math.abs(ni) > 0)) return null;
+      const r = cfo / ni;
+      return { value: +r.toFixed(2), unit: "배",
+               verdict: ni < 0 ? "적자(비교 무의미)" : (r >= 1.2 ? "현금창출 우수" : (r >= 0.8 ? "정상" : "이익 대비 현금 부족")) };
+    }
+  },
+  {
+    name: "cScore", ko: "몽티에 C-Score(분식 징후)",
+    desc: "Montier(2008) 6플래그 중 계산 가능한 것만 채점. 높을수록 회계 조작 징후가 겹친다.",
+    needs: ["NetIncome", "OperatingCashFlow", "Receivables", "TotalRevenue", "TotalAssets"],
+    run: function (c) {
+      if (!c.prev) return null;
+      let hit = 0, tot = 0;
+      const push = function (cond) { if (cond === null) return; tot++; if (cond) hit++; };
+      const d = function (k) {
+        const a = c.n(c.cur[k]), b = c.n(c.prev[k]);
+        return (a == null || b == null || !(Math.abs(b) > 0)) ? null : (a / b - 1);
+      };
+      // ① 순이익과 영업현금흐름의 괴리 확대
+      const niC = c.n(c.cur.NetIncome), cfoC = c.n(c.cur.OperatingCashFlow);
+      const niP = c.n(c.prev.NetIncome), cfoP = c.n(c.prev.OperatingCashFlow);
+      push((niC != null && cfoC != null && niP != null && cfoP != null) ? ((niC - cfoC) > (niP - cfoP)) : null);
+      // ② 매출채권이 매출보다 빨리 는다(밀어내기 매출 징후)
+      const dR = d("Receivables"), dS = d("TotalRevenue");
+      push((dR != null && dS != null) ? (dR > dS + 0.05) : null);
+      // ③ 감가상각률 하락(자산 수명을 늘려 비용을 미루는 조작)
+      const depC = c.n(c.cur.ReconciledDepreciation), ppeC = c.n(c.cur.NetPPE);
+      const depP = c.n(c.prev.ReconciledDepreciation), ppeP = c.n(c.prev.NetPPE);
+      push((depC != null && ppeC > 0 && depP != null && ppeP > 0) ? ((depC / ppeC) < (depP / ppeP) * 0.95) : null);
+      // ④ 총자산 급증(인수·자본화로 부실을 희석)
+      const dA = d("TotalAssets");
+      push(dA != null ? (dA > 0.10) : null);
+      // ⑤ 매출총이익률 급등(원가 이연 징후)
+      const gm = function (y) { const g = c.n(y.GrossProfit), r = c.n(y.TotalRevenue); return (g != null && r > 0) ? g / r : null; };
+      const gC = gm(c.cur), gP = gm(c.prev);
+      push((gC != null && gP != null) ? (gC > gP + 0.05) : null);
+      if (tot < 3) return null;   // 3개 미만이면 점수로 의미가 없다 — 데이터 부족으로 보고한다
+      return { value: hit, unit: "/" + tot,
+               verdict: hit >= Math.ceil(tot * 0.6) ? "분식 징후 다수" : (hit >= 2 ? "일부 징후" : "특이사항 없음") };
+    }
+  },
+  {
+    name: "revTrend", ko: "매출·영업이익률 추세",
+    desc: "최근 4개 회계연도의 매출 로그성장 기울기와 영업이익률 기울기(연 %p).",
+    needs: ["TotalRevenue", "OperatingIncome"],
+    run: function (c) {
+      const ys = c.years.slice(-4);
+      if (ys.length < 3) return null;
+      const lr = [], om = [];
+      for (const y of ys) {
+        const r = c.n(c.fund.years[y].TotalRevenue), o = c.n(c.fund.years[y].OperatingIncome);
+        if (r != null && r > 0) lr.push(Math.log(r)); else lr.push(null);
+        if (r != null && r > 0 && o != null) om.push(o / r); else om.push(null);
+      }
+      const slope = function (a) {
+        const xs = [], zs = [];
+        for (let i = 0; i < a.length; i++) if (a[i] != null) { xs.push(i); zs.push(a[i]); }
+        if (xs.length < 3) return null;
+        const mx = xs.reduce(function (p, q) { return p + q; }, 0) / xs.length;
+        const mz = zs.reduce(function (p, q) { return p + q; }, 0) / zs.length;
+        let num = 0, den = 0;
+        for (let i = 0; i < xs.length; i++) { num += (xs[i] - mx) * (zs[i] - mz); den += (xs[i] - mx) * (xs[i] - mx); }
+        return den > 0 ? num / den : null;
+      };
+      const sR = slope(lr), sM = slope(om);
+      if (sR == null && sM == null) return null;
+      return { value: sR != null ? +(sR * 100).toFixed(1) : null, unit: "%/년",
+               marginSlope: sM != null ? +(sM * 100).toFixed(2) : null,
+               verdict: (sR != null && sR > 0.05 && sM != null && sM > 0) ? "성장+마진 동반 개선"
+                      : (sR != null && sR > 0.05) ? "성장하나 마진 정체·하락"
+                      : (sR != null && sR < -0.02) ? "매출 역성장" : "정체" };
+    }
+  },
+  {
+    name: "debtLoad", ko: "부채 부담(순부채/EBITDA)",
+    desc: "(단기+장기차입 − 현금성 대용) / (영업이익+감가상각). 3배 초과면 레버리지 부담.",
+    needs: ["CurrentDebt", "LongTermDebt", "OperatingIncome", "ReconciledDepreciation"],
+    run: function (c) {
+      const cd = c.n(c.cur.CurrentDebt), ld = c.n(c.cur.LongTermDebt);
+      const oi = c.n(c.cur.OperatingIncome), dep = c.n(c.cur.ReconciledDepreciation);
+      if (cd == null && ld == null) return null;
+      const debt = (cd || 0) + (ld || 0);
+      const ebitda = (oi != null ? oi : 0) + (dep != null ? dep : 0);
+      if (!(ebitda > 0)) return { value: null, unit: "배", verdict: "EBITDA 음수 — 차입 상환력 없음" };
+      const r = debt / ebitda;
+      return { value: +r.toFixed(2), unit: "배",
+               verdict: r <= 1 ? "무차입 수준" : (r <= 3 ? "감당 가능" : (r <= 5 ? "부담" : "과다차입")) };
+    }
+  }
+];
+// 툴 일괄 실행 — 컨텍스트를 한 번만 만들고 전 툴에 같은 것을 넘긴다(LangChain Toolkit 규약).
+//   데이터 부족(needs 미충족)과 '계산했는데 나쁨' 을 반드시 구분해 돌려준다.
+function finToolsRun(fund, marketCap, price) {
+  try {
+    const ys = (fund && fund.order) || [];
+    if (!ys.length) return { ok: false, reason: "재무 데이터 없음", tools: [] };
+    const cur = fund.years[ys[ys.length - 1]] || {};
+    const prev = ys.length >= 2 ? (fund.years[ys[ys.length - 2]] || {}) : null;
+    const ctx = {
+      fund: fund, years: ys, cur: cur, prev: prev,
+      mcap: (typeof marketCap === "number" && marketCap > 0) ? marketCap : null,
+      price: (typeof price === "number" && price > 0) ? price : null,
+      n: function (v) { return (typeof v === "number" && isFinite(v)) ? v : null; }
+    };
+    const out = [];
+    for (const t of FIN_TOOLS) {
+      const missing = (t.needs || []).filter(function (k) { return ctx.n(cur[k]) == null; });
+      if (missing.length) { out.push({ name: t.name, ko: t.ko, desc: t.desc, ok: false, missing: missing }); continue; }
+      let r = null;
+      try { r = t.run(ctx); } catch (e) { r = null; }
+      if (!r) { out.push({ name: t.name, ko: t.ko, desc: t.desc, ok: false, missing: ["계산 불가(직전연도 부족 등)"] }); continue; }
+      out.push(Object.assign({ name: t.name, ko: t.ko, desc: t.desc, ok: true }, r));
+    }
+    return { ok: true, asOf: ys[ys.length - 1], years: ys.length, tools: out };
+  } catch (e) { return { ok: false, reason: String(e && e.message), tools: [] }; }
+}
+
 // [V15] 재무 건전성 하드필터 — evaluateFundamentals 결과로 매수 가부 판정.
 //   깡통·흑자도산·이익조작 의심 기업은 차트·뉴스가 좋아도 진입 차단(자본 보호).
 //   데이터 없으면 block=false(폴백 허용) — 펀더 미수집 종목까지 막지 않음(무해).
@@ -31294,6 +31493,24 @@ async function stockAnalysisReport(DB, symbol, marketCap) {
       L.push("· Piotroski F-Score " + ev.fScore + "/" + ev.fAvail + " · Altman Z " + (ev.z != null ? ev.z + "(" + ev.zBand + ")" : "N/A"));
       if (ev.mScore != null) L.push("· Beneish M-Score " + ev.mScore + " (" + ev.mFlag + ", 이익조작 탐지) · " + (ev.oProb != null ? "Ohlson 부도확률 " + Math.round(ev.oProb * 100) + "%" : ""));
       if (ev.accrual != null) L.push("· 발생액비율 " + (ev.accrual * 100).toFixed(1) + "% (이익의 질, 낮을수록 우수) · 총이익성 " + (ev.grossProf != null ? (ev.grossProf * 100).toFixed(0) + "%" : "N/A"));
+      // [V33.108] 재무제표 툴킷 — 학술모델이 다루지 않는 축(청산가치·현금수익률·분식징후·추세·차입).
+      //   데이터가 없어 못 낸 것은 그렇게 밝힌다 — "N/A" 와 "위험" 이 같아 보이면 안 된다.
+      try {
+        const _ft = finToolsRun(fund, marketCap, (dd && dd.price) || null);
+        if (_ft && _ft.ok) {
+          const _done = _ft.tools.filter(function (t) { return t.ok; });
+          const _na = _ft.tools.filter(function (t) { return !t.ok; });
+          if (_done.length) {
+            L.push("■ 재무제표 툴킷 (" + _done.length + "/" + _ft.tools.length + "종 산출)");
+            for (const t of _done) {
+              const v = (t.value != null) ? (t.value + (t.unit || "")) : "—";
+              L.push("· " + t.ko + " " + v + (t.ratio != null ? " (가격/가치 " + t.ratio + "배)" : "") +
+                     (t.marginSlope != null ? " · 마진기울기 " + t.marginSlope + "%p/년" : "") + " — " + t.verdict);
+            }
+          }
+          if (_na.length) L.push("· 미산출 " + _na.length + "종(데이터 부족): " + _na.map(function (t) { return t.ko; }).join(", "));
+        }
+      } catch (e) {}
       if (ev.roe != null || per != null) {
         const parts = [];
         if (ev.roe != null) parts.push("ROE " + (ev.roe * 100).toFixed(1) + "%");
@@ -36128,5 +36345,7 @@ export {
   // [V33.107] 회계 불변식 검증용 — tools/check-accounting.mjs
   computeCashFromTrades, _krSellTaxRate, _slipRate,
   // [V33.107] 상황별 반성기억(TradingAgents) 검증용
-  _expRegBucket, _expRegIC, EXPREG
+  _expRegBucket, _expRegIC, EXPREG,
+  // [V33.108] 재무제표 툴킷 검증용 — tools/check-fin-tools.mjs
+  FIN_TOOLS, finToolsRun
 };

@@ -48,6 +48,15 @@ jobs:
       #   실제로 두 달을 쫓았던 사고라, 식을 손으로 다시 적어 계약으로 못 박는다.
       - name: Accounting invariant check
         run: node tools/check-accounting.mjs
+      # [V33.108] LangGraph 식 파이프라인 그래프 — 야간 34단계의 순서 근거가 전부 주석이었다.
+      #   코드에서 getState/setState 채널을 추출해 의존 그래프를 만들고, 실행순서가 그걸
+      #   거스르지 않는지 검사한다(의도된 역방향만 명시적으로 허용). 주석은 실행되지 않는다.
+      - name: Pipeline graph (LangGraph-style) check
+        run: node tools/check-pipeline-graph.mjs
+      # [V33.108] 재무제표 툴킷 — 부호 하나만 뒤집혀도 '우량'과 '위험'이 바뀐다.
+      #   답을 아는 합성 재무제표로 각 툴이 그 답을 되찾는지 확인한다.
+      - name: Financial statement toolkit check
+        run: node tools/check-fin-tools.mjs
       # cloudflare/wrangler-action 대신 로컬에서 검증된 방식 그대로 실행
       # (wrangler-action@v3의 npx 자동설치가 4.86.0을 요구하며 실패하던 문제 회피)
       - name: Install wrangler
