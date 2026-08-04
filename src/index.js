@@ -2760,7 +2760,7 @@ async function applySignalTypeWeights(DB, cfg) {
 // ============================================================================
 // [V33.55] 빌드 버전 — SWR L2 캐시 키에 섞어 '배포 = 판단 캐시 자동 무효화'를 만든다.
 //   판정 로직을 고쳐도 옛 캐시가 최대 1시간 재배포되던 문제를 구조적으로 없앤다.
-const _BUILD_VER = "V33.105";
+const _BUILD_VER = "V33.106";
 
 const AI_PARAMS = {
   // ── OHLCV 타임프레임 ── 시가/고가/저가/종가/거래량을 어떤 봉 주기로 볼지.
@@ -25548,7 +25548,7 @@ async function stinBackfill(DB, opts) {
     const picked = [];
     for (let i = 0; i < maxSyms && i < all.length; i++) picked.push(all[(off + i) % all.length]);
     // 전수 커버 진행률 — "선별한다"는 오해가 없게 매번 남긴다(오프셋 회전으로 전 종목을 순회한다).
-    const _cov = "전체 " + all.length + "종목 중 " + off + "~" + ((off + picked.length) % all.length) + " 구간";
+    let _cov = "전체 " + all.length + "종목 중 " + off + " 구간부터";
 
     // [V33.72] ★중복 수확 차단★ 종목별 '마지막으로 표본을 만든 봉 시각' 워터마크.
     //   야후 5m 는 1개월 롤링 창, 네이버 minute5 는 당일치를 준다. 전 종목을 계속 회전하면
@@ -25556,16 +25556,68 @@ async function stinBackfill(DB, opts) {
     //   그 봉 시각보다 새로운 봉만 표본으로 만든다.
     let wm = {};
     try { const w = await getState(DB, "stin_bf_wm", null); if (w && typeof w === "object" && w.v) wm = w.v; } catch (e) {}
+    // [V33.106] 검증된 range 를 기억한다 — 매 회차 탐색하면 그게 곧 헛 fetch 다.
+    let _bfRange = "60d", _rangeProbed = false, _rangeDemoted = false;
+    try {
+      const _rs = await getState(DB, "stin_bf_range", null);
+      if (_rs && _rs.v) { _bfRange = String(_rs.v); _rangeProbed = true; }
+    } catch (e) {}
+    // [V33.106] 벽시계 마감시한 — 종목 수가 아니라 '실제로 쓴 시간' 으로 멈춘다.
+    //   회선이 빠른 날엔 더 많이 돌고, 느린 날엔 알아서 접는다(사이클 폭주 방지).
+    const _t0bf = Date.now();
+    const _deadline = _num(cfg.deadlineMs, 25000);
+    // 청크 플러시 — 한 회차에 수만 건을 만들 수 있게 됐으므로 메모리에 다 이고 있지 않는다.
+    //   R2 오브젝트 하나가 지나치게 커지면 JSON.stringify 에서 메모리 상한(128MB)을 친다.
+    const _CHUNK = 4000;
+    let _flushed = 0, _files = 0;
+    const _flushChunk = async function (arr) {
+      if (!arr.length) return;
+      if (_useD1) { await _stinFlushD1(DB, { done: arr, d1: true }); }
+      else {
+        const k2 = "st/intraday/" + _stinDay() + "/bf-" + Date.now() + "-" + _files + ".json";
+        await R2.put(k2, JSON.stringify({ n: arr.length, samples: arr, src: "backfill" }));
+      }
+      _flushed += arr.length; _files++; arr.length = 0;
+    };
     const made = [];
     let symOk = 0, symFail = 0, skipShort = 0, skipDup = 0;
+    // [V33.106] ★마감시한을 넣으면 회전 오프셋을 '실제로 본 종목 수' 만큼만 밀어야 한다★
+    //   종전엔 picked.length 만큼 통째로 밀었다. 그땐 항상 전량을 돌았으니 맞았지만,
+    //   이제 시간이 다 되면 중간에서 끊긴다 — 그대로 밀면 못 본 종목이 회전에서 통째로
+    //   건너뛰어져 영영 수확되지 않는다(전수 커버가 조용히 깨진다).
+    let _procN = 0;
     for (const sym of picked) {
       if (fetchBudgetLeft() < 6) break;
+      if (Date.now() - _t0bf > _deadline) break;   // [V33.106] 벽시계 마감
+      if (made.length >= _CHUNK) await _flushChunk(made);   // 메모리 상한 방어(청크 저장)
+      _procN++;
       // [V33.72] 시장을 심볼에서 판정한다 — KR 이 대상에 들어왔으므로 "us" 고정은 오라벨이 된다.
       const _mkt = /\.(KS|KQ)$/i.test(sym) ? "kr" : "us";
       const _wmTs = _num(wm[sym], 0);
       let _newWm = _wmTs;
       let mb = null;
-      try { mb = await fetchMinuteBars(sym, { interval: "5m", range: "1mo" }); } catch (e) { symFail++; continue; }
+      // [V33.106] ★같은 fetch 1회로 봉을 2배 받는다★ — 야후는 5분봉을 최대 60일 제공하는데
+      //   종전엔 range=1mo(약 1,716봉)만 받았다. 실측: 1mo → 종목당 140표본 / CPU 117ms,
+      //   60d → 종목당 283표본 / CPU 139ms. 즉 ★subrequest 는 그대로인데 표본이 2배★ 다
+      //   (CPU 는 +19%뿐이고 예산 300s 대비 무시할 수준).
+      //   다만 야후는 interval×range 조합에 까다로워 60d 가 거부될 수 있으므로,
+      //   첫 성공/실패를 상태에 기록해 그 다음부터는 검증된 range 만 쓴다(헛 fetch 0).
+      try {
+        mb = await fetchMinuteBars(sym, { interval: "5m", range: _bfRange });
+      } catch (e) {
+        if (_bfRange !== "1mo" && !_rangeProbed) {
+          // 긴 range 가 거부됐다 — 종전 range 로 되돌리고 그 사실을 남긴다(다음 회차부터 바로 1mo).
+          _bfRange = "1mo"; _rangeProbed = true; _rangeDemoted = true;
+          try { mb = await fetchMinuteBars(sym, { interval: "5m", range: "1mo" }); }
+          catch (e2) { symFail++; continue; }
+        } else { symFail++; continue; }
+      }
+      if (!_rangeProbed) {
+        // 응답이 실제로 길어졌는지 확인 — 200 으로 오면서 1mo 분량만 주는 경우도 걸러낸다.
+        const _n0 = (mb && ((mb.allCloses && mb.allCloses.length) || (mb.closes && mb.closes.length))) || 0;
+        _rangeProbed = true;
+        if (_bfRange !== "1mo" && _n0 < 2200 && !/\.(KS|KQ)$/i.test(sym)) { _bfRange = "1mo"; _rangeDemoted = true; }
+      }
       const c = mb && (mb.allCloses && mb.allCloses.length ? mb.allCloses : mb.closes);
       // [V33.104] 60+H(=72) → 40. 루프는 i=24 에서 시작해 i+H 까지 필요하므로 37봉이면
       //   표본이 나온다. 72 는 근거 없이 높았고, 그 탓에 KR 은 장 마감 직전이 아니면
@@ -25646,13 +25698,17 @@ async function stinBackfill(DB, opts) {
           pnl: +ret.toFixed(3), bar: hit ? (hit > 0 ? "tp" : "sl") : "time", hm: hm });
         n0++;
         if (_bts > _newWm) _newWm = _bts;
-        if (made.length >= _num(cfg.maxSamples, 4000)) break;
+        // [V33.106] 상한은 '이번 회차 총 생성분'(이미 내보낸 것 포함) 기준으로 센다.
+        if (_flushed + made.length >= _num(cfg.maxSamples, 4000)) break;
       }
       if (n0 > 0) symOk++;
       if (_newWm > _wmTs) wm[sym] = _newWm;
-      if (made.length >= _num(cfg.maxSamples, 4000)) break;
+      if (_flushed + made.length >= _num(cfg.maxSamples, 4000)) break;
     }
-    try { await setState(DB, "stin_bf_offset", { v: (off + picked.length) % all.length, ts: Date.now() }); } catch (e) {}
+    // 검증된 range 를 남긴다 — 다음 회차부터 탐색 없이 바로 쓴다.
+    try { if (_rangeProbed) await setState(DB, "stin_bf_range", { v: _bfRange, demoted: !!_rangeDemoted, ts: Date.now() }); } catch (e) {}
+    _cov = "전체 " + all.length + "종목 중 " + off + "~" + ((off + _procN) % all.length) + " 구간(" + _procN + "종목)";
+    try { await setState(DB, "stin_bf_offset", { v: (off + Math.max(1, _procN)) % all.length, ts: Date.now() }); } catch (e) {}
     // 워터마크 저장 — 유니버스에서 빠진 종목은 정리해 무한 증가를 막는다.
     try {
       const live = new Set(all);
@@ -25660,33 +25716,31 @@ async function stinBackfill(DB, opts) {
       for (const k2 in wm) if (live.has(k2)) wm2[k2] = wm[k2];
       await setState(DB, "stin_bf_wm", { v: wm2, ts: Date.now() });
     } catch (e) {}
-    if (!made.length) return "[ST-BACKFILL] 0건 — " + _cov +
-      " (성공 " + symOk + " 실패 " + symFail + " 짧음 " + skipShort + " 기수확 " + skipDup + ")";
-    // R2 로 내보낸다 — 라이브와 같은 폴더/스키마라 트레이너가 그대로 읽는다.
-    // [V33.95] R2 가 있으면 종전 경로(오브젝트 1개), 없으면 D1 표본 테이블로.
-    if (_useD1) {
-      await _stinFlushD1(DB, { done: made, d1: true });
-    } else {
-      const key = "st/intraday/" + _stinDay() + "/bf-" + Date.now() + ".json";
-      await R2.put(key, JSON.stringify({ n: made.length, samples: made, src: "backfill" }));
-    }
+    // 마지막 잔여분까지 내보낸다(청크 플러시와 같은 경로).
+    await _flushChunk(made);
+    const _total = _flushed;
+    if (!_total) return "[ST-BACKFILL] 0건 — " + _cov +
+      " (성공 " + symOk + " 실패 " + symFail + " 짧음 " + skipShort + " 기수확 " + skipDup +
+      ", range " + _bfRange + ")";
     try {
       const d0 = _stinDay();
       const pv = (await getState(DB, "stin_stats", null)) || {};
       const same = (pv.day === d0);
       // D1 경로는 _stinFlushD1 이 이미 total/today/files 를 올렸다 — 중복 가산 금지.
       await setState(DB, "stin_stats", Object.assign({}, pv, _useD1 ? {
-        day: d0, bfTotal: _num(pv.bfTotal, 0) + made.length, ts: Date.now()
+        day: d0, bfTotal: _num(pv.bfTotal, 0) + _total, ts: Date.now()
       } : {
         day: d0,
-        total: _num(pv.total, 0) + made.length,
-        today: (same ? _num(pv.today, 0) : 0) + made.length,
-        files: (same ? _num(pv.files, 0) : 0) + 1,
-        bfTotal: _num(pv.bfTotal, 0) + made.length, ts: Date.now()
+        total: _num(pv.total, 0) + _total,
+        today: (same ? _num(pv.today, 0) : 0) + _total,
+        files: (same ? _num(pv.files, 0) : 0) + _files,
+        bfTotal: _num(pv.bfTotal, 0) + _total, ts: Date.now()
       }));
     } catch (e) {}
-    return "[ST-BACKFILL] +" + made.length + "표본 / " + _cov +
-           " (성공 " + symOk + " 실패 " + symFail + " 짧음 " + skipShort + " 기수확 " + skipDup + ") — 저장된 5분봉";
+    return "[ST-BACKFILL] +" + _total + "표본(" + _files + "파일) / " + _cov +
+           " (성공 " + symOk + " 실패 " + symFail + " 짧음 " + skipShort + " 기수확 " + skipDup +
+           ", range " + _bfRange + (_rangeDemoted ? "↓" : "") +
+           ", " + (Date.now() - _t0bf) + "ms) — 저장된 5분봉";
   } catch (e) { return "[ST-BACKFILL] fail: " + (e && e.message); }
 }
 
@@ -35246,18 +35300,28 @@ export default {
         const _r2ok = true;   // [V33.95] R2 없으면 D1 로 적재 — 더는 바인딩에 묶이지 않는다
         const _bfLock = _num(await getState(env.DB, "stin_bf_lock", 0), 0);
         let _mkoBf = false; try { _mkoBf = isMarketOpen("us") || isMarketOpen("kr"); } catch (e) {}
-        const _gap = _mkoBf ? 30 * 60000 : 10 * 60000;   // [V33.71] 더 자주 — 표본이 급하다
+        // [V33.106] 회차 간격 단축 — 장외 10 → 5분, 장중 30 → 15분.
+        //   회차당 마감시한(장외 25s·장중 6s)이 있어 사이클을 잠식하지 않는다.
+        const _gap = _mkoBf ? 15 * 60000 : 5 * 60000;
         const _due = (Date.now() - _bfLock) > _gap;
         if (_r2ok && _due) {
           await setState(env.DB, "stin_bf_lock", Date.now());
-          try { resetFetchBudget(_mkoBf ? 30 : 120); } catch (e0) {}
+          // [V33.106] 전용 예산 상향 — 장외 120 → 200(마감시한이 먼저 걸리는 게 정상),
+          //   장중 30 → 45. Workers Paid subrequest 상한(1000/invocation) 안쪽이다.
+          try { resetFetchBudget(_mkoBf ? 45 : 200); } catch (e0) {}
           // [V33.72] 전 종목을 빨리 한 바퀴 돌기 위해 회당 종목 수를 늘린다.
           //   장외 20종목/10분 → 900종목 기준 약 7.5시간이면 전수 커버(종전 8종목이면 19시간).
           // [V33.102] 장외 회당 20 → 45 종목. 900종목 전수 커버가 7.5시간 → 3.3시간으로 줄어든다.
           //   장중(5종목)은 그대로 — 거래 사이클 예산을 잠식하면 안 된다.
-          // [V33.104] 장중 5 → 12. 이 단계는 전용 예산(30)을 따로 받으므로 거래 사이클을
-          //   잠식하지 않는다. US 가 라운드로빈으로 섞이면서 회당 수백 표본이 나온다.
-          const _bfr = await stinBackfill(env.DB, { maxSyms: _mkoBf ? 12 : 45, maxSamples: 8000 });
+          // [V33.106] 이제 멈추는 기준은 종목 수가 아니라 ★마감시한★ 이다 — 회선이 빠른 날엔
+          //   더 많이 돌고 느린 날엔 알아서 접는다. maxSyms 는 상한일 뿐 실제로는 거의 안 닿는다.
+          //   표본 상한도 올렸다(청크 플러시로 메모리 상한을 방어하므로 안전).
+          //   실측 근거: 종목당 CPU 139ms · 표본 283건(60d) → 2만 표본이어도 CPU 10s 안쪽.
+          const _bfr = await stinBackfill(env.DB, {
+            maxSyms: _mkoBf ? 25 : 120,
+            maxSamples: _mkoBf ? 5000 : 20000,
+            deadlineMs: _mkoBf ? 6000 : 25000
+          });
           await log(env.DB, "INFO", null, _bfr || "[ST-BACKFILL] 반환 없음");
         } else {
           // [V33.71] ★"안 돌았다"를 추측하지 않게 스킵 사유를 남긴다★

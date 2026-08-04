@@ -34,18 +34,21 @@ function synthBars(n, seed) {
 }
 
 const BARS = synthBars(1716, 12345);
+// 케이스별로 응답 길이를 바꿔야 하므로(60d 판정 검증) 스텁이 참조를 통해 읽는다.
+const BARS_REF = { cur: BARS };
 
 // ── 야후 chart 응답 스텁 ──
 globalThis.fetch = async function (url) {
   const u = String(url);
   if (u.indexOf("/v8/finance/chart/") >= 0) {
+    const B = BARS_REF.cur;
     return {
       ok: true, status: 200,
       json: async function () {
         return { chart: { result: [{
-          meta: { regularMarketPrice: BARS.c[BARS.c.length - 1] },
-          timestamp: BARS.ts,
-          indicators: { quote: [{ open: BARS.o, high: BARS.h, low: BARS.l, close: BARS.c, volume: BARS.v }] }
+          meta: { regularMarketPrice: B.c[B.c.length - 1] },
+          timestamp: B.ts,
+          indicators: { quote: [{ open: B.o, high: B.h, low: B.l, close: B.c, volume: B.v }] }
         }] } };
       },
       text: async function () { return "{}"; }
@@ -137,6 +140,67 @@ const bad = (msg) => { fails++; console.log("  FAIL " + msg); };
   const made2 = r2._puts.reduce(function (a, p) { return a + p.n; }, 0);
   if (made2 === 0) ok("워터마크 재실행 중복차단 (2회차 +" + made2 + ")");
   else bad("워터마크가 안 먹는다 — 같은 봉이 재수확됨 (+" + made2 + "): " + res2);
+}
+
+// ══ 1-b) 긴 range(60일) 판정 · 마감시한 · 청크 플러시 ═════════════════════════
+//   [V33.106] 같은 fetch 1회로 봉을 2배 받는 경로. 야후가 60d 를 실제로 주면 그대로 쓰고,
+//   1mo 분량만 오면 자동 강등한다 — 그 판정이 실제로 도는지 확인한다.
+{
+  const LONG = synthBars(3400, 777);          // 60일치 상당
+  const prevBars = BARS_REF.cur;
+  BARS_REF.cur = LONG;
+  const daily = JSON.stringify(synthDaily(300));
+  const db = fakeDB([["daily:AAA", daily], ["daily:BBB", daily]]);
+  const r2 = { _objs: [], async put(k, body) { this._objs.push({ k, o: JSON.parse(body) }); } };
+  M._setR2ForTest(r2);
+  const res = await M.stinBackfill(db, { maxSyms: 2, maxSamples: 100000 });
+  const n = r2._objs.reduce(function (a, x) { return a + x.o.n; }, 0);
+  console.log("  [긴range] " + res);
+  const rs = JSON.parse(db._state.get("stin_bf_range") || "null");
+  if (rs && rs.v === "60d" && !rs.demoted) ok("긴 range 유지 (봉이 실제로 길면 강등 안 함)");
+  else bad("긴 range 가 강등됐다 — " + JSON.stringify(rs));
+  if (n > 400) ok("긴 range 수율 " + n + "건/2종목 (1mo 대비 약 2배)");
+  else bad("긴 range 인데 수율이 " + n + "건뿐");
+
+  // 마감시한 0 이면 한 종목도 안 돈다(벽시계 가드가 실제로 먹는지).
+  const db2 = fakeDB([["daily:AAA", daily], ["daily:BBB", daily]]);
+  const r2b = { _n: 0, async put(k, b) { this._n += JSON.parse(b).n; } };
+  M._setR2ForTest(r2b);
+  const res2 = await M.stinBackfill(db2, { maxSyms: 2, maxSamples: 100000, deadlineMs: -1 });
+  if (r2b._n === 0 && /0건/.test(res2)) ok("마감시한 가드 동작 (deadlineMs=-1 → 0건)");
+  else bad("마감시한을 무시했다 — " + res2);
+
+  // 청크 플러시: 4,000건마다 오브젝트가 나뉘어야 한다(메모리 상한 방어).
+  // 종목당 약 280표본이므로 4,000 경계를 넘기려면 20종목이 필요하다.
+  const _rows3 = [];
+  for (let i = 0; i < 20; i++) _rows3.push(["daily:A" + (i < 10 ? "0" + i : i), daily]);
+  const db3 = fakeDB(_rows3);
+  const r2c = { _objs: [], async put(k, b) { this._objs.push(JSON.parse(b).n); } };
+  M._setR2ForTest(r2c);
+  await M.stinBackfill(db3, { maxSyms: 20, maxSamples: 100000 });
+  const tot = r2c._objs.reduce(function (a, b) { return a + b; }, 0);
+  if (tot > 4000 && r2c._objs.length >= 2 && Math.max.apply(null, r2c._objs) <= 4600)
+    ok("청크 플러시 " + r2c._objs.length + "파일 · 총 " + tot + "건 (파일당 최대 " + Math.max.apply(null, r2c._objs) + ")");
+  else bad("청크 분할이 안 됐다: 파일 " + r2c._objs.length + " 총 " + tot + " 최대 " + (r2c._objs.length ? Math.max.apply(null, r2c._objs) : 0));
+
+  // [V33.106] 회전 오프셋은 ★실제로 본 종목 수★ 만큼만 밀려야 한다.
+  //   마감시한으로 중간에 끊겼는데 picked 전체만큼 밀면 못 본 종목이 영영 건너뛰어진다
+  //   (전수 커버가 조용히 깨지고, 로그만 보면 정상으로 보인다).
+  {
+    const _rows4 = [];
+    for (let i = 0; i < 12; i++) _rows4.push(["daily:B" + (i < 10 ? "0" + i : i), daily]);
+    const db4 = fakeDB(_rows4);
+    const r2d = { async put() {} };
+    M._setR2ForTest(r2d);
+    // 표본 상한을 아주 낮게 잡아 첫 종목에서 끊기게 만든다.
+    await M.stinBackfill(db4, { maxSyms: 12, maxSamples: 10 });
+    const off = JSON.parse(db4._state.get("stin_bf_offset") || "{}");
+    if (Number(off.v) > 0 && Number(off.v) <= 3)
+      ok("회전 오프셋이 처리분(" + off.v + ")만큼만 전진 — 미처리 종목 건너뜀 없음");
+    else bad("오프셋이 " + off.v + " 로 밀렸다 — 못 본 종목이 회전에서 사라진다");
+  }
+
+  BARS_REF.cur = prevBars;
 }
 
 // ══ 2) 라이브 관측 경로가 표본을 만드는가 ════════════════════════════════════
