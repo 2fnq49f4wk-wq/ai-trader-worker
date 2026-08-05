@@ -260,5 +260,64 @@ async function shockCase(kTrue, n, label) {
   else bad("폴백이 깨졌다");
 }
 
+// ══ [V33.118] 블록 IC 게이트가 ★겹치는 라벨 아래서도★ 제 문턱을 지키는가 ══════════
+//   의심할 만한 이유가 있었다: _icBlockStats 의 블록은 시간순 연속 구간이고, 라벨 지평이
+//   10일인데 블록 폭이 그보다 좁으면 인접 블록이 같은 가격움직임을 공유한다. 블록끼리
+//   상관이 생기면 블록 IC 의 표준편차가 과소평가되고 t 가 부풀 수 있다.
+//
+//   ★그래서 재봤더니 그렇지 않았다.★ 우리 표본 구조(D일 × S종목, 라벨 H일 누적)를 그대로
+//   흉내내 진짜 IC=0 인 자료를 만들고 게이트를 돌리면 오탐률이 의도(단측 0.6%)와 맞는다.
+//   이유는 예측값이 행마다 독립이라, 블록 IC 추정의 산포가 라벨 겹침이 아니라 ★예측 잡음★
+//   에 지배되기 때문이다. V33.113 의 자유도 보정이 이미 제 몫을 하고 있다.
+//
+//   이 시험을 남기는 목적은 두 가지다.
+//     ① 나중에 누가(나 포함) "겹침 때문에 t 가 부풀 것" 이라고 ★추측으로★ 구조를 뜯어고치는
+//        일을 막는다. 이 저장소는 틀린 진단 위에 코드를 지은 적이 여러 번 있다.
+//     ② 반대로 _icBlockStats 를 손대다가 진짜로 문턱이 무너지면 그때는 잡는다.
+{
+  let _r = 99; const rnd = () => { _r = (_r * 1664525 + 1013904223) >>> 0; return (_r + 0.5) / 4294967296; };
+  const gs = () => Math.sqrt(-2 * Math.log(rnd())) * Math.cos(2 * Math.PI * rnd());
+  function gen(D, S, H) {
+    const pv = [], yv = [];
+    const noise = [];
+    for (let sy = 0; sy < S; sy++) { const a = []; for (let d = 0; d < D + H; d++) a.push(gs()); noise.push(a); }
+    for (let d = 0; d < D; d++) for (let sy = 0; sy < S; sy++) {
+      let f = 0; for (let h = 0; h < H; h++) f += noise[sy][d + h];   // H일 누적 = 겹치는 라벨
+      pv.push(gs());                                                  // 예측은 라벨과 무관(진짜 IC=0)
+      yv.push(f > 0 ? 1 : 0);
+    }
+    return { pv, yv };
+  }
+  const TMIN = 2.50;                     // ICGATE.tMin — 본페로니 보정된 단측 문턱(α≈0.006)
+  const cases = [[20, 200, 10], [40, 100, 10]];
+  for (const [D, S, H] of cases) {
+    let fire = 0; const T = 600;
+    for (let it = 0; it < T; it++) {
+      const g0 = gen(D, S, H);
+      const st = _icBlockStats(g0.pv, g0.yv, 5);
+      if (st && st.t != null && st.t >= TMIN) fire++;
+    }
+    const pct = fire / T * 100;
+    // 600회 몬테카를로에서 0.6% 의 표준오차는 약 0.3%p — 상한을 3% 로 넉넉히 둔다.
+    //   (여기서 잡고 싶은 건 '문턱이 무너지는' 수준의 회귀이지 소수점 흔들림이 아니다)
+    if (pct <= 3.0) ok("겹침 라벨(D" + D + "×S" + S + ", 지평 " + H + "일) 진짜 IC=0 → z≥" + TMIN + " 오탐 " + pct.toFixed(1) + "% (의도 0.6%)");
+    else bad("겹침 라벨에서 블록 IC 오탐이 " + pct.toFixed(1) + "% — 문턱이 무너졌다(의도 0.6%)");
+  }
+  // 반대 방향 — 진짜 실력이 있으면 통과해야 한다(문턱을 그냥 막아버린 게 아님을 확인).
+  {
+    let pass = 0; const T = 300, D = 20, S = 200, H = 10;
+    for (let it = 0; it < T; it++) {
+      const g0 = gen(D, S, H);
+      // 라벨 쪽으로 살짝 기운 예측 — 실측 IC 0.05~0.08 수준
+      const pv = g0.pv.map((v, i) => v * 0.85 + (g0.yv[i] - 0.5) * 0.5);
+      const st = _icBlockStats(pv, g0.yv, 5);
+      if (st && st.t != null && st.t >= TMIN) pass++;
+    }
+    const pw = pass / T * 100;
+    if (pw >= 80) ok("진짜 실력(IC≈0.06) → " + pw.toFixed(0) + "% 통과 (검정력 유지)");
+    else bad("실력 있는 모델도 " + pw.toFixed(0) + "% 만 통과한다 — 문턱이 과도하다");
+  }
+}
+
 console.log(fails ? "\n확률 계수 검증 실패 " + fails + "건" : "\n  ok   확률 계수 적합기 통과");
 process.exit(fails ? 1 : 0);
