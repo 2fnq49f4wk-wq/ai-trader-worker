@@ -11,7 +11,8 @@
 //   "많이 올랐다"가 아니라 "부드럽게 오르는가"로 천장을 연다. 같은 +3% 라도 한 방향으로
 //   밀어올린 날과 ±3% 를 오간 날은 다른 사건이고, 후자에 레버리지를 걸면 그건 추격이다.
 
-import { leverageDecide, DEFAULT_CFG, RISKENG } from "../src/index.js";
+import { leverageDecide, DEFAULT_CFG, RISKENG,
+         scalpMaeMult, SCALPMAE } from "../src/index.js";
 
 let fails = 0;
 const ok = (m) => console.log("  ok   " + m);
@@ -200,6 +201,101 @@ const L = (over) => leverageDecide(Object.assign({}, base, over));
   if (/단타는 아래 전용 게이트\(leverageDecide\)가 변동성까지 함께 본다/.test(src))
     ok("단타 이중 변동성 계산 방지 주석·분기 유지");
   else bad("volTarget 과 leverageDecide 가 같은 변동성으로 두 번 깎을 수 있다");
+}
+
+// ══ ⑦ [V33.120] 경로 문지기(MAE) — '가는 길을 견디는가' ═══════════════════
+//   켈리는 평균적으로 버는지를 본다. 방향을 맞혀도 먼저 손절에 닿으면 레버리지는
+//   손실만 배가한다 — 그건 도착점 통계에 안 보이고 경로(MAE)에만 보인다.
+{
+  // ★hardCap 에 물리지 않는 시나리오를 쓴다.★ 켈리까지 얹으면 raw 가 4.4 라 상한 2.5 에
+  //   붙어버리고, 그러면 계수를 절반으로 깎아도 결과가 그대로 2.5 다 — 효과가 안 보인다.
+  //   (처음에 그렇게 써서 게이트가 잡았다. 상한에 물린 지점은 비교 대상이 될 수 없다)
+  const strong = { realVolPct: 5, phase: "MELTUP", er: 0.50 };
+  const full = L(strong).mult;
+
+  const blocked = L(Object.assign({}, strong, { maeMult: 0, maeNote: "역행 0.90" }));
+  if (near(blocked.mult, 1, 0.01)) ok("MAE 차단(계수 0) → ×1 (증폭 전부 소멸, 거래 자체는 막지 않는다)");
+  else bad("MAE 차단인데 배수가 " + blocked.mult);
+
+  const half = L(Object.assign({}, strong, { maeMult: 0.5 }));
+  const wantHalf = 1 + (full - 1) * 0.5;
+  if (near(half.mult, wantHalf, 0.02)) ok("MAE 계수 0.5 → 증폭분 절반 (×" + full + " → ×" + half.mult + ")");
+  else bad("MAE 0.5 에서 " + half.mult + " (기대 " + wantHalf.toFixed(2) + ")");
+
+  const free = L(Object.assign({}, strong, { maeMult: 1 }));
+  if (near(free.mult, full, 0.01)) ok("MAE 계수 1 → 제한 없음(종전과 동일)");
+  else bad("MAE 1 인데 배수가 달라졌다");
+
+  // 장타는 이 문지기를 쓰지 않는다 — 손절폭이 ATR 기반으로 훨씬 넓어 지배적 실패모드가 아니다.
+  const sw = leverageDecide({ cfg: SW, isScalp: false, phase: "MELTUP", er: 0.5,
+    realVolPct: 5, targetVolPct: 15, ddPct: 0, grossFrac: 0, grossCapFrac: RISKENG.maxGrossFrac, maeMult: 0 });
+  if (sw.mult > 1) ok("장타는 MAE 문지기 미적용 → ×" + sw.mult);
+  else bad("장타에 MAE 문지기가 걸렸다: " + sw.mult);
+
+  // ── 비율 → 계수 사상 ──
+  const mkDB = (v) => ({
+    prepare(sql) {
+      const st = { _a: [], bind(...a) { st._a = a; return st; },
+        async first() {
+          if (/SELECT v FROM state WHERE k = \?/.test(sql) && st._a[0] === "scalp_mae")
+            return v === null ? null : { v: JSON.stringify(v) };
+          return null;
+        },
+        async all() { return { results: [] }; }, async run() { return {}; } };
+      return st;
+    }
+  });
+  const now = Date.now();
+  const rdy = (ratio, over) => Object.assign({ ready: true, ratio: ratio, ts: now,
+    freeBelow: SCALPMAE.freeBelow, blockAt: SCALPMAE.blockAt }, over || {});
+
+  const lo = await scalpMaeMult(mkDB(rdy(0.40)));
+  if (near(lo.mult, 1)) ok("역행/손절폭 0.40 ≤ " + SCALPMAE.freeBelow + " → 계수 1 (여유 충분)");
+  else bad("여유 구간에서 계수가 " + lo.mult);
+
+  const hi = await scalpMaeMult(mkDB(rdy(0.90)));
+  if (near(hi.mult, 0)) ok("역행/손절폭 0.90 ≥ " + SCALPMAE.blockAt + " → 계수 0 (경로가 손절폭을 못 견딘다)");
+  else bad("차단 구간에서 계수가 " + hi.mult);
+
+  const mid = await scalpMaeMult(mkDB(rdy((SCALPMAE.freeBelow + SCALPMAE.blockAt) / 2)));
+  if (near(mid.mult, 0.5, 0.02)) ok("중간 역행 → 계수 " + mid.mult + " (선형 — 문턱에서 튀지 않는다)");
+  else bad("중간 구간 계수가 " + mid.mult + " (기대 0.5)");
+
+  // 단조성 — 역행이 커질수록 계수가 줄어야 한다
+  let prev = Infinity, mono = true;
+  for (let r = 0.3; r <= 1.0001; r += 0.05) {
+    const m = (await scalpMaeMult(mkDB(rdy(r)))).mult;
+    if (m > prev + 1e-9) mono = false;
+    prev = m;
+  }
+  if (mono) ok("역행 대비 계수 단조감소");
+  else bad("역행이 커졌는데 계수가 커지는 구간이 있다");
+
+  // ★모르면 종전과 같게★ — 측정 전·스태일·없음은 전부 1
+  if (near((await scalpMaeMult(mkDB(null))).mult, 1)) ok("측정값 없음 → 계수 1 (종전 동작)");
+  else bad("측정값이 없는데 계수가 1 이 아니다");
+  if (near((await scalpMaeMult(mkDB({ ready: false, ts: now }))).mult, 1)) ok("ready:false → 계수 1");
+  else bad("ready:false 처리 실패");
+  const stale = await scalpMaeMult(mkDB(rdy(0.95, { ts: now - (SCALPMAE.staleH + 10) * 3600000 })));
+  if (near(stale.mult, 1)) ok("스태일(" + SCALPMAE.staleH + "h 초과) → 계수 1 (낡은 측정으로 문을 닫지 않는다)");
+  else bad("스태일 값을 그대로 썼다: " + stale.mult);
+}
+
+// ══ ⑧ MAE 배선 회귀 ════════════════════════════════════════════════════════
+{
+  const fs = await import("node:fs");
+  const src = fs.readFileSync(new URL("../src/index.js", import.meta.url), "utf8");
+  if (/mae: \+mae\.toFixed\(3\), mfe: \+mfe\.toFixed\(3\)/.test(src)) ok("백필 라벨이 MAE/MFE 를 담는다(미래 경로 정확값)");
+  else bad("백필이 MAE/MFE 를 안 담는다 — 분포를 잴 표본이 안 쌓인다");
+  if (/mae: _num\(it\.mae, 0\), mfe: _num\(it\.mfe, 0\), src: "live"/.test(src)) ok("라이브 라벨도 MAE/MFE 를 담고 src 로 구분한다");
+  else bad("라이브 라벨에 MAE/MFE·src 가 없다");
+  if (/if \(sm\.src === "live"\) \{ nLive\+\+; continue; \}/.test(src))
+    ok("분포 적합이 라이브 표본을 제외한다(1분 관측은 고저를 못 봐 MAE 과소추정)");
+  else bad("과소추정된 라이브 MAE 가 분포에 섞인다 — 낙관적으로 문이 열린다");
+  if (/_stg\("scalpmae"/.test(src) && /\["scalpmae",/.test(src)) ok("scalpmae 단계가 크론·수동 양쪽에 등록됨");
+  else bad("scalpmae 파이프라인 등록 누락");
+  if (/maeMult: _num\(_st\.maeMult, 1\)/.test(src)) ok("매수 경로가 MAE 계수를 결정기에 넘긴다");
+  else bad("MAE 계수가 결정기까지 안 간다 — 측정만 하고 안 쓰는 코드가 된다");
 }
 
 console.log(fails ? "\n레버리지 계약 위반 " + fails + "건" : "\n  ok   레버리지 계약 통과");

@@ -13862,6 +13862,22 @@ html[data-theme="light"] .rail{background:#fff;}
               one('美', S.us) + '<br>' + one('韓', S.kr)
               + ' <span class="sub">— 천장: 장타 폭등 ×'+S.ceilMeltup+' / 추세 ×'+S.ceilTrend+' · 단타 폭등 ×'+S.scalpCeilMeltup
               + ' (ER '+S.erMin+'↑부터 열려 '+S.erFull+'에서 만개)</span>'];
+          })(),
+          // [V33.120] 경로 문지기(MAE) — "켈리는 좋은데 왜 안 열리지"를 화면이 설명한다.
+          (function(){
+            var M = mode.alt && mode.alt.scalpMae;
+            if(!M) return ['단타 경로(MAE)', '<span class="sub">미측정 — 백필 표본 대기</span>'];
+            if(!M.ready) return [ico(null)+' 단타 경로(MAE)',
+              '<span class="sub">표본 '+n0(M.n)+'/'+n0(M.need)+' 대기'
+              + (M.nLiveSkipped ? ' · 라이브 '+n0(M.nLiveSkipped)+'건 제외(1분 관측은 고저 미포착)' : '')+'</span>'];
+            var c = M.mult >= 1 ? C.pos : (M.mult > 0 ? C.amb : C.neg);
+            var tag = M.mult >= 1 ? '통과' : (M.mult > 0 ? '부분 제한' : '차단');
+            return [ico(M.mult > 0 ? true : false)+' 단타 경로(MAE)',
+              col(tag, c)+' <span class="sub">역행/손절폭 p80 '+(has(M.ratio)?M.ratio.toFixed(2):'—')
+              + (has(M.median)?' (중앙 '+M.median.toFixed(2)+')':'')
+              + ' · 계수 ×'+M.mult.toFixed(2)
+              + ' · 여유 ≤'+M.freeBelow+' / 차단 ≥'+M.blockAt
+              + ' · n'+n0(M.n)+'</span>'];
           })()
         ]);
 

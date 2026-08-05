@@ -1385,6 +1385,7 @@ def _train_and_upload_scalp(BASE, KEY, HDR, featver):
     #   ix 스키마 버전(fv)이 서버와 다른 표본은 섞지 않는다(피처 인덱스 어긋남 방지).
     days, X, Y, TS, PNL, BAR, HM = 14, [], [], [], [], [], []
     SYM = []                                   # [V33.115] 고유도용 종목 — 겹침은 같은 종목 안에서만 센다
+    MAE = []                                   # [V33.120] |최대역행| / 배리어폭 — 경로 품질
     ifeatver, ifeatn, ifeatnames = None, 0, []
     skipped_old = 0
     # [V33.72] 같은 (종목, 봉시각) 표본은 한 번만 쓴다.
@@ -1438,6 +1439,10 @@ def _train_and_upload_scalp(BASE, KEY, HDR, featver):
                 SYM.append(str(sm.get("s") or ""))
                 BAR.append(sm.get("bar") or "time")            # tp / sl / time — 어느 배리어로 끝났나
                 HM.append(float(sm.get("hm") or 60.0))         # 결착까지 걸린 분
+                # [V33.120] 경로 통계 — 최대 역행/순행(%). 배리어폭(b) 대비로 정규화해서 쓴다.
+                #   레버리지를 걸 수 있는 표본이 어떤 것인지는 도착점이 아니라 경로가 말한다.
+                _bw = float(sm.get("b") or 0.0)
+                MAE.append(abs(float(sm.get("mae") or 0.0)) / _bw if _bw > 0 else 0.0)
         except Exception as e:
             print(f"  장중표본 {d} 수집 실패: {e}")
     N = len(Y)
@@ -1453,13 +1458,14 @@ def _train_and_upload_scalp(BASE, KEY, HDR, featver):
     X = np.array(X, dtype=np.float64); Y = np.array(Y, dtype=int); TS = np.array(TS)
     PNL = np.array(PNL, dtype=np.float64)
     BAR = np.array(BAR); HM = np.array(HM, dtype=np.float64)
-    SYM = np.array(SYM)
+    SYM = np.array(SYM); MAE = np.array(MAE, dtype=np.float64) if len(MAE) == len(Y) else None
     D = X.shape[1]
     bar_mix = {b: int((BAR == b).sum()) for b in ("tp", "sl", "time")}
     print(f"   배리어 결착: TP {bar_mix['tp']} / SL {bar_mix['sl']} / 시간만료 {bar_mix['time']}")
     order = np.argsort(TS)
     Xs, Ys, TSs, PNLs = X[order], Y[order], TS[order], PNL[order]
     BARs, HMs = BAR[order], HM[order]
+    MAEs = MAE[order] if MAE is not None else None
     SYMs = SYM[order] if SYM.size == N else None
     nval = max(300, int(N * 0.25))
     Xva, Yva = Xs[-nval:], Ys[-nval:]
@@ -1514,6 +1520,23 @@ def _train_and_upload_scalp(BASE, KEY, HDR, featver):
         Wtr = Wtr * (0.6 + 0.4 * hit) * (1.0 + 0.3 * (speed - 1.0))
     except Exception as e:
         print(f"   배리어 가중 생략: {e}")
+
+    # [V33.120] ★경로 품질 가중 — 레버리지를 걸 수 있는 표본에 학습을 집중시킨다★
+    #   같은 '승리' 라도 역행 없이 곧장 올라간 건과, 손절 직전까지 밀렸다가 겨우 돌아온 건은
+    #   전혀 다른 사건이다. 뒤엣것은 배수를 올리는 순간 손절로 바뀐다 — 레버리지 관점에서는
+    #   승리가 아니다. |최대역행|/배리어폭 이 작은 표본을 더 무겁게 본다.
+    #   (도착점만 보는 라벨로는 이 구분이 불가능하다. 그래서 워커가 mae 를 실어 보내게 했다)
+    try:
+        if MAEs is not None:
+            _mtr = MAEs[:-nval][tr_mask]
+            _q = np.clip(_mtr, 0.0, 1.5)
+            Wpath = 1.0 + 0.6 * (1.0 - np.clip(_q, 0.0, 1.0))    # 역행 0 → ×1.6, 역행=배리어폭 → ×1.0
+            Wtr = Wtr * Wpath
+            print(f"   경로 품질 가중 — 역행/배리어폭 중앙 {np.median(_mtr):.3f} · 평균가중 {Wpath.mean():.3f}")
+        else:
+            print("   경로 품질 가중 생략 — 워커가 아직 mae 를 안 내려준다(구버전)")
+    except Exception as e:
+        print(f"   경로 품질 가중 생략: {e}")
 
     import lightgbm as lgb
     # 피처가 65 → 77 로 늘고 정보량이 실제로 커졌으므로 용량도 함께 키운다(과적합은 조기중단으로 통제).

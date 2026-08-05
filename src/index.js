@@ -2788,7 +2788,7 @@ async function applySignalTypeWeights(DB, cfg) {
 // ============================================================================
 // [V33.55] 빌드 버전 — SWR L2 캐시 키에 섞어 '배포 = 판단 캐시 자동 무효화'를 만든다.
 //   판정 로직을 고쳐도 옛 캐시가 최대 1시간 재배포되던 문제를 구조적으로 없앤다.
-const _BUILD_VER = "V33.119";
+const _BUILD_VER = "V33.120";
 
 const AI_PARAMS = {
   // ── OHLCV 타임프레임 ── 시가/고가/저가/종가/거래량을 어떤 봉 주기로 볼지.
@@ -9337,12 +9337,23 @@ function leverageDecide(o) {
     }
     out.parts.exposure = +expMult.toFixed(3);
 
+    // ── ⑤-b [V33.120] 경로 문지기 — 손절폭 대비 최대역행(MAE)이 크면 증폭을 닫는다 ──
+    //   켈리는 '평균적으로 버는가'를 본다. 이건 '가는 길을 견디는가'를 본다.
+    //   방향을 맞혀도 먼저 손절에 닿으면 레버리지는 손실만 배가한다. 단타 전용
+    //   (장타는 손절폭이 ATR 기반으로 훨씬 넓어 이 실패모드가 지배적이지 않다).
+    let maeMult = 1;
+    if (isScalp && o && typeof o.maeMult === "number") {
+      maeMult = _clamp(o.maeMult, 0, 1);
+      if (maeMult < 1) out.why.push("경로 " + (o.maeNote || "역행 과대") + " → 증폭분 ×" + maeMult.toFixed(2));
+    }
+    out.parts.mae = +maeMult.toFixed(3);
+
     // ── 결합 — 증폭분(1 초과분)에만 디리스크를 곱한다 ──────────────────────
     //   그냥 전부 곱하면 DD 나 노출이 걸릴 때 기본 크기(1배)까지 깎여, 레버리지 조절이 아니라
     //   '거래 축소' 가 된다. 축소는 이미 다른 곳(crashGate·gapRisk·volTarget)이 담당한다.
     //   여기서 다루는 건 ★1배를 넘는 부분★ 이다.
     const raw = volMult * edgeMult;
-    const amp = Math.max(0, raw - 1) * ddMult * expMult;
+    const amp = Math.max(0, raw - 1) * ddMult * expMult * maeMult;
     let mult = 1 + amp;
     // 축소 방향(volMult<1)은 그대로 반영한다 — 위험이 크면 줄이는 건 언제나 옳다.
     if (raw < 1) mult = raw;
@@ -15755,7 +15766,11 @@ async function runTradingCycle(env) {
               const shrink = (nW + nL) / ((nW + nL) + 30);   // 표본 축소 — 얇은 표본의 켈리는 믿지 않는다
               _k = raw * shrink;
             }
-            __scalpEdge = { trusted: !!(_stTrust && _stTrust.trusted), kelly: _k, n: nW + nL };
+            // [V33.120] 경로 문지기(MAE) — 사이클 1회 조회. 측정 전이면 1(종전 동작).
+            let _mae = { mult: 1, note: null };
+            try { _mae = await scalpMaeMult(DB); } catch (e2) {}
+            __scalpEdge = { trusted: !!(_stTrust && _stTrust.trusted), kelly: _k, n: nW + nL,
+                            maeMult: _num(_mae.mult, 1), maeNote: _mae.note };
           } catch (e) {}
           try {
             const _pk = await getState(DB, "equity_peak:" + market, null);
@@ -16995,6 +17010,7 @@ async function runTradingCycle(env) {
                   realVolPct: _lvRealVol, targetVolPct: _lvTargetVol,
                   kelly: (typeof _st.kelly === "number") ? _st.kelly : null,
                   modelTrusted: !!_st.trusted,
+                  maeMult: _num(_st.maeMult, 1), maeNote: _st.maeNote,
                   ddPct: _num(__ddPctNow, 0),
                   grossFrac: _lvGrossFrac, grossCapFrac: RISKENG.maxGrossFrac
                 });
@@ -18584,6 +18600,15 @@ async function handleRequest(request, env, ctx) {
                 return { phase: rg.phase || null, er: _num(rg.er, null), realVol: _rv, targetVol: _tv,
                          mult: d.mult, why: d.why.join(" / ") };
               };
+              // [V33.120] 경로 문지기 현황 — "켈리는 좋은데 왜 안 열리지" 를 화면이 설명해야 한다.
+              try {
+                const _mm = await getState(env.DB, "scalp_mae", null);
+                const _mv = await scalpMaeMult(env.DB);
+                _alt.scalpMae = _mm ? { ready: !!_mm.ready, ratio: _num(_mm.ratio, null), median: _num(_mm.median, null),
+                  n: _num(_mm.n, 0), need: _num(_mm.need, SCALPMAE.minN), nLiveSkipped: _num(_mm.nLiveSkipped, 0),
+                  blockAt: _num(_mm.blockAt, SCALPMAE.blockAt), freeBelow: _num(_mm.freeBelow, SCALPMAE.freeBelow),
+                  mult: _num(_mv.mult, 1), note: _mv.note || null } : null;
+              } catch (e) {}
               _alt.surgeLev = { us: _mkLev(_rg, "us"), kr: _mkLev(_rgK, "kr"),
                                 erMin: _num(_swc2.erMin, 0.30), erFull: _num(_swc2.erFull, 0.50),
                                 ceilMeltup: _num(_swc2.ceilMeltup, 1.6), ceilTrend: _num(_swc2.ceilTrend, 1.35),
@@ -19797,6 +19822,7 @@ async function handleRequest(request, env, ctx) {
         ["blendk", function (DB) { return decisionBlendFitNightly(DB); }],
         ["socialobs", function (DB) { return socialObserveNightly(DB); }],
         ["socialk", function (DB) { return socialCoefFitNightly(DB); }],
+        ["scalpmae", function (DB) { return scalpMaeFitNightly(DB); }],
         ["confk", function (DB) { return scalpConfluenceFitNightly(DB); }],
         ["shockk", function (DB) { return shockPriorFitNightly(DB); }],
         ["mindshadow", function (DB) { return mindShadowPromoteNightly(DB); }],
@@ -25477,6 +25503,13 @@ function stinLabel(pend, priceOf) {
     if (px > 0 && !it.hit && it.p > 0) {
       const bar = (typeof it.b === "number" && it.b > 0) ? it.b : STIN.tpPct;
       const r = (px / it.p - 1) * 100;
+      // [V33.120] MAE/MFE — 관측할 때마다 경로의 양 끝을 갱신한다.
+      //   라이브는 1분 간격 관측이라 5분봉 고저를 못 보고 종가만 본다 → ★과소추정★ 이다.
+      //   백필(미래 경로를 다 들고 있음)이 정확한 값을 만들고, 라이브는 하한을 만든다.
+      //   그래서 아래 분포 적합은 백필 표본을 우선한다(src 로 구분 가능).
+      if (!(typeof it.mae === "number")) { it.mae = 0; it.mfe = 0; }
+      if (r < it.mae) it.mae = +r.toFixed(3);
+      if (r > it.mfe) it.mfe = +r.toFixed(3);
       if (r >= bar) { it.hit = 1; it.hp = +r.toFixed(3); }
       else if (r <= -bar) { it.hit = -1; it.hp = +r.toFixed(3); }
     }
@@ -25494,7 +25527,8 @@ function stinLabel(pend, priceOf) {
     }
     const d = { ts: it.t, x: it.x, y: y, pnl: +ret.toFixed(3), s: it.s, m: it.m,
                 bar: it.hit ? (it.hit > 0 ? "tp" : "sl") : "time",   // 어느 배리어로 끝났는지(학습 가중용)
-                hm: (now - it.t) / 60000 | 0 };                       // 결착까지 걸린 분(빠를수록 강한 신호)
+                hm: (now - it.t) / 60000 | 0,                         // 결착까지 걸린 분(빠를수록 강한 신호)
+                mae: _num(it.mae, 0), mfe: _num(it.mfe, 0), src: "live" };   // [V33.120] 경로 통계
     if (it.ix) { d.ix = it.ix; d.fv = it.fv; d.b = it.b; }   // [V33.46/47] 장중 피처 + 배리어폭
     pend.done.push(d);
     labeled++;
@@ -25683,11 +25717,19 @@ async function stinBackfill(DB, opts) {
         if (!Array.isArray(base) || base.length !== LUXML.featNames.length) continue;
         // ── 라벨: i+1..i+H 의 실제 경로로 삼중배리어 '최초 접촉' 판정(라이브와 동일 규칙) ──
         const bar = _clamp(1.5 * _num(ifeat[7], 0) * Math.sqrt(H), 0.4, 3.0);
-        let hit = 0, ret = 0, hm = H * 5;
+        // [V33.120] ★MAE/MFE(최대 역행/순행 폭)★ — 레버리지 엔진들이 공통으로 쓰는 경로 통계.
+        //   종전 라벨은 ★도착점★ 만 담았다(tp/sl/time). 그런데 "방향은 맞았는데 가는 길에
+        //   먼저 손절에 닿았다" 는 사건은 도착점만 봐서는 보이지 않는다. 레버리지를 걸 수
+        //   있는지는 정확히 그 경로가 결정한다 — 손절폭 대비 역행이 크면, 방향을 맞혀도
+        //   대부분 털린다. 그런 국면에서 배수를 올리면 손실만 배가된다.
+        //   백필은 미래 경로를 손에 들고 있으므로 여기서 정확히 잰다(라이브는 관측 시마다 갱신).
+        let hit = 0, ret = 0, hm = H * 5, mae = 0, mfe = 0;
         for (let k = 1; k <= H; k++) {
           const hi = (h[i + k] != null ? h[i + k] : c[i + k]);
           const lo = (l[i + k] != null ? l[i + k] : c[i + k]);
           const up = (hi / px - 1) * 100, dn = (lo / px - 1) * 100;
+          if (up > mfe) mfe = up;
+          if (dn < mae) mae = dn;
           if (up >= bar) { hit = 1; ret = bar; hm = k * 5; break; }
           if (dn <= -bar) { hit = -1; ret = -bar; hm = k * 5; break; }
         }
@@ -25697,7 +25739,8 @@ async function stinBackfill(DB, opts) {
           ix: ifeat.map(function (z) { return +(_num(z, 0)).toFixed(4); }),
           fv: STIN_FEATVER, b: +bar.toFixed(3),
           y: hit > 0 ? 1 : (hit < 0 ? 0 : (ret > 0 ? 1 : 0)),
-          pnl: +ret.toFixed(3), bar: hit ? (hit > 0 ? "tp" : "sl") : "time", hm: hm });
+          pnl: +ret.toFixed(3), bar: hit ? (hit > 0 ? "tp" : "sl") : "time", hm: hm,
+          mae: +mae.toFixed(3), mfe: +mfe.toFixed(3) });
         n0++;
         if (_bts > _newWm) _newWm = _bts;
         // [V33.106] 상한은 '이번 회차 총 생성분'(이미 내보낸 것 포함) 기준으로 센다.
@@ -27790,6 +27833,84 @@ async function decisionBlendFitNightly(DB) {
 //   → 저장된 표본으로 '모델 확률을 오프셋으로 고정한' 잔여 계수를 적합한다.
 //     모델이 이미 다 설명했다면 k 는 0 근처로 나오고, 남는 게 있으면 그만큼만 더한다.
 //   판정과 측정이 ★같은 _scalpConfluenceVotes★ 를 쓴다 — 갈라지면 측정이 거짓말이 된다.
+// ════════════════════════════════════════════════════════════════════════════
+// [V33.120] ★단타 레버리지의 마지막 문지기 — 경로가 손절폭을 견디는가★
+//
+//   레버리지 엔진(Passivbot·Freqtrade·Jesse)이 공통으로 추적하는 것이 MAE/MFE 다.
+//   우리 단타 라벨은 ★도착점★ 만 담고 있었다(tp/sl/time). 그런데 레버리지를 걸 수 있는지는
+//   도착점이 아니라 ★가는 길★ 이 결정한다:
+//     "방향은 맞았는데 먼저 손절에 닿았다" 는 사건이 도착점 통계에는 승/패로만 남는다.
+//   손절폭 대비 최대 역행(|MAE|/손절폭)이 1 에 가까우면, 방향을 맞혀도 대부분 털린다.
+//   그 국면에서 배수를 올리면 ★맞는 판단의 손실만 배가된다★.
+//
+//   그래서 최근 표본에서 |MAE|/배리어폭 의 상위 분위(p80)를 재고, 그게 문턱을 넘으면
+//   단타 레버리지 천장을 닫는다. 켈리는 '평균적으로 버는가'를 보고, 이건 '가는 길을
+//   견디는가'를 본다 — 레버리지에는 둘 다 필요하다.
+//
+//   ★백필 표본을 우선한다★ — 라이브는 1분 관측이라 5분봉 고저를 못 봐 MAE 를 과소추정한다.
+//   과소추정된 MAE 로 문을 열면 그건 측정이 아니라 낙관이다.
+const SCALPMAE = { minN: 400, quantile: 0.80, blockAt: 0.85, freeBelow: 0.55, staleH: 72 };
+async function scalpMaeFitNightly(DB) {
+  try {
+    const R2 = _bigR2();
+    if (!R2) { await setState(DB, "scalp_mae", { ready: false, why: "R2 없음", ts: Date.now() }); return "[MAE] R2 없음 — 측정 불가"; }
+    const rows = [];
+    let nLive = 0;
+    for (let d = 0; d < 5 && rows.length < 12000; d++) {
+      const day = new Date(Date.now() + 9 * 3600000 - d * 86400000).toISOString().slice(0, 10);
+      let cursor = undefined;
+      for (let pg = 0; pg < 6 && rows.length < 12000; pg++) {
+        const lr = await R2.list({ prefix: "st/intraday/" + day + "/", cursor: cursor, limit: 60 });
+        for (const o of (lr.objects || [])) {
+          if (rows.length >= 12000) break;
+          try {
+            const g = await R2.get(o.key); if (!g) continue;
+            const j = JSON.parse(await g.text());
+            for (const sm of (j.samples || [])) {
+              if (rows.length >= 12000) break;
+              const bw = _num(sm.b, 0);                       // 이 표본의 배리어폭(%)
+              if (!(bw > 0) || typeof sm.mae !== "number") continue;
+              if (sm.src === "live") { nLive++; continue; }   // 과소추정분은 분포에 안 넣는다
+              rows.push(Math.abs(_num(sm.mae, 0)) / bw);
+            }
+          } catch (e2) {}
+        }
+        if (!lr.truncated) break;
+        cursor = lr.cursor;
+      }
+    }
+    if (rows.length < SCALPMAE.minN) {
+      await setState(DB, "scalp_mae", { ready: false, n: rows.length, need: SCALPMAE.minN,
+        nLiveSkipped: nLive, why: "표본부족", ts: Date.now() });
+      return "[MAE] 백필표본 " + rows.length + "/" + SCALPMAE.minN + " — 대기" + (nLive ? " (라이브 " + nLive + "건 제외: 고저 미관측)" : "");
+    }
+    rows.sort(function (a, b) { return a - b; });
+    const q = _pctile(rows, SCALPMAE.quantile);
+    const med = _pctile(rows, 0.5);
+    await setState(DB, "scalp_mae", { ready: true, n: rows.length, ratio: +q.toFixed(4), median: +med.toFixed(4),
+      quantile: SCALPMAE.quantile, blockAt: SCALPMAE.blockAt, freeBelow: SCALPMAE.freeBelow,
+      nLiveSkipped: nLive, ts: Date.now() });
+    return "[MAE] 역행/손절폭 p" + (SCALPMAE.quantile * 100) + " = " + q.toFixed(3) +
+           " (중앙 " + med.toFixed(3) + ", n=" + rows.length + ") — " +
+           (q >= SCALPMAE.blockAt ? "★레버리지 차단★ 경로가 손절폭을 못 견딘다"
+            : q <= SCALPMAE.freeBelow ? "여유 충분 — 천장 제한 없음" : "부분 제한");
+  } catch (e) { return "[MAE] fail: " + (e && e.message); }
+}
+// 조회기 — 레버리지 배수에 곱할 계수 [0,1]. 측정 전이면 1(종전 동작).
+async function scalpMaeMult(DB) {
+  try {
+    const s = await getState(DB, "scalp_mae", null);
+    if (!s || !s.ready) return { mult: 1, note: "MAE 미측정" };
+    if (_num(s.ts, 0) > 0 && (Date.now() - _num(s.ts, 0)) > SCALPMAE.staleH * 3600000) return { mult: 1, note: "MAE 스태일" };
+    const r = _num(s.ratio, null);
+    if (r == null) return { mult: 1, note: "MAE 미측정" };
+    const lo = _num(s.freeBelow, 0.55), hi = _num(s.blockAt, 0.85);
+    if (r <= lo) return { mult: 1, note: "역행 " + r.toFixed(2) + " — 여유" };
+    if (r >= hi) return { mult: 0, note: "역행 " + r.toFixed(2) + " ≥ " + hi + " — 경로가 손절폭을 못 견딘다" };
+    return { mult: +_clamp((hi - r) / (hi - lo), 0, 1).toFixed(3), note: "역행 " + r.toFixed(2) + " — 부분 제한" };
+  } catch (e) { return { mult: 1, note: "MAE 조회 실패" }; }
+}
+
 async function scalpConfluenceFitNightly(DB) {
   try {
     const L = await mlScalpLoad(DB);
@@ -36602,6 +36723,7 @@ export default {
             await _stg("socialobs", async function () { return await socialObserveNightly(env.DB); });
             await _stg("socialk", async function () { return await socialCoefFitNightly(env.DB); });
             // [V33.98] 단타 합류 로짓 계수 실측(모델 확률을 오프셋으로 고정한 잔여효과).
+            await _stg("scalpmae", async function () { return await scalpMaeFitNightly(env.DB); });
             await _stg("confk", async function () { return await scalpConfluenceFitNightly(env.DB); });
             // [V33.105] 충격 프라이어 잔여계수 실측 — 확률 체인에서 가장 큰 개입(최대 −1.8 로짓)이
             //   유일하게 미측정 상수로 남아 있었다. 사건 표본이 쌓이는 만큼만 배율이 움직인다.
@@ -36697,6 +36819,8 @@ export {
   mlGuardObserve, MIND,
   // [V33.119] 레버리지 결정기 — tools/check-leverage.mjs
   leverageDecide, RISKENG,
+  // [V33.120] 단타 경로 문지기(MAE) — tools/check-leverage.mjs
+  scalpMaeFitNightly, scalpMaeMult, SCALPMAE,
   FIN_TOOLS, finToolsRun,
   // [V33.110] 소셜 멀티소스 검증용 — tools/check-social.mjs
   SOCIAL, SOCIAL_SOURCES, socialScoreOf
