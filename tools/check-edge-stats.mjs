@@ -20,7 +20,8 @@
 //     ⑤ 자산곡선 지표가 ★시간순★ 으로 계산되는가 (질의는 DESC 다)
 
 import { _edgeStats, _pctile, portfolioStatistics, _tSf,
-         computeSignalWeight, SIGNAL_TYPES, DEFAULT_CFG } from "../src/index.js";
+         computeSignalWeight, SIGNAL_TYPES, DEFAULT_CFG,
+         mlGuardObserve, MIND } from "../src/index.js";
 
 let fails = 0;
 const ok = (m) => console.log("  ok   " + m);
@@ -245,6 +246,94 @@ function gauss() { return Math.sqrt(-2 * Math.log(rnd())) * Math.cos(2 * Math.PI
     else bad("좋은 신호인데 가중이 " + w.toFixed(2));
   }
   if (kMin > 0) ok("최소가중 " + kMin + " — '모르겠다' 는 0 이 아니다");
+}
+
+// ══ ⑦ MIND 자기불신 가드 — 문턱이 표본오차를 반영하는가 ═══════════════════════
+//   distrust 가 켜지면 ★ML 개입이 통째로 중단★ 된다(규칙엔진 폴백). 가장 센 스위치인데
+//   종전엔 관측창이 25건이든 60건이든 "8%p 하락" 하나로 판정했다. 정확도 55% 모델의
+//   25건 표본오차는 ±9.9%p 라, 성능이 전혀 안 변해도 18.3% 확률로 불신이 걸렸다.
+{
+  function fakeGuardDB(init) {
+    const m = new Map(Object.entries(init || {}).map(([k, v]) => [k, JSON.stringify(v)]));
+    return {
+      prepare(sql) {
+        const st = { _a: [], bind(...a) { st._a = a; return st; },
+          async first() {
+            if (/SELECT v FROM state WHERE k = \?/.test(sql)) { const v = m.get(st._a[0]); return v === undefined ? null : { v }; }
+            return null;
+          },
+          async all() { return { results: [] }; },
+          async run() { if (/INSERT INTO state/.test(sql)) m.set(st._a[0], st._a[1]); return {}; } };
+        return st;
+      },
+      async batch(a) { for (const s of a) await s.run(); return []; },
+      get(k) { const v = m.get(k); return v === undefined ? null : JSON.parse(v); }
+    };
+  }
+  // 관측창을 원하는 승패열로 채운 뒤 가드를 한 번 더 돌려 판정을 읽는다.
+  async function tripAt(nLive, hits, baseAcc) {
+    const live = [];
+    for (let i = 0; i < nLive - 1; i++) live.push({ p: 0.6, w: i < hits ? 1 : 0 });
+    const db = fakeGuardDB({ mind_guard: { live: live, distrust: false, baseAcc: baseAcc } });
+    // 마지막 한 건을 넣어 판정을 트리거한다(맞춘 건인지 여부는 hits 에 반영해 둔다)
+    await mlGuardObserve(db, 0.6, hits >= nLive);
+    return db.get("mind_guard");
+  }
+  // (a) 창이 덜 찼을 때 문턱이 넓어지는가
+  const g25 = await tripAt(25, 13, 0.55);
+  const g60 = await tripAt(60, 31, 0.55);
+  if (g25 && g60 && g25.guardNeed > g60.guardNeed)
+    ok("문턱이 관측수에 따라 달라진다 — 25건 " + g25.guardNeed.toFixed(4) + " > 60건 " + g60.guardNeed.toFixed(4));
+  else bad("문턱이 관측수와 무관하다: " + JSON.stringify([g25 && g25.guardNeed, g60 && g60.guardNeed]));
+  // (b) 창이 다 차면 설정값(guardMargin)으로 수렴 — 정상 운용에서는 종전과 같은 자
+  if (g60 && Math.abs(g60.guardNeed - MIND.guardMargin) <= 0.005)
+    ok("창이 다 차면 문턱 " + g60.guardNeed.toFixed(4) + " ≈ guardMargin " + MIND.guardMargin + " (정상 운용은 종전과 동일)");
+  else bad("60건에서 문턱이 " + (g60 && g60.guardNeed) + " — guardMargin " + MIND.guardMargin + " 로 수렴해야 한다");
+  // (c) 성능이 그대로면 불신이 걸리지 않는가 (25건에서 55% 그대로 = 13~14승)
+  const gOK = await tripAt(25, 14, 0.55);
+  if (gOK && !gOK.distrust) ok("25건 · 라이브 " + (gOK.liveAcc * 100).toFixed(0) + "% · 기준 55% → 불신 없음");
+  else bad("성능이 그대로인데 불신이 걸렸다: " + JSON.stringify(gOK));
+  // (d) 진짜 열화는 여전히 잡히는가 (25건에서 32%)
+  const gBad = await tripAt(25, 8, 0.55);
+  if (gBad && gBad.distrust) ok("25건 · 라이브 " + (gBad.liveAcc * 100).toFixed(0) + "% · 기준 55% → 불신 발동(검출력 유지)");
+  else bad("명백한 열화를 못 잡는다: " + JSON.stringify(gBad));
+  // (d-2) ★판별 케이스★ — 이 시험만이 '판정이 실제로 바뀌었는지' 를 본다.
+  //   위 (a)(b) 는 g.guardNeed(광고된 문턱)를 읽을 뿐이라, 판정만 옛 상수로 되돌려도
+  //   그대로 통과한다(실제로 주입시험에서 통과했다). 결정 자체를 물어야 한다.
+  //   25건 · 라이브 44% · 기준 55% → 하락 11%p:
+  //     종전 문턱 8%p  → 불신 발동(오발)
+  //     표본오차 문턱 12.74%p → 불신 없음  ← 이쪽이어야 한다
+  const gMid = await tripAt(25, 11, 0.55);
+  if (gMid && !gMid.distrust)
+    ok("판별: 25건 · 라이브 44% (하락 11%p) → 불신 없음 — 표본오차 문턱 12.7%p 안이라 판단 보류");
+  else bad("25건 하락 11%p 에 불신이 걸렸다 — 판정이 여전히 고정 문턱 " + MIND.guardMargin + " 을 쓴다");
+  // 같은 하락폭이라도 창이 다 차면(60건) 문턱이 8.2%p 라 발동해야 한다 — 무회귀 확인.
+  const gMid60 = await tripAt(60, 26, 0.55);   // 26/60 = 43.3% → 하락 11.7%p
+  if (gMid60 && gMid60.distrust)
+    ok("판별: 60건 · 라이브 43% (하락 11.7%p) → 불신 발동 — 창이 차면 설정값대로 민감하다");
+  else bad("60건 하락 11.7%p 인데 불신이 안 걸린다 — 문턱이 과도하게 넓어졌다");
+  // (e) 몬테카를로 — 성능 불변 시 오발률
+  {
+    const T = 20000, base = 0.55;
+    for (const n of [25, 60]) {
+      let oldT = 0, newT = 0;
+      const need = Math.max(MIND.guardMargin, MIND.guardZ * Math.sqrt(base * (1 - base) / n));
+      for (let it = 0; it < T; it++) {
+        let hit = 0; for (let i = 0; i < n; i++) if (rnd() < base) hit++;
+        const drop = base - hit / n;
+        if (drop > MIND.guardMargin) oldT++;
+        if (drop > need) newT++;
+      }
+      const o = oldT / T * 100, w = newT / T * 100;
+      if (n === 25) {
+        if (w < o - 5) ok("n=25 오발 " + o.toFixed(1) + "% → " + w.toFixed(1) + "% (창이 덜 찼을 때만 엄격)");
+        else bad("n=25 오발이 " + o.toFixed(1) + "% → " + w.toFixed(1) + "% — 개선이 미미하다");
+      } else {
+        if (Math.abs(w - o) < 0.5) ok("n=60 오발 " + w.toFixed(1) + "% — 종전과 동일(정상 운용 무회귀)");
+        else bad("n=60 에서 동작이 바뀌었다: " + o.toFixed(1) + "% → " + w.toFixed(1) + "%");
+      }
+    }
+  }
 }
 
 console.log(fails ? "\n원장 유의성 계약 위반 " + fails + "건" : "\n  ok   원장 유의성 계약 통과");

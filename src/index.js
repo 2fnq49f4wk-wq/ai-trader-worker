@@ -2788,7 +2788,7 @@ async function applySignalTypeWeights(DB, cfg) {
 // ============================================================================
 // [V33.55] 빌드 버전 — SWR L2 캐시 키에 섞어 '배포 = 판단 캐시 자동 무효화'를 만든다.
 //   판정 로직을 고쳐도 옛 캐시가 최대 1시간 재배포되던 문제를 구조적으로 없앤다.
-const _BUILD_VER = "V33.117";
+const _BUILD_VER = "V33.118";
 
 const AI_PARAMS = {
   // ── OHLCV 타임프레임 ── 시가/고가/저가/종가/거래량을 어떤 봉 주기로 볼지.
@@ -26813,6 +26813,9 @@ const MIND = {
   trustFloor: 0.505,   // [V32.16] 외부 FM(Modal) 승격 절대바닥 — 위원장이라 게이트는 없지만 미달 모델 발행은 차단.
   stackL2: 0.01, stackEpochs: 200, stackLr: 0.1,
   guardMinLive: 25, guardMargin: 0.08, guardWindow: 60,
+  // [V33.117] 자기불신 문턱의 표본오차 계수. 관측창이 덜 찼을 때만 문턱이 넓어진다
+  //   (60건 다 차면 표준오차 6.4%p × 1.28 = 8.2%p ≈ guardMargin 이라 종전과 같은 자가 된다).
+  guardZ: 1.28,
   kellyGain: 1.6, kellyUCap: 0.15,
   gateThresh: 0.42, sizeMin: 0.5, sizeMax: 1.5,
   abstainStd: 0.16, abstainBand: 0.05
@@ -27289,7 +27292,19 @@ async function mlGuardObserve(DB, predP, won) {
       let hit = 0; for (const r of g.live) { const pred = r.p >= 0.5 ? 1 : 0; if (pred === r.w) hit++; }
       const liveAcc = hit / g.live.length;
       g.liveAcc = +liveAcc.toFixed(4);
-      g.distrust = (g.baseAcc - liveAcc) > MIND.guardMargin; // 약속보다 마진 이상 하락 → 불신
+      // [V33.117] ★문턱을 표본오차만큼 넓힌다.★
+      //   종전엔 관측창이 25건이든 60건이든 똑같이 "8%p 하락" 하나로 판정했다. 그런데
+      //   정확도 55% 인 모델의 25건 표본오차는 ±9.9%p 라, 성능이 ★전혀 안 변했어도★
+      //   18.3% 확률로 불신이 걸린다(몬테카를로 40,000회). distrust 는 ML 개입을 통째로
+      //   중단시키는 스위치다 — 즉 아무 문제가 없는 날의 5분의 1을 AI 없이 보내고 있었다.
+      //   창이 다 차면(60건) 표준오차가 6.4%p 라 설정값 8%p 가 그대로 유효하다. 즉 이 보정은
+      //   ★창이 덜 찼을 때만★ 더 엄격해지고, 정상 운용에서는 종전과 같은 문턱이다.
+      //   진짜 열화(55%→42%) 검출력은 60건에서 80.6% 로 종전과 동일하다.
+      const _gn = g.live.length;
+      const _gse = Math.sqrt(Math.max(0.01, _num(g.baseAcc, 0.55)) * (1 - Math.min(0.99, _num(g.baseAcc, 0.55))) / Math.max(1, _gn));
+      const _need = Math.max(_num(MIND.guardMargin, 0.08), _num(MIND.guardZ, 1.28) * _gse);
+      g.guardNeed = +_need.toFixed(4);
+      g.distrust = (g.baseAcc - liveAcc) > _need;   // 약속보다 '유의하게' 하락했을 때만 불신
     }
     await setState(DB, "mind_guard", g);
     return g.distrust;
@@ -36456,6 +36471,8 @@ export {
   _edgeStats, _pctile, portfolioStatistics, mlSelfReview,
   // [V33.117] 신호별 켈리 가중 — '음수 켈리 = 매수 금지' 의 유의성 검증용
   computeSignalWeight, SIGNAL_TYPES,
+  // [V33.117] MIND 자기불신 가드의 문턱 계약 검증용
+  mlGuardObserve, MIND,
   FIN_TOOLS, finToolsRun,
   // [V33.110] 소셜 멀티소스 검증용 — tools/check-social.mjs
   SOCIAL, SOCIAL_SOURCES, socialScoreOf
