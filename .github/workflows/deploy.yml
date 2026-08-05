@@ -83,6 +83,11 @@ jobs:
       #   몬테카를로로 오차단률과 검정력을 매 배포마다 함께 잰다(둘 중 하나만 좋으면 실패).
       - name: Ledger edge significance check
         run: node tools/check-edge-stats.mjs
+      # [V33.119] 레버리지 결정기 — 여기가 틀리면 손실이 그대로 배가된다.
+      #   Freqtrade leverage() 콜백 구조로 한곳에 모으고, 규칙은 AQR 변동성 타게팅 +
+      #   Passivbot 노출 테이퍼 + 효율비(ER) 문지기다. 답을 아는 합성입력으로 계약을 못 박는다.
+      - name: Leverage decision contract check
+        run: node tools/check-leverage.mjs
       # cloudflare/wrangler-action 대신 로컬에서 검증된 방식 그대로 실행
       # (wrangler-action@v3의 npx 자동설치가 4.86.0을 요구하며 실패하던 문제 회피)
       - name: Install wrangler

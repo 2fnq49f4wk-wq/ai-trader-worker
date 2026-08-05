@@ -13840,6 +13840,28 @@ html[data-theme="light"] .rail{background:#fff;}
             if(L.kelly < L.minKelly) return [ico(null)+' 단타 레버리지', col('닫힘', C.neg)+' <span class="sub">켈리 '+L.kelly.toFixed(3)+' &lt; '+L.minKelly+'</span>'];
             var mult = Math.min(L.maxMult, 1 + (Math.min(L.kelly,0.4)/0.20)*(L.maxMult-1));
             return [ico(true)+' 단타 레버리지', col('×'+mult.toFixed(2), C.pos)+' <span class="sub">켈리 '+L.kelly.toFixed(3)+' · 집중 ×'+L.concMult+' · DD컷 '+L.ddCut+'%</span>'];
+          })(),
+          // [V33.119] ★폭등 레버리지★ — 지금 천장이 열렸는지, 안 열렸으면 무엇이 모자란지.
+          //   설정값만 보여주면 "왜 안 열리지" 를 알 수 없다. 결정기가 낸 사유를 그대로 싣는다.
+          (function(){
+            var S = mode.alt && mode.alt.surgeLev;
+            if(!S) return ['폭등 레버리지', '<span class="sub">—</span>'];
+            var one = function(nm, o){
+              if(!o) return nm+' <span class="sub">국면 미측정</span>';
+              var up = (o.phase === 'MELTUP' || o.phase === 'TREND_UP');
+              var erTxt = has(o.er) ? o.er.toFixed(2) : '—';
+              var c = o.mult > 1.05 ? C.pos : (up ? C.amb : null);
+              var body = nm+' '+(c ? col('×'+o.mult.toFixed(2), c) : '×'+o.mult.toFixed(2))
+                + ' <span class="sub">'+esc(String(o.phase||'—'))+' · ER '+erTxt+'/'+S.erMin
+                + (has(o.realVol) ? ' · 하방실현 '+o.realVol.toFixed(0)+'%↔목표 '+o.targetVol+'%' : ' · 변동성 미측정')
+                + '</span>';
+              return body;
+            };
+            var anyOpen = (S.us && S.us.mult > 1.05) || (S.kr && S.kr.mult > 1.05);
+            return [ico(anyOpen ? true : null)+' 폭등 레버리지',
+              one('美', S.us) + '<br>' + one('韓', S.kr)
+              + ' <span class="sub">— 천장: 장타 폭등 ×'+S.ceilMeltup+' / 추세 ×'+S.ceilTrend+' · 단타 폭등 ×'+S.scalpCeilMeltup
+              + ' (ER '+S.erMin+'↑부터 열려 '+S.erFull+'에서 만개)</span>'];
           })()
         ]);
 

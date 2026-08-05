@@ -2788,7 +2788,7 @@ async function applySignalTypeWeights(DB, cfg) {
 // ============================================================================
 // [V33.55] 빌드 버전 — SWR L2 캐시 키에 섞어 '배포 = 판단 캐시 자동 무효화'를 만든다.
 //   판정 로직을 고쳐도 옛 캐시가 최대 1시간 재배포되던 문제를 구조적으로 없앤다.
-const _BUILD_VER = "V33.118";
+const _BUILD_VER = "V33.119";
 
 const AI_PARAMS = {
   // ── OHLCV 타임프레임 ── 시가/고가/저가/종가/거래량을 어떤 봉 주기로 볼지.
@@ -3882,7 +3882,31 @@ const DEFAULT_CFG = {
     maxMult: 2.0,        // 거래당 리스크 최대 2배
     concMult: 2.0,       // 종목당 비중 상한 2배 (집중투자) — 단타 6% → 12%
     minKelly: 0.05,      // 실측 켈리가 이 이상일 때만 배수 개방
-    ddCut: 6             // 계좌 고점 대비 −6% 넘게 밀리면 배수 즉시 1.0
+    ddCut: 6,            // 계좌 고점 대비 −6% 넘게 밀리면 배수 즉시 1.0
+    // ── [V33.119] leverageDecide 공용 파라미터 ──
+    //   변동성 타게팅의 천장을 국면·추세품질이 연다. 종전 volTarget.scaleMax(1.2)는
+    //   "조용할 때 더 싣는다"는 절반을 사실상 닫아놨었다 — 폭등장이 정확히 그 자리다.
+    ceilBase: 1.2,       // 평시 천장(종전 volTarget.scaleMax 와 동일 — 무회귀 기준선)
+    ceilTrend: 1.6,      // TREND_UP + 추세품질 확인 시 천장
+    ceilMeltup: 2.2,     // MELTUP + 추세품질 확인 시 천장
+    erMin: 0.30,         // 효율비 이 아래면 '거친 상승' — 천장 안 연다(추격 방지)
+    erFull: 0.50,        // 이 이상이면 천장을 끝까지 연다(그 사이는 선형)
+    floor: 0.5,          // 축소 방향 하한
+    hardCap: 2.5,        // 어떤 조합으로도 이 배수를 넘지 않는다
+    taperFrom: 0.70      // 총노출이 한도의 70% 를 넘으면 증폭분을 선형으로 줄인다(Passivbot)
+  },
+  // [V33.119] ★장타·스냅의 폭등 레버리지★ — 단타와 분리한 별도 손잡이다.
+  //   장타는 오버나이트 갭을 맞으므로 위험이 비대칭이다(V33.82 판단, 그대로 유지).
+  //   그래서 ① 켈리 증폭을 안 쓰고(변동성 타게팅만) ② 천장을 단타보다 훨씬 낮게 잡고
+  //   ③ gapRisk 축소는 종전대로 그대로 곱해진다. 즉 '조용하고 부드러운 상승장에서만
+  //   목표 위험을 채우는' 수준이지, 갭 위험을 키우는 방향이 아니다.
+  swingLeverage: {
+    enabled: true,
+    ceilBase: 1.2, ceilTrend: 1.35, ceilMeltup: 1.6,
+    erMin: 0.30, erFull: 0.50,
+    floor: 0.5, hardCap: 1.6,
+    ddCut: 8, taperFrom: 0.70,
+    minKelly: 0.05, maxMult: 1.0, concMult: 1.0   // 장타는 엣지 증폭·집중도 확대를 쓰지 않는다
   },
 
   signalTypeWeights: {
@@ -9205,6 +9229,136 @@ function _pctile(sorted, q) {
   const lo = Math.floor(i), hi = Math.ceil(i);
   return lo === hi ? sorted[lo] : sorted[lo] + (sorted[hi] - sorted[lo]) * (i - lo);
 }
+// ════════════════════════════════════════════════════════════════════════════
+// [V33.119] ★레버리지 결정을 한곳으로 — Freqtrade `leverage()` 콜백 구조 이식★
+//
+//   공개 엔진들이 레버리지를 어떻게 다루는지 보고 우리 코드와 대조한 결과:
+//
+//   ① Freqtrade(25k★) 는 `leverage(pair, current_time, current_rate, proposed_leverage,
+//      max_leverage, side)` 콜백 ★하나★ 에서 배수를 정한다. 우리는 매수 루프 한복판에서
+//      _scLev 를 인라인으로 계산했다 — 시험할 수 없고, 단타 외의 자리에 재사용할 수도 없다.
+//      → 순수함수로 뽑는다. 입력만 주면 배수가 나오므로 합성입력으로 계약을 못 박을 수 있다.
+//
+//   ② AQR TSMOM · Deep Momentum Networks(Lim·Zohren·Roberts 2019) 의 표준 레버리지 규칙은
+//      ★변동성 타게팅★ 이다: 크기 ∝ 목표변동성 / 실현변동성. 우리에게도 volTarget 이 있었지만
+//      scaleMax 가 1.2 라 ★올리는 방향으로는 거의 닫혀 있었다★. 즉 "변동성이 낮을 때 더 싣는다"
+//      는 절반이 작동하지 않았다. 폭등장에서 가장 잘 벌 자리가 정확히 거기다.
+//
+//   ③ Passivbot 의 wallet_exposure_limit — 총노출이 한도에 가까워질수록 신규 크기를 ★연속적으로★
+//      줄인다. 우리 RISKENG.maxGrossFrac 은 절벽이다(넘으면 거부). 절벽 직전까지 전속력으로
+//      달리다 갑자기 전량 거부되면, 마지막 한 종목만 못 사는 게 아니라 그 사이클의 남은 후보가
+//      통째로 막힌다. 완만한 감속으로 바꾼다.
+//
+//   ★폭등에 레버리지를 거는 조건은 '많이 올랐다'가 아니다.★ 부드럽게 오르는가다.
+//   같은 +3% 라도 종일 한 방향으로 밀어올린 날과 ±3% 를 오간 날은 완전히 다른 사건이다.
+//   그래서 효율비(ER)를 문지기로 둔다 — 추세의 질이 확인될 때만 천장이 열린다.
+//   그리고 리스크는 ★하방★ 변동성으로 잰다(Sortino 관점). 상승 변동성으로 스로틀이 걸리면
+//   가장 잘 벌 국면에서 스스로 브레이크를 밟게 된다(V33.44 가 잡은 그 버그).
+//
+//   반환: { mult, posMult, why, parts } — mult 는 거래당 리스크 배수, posMult 는 종목당 비중 배수.
+function leverageDecide(o) {
+  const out = { mult: 1, posMult: 1, why: [], parts: {} };
+  try {
+    const c = (o && o.cfg) || {};
+    if (c.enabled === false) { out.why.push("비활성"); return out; }
+    const phase = String((o && o.phase) || "RANGE");
+    const isScalp = !!(o && o.isScalp);
+
+    // ── ① 변동성 타게팅 (AQR TSMOM / DMN) ─────────────────────────────────
+    //   실현변동성이 목표의 절반이면 2배 실어야 목표 위험이 된다. 그게 이 식의 전부다.
+    let volMult = 1;
+    const rv = _num(o && o.realVolPct, null);
+    const tv = _num(o && o.targetVolPct, null);
+    if (rv != null && tv != null && rv > 1) {
+      volMult = tv / rv;
+      out.parts.volRaw = +volMult.toFixed(3);
+    }
+
+    // ── ② 천장은 국면·추세품질이 연다 ───────────────────────────────────────
+    //   RANGE·CRASH 에서는 아무리 조용해도 천장을 열지 않는다. '조용한 보합'은
+    //   레버리지를 걸 이유가 아니라 그냥 기회가 없는 것이다.
+    const ceilBase = _num(c.ceilBase, 1.2);
+    let ceil = ceilBase;
+    const er = _num(o && o.er, null);
+    const erMin = _num(c.erMin, 0.30);
+    const upPhase = (phase === "MELTUP" || phase === "TREND_UP");
+    if (upPhase && er != null && er >= erMin) {
+      // ER 이 문턱을 넘은 만큼만 선형으로 천장을 연다 — 계단이 아니라 경사로.
+      const erFull = _num(c.erFull, 0.50);
+      const g = _clamp((er - erMin) / Math.max(1e-6, erFull - erMin), 0, 1);
+      // 계산된 키(c[...])로 읽지 않는다 — 죽은설정 게이트가 정적으로 못 보고,
+      //   사람이 읽어도 어느 손잡이가 쓰이는지 한눈에 안 들어온다.
+      const ceilMax = (phase === "MELTUP") ? _num(c.ceilMeltup, 2.2) : _num(c.ceilTrend, 1.6);
+      ceil = ceilBase + (ceilMax - ceilBase) * g;
+      out.parts.erGate = +g.toFixed(3);
+      out.why.push(phase + " ER" + er.toFixed(2) + " → 천장 ×" + ceil.toFixed(2));
+    } else if (upPhase) {
+      out.why.push(phase + " 이지만 ER" + (er == null ? "미측정" : er.toFixed(2)) + " < " + erMin + " — 천장 안 엶(거친 상승)");
+    }
+    volMult = _clamp(volMult, _num(c.floor, 0.5), ceil);
+    out.parts.vol = +volMult.toFixed(3);
+
+    // ── ③ 실측 엣지(켈리) — 단타에만. 장타는 표본 축이 달라 여기서 안 쓴다. ──
+    let edgeMult = 1;
+    if (isScalp) {
+      const k = _num(o && o.kelly, null);
+      const minK = _num(c.minKelly, 0.05);
+      if (!(o && o.modelTrusted)) { out.why.push("단타: 모델 미신뢰 → 엣지배수 1"); }
+      else if (k == null || k < minK) { out.why.push("단타: 켈리 " + (k == null ? "미측정" : k.toFixed(3)) + " < " + minK + " → 엣지배수 1"); }
+      else {
+        const kc = _clamp(k, 0, 0.4);
+        edgeMult = _clamp(1 + (kc / 0.20) * (_num(c.maxMult, 2.0) - 1), 1, _num(c.maxMult, 2.0));
+        out.why.push("단타 켈리 " + kc.toFixed(3) + " → ×" + edgeMult.toFixed(2));
+      }
+    }
+    out.parts.edge = +edgeMult.toFixed(3);
+
+    // ── ④ 드로다운 디리스크 — 무너지는 중엔 어떤 근거로도 안 올린다 ────────
+    const dd = _num(o && o.ddPct, 0);
+    const ddCut = _num(c.ddCut, 6);
+    let ddMult = 1;
+    if (dd > 0 && ddCut > 0) {
+      ddMult = _clamp(1 - dd / ddCut, 0, 1);
+      if (ddMult < 1) out.why.push("DD " + dd.toFixed(1) + "% → 증폭분 ×" + ddMult.toFixed(2));
+    }
+    out.parts.dd = +ddMult.toFixed(3);
+
+    // ── ⑤ 총노출 테이퍼 (Passivbot wallet_exposure_limit) ──────────────────
+    //   한도의 taperFrom 지점부터 선형으로 0 까지 줄인다. 절벽 대신 경사로.
+    let expMult = 1;
+    const gross = _num(o && o.grossFrac, null);
+    const capF = _num(o && o.grossCapFrac, null);
+    if (gross != null && capF != null && capF > 0) {
+      const from = _clamp(_num(c.taperFrom, 0.70), 0.1, 1);
+      const u = gross / capF;                       // 한도 대비 사용률
+      if (u >= 1) expMult = 0;
+      else if (u > from) expMult = _clamp((1 - u) / (1 - from), 0, 1);
+      if (expMult < 1) out.why.push("총노출 " + (u * 100).toFixed(0) + "% of 한도 → ×" + expMult.toFixed(2));
+    }
+    out.parts.exposure = +expMult.toFixed(3);
+
+    // ── 결합 — 증폭분(1 초과분)에만 디리스크를 곱한다 ──────────────────────
+    //   그냥 전부 곱하면 DD 나 노출이 걸릴 때 기본 크기(1배)까지 깎여, 레버리지 조절이 아니라
+    //   '거래 축소' 가 된다. 축소는 이미 다른 곳(crashGate·gapRisk·volTarget)이 담당한다.
+    //   여기서 다루는 건 ★1배를 넘는 부분★ 이다.
+    const raw = volMult * edgeMult;
+    const amp = Math.max(0, raw - 1) * ddMult * expMult;
+    let mult = 1 + amp;
+    // 축소 방향(volMult<1)은 그대로 반영한다 — 위험이 크면 줄이는 건 언제나 옳다.
+    if (raw < 1) mult = raw;
+    mult = _clamp(mult, _num(c.floor, 0.5), _num(c.hardCap, 2.5));
+    out.mult = +mult.toFixed(3);
+
+    // 종목당 비중 상한 배수 — 배수가 열린 만큼만 집중도 허용(단타 전용).
+    if (isScalp && mult > 1) {
+      const cm = _num(c.concMult, 2.0);
+      out.posMult = +_clamp(1 + (cm - 1) * ((mult - 1) / Math.max(1e-6, _num(c.hardCap, 2.5) - 1)), 1, cm).toFixed(3);
+    }
+    if (!out.why.length) out.why.push("기본");
+    return out;
+  } catch (e) { return { mult: 1, posMult: 1, why: ["예외:" + (e && e.message)], parts: {} }; }
+}
+
 // ★PortfolioAnalyzer 이식★ — 실제 원장(체결된 매도)에서 성과통계를 계산한다.
 //   NautilusTrader 의 PortfolioStatistic 들(Expectancy, ProfitFactor, WinRate, RiskReturnRatio)을
 //   우리 원장 스키마에 맞춰 다시 쓴 것. 반환 단위: 수익률(%)과 통화금액을 분리해 둘 다 낸다.
@@ -14753,6 +14907,14 @@ async function runTradingCycle(env) {
       const positions = await getPositions(DB, market);  // key: "SYM::strategy"
       const feeRate = market === "us" ? mcfg.feeUS : mcfg.feeKR;
       const regime = regimes[market];
+      // [V33.119] 국면 스냅샷을 남긴다 — AI 두뇌 창이 "폭등 레버리지가 왜 안 열리나" 를
+      //   설정값이 아니라 ★지금 실제 값★ 으로 설명할 수 있어야 한다(시장당 사이클 1회 쓰기).
+      try {
+        if (regime) await setState(DB, "regime_snap:" + market, {
+          phase: regime.phase || null, regime: regime.regime || null,
+          er: _num(regime.er, null), avgDayPct: _num(regime.avgDayPct, null),
+          idxReturn5: _num(regime.idxReturn5, null), ts: Date.now() });
+      } catch (e) {}
       let canTrade = marketsToTrade.indexOf(market) !== -1;
       // [V31] 매매 직전 락 소유권 재확인 — US 처리가 길어져 락이 만료·탈취됐으면
       //   이 시장은 거래하지 않는다(다른 워커가 이미 처리 중일 수 있음 → 이중체결 방지).
@@ -16715,6 +16877,16 @@ async function runTradingCycle(env) {
 
             // [V12.64] AI 주도 진입은 규칙신호 없이 들어가므로 사이즈를 보수적으로 축소(baseWeight 배).
             if (signal && signal.isAiPrimary) sizeScale *= ((AI_PARAMS.aiPrimary && AI_PARAMS.aiPrimary.baseWeight) || 0.6);
+            // [V33.119] 레버리지 결정의 공통 입력 — 실현변동성(아래에서 산출)과 총노출 사용률.
+            //   총노출은 RISKENG 이 '넘으면 거부' 로만 쓰던 값이다. 절벽 직전에 갑자기 전량 거부되면
+            //   그 사이클의 남은 후보가 통째로 막힌다 — Passivbot 처럼 완만히 감속시키려면
+            //   ★사이징 단계에서★ 알아야 한다.
+            let _lvRealVol = null, _lvTargetVol = null, _lvGrossFrac = null;
+            try {
+              const _eqNow = (typeof portfolioValue === "number" && portfolioValue > 0) ? portfolioValue : null;
+              const _cashNow = _num(cash && cash[market], null);
+              if (_eqNow != null && _cashNow != null) _lvGrossFrac = Math.max(0, (_eqNow - _cashNow)) / _eqNow;
+            } catch (e) {}
             // [V12.74] ★변동성 타게팅★ (기관 표준 벤치마킹) — 지수 실현변동성이 목표 초과면 감속, 미달이면 소폭 증속.
             //   crashGate(급락 반응)와 곱연산으로 결합되는 연속·선제적 스로틀. 인버스는 면제(변동성 확대가 호재).
             try {
@@ -16745,9 +16917,27 @@ async function runTradingCycle(env) {
                   }
                   const _tgt = (_vt.targetVolPct && _vt.targetVolPct[market]) || 15;
                   if (_realVol > 1) {
-                    const _vs = _clamp(_tgt / _realVol, _vt.scaleMin || 0.5, _vt.scaleMax || 1.2);
-                    sizeScale *= _vs;
-                    if (_vs < 0.85) signal.volTargetNote = "VOLTGT ×" + _vs.toFixed(2) + " (하방실현 " + _realVol.toFixed(0) + "%>목표 " + _tgt + "%)";
+                    // [V33.119] 사이클 안에서 재사용한다 — 단타 레버리지도 같은 실현변동성을 본다.
+                    _lvRealVol = _realVol; _lvTargetVol = _tgt;
+                    if (strategy === "scalp") {
+                      // 단타는 아래 전용 게이트(leverageDecide)가 변동성까지 함께 본다 — 여기선 건너뛴다.
+                      //   두 곳에서 곱하면 같은 변동성으로 두 번 깎게 된다.
+                    } else {
+                      // ★장타·스냅의 폭등 레버리지★ — 종전엔 scaleMax 1.2 로 천장이 막혀
+                      //   "조용할 때 더 싣는다"는 절반이 사실상 닫혀 있었다. 이제 국면·추세품질이 연다.
+                      //   갭 위험은 여기서 키우지 않는다 — gapRisk 축소는 뒤에서 그대로 곱해진다.
+                      const _swc = (mcfg.swingLeverage || DEFAULT_CFG.swingLeverage || {});
+                      const _lvd = leverageDecide({
+                        cfg: _swc, isScalp: false,
+                        phase: (regime && regime.phase) || null, er: (regime && regime.er) != null ? regime.er : null,
+                        realVolPct: _realVol, targetVolPct: _tgt,
+                        ddPct: _num(__ddPctNow, 0),
+                        grossFrac: _lvGrossFrac, grossCapFrac: RISKENG.maxGrossFrac
+                      });
+                      sizeScale *= _lvd.mult;
+                      if (_lvd.mult < 0.85) signal.volTargetNote = "VOLTGT ×" + _lvd.mult.toFixed(2) + " (하방실현 " + _realVol.toFixed(0) + "%>목표 " + _tgt + "%)";
+                      else if (_lvd.mult > 1.05) signal.volTargetNote = "LEV ×" + _lvd.mult.toFixed(2) + " (" + _lvd.why.join(" / ") + ")";
+                    }
                   }
                 }
               }
@@ -16788,29 +16978,38 @@ async function runTradingCycle(env) {
             //     ② 최근 실현 켈리 f* ≥ minKelly(양의 엣지 실측)
             //     ③ 계좌 고점 대비 드로다운이 ddCut 이내       — 무너지는 중엔 자동 축소
             //   조건이 깨지면 배수는 즉시 1.0 으로 돌아간다.
+            // [V33.119] ★한 함수가 결정한다★ (Freqtrade leverage() 콜백 구조)
+            //   종전엔 여기서 인라인으로 켈리 하나만 보고 배수를 정했다. 그래서
+            //     · 시험할 수 없었고(합성입력을 넣을 자리가 없다)
+            //     · 실현변동성을 안 봤다 — 켈리가 좋으면 시장이 아무리 거칠어도 2배로 실었다
+            //     · 총노출이 한도에 붙어 있어도 그대로 2배를 요구하다 RISKENG 절벽에서 잘렸다
+            //   leverageDecide 가 변동성 타게팅·추세품질·드로다운·총노출을 함께 본다.
             let _scLev = 1.0, _scLevWhy = null;
             if (_scalpSz) {
               const _lv = (mcfg.scalpLeverage || DEFAULT_CFG.scalpLeverage || {});
               if (_lv.enabled !== false) {
                 const _st = __scalpEdge || {};
-                const _okModel = !!_st.trusted;
-                const _okEdge = (typeof _st.kelly === "number") && _st.kelly >= _num(_lv.minKelly, 0.05);
-                const _dd = _num(__ddPctNow, 0);
-                const _okDd = _dd <= _num(_lv.ddCut, 6);
-                if (_okModel && _okEdge && _okDd) {
-                  // 켈리에 비례해 배수를 올린다(선형), 상한은 maxMult.
-                  const _k = _clamp(_st.kelly, 0, 0.4);
-                  _scLev = _clamp(1 + (_k / 0.20) * (_num(_lv.maxMult, 2.0) - 1), 1, _num(_lv.maxMult, 2.0));
-                  maxPosPct = maxPosPct * _clamp(_num(_lv.concMult, 2.0), 1, 4);   // 집중투자 — 종목당 상한 확대
-                  _scLevWhy = "켈리 " + _k.toFixed(3) + " → ×" + _scLev.toFixed(2) + " 집중 " + maxPosPct.toFixed(0) + "%";
-                } else {
-                  _scLevWhy = "대기(" + (!_okModel ? "모델 미신뢰" : !_okEdge ? "켈리 " + (typeof _st.kelly === "number" ? _st.kelly.toFixed(3) : "미측정") + " < " + _num(_lv.minKelly, 0.05) : "DD " + _dd.toFixed(1) + "% 초과") + ")";
-                }
+                const _lvd = leverageDecide({
+                  cfg: _lv, isScalp: true,
+                  phase: (regime && regime.phase) || null, er: (regime && regime.er) != null ? regime.er : null,
+                  realVolPct: _lvRealVol, targetVolPct: _lvTargetVol,
+                  kelly: (typeof _st.kelly === "number") ? _st.kelly : null,
+                  modelTrusted: !!_st.trusted,
+                  ddPct: _num(__ddPctNow, 0),
+                  grossFrac: _lvGrossFrac, grossCapFrac: RISKENG.maxGrossFrac
+                });
+                _scLev = _lvd.mult;
+                if (_lvd.posMult > 1) maxPosPct = maxPosPct * _clamp(_lvd.posMult, 1, 4);
+                _scLevWhy = "×" + _scLev.toFixed(2) + " 집중 " + maxPosPct.toFixed(0) + "% — " + _lvd.why.join(" / ");
+                if (signal) signal.levNote = _scLevWhy;
               }
             }
-            if (_scLev > 1) {
-              riskPct = riskPct * _scLev;   // [V33.82] 단타 레버리지 — 거래당 리스크 확대
-              try { await log(DB, "INFO", symbol, "[단타레버리지] " + _scLevWhy); } catch (e0) {}
+            // [V33.119] ★1 미만도 반영한다★ — 단타는 위 volTarget 블록을 건너뛰므로(이중계산 방지)
+            //   변동성이 목표를 넘어 배수가 1 아래로 나오면 그 축소를 여기서 적용해야 한다.
+            //   종전 조건이 `> 1` 뿐이라, 그대로 뒀으면 ★단타만 변동성 스로틀이 통째로 빠졌을 것★ 이다.
+            if (_scLev !== 1) {
+              riskPct = riskPct * _scLev;   // [V33.82] 단타 레버리지 — 거래당 리스크 확대/축소
+              if (_scLev > 1) { try { await log(DB, "INFO", symbol, "[단타레버리지] " + _scLevWhy); } catch (e0) {} }
             }
             const equity = (typeof portfolioValue === "number" && portfolioValue > 0) ? portfolioValue : cash[market];
             const tr = getStrategyRules(mcfg, strategy, market);
@@ -18367,6 +18566,29 @@ async function handleRequest(request, env, ctx) {
             _alt.scalpLev = { enabled: _lvc.enabled !== false, trusted: !!(_stT && _stT.trusted),
               kelly: _kk, n: nW + nL, minKelly: _num(_lvc.minKelly, 0.05),
               maxMult: _num(_lvc.maxMult, 2), concMult: _num(_lvc.concMult, 2), ddCut: _num(_lvc.ddCut, 6) };
+            // [V33.119] ★폭등 레버리지가 지금 열려 있는가★ — 실제 결정기를 그대로 돌려 보여준다.
+            //   화면이 설정값만 보여주면 "왜 안 열리지" 를 알 수 없다. 결정기가 낸 사유를 그대로 싣는다.
+            try {
+              // 쓰기와 같은 형태(접두사 + 시장)로 읽는다 — 게이트가 키를 정적으로 대조한다.
+              const _rgOf = async function (mkt) { try { return await getState(env.DB, "regime_snap:" + mkt, null); } catch (e) { return null; } };
+              const _rg = await _rgOf("us");
+              const _rgK = await _rgOf("kr");
+              const _swc2 = (DEFAULT_CFG.swingLeverage || {});
+              const _mkLev = function (rg, mkt) {
+                if (!rg) return null;
+                const _tv = (AI_PARAMS.volTarget && AI_PARAMS.volTarget.targetVolPct && AI_PARAMS.volTarget.targetVolPct[mkt]) || 15;
+                const _rv = _num(rg.realVolPct, null);      // 없으면 결정기가 변동성 부분을 건너뛴다
+                const d = leverageDecide({ cfg: _swc2, isScalp: false, phase: rg.phase || null,
+                  er: _num(rg.er, null), realVolPct: _rv, targetVolPct: _tv, ddPct: 0,
+                  grossFrac: null, grossCapFrac: RISKENG.maxGrossFrac });
+                return { phase: rg.phase || null, er: _num(rg.er, null), realVol: _rv, targetVol: _tv,
+                         mult: d.mult, why: d.why.join(" / ") };
+              };
+              _alt.surgeLev = { us: _mkLev(_rg, "us"), kr: _mkLev(_rgK, "kr"),
+                                erMin: _num(_swc2.erMin, 0.30), erFull: _num(_swc2.erFull, 0.50),
+                                ceilMeltup: _num(_swc2.ceilMeltup, 1.6), ceilTrend: _num(_swc2.ceilTrend, 1.35),
+                                scalpCeilMeltup: _num(_lvc.ceilMeltup, 2.2) };
+            } catch (e) {}
           } catch (e) {}
         } catch (e) {}
         // [V33.81] 진입 문턱 실황 — 백분위 문턱이 실제로 어디에 걸려 있는지.
@@ -36473,6 +36695,8 @@ export {
   computeSignalWeight, SIGNAL_TYPES,
   // [V33.117] MIND 자기불신 가드의 문턱 계약 검증용
   mlGuardObserve, MIND,
+  // [V33.119] 레버리지 결정기 — tools/check-leverage.mjs
+  leverageDecide, RISKENG,
   FIN_TOOLS, finToolsRun,
   // [V33.110] 소셜 멀티소스 검증용 — tools/check-social.mjs
   SOCIAL, SOCIAL_SOURCES, socialScoreOf
