@@ -11,7 +11,7 @@
 //   "많이 올랐다"가 아니라 "부드럽게 오르는가"로 천장을 연다. 같은 +3% 라도 한 방향으로
 //   밀어올린 날과 ±3% 를 오간 날은 다른 사건이고, 후자에 레버리지를 걸면 그건 추격이다.
 
-import { leverageDecide, DEFAULT_CFG, RISKENG,
+import { leverageDecide, pyramidDecide, DEFAULT_CFG, RISKENG,
          scalpMaeMult, SCALPMAE } from "../src/index.js";
 
 let fails = 0;
@@ -296,6 +296,146 @@ const L = (over) => leverageDecide(Object.assign({}, base, over));
   else bad("scalpmae 파이프라인 등록 누락");
   if (/maeMult: _num\(_st\.maeMult, 1\)/.test(src)) ok("매수 경로가 MAE 계수를 결정기에 넘긴다");
   else bad("MAE 계수가 결정기까지 안 간다 — 측정만 하고 안 쓰는 코드가 된다");
+}
+
+// ══ ⑦ 피라미딩(Turtle 유닛 추가 / Freqtrade adjust_trade_position) ═══════════
+//   반환 addQty 는 ★실제로 더 사는 주식 수★ 다. 여기서 위험 계산이 틀리면
+//   "이겼다고 생각한 자리"에서 계좌 위험이 조용히 커진다 — 가장 나쁜 형태의 버그다.
+{
+  const P = DEFAULT_CFG.pyramid;
+  // 기준 상황: 100주를 100에 샀고, 손절은 이미 본전(100) 위인 102, ATR 2, 현재가 104.
+  //   직전진입 100 + 0.5×2 = 101 이므로 가격조건 충족.
+  const pbase = {
+    cfg: P, price: 104, avg: 100, qty: 100, stopPrice: 102, atrN: 2,
+    unitsAdded: 0, lastAddPrice: 100, phase: "MELTUP", er: 0.45,
+    equity: 100000, heatPct: 1.0, maxHeatPct: 8, maxPosPct: 100, newStopCandidate: 102
+  };
+  const Y = (over) => pyramidDecide(Object.assign({}, pbase, over));
+
+  const okAdd = Y({});
+  if (okAdd.add && okAdd.addQty > 0) ok("본전잠금·MELTUP·0.5N 상승 → +" + okAdd.addQty + "주 (" + okAdd.why.join(" / ") + ")");
+  else bad("정상 조건인데 안 더한다: " + okAdd.why.join(" / "));
+
+  // ★핵심 불변식★ — 더한 뒤 전체 청산위험이 예산을 넘지 않는다.
+  if (okAdd.add) {
+    // ★유효손절(갭 버퍼 반영)으로 재야 한다★ — 명목손절로 재면 0 이 나와 불변식이 무의미해진다.
+    const risk = Math.max(0, (okAdd.projAvg - okAdd.projStopEff)) * (pbase.qty + okAdd.addQty);
+    const budget = pbase.equity * (P.riskPctOfEquity / 100);
+    if (risk <= budget + 1e-6) ok("전체 청산위험 " + risk.toFixed(0) + " ≤ 예산 " + budget.toFixed(0));
+    else bad("위험이 예산을 넘었다: " + risk.toFixed(0) + " > " + budget.toFixed(0));
+    // ★위험이 0 으로 나오면 안 된다★ — 손절가를 그대로 믿으면 "공짜 레버리지"가 되어
+    //   무한히 더하게 된다. 갭 버퍼를 깐 유효 손절가로 재야 주식 수가 늘어난 만큼 위험도 는다.
+    if (okAdd.projRiskPct > 0) ok("갭보정 위험 " + okAdd.projRiskPct + "% > 0 (손절가를 그대로 믿지 않는다)");
+    else bad("위험이 0% 로 나왔다 — 갭 버퍼가 안 걸렸다. 공짜 레버리지로 오인해 무한히 더하게 된다");
+    if (okAdd.projStopEff < okAdd.projStop)
+      ok("유효손절 " + okAdd.projStopEff + " < 명목손절 " + okAdd.projStop + " (갭 버퍼 " + P.gapBufferPct + "%)");
+    else bad("유효손절이 명목손절 이상이다: " + okAdd.projStopEff);
+    // 주식 수가 늘면 갭 손실도 는다 — 위험은 수량에 대해 증가해야 한다.
+    const smallAdd = Y({ cfg: Object.assign({}, P, { unitFrac: 0.1 }) });
+    if (smallAdd.add && smallAdd.projRiskPct < okAdd.projRiskPct)
+      ok("적게 더하면 위험도 작다 (" + smallAdd.addQty + "주 " + smallAdd.projRiskPct + "% < " + okAdd.addQty + "주 " + okAdd.projRiskPct + "%)");
+    else bad("수량과 위험이 함께 늘지 않는다");
+  }
+
+  // ★안 더해야 하는 경우들★
+  if (!Y({ stopPrice: 99, newStopCandidate: 99 }).add) ok("손절이 평단 아래 → 안 더한다(물타기 방지)");
+  else bad("본전잠금 전인데 더했다 — 계좌 위험이 커진다");
+  if (!Y({ phase: "RANGE" }).add) ok("RANGE → 안 더한다");
+  else bad("보합장에서 더했다");
+  if (!Y({ phase: "TREND_DOWN" }).add) ok("TREND_DOWN → 안 더한다");
+  else bad("하락장에서 더했다");
+  if (!Y({ er: 0.20 }).add) ok("ER 0.20 < " + P.erMin + " → 안 더한다(거친 상승)");
+  else bad("거친 상승에서 더했다");
+  if (!Y({ price: 100.5 }).add) ok("직전진입 +0.5N 미달 → 안 더한다");
+  else bad("가격이 충분히 안 갔는데 더했다");
+  if (!Y({ unitsAdded: P.maxUnits }).add) ok("유닛 " + P.maxUnits + "/" + P.maxUnits + " 소진 → 안 더한다");
+  else bad("유닛 상한을 넘겼다");
+  if (!Y({ heatPct: 7.9, maxHeatPct: 8 }).add) ok("포트폴리오 히트 상한 근접 → 안 더한다");
+  else bad("히트 상한을 넘겨 더했다");
+  if (!Y({ stopPrice: null }).add) ok("손절가 없음 → 안 더한다(위험을 계산할 수 없다)");
+  else bad("손절가 없이 더했다");
+  if (!Y({ atrN: null }).add) ok("ATR 없음 → 안 더한다");
+  else bad("ATR 없이 더했다");
+  if (!pyramidDecide(null).add) ok("null 입력 → 안 더한다");
+  else bad("null 폴백 실패");
+  if (!pyramidDecide(Object.assign({}, pbase, { cfg: { enabled: false } })).add) ok("enabled:false → 스위치가 실제로 끈다");
+  else bad("비활성인데 더했다");
+
+  // 유닛 크기 상한 — 한 번에 두 배로 불리지 않는다
+  const big = Y({ price: 130, stopPrice: 128, newStopCandidate: 128, avg: 100, qty: 100 });
+  if (!big.add || big.addQty <= Math.floor(100 * P.unitFrac)) ok("유닛 크기 ≤ 원 수량 × " + P.unitFrac + " (" + (big.add ? "+" + big.addQty + "주" : "미추가") + ")");
+  else bad("유닛이 너무 크다: +" + big.addQty + "주");
+
+  // 종목 비중 상한이 걸리면 그만큼만
+  const cap = Y({ maxPosPct: 10.5 });   // 자산 100,000 × 10.5% = 10,500 / 104 ≈ 100주 → 여유 거의 0
+  if (!cap.add || (100 + cap.addQty) * 104 <= 100000 * 0.105 + 104)
+    ok("종목 비중 상한 반영 (" + (cap.add ? "+" + cap.addQty + "주" : "미추가") + ")");
+  else bad("비중 상한을 넘겨 더했다: +" + cap.addQty + "주");
+
+  // 단조성 — 예산이 클수록 더 살 수 있어야 한다(뒤집히면 사이징이 진동한다)
+  let prevQ = -1, mono = true;
+  for (const r of [0.2, 0.3, 0.5, 0.8, 1.2]) {
+    const y = Y({ cfg: Object.assign({}, P, { riskPctOfEquity: r }), stopPrice: 100, newStopCandidate: 100 });
+    const q = y.add ? y.addQty : 0;
+    if (q < prevQ - 1e-9) mono = false;
+    prevQ = q;
+  }
+  if (mono) ok("리스크 예산 대비 추가수량 단조증가");
+  else bad("예산을 늘렸는데 수량이 줄어드는 구간이 있다");
+}
+
+// ══ ⑧ 피라미딩 배선 회귀 ═══════════════════════════════════════════════════
+{
+  const fs = await import("node:fs");
+  const src = fs.readFileSync(new URL("../src/index.js", import.meta.url), "utf8");
+  const need = [
+    [/pyramidDecide\(\{/, "매수 루프가 pyramidDecide 를 부른다(보유중 무조건 continue 로 회귀하지 않았다)"],
+    [/positions\[symbol \+ "::" \+ strategy\]/, "포지션 키가 \"SYM::strategy\" 규약을 따른다"],
+    [/!\(ctx\.pyramid && ctx\.pyramid\.units > 0\)/, "ALREADY_HELD 가드가 열쇠 있을 때만 열린다"],
+    [/pmeta\.pyrUnits = Math\.max/, "유닛 카운터를 포지션 meta 에 남긴다"],
+    [/qty = _pyr\.addQty;/, "추가 수량을 pyramidDecide 결과로 덮어쓴다"],
+    [/pyramid: \(_pyr && _pyr\.add\) \? \{ units: 1 \} : null/, "열쇠는 판정 통과 시에만 실린다"]
+  ];
+  for (const [re, what] of need) {
+    if (re.test(src)) ok(what);
+    else bad(what + " — 배선이 끊겼다");
+  }
+  // ★열쇠 없이 열리면 안 된다★ — 가드가 무조건 통과로 바뀌지 않았는지
+  if (/return "ALREADY_HELD " \+ strategy;/.test(src)) ok("ALREADY_HELD 가드 자체는 살아 있다");
+  else bad("ALREADY_HELD 가드가 사라졌다 — 중복매수·물타기의 마지막 방어선이다");
+}
+
+// ══ ⑨ ★피라미딩이 학습 라벨을 오염시키지 않는가★ ═══════════════════════════
+//   이건 단위시험으로는 안 보이고 통합했을 때만 드러나는 종류의 오류다.
+//   피라미딩은 평단을 끌어올려 pnl_pct 를 낮춘다. 실측(합성경로):
+//     100주@100 → 104 에서 +50, 106 에서 +48 → 평단 102.46
+//       112 청산: 12.00% → 9.31%  (금액은 1200 → 1888 로 늘었는데 수익률은 줄었다)
+//       102 손절: +2.00% → −0.45% (★부호가 뒤집힌다★)
+//   부호가 뒤집히면 이진 라벨이 1→0 이 되는데 ★피처는 최초 진입 시점의 것★ 이다.
+//   즉 가장 멀리 간 거래일수록 라벨이 0 이 되고, 그 라벨이 V33.116/117 의 유의성 기반
+//   자동차단으로 흘러들어 ★가장 좋은 신호를 끄게★ 된다. 학습·통계는 최초 평단으로 재야 한다.
+{
+  const fs = await import("node:fs");
+  const src = fs.readFileSync(new URL("../src/index.js", import.meta.url), "utf8");
+  const need = [
+    [/const entryPnlPct = \(_pyrBase != null && _pyrBase > 0\)/, "최초 진입 기준 수익률(entryPnlPct)을 따로 낸다"],
+    [/if \(pmeta\.pyrBaseAvg == null\) pmeta\.pyrBaseAvg = prior\.avg;/, "첫 유닛 추가 때 최초 평단을 한 번만 기록한다"],
+    [/mlLogSample\(DB, market, symbol, strategy, pos\.meta\.entryFeatures, entryPnlPct,/, "ML 표본이 entryPnlPct 를 쓴다"],
+    [/const _statPct = entryPnlPct;/, "신호·섹터 통계가 entryPnlPct 를 쓴다"],
+    [/_e0\.nSq\+\+; _e0\.sumSq \+= _statPct \* _statPct; _e0\.sumSqPnl \+= _statPct;/, "유의성 검정용 제곱합도 같은 자를 쓴다"]
+  ];
+  for (const [re, what] of need) {
+    if (re.test(src)) ok(what);
+    else bad(what + " — 피라미딩이 학습 라벨을 오염시킨다");
+  }
+  // 원장(trades)의 pnl_pct 는 ★실제 자본수익률 그대로★ 여야 한다 — 둘을 섞으면 회계가 어긋난다.
+  if (/const pnlPct = costBasis > 0 \? \(pnl \/ costBasis \* 100\) : 0;/.test(src))
+    ok("원장 pnl_pct 는 실제 자본수익률 그대로(회계 정합 유지)");
+  else bad("원장 pnl_pct 정의가 바뀌었다 — 회계와 학습을 섞으면 안 된다");
+  // 피라미딩이 없었으면 두 수치가 같아야 한다(무회귀).
+  if (/\? \(\(price - _pyrBase\) \/ _pyrBase \* 100\) : pnlPct;/.test(src))
+    ok("피라미딩 없으면 entryPnlPct == pnlPct (기존 거래 무회귀)");
+  else bad("피라미딩이 없을 때의 폴백이 pnlPct 가 아니다");
 }
 
 console.log(fails ? "\n레버리지 계약 위반 " + fails + "건" : "\n  ok   레버리지 계약 통과");

@@ -2788,7 +2788,7 @@ async function applySignalTypeWeights(DB, cfg) {
 // ============================================================================
 // [V33.55] 빌드 버전 — SWR L2 캐시 키에 섞어 '배포 = 판단 캐시 자동 무효화'를 만든다.
 //   판정 로직을 고쳐도 옛 캐시가 최대 1시간 재배포되던 문제를 구조적으로 없앤다.
-const _BUILD_VER = "V33.120";
+const _BUILD_VER = "V33.121";
 
 const AI_PARAMS = {
   // ── OHLCV 타임프레임 ── 시가/고가/저가/종가/거래량을 어떤 봉 주기로 볼지.
@@ -3894,6 +3894,21 @@ const DEFAULT_CFG = {
     floor: 0.5,          // 축소 방향 하한
     hardCap: 2.5,        // 어떤 조합으로도 이 배수를 넘지 않는다
     taperFrom: 0.70      // 총노출이 한도의 70% 를 넘으면 증폭분을 선형으로 줄인다(Passivbot)
+  },
+  // [V33.121] ★불려 나가기(피라미딩)★ — Turtle 유닛 추가 / Freqtrade adjust_trade_position.
+  //   폭등장에서 가장 크게 버는 수단인데, 종전엔 "이미 보유중이면 추가매수 차단" 한 줄로 막혀 있었다.
+  //   ★계좌 위험을 늘리지 않는 형태로만★ 연다 — 기존 손절이 본전 위일 때만, 그리고 더한 뒤의
+  //   전체 청산위험이 1회 리스크 예산을 넘지 않는 수량까지만. 자세한 근거는 pyramidDecide 주석.
+  pyramid: {
+    enabled: true,
+    maxUnits: 2,           // 원 포지션 외에 최대 2번까지 더한다(Turtle 은 3번 — 갭 위험 때문에 보수적으로)
+    addAtN: 0.5,           // 직전 진입가 대비 0.5 ATR 오를 때마다 1유닛
+    unitFrac: 0.5,         // 한 유닛은 원 수량의 50% 까지 — 한 번에 두 배로 불리지 않는다
+    riskPctOfEquity: 0.5,  // 더한 뒤 ★전체★ 청산위험이 자산의 이 % 를 넘으면 안 더한다
+    gapBufferPct: 2.0,     // 손절가를 이만큼 낮춰 잡고 위험을 계산한다 — 갭하락은 손절을 지나친다.
+                           //   이게 없으면 "손절이 평단 위 = 위험 0" 이 되어 무한히 더하게 된다.
+    erMin: 0.30,           // 추세품질 문지기 — leverageDecide 와 같은 자
+    strategies: ["trend"]  // 어느 전략에 허용할지. 단타는 60분 지평이라 유닛을 쌓을 시간이 없다
   },
   // [V33.119] ★장타·스냅의 폭등 레버리지★ — 단타와 분리한 별도 손잡이다.
   //   장타는 오버나이트 갭을 맞으므로 위험이 비대칭이다(V33.82 판단, 그대로 유지).
@@ -9370,6 +9385,128 @@ function leverageDecide(o) {
   } catch (e) { return { mult: 1, posMult: 1, why: ["예외:" + (e && e.message)], parts: {} }; }
 }
 
+// ════════════════════════════════════════════════════════════════════════════
+// [V33.121] ★불려 나가기(피라미딩) — Turtle 유닛 추가 / Freqtrade adjust_trade_position★
+//
+//   폭등에 레버리지를 거는 방법은 두 가지다. ① 진입할 때 크게 산다 ② 맞은 뒤에 더 산다.
+//   ①은 틀렸을 때 손실도 그만큼 커진다. 추세추종이 실제로 쓰는 건 ②다 —
+//   Original Turtles 는 0.5N(ATR) 오를 때마다 1유닛씩 최대 4유닛까지 더하고,
+//   더할 때마다 ★전체 포지션의 손절을 함께 올린다★. Freqtrade 는 같은 일을
+//   adjust_trade_position() 콜백으로 한다. 우리는 지금 "이미 보유중이면 추가매수 차단"
+//   한 줄로 이 경로를 통째로 막아놨다 — 폭등장에서 가장 크게 벌 수단이 없는 셈이다.
+//
+//   ★그대로 옮기지는 않는다.★ Turtle 은 유닛당 1% 씩 최대 4% 계좌위험을 허용한다(진짜 레버리지).
+//   우리 원장은 손실의 64%가 갭이었고, 이 저장소는 이미 그 이유로 장타 레버리지를 조심해 왔다.
+//   그래서 ★계좌 위험을 늘리지 않는 형태★ 로만 더한다:
+//     · 기존 포지션의 손절이 이미 본전 위일 때만 더한다(그 포지션은 더 이상 잃을 수 없다)
+//     · 더한 뒤의 ★전체★ 청산위험 (평단−손절)×수량 이 원래 1회 리스크 예산을 못 넘게 수량을 정한다
+//     · 넘길 수밖에 없으면 아예 더하지 않는다(수량을 억지로 깎아 티끌 주문을 내지 않는다)
+//   즉 이건 '위험을 키우는 레버리지'가 아니라 ★이미 이긴 자리에서만 크기를 키우는 레버리지★ 다.
+//   틀리면 본전, 맞으면 크게 — 폭등 대응으로 옳은 비대칭이다.
+//
+//   반환: { add, addQty, why, projRiskPct, projAvg, projStop }
+function pyramidDecide(o) {
+  const out = { add: false, addQty: 0, why: [], projRiskPct: null, projAvg: null, projStop: null };
+  try {
+    const c = (o && o.cfg) || {};
+    if (c.enabled === false) { out.why.push("비활성"); return out; }
+    const price = _num(o && o.price, 0);
+    const avg = _num(o && o.avg, 0);
+    const qty0 = _num(o && o.qty, 0);
+    const stop0 = _num(o && o.stopPrice, null);
+    const atrN = _num(o && o.atrN, null);
+    const equity = _num(o && o.equity, 0);
+    if (!(price > 0 && avg > 0 && qty0 > 0 && equity > 0)) { out.why.push("입력 부족"); return out; }
+    if (stop0 == null || !(stop0 > 0)) { out.why.push("손절가 없음 — 위험을 계산할 수 없다"); return out; }
+    if (atrN == null || !(atrN > 0)) { out.why.push("ATR 없음"); return out; }
+
+    // ① 국면 — 폭등·상승추세에서만. 되돌림장에서 물타기가 되면 안 된다.
+    const phase = String((o && o.phase) || "RANGE");
+    if (phase !== "MELTUP" && phase !== "TREND_UP") { out.why.push(phase + " — 상승국면 아님"); return out; }
+    // ② 추세의 질 — leverageDecide 와 같은 문지기. 거친 상승엔 더 사지 않는다.
+    const er = _num(o && o.er, null);
+    const erMin = _num(c.erMin, 0.30);
+    if (er == null || er < erMin) { out.why.push("ER " + (er == null ? "미측정" : er.toFixed(2)) + " < " + erMin); return out; }
+
+    // ③ 유닛 상한
+    const units = Math.max(0, Math.floor(_num(o && o.unitsAdded, 0)));
+    const maxU = Math.max(0, Math.floor(_num(c.maxUnits, 2)));
+    if (units >= maxU) { out.why.push("유닛 " + units + "/" + maxU + " 소진"); return out; }
+
+    // ④ 가격이 충분히 갔는가 — 마지막 진입가 대비 addAtN × ATR
+    const lastAdd = _num(o && o.lastAddPrice, avg);
+    const step = _num(c.addAtN, 0.5) * atrN;
+    if (!(price >= lastAdd + step)) {
+      out.why.push("직전진입 " + lastAdd.toFixed(2) + " + " + _num(c.addAtN, 0.5) + "N(" + step.toFixed(2) + ") 미달");
+      return out;
+    }
+
+    // ⑤ ★기존 포지션이 이미 본전 위에서 잠겨 있어야 한다★
+    //   이게 이 설계의 핵심 안전장치다. 손절이 평단 아래면, 더 사는 순간 계좌 위험이 커진다.
+    if (!(stop0 >= avg)) {
+      out.why.push("손절 " + stop0.toFixed(2) + " < 평단 " + avg.toFixed(2) + " — 본전잠금 전엔 안 더한다");
+      return out;
+    }
+
+    // ⑥ 수량 — 더한 뒤 ★전체★ 청산위험이 1회 리스크 예산을 넘지 않는 최대 수량.
+    //   더할 때의 새 손절은 호출부가 계산해 넘긴다(기존 손절과 새 손절 중 높은 쪽 = executeBuy 와 동일 규칙).
+    const stopNew = Math.max(stop0, _num(o && o.newStopCandidate, stop0));
+    const budget = equity * (_num(c.riskPctOfEquity, 0.5) / 100);
+    // ★손절가를 그대로 믿지 않는다 — 갭 버퍼를 깐다.★
+    //   손절은 '장중 가격이 손절가에 닿으면' 작동한다. 갭하락으로 손절가 아래에서 시가가
+    //   형성되면 그 아래 아무 가격에서나 체결된다. 우리 원장은 ★손실의 64%가 갭★ 이었다.
+    //   그래서 "손절이 평단 위 = 위험 0" 은 오버나이트 포지션에서 거짓이다 — 주식 수가 늘면
+    //   갭이 났을 때 손실도 그만큼 늘어난다. 유효 손절가를 gapBufferPct 만큼 낮춰 잡아야
+    //   피라미딩이 '공짜 레버리지'로 보이지 않는다(그렇게 보이면 무한히 더하게 된다).
+    const gapBuf = _clamp(_num(c.gapBufferPct, 2.0), 0, 20);
+    const stopEff = stopNew * (1 - gapBuf / 100);
+    // 위험(q) = max(0, avgN − stopEff) × (qty0+q),  avgN = (avg·qty0 + price·q)/(qty0+q)
+    //        = max(0, avg·qty0 + price·q − stopEff·(qty0+q))
+    //   → q 에 대해 선형이다. budget 이하가 되는 최대 q 를 닫힌형으로 푼다.
+    const a = (avg - stopEff) * qty0;               // 기존분의 갭보정 위험
+    const b = price - stopEff;                       // 추가분 1주당 갭보정 위험
+    let qMax;
+    if (b <= 0) {
+      qMax = Infinity;                               // 추가분이 갭 버퍼 아래에서도 이익 — 이론상 무제한(아래 상한이 자른다)
+      out.why.push("추가분이 갭보정 손절 위 — 위험 증가 없음");
+    } else {
+      qMax = (budget - a) / b;
+    }
+    if (!(qMax > 0)) { out.why.push("위험예산 소진 (기존 갭보정위험 " + a.toFixed(0) + " ≥ 예산 " + budget.toFixed(0) + ")"); return out; }
+
+    // 유닛 크기 상한 — 원 포지션의 unitFrac 배까지만(한 번에 두 배로 불리지 않는다)
+    const qUnit = Math.floor(qty0 * _clamp(_num(c.unitFrac, 0.5), 0.1, 1));
+    let q = Math.min(Math.floor(qMax), qUnit);
+    // 종목 비중 상한
+    const posCapQty = Math.floor((equity * (_num(o && o.maxPosPct, 100) / 100)) / price) - qty0;
+    if (posCapQty >= 0) q = Math.min(q, posCapQty);
+    if (!(q > 0)) { out.why.push("가능수량 0 (예산 " + Math.floor(qMax) + " · 유닛 " + qUnit + " · 비중여유 " + posCapQty + ")"); return out; }
+
+    // ⑦ 포트폴리오 히트 — 계좌 전체 위험이 상한을 넘으면 안 더한다.
+    const qtyN = qty0 + q;
+    const avgN = (avg * qty0 + price * q) / qtyN;
+    const risk = Math.max(0, (avgN - stopEff)) * qtyN;          // 갭보정 위험(위와 같은 자)
+    const riskBefore = Math.max(0, (avg - stopEff) * qty0);
+    const heatAdd = equity > 0 ? (risk - riskBefore) / equity * 100 : 0;
+    const heatNow = _num(o && o.heatPct, 0);
+    const heatMax = _num(o && o.maxHeatPct, null);
+    if (heatMax != null && (heatNow + Math.max(0, heatAdd)) > heatMax) {
+      out.why.push("히트 " + heatNow.toFixed(1) + "+" + Math.max(0, heatAdd).toFixed(1) + " > " + heatMax + "%");
+      return out;
+    }
+
+    out.add = true; out.addQty = q;
+    out.projAvg = +avgN.toFixed(4); out.projStop = +stopNew.toFixed(4);
+    out.projStopEff = +stopEff.toFixed(4);
+    out.projRiskPct = +(risk / equity * 100).toFixed(3);
+    out.why.push("유닛 " + (units + 1) + "/" + maxU + " · +" + q + "주 @" + price.toFixed(2) +
+                 " · 평단 " + avg.toFixed(2) + "→" + avgN.toFixed(2) +
+                 " · 손절 " + stop0.toFixed(2) + "→" + stopNew.toFixed(2) +
+                 " · 갭보정 전체위험 " + out.projRiskPct.toFixed(2) + "% (예산 " + _num(c.riskPctOfEquity, 0.5) + "% · 갭버퍼 " + gapBuf + "%)");
+    return out;
+  } catch (e) { return { add: false, addQty: 0, why: ["예외:" + (e && e.message)], projRiskPct: null, projAvg: null, projStop: null }; }
+}
+
 // ★PortfolioAnalyzer 이식★ — 실제 원장(체결된 매도)에서 성과통계를 계산한다.
 //   NautilusTrader 의 PortfolioStatistic 들(Expectancy, ProfitFactor, WinRate, RiskReturnRatio)을
 //   우리 원장 스키마에 맞춰 다시 쓴 것. 반환 단위: 수익률(%)과 통화금액을 분리해 둘 다 낸다.
@@ -11702,7 +11839,9 @@ function evaluateBuyBlocks(price, dayPct, dailyData, cfg, regime, signal, ctx) {
   }
 
   // [V8] 같은 (종목, 전략) 조합 이미 보유 시 추가 진입 차단
-  if (ctx && ctx.strategiesHeld && ctx.strategiesHeld.has(strategy)) {
+  // [V33.121] 피라미딩은 예외 — 호출부가 pyramidDecide 로 판정을 끝내고 열쇠를 넘긴 경우만.
+  //   열쇠 없이는 종전대로 막힌다(이 가드가 물타기·중복매수의 마지막 방어선이다).
+  if (ctx && ctx.strategiesHeld && ctx.strategiesHeld.has(strategy) && !(ctx.pyramid && ctx.pyramid.units > 0)) {
     return "ALREADY_HELD " + strategy;
   }
 
@@ -11863,6 +12002,15 @@ async function executeBuy(DB, market, symbol, strategy, qty, price, signal, dail
       } else {
         pmeta.stopPrice = stopPrice;
       }
+      // [V33.121] 피라미딩 유닛 카운터 — 다음 판정이 "몇 유닛 더했나 / 마지막 진입가" 를 알아야 한다.
+      if (opts && opts.pyramid && opts.pyramid.units > 0) {
+        // ★최초 진입 평단을 첫 유닛 추가 때 딱 한 번 남긴다★ — 학습·통계는 이 값으로 잰다.
+        //   피라미딩이 평단을 끌어올려 pnl_pct 부호까지 뒤집을 수 있는데, 피처는 최초 진입
+        //   시점의 것이라 그 라벨은 진입 판단의 성패를 나타내지 않는다(executeSell 주석 참조).
+        if (pmeta.pyrBaseAvg == null) pmeta.pyrBaseAvg = prior.avg;
+        pmeta.pyrUnits = Math.max(_num(pmeta.pyrUnits, 0), Math.floor(opts.pyramid.units));
+        pmeta.pyrLastPrice = _num(opts.pyramid.price, price);
+      }
       if (pmeta.peakPrice == null || price > pmeta.peakPrice) pmeta.peakPrice = price;
       // [V14] peakPrice 안전 초기화 — null 이면 평단/현재가 중 높은 값으로 채워 트레일 작동 보장
       if (pmeta.peakPrice == null) pmeta.peakPrice = Math.max(newAvg, price);
@@ -12012,6 +12160,19 @@ async function executeSell(DB, market, symbol, pos, sellQty, price, reason, cfg,
   const costBasis = pos.avg * sellQty + entryFeeForThisSell;
   const pnl = proceeds - costBasis;
   const pnlPct = costBasis > 0 ? (pnl / costBasis * 100) : 0;
+  // [V33.121] ★학습·통계용 수익률은 '최초 진입' 기준으로 따로 낸다.★
+  //   피라미딩은 평단을 끌어올리므로 pnl_pct 를 계통적으로 낮춘다. 실측하면:
+  //     100@100 → 104 에서 +50, 106 에서 +48 유닛 추가 → 평단 102.46
+  //     · 112 청산: 수익률 12.00% → 9.31% (금액은 1200 → 1888 로 ★늘었는데★)
+  //     · 102 손절: 수익률 +2.00% → −0.45% (금액 +200 → −92 로 ★부호가 뒤집힌다★)
+  //   부호가 뒤집히면 이진 라벨이 1→0 이 된다. 그런데 ★피처는 최초 진입 시점의 것★ 이다.
+  //   즉 "가장 멀리 간 거래" 일수록 라벨이 0 으로 뒤집히고, 그 잘못된 라벨이
+  //   V33.116/117 의 유의성 기반 자동차단으로 흘러들어 ★가장 좋은 신호를 끄게★ 된다.
+  //   → 진입 판단의 성패는 최초 평단으로 재고, 원장의 pnl_pct 는 실제 자본수익률 그대로 둔다.
+  //     둘은 다른 질문에 답하는 다른 수치다(전자: 이 진입이 옳았나 / 후자: 얼마 벌었나).
+  const _pyrBase = _num(pos.meta && pos.meta.pyrBaseAvg, null);
+  const entryPnlPct = (_pyrBase != null && _pyrBase > 0)
+    ? ((price - _pyrBase) / _pyrBase * 100) : pnlPct;
   const heldMin = pos.opened_ts ? Math.floor((Date.now() - pos.opened_ts) / 60000) : 0;
 
   const signalMembers = pos.meta.signalMembers || [];
@@ -12032,7 +12193,7 @@ async function executeSell(DB, market, symbol, pos, sellQty, price, reason, cfg,
             if (__idxNow > 0) __idxRetPct = (__idxNow / pos.meta.entryIdxClose - 1) * 100;
           }
         } catch (e) {}
-        await mlLogSample(DB, market, symbol, strategy, pos.meta.entryFeatures, pnlPct, __idxRetPct);
+        await mlLogSample(DB, market, symbol, strategy, pos.meta.entryFeatures, entryPnlPct, __idxRetPct);
         // [V33.78] FLOW 표본 — 진입 시 스냅샷해 둔 FLOW 피처를 같은 결과로 라벨링한다.
         //   기존 표본 스트림과 완전히 분리돼 있어 LUXML 에 아무 영향이 없다.
         try {
@@ -12142,6 +12303,11 @@ async function executeSell(DB, market, symbol, pos, sellQty, price, reason, cfg,
     } catch (e) {}
   }
   // [섹터그룹·신호타입] 전량청산 시 성과 누적 (autoTune이 가중치 계산에 사용)
+  // [V33.121] ★여기부터는 entryPnlPct(최초 진입 기준)를 쓴다.★
+  //   이 통계는 "그 신호로 들어간 게 옳았나" 를 묻고, 그 답으로 신호 가중·자동차단을 정한다.
+  //   피라미딩이 평단을 올려 낮아진 수익률로 재면, 가장 멀리 간(=가장 좋은) 거래일수록
+  //   신호 성적이 나빠 보인다. 원장(trades.pnl_pct)은 실제 자본수익률 그대로 남는다.
+  const _statPct = entryPnlPct;
   try {
     if (fullClose) {
       // (1) 섹터 그룹 통계
@@ -12150,8 +12316,8 @@ async function executeSell(DB, market, symbol, pos, sellQty, price, reason, cfg,
       if (!gs[grp]) gs[grp] = { trades: 0, wins: 0, sumPnlPct: 0 };
       if (gs[grp].trades >= 120) { gs[grp].trades = Math.round(gs[grp].trades / 2); gs[grp].wins = Math.round(gs[grp].wins / 2); gs[grp].sumPnlPct = gs[grp].sumPnlPct / 2; }
       gs[grp].trades++;
-      if (pnlPct > 0) gs[grp].wins++;
-      gs[grp].sumPnlPct += pnlPct;
+      if (_statPct > 0) gs[grp].wins++;
+      gs[grp].sumPnlPct += _statPct;
       await setState(DB, "sector_group_stats", gs);
       // (2) 신호 타입 통계 (TR_PULLBACK / TR_BREAKOUT)
       if (entrySignalName && SIGNAL_TYPES.indexOf(entrySignalName) >= 0) {
@@ -12171,10 +12337,10 @@ async function executeSell(DB, market, symbol, pos, sellQty, price, reason, cfg,
           _e0.sumSq /= 2; _e0.sumSqPnl /= 2; _e0.nSq = Math.round(_e0.nSq / 2);
         }
         _e0.trades++;
-        if (pnlPct > 0) { _e0.wins++; _e0.nWin++; _e0.sumWin += pnlPct; }
-        else { _e0.nLoss++; _e0.sumLoss += Math.abs(pnlPct); }
-        _e0.sumPnlPct += pnlPct;
-        _e0.nSq++; _e0.sumSq += pnlPct * pnlPct; _e0.sumSqPnl += pnlPct;
+        if (_statPct > 0) { _e0.wins++; _e0.nWin++; _e0.sumWin += _statPct; }
+        else { _e0.nLoss++; _e0.sumLoss += Math.abs(_statPct); }
+        _e0.sumPnlPct += _statPct;
+        _e0.nSq++; _e0.sumSq += _statPct * _statPct; _e0.sumSqPnl += _statPct;
         await setState(DB, "signal_type_stats", ss);
       }
     }
@@ -16705,8 +16871,39 @@ async function runTradingCycle(env) {
               continue;
             }
             // [V24] 이 종목을 이미 보유중이면(어느 전략이든) 추가 매수 차단
+            // [V33.121] ★예외: 피라미딩★ — 이미 이긴 자리에서만 유닛을 더한다.
+            //   여기서 무조건 continue 하던 한 줄이 폭등장의 가장 큰 수익원(불려 나가기)을
+            //   통째로 막고 있었다. 다만 조건은 pyramidDecide 가 전부 판정한다 —
+            //   본전잠금·상승국면·추세품질·유닛상한·갭보정 위험예산·히트 중 하나라도 어긋나면 안 더한다.
+            let _pyr = null;
             if (heldSymbols.has(symbol)) {
-              continue;
+              const _pc = (mcfg.pyramid || DEFAULT_CFG.pyramid || {});
+              const _okStrat = Array.isArray(_pc.strategies) ? _pc.strategies.indexOf(strategy) >= 0 : false;
+              if (!(_pc.enabled !== false && _okStrat && !_symInverse && !crashGate.blockNew)) continue;
+              // positions 키는 "SYM::strategy" 다(getPositions 규약). 같은 전략의 유닛만 더한다 —
+              //   다른 전략이 들고 있는 물량에 얹으면 손절·익절 규칙이 뒤섞인다.
+              const _pos = positions[symbol + "::" + strategy];
+              if (!_pos || !(_num(_pos.qty, 0) > 0)) continue;
+              const _pm = _pos.meta || {};
+              // 새 손절 후보 = executeBuy 와 같은 규칙(min(N×ATR, price×stop%))로 이 가격에서 계산.
+              const _ptr = getStrategyRules(mcfg, strategy, market);
+              const _pAtrStop = (dailyAtr && dailyAtr > 0) ? dailyAtr * (_ptr.atrStopMult || mcfg.atrStopMult || 2.0) : null;
+              const _pPctStop = price * ((_ptr.stopLossPct || mcfg.stopLoss || 5) / 100);
+              const _pStopDist = (_pAtrStop != null) ? Math.min(_pAtrStop, _pPctStop) : _pPctStop;
+              _pyr = pyramidDecide({
+                cfg: _pc, price: price, avg: _num(_pos.avg, 0), qty: _num(_pos.qty, 0),
+                stopPrice: (typeof _pm.stopPrice === "number") ? _pm.stopPrice : null,
+                atrN: dailyAtr, unitsAdded: _num(_pm.pyrUnits, 0),
+                lastAddPrice: _num(_pm.pyrLastPrice, _num(_pos.avg, 0)),
+                phase: (regime && regime.phase) || null, er: (regime && regime.er) != null ? regime.er : null,
+                equity: (typeof portfolioValue === "number" && portfolioValue > 0) ? portfolioValue : 0,
+                heatPct: _num(portfolioHeatPct, 0),
+                maxHeatPct: (typeof mcfg.maxPortfolioHeat === "number") ? mcfg.maxPortfolioHeat : 12.0,
+                maxPosPct: _num((getTrendSizing(mcfg, market) || {}).maxPositionPct, 15),
+                newStopCandidate: price - _pStopDist
+              });
+              if (!_pyr.add) continue;
+              try { await log(DB, "INFO", symbol, "[피라미딩] " + _pyr.why.join(" / ")); } catch (e0) {}
             }
             // [V63] 동시 보유 종목 수 자동화 — 고정 상한(maxConcurrent) 제거가 기본.
             //   개수 제한 대신 ① 전략버킷 예산 스냅샷(V28/V51) ② 가용현금 클램프
@@ -16739,7 +16936,10 @@ async function runTradingCycle(env) {
               heldSymbols: heldSymbols,
               sectorCounts: sectorCounts,
               strategiesHeld: strategiesHeldNow,
-              cooldowns: activeCooldowns
+              cooldowns: activeCooldowns,
+              // [V33.121] 피라미딩 열쇠 — 위에서 pyramidDecide 가 통과시킨 경우에만 실린다.
+              //   이게 없으면 evaluateBuyBlocks 의 ALREADY_HELD 가 종전대로 막는다.
+              pyramid: (_pyr && _pyr.add) ? { units: 1 } : null
             };
             // [V12] 폭락장 생존 게이트 — 신규매수 전면 차단(드로다운 L2+/연속손실/패닉)
             //   [패닉 헤지] 인버스 ETF는 면제 — 패닉장에서 인버스로 수익·헤지를 노린다.
@@ -17512,6 +17712,14 @@ async function runTradingCycle(env) {
                   })() },
                 (llmInstr && llmInstr.stop_loss_adjustment && typeof llmInstr.stop_loss_adjustment.new_pct === "number")
                   ? { stopPctOverride: llmInstr.stop_loss_adjustment.new_pct } : null);
+              // [V33.121] 피라미딩 — 수량은 pyramidDecide 가 정한 유닛으로 ★덮어쓴다★.
+              //   위 사이징은 '새 포지션' 기준이라 이미 보유중인 물량과 위험예산이 겹친다.
+              //   pyramid 플래그는 executeBuy 의 ALREADY_HELD 가드를 여는 열쇠이자,
+              //   포지션 meta 에 유닛 카운터를 남기라는 지시다.
+              if (_pyr && _pyr.add) {
+                qty = _pyr.addQty;
+                buyOpts.pyramid = { units: _num((positions[symbol + "::" + strategy] && positions[symbol + "::" + strategy].meta || {}).pyrUnits, 0) + 1, price: price };
+              }
               const cashBefore = cash[market];
               cash = await executeBuy(DB, market, symbol, strategy, qty, price, signal, dailyAtr, mcfg, cash, buyOpts) || cash;
               // [V28] executeBuy가 실제로 cash를 차감했을 때만 매수 성공으로 카운트.
@@ -36819,6 +37027,8 @@ export {
   mlGuardObserve, MIND,
   // [V33.119] 레버리지 결정기 — tools/check-leverage.mjs
   leverageDecide, RISKENG,
+  // [V33.121] 피라미딩 결정기 — tools/check-leverage.mjs
+  pyramidDecide,
   // [V33.120] 단타 경로 문지기(MAE) — tools/check-leverage.mjs
   scalpMaeFitNightly, scalpMaeMult, SCALPMAE,
   FIN_TOOLS, finToolsRun,
