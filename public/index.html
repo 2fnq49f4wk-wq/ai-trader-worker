@@ -4480,6 +4480,7 @@ html[data-theme="light"] .m-brainbar button.active{color:#0b4f9e;background:rgba
       <div style="font-size:11px;color:var(--t1);margin-bottom:8px;font-weight:700;">시스템 도구</div>
       <div style="display:flex;gap:8px;flex-wrap:wrap;">
         <button type="button" class="btn" id="btnDownloadLogsSettings">📥 ENGINE-LOG CSV</button>
+        <button type="button" class="btn" id="btnDownloadAiStatus">🧠 AI 운영상태 JSON</button>
         <button type="button" class="btn" id="btnHolidayRecheck">📅 휴장 확인</button>
         <button type="button" class="btn" id="btnDebug">🔧 진단</button>
       </div>
@@ -9024,6 +9025,57 @@ html[data-theme="light"] .m-brainbar button.active{color:#0b4f9e;background:rgba
     return s;
   }
 
+  // [V33.123] ★AI 운영상태 스냅샷 다운로드★
+  //   "왜 이게 안 열리냐/왜 저 모델이 미신뢰냐" 를 묻고 답하려면 그 순간의 상태가 통째로
+  //   필요하다. 화면은 요약만 보여주고, 화면에 없는 값(레버리지 사유·MAE 계수·고유도·
+  //   파이프라인 단계별 결과)이 정작 원인인 경우가 많다. 한 번에 모아 파일로 내린다.
+  //   ★읽기 전용★ — 기존 조회 엔드포인트만 부른다(새 서버부하 0, 대부분 SWR 캐시 히트).
+  //   실패한 엔드포인트는 통째로 빠뜨리지 않고 error 를 그대로 담는다 —
+  //   "무엇을 못 가져왔는가" 자체가 진단 정보다.
+  function downloadJSON(obj, filename) {
+    var blob = new Blob([JSON.stringify(obj, null, 2)], { type: 'application/json;charset=utf-8;' });
+    var url = URL.createObjectURL(blob);
+    var link = document.createElement('a');
+    link.href = url; link.download = filename;
+    document.body.appendChild(link); link.click(); document.body.removeChild(link);
+    setTimeout(function(){ URL.revokeObjectURL(url); }, 1000);
+  }
+  function downloadAiStatus() {
+    var SRC = [
+      ['aiMode',      '/api/ai-mode'],       // 위원회·대체모델·레버리지·MAE·포트폴리오 통계
+      ['aiSelfcheck', '/api/ai/selfcheck'],  // AI 레이어 자가진단(오류·경고 목록)
+      ['selfcheck',   '/api/selfcheck'],     // 시스템 자가진단(파이프라인 지연·사이트 오류)
+      ['mlStatus',    '/api/ml-status'],     // 모델 상세(정확도·IC·표본·featVer)
+      ['pipeline',    '/api/pipeline']       // 야간 파이프라인 단계별 최근 결과
+    ];
+    toast('AI 운영상태 수집 중...');
+    Promise.all(SRC.map(function(pair){
+      return fetch(pair[1])
+        .then(function(r){
+          if (!r.ok) return { __error: 'HTTP ' + r.status, __url: pair[1] };
+          return r.json();
+        })
+        .then(function(j){ return [pair[0], j]; })
+        ['catch'](function(e){ return [pair[0], { __error: String(e && e.message || e), __url: pair[1] }]; });
+    })).then(function(rows){
+      var out = {
+        capturedAt: new Date().toISOString(),
+        userAgent: navigator.userAgent,
+        sources: SRC.map(function(p){ return p[1]; })
+      };
+      var nErr = 0;
+      rows.forEach(function(r){ out[r[0]] = r[1]; if (r[1] && r[1].__error) nErr++; });
+      // 어느 빌드에서 찍힌 스냅샷인지 — 없으면 나중에 이 파일을 해석할 수 없다.
+      //   /api/selfcheck 가 build 를 함께 내려준다(V33.123).
+      out.build = (out.selfcheck && out.selfcheck.build) || null;
+      out.serverTs = (out.selfcheck && out.selfcheck.serverTs) || null;
+      out.fetchErrors = nErr;
+      var ts = new Date().toISOString().replace(/[:.]/g, '-').slice(0, 19);
+      downloadJSON(out, 'ai-status-' + ts + '.json');
+      toast(nErr ? ('AI 운영상태 다운로드 완료 (' + nErr + '개 항목 수집 실패 — 파일 안에 사유 기록)')
+                 : 'AI 운영상태 다운로드 완료');
+    })['catch'](function(e){ toast('AI 운영상태 다운로드 실패: ' + (e && e.message)); });
+  }
   function downloadCSV(csvText, filename) {
     // Excel 한글 깨짐 방지용 BOM 추가
     var blob = new Blob(['\uFEFF' + csvText], { type: 'text/csv;charset=utf-8;' });
@@ -10828,6 +10880,9 @@ html[data-theme="light"] .m-brainbar button.active{color:#0b4f9e;background:rgba
   var _btKR=$('btnBacktestKR'); if(_btKR) _btKR.addEventListener('click', function(){ runBacktestUI('kr'); });
   var _btnDownloadLogsSettings = $('btnDownloadLogsSettings');
   if (_btnDownloadLogsSettings) _btnDownloadLogsSettings.addEventListener('click', downloadLogsCSV);
+  // [V33.123] AI 운영상태 스냅샷 — 위원회·레버리지·MAE·고유도·파이프라인을 한 파일로.
+  var _btnDlAiStatus = $('btnDownloadAiStatus');
+  if (_btnDlAiStatus) _btnDlAiStatus.addEventListener('click', downloadAiStatus);
   var _btnDownloadPos = $('btnDownloadPositions');
   if (_btnDownloadPos) _btnDownloadPos.addEventListener('click', downloadPositionsCSV);
   var _btnRunCM = $('btnRunCM');

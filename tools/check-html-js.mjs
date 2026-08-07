@@ -102,4 +102,81 @@ try {
   console.error("  WARN 런타임 검사 자체 실패:", e.message);
 }
 
+// ── [V33.123] AI 운영상태 스냅샷 다운로드 — 실제로 실행해 본다 ──────────────
+//   버튼·핸들러·함수 셋 중 하나만 어긋나도 "눌러도 아무 일이 없는 버튼" 이 된다.
+//   이 저장소는 그런 손잡이를 여러 번 만들었다(설정은 있는데 코드가 안 읽던 82개 키).
+//   그래서 존재 확인이 아니라 ★fetch 를 모킹해 함수를 돌리고 결과 JSON 을 검사★ 한다.
+//   특히 '일부 엔드포인트 실패' 는 반드시 시험한다 — 진단 파일이 필요한 상황은
+//   대개 무언가 이미 고장난 상황이라, 하나 실패했다고 전체가 날아가면 쓸모가 없다.
+try {
+  const htmlS = readFileSync(new URL("../public/index.html", import.meta.url), "utf8");
+  // 버튼 · 핸들러 배선
+  const wired = [
+    [/id="btnDownloadAiStatus"/, "설정에 AI 운영상태 버튼이 있다"],
+    [/_btnDlAiStatus\.addEventListener\('click', downloadAiStatus\)/, "버튼에 핸들러가 붙어 있다"],
+    [/function downloadAiStatus\(\)/, "downloadAiStatus 가 정의돼 있다"],
+    [/chk\.build = _BUILD_VER;/, null]   // 서버측은 아래에서 따로 본다
+  ];
+  let wbad = 0;
+  for (const [re, what] of wired) {
+    if (!what) continue;
+    if (re.test(htmlS)) console.log("  ok   " + what);
+    else { wbad++; console.error("  FAIL " + what + " — 눌러도 아무 일이 없는 버튼이 된다"); }
+  }
+  const srcS = readFileSync(new URL("../src/index.js", import.meta.url), "utf8");
+  if (/chk\.build = _BUILD_VER;/.test(srcS)) console.log("  ok   /api/selfcheck 가 build 를 내려준다(스냅샷 해석에 필요)");
+  else { wbad++; console.error("  FAIL selfcheck 가 build 를 안 내려준다 — 스냅샷의 build 가 항상 null 이 된다"); }
+
+  // 런타임 — fetch 모킹
+  const bodyS = [...htmlS.matchAll(/<script(?![^>]*\bsrc=)[^>]*>([\s\S]*?)<\/script>/gi)]
+    .map((m) => m[1]).find((t) => t.includes("function downloadAiStatus"));
+  if (!bodyS) { wbad++; console.error("  FAIL downloadAiStatus 를 담은 스크립트를 못 찾았다"); }
+  else {
+    const fnSrc = bodyS.match(/function downloadJSON[\s\S]*?\n  \}\n/)[0]
+                + bodyS.match(/function downloadAiStatus[\s\S]*?\n  \}\n/)[0];
+    const runCase = async (fetchImpl) => {
+      let captured = null; const toasts = [];
+      const g = {
+        toast: (m) => toasts.push(m), fetch: fetchImpl,
+        Blob: class { constructor(parts) { captured = parts.join(""); } },
+        URL: { createObjectURL: () => "blob:x", revokeObjectURL: () => {} },
+        document: { createElement: () => ({ click() {} }), body: { appendChild() {}, removeChild() {} }, getElementById: () => null },
+        navigator: { userAgent: "gate" }, window: {}, setTimeout: (f) => f(),
+        Date, JSON, Promise, String, Object, Array, Number, Math
+      };
+      const keys = Object.keys(g);
+      const fn = new Function(...keys, fnSrc + "; return downloadAiStatus;")(...keys.map((k) => g[k]));
+      fn();
+      await new Promise((r) => setTimeout(r, 30));
+      return { j: captured ? JSON.parse(captured) : null, toasts };
+    };
+    const okFetch = (u) => Promise.resolve({ ok: true, json: () => Promise.resolve(
+      u === "/api/selfcheck" ? { build: "VTEST", serverTs: 111 } : { endpoint: u }) });
+    const r1 = await runCase(okFetch);
+    const want = ["aiMode", "aiSelfcheck", "selfcheck", "mlStatus", "pipeline"];
+    const missing = want.filter((k) => !r1.j || r1.j[k] == null);
+    if (!missing.length && r1.j.fetchErrors === 0 && r1.j.build === "VTEST")
+      console.log("  ok   AI 운영상태 스냅샷 " + want.length + "항목 수집 · build 기록 · fetchErrors 0");
+    else { wbad++; console.error("  FAIL 스냅샷 내용 이상 — 누락 " + missing.join(",") + " build " + (r1.j && r1.j.build) + " err " + (r1.j && r1.j.fetchErrors)); }
+
+    // ★일부 실패해도 나머지는 살아야 한다★
+    const mixFetch = (u) => u === "/api/ml-status" ? Promise.resolve({ ok: false, status: 500 })
+                      : u === "/api/pipeline" ? Promise.reject(new Error("network down"))
+                      : okFetch(u);
+    const r2 = await runCase(mixFetch);
+    const okPartial = r2.j && r2.j.fetchErrors === 2
+      && r2.j.mlStatus && r2.j.mlStatus.__error === "HTTP 500"
+      && r2.j.pipeline && r2.j.pipeline.__error === "network down"
+      && r2.j.aiMode && r2.j.aiMode.endpoint === "/api/ai-mode";
+    if (okPartial) console.log("  ok   일부 실패해도 나머지는 수집되고 실패 사유가 파일에 남는다");
+    else { wbad++; console.error("  FAIL 부분 실패 처리 이상: " + JSON.stringify(r2.j && { e: r2.j.fetchErrors, m: r2.j.mlStatus, p: r2.j.pipeline })); }
+    if (r2.toasts.some((t) => /수집 실패/.test(t))) console.log("  ok   부분 실패를 사용자에게 알린다");
+    else { wbad++; console.error("  FAIL 부분 실패인데 성공한 것처럼 알린다"); }
+  }
+  rtBad += wbad;
+} catch (e) {
+  console.error("  FAIL AI 운영상태 다운로드 검사 실패:", e.message);
+  rtBad += 1;
+}
+
 process.exit((bad + rtBad) ? 1 : 0);

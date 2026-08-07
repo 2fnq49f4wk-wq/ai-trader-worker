@@ -2788,7 +2788,7 @@ async function applySignalTypeWeights(DB, cfg) {
 // ============================================================================
 // [V33.55] 빌드 버전 — SWR L2 캐시 키에 섞어 '배포 = 판단 캐시 자동 무효화'를 만든다.
 //   판정 로직을 고쳐도 옛 캐시가 최대 1시간 재배포되던 문제를 구조적으로 없앤다.
-const _BUILD_VER = "V33.122";
+const _BUILD_VER = "V33.123";
 
 const AI_PARAMS = {
   // ── OHLCV 타임프레임 ── 시가/고가/저가/종가/거래량을 어떤 봉 주기로 볼지.
@@ -18964,6 +18964,10 @@ async function handleRequest(request, env, ctx) {
       return await swrJson("selfcheck", 60000, 3600000, async function () {
         let chk = { status: "warn", errCnt: 0, warnCnt: 0, issues: [] };
         try { chk = await _luxSelfCheck(env.DB); } catch (e) { chk = { status: "error", errCnt: 1, warnCnt: 0, issues: [{ level: "error", area: "점검", msg: "자가진단 실패: " + (e && e.message) }] }; }
+        // [V33.123] 빌드 버전을 함께 낸다 — AI 운영상태 스냅샷이 "어느 빌드에서 찍혔나" 를
+        //   기록해야 나중에 그 파일을 해석할 수 있다. 버전 없는 진단자료는 반쪽이다.
+        chk.build = _BUILD_VER;
+        chk.serverTs = Date.now();
         return chk;
       });
     }
