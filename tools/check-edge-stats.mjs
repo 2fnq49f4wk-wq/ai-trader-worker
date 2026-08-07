@@ -149,13 +149,25 @@ function gauss() { return Math.sqrt(-2 * Math.log(rnd())) * Math.cos(2 * Math.PI
     //     시간순  → 고점 뒤 4연속 손실, 낙폭 0,0,0,0,0,0,−1,−1.99,−2.97,−3.94 → Ulcer 1.712
     //     역순    → 손실이 먼저 나고 이후 회복,               → Ulcer 1.827
     //   (최대낙폭은 이 자료에서 우연히 양쪽 −3.94% 로 같다 — 그래서 판별에 쓰지 않는다)
-    if (near(ps.ulcer, 1.712, 2e-3)) ok("Ulcer 1.712 — 자산곡선이 시간순으로 재생된다");
-    else bad("Ulcer 가 " + ps.ulcer + " (시간순 기대 1.712 / 역순이면 1.827) — 질의 DESC 를 안 뒤집었다");
-    if (near(ps.maxDD, -3.94, 0.02)) ok("최대낙폭 " + ps.maxDD + "%"); else bad("최대낙폭 " + ps.maxDD);
+    // [V33.125] ★단순합 누적★ 으로 바꿨다. 복리로 쌓으면 매 거래에 계좌 전액을 넣는다는 뜻이 되고,
+    //   실측에서 누적 11,642% · 최대낙폭 −43% 라는 자릿수 틀린 숫자가 나왔다(거래당 리스크는 0.5~3%).
+    //   자료: 이익 +2 ×6, 손실 −1 ×4 (시간순) → 누적 12 에서 고점, 이후 4연속 손실로 −4%p 낙폭.
+    if (near(ps.tradeSeqRet, 8, 1e-6)) ok("거래수열 누적 " + ps.tradeSeqRet + "%p = 단순합(12−4)");
+    else bad("누적이 " + ps.tradeSeqRet + " — 단순합 8 이어야 한다(복리로 되돌아갔다)");
+    if (near(ps.tradeSeqMaxDD, -4, 1e-6)) ok("거래수열 최대낙폭 " + ps.tradeSeqMaxDD + "%p (고점 12 → 8)");
+    else bad("최대낙폭이 " + ps.tradeSeqMaxDD + " — −4 이어야 한다");
+    // 순서 의존 — 손실이 앞에 오면 낙폭 모양이 달라진다(질의는 DESC 라 뒤집어야 한다).
+    const _uExp = Math.sqrt((0*6 + 1 + 4 + 9 + 16) / 10);
+    if (near(ps.tradeSeqUlcer, _uExp, 2e-3)) ok("거래수열 Ulcer " + ps.tradeSeqUlcer + " — 시간순으로 재생된다");
+    else bad("Ulcer 가 " + ps.tradeSeqUlcer + " (시간순 기대 " + _uExp.toFixed(3) + ") — DESC 를 안 뒤집었다");
+    // ★계좌 지표로 오인되지 않게 이름에 tradeSeq 가 박혀 있어야 한다★
+    if (ps.ulcer === undefined && ps.maxDD === undefined && ps.totalRet === undefined)
+      ok("옛 이름(ulcer/maxDD/totalRet) 제거 — 계좌 낙폭으로 오인될 수 없다");
+    else bad("옛 이름이 남아 있다 — 계좌 지표처럼 읽힌다");
     if (ps.spanDays === 45) ok("기간 45일"); else bad("기간 " + ps.spanDays);
     // 45일 < 60일이므로 UPI 는 연환산하지 않는다(짧은 기간의 연환산은 거짓말이다)
-    if (ps.upi === null) ok("기간 60일 미만 → UPI 생략(짧은 기간 연환산 금지)");
-    else bad("45일인데 UPI 를 냈다: " + ps.upi);
+    if (ps.tradeSeqUpi === null) ok("기간 60일 미만 → UPI 생략(짧은 기간 연환산 금지)");
+    else bad("45일인데 UPI 를 냈다: " + ps.tradeSeqUpi);
   }
 }
 

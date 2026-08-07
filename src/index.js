@@ -2788,7 +2788,7 @@ async function applySignalTypeWeights(DB, cfg) {
 // ============================================================================
 // [V33.55] 빌드 버전 — SWR L2 캐시 키에 섞어 '배포 = 판단 캐시 자동 무효화'를 만든다.
 //   판정 로직을 고쳐도 옛 캐시가 최대 1시간 재배포되던 문제를 구조적으로 없앤다.
-const _BUILD_VER = "V33.124";
+const _BUILD_VER = "V33.125";
 
 const AI_PARAMS = {
   // ── OHLCV 타임프레임 ── 시가/고가/저가/종가/거래량을 어떤 봉 주기로 볼지.
@@ -9568,25 +9568,34 @@ async function portfolioStatistics(DB, opts) {
     const payoff = avgLoss > 1e-9 ? avgWin / avgLoss : null;
     const kelly = payoff ? winRate - (1 - winRate) / payoff : null;
     // Ulcer Index(Martin) — 낙폭의 ★깊이와 지속★ 을 함께 벌한다. MDD 는 최악 한 점만 본다.
-    //   거래 순서 자산곡선(복리)에서 산출한다.
-    let eq = 1, peak = 1, ddSq = 0, maxDD = 0;
+    // [V33.125] ★계좌 곡선이 아니라 '거래수익률 수열' 곡선이다 — 이름과 계산을 바로잡는다.★
+    //   V33.116 은 거래별 수익률을 ★복리로★ 쌓았다. 그건 매 거래에 계좌 전액을 넣는다는 뜻인데,
+    //   우리 거래당 리스크는 자산의 0.5~3% 다. 실측 스냅샷에서 그 결과가 이렇게 나왔다:
+    //       누적 11,642% · 최대낙폭 −43.28% · Ulcer 11.3
+    //   +4% 거래 한 건의 실제 계좌 영향은 +0.04~0.12% 인데, 화면은 계좌 낙폭 43% 를 말하고 있었다.
+    //   자릿수가 틀린 숫자를 계좌 지표처럼 보여주는 건 없느니만 못하다.
+    //   → 단순합(누적 R)으로 바꾸고 이름에 tradeSeq 를 박아 '무엇의 곡선인지' 를 못 박는다.
+    //     계좌 실제 낙폭이 필요하면 equity 이력이 있어야 하는데 우리는 시계열로 갖고 있지 않다 —
+    //     없는 것을 있는 척하지 않는다.
+    let cum = 0, peak = 0, ddSq = 0, maxDD = 0;
     for (const x of R) {
-      eq *= (1 + x / 100);
-      if (eq > peak) peak = eq;
-      const dd = peak > 1e-12 ? (eq / peak - 1) * 100 : 0;
+      cum += x;
+      if (cum > peak) peak = cum;
+      const dd = cum - peak;          // 누적 수익률 기준 낙폭(%p)
       ddSq += dd * dd;
       if (dd < maxDD) maxDD = dd;
     }
     const ulcer = Math.sqrt(ddSq / n);
-    const totalRet = (eq - 1) * 100;
+    const totalRet = cum;
     // UPI(Martin ratio) = 연환산 수익 / Ulcer. 기간이 짧으면 연환산이 거짓말을 하므로 null.
     let upi = null, spanDays = null;
     try {
       const t0 = _num(rows[0].ts, 0), t1 = _num(rows[rows.length - 1].ts, 0);
       if (t1 > t0) {
         spanDays = (t1 - t0) / 86400000;
-        if (spanDays >= 60 && ulcer > 1e-9 && eq > 0) {
-          const annual = (Math.pow(eq, 365 / spanDays) - 1) * 100;
+        if (spanDays >= 60 && ulcer > 1e-9) {
+          // [V33.125] 누적이 단순합이 되었으므로 연환산도 선형으로 — 복리 환산은 같은 과대계상을 부른다.
+          const annual = totalRet * (365 / spanDays);
           upi = +(annual / ulcer).toFixed(3);
         }
       }
@@ -9604,8 +9613,9 @@ async function portfolioStatistics(DB, opts) {
       tailRatio: tailRatio != null ? +tailRatio.toFixed(3) : null,
       payoff: payoff != null ? +payoff.toFixed(3) : null,
       kelly: kelly != null ? +kelly.toFixed(4) : null,
-      ulcer: +ulcer.toFixed(3), upi: upi, maxDD: +maxDD.toFixed(2),
-      totalRet: +totalRet.toFixed(2), spanDays: spanDays != null ? Math.round(spanDays) : null,
+      // [V33.125] 이름에 tradeSeq — 계좌 곡선이 아니라 '거래수익률 수열' 의 통계다.
+      tradeSeqUlcer: +ulcer.toFixed(3), tradeSeqUpi: upi, tradeSeqMaxDD: +maxDD.toFixed(2),
+      tradeSeqRet: +totalRet.toFixed(2), spanDays: spanDays != null ? Math.round(spanDays) : null,
       ts: Date.now()
     };
   } catch (e) { return { n: 0, ready: false, error: e && e.message }; }
@@ -9623,8 +9633,8 @@ async function portfolioStatsNightly(DB) {
            all.expectancy.toFixed(3) + "%/건 손익비 " + all.profitFactor.toFixed(2) +
            " 위험대비 " + all.riskReturn.toFixed(3) +
            " · SQN " + all.sqn.toFixed(2) + "(df" + all.edgeDf + ")" +
-           " Sortino " + all.sortino.toFixed(2) + " Ulcer " + all.ulcer.toFixed(2) +
-           (all.upi != null ? " UPI " + all.upi.toFixed(2) : "");
+           " Sortino " + all.sortino.toFixed(2) + " 거래수열Ulcer " + all.tradeSeqUlcer.toFixed(2) +
+           (all.tradeSeqUpi != null ? " UPI " + all.tradeSeqUpi.toFixed(2) : "");
   } catch (e) { return "[PORT] fail: " + (e && e.message); }
 }
 
@@ -32586,15 +32596,28 @@ async function mlSelfReview(DB) {
       const pnl = _num(r.pnl, 0), pct = _num(r.pnl_pct, 0);
       tot += pnl; if (pnl > 0) { wins++; gW += pnl; } else gL += Math.abs(pnl);
       const e = entryTag(r); (byEntry[e] = byEntry[e] || { n: 0, pnl: 0, w: 0, R: [] }); byEntry[e].n++; byEntry[e].pnl += pnl; byEntry[e].R.push(pct); if (pnl > 0) byEntry[e].w++;
+      // [V33.125] 통화중립 누적 — 아래 worst 정렬·진단이 이걸 쓴다(byEntry.pnl 은 통화가 섞인다).
+      byEntry[e].sumPct = _num(byEntry[e].sumPct, 0) + pct;
       (byMkt[r.market] = byMkt[r.market] || { n: 0, pnl: 0, w: 0 }); byMkt[r.market].n++; byMkt[r.market].pnl += pnl; if (pnl > 0) byMkt[r.market].w++;
       const sm = /STOP (-?\d+\.\d+)%/.exec(r.reason || ""); if (sm && pct < parseFloat(sm[1]) - 0.05) slip++;
     }
     const n = rows.length, winRate = wins / n, pf = gL > 0 ? gW / gL : 99;
-    const worst = Object.keys(byEntry).map(function (e) { return { e: e, n: byEntry[e].n, pnl: byEntry[e].pnl, w: byEntry[e].w }; }).sort(function (a, b) { return a.pnl - b.pnl; }).slice(0, 3);
+    // [V33.125] ★통화 혼합 수정★ — 종전엔 원화·달러 손익을 그대로 더해 정렬했다.
+    //   실측 스냅샷: totalPnl −3,005,594 로 표시됐는데 내역은
+    //     kr −2,698,740(KRW) · bdkr −307,134(KRW) · us +2,752(USD) · cm −2,150(USD) · bdus −322(USD)
+    //   원화 손실 ≈ USD −2,200 이라 실제 합계는 대략 USD −1,920 인데 화면은 −300만을 말한다.
+    //   더 나쁜 건 worstStrategies 다 — 원화 거래는 자릿수가 1,000배라 ★항상 최악으로 뜬다★.
+    //   즉 "최악 전략" 목록이 사실상 "한국 거래가 섞인 전략" 목록이었고, 그 위에서 진단을 냈다.
+    //   → 정렬·표시는 통화중립인 ★수익률 합★ 으로 한다. 금액은 시장별(byMarket)에만 남긴다.
+    const worst = Object.keys(byEntry).map(function (e) {
+      return { e: e, n: byEntry[e].n, pnl: byEntry[e].pnl, sumPct: _num(byEntry[e].sumPct, 0), w: byEntry[e].w };
+    }).sort(function (a, b) { return a.sumPct - b.sumPct; }).slice(0, 3);
     const diagnosis = [];
     if (winRate >= 0.5 && pf >= 1.3 && tot < 0) diagnosis.push("승률·손익비는 양호하나 총손익 마이너스 → 소수 대형손실·사이징 집중이 문제(꼬리리스크 상한 검토)");
-    for (const w of worst) if (w.pnl < 0 && w.w / w.n < 0.4) diagnosis.push("전략 " + w.e + " 승률" + (w.w / w.n * 100).toFixed(0) + "%·손익" + w.pnl.toFixed(0) + " → 저성과(게이트 강화/비활성 검토)");
-    for (const mk of Object.keys(byMkt)) if (byMkt[mk].pnl < 0) diagnosis.push(mk.toUpperCase() + " 시장 손익 " + byMkt[mk].pnl.toFixed(0) + " → 해당 시장 진입 보수화 필요");
+    for (const w of worst) if (w.sumPct < 0 && w.w / w.n < 0.4) diagnosis.push("전략 " + w.e + " 승률" + (w.w / w.n * 100).toFixed(0) + "%·수익률합" + w.sumPct.toFixed(1) + "% → 저성과(게이트 강화/비활성 검토)");
+    for (const mk of Object.keys(byMkt)) if (byMkt[mk].pnl < 0)
+      diagnosis.push(mk.toUpperCase() + " 시장 손익 " + byMkt[mk].pnl.toFixed(0) +
+                     (/kr/i.test(mk) ? "원" : "달러") + " → 해당 시장 진입 보수화 필요");
     if (slip >= 5) diagnosis.push("손절 슬리피지 " + slip + "건 → 갭 리스크(사이즈 축소·스탑 버퍼 검토)");
     if (!diagnosis.length) diagnosis.push("특이 문제 없음 — 현 정책 유지");
     // [V12.75] ★자가치유(Self-Healing)★ 진단에 그치지 않고 행동.
@@ -32627,9 +32650,14 @@ async function mlSelfReview(DB) {
       diagnosis.push("자동차단 없음 — 손실전략이 있어도 표본이 운과 구별될 만큼 쌓이지 않았다(" +
                      _cand.length + "종 검정, α=" + _alpha.toFixed(4) + ")");
     const review = { ts: Date.now(), windowDays: 60, n: n, winRate: +winRate.toFixed(3), profitFactor: +pf.toFixed(2),
-      totalPnl: +tot.toFixed(0), stopSlippage: slip,
+      // [V33.125] totalPnl 은 ★통화가 섞인 합★ 이다(KRW+USD). 그대로 두되 이름으로 경고하고,
+      //   해석 가능한 통화중립 수치를 함께 낸다. 시장별 금액은 byMarket 에 통화별로 남아 있다.
+      totalPnl: +tot.toFixed(0), totalPnlMixedCcy: true,
+      sumPct: +rows.reduce(function (a2, r2) { return a2 + _num(r2.pnl_pct, 0); }, 0).toFixed(2),
+      avgPct: +(rows.reduce(function (a2, r2) { return a2 + _num(r2.pnl_pct, 0); }, 0) / Math.max(1, n)).toFixed(3),
+      stopSlippage: slip,
       byMarket: Object.keys(byMkt).map(function (m) { return { market: m, trades: byMkt[m].n, pnl: +byMkt[m].pnl.toFixed(0), winRate: +(byMkt[m].w / byMkt[m].n).toFixed(2) }; }),
-      worstStrategies: worst.map(function (w) { return { strategy: w.e, trades: w.n, pnl: +w.pnl.toFixed(0), winRate: +(w.w / w.n).toFixed(2) }; }),
+      worstStrategies: worst.map(function (w) { return { strategy: w.e, trades: w.n, sumPct: +w.sumPct.toFixed(2), avgPct: +(w.sumPct / Math.max(1, w.n)).toFixed(3), pnlMixedCcy: +w.pnl.toFixed(0), winRate: +(w.w / w.n).toFixed(2) }; }),
       autoDisable: autoDisable,
       // [V33.116] 검정 결과를 그대로 남긴다 — "왜 차단했나/왜 안 했나" 가 화면에서 읽혀야 한다.
       edgeTests: _edgeNote.sort(function (a, b) { return a.sqn - b.sqn; }).slice(0, 8),

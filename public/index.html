@@ -13990,13 +13990,16 @@ html[data-theme="light"] .rail{background:#fff;}
             + (has(P.kelly)?' · Kelly '+(P.kelly*100).toFixed(1)+'%':'')
             + '</span>']);
         }
-        // 낙폭 품질 — 최대낙폭은 최악 한 점만 본다. Ulcer 는 깊이×지속을 함께 벌한다.
-        if(has(P.ulcer)){
-          rows2.push(['낙폭 (Ulcer)', P.ulcer.toFixed(2)
-            + ' <span class="sub">최대낙폭 '+(has(P.maxDD)?P.maxDD.toFixed(2)+'%':'—')
-            + (has(P.upi)?' · UPI '+P.upi.toFixed(2):' · UPI 기간부족')
-            + (has(P.totalRet)?' · 누적 '+(P.totalRet>0?'+':'')+P.totalRet.toFixed(1)+'%':'')
-            + (has(P.spanDays)?' / '+n0(P.spanDays)+'일':'')+'</span>']);
+        // [V33.125] ★계좌 낙폭이 아니라 '거래수익률 수열' 의 낙폭★ — 이름에 그대로 쓴다.
+        //   거래당 리스크가 자산의 0.5~3% 라 계좌 낙폭은 이보다 훨씬 작다. 혼동하면
+        //   멀쩡한 계좌를 −43% 로 읽게 된다(V33.116 이 실제로 그렇게 표시했다).
+        if(has(P.tradeSeqUlcer)){
+          rows2.push(['거래수열 낙폭', P.tradeSeqUlcer.toFixed(2)
+            + ' <span class="sub">최대 '+(has(P.tradeSeqMaxDD)?P.tradeSeqMaxDD.toFixed(1)+'%p':'—')
+            + (has(P.tradeSeqUpi)?' · UPI '+P.tradeSeqUpi.toFixed(2):' · UPI 기간부족')
+            + (has(P.tradeSeqRet)?' · 누적R '+(P.tradeSeqRet>0?'+':'')+P.tradeSeqRet.toFixed(0)+'%p':'')
+            + (has(P.spanDays)?' / '+n0(P.spanDays)+'일':'')
+            + ' — 계좌 낙폭 아님(거래당 리스크 0.5~3%)</span>']);
         }
       } else {
         rows2.push(['실적 통계', '<span class="sub">종결거래 '+n0(P && P.n)+'/10 — 집계 대기</span>']);
