@@ -1,0 +1,116 @@
+name: Modal Trainer Watchdog
+
+# [V33.126] ★외부학습이 멈춘 것을 아무도 되살리지 못하던 구조를 고친다.★
+#
+#   지금까지의 실행 경로는 둘뿐이었고, 둘 다 이번 사고를 못 막았다:
+#     ① Modal 자체 cron — modal_train.py 안의 modal.Cron("10 */6 * * *").
+#        Modal 쪽에서 스케줄이 멈추면(크레딧 소진·앱 정지·토큰 만료) 우리 저장소에는
+#        되살릴 수단이 없다. 실제로 모델이 ★212시간★ 안 올라왔다.
+#     ② 워커의 자동 재트리거(_luxAutoRetrainModal) — GitHub workflow_dispatch 를 부른다.
+#        그런데 env.GITHUB_TOKEN 이 없으면 조용히 스킵한다. 지금 상태가 그렇다
+#        (운영상태 스냅샷: "lastSkip": "no_github_token").
+#   그리고 modal-deploy.yml 은 ★배포만★ 한다 — trainer 파일이 바뀔 때만 돈다.
+#   즉 "학습을 주기적으로 돌린다" 를 책임지는 주체가 GitHub 쪽에는 아예 없었다.
+#
+#   이 워치독은 그 빈자리를 메운다. 6시간마다 깨어나 ★모델이 실제로 신선한지 먼저 확인하고★,
+#   낡았을 때만 학습을 돌린다. 무조건 돌리면 Modal 자체 cron 과 겹쳐 GPU 비용이 두 배가 된다.
+#
+#   ※ 이 워크플로가 성공했다고 학습이 성공한 것은 아니다 — 그 구분을 로그에 남긴다.
+#     modal-deploy.yml 은 시크릿이 없으면 전 단계를 건너뛰고도 'success' 로 끝나는데,
+#     그건 "아무 일도 안 했는데 초록불" 이라 이번 사고를 8일간 가렸다. 같은 실수를 반복하지 않는다.
+
+on:
+  schedule:
+    - cron: '40 */6 * * *'   # Modal 자체 cron(10분)과 30분 어긋나게 — 정상일 땐 아래 신선도 검사에서 스킵된다
+  workflow_dispatch:
+    inputs:
+      force:
+        description: '신선도와 무관하게 즉시 학습'
+        type: boolean
+        default: false
+
+# 동시 실행 방지 — 겹쳐 돌면 같은 표본으로 두 번 학습해 GPU 만 태운다.
+concurrency:
+  group: modal-training
+  cancel-in-progress: false
+
+jobs:
+  watchdog:
+    runs-on: ubuntu-latest
+    name: 외부학습 신선도 감시
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: 모델 신선도 확인
+        id: fresh
+        env:
+          WORKER_URL: ${{ vars.WORKER_URL }}
+        run: |
+          set +e
+          URL="${WORKER_URL:-https://ai-trader-app.workers.dev}"
+          echo "확인 대상: $URL/api/ai/selfcheck"
+          BODY=$(curl -sS --max-time 30 "$URL/api/ai/selfcheck")
+          RC=$?
+          if [ $RC -ne 0 ] || [ -z "$BODY" ]; then
+            # ★조회 실패는 '신선하다'가 아니다★ — 모르면 돌린다(안 도는 것이 더 큰 손해).
+            echo "::warning::신선도 조회 실패(rc=$RC) — 모르는 상태이므로 학습을 진행한다"
+            echo "stale=true" >> "$GITHUB_OUTPUT"
+            echo "age=unknown" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          # 한 줄 파이썬 — run: | 블록 안에서 여러 줄 스크립트를 쓰면 들여쓰기가 블록을 깨뜨린다.
+          AGE=$(printf '%s' "$BODY" | python3 -c 'import sys,json;d=json.load(sys.stdin);et=d.get("externalTrain") or {};a=[v.get("ageH") for v in et.values() if isinstance(v,dict) and v.get("ageH") is not None];print(min(a) if a else 9999)' 2>/dev/null || echo 9999)
+          [ -z "$AGE" ] && AGE=9999
+          echo "가장 신선한 외부모델: ${AGE}h"
+          echo "age=$AGE" >> "$GITHUB_OUTPUT"
+          # 6시간 주기이므로 14시간을 넘으면 확실히 밀린 것이다(워커의 자동 재트리거와 같은 문턱).
+          STALE=$(python3 -c "print('true' if float('$AGE') > 14 else 'false')")
+          echo "stale=$STALE" >> "$GITHUB_OUTPUT"
+
+      - name: 시크릿 확인
+        id: sec
+        env:
+          MODAL_TOKEN_ID: ${{ secrets.MODAL_TOKEN_ID }}
+        run: |
+          if [ -z "$MODAL_TOKEN_ID" ]; then
+            echo "ok=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "ok=true" >> "$GITHUB_OUTPUT"
+          fi
+
+      # ★시크릿이 없으면 실패시킨다.★ modal-deploy.yml 은 여기서 조용히 스킵하고 초록불을 켜서
+      #   "8일째 학습이 안 돌고 있다" 를 아무도 모르게 만들었다. 워치독은 반대로 시끄러워야 한다.
+      - name: 시크릿 없음 — 실패 처리
+        if: steps.sec.outputs.ok != 'true'
+        run: |
+          echo "::error::MODAL_TOKEN_ID/MODAL_TOKEN_SECRET 미설정 — 외부학습을 돌릴 수 없다."
+          echo "### 🔴 Modal 시크릿 없음 — 외부학습 불가" >> "$GITHUB_STEP_SUMMARY"
+          echo "Settings → Secrets and variables → Actions 에 MODAL_TOKEN_ID / MODAL_TOKEN_SECRET 을 등록하세요." >> "$GITHUB_STEP_SUMMARY"
+          exit 1
+
+      - name: Install modal
+        if: steps.fresh.outputs.stale == 'true' || inputs.force
+        run: pip install modal
+
+      - name: 학습 실행
+        if: steps.fresh.outputs.stale == 'true' || inputs.force
+        env:
+          MODAL_TOKEN_ID: ${{ secrets.MODAL_TOKEN_ID }}
+          MODAL_TOKEN_SECRET: ${{ secrets.MODAL_TOKEN_SECRET }}
+        run: |
+          echo "최신 외부모델 ${{ steps.fresh.outputs.age }}h — 학습을 실행한다"
+          # 배포를 먼저 해서 Modal 쪽 cron 도 함께 되살린다(스케줄이 멈춰 있었다면 이걸로 복구된다).
+          modal deploy trainer/modal/modal_train.py
+          modal run trainer/modal/modal_train.py
+
+      - name: 결과 요약
+        if: always()
+        run: |
+          if [ "${{ steps.fresh.outputs.stale }}" = "true" ] || [ "${{ inputs.force }}" = "true" ]; then
+            echo "### 🔧 외부학습 실행함 (최신모델 ${{ steps.fresh.outputs.age }}h)" >> "$GITHUB_STEP_SUMMARY"
+            echo "" >> "$GITHUB_STEP_SUMMARY"
+            echo "★이 워크플로의 성공이 학습 성공을 뜻하지는 않는다★ — 위 '학습 실행' 단계 로그와" >> "$GITHUB_STEP_SUMMARY"
+            echo "대시보드의 외부모델 나이를 함께 확인할 것. 다음 실행에서도 나이가 안 줄면 트레이너 자체 문제다." >> "$GITHUB_STEP_SUMMARY"
+          else
+            echo "### ✅ 외부모델 신선함 (${{ steps.fresh.outputs.age }}h ≤ 14h) — 학습 생략" >> "$GITHUB_STEP_SUMMARY"
+          fi
