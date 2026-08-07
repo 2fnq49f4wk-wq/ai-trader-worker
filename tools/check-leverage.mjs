@@ -438,5 +438,24 @@ const L = (over) => leverageDecide(Object.assign({}, base, over));
   else bad("피라미딩이 없을 때의 폴백이 pnlPct 가 아니다");
 }
 
+// ══ ⑩ 거래당 리스크의 무조건 상한 ══════════════════════════════════════════
+//   레버리지 배수는 사이징 사슬 여러 곳에서 곱해진다. 어느 한 경로가 최종 클램프를
+//   ★건너뛰면★ 상한이 사라진다 — 실제로 3% 클램프는 거래별 켈리 블록 안에만 있었다.
+{
+  const fs = await import("node:fs");
+  const src = fs.readFileSync(new URL("../src/index.js", import.meta.url), "utf8");
+  if (/if \(riskPct > _swMax\) \{/.test(src) && /const riskDollar = equity \* \(riskPct \/ 100\) \* combW;/.test(src)) {
+    const iCap = src.indexOf("if (riskPct > _swMax) {");
+    const iUse = src.indexOf("const riskDollar = equity * (riskPct / 100) * combW;");
+    if (iCap > 0 && iUse > iCap) ok("무조건 리스크 상한이 riskDollar 산출 ★앞★ 에 있다");
+    else bad("리스크 상한이 riskDollar 뒤에 있다 — 아무 소용이 없다");
+  } else bad("거래당 리스크의 무조건 상한이 없다 — 켈리 경로를 건너뛰면 레버리지가 상한 없이 실린다");
+  // 레버리지 배수가 상한보다 먼저 곱해져야 상한이 의미가 있다
+  const iLev = src.indexOf("riskPct = riskPct * _scLev;");
+  const iCap2 = src.indexOf("if (riskPct > _swMax) {");
+  if (iLev > 0 && iCap2 > iLev) ok("단타 레버리지 배수가 상한보다 먼저 곱해진다");
+  else bad("레버리지가 상한 뒤에 곱해진다 — 상한을 우회한다");
+}
+
 console.log(fails ? "\n레버리지 계약 위반 " + fails + "건" : "\n  ok   레버리지 계약 통과");
 process.exit(fails ? 1 : 0);

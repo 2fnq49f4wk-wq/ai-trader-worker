@@ -2788,7 +2788,7 @@ async function applySignalTypeWeights(DB, cfg) {
 // ============================================================================
 // [V33.55] 빌드 버전 — SWR L2 캐시 키에 섞어 '배포 = 판단 캐시 자동 무효화'를 만든다.
 //   판정 로직을 고쳐도 옛 캐시가 최대 1시간 재배포되던 문제를 구조적으로 없앤다.
-const _BUILD_VER = "V33.121";
+const _BUILD_VER = "V33.122";
 
 const AI_PARAMS = {
   // ── OHLCV 타임프레임 ── 시가/고가/저가/종가/거래량을 어떤 봉 주기로 볼지.
@@ -17348,6 +17348,20 @@ async function runTradingCycle(env) {
             let combW = sigConf * grpW * sigTypeW * _gapAdj;
             const wFloor = mcfg.weightFloor != null ? mcfg.weightFloor : 0.3;
             if (combW < wFloor) combW = wFloor;
+            // [V33.121] ★거래당 리스크의 무조건 상한 — 마지막 방어선.★
+            //   3% 클램프(kellyRiskMax)는 지금 ★거래별 켈리 블록 안에서만★ 걸린다.
+            //   perTradeKelly 를 끄거나 켈리 산출이 실패하면(_kk == null) 그 클램프를 통과하지
+            //   못하고, 그러면 레버리지 배수(단타 ×2.5 / 장타 ×1.6)에 다른 배수들이 곱해진 값이
+            //   아무 상한 없이 그대로 쓰인다. 지금 기본값 조합으로는 3% 를 넘지 않지만,
+            //   그건 ★우연히 안전한 것★ 이지 보장이 아니다 — 손잡이 하나만 올려도 깨진다.
+            //   보장은 코드가 해야 한다. 경로와 무관하게 여기서 한 번 더 자른다.
+            {
+              const _swMax = _num((mcfg.signalTypeWeights || {}).kellyRiskMax, 3.0);
+              if (riskPct > _swMax) {
+                if (signal) signal.riskCapNote = "RISKCAP " + riskPct.toFixed(2) + "% → " + _swMax.toFixed(2) + "%";
+                riskPct = _swMax;
+              }
+            }
             // 리스크 기반 수량
             const riskDollar = equity * (riskPct / 100) * combW;
             let qty = Math.floor(riskDollar / stopDist);
