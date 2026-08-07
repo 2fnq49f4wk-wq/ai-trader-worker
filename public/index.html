@@ -13822,6 +13822,13 @@ html[data-theme="light"] .rail{background:#fff;}
         if(has(d.valN) && has(d.valNRaw) && d.valNRaw > d.valN)
           msg += ' <span class="sub">· 검증 유효 '+n0(d.valN)+'/'+n0(d.valNRaw)
                + (has(d.uniq)?'(고유도 '+d.uniq.toFixed(2)+')':'')+'</span>';
+        // [V33.124] ★고유도 보정 때문에 막힌 경우★ — 실력 부족과 구분되어야 한다.
+        //   문턱(0.505)은 valN 이 명목이던 시절 값이고, 지금 valN 은 유효표본수다.
+        //   "명목이면 통과인데 유효로는 미달" 이면 그건 모델이 나빠진 게 아니라 자가 바뀐 것이다.
+        if(!d.trusted && has(d.accLBNominal) && has(floor) && (d.accLBNominal*100) >= floor)
+          msg += ' <span class="sub" style="color:var(--amb)">· 명목기준이면 '
+               + (d.accLBNominal*100).toFixed(1)+'% 로 통과 — 고유도 보정으로 미달('
+               + (has(d.uniqCost)?'−'+(d.uniqCost*100).toFixed(1)+'%p':'')+')</span>';
       }
       return [ico(on)+' '+nm, msg];
     };

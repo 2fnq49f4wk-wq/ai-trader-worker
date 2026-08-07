@@ -2788,7 +2788,7 @@ async function applySignalTypeWeights(DB, cfg) {
 // ============================================================================
 // [V33.55] 빌드 버전 — SWR L2 캐시 키에 섞어 '배포 = 판단 캐시 자동 무효화'를 만든다.
 //   판정 로직을 고쳐도 옛 캐시가 최대 1시간 재배포되던 문제를 구조적으로 없앤다.
-const _BUILD_VER = "V33.123";
+const _BUILD_VER = "V33.124";
 
 const AI_PARAMS = {
   // ── OHLCV 타임프레임 ── 시가/고가/저가/종가/거래량을 어떤 봉 주기로 볼지.
@@ -18475,6 +18475,9 @@ async function handleRequest(request, env, ctx) {
               // [V33.115] 검증 유효표본수/명목/평균 고유도 — "검증 3,000건" 이 실제로 몇 건어치인지.
               valN: _dt ? _num(_dt.valN, null) : null, valNRaw: _dt ? _num(_dt.valNRaw, null) : null,
               uniq: _dt ? _num(_dt.valUniq, null) : null,
+              // [V33.124] 고유도 보정이 문턱을 올려 막은 경우 그 사실을 그대로 보인다.
+              accLBNominal: _dt ? _num(_dt.accLBNominal, null) : null,
+              uniqCost: _dt ? _num(_dt.uniqCost, null) : null,
               trainedAt: _dMeta ? _dMeta.ts : null
             },
             gbdt: {
@@ -18485,7 +18488,9 @@ async function handleRequest(request, env, ctx) {
               w: _gt ? _gt.wGbdt : null, source: _gt ? (_gt.source || "worker") : null,
               reason: _gt ? _gt.reason : null,
               valN: _gt ? _num(_gt.valN, null) : null, valNRaw: _gt ? _num(_gt.valNRaw, null) : null,
-              uniq: _gt ? _num(_gt.valUniq, null) : null
+              uniq: _gt ? _num(_gt.valUniq, null) : null,
+              accLBNominal: _gt ? _num(_gt.accLBNominal, null) : null,
+              uniqCost: _gt ? _num(_gt.uniqCost, null) : null
             },
             mind: {
               stored: !!(_probe && _probe.mfm && _probe.mmeta),
@@ -28862,6 +28867,15 @@ async function mlDNNTrainNightly(DB) {
     const _dnnBase = val.length ? Math.max(_dnnPos / val.length, 1 - _dnnPos / val.length) : 0.5;
     let trust = { wDnn: 0, trusted: false, dnnAcc: net.valAcc, dnnAccLB: +dnnLB.toFixed(4), mindAcc: mindLB, base: +_dnnBase.toFixed(4),
                   valN: net.valN, valNRaw: net.valNRaw, valUniq: net.valUniq };
+    // [V33.124] 고유도 보정이 문턱을 올린 것을 보이게 한다(GBDT 주석 참조 — 같은 이유).
+    if (_num(net.valNRaw, 0) > _num(net.valN, 0)) {
+      const _lbNomD = _wilsonLB(dnnAcc, _num(net.valNRaw, 0));
+      trust.accLBNominal = +_lbNomD.toFixed(4);
+      trust.uniqCost = +(_lbNomD - dnnLB).toFixed(4);
+      if (_lbNomD >= DNN.trustFloor && dnnLB < DNN.trustFloor)
+        trust.reason = "고유도보정: 명목 하한 " + (_lbNomD * 100).toFixed(1) + "% 는 통과인데 유효 하한 " +
+                       (dnnLB * 100).toFixed(1) + "% 로 미달 (유효 " + _num(net.valN, 0) + "/" + _num(net.valNRaw, 0) + ")";
+    }
     if (dnnLB >= DNN.trustFloor && dnnLB >= _dnnBase + (DNN.trustBaselineMargin || 0)) {
       const eD = Math.exp(DNN.trustTemp * (dnnLB - 0.5));
       const eM = Math.exp(DNN.trustTemp * (mindLB - 0.5));
@@ -30080,6 +30094,21 @@ async function mlGBDTTrainNightly(DB) {
     const _gBase = data.length ? Math.max(_gPos / data.length, 1 - _gPos / data.length) : 0.5;
     let trust = { wGbdt: 0, trusted: false, gbdtAcc: model.valAcc, gbdtAccLB: +accLB.toFixed(4), mindAcc: mindLB, base: +_gBase.toFixed(4),
                   valN: model.valN, valNRaw: model.valNRaw, valUniq: model.valUniq };
+    // [V33.124] ★고유도 보정이 문턱을 조용히 올린 것을 보이게 한다.★
+    //   trustFloor(0.505)는 valN 이 ★명목★ 이던 시절에 정해진 값이다. V33.115~118 에서
+    //   valN 을 유효표본수로 바꿨는데(고유도 ~0.05 면 표본이 1/20), 문턱은 그대로 뒀다.
+    //   그러면 요구 정확도가 조용히 올라간다 — 명목 12,000(≈52%) → 유효 600(≈54%).
+    //   DNN·GBDT 는 IC 대체 경로가 없어 이 하나로 신뢰가 결정되므로, 막힌 이유가
+    //   '실력 부족'인지 '자를 바꿔서'인지 구분되지 않으면 원인을 영영 못 찾는다.
+    //   판정 자체는 바꾸지 않는다(그게 통계적으로 옳다) — 대신 근거를 남긴다.
+    if (_num(model.valNRaw, 0) > _num(model.valN, 0)) {
+      const _lbNom = _wilsonLB(acc, _num(model.valNRaw, 0));
+      trust.accLBNominal = +_lbNom.toFixed(4);
+      trust.uniqCost = +(_lbNom - accLB).toFixed(4);
+      if (_lbNom >= GBDT.trustFloor && accLB < GBDT.trustFloor)
+        trust.reason = "고유도보정: 명목 하한 " + (_lbNom * 100).toFixed(1) + "% 는 통과인데 유효 하한 " +
+                       (accLB * 100).toFixed(1) + "% 로 미달 (유효 " + _num(model.valN, 0) + "/" + _num(model.valNRaw, 0) + ")";
+    }
     if (accLB >= GBDT.trustFloor && accLB >= _gBase + (DNN.trustBaselineMargin || 0)) {
       const eG = Math.exp(GBDT.trustTemp * (accLB - 0.5));
       const eM = Math.exp(GBDT.trustTemp * (mindLB - 0.5));
