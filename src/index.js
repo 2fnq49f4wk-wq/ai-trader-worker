@@ -2788,7 +2788,7 @@ async function applySignalTypeWeights(DB, cfg) {
 // ============================================================================
 // [V33.55] 빌드 버전 — SWR L2 캐시 키에 섞어 '배포 = 판단 캐시 자동 무효화'를 만든다.
 //   판정 로직을 고쳐도 옛 캐시가 최대 1시간 재배포되던 문제를 구조적으로 없앤다.
-const _BUILD_VER = "V33.133";
+const _BUILD_VER = "V33.134";
 
 const AI_PARAMS = {
   // ── OHLCV 타임프레임 ── 시가/고가/저가/종가/거래량을 어떤 봉 주기로 볼지.
@@ -18521,10 +18521,18 @@ async function handleRequest(request, env, ctx) {
 
     if (path === "/api/pipeline") {
       try {
+        // [V33.134] ★sessionOnly — 장중에만 도는 단계는 장외에 STALE 로 찍지 않는다.★
+        //   last_tick 은 runTradingCycle 끝에서만 갱신되는데, 장외에는 "US & KR 장외 — 사이클
+        //   스킵" 으로 조기 반환하므로 주말 내내 안 갱신된다. 그런데 문턱이 10분이라
+        //   ★토·일에는 반드시 빨간불★ 이 된다. 2026-08-09(일) 스냅샷의 "거래 사이클 STALE 29.7h"
+        //   가 정확히 그것이었다 — 마지막 거래는 금요일 미국장 마감(토 05:00 KST)이었고,
+        //   29.7시간은 그 시점부터 정상적으로 흐른 시간이다. 고장이 아니라 주말이다.
+        //   실시간 시세(fastwatch)도 같다. 이런 오경보는 진짜 고장을 덮으므로 없애야 한다.
+        //   → 장외에는 '대기(장외)' 로 표시하고, 마지막 갱신이 ★직전 거래일 이후★ 인지만 본다.
         const SUBS = [
-          { key: "last_tick",           label: "거래 사이클",   staleMs: 10 * 60000 },
-          { key: "fastwatch:markets",   label: "실시간 시세",   staleMs: 10 * 60000 },
-          { key: "mkt_context",         label: "시장 컨텍스트", staleMs: 24 * 3600000 },
+          { key: "last_tick",           label: "거래 사이클",   staleMs: 10 * 60000, sessionOnly: true },
+          { key: "fastwatch:markets",   label: "실시간 시세",   staleMs: 10 * 60000, sessionOnly: true },
+          { key: "mkt_context",         label: "시장 컨텍스트", staleMs: 24 * 3600000, sessionOnly: true },
           { key: "sector_news_sentiment", label: "뉴스 감성",   staleMs: 24 * 3600000 },
           { key: "xs_panel",            label: "횡단면 패널",   staleMs: 36 * 3600000 },
           // [V33.3] ★"표본 수확"이 항상 노란불(STALE)이던 버그★ — 수확기는
@@ -18540,12 +18548,19 @@ async function handleRequest(request, env, ctx) {
         const _tsMap = {};
         for (const r of ((_rows && _rows.results) || [])) _tsMap[r.k] = r.updated_ts || 0;
         const now = Date.now();
+        let _mktOpen = false;
+        try { _mktOpen = isMarketOpen("us") || isMarketOpen("kr"); } catch (e) {}
         const steps = SUBS.map(function (s) {
           const ts = _tsMap[s.key] || 0;
-          return { key: s.key, label: s.label, ts: ts || null,
-                   status: !ts ? "NEVER" : ((now - ts) <= s.staleMs ? "OK" : "STALE") };
+          let status;
+          if (!ts) status = "NEVER";
+          else if ((now - ts) <= s.staleMs) status = "OK";
+          else if (s.sessionOnly && !_mktOpen) status = "IDLE";   // 장외 — 안 도는 게 정상
+          else status = "STALE";
+          return { key: s.key, label: s.label, ts: ts || null, status: status,
+                   sessionOnly: !!s.sessionOnly, ageH: ts ? +((now - ts) / 3600000).toFixed(1) : null };
         });
-        return Response.json({ steps: steps, serverTime: now }, { headers: cors });
+        return Response.json({ steps: steps, serverTime: now, marketOpen: _mktOpen }, { headers: cors });
       } catch (e) {
         return Response.json({ steps: [], error: String((e && e.message) || e) }, { headers: cors });
       }
@@ -32730,6 +32745,11 @@ async function mlNewsNextDayNightly(DB) {
 //   → 장중 증분 스캔 모드를 추가한다: 이미 있는 라운드로빈 오프셋으로 '구간만' 읽어
 //     (LIMIT 로 상한) 픽을 갱신·병합한다. 회당 읽는 양이 상한이라 주기를 줄여도 부하가 평평하다.
 //   opts.slice = N 이면 증분 모드(N행만 읽음), 없으면 종전 전량 야간 스캔.
+// [V33.134] 전종목 스캔의 ★총★ 벽시계 예산. 가드(deadline)와 자가진단 경고가 같은 값을 본다.
+//   종전엔 가드가 "모델 로딩 후 90s", 경고가 "총 소요 88s 초과" 라 기준이 서로 달랐고,
+//   그 차이(설정시간 약 20s)만큼 실제 소요가 예산을 넘으면서 경고는 항상 켜져 있었다.
+const SCAN_WALL_MS = 120000;
+
 async function mlUniverseScanNightly(DB, opts) {
   if (!LUXML.enabled) return null;
   const _slice = (opts && opts.slice > 0) ? Math.floor(opts.slice) : 0;
@@ -32802,7 +32822,14 @@ async function mlUniverseScanNightly(DB, opts) {
     // [V32.44] 시장 충격 레짐 1회 계산 → 위원회 결정에 일괄 반영(폭락/대형호재)
     let _shock = { mode: "none", sev: 0 }; try { _shock = await _luxMarketShock(DB); } catch (e) {}
     const _evActive = _evCtx.evs && _evCtx.evs.length ? _evCtx.evs.map(function (e) { return e.code + "(" + e.intensity + (_conf[e.code] != null ? "·확증" + _conf[e.code] : "") + ")"; }).join(",") : "";
-    const deadline = Date.now() + 90000;   // 벽시계 가드(추론은 CPU 수 ms/심볼)
+    // [V33.134] ★가드를 _scanT0 기준으로 건다 — 종전엔 여기서부터 90s 를 셌다.★
+    //   _scanT0 는 이 함수 맨 처음(모델 로딩 전)이고 이 줄은 mind·L1·앙상블·DNN(32MB)·GBDT·
+    //   이벤트맥락·충격레짐·지수캐시를 전부 읽은 ★뒤★ 다. 그 설정시간이 durMs 에는 들어가고
+    //   가드에는 안 들어가서, 실제 소요는 90s 가 아니라 "설정 + 90s" 가 됐다(실측 109,974ms).
+    //   부작용이 두 개였다: ① 총 벽시계가 예산을 넘고 ② durMs 를 88s 와 비교하는 자가진단이
+    //   ★루프가 끝까지 돈 날이면 반드시★ 경고를 띄웠다 — 구조적으로 참일 수 없는 경보다.
+    //   이제 예산 하나(SCAN_WALL_MS)를 가드와 경고가 함께 쓴다.
+    const deadline = _scanT0 + SCAN_WALL_MS;
     const evstats = await getState(DB, "ml_evstats", null);
     const idxCache = {};   // [V7] 시장별 지수(상대강도) 1회 로드
     for (const mk of ["us", "kr", "cm"]) { try { idxCache[mk] = await _mlLoadIndexCloses(DB, mk); } catch (e) { idxCache[mk] = null; } }
@@ -34212,8 +34239,8 @@ async function _luxSelfCheck(DB) {
       } catch (e) {}
       // 성능 경고
       if (_sLoadMs != null && _sLoadMs > 800) add("warn", "속도", "상태 로딩 " + _sLoadMs + "ms — DB 응답 지연(일시적 부하 가능)");
-      if (scan && scan.durMs != null && scan.durMs >= 88000) add("warn", "스캔속도", "스캔이 90s 벽시계 한도 근접(" + Math.round(scan.durMs / 1000) + "s) — 유니버스 대비 커버리지 확인");
-      if (scan && scan.total && scan.scanned / scan.total < 0.5 && scan.durMs != null && scan.durMs >= 80000) add("info", "스캔량", "이번 스캔 커버리지 " + Math.round(scan.scanned / scan.total * 100) + "% — 나머지는 다음 사이클 순환 커버(정상)");
+      if (scan && scan.durMs != null && scan.durMs >= SCAN_WALL_MS * 0.95) add("warn", "스캔속도", "스캔이 벽시계 예산 " + Math.round(SCAN_WALL_MS / 1000) + "s 에 근접(" + Math.round(scan.durMs / 1000) + "s) — 유니버스 대비 커버리지 확인");
+      if (scan && scan.total && scan.scanned / scan.total < 0.5 && scan.durMs != null && scan.durMs >= SCAN_WALL_MS * 0.85) add("info", "스캔량", "이번 스캔 커버리지 " + Math.round(scan.scanned / scan.total * 100) + "% — 나머지는 다음 사이클 순환 커버(정상)");
       if (perf.news && perf.news.fresh24h != null && perf.news.fresh24h < 5 && wnH != null && wnH < 6) add("warn", "뉴스량", "최근24h 유입 뉴스 " + perf.news.fresh24h + "건으로 적음 — 소스/네트워크 점검 권장");
     } catch (e) {}
     // [V32.70] 최근 6h ERROR/WARN — 개수만이 아니라 실제 메시지를 유형·컴포넌트별로 묶어 '무슨 문제인지' 진단

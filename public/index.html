@@ -1739,6 +1739,7 @@ input[type="range"]{accent-color:var(--pos)!important;}
 .pl-ok .pl-dot{color:var(--pos);text-shadow:0 0 6px rgba(0,232,127,.6);}
 .pl-stale .pl-dot{color:var(--amber);}
 .pl-never .pl-dot{color:var(--t3);}
+.pl-idle .pl-dot{color:var(--t2);opacity:.75;}   /* [V33.134] 장외 대기 — 경보 아님 */
 .pl-name{font-weight:700;letter-spacing:.6px;color:var(--t2);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
 .pl-ok .pl-name{color:var(--t1);}
 .pl-age{margin-left:auto;color:var(--t3);font-variant-numeric:tabular-nums;flex-shrink:0;font-family:'IBM Plex Mono',monospace;}
@@ -6553,10 +6554,12 @@ html[data-theme="light"] .m-brainbar button.active{color:#0b4f9e;background:rgba
       if (!grid || !d || !d.steps) return;
       var okCnt = 0;
       grid.innerHTML = d.steps.map(function(s){
-        var cls = s.status === 'OK' ? 'pl-ok' : s.status === 'STALE' ? 'pl-stale' : 'pl-never';
-        if (s.status === 'OK') okCnt++;
-        var ageStr = s.ts ? fmtAgo(s.ts) : '미실행';
-        var icon = s.status === 'OK' ? '●' : s.status === 'STALE' ? '◐' : '○';
+        /* [V33.134] IDLE = 장외라 안 도는 게 정상인 단계. 종전엔 이걸 pl-never(빨강)로 칠해
+           토·일에는 '거래 사이클'이 반드시 고장처럼 보였다. 오경보가 진짜 고장을 덮는다. */
+        var cls = s.status === 'OK' ? 'pl-ok' : s.status === 'IDLE' ? 'pl-idle' : s.status === 'STALE' ? 'pl-stale' : 'pl-never';
+        if (s.status === 'OK' || s.status === 'IDLE') okCnt++;
+        var ageStr = s.status === 'IDLE' ? '장외 대기' : (s.ts ? fmtAgo(s.ts) : '미실행');
+        var icon = s.status === 'OK' ? '●' : s.status === 'IDLE' ? '◌' : s.status === 'STALE' ? '◐' : '○';
         return '<div class="pl-step '+cls+'">'+
           '<span class="pl-dot">'+icon+'</span>'+
           '<span class="pl-name">'+s.label+'</span>'+
@@ -11906,6 +11909,7 @@ html[data-theme="light"] #page-nnviz .nlv-tp-num .p{color:#0b6cd4;}
 #page-nnviz .nlv-step.ok i{background:#38bdf8;box-shadow:0 0 7px rgba(56,189,248,.7);}
 #page-nnviz .nlv-step.stale i{background:#ffc107;box-shadow:0 0 7px rgba(255,193,7,.55);}
 #page-nnviz .nlv-step.never i{background:#ff5c7a;}
+#page-nnviz .nlv-step.idle i{background:#5f79a2;}   /* [V33.134] 장외 대기 */
 #page-nnviz .nlv-step b{font-weight:500;color:#cdddf7;}
 #page-nnviz .nlv-step span{font-size:9.5px;color:#5f79a2;font-variant-numeric:tabular-nums;}
 #page-nnviz .nlv-feed{flex:1 1 auto;min-height:200px;max-height:300px;overflow-y:auto;padding:6px 0 10px;font-family:'IBM Plex Mono',monospace;font-size:10.5px;line-height:1.55;}
@@ -14301,8 +14305,9 @@ html[data-theme="light"] .rail{background:#fff;}
         +esc(scan.events.slice(0,2).map(function(e){ return e.label || e.code; }).join(' · '))+'</span></div>');
     }
     (steps||[]).forEach(function(s){
-      var cls = s.status === 'OK' ? 'ok' : (s.status === 'STALE' ? 'stale' : 'never');
-      rows.push('<div class="nlv-step '+cls+'"><i></i><b>'+esc(s.label)+'</b><span>'+esc(ago(s.ts))+'</span></div>');
+      var cls = s.status === 'OK' ? 'ok' : s.status === 'IDLE' ? 'idle' : (s.status === 'STALE' ? 'stale' : 'never');
+      var age = s.status === 'IDLE' ? '장외 대기' : ago(s.ts);
+      rows.push('<div class="nlv-step '+cls+'"><i></i><b>'+esc(s.label)+'</b><span>'+esc(age)+'</span></div>');
     });
     el.innerHTML = rows.length ? rows.join('') : '<div class="nlv-step"><i></i><b>파이프라인 상태 조회 실패</b><span>—</span></div>';
   }
