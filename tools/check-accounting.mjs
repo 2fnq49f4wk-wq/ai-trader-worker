@@ -11,6 +11,7 @@
 //     ④ ETF 매도세 면제·시행일 경계가 재생에도 그대로 적용된다
 //     ⑤ 왕복거래의 손실은 '비용의 합' 과 정확히 일치한다(유령 손익 0)
 
+import { readFileSync } from "node:fs";
 import { computeCashFromTrades, _krSellTaxRate, _slipRate, backtestSymbol } from "../src/index.js";
 
 let fails = 0;
@@ -208,6 +209,44 @@ const NOW = Date.now();
     if (priceSkew === 0) ok("백테스트 체결가 == 시장 종가 (" + res.trades.length + "건) — 비용은 가격이 아니라 비용률로 처리됨");
     else bad("체결가가 시장가와 다르다 " + priceSkew + "건 — 슬리피지를 가격에 섞고 있다(라이브와 불일치)");
   }
+}
+
+// ══ [V33.129] ★매도 원자성 — 판 돈이 사라지지 않는가★ ═══════════════════════
+//   현금은 원장(trades)에서 파생된다. 그래서 "포지션은 지워졌는데 SELL 이 원장에 없다" 는
+//   단순 불일치가 아니라 ★돈이 사라진 상태★ 다. 자산도 없고 대금도 안 들어온다.
+//   운영 스냅샷의 QTY_MISMATCH cm|GC=F "원장 2 vs 포지션 0" 이 그 서명이었다.
+//   매수는 V31 부터 DB.batch 로 원자적이었는데 매도 3경로만 순차 실행이었다.
+{
+  const src = readFileSync(new URL("../src/index.js", import.meta.url), "utf8");
+  const paths = [["executeSell(", "메인"], ["executeSellCM(", "원자재"], ["executeSellAlt(", "채권/대체"]];
+  for (const [fn, label] of paths) {
+    const i = src.indexOf("async function " + fn);
+    if (i < 0) { bad(label + " 매도 함수를 못 찾았다"); continue; }
+    const seg = src.slice(i, i + 14000);
+    const iBatch = seg.indexOf("DB.batch([");
+    const iSeq = seg.indexOf("await stmtPos.run()");
+    if (iSeq >= 0) { bad(label + " 매도가 아직 포지션을 따로 실행한다(stmtPos.run) — 판 돈이 사라질 수 있다"); continue; }
+    if (iBatch < 0) { bad(label + " 매도가 DB.batch 를 쓰지 않는다 — 원장·포지션이 원자적이지 않다"); continue; }
+    // ★순서★ — 조건부 INSERT 가 UPDATE/DELETE 보다 앞이어야 EXISTS 가 참일 수 있다.
+    const bat = seg.slice(iBatch, iBatch + 220);
+    if (/DB\.batch\(\[\s*_stmtTrade[A-Za-z]*\s*,\s*stmtPos\s*\]\)/.test(bat))
+      ok(label + " 매도: 배치 [조건부원장, 포지션] 순서 — 원자적이고 EXISTS 가 성립한다");
+    else bad(label + " 매도 배치 순서가 틀렸다(포지션이 먼저면 EXISTS 가 항상 거짓): " + bat.slice(0, 80));
+  }
+  // 조건부 INSERT 가 CAS 와 ★같은 조건★ 을 쓰는가 — 다르면 중복 원장이 생긴다.
+  const gi = src.indexOf("function stmtRecordTradeIfPos(");
+  if (gi < 0) bad("stmtRecordTradeIfPos 가 없다");
+  else {
+    const g = src.slice(gi, gi + 900);
+    const okSel = /INSERT INTO trades[\s\S]*SELECT[\s\S]*WHERE EXISTS/.test(g);
+    const okGuard = /positions WHERE symbol = \? AND strategy = \? AND market = \? AND qty = \?/.test(g);
+    if (okSel && okGuard) ok("조건부 원장 INSERT 가 포지션 CAS 와 동일 조건(symbol·strategy·market·qty)");
+    else bad("조건부 INSERT 의 가드가 CAS 와 다르다 — 중복 원장 또는 누락이 생긴다");
+  }
+  // CAS 판정을 배치 결과의 ★포지션 문장★ 에서 읽는가(인덱스 1)
+  const nIdx = (src.match(/_rowsChanged\(_bat[A-Za-z]*\s*&&\s*_bat[A-Za-z]*\[1\]\)/g) || []).length;
+  if (nIdx >= 3) ok("CAS 판정을 배치의 포지션 결과(index 1)에서 읽는다 — 3경로 모두");
+  else bad("CAS 판정이 배치 결과를 안 읽는 경로가 있다(" + nIdx + "/3)");
 }
 
 console.log(fails ? "\n회계 불변식 위반 " + fails + "건" : "\n  ok   회계 불변식 통과");

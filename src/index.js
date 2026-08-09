@@ -2788,7 +2788,7 @@ async function applySignalTypeWeights(DB, cfg) {
 // ============================================================================
 // [V33.55] 빌드 버전 — SWR L2 캐시 키에 섞어 '배포 = 판단 캐시 자동 무효화'를 만든다.
 //   판정 로직을 고쳐도 옛 캐시가 최대 1시간 재배포되던 문제를 구조적으로 없앤다.
-const _BUILD_VER = "V33.128";
+const _BUILD_VER = "V33.129";
 
 const AI_PARAMS = {
   // ── OHLCV 타임프레임 ── 시가/고가/저가/종가/거래량을 어떤 봉 주기로 볼지.
@@ -8965,6 +8965,34 @@ function stmtRecordTrade(DB, t) {
     .bind(t.ts, t.market, t.symbol, t.side, t.qty, t.price, t.pnl == null ? null : t.pnl, t.pnl_pct == null ? null : t.pnl_pct, t.reason);
 }
 
+// [V33.129] ★매도 원장을 포지션과 같은 조건으로 묶는 조건부 INSERT.★
+//
+//   매도 3경로(executeSell·executeSellCM·executeSellAlt)가 전부 이렇게 돌고 있었다:
+//       const posRes = await stmtPos.run();          // ① 포지션을 먼저 지운다
+//       if (_rowsChanged(posRes) === 0) return ...;   // ② CAS — 중복실행 차단
+//       await stmtRecordTrade(...).run();             // ③ 원장은 ★따로★ 쓴다
+//   ①과 ③ 사이에서 실패하면(D1 과부하·타임아웃·워커 축출) 포지션은 사라졌는데 원장에는
+//   SELL 이 없다. 그런데 ★현금은 원장에서 파생된다★(computeCashFromTrades) —
+//   즉 판 돈이 현금으로 들어오지 않는다. 자산도 없고 돈도 없다. 조용히 사라진다.
+//   운영 스냅샷의 QTY_MISMATCH cm|GC=F "원장 2 vs 포지션 0" 이 정확히 이 서명이다.
+//   (매수는 V31 부터 DB.batch 로 원자적이라 이 구멍이 없다 — 매도만 남아 있었다)
+//
+//   그냥 순서를 바꾸면 CAS 가 깨진다(포지션 결과를 알아야 중복인지 판정한다).
+//   → 원장 INSERT 를 ★포지션과 똑같은 조건★ 으로 만들어 한 배치에 넣는다.
+//     INSERT ... SELECT ... WHERE EXISTS(포지션이 아직 기대수량인가) 이므로,
+//     다른 invocation 이 이미 팔았으면 두 문장 모두 0행이 된다(중복 원장 없음).
+//     배치는 원자적이라 "포지션만 지워지고 원장은 없는" 상태가 만들어질 수 없다.
+//     ★순서 주의★ — INSERT 가 먼저다. UPDATE/DELETE 가 먼저 돌면 EXISTS 가 이미 거짓이 된다.
+function stmtRecordTradeIfPos(DB, t, guard) {
+  return DB.prepare(
+    "INSERT INTO trades (ts, market, symbol, side, qty, price, pnl, pnl_pct, reason) " +
+    "SELECT ?, ?, ?, ?, ?, ?, ?, ?, ? WHERE EXISTS (" +
+    "SELECT 1 FROM positions WHERE symbol = ? AND strategy = ? AND market = ? AND qty = ?)"
+  ).bind(t.ts, t.market, t.symbol, t.side, t.qty, t.price,
+         t.pnl == null ? null : t.pnl, t.pnl_pct == null ? null : t.pnl_pct, t.reason,
+         guard.symbol, guard.strategy, guard.market, guard.expectedQty);
+}
+
 // [중복실행 방지] 최근 windowMs 내 동일 (market, symbol, side, qty, price≈) 거래가 이미 있으면 true.
 //   매수는 ON CONFLICT 병합이라 CAS를 못 걸어, 겹치는 invocation의 중복 매수(현금 이중차감·
 //   수량 증발)를 원장 멱등성으로 차단한다. 정상 불타기는 가격이 달라 걸리지 않음(동일가+동일수량+2분내만 중복 판정).
@@ -12275,15 +12303,20 @@ async function executeSell(DB, market, symbol, pos, sellQty, price, reason, cfg,
     } else {
       stmtPos = stmtDeletePositionGuarded(DB, symbol, strategy, market, origQty);
     }
-    const posRes = await stmtPos.run();
-    const changed = _rowsChanged(posRes);
+    // [V33.129] ★원장·포지션을 한 배치로 — 조건부 INSERT 가 먼저다.★
+    //   종전엔 포지션을 먼저 지우고 원장을 따로 썼다. 그 사이에서 실패하면 판 돈이
+    //   현금(원장 파생)으로 안 들어온다(stmtRecordTradeIfPos 주석 참조).
+    const _stmtTrade = stmtRecordTradeIfPos(DB,
+      { ts: Date.now(), market: market, symbol: symbol, side: "SELL", qty: sellQty, price: price, pnl: pnl, pnl_pct: pnlPct, reason: enrichedReason },
+      { symbol: symbol, strategy: strategy, market: market, expectedQty: origQty });
+    const _bat = await DB.batch([_stmtTrade, stmtPos]);
+    const changed = _rowsChanged(_bat && _bat[1]);
     if (changed === 0) {
-      // 이 매도는 다른 실행이 이미 처리함 — 중복. 거래기록·현금반영 안 함.
+      // 이 매도는 다른 실행이 이미 처리함 — 중복. 원장도 EXISTS 조건에서 걸러져 안 쓰인다.
       await log(DB, "WARN", symbol, "SELL 중복실행 차단(CAS 0행): x" + sellQty + " @" + price.toFixed(2) + " " + reason);
       pos.qty = origQty;   // 인메모리 롤백
       return { cash: cash, pnlPct: 0, duplicate: true };
     }
-    await stmtRecordTrade(DB, { ts: Date.now(), market: market, symbol: symbol, side: "SELL", qty: sellQty, price: price, pnl: pnl, pnl_pct: pnlPct, reason: enrichedReason }).run();
     await verifyAfterTrade(DB, market, symbol, "SELL");   // [V33.74] 쓴 뒤에도 확인한다
   } catch (e) {
     await log(DB, "ERROR", symbol, "SELL transaction aborted: " + e.message);
@@ -14217,14 +14250,19 @@ async function executeSellCM(DB, symbol, pos, sellQty, price, reason, cfg, cash)
     } else {
       stmtPos = stmtDeletePositionGuarded(DB, symbol, "swing", "cm", origQtyCM);
     }
-    const posRes = await stmtPos.run();
-    const changed = _rowsChanged(posRes);
+    // [V33.129] ★원장·포지션을 한 배치로 — 순서 주의: 조건부 INSERT 가 먼저다.★
+    //   종전엔 포지션을 먼저 지우고 원장을 따로 썼다. 그 사이에서 실패하면 판 돈이
+    //   현금(원장 파생)으로 안 들어온다 — 자산도 없고 돈도 없다(stmtRecordTradeIfPos 주석 참조).
+    const _stmtTradeCM = stmtRecordTradeIfPos(DB,
+      { ts: Date.now(), market: "cm", symbol: symbol, side: "SELL", qty: sellQty, price: price, pnl: pnl, pnl_pct: pnlPct, reason: enrichedReason },
+      { symbol: symbol, strategy: "swing", market: "cm", expectedQty: origQtyCM });
+    const _batCM = await DB.batch([_stmtTradeCM, stmtPos]);
+    const changed = _rowsChanged(_batCM && _batCM[1]);
     if (changed === 0) {
       await log(DB, "WARN", symbol, "[CM] SELL 중복실행 차단(CAS 0행): x" + sellQty + " @" + price.toFixed(2) + " " + reason);
       pos.qty = origQtyCM;
       return { pnlPct: 0, cash: cash, duplicate: true };
     }
-    await stmtRecordTrade(DB, { ts: Date.now(), market: "cm", symbol: symbol, side: "SELL", qty: sellQty, price: price, pnl: pnl, pnl_pct: pnlPct, reason: enrichedReason }).run();
     await verifyAfterTrade(DB, "cm", symbol, "CM SELL");
   } catch (e) {
     await log(DB, "ERROR", symbol, "[CM] SELL transaction aborted: " + e.message);
@@ -14673,14 +14711,17 @@ async function executeSellAlt(DB, sleeve, symbol, pos, sellQty, price, reason, c
     let stmtPos;
     if (sellQty < pos.qty) { pos.qty = pos.qty - sellQty; pos.meta.tp1Done = true; pos.meta.feeRemaining = Math.max(0, feeRemaining - entryFeeForThisSell); stmtPos = stmtUpdatePositionGuarded(DB, mk, symbol, "swing", pos, origQtyAlt); }
     else { stmtPos = stmtDeletePositionGuarded(DB, symbol, "swing", mk, origQtyAlt); }
-    const posRes = await stmtPos.run();
-    const changed = _rowsChanged(posRes);
+    // [V33.129] 원장·포지션을 한 배치로(조건부 INSERT 먼저) — 메인 매도와 동일 규칙.
+    const _stmtTradeAlt = stmtRecordTradeIfPos(DB,
+      { ts: Date.now(), market: mk, symbol: symbol, side: "SELL", qty: sellQty, price: price, pnl: pnl, pnl_pct: pnlPct, reason: enrichedReason },
+      { symbol: symbol, strategy: "swing", market: mk, expectedQty: origQtyAlt });
+    const _batAlt = await DB.batch([_stmtTradeAlt, stmtPos]);
+    const changed = _rowsChanged(_batAlt && _batAlt[1]);
     if (changed === 0) {
       await log(DB, "WARN", symbol, "[" + sleeve.label + "] SELL 중복실행 차단(CAS 0행): x" + sellQty + " @" + price.toFixed(2) + " " + reason);
       pos.qty = origQtyAlt;
       return { pnlPct: 0, cash: cash, duplicate: true };
     }
-    await stmtRecordTrade(DB, { ts: Date.now(), market: mk, symbol: symbol, side: "SELL", qty: sellQty, price: price, pnl: pnl, pnl_pct: pnlPct, reason: enrichedReason }).run();
     await verifyAfterTrade(DB, mk, symbol, sleeve.label + " SELL");
   } catch (e) { await log(DB, "ERROR", symbol, "[" + sleeve.label + "] SELL aborted: " + e.message); return { pnlPct: 0, cash: cash }; }
   if (cash && typeof cash[mk] === "number") cash[mk] += proceeds;
