@@ -201,6 +201,118 @@ for (const k of reads) {
     for (const f of findings) console.error(`  FAIL 미선언 참조: ${f.fn}() 안의 '${f.name}' @${f.line} — 실행 시 ReferenceError`);
     bad += findings.length;
   }
+
+  // ══ [V33.131] ★블록 스코프 이탈 참조 검사★ ══
+  //   위의 미선언 검사는 선언을 ★함수 단위로 평평하게★ 모은다. 그래서 안쪽 블록에서
+  //   `let x` 를 선언하고 바깥에서 x 를 읽어도 "선언돼 있다"고 통과시킨다 — 실행하면
+  //   ReferenceError 다. 실제로 이 구멍으로 `_md` 가 8곳에서 스코프 밖 참조 상태였고,
+  //   프로덕션 로그에 "_md is not defined" 가 ★323건★ 찍힐 때까지 14개 게이트 전부가
+  //   초록불이었다(2026-08-06~08). node --check 도 위 검사도 못 잡는 구멍이다.
+  //
+  //   오탐을 0으로 유지하는 보수적 규칙 — 확실한 것만 본다:
+  //     · 함수 안에서 ★딱 한 번★ 선언된 단순 바인딩만 대상(섀도잉·구조분해·다중선언 제외)
+  //     · 선언 블록 밖 참조 → ReferenceError 로 확정 신고
+  //     · 같은 블록 안이지만 선언보다 ★앞선★ 참조 → TDZ. 단 중첩 함수 안(나중에 호출될 수
+  //       있어 합법)이면 신고하지 않는다.
+  {
+    const scopeFind = [];
+    const fnRe2 = /^(?:export\s+)?(?:async\s+)?function\s*\*?\s*([A-Za-z_$][\w$]*)\s*\(/gm;
+    let fm2;
+    while ((fm2 = fnRe2.exec(S)) !== null) {
+      const bOpen = S.indexOf("{", fm2.index);
+      if (bOpen < 0) continue;
+      let d0 = 0, bEnd = -1;
+      for (let k = bOpen; k < S.length; k++) { if (S[k] === "{") d0++; else if (S[k] === "}") { d0--; if (d0 === 0) { bEnd = k; break; } } }
+      if (bEnd < 0) continue;
+      const body = S.slice(bOpen, bEnd + 1), base = bOpen;
+
+      // 본문 내 brace 깊이 (body[i] 를 ★포함한 뒤★의 깊이)
+      const dep = new Int32Array(body.length);
+      { let d = 0; for (let i = 0; i < body.length; i++) { const c = body[i]; if (c === "{") d++; else if (c === "}") d--; dep[i] = d; } }
+
+      // 중첩 함수 본문 범위 — TDZ 판정에서 제외하기 위해
+      const fnRanges = [];
+      for (const m of body.matchAll(/(?:\bfunction\b[^(){;]*\([^()]*\)|=>)\s*\{/g)) {
+        const ob = m.index + m[0].length - 1;
+        const dd = dep[ob];
+        let ce = -1;
+        for (let k = ob + 1; k < body.length; k++) if (dep[k] === dd - 1) { ce = k; break; }
+        fnRanges.push([ob, ce < 0 ? body.length : ce]);
+      }
+      const inNestedFn = (p) => fnRanges.some(([a, b]) => p > a && p < b);
+
+      // 단순 단일 바인딩 선언만 ★후보★로 삼는다: `let x =` / `let x;` / `const x =`
+      const decls = new Map();   // name -> [pos...]
+      for (const m of body.matchAll(/\b(?:let|const|var)\s+([A-Za-z_$][\w$]*)\s*(=[^=>]|;)/g)) {
+        if (!decls.has(m[1])) decls.set(m[1], []);
+        decls.get(m[1]).push(m.index + m[0].indexOf(m[1]));
+      }
+      // ★모든★ 선언 형태의 횟수 — 후보 자격 심사용.
+      //   짧은 이름(c·k·q·m)은 형제 블록에서 `for (const k of …)` 로 몇 번씩 다시 선언된다.
+      //   그런 이름은 어느 선언이 어느 참조에 붙는지 정적으로 못 가리므로 아예 대상에서 뺀다.
+      const dcnt = new Map();
+      const bump = (n) => dcnt.set(n, (dcnt.get(n) || 0) + 1);
+      for (const m of body.matchAll(/\b(?:const|let|var)\s/g)) {
+        let i = m.index + m[0].length, dpt = 0, expectName = true;
+        while (i < body.length) {
+          const c = body[i];
+          if (c === "(" || c === "[" || c === "{") {
+            if (expectName && dpt === 0) {
+              let ddd = 0, j = i;
+              for (; j < body.length; j++) { if ("([{".indexOf(body[j]) >= 0) ddd++; else if (")]}".indexOf(body[j]) >= 0) { ddd--; if (ddd === 0) break; } }
+              for (const nm of body.slice(i, j + 1).matchAll(/([A-Za-z_$][\w$]*)/g)) bump(nm[1]);
+              i = j + 1; expectName = false; continue;
+            }
+            dpt++; i++; continue;
+          }
+          if (c === ")" || c === "]" || c === "}") { dpt--; if (dpt < 0) break; i++; continue; }
+          if (dpt === 0) {
+            if (c === ";") break;
+            if (c === ",") { expectName = true; i++; continue; }
+            if (c === "=") { expectName = false; i++; continue; }
+            if (expectName && /[A-Za-z_$]/.test(c)) { const w = body.slice(i).match(/^([A-Za-z_$][\w$]*)/); bump(w[1]); i += w[1].length; expectName = false; continue; }
+          }
+          i++;
+        }
+      }
+      for (const m of body.matchAll(/\bfunction\s*\*?\s*([A-Za-z_$][\w$]*)/g)) bump(m[1]);
+      for (const m of body.matchAll(/\bcatch\s*\(\s*([A-Za-z_$][\w$]*)/g)) bump(m[1]);
+      for (const m of body.matchAll(/\bclass\s+([A-Za-z_$][\w$]*)/g)) bump(m[1]);
+      for (const m of body.matchAll(/(?:function\s*\*?\s*[A-Za-z_$\w]*\s*)\(([^)]*)\)/g)) for (const nm of m[1].matchAll(/([A-Za-z_$][\w$]*)/g)) bump(nm[1]);
+      for (const m of body.matchAll(/\(([^()]*)\)\s*=>/g)) for (const nm of m[1].matchAll(/([A-Za-z_$][\w$]*)/g)) bump(nm[1]);
+      for (const m of body.matchAll(/(?:^|[^\w$.])([A-Za-z_$][\w$]*)\s*=>/gm)) bump(m[1]);
+
+      for (const [name, poss] of decls) {
+        if (poss.length !== 1) continue;                       // 섀도잉 가능 → 보수적으로 건너뜀
+        if ((dcnt.get(name) || 0) !== 1) continue;             // 다른 형태로도 선언됨 → 판단 불가
+        if (TOP.has(name) || GLOBALS.has(name) || KW.has(name)) continue;
+        const declPos = poss[0];
+        const dd = dep[declPos];
+        if (dd <= 1) continue;                                  // 함수 본문 최상위 선언 → 전 범위 유효
+        // 같은 이름이 다른 곳에서 함수/클래스/catch 로도 선언되면 제외
+        if (new RegExp(`\\b(?:function\\s*\\*?\\s*${name}\\b|class\\s+${name}\\b|catch\\s*\\(\\s*${name}\\b)`).test(body)) continue;
+        //   ※ 파라미터 여부는 위 dcnt 가 이미 센다. 여기서 `\(…name…\)\s*\{` 같은 느슨한
+        //     패턴을 쓰면 `if (_md && _md.allow) {` 이 '파라미터 목록'으로 오인돼 검사가
+        //     통째로 무력화된다 — 실제로 그 패턴 때문에 _md 8곳을 놓쳤다(주입시험으로 확인).
+
+        let bs = declPos; while (bs > 0 && dep[bs - 1] >= dd) bs--;
+        let be = declPos; while (be < body.length - 1 && dep[be + 1] >= dd) be++;
+
+        for (const r of body.matchAll(new RegExp(`([.?]\\s*)?\\b${name}\\b(\\s*:)?`, "g"))) {
+          if (r[1] || r[2]) continue;                           // .x / {x: ...}
+          const p = r.index + (r[1] ? r[1].length : 0);
+          if (p === declPos) continue;
+          if (/\b(?:let|const|var)\s+$/.test(body.slice(Math.max(0, p - 8), p))) continue;
+          if (p < bs || p > be) scopeFind.push({ fn: fm2[1], name, line: ln(base + p), why: "블록 밖" });
+          else if (p < declPos && !inNestedFn(p)) scopeFind.push({ fn: fm2[1], name, line: ln(base + p), why: "선언 이전(TDZ)" });
+        }
+      }
+    }
+    if (scopeFind.length) {
+      for (const f of scopeFind) console.error(`  FAIL 스코프 이탈: ${f.fn}() 의 '${f.name}' @${f.line} — ${f.why} 참조, 실행 시 ReferenceError`);
+      bad += scopeFind.length;
+    }
+  }
 }
 
 

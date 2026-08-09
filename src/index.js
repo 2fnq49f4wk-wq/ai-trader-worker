@@ -2788,7 +2788,7 @@ async function applySignalTypeWeights(DB, cfg) {
 // ============================================================================
 // [V33.55] 빌드 버전 — SWR L2 캐시 키에 섞어 '배포 = 판단 캐시 자동 무효화'를 만든다.
 //   판정 로직을 고쳐도 옛 캐시가 최대 1시간 재배포되던 문제를 구조적으로 없앤다.
-const _BUILD_VER = "V33.130";
+const _BUILD_VER = "V33.131";
 
 const AI_PARAMS = {
   // ── OHLCV 타임프레임 ── 시가/고가/저가/종가/거래량을 어떤 봉 주기로 볼지.
@@ -13411,6 +13411,14 @@ async function refreshShard(env, market, shard) {
 async function autoTune(DB, cfg, regimes) {
   if (!cfg.autoTune) return cfg;
   try {
+    // [V33.131] ★nowTs 선언을 함수 최상단으로 올린다 — V33.44 가 선언 이전에 읽고 있었다.★
+    //   종전 선언 위치는 13575행(신호 자동비활성화 직전)이었는데, 그보다 ★59줄 위★의
+    //   V33.44 「시장×전략 자동차단」 블록이 nowTs 를 두 번 읽는다(2시간 재계산 판정 + 저장 ts).
+    //   같은 함수 스코프의 선언 이전 참조 = TDZ 이고, 그 블록이 통째로 try{}catch(e){} 안이라
+    //   예외가 조용히 삼켜졌다 → ★V33.44 는 도입 이후 한 번도 실행된 적이 없다★.
+    //   하필 이 기능이 "KR/SCALP 같은 시장×전략 조합만 구조적으로 지는 것"을 끄는 장치다.
+    //   로그에 disabled=[SC_VWAP] 하나뿐이던 이유가 이것이다.
+    const nowTs = Date.now();
     // [V8.2] 신호별 통계는 시장 무관 (성능 평균)
     // [V8.3] window 크기를 cfg.signalStatsWindow로 제어 (기본 80건)
     //        + 최근 거래에 더 큰 가중치 (시간 감쇠) — 시장 국면 변화 추종력↑
@@ -13572,7 +13580,7 @@ async function autoTune(DB, cfg, regimes) {
     if (!newCfg.disabledSignalsAt) newCfg.disabledSignalsAt = {};
     const newlyDisabled = [];
     const reviewMs = (cfg.signalReviewDays || 30) * 24 * 3600 * 1000;
-    const nowTs = Date.now();
+    // (nowTs 선언은 V33.131 에서 autoTune 최상단으로 이동 — 아래 로직은 그 값을 그대로 쓴다)
     // 1) 신규 비활성화
     //   [V9.7] 기준 강화 — 기존 (WR<40% & avgPnL<0) AND 조건은 둔감해서 SW_RSI_REV 같은
     //   명백한 손실 신호(26건 WR31% avgPnL-2.49)도 살아남았다.
@@ -16735,6 +16743,14 @@ async function runTradingCycle(env) {
           //     내부자 Form4 3일 클러스터(US): -2
           //   해석: ≤-4 진입 차단 / -3..-1 ×0.7 / 0 중립 / +1..+2 ×1.1 / ≥+3 ×1.25
           //   SCALP 추가 규칙: 점수 음수면 차단 — 손실 데이터(연속 VWAP 손절)가 역풍 단타를 증명.
+          // [V33.131] ★_spillMult 선언을 이 if 밖으로 뺀다 — 안에서 선언하면 사용처가 스코프 밖이다.★
+          //   V33.46 메가캡 실적 파급 사이즈 반영은 아래 전략 루프(17134행 부근)에서 sizeScale 에
+          //   곱해지는데, 그 지점은 이 if 블록의 ★형제★ 블록이라 _spillMult 가 보이지 않았다.
+          //   그런데 그 코드가 `typeof _spillMult === "number"` 로 시작한다 — typeof 는 미선언
+          //   식별자에도 예외를 안 던지고 "undefined" 를 돌려주므로 조건이 항상 false 가 되어
+          //   ★예외 한 줄 없이 기능만 죽어 있었다★(V33.46 이후 줄곧). ctxScore 가점(±2)만 살아
+          //   있었고 사이즈 배수는 한 번도 적용된 적이 없다. 로그로는 절대 드러나지 않는 종류의 사고다.
+          let _spillMult = 1;
           if (stratResults.length > 0) {
             let ctxScore = 0;
             const ctxWhy = [];
@@ -16825,7 +16841,7 @@ async function runTradingCycle(env) {
             }
             // [V33.46] 메가캡 실적 파급 — 같은 섹터 대형주가 큰 서프라이즈를 내면 섹터 전체를 재평가한다.
             //   (2026-07-30 MSFT +16%·클라우드 43% 성장 → 나스닥 +2.8%, AMZN 동반 급등이 실제 사례)
-            let _spillMult = 1;
+            // (선언은 위 if 블록 바깥으로 이동 — V33.131)
             try {
               const _sg2 = (typeof getSectorGroup === "function") ? getSectorGroup(symbol, mcfg) : null;
               const _sp2 = _sg2 && __megaSpill && __megaSpill[_sg2];
@@ -16895,6 +16911,20 @@ async function runTradingCycle(env) {
             const strategy = sr.strategy;
             const signal = sr.signal;
 
+            // ═══ [V33.131] ★_md 를 여기서 선언한다 — 아래 8곳이 스코프 밖에서 참조하고 있었다.★ ═══
+            //   원래 선언은 훨씬 아래(딥결정 try 블록 안)에 있었다. 그런데 nobuy 사유를 기록하는
+            //   incNobuy/noteGateBlock 호출 8곳이 그 블록 ★밖★에서 _md 를 읽는다:
+            //     budget_*(예산버킷) · cash_short · price_too_high · max_concurrent · snap_max_concurrent
+            //     · kelly_zero  → 전부 실행 시 ReferenceError("_md is not defined"),
+            //     senti_override · fund_health → 선언 이전 참조라 TDZ("Cannot access before initialization").
+            //   실제로 프로덕션 로그에 ★323건★이 찍혔다(2026-08-06~08, GEN·TEAM·DASH·ULTA·SHOP 등 11종목).
+            //   전부 "[예산] 버킷 한도 도달" 로그 ★직후★ — 17749행 budget 경로다.
+            //   피해: 예외가 종목 루프의 catch 로 튀어 ★그 종목의 나머지 전략 평가가 통째로 날아간다★.
+            //   예산 한도는 매 사이클 상위 종목부터 소진되므로, 같은 종목이 반복해서 평가에서
+            //   탈락해 왔다(로그의 GEN 114건이 그 흔적). 게다가 nobuy 통계도 그만큼 누락됐다.
+            //   전략 1회분 결정이므로 루프 본문 최상단이 올바른 선언 위치다(매 iteration 리셋).
+            let _md = null;
+
             // ═══ [V33.67] ★장타에도 같은 구조가 있었다 — 반사실 후보가 진입 게이트 뒤에 있었다★ ═══
             //   반사실(counterfactual) 후보 적재의 존재 이유는 "안 산 종목이 어떻게 됐는지"를 배우는 것이다.
             //   그런데 적재 지점이 진입 게이트 13개(LLM_DISABLE·NEGEXP_SIG·NEGEXP_MS·XMKT_SEMI·
@@ -16941,6 +16971,13 @@ async function runTradingCycle(env) {
             //   여기서 무조건 continue 하던 한 줄이 폭등장의 가장 큰 수익원(불려 나가기)을
             //   통째로 막고 있었다. 다만 조건은 pyramidDecide 가 전부 판정한다 —
             //   본전잠금·상승국면·추세품질·유닛상한·갭보정 위험예산·히트 중 하나라도 어긋나면 안 더한다.
+            // [V33.131] ★인버스 판정을 피라미딩 게이트보다 먼저 만든다.★
+            //   V33.121 이 아래 게이트에서 _symInverse 를 읽는데 그 const 선언은 17034행이었다 —
+            //   같은 블록의 ★선언 이전★ 참조라 TDZ("Cannot access before initialization")다.
+            //   `heldSymbols.has(symbol) && pyramid.enabled && 대상전략` 이 전부 참일 때,
+            //   즉 ★피라미딩이 실제로 작동하려는 바로 그 순간에만★ 터지므로 지금까지
+            //   로그에 안 잡혔다(보유 + 대상전략 조합이 아직 안 나옴). 켜지자마자 죽었을 것이다.
+            const _symInverse = INVERSE_ETF.has(symbol);
             let _pyr = null;
             if (heldSymbols.has(symbol)) {
               const _pc = (mcfg.pyramid || DEFAULT_CFG.pyramid || {});
@@ -17009,7 +17046,7 @@ async function runTradingCycle(env) {
             };
             // [V12] 폭락장 생존 게이트 — 신규매수 전면 차단(드로다운 L2+/연속손실/패닉)
             //   [패닉 헤지] 인버스 ETF는 면제 — 패닉장에서 인버스로 수익·헤지를 노린다.
-            const _symInverse = INVERSE_ETF.has(symbol);
+            //   (_symInverse 선언은 V33.131 에서 피라미딩 게이트 위로 이동)
             // [SCALP-PANIC] 패닉 단타 신호는 전면차단(DD_L2/연속손실)도 면제 — 리스크 작고 회전 빨라 패닉장 수익 기회 유지.
             const _isPanicScalpSig = signal && signal.isPanicScalp === true;
             if (crashGate.blockNew && !_symInverse && !_isPanicScalpSig) {
@@ -17529,7 +17566,7 @@ async function runTradingCycle(env) {
                   }
                 } catch (e) {}
                 // 최상위 결정(deep) → 폴백(mind)
-                let _md = null;
+                _md = null;   // [V33.131] 선언은 전략 루프 최상단으로 이동 — 여기서는 재사용 전 초기화만
                 // [V33.78] FLOW 피처 조립 — 모델이 신뢰 상태일 때만 만든다(불필요한 fetch 방지).
                 //   피어 계산은 캐시된 일봉만 쓰므로 네트워크 0, 포지셔닝/옵션은 종목당 하루 1회 캐시.
                 let __flowFeat = null;
