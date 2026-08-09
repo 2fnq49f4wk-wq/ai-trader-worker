@@ -2788,7 +2788,7 @@ async function applySignalTypeWeights(DB, cfg) {
 // ============================================================================
 // [V33.55] 빌드 버전 — SWR L2 캐시 키에 섞어 '배포 = 판단 캐시 자동 무효화'를 만든다.
 //   판정 로직을 고쳐도 옛 캐시가 최대 1시간 재배포되던 문제를 구조적으로 없앤다.
-const _BUILD_VER = "V33.126";
+const _BUILD_VER = "V33.127";
 
 const AI_PARAMS = {
   // ── OHLCV 타임프레임 ── 시가/고가/저가/종가/거래량을 어떤 봉 주기로 볼지.
@@ -27756,7 +27756,13 @@ async function mlMindTrainNightly(DB) {
     //   기준으로 갱신 → 관측이 누적돼 자기감시가 실제로 작동. distrust 상태는 새 모델이므로 초기화.
     let _prevGuard = null; try { _prevGuard = await getState(DB, "mind_guard", null); } catch (e) {}
     const _carry = (_prevGuard && Array.isArray(_prevGuard.live)) ? _prevGuard.live.slice(-MIND.guardWindow) : [];
-    await setState(DB, "mind_guard", { live: _carry, distrust: false, baseAcc: mind.valAcc });
+    // [V33.127] liveBase 는 ★라이브 분포의 성질★ 이라 모델 재학습과 무관하게 이어받는다.
+    //   그래야 "새 모델이 예전 라이브보다 나빠졌는가" 를 물을 수 있다. 버리면 25건을 다시
+    //   모으는 동안 가드가 눈을 감는다. baseAcc(검증)는 표시용으로만 남긴다.
+    await setState(DB, "mind_guard", { live: _carry, distrust: false, baseAcc: mind.valAcc,
+      liveBase: _prevGuard ? _prevGuard.liveBase : null,
+      liveBaseN: _prevGuard ? _prevGuard.liveBaseN : null,
+      liveBaseAt: _prevGuard ? _prevGuard.liveBaseAt : null });
 
     return "[MIND] n=" + N + " 결합valAcc=" + (valAcc * 100).toFixed(1) + "%(하한 " + (accLB * 100).toFixed(1) + "%) (FM단독 " + (fmAcc * 100).toFixed(1) +
            "%) 전문가=" + expertNames.join("+") + " meta_w=[" + meta.w.map(function (v) { return v.toFixed(2); }).join(",") + "]";
@@ -27806,11 +27812,48 @@ async function mlGuardObserve(DB, predP, won) {
       //   창이 다 차면(60건) 표준오차가 6.4%p 라 설정값 8%p 가 그대로 유효하다. 즉 이 보정은
       //   ★창이 덜 찼을 때만★ 더 엄격해지고, 정상 운용에서는 종전과 같은 문턱이다.
       //   진짜 열화(55%→42%) 검출력은 60건에서 80.6% 로 종전과 동일하다.
+      // [V33.127] ★기준선을 검증정확도에서 '라이브 기준선'으로 바꾼다 — 비교가 성립하지 않았다.★
+      //   종전 기준선은 mind.valAcc 였다. 그런데 두 수치는 ★다른 모집단★ 이다:
+      //     검증  = 수확표본(ml_samples 176,937건 중 176,314건이 hv) — 봉 기반 10일 지평
+      //             시뮬레이션 결과, 양성비율 42.2%
+      //     라이브 = 실거래 — 손절·익절·타임스톱으로 종료, 실측 승률 56.2%
+      //   실제 값으로 계산하면 격차가 14.5%p 이고, 문턱은 관측 25건에서 11.7%p·60건에서 8.0%p 다.
+      //   즉 ★관측이 25건만 쌓이면 어느 창 크기에서도 distrust 가 발동★ 하고, 그러면
+      //   mlDeepDecide 가 observe 로 떨어져 AI 개입이 통째로 멈춘다. 성능과 무관하게 그렇다.
+      //   (운영 스냅샷의 liveN 이 0 이라 아직 안 터졌을 뿐 — 시한폭탄이었다)
+      //   → 가드가 물어야 할 것은 "검증 약속을 지키는가" 가 아니라 ★"예전보다 나빠졌는가"★ 다.
+      //     라이브 관측 첫 guardMinLive 건으로 기준선을 한 번 얼리고, 이후 그것과 비교한다.
+      //     기준선이 생기기 전에는 ★비교 대상이 없으므로 발동하지 않는다★ —
+      //     비교 불가능한 값으로 AI 를 끄는 건 측정이 아니라 사고다.
       const _gn = g.live.length;
-      const _gse = Math.sqrt(Math.max(0.01, _num(g.baseAcc, 0.55)) * (1 - Math.min(0.99, _num(g.baseAcc, 0.55))) / Math.max(1, _gn));
-      const _need = Math.max(_num(MIND.guardMargin, 0.08), _num(MIND.guardZ, 1.28) * _gse);
-      g.guardNeed = +_need.toFixed(4);
-      g.distrust = (g.baseAcc - liveAcc) > _need;   // 약속보다 '유의하게' 하락했을 때만 불신
+      // 총 관측수 — 창(guardWindow)은 롤링이라 length 로는 "얼마나 겪었나" 를 알 수 없다.
+      g.nTotal = Math.max(_num(g.nTotal, 0) + 1, _gn);
+      if (g.liveBase == null) {
+        g.liveBase = +liveAcc.toFixed(4);
+        g.liveBaseN = _gn;
+        g.liveBaseAt = Date.now();
+      }
+      // ★기준선과 겹치는 동안은 비교가 성립하지 않는다.★
+      //   기준선을 얼린 직후엔 현재창이 곧 기준선이라 차이가 항상 0 이다(발동 불가).
+      //   기준선 밖의 새 관측이 guardMinLive 만큼 쌓여야 '예전 대비'를 물을 수 있다.
+      //   이 조건이 없으면 위 얼리기가 판정을 무력화해 가드 전체가 죽은 코드가 된다.
+      if (_num(g.nTotal, 0) < _num(g.liveBaseN, MIND.guardMinLive) + MIND.guardMinLive) {
+        g.distrust = false;
+        g.guardNeed = null;
+        g.guardNote = "기준선 이후 관측 " + Math.max(0, _num(g.nTotal, 0) - _num(g.liveBaseN, 0)) +
+                      "/" + MIND.guardMinLive + " (기준선 " + ((_num(g.liveBase, 0)) * 100).toFixed(1) + "%)";
+      } else {
+        // 두 비율 검정 — 기준선과 현재창은 표본수가 다르므로 각각의 오차를 함께 반영한다.
+        //   (초기에는 기준선이 현재창에 포함돼 있어 검정이 보수적으로 기운다 — 놓치는 쪽이라 안전하다)
+        const _nB = Math.max(1, _num(g.liveBaseN, MIND.guardMinLive));
+        const _pB = _clamp(_num(g.liveBase, 0.5), 0.01, 0.99);
+        const _pPool = _clamp((_pB * _nB + liveAcc * _gn) / (_nB + _gn), 0.01, 0.99);
+        const _gse = Math.sqrt(_pPool * (1 - _pPool) * (1 / _nB + 1 / _gn));
+        const _need = Math.max(_num(MIND.guardMargin, 0.08), _num(MIND.guardZ, 1.28) * _gse);
+        g.guardNeed = +_need.toFixed(4);
+        g.guardNote = null;
+        g.distrust = (_pB - liveAcc) > _need;   // 예전 라이브보다 '유의하게' 나빠졌을 때만 불신
+      }
     }
     await setState(DB, "mind_guard", g);
     return g.distrust;
@@ -30643,7 +30686,11 @@ async function aiSelfCheck(DB) {
     // 가드 상태
     const guard = await getState(DB, "mind_guard", null);
     if (guard && guard.distrust) R.errors.push("자기감시 distrust 발동(라이브 정확도 급락) — ML 개입 중단 중");
-    R.guard = guard ? { distrust: !!guard.distrust, liveAcc: guard.liveAcc, baseAcc: guard.baseAcc, liveN: (guard.live || []).length } : null;
+    // [V33.127] liveBase(라이브 기준선)를 함께 낸다 — baseAcc(검증)는 이제 판정에 안 쓴다.
+    R.guard = guard ? { distrust: !!guard.distrust, liveAcc: guard.liveAcc, baseAcc: guard.baseAcc,
+                        liveBase: _num(guard.liveBase, null), liveBaseN: _num(guard.liveBaseN, null),
+                        guardNeed: _num(guard.guardNeed, null), guardNote: guard.guardNote || null,
+                        liveN: (guard.live || []).length } : null;
 
     R.summary = R.errors.length ? ("ERROR " + R.errors.length + "건") : (R.warnings.length ? ("WARN " + R.warnings.length + "건") : "정상");
   } catch (e) { R.errors.push("selfcheck 실패: " + (e && e.message)); }

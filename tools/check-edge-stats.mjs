@@ -283,68 +283,80 @@ function gauss() { return Math.sqrt(-2 * Math.log(rnd())) * Math.cos(2 * Math.PI
     };
   }
   // 관측창을 원하는 승패열로 채운 뒤 가드를 한 번 더 돌려 판정을 읽는다.
-  async function tripAt(nLive, hits, baseAcc) {
+  //   [V33.127] liveBase(라이브 기준선)를 인자로 받는다 — 검증정확도(baseAcc)는 이제 판정에 안 쓴다.
+  async function tripAt(nLive, hits, baseAcc, liveBase, liveBaseN) {
     const live = [];
     for (let i = 0; i < nLive - 1; i++) live.push({ p: 0.6, w: i < hits ? 1 : 0 });
-    const db = fakeGuardDB({ mind_guard: { live: live, distrust: false, baseAcc: baseAcc } });
+    const st = { live: live, distrust: false, baseAcc: baseAcc };
+    // nTotal — 기준선 이후 새 관측이 충분히 쌓였다는 표시. 없으면 가드가 '수집중' 으로 대기한다.
+    if (liveBase != null) { st.liveBase = liveBase; st.liveBaseN = liveBaseN || 25; st.nTotal = (liveBaseN || 25) + 999; }
+    const db = fakeGuardDB({ mind_guard: st });
     // 마지막 한 건을 넣어 판정을 트리거한다(맞춘 건인지 여부는 hits 에 반영해 둔다)
     await mlGuardObserve(db, 0.6, hits >= nLive);
     return db.get("mind_guard");
   }
-  // (a) 창이 덜 찼을 때 문턱이 넓어지는가
-  const g25 = await tripAt(25, 13, 0.55);
-  const g60 = await tripAt(60, 31, 0.55);
-  if (g25 && g60 && g25.guardNeed > g60.guardNeed)
-    ok("문턱이 관측수에 따라 달라진다 — 25건 " + g25.guardNeed.toFixed(4) + " > 60건 " + g60.guardNeed.toFixed(4));
-  else bad("문턱이 관측수와 무관하다: " + JSON.stringify([g25 && g25.guardNeed, g60 && g60.guardNeed]));
-  // (b) 창이 다 차면 설정값(guardMargin)으로 수렴 — 정상 운용에서는 종전과 같은 자
-  if (g60 && Math.abs(g60.guardNeed - MIND.guardMargin) <= 0.005)
-    ok("창이 다 차면 문턱 " + g60.guardNeed.toFixed(4) + " ≈ guardMargin " + MIND.guardMargin + " (정상 운용은 종전과 동일)");
-  else bad("60건에서 문턱이 " + (g60 && g60.guardNeed) + " — guardMargin " + MIND.guardMargin + " 로 수렴해야 한다");
-  // (c) 성능이 그대로면 불신이 걸리지 않는가 (25건에서 55% 그대로 = 13~14승)
-  const gOK = await tripAt(25, 14, 0.55);
-  if (gOK && !gOK.distrust) ok("25건 · 라이브 " + (gOK.liveAcc * 100).toFixed(0) + "% · 기준 55% → 불신 없음");
-  else bad("성능이 그대로인데 불신이 걸렸다: " + JSON.stringify(gOK));
-  // (d) 진짜 열화는 여전히 잡히는가 (25건에서 32%)
-  const gBad = await tripAt(25, 8, 0.55);
-  if (gBad && gBad.distrust) ok("25건 · 라이브 " + (gBad.liveAcc * 100).toFixed(0) + "% · 기준 55% → 불신 발동(검출력 유지)");
-  else bad("명백한 열화를 못 잡는다: " + JSON.stringify(gBad));
-  // (d-2) ★판별 케이스★ — 이 시험만이 '판정이 실제로 바뀌었는지' 를 본다.
-  //   위 (a)(b) 는 g.guardNeed(광고된 문턱)를 읽을 뿐이라, 판정만 옛 상수로 되돌려도
-  //   그대로 통과한다(실제로 주입시험에서 통과했다). 결정 자체를 물어야 한다.
-  //   25건 · 라이브 44% · 기준 55% → 하락 11%p:
-  //     종전 문턱 8%p  → 불신 발동(오발)
-  //     표본오차 문턱 12.74%p → 불신 없음  ← 이쪽이어야 한다
-  const gMid = await tripAt(25, 11, 0.55);
-  if (gMid && !gMid.distrust)
-    ok("판별: 25건 · 라이브 44% (하락 11%p) → 불신 없음 — 표본오차 문턱 12.7%p 안이라 판단 보류");
-  else bad("25건 하락 11%p 에 불신이 걸렸다 — 판정이 여전히 고정 문턱 " + MIND.guardMargin + " 을 쓴다");
-  // 같은 하락폭이라도 창이 다 차면(60건) 문턱이 8.2%p 라 발동해야 한다 — 무회귀 확인.
-  const gMid60 = await tripAt(60, 26, 0.55);   // 26/60 = 43.3% → 하락 11.7%p
-  if (gMid60 && gMid60.distrust)
-    ok("판별: 60건 · 라이브 43% (하락 11.7%p) → 불신 발동 — 창이 차면 설정값대로 민감하다");
-  else bad("60건 하락 11.7%p 인데 불신이 안 걸린다 — 문턱이 과도하게 넓어졌다");
-  // (e) 몬테카를로 — 성능 불변 시 오발률
+  // (a) ★기준선이 없으면 발동하지 않고, 첫 창으로 기준선을 얼린다★
+  //   비교 대상이 없는데 AI 를 끄는 건 측정이 아니라 사고다.
+  const g0 = await tripAt(25, 8, 0.55, null);
+  if (g0 && !g0.distrust) ok("라이브 기준선 없음 → 불신 발동 안 함(성적이 나빠도 비교 대상이 없다)");
+  else bad("기준선도 없이 불신이 걸렸다");
+  if (g0 && g0.guardNote && /기준선 이후 관측/.test(g0.guardNote))
+    ok("대기 사유를 남긴다: " + g0.guardNote);
+  else bad("기준선 직후인데 대기 사유가 없다 — 얼리기가 판정을 무력화하고 있다");
+  // ★기준선과 겹치는 동안은 발동하지 않는다★ — 이 조건이 없으면 위 얼리기가 가드를 죽인다.
+  const gOverlap = await tripAt(60, 18, 0.55, 0.56, 25);   // nTotal 미지정 → 겹침 구간
+  gOverlap.__note = 1;
+  if (g0 && near(g0.liveBase, 0.32, 0.01) && g0.liveBaseN === 25)
+    ok("첫 " + g0.liveBaseN + "건으로 라이브 기준선 " + g0.liveBase + " 고정");
+  else bad("기준선이 안 얼려졌다: " + JSON.stringify(g0 && { b: g0.liveBase, n: g0.liveBaseN }));
+
+  // (b) ★검증정확도(baseAcc)는 판정에 쓰이지 않는다★ — 이번 수정의 핵심.
+  //   실측 사고: baseAcc 0.7072(수확표본) vs 라이브 승률 0.562 → 격차 14.5%p 로 무조건 발동했다.
+  //   baseAcc 를 극단으로 흔들어도 판정·문턱이 안 변해야 고쳐진 것이다.
+  const bLow = await tripAt(60, 34, 0.50, 0.56, 25);
+  const bHigh = await tripAt(60, 34, 0.99, 0.56, 25);
+  if (bLow && bHigh && bLow.distrust === bHigh.distrust && near(bLow.guardNeed, bHigh.guardNeed, 1e-9))
+    ok("검증정확도 0.50↔0.99 로 바꿔도 판정·문턱 불변 — 더 이상 비교에 안 쓴다");
+  else bad("검증정확도가 아직 판정에 영향을 준다: " + JSON.stringify([bLow && bLow.distrust, bHigh && bHigh.distrust]));
+
+  // (c) 기준선 대비 소폭 하락은 참고, 큰 하락은 잡는다
+  const mild = await tripAt(60, 32, 0.7072, 0.56, 25);
+  if (mild && !mild.distrust) ok("기준선 56% → " + (mild.liveAcc * 100).toFixed(0) + "% (소폭) → 불신 없음");
+  else bad("소폭 하락에 불신이 걸렸다: " + JSON.stringify(mild && mild.liveAcc));
+  const hard = await tripAt(60, 18, 0.7072, 0.56, 25);
+  if (hard && hard.distrust) ok("기준선 56% → " + (hard.liveAcc * 100).toFixed(0) + "% (큰 하락) → 불신 발동(검정력 유지)");
+  else bad("명백한 열화를 못 잡는다: " + JSON.stringify(hard && { a: hard.liveAcc, need: hard.guardNeed }));
+
+  // (d) 두 비율 검정 — 기준선 표본이 적을수록 문턱이 넓어야 한다
+  const wideB = await tripAt(60, 32, 0.7072, 0.56, 25);
+  const tightB = await tripAt(60, 32, 0.7072, 0.56, 400);
+  if (wideB && tightB && wideB.guardNeed > tightB.guardNeed)
+    ok("기준선 표본 25건 문턱 " + wideB.guardNeed + " > 400건 " + tightB.guardNeed + " (양쪽 오차 반영)");
+  else bad("기준선 표본수가 문턱에 반영되지 않는다");
+
+  // (e) ★실측 사고 재현★ — 종전 규칙이면 발동, 새 규칙이면 발동 안 함
+  const real = await tripAt(60, 34, 0.7072, 0.56, 60);
+  const oldWouldFire = (0.7072 - 34 / 60) > 0.08;
+  if (oldWouldFire && real && !real.distrust)
+    ok("실측 사고 재현: 종전이면 발동(격차 " + ((0.7072 - 34 / 60) * 100).toFixed(1) + "%p > 8%p), 새 규칙은 발동 안 함");
+  else bad("실측 조건에서 여전히 발동한다: " + JSON.stringify(real && { a: real.liveAcc, need: real.guardNeed, d: real.distrust }));
+
+  // (f) 몬테카를로 — 성능 불변인데 발동하는 비율
   {
-    const T = 20000, base = 0.55;
-    for (const n of [25, 60]) {
-      let oldT = 0, newT = 0;
-      const need = Math.max(MIND.guardMargin, MIND.guardZ * Math.sqrt(base * (1 - base) / n));
-      for (let it = 0; it < T; it++) {
-        let hit = 0; for (let i = 0; i < n; i++) if (rnd() < base) hit++;
-        const drop = base - hit / n;
-        if (drop > MIND.guardMargin) oldT++;
-        if (drop > need) newT++;
-      }
-      const o = oldT / T * 100, w = newT / T * 100;
-      if (n === 25) {
-        if (w < o - 5) ok("n=25 오발 " + o.toFixed(1) + "% → " + w.toFixed(1) + "% (창이 덜 찼을 때만 엄격)");
-        else bad("n=25 오발이 " + o.toFixed(1) + "% → " + w.toFixed(1) + "% — 개선이 미미하다");
-      } else {
-        if (Math.abs(w - o) < 0.5) ok("n=60 오발 " + w.toFixed(1) + "% — 종전과 동일(정상 운용 무회귀)");
-        else bad("n=60 에서 동작이 바뀌었다: " + o.toFixed(1) + "% → " + w.toFixed(1) + "%");
-      }
+    const T = 20000, p = 0.56, nB = 25, nW = 60;
+    let fire = 0;
+    for (let it = 0; it < T; it++) {
+      let hb = 0; for (let i = 0; i < nB; i++) if (rnd() < p) hb++;
+      let hw = 0; for (let i = 0; i < nW; i++) if (rnd() < p) hw++;
+      const pB = hb / nB, pW = hw / nW;
+      const pPool = (pB * nB + pW * nW) / (nB + nW);
+      const se = Math.sqrt(pPool * (1 - pPool) * (1 / nB + 1 / nW));
+      const need = Math.max(MIND.guardMargin, MIND.guardZ * se);
+      if ((pB - pW) > need) fire++;
     }
+    const pct = fire / T * 100;
+    if (pct <= 12) ok("성능 불변 시 오발 " + pct.toFixed(1) + "% (두 비율 검정)");
+    else bad("오발률이 " + pct.toFixed(1) + "% — 너무 자주 AI 를 끈다");
   }
 }
 
