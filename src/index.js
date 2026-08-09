@@ -2788,7 +2788,7 @@ async function applySignalTypeWeights(DB, cfg) {
 // ============================================================================
 // [V33.55] 빌드 버전 — SWR L2 캐시 키에 섞어 '배포 = 판단 캐시 자동 무효화'를 만든다.
 //   판정 로직을 고쳐도 옛 캐시가 최대 1시간 재배포되던 문제를 구조적으로 없앤다.
-const _BUILD_VER = "V33.132";
+const _BUILD_VER = "V33.133";
 
 const AI_PARAMS = {
   // ── OHLCV 타임프레임 ── 시가/고가/저가/종가/거래량을 어떤 봉 주기로 볼지.
@@ -26971,11 +26971,35 @@ async function mlBanditNoiseNightly(DB) {
     const test = mlPermutationTest(val, model.w, model.b);
     const excludedIdx = test.features.filter(function (f) { return !f.signal; }).map(function (f) { return f.idx; });
     const result = { baseAcc: test.baseAcc, excludedIdx: excludedIdx, detail: test.features, testedAt: Date.now() };
-    await setState(DB, "noise_filter", result);
+    // (저장은 아래에서 한 번만 한다 — contextDim/banditOff/why 까지 채운 뒤가 완전한 기록이다)
 
     const exNames = test.features.filter(function (f) { return !f.signal; }).map(function (f) { return f.name; });
+    // [V33.133] ★"전부 제외" 는 그냥 제외가 아니라 밴딧이 통째로 꺼진다는 뜻이다 — 그걸 말한다.★
+    //   mlBanditContext 는 살아남은 차원이 minContextDim(2) 미만이면 null 을 돌려주고,
+    //   그러면 mlBrainBanditSize 가 조용히 아무것도 안 한다(사이즈배수 1). 안전한 기본값이지만
+    //   ★기능 하나가 꺼져 있다는 사실 자체가 안 보였다★ — 2026-08-09 스냅샷이 그 상태였다
+    //   (61/61 제외 · banditArms=null · baseAcc 0.539 · 최대drop +0.0027 < 문턱 0.003).
+    //
+    //   왜 전부 제외되는가 — 검정이 고장난 게 아니라 ★상관★ 때문이다. 몬테카를로로 확인했다:
+    //     · 무상관이면 이 검정은 위양성 0.0% / 검출률 48~100% 로 제대로 작동한다.
+    //     · 블록상관 rho≥0.6 을 주면 진짜 신호 16개가 있어도 ★전부 문턱 미달★ 이 된다.
+    //   순열중요도는 상관된 짝이 정보를 대신 들고 있으면 한 피처를 섞어도 정확도가 안 떨어진다
+    //   (Strobl 2008; Hooker & Mentch 2019). 운영 피처 65종은 거의 다 같은 가격계열 변형이라
+    //   정확히 그 조건이다. 여기서 문턱을 낮추거나 상위 N개를 강제 편입하면 밴딧이 ★잡음으로
+    //   사이즈를 흔들게★ 되므로 기준은 건드리지 않는다 — 끄는 쪽이 옳다. 대신 보이게 만든다.
+    const _nTested = test.features.length;
+    const _alive = _nTested - exNames.length;
+    const _off = _alive < LUXBANDIT.minContextDim;
+    result.contextDim = _alive;
+    result.banditOff = _off;
+    result.why = _off
+      ? ("유의 피처 " + _alive + "/" + _nTested + "개 (문턱 drop>" + LUXNOISE.dropFloor + ") → 컨텍스트 차원 부족으로 밴딧 미가동. " +
+         "피처 상관이 높으면 순열중요도가 전부 0 쪽으로 붕괴하는 알려진 성질 — 모델에 신호가 없다는 뜻은 아니다.")
+      : ("유의 피처 " + _alive + "/" + _nTested + "개 → 밴딧 가동");
+    await setState(DB, "noise_filter", result);
     return "[BANDIT] 노이즈검정 baseAcc=" + (test.baseAcc * 100).toFixed(1) + "% | 컨텍스트제외 " +
-           exNames.length + "개: " + exNames.join(",");
+           exNames.length + "개" + (_off ? " → ★밴딧 미가동(컨텍스트 " + _alive + "차원 < " + LUXBANDIT.minContextDim + ")★" : "") +
+           ": " + exNames.join(",");
   } catch (e) {
     return "[BANDIT] noise test fail: " + (e && e.message);
   }
@@ -30846,6 +30870,17 @@ async function aiSelfCheck(DB) {
       R.bigModelStoreAtUpload = _dm ? (_dm.r2 ? "R2" : ("D1 청크 " + (_dm.chunks || 0) + "행")) : "없음";
       R.bigModelStore = R.bigModelStoreAtUpload;   // 하위호환(기존 화면이 읽는다)
       R.r2BoundNow = !!_bigR2();
+      // [V33.133] ★이 값은 지금 이 요청(fetch 경로)에서 본 것이다 — 크론에서 본 것과 다를 수 있다.★
+      //   실제로 달랐다: 스냅샷은 r2BoundNow=true 인데 같은 시각 크론의 stinBackfill 은
+      //   "R2 미바인딩 — 수집 중단" 을 357번 찍었다. 배포의 Enable R2 binding 단계는 성공했고
+      //   wrangler.toml 도 켜져 있으므로 "설정이 없다" 로는 설명되지 않는다.
+      //   두 경로가 각자 본 값을 나란히 낸다 — 이게 다르면 원인은 설정이 아니라 실행맥락이다.
+      R.r2BoundCron = await getState(DB, "r2_bind_probe", null);
+      if (R.r2BoundCron && R.r2BoundNow && R.r2BoundCron.bigR2 === false) {
+        R.errors.push("R2 바인딩이 ★경로마다 다르다★ — 이 요청(fetch)에서는 보이는데 크론에서는 안 보인다" +
+          (R.r2BoundCron.envModels === false ? " (크론의 env.MODELS 자체가 없음)" : " (크론의 env.MODELS 는 있는데 _bigR2() 가 빔)") +
+          ". 장중 표본 수집·MAE 측정이 이것 때문에 멈춘다.");
+      }
       if (_dm && _dm.r2 && !R.r2BoundNow)
         R.errors.push("R2 바인딩 소실 — 모델은 R2 에 저장돼 있는데(업로드 시점) 지금 env.MODELS 가 없다. " +
                       "배포의 'Enable R2 binding' 단계는 성공했으므로 wrangler.toml 문제가 아니라 " +
@@ -36687,7 +36722,29 @@ export default {
       //   장중에도 돌리되(코어 매매 예산과 분리된 자체 예산) 회당 종목 수를 줄여 부담을 낮춘다.
       //   저장된 봉만 읽어 표본을 만드는 경로라, 라이브 수집이 막혀도 이쪽은 독립적으로 쌓인다.
       try {
-        const _r2ok = true;   // [V33.95] R2 없으면 D1 로 적재 — 더는 바인딩에 묶이지 않는다
+        // [V33.133] ★이 줄은 `const _r2ok = true;` 하드코딩이었다 — 아무것도 확인하지 않고 "OK" 를 찍었다.★
+        //   V33.95 주석은 "R2 없으면 D1 로 적재 — 더는 바인딩에 묶이지 않는다" 였는데,
+        //   V33.110 이 그 D1 폴백을 제거하면서 stinBackfill 은 다시 "R2 없으면 즉시 중단" 이 됐다.
+        //   그런데 이 상수만 true 로 남아, 30분마다 "[ST-BACKFILL] 대기 — R2=OK" 를 찍었다.
+        //   실제 로그(2026-08-06~09)는 정확히 이렇게 모순돼 있었다:
+        //     04:45  [ST-BACKFILL] 대기 — R2=OK 다음실행까지 N분   ← 이 하드코딩이 만든 문장
+        //     04:58  [ST-BACKFILL] R2 미바인딩 — 수집 중단          ← stinBackfill 의 실제 결과
+        //   같은 서브시스템이 13분 간격으로 정반대를 말했다. 357:66 으로 미바인딩이 압도적인데
+        //   ★30분마다 한 번씩 "OK" 가 섞여 나와★ 문제를 못 알아보게 만들었다.
+        //   결과: 장중 표본이 안 쌓여 scalpMae 가 n=0(직전 스냅샷 n=9529 → 0)으로 되돌아갔다.
+        const _r2ok = !!_bigR2();
+        // 배포 로그상 R2 바인딩은 켜져 있는데(Enable R2 binding 단계 success) 크론에서는 null 이다.
+        //   여기서는 원격 관측이 안 되므로 ★다음 스냅샷이 스스로 답하게★ 계측만 남긴다:
+        //   바인딩 자체가 없는 것(env.MODELS 부재)인지, 있었는데 __R2 가 비는 것인지를 가른다.
+        try {
+          await setState(env.DB, "r2_bind_probe", {
+            ts: Date.now(),
+            bigR2: _r2ok,                              // _bigR2() — 백필/표본 경로가 실제로 보는 값
+            envModels: (typeof env.MODELS !== "undefined" && env.MODELS !== null),  // 바인딩 존재 여부
+            where: "cron",
+            marketOpen: (function () { try { return isMarketOpen("us") || isMarketOpen("kr"); } catch (e) { return null; } })()
+          });
+        } catch (e0) {}
         const _bfLock = _num(await getState(env.DB, "stin_bf_lock", 0), 0);
         let _mkoBf = false; try { _mkoBf = isMarketOpen("us") || isMarketOpen("kr"); } catch (e) {}
         // [V33.106] 회차 간격 단축 — 장외 10 → 5분, 장중 30 → 15분.
