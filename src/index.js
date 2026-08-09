@@ -2788,7 +2788,7 @@ async function applySignalTypeWeights(DB, cfg) {
 // ============================================================================
 // [V33.55] 빌드 버전 — SWR L2 캐시 키에 섞어 '배포 = 판단 캐시 자동 무효화'를 만든다.
 //   판정 로직을 고쳐도 옛 캐시가 최대 1시간 재배포되던 문제를 구조적으로 없앤다.
-const _BUILD_VER = "V33.131";
+const _BUILD_VER = "V33.132";
 
 const AI_PARAMS = {
   // ── OHLCV 타임프레임 ── 시가/고가/저가/종가/거래량을 어떤 봉 주기로 볼지.
@@ -17773,18 +17773,50 @@ async function runTradingCycle(env) {
             if (qty > maxByCash) qty = maxByCash;
             if (qty < 0) qty = 0;
 
-            const totalCost = qty * price * (1 + feeRate);
             // [V27] 예산 가드 — 부동소수점 오차 여유(1원/1센트) 두고 엄격 차단 + 초과 시도 로깅
             const epsilon = market === "us" ? 0.01 : 1;
             // [V51] 전략별 예산 가드 — 해당 전략 버킷 한도 내에서만 매수.
             const _bk = _bkt(strategy);
             const _budgetCap = (market === "cm") ? cycleBudget.cm : cycleBudget[market][_bk];
             const _spentSoFar = (market === "cm") ? cycleSpent.cm : cycleSpent[market][_bk];
+
+            // ═══ [V33.131] ★버킷 한도로도 수량을 깎는다 — 종전엔 넘으면 주문을 통째로 버렸다.★ ═══
+            //   수량은 여기까지 오면서 ① 신호 사이즈 ② 종목비중 상한(maxByPos) ③ 가용현금(maxByCash)
+            //   으로만 깎였다. ★버킷 예산은 깎는 데 안 쓰이고 통과/탈락 판정에만 쓰였다.★
+            //   그래서 "종목비중 상한이 버킷 예산보다 큰" 상태가 되면 첫 주문부터 한도를 넘겨
+            //   ★영원히 못 산다★ — 사이클을 아무리 돌려도 같은 수량을 다시 제시하기 때문이다.
+            //   실제 로그(2026-08-06~08)의 예산 차단 25건이 ★전부 누적=0★ 이었다:
+            //     누적=0+6249 > 4460 (40% 초과) · 누적=0+15341 > 14639 (4.8% 초과)
+            //   즉 버킷을 한 푼도 안 쓴 상태의 교착이었다. 계좌가 대부분 투자돼 현금이 마르면
+            //   (cash×split < equity×maxPosPct) 자동으로 이 상태가 되므로, 보유가 쌓일수록
+            //   추세 버킷이 통째로 잠긴다. 금요일 미국장 마지막 30분 16개 사이클이 심사에서
+            //   "진입 1~3" 을 통과시키고도 buy=0 으로 끝난 이유가 이것이다.
+            //   → 한도를 넘으면 ★한도에 맞게 줄여서 산다★. 줄인 결과가 최소 명목가(RISKENG.minNotional)
+            //     미만이면 그때만 차단한다 — 수수료가 기대수익을 먹는 티끌주문은 안 내는 게 맞다.
+            const _budgetLeft = _budgetCap - _spentSoFar;
+            const _unit = price * (1 + feeRate);
+            const _maxByBudget = (_unit > 0) ? Math.floor(_budgetLeft / _unit) : 0;
+            let _budgetTrim = 0;
+            if (qty > 0 && _maxByBudget < qty) { _budgetTrim = qty - Math.max(0, _maxByBudget); qty = Math.max(0, _maxByBudget); }
+
+            const totalCost = qty * price * (1 + feeRate);
+            const _minNotional = _num(RISKENG.minNotional[market], 0);
             const wouldSpend = _spentSoFar + totalCost;
-            if (qty > 0 && wouldSpend > _budgetCap + epsilon) {
-              await log(DB, "INFO", symbol, "[예산] " + market.toUpperCase() + " " + _bk + "버킷 한도 도달: 누적=" + Math.round(_spentSoFar) + "+" + Math.round(totalCost) + " > " + Math.round(_budgetCap) + " (" + strategy + ")");
+            if (_budgetTrim > 0 && (qty <= 0 || (_minNotional > 0 && qty * price < _minNotional))) {
+              // 줄여도 살 만한 크기가 안 나온다 = 진짜로 예산이 없다.
+              await log(DB, "INFO", symbol, "[예산] " + market.toUpperCase() + " " + _bk + "버킷 잔여부족: 잔여=" + Math.round(_budgetLeft) +
+                " (누적=" + Math.round(_spentSoFar) + "/" + Math.round(_budgetCap) + ") → 최대 " + _maxByBudget + "주, 최소주문 미달 (" + strategy + ")");
+              incNobuy("budget_" + _bk, (_md && typeof _md.p === "number") ? _md.p : null); noteGateBlock("budget_" + _bk, symbol, (_md && typeof _md.p === "number") ? _md.p : null, price);
+            } else if (qty > 0 && wouldSpend > _budgetCap + epsilon) {
+              // 클램프 후에도 넘으면 계산 오류다 — 종전처럼 차단하고 눈에 띄게 남긴다.
+              await log(DB, "WARN", symbol, "[예산] " + market.toUpperCase() + " " + _bk + "버킷 한도 도달(클램프 후에도 초과 — 점검 필요): 누적=" +
+                Math.round(_spentSoFar) + "+" + Math.round(totalCost) + " > " + Math.round(_budgetCap) + " (" + strategy + ")");
               incNobuy("budget_" + _bk, (_md && typeof _md.p === "number") ? _md.p : null); noteGateBlock("budget_" + _bk, symbol, (_md && typeof _md.p === "number") ? _md.p : null, price);
             } else if (qty > 0 && totalCost <= cash[market] + epsilon) {
+              if (_budgetTrim > 0) {
+                await log(DB, "INFO", symbol, "[예산] " + market.toUpperCase() + " " + _bk + "버킷 맞춤 축소: " + (qty + _budgetTrim) + "주 → " + qty +
+                  "주 (잔여 " + Math.round(_budgetLeft) + " / 주당 " + Math.round(_unit) + ")");
+              }
               // [분봉] 진입 직전 장중 타이밍 확인 — 확정 후보에만 분봉 1회 조회.
               //   장중 급락(칼날)·VWAP 추격 진입을 차단. 조회 실패/예산초과 시 통과(기존 동작 보존).
               //   maxPerCycle 캡으로 subrequest 통제, 장중·정규장에서만 의미있어 canTrade일 때만.

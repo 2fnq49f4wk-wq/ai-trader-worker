@@ -88,6 +88,12 @@ jobs:
       #   Passivbot 노출 테이퍼 + 효율비(ER) 문지기다. 답을 아는 합성입력으로 계약을 못 박는다.
       - name: Leverage decision contract check
         run: node tools/check-leverage.mjs
+      # [V33.131] 전략버킷 예산 가드 — "넘으면 버린다" 가 아니라 "넘으면 줄인다" 여야 한다.
+      #   종전엔 한도를 넘는 주문을 통째로 버렸고, 다음 사이클이 같은 수량을 다시 제시하므로
+      #   ★영원히 못 사는 교착★ 이 됐다(로그의 예산 차단 25건이 전부 누적=0 이었다).
+      #   교착 해소와 한도 준수를 ★동시에★ 본다 — 하나만 보면 반대쪽으로 틀린다.
+      - name: Budget bucket clamp contract check
+        run: node tools/check-budget-clamp.mjs
       # cloudflare/wrangler-action 대신 로컬에서 검증된 방식 그대로 실행
       # (wrangler-action@v3의 npx 자동설치가 4.86.0을 요구하며 실패하던 문제 회피)
       - name: Install wrangler
