@@ -2788,7 +2788,7 @@ async function applySignalTypeWeights(DB, cfg) {
 // ============================================================================
 // [V33.55] 빌드 버전 — SWR L2 캐시 키에 섞어 '배포 = 판단 캐시 자동 무효화'를 만든다.
 //   판정 로직을 고쳐도 옛 캐시가 최대 1시간 재배포되던 문제를 구조적으로 없앤다.
-const _BUILD_VER = "V33.127";
+const _BUILD_VER = "V33.128";
 
 const AI_PARAMS = {
   // ── OHLCV 타임프레임 ── 시가/고가/저가/종가/거래량을 어떤 봉 주기로 볼지.
@@ -15935,6 +15935,21 @@ async function runTradingCycle(env) {
               nW += _num(e3.nWin, 0); nL += _num(e3.nLoss, 0);
               sW += _num(e3.sumWin, 0); sL += _num(e3.sumLoss, 0);
             }
+            // [V33.128] ★n=0 의 이유를 남긴다.★ 운영 스냅샷에서 scalpLev.n 이 0 인데 원장에는
+            //   SC_VWAP 94건·SC_PULLBACK 36건이 있었다. 두 수치의 출처가 다르다 —
+            //   전자는 signal_type_stats(청산 때 누적), 후자는 trades.reason 파싱.
+            //   "청산은 됐는데 신호통계에 안 쌓였다" 인데 어디서 끊겼는지 모르면 못 고친다.
+            //   추측으로 고치지 않고 ★무엇이 없어서 0인지★ 를 실어 다음 스냅샷에 남긴다.
+            let _scWhy = null;
+            try {
+              const _kAll2 = Object.keys(_ss || {});
+              const _kSc2 = _kAll2.filter(function (k) { return k.indexOf("SC_") === 0; });
+              const _kNoF2 = _kSc2.filter(function (k) { return _ss[k] && _ss[k].nWin == null; });
+              if (!_kAll2.length) _scWhy = "signal_type_stats 가 비어 있다 — 청산 경로가 신호통계를 안 쌓는다";
+              else if (!_kSc2.length) _scWhy = "SC_* 키 없음 — 신호통계 " + _kAll2.length + "종(" + _kAll2.slice(0, 6).join(",") + ") 중 단타 신호가 없다";
+              else if (_kNoF2.length === _kSc2.length) _scWhy = "SC_* " + _kSc2.length + "종 있으나 전부 nWin 필드 없음(V33.82 이전 엔트리 — 다음 청산에 채워진다)";
+              else if (nW + nL === 0) _scWhy = "SC_* " + _kSc2.length + "종 · 승패 누적 0";
+            } catch (e2) {}
             let _k = null;
             if (nW > 0 && nL > 0 && sW > 0 && sL > 0) {
               const p2 = nW / (nW + nL), b2v = (sW / nW) / (sL / nL);
@@ -15945,7 +15960,7 @@ async function runTradingCycle(env) {
             // [V33.120] 경로 문지기(MAE) — 사이클 1회 조회. 측정 전이면 1(종전 동작).
             let _mae = { mult: 1, note: null };
             try { _mae = await scalpMaeMult(DB); } catch (e2) {}
-            __scalpEdge = { trusted: !!(_stTrust && _stTrust.trusted), kelly: _k, n: nW + nL,
+            __scalpEdge = { trusted: !!(_stTrust && _stTrust.trusted), kelly: _k, n: nW + nL, why: _scWhy,
                             maeMult: _num(_mae.mult, 1), maeNote: _mae.note };
           } catch (e) {}
           try {
@@ -18816,8 +18831,23 @@ async function handleRequest(request, env, ctx) {
             }
             let _ddU = null;
             try { const _pk2 = await getState(env.DB, "equity_peak:us", null); if (_pk2) _ddU = _num(_pk2.v, 0); } catch (e) {}
+            // [V33.128] ★n=0 의 이유를 남긴다.★ 운영 스냅샷에서 scalpLev.n 이 0 인데 원장에는
+            //   SC_VWAP 94건·SC_PULLBACK 36건이 있었다. 두 수치의 출처가 다르다 —
+            //   전자는 signal_type_stats(청산 때 누적), 후자는 trades.reason 파싱.
+            //   "청산은 됐는데 신호통계에 안 쌓였다" 인데 어디서 끊겼는지 모르면 못 고친다.
+            //   숫자만 0 으로 두지 말고 ★무엇이 없어서 0인지★ 를 실어 다음 스냅샷에 남긴다.
+            let _scWhy2 = null;
+            try {
+              const _kAll = Object.keys(_ss3 || {});
+              const _kSc = _kAll.filter(function (k) { return k.indexOf("SC_") === 0; });
+              const _kNoF = _kSc.filter(function (k) { return _ss3[k] && _ss3[k].nWin == null; });
+              if (!_kAll.length) _scWhy2 = "signal_type_stats 가 비어 있다 — 청산 경로가 신호통계를 안 쌓는다";
+              else if (!_kSc.length) _scWhy2 = "SC_* 키 없음 — 신호통계 " + _kAll.length + "종(" + _kAll.slice(0, 6).join(",") + ") 중 단타 신호가 없다";
+              else if (_kNoF.length === _kSc.length) _scWhy2 = "SC_* " + _kSc.length + "종 있으나 전부 nWin 필드 없음(V33.82 이전 엔트리 — 다음 청산에 채워진다)";
+              else if (nW + nL === 0) _scWhy2 = "SC_* " + _kSc.length + "종 · 승패 누적 0";
+            } catch (e) {}
             _alt.scalpLev = { enabled: _lvc.enabled !== false, trusted: !!(_stT && _stT.trusted),
-              kelly: _kk, n: nW + nL, minKelly: _num(_lvc.minKelly, 0.05),
+              kelly: _kk, n: nW + nL, why: _scWhy2, minKelly: _num(_lvc.minKelly, 0.05),
               maxMult: _num(_lvc.maxMult, 2), concMult: _num(_lvc.concMult, 2), ddCut: _num(_lvc.ddCut, 6) };
             // [V33.119] ★폭등 레버리지가 지금 열려 있는가★ — 실제 결정기를 그대로 돌려 보여준다.
             //   화면이 설정값만 보여주면 "왜 안 열리지" 를 알 수 없다. 결정기가 낸 사유를 그대로 싣는다.
@@ -30623,7 +30653,18 @@ async function aiSelfCheck(DB) {
       }
       // 대형모델이 실제로 R2로 갔는지 함께 보고 — 남아 있으면 무엇이 D1을 점유 중인지 명확해진다.
       const _dm = await getState(DB, "dnn_model:meta", null);
-      R.bigModelStore = _dm ? (_dm.r2 ? "R2" : ("D1 청크 " + (_dm.chunks || 0) + "행")) : "없음";
+      // [V33.128] ★이 값은 '업로드 당시' 어디에 저장했는지다 — 지금 R2 가 붙어 있다는 뜻이 아니다.★
+      //   운영 스냅샷에서 bigModelStore "R2" 와 scalp r2Bound false 가 동시에 떠서 모순으로 보였는데,
+      //   모순이 아니라 ★서로 다른 시점★ 을 말하고 있었다: 전자는 dnn_model:meta.r2(212시간 전
+      //   업로드 시점의 기록), 후자는 지금 이 순간의 env.MODELS 바인딩 여부.
+      //   즉 진단은 "업로드 이후 어느 시점에 바인딩이 사라졌다" 다. 이름을 바로잡고 현재 상태를 함께 낸다.
+      R.bigModelStoreAtUpload = _dm ? (_dm.r2 ? "R2" : ("D1 청크 " + (_dm.chunks || 0) + "행")) : "없음";
+      R.bigModelStore = R.bigModelStoreAtUpload;   // 하위호환(기존 화면이 읽는다)
+      R.r2BoundNow = !!_bigR2();
+      if (_dm && _dm.r2 && !R.r2BoundNow)
+        R.errors.push("R2 바인딩 소실 — 모델은 R2 에 저장돼 있는데(업로드 시점) 지금 env.MODELS 가 없다. " +
+                      "배포의 'Enable R2 binding' 단계는 성공했으므로 wrangler.toml 문제가 아니라 " +
+                      "Cloudflare 쪽(버킷 삭제·R2 비활성·계정 상태)을 확인해야 한다. 장중 표본 수집이 멈춘 원인이다.");
     } catch (e) {}
     // 딥이력 커버리지 — 표본 증가의 상한을 결정하는 값
     try {
@@ -36223,9 +36264,26 @@ async function mlLabelCandidates(DB, priceLookup, opts) {
     let labeled = 0, skipped = 0, purged = 0, deduped = 0;
     const delStmts = [];
     const seen = {}; // 같은 종목·전략·진입일 중복 표본 제거(여러 cron이 같은 날 반복로깅한 것)
+    // [V33.128] ★라벨 창 정렬 — 여기서 쓰는 가격경로는 '오늘 기준 마지막 n봉' 이다.★
+    //   priceLookup 이 dd.closes.slice(-n) 을 주고, 아래에서 다시 seg = path.slice(-horizon) 을 한다.
+    //   즉 라벨이 붙는 구간은 ★진입 이후 horizon봉★ 이 아니라 ★가장 최근 horizon봉★ 이다.
+    //   후보가 딱 horizon 만큼 익었을 때만 둘이 일치한다. 15일 된 후보(horizon 5)를 라벨하면
+    //   진입가 대비 '10~15일 뒤 구간' 을 재게 되고, 그 라벨은 틀린 값이 그대로 학습에 들어간다.
+    //   daily 캐시에는 dates 가 없어 진입 봉을 되찾을 방법이 없다 — 없는 것을 추측하지 않는다.
+    //   → 정렬이 보장되는 창 안에서만 라벨하고, 그 밖으로 늙은 후보는 ★삭제★ 한다.
+    //   또 하나: 종전 성숙 판정은 horizon(거래일)을 달력일로 그대로 썼다. 5거래일은 달력으로
+    //   약 7일이라 ★2일 일찍★ 라벨돼 구간이 짧았다. 거래일→달력일 환산(×7/5)을 넣는다.
+    const _calDays = function (h) { return Math.ceil(Math.max(1, h) * 7 / 5) + 1; };
+    const _alignSlack = 4;   // 공휴일·장기휴장 여유(달력일)
+    let misaligned = 0;
     for (const c of cands) {
-      const dueMs = (c.horizon || 5) * 86400000;
-      if (now - c.ts < dueMs) { skipped++; continue; } // 아직 미성숙
+      const _h = c.horizon || 5;
+      const _due = _calDays(_h) * 86400000;
+      if (now - c.ts < _due) { skipped++; continue; } // 아직 미성숙(거래일→달력일 환산 적용)
+      if (now - c.ts > _due + _alignSlack * 86400000) {
+        // 최근 horizon봉이 더 이상 '진입 직후' 가 아니다 → 틀린 라벨을 만드느니 버린다.
+        delStmts.push(DB.prepare("DELETE FROM ml_candidates WHERE id=?").bind(c.id)); misaligned++; continue;
+      }
       const entryDay = Math.floor(c.ts / 86400000);
       const key = c.symbol + "|" + (c.strategy || "") + "|" + entryDay;
       if (seen[key]) { delStmts.push(DB.prepare("DELETE FROM ml_candidates WHERE id=?").bind(c.id)); deduped++; continue; }
@@ -36269,7 +36327,8 @@ async function mlLabelCandidates(DB, priceLookup, opts) {
     }
     for (let i = 0; i < delStmts.length; i += 100) { try { await DB.batch(delStmts.slice(i, i + 100)); } catch (e) {} }
     return "[CF] 반사실 라벨링 " + labeled + "건 편입" + (deduped ? "(+중복제거 " + deduped + ")" : "") +
-           ", 미성숙 " + skipped + "건 대기" + (purged ? ", 만료정리 " + purged + "건" : "");
+           ", 미성숙 " + skipped + "건 대기" + (purged ? ", 만료정리 " + purged + "건" : "") +
+           (misaligned ? ", 창정렬 불가로 폐기 " + misaligned + "건(틀린 라벨을 만드느니 버린다)" : "");
   } catch (e) { return "[CF] fail: " + (e && e.message); }
 }
 
