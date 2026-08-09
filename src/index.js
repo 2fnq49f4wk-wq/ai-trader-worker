@@ -2788,7 +2788,7 @@ async function applySignalTypeWeights(DB, cfg) {
 // ============================================================================
 // [V33.55] 빌드 버전 — SWR L2 캐시 키에 섞어 '배포 = 판단 캐시 자동 무효화'를 만든다.
 //   판정 로직을 고쳐도 옛 캐시가 최대 1시간 재배포되던 문제를 구조적으로 없앤다.
-const _BUILD_VER = "V33.129";
+const _BUILD_VER = "V33.130";
 
 const AI_PARAMS = {
   // ── OHLCV 타임프레임 ── 시가/고가/저가/종가/거래량을 어떤 봉 주기로 볼지.
@@ -20876,6 +20876,81 @@ async function handleRequest(request, env, ctx) {
         const cfg = migrateCfgToMarkets(Object.assign({}, DEFAULT_CFG, await getState(env.DB, "cfg", {})));
         return await runLedgerAudit(env.DB, cfg);
       });
+    }
+    // [V33.130] ★불일치 판별 — "어느 쪽으로 맞춰야 하는가" 를 데이터로 답한다.★
+    //   GET /api/audit/explain?market=cm&symbol=GC=F
+    //   ledgerCheckIntegrity 는 불일치를 ★보고만★ 한다(자동 수정은 원인을 덮으므로 옳은 설계다).
+    //   그런데 보고만 받으면 사람이 판단할 근거가 없다: 원장 2 vs 포지션 0 이 나왔을 때
+    //     (가) 아직 보유 중인데 포지션 행이 사라진 것인가 → positions 를 복구해야 한다
+    //     (나) 실제로 팔았는데 SELL 기록이 빠진 것인가   → 원장에 SELL 을 넣어야 대금이 들어온다
+    //   둘은 정반대 조치다. 그 종목의 원장 전건과 포지션 현재 상태, 그리고 그 사이의
+    //   ERROR/WARN 로그를 한 화면에 모아 준다. ★읽기 전용 — 아무것도 고치지 않는다.★
+    if (path === "/api/audit/explain" && request.method === "GET") {
+      const _mk = (url.searchParams.get("market") || "").trim();
+      const _sy = (url.searchParams.get("symbol") || "").trim();
+      if (!_mk || !_sy) return Response.json({ error: "market·symbol 필수" }, { status: 400, headers: cors });
+      try {
+        const _tr = await env.DB.prepare(
+          "SELECT id, ts, side, qty, price, pnl, pnl_pct, reason FROM trades WHERE market = ? AND symbol = ? ORDER BY ts ASC"
+        ).bind(_mk, _sy).all();
+        const _rows = (_tr && _tr.results) || [];
+        let net = 0, lastBuyTs = 0, lastSellTs = 0;
+        for (const r of _rows) {
+          const q = _num(r.qty, 0);
+          if (r.side === "BUY") { net += q; if (_num(r.ts, 0) > lastBuyTs) lastBuyTs = _num(r.ts, 0); }
+          else { net -= q; if (_num(r.ts, 0) > lastSellTs) lastSellTs = _num(r.ts, 0); }
+        }
+        const _po = await env.DB.prepare(
+          "SELECT strategy, qty, avg_price, opened_ts, meta FROM positions WHERE market = ? AND symbol = ?"
+        ).bind(_mk, _sy).all();
+        const _pos = ((_po && _po.results) || []).map(function (p) {
+          let m = null; try { m = JSON.parse(p.meta || "{}"); } catch (e) {}
+          return { strategy: p.strategy, qty: _num(p.qty, 0), avg: _num(p.avg_price, 0),
+                   openedTs: _num(p.opened_ts, 0), stopPrice: m ? _num(m.stopPrice, null) : null };
+        });
+        let posQty = 0; for (const p of _pos) posQty += p.qty;
+        // 마지막 매수 이후의 ERROR/WARN — 매도 기록이 빠진 사고라면 그 흔적이 여기 남는다.
+        let _logs = [];
+        try {
+          const lr = await env.DB.prepare(
+            "SELECT ts, level, message FROM logs WHERE symbol = ? AND ts >= ? AND level IN ('ERROR','WARN') ORDER BY ts DESC LIMIT 20"
+          ).bind(_sy, Math.max(0, lastBuyTs - 3600000)).all();
+          _logs = ((lr && lr.results) || []).map(function (l) { return { ts: _num(l.ts, 0), level: l.level, msg: String(l.message || "").slice(0, 300) }; });
+        } catch (e) {}
+        const diff = net - posQty;
+        // ★판단 근거를 문장으로 낸다★ — 숫자만 주면 결국 같은 질문을 다시 하게 된다.
+        let verdict, action;
+        if (Math.abs(diff) < 1e-9) { verdict = "불일치 없음"; action = "조치 불필요"; }
+        else if (diff > 0) {
+          verdict = "원장이 " + diff + " 만큼 많다 — 매수는 기록됐는데 그만큼의 포지션이 없다";
+          // ★로그에 매도 중단 흔적이 있으면 원인이 확정된다★ — V33.129 이전의 비원자 매도다.
+          //   그때는 포지션 삭제만 커밋되고 원장 기록이 실패했다. 즉 ★그 매도는 원장상 일어나지 않았다★.
+          //   없던 체결을 지어내지 않는다(가격·시각을 알 수 없다). 포지션을 되살리는 쪽이 옳다 —
+          //   되살리면 손절·익절 로직이 정상적으로 다시 판단해 제대로 기록하며 판다.
+          const _abort = _logs.some(function (l) { return /SELL transaction aborted|SELL aborted/.test(l.msg || ""); });
+          if (_abort) {
+            action = "★원인 확정★ 마지막 매수 이후 'SELL transaction aborted' 로그가 있다 — V33.129 이전의 " +
+                     "비원자 매도다(포지션 삭제만 커밋, 원장 기록 실패). 원장상 그 매도는 일어나지 않았으므로 " +
+                     "positions 를 " + net + " 으로 복구하는 것이 맞다. 없던 체결을 지어내면 가격·시각이 허구가 되고 " +
+                     "현금이 틀어진다. 복구하면 손절·익절이 다시 판단해 제대로 기록하며 판다.";
+          } else {
+            action = "매도 기록이 빠졌다면(V33.129 이전 비원자 매도) 포지션을 " + net + " 으로 복구하는 것이 맞다 — " +
+                     "원장상 그 매도는 일어나지 않았고, 없던 체결을 지어내면 가격·시각이 허구가 된다. " +
+                     "다만 이 종목에는 매도 중단 로그가 남아 있지 않다(로그 보존기간이 지났을 수 있다). " +
+                     "lastSellTs 와 trades 목록으로 실제 청산 여부를 먼저 확인할 것.";
+          }
+        } else {
+          verdict = "포지션이 " + (-diff) + " 만큼 많다 — 원장에 없는 보유분이 있다";
+          action = "유령 포지션일 가능성이 높다. 매수 기록이 빠졌는지(그러면 현금이 과대계상돼 있다) 확인 후 정리한다.";
+        }
+        return Response.json({ ok: true, market: _mk, symbol: _sy,
+          ledgerNet: net, positionQty: posQty, diff: diff,
+          verdict: verdict, suggestedAction: action,
+          lastBuyTs: lastBuyTs || null, lastSellTs: lastSellTs || null,
+          trades: _rows.map(function (r) { return { id: r.id, ts: _num(r.ts, 0), side: r.side, qty: _num(r.qty, 0), price: _num(r.price, 0), reason: String(r.reason || "").slice(0, 160) }; }),
+          positions: _pos, logsAfterLastBuy: _logs,
+          note: "읽기 전용 — 이 엔드포인트는 아무것도 수정하지 않는다." }, { headers: cors });
+      } catch (e) { return Response.json({ error: e && e.message }, { status: 500, headers: cors }); }
     }
     // [수동 청산] 특정 포지션을 현재가로 전량/부분 시장가 청산.
     //   POST /api/close?market=us&symbol=AMAT&strategy=trend&confirm=1 (&qty=N 부분청산)

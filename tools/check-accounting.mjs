@@ -249,5 +249,57 @@ const NOW = Date.now();
   else bad("CAS 판정이 배치 결과를 안 읽는 경로가 있다(" + nIdx + "/3)");
 }
 
+// ══ [V33.130] 불일치 판별 엔드포인트 — 실제 코드를 돌려 판정을 확인한다 ═══════
+//   ledgerCheckIntegrity 는 보고만 한다(옳은 설계). 하지만 사람이 조치하려면 근거가 필요하고,
+//   근거 없이 고치면 원장이 더 망가진다. 실제 사례(cm|GC=F 원장 2 vs 포지션 0)로 돌려본다.
+{
+  const src = readFileSync(new URL("../src/index.js", import.meta.url), "utf8");
+  const i0 = src.indexOf('if (path === "/api/audit/explain"');
+  const j0 = src.indexOf("// [수동 청산] 특정 포지션을", i0);
+  if (i0 < 0 || j0 < 0) bad("/api/audit/explain 엔드포인트를 못 찾았다");
+  else {
+    const body = src.slice(i0, j0).replace(/^if \(path[^\n]*\n/, "").replace(/\n\s*\}\s*$/, "");
+    const _num = (v, d) => (typeof v === "number" && isFinite(v) ? v : (d === undefined ? 0 : d));
+    const run = async (trades, positions, logs) => {
+      const db = { prepare(sql) { const st = { _a: [], bind(...a) { st._a = a; return st; },
+        async all() { if (/FROM trades/.test(sql)) return { results: trades };
+                      if (/FROM positions/.test(sql)) return { results: positions };
+                      if (/FROM logs/.test(sql)) return { results: logs }; return { results: [] }; } }; return st; } };
+      const url = { searchParams: { get: (k) => ({ market: "cm", symbol: "GC=F" })[k] || null } };
+      let out = null;
+      const Response = { json: (o) => { out = o; return o; } };
+      await new Function("url", "Response", "env", "cors", "_num", "path", "request",
+        "return (async()=>{" + body + "})();")(url, Response, { DB: db }, {}, _num, "/api/audit/explain", { method: "GET" });
+      return out;
+    };
+    const buy = [{ id: 1, ts: 1000, side: "BUY", qty: 2, price: 1800, reason: "[SWING] GOLD" }];
+    // (a) 실측 사례 + 매도중단 로그 → 원인 확정, 포지션 복구 권고
+    const a1 = await run(buy, [], [{ ts: 5000, level: "ERROR", message: "[CM] SELL transaction aborted: D1_ERROR" }]);
+    if (a1 && a1.diff === 2 && /원인 확정/.test(a1.suggestedAction) && /복구/.test(a1.suggestedAction))
+      ok("불일치 판별: 매도중단 로그 있음 → 원인 확정 + 포지션 복구 권고");
+    else bad("판정이 기대와 다르다: " + JSON.stringify(a1 && { d: a1.diff, a: (a1.suggestedAction || "").slice(0, 60) }));
+    // ★없던 체결을 지어내라고 하면 안 된다★ — 가격·시각이 허구가 되고 현금이 틀어진다.
+    if (a1 && !/SELL 을 원장에 넣/.test(a1.suggestedAction))
+      ok("없던 매도를 원장에 기록하라고 권하지 않는다(가격·시각 허구 방지)");
+    else bad("허구의 체결 기록을 권하고 있다");
+    // (b) 로그 없음 → 확정하지 않고 확인을 요구
+    const a2 = await run(buy, [], []);
+    if (a2 && !/원인 확정/.test(a2.suggestedAction) && /확인할 것/.test(a2.suggestedAction))
+      ok("로그 없음 → 단정하지 않고 확인을 요구한다");
+    else bad("로그가 없는데 단정한다");
+    // (c) 일치하면 조치 불필요
+    const a3 = await run(buy, [{ strategy: "swing", qty: 2, avg_price: 1800, opened_ts: 1000, meta: "{}" }], []);
+    if (a3 && a3.diff === 0 && /불필요/.test(a3.suggestedAction)) ok("일치 시 조치 불필요");
+    else bad("일치인데 조치를 권한다: " + JSON.stringify(a3 && a3.diff));
+    // (d) 반대 방향 — 유령 포지션
+    const a4 = await run([], [{ strategy: "swing", qty: 3, avg_price: 10, opened_ts: 1, meta: "{}" }], []);
+    if (a4 && a4.diff === -3 && /유령/.test(a4.suggestedAction)) ok("포지션 초과 → 유령 포지션으로 판정");
+    else bad("반대 방향 판정 이상: " + JSON.stringify(a4 && a4.diff));
+    // (e) ★읽기 전용★ — 이 엔드포인트가 무언가를 쓰면 진단이 아니라 사고다.
+    if (!/INSERT|UPDATE|DELETE/.test(body)) ok("판별 엔드포인트에 쓰기 구문 없음(읽기 전용)");
+    else bad("판별 엔드포인트가 DB 를 수정한다 — 진단 도구가 원장을 건드리면 안 된다");
+  }
+}
+
 console.log(fails ? "\n회계 불변식 위반 " + fails + "건" : "\n  ok   회계 불변식 통과");
 process.exit(fails ? 1 : 0);
