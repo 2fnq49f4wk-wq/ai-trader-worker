@@ -13453,6 +13453,327 @@ html[data-theme="light"] .rail{background:#fff;}
   font-family:'IBM Plex Mono',monospace;box-shadow:0 10px 30px rgba(0,0,0,.5);animation:densIn .2s ease-out;
 }
 @keyframes densIn{from{opacity:0;transform:translateY(6px);}to{opacity:1;transform:none;}}
+
+/* ═══════════════════════════════════════════════════════════════════════════
+   [V33.139] 전역 Apple 디자인 레이어 — 대시보드 · 포지션 · 거래 · 상세 · 매크로 · 리포트
+   ───────────────────────────────────────────────────────────────────────────
+   V33.137 이 AI 두뇌 화면에만 적용했던 언어를 나머지 화면으로 넓힌다.
+   마크업·ID·클래스·JS 는 건드리지 않는다 — 표현만 다시 쓴다.
+
+   ★선택자에 html:root 를 붙이는 이유★
+   기존 라이트 규칙이 `html[data-theme="light"] .card` 형태라 특이도가 (0,2,1) 이다.
+   그냥 `.card` (0,1,0) 로 쓰면 뒤에 써도 라이트에서 ★안 먹는다★ — 특이도가 순서를 이긴다.
+   V33.137 에서 이 함정에 실제로 빠져 라이트 테마가 통째로 무시됐고, 그때는 충돌하는
+   선택자마다 라이트판을 하나씩 더 썼다. 이번엔 `html:root` 로 특이도를 (0,2,1) 로 맞춘다.
+   :root 는 언제나 참이므로 다크·라이트 모두에 걸리고, 뒤에 있으니 동점에서 이긴다.
+   (data-theme 은 라이트일 때만 붙는다 — 그래서 `html[data-theme]` 는 쓸 수 없다.)
+   ═══════════════════════════════════════════════════════════════════════════ */
+
+html:root{
+  --apx-tint:      #4a9eff;
+  --apx-tint-soft: rgba(74,158,255,.14);
+  --apx-mat:       rgba(28,35,50,.55);
+  --apx-mat-light: rgba(255,255,255,.06);
+  --apx-hair:      rgba(255,255,255,.08);
+  --apx-hair-top:  rgba(255,255,255,.16);
+  --apx-sh-s:      0 1px 2px rgba(0,0,0,.28);
+  --apx-sh-m:      0 6px 20px rgba(0,0,0,.30);
+  --apx-sh-l:      0 20px 56px rgba(0,0,0,.42);
+  --apx-ease:      cubic-bezier(.32,.72,0,1);
+  --apx-ease-out:  cubic-bezier(.22,.61,.36,1);
+  --apx-fast:      .18s;
+  --apx-r-lg: 18px; --apx-r-md: 14px; --apx-r-sm: 10px;
+}
+html[data-theme="light"]:root{
+  --apx-tint:      #0a63d6;
+  --apx-tint-soft: rgba(10,99,214,.10);
+  --apx-mat:       rgba(255,255,255,.66);
+  --apx-mat-light: rgba(10,25,55,.05);
+  --apx-hair:      rgba(10,25,55,.10);
+  --apx-hair-top:  rgba(255,255,255,.9);
+  --apx-sh-s:      0 1px 2px rgba(16,32,64,.08);
+  --apx-sh-m:      0 6px 20px rgba(16,32,64,.10);
+  --apx-sh-l:      0 20px 56px rgba(16,32,64,.14);
+}
+
+/* ── 타이포 기반 ──────────────────────────────────────────────────────────
+   시스템 폰트를 기본으로. 숫자는 tabular 로 고정해 값이 갱신돼도 자리가 안 흔들린다. */
+html:root body{
+  font-family:-apple-system,BlinkMacSystemFont,'SF Pro Text','Helvetica Neue','Segoe UI',system-ui,sans-serif;
+  font-optical-sizing:auto;
+}
+html:root .page-title{
+  font-size:1.0625rem; font-weight:650; letter-spacing:-.015em; line-height:1.2;
+}
+html:root .fv-panel-head,
+html:root .dash-block-label,
+html:root .pipeline-title{
+  font-size:.75rem; font-weight:600; letter-spacing:-.002em;
+}
+html:root .fv-panel-sub,
+html:root .pipeline-sub,
+html:root .hint,
+html:root .empty{ font-size:.6875rem; letter-spacing:.004em; line-height:1.5; }
+/* 큰 숫자 — 이 앱의 주인공. 커질수록 자간을 좁힌다. */
+html:root .port-total,
+html:root .summary-value,
+html:root .topbar-value,
+html:root .idx-price,
+html:root .fv-idx-price{
+  letter-spacing:-.028em; font-weight:700; font-variant-numeric:tabular-nums;
+}
+html:root .port-pnl,
+html:root .pos-pnl,
+html:root .wl-price,
+html:root .fv-table td,
+html:root .macro-table td{ font-variant-numeric:tabular-nums; }
+
+/* ── 표면 — 재질 2단(페이지 표면 / 패널) ────────────────────────────────── */
+html:root .card,
+html:root .fv-panel,
+html:root .port-card,
+html:root .dash-block,
+html:root .idx-card,
+html:root .fv-idx,
+html:root .pipeline-bar,
+html:root .macro-table-wrap,
+html:root .detail-panel{
+  background:var(--apx-mat);
+  border:1px solid var(--apx-hair);
+  border-top-color:var(--apx-hair-top);
+  border-radius:var(--apx-r-md);
+  box-shadow:var(--apx-sh-m);
+  -webkit-backdrop-filter:blur(16px) saturate(170%);
+  backdrop-filter:blur(16px) saturate(170%);
+}
+/* 큰 표면일수록 두껍게 읽혀야 한다 */
+html:root .port-card,
+html:root .modal-content{
+  border-radius:var(--apx-r-lg);
+  box-shadow:var(--apx-sh-l);
+  -webkit-backdrop-filter:blur(22px) saturate(180%);
+  backdrop-filter:blur(22px) saturate(180%);
+}
+html:root .modal-content{
+  background:var(--apx-mat); border:1px solid var(--apx-hair); border-top-color:var(--apx-hair-top);
+}
+/* 패널 머리 — 선 대신 여백으로 나눈다 */
+html:root .fv-panel-head,
+html:root .pipeline-head,
+html:root .port-card-head{
+  border-bottom:none;
+  padding:.7rem .85rem .5rem;
+  background:transparent;
+}
+html:root .page-header{ border-bottom:none; padding-bottom:.5rem; }
+
+/* ── 떠 있는 크롬 — 콘텐츠가 밑으로 흐른다 ────────────────────────────── */
+html:root .content-topbar{
+  background:color-mix(in srgb, var(--bg) 62%, transparent);
+  -webkit-backdrop-filter:blur(20px) saturate(180%);
+  backdrop-filter:blur(20px) saturate(180%);
+  border-bottom:1px solid var(--apx-hair);
+}
+html:root .rail{
+  background:color-mix(in srgb, var(--bg) 55%, transparent);
+  -webkit-backdrop-filter:blur(20px) saturate(180%);
+  backdrop-filter:blur(20px) saturate(180%);
+  border-left:1px solid var(--apx-hair);
+}
+
+/* ── 컨트롤 — 누르는 즉시 반응한다(pointer-down) ───────────────────────── */
+html:root .btn,
+html:root .db-sort-btn,
+html:root .detail-tf-btn,
+html:root .wi-f, html:root .wi-s, html:root .wi-sp,
+html:root .rail-btn{
+  border-radius:999px;
+  border:1px solid var(--apx-hair);
+  background:var(--apx-mat-light);
+  font-weight:550; letter-spacing:-.003em;
+  -webkit-backdrop-filter:blur(12px) saturate(160%);
+  backdrop-filter:blur(12px) saturate(160%);
+  box-shadow:var(--apx-sh-s);
+  transition:transform var(--apx-fast) var(--apx-ease-out),
+             background-color var(--apx-fast) var(--apx-ease-out),
+             border-color var(--apx-fast) var(--apx-ease-out),
+             color var(--apx-fast) var(--apx-ease-out);
+}
+html:root .btn:hover,
+html:root .db-sort-btn:hover,
+html:root .detail-tf-btn:hover,
+html:root .wi-f:hover, html:root .wi-s:hover, html:root .wi-sp:hover,
+html:root .rail-btn:hover{ background:var(--apx-tint-soft); border-color:var(--apx-tint); }
+html:root .btn:active,
+html:root .db-sort-btn:active,
+html:root .detail-tf-btn:active,
+html:root .wi-f:active, html:root .wi-s:active, html:root .wi-sp:active,
+html:root .rail-btn:active{ transform:scale(.96); }
+html:root .btn:focus-visible,
+html:root .nav-item:focus-visible,
+html:root .db-sort-btn:focus-visible{ outline:2px solid var(--apx-tint); outline-offset:2px; }
+/* 선택 상태는 색이 아니라 '실린 재질' 로 말한다 */
+html:root .wi-f.active, html:root .wi-sp.active,
+html:root .detail-tf-btn.active,
+html:root .db-sort-btn.active{
+  background:var(--apx-tint-soft); border-color:var(--apx-tint); color:var(--apx-tint);
+}
+
+/* 좌측 내비 */
+html:root .nav-item{
+  border-radius:10px; margin:1px 6px;
+  transition:background-color var(--apx-fast) var(--apx-ease-out),
+             color var(--apx-fast) var(--apx-ease-out),
+             transform var(--apx-fast) var(--apx-ease-out);
+}
+html:root .nav-item:hover{ background:var(--apx-mat-light); }
+html:root .nav-item:active{ transform:scale(.98); }
+html:root .nav-item.active{ background:var(--apx-tint-soft); color:var(--apx-tint); }
+
+/* ── 행(row) — 만질 수 있는 것은 떠오른다 ─────────────────────────────── */
+html:root .fv-table tbody tr,
+html:root .macro-table tbody tr,
+html:root .trade-row,
+html:root .news-item{
+  transition:background-color var(--apx-fast) var(--apx-ease-out);
+}
+html:root .fv-table tbody tr:hover,
+html:root .macro-table tbody tr:hover,
+html:root .trade-row:hover,
+html:root .news-item:hover{ background:var(--apx-tint-soft); }
+html:root .fv-table th,
+html:root .macro-table th{
+  font-weight:600; letter-spacing:.01em; font-size:.625rem;
+  border-bottom:1px solid var(--apx-hair); background:transparent;
+}
+html:root .fv-table td,
+html:root .macro-table td{ border-bottom:1px solid color-mix(in srgb, var(--apx-hair) 55%, transparent); }
+
+/* ── 배분 바·게이지 ───────────────────────────────────────────────────── */
+html:root .port-alloc-bar,
+html:root .fv-breadth,
+html:root .heat-bar{ border-radius:999px; overflow:hidden; background:var(--apx-mat-light); }
+html:root .port-alloc-bar>i,
+html:root .fv-breadth>span{ transition:width .38s var(--apx-ease); }
+
+/* ── 모달 — 배경을 뒤로 밀고 어둡게(집중), 재질처럼 맺힌다 ──────────────── */
+html:root .modal-overlay,
+html:root .cmdk-overlay{
+  -webkit-backdrop-filter:blur(8px) saturate(120%);
+  backdrop-filter:blur(8px) saturate(120%);
+}
+html:root .modal-overlay.show .modal-content,
+html:root .cmdk-overlay.show .cmdk-box{
+  animation:apxMaterialize .32s var(--apx-ease) both;
+}
+@keyframes apxMaterialize{
+  from{ opacity:0; transform:scale(.97) translateY(6px); filter:blur(5px); }
+  to  { opacity:1; transform:none;                       filter:blur(0);   }
+}
+
+/* 빠른 검색 FAB — 떠 있는 조작부 */
+html:root .cmdk-fab{
+  border-radius:999px; border:1px solid var(--apx-hair);
+  background:var(--apx-mat); box-shadow:var(--apx-sh-m);
+  -webkit-backdrop-filter:blur(18px) saturate(180%);
+  backdrop-filter:blur(18px) saturate(180%);
+  transition:transform var(--apx-fast) var(--apx-ease-out);
+}
+html:root .cmdk-fab:active{ transform:scale(.94); }
+
+/* ── 접근성 — 세 선호는 서로 다른 요구다 ──────────────────────────────── */
+@media (prefers-reduced-motion:reduce){
+  html:root .btn:active, html:root .nav-item:active, html:root .cmdk-fab:active,
+  html:root .db-sort-btn:active, html:root .detail-tf-btn:active,
+  html:root .wi-f:active, html:root .wi-s:active, html:root .wi-sp:active,
+  html:root .rail-btn:active{ transform:none; }
+  html:root .modal-overlay.show .modal-content,
+  html:root .cmdk-overlay.show .cmdk-box{ animation:none; }
+  html:root .port-alloc-bar>i, html:root .fv-breadth>span{ transition:none; }
+}
+@media (prefers-reduced-transparency:reduce){
+  html:root .card, html:root .fv-panel, html:root .port-card, html:root .dash-block,
+  html:root .idx-card, html:root .fv-idx, html:root .pipeline-bar, html:root .modal-content,
+  html:root .content-topbar, html:root .rail, html:root .btn, html:root .cmdk-fab,
+  html:root .modal-overlay, html:root .cmdk-overlay{
+    -webkit-backdrop-filter:none !important; backdrop-filter:none !important;
+  }
+  html:root .card, html:root .fv-panel, html:root .port-card, html:root .dash-block,
+  html:root .idx-card, html:root .pipeline-bar, html:root .modal-content{ background:var(--s1); }
+  html:root .content-topbar, html:root .rail{ background:var(--bg); }
+}
+@media (prefers-contrast:more){
+  html:root .card, html:root .fv-panel, html:root .port-card, html:root .dash-block,
+  html:root .idx-card, html:root .pipeline-bar, html:root .modal-content{
+    background:var(--bg); border-color:var(--t2);
+  }
+  html:root .btn, html:root .nav-item.active{ border-color:var(--t2); }
+}
+
+/* ── 좁은 화면 — 손가락 표적과 여백 ───────────────────────────────────── */
+@media (max-width:640px){
+  html:root .btn,
+  html:root .db-sort-btn,
+  html:root .detail-tf-btn{ min-height:2rem; padding-left:.7rem; padding-right:.7rem; }
+  html:root .card, html:root .fv-panel, html:root .port-card,
+  html:root .dash-block, html:root .pipeline-bar{ border-radius:var(--apx-r-md); }
+}
+
+
+/* ── 보완 ① 카드 재질이 안 붙어 있던 표면들 ──────────────────────────────
+   포지션 화면의 원자재·채권 구역은 클래스 없는 div(#cmSummaryBar·#cmPositionsBox2)와
+   .alt-grid·.pos-pnl-summary 라, 위 규칙에 안 걸려 ★혼자 화면 끝까지 늘어난 판★ 으로 보였다.
+   같은 재질을 준다 — 한 화면 안에서 어떤 덩어리는 카드고 어떤 덩어리는 아니면 위계가 무너진다. */
+html:root #cmSummaryBar,
+html:root #cmPositionsBox2,
+html:root .pos-pnl-summary,
+html:root .positions-collapsed,
+html:root .alt-grid > *,
+html:root .db-block,
+html:root .strat-card{
+  background:var(--apx-mat);
+  border:1px solid var(--apx-hair);
+  border-top-color:var(--apx-hair-top);
+  border-radius:var(--apx-r-md);
+  box-shadow:var(--apx-sh-m);
+  -webkit-backdrop-filter:blur(16px) saturate(170%);
+  backdrop-filter:blur(16px) saturate(170%);
+  overflow:hidden;
+}
+html:root .cm-section-label{ border:none; padding:.6rem .1rem .35rem; font-size:.6875rem; letter-spacing:.02em; }
+
+/* ── 보완 ② 알약 버튼이 두 줄로 접히던 것 ────────────────────────────────
+   border-radius:999px 를 준 뒤 좁은 칸에서 글자가 접히면 알약이 세로로 부풀어 열이 어긋난다.
+   (히트맵 툴바의 '장중' 이 실제로 그랬다.) 줄바꿈을 막고 최소 높이를 맞춘다. */
+html:root .btn,
+html:root .db-sort-btn,
+html:root .detail-tf-btn,
+html:root .wi-f, html:root .wi-s, html:root .wi-sp,
+html:root .rail-btn{
+  white-space:nowrap;
+  display:inline-flex; align-items:center; justify-content:center;
+  min-height:1.75rem; line-height:1.2;
+}
+
+/* ── 보완 ③ 토스트 — 떠 있는 알림도 같은 재질로 ─────────────────────── */
+html:root .toast{
+  border-radius:999px;
+  background:var(--apx-mat);
+  border:1px solid var(--apx-hair);
+  border-top-color:var(--apx-hair-top);
+  box-shadow:var(--apx-sh-l);
+  -webkit-backdrop-filter:blur(20px) saturate(180%);
+  backdrop-filter:blur(20px) saturate(180%);
+  padding:.55rem 1.1rem; font-size:.75rem; letter-spacing:-.003em;
+  transition:transform .32s var(--apx-ease), opacity .32s var(--apx-ease);
+}
+@media (prefers-reduced-transparency:reduce){
+  html:root #cmSummaryBar, html:root #cmPositionsBox2, html:root .pos-pnl-summary,
+  html:root .positions-collapsed, html:root .alt-grid > *, html:root .toast{
+    -webkit-backdrop-filter:none !important; backdrop-filter:none !important; background:var(--s1);
+  }
+}
+
 </style>
 
 <script>
