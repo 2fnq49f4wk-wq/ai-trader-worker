@@ -2788,7 +2788,7 @@ async function applySignalTypeWeights(DB, cfg) {
 // ============================================================================
 // [V33.55] 빌드 버전 — SWR L2 캐시 키에 섞어 '배포 = 판단 캐시 자동 무효화'를 만든다.
 //   판정 로직을 고쳐도 옛 캐시가 최대 1시간 재배포되던 문제를 구조적으로 없앤다.
-const _BUILD_VER = "V33.134";
+const _BUILD_VER = "V33.135";
 
 const AI_PARAMS = {
   // ── OHLCV 타임프레임 ── 시가/고가/저가/종가/거래량을 어떤 봉 주기로 볼지.
@@ -3081,7 +3081,18 @@ const AI_PARAMS = {
     //   topPct: 최근 후보 p 분포에서 상위 몇 %를 진입 후보로 볼 것인가.
     //   absFloor: 그래도 이 확률 미만이면 안 산다(동전던지기 매수 차단).
     topPct: 0.18,
-    absFloor: 0.53,
+    absFloor: 0.53,        // [V33.135] 손익비 기반 하한을 못 구할 때의 폴백일 뿐 — 상시값이 아니다.
+    // [V33.135] 절대 하한을 ★실측 손익분기 확률★ 에서 만든다(aiEntryFloor 참조).
+    //   라벨이 pnl>0 이므로 p 는 승률이고, 손익분기는 1/(1+손익비) 다.
+    //   실측(2026-08-10): US 손익비 1.32 → 분기 0.432 / KR 1.70 → 0.370.
+    //   상수 0.53 은 그보다 훨씬 위라 기대값 양수인 구간을 통째로 버리고 있었다.
+    floorFromPayoff: {
+      enabled: true,
+      minN: 100,           // 이만큼 종결거래가 쌓인 시장에만 적용(손익비 추정 안정화)
+      margin: 0.05,        // 안전여유 — 문턱을 내리면 한계거래 손익비는 실현치보다 나빠진다(선택편향)
+      hardMin: 0.45,       // 손익비 추정이 튀어도 이 아래로는 안 내려간다
+      hardMax: 0.60        // 반대로 과도하게 올라가 거래가 마르지도 않게
+    },
     // [V12.132] 8→30. 평가가 3.6%만 돌던 시절엔 8이 합리적이었으나, 이제 557종목을 100% 완주하므로
     //   8은 명백한 병목이었다(로그: NOBUY no_signal 549 — 평가한 549종목이 상한 때문에 후보조차 못 됨).
     //   실제 진입은 아래 위원회(p>=threshold·metaHardFilter·합의도)가 결정하므로 후보 확대가
@@ -9649,16 +9660,74 @@ async function portfolioStatistics(DB, opts) {
   } catch (e) { return { n: 0, ready: false, error: e && e.message }; }
 }
 
+// ═══ [V33.135] ★AI 진입 문턱의 절대 하한을 손익분기 확률에서 구한다★ ═══
+//   라벨 정의가 `pnl_pct > 0`(_labelOfRow) 이므로 위원회의 p 는 ★승률 확률★ 이다.
+//   그러면 "사면 이득인가" 의 경계는 동전던지기(0.5)가 아니라 손익비가 정한다:
+//       EV = p·avgWin − (1−p)·avgLoss > 0  ⟺  p > avgLoss/(avgWin+avgLoss) = 1/(1+payoff)
+//
+//   종전 코드는 absFloor 0.53 을 상수로 박아 두고 "동전던지기 매수 차단" 이라고 적었다.
+//   그런데 실측 손익분기는 그보다 한참 아래였다(2026-08-10 스냅샷):
+//       US  payoff 1.316 → p* 0.4318      KR  payoff 1.705 → p* 0.3698
+//   즉 0.43~0.53 구간의 ★기대값이 양수인 거래를 전부 버리고 있었다★.
+//
+//   피해는 그것으로 끝나지 않았다. V33.80 이 넣은 횡단면 백분위 문턱(상위 topPct 18%)이
+//   계산한 값은 US 0.5209 / KR 0.4906 으로 ★둘 다 0.53 아래★ 라, max(floor, pctThr) 에서
+//   언제나 floor 가 이겨 적응 문턱이 통째로 무력화됐다. 게다가 그 뒤 _clamp(…, 0.5, 0.9) 의
+//   하한 0.5 가 한 번 더 같은 가정을 박아 두고 있었다.
+//   결과: 위원회 400건 중 p≥0.5 는 ★3건(0.8%)★ 뿐인데 목표는 18% 였고, 실제 로그는
+//   "진입 0 · 보류 22 — 주요사유 ai_primary_gate:21" 이 매 사이클 반복됐다.
+//
+//   보정 방향까지 확인했다 — 신뢰도곡선에서 0.3 이상 전 구간이 ★과소예측★ 이다
+//   (0.4-0.5 구간: 예측 0.454 → 실제 0.486). 즉 0.53 은 보이는 것보다 더 보수적이다.
+//   백분위 문턱에서의 한계거래 기대값도 양수다: US +0.55%/건, KR +0.64%/건.
+//
+//   그래서 하한을 실측 손익비에서 만든다. 다만 세 가지를 지킨다:
+//     ① 표본이 적으면 쓰지 않는다(minN) — 손익비 추정이 흔들리면 문턱이 널뛴다.
+//     ② 안전여유(margin)를 더한다 — 문턱을 내리면 한계거래의 손익비는 실현 손익비보다
+//        나빠지는 게 정상이다(선택편향). 그 드리프트를 여유로 흡수한다.
+//     ③ 상·하한으로 감싼다 — 이상한 손익비 추정 하나가 문을 활짝 열지 못하게.
+function aiEntryFloor(portStats, market, cfg) {
+  const dflt = (cfg && cfg.absFloor != null) ? cfg.absFloor : 0.53;
+  try {
+    const c = (cfg && cfg.floorFromPayoff) || {};
+    if (c.enabled === false) return { floor: dflt, src: "fixed(disabled)" };
+    const minN = (c.minN != null) ? c.minN : 100;
+    const margin = (c.margin != null) ? c.margin : 0.05;
+    const lo = (c.hardMin != null) ? c.hardMin : 0.45;
+    const hi = (c.hardMax != null) ? c.hardMax : 0.60;
+    const ps = portStats && (portStats[market] || portStats.all);
+    if (!ps || !ps.ready || !(ps.n >= minN)) return { floor: dflt, src: "fixed(표본" + ((ps && ps.n) || 0) + "<" + minN + ")" };
+    const payoff = _num(ps.payoff, null);
+    if (!(payoff > 0) || !isFinite(payoff)) return { floor: dflt, src: "fixed(손익비 없음)" };
+    const be = 1 / (1 + payoff);                     // 손익분기 승률
+    // ★불변식: 하한은 결코 손익분기 아래로 내려가지 않는다.★
+    //   종전 판본은 _clamp(be + margin, lo, hi) 만 썼는데, 손익비가 나쁘면
+    //   (payoff < 0.33 → be > 0.75) be + margin 이 hi(0.60)를 넘어 ★클램프가 하한을
+    //   손익분기 밑으로 끌어내렸다★ — 기대값이 음수인 거래를 통과시키는 셈이다.
+    //   몬테카를로에서 20,000회 중 1,831회 그랬다(게이트가 잡았다).
+    //   hi 의 원래 목적은 "거래가 마르지 않게" 인데, 기대값이 음수인 국면에서는
+    //   거래가 마르는 것이 ★옳은 결과★ 다. 그래서 hi 는 여유폭만 제한하고
+    //   손익분기 자체는 언제나 존중한다.
+    const floor = Math.max(be, _clamp(be + margin, lo, hi));
+    return { floor: floor, src: "손익비 " + payoff.toFixed(2) + " → 분기 " + be.toFixed(3) + " +여유 " + margin, be: be, payoff: payoff, n: ps.n };
+  } catch (e) { return { floor: dflt, src: "fixed(예외)" }; }
+}
+
 // 야간 1회 갱신 — 전체/시장별을 함께 저장한다(AI 두뇌 표시 + EV 게이트가 읽는다).
 async function portfolioStatsNightly(DB) {
   try {
     const all = await portfolioStatistics(DB, { limit: 400 });
     const us = await portfolioStatistics(DB, { market: "us", limit: 300 });
     const kr = await portfolioStatistics(DB, { market: "kr", limit: 300 });
+    // [V33.135] all.profitFactor 는 ★금액 기준★ 이라 KRW+USD 를 그대로 더한 값이다 — 무의미하다.
+    //   (us/kr 은 단일통화라 유효하다. 실제로 all 은 0.716 인데 수익률 기준 omega 는 2.278 이었다.)
+    //   totalPnl 에 했던 것과 같은 처리: 값을 지우고 이유를 남긴다. 대신 통화중립인
+    //   omega(수익률 기준 이익합/손실합)를 함께 봐야 한다는 것을 필드로 명시한다.
+    if (all && all.ready) { all.profitFactorMixedCcy = true; all.profitFactor = null; all.profitFactorNote = "통화혼합(원+달러) — 금액 기준 PF 는 무의미. 통화중립 지표는 omega"; }
     await setState(DB, "port_stats", { all: all, us: us, kr: kr, ts: Date.now() });
     if (!all.ready) return "[PORT] 종결거래 " + all.n + "/10 — 통계 대기";
     return "[PORT] n=" + all.n + " 승률 " + (all.winRate * 100).toFixed(1) + "% 기대값 " +
-           all.expectancy.toFixed(3) + "%/건 손익비 " + all.profitFactor.toFixed(2) +
+           all.expectancy.toFixed(3) + "%/건 손익비(수익률) " + all.omega.toFixed(2) +
            " 위험대비 " + all.riskReturn.toFixed(3) +
            " · SQN " + all.sqn.toFixed(2) + "(df" + all.edgeDf + ")" +
            " Sortino " + all.sortino.toFixed(2) + " 거래수열Ulcer " + all.tradeSeqUlcer.toFixed(2) +
@@ -15103,6 +15172,10 @@ async function runTradingCycle(env) {
     // [FIX V8.8] 엔진이 꺼져 있으면 거래 대상에서 제외(가격 갱신은 marketsForQuotes로 계속).
     if (engineEnabled && usCanTrade) marketsToTrade.push("us");
     if (engineEnabled && krCanTrade) marketsToTrade.push("kr");
+    // [V33.135] 이번 사이클에 실제로 쓰인 진입 문턱과 근거(시장별). 사이클 끝에서 저장한다.
+    //   ★시장 루프 밖에 선언한다★ — 안쪽에 두면 저장 지점이 스코프 밖이 된다.
+    //   (처음에 실제로 그렇게 썼고 check-order 의 블록스코프 검사가 잡았다.)
+    const __thrWhy = {};
 
     // [신규·인터마켓] 시장 컨텍스트(risk-on/off) 1회 갱신 — 거래할 시장이 있을 때만(불필요 fetch 방지).
     //   예산 가드 내장(캐시·enrich 임계·subreq 예비). 결과 sizeScale을 신규매수 사이징에 반영.
@@ -15919,6 +15992,7 @@ async function runTradingCycle(env) {
       let __blendK = null;                    // [V33.96] 결정블렌드 실측 계수
       let __dualBull = null, __dualBear = null, __dualShift = null;   // [V33.89] 강세/약세 이중 헤드 (+V33.93 실측 사분면 로짓)
       let __pDistCache = null, __pDistNew = [];   // [V33.80] 후보 p 분포(백분위 문턱용)
+
       // [V33.82] 단타 레버리지 게이트 입력 — 사이클당 1회만 만든다.
       let __scalpEdge = null, __ddPctNow = 0;
       let __portRho = null;   // [V33.83] 보유 포지션 평균 상관 — 켈리 동시베팅 보정
@@ -17685,10 +17759,14 @@ async function runTradingCycle(env) {
                       const _srt = _pd.v.slice().sort(function (x, y) { return x - y; });
                       const _idx = Math.min(_srt.length - 1, Math.max(0, Math.floor(_srt.length * (1 - _tgtPct))));
                       const _pctThr = _srt[_idx];
-                      const _floor = (_ap2.absFloor != null ? _ap2.absFloor : 0.53);
-                      const _newThr = _clamp(Math.max(_floor, _pctThr), 0.5, 0.9);
+                      // [V33.135] 하한을 실측 손익분기에서 만든다(위 aiEntryFloor 주석 참조).
+                      //   그리고 그 아래 _clamp 의 하한도 같은 값으로 맞춘다 —
+                      //   종전엔 0.5 가 박혀 있어, floor 를 내려도 클램프가 다시 0.5 로 올려버렸다.
+                      const _fl = aiEntryFloor(__portStats, market, _ap2);
+                      const _floor = _fl.floor;
+                      const _newThr = _clamp(Math.max(_floor, _pctThr), _floor, 0.9);
                       // 고정문턱보다 낮아질 때만 적용한다(문턱을 올려 거래를 더 막지는 않는다).
-                      if (_newThr < _thrAI) _thrAI = _newThr;
+                      if (_newThr < _thrAI) { _thrAI = _newThr; __thrWhy[market] = { thr: +_newThr.toFixed(4), pct: +_pctThr.toFixed(4), floor: +_floor.toFixed(4), src: _fl.src, n: _srt.length }; }
                     }
                   } catch (e) {}
                   if (!_md || !_md.allow || _md.observe || _md.abstain
@@ -18019,6 +18097,8 @@ async function runTradingCycle(env) {
 
     // [회계 재설계] cash는 trades 원장에서 항상 재계산되므로 별도 저장하지 않는다(죽은 코드 제거).
     try { await setState(DB, "last_tick", Date.now()); } catch (e) {}
+    // [V33.135] 진입 문턱 근거 기록(시장별). ai_primary_gate 가 막았을 때 원인을 즉시 본다.
+    try { for (const _mk in __thrWhy) await setState(DB, "ai_thr_why:" + _mk, Object.assign({ ts: Date.now() }, __thrWhy[_mk])); } catch (e) {}
     // [V25 감사 A] 사이클 종료 시 회계 무결성 검증 — 거래한 시장만.
     for (const mkt of marketsToTrade) {
       await auditAccounting(DB, mkt, cash);
@@ -19012,13 +19092,20 @@ async function handleRequest(request, env, ctx) {
         let _thr = null;
         try {
           const _ap = (AI_PARAMS && AI_PARAMS.aiPrimary) || {};
+          // [V33.135] 하한이 더는 상수가 아니다 — 손익비에서 계산된다. 그래서 여기서도
+          //   ★설정값이 아니라 실제로 쓰인 값★ 을 낸다. 종전엔 absFloor 상수를 그대로 찍어
+          //   화면의 floor 와 엔진이 실제 적용한 문턱이 다를 수 있었다.
+          const _ps0 = await getState(env.DB, "port_stats", null);
           const _mkThr = async function (mkt) {
             const d = await getState(env.DB, "ai_pdist:" + mkt, null);
-            if (!d || !Array.isArray(d.v) || d.v.length < 200) return { n: d && d.v ? d.v.length : 0, thr: null, fixed: _num(_ap.threshold, 0.55) };
+            const _fl = aiEntryFloor(_ps0, mkt, _ap);
+            const _why = await getState(env.DB, "ai_thr_why:" + mkt, null);   // 엔진이 마지막 사이클에 실제로 쓴 값
+            const _base = { fixed: _num(_ap.threshold, 0.55), floor: +_fl.floor.toFixed(4), floorSrc: _fl.src,
+                            floorFixed: _num(_ap.absFloor, 0.53), topPct: _num(_ap.topPct, 0.18), applied: _why || null };
+            if (!d || !Array.isArray(d.v) || d.v.length < 200) return Object.assign({ n: d && d.v ? d.v.length : 0, thr: null }, _base);
             const srt = d.v.slice().sort(function (x, y) { return x - y; });
             const idx = Math.min(srt.length - 1, Math.max(0, Math.floor(srt.length * (1 - _num(_ap.topPct, 0.18)))));
-            return { n: srt.length, thr: +srt[idx].toFixed(4), fixed: _num(_ap.threshold, 0.55),
-                     floor: _num(_ap.absFloor, 0.53), topPct: _num(_ap.topPct, 0.18) };
+            return Object.assign({ n: srt.length, thr: +srt[idx].toFixed(4) }, _base);
           };
           _thr = { us: await _mkThr("us"), kr: await _mkThr("kr") };
         } catch (e) {}
@@ -37449,7 +37536,7 @@ export default {
 // [검증용 named export] Cloudflare Worker는 default export만 사용하므로 무해.
 //   로컬 백테스트/단위검증 스크립트에서 핵심 함수를 직접 호출하기 위함.
 export {
-  DEFAULT_CFG, migrateCfgToMarkets, evaluateAllStrategies, evaluateTrendEntry, evaluateSnapEntry,
+  DEFAULT_CFG, AI_PARAMS, migrateCfgToMarkets, evaluateAllStrategies, evaluateTrendEntry, evaluateSnapEntry,
   evaluateSell, backtestSymbol, backtestStats, backtestStatsBySignal,
   getRSI, getMA, getATR, getNDayHigh, getStrategyRules, fetchDailyForBacktest,
   fetchMinuteBars, confirmIntradayEntry,
@@ -37480,6 +37567,7 @@ export {
   // [V33.121] 피라미딩 결정기 — tools/check-leverage.mjs
   pyramidDecide,
   // [V33.120] 단타 경로 문지기(MAE) — tools/check-leverage.mjs
+  aiEntryFloor,
   scalpMaeFitNightly, scalpMaeMult, SCALPMAE,
   FIN_TOOLS, finToolsRun,
   // [V33.110] 소셜 멀티소스 검증용 — tools/check-social.mjs
