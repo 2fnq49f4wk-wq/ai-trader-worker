@@ -2788,7 +2788,7 @@ async function applySignalTypeWeights(DB, cfg) {
 // ============================================================================
 // [V33.55] 빌드 버전 — SWR L2 캐시 키에 섞어 '배포 = 판단 캐시 자동 무효화'를 만든다.
 //   판정 로직을 고쳐도 옛 캐시가 최대 1시간 재배포되던 문제를 구조적으로 없앤다.
-const _BUILD_VER = "V33.135";
+const _BUILD_VER = "V33.136";
 
 const AI_PARAMS = {
   // ── OHLCV 타임프레임 ── 시가/고가/저가/종가/거래량을 어떤 봉 주기로 볼지.
@@ -9807,6 +9807,13 @@ async function ledgerCheckIntegrity(DB, opts) {
         await log(DB, "ERROR", null, "[정합성감사] 전수 " + out.checked + "종목 중 " + out.issues.length + "건 불일치 — " + head);
       }
     }
+    // [V33.136] 복구 이력을 불일치 옆에 붙인다 — 같은 종목이 다시 어긋나면 "복구했는데 또?" 가
+    //   바로 보여야 한다. 한 번 복구하고 재발하면 그건 복구 실패가 아니라 ★원인이 살아 있다★ 는 뜻이다.
+    for (const _is of out.issues) {
+      if (!_is || !_is.symbol) continue;
+      try { const _rp = await getState(DB, "audit_repair:" + _is.symbol, null); if (_rp) _is.repaired = _rp; } catch (e) {}
+    }
+    out.repairHint = out.ok ? null : "POST /api/audit/repair?market=<시장>&symbol=<종목>&confirm=1 — 원장 기준으로 포지션만 재구성한다(원장은 안 건드린다).";
     await setState(DB, "ledger_audit", { ok: out.ok, checked: out.checked, nIssues: out.issues.length, issues: out.issues.slice(0, 20), ts: out.ts });
     return out;
   } catch (e) {
@@ -21122,6 +21129,88 @@ async function handleRequest(request, env, ctx) {
           positions: _pos, logsAfterLastBuy: _logs,
           note: "읽기 전용 — 이 엔드포인트는 아무것도 수정하지 않는다." }, { headers: cors });
       } catch (e) { return Response.json({ error: e && e.message }, { status: 500, headers: cors }); }
+    }
+    // ── /api/audit/explain 끝 ── [END:audit-explain] (검사기가 이 표식까지 잘라 실행한다.
+    //    표식 없이 "다음 기능의 주석" 을 끝으로 삼으면, 그 사이에 코드를 넣는 순간 검사기가 깨진다.
+    //    실제로 아래 repair 를 넣었을 때 그렇게 깨졌다.)
+
+    // ═══ [V33.136] ★불일치 복구 — 판별까지 해놓고 손으로 고칠 방법이 없었다.★ ═══
+    //   POST /api/audit/repair?market=cm&symbol=GC=F&confirm=1
+    //   /api/audit/explain 이 "positions 를 N 으로 복구하는 것이 맞다" 까지 답하는데도
+    //   그걸 실행할 경로가 없어 QTY_MISMATCH cm|GC=F 가 5일째 그대로 남아 있었다.
+    //
+    //   ★왜 원장이 아니라 포지션을 고치는가★
+    //   원장(trades)은 현금의 유일한 원천이다. 없던 SELL 을 지어 넣으면 가격·시각이 허구가 되고
+    //   그 허구가 그대로 현금이 된다 — 되돌릴 수 없는 오염이다. 반면 포지션은 원장에서
+    //   ★재구성 가능한 파생물★ 이다. 그래서 방향은 언제나 원장 → 포지션 이다.
+    //   복구하면 손절·익절 로직이 그 자리를 다시 판단해 제대로 기록하며 판다.
+    //
+    //   ★안전장치★
+    //     · confirm=1 필수(실수 방지) · diff>0(원장이 많은 경우)만 자동 복구
+    //     · diff<0(유령 포지션)은 ★거부★ 한다 — 그건 매수 기록이 빠졌다는 뜻이고,
+    //       포지션을 지우면 있는 자산을 없애는 것이라 사람이 판단해야 한다.
+    //     · 미청산 매수를 FIFO 로 짚어 남은 물량의 가중평균가로 되살린다(가격을 지어내지 않는다).
+    //     · 이미 일치하면 아무것도 하지 않는다(멱등).
+    if (path === "/api/audit/repair" && request.method === "POST") {
+      if (url.searchParams.get("confirm") !== "1") return Response.json({ ok: false, error: "confirm=1 required" }, { status: 400, headers: cors });
+      const _mk = (url.searchParams.get("market") || "").trim();
+      const _sy = (url.searchParams.get("symbol") || "").trim();
+      if (!_mk || !_sy) return Response.json({ ok: false, error: "market·symbol 필수" }, { status: 400, headers: cors });
+      try {
+        const _tr = await env.DB.prepare(
+          "SELECT ts, side, qty, price, reason FROM trades WHERE market = ? AND symbol = ? ORDER BY ts ASC"
+        ).bind(_mk, _sy).all();
+        const _rows = (_tr && _tr.results) || [];
+        // FIFO 로 매수 로트를 소진시킨다 — 남는 로트가 곧 '아직 보유 중인 물량' 이다.
+        const lots = [];
+        for (const r of _rows) {
+          const q = _num(r.qty, 0);
+          if (!(q > 0)) continue;
+          if (r.side === "BUY") lots.push({ ts: _num(r.ts, 0), qty: q, price: _num(r.price, 0), reason: String(r.reason || "") });
+          else {
+            let left = q;
+            while (left > 1e-9 && lots.length) {
+              const take = Math.min(left, lots[0].qty);
+              lots[0].qty -= take; left -= take;
+              if (lots[0].qty <= 1e-9) lots.shift();
+            }
+          }
+        }
+        let net = 0, cost = 0, firstTs = 0;
+        for (const l of lots) { net += l.qty; cost += l.qty * l.price; if (!firstTs || l.ts < firstTs) firstTs = l.ts; }
+        const _po = await env.DB.prepare("SELECT strategy, qty FROM positions WHERE market = ? AND symbol = ?").bind(_mk, _sy).all();
+        let posQty = 0; for (const p of ((_po && _po.results) || [])) posQty += _num(p.qty, 0);
+        const diff = +(net - posQty).toFixed(8);
+
+        if (Math.abs(diff) < 1e-9) return Response.json({ ok: true, changed: false, market: _mk, symbol: _sy, ledgerNet: net, positionQty: posQty, note: "이미 일치 — 조치 없음" }, { headers: cors });
+        if (diff < 0) return Response.json({ ok: false, changed: false, market: _mk, symbol: _sy, ledgerNet: net, positionQty: posQty, diff: diff,
+          error: "포지션이 원장보다 많다(유령 포지션) — 자동 복구하지 않는다. 매수 기록 누락이면 현금이 과대계상돼 있으므로 사람이 판단해야 한다. /api/audit/explain 으로 원장을 먼저 확인할 것." }, { status: 409, headers: cors });
+
+        // 전략 태그를 원장 reason 에서 되찾는다: "[AI][TREND] ..." → trend
+        let strat = "swing";
+        for (let i = lots.length - 1; i >= 0; i--) {
+          const m = /\]\[([A-Z_]+)\]/.exec(lots[i].reason) || /\[([A-Z_]+)\]/.exec(lots[i].reason);
+          if (m && m[1]) { strat = m[1].toLowerCase(); break; }
+        }
+        const avg = net > 0 ? cost / net : 0;
+        if (!(avg > 0)) return Response.json({ ok: false, error: "원장의 매수가가 유효하지 않아 평균단가를 복원할 수 없다" }, { status: 500, headers: cors });
+
+        // 남은 물량 전부를 한 포지션으로 되살린다(전략이 섞여 있었다면 마지막 태그를 쓴다 —
+        //   손절·익절 규칙은 전략별이라 하나로 모아야 규칙이 일관되게 적용된다).
+        // 필드명은 stmtSavePosition 규약을 따른다(avg · opened_ts) — avgPrice/openedTs 로 쓰면
+        //   바인딩이 undefined 가 되어 조용히 깨진 포지션이 들어간다.
+        await stmtSavePosition(env.DB, _mk, _sy, strat, {
+          qty: net, avg: +avg.toFixed(6), opened_ts: firstTs || Date.now(),
+          meta: { repaired: true, repairedTs: Date.now(), repairedFrom: "ledger", prevPositionQty: posQty }
+        }).run();
+        await log(env.DB, "WARN", _sy, "[정합성복구] " + _mk + "|" + _sy + " 포지션 " + posQty + " → " + net +
+          "주 복구(원장 기준, 평단 " + avg.toFixed(2) + ", 전략 " + strat + "). 원장은 건드리지 않았다 — 현금의 원천이기 때문이다.");
+        try { await setState(env.DB, "audit_repair:" + _mk + "|" + _sy, { ts: Date.now(), from: posQty, to: net, avg: +avg.toFixed(6), strategy: strat }); } catch (e) {}
+        return Response.json({ ok: true, changed: true, market: _mk, symbol: _sy,
+          ledgerNet: net, positionQtyBefore: posQty, positionQtyAfter: net,
+          avgPrice: +avg.toFixed(6), strategy: strat, openedTs: firstTs || null,
+          note: "원장은 수정하지 않았다. 포지션만 원장에서 재구성했다 — 이제 손절·익절이 정상 판단한다." }, { headers: cors });
+      } catch (e) { return Response.json({ ok: false, error: e && e.message }, { status: 500, headers: cors }); }
     }
     // [수동 청산] 특정 포지션을 현재가로 전량/부분 시장가 청산.
     //   POST /api/close?market=us&symbol=AMAT&strategy=trend&confirm=1 (&qty=N 부분청산)

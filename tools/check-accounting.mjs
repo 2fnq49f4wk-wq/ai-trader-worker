@@ -255,10 +255,19 @@ const NOW = Date.now();
 {
   const src = readFileSync(new URL("../src/index.js", import.meta.url), "utf8");
   const i0 = src.indexOf('if (path === "/api/audit/explain"');
-  const j0 = src.indexOf("// [수동 청산] 특정 포지션을", i0);
+  // [V33.136] 끝을 ★전용 표식★ 으로 잡는다. 종전엔 "다음 기능의 주석" 을 끝으로 삼았는데,
+  //   그 사이에 코드를 하나 넣자마자(= /api/audit/repair) 잘린 조각이 문법오류가 났다.
+  //   검사기의 경계는 검사기를 위해 존재하는 표식에 걸어야 한다.
+  const j0 = src.indexOf("[END:audit-explain]", i0);
   if (i0 < 0 || j0 < 0) bad("/api/audit/explain 엔드포인트를 못 찾았다");
   else {
-    const body = src.slice(i0, j0).replace(/^if \(path[^\n]*\n/, "").replace(/\n\s*\}\s*$/, "");
+    //   꼬리의 빈 줄·주석을 먼저 걷어낸 뒤에 닫는 중괄호를 뗀다 — 표식 앞에 설명 주석이
+    //   붙어 있으면 곧바로 `}` 를 찾는 정규식이 빗나가 조각이 불균형해진다.
+    const body = src.slice(i0, j0)
+      .replace(/^if \(path[^\n]*\n/, "")
+      .replace(/[ \t]*\/\/[^\n]*$/, "")
+      .replace(/(?:[ \t]*\/\/[^\n]*\n|[ \t]*\n)+$/, "")
+      .replace(/\n\s*\}\s*$/, "");
     const _num = (v, d) => (typeof v === "number" && isFinite(v) ? v : (d === undefined ? 0 : d));
     const run = async (trades, positions, logs) => {
       const db = { prepare(sql) { const st = { _a: [], bind(...a) { st._a = a; return st; },
@@ -298,6 +307,67 @@ const NOW = Date.now();
     // (e) ★읽기 전용★ — 이 엔드포인트가 무언가를 쓰면 진단이 아니라 사고다.
     if (!/INSERT|UPDATE|DELETE/.test(body)) ok("판별 엔드포인트에 쓰기 구문 없음(읽기 전용)");
     else bad("판별 엔드포인트가 DB 를 수정한다 — 진단 도구가 원장을 건드리면 안 된다");
+  }
+}
+
+
+// ══ [V33.136] 불일치 ★복구★ 엔드포인트 — 방향과 안전장치 ══
+//   판별(explain)은 "포지션을 복구하라" 까지 답했는데 실행 경로가 없어 QTY_MISMATCH 가
+//   5일 방치됐다. 복구는 돈을 만지는 조작이므로 계약을 못 박는다:
+//     ① 방향은 언제나 원장 → 포지션. 원장은 현금의 유일한 원천이라 없던 체결을 지어 넣으면
+//        허구의 가격·시각이 그대로 현금이 된다(되돌릴 수 없다).
+//     ② 유령 포지션(diff<0)은 자동 복구하지 않는다 — 있는 자산을 지우는 방향이라 사람 판단.
+//     ③ 남은 물량은 FIFO 로 짚어 가중평균가로 되살린다(가격을 지어내지 않는다).
+{
+  const src = readFileSync(new URL("../src/index.js", import.meta.url), "utf8");
+  const i0 = src.indexOf('if (path === "/api/audit/repair"');
+  if (i0 < 0) bad("/api/audit/repair 엔드포인트를 못 찾았다");
+  else {
+    const end = src.indexOf("// [수동 청산] 특정 포지션을", i0);
+    const body = src.slice(i0, end > 0 ? end : i0 + 6000);
+
+    if (/confirm"\) !== "1"/.test(body)) ok("복구에 confirm=1 을 요구한다");
+    else bad("확인 없이 복구가 실행된다");
+
+    if (/diff < 0/.test(body) && /status: 409/.test(body)) ok("유령 포지션(diff<0)은 409 로 거부 — 사람 판단으로 넘긴다");
+    else bad("유령 포지션도 자동 복구한다 — 있는 자산을 지우는 방향이다");
+
+    if (!/INSERT INTO trades|stmtRecordTrade/.test(body)) ok("원장에는 ★쓰지 않는다★ (현금의 원천을 지어내지 않는다)");
+    else bad("복구가 원장에 쓴다 — 허구의 체결이 그대로 현금이 된다");
+
+    if (/stmtSavePosition\(env\.DB, _mk, _sy, strat, \{[\s\S]{0,200}?avg:/.test(body)) ok("포지션 저장이 규약 필드명(avg·opened_ts)을 쓴다");
+    else bad("stmtSavePosition 필드명이 규약과 다르다 — 바인딩이 undefined 가 되어 조용히 깨진다");
+
+    if (/Math\.abs\(diff\) < 1e-9/.test(body)) ok("이미 일치하면 아무것도 안 한다(멱등)");
+    else bad("일치 상태에서도 쓰기가 일어난다");
+
+    // FIFO 로트 소진 로직을 그대로 떼어 검증한다 — 남은 물량과 평단이 맞아야 한다.
+    const fifo = (rows) => {
+      const lots = [];
+      for (const r of rows) {
+        const q = r.qty;
+        if (!(q > 0)) continue;
+        if (r.side === "BUY") lots.push({ ts: r.ts, qty: q, price: r.price });
+        else { let left = q; while (left > 1e-9 && lots.length) { const t = Math.min(left, lots[0].qty); lots[0].qty -= t; left -= t; if (lots[0].qty <= 1e-9) lots.shift(); } }
+      }
+      let net = 0, cost = 0; for (const l of lots) { net += l.qty; cost += l.qty * l.price; }
+      return { net, avg: net > 0 ? cost / net : 0 };
+    };
+    const r1 = fifo([{ ts: 1, side: "BUY", qty: 2, price: 1800 }]);
+    if (r1.net === 2 && Math.abs(r1.avg - 1800) < 1e-9) ok("실측 사례(GC=F 매수 2, 매도 없음) → 2주 @1800 복원");
+    else bad(`실측 사례 복원 실패: ${JSON.stringify(r1)}`);
+
+    const r2 = fifo([{ ts: 1, side: "BUY", qty: 2, price: 1000 }, { ts: 2, side: "BUY", qty: 3, price: 2000 }, { ts: 3, side: "SELL", qty: 2, price: 1500 }]);
+    if (r2.net === 3 && Math.abs(r2.avg - 2000) < 1e-9) ok("FIFO — 먼저 산 로트가 먼저 나간다(남은 3주 @2000)");
+    else bad(`FIFO 소진이 틀렸다: ${JSON.stringify(r2)} (기대 net 3 · avg 2000)`);
+
+    const r3 = fifo([{ ts: 1, side: "BUY", qty: 2, price: 1000 }, { ts: 2, side: "SELL", qty: 2, price: 1500 }]);
+    if (r3.net === 0) ok("전량 청산된 종목은 복원할 물량이 없다");
+    else bad(`청산됐는데 물량이 남는다: ${JSON.stringify(r3)}`);
+
+    const r4 = fifo([{ ts: 1, side: "BUY", qty: 1, price: 100 }, { ts: 2, side: "BUY", qty: 1, price: 300 }]);
+    if (Math.abs(r4.avg - 200) < 1e-9) ok("평단은 남은 로트의 가중평균 (100·300 → 200)");
+    else bad(`가중평균이 틀렸다: ${r4.avg}`);
   }
 }
 

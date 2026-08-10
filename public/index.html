@@ -1740,6 +1740,14 @@ input[type="range"]{accent-color:var(--pos)!important;}
 .pl-stale .pl-dot{color:var(--amber);}
 .pl-never .pl-dot{color:var(--t3);}
 .pl-idle .pl-dot{color:var(--t2);opacity:.75;}   /* [V33.134] 장외 대기 — 경보 아님 */
+/* [V33.136] 정합성 복구 버튼 — 파괴적이지 않지만 원장을 만지는 조작이라 눈에 띄되 유혹적이지 않게 */
+.au-fix{font:inherit;font-size:10px;padding:2px 8px;margin-left:6px;border-radius:999px;cursor:pointer;
+  border:1px solid color-mix(in srgb, var(--amber,#fbbf24) 45%, transparent);
+  background:color-mix(in srgb, var(--amber,#fbbf24) 12%, transparent);color:var(--amber,#fbbf24);}
+.au-fix:hover{background:color-mix(in srgb, var(--amber,#fbbf24) 22%, transparent);}
+.au-fix:disabled{opacity:.6;cursor:default;}
+.au-fix.au-done{border-color:color-mix(in srgb, var(--pos) 45%, transparent);
+  background:color-mix(in srgb, var(--pos) 12%, transparent);color:var(--pos);}
 .pl-name{font-weight:700;letter-spacing:.6px;color:var(--t2);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
 .pl-ok .pl-name{color:var(--t1);}
 .pl-age{margin-left:auto;color:var(--t3);font-variant-numeric:tabular-nums;flex-shrink:0;font-family:'IBM Plex Mono',monospace;}
@@ -14113,6 +14121,19 @@ html[data-theme="light"] .rail{background:#fff;}
           ? col('이상 없음', C.pos) + ' <span class="sub">전수 '+n0(AU.checked)+'종목</span>'
           : col(n0(AU.nIssues)+'건 불일치', C.neg) + ' <span class="sub">전수 '+n0(AU.checked)+'종목 · '
             + esc(((AU.issues||[]).slice(0,2).map(function(i){ return i.code+' '+(i.symbol||''); }).join(', ')))+'</span>']);
+        /* [V33.136] 불일치를 ★고칠 수 있게★ 한다. 판별(explain)은 "포지션을 복구하라" 까지
+           답하는데 실행 경로가 화면에 없어 QTY_MISMATCH 가 5일 방치됐다.
+           복구 방향은 언제나 원장 → 포지션이다(원장은 현금의 유일한 원천이라 손대지 않는다). */
+        (AU.issues||[]).forEach(function(iss){
+          if(!iss || !iss.symbol || iss.code !== 'QTY_MISMATCH') return;
+          var parts = String(iss.symbol).split('|');
+          var mk = parts.length > 1 ? parts[0] : '', sy = parts.length > 1 ? parts[1] : parts[0];
+          if(!mk) return;
+          rows2.push(['└ '+esc(sy),
+            '<span class="sub">'+esc(iss.detail||'')+'</span>'
+            + (iss.repaired ? ' <span class="sub">· 복구이력 '+esc(String(iss.repaired.from))+'→'+esc(String(iss.repaired.to))+'</span>' : '')
+            + ' <button class="au-fix" data-mk="'+esc(mk)+'" data-sy="'+esc(sy)+'">원장 기준 복구</button>']);
+        });
       }
       h += sec('실적 · 거래상태') + tbl(rows2);
     })();
@@ -14231,6 +14252,25 @@ html[data-theme="light"] .rail{background:#fff;}
             })
           : [['', null]]);
     put(h);
+    /* [V33.136] 복구 버튼 배선 — 위임이 아니라 put() 직후에 건다(이 노드는 매 갱신마다 새로 그려진다).
+       돈이 걸린 조작이라 ① 무엇을 어떻게 바꾸는지 먼저 말하고 ② 확인을 받고 ③ 결과를 그대로 보여준다. */
+    [el, mob].forEach(function(root){
+      if(!root || typeof root.querySelectorAll !== 'function') return;   /* 스텁·분리 노드 방어 */
+      root.querySelectorAll('.au-fix').forEach(function(btn){
+        btn.addEventListener('click', async function(){
+          var mk = btn.getAttribute('data-mk'), sy = btn.getAttribute('data-sy');
+          if(!confirm(sy+' 의 포지션을 원장 기준으로 재구성합니다.\n\n· 원장(체결기록)은 건드리지 않습니다 — 현금의 유일한 원천이라 손대면 안 됩니다.\n· 미청산 매수를 FIFO 로 짚어 남은 물량과 가중평균가로 포지션을 되살립니다.\n· 복구 후에는 손절·익절이 정상적으로 다시 판단합니다.\n\n진행할까요?')) return;
+          btn.disabled = true; btn.textContent = '복구 중…';
+          try{
+            var r = await fetch('/api/audit/repair?market='+encodeURIComponent(mk)+'&symbol='+encodeURIComponent(sy)+'&confirm=1', { method:'POST' });
+            var j = await r.json();
+            if(j && j.ok && j.changed) { btn.textContent = '복구됨 '+j.positionQtyBefore+'→'+j.positionQtyAfter; btn.classList.add('au-done'); }
+            else if(j && j.ok) { btn.textContent = '이미 일치'; btn.classList.add('au-done'); }
+            else { btn.textContent = '실패'; btn.disabled = false; alert('복구하지 않았습니다.\n\n'+((j && j.error) || ('HTTP '+r.status))); }
+          }catch(e){ btn.textContent = '실패'; btn.disabled = false; alert('복구 요청 실패: '+e.message); }
+        });
+      });
+    });
   }
 
   // [V33.2] AI 후보 종목 그래프 — 위원회 상위 픽의 최근 흐름(워치리스트 일봉 spark)을 카드로.
