@@ -2788,7 +2788,7 @@ async function applySignalTypeWeights(DB, cfg) {
 // ============================================================================
 // [V33.55] 빌드 버전 — SWR L2 캐시 키에 섞어 '배포 = 판단 캐시 자동 무효화'를 만든다.
 //   판정 로직을 고쳐도 옛 캐시가 최대 1시간 재배포되던 문제를 구조적으로 없앤다.
-const _BUILD_VER = "V33.139";
+const _BUILD_VER = "V33.140";
 
 const AI_PARAMS = {
   // ── OHLCV 타임프레임 ── 시가/고가/저가/종가/거래량을 어떤 봉 주기로 볼지.
@@ -18910,6 +18910,8 @@ async function handleRequest(request, env, ctx) {
               //   flow 는 홀드아웃도 통과하고 전진 IC 도 양수인데 대기였다 — 이유는 전진 t 였고
               //   그 값이 어디에도 안 나왔다. 판정 결과(tier·why)를 판정 함수에서 그대로 낸다.
               fwdICt: m ? _num(m.fwdICt, null) : null,
+              fwdDays: m ? _num(m.fwdDays, 0) : 0, fwdBatchN: m ? _num(m.fwdBatchN, 0) : 0,
+              minFwdDays: FWDLED.minDays,
               admit: m ? expertAdmit(m) : null,
               fwdReady: !!(m && m.fwdReady), holdPass: !!(m && m.holdPass), minFwd: ICGATE.minForward,
               valN: m ? _num(m.valN, null) : null,
@@ -18937,6 +18939,8 @@ async function handleRequest(request, env, ctx) {
               icBlock: _mo ? _num(_mo.valICBlock, null) : null, icT: _mo ? _num(_mo.valICt, null) : null,
               fwdIC: _mo ? _num(_mo.fwdIC, null) : null, fwdN: _mo ? _num(_mo.fwdN, 0) : 0,
               fwdICt: _mo ? _num(_mo.fwdICt, null) : null, admit: _mo ? expertAdmit(_mo) : null,
+              fwdDays: _mo ? _num(_mo.fwdDays, 0) : 0, fwdBatchN: _mo ? _num(_mo.fwdBatchN, 0) : 0,
+              minFwdDays: FWDLED.minDays,
               fwdReady: !!(_mo && _mo.fwdReady), holdPass: !!(_mo && _mo.holdPass), minFwd: ICGATE.minForward,
               protos: _mo && Array.isArray(_mo.protos) ? _mo.protos.length : null, n: _mo ? _num(_mo.n, null) : null };
           } catch (e) {}
@@ -23678,6 +23682,8 @@ async function _miniLogisticTrain(DB, opts) {
       valICtRaw: _st.tRaw != null ? _st.tRaw : null, valICdf: _st.df != null ? _st.df : null,
       fwdIC: _fwd ? _fwd.ic : null, fwdICt: _fwd ? _fwd.t : null,
       fwdN: _fwd ? _fwd.n : 0, fwdReady: !!(_fwd && _fwd.ready),
+      // [V33.140] 원장이 며칠치인지 — "표본이 왜 아직 모자라나" 를 화면이 답할 수 있어야 한다
+      fwdDays: _fwd ? _num(_fwd.days, 0) : 0, fwdBatchN: _fwd ? _num(_fwd.batchN, 0) : 0,
       fwdMode: _fwd ? (_fwd.mode || null) : null, maxId: _maxId,
       holdPass: _holdPass,
       trusted: _trusted };
@@ -24014,6 +24020,7 @@ async function memoTrainNightly(DB) {
     model.valICt = st.t != null ? +st.t.toFixed(3) : null;
     model.fwdIC = _fwd ? _fwd.ic : null; model.fwdICt = _fwd ? _fwd.t : null;
     model.fwdN = _fwd ? _fwd.n : 0; model.fwdReady = !!(_fwd && _fwd.ready);
+    model.fwdDays = _fwd ? _num(_fwd.days, 0) : 0; model.fwdBatchN = _fwd ? _num(_fwd.batchN, 0) : 0;
     model.fwdMode = _fwd ? (_fwd.mode || null) : null; model.maxId = _maxId;
     model.holdPass = (model.valICBlock != null && model.valICt != null)
       && model.valICBlock >= MEMOML.icFloor && model.valICt >= MEMOML.icTMin;
@@ -25304,6 +25311,28 @@ function expertAdmit(m) {
              why: "잠정 — 홀드아웃 t " + t.toFixed(2) + "(문턱 " + ICGATE.tMin + ") · " + fwdWhy + " → 가중 ×" + mult.toFixed(2) };
   } catch (e) { return { admit: false, mult: 0, tier: "none", why: "판정 실패" }; }
 }
+// ═══ [V33.140] ★전진검증이 구조적으로 못 채워지던 이유 — 창이 매일 밤 리셋됐다★ ═══
+//   전진표본은 "학습 당시 존재하지 않았던 행"(id > 학습때 기록한 maxId)으로 고른다.
+//   그런데 그 maxId 는 ★매일 밤 재학습 때마다 갱신★ 된다. 즉 전진창은 언제나 '지난밤 이후'
+//   하루치다. 그리고 표본 유입은 하루 약 384건인데 문턱은 400건이다 — 못 채운다.
+//
+//   운영 스냅샷(2026-08-10)이 이걸 그대로 보여줬다:
+//     memo  총표본 177,868 인데 전진 ★357★  ← 어제 유입(357)과 정확히 일치
+//     stack 총표본   2,086 인데 전진 ★358★  ← 역시 하루치
+//   표본이 17만 개 쌓였는데 전진검증은 영원히 대기다. 예산 버킷 교착과 같은 모양이다 —
+//   ★채워지는 속도보다 리셋이 빠르면 문턱은 영원히 못 넘는다.★
+//
+//   → 하루치를 버리지 않고 ★누적★ 한다. 매일 그날 도착분에 대해 그 시점 모델의 IC 를 재고
+//     원장(fwd_ledger:*)에 한 줄씩 append 한다. 전진통계는 그 원장 전체로 계산한다.
+//     이건 편법이 아니라 표준적인 walk-forward 평가다 — 각 줄은 그 줄을 만든 모델 버전에게
+//     진짜 out-of-sample 이고, 날짜는 자연스러운 ★비중첩 블록★ 이라 블록 t 를 그대로 쓴다.
+//     featVer 가 바뀌면 다른 모델이므로 원장을 버린다.
+const FWDLED = {
+  minBatch: 30,     // 하루 배치가 이보다 작으면 그날 IC 는 의미가 없다 → 기록하지 않는다
+  minDays: 3,       // 날짜 간 분산으로 t 를 만들려면 최소 3일
+  keepDays: 45      // 오래된 기록은 버린다(모델도 시장도 그만큼 변한다)
+};
+
 async function icForwardCheck(DB, opts) {
   try {
     const o = opts || {};
@@ -25329,22 +25358,62 @@ async function icForwardCheck(DB, opts) {
       "SELECT ts, feat, label, pnl_pct FROM " + o.table + " WHERE featver = ? AND " + _where + " ORDER BY ts ASC LIMIT 4000"
     ).bind(o.sampleFeatVer != null ? o.sampleFeatVer : o.featVer, _bindVal).all();
     const rows = (rs && rs.results) || [];
-    if (rows.length < ICGATE.minForward) return { n: rows.length, ic: null, t: null, ready: false, mode: _mode };
-    const pv = [], yv = [];
-    for (const r of rows) {
-      let v; try { v = JSON.parse(r.feat); } catch (e) { continue; }
-      if (!Array.isArray(v)) continue;
-      const p = o.scoreFn(prev, v);
-      if (p == null || !isFinite(p)) continue;
-      const y = (typeof o.labelFn === "function") ? o.labelFn(r) : (r.label ? 1 : 0);
-      if (y == null) continue;
-      pv.push(p); yv.push(y);
+
+    // ── 원장 적재 ──────────────────────────────────────────────────────────
+    const _lkey = "fwd_ledger:" + o.stateKey;
+    let _led = null;
+    try { _led = await getState(DB, _lkey, null); } catch (e) {}
+    if (!_led || !Array.isArray(_led.v) || _led.featVer !== o.featVer) _led = { featVer: o.featVer, v: [] };
+
+    // 이번 배치(= 이 모델 버전이 학습된 뒤 도착한 행)의 IC 를 잰다.
+    let _batchN = 0;
+    if (rows.length >= FWDLED.minBatch) {
+      const pv = [], yv = [];
+      for (const r of rows) {
+        let v; try { v = JSON.parse(r.feat); } catch (e) { continue; }
+        if (!Array.isArray(v)) continue;
+        const p = o.scoreFn(prev, v);
+        if (p == null || !isFinite(p)) continue;
+        const y = (typeof o.labelFn === "function") ? o.labelFn(r) : (r.label ? 1 : 0);
+        if (y == null) continue;
+        pv.push(p); yv.push(y);
+      }
+      if (pv.length >= FWDLED.minBatch) {
+        const _bst = _icBlockStats(pv, yv, 2);
+        const _bic = _num(_bst.ic, null);
+        if (_bic != null && isFinite(_bic)) {
+          _batchN = pv.length;
+          // 모델 버전(prev.ts)당 한 줄. 같은 버전이 하루 안에 여러 번 평가되면 갱신한다
+          //   — 같은 모델의 같은 구간을 두 번 세면 표본이 부풀고 t 가 과장된다.
+          const _row = { key: _num(prev.ts, 0), ts: Date.now(), n: pv.length, ic: +_bic.toFixed(5) };
+          const _i = _led.v.findIndex(function (x) { return x && x.key === _row.key; });
+          if (_i >= 0) _led.v[_i] = _row; else _led.v.push(_row);
+          if (_led.v.length > FWDLED.keepDays) _led.v = _led.v.slice(-FWDLED.keepDays);
+          try { await setState(DB, _lkey, _led); } catch (e) {}
+        }
+      }
     }
-    if (pv.length < ICGATE.minForward) return { n: pv.length, ic: null, t: null, ready: false, mode: _mode };
-    const st = _icBlockStats(pv, yv, 5);
-    return { n: pv.length, ic: +_num(st.ic, 0).toFixed(5),
-             blockIC: st.blockIC != null ? +st.blockIC.toFixed(5) : null,
-             t: st.t != null ? +st.t.toFixed(3) : null, ready: true, mode: _mode };
+
+    // ── 누적 통계 ──────────────────────────────────────────────────────────
+    const _v = _led.v || [];
+    let _nSum = 0, _wIC = 0;
+    for (const e of _v) { _nSum += _num(e.n, 0); _wIC += _num(e.ic, 0) * _num(e.n, 0); }
+    const _icPooled = _nSum > 0 ? _wIC / _nSum : null;
+    // 날짜 간 분산으로 t — 각 줄은 서로 다른 날의 비중첩 표본이므로 블록 t 의 가정이 성립한다.
+    let _t = null, _df = null;
+    if (_v.length >= 2) {
+      let m = 0; for (const e of _v) m += _num(e.ic, 0); m /= _v.length;
+      let s2 = 0; for (const e of _v) { const d = _num(e.ic, 0) - m; s2 += d * d; }
+      const sd = Math.sqrt(s2 / Math.max(1, _v.length - 1));
+      const tRaw = sd > 1e-9 ? m / (sd / Math.sqrt(_v.length)) : (m > 0 ? 9 : (m < 0 ? -9 : 0));
+      _df = _v.length - 1;
+      _t = +_tToZ(tRaw, _df).toFixed(3);
+    }
+    const _ready = _nSum >= ICGATE.minForward && _v.length >= FWDLED.minDays && _t != null;
+    return { n: _nSum, ic: _icPooled != null ? +_icPooled.toFixed(5) : null,
+             blockIC: _icPooled != null ? +_icPooled.toFixed(5) : null,
+             t: _t, ready: _ready, mode: _mode,
+             days: _v.length, batchN: _batchN, df: _df, minDays: FWDLED.minDays };
   } catch (e) { return null; }
 }
 
@@ -34494,8 +34563,16 @@ async function _luxSelfCheck(DB) {
         const t24 = nowT - 24 * 3600000, t7 = nowT - 7 * 86400000;
         let total = null, d1 = null, d7 = null;
         try { const r = await DB.prepare("SELECT COUNT(*) c FROM ml_samples WHERE featver=?").bind(fv).first(); total = (r && r.c) || 0; } catch (e) {}
-        try { const r = await DB.prepare("SELECT COUNT(*) c FROM ml_samples WHERE featver=? AND ts>=?").bind(fv, t24).first(); d1 = (r && r.c) || 0; } catch (e) {}
-        try { const r = await DB.prepare("SELECT COUNT(*) c FROM ml_samples WHERE featver=? AND ts>=?").bind(fv, t7).first(); d7 = (r && r.c) || 0; } catch (e) {}
+        // ══ [V33.140] ★유입량을 ts 로 세면 안 된다 — ts 는 '봉의 날짜' 다★ ══
+        //   수확기는 표본의 ts 를 baseTs − k일 로 ★역산해 넣는다★. 그래서 오늘 적재된 행도
+        //   ts 는 몇 달 전이 되고, `ts >= 지금−24h` 로 세면 거의 0 이 나온다.
+        //   실제로 같은 스냅샷 안에서 이 값이 ★1★ 인데 화면 다른 쪽(ins_ts 기준)은 ★249★ 였다.
+        //   3.5배도 아니고 249배 차이다. 게다가 아래 경고문이 "최근 7일 신규 0건 — 적재 점검"
+        //   이라 ★수집이 멈춘 것처럼★ 읽힌다. 오경보가 진짜 고장을 덮는 전형이다.
+        //   V33.104 가 전진검증에서 고친 바로 그 함정이 여기엔 그대로 남아 있었다.
+        //   → 적재시각 ins_ts 를 쓴다(V33.32 부터 기록). 없는 구행만 ts 로 폴백한다.
+        try { const r = await DB.prepare("SELECT COUNT(*) c FROM ml_samples WHERE featver=? AND COALESCE(ins_ts, ts)>=?").bind(fv, t24).first(); d1 = (r && r.c) || 0; } catch (e) {}
+        try { const r = await DB.prepare("SELECT COUNT(*) c FROM ml_samples WHERE featver=? AND COALESCE(ins_ts, ts)>=?").bind(fv, t7).first(); d7 = (r && r.c) || 0; } catch (e) {}
         perf.samples = { total: total, last24h: d1, last7d: d7, perDay: d7 != null ? Math.round(d7 / 7) : null, featVer: fv };
         if (total != null && total < 300) add("info", "학습표본", "현재 featVer 표본 " + total + "건 — 위원회 신뢰 승격 표본 축적 중");
         if (d1 === 0 && d7 === 0) add("warn", "학습표본", "최근 7일 신규 표본 0건 — 야간 수확/실거래 표본 적재 점검 필요");

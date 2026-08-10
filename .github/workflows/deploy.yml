@@ -104,6 +104,12 @@ jobs:
       #   전진 IC 가 음수인 모델은 어떤 홀드아웃 성적으로도 못 들어오는지 함께 확인한다.
       - name: Committee expert admission contract check
         run: node tools/check-expert-admit.mjs
+      # [V33.140] 전진검증 누적 원장 — 창이 매일 밤 리셋돼 ★구조적으로★ 못 채워지던 것을 고쳤다.
+      #   (memo: 총표본 177,868 인데 전진 357 = 어제 유입과 정확히 일치)
+      #   교착 해소와 통계 정직성을 함께 본다: 잡음 통과율이 문턱의 명목값과 맞는지,
+      #   음수 IC 가 누적으로 뒤집히지 않는지, 같은 모델 버전을 두 번 세지 않는지.
+      - name: Forward validation ledger contract check
+        run: node tools/check-fwd-ledger.mjs
       # cloudflare/wrangler-action 대신 로컬에서 검증된 방식 그대로 실행
       # (wrangler-action@v3의 npx 자동설치가 4.86.0을 요구하며 실패하던 문제 회피)
       - name: Install wrangler
