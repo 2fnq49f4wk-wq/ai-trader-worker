@@ -11953,6 +11953,7 @@ html[data-theme="light"] #page-nnviz .nlv-stat,html[data-theme="light"] #page-nn
 html[data-theme="light"] #page-nnviz .nlv-fbar{background:rgba(18,35,63,.08);}
 html[data-theme="light"] #page-nnviz .nlv-pipe,
 html[data-theme="light"] #page-nnviz .nlv-sec-h{border-color:#d5dfee;}
+
 /* 라이트에서 흐려지던 요소들 — 스트립 태그·상위3 수치·섹션 헤더 */
 html[data-theme="light"] #page-nnviz .nlv-tag{color:#3a4b66;border-color:#c2cfe4;background:#fbfdff;}
 html[data-theme="light"] #page-nnviz .nlv-tag.hot{color:#0b5f96;border-color:#7fc4e8;background:rgba(56,189,248,.14);}
@@ -12031,6 +12032,526 @@ html[data-theme="light"] #page-nnviz .nlv-line .b em{color:#12233f;}
 html[data-theme="light"] #page-nnviz .nlv-line .b{color:#33455f;}
 html[data-theme="light"] #page-nnviz .nlv-pipe,
 html[data-theme="light"] #page-nnviz .nlv-sec-h{border-color:#d5dfee;}
+
+/* ═══════════════════════════════════════════════════════════════════════════
+   [V33.137] AI 두뇌 관측 — Apple 디자인 언어 적용 레이어
+   ───────────────────────────────────────────────────────────────────────────
+   기능은 하나도 바꾸지 않는다. ID·클래스·마크업 구조는 그대로 두고 ★표현만★ 다시 쓴다.
+   (JS 가 참조하는 이름을 건드리면 화면이 조용히 죽는다 — 이 파일에서 반복해서 겪은 사고다.)
+
+   따르는 원칙 — Apple 의 인터페이스 설계와 WWDC 2018 'Designing Fluid Interfaces':
+     · 재질과 깊이   반투명 레이어가 위계를 만든다. 큰 표면일수록 두껍게(블러↑·그림자↑).
+                     밝은 반투명 위에 밝은 반투명을 겹치지 않는다 — 가독성이 무너진다.
+     · 타이포        트래킹은 ★크기마다 다르다★. 큰 글자는 음수 자간(커질수록 멀어 보인다),
+                     본문은 0 근처. 행간은 크기와 반비례. 위계는 크기가 아니라 굵기로 만든다.
+     · 모션          기본은 임계감쇠(damping 1.0, response 0.3~0.4) — 튀지 않는다.
+                     되튐은 ★사용자가 운동량을 실었을 때만★. transform·opacity 만 움직인다.
+     · 반응          누르는 즉시 반응한다(pointer-down). 끝날 때가 아니라.
+     · 공간 일관성   들어온 길로 나간다. 열린 자리에서 자란다(transform-origin).
+     · 절제          경계선을 긋는 대신 여백·대비·순서로 나눈다. 스크롤 경계는 페이드로.
+     · 접근성        motion·transparency·contrast 선호를 각각 존중한다. 셋은 서로 다른 요구다.
+   ═══════════════════════════════════════════════════════════════════════════ */
+
+#page-nnviz{
+  /* 재질 토큰 — 다크 기준. 라이트는 아래에서 ★역할만★ 바꾼다(색을 흩뿌리지 않는다). */
+  --ap-ink:        var(--t1);
+  --ap-ink2:       var(--t2);
+  --ap-ink3:       var(--t3);
+  --ap-tint:       #4a9eff;            /* 강조 — 단일 계열로 통일 */
+  --ap-tint-soft:  rgba(74,158,255,.14);
+
+  /* 재질 3단 — 무거울수록 구조를 나누고, 가벼울수록 조작을 부른다 */
+  --ap-mat-heavy:  rgba(14,18,28,.72); /* 페이지 표면 */
+  --ap-mat:        rgba(28,35,50,.55); /* 패널 */
+  --ap-mat-light:  rgba(255,255,255,.06); /* 컨트롤 */
+  --ap-hair:       rgba(255,255,255,.08); /* 헤어라인 — 선이 아니라 빛의 가장자리 */
+  --ap-hair-top:   rgba(255,255,255,.16); /* 재질 윗면이 빛을 받는 선 */
+  --ap-shadow-s:   0 1px 2px rgba(0,0,0,.28);
+  --ap-shadow-m:   0 6px 20px rgba(0,0,0,.34);
+  --ap-shadow-l:   0 24px 64px rgba(0,0,0,.46);
+  --ap-blur:       20px;
+
+  /* 모션 — response 0.3~0.4 를 CSS 로 옮긴 값. 기본은 되튐 없음. */
+  --ap-ease:       cubic-bezier(.32,.72,0,1);      /* 임계감쇠 느낌 */
+  --ap-ease-out:   cubic-bezier(.22,.61,.36,1);
+  --ap-spring:     cubic-bezier(.34,1.36,.64,1);   /* 되튐 — 운동량 있는 것에만 */
+  --ap-dur:        .38s;
+  --ap-dur-fast:   .18s;
+
+  --ap-r-lg: 20px; --ap-r-md: 14px; --ap-r-sm: 10px;
+}
+html[data-theme="light"] #page-nnviz{
+  --ap-mat-heavy:  rgba(255,255,255,.74);
+  --ap-mat:        rgba(255,255,255,.62);
+  --ap-mat-light:  rgba(10,25,55,.05);
+  --ap-hair:       rgba(10,25,55,.10);
+  --ap-hair-top:   rgba(255,255,255,.9);
+  --ap-tint:       #0a63d6;
+  --ap-tint-soft:  rgba(10,99,214,.10);
+  --ap-shadow-s:   0 1px 2px rgba(16,32,64,.08);
+  --ap-shadow-m:   0 6px 20px rgba(16,32,64,.10);
+  --ap-shadow-l:   0 24px 64px rgba(16,32,64,.14);
+}
+
+/* ── 페이지 표면 ────────────────────────────────────────────────────────────
+   가장 큰 표면이므로 가장 두껍게 읽혀야 한다: 강한 블러 + 깊은 그림자.
+   테두리는 사방 균일한 선이 아니라, 윗면만 밝게 해서 ★빛을 받는 재질★ 로 보이게 한다. */
+#page-nnviz .nnviz-content{
+  background:var(--ap-mat-heavy);
+  -webkit-backdrop-filter:blur(var(--ap-blur)) saturate(180%);
+  backdrop-filter:blur(var(--ap-blur)) saturate(180%);
+  border:1px solid var(--ap-hair);
+  border-top-color:var(--ap-hair-top);
+  border-radius:var(--ap-r-lg);
+  box-shadow:var(--ap-shadow-l);
+  padding:1.5rem 1.5rem 1.75rem;
+  overflow:visible;
+}
+#page-nnviz .nnviz-content::before{
+  /* 표면 위쪽의 미묘한 광원 — 재질에 방향감을 준다. 장식이 아니라 깊이 단서다. */
+  content:'';position:absolute;inset:0;border-radius:inherit;pointer-events:none;
+  background:radial-gradient(120% 60% at 50% -10%, var(--ap-tint-soft), transparent 65%);
+}
+
+/* ── 타이포 — 크기마다 트래킹과 행간이 다르다 ──────────────────────────── */
+#page-nnviz{
+  font-family:-apple-system,BlinkMacSystemFont,'SF Pro Text','Helvetica Neue','Segoe UI',system-ui,sans-serif;
+  font-optical-sizing:auto;
+  font-variant-numeric:tabular-nums;   /* 숫자가 갱신될 때 자리가 흔들리지 않는다 */
+}
+#page-nnviz .nnv-title{
+  font-family:inherit;
+  font-size:1.5rem; font-weight:700;
+  letter-spacing:-.022em;              /* 커질수록 음수 — 안 그러면 글자가 흩어져 보인다 */
+  line-height:1.1;                     /* 행간은 크기와 반비례 */
+  color:var(--ap-ink);
+  gap:.55rem;
+}
+#page-nnviz .nnv-sub,
+#page-nnviz .nnv-legend{
+  font-size:.8125rem; line-height:1.55; letter-spacing:0;   /* 본문은 0 근처 */
+  color:var(--ap-ink2);
+}
+#page-nnviz .nlv-sec-h{
+  font-size:.8125rem; font-weight:600; letter-spacing:-.005em;
+  color:var(--ap-ink);
+  border-bottom:none;                  /* 선 대신 여백으로 나눈다 */
+  padding-bottom:.5rem; margin-bottom:.6rem;
+  display:flex; align-items:center; gap:.4rem;
+}
+#page-nnviz .nlv-sec-h small,
+#page-nnviz .nnv-comm-name small{
+  font-size:.6875rem; font-weight:400; letter-spacing:.005em;  /* 작을수록 양수 트래킹 */
+  color:var(--ap-ink3);
+}
+/* 숫자 디스플레이 — 확률·가격은 이 화면의 주인공이다 */
+#page-nnviz .nlv-tp-num .p,
+#page-nnviz #nlvTpP{
+  font-size:2.25rem; font-weight:700; letter-spacing:-.03em; line-height:1;
+  color:var(--ap-ink);
+}
+#page-nnviz .nlv-tp-id .sym{
+  font-size:1.0625rem; font-weight:650; letter-spacing:-.012em; color:var(--ap-ink);
+}
+#page-nnviz .nlv-tp-id .nm{ font-size:.75rem; font-weight:400; color:var(--ap-ink3); letter-spacing:0; }
+
+/* ── 컨트롤 — 누르는 즉시 반응한다 ────────────────────────────────────────
+   Apple 은 touch-down 에 반응한다. 손을 뗄 때 반응하면 죽은 것처럼 느껴진다. */
+#page-nnviz .nnv-btn,
+#page-nnviz .nlv-btn{
+  font:inherit; font-size:.75rem; font-weight:550; letter-spacing:-.003em;
+  color:var(--ap-ink); background:var(--ap-mat-light);
+  border:1px solid var(--ap-hair); border-radius:999px;
+  padding:.44rem .85rem; cursor:pointer;
+  -webkit-backdrop-filter:blur(12px) saturate(160%);
+  backdrop-filter:blur(12px) saturate(160%);
+  box-shadow:var(--ap-shadow-s);
+  transition:transform var(--ap-dur-fast) var(--ap-ease-out),
+             background-color var(--ap-dur-fast) var(--ap-ease-out),
+             border-color var(--ap-dur-fast) var(--ap-ease-out);
+}
+#page-nnviz .nnv-btn:hover,
+#page-nnviz .nlv-btn:hover{ background:var(--ap-tint-soft); border-color:var(--ap-tint); }
+#page-nnviz .nnv-btn:active,
+#page-nnviz .nlv-btn:active{ transform:scale(.96); }   /* pointer-down 에 즉시 */
+#page-nnviz .nnv-btn:focus-visible,
+#page-nnviz .nlv-btn:focus-visible,
+#page-nnviz .nnv-tab:focus-visible{ outline:2px solid var(--ap-tint); outline-offset:2px; }
+
+/* ── 모델 탭 — 세그먼티드 컨트롤 ──────────────────────────────────────────
+   버튼 6개가 각자 떠 있으면 '선택지'로 안 읽힌다. 하나의 트랙 위에서
+   선택된 알약이 미끄러지는 형태가 "여럿 중 하나"를 가장 정확히 말한다. */
+#page-nnviz .nnv-tabs{
+  display:inline-flex !important; gap:.15rem !important;
+  padding:.2rem; border-radius:999px;
+  background:var(--ap-mat-light);
+  border:1px solid var(--ap-hair);
+  -webkit-backdrop-filter:blur(12px) saturate(160%);
+  backdrop-filter:blur(12px) saturate(160%);
+  max-width:100%; overflow-x:auto; scrollbar-width:none;
+}
+#page-nnviz .nnv-tabs::-webkit-scrollbar{ display:none; }
+#page-nnviz .nnv-tab{
+  font:inherit; font-size:.75rem; font-weight:550; letter-spacing:-.003em;
+  white-space:nowrap; border:none; background:transparent; color:var(--ap-ink2);
+  border-radius:999px; padding:.4rem .8rem; cursor:pointer;
+  display:inline-flex; align-items:center; gap:.35rem;
+  transition:color var(--ap-dur-fast) var(--ap-ease-out),
+             background-color var(--ap-dur-fast) var(--ap-ease-out),
+             transform var(--ap-dur-fast) var(--ap-ease-out);
+}
+#page-nnviz .nnv-tab:hover{ color:var(--ap-ink); }
+#page-nnviz .nnv-tab:active{ transform:scale(.97); }
+#page-nnviz .nnv-tab.active{
+  color:var(--ap-ink);
+  background:var(--ap-mat);
+  box-shadow:var(--ap-shadow-s);
+  border:1px solid var(--ap-hair-top);
+}
+#page-nnviz .nnv-tab .lux-ico{ width:.8rem; height:.8rem; opacity:.85; }
+
+/* ── 패널 — 재질 위계의 두 번째 단 ───────────────────────────────────────
+   페이지 표면(무거움) 위에 얹히므로 더 가벼워야 한다.
+   ★밝은 반투명 위에 밝은 반투명을 겹치지 않는다★ — 그래서 블러는 낮추고 배경만 얹는다. */
+#page-nnviz .nlv-panel,
+#page-nnviz .nlv-core,
+#page-nnviz .nlv-funnel-wrap,
+#page-nnviz .nlv-picks,
+#page-nnviz .nnv-stage,
+#page-nnviz .nnv-comm{
+  background:var(--ap-mat);
+  border:1px solid var(--ap-hair);
+  border-top-color:var(--ap-hair-top);
+  border-radius:var(--ap-r-md);
+  box-shadow:var(--ap-shadow-m);
+  padding:.9rem 1rem 1rem;
+}
+#page-nnviz .nnv-stage{ padding:.6rem; }
+
+/* 상태 스트립 — 떠 있는 크롬이므로 얇고 가볍게 */
+#page-nnviz .nlv-strip{
+  background:var(--ap-mat-light);
+  border:1px solid var(--ap-hair);
+  border-radius:999px;
+  padding:.4rem .9rem;
+  box-shadow:none;
+  display:flex; align-items:center; gap:.6rem; flex-wrap:wrap;
+  font-size:.6875rem; letter-spacing:.02em;
+}
+#page-nnviz .nlv-tagline{ font-weight:650; letter-spacing:.06em; color:var(--ap-tint); }
+#page-nnviz .nlv-clock{ color:var(--ap-ink3); font-variant-numeric:tabular-nums; }
+
+/* 칩 — 같은 계열 안에서 농도로만 구분한다(색을 늘리지 않는다) */
+#page-nnviz .nnv-chip,
+#page-nnviz .nlv-tag,
+#page-nnviz .nlv-stat{
+  background:var(--ap-mat-light);
+  border:1px solid var(--ap-hair);
+  border-radius:999px;
+  padding:.22rem .6rem;
+  font-size:.6875rem; letter-spacing:.004em;
+  color:var(--ap-ink2);
+}
+
+/* ── 스크롤 경계 — 1px 선 대신 페이드 ─────────────────────────────────────
+   떠 있는 크롬과 콘텐츠가 만나는 자리에만 마스크를 준다. 선을 그으면 잘린 느낌이,
+   페이드를 주면 '아래로 이어진다'는 느낌이 남는다. */
+#page-nnviz .nlv-feed,
+#page-nnviz .nnv-scroll,
+#page-nnviz .nlv-toplist{
+  -webkit-mask-image:linear-gradient(180deg,transparent 0,#000 14px,#000 calc(100% - 14px),transparent 100%);
+  mask-image:linear-gradient(180deg,transparent 0,#000 14px,#000 calc(100% - 14px),transparent 100%);
+  scrollbar-width:thin;
+}
+#page-nnviz .nlv-pipe{ border:none; }
+
+/* ── 막대·게이지 ────────────────────────────────────────────────────────── */
+#page-nnviz .nnv-bar,
+#page-nnviz .nnv-role-bar,
+#page-nnviz .nlv-fbar,
+#page-nnviz .nlv-pick-bar{
+  background:var(--ap-mat-light);
+  border-radius:999px; overflow:hidden;
+}
+#page-nnviz .nnv-bar>span,
+#page-nnviz .nnv-role-bar>span,
+#page-nnviz .nlv-fbar>span,
+#page-nnviz .nlv-pick-bar>span{
+  border-radius:999px;
+  background:linear-gradient(90deg,var(--ap-tint),color-mix(in srgb,var(--ap-tint) 55%,#7ad9ff));
+  transition:width var(--ap-dur) var(--ap-ease);   /* 값 변화는 부드럽게, 되튐 없이 */
+}
+
+/* ── 후보 카드 — 만질 수 있는 것처럼 ─────────────────────────────────────
+   운동량이 실리는 요소라 눌림·떠오름을 준다. transform 만 움직여 합성만으로 처리된다. */
+#page-nnviz .nlv-pick{
+  background:var(--ap-mat-light);
+  border:1px solid var(--ap-hair);
+  border-radius:var(--ap-r-sm);
+  transition:transform var(--ap-dur-fast) var(--ap-ease-out),
+             box-shadow var(--ap-dur-fast) var(--ap-ease-out),
+             border-color var(--ap-dur-fast) var(--ap-ease-out);
+  will-change:transform;
+}
+#page-nnviz .nlv-pick:hover{
+  transform:translateY(-2px);
+  box-shadow:var(--ap-shadow-m);
+  border-color:color-mix(in srgb,var(--ap-tint) 40%,transparent);
+}
+#page-nnviz .nlv-pick:active{ transform:translateY(0) scale(.985); }
+#page-nnviz .nlv-pick-sym{ font-weight:650; letter-spacing:-.01em; color:var(--ap-ink); }
+#page-nnviz .nlv-pick-name,
+#page-nnviz .nlv-pick-tech{ color:var(--ap-ink3); font-size:.6875rem; }
+
+/* 판정 로그 한 줄 — 새 줄은 아래에서 올라온다(들어온 길로 나간다) */
+#page-nnviz .nlv-line{
+  border-bottom:1px solid var(--ap-hair);
+  padding:.4rem .1rem;
+  animation:apRise .42s var(--ap-ease) both;
+}
+@keyframes apRise{ from{ opacity:0; transform:translateY(6px); } to{ opacity:1; transform:none; } }
+
+/* 파이프라인 단계 */
+#page-nnviz .nlv-step{ padding:.32rem 0; }
+#page-nnviz .nlv-step i{ transition:background-color var(--ap-dur) var(--ap-ease); }
+
+/* 위원회 행 */
+#page-nnviz .nnv-comm-row{
+  border-bottom:1px solid var(--ap-hair);
+  padding:.5rem .2rem;
+}
+#page-nnviz .nnv-comm-row:last-child{ border-bottom:none; }
+
+/* 툴팁 — 열린 자리에서 자란다 */
+#page-nnviz .nnv-tip{
+  background:var(--ap-mat-heavy);
+  -webkit-backdrop-filter:blur(var(--ap-blur)) saturate(180%);
+  backdrop-filter:blur(var(--ap-blur)) saturate(180%);
+  border:1px solid var(--ap-hair);
+  border-top-color:var(--ap-hair-top);
+  border-radius:var(--ap-r-sm);
+  box-shadow:var(--ap-shadow-m);
+  color:var(--ap-ink);
+  font-size:.75rem;
+  transform-origin:var(--ap-origin,50% 0);
+  animation:apMaterialize .3s var(--ap-ease) both;
+}
+/* 재질은 '나타나는' 게 아니라 '맺힌다' — 블러와 크기를 함께 움직인다 */
+@keyframes apMaterialize{
+  from{ opacity:0; transform:scale(.96); filter:blur(6px); }
+  to  { opacity:1; transform:scale(1);   filter:blur(0);   }
+}
+
+/* 빈 상태 — 없음을 조용히 말한다 */
+#page-nnviz .nnv-empty,
+#page-nnviz .nlv-empty{
+  color:var(--ap-ink3); font-size:.75rem; letter-spacing:0;
+  padding:1.25rem .5rem; text-align:center;
+}
+
+/* 라이브 인디케이터 — 느린 진동은 피로하므로 은은하게, 그리고 끌 수 있게 */
+#page-nnviz .nnv-title .dot{
+  width:.5rem; height:.5rem; border-radius:50%;
+  background:var(--ap-tint);
+  box-shadow:0 0 0 0 color-mix(in srgb,var(--ap-tint) 55%,transparent);
+  animation:apPulse 2.4s var(--ap-ease-out) infinite;
+}
+@keyframes apPulse{
+  0%  { box-shadow:0 0 0 0 color-mix(in srgb,var(--ap-tint) 45%,transparent); }
+  70% { box-shadow:0 0 0 .55rem transparent; }
+  100%{ box-shadow:0 0 0 0 transparent; }
+}
+
+/* ── 레이아웃 여백 — 값을 눈대중으로 흩뿌리지 않고 한 단위로 맞춘다 ────── */
+#page-nnviz .nnv-head{ margin-bottom:1rem; gap:.75rem; }
+#page-nnviz .nlv-hero{ gap:1rem; }
+#page-nnviz .nlv-lower{ gap:1rem; margin-top:1rem; }
+#page-nnviz .nlv-picks{ margin-top:1rem; }
+#page-nnviz .nnv-chips{ gap:.35rem; margin:.75rem 0; }
+#page-nnviz .nnv-tabs{ margin:.25rem 0 .9rem; }
+
+/* ── 접근성 — 세 가지 선호는 서로 다른 요구다 ────────────────────────── */
+@media (prefers-reduced-motion:reduce){
+  #page-nnviz *,
+  #page-nnviz *::before,
+  #page-nnviz *::after{
+    animation-duration:.01ms !important; animation-iteration-count:1 !important;
+    transition-duration:.12s !important;                 /* 없애지 않는다 — 부드러운 교차페이드로 */
+    transition-property:opacity,background-color,color !important;
+  }
+  #page-nnviz .nlv-pick:hover,
+  #page-nnviz .nlv-pick:active{ transform:none; }
+  #page-nnviz .nnv-btn:active,
+  #page-nnviz .nlv-btn:active,
+  #page-nnviz .nnv-tab:active{ transform:none; }
+  #page-nnviz .nnv-title .dot{ animation:none; }
+}
+@media (prefers-reduced-transparency:reduce){
+  #page-nnviz .nnviz-content,
+  #page-nnviz .nlv-panel, #page-nnviz .nlv-core, #page-nnviz .nlv-funnel-wrap,
+  #page-nnviz .nlv-picks, #page-nnviz .nnv-stage, #page-nnviz .nnv-comm,
+  #page-nnviz .nnv-tabs, #page-nnviz .nnv-btn, #page-nnviz .nlv-btn, #page-nnviz .nnv-tip{
+    -webkit-backdrop-filter:none !important; backdrop-filter:none !important;
+    background:var(--s1) !important;
+  }
+  #page-nnviz .nnviz-content::before{ display:none; }
+}
+@media (prefers-contrast:more){
+  #page-nnviz{ --ap-hair:currentColor; }
+  #page-nnviz .nnviz-content,
+  #page-nnviz .nlv-panel, #page-nnviz .nlv-core, #page-nnviz .nlv-funnel-wrap,
+  #page-nnviz .nlv-picks, #page-nnviz .nnv-stage, #page-nnviz .nnv-comm{
+    background:var(--bg); border-color:var(--ap-ink2);
+  }
+  #page-nnviz .nnv-tab.active{ outline:2px solid var(--ap-tint); }
+}
+
+
+/* ── 두뇌 페이지의 뷰 전환 — 모바일에서는 이것이 주 조작부다 ──────────────
+   운영상태 스냅샷의 userAgent 가 iPhone·카카오톡 인앱이다. 즉 이 화면을 실제로 쓰는 자리는
+   ★폰★ 이고, 거기서 가장 먼저 만지는 것이 이 전환 버튼이다. 두뇌 페이지일 때만 적용한다
+   (:has 를 못 쓰는 브라우저에서는 규칙이 통째로 무시되므로 기존 모습 그대로 — 안전한 후퇴다). */
+body:has(#page-nnviz.active) .rail-view{
+  border-radius:12px;
+  border:1px solid rgba(255,255,255,.08);
+  background:rgba(255,255,255,.05);
+  -webkit-backdrop-filter:blur(12px) saturate(160%);
+  backdrop-filter:blur(12px) saturate(160%);
+  transition:transform .18s cubic-bezier(.22,.61,.36,1),
+             background-color .18s cubic-bezier(.22,.61,.36,1),
+             border-color .18s cubic-bezier(.22,.61,.36,1);
+}
+body:has(#page-nnviz.active) .rail-view:active{ transform:scale(.97); }   /* 누르는 즉시 */
+body:has(#page-nnviz.active) .rail-view.active{
+  background:rgba(74,158,255,.14);
+  border-color:#4a9eff;
+  box-shadow:0 1px 2px rgba(0,0,0,.28);
+}
+body:has(#page-nnviz.active) .rail-view b{ letter-spacing:-.005em; font-weight:600; }
+body:has(#page-nnviz.active) .rail-views{ border-bottom:none; gap:.4rem; }
+html[data-theme="light"]:has(#page-nnviz.active) .rail-view{
+  border-color:rgba(10,25,55,.10); background:rgba(10,25,55,.04);
+}
+html[data-theme="light"]:has(#page-nnviz.active) .rail-view.active{
+  background:rgba(10,99,214,.10); border-color:#0a63d6; box-shadow:0 1px 2px rgba(16,32,64,.08);
+}
+@media (prefers-reduced-motion:reduce){
+  body:has(#page-nnviz.active) .rail-view:active{ transform:none; }
+}
+@media (prefers-reduced-transparency:reduce){
+  body:has(#page-nnviz.active) .rail-view{ -webkit-backdrop-filter:none; backdrop-filter:none; background:var(--s2); }
+}
+
+/* 라이트에서 비활성 탭의 별 아이콘이 배경에 묻히던 것 — 조금만 올린다(주목을 뺏지 않게) */
+html[data-theme="light"] #page-nnviz .nnv-tab .lux-ico{ opacity:.55; }
+html[data-theme="light"] #page-nnviz .nnv-tab.active .lux-ico{ opacity:1; }
+
+/* ── 좁은 화면 — 텍스트 크기 설정을 존중하도록 rem 기반으로 좁힌다 ────── */
+
+
+/* ── 다듬기 ① 격자의 배경이 빈 칸에 드러나던 것 ───────────────────────────
+   종전 격자는 gap:1px + 배경색으로 '선'을 만들었다(칸과 칸 사이 1px 만 배경이 보이는 기법).
+   그런데 마지막 줄이 덜 차면 ★남은 자리 전체가 그 배경색 덩어리★ 로 드러난다 —
+   실제로 후보가 8개일 때 오른쪽 절반이 색 블록으로 보였다.
+   선은 각 칸이 스스로 그리게 하고 격자 배경은 없앤다(빈 칸은 그냥 비어 있어야 한다). */
+#page-nnviz .nlv-picks-grid,
+#page-nnviz .nlv-kpi,
+#page-nnviz .nlv-toplist{ background:transparent; gap:.5rem; border-top:none; }
+html[data-theme="light"] #page-nnviz .nlv-picks-grid,
+html[data-theme="light"] #page-nnviz .nlv-kpi,
+html[data-theme="light"] #page-nnviz .nlv-toplist{ background:transparent; }
+#page-nnviz .nlv-picks{
+  background:var(--ap-mat); border:1px solid var(--ap-hair);
+  border-top-color:var(--ap-hair-top); border-radius:var(--ap-r-md);
+  box-shadow:var(--ap-shadow-m); padding:.9rem 1rem 1rem; overflow:visible;
+}
+html[data-theme="light"] #page-nnviz .nlv-picks{ background:var(--ap-mat); border-color:var(--ap-hair); }
+#page-nnviz .nlv-stat,
+#page-nnviz .nlv-top{
+  background:var(--ap-mat-light); border:1px solid var(--ap-hair);
+  border-radius:var(--ap-r-sm); padding:.55rem .7rem;
+}
+html[data-theme="light"] #page-nnviz .nlv-stat,
+html[data-theme="light"] #page-nnviz .nlv-top{ background:var(--ap-mat-light); }
+#page-nnviz .nlv-top{ transition:background-color var(--ap-dur-fast) var(--ap-ease-out), transform var(--ap-dur-fast) var(--ap-ease-out); }
+#page-nnviz .nlv-top:hover{ background:var(--ap-tint-soft); }
+#page-nnviz .nlv-top:active{ transform:scale(.98); }
+
+/* ── 다듬기 ② 자간 — 작은 글자에 2.4px 는 과하다 ─────────────────────────
+   작은 텍스트는 트래킹을 ★조금★ 벌린다. 크게 벌리면 단어가 흩어져 오히려 못 읽는다.
+   대문자 라벨만 예외적으로 조금 더 준다(대문자는 원래 사이가 좁아 보인다). */
+#page-nnviz .nlv-tagline{ font-size:.625rem; letter-spacing:.09em; }
+#page-nnviz .nlv-picks-head{
+  font-size:.8125rem; font-weight:600; letter-spacing:-.005em; color:var(--ap-ink);
+  padding:0 0 .6rem; border-bottom:none;
+}
+#page-nnviz .nlv-picks-sub{ font-size:.6875rem; letter-spacing:.004em; color:var(--ap-ink3); }
+#page-nnviz .nlv-stat .k,
+#page-nnviz .nlv-top .k,
+#page-nnviz .nnv-chip .k{ letter-spacing:.01em; font-size:.625rem; color:var(--ap-ink3); }
+#page-nnviz .nlv-stat .v{ letter-spacing:-.015em; font-weight:650; color:var(--ap-ink); }
+html[data-theme="light"] #page-nnviz .nlv-picks-head{ color:var(--ap-ink); }
+html[data-theme="light"] #page-nnviz .nlv-picks-sub{ color:var(--ap-ink3); }
+
+/* ── 다듬기 ③ 깔때기·리스트의 하드 구분선 제거 ──────────────────────────
+   1px 선으로 나누면 '잘렸다' 로 읽히고, 여백으로 나누면 '이어진다' 로 읽힌다.
+   Apple 이 구분선을 거의 안 쓰는 이유다 — 위계는 간격과 대비가 만든다. */
+#page-nnviz .nlv-fstep{ border:none; padding:.3rem 0; }
+#page-nnviz .nlv-funnel{ display:grid; gap:.15rem; }
+#page-nnviz .nlv-hero>*{ min-width:0; }
+
+/* ── 다듬기 ④ 후보 카드가 격자선에 기대던 테두리를 스스로 갖는다 ───────── */
+#page-nnviz .nlv-pick{ background:var(--ap-mat-light); }
+html[data-theme="light"] #page-nnviz .nlv-pick{ background:rgba(255,255,255,.72); }
+#page-nnviz .nlv-pick-chart,
+#page-nnviz .nlv-pick-nochart{ border-radius:6px; }
+
+/* ── 라이트 테마 재적용 ──────────────────────────────────────────────────
+   기존 라이트 규칙은 `html[data-theme="light"] #page-nnviz .x` 라 특이도가 위 레이어보다
+   ★높다★ — 뒤에 썼다고 이기지 않는다(특이도가 순서를 이긴다). 그래서 충돌하는 선택자만
+   같은 특이도로 다시 선언한다. 값은 전부 토큰이므로 다크와 한 벌로 움직인다. */
+html[data-theme="light"] #page-nnviz .nnv-sub,
+html[data-theme="light"] #page-nnviz .nnv-legend{ color:var(--ap-ink2); }
+html[data-theme="light"] #page-nnviz .nnv-empty,
+html[data-theme="light"] #page-nnviz .nlv-empty{ color:var(--ap-ink3); }
+html[data-theme="light"] #page-nnviz .nnv-tab{
+  background:transparent; border:none; color:var(--ap-ink2);
+}
+html[data-theme="light"] #page-nnviz .nnv-tab:hover{ color:var(--ap-ink); border:none; background:transparent; }
+html[data-theme="light"] #page-nnviz .nnv-tab.active{
+  color:var(--ap-ink); background:var(--ap-mat);
+  border:1px solid var(--ap-hair-top); box-shadow:var(--ap-shadow-s);
+}
+html[data-theme="light"] #page-nnviz .nnv-btn{
+  background:var(--ap-mat-light); border:1px solid var(--ap-hair); color:var(--ap-ink);
+}
+html[data-theme="light"] #page-nnviz .nnv-btn:hover{
+  background:var(--ap-tint-soft); border-color:var(--ap-tint); color:var(--ap-ink);
+}
+html[data-theme="light"] #page-nnviz .nnv-chip{ background:var(--ap-mat-light); border-color:var(--ap-hair); }
+html[data-theme="light"] #page-nnviz .nnv-stage{ background:var(--ap-mat); border-color:var(--ap-hair); }
+html[data-theme="light"] #page-nnviz .nnv-tip{
+  background:var(--ap-mat-heavy); border-color:var(--ap-hair); color:var(--ap-ink);
+}
+html[data-theme="light"] #page-nnviz .nnv-bar,
+html[data-theme="light"] #page-nnviz .nnv-role-bar{ background:var(--ap-mat-light); }
+/* 카드 hover 는 색이 아니라 ★떠오름★ 으로 말한다 — 라이트에서도 같은 언어를 쓴다 */
+html[data-theme="light"] #page-nnviz .nlv-pick:hover{ background:var(--ap-mat-light); }
+html[data-theme="light"] #page-nnviz .nlv-pick-sym{ color:var(--ap-ink); }
+html[data-theme="light"] #page-nnviz .nlv-pick-name,
+html[data-theme="light"] #page-nnviz .nlv-pick-tech{ color:var(--ap-ink3); }
+html[data-theme="light"] #page-nnviz .nlv-picks-head{ color:var(--ap-ink); }
+html[data-theme="light"] #page-nnviz .nlv-picks-sub{ color:var(--ap-ink3); }
+html[data-theme="light"] #page-nnviz .nlv-pipe{ border-color:transparent; }
+html[data-theme="light"] #page-nnviz .nlv-sec-h{ border-color:transparent; color:var(--ap-ink); }
+
+@media (max-width:640px){
+  #page-nnviz .nnviz-content{ margin:.5rem; padding:1rem .85rem 1.15rem; border-radius:var(--ap-r-md); }
+  #page-nnviz .nnv-title{ font-size:1.25rem; }
+  #page-nnviz .nlv-tp-num .p, #page-nnviz #nlvTpP{ font-size:1.875rem; }
+  #page-nnviz .nnv-btn, #page-nnviz .nlv-btn{ padding:.5rem .7rem; }   /* 손가락 표적 확보 */
+  #page-nnviz .nlv-hero, #page-nnviz .nlv-lower{ gap:.75rem; }
+}
 </style>
 <script>
 (function(){
