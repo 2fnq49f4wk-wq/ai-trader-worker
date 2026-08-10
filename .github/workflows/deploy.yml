@@ -99,6 +99,11 @@ jobs:
       #   함께 검사한다: 기대값 양수 구간은 통과하고, 음수 구간은 어떤 손익비에서도 못 지난다.
       - name: AI entry floor contract check
         run: node tools/check-entry-floor.mjs
+      # [V33.138] 위원 자격 — 이분법(trusted)에서 '증거 비례' 로 바꿨다. 위원회에 모델을
+      #   ★더 넣는★ 방향이므로 잡음 유입을 실측한다. 배수가 아니라 소프트맥스 ★지분★ 을 재고,
+      #   전진 IC 가 음수인 모델은 어떤 홀드아웃 성적으로도 못 들어오는지 함께 확인한다.
+      - name: Committee expert admission contract check
+        run: node tools/check-expert-admit.mjs
       # cloudflare/wrangler-action 대신 로컬에서 검증된 방식 그대로 실행
       # (wrangler-action@v3의 npx 자동설치가 4.86.0을 요구하며 실패하던 문제 회피)
       - name: Install wrangler

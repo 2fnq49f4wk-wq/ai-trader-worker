@@ -2788,7 +2788,7 @@ async function applySignalTypeWeights(DB, cfg) {
 // ============================================================================
 // [V33.55] 빌드 버전 — SWR L2 캐시 키에 섞어 '배포 = 판단 캐시 자동 무효화'를 만든다.
 //   판정 로직을 고쳐도 옛 캐시가 최대 1시간 재배포되던 문제를 구조적으로 없앤다.
-const _BUILD_VER = "V33.137";
+const _BUILD_VER = "V33.138";
 
 const AI_PARAMS = {
   // ── OHLCV 타임프레임 ── 시가/고가/저가/종가/거래량을 어떤 봉 주기로 볼지.
@@ -18906,6 +18906,11 @@ async function handleRequest(request, env, ctx) {
               icTRaw: m ? _num(m.valICtRaw, null) : null, icDf: m ? _num(m.valICdf, null) : null,
               // [V33.93] 전진검증 — 학습 이후 도착한 표본에서의 성적.
               fwdIC: m ? _num(m.fwdIC, null) : null, fwdN: m ? _num(m.fwdN, 0) : 0,
+              // [V33.138] ★fwdICt 가 화면에 없어서 "왜 막혔나" 를 답할 수 없었다.★
+              //   flow 는 홀드아웃도 통과하고 전진 IC 도 양수인데 대기였다 — 이유는 전진 t 였고
+              //   그 값이 어디에도 안 나왔다. 판정 결과(tier·why)를 판정 함수에서 그대로 낸다.
+              fwdICt: m ? _num(m.fwdICt, null) : null,
+              admit: m ? expertAdmit(m) : null,
               fwdReady: !!(m && m.fwdReady), holdPass: !!(m && m.holdPass), minFwd: ICGATE.minForward,
               valN: m ? _num(m.valN, null) : null,
               // [V33.114] 유효표본수(고유도 가중합)와 평균 고유도 — 명목 n 과의 차이를 보이게.
@@ -18931,6 +18936,7 @@ async function handleRequest(request, env, ctx) {
               acc: _mo ? _num(_mo.valAcc, null) : null, ic: _mo ? _num(_mo.valIC, null) : null,
               icBlock: _mo ? _num(_mo.valICBlock, null) : null, icT: _mo ? _num(_mo.valICt, null) : null,
               fwdIC: _mo ? _num(_mo.fwdIC, null) : null, fwdN: _mo ? _num(_mo.fwdN, 0) : 0,
+              fwdICt: _mo ? _num(_mo.fwdICt, null) : null, admit: _mo ? expertAdmit(_mo) : null,
               fwdReady: !!(_mo && _mo.fwdReady), holdPass: !!(_mo && _mo.holdPass), minFwd: ICGATE.minForward,
               protos: _mo && Array.isArray(_mo.protos) ? _mo.protos.length : null, n: _mo ? _num(_mo.n, null) : null };
           } catch (e) {}
@@ -23680,8 +23686,8 @@ async function _miniLogisticTrain(DB, opts) {
            (_bIC != null ? " 블록IC " + _bIC.toFixed(4) + " t " + (_tv || 0).toFixed(2) : " (블록 부족)") +
            (_fwd && _fwd.ready ? " 전진IC " + _num(_fwd.ic, 0).toFixed(4) + "(n" + _fwd.n + ")"
                                : " 전진" + (_fwd ? _fwd.n : 0) + "/" + ICGATE.minForward) +
-           (model.trusted ? " → 위원회 합류"
-                          : (!_holdPass ? " → 유의성 미달, 대기" : " → 전진검증 미통과, 대기"));
+           " → " + (function () { const a = expertAdmit(model); return a.tier === "full" ? "위원회 정식합류"
+             : a.admit ? ("위원회 잠정합류(가중 ×" + a.mult.toFixed(2) + ") — " + a.why) : ("합류 보류 — " + a.why); })();
   } catch (e) { return "[" + opts.tag + "] 학습 실패: " + (e && e.message); }
 }
 
@@ -24019,8 +24025,8 @@ async function memoTrainNightly(DB) {
            "% IC " + model.valIC.toFixed(4) + (model.valICt != null ? " t " + model.valICt.toFixed(2) : "") +
            (model.fwdReady ? " 전진IC " + _num(model.fwdIC, 0).toFixed(4) + "(n" + model.fwdN + ")"
                            : " 전진" + model.fwdN + "/" + ICGATE.minForward) +
-           (model.trusted ? " → 위원회 합류"
-                          : (!model.holdPass ? " → 유의성 미달, 대기" : " → 전진검증 미통과, 대기"));
+           " → " + (function () { const a = expertAdmit(model); return a.tier === "full" ? "위원회 정식합류"
+             : a.admit ? ("위원회 잠정합류(가중 ×" + a.mult.toFixed(2) + ") — " + a.why) : ("합류 보류 — " + a.why); })();
   } catch (e) { return "[MEMO] 학습 실패: " + (e && e.message); }
 }
 
@@ -25213,8 +25219,91 @@ const ICGATE = {
   //   오합류율은 3.2% × 17.4% ≈ 0.56% 로 사실상 그대로 유지되면서 대기만 풀린다.
   minForward: 400,
   forwardFloor: 0,
-  forwardTMin: 1.0
+  forwardTMin: 1.0,
+  // ═══ [V33.138] ★위원 자격을 이분법에서 '증거 비례' 로 바꾼다★ ═══
+  //   종전엔 trusted 가 true 여야만 위원회에 들어왔다. 그런데 실제 상태를 보면
+  //   막힌 이유가 모델마다 전혀 다른데 화면에는 전부 "대기" 한 단어로 뭉개져 있었다
+  //   (2026-08-10 스냅샷):
+  //     flow   홀드아웃 t 2.82 통과 · 전진 IC +0.016 ★양수★ 인데 전진 t 가 1.0 미달
+  //     stack  홀드아웃 t 3.24 통과 · 전진표본 358/400 ★42건 모자람★
+  //     memo   홀드아웃 t 2.32 로 본페로니 문턱 2.50 에 ★0.18 모자람★
+  //     xalpha 홀드아웃 t 3.20 통과인데 전진 IC ★−0.069 (음수)★
+  //   앞의 셋은 "증거가 아직 덜 쌓였다" 이고 마지막 하나는 "일반화에 실패했다" 다.
+  //   이 둘을 같은 취급으로 0 점 주는 것은 정보를 버리는 것이다.
+  //
+  //   → 자격을 세 단계로 둔다. 가중은 ★증거의 양에 비례★ 한다(0 아니면 1 이 아니다).
+  //     · 정식(full)     홀드아웃·전진 모두 통과      → IC 가중 그대로
+  //     · 잠정(provisional) 홀드아웃은 개별 5% 이상이고 전진이 ★음수가 아님★ → IC 를 줄여서 참여
+  //     · 제외(reject)   홀드아웃이 잡음 수준이거나, 전진 IC 가 ★음수★
+  //   전진 IC 가 음수인 모델은 절대 안 넣는다. 그건 문턱 문제가 아니라 "학습 밖에서는
+  //   방향이 반대" 라는 직접 증거이고, 넣으면 그만큼 잃는다.
+  provisional: {
+    enabled: true,
+    tMin: 1.65,      // 홀드아웃 개별 단측 5%. 이보다 낮으면 잡음과 구별되지 않는다 → 제외.
+    fwdWeak: 0.60,   // 전진 방향은 맞는데(IC>0) 유의성이 아직 안 선 상태
+    fwdBase: 0.25,   // 전진표본이 0 일 때의 바닥 가중
+    fwdSpan: 0.35,   // 표본이 minForward 에 도달하며 더해지는 폭 (0.25 → 0.60)
+    cap: 0.85,       // 잠정은 정식보다 ★언제나★ 가벼워야 한다. 같아지면 구분이 무의미해진다.
+    // ★minMult 가 왜 필요한가★ — 위원 가중은 exp(_icT × ic) 다. 즉 ic 를 0 으로 줄여도
+    //   exp(0)=1 이라 ★정상 지분의 한 표★ 가 된다. "가중을 0 으로 줄여 넣는다" 가 성립하지 않는
+    //   구조다. 그래서 배수가 이 값 아래면 넣지 않는다. 문턱 바로 위의 운 좋은 잡음이
+    //   한 표를 통째로 얻는 경로를 막는 장치다.
+    //   ※ 이름을 minAdmitMult 로 둔다 — minMult 는 은퇴한 구 사이징 키라 이름이 겹치면
+    //     죽은설정 검사기가 "은퇴 키를 다시 읽는다" 로 잡는다(실제로 잡혔다).
+    minAdmitMult: 0.12
+  }
 };
+
+// [V33.138] 위원 자격과 가중 배수를 함께 돌려준다. 화면·로그가 같은 함수를 쓰므로
+//   "왜 안 들어왔나" 와 "얼마나 실렸나" 가 서로 어긋날 수 없다.
+function expertAdmit(m) {
+  try {
+    const P = ICGATE.provisional || {};
+    if (!m) return { admit: false, mult: 0, tier: "none", why: "모델 없음" };
+    const t = (typeof m.valICt === "number" && isFinite(m.valICt)) ? m.valICt : null;
+    const bIC = (typeof m.valICBlock === "number" && isFinite(m.valICBlock)) ? m.valICBlock : null;
+    const fwdReady = !!m.fwdReady;
+    const fwdIC = (typeof m.fwdIC === "number" && isFinite(m.fwdIC)) ? m.fwdIC : null;
+    const fwdT = (typeof m.fwdICt === "number" && isFinite(m.fwdICt)) ? m.fwdICt : null;
+    const fwdN = _num(m.fwdN, 0);
+
+    // ★전진 IC 가 음수면 여기서 끝난다★ — 학습 밖에서 방향이 반대라는 직접 증거다.
+    if (fwdReady && fwdIC != null && fwdIC <= ICGATE.forwardFloor)
+      return { admit: false, mult: 0, tier: "reject",
+               why: "전진 IC " + fwdIC.toFixed(4) + " ≤ 0 — 학습 밖에서 방향이 반대다(문턱 문제가 아니다)" };
+
+    if (m.trusted) return { admit: true, mult: 1, tier: "full", why: "홀드아웃·전진 모두 통과" };
+    if (P.enabled === false) return { admit: false, mult: 0, tier: "reject", why: "잠정합류 비활성" };
+    if (t == null || bIC == null) return { admit: false, mult: 0, tier: "reject", why: "블록 유의성 미측정" };
+    if (t < _num(P.tMin, 1.65))
+      return { admit: false, mult: 0, tier: "reject",
+               why: "홀드아웃 t " + t.toFixed(2) + " < " + _num(P.tMin, 1.65) + " — 잡음과 구별되지 않는다" };
+
+    // 홀드아웃 증거 — ★잡음 문턱에서 0, 본페로니 문턱에서 1★ 이 되는 경사로.
+    //   처음엔 t/tMin 을 썼는데, 그러면 t=1.65(잡음과 겨우 구별되는 지점)가 0.66 을 받는다.
+    //   실제로 합류하는 잡음은 대부분 그 경계에 몰려 있으므로, 거기서 가중이 0 이어야
+    //   "운 좋은 잡음" 과 "실력" 이 갈린다. 게이트의 몬테카를로가 이걸 잡아냈다.
+    const _pT = _num(P.tMin, 1.65), _fT = _num(ICGATE.tMin, 2.5);
+    const holdMult = _clamp((t - _pT) / Math.max(1e-9, _fT - _pT), 0, 1);
+    // 전진 증거: 통과 > 방향만 맞음 > 아직 쌓는 중
+    let fwdMult, fwdWhy;
+    if (fwdReady && fwdIC != null && fwdIC > ICGATE.forwardFloor) {
+      if (fwdT != null && fwdT >= ICGATE.forwardTMin) { fwdMult = 1; fwdWhy = "전진 통과"; }
+      else { fwdMult = _num(P.fwdWeak, 0.6); fwdWhy = "전진 IC 양수이나 t " + (fwdT != null ? fwdT.toFixed(2) : "?") + " < " + ICGATE.forwardTMin; }
+    } else {
+      const frac = _clamp(fwdN / Math.max(1, ICGATE.minForward), 0, 1);
+      fwdMult = _num(P.fwdBase, 0.25) + _num(P.fwdSpan, 0.35) * frac;
+      fwdWhy = "전진표본 " + fwdN + "/" + ICGATE.minForward + " 축적 중";
+    }
+    const mult = _clamp(holdMult * fwdMult, 0, _num(P.cap, 0.85));
+    if (mult < _num(P.minAdmitMult, 0.12))
+      return { admit: false, mult: 0, tier: "reject",
+               why: "증거 배수 " + mult.toFixed(3) + " < " + _num(P.minAdmitMult, 0.12) +
+                    " — 가중을 0 가까이 줄여 넣는 것은 불가능하다(exp(0)=1 이라 정상 한 표가 된다)" };
+    return { admit: true, mult: +mult.toFixed(4), tier: "provisional",
+             why: "잠정 — 홀드아웃 t " + t.toFixed(2) + "(문턱 " + ICGATE.tMin + ") · " + fwdWhy + " → 가중 ×" + mult.toFixed(2) };
+  } catch (e) { return { admit: false, mult: 0, tier: "none", why: "판정 실패" }; }
+}
 async function icForwardCheck(DB, opts) {
   try {
     const o = opts || {};
@@ -29670,11 +29759,13 @@ async function mlDeepDecide(DB, featVec, opts) {
     try {
       if (opts.flowFeat && Array.isArray(opts.flowFeat)) {
         const fm = (opts.flowModel !== undefined) ? opts.flowModel : await getState(DB, "flow_model", null);
-        if (fm && fm.trusted && fm.featVer === FLOWML.featVer) {
+        // [V33.138] 이분법(trusted) → 증거 비례. 잠정 합류는 IC 를 줄여서 실린다.
+        const _fa = expertAdmit(fm);
+        if (fm && _fa.admit && fm.featVer === FLOWML.featVer) {
           const pF = flowScore(fm, opts.flowFeat);
           if (pF != null && Math.abs(pF - 0.5) > 1e-4) {
-            experts.push({ name: "flow", p: pF, z: _logitD(pF),
-                           acc: _num(fm.valAcc, 0.5), ic: _icEffective(fm) });   // [V33.94] wMul 제거
+            experts.push({ name: "flow" + (_fa.tier === "provisional" ? "~" : ""), p: pF, z: _logitD(pF),
+                           acc: _num(fm.valAcc, 0.5), ic: _num(_icEffective(fm), 0) * _fa.mult, tier: _fa.tier });
           }
         }
       }
@@ -29683,11 +29774,12 @@ async function mlDeepDecide(DB, featVec, opts) {
     try {
       if (opts.xaFeat && Array.isArray(opts.xaFeat)) {
         const xm = (opts.xaModel !== undefined) ? opts.xaModel : await getState(DB, "xalpha_model", null);
-        if (xm && xm.trusted && xm.featVer === XALPHA.featVer) {
+        const _xa = expertAdmit(xm);
+        if (xm && _xa.admit && xm.featVer === XALPHA.featVer) {
           const pX = flowScore(xm, opts.xaFeat);   // 같은 로지스틱 포맷이라 채점기를 공유한다
           if (pX != null && Math.abs(pX - 0.5) > 1e-4) {
-            experts.push({ name: "xalpha", p: pX, z: _logitD(pX),
-                           acc: _num(xm.valAcc, 0.5), ic: _icEffective(xm) });   // [V33.94] wMul 제거
+            experts.push({ name: "xalpha" + (_xa.tier === "provisional" ? "~" : ""), p: pX, z: _logitD(pX),
+                           acc: _num(xm.valAcc, 0.5), ic: _num(_icEffective(xm), 0) * _xa.mult, tier: _xa.tier });
           }
         }
       }
@@ -29697,11 +29789,12 @@ async function mlDeepDecide(DB, featVec, opts) {
     //   국소 구조를 보는 위원이 하나도 없었다. 앙상블 다양성 기여가 큰 자리다.
     try {
       const mm2 = (opts.memoModel !== undefined) ? opts.memoModel : await getState(DB, "memo_model", null);
-      if (mm2 && mm2.trusted && mm2.luxFeatVer === LUXML.featVer) {
+      const _ma = expertAdmit(mm2);
+      if (mm2 && _ma.admit && mm2.luxFeatVer === LUXML.featVer) {
         const pM = memoScore(mm2, featVec);
         if (pM != null && Math.abs(pM - 0.5) > 1e-4) {
-          experts.push({ name: "memo", p: pM, z: _logitD(pM),
-                         acc: _num(mm2.valAcc, 0.5), ic: _icEffective(mm2) });   // [V33.94] wMul 제거
+          experts.push({ name: "memo" + (_ma.tier === "provisional" ? "~" : ""), p: pM, z: _logitD(pM),
+                         acc: _num(mm2.valAcc, 0.5), ic: _num(_icEffective(mm2), 0) * _ma.mult, tier: _ma.tier });
         }
       }
     } catch (e) {}
@@ -29830,9 +29923,20 @@ async function mlDeepDecide(DB, featVec, opts) {
       try {
         if (_stackFeat) {
           const sm = (opts.stackModel !== undefined) ? opts.stackModel : await getState(DB, "stack_model", null);
-          if (sm && sm.trusted && sm.featVer === STACKML.featVer) {
+          // [V33.138] STACK 은 투표 위원이 아니라 ★결합확률을 대체하는 메타모델★ 이다.
+          //   그래서 잠정 단계에서 그대로 대체하면 증거가 덜 쌓인 모델에 결정을 통째로 넘기게 된다.
+          //   대신 로짓 공간에서 증거 배수만큼 ★혼합★ 한다 — 증거가 차면 자연히 대체에 수렴한다.
+          const _sa = expertAdmit(sm);
+          if (sm && _sa.admit && sm.featVer === STACKML.featVer) {
             const pS = flowScore(sm, _stackFeat);
-            if (pS != null) { pCombined = pS; _usedStack = true; }
+            if (pS != null) {
+              if (_sa.tier === "full") { pCombined = pS; _usedStack = true; }
+              else {
+                const _wS = _clamp(_sa.mult, 0, 1);
+                pCombined = _clamp(_sigmoid((1 - _wS) * _logitD(pCombined) + _wS * _logitD(pS)), 0.001, 0.999);
+                _usedStack = false;   // 온도보정은 여전히 투표분포 기준이 맞다(대체가 아니므로)
+              }
+            }
           }
         }
       } catch (e) {}
@@ -37656,7 +37760,7 @@ export {
   // [V33.121] 피라미딩 결정기 — tools/check-leverage.mjs
   pyramidDecide,
   // [V33.120] 단타 경로 문지기(MAE) — tools/check-leverage.mjs
-  aiEntryFloor,
+  aiEntryFloor, expertAdmit, ICGATE,
   scalpMaeFitNightly, scalpMaeMult, SCALPMAE,
   FIN_TOOLS, finToolsRun,
   // [V33.110] 소셜 멀티소스 검증용 — tools/check-social.mjs
