@@ -2788,7 +2788,7 @@ async function applySignalTypeWeights(DB, cfg) {
 // ============================================================================
 // [V33.55] 빌드 버전 — SWR L2 캐시 키에 섞어 '배포 = 판단 캐시 자동 무효화'를 만든다.
 //   판정 로직을 고쳐도 옛 캐시가 최대 1시간 재배포되던 문제를 구조적으로 없앤다.
-const _BUILD_VER = "V33.142";
+const _BUILD_VER = "V33.143";
 
 const AI_PARAMS = {
   // ── OHLCV 타임프레임 ── 시가/고가/저가/종가/거래량을 어떤 봉 주기로 볼지.
@@ -19998,7 +19998,7 @@ async function handleRequest(request, env, ctx) {
       const _scIcFloor = 0.015;
       const _passAccS = vLB >= _baseline + 0.015;
       const _passICs = (_sICb != null && _sICt != null)
-        ? (_sICb >= _scIcFloor && _sICt >= ICGATE.tMin)
+        ? (_sICb >= _scIcFloor && _sICt >= icTMinNow(await getState(env.DB, "ic_family", null)))
         : (_sIC != null && _num(_icEffective({ valIC: _sIC, valN: vN }), 0) >= _scIcFloor);
       const trusted = convOK && model.n >= 3000 && (_passAccS || _passICs);
       const trust = { trusted: trusted, valAcc: model.valAcc, valAccLB: model.valAccLB, n: model.n,
@@ -20307,6 +20307,12 @@ async function handleRequest(request, env, ctx) {
         //   유효표본수를 구해 Wilson 하한을 잰다(명목 n 을 쓰면 겹친 라벨을 독립으로 세게 된다).
         ["pooluniq", function (DB) { return mlPoolUniqNightly(DB); }],
         ["l1", function (DB) { return mlTrainNightly(DB); }],
+        // [V33.143] ★학습 시작 ‘전’ 에 동시검정 가족 크기를 센다.★
+        //   처음엔 학습 뒤에 뒀는데, 그러면 오늘 밤 학습이 전부 ★어제 값★ 으로 문턱을 정하고
+        //   파이프라인 그래프 검사가 그 역방향 의존을 바로 잡아냈다(dual 이 icfamily 산출물을
+        //   먼저 읽는다). 앞으로 옮기면 오늘 밤 전 단계가 방금 잰 값을 쓴다.
+        //   36시간 신선도 창으로 세므로 '어젯밤 학습된 모델' 이 그대로 오늘의 가족이 된다.
+        ["icfamily", function (DB) { return icFamilyStamp(DB); }],
         ["bandit", function (DB) { return mlBanditNoiseNightly(DB); }],
         ["brain", function (DB) { return mlBrainTrainNightly(DB); }],
         ["mind", function (DB) { return mlMindTrainNightly(DB); }],
@@ -23688,8 +23694,10 @@ async function _miniLogisticTrain(DB, opts) {
     let _base = 0;
     try { for (const yy of Y) _base += yy; _base = Y.length ? _base / Y.length : 0; } catch (e) {}
     const _floor = _num(opts.icFloor, 0.012);
-    // [V33.93] 본페로니 보정 문턱 — 전문가 8종을 매일 밤 동시검정하므로 1.65 는 근거가 없다.
-    const _tMin = _num(opts.icTMin, ICGATE.tMin);
+    // [V33.93] 본페로니 보정 문턱 — 여러 모델을 매일 밤 동시검정하므로 1.65 는 근거가 없다.
+    // [V33.143] 그 '여러' 를 ★세어서★ 정한다. 상수 8 은 모델이 늘어도 안 따라왔다.
+    let _fam = null; try { _fam = await getState(DB, "ic_family", null); } catch (e) {}
+    const _tMin = _num(opts.icTMin, icTMinNow(_fam, { strict: !!opts.strictGate }));
     const _bIC = (_st.blockIC != null) ? _st.blockIC : null;
     const _tv = (_st.t != null) ? _st.t : null;
     // 블록 통계를 못 구할 만큼 홀드아웃이 작으면(블록당 20건 미만) 유의성을 확인할 수 없다 →
@@ -23711,6 +23719,9 @@ async function _miniLogisticTrain(DB, opts) {
       valICIR: _st.icir != null ? +_st.icir.toFixed(3) : null,
       valICt: _tv != null ? +_tv.toFixed(3) : null, valICK: _st.K,
       valICtRaw: _st.tRaw != null ? _st.tRaw : null, valICdf: _st.df != null ? _st.df : null,
+      // [V33.143] ★어떤 문턱으로 판정했는지를 모델에 남긴다.★ expertAdmit 은 동기 함수라
+      //   DB 를 못 읽는다. 상수를 다시 읽게 하면 학습 때와 판정 때의 문턱이 어긋날 수 있다.
+      tMinUsed: _tMin, icFamilyK: _fam ? _num(_fam.k, null) : null,
       purged: _purged,   // [V33.141] 경계 누출로 잘라낸 학습표본 수 — 홀드아웃 신뢰의 근거
       fwdIC: _fwd ? _fwd.ic : null, fwdICt: _fwd ? _fwd.t : null,
       fwdN: _fwd ? _fwd.n : 0, fwdReady: !!(_fwd && _fwd.ready),
@@ -24054,8 +24065,12 @@ async function memoTrainNightly(DB) {
     model.fwdN = _fwd ? _fwd.n : 0; model.fwdReady = !!(_fwd && _fwd.ready);
     model.fwdDays = _fwd ? _num(_fwd.days, 0) : 0; model.fwdBatchN = _fwd ? _num(_fwd.batchN, 0) : 0;
     model.fwdMode = _fwd ? (_fwd.mode || null) : null; model.maxId = _maxId;
+    // [V33.143] 문턱을 가족 크기에서 구한다(MEMOML.icTMin 상수 대신). 기록도 남긴다.
+    let _memoFam = null; try { _memoFam = await getState(DB, "ic_family", null); } catch (e) {}
+    const _memoTMin = icTMinNow(_memoFam);
+    model.tMinUsed = _memoTMin; model.icFamilyK = _memoFam ? _num(_memoFam.k, null) : null;
     model.holdPass = (model.valICBlock != null && model.valICt != null)
-      && model.valICBlock >= MEMOML.icFloor && model.valICt >= MEMOML.icTMin;
+      && model.valICBlock >= MEMOML.icFloor && model.valICt >= _memoTMin;
     // [V33.93] 홀드아웃 유의성 ★그리고★ 전진검증(학습 이후 표본)을 함께 요구한다.
     model.trusted = !!(model.holdPass && _fwd && _fwd.ready && _num(_fwd.ic, -1) > ICGATE.forwardFloor
                        && _num(_fwd.t, -9) >= ICGATE.forwardTMin);
@@ -24382,7 +24397,10 @@ async function stackTrainNightly(DB) {
     l2: STACKML.l2, icFloor: STACKML.icFloor,
     // [V33.91] STACK 은 위원회 결합확률을 ★통째로 대체★ 하는 자리다. 잘못 들어오면
     //   다른 전문가와 섞여 희석되는 게 아니라 혼자 결정한다 → 유의성 문턱을 더 높게 잡는다.
-    icTMin: 2.2
+    // [V33.143] ★그런데 값이 2.2 였다 — 공통 문턱 2.50 보다 오히려 낮다.★
+    //   주석은 "더 높게" 인데 숫자는 더 낮았다. 손으로 정한 상수가 의도와 반대로 굳은 것이다.
+    //   이제 공통 문턱(가족 크기에서 계산) × strictMult 로 ★실제로 더 높게★ 만든다.
+    strictGate: true
   });
 }
 
@@ -25238,7 +25256,10 @@ function _icBlockStats(pv, yv, K) {
 //     신뢰 조건에 (홀드아웃 t ≥ 본페로니 문턱) ★그리고★ (전진 IC > 0) 을 함께 요구한다.
 //   전진 표본이 아직 부족하면 신뢰하지 않는다 — "확인 못 한 건 안 믿는다"가 원칙이다.
 const ICGATE = {
-  tMin: 2.50,        // 본페로니: 전문가 8종 동시검정 → α 0.05/8 ≈ 0.006 (단측 z ≈ 2.5)
+  // [V33.143] ★이 값은 이제 폴백일 뿐이다.★ 실제 문턱은 icTMinNow(가족크기)가 계산한다.
+  //   남겨 두는 이유: 가족을 아직 못 센 첫 가동에서 종전과 같은 값으로 시작하기 위해서다.
+  //   직접 참조하는 코드가 새로 생기면 그건 다시 '박힌 숫자' 가 된다 — 쓰지 말 것.
+  tMin: 2.50,        // (폴백) 본페로니 k=8 · α 0.05 → 단측 z ≈ 2.50
   // 전진표본 수와 t 문턱은 ★검정력 시뮬레이션으로 정했다★ (추측으로 정하면 그게 또 비약이다).
   //   전진검증 통과율 (IC>0 그리고 t≥tMin):
   //     전진표본  tMin │   잡음   약함(IC~.03)  보통(IC~.06)  강함(IC~.12)
@@ -25259,6 +25280,24 @@ const ICGATE = {
   minForward: 400,
   forwardFloor: 0,
   forwardTMin: 1.0,
+  // ═══ [V33.143] ★본페로니 문턱을 상수에서 '세어서 정하는 값' 으로 바꾼다★ ═══
+  //   tMin: 2.50 은 "전문가 8종 동시검정" 을 뜻했다(α=0.05/8 → z≈2.50). 그런데 그 8 은
+  //   ★코드에 박힌 숫자★ 였고, 그 뒤로 모델이 계속 늘었다(flow·xalpha·stack·memo·이중헤드
+  //   ×2 …). 가족이 커졌는데 보정은 그대로면 다중검정 보정이 그만큼 약해진다.
+  //   반대로 모델이 멈춰 검정 대상에서 빠지면 필요 이상으로 엄격해진다.
+  //
+  //   게다가 같은 뜻의 상수가 세 곳에 각각 박혀 이미 ★서로 어긋나 있었다★:
+  //     ICGATE.tMin 2.50 · MEMOML.icTMin 2.50 · STACK 의 icTMin ★2.2★
+  //   STACK 쪽은 주석이 "혼자 결정하는 자리라 문턱을 ★더 높게★ 잡는다" 인데 값은 2.50 보다
+  //   ★낮다★ — 의도와 값이 정반대다. 손으로 정한 숫자가 드리프트한 전형이다.
+  //
+  //   → 매일 밤 ★실제로 유의성 검정을 받은 모델 수★ 를 세어 z 를 계산한다.
+  //     alpha 는 정책(우리가 감수할 오합류율)이라 상수로 남기고, k 는 측정한다.
+  //     k=8 이면 2.50 이 그대로 나온다 — 즉 이 변경은 동작을 바꾸는 게 아니라 ★일반화★ 다.
+  familyAlpha: 0.05,     // 가족 단위 오합류율(정책). 이건 취향이라 측정 대상이 아니다.
+  familyFallback: 8,     // 아직 못 세었을 때(첫 가동)의 가정 — 종전 상수와 같은 값
+  strictMult: 1.15,      // STACK 처럼 '혼자 결정하는' 자리에 곱하는 엄격도(1.0=동일)
+
   // ═══ [V33.138] ★위원 자격을 이분법에서 '증거 비례' 로 바꾼다★ ═══
   //   종전엔 trusted 가 true 여야만 위원회에 들어왔다. 그런데 실제 상태를 보면
   //   막힌 이유가 모델마다 전혀 다른데 화면에는 전부 "대기" 한 단어로 뭉개져 있었다
@@ -25293,6 +25332,51 @@ const ICGATE = {
   }
 };
 
+// [V33.143] 가족 크기 k 에서 단측 본페로니 z 를 만든다. k=8·α=0.05 → 2.498(≈종전 2.50).
+function icBonferroniT(k, alpha) {
+  const _k = Math.max(1, Math.floor(_num(k, ICGATE.familyFallback)));
+  const _a = _num(alpha, ICGATE.familyAlpha);
+  const z = _normInv(1 - _a / _k);
+  return +_clamp(z, 1.0, 5.0).toFixed(3);
+}
+// 지금 적용할 문턱 — 야간에 세어 둔 가족 크기를 쓴다(없으면 종전 값으로 폴백).
+function icTMinNow(fam, opts) {
+  const o = opts || {};
+  const k = (fam && _num(fam.k, 0) > 0) ? _num(fam.k, 0) : ICGATE.familyFallback;
+  const base = icBonferroniT(k, ICGATE.familyAlpha);
+  return o.strict ? +Math.min(5, base * _num(ICGATE.strictMult, 1.15)).toFixed(3) : base;
+}
+// 야간 파이프라인 끝에서 ★실제로 검정받은 모델 수★ 를 센다.
+//   '선언한 목록' 이 아니라 '최근 36시간 안에 valICt 를 남긴 모델' 을 센다 —
+//   모델이 추가·제거·정지되면 자동으로 따라간다(목록을 갱신하는 걸 잊어도 어긋나지 않는다).
+const IC_FAMILY_KEYS = ["flow_model", "xalpha_model", "stack_model", "memo_model",
+  "dual_bull_model", "dual_bear_model", "mind_model", "gbdt_model", "ml_model",
+  "xgb_trust", "lgb_trust", "cat_trust", "dnn_trust", "scalp_trust"];
+async function icFamilyStamp(DB) {
+  try {
+    const S = await getStates(DB, IC_FAMILY_KEYS);
+    const now = Date.now(), FRESH = 36 * 3600000;
+    let k = 0; const names = [];
+    for (const key of IC_FAMILY_KEYS) {
+      const m = S[key];
+      if (!m) continue;
+      const t = (typeof m.valICt === "number" && isFinite(m.valICt));
+      const acc = (typeof m.valAcc === "number" || typeof m.gbdtAccLB === "number" || typeof m.accLB === "number");
+      if (!(t || acc)) continue;                       // 유의성/정확도 판정을 받지 않는 항목은 가족이 아니다
+      const ts = _num(m.ts, _num(m.trainedAt, 0));
+      if (ts > 0 && (now - ts) > FRESH) continue;      // 멈춘 모델은 오늘의 동시검정에 없다
+      k++; names.push(key.replace(/_model$|_trust$/, ""));
+    }
+    const prev = await getState(DB, "ic_family", null);
+    const out = { k: k, names: names, tMin: icBonferroniT(k, ICGATE.familyAlpha), ts: now };
+    await setState(DB, "ic_family", out);
+    const _pk = prev ? _num(prev.k, 0) : 0;
+    return "[IC-FAMILY] 동시검정 " + k + "종 → 본페로니 z " + out.tMin +
+           (_pk && _pk !== k ? " (직전 " + _pk + "종 · z " + _num(prev.tMin, 0).toFixed(2) + ")" : "") +
+           " · " + names.join(",");
+  } catch (e) { return "[IC-FAMILY] fail: " + (e && e.message); }
+}
+
 // [V33.138] 위원 자격과 가중 배수를 함께 돌려준다. 화면·로그가 같은 함수를 쓰므로
 //   "왜 안 들어왔나" 와 "얼마나 실렸나" 가 서로 어긋날 수 없다.
 function expertAdmit(m) {
@@ -25322,7 +25406,9 @@ function expertAdmit(m) {
     //   처음엔 t/tMin 을 썼는데, 그러면 t=1.65(잡음과 겨우 구별되는 지점)가 0.66 을 받는다.
     //   실제로 합류하는 잡음은 대부분 그 경계에 몰려 있으므로, 거기서 가중이 0 이어야
     //   "운 좋은 잡음" 과 "실력" 이 갈린다. 게이트의 몬테카를로가 이걸 잡아냈다.
-    const _pT = _num(P.tMin, 1.65), _fT = _num(ICGATE.tMin, 2.5);
+    //   [V33.143] 상단 문턱은 ★그 모델이 실제로 판정받은 값★ 을 쓴다(학습 때 기록해 둔 tMinUsed).
+    //   여기서 상수를 다시 읽으면 학습 시점과 판정 시점의 문턱이 어긋난다.
+    const _pT = _num(P.tMin, 1.65), _fT = _num(m.tMinUsed, icBonferroniT(ICGATE.familyFallback, ICGATE.familyAlpha));
     const holdMult = _clamp((t - _pT) / Math.max(1e-9, _fT - _pT), 0, 1);
     // 전진 증거: 통과 > 방향만 맞음 > 아직 쌓는 중
     let fwdMult, fwdWhy;
@@ -25340,7 +25426,8 @@ function expertAdmit(m) {
                why: "증거 배수 " + mult.toFixed(3) + " < " + _num(P.minAdmitMult, 0.12) +
                     " — 가중을 0 가까이 줄여 넣는 것은 불가능하다(exp(0)=1 이라 정상 한 표가 된다)" };
     return { admit: true, mult: +mult.toFixed(4), tier: "provisional",
-             why: "잠정 — 홀드아웃 t " + t.toFixed(2) + "(문턱 " + ICGATE.tMin + ") · " + fwdWhy + " → 가중 ×" + mult.toFixed(2) };
+             why: "잠정 — 홀드아웃 t " + t.toFixed(2) + "(문턱 " + _fT.toFixed(2) +
+                  (m.icFamilyK ? ", 동시검정 " + m.icFamilyK + "종" : "") + ") · " + fwdWhy + " → 가중 ×" + mult.toFixed(2) };
   } catch (e) { return { admit: false, mult: 0, tier: "none", why: "판정 실패" }; }
 }
 // ═══ [V33.140] ★전진검증이 구조적으로 못 채워지던 이유 — 창이 매일 밤 리셋됐다★ ═══
@@ -28936,7 +29023,8 @@ async function mindShadowPromoteNightly(DB) {
     const _nEff = _effN(pv.length, _uBar);
     const accLB = _wilsonLB(acc, _nEff);
     const st = _icBlockStats(pv, yv, 5);
-    const icOK = (st.blockIC != null && st.t != null) && st.blockIC >= 0.012 && st.t >= ICGATE.tMin;
+    const _shTMin = icTMinNow(await getState(DB, "ic_family", null));
+    const icOK = (st.blockIC != null && st.t != null) && st.blockIC >= 0.012 && st.t >= _shTMin;
     const accOK = accLB >= MIND.trustFloor;
     if (!(icOK || accOK))
       return "[MIND-SHADOW] 전진검증 미달 (정확도하한 " + (accLB * 100).toFixed(1) + "% / 블록IC " +
@@ -34664,12 +34752,31 @@ async function _luxSelfCheck(DB) {
       const pats = [
         { key: "수집·처리 실패", re: /실패|fail|에러|error|예외|exception/i, sev: "warn", thr: 6, hint: " (데이터 수집·처리 불안정 의심)" },
         { key: "예산·한도 압박", re: /예산|budget|한도|초과|타임아웃|timeout|abort|1102|과부하/i, sev: "warn", thr: 4, hint: " (CPU/subrequest 예산 압박 의심)" },
-        { key: "데이터 부족·누락", re: /부족|미달|없음|없어|empty|no data|누락|0건/i, sev: "info", thr: 20, hint: " (표본·시세·뉴스 유입 점검)" },
+        // [V33.143] `0건` 에 숫자 경계를 붙인다 — 종전 패턴은 ★"3000건"·"50건" 도 매칭★ 했다.
+        //   ("반사실 라벨링 0건 편입, 미성숙 3000건 대기" 가 '데이터 부족' 으로 세어지던 이유)
+        { key: "데이터 부족·누락", re: /부족|미달|없음|없어|empty|no data|누락|(?:^|[^0-9])0건/i, sev: "info", thr: 20, hint: " (표본·시세·뉴스 유입 점검)" },
         { key: "모델 미비·억제", re: /미학습|억제|섀도우|shadow|distrust|불신|미신뢰/i, sev: "info", thr: 30, hint: " (위원회 일부 모델 대기 — 학습 축적/신뢰 게이트)" },
         { key: "재시도·지연", re: /재시도|retry|지연|stale|늦|밀림|skip|스킵/i, sev: "info", thr: 30, hint: "" }
       ];
+      // ══ [V33.143] ★0 으로 보고된 계수기를 '실패' 로 세고 있었다★ ══
+      //   정상 사이클 요약은 이렇게 생겼다:
+      //     Done: tried=24 skip=0 buy=0 sell=0 ★fetchFail=0★ minBars=0 scalp[...]
+      //   그런데 위 패턴이 /실패|fail/ 이라 ★fetchFail=0 이 매번 걸린다★.
+      //   즉 "실패가 0건" 이라는 보고가 "실패 발생" 으로 집계됐다. 지표 이름을 사건으로 센 것이다.
+      //   운영 스냅샷에서 실제로 이렇게 떴다:
+      //     "최근12h '수집·처리 실패' 패턴 12건 (데이터 수집·처리 불안정 의심)
+      //      · 예: Done: tried=24 skip=0 buy=0 sell=0 fetchFail=0 minBars=0 …"
+      //   예시로 붙은 줄 자체가 ★아무 문제 없는 정상 요약★ 이다. '데이터 부족·누락' 22건도
+      //   같은 이유(minBars=0 · 0건)였다. 늘 켜진 경고는 침묵과 똑같이 진짜 고장을 덮는다.
+      //   → 매칭 전에 ★값이 0 인 계수기★ 를 지운다. fetchFail=3 은 그대로 잡힌다.
+      const _evt = function (m) {
+        return String(m || "")
+          .replace(/[A-Za-z가-힣_][\w가-힣_]*\s*=\s*0(?![.\d])/g, " ")   // key=0 (0.5 같은 건 남긴다)
+          .replace(/\b0\s*건/g, " ")                                        // "0건"
+          .replace(/\b0\/\d+/g, " ");                                       // "0/400" 같은 진행표시
+      };
       const cnt = {}, samp = {};
-      for (const r of rows) { const msg = String(r.message || ""); for (const p of pats) { if (p.re.test(msg)) { cnt[p.key] = (cnt[p.key] || 0) + 1; if (!samp[p.key]) samp[p.key] = msg.slice(0, 110); } } }
+      for (const r of rows) { const msg = _evt(r.message); for (const p of pats) { if (p.re.test(msg)) { cnt[p.key] = (cnt[p.key] || 0) + 1; if (!samp[p.key]) samp[p.key] = String(r.message || "").slice(0, 110); } } }
       for (const p of pats) { const n = cnt[p.key] || 0; if (n >= p.thr) add(p.sev, "로그추론", "최근12h '" + p.key + "' 패턴 " + n + "건" + p.hint + " · 예: " + (samp[p.key] || "")); }
       // 컴포넌트별 실패 클러스터([PREFIX] 기준)
       const compFail = {};
@@ -37738,6 +37845,7 @@ export default {
             await _stg("pooluniq", async function () { return await mlPoolUniqNightly(env.DB); });
             // (3) 7단 학습 파이프라인(순서 고정: L1→노이즈→앙상블→MIND→DNN→GBDT)
             await _stg("l1", async function () { return await mlTrainNightly(env.DB); });
+            await _stg("icfamily", async function () { return await icFamilyStamp(env.DB); });
             await _stg("bandit", async function () { return await mlBanditNoiseNightly(env.DB); });
             await _stg("brain", async function () { return await mlBrainTrainNightly(env.DB); });
             await _stg("mind", async function () { return await mlMindTrainNightly(env.DB); });
@@ -37869,7 +37977,7 @@ export {
   // [V33.121] 피라미딩 결정기 — tools/check-leverage.mjs
   pyramidDecide,
   // [V33.120] 단타 경로 문지기(MAE) — tools/check-leverage.mjs
-  aiEntryFloor, expertAdmit, ICGATE,
+  aiEntryFloor, expertAdmit, ICGATE, icBonferroniT, icTMinNow,
   scalpMaeFitNightly, scalpMaeMult, SCALPMAE,
   FIN_TOOLS, finToolsRun,
   // [V33.110] 소셜 멀티소스 검증용 — tools/check-social.mjs

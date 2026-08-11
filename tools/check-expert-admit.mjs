@@ -11,6 +11,7 @@
 //     xalpha 홀드아웃 t 3.20 통과인데 ★전진 IC −0.069(음수)★
 //   앞의 셋은 "증거가 덜 쌓임", 마지막은 "일반화 실패" 다. 같은 0 점을 주면 정보를 버린다.
 
+import { readFileSync } from "node:fs";
 import { expertAdmit, ICGATE } from "../src/index.js";
 
 let fails = 0;
@@ -123,6 +124,62 @@ const M = (o) => Object.assign({
   }
   if (out === 0) ok("가중 배수가 항상 [0,1] 안 — IC 를 키우는 방향으로는 절대 작동하지 않는다");
   else bad(`가중이 범위를 벗어난 경우 ${out}건`);
+}
+
+// ══ [V33.143] 본페로니 문턱이 ★세어서 정해지는가★ ═══════════════════════════
+//   tMin 2.50 은 "전문가 8종 동시검정" 을 뜻했는데 그 8 이 코드에 박힌 숫자였다.
+//   모델이 늘면 보정이 약해지고, 멈추면 필요 이상으로 엄격해진다.
+//   게다가 같은 뜻의 상수가 세 곳에 흩어져 이미 어긋나 있었다 —
+//   ICGATE.tMin 2.50 · MEMOML.icTMin 2.50 · STACK 의 icTMin ★2.2★.
+//   STACK 주석은 "혼자 결정하는 자리라 더 높게" 인데 값은 더 ★낮았다★.
+{
+  const { icBonferroniT, icTMinNow } = await import("../src/index.js");
+
+  // ① 종전 동작을 그대로 재현하는가 — 이 변경은 동작 변경이 아니라 일반화여야 한다
+  const at8 = icBonferroniT(8, 0.05);
+  if (Math.abs(at8 - 2.50) < 0.01) ok(`k=8 · α=0.05 → z ${at8} (종전 상수 2.50 을 그대로 재현 — 일반화이지 동작 변경이 아니다)`);
+  else bad(`k=8 에서 ${at8} — 종전 2.50 과 다르다`);
+
+  // ② 가족이 커지면 문턱이 올라간다(다중검정 보정의 정의)
+  const seq = [1, 4, 8, 12, 20].map((k) => icBonferroniT(k, 0.05));
+  let mono = true; for (let i = 1; i < seq.length; i++) if (seq[i] <= seq[i - 1]) mono = false;
+  if (mono) ok(`가족 크기 1→20 에서 문턱 단조 증가: ${seq.join(" → ")}`);
+  else bad(`문턱이 단조 증가하지 않는다: ${seq.join(",")}`);
+
+  // ③ 실제 로스터(11~12종)에서 종전 상수보다 엄격해진다 — 그게 이 수정의 요점이다
+  const at12 = icBonferroniT(12, 0.05);
+  if (at12 > 2.50) ok(`현재 로스터 규모(k=12) → z ${at12} > 종전 2.50 — 모델이 늘어난 만큼 보정도 늘어난다`);
+  else bad(`k=12 에서 ${at12} — 보정이 안 늘었다`);
+
+  // ④ STACK 의 엄격 모드가 ★실제로 더 높은가★ (종전엔 2.2 로 더 낮았다)
+  const fam = { k: 12 };
+  const normal = icTMinNow(fam), strict = icTMinNow(fam, { strict: true });
+  if (strict > normal) ok(`STACK 엄격 문턱 ${strict} > 공통 ${normal} — 주석의 의도와 값이 이제 일치한다(종전 2.2 < 2.50)`);
+  else bad(`엄격 모드가 더 낮거나 같다: ${strict} vs ${normal}`);
+
+  // ⑤ 못 세었을 때는 종전 값으로 폴백한다(첫 가동에서 문턱이 튀지 않게)
+  const fb = icTMinNow(null);
+  if (Math.abs(fb - 2.50) < 0.01) ok(`가족 미측정 → 폴백 ${fb} (종전과 동일 — 첫 가동에서 문턱이 튀지 않는다)`);
+  else bad(`폴백이 ${fb} — 종전 2.50 과 다르다`);
+
+  // ⑥ 범위 안전 — 이상한 k 가 들어와도 문턱이 무너지지 않는다
+  let outOfRange = 0;
+  for (const k of [0, -5, 1e9, NaN, null, undefined]) {
+    const z = icBonferroniT(k, 0.05);
+    if (!(z >= 1.0 && z <= 5.0)) outOfRange++;
+  }
+  if (outOfRange === 0) ok("비정상 k(0·음수·1e9·NaN·null)에서도 문턱이 [1.0, 5.0] 안에 머문다");
+  else bad(`비정상 k 에서 문턱이 범위를 벗어난다: ${outOfRange}건`);
+
+  // ⑦ 소스 계약 — 흩어진 상수가 정말로 사라졌는가
+  const src = readFileSync(new URL("../src/index.js", import.meta.url), "utf8");
+  if (!/icTMin: 2\.2/.test(src)) ok("STACK 의 손으로 정한 2.2 가 사라졌다");
+  else bad("icTMin: 2.2 가 아직 있다 — 공통 문턱보다 낮은 '더 엄격한' 문턱이 남아 있다");
+  const direct = (src.match(/ICGATE\.tMin/g) || []).length;
+  if (direct <= 1) ok(`ICGATE.tMin 직접 참조 ${direct}곳(주석 제외 — 이제 계산값을 쓴다)`);
+  else bad(`ICGATE.tMin 을 아직 ${direct}곳에서 직접 읽는다 — 다시 박힌 숫자가 된다`);
+  if (/tMinUsed: _tMin/.test(src)) ok("판정에 쓴 문턱을 모델에 기록한다(학습 시점과 판정 시점이 어긋나지 않게)");
+  else bad("문턱을 모델에 기록하지 않는다");
 }
 
 console.log(fails ? "\n위원 자격 계약 위반 " + fails + "건 — 배포 차단" : "\n  ok   위원 자격 계약 통과");

@@ -5,6 +5,7 @@
 //   결과는 여전히 '그럴듯한 점수'로 나온다 — 이 저장소가 확률 쪽에서 반복해 겪은 실패 형태다.
 //   → 시각을 아는 합성 스트림을 넣어 계약을 못 박는다.
 
+import { readFileSync } from "node:fs";
 import { SOCIAL, SOCIAL_SOURCES, socialScoreOf } from "../src/index.js";
 
 let fails = 0;
@@ -105,6 +106,48 @@ const run = (msgs) => ST.parse({ messages: msgs }, cut, null, NOW);
   const sc = socialScoreOf(bearRec);
   if (sc != null && sc < -0.7) ok("Reddit 언급 50건이 약세 강도만 키움 " + sc.toFixed(3) + " (방향 유지)");
   else bad("Reddit 이 방향을 바꿨거나 강도가 안 먹는다: " + sc);
+}
+
+
+// ══ [V33.143] 로그 휴리스틱 분류기 — 0 으로 보고된 계수기를 '사건' 으로 세지 않는가 ══
+//   정상 사이클 요약(Done: … fetchFail=0 minBars=0 …)이 /실패|fail/ 에 걸려
+//   "수집·처리 실패 12건" 경고가 매번 떴다. 예시로 붙은 줄 자체가 아무 문제 없는 요약이었다.
+//   지표 ★이름★ 을 사건으로 세면 경고가 늘 켜지고, 늘 켜진 경고는 진짜 고장을 덮는다.
+{
+  const src = readFileSync(new URL("../src/index.js", import.meta.url), "utf8");
+  // 소스 계약 — 정규화가 존재하고 매칭 ★전에★ 적용되는가
+  if (/const _evt = function \(m\)/.test(src)) ok("로그 분류 전에 계수기 정규화(_evt)를 거친다");
+  else bad("_evt 정규화가 없다 — fetchFail=0 이 다시 '실패' 로 세어진다");
+  if (/for \(const r of rows\) \{ const msg = _evt\(r\.message\);/.test(src))
+    ok("정규화된 문자열로 매칭한다(원문은 예시 표시용으로만 남는다)");
+  else bad("원문으로 매칭한다 — 정규화가 무의미하다");
+  if (/\(\?:\^\|\[\^0-9\]\)0건/.test(src)) ok("`0건` 패턴에 숫자 경계가 있다 — \"3000건\" 이 '부족' 으로 안 세어진다");
+  else bad("`0건` 이 경계 없이 매칭된다 — 3000건·50건이 전부 '데이터 부족' 이 된다");
+
+  // 동작 계약 — src 와 같은 식을 옮겨 6케이스로 확인
+  const evt = (m) => String(m || "")
+    .replace(/[A-Za-z가-힣_][\w가-힣_]*\s*=\s*0(?![.\d])/g, " ")
+    .replace(/\b0\s*건/g, " ")
+    .replace(/\b0\/\d+/g, " ");
+  const RE_FAIL = /실패|fail|에러|error|예외|exception/i;
+  const RE_LACK = /부족|미달|없음|없어|empty|no data|누락|(?:^|[^0-9])0건/i;
+  const cases = [
+    ["Done: tried=24 skip=0 buy=0 sell=0 fetchFail=0 minBars=0 scalp[elig=24]", false, false, "정상 사이클 요약"],
+    ["Done: tried=24 skip=0 buy=1 sell=0 fetchFail=7 minBars=0", true, false, "진짜 수집실패 7건"],
+    ["[SOCIAL] 모듈 실패 13건 반복 감지", true, false, "진짜 모듈 실패"],
+    ["[CF-TICK] 반사실 라벨링 0건 편입, 미성숙 3000건 대기", false, false, "0건 보고(정상)"],
+    ["[STACK] 전진검증 0/400 대기", false, false, "진행 표시(정상)"],
+    ["[ML] 유효표본 부족(120) — 학습 대기", false, true, "진짜 표본 부족"]
+  ];
+  let okAll = true;
+  for (const [msg, wantFail, wantLack, tag] of cases) {
+    const e = evt(msg), gf = RE_FAIL.test(e), gl = RE_LACK.test(e);
+    if (gf !== wantFail || gl !== wantLack) {
+      bad(`분류 오작동 [${tag}] 실패=${gf}(기대 ${wantFail}) 부족=${gl}(기대 ${wantLack}) · 정규화후="${e.trim().slice(0, 60)}"`);
+      okAll = false;
+    }
+  }
+  if (okAll) ok("로그 분류 6케이스 — 0 계수기는 안 세고 진짜 실패/부족은 잡는다");
 }
 
 console.log(fails ? "\n소셜 최신성 계약 위반 " + fails + "건" : "\n  ok   소셜 멀티소스 통과");
