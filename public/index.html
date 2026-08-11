@@ -13774,6 +13774,114 @@ html:root .toast{
   }
 }
 
+
+/* ═══════════════════════════════════════════════════════════════════════════
+   [V33.142] 우측 사이드바 'AI 운용 상태' — 폭은 그대로(190px), 읽히게만 다시.
+   ───────────────────────────────────────────────────────────────────────────
+   종전 상태를 그대로 적으면: 본문 9.5px · 라벨 8.5px에 자간 1px 대문자 ·
+   한글까지 'IBM Plex Mono' · 행마다 1px 구분선 · 값은 word-break 로 단어 중간에서 잘림.
+   좁은 칸이라 정보를 넣으려고 글자를 줄인 것인데, 줄인 글자는 결국 안 읽힌다.
+
+   폭을 못 늘리므로 ★타이포와 위계★ 로만 되찾는다:
+     · 한글은 시스템 폰트로(모노스페이스 한글은 자소 간격이 무너진다).
+       숫자만 tabular 로 고정 — 값이 갱신돼도 자리가 안 흔들린다.
+     · 최소 글자 크기를 올린다: 값 11px · 라벨 10px · 섹션 10px.
+       (좁을수록 작게가 아니라 ★좁을수록 덜 넣고 크게★ 가 맞다)
+     · 대문자 + 넓은 자간을 버린다. 8.5px 에서 1px 자간은 단어를 흩뜨린다.
+     · 행 구분선을 지우고 여백으로 나눈다 — 190px 안에 가로선이 20개면 그게 노이즈다.
+     · 값은 굵기로 띄운다(색을 늘리지 않는다). 단어 중간 줄바꿈을 끈다.
+     · 섹션을 옅은 재질 카드로 묶어 눈이 덩어리로 잡게 한다.
+   ═══════════════════════════════════════════════════════════════════════════ */
+html:root .rail-sec-h{
+  font-family:-apple-system,BlinkMacSystemFont,'SF Pro Text','Helvetica Neue','Segoe UI',system-ui,sans-serif;
+  font-size:10px; font-weight:600; letter-spacing:-.005em; text-transform:none;
+  color:var(--t2); padding:9px 10px 5px;
+  /* 한국어는 ★어절 단위★ 로 끊어야 읽힌다. 기본값이면 "신경망·모델 구/조" 처럼
+     낱자에서 잘려 단어가 두 줄에 걸친다 — 좁은 칸일수록 이게 치명적이다. */
+  word-break:keep-all; overflow-wrap:break-word; line-height:1.4;
+}
+html:root .rail-ai{
+  font-family:-apple-system,BlinkMacSystemFont,'SF Pro Text','Helvetica Neue','Segoe UI',system-ui,sans-serif;
+  font-size:11px; line-height:1.45; color:var(--t2);
+  padding:0 8px 10px;
+  font-variant-numeric:tabular-nums;
+  min-width:0; overflow-wrap:anywhere;   /* 어떤 자식도 칸 밖으로 밀려나지 않게 */
+}
+/* 운용 배지 — 이 칸에서 가장 먼저 읽혀야 하는 한 줄 */
+html:root .rail-ai .badge{
+  display:flex; align-items:center; gap:5px;
+  font-size:11.5px; font-weight:650; letter-spacing:-.01em;
+  padding:6px 9px; margin:0 0 8px;
+  border-radius:999px;
+  background:var(--apx-mat-light); border:1px solid var(--apx-hair);
+}
+/* 섹션 제목 — 대문자·넓은 자간을 버리고 대비로 세운다 */
+html:root .rail-ai .k{
+  font-size:10px; font-weight:600; letter-spacing:-.003em; text-transform:none;
+  color:var(--t2); display:block; margin:11px 0 4px; opacity:.95;
+  word-break:keep-all; overflow-wrap:break-word;
+}
+html:root .rail-ai .k::after{
+  /* 제목 아래 아주 얕은 경계 — 선이 아니라 '빛의 자국' 정도로만 */
+  content:''; display:block; height:1px; margin-top:4px;
+  background:linear-gradient(90deg, var(--apx-hair), transparent 70%);
+}
+/* 표 — 구분선 대신 여백. 라벨은 조용히, 값은 굵게. */
+/* ★table-layout:fixed 가 핵심★ — 기본 auto 레이아웃은 내용이 길면 표를 ★밖으로 밀어낸다★.
+   레일은 overflow:hidden 이라 밀려난 만큼 그대로 잘린다("+30?" "MACD·Stoch·A?" 가 그것이었다).
+   고정 레이아웃으로 칸을 먼저 정하고, 내용이 그 안에서 접히게 한다. */
+html:root .rail-ai .tbl{ font-size:10.5px; margin:0 0 2px; table-layout:fixed; width:100%; }
+html:root .rail-ai .tbl td{ padding:3px 0; border-bottom:none; vertical-align:baseline; }
+html:root .rail-ai .tbl td.lb{
+  /* 46px 로 줄였더니 "XALPHA" 가 "XALPH" 로 잘렸다 — 모델 이름이 잘리는 건 값 한 줄
+     늘어나는 것보다 나쁘다(무엇에 대한 값인지 자체가 모호해진다). 52px 로 돌린다. */
+  color:var(--t3); font-size:10px; letter-spacing:-.015em; width:52px; padding-right:6px;
+  white-space:nowrap; overflow:hidden; text-overflow:ellipsis;
+}
+html:root .rail-ai .tbl td.vl{
+  color:var(--t1); font-size:10.5px; font-weight:500;
+  /* 값 칸은 ★어절 보존을 포기한다★ — 폭이 130px 남짓이라 keep-all 로는 담기지 않고
+     넘치면 잘린다. 잘린 글자는 접힌 글자보다 훨씬 나쁘다(정보가 사라진다).
+     한국어는 음절 단위 개행이 표준 조판이기도 하다. 긴 라틴 토큰은 anywhere 가 접는다. */
+  word-break:normal; overflow-wrap:anywhere; line-height:1.42; min-width:0;
+}
+html:root .rail-ai .tbl td.vl .em{ font-weight:700; color:var(--t1); }
+html:root .rail-ai .tbl td.vl .nil{ color:var(--t3); opacity:.5; }
+html:root .rail-ai .sub{ color:var(--t3); font-size:9.5px; letter-spacing:0; }
+html:root .rail-ai .diag{ color:var(--t3); font-size:10px; line-height:1.5; }
+html:root .rail-ai .pick{ color:var(--t1); font-weight:600; }
+html:root .rail-ai .row{ gap:2px 7px; margin-bottom:4px; font-size:10.5px; }
+/* 게이지 — 얇은 선 하나로 값의 크기를 보이게 */
+html:root .rail-ai .gauge{ height:4px; border-radius:999px; background:var(--apx-mat-light); margin:4px 0 2px; }
+html:root .rail-ai .gauge>i{ border-radius:999px; transition:width .38s var(--apx-ease); }
+
+/* 뷰 전환 — 사이드바 안에서도 알약으로 통일(두뇌 화면 밖에서도) */
+html:root .rail-view{ border-radius:10px; padding:7px 9px; }
+html:root .rail-view b{ font-size:11px; font-weight:600; letter-spacing:-.005em; color:var(--t1); }
+html:root .rail-view small{ font-size:9.5px; color:var(--t3); letter-spacing:0; }
+html:root .rail-views{ gap:4px; }
+
+/* 섹션 덩어리 — 눈이 묶어서 잡게 한다(선이 아니라 아주 옅은 면으로) */
+html:root .rail-sec{ border-bottom:none; margin:0 6px 6px; border-radius:12px; background:var(--apx-mat-light); }
+html:root .rail-sec.rail-slot{ background:transparent; }
+
+/* 라이트 — 기존 규칙이 특이도가 높아 같은 값으로 다시 못 박는다 */
+html[data-theme="light"]:root .rail-ai{ color:var(--t2); }
+html[data-theme="light"]:root .rail-ai .tbl td.vl,
+html[data-theme="light"]:root .rail-ai .tbl td.vl .em,
+html[data-theme="light"]:root .rail-ai .pick{ color:var(--t1); }
+html[data-theme="light"]:root .rail-ai .tbl td.lb,
+html[data-theme="light"]:root .rail-ai .diag,
+html[data-theme="light"]:root .rail-ai .sub{ color:var(--t3); }
+html[data-theme="light"]:root .rail-sec-h,
+html[data-theme="light"]:root .rail-ai .k{ color:var(--t2); }
+html[data-theme="light"]:root .rail-view b{ color:var(--t1); }
+html[data-theme="light"]:root .rail-view small{ color:var(--t3); }
+
+@media (prefers-reduced-motion:reduce){
+  html:root .rail-ai .gauge>i{ transition:none; }
+}
+
 </style>
 
 <script>

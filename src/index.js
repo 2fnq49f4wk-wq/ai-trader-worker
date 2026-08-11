@@ -2788,7 +2788,7 @@ async function applySignalTypeWeights(DB, cfg) {
 // ============================================================================
 // [V33.55] 빌드 버전 — SWR L2 캐시 키에 섞어 '배포 = 판단 캐시 자동 무효화'를 만든다.
 //   판정 로직을 고쳐도 옛 캐시가 최대 1시간 재배포되던 문제를 구조적으로 없앤다.
-const _BUILD_VER = "V33.140";
+const _BUILD_VER = "V33.142";
 
 const AI_PARAMS = {
   // ── OHLCV 타임프레임 ── 시가/고가/저가/종가/거래량을 어떤 봉 주기로 볼지.
@@ -23599,7 +23599,38 @@ async function _miniLogisticTrain(DB, opts) {
     // 시간순(최신이 앞) → 뒤집어 오래된 것부터. 마지막 20% 를 홀드아웃(시간 분리).
     X.reverse(); Y.reverse(); P.reverse(); T.reverse(); S.reverse();
     const nval = Math.max(100, Math.floor(N * 0.2));
-    const ntr = N - nval;
+    let ntr = N - nval, _purged = 0;
+    // ══ [V33.141] ★퍼징(purge) — 경계에서 학습 라벨이 검증 구간으로 새고 있었다★ ══
+    //   분할은 시간순이라 "검증이 미래" 는 맞다. 그런데 라벨 지평이 5일이다.
+    //   경계 직전 학습표본의 ★결과 구간★ 은 검증 구간 안으로 뻗는다 — 즉 학습이 검증 기간의
+    //   가격 움직임을 이미 본다. de Prado(AFML 7장)가 purging 으로 잘라내는 바로 그 누출이다.
+    //
+    //   왜 이게 이 표들에서 특히 치명적인가: flow/xalpha 는 백필이 ★하루에 수백 종목★ 을
+    //   한꺼번에 넣는다. 그래서 검증셋 1,160건이 시간으로는 며칠치밖에 안 된다
+    //   (고유도 0.153 → 유효표본 178). 라벨 지평 5일이 검증 구간 전체를 덮어버린다.
+    //   결과가 그대로 숫자에 나온다 — ★홀드아웃 IC 0.19 vs 전진 IC 0.02, 10배 차이★.
+    //   홀드아웃이 부풀면 게이트(블록 t·icFloor)도 같이 부풀어 판정 자체를 못 믿게 된다.
+    //
+    //   → 경계 시각(검증 첫 표본의 ts)보다 라벨 구간이 뻗는 학습표본을 잘라낸다.
+    //     (검증이 뒤이므로 반대 방향 엠바고는 필요 없다 — 학습이 검증보다 항상 앞이다.)
+    {
+      const _span = _num(opts.labelSpanMs, AI_PARAMS.predictionHorizonDays * 86400000);
+      const _bound = _num(T[ntr], 0);
+      if (_bound > 0 && _span > 0) {
+        let _keep = ntr;
+        while (_keep > 0 && _num(T[_keep - 1], 0) + _span > _bound) _keep--;
+        _purged = ntr - _keep;
+        ntr = _keep;
+        // ★부분 퍼징은 하지 않는다.★ 처음엔 "너무 줄면 바닥까지만 자른다" 로 썼는데,
+        //   그 식은 ★경계에 가장 가까운(=가장 심하게 누출된) 표본을 남기는★ 방향이었다.
+        //   덜 나쁜 절충이 아니라 그냥 틀린 절충이다. 다 자르거나, 못 자르겠으면 학습을 미룬다.
+        if (ntr < opts.minN) {
+          return "[" + opts.tag + "] 퍼징 후 학습표본 " + ntr + "/" + opts.minN +
+                 " — 대기(라벨 지평 " + Math.round(_span / 86400000) + "일이 검증 구간과 겹쳐 " +
+                 _purged + "건 제외). 표본이 더 쌓이면 자동 진행.";
+        }
+      }
+    }
     // ══ [V33.114] ★표준화 누출 수정★ ══
     //   종전엔 평균·표준편차를 ★홀드아웃을 포함한 전체★ 로 계산한 뒤 그 자로 홀드아웃을 채점했다.
     //   검증표본의 분포가 변환에 스며들어 검증성적이 실제보다 좋게 나온다(전형적 train/test 누출).
@@ -23680,6 +23711,7 @@ async function _miniLogisticTrain(DB, opts) {
       valICIR: _st.icir != null ? +_st.icir.toFixed(3) : null,
       valICt: _tv != null ? +_tv.toFixed(3) : null, valICK: _st.K,
       valICtRaw: _st.tRaw != null ? _st.tRaw : null, valICdf: _st.df != null ? _st.df : null,
+      purged: _purged,   // [V33.141] 경계 누출로 잘라낸 학습표본 수 — 홀드아웃 신뢰의 근거
       fwdIC: _fwd ? _fwd.ic : null, fwdICt: _fwd ? _fwd.t : null,
       fwdN: _fwd ? _fwd.n : 0, fwdReady: !!(_fwd && _fwd.ready),
       // [V33.140] 원장이 며칠치인지 — "표본이 왜 아직 모자라나" 를 화면이 답할 수 있어야 한다

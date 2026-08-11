@@ -110,6 +110,12 @@ jobs:
       #   음수 IC 가 누적으로 뒤집히지 않는지, 같은 모델 버전을 두 번 세지 않는지.
       - name: Forward validation ledger contract check
         run: node tools/check-fwd-ledger.mjs
+      # [V33.141] 경계 퍼징 — 라벨 지평이 5일이라 경계 직전 학습표본의 결과 구간이
+      #   검증 구간으로 뻗는다(de Prado purging). 넣되 ★효과를 과장하지 않는다★ —
+      #   합성 측정에서 홀드아웃 변화는 0.0001 이었고, 운영의 10배 갭은 측정 버그가 아니라
+      #   일반화 갭이다. 이 게이트는 "해롭지 않은가"와 "구현 방향이 맞는가"만 본다.
+      - name: Train/val purge contract check
+        run: node tools/check-purge.mjs
       # cloudflare/wrangler-action 대신 로컬에서 검증된 방식 그대로 실행
       # (wrangler-action@v3의 npx 자동설치가 4.86.0을 요구하며 실패하던 문제 회피)
       - name: Install wrangler
