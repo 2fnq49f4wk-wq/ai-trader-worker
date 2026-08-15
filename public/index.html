@@ -8,7 +8,7 @@
      인데, 지금까지 화면에서 그걸 알 방법이 전혀 없었다(카카오톡 인앱 브라우저는 특히 강하게 캐시한다).
      서버가 내려주는 build 와 이 값을 비교해 다르면 배너로 알린다.
      ※ src/index.js 의 _BUILD_VER 와 항상 같아야 한다 — check-html-js 가 강제한다. -->
-<meta name="lux-build" content="V33.147">
+<meta name="lux-build" content="V33.148">
 <title>LUX-ENGINE V10</title>
 <link rel="icon" type="image/svg+xml" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'%3E%3Crect width='100' height='100' fill='%23000'/%3E%3Cpath fill='%23fff' d='M50 8 L53 41.7 L70.7 29.3 L58.3 47 L92 50 L58.3 53 L70.7 70.7 L53 58.3 L50 92 L47 58.3 L29.3 70.7 L41.7 53 L8 50 L41.7 47 L29.3 29.3 L47 41.7 Z'/%3E%3Cpath fill='%23b6bcc6' d='M50 50 L50 8 L53 41.7 Z M50 50 L70.7 29.3 L58.3 47 Z M50 50 L92 50 L58.3 53 Z M50 50 L70.7 70.7 L53 58.3 Z M50 50 L50 92 L47 58.3 Z M50 50 L29.3 70.7 L41.7 53 Z M50 50 L8 50 L41.7 47 Z M50 50 L29.3 29.3 L47 41.7 Z'/%3E%3C/svg%3E">
 <script>
@@ -1758,6 +1758,9 @@ input[type="range"]{accent-color:var(--pos)!important;}
 .pl-ok .pl-name{color:var(--t1);}
 .pl-age{margin-left:auto;color:var(--t3);font-variant-numeric:tabular-nums;flex-shrink:0;font-family:'IBM Plex Mono',monospace;}
 @media(max-width:900px){.pipeline-grid{grid-template-columns:repeat(2,1fr);}.pl-step{border-bottom:1px solid var(--bd2);}}
+/* [V33.148] 이름은 남는 폭을 먼저 가져간다 — 나이(.pl-age)는 flex-shrink:0 이라
+   폭이 모자라면 언제나 ★이름부터★ 굶었다. 폰 1열 전환은 아래 max-width:767px 블록에서 한다. */
+.pl-name{flex:1 1 auto;min-width:0;}
 
 /* AI DIRECTIVE 패널 강조 */
 .llm-banner{border-left:2px solid var(--pos)!important;}
@@ -3030,7 +3033,11 @@ html[data-theme="light"] ::placeholder{color:#8fa0b8;opacity:1;}
   .fv-mid .fv-movers-grid{max-height:300px;}
   .fv-movers-grid{grid-template-columns:1fr;}
   .fv-movers-grid table:first-child{border-right:none;border-bottom:1px solid var(--bd2);}
-  .pipeline-grid{grid-template-columns:repeat(auto-fit,minmax(96px,1fr));}
+  /* [V33.148] 종전 minmax(96px,1fr) — 96px 칸에 점(8)+이름+나이(최대 43)를 욱여넣으니
+     .pl-age 가 flex-shrink:0 이라 ★이름부터★ 굶었다. 폰에서는 1열로 편다(아래 600px 규칙과 같은 값,
+     여기가 뒤에 있어 순서로 이겨서 명시한다). */
+  .pipeline-grid{grid-template-columns:1fr;}
+  .pl-step{border-right:none;}
   /* 패널 헤더 툴바(맵 기간·시장 버튼 등)는 줄바꿈 대신 가로 스크롤 — 헤더가 3줄로 터지던 것 방지 */
   .fv-panel-head{flex-wrap:wrap;row-gap:4px;}
   .fv-panel-head>span[style*="margin-left:auto"]{
@@ -13901,6 +13908,26 @@ html[data-theme="light"]:root .rail-view small{ color:var(--t3); }
 
 @media (prefers-reduced-motion:reduce){
   html:root .rail-ai .gauge>i{ transition:none; }
+}
+
+/* ─────────────────────────────────────────────────────────────────────────
+   [V33.148] 아주 좁은 폰(≤360px) 정리 — 헤드리스 실측으로 잡힌 것만 손댄다.
+   320px 에서 아래 넷이 상자 밖으로 나가거나 잘렸고, 전부 ★스크롤로 도달 불가★ 였다
+   (대시보드의 섹터 셀렉트·↻ 버튼도 밖으로 나가지만 그쪽은 가로 스크롤 툴바 안이라
+    스와이프로 닿는다 — 설계된 동작이므로 건드리지 않는다).
+   글자를 줄이는 대신 자간·여백부터 줄인다 — 숫자는 읽혀야 하는 값이다.
+   ───────────────────────────────────────────────────────────────────────── */
+@media (max-width:360px){
+  /* KPI 타일: "위원회 가동" 이 자간 때문에 6px 넘쳤다 */
+  #page-nnviz .nlv-stat{ padding:8px 7px 9px; }
+  #page-nnviz .nlv-stat .k{ letter-spacing:.5px; font-size:8px; }
+  #page-nnviz .nlv-stat .v{ font-size:12.5px; }     /* "3.2 종목/s" 15px 넘침 */
+  /* 상위 후보: 한국 티커(005930.KS)가 11px 잘렸다 */
+  #page-nnviz .nlv-top{ padding:8px 6px; }
+  #page-nnviz .nlv-top .s{ font-size:10px; letter-spacing:-.2px; }
+  /* 포지션 요약 바: 좌우 20px 여백이 3칸에서 14px 넘침을 만들었다 */
+  .cm-stat{ padding:12px 8px; }
+  .summary-value{ font-size:13px; }
 }
 
 </style>

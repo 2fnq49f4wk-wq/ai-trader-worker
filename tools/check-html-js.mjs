@@ -192,6 +192,76 @@ try {
   rtBad += cbad;
 } catch (e) { console.error("  FAIL 거짓상태 보고 검사 실패:", e.message); rtBad += 1; }
 
+// ── [V33.148] 폰 폭에서 엔진 파이프라인 단계 '이름' 이 살아남는가 ────────────
+//   실제 사고: .pl-age 는 flex-shrink:0 인데 .pl-name 은 아니라, 칸이 좁으면 ★이름부터★ 굶는다.
+//   폰 전용 규칙이 minmax(96px,1fr) 로 칸을 잘게 쪼개 두어서 430px 기기에서도 8/8 이 잘렸고,
+//   '거래 사이클' 이 15px 로 줄어 "거…" 만 보였다. 8개 서브시스템 감시판이 무용지물이었다.
+//   CI 에 브라우저가 없으므로 ★캐스케이드를 직접 걸어★ 폰 폭에서 어떤 선언이 이기는지 계산한다.
+try {
+  const hp = readFileSync(new URL("../public/index.html", import.meta.url), "utf8");
+  //   주석은 먼저 걷어낸다 — 선택자를 역방향으로 읽기 때문에 규칙 바로 앞 주석이 붙어 오면
+  //   ".pipeline-grid" 와 일치하지 않아 그 선언을 통째로 놓친다(처음 판에서 실제로 놓쳤다).
+  const css = [...hp.matchAll(/<style[^>]*>([\s\S]*?)<\/style>/gi)].map((m) => m[1]).join("\n")
+    .replace(/\/\*[\s\S]*?\*\//g, " ");
+  // @media 블록을 스택으로 추적하며 .pipeline-grid 선언을 조건과 함께 모은다.
+  //   ※ 중첩 중괄호를 정확히 세야 한다 — 안 세면 일반 규칙의 첫 '}' 가 @media 를 조기에 닫아
+  //     min-width:1000px 짜리 터미널 밀도 규칙이 폰에도 적용되는 것처럼 오판한다(실제로 겪었다).
+  const decls = [];
+  {
+    let depth = 0, i = 0;
+    const media = [];                       // { cond, depth }
+    const selOf = (openIdx) => {
+      let s = openIdx - 1;
+      while (s >= 0 && css[s] !== "}" && css[s] !== "{" && css[s] !== ";") s--;
+      return css.slice(s + 1, openIdx).trim();
+    };
+    while (i < css.length) {
+      if (css.startsWith("@media", i)) {
+        const open = css.indexOf("{", i);
+        if (open < 0) break;
+        media.push({ cond: css.slice(i, open), depth: depth });
+        depth++; i = open + 1; continue;
+      }
+      const ch = css[i];
+      if (ch === "{") {
+        const sel = selOf(i), end = css.indexOf("}", i);
+        if (sel === ".pipeline-grid" && end > 0) {
+          const maxes = media.map((m) => (m.cond.match(/max-width:\s*(\d+)px/) || [])[1]).filter(Boolean).map(Number);
+          decls.push({ sel, body: css.slice(i + 1, end),
+            maxW: maxes.length ? Math.min(...maxes) : Infinity,
+            minW: Math.max(0, ...media.map((m) => +((m.cond.match(/min-width:\s*(\d+)px/) || [])[1] || 0))) });
+          i = end + 1; continue;            // 규칙 전체를 소비 — depth 는 그대로
+        }
+        depth++; i++; continue;
+      }
+      if (ch === "}") {
+        depth--;
+        while (media.length && media[media.length - 1].depth >= depth) media.pop();
+        i++; continue;
+      }
+      i++;
+    }
+  }
+  // 390px(가장 흔한 폰)에서 이기는 선언 = 조건을 만족하는 것 중 ★파일 순서상 마지막★
+  const W = 390;
+  const win = decls.filter((d) => W <= d.maxW && W >= d.minW).pop();
+  let pbad = 0;
+  if (!decls.length) { pbad++; console.error("  FAIL .pipeline-grid 선언을 못 찾았다 — 검사가 헛돈다"); }
+  else if (!win) { pbad++; console.error("  FAIL 390px 에서 적용되는 .pipeline-grid 선언이 없다"); }
+  else {
+    const cols = (win.body.match(/grid-template-columns:\s*([^;]+)/) || [])[1] || "";
+    // 한 칸이 되거나(1fr/none), 최소폭이 넉넉해야(≥240px) 이름이 안 굶는다.
+    const single = /^\s*(1fr|none)\s*$/.test(cols);
+    const mm = +((cols.match(/minmax\(\s*(\d+)px/) || [])[1] || 0);
+    if (single || mm >= 240) console.log(`  ok   폰(390px) 파이프라인 그리드 = "${cols.trim()}" — 단계 이름이 굶지 않는다`);
+    else { pbad++; console.error(`  FAIL 폰에서 .pipeline-grid 가 "${cols.trim()}" — 칸이 좁아 .pl-age(shrink 불가)가 이름을 굶긴다`); }
+  }
+  if (/\.pl-name\{flex:1 1 auto;min-width:0;\}/.test(hp))
+    console.log("  ok   .pl-name 이 남는 폭을 먼저 가져간다");
+  else { pbad++; console.error("  FAIL .pl-name 에 flex:1 1 auto;min-width:0 이 없다 — 나이 문자열이 길면 이름이 사라진다"); }
+  rtBad += pbad;
+} catch (e) { console.error("  FAIL 파이프라인 폰 레이아웃 검사 실패:", e.message); rtBad += 1; }
+
 // ── [V33.123] AI 운영상태 스냅샷 다운로드 — 실제로 실행해 본다 ──────────────
 //   버튼·핸들러·함수 셋 중 하나만 어긋나도 "눌러도 아무 일이 없는 버튼" 이 된다.
 //   이 저장소는 그런 손잡이를 여러 번 만들었다(설정은 있는데 코드가 안 읽던 82개 키).
