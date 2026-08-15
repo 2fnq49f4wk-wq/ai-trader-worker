@@ -8,7 +8,7 @@
      인데, 지금까지 화면에서 그걸 알 방법이 전혀 없었다(카카오톡 인앱 브라우저는 특히 강하게 캐시한다).
      서버가 내려주는 build 와 이 값을 비교해 다르면 배너로 알린다.
      ※ src/index.js 의 _BUILD_VER 와 항상 같아야 한다 — check-html-js 가 강제한다. -->
-<meta name="lux-build" content="V33.145">
+<meta name="lux-build" content="V33.146">
 <title>LUX-ENGINE V10</title>
 <link rel="icon" type="image/svg+xml" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'%3E%3Crect width='100' height='100' fill='%23000'/%3E%3Cpath fill='%23fff' d='M50 8 L53 41.7 L70.7 29.3 L58.3 47 L92 50 L58.3 53 L70.7 70.7 L53 58.3 L50 92 L47 58.3 L29.3 70.7 L41.7 53 L8 50 L41.7 47 L29.3 29.3 L47 41.7 Z'/%3E%3Cpath fill='%23b6bcc6' d='M50 50 L50 8 L53 41.7 Z M50 50 L70.7 29.3 L58.3 47 Z M50 50 L92 50 L58.3 53 Z M50 50 L70.7 70.7 L53 58.3 Z M50 50 L50 92 L47 58.3 Z M50 50 L29.3 70.7 L41.7 53 Z M50 50 L8 50 L41.7 47 Z M50 50 L29.3 29.3 L47 41.7 Z'/%3E%3C/svg%3E">
 <script>
@@ -15148,13 +15148,25 @@ html[data-theme="light"]:root .rail-view small{ color:var(--t3); }
       var P = alt.port && alt.port.all, TS = alt.tradeState;
       var rows2 = [];
       if(P && P.ready){
-        var pfCol = P.profitFactor >= 1.3 ? C.pos : (P.profitFactor >= 1.0 ? C.amb : C.neg);
+        /* [V33.146] ★서버가 의도적으로 비우는 필드를 렌더러가 몰랐다★
+           V33.135 부터 all 범위의 profitFactor 는 통화혼합(원+달러) 금액합이라 무의미해서
+           서버가 null 로 비우고 profitFactorMixedCcy 플래그를 단다(us/kr 은 단일통화라 유효).
+           렌더러는 그걸 모른 채 .toFixed 를 불렀고, 패널 전체가 "표시 오류" 로 떨어졌다.
+           통화중립 대체값은 omega — 수익률 기준 이익합/손실합이라 정의가 PF 와 같다.
+           ready 인 P 라도 개별 필드는 null 일 수 있다는 전제로 전부 has() 를 통과시킨다. */
+        var pfV = has(P.profitFactor) ? P.profitFactor : (has(P.omega) ? P.omega : null);
+        var pfAlt = !has(P.profitFactor) && has(pfV);
+        var pfCol = !has(pfV) ? C.dim : (pfV >= 1.3 ? C.pos : (pfV >= 1.0 ? C.amb : C.neg));
         var exCol = P.expectancy > 0 ? C.pos : C.neg;
-        rows2.push(['승률 · 표본', em((P.winRate*100).toFixed(1)+'%') + ' <span class="sub">' + n0(P.n) + '건 (승 '+n0(P.nWin)+' / 패 '+n0(P.nLoss)+')</span>']);
-        rows2.push(['1거래 기대값', col((P.expectancy>0?'+':'')+P.expectancy.toFixed(3)+'%', exCol)
-          + ' <span class="sub">평균이익 +'+P.avgWin.toFixed(2)+'% / 평균손실 −'+P.avgLoss.toFixed(2)+'%</span>']);
-        rows2.push(['손익비 · 위험대비', col(P.profitFactor.toFixed(2), pfCol)
-          + ' <span class="sub">위험대비수익 '+P.riskReturn.toFixed(3)+' · 최대연속손실 '+n0(P.maxLossStreak)+'</span>']);
+        var f = function(v, d, suf){ return has(v) ? v.toFixed(d)+(suf||'') : '—'; };
+        rows2.push(['승률 · 표본', em(has(P.winRate) ? (P.winRate*100).toFixed(1)+'%' : '—') + ' <span class="sub">' + n0(P.n) + '건 (승 '+n0(P.nWin)+' / 패 '+n0(P.nLoss)+')</span>']);
+        rows2.push(['1거래 기대값', (has(P.expectancy) ? col((P.expectancy>0?'+':'')+P.expectancy.toFixed(3)+'%', exCol) : NIL)
+          + ' <span class="sub">평균이익 +'+f(P.avgWin,2,'%')+' / 평균손실 −'+f(P.avgLoss,2,'%')+'</span>']);
+        rows2.push([pfAlt ? '손익비(수익률) · 위험대비' : '손익비 · 위험대비',
+          (has(pfV) ? col(pfV.toFixed(2), pfCol) : NIL)
+          + ' <span class="sub">'
+          + (pfAlt ? '통화혼합이라 금액 PF 는 무효 → 수익률 기준(Omega) · ' : '')
+          + '위험대비수익 '+f(P.riskReturn,3)+' · 최대연속손실 '+n0(P.maxLossStreak)+'</span>']);
         // [V33.116] ★이 성적이 운과 구별되는가★ — SQN(Van Tharp) = √n×평균/표준편차 = 기대값 t검정.
         //   모델 쪽엔 IC 의 t 를 늘 띄우면서 정작 실제 원장은 승률·손익비만 보여줬다.
         //   Van Tharp 대역: <1.6 미흡 / 1.6~2.0 보통 / 2.0~2.5 양호 / >2.5 우수.
@@ -15168,13 +15180,15 @@ html[data-theme="light"]:root .rail-view small{ color:var(--t3); }
         // 하방·꼬리 — 평균과 표준편차만 보면 "크게 한 번 터지는" 구조가 안 보인다.
         if(has(P.sortino) || has(P.omega) || has(P.tailRatio)){
           var tail = has(P.tailRatio) ? P.tailRatio : null;
+          /* [V33.146] 조각을 이어붙이면 앞이 비었을 때 ' · ' 로 시작한다 — 배열로 모아 join.
+             pfAlt(통화혼합) 일 때 Omega 는 위 '손익비(수익률)' 줄이 이미 같은 값을 보여준다. */
+          var tp = [];
+          if(has(P.omega) && !pfAlt) tp.push('Omega '+P.omega.toFixed(2));
+          if(tail!=null) tp.push('꼬리비율 '+col(tail.toFixed(2), tail>=1?C.pos:C.neg));
+          if(has(P.payoff)) tp.push('손익비(수익률) '+P.payoff.toFixed(2));
+          if(has(P.kelly)) tp.push('Kelly '+(P.kelly*100).toFixed(1)+'%');
           rows2.push(['하방 · 꼬리', (has(P.sortino)?'Sortino '+P.sortino.toFixed(2):'—')
-            + ' <span class="sub">'
-            + (has(P.omega)?'Omega '+P.omega.toFixed(2):'')
-            + (tail!=null?' · 꼬리비율 '+col(tail.toFixed(2), tail>=1?C.pos:C.neg):'')
-            + (has(P.payoff)?' · 손익비(수익률) '+P.payoff.toFixed(2):'')
-            + (has(P.kelly)?' · Kelly '+(P.kelly*100).toFixed(1)+'%':'')
-            + '</span>']);
+            + (tp.length ? ' <span class="sub">'+tp.join(' · ')+'</span>' : '')]);
         }
         // [V33.125] ★계좌 낙폭이 아니라 '거래수익률 수열' 의 낙폭★ — 이름에 그대로 쓴다.
         //   거래당 리스크가 자산의 0.5~3% 라 계좌 낙폭은 이보다 훨씬 작다. 혼동하면

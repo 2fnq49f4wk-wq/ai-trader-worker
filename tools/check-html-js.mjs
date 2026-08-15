@@ -79,6 +79,34 @@ try {
                port:{all:{ready:false,n:4}}, tradeState:{us:'HALTED',kr:'ACTIVE',reason:null},
                chain:{techK:null,finalCal:null,dualShift:null,evByVol:0,protect:{cooldownMin:90,lowProfitLockMin:360,enabled:true}},r2:{bound:false,v:null,ageSec:null},gate:{rows:[],byP:[],scored:0},audit:{ok:true,checked:0,nIssues:0,issues:[]}},
           thr:{us:null, kr:{n:0,thr:null,fixed:0.55}} }, []],
+        /* [V33.146] ★서버가 실제로 내려주는 모양★ — portfolioStatsNightly 는 all.profitFactor 를
+           통화혼합이라 일부러 null 로 비운다(us/kr 은 유효). 종전 fixture 는 profitFactor:1.31 로
+           채워 둬서 이 경로를 한 번도 안 밟았고, 실제 운영에서 패널이 통째로
+           "표시 오류: null is not an object (evaluating 'P.profitFactor.toFixed')" 로 죽었다.
+           ready:true 인데 개별 필드는 null 일 수 있다 — 그 조합을 여기서 강제한다.
+           아래 정적 검사(서버 null 필드 ↔ fixture)가 이 목록이 서버와 어긋나면 실패시킨다. */
+        portMixedCcy: [{ aiReady:true, scalp:{}, samples:{}, committee:{},
+          alt:{ port:{ all:{ ready:true, n:212, winRate:0.523, nWin:111, nLoss:101,
+                  avgWin:3.42, avgLoss:2.61, expectancy:0.544,
+                  profitFactor:null, profitFactorMixedCcy:true,
+                  profitFactorNote:'통화혼합(원+달러) — 금액 기준 PF 는 무의미. 통화중립 지표는 omega',
+                  riskReturn:0.118, sd:4.1, maxLossStreak:6,
+                  sqn:1.72, edgeT:1.72, edgeDf:180, edgePNeg:0.043,
+                  sortino:1.21, omega:2.278,
+                  tailRatio:null, payoff:null, kelly:null,
+                  tradeSeqUlcer:6.2, tradeSeqUpi:null, tradeSeqMaxDD:18.4,
+                  tradeSeqRet:112, spanDays:null, ts:Date.now() } },
+                tradeState:null, chain:null, r2:null, gate:null, audit:null },
+          thr:{} }, []],
+        /* 전부 null — ready 만 참이고 나머지가 비어도 패널은 살아야 한다(서버 예외 시의 모양). */
+        portAllNull: [{ aiReady:true, scalp:{}, samples:{}, committee:{},
+          alt:{ port:{ all:{ ready:true, n:11, winRate:null, nWin:null, nLoss:null,
+                  avgWin:null, avgLoss:null, expectancy:null, profitFactor:null,
+                  riskReturn:null, maxLossStreak:null, omega:null, sortino:null,
+                  tailRatio:null, payoff:null, kelly:null,
+                  tradeSeqUlcer:null, tradeSeqUpi:null, tradeSeqMaxDD:null,
+                  tradeSeqRet:null, spanDays:null } } },
+          thr:{} }, []],
         nullMode: [null, null]
       };
       var errs = [];
@@ -100,6 +128,47 @@ try {
   }
 } catch (e) {
   console.error("  WARN 런타임 검사 자체 실패:", e.message);
+}
+
+// ── [V33.146] 서버가 null 로 내려보내는 필드는 ★반드시★ 위 fixture 에 null 로 들어간다 ──
+//   실제 사고: V33.135 가 서버에서 all.profitFactor 를 null 로 비웠는데(통화혼합이라 옳은 결정)
+//   렌더러는 그대로 .toFixed 를 불렀다. 게이트 fixture 는 profitFactor:1.31 로 채워져 있어서
+//   19개 게이트가 전부 통과한 채 배포됐고, 사용자 화면에서 패널이 통째로 죽었다.
+//   원인은 렌더러 한 줄이 아니라 ★fixture 가 서버와 따로 논 것★ 이다. 그래서 여기서는
+//   서버 코드에서 "null 이 될 수 있는 필드" 를 직접 뽑아 fixture 와 대조한다 —
+//   서버가 새 필드를 비우면 이 검사가 먼저 깨진다.
+try {
+  const srcN = readFileSync(new URL("../src/index.js", import.meta.url), "utf8");
+  const gateSelf = readFileSync(new URL("./check-html-js.mjs", import.meta.url), "utf8");
+  const nul = new Set();
+  // (1) portfolioStatistics 의 반환 리터럴 — `x: cond != null ? … : null`
+  const retIdx = srcN.indexOf("ready: true, n: n, market: o.market");
+  if (retIdx > 0) {
+    const block = srcN.slice(retIdx, srcN.indexOf("ts: Date.now()", retIdx));
+    for (const mm of block.matchAll(/(\w+):\s*[^,]*?!=\s*null\s*\?[^,]*?:\s*null/g)) nul.add(mm[1]);
+    // (2) `let x = null` 로 선언된 변수를 그대로 싣는 필드(tradeSeqUpi 가 그렇다)
+    const lets = new Set([...srcN.matchAll(/\blet\s+(\w+)\s*=\s*null\b/g)].map((x) => x[1]));
+    for (const mm of block.matchAll(/(\w+):\s*(\w+)\s*,/g)) if (lets.has(mm[2])) nul.add(mm[1]);
+  }
+  // (3) 야간 집계가 사후에 비우는 필드 — `all.profitFactor = null`
+  for (const mm of srcN.matchAll(/\b(?:all|us|kr)\.(\w+)\s*=\s*null\b/g)) nul.add(mm[1]);
+
+  if (!nul.size) { console.error("  FAIL 서버 null 필드를 하나도 못 뽑았다 — 검사가 헛돈다"); rtBad += 1; }
+  else {
+    // fixture 는 이 파일 자신의 CASES 리터럴이다.
+    const fixIdx = gateSelf.indexOf("portMixedCcy:");
+    const fix = fixIdx > 0 ? gateSelf.slice(fixIdx, gateSelf.indexOf("nullMode:", fixIdx)) : "";
+    const miss = [...nul].filter((f) => !new RegExp("\\b" + f + "\\s*:\\s*null\\b").test(fix));
+    if (miss.length) {
+      console.error(`  FAIL 서버가 비우는 필드가 fixture 에 없다: ${miss.join(", ")} — 렌더러가 그 경로를 한 번도 안 밟는다`);
+      rtBad += 1;
+    } else {
+      console.log(`  ok   서버 null 가능 필드 ${nul.size}개(${[...nul].join(",")}) 전부 fixture 에서 실제로 렌더된다`);
+    }
+  }
+} catch (e) {
+  console.error("  FAIL null 필드 대조 검사 실패:", e.message);
+  rtBad += 1;
 }
 
 // ── [V33.123] AI 운영상태 스냅샷 다운로드 — 실제로 실행해 본다 ──────────────
