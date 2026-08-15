@@ -8,7 +8,7 @@
      인데, 지금까지 화면에서 그걸 알 방법이 전혀 없었다(카카오톡 인앱 브라우저는 특히 강하게 캐시한다).
      서버가 내려주는 build 와 이 값을 비교해 다르면 배너로 알린다.
      ※ src/index.js 의 _BUILD_VER 와 항상 같아야 한다 — check-html-js 가 강제한다. -->
-<meta name="lux-build" content="V33.146">
+<meta name="lux-build" content="V33.147">
 <title>LUX-ENGINE V10</title>
 <link rel="icon" type="image/svg+xml" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'%3E%3Crect width='100' height='100' fill='%23000'/%3E%3Cpath fill='%23fff' d='M50 8 L53 41.7 L70.7 29.3 L58.3 47 L92 50 L58.3 53 L70.7 70.7 L53 58.3 L50 92 L47 58.3 L29.3 70.7 L41.7 53 L8 50 L41.7 47 L29.3 29.3 L47 41.7 Z'/%3E%3Cpath fill='%23b6bcc6' d='M50 50 L50 8 L53 41.7 Z M50 50 L70.7 29.3 L58.3 47 Z M50 50 L92 50 L58.3 53 Z M50 50 L70.7 70.7 L53 58.3 Z M50 50 L50 92 L47 58.3 Z M50 50 L29.3 70.7 L41.7 53 Z M50 50 L8 50 L41.7 47 Z M50 50 L29.3 29.3 L47 41.7 Z'/%3E%3C/svg%3E">
 <script>
@@ -14744,7 +14744,12 @@ html[data-theme="light"]:root .rail-view small{ color:var(--t3); }
   function renderStripTags(d){
     var el = $id('nlvStripTags'); if(!el) return;
     var scan = d.scan || {}, mode = d.mode || {}, t = [];
-    t.push('<span class="nlv-tag '+(mode.aiReady?'hot':'warn')+'">'+(mode.aiReady?'AI 자율운용':'규칙 비상운용')+'</span>');
+    /* [V33.146] '아직 안 왔다' 와 '꺼져 있다' 는 다른 사실이다.
+       acc.mode 초기값이 {} 라 종전엔 데이터가 오기 전/실패 시에도 단정적으로
+       "규칙 비상운용" 이라고 적었다 — 없는 사고를 화면이 만들어낸 셈이다. */
+    t.push(mode.aiReady == null
+      ? '<span class="nlv-tag">운용모드 확인 중</span>'
+      : '<span class="nlv-tag '+(mode.aiReady?'hot':'warn')+'">'+(mode.aiReady?'AI 자율운용':'규칙 비상운용')+'</span>');
     if(scan.shock && scan.shock.mode && scan.shock.mode !== 'none'){
       var lbl = {crash:'폭락 방어',rally:'대형호재',rebound:'반등(dip)',fomcPre:'FOMC 임박'}[scan.shock.mode] || scan.shock.mode;
       t.push('<span class="nlv-tag warn">레짐 '+esc(lbl)+' sev'+esc(scan.shock.sev)+'</span>');
@@ -14798,12 +14803,13 @@ html[data-theme="light"]:root .rail-view small{ color:var(--t3); }
   function renderKpi(d){
     var el = $id('nlvKpi'); if(!el) return;
     var scan = d.scan || {}, mode = d.mode || {};
-    var c = mode.committee || {}, on = 0;
-    ['mind','dnn','gbdt'].forEach(function(k){ if(c[k]) on++; });
-    ['xgb','lgb','cat'].forEach(function(k){ if(c[k] && c[k].trusted) on++; });
+    var c = mode.committee, on = 0;
+    ['mind','dnn','gbdt'].forEach(function(k){ if(c && c[k]) on++; });
+    ['xgb','lgb','cat'].forEach(function(k){ if(c && c[k] && c[k].trusted) on++; });
     var dur = scan.durMs ? (scan.durMs/1000).toFixed(0)+'초' : '—';
     var st = [
-      ['위원회 가동', on+' / 6', on>=3?'good':(on>0?'warn':'off')],
+      // [V33.146] committee 가 아예 없으면 '0 / 6'(전원 정지)이 아니라 '—'(미확인)이다.
+      ['위원회 가동', c ? on+' / 6' : '—', c ? (on>=3?'good':(on>0?'warn':'off')) : ''],
       ['처리 속도', scan.rate!=null ? scan.rate+' 종목/s' : '—', ''],
       ['스캔 소요', dur, '']
     ];
@@ -15573,7 +15579,14 @@ html[data-theme="light"]:root .rail-view small{ color:var(--t3); }
       if(!mode) return;
       acc.mode = mode;
       if(!acc.scan || acc.scan.ts == null) acc.scan = mode.scan || acc.scan;
-      renderRailAiMode(mode, acc.picks);
+      /* [V33.146] ★렌더 실패가 '운용 상태'로 둔갑하지 않게 격리한다★
+         종전엔 여기서 renderRailAiMode 가 던지면 .then 이 통째로 중단되고 아래 catch 가
+         조용히 삼켰다. 그러면 acc.mode 는 채워졌는데 paintLive 가 안 돌아 상단 배지와
+         KPI 는 초기값 {} 을 그대로 본다 — 화면이 "규칙 비상운용 · 위원회 0/6" 이라고
+         ★거짓 보고★ 를 했다(실제 위원회는 6/6 가동 중이었다).
+         사이드바 하나가 죽는 것과 시스템이 멈춘 것은 전혀 다른 사건이다. */
+      try { renderRailAiMode(mode, acc.picks); }
+      catch(e){ try{ console.error('renderRailAiMode 실패 — 본화면은 계속 그린다', e); }catch(_){} }
       // 픽이 아직 없으면 코어를 그리지 않는다 — 빈 상태를 "IDLE"로 잘못 확정짓지 않기 위함.
       if(acc.picks.length){ paintLive(acc, pipeSteps); cacheLive(acc, pipeSteps); }
     })['catch'](function(){});

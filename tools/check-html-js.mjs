@@ -171,6 +171,27 @@ try {
   rtBad += 1;
 }
 
+// ── [V33.146] 렌더 실패가 '운용 상태'로 둔갑하면 안 된다 ────────────────────
+//   실제 사고: renderRailAiMode 가 던지자 loadLive 의 ②번 leg 이 통째로 중단되고
+//   catch(){} 가 삼켰다. paintLive 가 안 돌아 상단 배지·KPI 는 초기값 {} 을 그대로 읽고
+//   "규칙 비상운용 · 위원회 가동 0 / 6" 이라고 적었다 — 실제로는 6/6 가동 중이었다.
+//   사이드바 한 칸이 깨진 것과 매매엔진이 멈춘 것은 전혀 다른 사건인데 화면이 후자로 보고했다.
+try {
+  const hj = readFileSync(new URL("../public/index.html", import.meta.url), "utf8");
+  let cbad = 0;
+  const chk = (re, ok, ng) => { if (re.test(hj)) console.log("  ok   " + ok); else { cbad++; console.error("  FAIL " + ng); } };
+  chk(/try \{ renderRailAiMode\(mode, acc\.picks\); \}\s*\n\s*catch/,
+    "레일 렌더가 던져도 본화면(배지·KPI·캐시)은 계속 그린다",
+    "renderRailAiMode 가 격리되지 않았다 — 한 번 던지면 배지·KPI 가 초기값으로 굳어 거짓 상태를 보고한다");
+  chk(/mode\.aiReady == null\s*\n\s*\?\s*'<span class="nlv-tag">운용모드 확인 중/,
+    "운용모드 미확인과 '규칙 비상운용' 을 구분한다",
+    "데이터가 오기 전에도 단정적으로 '규칙 비상운용' 이라 적는다 — 없는 사고를 만들어낸다");
+  chk(/\['위원회 가동', c \? on\+' \/ 6' : '—'/,
+    "committee 가 없으면 '0 / 6'(전원 정지)이 아니라 '—'(미확인)",
+    "committee 가 비어도 '0 / 6' 이라 적는다 — 미확인을 전원 정지로 오보한다");
+  rtBad += cbad;
+} catch (e) { console.error("  FAIL 거짓상태 보고 검사 실패:", e.message); rtBad += 1; }
+
 // ── [V33.123] AI 운영상태 스냅샷 다운로드 — 실제로 실행해 본다 ──────────────
 //   버튼·핸들러·함수 셋 중 하나만 어긋나도 "눌러도 아무 일이 없는 버튼" 이 된다.
 //   이 저장소는 그런 손잡이를 여러 번 만들었다(설정은 있는데 코드가 안 읽던 82개 키).
