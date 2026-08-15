@@ -170,13 +170,47 @@ try {
       && r2.j.aiMode && r2.j.aiMode.endpoint === "/api/ai-mode";
     if (okPartial) console.log("  ok   일부 실패해도 나머지는 수집되고 실패 사유가 파일에 남는다");
     else { wbad++; console.error("  FAIL 부분 실패 처리 이상: " + JSON.stringify(r2.j && { e: r2.j.fetchErrors, m: r2.j.mlStatus, p: r2.j.pipeline })); }
-    if (r2.toasts.some((t) => /수집 실패/.test(t))) console.log("  ok   부분 실패를 사용자에게 알린다");
+    if (r2.toasts.some((t) => /수집 실패/.test(t))) 
+console.log("  ok   부분 실패를 사용자에게 알린다");
     else { wbad++; console.error("  FAIL 부분 실패인데 성공한 것처럼 알린다"); }
   }
   rtBad += wbad;
 } catch (e) {
   console.error("  FAIL AI 운영상태 다운로드 검사 실패:", e.message);
   rtBad += 1;
+}
+
+
+// ══ [V33.144] AI 운용상태가 ★두뇌 화면 밖에서도★ 채워지는가 ══════════════════
+//   사고: renderRailAiMode 를 부르는 곳이 loadLive 한 곳뿐이었고, loadLive 는 liveStart()
+//   안에서만 돌며 liveStart 는 `id === 'nnviz'` 일 때만 호출됐다. 즉 AI 두뇌 화면에
+//   들어가야만 채워지고 다른 화면에서는 초기 문구("확인 중…")가 그대로 남았다.
+//   데스크톱은 그 화면 밖에서 레일이 숨겨져 티가 덜 났지만 ★모바일은 #mobAiMode 가
+//   모든 화면에 보인다★ — 사용자가 본 "계속 로딩중" 이 그것이다.
+//   (헤드리스 크로뮴으로 재현·검증했다: 수정 전 5케이스 전부 "확인 중…" 고착, 수정 후 전부 채워짐)
+{
+  let abad = 0;
+  const aok = (m) => console.log("  ok   " + m);
+  const abd = (m) => { abad++; console.error("  FAIL " + m); };
+  const hh = readFileSync(new URL("../public/index.html", import.meta.url), "utf8");
+
+  if (/function aiModeStart\(\)/.test(hh)) aok("두뇌 화면과 무관한 독립 로더(aiModeStart)가 있다");
+  else abd("독립 로더가 없다 — 두뇌 화면에 들어가야만 AI 운용상태가 채워진다");
+
+  if (/watchPages\(\);[\s\S]{0,400}?aiModeStart\(\);/.test(hh)) aok("부팅 시 조건 없이 시작한다");
+  else abd("부팅 경로에서 aiModeStart 를 부르지 않는다 — 첫 화면이 두뇌가 아니면 영영 안 채워진다");
+
+  const mm = hh.match(/if\(id === 'nnviz'\) liveStart\(\); else liveStop\(\);[\s\S]{0,320}/);
+  if (mm && /aiModeStart\(\);/.test(mm[0])) aok("페이지 전환 시에도 로더가 유지된다(liveStop 과 함께 꺼지지 않는다)");
+  else abd("페이지 전환에서 AI 운용상태 로더가 함께 멈춘다 — '계속 로딩중' 재발");
+
+  if (/aiModePaint\(null\)/.test(hh)) aok("조회 실패 시 '조회 실패' 상태를 그린다(초기 문구에 머물지 않는다)");
+  else abd("조회 실패 시 초기 문구 그대로 남는다 — 무엇이 일어났는지 화면이 말하지 않는다");
+
+  if (/luxAiModeCache/.test(hh)) aok("마지막 성공값을 캐시해 즉시 표시한다");
+  else abd("캐시가 없다 — 매번 네트워크를 기다리며 '확인 중…' 이 보인다");
+
+  rtBad += abad;
 }
 
 process.exit((bad + rtBad) ? 1 : 0);

@@ -14417,6 +14417,39 @@ html[data-theme="light"]:root .rail-view small{ color:var(--t3); }
         전부 서버 실데이터. 연출만 하고 수치는 만들지 않는다.
      ═════════════════════════════════════════════════════════════ */
   var LIVE = { timer:null, paused:false, active:false, data:null };
+  /* ══ [V33.144] ★AI 운용상태가 영원히 "확인 중…" 이던 이유★ ══
+     renderRailAiMode 를 부르는 곳이 loadLive ★한 곳뿐★ 이었고, loadLive 는
+     liveStart() 안에서만 돌며 liveStart 는 `id === 'nnviz'` 일 때만 호출된다.
+     즉 AI 두뇌 화면에 들어가야만 채워지고, 다른 화면에서는 초기 문구 그대로 남는다.
+     데스크톱은 그 화면 밖에서 레일이 숨겨져 티가 덜 났지만, ★모바일은 이 블록(#mobAiMode)이
+     모든 화면에 보인다★ — 그래서 "계속 로딩중" 으로 보였다.
+     → 브레인 화면과 무관하게 도는 독립 로더를 둔다. /api/ai-mode 는 서버 SWR(20s)라
+       2분 폴링이 싸다. 마지막 성공값을 캐시해 두고 즉시 그린 뒤 최신값으로 덮는다. */
+  var AIM = { timer:null, last:null };
+  function aiModePaint(mode){
+    try{ renderRailAiMode(mode, (LIVE.data && LIVE.data.picks) || []); }catch(e){}
+  }
+  function aiModePull(){
+    return fetch('/api/ai-mode').then(function(r){ return r.json(); }).then(function(mode){
+      if(!mode || typeof mode !== 'object') throw new Error('empty');
+      AIM.last = mode;
+      try{ localStorage.setItem('luxAiModeCache', JSON.stringify({ m:mode, ts:Date.now() })); }catch(e){}
+      aiModePaint(mode);
+    })['catch'](function(){
+      /* ★실패해도 "확인 중…" 에 머물지 않는다.★ 마지막 값이 있으면 그걸 다시 그리고,
+         없으면 렌더러의 조회실패 상태를 그린다 — 무엇이 일어났는지 화면이 말해야 한다. */
+      if(AIM.last) aiModePaint(AIM.last); else aiModePaint(null);
+    });
+  }
+  function aiModeStart(){
+    if(AIM.timer) return;
+    try{
+      var c = JSON.parse(localStorage.getItem('luxAiModeCache') || 'null');
+      if(c && c.m){ AIM.last = c.m; aiModePaint(c.m); }   /* 즉시 표시(체감 0ms) */
+    }catch(e){}
+    aiModePull();
+    AIM.timer = setInterval(function(){ if(!document.hidden) aiModePull(); }, 120000);
+  }
   // 두뇌 페이지 안의 뷰: 'live'(작동 화면) | 'struct'(구조 관측)
   var BVIEW = 'live';
   try{ if(localStorage.getItem('luxBrainView') === 'struct') BVIEW = 'struct'; }catch(e){}
@@ -15487,6 +15520,8 @@ html[data-theme="light"]:root .rail-view small{ color:var(--t3); }
     }
     hookGlobals();
     watchPages();          // 페이지 활성 상태를 직접 관찰 — 누가 바꾸든 사이드바가 따라간다
+    // [V33.144] AI 운용상태는 ★어느 화면에 있든★ 채워져야 한다 — 브레인 화면 진입과 무관하게 시작.
+    aiModeStart();
     // 새로고침 직후 이미 두뇌 페이지면 즉시 구동
     railGate();
     var nn = $id('page-nnviz');
@@ -15514,6 +15549,9 @@ html[data-theme="light"]:root .rail-view small{ color:var(--t3); }
     if(id === __lastPage) return;
     __lastPage = id;
     try{ if(id === 'nnviz') liveStart(); else liveStop(); }catch(e){}
+    // [V33.144] liveStop 은 두뇌 화면의 무거운 렌더(코어 SVG·판정 스트림)만 멈춘다.
+    //   AI 운용상태 로더는 ★멈추지 않는다★ — 그게 멈춰서 "계속 로딩중" 이 됐다.
+    try{ aiModeStart(); }catch(e){}
     // [V33.33] 지표·환율 페이지의 실시간 폴링을 페이지 전환에 맞춰 켜고 끈다
     //   (다른 페이지에 있을 때 헛호출하지 않도록).
     try{
