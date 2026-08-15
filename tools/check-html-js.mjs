@@ -204,11 +204,40 @@ console.log("  ok   부분 실패를 사용자에게 알린다");
   if (mm && /aiModeStart\(\);/.test(mm[0])) aok("페이지 전환 시에도 로더가 유지된다(liveStop 과 함께 꺼지지 않는다)");
   else abd("페이지 전환에서 AI 운용상태 로더가 함께 멈춘다 — '계속 로딩중' 재발");
 
-  if (/aiModePaint\(null\)/.test(hh)) aok("조회 실패 시 '조회 실패' 상태를 그린다(초기 문구에 머물지 않는다)");
+  if (/상태 조회 실패[\s\S]{0,120}?자동 재시도/.test(hh)) aok("조회 실패 시 사유를 적는다(초기 문구에 머물지 않는다)");
   else abd("조회 실패 시 초기 문구 그대로 남는다 — 무엇이 일어났는지 화면이 말하지 않는다");
+
+  // [V33.145] 세 갈래 실패를 각각 막았는지 — 늦은 DOM · 응답 지연 · 렌더 예외
+  if (/function aiModePump\(\)/.test(hh) && /if\(!aiModeTargets\(\)\.length\) return;/.test(hh))
+    aok("대상 DOM 이 늦게 생겨도 펌프가 다시 그린다(요소 없으면 조용히 return 하던 경로)");
+  else abd("늦게 생긴 DOM 을 다시 그리지 않는다 — 첫 페인트가 무효면 최대 2분간 '확인 중…'");
+  if (/new AbortController\(\)/.test(hh) && /응답 지연/.test(hh))
+    aok("응답이 12초를 넘으면 끊고 '응답 지연' 으로 표시한다(무한 대기 없음)");
+  else abd("fetch 에 시간 제한이 없다 — 응답이 안 오면 영원히 로딩중");
+  if (/◌ 표시 오류/.test(hh))
+    aok("렌더러가 던지면 예외 메시지를 화면에 적는다(삼키지 않는다)");
+  else abd("렌더 예외를 삼킨다 — 초기 문구가 그대로 남는다");
+  const gateIdx = hh.indexOf("railGate();"), startIdx = hh.indexOf("aiModeStart();");
+  if (gateIdx > 0 && startIdx > gateIdx)
+    aok("aiModeStart 가 railGate(레일 DOM 생성) ★뒤★ 에 온다");
+  else abd("aiModeStart 가 railGate 앞에 있다 — 첫 페인트 때 #railAiMode 가 아직 없다");
+  if (/am\.id = 'mobAiMode'[\s\S]{0,400}?aiModeRepaint\(\)/.test(hh))
+    aok("모바일 #mobAiMode 생성 직후 곧바로 다시 그린다");
+  else abd("모바일 요소 생성 후 재페인트가 없다 — 다음 폴링(2분)까지 '확인 중…'");
 
   if (/luxAiModeCache/.test(hh)) aok("마지막 성공값을 캐시해 즉시 표시한다");
   else abd("캐시가 없다 — 매번 네트워크를 기다리며 '확인 중…' 이 보인다");
+
+  // [V33.145] 판 버전 표식 — src 의 _BUILD_VER 와 ★반드시★ 같아야 한다.
+  //   다르면 배너가 영원히 뜨거나(거짓 경보) 영원히 안 뜬다(캐시 문제를 못 잡는다).
+  const src2 = readFileSync(new URL("../src/index.js", import.meta.url), "utf8");
+  const mv = (hh.match(/<meta name="lux-build" content="([^"]+)"/) || [])[1];
+  const sv = (src2.match(/const _BUILD_VER = "([^"]+)"/) || [])[1];
+  if (mv && sv && mv === sv) aok(`판 표식 일치 (${mv}) — 서버 build 와 비교해 캐시 문제를 화면이 알린다`);
+  else abd(`판 표식 불일치: index.html "${mv}" vs src "${sv}" — 배너가 거짓으로 뜨거나 안 뜬다`);
+  if (/lux-build-banner/.test(hh) && /location\.replace\(location\.pathname \+ '\?v='/.test(hh))
+    aok("새 버전 배너가 쿼리스트링으로 캐시를 우회한다(단순 reload 는 인앱 브라우저가 또 캐시를 준다)");
+  else abd("버전 불일치 배너가 없거나 캐시 우회를 안 한다");
 
   rtBad += abad;
 }
