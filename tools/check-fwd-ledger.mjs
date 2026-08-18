@@ -118,19 +118,77 @@ const dayIC = (trueIC, n) => trueIC + randn() / Math.sqrt(Math.max(4, n - 3));
   else bad(`음수 IC 모델이 ${pass}/${N} 건 통과했다`);
 }
 
-// ── ⑤ 같은 모델 버전을 두 번 세지 않는다 ───────────────────────────────
-//   하루에 두 번 평가되면 표본이 부풀고 t 가 과장된다. 버전 키로 갱신해야 한다.
+// ── ⑤ [V33.149] 줄의 단위는 ★날짜★ 이고, 겹침은 고수위(hwm)로 막는다 ─────────
+//   ★고친 사고★ 종전 줄 key 는 모델 버전(prev.ts)이었다. 의도("같은 구간을 두 번 세지 않는다")는
+//   옳았지만, 재학습이 멈춘 모델은 key 가 영원히 같아 ★한 줄만 덮어쓴다★ → days 가 1 에 고정되고
+//   ready(days ≥ 3)와 블록 t(줄 2개 이상)를 구조적으로 못 넘는다. 운영 스냅샷(2026-08-18):
+//   flow·stack 은 모델이 7일째 그대로라 fwdDays=1, 매일 재학습되는 xalpha(5)·memo(8)만 쌓였다.
+//   "학습이 멈춘 모델일수록 전진검증도 영영 못 끝낸다" 는 역방향 잠금이었다.
 {
   const src = readFileSync(new URL("../src/index.js", import.meta.url), "utf8");
-  if (/_led\.v\.findIndex\(function \(x\) \{ return x && x\.key === _row\.key; \}\)/.test(src))
-    ok("모델 버전(prev.ts)당 한 줄 — 같은 버전 재평가는 추가가 아니라 갱신");
-  else bad("버전 중복 방지가 없다 — 같은 구간을 두 번 세면 t 가 과장된다");
+  if (/const _day = new Date\(\)\.toISOString\(\)\.slice\(0, 10\);/.test(src)
+      && /_led\.v\.findIndex\(function \(x\) \{ return x && x\.key === _day; \}\)/.test(src))
+    ok("줄 key 가 날짜다 — 재학습 여부와 무관하게 날짜 블록이 쌓인다");
+  else bad("줄 key 가 날짜가 아니다 — 재학습이 멈추면 days 가 1 에 고정된다");
+  if (/_led\.hwmId/.test(src) && /_led\.hwmTs/.test(src)
+      && /Math\.max\(_num\(prev\.maxId, 0\), _num\(_led\.hwmId, 0\)\)/.test(src))
+    ok("고수위(hwm) 이후만 조회한다 — 줄끼리 겹치지 않아 블록 t 의 가정이 성립한다");
+  else bad("고수위가 없다 — 같은 표본을 여러 줄에 나눠 세면 t 가 과장된다");
+  if (/_num\(_led\.ver, 1\) !== _LEDVER/.test(src))
+    ok("원장 스키마 버전이 다르면 버린다 — 구판(버전키·hwm 없음)과 섞으면 두 번 센다");
+  else bad("구판 원장을 이어 쓴다 — 같은 표본이 두 번 세어져 t 가 부풀어 오른다");
+  //   정렬열 = 필터열. 다르면 LIMIT 이 중간을 건너뛰고 hwm 이 그 행을 영구히 버린다.
+  if (/_order = "id ASC"/.test(src) && /ORDER BY " \+ _order/.test(src))
+    ok("정렬을 필터와 같은 열로 맞춘다 — LIMIT 이 중간을 건너뛰어도 표본이 새지 않는다");
+  else bad("정렬열과 필터열이 다르다 — hwm 을 올리는 순간 안 센 행이 영구히 버려진다");
   if (/_led\.featVer !== o\.featVer/.test(src)) ok("featVer 가 바뀌면 원장을 버린다(다른 모델이다)");
   else bad("featVer 변경 시 원장을 이어 쓴다 — 다른 모델의 성적이 섞인다");
   if (/_led\.v\.length > FWDLED\.keepDays/.test(src)) ok(`원장을 최근 ${KEEP}일로 자른다(모델도 시장도 변한다)`);
   else bad("원장이 무한히 자란다");
   if (/COALESCE\(ins_ts, ts\)>=/.test(src)) ok("표본 유입량을 적재시각(ins_ts)으로 센다 — ts 는 봉 날짜라 249배 어긋났다");
   else bad("유입량을 ts 로 센다 — '최근 24h 1건' 같은 오경보가 다시 난다");
+}
+
+// ── ⑥ 재학습이 멈춘 모델도 전진검증을 끝낼 수 있어야 한다 ────────────────────
+//   두 방식을 같은 유입에 돌려 비교한다. 이건 통계 검정이 아니라 ★교착 검사★ 다.
+{
+  const ARRIVE = 380;                 // 하루 유입(운영 실측 근방)
+  const runDays = 12;
+  // 종전: 줄 key = 모델 버전. 재학습이 없으면 버전이 안 바뀐다.
+  const oldWay = (retrains) => {
+    const v = []; let modelVer = 0, consumed = 0;
+    for (let d = 0; d < runDays; d++) {
+      if (retrains) { modelVer = d; consumed = 0; }       // 재학습 → 창 리셋
+      consumed += ARRIVE;                                  // 누적창(겹침) 전체를 다시 센다
+      const row = { key: modelVer, n: consumed, ic: 0.04 };
+      const i = v.findIndex((x) => x.key === row.key);
+      if (i >= 0) v[i] = row; else v.push(row);
+    }
+    return ledgerStats(v);
+  };
+  // 신판: 줄 key = 날짜, 조회는 hwm 이후만 → 줄끼리 비겹침.
+  const newWay = (retrains) => {
+    const v = []; let hwm = 0, arrived = 0;
+    for (let d = 0; d < runDays; d++) {
+      arrived += ARRIVE;
+      const batch = arrived - hwm;                         // hwm 이후만
+      if (batch >= 30) { v.push({ key: "d" + d, n: batch, ic: 0.04 }); hwm = arrived; }
+    }
+    return { ...ledgerStats(v), pooledN: v.reduce((a, e) => a + e.n, 0) };
+  };
+  const oS = oldWay(false), nS = newWay(false);
+  if (oS.days === 1 && !oS.ready) ok(`종전 방식 재현: 재학습 없는 모델은 ${runDays}일 뒤에도 days=1 · ready=false (교착)`);
+  else bad(`종전 방식이 교착을 재현하지 않는다(days=${oS.days} ready=${oS.ready}) — 검사가 헛돈다`);
+  if (nS.days === runDays && nS.ready) ok(`새 방식: 재학습이 없어도 days=${nS.days} · ready=true (교착 해소)`);
+  else bad(`새 방식도 교착이다(days=${nS.days} ready=${nS.ready})`);
+  if (oldWay(true).ready) ok("재학습되는 모델은 종전 방식에서도 통과했다(회귀 아님 — 새 방식이 그 경우를 깨지 않아야 한다)");
+  else bad("종전 방식이 재학습 모델조차 통과 못 시킨다 — 비교 기준이 틀렸다");
+  if (newWay(true).ready) ok("새 방식도 재학습되는 모델을 그대로 통과시킨다");
+  else bad("새 방식이 재학습 모델을 막는다 — 회귀");
+  // ★표본을 두 번 세지 않는다★ — 줄의 합이 실제 유입량을 넘으면 t 가 부풀어 오른다.
+  const nS2 = newWay(false);
+  if (nS2.pooledN === ARRIVE * runDays) ok(`줄 합계 ${nS2.pooledN} = 실제 유입 ${ARRIVE * runDays} — 두 번 세지 않는다`);
+  else bad(`줄 합계 ${nS2.pooledN} ≠ 유입 ${ARRIVE * runDays} — 중복 계수`);
 }
 
 console.log(fails ? "\n전진 원장 계약 위반 " + fails + "건 — 배포 차단" : "\n  ok   전진 원장 계약 통과");

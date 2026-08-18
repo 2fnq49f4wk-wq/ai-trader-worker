@@ -8,7 +8,7 @@
      인데, 지금까지 화면에서 그걸 알 방법이 전혀 없었다(카카오톡 인앱 브라우저는 특히 강하게 캐시한다).
      서버가 내려주는 build 와 이 값을 비교해 다르면 배너로 알린다.
      ※ src/index.js 의 _BUILD_VER 와 항상 같아야 한다 — check-html-js 가 강제한다. -->
-<meta name="lux-build" content="V33.148">
+<meta name="lux-build" content="V33.149">
 <title>LUX-ENGINE V10</title>
 <link rel="icon" type="image/svg+xml" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'%3E%3Crect width='100' height='100' fill='%23000'/%3E%3Cpath fill='%23fff' d='M50 8 L53 41.7 L70.7 29.3 L58.3 47 L92 50 L58.3 53 L70.7 70.7 L53 58.3 L50 92 L47 58.3 L29.3 70.7 L41.7 53 L8 50 L41.7 47 L29.3 29.3 L47 41.7 Z'/%3E%3Cpath fill='%23b6bcc6' d='M50 50 L50 8 L53 41.7 Z M50 50 L70.7 29.3 L58.3 47 Z M50 50 L92 50 L58.3 53 Z M50 50 L70.7 70.7 L53 58.3 Z M50 50 L50 92 L47 58.3 Z M50 50 L29.3 70.7 L41.7 53 Z M50 50 L8 50 L41.7 47 Z M50 50 L29.3 29.3 L47 41.7 Z'/%3E%3C/svg%3E">
 <script>
@@ -3980,6 +3980,10 @@ html[data-theme="light"] .m-brainbar button.active{color:#0b4f9e;background:rgba
         <div class="nlv-funnel-wrap">
           <div class="nlv-sec-h">판정 깔때기 <small>유니버스에서 진입후보까지</small></div>
           <div class="nlv-funnel" id="nlvFunnel"></div>
+          <!-- [V33.149] 위원회 구성 — 종전엔 KPI 타일의 "6 / 6" 하나뿐이라 신규 위원 5종이
+               화면 어디에도 없었다. 정식·잠정·보류를 사유와 함께 그대로 보인다. -->
+          <div class="nlv-sec-h nlv-cm-h">위원회 구성 <small id="nlvCmSub">정식 · 잠정 · 대기</small></div>
+          <div class="nlv-cmlist" id="nlvCommittee"></div>
           <div class="nlv-kpi" id="nlvKpi"></div>
         </div>
       </div>
@@ -7853,7 +7857,8 @@ html[data-theme="light"] .m-brainbar button.active{color:#0b4f9e;background:rgba
       var expMap = { mind: '스태킹', dnn: '딥넷', gbdt: '트리' };
       if (ai.experts && ai.experts.length) {
         html += '<div class="crowd-row"><span class="crowd-k">전문가</span><span class="crowd-sub">' +
-          ai.experts.map(function(e){ return (expMap[e.name] || e.name) + ' ' + Math.round(e.p * 100) + '%'; }).join(' · ') + '</span></div>';
+          /* [V33.149] '~' 는 이제 name 이 아니라 tier 에서 나온다(name 은 조회 키라 손대지 않는다) */
+          ai.experts.map(function(e){ return (expMap[e.name] || e.name) + (e.tier === 'provisional' ? '~' : '') + ' ' + Math.round(e.p * 100) + '%'; }).join(' · ') + '</span></div>';
       }
       if (ai.topFeatures && ai.topFeatures.length) {
         html += '<div class="crowd-row"><span class="crowd-k">주요 근거</span><span class="crowd-sub">' +
@@ -11911,6 +11916,24 @@ html[data-theme="light"] #page-nnviz .nlv-tp-num .p{color:#0b6cd4;}
   text-align:right;font-variant-numeric:tabular-nums;white-space:nowrap;}
 #page-nnviz .nlv-fstep .fv small{display:block;font-size:8.5px;font-weight:400;color:#5f79a2;}
 
+/* [V33.149] 위원회 구성 목록 — 좁은 패널이라 한 줄에 이름·역할·상태만.
+   상태는 색이 아니라 ★글자★ 로도 구분된다(색각 이상·흑백 캡처에서도 읽혀야 한다). */
+#page-nnviz .nlv-cm-h{ margin-top:10px; }
+#page-nnviz .nlv-cmlist{ display:grid; grid-template-columns:1fr 1fr; gap:1px; background:#14203a;
+  border-top:1px solid #14203a; border-bottom:1px solid #14203a; }
+#page-nnviz .nlv-cm{ background:#080d18; padding:5px 8px; display:grid;
+  grid-template-columns:auto 1fr auto; align-items:baseline; gap:5px; min-width:0; }
+#page-nnviz .nlv-cm .cn{ font-family:'IBM Plex Mono',monospace; font-size:9.5px; font-weight:700; color:#c8d8ee; }
+#page-nnviz .nlv-cm .cr{ font-size:8.5px; color:#4a5f82; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+#page-nnviz .nlv-cm .cs{ font-size:8.5px; font-weight:700; white-space:nowrap; letter-spacing:.2px; }
+#page-nnviz .nlv-cm.ok   .cs{ color:#38bdf8; }
+#page-nnviz .nlv-cm.prov .cs{ color:#ffc107; }
+#page-nnviz .nlv-cm.warn .cs{ color:#ff9f43; }
+#page-nnviz .nlv-cm.off  .cs{ color:#5f79a2; }
+#page-nnviz .nlv-cm.ok   .cn{ color:#eaf2ff; }
+#page-nnviz .nlv-cm.off  .cn{ color:#7d90ad; }
+@media (max-width:360px){ #page-nnviz .nlv-cmlist{ grid-template-columns:1fr; } }
+
 /* KPI 타일 */
 #page-nnviz .nlv-kpi{display:grid;grid-template-columns:repeat(3,1fr);gap:1px;background:#14203a;border-top:1px solid #14203a;margin-top:auto;}
 #page-nnviz .nlv-stat{background:#080d18;padding:8px 11px 9px;min-width:0;}
@@ -11963,6 +11986,15 @@ html[data-theme="light"] #page-nnviz .nlv-stat .v.warn{color:#a5730a;}
 html[data-theme="light"] #page-nnviz .nlv-stat .v.off{color:#c62a45;}
 html[data-theme="light"] #page-nnviz .nlv-kpi,html[data-theme="light"] #page-nnviz .nlv-toplist{background:#cdd9ee;}
 html[data-theme="light"] #page-nnviz .nlv-stat,html[data-theme="light"] #page-nnviz .nlv-top{background:#fbfdff;}
+/* [V33.149] 라이트 테마 — 어두운 배경 리터럴을 그대로 두면 흰 화면에서 검은 블록이 된다. */
+html[data-theme="light"] #page-nnviz .nlv-cm{background:#fbfdff;}
+html[data-theme="light"] #page-nnviz .nlv-cmlist{background:#dbe5f2;border-color:#dbe5f2;}
+html[data-theme="light"] #page-nnviz .nlv-cm .cn{color:#12233f;}
+html[data-theme="light"] #page-nnviz .nlv-cm .cr{color:#5b6f8d;}
+html[data-theme="light"] #page-nnviz .nlv-cm.ok .cs{color:#0b6cd4;}
+html[data-theme="light"] #page-nnviz .nlv-cm.prov .cs{color:#a5730a;}
+html[data-theme="light"] #page-nnviz .nlv-cm.warn .cs{color:#b4560a;}
+html[data-theme="light"] #page-nnviz .nlv-cm.off .cs{color:#6d7f9c;}
 html[data-theme="light"] #page-nnviz .nlv-fbar{background:rgba(18,35,63,.08);}
 html[data-theme="light"] #page-nnviz .nlv-pipe,
 html[data-theme="light"] #page-nnviz .nlv-sec-h{border-color:#d5dfee;}
@@ -14745,6 +14777,7 @@ html[data-theme="light"]:root .rail-view small{ color:var(--t3); }
     renderTopList(picks);
     renderStripTags(d);
     renderFunnel(d);
+    renderCommittee(d);
     renderKpi(d);
   }
 
@@ -14826,17 +14859,100 @@ html[data-theme="light"]:root .rail-view small{ color:var(--t3); }
     }).join('');
   }
 
+  /* ═══ [V33.149] 위원회 구성 — 신규 위원까지 전부 보인다 ═══
+     종전 화면은 위원회를 "6 / 6" 이라는 숫자 하나로만 보여줬고, 그 6은 고전 6종
+     (MIND·DNN·GBDT·XGB·LGB·Cat)뿐이었다. FLOW·XALPHA·MEMO(투표 위원), STACK(결합 대체),
+     이중헤드(사분면 프라이어)는 ★화면에 존재하지 않았다★ — 잠정합류로 실제 투표하고 있는데도.
+     역할이 서로 다르므로 한 줄로 뭉뚱그리지 않고 역할을 같이 적는다. */
+  var CMROSTER = [
+    ['mind',   'MIND',   '위원장'],
+    ['dnn',    'DNN',    '딥넷'],
+    ['gbdt',   'GBDT',   '트리'],
+    ['xgb',    'XGB',    '부스터'],
+    ['lgb',    'LGB',    '부스터'],
+    ['cat',    'CAT',    '부스터'],
+    ['flow',   'FLOW',   '수급'],
+    ['xalpha', 'XALPHA', '형식알파'],
+    ['memo',   'MEMO',   '기억'],
+    ['stack',  'STACK',  '결합대체'],
+    ['dual',   'DUAL',   '사분면']
+  ];
+  // 위원 하나의 상태를 ★한 곳에서★ 판정한다 — KPI 타일과 목록이 다른 말을 하면 안 된다.
+  function cmState(key, mode){
+    var c = mode.committee || {}, alt = mode.alt || {};
+    if(key === 'mind' || key === 'dnn' || key === 'gbdt')
+      return c[key] ? {on:1, tag:'정식', cls:'ok'} : {on:0, tag:'미학습', cls:'off'};
+    if(key === 'xgb' || key === 'lgb' || key === 'cat'){
+      var b = c[key];
+      if(!b) return {on:0, tag:'없음', cls:'off'};
+      return b.trusted ? {on:1, tag:'정식', cls:'ok'}
+                       : {on:0, tag:'보류', cls:'warn', why:(b.reason||'신뢰문턱 미달')};
+    }
+    if(key === 'dual'){
+      // 이중헤드는 투표하지 않는다 — 실측 사분면 로짓만큼 확률을 민다.
+      //   그래서 '가동' 의 근거는 모델 학습 여부가 아니라 ★실측표가 있는가★ 다.
+      // ★chain 은 alt 아래에 있다★ — mode.chain 으로 읽으면 항상 undefined 라
+      //   실측표가 멀쩡히 있는데도 영원히 '미측정' 으로 보인다(첫 판에서 실제로 그랬다).
+      var ch = (mode.alt && mode.alt.chain) || mode.chain;
+      var sh = ch && ch.dualShift;
+      var d = alt.dual || {};
+      if(sh && sh.shift) return {on:1, tag:'가동', cls:'ok', why:'실측 사분면 로짓 적용 (n '+(sh.n||0)+')'};
+      return {on:0, tag:'미측정', cls:'off',
+              why:(d.bull&&d.bull.trained ? '헤드는 학습됨 — 사분면 실측표 대기' : '학습 대기')};
+    }
+    var m = alt[key];
+    if(!m) return {on:0, tag:'없음', cls:'off'};
+    if(!m.trained) return {on:0, tag:'미학습', cls:'off',
+      why:'표본 '+(m.samples||0)+'/'+(m.minN||0)+(m.note?' · '+m.note:'')};
+    var a = m.admit;
+    if(a && a.tier === 'full') return {on:1, tag:'정식', cls:'ok', why:a.why};
+    if(a && a.admit) return {on:1, tag:'잠정 ×'+(a.mult!=null?a.mult.toFixed(2):'?'), cls:'prov', why:a.why};
+    return {on:0, tag:'보류', cls:'warn', why:(a&&a.why)||'판정 대기'};
+  }
+  function renderCommittee(d){
+    var el = $id('nlvCommittee'); if(!el) return;
+    var mode = d.mode || {}, sub = $id('nlvCmSub');
+    if(!mode.committee){
+      el.innerHTML = '<div class="nlv-empty">위원회 상태 확인 중…</div>';
+      if(sub) sub.textContent = '확인 중';
+      return;
+    }
+    var nFull = 0, nProv = 0;
+    var html = CMROSTER.map(function(r){
+      var st = cmState(r[0], mode);
+      if(st.cls === 'ok') nFull++; else if(st.cls === 'prov') nProv++;
+      // 학습이 멈춘 위원은 마지막 학습 시도 결과를 그대로 붙인다(로그를 뒤지지 않게).
+      var m = (mode.alt||{})[r[0]];
+      var tip = (st.why||'') + (m && m.note ? ' | 최근 학습: ' + m.note : '');
+      return '<div class="nlv-cm '+st.cls+'" title="'+esc(tip)+'">'
+        +'<span class="cn">'+esc(r[1])+'</span>'
+        +'<span class="cr">'+esc(r[2])+'</span>'
+        +'<span class="cs">'+esc(st.tag)+'</span>'
+      +'</div>';
+    }).join('');
+    el.innerHTML = html;
+    if(sub) sub.textContent = '정식 '+nFull+' · 잠정 '+nProv+' · 대기 '+(CMROSTER.length-nFull-nProv);
+  }
+
   // KPI 3타일 — 위원회 가동 / 처리속도 / 스캔 소요
   function renderKpi(d){
     var el = $id('nlvKpi'); if(!el) return;
     var scan = d.scan || {}, mode = d.mode || {};
-    var c = mode.committee, on = 0;
-    ['mind','dnn','gbdt'].forEach(function(k){ if(c && c[k]) on++; });
-    ['xgb','lgb','cat'].forEach(function(k){ if(c && c[k] && c[k].trusted) on++; });
+    /* [V33.149] 명부를 cmState 하나로 통일한다 — 종전엔 여기서 고전 6종만 따로 세어
+       "6 / 6"(완전가동)이라 적었다. 실제로는 FLOW·MEMO 가 잠정합류로 투표 중이고
+       STACK 도 결합에 섞이고 있었는데, 화면은 그 5명의 존재 자체를 부정하고 있었다.
+       목록과 타일이 다른 말을 하지 않도록 판정 함수를 공유한다. */
+    var c = mode.committee, on = 0, prov = 0;
+    if(c) CMROSTER.forEach(function(r){
+      var st2 = cmState(r[0], mode);
+      if(st2.cls === 'ok') on++; else if(st2.cls === 'prov'){ on++; prov++; }
+    });
+    var tot = CMROSTER.length;
     var dur = scan.durMs ? (scan.durMs/1000).toFixed(0)+'초' : '—';
     var st = [
-      // [V33.146] committee 가 아예 없으면 '0 / 6'(전원 정지)이 아니라 '—'(미확인)이다.
-      ['위원회 가동', c ? on+' / 6' : '—', c ? (on>=3?'good':(on>0?'warn':'off')) : ''],
+      // [V33.146] committee 가 아예 없으면 '0 / N'(전원 정지)이 아니라 '—'(미확인)이다.
+      ['위원회 가동', c ? on+' / '+tot+(prov?' ('+prov+' 잠정)':'') : '—',
+        c ? (on>=Math.ceil(tot/2)?'good':(on>0?'warn':'off')) : ''],
       ['처리 속도', scan.rate!=null ? scan.rate+' 종목/s' : '—', ''],
       ['스캔 소요', dur, '']
     ];
@@ -15042,12 +15158,17 @@ html[data-theme="light"]:root .rail-view small{ color:var(--t3); }
     //   단지 ★IC 유의성 게이트를 아직 못 넘어서★ 표결에 안 들어가는 것뿐이다.
     //   같은 칸에 모아 놓고 "가동 n명 / 대기 m명" 으로 한 줄에 보이게 한다.
     var _altT = alt0 || {};
+    var ch0 = _altT.chain || null;
+    var _adm = function(m){ return !!(m && m.admit && m.admit.admit); };
     var _memb = [
       {on: !!(dg.mind && dg.mind.trusted)}, {on: !!(dg.dnn && dg.dnn.trusted)}, {on: !!(dg.gbdt && dg.gbdt.trusted)},
       {on: !!(c.xgb && c.xgb.trusted)}, {on: !!(c.lgb && c.lgb.trusted)}, {on: !!(c.cat && c.cat.trusted)},
-      {on: !!(_altT.flow && _altT.flow.trusted)}, {on: !!(_altT.xalpha && _altT.xalpha.trusted)},
-      {on: !!(_altT.stack && _altT.stack.trusted)}, {on: !!(_altT.memo && _altT.memo.trusted)},
-      {on: !!(_altT.dual && _altT.dual.bull && _altT.dual.bull.trusted && _altT.dual.bear && _altT.dual.bear.trusted)}
+      /* [V33.149] ★trusted 가 아니라 admit 으로 센다★ — 엔진은 expertAdmit 으로 합류를 정하고
+         잠정(provisional)도 실제로 ★가중 ×mult 로 투표★ 한다. 화면만 trusted 를 봐서
+         투표 중인 위원을 '대기' 로 적었다. 판정 기준이 엔진과 달랐던 것이다. */
+      {on: _adm(_altT.flow)}, {on: _adm(_altT.xalpha)},
+      {on: _adm(_altT.stack)}, {on: _adm(_altT.memo)},
+      {on: !!(ch0 && ch0.dualShift && ch0.dualShift.shift)}
     ];
     var _nOn = 0; for (var _mi = 0; _mi < _memb.length; _mi++) if (_memb[_mi].on) _nOn++;
     h += sec('위원회', col(_nOn + '/' + _memb.length + ' 가동', _nOn >= 3 ? C.pos : (_nOn >= 1 ? C.amb : C.neg)))
@@ -15074,12 +15195,26 @@ html[data-theme="light"]:root .rail-view small{ color:var(--t3); }
         : ' <span class="sub">(유의성 미측정)</span>';
       var fwd = o.fwdReady ? ' · 전진IC '+(has(o.fwdIC)?o.fwdIC.toFixed(3):'—')+'<span class="sub">(n'+n0(o.fwdN)+')</span>'
                            : ' <span class="sub">· 전진검증 '+n0(o.fwdN)+'/'+n0(o.minFwd)+'</span>';
-      if(o.trusted && has(o.ic))      body = col('가동', C.pos)+' <span class="sub">IC '+(has(o.icBlock)?o.icBlock.toFixed(3):o.ic.toFixed(3))+sig+fwd+'</span>';
-      else if(o.trained && o.holdPass) body = col('전진검증 대기', C.amb)+' <span class="sub">IC '+(has(o.icBlock)?o.icBlock.toFixed(3):(has(o.ic)?o.ic.toFixed(3):'—'))+sig+fwd+'</span>';
-      else if(o.trained)              body = col('유의성 미달 대기', C.amb)+' <span class="sub">IC '+(has(o.ic)?o.ic.toFixed(3):'—')+sig+' · 표본 '+n0(o.n)
-                                        +(has(o.uniq)&&has(o.valNRaw)?' · 검증 유효 '+n0(o.valN)+'/'+n0(o.valNRaw)+'(고유도 '+o.uniq.toFixed(2)+')':'')+'</span>';
+      /* [V33.149] ★상태는 엔진과 같은 자로 잰다★ — 종전 분기는 trusted/holdPass 만 봐서
+         잠정합류(expertAdmit tier=provisional)로 ★실제 투표 중인★ 위원을 '전진검증 대기'
+         라고 적었다. 화면이 "안 돌고 있다" 고 말하는 동안 그 위원은 가중 ×0.40 으로
+         표를 던지고 있었다. 합류 판정은 admit 하나만 쓴다. */
+      var A = o.admit || null;
+      var icTxt = 'IC '+(has(o.icBlock)?o.icBlock.toFixed(3):(has(o.ic)?o.ic.toFixed(3):'—'));
+      if(A && A.tier === 'full')      body = col('가동', C.pos)+' <span class="sub">'+icTxt+sig+fwd+'</span>';
+      else if(A && A.admit)           body = col('잠정가동 ×'+(has(A.mult)?A.mult.toFixed(2):'?'), C.amb)
+                                        +' <span class="sub">'+icTxt+sig+fwd+'</span>';
+      else if(o.trained)              body = col('합류 보류', C.neg)+' <span class="sub">'+esc(A&&A.why?A.why:'판정 대기')+'</span>';
       else                            body = col('표본수집', C.amb)+' <span class="sub">'+n0(o.samples)+' / '+n0(o.minN)+'</span>';
-      return [ico(o.trusted ? true : null)+' '+nm, body];
+      /* [V33.149] ★학습이 멈춘 것을 화면이 말해야 한다★ — flow·stack 이 7일째 재학습을
+         멈춘 것을 운영화면 어디서도 알 수 없어, 모델 ts 를 손으로 비교해야 드러났다.
+         마지막 학습 시도의 결과 문구(note)를 그대로 붙인다. */
+      if(has(o.ts)){
+        var ageH = (Date.now() - o.ts) / 3600000;
+        if(ageH > 36) body += ' <span class="sub">· ⚠ 마지막 학습 '+Math.floor(ageH/24)+'일 전</span>';
+      }
+      if(o.note && o.noteOk === false) body += ' <span class="sub">· '+esc(String(o.note).slice(0,90))+'</span>';
+      return [ico((A && A.tier === 'full') ? true : null)+' '+nm, body];
     };
     var bfTxt = alt.backfill && alt.backfill.made
       ? '<span class="sub">소급생성 '+n0(alt.backfill.made)+'건 (커서 '+n0(alt.backfill.cursor)+')</span>'

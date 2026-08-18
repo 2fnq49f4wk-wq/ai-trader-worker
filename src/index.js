@@ -2788,7 +2788,7 @@ async function applySignalTypeWeights(DB, cfg) {
 // ============================================================================
 // [V33.55] 빌드 버전 — SWR L2 캐시 키에 섞어 '배포 = 판단 캐시 자동 무효화'를 만든다.
 //   판정 로직을 고쳐도 옛 캐시가 최대 1시간 재배포되던 문제를 구조적으로 없앤다.
-const _BUILD_VER = "V33.148";
+const _BUILD_VER = "V33.149";
 
 const AI_PARAMS = {
   // ── OHLCV 타임프레임 ── 시가/고가/저가/종가/거래량을 어떤 봉 주기로 볼지.
@@ -18887,6 +18887,9 @@ async function handleRequest(request, env, ctx) {
         try {
           const _mk = async function (key, table, minN, featVer) {
             const m = await getState(env.DB, key, null);
+            // [V33.149] 마지막 학습 시도의 결과 — "왜 아직 대기인가" 의 1차 답이다.
+            let _note = null;
+            try { _note = await getState(env.DB, "train_note:" + key, null); } catch (e) {}
             let n = 0;
             try {
               const r = await env.DB.prepare("SELECT COUNT(*) c FROM " + table + " WHERE featver = ?").bind(featVer).first();
@@ -18918,7 +18921,10 @@ async function handleRequest(request, env, ctx) {
               // [V33.114] 유효표본수(고유도 가중합)와 평균 고유도 — 명목 n 과의 차이를 보이게.
               valNRaw: m ? _num(m.valNRaw, null) : null, uniq: m ? _num(m.valUniq, null) : null,
               n: m ? _num(m.n, null) : null,
-              ts: m ? _num(m.ts, null) : null
+              ts: m ? _num(m.ts, null) : null,
+              note: _note ? String(_note.msg || "") : null,
+              noteOk: _note ? !!_note.ok : null,
+              noteTs: _note ? _num(_note.ts, null) : null
             };
           };
           const _bf = await getState(env.DB, "alt_bf_cursor", null);
@@ -18931,6 +18937,8 @@ async function handleRequest(request, env, ctx) {
           // [V33.92] MEMO — ml_samples 를 원형으로 압축해 쓰므로 표본 풀은 스윙과 같다.
           try {
             const _mo = await getState(env.DB, "memo_model", null);
+            let _mnote = null;
+            try { _mnote = await getState(env.DB, "train_note:memo_model", null); } catch (e) {}
             let _mn = 0;
             try { const r = await env.DB.prepare("SELECT COUNT(*) c FROM ml_samples WHERE featver = ?").bind(LUXML.featVer).first(); _mn = _num(r && r.c, 0); } catch (e) {}
             _alt.memo = { samples: _mn, minN: MEMOML.minTrainSamples,
@@ -18942,7 +18950,11 @@ async function handleRequest(request, env, ctx) {
               fwdDays: _mo ? _num(_mo.fwdDays, 0) : 0, fwdBatchN: _mo ? _num(_mo.fwdBatchN, 0) : 0,
               minFwdDays: FWDLED.minDays,
               fwdReady: !!(_mo && _mo.fwdReady), holdPass: !!(_mo && _mo.holdPass), minFwd: ICGATE.minForward,
-              protos: _mo && Array.isArray(_mo.protos) ? _mo.protos.length : null, n: _mo ? _num(_mo.n, null) : null };
+              protos: _mo && Array.isArray(_mo.protos) ? _mo.protos.length : null, n: _mo ? _num(_mo.n, null) : null,
+              // [V33.149] flow/xalpha/stack 과 같은 필드를 채운다 — 화면이 모델마다 다른 말을 하면 안 된다.
+              ts: _mo ? _num(_mo.ts, null) : null,
+              note: _mnote ? String(_mnote.msg || "") : null,
+              noteOk: _mnote ? !!_mnote.ok : null };
           } catch (e) {}
           // [V33.89] 이중헤드(강세/약세) — ml_samples 를 그대로 쓰므로 표본은 스윙 풀과 같다.
           try {
@@ -23552,8 +23564,16 @@ async function flowLogSample(DB, market, symbol, featVec, pnlPct) {
 // [V33.79] FLOW·XALPHA 공용 야간학습기 — 두 모델이 같은 구조라 구현을 하나로 둔다.
 //   서로 다른 코드 두 벌을 두면 한쪽만 고치는 사고가 난다(이 프로젝트에서 이미 겪었다).
 //   opts: { table, stateKey, tag, featVer, D, minN, window, l2, icFloor }
+// [V33.149] ★"왜 학습이 안 됐나" 를 화면이 답할 수 있어야 한다★
+//   이 함수는 실패해도 ★던지지 않고 문자열을 돌려준다★ — 그 문자열은 로그로만 갔다.
+//   그래서 flow·stack 이 7일째 재학습을 멈춘 것을 운영화면 어디에서도 알 수 없었고,
+//   모델 ts 를 손으로 비교해야 겨우 드러났다. 결과를 상태로 남겨 /api/ai-mode 가 싣게 한다.
 async function _miniLogisticTrain(DB, opts) {
-  try {
+  //   본문은 내부 클로저로 둔다 — 결과 문자열을 한 곳에서 가로채 상태로 남기기 위해서다.
+  //   (함수를 둘로 쪼개면 바깥 함수가 opts 를 안 읽게 되어 배선 검사가 '죽은 인자' 로 잡는다.
+  //    그건 검사가 옳다 — 우회하지 말고 구조를 맞춘다.)
+  const _run = async function () {
+   try {
     // [V33.93] ★재학습으로 덮어쓰기 전에★ 어제 모델을 그 이후 도착한 표본으로 채점한다.
     //   이게 유일하게 다중검정·행운창(lucky window)에 오염되지 않은 증거다.
     let _fwd = null;
@@ -23737,7 +23757,14 @@ async function _miniLogisticTrain(DB, opts) {
                                : " 전진" + (_fwd ? _fwd.n : 0) + "/" + ICGATE.minForward) +
            " → " + (function () { const a = expertAdmit(model); return a.tier === "full" ? "위원회 정식합류"
              : a.admit ? ("위원회 잠정합류(가중 ×" + a.mult.toFixed(2) + ") — " + a.why) : ("합류 보류 — " + a.why); })();
-  } catch (e) { return "[" + opts.tag + "] 학습 실패: " + (e && e.message); }
+   } catch (e) { return "[" + opts.tag + "] 학습 실패: " + (e && e.message); }
+  };
+  const _msg = await _run();
+  try {
+    await setState(DB, "train_note:" + opts.stateKey,
+      { msg: String(_msg == null ? "" : _msg).slice(0, 300), ok: /학습완료/.test(String(_msg || "")), ts: Date.now() });
+  } catch (e) {}
+  return _msg;
 }
 
 async function flowTrainNightly(DB) {
@@ -23977,7 +24004,10 @@ const MEMOML = {
 //   야간 1회. 마지막 20% 는 홀드아웃으로 남겨 IC 유의성을 잰다(다른 모델과 같은 잣대).
 async function memoTrainNightly(DB) {
   if (!MEMOML.enabled) return null;
-  try {
+  // [V33.149] flow/xalpha/stack 과 같은 방식으로 마지막 학습 결과를 남긴다
+  //   — 화면이 "왜 아직 대기인가" 를 모델마다 같은 자리에서 답해야 한다.
+  const _run = async function () {
+   try {
     const D = LUXML.featNames.length;
     // [V33.93] 재학습 전 전진검증 — 어제 원형책을 그 이후 도착한 표본으로 채점한다.
     let _fwd = null;
@@ -24081,7 +24111,14 @@ async function memoTrainNightly(DB) {
                            : " 전진" + model.fwdN + "/" + ICGATE.minForward) +
            " → " + (function () { const a = expertAdmit(model); return a.tier === "full" ? "위원회 정식합류"
              : a.admit ? ("위원회 잠정합류(가중 ×" + a.mult.toFixed(2) + ") — " + a.why) : ("합류 보류 — " + a.why); })();
-  } catch (e) { return "[MEMO] 학습 실패: " + (e && e.message); }
+   } catch (e) { return "[MEMO] 학습 실패: " + (e && e.message); }
+  };
+  const _msg = await _run();
+  try {
+    await setState(DB, "train_note:memo_model",
+      { msg: String(_msg == null ? "" : _msg).slice(0, 300), ok: /^\[MEMO\] 원형 /.test(String(_msg || "")), ts: Date.now() });
+  } catch (e) {}
+  return _msg;
 }
 
 // 추론 — 가장 가까운 이웃 원형들의 결과를 거리가중 평균. "비슷한 상황에서 실제로 어땠나".
@@ -25469,22 +25506,48 @@ async function icForwardCheck(DB, opts) {
     //   → 1순위: 학습 때 기록해 둔 maxId 보다 큰 id (집합적으로 완벽히 배타적)
     //     2순위: 도착시각 ins_ts (V33.32 부터 모든 신규 행에 기록된다)
     //     3순위: 종전 ts (ts 가 곧 적재시각인 표 — flow/xalpha/stack_samples)
-    let _where, _bindVal, _mode;
-    if (_num(prev.maxId, 0) > 0) { _where = "id > ?"; _bindVal = _num(prev.maxId, 0); _mode = "id"; }
-    else if (o.hasInsTs) { _where = "COALESCE(ins_ts, ts) > ?"; _bindVal = _num(prev.ts, 0); _mode = "ins_ts"; }
-    else { _where = "ts > ?"; _bindVal = _num(prev.ts, 0); _mode = "ts"; }
+    // ── [V33.149] ★원장을 먼저 읽는다 — 어디까지 세었는지(hwm)가 다음 배치의 시작점이다★ ──
+    //   종전 원장은 한 줄의 key 가 ★모델 버전(prev.ts)★ 이었다. 의도는 "같은 모델의 같은
+    //   구간을 두 번 세지 않는다" 였고 그건 맞다. 그런데 부작용이 치명적이었다:
+    //   ★재학습이 멈춘 모델은 key 가 영원히 같아서 같은 줄만 덮어쓴다★ → v.length 가 1 에서
+    //   안 늘고, ready 조건(days ≥ 3)과 블록 t(줄이 2개 이상 필요)를 ★구조적으로★ 못 넘는다.
+    //   운영 스냅샷(2026-08-18)이 그대로 보여줬다 — flow·stack 은 모델이 7일째 그대로라
+    //   fwdDays 가 1 이고, 매일 재학습되는 xalpha(5)·memo(8)만 날짜가 쌓였다.
+    //   즉 "학습이 멈춘 모델일수록 전진검증도 영영 못 끝낸다" 는 역방향 잠금이었다.
+    //
+    //   → 줄의 단위를 ★날짜★ 로 바꾼다. 그리고 줄끼리 겹치지 않도록 원장이 고수위(hwm)를
+    //     들고 다닌다: 다음 조회는 언제나 hwm 이후만 본다. 이러면 재학습 여부와 무관하게
+    //     날짜 블록이 쌓이고, 각 줄은 여전히 비중첩이라 블록 t 의 가정도 그대로 성립한다.
+    const _lkey = "fwd_ledger:" + o.stateKey;
+    const _LEDVER = 2;                      // 줄 key 의미가 바뀌었다(모델버전 → 날짜)
+    let _led = null;
+    try { _led = await getState(DB, _lkey, null); } catch (e) {}
+    //   ★구판 원장은 버린다.★ 구판 줄은 hwm 없이 누적창을 통째로 세었으므로, 새 방식과 섞으면
+    //   같은 표본을 두 번 세어 t 가 부풀어 오른다. 통계를 부풀리느니 며칠 다시 쌓는 게 낫다.
+    if (!_led || !Array.isArray(_led.v) || _led.featVer !== o.featVer || _num(_led.ver, 1) !== _LEDVER)
+      _led = { ver: _LEDVER, featVer: o.featVer, v: [], hwmId: 0, hwmTs: 0 };
+
+    let _where, _bindVal, _mode, _order;
+    if (_num(prev.maxId, 0) > 0) {
+      _where = "id > ?"; _mode = "id"; _order = "id ASC";
+      _bindVal = Math.max(_num(prev.maxId, 0), _num(_led.hwmId, 0));
+    } else if (o.hasInsTs) {
+      _where = "COALESCE(ins_ts, ts) > ?"; _mode = "ins_ts"; _order = "ats ASC";
+      _bindVal = Math.max(_num(prev.ts, 0), _num(_led.hwmTs, 0));
+    } else {
+      _where = "ts > ?"; _mode = "ts"; _order = "ats ASC";
+      _bindVal = Math.max(_num(prev.ts, 0), _num(_led.hwmTs, 0));
+    }
+    //   정렬을 필터와 ★같은 열★ 로 맞춘다 — 다르면 LIMIT 이 중간을 건너뛰어, hwm 을 올리는
+    //   순간 안 센 행이 영구히 버려진다(ts 순서와 id 순서는 일치하지 않는다).
+    const _selAt = o.hasInsTs ? "COALESCE(ins_ts, ts) AS ats" : "ts AS ats";
     const rs = await DB.prepare(
-      "SELECT ts, feat, label, pnl_pct FROM " + o.table + " WHERE featver = ? AND " + _where + " ORDER BY ts ASC LIMIT 4000"
+      "SELECT id, ts, " + _selAt + ", feat, label, pnl_pct FROM " + o.table +
+      " WHERE featver = ? AND " + _where + " ORDER BY " + _order + " LIMIT 4000"
     ).bind(o.sampleFeatVer != null ? o.sampleFeatVer : o.featVer, _bindVal).all();
     const rows = (rs && rs.results) || [];
 
-    // ── 원장 적재 ──────────────────────────────────────────────────────────
-    const _lkey = "fwd_ledger:" + o.stateKey;
-    let _led = null;
-    try { _led = await getState(DB, _lkey, null); } catch (e) {}
-    if (!_led || !Array.isArray(_led.v) || _led.featVer !== o.featVer) _led = { featVer: o.featVer, v: [] };
-
-    // 이번 배치(= 이 모델 버전이 학습된 뒤 도착한 행)의 IC 를 잰다.
+    // 이번 배치(= 아직 세지 않은 행)의 IC 를 잰다.
     let _batchN = 0;
     if (rows.length >= FWDLED.minBatch) {
       const pv = [], yv = [];
@@ -25502,17 +25565,27 @@ async function icForwardCheck(DB, opts) {
         const _bic = _num(_bst.ic, null);
         if (_bic != null && isFinite(_bic)) {
           _batchN = pv.length;
-          // 모델 버전(prev.ts)당 한 줄. 같은 버전이 하루 안에 여러 번 평가되면 갱신한다
-          //   — 같은 모델의 같은 구간을 두 번 세면 표본이 부풀고 t 가 과장된다.
-          const _row = { key: _num(prev.ts, 0), ts: Date.now(), n: pv.length, ic: +_bic.toFixed(5) };
-          const _i = _led.v.findIndex(function (x) { return x && x.key === _row.key; });
-          if (_i >= 0) _led.v[_i] = _row; else _led.v.push(_row);
+          // 하루 = 한 블록. 같은 날 두 번 돌아도 hwm 덕에 ★서로 겹치지 않는★ 배치이므로
+          // 표본수 가중으로 합친다(두 번 세는 게 아니라 그날 블록이 커지는 것이다).
+          const _day = new Date().toISOString().slice(0, 10);
+          const _i = _led.v.findIndex(function (x) { return x && x.key === _day; });
+          if (_i >= 0) {
+            const _p0 = _led.v[_i], _n0 = _num(_p0.n, 0), _nN = _n0 + pv.length;
+            _led.v[_i] = { key: _day, ts: Date.now(), n: _nN,
+                           ic: +(((_num(_p0.ic, 0) * _n0) + _bic * pv.length) / Math.max(1, _nN)).toFixed(5) };
+          } else {
+            _led.v.push({ key: _day, ts: Date.now(), n: pv.length, ic: +_bic.toFixed(5) });
+          }
           if (_led.v.length > FWDLED.keepDays) _led.v = _led.v.slice(-FWDLED.keepDays);
+          // ★세고 나서야 고수위를 옮긴다★ — minBatch 에 못 미쳐 건너뛴 행은 버리지 않고
+          //   다음 회차에 다시 집어 든다(작은 배치를 버리면 표본이 조용히 새어나간다).
+          const _last = rows[rows.length - 1];
+          if (_mode === "id") { const _mx = _num(_last.id, 0); if (_mx > _num(_led.hwmId, 0)) _led.hwmId = _mx; }
+          else { const _mx = _num(_last.ats, 0); if (_mx > _num(_led.hwmTs, 0)) _led.hwmTs = _mx; }
           try { await setState(DB, _lkey, _led); } catch (e) {}
         }
       }
     }
-
     // ── 누적 통계 ──────────────────────────────────────────────────────────
     const _v = _led.v || [];
     let _nSum = 0, _wIC = 0;
@@ -29942,6 +30015,16 @@ async function mlDeepDecide(DB, featVec, opts) {
         if (bw > 0 && bUsed > 0) { const pBoost = _clamp(_sigmoid(bz / bw), 0.001, 0.999); experts.push({ name: "boost", p: pBoost, z: _logitD(pBoost), acc: bAccMax, ic: bICMax }); }
       }
     } catch (e) {}
+    // ── [V33.149] ★전문가의 name 은 식별자다 — 표시용 표식을 섞으면 안 된다★
+    //   종전엔 잠정합류 위원의 name 에 "~" 를 붙여 화면에서 구분했다. 그런데 name 은
+    //   ★세 곳에서 조회 키로 쓰인다★:
+    //     ① _stackFeat 슬롯(_EXPERT_SLOTS: "flow"/"xalpha"/"memo")
+    //     ② 적응형 신뢰도 _relMap[ex.name]  (야간이 "flow" 로 저장)
+    //     ③ 상황별 IC  _expRegIC(..., ex.name, ...)  (야간이 "memo" 로 저장)
+    //   "flow~" 는 셋 다 빗나간다. 결과가 특히 나쁜 곳이 ①이다 — STACK 입력의 참여마스크가
+    //   0 이 되어 ★"그 위원은 없었다"★ 로 기록된다. 실제로는 투표했는데 없었다고 학습시킨 것이다.
+    //   신규 위원은 전부 잠정 단계라, 정확히 신규 위원만 이 세 경로에서 통째로 빠져 있었다.
+    //   → name 은 고정하고, 등급은 tier 필드로 나른다(화면이 tier 로 표식을 그린다).
     // ── [V33.78] FLOW 전문가 합류 — 봉차트·뉴스에 없는 축(피어그래프·공매도·내부자·풋콜) ──
     //   기존 위원들과 정보원이 겹치지 않아 앙상블 다양성 측면에서 기여가 크다.
     //   IC 가 icFloor 를 넘을 때만 참여하고, 가중은 V33.77 의 IC 소프트맥스가 자동 처리한다.
@@ -29953,7 +30036,7 @@ async function mlDeepDecide(DB, featVec, opts) {
         if (fm && _fa.admit && fm.featVer === FLOWML.featVer) {
           const pF = flowScore(fm, opts.flowFeat);
           if (pF != null && Math.abs(pF - 0.5) > 1e-4) {
-            experts.push({ name: "flow" + (_fa.tier === "provisional" ? "~" : ""), p: pF, z: _logitD(pF),
+            experts.push({ name: "flow", p: pF, z: _logitD(pF),
                            acc: _num(fm.valAcc, 0.5), ic: _num(_icEffective(fm), 0) * _fa.mult, tier: _fa.tier });
           }
         }
@@ -29967,7 +30050,7 @@ async function mlDeepDecide(DB, featVec, opts) {
         if (xm && _xa.admit && xm.featVer === XALPHA.featVer) {
           const pX = flowScore(xm, opts.xaFeat);   // 같은 로지스틱 포맷이라 채점기를 공유한다
           if (pX != null && Math.abs(pX - 0.5) > 1e-4) {
-            experts.push({ name: "xalpha" + (_xa.tier === "provisional" ? "~" : ""), p: pX, z: _logitD(pX),
+            experts.push({ name: "xalpha", p: pX, z: _logitD(pX),
                            acc: _num(xm.valAcc, 0.5), ic: _num(_icEffective(xm), 0) * _xa.mult, tier: _xa.tier });
           }
         }
@@ -29982,7 +30065,7 @@ async function mlDeepDecide(DB, featVec, opts) {
       if (mm2 && _ma.admit && mm2.luxFeatVer === LUXML.featVer) {
         const pM = memoScore(mm2, featVec);
         if (pM != null && Math.abs(pM - 0.5) > 1e-4) {
-          experts.push({ name: "memo" + (_ma.tier === "provisional" ? "~" : ""), p: pM, z: _logitD(pM),
+          experts.push({ name: "memo", p: pM, z: _logitD(pM),
                          acc: _num(mm2.valAcc, 0.5), ic: _num(_icEffective(mm2), 0) * _ma.mult, tier: _ma.tier });
         }
       }
@@ -30300,7 +30383,9 @@ async function mlDeepDecide(DB, featVec, opts) {
     }
     const _baseUnc = mindScore ? (mindScore.uncertainty || 0) : _committeeUnc;
     const unc = Math.max(_baseUnc, _expDisagree);   // 합의도 반영 유효 불확실성
-    const _expOut = experts.map(function (ex) { return { name: ex.name, p: +ex.p.toFixed(3), acc: +ex.acc.toFixed(3) }; });
+    // [V33.149] tier 를 그대로 실어 보낸다 — 화면의 '잠정' 표식은 name 이 아니라 이 필드로 그린다.
+    const _expOut = experts.map(function (ex) { return { name: ex.name, p: +ex.p.toFixed(3), acc: +ex.acc.toFixed(3),
+      tier: ex.tier || null }; });
     // [V12.73] ★DI 기권 게이트★ (FreqAI Dissimilarity Index 이식) — 입력 피처가 학습분포에서 평균
     //   |z|>diThreshold 만큼 멀면(전례 없는 시장상황) 예측 신뢰 불가 → 기권. "모르는 건 모른다"가
     //   실전 자동매매 AI의 표준 안전장치(freqtrade DI_threshold와 동일 사상).
