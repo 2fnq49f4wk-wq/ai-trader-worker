@@ -2788,7 +2788,7 @@ async function applySignalTypeWeights(DB, cfg) {
 // ============================================================================
 // [V33.55] 빌드 버전 — SWR L2 캐시 키에 섞어 '배포 = 판단 캐시 자동 무효화'를 만든다.
 //   판정 로직을 고쳐도 옛 캐시가 최대 1시간 재배포되던 문제를 구조적으로 없앤다.
-const _BUILD_VER = "V33.154";
+const _BUILD_VER = "V33.155";
 
 const AI_PARAMS = {
   // ── OHLCV 타임프레임 ── 시가/고가/저가/종가/거래량을 어떤 봉 주기로 볼지.
@@ -23854,7 +23854,17 @@ async function _miniLogisticTrain(DB, opts) {
     // 시간순(최신이 앞) → 뒤집어 오래된 것부터. 마지막 20% 를 홀드아웃(시간 분리).
     X.reverse(); Y.reverse(); P.reverse(); T.reverse(); S.reverse();
     const nval = Math.max(100, Math.floor(N * 0.2));
-    let ntr = N - nval, _purged = 0;
+    /* [V33.155] ★홀드아웃 경계는 고정이다 — 퍼징은 학습쪽만 자른다★
+       종전엔 퍼징이 ntr 을 줄인 뒤 검증 루프를 `i = ntr` 부터 돌렸다. 그러면 잘라낸 구간이
+       그대로 ★홀드아웃에 흡수★ 된다. 증상이 숫자로 남아 있었다 — 운영 스냅샷의
+       XALPHA valAcc 가 ★2.4159★ 였다(분류 정확도가 1 을 넘을 수 없다. 루프는 늘어난 구간을
+       돌고 분모는 원래 nval 이었다).
+       통계적으로 더 나쁜 건 따로 있다: 퍼징 구간은 라벨이 학습구간과 겹쳐 적합값 쪽으로
+       끌리는 ★다른 모집단★ 이다. 그걸 진짜 홀드아웃과 섞으면 블록 간 분산이 커져
+       t 가 주저앉는다 — "잡음과 구별되지 않는다" 는 판정이 여기서 나올 수 있다.
+       → 경계(nvalStart)를 못 박고, 퍼징은 학습 끝만 당긴다. */
+    const nvalStart = N - nval;
+    let ntr = nvalStart, _purged = 0;
     // ══ [V33.141] ★퍼징(purge) — 경계에서 학습 라벨이 검증 구간으로 새고 있었다★ ══
     //   분할은 시간순이라 "검증이 미래" 는 맞다. 그런데 라벨 지평이 5일이다.
     //   경계 직전 학습표본의 ★결과 구간★ 은 검증 구간 안으로 뻗는다 — 즉 학습이 검증 기간의
@@ -23870,11 +23880,11 @@ async function _miniLogisticTrain(DB, opts) {
     //     (검증이 뒤이므로 반대 방향 엠바고는 필요 없다 — 학습이 검증보다 항상 앞이다.)
     {
       const _span = _num(opts.labelSpanMs, AI_PARAMS.predictionHorizonDays * 86400000);
-      const _bound = _num(T[ntr], 0);
+      const _bound = _num(T[nvalStart], 0);   // 경계는 언제나 홀드아웃 첫 표본 — 퍼징으로 움직이지 않는다
       if (_bound > 0 && _span > 0) {
-        let _keep = ntr;
+        let _keep = nvalStart;
         while (_keep > 0 && _num(T[_keep - 1], 0) + _span > _bound) _keep--;
-        _purged = ntr - _keep;
+        _purged = nvalStart - _keep;
         ntr = _keep;
         // ★부분 퍼징은 하지 않는다.★ 처음엔 "너무 줄면 바닥까지만 자른다" 로 썼는데,
         //   그 식은 ★경계에 가장 가까운(=가장 심하게 누출된) 표본을 남기는★ 방향이었다.
@@ -23921,21 +23931,29 @@ async function _miniLogisticTrain(DB, opts) {
     }
     // 검증 — 정확도와 IC 를 함께 잰다.
     let correct = 0; const pv = [], yv = [];
-    for (let i = ntr; i < N; i++) {
+    for (let i = nvalStart; i < N; i++) {   // ★ntr 이 아니라 nvalStart★ — 퍼징 구간은 학습에서만 빠진다
       let z = b; for (let j = 0; j < D; j++) z += w[j] * Z[i][j];
       const p = 1 / (1 + Math.exp(-_clamp(z, -30, 30)));
       pv.push(p); yv.push(Y[i]);
       if ((p >= 0.5 ? 1 : 0) === Y[i]) correct++;
     }
-    const acc = correct / Math.max(1, nval);
+    const acc = correct / Math.max(1, N - nvalStart);   // 분모 = 실제로 돈 횟수
     // [V33.114] ★유효표본수★ — 홀드아웃의 고유도 가중합. 겹친 표본을 한 건으로 세지 않는다.
     //   Wilson 하한·저장되는 valN 이 모두 이 값을 쓴다(명목 n 을 쓰면 과신한다).
-    let _nEff = 0; for (let i = ntr; i < N; i++) _nEff += uw[i];
+    let _nEff = 0; for (let i = nvalStart; i < N; i++) _nEff += uw[i];
     _nEff = Math.max(8, Math.round(_nEff));
-    const _uBar = +(_nEff / Math.max(1, nval)).toFixed(3);   // 평균 고유도(0~1)
+    const _uBar = +(_nEff / Math.max(1, N - nvalStart)).toFixed(3);   // 평균 고유도(0~1)
     // [V33.91] IC 를 한 덩어리로 재지 않고 홀드아웃을 5블록으로 나눠 유의성까지 잰다.
     //   순수 잡음 모델이 raw IC 게이트를 43~49% 통과하던 것을 7~8% 로 낮춘다(_icBlockStats 주석 참조).
-    const _st = _icBlockStats(pv, yv, 5);
+    /* [V33.155] opts.dayBlocks 면 ★그날의 횡단면★ 단위로 블록을 나눈다(키 = 표본의 날짜).
+       횡단면 알파(XALPHA)는 "같은 날 유니버스 안에서의 상대 순위" 가 신호라, 연속 슬라이스로
+       나누면 블록 간 분산이 모델이 아니라 시장 국면을 재게 된다. 나머지 모델은 종전 그대로. */
+    let _blkKeys = null;
+    if (opts.dayBlocks) {
+      _blkKeys = [];
+      for (let i = nvalStart; i < N; i++) _blkKeys.push(Math.floor(_num(T[i], 0) / 86400000));
+    }
+    const _st = _icBlockStats(pv, yv, 5, _blkKeys);
     const ic = _num(_st.ic, 0);
     // [V33.89] 기저확률(양성비율)을 함께 저장한다 — 이중헤드 사분면 경계를 절대값이 아니라
     //   각 헤드의 기저확률 기준으로 잡기 위해서다. 문턱을 절대값으로 두면 라벨 희소도가 다른
@@ -24672,7 +24690,10 @@ async function stackTrainNightly(DB) {
 
 const XALPHA = {
   enabled: true,
-  featVer: 1,
+  // [V33.155] 1 → 2: 형식알파 10종이 원값에서 ★횡단면 랭크★ 로 바뀌었다(의미가 다른 피처다).
+  //   옛 표본·모델과 섞이면 안 되므로 판을 올린다. 소급생성 커서도 featVer 로 묶여 있어
+  //   자동으로 처음부터 다시 만든다(altSampleBackfill 의 fvX 비교).
+  featVer: 2,
   featNames: [
     // ── WorldQuant 형식알파(논문 번호 표기) ──
     "a101",      // #101 (close−open)/((high−low)+.001) — 당일 몸통 방향
@@ -24685,6 +24706,10 @@ const XALPHA = {
     "a33",       // #33  rank(−(1 − open/close))
     "a23",       // #23  20일 고가평균 < 고가면 −Δ(high,2), 아니면 0
     "a2",        // #2   −corr(rank(Δlog(volume),2), rank((close−open)/open), 6)
+    // ── decay_linear(5일) 평활 알파 — 하루짜리 신호를 10일 라벨 지평에 맞춰 늘린 것 ──
+    //   ★순서는 xalphaBuildFeat 의 push 순서와 반드시 같다★ (원값 10 → 감쇠 10 → 횡단면 5).
+    //   어긋나면 구조 관측 화면이 계수에 엉뚱한 이름을 붙인다 — 값은 맞는데 해석이 틀어진다.
+    "d101", "d54", "d12", "d41", "d53", "d6", "d4", "d33", "d23", "d2",
     // ── 횡단면 랭크(JPX 방식) — 같은 시장 안에서의 상대 순위 ──
     "xsRet5",    // 5일 수익률 랭크(0~1)
     "xsRet20",   // 20일 수익률 랭크
@@ -24692,6 +24717,7 @@ const XALPHA = {
     "xsVolat",   // 변동성 랭크
     "xsAmihud"   // 비유동성(Amihud) 랭크 — 유동성 프리미엄
   ],
+  minPanel: 20,          // 랭크를 낼 최소 유니버스 — 이보다 얇으면 순위가 정보가 아니라 잡음이다
   minTrainSamples: 800,
   trainWindow: 40000,
   l2: 1.0,
@@ -24737,7 +24763,10 @@ function _xaXsRank(vals, target) {
 // 횡단면 통계를 시장 단위로 1회만 만든다(종목마다 다시 돌면 O(N²) 가 된다).
 //   반환: { ret5:[], ret20:[], volSurge:[], volat:[], amihud:[], bySym:{sym:{...}} }
 function xalphaBuildPanel(dailyCache, market) {
-  const panel = { ret5: [], ret20: [], volSurge: [], volat: [], amihud: [], bySym: {} };
+  // [V33.155] alphas[j] = 그날 그 시장의 j번째 형식알파 분포. 피처 빌더가 이 분포에
+  //   자기 값을 대고 순위를 낸다. ★같은 식(xalphaRawAlphas)을 공유★ 해 두 벌이 되지 않게 한다.
+  const panel = { ret5: [], ret20: [], volSurge: [], volat: [], amihud: [], bySym: {}, alphas: [], decays: [] };
+  for (let j = 0; j < XA_NALPHA; j++) { panel.alphas.push([]); panel.decays.push([]); }
   try {
     for (const sy in dailyCache) {
       const isKR = /\.(KS|KQ)$/.test(sy);
@@ -24781,6 +24810,10 @@ function xalphaBuildPanel(dailyCache, market) {
         if (k >= 10) ami = Math.log(1 + sum / k * 1e9);
       }
       panel.bySym[sy] = { r5: r5, r20: r20, vs: vs, vol: vol, ami: ami };
+      const _ra = xalphaRawAlphas(sy, dailyCache);
+      if (_ra) for (let j = 0; j < XA_NALPHA; j++) panel.alphas[j].push(_ra[j]);
+      const _rd = xalphaDecayAlphas(sy, dailyCache);
+      if (_rd) for (let j = 0; j < XA_NALPHA; j++) panel.decays[j].push(_rd[j]);
       if (r5 != null) panel.ret5.push(r5);
       if (r20 != null) panel.ret20.push(r20);
       if (vs != null) panel.volSurge.push(vs);
@@ -24792,26 +24825,45 @@ function xalphaBuildPanel(dailyCache, market) {
 }
 
 // XALPHA 피처벡터 — 캐시된 OHLCV + 시장 패널만 쓴다(네트워크 0).
-function xalphaBuildFeat(symbol, dailyCache, panel) {
+/* [V33.155] ★형식알파를 원값으로 넣던 것을 횡단면 랭크로 바꾼다★
+   WorldQuant 101 의 알파는 ★유니버스 전체를 가로질러 순위를 매겨★ 쓰라고 만든 식이다
+   (논문의 rank() 연산자가 그것이고, 포트폴리오도 그 순위로 롱숏을 짠다).
+   그런데 여기서는 10개를 ★종목별 원값★ 그대로 피처로 넣고 있었다. 주석이 스스로
+   그걸 인정하고 있었다 — "#33 rank(...) → 종목 단위에선 −(1−open/close) 자체를 쓴다".
+
+   왜 그게 약한가: 원값의 크기는 종목마다(가격대·변동성·유동성), 날마다(시장 전체 등락)
+   다르다. 그런 값을 종목·시점 섞인 표본에 로지스틱으로 적합하면 대부분 잡음을 맞춘다.
+   ★같은 날 같은 시장 안에서의 순위★ 로 바꾸면 종목 규모도, 그날의 시장 전체 움직임도
+   같이 빠져나가고 [0,1] 로 정상화된다 — JPX·Numerai 계열 파이프라인의 표준 전처리이자
+   원 논문이 rank() 로 의도한 것과 같은 방향이다.
+
+   raw 계산은 xalphaRawAlphas 로 떼어내 ★패널 빌더와 피처 빌더가 같은 식을 쓰게★ 했다
+   (두 벌로 두면 한쪽만 고치는 사고가 난다 — 이 저장소가 이미 여러 번 겪었다). */
+function xalphaRawAlphas(symbol, dailyCache, back) {
   try {
-    if (!XALPHA.enabled) return null;
     const d = dailyCache && dailyCache[symbol];
-    if (!d || !Array.isArray(d.closes) || d.closes.length < 25) return null;
-    const c = d.closes;
-    const o = Array.isArray(d.opens) && d.opens.length === c.length ? d.opens : c;
-    const h = Array.isArray(d.highs) && d.highs.length === c.length ? d.highs : c;
-    const l = Array.isArray(d.lows) && d.lows.length === c.length ? d.lows : c;
-    const v = Array.isArray(d.volumes) && d.volumes.length === c.length ? d.volumes : null;
+    const _bk = Math.max(0, Math.floor(_num(back, 0)));
+    const _c0 = d && d.closes;
+    if (!Array.isArray(_c0) || _c0.length < 25 + _bk) return null;
+    /* ★배열을 잘라서 넘긴다★ — _xaDelta·_xaCorr·_xaTsRank 는 전부 '배열의 끝' 을 기준으로
+       창을 잡는다. back 일 전 시점을 계산하려고 인덱스만 옮기면 그 헬퍼들만 여전히 오늘을
+       보게 되어 ★시점이 섞인 알파★ 가 나온다(미래를 보는 것과 같다). 끝을 잘라 두면
+       모든 헬퍼가 자동으로 그 시점의 창을 본다. */
+    const _cut = _bk > 0 ? (_c0.length - _bk) : _c0.length;
+    const _sl = function (a) { return (Array.isArray(a) && a.length === _c0.length) ? a.slice(0, _cut) : null; };
+    const c = _c0.slice(0, _cut);
+    const o = _sl(d.opens) || c;
+    const h = _sl(d.highs) || c;
+    const l = _sl(d.lows) || c;
+    const v = _sl(d.volumes);
     const n = c.length - 1;
     const C = c[n], O = o[n], H = h[n], L = l[n];
     if (!(C > 0)) return null;
     // vwap 근사 — 일봉만 있으므로 전형가격(typical price)을 쓴다. 논문의 vwap 대용.
     const vwap = (H + L + C) / 3;
-
     // #101 — (close − open) / ((high − low) + .001)
     const a101 = _clamp((C - O) / ((H - L) + 0.001 * C), -3, 3);
-    // #54 — −((low − close)·open^5) / ((low − high)·close^5).
-    //   5제곱은 스케일이 폭발하므로 논문의 의도(종가가 고−저 구간 어디인가)를 보존한 정규화형으로 쓴다.
+    // #54 — 종가가 고−저 구간 어디인가(5제곱은 스케일이 폭발하므로 의도를 보존한 정규화형)
     const a54 = (H > L) ? _clamp(-((L - C) / (L - H)), -2, 2) : 0;
     // #12 — sign(Δvolume)·(−Δclose)
     const dv = v ? _xaDelta(v, 1) : 0;
@@ -24827,12 +24879,12 @@ function xalphaBuildFeat(symbol, dailyCache, panel) {
     const a53 = _clamp(-_xaDelta(_pos, Math.min(9, _pos.length - 1)), -5, 5);
     // #6 — −corr(open, volume, 10)
     const a6 = v ? -_xaCorr(o, v, 10) : 0;
-    // #4 — −ts_rank(rank(low), 9). rank(low) 는 횡단면이지만 패널이 당일치뿐이라
-    //   시계열 랭크만 쓰되 부호는 논문대로 반전한다.
-    const a4 = -( _xaTsRank(l, 9) - 0.5) * 2;
-    // #33 — rank(−(1 − open/close)) → 종목 단위에선 −(1 − open/close) 자체를 쓴다
+    // #4 — −ts_rank(rank(low), 9). 바깥 ts_rank 은 그대로, 안쪽 rank(low) 는 아래에서
+    //   횡단면 랭크가 한 번 더 걸리므로 논문 의도에 더 가까워진다.
+    const a4 = -(_xaTsRank(l, 9) - 0.5) * 2;
+    // #33 — rank(−(1 − open/close)) — 바깥 rank 는 아래 횡단면 랭크가 담당한다
     const a33 = _clamp(-(1 - O / C) * 100, -10, 10);
-    // #23 — sum(high,20)/20 < high 이면 −Δ(high,2), 아니면 0
+    // #23 — 20일 고가평균 < 고가면 −Δ(high,2), 아니면 0
     let ma20h = 0, k20 = 0;
     for (let i = Math.max(0, h.length - 20); i < h.length; i++) { ma20h += h[i]; k20++; }
     ma20h = k20 > 0 ? ma20h / k20 : H;
@@ -24848,18 +24900,60 @@ function xalphaBuildFeat(symbol, dailyCache, panel) {
       }
       a2 = -_xaCorr(dlv, co, 6);
     }
-
-    // ── 횡단면 랭크(JPX) ──
-    const b = (panel && panel.bySym && panel.bySym[symbol]) || {};
-    const xsRet5 = _xaXsRank(panel ? panel.ret5 : [], b.r5);
-    const xsRet20 = _xaXsRank(panel ? panel.ret20 : [], b.r20);
-    const xsVolSurge = _xaXsRank(panel ? panel.volSurge : [], b.vs);
-    const xsVolat = _xaXsRank(panel ? panel.volat : [], b.vol);
-    const xsAmihud = _xaXsRank(panel ? panel.amihud : [], b.ami);
-
-    const out = [a101, a54, a12, a41, a53, a6, a4, a33, a23, a2,
-                 xsRet5, xsRet20, xsVolSurge, xsVolat, xsAmihud];
+    const out = [a101, a54, a12, a41, a53, a6, a4, a33, a23, a2];
     for (let i = 0; i < out.length; i++) if (!isFinite(out[i])) out[i] = 0;
+    return out;
+  } catch (e) { return null; }
+}
+const XA_NALPHA = 10;      // 형식알파 개수
+/* [V33.155] ★decay_linear — 논문 자신의 연산자이자, 지평 불일치를 메우는 자리★
+   형식알파 10종은 전부 ★하루짜리★ 신호다(오늘 봉 vs 어제 봉). 그런데 라벨 지평은 10일이다.
+   하루짜리 미시구조 신호로 10일 뒤를 맞히라는 건 애초에 어긋난 요구다 —
+   IC 가 낮게 나오는 게 당연하다.
+   WorldQuant 101 은 이걸 decay_linear(x, d) 로 다룬다: 최근 d일 알파를 선형가중 평균해
+   신호를 지평에 맞게 늘린다. 여기서도 같은 연산자를 쓴다(가중 5:4:3:2:1).
+   원값 10 + 감쇠평활 10 = 20개를 각각 횡단면 랭크로 넣는다 — 짧은 신호와 늘린 신호는
+   서로 다른 정보라 둘 다 남긴다(모델이 어느 쪽을 쓸지는 계수가 정한다). */
+const XA_DECAY_D = 5;
+function xalphaDecayAlphas(symbol, dailyCache) {
+  try {
+    const acc = new Array(XA_NALPHA).fill(0);
+    let wsum = 0;
+    for (let b = 0; b < XA_DECAY_D; b++) {
+      const a = xalphaRawAlphas(symbol, dailyCache, b);
+      if (!a) return null;                       // 한 시점이라도 못 만들면 평활도 못 만든다
+      const w = XA_DECAY_D - b;                  // 5,4,3,2,1 — 최근일수록 무겁게
+      for (let j = 0; j < XA_NALPHA; j++) acc[j] += w * a[j];
+      wsum += w;
+    }
+    if (!(wsum > 0)) return null;
+    for (let j = 0; j < XA_NALPHA; j++) acc[j] = acc[j] / wsum;
+    return acc;
+  } catch (e) { return null; }
+}
+
+function xalphaBuildFeat(symbol, dailyCache, panel) {
+  try {
+    if (!XALPHA.enabled) return null;
+    const raw = xalphaRawAlphas(symbol, dailyCache);
+    const dec = xalphaDecayAlphas(symbol, dailyCache);
+    if (!raw || !dec) return null;
+    // ★랭크는 모집단이 있어야 뜻이 생긴다★ — 5종목짜리 순위는 정보가 아니라 잡음이다.
+    //   패널이 얇으면 표본을 만들지 않는다(억지로 0.5 를 채우면 피처가 상수가 된다).
+    const av = panel && panel.alphas, dv = panel && panel.decays;
+    if (!Array.isArray(av) || av.length !== XA_NALPHA || !Array.isArray(av[0]) || av[0].length < XALPHA.minPanel) return null;
+    if (!Array.isArray(dv) || dv.length !== XA_NALPHA || !Array.isArray(dv[0]) || dv[0].length < XALPHA.minPanel) return null;
+    const out = [];
+    for (let j = 0; j < XA_NALPHA; j++) out.push(_xaXsRank(av[j], raw[j]));
+    for (let j = 0; j < XA_NALPHA; j++) out.push(_xaXsRank(dv[j], dec[j]));
+    // ── 횡단면 랭크(JPX) — 종전부터 랭크였던 5종은 그대로 ──
+    const b = (panel && panel.bySym && panel.bySym[symbol]) || {};
+    out.push(_xaXsRank(panel ? panel.ret5 : [], b.r5));
+    out.push(_xaXsRank(panel ? panel.ret20 : [], b.r20));
+    out.push(_xaXsRank(panel ? panel.volSurge : [], b.vs));
+    out.push(_xaXsRank(panel ? panel.volat : [], b.vol));
+    out.push(_xaXsRank(panel ? panel.amihud : [], b.ami));
+    for (let i = 0; i < out.length; i++) if (!isFinite(out[i])) out[i] = 0.5;
     return out;
   } catch (e) { return null; }
 }
@@ -24880,7 +24974,9 @@ async function xalphaTrainNightly(DB) {
     table: "xalpha_samples", stateKey: "xalpha_model", tag: "XALPHA",
     featVer: XALPHA.featVer, D: XALPHA.featNames.length,
     minN: XALPHA.minTrainSamples, window: XALPHA.trainWindow,
-    l2: XALPHA.l2, icFloor: XALPHA.icFloor
+    l2: XALPHA.l2, icFloor: XALPHA.icFloor,
+    // 횡단면 알파 — 유의성은 '일별 횡단면 IC 의 시계열'(ICIR)로 잰다. 위 _icBlockStats 주석 참조.
+    dayBlocks: true
   });
 }
 
@@ -25467,7 +25563,14 @@ function _tToZ(t, df) {
   } catch (e) { return t; }
 }
 
-function _icBlockStats(pv, yv, K) {
+/* [V33.155] keys 를 주면 ★연속 슬라이스가 아니라 그 키(= 날짜)로★ 블록을 나눈다.
+   왜 필요한가: XALPHA 는 ★횡단면 알파★ 다 — 같은 날 유니버스 안에서의 상대 순위가 신호다.
+   그런데 연속 슬라이스 블록은 한 블록이 며칠치를 섞거나 한 국면에 통째로 들어가서,
+   블록 간 분산이 ★모델 품질이 아니라 시장 국면★ 을 재게 된다. 그러면 진짜 알파도 t 가 주저앉는다.
+   퀀트 주식에서 표준은 ‘일별 횡단면 IC 를 낸 뒤 그 시계열로 ICIR’ 이다 — keys 경로가 그것이다.
+   ★기본 동작은 바꾸지 않는다★(keys 없으면 종전과 동일). V33.113 이 연속 슬라이스로 재놓은
+   오탐률 보정을 통째로 흔들지 않기 위해서다. 쓰는 곳에서만 켠다. */
+function _icBlockStats(pv, yv, K, keys) {
   try {
     const n = Math.min(pv.length, yv.length);
     const _c = function (a, b) {
@@ -25481,14 +25584,34 @@ function _icBlockStats(pv, yv, K) {
     const all = _c(pv.slice(0, n), yv.slice(0, n));
     // [V33.113] 표본이 많으면 블록을 더 쪼갠다 — 자유도(K−1)가 커질수록 t 문턱이 정직해진다.
     //   블록은 최소 200표본을 유지해 블록 자체의 독립성 가정을 깨지 않는다.
-    const kWant = Math.max(2, Math.floor(K || 5));
-    const k = Math.max(kWant, Math.min(12, Math.floor(n / 200)));
-    const bs = Math.floor(n / k);
-    if (bs < 20 || all == null) return { ic: all == null ? 0 : all, blockIC: null, icir: null, t: null, K: 0 };
     const ics = [];
-    for (let i = 0; i < k; i++) {
-      const c = _c(pv.slice(i * bs, (i + 1) * bs), yv.slice(i * bs, (i + 1) * bs));
-      if (c != null) ics.push(c);
+    if (Array.isArray(keys) && keys.length >= n) {
+      // ── 키(날짜)별 블록 — 각 블록이 '그날의 횡단면' 이다 ──
+      const by = new Map();
+      for (let i = 0; i < n; i++) {
+        const k2 = keys[i];
+        if (k2 == null) continue;
+        let g = by.get(k2); if (!g) { g = { p: [], y: [] }; by.set(k2, g); }
+        g.p.push(pv[i]); g.y.push(yv[i]);
+      }
+      // 하루가 너무 얇으면 그날의 횡단면 상관은 잡음이다 — 버린다(억지로 넣으면 분산만 키운다).
+      const days = [...by.keys()].sort();
+      for (const d of days) {
+        const g = by.get(d);
+        if (g.p.length < 12) continue;
+        const c = _c(g.p, g.y);
+        if (c != null) ics.push(c);
+      }
+      if (all == null) return { ic: 0, blockIC: null, icir: null, t: null, K: 0 };
+    } else {
+      const kWant = Math.max(2, Math.floor(K || 5));
+      const k = Math.max(kWant, Math.min(12, Math.floor(n / 200)));
+      const bs = Math.floor(n / k);
+      if (bs < 20 || all == null) return { ic: all == null ? 0 : all, blockIC: null, icir: null, t: null, K: 0 };
+      for (let i = 0; i < k; i++) {
+        const c = _c(pv.slice(i * bs, (i + 1) * bs), yv.slice(i * bs, (i + 1) * bs));
+        if (c != null) ics.push(c);
+      }
     }
     if (ics.length < 2) return { ic: all, blockIC: null, icir: null, t: null, K: 0 };
     let m = 0; for (const v of ics) m += v; m /= ics.length;
@@ -29430,8 +29553,8 @@ async function mlMindVizData(DB) {
 //       입력을 표준화(mean/std)한 뒤 학습하므로 계수끼리 크기 비교가 성립한다.
 //     · MEMO = k-means 원형 책 → 계수가 없다. 원형별 승률·표본이 구조다(아래 별도 함수).
 const _LINVIZ = {
-  flow:     { key: "flow_model",      label: "FLOW (수급·피어)",        names: function () { return FLOWML.featNames; } },
-  xalpha:   { key: "xalpha_model",    label: "XALPHA (형식알파·랭크)",  names: function () { return XALPHA.featNames; } },
+  flow:     { key: "flow_model",      label: "FLOW (수급·피어)",        names: function () { return FLOWML.featNames; }, ver: function () { return FLOWML.featVer; } },
+  xalpha:   { key: "xalpha_model",    label: "XALPHA (형식알파·랭크)",  names: function () { return XALPHA.featNames; }, ver: function () { return XALPHA.featVer; } },
   stack:    { key: "stack_model",     label: "STACK (위원회 결합)",      names: function () {
       // 입력은 전문가 확률 8 + 참여마스크 8 = 16. 이름을 그대로 지어 줘야 화면이 읽힌다.
       const sl = ["mind", "dnn", "gbdt", "boost", "flow", "xalpha", "memo", "rule"];
@@ -29449,6 +29572,16 @@ async function mlLinearVizData(DB, name) {
     let note = null;
     try { note = await getState(DB, "train_note:" + spec.key, null); } catch (e) {}
     const fn = spec.names() || [];
+    /* [V33.155] ★판이 다른 모델에 새 이름을 붙이지 않는다★
+       featVer 가 올라가면 피처의 개수와 뜻이 달라진다(XALPHA 15 → 25). 옛 모델의 계수에
+       새 이름표를 순서대로 붙이면 값은 맞는데 ★해석이 통째로 틀린★ 화면이 된다.
+       추론은 이미 featVer 로 걸러 이 모델을 안 쓴다 — 화면도 같은 기준으로 말해야 한다. */
+    const _wantVer = (typeof spec.ver === "function") ? spec.ver() : null;
+    if (m && Array.isArray(m.w) && _wantVer != null && _num(m.featVer, -1) !== _wantVer) {
+      return { kind: name, model: label, trained: false, featNames: fn, inputDim: fn.length,
+               staleVer: _num(m.featVer, null), wantVer: _wantVer, trainedAt: _num(m.ts, null),
+               note: note ? String(note.msg || "") : null, noteTs: note ? _num(note.ts, null) : null };
+    }
     if (!m || !Array.isArray(m.w)) {
       return { kind: name, model: label, trained: false, featNames: fn, inputDim: fn.length,
                note: note ? String(note.msg || "") : null, noteTs: note ? _num(note.ts, null) : null };

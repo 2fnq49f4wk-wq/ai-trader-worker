@@ -119,6 +119,9 @@ jobs:
 
       - name: 목표가 개정 계약 검사 (상향/하향 · 부호 규약 · 가격 독립성)
         run: node tools/check-analyst-rev.mjs
+
+      - name: XALPHA 계약 검사 (횡단면 랭크 · 누출 · 일별 유의성)
+        run: node tools/check-xalpha.mjs
       # cloudflare/wrangler-action 대신 로컬에서 검증된 방식 그대로 실행
       # (wrangler-action@v3의 npx 자동설치가 4.86.0을 요구하며 실패하던 문제 회피)
       - name: Install wrangler

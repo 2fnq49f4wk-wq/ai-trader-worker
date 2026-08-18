@@ -140,5 +140,50 @@ const score = (m, rows) => rows.map((r) => 1 / (1 + Math.exp(-(m.w * r.x + m.b))
   else bad("퍼징 건수를 기록하지 않는다");
 }
 
+// ── [V33.155] ★홀드아웃 경계는 퍼징으로 움직이지 않는다★ ─────────────────
+//   실제 사고: 퍼징이 ntr 을 줄인 뒤 검증 루프가 `i = ntr` 부터 돌아, 잘라낸 구간이
+//   그대로 홀드아웃에 흡수됐다. 증상이 숫자로 남아 있었다 —
+//   운영 스냅샷의 XALPHA valAcc 가 ★2.4159★. 분류 정확도는 1 을 넘을 수 없다.
+//   (루프는 늘어난 구간을 돌고 분모는 원래 nval 이었다)
+//   통계적으로 더 나쁜 건: 퍼징 구간은 라벨이 학습구간과 겹쳐 적합값 쪽으로 끌리는
+//   ★다른 모집단★ 이다. 진짜 홀드아웃과 섞이면 블록 간 분산이 커져 t 가 주저앉는다.
+{
+  const src2 = readFileSync(new URL("../src/index.js", import.meta.url), "utf8");
+  const fn = src2.slice(src2.indexOf("async function _miniLogisticTrain"),
+                        src2.indexOf("async function flowTrainNightly"));
+  if (/const nvalStart = N - nval;/.test(fn)) ok("홀드아웃 시작점(nvalStart)을 못 박는다");
+  else bad("홀드아웃 시작점이 없다 — 퍼징이 경계를 움직인다");
+  if (/for \(let i = nvalStart; i < N; i\+\+\) \{/.test(fn))
+    ok("검증 루프가 nvalStart 부터 돈다(퍼징 구간은 학습에서만 빠진다)");
+  else bad("검증 루프가 퍼징된 ntr 부터 돈다 — 잘라낸 구간이 홀드아웃에 섞인다");
+  if (/const acc = correct \/ Math\.max\(1, N - nvalStart\);/.test(fn))
+    ok("정확도 분모가 실제로 돈 횟수와 같다(1 을 넘을 수 없다)");
+  else bad("정확도 분모가 루프 횟수와 다르다 — valAcc 가 1 을 넘을 수 있다");
+  if (/let _nEff = 0; for \(let i = nvalStart; i < N; i\+\+\)/.test(fn))
+    ok("유효표본수도 같은 구간에서 센다");
+  else bad("유효표본수를 다른 구간에서 센다 — 고유도·Wilson 하한이 어긋난다");
+  if (/const _bound = _num\(T\[nvalStart\], 0\);/.test(fn))
+    ok("퍼징 경계 시각이 홀드아웃 첫 표본이다(퍼징으로 스스로 움직이지 않는다)");
+  else bad("퍼징 경계가 ntr 을 참조한다 — 자기가 자른 결과를 다시 경계로 삼는다");
+}
+
+// 산식이 실제로 1 을 못 넘는지 — 계약을 글이 아니라 수로 확인한다.
+{
+  const N = 5000, nval = Math.max(100, Math.floor(N * 0.2));
+  const nvalStart = N - nval;
+  let worst = 0;
+  for (const purged of [0, 500, 2000, nvalStart - 1]) {
+    const ntr = Math.max(0, nvalStart - purged);
+    const loops = N - nvalStart;                  // 고친 판: 경계 고정
+    const acc = loops / Math.max(1, N - nvalStart);
+    worst = Math.max(worst, acc);
+    // 종전 판을 재현해 1 을 넘는지도 확인
+    const accOld = (N - ntr) / Math.max(1, nval);
+    if (purged > 0 && !(accOld > 1)) bad(`종전 산식이 퍼징 ${purged}건에서 1 을 안 넘는다 — 재현 실패`);
+  }
+  if (worst <= 1) ok(`고친 산식은 퍼징량과 무관하게 정확도 ≤ 1 (최대 ${worst.toFixed(3)})`);
+  else bad(`고친 산식도 정확도가 1 을 넘는다(${worst.toFixed(3)})`);
+}
+
 console.log(fails ? "\n퍼징 계약 위반 " + fails + "건 — 배포 차단" : "\n  ok   퍼징 계약 통과");
 process.exit(fails ? 1 : 0);
