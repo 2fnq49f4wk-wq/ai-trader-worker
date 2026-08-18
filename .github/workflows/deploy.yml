@@ -116,6 +116,9 @@ jobs:
       #   일반화 갭이다. 이 게이트는 "해롭지 않은가"와 "구현 방향이 맞는가"만 본다.
       - name: Train/val purge contract check
         run: node tools/check-purge.mjs
+
+      - name: 목표가 개정 계약 검사 (상향/하향 · 부호 규약 · 가격 독립성)
+        run: node tools/check-analyst-rev.mjs
       # cloudflare/wrangler-action 대신 로컬에서 검증된 방식 그대로 실행
       # (wrangler-action@v3의 npx 자동설치가 4.86.0을 요구하며 실패하던 문제 회피)
       - name: Install wrangler

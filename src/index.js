@@ -2788,7 +2788,7 @@ async function applySignalTypeWeights(DB, cfg) {
 // ============================================================================
 // [V33.55] 빌드 버전 — SWR L2 캐시 키에 섞어 '배포 = 판단 캐시 자동 무효화'를 만든다.
 //   판정 로직을 고쳐도 옛 캐시가 최대 1시간 재배포되던 문제를 구조적으로 없앤다.
-const _BUILD_VER = "V33.150";
+const _BUILD_VER = "V33.151";
 
 const AI_PARAMS = {
   // ── OHLCV 타임프레임 ── 시가/고가/저가/종가/거래량을 어떤 봉 주기로 볼지.
@@ -7442,6 +7442,168 @@ function _epsNum(v) {
   return neg ? -n : n;
 }
 
+// ════════════════════════════════════════════════════════════════════════════
+// [V33.151] ★증권사 목표가 상향/하향 — '수준' 이 아니라 '개정' 을 본다★
+//
+//   종전에도 애널리스트 목표가는 받고 있었지만 쓰는 값은 upsidePct(목표가 대비 상승여력)
+//   ★수준★ 뿐이었다. 수준은 이미 가격에 상당 부분 반영돼 있고, 무엇보다
+//   upsidePct 는 ★주가가 움직이기만 해도 변한다★ — 증권사가 아무것도 안 해도 숫자가 바뀐다.
+//   "증권사가 목표가를 올렸나 내렸나" 는 목표가 그 자체를 시점 간 비교해야만 나온다.
+//
+//   외부 유료 API 를 새로 붙이지 않는다. 이미 6시간마다 targetMeanPrice 를 받고 있으므로,
+//   ★그 값을 스냅샷으로 남기고 차분★ 하면 개정 사건이 그대로 나온다. 새 의존성 0.
+//   (그래서 이력은 배포 시점부터 쌓인다 — 과거 소급은 불가능하다. 화면에 그렇게 적는다.)
+//
+//   등급(averageAnalystRating)은 1=Strong Buy … 5=Sell 이라 ★값이 내려가면 상향★ 이다.
+//   부호를 뒤집지 않으면 의미가 정반대가 된다 — 여기서 한 번만 뒤집고 이후로는 rating 부호를
+//   직접 만지지 않는다.
+const ANALYSTREV = {
+  deadbandPct: 0.5,     // 목표가 변화가 이보다 작으면 개정으로 치지 않는다(반올림·환산 잡음)
+  windowDays: 90,       // 개정 모멘텀을 보는 창
+  maxEvents: 8,         // 종목당 보관 사건 수(상태 크기 방어)
+  minOpinions: 3,       // 애널리스트 3인 미만은 애초에 수집에서 제외되지만 여기서도 방어
+  ratingDeadband: 0.05  // 등급 평균의 미세 변동 무시
+};
+// 갱신분과 직전분을 비교해 개정 사건을 원장에 append 한다.
+async function analystRevTrack(DB, prevBySym, nowBySym) {
+  try {
+    if (!nowBySym) return "";
+    let led = null;
+    try { led = await getState(DB, "analyst_rev", null); } catch (e) {}
+    if (!led || !led.bySym) led = { bySym: {}, ts: 0 };
+    const now = Date.now();
+    const cutoff = now - ANALYSTREV.windowDays * 86400000;
+    let nUp = 0, nDn = 0;
+    for (const sym of Object.keys(nowBySym)) {
+      const cur = nowBySym[sym], old = prevBySym ? prevBySym[sym] : null;
+      if (!cur) continue;
+      const rec = led.bySym[sym] || { ev: [], ts: 0 };
+      // ── 목표가 개정 ──
+      if (old && typeof old.tgt === "number" && old.tgt > 0 && typeof cur.tgt === "number" && cur.tgt > 0) {
+        const dPct = ((cur.tgt - old.tgt) / old.tgt) * 100;
+        if (Math.abs(dPct) >= ANALYSTREV.deadbandPct) {
+          rec.ev = (rec.ev || []).concat([{ t: now, p: +dPct.toFixed(3), from: old.tgt, to: cur.tgt }]);
+          if (dPct > 0) nUp++; else nDn++;
+          // ★그 시점의 점수를 사건에 박아 둔다★ — 점수는 창(90일) 전체로 계산되므로
+          //   나중에 되돌아가서 재현할 수 없다. 계수 실측은 이 값으로만 정직해진다.
+          try { const _sc = analystRevScore(rec); if (_sc) rec.ev[rec.ev.length - 1].s = _sc.score; } catch (e) {}
+        }
+      }
+      // ── 등급 개정 (1=Strong Buy … 5=Sell → 감소가 상향) ──
+      if (old && typeof old.rating === "number" && typeof cur.rating === "number") {
+        const dR = cur.rating - old.rating;
+        if (Math.abs(dR) >= ANALYSTREV.ratingDeadband) {
+          rec.dRating = +(-dR).toFixed(3);          // ★부호 뒤집음★ — 양수 = 상향
+          rec.ratingTs = now;
+        }
+      }
+      rec.tgt = cur.tgt != null ? cur.tgt : rec.tgt;
+      rec.rating = cur.rating != null ? cur.rating : rec.rating;
+      rec.nOpinions = cur.nOpinions != null ? cur.nOpinions : rec.nOpinions;
+      rec.ts = now;
+      // 창 밖 사건 정리 + 개수 상한
+      rec.ev = (rec.ev || []).filter(function (e) { return _num(e.t, 0) >= cutoff; }).slice(-ANALYSTREV.maxEvents);
+      if (rec.ratingTs && rec.ratingTs < cutoff) { rec.dRating = null; rec.ratingTs = null; }
+      led.bySym[sym] = rec;
+    }
+    led.ts = now;
+    led.windowDays = ANALYSTREV.windowDays;
+    try { await setState(DB, "analyst_rev", led); } catch (e) {}
+    return (nUp || nDn) ? (" · 목표가 개정 ▲" + nUp + " ▼" + nDn) : "";
+  } catch (e) { return ""; }
+}
+// 개정 모멘텀 점수 — [-1, 1]. 목표가 순개정률과 등급 변화를 합친다.
+//   ★크기가 아니라 방향과 일관성★ 을 본다: 한 번 크게 올린 것보다 여러 번 꾸준히 올린 쪽이 강하다.
+function analystRevScore(rec) {
+  try {
+    if (!rec) return null;
+    const ev = Array.isArray(rec.ev) ? rec.ev : [];
+    let net = 0, up = 0, dn = 0;
+    for (const e of ev) { const p = _num(e.p, 0); net += p; if (p > 0) up++; else if (p < 0) dn++; }
+    let s = 0, has = false;
+    if (ev.length) {
+      // 순개정률 ±10% 를 만점으로 본다(그 이상은 포화 — 이상치 한 건이 지배하지 않게)
+      const sNet = _clamp(net / 10, -1, 1);
+      // 일관성: 사건 부호가 한쪽으로 몰릴수록 1 에 가깝다
+      const cons = (up + dn) > 0 ? (up - dn) / (up + dn) : 0;
+      s += 0.5 * sNet + 0.5 * cons * Math.min(1, (up + dn) / 3);
+      has = true;
+    }
+    if (typeof rec.dRating === "number" && isFinite(rec.dRating)) {
+      s += _clamp(rec.dRating / 0.5, -1, 1) * 0.6;   // 등급 0.5단계 이동을 만점으로
+      has = true;
+    }
+    if (!has) return null;
+    return { score: +_clamp(s, -1, 1).toFixed(4), net: +net.toFixed(3), up: up, dn: dn,
+             dRating: (typeof rec.dRating === "number") ? rec.dRating : null, nEv: ev.length };
+  } catch (e) { return null; }
+}
+
+// ── [V33.151] 목표가 개정 계수 실측 — ★상수로 박지 않는다★ ──────────────────
+//   이 저장소의 다른 계수(techK·confK·shockK)와 같은 방식이다: 사건이 실제로 수익률을
+//   예측했는지 재고, 유의하지 않으면 0 으로 수축한다("미측정 → 0 적용, 근거 없이 밀지 않는다").
+//   ★추가 fetch 0★ — 이미 저장된 일봉 캐시(daily:)와 개정 원장만 쓴다. 사건연구(event study).
+//   이력은 배포 시점부터 쌓이므로 초기에는 n 이 모자라 계수가 0 이다. 그게 정상이다.
+async function analystRevFitNightly(DB) {
+  try {
+    const led = await getState(DB, "analyst_rev", null);
+    if (!led || !led.bySym) return "[ANLREVK] 개정 원장 없음 — 대기";
+    const H = _num(AI_PARAMS.predictionHorizonDays, 10);
+    const now = Date.now();
+    const X = [], Y = [];
+    let scanned = 0;
+    for (const sym of Object.keys(led.bySym)) {
+      const rec = led.bySym[sym];
+      const ev = (rec && Array.isArray(rec.ev)) ? rec.ev : [];
+      if (!ev.length) continue;
+      // 지평이 끝난 사건만 — 아직 결과가 안 나온 사건을 넣으면 미래를 보는 셈이다.
+      const done = ev.filter(function (e) { return typeof e.s === "number" && (now - _num(e.t, 0)) >= (H + 1) * 86400000; });
+      if (!done.length) continue;
+      let d = null;
+      try { d = await getState(DB, "daily:" + sym, null); } catch (e) {}
+      const cl = d && Array.isArray(d.closes) ? d.closes : null;
+      if (!cl || cl.length < 60) continue;
+      scanned++;
+      for (const e of done) {
+        const i0 = _altBarIdx(cl.length, _num(e.t, 0), now);
+        const i1 = i0 + Math.round(H * (252 / 365));
+        if (!(i0 >= 0 && i1 < cl.length)) continue;
+        const p0 = _num(cl[i0], 0), p1 = _num(cl[i1], 0);
+        if (!(p0 > 0 && p1 > 0)) continue;
+        X.push(_clamp(_num(e.s, 0), -1, 1));
+        Y.push(((p1 - p0) / p0) > 0 ? 1 : 0);      // 다른 계수들과 같은 라벨 정의(상승 여부)
+      }
+    }
+    const N = X.length;
+    if (N < 300) {
+      await setState(DB, "analyst_rev_k", { k: null, t: null, kEff: 0, n: N, minN: 300, ts: Date.now() });
+      return "[ANLREVK] 사건표본 " + N + "/300 — 대기(계수 0 적용, 종목 " + scanned + "종 스캔)";
+    }
+    let k = 0, b0 = 0;
+    const lr = 0.5, epochs = 400;
+    for (let ep = 0; ep < epochs; ep++) {
+      let gk = 0, gb = 0;
+      for (let i = 0; i < N; i++) {
+        const p = 1 / (1 + Math.exp(-_clamp(b0 + k * X[i], -30, 30)));
+        const er = p - Y[i];
+        gk += er * X[i]; gb += er;
+      }
+      k -= lr * (gk / N); b0 -= lr * (gb / N);
+    }
+    let fi = 0;
+    for (let i = 0; i < N; i++) {
+      const p = 1 / (1 + Math.exp(-_clamp(b0 + k * X[i], -30, 30)));
+      fi += p * (1 - p) * X[i] * X[i];
+    }
+    const se = fi > 1e-9 ? 1 / Math.sqrt(fi) : Infinity;
+    const tval = isFinite(se) && se > 0 ? k / se : 0;
+    const kEff = +_clamp(k * _coefShrink(tval), -1.2, 1.2).toFixed(4);
+    await setState(DB, "analyst_rev_k", { k: +k.toFixed(4), se: +(isFinite(se) ? se : 9).toFixed(4),
+      t: +tval.toFixed(2), kEff: kEff, n: N, minN: 300, horizonDays: H, ts: Date.now() });
+    return "[ANLREVK] 목표가 개정 계수 실측 k=" + k.toFixed(3) + " (t " + tval.toFixed(2) + ", n " + N + ") → 적용 " + kEff.toFixed(3);
+  } catch (e) { return "[ANLREVK] fail: " + (e && e.message); }
+}
+
 async function updateAnalystConsensus(DB, cfg, force) {
   const ac = Object.assign({ enabled: true, refreshHours: 6, minBudgetReserve: 10, chunk: 40 }, (cfg && cfg.analyst) || {});
   if (ac.enabled === false) return null;
@@ -7478,6 +7640,11 @@ async function updateAnalystConsensus(DB, cfg, force) {
         if (typeof px === "number" && px > 0 && typeof tgt === "number" && tgt > 0) o.upsidePct = ((tgt - px) / px) * 100;
         if (rating != null) o.rating = rating;
         if (typeof row.numberOfAnalystOpinions === "number") o.nOpinions = row.numberOfAnalystOpinions;
+        // [V33.151] ★목표가 절대값을 남긴다 — 개정 방향은 upsidePct 로는 못 잰다★
+        //   upsidePct = (목표가−주가)/주가 라서 ★주가가 움직이기만 해도 변한다★.
+        //   "증권사가 목표가를 올렸나" 를 보려면 목표가 그 자체를 비교해야 한다.
+        if (typeof tgt === "number" && tgt > 0) o.tgt = +tgt.toFixed(4);
+        if (typeof px === "number" && px > 0) o.px = +px.toFixed(4);
         // 신뢰도 낮은(애널리스트 3인 미만) 항목은 제외 — 노이즈 차단
         if ((o.upsidePct != null || o.rating != null) && (o.nOpinions == null || o.nOpinions >= 3)) { bySym[row.symbol] = o; okCount++; }
       });
@@ -7486,7 +7653,10 @@ async function updateAnalystConsensus(DB, cfg, force) {
   if (okCount === 0) return cached;  // 전부 실패 → 기존 캐시 보존
   const result = { bySym: bySym, ts: Date.now(), n: okCount };
   try { await setState(DB, "analyst_consensus", result); } catch (e) {}
-  try { await log(DB, "INFO", null, "[ANALYST] 컨센서스 " + okCount + "종목 갱신(목표가·투자의견)"); } catch (e) {}
+  // [V33.151] 목표가 개정(상향/하향) 원장 갱신 — 이 갱신분과 직전분을 비교해 사건으로 남긴다.
+  let _revNote = "";
+  try { _revNote = await analystRevTrack(DB, cached && cached.bySym, bySym); } catch (e) {}
+  try { await log(DB, "INFO", null, "[ANALYST] 컨센서스 " + okCount + "종목 갱신(목표가·투자의견)" + _revNote); } catch (e) {}
   return result;
 }
 
@@ -8465,12 +8635,20 @@ function taDetectPatterns(dailyData) {
 //   /api/earnings·/api/econ·/api/insider 가 채워둔 상태를 재사용.
 // ════════════════════════════════════════════════════════════════════════════
 async function buildEventRiskData(DB) {
-  const out = { earningsBySym: {}, earningsRecentBySym: {}, analystBySym: {}, econ: { us: { preHigh: null, shock: 0, shockTitle: "" }, kr: { preHigh: null, shock: 0, shockTitle: "" } }, insiderCount: {} };
+  const out = { earningsBySym: {}, earningsRecentBySym: {}, analystBySym: {}, analystRevBySym: {}, analystRevK: null, econ: { us: { preHigh: null, shock: 0, shockTitle: "" }, kr: { preHigh: null, shock: 0, shockTitle: "" } }, insiderCount: {} };
   const now = Date.now();
   try {
     // (0) [V9.9] 애널리스트 컨센서스 — 별도 크론이 채운 캐시 로드(목표가 상승여력·투자의견). 추가 fetch 0.
     const ac = await getState(DB, "analyst_consensus", null);
     if (ac && ac.bySym) out.analystBySym = ac.bySym;
+  } catch (e) {}
+  try {
+    // [V33.151] 목표가 개정(상향/하향) 원장 + ★실측 계수★. 추가 fetch 0.
+    //   계수는 상수가 아니라 야간 사건연구가 잰 값이다 — 미측정이면 0 이라 아무 영향이 없다.
+    const rv = await getState(DB, "analyst_rev", null);
+    if (rv && rv.bySym) out.analystRevBySym = rv.bySym;
+    const rk = await getState(DB, "analyst_rev_k", null);
+    if (rk) out.analystRevK = rk;
   } catch (e) {}
   try {
     // (1) 어닝스 — 심볼별 다가오는 발표 시각(회피용) + 최근 과거 발표(PEAD 추종용) 분리 추적
@@ -11523,6 +11701,20 @@ function evaluateAllStrategies(price, dayPct, dailyData, cfg, signalStats, regim
             if (typeof _a.upsidePct === "number") { _as += Math.max(-1, Math.min(1, _a.upsidePct / 25)); _h = true; }
             if (typeof _a.rating === "number") { _as += Math.max(-1, Math.min(1, (3 - _a.rating) / 1.5)); _h = true; }
             if (_h) _sf.push({ n: "ANALYST", w: 0.8, s: _as / ((typeof _a.upsidePct === "number" && typeof _a.rating === "number") ? 2 : 1) });
+          }
+          // [V33.151] ★목표가 개정(상향/하향)★ — 수준(위)과는 다른 정보다.
+          //   수준은 이미 가격에 반영돼 있고 주가가 움직이기만 해도 변하지만, 개정은
+          //   "증권사가 방금 생각을 바꿨다" 는 새 정보다. 그래서 별도 팩터로 싣는다.
+          //   ★가중은 손으로 정하지 않는다★ — 야간 사건연구가 잰 kEff 를 쓰고, 미측정이면 0
+          //   (= 팩터를 아예 안 싣는다). 근거 없이 밀지 않는다는 이 저장소의 원칙 그대로다.
+          const _rk = eventData.analystRevK;
+          const _kEff = _rk ? _num(_rk.kEff, 0) : 0;
+          if (_kEff !== 0 && eventData.analystRevBySym) {
+            const _rv = analystRevScore(eventData.analystRevBySym[dailyData.symbol]);
+            if (_rv && _rv.score !== 0) {
+              // kEff 는 로짓 기울기다. 팩터 가중으로 쓰려면 크기만 취하고 방향은 점수가 정한다.
+              _sf.push({ n: "TGT개정", w: _clamp(Math.abs(_kEff), 0, 1.2), s: _clamp(_rv.score * (_kEff >= 0 ? 1 : -1), -1, 1) });
+            }
           }
         }
         // (8) 경제지표 임박 — 시장 전체 보수화(음의 팩터로 합성)
@@ -18998,6 +19190,10 @@ async function handleRequest(request, env, ctx) {
             const _ev = await getState(env.DB, "ml_evstats", null);
             _alt.chain = {
               techK: _tk ? { k: _num(_tk.k, null), kEff: _num(_tk.kEff, null), t: _num(_tk.t, null), n: _num(_tk.n, 0) } : null,
+              // [V33.151] 목표가 개정 계수 — 다른 계수들과 같은 자리에 같은 모양으로.
+              anlRevK: await (async function () { try { const a = await getState(env.DB, "analyst_rev_k", null);
+                return a ? { k: _num(a.k, null), kEff: _num(a.kEff, null), t: _num(a.t, null),
+                             n: _num(a.n, 0), minN: _num(a.minN, 300) } : null; } catch (e) { return null; } })(),
               finalCal: _fc ? { T: _num(_fc.T, null), ece: _num(_fc.ece, null), eceRaw: _num(_fc.eceRaw, null), n: _num(_fc.n, 0) } : null,
               confK: await (async function () { try { const c = await getState(env.DB, "scalp_conf_k", null);
                 return c ? { k: _num(c.k, null), kEff: _num(c.kEff, null), t: _num(c.t, null), n: _num(c.n, 0) } : null; } catch (e) { return null; } })(),
@@ -20338,6 +20534,7 @@ async function handleRequest(request, env, ctx) {
         ["memo", function (DB) { return memoTrainNightly(DB); }],
         ["expreg", function (DB) { return expertRegimeFitNightly(DB); }],
         ["techk", function (DB) { return techPriorFitNightly(DB); }],
+        ["anlrevk", function (DB) { return analystRevFitNightly(DB); }],
         ["finalcal", function (DB) { return finalCalFitNightly(DB); }],
         ["gateaudit", function (DB) { return gateAuditNightly(DB); }],
         ["blendk", function (DB) { return decisionBlendFitNightly(DB); }],
@@ -21858,6 +22055,35 @@ async function handleRequest(request, env, ctx) {
 
     // === [V58 신규] 경제지표 캘린더 — TradingView 공개 캘린더 프록시 (30분 캐시) ===
     //   미국+한국, 오늘 기준 -1일 ~ +7일. importance(-1~1)를 임팩트 점수로 사용.
+    // ── [V33.151] 증권사 목표가 상향/하향 ────────────────────────────────────
+    //   추가 fetch 0 — 6시간마다 받는 컨센서스의 ★차분★ 이다(analystRevTrack 이 적립).
+    if (path === "/api/analyst-rev") {
+      const led = await getState(env.DB, "analyst_rev", null);
+      const k = await getState(env.DB, "analyst_rev_k", null);
+      const out = [];
+      const bySym = (led && led.bySym) || {};
+      for (const sym of Object.keys(bySym)) {
+        const rec = bySym[sym];
+        const sc = analystRevScore(rec);
+        if (!sc) continue;
+        const last = (rec.ev && rec.ev.length) ? rec.ev[rec.ev.length - 1] : null;
+        out.push({ symbol: sym, score: sc.score, net: sc.net, up: sc.up, dn: sc.dn,
+                   dRating: sc.dRating, nEv: sc.nEv,
+                   tgt: _num(rec.tgt, null), rating: _num(rec.rating, null), nOpinions: _num(rec.nOpinions, null),
+                   lastTs: last ? _num(last.t, null) : (rec.ratingTs || null),
+                   lastPct: last ? _num(last.p, null) : null,
+                   lastFrom: last ? _num(last.from, null) : null, lastTo: last ? _num(last.to, null) : null });
+      }
+      // 최근 개정 순 — "방금 무슨 일이 있었나" 가 이 화면의 질문이다.
+      out.sort(function (a, b) { return _num(b.lastTs, 0) - _num(a.lastTs, 0); });
+      return Response.json({
+        items: out.slice(0, 60), total: out.length,
+        ts: led ? _num(led.ts, null) : null, windowDays: ANALYSTREV.windowDays,
+        deadbandPct: ANALYSTREV.deadbandPct,
+        k: k ? { kEff: _num(k.kEff, 0), k: _num(k.k, null), t: _num(k.t, null), n: _num(k.n, 0), minN: _num(k.minN, 300) } : null
+      }, { headers: cors });
+    }
+
     if (path === "/api/econ") {
       const ck = "econ_calendar";
       const cached = await getState(env.DB, ck, null);
@@ -38055,6 +38281,8 @@ export default {
             //   구간으로만 레짐별 IC 를 잰다(누출 방지). memo 다음 자리가 맞다.
             await _stg("expreg", async function () { return await expertRegimeFitNightly(env.DB); });
             await _stg("techk", async function () { return await techPriorFitNightly(env.DB); });
+            // [V33.151] 목표가 개정 계수 실측 — 추가 fetch 0(저장된 일봉 + 개정 원장 사건연구).
+            await _stg("anlrevk", async function () { return await analystRevFitNightly(env.DB); });
             await _stg("finalcal", async function () { return await finalCalFitNightly(env.DB); });
             // [V33.95] 게이트 감사 — 고확률로 막힌 자리가 실제로 올랐는지 실측(추가 fetch 0).
             await _stg("gateaudit", async function () { return await gateAuditNightly(env.DB); });
