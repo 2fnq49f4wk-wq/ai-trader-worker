@@ -2788,7 +2788,7 @@ async function applySignalTypeWeights(DB, cfg) {
 // ============================================================================
 // [V33.55] 빌드 버전 — SWR L2 캐시 키에 섞어 '배포 = 판단 캐시 자동 무효화'를 만든다.
 //   판정 로직을 고쳐도 옛 캐시가 최대 1시간 재배포되던 문제를 구조적으로 없앤다.
-const _BUILD_VER = "V33.149";
+const _BUILD_VER = "V33.150";
 
 const AI_PARAMS = {
   // ── OHLCV 타임프레임 ── 시가/고가/저가/종가/거래량을 어떤 봉 주기로 볼지.
@@ -19289,9 +19289,12 @@ async function handleRequest(request, env, ctx) {
     //   [V12.36] ?model=dnn(기본)|mind|gbdt — 사이드바 두뇌 페이지에서 3개 모델 구조를 각각 관측.
     if (path === "/api/nn-viz") {
       const modelSel = url.searchParams.get("model") || "dnn";
+      // [V33.150] 신규 위원 5종 추가 — 선형(계수) / 원형(기억) 은 트리·층 렌더러로 못 그린다.
       const data = modelSel === "mind" ? await mlMindVizData(env.DB)
         : (["gbdt", "xgb", "lgb", "cat"].indexOf(modelSel) !== -1) ? await mlTreeVizData(env.DB, modelSel)
-        : await mlDNNVizData(env.DB);
+        : (modelSel === "memo") ? await mlMemoVizData(env.DB)
+        : (_LINVIZ[modelSel] ? await mlLinearVizData(env.DB, modelSel)
+        : await mlDNNVizData(env.DB));
       return Response.json(data, { headers: cors });
     }
 
@@ -29190,6 +29193,105 @@ async function mlMindVizData(DB) {
 
 // [V32.13] 범용 부스팅 트리 시각화 — gbdt/xgb/lgb/cat 공통. 라이브 모델 우선, 없으면 섀도우(_ext).
 //   피처 중요도는 트리 분할 사용 빈도로 근사(모든 라이브러리 트리가 동일 {f,t,l,r} 포맷).
+// ════════════════════════════════════════════════════════════════════════════
+// [V33.150] ★신규 위원 5종의 구조 관측★
+//   종전 구조 화면은 DNN·MIND·GBDT·XGB·LGB·Cat 6종만 볼 수 있었다. FLOW·XALPHA·STACK·
+//   MEMO·이중헤드는 위원회에서 실제로 투표하는데 ★내부를 볼 방법이 아예 없었다★ —
+//   "왜 이렇게 판단했나" 를 물을 수 있는 위원과 없는 위원이 갈려 있었다.
+//
+//   구조가 트리도 층도 아니라 기존 렌더러를 재탕할 수 없다:
+//     · FLOW/XALPHA/STACK/이중헤드 = L2 로지스틱 → ★부호 있는 계수★ 가 곧 구조다.
+//       입력을 표준화(mean/std)한 뒤 학습하므로 계수끼리 크기 비교가 성립한다.
+//     · MEMO = k-means 원형 책 → 계수가 없다. 원형별 승률·표본이 구조다(아래 별도 함수).
+const _LINVIZ = {
+  flow:     { key: "flow_model",      label: "FLOW (수급·피어)",        names: function () { return FLOWML.featNames; } },
+  xalpha:   { key: "xalpha_model",    label: "XALPHA (형식알파·랭크)",  names: function () { return XALPHA.featNames; } },
+  stack:    { key: "stack_model",     label: "STACK (위원회 결합)",      names: function () {
+      // 입력은 전문가 확률 8 + 참여마스크 8 = 16. 이름을 그대로 지어 줘야 화면이 읽힌다.
+      const sl = ["mind", "dnn", "gbdt", "boost", "flow", "xalpha", "memo", "rule"];
+      return sl.map(function (x) { return "p:" + x; }).concat(sl.map(function (x) { return "참여:" + x; }));
+    } },
+  dualbull: { key: "dual_bull_model", label: "이중헤드 · 강세",          names: function () { return LUXML.featNames; } },
+  dualbear: { key: "dual_bear_model", label: "이중헤드 · 약세",          names: function () { return LUXML.featNames; } }
+};
+async function mlLinearVizData(DB, name) {
+  const spec = _LINVIZ[name];
+  const label = spec ? spec.label : name;
+  try {
+    if (!spec) return { kind: name, model: label, trained: false, error: "알 수 없는 모델" };
+    const m = await getState(DB, spec.key, null);
+    let note = null;
+    try { note = await getState(DB, "train_note:" + spec.key, null); } catch (e) {}
+    const fn = spec.names() || [];
+    if (!m || !Array.isArray(m.w)) {
+      return { kind: name, model: label, trained: false, featNames: fn, inputDim: fn.length,
+               note: note ? String(note.msg || "") : null, noteTs: note ? _num(note.ts, null) : null };
+    }
+    const w = m.w;
+    let mx = 0; for (const v of w) { const a = Math.abs(_num(v, 0)); if (a > mx) mx = a; }
+    const coefs = w.map(function (v, j) {
+      const val = _num(v, 0);
+      return { i: j, name: fn[j] || ("f" + j), role: (typeof FEAT_ROLES !== "undefined" && FEAT_ROLES[fn[j]]) || "",
+               w: +val.toFixed(4), dir: val >= 0 ? 1 : -1,
+               strength: mx > 0 ? +(Math.abs(val) / mx).toFixed(3) : 0 };
+    });
+    const top = coefs.slice().sort(function (a, b) { return b.strength - a.strength; }).slice(0, 20);
+    return {
+      kind: name, model: label, trained: true, family: "linear",
+      inputDim: w.length, featNames: fn, coefs: coefs, topFeatures: top,
+      // 화면이 기존 막대 렌더러와 호환되게 같은 이름도 실어 준다.
+      inputFeatures: coefs,
+      b: +_num(m.b, 0).toFixed(4), baseRate: _num(m.baseRate, null),
+      n: _num(m.n, null), valAcc: _num(m.valAcc, null), valN: _num(m.valN, null), valNRaw: _num(m.valNRaw, null),
+      valUniq: _num(m.valUniq, null), valIC: _num(m.valIC, null), valICBlock: _num(m.valICBlock, null),
+      valICt: _num(m.valICt, null), tMinUsed: _num(m.tMinUsed, null), icFamilyK: _num(m.icFamilyK, null),
+      purged: _num(m.purged, null),
+      fwdIC: _num(m.fwdIC, null), fwdICt: _num(m.fwdICt, null), fwdN: _num(m.fwdN, 0),
+      fwdDays: _num(m.fwdDays, 0), minFwd: ICGATE.minForward, minFwdDays: FWDLED.minDays,
+      trusted: !!m.trusted, holdPass: !!m.holdPass, admit: expertAdmit(m),
+      trainedAt: _num(m.ts, null), featVer: _num(m.featVer, null),
+      note: note ? String(note.msg || "") : null, noteOk: note ? !!note.ok : null, noteTs: note ? _num(note.ts, null) : null
+    };
+  } catch (e) { return { kind: name, model: label, trained: false, error: e && e.message }; }
+}
+// MEMO — 계수가 없다. 원형(prototype) 하나하나가 "비슷했던 과거 국면" 이고,
+//   그 원형의 승률·표본수가 곧 모델의 내용이다. 원형을 승률순으로 보인다.
+async function mlMemoVizData(DB) {
+  try {
+    const m = await getState(DB, "memo_model", null);
+    let note = null;
+    try { note = await getState(DB, "train_note:memo_model", null); } catch (e) {}
+    const fn = LUXML.featNames;
+    if (!m || !Array.isArray(m.protos) || !m.protos.length) {
+      let sn = 0;
+      try { const r = await DB.prepare("SELECT COUNT(*) c FROM ml_samples WHERE featver=?").bind(LUXML.featVer).first(); sn = _num(r && r.c, 0); } catch (e) {}
+      return { kind: "memo", model: "MEMO (유사상황 기억)", trained: false, samples: sn,
+               minTrainSamples: MEMOML.minTrainSamples, featNames: fn,
+               note: note ? String(note.msg || "") : null };
+    }
+    // 원형별로 '이 국면을 무엇이 특징짓나' 를 함께 낸다 — 중심좌표가 표준화 z 라
+    //   |z| 가 큰 축이 곧 그 국면의 성격이다(전부 나열하면 65축이라 읽히지 않는다).
+    const protos = m.protos.map(function (p, i) {
+      const c = Array.isArray(p.c) ? p.c : [];
+      const marks = c.map(function (v, j) { return { name: fn[j] || ("f" + j), z: +_num(v, 0).toFixed(2) }; })
+        .sort(function (a, b) { return Math.abs(b.z) - Math.abs(a.z); }).slice(0, 5);
+      return { i: i, n: _num(p.n, 0), winRate: _num(p.p, null), avgPnl: _num(p.pnl, null), marks: marks };
+    }).sort(function (a, b) { return _num(b.winRate, 0) - _num(a.winRate, 0); });
+    return {
+      kind: "memo", model: "MEMO (유사상황 기억)", trained: true, family: "prototype",
+      K: protos.length, protos: protos, featNames: fn, inputDim: fn.length,
+      n: _num(m.n, null), valAcc: _num(m.valAcc, null), valIC: _num(m.valIC, null),
+      valICBlock: _num(m.valICBlock, null), valICt: _num(m.valICt, null),
+      fwdIC: _num(m.fwdIC, null), fwdICt: _num(m.fwdICt, null), fwdN: _num(m.fwdN, 0),
+      fwdDays: _num(m.fwdDays, 0), minFwd: ICGATE.minForward, minFwdDays: FWDLED.minDays,
+      trusted: !!m.trusted, holdPass: !!m.holdPass, admit: expertAdmit(m),
+      baseRate: _num(m.base, null),   // 원형 승률을 이 값과 비교해야 의미가 있다
+      trainedAt: _num(m.ts, null), shrinkN: MEMOML.shrinkN,
+      note: note ? String(note.msg || "") : null, noteOk: note ? !!note.ok : null, noteTs: note ? _num(note.ts, null) : null
+    };
+  } catch (e) { return { kind: "memo", model: "MEMO (유사상황 기억)", trained: false, error: e && e.message }; }
+}
+
 async function mlTreeVizData(DB, name) {
   const fn = LUXML.featNames;
   const label = name.toUpperCase();

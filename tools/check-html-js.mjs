@@ -271,6 +271,55 @@ try {
   rtBad += pbad;
 } catch (e) { console.error("  FAIL 파이프라인 폰 레이아웃 검사 실패:", e.message); rtBad += 1; }
 
+// ── [V33.150] 구조 관측 탭 ↔ /api/nn-viz 라우팅 배선 ────────────────────────
+//   탭만 늘리고 서버 라우팅을 안 고치면 그 탭은 DNN 구조를 보여준다(폴백이 mlDNNVizData 다).
+//   조용히 틀린 그림을 보여주는 것이라 화면만 봐서는 알아채기 어렵다 — 배선을 강제한다.
+try {
+  const hv = readFileSync(new URL("../public/index.html", import.meta.url), "utf8");
+  const sv = readFileSync(new URL("../src/index.js", import.meta.url), "utf8");
+  const tabsBlock = (hv.match(/<div class="nnv-tabs"[\s\S]*?<\/div>/) || [""])[0];
+  const tabs = [...tabsBlock.matchAll(/data-model="([^"]+)"/g)].map((m) => m[1]);
+  const route = (sv.match(/if \(path === "\/api\/nn-viz"\)[\s\S]{0,900}?Response\.json/) || [""])[0];
+  const linKeys = [...(sv.match(/const _LINVIZ = \{[\s\S]*?\n\};/) || [""])[0].matchAll(/^\s{2}(\w+):\s*\{/gm)].map((m) => m[1]);
+  const missing = tabs.filter((t) => {
+    if (t === "dnn" || t === "mind" || t === "memo") return !route.includes('"' + t + '"') && t !== "dnn";
+    if (["gbdt", "xgb", "lgb", "cat"].includes(t)) return !route.includes('"' + t + '"');
+    return !linKeys.includes(t);
+  });
+  let nbad = 0;
+  if (!tabs.length) { nbad++; console.error("  FAIL 구조 관측 탭을 하나도 못 찾았다 — 검사가 헛돈다"); }
+  else if (missing.length) { nbad++; console.error(`  FAIL 탭은 있는데 서버 라우팅이 없다: ${missing.join(", ")} — 그 탭은 조용히 DNN 구조를 보여준다`); }
+  else console.log(`  ok   구조 관측 탭 ${tabs.length}종(${tabs.join(",")})이 전부 서버 라우팅과 이어져 있다`);
+  // 프론트 MODELS(사이드바 목록)와 탭 목록이 어긋나면 사이드바에서 고른 모델이 활성표시가 안 된다.
+  const rail = [...((hv.match(/var MODELS = \[[\s\S]*?\];/) || [""])[0]).matchAll(/\['(\w+)'/g)].map((m) => m[1]);
+  const diff = tabs.filter((t) => !rail.includes(t)).concat(rail.filter((r) => !tabs.includes(r)));
+  if (!diff.length) console.log("  ok   사이드바 모델 목록과 탭 목록이 같다");
+  else { nbad++; console.error(`  FAIL 사이드바/탭 목록 불일치: ${diff.join(", ")} — 고른 모델이 활성표시되지 않는다`); }
+  rtBad += nbad;
+} catch (e) { console.error("  FAIL 구조 관측 배선 검사 실패:", e.message); rtBad += 1; }
+
+// ── [V33.150] 대시보드 경제지표 캘린더가 패널 밖으로 잘리지 않는가 ──────────
+//   실제 증상: 7열 표(일시·영향·지표·실제·예상·이전·서프)가 요구하는 최소폭이
+//   1fr:1fr 로 나눈 칸을 넘겨, 패널의 overflow-x 안으로 오른쪽 열이 숨었다.
+//   헤드리스 실측(1024px): 표 523px vs 가용 414px → 109px 이 잘려 나갔다.
+//   폭을 정한 건 값이 아니라 ★헤더 글자★ 였다("Expected" 65px vs 값 "49.2" 30px).
+try {
+  const hc = readFileSync(new URL("../public/index.html", import.meta.url), "utf8");
+  let ebad = 0;
+  const cols = (hc.match(/\.cmbd-grid\{[^}]*grid-template-columns:\s*([^;]+);/) || [])[1] || "";
+  const fr = [...cols.matchAll(/([\d.]+)fr/g)].map((x) => +x[1]);
+  if (fr.length === 2 && fr[0] > fr[1] * 1.15)
+    console.log(`  ok   경제지표 칸이 기술분석 칸보다 넓다 (${cols.trim()}) — 7열 표와 입력 한 줄에 같은 폭을 주지 않는다`);
+  else { ebad++; console.error(`  FAIL .cmbd-grid 가 "${cols.trim()}" — 7열 표가 좁은 칸에 갇혀 오른쪽 열이 잘린다`); }
+  if (/td\.econ-name\{[^}]*max-width:[^}]*text-overflow:\s*ellipsis/.test(hc))
+    console.log("  ok   지표명 칸이 묶여 있다 — 긴 이름이 표 전체를 밀어내지 못한다");
+  else { ebad++; console.error("  FAIL 지표명 칸에 max-width/ellipsis 가 없다 — 긴 지표명 하나가 표를 패널 밖으로 민다"); }
+  if (/<th class="right" title="Expected[^"]*">예상<\/th>/.test(hc))
+    console.log("  ok   숫자 열 헤더가 짧다(원 이름은 툴팁) — 헤더가 열 폭을 정하지 못한다");
+  else { ebad++; console.error("  FAIL 숫자 열 헤더가 길다 — 값보다 헤더가 넓어 표가 밀려난다"); }
+  rtBad += ebad;
+} catch (e) { console.error("  FAIL 경제지표 캘린더 폭 검사 실패:", e.message); rtBad += 1; }
+
 // ── [V33.123] AI 운영상태 스냅샷 다운로드 — 실제로 실행해 본다 ──────────────
 //   버튼·핸들러·함수 셋 중 하나만 어긋나도 "눌러도 아무 일이 없는 버튼" 이 된다.
 //   이 저장소는 그런 손잡이를 여러 번 만들었다(설정은 있는데 코드가 안 읽던 82개 키).

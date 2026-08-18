@@ -8,7 +8,7 @@
      인데, 지금까지 화면에서 그걸 알 방법이 전혀 없었다(카카오톡 인앱 브라우저는 특히 강하게 캐시한다).
      서버가 내려주는 build 와 이 값을 비교해 다르면 배너로 알린다.
      ※ src/index.js 의 _BUILD_VER 와 항상 같아야 한다 — check-html-js 가 강제한다. -->
-<meta name="lux-build" content="V33.149">
+<meta name="lux-build" content="V33.150">
 <title>LUX-ENGINE V10</title>
 <link rel="icon" type="image/svg+xml" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'%3E%3Crect width='100' height='100' fill='%23000'/%3E%3Cpath fill='%23fff' d='M50 8 L53 41.7 L70.7 29.3 L58.3 47 L92 50 L58.3 53 L70.7 70.7 L53 58.3 L50 92 L47 58.3 L29.3 70.7 L41.7 53 L8 50 L41.7 47 L29.3 29.3 L47 41.7 Z'/%3E%3Cpath fill='%23b6bcc6' d='M50 50 L50 8 L53 41.7 Z M50 50 L70.7 29.3 L58.3 47 Z M50 50 L92 50 L58.3 53 Z M50 50 L70.7 70.7 L53 58.3 Z M50 50 L50 92 L47 58.3 Z M50 50 L29.3 70.7 L41.7 53 Z M50 50 L8 50 L41.7 47 Z M50 50 L29.3 29.3 L47 41.7 Z'/%3E%3C/svg%3E">
 <script>
@@ -2000,7 +2000,9 @@ html[data-theme="light"] .sb-brand{background:#0d0d0d;}
 html[data-theme="light"] .sb-brand-name{color:#fff;}
 
 /* ════ [V59] COMMODITIES/BONDS/ECON/TA 패널 그리드 — 한 화면 효율 배치 ════ */
-.cmbd-grid{display:grid;grid-template-columns:1fr 1fr;gap:8px;padding:8px;}
+/* [V33.150] 균등분할이 아니다 — 왼쪽은 7열 표, 오른쪽은 입력 한 줄 + 결과다.
+   같은 폭을 주면 표만 잘린다. 실측으로 정한 비율(econ 게이트가 넘침 0 을 강제한다). */
+.cmbd-grid{display:grid;grid-template-columns:1.35fr 1fr;gap:8px;padding:8px;}
 @media(max-width:900px){.cmbd-grid{grid-template-columns:1fr;}}
 .cmbd-grid .fv-panel{display:flex;flex-direction:column;min-width:0;overflow-x:auto;}
 .cmbd-grid .fv-table{width:100%;}
@@ -2033,6 +2035,25 @@ html[data-theme="light"] .sb-brand-name{color:#fff;}
 .econ-beat{color:var(--pos)!important;font-weight:700;}
 .econ-miss{color:var(--neg)!important;font-weight:700;}
 .econ-today td{background:rgba(255,201,77,.05);}
+/* [V33.150] ★경제지표 캘린더가 잘려 보이던 이유★ — 7열이 요구하는 최소폭(523px)이
+   1fr:1fr 로 나눈 칸(1024px 화면에서 414px)을 넘겨, 패널의 overflow-x 안으로 숨었다.
+   오른쪽 끝 '서프라이즈' 열이 잘려 나가 사용자에겐 그냥 잘린 표로 보인다.
+   → ① 지표명 칸이 표를 밀지 못하게 묶고 ② 숫자 열은 내용폭에 맞춰 붙인다. */
+.cmbd-grid .fv-table td.econ-name{max-width:190px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
+.cmbd-grid .fv-table th:nth-child(n+4),
+.cmbd-grid .fv-table td:nth-child(n+4){white-space:nowrap;width:1%;}
+.cmbd-grid .fv-table th:nth-child(2),
+.cmbd-grid .fv-table td:nth-child(2){width:1%;white-space:nowrap;}
+@media(max-width:1200px){
+  .cmbd-grid .fv-table td.econ-name{max-width:120px;}
+  .cmbd-grid .fv-table th,.cmbd-grid .fv-table td{padding:4px 5px;}
+}
+/* 1100px 아래에서는 더 조인다 — 여기서 6px 가 모자라 서프라이즈 열이 다시 밖으로 나갔다(실측). */
+@media(max-width:1100px){
+  .cmbd-grid .fv-table td.econ-name{max-width:104px;}
+  .cmbd-grid .fv-table th,.cmbd-grid .fv-table td{padding:4px 4px;font-size:9.5px;}
+  .cmbd-grid .econ-imp i{width:7px;height:7px;}
+}
 
 /* ════ [V59] TECHNICAL ANALYSIS ════ */
 .ta-chart-wrap{padding:8px 12px 4px;}
@@ -3524,7 +3545,9 @@ html[data-theme="light"] .m-brainbar button.active{color:#0b4f9e;background:rgba
             <button type="button" id="btnEconRefresh" class="btn" style="margin-left:auto;font-size:9px;padding:2px 8px;">↻</button>
           </div>
           <div style="max-height:320px;overflow:auto;-webkit-overflow-scrolling:touch;">
-            <table class="fv-table"><thead><tr><th>일시</th><th>Impact</th><th>지표</th><th class="right">Actual</th><th class="right">Expected</th><th class="right">Prior</th><th class="right">서프라이즈</th></tr></thead><tbody id="econBody"><tr><td colspan="7" class="empty">로딩 중...</td></tr></tbody></table>
+            <!-- [V33.150] 열 폭을 정하는 건 값이 아니라 ★헤더 글자★ 였다 — "Expected" 가 65px 를 잡는데
+                 값 "49.2" 는 30px 다. 뜻은 그대로 두고 글자만 줄인다(툴팁에 원 이름). -->
+            <table class="fv-table"><thead><tr><th>일시</th><th title="영향도">영향</th><th>지표</th><th class="right" title="Actual — 발표치">실제</th><th class="right" title="Expected — 시장 예상치">예상</th><th class="right" title="Prior — 직전치">이전</th><th class="right econ-sur-h" title="서프라이즈 — 예상 대비 비율">서프</th></tr></thead><tbody id="econBody"><tr><td colspan="7" class="empty">로딩 중...</td></tr></tbody></table>
           </div>
         </div>
         <div class="fv-panel">
@@ -4023,6 +4046,13 @@ html[data-theme="light"] .m-brainbar button.active{color:#0b4f9e;background:rgba
       <button class="nnv-tab" data-model="xgb" onclick="switchNnModel('xgb')"><svg class="lux-star-svg lux-ico" viewBox="0 0 100 100" aria-hidden="true"><use href="#luxStarSym"/></svg> XGBoost</button>
       <button class="nnv-tab" data-model="lgb" onclick="switchNnModel('lgb')"><svg class="lux-star-svg lux-ico" viewBox="0 0 100 100" aria-hidden="true"><use href="#luxStarSym"/></svg> LightGBM</button>
       <button class="nnv-tab" data-model="cat" onclick="switchNnModel('cat')"><svg class="lux-star-svg lux-ico" viewBox="0 0 100 100" aria-hidden="true"><use href="#luxStarSym"/></svg> CatBoost</button>
+      <!-- [V33.150] 신규 위원 5종 — 이들도 위원회에서 실제로 투표한다. 내부를 볼 수 있어야 한다. -->
+      <button class="nnv-tab" data-model="flow" onclick="switchNnModel('flow')"><svg class="lux-star-svg lux-ico" viewBox="0 0 100 100" aria-hidden="true"><use href="#luxStarSym"/></svg> FLOW (수급·피어)</button>
+      <button class="nnv-tab" data-model="xalpha" onclick="switchNnModel('xalpha')"><svg class="lux-star-svg lux-ico" viewBox="0 0 100 100" aria-hidden="true"><use href="#luxStarSym"/></svg> XALPHA (형식알파)</button>
+      <button class="nnv-tab" data-model="memo" onclick="switchNnModel('memo')"><svg class="lux-star-svg lux-ico" viewBox="0 0 100 100" aria-hidden="true"><use href="#luxStarSym"/></svg> MEMO (유사상황)</button>
+      <button class="nnv-tab" data-model="stack" onclick="switchNnModel('stack')"><svg class="lux-star-svg lux-ico" viewBox="0 0 100 100" aria-hidden="true"><use href="#luxStarSym"/></svg> STACK (위원회 결합)</button>
+      <button class="nnv-tab" data-model="dualbull" onclick="switchNnModel('dualbull')"><svg class="lux-star-svg lux-ico" viewBox="0 0 100 100" aria-hidden="true"><use href="#luxStarSym"/></svg> 이중헤드 강세</button>
+      <button class="nnv-tab" data-model="dualbear" onclick="switchNnModel('dualbear')"><svg class="lux-star-svg lux-ico" viewBox="0 0 100 100" aria-hidden="true"><use href="#luxStarSym"/></svg> 이중헤드 약세</button>
     </div>
     <div class="nnv-sub" id="nnvSub">신경망 구조·가중치 강도를 실시간으로 관측합니다.</div>
     <div class="nnv-banner" id="nnvBanner" style="display:none;"></div>
@@ -6889,7 +6919,12 @@ html[data-theme="light"] .m-brainbar button.active{color:#0b4f9e;background:rgba
         if (e.actual != null && e.forecast != null && isFinite(e.actual) && isFinite(e.forecast)) {
           var diff = e.actual - e.forecast;
           var pct = e.forecast !== 0 ? (diff / Math.abs(e.forecast) * 100) : 0;
-          surTxt = (diff >= 0 ? '+' : '') + fmtNum(diff, 2) + (Math.abs(pct) < 999 ? ' ('+(pct>=0?'+':'')+fmtNum(pct,1)+'%)' : '');
+          /* [V33.150] 서프라이즈 칸이 "-0.08 (-2.5%)" 로 106px 를 먹어 표 전체를 밀어냈다.
+             절대차는 단위가 지표마다 달라(K·%·pt) 그 자체로는 비교가 안 되고, 비교 가능한 건
+             ★예상 대비 비율★ 이다. 비율을 주값으로 올리고 절대차는 툴팁으로 내린다. */
+          surTxt = (Math.abs(pct) < 999)
+            ? '<span title="절대차 '+(diff>=0?'+':'')+fmtNum(diff,2)+'">'+(pct>=0?'+':'')+fmtNum(pct,1)+'%</span>'
+            : (diff >= 0 ? '+' : '') + fmtNum(diff, 2);
           surCls = diff > 0 ? 'econ-beat' : diff < 0 ? 'econ-miss' : '';
         }
         var fv = function(v){ return v != null && isFinite(v) ? fmtNum(v, 2) + (e.unit ? e.unit : '') : '-'; };
@@ -6898,7 +6933,9 @@ html[data-theme="light"] .m-brainbar button.active{color:#0b4f9e;background:rgba
         return '<tr'+(isToday?' class="econ-today"':'')+'>'+
           '<td style="white-space:nowrap;">'+when+'</td>'+
           '<td><span class="econ-imp imp'+impLvl+'"><i></i><i></i><i></i></span></td>'+
-          '<td>'+flag+' <span class="fv-tick">'+escapeHtml(e.title)+'</span>'+(e.period?' <span style="font-size:8.5px;color:var(--t3);">'+escapeHtml(e.period)+'</span>':'')+'</td>'+
+          /* [V33.150] 지표명이 길면(예: University of Michigan Consumer Sentiment) 이 칸이
+             표를 통째로 넓혀 오른쪽 열들이 패널 밖으로 밀려났다. 이 칸만 줄이고 전체 이름은 툴팁으로. */
+          '<td class="econ-name" title="'+escapeHtml(e.title)+'">'+flag+' <span class="fv-tick">'+escapeHtml(e.title)+'</span>'+(e.period?' <span style="font-size:8.5px;color:var(--t3);">'+escapeHtml(e.period)+'</span>':'')+'</td>'+
           '<td class="right '+actCls+'">'+fv(e.actual)+'</td>'+
           '<td class="right">'+fv(e.forecast)+'</td>'+
           '<td class="right">'+fv(e.previous)+'</td>'+
@@ -11988,6 +12025,21 @@ html[data-theme="light"] #page-nnviz .nlv-kpi,html[data-theme="light"] #page-nnv
 html[data-theme="light"] #page-nnviz .nlv-stat,html[data-theme="light"] #page-nnviz .nlv-top{background:#fbfdff;}
 /* [V33.149] 라이트 테마 — 어두운 배경 리터럴을 그대로 두면 흰 화면에서 검은 블록이 된다. */
 html[data-theme="light"] #page-nnviz .nlv-cm{background:#fbfdff;}
+/* [V33.150] 선형·원형 구조 뷰 라이트 테마 */
+html[data-theme="light"] #page-nnviz .nnv-lin-name{color:#3a4b66;}
+html[data-theme="light"] #page-nnviz .nnv-lin-track{background:#eef3fa;border-color:#dbe5f2;}
+html[data-theme="light"] #page-nnviz .nnv-lin-zero{background:#b9c7dc;}
+html[data-theme="light"] #page-nnviz .nnv-lin-w.pos{color:#0b6cd4;}
+html[data-theme="light"] #page-nnviz .nnv-lin-w.neg{color:#c62a45;}
+html[data-theme="light"] #page-nnviz .nnv-lin-head{color:#5b6f8d;}
+html[data-theme="light"] #page-nnviz .nnv-proto{border-color:#dbe5f2;}
+html[data-theme="light"] #page-nnviz .nnv-proto-h{color:#5b6f8d;}
+html[data-theme="light"] #page-nnviz .nnv-proto-h b{color:#12233f;}
+html[data-theme="light"] #page-nnviz .nnv-proto-wr.pos,html[data-theme="light"] #page-nnviz .nnv-proto-d.pos{color:#0b6cd4;}
+html[data-theme="light"] #page-nnviz .nnv-proto-wr.neg,html[data-theme="light"] #page-nnviz .nnv-proto-d.neg{color:#c62a45;}
+html[data-theme="light"] #page-nnviz .nnv-mk{border-color:#dbe5f2;color:#5b6f8d;}
+html[data-theme="light"] #page-nnviz .nnv-mk.p{border-color:#9fc9e8;color:#0b5f96;}
+html[data-theme="light"] #page-nnviz .nnv-mk.n{border-color:#e8a8b4;color:#a32338;}
 html[data-theme="light"] #page-nnviz .nlv-cmlist{background:#dbe5f2;border-color:#dbe5f2;}
 html[data-theme="light"] #page-nnviz .nlv-cm .cn{color:#12233f;}
 html[data-theme="light"] #page-nnviz .nlv-cm .cr{color:#5b6f8d;}
@@ -12779,11 +12831,137 @@ html[data-theme="light"] #page-nnviz .nlv-sec-h{ border-color:transparent; color
       { kind:'output', tag:'OUT',   act:'σ(승률)',    size:1,    strength:[0.95] }
     ];
   }
+  /* ═══ [V33.150] 선형 위원(FLOW·XALPHA·STACK·이중헤드) 구조 ═══
+     로지스틱 회귀라 층도 트리도 없다. 구조 = ★부호 있는 표준화 계수★ 다.
+     입력을 mean/std 로 표준화한 뒤 학습하므로 계수끼리 크기 비교가 성립하고,
+     부호가 곧 "이 축이 오르면 확률이 오르나/내리나" 를 말한다. 부호를 지우고
+     절대값만 보이면(기존 트리 렌더러처럼) 그 정보를 통째로 버리게 된다. */
+  function NNV_renderLinear(d){
+    var stage=document.getElementById('nnvStage'), chips=document.getElementById('nnvChips'),
+        comm=document.getElementById('nnvComm'), legend=document.getElementById('nnvLegend'),
+        sub=document.getElementById('nnvSub'), ban=document.getElementById('nnvBanner'),
+        roles=document.getElementById('nnvRoles');
+    if(legend) legend.style.display='none'; if(roles) roles.innerHTML='';
+    if(!d || !d.trained){
+      sub.textContent = (d&&d.model||'선형 위원')+' — 아직 학습된 모델이 없습니다.';
+      chips.innerHTML = chip('상태','학습 대기','warn') + (d&&d.inputDim?chip('입력 차원', d.inputDim+'개',''):'');
+      if(ban){ ban.className='nnv-banner off';
+        ban.innerHTML='⚠️ <b>학습 대기</b>'+(d&&d.note?' — 마지막 학습 시도: <code>'+esc(d.note)+'</code>':'');
+        ban.style.display='block'; }
+      comm.innerHTML=''; stage.innerHTML='<div class="nnv-empty">🌱 '+esc(d&&d.model||'')+' 학습 대기 중…</div>';
+      return;
+    }
+    var A = d.admit || null;
+    var tier = A ? (A.tier==='full'?'정식 합류':(A.admit?'잠정 합류 ×'+(A.mult!=null?A.mult.toFixed(2):'?'):'합류 보류')) : '—';
+    var tierCls = A ? (A.tier==='full'?'good':(A.admit?'warn':'off')) : '';
+    sub.textContent = d.model+' — L2 로지스틱 · 입력 '+d.inputDim+'차원 · 표준화 계수'
+      + (d.trainedAt? ' · 학습 '+new Date(d.trainedAt).toLocaleDateString('ko-KR') : '');
+    chips.innerHTML =
+      chip('합류 상태', tier, tierCls) +
+      chip('학습 표본', d.n!=null? d.n.toLocaleString():'—','') +
+      chip('검증 정확도', pct(d.valAcc),'') +
+      chip('블록 IC', d.valICBlock!=null? d.valICBlock.toFixed(3):'—', (d.valICBlock||0)>0.012?'good':'warn') +
+      chip('유의성 t', d.valICt!=null? d.valICt.toFixed(2):'—',
+           (d.valICt!=null && d.tMinUsed!=null && d.valICt>=d.tMinUsed)?'good':'warn') +
+      chip('전진검증', d.fwdN!=null? (d.fwdN.toLocaleString()+' / '+(d.minFwd||0).toLocaleString()
+           +(d.fwdDays!=null?' · '+d.fwdDays+'일':'')):'—', d.fwdN>=(d.minFwd||0)?'good':'warn');
+    if(ban){
+      ban.className = 'nnv-banner ' + (A && A.admit ? 'on' : 'off');
+      ban.innerHTML = (A && A.admit ? '✅ ' : '⚠️ ') + '<b>'+esc(tier)+'</b>'
+        + (A && A.why ? ' — '+esc(A.why) : '')
+        + (d.note && d.noteOk===false ? '<br>마지막 학습 시도: <code>'+esc(d.note)+'</code>' : '');
+      ban.style.display='block';
+    }
+    var top = (d.topFeatures||[]).slice(0,20);
+    var rows = top.map(function(f){
+      var w = Math.max(2, Math.abs(f.strength||0)*50);
+      var pos = (f.dir||1) >= 0;
+      return '<div class="nnv-lin-row" title="'+esc(f.name)+' 계수 '+(f.w!=null?f.w.toFixed(4):'—')+'">'
+        +'<div class="nnv-lin-name">'+esc(f.name)+'</div>'
+        +'<div class="nnv-lin-track">'
+          +'<span class="nnv-lin-zero"></span>'
+          +'<span class="nnv-lin-bar '+(pos?'pos':'neg')+'" style="width:'+w.toFixed(1)+'%;'+(pos?'left:50%':'right:50%')+'"></span>'
+        +'</div>'
+        +'<div class="nnv-lin-w '+(pos?'pos':'neg')+'">'+(f.w>=0?'+':'')+(f.w!=null?f.w.toFixed(3):'—')+'</div>'
+      +'</div>';
+    }).join('');
+    stage.innerHTML = '<div class="nnv-lin-wrap">'
+      + '<div class="nnv-lin-head"><span>← 확률을 낮추는 축</span><span>확률을 높이는 축 →</span></div>'
+      + rows + '</div>';
+    comm.innerHTML = '<div style="font-size:10px;color:#6f84aa;line-height:1.6;">'
+      + '막대는 <b>표준화 계수</b>다 — 입력을 평균 0·표준편차 1 로 맞춘 뒤 학습했으므로 축끼리 크기를 그대로 비교할 수 있다. '
+      + '부호는 방향이다(오른쪽 = 그 축이 커질수록 상승확률↑). 절편 b = <b>'+(d.b!=null?d.b.toFixed(3):'—')+'</b>'
+      + (d.baseRate!=null? ' · 기저 승률 <b>'+pct(d.baseRate)+'</b>':'')
+      + (d.purged? ' · 경계 퍼징으로 학습표본 <b>'+d.purged.toLocaleString()+'</b>건 제외(라벨 누출 차단)':'')
+      + (d.valUniq!=null? ' · 검증 평균 고유도 <b>'+d.valUniq.toFixed(2)+'</b>(유효 '+(d.valN||0).toLocaleString()+'/'+(d.valNRaw||0).toLocaleString()+')':'')
+      + '</div>';
+  }
+
+  /* ═══ [V33.150] MEMO 구조 — 계수가 없다. '비슷했던 과거 국면' 목록이 곧 모델이다 ═══ */
+  function NNV_renderMemo(d){
+    var stage=document.getElementById('nnvStage'), chips=document.getElementById('nnvChips'),
+        comm=document.getElementById('nnvComm'), legend=document.getElementById('nnvLegend'),
+        sub=document.getElementById('nnvSub'), ban=document.getElementById('nnvBanner'),
+        roles=document.getElementById('nnvRoles');
+    if(legend) legend.style.display='none'; if(roles) roles.innerHTML='';
+    if(!d || !d.trained){
+      sub.textContent = 'MEMO — 아직 원형이 만들어지지 않았습니다.';
+      chips.innerHTML = chip('상태','학습 대기','warn')
+        + (d&&d.samples!=null? chip('표본', d.samples.toLocaleString()+'/'+(d.minTrainSamples||0).toLocaleString(),
+            d.samples>=(d.minTrainSamples||0)?'good':'warn') : '');
+      if(ban){ ban.className='nnv-banner off';
+        ban.innerHTML='⚠️ <b>학습 대기</b>'+(d&&d.note?' — 마지막 학습 시도: <code>'+esc(d.note)+'</code>':''); ban.style.display='block'; }
+      comm.innerHTML=''; stage.innerHTML='<div class="nnv-empty">🌱 MEMO 원형 생성 대기 중…</div>';
+      return;
+    }
+    var A = d.admit || null;
+    var tier = A ? (A.tier==='full'?'정식 합류':(A.admit?'잠정 합류 ×'+(A.mult!=null?A.mult.toFixed(2):'?'):'합류 보류')) : '—';
+    sub.textContent = 'MEMO — k-means 원형 '+d.K+'개 · 입력 '+d.inputDim+'차원 · 비모수(국소) 위원';
+    chips.innerHTML =
+      chip('합류 상태', tier, A&&A.tier==='full'?'good':(A&&A.admit?'warn':'off')) +
+      chip('원형 수', d.K+'개','good') +
+      chip('학습 표본', d.n!=null? d.n.toLocaleString():'—','') +
+      chip('기저 승률', pct(d.baseRate),'') +
+      chip('블록 IC', d.valICBlock!=null? d.valICBlock.toFixed(3):'—',(d.valICBlock||0)>0.012?'good':'warn') +
+      chip('전진검증', (d.fwdN||0).toLocaleString()+' / '+(d.minFwd||0).toLocaleString(), d.fwdN>=(d.minFwd||0)?'good':'warn');
+    if(ban){ ban.className='nnv-banner '+(A&&A.admit?'on':'off');
+      ban.innerHTML=(A&&A.admit?'✅ ':'⚠️ ')+'<b>'+esc(tier)+'</b>'+(A&&A.why?' — '+esc(A.why):''); ban.style.display='block'; }
+    var base = d.baseRate!=null? d.baseRate : 0.5;
+    var rows = (d.protos||[]).map(function(pr){
+      var edge = (pr.winRate!=null? pr.winRate:base) - base;
+      var w = Math.max(2, Math.min(50, Math.abs(edge)*220));
+      var pos = edge >= 0;
+      var marks = (pr.marks||[]).map(function(mk){
+        return '<span class="nnv-mk '+(mk.z>=0?'p':'n')+'">'+esc(mk.name)+' '+(mk.z>=0?'+':'')+mk.z+'</span>';
+      }).join('');
+      return '<div class="nnv-proto">'
+        +'<div class="nnv-proto-h"><b>#'+pr.i+'</b>'
+          +'<span class="nnv-proto-wr '+(pos?'pos':'neg')+'">'+(pr.winRate!=null?(pr.winRate*100).toFixed(1)+'%':'—')+'</span>'
+          +'<span class="nnv-proto-d '+(pos?'pos':'neg')+'">'+(edge>=0?'+':'')+(edge*100).toFixed(1)+'%p</span>'
+          +'<span class="nnv-proto-n">n '+(pr.n||0).toLocaleString()+'</span>'
+          +'<span class="nnv-proto-n">평균 '+(pr.avgPnl!=null?(pr.avgPnl>=0?'+':'')+pr.avgPnl.toFixed(2)+'%':'—')+'</span>'
+        +'</div>'
+        +'<div class="nnv-lin-track"><span class="nnv-lin-zero"></span>'
+          +'<span class="nnv-lin-bar '+(pos?'pos':'neg')+'" style="width:'+w.toFixed(1)+'%;'+(pos?'left:50%':'right:50%')+'"></span></div>'
+        +'<div class="nnv-proto-mk">'+marks+'</div>'
+      +'</div>';
+    }).join('');
+    stage.innerHTML = '<div class="nnv-lin-wrap"><div class="nnv-lin-head"><span>← 기저보다 나쁜 국면</span><span>기저보다 좋은 국면 →</span></div>'+rows+'</div>';
+    comm.innerHTML = '<div style="font-size:10px;color:#6f84aa;line-height:1.6;">'
+      + '원형 하나가 <b>"이런 국면"</b> 하나다. 막대는 그 국면의 승률이 기저(<b>'+pct(base)+'</b>)에서 얼마나 벗어났는지다. '
+      + '승률은 표본수로 <b>수축</b>돼 있다(n/(n+'+(d.shrinkN||40)+')) — 20건짜리 원형의 80% 를 그대로 믿지 않는다. '
+      + '아래 칩은 그 국면을 가장 강하게 특징짓는 축(표준화 z)이다.'
+      + '</div>';
+  }
+
   function NNV_render(d){
     // [V12.3] 노드 클릭 툴팁용 — 입력 피처명 → 역할 맵
     NNV.roles={}; try{ ((d&&(d.inputFeatures||d.topFeatures))||[]).forEach(function(f){ if(f&&f.name) NNV.roles[f.name]={role:f.role||''}; }); }catch(e){}
     var stage=document.getElementById('nnvStage'), chips=document.getElementById('nnvChips'),
         comm=document.getElementById('nnvComm'), legend=document.getElementById('nnvLegend'), sub=document.getElementById('nnvSub');
+    // [V33.150] 구조가 다른 위원은 다른 렌더러로 — 트리 렌더러에 넣으면 GBDT 로 오표기된다.
+    if(d && d.kind === 'memo'){ NNV_renderMemo(d); return; }
+    if(d && d.kind && ['flow','xalpha','stack','dualbull','dualbear'].indexOf(d.kind) !== -1){ NNV_renderLinear(d); return; }
     if(d && d.kind && d.kind!=='dnn'){ NNV_renderSimple(d); return; }
     if(!d || !d.trained){
       // [V10] 미학습이어도 구조(dims)로 미리보기 시각화 — 영상처럼 지금 바로 신경망을 볼 수 있게.
@@ -13310,6 +13488,37 @@ html[data-theme="light"] #page-nnviz .nlv-sec-h{ border-color:transparent; color
   display:flex;align-items:center;gap:6px;padding:7px 10px 6px;
   font-family:'IBM Plex Mono',monospace;font-size:8.5px;letter-spacing:1.6px;color:var(--t3);text-transform:uppercase;
 }
+/* [V33.150] 선형 위원 계수 막대 — 0 을 가운데 두고 좌(음)/우(양). 부호가 정보다. */
+#page-nnviz .nnv-lin-wrap{padding:4px 2px 8px;}
+#page-nnviz .nnv-lin-head{display:flex;justify-content:space-between;font-size:9px;color:#5f79a2;
+  letter-spacing:.4px;padding:0 2px 6px;}
+#page-nnviz .nnv-lin-row{display:grid;grid-template-columns:118px 1fr 58px;align-items:center;gap:8px;
+  padding:2px 2px;font-size:10px;}
+#page-nnviz .nnv-lin-name{font-family:'IBM Plex Mono',monospace;color:#a9bcd8;white-space:nowrap;
+  overflow:hidden;text-overflow:ellipsis;}
+#page-nnviz .nnv-lin-track{position:relative;height:9px;background:#0b1220;
+  border:1px solid #14203a;border-radius:2px;overflow:hidden;}
+#page-nnviz .nnv-lin-zero{position:absolute;left:50%;top:0;bottom:0;width:1px;background:#2b3c5c;}
+#page-nnviz .nnv-lin-bar{position:absolute;top:1px;bottom:1px;border-radius:1px;}
+#page-nnviz .nnv-lin-bar.pos{background:linear-gradient(90deg,#1d6fa8,#38bdf8);}
+#page-nnviz .nnv-lin-bar.neg{background:linear-gradient(270deg,#a83a52,#ff5c7a);}
+#page-nnviz .nnv-lin-w{font-family:'IBM Plex Mono',monospace;font-size:9.5px;text-align:right;}
+#page-nnviz .nnv-lin-w.pos{color:#38bdf8;} #page-nnviz .nnv-lin-w.neg{color:#ff5c7a;}
+/* MEMO 원형 카드 */
+#page-nnviz .nnv-proto{padding:6px 2px 7px;border-bottom:1px solid #14203a;}
+#page-nnviz .nnv-proto-h{display:flex;align-items:baseline;gap:8px;font-size:10px;color:#7d90ad;margin-bottom:4px;flex-wrap:wrap;}
+#page-nnviz .nnv-proto-h b{color:#c8d8ee;font-family:'IBM Plex Mono',monospace;}
+#page-nnviz .nnv-proto-wr{font-weight:700;font-size:11.5px;}
+#page-nnviz .nnv-proto-wr.pos,#page-nnviz .nnv-proto-d.pos{color:#38bdf8;}
+#page-nnviz .nnv-proto-wr.neg,#page-nnviz .nnv-proto-d.neg{color:#ff5c7a;}
+#page-nnviz .nnv-proto-n{font-family:'IBM Plex Mono',monospace;font-size:9px;color:#4a5f82;}
+#page-nnviz .nnv-proto-mk{display:flex;flex-wrap:wrap;gap:3px;margin-top:4px;}
+#page-nnviz .nnv-mk{font-family:'IBM Plex Mono',monospace;font-size:8.5px;padding:1px 5px;border-radius:2px;
+  border:1px solid #1c2b47;color:#7d90ad;}
+#page-nnviz .nnv-mk.p{border-color:#1d4a6b;color:#7fc4e8;}
+#page-nnviz .nnv-mk.n{border-color:#6b2a3a;color:#f0919f;}
+@media (max-width:600px){ #page-nnviz .nnv-lin-row{grid-template-columns:92px 1fr 50px;font-size:9.5px;} }
+
 /* 모델 구조 선택 버튼 (구조 관측 전용) */
 .rail-models{display:grid;grid-template-columns:1fr 1fr;gap:4px;padding:0 8px 9px;}
 .rail-model{
@@ -14271,7 +14480,11 @@ html[data-theme="light"]:root .rail-view small{ color:var(--t3); }
   var RAIL_PAGES = ['nnviz','report','whatif'];
   var RAIL_W = 190;   // 우측 사이드바 폭(px) — CSS .rail 과 같이 유지
   // 구조 관측에서 고를 수 있는 모델 — 기존 nnv-tab 과 같은 목록(switchNnModel 인자와 동일)
-  var MODELS = [['dnn','DNN 딥넷'],['mind','MIND 스태킹'],['gbdt','GBDT'],['xgb','XGBoost'],['lgb','LightGBM'],['cat','CatBoost']];
+  // [V33.150] 신규 위원 5종 추가 — 종전엔 고전 6종만 구조를 볼 수 있었다.
+  //   FLOW·XALPHA·STACK·MEMO·이중헤드는 위원회에서 실제로 투표하는데 내부를 볼 방법이 없었다.
+  var MODELS = [['dnn','DNN 딥넷'],['mind','MIND 스태킹'],['gbdt','GBDT'],['xgb','XGBoost'],['lgb','LightGBM'],['cat','CatBoost'],
+                ['flow','FLOW 수급'],['xalpha','XALPHA 알파'],['memo','MEMO 기억'],['stack','STACK 결합'],
+                ['dualbull','이중헤드 강세'],['dualbear','이중헤드 약세']];
   // 모델 버튼은 항상 보인다(사용자 요청: DNN·신경망 구조 버튼 복구). 누르면 구조 화면으로 전환되며
   // 해당 모델이 열리고, 작동 화면일 땐 어떤 것도 활성 표시하지 않는다.
   function syncRailModels(active){
