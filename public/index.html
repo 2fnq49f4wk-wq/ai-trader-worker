@@ -8,7 +8,7 @@
      인데, 지금까지 화면에서 그걸 알 방법이 전혀 없었다(카카오톡 인앱 브라우저는 특히 강하게 캐시한다).
      서버가 내려주는 build 와 이 값을 비교해 다르면 배너로 알린다.
      ※ src/index.js 의 _BUILD_VER 와 항상 같아야 한다 — check-html-js 가 강제한다. -->
-<meta name="lux-build" content="V33.156">
+<meta name="lux-build" content="V33.157">
 <title>LUX-ENGINE V10</title>
 <!-- ══ [V33.156] 설치형 앱(PWA) — 폰·PC 에서 홈화면/독에 담아 앱처럼 연다 ══
      · manifest  : 이름·아이콘·standalone 표시(주소창 없이 앱처럼)
@@ -19,7 +19,14 @@
 <meta name="application-name" content="LUX">
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="mobile-web-app-capable" content="yes">
-<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<!-- [V33.157] black-translucent → default.
+     black-translucent 는 두 가지를 동시에 강제한다: ① 본문이 상태바 ★밑으로★ 들어간다
+     ② 상태바 글자가 ★항상 흰색★ 이다. ②는 라이트 테마에서 시각·배터리·와이파이가
+     밝은 배경 위 흰 글자가 되어 아예 안 보인다 — CSS 로는 못 고친다.
+     default 로 두면 iOS 가 상태바 자리를 직접 비워 주고 theme-color 로 칠하며 글자색도
+     대비에 맞춰 고른다. 그래도 겹치는 플랫폼이 있을 수 있으니 CSS 의 safe-area 여백은
+     그대로 둔다(겹치지 않는 기기에서는 env() 가 0 이라 빈 공간이 생기지 않는다). -->
+<meta name="apple-mobile-web-app-status-bar-style" content="default">
 <meta name="apple-mobile-web-app-title" content="LUX">
 <link rel="apple-touch-icon" href="/apple-touch-icon.png">
 <meta name="theme-color" content="#000000" media="(prefers-color-scheme: dark)">
@@ -3306,6 +3313,12 @@ html[data-theme="light"] .m-brainbar button.active{color:#0b4f9e;background:rgba
       </div>
       <div class="sb-btn-row">
         <button type="button" class="sb-btn btn" id="btnSettings" style="flex:1;">⚙ SETTINGS</button>
+      </div>
+      <!-- [V33.157] 홈 화면에 추가해 앱으로 열면 주소창의 새로고침(↻)이 없다.
+           웹에서도 눌러서 손해 볼 것이 없으므로 조건 없이 둔다 — 앱에서만 보이는
+           버튼은 "웹에서 되던 게 앱에서 안 된다" 의 반대 문제를 만든다. -->
+      <div class="sb-btn-row">
+        <button type="button" class="sb-btn btn" id="btnUpdate" style="flex:1;" title="서버의 최신 판과 비교해 다르면 캐시를 비우고 새로 받습니다">↻ 새 버전 확인</button>
       </div>
       <button type="button" class="sb-theme-btn" id="btnTheme">🌙 DARK</button>
     </div>
@@ -14490,6 +14503,58 @@ html[data-theme="light"]:root .rail-view small{ color:var(--t3); }
 }
 
 /* ═══════════════════════════════════════════════════════════════════════════
+   [V33.157] 안전영역 — ★폰만의 문제가 아니었다.★
+
+   V33.156 에서 안전영역 여백을 @media(max-width:767px) ★안에★ 넣었다. 그래서
+   768px 부터인 아이패드는 여백을 한 픽셀도 못 받았는데, 같은 판에서 켠
+   viewport-fit=cover + black-translucent 는 본문을 상태바 밑으로 밀어 넣는다 —
+   홈 화면에 추가해 열면 시각·배터리·와이파이가 좌측 사이드바 맨 윗줄을 덮었다.
+   웹에서는 안 겹치니 눈으로는 안 잡히는, 딱 그 종류의 버그였다.
+
+   고치는 방식: 토큰은 ★전 폭 공통★ 으로 한 번만 정의하고, 폰 블록은 그것을 받아 쓴다.
+   그리고 '마법의 최소값' 은 두지 않는다 — 겹치지 않는 기기(iOS default 상태바처럼
+   OS 가 이미 자리를 비워 주는 경우)에서는 env() 가 0 이고, 0 이 정답이다.
+   상수를 박으면 겹치지도 않는 화면에 죽은 공간이 생긴다.
+   ═══════════════════════════════════════════════════════════════════════════ */
+:root{
+  --lux-sat:env(safe-area-inset-top,0px);
+  --lux-sab:env(safe-area-inset-bottom,0px);
+  --lux-sal:env(safe-area-inset-left,0px);
+  --lux-sar:env(safe-area-inset-right,0px);
+}
+/* 아이패드·PC — 폰 셸(고정 앱바/탭바)이 없는 폭. 셸이 직접 안쪽 여백을 갖는다.
+   웹에서는 env() 가 전부 0 이라 이 규칙이 화면을 바꾸지 않는다(측정으로 확인한다). */
+@media (min-width:768px){
+  .shell{
+    padding-top:var(--lux-sat); padding-bottom:var(--lux-sab);
+    padding-left:var(--lux-sal); padding-right:var(--lux-sar);
+    background:var(--s1);            /* 여백 띠가 앱 크롬과 같은 톤으로 보이게 */
+  }
+}
+/* 화면에 떠 있는 것들 — 홈바·가로 노치에 걸리지 않게 */
+.cmdk-fab{ bottom:calc(18px + var(--lux-sab)); right:calc(18px + var(--lux-sar)); }
+@media(min-width:1000px){ .cmdk-fab{ right:calc(var(--rail-w,0px) + 18px + var(--lux-sar)); } }
+.modal{ padding-top:var(--lux-sat); padding-bottom:var(--lux-sab); }
+
+/* [V33.157] 당겨서 새로고침 표시 — 설치형에서만 JS 가 붙는다(웹에는 아예 안 생긴다) */
+.lux-ptr{
+  position:fixed; top:calc(var(--lux-sat) + 6px); left:50%; z-index:9998;
+  transform:translateX(-50%) translateY(-60px); opacity:0; pointer-events:none;
+  display:flex; align-items:center; gap:7px;
+  padding:.4rem .85rem; border-radius:999px;
+  font-size:11px; font-weight:600; letter-spacing:-.005em; color:var(--t2);
+  background:color-mix(in srgb, var(--s1) 88%, transparent);
+  border:1px solid var(--bd);
+  box-shadow:0 8px 24px rgba(0,0,0,.32);
+  -webkit-backdrop-filter:blur(18px) saturate(180%); backdrop-filter:blur(18px) saturate(180%);
+  transition:transform .18s cubic-bezier(.2,.8,.2,1), opacity .18s ease;
+}
+.lux-ptr .lux-ptr-ic{ display:inline-block; font-size:13px; line-height:1; color:var(--t3); transition:transform .18s ease, color .18s; }
+.lux-ptr.ready{ color:var(--t1); border-color:var(--acc); }
+.lux-ptr.ready .lux-ptr-ic{ transform:rotate(180deg); color:var(--acc); }
+@media (prefers-reduced-motion:reduce){ .lux-ptr,.lux-ptr .lux-ptr-ic{ transition:none; } }
+
+/* ═══════════════════════════════════════════════════════════════════════════
    [V33.156] 폰 전용 셸 정리 — ★여기 한 곳★ 이 폰 규칙의 마지막 발언권이다.
    지금까지 폰 규칙이 세 군데(51행 미디어쿼리·2990행 모바일 셸·14475행 좁은폰)로
    흩어져 있었고, V33.148/V33.153 에서 "고쳤는데 안 바뀐다" 가 두 번 났다.
@@ -14506,10 +14571,12 @@ html[data-theme="light"]:root .rail-view small{ color:var(--t3); }
      탭바가 홈바에 깔린다 — 웹에서는 안 보이다가 ★설치했을 때만★ 깨지는 종류의 버그다.
      높이·여백을 토큰 하나로 묶어 셸 패딩과 바 높이가 절대 어긋나지 않게 한다. */
   :root{
-    --m-sat:env(safe-area-inset-top,0px);
-    --m-sab:env(safe-area-inset-bottom,0px);
-    --m-sal:env(safe-area-inset-left,0px);
-    --m-sar:env(safe-area-inset-right,0px);
+    /* [V33.157] 정의는 전역(:root)에 한 번만 — 여기서는 받아 쓰기만 한다.
+       종전엔 여기서 env() 를 직접 읽었고, 그래서 이 블록을 안 읽는 아이패드가 빈손이었다. */
+    --m-sat:var(--lux-sat);
+    --m-sab:var(--lux-sab);
+    --m-sal:var(--lux-sal);
+    --m-sar:var(--lux-sar);
     --m-ab-h:50px;                                   /* 앱바 본문 높이(안전영역 제외) */
     --m-tb-h:56px;                                   /* 탭바 본문 높이(안전영역 제외) */
     --m-top:calc(var(--m-ab-h) + var(--m-sat));
@@ -14997,6 +15064,7 @@ html[data-theme="light"]:root .rail-view small{ color:var(--t3); }
         +'<button type="button" data-proxy="btnLogs">LOG</button>'
         +'<button type="button" data-proxy="btnHeatmap">MAP</button>'
         +'<button type="button" data-proxy="btnSettings">⚙ 설정</button>'
+        +'<button type="button" data-proxy="btnUpdate">↻ 새 버전</button>'
         +'<button type="button" data-proxy="btnTheme">🌓 테마</button>'
       +'</div></div>'
       +'<div class="m-dr-sec"><div class="m-dr-sec-h">자동 운용</div>'
@@ -15305,41 +15373,152 @@ html[data-theme="light"]:root .rail-view small{ color:var(--t3); }
      그런데 그건 화면에서 확인할 방법이 없어서, 코드를 계속 의심하게 만든다.
      서버 build 와 이 페이지의 meta 를 비교해 다르면 ★눌러서 새로고침★ 배너를 띄운다.
      자동 새로고침은 하지 않는다 — 보고 있던 화면을 말없이 날리면 그게 더 나쁘다. */
-  function buildCheck(){
+  /* ══ [V33.157] 앱에는 새로고침 버튼이 없다 ══
+     웹에서는 주소창의 ↻ 를 눌러 새 판을 받았다. 홈 화면에 추가해 standalone 으로 열면
+     그 버튼이 ★없다★ — 즉 V33.156 에서 앱을 만든 순간, 판을 갱신할 길이 배너 하나뿐이
+     되었고 그 배너는 10분 주기 폴링에만 뜬다. 앱은 대개 종료되지 않고 '복귀' 하므로
+     그 10분을 통째로 기다려야 했다.
+     그래서 세 갈래를 함께 둔다 — 자동(복귀 즉시 확인) · 손동작(당겨서 새로고침) ·
+     명시적 버튼(메뉴/사이드바). 하나가 막혀도 나머지로 도달한다.
+
+     새로고침의 실제 동작은 ★이 함수 한 곳★ 에만 있다. 세 갈래가 각자 구현하면
+     한 갈래만 캐시를 안 비우는 식으로 어긋난다 — 그게 바로 이 배너가 없애려던 증상이다. */
+  var LUXRF = { busy:false };
+  /* 짧은 알림. 본 스크립트의 toast() 는 ★다른 <script> 블록★ 에 있어 여기서 못 부른다
+     (V33.150 에서 ago() 로 똑같이 한 번 데였다).
+     ★#toast 를 같이 쓰지도 않는다.★ 실측에서 잡혔다 — 본 스크립트의 toast() 가 걸어 둔
+     2.5초 타이머가, 그 뒤에 띄운 내 메시지의 show 를 대신 벗겨 버린다(주인이 둘인 상태).
+     서로의 타이머를 건드리지 않게 자기 요소를 쓴다. 모양은 .toast 를 그대로 물려받는다. */
+  function luxSay(msg){
+    var t = document.getElementById('luxSayBox');
+    if(!t){ t = document.createElement('div'); t.id = 'luxSayBox'; t.className = 'toast'; document.body.appendChild(t); }
+    t.textContent = msg; t.classList.add('show');
+    clearTimeout(luxSay._t);
+    luxSay._t = setTimeout(function(){ t.classList.remove('show'); }, 2600);
+  }
+  function luxHardReload(ver){
+    if(LUXRF.busy) return; LUXRF.busy = true;
+    var go = function(){
+      /* 쿼리스트링을 바꿔 캐시를 확실히 우회한다(단순 reload 로는 인앱 브라우저가 또 캐시를 준다) */
+      try{ location.replace(location.pathname + '?v=' + encodeURIComponent(ver || Date.now()) + location.hash); }
+      catch(e){ location.reload(); }
+    };
+    try{
+      var jobs = [];
+      /* 서비스워커 캐시도 함께 비운다 — 안 그러면 "새로고침을 눌렀는데 그대로" 가 남는다 */
+      if(window.caches && caches.keys) jobs.push(caches.keys().then(function(ks){
+        return Promise.all(ks.map(function(k){ return caches.delete(k); }));
+      }));
+      if(navigator.serviceWorker && navigator.serviceWorker.getRegistration)
+        jobs.push(navigator.serviceWorker.getRegistration().then(function(r){
+          if(r && r.waiting) r.waiting.postMessage('lux-skip-waiting');
+          return r ? r.update() : null;
+        }));
+      if(jobs.length){ Promise.all(jobs).then(go, go); setTimeout(go, 1500); return; }   /* 캐시 API 가 멎어도 반드시 간다 */
+    }catch(e){}
+    go();
+  }
+  window.luxHardReload = luxHardReload;
+
+  /* 서버 판을 확인한다. opts.announce=true 면 같아도 사람에게 결과를 알린다
+     (버튼을 눌렀는데 아무 일도 안 일어나면 고장으로 보인다). */
+  function buildCheck(opts){
     var meta = document.querySelector('meta[name="lux-build"]');
     var mine = meta ? (meta.getAttribute('content') || '') : '';
-    if(!mine) return;
-    fetch('/api/selfcheck').then(function(r){ return r.json(); }).then(function(d){
+    if(!mine) return Promise.resolve(null);
+    var announce = !!(opts && opts.announce);
+    return fetch('/api/selfcheck', { cache:'no-store' }).then(function(r){ return r.json(); }).then(function(d){
       var srv = d && d.build;
-      if(!srv || srv === mine) return;
-      if(document.getElementById('luxBuildBanner')) return;
+      if(!srv || srv === mine){
+        if(announce) luxSay('최신 판입니다 · ' + mine);
+        return srv || null;
+      }
+      if(announce){ luxHardReload(srv); return srv; }        /* 사람이 직접 눌렀으면 묻지 않고 간다 */
+      if(document.getElementById('luxBuildBanner')) return srv;
       var b = document.createElement('button');
       b.type = 'button'; b.id = 'luxBuildBanner'; b.className = 'lux-build-banner';
       b.innerHTML = '새 버전 <b>' + String(srv).slice(0,12) + '</b> 나왔어요 · 이 화면은 ' + String(mine).slice(0,12) + ' — 눌러서 새로고침';
-      b.addEventListener('click', function(){
-        /* 쿼리스트링을 바꿔 캐시를 확실히 우회한다(단순 reload 로는 인앱 브라우저가 또 캐시를 준다) */
-        /* [V33.156] 앱(PWA)으로 설치돼 있으면 서비스워커 캐시도 함께 비운다 —
-           안 그러면 "새로고침을 눌렀는데 그대로" 라는, 이 배너가 없애려던 바로 그 증상이 남는다. */
-        var go = function(){
-          try{ location.replace(location.pathname + '?v=' + encodeURIComponent(srv) + location.hash); }
-          catch(e){ location.reload(); }
-        };
-        try{
-          var jobs = [];
-          if(window.caches && caches.keys) jobs.push(caches.keys().then(function(ks){
-            return Promise.all(ks.map(function(k){ return caches.delete(k); }));
-          }));
-          if(navigator.serviceWorker && navigator.serviceWorker.getRegistration)
-            jobs.push(navigator.serviceWorker.getRegistration().then(function(r){
-              if(r && r.waiting) r.waiting.postMessage('lux-skip-waiting');
-              return r ? r.update() : null;
-            }));
-          if(jobs.length){ Promise.all(jobs).then(go, go); setTimeout(go, 1500); return; }
-        }catch(e){}
-        go();
-      });
+      b.addEventListener('click', function(){ luxHardReload(srv); });
       document.body.appendChild(b);
-    })['catch'](function(){});
+      return srv;
+    })['catch'](function(){
+      if(announce) luxSay('판 확인 실패 — 네트워크를 확인해 주세요');
+      return null;
+    });
+  }
+  window.luxBuildCheck = buildCheck;
+
+  /* ══ [V33.157] 당겨서 새로고침 (설치형 전용) ══
+     스크롤 컨테이너는 .page.active 다(.shell 이 아니다 — 본문만 내부 스크롤한다).
+     맨 위(scrollTop<=0)에서 아래로 끌 때만 잡고, 세로 성분이 가로보다 커야 인정한다.
+     — 표는 가로 스크롤을 쓰기 때문에, 이 조건이 없으면 표를 옆으로 밀 때마다 오작동한다.
+     당김 거리는 저항을 줘서 실제 손가락보다 덜 움직인다(끝없이 늘어나는 느낌 방지). */
+  var PTR = { y0:0, x0:0, on:false, armed:false, el:null, dist:0 };
+  var PTR_TRIP = 58;                 /* 이 이상 당기면 새로고침 (손가락 이동 ≈105px) */
+  function ptrBar(){
+    var b = document.getElementById('luxPtr');
+    if(!b){
+      b = document.createElement('div'); b.id = 'luxPtr'; b.className = 'lux-ptr';
+      b.innerHTML = '<span class="lux-ptr-ic">↻</span><span class="lux-ptr-tx"></span>';
+      document.body.appendChild(b);
+    }
+    return b;
+  }
+  function ptrPaint(d, ready){
+    var b = ptrBar();
+    b.style.transform = 'translateX(-50%) translateY(' + Math.round(Math.min(d, 96)) + 'px)';
+    b.style.opacity = String(Math.min(1, d / 34));
+    b.classList.toggle('ready', !!ready);
+    b.querySelector('.lux-ptr-tx').textContent = ready ? '놓으면 새로고침' : '당겨서 새로고침';
+  }
+  function ptrHide(){
+    var b = document.getElementById('luxPtr'); if(!b) return;
+    b.style.transform = 'translateX(-50%) translateY(-60px)'; b.style.opacity = '0'; b.classList.remove('ready');
+  }
+  function initPullRefresh(){
+    document.addEventListener('touchstart', function(e){
+      if(LUXRF.busy || e.touches.length !== 1) return;
+      var el = e.target.closest ? e.target.closest('.page.active') : null;
+      /* 드로어·모달이 떠 있으면 그쪽 제스처다 — 건드리지 않는다 */
+      if(!el || document.querySelector('.m-drawer.show') || document.querySelector('.modal.show')) return;
+      if(el.scrollTop > 0) return;
+      PTR.el = el; PTR.y0 = e.touches[0].clientY; PTR.x0 = e.touches[0].clientX;
+      PTR.on = true; PTR.armed = false; PTR.dist = 0;
+    }, { passive:true });
+
+    document.addEventListener('touchmove', function(e){
+      if(!PTR.on || e.touches.length !== 1) return;
+      var dy = e.touches[0].clientY - PTR.y0, dx = e.touches[0].clientX - PTR.x0;
+      if(!PTR.armed){
+        if(Math.abs(dx) > Math.abs(dy) || dy < 8){ PTR.on = false; return; }   /* 가로 스와이프거나 위로 = 남의 제스처 */
+        PTR.armed = true;
+      }
+      if(PTR.el.scrollTop > 0){ PTR.on = false; ptrHide(); return; }
+      /* 저항 — 손가락보다 덜 따라오게. 지수 감쇠(^0.82)는 임계까지 172px 을 끌어야 해서
+         실측 후 선형(×0.55)으로 바꿨다: 임계 58px = 손가락 105px, iOS 감각과 비슷하다. */
+      PTR.dist = Math.max(0, dy) * 0.55;
+      ptrPaint(PTR.dist, PTR.dist >= PTR_TRIP);
+    }, { passive:true });
+
+    var end = function(){
+      if(!PTR.on){ return; }
+      PTR.on = false;
+      if(PTR.dist >= PTR_TRIP){
+        ptrPaint(PTR_TRIP, true);
+        ptrBar().querySelector('.lux-ptr-tx').textContent = '새 판 확인 중…';
+        /* ★무조건 새로고침하지 않는다.★ 판이 그대로면 보고 있던 화면을 날릴 이유가 없다 —
+           그때는 데이터만 다시 불러온다. 판이 다르면 캐시까지 비우고 새로 받는다. */
+        buildCheck({ announce:true }).then(function(srv){
+          var meta = document.querySelector('meta[name="lux-build"]');
+          var mine = meta ? meta.getAttribute('content') : '';
+          if(!srv || srv === mine){ try{ if(typeof loadLive === 'function') loadLive(false); }catch(e){} }
+          setTimeout(ptrHide, 400);
+        }, function(){ setTimeout(ptrHide, 400); });
+      } else ptrHide();
+      PTR.dist = 0;
+    };
+    document.addEventListener('touchend', end, { passive:true });
+    document.addEventListener('touchcancel', end, { passive:true });
   }
   // 두뇌 페이지 안의 뷰: 'live'(작동 화면) | 'struct'(구조 관측)
   var BVIEW = 'live';
@@ -16560,6 +16739,40 @@ html[data-theme="light"]:root .rail-view small{ color:var(--t3); }
     //   첫 페인트가 통째로 무효였다(renderRailAiMode 는 대상이 없으면 조용히 return 한다).
     aiModeStart();
     try{ buildCheck(); setInterval(function(){ if(!document.hidden) buildCheck(); }, 600000); }catch(e){}
+
+    /* ══ [V33.157] 앱에서 새 판으로 가는 세 갈래 ══ */
+    try{
+      /* ① 버튼 — 사이드바(아이패드·PC) / 드로어(폰). 눌렀는데 아무 일도 안 일어나면
+            고장으로 보이므로, 최신일 때도 "최신 판입니다" 라고 말한다. */
+      var upBtn = $id('btnUpdate');
+      if(upBtn) upBtn.addEventListener('click', function(){
+        var tx = upBtn.textContent; upBtn.textContent = '확인 중…'; upBtn.disabled = true;
+        buildCheck({ announce:true })['catch'](function(){}).then(function(){
+          upBtn.textContent = tx; upBtn.disabled = false;
+        }, function(){ upBtn.textContent = tx; upBtn.disabled = false; });
+      });
+
+      /* ② 앱으로 ★복귀★ 할 때 자동 확인.
+            설치형 앱은 대개 종료되지 않고 배경으로 갔다가 돌아온다. 그동안 10분 폴링은
+            document.hidden 때문에 멈춰 있으므로, 돌아온 그 순간이 확인하기 가장 좋은 때다.
+            너무 잦으면 무의미하니 60초 안에는 다시 묻지 않는다. */
+      var lastChk = Date.now();
+      document.addEventListener('visibilitychange', function(){
+        if(document.hidden) return;
+        if(Date.now() - lastChk < 60000) return;
+        lastChk = Date.now();
+        try{ buildCheck(); }catch(e){}
+      });
+
+      /* ③ 당겨서 새로고침 — ★설치형에서만★ 건다.
+            웹에는 주소창 새로고침이 있고 브라우저 자체 제스처와도 겹친다. 앱에는 둘 다 없다.
+            본문 맨 위에서 아래로 끌 때만 반응하고, 가로로 긁는 표 스와이프와 섞이지 않게
+            세로 성분이 가로보다 클 때만 인정한다. */
+      var standalone = false;
+      try{ standalone = (window.matchMedia && matchMedia('(display-mode: standalone)').matches)
+                        || window.navigator.standalone === true; }catch(e){}
+      if(standalone && 'ontouchstart' in window) initPullRefresh();
+    }catch(e){}
     var nn = $id('page-nnviz');
     if(nn && nn.classList.contains('active')){
       liveStart();

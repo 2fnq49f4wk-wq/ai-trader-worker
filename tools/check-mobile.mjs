@@ -86,11 +86,35 @@ console.log('③ 안전영역 — 셸 여백과 바 높이가 같은 토큰에�
   eq(tH,  'var(--m-bot)', '탭바 높이가 --m-bot');
   if (sPT === aH && sPB === tH) ok('여백과 높이가 ★같은 식★ 이라 어긋날 수 없다 (' + abH + '/' + tbH + ' + 안전영역)');
   else bad('여백과 높이가 다른 식이다 — 설치 시 본문이 바에 깔린다');
-  for (const v of ['--m-sat', '--m-sab', '--m-sal', '--m-sar']) {
-    const d = B.match(new RegExp(v + ':\\s*env\\(safe-area-inset-[a-z]+,\\s*0px\\)'));
-    if (!d) bad(v + ' 이 env(..., 0px) 폴백 형태가 아니다 — 안전영역을 모르는 브라우저에서 NaN 이 된다');
+  /* [V33.157] 토큰의 ★정의는 전역 한 곳★ 이어야 한다.
+     V33.156 은 이 정의를 폰 미디어쿼리 안에 뒀다. 그래서 768px 부터인 아이패드는
+     여백을 한 픽셀도 못 받았고, 같은 판에서 켠 viewport-fit=cover 가 본문을 상태바
+     밑으로 밀어 넣어 ★홈 화면에 추가했을 때만★ 시각·배터리가 화면을 덮었다.
+     같은 실수가 되풀이되지 않게, '정의는 전역 / 폰은 참조' 를 형태로 못박는다. */
+  const G = H.slice(0, H.indexOf(PH));                       // 폰 블록 앞부분(전역 영역)
+  for (const [g, m2, side] of [['--lux-sat','--m-sat','top'], ['--lux-sab','--m-sab','bottom'],
+                               ['--lux-sal','--m-sal','left'], ['--lux-sar','--m-sar','right']]) {
+    if (!new RegExp(g + ':\\s*env\\(safe-area-inset-' + side + ',\\s*0px\\)').test(G))
+      bad(g + ' 전역 정의가 env(safe-area-inset-' + side + ', 0px) 형태가 아니다');
+    if (!new RegExp(m2 + ':\\s*var\\(' + g + '\\)').test(B))
+      bad(m2 + ' 가 전역 토큰 ' + g + ' 를 참조하지 않는다 — 정의가 두 벌이 된다');
   }
-  ok('안전영역 토큰 4종 모두 env(…, 0px) 폴백을 갖는다');
+  ok('안전영역 토큰 4종: 전역에서 env(…, 0px) 로 한 번 정의하고 폰은 참조만 한다');
+  // 아이패드·PC 도 그 여백을 실제로 ★쓰는가★ (정의만 하고 안 쓰면 V33.156 과 같은 상태다)
+  const wide = G.match(/@media \(min-width:768px\)\{[\s\S]{0,400}?\}/);
+  const wideTxt = wide ? wide[0].replace(/\s+/g, '') : '';
+  for (const t of ['padding-top:var(--lux-sat)', 'padding-bottom:var(--lux-sab)',
+                   'padding-left:var(--lux-sal)', 'padding-right:var(--lux-sar)']) {
+    if (!wideTxt.includes(t)) bad('768px 이상에서 셸이 ' + t + ' 를 쓰지 않는다 — 아이패드 설치형이 상태바에 가려진다');
+  }
+  ok('아이패드·PC(≥768px) 셸이 안전영역 네 방향을 모두 여백으로 쓴다');
+  // '마법의 최소값' 금지 — 겹치지 않는 기기에 죽은 공간을 만든다
+  if (/--lux-sat:\s*max\(/.test(G)) bad('전역 상단 인셋에 최소값이 박혀 있다 — 겹치지 않는 화면에 죽은 여백이 생긴다');
+  else ok('인셋에 상수 최소값을 박지 않았다 — 안 겹치는 기기에서는 0 이 정답이다');
+  // 상태바 글자색: black-translucent 는 라이트 테마에서 흰 글자가 되어 안 보인다
+  if (/apple-mobile-web-app-status-bar-style"\s+content="black-translucent"/.test(H))
+    bad('상태바 스타일이 black-translucent — 라이트 테마에서 시각·배터리가 흰 글자로 사라진다');
+  else ok('상태바 스타일이 black-translucent 가 아니다(라이트 테마에서도 읽힌다)');
   // 하단 고정물이 탭바 위에 있는가
   if (/\.toast,\s*#luxBuildBanner\{\s*bottom:calc\(var\(--m-bot\)/.test(B.replace(/\s+/g, ' ').replace(/ \{/g, '{')))
     ok('토스트·판 배너가 탭바 위로 올라간다(가려서 못 누르는 일 없음)');
@@ -215,6 +239,52 @@ console.log('⑤ 아코디언 동작 — 접기이지 지우기가 아님을 실
     else bad('재페인트에서 펼침 상태가 초기화됐다: ' + JSON.stringify(open2));
     void before;
   }
+}
+
+/* ── ⑥ 설치형에서 새 판으로 가는 길 ─────────────────────────────────────────
+   앱(standalone)에는 주소창의 새로고침이 없다. V33.156 에서 앱을 만든 순간
+   판 갱신 경로가 10분 폴링 배너 ★하나뿐★ 이 되었고, 앱은 대개 종료되지 않고
+   '복귀' 하므로 그 10분을 통째로 기다려야 했다. 갈래가 여럿이어도 실제 새로고침
+   동작은 한 곳에만 있어야 한다 — 갈라지면 한 갈래만 캐시를 안 비운다. */
+console.log('⑥ 새 판 경로 — 갈래는 셋, 동작은 한 곳');
+{
+  const impl = (H.match(/function luxHardReload\(/g) || []).length;
+  eq(impl, 1, '새로고침 구현 개수');
+  const body = H.slice(H.indexOf('function luxHardReload('), H.indexOf('window.luxHardReload'));
+  for (const [need, why] of [
+    ['caches.delete',                  '서비스워커 캐시를 비운다'],
+    ["postMessage('lux-skip-waiting')", '대기 중인 새 워커를 인수시킨다'],
+    ['location.replace',               '쿼리스트링을 바꿔 캐시를 우회한다'],
+    ['setTimeout(go, 1500)',           '캐시 API 가 멎어도 반드시 이동한다'],
+  ]) { if (body.includes(need)) ok(why); else bad('새로고침이 ' + why + ' — 그 단계가 빠졌다'); }
+
+  const routes = [
+    ["$id('btnUpdate')",                    '① 버튼(사이드바·드로어)'],
+    ["addEventListener('visibilitychange'", '② 앱 복귀 시 자동 확인'],
+    ['initPullRefresh()',                   '③ 당겨서 새로고침'],
+  ];
+  for (const [t, nm] of routes) { if (H.includes(t)) ok(nm + ' 존재'); else bad(nm + ' 가 없다'); }
+  if (H.includes('id="btnUpdate"') && H.includes('data-proxy=\"btnUpdate\"'))
+    ok('버튼이 아이패드·PC(사이드바)와 폰(드로어) 양쪽에 있다');
+  else bad('새 버전 버튼이 한쪽 화면에만 있다');
+
+  // 당겨서 새로고침은 설치형에서만 — 웹에는 주소창 새로고침이 있고 브라우저 제스처와 겹친다
+  const gate = H.slice(H.indexOf('var standalone = false;'), H.indexOf('initPullRefresh();') + 20);
+  if (/matchMedia\('\(display-mode: standalone\)'\)/.test(gate) && /if\(standalone && 'ontouchstart' in window\)/.test(gate))
+    ok('당겨서 새로고침은 설치형 + 터치일 때만 붙는다(웹은 손대지 않는다)');
+  else bad('당겨서 새로고침이 웹에도 붙는다');
+
+  // 가로 스와이프(표)와 섞이지 않는가 — 이 조건이 없으면 표를 옆으로 밀 때마다 오작동한다
+  const ptr = H.slice(H.indexOf('function initPullRefresh()'), H.indexOf("document.addEventListener('touchend', end"));
+  if (/Math\.abs\(dx\) > Math\.abs\(dy\)/.test(ptr)) ok('가로 성분이 더 크면 남의 제스처로 넘긴다(표 가로 스크롤 보호)');
+  else bad('가로 스와이프와 당김을 구분하지 않는다');
+  if (/scrollTop > 0/.test(ptr)) ok('본문 맨 위에서만 반응한다');
+  else bad('스크롤 도중에도 당김이 걸린다');
+
+  // 판이 그대로면 보고 있던 화면을 날리지 않는다
+  if (/if\(!srv \|\| srv === mine\)\{ try\{ if\(typeof loadLive === 'function'\) loadLive\(false\); \}catch\(e\)\{\} \}/.test(H))
+    ok('판이 같으면 새로고침 대신 데이터만 다시 부른다(보던 화면을 안 날린다)');
+  else bad('판이 같아도 화면을 통째로 새로고침한다');
 }
 
 console.log(fail ? '\n실패 ' + fail + '건' : '\nok   폰 화면 계약 통과');
