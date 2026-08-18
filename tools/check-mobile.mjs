@@ -287,5 +287,93 @@ console.log('⑥ 새 판 경로 — 갈래는 셋, 동작은 한 곳');
   else bad('판이 같아도 화면을 통째로 새로고침한다');
 }
 
+/* ── ⑦ 스크롤 컨테이너의 자식은 줄어들지 않는다 ────────────────────────────
+   .page 는 세로 flex + overflow-y:auto 다. flex 자식 기본값이 flex-shrink:1 이라
+   내용이 넘치면 브라우저가 자식을 ★줄인다★. 평소엔 삐져나와 티가 안 나다가,
+   애플 재질과 함께 들어간 overflow:hidden 이 줄어든 만큼을 그대로 잘라냈다.
+   실측(1024×768, 보유 9종목): #positionsBox 내용 289px → 상자 51px — 보유 종목이
+   통째로 사라졌다. 요소마다 flex:0 0 auto 를 붙이는 대신 규칙 하나로 못박는다. */
+console.log('⑦ 눌린 상자 — 스크롤 컨테이너의 자식은 줄지 않는다');
+{
+  if (/html:root \.page > \*\{ flex-shrink:0; \}/.test(H))
+    ok('.page 의 모든 직계 자식에 flex-shrink:0 (요소별 땜질이 아니라 규칙)');
+  else bad('.page > * 의 flex-shrink 를 막지 않았다 — 넘치면 자식이 눌려 잘린다');
+  // 이 규칙은 전역이어야 한다 — 폰 블록 안에 있으면 아이패드·PC 가 또 눌린다
+  const g = H.slice(0, H.indexOf(PH));
+  if (/html:root \.page > \*/.test(g)) ok('폰 전용이 아니라 전 폭 공통이다');
+  else bad('flex-shrink 규칙이 폰 블록 안에 있다 — 아이패드·PC 에서 같은 증상이 남는다');
+  // flex-grow 는 건드리지 않아야 한다(높이를 채우는 자식이 있다)
+  if (/html:root \.page > \*\{ flex-shrink:0; \}/.test(H) && !/\.page > \*\{[^}]*flex-grow/.test(H))
+    ok('flex-grow 는 손대지 않는다 — 높이를 채우려 flex:1 을 쓴 자식은 그대로 동작한다');
+}
+
+/* ── ⑧ 인트로는 레이아웃을 움직이지 않는다 ────────────────────────────────
+   제목이 letter-spacing 을 18px→8px 로 애니메이션했다. 레이아웃 속성이라 프레임마다
+   글자 폭이 재계산되며 좌우로 떨렸고, 가운데 정렬 flex 라 그 폭이 상자 폭이 되어
+   ★이웃한 로고까지★ 좌우로 밀었다. 원인 하나가 증상 둘을 만들었다. */
+console.log('⑧ 인트로 — 합성만 하고 레이아웃은 건드리지 않는가');
+{
+  const intro = H.slice(H.indexOf('.intro-text-box{'), H.indexOf('/* ── 셸 레이아웃 ── */'));
+  const kf = H.slice(H.indexOf('@keyframes spacexTitleIn'), H.indexOf('@keyframes spacexSubIn') + 200);
+  for (const prop of ['letter-spacing', 'width', 'margin', 'padding', 'font-size', 'text-indent']) {
+    if (new RegExp('@keyframes[^}]*' + prop, 'm').test(kf) || kf.split('\n').some(l => l.includes(prop)))
+      bad('인트로 키프레임이 레이아웃 속성(' + prop + ')을 애니메이션한다 — 글자와 로고가 흔들린다');
+  }
+  ok('인트로 키프레임에 레이아웃 속성이 없다 (opacity·transform·filter 만)');
+  if (/\.intro-star-logo\{[^}]*flex:0 0 auto/.test(intro) || /\.intro-star-logo\{[^}]*flex:0 0 auto/.test(H))
+    ok('로고 폭이 고정 — 이웃 폭 변화에 끌려다니지 않는다');
+  else bad('로고에 폭 고정이 없다');
+  if (/prefers-reduced-motion:reduce\)\{\s*\.intro-star-logo/.test(H.replace(/\s+/g, ' ').replace(/\) \{/g, '){')))
+    ok('움직임 최소화 설정에서는 등장만 하고 움직이지 않는다');
+  else bad('인트로가 prefers-reduced-motion 을 무시한다');
+}
+
+/* ── ⑨ 보는 행위가 거래를 일으키지 않는다 ────────────────────────────────
+   화면을 열면 2초 뒤 POST /api/tick 이 나갔고, 그 끝은 runTradingCycle — 주문까지
+   나가는 전체 사이클이다. 서버 cron 이 이미 매 1분 같은 것을 돌린다. 앱(PWA)에서는
+   복귀·새로고침이 잦아 예정에 없던 사이클이 더 늘어난다. */
+console.log('⑨ 자동 거래 트리거 — 화면을 여는 것만으로 돌지 않는가');
+{
+  if (/setTimeout\(function\(\) \{\s*runNow\(\);\s*\}, 2000\);/.test(H))
+    bad('부팅 2초 뒤 runNow() 자동 호출이 남아 있다 — 보는 행위가 거래를 일으킨다');
+  else ok('부팅 시 자동 runNow() 호출이 없다');
+  const calls = (H.match(/(^|[^.\w])runNow\(\)/gm) || []).length;   // 정의 1 + 버튼 바인딩 1
+  if (calls <= 2) ok('runNow 호출 지점 ' + calls + '개 — 사람이 누르는 경로만 남았다');
+  else bad('runNow 호출이 ' + calls + '군데다 — 자동 경로가 또 있다');
+}
+
+/* ── ⑩ 아이패드는 env() 가 거짓말을 한다 ─────────────────────────────────
+   노치가 없어 safe-area-inset-top 이 0 인데 상태바는 본문 위에 그려진다.
+   값을 믿으면 영원히 가려지고, 상수를 박으면 안 겹치는 기기에 죽은 여백이 생긴다.
+   그래서 '설치형인가 · 화면 세로를 다 쓰는가 · 그런데 인셋이 0인가' 를 재서 정한다. */
+console.log('⑩ 안전영역 실측 — 값을 믿지도, 상수를 박지도 않는다');
+{
+  const f = H.slice(H.indexOf('function luxFitSafeArea()'), H.indexOf('window.luxFitSafeArea'));
+  for (const [t, why] of [
+    ["display-mode: standalone",  '설치형일 때만 손댄다(웹은 상태바가 본문 위에 없다)'],
+    ['if(envTop >= 1)',           'OS 가 인셋을 제대로 주면 CSS 에 맡기고 물러난다'],
+    ['screen.width',              '화면 세로를 다 쓰는지 재서 겹침을 판정한다'],
+    ['landscape ? Math.min',      '회전을 고려해 긴 변/짧은 변을 골라 비교한다'],
+    ["setProperty('--lux-sat'",   '겹칠 때만 상단 인셋을 채워 넣는다'],
+    ["removeProperty('--lux-sat'",'아니면 되돌린다 — 죽은 여백을 남기지 않는다'],
+  ]) { if (f.includes(t)) ok(why); else bad('안전영역 실측이 ' + why + ' — 그 단계가 빠졌다'); }
+  if (/orientationchange/.test(H)) ok('회전하면 다시 잰다');
+  else bad('회전 후 다시 재지 않는다');
+}
+
+/* ── ⑪ 앱에서 '지금 돌고 있나' 가 보이는가 ──────────────────────────────── */
+console.log('⑪ 폰 앱바 실시간 칩');
+{
+  if (H.includes('id="mAbLive"') && H.includes('id="mAbDot"')) ok('앱바에 실시간 점·문구가 있다');
+  else bad('앱바에 실시간 표시가 없다');
+  if (/c\.indexOf\(' live '\) >= 0/.test(H))
+    ok("상태를 #liveIndicator(부모)에서 읽는다 — 점에서 읽으면 늘 'live-dot' 만 나온다");
+  else bad('실시간 상태를 잘못된 요소에서 읽는다');
+  const B2 = globalThis.__PHONE_BLOCK || '';
+  if (/\.m-ab-sub\.live>b\{ color:var\(--pos\); \}/.test(B2) && /\.m-ab-sub\.dead>b\{ color:var\(--neg\); \}/.test(B2))
+    ok('상태를 색으로도 말한다(글자만으로는 흘깃 봐서 안 잡힌다)');
+  else bad('상태 색이 없다');
+}
+
 console.log(fail ? '\n실패 ' + fail + '건' : '\nok   폰 화면 계약 통과');
 process.exit(fail ? 1 : 0);

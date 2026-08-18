@@ -8,7 +8,7 @@
      인데, 지금까지 화면에서 그걸 알 방법이 전혀 없었다(카카오톡 인앱 브라우저는 특히 강하게 캐시한다).
      서버가 내려주는 build 와 이 값을 비교해 다르면 배너로 알린다.
      ※ src/index.js 의 _BUILD_VER 와 항상 같아야 한다 — check-html-js 가 강제한다. -->
-<meta name="lux-build" content="V33.157">
+<meta name="lux-build" content="V33.158">
 <title>LUX-ENGINE V10</title>
 <!-- ══ [V33.156] 설치형 앱(PWA) — 폰·PC 에서 홈화면/독에 담아 앱처럼 연다 ══
      · manifest  : 이름·아이콘·standalone 표시(주소창 없이 앱처럼)
@@ -92,13 +92,20 @@ body{
   pointer-events:none;opacity:0;animation:skyGlow 3.5s ease-out forwards;
 }
 @keyframes skyGlow{0%{opacity:0;}40%{opacity:1;}100%{opacity:0.5;}}
+@media (prefers-reduced-motion:reduce){
+  .intro-star-logo,.intro-title,.intro-subtitle{
+    animation-duration:.01ms!important;animation-delay:0s!important;
+    opacity:1;transform:none;filter:none;
+  }
+}
 .intro-center-box{
   display:flex;flex-direction:column;align-items:center;
   gap:18px;position:relative;z-index:2;
 }
 .intro-star-logo{
-  position:relative;width:72px;height:72px;
-  opacity:0;transform:scale(0.85);
+  position:relative;width:72px;height:72px;flex:0 0 auto;   /* 폭 고정 — 이웃 폭에 끌려다니지 않는다 */
+  opacity:0;transform:scale(0.85);transform-origin:50% 50%;
+  will-change:opacity,transform;
   animation:introLogoFade 1.6s cubic-bezier(0.25,0.1,0.25,1) forwards 0.2s;
 }
 .intro-star-logo .lux-star-svg{
@@ -123,27 +130,43 @@ body{
   font-family:'UnifrakturCook','UnifrakturMaguntia',serif;
   font-weight:700;text-transform:none;letter-spacing:0.5px;
 }
-.intro-text-box{text-align:center;}
+/* ══ [V33.158] 인트로가 흔들리던 이유 — 원인은 하나였다 ══
+   제목이 letter-spacing 을 18px→8px 로 애니메이션했다. letter-spacing 은 ★레이아웃★
+   속성이다. 프레임마다 글자 폭이 다시 계산되고, 가운데 정렬이라 각 글자가 반올림
+   경계를 넘나들며 좌우로 떨린다 — 그게 "글씨가 흔들린다" 였다.
+
+   로고가 같이 흔들린 것도 같은 원인이다. .intro-center-box 는 세로 flex + 가운데 정렬
+   이라 ★가장 넓은 자식★ 의 폭이 곧 상자 폭인데, 그 자식(제목)의 폭이 매 프레임 바뀌니
+   상자가 넓어졌다 좁아지고, 그 안에서 가운데로 놓인 로고가 좌우로 밀렸다.
+   로고 자신의 애니메이션(scale)은 문제가 없었다 — 이웃이 움직여서 밀린 것이다.
+
+   그래서 자간은 ★고정★ 하고, 등장은 합성만 되는 속성(opacity·transform·filter)으로 한다.
+   퍼져 들어오는 느낌은 scale 로 대신한다 — 보기에는 같고, 레이아웃은 한 번도 안 움직인다. */
+.intro-text-box{text-align:center;width:max-content;max-width:92vw;margin:0 auto;}
 .intro-title{
   font-family:'Helvetica Neue','Segoe UI',Arial,sans-serif;
   font-size:30px;font-weight:300;color:#ffffff;
-  letter-spacing:8px;text-transform:uppercase;
+  letter-spacing:8px;text-transform:uppercase;      /* ★고정★ — 애니메이션하지 않는다 */
   margin-bottom:10px;text-indent:8px;
-  opacity:0;filter:blur(8px);
+  opacity:0;filter:blur(8px);transform:scale(1.06);
+  transform-origin:50% 50%;
+  will-change:opacity,transform,filter;
   animation:spacexTitleIn 2s cubic-bezier(0.16,1,0.3,1) forwards 0.5s;
 }
 .intro-subtitle{
   font-family:'Helvetica Neue','Segoe UI',Arial,sans-serif;
   font-size:11px;font-weight:300;color:#888888;
-  letter-spacing:5px;text-transform:uppercase;text-indent:5px;
-  opacity:0;animation:spacexSubIn 1.6s ease-out forwards 1.3s;
+  letter-spacing:5px;text-transform:uppercase;text-indent:5px;   /* ★고정★ */
+  opacity:0;transform:scale(1.05);transform-origin:50% 50%;
+  will-change:opacity,transform;
+  animation:spacexSubIn 1.6s cubic-bezier(0.16,1,0.3,1) forwards 1.3s;
 }
 @keyframes spacexTitleIn{
-  0%{opacity:0;filter:blur(8px);letter-spacing:18px;}
+  0%{opacity:0;filter:blur(8px);transform:scale(1.06);}
   60%{opacity:1;filter:blur(0px);}
-  100%{opacity:1;filter:blur(0px);letter-spacing:8px;}
+  100%{opacity:1;filter:blur(0px);transform:scale(1);}
 }
-@keyframes spacexSubIn{0%{opacity:0;letter-spacing:10px;}100%{opacity:1;letter-spacing:5px;}}
+@keyframes spacexSubIn{0%{opacity:0;transform:scale(1.05);}100%{opacity:1;transform:scale(1);}}
 
 /* ── 셸 레이아웃 ── */
 .shell{display:flex;height:100vh;height:100dvh;overflow:hidden;}
@@ -11593,10 +11616,16 @@ html[data-theme="light"] .m-brainbar button.active{color:#0b4f9e;background:rgba
   // [V13] 샤드 fan-out 시작 — 가격은 매분 전부 병렬, 일봉은 라운드로빈
   loadShardMeta().then(function(){
   });
-  // 자동 RUN NOW 1회
-  setTimeout(function() {
-    runNow();
-  }, 2000);
+  /* [V33.158] ★화면을 여는 것만으로 거래가 돌던 것을 없앤다.★
+     여기서 부르던 runNow() 는 POST /api/tick 이고, 그 끝은 runTradingCycle —
+     즉 ★주문까지 나가는 전체 사이클★ 이다. 그런데 서버 cron 이 이미 매 1분 같은 것을
+     돌린다(V33.3 에서 RUN NOW 버튼을 없앤 이유가 바로 그거였다 — 버튼만 없애고
+     이 자동 호출은 남아 있었다).
+     남겨 두면 대시보드를 열 때마다, 새로고침할 때마다, 앱이 복귀할 때마다 예정에 없던
+     사이클이 하나 더 뜬다. 스캔이 122초라 1분 cron 과 겹칠 수 있고, 겹친 두 사이클이
+     같은 신호를 두 번 볼 위험이 있다. ★보는 행위가 거래를 일으켜서는 안 된다.★
+     runNow 자체는 남긴다 — 숨겨진 btnTick 이 아직 그것을 쓴다(수동 경로는 사람이 누를 때만). */
+  // (자동 RUN NOW 제거 — 서버 cron 이 매 1분 실행한다)
   timer = setInterval(refreshAll, REFRESH_MS);
   // [V13] 가격: 60초마다 전 종목 fan-out (정규장 1분 갱신 목표)
   // [V16] 가격 갱신은 서버 cron(매분)이 담당 → 프론트 fan-out 제거. state 폴링만으로 최신값 표시.
@@ -14536,6 +14565,27 @@ html[data-theme="light"]:root .rail-view small{ color:var(--t3); }
 @media(min-width:1000px){ .cmdk-fab{ right:calc(var(--rail-w,0px) + 18px + var(--lux-sar)); } }
 .modal{ padding-top:var(--lux-sat); padding-bottom:var(--lux-sab); }
 
+/* ═══════════════════════════════════════════════════════════════════════════
+   [V33.158] 포지션 화면에서 보유 종목이 사라지던 진짜 이유 — ★눌린 것★ 이지 겹친 게 아니다.
+
+   .page 는 세로 flex 컨테이너다(overflow-y:auto 로 스스로 스크롤한다).
+   flex 자식의 기본값은 flex-shrink:1 — ★내용이 넘치면 브라우저가 자식을 줄인다.★
+   평소엔 넘친 만큼 밖으로 삐져나와 티가 안 났는데, V33.153 에서 애플 재질을 입히며
+   같은 요소들에 overflow:hidden 을 준 순간, 줄어든 만큼이 그대로 ★잘려나갔다★.
+
+   실측(1024×768, 보유 9종목):
+     #positionsBox   내용 289px → 상자 51px   ← 보유 종목표가 통째로 잘림
+     #cmSummaryBar   내용  53px → 상자 13px   ← 원자재 요약이 안 보임
+     #cmPositionsBox2 내용 57px → 상자 12px
+     #posPnlSummary  내용  71px → 상자 41px   ← 평가손익 상자가 반만 보임
+
+   고치는 방식: 개별 요소에 하나씩 flex:0 0 auto 를 붙이지 않는다 — 이미 그 방식으로
+   V33.150 에서 목표가 패널 하나를 고쳤고, 이번에 네 개가 또 나왔다. 원인은 요소가
+   아니라 ★규칙★ 이다. 스크롤 컨테이너의 자식은 줄어들 이유가 없다: 넘치면 스크롤한다.
+   .page 의 모든 직계 자식에 한 번에 못박는다. (flex-grow 는 건드리지 않으므로
+    높이를 채우려고 flex:1 을 쓴 자식은 그대로 동작한다.) */
+html:root .page > *{ flex-shrink:0; }
+
 /* [V33.157] 당겨서 새로고침 표시 — 설치형에서만 JS 가 붙는다(웹에는 아예 안 생긴다) */
 .lux-ptr{
   position:fixed; top:calc(var(--lux-sat) + 6px); left:50%; z-index:9998;
@@ -14622,6 +14672,19 @@ html[data-theme="light"]:root .rail-view small{ color:var(--t3); }
   .m-tab .tx{ font-size:9.5px; font-weight:600; letter-spacing:0; }
   .m-tab.active .ic{ background:color-mix(in srgb, var(--acc) 16%, transparent); }
   .m-tab:active .ic{ transform:scale(.94); }
+
+  /* [V33.158] 앱바 실시간 칩 — 상태는 색으로도 말한다(글자만으로는 흘깃 봐서 안 잡힌다) */
+  .m-ab-sub{ display:flex; align-items:center; gap:5px; font-size:8.5px; }
+  .m-ab-sub>b{ font-weight:600; }
+  .m-ab-sub>span{ color:var(--t3); overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+  .m-ab-dot{ width:5px; height:5px; border-radius:50%; background:var(--t3); flex:0 0 auto; }
+  .m-ab-sub.live>b{ color:var(--pos); }
+  .m-ab-sub.live .m-ab-dot{ background:var(--pos); box-shadow:0 0 6px rgba(0,230,118,.7); animation:livePulse 2s ease-in-out infinite; }
+  .m-ab-sub.stale>b{ color:var(--amber,#fbbf24); }
+  .m-ab-sub.stale .m-ab-dot{ background:var(--amber,#fbbf24); }
+  .m-ab-sub.dead>b{ color:var(--neg); }
+  .m-ab-sub.dead .m-ab-dot{ background:var(--neg); }
+  @media (prefers-reduced-motion:reduce){ .m-ab-sub.live .m-ab-dot{ animation:none; } }
 
   /* ── ④ 드로어 — 터치 타깃 44px 확보 ── */
   .m-dr-item{ min-height:46px; font-size:11.5px; }
@@ -15035,7 +15098,11 @@ html[data-theme="light"]:root .rail-view small{ color:var(--t3); }
     bar.innerHTML =
       '<span class="m-ab-logo"><svg viewBox="0 0 100 100" aria-hidden="true"><use href="#luxStarSym"/></svg></span>'
       +'<span class="m-ab-mid"><span class="m-ab-title">LUX-ENGINE</span>'
-        +'<span class="m-ab-sub" id="mAbSub">—</span></span>'
+        /* [V33.158] 앱으로 보면 "지금 살아서 돌고 있나" 를 볼 데가 없었다.
+           PC/패드는 좌측 사이드바가 LIVE·마지막 사이클을 늘 보여주는데, 폰은 그 사이드바가
+           통째로 숨겨져 시장 상태만 나왔다. 같은 값을 앱바 한 줄로 옮긴다. */
+        +'<span class="m-ab-sub" id="mAbSub"><i class="m-ab-dot" id="mAbDot"></i><b id="mAbLive">확인 중</b>'
+          +'<span id="mAbMkt"></span></span></span>'
       +'<span class="m-ab-pnl" id="mAbPnl"></span>'
       +'<button type="button" class="m-ab-btn" id="mAbSearch" aria-label="검색">🔍</button>'
       +'<button type="button" class="m-ab-btn" id="mAbMenu" aria-label="메뉴">☰</button>';
@@ -15149,17 +15216,42 @@ html[data-theme="light"]:root .rail-view small{ color:var(--t3); }
     for(var j=0;j<drEls.length;j++) drEls[j].classList.toggle('active', drEls[j].getAttribute('data-page') === id);
     var pnlSrc = $id('positionsTotalPnl'), pnl = $id('mAbPnl');
     if(pnlSrc && pnl && pnl.innerHTML !== pnlSrc.innerHTML) pnl.innerHTML = pnlSrc.innerHTML;
-    var sub = $id('mAbSub');
-    if(sub){
-      var us = $id('usMarketStatus'), kr = $id('krMarketStatus');
-      sub.textContent = '🇺🇸 ' + ((us && us.textContent) || '—') + '  ·  🇰🇷 ' + ((kr && kr.textContent) || '—');
+    /* [V33.158] 실시간 상태 — 값은 원본 DOM 에서 그대로 가져온다(판단 로직을 복제하지 않는다).
+       초록 = 살아 있음 · 노랑 = 지연 · 빨강 = 끊김. 판정은 이미 liveIndicator 가 하고 있으므로
+       그 클래스를 그대로 물려받는다 — 여기서 다시 판단하면 두 화면이 다른 말을 하게 된다. */
+    var live = $id('mAbLive'), dot = $id('mAbDot'), mkt = $id('mAbMkt');
+    if(live){
+      var src = $id('liveText'), ind = $id('liveIndicator'), auto = $id('sbAutoSub');
+      var tx = (src && src.textContent) || '—';
+      /* sbAutoSub 는 '3분 전' 같은 경과시간일 때도, '첫 사이클 대기 중' 같은 문장일 때도 있다.
+         문장 앞에 '사이클' 을 덧붙이면 "사이클 첫 사이클 대기 중" 이 된다 — 경과시간일 때만 붙인다. */
+      var av = (auto && auto.textContent || '').trim();
+      var cyc = !av || av === '—' ? '' : (/(전|초|분|시간)$/.test(av) ? ' · 사이클 ' + av : ' · ' + av);
+      var want = tx + cyc;
+      if(live.textContent !== want) live.textContent = want;
+      /* 상태(live/stale/dead)는 점이 아니라 ★부모 .live-indicator★ 가 들고 있다.
+         점에서 읽으면 늘 'live-dot' 만 나와 색이 영원히 안 바뀐다. */
+      var st = '';
+      if(ind){ var c = ' ' + (ind.className || '') + ' ';
+        st = c.indexOf(' live ') >= 0 ? 'live' : c.indexOf(' stale ') >= 0 ? 'stale'
+           : c.indexOf(' dead ') >= 0 ? 'dead' : ''; }
+      var sub2 = $id('mAbSub');
+      if(sub2){ var sc = 'm-ab-sub' + (st ? ' ' + st : '');
+        if(sub2.className !== sc) sub2.className = sc; }
+      void dot;
     }
+    var us = $id('usMarketStatus'), kr = $id('krMarketStatus');
+    if(mkt){
+      var mt = ' · 🇺🇸' + ((us && us.textContent) || '—') + ' 🇰🇷' + ((kr && kr.textContent) || '—');
+      if(mkt.textContent !== mt) mkt.textContent = mt;
+    }
+    var sub = $id('mAbSub');
     var ds = $id('mDrStatus');
     if(ds){
       var eng = $id('engineText'), lv = $id('liveText');
       ds.innerHTML = '엔진 · ' + esc((eng && eng.textContent) || '—') + '<br>'
         + '연결 · ' + esc((lv && lv.textContent) || '—') + '<br>'
-        + (sub ? esc(sub.textContent) : '');
+        + '🇺🇸 ' + esc((us && us.textContent) || '—') + ' · 🇰🇷 ' + esc((kr && kr.textContent) || '—');
     }
   }
 
@@ -15447,6 +15539,48 @@ html[data-theme="light"]:root .rail-view small{ color:var(--t3); }
     });
   }
   window.luxBuildCheck = buildCheck;
+
+  /* ══ [V33.158] 아이패드 설치형에서 시각·배터리가 화면을 덮던 것 ══
+     V33.157 에서 "겹치지 않는 기기에서는 env() 가 0 이고 0 이 정답" 이라고 적었다.
+     그 전제가 틀렸다 — ★아이패드는 노치가 없어 env() 가 0 을 주면서도 상태바는 본문 위에
+     그려진다.★ 즉 인셋만 믿으면 아이패드는 영원히 0 을 받고 계속 가려진다.
+
+     그렇다고 상수 24px 을 박으면 OS 가 이미 자리를 비워 주는 기기(아이폰 default 상태바,
+     안드로이드, PC)에 죽은 여백이 생긴다. 값을 믿을 수도, 상수를 박을 수도 없으면
+     ★재면 된다★:
+       · 설치형인가?                      (아니면 상태바가 본문 위에 없다 — 끝)
+       · 뷰포트가 화면 세로를 전부 쓰는가? (쓰면 상태바 자리까지 우리 것이다 = 겹친다)
+       · 그런데 env() 는 0 이라고 하는가?  (그러면 OS 가 인셋을 안 알려주는 경우다)
+     셋이 모두 참일 때만 상태바 높이(24px)를 넣는다. 하나라도 아니면 CSS 의 env() 를 그대로 둔다.
+     화면 회전으로 값이 바뀌므로 회전·크기변경 때 다시 잰다. */
+  var SAFEPX = 24;                 /* iPadOS 상태바 높이(pt) */
+  function luxEnvTop(){
+    var pr = document.createElement('div');
+    pr.style.cssText = 'position:fixed;top:0;left:0;width:0;visibility:hidden;pointer-events:none;'
+                     + 'height:env(safe-area-inset-top,0px);';
+    document.body.appendChild(pr);
+    var v = pr.getBoundingClientRect().height;
+    pr.parentNode.removeChild(pr);
+    return v;
+  }
+  function luxFitSafeArea(){
+    var root = document.documentElement;
+    var standalone = false;
+    try{ standalone = (window.matchMedia && matchMedia('(display-mode: standalone)').matches)
+                      || window.navigator.standalone === true; }catch(e){}
+    if(!standalone){ root.style.removeProperty('--lux-sat'); return; }
+    var envTop = luxEnvTop();
+    if(envTop >= 1){ root.style.removeProperty('--lux-sat'); return; }   /* OS 가 제대로 알려준다 — CSS 에 맡긴다 */
+    /* 화면 세로를 전부 쓰고 있는가 — 회전을 고려해 짧은/긴 변을 골라 비교한다 */
+    var sw = screen.width || 0, sh = screen.height || 0;
+    var landscape = window.innerWidth > window.innerHeight;
+    var full = landscape ? Math.min(sw, sh) : Math.max(sw, sh);
+    if(!full){ root.style.removeProperty('--lux-sat'); return; }
+    var gap = full - window.innerHeight;
+    if(gap <= 2) root.style.setProperty('--lux-sat', SAFEPX + 'px');     /* 겹친다 — 우리가 비운다 */
+    else root.style.removeProperty('--lux-sat');                        /* OS 가 이미 비웠다 */
+  }
+  window.luxFitSafeArea = luxFitSafeArea;
 
   /* ══ [V33.157] 당겨서 새로고침 (설치형 전용) ══
      스크롤 컨테이너는 .page.active 다(.shell 이 아니다 — 본문만 내부 스크롤한다).
@@ -16772,6 +16906,11 @@ html[data-theme="light"]:root .rail-view small{ color:var(--t3); }
       try{ standalone = (window.matchMedia && matchMedia('(display-mode: standalone)').matches)
                         || window.navigator.standalone === true; }catch(e){}
       if(standalone && 'ontouchstart' in window) initPullRefresh();
+
+      /* 안전영역 실측 — 부팅 직후와 회전·크기변경 때 (아이패드는 env() 가 거짓말을 한다) */
+      luxFitSafeArea();
+      window.addEventListener('resize', luxFitSafeArea);
+      window.addEventListener('orientationchange', function(){ setTimeout(luxFitSafeArea, 250); });
     }catch(e){}
     var nn = $id('page-nnviz');
     if(nn && nn.classList.contains('active')){
