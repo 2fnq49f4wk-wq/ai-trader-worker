@@ -2,14 +2,28 @@
 <html lang="ko">
 <head>
 <meta charset="UTF-8">
-<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
 <!-- [V33.145] ★이 파일이 몇 번 판인지 스스로 안다.★
      증상: 배포가 성공했는데도 화면이 그대로다. 원인 후보 1순위는 ★브라우저가 옛 HTML 을 쓰는 것★
      인데, 지금까지 화면에서 그걸 알 방법이 전혀 없었다(카카오톡 인앱 브라우저는 특히 강하게 캐시한다).
      서버가 내려주는 build 와 이 값을 비교해 다르면 배너로 알린다.
      ※ src/index.js 의 _BUILD_VER 와 항상 같아야 한다 — check-html-js 가 강제한다. -->
-<meta name="lux-build" content="V33.155">
+<meta name="lux-build" content="V33.156">
 <title>LUX-ENGINE V10</title>
+<!-- ══ [V33.156] 설치형 앱(PWA) — 폰·PC 에서 홈화면/독에 담아 앱처럼 연다 ══
+     · manifest  : 이름·아이콘·standalone 표시(주소창 없이 앱처럼)
+     · viewport  : viewport-fit=cover — 노치·홈바 영역까지 쓰고, 안쪽 여백은 CSS 의 safe-area 가 잡는다
+     · iOS 는 아직 manifest 를 다 안 읽는다 → apple-* 메타를 따로 준다(구형 사파리 대응)
+     · theme-color 는 라이트/다크를 각각 준다 — 상태바 색이 화면과 어긋나면 앱처럼 안 보인다 -->
+<link rel="manifest" href="/manifest.webmanifest">
+<meta name="application-name" content="LUX">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="apple-mobile-web-app-title" content="LUX">
+<link rel="apple-touch-icon" href="/apple-touch-icon.png">
+<meta name="theme-color" content="#000000" media="(prefers-color-scheme: dark)">
+<meta name="theme-color" content="#f5f8fd" media="(prefers-color-scheme: light)">
 <link rel="icon" type="image/svg+xml" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'%3E%3Crect width='100' height='100' fill='%23000'/%3E%3Cpath fill='%23fff' d='M50 8 L53 41.7 L70.7 29.3 L58.3 47 L92 50 L58.3 53 L70.7 70.7 L53 58.3 L50 92 L47 58.3 L29.3 70.7 L41.7 53 L8 50 L41.7 47 L29.3 29.3 L47 41.7 Z'/%3E%3Cpath fill='%23b6bcc6' d='M50 50 L50 8 L53 41.7 Z M50 50 L70.7 29.3 L58.3 47 Z M50 50 L92 50 L58.3 53 Z M50 50 L70.7 70.7 L53 58.3 Z M50 50 L50 92 L47 58.3 Z M50 50 L29.3 70.7 L41.7 53 Z M50 50 L8 50 L41.7 47 Z M50 50 L29.3 29.3 L47 41.7 Z'/%3E%3C/svg%3E">
 <script>
 // 테마 선반영(깜빡임 방지) — 저장값 없으면 기본 다크
@@ -3150,6 +3164,28 @@ html[data-theme="light"] .m-aimode .pick{color:#12233f;}
 html[data-theme="light"] .m-brainbar button{background:#eef3fb;border-color:#ccd6e6;color:#3a4b66;}
 html[data-theme="light"] .m-brainbar button.active{color:#0b4f9e;background:rgba(11,108,212,.12);border-color:#0b6cd4;}
 </style>
+<script>
+/* [V33.156] 서비스워커 등록 — ★메인 스크립트와 분리★ 한다.
+   메인(38만자 인라인 스크립트)에서 예외가 나도 앱 설치는 되어야 하고,
+   반대로 등록이 실패해도 웹은 평소대로 돌아야 한다. 둘을 묶으면 하나가 다른 하나를 죽인다. */
+(function(){
+  if(!('serviceWorker' in navigator)) return;
+  if(location.protocol !== 'https:' && location.hostname !== 'localhost') return;   // file:// 로 열었을 때 콘솔 오염 방지
+  window.addEventListener('load', function(){
+    navigator.serviceWorker.register('/sw.js', { scope: '/' }).then(function(reg){
+      /* 새 판이 대기 중이면 곧바로 인수시킨다 — 앱이 옛 판을 붙들고 있는 시간을 없앤다.
+         (실제 새로고침은 판 배너가 사용자에게 묻는다 — 보고 있는 화면을 말없이 갈아치우지 않는다) */
+      if(reg.waiting) reg.waiting.postMessage('lux-skip-waiting');
+      reg.addEventListener('updatefound', function(){
+        var w = reg.installing;
+        if(w) w.addEventListener('statechange', function(){
+          if(w.state === 'installed' && navigator.serviceWorker.controller) w.postMessage('lux-skip-waiting');
+        });
+      });
+    })['catch'](function(){ /* 등록 실패는 치명적이지 않다 — 웹으로 계속 쓴다 */ });
+  });
+})();
+</script>
 </head>
 <body>
 
@@ -14453,6 +14489,121 @@ html[data-theme="light"]:root .rail-view small{ color:var(--t3); }
   .summary-value{ font-size:13px; }
 }
 
+/* ═══════════════════════════════════════════════════════════════════════════
+   [V33.156] 폰 전용 셸 정리 — ★여기 한 곳★ 이 폰 규칙의 마지막 발언권이다.
+   지금까지 폰 규칙이 세 군데(51행 미디어쿼리·2990행 모바일 셸·14475행 좁은폰)로
+   흩어져 있었고, V33.148/V33.153 에서 "고쳤는데 안 바뀐다" 가 두 번 났다.
+   원인은 늘 같았다 — 뒤에 있는 규칙이 이겼다. 그래서 이번 변경은 전부 이 블록에 모은다.
+
+   폰만 바꾼다. 미디어쿼리 상한은 767px 이고 아이패드는 768px 부터라
+   패드·PC 는 이 블록을 ★한 줄도★ 읽지 않는다(게이트가 실측으로 확인한다).
+   ═══════════════════════════════════════════════════════════════════════════ */
+@media (max-width:767px){
+
+  /* ── ① 안전영역 — 설치형(PWA)에서 노치·홈바에 먹히지 않게 ──
+     V33.156 에서 viewport-fit=cover 를 켰다. 그 순간부터 화면은 노치 ★아래까지★ 뻗고,
+     안쪽 여백은 CSS 가 직접 잡아야 한다. 안 잡으면 앱바가 상태바 밑으로 들어가고
+     탭바가 홈바에 깔린다 — 웹에서는 안 보이다가 ★설치했을 때만★ 깨지는 종류의 버그다.
+     높이·여백을 토큰 하나로 묶어 셸 패딩과 바 높이가 절대 어긋나지 않게 한다. */
+  :root{
+    --m-sat:env(safe-area-inset-top,0px);
+    --m-sab:env(safe-area-inset-bottom,0px);
+    --m-sal:env(safe-area-inset-left,0px);
+    --m-sar:env(safe-area-inset-right,0px);
+    --m-ab-h:50px;                                   /* 앱바 본문 높이(안전영역 제외) */
+    --m-tb-h:56px;                                   /* 탭바 본문 높이(안전영역 제외) */
+    --m-top:calc(var(--m-ab-h) + var(--m-sat));
+    --m-bot:calc(var(--m-tb-h) + var(--m-sab));
+  }
+  .shell{ padding-top:var(--m-top); padding-bottom:var(--m-bot); }
+  .m-appbar{
+    height:var(--m-top); padding-top:var(--m-sat);
+    padding-left:calc(12px + var(--m-sal)); padding-right:calc(12px + var(--m-sar));
+  }
+  .m-tabbar{
+    height:var(--m-bot); padding-bottom:var(--m-sab);
+    padding-left:var(--m-sal); padding-right:var(--m-sar);
+  }
+  .m-drawer{ padding-top:var(--m-sat); padding-bottom:var(--m-sab); }
+  /* 화면 하단에 떠 있는 것들은 탭바 ★위로★ 올린다(가려지면 누를 수 없다) */
+  .toast,#luxBuildBanner{ bottom:calc(var(--m-bot) + 10px)!important; }
+
+  /* ── ② 앱바 — 유리 재질로 통일하고, 값은 줄바꿈 없이 ── */
+  .m-appbar{
+    background:color-mix(in srgb, var(--s1) 86%, transparent);
+    -webkit-backdrop-filter:saturate(180%) blur(18px); backdrop-filter:saturate(180%) blur(18px);
+    gap:10px;
+  }
+  .m-ab-title{ font-size:11.5px; letter-spacing:1.2px; }
+  .m-ab-sub{ font-size:8.5px; overflow:hidden; text-overflow:ellipsis; }
+  .m-ab-pnl{ max-width:34vw; overflow:hidden; text-overflow:ellipsis; }
+  .m-ab-btn{ width:38px; height:38px; border-radius:11px; font-size:15px; }
+
+  /* ── ③ 탭바 — 아이콘에 활성 알약을 얹는다 ──
+     종전엔 활성 표시가 '글자색이 살짝 밝아짐' 뿐이라, 실제 폰에서 지금 어느 화면인지
+     한눈에 안 잡혔다(촬영본에서 확인). 색만으로 말하지 않고 ★모양★ 으로도 말하게 한다. */
+  .m-tabbar{
+    background:color-mix(in srgb, var(--s1) 86%, transparent);
+    -webkit-backdrop-filter:saturate(180%) blur(18px); backdrop-filter:saturate(180%) blur(18px);
+  }
+  .m-tab{ gap:2px; padding-top:5px; }
+  .m-tab .ic{
+    display:flex; align-items:center; justify-content:center;
+    width:46px; height:26px; border-radius:9px; font-size:16px;
+    transition:background .16s var(--ap-ease,ease), color .16s;
+  }
+  .m-tab .tx{ font-size:9.5px; font-weight:600; letter-spacing:0; }
+  .m-tab.active .ic{ background:color-mix(in srgb, var(--acc) 16%, transparent); }
+  .m-tab:active .ic{ transform:scale(.94); }
+
+  /* ── ④ 드로어 — 터치 타깃 44px 확보 ── */
+  .m-dr-item{ min-height:46px; font-size:11.5px; }
+  .m-dr-act button{ min-height:46px; }
+
+  /* ── ⑤ AI 두뇌 전환 바 — 138px → 두 줄(약 84px) ──
+     다섯 버튼을 2열 그리드에 넣어 세 줄을 쓰던 것을, ★역할대로★ 묶는다.
+       윗줄 = 뷰 전환(작동/구조)  ·  아랫줄 = 이동 둘 + 도구 토글
+     6열 격자에 3+3 / 2+2+2 로 얹으면 DOM 순서를 안 건드리고 두 줄이 된다. */
+  .m-brainbar{
+    grid-template-columns:repeat(6,1fr); gap:6px; margin:0 0 10px;
+  }
+  .m-brainbar>button:nth-child(1),
+  .m-brainbar>button:nth-child(2){ grid-column:span 3; min-height:42px; font-size:12px; }
+  .m-brainbar>button:nth-child(3),
+  .m-brainbar>button:nth-child(4){ grid-column:span 2; min-height:38px; font-size:10.5px; }
+  .m-brainbar>button[data-tools]{ grid-column:span 2; min-height:38px; font-size:10.5px; }
+
+  /* ── ⑥ AI 운용 상태 — 2,450px 짜리 글벽을 접는다 ──
+     실측: #mobAiMode 한 블록이 세로 2,450px(화면 2.9장) 였다. 12개 섹션이 전부 펼쳐진
+     채라, 두뇌 화면에서 아래를 보려면 이 벽을 통째로 지나야 했다. 내용을 지우지 않고
+     ★섹션 단위로 접는다★ — 첫 섹션만 펼친 채 시작하고, 나머지는 눌러서 연다. */
+  .m-acc{ border-top:1px solid var(--bd2); }
+  .m-acc:first-of-type{ border-top:none; }
+  .m-acc-h{
+    display:flex; align-items:center; gap:8px; width:100%; min-height:40px;
+    padding:9px 2px; background:transparent; border:none; cursor:pointer;
+    font-family:'IBM Plex Mono',monospace; font-size:9px; letter-spacing:1.4px;
+    text-transform:uppercase; color:var(--t3); text-align:left;
+  }
+  .m-acc-h>b{ flex:1 1 auto; min-width:0; font-weight:600; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+  .m-acc-h>i{ font-style:normal; font-size:10px; color:var(--t3); transition:transform .18s ease; }
+  .m-acc.open .m-acc-h{ color:var(--acc); }
+  .m-acc.open .m-acc-h>i{ transform:rotate(180deg); }
+  .m-acc-b{ display:none; padding:0 0 10px; }
+  .m-acc.open .m-acc-b{ display:block; }
+  /* 접힘 상태에서도 '무엇이 들었는지' 는 보여야 한다 — 줄 수를 적는다 */
+  .m-acc-n{ flex:0 0 auto; font-size:8.5px; color:var(--t3); opacity:.8; }
+
+  /* ── ⑦ 본문 밀도 — 폰에서만 한 단계 조인다 ──
+     ★여기에는 실측으로 '실제로 적용되는 것' 만 남긴다.★ 처음엔 .fv-panel-head 패딩과
+     .table 셀 패딩도 함께 넣었는데, 헤드리스로 재보니 계산값이 그대로였다 —
+     애플 타이포 레이어가 html:root 로 특이도를 한 단계 올려 잡고 있어 졌던 것이다.
+     아무 일도 안 하는 CSS 를 남겨두면 다음 사람이 "고쳤는데 안 바뀐다" 를 또 겪는다.
+     그래서 진 규칙은 지우고, 꼭 필요한 것(.page-title)만 같은 특이도로 맞춰 이긴다. */
+  .page-header{ padding:10px 12px 8px; }
+  html:root .page-title{ font-size:.9375rem; }   /* 17px → 15px · 특이도는 애플 레이어와 동급 */
+}
+
 </style>
 
 <script>
@@ -15081,6 +15232,71 @@ html[data-theme="light"]:root .rail-view small{ color:var(--t3); }
     aiModePull();
     AIM.timer = setInterval(function(){ if(!document.hidden) aiModePull(); }, 120000);
   }
+  /* ══ [V33.156] 폰의 AI 운용 상태 — 글벽을 섹션 아코디언으로 ══
+     실측(390×844, 실제 스냅샷): #mobAiMode 한 블록이 세로 ★2,450px★ = 화면 2.9장.
+     12개 섹션이 전부 펼쳐진 채라, 두뇌 화면에서 그 아래를 보려면 이 벽을 통째로 지나야 했다.
+     레일(PC)은 폭이 좁고 스크롤이 따로라 티가 덜 났지만, 폰은 본문 흐름에 그대로 얹힌다.
+
+     내용은 ★한 글자도 지우지 않는다★ — 접기만 한다. renderRailAiMode 는 손대지 않고
+     (레일과 공용 코드다) 폰 전용 요소인 #mobAiMode 안에서만 다시 묶는다.
+     다시 그릴 때마다(2분 폴링) 구조가 날아가므로, 열림 상태는 ★섹션 제목★ 으로 기억한다. */
+  var MACC = null;                 /* 제목 → 열림여부. null = 아직 초기화 전 */
+  function mobAiAccordion(){
+    var host = $id('mobAiMode'); if(!host) return;
+    var kids = [].slice.call(host.children);
+    var nk = 0;
+    for(var i=0;i<kids.length;i++) if(kids[i].className === 'k') nk++;
+    if(nk < 2) return;             /* 오류·로딩 문구이거나 접을 게 없다 — 그대로 둔다 */
+
+    var frag = document.createDocumentFragment();
+    var sec = null, body = null, first = true;
+    if(MACC === null) MACC = {};   /* 첫 회: 첫 섹션만 펼치고 나머지는 접는다 */
+
+    for(var j=0;j<kids.length;j++){
+      var el = kids[j];
+      if(el.className === 'k'){
+        var title = (el.textContent || '').trim();
+        var open = Object.prototype.hasOwnProperty.call(MACC, title) ? !!MACC[title] : first;
+        MACC[title] = open;
+        first = false;
+        sec = document.createElement('div');
+        sec.className = 'm-acc' + (open ? ' open' : '');
+        sec.setAttribute('data-t', title);
+        var h = document.createElement('button');
+        h.type = 'button'; h.className = 'm-acc-h';
+        h.setAttribute('aria-expanded', open ? 'true' : 'false');
+        h.innerHTML = '<b></b><span class="m-acc-n"></span><i>▾</i>';
+        h.firstChild.textContent = title;
+        body = document.createElement('div'); body.className = 'm-acc-b';
+        sec.appendChild(h); sec.appendChild(body);
+        frag.appendChild(sec);
+      } else if(body){
+        body.appendChild(el);      /* 다음 .k 전까지는 이 섹션의 내용 */
+      } else {
+        frag.appendChild(el);      /* 첫 .k 앞(배지·요약)은 항상 보인다 */
+      }
+    }
+    /* 접힌 상태에서도 '무엇이 들었는지' 는 보여야 한다 — 줄 수를 적는다 */
+    var secs = frag.querySelectorAll ? frag.querySelectorAll('.m-acc') : [];
+    for(var k2=0;k2<secs.length;k2++){
+      var b2 = secs[k2].querySelector('.m-acc-b');
+      var rows = b2 ? b2.querySelectorAll('tr').length : 0;
+      var n = secs[k2].querySelector('.m-acc-n');
+      if(n) n.textContent = rows ? (rows + '줄') : '';
+    }
+    host.innerHTML = '';
+    host.appendChild(frag);
+    if(!host.getAttribute('data-acc-wired')){
+      host.setAttribute('data-acc-wired','1');
+      host.addEventListener('click', function(e){
+        var h2 = e.target.closest ? e.target.closest('.m-acc-h') : null; if(!h2) return;
+        var box = h2.parentNode, on = box.classList.toggle('open');
+        h2.setAttribute('aria-expanded', on ? 'true' : 'false');
+        MACC[box.getAttribute('data-t')] = on;
+      });
+    }
+  }
+
   /* 모바일 셸이 #mobAiMode 를 나중에 만든다 — 만들어진 직후 곧바로 다시 그린다. */
   function aiModeRepaint(){ if(AIM.last) aiModePaint(AIM.last); }
 
@@ -15102,8 +15318,25 @@ html[data-theme="light"]:root .rail-view small{ color:var(--t3); }
       b.innerHTML = '새 버전 <b>' + String(srv).slice(0,12) + '</b> 나왔어요 · 이 화면은 ' + String(mine).slice(0,12) + ' — 눌러서 새로고침';
       b.addEventListener('click', function(){
         /* 쿼리스트링을 바꿔 캐시를 확실히 우회한다(단순 reload 로는 인앱 브라우저가 또 캐시를 준다) */
-        try{ location.replace(location.pathname + '?v=' + encodeURIComponent(srv) + location.hash); }
-        catch(e){ location.reload(); }
+        /* [V33.156] 앱(PWA)으로 설치돼 있으면 서비스워커 캐시도 함께 비운다 —
+           안 그러면 "새로고침을 눌렀는데 그대로" 라는, 이 배너가 없애려던 바로 그 증상이 남는다. */
+        var go = function(){
+          try{ location.replace(location.pathname + '?v=' + encodeURIComponent(srv) + location.hash); }
+          catch(e){ location.reload(); }
+        };
+        try{
+          var jobs = [];
+          if(window.caches && caches.keys) jobs.push(caches.keys().then(function(ks){
+            return Promise.all(ks.map(function(k){ return caches.delete(k); }));
+          }));
+          if(navigator.serviceWorker && navigator.serviceWorker.getRegistration)
+            jobs.push(navigator.serviceWorker.getRegistration().then(function(r){
+              if(r && r.waiting) r.waiting.postMessage('lux-skip-waiting');
+              return r ? r.update() : null;
+            }));
+          if(jobs.length){ Promise.all(jobs).then(go, go); setTimeout(go, 1500); return; }
+        }catch(e){}
+        go();
       });
       document.body.appendChild(b);
     })['catch'](function(){});
@@ -16024,6 +16257,10 @@ html[data-theme="light"]:root .rail-view small{ color:var(--t3); }
             })
           : [['', null]]);
     put(h);
+    /* [V33.156] 폰 전용: 방금 넣은 HTML 을 섹션 아코디언으로 다시 묶는다.
+       ★부르는 곳을 여기 한 곳으로 둔다★ — 그리는 경로가 둘(aiModePaint·loadLive)이라
+       한 쪽만 걸면 다른 경로로 그려질 때마다 접힘이 풀린다. */
+    try{ mobAiAccordion(); }catch(e){}
     /* [V33.136] 복구 버튼 배선 — 위임이 아니라 put() 직후에 건다(이 노드는 매 갱신마다 새로 그려진다).
        돈이 걸린 조작이라 ① 무엇을 어떻게 바꾸는지 먼저 말하고 ② 확인을 받고 ③ 결과를 그대로 보여준다. */
     [el, mob].forEach(function(root){

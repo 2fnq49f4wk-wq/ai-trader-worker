@@ -2788,7 +2788,7 @@ async function applySignalTypeWeights(DB, cfg) {
 // ============================================================================
 // [V33.55] 빌드 버전 — SWR L2 캐시 키에 섞어 '배포 = 판단 캐시 자동 무효화'를 만든다.
 //   판정 로직을 고쳐도 옛 캐시가 최대 1시간 재배포되던 문제를 구조적으로 없앤다.
-const _BUILD_VER = "V33.155";
+const _BUILD_VER = "V33.156";
 
 const AI_PARAMS = {
   // ── OHLCV 타임프레임 ── 시가/고가/저가/종가/거래량을 어떤 봉 주기로 볼지.
@@ -24272,18 +24272,44 @@ async function memoTrainNightly(DB) {
     const raw = (rows && rows.results) || [];
     // [V33.104] 적합에 들어간 행의 최대 id — 다음 밤 전진검증의 배타 기준.
     let _maxId = 0; for (const r of raw) { const _i = _num(r.id, 0); if (_i > _maxId) _maxId = _i; }
-    const X = [], Y = [], P = [];
+    const X = [], Y = [], P = [], T = [];
     for (let i = raw.length - 1; i >= 0; i--) {          // 오래된 것부터(시간순)
       let v; try { v = JSON.parse(raw[i].feat); } catch (e) { continue; }
       if (!Array.isArray(v) || v.length !== D) continue;
       X.push(v.map(function (t) { return _num(t, 0); }));
       Y.push(_labelOfRow(raw[i]));
       P.push(_num(raw[i].pnl_pct, 0));
+      T.push(_num(raw[i].ts, 0));   // [V33.156] 퍼징용 — ml_samples.ts 는 ★봉 날짜★ 라 라벨 시계와 맞다
     }
     const N = X.length;
     if (N < MEMOML.minTrainSamples) return "[MEMO] 표본 " + N + "/" + MEMOML.minTrainSamples + " — 대기";
     const mean = new Array(D).fill(0), std = new Array(D).fill(0);
-    const nval = Math.max(200, Math.floor(N * 0.2)), ntr = N - nval;
+    const nval = Math.max(200, Math.floor(N * 0.2));
+    /* ══ [V33.156] ★MEMO 에만 퍼징이 없었다★ ══
+       _miniLogisticTrain(flow·xalpha·stack·dual)은 V33.141 부터 경계 퍼징을 한다.
+       그런데 MEMO 는 같은 ml_samples 를, 같은 10일 라벨 지평으로 쓰면서 퍼징이 없었다 —
+       경계 직전 학습표본의 결과 구간이 홀드아웃 안으로 뻗는다(de Prado, AFML 7장).
+       운영 스냅샷이 그 서명을 그대로 보였다: 홀드아웃 IC 0.167 vs 전진 IC 0.044 — 3.8배.
+       퍼징을 만들게 한 FLOW 의 "홀드아웃 0.19 vs 전진 0.02" 와 같은 모양이다.
+       ★경계는 고정★ 이다 — 퍼징은 학습 끝만 당긴다(V33.155 에서 겪은 오염을 반복하지 않는다). */
+    const nvalStart = N - nval;
+    let ntr = nvalStart, _purged = 0;
+    {
+      const _span = AI_PARAMS.predictionHorizonDays * 86400000;
+      const _bound = _num(T[nvalStart], 0);
+      if (_bound > 0 && _span > 0) {
+        let _keep = nvalStart;
+        while (_keep > 0 && _num(T[_keep - 1], 0) + _span > _bound) _keep--;
+        _purged = nvalStart - _keep;
+        ntr = _keep;
+        // 부분 퍼징은 하지 않는다 — 경계에 가장 가까운(가장 누출된) 표본을 남기는 절충이 된다.
+        if (ntr < MEMOML.minTrainSamples) {
+          return "[MEMO] 퍼징 후 학습표본 " + ntr + "/" + MEMOML.minTrainSamples +
+                 " — 대기(라벨 지평 " + Math.round(_span / 86400000) + "일이 검증 구간과 겹쳐 " +
+                 _purged + "건 제외). 표본이 더 쌓이면 자동 진행.";
+        }
+      }
+    }
     for (let i = 0; i < ntr; i++) for (let j = 0; j < D; j++) mean[j] += X[i][j];
     for (let j = 0; j < D; j++) mean[j] /= ntr;
     for (let i = 0; i < ntr; i++) for (let j = 0; j < D; j++) std[j] += (X[i][j] - mean[j]) * (X[i][j] - mean[j]);
@@ -24326,10 +24352,12 @@ async function memoTrainNightly(DB) {
     }
     if (protos.length < 8) return "[MEMO] 유효 원형 " + protos.length + "개 — 대기";
     const model = { protos: protos, mean: mean, std: std, base: +base.toFixed(4),
-                    featVer: MEMOML.featVer, luxFeatVer: LUXML.featVer, n: ntr, ts: Date.now() };
+                    featVer: MEMOML.featVer, luxFeatVer: LUXML.featVer, n: ntr,
+                    purged: _purged,   // [V33.156] 다른 모델과 같은 근거를 남긴다(홀드아웃 신뢰의 바탕)
+                    ts: Date.now() };
     // 홀드아웃 채점 → IC 유의성(다른 모델과 같은 기준)
     const pv = [], yv = [];
-    for (let i = ntr; i < N; i++) { const p = memoScore(model, X[i]); if (p == null) continue; pv.push(p); yv.push(Y[i]); }
+    for (let i = nvalStart; i < N; i++) { const p = memoScore(model, X[i]); if (p == null) continue; pv.push(p); yv.push(Y[i]); }
     const st = _icBlockStats(pv, yv, 5);
     let correct = 0; for (let i = 0; i < pv.length; i++) if ((pv[i] >= 0.5 ? 1 : 0) === yv[i]) correct++;
     model.valAcc = +(correct / Math.max(1, pv.length)).toFixed(4);

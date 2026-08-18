@@ -185,5 +185,38 @@ const score = (m, rows) => rows.map((r) => 1 / (1 + Math.exp(-(m.w * r.x + m.b))
   else bad(`고친 산식도 정확도가 1 을 넘는다(${worst.toFixed(3)})`);
 }
 
+// ── [V33.156] ★퍼징은 한 모델의 기능이 아니라 계약이다★ ────────────────────
+//   V33.141 은 _miniLogisticTrain(flow·xalpha·stack·dual)에만 퍼징을 넣었다.
+//   그런데 MEMO 는 ★같은 ml_samples 를 같은 10일 라벨 지평★ 으로 쓰면서 퍼징이 없었다.
+//   운영 스냅샷이 그 서명을 그대로 보였다 — 홀드아웃 IC 0.167 vs 전진 IC 0.044(3.8배).
+//   퍼징을 만들게 한 FLOW 의 "홀드아웃 0.19 vs 전진 0.02" 와 같은 모양이다.
+//   → 시간분할 홀드아웃으로 학습하는 야간 학습기는 ★전부★ 퍼징해야 한다. 여기서 강제한다.
+{
+  const src3 = readFileSync(new URL("../src/index.js", import.meta.url), "utf8");
+  const cut = (a, b) => { const i = src3.indexOf(a); const j = b ? src3.indexOf(b, i) : src3.length; return src3.slice(i, j); };
+  const trainers = [
+    ["_miniLogisticTrain", cut("async function _miniLogisticTrain", "async function flowTrainNightly")],
+    ["memoTrainNightly",   cut("async function memoTrainNightly", "function memoScore")]
+  ];
+  for (const [nm, body] of trainers) {
+    if (!body || body.length < 200) { bad(`${nm} 본문을 못 찾았다 — 검사가 헛돈다`); continue; }
+    // ① 홀드아웃 경계를 고정하는가
+    if (/const nvalStart = N - nval;/.test(body)) ok(`${nm}: 홀드아웃 경계(nvalStart)를 못 박는다`);
+    else bad(`${nm}: 홀드아웃 경계가 고정돼 있지 않다 — 퍼징이 경계를 움직인다`);
+    // ② 라벨 지평만큼 학습 끝을 잘라내는가
+    if (/_num\(T\[_keep - 1\], 0\) \+ _span > _bound/.test(body)) ok(`${nm}: 라벨 구간이 경계를 넘는 학습표본을 잘라낸다`);
+    else bad(`${nm}: 퍼징이 없다 — 경계 직전 학습표본의 결과가 홀드아웃 안으로 뻗는다(누출)`);
+    // ③ 잘라서 모자라면 학습을 미루는가(부분 퍼징 금지)
+    if (/퍼징 후 학습표본/.test(body)) ok(`${nm}: 퍼징 후 표본이 모자라면 학습을 미룬다`);
+    else bad(`${nm}: 퍼징 후 부족을 처리하지 않는다`);
+    // ④ 검증 루프가 고정 경계에서 시작하는가
+    if (/for \(let i = nvalStart; i < N; i\+\+\)/.test(body)) ok(`${nm}: 검증이 고정 경계에서 시작한다`);
+    else bad(`${nm}: 검증이 퍼징된 ntr 에서 시작한다 — 잘라낸 구간이 홀드아웃에 섞인다`);
+    // ⑤ 근거를 모델에 남기는가
+    if (/purged: _purged/.test(body)) ok(`${nm}: 잘라낸 건수를 모델에 남긴다`);
+    else bad(`${nm}: 퍼징 건수를 남기지 않는다 — 홀드아웃을 믿을 근거가 화면에 없다`);
+  }
+}
+
 console.log(fails ? "\n퍼징 계약 위반 " + fails + "건 — 배포 차단" : "\n  ok   퍼징 계약 통과");
 process.exit(fails ? 1 : 0);

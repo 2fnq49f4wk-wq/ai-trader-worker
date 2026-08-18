@@ -159,5 +159,17 @@ const mkUni = (n, bars) => {
     `featVer ${M.XALPHA.featVer} 인데 피처가 ${M.XALPHA.featNames.length}개 — 의미가 다른 표본이 섞인다`);
 }
 
+// ── ⑧ 소급생성이 감쇠 창을 감당하는가 ─────────────────────────────────────
+//   decay_linear 는 back=0..D-1 시점을 전부 계산한다. 소급생성 스냅샷의 봉 수가 모자라면
+//   xalphaBuildFeat 이 null 을 돌려주고 ★그 표본이 조용히 사라진다★ (에러도 안 난다).
+{
+  const alt = (src.match(/const ALTBF = \{[^}]*\}/) || [""])[0];
+  const minIdx = Number((alt.match(/minIdx:\s*(\d+)/) || [])[1]);
+  const need = 24 + (M.XA_DECAY_D - 1);   // 스냅샷 봉수(minIdx+1) ≥ 25 + (D-1)
+  chk(isFinite(minIdx) && minIdx >= need,
+    `소급생성 최소 봉 인덱스 ${minIdx} ≥ 필요치 ${need} (감쇠 ${M.XA_DECAY_D}일을 감당한다)`,
+    `ALTBF.minIdx ${minIdx} < ${need} — 감쇠 창을 못 채워 소급 표본이 조용히 사라진다`);
+}
+
 console.log(fails ? "\nXALPHA 계약 위반 " + fails + "건 — 배포 차단" : "\n  ok   XALPHA 계약 통과");
 process.exit(fails ? 1 : 0);

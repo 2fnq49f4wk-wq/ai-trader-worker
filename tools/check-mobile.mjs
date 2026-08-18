@@ -1,0 +1,221 @@
+/* ═══════════════════════════════════════════════════════════════════════════
+   [V33.156] 폰 화면 계약 — "폰만 바뀐다"와 "접어도 안 사라진다"를 코드에서 확인한다.
+
+   왜 게이트가 필요한가.
+     ① 이 파일의 폰 규칙은 지금까지 세 군데로 흩어져 있었고, V33.148·V33.153 에서
+        "고쳤는데 안 바뀐다" 가 두 번 났다. 원인은 매번 ★뒤에 있는 규칙이 이겼다★ 였다.
+        그래서 폰 블록이 마지막 발언권을 갖는지를 소스 순서로 직접 확인한다.
+     ② 사용자 요구가 "아이패드·PC 는 지금과 똑같이" 였다. 폰 규칙이 미디어쿼리
+        밖으로 한 줄이라도 새면 그 약속이 깨진다 — 중괄호를 세어 확인한다.
+     ③ 안전영역: viewport-fit=cover 를 켠 뒤로 셸 여백과 바 높이가 어긋나면
+        ★설치했을 때만★ 본문이 노치·홈바에 깔린다. 웹에서는 안 보이는 종류의 버그라
+        눈으로 못 잡는다. 두 값이 같은 토큰에서 나오는지 식으로 확인한다.
+     ④ 아코디언: 2,450px 글벽을 접었다. "접었다"가 "지웠다"가 되면 안 된다 —
+        함수를 실제로 ★돌려서★ 내용 노드가 하나도 안 사라지는지 센다.
+   ═══════════════════════════════════════════════════════════════════════════ */
+import { readFileSync } from 'node:fs';
+
+const H = readFileSync(new URL('../public/index.html', import.meta.url), 'utf8');
+let fail = 0;
+const ok  = (m) => console.log('  ok   ' + m);
+const bad = (m) => { console.log('  ✘ ' + m); fail++; };
+const eq  = (a, b, m) => (a === b ? ok(m + ' (' + a + ')') : bad(m + ' — ' + a + ' ≠ ' + b));
+
+/* ── ① 폰 블록이 소스의 마지막 발언권을 갖는가 ───────────────────────────── */
+console.log('① 소스 순서 — 폰 규칙의 마지막 발언권');
+const PH = '[V33.156] 폰 전용 셸 정리';
+const iPh = H.indexOf(PH);
+if (iPh < 0) bad('V33.156 폰 블록을 찾지 못했다');
+else {
+  const own = H.indexOf('@media (max-width:767px){', iPh);   // 이 블록 자신의 미디어쿼리
+  const later = [];
+  const re = /@media\s*\(\s*max-width\s*:\s*(\d+)px\s*\)/g;
+  let m;
+  while ((m = re.exec(H))) if (Number(m[1]) <= 767 && m.index > own) later.push(m[1] + 'px@' + m.index);
+  if (later.length) bad('폰 블록 뒤에 또 다른 좁은폭 규칙이 있다(순서로 진다): ' + later.join(', '));
+  else ok('≤767px 미디어쿼리 중 V33.156 블록이 가장 뒤 — 순서로 이긴다');
+}
+
+/* ── ② 폰 규칙이 미디어쿼리 밖으로 새지 않는가 ──────────────────────────── */
+console.log('② 격리 — 아이패드(768px~)는 이 블록을 한 줄도 읽지 않는다');
+{
+  const start = H.indexOf('@media (max-width:767px){', iPh);
+  if (start < 0) bad('폰 블록의 미디어쿼리 시작을 찾지 못했다');
+  else {
+    // 중괄호를 세어 블록의 끝을 정확히 찾는다(주석 안의 괄호는 없다 — /* */ 를 먼저 지운다)
+    const body = H.slice(start);
+    const clean = body.replace(/\/\*[\s\S]*?\*\//g, (s) => ' '.repeat(s.length));
+    let d = 0, end = -1;
+    for (let i = clean.indexOf('{'); i < clean.length; i++) {
+      if (clean[i] === '{') d++;
+      else if (clean[i] === '}') { d--; if (d === 0) { end = i; break; } }
+    }
+    if (end < 0) bad('폰 블록의 중괄호가 닫히지 않았다');
+    else {
+      const inside = H.slice(start, start + end + 1);
+      ok('폰 블록은 ' + inside.split('\n').length + '줄짜리 단일 미디어쿼리로 닫힌다');
+      // 이 블록에서만 쓰는 이름들이 블록 ★밖★ 에 선언되어 있지 않은지
+      const outside = H.slice(0, start) + H.slice(start + end + 1);
+      for (const sel of ['--m-sat', '--m-sab', '--m-top:', '--m-bot:', '.m-acc-h{', '.m-acc-b{']) {
+        if (outside.includes(sel)) bad('폰 전용 토큰/선택자가 미디어쿼리 밖에도 있다: ' + sel);
+      }
+      ok('폰 전용 토큰(--m-sat/--m-sab/--m-top/--m-bot)과 .m-acc 규칙은 블록 안에만 있다');
+      globalThis.__PHONE_BLOCK = inside;
+    }
+  }
+}
+
+/* ── ③ 안전영역 산술 — 셸 여백 == 바 높이 ───────────────────────────────── */
+console.log('③ 안전영역 — 셸 여백과 바 높이가 같은 토큰에서 나오는가');
+{
+  const B = globalThis.__PHONE_BLOCK || '';
+  const grab = (re) => { const m = B.match(re); return m ? m[1].replace(/\s+/g, '') : null; };
+  const abH  = grab(/--m-ab-h:\s*([^;]+);/);
+  const tbH  = grab(/--m-tb-h:\s*([^;]+);/);
+  const top  = grab(/--m-top:\s*([^;]+);/);
+  const bot  = grab(/--m-bot:\s*([^;]+);/);
+  const sPT  = grab(/\.shell\{[^}]*padding-top:\s*([^;]+);/);
+  const sPB  = grab(/\.shell\{[^}]*padding-bottom:\s*([^;]+);/);
+  const aH   = grab(/\.m-appbar\{\s*height:\s*([^;]+);/);
+  const tH   = grab(/\.m-tabbar\{\s*height:\s*([^;]+);/);
+  eq(top, 'calc(var(--m-ab-h)+var(--m-sat))', '--m-top = 앱바 본문 + 노치');
+  eq(bot, 'calc(var(--m-tb-h)+var(--m-sab))', '--m-bot = 탭바 본문 + 홈바');
+  eq(sPT, 'var(--m-top)', '셸 상단여백이 --m-top');
+  eq(aH,  'var(--m-top)', '앱바 높이가 --m-top');
+  eq(sPB, 'var(--m-bot)', '셸 하단여백이 --m-bot');
+  eq(tH,  'var(--m-bot)', '탭바 높이가 --m-bot');
+  if (sPT === aH && sPB === tH) ok('여백과 높이가 ★같은 식★ 이라 어긋날 수 없다 (' + abH + '/' + tbH + ' + 안전영역)');
+  else bad('여백과 높이가 다른 식이다 — 설치 시 본문이 바에 깔린다');
+  for (const v of ['--m-sat', '--m-sab', '--m-sal', '--m-sar']) {
+    const d = B.match(new RegExp(v + ':\\s*env\\(safe-area-inset-[a-z]+,\\s*0px\\)'));
+    if (!d) bad(v + ' 이 env(..., 0px) 폴백 형태가 아니다 — 안전영역을 모르는 브라우저에서 NaN 이 된다');
+  }
+  ok('안전영역 토큰 4종 모두 env(…, 0px) 폴백을 갖는다');
+  // 하단 고정물이 탭바 위에 있는가
+  if (/\.toast,\s*#luxBuildBanner\{\s*bottom:calc\(var\(--m-bot\)/.test(B.replace(/\s+/g, ' ').replace(/ \{/g, '{')))
+    ok('토스트·판 배너가 탭바 위로 올라간다(가려서 못 누르는 일 없음)');
+  else bad('하단 고정물이 탭바 위로 올라가지 않는다');
+}
+
+/* ── ④ 아코디언 — 부르는 곳이 한 곳인가 ─────────────────────────────────── */
+console.log('④ 아코디언 호출 — 그리는 경로가 둘인데 한 곳에서만 건다');
+{
+  const calls = (H.match(/mobAiAccordion\(\);/g) || []).length;
+  eq(calls, 1, '호출 지점 수(정의 제외)');
+  const putIdx = H.indexOf('    put(h);');
+  const callIdx = H.indexOf('mobAiAccordion();');
+  if (putIdx > 0 && callIdx > putIdx && callIdx - putIdx < 600)
+    ok('호출이 put(h) 직후 — aiModePaint·loadLive 두 경로 모두 이 지점을 지난다');
+  else bad('호출이 공용 페인트(put) 직후가 아니다 — 한 경로에서만 접힘이 살아남는다');
+}
+
+/* ── ⑤ 아코디언을 ★실제로 돌려★ 내용이 사라지지 않는지 센다 ──────────────── */
+console.log('⑤ 아코디언 동작 — 접기이지 지우기가 아님을 실행으로 확인');
+{
+  // 함수 원문을 그대로 떼어내 최소 DOM 위에서 돌린다(구현을 흉내내지 않는다)
+  const s = H.indexOf('function mobAiAccordion(){');
+  if (s < 0) bad('mobAiAccordion 원문을 찾지 못했다');
+  else {
+    let d = 0, e = -1;
+    for (let i = H.indexOf('{', s); i < H.length; i++) {
+      if (H[i] === '{') d++; else if (H[i] === '}') { d--; if (d === 0) { e = i; break; } }
+    }
+    const src = H.slice(s, e + 1);
+
+    /* 최소 DOM — 이 함수가 쓰는 것만 구현한다 */
+    class N {
+      constructor(tag){ this.tagName=tag; this.children=[]; this.parentNode=null; this.className='';
+        this.attrs={}; this.type=''; this._txt=''; this._h=''; this._ls=[];
+        this.classList={ add:(c)=>{ if(!this.className.split(' ').includes(c)) this.className=(this.className+' '+c).trim(); },
+          contains:(c)=>this.className.split(' ').includes(c),
+          toggle:(c)=>{ const on=!this.classList.contains(c);
+            this.className = on ? (this.className+' '+c).trim() : this.className.split(' ').filter(x=>x!==c).join(' ');
+            return on; } };
+      }
+      get firstChild(){ return this.children[0]; }
+      set textContent(v){ this._txt=String(v); }
+      get textContent(){ return this.children.length ? this.children.map(c=>c.textContent).join('') : this._txt; }
+      set innerHTML(v){ this._h=String(v); this.children=[];
+        // 이 코드가 넣는 innerHTML 은 '<b></b><span class="m-acc-n"></span><i>▾</i>' 하나뿐
+        const mm=String(v).match(/<(\w+)(?:\s+class="([^"]*)")?[^>]*>/g)||[];
+        for(const t of mm){ const g=/<(\w+)(?:\s+class="([^"]*)")?/.exec(t);
+          const c=new N(g[1].toUpperCase()); c.className=g[2]||''; c.parentNode=this; this.children.push(c); } }
+      get innerHTML(){ return this._h; }
+      appendChild(c){ if(c.__frag){ for(const k of c.children.slice()){ k.parentNode=this; this.children.push(k); } c.children=[]; return c; }
+        if(c.parentNode) c.parentNode.children=c.parentNode.children.filter(x=>x!==c);
+        c.parentNode=this; this.children.push(c); return c; }
+      setAttribute(k,v){ this.attrs[k]=String(v); }
+      getAttribute(k){ return Object.prototype.hasOwnProperty.call(this.attrs,k)?this.attrs[k]:null; }
+      addEventListener(t, f){ this._ls.push({ t, f }); }
+      closest(sel){ const c=sel.replace(/^\./,''); let n=this;
+        while(n){ if(n.classList && n.classList.contains(c)) return n; n=n.parentNode; } return null; }
+      _fire(target){ for(const l of this._ls) if(l.t==='click') l.f({ target }); }
+      _all(out=[]){ for(const c of this.children){ out.push(c); c._all(out); } return out; }
+      querySelector(sel){ return this.querySelectorAll(sel)[0]||null; }
+      querySelectorAll(sel){
+        const cls=sel.replace(/^\./,''), tag=sel.toUpperCase();
+        return this._all().filter(n=> sel.startsWith('.') ? n.classList.contains(cls) : n.tagName===tag);
+      }
+    }
+    const host = new N('DIV');
+    host.setAttribute('id','mobAiMode');
+    const mkNode=(cls,txt)=>{ const n=new N('DIV'); n.className=cls; n.textContent=txt; return n; };
+    const mkTbl=(rows)=>{ const t=new N('TABLE'); t.className='tbl';
+      for(let i=0;i<rows;i++) t.appendChild(new N('TR')); return t; };
+    /* 배지 1 + (제목 + 표) × 3 + 진단 1 */
+    const badge=mkNode('badge','◉ AI 자율운용'); host.appendChild(badge);
+    const SECT=[['시장 국면',3],['위원회 10/11 가동',6],['AI 픽',2]];
+    const contents=[];
+    for(const [t,r] of SECT){ host.appendChild(mkNode('k',t)); const tb=mkTbl(r); contents.push(tb); host.appendChild(tb); }
+    const diag=mkNode('diag','진단'); contents.push(diag); host.appendChild(diag);
+    const before = host._all().length;
+
+    const doc = { createElement:(t)=>new N(t.toUpperCase()),
+      createDocumentFragment:()=>{ const f=new N('#fragment'); f.__frag=true; return f; } };
+    const $id = (id) => (id === 'mobAiMode' ? host : null);
+    if (!/\bvar MACC = null;/.test(H)) bad('MACC(열림 상태 기억) 선언을 찾지 못했다');
+    const fn = new Function('document', '$id', 'var MACC = null;\n' + src + '\nreturn mobAiAccordion;')(doc, $id);
+    fn();
+
+    const secs = host.querySelectorAll('.m-acc');
+    eq(secs.length, 3, '섹션 수');
+    // 내용 노드가 전부 살아 있는가 (배지 + 표 3 + 진단)
+    const still = [badge, ...contents].filter(n => host._all().includes(n)).length;
+    eq(still, 1 + contents.length, '원래 내용 노드가 남아 있는 개수');
+    const rowsAfter = host.querySelectorAll('TR').length;
+    eq(rowsAfter, 3 + 6 + 2, '표의 줄 수(접어도 DOM 에 그대로)');
+    // 배지는 첫 섹션 앞 — 항상 보인다
+    if (host.children[0] === badge) ok('첫 .k 앞의 배지는 접히지 않고 항상 보인다');
+    else bad('배지가 섹션 안으로 들어갔다 — 접으면 상태 요약이 사라진다');
+    // 첫 섹션만 펼침
+    const open = secs.map(s => s.classList.contains('open'));
+    if (open[0] && !open[1] && !open[2]) ok('첫 회 기본값 — 첫 섹션만 펼침, 나머지 접힘');
+    else bad('기본 펼침 상태가 [true,false,false] 가 아니다: ' + JSON.stringify(open));
+    // 제목에 줄 수가 적혀 있는가(접힌 채로도 무엇이 들었는지 보인다)
+    const ns = secs.map(s => (s.querySelector('.m-acc-n') || {}).textContent);
+    if (ns[0] === '3줄' && ns[1] === '6줄') ok('접힌 섹션도 줄 수를 표시한다 — ' + ns.join(' / '));
+    else bad('섹션 줄 수 표기가 없다: ' + JSON.stringify(ns));
+
+    /* 재페인트(2분 폴링) — 열림 상태가 제목으로 기억되는가.
+       ★DOM 을 직접 토글하지 않고 실제 클릭 경로를 태운다★ — 기억(MACC)을 갱신하는 것은
+       클릭 핸들러이지 class 가 아니다. 직접 토글하면 게이트가 '기억이 있다'고 착각한다. */
+    host._fire(secs[2].querySelector('.m-acc-h'));   // 사용자가 'AI 픽' 을 펼쳤다
+    host._fire(secs[0].querySelector('.m-acc-h'));   // 그리고 '시장 국면' 을 접었다
+    const afterClick = host.querySelectorAll('.m-acc').map(s => s.classList.contains('open'));
+    if (afterClick[0] === false && afterClick[2] === true) ok('제목을 누르면 열고 닫힌다 ' + JSON.stringify(afterClick));
+    else bad('제목 클릭이 동작하지 않는다: ' + JSON.stringify(afterClick));
+
+    // 서버가 새 값을 내려 innerHTML 이 통째로 갈린 상황을 그대로 재현한다
+    host.children = [];
+    host.appendChild(mkNode('badge','◉ AI 자율운용'));
+    for(const [t,r] of SECT){ host.appendChild(mkNode('k',t)); host.appendChild(mkTbl(r)); }
+    fn();
+    const open2 = host.querySelectorAll('.m-acc').map(s => s.classList.contains('open'));
+    if (open2[2] === true && open2[0] === false) ok('다시 그려도 사용자가 펼친 섹션이 유지된다 ' + JSON.stringify(open2));
+    else bad('재페인트에서 펼침 상태가 초기화됐다: ' + JSON.stringify(open2));
+    void before;
+  }
+}
+
+console.log(fail ? '\n실패 ' + fail + '건' : '\nok   폰 화면 계약 통과');
+process.exit(fail ? 1 : 0);
