@@ -8,7 +8,7 @@
      인데, 지금까지 화면에서 그걸 알 방법이 전혀 없었다(카카오톡 인앱 브라우저는 특히 강하게 캐시한다).
      서버가 내려주는 build 와 이 값을 비교해 다르면 배너로 알린다.
      ※ src/index.js 의 _BUILD_VER 와 항상 같아야 한다 — check-html-js 가 강제한다. -->
-<meta name="lux-build" content="V33.153">
+<meta name="lux-build" content="V33.154">
 <title>LUX-ENGINE V10</title>
 <link rel="icon" type="image/svg+xml" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'%3E%3Crect width='100' height='100' fill='%23000'/%3E%3Cpath fill='%23fff' d='M50 8 L53 41.7 L70.7 29.3 L58.3 47 L92 50 L58.3 53 L70.7 70.7 L53 58.3 L50 92 L47 58.3 L29.3 70.7 L41.7 53 L8 50 L41.7 47 L29.3 29.3 L47 41.7 Z'/%3E%3Cpath fill='%23b6bcc6' d='M50 50 L50 8 L53 41.7 Z M50 50 L70.7 29.3 L58.3 47 Z M50 50 L92 50 L58.3 53 Z M50 50 L70.7 70.7 L53 58.3 Z M50 50 L50 92 L47 58.3 Z M50 50 L29.3 70.7 L41.7 53 Z M50 50 L8 50 L41.7 47 Z M50 50 L29.3 29.3 L47 41.7 Z'/%3E%3C/svg%3E">
 <script>
@@ -12444,18 +12444,23 @@ html[data-theme="light"] #page-nnviz{
      · 숫자는 tabular — 갱신될 때 자리가 흔들리지 않는다. */
 /* 제 줄로 나왔으므로 폭에 맞춰 스스로 열 수를 정한다 — 1600px 6열, 1440px 5열, 폰 1열.
    고정 2열이면 넓은 화면에서 카드가 늘어지고 좁은 화면에서 글자가 눌린다. */
+/* [V33.154] ★뿌옇게 보이던 이유★ — 카드 표면이 흰색 6% 반투명(--ap-mat-light)이었고,
+   그 아래 패널이 backdrop-filter 로 흐려져 있다. 흰끼가 흐린 배경 위에 얹히면 우유빛이 된다.
+   패널은 재질(떠 있는 표면)이 맞지만 ★카드는 그 위에 눌러 넣은 자리★ 다 — 밝게 덧칠할 게
+   아니라 오히려 ★배경 쪽으로 눌러야★ 또렷해진다. --bg 를 섞어 쓰면 라이트 테마에서는
+   자동으로 반대 방향(흰 쪽)으로 눌린다 — 테마별 색을 따로 적지 않는다. */
 #page-nnviz .nlv-cmlist{
-  display:grid; grid-template-columns:repeat(auto-fill,minmax(196px,1fr)); gap:.3rem;
+  display:grid; grid-template-columns:repeat(auto-fill,minmax(150px,1fr)); gap:.26rem;
   background:none; border:none; margin-top:.15rem;
 }
 #page-nnviz .nlv-cm{
   display:grid;
   grid-template-columns:auto 1fr auto;
   grid-template-areas:'dot name state' 'bar bar bar';
-  align-items:baseline; gap:.12rem .38rem;
-  min-width:0; padding:.36rem .55rem .38rem;   /* 아래를 조금 더 — 막대가 테두리에 붙지 않게 */
-  background:var(--ap-mat-light);
-  border:1px solid var(--ap-hair);
+  align-items:baseline; gap:.1rem .32rem;
+  min-width:0; padding:.28rem .45rem .3rem;
+  background:color-mix(in srgb, var(--bg) 80%, transparent);
+  border:1px solid color-mix(in srgb, var(--ap-ink3) 24%, transparent);
   border-radius:var(--ap-r-sm);
   transition:border-color var(--ap-dur-fast) var(--ap-ease-out),
              background-color var(--ap-dur-fast) var(--ap-ease-out);
@@ -12463,40 +12468,41 @@ html[data-theme="light"] #page-nnviz{
 #page-nnviz .nlv-cm:hover{ border-color:color-mix(in srgb, var(--ap-tint) 30%, transparent); }
 /* 상태 점 — 합류한 위원만 tint 로 '켜진다'. 잠정은 같은 색을 옅게(농도로 구분). */
 #page-nnviz .nlv-cm .cm-dot{
-  grid-area:dot; width:6px; height:6px; border-radius:50%;
+  grid-area:dot; width:5px; height:5px; border-radius:50%;
   background:var(--ap-ink3); opacity:.5; align-self:center;
 }
 #page-nnviz .nlv-cm.ok   .cm-dot{ background:var(--ap-tint); opacity:1;
-  box-shadow:0 0 0 3px color-mix(in srgb, var(--ap-tint) 18%, transparent); }
+  box-shadow:0 0 0 2.5px color-mix(in srgb, var(--ap-tint) 20%, transparent); }
 #page-nnviz .nlv-cm.prov .cm-dot{ background:var(--ap-tint); opacity:.55; }
 #page-nnviz .nlv-cm.warn .cm-dot{ background:var(--amber,#fbbf24); opacity:.9; }
 /* 이름 — 이 카드의 주인공. 작은 크기라 트래킹은 0 근처. */
+/* 이름은 ★항상 또렷하게★ — 종전엔 정식이 아닌 위원을 ink2 로 흐려 뒀는데,
+   그러면 '아직 못 미더운 위원' 이 아니라 그냥 '읽기 어려운 글자' 가 된다. 등급은 상태 글자가 말한다. */
 #page-nnviz .nlv-cm .cn{
   grid-area:name; font-family:inherit;
-  font-size:.6875rem; font-weight:650; letter-spacing:-.004em;
-  color:var(--ap-ink2); min-width:0;
+  font-size:.625rem; font-weight:660; letter-spacing:-.004em;
+  color:var(--ap-ink); min-width:0;
   overflow:hidden; text-overflow:ellipsis; white-space:nowrap;
 }
-#page-nnviz .nlv-cm.ok .cn{ color:var(--ap-ink); }
 /* 역할 — 이름 뒤에 붙는 보조. 별도 칸을 주면 좁은 폭에서 이름을 잡아먹는다. */
 #page-nnviz .nlv-cm .cr{
   grid-area:name; justify-self:end; align-self:baseline;
-  font-size:.5625rem; font-weight:400; letter-spacing:.01em;
-  color:var(--ap-ink3); white-space:nowrap; padding-left:.3rem;
+  font-size:.5rem; font-weight:400; letter-spacing:.01em;
+  color:var(--ap-ink3); white-space:nowrap; padding-left:.26rem;
   overflow:hidden; text-overflow:ellipsis;
 }
 #page-nnviz .nlv-cm .cs{
   grid-area:state;
-  font-size:.5625rem; font-weight:600; letter-spacing:.012em;
+  font-size:.5rem; font-weight:650; letter-spacing:.012em;
   font-variant-numeric:tabular-nums; white-space:nowrap;
-  color:var(--ap-ink3);
+  color:var(--ap-ink2);
 }
 #page-nnviz .nlv-cm.ok   .cs{ color:var(--ap-tint); }
 #page-nnviz .nlv-cm.prov .cs{ color:color-mix(in srgb, var(--ap-tint) 72%, var(--ap-ink3)); }
 #page-nnviz .nlv-cm.warn .cs{ color:var(--amber,#fbbf24); }
 /* 발언권 막대 — 숫자(×0.40)와 같은 사실을 길이로 한 번 더. 11명의 분포가 한눈에 읽힌다. */
 #page-nnviz .nlv-cm .cm-w{
-  grid-area:bar; height:2px; margin-top:.26rem;
+  grid-area:bar; height:2px; margin-top:.2rem;
   background:color-mix(in srgb, var(--ap-ink3) 16%, transparent);
   border-radius:999px; overflow:hidden;
 }
@@ -12511,10 +12517,15 @@ html[data-theme="light"] #page-nnviz{
 #page-nnviz .nlv-cm.prov .cm-w>i{ opacity:.72; }   /* 잠정이 정보량이 큰 쪽이라 살짝 더 또렷하게 */
 #page-nnviz .nlv-cm.warn .cm-w,
 #page-nnviz .nlv-cm.off  .cm-w{ opacity:.4; }
-@media (max-width:420px){ #page-nnviz .nlv-cmlist{ grid-template-columns:1fr; } }
+/* [V33.154] 카드가 작아져 390px 에서도 2열이 들어간다 — 1열이면 11장이 세로로 390px 를 먹는다.
+   1열 강제는 정말 좁은 폭(≤360)에서만. */
+@media (max-width:360px){ #page-nnviz .nlv-cmlist{ grid-template-columns:1fr; } }
+/* 넓은 화면에서는 열 수에 상한을 둔다 — auto-fill 만 두면 1920px 에서 9열이 되어
+   11명이 9+2 로 갈리고 둘째 줄이 거의 빈다. ★11 은 6+5 가 가장 정돈된 2줄★ 이다. */
+@media (min-width:1500px){ #page-nnviz .nlv-cmlist{ grid-template-columns:repeat(6,minmax(0,1fr)); } }
 /* 위원회 줄 — 히어로와 같은 재질의 카드로 감싼다(제 줄이 되었으니 표면도 제 것을 갖는다). */
 #page-nnviz .nlv-cmrow{
-  margin-top:1rem;
+  margin-top:.85rem;
   background:var(--ap-mat);
   -webkit-backdrop-filter:blur(var(--ap-blur)) saturate(180%);
   backdrop-filter:blur(var(--ap-blur)) saturate(180%);
