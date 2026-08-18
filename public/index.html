@@ -8,7 +8,7 @@
      인데, 지금까지 화면에서 그걸 알 방법이 전혀 없었다(카카오톡 인앱 브라우저는 특히 강하게 캐시한다).
      서버가 내려주는 build 와 이 값을 비교해 다르면 배너로 알린다.
      ※ src/index.js 의 _BUILD_VER 와 항상 같아야 한다 — check-html-js 가 강제한다. -->
-<meta name="lux-build" content="V33.152">
+<meta name="lux-build" content="V33.153">
 <title>LUX-ENGINE V10</title>
 <link rel="icon" type="image/svg+xml" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'%3E%3Crect width='100' height='100' fill='%23000'/%3E%3Cpath fill='%23fff' d='M50 8 L53 41.7 L70.7 29.3 L58.3 47 L92 50 L58.3 53 L70.7 70.7 L53 58.3 L50 92 L47 58.3 L29.3 70.7 L41.7 53 L8 50 L41.7 47 L29.3 29.3 L47 41.7 Z'/%3E%3Cpath fill='%23b6bcc6' d='M50 50 L50 8 L53 41.7 Z M50 50 L70.7 29.3 L58.3 47 Z M50 50 L92 50 L58.3 53 Z M50 50 L70.7 70.7 L53 58.3 Z M50 50 L50 92 L47 58.3 Z M50 50 L29.3 70.7 L41.7 53 Z M50 50 L8 50 L41.7 47 Z M50 50 L29.3 29.3 L47 41.7 Z'/%3E%3C/svg%3E">
 <script>
@@ -4036,12 +4036,18 @@ html[data-theme="light"] .m-brainbar button.active{color:#0b4f9e;background:rgba
         <div class="nlv-funnel-wrap">
           <div class="nlv-sec-h">판정 깔때기 <small>유니버스에서 진입후보까지</small></div>
           <div class="nlv-funnel" id="nlvFunnel"></div>
-          <!-- [V33.149] 위원회 구성 — 종전엔 KPI 타일의 "6 / 6" 하나뿐이라 신규 위원 5종이
-               화면 어디에도 없었다. 정식·잠정·보류를 사유와 함께 그대로 보인다. -->
-          <div class="nlv-sec-h nlv-cm-h">위원회 구성 <small id="nlvCmSub">정식 · 잠정 · 대기</small></div>
-          <div class="nlv-cmlist" id="nlvCommittee"></div>
           <div class="nlv-kpi" id="nlvKpi"></div>
         </div>
+      </div>
+
+      <!-- [V33.153] ★위원회 구성을 깔때기 카드에서 꺼내 제 줄로★
+           V33.149 에서는 '자리가 남아서' 깔때기 카드 안에 붙였는데, 두 가지가 어긋났다.
+             ① 묻는 질문이 다르다 — 깔때기는 "무엇을 걸렀나", 위원회는 "누가 판단했나".
+             ② 히어로 두 카드의 무게가 무너졌다 — 왼쪽(최우선 후보)은 텅 비고 오른쪽만 빽빽했다.
+           제 줄로 빼면 11명이 폭을 다 쓰므로 2열이 아니라 4~6열로 펴져 읽기도 나아진다. -->
+      <div class="nlv-cmrow">
+        <div class="nlv-sec-h nlv-cm-h">위원회 구성 <small id="nlvCmSub">정식 · 잠정 · 대기</small></div>
+        <div class="nlv-cmlist" id="nlvCommittee"></div>
       </div>
 
       <!-- ③ 하단 — 좌: 판정 스트림 / 우: 파이프라인 -->
@@ -12436,8 +12442,10 @@ html[data-theme="light"] #page-nnviz{
      · 상태를 색만으로 말하지 않는다 — 점·글자·막대 길이 셋이 같은 사실을 중복해서 말한다
        (색각 이상·흑백 캡처에서도 읽혀야 한다).
      · 숫자는 tabular — 갱신될 때 자리가 흔들리지 않는다. */
+/* 제 줄로 나왔으므로 폭에 맞춰 스스로 열 수를 정한다 — 1600px 6열, 1440px 5열, 폰 1열.
+   고정 2열이면 넓은 화면에서 카드가 늘어지고 좁은 화면에서 글자가 눌린다. */
 #page-nnviz .nlv-cmlist{
-  display:grid; grid-template-columns:1fr 1fr; gap:.3rem;
+  display:grid; grid-template-columns:repeat(auto-fill,minmax(196px,1fr)); gap:.3rem;
   background:none; border:none; margin-top:.15rem;
 }
 #page-nnviz .nlv-cm{
@@ -12504,16 +12512,101 @@ html[data-theme="light"] #page-nnviz{
 #page-nnviz .nlv-cm.warn .cm-w,
 #page-nnviz .nlv-cm.off  .cm-w{ opacity:.4; }
 @media (max-width:420px){ #page-nnviz .nlv-cmlist{ grid-template-columns:1fr; } }
+/* 위원회 줄 — 히어로와 같은 재질의 카드로 감싼다(제 줄이 되었으니 표면도 제 것을 갖는다). */
+#page-nnviz .nlv-cmrow{
+  margin-top:1rem;
+  background:var(--ap-mat);
+  -webkit-backdrop-filter:blur(var(--ap-blur)) saturate(180%);
+  backdrop-filter:blur(var(--ap-blur)) saturate(180%);
+  border:1px solid var(--ap-hair); border-top-color:var(--ap-hair-top);
+  border-radius:var(--ap-r-md); box-shadow:var(--ap-shadow-s);
+  padding:.85rem 1rem 1rem;
+}
 
 /* ── 스크롤 경계 — 1px 선 대신 페이드 ─────────────────────────────────────
    떠 있는 크롬과 콘텐츠가 만나는 자리에만 마스크를 준다. 선을 그으면 잘린 느낌이,
    페이드를 주면 '아래로 이어진다'는 느낌이 남는다. */
+/* ★.nlv-toplist 는 여기서 뺐다★ — 스크롤하지 않는 3칸 그리드라 페이드가 걸리면
+   카드 위아래만 이유 없이 흐려진다. 이 마스크는 '아래로 이어진다' 를 말하는 장치이므로
+   실제로 이어지는 것에만 쓴다. */
 #page-nnviz .nlv-feed,
-#page-nnviz .nnv-scroll,
-#page-nnviz .nlv-toplist{
+#page-nnviz .nnv-scroll{
   -webkit-mask-image:linear-gradient(180deg,transparent 0,#000 14px,#000 calc(100% - 14px),transparent 100%);
   mask-image:linear-gradient(180deg,transparent 0,#000 14px,#000 calc(100% - 14px),transparent 100%);
   scrollbar-width:thin;
+}
+
+/* ── 최우선 후보 카드 ────────────────────────────────────────────────────
+   [V33.153] 위원회 카드와 같은 재질로 맞춘다. 종전엔 여기만 1px 격자선 + 하드코딩 색이라
+   같은 화면에서 두 가지 언어가 섞여 있었다. */
+#page-nnviz .nlv-toplist{
+  display:grid; grid-template-columns:repeat(3,1fr); gap:.3rem;
+  background:none; border-top:none; padding:0 .8rem .8rem;
+}
+#page-nnviz .nlv-top{
+  background:var(--ap-mat-light);
+  border:1px solid var(--ap-hair);
+  border-radius:var(--ap-r-sm);
+  padding:.42rem .55rem .46rem;
+  transition:transform var(--ap-dur-fast) var(--ap-ease-out),
+             border-color var(--ap-dur-fast) var(--ap-ease-out),
+             box-shadow var(--ap-dur-fast) var(--ap-ease-out);
+}
+#page-nnviz .nlv-top:hover{
+  background:var(--ap-mat-light);
+  transform:translateY(-1px);
+  border-color:color-mix(in srgb,var(--ap-tint) 34%,transparent);
+  box-shadow:var(--ap-shadow-s);
+}
+#page-nnviz .nlv-top:active{ transform:translateY(0) scale(.99); }
+#page-nnviz .nlv-top .r{
+  font-family:inherit; font-size:.5625rem; font-weight:600;
+  letter-spacing:.03em; color:var(--ap-ink3);
+}
+#page-nnviz .nlv-top .s{
+  font-family:inherit; font-size:.75rem; font-weight:650; letter-spacing:-.008em;
+  color:var(--ap-ink); margin-top:.1rem;
+}
+#page-nnviz .nlv-top .p{
+  font-family:inherit; font-size:.6875rem; font-weight:600;
+  font-variant-numeric:tabular-nums; color:var(--ap-tint); margin-top:.05rem;
+}
+/* 폰에서 3칸이 좁다 — 한국 티커(005930.KS)가 7px 모자랐다(실측).
+   ★티커는 자르면 안 되는 값★ 이라(무슨 종목인지 사라진다) 글자를 줄여서 담는다.
+   V33.148 이 ≤360px 에 같은 규칙을 뒀지만 위 애플 레이어가 순서로 덮었다 — 여기에 다시 둔다. */
+@media (max-width:430px){
+  #page-nnviz .nlv-top{ padding:.4rem .42rem .44rem; }
+  #page-nnviz .nlv-top .s{ font-size:.625rem; letter-spacing:-.02em; }
+  #page-nnviz .nlv-top .p{ font-size:.625rem; }
+  #page-nnviz .nlv-toplist{ gap:.24rem; padding:0 .6rem .6rem; }
+}
+/* ※ 320px 대응은 파일 맨 끝의 ≤360px 블록에서 한다 — 그 블록이 순서상 가장 뒤라
+   여기서 또 정의하면 세 곳이 다투고, 실제로 그래서 한 번 안 먹었다(V33.148 규칙이 이겼다). */
+/* 히어로 한 줄 — 종목과 확률은 ★한 문장★ 이다. 세로 여백을 줄여 붙여 읽히게 한다. */
+#page-nnviz .nlv-tp{ padding:.7rem .9rem .35rem; align-items:baseline; }
+#page-nnviz .nlv-tp-id .sym{
+  font-family:inherit; font-size:1.25rem; font-weight:680; letter-spacing:-.02em;
+  color:var(--ap-ink);
+}
+#page-nnviz .nlv-tp-id .nm{ font-size:.6875rem; color:var(--ap-ink3); letter-spacing:0; }
+#page-nnviz .nlv-tp-num .p{
+  font-family:inherit; font-size:1.875rem; font-weight:700; letter-spacing:-.028em;
+  line-height:1.05; font-variant-numeric:tabular-nums; color:var(--ap-ink);
+}
+#page-nnviz .nlv-tp-num .vd{
+  font-family:inherit; font-size:.6875rem; font-weight:500; letter-spacing:.004em;
+  color:var(--ap-ink3); margin-top:.14rem;
+}
+/* 차트가 비어 있을 때 — 큰 여백에 작은 글자 하나만 남으면 '고장' 처럼 보인다.
+   재질 위에 얹어 '자리는 있고 데이터가 아직 없다' 로 읽히게 한다. */
+#page-nnviz .nlv-tp-chart{ padding:.15rem .8rem .5rem; }
+#page-nnviz .nlv-tp-chart .nnv-empty,
+#page-nnviz .nlv-tp-chart .nlv-empty{
+  height:100%; min-height:120px;
+  display:flex; align-items:center; justify-content:center;
+  background:var(--ap-mat-light);
+  border:1px solid var(--ap-hair); border-radius:var(--ap-r-sm);
+  color:var(--ap-ink3); font-size:.6875rem; letter-spacing:.004em;
 }
 #page-nnviz .nlv-pipe{ border:none; }
 
@@ -12632,7 +12725,9 @@ html[data-theme="light"] #page-nnviz{
     transition-property:opacity,background-color,color !important;
   }
   #page-nnviz .nlv-pick:hover,
-  #page-nnviz .nlv-pick:active{ transform:none; }
+  #page-nnviz .nlv-pick:active,
+  #page-nnviz .nlv-top:hover,
+  #page-nnviz .nlv-top:active{ transform:none; }
   #page-nnviz .nnv-btn:active,
   #page-nnviz .nlv-btn:active,
   #page-nnviz .nnv-tab:active{ transform:none; }
@@ -12643,7 +12738,8 @@ html[data-theme="light"] #page-nnviz{
   #page-nnviz .nlv-panel, #page-nnviz .nlv-core, #page-nnviz .nlv-funnel-wrap,
   #page-nnviz .nlv-picks, #page-nnviz .nnv-stage, #page-nnviz .nnv-comm,
   #page-nnviz .nnv-tabs, #page-nnviz .nnv-btn, #page-nnviz .nlv-btn, #page-nnviz .nnv-tip,
-  #page-nnviz .nlv-cm{
+  #page-nnviz .nlv-cm, #page-nnviz .nlv-cmrow, #page-nnviz .nlv-top,
+  #page-nnviz .nlv-tp-chart .nlv-empty{
     -webkit-backdrop-filter:none !important; backdrop-filter:none !important;
     background:var(--s1) !important;
   }
@@ -12653,10 +12749,12 @@ html[data-theme="light"] #page-nnviz{
   #page-nnviz{ --ap-hair:currentColor; }
   #page-nnviz .nnviz-content,
   #page-nnviz .nlv-panel, #page-nnviz .nlv-core, #page-nnviz .nlv-funnel-wrap,
-  #page-nnviz .nlv-picks, #page-nnviz .nnv-stage, #page-nnviz .nnv-comm{
+  #page-nnviz .nlv-picks, #page-nnviz .nnv-stage, #page-nnviz .nnv-comm,
+  #page-nnviz .nlv-cmrow{
     background:var(--bg); border-color:var(--ap-ink2);
   }
   #page-nnviz .nnv-tab.active{ outline:2px solid var(--ap-tint); }
+  #page-nnviz .nlv-top{ background:var(--bg); border-color:var(--ap-ink2); }
   /* 위원회 카드 — 대비 선호에서는 재질 대신 또렷한 테두리로 구분한다 */
   #page-nnviz .nlv-cm{ background:var(--bg); border-color:var(--ap-ink2); }
   #page-nnviz .nlv-cm .cr,
@@ -14323,9 +14421,13 @@ html[data-theme="light"]:root .rail-view small{ color:var(--t3); }
   #page-nnviz .nlv-stat{ padding:8px 7px 9px; }
   #page-nnviz .nlv-stat .k{ letter-spacing:.5px; font-size:8px; }
   #page-nnviz .nlv-stat .v{ font-size:12.5px; }     /* "3.2 종목/s" 15px 넘침 */
-  /* 상위 후보: 한국 티커(005930.KS)가 11px 잘렸다 */
-  #page-nnviz .nlv-top{ padding:8px 6px; }
-  #page-nnviz .nlv-top .s{ font-size:10px; letter-spacing:-.2px; }
+  /* 상위 후보: 한국 티커(005930.KS)는 ★자르면 안 되는 값★ 이다(무슨 종목인지 사라진다).
+     V33.153 에서 카드가 애플 재질로 바뀌며 폰트가 커져 다시 3px 모자랐다 — 재실측한 값. */
+  #page-nnviz .nlv-toplist{ gap:.2rem; padding:0 .45rem .5rem; }
+  #page-nnviz .nlv-top{ padding:.34rem .28rem .38rem; }
+  #page-nnviz .nlv-top .s{ font-size:9px; letter-spacing:-.03em; }
+  #page-nnviz .nlv-top .p{ font-size:9px; }
+  #page-nnviz .nlv-top .r{ font-size:8px; }
   /* 포지션 요약 바: 좌우 20px 여백이 3칸에서 14px 넘침을 만들었다 */
   .cm-stat{ padding:12px 8px; }
   .summary-value{ font-size:13px; }
@@ -14481,7 +14583,9 @@ html[data-theme="light"]:root .rail-view small{ color:var(--t3); }
         +'<button type="button" class="rail-view" data-view="struct" title="구조 관측 — 모델 내부 구조·가중치"><b><span class="ic">◈</span><span class="tx">구조 관측</span></b><small>모델 내부·가중치</small></button>'
       +'</div>'
       // ── 구조 관측 전용: 모델 선택(DNN·MIND·GBDT·XGB·LGB·Cat). 구조 뷰일 때만 펼쳐진다.
-      +'<div class="rail-sec" id="railModelsSec">'
+      // 구조 관측 전용 — 부팅 시점에 이미 숨겨 두고, syncRailModels 가 뷰에 맞춰 켠다.
+      //   (기본값을 '보임' 으로 두면 부팅 직후 한 프레임 깜빡였다가 사라진다)
+      +'<div class="rail-sec" id="railModelsSec" style="display:none;">'
         +'<div class="rail-sec-h">신경망·모델 구조 <span style="letter-spacing:0;text-transform:none;">· 누르면 구조 화면</span></div>'
         +'<div class="rail-models" id="railModels">'
           + MODELS.map(function(m){
@@ -14645,9 +14749,13 @@ html[data-theme="light"]:root .rail-view small{ color:var(--t3); }
   var MODELS = [['dnn','DNN 딥넷'],['mind','MIND 스태킹'],['gbdt','GBDT'],['xgb','XGBoost'],['lgb','LightGBM'],['cat','CatBoost'],
                 ['flow','FLOW 수급'],['xalpha','XALPHA 알파'],['memo','MEMO 기억'],['stack','STACK 결합'],
                 ['dualbull','이중헤드 강세'],['dualbear','이중헤드 약세']];
-  // 모델 버튼은 항상 보인다(사용자 요청: DNN·신경망 구조 버튼 복구). 누르면 구조 화면으로 전환되며
-  // 해당 모델이 열리고, 작동 화면일 땐 어떤 것도 활성 표시하지 않는다.
+  /* [V33.153] 모델 목록은 ★구조 관측일 때만★ 나타난다(사용자 요청).
+     종전엔 작동 화면에서도 12개 버튼이 늘 자리를 차지했다 — 그 화면에서는 누를 이유가 없는
+     버튼이라 사이드바의 세로 예산만 먹었다. 표시 여부와 활성 표시를 ★한 함수에서★ 정한다:
+     두 곳으로 갈리면 '보이는데 활성표시가 없는' 어긋난 상태가 생긴다. */
   function syncRailModels(active){
+    var sec = document.getElementById('railModelsSec');
+    if(sec) sec.style.display = (BVIEW === 'struct') ? '' : 'none';
     if(BVIEW !== 'struct'){
       var off = document.querySelectorAll('.rail-model');
       for(var k=0;k<off.length;k++) off[k].classList.remove('active');

@@ -271,6 +271,40 @@ try {
   rtBad += pbad;
 } catch (e) { console.error("  FAIL 파이프라인 폰 레이아웃 검사 실패:", e.message); rtBad += 1; }
 
+// ── [V33.153] 구조 관측 모델 목록은 그 뷰에서만 보인다 ──────────────────────
+//   작동 화면에서는 누를 이유가 없는 버튼 12개가 사이드바 세로 예산만 먹었다.
+//   ★표시 여부와 활성 표시가 한 함수에서 나와야★ '보이는데 활성표시가 없는' 어긋난 상태가 없다.
+try {
+  const hr = readFileSync(new URL("../public/index.html", import.meta.url), "utf8");
+  let sbad = 0;
+  if (/function syncRailModels\(active\)\{[\s\S]{0,320}?railModelsSec[\s\S]{0,120}?BVIEW === 'struct'/.test(hr))
+    console.log("  ok   모델 목록 표시를 syncRailModels 가 BVIEW 로 정한다(활성 표시와 같은 곳)");
+  else { sbad++; console.error("  FAIL 모델 목록 표시가 뷰와 연결돼 있지 않다 — 작동 화면에서도 버튼이 남는다"); }
+  if (/id="railModelsSec" style="display:none;"/.test(hr))
+    console.log("  ok   초기값이 숨김 — 부팅 직후 한 프레임 깜빡였다가 사라지지 않는다");
+  else { sbad++; console.error("  FAIL 모델 목록 초기값이 '보임' — 작동 화면 부팅 시 깜빡인다"); }
+  rtBad += sbad;
+} catch (e) { console.error("  FAIL 모델 목록 표시 검사 실패:", e.message); rtBad += 1; }
+
+// ── [V33.153] 위원회 구성은 깔때기 카드 ★안에 있으면 안 된다★ ────────────────
+//   V33.149 는 '자리가 남아서' 깔때기 카드 안에 넣었는데, 그러자 히어로 두 카드의 무게가
+//   무너졌다 — 왼쪽(최우선 후보)은 649px 중 대부분이 빈 공간이고 오른쪽만 빽빽했다.
+//   질문 자체도 다르다: 깔때기는 "무엇을 걸렀나", 위원회는 "누가 판단했나".
+try {
+  const hh2 = readFileSync(new URL("../public/index.html", import.meta.url), "utf8");
+  let hbad = 0;
+  const wrap = hh2.match(/<div class="nlv-funnel-wrap">[\s\S]*?<\/div>\s*<\/div>/);
+  if (wrap && /nlvCommittee/.test(wrap[0])) {
+    hbad++; console.error("  FAIL 위원회 구성이 깔때기 카드 안에 있다 — 히어로 두 카드의 무게가 다시 무너진다");
+  } else console.log("  ok   위원회 구성이 깔때기 카드 밖(제 줄)에 있다 — 히어로 두 카드가 같은 무게를 갖는다");
+  if (/<div class="nlv-cmrow">/.test(hh2)) console.log("  ok   위원회 전용 줄(.nlv-cmrow)이 있다");
+  else { hbad++; console.error("  FAIL 위원회 전용 줄이 없다"); }
+  if (/\.nlv-cmlist\{[^}]*repeat\(auto-fill,minmax\(/.test(hh2))
+    console.log("  ok   위원회 열 수가 폭에 따라 자동(고정 2열이면 넓은 화면에서 늘어진다)");
+  else { hbad++; console.error("  FAIL 위원회가 고정 열 수다 — 제 줄로 나온 이점을 못 쓴다"); }
+  rtBad += hbad;
+} catch (e) { console.error("  FAIL 히어로 배치 검사 실패:", e.message); rtBad += 1; }
+
 // ── [V33.152] 위원회 구성 카드는 ★재질 토큰★ 으로만 칠한다 ──────────────────
 //   실제로 겪은 문제: 처음 판은 #080d18/#14203a 같은 리터럴로 칠했고, 그래서 라이트 테마용
 //   색을 ★또 한 벌★ 적어야 했다(html[data-theme="light"] 8줄). 두 벌은 반드시 드리프트한다 —
