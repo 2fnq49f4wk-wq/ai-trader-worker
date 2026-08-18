@@ -8,7 +8,7 @@
      인데, 지금까지 화면에서 그걸 알 방법이 전혀 없었다(카카오톡 인앱 브라우저는 특히 강하게 캐시한다).
      서버가 내려주는 build 와 이 값을 비교해 다르면 배너로 알린다.
      ※ src/index.js 의 _BUILD_VER 와 항상 같아야 한다 — check-html-js 가 강제한다. -->
-<meta name="lux-build" content="V33.151">
+<meta name="lux-build" content="V33.152">
 <title>LUX-ENGINE V10</title>
 <link rel="icon" type="image/svg+xml" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'%3E%3Crect width='100' height='100' fill='%23000'/%3E%3Cpath fill='%23fff' d='M50 8 L53 41.7 L70.7 29.3 L58.3 47 L92 50 L58.3 53 L70.7 70.7 L53 58.3 L50 92 L47 58.3 L29.3 70.7 L41.7 53 L8 50 L41.7 47 L29.3 29.3 L47 41.7 Z'/%3E%3Cpath fill='%23b6bcc6' d='M50 50 L50 8 L53 41.7 Z M50 50 L70.7 29.3 L58.3 47 Z M50 50 L92 50 L58.3 53 Z M50 50 L70.7 70.7 L53 58.3 Z M50 50 L50 92 L47 58.3 Z M50 50 L29.3 70.7 L41.7 53 Z M50 50 L8 50 L41.7 47 Z M50 50 L29.3 29.3 L47 41.7 Z'/%3E%3C/svg%3E">
 <script>
@@ -12052,20 +12052,9 @@ html[data-theme="light"] #page-nnviz .nlv-tp-num .p{color:#0b6cd4;}
 /* [V33.149] 위원회 구성 목록 — 좁은 패널이라 한 줄에 이름·역할·상태만.
    상태는 색이 아니라 ★글자★ 로도 구분된다(색각 이상·흑백 캡처에서도 읽혀야 한다). */
 #page-nnviz .nlv-cm-h{ margin-top:10px; }
-#page-nnviz .nlv-cmlist{ display:grid; grid-template-columns:1fr 1fr; gap:1px; background:#14203a;
-  border-top:1px solid #14203a; border-bottom:1px solid #14203a; }
-#page-nnviz .nlv-cm{ background:#080d18; padding:5px 8px; display:grid;
-  grid-template-columns:auto 1fr auto; align-items:baseline; gap:5px; min-width:0; }
-#page-nnviz .nlv-cm .cn{ font-family:'IBM Plex Mono',monospace; font-size:9.5px; font-weight:700; color:#c8d8ee; }
-#page-nnviz .nlv-cm .cr{ font-size:8.5px; color:#4a5f82; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
-#page-nnviz .nlv-cm .cs{ font-size:8.5px; font-weight:700; white-space:nowrap; letter-spacing:.2px; }
-#page-nnviz .nlv-cm.ok   .cs{ color:#38bdf8; }
-#page-nnviz .nlv-cm.prov .cs{ color:#ffc107; }
-#page-nnviz .nlv-cm.warn .cs{ color:#ff9f43; }
-#page-nnviz .nlv-cm.off  .cs{ color:#5f79a2; }
-#page-nnviz .nlv-cm.ok   .cn{ color:#eaf2ff; }
-#page-nnviz .nlv-cm.off  .cn{ color:#7d90ad; }
-@media (max-width:360px){ #page-nnviz .nlv-cmlist{ grid-template-columns:1fr; } }
+/* [V33.152] 위원회 구성은 아래 애플 레이어에서 정의한다(재질 토큰 기반).
+   여기 있던 하드코딩 판(#080d18/#14203a + 1px 격자선)은 같은 화면의 다른 요소들과
+   재질이 어긋났고, 라이트 테마용 색을 따로 또 적어야 했다 — 두 곳이 드리프트하는 구조였다. */
 
 /* KPI 타일 */
 #page-nnviz .nlv-kpi{display:grid;grid-template-columns:repeat(3,1fr);gap:1px;background:#14203a;border-top:1px solid #14203a;margin-top:auto;}
@@ -12119,8 +12108,6 @@ html[data-theme="light"] #page-nnviz .nlv-stat .v.warn{color:#a5730a;}
 html[data-theme="light"] #page-nnviz .nlv-stat .v.off{color:#c62a45;}
 html[data-theme="light"] #page-nnviz .nlv-kpi,html[data-theme="light"] #page-nnviz .nlv-toplist{background:#cdd9ee;}
 html[data-theme="light"] #page-nnviz .nlv-stat,html[data-theme="light"] #page-nnviz .nlv-top{background:#fbfdff;}
-/* [V33.149] 라이트 테마 — 어두운 배경 리터럴을 그대로 두면 흰 화면에서 검은 블록이 된다. */
-html[data-theme="light"] #page-nnviz .nlv-cm{background:#fbfdff;}
 /* [V33.150] 선형·원형 구조 뷰 라이트 테마 */
 html[data-theme="light"] #page-nnviz .nnv-lin-name{color:#3a4b66;}
 html[data-theme="light"] #page-nnviz .nnv-lin-track{background:#eef3fa;border-color:#dbe5f2;}
@@ -12136,13 +12123,6 @@ html[data-theme="light"] #page-nnviz .nnv-proto-wr.neg,html[data-theme="light"] 
 html[data-theme="light"] #page-nnviz .nnv-mk{border-color:#dbe5f2;color:#5b6f8d;}
 html[data-theme="light"] #page-nnviz .nnv-mk.p{border-color:#9fc9e8;color:#0b5f96;}
 html[data-theme="light"] #page-nnviz .nnv-mk.n{border-color:#e8a8b4;color:#a32338;}
-html[data-theme="light"] #page-nnviz .nlv-cmlist{background:#dbe5f2;border-color:#dbe5f2;}
-html[data-theme="light"] #page-nnviz .nlv-cm .cn{color:#12233f;}
-html[data-theme="light"] #page-nnviz .nlv-cm .cr{color:#5b6f8d;}
-html[data-theme="light"] #page-nnviz .nlv-cm.ok .cs{color:#0b6cd4;}
-html[data-theme="light"] #page-nnviz .nlv-cm.prov .cs{color:#a5730a;}
-html[data-theme="light"] #page-nnviz .nlv-cm.warn .cs{color:#b4560a;}
-html[data-theme="light"] #page-nnviz .nlv-cm.off .cs{color:#6d7f9c;}
 html[data-theme="light"] #page-nnviz .nlv-fbar{background:rgba(18,35,63,.08);}
 html[data-theme="light"] #page-nnviz .nlv-pipe,
 html[data-theme="light"] #page-nnviz .nlv-sec-h{border-color:#d5dfee;}
@@ -12446,6 +12426,85 @@ html[data-theme="light"] #page-nnviz{
   color:var(--ap-ink2);
 }
 
+/* ── 위원회 구성 ─────────────────────────────────────────────────────────
+   [V33.152] 애플 재질로 다시 그린다. 종전 판은 1px 격자선으로 칸을 나눈 터미널 표였고,
+   같은 화면의 다른 요소(칩·후보카드·게이지)와 재질이 어긋났다.
+   원칙 그대로 적용한다:
+     · 선을 긋는 대신 ★여백★ 으로 나눈다 — 격자선 제거, 카드 사이 간격으로 구분.
+     · 색을 늘리지 않는다 — 강조는 tint 한 계열, 나머지는 ★농도★ 로만 구분한다.
+       다만 '보류' 는 경고 의미가 실제로 다르므로 amber 를 남긴다(장식이 아니라 신호).
+     · 상태를 색만으로 말하지 않는다 — 점·글자·막대 길이 셋이 같은 사실을 중복해서 말한다
+       (색각 이상·흑백 캡처에서도 읽혀야 한다).
+     · 숫자는 tabular — 갱신될 때 자리가 흔들리지 않는다. */
+#page-nnviz .nlv-cmlist{
+  display:grid; grid-template-columns:1fr 1fr; gap:.3rem;
+  background:none; border:none; margin-top:.15rem;
+}
+#page-nnviz .nlv-cm{
+  display:grid;
+  grid-template-columns:auto 1fr auto;
+  grid-template-areas:'dot name state' 'bar bar bar';
+  align-items:baseline; gap:.12rem .38rem;
+  min-width:0; padding:.36rem .55rem .38rem;   /* 아래를 조금 더 — 막대가 테두리에 붙지 않게 */
+  background:var(--ap-mat-light);
+  border:1px solid var(--ap-hair);
+  border-radius:var(--ap-r-sm);
+  transition:border-color var(--ap-dur-fast) var(--ap-ease-out),
+             background-color var(--ap-dur-fast) var(--ap-ease-out);
+}
+#page-nnviz .nlv-cm:hover{ border-color:color-mix(in srgb, var(--ap-tint) 30%, transparent); }
+/* 상태 점 — 합류한 위원만 tint 로 '켜진다'. 잠정은 같은 색을 옅게(농도로 구분). */
+#page-nnviz .nlv-cm .cm-dot{
+  grid-area:dot; width:6px; height:6px; border-radius:50%;
+  background:var(--ap-ink3); opacity:.5; align-self:center;
+}
+#page-nnviz .nlv-cm.ok   .cm-dot{ background:var(--ap-tint); opacity:1;
+  box-shadow:0 0 0 3px color-mix(in srgb, var(--ap-tint) 18%, transparent); }
+#page-nnviz .nlv-cm.prov .cm-dot{ background:var(--ap-tint); opacity:.55; }
+#page-nnviz .nlv-cm.warn .cm-dot{ background:var(--amber,#fbbf24); opacity:.9; }
+/* 이름 — 이 카드의 주인공. 작은 크기라 트래킹은 0 근처. */
+#page-nnviz .nlv-cm .cn{
+  grid-area:name; font-family:inherit;
+  font-size:.6875rem; font-weight:650; letter-spacing:-.004em;
+  color:var(--ap-ink2); min-width:0;
+  overflow:hidden; text-overflow:ellipsis; white-space:nowrap;
+}
+#page-nnviz .nlv-cm.ok .cn{ color:var(--ap-ink); }
+/* 역할 — 이름 뒤에 붙는 보조. 별도 칸을 주면 좁은 폭에서 이름을 잡아먹는다. */
+#page-nnviz .nlv-cm .cr{
+  grid-area:name; justify-self:end; align-self:baseline;
+  font-size:.5625rem; font-weight:400; letter-spacing:.01em;
+  color:var(--ap-ink3); white-space:nowrap; padding-left:.3rem;
+  overflow:hidden; text-overflow:ellipsis;
+}
+#page-nnviz .nlv-cm .cs{
+  grid-area:state;
+  font-size:.5625rem; font-weight:600; letter-spacing:.012em;
+  font-variant-numeric:tabular-nums; white-space:nowrap;
+  color:var(--ap-ink3);
+}
+#page-nnviz .nlv-cm.ok   .cs{ color:var(--ap-tint); }
+#page-nnviz .nlv-cm.prov .cs{ color:color-mix(in srgb, var(--ap-tint) 72%, var(--ap-ink3)); }
+#page-nnviz .nlv-cm.warn .cs{ color:var(--amber,#fbbf24); }
+/* 발언권 막대 — 숫자(×0.40)와 같은 사실을 길이로 한 번 더. 11명의 분포가 한눈에 읽힌다. */
+#page-nnviz .nlv-cm .cm-w{
+  grid-area:bar; height:2px; margin-top:.26rem;
+  background:color-mix(in srgb, var(--ap-ink3) 16%, transparent);
+  border-radius:999px; overflow:hidden;
+}
+/* ★그라디언트를 쓰지 않는다★ — 깔때기의 주역 막대가 이미 그라디언트다.
+   여기서 또 쓰면 위계가 무너진다. 여기 막대는 보조 정보라 단색·저농도로 둔다.
+   길이가 정보이고 색은 '같은 축' 이라는 표시일 뿐이다(정식 7개가 화면을 지배하면 안 된다). */
+#page-nnviz .nlv-cm .cm-w>i{
+  display:block; height:100%; border-radius:999px;
+  background:var(--ap-tint); opacity:.5;
+  transition:width var(--ap-dur) var(--ap-ease);
+}
+#page-nnviz .nlv-cm.prov .cm-w>i{ opacity:.72; }   /* 잠정이 정보량이 큰 쪽이라 살짝 더 또렷하게 */
+#page-nnviz .nlv-cm.warn .cm-w,
+#page-nnviz .nlv-cm.off  .cm-w{ opacity:.4; }
+@media (max-width:420px){ #page-nnviz .nlv-cmlist{ grid-template-columns:1fr; } }
+
 /* ── 스크롤 경계 — 1px 선 대신 페이드 ─────────────────────────────────────
    떠 있는 크롬과 콘텐츠가 만나는 자리에만 마스크를 준다. 선을 그으면 잘린 느낌이,
    페이드를 주면 '아래로 이어진다'는 느낌이 남는다. */
@@ -12583,7 +12642,8 @@ html[data-theme="light"] #page-nnviz{
   #page-nnviz .nnviz-content,
   #page-nnviz .nlv-panel, #page-nnviz .nlv-core, #page-nnviz .nlv-funnel-wrap,
   #page-nnviz .nlv-picks, #page-nnviz .nnv-stage, #page-nnviz .nnv-comm,
-  #page-nnviz .nnv-tabs, #page-nnviz .nnv-btn, #page-nnviz .nlv-btn, #page-nnviz .nnv-tip{
+  #page-nnviz .nnv-tabs, #page-nnviz .nnv-btn, #page-nnviz .nlv-btn, #page-nnviz .nnv-tip,
+  #page-nnviz .nlv-cm{
     -webkit-backdrop-filter:none !important; backdrop-filter:none !important;
     background:var(--s1) !important;
   }
@@ -12597,6 +12657,10 @@ html[data-theme="light"] #page-nnviz{
     background:var(--bg); border-color:var(--ap-ink2);
   }
   #page-nnviz .nnv-tab.active{ outline:2px solid var(--ap-tint); }
+  /* 위원회 카드 — 대비 선호에서는 재질 대신 또렷한 테두리로 구분한다 */
+  #page-nnviz .nlv-cm{ background:var(--bg); border-color:var(--ap-ink2); }
+  #page-nnviz .nlv-cm .cr,
+  #page-nnviz .nlv-cm .cs{ color:var(--ap-ink2); }
 }
 
 
@@ -15190,11 +15254,11 @@ html[data-theme="light"]:root .rail-view small{ color:var(--t3); }
   function cmState(key, mode){
     var c = mode.committee || {}, alt = mode.alt || {};
     if(key === 'mind' || key === 'dnn' || key === 'gbdt')
-      return c[key] ? {on:1, tag:'정식', cls:'ok'} : {on:0, tag:'미학습', cls:'off'};
+      return c[key] ? {on:1, tag:'정식', cls:'ok', mult:1} : {on:0, tag:'미학습', cls:'off'};
     if(key === 'xgb' || key === 'lgb' || key === 'cat'){
       var b = c[key];
       if(!b) return {on:0, tag:'없음', cls:'off'};
-      return b.trusted ? {on:1, tag:'정식', cls:'ok'}
+      return b.trusted ? {on:1, tag:'정식', cls:'ok', mult:1}
                        : {on:0, tag:'보류', cls:'warn', why:(b.reason||'신뢰문턱 미달')};
     }
     if(key === 'dual'){
@@ -15205,7 +15269,7 @@ html[data-theme="light"]:root .rail-view small{ color:var(--t3); }
       var ch = (mode.alt && mode.alt.chain) || mode.chain;
       var sh = ch && ch.dualShift;
       var d = alt.dual || {};
-      if(sh && sh.shift) return {on:1, tag:'가동', cls:'ok', why:'실측 사분면 로짓 적용 (n '+(sh.n||0)+')'};
+      if(sh && sh.shift) return {on:1, tag:'가동', cls:'ok', mult:1, why:'실측 사분면 로짓 적용 (n '+(sh.n||0)+')'};
       return {on:0, tag:'미측정', cls:'off',
               why:(d.bull&&d.bull.trained ? '헤드는 학습됨 — 사분면 실측표 대기' : '학습 대기')};
     }
@@ -15214,8 +15278,9 @@ html[data-theme="light"]:root .rail-view small{ color:var(--t3); }
     if(!m.trained) return {on:0, tag:'미학습', cls:'off',
       why:'표본 '+(m.samples||0)+'/'+(m.minN||0)+(m.note?' · '+m.note:'')};
     var a = m.admit;
-    if(a && a.tier === 'full') return {on:1, tag:'정식', cls:'ok', why:a.why};
-    if(a && a.admit) return {on:1, tag:'잠정 ×'+(a.mult!=null?a.mult.toFixed(2):'?'), cls:'prov', why:a.why};
+    if(a && a.tier === 'full') return {on:1, tag:'정식', cls:'ok', mult:1, why:a.why};
+    if(a && a.admit) return {on:1, tag:'잠정 ×'+(a.mult!=null?a.mult.toFixed(2):'?'), cls:'prov',
+                             mult:(a.mult!=null?a.mult:0), why:a.why};
     return {on:0, tag:'보류', cls:'warn', why:(a&&a.why)||'판정 대기'};
   }
   function renderCommittee(d){
@@ -15233,10 +15298,17 @@ html[data-theme="light"]:root .rail-view small{ color:var(--t3); }
       // 학습이 멈춘 위원은 마지막 학습 시도 결과를 그대로 붙인다(로그를 뒤지지 않게).
       var m = (mode.alt||{})[r[0]];
       var tip = (st.why||'') + (m && m.note ? ' | 최근 학습: ' + m.note : '');
+      /* [V33.152] ★발언권을 숫자가 아니라 길이로도 보인다★
+         "잠정 ×0.40" 은 정확하지만 다른 위원과 견주려면 머리로 환산해야 한다.
+         같은 자리에 같은 축의 막대를 두면 11명의 발언권 분포가 한눈에 읽힌다.
+         정식=1.0, 잠정=배수, 그 외=0 — 막대가 없다는 것 자체가 '표가 없다'는 뜻이다. */
+      var wgt = st.cls === 'ok' ? 1 : (st.cls === 'prov' ? (st.mult != null ? st.mult : 0) : 0);
       return '<div class="nlv-cm '+st.cls+'" title="'+esc(tip)+'">'
+        +'<span class="cm-dot" aria-hidden="true"></span>'
         +'<span class="cn">'+esc(r[1])+'</span>'
         +'<span class="cr">'+esc(r[2])+'</span>'
         +'<span class="cs">'+esc(st.tag)+'</span>'
+        +'<span class="cm-w"><i style="width:'+(Math.max(0,Math.min(1,wgt))*100).toFixed(1)+'%"></i></span>'
       +'</div>';
     }).join('');
     el.innerHTML = html;

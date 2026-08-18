@@ -271,6 +271,38 @@ try {
   rtBad += pbad;
 } catch (e) { console.error("  FAIL 파이프라인 폰 레이아웃 검사 실패:", e.message); rtBad += 1; }
 
+// ── [V33.152] 위원회 구성 카드는 ★재질 토큰★ 으로만 칠한다 ──────────────────
+//   실제로 겪은 문제: 처음 판은 #080d18/#14203a 같은 리터럴로 칠했고, 그래서 라이트 테마용
+//   색을 ★또 한 벌★ 적어야 했다(html[data-theme="light"] 8줄). 두 벌은 반드시 드리프트한다 —
+//   한쪽만 고치는 순간 한 테마에서만 깨지고, 그건 그 테마를 쓰는 사람만 본다.
+//   토큰(--ap-*)으로 칠하면 라이트는 역할 재정의만으로 따라온다(실제로 그렇게 줄였다).
+try {
+  const hk = readFileSync(new URL("../public/index.html", import.meta.url), "utf8");
+  const css = [...hk.matchAll(/<style[^>]*>([\s\S]*?)<\/style>/gi)].map((m) => m[1]).join("\n")
+    .replace(/\/\*[\s\S]*?\*\//g, " ");
+  // .nlv-cm / .nlv-cmlist 를 대상으로 하는 규칙만 모은다
+  const rules = [...css.matchAll(/([^{}]*\.nlv-cm(?:list)?\b[^{}]*)\{([^}]*)\}/g)];
+  let cbad = 0;
+  if (rules.length < 5) { cbad++; console.error(`  FAIL 위원회 카드 CSS 규칙을 ${rules.length}개밖에 못 찾았다 — 검사가 헛돈다`); }
+  else {
+    const hex = rules.filter((r) => /#[0-9a-fA-F]{3,8}\b/.test(r[2]) && !/var\(--[a-z-]+,\s*#/.test(r[2]));
+    if (hex.length) {
+      cbad++;
+      console.error(`  FAIL 위원회 카드에 하드코딩 색 ${hex.length}건 — 라이트 테마용 CSS 를 또 적게 되고 두 벌은 드리프트한다`);
+      console.error(`       예: ${hex[0][1].trim().slice(0, 60)} { ${hex[0][2].trim().slice(0, 60)} }`);
+    } else console.log(`  ok   위원회 카드 CSS ${rules.length}개 규칙이 전부 재질 토큰 기반(라이트 테마가 따로 필요 없다)`);
+    // 라이트 전용 덧칠이 다시 생기면 그것도 드리프트의 시작이다.
+    const lightDupes = (css.match(/html\[data-theme="light"\][^{}]*\.nlv-cm\b/g) || []).length;
+    if (lightDupes === 0) console.log("  ok   위원회 카드에 라이트 전용 덧칠이 없다 — 색 정의가 한 곳뿐이다");
+    else { cbad++; console.error(`  FAIL 라이트 전용 .nlv-cm 규칙 ${lightDupes}건 — 색 정의가 두 곳으로 갈렸다`); }
+  }
+  // 상태를 색만으로 말하지 않는다 — 점·글자·막대가 같은 사실을 중복해서 말해야 한다.
+  if (/<span class="cm-dot"/.test(hk) && /<span class="cs">/.test(hk) && /<span class="cm-w">/.test(hk))
+    console.log("  ok   상태를 색·글자·막대 셋으로 말한다(색각 이상·흑백 캡처에서도 읽힌다)");
+  else { cbad++; console.error("  FAIL 상태 표시가 색에만 의존한다"); }
+  rtBad += cbad;
+} catch (e) { console.error("  FAIL 위원회 카드 토큰 검사 실패:", e.message); rtBad += 1; }
+
 // ── [V33.150] 구조 관측 탭 ↔ /api/nn-viz 라우팅 배선 ────────────────────────
 //   탭만 늘리고 서버 라우팅을 안 고치면 그 탭은 DNN 구조를 보여준다(폴백이 mlDNNVizData 다).
 //   조용히 틀린 그림을 보여주는 것이라 화면만 봐서는 알아채기 어렵다 — 배선을 강제한다.
