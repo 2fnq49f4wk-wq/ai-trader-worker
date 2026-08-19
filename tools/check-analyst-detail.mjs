@@ -116,5 +116,26 @@ console.log('⑥ 증권사별 — 되는 것은 하고, 안 되는 것은 안 �
   else bad('대표값 계산이 중앙값이 아니다');
 }
 
+/* ⑦ 종목 상세의 빈 여백 — 뉴스가 남는 공간을 떠안지 않는가.
+   .detail-news{flex:1 1 auto} 는 사이드바가 짧던 시절의 규칙이었다. 목표가 패널이
+   들어가 사이드바가 길어지자 그 차이만큼을 빈 뉴스 상자가 통째로 떠안았다
+   (실측 1550px: 상자 안 빈칸 148px → 5px, 그 높이는 차트가 가져갔다 520 → 663px). */
+console.log('⑦ 종목 상세 — 남는 높이를 빈 상자가 아니라 차트가 가져가는가');
+{
+  const flat = H.replace(/\s+/g, '');
+  if (flat.includes('.detail-left.detail-news{flex:0 0auto;}'.replace(/\s/g, '')))
+    ok('뉴스는 내용만큼만 차지한다(남는 높이를 떠안지 않는다)');
+  else bad('뉴스가 아직 남는 공간을 흡수한다 — 빈 상자가 생긴다');
+  if (flat.includes('.detail-main.detail-chart{flex:1 1auto;height:auto;'.replace(/\s/g, '')))
+    ok('남는 높이는 차트가 가져간다 — 여백을 쓸모 있는 것으로 채운다');
+  else bad('차트가 남는 높이를 안 가져간다');
+  if (/\.detail-side\{ max-height:min\(84vh, 860px\); overflow-y:auto; \}/.test(H))
+    ok('사이드바가 끝없이 길어지지 않게 화면 안에서 묶고 안에서 스크롤한다');
+  else bad('사이드바에 높이 상한이 없다 — 차트도 같이 끝없이 늘어난다');
+  if (/@media \(min-width:901px\)\{[\s\S]{0,600}?\.detail-left \.detail-news/.test(H))
+    ok('이 규칙은 901px 이상에서만 — 폰은 세로로 쌓이므로 건드리지 않는다');
+  else bad('폰까지 닿는 규칙이다');
+}
+
 console.log(fail ? '\n실패 ' + fail + '건' : '\nok   종목별 애널리스트 자료 계약 통과');
 process.exit(fail ? 1 : 0);

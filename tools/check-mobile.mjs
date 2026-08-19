@@ -451,7 +451,12 @@ console.log('⑭ 행 높이 — 긴 카드가 화면 밖으로 자라지 않는�
     ok('넘치는 내용은 잘리지 않고 카드 안에서 스크롤한다(overflow:hidden 아님)');
   else bad('정보 카드 본문의 넘침 처리가 스크롤이 아니다');
   // 폰은 이 규칙을 한 줄도 읽으면 안 된다(전부 min-width 로 감싸져 있는가)
-  const seg = H.slice(H.indexOf('[V33.161] 한 줄의 높이는'), H.indexOf('[V33.159] 한국장 매매정지 패널'));
+  /* 구간의 끝을 '다음 V33 블록 머리말' 로 잡는다. 고정된 다른 버전 표식으로 끝을 잡으면
+     그 사이에 새 블록이 하나 끼는 순간(실제로 V33.164 가 그랬다) 이 검사가 남의 규칙까지
+     세면서 오탐한다. 검사 대상은 ★V33.161 블록 자신★ 이다. */
+  const segStart = H.indexOf('[V33.161] 한 줄의 높이는');
+  const nextHdr = H.indexOf('[V33.1', segStart + 40);
+  const seg = H.slice(segStart, nextHdr > 0 ? nextHdr : segStart + 4000);
   const opens = (seg.match(/@media \(min-width:(901|1000)px\)\{/g) || []).length;
   if (opens === 2 && !/@media \(max-width/.test(seg))
     ok('V33.161 규칙은 전부 min-width(901·1000) 안에 있다 — 폰은 읽지 않는다');

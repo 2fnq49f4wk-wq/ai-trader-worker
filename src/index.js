@@ -2788,7 +2788,7 @@ async function applySignalTypeWeights(DB, cfg) {
 // ============================================================================
 // [V33.55] 빌드 버전 — SWR L2 캐시 키에 섞어 '배포 = 판단 캐시 자동 무효화'를 만든다.
 //   판정 로직을 고쳐도 옛 캐시가 최대 1시간 재배포되던 문제를 구조적으로 없앤다.
-const _BUILD_VER = "V33.163";
+const _BUILD_VER = "V33.164";
 
 const AI_PARAMS = {
   // ── OHLCV 타임프레임 ── 시가/고가/저가/종가/거래량을 어떤 봉 주기로 볼지.
@@ -23982,17 +23982,34 @@ function _krbParseHankyung(html) {
     for (const c of tds) {
       if (!t) { const m = c.match(/(20\d{2})[-.\/](\d{1,2})[-.\/](\d{1,2})/); if (m) { t = Date.UTC(+m[1], +m[2] - 1, +m[3]) - 9 * 3600000; continue; } }
       if (tgt == null) {
-        const m = c.match(/^([\d,]+)$/);
-        if (m) { const v = parseFloat(m[1].replace(/,/g, "")); if (v >= KRBROKER.minTarget && v <= KRBROKER.maxTarget) { tgt = v; continue; } }
+        /* [V33.164] 종전엔 ★칸 전체가 숫자★ 일 때만 목표가로 인정했다. 프로덕션에서
+           증권사·투자의견은 나오는데 목표가만 계속 비었다 — 실제 칸에는 '95,000원',
+           '₩95,000', 앞뒤 공백 같은 것이 섞여 있어 전부 걸러지고 있었던 것이다.
+           통화기호·'원'·공백을 벗겨 내고 다시 본다. 범위 검사는 그대로 둔다. */
+        const c2 = c.replace(/[₩,\s]/g, "").replace(/원$/, "");
+        if (/^\d+(\.\d+)?$/.test(c2)) {
+          const v = parseFloat(c2);
+          if (v >= KRBROKER.minTarget && v <= KRBROKER.maxTarget) { tgt = v; continue; }
+        }
       }
-      if (!op && /^(매수|중립|보유|비중확대|비중축소|매도|Buy|Hold|Sell|Outperform|Neutral)$/i.test(c)) { op = c; continue; }
+      if (!op && /^(매수|강력매수|중립|보유|비중확대|비중축소|매도|Buy|Strong ?Buy|Hold|Sell|Outperform|Marketperform|Underperform|Neutral)$/i.test(c)) { op = c; continue; }
       if (!firm && /(증권|자산운용|투자증권|리서치)/.test(c) && c.length <= 20) { firm = c; continue; }
       if (!title && c.length > 6) title = c.slice(0, 60);
     }
     if (!firm || (tgt == null && !op)) continue;         // 증권사와 값 둘 다 없으면 버린다
     rows.push({ firm: firm, target: tgt, opinion: op, t: t, title: title });
   }
-  return rows;
+  /* [V33.164] 같은 줄이 여러 번 잡히는 것을 막는다 — 프로덕션에서 iM증권이 3번,
+     LS증권이 2번 나왔다. 표가 중첩돼 있거나 요약/본문이 각각 <tr> 로 잡히면 생긴다.
+     증권사+목표가+의견+날짜(일 단위)가 같으면 같은 리포트로 본다.
+     ★제목이 다르면 남긴다★ — 한 증권사가 하루에 두 편을 낼 수도 있다. */
+  const seen = {}, uniq = [];
+  for (const r of rows) {
+    const k = [r.firm, r.target, r.opinion, r.t ? Math.floor(r.t / 86400000) : "", r.title || ""].join("|");
+    if (seen[k]) continue;
+    seen[k] = 1; uniq.push(r);
+  }
+  return uniq;
 }
 
 // 종목 하나의 국내 증권사 리포트 목록. 실패는 null(빈 배열이 아니다 — '없음' 과 '못 받음' 은 다르다)
@@ -24014,7 +24031,20 @@ async function krBrokerReports(symbol) {
       const all = _krbParseHankyung(html);
       const cut = Date.now() - KRBROKER.days * 86400000;
       const rows = all.filter(function (x) { return x.t == null || x.t >= cut; }).slice(0, KRBROKER.maxRows);
-      if (rows.length) return { rows: rows, src: "한경컨센서스 · 국내 증권사 리포트", srcUrl: url };
+      if (rows.length) {
+        const out = { rows: rows, src: "한경컨센서스 · 국내 증권사 리포트", srcUrl: url };
+        /* 목표가가 ★한 줄도★ 없으면 왜 그런지 알아야 고칠 수 있다. 이 세션에서는
+           외부 망이 막혀 실제 표를 볼 수 없으므로, 첫 줄의 칸들을 그대로 담아 둔다.
+           (사람이 읽을 짧은 문자열만 — 원문 HTML 을 통째로 나르지 않는다) */
+        if (!rows.some(function (x) { return x.target != null; })) {
+          try {
+            const first = String(html).split(/<tr[\s>]/i)[1] || "";
+            out.diag = first.split(/<td[\s>]/i).slice(1).map(_krbStrip)
+                            .filter(function (x) { return x; }).slice(0, 8).join(" | ").slice(0, 200);
+          } catch (e) {}
+        }
+        return out;
+      }
     } catch (e) { /* 다음 질의 */ }
   }
   return null;
@@ -24109,6 +24139,13 @@ async function analystDetail(DB, symbol, force) {
                    cur: "KRW", src: br.src, srcUrl: br.srcUrl };
         v.brokers = br.rows;
         v.brokerSrc = br.src; v.brokerSrcUrl = br.srcUrl;
+        if (br.diag) v.brokerDiag = br.diag;
+        /* 현재가는 ★우리가 이미 받는 시세★ 로 채운다 — 목표가는 그들 것, 가격은 우리 것.
+           이게 없으면 상승여력을 못 내고 화면에 '현재가 —' 만 남는다(프로덕션에서 그랬다). */
+        if (v.px == null) {
+          try { const q = await getState(DB, "quote:" + sym, null);
+                if (q && typeof q.price === "number" && q.price > 0) v.px = q.price; } catch (e) {}
+        }
         /* 컨센서스 평균을 못 받았으면 ★리포트들의 중앙값★ 으로 대신한다.
            평균이 아니라 중앙값이다 — 한두 곳의 극단치가 전체를 끌고 가지 않게. */
         if (v.tgtMean == null) {

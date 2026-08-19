@@ -71,5 +71,28 @@ console.log('⑤ 응답이 아예 다른 모양이면 조용히 빈 결과');
   if(r.length===0) ok('표가 없으면 빈 배열 — 억지로 만들어내지 않는다');
   else bad('없는 데이터를 만들어냈다: '+JSON.stringify(r));
 }
+console.log('⑥ 프로덕션에서 실제로 겪은 두 가지');
+{
+  // (a) 목표가만 계속 비었다 — 칸에 '원'·₩·공백이 섞여 있으면 종전 규칙은 전부 걸렀다
+  const html6 = `<table><tbody>
+<tr><td>2026-08-19</td><td>실적 개선</td><td>95,000원</td><td>Buy</td><td>김분석</td><td>LS증권</td></tr>
+<tr><td>2026-08-19</td><td>목표가 상향</td><td> ₩120,000 </td><td>Buy</td><td>박분석</td><td>iM증권</td></tr>
+</tbody></table>`;
+  const r = _krbParseHankyung(html6);
+  const t1 = r[0] && r[0].target, t2 = r[1] && r[1].target;
+  if (t1 === 95000 && t2 === 120000) ok("'95,000원'·'₩120,000' 도 목표가로 읽는다 — " + t1.toLocaleString() + ' / ' + t2.toLocaleString());
+  else bad('통화기호·원 표기를 못 읽는다: ' + JSON.stringify(r.map(x => x.target)));
+
+  // (b) 같은 증권사가 여러 번 나왔다(iM증권 3회·LS증권 2회) — 중첩 표에서 같은 줄이 겹쳐 잡힌다
+  const dup = `<table><tbody>
+<tr><td>2026-08-19</td><td>제목가</td><td>50,000</td><td>Buy</td><td>가</td><td>iM증권</td></tr>
+<tr><td>2026-08-19</td><td>제목가</td><td>50,000</td><td>Buy</td><td>가</td><td>iM증권</td></tr>
+<tr><td>2026-08-19</td><td>제목나</td><td>52,000</td><td>Buy</td><td>나</td><td>iM증권</td></tr>
+</tbody></table>`;
+  const r2 = _krbParseHankyung(dup);
+  if (r2.length === 2) ok('같은 리포트 중복은 지우고, 제목이 다른 것은 남긴다 (3줄 → 2줄)');
+  else bad('중복 제거가 안 된다: ' + r2.length + '줄');
+}
+
 console.log(fail?('\n실패 '+fail+'건'):'\nok   국내 증권사 리포트 파서 통과');
 process.exit(fail?1:0);
