@@ -139,6 +139,12 @@ jobs:
       #   구현을 흉내내지 않고 함수 원문을 떼어 실제로 돌려 확인한다.
       - name: 한국장 매매정지 계약 검사 (사이드카 · 서킷브레이커)
         run: node tools/check-kr-halt.mjs
+      # [V33.162] 종목별 애널리스트 자료 — 요구는 하나였다: "추측 말고 발표난 걸로".
+      #   그래서 검사도 하나다 — 화면에 나가는 숫자의 출처가 분명한가.
+      #   못 받으면 비우는지, 출처를 늘 밝히는지, '발표 원문' 과 '우리 관측' 을
+      #   섞지 않는지, 국내 종목 경로가 실제로 있는지.
+      - name: 종목별 애널리스트 자료 계약 검사 (출처 · 발표/관측 구분)
+        run: node tools/check-analyst-detail.mjs
       # cloudflare/wrangler-action 대신 로컬에서 검증된 방식 그대로 실행
       # (wrangler-action@v3의 npx 자동설치가 4.86.0을 요구하며 실패하던 문제 회피)
       - name: Install wrangler

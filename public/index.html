@@ -8,7 +8,7 @@
      인데, 지금까지 화면에서 그걸 알 방법이 전혀 없었다(카카오톡 인앱 브라우저는 특히 강하게 캐시한다).
      서버가 내려주는 build 와 이 값을 비교해 다르면 배너로 알린다.
      ※ src/index.js 의 _BUILD_VER 와 항상 같아야 한다 — check-html-js 가 강제한다. -->
-<meta name="lux-build" content="V33.161">
+<meta name="lux-build" content="V33.162">
 <title>LUX-ENGINE V10</title>
 <!-- ══ [V33.156] 설치형 앱(PWA) — 폰·PC 에서 홈화면/독에 담아 앱처럼 연다 ══
      · manifest  : 이름·아이콘·standalone 표시(주소창 없이 앱처럼)
@@ -2105,12 +2105,9 @@ html[data-theme="light"] .sb-brand-name{color:#fff;}
 .anlrev-ai.on{color:var(--pos);background:rgba(48,204,90,.06);}
 .anlrev-ai.off{color:var(--amber,#fbbf24);background:rgba(255,193,7,.05);}
 .anlrev-ai b{font-weight:750;}
-/* 폰에서 8열이 25px 넘쳤다(실측) — 스와이프로 닿긴 하지만 안 넘치는 게 낫다. */
-@media(max-width:520px){
-  #anlRevBody td,.fv-panel .fv-table thead th{padding-left:5px;padding-right:5px;}
-  #anlRevBody td:nth-child(3) span{display:none;}   /* '177.3→186.5' 보조표기만 접는다(주값 %는 남는다) */
-  .anlrev-ai{font-size:9.5px;padding:6px 10px;}
-}
+/* [V33.162] 8열 표가 있던 자리는 종목 상세로 옮겨 사라졌다 — 그 표를 겨냥한 규칙도 함께 지운다.
+   배너(.anlrev-ai)는 상세 패널에서 그대로 쓴다. */
+@media(max-width:520px){ .anlrev-ai{font-size:9.5px;padding:6px 10px;} }
 
 /* ════ [V59] TECHNICAL ANALYSIS ════ */
 .ta-chart-wrap{padding:8px 12px 4px;}
@@ -3661,25 +3658,10 @@ html[data-theme="light"] .m-brainbar button.active{color:#0b4f9e;background:rgba
         </div>
       </div>
 
-      <!-- ════ [V33.151] 증권사 목표가 상향/하향 ════
-           추가 fetch 0 — 6시간마다 받던 컨센서스의 ★차분★ 이다. 종전엔 목표가 '수준'만
-           썼는데, 수준은 주가가 움직이기만 해도 변해서 "증권사가 생각을 바꿨나" 를 못 본다. -->
-      <!-- ★flex:0 0 auto 필수★ — .page 가 세로 flex 컨테이너라, 이게 없으면 이 패널만
-           내용(198px)이 있는데도 테두리 2px 로 찌부러진다(실측). -->
-      <div class="fv-panel" style="margin:0 8px 8px;flex:0 0 auto;">
-        <div class="fv-panel-head">🎯 ANALYST TARGET REVISIONS
-          <span class="fv-panel-sub" id="anlRevSub">증권사 목표가 상향/하향 · 최근 90일</span>
-          <button type="button" id="btnAnlRevRefresh" class="btn" style="margin-left:auto;font-size:9px;padding:2px 8px;">↻</button>
-        </div>
-        <div id="anlRevAi" class="anlrev-ai"></div>
-        <div style="max-height:300px;overflow:auto;-webkit-overflow-scrolling:touch;">
-          <table class="fv-table"><thead><tr>
-            <th>종목</th><th>방향</th><th class="right">최근 개정</th><th class="right">목표가</th>
-            <th class="right" title="창 안의 개정률 합">순개정</th><th class="right" title="상향/하향 횟수">▲▼</th>
-            <th class="right" title="투자의견 평균 변화 — 양수가 상향">등급Δ</th><th>시각</th>
-          </tr></thead><tbody id="anlRevBody"><tr><td colspan="8" class="empty">로딩 중...</td></tr></tbody></table>
-        </div>
-      </div>
+      <!-- [V33.162] 증권사 목표가 패널은 ★종목 상세★ 로 옮겼다(사용자 요청).
+           전 종목을 대시보드에 모아 두니, 정작 한 종목을 보는 화면에서 그 종목의
+           목표가를 볼 수 없었다. 서버의 개정 원장(analyst_rev)과 AI 반영(anlRevK)은
+           그대로다 — 화면 위치만 바뀐다. -->
 
     </div><!-- /dashboard -->
 
@@ -3995,6 +3977,11 @@ html[data-theme="light"] .m-brainbar button.active{color:#0b4f9e;background:rgba
                 <div class="detail-vcard" id="detailTA"></div>
               </div>
               <div class="detail-earn" id="detailEarn"></div>
+              <!-- [V33.162] 증권사 목표가 — ★발표된 자료★ 를 이 종목 자리에서 보여준다.
+                   종전엔 대시보드에 전 종목을 모아 놓아, 정작 한 종목을 보는 화면에서는
+                   그 종목의 목표가를 볼 수 없었다. -->
+              <div class="detail-sec">증권사 목표가 · 투자의견</div>
+              <div class="detail-anl" id="detailAnalyst"><div class="empty">로딩…</div></div>
               <div class="detail-sec">기술적 패턴</div>
               <div class="detail-pattern" id="detailPattern"></div>
             </aside>
@@ -7195,60 +7182,6 @@ html[data-theme="light"] .m-brainbar button.active{color:#0b4f9e;background:rgba
   //   AI 반영 여부를 같은 화면에 적는다. 종전에 여러 번, 화면은 지표를 보여주는데
   //   그게 실제로 판단에 쓰이는지는 알 수 없었다(그래서 죽은 기능을 몇 달씩 못 알아챘다).
   // ════════════════════════════════════════════════════════════════
-  function loadAnalystRev(force){
-    var body = $('anlRevBody'); if(!body) return;
-    fetch('/api/analyst-rev').then(function(r){ return r.json(); }).then(function(d){
-      var items = (d && d.items) || [];
-      var sub = $('anlRevSub');
-      if(sub) sub.textContent = '증권사 목표가 상향/하향 · 최근 '+((d&&d.windowDays)||90)+'일'
-        + (d && d.total ? ' · '+d.total+'종목' : '')
-        /* ★스코프 주의★ ago() 는 두뇌 스크립트 블록 소속이라 여기서는 없다.
-           같은 블록의 fmtAgo 를 쓴다(이미 '~분 전' 까지 붙여서 돌려준다). */
-        + (d && d.ts ? ' · 갱신 '+fmtAgo(d.ts) : '');
-      // ★AI가 실제로 쓰고 있는가★ — 계수가 0 이면 화면에만 있고 판단엔 안 들어간다. 그대로 적는다.
-      var ai = $('anlRevAi');
-      if(ai){
-        var k = d && d.k;
-        if(k && k.kEff){
-          ai.className = 'anlrev-ai on';
-          ai.innerHTML = '✅ <b>AI 판단에 반영 중</b> — 실측 계수 <b>'+Number(k.kEff).toFixed(3)+'</b>'
-            + (k.t!=null? ' (t '+Number(k.t).toFixed(2)+')':'')
-            + ' · 사건표본 '+(k.n||0).toLocaleString()+'건. 목표가 개정이 실제로 수익률을 예측했는지 재서 정한 값이며, '
-            + '유의하지 않으면 자동으로 0 이 됩니다.';
-        } else {
-          ai.className = 'anlrev-ai off';
-          var need = (k && k.minN) || 300, have = (k && k.n) || 0;
-          ai.innerHTML = '⏳ <b>측정 중 — 아직 판단에 반영하지 않습니다</b> (계수 0). '
-            + '사건표본 <b>'+have.toLocaleString()+' / '+need.toLocaleString()+'</b>건. '
-            + '개정 이력은 이 기능이 배포된 시점부터 쌓입니다(과거 소급 불가). '
-            + '표본이 차면 야간에 계수를 재고, 유의할 때만 자동으로 반영됩니다 — 근거 없이 밀지 않습니다.';
-        }
-      }
-      if(!items.length){ body.innerHTML = '<tr><td colspan="8" class="empty">아직 기록된 목표가 개정이 없습니다 — 컨센서스 갱신 2회 이상 필요</td></tr>'; return; }
-      body.innerHTML = items.map(function(it){
-        var up = (it.score||0) > 0, dnv = (it.score||0) < 0;
-        var dirTxt = up ? '▲ 상향' : (dnv ? '▼ 하향' : '— 혼조');
-        var dirCls = up ? 'econ-beat' : (dnv ? 'econ-miss' : '');
-        var lastTxt = (it.lastPct!=null) ? ((it.lastPct>=0?'+':'')+fmtNum(it.lastPct,1)+'%') : '-';
-        var fromTo = (it.lastFrom!=null && it.lastTo!=null)
-          ? '<span style="font-size:8.5px;color:var(--t3);"> '+fmtNum(it.lastFrom,1)+'→'+fmtNum(it.lastTo,1)+'</span>' : '';
-        var dR = (it.dRating!=null && it.dRating!==0)
-          ? '<span class="'+(it.dRating>0?'econ-beat':'econ-miss')+'">'+(it.dRating>0?'▲':'▼')+' '+fmtNum(Math.abs(it.dRating),2)+'</span>' : '-';
-        return '<tr>'
-          +'<td><span class="fv-tick" style="cursor:pointer;" onclick="if(window.openStockDetail)window.openStockDetail(\''+escapeHtml(it.symbol)+'\')">'+escapeHtml(it.symbol)+'</span></td>'
-          +'<td class="'+dirCls+'" style="white-space:nowrap;font-weight:700;">'+dirTxt+'</td>'
-          +'<td class="right '+((it.lastPct||0)>0?'econ-beat':((it.lastPct||0)<0?'econ-miss':''))+'" style="white-space:nowrap;">'+lastTxt+fromTo+'</td>'
-          +'<td class="right">'+(it.tgt!=null?fmtNum(it.tgt,2):'-')+'</td>'
-          +'<td class="right '+((it.net||0)>0?'econ-beat':((it.net||0)<0?'econ-miss':''))+'">'+(it.net!=null?((it.net>=0?'+':'')+fmtNum(it.net,1)+'%'):'-')+'</td>'
-          +'<td class="right" style="white-space:nowrap;"><span class="econ-beat">'+(it.up||0)+'</span>/<span class="econ-miss">'+(it.dn||0)+'</span></td>'
-          +'<td class="right">'+dR+'</td>'
-          +'<td style="white-space:nowrap;font-size:9px;color:var(--t3);">'+(it.lastTs?fmtAgo(it.lastTs):'-')+'</td>'
-          +'</tr>';
-      }).join('');
-    })['catch'](function(){
-      body.innerHTML = '<tr><td colspan="8" class="empty">목표가 개정 조회 실패</td></tr>';
-    });
-  }
 
   // ════════════════════════════════════════════════════════════════
   // [V60] EARNINGS CALENDAR — finviz식 실적 발표 일정
@@ -8136,6 +8069,141 @@ html[data-theme="light"] .m-brainbar button.active{color:#0b4f9e;background:rgba
     renderDetailPattern(chartPats[0] || candlePats[0] || null);
   }
 
+  /* ══ [V33.162] 증권사 목표가 · 투자의견 (종목 상세) ══
+     ★우리가 추정한 값은 하나도 없다.★ 화면에 나오는 숫자는 전부 공개된 발표치다:
+       · 목표가 평균/최고/최저 + 애널리스트 수  (컨센서스)
+       · 투자의견 분포                          (적극매수~매도 집계)
+       · 증권사별 등급 변경                     (증권사명·날짜·전등급→후등급)
+     마지막 항목이 가장 '발표 원문' 에 가깝다 — 누가 언제 무엇을 냈는지 그대로다.
+     값을 못 받으면 ★비워 두고 이유를 적는다★. 추정치로 칸을 메우지 않는다. */
+  var ANLD = { cache: {}, inflight: {} };
+  /* 증권사 발표는 최대 180일까지 거슬러 본다. fmtAgo 는 시간 단위에서 멈춰서
+     '720시간 전' 같은 표기가 나온다 — 읽으라고 만든 값이 아니게 된다. 날짜로 적는다. */
+  function anlAgo(ts){
+    if (!ts) return '';
+    var d = Math.floor((Date.now() - ts) / 86400000);
+    if (d <= 0) return fmtAgo(ts);
+    if (d < 7) return d + '일 전';
+    if (d < 60) return Math.floor(d / 7) + '주 전';
+    return Math.floor(d / 30) + '개월 전';
+  }
+  function anlGradeCls(g){
+    var t = String(g || '').toLowerCase();
+    if (/strong buy|buy|outperform|overweight|accumulate|add|매수/.test(t)) return 'pos';
+    if (/sell|underperform|underweight|reduce|매도/.test(t)) return 'neg';
+    return 'neu';
+  }
+  function anlMoney(v, cur){
+    if (v == null || !isFinite(v)) return '—';
+    if (cur === 'KRW') return '₩' + Math.round(v).toLocaleString();
+    return '$' + Number(v).toLocaleString(undefined, { maximumFractionDigits: 2 });
+  }
+  function renderDetailAnalyst(d){
+    var el = $('detailAnalyst'); if (!el) return;
+    if (!d || !d.ok){
+      el.innerHTML = '<div class="anl-none">' + escapeHtml((d && d.why) || '자료를 못 받았어요') + '</div>';
+      return;
+    }
+    var cur = d.cur || null, h = '';
+    /* ① 목표가 — 현재가와 함께 보여야 '얼마나 위' 인지가 읽힌다 */
+    h += '<div class="anl-top">';
+    h += '<div class="anl-tgt"><span class="k">목표가 평균</span><b>' + anlMoney(d.tgtMean, cur) + '</b>';
+    if (d.upsidePct != null)
+      h += '<i class="' + (d.upsidePct >= 0 ? 'pos' : 'neg') + '">'
+         + (d.upsidePct >= 0 ? '+' : '') + d.upsidePct.toFixed(1) + '%</i>';
+    h += '</div>';
+    h += '<div class="anl-meta">현재가 ' + anlMoney(d.px, cur)
+       + (d.n != null ? ' · 애널리스트 ' + d.n + '인' : '') + '</div>';
+    h += '</div>';
+    /* ② 최저~최고 범위 — 평균 하나만 보면 의견이 갈렸는지를 못 본다 */
+    if (d.tgtLow != null && d.tgtHigh != null && d.tgtHigh > d.tgtLow){
+      var lo = d.tgtLow, hi = d.tgtHigh;
+      var pos = function(v){ return Math.max(0, Math.min(100, ((v - lo) / (hi - lo)) * 100)); };
+      h += '<div class="anl-range"><i class="bar"></i>'
+         + (d.px != null ? '<i class="px" style="left:' + pos(d.px) + '%" title="현재가"></i>' : '')
+         + '<i class="mean" style="left:' + pos(d.tgtMean) + '%" title="평균 목표가"></i></div>'
+         + '<div class="anl-range-lb"><span>' + anlMoney(lo, cur) + '</span><span>최저 ~ 최고</span><span>'
+         + anlMoney(hi, cur) + '</span></div>';
+    }
+    /* ③ 투자의견 분포 */
+    if (d.dist){
+      var D = d.dist, tot = D.strongBuy + D.buy + D.hold + D.sell + D.strongSell;
+      if (tot > 0){
+        var seg = [['적극매수', D.strongBuy, 'sb'], ['매수', D.buy, 'b'], ['보유', D.hold, 'h'],
+                   ['매도', D.sell, 's'], ['적극매도', D.strongSell, 'ss']];
+        h += '<div class="anl-dist">' + seg.map(function(x){
+          return x[1] > 0 ? '<i class="' + x[2] + '" style="flex:' + x[1] + '" title="' + x[0] + ' ' + x[1] + '인"></i>' : '';
+        }).join('') + '</div>';
+        h += '<div class="anl-dist-lb">' + seg.filter(function(x){ return x[1] > 0; })
+              .map(function(x){ return '<span class="' + x[2] + '">' + x[0] + ' ' + x[1] + '</span>'; }).join('') + '</div>';
+      }
+    } else if (d.ratingKey){
+      h += '<div class="anl-dist-lb"><span class="' + anlGradeCls(d.ratingKey) + '">투자의견 '
+         + escapeHtml(String(d.ratingKey).toUpperCase()) + '</span></div>';
+    }
+    /* ④ 증권사별 등급 변경 — 여기가 '이미 발표난 것' 그 자체다 */
+    if (d.actions && d.actions.length){
+      h += '<div class="anl-acts-h">최근 증권사 발표 · ' + d.actions.length + '건</div><div class="anl-acts">';
+      d.actions.forEach(function(a){
+        var act = String(a.act || '').toLowerCase();
+        var mark = act === 'up' ? '▲' : act === 'down' ? '▼' : act === 'init' ? '＋' : '·';
+        var cls = act === 'up' ? 'pos' : act === 'down' ? 'neg' : 'neu';
+        /* 사이드바 폭(≈260px)에서 한 줄에 넣으면 증권사 이름이 'Morgan …' 으로 잘린다 —
+           누가 냈는지가 이 표의 핵심인데 그게 사라진다. 두 줄로 나눈다. */
+        h += '<div class="anl-act"><span class="m ' + cls + '">' + mark + '</span>'
+           + '<span class="f" title="' + escapeHtml(a.firm || '') + '">' + escapeHtml(a.firm || '—') + '</span>'
+           + '<span class="d">' + anlAgo(a.t) + '</span>'
+           + '<span class="g">' + (a.from && a.from !== a.to ? '<s>' + escapeHtml(a.from) + '</s> → ' : '')
+           + '<b class="' + anlGradeCls(a.to) + '">' + escapeHtml(a.to || '—') + '</b></span>'
+           + '</div>';
+      });
+      h += '</div>';
+    }
+    /* ⑤ 우리가 관측한 컨센서스 변화 — ★발표 원문과 구분해서★ 적는다.
+       이건 6시간마다 받은 공개 컨센서스 두 스냅샷의 차분이지, 증권사 문서 자체가 아니다. */
+    if (d.rev && d.rev.ev && d.rev.ev.length){
+      h += '<div class="anl-acts-h">관측된 컨센서스 변화 · 최근 ' + d.rev.windowDays + '일</div><div class="anl-acts">';
+      d.rev.ev.slice().reverse().forEach(function(e){
+        /* 원장의 실제 필드는 {t, p(%), from, to} 다 — 이름을 짐작해서 쓰면 조용히 빈칸이 된다 */
+        var dp = (typeof e.p === 'number') ? e.p : null;
+        var up = dp != null && dp >= 0;
+        h += '<div class="anl-act"><span class="m ' + (up ? 'pos' : 'neg') + '">' + (up ? '▲' : '▼') + '</span>'
+           + '<span class="f">목표가 ' + (dp != null ? (up ? '+' : '') + dp.toFixed(1) + '%' : '변경') + '</span>'
+           + '<span class="g">' + (e.from != null && e.to != null ? anlMoney(e.from, cur) + ' → ' + anlMoney(e.to, cur) : '') + '</span>'
+           + '<span class="d">' + anlAgo(e.t) + '</span></div>';
+      });
+      h += '</div>';
+    }
+    /* ⑥ 이 신호를 AI 가 실제로 쓰는가 — 보여주기만 하는 기능이 되지 않게 */
+    if (d.aiK && d.aiK.k != null){
+      var on = Math.abs(d.aiK.k) > 1e-6;
+      h += '<div class="anlrev-ai ' + (on ? 'on' : 'off') + '">'
+         + (on ? 'AI 진입 판단에 <b>반영 중</b> · 계수 ' + d.aiK.k.toFixed(3) : 'AI 반영 <b>없음</b> — 아직 근거가 모자라요')
+         + (d.aiK.n != null ? ' · 표본 ' + d.aiK.n : '') + '</div>';
+    }
+    /* ⑦ 출처 — 어디서 온 숫자인지 항상 적는다 */
+    h += '<div class="anl-src">' + escapeHtml(d.src || '출처 미상')
+       + (d.stale ? ' · <b class="amber">오래된 값</b>' : '')
+       + (d.ts ? ' · ' + anlAgo(d.ts) : '') + '</div>';
+    el.innerHTML = h;
+  }
+  function loadDetailAnalyst(){
+    var sym = detailState.symbol; if (!sym) return;
+    var el = $('detailAnalyst'); if (!el) return;
+    if (ANLD.cache[sym]) { renderDetailAnalyst(ANLD.cache[sym]); return; }
+    el.innerHTML = '<div class="empty">증권사 자료 불러오는 중…</div>';
+    if (ANLD.inflight[sym]) return;
+    ANLD.inflight[sym] = 1;
+    fetch('/api/analyst?symbol=' + encodeURIComponent(sym))
+      .then(function(r){ return r.json(); })
+      .then(function(d){ ANLD.cache[sym] = d; if (detailState.symbol === sym) renderDetailAnalyst(d); })
+      ['catch'](function(e){
+        if (detailState.symbol === sym)
+          renderDetailAnalyst({ ok: false, why: '조회 실패 — ' + ((e && e.message) || e) });
+      })
+      .then(function(){ delete ANLD.inflight[sym]; });
+  }
+
   // 실적 발표일
   function renderDetailEarn() {
     var el = $('detailEarn'); if (!el) return;
@@ -8581,6 +8649,7 @@ html[data-theme="light"] .m-brainbar button.active{color:#0b4f9e;background:rgba
       renderDetailNews();
       loadDetailCrowd();   // [V15] 투자심리(투표+AI 의견) — 2분 클라 캐시
       loadDetailFund();    // [V15] 재무제표+평가 — 세션 캐시·서버 7일 캐시
+      loadDetailAnalyst(); // [V33.162] 증권사 목표가 — 발표된 자료(서버 12시간 캐시)
     }
     loadDetailTfSum();   // [V19] 시기별 기술요약(지금/1주/1달/1년) — 지수도 차트 기반이라 동작
     loadDetailChart(detailState.interval || '1d');
@@ -11923,8 +11992,6 @@ html[data-theme="light"] .m-brainbar button.active{color:#0b4f9e;background:rgba
 
   try { loadEcon(false); setInterval(function(){ loadEcon(false); }, 30 * 60 * 1000); } catch(e) {}
   // [V33.151] 목표가 개정 — 컨센서스가 6시간 주기라 화면도 30분이면 충분하다.
-  var _btnAnl = $('btnAnlRevRefresh'); if (_btnAnl) _btnAnl.addEventListener('click', function(){ loadAnalystRev(true); });
-  try { loadAnalystRev(false); setInterval(function(){ loadAnalystRev(false); }, 30 * 60 * 1000); } catch(e) {}
   // [V60] 어닝스 캘린더 / 내부자 거래 / 지표 임팩트 — 초기 로드 + 주기 갱신 + 수동 새로고침
   var _btnEarn = $('btnEarnRefresh'); if (_btnEarn) _btnEarn.addEventListener('click', function(){ loadEarnings(true); });
   var _btnIns = $('btnInsiderRefresh'); if (_btnIns) _btnIns.addEventListener('click', function(){ loadInsider(true); });
@@ -14773,6 +14840,49 @@ html:root .page > *{ flex-shrink:0; }
   html[data-density="terminal"] #fvKrHaltBody{ display:flex; flex-direction:column; }
   html[data-density="terminal"] #fvKrHaltBody > .krh-mk{ flex:1 1 auto; }
 }
+
+/* [V33.162] 종목 상세 — 증권사 목표가·투자의견. 전부 발표된 값이라 색·강조를 아끼지 않는다 */
+.detail-anl{ background:var(--s2); border:1px solid var(--bd); border-radius:8px; padding:10px; margin-bottom:10px; font-size:11.5px; }
+.anl-none{ color:var(--t3); font-size:11px; line-height:1.6; }
+.anl-top{ display:flex; flex-direction:column; gap:2px; }
+.anl-tgt{ display:flex; align-items:baseline; gap:7px; flex-wrap:wrap; }
+.anl-tgt .k{ font-size:10px; color:var(--t3); }
+.anl-tgt b{ font-family:'IBM Plex Mono',monospace; font-size:17px; font-weight:700; color:var(--t1); font-variant-numeric:tabular-nums; }
+.anl-tgt i{ font-style:normal; font-family:'IBM Plex Mono',monospace; font-size:12px; font-weight:700; }
+.anl-meta{ font-size:10px; color:var(--t3); }
+/* 최저~최고 띠 — 평균 하나만 보면 의견이 갈렸는지를 못 본다 */
+.anl-range{ position:relative; height:5px; margin:9px 0 3px; }
+.anl-range .bar{ position:absolute; inset:0; border-radius:3px;
+  background:linear-gradient(90deg, color-mix(in srgb,var(--neg) 40%,transparent), var(--s3), color-mix(in srgb,var(--pos) 40%,transparent)); }
+.anl-range .px,.anl-range .mean{ position:absolute; top:-3px; width:2px; height:11px; border-radius:1px; margin-left:-1px; }
+.anl-range .px{ background:var(--t1); }
+.anl-range .mean{ background:var(--acc); box-shadow:0 0 6px var(--acc); }
+.anl-range-lb{ display:flex; justify-content:space-between; font-size:9px; color:var(--t3); font-family:'IBM Plex Mono',monospace; }
+/* 투자의견 분포 */
+.anl-dist{ display:flex; height:6px; border-radius:3px; overflow:hidden; margin:9px 0 4px; background:var(--s3); }
+.anl-dist i{ display:block; }
+.anl-dist .sb{ background:var(--pos); } .anl-dist .b{ background:color-mix(in srgb,var(--pos) 60%,transparent); }
+.anl-dist .h{ background:var(--t3); }
+.anl-dist .s{ background:color-mix(in srgb,var(--neg) 60%,transparent); } .anl-dist .ss{ background:var(--neg); }
+.anl-dist-lb{ display:flex; flex-wrap:wrap; gap:3px 9px; font-size:9.5px; color:var(--t3); }
+.anl-dist-lb .sb,.anl-dist-lb .b,.anl-dist-lb .pos{ color:var(--pos); }
+.anl-dist-lb .s,.anl-dist-lb .ss,.anl-dist-lb .neg{ color:var(--neg); }
+/* 증권사별 발표 — 우리 계산이 한 톨도 안 섞인 기록 */
+.anl-acts-h{ margin:10px 0 5px; font-size:9.5px; letter-spacing:.04em; color:var(--t3); text-transform:uppercase; }
+.anl-acts{ display:flex; flex-direction:column; gap:3px; max-height:190px; overflow-y:auto; }
+/* 두 줄 격자: [표시][증권사][시각] / [   ][등급 변화 ................] */
+.anl-act{ display:grid; grid-template-columns:11px 1fr auto; gap:0 6px; font-size:10px; line-height:1.5;
+  padding-bottom:3px; border-bottom:1px solid var(--bd2); }
+.anl-act:last-child{ border-bottom:none; }
+.anl-act .m{ font-size:9px; }
+.anl-act .m.pos{ color:var(--pos); } .anl-act .m.neg{ color:var(--neg); } .anl-act .m.neu{ color:var(--t3); }
+.anl-act .f{ min-width:0; color:var(--t2); overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+.anl-act .g{ grid-column:2/-1; color:var(--t3); font-size:9.5px; }
+.anl-act .g s{ opacity:.6; }
+.anl-act .g b.pos{ color:var(--pos); } .anl-act .g b.neg{ color:var(--neg); } .anl-act .g b.neu{ color:var(--t1); }
+.anl-act .d{ flex:0 0 auto; font-size:9px; color:var(--t3); font-family:'IBM Plex Mono',monospace; }
+.anl-src{ margin-top:8px; padding-top:6px; border-top:1px solid var(--bd2); font-size:9px; color:var(--t3); }
+.anl-src b.amber{ color:var(--amber,#fbbf24); }
 
 /* [V33.159] 한국장 매매정지 패널 — 숫자만으로는 '얼마나 가까운지' 가 안 잡혀서 막대를 같이 준다 */
 .krh-mk{ padding:6px 0; border-top:1px solid var(--bd2); }

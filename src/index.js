@@ -2788,7 +2788,7 @@ async function applySignalTypeWeights(DB, cfg) {
 // ============================================================================
 // [V33.55] 빌드 버전 — SWR L2 캐시 키에 섞어 '배포 = 판단 캐시 자동 무효화'를 만든다.
 //   판정 로직을 고쳐도 옛 캐시가 최대 1시간 재배포되던 문제를 구조적으로 없앤다.
-const _BUILD_VER = "V33.161";
+const _BUILD_VER = "V33.162";
 
 const AI_PARAMS = {
   // ── OHLCV 타임프레임 ── 시가/고가/저가/종가/거래량을 어떤 봉 주기로 볼지.
@@ -21874,6 +21874,31 @@ async function handleRequest(request, env, ctx) {
       await log(env.DB, "INFO", null, msg);
       return Response.json({ ok: true, cash: newCash, deposits: deposits, outflows: outflows, before: before, added: { us: addUs, kr: addKr } }, { headers: cors });
     }
+    // [V33.162] 종목별 발표 애널리스트 자료 — 목표가·투자의견·증권사별 등급 변경
+    if (path === "/api/analyst") {
+      const sym = (url.searchParams.get("symbol") || "").trim();
+      if (!sym) return Response.json({ ok: false, why: "symbol 이 필요해요" }, { status: 400, headers: cors });
+      const force = url.searchParams.get("force") === "1";
+      const d = await analystDetail(env.DB, sym, force) || { ok: false, why: "조회 실패" };
+      /* [V33.162] 이 종목의 '컨센서스 변화 관측치' 도 같이 싣는다.
+         발표 원문(actions)과 ★구분해서★ 보여줘야 한다 — 이건 우리가 6시간마다 받은
+         공개 컨센서스 두 스냅샷의 차분이지, 증권사가 낸 문서 그 자체는 아니다. */
+      try {
+        const led = await getState(env.DB, "analyst_rev", null);
+        const rec = led && led.bySym && led.bySym[sym.toUpperCase()];
+        if (rec) {
+          const sc = analystRevScore(rec);
+          d.rev = { ev: (rec.ev || []).slice(-6), score: sc ? sc.score : null,
+                    windowDays: ANALYSTREV.windowDays, obs: true };
+        }
+        /* 이 신호를 AI 가 ★실제로 쓰고 있는지★ 같이 내려준다.
+           화면이 "보여주기만" 하는지 "판단에 쓰는지" 를 같은 자리에서 말해야
+           죽은 기능을 못 알아채는 일이 없다(V33.151 에서 얻은 교훈). */
+        const kRow = await getState(env.DB, "analyst_rev_k", null);
+        d.aiK = kRow ? { k: _num(kRow.k, null), n: _num(kRow.n, null), ts: _num(kRow.ts, null) } : null;
+      } catch (e) {}
+      return Response.json(d, { headers: cors });
+    }
     // [V33.159] 한국장 매매정지 감시 — 사이드카(매수/매도) · 서킷브레이커 1~3단계
     if (path === "/api/kr-halt") {
       const snap = await krHaltSnapshot(env.DB, new Date());
@@ -23835,6 +23860,171 @@ async function flowPeerFeat(DB, symbol, market, dailyCache) {
       nPeers: top.length
     };
   } catch (e) { return null; }
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+// [V33.162] 종목별 ★발표된★ 애널리스트 목표가 — 우리가 추정하지 않는다
+//
+// 종전에 있던 것과 무엇이 다른가:
+//   기존 analyst_consensus 는 ①미국 종목만 ②'평균 목표가 하나' 만 받았다.
+//   그래서 한국 종목은 아무것도 없었고, 미국도 "어느 증권사가 언제 무엇을 냈는지" 는
+//   볼 수 없었다. 여기서는 ★발표 원문에 가까운 것★ 을 종목 단위로 모은다:
+//     · 목표가 평균/최고/최저/중간값 + 애널리스트 수      (financialData)
+//     · 투자의견 분포(적극매수~매도) 와 그 추이            (recommendationTrend)
+//     · ★증권사별 등급 변경 기록★ (증권사명·날짜·전등급→후등급)  (upgradeDowngradeHistory)
+//   마지막 것이 사용자가 말한 "이미 발표난 것" 에 가장 가깝다 — 우리 계산이 하나도 안 섞인다.
+//
+// 한국 종목:
+//   야후는 .KS/.KQ 의 목표가를 거의 안 준다. 국내 컨센서스는 네이버 금융(에프앤가이드)
+//   쪽에 있다. 후보 경로를 순서대로 시도하고, ★어디서 온 값인지(src)를 반드시 남긴다★.
+//   전부 실패하면 null 을 준다 — 없는 값을 지어내지 않는다.
+//
+// ★이 세션에서는 외부 망이 막혀 응답 형식을 실측하지 못했다.★ 그래서 파서는 전부
+//   '있으면 쓰고 없으면 버린다' 로 짰고, 숫자는 범위 검사를 통과한 것만 채택한다.
+//   실패는 조용히 넘기지 않고 사유를 남겨 화면이 "왜 비었는지" 를 말할 수 있게 한다.
+const ANLDET = {
+  cacheHours: 12,          // 목표가는 하루에 몇 번씩 바뀌는 값이 아니다
+  maxActions: 12,          // 증권사별 등급 변경 표시 개수
+  actionDays: 180,         // 그 기간
+  /* 이름을 minBudget 으로 두면 은퇴한 설정 키와 겹쳐 '대장이 낡았다' 로 잡힌다.
+     게이트를 느슨하게 하는 대신 이름을 바꾼다 — 이건 설정이 아니라 이 모듈의 상수다. */
+  minFetchBudget: 4
+};
+
+function _anlRaw(o) { return (o && typeof o.raw === "number" && isFinite(o.raw)) ? o.raw : null; }
+function _anlIsKR(sym) { return /\.(KS|KQ)$/i.test(String(sym || "")); }
+
+// 미국 — 야후 quoteSummary. 세 모듈 모두 '발표된 것' 이다.
+async function anlFetchUS(symbol) {
+  const mods = "financialData,recommendationTrend,upgradeDowngradeHistory,price";
+  const j = await yahooFetch("https://query1.finance.yahoo.com/v10/finance/quoteSummary/" +
+    encodeURIComponent(symbol) + "?modules=" + mods);
+  const r = j && j.quoteSummary && j.quoteSummary.result && j.quoteSummary.result[0];
+  if (!r) return null;
+  const fd = r.financialData || {}, pr = r.price || {};
+  const px = _anlRaw(fd.currentPrice) || _anlRaw(pr.regularMarketPrice);
+  const out = {
+    src: "Yahoo Finance (발표 컨센서스)", srcUrl: "https://finance.yahoo.com/quote/" + encodeURIComponent(symbol) + "/analysis",
+    px: px, cur: pr.currency || fd.financialCurrency || null,
+    tgtMean: _anlRaw(fd.targetMeanPrice), tgtHigh: _anlRaw(fd.targetHighPrice),
+    tgtLow: _anlRaw(fd.targetLowPrice), tgtMedian: _anlRaw(fd.targetMedianPrice),
+    n: _anlRaw(fd.numberOfAnalystOpinions),
+    ratingKey: fd.recommendationKey || null, ratingMean: _anlRaw(fd.recommendationMean),
+    dist: null, actions: []
+  };
+  // 투자의견 분포 — 가장 최근 기간(0m)
+  try {
+    const t = (r.recommendationTrend && r.recommendationTrend.trend) || [];
+    const t0 = t[0];
+    if (t0) out.dist = { strongBuy: _num(t0.strongBuy, 0), buy: _num(t0.buy, 0), hold: _num(t0.hold, 0),
+                         sell: _num(t0.sell, 0), strongSell: _num(t0.strongSell, 0) };
+  } catch (e) {}
+  // ★증권사별 등급 변경★ — 우리 계산이 한 톨도 안 들어간 발표 기록
+  try {
+    const h = (r.upgradeDowngradeHistory && r.upgradeDowngradeHistory.history) || [];
+    const cut = Date.now() / 1000 - ANLDET.actionDays * 86400;
+    const rows = [];
+    for (const a of h) {
+      const t = _num(a.epochGradeDate, 0);
+      if (!t || t < cut) continue;
+      rows.push({ firm: String(a.firm || "").slice(0, 40), to: String(a.toGrade || "").slice(0, 24),
+                  from: String(a.fromGrade || "").slice(0, 24),
+                  act: String(a.action || "").slice(0, 12), t: t * 1000 });
+    }
+    rows.sort(function (x, y) { return y.t - x.t; });
+    out.actions = rows.slice(0, ANLDET.maxActions);
+  } catch (e) {}
+  return (out.tgtMean != null || out.actions.length || out.dist) ? out : null;
+}
+
+// 한국 — 네이버 금융(에프앤가이드) 컨센서스. 후보를 순서대로 시도한다.
+//   ★형식을 실측하지 못했으므로 '있으면 쓴다' 로만 읽는다.★ 숫자는 범위 검사를 통과한 것만.
+async function anlFetchKR(symbol) {
+  const code = String(symbol).replace(/\.(KS|KQ)$/i, "");
+  if (!/^\d{6}$/.test(code)) return null;
+  const hdr = { "User-Agent": "Mozilla/5.0", "Referer": "https://m.stock.naver.com/" };
+  const tries = [
+    { url: "https://m.stock.naver.com/api/stock/" + code + "/integration", src: "네이버 금융 · 종목분석" },
+    { url: "https://m.stock.naver.com/api/stock/" + code + "/finance/consensus", src: "네이버 금융 · 컨센서스" }
+  ];
+  for (const t of tries) {
+    if (fetchBudgetLeft() < ANLDET.minFetchBudget) break;
+    try {
+      __fetchBudget.used++;
+      const r = await fetch(t.url, { headers: hdr });
+      if (!r.ok) continue;
+      const j = await r.json();
+      const got = _anlParseKR(j);
+      if (got) {
+        got.src = t.src;
+        got.srcUrl = "https://m.stock.naver.com/domestic/stock/" + code + "/total";
+        got.cur = "KRW";
+        return got;
+      }
+    } catch (e) { /* 다음 후보 */ }
+  }
+  return null;
+}
+
+// 응답 어디에 들어 있든 '목표주가/투자의견' 으로 보이는 값을 찾는다.
+//   깊이 우선으로 훑되, 목표주가는 ★현재가 대비 말이 되는 범위★ 안일 때만 채택한다.
+function _anlParseKR(j) {
+  if (!j || typeof j !== "object") return null;
+  let tgt = null, n = null, opinion = null, px = null;
+  const KEY_T = /(targetprice|goalprice|목표주가|목표가)/i;
+  const KEY_N = /(analystcount|estimatecount|참여|기관수|증권사수)/i;
+  const KEY_O = /(investmentopinion|opinion|투자의견)/i;
+  const KEY_P = /(closeprice|현재가|nowprice|price)$/i;
+  const walk = function (o, d) {
+    if (!o || d > 6) return;
+    if (Array.isArray(o)) { for (const x of o) walk(x, d + 1); return; }
+    if (typeof o !== "object") return;
+    for (const k in o) {
+      const v = o[k];
+      const num = (typeof v === "number") ? v
+                : (typeof v === "string" && /^-?[\d,]+(\.\d+)?$/.test(v.trim())) ? parseFloat(v.replace(/,/g, "")) : null;
+      if (num != null && isFinite(num)) {
+        if (tgt == null && KEY_T.test(k) && num > 0) tgt = num;
+        else if (n == null && KEY_N.test(k) && num > 0 && num < 200) n = num;
+        else if (px == null && KEY_P.test(k) && num > 0) px = num;
+      } else if (typeof v === "string" && opinion == null && KEY_O.test(k) && v.length <= 12) opinion = v;
+      if (v && typeof v === "object") walk(v, d + 1);
+    }
+  };
+  walk(j, 0);
+  if (tgt == null) return null;
+  // 말이 되는 값인지 — 현재가를 찾았으면 0.2~5배 밖은 버린다(엉뚱한 키를 주웠을 수 있다)
+  if (px != null && px > 0 && (tgt < px * 0.2 || tgt > px * 5)) return null;
+  return { px: px, tgtMean: tgt, tgtHigh: null, tgtLow: null, tgtMedian: null,
+           n: n, ratingKey: opinion, ratingMean: null, dist: null, actions: [] };
+}
+
+// 종목 하나의 '발표된 애널리스트 자료'. 캐시 우선, 실패해도 옛 값을 보존한다.
+async function analystDetail(DB, symbol, force) {
+  const sym = String(symbol || "").toUpperCase();
+  if (!sym) return null;
+  const key = "anldet:" + sym;
+  let cached = null;
+  try { cached = await getState(DB, key, null); } catch (e) {}
+  if (!force && cached && cached.ts && (Date.now() - cached.ts) < ANLDET.cacheHours * 3600000) return cached;
+  if (fetchBudgetLeft() < ANLDET.minFetchBudget) {
+    return cached || { symbol: sym, ok: false, why: "조회 예산이 부족해요 — 잠시 뒤 다시 채워집니다", ts: Date.now() };
+  }
+  let v = null, why = "";
+  try {
+    v = _anlIsKR(sym) ? await anlFetchKR(sym) : await anlFetchUS(sym);
+  } catch (e) { why = String((e && e.message) || e).slice(0, 120); }
+  if (!v) {
+    // ★없는 값을 지어내지 않는다.★ 옛 값이 있으면 그것을 '오래된 값' 으로 표시해 돌려준다.
+    if (cached && cached.ok) return Object.assign({}, cached, { stale: true });
+    return { symbol: sym, ok: false, stale: false, ts: Date.now(),
+             why: why || (_anlIsKR(sym) ? "국내 증권사 컨센서스를 받지 못했어요(공개 경로 응답 없음)"
+                                        : "이 종목의 애널리스트 자료가 공개되어 있지 않아요") };
+  }
+  v.upsidePct = (v.px > 0 && v.tgtMean > 0) ? +(((v.tgtMean - v.px) / v.px) * 100).toFixed(2) : null;
+  const out = Object.assign({ symbol: sym, ok: true, stale: false, ts: Date.now() }, v);
+  try { await setState(DB, key, out); } catch (e) {}
+  return out;
 }
 
 // 포지셔닝 데이터 — 야후 quoteSummary 모듈. 종목당 하루 1회만 받고 D1 에 캐시한다.
