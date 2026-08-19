@@ -375,5 +375,26 @@ console.log('⑪ 폰 앱바 실시간 칩');
   else bad('상태 색이 없다');
 }
 
+/* ── ⑫ 격자는 자식을 이름으로 열거하지 않는다 ────────────────────────────
+   터미널 밀도의 .fv-deck 4열 격자는 "전체폭으로 펼 자식" 을 하나하나 적고 있었다.
+   그래서 목록에 없는 자식이 하나 생기면 1/4 칸에 박혀 격자가 찢어졌다.
+   실제로 그렇게 됐다 — 위기 경보 배너(#fvCrisisBanner)는 위기 단계가 '경계' 이상일 때
+   ★런타임에 만들어져★ .fv-deck 에 꽂히므로 그 목록에 있을 수가 없다.
+   기본값을 뒤집어(전부 전체폭) 앞으로 자식이 늘어도 안전하게 둔다. */
+console.log('⑫ 터미널 격자 — 새 자식이 생겨도 안 찢어지는가');
+{
+  if (/\.fv-deck>\*\{grid-column:1\/-1;\}/.test(H.replace(/\s+/g, '')))
+    ok('.fv-deck 의 ★모든★ 자식이 기본 전체폭 (열거가 아니라 기본값)');
+  else bad('.fv-deck 자식을 이름으로 열거하고 있다 — 런타임에 꽂히는 자식이 격자를 찢는다');
+  // 좁힐 것만 예외로 남아 있는가
+  const nar = (H.match(/\.fv-deck>#fv(Crisis|Events)Panel/g) || []).length;
+  if (nar === 2) ok('2칸으로 좁히는 예외는 위기·이슈 패널 둘뿐');
+  else bad('좁힘 예외가 ' + nar + '개다 — 의도한 둘이 아니다');
+  // 런타임 배너가 실제로 .fv-deck 에 꽂히는지(전제 확인)
+  if (/host\.parentNode\.insertBefore\(ban, host\)/.test(H) && /id = 'fvCrisisBanner'/.test(H))
+    ok('위기 배너는 런타임에 .fv-deck 로 삽입된다 — 열거 방식이 위험한 이유');
+  else bad('위기 배너 삽입 경로가 바뀌었다 — 이 게이트의 전제를 다시 확인해야 한다');
+}
+
 console.log(fail ? '\n실패 ' + fail + '건' : '\nok   폰 화면 계약 통과');
 process.exit(fail ? 1 : 0);

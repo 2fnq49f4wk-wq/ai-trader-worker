@@ -8,7 +8,7 @@
      인데, 지금까지 화면에서 그걸 알 방법이 전혀 없었다(카카오톡 인앱 브라우저는 특히 강하게 캐시한다).
      서버가 내려주는 build 와 이 값을 비교해 다르면 배너로 알린다.
      ※ src/index.js 의 _BUILD_VER 와 항상 같아야 한다 — check-html-js 가 강제한다. -->
-<meta name="lux-build" content="V33.158">
+<meta name="lux-build" content="V33.159">
 <title>LUX-ENGINE V10</title>
 <!-- ══ [V33.156] 설치형 앱(PWA) — 폰·PC 에서 홈화면/독에 담아 앱처럼 연다 ══
      · manifest  : 이름·아이콘·standalone 표시(주소창 없이 앱처럼)
@@ -3420,6 +3420,14 @@ html[data-theme="light"] .m-brainbar button.active{color:#0b4f9e;background:rgba
           </div>
           <div id="fvCrisisBody" style="padding:9px 10px;font-size:11px;line-height:1.6;color:var(--t2);">로딩 중…</div>
         </div>
+        <!-- [V33.159] 한국장 매매정지 감시 — 사이드카(매수/매도) · 서킷브레이커 1~3단계 -->
+        <div class="fv-panel" id="fvKrHaltPanel" style="margin-bottom:8px;">
+          <div class="fv-panel-head" id="fvKrHaltHead" style="cursor:pointer;" title="클릭하면 접거나 펼쳐요">
+            <span id="fvKrHaltCaret">▾</span> 한국장 매매정지 <span class="fv-panel-sub" id="fvKrHaltBadge">확인 중…</span>
+          </div>
+          <div id="fvKrHaltBody" style="padding:10px 12px;"><div class="empty">불러오는 중…</div></div>
+        </div>
+
         <!-- [V32.51] 활성 이슈 · 레짐 패널 — 이벤트 엔진(수혜/피해·확증·효능·순섹터선호)을 대시보드에 시각화 -->
         <div class="fv-panel" id="fvEventsPanel" style="margin-bottom:8px;">
           <div class="fv-panel-head" id="fvEventsHead" style="cursor:pointer;" title="클릭하면 접거나 펼쳐요">
@@ -5174,6 +5182,122 @@ html[data-theme="light"] .m-brainbar button.active{color:#0b4f9e;background:rgba
       } else if (ban) { ban.remove(); }
     })['catch'](function(){});
   }
+  /* ══ [V33.159] 한국장 매매정지 — 사이드카 · 서킷브레이커 ══
+     화면이 지켜야 할 것 하나: ★무엇으로 잰 값인지 숨기지 않는다.★
+     서킷브레이커의 규정 기준은 지수 그 자체라 우리가 재는 값이 곧 규정값이다.
+     사이드카의 규정 기준은 선물인데 이 엔진에는 선물 시세가 없어 현물 지수로 대용한다.
+     그래서 사이드카 칸에는 '대용' 이라고 적고, 발동을 단정하지 않는다. */
+  var __krHaltTimer = null, __krHaltBound = false;
+  function bindKrHaltToggle(){
+    if(__krHaltBound) return;
+    var head = document.getElementById('fvKrHaltHead'), body = document.getElementById('fvKrHaltBody'),
+        caret = document.getElementById('fvKrHaltCaret');
+    if(!head || !body) return;
+    __krHaltBound = true;
+    head.addEventListener('click', function(){
+      var open = body.style.display !== 'none';
+      body.style.display = open ? 'none' : 'block';
+      if(caret) caret.textContent = open ? '▸' : '▾';
+    });
+  }
+  function krHaltBar(pct, lo, hi){
+    /* -hi ~ +hi 를 가로막대에 얹고 지금 위치를 표시한다. 숫자만으로는 '얼마나 가까운지' 가 안 잡힌다. */
+    var p = Math.max(-hi, Math.min(hi, pct));
+    var left = ((p + hi) / (2 * hi)) * 100;
+    var mk = function(v){ return ((v + hi) / (2 * hi)) * 100; };
+    return '<div class="krh-bar">'
+      + '<i class="krh-zone sell" style="width:' + mk(-lo) + '%"></i>'
+      + '<i class="krh-zone buy" style="left:' + mk(lo) + '%;right:0"></i>'
+      + '<i class="krh-tick" style="left:' + mk(-lo) + '%"></i>'
+      + '<i class="krh-tick" style="left:' + mk(lo) + '%"></i>'
+      + '<i class="krh-now' + (pct < 0 ? ' neg' : '') + '" style="left:' + left + '%"></i>'
+      + '</div>';
+  }
+  function renderKrHalt(){
+    var body = document.getElementById('fvKrHaltBody'), badge = document.getElementById('fvKrHaltBadge');
+    if(!body) return;
+    fetch('/api/kr-halt').then(function(r){ return r.json(); }).then(function(d){
+      if(!d || !d.markets) throw new Error('빈 응답');
+      var worst = null, html = '';
+      ['kospi','kosdaq'].forEach(function(k){
+        var m = d.markets[k]; if(!m) return;
+        var pct = m.pct;
+        var pc = pct === null ? '<span class="nil">—</span>'
+               : '<b class="' + (pct >= 0 ? 'pos' : 'neg') + '">' + (pct >= 0 ? '+' : '') + pct.toFixed(2) + '%</b>';
+        html += '<div class="krh-mk">';
+        html += '<div class="krh-h"><span class="krh-nm">' + escapeHtml(m.name) + '</span>' + pc + '</div>';
+        if(pct === null){ html += '<div class="krh-note">지수 시세를 아직 못 받았어요</div></div>'; return; }
+
+        /* 사이드카 */
+        var sc = m.sidecar;
+        html += krHaltBar(pct, sc.threshold, Math.max(sc.threshold * 1.6, Math.abs(pct) * 1.15));
+        var scTx;
+        if(sc.held && !sc.blocked){
+          scTx = '<b class="' + (sc.dir === 'buy' ? 'pos' : 'neg') + '">'
+               + (sc.dir === 'buy' ? '매수' : '매도') + ' 사이드카 조건 충족(추정)</b> · 프로그램매매 '
+               + sc.haltMin + '분 정지';
+          worst = worst || { lv: 'hot', tx: m.name + ' ' + (sc.dir === 'buy' ? '매수' : '매도') + ' 사이드카(추정)' };
+        } else if(sc.beyond && sc.blocked){
+          /* 문턱은 넘었지만 규정상 오늘은 못 발동한다. 여기서 '1분 지속되면 발동' 이라고 쓰면
+             바로 아래 '14:50 이후 — 오늘은 발동하지 않아요' 와 ★서로 반대말★ 이 된다. */
+          scTx = '<b class="amber">문턱 초과</b> — 다만 규정상 지금은 발동하지 않아요';
+        } else if(sc.beyond){
+          scTx = '<b class="amber">문턱 초과 — 1분 지속되면 발동</b>';
+          worst = worst || { lv: 'warn', tx: m.name + ' 사이드카 임박' };
+        } else {
+          scTx = '매수까지 <b>' + sc.toBuy.toFixed(2) + '%p</b> · 매도까지 <b>' + sc.toSell.toFixed(2) + '%p</b>';
+        }
+        html += '<div class="krh-row"><span class="krh-k">사이드카</span><span class="krh-v">' + scTx + '</span></div>';
+        html += '<div class="krh-note">규정 ' + escapeHtml(sc.rule) + ' · ' + escapeHtml(sc.proxyNote) + '</div>';
+        if(sc.blocked) html += '<div class="krh-note">' + escapeHtml(sc.blocked) + '</div>';
+
+        /* 서킷브레이커 */
+        var cb = m.cb, cbTx;
+        if(cb.active){
+          cbTx = '<b class="neg">' + cb.active + '단계 발동 조건 충족</b>'
+               + (cb.steps[cb.active - 1].haltMin ? ' · ' + cb.steps[cb.active - 1].haltMin + '분 중단' : ' · 당일 장 종료');
+          worst = { lv: 'hot', tx: m.name + ' 서킷브레이커 ' + cb.active + '단계' };
+        } else if(cb.nearest){
+          cbTx = cb.nearest.step + '단계(' + cb.nearest.threshold + '%)까지 <b>' + cb.nearest.remain.toFixed(2) + '%p</b>';
+        } else cbTx = '<span class="nil">—</span>';
+        html += '<div class="krh-row"><span class="krh-k">서킷브레이커</span><span class="krh-v">' + cbTx + '</span></div>';
+        html += '<div class="krh-note">기준 ' + escapeHtml(cb.basis) + ' — 규정 기준 그대로예요(대용 아님)</div>';
+        html += '<div class="krh-steps">' + cb.steps.map(function(x){
+          return '<span class="krh-step' + (x.beyond ? ' on' : '') + '">' + x.step + '단계 ' + x.threshold + '%</span>';
+        }).join('') + '</div>';
+
+        if(m.fired && m.fired.length){
+          html += '<div class="krh-fired">오늘 기록 · ' + m.fired.map(function(f){
+            return f.kind === 'sidecar' ? ((f.dir === 'buy' ? '매수' : '매도') + ' 사이드카 ' + f.pct + '%')
+                                        : ('서킷브레이커 ' + f.step + '단계 ' + f.pct + '%');
+          }).join(' · ') + '</div>';
+        }
+        html += '</div>';
+      });
+      if(!d.session) html += '<div class="krh-note">정규장(09:00~15:30) 밖이라 감시는 쉬는 중이에요</div>';
+      body.innerHTML = html || '<div class="empty">표시할 값이 없어요</div>';
+      if(badge){
+        badge.textContent = worst ? worst.tx : (d.session ? '정상 · 발동 없음' : '장외');
+        badge.style.color = worst ? (worst.lv === 'hot' ? 'var(--neg)' : 'var(--amber,#fbbf24)')
+                                  : (d.session ? 'var(--pos)' : 'var(--t3)');
+      }
+    })['catch'](function(e){
+      body.innerHTML = '<div class="krh-note">불러오지 못했어요 — ' + escapeHtml(String(e && e.message || e)) + '</div>';
+      if(badge){ badge.textContent = '조회 실패'; badge.style.color = 'var(--t3)'; }
+    });
+  }
+  function startKrHalt(){
+    bindKrHaltToggle();
+    renderKrHalt();
+    if(__krHaltTimer) return;
+    /* 한국 정규장에서는 1분(사이드카·CB 는 1분 지속이 조건이라 그보다 성기게 보면 놓친다),
+       장외에는 10분. 서버가 이미 매 1분 지수를 갱신하므로 더 자주 물어도 새 값이 없다. */
+    __krHaltTimer = setInterval(function(){
+      if(document.hidden) return;
+      renderKrHalt();
+    }, 60000);
+  }
+
   // [V32.51] 활성 이슈 · 레짐 패널 — /api/events 폴링(4분)
   var __eventsTimer = null, __eventsToggleBound = false;
   function bindEventsToggle() {
@@ -5243,6 +5367,7 @@ html[data-theme="light"] .m-brainbar button.active{color:#0b4f9e;background:rgba
     try { bindAiAskPanel(); } catch(e) {}
     try { renderCrisisPanel(); if (!__crisisTimer) __crisisTimer = setInterval(renderCrisisPanel, 180000); } catch(e) {}
     try { renderEventsPanel(); if (!__eventsTimer) __eventsTimer = setInterval(renderEventsPanel, 240000); } catch(e) {}
+    try { startKrHalt(); } catch(e) {}   // [V33.159] 한국장 사이드카·서킷브레이커 감시
     // ① 지수 패널 행
     var row = $('fvIndexRow');
     if (row && state.indices && state.indices.length) {
@@ -14022,11 +14147,14 @@ html[data-theme="light"] .rail{background:#fff;}
   html[data-density="terminal"] .fv-deck{
     display:grid;grid-template-columns:repeat(4,minmax(0,1fr));align-items:start;
   }
-  html[data-density="terminal"] .fv-deck>.fv-index-row,
-  html[data-density="terminal"] .fv-deck>.fv-breadth-row,
-  html[data-density="terminal"] .fv-deck>.fv-mid,
-  html[data-density="terminal"] .fv-deck>.fv-bottom,
-  html[data-density="terminal"] .fv-deck>#fvAiAskPanel{grid-column:1/-1;}
+  /* [V33.159] ★기본값을 뒤집는다 — 자식을 이름으로 열거하지 않는다.★
+     종전엔 "전체폭으로 펼 자식" 을 하나하나 적었다. 그래서 목록에 없는 자식이 하나라도
+     생기면 1/4 칸에 박혀 격자가 찢어졌다. 실제로 그렇게 됐다:
+     위기 경보 배너(#fvCrisisBanner)는 위기 단계가 '경계' 이상일 때 ★런타임에 만들어져★
+     .fv-deck 에 꽂히는데, 이 목록에 있을 리가 없다. 아이패드에서 게이지가 50/100 을
+     찍은 날 배너가 나타나면서 대시보드가 통째로 어긋나 보였다.
+     → 모든 자식을 전체폭으로 두고, ★좁힐 것만★ 예외로 적는다. 앞으로 자식이 늘어도 안전하다. */
+  html[data-density="terminal"] .fv-deck>*{grid-column:1/-1;}
   /* AI 운용 상태는 두뇌 페이지 사이드바로 이동해 여기선 숨김 — 남은 두 패널이 폭을 나눠 갖는다 */
   html[data-density="terminal"] .fv-deck>#fvCrisisPanel,
   html[data-density="terminal"] .fv-deck>#fvEventsPanel{grid-column:span 2;}
@@ -14585,6 +14713,32 @@ html[data-theme="light"]:root .rail-view small{ color:var(--t3); }
    .page 의 모든 직계 자식에 한 번에 못박는다. (flex-grow 는 건드리지 않으므로
     높이를 채우려고 flex:1 을 쓴 자식은 그대로 동작한다.) */
 html:root .page > *{ flex-shrink:0; }
+
+/* [V33.159] 한국장 매매정지 패널 — 숫자만으로는 '얼마나 가까운지' 가 안 잡혀서 막대를 같이 준다 */
+.krh-mk{ padding:8px 0; border-top:1px solid var(--bd2); }
+.krh-mk:first-child{ border-top:none; padding-top:0; }
+.krh-h{ display:flex; align-items:baseline; gap:8px; margin-bottom:6px; }
+.krh-nm{ font-size:11.5px; font-weight:650; color:var(--t1); }
+.krh-h b{ font-family:'IBM Plex Mono',monospace; font-size:13px; font-variant-numeric:tabular-nums; }
+.krh-bar{ position:relative; height:6px; border-radius:3px; background:var(--s2); overflow:hidden; margin:6px 0 8px; }
+.krh-zone{ position:absolute; top:0; bottom:0; }
+.krh-zone.sell{ left:0; background:color-mix(in srgb, var(--neg) 26%, transparent); }
+.krh-zone.buy{ background:color-mix(in srgb, var(--pos) 26%, transparent); }
+.krh-tick{ position:absolute; top:0; bottom:0; width:1px; background:var(--bd); }
+.krh-now{ position:absolute; top:-2px; width:2px; height:10px; border-radius:1px; background:var(--pos); box-shadow:0 0 6px currentColor; }
+.krh-now.neg{ background:var(--neg); }
+.krh-row{ display:flex; gap:8px; align-items:baseline; font-size:10.5px; margin-top:3px; }
+.krh-k{ flex:0 0 84px; color:var(--t3); letter-spacing:.02em; white-space:nowrap; }
+.krh-v{ flex:1 1 auto; min-width:0; color:var(--t2); }
+.krh-v b{ font-family:'IBM Plex Mono',monospace; font-variant-numeric:tabular-nums; color:var(--t1); }
+.krh-v b.amber{ color:var(--amber,#fbbf24); }
+.krh-note{ font-size:9.5px; color:var(--t3); margin-top:3px; line-height:1.5; }
+.krh-steps{ display:flex; flex-wrap:wrap; gap:4px; margin-top:5px; }
+.krh-step{ font-size:9px; font-family:'IBM Plex Mono',monospace; padding:2px 6px; border-radius:999px;
+  border:1px solid var(--bd); color:var(--t3); }
+.krh-step.on{ border-color:var(--neg); color:var(--neg); background:color-mix(in srgb, var(--neg) 12%, transparent); }
+.krh-fired{ margin-top:6px; font-size:9.5px; color:var(--amber,#fbbf24); }
+@media(max-width:767px){ .krh-k{ flex-basis:74px; font-size:9.5px; } }
 
 /* [V33.157] 당겨서 새로고침 표시 — 설치형에서만 JS 가 붙는다(웹에는 아예 안 생긴다) */
 .lux-ptr{

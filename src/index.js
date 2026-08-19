@@ -2788,7 +2788,7 @@ async function applySignalTypeWeights(DB, cfg) {
 // ============================================================================
 // [V33.55] 빌드 버전 — SWR L2 캐시 키에 섞어 '배포 = 판단 캐시 자동 무효화'를 만든다.
 //   판정 로직을 고쳐도 옛 캐시가 최대 1시간 재배포되던 문제를 구조적으로 없앤다.
-const _BUILD_VER = "V33.158";
+const _BUILD_VER = "V33.159";
 
 const AI_PARAMS = {
   // ── OHLCV 타임프레임 ── 시가/고가/저가/종가/거래량을 어떤 봉 주기로 볼지.
@@ -4549,6 +4549,150 @@ function kstTradingDayKey(now) {
   const m = String(d.getUTCMonth() + 1).padStart(2, "0");
   const da = String(d.getUTCDate()).padStart(2, "0");
   return d.getUTCFullYear() + "-" + m + "-" + da;
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+// [V33.159] 한국장 매매정지 감시 — 사이드카 · 서킷브레이커
+//
+// 무엇을 보는가(한국거래소 규정):
+//   · 사이드카(프로그램매매호가 효력정지)
+//       코스피 : KOSPI200 선물 최근월물이 기준가 대비 ±5% 이상 변동해 1분간 지속
+//       코스닥 : KOSDAQ150 선물 ±6% 이상 ★그리고★ KOSDAQ150 지수 ±3% 이상, 1분 지속
+//       → 프로그램매매 호가 효력 5분 정지. 1일 1회. 장 종료 40분 전(14:50) 이후 미발동.
+//       상승이면 매수 사이드카, 하락이면 매도 사이드카.
+//   · 서킷브레이커(전 종목 매매거래 중단)
+//       1단계 지수 -8%  · 2단계 -15%(1단계보다 1%p 이상 추가하락) · 3단계 -20%
+//       각 1분 지속. 1·2단계는 20분 중단 + 1일 1회 + 14:50 이후 미발동.
+//       3단계는 당일 장 종료(장 마감 전 언제든 발동).
+//
+// ★무엇을 재고 있는지 정확히 적는다.★
+//   서킷브레이커의 기준은 ★지수 그 자체★ 다 — 우리가 이미 갖고 있는 ^KS11/^KQ11 로
+//   규정과 같은 값을 잰다. 대용이 아니다.
+//   사이드카의 기준은 ★선물★ 이다. 이 엔진에는 KOSPI200/KOSDAQ150 선물 시세가 없다.
+//   선물은 현물을 바짝 따라가지만 같지 않다(베이시스). 그래서 현물 지수로 재되,
+//   결과에 proxy:true 와 근거 문구를 실어 화면이 "대용값" 이라고 말하게 한다.
+//   ★모르는 것을 아는 척하지 않는다.★ — 대용값으로 "발동" 을 단정하지 않고
+//   '임박/추정' 까지만 말한다.
+const KRHALT = {
+  openMin: 9 * 60, closeMin: 15 * 60 + 30,
+  sidecar: {
+    kospi:  { idx: "^KS11", name: "코스피", rule: "KOSPI200 선물 ±5%", pct: 5.0 },
+    kosdaq: { idx: "^KQ11", name: "코스닥", rule: "KOSDAQ150 선물 ±6% + 지수 ±3%", pct: 6.0 }
+  },
+  sidecarHaltMin: 5,
+  sidecarCutoffMin: 14 * 60 + 50,
+  cb: [
+    { step: 1, pct: -8,  haltMin: 20,   cutoffMin: 14 * 60 + 50 },
+    { step: 2, pct: -15, haltMin: 20,   cutoffMin: 14 * 60 + 50 },
+    { step: 3, pct: -20, haltMin: null, cutoffMin: 15 * 60 + 30 }
+  ],
+  holdMs: 3 * 60 * 1000    // '1분 지속' 판정 — 직전 관측이 이 시간 안이어야 연속으로 인정
+};
+
+// 직전 관측과 지금 관측이 ★둘 다★ 문턱을 넘었을 때만 '1분 지속' 으로 본다.
+//   cron 이 매 1분이라 두 번 연속 = 최소 1분. 한 번만 스치는 값으로 발동을 외치지 않는다.
+function _krHeld(prev, nowTs, ok) {
+  if (!ok) return false;
+  if (!prev || !prev.ts || !prev.ok) return false;
+  return (nowTs - prev.ts) <= KRHALT.holdMs;
+}
+
+// 한 시장의 상태를 만든다. pct 는 전일 종가 대비 등락률(%).
+function krHaltMarket(key, pct, kstMin, prevObs, firedToday) {
+  const sc = KRHALT.sidecar[key];
+  const out = {
+    market: key, name: sc.name, pct: (typeof pct === "number") ? +pct.toFixed(2) : null,
+    sidecar: null, cb: null, fired: firedToday || []
+  };
+  if (typeof pct !== "number") return out;
+  const inSession = kstMin >= KRHALT.openMin && kstMin <= KRHALT.closeMin;
+
+  // ── 사이드카 (양방향) ──
+  const scCut = kstMin > KRHALT.sidecarCutoffMin;
+  const scDone = (firedToday || []).some(function (f) { return f.kind === "sidecar"; });
+  const up = pct >= sc.pct, dn = pct <= -sc.pct;
+  const heldUp = _krHeld(prevObs && prevObs.scUp, Date.now(), up);
+  const heldDn = _krHeld(prevObs && prevObs.scDn, Date.now(), dn);
+  out.sidecar = {
+    rule: sc.rule, threshold: sc.pct,
+    proxy: true,                                   // ★선물이 아니라 현물 지수로 잰 값★
+    proxyNote: sc.name + " 지수로 대용 측정 — 규정 기준은 선물이라 실제 발동과 다를 수 있어요",
+    dir: up ? "buy" : (dn ? "sell" : null),        // 상승=매수 사이드카 · 하락=매도 사이드카
+    beyond: up || dn,
+    held: heldUp || heldDn,                        // 1분 지속까지 충족
+    toBuy:  +(sc.pct - pct).toFixed(2),            // 매수 사이드카까지 남은 %p
+    toSell: +(pct + sc.pct).toFixed(2),            // 매도 사이드카까지 남은 %p
+    blocked: scCut ? "14:50 이후 — 오늘은 발동하지 않아요"
+            : (scDone ? "오늘 이미 발동 — 1일 1회" : (inSession ? null : "정규장 시간이 아니에요")),
+    haltMin: KRHALT.sidecarHaltMin
+  };
+
+  // ── 서킷브레이커 (하락만) ──
+  const steps = KRHALT.cb.map(function (c, i) {
+    const beyond = pct <= c.pct;
+    const held = _krHeld(prevObs && prevObs.cb && prevObs.cb[i], Date.now(), beyond);
+    const done = (firedToday || []).some(function (f) { return f.kind === "cb" && f.step === c.step; });
+    return {
+      step: c.step, threshold: c.pct, remain: +(pct - c.pct).toFixed(2),
+      beyond: beyond, held: held, haltMin: c.haltMin,
+      blocked: kstMin > c.cutoffMin ? "규정상 발동 시각이 지났어요"
+              : (done ? "오늘 이미 발동" : (inSession ? null : "정규장 시간이 아니에요"))
+    };
+  });
+  const hit = steps.filter(function (x) { return x.held && !x.blocked; });
+  out.cb = {
+    proxy: false,                                  // ★지수 자체가 규정 기준★ — 대용이 아니다
+    basis: sc.name + " 지수 · 전일 종가 대비",
+    steps: steps,
+    active: hit.length ? hit[hit.length - 1].step : null,
+    nearest: steps.filter(function (x) { return !x.beyond; })[0] || null
+  };
+  return out;
+}
+
+// 관측을 저장한다(다음 호출에서 '1분 지속' 판정에 쓴다) + 오늘 발동 이력 누적.
+async function krHaltSnapshot(DB, now) {
+  const t = now || new Date();
+  const kst = getKST(t);
+  const day = kstTradingDayKey(t);
+  let st = await getState(DB, "krhalt:state", null);
+  if (!st || st.day !== day) st = { day: day, obs: {}, fired: {} };
+  const outMk = {};
+  for (const key of Object.keys(KRHALT.sidecar)) {
+    const sc = KRHALT.sidecar[key];
+    const q = await getState(DB, "index:" + sc.idx, null);
+    const pct = q && typeof q.dayPct === "number" ? q.dayPct : null;
+    const prev = st.obs[key] || null;
+    const m = krHaltMarket(key, pct, kst.totalMin, prev, st.fired[key] || []);
+    outMk[key] = m;
+    // 이번 관측 기록
+    if (typeof pct === "number") {
+      const nowTs = Date.now();
+      st.obs[key] = {
+        ts: nowTs, pct: pct,
+        scUp: { ts: nowTs, ok: pct >= sc.pct },
+        scDn: { ts: nowTs, ok: pct <= -sc.pct },
+        cb: KRHALT.cb.map(function (c) { return { ts: nowTs, ok: pct <= c.pct }; })
+      };
+      // 지속까지 충족하고 규정상 막히지 않았으면 '오늘 발동' 으로 기록
+      st.fired[key] = st.fired[key] || [];
+      if (m.sidecar && m.sidecar.held && !m.sidecar.blocked
+          && !st.fired[key].some(function (f) { return f.kind === "sidecar"; })) {
+        st.fired[key].push({ kind: "sidecar", dir: m.sidecar.dir, pct: +pct.toFixed(2), ts: nowTs, proxy: true });
+      }
+      for (const s2 of (m.cb ? m.cb.steps : [])) {
+        if (s2.held && !s2.blocked && !st.fired[key].some(function (f) { return f.kind === "cb" && f.step === s2.step; }))
+          st.fired[key].push({ kind: "cb", step: s2.step, pct: +pct.toFixed(2), ts: nowTs, proxy: false });
+      }
+      m.fired = st.fired[key];
+    }
+  }
+  await setState(DB, "krhalt:state", st);
+  return {
+    day: day, kstMin: kst.totalMin,
+    session: kst.totalMin >= KRHALT.openMin && kst.totalMin <= KRHALT.closeMin,
+    markets: outMk, ts: Date.now()
+  };
 }
 
 // 실제 거래소 정규장 시간 — 시세 자체가 생성되는 시간
@@ -21729,6 +21873,11 @@ async function handleRequest(request, env, ctx) {
                   " (US " + before.us + "->" + newCash.us + ", KR " + before.kr + "->" + newCash.kr + ")";
       await log(env.DB, "INFO", null, msg);
       return Response.json({ ok: true, cash: newCash, deposits: deposits, outflows: outflows, before: before, added: { us: addUs, kr: addKr } }, { headers: cors });
+    }
+    // [V33.159] 한국장 매매정지 감시 — 사이드카(매수/매도) · 서킷브레이커 1~3단계
+    if (path === "/api/kr-halt") {
+      const snap = await krHaltSnapshot(env.DB, new Date());
+      return Response.json(snap, { headers: cors });
     }
     if (path === "/api/tick" && request.method === "POST") {
       await runTradingCycle(env);
