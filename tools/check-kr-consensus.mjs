@@ -63,20 +63,45 @@ console.log('③ ★아무 숫자나 줍지 않는다★ — 여기가 제일 �
   else bad('점검 페이지에서 값을 만들었다');
 }
 
-console.log('④ 한글이 깨지면 라벨을 못 찾는다 — 디코딩이 필수다');
+console.log('④ ★인코딩 판정★ — 프로덕션에서 두 사이트 다 200인데 라벨을 못 찾았다');
 {
-  if (/function _krDecode\(/.test(S) && /TextDecoder\("euc-kr"\)/.test(S))
-    ok('EUC-KR 디코딩 경로가 있다(UTF-8 로 읽으면 목표주가 라벨이 깨진다)');
-  else bad('EUC-KR 디코딩이 없다');
-  if (/cnt\(u8\) > cnt\(eu\) \? u8 : eu/.test(S))
-    ok('둘 다 깨지면 한글이 더 많이 살아 있는 쪽을 고른다');
-  else bad('디코딩 폴백이 없다');
+  const D = new Function(grab('function _krDecode(') + '; return _krDecode;')();
+  const enc = (str) => new TextEncoder().encode(str);           // UTF-8 바이트
+  const utf8Page = '<html><td>목표주가</td><td>95,000</td></html>';
+  const got = D(enc(utf8Page), '목표');
+  if (got.indexOf('목표주가') >= 0) ok('UTF-8 문서를 UTF-8 로 읽는다');
+  else bad('UTF-8 문서를 잘못 읽었다: ' + got.slice(0, 60));
+
+  /* ★이 사례가 종전 규칙을 깨뜨렸다★ — UTF-8 을 EUC-KR 로 읽으면 대부분의 바이트쌍이
+     유효한 한자로 매핑돼 U+FFFD 가 하나도 안 나온다. 그래서 "안 깨졌다" 고 판정하고
+     쓰레기 해독을 그대로 썼다. */
+  const euKrRead = new TextDecoder('euc-kr').decode(enc(utf8Page));
+  if (euKrRead.indexOf('\uFFFD') < 0)
+    ok('UTF-8 을 EUC-KR 로 읽으면 U+FFFD 가 안 나온다 — 종전 판정이 통하지 않던 이유');
+  else console.log('  --   이 환경에서는 U+FFFD 가 나온다(판정 근거로는 여전히 부적절)');
+  if (euKrRead.indexOf('목표주가') < 0 && got.indexOf('목표주가') >= 0)
+    ok('그 쓰레기 해독에는 라벨이 없고, 새 판정은 라벨이 있는 쪽을 골랐다');
+  else bad('새 판정이 여전히 잘못된 해독을 고른다');
+
+  // 라벨이 어느 쪽에도 없으면 한글이 더 많은 쪽
+  const plain = D(enc('<html>no korean here</html>'), '목표');
+  if (typeof plain === 'string') ok('라벨이 없어도 문자열을 돌려준다(빈 결과로 이어진다)');
 }
 
 console.log('⑤ 전부 실패하면 어디를 두드렸는지 남긴다');
 {
-  if (/tried\.push\(h\.src \+ " 목표주가 못 찾음"\)/.test(S)) ok('경로별 실패 사유를 모은다');
-  else bad('실패 사유를 안 남긴다');
+  /* '못 찾음' 한 마디로는 무엇을 고칠지 알 수 없다. 원인이 셋인데 조치가 각각 다르다:
+     한글깨짐 → 인코딩 · 라벨없음 → 다른 소스 · 숫자 못 읽음 → 정규식.
+     진단이 셋을 갈라 말하는지 확인한다. */
+  for (const [t, why] of [
+    ['한글깨짐(',            '인코딩 문제를 따로 말한다'],
+    ['라벨없음(',            '그 페이지에 목표주가가 없다는 것을 따로 말한다'],
+    ['라벨은 있으나 숫자 못 읽음', '숫자 형태 문제를 따로 말한다'],
+  ]) { if (S.includes(t)) ok(why); else bad('진단이 ' + why.replace('말한다','말하지 않는다')); }
+  // 소스가 여러 곳인가 — 한 곳에 목표주가가 없을 수 있다
+  const nSrc = (S.match(/src: "(네이버|에프앤가이드)[^"]*"/g) || []).length;
+  if (nSrc >= 4) ok('목표주가 후보 경로 ' + nSrc + '곳 — 한 곳에 없어도 다음을 본다');
+  else bad('경로가 ' + nSrc + '곳뿐이다');
   if (/return tried\.length \? \{ _tried: tried \} : null;/.test(S)) ok('그 사유를 호출부로 올린다');
   else bad('사유가 버려진다');
 }

@@ -2788,7 +2788,7 @@ async function applySignalTypeWeights(DB, cfg) {
 // ============================================================================
 // [V33.55] 빌드 버전 — SWR L2 캐시 키에 섞어 '배포 = 판단 캐시 자동 무효화'를 만든다.
 //   판정 로직을 고쳐도 옛 캐시가 최대 1시간 재배포되던 문제를 구조적으로 없앤다.
-const _BUILD_VER = "V33.166";
+const _BUILD_VER = "V33.167";
 
 const AI_PARAMS = {
   // ── OHLCV 타임프레임 ── 시가/고가/저가/종가/거래량을 어떤 봉 주기로 볼지.
@@ -24113,6 +24113,12 @@ async function anlFetchKR(symbol) {
      이 방식은 표든 목록이든 문단이든 상관없이 동작한다.
      국내 컨센서스가 실제로 모여 있는 곳(에프앤가이드 계열)을 우선한다. */
   const htmlSrcs = [
+    /* 네이버 종목 메인 — 서버가 그대로 그려 주고 EUC-KR 이다. 투자의견·목표주가가 본문에 있다. */
+    { url: "https://finance.naver.com/item/main.naver?code=" + code,
+      src: "네이버 금융 종목", ref: "https://finance.naver.com/" },
+    /* 에프앤가이드 컨센서스 전용 화면 — 목표주가만 모여 있는 곳 */
+    { url: "https://navercomp.wisereport.co.kr/v2/company/cF3002.aspx?cmp_cd=" + code + "&finGubun=MAIN",
+      src: "에프앤가이드 컨센서스", ref: "https://navercomp.wisereport.co.kr/" },
     { url: "https://navercomp.wisereport.co.kr/v2/company/c1010001.aspx?cmp_cd=" + code,
       src: "네이버 금융 종목분석(에프앤가이드)", ref: "https://finance.naver.com/" },
     { url: "https://comp.fnguide.com/SVO2/ASP/SVD_Main.asp?pGB=1&gicode=A" + code + "&NewMenuID=101&stkGb=701",
@@ -24124,13 +24130,21 @@ async function anlFetchKR(symbol) {
       __fetchBudget.used++;
       const r = await fetch(h.url, { headers: { "User-Agent": "Mozilla/5.0", "Referer": h.ref } });
       if (!r.ok) { tried.push(h.src + " HTTP " + r.status); continue; }
-      const html = _krDecode(await r.arrayBuffer());
+      const html = _krDecode(await r.arrayBuffer(), "목표");
       const got = _krConsensusFromHtml(html);
       if (got && got.tgtMean != null) {
         got.src = h.src; got.srcUrl = h.url; got.cur = "KRW";
         return got;
       }
-      tried.push(h.src + " 목표주가 못 찾음");
+      /* [V33.167] '못 찾음' 만으로는 무엇을 고쳐야 할지 알 수 없다.
+         한글이 살아 있는지 · 라벨이 있는지 · 숫자가 없는지를 갈라 적는다.
+           한글X  → 인코딩 문제      한글O·라벨X → 그 페이지엔 없다(다른 소스로)
+           라벨O  → 숫자 형태 문제(정규식) */
+      const hg = (html.match(/[가-힣]/g) || []).length;
+      const hasLbl = /(목표\s*주가|적정\s*주가|목표\s*가격)/.test(html);
+      tried.push(h.src + (hg < 20 ? " 한글깨짐(" + html.length + "자)"
+                 : !hasLbl ? " 라벨없음(" + hg + "한글)"
+                 : " 라벨은 있으나 숫자 못 읽음"));
     } catch (e) { tried.push(h.src + " 실패"); }
   }
 
@@ -24162,17 +24176,23 @@ async function anlFetchKR(symbol) {
 }
 
 // 국내 사이트는 EUC-KR 이 흔하다. UTF-8 로 읽으면 한글 라벨('목표주가')이 깨져 전부 실패한다.
-function _krDecode(buf) {
-  try {
-    const eu = new TextDecoder("euc-kr").decode(buf);
-    if (eu && eu.indexOf("�") < 0) return eu;
-    const u8 = new TextDecoder("utf-8").decode(buf);
-    /* 둘 다 깨졌으면 한글이 더 많이 살아 있는 쪽을 쓴다 */
-    const cnt = function (x) { return (String(x).match(/[가-힣]/g) || []).length; };
-    return cnt(u8) > cnt(eu) ? u8 : eu;
-  } catch (e) {
-    try { return new TextDecoder("utf-8").decode(buf); } catch (e2) { return ""; }
-  }
+function _krDecode(buf, mustHave) {
+  /* [V33.167] ★인코딩 판정을 U+FFFD 로 하면 안 된다.★
+     프로덕션에서 두 사이트 모두 HTTP 200 인데 '목표주가 못 찾음' 이 나왔다 —
+     오류가 아니라 ★라벨이 안 잡힌 것★ 이다. 원인이 여기 있었다:
+     UTF-8 문서를 EUC-KR 로 읽으면 대부분의 바이트쌍이 ★유효한 한자/한글로 매핑돼★
+     U+FFFD 가 하나도 안 나온다. 그러면 종전 규칙은 그 쓰레기 해독을 '정상' 으로 보고
+     그대로 반환했고, '목표주가' 는 영원히 안 맞았다.
+     → 판정 기준을 바꾼다: ★찾으려는 말이 실제로 들어 있는 해독★ 을 고른다.
+       둘 다 없으면 한글이 더 많이 살아 있는 쪽(문서로서 말이 되는 쪽)을 쓴다. */
+  const dec = function (enc) { try { return new TextDecoder(enc).decode(buf); } catch (e) { return ""; } };
+  const eu = dec("euc-kr"), u8 = dec("utf-8");
+  const key = mustHave || "목표";
+  const hasEu = eu.indexOf(key) >= 0, hasU8 = u8.indexOf(key) >= 0;
+  if (hasEu && !hasU8) return eu;
+  if (hasU8 && !hasEu) return u8;
+  const cnt = function (x) { return (String(x).match(/[가-힣]/g) || []).length; };
+  return cnt(u8) > cnt(eu) ? u8 : eu;
 }
 
 /* 라벨 앵커 추출 — 표 구조를 가정하지 않는다.
