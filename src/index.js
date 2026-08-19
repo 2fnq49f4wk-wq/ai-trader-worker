@@ -2788,7 +2788,7 @@ async function applySignalTypeWeights(DB, cfg) {
 // ============================================================================
 // [V33.55] 빌드 버전 — SWR L2 캐시 키에 섞어 '배포 = 판단 캐시 자동 무효화'를 만든다.
 //   판정 로직을 고쳐도 옛 캐시가 최대 1시간 재배포되던 문제를 구조적으로 없앤다.
-const _BUILD_VER = "V33.164";
+const _BUILD_VER = "V33.165";
 
 const AI_PARAMS = {
   // ── OHLCV 타임프레임 ── 시가/고가/저가/종가/거래량을 어떤 봉 주기로 볼지.
@@ -23971,12 +23971,23 @@ const KRBROKER = {
 function _krbStrip(h) { return String(h || "").replace(/<[^>]*>/g, " ").replace(/&nbsp;/g, " ").replace(/\s+/g, " ").trim(); }
 
 // 한경컨센서스 종목 리포트 목록 → [{firm, target, opinion, t, title}]
-function _krbParseHankyung(html) {
+function _krbParseHankyung(html, want) {
   const rows = [];
   const trs = String(html || "").split(/<tr[\s>]/i).slice(1);
   for (const tr of trs) {
     const tds = tr.split(/<td[\s>]/i).slice(1).map(_krbStrip);
     if (tds.length < 4) continue;
+    /* [V33.165] ★이 줄이 정말 이 종목의 리포트인가.★
+       프로덕션에서 어느 종목을 열어도 같은 증권사·같은 의견이 나왔다 — 검색어가
+       안 먹고 ★최신 리포트 목록★ 이 그대로 돌아온 것으로 보인다. 그러면 남의 종목
+       리포트를 이 종목 화면에 붙이는 셈이라, 안 보이는 것보다 나쁘다.
+       종목명이나 코드가 줄 어딘가에 없으면 버린다. 확인 못 하면 안 쓴다. */
+    if (want && (want.name || want.code)) {
+      const rowTx = tds.join(" ");
+      const hitName = want.name && rowTx.indexOf(want.name) >= 0;
+      const hitCode = want.code && rowTx.indexOf(want.code) >= 0;
+      if (!hitName && !hitCode) continue;
+    }
     // 날짜(YYYY-MM-DD) · 목표가(숫자) · 투자의견(한글/영문 단어) · 증권사(…증권/…투자증권)
     let t = null, tgt = null, op = null, firm = null, title = null;
     for (const c of tds) {
@@ -23991,13 +24002,25 @@ function _krbParseHankyung(html) {
           const v = parseFloat(c2);
           if (v >= KRBROKER.minTarget && v <= KRBROKER.maxTarget) { tgt = v; continue; }
         }
+        /* [V33.165] 라벨과 값이 ★한 칸에★ 들어 있는 모양도 있다 — "목표주가 420,000원".
+           그때는 칸 전체가 숫자가 아니라 위 규칙에 안 걸린다. 다만 아무 숫자나 주우면
+           조회수·순번까지 목표가로 올라가므로, ★'목표'·'적정' 이라는 말이 같은 칸에
+           있을 때만★ 그 칸의 숫자를 쓴다. */
+        if (/(목표|적정)/.test(c)) {
+          const m2 = c.match(/([\d][\d,]{2,})\s*원?/);
+          if (m2) {
+            const v2 = parseFloat(m2[1].replace(/,/g, ""));
+            if (v2 >= KRBROKER.minTarget && v2 <= KRBROKER.maxTarget) { tgt = v2; continue; }
+          }
+        }
       }
       if (!op && /^(매수|강력매수|중립|보유|비중확대|비중축소|매도|Buy|Strong ?Buy|Hold|Sell|Outperform|Marketperform|Underperform|Neutral)$/i.test(c)) { op = c; continue; }
       if (!firm && /(증권|자산운용|투자증권|리서치)/.test(c) && c.length <= 20) { firm = c; continue; }
       if (!title && c.length > 6) title = c.slice(0, 60);
     }
     if (!firm || (tgt == null && !op)) continue;         // 증권사와 값 둘 다 없으면 버린다
-    rows.push({ firm: firm, target: tgt, opinion: op, t: t, title: title });
+    rows.push({ firm: firm, target: tgt, opinion: op, t: t, title: title,
+                raw: tds.filter(function (x) { return x; }).slice(0, 8).join(" | ").slice(0, 180) });
   }
   /* [V33.164] 같은 줄이 여러 번 잡히는 것을 막는다 — 프로덕션에서 iM증권이 3번,
      LS증권이 2번 나왔다. 표가 중첩돼 있거나 요약/본문이 각각 <tr> 로 잡히면 생긴다.
@@ -24018,7 +24041,12 @@ async function krBrokerReports(symbol) {
   if (!/^\d{6}$/.test(code)) return null;
   const name = (typeof NAME_MAP !== "undefined" && NAME_MAP[String(symbol).toUpperCase()]) || "";
   const hdr = { "User-Agent": "Mozilla/5.0", "Referer": "https://consensus.hankyung.com/" };
-  // 검색은 종목명이 잘 먹고, 코드가 먹는 경우도 있어 둘 다 시도한다
+  /* [V33.165] 경로를 둘로 나눈다.
+       ① 한경컨센서스 — 목표가(적정가격)를 표에 싣는다. 다만 검색어가 안 먹으면
+          최신 리포트 목록이 그대로 오므로, 위 파서가 ★종목명/코드 확인★ 을 강제한다.
+       ② 네이버 금융 리서치 — itemCode 로 ★확실히★ 종목이 걸린다. 대신 목록 표에
+          목표가 열이 없어 증권사·제목·날짜만 얻는다.
+     둘 다 시도해 합친다. 목표가는 ①에서만 나오고, ②는 "누가 언제 냈는지" 를 채운다. */
   const queries = [name, code].filter(function (x) { return x; });
   for (const q of queries) {
     if (fetchBudgetLeft() < ANLDET.minFetchBudget) break;
@@ -24028,7 +24056,7 @@ async function krBrokerReports(symbol) {
       const r = await fetch(url, { headers: hdr });
       if (!r.ok) continue;
       const html = await r.text();
-      const all = _krbParseHankyung(html);
+      const all = _krbParseHankyung(html, { name: name, code: code });
       const cut = Date.now() - KRBROKER.days * 86400000;
       const rows = all.filter(function (x) { return x.t == null || x.t >= cut; }).slice(0, KRBROKER.maxRows);
       if (rows.length) {
@@ -24037,17 +24065,38 @@ async function krBrokerReports(symbol) {
            외부 망이 막혀 실제 표를 볼 수 없으므로, 첫 줄의 칸들을 그대로 담아 둔다.
            (사람이 읽을 짧은 문자열만 — 원문 HTML 을 통째로 나르지 않는다) */
         if (!rows.some(function (x) { return x.target != null; })) {
-          try {
-            const first = String(html).split(/<tr[\s>]/i)[1] || "";
-            out.diag = first.split(/<td[\s>]/i).slice(1).map(_krbStrip)
-                            .filter(function (x) { return x; }).slice(0, 8).join(" | ").slice(0, 200);
-          } catch (e) {}
+          /* ★우리가 실제로 채택한 줄★ 을 담는다. 종전엔 표의 첫 줄(머리글일 수도 있는)을
+             담아서 정작 문제의 줄을 못 봤다. */
+          out.diag = (rows[0] && rows[0].raw) || "";
         }
         return out;
       }
     } catch (e) { /* 다음 질의 */ }
   }
-  return null;
+  /* 한경 쪽에서 이 종목의 줄을 하나도 확인하지 못했다 —
+     네이버 리서치로 '누가 언제 냈는지' 만이라도 정확히 가져온다. */
+  return await krBrokerReportsNaver(code, name);
+}
+
+// 네이버 금융 리서치 — itemCode 로 종목이 확실히 걸린다(목표가 열은 없다)
+async function krBrokerReportsNaver(code, name) {
+  if (fetchBudgetLeft() < ANLDET.minFetchBudget) return null;
+  const url = "https://finance.naver.com/research/company_list.naver?searchType=itemCode&itemCode=" + encodeURIComponent(code);
+  try {
+    __fetchBudget.used++;
+    const r = await fetch(url, { headers: { "User-Agent": "Mozilla/5.0", "Referer": "https://finance.naver.com/research/" } });
+    if (!r.ok) return null;
+    const buf = await r.arrayBuffer();
+    /* 네이버 리서치는 EUC-KR 이다. UTF-8 로 읽으면 한글이 깨져 증권사명 판별이 통째로 실패한다. */
+    let html = "";
+    try { html = new TextDecoder("euc-kr").decode(buf); }
+    catch (e) { html = new TextDecoder("utf-8").decode(buf); }
+    const rows = _krbParseHankyung(html, null).slice(0, KRBROKER.maxRows);
+    if (!rows.length) return null;
+    return { rows: rows, src: "네이버 금융 리서치 · 국내 증권사 리포트",
+             srcUrl: url, noTarget: true,
+             diag: rows[0] ? rows[0].raw : "" };
+  } catch (e) { return null; }
 }
 
 // 한국 — 네이버 금융(에프앤가이드) 컨센서스. 후보를 순서대로 시도한다.
@@ -24140,6 +24189,7 @@ async function analystDetail(DB, symbol, force) {
         v.brokers = br.rows;
         v.brokerSrc = br.src; v.brokerSrcUrl = br.srcUrl;
         if (br.diag) v.brokerDiag = br.diag;
+        if (br.noTarget) v.brokerNoTarget = true;
         /* 현재가는 ★우리가 이미 받는 시세★ 로 채운다 — 목표가는 그들 것, 가격은 우리 것.
            이게 없으면 상승여력을 못 내고 화면에 '현재가 —' 만 남는다(프로덕션에서 그랬다). */
         if (v.px == null) {
