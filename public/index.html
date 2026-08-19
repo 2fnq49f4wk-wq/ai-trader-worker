@@ -8,7 +8,7 @@
      인데, 지금까지 화면에서 그걸 알 방법이 전혀 없었다(카카오톡 인앱 브라우저는 특히 강하게 캐시한다).
      서버가 내려주는 build 와 이 값을 비교해 다르면 배너로 알린다.
      ※ src/index.js 의 _BUILD_VER 와 항상 같아야 한다 — check-html-js 가 강제한다. -->
-<meta name="lux-build" content="V33.165">
+<meta name="lux-build" content="V33.166">
 <title>LUX-ENGINE V10</title>
 <!-- ══ [V33.156] 설치형 앱(PWA) — 폰·PC 에서 홈화면/독에 담아 앱처럼 연다 ══
      · manifest  : 이름·아이콘·standalone 표시(주소창 없이 앱처럼)
@@ -8101,7 +8101,8 @@ html[data-theme="light"] .m-brainbar button.active{color:#0b4f9e;background:rgba
   function renderDetailAnalyst(d){
     var el = $('detailAnalyst'); if (!el) return;
     if (!d || !d.ok){
-      el.innerHTML = '<div class="anl-none">' + escapeHtml((d && d.why) || '자료를 못 받았어요') + '</div>';
+      el.innerHTML = '<div class="anl-none">' + escapeHtml((d && d.why) || '자료를 못 받았어요') + '</div>'
+        + (d && d.tgtTried ? '<div class="anl-note"><span class="anl-diag">' + escapeHtml(d.tgtTried) + '</span></div>' : '');
       return;
     }
     var cur = d.cur || null, h = '';
@@ -8181,7 +8182,9 @@ html[data-theme="light"] .m-brainbar button.active{color:#0b4f9e;background:rgba
          ① 이 목록에 애초에 목표가 열이 없다(네이버 리서치) → 사실을 그대로 적는다.
          ② 있어야 하는데 못 읽었다(한경) → 우리가 채택한 줄을 ★눈에 보이게★ 적는다.
             종전엔 툴팁이라 아이패드에서 볼 수가 없었다 — 볼 수 없는 진단은 없는 것과 같다. */
-      if (!d.brokers.some(function(b){ return b.target != null; })){
+      /* 컨센서스 목표가를 다른 경로에서 이미 받았다면, 리포트 줄에 목표가가 없는 것은
+         문제가 아니다 — 그때까지 "못 읽었어요" 라고 하면 멀쩡한 화면을 고장으로 보이게 한다. */
+      if (d.tgtMean == null && !d.brokers.some(function(b){ return b.target != null; })){
         if (d.brokerNoTarget){
           h += '<div class="anl-note">이 목록은 목표가를 싣지 않아요 — 증권사·날짜만 확인됩니다</div>';
         } else {
@@ -8189,6 +8192,9 @@ html[data-theme="light"] .m-brainbar button.active{color:#0b4f9e;background:rgba
              + (d.brokerDiag ? '<br><span class="anl-diag">읽은 줄: ' + escapeHtml(d.brokerDiag) + '</span>' : '')
              + '</div>';
         }
+        /* 컨센서스 경로를 어디까지 두드렸는지 — 다음에 고칠 단서다 */
+        if (d.tgtTried)
+          h += '<div class="anl-note"><span class="anl-diag">컨센서스 경로: ' + escapeHtml(d.tgtTried) + '</span></div>';
       }
       /* 국내 리서치는 매도 의견이 거의 나오지 않는다 — 화면이 고장 난 게 아니라
          시장의 성질이다. 이 한 줄이 없으면 "왜 다 매수지?" 를 계속 의심하게 된다. */

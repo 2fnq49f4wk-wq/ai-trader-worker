@@ -150,6 +150,11 @@ jobs:
       #   그 규칙이 흔들리면 엉뚱한 숫자가 목표가로 올라간다. HTML 모양을 여러 개 만들어 돌린다.
       - name: 국내 증권사 리포트 파서 검사 (열 순서 무관 · 오인 방지)
         run: node tools/check-kr-broker.mjs
+      # [V33.166] 국내 목표주가 추출 — 두 번 실패한 원인이 같았다: '표의 몇 번째 칸' 가정.
+      #   구조를 버리고 '목표주가' 라는 말 뒤의 숫자를 찾는다. 여러 모양에서 통하는지와,
+      #   무엇보다 ★아무 숫자나 줍지 않는지★ 를 본다(엉뚱한 값은 조용한 거짓말이 된다).
+      - name: 국내 목표주가 추출 검사 (라벨 앵커 · 오인 방지)
+        run: node tools/check-kr-consensus.mjs
       # cloudflare/wrangler-action 대신 로컬에서 검증된 방식 그대로 실행
       # (wrangler-action@v3의 npx 자동설치가 4.86.0을 요구하며 실패하던 문제 회피)
       - name: Install wrangler

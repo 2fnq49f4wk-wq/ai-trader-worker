@@ -2788,7 +2788,7 @@ async function applySignalTypeWeights(DB, cfg) {
 // ============================================================================
 // [V33.55] 빌드 버전 — SWR L2 캐시 키에 섞어 '배포 = 판단 캐시 자동 무효화'를 만든다.
 //   판정 로직을 고쳐도 옛 캐시가 최대 1시간 재배포되던 문제를 구조적으로 없앤다.
-const _BUILD_VER = "V33.165";
+const _BUILD_VER = "V33.166";
 
 const AI_PARAMS = {
   // ── OHLCV 타임프레임 ── 시가/고가/저가/종가/거래량을 어떤 봉 주기로 볼지.
@@ -24104,6 +24104,37 @@ async function krBrokerReportsNaver(code, name) {
 async function anlFetchKR(symbol) {
   const code = String(symbol).replace(/\.(KS|KQ)$/i, "");
   if (!/^\d{6}$/.test(code)) return null;
+  const tried = [];
+
+  /* ── ① 라벨을 앵커로 잡는 HTML 경로 (V33.166) ──
+     지금까지 두 번 실패한 이유는 같다 — ★표의 몇 번째 칸★ 을 가정했기 때문이다.
+     열 순서·칸 병합·라벨 위치는 사이트마다 다르고 언제든 바뀐다.
+     그래서 구조를 버리고 ★'목표주가' 라는 말 바로 뒤의 숫자★ 를 찾는다.
+     이 방식은 표든 목록이든 문단이든 상관없이 동작한다.
+     국내 컨센서스가 실제로 모여 있는 곳(에프앤가이드 계열)을 우선한다. */
+  const htmlSrcs = [
+    { url: "https://navercomp.wisereport.co.kr/v2/company/c1010001.aspx?cmp_cd=" + code,
+      src: "네이버 금융 종목분석(에프앤가이드)", ref: "https://finance.naver.com/" },
+    { url: "https://comp.fnguide.com/SVO2/ASP/SVD_Main.asp?pGB=1&gicode=A" + code + "&NewMenuID=101&stkGb=701",
+      src: "에프앤가이드 기업분석", ref: "https://comp.fnguide.com/" }
+  ];
+  for (const h of htmlSrcs) {
+    if (fetchBudgetLeft() < ANLDET.minFetchBudget) break;
+    try {
+      __fetchBudget.used++;
+      const r = await fetch(h.url, { headers: { "User-Agent": "Mozilla/5.0", "Referer": h.ref } });
+      if (!r.ok) { tried.push(h.src + " HTTP " + r.status); continue; }
+      const html = _krDecode(await r.arrayBuffer());
+      const got = _krConsensusFromHtml(html);
+      if (got && got.tgtMean != null) {
+        got.src = h.src; got.srcUrl = h.url; got.cur = "KRW";
+        return got;
+      }
+      tried.push(h.src + " 목표주가 못 찾음");
+    } catch (e) { tried.push(h.src + " 실패"); }
+  }
+
+  /* ── ② JSON 후보 (모바일 API) ── */
   const hdr = { "User-Agent": "Mozilla/5.0", "Referer": "https://m.stock.naver.com/" };
   const tries = [
     { url: "https://m.stock.naver.com/api/stock/" + code + "/integration", src: "네이버 금융 · 종목분석" },
@@ -24114,7 +24145,7 @@ async function anlFetchKR(symbol) {
     try {
       __fetchBudget.used++;
       const r = await fetch(t.url, { headers: hdr });
-      if (!r.ok) continue;
+      if (!r.ok) { tried.push(t.src + " HTTP " + r.status); continue; }
       const j = await r.json();
       const got = _anlParseKR(j);
       if (got) {
@@ -24123,9 +24154,57 @@ async function anlFetchKR(symbol) {
         got.cur = "KRW";
         return got;
       }
-    } catch (e) { /* 다음 후보 */ }
+      tried.push(t.src + " 목표가 없음");
+    } catch (e) { tried.push(t.src + " 실패"); }
   }
-  return null;
+  /* 전부 실패 — ★어디를 두드렸고 무엇이 없었는지★ 를 남긴다. 다음에 고칠 단서가 된다. */
+  return tried.length ? { _tried: tried } : null;
+}
+
+// 국내 사이트는 EUC-KR 이 흔하다. UTF-8 로 읽으면 한글 라벨('목표주가')이 깨져 전부 실패한다.
+function _krDecode(buf) {
+  try {
+    const eu = new TextDecoder("euc-kr").decode(buf);
+    if (eu && eu.indexOf("�") < 0) return eu;
+    const u8 = new TextDecoder("utf-8").decode(buf);
+    /* 둘 다 깨졌으면 한글이 더 많이 살아 있는 쪽을 쓴다 */
+    const cnt = function (x) { return (String(x).match(/[가-힣]/g) || []).length; };
+    return cnt(u8) > cnt(eu) ? u8 : eu;
+  } catch (e) {
+    try { return new TextDecoder("utf-8").decode(buf); } catch (e2) { return ""; }
+  }
+}
+
+/* 라벨 앵커 추출 — 표 구조를 가정하지 않는다.
+   '목표주가' 라는 말 뒤 120자 안에서 말이 되는 숫자를 찾는다.
+   라벨이 목차·설명에도 나올 수 있으므로 ★숫자를 찾을 때까지★ 다음 라벨로 넘어간다. */
+function _krConsensusFromHtml(html) {
+  const txt = String(html || "").replace(/<[^>]*>/g, " ").replace(/&nbsp;/g, " ").replace(/\s+/g, " ");
+  const num = function (seg) {
+    const m = seg.match(/([1-9][\d,]{2,})/);
+    if (!m) return null;
+    const v = parseFloat(m[1].replace(/,/g, ""));
+    return (v >= KRBROKER.minTarget && v <= KRBROKER.maxTarget) ? v : null;
+  };
+  let tgt = null;
+  const LBL = /(목표\s*주가|적정\s*주가|목표\s*가격)/g;
+  let m;
+  while ((m = LBL.exec(txt))) {
+    const v = num(txt.slice(m.index + m[0].length, m.index + m[0].length + 120));
+    if (v != null) { tgt = v; break; }
+  }
+  if (tgt == null) return null;
+  let op = null, n = null, px = null;
+  const mo = txt.match(/투자\s*의견\s*([가-힣A-Za-z.]{1,10})/);
+  if (mo && !/^\d/.test(mo[1])) op = mo[1];
+  const mn = txt.match(/(추정기관수|참여기관수|기관수)\s*([0-9]{1,3})/);
+  if (mn) n = parseInt(mn[2], 10);
+  const mp = txt.match(/(현재가|종가)\s*([1-9][\d,]{2,})/);
+  if (mp) { const v = parseFloat(mp[2].replace(/,/g, "")); if (v > 0) px = v; }
+  /* 목표가가 현재가의 0.2~5배 밖이면 엉뚱한 숫자를 주운 것이다 — 버린다 */
+  if (px != null && (tgt < px * 0.2 || tgt > px * 5)) return null;
+  return { px: px, tgtMean: tgt, tgtHigh: null, tgtLow: null, tgtMedian: null,
+           n: n, ratingKey: op, ratingMean: null, dist: null, actions: [] };
 }
 
 // 응답 어디에 들어 있든 '목표주가/투자의견' 으로 보이는 값을 찾는다.
@@ -24172,10 +24251,13 @@ async function analystDetail(DB, symbol, force) {
   if (fetchBudgetLeft() < ANLDET.minFetchBudget) {
     return cached || { symbol: sym, ok: false, why: "조회 예산이 부족해요 — 잠시 뒤 다시 채워집니다", ts: Date.now() };
   }
-  let v = null, why = "";
+  let v = null, why = "", triedNote = null;
   try {
     v = _anlIsKR(sym) ? await anlFetchKR(sym) : await anlFetchUS(sym);
   } catch (e) { why = String((e && e.message) || e).slice(0, 120); }
+  /* [V33.166] 국내 경로가 전부 실패하면 '어디를 두드렸는지' 만 담긴 표식이 온다.
+     그건 값이 아니므로 v 로 쓰지 않는다 — 다만 사유는 화면까지 들고 간다. */
+  if (v && v._tried && v.tgtMean == null) { triedNote = v._tried.join(" · "); v = null; }
   /* [V33.163] 국내 종목은 ★증권사별 리포트 목록★ 을 따로 붙인다.
      컨센서스(평균 하나)와 달리 "어느 증권사가 얼마를 냈는지" 가 줄 단위로 나온다.
      컨센서스를 못 받았어도 이것만 있으면 화면은 채워진다 — 그래서 v 가 없어도 시도한다. */
@@ -24190,6 +24272,7 @@ async function analystDetail(DB, symbol, force) {
         v.brokerSrc = br.src; v.brokerSrcUrl = br.srcUrl;
         if (br.diag) v.brokerDiag = br.diag;
         if (br.noTarget) v.brokerNoTarget = true;
+        if (triedNote) v.tgtTried = triedNote;
         /* 현재가는 ★우리가 이미 받는 시세★ 로 채운다 — 목표가는 그들 것, 가격은 우리 것.
            이게 없으면 상승여력을 못 내고 화면에 '현재가 —' 만 남는다(프로덕션에서 그랬다). */
         if (v.px == null) {
@@ -24216,6 +24299,7 @@ async function analystDetail(DB, symbol, force) {
     // ★없는 값을 지어내지 않는다.★ 옛 값이 있으면 그것을 '오래된 값' 으로 표시해 돌려준다.
     if (cached && cached.ok) return Object.assign({}, cached, { stale: true });
     return { symbol: sym, ok: false, stale: false, ts: Date.now(),
+             tgtTried: triedNote || undefined,
              why: why || (_anlIsKR(sym) ? "국내 증권사 컨센서스를 받지 못했어요(공개 경로 응답 없음)"
                                         : "이 종목의 애널리스트 자료가 공개되어 있지 않아요") };
   }
