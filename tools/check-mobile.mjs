@@ -431,5 +431,32 @@ console.log('⑬ 격자 행 — 짝지을 패널이 실제로 이웃인가');
   else bad('한국장 패널이 위기·이슈 사이에 있다 — 좁은 폭에서 두 패널이 각자 한 줄을 차지한다');
 }
 
+/* ── ⑭ 한 줄의 높이는 가장 긴 카드가 정한다 ──────────────────────────────
+   ⑬ 은 "행이 폭을 다 쓰는가" 를 봤다. 폭이 다 차도 ★높이★ 가 어긋나면 옆 카드 아래가
+   통째로 빈다 — 실측: 기술적분석 스크리너가 1,183px 로 자라 옆 캘린더 카드를 같이
+   늘렸고, 캘린더 표는 320px 에서 끝나 그 아래가 텅 비었다.
+   고치는 방향은 짧은 카드를 늘리는 게 아니라 ★긴 카드를 화면 안에 묶는 것★ 이다. */
+console.log('⑭ 행 높이 — 긴 카드가 화면 밖으로 자라지 않는가');
+{
+  const flat = H.replace(/\s+/g, '');
+  for (const [t, why] of [
+    ['.cmbd-grid>.fv-panel{max-height:min(62vh,620px);}', '캘린더·기술적분석 카드가 뷰포트에 묶인다'],
+    ['.cmbd-grid#taResult{flex:1 1auto;min-height:0;overflow-y:auto;}'.replace(/\s/g, ''), '스크리너는 카드 안에서 스크롤한다'],
+    ['max-height:none!important;flex:1 1auto;min-height:0;overflow:auto;'.replace(/\s/g, ''), '캘린더 표가 고정 320px 대신 남는 높이를 채운다'],
+    ['.fv-deck{align-items:stretch;}', '한 줄의 카드들이 같은 높이가 된다'],
+    ['max-height:min(46vh,460px);', '정보 카드 상한이 보통 카드의 키 근처(460px)'],
+  ]) { if (flat.includes(t)) ok(why); else bad(why + ' — 그 규칙이 없다'); }
+  // 내용을 지우는 방식이 아니어야 한다 — 넘치면 잘리는 게 아니라 스크롤해야 한다
+  if (/#fvCrisisBody,\s*html\[data-density="terminal"\]\s*#fvEventsBody,\s*html\[data-density="terminal"\]\s*#fvKrHaltBody\{ flex:1 1 auto; min-height:0; overflow-y:auto; \}/.test(H))
+    ok('넘치는 내용은 잘리지 않고 카드 안에서 스크롤한다(overflow:hidden 아님)');
+  else bad('정보 카드 본문의 넘침 처리가 스크롤이 아니다');
+  // 폰은 이 규칙을 한 줄도 읽으면 안 된다(전부 min-width 로 감싸져 있는가)
+  const seg = H.slice(H.indexOf('[V33.161] 한 줄의 높이는'), H.indexOf('[V33.159] 한국장 매매정지 패널'));
+  const opens = (seg.match(/@media \(min-width:(901|1000)px\)\{/g) || []).length;
+  if (opens === 2 && !/@media \(max-width/.test(seg))
+    ok('V33.161 규칙은 전부 min-width(901·1000) 안에 있다 — 폰은 읽지 않는다');
+  else bad('V33.161 규칙 중 폰까지 닿는 것이 있다');
+}
+
 console.log(fail ? '\n실패 ' + fail + '건' : '\nok   폰 화면 계약 통과');
 process.exit(fail ? 1 : 0);

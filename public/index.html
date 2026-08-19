@@ -8,7 +8,7 @@
      인데, 지금까지 화면에서 그걸 알 방법이 전혀 없었다(카카오톡 인앱 브라우저는 특히 강하게 캐시한다).
      서버가 내려주는 build 와 이 값을 비교해 다르면 배너로 알린다.
      ※ src/index.js 의 _BUILD_VER 와 항상 같아야 한다 — check-html-js 가 강제한다. -->
-<meta name="lux-build" content="V33.160">
+<meta name="lux-build" content="V33.161">
 <title>LUX-ENGINE V10</title>
 <!-- ══ [V33.156] 설치형 앱(PWA) — 폰·PC 에서 홈화면/독에 담아 앱처럼 연다 ══
      · manifest  : 이름·아이콘·standalone 표시(주소창 없이 앱처럼)
@@ -14734,6 +14734,45 @@ html[data-theme="light"]:root .rail-view small{ color:var(--t3); }
    .page 의 모든 직계 자식에 한 번에 못박는다. (flex-grow 는 건드리지 않으므로
     높이를 채우려고 flex:1 을 쓴 자식은 그대로 동작한다.) */
 html:root .page > *{ flex-shrink:0; }
+
+/* ═══════════════════════════════════════════════════════════════════════════
+   [V33.161] 한 줄의 높이는 ★그 줄에서 가장 긴 카드★ 가 정한다.
+   그래서 옆 카드가 짧으면 그만큼이 통째로 빈 공간이 된다 — 화면이 "안 맞아" 보이던
+   실제 원인이다. 실측된 두 곳:
+     · 경제캘린더 ↔ 기술적분석 : 스크리너가 수백 개 칩을 세로로 쌓아 카드가 1,100px 을
+       넘겼다. 옆의 캘린더는 표가 320px 에서 끝나는데 카드만 같이 늘어나 아래가 텅 빈다.
+     · 지정학 게이지 ↔ 활성 이슈 : 이슈가 5건이면 두 배 가까이 차이가 난다.
+   고치는 방향은 '짧은 카드를 늘리는 것' 이 아니라 ★긴 카드를 화면 안에 묶는 것★ 이다.
+   내용은 지우지 않고 카드 안에서 스크롤시킨다. 그리고 짧은 카드의 스크롤 상자는
+   고정 높이를 버리고 남는 높이를 채우게 해, 빈 자리에 값이 더 들어가게 한다.
+   ═══════════════════════════════════════════════════════════════════════════ */
+@media (min-width:901px){
+  /* 카드가 화면 밖으로 자라지 않게 — 뷰포트에 맞춰 묶는다 */
+  .cmbd-grid > .fv-panel{ max-height:min(62vh, 620px); }
+  /* 캘린더 스크롤 상자: 고정 320px 대신 남는 높이를 채운다(인라인 style 이라 !important 필요) */
+  .cmbd-grid > .fv-panel > div[style*="max-height:320px"]{
+    max-height:none !important; flex:1 1 auto; min-height:0; overflow:auto;
+  }
+  /* 기술적분석 결과 — 카드를 늘리던 자리. 이제 카드 안에서 스크롤한다 */
+  .cmbd-grid #taResult{ flex:1 1 auto; min-height:0; overflow-y:auto; }
+}
+@media (min-width:1000px){
+  html[data-density="terminal"] .fv-deck{ align-items:stretch; }   /* 한 줄의 카드들은 같은 높이로 */
+  html[data-density="terminal"] .fv-deck > .fv-panel{ display:flex; flex-direction:column; }
+  html[data-density="terminal"] .fv-deck > #fvCrisisPanel,
+  html[data-density="terminal"] .fv-deck > #fvKrHaltPanel,
+  html[data-density="terminal"] .fv-deck > #fvEventsPanel{ max-height:min(46vh, 460px); }
+  /* 짧은 카드가 늘어난 만큼은 카드 ★안에★ 남는다 — 밖에 남는 것보다 낫지만 넓으면 허전하다.
+     그래서 상한은 '가장 긴 카드' 가 아니라 ★보통 카드의 키★ 근처로 잡았다(실측 기준 460px):
+     지정학 게이지가 대략 그 높이라, 이슈가 길어져도 줄이 그보다 더 자라지 않는다. */
+  html[data-density="terminal"] #fvCrisisBody,
+  html[data-density="terminal"] #fvEventsBody,
+  html[data-density="terminal"] #fvKrHaltBody{ flex:1 1 auto; min-height:0; overflow-y:auto; }
+  /* 한국장 카드는 내용이 짧아 늘어난 자리가 아래에 몰린다 — 두 시장이 반씩 나눠 갖게 해
+     한 덩어리의 빈칸을 둘로 쪼갠다(내용을 지어내지 않으면서 덜 허전하게). */
+  html[data-density="terminal"] #fvKrHaltBody{ display:flex; flex-direction:column; }
+  html[data-density="terminal"] #fvKrHaltBody > .krh-mk{ flex:1 1 auto; }
+}
 
 /* [V33.159] 한국장 매매정지 패널 — 숫자만으로는 '얼마나 가까운지' 가 안 잡혀서 막대를 같이 준다 */
 .krh-mk{ padding:6px 0; border-top:1px solid var(--bd2); }
