@@ -8,7 +8,7 @@
      인데, 지금까지 화면에서 그걸 알 방법이 전혀 없었다(카카오톡 인앱 브라우저는 특히 강하게 캐시한다).
      서버가 내려주는 build 와 이 값을 비교해 다르면 배너로 알린다.
      ※ src/index.js 의 _BUILD_VER 와 항상 같아야 한다 — check-html-js 가 강제한다. -->
-<meta name="lux-build" content="V33.159">
+<meta name="lux-build" content="V33.160">
 <title>LUX-ENGINE V10</title>
 <!-- ══ [V33.156] 설치형 앱(PWA) — 폰·PC 에서 홈화면/독에 담아 앱처럼 연다 ══
      · manifest  : 이름·아이콘·standalone 표시(주소창 없이 앱처럼)
@@ -3420,14 +3420,6 @@ html[data-theme="light"] .m-brainbar button.active{color:#0b4f9e;background:rgba
           </div>
           <div id="fvCrisisBody" style="padding:9px 10px;font-size:11px;line-height:1.6;color:var(--t2);">로딩 중…</div>
         </div>
-        <!-- [V33.159] 한국장 매매정지 감시 — 사이드카(매수/매도) · 서킷브레이커 1~3단계 -->
-        <div class="fv-panel" id="fvKrHaltPanel" style="margin-bottom:8px;">
-          <div class="fv-panel-head" id="fvKrHaltHead" style="cursor:pointer;" title="클릭하면 접거나 펼쳐요">
-            <span id="fvKrHaltCaret">▾</span> 한국장 매매정지 <span class="fv-panel-sub" id="fvKrHaltBadge">확인 중…</span>
-          </div>
-          <div id="fvKrHaltBody" style="padding:10px 12px;"><div class="empty">불러오는 중…</div></div>
-        </div>
-
         <!-- [V32.51] 활성 이슈 · 레짐 패널 — 이벤트 엔진(수혜/피해·확증·효능·순섹터선호)을 대시보드에 시각화 -->
         <div class="fv-panel" id="fvEventsPanel" style="margin-bottom:8px;">
           <div class="fv-panel-head" id="fvEventsHead" style="cursor:pointer;" title="클릭하면 접거나 펼쳐요">
@@ -3435,6 +3427,17 @@ html[data-theme="light"] .m-brainbar button.active{color:#0b4f9e;background:rgba
           </div>
           <div id="fvEventsBody" style="padding:9px 10px;font-size:11px;line-height:1.6;color:var(--t2);">로딩 중…</div>
         </div>
+        <!-- [V33.160] ★위치가 곧 레이아웃이다.★ V33.159 에서 이 패널을 위기 패널과 이슈 패널
+             ★사이에★ 뒀더니, 한 줄에 둘씩 놓이던 그 두 패널이 짝을 잃고 각자 한 줄을
+             차지해 화면 절반이 비었다. 좁은 폭에서는 이 패널이 전체폭으로 펴지므로
+             ★짝지어질 둘 뒤에★ 와야 한다. — 한국장 매매정지 감시 — 사이드카(매수/매도) · 서킷브레이커 1~3단계 -->
+        <div class="fv-panel" id="fvKrHaltPanel" style="margin-bottom:8px;">
+          <div class="fv-panel-head" id="fvKrHaltHead" style="cursor:pointer;" title="클릭하면 접거나 펼쳐요">
+            <span id="fvKrHaltCaret">▾</span> 한국장 매매정지 <span class="fv-panel-sub" id="fvKrHaltBadge">확인 중…</span>
+          </div>
+          <div id="fvKrHaltBody" style="padding:10px 12px;"><div class="empty">불러오는 중…</div></div>
+        </div>
+
         <!-- [V12.112] AI에게 물어보기 — 온보드 자연어 Q&A(외부 LLM API 미사용). 사용자 요청으로 대시보드에 유지. -->
         <div class="fv-panel" id="fvAiAskPanel" style="margin-bottom:8px;">
           <div class="fv-panel-head">AI에게 물어보기</div>
@@ -5248,8 +5251,11 @@ html[data-theme="light"] .m-brainbar button.active{color:#0b4f9e;background:rgba
           scTx = '매수까지 <b>' + sc.toBuy.toFixed(2) + '%p</b> · 매도까지 <b>' + sc.toSell.toFixed(2) + '%p</b>';
         }
         html += '<div class="krh-row"><span class="krh-k">사이드카</span><span class="krh-v">' + scTx + '</span></div>';
-        html += '<div class="krh-note">규정 ' + escapeHtml(sc.rule) + ' · ' + escapeHtml(sc.proxyNote) + '</div>';
-        if(sc.blocked) html += '<div class="krh-note">' + escapeHtml(sc.blocked) + '</div>';
+        /* [V33.160] 설명 두 줄 → 한 줄. 규정 문구와 '대용' 사유를 늘 펼쳐 두니 패널이
+           필요 이상으로 길었다. 지워서 줄이지는 않는다 — 물음표로 접어 둔다. */
+        html += '<div class="krh-note">' + escapeHtml(sc.rule)
+              + ' <span class="krh-why" title="' + escapeHtml(sc.proxyNote) + '">대용?</span>'
+              + (sc.blocked ? ' · ' + escapeHtml(sc.blocked) : '') + '</div>';
 
         /* 서킷브레이커 */
         var cb = m.cb, cbTx;
@@ -5260,11 +5266,11 @@ html[data-theme="light"] .m-brainbar button.active{color:#0b4f9e;background:rgba
         } else if(cb.nearest){
           cbTx = cb.nearest.step + '단계(' + cb.nearest.threshold + '%)까지 <b>' + cb.nearest.remain.toFixed(2) + '%p</b>';
         } else cbTx = '<span class="nil">—</span>';
-        html += '<div class="krh-row"><span class="krh-k">서킷브레이커</span><span class="krh-v">' + cbTx + '</span></div>';
-        html += '<div class="krh-note">기준 ' + escapeHtml(cb.basis) + ' — 규정 기준 그대로예요(대용 아님)</div>';
-        html += '<div class="krh-steps">' + cb.steps.map(function(x){
-          return '<span class="krh-step' + (x.beyond ? ' on' : '') + '">' + x.step + '단계 ' + x.threshold + '%</span>';
-        }).join('') + '</div>';
+        html += '<div class="krh-row"><span class="krh-k">서킷브레이커</span><span class="krh-v">' + cbTx
+              + ' <span class="krh-steps">' + cb.steps.map(function(x){
+                  return '<i class="krh-step' + (x.beyond ? ' on' : '') + '" title="' + x.step + '단계 ' + x.threshold + '%">' + x.step + '</i>';
+                }).join('') + '</span></span></div>';
+        html += '<div class="krh-note">' + escapeHtml(cb.basis) + ' · 규정 기준 그대로</div>';
 
         if(m.fired && m.fired.length){
           html += '<div class="krh-fired">오늘 기록 · ' + m.fired.map(function(f){
@@ -14144,8 +14150,14 @@ html[data-theme="light"] .rail{background:#fff;}
 @media(min-width:1000px){
   /* 데크를 4열 그리드로 — 세로로 길게 늘어지던 패널들을 옆으로 붙여 한 화면에 담는다.
      (인라인 margin-bottom:8px 를 덮어야 해서 !important 필요) */
+  /* [V33.160] 4열 → ★6열★.
+     정보 패널이 둘(위기·이슈)일 때는 4열에 2+2 로 딱 맞았다. V33.159 에서 한국장
+     매매정지 패널이 그 ★사이에★ 끼면서 2칸짜리 둘이 짝을 잃었다 —
+     [위기2][빈2] / [한국장4] / [이슈2][빈2] 로 화면 절반이 비었다.
+     셋을 한 줄에 나란히 놓으려면 3으로 나뉘는 열 수가 필요하다. 6열은 3(2칸씩)과
+     2(3칸씩) 를 모두 담고, 전체폭 항목은 1/-1 이라 그대로다. */
   html[data-density="terminal"] .fv-deck{
-    display:grid;grid-template-columns:repeat(4,minmax(0,1fr));align-items:start;
+    display:grid;grid-template-columns:repeat(6,minmax(0,1fr));align-items:start;
   }
   /* [V33.159] ★기본값을 뒤집는다 — 자식을 이름으로 열거하지 않는다.★
      종전엔 "전체폭으로 펼 자식" 을 하나하나 적었다. 그래서 목록에 없는 자식이 하나라도
@@ -14156,8 +14168,17 @@ html[data-theme="light"] .rail{background:#fff;}
      → 모든 자식을 전체폭으로 두고, ★좁힐 것만★ 예외로 적는다. 앞으로 자식이 늘어도 안전하다. */
   html[data-density="terminal"] .fv-deck>*{grid-column:1/-1;}
   /* AI 운용 상태는 두뇌 페이지 사이드바로 이동해 여기선 숨김 — 남은 두 패널이 폭을 나눠 갖는다 */
+  /* 정보 패널 셋은 한 줄에 나란히 — 6열 ÷ 3 = 각 2칸 */
   html[data-density="terminal"] .fv-deck>#fvCrisisPanel,
+  html[data-density="terminal"] .fv-deck>#fvKrHaltPanel,
   html[data-density="terminal"] .fv-deck>#fvEventsPanel{grid-column:span 2;}
+  /* 1300px 미만에서는 한 칸이 300px 아래로 내려가 표가 눌린다 —
+     그때는 둘(3칸씩)만 나란히 두고 한국장은 전체폭으로 편다(빈칸이 안 생긴다). */
+  @media(max-width:1299px){
+    html[data-density="terminal"] .fv-deck>#fvCrisisPanel,
+    html[data-density="terminal"] .fv-deck>#fvEventsPanel{grid-column:span 3;}
+    html[data-density="terminal"] .fv-deck>#fvKrHaltPanel{grid-column:1/-1;}
+  }
   html[data-density="terminal"] .fv-deck>.fv-panel{margin-bottom:0!important;}
   html[data-density="terminal"] .fv-deck{padding:6px 6px 0;gap:6px;}
   html[data-density="terminal"] .dash-grid{gap:6px;padding:6px;}
@@ -14715,30 +14736,34 @@ html[data-theme="light"]:root .rail-view small{ color:var(--t3); }
 html:root .page > *{ flex-shrink:0; }
 
 /* [V33.159] 한국장 매매정지 패널 — 숫자만으로는 '얼마나 가까운지' 가 안 잡혀서 막대를 같이 준다 */
-.krh-mk{ padding:8px 0; border-top:1px solid var(--bd2); }
+.krh-mk{ padding:6px 0; border-top:1px solid var(--bd2); }
 .krh-mk:first-child{ border-top:none; padding-top:0; }
-.krh-h{ display:flex; align-items:baseline; gap:8px; margin-bottom:6px; }
-.krh-nm{ font-size:11.5px; font-weight:650; color:var(--t1); }
-.krh-h b{ font-family:'IBM Plex Mono',monospace; font-size:13px; font-variant-numeric:tabular-nums; }
-.krh-bar{ position:relative; height:6px; border-radius:3px; background:var(--s2); overflow:hidden; margin:6px 0 8px; }
+.krh-h{ display:flex; align-items:baseline; gap:6px; margin-bottom:4px; }
+.krh-nm{ font-size:11px; font-weight:650; color:var(--t1); }
+.krh-h b{ font-family:'IBM Plex Mono',monospace; font-size:12px; font-variant-numeric:tabular-nums; }
+.krh-bar{ position:relative; height:5px; border-radius:3px; background:var(--s2); overflow:hidden; margin:4px 0 6px; }
 .krh-zone{ position:absolute; top:0; bottom:0; }
 .krh-zone.sell{ left:0; background:color-mix(in srgb, var(--neg) 26%, transparent); }
 .krh-zone.buy{ background:color-mix(in srgb, var(--pos) 26%, transparent); }
 .krh-tick{ position:absolute; top:0; bottom:0; width:1px; background:var(--bd); }
-.krh-now{ position:absolute; top:-2px; width:2px; height:10px; border-radius:1px; background:var(--pos); box-shadow:0 0 6px currentColor; }
+.krh-now{ position:absolute; top:-2px; width:2px; height:9px; border-radius:1px; background:var(--pos); box-shadow:0 0 6px currentColor; }
 .krh-now.neg{ background:var(--neg); }
-.krh-row{ display:flex; gap:8px; align-items:baseline; font-size:10.5px; margin-top:3px; }
-.krh-k{ flex:0 0 84px; color:var(--t3); letter-spacing:.02em; white-space:nowrap; }
+.krh-row{ display:flex; gap:6px; align-items:baseline; font-size:10px; margin-top:2px; }
+.krh-k{ flex:0 0 68px; color:var(--t3); letter-spacing:.02em; white-space:nowrap; }
 .krh-v{ flex:1 1 auto; min-width:0; color:var(--t2); }
 .krh-v b{ font-family:'IBM Plex Mono',monospace; font-variant-numeric:tabular-nums; color:var(--t1); }
 .krh-v b.amber{ color:var(--amber,#fbbf24); }
-.krh-note{ font-size:9.5px; color:var(--t3); margin-top:3px; line-height:1.5; }
-.krh-steps{ display:flex; flex-wrap:wrap; gap:4px; margin-top:5px; }
-.krh-step{ font-size:9px; font-family:'IBM Plex Mono',monospace; padding:2px 6px; border-radius:999px;
-  border:1px solid var(--bd); color:var(--t3); }
-.krh-step.on{ border-color:var(--neg); color:var(--neg); background:color-mix(in srgb, var(--neg) 12%, transparent); }
-.krh-fired{ margin-top:6px; font-size:9.5px; color:var(--amber,#fbbf24); }
-@media(max-width:767px){ .krh-k{ flex-basis:74px; font-size:9.5px; } }
+.krh-note{ font-size:9px; color:var(--t3); margin-top:2px; line-height:1.45; }
+/* 접어 둔 설명 — 지운 게 아니라 물음표 뒤에 넣었다(길게 늘어놓지 않으면서 근거는 남긴다) */
+.krh-why{ border-bottom:1px dotted var(--t3); cursor:help; }
+/* 단계 칩 — 한 줄을 따로 쓰지 않고 서킷브레이커 값 옆에 붙는다 */
+.krh-steps{ display:inline-flex; gap:3px; margin-left:4px; vertical-align:baseline; }
+.krh-step{ font-style:normal; font-size:8.5px; font-family:'IBM Plex Mono',monospace;
+  width:14px; height:14px; line-height:13px; text-align:center; border-radius:50%;
+  border:1px solid var(--bd); color:var(--t3); cursor:help; }
+.krh-step.on{ border-color:var(--neg); color:var(--neg); background:color-mix(in srgb, var(--neg) 14%, transparent); }
+.krh-fired{ margin-top:4px; font-size:9px; color:var(--amber,#fbbf24); }
+@media(max-width:767px){ .krh-k{ flex-basis:64px; font-size:9.5px; } }
 
 /* [V33.157] 당겨서 새로고침 표시 — 설치형에서만 JS 가 붙는다(웹에는 아예 안 생긴다) */
 .lux-ptr{

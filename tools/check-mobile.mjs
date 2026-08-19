@@ -386,14 +386,49 @@ console.log('⑫ 터미널 격자 — 새 자식이 생겨도 안 찢어지는�
   if (/\.fv-deck>\*\{grid-column:1\/-1;\}/.test(H.replace(/\s+/g, '')))
     ok('.fv-deck 의 ★모든★ 자식이 기본 전체폭 (열거가 아니라 기본값)');
   else bad('.fv-deck 자식을 이름으로 열거하고 있다 — 런타임에 꽂히는 자식이 격자를 찢는다');
-  // 좁힐 것만 예외로 남아 있는가
-  const nar = (H.match(/\.fv-deck>#fv(Crisis|Events)Panel/g) || []).length;
-  if (nar === 2) ok('2칸으로 좁히는 예외는 위기·이슈 패널 둘뿐');
-  else bad('좁힘 예외가 ' + nar + '개다 — 의도한 둘이 아니다');
+  /* 좁히는 예외는 ★id 로 지목한 것만★ 이어야 한다.
+     .fv-panel 같은 넓은 선택자로 좁히면 새로 생기는 패널이 또 말려든다.
+     (V33.160 에서 한국장 패널이 합류해 좁힘 대상은 셋 — 폭 구간마다 span 값이 다르다) */
+  const narrowed = new Set((H.match(/\.fv-deck>#(fv[A-Za-z]+Panel)\{?/g) || [])
+    .map(function (x) { return x.replace(/.*#/, '').replace(/\{$/, ''); }));
+  const want = ['fvCrisisPanel', 'fvKrHaltPanel', 'fvEventsPanel'];
+  const extra = [...narrowed].filter(function (x) { return want.indexOf(x) < 0; });
+  if (!extra.length && want.every(function (x) { return narrowed.has(x); }))
+    ok('좁힘 예외는 id 로 지목한 셋뿐 — ' + want.join(' · '));
+  else bad('좁힘 예외가 의도와 다르다 — 있는 것: ' + [...narrowed].join(', '));
+  if (/\.fv-deck>\.fv-panel\{[^}]*grid-column/.test(H))
+    bad('.fv-panel 같은 넓은 선택자로 좁히고 있다 — 새 패널이 말려든다');
+  else ok('넓은 선택자로 좁히지 않는다');
   // 런타임 배너가 실제로 .fv-deck 에 꽂히는지(전제 확인)
   if (/host\.parentNode\.insertBefore\(ban, host\)/.test(H) && /id = 'fvCrisisBanner'/.test(H))
     ok('위기 배너는 런타임에 .fv-deck 로 삽입된다 — 열거 방식이 위험한 이유');
   else bad('위기 배너 삽입 경로가 바뀌었다 — 이 게이트의 전제를 다시 확인해야 한다');
+}
+
+/* ── ⑬ 격자의 행은 폭을 다 써야 한다 ────────────────────────────────────
+   ⑫ 는 "자식이 1/4 칸에 박히지 않는가" 를 봤다. 그것만으로는 부족했다 —
+   V33.159 에서 한국장 패널을 위기 패널과 이슈 패널 ★사이에★ 넣자, 2칸씩 짝을 이루던
+   그 둘이 각각 혼자 한 줄을 차지해 화면 절반이 비었다(1000~1680px 네 폭 모두).
+   자식은 전부 제 폭을 가졌는데 ★행★ 이 비었다. 그래서 열 수와 짝의 개수, 그리고
+   DOM 순서가 서로 맞는지를 함께 본다. */
+console.log('⑬ 격자 행 — 짝지을 패널이 실제로 이웃인가');
+{
+  const cols = (H.match(/\.fv-deck\{\s*display:grid;grid-template-columns:repeat\((\d+),/) || [])[1];
+  const span2 = (H.match(/\.fv-deck>#fv(Crisis|KrHalt|Events)Panel\{grid-column:span 2;\}/g) || []).length
+             || (H.match(/\.fv-deck>#fv(Crisis|KrHalt|Events)Panel,?\s*/g) || []).length;
+  if (cols === '6') ok('격자 열 수 6 — 3개(2칸씩)와 2개(3칸씩)를 모두 담는다');
+  else bad('격자 열 수가 ' + cols + ' 이다 — 정보 패널 3개를 한 줄에 못 놓는다');
+  // 좁은 폭 폴백: 둘만 나란히(3칸씩) + 한국장은 전체폭
+  const nar = H.replace(/\s+/g, '');
+  if (nar.includes('#fvCrisisPanel,html[data-density="terminal"].fv-deck>#fvEventsPanel{grid-column:span3;}')
+      && nar.includes('#fvKrHaltPanel{grid-column:1/-1;}'))
+    ok('1300px 미만 폴백 — 위기·이슈만 나란히, 한국장은 전체폭(빈칸 없음)');
+  else bad('좁은 폭 폴백이 없다 — 한 칸이 300px 아래로 내려가 표가 눌린다');
+  // ★DOM 순서★ — 전체폭이 되는 패널이 짝 사이에 끼면 짝이 갈라진다
+  const iC = H.indexOf('id="fvCrisisPanel"'), iE = H.indexOf('id="fvEventsPanel"'), iK = H.indexOf('id="fvKrHaltPanel"');
+  if (iC > 0 && iE > 0 && iK > 0 && iK > iE)
+    ok('한국장 패널이 짝(위기·이슈) ★뒤★ 에 온다 — 좁은 폭에서 짝이 안 갈라진다');
+  else bad('한국장 패널이 위기·이슈 사이에 있다 — 좁은 폭에서 두 패널이 각자 한 줄을 차지한다');
 }
 
 console.log(fail ? '\n실패 ' + fail + '건' : '\nok   폰 화면 계약 통과');
