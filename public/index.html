@@ -8,7 +8,7 @@
      인데, 지금까지 화면에서 그걸 알 방법이 전혀 없었다(카카오톡 인앱 브라우저는 특히 강하게 캐시한다).
      서버가 내려주는 build 와 이 값을 비교해 다르면 배너로 알린다.
      ※ src/index.js 의 _BUILD_VER 와 항상 같아야 한다 — check-html-js 가 강제한다. -->
-<meta name="lux-build" content="V33.167">
+<meta name="lux-build" content="V33.168">
 <title>LUX-ENGINE V10</title>
 <!-- ══ [V33.156] 설치형 앱(PWA) — 폰·PC 에서 홈화면/독에 담아 앱처럼 연다 ══
      · manifest  : 이름·아이콘·standalone 표시(주소창 없이 앱처럼)
@@ -8199,8 +8199,19 @@ html[data-theme="light"] .m-brainbar button.active{color:#0b4f9e;background:rgba
       /* 국내 리서치는 매도 의견이 거의 나오지 않는다 — 화면이 고장 난 게 아니라
          시장의 성질이다. 이 한 줄이 없으면 "왜 다 매수지?" 를 계속 의심하게 된다. */
       var _ops = d.brokers.map(function(b){ return String(b.opinion || ''); }).filter(function(x){ return x; });
-      if (_ops.length >= 3 && _ops.every(function(x){ return /매수|buy|outperform|비중확대|strong/i.test(x); }))
+      /* [V33.168] 문턱을 3 → 2 로. 리포트가 둘뿐인 종목이 많아 그때는 설명이 안 떴고,
+         사용자는 "일부는 아직도 매수만" 이라고 볼 수밖에 없었다. */
+      if (_ops.length >= 2 && _ops.every(function(x){ return /매수|buy|outperform|비중확대|strong/i.test(x); }))
         h += '<div class="anl-note">국내 증권사 리포트는 매도 의견을 내는 일이 드물어요 — 매수 일색인 것은 이 종목만의 일이 아닙니다</div>';
+    }
+    /* [V33.168] 목표가는 떴는데 증권사가 안 보이는 경우 — "어느 증권사가 낸 건지" 를
+       묻게 된다. 답은 ★특정 증권사가 아니다★ 이다: 컨센서스는 여러 증권사 목표가를
+       모아 평균 낸 값이라 개별 이름이 붙지 않는다. 그 사실을 적지 않으면 화면이
+       무언가를 빠뜨린 것처럼 보인다. */
+    if (d.tgtMean != null && !d.tgtFrom && (!d.brokers || !d.brokers.length) && (!d.actions || !d.actions.length)){
+      h += '<div class="anl-note">이 값은 여러 증권사 목표가를 모은 <b>컨센서스 평균</b>이에요 — 특정 증권사의 값이 아닙니다'
+         + (d.n != null ? ' (참여 ' + d.n + '곳)' : '')
+         + '<br>개별 증권사 리포트는 이 종목에서 확인되지 않았어요</div>';
     }
     /* ⑥ 우리가 관측한 컨센서스 변화 — ★발표 원문과 구분해서★ 적는다.
        이건 6시간마다 받은 공개 컨센서스 두 스냅샷의 차분이지, 증권사 문서 자체가 아니다. */
@@ -14897,8 +14908,12 @@ html:root .page > *{ flex-shrink:0; }
   .detail-left .detail-news{ flex:0 0 auto; }
   /* 차트가 남는 높이를 가져간다. 종전 고정 52vh 를 풀고 늘어나게 둔다 */
   .detail-main .detail-chart{ flex:1 1 auto; height:auto; min-height:300px; max-height:none; }
-  /* 사이드바가 끝없이 길어지면 차트도 같이 늘어난다 — 화면 안에서 묶고 안에서 스크롤 */
-  .detail-side{ max-height:min(84vh, 860px); overflow-y:auto; }
+  /* [V33.168] ★상한을 뺀다.★ V33.164 에서 "사이드바가 끝없이 길어지면 차트도 같이
+     늘어난다" 며 84vh 로 묶었는데, 그 결과 맨 아래 '기술적 패턴' 이 잘려 보였다.
+     안쪽 스크롤은 바깥 페이지 스크롤과 겹쳐 아이패드에서는 잘린 것과 구분이 안 된다.
+     ★잘려 보이는 것보다 길어지는 편이 낫다.★ 게다가 사이드바가 무한정 길어질 일도
+     없다 — 증권사 리포트 목록은 이미 190px 에서 안쪽 스크롤로 묶여 있다.
+     남는 높이는 그대로 차트가 가져가므로 빈 상자도 생기지 않는다. */
 }
 
 /* [V33.162] 종목 상세 — 증권사 목표가·투자의견. 전부 발표된 값이라 색·강조를 아끼지 않는다 */

@@ -129,9 +129,17 @@ console.log('⑦ 종목 상세 — 남는 높이를 빈 상자가 아니라 차�
   if (flat.includes('.detail-main.detail-chart{flex:1 1auto;height:auto;'.replace(/\s/g, '')))
     ok('남는 높이는 차트가 가져간다 — 여백을 쓸모 있는 것으로 채운다');
   else bad('차트가 남는 높이를 안 가져간다');
-  if (/\.detail-side\{ max-height:min\(84vh, 860px\); overflow-y:auto; \}/.test(H))
-    ok('사이드바가 끝없이 길어지지 않게 화면 안에서 묶고 안에서 스크롤한다');
-  else bad('사이드바에 높이 상한이 없다 — 차트도 같이 끝없이 늘어난다');
+  /* [V33.168] 반대로 뒤집혔다 — 상한이 있으면 맨 아래 '기술적 패턴' 이 잘린다.
+     안쪽 스크롤은 바깥 페이지 스크롤과 겹쳐 아이패드에서 잘린 것과 구분이 안 됐다.
+     길이는 이미 리포트 목록(190px 안쪽 스크롤)이 잡아 주므로 상한이 필요 없다. */
+  /* max-height:none 은 상한이 아니라 '상한 해제' 다 — 이것까지 실패로 세면 오탐이다. */
+  const capped = (H.match(/\.detail-side\{[^}]*max-height:\s*([^;}]+)/g) || [])
+    .filter(function (x) { return !/max-height:\s*none/.test(x); });
+  if (capped.length) bad('사이드바에 높이 상한이 있다 — 맨 아래 패널이 잘린다: ' + capped[0].slice(0, 60));
+  else ok('사이드바에 높이 상한이 없다 — 아래 패널이 안 잘린다');
+  if (/\.anl-acts\{[^}]*max-height:190px[^}]*overflow-y:auto/.test(H))
+    ok('대신 리포트 목록이 190px 안쪽 스크롤로 길이를 잡는다');
+  else bad('리포트 목록이 안 묶여 있다 — 사이드바가 끝없이 길어질 수 있다');
   if (/@media \(min-width:901px\)\{[\s\S]{0,600}?\.detail-left \.detail-news/.test(H))
     ok('이 규칙은 901px 이상에서만 — 폰은 세로로 쌓이므로 건드리지 않는다');
   else bad('폰까지 닿는 규칙이다');
