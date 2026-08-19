@@ -8,7 +8,7 @@
      인데, 지금까지 화면에서 그걸 알 방법이 전혀 없었다(카카오톡 인앱 브라우저는 특히 강하게 캐시한다).
      서버가 내려주는 build 와 이 값을 비교해 다르면 배너로 알린다.
      ※ src/index.js 의 _BUILD_VER 와 항상 같아야 한다 — check-html-js 가 강제한다. -->
-<meta name="lux-build" content="V33.162">
+<meta name="lux-build" content="V33.163">
 <title>LUX-ENGINE V10</title>
 <!-- ══ [V33.156] 설치형 앱(PWA) — 폰·PC 에서 홈화면/독에 담아 앱처럼 연다 ══
      · manifest  : 이름·아이콘·standalone 표시(주소창 없이 앱처럼)
@@ -8107,13 +8107,16 @@ html[data-theme="light"] .m-brainbar button.active{color:#0b4f9e;background:rgba
     var cur = d.cur || null, h = '';
     /* ① 목표가 — 현재가와 함께 보여야 '얼마나 위' 인지가 읽힌다 */
     h += '<div class="anl-top">';
-    h += '<div class="anl-tgt"><span class="k">목표가 평균</span><b>' + anlMoney(d.tgtMean, cur) + '</b>';
+    /* ★라벨이 곧 출처다.★ 컨센서스 평균을 못 받아 리포트들의 중앙값을 쓴 경우
+       '평균' 이라고 적으면 안 된다 — 다른 값을 같은 이름으로 부르는 셈이다. */
+    h += '<div class="anl-tgt"><span class="k">' + (d.tgtFrom ? escapeHtml(d.tgtFrom) : '목표가 평균')
+       + '</span><b>' + anlMoney(d.tgtMean, cur) + '</b>';
     if (d.upsidePct != null)
       h += '<i class="' + (d.upsidePct >= 0 ? 'pos' : 'neg') + '">'
          + (d.upsidePct >= 0 ? '+' : '') + d.upsidePct.toFixed(1) + '%</i>';
     h += '</div>';
     h += '<div class="anl-meta">현재가 ' + anlMoney(d.px, cur)
-       + (d.n != null ? ' · 애널리스트 ' + d.n + '인' : '') + '</div>';
+       + (d.n != null ? ' · ' + (d.tgtFrom ? '리포트 ' + d.n + '건' : '애널리스트 ' + d.n + '인') : '') + '</div>';
     h += '</div>';
     /* ② 최저~최고 범위 — 평균 하나만 보면 의견이 갈렸는지를 못 본다 */
     if (d.tgtLow != null && d.tgtHigh != null && d.tgtHigh > d.tgtLow){
@@ -8159,7 +8162,23 @@ html[data-theme="light"] .m-brainbar button.active{color:#0b4f9e;background:rgba
       });
       h += '</div>';
     }
-    /* ⑤ 우리가 관측한 컨센서스 변화 — ★발표 원문과 구분해서★ 적는다.
+    /* ⑤ 국내 증권사별 리포트 — ★증권사명·목표가·투자의견·날짜 그대로★
+       미국 IB(JP모건·골드만 등) 는 리서치 원문이 유료 기관 전용이라 목표가 숫자까지는
+       공개로 못 가져온다. 대신 위 '최근 증권사 발표' 에 그 회사들의 등급 변경이 나온다.
+       국내는 리포트 요약이 공개라 여기 줄 단위로 실을 수 있다. */
+    if (d.brokers && d.brokers.length){
+      h += '<div class="anl-acts-h">국내 증권사 리포트 · ' + d.brokers.length + '건</div><div class="anl-acts">';
+      d.brokers.forEach(function(b){
+        h += '<div class="anl-act"><span class="m neu">·</span>'
+           + '<span class="f" title="' + escapeHtml(b.title || b.firm || '') + '">' + escapeHtml(b.firm || '—') + '</span>'
+           + '<span class="d">' + (b.t ? anlAgo(b.t) : '') + '</span>'
+           + '<span class="g">' + (b.target != null ? '목표 <b>' + anlMoney(b.target, 'KRW') + '</b>' : '')
+           + (b.opinion ? ' · <b class="' + anlGradeCls(b.opinion) + '">' + escapeHtml(b.opinion) + '</b>' : '')
+           + '</span></div>';
+      });
+      h += '</div>';
+    }
+    /* ⑥ 우리가 관측한 컨센서스 변화 — ★발표 원문과 구분해서★ 적는다.
        이건 6시간마다 받은 공개 컨센서스 두 스냅샷의 차분이지, 증권사 문서 자체가 아니다. */
     if (d.rev && d.rev.ev && d.rev.ev.length){
       h += '<div class="anl-acts-h">관측된 컨센서스 변화 · 최근 ' + d.rev.windowDays + '일</div><div class="anl-acts">';
@@ -8174,15 +8193,16 @@ html[data-theme="light"] .m-brainbar button.active{color:#0b4f9e;background:rgba
       });
       h += '</div>';
     }
-    /* ⑥ 이 신호를 AI 가 실제로 쓰는가 — 보여주기만 하는 기능이 되지 않게 */
+    /* ⑦ 이 신호를 AI 가 실제로 쓰는가 — 보여주기만 하는 기능이 되지 않게 */
     if (d.aiK && d.aiK.k != null){
       var on = Math.abs(d.aiK.k) > 1e-6;
       h += '<div class="anlrev-ai ' + (on ? 'on' : 'off') + '">'
          + (on ? 'AI 진입 판단에 <b>반영 중</b> · 계수 ' + d.aiK.k.toFixed(3) : 'AI 반영 <b>없음</b> — 아직 근거가 모자라요')
          + (d.aiK.n != null ? ' · 표본 ' + d.aiK.n : '') + '</div>';
     }
-    /* ⑦ 출처 — 어디서 온 숫자인지 항상 적는다 */
+    /* ⑧ 출처 — 어디서 온 숫자인지 항상 적는다 */
     h += '<div class="anl-src">' + escapeHtml(d.src || '출처 미상')
+       + (d.brokerSrc && d.brokerSrc !== d.src ? ' · ' + escapeHtml(d.brokerSrc) : '')
        + (d.stale ? ' · <b class="amber">오래된 값</b>' : '')
        + (d.ts ? ' · ' + anlAgo(d.ts) : '') + '</div>';
     el.innerHTML = h;

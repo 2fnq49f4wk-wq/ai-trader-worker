@@ -145,6 +145,11 @@ jobs:
       #   섞지 않는지, 국내 종목 경로가 실제로 있는지.
       - name: 종목별 애널리스트 자료 계약 검사 (출처 · 발표/관측 구분)
         run: node tools/check-analyst-detail.mjs
+      # [V33.163] 국내 증권사 리포트 파서 — 표의 열 순서를 우리가 정할 수 없고
+      #   이 세션에서는 응답을 실측하지도 못했다. '몇 번째 칸' 이 아니라 생김새로 고르는데,
+      #   그 규칙이 흔들리면 엉뚱한 숫자가 목표가로 올라간다. HTML 모양을 여러 개 만들어 돌린다.
+      - name: 국내 증권사 리포트 파서 검사 (열 순서 무관 · 오인 방지)
+        run: node tools/check-kr-broker.mjs
       # cloudflare/wrangler-action 대신 로컬에서 검증된 방식 그대로 실행
       # (wrangler-action@v3의 npx 자동설치가 4.86.0을 요구하며 실패하던 문제 회피)
       - name: Install wrangler

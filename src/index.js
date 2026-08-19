@@ -2788,7 +2788,7 @@ async function applySignalTypeWeights(DB, cfg) {
 // ============================================================================
 // [V33.55] 빌드 버전 — SWR L2 캐시 키에 섞어 '배포 = 판단 캐시 자동 무효화'를 만든다.
 //   판정 로직을 고쳐도 옛 캐시가 최대 1시간 재배포되던 문제를 구조적으로 없앤다.
-const _BUILD_VER = "V33.162";
+const _BUILD_VER = "V33.163";
 
 const AI_PARAMS = {
   // ── OHLCV 타임프레임 ── 시가/고가/저가/종가/거래량을 어떤 봉 주기로 볼지.
@@ -23937,6 +23937,89 @@ async function anlFetchUS(symbol) {
   return (out.tgtMean != null || out.actions.length || out.dist) ? out : null;
 }
 
+// ═══ [V33.163] 한국 — ★증권사별 리포트 원문 목록★ ═══
+//
+// 사용자가 물은 것: "JP모건·골드만삭스, 그리고 한국 증권사들이 ★발표하는 것★ 에서
+// 직접 못 가져오냐". 세 갈래로 사실이 다르다.
+//
+//  ① 미국 IB(JP Morgan·Goldman Sachs 등) 의 리서치 원문
+//     — 유료 기관고객 전용 포털(markets.jpmorgan.com, research.gs.com)에 있고
+//       무료 공개 API 가 없다. 열람권한 없이 받아 재배포하면 저작권·이용약관 위반이다.
+//       그래서 ★직접은 못 가져온다.★ 대신 그 회사들이 낸 ★등급 변경 사실★ 은
+//       공개 집계로 이미 받고 있다(anlFetchUS 의 upgradeDowngradeHistory —
+//       "Morgan Stanley: Equal-Weight → Overweight" 처럼 회사명이 그대로 나온다).
+//
+//  ② BlackRock — 애초에 종목 목표가를 내지 않는다. 셀사이드 리서치하우스가 아니라
+//     자산운용사다. 시장 전망(코멘터리)은 공개하지만 개별 종목 목표주가는 없다.
+//     여기 넣으면 없는 자료를 있는 것처럼 보이게 된다.
+//
+//  ③ ★한국 증권사는 다르다.★ 국내는 리포트 요약이 공개로 모여 있다 —
+//     한경컨센서스가 증권사명·목표가·투자의견·작성일을 표로 공개한다.
+//     즉 "삼성증권 목표가 95,000원, 매수, 8/14" 같은 줄을 그대로 가져올 수 있다.
+//     이것이 사용자가 원한 것에 가장 가깝고, 실제로 가능한 유일한 '증권사별 목표가' 다.
+//
+// ★이 세션에서는 외부 망이 막혀 응답을 실측하지 못했다.★ 그래서 파서는 표의 열 위치를
+//   가정하지 않고 '숫자처럼 생긴 목표가 · 증권사처럼 생긴 이름' 을 각각 찾아 맞춘다.
+//   못 찾으면 그 줄을 버린다 — 엉뚱한 값을 채우느니 비운다.
+const KRBROKER = {
+  maxRows: 12,
+  days: 180,
+  minTarget: 100,            // 원 단위 목표가의 하한(파싱 오인 방지)
+  maxTarget: 100000000
+};
+
+function _krbStrip(h) { return String(h || "").replace(/<[^>]*>/g, " ").replace(/&nbsp;/g, " ").replace(/\s+/g, " ").trim(); }
+
+// 한경컨센서스 종목 리포트 목록 → [{firm, target, opinion, t, title}]
+function _krbParseHankyung(html) {
+  const rows = [];
+  const trs = String(html || "").split(/<tr[\s>]/i).slice(1);
+  for (const tr of trs) {
+    const tds = tr.split(/<td[\s>]/i).slice(1).map(_krbStrip);
+    if (tds.length < 4) continue;
+    // 날짜(YYYY-MM-DD) · 목표가(숫자) · 투자의견(한글/영문 단어) · 증권사(…증권/…투자증권)
+    let t = null, tgt = null, op = null, firm = null, title = null;
+    for (const c of tds) {
+      if (!t) { const m = c.match(/(20\d{2})[-.\/](\d{1,2})[-.\/](\d{1,2})/); if (m) { t = Date.UTC(+m[1], +m[2] - 1, +m[3]) - 9 * 3600000; continue; } }
+      if (tgt == null) {
+        const m = c.match(/^([\d,]+)$/);
+        if (m) { const v = parseFloat(m[1].replace(/,/g, "")); if (v >= KRBROKER.minTarget && v <= KRBROKER.maxTarget) { tgt = v; continue; } }
+      }
+      if (!op && /^(매수|중립|보유|비중확대|비중축소|매도|Buy|Hold|Sell|Outperform|Neutral)$/i.test(c)) { op = c; continue; }
+      if (!firm && /(증권|자산운용|투자증권|리서치)/.test(c) && c.length <= 20) { firm = c; continue; }
+      if (!title && c.length > 6) title = c.slice(0, 60);
+    }
+    if (!firm || (tgt == null && !op)) continue;         // 증권사와 값 둘 다 없으면 버린다
+    rows.push({ firm: firm, target: tgt, opinion: op, t: t, title: title });
+  }
+  return rows;
+}
+
+// 종목 하나의 국내 증권사 리포트 목록. 실패는 null(빈 배열이 아니다 — '없음' 과 '못 받음' 은 다르다)
+async function krBrokerReports(symbol) {
+  const code = String(symbol).replace(/\.(KS|KQ)$/i, "");
+  if (!/^\d{6}$/.test(code)) return null;
+  const name = (typeof NAME_MAP !== "undefined" && NAME_MAP[String(symbol).toUpperCase()]) || "";
+  const hdr = { "User-Agent": "Mozilla/5.0", "Referer": "https://consensus.hankyung.com/" };
+  // 검색은 종목명이 잘 먹고, 코드가 먹는 경우도 있어 둘 다 시도한다
+  const queries = [name, code].filter(function (x) { return x; });
+  for (const q of queries) {
+    if (fetchBudgetLeft() < ANLDET.minFetchBudget) break;
+    const url = "https://consensus.hankyung.com/analysis/list?report_type=CO&search_value=" + encodeURIComponent(q);
+    try {
+      __fetchBudget.used++;
+      const r = await fetch(url, { headers: hdr });
+      if (!r.ok) continue;
+      const html = await r.text();
+      const all = _krbParseHankyung(html);
+      const cut = Date.now() - KRBROKER.days * 86400000;
+      const rows = all.filter(function (x) { return x.t == null || x.t >= cut; }).slice(0, KRBROKER.maxRows);
+      if (rows.length) return { rows: rows, src: "한경컨센서스 · 국내 증권사 리포트", srcUrl: url };
+    } catch (e) { /* 다음 질의 */ }
+  }
+  return null;
+}
+
 // 한국 — 네이버 금융(에프앤가이드) 컨센서스. 후보를 순서대로 시도한다.
 //   ★형식을 실측하지 못했으므로 '있으면 쓴다' 로만 읽는다.★ 숫자는 범위 검사를 통과한 것만.
 async function anlFetchKR(symbol) {
@@ -24014,6 +24097,34 @@ async function analystDetail(DB, symbol, force) {
   try {
     v = _anlIsKR(sym) ? await anlFetchKR(sym) : await anlFetchUS(sym);
   } catch (e) { why = String((e && e.message) || e).slice(0, 120); }
+  /* [V33.163] 국내 종목은 ★증권사별 리포트 목록★ 을 따로 붙인다.
+     컨센서스(평균 하나)와 달리 "어느 증권사가 얼마를 냈는지" 가 줄 단위로 나온다.
+     컨센서스를 못 받았어도 이것만 있으면 화면은 채워진다 — 그래서 v 가 없어도 시도한다. */
+  if (_anlIsKR(sym)) {
+    try {
+      const br = await krBrokerReports(sym);
+      if (br && br.rows.length) {
+        v = v || { px: null, tgtMean: null, tgtHigh: null, tgtLow: null, tgtMedian: null,
+                   n: null, ratingKey: null, ratingMean: null, dist: null, actions: [],
+                   cur: "KRW", src: br.src, srcUrl: br.srcUrl };
+        v.brokers = br.rows;
+        v.brokerSrc = br.src; v.brokerSrcUrl = br.srcUrl;
+        /* 컨센서스 평균을 못 받았으면 ★리포트들의 중앙값★ 으로 대신한다.
+           평균이 아니라 중앙값이다 — 한두 곳의 극단치가 전체를 끌고 가지 않게. */
+        if (v.tgtMean == null) {
+          const ts2 = br.rows.map(function (x) { return x.target; })
+                             .filter(function (x) { return typeof x === "number" && x > 0; })
+                             .sort(function (a, b) { return a - b; });
+          if (ts2.length) {
+            v.tgtMean = ts2[Math.floor(ts2.length / 2)];
+            v.tgtLow = ts2[0]; v.tgtHigh = ts2[ts2.length - 1];
+            v.n = ts2.length;
+            v.tgtFrom = "리포트 중앙값";     /* ★출처를 바꿔 적는다 — 컨센서스가 아니다★ */
+          }
+        }
+      }
+    } catch (e) {}
+  }
   if (!v) {
     // ★없는 값을 지어내지 않는다.★ 옛 값이 있으면 그것을 '오래된 값' 으로 표시해 돌려준다.
     if (cached && cached.ok) return Object.assign({}, cached, { stale: true });
