@@ -2788,7 +2788,7 @@ async function applySignalTypeWeights(DB, cfg) {
 // ============================================================================
 // [V33.55] 빌드 버전 — SWR L2 캐시 키에 섞어 '배포 = 판단 캐시 자동 무효화'를 만든다.
 //   판정 로직을 고쳐도 옛 캐시가 최대 1시간 재배포되던 문제를 구조적으로 없앤다.
-const _BUILD_VER = "V33.169";
+const _BUILD_VER = "V33.170";
 
 const AI_PARAMS = {
   // ── OHLCV 타임프레임 ── 시가/고가/저가/종가/거래량을 어떤 봉 주기로 볼지.
@@ -8919,6 +8919,30 @@ function wrapD1(realDB) {
   };
 }
 
+/* ═══════════════════════════════════════════════════════════════════════════
+   [V33.170] ★같은 값을 종목마다 다시 읽던 것을 한 번만 읽는다.★
+
+   증상: 장중 증분 스캔이 56종목을 훑는 데 100초를 썼다(1.79초/종목).
+   원인: mlDeepDecide 는 호출 한 번에 D1 을 14회 읽는다(모델·계수 블롭들).
+        거래 평가 루프는 그 값들을 미리 읽어 opts 로 넘겨 왕복을 피하는데,
+        ★스캔 경로는 일부만 넘겨서★ 나머지 8~14개를 종목마다 다시 읽었다.
+        56종목 × 약 12회 ≈ 670 왕복, D1 1회가 약 94ms 이니 그것만으로 60초가 넘는다.
+        같은 이유로 거래 평가도 TIME-CAP 에 계속 걸렸다(US 62/557).
+
+   고치는 방식: 호출부마다 opts 를 채우는 것은 ★또 빠뜨릴 수 있다★(실제로 그렇게 됐다).
+   읽기 자체를 invocation 단위로 기억한다. 이 키들은 야간 학습이 쓰고 사이클 내내
+   변하지 않는 값이라, 한 invocation 안에서 두 번 읽을 이유가 없다.
+   ★쓰기가 나면 그 키만 즉시 잊는다★ — 안 그러면 학습이 방금 쓴 값을 옛 값으로 읽는다.
+   ═══════════════════════════════════════════════════════════════════════════ */
+let __cycMemo = new Map();
+function cycMemoReset() { __cycMemo = new Map(); }
+async function _cycState(DB, k, def) {
+  if (__cycMemo.has(k)) { const v = __cycMemo.get(k); return (v === undefined) ? def : v; }
+  const v = await getState(DB, k, def);
+  __cycMemo.set(k, v);
+  return v;
+}
+
 async function getState(DB, k, def) {
   try {
     const row = await DB.prepare("SELECT v FROM state WHERE k = ?").bind(k).first();
@@ -8944,6 +8968,7 @@ async function getStates(DB, keys) {
 }
 
 async function setState(DB, k, v) {
+  __cycMemo.delete(k);   // [V33.170] 방금 쓴 값을 옛 값으로 읽지 않게 — 쓰기는 기억을 지운다
   await DB.prepare("INSERT INTO state (k, v, updated_ts) VALUES (?, ?, ?) ON CONFLICT(k) DO UPDATE SET v=excluded.v, updated_ts=excluded.updated_ts")
     .bind(k, JSON.stringify(v), Date.now()).run();
 }
@@ -20114,12 +20139,20 @@ async function handleRequest(request, env, ctx) {
         return null;
       };
       // ── 공용: 신뢰게이트 계산 + 저장 + 응답(단발/커밋 공통) ──
-      const _finishImport = async function (saveInfo, valAcc, valAccLB, valN) {
+      /* [V33.170] ★여기서 8일치 GPU 학습이 통째로 버려지고 있었다.★
+         이 함수는 아래 커밋 분기의 지역변수 stg 를 참조했는데, stg 는 ★이 함수보다 뒤에★
+         그 분기 안에서 선언된다(const, 블록 스코프). 그래서 커밋할 때마다
+         ReferenceError: stg is not defined → 500 이 났다.
+         Modal 로그가 그대로 말해 준다: RuntimeError: commit 500: {"error":"stg is not defined"}.
+         GPU 는 매 6시간 8~15분씩 정상적으로 돌았고, 결과만 업로드 마지막 단계에서 버려졌다.
+         → 스코프에 의존하지 않고 ★인자로 받는다.★ */
+      const _finishImport = async function (saveInfo, valAcc, valAccLB, valN, valStat) {
+        const _vs = valStat || {};
         __dnnMemCache = null;
         let mindLB = 0.5;
         try { const mm = await mlMindLoad(env.DB); if (mm) mindLB = (typeof mm.valAccLB === "number") ? mm.valAccLB : _wilsonLB(_num(mm.valAcc, 0.5), _num(mm.valN, 30)); } catch (e) {}
         let trust = { wDnn: 0, trusted: false, dnnAcc: valAcc, dnnAccLB: valAccLB, mindAcc: mindLB, source: "external",
-                      valN: valN, valNRaw: _num(stg.valNRaw, valN), valUniq: _num(stg.valUniq, null) };
+                      valN: valN, valNRaw: _num(_vs.valNRaw, valN), valUniq: _num(_vs.valUniq, null) };
         // [V12.54] 절대실력 게이트 — MIND 상대비교 폐기. 외부학습분은 val 라벨이 없어 다수클래스 기저를
         //   못 구하므로 trustFloor 절대문턱만 적용(외부 학습기가 자체 홀드아웃으로 valAccLB를 보고).
         if (valAccLB >= DNN.trustFloor) {
@@ -20202,7 +20235,7 @@ async function handleRequest(request, env, ctx) {
         catch (e) { return Response.json({ error: "저장 실패: " + (e && e.message) }, { status: 500, headers: cors }); }
         // 스테이징 정리
         try { await env.DB.prepare("DELETE FROM state WHERE k = 'dnn_stage' OR (k >= 'dnn_stage:net:' AND k < 'dnn_stage:net;')").run(); } catch (e) {}
-        return await _finishImport(saveInfo, stg.valAcc, stg.valAccLB, stg.valN);
+        return await _finishImport(saveInfo, stg.valAcc, stg.valAccLB, stg.valN, stg);
       }
 
       // ════════ 기존 단발 업로드(소형·수동용) ════════
@@ -31091,7 +31124,7 @@ async function mlDeepDecide(DB, featVec, opts) {
       }
     }
 
-    const trust = (opts.trust !== undefined) ? opts.trust : await getState(DB, "dnn_trust", null);
+    const trust = (opts.trust !== undefined) ? opts.trust : await _cycState(DB, "dnn_trust", null);
     // ── 전문가 위원회: mind(스태킹) + dnn(멀티시드 딥넷) + gbdt(부스팅트리) ──
     //   [V4] 각 전문가의 검증정확도 "Wilson 하한" 소프트맥스(T=12)로 로짓 가중평균.
     //   신뢰 못 받은 전문가는 불참. 결합확률은 야간 보정 온도(committee_cal.T)로 캘리브레이션.
@@ -31129,7 +31162,7 @@ async function mlDeepDecide(DB, featVec, opts) {
       }
     }
     try {
-      const gtrust = (opts.gbdtTrust !== undefined) ? opts.gbdtTrust : await getState(DB, "gbdt_trust", null);
+      const gtrust = (opts.gbdtTrust !== undefined) ? opts.gbdtTrust : await _cycState(DB, "gbdt_trust", null);
       if (gtrust && gtrust.trusted && gtrust.wGbdt > 0) {
         const gm = (opts.gbdt !== undefined) ? opts.gbdt : await mlGBDTLoad(DB, opts.market);
         const pG = gm ? mlGBDTScore(gm, featVec) : null;
@@ -31175,7 +31208,7 @@ async function mlDeepDecide(DB, featVec, opts) {
     //   IC 가 icFloor 를 넘을 때만 참여하고, 가중은 V33.77 의 IC 소프트맥스가 자동 처리한다.
     try {
       if (opts.flowFeat && Array.isArray(opts.flowFeat)) {
-        const fm = (opts.flowModel !== undefined) ? opts.flowModel : await getState(DB, "flow_model", null);
+        const fm = (opts.flowModel !== undefined) ? opts.flowModel : await _cycState(DB, "flow_model", null);
         // [V33.138] 이분법(trusted) → 증거 비례. 잠정 합류는 IC 를 줄여서 실린다.
         const _fa = expertAdmit(fm);
         if (fm && _fa.admit && fm.featVer === FLOWML.featVer) {
@@ -31190,7 +31223,7 @@ async function mlDeepDecide(DB, featVec, opts) {
     // ── [V33.79] XALPHA 전문가 합류 — 형식알파(WorldQuant 101) + 횡단면 랭크(JPX) ──
     try {
       if (opts.xaFeat && Array.isArray(opts.xaFeat)) {
-        const xm = (opts.xaModel !== undefined) ? opts.xaModel : await getState(DB, "xalpha_model", null);
+        const xm = (opts.xaModel !== undefined) ? opts.xaModel : await _cycState(DB, "xalpha_model", null);
         const _xa = expertAdmit(xm);
         if (xm && _xa.admit && xm.featVer === XALPHA.featVer) {
           const pX = flowScore(xm, opts.xaFeat);   // 같은 로지스틱 포맷이라 채점기를 공유한다
@@ -31205,7 +31238,7 @@ async function mlDeepDecide(DB, featVec, opts) {
     //   나머지 위원 전원이 전역 파라미터 하나로 모든 상황을 설명하는 모수적 모델이라,
     //   국소 구조를 보는 위원이 하나도 없었다. 앙상블 다양성 기여가 큰 자리다.
     try {
-      const mm2 = (opts.memoModel !== undefined) ? opts.memoModel : await getState(DB, "memo_model", null);
+      const mm2 = (opts.memoModel !== undefined) ? opts.memoModel : await _cycState(DB, "memo_model", null);
       const _ma = expertAdmit(mm2);
       if (mm2 && _ma.admit && mm2.luxFeatVer === LUXML.featVer) {
         const pM = memoScore(mm2, featVec);
@@ -31339,7 +31372,7 @@ async function mlDeepDecide(DB, featVec, opts) {
       //   IC 검증을 통과한 모델만 쓰고, 미달이면 위 투표 결과를 그대로 유지한다.
       try {
         if (_stackFeat) {
-          const sm = (opts.stackModel !== undefined) ? opts.stackModel : await getState(DB, "stack_model", null);
+          const sm = (opts.stackModel !== undefined) ? opts.stackModel : await _cycState(DB, "stack_model", null);
           // [V33.138] STACK 은 투표 위원이 아니라 ★결합확률을 대체하는 메타모델★ 이다.
           //   그래서 잠정 단계에서 그대로 대체하면 증거가 덜 쌓인 모델에 결정을 통째로 넘기게 된다.
           //   대신 로짓 공간에서 증거 배수만큼 ★혼합★ 한다 — 증거가 차면 자연히 대체에 수렴한다.
@@ -31364,7 +31397,7 @@ async function mlDeepDecide(DB, featVec, opts) {
     //   그 뒤에 오는 ⑥~⑨는 전부 로그오즈 덧셈/수축이므로 '보정된 기저확률에 독립 증거를 더한다'가 되어
     //   체계가 일관된다.
     try {
-      const cal = (opts.cal !== undefined) ? opts.cal : await getState(DB, "committee_cal", null);
+      const cal = (opts.cal !== undefined) ? opts.cal : await _cycState(DB, "committee_cal", null);
       // [V12.93] featVer 불일치 보정온도는 무시 — featVer 상향 직후 구버전 T가 신버전 확률을 왜곡하던 것 방지.
       // [V33.90] ★STACK 이 확률을 냈으면 온도보정을 하지 않는다★
       //   committee_cal.T 는 '투표 결합확률' 분포에서 학습한 값이다. STACK 메타모델은 라벨에
@@ -31435,7 +31468,7 @@ async function mlDeepDecide(DB, featVec, opts) {
         //   로그오즈에 0.66 을 더한다는 건 "기술점수 1점이면 승산 1.93배" 라는 주장인데 잰 적이 없다.
         //   techPriorFitNightly 가 1차원 로지스틱으로 기울기를 재고 유의성으로 수축해 둔다.
         //   실측표가 없으면 0 — 근거 없이 밀지 않는다(이중헤드와 같은 원칙).
-        const _tk = (opts.techK !== undefined) ? opts.techK : await getState(DB, "tech_prior_k", null);
+        const _tk = (opts.techK !== undefined) ? opts.techK : await _cycState(DB, "tech_prior_k", null);
         const _kEff = _tk ? _num(_tk.kEff, 0) : 0;
         if (_kEff !== 0) pCombined = _clamp(_sigmoid(_logitD(pCombined) + _techScore * _kEff), 0.001, 0.999);
       }
@@ -31494,9 +31527,9 @@ async function mlDeepDecide(DB, featVec, opts) {
     //   (V33.85 의 캘리브레이션 위치 사고와 같은 계열 — 순서가 곧 의미다.)
     let _dual = null;
     try {
-      const _bm = (opts.dualBull !== undefined) ? opts.dualBull : await getState(DB, "dual_bull_model", null);
-      const _rm = (opts.dualBear !== undefined) ? opts.dualBear : await getState(DB, "dual_bear_model", null);
-      const _qs = (opts.dualShift !== undefined) ? opts.dualShift : await getState(DB, "dual_quad_shift", null);
+      const _bm = (opts.dualBull !== undefined) ? opts.dualBull : await _cycState(DB, "dual_bull_model", null);
+      const _rm = (opts.dualBear !== undefined) ? opts.dualBear : await _cycState(DB, "dual_bear_model", null);
+      const _qs = (opts.dualShift !== undefined) ? opts.dualShift : await _cycState(DB, "dual_quad_shift", null);
       _dual = dualHeadJudge(_bm, _rm, featVec, { shift: _qs && _qs.shift });
       // [V33.93] 실측 로그오즈 차만큼만 민다. 실측표가 없으면 0 — 근거 없이 밀지 않는다.
       if (_dual && _dual.dz) pCombined = _clamp(_sigmoid(_logitD(pCombined) + _dual.dz), 0.001, 0.999);
@@ -31510,7 +31543,7 @@ async function mlDeepDecide(DB, featVec, opts) {
     //   pPreCal2 는 학습 버퍼용으로 따로 남긴다(자기가 고친 값을 다시 배우면 T2 가 1로 붕괴한다).
     const _pPreCal2 = pCombined;
     try {
-      const _fc = (opts.finalCal !== undefined) ? opts.finalCal : await getState(DB, "final_cal", null);
+      const _fc = (opts.finalCal !== undefined) ? opts.finalCal : await _cycState(DB, "final_cal", null);
       if (_fc && typeof _fc.T === "number" && _fc.T > 0.4 && _fc.T < 5 && _num(_fc.n, 0) >= FINALCAL.minN) {
         pCombined = _clamp(_sigmoid(_logitD(pCombined) / _fc.T), 0.001, 0.999);
       }
@@ -31541,7 +31574,7 @@ async function mlDeepDecide(DB, featVec, opts) {
     // [V7] 기대값(EV) 게이트: 통계 있으면 p·평균이익 − (1−p)·평균손실 > 0 로 판단
     //   (손익 비대칭 반영 — 고정 확률 임계보다 수익률 정렬적). 통계 없으면 종전 임계.
     let allow, evVal = null, _evSrc = null, _evThr = null;
-    let evs = (opts.evstats !== undefined) ? opts.evstats : await getState(DB, "ml_evstats", null);
+    let evs = (opts.evstats !== undefined) ? opts.evstats : await _cycState(DB, "ml_evstats", null);
     _evSrc = evs ? "samples" : null;
     // [V33.90] ★EV 게이트의 손익 비대칭을 '실제 원장'에서 가져온다 (NautilusTrader PortfolioAnalyzer)★
     //   ml_evstats 의 avgWin/avgLoss 는 학습표본 풀에서 잰 값인데, 그 풀은 17만 중 대부분이
@@ -31550,7 +31583,7 @@ async function mlDeepDecide(DB, featVec, opts) {
     //   ★즉 EV 게이트가 우리 거래가 아닌 남의 분포로 문턱을 잡고 있었다★ — 전형적 train/serve 스큐.
     //   종결거래가 40건 이상 쌓이면 원장 실측값을 우선한다(그 전엔 표본값으로 공백 없이 운용).
     try {
-      const _ps = (opts.portStats !== undefined) ? opts.portStats : await getState(DB, "port_stats", null);
+      const _ps = (opts.portStats !== undefined) ? opts.portStats : await _cycState(DB, "port_stats", null);
       const _pm = _ps && ((opts.market === "us" || opts.market === "kr") ? _ps[opts.market] : null);
       const _pick = (_pm && _pm.ready && _pm.n >= 40) ? _pm : ((_ps && _ps.all && _ps.all.ready && _ps.all.n >= 40) ? _ps.all : null);
       if (_pick && _pick.avgWin > 0 && _pick.avgLoss > 0) {
@@ -38622,7 +38655,7 @@ async function sentiStatus(DB) {
 }
 export default {
   // [V12.128] 모든 D1 접근을 과부하 재시도 래퍼로 감싼다(호출부 160여 곳을 건드리지 않고 일괄 적용).
-  async fetch(request, env, ctx) { __R2 = env.MODELS || null; return handleRequest(request, Object.assign({}, env, { DB: wrapD1(env.DB) }), ctx); },
+  async fetch(request, env, ctx) { __R2 = env.MODELS || null; cycMemoReset(); return handleRequest(request, Object.assign({}, env, { DB: wrapD1(env.DB) }), ctx); },
   async scheduled(event, env, ctx) {
     __R2 = env.MODELS || null;   // [V33.13] 대형모델 저장소 바인딩(없으면 D1 청크 경로 유지)
     env = Object.assign({}, env, { DB: wrapD1(env.DB) });
@@ -38633,6 +38666,7 @@ export default {
     //   → 단일 promise 안에서 "순차" 실행해 각 사이클이 자기 예산을 온전히 쓰게 한다.
     const __cronStart = Date.now();
     __sleepAccumMs = 0;  // [실시간] invocation 시작마다 sleep 누적 초기화
+    cycMemoReset();      // [V33.170] 사이클 상수 캐시 초기화 — warm isolate 의 옛 값을 물려받지 않는다
     let __usageCalib = USAGE_LIMITS_DEFAULT.cpuCalibration;
     ctx.waitUntil((async () => {
       // [PAID 가드] Workers Paid 한도 90% 도달 시 모든 작업 차단 (초과 과금 방지)

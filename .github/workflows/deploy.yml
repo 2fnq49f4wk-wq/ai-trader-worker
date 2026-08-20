@@ -161,6 +161,12 @@ jobs:
       #   산식은 손계산과 대조하고, 표본 부족·결측 처리·조회 비용까지 함께 본다.
       - name: 심화 재무분석·업종 비교 계약 검사 (산식 · 방향 · 표본)
         run: node tools/check-fund-peer.mjs
+      # [V33.170] 사이클 상수 캐시 — 증상은 CPU/시간이었지만 원인은 D1 왕복이었다.
+      #   mlDeepDecide 가 호출당 14회 읽는데 스캔 경로가 그 값을 안 넘겨 종목마다 다시 읽었다.
+      #   호출부마다 opts 를 채우는 방식은 또 빠뜨릴 수 있어(실제로 그랬다) 읽기 자체를 기억한다.
+      #   쓰기가 나면 즉시 잊는지(학습 결과를 옛 값으로 읽지 않는지)를 함께 확인한다.
+      - name: 사이클 상수 캐시 계약 검사 (왕복 횟수 · 쓰기 무효화)
+        run: node tools/check-cyc-memo.mjs
       # cloudflare/wrangler-action 대신 로컬에서 검증된 방식 그대로 실행
       # (wrangler-action@v3의 npx 자동설치가 4.86.0을 요구하며 실패하던 문제 회피)
       - name: Install wrangler
