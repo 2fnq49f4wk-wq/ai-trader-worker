@@ -155,6 +155,12 @@ jobs:
       #   무엇보다 ★아무 숫자나 줍지 않는지★ 를 본다(엉뚱한 값은 조용한 거짓말이 된다).
       - name: 국내 목표주가 추출 검사 (라벨 앵커 · 오인 방지)
         run: node tools/check-kr-consensus.mjs
+      # [V33.169] 심화 재무분석 · 동일 업종 비교.
+      #   업종 비교는 '상대 위치' 를 말한다 — 방향(높을수록 좋음/나쁨)을 한 번만 틀리면
+      #   발생액이 높은 기업이 '업종 상위' 로 뜬다. 숫자는 그럴듯하고 뜻은 정반대다.
+      #   산식은 손계산과 대조하고, 표본 부족·결측 처리·조회 비용까지 함께 본다.
+      - name: 심화 재무분석·업종 비교 계약 검사 (산식 · 방향 · 표본)
+        run: node tools/check-fund-peer.mjs
       # cloudflare/wrangler-action 대신 로컬에서 검증된 방식 그대로 실행
       # (wrangler-action@v3의 npx 자동설치가 4.86.0을 요구하며 실패하던 문제 회피)
       - name: Install wrangler

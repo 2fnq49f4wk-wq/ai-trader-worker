@@ -8,7 +8,7 @@
      인데, 지금까지 화면에서 그걸 알 방법이 전혀 없었다(카카오톡 인앱 브라우저는 특히 강하게 캐시한다).
      서버가 내려주는 build 와 이 값을 비교해 다르면 배너로 알린다.
      ※ src/index.js 의 _BUILD_VER 와 항상 같아야 한다 — check-html-js 가 강제한다. -->
-<meta name="lux-build" content="V33.168">
+<meta name="lux-build" content="V33.169">
 <title>LUX-ENGINE V10</title>
 <!-- ══ [V33.156] 설치형 앱(PWA) — 폰·PC 에서 홈화면/독에 담아 앱처럼 연다 ══
      · manifest  : 이름·아이콘·standalone 표시(주소창 없이 앱처럼)
@@ -8379,6 +8379,55 @@ html[data-theme="light"] .m-brainbar button.active{color:#0b4f9e;background:rgba
     if (a >= 1e6)  return sign + '$' + (a / 1e6).toFixed(0) + 'M';
     return sign + '$' + Math.round(a).toLocaleString();
   }
+  /* ══ [V33.169] 동일 업종 비교 — QMJ(Asness·Frazzini·Pedersen 2019) 방식 ══
+     같은 업종 안에서의 ★상대 위치★ 로 본다. 절대값은 업종마다 수준이 달라
+     (반도체 총이익성 vs 은행) 그대로 비교하면 뜻이 없다.
+     막대는 백분위, 숫자는 값과 업종 중앙값을 함께 보여 준다 —
+     "얼마나 다른가" 는 순위만으로도, 값만으로도 답이 안 되기 때문이다. */
+  function renderFundPeer(d) {
+    var p = d && d.peer;
+    if (!p) return '';
+    if (!p.ok) {
+      return '<div class="fund-peer"><div class="fp-h">동일 업종 비교</div>' +
+        '<div class="fp-none">표본이 모자라요 — 같은 업종에서 재무를 받아 둔 종목이 ' +
+        (p.n || 0) + '개(최소 ' + (p.min || 3) + '개 필요)<br>' +
+        '다른 종목 상세를 열어 두면 표본이 쌓여 자동으로 채워집니다</div></div>';
+    }
+    var qz = p.qmj;
+    var band = qz == null ? '' : (qz >= 0.6 ? 'good' : qz <= -0.6 ? 'bad' : 'mid');
+    var say = qz == null ? '' : (qz >= 0.6 ? '업종 상위' : qz <= -0.6 ? '업종 하위' : '업종 평균권');
+    var h = '<div class="fund-peer">' +
+      '<div class="fp-h">동일 업종 비교 <span class="fp-sub">' + escapeHtml(p.sector || '') +
+      ' · 표본 ' + p.n + '종목</span></div>';
+    if (qz != null)
+      h += '<div class="fp-qmj ' + band + '"><span class="k">종합 품질(업종 대비)</span>' +
+           '<b>' + (qz > 0 ? '+' : '') + qz.toFixed(2) + 'σ</b><span class="s">' + say + '</span></div>';
+    h += '<div class="fp-rows">';
+    (p.rows || []).forEach(function(r) {
+      var cls = r.pct >= 70 ? 'good' : r.pct <= 30 ? 'bad' : 'mid';
+      var diff = r.v - r.med;
+      /* 방향을 반영해 '좋은 쪽으로 얼마나' 를 말한다 — 발생액은 낮은 쪽이 좋다 */
+      /* 차이가 0 이면 좋지도 나쁘지도 않다 — 종전엔 0.0 이 빨갛게 떴다(실측) */
+      var dcls = Math.abs(diff) < 0.05 ? 'neu' : ((r.dir > 0 ? diff > 0 : diff < 0) ? 'pos' : 'neg');
+      h += '<div class="fp-row">' +
+        '<span class="fp-nm" title="' + escapeAttr(r.cite) + '">' + escapeHtml(r.ko) + '</span>' +
+        '<span class="fp-bar"><i class="' + cls + '" style="width:' + Math.max(2, r.pct) + '%"></i></span>' +
+        '<span class="fp-pct ' + cls + '">' + r.pct + '%</span>' +
+        '<span class="fp-v">' + r.v.toFixed(1) + '<i>중앙 ' + r.med.toFixed(1) + '</i></span>' +
+        '<span class="fp-d ' + dcls + '">' + (dcls === 'neu' ? '±0.0' : ((diff >= 0 ? '+' : '') + diff.toFixed(1))) + '</span>' +
+        '</div>';
+    });
+    h += '</div>';
+    /* 무엇을 못 쟀는지 밝힌다 — 빈칸과 '나쁨' 은 다르다 */
+    if (d.adv && d.adv.missing && d.adv.missing.length)
+      h += '<div class="fp-miss">재무항목이 없어 건너뛴 지표: ' + escapeHtml(d.adv.missing.join(', ')) + '</div>';
+    if (d.adv && d.adv.opProfNoInterest)
+      h += '<div class="fp-miss">영업수익성은 이자비용을 빼지 않은 값이에요(해당 항목 미제공)</div>';
+    h += '<div class="fund-note">순위 기준 z점수 · QMJ(Asness·Frazzini·Pedersen 2019, RAS) 방식 · ' +
+         '지표 출처는 각 항목에 표시</div></div>';
+    return h;
+  }
+
   function renderDetailFund(d) {
     var el = $('detailFund'); if (!el) return;
     if (!d || !d.order || !d.order.length) { el.innerHTML = '<div class="empty">재무 데이터 없음</div>'; return; }
@@ -8427,6 +8476,7 @@ html[data-theme="light"] .m-brainbar button.active{color:#0b4f9e;background:rgba
         '<div class="fund-note">Piotroski F · Altman Z · Beneish M · Ohlson O · Sloan 발생액 · Novy-Marx 총이익성 (학술모델) · 기준연도 ' + escapeHtml(ev.asOf || '') + '</div>' +
         '</div>';
     }
+    html += renderFundPeer(d);
     el.innerHTML = html;
   }
   function loadDetailFund() {
@@ -14915,6 +14965,35 @@ html:root .page > *{ flex-shrink:0; }
      없다 — 증권사 리포트 목록은 이미 190px 에서 안쪽 스크롤로 묶여 있다.
      남는 높이는 그대로 차트가 가져가므로 빈 상자도 생기지 않는다. */
 }
+
+/* [V33.169] 동일 업종 비교 — 순위 막대 + 값/중앙값. 숫자만도, 순위만도 답이 안 된다 */
+.fund-peer{ margin-top:12px; padding-top:10px; border-top:1px solid var(--bd); }
+.fp-h{ font-size:11px; font-weight:700; color:var(--t1); margin-bottom:7px; }
+.fp-sub{ font-weight:400; font-size:9.5px; color:var(--t3); margin-left:5px; }
+.fp-none{ font-size:10px; color:var(--t3); line-height:1.6; }
+.fp-qmj{ display:flex; align-items:baseline; gap:8px; padding:7px 10px; border-radius:8px; margin-bottom:8px;
+  background:var(--s2); border:1px solid var(--bd2); }
+.fp-qmj .k{ font-size:10px; color:var(--t3); }
+.fp-qmj b{ font-family:'IBM Plex Mono',monospace; font-size:15px; font-weight:700; }
+.fp-qmj .s{ font-size:10px; margin-left:auto; }
+.fp-qmj.good b,.fp-qmj.good .s{ color:var(--pos); }
+.fp-qmj.bad b,.fp-qmj.bad .s{ color:var(--neg); }
+.fp-qmj.mid b,.fp-qmj.mid .s{ color:var(--t2); }
+.fp-rows{ display:flex; flex-direction:column; gap:3px; }
+.fp-row{ display:grid; grid-template-columns:minmax(86px,1.2fr) 1fr 34px 78px 46px; gap:6px;
+  align-items:center; font-size:9.5px; }
+.fp-nm{ color:var(--t2); overflow:hidden; text-overflow:ellipsis; white-space:nowrap; cursor:help; }
+.fp-bar{ position:relative; height:5px; border-radius:3px; background:var(--s3); overflow:hidden; }
+.fp-bar i{ display:block; height:100%; border-radius:3px; }
+.fp-bar i.good{ background:var(--pos); } .fp-bar i.bad{ background:var(--neg); } .fp-bar i.mid{ background:var(--t3); }
+.fp-pct{ font-family:'IBM Plex Mono',monospace; text-align:right; font-variant-numeric:tabular-nums; }
+.fp-pct.good{ color:var(--pos); } .fp-pct.bad{ color:var(--neg); } .fp-pct.mid{ color:var(--t3); }
+.fp-v{ font-family:'IBM Plex Mono',monospace; text-align:right; color:var(--t1); font-variant-numeric:tabular-nums; }
+.fp-v i{ display:block; font-style:normal; font-size:8px; color:var(--t3); }
+.fp-d{ font-family:'IBM Plex Mono',monospace; text-align:right; font-variant-numeric:tabular-nums; }
+.fp-d.pos{ color:var(--pos); } .fp-d.neg{ color:var(--neg); } .fp-d.neu{ color:var(--t3); }
+.fp-miss{ margin-top:6px; font-size:9px; color:var(--t3); line-height:1.5; }
+@media(max-width:900px){ .fp-row{ grid-template-columns:minmax(72px,1fr) 1fr 30px 64px 40px; font-size:9px; } }
 
 /* [V33.162] 종목 상세 — 증권사 목표가·투자의견. 전부 발표된 값이라 색·강조를 아끼지 않는다 */
 .detail-anl{ background:var(--s2); border:1px solid var(--bd); border-radius:8px; padding:10px; margin-bottom:10px; font-size:11.5px; }

@@ -2788,7 +2788,7 @@ async function applySignalTypeWeights(DB, cfg) {
 // ============================================================================
 // [V33.55] 빌드 버전 — SWR L2 캐시 키에 섞어 '배포 = 판단 캐시 자동 무효화'를 만든다.
 //   판정 로직을 고쳐도 옛 캐시가 최대 1시간 재배포되던 문제를 구조적으로 없앤다.
-const _BUILD_VER = "V33.168";
+const _BUILD_VER = "V33.169";
 
 const AI_PARAMS = {
   // ── OHLCV 타임프레임 ── 시가/고가/저가/종가/거래량을 어떤 봉 주기로 볼지.
@@ -20768,7 +20768,22 @@ async function handleRequest(request, env, ctx) {
       const mcap = Number(url.searchParams.get("mcap")) || null;   // 프론트가 이미 아는 시총(서버 조회 절약)
       const fund = await fetchFundamentals(env.DB, sym);
       const ev = evaluateFundamentals(fund, mcap);
-      return Response.json({ symbol: sym, years: fund.years || {}, order: fund.order || [], ts: fund.ts || null, eval: ev }, { headers: cors });
+      const adv = fundAdvanced(fund);
+      /* [V33.169] 동일 업종 비교 — 추가 조회는 업종 분류 1회뿐이고, 비교 자체는
+         이미 받아 둔 fund: 캐시만 쓴다. 표본이 모자라면 비교를 하지 않는다. */
+      let peer = null, sect = null;
+      try {
+        sect = await fundSectorOf(env.DB, sym);
+        if (sect && sect.sector) {
+          const peers = await fundPeersOf(env.DB, sym, sect.sector);
+          peer = await fundPeerCompare(env.DB, sym, peers);
+          if (peer) { peer.sector = sect.sector; peer.sectorSrc = sect.src; }
+        }
+      } catch (e) {}
+      return Response.json({ symbol: sym, years: fund.years || {}, order: fund.order || [], ts: fund.ts || null,
+                             eval: ev, adv: adv, peer: peer,
+                             metrics: FUND_METRICS.map(function (m) { return { k: m.k, ko: m.ko, cite: m.cite, dir: m.dir }; }) },
+                           { headers: cors });
     }
 
     // ── [V33.109] 소셜 멀티소스 상태·종목별 점수 ──
@@ -33065,9 +33080,15 @@ const FUND_TYPES = "annualTotalRevenue,annualGrossProfit,annualOperatingIncome,a
   "annualStockholdersEquity,annualRetainedEarnings,annualOperatingCashFlow,annualFreeCashFlow,annualBasicAverageShares," +
   // [V8] 학술 재무모델용 추가 필드(Beneish M-Score / Ohlson O-Score / Sloan 발생액)
   "annualReceivables,annualCostOfRevenue,annualSellingGeneralAndAdministration," +
-  "annualReconciledDepreciation,annualNetPPE,annualCurrentDebt,annualLongTermDebt";
+  "annualReconciledDepreciation,annualNetPPE,annualCurrentDebt,annualLongTermDebt," +
+  // [V33.169] 최근 문헌용 추가 항목 — 없으면 그 지표만 건너뛴다(파서가 결측을 허용한다)
+  //   현금성자산·재고·매입채무 : 현금기준 영업수익성(Ball et al. 2016), 순영업자산(Hirshleifer et al. 2004)
+  //   이자비용                 : 영업수익성(Fama-French 2015 RMW 정의에 이자비용 차감이 들어간다)
+  //   총부채·설비투자           : 안전성(QMJ) · 투자(Cooper et al. 2008)
+  "annualCashAndCashEquivalents,annualInventory,annualAccountsPayable," +
+  "annualInterestExpense,annualTotalDebt,annualCapitalExpenditure";
 
-const FUND_VER = 2;   // [V8] 학술모델 필드 추가 — 구버전 캐시 무효화
+const FUND_VER = 3;   // [V33.169] 항목 확장 — 구버전 캐시 무효화
 async function fetchFundamentals(DB, symbol) {
   const key = "fund:" + symbol;
   let cached = null;
@@ -33249,6 +33270,270 @@ function evaluateFundamentals(fund, marketCap) {
       score: score, grade: grade, verdict: verdict, warns: warns
     };
   } catch (e) { return null; }
+}
+
+// ════════════════════════════════════════════════════════════════════════════
+// [V33.169] 심화 재무분석 — 최근 문헌의 축을 채운다
+//
+// 기존 evaluateFundamentals 는 고전 4종(Piotroski 2000 · Altman 1968 · Beneish 1999 ·
+// Ohlson 1980)과 Sloan(1996) 발생액, Novy-Marx(2013) 총이익성을 이미 낸다.
+// 여기서는 ★그 뒤에 나온 문헌★ 이 "더 잘 맞는다" 고 보고한 축을 더한다. 출처를 그대로 적는다:
+//
+//   · 현금기준 영업수익성 — Ball, Gerakos, Linnainmaa & Nikolaev (2016), JFE
+//       "Accruals, cash flows, and operating profitability in the cross section of stock returns"
+//       발생액을 걷어낸 현금 기준 수익성이 발생액 기반 수익성보다 수익률 예측력이 높다.
+//   · 영업수익성(RMW) — Fama & French (2015), JFE "A five-factor asset pricing model"
+//       (매출−매출원가−판관비−이자비용)/자기자본.
+//   · 자산성장 — Cooper, Gulen & Schill (2008), JF "Asset Growth and the Cross-Section of Stock Returns"
+//       총자산 증가율이 높을수록 이후 수익률이 낮다(투자 요인의 대표 측정치).
+//   · 순영업자산 — Hirshleifer, Hou, Teoh & Zhang (2004), JAE
+//       대차대조표가 부풀수록(NOA/TA↑) 이후 수익률이 낮다.
+//   · 품질(QMJ) — Asness, Frazzini & Pedersen (2019), Review of Accounting Studies
+//       "Quality Minus Junk". 수익성·성장·안전성을 각각 ★횡단면 z점수★ 로 합성한다.
+//       ★이 논문의 방식이 곧 '동일 업종 비교' 의 근거다★ — 절대값이 아니라 같은 표본 안에서의
+//       상대 위치로 품질을 정의한다.
+//
+// ★없는 항목은 만들지 않는다.★ 각 지표는 필요한 재무항목이 있을 때만 값을 내고,
+//   없으면 null 과 사유를 남긴다 — "계산했더니 나쁜 것" 과 "데이터가 없는 것" 은 다르다.
+// ════════════════════════════════════════════════════════════════════════════
+
+// 업종 비교에 쓰는 지표 목록 — ★한 곳에서 정의★ 해 계산·화면·게이트가 어긋날 수 없게 한다.
+//   dir:+1 = 높을수록 좋음 · -1 = 낮을수록 좋음
+const FUND_METRICS = [
+  { k: "cashOpProf", ko: "현금기준 영업수익성", dir: +1, unit: "%", cite: "Ball et al. 2016 (JFE)" },
+  { k: "opProf",     ko: "영업수익성(RMW)",     dir: +1, unit: "%", cite: "Fama-French 2015 (JFE)" },
+  { k: "grossProf",  ko: "총이익성 GP/A",       dir: +1, unit: "%", cite: "Novy-Marx 2013 (JFE)" },
+  { k: "roe",        ko: "ROE",                dir: +1, unit: "%", cite: "-" },
+  { k: "accrual",    ko: "발생액(낮을수록 좋음)", dir: -1, unit: "%", cite: "Sloan 1996 (TAR)" },
+  { k: "assetGrowth",ko: "자산성장(낮을수록 좋음)", dir: -1, unit: "%", cite: "Cooper et al. 2008 (JF)" },
+  { k: "noa",        ko: "순영업자산 NOA/A(낮을수록)", dir: -1, unit: "%", cite: "Hirshleifer et al. 2004 (JAE)" },
+  { k: "roaVol",     ko: "ROA 변동성(낮을수록)", dir: -1, unit: "%", cite: "QMJ 안전성 (AFP 2019)" },
+  { k: "leverage",   ko: "부채비율(낮을수록)",   dir: -1, unit: "%", cite: "QMJ 안전성 (AFP 2019)" },
+  { k: "revCagr3",   ko: "매출 3년 CAGR",       dir: +1, unit: "%", cite: "QMJ 성장 (AFP 2019)" }
+];
+
+// 한 종목의 심화 지표. 전부 '있으면 계산, 없으면 null'.
+function fundAdvanced(fund) {
+  const ys = (fund && fund.order) || [];
+  if (!ys.length) return null;
+  const Y = function (i) { return fund.years[ys[ys.length - i]] || {}; };
+  const n = function (v) { return (typeof v === "number" && isFinite(v)) ? v : null; };
+  const cur = Y(1), prev = ys.length >= 2 ? Y(2) : null;
+  const miss = [];
+  const need = function (v, name) { if (v == null) { if (miss.indexOf(name) < 0) miss.push(name); return null; } return v; };
+
+  const ta = n(cur.TotalAssets), rev = n(cur.TotalRevenue), gp = n(cur.GrossProfit),
+        cogs = n(cur.CostOfRevenue), sga = n(cur.SellingGeneralAndAdministration),
+        eq = n(cur.StockholdersEquity), ni = n(cur.NetIncome), cfo = n(cur.OperatingCashFlow),
+        tl = n(cur.TotalLiabilitiesNetMinorityInterest), cash = n(cur.CashAndCashEquivalents),
+        inv = n(cur.Inventory), ap = n(cur.AccountsPayable), rec = n(cur.Receivables),
+        intx = n(cur.InterestExpense), td = n(cur.TotalDebt), cud = n(cur.CurrentDebt), ltd = n(cur.LongTermDebt);
+  const pTa = prev ? n(prev.TotalAssets) : null, pInv = prev ? n(prev.Inventory) : null,
+        pAp = prev ? n(prev.AccountsPayable) : null, pRec = prev ? n(prev.Receivables) : null;
+
+  const out = { asOf: ys[ys.length - 1], missing: miss };
+
+  /* 영업수익성(RMW) — (매출−매출원가−판관비−이자비용)/자기자본.
+     이자비용이 없으면 0으로 두지 않고 ★빼지 않은 값★ 임을 표시한다. */
+  if (rev != null && cogs != null && sga != null && eq != null && eq > 0) {
+    const noInt = (intx == null);
+    out.opProf = +(((rev - cogs - sga - (intx || 0)) / eq) * 100).toFixed(2);
+    out.opProfNoInterest = noInt;
+    if (noInt) need(null, "이자비용");
+  } else { out.opProf = null; need(null, "매출/원가/판관비/자기자본"); }
+
+  /* 현금기준 영업수익성 (Ball et al. 2016) —
+     영업이익에서 ★운전자본 발생액★ 을 걷어낸다: −Δ매출채권 −Δ재고 +Δ매입채무. */
+  if (rev != null && cogs != null && sga != null && ta && ta > 0) {
+    const dRec = (rec != null && pRec != null) ? (rec - pRec) : null;
+    const dInv = (inv != null && pInv != null) ? (inv - pInv) : null;
+    const dAp = (ap != null && pAp != null) ? (ap - pAp) : null;
+    const parts = [dRec, dInv, dAp].filter(function (x) { return x != null; }).length;
+    const adj = (dRec || 0) + (dInv || 0) - (dAp || 0);
+    out.cashOpProf = +((((rev - cogs - sga) - adj) / ta) * 100).toFixed(2);
+    out.cashOpProfParts = parts;          /* 3이면 완전, 그보다 적으면 부분 보정 */
+    if (parts < 3) need(null, "재고/매입채무 일부");
+  } else { out.cashOpProf = null; }
+
+  /* 자산성장 (Cooper et al. 2008) */
+  out.assetGrowth = (ta != null && pTa) ? +(((ta / pTa) - 1) * 100).toFixed(2) : null;
+
+  /* 순영업자산 NOA/A (Hirshleifer et al. 2004)
+     NOA = (총자산−현금) − (총부채−이자부부채). 현금·부채 항목이 없으면 낸다고 하지 않는다. */
+  if (ta && ta > 0 && cash != null && tl != null) {
+    const debt = (td != null) ? td : ((cud || 0) + (ltd || 0));
+    const noa = (ta - cash) - (tl - debt);
+    out.noa = +((noa / ta) * 100).toFixed(2);
+  } else { out.noa = null; if (cash == null) need(null, "현금성자산"); }
+
+  /* 안전성 — ROA 변동성(최근 5개 연도 표준편차)과 부채비율 (QMJ) */
+  const roas = [];
+  for (let i = 1; i <= Math.min(5, ys.length); i++) {
+    const y = Y(i), a = n(y.TotalAssets), e = n(y.NetIncome);
+    if (a && e != null) roas.push(e / a);
+  }
+  if (roas.length >= 3) {
+    const m = roas.reduce(function (a, b) { return a + b; }, 0) / roas.length;
+    const v = roas.reduce(function (a, b) { return a + (b - m) * (b - m); }, 0) / (roas.length - 1);
+    out.roaVol = +(Math.sqrt(v) * 100).toFixed(2);
+    out.roaVolYears = roas.length;
+  } else { out.roaVol = null; }
+  out.leverage = (tl != null && ta) ? +((tl / ta) * 100).toFixed(2) : null;
+
+  /* 성장 — 매출 3년 CAGR (QMJ 성장 축) */
+  if (ys.length >= 4) {
+    const r0 = n(Y(4).TotalRevenue), r1 = rev;
+    if (r0 && r0 > 0 && r1 && r1 > 0) out.revCagr3 = +((Math.pow(r1 / r0, 1 / 3) - 1) * 100).toFixed(2);
+    else out.revCagr3 = null;
+  } else out.revCagr3 = null;
+
+  /* 기존 지표와 같은 단위(%)로 맞춰 업종 비교 표에 함께 세운다 */
+  out.grossProf = (gp != null && ta) ? +((gp / ta) * 100).toFixed(2) : null;
+  out.roe = (ni != null && eq && eq > 0) ? +((ni / eq) * 100).toFixed(2) : null;
+  out.accrual = (ni != null && cfo != null && ta) ? +(((ni - cfo) / ta) * 100).toFixed(2) : null;
+  return out;
+}
+
+/* ── 동일 업종 비교 ─────────────────────────────────────────────────────────
+   QMJ(2019)의 방식 그대로 ★같은 표본 안에서의 상대 위치★ 로 품질을 본다.
+   절대값은 업종마다 수준이 달라(반도체 총이익성 vs 은행) 비교 자체가 성립하지 않는다.
+
+   ★추가 조회를 하지 않는다.★ 이미 받아 둔 fund: 캐시만 모은다 — 그래서 표본 수를
+   반드시 함께 밝힌다. 표본이 3 미만이면 비교를 ★하지 않는다★(둘을 비교해 백분위를
+   말하는 것은 숫자를 지어내는 것과 같다).
+   ★z점수는 값이 아니라 순위로 낸다.★ QMJ 논문이 그렇게 한다 — 각 변수를 횡단면
+   순위로 바꾼 뒤 표준화한다. 이유는 실측으로 확인된다: 표본이 10~60종목이면 값 기준
+   z는 극단치 하나에 통째로 끌려간다(윈저라이즈는 5% 꼬리가 0.5종목이라 아무것도 못 자른다).
+   순위 기준은 극단치가 아무리 커도 '가장 높은 하나' 일 뿐이라 흔들리지 않는다. */
+/* maxPeers 는 정확도가 아니라 ★지연★ 이 정한다 — 동종 한 곳당 fund: 를 한 번 읽으므로
+   30이면 최대 30회다. 순위 기반이라 30종목이면 백분위가 충분히 안정적이다. */
+const PEERCMP = { minPeers: 3, maxPeers: 30 };
+
+function _pctRank(arr, v) {
+  if (!arr.length) return null;
+  let below = 0, eq = 0;
+  for (const x of arr) { if (x < v) below++; else if (x === v) eq++; }
+  return +(((below + eq / 2) / arr.length) * 100).toFixed(0);
+}
+function _median(arr) {
+  if (!arr.length) return null;
+  const a = arr.slice().sort(function (x, y) { return x - y; });
+  const m = Math.floor(a.length / 2);
+  return a.length % 2 ? a[m] : (a[m - 1] + a[m]) / 2;
+}
+/* 값 → 순위(동점은 평균순위). 순위로 바꾸면 극단치의 크기가 사라지고 위치만 남는다. */
+function _ranks(arr) {
+  const idx = arr.map(function (v, i) { return { v: v, i: i }; })
+                 .sort(function (a, b) { return a.v - b.v; });
+  const r = new Array(arr.length);
+  let k = 0;
+  while (k < idx.length) {
+    let j = k;
+    while (j + 1 < idx.length && idx[j + 1].v === idx[k].v) j++;
+    const avg = (k + j) / 2 + 1;                 /* 1-based 평균순위 */
+    for (let m = k; m <= j; m++) r[idx[m].i] = avg;
+    k = j + 1;
+  }
+  return r;
+}
+
+/* 업종을 무엇으로 볼 것인가.
+   SECTOR_MAP 은 29종목뿐이라 그것만으로는 비교 표본이 안 나온다. 야후 assetProfile 의
+   sector/industry 를 종목당 1회(30일 캐시) 받아 채운다 — 업종은 자주 바뀌지 않는다.
+   그것도 실패하면 ★비교하지 않는다★. '미국 전체' 같은 묶음으로 비교하면
+   반도체와 은행을 같은 자로 재는 셈이라 숫자가 그럴듯해도 뜻이 없다. */
+async function fundSectorOf(DB, symbol) {
+  if (typeof SECTOR_MAP !== "undefined" && SECTOR_MAP[symbol]) return { sector: SECTOR_MAP[symbol], src: "내장 분류" };
+  const key = "sector:" + symbol;
+  let c = null;
+  try { c = await getState(DB, key, null); } catch (e) {}
+  if (c && c.ts && (Date.now() - c.ts) < 30 * 86400000) return c.v ? c.v : null;
+  if (fetchBudgetLeft() < 3) return c && c.v ? c.v : null;
+  try {
+    const j = await yahooFetch("https://query1.finance.yahoo.com/v10/finance/quoteSummary/" +
+      encodeURIComponent(symbol) + "?modules=assetProfile");
+    const r = j && j.quoteSummary && j.quoteSummary.result && j.quoteSummary.result[0];
+    const ap = r && r.assetProfile;
+    const v = (ap && (ap.industry || ap.sector))
+      ? { sector: String(ap.industry || ap.sector).slice(0, 48), src: "Yahoo 업종분류" } : null;
+    try { await setState(DB, key, { v: v, ts: Date.now() }); } catch (e) {}
+    if (v && v.sector) await fundSectorIndexAdd(DB, symbol, v.sector);
+    return v;
+  } catch (e) { return c && c.v ? c.v : null; }
+}
+
+/* 같은 업종의 종목 목록.
+   ★유니버스를 훑으면 안 된다★ — 종목당 getState 를 부르면 상세 페이지 한 번에
+   1,000회 가까운 DB 조회가 난다(유니버스가 그만큼이다). 업종을 알아낼 때마다
+   ★색인 하나★ 에 적어 두고, 여기서는 그 색인만 한 번 읽는다. */
+async function fundSectorIndexAdd(DB, symbol, sector) {
+  try {
+    const idx = (await getState(DB, "sector_index", null)) || {};
+    const arr = idx[sector] || [];
+    if (arr.indexOf(symbol) >= 0) return;
+    arr.push(symbol);
+    idx[sector] = arr.slice(-200);            /* 업종당 상한 — 무한정 커지지 않게 */
+    await setState(DB, "sector_index", idx);
+  } catch (e) {}
+}
+async function fundPeersOf(DB, symbol, sector) {
+  const out = [symbol];
+  /* 내장 분류(SECTOR_MAP)는 메모리에 있으니 훑어도 DB 조회가 0이다 */
+  if (typeof SECTOR_MAP !== "undefined") {
+    for (const u in SECTOR_MAP) {
+      if (u !== symbol && SECTOR_MAP[u] === sector && out.indexOf(u) < 0) out.push(u);
+    }
+  }
+  let idx = null;
+  try { idx = await getState(DB, "sector_index", null); } catch (e) {}
+  const arr = (idx && idx[sector]) || [];
+  for (const u of arr) { if (out.indexOf(u) < 0) out.push(u); if (out.length >= PEERCMP.maxPeers) break; }
+  return out;
+}
+
+async function fundPeerCompare(DB, symbol, peers) {
+  const me = {};
+  const cols = {};                       /* 지표별 동종 값 모음 */
+  const used = [];
+  for (const p of peers.slice(0, PEERCMP.maxPeers)) {
+    let f = null;
+    try { f = await getState(DB, "fund:" + p, null); } catch (e) {}
+    if (!f || !f.order || !f.order.length) continue;
+    const a = fundAdvanced(f);
+    if (!a) continue;
+    used.push(p);
+    for (const m of FUND_METRICS) {
+      const v = a[m.k];
+      if (typeof v === "number" && isFinite(v)) (cols[m.k] = cols[m.k] || []).push(v);
+    }
+    if (p === symbol) for (const m of FUND_METRICS) me[m.k] = a[m.k];
+  }
+  const n = used.length;
+  if (n < PEERCMP.minPeers) return { ok: false, n: n, min: PEERCMP.minPeers, peers: used };
+  const rows = [];
+  let zSum = 0, zN = 0;
+  for (const m of FUND_METRICS) {
+    const raw = cols[m.k] || [];
+    if (raw.length < PEERCMP.minPeers || typeof me[m.k] !== "number") continue;
+    const med = _median(raw);
+    const mv = me[m.k];
+    /* ★순위로 z를 낸다★ (QMJ 2019). 값 기준이면 극단치 하나가 z 전체를 끌고 간다. */
+    const rk = _ranks(raw);
+    const mIdx = raw.indexOf(mv);
+    const myRank = mIdx >= 0 ? rk[mIdx] : null;
+    const rMean = rk.reduce(function (a, b) { return a + b; }, 0) / rk.length;
+    const rSd = Math.sqrt(rk.reduce(function (a, b) { return a + (b - rMean) * (b - rMean); }, 0) / Math.max(1, rk.length - 1));
+    /* 방향을 곱해 ★항상 '높을수록 좋음'★ 으로 뒤집는다 — 안 그러면 발생액이 높은 게
+       좋아 보이는 표가 된다. */
+    const z = (myRank != null && rSd > 0) ? ((myRank - rMean) / rSd) * m.dir : 0;
+    const pct = _pctRank(raw, mv);
+    rows.push({ k: m.k, ko: m.ko, cite: m.cite, unit: m.unit, dir: m.dir,
+                v: +mv.toFixed(2), med: +med.toFixed(2), n: raw.length,
+                pct: m.dir > 0 ? pct : (100 - pct), z: +z.toFixed(2) });
+    zSum += z; zN++;
+  }
+  return { ok: rows.length > 0, n: n, rows: rows,
+           qmj: zN ? +(zSum / zN).toFixed(2) : null, peers: used };
 }
 
 // ════════════════════════════════════════════════════════════════════════════
