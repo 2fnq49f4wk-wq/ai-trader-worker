@@ -2788,7 +2788,76 @@ async function applySignalTypeWeights(DB, cfg) {
 // ============================================================================
 // [V33.55] 빌드 버전 — SWR L2 캐시 키에 섞어 '배포 = 판단 캐시 자동 무효화'를 만든다.
 //   판정 로직을 고쳐도 옛 캐시가 최대 1시간 재배포되던 문제를 구조적으로 없앤다.
-const _BUILD_VER = "V33.170";
+const _BUILD_VER = "V33.171";
+
+// ═══ [V33.171] 평가 순서 계획 — ★승격과 순환을 교차해 굶주림을 구조적으로 없앤다★ ═══
+//   V33.50 의 형태트리거는 "급한 몇 종목을 앞으로 당긴다"는 의도였으나, 실제 운영로그에서는
+//   매 사이클 118~227종목이 승격됐다. +2 짜리 약한 조건('강세'=당일 +2%, '신고가근접'=고점
+//   0.5% 이내)이 흔해 유니버스의 20~40%가 걸리기 때문이다. 그런데 TIME-CAP 예산으로 실제
+//   평가되는 것은 6~62종목뿐이었다 — 즉 루프는 승격 블록조차 다 끝내지 못하고 끊겼고,
+//   그 뒤에 붙여둔 순환 대기열에는 ★단 한 번도 도달하지 못했다★.
+//   그 결과 순환 진도(_evalBaseDone)가 항상 0 이라 오프셋이 Math.max(1,0)=1, 사이클당 한 칸씩만
+//   전진했다. 557종목 한 바퀴에 557사이클(약 9시간). 겉보기엔 "라운드로빈"이지만 실제로는
+//   같은 상위 종목 수십 개를 매 분 다시 보고 있었다.
+//   상한만 두는 수리는 예산이 바뀌면 또 굶는다(예산이 6종목까지 떨어진 날이 실제로 있었다).
+//   그래서 배치 자체를 바꾼다: 앞머리 headN 개를 먼저 보고, 그 뒤로는 승격:순환을 1:1 로 엮는다.
+//   TIME-CAP 이 어디서 잘라도 순환분이 절반을 가져가므로 굶는 것이 불가능하다.
+const LIVETRIG = {
+  minScore: 4,   // 승격 자격 — '신고가/MA20회복/급등4%' 급만. +2 짜리 약신호는 순환에 맡긴다
+  maxN: 20,      // 승격 상한 — 예산을 승격이 통째로 먹지 못하게 한다
+  headN: 2       // 교차 전에 무조건 먼저 보는 최상위 개수(진짜 돌파를 즉시 본다)
+  // ※ 순환 선두 보호구간(rrGuard)은 maxN+headN 으로 ★계산해서 쓴다★ — 따로 적어두면 어긋난다
+
+};
+
+// 회전된 순서(rotated)와 종목별 트리거 점수를 받아 실제 평가 순서를 만든다.
+//   반환 promoted 는 '순환 진도로 세면 안 되는' 승격분, pos 는 각 종목의 회전 내 좌표다.
+function evalOrderPlan(rotated, scoreOf, cfg) {
+  const C = cfg || LIVETRIG;
+  const pos = new Map();
+  for (let i = 0; i < rotated.length; i++) pos.set(rotated[i], i);
+  // [V33.171] ★순환 선두는 승격 대상에서 뺀다★ — 어차피 몇 칸 뒤에 볼 종목을 앞으로 당겨봐야
+  //   얻는 것이 없고, 대신 그 칸이 '평가된 연속구간'에서 빠져 오프셋 전진을 통째로 막는다.
+  //   (예산이 10종목까지 쪼그라든 날, 이것 때문에 전진이 0칸이 되는 것을 게이트가 잡아냈다)
+  //   보호구간은 승격이 차지할 수 있는 최대 칸수(maxN+headN)로 계산한다 — 상수를 따로 두면 어긋난다.
+  const guard = Math.max(0, (C.maxN | 0) + (C.headN | 0));
+  const hot = [], base = [];
+  for (let i = 0; i < rotated.length; i++) {
+    const it = rotated[i];
+    const s = scoreOf(it) || 0;
+    if (s >= C.minScore && i >= guard) hot.push({ it: it, s: s }); else base.push(it);
+  }
+  // 점수 내림차순, 동점이면 회전 순서 유지(안정 정렬)
+  hot.sort(function (a, b) { return (b.s - a.s) || (pos.get(a.it) - pos.get(b.it)); });
+  const cap = Math.max(0, C.maxN | 0);
+  const keep = hot.slice(0, cap);
+  const spill = hot.slice(cap);
+  // 상한을 넘은 승격 후보는 버리지 않고 ★원래 순환 좌표로 되돌린다★ — 어떤 종목도 사라지지 않는다
+  if (spill.length) {
+    for (const x of spill) base.push(x.it);
+    base.sort(function (a, b) { return pos.get(a) - pos.get(b); });
+  }
+  const promoted = new Set();
+  for (const x of keep) promoted.add(x.it);
+  const order = [];
+  let h = 0, b = 0;
+  const head = Math.min(Math.max(0, C.headN | 0), keep.length);
+  while (h < head) order.push(keep[h++].it);
+  while (h < keep.length || b < base.length) {
+    if (h < keep.length) order.push(keep[h++].it);
+    if (b < base.length) order.push(base[b++]);
+  }
+  return { order: order, promoted: promoted, pos: pos, hotN: keep.length };
+}
+
+// 오프셋 전진량 — ★앞에서부터 빈틈없이 평가된 칸수만★ 넘어간다.
+//   "본 것의 개수"로 밀면 승격 때문에 건너뛴 칸이 통째로 굶는다(그게 V33.50 의 두 번째 함정이었다).
+//   연속 구간만 인정하므로, 어떤 종목도 평가되지 않은 채 지나쳐지지 않는다.
+function evalOffsetAdvance(seenPositions, n) {
+  let k = 0;
+  while (k < n && seenPositions.has(k)) k++;
+  return k;
+}
 
 const AI_PARAMS = {
   // ── OHLCV 타임프레임 ── 시가/고가/저가/종가/거래량을 어떤 봉 주기로 볼지.
@@ -16278,7 +16347,10 @@ async function runTradingCycle(env) {
       //   ★부하 0★ — 시세(batchQuotes)와 일봉(dailyMap)은 이미 메모리에 다 올라와 있다.
       //   추가 D1 조회도, 추가 네트워크 fetch 도 없다. 순수 산술이라 수 ms 로 끝난다.
       //   (라운드로빈 자체는 유지된다 — 트리거가 없는 종목들은 종전 순서 그대로 뒤를 잇는다)
-      let _trigN = 0, _trigTop = [];
+      let _trigN = 0, _trigTop = [], _trigPromoted = 0;
+      let _evalPromoted = new Set();          // [V33.171] 승격분 — 순환 진도로 세지 않는다
+      let _evalPos = new Map();               // [V33.171] 종목 → 회전 내 좌표(오프셋 회계의 근거)
+      for (let _i = 0; _i < orderedEval.length; _i++) { orderedEval[_i].__trig = 0; _evalPos.set(orderedEval[_i], _i); }
       try {
         const _LB = 60;   // 형태 판정 창(봉) — 길수록 비싸지므로 60봉으로 제한
         const _scored = [];
@@ -16317,18 +16389,23 @@ async function runTradingCycle(env) {
           it.__trig = s;   // 아래 오프셋 회계에서 '승격분'을 구분하기 위한 표시
           _scored.push({ it: it, s: s });
         }
-        if (_trigN > 0) {
-          // 안정 정렬: 점수 내림차순, 동점이면 기존 라운드로빈 순서 유지
-          const _idx = new Map(); orderedEval.forEach(function (v, i) { _idx.set(v, i); });
-          _scored.sort(function (a, b) { return (b.s - a.s) || (_idx.get(a.it) - _idx.get(b.it)); });
-          orderedEval = _scored.map(function (x) { return x.it; });
-        }
+        // [V33.171] ★승격을 앞에 몰아놓지 않는다★ — 교차 배치라 순환분이 반드시 자기 몫을 가져간다.
+        //   (승격 자격/상한은 LIVETRIG. 상한 초과분은 원래 순환 좌표로 되돌아간다)
+        const _plan = evalOrderPlan(orderedEval, function (it) { return (it && it.__trig) || 0; }, LIVETRIG);
+        orderedEval = _plan.order;
+        _trigPromoted = _plan.hotN;
+        _evalPromoted = _plan.promoted;
+        _evalPos = _plan.pos;
       } catch (e) {}
       if (_trigN > 0) {
-        try { await log(DB, "INFO", null, "[LIVE-TRIG] " + market.toUpperCase() + " 형태트리거 " + _trigN + "종목 우선평가 — " + _trigTop.join(", ")); } catch (e) {}
+        try {
+          await log(DB, "INFO", null, "[LIVE-TRIG] " + market.toUpperCase() + " 형태트리거 " + _trigN +
+            "종목 중 " + _trigPromoted + "종목 우선평가(나머지는 순환 순서 유지) — " + _trigTop.join(", "));
+        } catch (e) {}
       }
-      let evalProcessed = 0, evalTimedOut = false;
+      let evalProcessed = 0, evalTimedOut = false, _evalAdv = 0;
       let _evalBaseDone = 0;   // [V33.50] 트리거 승격분을 제외한 '라운드로빈 진도' 카운터
+      const _evalSeen = new Set();   // [V33.171] 이번 사이클에 실제로 평가한 회전 좌표들
       const __candLog = [];   // [V12.130] 후보 신호를 모아 사이클 끝에 1회만 기록(D1 write 절감)
       // [성능] 평가 중 quote 지표 갱신을 종목당 D1 write(saveQuote) 대신 batch로 모아
       //   루프 끝에 일괄 커밋 → 종목당 ~419ms였던 평가 속도를 ms 단위로 단축(커버리지 확대 가능).
@@ -16572,18 +16649,39 @@ async function runTradingCycle(env) {
           // [V33.50] ★오프셋 회계 정정★ 트리거로 앞당겨진 종목은 '라운드로빈 진도'가 아니다.
           //   그걸 포함해 오프셋을 밀면 그만큼의 종목이 이번 바퀴에서 통째로 건너뛰어진다.
           //   기본 순환분(승격되지 않은 것)만 세어 진도를 옮긴다 — 어떤 종목도 굶지 않는다.
-          try { await setState(DB, "eval_offset:" + market, (evalOffset + Math.max(1, _evalBaseDone)) % fetched.length); } catch (e) {}
+          // [V33.171] ★"본 개수"가 아니라 "앞에서부터 빈틈없이 본 칸수"만큼 전진한다★
+          //   종전엔 승격분을 뺀 개수로 밀어, 승격이 예산을 다 먹은 사이클에서 진도가 0 →
+          //   Math.max(1,0)=1 로 한 칸씩만 갔다(한 바퀴 557사이클 ≈ 9시간).
+          _evalAdv = evalOffsetAdvance(_evalSeen, fetched.length);
+          if (_evalAdv > 0) {
+            try { await setState(DB, "eval_offset:" + market, (evalOffset + _evalAdv) % fetched.length); } catch (e) {}
+          }
           // [V33.35] TIME-CAP 은 고장이 아니라 설계된 안전장치다(한도 초과 전에 끊고 다음
           //   사이클이 eval_offset 부터 이어받는다 — 위 주석 참조). 종전엔 무조건 WARN 이라
           //   정상 순환이 "오류·경고"로 집계됐다. 커버리지가 30% 미만일 때만 경고로 올린다.
           const _covPct = fetched.length ? (evalProcessed / fetched.length) : 1;
-          await log(DB, _covPct < 0.3 ? "WARN" : "INFO", null,
+          // [V33.171] ★"이어서 평가한다"는 말이 사실인지 화면에 숫자로 남긴다★
+          //   종전 문구는 진도가 0칸이어도 똑같이 "이어서 평가"라고 적어, 9시간짜리 정체가
+          //   로그상 정상으로 보였다. 이제 전진 칸수와 한 바퀴 소요 사이클을 함께 적는다.
+          const _lap = _evalAdv > 0 ? Math.ceil(fetched.length / _evalAdv) : 0;
+          await log(DB, (_covPct < 0.3 || _evalAdv < 1) ? "WARN" : "INFO", null,
             "[TIME-CAP] " + market.toUpperCase() + " 평가 " + evalProcessed + "/" + fetched.length +
-            "종목(" + Math.round(_covPct * 100) + "%) 후 중단 — 다음 사이클이 이어서 평가(라운드로빈)");
+            "종목(" + Math.round(_covPct * 100) + "%) 후 중단 — 순환 " + _evalAdv + "칸 전진" +
+            (_lap ? "(전종목 한바퀴 ~" + _lap + "사이클)" : "(★정체★ — 다음 사이클이 같은 자리에서 다시 시작한다)") +
+            " · 승격 " + _trigPromoted + "종목");
           break;
         }
         evalProcessed++;
-        if (!(item.__trig > 0)) _evalBaseDone++;   // [V33.50] 승격되지 않은 종목만 순환 진도로 계산
+        // [V33.171] 승격분은 순환 진도가 아니다. 순환분은 '어느 칸을 봤는지' 좌표로 기록한다
+        //   — 개수가 아니라 좌표여야 건너뛴 칸이 생기지 않는다.
+        if (!_evalPromoted.has(item)) {
+          _evalBaseDone++;
+          const _p = _evalPos.get(item);
+          if (typeof _p === "number") _evalSeen.add(_p);
+        } else {
+          const _p2 = _evalPos.get(item);
+          if (typeof _p2 === "number") _evalSeen.add(_p2);   // 승격분도 '평가된 칸'이므로 연속구간에 포함
+        }
         // [V32.1] 긴 평가 루프 중에도 주기적으로 락 TTL 갱신 — 한 시장 평가가 수십 초로 길어지면
         //   그 사이 락이 만료돼 다음 크론에 탈취되고, 이후 시장/후처리가 소유권을 잃던 문제 예방.
         if (evalProcessed % 20 === 0) {
