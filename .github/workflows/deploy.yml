@@ -179,6 +179,12 @@ jobs:
       #   커밋 500 이 8일간 조용했던 문제도 함께 — '보낸 시각'이 아니라 '들어온 결과'를 표시한다.
       - name: 평가비용·학습가시성 검사 (부가조회 총량 · 커밋 관측)
         run: node tools/check-eval-cost.mjs
+      # [V33.173] 표본 시각 계약. 소급생성이 ts 에 적재 시각을 찍어, 몇 달치 시장이 하루로 뭉쳤다.
+      #   퍼징이 그걸 전부 '검증 구간 침범'으로 보고 학습셋을 통째로 잘랐다
+      #   (실측: XALPHA 표본 1,921 → 학습표본 0/800, FLOW 7,788 → 298/800).
+      #   "표본은 다 모였는데 학습이 안 된다"의 정체다. 퍼징 식을 떼어 재현·검증한다.
+      - name: 표본 시각 검사 (관측 시각 · 퍼징 생존율)
+        run: node tools/check-sample-ts.mjs
       # cloudflare/wrangler-action 대신 로컬에서 검증된 방식 그대로 실행
       # (wrangler-action@v3의 npx 자동설치가 4.86.0을 요구하며 실패하던 문제 회피)
       - name: Install wrangler

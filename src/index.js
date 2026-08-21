@@ -2788,7 +2788,7 @@ async function applySignalTypeWeights(DB, cfg) {
 // ============================================================================
 // [V33.55] 빌드 버전 — SWR L2 캐시 키에 섞어 '배포 = 판단 캐시 자동 무효화'를 만든다.
 //   판정 로직을 고쳐도 옛 캐시가 최대 1시간 재배포되던 문제를 구조적으로 없앤다.
-const _BUILD_VER = "V33.172";
+const _BUILD_VER = "V33.173";
 
 // ═══ [V33.171] 평가 순서 계획 — ★승격과 순환을 교차해 굶주림을 구조적으로 없앤다★ ═══
 //   V33.50 의 형태트리거는 "급한 몇 종목을 앞으로 당긴다"는 의도였으나, 실제 운영로그에서는
@@ -12759,9 +12759,13 @@ async function executeSell(DB, market, symbol, pos, sellQty, price, reason, cfg,
         // [V33.78] FLOW 표본 — 진입 시 스냅샷해 둔 FLOW 피처를 같은 결과로 라벨링한다.
         //   기존 표본 스트림과 완전히 분리돼 있어 LUXML 에 아무 영향이 없다.
         try {
-          if (Array.isArray(pos.meta.flowFeat)) await flowLogSample(DB, market, symbol, pos.meta.flowFeat, pnlPct);
-          if (Array.isArray(pos.meta.xaFeat)) await xalphaLogSample(DB, market, symbol, pos.meta.xaFeat, pnlPct);
-          if (Array.isArray(pos.meta.stackFeat)) await stackLogSample(DB, market, symbol, pos.meta.stackFeat, pnlPct);
+          // [V33.173] ★관측 시각 = 진입 시각★ — 이 피처들은 전부 진입 때 스냅샷해 둔 것이다.
+          //   청산 시각(Date.now())을 찍으면 라벨 지평만큼 미래로 밀려, 퍼징이 '검증 구간을
+          //   침범하는 표본'으로 오판해 잘라낸다.
+          const _obsTs = _num(pos.opened_ts, 0) || Date.now();
+          if (Array.isArray(pos.meta.flowFeat)) await flowLogSample(DB, market, symbol, pos.meta.flowFeat, pnlPct, _obsTs);
+          if (Array.isArray(pos.meta.xaFeat)) await xalphaLogSample(DB, market, symbol, pos.meta.xaFeat, pnlPct, _obsTs);
+          if (Array.isArray(pos.meta.stackFeat)) await stackLogSample(DB, market, symbol, pos.meta.stackFeat, pnlPct, _obsTs);
         } catch (e) {}
       }
       if (Array.isArray(pos.meta.mlEvKeys) && pos.meta.mlEvKeys.length && typeof mlUpdateEventExpectancy === "function") {
@@ -23988,7 +23992,13 @@ const FLOWML = {
   enabled: true,
   // [V33.104] 1 → 2: 결측마스크(posAvail) 추가로 차원 12 → 13.
   //   옛 표본은 마스크가 없어 섞이면 다시 '0=중립' 오염이 생긴다 → 버전으로 분리.
-  featVer: 2,
+  // [V33.173] 2 → 3. 차원은 그대로다 — 바뀐 것은 ★표본의 ts 의미★ 다.
+  //   종전 소급표본은 ts 에 '적재 시각(Date.now())'을 찍어, 몇 달치 시장이 며칠 안에 뭉쳤다.
+  //   퍼징(V33.141)은 ts 로 '라벨 구간이 검증 경계를 넘느냐'를 판단하므로, 뭉친 표본은
+  //   전부 경계를 넘는 것으로 보여 학습셋이 통째로 잘렸다(운영 실측: XALPHA 학습표본 0/800).
+  //   이제 원본 행의 관측 시각을 물려준다. 옛 표본과 섞으면 퍼징이 다시 오판하므로 판을 가른다
+  //   (DELETE 불필요 — 조회가 featver 로 걸린다. 소급생성은 장외 10분마다 도니 하루면 다시 찬다).
+  featVer: 3,
   featNames: [
     // ── 피어 그래프(추가 fetch 0) ──
     "peerRet5",      // 상관 상위 피어들의 5일 수익률 평균(%)
@@ -24657,12 +24667,21 @@ async function flowBuildFeat(DB, symbol, market, dailyCache, opts) {
 }
 
 // 표본 적재 — 청산 시 mlLogSample 과 같은 자리에서 호출한다(같은 결과, 다른 피처).
-async function flowLogSample(DB, market, symbol, featVec, pnlPct) {
+// [V33.173] ★ts 는 "이 표본이 관측된 시각"이어야 한다 — 적재 시각이 아니다.★
+//   퍼징(V33.141)은 "이 학습표본의 라벨 구간(10일)이 검증 경계를 넘느냐"를 ts 로 판단한다.
+//   그런데 소급생성(altSampleBackfill)은 과거 거래에서 피처를 만들면서 ts 에 Date.now() 를
+//   찍었다 — 몇 달 전 시장을 본 표본 19,436건이 전부 '오늘' 로 기록됐다.
+//   결과: 표본이 시간상 한 점에 뭉쳐 ★전부가 검증 경계를 넘는다★ → 퍼징이 학습셋을 통째로
+//   지운다. 운영 스냅샷이 그대로 말한다 — XALPHA 1,921건 → 학습표본 0/800,
+//   FLOW 7,788건 → 298/800. "표본은 다 모였는데 학습이 안 된다"의 정체다.
+//   (V33.141 주석은 이 증상을 '백필이 하루에 수백 종목을 넣어서' 라고 적었지만, 진짜 원인은
+//    백필이 원본 행의 ts 를 손에 쥐고도 버린 것이었다 — 날짜별로 묶는 데는 쓰면서.)
+async function flowLogSample(DB, market, symbol, featVec, pnlPct, tsMs) {
   try {
     if (!FLOWML.enabled || !Array.isArray(featVec) || featVec.length !== FLOWML.featNames.length) return;
     await DB.prepare("CREATE TABLE IF NOT EXISTS flow_samples (id INTEGER PRIMARY KEY AUTOINCREMENT, ts INTEGER, market TEXT, symbol TEXT, feat TEXT, label INTEGER, pnl_pct REAL, featver INTEGER)").run();
     await DB.prepare("INSERT INTO flow_samples (ts, market, symbol, feat, label, pnl_pct, featver) VALUES (?,?,?,?,?,?,?)")
-      .bind(Date.now(), market, symbol, JSON.stringify(featVec), _num(pnlPct, 0) > 0 ? 1 : 0, _num(pnlPct, 0), FLOWML.featVer).run();
+      .bind(_num(tsMs, 0) > 0 ? _num(tsMs, 0) : Date.now(), market, symbol, JSON.stringify(featVec), _num(pnlPct, 0) > 0 ? 1 : 0, _num(pnlPct, 0), FLOWML.featVer).run();
   } catch (e) {}
 }
 
@@ -25042,7 +25061,7 @@ async function altSampleBackfill(DB, opts) {
         if (!sy || !snap[sy]) { skipped++; continue; }
         if (XALPHA.enabled && _num(r.id, 0) > xDone) {
           const f = xalphaBuildFeat(sy, snap, mk === "kr" ? panelKR : panelUS);
-          if (f) { await xalphaLogSample(DB, mk, sy, f, _num(r.pnl_pct, 0)); madeX++; }
+          if (f) { await xalphaLogSample(DB, mk, sy, f, _num(r.pnl_pct, 0), _num(r.ts, 0)); madeX++; }   // [V33.173] 원본 행의 관측 시각
         }
         if (FLOWML.enabled && _num(r.id, 0) > fDone) {
           // 포지셔닝(공매도·내부자·풋콜)은 시점 데이터라 과거 값을 알 수 없다 → 0(중립).
@@ -25054,7 +25073,7 @@ async function altSampleBackfill(DB, opts) {
             const fv = [g(peer, "peerRet5"), g(peer, "peerRet20"), g(peer, "peerDisp"),
                         g(peer, "peerRel5"), g(peer, "peerCorrAvg"), g(peer, "peerLead"),
                         0, 0, 0, 0, 0, 0, 0];
-            await flowLogSample(DB, mk, sy, fv, _num(r.pnl_pct, 0));
+            await flowLogSample(DB, mk, sy, fv, _num(r.pnl_pct, 0), _num(r.ts, 0));   // [V33.173] 원본 행의 관측 시각
             madeF++;
           }
         }
@@ -25447,19 +25466,25 @@ const STACKML = {
   //   전부 in-sample 이었다(그래서 IC 0.566, t 7.51 이라는 비현실적 수치가 나왔다).
   //   이제 '전문가가 학습한 적 없는 행' 만 쓴다. 옛 표본과 섞으면 그 오염이 그대로
   //   남으므로 버전으로 갈라 자연 소멸시킨다(DELETE 불필요 — 조회가 featver 로 걸린다).
-  featVer: 3,
+  // [V33.173] 3 → 4. 차원은 그대로다 — 바뀐 것은 ★표본의 ts 의미★ 다.
+  //   종전 소급표본은 ts 에 '적재 시각(Date.now())'을 찍어, 몇 달치 시장이 며칠 안에 뭉쳤다.
+  //   퍼징(V33.141)은 ts 로 '라벨 구간이 검증 경계를 넘느냐'를 판단하므로, 뭉친 표본은
+  //   전부 경계를 넘는 것으로 보여 학습셋이 통째로 잘렸다(운영 실측: XALPHA 학습표본 0/800).
+  //   이제 원본 행의 관측 시각을 물려준다. 옛 표본과 섞으면 퍼징이 다시 오판하므로 판을 가른다
+  //   (DELETE 불필요 — 조회가 featver 로 걸린다. 소급생성은 장외 10분마다 도니 하루면 다시 찬다).
+  featVer: 4,
   minTrainSamples: 600,     // 14차원이라 600건이면 수렴한다
   trainWindow: 40000,
   l2: 1.5,                  // 전문가 확률끼리 상관이 높아 규제를 조금 세게
   icFloor: 0.015            // 투표를 대체하는 자리라 문턱을 FLOW/XALPHA 보다 높게
 };
 
-async function stackLogSample(DB, market, symbol, featVec, pnlPct) {
+async function stackLogSample(DB, market, symbol, featVec, pnlPct, tsMs) {
   try {
     if (!STACKML.enabled || !Array.isArray(featVec) || featVec.length !== 16) return;
     await DB.prepare("CREATE TABLE IF NOT EXISTS stack_samples (id INTEGER PRIMARY KEY AUTOINCREMENT, ts INTEGER, market TEXT, symbol TEXT, feat TEXT, label INTEGER, pnl_pct REAL, featver INTEGER)").run();
     await DB.prepare("INSERT INTO stack_samples (ts, market, symbol, feat, label, pnl_pct, featver) VALUES (?,?,?,?,?,?,?)")
-      .bind(Date.now(), market, symbol, JSON.stringify(featVec), _num(pnlPct, 0) > 0 ? 1 : 0, _num(pnlPct, 0), STACKML.featVer).run();
+      .bind(_num(tsMs, 0) > 0 ? _num(tsMs, 0) : Date.now(), market, symbol, JSON.stringify(featVec), _num(pnlPct, 0) > 0 ? 1 : 0, _num(pnlPct, 0), STACKML.featVer).run();
   } catch (e) {}
 }
 // ════════════════════════════════════════════════════════════════════════════
@@ -25501,7 +25526,8 @@ async function stackSampleBackfill(DB, opts) {
     // 커서와 에폭 중 큰 쪽부터 — 되감아도 누출 구간으로는 절대 못 돌아간다.
     const _from = Math.max(_num(st.lastId, 0), _ep);
     const rows = (await DB.prepare(
-      "SELECT id, market, symbol, feat, label, pnl_pct FROM ml_samples WHERE id > ? AND featver = ? ORDER BY id ASC LIMIT ?"
+      // [V33.173] ts 를 함께 읽는다 — 소급생성 표본의 '관측 시각'을 원본에서 물려주기 위해서.
+      "SELECT id, ts, market, symbol, feat, label, pnl_pct FROM ml_samples WHERE id > ? AND featver = ? ORDER BY id ASC LIMIT ?"
     ).bind(_from, LUXML.featVer, lim).all()).results || [];
     if (!rows.length) {
       // 되감기 없음 — 되감으면 전문가가 이미 학습한 행으로 돌아가 누출이 재발한다.
@@ -25557,7 +25583,7 @@ async function stackSampleBackfill(DB, opts) {
       const fv = [];
       for (const k of SLOTS) fv.push(P[k] != null ? _clamp(P[k], 0.001, 0.999) : 0.5);
       for (const k of SLOTS) fv.push(M[k] ? 1 : 0);
-      await stackLogSample(DB, r.market || "us", r.symbol || null, fv, _num(r.pnl_pct, 0));
+      await stackLogSample(DB, r.market || "us", r.symbol || null, fv, _num(r.pnl_pct, 0), _num(r.ts, 0));   // [V33.173] 원본 행의 관측 시각
       made++;
     }
     await setState(DB, "stack_bf_cursor", { lastId: lastId, made: _num(st.made, 0) + made, ts: Date.now() });
@@ -25599,7 +25625,13 @@ const XALPHA = {
   // [V33.155] 1 → 2: 형식알파 10종이 원값에서 ★횡단면 랭크★ 로 바뀌었다(의미가 다른 피처다).
   //   옛 표본·모델과 섞이면 안 되므로 판을 올린다. 소급생성 커서도 featVer 로 묶여 있어
   //   자동으로 처음부터 다시 만든다(altSampleBackfill 의 fvX 비교).
-  featVer: 2,
+  // [V33.173] 2 → 3. 차원은 그대로다 — 바뀐 것은 ★표본의 ts 의미★ 다.
+  //   종전 소급표본은 ts 에 '적재 시각(Date.now())'을 찍어, 몇 달치 시장이 며칠 안에 뭉쳤다.
+  //   퍼징(V33.141)은 ts 로 '라벨 구간이 검증 경계를 넘느냐'를 판단하므로, 뭉친 표본은
+  //   전부 경계를 넘는 것으로 보여 학습셋이 통째로 잘렸다(운영 실측: XALPHA 학습표본 0/800).
+  //   이제 원본 행의 관측 시각을 물려준다. 옛 표본과 섞으면 퍼징이 다시 오판하므로 판을 가른다
+  //   (DELETE 불필요 — 조회가 featver 로 걸린다. 소급생성은 장외 10분마다 도니 하루면 다시 찬다).
+  featVer: 3,
   featNames: [
     // ── WorldQuant 형식알파(논문 번호 표기) ──
     "a101",      // #101 (close−open)/((high−low)+.001) — 당일 몸통 방향
@@ -25864,12 +25896,12 @@ function xalphaBuildFeat(symbol, dailyCache, panel) {
   } catch (e) { return null; }
 }
 
-async function xalphaLogSample(DB, market, symbol, featVec, pnlPct) {
+async function xalphaLogSample(DB, market, symbol, featVec, pnlPct, tsMs) {
   try {
     if (!XALPHA.enabled || !Array.isArray(featVec) || featVec.length !== XALPHA.featNames.length) return;
     await DB.prepare("CREATE TABLE IF NOT EXISTS xalpha_samples (id INTEGER PRIMARY KEY AUTOINCREMENT, ts INTEGER, market TEXT, symbol TEXT, feat TEXT, label INTEGER, pnl_pct REAL, featver INTEGER)").run();
     await DB.prepare("INSERT INTO xalpha_samples (ts, market, symbol, feat, label, pnl_pct, featver) VALUES (?,?,?,?,?,?,?)")
-      .bind(Date.now(), market, symbol, JSON.stringify(featVec), _num(pnlPct, 0) > 0 ? 1 : 0, _num(pnlPct, 0), XALPHA.featVer).run();
+      .bind(_num(tsMs, 0) > 0 ? _num(tsMs, 0) : Date.now(), market, symbol, JSON.stringify(featVec), _num(pnlPct, 0) > 0 ? 1 : 0, _num(pnlPct, 0), XALPHA.featVer).run();
   } catch (e) {}
 }
 
