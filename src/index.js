@@ -2788,7 +2788,7 @@ async function applySignalTypeWeights(DB, cfg) {
 // ============================================================================
 // [V33.55] 빌드 버전 — SWR L2 캐시 키에 섞어 '배포 = 판단 캐시 자동 무효화'를 만든다.
 //   판정 로직을 고쳐도 옛 캐시가 최대 1시간 재배포되던 문제를 구조적으로 없앤다.
-const _BUILD_VER = "V33.176";
+const _BUILD_VER = "V33.177";
 
 // ═══ [V33.171] 평가 순서 계획 — ★승격과 순환을 교차해 굶주림을 구조적으로 없앤다★ ═══
 //   V33.50 의 형태트리거는 "급한 몇 종목을 앞으로 당긴다"는 의도였으나, 실제 운영로그에서는
@@ -19473,7 +19473,13 @@ async function handleRequest(request, env, ctx) {
               fwdICt: m ? _num(m.fwdICt, null) : null,
               fwdDays: m ? _num(m.fwdDays, 0) : 0, fwdBatchN: m ? _num(m.fwdBatchN, 0) : 0,
               minFwdDays: FWDLED.minDays,
-              admit: m ? expertAdmit(m) : null,
+              // [V33.177] ★판이 다른 모델은 admit 도 함께 죽인다★
+              //   trained 는 featVer 를 확인하는데 admit(expertAdmit)은 확인하지 않아,
+              //   옛 판이 예전에 합격했던 기록이 그대로 남아 화면에 "잠정가동 ×0.40" 으로 떴다.
+              //   그런데 실제 매매(위원회 투표)는 featVer 가 맞을 때만 이 admit 을 쓴다
+              //   (아래 flowScoreCommittee 류의 "fm.featVer === FLOWML.featVer" 게이트 참조) —
+              //   즉 화면은 "가동 중"이라 말하는데 실거래에서는 이미 빠진 위원이었다.
+              admit: (m && m.featVer === featVer) ? expertAdmit(m) : null,
               fwdReady: !!(m && m.fwdReady), holdPass: !!(m && m.holdPass), minFwd: ICGATE.minForward,
               valN: m ? _num(m.valN, null) : null,
               // [V33.114] 유효표본수(고유도 가중합)와 평균 고유도 — 명목 n 과의 차이를 보이게.
@@ -19504,7 +19510,9 @@ async function handleRequest(request, env, ctx) {
               acc: _mo ? _num(_mo.valAcc, null) : null, ic: _mo ? _num(_mo.valIC, null) : null,
               icBlock: _mo ? _num(_mo.valICBlock, null) : null, icT: _mo ? _num(_mo.valICt, null) : null,
               fwdIC: _mo ? _num(_mo.fwdIC, null) : null, fwdN: _mo ? _num(_mo.fwdN, 0) : 0,
-              fwdICt: _mo ? _num(_mo.fwdICt, null) : null, admit: _mo ? expertAdmit(_mo) : null,
+              // [V33.177] FLOW/XALPHA/STACK 와 같은 이유로 같은 자로 가둔다 — 옛 판은 admit 도 null.
+              fwdICt: _mo ? _num(_mo.fwdICt, null) : null,
+              admit: (_mo && _mo.luxFeatVer === LUXML.featVer) ? expertAdmit(_mo) : null,
               fwdDays: _mo ? _num(_mo.fwdDays, 0) : 0, fwdBatchN: _mo ? _num(_mo.fwdBatchN, 0) : 0,
               minFwdDays: FWDLED.minDays,
               fwdReady: !!(_mo && _mo.fwdReady), holdPass: !!(_mo && _mo.holdPass), minFwd: ICGATE.minForward,
