@@ -2788,7 +2788,7 @@ async function applySignalTypeWeights(DB, cfg) {
 // ============================================================================
 // [V33.55] 빌드 버전 — SWR L2 캐시 키에 섞어 '배포 = 판단 캐시 자동 무효화'를 만든다.
 //   판정 로직을 고쳐도 옛 캐시가 최대 1시간 재배포되던 문제를 구조적으로 없앤다.
-const _BUILD_VER = "V33.171";
+const _BUILD_VER = "V33.172";
 
 // ═══ [V33.171] 평가 순서 계획 — ★승격과 순환을 교차해 굶주림을 구조적으로 없앤다★ ═══
 //   V33.50 의 형태트리거는 "급한 몇 종목을 앞으로 당긴다"는 의도였으나, 실제 운영로그에서는
@@ -2802,6 +2802,24 @@ const _BUILD_VER = "V33.171";
 //   상한만 두는 수리는 예산이 바뀌면 또 굶는다(예산이 6종목까지 떨어진 날이 실제로 있었다).
 //   그래서 배치 자체를 바꾼다: 앞머리 headN 개를 먼저 보고, 그 뒤로는 승격:순환을 1:1 로 엮는다.
 //   TIME-CAP 이 어디서 잘라도 순환분이 절반을 가져가므로 굶는 것이 불가능하다.
+// ═══ [V33.172] 부가조회 예산 — ★기능마다 따로 준 예산을 아무도 합산하지 않았다★ ═══
+//   평가가 사이클당 450종목 → 34~51종목으로 주저앉은 실제 구조다. 평가 루프 안에서
+//   종목마다 도는 '부가조회'가 기능이 늘 때마다 하나씩 붙었는데, 각자 자기 몫만 보고 있었다:
+//     · 단타 분봉 스캔(V33.51~59) — 평가예산의 35~45% (자기 몫은 스스로 지킨다)
+//     · FLOW 포지셔닝/풋콜(V33.78) — ★상한 없음★. 종목마다 D1 read 2회 +
+//       캐시 만료 시 야후 quoteSummary 3모듈 + 옵션체인 전량(수백 KB, 0.5~2초)
+//     · 옵션 심리(V22)·진입 직전 분봉 확인 — 건수 상한만 있고 시간 상한 없음
+//   35% + 무제한 + 무제한 = 100% 를 훌쩍 넘는다. 그래서 종목당 2.5~6초가 나왔다.
+//   ★게다가 라운드로빈을 고치면(V33.171) 평가가 유니버스를 실제로 훑기 시작해
+//     FLOW 콜드미스가 쏟아진다 — 고치지 않으면 이번 수정이 상황을 악화시킨다.★
+//   해결: 부가조회 전체가 ★하나의 시간 지갑★을 공유한다. 지갑이 비면 부가조회는 건너뛰고
+//   핵심 평가는 제 속도로 계속 간다. 기능이 또 늘어도 총량은 변하지 않는다.
+const ENRICH = {
+  share: 0.40,          // 평가예산 중 부가조회에 허용하는 총량(나머지 60% 는 평가가 확보)
+  flowRefreshPerCycle: 6,   // FLOW 콜드미스 네트워크 갱신은 사이클당 이만큼만(점진적 워밍)
+  slowSymMs: 1200       // 이 시간을 넘긴 종목은 느린 종목으로 계측에 남긴다
+};
+
 const LIVETRIG = {
   minScore: 4,   // 승격 자격 — '신고가/MA20회복/급등4%' 급만. +2 짜리 약신호는 순환에 맡긴다
   maxN: 20,      // 승격 상한 — 예산을 승격이 통째로 먹지 못하게 한다
@@ -16404,6 +16422,28 @@ async function runTradingCycle(env) {
         } catch (e) {}
       }
       let evalProcessed = 0, evalTimedOut = false, _evalAdv = 0;
+      // [V33.172] 부가조회 공용 지갑 — 기능별 개별 예산의 합이 예산을 넘던 문제를 총량으로 막는다.
+      //   phase 는 '어디에 시간이 갔는지'를 사이클마다 한 줄로 남기기 위한 계측이다(D1 write 0).
+      const _enrich = { spent: 0, budget: 0, flowRefresh: 0, skipped: 0, slow: [] };
+      const _phase = { scalp: 0, flow: 0, opt: 0, intra: 0, decide: 0, news: 0 };
+      let _symPrevT0 = 0, _symPrev = "", _symTotalMs = 0;   // [V33.172] 종목당 소요시간 계측
+      // 부가조회 한 건을 지갑에서 결제한다. 잔액이 없으면 아예 실행하지 않고 건너뛴 횟수를 센다.
+      //   ★핵심 평가(신호생성·판정)는 이 지갑을 쓰지 않는다★ — 부가정보 때문에 본체가 굶으면 안 된다.
+      const _enrichRun = async function (kind, fn) {
+        if (_enrich.spent >= _enrich.budget) { _enrich.skipped++; return undefined; }
+        const _t0 = Date.now();
+        try { return await fn(); }
+        finally { const _d = Date.now() - _t0; _enrich.spent += _d; if (_phase[kind] != null) _phase[kind] += _d; }
+      };
+      // [V33.172] ★거래 확정 경로는 지갑으로 막지 않는다 — 재기만 한다★
+      //   진입 직전 분봉확인·옵션심리는 '이미 매수하기로 한 종목'에만 걸린다(건수도 이미 상한이 있다).
+      //   여기서 조회를 건너뛰면 결과가 undefined 가 되고, 확인 실패는 진입 차단으로 읽혀
+      //   ★지갑이 비었다는 이유로 거래가 막히는★ 조용한 사고가 난다. 계측만 하고 통과시킨다.
+      const _phaseRun = async function (kind, fn) {
+        const _t0 = Date.now();
+        try { return await fn(); }
+        finally { const _d = Date.now() - _t0; if (_phase[kind] != null) _phase[kind] += _d; }
+      };
       let _evalBaseDone = 0;   // [V33.50] 트리거 승격분을 제외한 '라운드로빈 진도' 카운터
       const _evalSeen = new Set();   // [V33.171] 이번 사이클에 실제로 평가한 회전 좌표들
       const __candLog = [];   // [V12.130] 후보 신호를 모아 사이클 끝에 1회만 기록(D1 write 절감)
@@ -16642,6 +16682,7 @@ async function runTradingCycle(env) {
       // [V32.3] 프리페치(시세배치·일봉 일괄로드)와 모델 로딩이 D1 과부하 시 길어질 수 있어,
       //   평가 루프 진입 직전 락 TTL을 한 번 더 갱신 → 여전히 소유 중이면 만료 임박을 리셋해 탈취 방지.
       try { await refreshCycleLock(DB, cfg.cycleLockTTL || 180000, myLockPid); } catch (e) {}
+      _enrich.budget = Math.max(0, Math.round(evalBudgetMs * ENRICH.share));   // [V33.172] 지갑 확정
       for (const item of orderedEval) {
         const _evalElapsed = Date.now() - evalStartedAt;
         if (_evalElapsed > evalBudgetMs || (Date.now() - cycleStartedAt > hardCapMs && _evalElapsed > evalMinMs)) {
@@ -16672,6 +16713,15 @@ async function runTradingCycle(env) {
           break;
         }
         evalProcessed++;
+        // [V33.172] ★직전 종목의 소요시간을 여기서 정산한다★ — 루프 본문에 continue 가 많아
+        //   끝에서 재면 대부분의 경로가 계측을 건너뛴다. 다음 반복 진입 시점이 유일하게
+        //   모든 경로가 반드시 지나는 자리다.
+        if (_symPrevT0 > 0) {
+          const _sd = Date.now() - _symPrevT0;
+          _symTotalMs += _sd;
+          if (_sd >= ENRICH.slowSymMs && _enrich.slow.length < 5) _enrich.slow.push(_symPrev + ":" + _sd + "ms");
+        }
+        const _symT0 = Date.now(); _symPrevT0 = _symT0; _symPrev = item.symbol;
         // [V33.171] 승격분은 순환 진도가 아니다. 순환분은 '어느 칸을 봤는지' 좌표로 기록한다
         //   — 개수가 아니라 좌표여야 건너뛴 칸이 생기지 않는다.
         if (!_evalPromoted.has(item)) {
@@ -17075,7 +17125,7 @@ async function runTradingCycle(env) {
                 //   지표(RSI·MACD·볼린저·ADX)는 연속 시계열만 있으면 되므로 전일 봉이 붙는 순간
                 //   개장 첫 봉부터 산출이 가능해진다. 단, 규칙엔진이 쓰는 세션값(VWAP·dayHigh/Low)은
                 //   오늘 봉 기준이어야 하므로 fetchMinuteBars 가 그 필드들을 오늘분으로 유지한다.
-                const _scalpMb = await fetchMinuteBars(symbol, { interval: "5m", range: "2d" });
+                const _scalpMb = await _enrichRun("scalp", function () { return fetchMinuteBars(symbol, { interval: "5m", range: "2d" }); });   // [V33.172] 지갑 결제
                 // [V33.40] ★장중 단타 학습표본 관측★ 이미 받아온 분봉을 그대로 재사용하므로 추가
                 //   fetch 가 0이다. 피처는 라이브 판정과 같은 mlBuildFeatures 로 만들어 학습/추론
                 //   정합을 유지한다. 저장은 전량 R2(대기 버퍼도 R2) — D1 은 건드리지 않는다.
@@ -17109,7 +17159,8 @@ async function runTradingCycle(env) {
                 } catch (e) {}
                 // [V33.48/53] 규칙 단타 신호는 (a) 시장 허용(usOnly) 이고 (b) 규칙 사전필터(_scAligned)를
                 //   통과했을 때만 생성한다. AI 단타는 아래에서 완전히 독립적으로 판단한다.
-                let _scalpSig = (_entryAllowed && _ruleScalpOk && _scAligned)
+                // [V33.172] _scalpMb 는 지갑이 비면 undefined 다 — 분봉 없이 단타를 판정하지 않는다.
+                let _scalpSig = (_scalpMb && _entryAllowed && _ruleScalpOk && _scAligned)
                   ? evaluateScalpEntry(_scalpMb, daily, mcfg, market, regime, _sigTypeStats) : null;
                 if (_scalpSig) scalpSig++;  // [진단] 게이트 통과해 신호 발생
                 // [V9.10 합성함수] SCALP 일봉 컨텍스트 직교 강화 — 분봉 진입을 일봉 추세/매집/실적/애널리스트로 사이즈 차등.
@@ -18111,10 +18162,19 @@ async function runTradingCycle(env) {
                 //   피어 계산은 캐시된 일봉만 쓰므로 네트워크 0, 포지셔닝/옵션은 종목당 하루 1회 캐시.
                 let __flowFeat = null;
                 try {
-                  if (FLOWML.enabled && __flowModel && __flowModel.trusted) {
-                    __flowFeat = await flowBuildFeat(DB, symbol, market, __dailyCacheForFlow);
-                  } else if (FLOWML.enabled && __flowCollect) {
-                    __flowFeat = await flowBuildFeat(DB, symbol, market, __dailyCacheForFlow);   // 학습 전엔 표본 수집만
+                  if (FLOWML.enabled && (( __flowModel && __flowModel.trusted) || __flowCollect)) {
+                    // [V33.172] ★"피어는 네트워크 0"이라는 주석이 사실의 3분의 1이었다★
+                    //   flowBuildFeat 은 피어 말고도 flowFetchPositioning(야후 quoteSummary 3모듈)과
+                    //   flowFetchPutCall(옵션체인 전량)을 종목마다 부른다. 상한이 전혀 없었다.
+                    //   → 지갑에서 결제하고, 콜드미스 네트워크 갱신은 사이클당 flowRefreshPerCycle 건까지만.
+                    const _flowNoFetch = (_enrich.flowRefresh >= ENRICH.flowRefreshPerCycle);
+                    __flowFeat = await _enrichRun("flow", async function () {
+                      const _t = Date.now();
+                      const _r = await flowBuildFeat(DB, symbol, market, __dailyCacheForFlow, { noFetch: _flowNoFetch });
+                      // 200ms 넘게 걸렸으면 네트워크를 탔다고 본다(캐시 적중은 D1 read 2회로 훨씬 싸다)
+                      if (!_flowNoFetch && (Date.now() - _t) > 200) _enrich.flowRefresh++;
+                      return _r;
+                    });
                   }
                   if (__flowFeat) signal.flowFeat = __flowFeat;
                 } catch (e) {}
@@ -18300,7 +18360,7 @@ async function runTradingCycle(env) {
             try {
               const _oc = AI_PARAMS.options;
               if (_oc && _oc.enabled !== false && market === "us" && qty > 0) {
-                const _os = await fetchOptionsSignal(DB, symbol);
+                const _os = await _phaseRun("opt", function () { return fetchOptionsSignal(DB, symbol); });   // [V33.172] 계측만 — 거래 확정 경로는 막지 않는다
                 if (_os && typeof _os.putCall === "number") {
                   let _oscale = 1;
                   if (_os.putCall >= (_oc.putCallBearish || 1.3)) _oscale = _oc.bearishSizeScale || 0.7;
@@ -18369,7 +18429,7 @@ async function runTradingCycle(env) {
               if (strategy !== "scalp" && _ic && _ic.enabled !== false && minuteFetchUsed < (_ic.maxPerCycle || 60) && fetchBudgetLeft() > 5) {
                 try {
                   minuteFetchUsed++;
-                  const _mb = await fetchMinuteBars(symbol, { interval: _ic.interval || "5m" });
+                  const _mb = await _phaseRun("intra", function () { return fetchMinuteBars(symbol, { interval: _ic.interval || "5m" }); });   // [V33.172] 계측만 — 거래 확정 경로는 막지 않는다
                   const _conf = confirmIntradayEntry(_mb, price, _ic);
                   if (!_conf.ok) {
                     incBlock(_conf.reason.split(" ")[0] + "[" + strategy + "]");
@@ -18503,6 +18563,26 @@ async function runTradingCycle(env) {
         await log(DB, "INFO", null, "[EVAL] " + market.toUpperCase() + " 평가 " + evalProcessed + "/" + fetched.length +
           "종목(" + (fetched.length ? (evalProcessed / fetched.length * 100).toFixed(0) : "0") + "%)" +
           (evalTimedOut ? " TIME-CAP" : " 완주"));
+      } catch (e) {}
+      // [V33.172] ★"어디에 시간이 갔나"를 매 사이클 한 줄로 남긴다★
+      //   평가가 450종목 → 34종목으로 주저앉은 원인을 찾는 데 3주치 커밋을 뒤져야 했다.
+      //   원인은 평가 루프 안의 부가조회였는데, 그게 얼마를 먹는지 아무도 재고 있지 않았다.
+      //   D1 write 는 사이클당 1회(이 줄 하나)뿐이라 부하가 없다.
+      try {
+        // 마지막 종목은 다음 반복이 없으므로 여기서 정산한다(TIME-CAP break 로 끊긴 경우 포함)
+        if (_symPrevT0 > 0) { _symTotalMs += Date.now() - _symPrevT0; _symPrevT0 = 0; }
+        if (evalProcessed > 0) {
+          const _per = Math.round(_symTotalMs / evalProcessed);
+          const _pp = [];
+          for (const _k of ["scalp", "flow", "opt", "intra"]) if (_phase[_k] > 0) _pp.push(_k + " " + Math.round(_phase[_k]) + "ms");
+          await log(DB, _per > ENRICH.slowSymMs ? "WARN" : "INFO", null,
+            "[EVAL-COST] " + market.toUpperCase() + " 종목당 평균 " + _per + "ms · 부가조회 " +
+            Math.round(_enrich.spent) + "/" + _enrich.budget + "ms" +
+            (_enrich.skipped ? "(예산소진 " + _enrich.skipped + "건 생략)" : "") +
+            (_enrich.flowRefresh ? " · FLOW갱신 " + _enrich.flowRefresh + "종목" : "") +
+            (_pp.length ? " — " + _pp.join(", ") : "") +
+            (_enrich.slow.length ? " · 느린종목 " + _enrich.slow.join(", ") : ""));
+        }
       } catch (e) {}
 
       // [V8.1.2] 시장당 NOBUY / BLOCK / 샘플 요약
@@ -21174,7 +21254,9 @@ async function handleRequest(request, env, ctx) {
         "sector_group_stats", "signal_type_stats", "deposits", "outflows",
         "twr:us", "twr:kr", "last_tick", "last_heartbeat", "mcap_shares",
         "signal_stats", "budget_split_applied", "llm_daily:us", "llm_daily:kr",
-        "mkt_context", "sector_news_sentiment"
+        "mkt_context", "sector_news_sentiment",
+        // [V33.172] 외부(Modal) 학습이 ★커밋을 통과해 실제로 들어왔는지★ — 상단 상태칩용.
+        EXTIMP_KEY, "modal_retrain_auto", "mind_model", "dnn_trust", "gbdt_trust", "xgb_trust", "lgb_trust", "cat_trust"
       ]);
       const sectorGroupStats = __S["sector_group_stats"] || {};
       const sectorGroups = { stats: sectorGroupStats, weights: (cfg.sectorGroups && cfg.sectorGroups.weights) || {} };
@@ -21282,6 +21364,8 @@ async function handleRequest(request, env, ctx) {
           krBySymbol: posKR.bySymbol
         },
         lastTick: lastTick, lastHeartbeat: lastHeartbeat, serverTime: Date.now(), cfg: cfg,
+        extTrain: _extTrainSummary(__S),   // [V33.172] 상단 학습 상태칩
+
         marketStatus: {
           us: isMarketOpen("us") && (await isMarketTradingDay(env.DB, "us", env)) !== false,
           kr: isMarketOpen("kr") && (await isMarketTradingDay(env.DB, "kr", env)) !== false
@@ -24477,11 +24561,17 @@ async function analystDetail(DB, symbol, force) {
 
 // 포지셔닝 데이터 — 야후 quoteSummary 모듈. 종목당 하루 1회만 받고 D1 에 캐시한다.
 //   실패해도 null 만 반환(기존 동작 무영향). 예산 가드 필수.
-async function flowFetchPositioning(DB, symbol) {
+async function flowFetchPositioning(DB, symbol, opts) {
   try {
     const key = "flowpos:" + symbol;
     const cached = await getState(DB, key, null);
     if (cached && (Date.now() - _num(cached.ts, 0)) < 20 * 3600000) return cached.v;
+    // [V33.172] ★평가 루프 안에서는 네트워크 갱신을 하지 않는다★ — 아래 flowFetchPutCall 도 같다.
+    //   이 두 함수는 종목마다 야후를 때린다(quoteSummary 3모듈 + 옵션체인 전량).
+    //   20시간 캐시라 '가끔'일 것 같지만, 라운드로빈이 고쳐져 평가가 유니버스를 실제로 훑기
+    //   시작하면 매 사이클 콜드미스가 쏟아진다. 캐시가 없으면 그냥 없는 대로 판단하고(결측
+    //   마스크 posAvail 이 이미 그 사실을 모델에 알려준다), 갱신은 예산이 허락하는 만큼만 한다.
+    if (opts && opts.noFetch) return cached ? cached.v : null;
     if (fetchBudgetLeft() < 3) return cached ? cached.v : null;
     const mods = "defaultKeyStatistics,majorHoldersBreakdown,insiderTransactions";
     const j = await yahooFetch("https://query1.finance.yahoo.com/v10/finance/quoteSummary/" +
@@ -24523,12 +24613,13 @@ async function flowFetchPositioning(DB, symbol) {
 }
 
 // 옵션 풋/콜 미결제약정 비율 — 포지셔닝의 직접 관측. US 만 제공된다.
-async function flowFetchPutCall(DB, symbol) {
+async function flowFetchPutCall(DB, symbol, opts) {
   try {
     if (/\.(KS|KQ)$/.test(symbol) || /=F$/.test(symbol)) return null;
     const key = "flowopt:" + symbol;
     const cached = await getState(DB, key, null);
     if (cached && (Date.now() - _num(cached.ts, 0)) < 20 * 3600000) return cached.v;
+    if (opts && opts.noFetch) return cached ? cached.v : null;   // [V33.172] 평가 루프에서는 옵션체인을 받지 않는다
     if (fetchBudgetLeft() < 3) return cached ? cached.v : null;
     const j = await yahooFetch("https://query1.finance.yahoo.com/v7/finance/options/" + encodeURIComponent(symbol));
     const r = j && j.optionChain && j.optionChain.result && j.optionChain.result[0];
@@ -24545,12 +24636,12 @@ async function flowFetchPutCall(DB, symbol) {
 }
 
 // FLOW 피처벡터 조립 — 없는 값은 0(중립)으로 채운다. 결측이 학습을 막지 않게 한다.
-async function flowBuildFeat(DB, symbol, market, dailyCache) {
+async function flowBuildFeat(DB, symbol, market, dailyCache, opts) {
   try {
     if (!FLOWML.enabled) return null;
     const peer = await flowPeerFeat(DB, symbol, market, dailyCache);
-    const pos = await flowFetchPositioning(DB, symbol);
-    const pc = await flowFetchPutCall(DB, symbol);
+    const pos = await flowFetchPositioning(DB, symbol, opts);
+    const pc = await flowFetchPutCall(DB, symbol, opts);
     if (!peer && !pos && pc == null) return null;   // 아무 정보도 없으면 표본으로 만들지 않는다
     const g = function (o, k) { return (o && typeof o[k] === "number" && isFinite(o[k])) ? o[k] : 0; };
     return [
@@ -38751,9 +38842,104 @@ async function sentiStatus(DB) {
       featVer: LUXML.featVer, staleFeatverSamples: c.stale };
   } catch (e) { return { error: e && e.message }; }
 }
+// ═══ [V33.172] 외부(Modal) 학습 산출물이 ★실제로 들어왔는지★ 한 곳에서 기록한다 ═══
+//   V33.170 에서 드러난 사고: 커밋 단계가 ReferenceError 로 500 을 뱉는데, 화면에는 여전히
+//   "학습 21시간 전"이 떠 있었다. 그 숫자는 '보낸 시각'이지 '들어온 시각'이 아니었기 때문이다.
+//   8일치 GPU 학습이 그렇게 조용히 버려졌다.
+//   → 업로더별로 기록을 붙이면 또 빠뜨린다(이 프로젝트에서 이미 겪었다). 라우터 바깥에서
+//     /api/*-import 응답을 통째로 관찰한다. 앞으로 업로더가 늘어도 자동으로 포함된다.
+const EXTIMP_KEY = "ext_import_log";
+// [V33.172] 상단 상태칩이 쓰는 한 줄 요약 — "보냈다"가 아니라 ★"들어왔다"★를 말한다.
+//   ok:  마지막 커밋이 성공했고 외부 산출물이 24h 안에 갱신됨
+//   warn: 커밋은 되는데 오래됨(모델이 늙었다)
+//   fail: 마지막 커밋이 실패 — GPU 는 돌았는데 결과가 버려지고 있다(V33.170 이 그랬다)
+function _extTrainSummary(SS) {
+  try {
+    const rec = SS[EXTIMP_KEY] || null;
+    const names = { mind: "mind_model", dnn: "dnn_trust", gbdt: "gbdt_trust", xgb: "xgb_trust", lgb: "lgb_trust", cat: "cat_trust" };
+    const keys = Object.keys(names);
+    let ext = 0, freshest = null;
+    for (const k of keys) {
+      const o = SS[names[k]];
+      if (o && o.source === "external") {
+        ext++;
+        const t = _num(o.trainedAt, 0);
+        if (t > 0 && (freshest == null || t > freshest)) freshest = t;
+      }
+    }
+    const ageH = freshest ? +((Date.now() - freshest) / 3600000).toFixed(1) : null;
+    // 마지막 커밋 결과 — 업로더 중 가장 최근 것
+    let last = null;
+    if (rec && rec.by) for (const w of Object.keys(rec.by)) {
+      const r = rec.by[w];
+      if (r && (last == null || _num(r.ts, 0) > _num(last.ts, 0))) last = Object.assign({ who: w }, r);
+    }
+    let state = "unknown", why = "커밋 기록 없음 — 아직 한 번도 업로드가 오지 않았다";
+    if (last && last.ok === false) {
+      state = "fail";
+      why = last.who + " 커밋 실패(" + (last.err || last.status) + ")" +
+            (last.failStreak > 1 ? " · " + last.failStreak + "회 연속" : "") +
+            " — GPU 는 돌았는데 결과가 버려지고 있다";
+    } else if (last && last.ok === true) {
+      if (ageH != null && ageH > 24) { state = "warn"; why = "커밋은 통과하지만 최신 산출물이 " + ageH + "시간 전 — 학습 주기 확인 필요"; }
+      else { state = "ok"; why = "마지막 커밋 " + last.who + " 통과 · 외부 모델 " + ext + "/" + keys.length + " 가동"; }
+    } else if (ext > 0) {
+      state = ageH != null && ageH > 24 ? "warn" : "ok";
+      why = "외부 모델 " + ext + "/" + keys.length + " 적재됨(커밋 관측 이전에 들어온 것)";
+    }
+    const fails = (rec && Array.isArray(rec.fails)) ? rec.fails.slice(0, 3) : [];
+    return { state: state, why: why, models: ext, total: keys.length, ageH: ageH,
+             last: last ? { who: last.who, ok: !!last.ok, ts: last.ts, err: last.err || null, stage: last.stage || null } : null,
+             dispatchAgoH: (SS["modal_retrain_auto"] && SS["modal_retrain_auto"].ts)
+               ? +((Date.now() - SS["modal_retrain_auto"].ts) / 3600000).toFixed(1) : null,
+             fails: fails };
+  } catch (e) { return { state: "unknown", why: "요약 실패", models: 0, total: 6, ageH: null, last: null, fails: [] }; }
+}
+async function extImportObserve(env, request, res) {
+  try {
+    const u = new URL(request.url);
+    const m = /^\/api\/([a-z0-9]+)-import$/.exec(u.pathname);
+    if (!m || request.method !== "POST") return;
+    const stage = u.searchParams.get("stage") || "single";
+    // 분할 업로드의 중간 단계(begin/net)는 소음이다 — 결과가 확정되는 단계만 남긴다.
+    if (stage === "begin" || stage === "net") return;
+    let ok = res.status >= 200 && res.status < 300, err = null;
+    try {
+      const j = await res.clone().json();
+      if (j && j.error) { ok = false; err = String(j.error).slice(0, 200); }
+      if (j && j.ok === false) ok = false;
+    } catch (e) {}
+    if (!ok && !err) err = "HTTP " + res.status;
+    const rec = (await getState(env.DB, EXTIMP_KEY, null)) || { by: {}, fails: [] };
+    rec.by = rec.by || {}; rec.fails = rec.fails || [];
+    const prev = rec.by[m[1]] || {};
+    rec.by[m[1]] = {
+      ts: Date.now(), ok: ok, status: res.status, stage: stage, err: err,
+      okTs: ok ? Date.now() : _num(prev.okTs, 0),        // 마지막으로 ★성공★한 시각
+      okStreak: ok ? (_num(prev.okStreak, 0) + 1) : 0,
+      failStreak: ok ? 0 : (_num(prev.failStreak, 0) + 1)
+    };
+    if (!ok) {
+      rec.fails.unshift({ ts: Date.now(), who: m[1], stage: stage, status: res.status, err: err });
+      rec.fails = rec.fails.slice(0, 10);
+    }
+    rec.ts = Date.now();
+    await setState(env.DB, EXTIMP_KEY, rec);
+    await log(env.DB, ok ? "INFO" : "ERROR", null,
+      "[EXT-IMPORT] " + m[1] + " " + stage + " → " + (ok ? "커밋 성공" : "★실패★ " + (err || res.status)));
+  } catch (e) {}
+}
+
 export default {
   // [V12.128] 모든 D1 접근을 과부하 재시도 래퍼로 감싼다(호출부 160여 곳을 건드리지 않고 일괄 적용).
-  async fetch(request, env, ctx) { __R2 = env.MODELS || null; cycMemoReset(); return handleRequest(request, Object.assign({}, env, { DB: wrapD1(env.DB) }), ctx); },
+  async fetch(request, env, ctx) {
+    __R2 = env.MODELS || null; cycMemoReset();
+    const _env = Object.assign({}, env, { DB: wrapD1(env.DB) });
+    const _res = await handleRequest(request, _env, ctx);
+    // [V33.172] 업로더가 아니면 즉시 반환된다(정규식 한 번) — 일반 요청에 부하가 없다.
+    try { ctx.waitUntil(extImportObserve(_env, request, _res)); } catch (e) {}
+    return _res;
+  },
   async scheduled(event, env, ctx) {
     __R2 = env.MODELS || null;   // [V33.13] 대형모델 저장소 바인딩(없으면 D1 청크 경로 유지)
     env = Object.assign({}, env, { DB: wrapD1(env.DB) });
