@@ -1,0 +1,100 @@
+name: 워커 로그 조회
+
+# [V33.178] ★진단이 사람 손을 거쳐야만 가능했다.★
+#
+#   워커 로그는 대시보드의 LOG 창에서만 볼 수 있었다. 그래서 "왜 XALPHA 가 0 건인가" 같은
+#   질문에 답하려면 매번 사람이 화면을 열어 읽고 옮겨 적어야 했다. 진단이 느려지는 만큼
+#   추측으로 코드를 고치게 되고, 그건 이 저장소가 이미 여러 번 겪은 실패 방식이다.
+#
+#   /api/logs 는 인증이 없는 읽기 전용 엔드포인트다(D1 의 logs 표를 최신순으로 돌려준다).
+#   이 워크플로는 그것을 받아 ★필요한 줄만★ 요약에 싣는다. 쓰기는 하지 않는다.
+
+on:
+  workflow_dispatch:
+    inputs:
+      filter:
+        description: '이 문자열이 든 줄만 (빈칸이면 전부)'
+        type: string
+        default: 'ALT-BF'
+      limit:
+        description: '최근 몇 줄을 받아올까'
+        type: string
+        default: '600'
+
+concurrency:
+  group: worker-logs
+  cancel-in-progress: true
+
+jobs:
+  logs:
+    runs-on: ubuntu-latest
+    name: 워커 로그 읽기
+    steps:
+      - uses: actions/checkout@v4
+
+      # 주소는 스스로 알아낸다 — 워치독·수동학습과 같은 방식.
+      - name: 워커 주소 확인
+        id: url
+        env:
+          WORKER_URL: ${{ vars.WORKER_URL }}
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+        run: |
+          set +e
+          NAME=$(grep -m1 '^name' wrangler.toml | sed 's/.*= *"//; s/"//')
+          if [ -n "$WORKER_URL" ]; then
+            echo "url=${WORKER_URL%/}" >> "$GITHUB_OUTPUT"; exit 0
+          fi
+          SUB=$(curl -sS --max-time 20 \
+            -H "Authorization: Bearer $CLOUDFLARE_API_TOKEN" \
+            "https://api.cloudflare.com/client/v4/accounts/$CLOUDFLARE_ACCOUNT_ID/workers/subdomain" \
+            | python3 -c 'import sys,json;d=json.load(sys.stdin);print((d.get("result") or {}).get("subdomain") or "")' 2>/dev/null)
+          [ -n "$SUB" ] && echo "url=https://$NAME.$SUB.workers.dev" >> "$GITHUB_OUTPUT" || echo "url=" >> "$GITHUB_OUTPUT"
+
+      # ★주소를 못 찾으면 조용히 넘어가지 않는다.★ 빈 결과와 "조회 실패" 는 뜻이 전혀 다르다.
+      - name: 주소 확인 실패 처리
+        if: steps.url.outputs.url == ''
+        run: |
+          echo "::error::워커 주소를 알아내지 못했다"
+          {
+            echo "### 🔴 워커 주소 없음"
+            echo "Settings → Secrets and variables → Actions → **Variables** 에 \`WORKER_URL\` 을 등록하거나,"
+            echo "\`CLOUDFLARE_API_TOKEN\` 에 \`Workers Scripts: Read\` 권한을 주세요."
+          } >> "$GITHUB_STEP_SUMMARY"
+          exit 1
+
+      - name: 로그 받기
+        id: fetch
+        env:
+          URL: ${{ steps.url.outputs.url }}
+          FILTER: ${{ inputs.filter }}
+          LIMIT: ${{ inputs.limit }}
+        run: |
+          set +e
+          echo "GET $URL/api/logs?limit=$LIMIT  (필터: '${FILTER:-없음}')"
+          CODE=$(curl -sS --max-time 60 -o logs.json -w '%{http_code}' "$URL/api/logs?limit=$LIMIT")
+          echo "HTTP $CODE"
+          echo "code=$CODE" >> "$GITHUB_OUTPUT"
+          [ "$CODE" = "200" ] || exit 1
+          # 뽑는 일은 tools/pick-logs.mjs 가 한다 — YAML 안에 스크립트를 박으면 들여쓰기가 깨지고
+          # 로컬에서 시험해 볼 수도 없다(실제로 그렇게 한 번 깨뜨렸다).
+          node tools/pick-logs.mjs logs.json "$FILTER" 120 > picked.txt
+          head -c 6000 picked.txt
+
+      - name: 결과 요약
+        if: always()
+        env:
+          FILTER: ${{ inputs.filter }}
+        run: |
+          {
+            echo "### 워커 로그 — 필터 \`${FILTER:-(전체)}\`"
+            echo ""
+            if [ "${{ steps.fetch.outputs.code }}" != "200" ]; then
+              echo "🔴 조회 실패 (HTTP ${{ steps.fetch.outputs.code }}) — 워커 배포 상태를 확인할 것."
+            else
+              echo '```'
+              head -c 60000 picked.txt 2>/dev/null || echo "(응답 없음)"
+              echo ""
+              echo '```'
+            fi
+          } >> "$GITHUB_STEP_SUMMARY"
