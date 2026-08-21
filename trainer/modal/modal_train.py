@@ -186,8 +186,22 @@ def train_job(epochs: int = EPOCHS_DEFAULT, dry: bool = False):
         _hor_d = float((cfg or {}).get("prediction", {}).get("horizonDays") or 10)
     except Exception:
         _hor_d = 10.0
-    UNIQ = _uniq_weights(TS, SYM, _hor_d * 86400000.0)
-    print(f"   표본 고유도: 평균 {UNIQ.mean():.3f} · 유효 {UNIQ.sum():.0f}/{N} (라벨지평 {_hor_d:.0f}일)")
+    # [V33.176] ★심볼이 안 오면 고유도가 조용히 무너진다 — 그 상태를 소리내어 말한다.★
+    #   고유도는 같은 종목 안의 라벨 겹침만 센다. 심볼이 전부 빈 문자열이면 온 표본이 한
+    #   바구니에 들어가 "모든 종목의 같은 날짜"가 서로 겹치는 것으로 계산된다.
+    #   실제로 그랬다 — R2 스냅샷 행에 s 가 빠져 있어 유효표본이 183,948건 중 31건으로 나왔고,
+    #   Wilson 하한이 24%로 무너져 DNN·GBDT 가 영원히 trustFloor 를 못 넘었다.
+    #   숫자만 보면 "표본이 부족하다" 로 오해하게 된다. 원인을 화면이 직접 말해야 한다.
+    _nsym = len(set(SYM.tolist())) if N else 0
+    if _nsym <= 1 and N > 100:
+        print(f"   ⚠️⚠️ 표본에 종목(s) 이 없다 — 고유도를 종목별로 잴 수 없다(고유 심볼 {_nsym}개).")
+        print("        워커의 /api/ml-export(또는 R2 스냅샷)가 s 를 안 싣고 있다는 뜻이다.")
+        print("        이 상태에서는 유효표본수가 실제의 수천분의 1로 나와 신뢰 게이트를 영원히 못 넘는다.")
+        print("        → 고유도 보정을 ★건너뛰고★ 균등가중으로 학습한다(잘못된 축소보다 낫다).")
+        UNIQ = np.ones(N, dtype=np.float64)
+    else:
+        UNIQ = _uniq_weights(TS, SYM, _hor_d * 86400000.0)
+    print(f"   표본 고유도: 평균 {UNIQ.mean():.3f} · 유효 {UNIQ.sum():.0f}/{N} (라벨지평 {_hor_d:.0f}일, 종목 {_nsym}개)")
     mw = np.clip(absp / pnl_scale, 0.3, 3.0) * np.where(HV > 0, hv_w, 1.0) * recency * UNIQ
 
     n_val = max(20, int(N * val_frac))

@@ -185,6 +185,11 @@ jobs:
       #   "표본은 다 모였는데 학습이 안 된다"의 정체다. 퍼징 식을 떼어 재현·검증한다.
       - name: 표본 시각 검사 (관측 시각 · 퍼징 생존율)
         run: node tools/check-sample-ts.mjs
+      # [V33.176] 표본 전달 계약. R2 스냅샷 행에 s(종목)가 빠져 트레이너가 온 표본을 한 종목으로
+      #   보고 고유도를 쟀다 — 유효표본 183,948 → 31건, Wilson 하한 24%, trustFloor 영구 미달.
+      #   표본 부족처럼 보였지만 한 칸이 빠진 것이었다. 모든 내보내기 경로의 필드를 맞춰 검사한다.
+      - name: 표본 전달 검사 (종목 필드 · 스냅샷 스키마 판)
+        run: node tools/check-ml-export.mjs
       # cloudflare/wrangler-action 대신 로컬에서 검증된 방식 그대로 실행
       # (wrangler-action@v3의 npx 자동설치가 4.86.0을 요구하며 실패하던 문제 회피)
       - name: Install wrangler

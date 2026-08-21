@@ -2788,7 +2788,7 @@ async function applySignalTypeWeights(DB, cfg) {
 // ============================================================================
 // [V33.55] 빌드 버전 — SWR L2 캐시 키에 섞어 '배포 = 판단 캐시 자동 무효화'를 만든다.
 //   판정 로직을 고쳐도 옛 캐시가 최대 1시간 재배포되던 문제를 구조적으로 없앤다.
-const _BUILD_VER = "V33.175";
+const _BUILD_VER = "V33.176";
 
 // ═══ [V33.171] 평가 순서 계획 — ★승격과 순환을 교차해 굶주림을 구조적으로 없앤다★ ═══
 //   V33.50 의 형태트리거는 "급한 몇 종목을 앞으로 당긴다"는 의도였으나, 실제 운영로그에서는
@@ -9212,12 +9212,18 @@ function _mlExportConfig() {
            icFloor: (typeof GBDT !== "undefined" && GBDT.icFloor != null) ? GBDT.icFloor : 0.015 };
 }
 const MLSNAP_PART = 20000;
-function _mlSnapKey(fv, part) { return "ml/v" + fv + "/part-" + part + ".json"; }
+// [V33.176] ★스냅샷 스키마 판★ — 행 모양이 바뀌면 옛 스냅샷이 조용히 서빙되면 안 된다.
+//   실제로 그 사고가 났다: 아래 SELECT 에 symbol 이 빠져 있어 스냅샷 행에 s 가 없었고,
+//   트레이너는 전 표본을 한 종목으로 보고 고유도를 쟀다(아래 주석 참조).
+//   featVer 만으로는 이걸 못 가른다 — 피처 정의는 그대로이고 '전달 스키마'만 바뀌기 때문이다.
+const MLSNAP_SCHEMA = 2;
+function _mlSnapKey(fv, part) { return "ml/v" + fv + "s" + MLSNAP_SCHEMA + "/part-" + part + ".json"; }
+function _mlSnapStateKey(fv) { return "ml_snap:v" + fv + "s" + MLSNAP_SCHEMA; }
 async function mlSnapshotBuildStep(DB, deadline) {
   const R2 = _bigR2();
   if (!R2) return { done: false, reason: "R2 미바인딩" };
   const fv = LUXML.featVer;
-  let st = await getState(DB, "ml_snap:v" + fv, null);
+  let st = await getState(DB, _mlSnapStateKey(fv), null);
   const nowT = Date.now();
   // 12시간마다 새로 뜬다. 진행 중이면 이어서.
   if (st && st.done && (nowT - (st.ts || 0)) < 12 * 3600000) return { done: true, fresh: true };
@@ -9225,13 +9231,14 @@ async function mlSnapshotBuildStep(DB, deadline) {
     const c = await DB.prepare("SELECT COUNT(*) c FROM ml_samples WHERE featver=?").bind(fv).first();
     const total = (c && c.c) || 0;
     st = { done: false, ts: nowT, anchorTs: nowT, total: total, parts: Math.ceil(total / MLSNAP_PART), next: 0 };
-    await setState(DB, "ml_snap:v" + fv, st);
+    await setState(DB, _mlSnapStateKey(fv), st);
   }
   while (st.next < st.parts) {
     if (deadline && Date.now() > deadline) break;
     const off = st.next * MLSNAP_PART;
     const rows = await DB.prepare(
-      "SELECT id, ts, market, feat, label, pnl_pct, strategy FROM ml_samples WHERE featver=? AND ts<=? ORDER BY ts DESC, id DESC LIMIT ? OFFSET ?"
+      // [V33.176] ★symbol 이 빠져 있었다 — 그 한 칸이 외부학습 전체를 무력화했다.★
+      "SELECT id, ts, market, symbol, feat, label, pnl_pct, strategy FROM ml_samples WHERE featver=? AND ts<=? ORDER BY ts DESC, id DESC LIMIT ? OFFSET ?"
     ).bind(fv, st.anchorTs, MLSNAP_PART, off).all();
     const raw = (rows && rows.results) || [];
     const out = [];
@@ -9241,18 +9248,26 @@ async function mlSnapshotBuildStep(DB, deadline) {
       // [V33.76] market 을 내보낸다 — 종전엔 SELECT 에 없어 트레이너가 시장을 전혀 알 수 없었고,
       //   그래서 미국·한국 표본이 한 모델에 뭉쳐 학습됐다(피처에 mktUS/mktKR 원핫은 있으나
       //   depth4 얕은 트리로는 시장별 상호작용을 거의 못 잡는다). 시장별 분리학습의 전제 조건.
-      out.push({ ts: _num(r.ts, 0), m: String(r.market || "us"),
+      // [V33.176] ★s(종목)를 반드시 싣는다.★
+      //   트레이너의 고유도(de Prado AFML 4장)는 ★같은 종목 안에서만★ 라벨 구간 겹침을 센다.
+      //   그런데 R2 스냅샷 행에 s 가 없어 전 표본이 빈 문자열 한 바구니에 들어갔고, 결과적으로
+      //   "모든 종목의 같은 날짜"가 서로 겹치는 것으로 계산됐다. 실측 결과가 그대로 말한다 —
+      //     표본 고유도: 평균 0.000 · 유효 31/183948
+      //     유효표본 8/18395 → Wilson 하한 24.43% → trustFloor 영구 미달
+      //   즉 DNN·GBDT 는 표본이 아무리 쌓여도 신뢰 상태가 될 수 없는 구조였다.
+      //   (D1 직접 서빙 경로에는 s 가 있었다. V33.27 에서 R2 를 우선 경로로 만들면서 갈렸다)
+      out.push({ ts: _num(r.ts, 0), m: String(r.market || "us"), s: String(r.symbol || ""),
                  x: v.map(function (t) { return _num(t, 0); }), y: _labelOfRow(r),
                  pnl: _num(r.pnl_pct, 0), hv: r.strategy === "hv" ? 1 : 0 });
     }
     await R2.put(_mlSnapKey(fv, st.next), JSON.stringify(out));
     st.next++;
-    await setState(DB, "ml_snap:v" + fv, st);
+    await setState(DB, _mlSnapStateKey(fv), st);
     if (raw.length < MLSNAP_PART) { st.parts = st.next; break; }
   }
   if (st.next >= st.parts) {
     st.done = true; st.ts = Date.now();
-    await setState(DB, "ml_snap:v" + fv, st);
+    await setState(DB, _mlSnapStateKey(fv), st);
     return { done: true, parts: st.parts, total: st.total };
   }
   return { done: false, progress: st.next + "/" + st.parts };
@@ -20165,7 +20180,7 @@ async function handleRequest(request, env, ctx) {
       try {
         const _R2 = _bigR2();
         if (_R2) {
-          const _snap = await getState(env.DB, "ml_snap:v" + LUXML.featVer, null);
+          const _snap = await getState(env.DB, _mlSnapStateKey(LUXML.featVer), null);
           if (_snap && _snap.done && (Date.now() - (_snap.ts || 0)) < 26 * 3600000) {
             const _part = Math.floor(offset / MLSNAP_PART);
             if (_part >= _snap.parts) {
@@ -20242,14 +20257,16 @@ async function handleRequest(request, env, ctx) {
       let rows = { results: [] };
       try {
         rows = await env.DB.prepare(
-          "SELECT ts, feat, label, pnl_pct, horizon FROM ml_samples_st WHERE featver=? ORDER BY ts DESC, id DESC LIMIT ? OFFSET ?"
+          // [V33.176] market·symbol 을 함께 읽는다 — 같은 함정을 이 스트림에 남겨두지 않는다.
+          "SELECT ts, market, symbol, feat, label, pnl_pct, horizon FROM ml_samples_st WHERE featver=? ORDER BY ts DESC, id DESC LIMIT ? OFFSET ?"
         ).bind(LUXML.featVer, limit, offset).all();
       } catch (e) {}
       const out = [];
       for (const r of ((rows && rows.results) || [])) {
         let v; try { v = JSON.parse(r.feat); } catch (e) { continue; }
         if (!Array.isArray(v) || v.length !== LUXML.featNames.length) continue;
-        out.push({ ts: _num(r.ts, 0), x: v.map(function (t) { return _num(t, 0); }), y: _labelOfRow(r),
+        out.push({ ts: _num(r.ts, 0), m: String(r.market || "us"), s: String(r.symbol || ""),
+                   x: v.map(function (t) { return _num(t, 0); }), y: _labelOfRow(r),
                    pnl: _num(r.pnl_pct, 0), h: _num(r.horizon, 2) });
       }
       const _sc = (typeof AI_PARAMS !== "undefined" && AI_PARAMS.aiScalp) || {};
