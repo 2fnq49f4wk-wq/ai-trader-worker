@@ -1,0 +1,126 @@
+name: Worker 학습기 수동 실행
+
+# [V33.174] ★Modal 이 학습하지 않는 모델들을 손으로 돌릴 방법이 없었다.★
+#
+#   외부(Modal) 트레이너가 맡는 것: DNN · GBDT · XGB/LGB/CAT · FM · SCALP.
+#   그런데 XALPHA · FLOW · STACK · MEMO 는 ★워커 안에서★ 도는 야간 로지스틱 회귀다
+#   (modal_train.py 에 'xalpha' 라는 문자열조차 없다). 즉 Modal 워크플로를 아무리 돌려도
+#   이 넷은 학습되지 않는다 — 그런데 그걸 알 방법도, 손으로 돌릴 방법도 없었다.
+#
+#   워커에는 이미 POST /api/ai/train-now?target=... 이 있다. 다만 TRAIN_KEY 인증이 필요하고
+#   그 키는 wrangler secret 이라 GitHub 쪽에 없었다. 이 워크플로가 그 다리를 놓는다.
+#
+#   ※ 표본이 모자라면 학습기는 "표본 N/최소 — 학습 대기" 를 돌려준다. 그건 실패가 아니라
+#     정상 응답이므로 아래 요약이 그대로 보여준다(초록불로 덮지 않는다).
+
+on:
+  workflow_dispatch:
+    inputs:
+      target:
+        description: '학습기 (all = 야간 파이프라인 전 단계)'
+        type: choice
+        default: xalpha
+        options: [xalpha, flow, stack, memo, mind, gbdt, dnn, l1, all]
+
+concurrency:
+  group: worker-training
+  cancel-in-progress: false
+
+jobs:
+  train:
+    runs-on: ubuntu-latest
+    name: 워커 학습기 실행
+    steps:
+      - uses: actions/checkout@v4
+
+      # 주소는 스스로 알아낸다 — 사람이 붙여넣을 것을 늘리지 않는다(워치독과 같은 방식).
+      - name: 워커 주소 확인
+        id: url
+        env:
+          WORKER_URL: ${{ vars.WORKER_URL }}
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+        run: |
+          set +e
+          NAME=$(grep -m1 '^name' wrangler.toml | sed 's/.*= *"//; s/"//')
+          if [ -n "$WORKER_URL" ]; then
+            echo "url=${WORKER_URL%/}" >> "$GITHUB_OUTPUT"; exit 0
+          fi
+          SUB=$(curl -sS --max-time 20 \
+            -H "Authorization: Bearer $CLOUDFLARE_API_TOKEN" \
+            "https://api.cloudflare.com/client/v4/accounts/$CLOUDFLARE_ACCOUNT_ID/workers/subdomain" \
+            | python3 -c 'import sys,json;d=json.load(sys.stdin);print((d.get("result") or {}).get("subdomain") or "")' 2>/dev/null)
+          [ -n "$SUB" ] && echo "url=https://$NAME.$SUB.workers.dev" >> "$GITHUB_OUTPUT" || echo "url=" >> "$GITHUB_OUTPUT"
+
+      # ★없으면 조용히 넘어가지 않고 실패시킨다.★ "아무 일도 안 했는데 초록불" 을 만들지 않는다.
+      - name: 준비 확인
+        env:
+          TRAIN_KEY: ${{ secrets.TRAIN_KEY }}
+        run: |
+          FAIL=0
+          if [ -z "${{ steps.url.outputs.url }}" ]; then
+            echo "::error::워커 주소를 알아내지 못했다"
+            echo "### 🔴 워커 주소 없음" >> "$GITHUB_STEP_SUMMARY"
+            echo "CLOUDFLARE_API_TOKEN 에 \`Workers Scripts: Read\` 권한을 주거나, Variables 에 \`WORKER_URL\` 을 등록하세요." >> "$GITHUB_STEP_SUMMARY"
+            FAIL=1
+          fi
+          if [ -z "$TRAIN_KEY" ]; then
+            echo "::error::TRAIN_KEY 시크릿 미설정"
+            {
+              echo "### 🔴 TRAIN_KEY 시크릿이 없다"
+              echo ""
+              echo "워커에 설정해 둔 것과 ★같은 값★ 을 GitHub 에도 등록해야 한다."
+              echo "값이 기억나지 않으면 새로 정해 양쪽에 같이 넣으면 된다:"
+              echo ""
+              echo '```'
+              echo "wrangler secret put TRAIN_KEY     # 워커 쪽"
+              echo '```'
+              echo "그리고 Settings → Secrets and variables → Actions → **Secrets** 에 \`TRAIN_KEY\` 로 같은 값 등록."
+              echo "(Modal 쪽 시크릿에도 같은 값이 들어가 있어야 외부 학습이 계속 동작한다)"
+            } >> "$GITHUB_STEP_SUMMARY"
+            FAIL=1
+          fi
+          exit $FAIL
+
+      - name: 학습 실행
+        id: run
+        env:
+          TRAIN_KEY: ${{ secrets.TRAIN_KEY }}
+          URL: ${{ steps.url.outputs.url }}
+          TARGET: ${{ inputs.target }}
+        run: |
+          set +e
+          echo "POST $URL/api/ai/train-now?target=$TARGET"
+          # all 은 야간 파이프라인 전 단계라 오래 걸린다 — 넉넉히 기다린다.
+          BODY=$(curl -sS --max-time 900 -w '\n%{http_code}' -X POST \
+            -H "X-Train-Key: $TRAIN_KEY" \
+            "$URL/api/ai/train-now?target=$TARGET")
+          CODE=$(printf '%s' "$BODY" | tail -n1)
+          JSON=$(printf '%s' "$BODY" | sed '$d')
+          echo "HTTP $CODE"
+          printf '%s\n' "$JSON" | head -c 4000
+          printf '%s' "$JSON" > result.json
+          echo "code=$CODE" >> "$GITHUB_OUTPUT"
+
+      - name: 결과 요약
+        if: always()
+        env:
+          TARGET: ${{ inputs.target }}
+        run: |
+          CODE="${{ steps.run.outputs.code }}"
+          {
+            echo "### 워커 학습기 \`$TARGET\` — HTTP ${CODE:-없음}"
+            echo ""
+            if [ "$CODE" != "200" ]; then
+              echo "🔴 호출이 실패했다. 401 이면 TRAIN_KEY 불일치, 503 이면 워커에 키가 없다는 뜻이다."
+            else
+              echo "각 학습기가 돌려준 문장을 그대로 싣는다 —"
+              echo "**\"표본 N/최소 — 학습 대기\" 는 실패가 아니라 표본이 덜 찼다는 정상 응답이다.**"
+            fi
+            echo ""
+            echo '```json'
+            head -c 3500 result.json 2>/dev/null || echo "(응답 없음)"
+            echo ""
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+          [ "$CODE" = "200" ]
