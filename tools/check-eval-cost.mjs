@@ -142,5 +142,27 @@ console.log('⑦ 상단 표시가 "보낸 시각"이 아니라 "들어온 결과
   else bad('색으로만 구분한다');
 }
 
+console.log('⑧ 외부 모델이 ★언제 학습됐는지★ 기록하는가');
+{
+  /* 운영 스냅샷에서 dnn/xgb/lgb/cat 의 ageH 가 전부 null 이었다 — trust 레코드에
+     trainedAt 이 없어서다. 그래서 "학습 21시간 전"도, 워치독의 신선도 계산도 근거가 없었다.
+     ★새 업로더가 생겨도 빠뜨리지 않도록★ source:"external" 을 쓰는 객체 리터럴을 전수 검사한다. */
+  const lits = [];
+  let i = 0;
+  while ((i = S.indexOf('source: "external"', i + 1)) > 0) {
+    // 이 리터럴이 속한 { ... } 를 앞뒤로 훑어 찾는다
+    let d = 0, a = i;
+    for (; a > 0; a--) { if (S[a] === '}') d++; else if (S[a] === '{') { if (!d) break; d--; } }
+    d = 0; let b = i;
+    for (; b < S.length; b++) { if (S[b] === '{') d++; else if (S[b] === '}') { if (!d) break; d--; } }
+    lits.push({ at: S.slice(0, i).split('\n').length, body: S.slice(a, b + 1) });
+  }
+  if (lits.length >= 8) ok('source:"external" 리터럴 ' + lits.length + '건을 전수 검사한다');
+  else bad('검사 대상이 ' + lits.length + '건뿐이다 — 탐색이 어긋났다');
+  const missing = lits.filter(x => !/trainedAt/.test(x.body)).map(x => 'line ' + x.at);
+  if (!missing.length) ok('모두 trainedAt 을 함께 기록한다 — 나이를 항상 알 수 있다');
+  else bad('★trainedAt 이 없는 외부 모델 기록★: ' + missing.join(', ') + ' — 화면 나이가 null 이 된다');
+}
+
 console.log(fail ? '\n✘ 평가비용·학습가시성 게이트 실패 ' + fail + '건' : '\n✅ 통과 — 부가조회는 총량 안에서만 돌고, 학습 커밋 결과가 화면에 산다');
 process.exit(fail ? 1 : 0);

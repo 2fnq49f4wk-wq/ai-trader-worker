@@ -2788,7 +2788,7 @@ async function applySignalTypeWeights(DB, cfg) {
 // ============================================================================
 // [V33.55] 빌드 버전 — SWR L2 캐시 키에 섞어 '배포 = 판단 캐시 자동 무효화'를 만든다.
 //   판정 로직을 고쳐도 옛 캐시가 최대 1시간 재배포되던 문제를 구조적으로 없앤다.
-const _BUILD_VER = "V33.173";
+const _BUILD_VER = "V33.175";
 
 // ═══ [V33.171] 평가 순서 계획 — ★승격과 순환을 교차해 굶주림을 구조적으로 없앤다★ ═══
 //   V33.50 의 형태트리거는 "급한 몇 종목을 앞으로 당긴다"는 의도였으나, 실제 운영로그에서는
@@ -20333,7 +20333,12 @@ async function handleRequest(request, env, ctx) {
         __dnnMemCache = null;
         let mindLB = 0.5;
         try { const mm = await mlMindLoad(env.DB); if (mm) mindLB = (typeof mm.valAccLB === "number") ? mm.valAccLB : _wilsonLB(_num(mm.valAcc, 0.5), _num(mm.valN, 30)); } catch (e) {}
+        // [V33.175] ★"학습 21시간 전"이 아무 의미가 없던 마지막 조각★
+        //   신뢰(trust) 레코드에 trainedAt 이 없어 운영화면의 외부모델 나이가 전부 null 이었다.
+        //   그래서 워치독의 신선도 계산도 항상 9999(=낡음)로 떨어져, 주소를 고쳐도 6시간마다
+        //   무조건 GPU 를 돌리게 돼 있었다. 모델 레코드에는 이미 찍고 있었는데 trust 에만 빠졌다.
         let trust = { wDnn: 0, trusted: false, dnnAcc: valAcc, dnnAccLB: valAccLB, mindAcc: mindLB, source: "external",
+                      trainedAt: Date.now(),
                       valN: valN, valNRaw: _num(_vs.valNRaw, valN), valUniq: _num(_vs.valUniq, null) };
         // [V12.54] 절대실력 게이트 — MIND 상대비교 폐기. 외부학습분은 val 라벨이 없어 다수클래스 기저를
         //   못 구하므로 trustFloor 절대문턱만 적용(외부 학습기가 자체 홀드아웃으로 valAccLB를 보고).
@@ -20454,6 +20459,7 @@ async function handleRequest(request, env, ctx) {
       let mindLB = 0.5;
       try { const mm = await mlMindLoad(env.DB); if (mm) mindLB = (typeof mm.valAccLB === "number") ? mm.valAccLB : _wilsonLB(_num(mm.valAcc, 0.5), _num(mm.valN, 30)); } catch (e) {}
       let trust = { wDnn: 0, trusted: false, dnnAcc: net.valAcc, dnnAccLB: net.valAccLB, mindAcc: mindLB, source: "external",
+                    trainedAt: Date.now(),
                     valN: net.valN, valNRaw: net.valNRaw, valUniq: net.valUniq };
       // [V12.54] 절대실력 게이트 — MIND 상대비교 폐기(외부학습분은 val 라벨 부재로 trustFloor만 적용).
       if (dnnLB >= DNN.trustFloor) {
@@ -20678,7 +20684,7 @@ async function handleRequest(request, env, ctx) {
       // 트러스트 계산(라이브 GBDT와 동일 로직).
       let mindLB = 0.5;
       try { const mm = await mlMindLoad(env.DB); if (mm) mindLB = (typeof mm.valAccLB === "number") ? mm.valAccLB : _wilsonLB(_num(mm.valAcc, 0.5), _num(mm.valN, 30)); } catch (e) {}
-      let trust = { wGbdt: 0, trusted: false, gbdtAcc: model.valAcc, gbdtAccLB: model.valAccLB, mindAcc: mindLB, source: "external", selfAcc: selfAcc != null ? +selfAcc.toFixed(4) : null, selfN: selfN, convMaxDiff: convMaxDiff != null ? +convMaxDiff.toFixed(4) : null, convN: convN,
+      let trust = { wGbdt: 0, trusted: false, gbdtAcc: model.valAcc, gbdtAccLB: model.valAccLB, mindAcc: mindLB, source: "external", trainedAt: Date.now(), selfAcc: selfAcc != null ? +selfAcc.toFixed(4) : null, selfN: selfN, convMaxDiff: convMaxDiff != null ? +convMaxDiff.toFixed(4) : null, convN: convN,
         valN: model.valN, valNRaw: model.valNRaw, valUniq: model.valUniq };
       trust.valIC = _vIC; trust.valRankIC = _vRIC;
       trust.valN = valN;                                   // [V33.91] Fisher z 하한 계산에 필요
