@@ -2788,7 +2788,7 @@ async function applySignalTypeWeights(DB, cfg) {
 // ============================================================================
 // [V33.55] 빌드 버전 — SWR L2 캐시 키에 섞어 '배포 = 판단 캐시 자동 무효화'를 만든다.
 //   판정 로직을 고쳐도 옛 캐시가 최대 1시간 재배포되던 문제를 구조적으로 없앤다.
-const _BUILD_VER = "V33.177";
+const _BUILD_VER = "V33.178";
 
 // ═══ [V33.171] 평가 순서 계획 — ★승격과 순환을 교차해 굶주림을 구조적으로 없앤다★ ═══
 //   V33.50 의 형태트리거는 "급한 몇 종목을 앞으로 당긴다"는 의도였으나, 실제 운영로그에서는
@@ -24749,6 +24749,10 @@ async function _miniLogisticTrain(DB, opts) {
     // [V33.104] 적합에 실제로 들어간 행의 최대 id — 다음 밤 전진검증이 "학습에 안 쓰인 행"을
     //   집합적으로 정확히 고르는 기준이 된다(ts 의미가 표마다 달라 시각 비교는 못 믿는다).
     let _maxId = 0; for (const r of raw) { const _i = _num(r.id, 0); if (_i > _maxId) _maxId = _i; }
+    // [V33.178] ★적합에 들어간 행의 최대 '관측 시각'★ — id 만으로는 전진검증이 성립하지 않는다.
+    //   수확기는 과거 이력을 계속 소급 적재한다(딥이력 커버리지). 그 행들은 id 가 크지만
+    //   ts(봉 날짜)는 과거다. 그래서 'id > maxId' 만 쓰면 전진검증이 ★과거 구간★ 을 채점한다.
+    let _maxTs = 0; for (const r of raw) { const _t = _num(r.ts, 0); if (_t > _maxTs) _maxTs = _t; }
     if (raw.length < opts.minN) {
       return "[" + opts.tag + "] 표본 " + raw.length + "/" + opts.minN + " — 학습 대기";
     }
@@ -24922,7 +24926,7 @@ async function _miniLogisticTrain(DB, opts) {
       fwdN: _fwd ? _fwd.n : 0, fwdReady: !!(_fwd && _fwd.ready),
       // [V33.140] 원장이 며칠치인지 — "표본이 왜 아직 모자라나" 를 화면이 답할 수 있어야 한다
       fwdDays: _fwd ? _num(_fwd.days, 0) : 0, fwdBatchN: _fwd ? _num(_fwd.batchN, 0) : 0,
-      fwdMode: _fwd ? (_fwd.mode || null) : null, maxId: _maxId,
+      fwdMode: _fwd ? (_fwd.mode || null) : null, maxId: _maxId, maxTs: _maxTs,
       holdPass: _holdPass,
       trusted: _trusted };
     await setState(DB, opts.stateKey, model);
@@ -25068,6 +25072,15 @@ async function altSampleBackfill(DB, opts) {
 
     const now = Date.now();
     let madeX = 0, madeF = 0, skipped = 0, lastId = _num(st.lastId, 0);
+    // [V33.178] ★XALPHA 가 왜 0 건인지 로그가 답하지 못했다.★ 운영 실측에서 같은 루프·같은 행을
+    //   돌면서 FLOW 는 299 건을 만들고 XALPHA 는 0 건이었는데, 메시지는 "+0 / +299" 만 찍었다.
+    //   XALPHA 는 ★같은 시장 안에서 20종목(minPanel) 이상★ 이라야 횡단면 랭크를 낼 수 있다
+    //   (얇은 패널의 순위는 정보가 아니라 잡음이다 — xalphaBuildFeat 주석). 날짜 게이트는
+    //   두 시장을 ★합쳐★ 20 을 보므로, US 12 + KR 11 같은 날은 게이트를 통과하지만 두 패널이
+    //   모두 얇아 XALPHA 만 통째로 실패한다. 그런데 커서는 그대로 전진해 그 행들은 영영 안 돌아온다.
+    //   원인을 로그가 스스로 말하게 한다 — 다음 수확 한 번이면 가설이 사실인지 갈린다.
+    let xThinUS = 0, xThinKR = 0, xNull = 0;
+    const _panelW = function (p) { return (p && Array.isArray(p.alphas) && Array.isArray(p.alphas[0])) ? p.alphas[0].length : 0; };
     for (const dk of days) {
       const list = byDay[dk];
       const ts0 = _num(list[0].ts, now);
@@ -25091,8 +25104,12 @@ async function altSampleBackfill(DB, opts) {
         const sy = r.symbol, mk = String(r.market || "us");
         if (!sy || !snap[sy]) { skipped++; continue; }
         if (XALPHA.enabled && _num(r.id, 0) > xDone) {
-          const f = xalphaBuildFeat(sy, snap, mk === "kr" ? panelKR : panelUS);
+          const _pn = mk === "kr" ? panelKR : panelUS;
+          const f = xalphaBuildFeat(sy, snap, _pn);
           if (f) { await xalphaLogSample(DB, mk, sy, f, _num(r.pnl_pct, 0), _num(r.ts, 0)); madeX++; }   // [V33.173] 원본 행의 관측 시각
+          // [V33.178] 실패 사유를 갈라 센다 — '패널이 얇아서' 와 '그 밖의 이유' 는 처방이 다르다.
+          else if (_panelW(_pn) < XALPHA.minPanel) { if (mk === "kr") xThinKR++; else xThinUS++; }
+          else xNull++;
         }
         if (FLOWML.enabled && _num(r.id, 0) > fDone) {
           // 포지셔닝(공매도·내부자·풋콜)은 시점 데이터라 과거 값을 알 수 없다 → 0(중립).
@@ -25116,7 +25133,12 @@ async function altSampleBackfill(DB, opts) {
       xDone: XALPHA.enabled ? Math.max(xDone, lastId) : xDone, fvX: XALPHA.featVer,
       ts: Date.now() });
     return "[ALT-BF] 날짜 " + days.length + "일 처리 — XALPHA +" + madeX + " / FLOW +" + madeF +
-           " (건너뜀 " + skipped + ", 커서 " + lastId + ")";
+           " (건너뜀 " + skipped + ", 커서 " + lastId + ")" +
+           // [V33.178] XALPHA 가 0 건일 때 ★왜★ 를 함께 적는다(위 주석 참조).
+           ((xThinUS || xThinKR || xNull)
+             ? " · XALPHA 실패내역: 패널부족 US " + xThinUS + " / KR " + xThinKR +
+               " (최소 " + XALPHA.minPanel + "종목) · 기타 " + xNull
+             : "");
   } catch (e) { return "[ALT-BF] 실패: " + (e && e.message); }
 }
 
@@ -25200,6 +25222,8 @@ async function memoTrainNightly(DB) {
     const raw = (rows && rows.results) || [];
     // [V33.104] 적합에 들어간 행의 최대 id — 다음 밤 전진검증의 배타 기준.
     let _maxId = 0; for (const r of raw) { const _i = _num(r.id, 0); if (_i > _maxId) _maxId = _i; }
+    // [V33.178] 관측 시각의 최대값 — 전진검증이 '과거 소급표본' 을 미래로 착각하지 않게 한다(위 주석 참조).
+    let _maxTs = 0; for (const r of raw) { const _t = _num(r.ts, 0); if (_t > _maxTs) _maxTs = _t; }
     const X = [], Y = [], P = [], T = [];
     for (let i = raw.length - 1; i >= 0; i--) {          // 오래된 것부터(시간순)
       let v; try { v = JSON.parse(raw[i].feat); } catch (e) { continue; }
@@ -25297,7 +25321,7 @@ async function memoTrainNightly(DB) {
     model.fwdIC = _fwd ? _fwd.ic : null; model.fwdICt = _fwd ? _fwd.t : null;
     model.fwdN = _fwd ? _fwd.n : 0; model.fwdReady = !!(_fwd && _fwd.ready);
     model.fwdDays = _fwd ? _num(_fwd.days, 0) : 0; model.fwdBatchN = _fwd ? _num(_fwd.batchN, 0) : 0;
-    model.fwdMode = _fwd ? (_fwd.mode || null) : null; model.maxId = _maxId;
+    model.fwdMode = _fwd ? (_fwd.mode || null) : null; model.maxId = _maxId; model.maxTs = _maxTs;
     // [V33.143] 문턱을 가족 크기에서 구한다(MEMOML.icTMin 상수 대신). 기록도 남긴다.
     let _memoFam = null; try { _memoFam = await getState(DB, "ic_family", null); } catch (e) {}
     const _memoTMin = icTMinNow(_memoFam);
@@ -26840,7 +26864,9 @@ async function icForwardCheck(DB, opts) {
     //     들고 다닌다: 다음 조회는 언제나 hwm 이후만 본다. 이러면 재학습 여부와 무관하게
     //     날짜 블록이 쌓이고, 각 줄은 여전히 비중첩이라 블록 t 의 가정도 그대로 성립한다.
     const _lkey = "fwd_ledger:" + o.stateKey;
-    const _LEDVER = 2;                      // 줄 key 의미가 바뀌었다(모델버전 → 날짜)
+    // [V33.178] 2 → 3. 줄의 ★측정 대상★ 이 바뀌었다 — 종전 줄들은 과거 소급표본으로 잰 IC 라
+    //   (아래 주석 참조) 새 줄과 섞으면 틀린 음수를 keepDays 동안 계속 끌고 간다. 버리고 다시 쌓는다.
+    const _LEDVER = 3;                      // 줄 key 의미가 바뀌었다(모델버전 → 날짜) · 측정기준 정정
     let _led = null;
     try { _led = await getState(DB, _lkey, null); } catch (e) {}
     //   ★구판 원장은 버린다.★ 구판 줄은 hwm 없이 누적창을 통째로 세었으므로, 새 방식과 섞으면
@@ -26848,10 +26874,32 @@ async function icForwardCheck(DB, opts) {
     if (!_led || !Array.isArray(_led.v) || _led.featVer !== o.featVer || _num(_led.ver, 1) !== _LEDVER)
       _led = { ver: _LEDVER, featVer: o.featVer, v: [], hwmId: 0, hwmTs: 0 };
 
+    /* ══ [V33.178] ★'적합에 안 쓰였다' 와 '미래다' 는 다른 조건이다 — 둘 다 걸어야 한다★ ══
+       V33.104 는 전진표본을 id > maxId 로 골랐다. 그 조건이 보장하는 것은 ★적합 배타성★
+       하나뿐인데, 우리는 그것을 '학습 이후 도착 = 미래' 로 읽어 왔다. 두 뜻이 갈리는 이유:
+
+         수확기는 과거 이력을 끊임없이 ★소급★ 적재한다(딥이력 커버리지 확장).
+         그 행들은 id 가 크지만 ts(봉 날짜)는 ★과거★ 다.
+
+       그래서 전진검증은 실제로는 '학습구간보다 과거인 시장' 에서 모델을 채점하고 있었다.
+       운영 화면이 그 결과를 그대로 보여준다 — ml_samples 를 쓰는 세 모델이 ★전부★ 음수다:
+         이중헤드 강세 전진IC −0.0775 · 약세 −0.0848 · MEMO −0.1343
+       독립적인 세 모델이 나란히 음수인 것은 실력 부족이 아니라 ★척도가 틀렸다★ 는 신호다.
+       (게이트는 forwardFloor=0 이라, 이 값 때문에 셋 다 '합류 보류' 로 묶여 있었다)
+
+       → id(적합 배타) 와 ts(시간 전진) 를 ★함께★ 건다. maxTs 는 학습 때 기록해 둔
+         '적합에 들어간 행의 최대 관측시각' 이다. 새 봉이 실제로 도착해야만 전진표본이 는다 —
+         느리지만 그게 정직한 속도다. (V33.104 가 겪은 '0/400 영구정체' 와는 다르다:
+          그때 기준은 ts > 학습 벽시계였고, 봉 날짜는 언제나 그보다 과거라 구조적으로 0 이었다.
+          여기 기준은 ts > 학습표본의 최대 봉날짜이므로 다음 거래일이면 채워진다.)
+       ※ maxTs 가 없는 옛 모델 레코드는 종전대로 동작한다 — 다음 재학습 때 기록된다. */
     let _where, _bindVal, _mode, _order;
+    let _tsGuard = 0;
     if (_num(prev.maxId, 0) > 0) {
       _where = "id > ?"; _mode = "id"; _order = "id ASC";
       _bindVal = Math.max(_num(prev.maxId, 0), _num(_led.hwmId, 0));
+      _tsGuard = _num(prev.maxTs, 0);
+      if (_tsGuard > 0) { _where += " AND ts > ?"; _mode = "id+ts"; }
     } else if (o.hasInsTs) {
       _where = "COALESCE(ins_ts, ts) > ?"; _mode = "ins_ts"; _order = "ats ASC";
       _bindVal = Math.max(_num(prev.ts, 0), _num(_led.hwmTs, 0));
@@ -26862,10 +26910,13 @@ async function icForwardCheck(DB, opts) {
     //   정렬을 필터와 ★같은 열★ 로 맞춘다 — 다르면 LIMIT 이 중간을 건너뛰어, hwm 을 올리는
     //   순간 안 센 행이 영구히 버려진다(ts 순서와 id 순서는 일치하지 않는다).
     const _selAt = o.hasInsTs ? "COALESCE(ins_ts, ts) AS ats" : "ts AS ats";
-    const rs = await DB.prepare(
+    const _st0 = DB.prepare(
       "SELECT id, ts, " + _selAt + ", feat, label, pnl_pct FROM " + o.table +
       " WHERE featver = ? AND " + _where + " ORDER BY " + _order + " LIMIT 4000"
-    ).bind(o.sampleFeatVer != null ? o.sampleFeatVer : o.featVer, _bindVal).all();
+    );
+    const rs = await (_tsGuard > 0
+      ? _st0.bind(o.sampleFeatVer != null ? o.sampleFeatVer : o.featVer, _bindVal, _tsGuard)
+      : _st0.bind(o.sampleFeatVer != null ? o.sampleFeatVer : o.featVer, _bindVal)).all();
     const rows = (rs && rs.results) || [];
 
     // 이번 배치(= 아직 세지 않은 행)의 IC 를 잰다.

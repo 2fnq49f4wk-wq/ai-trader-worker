@@ -191,5 +191,49 @@ const dayIC = (trueIC, n) => trueIC + randn() / Math.sqrt(Math.max(4, n - 3));
   else bad(`줄 합계 ${nS2.pooledN} ≠ 유입 ${ARRIVE * runDays} — 중복 계수`);
 }
 
+// ── ⑦ [V33.178] 전진표본은 '적합 배타' 만으로는 부족하다 — ★시간상 미래★ 여야 한다 ────
+//   ★고친 사고★ 수확기는 과거 이력을 계속 소급 적재한다. 그 행은 id 가 크고(=적합에 안 쓰임)
+//   ts(봉 날짜)는 과거다. id > maxId 만 걸면 전진검증이 ★학습구간보다 과거인 시장★ 을 채점한다.
+//   운영 실측: ml_samples 를 쓰는 세 모델이 나란히 음수였다(강세 −0.0775 · 약세 −0.0848 · MEMO −0.1343).
+{
+  // 모델은 최근 100일로 학습했다(관측시각 기준). 그 뒤 표본이 두 갈래로 들어온다.
+  const TRAIN_MAX_TS = 100, TRAIN_MAX_ID = 1000;
+  const arrivals = [];
+  // (가) 소급 수확 — id 는 크지만 ts 는 과거(1~99일). 미래가 아니다.
+  for (let i = 0; i < 300; i++) arrivals.push({ id: TRAIN_MAX_ID + 1 + i, ts: 1 + (i % 99) });
+  // (나) 실제 새 봉 — id 도 크고 ts 도 학습 최대 관측시각보다 뒤(101~110일).
+  for (let i = 0; i < 120; i++) arrivals.push({ id: TRAIN_MAX_ID + 301 + i, ts: 101 + (i % 10) });
+
+  const oldPick = arrivals.filter((r) => r.id > TRAIN_MAX_ID);                       // 종전
+  const newPick = arrivals.filter((r) => r.id > TRAIN_MAX_ID && r.ts > TRAIN_MAX_TS); // V33.178
+
+  if (oldPick.length === 420) ok("종전 기준 재현 — 소급표본 300건이 전진표본에 섞여 들어온다(420건)");
+  else bad(`종전 기준 재현 실패(${oldPick.length}건) — 검사가 헛돈다`);
+
+  const leaked = oldPick.filter((r) => r.ts <= TRAIN_MAX_TS).length;
+  if (leaked === 300) ok(`종전 기준의 오염 규모: 전진표본의 ${((leaked / oldPick.length) * 100).toFixed(0)}% 가 학습구간보다 ★과거★ 다`);
+  else bad(`오염 규모가 예상과 다르다(${leaked}건)`);
+
+  if (newPick.length === 120 && newPick.every((r) => r.ts > TRAIN_MAX_TS))
+    ok("새 기준 — 과거 소급표본을 전부 걷어내고 진짜 새 봉 120건만 남긴다");
+  else bad(`새 기준이 과거 표본을 걸러내지 못한다(${newPick.length}건)`);
+
+  // ★두 조건은 서로를 대체하지 못한다★ — ts 만 걸면 적합에 쓰인 행이 도로 들어온다.
+  const tsOnly = [{ id: 500, ts: 100 }, ...arrivals].filter((r) => r.ts > TRAIN_MAX_TS - 1);
+  if (tsOnly.some((r) => r.id <= TRAIN_MAX_ID))
+    ok("ts 조건 단독으로는 적합에 쓰인 행이 새어든다 — id 조건을 함께 걸어야 하는 이유");
+  else bad("ts 단독 조건의 위험을 재현하지 못한다 — 검사가 헛돈다");
+
+  // 소스 계약 — 두 조건이 실제로 함께 걸려 있고, 학습이 maxTs 를 기록하는지.
+  const src = readFileSync(new URL("../src/index.js", import.meta.url), "utf8");
+  if (/_where\s*\+=\s*" AND ts > \?"/.test(src)) ok("소스: 전진 조회가 id 배타에 더해 ts 전진까지 건다");
+  else bad("소스: 전진 조회에 ts 조건이 없다 — 소급표본이 다시 섞인다");
+  if (/maxTs:\s*_maxTs/.test(src) && /model\.maxTs\s*=\s*_maxTs/.test(src))
+    ok("소스: 학습이 적합표본의 최대 관측시각(maxTs)을 모델에 기록한다(로지스틱·MEMO 양쪽)");
+  else bad("소스: maxTs 를 기록하지 않는 학습 경로가 있다 — 그 모델은 종전 오염이 그대로다");
+  if (/const _LEDVER = 3/.test(src)) ok("소스: 원장 판을 올려 틀린 척도로 쌓인 옛 줄을 버린다");
+  else bad("소스: 원장 판이 그대로다 — 옛 음수 줄이 keepDays 동안 결과를 끌고 간다");
+}
+
 console.log(fails ? "\n전진 원장 계약 위반 " + fails + "건 — 배포 차단" : "\n  ok   전진 원장 계약 통과");
 process.exit(fails ? 1 : 0);
