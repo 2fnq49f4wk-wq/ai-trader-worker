@@ -17,16 +17,19 @@ process.stdin.on("end", () => {
   let d;
   try { d = JSON.parse(raw); } catch (e) {
     console.log("RESUME=");
+    console.log("CRASH=");
     console.log("LINE=파싱실패: " + raw.slice(0, 160).replace(/\s+/g, " "));
     return;
   }
   if (!d || d.ok !== true) {
     console.log("RESUME=");
+    console.log("CRASH=");
     console.log("LINE=실패: " + String((d && d.error) || "알 수 없음").slice(0, 160));
     return;
   }
   if (d.target !== "all") {
     console.log("RESUME=");
+    console.log("CRASH=");
     console.log("LINE=" + String(d.result || "(응답 없음)").slice(0, 300).replace(/\s+/g, " "));
     return;
   }
@@ -39,7 +42,12 @@ process.stdin.on("end", () => {
     if (v.indexOf("skipped") === 0) skipped++;
     else { ran++; if (v.indexOf("FAIL:") === 0) failed.push(k); }
   }
+  // [V33.197] 서버가 알아낸 '죽인 단계' 를 그대로 옮긴다 — 이게 없으면 사람이 로그를 뒤져야 한다.
+  const crash = d.crashedAt ? (" · 직전 호출이 '" + d.crashedAt + "' 에서 죽음(" + (d.crashFails || 1) + "회)") : "";
+  const auto = d.autoSkipped ? (" · ★'" + d.autoSkipped + "' 자동 건너뜀★") : "";
   console.log("RESUME=" + from);
+  console.log("CRASH=" + (d.autoSkipped || ""));
   console.log("LINE=" + ran + "단계 실행 / " + skipped + " 대기 · " + d.ms + "ms" +
-    (failed.length ? " · 실패 " + failed.join(",") : "") + (from ? " · 다음 " + from : " · 완주"));
+    (failed.length ? " · 실패 " + failed.join(",") : "") + crash + auto +
+    (from ? " · 다음 " + from : " · 완주"));
 });

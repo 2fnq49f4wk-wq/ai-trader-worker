@@ -2788,7 +2788,7 @@ async function applySignalTypeWeights(DB, cfg) {
 // ============================================================================
 // [V33.55] 빌드 버전 — SWR L2 캐시 키에 섞어 '배포 = 판단 캐시 자동 무효화'를 만든다.
 //   판정 로직을 고쳐도 옛 캐시가 최대 1시간 재배포되던 문제를 구조적으로 없앤다.
-const _BUILD_VER = "V33.195";
+const _BUILD_VER = "V33.197";
 
 // ═══ [V33.171] 평가 순서 계획 — ★승격과 순환을 교차해 굶주림을 구조적으로 없앤다★ ═══
 //   V33.50 의 형태트리거는 "급한 몇 종목을 앞으로 당긴다"는 의도였으나, 실제 운영로그에서는
@@ -21509,23 +21509,55 @@ async function handleRequest(request, env, ctx) {
       //   그러면 사용자가 &from=<다음단계> 로 이어서 돌릴 수 있다(진행상황이 보이는 재개형 실행).
       if (target === "all") {
         const _t00 = Date.now();
+        /* [V33.197] ★워커를 죽이는 단계를 서버가 스스로 알아낸다.★
+           워커가 자원한도로 죽으면 응답도 예외도 없다 — 클라이언트는 '어디서 죽었는지' 를
+           알 수 없고, 그래서 V33.196 의 클라이언트측 skip 은 엉뚱한 단계(harvest)를 건너뛰다
+           같은 자리에서 계속 죽었다(실측: skip=harvest 를 붙이고도 503 세 번).
+           알 수 있는 것은 워커뿐이다 — 들어가기 전에 이름을 적어 두면 된다.
+           지워지지 않은 채 남아 있다는 것은 ★그 단계에서 죽었다★ 는 뜻이다. */
+        let _crashPrev = null;
+        try { _crashPrev = await getState(env.DB, "alltrain_cur", null); } catch (e0) {}
+        const _crashHit = (_crashPrev && _crashPrev.stage) ? String(_crashPrev.stage) : null;
+        const _crashN = _crashHit ? _num(_crashPrev.fails, 0) + 1 : 0;
+        // 두 번 연속 같은 자리에서 죽었으면 우연이 아니다 — 이번에는 건너뛰고 나머지를 살린다.
+        const _autoSkip = (_crashHit && _crashN >= 2) ? _crashHit : null;
         const _deadline = _clamp(Number(url.searchParams.get("deadlineMs")) || 240000, 30000, 280000);
         const _from = (url.searchParams.get("from") || "").trim();
         const _only = (url.searchParams.get("skip") || "").split(",").map(function (s) { return s.trim(); }).filter(Boolean);
+        if (_autoSkip && _only.indexOf(_autoSkip) < 0) _only.push(_autoSkip);
         let _started = !_from;
         const out = {}; const _skipped = [];
         for (const [nm, fn] of _PIPE) {
           if (!_started) { if (nm === _from) _started = true; else { out[nm] = "skipped(before from)"; continue; } }
           if (_only.indexOf(nm) >= 0) { out[nm] = "skipped(skip=)"; continue; }
           if (Date.now() - _t00 > _deadline) { out[nm] = "skipped(deadline)"; _skipped.push(nm); continue; }
+          /* [V33.197] ★어느 단계가 워커를 죽이는지 알 방법이 없었다.★
+             실측: from=harvest 로 재개하면 매번 40~70초에 503. 그래서 skip=harvest 를 넣었는데
+             ★그래도 503★ 이었다 — 즉 죽는 것은 harvest 가 아니라 그 뒤의 어떤 단계다.
+             워커가 통째로 죽으면 try/catch 도, 응답도 없다. 완료 후에만 로그를 남기던 종전
+             방식으로는 ★죽은 단계는 영원히 기록되지 않는다★ (기록은 성공한 것만 남는다).
+             → 들어가기 ★전에★ 남긴다. 그러면 로그의 마지막 START 가 곧 범인이다.
+             D1 쓰기 한 번의 비용으로, 추측 대신 이름을 얻는다. */
+          // 들어가기 ★전에★ 이름을 남긴다. 죽으면 이 기록이 남아 다음 호출이 범인을 안다.
+          try { await setState(env.DB, "alltrain_cur", { stage: nm, at: Date.now(),
+                  fails: (nm === _crashHit) ? _crashN : 0 }); } catch (e0) {}
           const _s0 = Date.now();
           try { out[nm] = await fn(env.DB); } catch (e) { out[nm] = "FAIL: " + (e && e.message); }
           if (out[nm] == null) out[nm] = "(no-op)";
+          // 무사히 나왔다 = 이 단계는 범인이 아니다. 기록을 지운다.
+          try { await setState(env.DB, "alltrain_cur", null); } catch (e0) {}
           out[nm] = String(out[nm]).slice(0, 400) + " [" + (Date.now() - _s0) + "ms]";
           try { await log(env.DB, "INFO", null, "[수동트리거:all:" + nm + "] " + out[nm]); } catch (e) {}
         }
+        /* 직전 호출이 어디서 죽었는지, 이번에 무엇을 자동으로 건너뛰었는지 응답이 말한다.
+           ★조용히 건너뛰지 않는다★ — 건너뛴 단계는 고쳐야 할 것이지 없는 것이 아니다. */
+        if (_autoSkip) {
+          try { await log(env.DB, "WARN", null, "[수동트리거:all] '" + _autoSkip + "' 이 " + _crashN +
+                  "회 연속 워커를 죽였다 — 이번 회차는 건너뛰고 진행했다(원인 조사 필요)"); } catch (e0) {}
+        }
         return Response.json({ ok: true, target: "all", stages: _PIPE.length, ms: Date.now() - _t00,
           resume: _skipped.length ? ("/api/ai/train-now?target=all&from=" + _skipped[0]) : null,
+          crashedAt: _crashHit, crashFails: _crashN || null, autoSkipped: _autoSkip,
           results: out }, { headers: cors });
       }
       if (!FN[target]) return Response.json({ error: "target은 all|" + Object.keys(FN).join("|") + " 중 하나" }, { status: 400, headers: cors });
