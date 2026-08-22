@@ -2788,7 +2788,7 @@ async function applySignalTypeWeights(DB, cfg) {
 // ============================================================================
 // [V33.55] 빌드 버전 — SWR L2 캐시 키에 섞어 '배포 = 판단 캐시 자동 무효화'를 만든다.
 //   판정 로직을 고쳐도 옛 캐시가 최대 1시간 재배포되던 문제를 구조적으로 없앤다.
-const _BUILD_VER = "V33.193";
+const _BUILD_VER = "V33.194";
 
 // ═══ [V33.171] 평가 순서 계획 — ★승격과 순환을 교차해 굶주림을 구조적으로 없앤다★ ═══
 //   V33.50 의 형태트리거는 "급한 몇 종목을 앞으로 당긴다"는 의도였으나, 실제 운영로그에서는
@@ -19283,15 +19283,22 @@ function mutationGuard(request, url, env) {
   if (org) {
     // Origin 이 있다 = 브라우저다. 우리 호스트가 아니면 남의 페이지가 보낸 것이다.
     if (sameHost(org)) return null;
-  } else if (sameHost(request.headers.get("referer"))) {
-    // 일부 클라이언트는 Origin 을 생략한다 — Referer 로 한 번 더 본다.
-    return null;
+    // ★교차 출처가 확정된 경우★ 는 여기서 끝낸다 — 아래 완충장치로 새면 안 된다.
+    rateLimitAuthFail(request);
+    return "교차 출처 요청 거절: " + String(org).slice(0, 80);
   }
+  /* Origin 이 없을 때의 완충장치 — ★이 문을 잘못 닫으면 화면의 모든 버튼이 죽는다.★
+     그래서 브라우저만 만들 수 있고 남의 사이트가 위조할 수 없는 표식을 두 개 더 본다:
+       · Sec-Fetch-Site: same-origin — 브라우저가 붙이고 스크립트가 못 건드리는 금지 헤더다.
+       · Referer 가 우리 호스트 — 이 워커는 Referrer-Policy 를 strict-origin-when-cross-origin
+         으로 보내므로 동일 출처에서는 전체 URL 이 실려 온다.
+     둘 다 '동일 출처' 를 말할 때만 통과다. curl 은 어느 것도 자동으로 붙이지 않는다. */
+  if (request.headers.get("sec-fetch-site") === "same-origin") return null;
+  if (sameHost(request.headers.get("referer"))) return null;
   const k = request.headers.get("x-train-key") || url.searchParams.get("key") || "";
   if (env && env.TRAIN_KEY && _safeEq(k, env.TRAIN_KEY)) return null;
   rateLimitAuthFail(request);   // 출처 위조 시도도 실패로 센다 — 반복하면 잠긴다
-  return org ? ("교차 출처 요청 거절: " + String(org).slice(0, 80))
-             : "출처 없는 상태변경 요청 — X-Train-Key 필요";
+  return "출처 없는 상태변경 요청 — X-Train-Key 필요";
 }
 
 /* [V33.193] 정적 문서에 보안 헤더를 붙인다. 종전에는 하나도 없었다.
@@ -19357,7 +19364,18 @@ async function handleRequest(request, env, ctx) {
      페이지에서 왔거나 TRAIN_KEY 를 들고 있어야 한다(mutationGuard 주석 참조).
      읽기(GET)에는 아무 영향이 없다 — 대시보드는 공개 조회 그대로 동작한다. */
   const _mg = mutationGuard(request, url, env);
-  if (_mg) return Response.json({ error: "forbidden", reason: _mg }, { status: 403, headers: cors });
+  if (_mg) {
+    /* ★거절은 반드시 흔적을 남긴다.★ 이 문을 잘못 닫으면 화면의 버튼이 조용히 죽는데,
+       그때 로그가 "무엇이 왜 막혔나" 를 말해주지 않으면 원인을 찾는 데 하루가 든다.
+       5분에 한 번만 남긴다 — 공격받는 중에 로그가 그 자체로 부하가 되면 안 된다. */
+    try {
+      if (!globalThis.__mgLogTs || Date.now() - globalThis.__mgLogTs > 300000) {
+        globalThis.__mgLogTs = Date.now();
+        ctx.waitUntil(log(env.DB, "WARN", null, "[MUT-GUARD] " + request.method + " " + path + " 거절 — " + _mg));
+      }
+    } catch (e) {}
+    return Response.json({ error: "forbidden", reason: _mg }, { status: 403, headers: cors });
+  }
 
   // [V12.131] 읽기전용 조회 엔드포인트용 공통 SWR 헬퍼.
   //   /api/state·/api/ml-status에서 효과가 검증된 패턴(신선하면 즉시, 오래됐어도 즉시 주고

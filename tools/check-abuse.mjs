@@ -195,6 +195,25 @@ const BOOT = ["/api/state", "/api/ml-status", "/api/ai-mode", "/api/selfcheck", 
   chk(!!mg(mk("POST", {}), U, ENV),
     "출처가 없는 POST(curl)는 키 없이는 거절된다",
     "출처 없는 POST 가 그냥 통과한다 — 주소만 알면 누구나 초기화할 수 있다");
+  /* ★완충장치★ — 이 문을 잘못 닫으면 화면의 모든 버튼이 죽는다. Origin 을 생략하는
+     클라이언트(일부 사파리 경로)를 대비해 브라우저만 붙일 수 있는 표식 둘을 더 본다.
+     둘 다 '동일 출처' 를 말할 때만 통과이고, curl 은 어느 것도 자동으로 붙이지 않는다. */
+  chk(mg(mk("POST", { "sec-fetch-site": "same-origin" }), U, ENV) === null,
+    "Sec-Fetch-Site: same-origin 이면 통과한다(브라우저만 붙일 수 있는 금지 헤더)",
+    "동일 출처 표식을 무시한다 — Origin 을 생략하는 브라우저에서 버튼이 죽는다");
+  chk(!!mg(mk("POST", { "sec-fetch-site": "cross-site" }), U, ENV),
+    "Sec-Fetch-Site: cross-site 는 거절된다",
+    "교차 출처 표식인데 통과한다");
+  chk(mg(mk("POST", { referer: "https://ai-trader-app.example.workers.dev/" }), U, ENV) === null,
+    "동일 호스트 Referer 도 통과한다(두 번째 완충장치)",
+    "동일 호스트 Referer 를 안 본다");
+  chk(!!mg(mk("POST", { referer: "https://evil.example.com/x" }), U, ENV),
+    "남의 호스트 Referer 는 거절된다",
+    "교차 출처 Referer 가 통과한다");
+  // ★Origin 이 교차 출처로 확정되면 완충장치로 새면 안 된다★
+  chk(!!mg(mk("POST", { origin: "https://evil.example.com", "sec-fetch-site": "same-origin" }), U, ENV),
+    "Origin 이 교차 출처면 다른 표식이 있어도 거절된다(완충장치로 새지 않는다)",
+    "교차 출처 Origin 인데 Sec-Fetch-Site 위조로 통과한다 — 완충장치가 구멍이 됐다");
   chk(mg(mk("POST", { "x-train-key": "s3cret-key-value" }), U, ENV) === null,
     "TRAIN_KEY 를 들고 오면 통과한다 — CI·스크립트 경로가 그대로 산다",
     "키를 들고 와도 막힌다 — 워크플로가 전부 깨진다");
