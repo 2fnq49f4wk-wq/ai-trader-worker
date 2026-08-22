@@ -171,5 +171,39 @@ const mkUni = (n, bars) => {
     `ALTBF.minIdx ${minIdx} < ${need} — 감쇠 창을 못 채워 소급 표본이 조용히 사라진다`);
 }
 
+// ── ⑨ 소급생성이 ★반드시 전진하는가★ (V33.187) ───────────────────────────
+//   실측 사고: 수동 스윕이 커서 669953 에서 10여 회차를 회차당 48초씩 태우고 +0/+0 만 찍다
+//   60분 제한에 잘렸다. 원인은 두 겹이었다.
+//     ① 배치 종목별 일봉 선로드(dailyAll)가 ★한 번도 읽히지 않는 채★ 수백 건의 getState 를
+//        날려 준비 단계가 예산을 다 먹었다.
+//     ② 마감시한을 날짜 루프 ★첫머리★ 에서 재서, 준비가 길면 한 날짜도 처리 못 하고 빠져나왔다.
+//        lastId 가 안 오르니 다음 회차가 같은 날짜를 다시 집어 온다 — 무한 제자리.
+//   지켜야 할 불변식: ★한 회차는 적어도 한 날짜를 끝낸다 = 커서는 반드시 전진한다.★
+{
+  const bf = grab("altSampleBackfill");
+  // 주석은 걷어내고 본다 — 이 게이트가 지키려는 건 ★코드★ 다. 무엇을 왜 걷어냈는지 적은
+  // 주석이 제 게이트를 걸어 넘어뜨리면, 다음 사람은 설명을 지우는 쪽으로 배운다(V33.182 재발).
+  const bfCode = bf.replace(/\/\*[\s\S]*?\*\//g, " ").replace(/\/\/[^\n]*/g, " ");
+  chk(!/dailyAll/.test(bfCode),
+    "소급생성에 읽히지 않는 일봉 선로드가 없다(회차당 수백 건의 조회를 태우던 자리)",
+    "altSampleBackfill 에 dailyAll 선로드가 되살아났다 — 아무도 안 읽는데 예산만 먹는다");
+  const guard = (bf.match(/for \(const dk of days\)[\s\S]{0,80}?break;/) || [""])[0];
+  chk(/_dDone > 0/.test(guard),
+    "마감시한은 한 날짜를 끝낸 뒤부터 본다 — 커서가 반드시 전진한다",
+    "날짜 루프가 첫머리에서 무조건 빠져나올 수 있다 — 커서가 안 올라 스윕이 제자리를 돈다");
+  chk(/const _lm = _num\(cfg\.loopMs, 0\);/.test(bf) && /_lm > 0 \? \(Date\.now\(\) \+ _lm\)/.test(bf),
+    "예산을 날짜 루프 시작 시점부터 잰다(loopMs) — 준비 시간이 일할 시간을 잡아먹지 않는다",
+    "loopMs 경로가 없다 — 절대 마감시각이면 준비 단계가 길 때 루프 몫이 0 이 된다");
+  const rr = src.slice(src.indexOf('path === "/api/ai/resample-run"'));
+  chk(/altSampleBackfill\(env\.DB, \{ batchDates: _bd, loopMs: \d+ \}\)/.test(rr.slice(0, 2000)),
+    "수동 스윕 문이 loopMs 로 예산을 준다",
+    "resample-run 이 아직 절대 마감시각(deadlineMs)으로 예산을 준다");
+  // 스윕을 모는 쪽에도 정지 감지가 있어야 한다 — 진행 없는 반복은 시간만 태운다.
+  const wf = readFileSync(new URL("../.github/workflows/resample-run.yml", import.meta.url), "utf8");
+  chk(/STALL=\$\(\(STALL\+1\)\)/.test(wf) && /STALL.*-ge 5/.test(wf),
+    "스윕 워크플로가 커서 정지를 5회차에 감지해 멈춘다",
+    "스윕 워크플로에 커서 정지 가드가 없다 — 제자리 반복이 제한시간까지 간다");
+}
+
 console.log(fails ? "\nXALPHA 계약 위반 " + fails + "건 — 배포 차단" : "\n  ok   XALPHA 계약 통과");
 process.exit(fails ? 1 : 0);

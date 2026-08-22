@@ -17,7 +17,7 @@ on:
       rounds:
         description: '최대 회차 수 (1회차 ≈ 1200행)'
         type: string
-        default: '160'
+        default: '400'
       sleep:
         description: '회차 간 대기(초) — 워커 부하 조절'
         type: string
@@ -30,7 +30,7 @@ concurrency:
 jobs:
   sweep:
     runs-on: ubuntu-latest
-    timeout-minutes: 60
+    timeout-minutes: 330
     name: 소급생성 반복 실행
     steps:
       - uses: actions/checkout@v4
@@ -70,7 +70,7 @@ jobs:
         run: |
           set +e
           : > sweep.txt
-          DONE=0; i=0; FAILS=0
+          DONE=0; i=0; FAILS=0; PREV=""; STALL=0; STALLED=0
           while [ "$i" -lt "$ROUNDS" ]; do
             i=$((i+1))
             BODY=$(curl -sS --max-time 120 -X POST -H "X-Train-Key: $TRAIN_KEY" \
@@ -91,10 +91,24 @@ jobs:
             CLEAN=$(printf '%s' "$LINE" | sed 's/__DONE__//')
             echo "회차 $i: $CLEAN" | tee -a sweep.txt
             [ "$DONE" = "1" ] && { echo "— 남은 표본 없음. 스윕 완료 —" | tee -a sweep.txt; break; }
+            # ★커서가 안 움직이면 멈춘다★ — 스윕 2회차에서 커서 669953 에 걸린 채 10여 회차를
+            # 48초씩 태우다 60분 제한에 잘렸다. 진행이 없는 반복은 시간만 쓴다. 사람이 보게 만든다.
+            CUR=$(printf '%s' "$CLEAN" | sed -n 's/^커서 \([0-9]*\) .*/\1/p')
+            if [ -n "$CUR" ] && [ "$CUR" = "$PREV" ]; then
+              STALL=$((STALL+1))
+              if [ "$STALL" -ge 5 ]; then
+                echo "::error::커서가 $CUR 에서 5회차째 그대로다 — 진행이 없어 중단한다" | tee -a sweep.txt
+                STALLED=1; break
+              fi
+            else
+              STALL=0
+            fi
+            PREV="$CUR"
             sleep "$NAP"
           done
           echo "rounds=$i" >> "$GITHUB_OUTPUT"
           echo "done=$DONE" >> "$GITHUB_OUTPUT"
+          echo "stalled=$STALLED" >> "$GITHUB_OUTPUT"
 
       - name: 결과 요약
         if: always()
@@ -104,6 +118,9 @@ jobs:
             echo ""
             if [ "${{ steps.sweep.outputs.done }}" = "1" ]; then
               echo "★전체 구간을 다 훑었다.★ 이제 수동 학습(train-now)으로 xalpha·flow 를 돌리면 된다."
+            elif [ "${{ steps.sweep.outputs.stalled }}" = "1" ]; then
+              echo "🟠 **커서가 멈춰 중단했다** — 같은 커서로 5회차가 지났다. 워커 쪽 백필이 한 날짜도"
+              echo "처리하지 못하고 있다는 뜻이다(준비 단계가 예산을 다 쓰는 경우가 대표적이다)."
             else
               echo "아직 남았다 — 이 워크플로를 다시 실행하면 커서 이후부터 이어서 훑는다."
             fi
