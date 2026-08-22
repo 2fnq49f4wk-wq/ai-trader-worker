@@ -549,4 +549,42 @@ console.log("  ok   부분 실패를 사용자에게 알린다");
   rtBad += abad;
 }
 
+/* ── [V33.198] 렌더러가 자기 스코프에 없는 도우미를 부르지 않는가 ─────────────
+   실측 사고: V33.195 가 사이드바 렌더러의 has() 를 두뇌관측 렌더러(NNV_render)에 그대로
+   갖다 썼다. 두 렌더러는 서로 다른 스코프라 has 는 그 자리에 존재하지 않는다.
+   런타임에 ReferenceError → then() 안이라 프로미스 거부 → openNnViz 의 catch 가
+   ★"엔진이 응답하지 않습니다"★ 를 띄웠다. ★그동안 서버는 HTTP 200 을 0.96초에 정상
+   반환하고 있었다★(엔드포인트 실측). 화면이 엉뚱한 곳을 탓해 원인을 서버에서 찾게 만들었다.
+   문법 검사로는 절대 안 잡힌다 — 호출 자체는 문법적으로 완전히 정상이다. */
+console.log("\n⑨ 렌더러 스코프 — 도우미가 그 자리에 있는가");
+{
+  let sbad = 0;
+  const sok = (m) => console.log("  ok   " + m);
+  const sbd = (m) => { sbad++; console.error("  FAIL " + m); };
+  const hv9 = readFileSync(new URL("../public/index.html", import.meta.url), "utf8");
+  const HELPERS = ["has", "pct", "esc", "chip", "n0", "col", "ico"];
+  const SCOPES = [["두뇌관측(NNV)", "window.openNnViz", "// [V12 재디자인] 전 층 가시화"]];
+  for (const [nm, a, b] of SCOPES) {
+    const i0 = hv9.indexOf(a), i1 = hv9.indexOf(b, i0);
+    if (i0 < 0 || i1 < 0) { sbd(nm + " 스코프를 찾지 못했다 — 표식이 바뀌었으면 이 게이트도 함께 고칠 것"); continue; }
+    const seg = hv9.slice(i0, i1);
+    const declared = new Set();
+    for (const m of (seg.match(/function\s+([A-Za-z_$][\w$]*)\s*\(/g) || []))
+      declared.add(m.replace(/function\s+/, "").replace(/\s*\($/, ""));
+    for (const m of (seg.match(/\b(?:var|let|const)\s+([A-Za-z_$][\w$]*)\s*=\s*function/g) || []))
+      declared.add(m.replace(/\b(?:var|let|const)\s+/, "").replace(/\s*=\s*function$/, ""));
+    let miss = 0;
+    for (const h of HELPERS) {
+      const used = new RegExp("[^\\w$.]" + h + "\\s*\\(").test(seg);
+      if (used && !declared.has(h)) { sbd(nm + " 이 " + h + "() 를 쓰는데 그 스코프에 선언이 없다 — 런타임 ReferenceError"); miss++; }
+    }
+    if (!miss) sok(nm + " 스코프가 쓰는 도우미가 전부 그 안에 선언돼 있다 (" + [...declared].filter((d) => HELPERS.includes(d)).join(", ") + ")");
+  }
+  // catch 문구가 원인을 단정하면 안 된다 — 통신 실패와 렌더 예외 둘 다 이 catch 로 온다.
+  if (/화면을 그리는 중 오류가 났습니다\(엔진은 응답했습니다\)/.test(hv9))
+    sok("조회 실패 문구가 통신 실패와 렌더 오류를 구분해 적는다");
+  else sbd("조회 실패를 무조건 '엔진이 응답하지 않습니다' 로 적는다 — 원인을 엉뚱한 곳으로 돌린다");
+  rtBad += sbad;
+}
+
 process.exit((bad + rtBad) ? 1 : 0);
