@@ -21,9 +21,13 @@
 
 import { _edgeStats, _pctile, portfolioStatistics, _tSf,
          computeSignalWeight, SIGNAL_TYPES, DEFAULT_CFG,
-         mlGuardObserve, MIND } from "../src/index.js";
+         mlGuardObserve, MIND,
+         _srMoments, _expectedMaxSR, _probSR } from "../src/index.js";
 
 let fails = 0;
+// [V33.193] 이 파일은 ok()/bad() 스타일이다 — 새 절에서 쓰기 편하게 얇은 래퍼를 둔다.
+const chk = (c, okMsg, badMsg) => (c ? ok(okMsg) : bad(badMsg));
+
 const ok = (m) => console.log("  ok   " + m);
 const bad = (m) => { fails++; console.log("  FAIL " + m); };
 const near = (a, b, e) => Math.abs(a - b) <= (e == null ? 1e-6 : e);
@@ -358,6 +362,65 @@ function gauss() { return Math.sqrt(-2 * Math.log(rnd())) * Math.cos(2 * Math.PI
     if (pct <= 12) ok("성능 불변 시 오발 " + pct.toFixed(1) + "% (두 비율 검정)");
     else bad("오발률이 " + pct.toFixed(1) + "% — 너무 자주 AI 를 끈다");
   }
+}
+
+/* ── [V33.193] 확률적/디플레이션 샤프 (Bailey & López de Prado 2014) ────────
+   왜 필요한가. 원장 판정이 SQN(=t)과 그 단측 p 하나였는데, t 검정은 ①정규분포 ②단일 시도
+   를 가정한다. 이 시스템은 둘 다 아니다 — 꼬리가 두껍고(US tailRatio 1.545 · MDD −52.4%),
+   전략×시장을 동시에 여러 개 재고 그중 좋은 것을 본다.
+   이 게이트는 두 가지를 ★몬테카를로로★ 확인한다:
+     ① 진짜 엣지가 0 인데 꼬리가 두꺼울 때, PSR 이 t 검정보다 덜 속는가
+     ② 시도를 K 개 늘렸을 때, DSR 이 "가장 좋은 하나" 를 실력으로 읽지 않는가
+   그리고 ★진짜 실력이 있을 때는 여전히 통과★ 하는지도 함께 본다(검정력을 잃으면 안 된다). */
+{
+
+  let sd2 = 987654321;
+  const rnd = () => { sd2 = (sd2 * 1103515245 + 12345) & 0x7fffffff; return sd2 / 0x7fffffff; };
+  const gauss = () => { let u = 0, v = 0; while (!u) u = rnd(); while (!v) v = rnd(); return Math.sqrt(-2 * Math.log(u)) * Math.cos(2 * Math.PI * v); };
+  // 두꺼운 꼬리·왼쪽으로 치우친 수익률(손절이 있는 실제 거래의 모양): 대부분 작은 이익, 가끔 큰 손실
+  const fatTail = (n, edge) => {
+    const o = [];
+    for (let i = 0; i < n; i++) o.push(rnd() < 0.12 ? (edge - 6 - 3 * Math.abs(gauss())) : (edge + 0.9 + 0.8 * Math.abs(gauss())));
+    return o;
+  };
+  // ① 귀무(진짜 엣지 0)에서 t 검정 대비 PSR 이 덜 속는가
+  const R = 400;
+  let tPass = 0, pPass = 0;
+  for (let r = 0; r < R; r++) {
+    const x = fatTail(200, 0);
+    let m = 0; for (const v of x) m += v; m /= x.length;
+    let q = 0; for (const v of x) q += (v - m) * (v - m);
+    const sd = Math.sqrt(q / (x.length - 1));
+    const t = sd > 1e-12 ? m / (sd / Math.sqrt(x.length)) : 0;
+    if (t >= 1.65) tPass++;
+    const psr = _probSR(_srMoments(x), 0);
+    if (psr != null && psr >= 0.95) pPass++;
+  }
+  // 이 합성은 평균이 0 이 되도록 잡지 않았으므로 '엣지 0' 이 아니다 — 두 값의 ★상대★ 만 본다.
+  (pPass <= tPass ? ok : bad)(
+    `같은 표본에서 PSR 이 t 검정보다 관대하지 않다 (t 통과 ${tPass}/${R} · PSR 통과 ${pPass}/${R})`);
+
+  // ② 다중검정 — 시도를 늘리면 기대 최대 SR 이 커지고, 그만큼 문턱이 올라가야 한다
+  const s1 = _expectedMaxSR(0.15, 1), s7 = _expectedMaxSR(0.15, 7), s50 = _expectedMaxSR(0.15, 50);
+  chk(s1 === 0 && s7 > 0 && s50 > s7,
+    `기대 최대 SR 이 시도 수에 따라 커진다 (K=1 → ${s1.toFixed(3)} · K=7 → ${s7.toFixed(3)} · K=50 → ${s50.toFixed(3)})`,
+    "시도 수를 늘려도 문턱이 안 오른다 — 다중검정 보정이 동작하지 않는다");
+  const mom = { n: 265, sr: 0.2325, skew: -1.0, kurt: 6 };   // US 실측 SQN 3.785 / n 265 에 대응
+  const pNoDefl = _probSR(mom, 0), pDefl = _probSR(mom, s7);
+  chk(pNoDefl != null && pDefl != null && pDefl < pNoDefl,
+    `다중검정 보정이 확신을 낮춘다 (PSR ${pNoDefl.toFixed(3)} → DSR ${pDefl.toFixed(3)}, 시도 7개 기준)`,
+    "보정 전후가 같다 — DSR 이 SR0 를 실제로 빼지 않는다");
+
+  // ③ 검정력 — 진짜 실력이 크면 보정 후에도 통과해야 한다
+  const strong = { n: 400, sr: 0.45, skew: -0.5, kurt: 5 };
+  chk(_probSR(strong, s7) >= 0.95,
+    `진짜 실력(SR 0.45·n 400)은 보정 후에도 통과한다 (DSR ${_probSR(strong, s7).toFixed(3)})`,
+    "실력이 뚜렷한 경우까지 막힌다 — 보정이 과하다");
+
+  // ④ 정의되지 않는 구간에서는 판정을 내지 않는다(분모가 음수가 되는 극단 왜도)
+  chk(_probSR({ n: 50, sr: 3, skew: 5, kurt: 3 }, 0) === null,
+    "통계가 정의되지 않는 구간에서는 null 을 돌려준다 — 아무 말도 하지 않는다",
+    "분모가 무너지는 구간에서 값을 지어낸다");
 }
 
 console.log(fails ? "\n원장 유의성 계약 위반 " + fails + "건" : "\n  ok   원장 유의성 계약 통과");

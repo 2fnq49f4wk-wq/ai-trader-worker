@@ -511,6 +511,35 @@ console.log('\n⑥ 접속 직후 — 대시보드 · 모두 접힘');
   if (/bar\.classList\.add\('collapsed'\);/.test(H))
     ok('AI픽·뉴스픽은 접속 시 항상 접혀 있다');
   else bad('AI픽·뉴스픽이 저장된 펼침 상태를 되살린다');
+  /* [V33.193] ★대시보드의 ENGINE PIPELINE 은 다른 요소다.★ V33.190 은 'AI 두뇌' 페이지의
+     같은 이름 패널(#nlvPipePanel)에만 버튼을 달았고, 첫 화면의 #pipelineBar 는 그대로였다.
+     이름이 같은 두 패널을 하나로 본 것이 원인이다 — 둘 다 확인한다. */
+  if (/<div class="pipeline-bar folded" id="pipelineBar">/.test(H) && /id="pipelineFold"/.test(H))
+    ok('대시보드 ENGINE PIPELINE 도 접기 버튼을 갖고 접힌 채로 시작한다');
+  else bad('대시보드 ENGINE PIPELINE 에 접기 버튼이 없거나 펼친 채로 시작한다');
+  if (/\.pipeline-bar\.folded \.pipeline-grid\{display:none;\}/.test(H))
+    ok('접힘 CSS 가 실제로 내용을 숨긴다');
+  else bad('접힘 클래스에 대응하는 CSS 가 없다 — 클래스만 붙고 화면은 그대로다');
+}
+
+/* ── ⑧ [V33.193] 폰 대시보드 — 접속 시 접혀 있어야 할 패널들 ─────────────── */
+console.log('\n⑧ 폰 — 첫 화면 접힘 패널');
+{
+  /* ★함수 선언이어야 한다★ — 이 세 패널의 렌더 함수는 파일 앞쪽에 있고 호출도 먼저 될 수 있다.
+     식(window.__x = function…)으로 두면 그 대입이 아직 안 돌아 조용히 아무 일도 안 일어난다. */
+  if (/\n  function _luxPhoneFold\(bodyId, caretId\)\{/.test(H))
+    ok('폰 접힘 헬퍼가 함수 선언이다 — 호출 순서에 상관없이 동작한다');
+  else bad('폰 접힘 헬퍼가 함수 선언이 아니다 — 렌더가 먼저 돌면 조용히 아무 일도 안 일어난다');
+  if (/max-width:767px/.test((H.match(/function _luxPhoneFold[\s\S]{0,400}/) || [''])[0]))
+    ok('폰 폭(767px)에서만 접는다 — 넓은 화면은 종전대로 펼쳐진다');
+  else bad('폰 판정 없이 접는다 — PC 화면까지 접힌다');
+  for (const [nm, body, caret] of [['지정학·위기 게이지', 'fvCrisisBody', 'fvCrisisCaret'],
+                                   ['활성 이슈·레짐', 'fvEventsBody', 'fvEventsCaret'],
+                                   ['한국장 매매정지', 'fvKrHaltBody', 'fvKrHaltCaret']]) {
+    if (H.indexOf("_luxPhoneFold('" + body + "', '" + caret + "')") > 0)
+      ok(nm + ' 패널이 폰에서 접힌 채로 시작한다');
+    else bad(nm + ' 패널이 폰에서 펼친 채로 시작한다');
+  }
 }
 
 /* ── ⑦ [V33.190] 폰 대시보드 — 시총맵이 TOP MOVERS 위 ────────────────────── */

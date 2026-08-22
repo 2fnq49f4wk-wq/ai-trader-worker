@@ -50,9 +50,17 @@ const params = (D, hidden) => {
     "워커 폴백이 아직 GPU 구조로 학습한다 — CPU 300s 안에서 수렴할 수 없다");
   chk(gpu >= 700000, `정식(GPU) 망 용량이 유지된다 — 넷당 ${gpu.toLocaleString()} 파라미터`,
     `GPU 망이 넷당 ${gpu} 파라미터로 줄었다 — GPU 예산에서 용량을 줄일 이유가 없다`);
-  chk(DNN.hidden.length <= 6,
-    `정식 망 깊이 ${DNN.hidden.length}층 — 표 형식 자료에서 깊이는 폭보다 비싸다(Gorishniy 2021 · Holzmüller 2024)`,
-    `정식 망이 ${DNN.hidden.length}층이다 — 표 자료에서 이 깊이는 근거가 없다`);
+  /* 깊이는 ★사용자가 정한 값★ 이다(은닉 10층). 여기서 '몇 층이 옳은가' 를 게이트가 판정하지
+     않는다 — 그건 코드가 아니라 사람이 정할 문제다. 게이트가 막는 것은 ★모르는 사이에 바뀌는
+     것★ 이다: 아래 EXPECT 와 다르면 배포가 멈추고, 바꾸려면 이 줄을 함께 고쳐야 한다.
+     (V33.188 이 10→2, V33.191 이 2→5 로 바꾸는 동안 아무 게이트도 그걸 붙잡지 못했다.) */
+  const EXPECT_HIDDEN = [640, 512, 384, 256, 192, 128, 96, 64, 48, 32];
+  chk(DNN.hidden.length === EXPECT_HIDDEN.length && DNN.hidden.every((v, i) => v === EXPECT_HIDDEN[i]),
+    `정식 망 구조가 선언된 값과 같다 — 은닉 ${DNN.hidden.length}층 ${DNN.hidden.join("-")}`,
+    `정식 망 구조가 바뀌었다: ${DNN.hidden.join("-")} ≠ ${EXPECT_HIDDEN.join("-")} — 의도한 변경이면 이 게이트의 EXPECT_HIDDEN 도 함께 고칠 것`);
+  chk(gpu === 763345 && gpu * 6 === 4580070,
+    `파라미터 수가 산식과 일치한다 — 넷당 ${gpu.toLocaleString()} · 6시드 ${(gpu * 6).toLocaleString()}`,
+    `파라미터 수가 예상과 다르다(넷당 ${gpu}) — 구조 변경이 화면 표시와 어긋날 수 있다`);
   chk(wk < gpu / 10, `워커 폴백은 넷당 ${wk.toLocaleString()} 파라미터(GPU 망의 1/${Math.round(gpu / wk)})`,
     `워커 폴백이 넷당 ${wk} 파라미터다 — CPU 예산 안에서 못 끝낸다`);
   chk(DNNW.seeds <= DNN.seeds, `워커 시드 ${DNNW.seeds} ≤ GPU 시드 ${DNN.seeds}`,
@@ -64,6 +72,24 @@ const params = (D, hidden) => {
       && /function _dnnTrainOne\(train, val, dims, deadline, warm, hp\)/.test(src),
     "학습 하이퍼파라미터가 인자로 전달된다 — 워커와 GPU 가 서로의 값을 안 쓴다",
     "_dnnTrainOne 이 아직 전역 DNN 상수를 직접 읽는다 — 분리가 절반만 된 것이다");
+}
+
+// ── ①-b 파라미터 수를 ★세어서★ 말하는가 (화면이 "3M" 을 외우고 있었다) ───
+{
+  const H = readFileSync(new URL("../public/index.html", import.meta.url), "utf8");
+  chk(/function _dnnParamCount\(dims\)/.test(src),
+    "파라미터를 dims 에서 세는 단일 진실(_dnnParamCount)이 있다",
+    "파라미터를 세는 곳이 없다 — 화면과 서버가 서로 다른 숫자를 말하게 된다");
+  chk(/paramsPerNet: _dnnParamCount\(_dimsPrev\)/.test(src),
+    "미학습 미리보기도 실제 dims 로 센 값을 내려보낸다",
+    "미학습 경로가 파라미터 수를 안 내려보낸다 — 화면이 상수를 지어내게 된다");
+  // ★하드코딩된 '3M' 이 화면에 남아 있으면 안 된다★ — 구조가 바뀌면 곧바로 거짓이 된다.
+  const bad3m = (H.match(/>3M[^<]*파라미터|3M은 Worker|3M 파라미터/g) || []).length;
+  chk(bad3m === 0, "화면에 하드코딩된 '3M' 표기가 남아 있지 않다",
+    `화면이 아직 '3M' 을 문자열로 들고 있다(${bad3m}곳) — 구조를 바꾸는 순간 거짓이 된다`);
+  chk(/d\.params\.toLocaleString\(\)/.test(H) && !/\(d\.params\/1e6\)\.toFixed/.test(H),
+    "화면이 정확한 개수를 그대로 적는다(백만 단위 반올림 금지)",
+    "화면이 파라미터를 'M' 으로 반올림한다 — 워커 폴백(33,538)과 GPU 망이 구별되지 않는다");
 }
 
 // ── ② 표본이 전 구간을 보는가 ──────────────────────────────────────────────

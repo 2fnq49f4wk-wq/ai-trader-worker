@@ -153,5 +153,73 @@ const BOOT = ["/api/state", "/api/ml-status", "/api/ai-mode", "/api/selfcheck", 
     "응답에 cache-control 이 없다 — 화면이 같은 값을 계속 다시 물어본다");
 }
 
+// ── ⑦ [V33.193] 상태를 바꾸는 요청에 문이 있는가 (CSRF) ────────────────────
+//   실측: POST 36개 중 TRAIN_KEY 를 요구하는 것은 10개뿐이고, 나머지 26개에는 아무 문이
+//   없었다 — /api/reset · /api/cfg · /api/cash/add · /api/close · /api/reset_tickers 포함.
+//   거기에 CORS 가 * 였으니, 사용자가 아무 사이트나 보는 동안 그 사이트가 이 워커로
+//   JSON POST 를 보내 포트폴리오를 초기화할 수 있었다. 한도(V33.190)는 ★양★ 을 막는 장치라
+//   한 번이면 끝나는 공격에는 소용이 없다.
+{
+  const i = src.indexOf("function mutationGuard(request, url, env) {");
+  chk(i > 0, "상태변경 요청에 출처 검사(mutationGuard)가 있다",
+    "상태를 바꾸는 요청에 아무 문이 없다 — 남의 사이트가 포트폴리오를 초기화할 수 있다");
+  const iRl = code.indexOf("const _rl = rateLimit(request, path, cors)");
+  const iMg = code.indexOf("const _mg = mutationGuard(request, url, env)");
+  const iRoute = code.indexOf('if (path === "/api/ml-status")');
+  chk(iMg > iRl && iRoute > iMg, "출처 검사가 라우팅보다 먼저다 — 통과 못 하면 아무 일도 안 일어난다",
+    "출처 검사가 라우팅 뒤에 있다 — 이미 처리한 뒤라 방어가 되지 않는다");
+
+  // 실제로 돌려 본다
+  const j = src.indexOf("\n}", i);
+  const mod2 = src.slice(i, j + 2);
+  const c3 = vm.createContext({ URL, Math, Number, String, console });
+  new vm.Script(`
+    function _safeEq(a,b){var x=String(a==null?"":a),y=String(b==null?"":b);if(x.length!==y.length)return false;var d=0;for(var i=0;i<x.length;i++)d|=x.charCodeAt(i)^y.charCodeAt(i);return d===0;}
+    function rateLimitAuthFail(){}
+    ${mod2}
+    this.mutationGuard = mutationGuard;
+  `).runInContext(c3);
+  const mg = c3.mutationGuard;
+  const U = new URL("https://ai-trader-app.example.workers.dev/api/reset");
+  const mk = (method, hdrs) => ({ method: method, headers: { get: (h) => hdrs[String(h).toLowerCase()] || null } });
+  const ENV = { TRAIN_KEY: "s3cret-key-value" };
+
+  chk(mg(mk("GET", {}), U, ENV) === null, "읽기(GET)는 아무 영향이 없다 — 대시보드는 그대로 공개 조회다",
+    "GET 까지 막았다 — 화면이 통째로 죽는다");
+  chk(mg(mk("POST", { origin: "https://ai-trader-app.example.workers.dev" }), U, ENV) === null,
+    "자기 페이지에서 온 POST 는 통과한다(사이트 기능 무영향)",
+    "동일 출처 POST 가 막힌다 — 설정 변경·청산 버튼이 전부 죽는다");
+  chk(!!mg(mk("POST", { origin: "https://evil.example.com" }), U, ENV),
+    "남의 사이트에서 온 POST 는 거절된다(CSRF 차단)",
+    "교차 출처 POST 가 통과한다 — 아무 사이트나 포트폴리오를 초기화할 수 있다");
+  chk(!!mg(mk("POST", {}), U, ENV),
+    "출처가 없는 POST(curl)는 키 없이는 거절된다",
+    "출처 없는 POST 가 그냥 통과한다 — 주소만 알면 누구나 초기화할 수 있다");
+  chk(mg(mk("POST", { "x-train-key": "s3cret-key-value" }), U, ENV) === null,
+    "TRAIN_KEY 를 들고 오면 통과한다 — CI·스크립트 경로가 그대로 산다",
+    "키를 들고 와도 막힌다 — 워크플로가 전부 깨진다");
+  chk(!!mg(mk("POST", { "x-train-key": "wrong-length-x" }), U, ENV),
+    "틀린 키는 거절된다",
+    "틀린 키가 통과한다");
+}
+
+// ── ⑧ [V33.193] 나가는 응답에 보안 헤더가 붙는가 ───────────────────────────
+{
+  chk(/const SECHDR = \{/.test(src) && /function withSecurityHeaders\(res\)/.test(src),
+    "보안 헤더 세트와 적용 함수가 있다",
+    "보안 헤더가 없다 — 클릭재킹·MIME 스니핑이 열려 있다");
+  for (const h of ["x-content-type-options", "x-frame-options", "referrer-policy",
+                   "permissions-policy", "content-security-policy"]) {
+    chk(new RegExp('"' + h + '"').test(src), "헤더 " + h + " 를 붙인다", "헤더 " + h + " 가 없다");
+  }
+  chk(/frame-ancestors 'self'/.test(src) && /object-src 'none'/.test(src),
+    "CSP 가 frame-ancestors·object-src 를 잠근다",
+    "CSP 에 frame-ancestors/object-src 잠금이 없다");
+  // ★출구가 하나여야 한다★ — 정적 자산은 env.ASSETS 가 만들므로 handleRequest 안에서는 못 붙인다.
+  chk(/return withSecurityHeaders\(_res\);/.test(src),
+    "헤더를 워커의 단일 출구에서 붙인다 — 빠지는 경로가 생기지 않는다",
+    "보안 헤더가 일부 경로에만 붙는다 — 정적 문서가 빠질 수 있다");
+}
+
 console.log(fails ? "\n남용 방어 계약 위반 " + fails + "건 — 배포 차단" : "\n  ok   남용 방어 · 다중 사용자 계약 통과");
 process.exit(fails ? 1 : 0);

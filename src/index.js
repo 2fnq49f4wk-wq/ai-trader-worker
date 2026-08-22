@@ -2788,7 +2788,7 @@ async function applySignalTypeWeights(DB, cfg) {
 // ============================================================================
 // [V33.55] 빌드 버전 — SWR L2 캐시 키에 섞어 '배포 = 판단 캐시 자동 무효화'를 만든다.
 //   판정 로직을 고쳐도 옛 캐시가 최대 1시간 재배포되던 문제를 구조적으로 없앤다.
-const _BUILD_VER = "V33.192";
+const _BUILD_VER = "V33.193";
 
 // ═══ [V33.171] 평가 순서 계획 — ★승격과 순환을 교차해 굶주림을 구조적으로 없앤다★ ═══
 //   V33.50 의 형태트리거는 "급한 몇 종목을 앞으로 당긴다"는 의도였으나, 실제 운영로그에서는
@@ -9722,6 +9722,73 @@ async function riskPreTradeCheck(DB, o) {
 //   이건 사실 "거래당 기대값이 0인가" 에 대한 t 통계량과 같은 수다. 이름이 둘일 뿐이다.
 //   그래서 한 번 계산해 두 용도로 쓴다 — 화면에는 SQN 으로, 게이트에는 t 로.
 //   df = n−1 인 Student-t 로 단측 p 를 낸다(_tSf 는 V33.113 에서 이미 깔아뒀다).
+/* ════════════════════════════════════════════════════════════════════════════
+   [V33.193] ★확률적/디플레이션 샤프 — 이 시스템에 없던 마지막 통계적 방어★
+
+   출처: Bailey & López de Prado (2014) "The Deflated Sharpe Ratio: Correcting for
+         Selection Bias, Backtest Overfitting, and Non-Normality" (SSRN 2460551).
+
+   무엇이 빠져 있었나. 원장 판정은 SQN(=t 통계량)과 그 단측 p 하나로 하고 있었다. 그런데 t 검정은
+   두 가지를 가정한다: ① 수익률이 정규분포다 ② 이 검정이 ★유일한 시도★ 다. 둘 다 사실이 아니다.
+     ① 실측: US tailRatio 1.545 · 거래수열 MDD −52.4% · 최대연속손실 7~18.
+        꼬리가 두껍고 비대칭이다 — 정규 가정이 t 를 부풀린다.
+     ② 이 시스템은 전략 여러 개 × 시장 여러 개를 동시에 재고, 그중 잘 나온 것을 본다.
+        "여러 번 시도해서 가장 좋은 것" 의 기댓값은 0 이 아니다. 그 편향을 안 빼면
+        운 좋은 하나를 실력으로 읽는다. ICGATE 는 IC 쪽에 본페로니를 깔아뒀으면서
+        ★정작 실제 돈이 오간 원장★ 에는 아무 보정이 없었다.
+
+   PSR = P(진짜 SR > 기준 SR | 관측 SR, n, 왜도, 첨도)
+       = Φ( (SR − SR0)·√(n−1) / √(1 − γ3·SR + (γ4−1)/4·SR²) )
+   DSR = 기준 SR0 를 ★다중검정 기대 최대치★ 로 놓은 PSR.
+       SR0 = σ(SR)·[ (1−γ)·Φ⁻¹(1 − 1/K) + γ·Φ⁻¹(1 − 1/(K·e)) ],  γ = 오일러–마스케로니
+       σ(SR) = 시도들 사이의 SR 표준편차, K = 독립 시도 수.
+
+   ※ 여기서 SR 은 ★관측당★ 샤프다(연율화하지 않는다). 우리 SQN = t = SR·√n 이므로
+     SR = SQN/√n 이다. 연율화하면 √n 이 두 번 들어가 값이 망가진다.
+*/
+function _srMoments(rets) {
+  const n = Array.isArray(rets) ? rets.length : 0;
+  if (n < 4) return { n: n, sr: 0, skew: 0, kurt: 3 };
+  let m = 0; for (const r of rets) m += _num(r, 0); m /= n;
+  let m2 = 0, m3 = 0, m4 = 0;
+  for (const r of rets) { const d = _num(r, 0) - m; const d2 = d * d; m2 += d2; m3 += d2 * d; m4 += d2 * d2; }
+  m2 /= n; m3 /= n; m4 /= n;
+  const sd = Math.sqrt(m2);
+  if (!(sd > 1e-12)) return { n: n, sr: 0, skew: 0, kurt: 3 };
+  return { n: n, sr: m / sd, skew: m3 / (sd * sd * sd), kurt: m4 / (m2 * m2) };
+}
+// 다중검정에서 ★귀무가설 하에 기대되는 최대 SR★ — 이만큼은 운으로도 나온다.
+function _expectedMaxSR(sigmaSR, K) {
+  const g = 0.5772156649015329;   // 오일러–마스케로니
+  const k = Math.max(1, Math.floor(_num(K, 1)));
+  const s = _num(sigmaSR, 0);
+  if (!(s > 0) || k <= 1) return 0;
+  const a = _normInv(1 - 1 / k);
+  const b = _normInv(1 - 1 / (k * Math.E));
+  return s * ((1 - g) * a + g * b);
+}
+// 확률적 샤프(sr0=0) / 디플레이션 샤프(sr0=기대 최대치). 반환은 확률 0~1.
+function _probSR(mom, sr0) {
+  try {
+    const n = _num(mom && mom.n, 0);
+    if (n < 4) return null;
+    const sr = _num(mom.sr, 0), sk = _num(mom.skew, 0), ku = _num(mom.kurt, 3);
+    // 분모가 0 이나 음수가 되면(극단 왜도) 통계가 정의되지 않는다 — 그때는 판정을 내지 않는다.
+    const v = 1 - sk * sr + ((ku - 1) / 4) * sr * sr;
+    if (!(v > 1e-9)) return null;
+    const z = (sr - _num(sr0, 0)) * Math.sqrt(n - 1) / Math.sqrt(v);
+    if (!isFinite(z)) return null;
+    return +_clamp(0.5 * (1 + _erf(z / Math.SQRT2)), 0, 1).toFixed(4);
+  } catch (e) { return null; }
+}
+// 표준정규 CDF 용 오차함수(Abramowitz–Stegun 7.1.26 — 절대오차 1.5e-7).
+function _erf(x) {
+  const s = x < 0 ? -1 : 1, a = Math.abs(x);
+  const t = 1 / (1 + 0.3275911 * a);
+  const y = 1 - (((((1.061405429 * t - 1.453152027) * t) + 1.421413741) * t - 0.284496736) * t + 0.254829592) * t * Math.exp(-a * a);
+  return s * y;
+}
+
 function _edgeStats(rets) {
   const n = Array.isArray(rets) ? rets.length : 0;
   if (n < 2) return { n: n, mean: 0, sd: 0, t: 0, df: Math.max(0, n - 1), pNeg: 1, sqn: 0 };
@@ -10100,6 +10167,7 @@ async function portfolioStatistics(DB, opts) {
         }
       }
     } catch (e) {}
+    const _mom = _srMoments(R);
     return {
       ready: true, n: n, market: o.market || "all",
       winRate: +winRate.toFixed(4), nWin: nWin, nLoss: nLoss,
@@ -10109,6 +10177,12 @@ async function portfolioStatistics(DB, opts) {
       maxLossStreak: maxLossStreak,
       // [V33.116] 신규 — 유의성과 꼬리·낙폭 품질
       sqn: _edge.sqn, edgeT: _edge.t, edgeDf: _edge.df, edgePNeg: +_edge.pNeg.toFixed(4),
+      /* [V33.193] 관측당 샤프와 그 모멘트 — PSR/DSR 의 재료다(위 _srMoments 주석 참조).
+         edgePNeg 는 정규 가정 t 검정이라 꼬리가 두꺼우면 낙관적이다. psr 은 그 왜도·첨도를
+         직접 넣어 다시 잰 값이고, dsr 은 거기에 ★다중검정 보정★ 까지 얹은 값이다
+         (dsr 은 시도 집합을 아는 portfolioStatsNightly 가 채운다 — 여기서는 알 수 없다). */
+      sr: +_mom.sr.toFixed(4), srSkew: +_mom.skew.toFixed(3), srKurt: +_mom.kurt.toFixed(3),
+      psr: _probSR(_mom, 0), dsr: null, dsrTrials: null, dsrSR0: null,
       sortino: +sortino.toFixed(3), omega: +omega.toFixed(3),
       tailRatio: tailRatio != null ? +tailRatio.toFixed(3) : null,
       payoff: payoff != null ? +payoff.toFixed(3) : null,
@@ -10185,6 +10259,36 @@ async function portfolioStatsNightly(DB) {
     //   totalPnl 에 했던 것과 같은 처리: 값을 지우고 이유를 남긴다. 대신 통화중립인
     //   omega(수익률 기준 이익합/손실합)를 함께 봐야 한다는 것을 필드로 명시한다.
     if (all && all.ready) { all.profitFactorMixedCcy = true; all.profitFactor = null; all.profitFactorNote = "통화혼합(원+달러) — 금액 기준 PF 는 무의미. 통화중립 지표는 omega"; }
+    /* [V33.193] ★다중검정 보정(DSR)은 시도 집합을 아는 여기서만 계산할 수 있다.★
+       "US 가 SQN 3.79 라 유의하다" 는 말은 ★US 만 재봤을 때★ 맞는 말이다. 실제로는 시장 셋과
+       전략 여럿을 동시에 재고 그중 좋은 것을 본다 — 그러면 가장 좋은 하나는 운으로도 어느 정도
+       올라간다. 그 기대 최대치(SR0)를 빼고 다시 재는 것이 DSR 이다.
+       시도 집합 = 시장별 통계 + 야간 자가평가가 검정한 전략들. 둘 다 '돈이 오간 원장' 이고
+       같은 표본에서 나왔으므로 같은 가족으로 세는 것이 맞다. */
+    try {
+      const _srs = [];
+      for (const _p of [us, kr]) if (_p && _p.ready && typeof _p.sr === "number") _srs.push(_p.sr);
+      try {
+        const _rv = await getState(DB, "ai_selfreview", null);
+        for (const _e of ((_rv && _rv.edgeTests) || [])) {
+          const _n = _num(_e.n, 0), _sq = _num(_e.sqn, null);
+          if (_n >= 20 && _sq != null) _srs.push(_sq / Math.sqrt(_n));
+        }
+      } catch (e0) {}
+      const K = _srs.length;
+      let sig = 0;
+      if (K >= 2) {
+        let m = 0; for (const v of _srs) m += v; m /= K;
+        let q = 0; for (const v of _srs) q += (v - m) * (v - m);
+        sig = Math.sqrt(q / (K - 1));
+      }
+      const SR0 = _expectedMaxSR(sig, K);
+      for (const _p of [all, us, kr]) {
+        if (!_p || !_p.ready) continue;
+        _p.dsrTrials = K; _p.dsrSR0 = +SR0.toFixed(4);
+        _p.dsr = _probSR({ n: _p.n, sr: _p.sr, skew: _p.srSkew, kurt: _p.srKurt }, SR0);
+      }
+    } catch (e) {}
     await setState(DB, "port_stats", { all: all, us: us, kr: kr, ts: Date.now() });
     if (!all.ready) return "[PORT] 종결거래 " + all.n + "/10 — 통계 대기";
     return "[PORT] n=" + all.n + " 승률 " + (all.winRate * 100).toFixed(1) + "% 기대값 " +
@@ -18038,13 +18142,23 @@ async function runTradingCycle(env) {
                 const _pmS = __portStats && __portStats[market];
                 if (_pmS && _pmS.ready && _num(_pmS.n, 0) >= _num(_mg.minN, 60)) {
                   const _et = _num(_pmS.edgeT, 0);
-                  const _sh = _coefShrink(_et);                       // 0(잡음) → 1(확실)
+                  let _sh = _coefShrink(_et);                         // 0(잡음) → 1(확실)
+                  /* [V33.193] ★디플레이션 샤프를 한쪽 브레이크로만 쓴다.★
+                     DSR 은 다중검정·비정규 꼬리를 보정한 "이 엣지가 진짜일 확률" 이다
+                     (Bailey & López de Prado 2014). 0.5 미만이면 ★보정 후에는 실력보다 운 쪽★
+                     이라는 뜻이므로 그 시장은 바닥 크기로 내린다.
+                     ★0.5 이상일 때는 아무것도 하지 않는다★ — 여기서 DSR 로 전면 수축까지 걸면
+                     지금 유일하게 돈을 벌고 있는 시장(US)을 내가 재보지도 않은 값으로 깎게 된다.
+                     먼저 재서 화면에 띄우고(port_stats.dsr·psr), 실제 값을 보고 나서 넓힐 일이다. */
+                  const _dsr = _num(_pmS.dsr, null);
+                  let _dsrNote = "";
+                  if (_dsr != null && _dsr < 0.5) { _sh = 0; _dsrNote = " · DSR " + _dsr.toFixed(2) + "<0.50"; }
                   const _fl = _clamp(_num(_mg.floorMult, 0.4), 0.05, 1);
                   const _gm = _clamp(_fl + (1 - _fl) * _sh, _fl, 1);
                   if (_gm < 0.999) {
                     riskPct = _clamp(riskPct * _gm, _num(_mg.riskMin, 0.15), 100);
                     signal.govNote = "시장증거 " + market.toUpperCase() + " SQN " + _et.toFixed(2) +
-                                     "(n " + _num(_pmS.n, 0) + ") → 크기 ×" + _gm.toFixed(2);
+                                     "(n " + _num(_pmS.n, 0) + ")" + _dsrNote + " → 크기 ×" + _gm.toFixed(2);
                   }
                 }
               }
@@ -19133,6 +19247,87 @@ function rateLimitAuthFail(request) {
     if (b.m.size < RATELIM.maxKeys || b.m.has(k)) b.m.set(k, _num(b.m.get(k), 0) + 1);
   } catch (e) {}
 }
+/* ════════════════════════════════════════════════════════════════════════════
+   [V33.193] ★상태를 바꾸는 요청 26개가 인증도 출처확인도 없이 열려 있었다.★
+
+   실측(코드 전수 조사): POST 엔드포인트 36개 중 TRAIN_KEY 를 요구하는 것은 10개뿐이다.
+   나머지 26개에는 아무 문이 없었고, 그중에는 이런 것들이 있다:
+     /api/reset · /api/reset_market · /api/reset_tickers · /api/reset_commodities
+     /api/cfg (리스크%·예산·티커 변경) · /api/cash/add (현금 잔고 변경)
+     /api/close (포지션 청산) · /api/force-lock · /api/force-unlock · /api/unlock
+     /api/audit/repair · /api/audit/dedupe · /api/migrate · /api/tick
+   여기에 CORS 가 Access-Control-Allow-Origin: * 였다. 즉 ★아무 웹사이트나★ 사용자가 그
+   페이지를 보는 동안 이 워커로 JSON POST 를 보내 포트폴리오를 초기화하거나 설정을 바꿀 수
+   있었다(application/json 이라 프리플라이트가 뜨는데, 그 프리플라이트를 우리가 * 로 승인했다).
+   요청 한도(V33.190)는 ★양★ 을 막는 장치지 ★권한★ 을 막는 장치가 아니다 — 한 번이면 되는
+   공격에는 아무 소용이 없다.
+
+   무엇으로 막나 — 이 사이트에는 로그인이 없고, 브라우저에 비밀키를 둘 수도 없다
+   (둔 순간 그건 더 이상 비밀이 아니다). 그래서 ★출처★ 로 막는다:
+     · 브라우저는 POST 에 Origin 헤더를 ★항상★ 붙인다(동일 출처 요청에도 붙는다).
+       그 값이 이 워커의 호스트와 다르면 남의 사이트가 보낸 것이다 → 거절.
+     · Origin 이 아예 없는 요청(curl·스크립트)은 브라우저가 아니다 → TRAIN_KEY 로 증명하게 한다.
+       CI 워크플로들은 이미 그 키를 헤더로 보내므로 그대로 동작한다.
+   이건 인증이 아니라 ★CSRF 방어★ 다. 키를 아는 사람은 여전히 무엇이든 할 수 있다 —
+   그게 맞는 설계다(그 키가 이 시스템의 관리자 자격이다).
+*/
+function mutationGuard(request, url, env) {
+  const m = request.method;
+  if (m === "GET" || m === "HEAD" || m === "OPTIONS") return null;
+  const host = url.host;
+  const sameHost = function (v) {
+    if (!v) return false;
+    try { return new URL(v).host === host; } catch (e) { return false; }
+  };
+  const org = request.headers.get("origin");
+  if (org) {
+    // Origin 이 있다 = 브라우저다. 우리 호스트가 아니면 남의 페이지가 보낸 것이다.
+    if (sameHost(org)) return null;
+  } else if (sameHost(request.headers.get("referer"))) {
+    // 일부 클라이언트는 Origin 을 생략한다 — Referer 로 한 번 더 본다.
+    return null;
+  }
+  const k = request.headers.get("x-train-key") || url.searchParams.get("key") || "";
+  if (env && env.TRAIN_KEY && _safeEq(k, env.TRAIN_KEY)) return null;
+  rateLimitAuthFail(request);   // 출처 위조 시도도 실패로 센다 — 반복하면 잠긴다
+  return org ? ("교차 출처 요청 거절: " + String(org).slice(0, 80))
+             : "출처 없는 상태변경 요청 — X-Train-Key 필요";
+}
+
+/* [V33.193] 정적 문서에 보안 헤더를 붙인다. 종전에는 하나도 없었다.
+   · X-Frame-Options / frame-ancestors — 남의 페이지가 이 대시보드를 iframe 에 얹어
+     클릭을 가로채는 것(클릭재킹)을 막는다. 위 CSRF 방어와 짝이다.
+   · X-Content-Type-Options — MIME 스니핑으로 업로드물이 스크립트로 해석되는 것을 막는다.
+   · Referrer-Policy — 워커 주소가 외부 사이트로 새는 것을 줄인다(주소 자체가 준-비밀이다).
+   · Permissions-Policy — 이 대시보드는 카메라·마이크·위치를 쓰지 않는다. 안 쓰는 권한은 끈다.
+   ※ CSP 는 script-src 'unsafe-inline' 이 필요하다(이 페이지는 인라인 스크립트로 되어 있다).
+     그래도 ★기본 출처를 self 로 묶고 object/base 를 막는 것★ 만으로 주입면이 크게 준다.
+     인라인을 걷어내는 건 별도 작업이라, 지금은 할 수 있는 것부터 건다. */
+const SECHDR = {
+  "x-content-type-options": "nosniff",
+  "x-frame-options": "SAMEORIGIN",
+  "referrer-policy": "strict-origin-when-cross-origin",
+  "permissions-policy": "camera=(), microphone=(), geolocation=(), payment=(), usb=()",
+  "content-security-policy":
+    "default-src 'self'; " +
+    "script-src 'self' 'unsafe-inline'; " +
+    "style-src 'self' 'unsafe-inline'; " +
+    "img-src 'self' data: blob: https:; " +
+    "font-src 'self' data:; " +
+    "connect-src 'self'; " +
+    "frame-ancestors 'self'; " +
+    "base-uri 'self'; " +
+    "form-action 'self'; " +
+    "object-src 'none'"
+};
+function withSecurityHeaders(res) {
+  try {
+    const h = new Headers(res.headers);
+    for (const k in SECHDR) if (!h.has(k)) h.set(k, SECHDR[k]);
+    return new Response(res.body, { status: res.status, statusText: res.statusText, headers: h });
+  } catch (e) { return res; }
+}
+
 /* 비밀값 비교는 ★길이와 무관하게 같은 시간★ 이 걸리게 한다. 원격 공격자에게 실제로 쓸 만한
    타이밍 채널은 아니지만(네트워크 지터가 훨씬 크다), 비용이 0 이라 안 할 이유가 없다.
    길이 자체는 숨기지 못한다 — 그건 어떤 방식으로도 마찬가지다. */
@@ -19158,6 +19353,11 @@ async function handleRequest(request, env, ctx) {
   // [V33.190] 남용 방어 — 라우팅보다 먼저. 여기서 끊으면 D1 을 한 번도 안 건드린다.
   const _rl = rateLimit(request, path, cors);
   if (_rl) return _rl;
+  /* [V33.193] ★권한 방어 — 한도 바로 뒤, 라우팅 앞.★ 상태를 바꾸는 요청은 이 워커 자신의
+     페이지에서 왔거나 TRAIN_KEY 를 들고 있어야 한다(mutationGuard 주석 참조).
+     읽기(GET)에는 아무 영향이 없다 — 대시보드는 공개 조회 그대로 동작한다. */
+  const _mg = mutationGuard(request, url, env);
+  if (_mg) return Response.json({ error: "forbidden", reason: _mg }, { status: 403, headers: cors });
 
   // [V12.131] 읽기전용 조회 엔드포인트용 공통 SWR 헬퍼.
   //   /api/state·/api/ml-status에서 효과가 검증된 패턴(신선하면 즉시, 오래됐어도 즉시 주고
@@ -31400,22 +31600,26 @@ async function mlMindStatus(DB) {
 
 const DNN = {
   enabled: true,
-  /* [V33.191] ★여기는 정식(GPU) 구조다 — Modal 트레이너가 /api/dnn-config 로 이 값을 읽어 간다.★
-     V33.188 이 이 값을 128-64 로 줄였는데, 그건 ★워커 폴백에서만★ 옳은 판단이었다.
-     Modal 은 T4 GPU 에서 표본 185,408건 전부를 받아 400에폭·6시드로 돌린다 — 거기서 용량을
-     줄일 이유가 없다. 워커(순수 JS·CPU 300s)와 GPU 는 완전히 다른 예산이므로 구조도 분리한다.
-     아래 DNNW 가 워커 전용이고, 이 DNN 이 GPU 용이다.
+  /* [V33.193] ★은닉 10층으로 되돌린다 — 사용자 지시.★
+     V33.188 이 10층 → 2층으로, V33.191 이 2층 → 5층으로 바꿨다. 원래 값은 10층이었고,
+     되돌리라는 지시를 받았다. 그대로 되돌린다.
 
-     ★그러면 종전 10층 그대로 두면 되지 않나★ — 용량은 되돌리되 ★깊이는 절반으로 줄인다.★
-     표 형식 자료에서 깊은 평범한 MLP 가 손해를 보는 건 폭이 아니라 깊이 쪽이다:
-       · Grinsztajn et al. NeurIPS 2022 — MLP 는 무정보 피처·비평활 결정경계에 취약
-         (여기 65개 중 밴딧이 유의하다고 본 건 8개다 — 정확히 그 조건이다)
-       · Gorishniy et al. NeurIPS 2021 — 잘 조율된 ★얕은★ MLP 가 정교한 구조와 대등
-       · Holzmüller et al. NeurIPS 2024(RealMLP) — 표 자료 MLP 의 강한 기본값은 은닉 2~4층
-     넷당 파라미터: 종전 10층 763,345 → 새 5층 772,993 (+1.3%). 6시드 총합 4.58M → 4.64M.
-     ★용량은 오히려 늘었고 깊이만 10 → 5 로 줄었다.★ 같은 예산으로 더 빨리, 더 안정적으로 수렴한다. */
-  hidden: [768, 512, 384, 256, 128],
-  dropout: 0.42,         // 대형 망 — 과적합 억제(GPU 학습 기준)
+     되돌리면서 남기는 사실(판단이 아니라 측정값이다):
+       · 넷당 763,345 파라미터 · Modal 이 6시드로 덮어쓰므로 총 4,580,070.
+         이 숫자는 이제 ★코드가 dims 에서 세어★ 화면으로 내려간다(_dnnParamCount).
+         종전에는 화면이 "3M" 이라는 문자열을 들고 있어서, 구조를 바꾸는 순간 거짓이 됐다.
+       · 학습은 Modal(T4 GPU)이 맡는다 — 표본 185,408건 전부 · 400에폭 · 조기종료 · 6시드.
+       · 워커(순수 JS)는 폴백이며 아래 DNNW 로 따로 학습한다. 그 크기를 나눈 근거는
+         ★실측치★ 다: 워커가 만든 모델의 valAcc 0.404 인데 다수클래스만 찍어도 0.571 이었고
+         (posRate 0.429), 그때 파라미터/표본 = 3,053,380 / 2,000 = 1,527 이었다.
+         두 숫자 모두 스냅샷에서 직접 읽은 값이다.
+
+     ※ 깊이가 늘면 추론 비용도 함께 는다 — 6시드 × 763,345 를 종목마다 돈다.
+       신뢰게이트를 통과해 실제로 투표를 시작하면 이 비용이 사이클 예산에 들어온다.
+       그래서 폭을 더 늘리지는 않았다(원래 값 그대로). 용량을 더 키워야 한다면 추론 예산을
+       먼저 재고 나서 올리는 게 순서다. */
+  hidden: [640, 512, 384, 256, 192, 128, 96, 64, 48, 32],
+  dropout: 0.42,
   l2: 9e-4,
   lr: 0.0025,
   beta1: 0.9, beta2: 0.999, eps: 1e-8,
@@ -31474,26 +31678,27 @@ const DNN = {
 };
 
 /* ════════════════════════════════════════════════════════════════════════════
-   [V33.191] ★워커 폴백 전용 하이퍼파라미터 — GPU 와 예산이 완전히 다르다.★
+   [V33.193] ★워커 폴백 전용 하이퍼파라미터 — GPU 와 예산이 다르다.★
 
-   왜 나누나. 위 DNN 은 Modal(T4 GPU, 표본 185,408건, 400에폭, 6시드)이 읽는 값이다.
-   그런데 같은 값을 ★순수 JS·CPU 300초★ 인 워커 폴백도 그대로 썼다. 결과가 운영 스냅샷이다:
-     architecture 65-640-…-32-1×4 · n 5,000 · valAcc 0.404
-   다수클래스만 찍어도 57%(posRate 0.429) 인 라벨에서 40.4% 다. 종전 주석이 스스로
-   "순수 JS Worker 에선 이 크기가 완전학습은 어려움" 이라고 적어 두고 있었다 — 즉
-   ★한 번도 수렴한 적 없는 망★ 이 매일 밤 만들어져 위원회 앞에 놓였던 것이다.
+   위 DNN 은 Modal(T4 GPU · 표본 185,408건 · 400에폭 · 6시드)이 /api/dnn-config 로 읽어 가는
+   값이다. 같은 값을 순수 JS 워커(CPU 300초)도 그대로 쓰고 있었다.
 
-   그리고 표본이 굶고 있었다. 종전 읽기량은
+   ★근거는 실측치다.★ 운영 스냅샷(2026-08-22)에서 직접 읽은 숫자만 적는다:
+     · dnn.architecture = 65-640-512-384-256-192-128-96-64-48-32-1×4  → 파라미터 3,053,380
+     · dnn.n            = 5,000        (학습에 실제로 쓴 것은 그중 2,000)
+     · dnn.valAcc       = 0.404
+     · data.posRate     = 0.429        → 다수클래스만 찍어도 0.571
+   40.4% 는 0.571 보다 16.7%p 낮다. 그리고 파라미터/표본 = 3,053,380 / 2,000 = 1,527 이다.
+   이 두 숫자면 충분하다 — 이 예산에서 이 크기는 학습이 끝나지 않는다.
+
+   표본도 굶고 있었다. 종전 읽기량은
      _dnnRead = min(trainWindow, dnnMaxSamples×2 + 1000) = 5,000
-   이고 학습에는 그중 최근 2,000건만 썼다. ★185,408건 중 5,000건, 그것도 전부 최근 구간★ 이다.
-   그러면 검증 홀드아웃도 같은 며칠 안에서 잘리므로, valAcc 는 '한 국면에서의 성적' 이 된다
-   (XALPHA 홀드아웃이 사흘치였던 것과 정확히 같은 병이다).
-   → 아래 spanBuckets 로 ★전 구간에 걸쳐 균등하게★ 뽑고, 최근 구간은 따로 채운다.
-     읽는 행 수는 비슷한데 보는 기간이 몇 달로 늘어난다(비용은 그대로, 대표성만 좋아진다).
+   이고 그마저 전부 최근 구간이다(ts DESC). 그러면 검증 홀드아웃도 같은 며칠 안에서 잘리므로
+   valAcc 가 '한 국면에서의 성적' 이 된다.
+   → 아래 spanBuckets 로 전 구간에서 균등하게 뽑고, 최근 구간은 따로 채운다.
 
-   ★이 망이 GPU 망보다 약한 건 당연하고, 그래야 한다.★ 워커 폴백의 임무는 '이기는 것' 이
-   아니라 'Modal 이 없을 때 말이 되는 값을 내는 것' 이다. 실제로 더 나은 외부 모델이 있으면
-   덮어쓰지 않는다(V33.50 가드). 그래서 여기서는 ★반드시 끝나는 크기★ 가 정답이다. */
+   ★이 망이 GPU 망보다 약한 건 의도다.★ 폴백의 임무는 이기는 것이 아니라 Modal 이 없을 때
+   말이 되는 값을 내는 것이고, 더 나은 외부 모델이 있으면 덮어쓰지 않는다(V33.50 가드). */
 const DNNW = Object.assign({}, DNN, {
   hidden: [128, 64],     // 넷당 ≈16.6K 파라미터(GPU 망의 1/46) — CPU 예산 안에서 수렴 가능
   seeds: 2,              // 안 끝난 망 4개보다 끝난 망 2개가 낫다
@@ -31519,6 +31724,16 @@ function _dnnHeInit(nout, nin) {
 }
 // [V9.1] 윈저화 표준화 — 표준화값을 ±stdClip(σ)로 클램프. 금융 팬테일 이상치가 활성/그래디언트를
 //   지배하는 것을 차단(학습·추론 동일 적용 → 분포 일관). NaN/Inf는 0으로 살균.
+/* [V33.193] dims 배열 하나로 파라미터 수를 센다 — ★세는 곳을 하나로 둔다.★
+   종전에는 화면이 "3M" 이라는 문자열을 들고 있었고(두 군데), 학습된 모델 쪽만 실제 가중치에서
+   세고 있었다. 그래서 구조를 바꾸는 순간 두 화면이 서로 다른 숫자를 말했다. */
+function _dnnParamCount(dims) {
+  try {
+    let n = 0;
+    for (let i = 0; i < dims.length - 1; i++) n += dims[i] * dims[i + 1] + dims[i + 1];
+    return n;
+  } catch (e) { return 0; }
+}
 function _dnnStdVec(x, mean, std) {
   const cl = (typeof DNN !== "undefined" && DNN.stdClip) ? DNN.stdClip : 6;
   const o = new Array(x.length);
@@ -32814,7 +33029,16 @@ async function mlDNNVizData(DB) {
     if (!m || (!Array.isArray(m.nets) && !Array.isArray(m.W))) {
       const _fn = LUXML.featNames;
       const _if = _fn.map(function (nm, j) { return { i: j, name: nm, role: FEAT_ROLES[nm] || "", liveOnly: _LIVE_ONLY_FEATS.has(nm), strength: 0 }; });
-      return { trained: false, hidden: DNN.hidden, dims: [_fn.length].concat(DNN.hidden).concat([1]), inputDim: _fn.length, seeds: DNN.seeds, trust: trust || null,
+      /* [V33.193] ★파라미터 수를 화면이 '3M' 이라고 외우고 있었다.★
+         구조가 바뀌면 그 숫자는 곧바로 거짓이 된다(실제로 그렇게 됐다). 여기서 dims 로부터
+         ★세어서★ 내려보낸다. 미학습 미리보기는 정식(GPU) 구조 기준이고, 워커 폴백이 만들
+         구조는 따로 함께 싣는다 — 둘은 다른 망이고 화면이 그걸 구분할 수 있어야 한다. */
+      const _dimsPrev = [_fn.length].concat(DNN.hidden).concat([1]);
+      return { trained: false, hidden: DNN.hidden, dims: _dimsPrev, inputDim: _fn.length, seeds: DNN.seeds, trust: trust || null,
+        paramsPerNet: _dnnParamCount(_dimsPrev), params: _dnnParamCount(_dimsPrev) * Math.max(1, _num(DNN.seeds, 1)),
+        workerDims: [_fn.length].concat(DNNW.hidden).concat([1]),
+        workerParamsPerNet: _dnnParamCount([_fn.length].concat(DNNW.hidden).concat([1])),
+        workerSeeds: DNNW.seeds,
         active: false, source: null, featNames: _fn, inputFeatures: _if, topFeatures: _if.slice(0, 20) };
     }
     const nets = Array.isArray(m.nets) ? m.nets : [{ W: m.W, b: m.b, dims: m.dims }];
@@ -32859,7 +33083,7 @@ async function mlDNNVizData(DB) {
       trained: true, architecture: dims.join("-") + "×" + nets.length, dims: dims,
       cfgLayers: ((m.source === "external" ? DNN.hidden : DNNW.hidden).length + 2),
       builtBy: (m.source === "external" ? "external" : "worker"), seeds: nets.length,
-      valAcc: m.valAcc, n: m.n, params: params, trainedAt: m.trainedAt, source: source,
+      valAcc: m.valAcc, n: m.n, params: params, paramsPerNet: paramsPerNet, trainedAt: m.trainedAt, source: source,
       layers: layers, inputFeatures: inputFeatures, topFeatures: topFeatures
     };
     if (_meta && _meta.ts) { try { await setState(DB, "nn_viz_cache", { metaTs: _meta.ts, heavy: heavy }); } catch (e) {} }
@@ -39821,7 +40045,10 @@ export default {
     const _res = await handleRequest(request, _env, ctx);
     // [V33.172] 업로더가 아니면 즉시 반환된다(정규식 한 번) — 일반 요청에 부하가 없다.
     try { ctx.waitUntil(extImportObserve(_env, request, _res)); } catch (e) {}
-    return _res;
+    /* [V33.193] 보안 헤더는 ★나가는 모든 응답★ 에 붙인다 — 문서·자산·API 를 가리지 않는다.
+       한 곳에서만 붙이면 반드시 빠지는 경로가 생긴다(정적 자산은 env.ASSETS 가 만들어
+       돌려주므로 handleRequest 안에서는 손댈 지점이 없다). 출구는 여기 하나뿐이다. */
+    return withSecurityHeaders(_res);
   },
   async scheduled(event, env, ctx) {
     __R2 = env.MODELS || null;   // [V33.13] 대형모델 저장소 바인딩(없으면 D1 청크 경로 유지)
@@ -40659,6 +40886,8 @@ export {
   STIN, STIN_IFEAT_N, STIN_FEATVER, LUXML, _setR2ForTest,
   // [V33.105] 확률 계수 적합기 검증용 — tools/check-prob-fitters.mjs
   shockPriorFitNightly, decisionBlendFitNightly, _shockLogitShift, _coefShrink, SHOCKCAL,
+  // [V33.193] 확률적/디플레이션 샤프 검증용 — tools/check-edge-stats.mjs
+  _srMoments, _expectedMaxSR, _probSR,
   // [V33.107] 회계 불변식 검증용 — tools/check-accounting.mjs
   computeCashFromTrades, _krSellTaxRate, _slipRate,
   // [V33.107] 상황별 반성기억(TradingAgents) 검증용

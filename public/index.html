@@ -8,7 +8,7 @@
      인데, 지금까지 화면에서 그걸 알 방법이 전혀 없었다(카카오톡 인앱 브라우저는 특히 강하게 캐시한다).
      서버가 내려주는 build 와 이 값을 비교해 다르면 배너로 알린다.
      ※ src/index.js 의 _BUILD_VER 와 항상 같아야 한다 — check-html-js 가 강제한다. -->
-<meta name="lux-build" content="V33.192">
+<meta name="lux-build" content="V33.193">
 <title>LUX-ENGINE V10</title>
 <!-- ══ [V33.156] 설치형 앱(PWA) — 폰·PC 에서 홈화면/독에 담아 앱처럼 연다 ══
      · manifest  : 이름·아이콘·standalone 표시(주소창 없이 앱처럼)
@@ -1801,6 +1801,14 @@ input[type="range"]{accent-color:var(--pos)!important;}
 .pipeline-head{display:flex;align-items:center;gap:10px;padding:9px 14px;border-bottom:1px solid var(--bd2);}
 .pipeline-title{font-size:9px;font-weight:700;letter-spacing:1.8px;color:var(--t2);}
 .pipeline-sub{font-size:9px;color:var(--t3);font-variant-numeric:tabular-nums;margin-left:auto;letter-spacing:.8px;}
+/* [V33.193] 접기 버튼 — 부제 뒤에 붙는다(부제가 margin-left:auto 로 오른쪽을 잡고 있다). */
+.pipeline-fold{appearance:none;border:1px solid var(--bd);background:var(--s2);color:var(--t2);
+  font-family:inherit;font-size:9px;letter-spacing:.6px;padding:4px 9px;border-radius:5px;cursor:pointer;
+  flex:0 0 auto;min-height:26px;}
+.pipeline-fold:hover{color:var(--t1);}
+.pipeline-fold:focus-visible{outline:2px solid var(--acc);outline-offset:1px;}
+.pipeline-bar.folded .pipeline-grid{display:none;}
+.pipeline-bar.folded .pipeline-head{border-bottom:none;}
 .pipeline-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(130px,1fr));}
 .pl-step{display:flex;align-items:center;gap:6px;padding:8px 12px;border-right:1px solid var(--bd2);
   font-size:9px;min-width:0;}
@@ -3399,10 +3407,16 @@ html[data-theme="light"] .m-brainbar button.active{color:#0b4f9e;background:rgba
     <div class="page" id="page-dashboard">
 
       <!-- [V10.2] ENGINE PIPELINE — 8단계 서브시스템 상태 모니터 -->
-      <div class="pipeline-bar" id="pipelineBar">
+      <!-- [V33.193] ★접기 버튼이 안 보인다는 지적 — 다른 파이프라인에 달았었다.★
+           V33.190 이 버튼을 단 곳은 'AI 두뇌' 페이지(#nlvPipePanel)의 엔진 파이프라인이고,
+           대시보드 첫 화면에 있는 것은 이쪽(#pipelineBar)이다. 이름이 같아 같은 것으로 봤다.
+           여기에도 달고, 접속 시에는 접힌 상태로 시작한다. -->
+      <div class="pipeline-bar folded" id="pipelineBar">
         <div class="pipeline-head">
           <span class="pipeline-title">ENGINE PIPELINE</span>
           <span class="pipeline-sub" id="pipelineSub">8 SUBSYSTEMS · 로딩 중...</span>
+          <button type="button" class="pipeline-fold" id="pipelineFold"
+                  aria-expanded="false" aria-controls="pipelineGrid">펼치기 ▾</button>
         </div>
         <div class="pipeline-grid" id="pipelineGrid"></div>
       </div>
@@ -5192,6 +5206,18 @@ html[data-theme="light"] .m-brainbar button.active{color:#0b4f9e;background:rgba
     }
   }
   // [V32.19] 지정학·위기 게이지 패널 렌더 — /api/crisis 폴링(대시보드 표시 중 3분마다)
+  /* [V33.193] 폰이면 그 패널을 접은 채로 시작한다.
+     ★함수 선언으로 둔다★ — 렌더 함수들이 이 줄보다 위에 있고 호출 시점도 앞설 수 있다.
+     식(window.__x = function...)으로 두면 그 대입이 아직 안 돌아 조용히 아무 일도 안 일어난다. */
+  function _luxPhoneFold(bodyId, caretId){
+    try{
+      if (!(window.matchMedia && window.matchMedia('(max-width:767px)').matches)) return;
+      var b = document.getElementById(bodyId), c = document.getElementById(caretId);
+      if (!b) return;
+      b.style.display = 'none';
+      if (c) c.textContent = '▸';
+    }catch(e){}
+  }
   var __crisisTimer = null;
   var __crisisToggleBound = false;
   function bindCrisisToggle() {
@@ -5199,6 +5225,8 @@ html[data-theme="light"] .m-brainbar button.active{color:#0b4f9e;background:rgba
     var head = document.getElementById('fvCrisisHead'), body = document.getElementById('fvCrisisBody'), caret = document.getElementById('fvCrisisCaret');
     if (!head || !body) return;
     __crisisToggleBound = true;
+    // [V33.193] 폰에서는 접힌 채로 시작한다(여는 방법은 그대로 — 머리를 누르면 된다).
+    _luxPhoneFold('fvCrisisBody', 'fvCrisisCaret');
     head.addEventListener('click', function(){
       var open = body.style.display !== 'none';
       body.style.display = open ? 'none' : 'block';
@@ -5273,6 +5301,8 @@ html[data-theme="light"] .m-brainbar button.active{color:#0b4f9e;background:rgba
         caret = document.getElementById('fvKrHaltCaret');
     if(!head || !body) return;
     __krHaltBound = true;
+    // [V33.193] 폰에서는 접힌 채로 시작한다(여는 방법은 그대로 — 머리를 누르면 된다).
+    _luxPhoneFold('fvKrHaltBody', 'fvKrHaltCaret');
     head.addEventListener('click', function(){
       var open = body.style.display !== 'none';
       body.style.display = open ? 'none' : 'block';
@@ -5387,6 +5417,8 @@ html[data-theme="light"] .m-brainbar button.active{color:#0b4f9e;background:rgba
     var head = document.getElementById('fvEventsHead'), body = document.getElementById('fvEventsBody'), caret = document.getElementById('fvEventsCaret');
     if (!head || !body) return;
     __eventsToggleBound = true;
+    // [V33.193] 폰에서는 접힌 채로 시작한다(여는 방법은 그대로 — 머리를 누르면 된다).
+    _luxPhoneFold('fvEventsBody', 'fvEventsCaret');
     head.addEventListener('click', function(){
       var open = body.style.display !== 'none';
       body.style.display = open ? 'none' : 'block';
@@ -11610,6 +11642,27 @@ html[data-theme="light"] .m-brainbar button.active{color:#0b4f9e;background:rgba
       })(BARS[i][0], BARS[i][1]);
     }
   })();
+  /* ── [V33.193] 대시보드 첫 화면 접힘 ───────────────────────────────────────
+     ① ENGINE PIPELINE 접기 버튼 — V33.190 은 'AI 두뇌' 페이지의 같은 이름 패널에 달았다.
+        대시보드 첫 화면의 것은 #pipelineBar 다. 여기에도 달고 접힌 채로 시작한다.
+     ② 폰에서만 접히는 패널들 — 지정학·위기 게이지 / 활성 이슈·레짐 / 한국장 매매정지.
+        셋 다 이미 머리를 누르면 접히는 구조라(bindCrisisToggle 등) 여는 방법은 그대로다.
+        여기서는 ★첫 렌더의 초기값★ 만 접힘으로 둔다. 넓은 화면은 종전대로 펼쳐진다 —
+        요구가 "폰에서 들어왔을 때" 였고, PC 는 세로 공간이 문제가 아니기 때문이다.
+     ★상태를 저장하지 않는다★ — "접속했을 때 처음에는 접힘" 이 요구이므로, 저장했다가
+     되살리면 그 요구를 어긴다. 펼침은 그 방문 안에서만 유지된다. */
+  (function(){
+    var pb = $('pipelineBar'), pf = $('pipelineFold');
+    if (pb && pf) {
+      var paint = function(){
+        var folded = pb.classList.contains('folded');
+        pf.textContent = folded ? '펼치기 ▾' : '접기 ▴';
+        pf.setAttribute('aria-expanded', folded ? 'false' : 'true');
+      };
+      pf.addEventListener('click', function(ev){ ev.stopPropagation(); pb.classList.toggle('folded'); paint(); });
+      paint();
+    }
+  })();
   var _btnDownloadPos = $('btnDownloadPositions');
   if (_btnDownloadPos) _btnDownloadPos.addEventListener('click', downloadPositionsCSV);
   var _btnRunCM = $('btnRunCM');
@@ -13780,7 +13833,20 @@ html[data-theme="light"] #page-nnviz .nlv-sec-h{ border-color:transparent; color
         NNV_drawSVG(stage, pv);
         NNV_renderRoles(d);
         var ban0=document.getElementById('nnvBanner');
-        if(ban0){ ban0.className='nnv-banner off'; ban0.innerHTML='⚠️ <b>학습 대기</b> — 아직 저장된 모델이 없습니다. 표본은 충분하나 3M은 Worker CPU로 완전학습이 안 끝납니다. <b>외부 GPU 학습</b>을 돌리면 즉시 가동됩니다.'; ban0.style.display='block'; }
+        /* [V33.193] ★"3M" 을 화면이 문자열로 외우고 있었다.★ 구조를 바꾸는 순간 거짓이 된다
+           (실제로 그렇게 됐다 — 워커 폴백은 33,538, GPU 6시드는 4,580,070 이다).
+           서버가 dims 에서 세어 내려주는 값(paramsPerNet·seeds)만 쓴다. */
+        if(ban0){
+          var _pn0 = d.paramsPerNet||0, _sd0 = d.seeds||1;
+          var _wp0 = d.workerParamsPerNet||0, _ws0 = d.workerSeeds||1;
+          ban0.className='nnv-banner off';
+          ban0.innerHTML='⚠️ <b>학습 대기</b> — 아직 저장된 모델이 없습니다. '
+            + '정식(외부 GPU) 구조는 <b>넷당 '+_pn0.toLocaleString()+'개 × '+_sd0+'시드 = '+(_pn0*_sd0).toLocaleString()+'개</b>이고, '
+            + '이 크기는 Worker CPU 로는 학습이 끝나지 않습니다. '
+            + (_wp0? '워커 폴백은 <b>넷당 '+_wp0.toLocaleString()+'개 × '+_ws0+'시드 = '+(_wp0*_ws0).toLocaleString()+'개</b>로 따로 돕니다. ':'')
+            + '<b>외부 GPU 학습</b>을 돌리면 정식 구조가 즉시 가동됩니다.';
+          ban0.style.display='block';
+        }
         var note=document.createElement('div');
         note.className='nnv-empty'; note.style.padding='8px'; note.style.fontSize='11px';
         note.innerHTML='🌱 <b>미학습 미리보기</b> — 딥넷은 표본 400건 이상 쌓이면 야간에 자동 학습됩니다. 학습 후엔 실제 가중치 강도로 그려집니다.';
@@ -13791,11 +13857,17 @@ html[data-theme="light"] #page-nnviz .nlv-sec-h{ border-color:transparent; color
       stage.innerHTML='<div class="nnv-empty">🌱 구조 정보를 불러오는 중…</div>';
       return;
     }
-    sub.textContent='구조 '+d.architecture+' · 파라미터 '+ (d.params? d.params.toLocaleString():'—') +'개 · 야간 자가학습';
+    /* [V33.193] 정확한 수를 그대로 적는다 — 넷당 × 시드 = 총계. 'M' 으로 반올림하면
+       워커 폴백(33,538)과 GPU 망(4,580,070)이 화면에서 구별되지 않는다. */
+    var _pnT = d.paramsPerNet||0, _sdT = d.seeds||1;
+    sub.textContent='구조 '+d.architecture
+      + ' · 파라미터 넷당 '+_pnT.toLocaleString()+'개 × '+_sdT+'시드 = '+(d.params? d.params.toLocaleString():'—')+'개'
+      + ' · '+(d.builtBy==='external'?'외부 GPU 학습':'워커 야간 자가학습');
     var wDnn = d.trust? d.trust.wDnn : 0, trusted = d.trust && d.trust.trusted;
     chips.innerHTML =
       chip('전체 층', (d.dims?d.dims.length:0)+'층', 'good') +
-      chip('파라미터', d.params? (d.params/1e6).toFixed(2)+'M':'—','') +
+      chip('총 파라미터', d.params? d.params.toLocaleString()+'개':'—','') +
+      chip('넷당 파라미터', d.paramsPerNet? d.paramsPerNet.toLocaleString()+'개':'—','') +
       chip('시드 앙상블', (d.seeds||1)+'개','') +
       chip('검증 정확도', pct(d.valAcc), d.valAcc>=0.55?'good':(d.valAcc>=0.5?'warn':'off')) +
       chip('학습 표본', d.n? d.n.toLocaleString():'—','') +
@@ -13807,10 +13879,15 @@ html[data-theme="light"] #page-nnviz .nlv-sec-h{ border-color:transparent; color
     var ban=document.getElementById('nnvBanner');
     if(ban){
       if(d.active){ ban.className='nnv-banner on'; ban.innerHTML='✅ <b>가동 중</b> — 이 딥넷이 위원회에서 실거래 결정에 반영됩니다 (wDNN='+((d.trust&&d.trust.wDnn)||0).toFixed(2)+(d.source==='external'?' · 외부GPU 학습':'')+')'; }
-      else { ban.className='nnv-banner off'; ban.innerHTML='⚠️ <b>미반영</b> — 검증성능이 기준(mind)에 못 미쳐 신뢰게이트가 <b>wDNN=0</b>으로 억제 중입니다. 3M 파라미터가 아직 실거래에 기여하지 않습니다. (외부 GPU 학습으로 성능을 끌어올리면 자동 가동)'; }
+      else { ban.className='nnv-banner off'; ban.innerHTML='⚠️ <b>미반영</b> — 검증성능이 기준(mind)에 못 미쳐 신뢰게이트가 <b>wDNN=0</b>으로 억제 중입니다. '
+        + '<b>'+((d.params||0).toLocaleString())+'개</b> 파라미터가 아직 실거래에 기여하지 않습니다. (외부 GPU 학습으로 성능을 끌어올리면 자동 가동)'; }
       // [V12] 저장 모델이 구버전 구조면 안내 — "12층이라는데 왜 안 보이나"의 원인 표시
+      /* [V33.193] ★'구버전 구조' 라고 단정하지 않는다.★ 워커 폴백은 정식 구조보다 일부러 작다.
+         서버가 builtBy 로 어느 쪽인지 알려주므로, 층 수가 다르면 그 이유를 정확히 적는다. */
       if(d.cfgLayers && d.dims && d.dims.length !== d.cfgLayers){
-        ban.innerHTML += '<br>'+(window.LUX_ICO||'')+' 현재 표시 중인 학습 모델은 <b>'+d.dims.length+'층(구버전 구조)</b>입니다. 최신 설정은 <b>'+d.cfgLayers+'층</b> — 다음 학습(야간 자가학습 또는 외부 GPU)이 완료되면 '+d.cfgLayers+'층으로 갱신됩니다.';
+        ban.innerHTML += '<br>'+(window.LUX_ICO||'')+' 지금 실린 모델은 <b>'+d.dims.length+'층</b>'
+          + (d.builtBy==='worker' ? '(워커 폴백 — 정식 구조보다 작게 학습합니다)' : '(구버전 구조)')
+          + '입니다. 이 경로의 최신 설정은 <b>'+d.cfgLayers+'층</b> — 다음 학습이 끝나면 갱신됩니다.';
       }
       ban.style.display='block';
     }
