@@ -2788,7 +2788,7 @@ async function applySignalTypeWeights(DB, cfg) {
 // ============================================================================
 // [V33.55] 빌드 버전 — SWR L2 캐시 키에 섞어 '배포 = 판단 캐시 자동 무효화'를 만든다.
 //   판정 로직을 고쳐도 옛 캐시가 최대 1시간 재배포되던 문제를 구조적으로 없앤다.
-const _BUILD_VER = "V33.188";
+const _BUILD_VER = "V33.190";
 
 // ═══ [V33.171] 평가 순서 계획 — ★승격과 순환을 교차해 굶주림을 구조적으로 없앤다★ ═══
 //   V33.50 의 형태트리거는 "급한 몇 종목을 앞으로 당긴다"는 의도였으나, 실제 운영로그에서는
@@ -18981,6 +18981,122 @@ async function auditAccounting(DB, market, cash) {
   }
 }
 
+/* ════════════════════════════════════════════════════════════════════════════
+   [V33.190] ★남용 방어와 다중 사용자★ — 지금까지 이 워커에는 요청 한도가 하나도 없었다.
+
+   무엇이 문제였나
+     · /api/ai/selfcheck 는 캐시가 없어 ★요청 한 건마다 6초짜리 D1 작업★ 을 통째로 새로 한다
+       (실측 5,976ms). 한 사람이 새로고침을 연타하거나, 여러 사람이 동시에 들어오는 것만으로
+       D1 이 그 작업으로 가득 찬다. D1 은 SQLite 한 인스턴스라 ★거래 사이클과 같은 큐★ 를 쓴다 —
+       화면이 느려지는 데서 끝나지 않고 실제 매매가 밀린다.
+     · 악의적으로 초당 수백 건을 던지면 막을 것이 아무것도 없었다.
+
+   여기서 하는 것
+     ① 요청 한도(토큰버킷) — IP 별로, ★경로 비용에 가중치를 둬서★ 센다. 무거운 조회 1건이
+        가벼운 조회 1건과 같은 값으로 세어지면 한도는 의미가 없다.
+     ② 인증 실패 전용 버킷 — TRAIN_KEY 를 찍어 맞히려는 시도를 훨씬 빨리 끊는다.
+     ③ 캐시 단일비행(single-flight) — 아래 swrJson 참조. 같은 것을 동시에 열 번 만들지 않는다.
+
+   ★한계를 분명히 적어 둔다★ 카운터는 아이솔레이트 메모리에 있다. 즉 colo·아이솔레이트마다
+   따로 세므로, 전 세계에 흩뿌린 분산 공격은 이 한도의 배수만큼 통과한다. 그걸 막으려면
+   Cloudflare WAF 의 Rate Limiting 규칙이나 Durable Object 가 필요하다(둘 다 이 코드 밖의 설정).
+   여기서 막는 것은 ★단일 출처의 폭주★ 와 ★키 추측★ 이다 — 그리고 그게 실제로 일어나는 일의
+   대부분이다. 저장소를 안 쓰므로 이 방어 자체가 D1 부하를 만들지 않는다(중요하다 —
+   요청마다 D1 에 카운터를 쓰는 한도기는 그 자체로 공격 도구가 된다).
+*/
+const RATELIM = {
+  enabled: true,
+  windowMs: 10000,        // 창 하나의 길이. 창이 끝나면 맵을 통째로 버린다(정리 비용 0)
+  /* ★한도는 '정상 사용자가 절대 닿지 않는 곳' 에 둔다.★ 대시보드 첫 부팅 한 번이 무거운 조회
+     13개를 동시에 친다(state·quotes·indices·heatmap·ml-status·ai-mode·selfcheck·ai/selfcheck·
+     pipeline·events·ai-picks·commodities·trades). 그게 4점씩이면 55점 안팎이다.
+     그리고 ★한국 이동통신은 CGNAT★ 이라 여러 사람이 같은 IP 로 보인다 — 한 IP 가 곧 한 사람이
+     아니다. 그래서 600점 = 같은 IP 에서 10초에 부팅 10회쯤까지는 아무 일도 안 일어난다.
+     공격자는 10초에 무거운 요청 150건에서 막히는데, 그건 전부 캐시에서 나가므로 D1 은 0 이다.
+     (한도의 목적은 D1 을 지키는 것이지 요청을 예쁘게 세는 게 아니다 — 캐시가 1차 방어이고
+      이건 2차다. 그래서 넉넉히 잡아도 방어가 약해지지 않는다.) */
+  budget: 600,
+  costHeavy: 4,           // 무거운 조회 — 캐시 미스 시 D1 을 실제로 훑는 것들
+  costWrite: 10,          // 상태를 바꾸는 요청
+  authFailWindowMs: 60000,
+  authFailBudget: 8,      // 1분에 키 8회 실패하면 그 IP 는 잠근다
+  maxKeys: 20000,         // 맵 상한 — IP 를 바꿔가며 메모리를 부풀리는 것 방지
+  retryAfterSec: 10
+};
+// 무거운 조회 — 캐시 미스 시 D1 을 실제로 훑는 경로.
+const _RL_HEAVY = /^\/api\/(ai\/selfcheck|selfcheck|ml-status|ai-mode|state|heatmap|indices|trades|audit|commodities|events|ai-picks|pipeline|scan|report|whatif)/;
+function _rlBucket(now) {
+  const g = globalThis;
+  let b = g.__rl;
+  if (!b || (now - b.at) >= RATELIM.windowMs) { b = g.__rl = { at: now, m: new Map() }; }
+  return b;
+}
+// 인증 실패는 창이 길다 — 별도 버킷으로 둔다(정상 트래픽과 섞으면 둘 다 제대로 못 센다).
+function _rlAuthBucket(now) {
+  const g = globalThis;
+  let b = g.__rlAuth;
+  if (!b || (now - b.at) >= RATELIM.authFailWindowMs) { b = g.__rlAuth = { at: now, m: new Map() }; }
+  return b;
+}
+function _clientKey(request) {
+  try {
+    const h = request.headers;
+    return h.get("cf-connecting-ip") || h.get("x-forwarded-for") || h.get("x-real-ip") || "anon";
+  } catch (e) { return "anon"; }
+}
+// 반환: null 이면 통과, Response 면 그대로 돌려줄 429.
+function rateLimit(request, path, cors) {
+  if (!RATELIM.enabled) return null;
+  if (!path.startsWith("/api/")) return null;      // 정적 자산은 엣지가 준다 — D1 을 안 건드린다
+  const now = Date.now();
+  const key = _clientKey(request);
+  // ★키 추측을 먼저 본다★ — 잠긴 IP 는 아무것도 못 한다.
+  const ab = _rlAuthBucket(now);
+  if (_num(ab.m.get(key), 0) >= RATELIM.authFailBudget) {
+    return new Response(JSON.stringify({ error: "too many failed authentications" }), {
+      status: 429, headers: Object.assign({ "content-type": "application/json",
+        "retry-after": String(Math.ceil(RATELIM.authFailWindowMs / 1000)) }, cors) });
+  }
+  const b = _rlBucket(now);
+  if (b.m.size >= RATELIM.maxKeys && !b.m.has(key)) {
+    // 맵이 상한에 닿았다 = 지금 분산 공격을 받고 있다. 새 IP 는 이 창 동안 무거운 것을 못 한다.
+    if (_RL_HEAVY.test(path)) {
+      return new Response(JSON.stringify({ error: "rate limited" }), { status: 429,
+        headers: Object.assign({ "content-type": "application/json", "retry-after": String(RATELIM.retryAfterSec) }, cors) });
+    }
+    return null;
+  }
+  const cost = (request.method !== "GET" && request.method !== "HEAD")
+    ? RATELIM.costWrite : (_RL_HEAVY.test(path) ? RATELIM.costHeavy : 1);
+  const used = _num(b.m.get(key), 0) + cost;
+  b.m.set(key, used);
+  // 관측용 — 한도에 얼마나 가까운지 응답 헤더로 보이게 한다(정상 사용자가 닿는지 확인 가능).
+  if (used > RATELIM.budget) {
+    const left = Math.max(1, Math.ceil((RATELIM.windowMs - (now - b.at)) / 1000));
+    return new Response(JSON.stringify({ error: "rate limited", retryAfterSec: left }), {
+      status: 429, headers: Object.assign({ "content-type": "application/json",
+        "retry-after": String(left), "x-ratelimit-cost": String(cost) }, cors) });
+  }
+  return null;
+}
+// 인증 실패를 기록한다 — 실패한 쪽만 부른다(성공 경로에는 비용이 없다).
+function rateLimitAuthFail(request) {
+  try {
+    const b = _rlAuthBucket(Date.now()), k = _clientKey(request);
+    if (b.m.size < RATELIM.maxKeys || b.m.has(k)) b.m.set(k, _num(b.m.get(k), 0) + 1);
+  } catch (e) {}
+}
+/* 비밀값 비교는 ★길이와 무관하게 같은 시간★ 이 걸리게 한다. 원격 공격자에게 실제로 쓸 만한
+   타이밍 채널은 아니지만(네트워크 지터가 훨씬 크다), 비용이 0 이라 안 할 이유가 없다.
+   길이 자체는 숨기지 못한다 — 그건 어떤 방식으로도 마찬가지다. */
+function _safeEq(a, b) {
+  const x = String(a == null ? "" : a), y = String(b == null ? "" : b);
+  if (x.length !== y.length) return false;
+  let d = 0;
+  for (let i = 0; i < x.length; i++) d |= x.charCodeAt(i) ^ y.charCodeAt(i);
+  return d === 0;
+}
+
 async function handleRequest(request, env, ctx) {
   const url = new URL(request.url);
   const path = url.pathname;
@@ -18989,7 +19105,12 @@ async function handleRequest(request, env, ctx) {
     "Access-Control-Allow-Methods": "GET, POST, OPTIONS",
     "Access-Control-Allow-Headers": "Content-Type"
   };
+  // ★프리플라이트는 한도 밖에 둔다★ — 브라우저가 자동으로 보내는 것이라, 여기에 쓰기 비용을
+  //   물리면 정상 사용자가 자기 예산을 프리플라이트로 태우게 된다.
   if (request.method === "OPTIONS") return new Response(null, { headers: cors });
+  // [V33.190] 남용 방어 — 라우팅보다 먼저. 여기서 끊으면 D1 을 한 번도 안 건드린다.
+  const _rl = rateLimit(request, path, cors);
+  if (_rl) return _rl;
 
   // [V12.131] 읽기전용 조회 엔드포인트용 공통 SWR 헬퍼.
   //   /api/state·/api/ml-status에서 효과가 검증된 패턴(신선하면 즉시, 오래됐어도 즉시 주고
@@ -19001,7 +19122,13 @@ async function handleRequest(request, env, ctx) {
   //   공유되는 Edge Cache를 L2로 둔다 — 누가 한 번 빌드하면 같은 지역의 모든 요청이 재사용.
   const swrJson = async function (key, freshMs, staleMs, build) {
     const store = (globalThis.__swr || (globalThis.__swr = {}));
-    const jhdr = Object.assign({ "content-type": "application/json" }, cors);
+    /* [V33.190] ★브라우저에도 신선도를 알려준다.★ 종전에는 캐시 헤더가 없어, 화면이 5초마다
+       같은 것을 물어보면 그때마다 워커가 깨어났다(캐시에서 즉시 답하긴 해도 요청 자체는 온다).
+       사용자가 늘수록 그 왕복이 그대로 곱해진다. 서버가 어차피 freshMs 동안 같은 값을 줄
+       것이므로, 그 시간만큼은 브라우저가 스스로 답하게 둔다 — 화면이 보는 값은 완전히 같다. */
+    const _br = Math.max(3, Math.min(20, Math.floor(_num(freshMs, 15000) / 1000)));
+    const jhdr = Object.assign({ "content-type": "application/json",
+      "cache-control": "public, max-age=" + _br }, cors);
     // [V33.55] ★배포하면 판단이 즉시 갱신되게★ L1(아이솔레이트 메모리)은 재배포로 사라지지만
     //   L2(caches.default)는 남아, 판정 로직을 고쳐 배포해도 최대 staleMs(1시간) 동안 옛 판단이
     //   그대로 재배포됐다. 국면 분류를 고쳐도 화면이 안 바뀌던 원인.
@@ -19052,11 +19179,24 @@ async function handleRequest(request, env, ctx) {
         }
       }
     } catch (e) {}
-    // ── 콜드: 실제 빌드(이때만 D1을 친다) ──
-    const v = await build();
-    const s = JSON.stringify(v), t = Date.now();
-    store[key] = { ts: t, str: s };
-    if (ctx && ctx.waitUntil) ctx.waitUntil(put(s, t)); else await put(s, t);
+    /* ── 콜드: 실제 빌드(이때만 D1을 친다) ──
+       [V33.190] ★단일비행(single-flight).★ 종전에는 여기가 동시성에 무방비였다. 콜드
+       아이솔레이트에 사용자 열 명이 동시에 들어오면 ★같은 것을 만드는 빌드가 열 개★ 돌고,
+       열 개가 전부 D1 을 친다. ml-status 콜드 빌드는 실측 70~130초짜리라 이게 곧 자해다.
+       (refresh() 경로에는 이미 store[bk] 로 잠금이 있었는데, 정작 가장 무거운 콜드 경로에는
+        없었다 — 부하가 가장 클 때만 잠금이 없는 셈이었다.)
+       먼저 도착한 요청 하나만 빌드하고, 나머지는 그 약속을 같이 기다린다. */
+    const fk = "__f_" + key;
+    let fp = store[fk];
+    if (!fp) {
+      fp = store[fk] = Promise.resolve().then(build).then(function (v) {
+        const s2 = JSON.stringify(v), t2 = Date.now();
+        store[key] = { ts: t2, str: s2 };
+        if (ctx && ctx.waitUntil) ctx.waitUntil(put(s2, t2)); else put(s2, t2);
+        return s2;
+      })["finally"](function () { store[fk] = null; });
+    }
+    const s = await fp;
     return new Response(s, { headers: jhdr });
   };
 
@@ -19169,7 +19309,9 @@ async function handleRequest(request, env, ctx) {
     }
 
     if (path === "/api/pipeline") {
-      try {
+      // [V33.190] 단계 신선도는 분 단위로만 바뀐다 — 사용자 수만큼 D1 을 칠 이유가 없다.
+      return await swrJson("pipeline", 30000, 600000, async function () {
+       try {
         // [V33.134] ★sessionOnly — 장중에만 도는 단계는 장외에 STALE 로 찍지 않는다.★
         //   last_tick 은 runTradingCycle 끝에서만 갱신되는데, 장외에는 "US & KR 장외 — 사이클
         //   스킵" 으로 조기 반환하므로 주말 내내 안 갱신된다. 그런데 문턱이 10분이라
@@ -19209,10 +19351,11 @@ async function handleRequest(request, env, ctx) {
           return { key: s.key, label: s.label, ts: ts || null, status: status,
                    sessionOnly: !!s.sessionOnly, ageH: ts ? +((now - ts) / 3600000).toFixed(1) : null };
         });
-        return Response.json({ steps: steps, serverTime: now, marketOpen: _mktOpen }, { headers: cors });
-      } catch (e) {
-        return Response.json({ steps: [], error: String((e && e.message) || e) }, { headers: cors });
-      }
+        return { steps: steps, serverTime: now, marketOpen: _mktOpen };
+       } catch (e) {
+        return { steps: [], error: String((e && e.message) || e) };
+       }
+      });
     }
 
     // [V12.73] 경량 운용모드 조회 — 대시보드 배지·자가평가 카드용(ml-status 전체보다 훨씬 가벼움)
@@ -20156,7 +20299,9 @@ async function handleRequest(request, env, ctx) {
         return { ok: false, code: 503, msg: "TRAIN_KEY 미설정 — 'wrangler secret put TRAIN_KEY' 후 사용" };
       }
       const got = url.searchParams.get("key") || (request.headers.get("x-train-key") || "");
-      if (got !== want) {
+      // [V33.190] 상수시간 비교 + 실패 카운트(키 추측을 1분 8회에서 끊는다).
+      if (!_safeEq(got, want)) {
+        rateLimitAuthFail(request);
         try {
           if (!globalThis.__trainAuthLogTs || Date.now() - globalThis.__trainAuthLogTs > 300000) {
             globalThis.__trainAuthLogTs = Date.now();
@@ -20860,8 +21005,15 @@ async function handleRequest(request, env, ctx) {
     //   그대로 있어 재계산만 하면 됨. 다음 UTC자정까지 기다리지 않고 캐시에서 즉시 재수확하기 위한 트리거.
     // GET /api/ai/selfcheck — AI 레이어 자가 오류진단(읽기전용). 모델·표본·위원회·가드 이상을 목록화.
     if (path === "/api/ai/selfcheck") {
-      try { return Response.json(await aiSelfCheck(env.DB), { headers: cors }); }
-      catch (e) { return Response.json({ error: e && e.message }, { status: 500, headers: cors }); }
+      /* [V33.190] ★이 워커에서 가장 비싼 조회인데 캐시가 없었다.★ 실측 5,976ms —
+         요청 한 건마다 6초짜리 D1 작업을 통째로 새로 한다. 사용자가 둘만 돼도 12초어치가
+         D1 큐에 쌓이고, 그 큐는 ★거래 사이클과 같은 큐★ 다(D1 은 SQLite 한 인스턴스).
+         화면이 느려지는 문제가 아니라 매매가 밀리는 문제였다.
+         내용은 야간 파이프라인과 모델 학습에서만 바뀌므로 초 단위 신선도가 필요 없다.
+         다른 조회들과 같은 SWR 을 태운다 — 오래됐어도 즉시 주고 갱신은 뒤에서 한다. */
+      return await swrJson("ai-selfcheck", 60000, 3600000, async function () {
+        return await aiSelfCheck(env.DB);
+      });
     }
     // [V12.132] 딥이력 수집 즉시 진단/실행 — 장외 20분 락을 기다리지 않고 원인을 확인한다.
     //   표본이 원천 고갈(163,667)이라 딥이력 확대가 유일한 증량 경로인데, 실행돼도 0건이라

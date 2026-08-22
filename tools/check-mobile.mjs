@@ -463,5 +463,70 @@ console.log('⑭ 행 높이 — 긴 카드가 화면 밖으로 자라지 않는�
   else bad('V33.161 규칙 중 폰까지 닿는 것이 있다');
 }
 
+/* ── ⑤ [V33.190] 폰에서 미국장으로 갈 문이 있는가 ─────────────────────────
+   실측 사고: V33.126 이 @media(max-width:640px) 안에 `.mk-tabs{display:flex}` 를 넣고
+   그 ★뒤에★ 미디어쿼리 밖에서 `.mk-tabs{display:none}` 을 다시 선언했다. 명시도가 같고
+   (클래스 하나) 미디어쿼리는 명시도를 올리지 않으므로 ★나중 규칙이 이긴다★ — 탭은 어떤
+   화면에서도 뜬 적이 없다. 같은 미디어쿼리가 `.db-col{display:none}` 으로 한 시장만 남기니,
+   폰에서는 한국장만 보이고 미국장으로 갈 문이 아예 없었다.
+   이 게이트는 그 형태를 못박는다: ★기본값(none)이 미디어쿼리 override 보다 앞에 있어야 한다.★ */
+console.log('\n⑤ 폰 — 국장/미장 전환');
+{
+  const iDef = H.indexOf('.db-mk-switch{display:none;}');
+  const iOn  = H.indexOf('.db-mk-switch{display:inline-flex;}');
+  if (iDef < 0 || iOn < 0) bad('국장/미장 스위치의 기본/override 규칙을 찾지 못했다');
+  else if (iDef < iOn) ok('스위치 기본값(none)이 폰 override 보다 ★앞★ 에 있다 — 소스 순서로 이긴다');
+  else bad('기본값 display:none 이 override 뒤에 있다 — V33.126 과 똑같이 스위치가 영영 안 뜬다');
+  // 함정을 만든 마크업 자체가 사라졌는지 본다(주석 속 설명은 세지 않는다 — 클래스 속성만 본다).
+  if (!/class="mk-tabs?"/.test(H) && !/class="mk-tab /.test(H))
+    ok('영영 안 뜨던 .mk-tabs 마크업이 사라졌다 — 같은 함정이 남아 있지 않다');
+  else bad('.mk-tabs 마크업이 남아 있다 — 소스 순서에 지는 규칙이 되살아날 수 있다');
+  // 스위치는 ★정렬 바 안★ 에 있어야 한다 — 별도 줄을 쓰면 목록이 그만큼 아래로 밀린다.
+  const bar = (H.match(/<div class="db-sortbar"[\s\S]*?<\/div>/) || [''])[0];
+  if (/id="dbMkSwitch"/.test(bar) && /data-mk="us"/.test(bar) && /data-mk="kr"/.test(bar))
+    ok('국장/미장 스위치가 정렬 바 안에 있다(국장·미장 두 칸)');
+  else bad('정렬 바 안에 국장/미장 스위치가 없다');
+  if (/document\.getElementById\('dbMkSwitch'\)/.test(H) && /\.db-mk-opt/.test(H))
+    ok('스위치가 실제로 배선돼 있다(.db-mk-opt → mk-active)');
+  else bad('스위치에 이벤트가 안 걸려 있다 — 눌러도 시장이 안 바뀐다');
+}
+
+/* ── ⑥ [V33.190] 접속 직후 화면 ──────────────────────────────────────────── */
+console.log('\n⑥ 접속 직후 — 대시보드 · 모두 접힘');
+{
+  if (/_phone \? 'dashboard' : \(localStorage\.getItem\('luxPage'\)/.test(H))
+    ok('폰으로 접속하면 언제나 대시보드로 시작한다(넓은 화면은 종전대로 마지막 페이지)');
+  else bad('폰 첫 화면이 대시보드로 고정돼 있지 않다');
+  if (/<div class="nlv-panel nlv-foldable folded" id="nlvPipePanel">/.test(H))
+    ok('엔진 파이프라인은 접힌 상태로 시작한다');
+  else bad('엔진 파이프라인이 접힌 상태로 시작하지 않는다');
+  if (/id="nlvPipeFold"/.test(H) && /pn\.classList\.toggle\('folded'\)/.test(H))
+    ok('엔진 파이프라인에 접기/펼치기 버튼이 배선돼 있다');
+  else bad('엔진 파이프라인 접기 버튼이 없거나 안 걸려 있다');
+  // ★자동 펼치기가 되살아나면 "접속 시 접힘" 이 무너진다★ — 데이터가 오면 스스로 펼쳐졌었다.
+  if (!/자동 펼치기\n?\s*if \((recentTradesFull|allTradesFull)\.length > 0/.test(H)
+      && !/tradesExpanded = true;/.test(H) && !/allTradesExpanded = true;/.test(H))
+    ok('거래내역이 데이터 도착만으로 스스로 펼쳐지지 않는다');
+  else bad('거래내역 자동 펼치기가 남아 있다 — 접어 둬도 다음 갱신에 도로 펼쳐진다');
+  if (/bar\.classList\.add\('collapsed'\);/.test(H))
+    ok('AI픽·뉴스픽은 접속 시 항상 접혀 있다');
+  else bad('AI픽·뉴스픽이 저장된 펼침 상태를 되살린다');
+}
+
+/* ── ⑦ [V33.190] 폰 대시보드 — 시총맵이 TOP MOVERS 위 ────────────────────── */
+console.log('\n⑦ 폰 대시보드 배치');
+{
+  const seg = H.slice(H.indexOf('@media(max-width:767px){'));
+  const m1 = /\.fv-mid > \.fv-panel:nth-child\(1\)\{order:2;\}/.test(seg);
+  const m2 = /\.fv-mid > \.fv-panel:nth-child\(2\)\{order:1;\}/.test(seg);
+  if (m1 && m2) ok('폰에서 S&P 500 MAP 이 TOP MOVERS 위에 온다(order — DOM 은 안 건드린다)');
+  else bad('폰에서 맵/무버스 순서가 안 바뀐다');
+  // DOM 순서는 그대로여야 데스크톱(좌 무버스 / 우 맵)이 유지된다.
+  const dom = H.indexOf('TOP MOVERS');
+  const map = H.indexOf('S&amp;P 500 MAP');
+  if (dom > 0 && map > dom) ok('DOM 순서는 그대로다 — 넓은 화면 배치가 안 뒤집힌다');
+  else bad('DOM 순서가 바뀌었다 — 데스크톱 배치까지 따라 뒤집힌다');
+}
+
 console.log(fail ? '\n실패 ' + fail + '건' : '\nok   폰 화면 계약 통과');
 process.exit(fail ? 1 : 0);

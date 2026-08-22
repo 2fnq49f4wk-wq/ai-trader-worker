@@ -8,7 +8,7 @@
      인데, 지금까지 화면에서 그걸 알 방법이 전혀 없었다(카카오톡 인앱 브라우저는 특히 강하게 캐시한다).
      서버가 내려주는 build 와 이 값을 비교해 다르면 배너로 알린다.
      ※ src/index.js 의 _BUILD_VER 와 항상 같아야 한다 — check-html-js 가 강제한다. -->
-<meta name="lux-build" content="V33.188">
+<meta name="lux-build" content="V33.190">
 <title>LUX-ENGINE V10</title>
 <!-- ══ [V33.156] 설치형 앱(PWA) — 폰·PC 에서 홈화면/독에 담아 앱처럼 연다 ══
      · manifest  : 이름·아이콘·standalone 표시(주소창 없이 앱처럼)
@@ -2411,22 +2411,37 @@ html[data-theme="light"] .db-sort-btn.active{color:#fff;}
   background:var(--s2);letter-spacing:.5px;position:sticky;top:0;z-index:1;}
 .detail-browse .db-list{max-height:72vh;overflow-y:auto;-webkit-overflow-scrolling:touch;}
 .detail-browse .empty{padding:24px;text-align:center;color:var(--t3);font-size:11px;}
-@media(max-width:640px){
+/* [V33.190] ★폰에서 미국장이 아예 안 보이던 원인 — CSS 소스 순서였다.★
+   V33.126 은 @media(max-width:640px) 안에 `.mk-tabs{display:flex}` 를 넣고, 그 ★뒤에★
+   미디어쿼리 밖에서 `.mk-tabs{display:none}` 을 다시 선언했다. 두 규칙의 명시도는 같고
+   (클래스 하나), 미디어쿼리는 명시도를 올리지 않는다 — 그러면 ★나중에 온 쪽이 이긴다★.
+   즉 탭은 어떤 화면 폭에서도 뜬 적이 없다. 그런데 같은 미디어쿼리가
+   `.db-col{display:none}` + `.db-col.mk-active{display:flex}` 로 한 시장만 남기므로,
+   폰에서는 한국장만 보이고 미국장으로 갈 문이 없었다. 정확히 사용자가 본 그대로다.
+   → 기본값(display:none)을 ★먼저★ 두고 미디어쿼리로 덮는다. 그리고 시장 전환은
+     탭 한 줄을 따로 쓰지 않고 정렬 바 안의 스위치로 옮긴다(세로 공간을 아낀다). */
+/* (종전 .mk-tabs / .mk-tab 규칙은 그 마크업과 함께 걷어냈다 — 전환은 아래 스위치가 맡는다) */
+.db-mk-switch{display:none;}
+@media(max-width:767px){
   /* [V33.126] ★모바일에서 한국장·미국장을 위아래로 쌓지 않는다.★
-     640px 화면에서 두 목록이 세로로 붙으면 미국주식을 보려면 한국주식 전체를 스크롤해서
-     지나가야 한다(종목당 ~52px × 수십 종목). 탭으로 전환한다 — 한 번에 한 시장만 그린다. */
+     좁은 화면에서 두 목록이 세로로 붙으면 미국주식을 보려면 한국주식 전체를 스크롤해서
+     지나가야 한다(종목당 ~52px × 수십 종목). 한 번에 한 시장만 그린다.
+     [V33.190] 문턱을 640 → 767 로 올린다 — 이 앱의 '폰' 경계와 같은 값으로 맞춘다. */
   .detail-browse{grid-template-columns:1fr;}
   .detail-browse .db-list{max-height:none;}
   .detail-browse .db-col{display:none;}
   .detail-browse .db-col.mk-active{display:flex;}
-  .detail-browse .db-head{display:none;}         /* 탭이 제목 역할을 한다 — 중복 제거 */
-  .mk-tabs{display:flex;gap:6px;margin:0 0 8px;}
+  .detail-browse .db-head{display:none;}         /* 스위치가 제목 역할을 한다 — 중복 제거 */
+  .db-mk-switch{display:inline-flex;}
 }
-/* 넓은 화면에서는 탭이 필요 없다(두 칸이 나란히 보인다) */
-.mk-tabs{display:none;}
-.mk-tab{flex:1;padding:9px 10px;font-size:12px;font-weight:700;border:1px solid var(--bd);
-  background:var(--s1);color:var(--t3);border-radius:8px;cursor:pointer;font-family:inherit;}
-.mk-tab.active{background:var(--s2);color:var(--t1);border-color:var(--acc);}
+/* [V33.190] 정렬 바 안의 국장/미장 스위치 — 두 칸짜리 알약 모양. 누르면 한 시장만 그린다. */
+.db-mk-switch{margin-left:auto;flex:0 0 auto;align-items:center;gap:0;
+  border:1px solid var(--bd);border-radius:999px;overflow:hidden;background:var(--s1);}
+.db-mk-opt{appearance:none;border:0;background:transparent;cursor:pointer;font-family:inherit;
+  font-size:11px;font-weight:700;color:var(--t3);padding:6px 13px;line-height:1;min-height:32px;
+  transition:background .15s,color .15s;}
+.db-mk-opt.active{background:var(--acc);color:var(--bg,#0b0e13);}
+.db-mk-opt:focus-visible{outline:2px solid var(--acc);outline-offset:-2px;}
 /* [V33.126] 접이식 픽 바 — 모바일에서 AI픽·뉴스픽이 화면 위쪽을 통째로 먹는다.
    제목을 눌러 접는다. 접힘 상태는 localStorage 에 남겨 새로고침해도 유지된다. */
 .aipick-title{cursor:pointer;user-select:none;}
@@ -3144,6 +3159,11 @@ html[data-theme="light"] ::placeholder{color:#8fa0b8;opacity:1;}
   .dash-grid{gap:8px;padding:8px;}
   .pipeline-bar{margin:0 8px;}
   .fv-mid{grid-template-columns:1fr;}
+  /* [V33.190] 폰에서는 시총맵(S&P 500 MAP)이 TOP MOVERS ★위★ 에 온다.
+     DOM 순서는 안 건드린다 — 넓은 화면은 두 칸이 나란히 놓이므로 순서를 바꿀 이유가 없고,
+     DOM 을 바꾸면 데스크톱 배치(좌 무버스 / 우 맵)까지 따라 뒤집힌다. order 로 폰에서만 편다. */
+  .fv-mid > .fv-panel:nth-child(1){order:2;}   /* TOP MOVERS */
+  .fv-mid > .fv-panel:nth-child(2){order:1;}   /* S&P 500 MAP */
   .fv-bottom{grid-template-columns:1fr;}
   .cmbd-grid,.fv3-grid{grid-template-columns:1fr!important;}
   /* 폰에서는 터미널 밀도 레이어를 쓰지 않는다(글자가 너무 작아짐) */
@@ -3672,7 +3692,8 @@ html[data-theme="light"] .m-brainbar button.active{color:#0b4f9e;background:rgba
         <div class="fv-panel">
           <div class="fv-panel-head">📐 TECHNICAL ANALYSIS <span class="fv-panel-sub">캔들/차트 패턴 자동 감지</span>
             <button type="button" id="btnTaBack" class="btn" style="margin-left:auto;font-size:9px;padding:2px 8px;display:none;">← 스크리너</button>
-            <button type="button" id="btnTaCollapse" class="btn" style="font-size:9px;padding:2px 8px;margin-left:6px;">접기</button>
+            <!-- [V33.190] 접속 시 접힘(아래 초기화 참조) — 라벨도 그 상태에 맞춘다. -->
+            <button type="button" id="btnTaCollapse" class="btn" style="font-size:9px;padding:2px 8px;margin-left:6px;">펼치기</button>
           </div>
           <div style="display:flex;gap:6px;padding:8px 12px;border-bottom:1px solid var(--bd2);flex-wrap:wrap;">
             <input type="text" class="wl-search" id="taSymbol" placeholder="심볼 입력 (AAPL, 005930.KS)" style="flex:1;min-width:140px;" autocomplete="off">
@@ -3933,11 +3954,12 @@ html[data-theme="light"] .m-brainbar button.active{color:#0b4f9e;background:rgba
             <button type="button" class="db-sort-btn" data-sort="vol">거래량</button>
             <button type="button" class="db-sort-btn" data-sort="up">상승률</button>
             <button type="button" class="db-sort-btn" data-sort="down">하락률</button>
-          </div>
-          <!-- [V33.126] 시장 전환 탭 — 모바일에서만 보인다(CSS .mk-tabs) -->
-          <div class="mk-tabs" id="mkTabs">
-            <button type="button" class="mk-tab active" data-mk="kr">🇰🇷 한국주식</button>
-            <button type="button" class="mk-tab" data-mk="us">🇺🇸 미국주식</button>
+            <!-- [V33.190] 국장/미장 스위치 — 폰에서만 보인다. 정렬 줄 안에 두어 세로 공간을
+                 쓰지 않는다(종전 탭 한 줄은 목록을 그만큼 아래로 밀었다). -->
+            <span class="db-mk-switch" id="dbMkSwitch" role="group" aria-label="시장 전환">
+              <button type="button" class="db-mk-opt active" data-mk="kr" aria-pressed="true">국장</button>
+              <button type="button" class="db-mk-opt" data-mk="us" aria-pressed="false">미장</button>
+            </span>
           </div>
           <div class="detail-browse">
             <div class="db-col mk-active" data-mk="kr">
@@ -4155,8 +4177,11 @@ html[data-theme="light"] .m-brainbar button.active{color:#0b4f9e;background:rgba
           </div>
           <div class="nlv-feed" id="nlvFeed"><div class="nlv-empty">스캔 기록을 불러오는 중…</div></div>
         </div>
-        <div class="nlv-panel">
-          <div class="nlv-sec-h">엔진 파이프라인 <small>단계별 최신도</small></div>
+        <div class="nlv-panel nlv-foldable folded" id="nlvPipePanel">
+          <div class="nlv-sec-h">엔진 파이프라인 <small>단계별 최신도</small>
+            <button type="button" class="nlv-btn nlv-fold-btn" id="nlvPipeFold"
+                    aria-expanded="false" aria-controls="nlvPipe" title="접기/펼치기">펼치기 ▾</button>
+          </div>
           <div class="nlv-pipe" id="nlvPipe"></div>
         </div>
       </div>
@@ -9570,13 +9595,10 @@ html[data-theme="light"] .m-brainbar button.active{color:#0b4f9e;background:rgba
   function renderTrades(trades) {
     recentTradesFull = trades || [];
     renderRecentFiltered();
-    // 거래 내역이 있으면 자동 펼치기
-    if (recentTradesFull.length > 0 && !tradesExpanded) {
-      var tableBox = $('tradesTableBox'), btn = $('tradesToggleBtn');
-      tradesExpanded = true;
-      if (tableBox) tableBox.classList.add('show');
-      if (btn) btn.textContent = '접기';
-    }
+    /* [V33.190] ★자동 펼치기를 없앤다.★ 데이터가 도착하면 스스로 펼쳐지던 코드다.
+       접속 직후 화면이 접힌 상태로 시작해야 한다는 요구와 정면으로 부딪친다 —
+       사용자가 접어 둬도 다음 갱신이 오면 도로 펼쳐졌다(접기가 유지되지 않던 이유).
+       펼치는 것은 사용자가 정한다. 버튼은 그대로 있다. */
   }
   // [V32.8] 선택된 종류(tradeFilter)로 최근 거래를 걸러 표+요약(승률·평균수익률)을 그 종류만으로 재계산.
   function renderRecentFiltered() {
@@ -9601,13 +9623,7 @@ html[data-theme="light"] .m-brainbar button.active{color:#0b4f9e;background:rgba
   function renderAllTrades(trades) {
     allTradesFull = trades || [];
     renderAllTradesFiltered();
-    // 전체 거래 내역이 있으면 자동 펼치기
-    if (allTradesFull.length > 0 && !allTradesExpanded) {
-      var tableBox = $('allTradesTableBox'), btn = $('allTradesToggleBtn');
-      allTradesExpanded = true;
-      if (tableBox) tableBox.classList.add('show');
-      if (btn) btn.textContent = '접기';
-    }
+    // [V33.190] 자동 펼치기 제거 — 위 renderTrades 주석과 같은 이유.
   }
 
   // 선택된 종류로 거래를 걸러 표+요약(승률·평균수익률)을 그 종류만으로 다시 계산해 렌더.
@@ -11534,24 +11550,30 @@ html[data-theme="light"] .m-brainbar button.active{color:#0b4f9e;background:rgba
   var _btnDlAiStatus = $('btnDownloadAiStatus');
   if (_btnDlAiStatus) _btnDlAiStatus.addEventListener('click', downloadAiStatus);
 
-  // ── [V33.126] 모바일: 시장 전환 탭 ──────────────────────────────────────────
-  //   640px 이하에서 한국·미국 목록이 세로로 쌓이면, 미국주식을 보려고 한국주식 수십 종목을
-  //   스크롤해 지나가야 한다. 탭으로 한 번에 한 시장만 보인다.
-  //   ★넓은 화면에서는 CSS 가 탭을 숨기고 두 칸을 나란히 그리므로 이 코드는 무해하다★ —
-  //   mk-active 클래스는 데스크톱 CSS 가 참조하지 않는다.
+  /* ── [V33.190] 폰: 국장/미장 스위치 ────────────────────────────────────────
+     좁은 화면에서 한국·미국 목록이 세로로 쌓이면, 미국주식을 보려고 한국주식 수십 종목을
+     스크롤해 지나가야 한다. 그래서 V33.126 이 한 시장만 그리게 했는데, 전환 탭이
+     ★CSS 소스 순서에 져서 한 번도 뜬 적이 없었다★(.mk-tabs 주석 참조). 그 결과 폰에서는
+     한국장만 보이고 미국장으로 갈 문이 아예 없었다.
+     이제 전환은 정렬 바 안의 스위치가 맡는다. 넓은 화면에서는 CSS 가 스위치를 숨기고
+     두 칸을 나란히 그리므로 이 코드는 무해하다 — mk-active 는 데스크톱 CSS 가 안 본다. */
   (function () {
-    var tabs = document.getElementById('mkTabs');
-    if (!tabs) return;
+    var sw = document.getElementById('dbMkSwitch');
+    if (!sw) return;
     var KEY = 'lux_browse_mk';
     function apply(mk) {
-      var bs = document.querySelectorAll('.mk-tab');
-      for (var i = 0; i < bs.length; i++) bs[i].classList.toggle('active', bs[i].getAttribute('data-mk') === mk);
+      var bs = document.querySelectorAll('.db-mk-opt');
+      for (var i = 0; i < bs.length; i++) {
+        var on = bs[i].getAttribute('data-mk') === mk;
+        bs[i].classList.toggle('active', on);
+        bs[i].setAttribute('aria-pressed', on ? 'true' : 'false');
+      }
       var cs = document.querySelectorAll('.detail-browse .db-col');
       for (var j = 0; j < cs.length; j++) cs[j].classList.toggle('mk-active', cs[j].getAttribute('data-mk') === mk);
       try { localStorage.setItem(KEY, mk); } catch (e) {}
     }
-    tabs.addEventListener('click', function (ev) {
-      var b = ev.target && ev.target.closest ? ev.target.closest('.mk-tab') : null;
+    sw.addEventListener('click', function (ev) {
+      var b = ev.target && ev.target.closest ? ev.target.closest('.db-mk-opt') : null;
       if (b) apply(b.getAttribute('data-mk'));
     });
     var saved = null;
@@ -11575,9 +11597,11 @@ html[data-theme="light"] .m-brainbar button.active{color:#0b4f9e;background:rgba
           car.className = 'aipick-caret'; car.textContent = '▼';
           title.appendChild(car);
         }
-        var folded = false;
-        try { folded = localStorage.getItem(key) === '1'; } catch (e) {}
-        bar.classList.toggle('collapsed', folded);
+        /* [V33.190] ★접속 시에는 항상 접혀 있다.★ 종전에는 저장된 상태를 되살렸는데,
+           폰에서 이 두 바가 펼쳐진 채로 시작하면 첫 화면을 통째로 먹어 정작 종목 목록이
+           스크롤 아래로 밀린다. 펼침은 그 방문 안에서만 유지한다(저장은 계속 하되 읽지 않는다 —
+           나중에 '마지막 상태 기억' 을 옵션으로 되살릴 때 값이 남아 있어야 하므로). */
+        bar.classList.add('collapsed');
         title.addEventListener('click', function () {
           var now = !bar.classList.contains('collapsed');
           bar.classList.toggle('collapsed', now);
@@ -12202,6 +12226,16 @@ html[data-theme="light"] .m-brainbar button.active{color:#0b4f9e;background:rgba
   // [V63] TA 뒤로가기(스크리너 복원) + 접기/펼치기
   var _btnTaBack = $('btnTaBack'); if (_btnTaBack) _btnTaBack.addEventListener('click', taGoBack);
   var _btnTaCol = $('btnTaCollapse');
+  /* [V33.190] 기술적 분석 패널은 접힌 채로 시작한다 — '접고 펼칠 수 있는 것은 접속 시 모두 접힘'.
+     핸들러가 box.style.display 를 상태의 근거로 읽으므로, 여기서 실제로 접어 둬야
+     첫 클릭이 '펼치기' 로 동작한다(라벨만 바꾸면 첫 클릭이 반대로 간다). */
+  (function(){
+    var _tb = $('taResult');
+    if(!_tb) return;
+    _tb.style.display = 'none';
+    var _bar = _tb.previousElementSibling;
+    if(_bar && _bar.querySelector && _bar.querySelector('#taSymbol')) _bar.style.display = 'none';
+  })();
   if (_btnTaCol) _btnTaCol.addEventListener('click', function(){
     var box = $('taResult');
     var bar = box && box.previousElementSibling; // 입력/버튼 줄
@@ -12210,7 +12244,16 @@ html[data-theme="light"] .m-brainbar button.active{color:#0b4f9e;background:rgba
     if (bar && bar.querySelector && bar.querySelector('#taSymbol')) bar.style.display = hidden ? '' : 'none';
     _btnTaCol.textContent = hidden ? '접기' : '펼치기';
   });
-  try{var _lp=localStorage.getItem('luxPage')||'dashboard'; if(_lp==='fx')_lp='macro'; showPage(_lp);}catch(e){showPage('dashboard');}
+  /* [V33.190] ★폰으로 접속하면 언제나 대시보드로 시작한다.★
+     종전에는 마지막으로 보던 페이지를 되살렸는데, 폰에서는 그게 '두뇌'나 '거래내역' 같은
+     세로로 긴 화면인 경우가 많아 접속하자마자 시장 개요를 볼 수 없었다.
+     넓은 화면(작업용)에서는 종전대로 마지막 페이지를 되살린다 — 거기서는 그게 편의다. */
+  try{
+    var _phone=false; try{ _phone = !!(window.matchMedia && window.matchMedia('(max-width:767px)').matches); }catch(e0){}
+    var _lp = _phone ? 'dashboard' : (localStorage.getItem('luxPage')||'dashboard');
+    if(_lp==='fx')_lp='macro';
+    showPage(_lp);
+  }catch(e){showPage('dashboard');}
 
   // [V33.112] ★VISION AI 프론트 모듈 전체 삭제★ (사용자 확인: AI 비전은 쓰지 않는다)
   //   브라우저가 차트를 그려 Roboflow 로 추론하고 결과를 /api/vision-results 로 올리던 경로다.
@@ -12542,6 +12585,12 @@ html[data-theme="light"] #page-nnviz .nlv-tp-num .p{color:#0b6cd4;}
 #page-nnviz .nlv-btn{cursor:pointer;background:rgba(56,189,248,.1);border:1px solid #22345a;border-radius:6px;color:#9fb4dc;font-size:10px;padding:2px 8px;line-height:1.5;}
 #page-nnviz .nlv-btn:hover{color:#eaf2ff;border-color:#38bdf8;}
 #page-nnviz .nlv-pipe{display:flex;flex-direction:column;gap:1px;padding:9px 12px 11px;}
+/* [V33.190] 접이식 패널 — 접속 시에는 접혀 있고, 버튼으로 편다.
+   ★display:none 을 쓴다★ — 높이 애니메이션은 내용이 비동기로 채워지는 패널에서 높이를
+   잘못 잡아 잘린 채로 굳는다(이 저장소가 겪은 문제다). 접힘은 보이는가/아닌가일 뿐이다. */
+#page-nnviz .nlv-foldable.folded > .nlv-pipe,
+#page-nnviz .nlv-foldable.folded > .nlv-feed{display:none;}
+#page-nnviz .nlv-fold-btn{margin-left:auto;font-variant-numeric:tabular-nums;}
 #page-nnviz .nlv-step{display:grid;grid-template-columns:14px 1fr auto;align-items:center;gap:8px;padding:4px 0;font-family:'IBM Plex Mono',monospace;font-size:10.5px;color:#93aace;}
 #page-nnviz .nlv-step i{width:8px;height:8px;border-radius:50%;background:#33415c;display:inline-block;margin-left:3px;}
 #page-nnviz .nlv-step.ok i{background:#38bdf8;box-shadow:0 0 7px rgba(56,189,248,.7);}
@@ -17472,6 +17521,21 @@ html:root .page > *{ flex-shrink:0; }
         LIVE.paused = !LIVE.paused;
         this.textContent = LIVE.paused ? '▶' : '⏸';
       });
+      /* [V33.190] 엔진 파이프라인 접기/펼치기 — ★접속 시에는 항상 접혀 있다.★
+         8단계 × 각 줄이 세로로 길어 폰에서는 이 패널 하나가 화면을 통째로 먹는다.
+         상태를 저장하지 않는 건 의도다 — 요구가 "접속했을 때 처음에는 접힌 상태" 이므로
+         저장했다가 되살리면 그 요구를 어기게 된다. 펼침은 그 방문 안에서만 유지된다. */
+      (function(){
+        var fb = $id('nlvPipeFold'), pn = $id('nlvPipePanel');
+        if(!fb || !pn) return;
+        function paint(){
+          var folded = pn.classList.contains('folded');
+          fb.textContent = folded ? '펼치기 ▾' : '접기 ▴';
+          fb.setAttribute('aria-expanded', folded ? 'false' : 'true');
+        }
+        fb.addEventListener('click', function(){ pn.classList.toggle('folded'); paint(); });
+        paint();
+      })();
       // 시세/보유 갱신 반영 — 5초 주기로 우측 트레이·모바일 앱바만 다시 맞춘다(변화 없으면 DOM 손 안 댐).
       setInterval(function(){
         if(document.hidden) return;
