@@ -2788,7 +2788,7 @@ async function applySignalTypeWeights(DB, cfg) {
 // ============================================================================
 // [V33.55] 빌드 버전 — SWR L2 캐시 키에 섞어 '배포 = 판단 캐시 자동 무효화'를 만든다.
 //   판정 로직을 고쳐도 옛 캐시가 최대 1시간 재배포되던 문제를 구조적으로 없앤다.
-const _BUILD_VER = "V33.182";
+const _BUILD_VER = "V33.183";
 
 // ═══ [V33.171] 평가 순서 계획 — ★승격과 순환을 교차해 굶주림을 구조적으로 없앤다★ ═══
 //   V33.50 의 형태트리거는 "급한 몇 종목을 앞으로 당긴다"는 의도였으나, 실제 운영로그에서는
@@ -20894,6 +20894,68 @@ async function handleRequest(request, env, ctx) {
       } catch (e) {
         return Response.json({ ok: false, error: e && e.message }, { status: 500, headers: cors });
       }
+    }
+    /* ══ [V33.183] POST /api/ai/resample — 소급표본을 비우고 처음부터 다시 만든다 ══
+       왜 필요한가: xalpha·flow 표본이 ★최근 며칠★ 에만 몰려 있어, 라벨 지평 10일짜리 퍼징이
+       학습구간을 통째로 지운다(실측 980건 → 퍼징 후 41건). 표본을 더 넣어도 같은 날짜에
+       쌓이면 그대로다 — 필요한 건 ★긴 관측기간★ 이고, ml_samples 에는 이미 몇 달치가 있다.
+       백필 커서를 되감으면 그 기간을 다시 훑어 폭넓은 표본을 만든다.
+
+       ★왜 지우고 시작하나★ — 커서만 되감으면 이미 만든 행을 다시 만들어 ★중복★ 이 된다.
+       중복표본은 유효표본 수를 부풀리고 검증 분할을 오염시킨다(V33.104 에서 겪은 사고).
+
+       ★안전성★ — 재소급은 지금 지우는 것을 포함한다(전체 ml_samples 를 훑으므로 최근 구간도
+       다시 만든다). 즉 역사 구간에서 아무것도 못 만들더라도 최악의 경우 며칠 뒤 지금 상태로
+       돌아올 뿐이다. 그리고 V33.178 진단이 실패 사유를 시장별로 찍으므로, 잘못되면 첫 회차
+       로그에서 바로 드러난다.
+
+       ★STACK 은 대상이 아니다★ — 그쪽 소급생성은 전문가 확률을 다시 채점하는데 그 전문가들이
+       바로 그 행으로 학습돼 in-sample 누출이 된다(V33.104 주석). 별도 epoch 장치로 묶여 있다.
+
+       실수 방지: TRAIN_KEY 인증 + confirm=1 을 모두 요구한다(둘 중 하나만으론 아무 일도 안 한다). */
+    if (path === "/api/ai/resample" && request.method === "POST") {
+      const au = _trainAuthed(); if (!au.ok) return Response.json({ error: au.msg }, { status: au.code, headers: cors });
+      if (url.searchParams.get("confirm") !== "1")
+        return Response.json({ error: "confirm=1 이 필요하다 — 표본을 삭제하는 되돌릴 수 없는 작업이다" },
+          { status: 400, headers: cors });
+      const _tg = String(url.searchParams.get("target") || "both").toLowerCase();
+      const _want = { xalpha: _tg === "xalpha" || _tg === "both", flow: _tg === "flow" || _tg === "both" };
+      if (!_want.xalpha && !_want.flow)
+        return Response.json({ error: "target 은 xalpha|flow|both 중 하나" }, { status: 400, headers: cors });
+      const _cnt = async function (tbl, fv) {
+        try { const r = await env.DB.prepare("SELECT COUNT(*) c FROM " + tbl + " WHERE featver=?").bind(fv).first(); return _num(r && r.c, 0); }
+        catch (e) { return -1; }
+      };
+      const out = { ok: true, target: _tg, before: {}, after: {} };
+      try {
+        if (_want.xalpha) {
+          out.before.xalpha = await _cnt("xalpha_samples", XALPHA.featVer);
+          await env.DB.prepare("DELETE FROM xalpha_samples WHERE featver=?").bind(XALPHA.featVer).run();
+          out.after.xalpha = await _cnt("xalpha_samples", XALPHA.featVer);
+        }
+        if (_want.flow) {
+          out.before.flow = await _cnt("flow_samples", FLOWML.featVer);
+          await env.DB.prepare("DELETE FROM flow_samples WHERE featver=?").bind(FLOWML.featVer).run();
+          out.after.flow = await _cnt("flow_samples", FLOWML.featVer);
+        }
+        // 커서 되감기 — ★대상 모델만★ 0 으로. 다른 모델의 커서를 건드리면 그쪽이 중복 생성된다
+        //   (백필 루프가 모델별 커서로 각자 걸러낸다 — altSampleBackfill 의 xDone/fDone 참조).
+        const _c0 = (await getState(env.DB, "alt_bf_cursor", null)) || {};
+        const _c1 = {
+          lastId: 0, made: _num(_c0.made, 0),
+          fDone: _want.flow ? 0 : _num(_c0.fDone, 0), fvF: FLOWML.featVer,
+          xDone: _want.xalpha ? 0 : _num(_c0.xDone, 0), fvX: XALPHA.featVer,
+          ts: Date.now()
+        };
+        await setState(env.DB, "alt_bf_cursor", _c1);
+        out.cursor = _c1;
+        out.note = "다음 장외 백필 회차(10분 주기)부터 처음부터 다시 만든다. 진행은 [ALT-BF] 로그로 확인.";
+        try { await log(env.DB, "WARN", null, "[RESAMPLE] " + _tg + " 표본 삭제 후 커서 되감기 — " +
+          JSON.stringify(out.before) + " → 0 (관측기간 확보를 위한 재소급)"); } catch (e) {}
+      } catch (e) {
+        return Response.json({ ok: false, error: e && e.message, partial: out }, { status: 500, headers: cors });
+      }
+      return Response.json(out, { headers: cors });
     }
     // POST /api/ai/train-now?target=mind|gbdt|brain|dnn|l1|calibrate — 하루1회 게이트를 기다리지 않고
     //   특정 학습기 하나만 지금 즉시 재학습. [V12.37] MIND 회귀가드 발동 직후 정상 모델로 즉시 복구할 때,
