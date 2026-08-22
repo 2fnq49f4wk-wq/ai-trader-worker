@@ -131,7 +131,26 @@ jobs:
               #   건너뛰고도 같은 자리에서 세 번 더 죽었다(범인이 그 뒤에 있었다).
               #   워커는 단계에 들어가기 전에 이름을 남기므로, 다음 호출이 그 기록을 보고
               #   두 번 연속 죽인 단계를 스스로 건너뛴다. 여기서는 재시도만 하면 된다.
-              [ "$SOFT" -ge 4 ] && { echo "연속 4회 실패 — 중단(재개지점 $FROM)" | tee -a trainlog.txt; break; }
+              if [ "$SOFT" -ge 4 ]; then
+                echo "연속 4회 실패 — 중단(재개지점 $FROM)" | tee -a trainlog.txt
+                # [V33.199] ★죽은 회차는 응답이 없다 — 범인 이름은 로그에서 집어 온다.★
+                #   워커는 단계 진입 직전에 "[수동트리거:all:START] <단계>" 를 남긴다.
+                #   마지막 START 가 곧 워커를 죽인 단계다. /api/logs 는 인증 없는 읽기 경로다.
+                echo "" | tee -a trainlog.txt
+                echo "── 워커 로그에서 마지막으로 진입한 단계를 확인한다 ──" | tee -a trainlog.txt
+                # pick-logs.mjs 는 ★파일★ 을 받는다(stdin 아님) — 받아서 파일로 두고 넘긴다.
+                curl -sS --max-time 60 "$URL/api/logs?limit=400" -o worklogs.json 2>/dev/null
+                LAST=$(node tools/pick-logs.mjs worklogs.json '수동트리거:all:START' 200 2>/dev/null | tail -3)
+                if [ -n "$LAST" ]; then
+                  echo "$LAST" | tee -a trainlog.txt
+                  KILLER=$(printf '%s' "$LAST" | tail -1 | sed -n 's/.*\[수동트리거:all:START\] \([A-Za-z0-9_]*\).*/\1/p')
+                  [ -n "$KILLER" ] && echo "★워커를 죽인 단계: $KILLER★" | tee -a trainlog.txt
+                  [ -n "$KILLER" ] && echo "killer=$KILLER" >> "$GITHUB_OUTPUT"
+                else
+                  echo "(로그에서 START 줄을 찾지 못했다 — 워커가 그 기록조차 남기기 전에 죽었을 수 있다)" | tee -a trainlog.txt
+                fi
+                break
+              fi
               sleep $((SOFT*15))
               continue
             fi
@@ -167,7 +186,11 @@ jobs:
             echo ""
             if [ "${{ steps.run.outputs.done }}" != "1" ]; then
               echo "🔴 파이프라인이 끝까지 못 갔다(마지막 HTTP ${CODE:-없음})."
-              echo "401 = TRAIN_KEY 불일치 · 503 = 워커 자원한도(무거운 회차 직후 흔하다, 재시도함) · 그 외는 아래 기록 참조."
+              echo "401 = TRAIN_KEY 불일치 · 503 = 워커 자원한도 · 그 외는 아래 기록 참조."
+              if [ -n "${{ steps.run.outputs.killer }}" ]; then
+                echo ""
+                echo "🔎 **워커를 죽인 단계: \`${{ steps.run.outputs.killer }}\`** — 워커 로그의 마지막 진입 기록에서 확인."
+              fi
             elif [ -n "${{ steps.run.outputs.skipped }}" ]; then
               echo "🟠 **완주했지만 건너뛴 단계가 있다: \`${{ steps.run.outputs.skipped }}\`**"
               echo "그 단계는 워커를 반복해서 죽였다(503). 나머지는 전부 돌았지만, 이건 따로 고쳐야 한다."

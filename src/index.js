@@ -2788,7 +2788,7 @@ async function applySignalTypeWeights(DB, cfg) {
 // ============================================================================
 // [V33.55] 빌드 버전 — SWR L2 캐시 키에 섞어 '배포 = 판단 캐시 자동 무효화'를 만든다.
 //   판정 로직을 고쳐도 옛 캐시가 최대 1시간 재배포되던 문제를 구조적으로 없앤다.
-const _BUILD_VER = "V33.198";
+const _BUILD_VER = "V33.199";
 
 // ═══ [V33.171] 평가 순서 계획 — ★승격과 순환을 교차해 굶주림을 구조적으로 없앤다★ ═══
 //   V33.50 의 형태트리거는 "급한 몇 종목을 앞으로 당긴다"는 의도였으나, 실제 운영로그에서는
@@ -21538,9 +21538,16 @@ async function handleRequest(request, env, ctx) {
              방식으로는 ★죽은 단계는 영원히 기록되지 않는다★ (기록은 성공한 것만 남는다).
              → 들어가기 ★전에★ 남긴다. 그러면 로그의 마지막 START 가 곧 범인이다.
              D1 쓰기 한 번의 비용으로, 추측 대신 이름을 얻는다. */
-          // 들어가기 ★전에★ 이름을 남긴다. 죽으면 이 기록이 남아 다음 호출이 범인을 안다.
+          /* 들어가기 ★전에★ 이름을 남긴다. 죽으면 이 기록이 남아 다음 호출이 범인을 안다.
+             [V33.199] ★로그에도 남긴다★ — state 는 워커만 읽을 수 있는데, 죽은 회차는
+             응답 자체가 없어서 그 판단이 밖으로 나올 길이 없다(실측: 자동 건너뛰기가
+             동작했는데도 CI 는 끝까지 범인 이름을 못 받았다 — 보고할 응답이 안 왔으니까).
+             /api/logs 는 인증 없는 읽기 경로라 CI 가 바로 집어 갈 수 있다.
+             수동 경로에서만 도는 단계당 1회 쓰기다 — 크론 부하와 무관하다. */
           try { await setState(env.DB, "alltrain_cur", { stage: nm, at: Date.now(),
                   fails: (nm === _crashHit) ? _crashN : 0 }); } catch (e0) {}
+          try { await log(env.DB, "INFO", null, "[수동트리거:all:START] " + nm +
+                  (_autoSkip ? " (자동건너뜀: " + _autoSkip + ")" : "")); } catch (e0) {}
           const _s0 = Date.now();
           try { out[nm] = await fn(env.DB); } catch (e) { out[nm] = "FAIL: " + (e && e.message); }
           if (out[nm] == null) out[nm] = "(no-op)";
