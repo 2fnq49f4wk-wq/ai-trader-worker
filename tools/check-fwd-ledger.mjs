@@ -233,6 +233,27 @@ const dayIC = (trueIC, n) => trueIC + randn() / Math.sqrt(Math.max(4, n - 3));
   else bad("소스: maxTs 를 기록하지 않는 학습 경로가 있다 — 그 모델은 종전 오염이 그대로다");
   if (/const _LEDVER = 3/.test(src)) ok("소스: 원장 판을 올려 틀린 척도로 쌓인 옛 줄을 버린다");
   else bad("소스: 원장 판이 그대로다 — 옛 음수 줄이 keepDays 동안 결과를 끌고 간다");
+
+  /* [V33.179] ★고침이 한 박자 늦으면 안 된다.★ maxTs 는 학습이 기록하므로, 배포 직후의
+     ★옛 모델 레코드★ 에는 없다. "없으면 종전대로" 로 두면 첫 재학습은 여전히 틀린 음수를 내고
+     그 값이 하루 더 화면에 남는다(실제로 그렇게 남았다). 표에서 되찾을 수 있어야 한다. */
+  if (/SELECT MAX\(ts\) AS mx FROM/.test(src) && /id <= \?/.test(src))
+    ok("소스: 옛 모델 레코드는 MAX(ts) WHERE id ≤ maxId 로 학습 최대관측시각을 되찾는다(첫 학습부터 적용)");
+  else bad("소스: maxTs 폴백이 없다 — 고침이 두 번째 학습부터 듣는다");
+  if (/pastSkipped/.test(src) && /ts <= \?/.test(src))
+    ok("소스: 걸러낸 과거표본 수를 계측해 남긴다 — 가설이 아니라 숫자로 확인된다");
+  else bad("소스: 오염 규모를 계측하지 않는다 — 고쳤는지 확인할 방법이 없다");
+
+  // 되찾기 산식이 옳은지 — 학습창이 'ts 상위 N' 이므로 MAX(ts | id≤maxId) 는 학습표본의 최대 ts 와 같다.
+  const tbl = [];
+  for (let i = 1; i <= 1200; i++) tbl.push({ id: i, ts: (i * 37) % 500 });   // ts 와 id 순서를 일부러 어긋나게
+  const MAXID = 1000;
+  const existed = tbl.filter((r) => r.id <= MAXID);
+  const recovered = Math.max(...existed.map((r) => r.ts));
+  const window = existed.slice().sort((a, b) => b.ts - a.ts).slice(0, 300);   // ts DESC LIMIT 300 = 학습창
+  const trueMax = Math.max(...window.map((r) => r.ts));
+  if (recovered === trueMax) ok(`되찾기 산식 확인 — MAX(ts|id≤maxId)=${recovered} = 학습창 최대 ts (ts·id 순서가 어긋나도 성립)`);
+  else bad(`되찾기 산식이 틀렸다(${recovered} ≠ ${trueMax})`);
 }
 
 console.log(fails ? "\n전진 원장 계약 위반 " + fails + "건 — 배포 차단" : "\n  ok   전진 원장 계약 통과");

@@ -2788,7 +2788,7 @@ async function applySignalTypeWeights(DB, cfg) {
 // ============================================================================
 // [V33.55] 빌드 버전 — SWR L2 캐시 키에 섞어 '배포 = 판단 캐시 자동 무효화'를 만든다.
 //   판정 로직을 고쳐도 옛 캐시가 최대 1시간 재배포되던 문제를 구조적으로 없앤다.
-const _BUILD_VER = "V33.178";
+const _BUILD_VER = "V33.179";
 
 // ═══ [V33.171] 평가 순서 계획 — ★승격과 순환을 교차해 굶주림을 구조적으로 없앤다★ ═══
 //   V33.50 의 형태트리거는 "급한 몇 종목을 앞으로 당긴다"는 의도였으나, 실제 운영로그에서는
@@ -24927,6 +24927,8 @@ async function _miniLogisticTrain(DB, opts) {
       // [V33.140] 원장이 며칠치인지 — "표본이 왜 아직 모자라나" 를 화면이 답할 수 있어야 한다
       fwdDays: _fwd ? _num(_fwd.days, 0) : 0, fwdBatchN: _fwd ? _num(_fwd.batchN, 0) : 0,
       fwdMode: _fwd ? (_fwd.mode || null) : null, maxId: _maxId, maxTs: _maxTs,
+      // [V33.179] 전진창에서 걸러낸 과거(소급) 표본 수 — 종전 음수 IC 의 출처를 숫자로 남긴다.
+      fwdPastSkipped: _fwd ? _fwd.pastSkipped : null,
       holdPass: _holdPass,
       trusted: _trusted };
     await setState(DB, opts.stateKey, model);
@@ -24934,6 +24936,8 @@ async function _miniLogisticTrain(DB, opts) {
            (_bIC != null ? " 블록IC " + _bIC.toFixed(4) + " t " + (_tv || 0).toFixed(2) : " (블록 부족)") +
            (_fwd && _fwd.ready ? " 전진IC " + _num(_fwd.ic, 0).toFixed(4) + "(n" + _fwd.n + ")"
                                : " 전진" + (_fwd ? _fwd.n : 0) + "/" + ICGATE.minForward) +
+           // [V33.179] 걸러낸 과거표본 수를 함께 적는다 — 종전 전진 IC 가 무엇으로 계산됐는지의 증거.
+           (_fwd && _num(_fwd.pastSkipped, 0) > 0 ? " (과거표본 " + _fwd.pastSkipped + "건 제외)" : "") +
            " → " + (function () { const a = expertAdmit(model); return a.tier === "full" ? "위원회 정식합류"
              : a.admit ? ("위원회 잠정합류(가중 ×" + a.mult.toFixed(2) + ") — " + a.why) : ("합류 보류 — " + a.why); })();
    } catch (e) { return "[" + opts.tag + "] 학습 실패: " + (e && e.message); }
@@ -25322,6 +25326,7 @@ async function memoTrainNightly(DB) {
     model.fwdN = _fwd ? _fwd.n : 0; model.fwdReady = !!(_fwd && _fwd.ready);
     model.fwdDays = _fwd ? _num(_fwd.days, 0) : 0; model.fwdBatchN = _fwd ? _num(_fwd.batchN, 0) : 0;
     model.fwdMode = _fwd ? (_fwd.mode || null) : null; model.maxId = _maxId; model.maxTs = _maxTs;
+    model.fwdPastSkipped = _fwd ? _fwd.pastSkipped : null;   // [V33.179] 위 주석 참조
     // [V33.143] 문턱을 가족 크기에서 구한다(MEMOML.icTMin 상수 대신). 기록도 남긴다.
     let _memoFam = null; try { _memoFam = await getState(DB, "ic_family", null); } catch (e) {}
     const _memoTMin = icTMinNow(_memoFam);
@@ -26892,13 +26897,26 @@ async function icForwardCheck(DB, opts) {
          느리지만 그게 정직한 속도다. (V33.104 가 겪은 '0/400 영구정체' 와는 다르다:
           그때 기준은 ts > 학습 벽시계였고, 봉 날짜는 언제나 그보다 과거라 구조적으로 0 이었다.
           여기 기준은 ts > 학습표본의 최대 봉날짜이므로 다음 거래일이면 채워진다.)
-       ※ maxTs 가 없는 옛 모델 레코드는 종전대로 동작한다 — 다음 재학습 때 기록된다. */
+       ※ [V33.179] ★옛 모델 레코드에도 지금 당장 적용한다.★ 처음엔 "maxTs 가 없으면 종전대로,
+         다음 재학습 때 기록된다" 로 두었는데, 그러면 고침이 ★두 번째 학습부터★ 듣는다.
+         첫 학습은 여전히 틀린 음수를 내고 그 값이 하루 더 화면에 남는다 — 실제로 그랬다.
+         되찾을 수 있다: 학습 당시 존재하던 행은 id ≤ maxId 이고, 학습창은 그 중 ts 상위 N 개다.
+         따라서 학습표본의 최대 관측시각 = MAX(ts) WHERE id ≤ maxId — 표에서 한 번 물어보면 된다. */
     let _where, _bindVal, _mode, _order;
     let _tsGuard = 0;
+    const _sfv = o.sampleFeatVer != null ? o.sampleFeatVer : o.featVer;
     if (_num(prev.maxId, 0) > 0) {
       _where = "id > ?"; _mode = "id"; _order = "id ASC";
       _bindVal = Math.max(_num(prev.maxId, 0), _num(_led.hwmId, 0));
       _tsGuard = _num(prev.maxTs, 0);
+      if (!(_tsGuard > 0)) {
+        try {
+          const _mr = await DB.prepare(
+            "SELECT MAX(ts) AS mx FROM " + o.table + " WHERE featver = ? AND id <= ?"
+          ).bind(_sfv, _num(prev.maxId, 0)).first();
+          _tsGuard = _num(_mr && _mr.mx, 0);
+        } catch (e) {}
+      }
       if (_tsGuard > 0) { _where += " AND ts > ?"; _mode = "id+ts"; }
     } else if (o.hasInsTs) {
       _where = "COALESCE(ins_ts, ts) > ?"; _mode = "ins_ts"; _order = "ats ASC";
@@ -26915,9 +26933,22 @@ async function icForwardCheck(DB, opts) {
       " WHERE featver = ? AND " + _where + " ORDER BY " + _order + " LIMIT 4000"
     );
     const rs = await (_tsGuard > 0
-      ? _st0.bind(o.sampleFeatVer != null ? o.sampleFeatVer : o.featVer, _bindVal, _tsGuard)
-      : _st0.bind(o.sampleFeatVer != null ? o.sampleFeatVer : o.featVer, _bindVal)).all();
+      ? _st0.bind(_sfv, _bindVal, _tsGuard)
+      : _st0.bind(_sfv, _bindVal)).all();
     const rows = (rs && rs.results) || [];
+    /* [V33.179] ★오염 규모를 숫자로 남긴다.★ "소급표본이 전진창을 채우고 있었다" 는 코드를 읽어
+       세운 가설이다 — 가설은 계측해서 확인해야 한다(이번에도 다른 가설 하나가 계측으로 뒤집혔다).
+       걸러낸 '과거' 행이 몇 건인지 한 번 세어 모델에 남긴다. 이 값이 크면 종전 전진 IC 는
+       학습구간보다 과거인 시장에서 나온 숫자였다는 직접 증거가 된다. */
+    let _pastSkipped = null;
+    if (_tsGuard > 0) {
+      try {
+        const _pr = await DB.prepare(
+          "SELECT COUNT(*) AS n FROM " + o.table + " WHERE featver = ? AND id > ? AND ts <= ?"
+        ).bind(_sfv, _bindVal, _tsGuard).first();
+        _pastSkipped = _num(_pr && _pr.n, 0);
+      } catch (e) {}
+    }
 
     // 이번 배치(= 아직 세지 않은 행)의 IC 를 잰다.
     let _batchN = 0;
@@ -26977,7 +27008,9 @@ async function icForwardCheck(DB, opts) {
     return { n: _nSum, ic: _icPooled != null ? +_icPooled.toFixed(5) : null,
              blockIC: _icPooled != null ? +_icPooled.toFixed(5) : null,
              t: _t, ready: _ready, mode: _mode,
-             days: _v.length, batchN: _batchN, df: _df, minDays: FWDLED.minDays };
+             days: _v.length, batchN: _batchN, df: _df, minDays: FWDLED.minDays,
+             // [V33.179] 계측 결과 — 전진창에서 걸러낸 '과거(소급적재)' 행 수. 위 주석 참조.
+             pastSkipped: _pastSkipped, tsGuard: _tsGuard || null };
   } catch (e) { return null; }
 }
 
