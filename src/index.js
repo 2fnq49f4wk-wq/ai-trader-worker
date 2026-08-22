@@ -2788,7 +2788,7 @@ async function applySignalTypeWeights(DB, cfg) {
 // ============================================================================
 // [V33.55] 빌드 버전 — SWR L2 캐시 키에 섞어 '배포 = 판단 캐시 자동 무효화'를 만든다.
 //   판정 로직을 고쳐도 옛 캐시가 최대 1시간 재배포되던 문제를 구조적으로 없앤다.
-const _BUILD_VER = "V33.201";
+const _BUILD_VER = "V33.202";
 
 // ═══ [V33.171] 평가 순서 계획 — ★승격과 순환을 교차해 굶주림을 구조적으로 없앤다★ ═══
 //   V33.50 의 형태트리거는 "급한 몇 종목을 앞으로 당긴다"는 의도였으나, 실제 운영로그에서는
@@ -10296,7 +10296,15 @@ async function portfolioStatsNightly(DB) {
            " 위험대비 " + all.riskReturn.toFixed(3) +
            " · SQN " + all.sqn.toFixed(2) + "(df" + all.edgeDf + ")" +
            " Sortino " + all.sortino.toFixed(2) + " 거래수열Ulcer " + all.tradeSeqUlcer.toFixed(2) +
-           (all.tradeSeqUpi != null ? " UPI " + all.tradeSeqUpi.toFixed(2) : "");
+           (all.tradeSeqUpi != null ? " UPI " + all.tradeSeqUpi.toFixed(2) : "") +
+           /* [V33.202] PSR/DSR 은 계산해서 port_stats 에 넣고 있었는데 ★문장에는 없었다★.
+              그래서 이 값이 파이프라인 완주 뒤에도 한 번도 눈에 보이지 않았다. SQN 만 보면
+              "4.87 이면 훌륭하다" 로 읽히는데, 시장 셋과 전략 여럿을 동시에 재고 그중 좋은 것을
+              보는 상황에서는 ★그 최대치가 운으로도 어느 정도 올라간다★ — DSR 이 그걸 뺀 값이다.
+              둘을 나란히 적어야 SQN 이 과신인지 아닌지가 한 줄로 읽힌다. */
+           (all.psr != null ? " · PSR " + (all.psr * 100).toFixed(1) + "%" : "") +
+           (all.dsr != null ? " DSR " + (all.dsr * 100).toFixed(1) + "%(시도 " + all.dsrTrials +
+                              "종, 기대최대SR " + _num(all.dsrSR0, 0).toFixed(4) + ")" : "");
   } catch (e) { return "[PORT] fail: " + (e && e.message); }
 }
 
@@ -33779,9 +33787,28 @@ async function mlCalibrateCommittee(DB) {
        → 절편이 있는 가족까지 넓히고 시간순 블록 교차검증으로 고른다(calFitBest 주석 참조).
        못 이기면 온도가 그대로 남으므로 최악이 '지금과 같음' 이다. */
     const _pairs = preds.map(function (r) { return [r.p, r.y]; });
-    const fit = calFitBest(_pairs, { tLo: 0.5, tHi: 6 });
+    const _tLo = 0.5, _tHi = 6;
+    const fit = calFitBest(_pairs, { tLo: _tLo, tHi: _tHi });
+    /* [V33.202] ★적합된 파라미터가 경계에 붙으면 그건 최적값이 아니라 제약이다.★
+       실측: T 가 정확히 6.00(=tHi) 으로 나왔는데 문장은 그냥 "온도(T 6.00)" 라고만 적었다.
+       T 를 키운다는 것은 로짓을 그만큼 나눈다는 뜻이고, 경계에 닿았다는 것은
+       "더 눌러야 하는데 못 눌렀다" 는 뜻이다 — 즉 위원회가 심하게 과신하고 있다.
+       그리고 온도는 ★치우침을 표현할 수 없다★(0.5 는 언제나 0.5 로 간다). 그래서
+       예측 평균과 실제 양성률을 함께 재서, 남은 오차가 산포 문제인지 치우침인지 가른다.
+       재는 데 드는 비용은 덧셈 두 번이고, 이것이 없으면 ECE 가 왜 안 줄었는지 알 수 없다. */
+    let _pMean = 0, _yMean = 0;
+    for (const _r of _pairs) { _pMean += _num(_r.p, 0); _yMean += _num(_r.y, 0); }
+    _pMean /= Math.max(1, _pairs.length); _yMean /= Math.max(1, _pairs.length);
+    const _bias = _pMean - _yMean;
+    const _atBound = (fit && String(fit.mode || "temp") === "temp" && typeof fit.T === "number" &&
+                      (fit.T >= _tHi - 1e-6 || fit.T <= _tLo + 1e-6));
     await setState(DB, "committee_cal", Object.assign({}, fit, { featVer: LUXML.featVer, ts: Date.now() }));
-    return "[CAL] 위원회 보정 " + _calDesc(fit) + " ECE " + (_num(fit.eceRaw, 0) * 100).toFixed(1) +
+    return "[CAL] 위원회 보정 " + _calDesc(fit) +
+           (_atBound ? " ★온도가 탐색범위 경계(" + fit.T.toFixed(2) + ")에 붙었다 — 최적값이 아니라 제약이다★" : "") +
+           " 예측평균 " + (_pMean * 100).toFixed(1) + "% vs 실제양성률 " + (_yMean * 100).toFixed(1) +
+           "%(치우침 " + (_bias >= 0 ? "+" : "") + (_bias * 100).toFixed(1) + "pp" +
+           (Math.abs(_bias) > 0.03 ? " — 온도로는 못 고치는 종류" : "") + ")" +
+           " ECE " + (_num(fit.eceRaw, 0) * 100).toFixed(1) +
            "% → " + (_num(fit.ece, 0) * 100).toFixed(1) + "% (n=" + preds.length +
            ", 교차검증 " + JSON.stringify(fit.cv) + ")";
   } catch (e) { return "[CAL] fail: " + (e && e.message); }
@@ -36394,10 +36421,13 @@ async function mlSelfReview(DB) {
     if (rows.length < 10) return "[SELFREVIEW] 청산표본 " + rows.length + "/10 — 대기";
     function entryTag(r) { const m = /#entry=(\S+)/.exec(r.reason || ""); if (m) return m[1]; const m2 = /\[([^\]]+)\]/.exec(r.reason || ""); return m2 ? m2[1] : "?"; }
     let tot = 0, wins = 0, gW = 0, gL = 0, slip = 0;
+    let gWp = 0, gLp = 0;   // [V33.202] 수익률 기준 이익합·손실합(통화중립)
     const byEntry = {}, byMkt = {};
     for (const r of rows) {
       const pnl = _num(r.pnl, 0), pct = _num(r.pnl_pct, 0);
       tot += pnl; if (pnl > 0) { wins++; gW += pnl; } else gL += Math.abs(pnl);
+      // [V33.202] 통화중립 손익비 — 금액 PF 는 원+달러가 섞여 무의미하다(아래 주석 참조).
+      if (pct > 0) gWp += pct; else gLp += Math.abs(pct);
       const e = entryTag(r); (byEntry[e] = byEntry[e] || { n: 0, pnl: 0, w: 0, R: [] }); byEntry[e].n++; byEntry[e].pnl += pnl; byEntry[e].R.push(pct); if (pnl > 0) byEntry[e].w++;
       // [V33.125] 통화중립 누적 — 아래 worst 정렬·진단이 이걸 쓴다(byEntry.pnl 은 통화가 섞인다).
       byEntry[e].sumPct = _num(byEntry[e].sumPct, 0) + pct;
@@ -36405,6 +36435,21 @@ async function mlSelfReview(DB) {
       const sm = /STOP (-?\d+\.\d+)%/.exec(r.reason || ""); if (sm && pct < parseFloat(sm[1]) - 0.05) slip++;
     }
     const n = rows.length, winRate = wins / n, pf = gL > 0 ? gW / gL : 99;
+    /* [V33.202] ★같은 밤, 같은 원장을 두고 두 화면이 다른 손익비를 말하고 있었다.★
+         [SELFREVIEW] PF 0.67          ← gW/gL, 원화와 달러를 그대로 더한 값
+         [PORT]       손익비(수익률) 2.15 ← 수익률 기준 omega(통화중립)
+       V33.125 는 이 문제를 알아채고 ★정렬★ 을 수익률로 바꿨고, V33.135 는 portstats 의
+       금액 PF 를 아예 null 로 지웠다("실제로 all 은 0.716 인데 omega 는 2.278"). 그런데
+       selfreview 의 ★헤드라인 pf 와 진단 게이트★ 는 고쳐지지 않고 남았다.
+       그냥 표시가 틀린 정도가 아니다 — 바로 아래 진단이 pf 를 조건으로 쓴다:
+         승률 ≥ 0.5 · 손익비 ≥ 1.3 · 총손익 < 0  →  "소수 대형손실·사이징 집중"
+       오늘 실측이 정확히 그 경우다(승률 0.563 · omega 2.15 · 시장별 손익 전부 마이너스).
+       그런데 섞인 pf 가 0.67 이라 조건이 거짓이 되어, ★맞는 진단이 나올 수 없었다★.
+       시스템이 답을 알고 있는데 단위 하나 때문에 말하지 못한 것이다. */
+    const pfPct = gLp > 1e-9 ? gWp / gLp : (gWp > 0 ? 99 : 0);
+    // 총손익도 마찬가지다 — 통화가 섞인 합의 부호에 진단을 걸 수 없다.
+    //   시장별 금액은 단일통화라 유효하므로, "손실을 낸 시장이 있는가" 로 본다.
+    const _mktNeg = Object.keys(byMkt).filter(function (mk) { return byMkt[mk].pnl < 0; });
     // [V33.125] ★통화 혼합 수정★ — 종전엔 원화·달러 손익을 그대로 더해 정렬했다.
     //   실측 스냅샷: totalPnl −3,005,594 로 표시됐는데 내역은
     //     kr −2,698,740(KRW) · bdkr −307,134(KRW) · us +2,752(USD) · cm −2,150(USD) · bdus −322(USD)
@@ -36416,7 +36461,11 @@ async function mlSelfReview(DB) {
       return { e: e, n: byEntry[e].n, pnl: byEntry[e].pnl, sumPct: _num(byEntry[e].sumPct, 0), w: byEntry[e].w };
     }).sort(function (a, b) { return a.sumPct - b.sumPct; }).slice(0, 3);
     const diagnosis = [];
-    if (winRate >= 0.5 && pf >= 1.3 && tot < 0) diagnosis.push("승률·손익비는 양호하나 총손익 마이너스 → 소수 대형손실·사이징 집중이 문제(꼬리리스크 상한 검토)");
+    if (winRate >= 0.5 && pfPct >= 1.3 && _mktNeg.length)
+      diagnosis.push("승률 " + (winRate * 100).toFixed(0) + "% · 손익비(수익률) " + pfPct.toFixed(2) +
+                     " 로 ★거래당 기대값은 플러스★ 인데 " + _mktNeg.join(",").toUpperCase() +
+                     " 시장 금액은 마이너스 → 이기는 거래보다 지는 거래에 돈이 더 실려 있다" +
+                     "(소수 대형손실·사이징 집중 — 꼬리리스크 상한·포지션 상한 검토)");
     for (const w of worst) if (w.sumPct < 0 && w.w / w.n < 0.4) diagnosis.push("전략 " + w.e + " 승률" + (w.w / w.n * 100).toFixed(0) + "%·수익률합" + w.sumPct.toFixed(1) + "% → 저성과(게이트 강화/비활성 검토)");
     for (const mk of Object.keys(byMkt)) if (byMkt[mk].pnl < 0)
       diagnosis.push(mk.toUpperCase() + " 시장 손익 " + byMkt[mk].pnl.toFixed(0) +
@@ -36442,7 +36491,11 @@ async function mlSelfReview(DB) {
     const _edgeNote = [];
     for (const e of _cand) {
       const st = _edgeStats(byEntry[e].R);
-      if (byEntry[e].pnl < 0 && st.pNeg <= _alpha) autoDisable.push(e);
+      /* [V33.202] 판정 재료를 금액에서 수익률로 바꾼다. V33.125 가 ★정렬★ 에서 이미 고친 문제인데
+         (원화 거래는 자릿수가 1,000배라 항상 최악으로 뜬다) ★차단★ 은 여전히 금액을 보고 있었다.
+         t 검정 자체는 처음부터 수익률(byEntry[e].R)로 하고 있었으므로, 앞의 관문만 단위가 달랐다 —
+         한국 거래가 섞인 전략은 관문을 항상 통과하고, 미국 전용 전략은 같은 손실에도 통과하지 못한다. */
+      if (_num(byEntry[e].sumPct, 0) < 0 && st.pNeg <= _alpha) autoDisable.push(e);
       _edgeNote.push({ strategy: e, n: st.n, sqn: st.sqn, pNeg: +st.pNeg.toFixed(4),
                        expectancy: +st.mean.toFixed(3) });
     }
@@ -36455,6 +36508,9 @@ async function mlSelfReview(DB) {
     const review = { ts: Date.now(), windowDays: 60, n: n, winRate: +winRate.toFixed(3), profitFactor: +pf.toFixed(2),
       // [V33.125] totalPnl 은 ★통화가 섞인 합★ 이다(KRW+USD). 그대로 두되 이름으로 경고하고,
       //   해석 가능한 통화중립 수치를 함께 낸다. 시장별 금액은 byMarket 에 통화별로 남아 있다.
+      profitFactorMixedCcy: true,
+      profitFactorNote: "통화혼합(원+달러) — 금액 기준 PF 는 무의미. 통화중립 지표는 profitFactorPct",
+      profitFactorPct: +pfPct.toFixed(2),
       totalPnl: +tot.toFixed(0), totalPnlMixedCcy: true,
       sumPct: +rows.reduce(function (a2, r2) { return a2 + _num(r2.pnl_pct, 0); }, 0).toFixed(2),
       avgPct: +(rows.reduce(function (a2, r2) { return a2 + _num(r2.pnl_pct, 0); }, 0) / Math.max(1, n)).toFixed(3),
@@ -36467,7 +36523,11 @@ async function mlSelfReview(DB) {
       edgeAlpha: +_alpha.toFixed(5),
       diagnosis: diagnosis };
     await setState(DB, "ai_selfreview", review);
-    return "[SELFREVIEW] n=" + n + " 승률" + (winRate * 100).toFixed(0) + "% PF" + pf.toFixed(2) + " 손익" + tot.toFixed(0) + " | 진단: " + diagnosis.join(" / ");
+    // 헤드라인에 통화혼합 값을 앞세우지 않는다 — 읽는 사람이 그 숫자로 판단하기 때문이다.
+    //   금액은 시장별로만 말한다(단일통화라 유효하다). 진단 안에 이미 시장별로 적혀 있다.
+    return "[SELFREVIEW] n=" + n + " 승률" + (winRate * 100).toFixed(0) +
+           "% 손익비(수익률) " + pfPct.toFixed(2) +
+           " | 진단: " + diagnosis.join(" / ");
   } catch (e) { return "[SELFREVIEW] fail: " + (e && e.message); }
 }
 

@@ -183,7 +183,11 @@ function gauss() { return Math.sqrt(-2 * Math.log(rnd())) * Math.cos(2 * Math.PI
     [/_ms\.avgPnl < 0 && _msSig/, "시장×전략 라이브 차단이 유의성을 확인한다"],
     [/if \(!\(_num\(s\.pNeg, 1\) <= _sigAlpha\)\) continue;/, "신호 자동비활성이 유의성을 확인한다"],
     [/wr <= sadCfg\.winRateOff && _sig/, "전략 자동비활성이 유의성을 확인한다"],
-    [/byEntry\[e\]\.pnl < 0 && st\.pNeg <= _alpha/, "mlSelfReview 자동차단이 유의성을 확인한다"]
+    // [V33.202] 관문의 손실 판정을 금액에서 ★수익률(sumPct)★ 로 바꿨다 — trades.pnl 은 원화와
+    //   달러가 한 열에 섞여 있어, 금액으로 재면 한국 거래가 섞인 전략만 관문을 통과한다
+    //   (check-ccy-mix 가 금액 형태를 금지한다). 이 검사의 계약은 "맨 문턱으로 회귀하지 않는가",
+    //   즉 ★st.pNeg <= _alpha 가 남아 있는가★ 이므로 그 부분은 그대로 요구한다.
+    [/sumPct[^\n]{0,40}< 0 && st\.pNeg <= _alpha/, "mlSelfReview 자동차단이 유의성을 확인한다"]
   ];
   for (const [re, what] of need) {
     if (re.test(src)) ok(what);
