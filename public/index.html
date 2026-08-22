@@ -8,7 +8,7 @@
      인데, 지금까지 화면에서 그걸 알 방법이 전혀 없었다(카카오톡 인앱 브라우저는 특히 강하게 캐시한다).
      서버가 내려주는 build 와 이 값을 비교해 다르면 배너로 알린다.
      ※ src/index.js 의 _BUILD_VER 와 항상 같아야 한다 — check-html-js 가 강제한다. -->
-<meta name="lux-build" content="V33.187">
+<meta name="lux-build" content="V33.188">
 <title>LUX-ENGINE V10</title>
 <!-- ══ [V33.156] 설치형 앱(PWA) — 폰·PC 에서 홈화면/독에 담아 앱처럼 연다 ══
      · manifest  : 이름·아이콘·standalone 표시(주소창 없이 앱처럼)
@@ -16549,6 +16549,9 @@ html:root .page > *{ flex-shrink:0; }
     if(a && a.tier === 'full') return {on:1, tag:'정식', cls:'ok', mult:1, why:a.why};
     if(a && a.admit) return {on:1, tag:'잠정 ×'+(a.mult!=null?a.mult.toFixed(2):'?'), cls:'prov',
                              mult:(a.mult!=null?a.mult:0), why:a.why};
+    /* [V33.188] '재 봤더니 못 미쳤다' 와 '아직 잴 수 없다' 를 나눠 적는다.
+       홀드아웃 블록이 사흘치뿐이면 그 t 는 모델의 방향이 아니라 그 사흘의 국면이다. */
+    if(a && a.tier === 'pending') return {on:0, tag:'판정 대기', cls:'warn', why:a.why};
     return {on:0, tag:'보류', cls:'warn', why:(a&&a.why)||'판정 대기'};
   }
   function renderCommittee(d){
@@ -16854,6 +16857,9 @@ html:root .page > *{ flex-shrink:0; }
       if(A && A.tier === 'full')      body = col('가동', C.pos)+' <span class="sub">'+icTxt+sig+fwd+'</span>';
       else if(A && A.admit)           body = col('잠정가동 ×'+(has(A.mult)?A.mult.toFixed(2):'?'), C.amb)
                                         +' <span class="sub">'+icTxt+sig+fwd+'</span>';
+      /* [V33.188] 관측 블록이 모자라 ★판정 자체를 못 한★ 경우를 '합류 보류'(=재 봤더니 못 미침)와
+         구분한다. 앞은 기다리는 것이고 뒤는 고치는 것이라 사람이 취할 행동이 다르다. */
+      else if(A && A.tier === 'pending') body = col('판정 대기', C.amb)+' <span class="sub">'+esc(A.why||'')+'</span>';
       else if(o.trained)              body = col('합류 보류', C.neg)+' <span class="sub">'+esc(A&&A.why?A.why:'판정 대기')+'</span>';
       /* [V33.181] ★판 불일치를 '표본수집' 이라 적지 않는다.★ 종전엔 모델이 아예 없는 것과
          옛 판(featVer) 모델이라 못 쓰는 것을 한 갈래로 묶어, 표본이 문턱을 넘었는데도
@@ -17076,8 +17082,10 @@ html:root .page > *{ flex-shrink:0; }
       rows3.push(['단타 합류 로짓 계수', CH.confK && has(CH.confK.kEff)
         ? em(CH.confK.kEff.toFixed(3)) + ' <span class="sub">실측 '+CH.confK.k.toFixed(3)+' · t '+(has(CH.confK.t)?CH.confK.t.toFixed(2):'—')+' · n '+n0(CH.confK.n)+' (종전 상수 0.50)</span>'
         : '<span class="sub">미측정 → 보수 0.25 (모델이 이미 본 증거라 잔여효과만 재야 함)</span>']);
-      rows3.push(['최종 확률보정 T2', CH.finalCal && has(CH.finalCal.T)
-        ? em(CH.finalCal.T.toFixed(2)) + ' <span class="sub">ECE '+(CH.finalCal.eceRaw*100).toFixed(1)+'% → '+(CH.finalCal.ece*100).toFixed(1)+'% · n '+n0(CH.finalCal.n)+'</span>'
+      // [V33.188] 보정기가 온도 한 가족이 아니다 — T 유무로 판정하면 베타/플랫으로 적합된 날
+      //   화면이 '미측정' 이라 거짓말한다. 서버가 실어 보낸 desc 를 그대로 쓴다.
+      rows3.push(['최종 확률보정 T2', CH.finalCal && has(CH.finalCal.ece)
+        ? em(esc(CH.finalCal.desc || ('T '+(has(CH.finalCal.T)?CH.finalCal.T.toFixed(2):'—')))) + ' <span class="sub">ECE '+(CH.finalCal.eceRaw*100).toFixed(1)+'% → '+(CH.finalCal.ece*100).toFixed(1)+'% · n '+n0(CH.finalCal.n)+'</span>'
         : '<span class="sub">미측정 → 보정 없음 (표본 대기)</span>']);
       rows3.push(['이중헤드 사분면 로짓', CH.dualShift && CH.dualShift.shift
         ? '<span class="sub">'+Object.keys(CH.dualShift.shift).map(function(k){ return esc(k)+' '+(CH.dualShift.shift[k]>=0?'+':'')+CH.dualShift.shift[k]; }).join(' · ')+' (n '+n0(CH.dualShift.n)+')</span>'

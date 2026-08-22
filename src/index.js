@@ -2788,7 +2788,7 @@ async function applySignalTypeWeights(DB, cfg) {
 // ============================================================================
 // [V33.55] 빌드 버전 — SWR L2 캐시 키에 섞어 '배포 = 판단 캐시 자동 무효화'를 만든다.
 //   판정 로직을 고쳐도 옛 캐시가 최대 1시간 재배포되던 문제를 구조적으로 없앤다.
-const _BUILD_VER = "V33.187";
+const _BUILD_VER = "V33.188";
 
 // ═══ [V33.171] 평가 순서 계획 — ★승격과 순환을 교차해 굶주림을 구조적으로 없앤다★ ═══
 //   V33.50 의 형태트리거는 "급한 몇 종목을 앞으로 당긴다"는 의도였으나, 실제 운영로그에서는
@@ -19581,7 +19581,7 @@ async function handleRequest(request, env, ctx) {
               anlRevK: await (async function () { try { const a = await getState(env.DB, "analyst_rev_k", null);
                 return a ? { k: _num(a.k, null), kEff: _num(a.kEff, null), t: _num(a.t, null),
                              n: _num(a.n, 0), minN: _num(a.minN, 300) } : null; } catch (e) { return null; } })(),
-              finalCal: _fc ? { T: _num(_fc.T, null), ece: _num(_fc.ece, null), eceRaw: _num(_fc.eceRaw, null), n: _num(_fc.n, 0) } : null,
+              finalCal: _fc ? { mode: _fc.mode || "temp", desc: _calDesc(_fc), T: _num(_fc.T, null), ece: _num(_fc.ece, null), eceRaw: _num(_fc.eceRaw, null), n: _num(_fc.n, 0) } : null,
               confK: await (async function () { try { const c = await getState(env.DB, "scalp_conf_k", null);
                 return c ? { k: _num(c.k, null), kEff: _num(c.kEff, null), t: _num(c.t, null), n: _num(c.n, 0) } : null; } catch (e) { return null; } })(),
               blendK: await (async function () { try { const b = await getState(env.DB, "decision_blend_k", null);
@@ -26831,6 +26831,16 @@ const ICGATE = {
   //   오합류율은 3.2% × 17.4% ≈ 0.56% 로 사실상 그대로 유지되면서 대기만 풀린다.
   minForward: 400,
   forwardFloor: 0,
+  /* [V33.188] ★블록이 몇 개인지 보지 않고 유의성만 읽고 있었다.★
+     운영 실측: XALPHA 는 홀드아웃 블록이 ★3개★(icDf 2) 뿐인데 "홀드아웃 t -2.58 < 1.65 —
+     잡음과 구별되지 않는다" 로 판정됐고, 화면은 그걸 '학습 방향과 반대' 로 읽혔다.
+     블록 3개는 사흘치 횡단면이다. 그 사흘이 한 국면(예: KR CRASH)이면 어떤 모멘텀·플로우
+     피처든 부호가 뒤집힌다 — 그건 모델의 방향이 아니라 그 사흘의 성질이다.
+     _tToZ 로 자유도 보정은 이미 하고 있지만, 보정은 ★같은 값을 덜 믿게★ 할 뿐
+     '측정한 적 없음' 과 '측정했는데 못 미침' 을 구분해 주지는 않는다. 그 둘은 처방이 다르다:
+     앞은 기다리는 것이고 뒤는 고치는 것이다. 화면이 둘을 같은 문장으로 말하면 사람이 잘못 고친다.
+     ※ 합류 여부는 달라지지 않는다(둘 다 미합류) — 달라지는 건 ★사유★ 다. */
+  minBlocks: 5,      // 홀드아웃 블록(=서로 다른 날) 이 이보다 적으면 유의성 판정 자체를 보류한다
   forwardTMin: 1.0,
   // ═══ [V33.143] ★본페로니 문턱을 상수에서 '세어서 정하는 값' 으로 바꾼다★ ═══
   //   tMin: 2.50 은 "전문가 8종 동시검정" 을 뜻했다(α=0.05/8 → z≈2.50). 그런데 그 8 은
@@ -26947,6 +26957,14 @@ function expertAdmit(m) {
       return { admit: false, mult: 0, tier: "reject",
                why: "전진 IC " + fwdIC.toFixed(4) + " ≤ 0 — 학습 밖에서 방향이 반대다(문턱 문제가 아니다)" };
 
+    // [V33.188] 블록 수 부족은 ★'못 미쳤다' 가 아니라 '아직 못 쟀다' 다★ (ICGATE.minBlocks 주석).
+    //   trusted 지름길보다 앞에 둔다 — 사흘치로 얻은 유의성으로 정식 합류시키면 안 된다.
+    const _K = (m.valICdf != null && isFinite(_num(m.valICdf, NaN))) ? _num(m.valICdf, 0) + 1 : null;
+    const _minK = _num(ICGATE.minBlocks, 5);
+    if (_K != null && _K < _minK)
+      return { admit: false, mult: 0, tier: "pending",
+               why: "홀드아웃 블록 " + _K + "개 < " + _minK + " — 관측 날짜가 모자라 유의성을 판정할 수 없다" +
+                    (t != null ? "(t " + t.toFixed(2) + " 은 사흘 남짓의 한 국면일 뿐이다)" : "") };
     if (m.trusted) return { admit: true, mult: 1, tier: "full", why: "홀드아웃·전진 모두 통과" };
     if (P.enabled === false) return { admit: false, mult: 0, tier: "reject", why: "잠정합류 비활성" };
     if (t == null || bIC == null) return { admit: false, mult: 0, tier: "reject", why: "블록 유의성 미측정" };
@@ -30210,6 +30228,253 @@ async function mlGuardObserve(DB, predP, won) {
   } catch (e) { return false; }
 }
 // ════════════════════════════════════════════════════════════════════════════
+// [V33.188] ★확률 보정을 '온도' 에서 '베타 보정' 으로 넓힌다 — 온도로는 잴 수 없는 오차가 있었다★
+//
+//   운영 실측(2026-08-22 스냅샷):
+//     committee_cal = { T: 6, ece: 0.1719,
+//                       diagram: [{ bin:"0.5-0.6", n:400, predicted:0.514, actual:0.343 }] }
+//   ★모형이 51.4% 라고 말한 자리에서 실제 승률은 34.3% 였다.★ 17%p 과신이고,
+//   진입문턱(us 0.503 / kr 0.45)이 바로 그 구간에 있다. 이 숫자가 켈리·사이징·게이트로
+//   그대로 흘러가므로, 여기가 틀리면 뒤의 모든 판단이 같은 방향으로 틀린다.
+//
+//   ★왜 온도로는 못 고치나★ 온도보정은 p_cal = σ(logit(p)/T) 다. 이 식은 T 가 무엇이든
+//   ★p=0.5 를 0.5 로 고정★ 한다(logit 0.5 = 0). 즉 '뾰족함' 만 줄일 뿐 ★치우침(bias)★ 은
+//   구조적으로 표현할 수 없다. 실측은 0.514 → 0.343 이라는 치우침이라, 탐색 상한 T=6 에
+//   붙어 있는데도 ECE 가 17% 로 남았다. 경계에 붙었다는 것 자체가 "이 가족으로는 못 맞춘다"
+//   는 신호였다.
+//
+//   ★무엇으로 바꾸나★ 절편이 있는 가족으로 넓힌다. 세 가족을 겹쳐 두고 교차검증으로 고른다:
+//     ① 온도(1모수)  σ(z/T)                      — 지금까지의 동작
+//     ② 플랫(2모수)  σ(a·z + b)                  — 치우침을 잡는 최소 확장 (Platt 1999)
+//     ③ 베타(3모수)  σ(a·ln p − b·ln(1−p) + c)   — 비대칭·비선형 치우침까지 (Kull et al. 2017)
+//   베타 보정은 [0,1] 위에서 정의돼 양 끝을 억지로 밀지 않고, 3모수뿐이라 수백 건에서도
+//   안정적이다. 등장회귀(isotonic)는 비모수라 이 크기(n=400)에서 과적합한다 — 그래서 뺐다.
+//     · Kull, Silva Filho, Flach (AISTATS 2017) "Beta calibration"
+//     · Guo et al. (ICML 2017) "On Calibration of Modern Neural Networks" — 온도보정의 원전
+//     · Niculescu-Mizil & Caruana (ICML 2005) — 표본이 적을 때 등장회귀가 무너지는 지점
+//
+//   ★모수를 늘리는 일은 공짜가 아니다★ 그래서 학습표본 NLL 로 고르지 않는다(그건 항상
+//   모수 많은 쪽이 이긴다). ★시간순 블록 교차검증★ 으로 고르고, 모수를 늘리려면 CV NLL 이
+//   최소 gainNats 만큼 좋아져야 한다. 표본이 모자라면 아예 후보에 넣지 않는다.
+//   못 이기면 종전 그대로 온도가 남는다 — 이 변경의 최악은 '지금과 같음' 이다.
+const CALFAM = {
+  minPlattN: 150,    // 절편 하나를 더 쓰려면 이만큼은 있어야
+  minBetaN: 250,     // 3모수를 쓰려면 이만큼
+  folds: 5,          // 시간순 연속 블록(무작위 섞기는 시계열에서 낙관편향)
+  minFoldPos: 5,     // 폴드 안에 승/패가 이만큼씩은 있어야 그 폴드를 센다
+  gainNats: 0.002,   // 모수를 늘리려면 CV NLL 이 이만큼은 좋아져야 한다
+  ridge: 1e-3,       // 뉴턴 안정화(분리 가능한 표본에서 발산 방지)
+  iters: 40,
+  maxAbs: 12         // 출력 로그오즈 클램프
+};
+
+// 보정 파라미터 → 로그오즈. ★적용은 여기 한 곳뿐★ — 화면·학습·라이브가 갈라지지 않게.
+function _calZ(cal, p) {
+  const q = _clamp(_num(p, 0.5), 1e-6, 1 - 1e-6);
+  const z = Math.log(q / (1 - q));
+  if (!cal) return z;
+  const m = String(cal.mode || "temp");
+  if (m === "beta") {
+    const a = Math.max(0, _num(cal.a, 0)), b = Math.max(0, _num(cal.b, 0)), c = _num(cal.c, 0);
+    if (!(a > 0 || b > 0)) return z;
+    return a * Math.log(q) - b * Math.log(1 - q) + c;
+  }
+  if (m === "platt") {
+    const a = Math.max(0, _num(cal.a, 0)), b = _num(cal.b, 0);
+    if (!(a > 0)) return z;
+    return a * z + b;
+  }
+  const T = _num(cal.T, 1);
+  if (!(T > 0.2 && T < 12)) return z;
+  return z / T;
+}
+// 보정 적용. cal 이 없거나 값이 이상하면 ★원래 확률 그대로★ 돌려준다(조용히 왜곡하지 않는다).
+function _calApply(cal, p) {
+  try {
+    const q = _clamp(_num(p, 0.5), 1e-6, 1 - 1e-6);
+    const s = _calZ(cal, q);
+    if (!isFinite(s)) return q;
+    return _clamp(1 / (1 + Math.exp(-_clamp(s, -CALFAM.maxAbs, CALFAM.maxAbs))), 0.001, 0.999);
+  } catch (e) { return _clamp(_num(p, 0.5), 0.001, 0.999); }
+}
+// 보정기를 사람 말로. 화면·로그가 "무엇으로 고쳤나" 를 같은 문장으로 쓴다.
+function _calDesc(cal) {
+  if (!cal) return "없음";
+  const m = String(cal.mode || "temp");
+  if (m === "beta") return "베타(a " + _num(cal.a, 0).toFixed(2) + " b " + _num(cal.b, 0).toFixed(2) + " c " + _num(cal.c, 0).toFixed(2) + ")";
+  if (m === "platt") return "플랫(a " + _num(cal.a, 0).toFixed(2) + " b " + _num(cal.b, 0).toFixed(2) + ")";
+  return "온도(T " + _num(cal.T, 1).toFixed(2) + ")";
+}
+
+// d×d 선형계 풀이(부분 피벗). d ≤ 3 이라 이 크기면 충분하고, 실패하면 null 로 물러난다.
+function _solveLin(A, b) {
+  const d = b.length;
+  const M = A.map(function (r, i) { return r.slice().concat([b[i]]); });
+  for (let c = 0; c < d; c++) {
+    let piv = c;
+    for (let r = c + 1; r < d; r++) if (Math.abs(M[r][c]) > Math.abs(M[piv][c])) piv = r;
+    if (!(Math.abs(M[piv][c]) > 1e-12)) return null;
+    const t = M[c]; M[c] = M[piv]; M[piv] = t;
+    for (let r = 0; r < d; r++) {
+      if (r === c) continue;
+      const f = M[r][c] / M[c][c];
+      for (let k = c; k <= d; k++) M[r][k] -= f * M[c][k];
+    }
+  }
+  const out = new Array(d);
+  for (let i = 0; i < d; i++) out[i] = M[i][d] / M[i][i];
+  for (const v of out) if (!isFinite(v)) return null;
+  return out;
+}
+// 뉴턴-랩슨 로지스틱 적합(릿지 포함). 모수가 2~3개뿐이라 몇 회로 수렴한다.
+function _logregFitCore(X, y, lam, d, n) {
+  let w = new Array(d).fill(0);
+  for (let it = 0; it < CALFAM.iters; it++) {
+    const g = new Array(d).fill(0);
+    const H = []; for (let i = 0; i < d; i++) H.push(new Array(d).fill(0));
+    for (let i = 0; i < n; i++) {
+      let z = 0; for (let j = 0; j < d; j++) z += w[j] * X[i][j];
+      const s = 1 / (1 + Math.exp(-_clamp(z, -30, 30)));
+      const r = s - y[i], sw = Math.max(1e-6, s * (1 - s));
+      for (let j = 0; j < d; j++) {
+        g[j] += r * X[i][j];
+        for (let k = 0; k < d; k++) H[j][k] += sw * X[i][j] * X[i][k];
+      }
+    }
+    for (let j = 0; j < d; j++) {
+      g[j] = g[j] / n + lam * w[j];
+      for (let k = 0; k < d; k++) H[j][k] = H[j][k] / n + (j === k ? lam : 0);
+    }
+    const dl = _solveLin(H, g);
+    if (!dl) return null;
+    let mx = 0;
+    for (let j = 0; j < d; j++) { w[j] -= dl[j]; if (Math.abs(dl[j]) > mx) mx = Math.abs(dl[j]); }
+    for (const v of w) if (!isFinite(v)) return null;
+    if (mx < 1e-8) break;
+  }
+  return w;
+}
+
+// 표본 → 세 가족의 설계행렬. p 는 미리 클램프한다(ln 0 방지).
+function _calDesign(pairs, fam) {
+  const X = [], y = [];
+  for (const r of pairs) {
+    const q = _clamp(_num(r[0], 0.5), 1e-4, 1 - 1e-4);
+    const z = Math.log(q / (1 - q));
+    if (fam === "beta") X.push([Math.log(q), -Math.log(1 - q), 1]);
+    else X.push([z, 1]);
+    y.push(_num(r[1], 0) ? 1 : 0);
+  }
+  return { X: X, y: y };
+}
+// 베타 보정 적합 — ★단조성을 강제한다★. a<0 또는 b<0 이면 그 항을 빼고 다시 적합한다
+//   (Kull et al. 2017 의 처방). 단조가 깨진 보정기는 '확률이 높을수록 덜 맞다' 를 주장하는 꼴이라
+//   순위를 뒤집어 버린다 — 보정이 아니라 파괴다.
+function _fitBeta(pairs) {
+  const D = _calDesign(pairs, "beta");
+  let w = _logregFitCore(D.X, D.y, CALFAM.ridge, 3, D.X.length);
+  if (!w) return null;
+  if (w[0] < 0 || w[1] < 0) {
+    const drop0 = w[0] < 0;
+    const X2 = D.X.map(function (r) { return drop0 ? [r[1], r[2]] : [r[0], r[2]]; });
+    const w2 = _logregFitCore(X2, D.y, CALFAM.ridge, 2, X2.length);
+    if (!w2 || w2[0] < 0) return null;
+    w = drop0 ? [0, w2[0], w2[1]] : [w2[0], 0, w2[1]];
+  }
+  return { mode: "beta", a: +w[0].toFixed(6), b: +w[1].toFixed(6), c: +w[2].toFixed(6) };
+}
+function _fitPlatt(pairs) {
+  const D = _calDesign(pairs, "platt");
+  const w = _logregFitCore(D.X, D.y, CALFAM.ridge, 2, D.X.length);
+  if (!w || !(w[0] > 0)) return null;
+  return { mode: "platt", a: +w[0].toFixed(6), b: +w[1].toFixed(6) };
+}
+function _fitTemp(pairs, lo, hi) {
+  const _n = function (T) {
+    let s = 0;
+    for (const r of pairs) {
+      const pc = _calApply({ mode: "temp", T: T }, r[0]);
+      s += -(_num(r[1], 0) * Math.log(pc) + (1 - _num(r[1], 0)) * Math.log(1 - pc));
+    }
+    return s / pairs.length;
+  };
+  let bT = 1, bL = _n(1);
+  const _lo = _num(lo, 0.5), _hi = _num(hi, 6);
+  for (let T = _lo; T <= _hi + 1e-9; T += 0.05) { const v = _n(T); if (v < bL) { bL = v; bT = T; } }
+  return { mode: "temp", T: +bT.toFixed(2) };
+}
+function _calNLL(cal, pairs) {
+  let s = 0;
+  for (const r of pairs) {
+    const pc = _calApply(cal, r[0]);
+    const yy = _num(r[1], 0) ? 1 : 0;
+    s += -(yy * Math.log(pc) + (1 - yy) * Math.log(1 - pc));
+  }
+  return s / pairs.length;
+}
+function _calECE(cal, pairs) {
+  const bins = []; for (let i = 0; i < 10; i++) bins.push({ lo: i / 10, hi: (i + 1) / 10, n: 0, p: 0, y: 0 });
+  for (const r of pairs) {
+    const pc = _calApply(cal, r[0]);
+    const i = Math.min(9, Math.max(0, Math.floor(pc * 10)));
+    bins[i].n++; bins[i].p += pc; bins[i].y += (_num(r[1], 0) ? 1 : 0);
+  }
+  let e = 0;
+  for (const b of bins) if (b.n > 0) e += (b.n / pairs.length) * Math.abs(b.p / b.n - b.y / b.n);
+  return { ece: e, diagram: bins.filter(function (b) { return b.n > 0; }).map(function (b) {
+    return { bin: b.lo.toFixed(1) + "-" + b.hi.toFixed(1), n: b.n, predicted: +(b.p / b.n).toFixed(3), actual: +(b.y / b.n).toFixed(3) };
+  }) };
+}
+// 시간순 연속 블록 교차검증 — 폴드마다 나머지로 적합하고 그 폴드에서만 NLL 을 잰다.
+//   ★무작위 섞기를 쓰지 않는다★ 이웃한 거래는 같은 국면을 공유해서, 섞으면 훈련셋에
+//   사실상 같은 상황이 들어가 낙관적인 값이 나온다(이 저장소가 블록 t 를 쓰는 이유와 같다).
+function _calCV(pairs, fitFn) {
+  const K = CALFAM.folds, n = pairs.length;
+  let tot = 0, cnt = 0, used = 0;
+  for (let k = 0; k < K; k++) {
+    const a = Math.floor(n * k / K), b = Math.floor(n * (k + 1) / K);
+    const te = pairs.slice(a, b), tr = pairs.slice(0, a).concat(pairs.slice(b));
+    if (te.length < 10 || tr.length < 40) continue;
+    let pT = 0, pE = 0;
+    for (const r of te) { if (_num(r[1], 0)) pT++; else pE++; }
+    if (pT < CALFAM.minFoldPos || pE < CALFAM.minFoldPos) continue;   // 한쪽만 있는 폴드는 NLL 이 무의미
+    // ★적합 실패한 폴드를 빼지 않는다★ — 빼면 '되는 폴드만 골라 잰' 낙관값이 된다.
+    //   실패했을 때 운영에서 실제로 일어나는 일(보정 없음)로 채점한다.
+    const m = fitFn(tr) || { mode: "temp", T: 1 };
+    tot += _calNLL(m, te) * te.length; cnt += te.length; used++;
+  }
+  if (used < 3) return null;   // 폴드가 3개도 안 살아남으면 고를 근거가 없다
+  return tot / cnt;
+}
+/* 세 가족을 겹쳐 두고 ★교차검증으로★ 고른다. 반환값은 그대로 state 에 저장해도 되는 모양이다.
+   opts.tLo/tHi 로 온도 탐색 범위를 지정한다(체인 중간과 끝은 쓰던 범위가 다르다). */
+function calFitBest(pairs, opts) {
+  const o = opts || {};
+  const n = pairs.length;
+  const cand = [{ name: "temp", fit: function (d) { return _fitTemp(d, o.tLo, o.tHi); } }];
+  if (n >= CALFAM.minPlattN) cand.push({ name: "platt", fit: _fitPlatt });
+  if (n >= CALFAM.minBetaN) cand.push({ name: "beta", fit: _fitBeta });
+  const cv = {};
+  let best = null, bestCV = Infinity;
+  for (const c of cand) {
+    const v = _calCV(pairs, c.fit);
+    cv[c.name] = (v == null) ? null : +v.toFixed(5);
+    if (v == null) continue;
+    // 모수가 많은 쪽은 ★뚜렷하게★ 나아야 채택된다(후보 순서가 곧 모수 순서다).
+    if (best === null || v < bestCV - CALFAM.gainNats) { best = c; bestCV = v; }
+  }
+  if (!best) best = cand[0];
+  const model = best.fit(pairs) || _fitTemp(pairs, o.tLo, o.tHi);
+  const base = { mode: "temp", T: 1 };
+  const fit = _calECE(model, pairs), raw = _calECE(base, pairs);
+  return Object.assign({}, model, {
+    n: n, cv: cv, chosen: best.name,
+    ece: +fit.ece.toFixed(4), eceRaw: +raw.ece.toFixed(4), diagram: fit.diagram,
+    nll: +_calNLL(model, pairs).toFixed(5), nllRaw: +_calNLL(base, pairs).toFixed(5)
+  });
+}
+
+// ════════════════════════════════════════════════════════════════════════════
 // [V33.94] ★최종 확률 보정(T2) — 체인 끝에 남은 상수들의 오차를 통째로 흡수한다★
 //
 //   확률 체인에는 아직 손으로 정한 상수가 남아 있다(이벤트 프라이어 계수, 불일치 수축 k,
@@ -30240,31 +30505,14 @@ async function finalCalFitNightly(DB) {
     if (v.length < FINALCAL.minN) return "[CAL2] 최종보정 표본 " + v.length + "/" + FINALCAL.minN + " — 대기";
     let pos = 0; for (const r of v) pos += r[1];
     if (pos < 10 || v.length - pos < 10) return "[CAL2] 승/패 편중(" + pos + "/" + v.length + ") — 대기";
-    const nll = function (T) {
-      let s = 0;
-      for (const r of v) {
-        const pc = _clamp(_sigmoid(_logit(_clamp(r[0], 1e-4, 1 - 1e-4)) / T), 1e-6, 1 - 1e-6);
-        s += -(r[1] * Math.log(pc) + (1 - r[1]) * Math.log(1 - pc));
-      }
-      return s / v.length;
-    };
-    let bT = 1, bL = nll(1);
-    for (let T = FINALCAL.tLo; T <= FINALCAL.tHi + 1e-9; T += 0.05) { const x = nll(T); if (x < bL) { bL = x; bT = T; } }
-    bT = +bT.toFixed(2);
-    // 보정 전후 ECE 로 개선 여부를 남긴다(적용 근거).
-    const ece = function (T) {
-      const bins = []; for (let i = 0; i < 10; i++) bins.push({ n: 0, p: 0, y: 0 });
-      for (const r of v) {
-        const pc = _clamp(_sigmoid(_logit(_clamp(r[0], 1e-4, 1 - 1e-4)) / T), 1e-6, 1 - 1e-6);
-        const i = Math.min(9, Math.floor(pc * 10));
-        bins[i].n++; bins[i].p += pc; bins[i].y += r[1];
-      }
-      let e = 0; for (const x of bins) if (x.n > 0) e += (x.n / v.length) * Math.abs(x.p / x.n - x.y / x.n);
-      return e;
-    };
-    const e0 = ece(1), e1 = ece(bT);
-    await setState(DB, "final_cal", { T: bT, n: v.length, ece: +e1.toFixed(4), eceRaw: +e0.toFixed(4), ts: Date.now() });
-    return "[CAL2] 최종보정 T=" + bT + " ECE " + (e0 * 100).toFixed(1) + "% → " + (e1 * 100).toFixed(1) + "% (n=" + v.length + ")";
+    // [V33.188] 온도 한 가족만 보던 것을 온도·플랫·베타 세 가족으로 넓히고 교차검증으로 고른다.
+    //   ★온도는 p=0.5 를 0.5 로 고정한다★ — 치우침(과신/과소신의 '수준')은 표현할 수 없다.
+    //   여기 T2 는 체인 끝의 잔여 오차를 흡수하는 자리라, 잡아야 할 것이 대부분 그 치우침이다.
+    const fit = calFitBest(v, { tLo: FINALCAL.tLo, tHi: FINALCAL.tHi });
+    await setState(DB, "final_cal", Object.assign({}, fit, { ts: Date.now(), featVer: LUXML.featVer }));
+    return "[CAL2] 최종보정 " + _calDesc(fit) + " ECE " + (_num(fit.eceRaw, 0) * 100).toFixed(1) +
+           "% → " + (_num(fit.ece, 0) * 100).toFixed(1) + "% (n=" + v.length +
+           ", 교차검증 " + JSON.stringify(fit.cv) + ")";
   } catch (e) { return "[CAL2] fail: " + (e && e.message); }
 }
 
@@ -30929,18 +31177,35 @@ async function mlMindStatus(DB) {
 
 const DNN = {
   enabled: true,
-  // [V10] 대형화: 은닉 10층 55→640→512→384→256→192→128→96→64→48→32→1. 넷당 ~757K × 4시드 = 총 3.03M 파라미터.
-  //   ⚠️순수 JS Worker(CPU 300s)에선 이 크기가 완전학습은 어려움 — 예산가드가 도는 만큼만 학습, 신뢰게이트가
-  //     mind 대비 검증성능으로 자동 채택/억제(못 이기면 wDnn=0). 표본·컴퓨트 늘수록 진가 발휘. 구조·표현력은 대폭↑.
-  hidden: [640, 512, 384, 256, 192, 128, 96, 64, 48, 32],
-  dropout: 0.42,         // [V10] 망 대형화 → 드롭아웃 상향(과적합 강력 억제)
-  l2: 9e-4,              // [V10] 가중치 감쇠 상향
-  lr: 0.0025,            // Adam 학습률(깊어져 약간 보수적)
+  /* [V33.188] ★10층 3.03M 파라미터를 표본 2,000건으로 학습하고 있었다 — 결과 valAcc 0.404.★
+     다수클래스만 찍어도 57%(posRate 0.429) 인 라벨에서 40.4% 는 '못 배웠다' 가 아니라
+     '반대로 외웠다' 에 가깝다. 세 가지가 동시에 어긋나 있었다:
+       ① 표본 대비 용량 — 파라미터 3.03M / 표본 2,000. 어떤 정칙화로도 메울 비율이 아니다.
+       ② 예산 — 순수 JS 워커에서 이 크기는 ★단 한 번도 수렴한 적이 없다★(주석이 스스로 인정).
+          예산가드가 에폭을 끊으므로 실제로 남는 건 '초기화에 가까운 망' 이다.
+       ③ 자료형 — 65개 피처 중 밴딧 잡음필터가 유의하다고 판정한 건 ★8개★ 다. 표 형식 자료에서
+          MLP 가 무정보 피처에 특히 약하다는 건 벤치마크로 반복 확인된 사실이다.
+     근거:
+       · Grinsztajn, Oyallon, Varoquaux (NeurIPS 2022) "Why do tree-based models still outperform
+         deep learning on typical tabular data?" — 5만 행 미만 표 자료에서 GBDT 우위, MLP 는
+         ①무정보 피처 ②비평활 결정경계에 특히 취약.
+       · Gorishniy et al. (NeurIPS 2021) "Revisiting Deep Learning Models for Tabular Data" —
+         잘 조율된 ★얕은★ MLP 가 대부분의 정교한 구조와 대등하다.
+       · Holzmüller et al. (NeurIPS 2024) "Better by default: strong pre-tuned MLPs…" — 표 자료
+         MLP 의 강한 기본값은 은닉 2~3층·수백 유닛 규모다. 10층 640 폭이 아니다.
+       · Lakshminarayanan et al. (2017) — 시드 앙상블은 유지한다(분산 감소가 가장 값싼 이득).
+     → 은닉 2층 128-64(≈16.6K 파라미터). 표본 예산은 3배로 올리고 시드는 4→2 로 줄여
+       ★한 시드가 실제로 수렴할 수 있는 예산★ 을 만든다. 용량을 줄였으므로 드롭아웃·감쇠도 함께 내린다
+       (큰 망을 억누르려고 올려둔 값이라, 작은 망에 그대로 두면 이번엔 과소적합한다). */
+  hidden: [128, 64],
+  dropout: 0.15,
+  l2: 3e-4,
+  lr: 0.004,             // 망이 작아져 더 공격적으로 — 끊겨도 쓸 만한 지점에 먼저 닿는다
   beta1: 0.9, beta2: 0.999, eps: 1e-8,
-  epochs: 50,
-  batch: 32,             // [V10] 배치 확대(대형 망 그래디언트 안정·처리량)
-  dnnMaxSamples: 2000,   // [V10] 대형 망 per-epoch 비용 제한 — 최근 표본 이만큼만(예산 내 에폭 수 확보)
-  patience: 8,           // 조기종료 인내
+  epochs: 40,
+  batch: 64,
+  dnnMaxSamples: 6000,   // 2,000 → 6,000. 파라미터가 1/180 이라 에폭 비용이 오히려 줄었다
+  patience: 6,           // 조기종료 인내
   gradClip: 5,
   minTrainSamples: 150,  // [V12.100] 300→150 — DNN Worker폴백만 문턱이 높아 MIND(80)/GBDT(120)는 학습되는데
                          //   DNN만 계속 "학습 대기"로 남던 것 해소(사용자 지적: 왜 DNN은 안 도냐). featVer 재구축
@@ -30973,7 +31238,8 @@ const DNN = {
                               //   단일 검증LB를 이 이상으로 신뢰하지 않음 → 참여 전문가가 실질 발언권을 갖는다.
   trustTemp: 12,         // 신뢰 소프트맥스 온도(정확도차→가중)
   // ── 과적합 방어(소표본 금융 특화) ──
-  seeds: 4,              // 멀티시드 앙상블 수(서로 다른 초기화·셔플로 K개 학습, 로짓 평균 → 분산↓)
+  seeds: 2,              // [V33.188] 4→2. 멀티시드 앙상블(로짓 평균 → 분산↓)은 유지하되, 예산을 시드 수가
+                         //   아니라 ★수렴★ 에 쓴다. 안 끝난 망 4개보다 끝난 망 2개가 낫다.
   labelSmooth: 0.06,     // 라벨 스무딩(승/패 라벨 노이즈에 과신 방지)
   inputNoise: 0.06,      // 학습 시 표준화 입력에 가우시안 노이즈(σ) 증강
   // [V9.7 논문 기법] 소표본 금융 tabular 특화 3종 — 신뢰게이트가 mind 대비 검증성능으로 자동 채택/억제.
@@ -31904,8 +32170,10 @@ async function mlDeepDecide(DB, featVec, opts) {
       //   committee_cal.T 는 '투표 결합확률' 분포에서 학습한 값이다. STACK 메타모델은 라벨에
       //   직접 로지스틱으로 적합돼 이미 그 자체로 보정돼 있고 분포도 다르다. 그 위에 투표용 T 를
       //   덧씌우면 잘 맞던 확률을 일부러 흐리는 꼴이 된다(이중 보정).
-      if (!_usedStack && cal && (cal.featVer == null || cal.featVer === LUXML.featVer) && typeof cal.T === "number" && cal.T > 0.3 && cal.T < 8) {
-        pCombined = _clamp(_sigmoid(_logitD(pCombined) / cal.T), 0.001, 0.999);
+      // [V33.188] 적용은 _calApply 한 곳으로 — 온도/플랫/베타 중 무엇으로 적합됐든 같은 문을 지난다.
+      //   ★가드를 cal.T 로 두면 안 된다★ — 베타로 적합된 보정기는 T 가 없어 조용히 통째로 무시된다.
+      if (!_usedStack && cal && (cal.featVer == null || cal.featVer === LUXML.featVer)) {
+        pCombined = _calApply(cal, pCombined);
       }
     } catch (e) {}
 
@@ -32045,8 +32313,9 @@ async function mlDeepDecide(DB, featVec, opts) {
     const _pPreCal2 = pCombined;
     try {
       const _fc = (opts.finalCal !== undefined) ? opts.finalCal : await _cycState(DB, "final_cal", null);
-      if (_fc && typeof _fc.T === "number" && _fc.T > 0.4 && _fc.T < 5 && _num(_fc.n, 0) >= FINALCAL.minN) {
-        pCombined = _clamp(_sigmoid(_logitD(pCombined) / _fc.T), 0.001, 0.999);
+      // [V33.188] 같은 이유로 여기도 _calApply 로 통일한다(가드는 표본 수·판 일치만 본다).
+      if (_fc && (_fc.featVer == null || _fc.featVer === LUXML.featVer) && _num(_fc.n, 0) >= FINALCAL.minN) {
+        pCombined = _calApply(_fc, pCombined);
       }
     } catch (e) {}
 
@@ -32788,37 +33057,20 @@ async function mlCalibrateCommittee(DB) {
       await setState(DB, "expert_reliability", { rel: relOut, featVer: LUXML.featVer, ts: Date.now() });
     } catch (e) {}
 
-    // 온도 라인서치(NLL 최소)
-    function nllAt(T) {
-      let ll = 0;
-      for (const r of preds) {
-        const pc = _clamp(_sigmoid(_logitD(r.p) / T), 1e-6, 1 - 1e-6);
-        ll += -(r.y * Math.log(pc) + (1 - r.y) * Math.log(1 - pc));
-      }
-      return ll / preds.length;
-    }
-    let bestT = 1, bestLL = nllAt(1);
-    // [V12.49] 탐색 상한 3→6 — 실측에서 bestT=3(경계값)에 붙어 NLL이 더 개선될 여지가 잘려 있었다
-    //   (라이브 diagram이 역상관 수준이라 강한 평탄화가 필요했던 상황). 적용측 가드도 <4→<8 동반 확대.
-    for (let T = 0.5; T <= 6.01; T += 0.1) { const v = nllAt(T); if (v < bestLL) { bestLL = v; bestT = T; } }
-    bestT = +bestT.toFixed(2);
-
-    // 신뢰도 다이어그램(10구간): 예측확률 vs 실제 적중률 — 구체적 자기점검 데이터
-    const bins = [];
-    for (let b = 0; b < 10; b++) bins.push({ lo: b / 10, hi: (b + 1) / 10, n: 0, pSum: 0, ySum: 0 });
-    for (const r of preds) {
-      const pc = _clamp(_sigmoid(_logitD(r.p) / bestT), 1e-6, 1 - 1e-6);
-      const b = Math.min(9, Math.floor(pc * 10));
-      bins[b].n++; bins[b].pSum += pc; bins[b].ySum += r.y;
-    }
-    const diagram = bins.filter(function (b) { return b.n > 0; })
-      .map(function (b) { return { bin: b.lo.toFixed(1) + "-" + b.hi.toFixed(1), n: b.n, predicted: +(b.pSum / b.n).toFixed(3), actual: +(b.ySum / b.n).toFixed(3) }; });
-    // ECE(기대 보정오차)
-    let ece = 0;
-    for (const b of bins) if (b.n > 0) ece += (b.n / preds.length) * Math.abs(b.pSum / b.n - b.ySum / b.n);
-
-    await setState(DB, "committee_cal", { T: bestT, n: preds.length, ece: +ece.toFixed(4), diagram: diagram, featVer: LUXML.featVer, ts: Date.now() });
-    return "[CAL] 위원회 보정 T=" + bestT + " ECE=" + (ece * 100).toFixed(1) + "% (n=" + preds.length + ")";
+    /* [V33.188] ★여기가 17%p 과신을 만들던 자리다.★
+       운영 실측: T=6(탐색 상한에 붙음)인데 ECE 17.19%, 신뢰도 다이어그램은
+       [0.5-0.6] 한 칸에 400건이 몰려 predicted 0.514 / actual 0.343.
+       온도보정 σ(logit(p)/T) 는 T 가 무엇이든 0.5→0.5 를 고정하므로 ★치우침을 못 고친다★.
+       상한에 붙어 있다는 사실 자체가 "이 가족으로는 못 맞춘다" 는 신호였는데, 종전 코드는
+       상한을 올리는 쪽(V12.49: 3→6)으로 대응해 증상만 미뤘다.
+       → 절편이 있는 가족까지 넓히고 시간순 블록 교차검증으로 고른다(calFitBest 주석 참조).
+       못 이기면 온도가 그대로 남으므로 최악이 '지금과 같음' 이다. */
+    const _pairs = preds.map(function (r) { return [r.p, r.y]; });
+    const fit = calFitBest(_pairs, { tLo: 0.5, tHi: 6 });
+    await setState(DB, "committee_cal", Object.assign({}, fit, { featVer: LUXML.featVer, ts: Date.now() }));
+    return "[CAL] 위원회 보정 " + _calDesc(fit) + " ECE " + (_num(fit.eceRaw, 0) * 100).toFixed(1) +
+           "% → " + (_num(fit.ece, 0) * 100).toFixed(1) + "% (n=" + preds.length +
+           ", 교차검증 " + JSON.stringify(fit.cv) + ")";
   } catch (e) { return "[CAL] fail: " + (e && e.message); }
 }
 
@@ -36682,7 +36934,7 @@ async function _luxSelfCheck(DB) {
     if (!(dt && dt.trusted)) add("warn", "모델", "DNN 미신뢰/대기(검증 정확도 축적 또는 featVer 재구축 대기)");
     if (!(gt && gt.trusted)) add("warn", "모델", "GBDT 미신뢰/대기");
     const cal = S["committee_cal"];
-    if (cal && cal.featVer != null && typeof LUXML !== "undefined" && cal.featVer !== LUXML.featVer) add("warn", "보정", "committee_cal featVer 불일치(" + cal.featVer + "≠" + LUXML.featVer + ") — 보정온도 무시 중");
+    if (cal && cal.featVer != null && typeof LUXML !== "undefined" && cal.featVer !== LUXML.featVer) add("warn", "보정", "committee_cal featVer 불일치(" + cal.featVer + "≠" + LUXML.featVer + ") — 확률 보정 무시 중");
     // 파이프라인 신선도
     const scan = S["ai_picks:scan"], scH = ageH(scan && scan.ts);
     if (scH == null) add("warn", "스캔", "야간 전종목 스캔 결과 없음(초기/미실행)");
@@ -38344,7 +38596,7 @@ async function mlMonthlyReport(DB, ym, force, env, ctx) {
     else L.push("· 딥넷: 자동 억제 중(검증 기준 미달 — 정상 안전장치)");
     if (gbdtT && gbdtT.trusted) L.push("· 부스팅트리: 신뢰가중 " + gbdtT.wGbdt + (gbdtM && gbdtM.nTrees ? " (" + gbdtM.nTrees + "트리)" : ""));
     else L.push("· 부스팅트리: 자동 억제 중(검증 기준 미달 — 정상 안전장치)");
-    if (cal && typeof cal.ece === "number") L.push("· 확률 보정: T=" + cal.T + ", 보정오차(ECE) " + (cal.ece * 100).toFixed(1) + "% — 낮을수록 '말한 확률만큼 맞음'");
+    if (cal && typeof cal.ece === "number") L.push("· 확률 보정: " + _calDesc(cal) + ", 보정오차(ECE) " + (cal.ece * 100).toFixed(1) + "%" + (typeof cal.eceRaw === "number" ? "(보정 전 " + (cal.eceRaw * 100).toFixed(1) + "%)" : "") + " — 낮을수록 '말한 확률만큼 맞음'");
     try {
       const evs = await getState(DB, "ml_evstats", null);
       if (evs && evs.avgWin > 0) L.push("· 기대값 게이트: 평균이익 +" + evs.avgWin + "% / 평균손실 -" + evs.avgLoss + "% — 진입은 EV(=p·이익−(1−p)·손실)>0 일 때만");
