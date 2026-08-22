@@ -1,0 +1,114 @@
+name: 소급생성 몰아 돌리기
+
+# [V33.184] 소급표본을 비운 뒤(resample) 다시 채우는 일을 손으로 몰아붙인다.
+#
+#   왜: 채우는 경로가 10분 크론 하나뿐이라 185,394행을 훑는 데 장외시간 기준 2~3일이 걸린다.
+#       그동안 xalpha·flow 는 표본 0 이라 학습을 아예 못 한다.
+#   어떻게: 워커의 /api/ai/resample-run 을 한 회차씩 반복 호출한다. 한 번의 워커 호출에서
+#       여러 회차를 돌리지 않는 이유는 우주(daily:*) 스캔이 회차마다 반복돼 메모리를 위협해서다.
+#   중복: 워커가 매 호출마다 alt_bf_lock 을 갱신하므로 크론이 자동으로 비켜선다.
+#
+#   읽기만 하는 게 아니라 표본을 ★만든다★ — 다만 커서를 따라가며 한 번씩만 만들므로
+#   중복은 생기지 않는다(모델별 커서가 이미 처리한 행을 거른다).
+
+on:
+  workflow_dispatch:
+    inputs:
+      rounds:
+        description: '최대 회차 수 (1회차 ≈ 1200행)'
+        type: string
+        default: '160'
+      sleep:
+        description: '회차 간 대기(초) — 워커 부하 조절'
+        type: string
+        default: '2'
+
+concurrency:
+  group: worker-training     # 학습·재소급과 같은 그룹 — 동시에 돌면 안 된다
+  cancel-in-progress: false
+
+jobs:
+  sweep:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    name: 소급생성 반복 실행
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: 워커 주소 확인
+        id: url
+        env:
+          WORKER_URL: ${{ vars.WORKER_URL }}
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+        run: |
+          set +e
+          NAME=$(grep -m1 '^name' wrangler.toml | sed 's/.*= *"//; s/"//')
+          if [ -n "$WORKER_URL" ]; then echo "url=${WORKER_URL%/}" >> "$GITHUB_OUTPUT"; exit 0; fi
+          SUB=$(curl -sS --max-time 20 \
+            -H "Authorization: Bearer $CLOUDFLARE_API_TOKEN" \
+            "https://api.cloudflare.com/client/v4/accounts/$CLOUDFLARE_ACCOUNT_ID/workers/subdomain" \
+            | python3 -c 'import sys,json;d=json.load(sys.stdin);print((d.get("result") or {}).get("subdomain") or "")' 2>/dev/null)
+          [ -n "$SUB" ] && echo "url=https://$NAME.$SUB.workers.dev" >> "$GITHUB_OUTPUT" || echo "url=" >> "$GITHUB_OUTPUT"
+
+      - name: 준비 확인
+        env:
+          TRAIN_KEY: ${{ secrets.TRAIN_KEY }}
+        run: |
+          FAIL=0
+          [ -z "${{ steps.url.outputs.url }}" ] && { echo "::error::워커 주소를 알아내지 못했다"; FAIL=1; }
+          [ -z "$TRAIN_KEY" ] && { echo "::error::TRAIN_KEY 시크릿 미설정"; FAIL=1; }
+          exit $FAIL
+
+      - name: 반복 실행
+        id: sweep
+        env:
+          TRAIN_KEY: ${{ secrets.TRAIN_KEY }}
+          URL: ${{ steps.url.outputs.url }}
+          ROUNDS: ${{ inputs.rounds }}
+          NAP: ${{ inputs.sleep }}
+        run: |
+          set +e
+          : > sweep.txt
+          DONE=0; i=0; FAILS=0
+          while [ "$i" -lt "$ROUNDS" ]; do
+            i=$((i+1))
+            BODY=$(curl -sS --max-time 120 -X POST -H "X-Train-Key: $TRAIN_KEY" \
+              "$URL/api/ai/resample-run?confirm=1")
+            RC=$?
+            if [ $RC -ne 0 ]; then
+              FAILS=$((FAILS+1))
+              echo "회차 $i: curl 실패 rc=$RC" | tee -a sweep.txt
+              # ★연속 실패면 멈춘다★ — 죽은 워커를 계속 두드리지 않는다.
+              [ "$FAILS" -ge 3 ] && { echo "연속 3회 실패 — 중단" | tee -a sweep.txt; break; }
+              sleep 5; continue
+            fi
+            FAILS=0
+            # 한 줄로 줄이는 일은 tools/resample-line.mjs 가 한다 — YAML 안에 여러 줄 스크립트를
+            # 박으면 블록 스칼라가 깨진다(이 저장소에서 이미 한 번 겪었다).
+            LINE=$(printf '%s' "$BODY" | node tools/resample-line.mjs 2>/dev/null)
+            case "$LINE" in *__DONE__*) DONE=1;; esac
+            CLEAN=$(printf '%s' "$LINE" | sed 's/__DONE__//')
+            echo "회차 $i: $CLEAN" | tee -a sweep.txt
+            [ "$DONE" = "1" ] && { echo "— 남은 표본 없음. 스윕 완료 —" | tee -a sweep.txt; break; }
+            sleep "$NAP"
+          done
+          echo "rounds=$i" >> "$GITHUB_OUTPUT"
+          echo "done=$DONE" >> "$GITHUB_OUTPUT"
+
+      - name: 결과 요약
+        if: always()
+        run: |
+          {
+            echo "### 소급생성 스윕 — ${{ steps.sweep.outputs.rounds }}회차 실행 · 완주 ${{ steps.sweep.outputs.done }}"
+            echo ""
+            if [ "${{ steps.sweep.outputs.done }}" = "1" ]; then
+              echo "★전체 구간을 다 훑었다.★ 이제 수동 학습(train-now)으로 xalpha·flow 를 돌리면 된다."
+            else
+              echo "아직 남았다 — 이 워크플로를 다시 실행하면 커서 이후부터 이어서 훑는다."
+            fi
+            echo ""
+            echo '```'
+            tail -c 12000 sweep.txt 2>/dev/null || echo "(기록 없음)"
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"

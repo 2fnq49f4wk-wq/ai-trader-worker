@@ -2788,7 +2788,7 @@ async function applySignalTypeWeights(DB, cfg) {
 // ============================================================================
 // [V33.55] 빌드 버전 — SWR L2 캐시 키에 섞어 '배포 = 판단 캐시 자동 무효화'를 만든다.
 //   판정 로직을 고쳐도 옛 캐시가 최대 1시간 재배포되던 문제를 구조적으로 없앤다.
-const _BUILD_VER = "V33.183";
+const _BUILD_VER = "V33.184";
 
 // ═══ [V33.171] 평가 순서 계획 — ★승격과 순환을 교차해 굶주림을 구조적으로 없앤다★ ═══
 //   V33.50 의 형태트리거는 "급한 몇 종목을 앞으로 당긴다"는 의도였으나, 실제 운영로그에서는
@@ -20956,6 +20956,44 @@ async function handleRequest(request, env, ctx) {
         return Response.json({ ok: false, error: e && e.message, partial: out }, { status: 500, headers: cors });
       }
       return Response.json(out, { headers: cors });
+    }
+    /* ══ [V33.184] POST /api/ai/resample-run — 소급생성을 손으로 몰아붙인다 ══
+       V33.183 으로 표본을 비우고 커서를 되감았는데, 다시 채우는 경로가 ★10분 크론 하나뿐★ 이다
+       (장외에만, 회당 1200행). 185,394행을 그 속도로 훑으면 장외시간 기준 2~3일이 걸린다.
+       그동안 xalpha·flow 는 표본 0 이라 학습을 아예 못 한다 — 고치자고 한 일이 더 오래 걸린다.
+
+       그래서 같은 함수를 인증 하에 즉시 1회 돌리는 문을 낸다. 회차 반복은 CI 가 맡는다 —
+       한 번의 워커 호출에서 여러 번 돌리면 우주(daily:*) 스캔이 회차마다 반복돼 메모리를
+       위협한다(그 스캔이 이 함수에서 가장 무거운 부분이다). ★크론과 완전히 같은 코드 경로★ 를
+       한 회차씩만 쓰는 게 가장 안전하다.
+
+       ★중복 방지★ — 크론이 동시에 돌면 같은 커서를 읽어 같은 행을 두 번 넣는다. 그래서 매 호출마다
+       alt_bf_lock 을 지금으로 갱신한다. 크론은 그 값이 10분보다 새것이면 건너뛴다(아래 크론 참조).
+       즉 CI 루프가 도는 동안 크론은 자동으로 비켜선다. */
+    if (path === "/api/ai/resample-run" && request.method === "POST") {
+      const au = _trainAuthed(); if (!au.ok) return Response.json({ error: au.msg }, { status: au.code, headers: cors });
+      if (url.searchParams.get("confirm") !== "1")
+        return Response.json({ error: "confirm=1 이 필요하다" }, { status: 400, headers: cors });
+      try {
+        // 크론이 끼어들지 못하게 먼저 잠근다 — 잠그고 나서 돈다(순서가 뒤바뀌면 겹칠 수 있다).
+        await setState(env.DB, "alt_bf_lock", Date.now());
+        const _t0 = Date.now();
+        const msg = await altSampleBackfill(env.DB, {});
+        const cur = await getState(env.DB, "alt_bf_cursor", null);
+        const _n = async function (tbl, fv) {
+          try { const r = await env.DB.prepare("SELECT COUNT(*) c FROM " + tbl + " WHERE featver=?").bind(fv).first(); return _num(r && r.c, 0); }
+          catch (e) { return -1; }
+        };
+        return Response.json({
+          ok: true, ms: Date.now() - _t0, result: msg,
+          cursor: cur ? { lastId: _num(cur.lastId, 0), xDone: _num(cur.xDone, 0), fDone: _num(cur.fDone, 0), made: _num(cur.made, 0) } : null,
+          samples: { xalpha: await _n("xalpha_samples", XALPHA.featVer), flow: await _n("flow_samples", FLOWML.featVer) },
+          // CI 루프가 이 값으로 멈춘다 — 문자열을 뒤지게 하지 않는다.
+          done: /남은 표본 없음/.test(String(msg || ""))
+        }, { headers: cors });
+      } catch (e) {
+        return Response.json({ ok: false, error: e && e.message }, { status: 500, headers: cors });
+      }
     }
     // POST /api/ai/train-now?target=mind|gbdt|brain|dnn|l1|calibrate — 하루1회 게이트를 기다리지 않고
     //   특정 학습기 하나만 지금 즉시 재학습. [V12.37] MIND 회귀가드 발동 직후 정상 모델로 즉시 복구할 때,
