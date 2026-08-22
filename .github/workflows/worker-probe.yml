@@ -1,0 +1,99 @@
+name: 워커 엔드포인트 점검
+
+# [V33.181] ★어떤 엔드포인트가 느리고 어떤 게 죽었는지 재는 자가 없었다.★
+#
+#   운영상태 스냅샷(브라우저가 모아 만든 파일)에 fetchErrors 가 뜨는데, 브라우저는 이유를
+#   "Load failed" 한 줄로만 남긴다 — HTTP 상태인지, 타임아웃인지, 네트워크인지 구분이 안 된다.
+#   그 차이가 처방을 가른다(느린 것은 쿼리를 줄이고, 500 이면 코드를 고친다).
+#
+#   특히 /api/ai/selfcheck 는 ★Modal 워치독이 신선도 판단에 쓰는 바로 그 엔드포인트★ 다.
+#   여기가 느려서 끊기면 워치독은 "모르니 일단 돌린다" 로 떨어져 6시간마다 GPU 를 태운다.
+#   즉 이 점검은 비용에 직접 걸려 있다.
+#
+#   읽기 전용(GET)만 한다. 상태코드·소요시간·본문 크기를 나란히 적는다.
+
+on:
+  workflow_dispatch:
+    inputs:
+      paths:
+        description: '점검할 경로(쉼표 구분)'
+        type: string
+        default: '/api/ai/selfcheck,/api/ml-status,/api/selfcheck,/api/ai-mode,/api/pipeline,/api/r2-status'
+      timeout:
+        description: '경로당 최대 대기(초)'
+        type: string
+        default: '60'
+
+concurrency:
+  group: worker-probe
+  cancel-in-progress: true
+
+jobs:
+  probe:
+    runs-on: ubuntu-latest
+    name: 엔드포인트 응답 측정
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: 워커 주소 확인
+        id: url
+        env:
+          WORKER_URL: ${{ vars.WORKER_URL }}
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+        run: |
+          set +e
+          NAME=$(grep -m1 '^name' wrangler.toml | sed 's/.*= *"//; s/"//')
+          if [ -n "$WORKER_URL" ]; then
+            echo "url=${WORKER_URL%/}" >> "$GITHUB_OUTPUT"; exit 0
+          fi
+          SUB=$(curl -sS --max-time 20 \
+            -H "Authorization: Bearer $CLOUDFLARE_API_TOKEN" \
+            "https://api.cloudflare.com/client/v4/accounts/$CLOUDFLARE_ACCOUNT_ID/workers/subdomain" \
+            | python3 -c 'import sys,json;d=json.load(sys.stdin);print((d.get("result") or {}).get("subdomain") or "")' 2>/dev/null)
+          [ -n "$SUB" ] && echo "url=https://$NAME.$SUB.workers.dev" >> "$GITHUB_OUTPUT" || echo "url=" >> "$GITHUB_OUTPUT"
+
+      - name: 주소 확인 실패 처리
+        if: steps.url.outputs.url == ''
+        run: |
+          echo "::error::워커 주소를 알아내지 못했다"
+          echo "### 🔴 워커 주소 없음 — Variables 의 WORKER_URL 을 확인하세요" >> "$GITHUB_STEP_SUMMARY"
+          exit 1
+
+      - name: 응답 측정
+        env:
+          URL: ${{ steps.url.outputs.url }}
+          PATHS: ${{ inputs.paths }}
+          TMO: ${{ inputs.timeout }}
+        run: |
+          set +e
+          : > probe.txt
+          IFS=','
+          for p in $PATHS; do
+            p=$(echo "$p" | xargs)          # 앞뒤 공백 제거
+            [ -z "$p" ] && continue
+            OUT=$(curl -sS --max-time "$TMO" -o body.bin -w '%{http_code} %{time_total} %{size_download}' "$URL$p" 2>/dev/null)
+            RC=$?
+            if [ $RC -ne 0 ]; then
+              # ★타임아웃과 HTTP 오류를 구분해 적는다★ — 브라우저의 "Load failed" 가 못 하던 일이다.
+              printf '%-24s  curl실패 rc=%s%s\n' "$p" "$RC" "$([ "$RC" = "28" ] && echo '  ← 타임아웃(느림)')" >> probe.txt
+            else
+              set -- $OUT
+              printf '%-24s  HTTP %s  %ss  %s bytes\n' "$p" "$1" "$2" "$3" >> probe.txt
+            fi
+          done
+          unset IFS
+          cat probe.txt
+
+      - name: 결과 요약
+        if: always()
+        run: |
+          {
+            echo "### 워커 엔드포인트 응답"
+            echo ""
+            echo "브라우저의 \`Load failed\` 는 원인을 안 알려준다 — 여기서 상태코드·소요시간으로 가른다."
+            echo ""
+            echo '```'
+            cat probe.txt 2>/dev/null || echo "(측정 없음)"
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
