@@ -2788,7 +2788,7 @@ async function applySignalTypeWeights(DB, cfg) {
 // ============================================================================
 // [V33.55] 빌드 버전 — SWR L2 캐시 키에 섞어 '배포 = 판단 캐시 자동 무효화'를 만든다.
 //   판정 로직을 고쳐도 옛 캐시가 최대 1시간 재배포되던 문제를 구조적으로 없앤다.
-const _BUILD_VER = "V33.185";
+const _BUILD_VER = "V33.186";
 
 // ═══ [V33.171] 평가 순서 계획 — ★승격과 순환을 교차해 굶주림을 구조적으로 없앤다★ ═══
 //   V33.50 의 형태트리거는 "급한 몇 종목을 앞으로 당긴다"는 의도였으나, 실제 운영로그에서는
@@ -20978,7 +20978,11 @@ async function handleRequest(request, env, ctx) {
         // 크론이 끼어들지 못하게 먼저 잠근다 — 잠그고 나서 돈다(순서가 뒤바뀌면 겹칠 수 있다).
         await setState(env.DB, "alt_bf_lock", Date.now());
         const _t0 = Date.now();
-        const msg = await altSampleBackfill(env.DB, {});
+        /* [V33.186] 수동 스윕은 회차당 날짜 수를 크게 잡는다(크론은 거래 사이클과 예산을 나눠
+           쓰므로 6 이 맞지만, 여기는 그 제약이 없다). 과거 구간은 날짜당 행이 몇 개뿐이라
+           날짜를 못 늘리면 커서가 회차당 +6 씩만 올라 과거 표본이 거의 안 쌓인다(실측). */
+        const _bd = Math.max(1, Math.min(60, _num(url.searchParams.get("dates"), 30)));
+        const msg = await altSampleBackfill(env.DB, { batchDates: _bd, deadlineMs: Date.now() + 20000 });
         /* [V33.185] ★진행을 밖에서 볼 수 없었다.★ 크론 경로는 결과를 로그에 남기는데
            이 수동 경로는 안 남겨서, 스윕이 32분 도는 동안 ALT-BF 로그가 06:26 에 멈춰 있었다.
            그 침묵이 "스윕이 죽었나" 로 읽힌다 — 실제로는 잘 돌고 있었는데도.
@@ -25187,7 +25191,15 @@ async function altSampleBackfill(DB, opts) {
       const key = d.getUTCFullYear() + "-" + String(d.getUTCMonth() + 1).padStart(2, "0") + "-" + String(d.getUTCDate()).padStart(2, "0");
       (byDay[key] = byDay[key] || []).push(r);
     }
-    const days = Object.keys(byDay).sort().slice(0, ALTBF.batchDates);
+    /* [V33.186] ★회차당 날짜 수를 수동 경로에서 올릴 수 있게 한다.★
+       실측: 재소급 스윕 160회차를 돌렸는데 커서가 회차당 +6 밖에 안 올랐다. batchDates=6 이
+       회차마다 ★날짜 6개★ 만 처리하는데, 과거 구간은 날짜당 행이 몇 개뿐이라 6행만 훑고 끝난다.
+       그 결과 표본 1745건 중 1692건이 최근 10일에 몰리고 과거는 53건뿐 —
+       관측기간은 134.8일로 늘었는데 ★밀도가 끝에 쏠려★ 퍼징이 여전히 학습구간을 지운다.
+       (기간과 밀도는 다른 문제다. V33.182 의 문구가 기간만 보고 "더 쌓이면 된다" 고 말한 이유다)
+       크론은 10분마다 거래 사이클과 예산을 나눠 쓰므로 6 이 맞다. 수동 스윕은 그 제약이 없다. */
+    const _bDates = Math.max(1, Math.min(60, _num(cfg.batchDates, ALTBF.batchDates)));
+    const days = Object.keys(byDay).sort().slice(0, _bDates);
 
     // 필요한 종목의 일봉만 로드(전 종목이 아니라 이 배치에 등장한 종목만).
     const need = new Set();
@@ -25221,7 +25233,11 @@ async function altSampleBackfill(DB, opts) {
     //   원인을 로그가 스스로 말하게 한다 — 다음 수확 한 번이면 가설이 사실인지 갈린다.
     let xThinUS = 0, xThinKR = 0, xNull = 0;
     const _panelW = function (p) { return (p && Array.isArray(p.alphas) && Array.isArray(p.alphas[0])) ? p.alphas[0].length : 0; };
+    // [V33.186] 날짜 수를 올리면 한 회차가 길어진다 — 마감시한을 두어 워커 시간예산을 넘지 않게 한다.
+    //   중간에 멈춰도 커서는 ★처리한 날짜까지만★ 오르므로(아래 lastId) 다음 회차가 이어받는다.
+    const _dl = _num(cfg.deadlineMs, 0);
     for (const dk of days) {
+      if (_dl && Date.now() > _dl) break;
       const list = byDay[dk];
       const ts0 = _num(list[0].ts, now);
       // 이 날짜 시점으로 잘라낸 우주 — 패널과 피어 계산에 함께 쓴다.
