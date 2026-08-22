@@ -92,16 +92,36 @@ jobs:
           TARGET: ${{ inputs.target }}
         run: |
           set +e
-          echo "POST $URL/api/ai/train-now?target=$TARGET"
-          # all 은 야간 파이프라인 전 단계라 오래 걸린다 — 넉넉히 기다린다.
-          BODY=$(curl -sS --max-time 900 -w '\n%{http_code}' -X POST \
-            -H "X-Train-Key: $TRAIN_KEY" \
-            "$URL/api/ai/train-now?target=$TARGET")
-          CODE=$(printf '%s' "$BODY" | tail -n1)
-          JSON=$(printf '%s' "$BODY" | sed '$d')
-          echo "HTTP $CODE"
-          printf '%s\n' "$JSON" | head -c 4000
-          printf '%s' "$JSON" > result.json
+          : > trainlog.txt
+          FROM=""; ROUND=0; CODE=""
+          # [V33.192] ★target=all 은 한 번으로 안 끝난다 — 재개까지 돌려야 '전체'다.★
+          #   워커는 1요청 CPU 상한(300s) 때문에 240초에서 스스로 끊고 남은 단계를
+          #   skipped(deadline) 로 표기한 뒤 resume 경로를 돌려준다. 종전 워크플로는 그 값을
+          #   쓰지 않고 한 번만 불렀다 — 그래서 파이프라인 ★뒷단이 매번 통째로 안 돌았다★.
+          #   하필 확률 보정(calibrate)·자가평가(selfreview)·원장통계(portstats)가 그 자리에 있다.
+          while [ "$ROUND" -lt 12 ]; do
+            ROUND=$((ROUND+1))
+            Q="target=$TARGET"
+            [ -n "$FROM" ] && Q="$Q&from=$FROM"
+            echo "POST $URL/api/ai/train-now?$Q"
+            BODY=$(curl -sS --max-time 900 -w '\n%{http_code}' -X POST \
+              -H "X-Train-Key: $TRAIN_KEY" \
+              "$URL/api/ai/train-now?$Q")
+            CODE=$(printf '%s' "$BODY" | tail -n1)
+            JSON=$(printf '%s' "$BODY" | sed '$d')
+            printf '%s' "$JSON" > result.json
+            [ "$CODE" != "200" ] && { echo "회차 $ROUND: HTTP $CODE" | tee -a trainlog.txt; break; }
+            # 여러 줄 스크립트를 YAML 에 박으면 블록 스칼라가 깨진다 — 파싱은 파일이 한다.
+            OUT=$(printf '%s' "$JSON" | node tools/train-line.mjs 2>/dev/null)
+            NEXT=$(printf '%s' "$OUT" | sed -n 's/^RESUME=//p')
+            LINE=$(printf '%s' "$OUT" | sed -n 's/^LINE=//p')
+            echo "회차 $ROUND: $LINE" | tee -a trainlog.txt
+            printf '%s' "$JSON" > "result-$ROUND.json"
+            [ -z "$NEXT" ] && break
+            FROM="$NEXT"
+            sleep 3
+          done
+          echo "rounds=$ROUND" >> "$GITHUB_OUTPUT"
           echo "code=$CODE" >> "$GITHUB_OUTPUT"
 
       - name: 결과 요약
@@ -120,6 +140,12 @@ jobs:
               echo "**\"표본 N/최소 — 학습 대기\" 는 실패가 아니라 표본이 덜 찼다는 정상 응답이다.**"
             fi
             echo ""
+            echo "**회차별 진행** (all 은 240초마다 끊고 이어서 돈다 — 아래가 그 기록이다)"
+            echo '```'
+            cat trainlog.txt 2>/dev/null || echo "(기록 없음)"
+            echo '```'
+            echo ""
+            echo "**마지막 응답**"
             echo '```json'
             head -c 3500 result.json 2>/dev/null || echo "(응답 없음)"
             echo ""
