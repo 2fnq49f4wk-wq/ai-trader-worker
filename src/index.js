@@ -2788,7 +2788,7 @@ async function applySignalTypeWeights(DB, cfg) {
 // ============================================================================
 // [V33.55] 빌드 버전 — SWR L2 캐시 키에 섞어 '배포 = 판단 캐시 자동 무효화'를 만든다.
 //   판정 로직을 고쳐도 옛 캐시가 최대 1시간 재배포되던 문제를 구조적으로 없앤다.
-const _BUILD_VER = "V33.202";
+const _BUILD_VER = "V33.203";
 
 // ═══ [V33.171] 평가 순서 계획 — ★승격과 순환을 교차해 굶주림을 구조적으로 없앤다★ ═══
 //   V33.50 의 형태트리거는 "급한 몇 종목을 앞으로 당긴다"는 의도였으나, 실제 운영로그에서는
@@ -34015,9 +34015,28 @@ async function harvestDeepFetchNightly(DB, opts) {
       " [실패내역 throw=" + __deepFail.throw + " noResult=" + __deepFail.noResult + " shortBars=" + __deepFail.shortBars +
       " ok=" + __deepFail.ok + " newIneligible=" + skippedIneligible +
       (__deepFail.lastErr ? " lastErr=" + __deepFail.lastErr : "") + "]";
+    /* [V33.203] ★이 한 줄이 자기 계수와 모순되고 있었다.★
+       실측: "갱신 0건 — scanned=0 attempted=2 todoLeft=0 ... [throw=0 noResult=0 shortBars=2 ok=0]
+              ★(외부 fetch 실패 추정)★"
+       throw=0 · noResult=0 이면 외부 호출은 ★성공★ 했다. shortBars 는 받아온 데이터의 봉이
+       300개 미만이라는 뜻이고(신규상장 등 딥 자격 미달), 그건 고장이 아니라 정상적인 탈락이다.
+       그런데 판정식이 계수를 하나도 안 보고 "attempted > 0 인데 fetched == 0" 만으로 원인을
+       단정했다. 같은 줄 안에 반증이 인쇄돼 있는데도 그렇다.
+       이 저장소가 V33.198 에서 고친 것과 같은 종류다 — 화면이 원인을 ★단정★ 하면, 사람은
+       그 단정을 믿고 엉뚱한 곳을 판다(실제로 이 문장 때문에 '외부 수집이 죽었다' 고 읽었다).
+       → 계수에서 원인을 ★읽어★ 적는다. 모르면 모른다고 적는다. */
+    let _why;
+    if (attempted <= 0) _why = " (수집대상 없음/예산부족)";
+    else if (__deepFail.throw > 0) _why = " (외부 호출 예외 " + __deepFail.throw + "건" +
+             (__deepFail.lastErr ? ": " + __deepFail.lastErr : "") + ")";
+    else if (__deepFail.noResult > 0) _why = " (응답은 왔으나 데이터 없음 " + __deepFail.noResult + "건)";
+    else if (__deepFail.shortBars > 0) _why = " (정상 — 받아온 " + __deepFail.shortBars +
+             "종목이 봉수 300 미만이라 딥 자격 미달. 고장이 아니다" +
+             (__deepTodoLeft === 0 ? " · 남은 대상 0" : "") + ")";
+    else _why = " (원인 불명 — 위 실패내역 어디에도 안 잡혔다)";
     return fetched
       ? ("[HIST] 딥-히스토리 " + fetched + "종목 갱신(range=max, " + (HARVEST.deepBars || 1800) + "봉) " + _diag)
-      : ("[HIST] 갱신 0건 — " + _diag + (attempted > 0 ? " (외부 fetch 실패 추정)" : " (수집대상 없음/예산부족)"));
+      : ("[HIST] 갱신 0건 — " + _diag + _why);
   } catch (e) { return "[HIST] fail: " + (e && e.message); }
 }
 
