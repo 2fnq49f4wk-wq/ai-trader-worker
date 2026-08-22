@@ -1,0 +1,121 @@
+name: 소급표본 재생성 (표본 삭제 · 되돌릴 수 없음)
+
+# [V33.183] xalpha·flow 의 소급표본을 비우고 커서를 되감아 처음부터 다시 만든다.
+#
+#   왜: 표본이 최근 며칠에만 몰려 있어 라벨 지평 10일짜리 퍼징이 학습구간을 통째로 덮는다
+#       (실측 980건 → 퍼징 후 41건). 표본을 더 넣어도 같은 날짜면 그대로다 — 필요한 건 기간이고,
+#       ml_samples 에는 이미 몇 달치가 있다.
+#
+#   ★되돌릴 수 없다.★ 그래서 실수로 돌지 않도록 세 겹을 둔다:
+#     ① 이 워크플로를 손으로 실행    ② confirm 입력에 정확히 RESAMPLE 을 타이핑
+#     ③ 워커 쪽에서 TRAIN_KEY 인증 + confirm=1 을 다시 확인
+#
+#   안전성: 재소급은 지금 지우는 것을 포함한다(전체 ml_samples 를 훑으므로 최근 구간도 다시
+#   만든다). 최악의 경우에도 며칠 뒤 지금 상태로 돌아올 뿐이다.
+
+on:
+  workflow_dispatch:
+    inputs:
+      target:
+        description: '대상'
+        type: choice
+        default: both
+        options: [both, xalpha, flow]
+      confirm:
+        description: '되돌릴 수 없음을 이해했다면 RESAMPLE 이라고 입력'
+        type: string
+        default: ''
+
+concurrency:
+  group: worker-training      # 학습과 같은 그룹 — 학습 중에 표본이 사라지면 안 된다
+  cancel-in-progress: false
+
+jobs:
+  resample:
+    runs-on: ubuntu-latest
+    name: 소급표본 재생성
+    steps:
+      - uses: actions/checkout@v4
+
+      # ★확인 문구가 정확하지 않으면 여기서 끝낸다★ — 아무것도 안 지운다.
+      - name: 확인 문구 검사
+        env:
+          CONFIRM: ${{ inputs.confirm }}
+        run: |
+          if [ "$CONFIRM" != "RESAMPLE" ]; then
+            echo "::error::confirm 입력이 RESAMPLE 이 아니다 — 아무것도 하지 않았다"
+            {
+              echo "### 🛑 중단 — 확인 문구 불일치"
+              echo ""
+              echo "표본을 지우는 되돌릴 수 없는 작업이라, confirm 칸에 정확히 \`RESAMPLE\` 을 입력해야 실행된다."
+              echo "입력값: \`${CONFIRM:-(비어 있음)}\`"
+            } >> "$GITHUB_STEP_SUMMARY"
+            exit 1
+          fi
+          echo "확인 문구 일치 — 계속 진행한다"
+
+      - name: 워커 주소 확인
+        id: url
+        env:
+          WORKER_URL: ${{ vars.WORKER_URL }}
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+        run: |
+          set +e
+          NAME=$(grep -m1 '^name' wrangler.toml | sed 's/.*= *"//; s/"//')
+          if [ -n "$WORKER_URL" ]; then echo "url=${WORKER_URL%/}" >> "$GITHUB_OUTPUT"; exit 0; fi
+          SUB=$(curl -sS --max-time 20 \
+            -H "Authorization: Bearer $CLOUDFLARE_API_TOKEN" \
+            "https://api.cloudflare.com/client/v4/accounts/$CLOUDFLARE_ACCOUNT_ID/workers/subdomain" \
+            | python3 -c 'import sys,json;d=json.load(sys.stdin);print((d.get("result") or {}).get("subdomain") or "")' 2>/dev/null)
+          [ -n "$SUB" ] && echo "url=https://$NAME.$SUB.workers.dev" >> "$GITHUB_OUTPUT" || echo "url=" >> "$GITHUB_OUTPUT"
+
+      - name: 준비 확인
+        env:
+          TRAIN_KEY: ${{ secrets.TRAIN_KEY }}
+        run: |
+          FAIL=0
+          [ -z "${{ steps.url.outputs.url }}" ] && { echo "::error::워커 주소를 알아내지 못했다"; FAIL=1; }
+          [ -z "$TRAIN_KEY" ] && { echo "::error::TRAIN_KEY 시크릿 미설정"; FAIL=1; }
+          exit $FAIL
+
+      - name: 재생성 실행
+        id: run
+        env:
+          TRAIN_KEY: ${{ secrets.TRAIN_KEY }}
+          URL: ${{ steps.url.outputs.url }}
+          TARGET: ${{ inputs.target }}
+        run: |
+          set +e
+          echo "POST $URL/api/ai/resample?target=$TARGET&confirm=1"
+          BODY=$(curl -sS --max-time 120 -w '\n%{http_code}' -X POST \
+            -H "X-Train-Key: $TRAIN_KEY" \
+            "$URL/api/ai/resample?target=$TARGET&confirm=1")
+          CODE=$(printf '%s' "$BODY" | tail -n1)
+          JSON=$(printf '%s' "$BODY" | sed '$d')
+          echo "HTTP $CODE"
+          printf '%s\n' "$JSON" | head -c 3000
+          printf '%s' "$JSON" > result.json
+          echo "code=$CODE" >> "$GITHUB_OUTPUT"
+
+      - name: 결과 요약
+        if: always()
+        run: |
+          {
+            echo "### 소급표본 재생성 — HTTP ${{ steps.run.outputs.code }}"
+            echo ""
+            if [ "${{ steps.run.outputs.code }}" = "200" ]; then
+              echo "표본을 비우고 백필 커서를 되감았다. 다음 장외 회차(10분 주기)부터 처음부터 다시 만든다."
+              echo ""
+              echo "진행 확인: **워커 로그 조회** 워크플로를 \`ALT-BF\` 필터로 실행."
+              echo "★첫 회차에서 XALPHA 가 0건이면 실패 사유가 함께 찍힌다(V33.178 진단).★"
+            else
+              echo "🔴 실패 — 400 이면 confirm 누락, 401 이면 TRAIN_KEY 불일치, 503 이면 워커에 키 없음."
+            fi
+            echo ""
+            echo '```json'
+            head -c 2500 result.json 2>/dev/null || echo "(응답 없음)"
+            echo ""
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+          [ "${{ steps.run.outputs.code }}" = "200" ]
