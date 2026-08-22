@@ -2788,7 +2788,7 @@ async function applySignalTypeWeights(DB, cfg) {
 // ============================================================================
 // [V33.55] 빌드 버전 — SWR L2 캐시 키에 섞어 '배포 = 판단 캐시 자동 무효화'를 만든다.
 //   판정 로직을 고쳐도 옛 캐시가 최대 1시간 재배포되던 문제를 구조적으로 없앤다.
-const _BUILD_VER = "V33.184";
+const _BUILD_VER = "V33.185";
 
 // ═══ [V33.171] 평가 순서 계획 — ★승격과 순환을 교차해 굶주림을 구조적으로 없앤다★ ═══
 //   V33.50 의 형태트리거는 "급한 몇 종목을 앞으로 당긴다"는 의도였으나, 실제 운영로그에서는
@@ -20979,6 +20979,11 @@ async function handleRequest(request, env, ctx) {
         await setState(env.DB, "alt_bf_lock", Date.now());
         const _t0 = Date.now();
         const msg = await altSampleBackfill(env.DB, {});
+        /* [V33.185] ★진행을 밖에서 볼 수 없었다.★ 크론 경로는 결과를 로그에 남기는데
+           이 수동 경로는 안 남겨서, 스윕이 32분 도는 동안 ALT-BF 로그가 06:26 에 멈춰 있었다.
+           그 침묵이 "스윕이 죽었나" 로 읽힌다 — 실제로는 잘 돌고 있었는데도.
+           크론과 ★같은 접두사★ 로 남긴다. 그래야 기존 필터(ALT-BF) 하나로 둘 다 보인다. */
+        try { if (msg) await log(env.DB, "INFO", null, String(msg)); } catch (e0) {}
         const cur = await getState(env.DB, "alt_bf_cursor", null);
         const _n = async function (tbl, fv) {
           try { const r = await env.DB.prepare("SELECT COUNT(*) c FROM " + tbl + " WHERE featver=?").bind(fv).first(); return _num(r && r.c, 0); }
