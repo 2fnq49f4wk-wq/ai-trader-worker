@@ -2788,7 +2788,7 @@ async function applySignalTypeWeights(DB, cfg) {
 // ============================================================================
 // [V33.55] 빌드 버전 — SWR L2 캐시 키에 섞어 '배포 = 판단 캐시 자동 무효화'를 만든다.
 //   판정 로직을 고쳐도 옛 캐시가 최대 1시간 재배포되던 문제를 구조적으로 없앤다.
-const _BUILD_VER = "V33.190";
+const _BUILD_VER = "V33.191";
 
 // ═══ [V33.171] 평가 순서 계획 — ★승격과 순환을 교차해 굶주림을 구조적으로 없앤다★ ═══
 //   V33.50 의 형태트리거는 "급한 몇 종목을 앞으로 당긴다"는 의도였으나, 실제 운영로그에서는
@@ -3231,6 +3231,18 @@ const AI_PARAMS = {
     lookback: 60,      // 갭 분포 관측 봉수
     minScale: 0.45,    // 수량 축소 하한(과도 위축 방지)
     earnScale: 0.5     // 실적발표 임박(D-1.5~D+0.3) 추가 축소 배수
+  },
+
+  /* [V33.191] ★시장별 실적 증거로 크기를 수축한다★ (사이징 루프의 marketGovernor 주석 참조)
+     실측: US SQN 3.785 / KR SQN 0.827, 장부는 KR −3,744,031원.
+     KR 을 끄지는 않는다 — edgePNeg 0.7954 라 "기대값이 음수" 는 통계적으로 말할 수 없다.
+     대신 증거가 약한 만큼만 크기를 줄인다. 표본이 minN 미만이면 아무것도 하지 않는다. */
+  marketGovernor: {
+    enabled: true,
+    minN: 60,          // 종결거래 이만큼은 있어야 시장 증거를 쳐다본다
+    floorMult: 0.4,    // 증거가 잡음 수준이어도 이 아래로는 안 줄인다
+                       //   ★0 으로 만들면 표본이 안 쌓여 증거가 영원히 갱신되지 않는다★
+    riskMin: 0.15      // 축소 후 리스크%의 절대 바닥
   },
 
   // ── [V12.71] ★AI 자율운용 컨트롤러★ — "AI가 스스로 시장 스캔 → 종목 선정 → 투자" ──
@@ -18003,6 +18015,41 @@ async function runTradingCycle(env) {
               }
             } catch (e) {}
 
+            /* ══ [V33.191] ★시장별 실적 증거로 크기를 수축한다 (KR 손실의 실제 처방)★ ══
+               운영 실측(port_stats, 2026-08-22):
+                 US  n 265 · 승률 60.8% · PF 1.054 · edgeT(SQN) 3.785 · 켈리 0.3077
+                 KR  n 187 · 승률 43.3% · PF 0.729 · edgeT(SQN) 0.827 · 켈리 0.0804 · 최대연속손실 18
+               장부는 KR −3,744,031원 이다.
+
+               ★그런데 KR 을 '차단' 하지는 않는다.★ edgePNeg 0.7954 — 즉 "KR 의 기대값이 음수다" 는
+               통계적으로 말할 수 없다(n 187 에 SQN 0.83). 근거 없이 시장을 끄는 것은 이 저장소가
+               게이트로 막아 온 바로 그 비약이다. 반대로 "증거가 US 만큼 강하지 않다" 는 것은
+               ★잴 수 있고 이미 재어 놓았다★ — SQN 3.785 대 0.827.
+               → 끄고 켜는 대신 ★증거의 세기만큼 크기를 줄인다.★ 다른 계수들에 쓰는 것과 같은
+                 수축함수(_coefShrink)를 그대로 쓴다: t<1.65 면 0, t≥2.65 면 1 로 가는 경사로.
+                 바닥(floorMult)을 둬서 완전히 0 이 되지는 않게 한다 — 표본이 계속 쌓여야
+                 증거가 갱신되고, 크기를 0 으로 만들면 그 갱신 자체가 멈춘다(자기실현적 정지).
+               실측 대입: US ×1.00(3.785) · KR ×0.40(0.827 → 수축 0 → 바닥). 켈리 비(0.0804/0.3077
+               = 0.26)와 같은 방향이고 그보다 보수적이지 않다.
+               ※ 표본이 모자라면(minN 미만) 아무것도 하지 않는다 — 안 잰 것을 잰 척하지 않는다. */
+            try {
+              const _mg = (typeof AI_PARAMS !== "undefined") ? AI_PARAMS.marketGovernor : null;
+              if (_mg && _mg.enabled !== false && (market === "us" || market === "kr")) {
+                const _pmS = __portStats && __portStats[market];
+                if (_pmS && _pmS.ready && _num(_pmS.n, 0) >= _num(_mg.minN, 60)) {
+                  const _et = _num(_pmS.edgeT, 0);
+                  const _sh = _coefShrink(_et);                       // 0(잡음) → 1(확실)
+                  const _fl = _clamp(_num(_mg.floorMult, 0.4), 0.05, 1);
+                  const _gm = _clamp(_fl + (1 - _fl) * _sh, _fl, 1);
+                  if (_gm < 0.999) {
+                    riskPct = _clamp(riskPct * _gm, _num(_mg.riskMin, 0.15), 100);
+                    signal.govNote = "시장증거 " + market.toUpperCase() + " SQN " + _et.toFixed(2) +
+                                     "(n " + _num(_pmS.n, 0) + ") → 크기 ×" + _gm.toFixed(2);
+                  }
+                }
+              }
+            } catch (e) {}
+
             if (!(stopDist > 0)) stopDist = price * 0.05;
 
             // [V33.44] ★오버나이트 갭 리스크 사이징 — 실거래에서 확인된 최대 손실원★
@@ -20886,7 +20933,31 @@ async function handleRequest(request, env, ctx) {
       //   안 보내면 검증표본 수 기반 Fisher z 하한으로 보수 판정한다.
       const _icEff = _icEffective(model);
       const _passIC = (_icEff != null && _icEff >= _icFloor);
-      if (_passAcc || _passIC) {
+      /* [V33.191] ★IC 단독 통과에 두 겹을 요구한다.★
+         운영 실측: XGB 정확도하한 0.4836, LGB 0.4871 인데 둘 다 trusted·promoted 로 위원회에
+         들어와 있었다(w 0.377 / 0.387). 한편 워커가 만든 DNN 은 같은 순간 floor 50.5 에 막혀
+         있었다 — ★같은 위원회에 두 개의 다른 잣대★ 가 있었던 셈이다.
+         V33.77 이 IC 경로를 연 이유 자체는 옳다(Wilson 하한은 검증표본이 작으면 비현실적인
+         정확도를 요구한다). 문제는 그 문이 ★정확도 증거가 반대를 가리킬 때도★ 열려 있었다는 것이다.
+         정확도 하한 0.4836 은 '아직 모르겠다' 가 아니라 '동전보다 못하다' 쪽이다.
+         그리고 가중식 wGbdt = σ(T·(gLB−0.5)) 는 ★그 모델이 떨어진 축★ 으로 표를 준다 — 앞뒤가 안 맞는다.
+         → IC 로만 들어오려면 (a) 정확도 하한이 동전 근처는 되고(icPathAccFloor)
+           (b) IC 가 ★블록 유의성★ 을 갖춰야 한다(점추정·Fisher 하한만으로는 부족 — _icEffective 주석 참조).
+         정확도로 통과한 모델(_passAcc)에는 아무 변화가 없다. */
+      const _icOnly = !_passAcc && _passIC;
+      const _icT = _num(model.valICt, null);
+      const _icTMin = _num(ICGATE.provisional && ICGATE.provisional.tMin, 1.65);
+      const _icFloorAcc = _num(GBDT.icPathAccFloor, 0.49);
+      let _icBlockWhy = null;
+      if (_icOnly) {
+        if (!(gLB >= _icFloorAcc))
+          _icBlockWhy = "IC 경로 — 정확도 하한 " + (gLB * 100).toFixed(2) + "% < " + (_icFloorAcc * 100).toFixed(0) +
+                        "% (동전보다 못한 쪽을 IC 로 덮지 않는다)";
+        else if (!(_icT != null && _icT >= _icTMin))
+          _icBlockWhy = "IC 경로 — 블록 유의성 t " + (_icT != null ? _icT.toFixed(2) : "미측정") + " < " + _icTMin;
+      }
+      if (_icBlockWhy) trust.reason = _icBlockWhy;
+      if ((_passAcc || _passIC) && !_icBlockWhy) {
         const eG = Math.exp(GBDT.trustTemp * (gLB - 0.5)), eM = Math.exp(GBDT.trustTemp * (mindLB - 0.5));
         trust.wGbdt = +(eG / (eG + eM)).toFixed(4); trust.trusted = true;
         trust.passedBy = _passAcc ? (_passIC ? "acc+ic" : "acc") : "ic";
@@ -31329,35 +31400,29 @@ async function mlMindStatus(DB) {
 
 const DNN = {
   enabled: true,
-  /* [V33.188] ★10층 3.03M 파라미터를 표본 2,000건으로 학습하고 있었다 — 결과 valAcc 0.404.★
-     다수클래스만 찍어도 57%(posRate 0.429) 인 라벨에서 40.4% 는 '못 배웠다' 가 아니라
-     '반대로 외웠다' 에 가깝다. 세 가지가 동시에 어긋나 있었다:
-       ① 표본 대비 용량 — 파라미터 3.03M / 표본 2,000. 어떤 정칙화로도 메울 비율이 아니다.
-       ② 예산 — 순수 JS 워커에서 이 크기는 ★단 한 번도 수렴한 적이 없다★(주석이 스스로 인정).
-          예산가드가 에폭을 끊으므로 실제로 남는 건 '초기화에 가까운 망' 이다.
-       ③ 자료형 — 65개 피처 중 밴딧 잡음필터가 유의하다고 판정한 건 ★8개★ 다. 표 형식 자료에서
-          MLP 가 무정보 피처에 특히 약하다는 건 벤치마크로 반복 확인된 사실이다.
-     근거:
-       · Grinsztajn, Oyallon, Varoquaux (NeurIPS 2022) "Why do tree-based models still outperform
-         deep learning on typical tabular data?" — 5만 행 미만 표 자료에서 GBDT 우위, MLP 는
-         ①무정보 피처 ②비평활 결정경계에 특히 취약.
-       · Gorishniy et al. (NeurIPS 2021) "Revisiting Deep Learning Models for Tabular Data" —
-         잘 조율된 ★얕은★ MLP 가 대부분의 정교한 구조와 대등하다.
-       · Holzmüller et al. (NeurIPS 2024) "Better by default: strong pre-tuned MLPs…" — 표 자료
-         MLP 의 강한 기본값은 은닉 2~3층·수백 유닛 규모다. 10층 640 폭이 아니다.
-       · Lakshminarayanan et al. (2017) — 시드 앙상블은 유지한다(분산 감소가 가장 값싼 이득).
-     → 은닉 2층 128-64(≈16.6K 파라미터). 표본 예산은 3배로 올리고 시드는 4→2 로 줄여
-       ★한 시드가 실제로 수렴할 수 있는 예산★ 을 만든다. 용량을 줄였으므로 드롭아웃·감쇠도 함께 내린다
-       (큰 망을 억누르려고 올려둔 값이라, 작은 망에 그대로 두면 이번엔 과소적합한다). */
-  hidden: [128, 64],
-  dropout: 0.15,
-  l2: 3e-4,
-  lr: 0.004,             // 망이 작아져 더 공격적으로 — 끊겨도 쓸 만한 지점에 먼저 닿는다
+  /* [V33.191] ★여기는 정식(GPU) 구조다 — Modal 트레이너가 /api/dnn-config 로 이 값을 읽어 간다.★
+     V33.188 이 이 값을 128-64 로 줄였는데, 그건 ★워커 폴백에서만★ 옳은 판단이었다.
+     Modal 은 T4 GPU 에서 표본 185,408건 전부를 받아 400에폭·6시드로 돌린다 — 거기서 용량을
+     줄일 이유가 없다. 워커(순수 JS·CPU 300s)와 GPU 는 완전히 다른 예산이므로 구조도 분리한다.
+     아래 DNNW 가 워커 전용이고, 이 DNN 이 GPU 용이다.
+
+     ★그러면 종전 10층 그대로 두면 되지 않나★ — 용량은 되돌리되 ★깊이는 절반으로 줄인다.★
+     표 형식 자료에서 깊은 평범한 MLP 가 손해를 보는 건 폭이 아니라 깊이 쪽이다:
+       · Grinsztajn et al. NeurIPS 2022 — MLP 는 무정보 피처·비평활 결정경계에 취약
+         (여기 65개 중 밴딧이 유의하다고 본 건 8개다 — 정확히 그 조건이다)
+       · Gorishniy et al. NeurIPS 2021 — 잘 조율된 ★얕은★ MLP 가 정교한 구조와 대등
+       · Holzmüller et al. NeurIPS 2024(RealMLP) — 표 자료 MLP 의 강한 기본값은 은닉 2~4층
+     넷당 파라미터: 종전 10층 763,345 → 새 5층 772,993 (+1.3%). 6시드 총합 4.58M → 4.64M.
+     ★용량은 오히려 늘었고 깊이만 10 → 5 로 줄었다.★ 같은 예산으로 더 빨리, 더 안정적으로 수렴한다. */
+  hidden: [768, 512, 384, 256, 128],
+  dropout: 0.42,         // 대형 망 — 과적합 억제(GPU 학습 기준)
+  l2: 9e-4,
+  lr: 0.0025,
   beta1: 0.9, beta2: 0.999, eps: 1e-8,
-  epochs: 40,
-  batch: 64,
-  dnnMaxSamples: 6000,   // 2,000 → 6,000. 파라미터가 1/180 이라 에폭 비용이 오히려 줄었다
-  patience: 6,           // 조기종료 인내
+  epochs: 50,            // 워커용 상한. Modal 은 자체 400에폭 + 조기종료를 쓴다
+  batch: 32,
+  dnnMaxSamples: 2000,   // (워커 폴백은 DNNW.dnnMaxSamples 를 쓴다 — 이 값은 하위호환용)
+  patience: 8,           // 조기종료 인내
   gradClip: 5,
   minTrainSamples: 150,  // [V12.100] 300→150 — DNN Worker폴백만 문턱이 높아 MIND(80)/GBDT(120)는 학습되는데
                          //   DNN만 계속 "학습 대기"로 남던 것 해소(사용자 지적: 왜 DNN은 안 도냐). featVer 재구축
@@ -31390,8 +31455,7 @@ const DNN = {
                               //   단일 검증LB를 이 이상으로 신뢰하지 않음 → 참여 전문가가 실질 발언권을 갖는다.
   trustTemp: 12,         // 신뢰 소프트맥스 온도(정확도차→가중)
   // ── 과적합 방어(소표본 금융 특화) ──
-  seeds: 2,              // [V33.188] 4→2. 멀티시드 앙상블(로짓 평균 → 분산↓)은 유지하되, 예산을 시드 수가
-                         //   아니라 ★수렴★ 에 쓴다. 안 끝난 망 4개보다 끝난 망 2개가 낫다.
+  seeds: 4,              // 멀티시드 앙상블 수(Modal 은 6으로 덮어쓴다 — SEEDS_OVERRIDE)
   labelSmooth: 0.06,     // 라벨 스무딩(승/패 라벨 노이즈에 과신 방지)
   inputNoise: 0.06,      // 학습 시 표준화 입력에 가우시안 노이즈(σ) 증강
   // [V9.7 논문 기법] 소표본 금융 tabular 특화 3종 — 신뢰게이트가 mind 대비 검증성능으로 자동 채택/억제.
@@ -31408,6 +31472,42 @@ const DNN = {
   trainBudgetMs: 90000   // [V10] 대형 망(3M) 대응 55s→90s. cpu_ms 300s 한도 내 다른 야간 스테이지와 합산 여유 확보. 예산 초과 시 남은 시드 생략(최소 1개 보장)
                          //   (월 CPU 영향: +55s/일 ≈ +1.7M ms/월 — 사용량 가드 여유 내, 셧다운 90% 대비 안전)
 };
+
+/* ════════════════════════════════════════════════════════════════════════════
+   [V33.191] ★워커 폴백 전용 하이퍼파라미터 — GPU 와 예산이 완전히 다르다.★
+
+   왜 나누나. 위 DNN 은 Modal(T4 GPU, 표본 185,408건, 400에폭, 6시드)이 읽는 값이다.
+   그런데 같은 값을 ★순수 JS·CPU 300초★ 인 워커 폴백도 그대로 썼다. 결과가 운영 스냅샷이다:
+     architecture 65-640-…-32-1×4 · n 5,000 · valAcc 0.404
+   다수클래스만 찍어도 57%(posRate 0.429) 인 라벨에서 40.4% 다. 종전 주석이 스스로
+   "순수 JS Worker 에선 이 크기가 완전학습은 어려움" 이라고 적어 두고 있었다 — 즉
+   ★한 번도 수렴한 적 없는 망★ 이 매일 밤 만들어져 위원회 앞에 놓였던 것이다.
+
+   그리고 표본이 굶고 있었다. 종전 읽기량은
+     _dnnRead = min(trainWindow, dnnMaxSamples×2 + 1000) = 5,000
+   이고 학습에는 그중 최근 2,000건만 썼다. ★185,408건 중 5,000건, 그것도 전부 최근 구간★ 이다.
+   그러면 검증 홀드아웃도 같은 며칠 안에서 잘리므로, valAcc 는 '한 국면에서의 성적' 이 된다
+   (XALPHA 홀드아웃이 사흘치였던 것과 정확히 같은 병이다).
+   → 아래 spanBuckets 로 ★전 구간에 걸쳐 균등하게★ 뽑고, 최근 구간은 따로 채운다.
+     읽는 행 수는 비슷한데 보는 기간이 몇 달로 늘어난다(비용은 그대로, 대표성만 좋아진다).
+
+   ★이 망이 GPU 망보다 약한 건 당연하고, 그래야 한다.★ 워커 폴백의 임무는 '이기는 것' 이
+   아니라 'Modal 이 없을 때 말이 되는 값을 내는 것' 이다. 실제로 더 나은 외부 모델이 있으면
+   덮어쓰지 않는다(V33.50 가드). 그래서 여기서는 ★반드시 끝나는 크기★ 가 정답이다. */
+const DNNW = Object.assign({}, DNN, {
+  hidden: [128, 64],     // 넷당 ≈16.6K 파라미터(GPU 망의 1/46) — CPU 예산 안에서 수렴 가능
+  seeds: 2,              // 안 끝난 망 4개보다 끝난 망 2개가 낫다
+  dropout: 0.15,         // 망이 작아졌으니 억제도 낮춘다(0.42 를 그대로 두면 이번엔 과소적합)
+  l2: 3e-4,
+  lr: 0.004,             // 예산에 끊겨도 쓸 만한 지점에 먼저 닿게
+  epochs: 40,
+  batch: 64,
+  patience: 6,
+  dnnMaxSamples: 6000,   // 학습에 쓰는 표본(종전 2,000)
+  spanBuckets: 8,        // 과거 구간을 이만큼으로 나눠 균등 추출 — 한 국면만 보지 않게
+  recentFrac: 0.5        // 읽는 표본의 절반은 최근 구간(최신성), 나머지는 전 구간 균등
+});
+
 
 // ── 선형대수 헬퍼 ──────────────────────────────────────────
 function _dnnRelu(v) { return v > 0 ? v : 0; }
@@ -31431,7 +31531,10 @@ function _dnnStdVec(x, mean, std) {
 }
 
 // 순전파. train=true면 드롭아웃 적용(inverted). 반환: {a[], pre[], p, masks[]}
-function _dnnForward(net, x, train) {
+// [V33.191] 드롭아웃 비율을 인자로 받는다 — 워커 폴백은 정식(GPU) 망과 다른 값을 쓴다.
+//   기본값은 종전과 같은 DNN.dropout 이라 추론 경로(train=false)는 아무 영향이 없다.
+function _dnnForward(net, x, train, dropoutP) {
+  const _dp = (typeof dropoutP === "number" && isFinite(dropoutP)) ? dropoutP : DNN.dropout;
   const L = net.W.length;
   const a = [x];
   const pre = [];
@@ -31449,7 +31552,7 @@ function _dnnForward(net, x, train) {
       const mask = new Array(nout).fill(1);
       for (let i = 0; i < nout; i++) {
         let h = _dnnRelu(z[i]);
-        if (train && DNN.dropout > 0) { if (Math.random() < DNN.dropout) { mask[i] = 0; h = 0; } else { h = h / (1 - DNN.dropout); } }
+        if (train && _dp > 0) { if (Math.random() < _dp) { mask[i] = 0; h = 0; } else { h = h / (1 - _dp); } }
         out[i] = h;
       }
       masks.push(mask);
@@ -31497,7 +31600,10 @@ function mlDNNScore(net, featVec) {
 
 // ── 시드 1개 학습: Adam + 미니배치 + 조기종료 + 라벨스무딩 + 입력노이즈 증강 ──
 //   deadline 초과 시 그 시점까지의 최적 가중치로 중단(부분학습도 유효). NaN이면 null.
-function _dnnTrainOne(train, val, dims, deadline, warm) {
+/* [V33.191] hp — 하이퍼파라미터를 인자로 받는다. 기본값은 DNN(정식·GPU) 이라 종전 호출은 그대로다.
+   워커 폴백만 DNNW 를 넘겨 ★작고 반드시 끝나는★ 망으로 학습한다(DNNW 주석 참조). */
+function _dnnTrainOne(train, val, dims, deadline, warm, hp) {
+  hp = hp || DNN;
   const W = [], b = [], mW = [], vW = [], mB = [], vB = [];
   for (let l = 0; l < dims.length - 1; l++) {
     W.push(_dnnHeInit(dims[l + 1], dims[l]));
@@ -31519,8 +31625,8 @@ function _dnnTrainOne(train, val, dims, deadline, warm) {
   let pos = 0; for (const t of train) pos += t.y;
   const wPos = pos > 0 ? train.length / (2 * pos) : 1;
   const wNeg = (train.length - pos) > 0 ? train.length / (2 * (train.length - pos)) : 1;
-  const eps = DNN.labelSmooth || 0;          // 라벨 스무딩: y→y(1-ε)+ε/2
-  const sigma = DNN.inputNoise || 0;         // 입력 가우시안 노이즈(표준화 공간)
+  const eps = hp.labelSmooth || 0;          // 라벨 스무딩: y→y(1-ε)+ε/2
+  const sigma = hp.inputNoise || 0;         // 입력 가우시안 노이즈(표준화 공간)
   const D = dims[0];
 
   function valLoss() {
@@ -31531,25 +31637,25 @@ function _dnnTrainOne(train, val, dims, deadline, warm) {
 
   let step = 0, bestLoss = Infinity, bestW = null, bestB = null, wait = 0, deadlineHit = false;
   // [V4] SWA(Izmailov 2018): 후반부 에폭들의 가중치 평균 — 평평한 최소점으로 일반화↑
-  const swaFrom = Math.floor(DNN.epochs * 0.5);
+  const swaFrom = Math.floor(hp.epochs * 0.5);
   let swaW = null, swaB = null, swaN = 0;
-  const clip = DNN.gradClip;
+  const clip = hp.gradClip;
   const noisy = new Array(D);
-  for (let ep = 0; ep < DNN.epochs; ep++) {
+  for (let ep = 0; ep < hp.epochs; ep++) {
     // [V11] ★핵심 수정★ 예산 초과 시 무조건 중단(기존 `&& bestW`가 첫 에폭 미완료 시 break를 막아
     //   3M망이 CPU한도까지 폭주→Worker 강제종료→아무것도 저장 못 함→"영원히 학습대기"의 원인이었음).
     if (Date.now() > deadline) break;
     // [V9] 코사인 LR 어닐링: lr → lr·lrFloorFrac (에폭 진행에 따라 감쇠, 후반 미세조정으로 일반화↑)
-    const _cosT = DNN.epochs > 1 ? ep / (DNN.epochs - 1) : 0;
-    const curLr = DNN.cosineLR
-      ? DNN.lr * ((DNN.lrFloorFrac || 0.08) + (1 - (DNN.lrFloorFrac || 0.08)) * 0.5 * (1 + Math.cos(Math.PI * _cosT)))
-      : DNN.lr;
+    const _cosT = hp.epochs > 1 ? ep / (hp.epochs - 1) : 0;
+    const curLr = hp.cosineLR
+      ? hp.lr * ((hp.lrFloorFrac || 0.08) + (1 - (hp.lrFloorFrac || 0.08)) * 0.5 * (1 + Math.cos(Math.PI * _cosT)))
+      : hp.lr;
     for (let i = train.length - 1; i > 0; i--) { const k = Math.floor(Math.random() * (i + 1)); const tmp = train[i]; train[i] = train[k]; train[k] = tmp; }
-    for (let bs = 0; bs < train.length; bs += DNN.batch) {
+    for (let bs = 0; bs < train.length; bs += hp.batch) {
       // [V11] 에폭 내부에서도 예산 감시 — 3M 대형망은 단일 에폭도 예산을 넘길 수 있어(에폭경계 체크만으론
       //   CPU한도 초과→강제종료). 배치마다 확인해 즉시 마감하고 지금까지 학습분을 반환(부분학습도 유효).
       if (Date.now() > deadline) { deadlineHit = true; break; }
-      const batch = train.slice(bs, bs + DNN.batch);
+      const batch = train.slice(bs, bs + hp.batch);
       // 그래디언트 누적
       const gW = W.map(function (m) { return m.map(function (r) { return r.map(function () { return 0; }); }); });
       const gB = b.map(function (r) { return r.map(function () { return 0; }); });
@@ -31558,7 +31664,7 @@ function _dnnTrainOne(train, val, dims, deadline, warm) {
         // [V9.7 Mixup] (Zhang et al., ICLR 2018) 확률 mixupP로 무작위 파트너와 선형보간(x·y 동시)
         //   → 소표본 tabular에서 결정경계를 매끄럽게(과적합·과신 완화). 소프트라벨은 BCE grad (p−y)에 그대로 유효.
         let yEff = t.y, wCls = (t.y ? wPos : wNeg), mwEff = t.mw;
-        if (DNN.mixupP > 0 && Math.random() < DNN.mixupP && train.length > 1) {
+        if (hp.mixupP > 0 && Math.random() < hp.mixupP && train.length > 1) {
           const u = train[Math.floor(Math.random() * train.length)];
           const lam = 0.2 + Math.random() * 0.6;   // λ∈[0.2,0.8] (Beta 근사 — 극단 회피)
           const mixed = new Array(D);
@@ -31569,18 +31675,18 @@ function _dnnTrainOne(train, val, dims, deadline, warm) {
           mwEff = lam * t.mw + (1 - lam) * u.mw;
         }
         if (sigma > 0) { const src = xin; for (let j = 0; j < D; j++) noisy[j] = src[j] + sigma * _gaussM(); xin = noisy; }
-        const fwd = _dnnForward(net, xin, true);
+        const fwd = _dnnForward(net, xin, true, hp.dropout);
         const L = W.length;
         // 출력 델타 (BCE+sigmoid, 스무딩 라벨): (p - yS) * weight
         const yS = yEff * (1 - eps) + eps / 2;
         // [V9.7 Focal] (Lin et al., ICCV 2017) 변조계수 (1−p_t)^γ — 이미 맞춘 쉬운 표본의 grad를 줄이고
         //   어려운 표본(오분류·경계)에 학습 집중. γ=0이면 기존과 동일.
         let focal = 1;
-        if (DNN.focalGamma > 0) { const pt = yEff > 0.5 ? fwd.p : (1 - fwd.p); focal = Math.pow(1 - pt, DNN.focalGamma); }
+        if (hp.focalGamma > 0) { const pt = yEff > 0.5 ? fwd.p : (1 - fwd.p); focal = Math.pow(1 - pt, hp.focalGamma); }
         // [V9.8 GCE] (Zhang&Sabuncu 2018) grad ×= p_t^q — 라벨과 모델확신이 어긋나는(오라벨 의심) 표본의
         //   갱신을 자동 감쇠 → CE의 노이즈 암기 방지. 소프트라벨(mixup)엔 기대확률로 일반화.
         let gce = 1;
-        if (DNN.gceQ > 0) { const ptg = yEff * fwd.p + (1 - yEff) * (1 - fwd.p); gce = Math.pow(Math.max(ptg, 0.05), DNN.gceQ); }
+        if (hp.gceQ > 0) { const ptg = yEff * fwd.p + (1 - yEff) * (1 - fwd.p); gce = Math.pow(Math.max(ptg, 0.05), hp.gceQ); }
         let delta = [(fwd.p - yS) * wCls * mwEff * focal * gce];
         for (let l = L - 1; l >= 0; l--) {
           const aPrev = fwd.a[l];
@@ -31604,27 +31710,27 @@ function _dnnTrainOne(train, val, dims, deadline, warm) {
       }
       // Adam 갱신(배치평균 + L2)
       step++;
-      const bc1 = 1 - Math.pow(DNN.beta1, step), bc2 = 1 - Math.pow(DNN.beta2, step);
+      const bc1 = 1 - Math.pow(hp.beta1, step), bc2 = 1 - Math.pow(hp.beta2, step);
       const bl = batch.length;
       for (let l = 0; l < W.length; l++) {
         for (let i = 0; i < W[l].length; i++) {
           for (let j = 0; j < W[l][i].length; j++) {
             // [V9] AdamW: 디커플드면 L2를 그래디언트에 넣지 않고 가중치에 직접 감쇠(적응형 옵티마이저 일반화↑).
             let g = gW[l][i][j] / bl;
-            if (!DNN.adamW) g += DNN.l2 * W[l][i][j];
+            if (!hp.adamW) g += hp.l2 * W[l][i][j];
             if (g > clip) g = clip; else if (g < -clip) g = -clip;
-            mW[l][i][j] = DNN.beta1 * mW[l][i][j] + (1 - DNN.beta1) * g;
-            vW[l][i][j] = DNN.beta2 * vW[l][i][j] + (1 - DNN.beta2) * g * g;
+            mW[l][i][j] = hp.beta1 * mW[l][i][j] + (1 - hp.beta1) * g;
+            vW[l][i][j] = hp.beta2 * vW[l][i][j] + (1 - hp.beta2) * g * g;
             const mh = mW[l][i][j] / bc1, vh = vW[l][i][j] / bc2;
-            W[l][i][j] -= curLr * mh / (Math.sqrt(vh) + DNN.eps);
-            if (DNN.adamW) W[l][i][j] -= curLr * DNN.l2 * W[l][i][j];  // 디커플드 감쇠
+            W[l][i][j] -= curLr * mh / (Math.sqrt(vh) + hp.eps);
+            if (hp.adamW) W[l][i][j] -= curLr * hp.l2 * W[l][i][j];  // 디커플드 감쇠
           }
           let gb = gB[l][i] / bl;
           if (gb > clip) gb = clip; else if (gb < -clip) gb = -clip;
-          mB[l][i] = DNN.beta1 * mB[l][i] + (1 - DNN.beta1) * gb;
-          vB[l][i] = DNN.beta2 * vB[l][i] + (1 - DNN.beta2) * gb * gb;
+          mB[l][i] = hp.beta1 * mB[l][i] + (1 - hp.beta1) * gb;
+          vB[l][i] = hp.beta2 * vB[l][i] + (1 - hp.beta2) * gb * gb;
           const mhb = mB[l][i] / bc1, vhb = vB[l][i] / bc2;
-          b[l][i] -= curLr * mhb / (Math.sqrt(vhb) + DNN.eps);  // 바이어스는 감쇠 없음(표준)
+          b[l][i] -= curLr * mhb / (Math.sqrt(vhb) + hp.eps);  // 바이어스는 감쇠 없음(표준)
         }
       }
     }
@@ -31652,7 +31758,7 @@ function _dnnTrainOne(train, val, dims, deadline, warm) {
       bestLoss = vl; wait = 0;
       bestW = W.map(function (m) { return m.map(function (r) { return r.slice(); }); });
       bestB = b.map(function (r) { return r.slice(); });
-    } else { wait++; if (wait >= DNN.patience) break; }
+    } else { wait++; if (wait >= hp.patience) break; }
   }
   if (bestW) { net.W = bestW; net.b = bestB; }
 
@@ -31697,11 +31803,47 @@ async function mlDNNTrainNightly(DB) {
     // [V12.100] ★DNN 완주 신뢰성★ 종전엔 trainWindow(90000)만큼 다 읽어 JSON.parse·표준화했는데
     //   실제 학습엔 최근 dnnMaxSamples(2000)만 쓴다 — 표본이 커질수록(37k+) 읽기·파싱만으로 CPU를 태워
     //   DNN 단계가 완주 못 하고(뒤의 GBDT까지 굶김) "DNN만 안 넘어가던" 원인. 필요한 최근 표본만 읽는다.
-    const _dnnRead = Math.min(LUXML.trainWindow, (DNN.dnnMaxSamples || 2000) * 2 + 1000);
-    const rows = await DB.prepare(
-      "SELECT ts, feat, label, pnl_pct, strategy FROM ml_samples WHERE featver = ? ORDER BY ts DESC LIMIT ?"
-    ).bind(LUXML.featVer, _dnnRead).all();
-    const raw = (rows && rows.results) ? rows.results : [];
+    /* [V33.191] ★표본이 굶고 있었다 — 185,408건 중 5,000건, 그것도 전부 최근 구간.★
+       종전: _dnnRead = min(trainWindow, dnnMaxSamples×2+1000) = 5,000 을 ts DESC 로 읽고
+       학습에는 그중 최근 2,000건만 썼다. 그러면 검증 홀드아웃까지 같은 며칠 안에서 잘려
+       valAcc 가 '한 국면에서의 성적' 이 된다(XALPHA 홀드아웃이 사흘치였던 것과 같은 병).
+       → 절반은 최근 구간, 절반은 ★id 범위를 균등 분할해★ 전 구간에서 뽑는다.
+         id 는 기본키라 범위 조회가 인덱스를 그대로 탄다 — 읽는 행 수는 비슷한데(비용 동일)
+         보는 기간이 며칠에서 몇 달로 늘어난다.
+       ※ 검증 분할은 아래에서 ts 정렬 후 ★뒤쪽(최근)★ 을 쓰므로 walk-forward 성질은 그대로다. */
+    const _dnnRead = Math.min(LUXML.trainWindow, (DNNW.dnnMaxSamples || 6000) * 2 + 1000);
+    const _nRecent = Math.max(200, Math.floor(_dnnRead * _num(DNNW.recentFrac, 0.5)));
+    const _COLS = "SELECT id, ts, feat, label, pnl_pct, strategy FROM ml_samples ";
+    const _seen = new Set();
+    const raw = [];
+    const _push = function (rs) {
+      for (const r of (rs || [])) { const k = _num(r.id, -1); if (k < 0 || _seen.has(k)) continue; _seen.add(k); raw.push(r); }
+    };
+    // ① 최근 구간
+    try {
+      const r1 = await DB.prepare(_COLS + "WHERE featver = ? ORDER BY ts DESC LIMIT ?")
+        .bind(LUXML.featVer, _nRecent).all();
+      _push(r1 && r1.results);
+    } catch (e) {}
+    // ② 전 구간 균등 — id 범위를 spanBuckets 로 나눠 각 구간에서 같은 수만큼
+    try {
+      const _mm = await DB.prepare("SELECT MIN(id) AS lo, MAX(id) AS hi FROM ml_samples WHERE featver = ?")
+        .bind(LUXML.featVer).first();
+      const lo = _num(_mm && _mm.lo, 0), hi = _num(_mm && _mm.hi, 0);
+      const B = Math.max(1, Math.floor(_num(DNNW.spanBuckets, 8)));
+      const per = Math.max(50, Math.floor((_dnnRead - _nRecent) / B));
+      if (hi > lo) {
+        const step = (hi - lo) / B;
+        for (let bI = 0; bI < B; bI++) {
+          const from = Math.floor(lo + step * bI);
+          const rb = await DB.prepare(_COLS + "WHERE featver = ? AND id >= ? ORDER BY id ASC LIMIT ?")
+            .bind(LUXML.featVer, from, per).all();
+          _push(rb && rb.results);
+        }
+      }
+    } catch (e) {}
+    // 시간순(오름차순)으로 맞춘다 — 아래 루프가 역순으로 읽으므로 여기서는 내림차순으로 둔다.
+    raw.sort(function (a, b) { return _num(b.ts, 0) - _num(a.ts, 0); });
     const nowTs = Date.now();
     const data = [];
     for (let i = raw.length - 1; i >= 0; i--) {
@@ -31736,12 +31878,20 @@ async function mlDNNTrainNightly(DB) {
     let train = all.slice(0, N - nVal).filter(function (t) { return t.ts < cutTs; });
     if (train.length < 60) train = all.slice(0, N - nVal);
     // [V10] 대형 망 학습비용 제한 — 최근 dnnMaxSamples개만 사용(예산 내 에폭 수 확보). 최신성 우선이라 뒤쪽(최근) 유지.
-    if (DNN.dnnMaxSamples && train.length > DNN.dnnMaxSamples) train = train.slice(train.length - DNN.dnnMaxSamples);
+    /* [V33.191] 학습표본 상한도 워커 전용 값으로. ★그리고 '최근만 남기기' 를 하지 않는다★ —
+       위에서 전 구간에 걸쳐 뽑아 온 표본을 여기서 뒤쪽만 잘라내면 애써 넓힌 기간이 도로 사라진다.
+       상한을 넘으면 ★균등 간격으로 솎아내어★ 기간을 유지한 채 개수만 줄인다. */
+    if (DNNW.dnnMaxSamples && train.length > DNNW.dnnMaxSamples) {
+      const _keep = DNNW.dnnMaxSamples, _st = train.length / _keep;
+      const _thin = [];
+      for (let ti = 0; ti < _keep; ti++) _thin.push(train[Math.min(train.length - 1, Math.floor(ti * _st))]);
+      train = _thin;
+    }
     const val = all.slice(N - nVal);
     if (train.length < 60) { await setState(DB, "dnn_trust", { wDnn: 0, trusted: false, reason: "train" }); return "[DNN] 훈련셋 부족"; }
 
     // 층 구조 [D, ...hidden, 1] — 멀티시드 앙상블(서로 다른 초기화·셔플 K개 → 로짓 평균)
-    const dims = [D].concat(DNN.hidden).concat([1]);
+    const dims = [D].concat(DNNW.hidden).concat([1]);   // [V33.191] 워커 폴백 구조(GPU 는 DNN.hidden)
     // [V12.36] "외부 모델 존재→생략" 판정은 함수 맨 앞으로 이동(위 prevModelEarly) — 여기선 웜스타트에만 재사용.
     const prevModel = prevModelEarly;
     const warmNets = (prevModel && Array.isArray(prevModel.nets) && Array.isArray(prevModel.dims)
@@ -31749,11 +31899,11 @@ async function mlDNNTrainNightly(DB) {
       ? prevModel.nets : null;   // [V11] 웜스타트 소스(차원 일치 시에만)
     const deadline = Date.now() + (DNN.trainBudgetMs || 20000);
     const nets = [];
-    const K = Math.max(1, DNN.seeds || 1);
+    const K = Math.max(1, DNNW.seeds || 1);
     for (let sd = 0; sd < K; sd++) {
       if (sd > 0 && Date.now() > deadline) break;   // CPU 예산 소진 — 최소 1개는 보장
       const warm = warmNets ? warmNets[sd % warmNets.length] : null;   // [V11] 여러 밤에 걸쳐 이어학습
-      const one = _dnnTrainOne(train, val, dims, deadline, warm);
+      const one = _dnnTrainOne(train, val, dims, deadline, warm, DNNW);
       if (one) nets.push(one);
     }
     if (!nets.length) { await setState(DB, "dnn_trust", { wDnn: 0, trusted: false, reason: "nan" }); return "[DNN] 수치불안정 감지 — 미사용"; }
@@ -31874,7 +32024,16 @@ async function _boostersCached(DB) {
       const T = await getStates(DB, ["xgb_trust", "lgb_trust", "cat_trust"]);
       for (const nm of ["xgb", "lgb", "cat"]) {
         const t = T[nm + "_trust"];
-        if (t && t.trusted && t.gbdtAccLB != null) {
+        /* [V33.191] ★읽는 쪽에도 같은 문턱을 둔다.★ 승격 시점 판정(gbdt-import)만 고치면,
+           이미 trusted 로 저장돼 있는 모델은 다음 외부 업로드(6시간 주기)까지 그대로 투표한다.
+           운영 실측 XGB 0.4836 / LGB 0.4871 이 지금 그 상태다 — 그 사이를 비워 두지 않는다.
+           (정확도로 통과한 모델은 여기서도 아무 변화가 없다.) */
+        const _lb = t ? _num(t.gbdtAccLB, 0) : 0;
+        const _tIC = t ? _num(t.valICt, null) : null;
+        const _okEvidence = (_lb >= _num(GBDT.trustFloor, 0.505))
+          || (_lb >= _num(GBDT.icPathAccFloor, 0.49)
+              && _tIC != null && _tIC >= _num(ICGATE.provisional && ICGATE.provisional.tMin, 1.65));
+        if (t && t.trusted && t.gbdtAccLB != null && _okEvidence) {
           let m = null; try { m = await getState(DB, nm + "_model", null); } catch (e) {}
           if (m && m.featVer === LUXML.featVer && Array.isArray(m.trees) && m.trees.length) out.push({ name: nm, model: m, accLB: _num(t.gbdtAccLB, 0.5) });
         }
@@ -32694,7 +32853,12 @@ async function mlDNNVizData(DB) {
     const source = m.source || "worker";   // "external"=외부GPU 업로드, "worker"=야간 자가학습
     // [V12.5 로딩속도] 무거운 요약을 캐시(모델 meta.ts 키) — 다음 요청부터 21MB 로드 생략
     const heavy = {
-      trained: true, architecture: dims.join("-") + "×" + nets.length, dims: dims, cfgLayers: DNN.hidden.length + 2, seeds: nets.length,
+      /* [V33.191] ★기대 구조는 '어디서 학습됐나' 에 따라 다르다.★ 워커 폴백은 이제 GPU 망보다
+         일부러 작다(DNNW). 여기서 DNN.hidden 만 보면 화면이 정상 폴백을 '구버전 구조' 라고
+         잘못 적는다 — 고칠 것이 없는데 고치라고 말하는 표시다. */
+      trained: true, architecture: dims.join("-") + "×" + nets.length, dims: dims,
+      cfgLayers: ((m.source === "external" ? DNN.hidden : DNNW.hidden).length + 2),
+      builtBy: (m.source === "external" ? "external" : "worker"), seeds: nets.length,
       valAcc: m.valAcc, n: m.n, params: params, trainedAt: m.trainedAt, source: source,
       layers: layers, inputFeatures: inputFeatures, topFeatures: topFeatures
     };
@@ -32723,6 +32887,9 @@ const GBDT = {
   eta: 0.06,            // 셔링크(학습률) — 트리 수 늘린 만큼 미세하게
   maxDepth: 4,          // 트리 깊이(4 = 최대 16리프, 얕게 유지가 과적합 방어)
   minChildWeight: 5,    // 자식 최소 헤시안 합(소표본 잎 금지)
+  // [V33.191] IC 경로로만 위원회에 들어오려는 모델의 정확도 하한 바닥(위 gbdt-import 주석 참조).
+  //   0.49 = "동전과 구별되지 않는다" 까지는 허용하되 "동전보다 못하다" 는 안 된다.
+  icPathAccFloor: 0.49,
   lambda: 1.0,          // 리프 L2 정규화
   gamma: 0.1,           // 분할 최소이득(가지치기)
   subsample: 0.8,       // 트리당 행 서브샘플
