@@ -93,15 +93,18 @@ jobs:
         run: |
           set +e
           : > trainlog.txt
-          FROM=""; ROUND=0; CODE=""
+          FROM=""; ROUND=0; CODE=""; SOFT=0
           # [V33.192] ★target=all 은 한 번으로 안 끝난다 — 재개까지 돌려야 '전체'다.★
           #   워커는 1요청 CPU 상한(300s) 때문에 240초에서 스스로 끊고 남은 단계를
           #   skipped(deadline) 로 표기한 뒤 resume 경로를 돌려준다. 종전 워크플로는 그 값을
           #   쓰지 않고 한 번만 불렀다 — 그래서 파이프라인 ★뒷단이 매번 통째로 안 돌았다★.
           #   하필 확률 보정(calibrate)·자가평가(selfreview)·원장통계(portstats)가 그 자리에 있다.
-          while [ "$ROUND" -lt 12 ]; do
+          while [ "$ROUND" -lt 20 ]; do
             ROUND=$((ROUND+1))
-            Q="target=$TARGET"
+            # [V33.195] 회차당 예산을 240초 → 150초로 줄인다. 마감시한은 ★단계 사이★ 에서만
+            #   재므로, 240초를 다 쓴 뒤 또 무거운 단계를 시작하면 한 회차가 452초까지 간다(실측).
+            #   짧게 끊으면 워커에 여유가 남아 다음 회차가 자원한도에 걸릴 확률이 준다.
+            Q="target=$TARGET&deadlineMs=150000"
             [ -n "$FROM" ] && Q="$Q&from=$FROM"
             echo "POST $URL/api/ai/train-now?$Q"
             BODY=$(curl -sS --max-time 900 -w '\n%{http_code}' -X POST \
@@ -110,7 +113,18 @@ jobs:
             CODE=$(printf '%s' "$BODY" | tail -n1)
             JSON=$(printf '%s' "$BODY" | sed '$d')
             printf '%s' "$JSON" > result.json
-            [ "$CODE" != "200" ] && { echo "회차 $ROUND: HTTP $CODE" | tee -a trainlog.txt; break; }
+            # [V33.195] ★한 번의 503 이 스윕 전체를 끝내고 있었다.★ 실측: 회차1 이 452초를 쓰고
+            #   200 으로 끝났는데(7단계 완료), 3초 뒤 회차2 가 503 을 받자 루프가 통째로 멈췄다.
+            #   워커는 무거운 회차 직후 자원한도에 걸릴 수 있다 — 그건 ★일시적★ 이고, 남은 34단계를
+            #   포기할 이유가 아니다. 재소급 스윕이 이미 쓰는 방식(연속 실패에만 중단)과 같게 만든다.
+            if [ "$CODE" != "200" ]; then
+              SOFT=$((SOFT+1))
+              echo "회차 $ROUND: HTTP $CODE — ${SOFT}회 연속 (재시도 대기 $((SOFT*20))초)" | tee -a trainlog.txt
+              [ "$SOFT" -ge 3 ] && { echo "연속 3회 실패 — 중단(남은 단계: $FROM 이후)" | tee -a trainlog.txt; break; }
+              sleep $((SOFT*20))
+              continue
+            fi
+            SOFT=0
             # 여러 줄 스크립트를 YAML 에 박으면 블록 스칼라가 깨진다 — 파싱은 파일이 한다.
             OUT=$(printf '%s' "$JSON" | node tools/train-line.mjs 2>/dev/null)
             NEXT=$(printf '%s' "$OUT" | sed -n 's/^RESUME=//p')
@@ -123,6 +137,9 @@ jobs:
           done
           echo "rounds=$ROUND" >> "$GITHUB_OUTPUT"
           echo "code=$CODE" >> "$GITHUB_OUTPUT"
+          # 완주 여부 = 남은 재개 지점이 없는가. 마지막 HTTP 코드로 판정하면
+          # '재시도 끝에 완주' 가 실패로 보이고 '한 회차만 돌고 멈춤' 이 성공으로 보인다.
+          [ -z "$FROM" ] && echo "done=1" >> "$GITHUB_OUTPUT" || echo "done=0" >> "$GITHUB_OUTPUT"
 
       - name: 결과 요약
         if: always()
@@ -133,8 +150,9 @@ jobs:
           {
             echo "### 워커 학습기 \`$TARGET\` — HTTP ${CODE:-없음}"
             echo ""
-            if [ "$CODE" != "200" ]; then
-              echo "🔴 호출이 실패했다. 401 이면 TRAIN_KEY 불일치, 503 이면 워커에 키가 없다는 뜻이다."
+            if [ "${{ steps.run.outputs.done }}" != "1" ]; then
+              echo "🔴 파이프라인이 끝까지 못 갔다(마지막 HTTP ${CODE:-없음})."
+              echo "401 = TRAIN_KEY 불일치 · 503 = 워커 자원한도(무거운 회차 직후 흔하다, 재시도함) · 그 외는 아래 기록 참조."
             else
               echo "각 학습기가 돌려준 문장을 그대로 싣는다 —"
               echo "**\"표본 N/최소 — 학습 대기\" 는 실패가 아니라 표본이 덜 찼다는 정상 응답이다.**"
@@ -151,4 +169,5 @@ jobs:
             echo ""
             echo '```'
           } >> "$GITHUB_STEP_SUMMARY"
-          [ "$CODE" = "200" ]
+          # 남은 단계가 있으면 실패로 표시한다 — 초록불로 덮으면 '뒷단이 안 돌았다' 를 놓친다.
+          [ "${{ steps.run.outputs.done }}" = "1" ]

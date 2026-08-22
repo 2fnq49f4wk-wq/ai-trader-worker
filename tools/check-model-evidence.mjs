@@ -149,5 +149,48 @@ const params = (D, hidden) => {
     "거버너가 시장별 실적이 아닌 값으로 크기를 줄인다");
 }
 
+// ── ⑤ [V33.195] 두 화면이 같은 사실을 말하는가 ─────────────────────────────
+//   실측 사고: 같은 순간 같은 DNN 을 두고
+//     AI 두뇌 관측(/api/ml-status)  → "검증 정확도 49.5%"   ← valAcc
+//     AI 운용상태 사이드바(/api/ai-mode) → "검증 47%"        ← accLB(Wilson 하한)
+//   둘 다 사실인데 ★이름이 같아서★ 사용자는 어느 쪽도 믿을 수 없게 됐다.
+//   고칠 것은 숫자가 아니라 이름이고, 두 화면이 같은 사실표를 쓰게 하는 것이다.
+{
+  const H = readFileSync(new URL("../public/index.html", import.meta.url), "utf8");
+  chk(/function _modelFacts\(trust, meta, opts\)/.test(src),
+    "모델 사실표를 만드는 단일 함수(_modelFacts)가 있다",
+    "사실표를 각 엔드포인트가 따로 조립한다 — 같은 모델이 화면마다 다른 숫자로 보이게 된다");
+  chk(/dnn: Object\.assign\(_modelFacts\(_dt, _dMeta/.test(src) && /gbdt: Object\.assign\(_modelFacts\(_gt/.test(src),
+    "/api/ai-mode 의 DNN·GBDT 행이 그 사실표에서 나온다",
+    "ai-mode 가 아직 필드를 손으로 조립한다");
+  // 두 값이 ★둘 다★ 실려야 한다 — 하나만 실으면 화면은 다시 이름을 겹쳐 쓰게 된다.
+  chk(/valAcc: pct\(raw\)/.test(src) && /accLB: pct\(lb\)/.test(src),
+    "사실표가 valAcc(맞힌 비율)와 accLB(신뢰하한)를 둘 다 싣는다",
+    "사실표에 두 값 중 하나가 없다 — 화면이 다시 한 이름으로 두 통계를 부르게 된다");
+  chk(/accLB: \(trust && trust\.dnnAccLB != null\)/.test(src) && /floor: \+\(_num\(DNN\.trustFloor/.test(src),
+    "/api/ml-status 도 accLB·floor 를 같은 이름으로 싣는다",
+    "두뇌관측 쪽에 accLB/floor 가 없다 — 두 화면이 다시 다른 값만 갖게 된다");
+  // ★같은 모델을 보고 있는지 판별할 키★ — 캐시 창이 다르면 값이 갈릴 수 있다.
+  chk(/trainedAt: pick\(t \? _num\(t\.trainedAt, null\)/.test(src),
+    "사실표가 trainedAt 을 싣는다 — 두 화면이 같은 모델인지 대조할 수 있다",
+    "trainedAt 이 없다 — 숫자가 갈렸을 때 버그인지 낡은 캐시인지 구분할 수 없다");
+  // 화면: 두 값을 다른 이름으로 적는가
+  chk(/parts\.push\('검증 '\+d\.valAcc\.toFixed\(1\)/.test(H) && /parts\.push\('하한 '\+d\.accLB\.toFixed\(1\)/.test(H),
+    "사이드바가 '검증' 과 '하한' 을 구분해 적는다",
+    "사이드바가 두 통계를 한 이름으로 적는다 — 이번 사고가 그대로 재발한다");
+  chk(/chip\('신뢰하한\(게이트 기준\)'/.test(H) && /chip\('신뢰 문턱'/.test(H),
+    "두뇌관측도 신뢰하한·문턱을 함께 보인다(게이트가 보는 값이 무엇인지 화면이 말한다)",
+    "두뇌관측이 valAcc 만 보인다 — 왜 억제 중인지 화면만으로 알 수 없다");
+  /* ★관측 화면은 모르는 것을 지어내면 안 된다.★ 미학습 미리보기가 뉴런 강도를 난수로
+     채워 새로고침마다 다른 그림을 보여주고 있었다. 구조(층·뉴런 수)는 사실이지만
+     강도는 알 수 없는 값이다 — 알 수 없으면 비워 두고 그렇다고 말해야 한다. */
+  chk(!/Math\.random\(\)/.test(H),
+    "구조 관측이 난수로 그리는 곳이 없다 — 모르는 값을 지어내지 않는다",
+    "화면이 아직 Math.random() 으로 뉴런 강도를 그린다 — 새로고침마다 다른 '사실' 을 보여준다");
+  chk(/미학습 — 구조만 표시/.test(H) && /뉴런 강도는 표시하지 않습니다/.test(H),
+    "미학습일 때 '구조는 사실 · 강도는 없음' 을 명시한다",
+    "미학습 미리보기가 무엇이 사실이고 무엇이 비어 있는지 말하지 않는다");
+}
+
 console.log(fails ? "\n모델 증거 계약 위반 " + fails + "건 — 배포 차단" : "\n  ok   모델 증거 계약 통과");
 process.exit(fails ? 1 : 0);

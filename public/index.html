@@ -8,7 +8,7 @@
      인데, 지금까지 화면에서 그걸 알 방법이 전혀 없었다(카카오톡 인앱 브라우저는 특히 강하게 캐시한다).
      서버가 내려주는 build 와 이 값을 비교해 다르면 배너로 알린다.
      ※ src/index.js 의 _BUILD_VER 와 항상 같아야 한다 — check-html-js 가 강제한다. -->
-<meta name="lux-build" content="V33.194">
+<meta name="lux-build" content="V33.195">
 <title>LUX-ENGINE V10</title>
 <!-- ══ [V33.156] 설치형 앱(PWA) — 폰·PC 에서 홈화면/독에 담아 앱처럼 연다 ══
      · manifest  : 이름·아이콘·standalone 표시(주소창 없이 앱처럼)
@@ -13826,9 +13826,15 @@ html[data-theme="light"] #page-nnviz .nlv-sec-h{ border-color:transparent; color
           chip('신뢰가중', 'wDNN 0','off');
         legend.style.display='flex';
         // dims → 미리보기 레이어(랜덤 강도)
+        /* [V33.195] ★여기가 '그냥 디자인' 이었다 — 뉴런 강도를 난수로 그리고 있었다.★
+           학습된 모델이 없을 때 화면은 아무 강도도 알지 못한다. 그런데 종전 코드는
+           0.25~1.00 사이 난수를 채워 ★새로고침할 때마다 다른 그림★ 을 보여줬다.
+           모르는 것을 아는 것처럼 그리는 건 관측 화면이 해서는 안 되는 일이다.
+           → 전부 같은 값(중립)으로 그리고, 아래 배너가 '구조만·강도 없음' 이라고 말한다.
+             층·뉴런 수는 실제 dims 그대로이므로 ★구조는 사실★ 이고 강도만 비어 있다. */
         var pv = dims.map(function(sz,i){
-          var strength=[]; for(var q=0;q<sz;q++) strength.push(0.25+Math.random()*0.75);
-          return { kind: i===0?'input':(i===dims.length-1?'output':'hidden'), size: sz, strength: strength };
+          var strength=[]; for(var q=0;q<sz;q++) strength.push(0.35);
+          return { kind: i===0?'input':(i===dims.length-1?'output':'hidden'), size: sz, strength: strength, unknown: true };
         });
         NNV_drawSVG(stage, pv);
         NNV_renderRoles(d);
@@ -13849,7 +13855,9 @@ html[data-theme="light"] #page-nnviz .nlv-sec-h{ border-color:transparent; color
         }
         var note=document.createElement('div');
         note.className='nnv-empty'; note.style.padding='8px'; note.style.fontSize='11px';
-        note.innerHTML='🌱 <b>미학습 미리보기</b> — 딥넷은 표본 400건 이상 쌓이면 야간에 자동 학습됩니다. 학습 후엔 실제 가중치 강도로 그려집니다.';
+        note.innerHTML='🌱 <b>미학습 — 구조만 표시</b> · 층·뉴런 수는 설정된 실제 구조('+dims.join('-')+')이고, '
+          + '<b>뉴런 강도는 표시하지 않습니다</b>(학습된 가중치가 없어 알 수 없는 값입니다). '
+          + '학습이 끝나면 실제 가중치 강도로 다시 그려집니다.';
         stage.appendChild(note);
         return;
       }
@@ -13862,14 +13870,23 @@ html[data-theme="light"] #page-nnviz .nlv-sec-h{ border-color:transparent; color
     var _pnT = d.paramsPerNet||0, _sdT = d.seeds||1;
     sub.textContent='구조 '+d.architecture
       + ' · 파라미터 넷당 '+_pnT.toLocaleString()+'개 × '+_sdT+'시드 = '+(d.params? d.params.toLocaleString():'—')+'개'
-      + ' · '+(d.builtBy==='external'?'외부 GPU 학습':'워커 야간 자가학습');
+      + ' · '+(d.builtBy==='external'?'외부 GPU 학습':'워커 야간 자가학습')
+      /* [V33.195] 학습시각 — 사이드바가 적는 값과 같으면 두 화면이 같은 모델을 보고 있는 것이다.
+         숫자가 어긋날 때 '버그인가 낡은 캐시인가' 를 이 한 줄이 가른다. */
+      + (has(d.trainedAt) ? ' · 학습 '+new Date(d.trainedAt).toLocaleString('ko-KR',{month:'2-digit',day:'2-digit',hour:'2-digit',minute:'2-digit'}) : '');
     var wDnn = d.trust? d.trust.wDnn : 0, trusted = d.trust && d.trust.trusted;
     chips.innerHTML =
       chip('전체 층', (d.dims?d.dims.length:0)+'층', 'good') +
       chip('총 파라미터', d.params? d.params.toLocaleString()+'개':'—','') +
       chip('넷당 파라미터', d.paramsPerNet? d.paramsPerNet.toLocaleString()+'개':'—','') +
       chip('시드 앙상블', (d.seeds||1)+'개','') +
+      /* [V33.195] ★사이드바와 같은 두 값을, 같은 이름으로.★ 종전엔 여기만 valAcc 를 적고
+         사이드바는 accLB 를 적어, 같은 모델이 49.5% / 47% 로 갈려 보였다.
+         게이트가 보는 것은 하한(accLB)이므로 문턱과 나란히 놓는다. */
       chip('검증 정확도', pct(d.valAcc), d.valAcc>=0.55?'good':(d.valAcc>=0.5?'warn':'off')) +
+      chip('신뢰하한(게이트 기준)', has(d.accLB)? d.accLB.toFixed(1)+'%':'—',
+           (has(d.accLB)&&has(d.floor)&&d.accLB>=d.floor)?'good':'off') +
+      chip('신뢰 문턱', has(d.floor)? d.floor.toFixed(1)+'%':'—','') +
       chip('학습 표본', d.n? d.n.toLocaleString():'—','') +
       chip('신뢰가중 wDNN', (wDnn!=null?wDnn.toFixed(2):'—'), trusted?'good':'off') +
       chip('옵티마이저', (d.config&&d.config.optimizer)||'Adam','') +
@@ -16896,7 +16913,8 @@ html:root .page > *{ flex-shrink:0; }
     var brow = function(nm, o){
       if(!o) return [ico(null)+' '+nm, '<span class="sub">미학습</span>'];
       var parts = [];
-      if(has(o.accLB)) parts.push('검증 '+(o.accLB*100).toFixed(1)+'%');
+      // [V33.195] 부스터도 같은 규칙 — '검증' 과 '하한' 을 구분해 적는다.
+      if(has(o.accLB)) parts.push('하한 '+(o.accLB*100).toFixed(1)+'%');
       if(has(o.w) && o.w > 0) parts.push('w='+o.w);
       var body = parts.length ? parts.join(' · ') : null;
       var tag = o.trusted ? col('가동', C.pos)
@@ -16904,14 +16922,27 @@ html:root .page > *{ flex-shrink:0; }
       return [ico(o)+' '+nm, tag + (body ? ' <span class="sub">'+body+'</span>' : '')
         + (o.source ? ' <span class="sub">·'+(o.source==='external'?'Modal':'Worker')+'</span>' : '')];
     };
+    /* [V33.195] ★같은 모델을 두 화면이 다른 숫자로 말하던 것을 끝낸다.★
+       실측: 두뇌관측 "검증 정확도 49.5%" vs 여기 "검증 47%". 둘 다 사실이고 다른 통계였다 —
+       49.5 = valAcc(맞힌 비율), 47.0 = accLB(유효표본 Wilson 하한, ★게이트가 쓰는 값★).
+       이름이 같으면 사람은 같은 것으로 읽고, 다르면 어느 쪽도 못 믿게 된다.
+       → 둘 다, 다른 이름으로 적는다. 그리고 학습시각을 함께 적어 ★두 화면이 같은 모델을
+         보고 있는지★ 를 화면에서 직접 대조할 수 있게 한다(캐시 창이 서로 다르다). */
+    var accPair = function(d, floor){
+      var parts = [];
+      if(has(d.valAcc)) parts.push('검증 '+d.valAcc.toFixed(1)+'%');
+      if(has(d.accLB))  parts.push('하한 '+d.accLB.toFixed(1)+'%');
+      if(has(floor))    parts.push('문턱 '+floor+'%');
+      return parts.join(' · ');
+    };
     var mrow = function(nm, on, d, floor){
       var msg = null;
       if(d){
         if(!d.stored)          msg = '<span class="sub">모델 없음 — 학습 미완료</span>';
         else if(!d.featVerOk)  msg = col('featVer 불일치('+esc(d.featVer)+')', C.neg);
-        else if(!d.trusted)    msg = col(has(d.accLB) ? ('검증 '+d.accLB+'% &lt; 문턱 '+(has(floor)?floor:'?')+'% → 억제')
+        else if(!d.trusted)    msg = col(has(d.accLB) ? ('억제 — '+accPair(d, floor)+' (하한이 문턱 미달)')
                                                       : ('미신뢰'+(d.reason?' ('+esc(d.reason)+')':'')), C.amb);
-        else                   msg = col('가동'+(has(d.w)?' w='+d.w:''), C.pos);
+        else                   msg = col('가동'+(has(d.w)?' w='+d.w:'')+' <span class="sub">'+accPair(d, floor)+'</span>', C.pos);
         if(d.source) msg += ' <span class="sub">·'+(d.source==='external'?'Modal':'Worker')+'</span>';
         // [V33.115] 검증 n 은 ★유효표본수★ 다. 10일 지평 라벨이 같은 종목 안에서 겹치므로
         //   "검증 3,000건" 은 3,000건어치 독립 증거가 아니다. 명목과 함께 보여 왜 문턱이
@@ -16919,6 +16950,13 @@ html:root .page > *{ flex-shrink:0; }
         if(has(d.valN) && has(d.valNRaw) && d.valNRaw > d.valN)
           msg += ' <span class="sub">· 검증 유효 '+n0(d.valN)+'/'+n0(d.valNRaw)
                + (has(d.uniq)?'(고유도 '+d.uniq.toFixed(2)+')':'')+'</span>';
+        /* [V33.195] 학습시각 — 두뇌관측과 이 값이 같으면 ★같은 모델을 보고 있는 것★ 이고,
+           다르면 한쪽이 낡은 캐시다. 숫자가 어긋날 때 어느 쪽이 문제인지 여기서 갈린다. */
+        if(has(d.trainedAt)){
+          var _ag = (Date.now() - d.trainedAt)/60000;
+          msg += ' <span class="sub">· 학습 '+(_ag < 90 ? Math.round(_ag)+'분 전'
+                : (_ag < 2880 ? (_ag/60).toFixed(1)+'시간 전' : Math.floor(_ag/1440)+'일 전'))+'</span>';
+        }
         // [V33.124] ★고유도 보정 때문에 막힌 경우★ — 실력 부족과 구분되어야 한다.
         //   문턱(0.505)은 valN 이 명목이던 시절 값이고, 지금 valN 은 유효표본수다.
         //   "명목이면 통과인데 유효로는 미달" 이면 그건 모델이 나빠진 게 아니라 자가 바뀐 것이다.

@@ -2788,7 +2788,7 @@ async function applySignalTypeWeights(DB, cfg) {
 // ============================================================================
 // [V33.55] 빌드 버전 — SWR L2 캐시 키에 섞어 '배포 = 판단 캐시 자동 무효화'를 만든다.
 //   판정 로직을 고쳐도 옛 캐시가 최대 1시간 재배포되던 문제를 구조적으로 없앤다.
-const _BUILD_VER = "V33.194";
+const _BUILD_VER = "V33.195";
 
 // ═══ [V33.171] 평가 순서 계획 — ★승격과 순환을 교차해 굶주림을 구조적으로 없앤다★ ═══
 //   V33.50 의 형태트리거는 "급한 몇 종목을 앞으로 당긴다"는 의도였으나, 실제 운영로그에서는
@@ -19667,38 +19667,28 @@ async function handleRequest(request, env, ctx) {
           //   ※ Modal 은 DNN 만 학습하는 게 아니다 — DNN·GBDT·XGB·LGB·Cat·MIND·단타를 모두 학습한다.
           //     source 필드로 어느 모델이 외부(Modal) 산출물인지도 함께 드러낸다.
           const _fmtAcc = function (x) { return (typeof x === "number") ? +(x * 100).toFixed(1) : null; };
+          /* [V33.195] ★사실표는 _modelFacts 한 곳에서 만든다.★ 종전에는 이 자리와
+             mlDNNStatus/mlGBDTStatus 가 각자 필드를 조립했고, 그래서 같은 모델을 두고
+             한쪽은 valAcc(49.5%)를, 다른 쪽은 accLB(47.0%)를 똑같이 "검증" 이라 적었다.
+             이제 두 값을 ★둘 다, 다른 이름으로★ 싣고 trainedAt 으로 동일 모델임을 증명한다. */
           _diag = {
-            dnn: {
+            dnn: Object.assign(_modelFacts(_dt, _dMeta, {
               stored: !!(_dMeta && (_dMeta.chunks > 0 || _dMeta.r2)),
               where: _dMeta ? (_dMeta.r2 ? "R2" : (_dMeta.chunks > 0 ? "D1×" + _dMeta.chunks : "없음")) : "없음",
               featVerOk: !!(_dMeta && (typeof _dMeta.featVer !== "number" || _dMeta.featVer === LUXML.featVer)),
-              featVer: _dMeta ? _dMeta.featVer : null,
-              trusted: !!(_dt && _dt.trusted),
-              accLB: _fmtAcc(_dt && (_dt.dnnAccLB != null ? _dt.dnnAccLB : _dt.valAccLB)),
-              floor: _fmtAcc(DNN.trustFloor),
-              w: _dt ? _dt.wDnn : null,
-              source: _dt ? (_dt.source || "worker") : null,
-              reason: _dt ? _dt.reason : null,
-              // [V33.115] 검증 유효표본수/명목/평균 고유도 — "검증 3,000건" 이 실제로 몇 건어치인지.
-              valN: _dt ? _num(_dt.valN, null) : null, valNRaw: _dt ? _num(_dt.valNRaw, null) : null,
-              uniq: _dt ? _num(_dt.valUniq, null) : null,
-              // [V33.124] 고유도 보정이 문턱을 올려 막은 경우 그 사실을 그대로 보인다.
-              accLBNominal: _dt ? _num(_dt.accLBNominal, null) : null,
-              uniqCost: _dt ? _num(_dt.uniqCost, null) : null,
-              trainedAt: _dMeta ? _dMeta.ts : null
-            },
-            gbdt: {
-              stored: !!(_probe && _probe.gtrees > 0), trees: _probe ? _probe.gtrees : null,
-              featVerOk: !!(_probe && _probe.gfv === LUXML.featVer), featVer: _probe ? _probe.gfv : null,
-              trusted: !!(_gt && _gt.trusted),
-              accLB: _fmtAcc(_gt && (_gt.gbdtAccLB != null ? _gt.gbdtAccLB : _gt.valAccLB)),
-              w: _gt ? _gt.wGbdt : null, source: _gt ? (_gt.source || "worker") : null,
-              reason: _gt ? _gt.reason : null,
-              valN: _gt ? _num(_gt.valN, null) : null, valNRaw: _gt ? _num(_gt.valNRaw, null) : null,
-              uniq: _gt ? _num(_gt.valUniq, null) : null,
-              accLBNominal: _gt ? _num(_gt.accLBNominal, null) : null,
-              uniqCost: _gt ? _num(_gt.uniqCost, null) : null
-            },
+              accKey: "dnnAcc", lbKey: "dnnAccLB", wKey: "wDnn", floor: DNN.trustFloor
+            }), {
+              // 구조 사실 — 두뇌관측의 층 그림과 같은 근거를 사이드바도 갖게 한다.
+              dims: (_dMeta && Array.isArray(_dMeta.dims)) ? _dMeta.dims : null,
+              seeds: _dMeta ? _num(_dMeta.seeds, null) : null,
+              paramsPerNet: (_dMeta && Array.isArray(_dMeta.dims)) ? _dnnParamCount(_dMeta.dims) : null,
+              params: (_dMeta && Array.isArray(_dMeta.dims)) ? _dnnParamCount(_dMeta.dims) * Math.max(1, _num(_dMeta.seeds, 1)) : null
+            }),
+            gbdt: Object.assign(_modelFacts(_gt, null, {
+              stored: !!(_probe && _probe.gtrees > 0),
+              featVerOk: !!(_probe && _probe.gfv === LUXML.featVer),
+              accKey: "gbdtAcc", lbKey: "gbdtAccLB", wKey: "wGbdt", floor: GBDT.trustFloor
+            }), { trees: _probe ? _probe.gtrees : null, featVer: _probe ? _probe.gfv : null }),
             mind: {
               stored: !!(_probe && _probe.mfm && _probe.mmeta),
               featVerOk: !!(_probe && _probe.mfv === LUXML.featVer), featVer: _probe ? _probe.mfv : null,
@@ -31745,6 +31735,58 @@ function _dnnHeInit(nout, nin) {
 /* [V33.193] dims 배열 하나로 파라미터 수를 센다 — ★세는 곳을 하나로 둔다.★
    종전에는 화면이 "3M" 이라는 문자열을 들고 있었고(두 군데), 학습된 모델 쪽만 실제 가중치에서
    세고 있었다. 그래서 구조를 바꾸는 순간 두 화면이 서로 다른 숫자를 말했다. */
+/* ════════════════════════════════════════════════════════════════════════════
+   [V33.195] ★두 화면이 서로 다른 통계를 같은 이름으로 부르고 있었다.★
+
+   사용자 실측: 같은 순간 DNN 이
+     · AI 두뇌 관측(/api/ml-status)     → "검증 정확도 49.5%"
+     · AI 운용상태 사이드바(/api/ai-mode) → "검증 47%"
+   둘 다 사실이다. 다른 것을 재고 있었을 뿐이다:
+     · 49.5% = valAcc      — 홀드아웃 원 정확도
+     · 47.0% = accLB       — 유효표본수 기반 Wilson ★신뢰하한★ (게이트가 쓰는 값)
+   그런데 화면에는 둘 다 "검증" 이라고만 적혀 있었다. 이름이 같으면 사람은 같은 것으로 읽는다 —
+   그리고 둘이 다르면 ★어느 쪽도 못 믿게 된다★. 실제로 그렇게 됐다.
+
+   고치는 방법은 '한쪽을 지우는 것' 이 아니다. 두 값은 둘 다 필요하다(하나는 실력, 하나는
+   그 실력을 얼마나 확신하는가). 필요한 것은 ★같은 사실표를 두 화면이 함께 쓰는 것★ 이다.
+   그래서 여기서 한 번 만들고, ai-mode 와 ml-status 가 같은 필드 이름으로 실어 나른다.
+   화면은 둘을 다른 이름으로 적는다: "검증 49.5% (하한 47.0% · 문턱 50.5%)".
+
+   trainedAt 을 반드시 함께 싣는다 — 두 화면은 캐시 창이 달라(ai-mode 20s / ml-status 15s)
+   서로 다른 시점의 스냅샷일 수 있다. 그때 ★같은 모델을 보고 있는지★ 를 판별할 수 있는 것은
+   학습시각뿐이다. 값이 다른데 trainedAt 이 같으면 그건 버그이고, trainedAt 이 다르면
+   한쪽이 낡은 것이다 — 화면이 그 둘을 구분할 수 있어야 한다. */
+function _modelFacts(trust, meta, opts) {
+  const o = opts || {};
+  const t = trust || null;
+  const pct = function (x) { return (typeof x === "number" && isFinite(x)) ? +(x * 100).toFixed(1) : null; };
+  const pick = function (a, b) { return (a != null) ? a : (b != null ? b : null); };
+  const raw = t ? pick(_num(t[o.accKey], null), _num(t.valAcc, null)) : null;
+  const lb = t ? pick(_num(t[o.lbKey], null), _num(t.valAccLB, null)) : null;
+  return {
+    stored: !!o.stored,
+    where: o.where || null,
+    featVer: (meta && meta.featVer != null) ? meta.featVer : null,
+    featVerOk: !!o.featVerOk,
+    trusted: !!(t && t.trusted),
+    /* ★두 값을 나란히, 다른 이름으로.★ valAcc 는 '맞힌 비율', accLB 는 '표본을 감안한 하한'.
+       게이트가 보는 것은 accLB 이므로 floor 와 함께 놓아 왜 막혔는지가 한 줄로 읽히게 한다. */
+    valAcc: pct(raw),
+    accLB: pct(lb),
+    floor: (o.floor != null) ? pct(o.floor) : null,
+    w: t ? _num(t[o.wKey], null) : null,
+    source: t ? (t.source || "worker") : null,
+    reason: t ? (t.reason || null) : null,
+    valN: t ? _num(t.valN, null) : null,
+    valNRaw: t ? _num(t.valNRaw, null) : null,
+    uniq: t ? _num(t.valUniq, null) : null,
+    accLBNominal: t ? _num(t.accLBNominal, null) : null,
+    uniqCost: t ? _num(t.uniqCost, null) : null,
+    // ★같은 모델을 보고 있는지 판별하는 유일한 키★ — 두 화면이 이걸로 서로를 검증한다.
+    trainedAt: pick(t ? _num(t.trainedAt, null) : null, meta ? _num(meta.ts, null) : null)
+  };
+}
+
 function _dnnParamCount(dims) {
   try {
     let n = 0;
@@ -33101,7 +33143,17 @@ async function mlDNNVizData(DB) {
       trained: true, architecture: dims.join("-") + "×" + nets.length, dims: dims,
       cfgLayers: ((m.source === "external" ? DNN.hidden : DNNW.hidden).length + 2),
       builtBy: (m.source === "external" ? "external" : "worker"), seeds: nets.length,
-      valAcc: m.valAcc, n: m.n, params: params, paramsPerNet: paramsPerNet, trainedAt: m.trainedAt, source: source,
+      /* [V33.195] ★사이드바와 같은 이름으로 같은 두 값을 싣는다.★ 종전에는 여기가 valAcc 만
+         내보내고 사이드바는 accLB 만 내보내, 같은 모델이 화면 두 곳에서 다른 숫자로 보였다.
+         accLB·floor 를 함께 실어 "왜 억제 중인지" 가 두 화면에서 같은 근거로 읽히게 한다. */
+      valAcc: m.valAcc,
+      accLB: (trust && trust.dnnAccLB != null) ? +(_num(trust.dnnAccLB, 0) * 100).toFixed(1)
+           : (m.valAccLB != null ? +(_num(m.valAccLB, 0) * 100).toFixed(1) : null),
+      valAccRaw: (m.valAcc != null) ? +(_num(m.valAcc, 0) * 100).toFixed(1) : null,
+      floor: +(_num(DNN.trustFloor, 0.505) * 100).toFixed(1),
+      valN: m.valN != null ? _num(m.valN, null) : null, valNRaw: m.valNRaw != null ? _num(m.valNRaw, null) : null,
+      uniq: m.valUniq != null ? _num(m.valUniq, null) : null,
+      n: m.n, params: params, paramsPerNet: paramsPerNet, trainedAt: m.trainedAt, source: source,
       layers: layers, inputFeatures: inputFeatures, topFeatures: topFeatures
     };
     if (_meta && _meta.ts) { try { await setState(DB, "nn_viz_cache", { metaTs: _meta.ts, heavy: heavy }); } catch (e) {} }
