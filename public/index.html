@@ -8,7 +8,7 @@
      인데, 지금까지 화면에서 그걸 알 방법이 전혀 없었다(카카오톡 인앱 브라우저는 특히 강하게 캐시한다).
      서버가 내려주는 build 와 이 값을 비교해 다르면 배너로 알린다.
      ※ src/index.js 의 _BUILD_VER 와 항상 같아야 한다 — check-html-js 가 강제한다. -->
-<meta name="lux-build" content="V33.179">
+<meta name="lux-build" content="V33.180">
 <title>LUX-ENGINE V10</title>
 <!-- ══ [V33.156] 설치형 앱(PWA) — 폰·PC 에서 홈화면/독에 담아 앱처럼 연다 ══
      · manifest  : 이름·아이콘·standalone 표시(주소창 없이 앱처럼)
@@ -16695,8 +16695,9 @@ html:root .page > *{ flex-shrink:0; }
     //   죽어 있는 상태였다. 즉 ★고장났을 때만 안 보이는 표시★ 였다.
     var storeCell;
     if(sc.r2Bound === false){
-      storeCell = col('D1 폴백', C.amb)
-        + ' <span class="sub">R2 미바인딩 · 표본 '+(n0(sc.d1Samples)||'0')+' · 대기 '+(n0(sc.d1Pending)||'0')+'</span>';
+      // [V33.180] 'D1 폴백' 은 V33.110 에서 없어진 경로다 — 그렇게 적으면 멈춘 것을 동작 중으로 읽는다.
+      storeCell = col('수집 중단', C.neg)
+        + ' <span class="sub">R2 미바인딩 · 폴백 없음(V33.110) · 잔여 D1 표본 '+(n0(sc.d1Samples)||'0')+' · 대기 '+(n0(sc.d1Pending)||'0')+'</span>';
     } else {
       storeCell = (has(sc.store)?esc(sc.store):'R2')
         + ' <span class="sub">대기 '+(n0(sc.pending)||'0')+' · 오늘 '+(has(sc.filesToday)?sc.filesToday:'0')+'파일</span>';
@@ -17114,7 +17115,12 @@ html:root .page > *{ flex-shrink:0; }
       if(!R) return;
       var rows5 = [];
       if(!R.bound){
-        rows5.push(['R2 바인딩', col('미바인딩', C.amb) + ' <span class="sub">D1 폴백으로 동작 중 (표본 수집·학습 가능)</span>']);
+        /* [V33.180] ★없는 폴백을 있다고 말하고 있었다.★ 종전 문구는 "D1 폴백으로 동작 중
+           (표본 수집·학습 가능)" 였는데, V33.110 이 그 폴백을 ★제거★ 했다. R2 가 없으면
+           장중 표본 수집은 우회하지 않고 ★멈춘다★. 즉 실제로 파이프라인이 죽어 있는 순간에
+           화면은 "가능" 이라고 안심시키고 있었다 — 이 저장소가 반복해 겪은 바로 그 실패 방식이다.
+           (대형모델은 D1 청크 폴백이 실제로 남아 있다 — 둘을 구분해 적는다) */
+        rows5.push(['R2 바인딩', col('미바인딩', C.neg) + ' <span class="sub">★장중(단타) 표본 수집 중단★ — V33.110 이후 D1 폴백 없음 · 대형모델만 D1 청크로 동작</span>']);
       } else if(!R.v){
         rows5.push(['R2 바인딩', col('활성', C.pos) + ' <span class="sub">상세 미집계 — /api/r2-status 최초 호출 시 채워진다</span>']);
       } else {

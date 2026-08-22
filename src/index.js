@@ -2788,7 +2788,7 @@ async function applySignalTypeWeights(DB, cfg) {
 // ============================================================================
 // [V33.55] 빌드 버전 — SWR L2 캐시 키에 섞어 '배포 = 판단 캐시 자동 무효화'를 만든다.
 //   판정 로직을 고쳐도 옛 캐시가 최대 1시간 재배포되던 문제를 구조적으로 없앤다.
-const _BUILD_VER = "V33.179";
+const _BUILD_VER = "V33.180";
 
 // ═══ [V33.171] 평가 순서 계획 — ★승격과 순환을 교차해 굶주림을 구조적으로 없앤다★ ═══
 //   V33.50 의 형태트리거는 "급한 몇 종목을 앞으로 당긴다"는 의도였으나, 실제 운영로그에서는
@@ -19110,8 +19110,12 @@ async function handleRequest(request, env, ctx) {
     if (path === "/api/r2-status") {
       const R2 = _bigR2();
       if (!R2) {
-        return Response.json({ bound: false, note: "R2 미바인딩 — 장중 표본은 D1 폴백(stin_samples), 대형모델은 D1 청크",
-          fallback: "D1" }, { headers: cors });
+        // [V33.180] ★없는 폴백을 있다고 답하고 있었다.★ V33.110 이 장중 표본의 D1 폴백을 제거했다 —
+        //   R2 가 없으면 우회하지 않고 ★수집이 멈춘다★. 대형모델의 D1 청크 폴백만 실제로 남아 있다.
+        //   종전 응답은 그 둘을 뭉뚱그려 "D1 폴백" 이라 답해, 멈춘 상태를 동작 중으로 읽게 만들었다.
+        return Response.json({ bound: false,
+          note: "R2 미바인딩 — 장중(단타) 표본 수집 중단(V33.110 이후 폴백 없음). 대형모델만 D1 청크로 동작",
+          scalpCollection: "stopped", fallback: "대형모델만 D1 청크" }, { headers: cors });
       }
       let cached = null;
       try { cached = await getState(env.DB, "r2_status_cache", null); } catch (e) {}

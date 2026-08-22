@@ -260,5 +260,40 @@ const bad = (msg) => { fails++; console.log("  FAIL " + msg); };
   }
 }
 
+/* ══ [V33.180] ★화면은 없는 폴백을 있다고 말하면 안 된다★ ══
+   V33.110 이 장중(단타) 표본의 D1 폴백을 제거했다 — R2 가 없으면 우회하지 않고 수집이 멈춘다.
+   그런데 화면과 /api/r2-status 는 그 뒤로도 "D1 폴백으로 동작 중 (표본 수집·학습 가능)" 이라고
+   답했다. 실제로 R2 가 9회 연속 미바인딩이라 수집이 멈춰 있던 시간에도 그렇게 적혀 있었다.
+   ★고장났는데 초록불★ 은 이 저장소가 반복해 겪은 실패 방식이라, 문구 자체를 계약으로 못 박는다.
+   (대형모델의 D1 청크 폴백은 실제로 남아 있다 — 그건 금지 대상이 아니다) */
+{
+  const { readFileSync } = await import("node:fs");
+  const html = readFileSync(new URL("../public/index.html", import.meta.url), "utf8");
+  const src = readFileSync(new URL("../src/index.js", import.meta.url), "utf8");
+
+  /* 금지: '표본 수집' 이 D1 폴백으로 가능하다는 취지의 문구.
+     ★줄 단위로 본다.★ 처음엔 줄바꿈을 넘나드는 패턴으로 썼는데, 그러면 "종전 문구는 …였다" 라고
+     ★옛 문구를 인용한 주석★ 까지 걸린다(실제로 이 검사가 그렇게 자기 자신을 잡았다).
+     화면에 실제로 나가는 문자열은 한 줄짜리 push 이므로 줄 안에서만 찾으면 충분하고,
+     사고 경위를 주석으로 남기는 일을 막지 않는다 — 그 기록이 다음 사람에게 필요하다. */
+  const lie = /D1 폴백으로 동작 중[^<\n]*표본 수집/;
+  const hit = html.split("\n").findIndex(function (L) { return lie.test(L); });
+  if (hit < 0) ok("화면: '표본 수집이 D1 폴백으로 가능' 이라는 문구가 없다");
+  else bad("화면이 없는 폴백을 안내한다(" + (hit + 1) + "행) — V33.110 이후 R2 없으면 장중 표본 수집은 멈춘다");
+
+  // 단타 저장경로 칸이 미바인딩을 '폴백'(정상처럼)으로 적지 않는다.
+  const storeBlk = html.slice(Math.max(0, html.indexOf("sc.r2Bound === false")), html.indexOf("sc.r2Bound === false") + 400);
+  if (storeBlk && !/col\('D1 폴백'/.test(storeBlk)) ok("화면: 단타 저장경로가 미바인딩을 'D1 폴백' 이라 적지 않는다");
+  else bad("단타 저장경로가 'D1 폴백' 으로 표시된다 — 멈춘 상태를 동작 중으로 읽게 만든다");
+
+  // 서버 응답도 같은 자로. bound:false 응답이 수집 중단임을 명시해야 한다.
+  if (/scalpCollection:\s*"stopped"/.test(src)) ok("서버: /api/r2-status 가 미바인딩 시 '장중 표본 수집 중단' 을 명시한다");
+  else bad("서버: /api/r2-status 가 미바인딩을 '폴백' 으로만 답한다 — 화면과 같은 거짓말이 된다");
+
+  // V33.110 의 사실 자체가 유지되는지 — 폴백이 되살아나면 위 문구 금지도 뜻이 없다.
+  if (/D1 폴백 제거/.test(src)) ok("소스: 장중 표본의 D1 폴백 제거가 유지된다(문구 계약의 전제)");
+  else bad("소스에서 'D1 폴백 제거' 근거가 사라졌다 — 폴백이 되살아났다면 위 문구 계약을 재검토할 것");
+}
+
 console.log(fails ? "\n단타 파이프라인 검증 실패 " + fails + "건" : "\n  ok   단타 표본 파이프라인 통과");
 process.exit(fails ? 1 : 0);
