@@ -20,7 +20,9 @@ on:
         description: '학습기 (all = 야간 파이프라인 전 단계)'
         type: choice
         default: xalpha
-        options: [xalpha, flow, stack, memo, mind, gbdt, dnn, l1, all]
+        # [V33.179] dual(이중헤드 강세/약세)이 빠져 있었다 — 화면에서 '합류 보류' 로 가장 눈에 띄는
+        #   위원인데 정작 손으로 돌릴 수가 없어, 고치고도 다음 야간까지 확인할 방법이 없었다.
+        options: [xalpha, flow, stack, memo, dual, mind, gbdt, dnn, l1, all]
 
 concurrency:
   group: worker-training
