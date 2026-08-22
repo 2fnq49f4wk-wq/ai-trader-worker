@@ -361,6 +361,22 @@ try {
   const diff = tabs.filter((t) => !rail.includes(t)).concat(rail.filter((r) => !tabs.includes(r)));
   if (!diff.length) console.log("  ok   사이드바 모델 목록과 탭 목록이 같다");
   else { nbad++; console.error(`  FAIL 사이드바/탭 목록 불일치: ${diff.join(", ")} — 고른 모델이 활성표시되지 않는다`); }
+  /* ══ [V33.181] ★사이드바와 구조패널이 같은 사실을 달리 말하면 안 된다★ ══
+     구조 관측 패널은 featVer 가 어긋난 모델을 '판 불일치 · v1 → v3 재학습 대기' 라고 정확히
+     말하는데, 사이드바는 같은 순간에 '표본수집 980 / 800' 이라고 적었다(운영 스냅샷 실측).
+     표본이 문턱을 넘었는데 '수집 중' 이라 하니, 왜 학습이 안 되는지 화면만 보고는 알 수 없다.
+     ★두 패널이 같은 입력을 다르게 해석하는 것★ 이 이 저장소의 반복 사고라 계약으로 묶는다. */
+  //   범위는 arow 선언부터 그 다음 선언(bfTxt)까지 — 처음엔 첫 `return [ico(` 까지로 잡았는데
+  //   arow 는 맨 앞에 조기반환이 하나 있어 본문을 통째로 놓쳤다(검사가 헛돌았다).
+  const railBody = (hv.match(/var arow = function[\s\S]*?var bfTxt/) || [""])[0];
+  if (/o\.staleVer != null/.test(railBody)) console.log("  ok   사이드바가 판 불일치를 '표본수집' 이 아니라 판 불일치로 적는다");
+  else { nbad++; console.error("  FAIL 사이드바가 판 불일치를 표본수집으로 뭉갠다 — 구조패널과 다른 말을 한다"); }
+  if (/o\.samples >= o\.minN/.test(railBody)) console.log("  ok   사이드바가 '문턱 충족인데 미학습' 을 수집 중이라 적지 않는다");
+  else { nbad++; console.error("  FAIL 표본이 문턱을 넘어도 '표본수집' 으로 적힌다 — 스냅샷의 980/800 모순이 되살아난다"); }
+  // 서버가 그 판 정보를 실제로 내려주는지(프론트만 고치면 항상 null 이라 분기가 죽는다).
+  const srcTxt = readFileSync(new URL("../src/index.js", import.meta.url), "utf8");
+  if (/staleVer:\s*\(m && Array\.isArray\(m\.w\)/.test(srcTxt)) console.log("  ok   서버가 위원별 staleVer/wantVer 를 내려준다");
+  else { nbad++; console.error("  FAIL 서버가 staleVer 를 안 내려준다 — 사이드바 분기가 영원히 안 걸린다"); }
   rtBad += nbad;
 } catch (e) { console.error("  FAIL 구조 관측 배선 검사 실패:", e.message); rtBad += 1; }
 
@@ -448,12 +464,19 @@ try {
                       : u === "/api/pipeline" ? Promise.reject(new Error("network down"))
                       : okFetch(u);
     const r2 = await runCase(mixFetch);
+    /* [V33.181] 사유 문구에 ★소요시간★ 이 붙었으므로 완전일치가 아니라 포함으로 본다.
+       사유가 남는지(계약)와 문구를 한 자도 못 바꾸게 하는 것(과잉구속)은 다르다. */
     const okPartial = r2.j && r2.j.fetchErrors === 2
-      && r2.j.mlStatus && r2.j.mlStatus.__error === "HTTP 500"
-      && r2.j.pipeline && r2.j.pipeline.__error === "network down"
+      && r2.j.mlStatus && /^HTTP 500/.test(r2.j.mlStatus.__error)
+      && r2.j.pipeline && /network down/.test(r2.j.pipeline.__error)
       && r2.j.aiMode && r2.j.aiMode.endpoint === "/api/ai-mode";
     if (okPartial) console.log("  ok   일부 실패해도 나머지는 수집되고 실패 사유가 파일에 남는다");
     else { wbad++; console.error("  FAIL 부분 실패 처리 이상: " + JSON.stringify(r2.j && { e: r2.j.fetchErrors, m: r2.j.mlStatus, p: r2.j.pipeline })); }
+    // [V33.181] 소요시간이 성공·실패 모두에 남아야 '죽은 것'과 '느린 것'을 구분할 수 있다.
+    const tm = r2.j && r2.j.timingsMs;
+    if (tm && typeof tm.aiMode === "number" && typeof tm.mlStatus === "number" && typeof tm.pipeline === "number")
+      console.log("  ok   경로별 소요시간(timingsMs)이 성공·실패 모두에 기록된다");
+    else { wbad++; console.error("  FAIL 소요시간이 안 남는다 — 'Load failed' 만으로는 느린 건지 죽은 건지 못 가린다"); }
     if (r2.toasts.some((t) => /수집 실패/.test(t))) 
 console.log("  ok   부분 실패를 사용자에게 알린다");
     else { wbad++; console.error("  FAIL 부분 실패인데 성공한 것처럼 알린다"); }

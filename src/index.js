@@ -2788,7 +2788,7 @@ async function applySignalTypeWeights(DB, cfg) {
 // ============================================================================
 // [V33.55] 빌드 버전 — SWR L2 캐시 키에 섞어 '배포 = 판단 캐시 자동 무효화'를 만든다.
 //   판정 로직을 고쳐도 옛 캐시가 최대 1시간 재배포되던 문제를 구조적으로 없앤다.
-const _BUILD_VER = "V33.180";
+const _BUILD_VER = "V33.181";
 
 // ═══ [V33.171] 평가 순서 계획 — ★승격과 순환을 교차해 굶주림을 구조적으로 없앤다★ ═══
 //   V33.50 의 형태트리거는 "급한 몇 종목을 앞으로 당긴다"는 의도였으나, 실제 운영로그에서는
@@ -19460,6 +19460,15 @@ async function handleRequest(request, env, ctx) {
             return {
               samples: n, minN: minN,
               trained: !!(m && m.featVer === featVer),
+              /* [V33.181] ★'모델이 없다' 와 '판이 달라 못 쓴다' 는 다른 상태다.★
+                 종전엔 둘 다 trained:false 로 뭉뚱그려, 사이드바가 판 불일치를 ★표본수집★ 으로
+                 그렸다. 운영 스냅샷이 그 모순을 그대로 보여준다 — XALPHA samples 980 / minN 800.
+                 표본이 문턱을 넘었는데도 "표본수집 980/800" 이라 적히니, 왜 학습이 안 되는지
+                 화면만 보고는 알 수 없다(정답은 featVer 1 모델 → 새 판 3 로 재학습 대기).
+                 같은 화면의 가운데 '구조 관측' 패널은 이미 '판 불일치' 라고 정확히 말한다 —
+                 두 패널이 같은 사실을 달리 말하면 안 된다. 판 정보를 그대로 내보낸다. */
+              staleVer: (m && Array.isArray(m.w) && m.featVer !== featVer) ? _num(m.featVer, null) : null,
+              wantVer: featVer,
               trusted: !!(m && m.trusted),
               acc: m ? _num(m.valAcc, null) : null,
               ic: m ? _num(m.valIC, null) : null,
