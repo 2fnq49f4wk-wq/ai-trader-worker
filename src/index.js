@@ -2788,7 +2788,7 @@ async function applySignalTypeWeights(DB, cfg) {
 // ============================================================================
 // [V33.55] 빌드 버전 — SWR L2 캐시 키에 섞어 '배포 = 판단 캐시 자동 무효화'를 만든다.
 //   판정 로직을 고쳐도 옛 캐시가 최대 1시간 재배포되던 문제를 구조적으로 없앤다.
-const _BUILD_VER = "V33.199";
+const _BUILD_VER = "V33.200";
 
 // ═══ [V33.171] 평가 순서 계획 — ★승격과 순환을 교차해 굶주림을 구조적으로 없앤다★ ═══
 //   V33.50 의 형태트리거는 "급한 몇 종목을 앞으로 당긴다"는 의도였으나, 실제 운영로그에서는
@@ -21515,22 +21515,54 @@ async function handleRequest(request, env, ctx) {
            같은 자리에서 계속 죽었다(실측: skip=harvest 를 붙이고도 503 세 번).
            알 수 있는 것은 워커뿐이다 — 들어가기 전에 이름을 적어 두면 된다.
            지워지지 않은 채 남아 있다는 것은 ★그 단계에서 죽었다★ 는 뜻이다. */
+        /* 표본 전체(수만 행)를 읽어 파싱하는 단계들 — 이들이 한 요청에 겹치면 메모리가 넘친다.
+           ★목록은 '무엇을 읽는가' 로 정한다★: LUXML.trainWindow 만큼 ml_samples 를 훑는 학습기들. */
+        const _HEAVY = ["l1", "brain", "mind", "gbdt", "dnn", "bandit", "memo", "dual", "stackbf", "expreg", "calibrate"];
+        let _ranHeavy = false;
         let _crashPrev = null;
         try { _crashPrev = await getState(env.DB, "alltrain_cur", null); } catch (e0) {}
         const _crashHit = (_crashPrev && _crashPrev.stage) ? String(_crashPrev.stage) : null;
-        const _crashN = _crashHit ? _num(_crashPrev.fails, 0) + 1 : 0;
-        // 두 번 연속 같은 자리에서 죽었으면 우연이 아니다 — 이번에는 건너뛰고 나머지를 살린다.
-        const _autoSkip = (_crashHit && _crashN >= 2) ? _crashHit : null;
+        /* [V33.200] ★죽은 단계를 '마지막 하나' 로만 기억해서 진동했다.★
+           실측: brain 에서 죽음 → 다음 회차가 brain 을 건너뜀 → 그 뒤 다른 단계에서 죽음
+           → 그 다음 회차는 brain 을 ★다시 기억하지 못하고★ 또 brain 을 실행 → 또 죽음.
+           건너뛴 사실이 어디에도 남지 않으니 같은 자리를 무한히 오간다.
+           → 죽은 단계를 ★누적 집합★ 으로 남긴다. 24시간이 지난 항목은 잊는다(일시적 사고를
+             영구 장애로 굳히지 않는다). 완주하면 통째로 비운다. */
+        let _bad = {};
+        try { _bad = (await getState(env.DB, "alltrain_bad", null)) || {}; } catch (e0) {}
+        const _BADTTL = 24 * 3600000;
+        for (const k in _bad) if (!(_num(_bad[k] && _bad[k].ts, 0) > Date.now() - _BADTTL)) delete _bad[k];
+        if (_crashHit) {
+          const _e = _bad[_crashHit] || { n: 0 };
+          _bad[_crashHit] = { n: _num(_e.n, 0) + 1, ts: Date.now() };
+          try { await setState(env.DB, "alltrain_bad", _bad); } catch (e0) {}
+        }
+        // 두 번 이상 죽인 단계는 전부 건너뛴다 — 하나가 아니라 집합이다.
+        const _autoSkipList = Object.keys(_bad).filter(function (k) { return _num(_bad[k].n, 0) >= 2; });
+        const _autoSkip = _autoSkipList.length ? _autoSkipList.join(",") : null;
+        const _crashN = _crashHit ? _num(_bad[_crashHit] && _bad[_crashHit].n, 0) : 0;
         const _deadline = _clamp(Number(url.searchParams.get("deadlineMs")) || 240000, 30000, 280000);
         const _from = (url.searchParams.get("from") || "").trim();
         const _only = (url.searchParams.get("skip") || "").split(",").map(function (s) { return s.trim(); }).filter(Boolean);
-        if (_autoSkip && _only.indexOf(_autoSkip) < 0) _only.push(_autoSkip);
+        for (const _as of _autoSkipList) if (_only.indexOf(_as) < 0) _only.push(_as);
         let _started = !_from;
         const out = {}; const _skipped = [];
         for (const [nm, fn] of _PIPE) {
           if (!_started) { if (nm === _from) _started = true; else { out[nm] = "skipped(before from)"; continue; } }
           if (_only.indexOf(nm) >= 0) { out[nm] = "skipped(skip=)"; continue; }
           if (Date.now() - _t00 > _deadline) { out[nm] = "skipped(deadline)"; _skipped.push(nm); continue; }
+          /* [V33.200] ★무거운 단계는 한 요청에 하나만 돈다.★
+             실측: from=stackbf 로 재개하면 stackbf→stackepoch→pooluniq→l1→icfamily→bandit 까지는
+             지나가고 ★brain 에서 매번 죽는다★(회차 2~5 전부 41~45초, 워커 로그의 마지막 진입도 brain).
+             brain 하나가 무거워서가 아니다 — l1 도 같은 6만 행을 읽고 무사히 지나간다.
+             문제는 ★한 요청 안에서 표본을 읽는 단계가 줄줄이 이어져 메모리가 누적★ 되는 것이다.
+             워커 메모리 한도(128MB)는 요청 단위이고, 앞 단계가 놓은 6만 행이 아직 회수되기 전에
+             다음 단계가 또 6만 행을 읽는다. 시간 예산(deadline)은 이걸 못 막는다 — 45초면
+             충분히 여유가 있는데도 죽으니까.
+             → 표본을 통째로 읽는 단계를 마치면 그 회차를 거기서 끝낸다. 남은 단계는 다음 호출이
+               ★새 아이솔레이트에서★ 이어받는다(CI 는 이미 resume 루프를 돌고 있다).
+             회차 수는 늘지만 회차마다 메모리가 초기화되므로 파이프라인이 실제로 끝까지 간다. */
+          if (_HEAVY.indexOf(nm) >= 0 && _ranHeavy) { out[nm] = "skipped(heavy-split)"; _skipped.push(nm); continue; }
           /* [V33.197] ★어느 단계가 워커를 죽이는지 알 방법이 없었다.★
              실측: from=harvest 로 재개하면 매번 40~70초에 503. 그래서 skip=harvest 를 넣었는데
              ★그래도 503★ 이었다 — 즉 죽는 것은 harvest 가 아니라 그 뒤의 어떤 단계다.
@@ -21551,6 +21583,7 @@ async function handleRequest(request, env, ctx) {
           const _s0 = Date.now();
           try { out[nm] = await fn(env.DB); } catch (e) { out[nm] = "FAIL: " + (e && e.message); }
           if (out[nm] == null) out[nm] = "(no-op)";
+          if (_HEAVY.indexOf(nm) >= 0) _ranHeavy = true;
           // 무사히 나왔다 = 이 단계는 범인이 아니다. 기록을 지운다.
           try { await setState(env.DB, "alltrain_cur", null); } catch (e0) {}
           out[nm] = String(out[nm]).slice(0, 400) + " [" + (Date.now() - _s0) + "ms]";
@@ -21559,9 +21592,12 @@ async function handleRequest(request, env, ctx) {
         /* 직전 호출이 어디서 죽었는지, 이번에 무엇을 자동으로 건너뛰었는지 응답이 말한다.
            ★조용히 건너뛰지 않는다★ — 건너뛴 단계는 고쳐야 할 것이지 없는 것이 아니다. */
         if (_autoSkip) {
-          try { await log(env.DB, "WARN", null, "[수동트리거:all] '" + _autoSkip + "' 이 " + _crashN +
-                  "회 연속 워커를 죽였다 — 이번 회차는 건너뛰고 진행했다(원인 조사 필요)"); } catch (e0) {}
+          try { await log(env.DB, "WARN", null, "[수동트리거:all] 워커를 2회 이상 죽인 단계를 건너뛰었다: " +
+                  _autoSkip + " (원인 조사 필요)"); } catch (e0) {}
         }
+        /* 완주했으면 죽은-단계 집합을 비운다. 안 비우면 한 번의 사고가 ★영구 장애★ 로 굳는다
+           (24시간 TTL 도 있지만, 완주는 '이제 괜찮다' 는 가장 확실한 증거다). */
+        if (!_skipped.length && !_autoSkip) { try { await setState(env.DB, "alltrain_bad", null); } catch (e0) {} }
         return Response.json({ ok: true, target: "all", stages: _PIPE.length, ms: Date.now() - _t00,
           resume: _skipped.length ? ("/api/ai/train-now?target=all&from=" + _skipped[0]) : null,
           crashedAt: _crashHit, crashFails: _crashN || null, autoSkipped: _autoSkip,
