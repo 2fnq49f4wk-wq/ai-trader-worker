@@ -2788,7 +2788,7 @@ async function applySignalTypeWeights(DB, cfg) {
 // ============================================================================
 // [V33.55] 빌드 버전 — SWR L2 캐시 키에 섞어 '배포 = 판단 캐시 자동 무효화'를 만든다.
 //   판정 로직을 고쳐도 옛 캐시가 최대 1시간 재배포되던 문제를 구조적으로 없앤다.
-const _BUILD_VER = "V33.200";
+const _BUILD_VER = "V33.201";
 
 // ═══ [V33.171] 평가 순서 계획 — ★승격과 순환을 교차해 굶주림을 구조적으로 없앤다★ ═══
 //   V33.50 의 형태트리거는 "급한 몇 종목을 앞으로 당긴다"는 의도였으나, 실제 운영로그에서는
@@ -21517,7 +21517,7 @@ async function handleRequest(request, env, ctx) {
            지워지지 않은 채 남아 있다는 것은 ★그 단계에서 죽었다★ 는 뜻이다. */
         /* 표본 전체(수만 행)를 읽어 파싱하는 단계들 — 이들이 한 요청에 겹치면 메모리가 넘친다.
            ★목록은 '무엇을 읽는가' 로 정한다★: LUXML.trainWindow 만큼 ml_samples 를 훑는 학습기들. */
-        const _HEAVY = ["l1", "brain", "mind", "gbdt", "dnn", "bandit", "memo", "dual", "stackbf", "expreg", "calibrate"];
+        const _HEAVY = ["l1", "brain", "mind", "gbdt", "dnn", "bandit", "memo", "dual", "stackbf", "expreg", "techk", "calibrate"];
         let _ranHeavy = false;
         let _crashPrev = null;
         try { _crashPrev = await getState(env.DB, "alltrain_cur", null); } catch (e0) {}
@@ -21562,7 +21562,12 @@ async function handleRequest(request, env, ctx) {
              → 표본을 통째로 읽는 단계를 마치면 그 회차를 거기서 끝낸다. 남은 단계는 다음 호출이
                ★새 아이솔레이트에서★ 이어받는다(CI 는 이미 resume 루프를 돌고 있다).
              회차 수는 늘지만 회차마다 메모리가 초기화되므로 파이프라인이 실제로 끝까지 간다. */
-          if (_HEAVY.indexOf(nm) >= 0 && _ranHeavy) { out[nm] = "skipped(heavy-split)"; _skipped.push(nm); continue; }
+          /* [V33.201] 무거운 단계를 하나 마쳤으면 ★그 자리에서 회차를 끝낸다★.
+             V33.200 은 무거운 단계만 건너뛰고 그 뒤의 가벼운 단계는 계속 돌렸는데, 재개 지점이
+             '건너뛴 첫 단계' 라서 다음 회차가 그 가벼운 단계들을 ★처음부터 다시★ 돌았다.
+             harvest·deephist 처럼 외부 호출을 하는 단계가 회차마다 반복되면 예산만 태운다.
+             여기서 끊으면 재개 지점이 바로 다음 단계가 되어 같은 일을 두 번 하지 않는다. */
+          if (_ranHeavy) { out[nm] = "skipped(heavy-split)"; _skipped.push(nm); continue; }
           /* [V33.197] ★어느 단계가 워커를 죽이는지 알 방법이 없었다.★
              실측: from=harvest 로 재개하면 매번 40~70초에 503. 그래서 skip=harvest 를 넣었는데
              ★그래도 503★ 이었다 — 즉 죽는 것은 harvest 가 아니라 그 뒤의 어떤 단계다.
@@ -21596,8 +21601,13 @@ async function handleRequest(request, env, ctx) {
                   _autoSkip + " (원인 조사 필요)"); } catch (e0) {}
         }
         /* 완주했으면 죽은-단계 집합을 비운다. 안 비우면 한 번의 사고가 ★영구 장애★ 로 굳는다
-           (24시간 TTL 도 있지만, 완주는 '이제 괜찮다' 는 가장 확실한 증거다). */
-        if (!_skipped.length && !_autoSkip) { try { await setState(env.DB, "alltrain_bad", null); } catch (e0) {} }
+           (24시간 TTL 도 있지만, 완주는 '이제 괜찮다' 는 가장 확실한 증거다).
+           [V33.201] ★조건에서 _autoSkip 을 뺀다.★ 종전 조건이면 자동 건너뛴 단계가 하나라도
+           있는 한 집합이 절대 안 비워진다 — 그 단계는 돌지 않으니 무죄를 증명할 기회도 없고,
+           스스로 걸어 잠근 문이 24시간 열리지 않는다. 실측에서 socialobs 가 그렇게 걸렸다.
+           끝까지 갔다는 것은 남은 단계가 없다는 뜻이고, 그러면 다음 회에 다시 시도해 보는 것이
+           맞다. 반복해서 죽인다면 그때 다시 2회를 채워 걸리므로 안전장치는 그대로다. */
+        if (!_skipped.length) { try { await setState(env.DB, "alltrain_bad", null); } catch (e0) {} }
         return Response.json({ ok: true, target: "all", stages: _PIPE.length, ms: Date.now() - _t00,
           resume: _skipped.length ? ("/api/ai/train-now?target=all&from=" + _skipped[0]) : null,
           crashedAt: _crashHit, crashFails: _crashN || null, autoSkipped: _autoSkip,
@@ -25901,12 +25911,14 @@ async function memoTrainNightly(DB) {
     let _maxTs = 0; for (const r of raw) { const _t = _num(r.ts, 0); if (_t > _maxTs) _maxTs = _t; }
     const X = [], Y = [], P = [], T = [];
     for (let i = raw.length - 1; i >= 0; i--) {          // 오래된 것부터(시간순)
-      let v; try { v = JSON.parse(raw[i].feat); } catch (e) { continue; }
+      const r = raw[i]; raw[i] = null;   // 파싱이 끝난 행의 원본 문자열을 즉시 놓아준다
+      let v; try { v = JSON.parse(r.feat); } catch (e) { continue; }
       if (!Array.isArray(v) || v.length !== D) continue;
-      X.push(v.map(function (t) { return _num(t, 0); }));
-      Y.push(_labelOfRow(raw[i]));
-      P.push(_num(raw[i].pnl_pct, 0));
-      T.push(_num(raw[i].ts, 0));   // [V33.156] 퍼징용 — ml_samples.ts 는 ★봉 날짜★ 라 라벨 시계와 맞다
+      for (let j = 0; j < v.length; j++) v[j] = _num(v[j], 0);   // 사본 대신 제자리에서 숫자화
+      X.push(v);
+      Y.push(_labelOfRow(r));
+      P.push(_num(r.pnl_pct, 0));
+      T.push(_num(r.ts, 0));   // [V33.156] 퍼징용 — ml_samples.ts 는 ★봉 날짜★ 라 라벨 시계와 맞다
     }
     const N = X.length;
     if (N < MEMOML.minTrainSamples) return "[MEMO] 표본 " + N + "/" + MEMOML.minTrainSamples + " — 대기";
@@ -29052,9 +29064,11 @@ async function mlTrainNightly(DB) {
     const nowTs = Date.now();
     const data = [];
     for (let i = raw.length - 1; i >= 0; i--) {
-      let v; try { v = JSON.parse(raw[i].feat); } catch (e) { continue; }
+      const r = raw[i]; raw[i] = null;   // 파싱이 끝난 행의 원본 문자열을 즉시 놓아준다
+      let v; try { v = JSON.parse(r.feat); } catch (e) { continue; }
       if (!Array.isArray(v) || v.length !== LUXML.featNames.length) continue;
-      data.push({ ts: _num(raw[i].ts, 0), x: v.map(function(t){ return _num(t, 0); }), y: _labelOfRow(raw[i]), pnl: _num(raw[i].pnl_pct, 0), hv: raw[i].strategy === "hv" });
+      for (let j = 0; j < v.length; j++) v[j] = _num(v[j], 0);   // 사본 대신 제자리에서 숫자화
+      data.push({ ts: _num(r.ts, 0), x: v, y: _labelOfRow(r), pnl: _num(r.pnl_pct, 0), hv: r.strategy === "hv" });
     }
     const N = data.length;
     if (N < LUXML.minTrainSamples) return "[ML] 유효표본 부족(" + N + ")";
@@ -29584,22 +29598,25 @@ async function mlBanditNoiseNightly(DB) {
 
     const data = [];
     for (let i = raw.length - 1; i >= 0; i--) {
-      let v; try { v = JSON.parse(raw[i].feat); } catch (e) { continue; }
+      const r = raw[i]; raw[i] = null;   // 파싱이 끝난 행의 원본 문자열을 즉시 놓아준다
+      let v; try { v = JSON.parse(r.feat); } catch (e) { continue; }
       if (!Array.isArray(v) || v.length !== LUXML.featNames.length) continue;
-      data.push({ x: v.map(function (t) { return _num(t, 0); }), y: _labelOfRow(raw[i]) });
+      for (let j = 0; j < v.length; j++) v[j] = _num(v[j], 0);   // 사본 대신 제자리에서 숫자화
+      data.push({ x: v, y: _labelOfRow(r) });
     }
     const N = data.length;
     if (N < LUXML.minTrainSamples) return "[BANDIT] 유효표본 부족(" + N + ")";
 
-    const Z = data.map(function (d) {
-      return {
-        z: d.x.map(function (v, j) {
-          const s = (model.std && model.std[j] > 1e-6) ? model.std[j] : 1;
-          return (v - (model.mean ? model.mean[j] : 0)) / s;
-        }),
-        y: d.y
-      };
-    });
+    // 표준화 사본을 따로 만들지 않는다 — 같은 피처 배열을 제자리에서 z 로 덮어쓴다.
+    const Z = data;
+    for (let i = 0; i < N; i++) {
+      const d = data[i], zx = d.x;
+      for (let j = 0; j < zx.length; j++) {
+        const s = (model.std && model.std[j] > 1e-6) ? model.std[j] : 1;
+        zx[j] = (zx[j] - (model.mean ? model.mean[j] : 0)) / s;
+      }
+      data[i] = { z: zx, y: d.y };
+    }
     const nVal = Math.max(10, Math.floor(N * LUXML.valFrac));
     const val = Z.slice(N - nVal); // mlTrainNightly과 동일 슬라이스(재현 목적)
 
@@ -29891,9 +29908,11 @@ async function mlBrainTrainNightly(DB) {
     const nowTs = Date.now();
     const data = [];
     for (let i = raw.length - 1; i >= 0; i--) {
-      let v; try { v = JSON.parse(raw[i].feat); } catch (e) { continue; }
+      const r = raw[i]; raw[i] = null;   // 파싱이 끝난 행의 원본 문자열을 즉시 놓아준다
+      let v; try { v = JSON.parse(r.feat); } catch (e) { continue; }
       if (!Array.isArray(v) || v.length !== LUXML.featNames.length) continue;
-      data.push({ ts: _num(raw[i].ts, 0), x: v.map(function (t) { return _num(t, 0); }), y: _labelOfRow(raw[i]), pnl: _num(raw[i].pnl_pct, 0), hv: raw[i].strategy === "hv" });
+      for (let j = 0; j < v.length; j++) v[j] = _num(v[j], 0);   // 사본 대신 제자리에서 숫자화
+      data.push({ ts: _num(r.ts, 0), x: v, y: _labelOfRow(r), pnl: _num(r.pnl_pct, 0), hv: r.strategy === "hv" });
     }
     let N = data.length;
     if (N < BRAIN.minTrainSamples) return "[BRAIN] 유효표본 부족(" + N + ")";
@@ -29918,13 +29937,15 @@ async function mlBrainTrainNightly(DB) {
     const medAbs = absPnls.length ? (absPnls[Math.floor(absPnls.length / 2)] || 1) : 1;
     const pnlScale = medAbs > 1e-6 ? medAbs : 1;
 
-    const Z = data.map(function (d) {
-      return {
-        z: d.x.map(function (v, j) { return (v - mean[j]) / (std[j] > 1e-6 ? std[j] : 1); }),
-        y: d.y, ts: d.ts,
-        mw: _clamp(Math.abs(d.pnl) / pnlScale, 0.3, 3.0) * (d.hv ? HARVEST.srcWeight : (LUXML.liveSrcWeight || 1)) * _recencyW(d.ts, nowTs)
-      };
-    });
+    // 표준화 사본을 따로 만들지 않는다 — 같은 피처 배열을 제자리에서 z 로 덮어쓴다.
+    // (여기서부터 data 를 원값으로 읽는 코드는 없다. 아래 계산은 전부 Z 만 본다.)
+    const Z = data;
+    for (let i = 0; i < N; i++) {
+      const d = data[i], zx = d.x;
+      for (let j = 0; j < D; j++) zx[j] = (zx[j] - mean[j]) / (std[j] > 1e-6 ? std[j] : 1);
+      data[i] = { z: zx, y: d.y, ts: d.ts,
+        mw: _clamp(Math.abs(d.pnl) / pnlScale, 0.3, 3.0) * (d.hv ? HARVEST.srcWeight : (LUXML.liveSrcWeight || 1)) * _recencyW(d.ts, nowTs) };
+    }
     const nVal = Math.max(10, Math.floor(N * BRAIN.valFrac));
     // [V4] 엠바고 퍼지 홀드아웃: val 시작 시점 ±embargo 내 표본을 train에서 제거(누출 차단)
     const embargoMs = (LUXML.embargoDays || 6) * 86400000;
@@ -30211,9 +30232,11 @@ async function _mindLoadSamples(DB) {
   const raw = (rows && rows.results) ? rows.results : [];
   const data = [];
   for (let i = raw.length - 1; i >= 0; i--) {
-    let v; try { v = JSON.parse(raw[i].feat); } catch (e) { continue; }
+    const r = raw[i]; raw[i] = null;   // 파싱이 끝난 행의 원본 문자열을 즉시 놓아준다
+    let v; try { v = JSON.parse(r.feat); } catch (e) { continue; }
     if (!Array.isArray(v) || v.length !== LUXML.featNames.length) continue;
-    data.push({ ts: _num(raw[i].ts, 0), x: v.map(function (t) { return _num(t, 0); }), y: _labelOfRow(raw[i]), pnl: _num(raw[i].pnl_pct, 0), hv: raw[i].strategy === "hv" });
+    for (let j = 0; j < v.length; j++) v[j] = _num(v[j], 0);   // 사본 대신 제자리에서 숫자화
+    data.push({ ts: _num(r.ts, 0), x: v, y: _labelOfRow(r), pnl: _num(r.pnl_pct, 0), hv: r.strategy === "hv" });
   }
   return data;
 }
@@ -33471,10 +33494,12 @@ async function mlGBDTTrainNightly(DB) {
     const nowTs = Date.now();
     const data = [];
     for (let i = raw.length - 1; i >= 0; i--) {
-      let v; try { v = JSON.parse(raw[i].feat); } catch (e) { continue; }
+      const r = raw[i]; raw[i] = null;   // 파싱이 끝난 행의 원본 문자열을 즉시 놓아준다
+      let v; try { v = JSON.parse(r.feat); } catch (e) { continue; }
       if (!Array.isArray(v) || v.length !== LUXML.featNames.length) continue;
-      data.push({ ts: _num(raw[i].ts, 0), x: v.map(function (t) { return _num(t, 0); }), y: _labelOfRow(raw[i]),
-                  pnl: _num(raw[i].pnl_pct, 0), hv: raw[i].strategy === "hv" });
+      for (let j = 0; j < v.length; j++) v[j] = _num(v[j], 0);   // 사본 대신 제자리에서 숫자화
+      data.push({ ts: _num(r.ts, 0), x: v, y: _labelOfRow(r),
+                  pnl: _num(r.pnl_pct, 0), hv: r.strategy === "hv" });
     }
     const N = data.length;
     if (N < GBDT.minTrainSamples) {
