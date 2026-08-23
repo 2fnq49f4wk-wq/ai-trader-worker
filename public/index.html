@@ -8,7 +8,7 @@
      인데, 지금까지 화면에서 그걸 알 방법이 전혀 없었다(카카오톡 인앱 브라우저는 특히 강하게 캐시한다).
      서버가 내려주는 build 와 이 값을 비교해 다르면 배너로 알린다.
      ※ src/index.js 의 _BUILD_VER 와 항상 같아야 한다 — check-html-js 가 강제한다. -->
-<meta name="lux-build" content="V33.225">
+<meta name="lux-build" content="V33.226">
 <title>LUX-ENGINE V10</title>
 <!-- ══ [V33.156] 설치형 앱(PWA) — 폰·PC 에서 홈화면/독에 담아 앱처럼 연다 ══
      · manifest  : 이름·아이콘·standalone 표시(주소창 없이 앱처럼)
@@ -13166,14 +13166,6 @@ html[data-theme="light"] #page-nnviz{
   display:grid; grid-template-columns:repeat(auto-fill,minmax(150px,1fr)); gap:.26rem;
   background:none; border:none; margin-top:.15rem;
 }
-/* [V33.216] 층 제목 — 전체 열을 차지해 역할 경계를 만든다.
-   구조 관측의 .nnv-nav-h 와 같은 문법이라 두 화면이 같은 언어로 읽힌다. */
-#page-nnviz .nlv-cm-lh{
-  grid-column:1/-1; font-size:.6rem; font-weight:700; letter-spacing:.08em;
-  text-transform:uppercase; color:var(--ap-ink3); opacity:.85;
-  padding:.5rem .1rem .12rem; border-top:1px solid var(--ap-hair); margin-top:.2rem;
-}
-#page-nnviz .nlv-cm-lh:first-child{ border-top:0; margin-top:0; padding-top:.05rem; }
 /* 투표하지 않는 층은 막대 대신 역할을 적는다 — 같은 자리에 다른 뜻의 막대를 두지 않는다.
    색은 전부 토큰으로 — 하드코딩하면 라이트 테마용 CSS 를 또 적게 되고 두 벌은 드리프트한다. */
 #page-nnviz .nlv-cm .cm-role{
@@ -17452,9 +17444,13 @@ html:root .page > *{ flex-shrink:0; }
       if(sub) sub.textContent = '확인 중';
       return;
     }
+    /* [V33.226] 층 제목을 걷어내고 ★평평한 목록★ 으로 되돌린다(사용자 요청).
+       역할 구분(투표/대체/이동)은 없애지 않고 각 카드의 역할 글자와 막대 유무로 남긴다 —
+       그건 장식이 아니라 사실이라서다(STACK 은 투표를 대체하고 DUAL 은 확률을 민다).
+       CMLAYERS 는 그 역할을 알기 위해 그대로 두고, 화면에만 제목을 안 그린다. */
     var nFull = 0, nProv = 0;
     var html = CMLAYERS.map(function(L){
-      return '<span class="nlv-cm-lh">'+esc(L[0])+'</span>' + L[2].map(function(r){
+      return L[2].map(function(r){
       var st = cmState(r[0], mode);
       if(st.cls === 'ok') nFull++; else if(st.cls === 'prov') nProv++;
       // 학습이 멈춘 위원은 마지막 학습 시도 결과를 그대로 붙인다(로그를 뒤지지 않게).
@@ -17483,8 +17479,7 @@ html:root .page > *{ flex-shrink:0; }
       }).join('');
     }).join('');
     el.innerHTML = html;
-    var nVote = CMLAYERS[0][2].length;
-    if(sub) sub.textContent = '투표 위원 '+nVote+'자리 · 정식 '+nFull+' · 잠정 '+nProv+' · 대기 '+(CMROSTER.length-nFull-nProv);
+    if(sub) sub.textContent = '정식 '+nFull+' · 잠정 '+nProv+' · 대기 '+(CMROSTER.length-nFull-nProv);
   }
 
   // KPI 3타일 — 위원회 가동 / 처리속도 / 스캔 소요
