@@ -345,9 +345,16 @@ try {
   const sv = readFileSync(new URL("../src/index.js", import.meta.url), "utf8");
   const tabsBlock = (hv.match(/<div class="nnv-tabs"[\s\S]*?<\/div>/) || [""])[0];
   const tabs = [...tabsBlock.matchAll(/data-model="([^"]+)"/g)].map((m) => m[1]);
-  const route = (sv.match(/if \(path === "\/api\/nn-viz"\)[\s\S]{0,900}?Response\.json/) || [""])[0];
+  /* [V33.206] ★창을 넓힌다 — 계약은 그대로다.★ 종전 정규식은 `if (path === "/api/nn-viz")`
+     처럼 ★닫는 괄호까지★ 요구해서, 같은 경로를 쿼리로 가르는 분기
+     (`if (path === "/api/nn-viz" && ...model === "overview")`)를 못 봤다.
+     그러면 실제로 라우팅된 탭을 "라우팅 없음" 으로 잘못 잡는다. 검사가 봐야 하는 것은
+     "그 모델 이름이 nn-viz 처리부 어딘가에서 실제로 갈라지는가" 이므로 그 범위를 다 담는다. */
+  const route = (sv.match(/if \(path === "\/api\/nn-viz"[\s\S]{0,9000}?await mlDNNVizData\(env\.DB\)\);/) || [""])[0];
   const linKeys = [...(sv.match(/const _LINVIZ = \{[\s\S]*?\n\};/) || [""])[0].matchAll(/^\s{2}(\w+):\s*\{/gm)].map((m) => m[1]);
   const missing = tabs.filter((t) => {
+    // overview 는 선형/트리 렌더러가 아니라 ★전용 분기★ 로 간다(층 구조를 그리므로).
+    if (t === "overview") return !route.includes('=== "overview"');
     if (t === "dnn" || t === "mind" || t === "memo") return !route.includes('"' + t + '"') && t !== "dnn";
     if (["gbdt", "xgb", "lgb", "cat"].includes(t)) return !route.includes('"' + t + '"');
     return !linKeys.includes(t);

@@ -2788,7 +2788,7 @@ async function applySignalTypeWeights(DB, cfg) {
 // ============================================================================
 // [V33.55] 빌드 버전 — SWR L2 캐시 키에 섞어 '배포 = 판단 캐시 자동 무효화'를 만든다.
 //   판정 로직을 고쳐도 옛 캐시가 최대 1시간 재배포되던 문제를 구조적으로 없앤다.
-const _BUILD_VER = "V33.205";
+const _BUILD_VER = "V33.206";
 
 // ═══ [V33.171] 평가 순서 계획 — ★승격과 순환을 교차해 굶주림을 구조적으로 없앤다★ ═══
 //   V33.50 의 형태트리거는 "급한 몇 종목을 앞으로 당긴다"는 의도였으나, 실제 운영로그에서는
@@ -20276,6 +20276,129 @@ async function handleRequest(request, env, ctx) {
 
     // ── [V9 시각화] 신경망 구조·가중치 강도·위원회 신뢰 — 프론트 "AI 두뇌 관측" 패널용 ──
     //   [V12.36] ?model=dnn(기본)|mind|gbdt — 사이드바 두뇌 페이지에서 3개 모델 구조를 각각 관측.
+    /* ── [V33.206] ★전체 구조 — 이것들이 어떻게 '하나' 로 합쳐지는지★ ────────────────
+       종전 구조 관측은 ★모델별 탭★ 만 있었다. 각 모델의 내부는 볼 수 있는데, 그것들이
+       무슨 순서로 어떻게 하나의 확률이 되는지는 화면 어디에도 없었다. 사용자가
+       "여러 모델을 하나로 통합할 수 없냐" 고 물은 이유가 그것이다 — 이미 통합돼 있는데
+       ★통합돼 있다는 사실이 안 보였다.★
+       그리고 이 표는 ★서버가 만든다★. 화면이 조각을 모아 조립하면 V33.195 에서 겪은
+       "같은 값을 두 화면이 다르게 부르는" 사고가 그대로 재발한다 — 사실표는 한 곳에서 나온다. */
+    if (path === "/api/nn-viz" && (url.searchParams.get("model") || "") === "overview") {
+      const _ov = { kind: "overview", ts: Date.now(), featVer: LUXML.featVer };
+      const _g = async function (k) { try { return await getState(env.DB, k, null); } catch (e) { return null; } };
+      const _pc = function (x) { return (typeof x === "number" && isFinite(x)) ? +(x * 100).toFixed(1) : null; };
+      const [mindM, dnnT, gT, stackM, cal, oofW, bfCur, oofCur] = await Promise.all([
+        mlMindLoad(env.DB), _g("dnn_trust"), _g("gbdt_trust"), _g("stack_model"),
+        _g("committee_cal"), _g("stack_oof_window"), _g("stack_bf_cursor"), _g("stack_oof_cursor")
+      ]);
+      let boosters = null; try { boosters = await _boostersCached(env.DB); } catch (e) {}
+      const [flowM, xaM, memoM, dBull, dBear] = await Promise.all([
+        _g("flow_model"), _g("xalpha_model"), _g("memo_model"), _g("dual_bull_model"), _g("dual_bear_model")
+      ]);
+      /* 위원 한 명을 '지금 실제로 투표하는가' 기준으로 적는다 — 화면에 좋아 보이는 값이 아니라
+         ★결정 경로가 실제로 보는 값★ 이다(admit·featVer 일치·신뢰게이트). */
+      const _row = function (name, label, o) {
+        const a = o.model ? expertAdmit(o.model) : null;
+        return { name: name, label: label, kind: o.kind || null,
+          trained: !!o.trained, featVer: o.featVer != null ? o.featVer : null,
+          featVerOk: o.featVerOk !== false,
+          valAcc: _pc(o.valAcc), accLB: _pc(o.accLB), floor: _pc(o.floor),
+          ic: (typeof o.ic === "number" && isFinite(o.ic)) ? +o.ic.toFixed(4) : null,
+          icT: (typeof o.icT === "number" && isFinite(o.icT)) ? +o.icT.toFixed(2) : null,
+          n: o.n != null ? Math.round(_num(o.n, 0)) : null,
+          minN: o.minN != null ? Math.round(_num(o.minN, 0)) : null,
+          voting: !!o.voting, tier: a ? a.tier : (o.tier || null),
+          mult: a ? a.mult : (o.mult != null ? o.mult : null),
+          why: o.why || (a ? a.why : null), params: o.params != null ? o.params : null };
+      };
+      const _mindLB = mindM ? _num(mindM.valAccLB, 0.5) : null;
+      const _dnnLB = dnnT ? _num(dnnT.dnnAccLB, null) : null;
+      _ov.experts = [
+        _row("mind", "MIND (인수분해기계 FM + 전문가 스태킹)", { kind: "fm",
+          trained: !!mindM, featVer: mindM ? mindM.featVer : null,
+          featVerOk: !!(mindM && mindM.featVer === LUXML.featVer),
+          valAcc: mindM ? _num(mindM.valAcc, null) : null, accLB: _mindLB,
+          n: mindM ? _num(mindM.n, null) : null, voting: !!mindM,
+          tier: "full", mult: 1, why: mindM ? "위원장 — 신뢰게이트 없이 항상 참여" : "모델 없음" }),
+        _row("dnn", "DNN (다층 퍼셉트론)", { kind: "mlp",
+          trained: !!(dnnT && dnnT.dnnAcc != null), valAcc: dnnT ? _num(dnnT.dnnAcc, null) : null,
+          accLB: _dnnLB, floor: _mindLB,
+          voting: !!(dnnT && dnnT.trusted && _num(dnnT.wDnn, 0) > 0),
+          mult: dnnT ? _num(dnnT.wDnn, 0) : null,
+          why: (dnnT && dnnT.trusted) ? "신뢰 통과" :
+               ((_dnnLB != null && _mindLB != null && _dnnLB < _mindLB)
+                 ? "하한 " + (_dnnLB * 100).toFixed(1) + "% < MIND 하한 " + (_mindLB * 100).toFixed(1) + "%"
+                 : (dnnT && dnnT.reason) || "미학습"),
+          params: dnnT ? _num(dnnT.params, null) : null }),
+        _row("gbdt", "GBDT (부스팅 트리)", { kind: "tree",
+          trained: !!(gT && gT.gbdtAcc != null), valAcc: gT ? _num(gT.gbdtAcc, null) : null,
+          accLB: gT ? _num(gT.gbdtAccLB, null) : null, floor: _mindLB,
+          voting: !!(gT && gT.trusted), why: (gT && gT.trusted) ? "신뢰 통과" : ((gT && gT.reason) || "미학습") }),
+        _row("boost", "BOOST (XGB·LGB·CatBoost 합의)", { kind: "tree",
+          trained: !!(boosters && boosters.length), n: boosters ? boosters.length : 0,
+          voting: !!(boosters && boosters.length),
+          why: boosters && boosters.length ? boosters.length + "종 합의(가중 ×0.8)" : "부스터 없음" }),
+        _row("flow", "FLOW (수급·피어)", { kind: "linear", model: flowM,
+          trained: !!flowM, featVer: flowM ? flowM.featVer : null,
+          featVerOk: !!(flowM && flowM.featVer === FLOWML.featVer),
+          valAcc: flowM ? _num(flowM.valAcc, null) : null, ic: flowM ? _num(flowM.valICBlock, null) : null,
+          icT: flowM ? _num(flowM.valICt, null) : null, n: flowM ? _num(flowM.n, null) : null,
+          minN: FLOWML.minTrainSamples,
+          voting: !!(flowM && flowM.featVer === FLOWML.featVer && expertAdmit(flowM).admit) }),
+        _row("xalpha", "XALPHA (형식알파 · 횡단면랭크)", { kind: "linear", model: xaM,
+          trained: !!xaM, featVer: xaM ? xaM.featVer : null,
+          featVerOk: !!(xaM && xaM.featVer === XALPHA.featVer),
+          valAcc: xaM ? _num(xaM.valAcc, null) : null, ic: xaM ? _num(xaM.valICBlock, null) : null,
+          icT: xaM ? _num(xaM.valICt, null) : null, n: xaM ? _num(xaM.n, null) : null,
+          minN: XALPHA.minTrainSamples,
+          voting: !!(xaM && xaM.featVer === XALPHA.featVer && expertAdmit(xaM).admit) }),
+        _row("memo", "MEMO (원형 기억)", { kind: "proto", model: memoM,
+          trained: !!memoM, valAcc: memoM ? _num(memoM.valAcc, null) : null,
+          ic: memoM ? _num(memoM.valICBlock, null) : null, icT: memoM ? _num(memoM.valICt, null) : null,
+          n: memoM ? _num(memoM.n, null) : null, minN: MEMOML.minTrainSamples,
+          voting: !!(memoM && expertAdmit(memoM).admit) }),
+        _row("rule", "RULE (규칙엔진)", { kind: "rule", trained: true, voting: true,
+          accLB: mindM ? _num(mindM.ruleAccLB, null) : null,
+          why: "상시 — 기술지표 기반 사전확률" })
+      ];
+      /* 이중헤드는 위원이 아니라 ★사분면 판정★ 에 쓰인다 — 같은 목록에 넣으면 8명이 10명으로 보인다. */
+      _ov.dual = [
+        _row("dual_bull", "이중헤드 강세", { model: dBull, trained: !!dBull,
+          valAcc: dBull ? _num(dBull.valAcc, null) : null, ic: dBull ? _num(dBull.valICBlock, null) : null,
+          icT: dBull ? _num(dBull.valICt, null) : null, voting: !!(dBull && expertAdmit(dBull).admit) }),
+        _row("dual_bear", "이중헤드 약세", { model: dBear, trained: !!dBear,
+          valAcc: dBear ? _num(dBear.valAcc, null) : null, ic: dBear ? _num(dBear.valICBlock, null) : null,
+          icT: dBear ? _num(dBear.valICt, null) : null, voting: !!(dBear && expertAdmit(dBear).admit) })
+      ];
+      const _sa = stackM ? expertAdmit(stackM) : null;
+      _ov.stack = {
+        trained: !!stackM, featVer: stackM ? stackM.featVer : null, wantVer: STACKML.featVer,
+        featVerOk: !!(stackM && stackM.featVer === STACKML.featVer),
+        dim: 16, slots: ["mind", "dnn", "gbdt", "boost", "flow", "xalpha", "memo", "rule"],
+        n: stackM ? _num(stackM.n, null) : null, minN: STACKML.minTrainSamples,
+        valAcc: _pc(stackM ? _num(stackM.valAcc, null) : null),
+        ic: stackM ? +_num(stackM.valICBlock, 0).toFixed(4) : null,
+        icT: stackM ? +_num(stackM.valICt, 0).toFixed(2) : null,
+        tier: _sa ? _sa.tier : null, mult: _sa ? _sa.mult : null, why: _sa ? _sa.why : "모델 없음",
+        /* 재료 공급 상태 — 왜 아직 못 배우는지가 여기서 갈린다(V33.205) */
+        oof: { minTs: oofW ? _num(oofW.minTs, null) : null, n: oofW ? _num(oofW.n, null) : null,
+               models: (oofW && oofW.models) || [], at: oofW ? _num(oofW.ts, null) : null },
+        made: bfCur ? _num(bfCur.made, 0) : 0,
+        cursorEpoch: bfCur ? _num(bfCur.lastId, 0) : 0,
+        cursorOof: oofCur ? _num(oofCur.lastId, 0) : 0
+      };
+      _ov.combine = {
+        icTemp: (typeof DNN !== "undefined" && DNN.icTemp != null) ? DNN.icTemp : 60,
+        icClamp: [-0.05, 0.25], trimMin: 5, trimFrac: 0.2, trimGap: 0.12,
+        cal: cal ? { mode: String(cal.mode || "temp"), T: _num(cal.T, null),
+                     a: _num(cal.a, null), b: _num(cal.b, null), c: _num(cal.c, null),
+                     ece: _pc(_num(cal.ece, null)), eceRaw: _pc(_num(cal.eceRaw, null)),
+                     featVer: cal.featVer != null ? cal.featVer : null } : null
+      };
+      _ov.votingCount = _ov.experts.filter(function (e) { return e.voting; }).length;
+      return Response.json(_ov, { headers: cors });
+    }
+
     if (path === "/api/nn-viz") {
       const modelSel = url.searchParams.get("model") || "dnn";
       // [V33.150] 신규 위원 5종 추가 — 선형(계수) / 원형(기억) 은 트리·층 렌더러로 못 그린다.

@@ -8,7 +8,7 @@
      인데, 지금까지 화면에서 그걸 알 방법이 전혀 없었다(카카오톡 인앱 브라우저는 특히 강하게 캐시한다).
      서버가 내려주는 build 와 이 값을 비교해 다르면 배너로 알린다.
      ※ src/index.js 의 _BUILD_VER 와 항상 같아야 한다 — check-html-js 가 강제한다. -->
-<meta name="lux-build" content="V33.205">
+<meta name="lux-build" content="V33.206">
 <title>LUX-ENGINE V10</title>
 <!-- ══ [V33.156] 설치형 앱(PWA) — 폰·PC 에서 홈화면/독에 담아 앱처럼 연다 ══
      · manifest  : 이름·아이콘·standalone 표시(주소창 없이 앱처럼)
@@ -2982,6 +2982,55 @@ html[data-theme="light"] .nav-item .lux-ico .lux-star-base,
 html[data-theme="light"] .nav-item .lux-ico .lux-star-facet{fill:#5a6c85;}
 html[data-theme="light"] .nav-item.active .lux-ico .lux-star-base,
 html[data-theme="light"] .nav-item.active .lux-ico .lux-star-facet{fill:#0b6cd4;}
+/* [V33.206] 전체 구조 — 층(layer) 뷰. 모델 카드가 아니라 결합 순서를 그린다. */
+#page-nnviz .nnv-ov{display:flex;flex-direction:column;gap:6px;padding:2px 0;}
+#page-nnviz .nnv-ov-lh{font-family:Space Grotesk,sans-serif;font-size:12px;letter-spacing:.4px;
+  color:#9fb4dc;margin:10px 0 2px;display:flex;align-items:baseline;gap:8px;flex-wrap:wrap;}
+#page-nnviz .nnv-ov-lh small{font-size:10px;color:#6f84aa;font-weight:400;letter-spacing:0;}
+#page-nnviz .nnv-ov-note{font-size:10.5px;color:#7d92b8;line-height:1.6;background:rgba(125,150,200,.06);
+  border-left:2px solid rgba(125,150,200,.28);padding:6px 9px;border-radius:0 6px 6px 0;}
+#page-nnviz .nnv-ov-row{display:grid;grid-template-columns:minmax(150px,1.4fr) auto minmax(0,2fr);
+  gap:8px;align-items:center;padding:7px 9px;border-radius:8px;
+  background:rgba(125,150,200,.05);border:1px solid rgba(125,150,200,.14);}
+#page-nnviz .nnv-ov-row.on{background:rgba(0,224,255,.07);border-color:rgba(0,224,255,.3);}
+#page-nnviz .nnv-ov-row.sub{opacity:.85;}
+#page-nnviz .nnv-ov-nm{font-size:12px;color:#dce7f7;font-weight:600;}
+#page-nnviz .nnv-ov-mt{font-size:10.5px;color:#8fa5c9;font-variant-numeric:tabular-nums;}
+#page-nnviz .nnv-ov-why{grid-column:1/-1;font-size:10px;color:#6f84aa;line-height:1.5;
+  padding-top:2px;border-top:1px dashed rgba(125,150,200,.18);margin-top:2px;}
+#page-nnviz .nnv-ov-b{font-size:9.5px;padding:2px 7px;border-radius:999px;white-space:nowrap;
+  font-weight:700;letter-spacing:.3px;}
+#page-nnviz .nnv-ov-b.good{background:rgba(0,224,255,.16);color:#7ce9ff;}
+#page-nnviz .nnv-ov-b.wait{background:rgba(125,150,200,.14);color:#9fb4dc;}
+#page-nnviz .nnv-ov-b.warn{background:rgba(255,180,60,.15);color:#ffc46b;}
+#page-nnviz .nnv-ov-b.off{background:rgba(255,110,110,.13);color:#ff9b9b;}
+#page-nnviz .nnv-ov-stack{margin:6px 0;padding:11px 12px;border-radius:10px;
+  background:linear-gradient(180deg,rgba(125,75,255,.10),rgba(125,75,255,.03));
+  border:1px solid rgba(125,75,255,.28);}
+#page-nnviz .nnv-ov-stack.on{background:linear-gradient(180deg,rgba(0,224,255,.12),rgba(125,75,255,.05));
+  border-color:rgba(0,224,255,.42);}
+#page-nnviz .nnv-ov-sh{font-family:Space Grotesk,sans-serif;font-size:12.5px;color:#e6eefb;
+  letter-spacing:.4px;margin-bottom:7px;}
+#page-nnviz .nnv-ov-sh small{font-size:10px;color:#9fb4dc;font-weight:400;letter-spacing:0;}
+#page-nnviz .nnv-ov-sb{display:flex;flex-wrap:wrap;gap:4px;margin-bottom:7px;}
+#page-nnviz .nnv-ov-slot{font-size:10px;padding:2px 8px;border-radius:6px;
+  background:rgba(125,150,200,.12);color:#8fa5c9;border:1px solid transparent;}
+#page-nnviz .nnv-ov-slot.on{background:rgba(0,224,255,.16);color:#7ce9ff;border-color:rgba(0,224,255,.32);}
+#page-nnviz .nnv-ov-sm{font-size:11px;color:#cfe0f5;line-height:1.6;font-variant-numeric:tabular-nums;}
+#page-nnviz .nnv-ov-sf{font-size:10px;color:#8fa5c9;margin-top:5px;line-height:1.55;
+  padding-top:5px;border-top:1px dashed rgba(125,150,200,.2);}
+@media(max-width:767px){
+  #page-nnviz .nnv-ov-row{grid-template-columns:1fr auto;}
+  #page-nnviz .nnv-ov-mt{grid-column:1/-1;}
+}
+html[data-theme="light"] #page-nnviz .nnv-ov-nm{color:var(--lt-ink);}
+html[data-theme="light"] #page-nnviz .nnv-ov-lh,
+html[data-theme="light"] #page-nnviz .nnv-ov-mt,
+html[data-theme="light"] #page-nnviz .nnv-ov-note,
+html[data-theme="light"] #page-nnviz .nnv-ov-sf,
+html[data-theme="light"] #page-nnviz .nnv-ov-why{color:var(--lt-ink2);}
+html[data-theme="light"] #page-nnviz .nnv-ov-sh,
+html[data-theme="light"] #page-nnviz .nnv-ov-sm{color:var(--lt-ink);}
 html[data-theme="light"] #page-nnviz .nnv-tab .lux-ico .lux-star-base,
 html[data-theme="light"] #page-nnviz .nnv-tab .lux-ico .lux-star-facet{fill:#5a6c85;}
 html[data-theme="light"] #page-nnviz .nnv-tab.active .lux-ico .lux-star-base,
@@ -4214,7 +4263,11 @@ html[data-theme="light"] .m-brainbar button.active{color:#0b4f9e;background:rgba
          (작동 화면만 볼 땐 무거운 /api/nn-viz 요청과 SVG 렌더가 아예 발생하지 않음) -->
     <div id="nnvStruct" style="display:none;">
     <div class="nnv-tabs" id="nnvTabs" style="display:flex;gap:6px;margin:2px 0 10px;">
-      <button class="nnv-tab active" data-model="dnn" onclick="switchNnModel('dnn')"><svg class="lux-star-svg lux-ico" viewBox="0 0 100 100" aria-hidden="true"><use href="#luxStarSym"/></svg> DNN (딥넷)</button>
+      <!-- [V33.206] ★전체 구조★ — 종전엔 모델별 탭만 있어서 "이것들이 어떻게 하나가 되는지" 가
+           화면 어디에도 없었다. 각 모델의 내부는 볼 수 있는데 결합 순서는 못 봤다.
+           이 탭이 그 층을 그린다: 전문가 8명 → IC가중 → STACK(통합) → 보정 → 로그오즈 층. -->
+      <button class="nnv-tab active" data-model="overview" onclick="switchNnModel('overview')"><svg class="lux-star-svg lux-ico" viewBox="0 0 100 100" aria-hidden="true"><use href="#luxStarSym"/></svg> 전체 구조</button>
+      <button class="nnv-tab" data-model="dnn" onclick="switchNnModel('dnn')"><svg class="lux-star-svg lux-ico" viewBox="0 0 100 100" aria-hidden="true"><use href="#luxStarSym"/></svg> DNN (딥넷)</button>
       <button class="nnv-tab" data-model="mind" onclick="switchNnModel('mind')"><svg class="lux-star-svg lux-ico" viewBox="0 0 100 100" aria-hidden="true"><use href="#luxStarSym"/></svg> MIND (스태킹)</button>
       <button class="nnv-tab" data-model="gbdt" onclick="switchNnModel('gbdt')"><svg class="lux-star-svg lux-ico" viewBox="0 0 100 100" aria-hidden="true"><use href="#luxStarSym"/></svg> GBDT (부스팅트리)</button>
       <button class="nnv-tab" data-model="xgb" onclick="switchNnModel('xgb')"><svg class="lux-star-svg lux-ico" viewBox="0 0 100 100" aria-hidden="true"><use href="#luxStarSym"/></svg> XGBoost</button>
@@ -13504,7 +13557,7 @@ html[data-theme="light"] #page-nnviz .nlv-sec-h{ border-color:transparent; color
 </style>
 <script>
 (function(){
-  var NNV = { timer:null, model:'dnn' };
+  var NNV = { timer:null, model:'overview' };
   // [V12.36] 두뇌 모델 탭 전환 — DNN(레이어 SVG) / MIND·GBDT(피처 영향도 막대)
   window.switchNnModel = function(m){
     if(NNV.model===m) return;
@@ -13551,7 +13604,7 @@ html[data-theme="light"] #page-nnviz .nlv-sec-h{ border-color:transparent; color
   };
   window.openNnViz = function(refreshOnly, modelSwitch){
     var stage=document.getElementById('nnvStage'); if(!stage) return;
-    var model = NNV.model || 'dnn';
+    var model = NNV.model || 'overview';
     var cacheKey = 'nnvCache_'+model;
     // [V12.5 로딩속도] 마지막 성공 데이터로 즉시 렌더(체감 0ms) → 백그라운드로 최신 데이터 갱신
     var painted=false;
@@ -13820,11 +13873,129 @@ html[data-theme="light"] #page-nnviz .nlv-sec-h{ border-color:transparent; color
       + '</div>';
   }
 
+
+  /* ── [V33.206] 전체 구조 렌더러 ─────────────────────────────────────────────
+     이 화면이 답해야 하는 질문은 "각 모델이 어떻게 생겼나" 가 아니라
+     ★"이것들이 무슨 순서로 하나의 확률이 되나"★ 다.
+     그래서 모델 카드가 아니라 ★층(layer)★ 을 그린다. 그리고 위원마다
+     '지금 투표하는가 / 아니면 왜 빠졌는가' 를 같은 줄에 적는다 — 빠진 이유가
+     안 보이면 사람은 그 위원이 없는 줄 안다. */
+  function NNV_renderOverview(d){
+    var stage=document.getElementById('nnvStage'), chips=document.getElementById('nnvChips'),
+        comm=document.getElementById('nnvComm'), legend=document.getElementById('nnvLegend'),
+        sub=document.getElementById('nnvSub'), ban=document.getElementById('nnvBanner'),
+        roles=document.getElementById('nnvRoles');
+    if(legend) legend.style.display='none';
+    if(roles) roles.innerHTML='';
+    var ex = d.experts||[], st = d.stack||{}, cb = d.combine||{}, nv = d.votingCount||0;
+    sub.textContent = '전체 구조 — 전문가 '+ex.length+'명 중 ★'+nv+'명 투표 중★ → IC가중 결합 → STACK(통합 메타모델) → 보정 → 로그오즈 층';
+
+    chips.innerHTML =
+      chip('투표 중인 위원', nv+' / '+ex.length, nv>=4?'good':'warn') +
+      chip('통합 메타모델(STACK)', st.trained? (st.tier==='full'?'대체 가동':'잠정 ×'+(st.mult!=null?st.mult.toFixed(2):'—')) : '학습 대기', st.trained?'good':'warn') +
+      chip('STACK 표본', (st.n!=null? st.n.toLocaleString():'—')+' / '+(st.minN!=null? st.minN.toLocaleString():'—'), (st.n!=null&&st.minN!=null&&st.n>=st.minN)?'good':'warn') +
+      chip('확률 보정', cb.cal? (cb.cal.mode==='beta'?'베타':cb.cal.mode==='platt'?'플랫':'온도 T='+(cb.cal.T!=null?cb.cal.T.toFixed(2):'—')) : '없음', cb.cal?'':'warn') +
+      chip('피처 판(featVer)', esc(d.featVer), 'good');
+
+    if(ban){
+      ban.className = st.trained? 'nnv-banner on' : 'nnv-banner off';
+      ban.innerHTML = st.trained
+        ? '✅ <b>통합 메타모델 가동</b> — STACK 이 전문가 8명의 확률을 입력으로 받아 최종 확률을 냅니다. 사람이 정한 가중이 아니라 <b>결과로부터 배운 결합</b>입니다.'
+        : '🌱 <b>통합 메타모델 학습 대기</b> — 전문가들의 확률을 하나로 묶는 STACK 이 아직 표본을 모으는 중입니다. 그동안은 아래 ②의 IC가중 결합이 최종 확률을 냅니다(공백 없음).';
+      ban.style.display='block';
+    }
+
+    function badge(e){
+      if(e.voting) return '<span class="nnv-ov-b good">투표 중'+(e.mult!=null&&e.mult<1&&e.mult>0?' ×'+e.mult.toFixed(2):'')+'</span>';
+      if(!e.trained) return '<span class="nnv-ov-b wait">미학습</span>';
+      if(e.featVerOk===false) return '<span class="nnv-ov-b warn">판 불일치 v'+esc(e.featVer)+'→v'+esc(d.featVer)+'</span>';
+      return '<span class="nnv-ov-b off">억제됨</span>';
+    }
+    function metrics(e){
+      var out=[];
+      if(e.valAcc!=null) out.push('검증 '+e.valAcc.toFixed(1)+'%');
+      if(e.accLB!=null)  out.push('하한 '+e.accLB.toFixed(1)+'%'+(e.floor!=null?' / 문턱 '+e.floor.toFixed(1)+'%':''));
+      if(e.ic!=null)     out.push('블록IC '+e.ic.toFixed(4)+(e.icT!=null?' (t '+e.icT.toFixed(2)+')':''));
+      if(e.n!=null)      out.push('표본 '+e.n.toLocaleString()+(e.minN!=null?'/'+e.minN.toLocaleString():''));
+      if(e.params!=null) out.push('파라미터 '+e.params.toLocaleString());
+      return out.join(' · ') || '—';
+    }
+    var rows = ex.map(function(e){
+      return '<div class="nnv-ov-row'+(e.voting?' on':'')+'">'
+        + '<div class="nnv-ov-nm">'+e.label+'</div>'
+        + '<div class="nnv-ov-bd">'+badge(e)+'</div>'
+        + '<div class="nnv-ov-mt">'+metrics(e)+'</div>'
+        + (e.why? '<div class="nnv-ov-why">'+String(e.why).replace(/[<>]/g,'')+'</div>':'')
+        + '</div>';
+    }).join('');
+
+    var dualRows = (d.dual||[]).map(function(e){
+      return '<div class="nnv-ov-row sub'+(e.voting?' on':'')+'">'
+        + '<div class="nnv-ov-nm">'+e.label+'</div>'
+        + '<div class="nnv-ov-bd">'+badge(e)+'</div>'
+        + '<div class="nnv-ov-mt">'+metrics(e)+'</div>'
+        + (e.why? '<div class="nnv-ov-why">'+String(e.why).replace(/[<>]/g,'')+'</div>':'')
+        + '</div>';
+    }).join('');
+
+    /* STACK 재료 공급 상태 — "왜 아직 못 배우나" 는 여기서 갈린다(V33.205 홀드아웃 경로) */
+    var oof = st.oof||{};
+    var oofLine = oof.minTs
+      ? '홀드아웃 구간 <b>'+new Date(oof.minTs).toISOString().slice(0,10)+' 이후</b> '
+        + (oof.n!=null? oof.n.toLocaleString()+'행':'—') + ' 열림'
+        + (oof.models&&oof.models.length? ' <span style="opacity:.65">('+oof.models.join('/')+' 가 학습한 적 없는 구간)</span>':'')
+      : '홀드아웃 경계 미수신 — 외부 학습기가 아직 안 올렸습니다';
+
+    var stackBox =
+      '<div class="nnv-ov-stack'+(st.trained?' on':'')+'">'
+      + '<div class="nnv-ov-sh">③ STACK — 통합 메타모델 <small>'+(st.dim||16)+'차원 = 전문가확률 8 + 참여마스크 8</small></div>'
+      + '<div class="nnv-ov-sb">'+(st.slots||[]).map(function(k){
+            var e = ex.filter(function(x){return x.name===k;})[0];
+            return '<span class="nnv-ov-slot'+(e&&e.voting?' on':'')+'">'+k+'</span>'; }).join('')+'</div>'
+      + '<div class="nnv-ov-sm">'
+        + (st.trained
+            ? '검증 '+(st.valAcc!=null?st.valAcc.toFixed(1)+'%':'—')
+              + (st.ic!=null? ' · 블록IC '+st.ic.toFixed(4):'')
+              + (st.icT!=null? ' (t '+st.icT.toFixed(2)+')':'')
+              + ' · ' + (st.tier==='full'? '<b>결합확률을 통째로 대체</b>' : '로짓 혼합 ×'+(st.mult!=null?st.mult.toFixed(2):'—'))
+            : '표본 <b>'+(st.n!=null?st.n.toLocaleString():'—')+' / '+(st.minN!=null?st.minN.toLocaleString():'—')+'</b> — 퍼징 후 문턱을 넘으면 자동 학습')
+        + '</div>'
+      + '<div class="nnv-ov-sf">'+oofLine
+        + ' · 누적생성 <b>'+(st.made!=null?st.made.toLocaleString():'—')+'</b>건'
+        + ' <span style="opacity:.6">(에폭커서 '+(st.cursorEpoch||0)+' / 홀드아웃커서 '+(st.cursorOof||0)+')</span></div>'
+      + (st.why? '<div class="nnv-ov-why">'+String(st.why).replace(/[<>]/g,'')+'</div>':'')
+      + '</div>';
+
+    var calTxt = cb.cal
+      ? (cb.cal.mode==='beta'? '베타(a '+esc(cb.cal.a)+' b '+esc(cb.cal.b)+' c '+esc(cb.cal.c)+')'
+         : cb.cal.mode==='platt'? '플랫(a '+esc(cb.cal.a)+' b '+esc(cb.cal.b)+')'
+         : '온도(T '+(cb.cal.T!=null?cb.cal.T.toFixed(2):'—')+')')
+        + (cb.cal.eceRaw!=null&&cb.cal.ece!=null? ' · ECE '+cb.cal.eceRaw.toFixed(1)+'% → '+cb.cal.ece.toFixed(1)+'%':'')
+      : '보정 모델 없음';
+
+    stage.innerHTML =
+      '<div class="nnv-ov">'
+      + '<div class="nnv-ov-lh">① 전문가 — 각자 독립 학습</div>' + rows
+      + '<div class="nnv-ov-lh">② IC 소프트맥스 결합 <small>w = exp('+(cb.icTemp||60)+' × IC), IC ∈ ['+((cb.icClamp||[])[0])+', '+((cb.icClamp||[])[1])+']</small></div>'
+      + '<div class="nnv-ov-note">정확도가 아니라 IC 로 가중합니다 — 정확도로 하면 실력차가 51~54% 라는 좁은 구간에 뭉쳐 사실상 단순평균이 됩니다.'
+        + ' 전문가 '+(cb.trimMin||5)+'명 이상이면 상하 '+Math.round((cb.trimFrac||0.2)*100)+'% 절사평균 가드가 함께 돕니다.</div>'
+      + stackBox
+      + '<div class="nnv-ov-lh">④ 확률 보정 <small>시간순 블록 교차검증으로 온도·플랫·베타 중 선택</small></div>'
+      + '<div class="nnv-ov-note">'+calTxt+'</div>'
+      + '<div class="nnv-ov-lh">⑤ 로그오즈 층 <small>여기부터는 전부 덧셈 — 보정된 기저확률에 독립 증거를 더한다</small></div>'
+      + '<div class="nnv-ov-note">기술 프라이어 · 사건 틸트 · 충격 프라이어 · 전문가 불일치 · 이중헤드 사분면 → 최종보정(T2)</div>'
+      + '<div class="nnv-ov-lh">보조 — 사분면 판정(위원 아님)</div>' + dualRows
+      + '</div>';
+    comm.innerHTML='';
+  }
+
   function NNV_render(d){
     // [V12.3] 노드 클릭 툴팁용 — 입력 피처명 → 역할 맵
     NNV.roles={}; try{ ((d&&(d.inputFeatures||d.topFeatures))||[]).forEach(function(f){ if(f&&f.name) NNV.roles[f.name]={role:f.role||''}; }); }catch(e){}
     var stage=document.getElementById('nnvStage'), chips=document.getElementById('nnvChips'),
         comm=document.getElementById('nnvComm'), legend=document.getElementById('nnvLegend'), sub=document.getElementById('nnvSub');
+    // [V33.206] 전체 구조는 모델 하나가 아니라 ★결합 순서★ 를 그린다 — 전용 렌더러로 보낸다.
+    if(d && d.kind === 'overview'){ NNV_renderOverview(d); return; }
     // [V33.150] 구조가 다른 위원은 다른 렌더러로 — 트리 렌더러에 넣으면 GBDT 로 오표기된다.
     if(d && d.kind === 'memo'){ NNV_renderMemo(d); return; }
     if(d && d.kind && ['flow','xalpha','stack','dualbull','dualbear'].indexOf(d.kind) !== -1){ NNV_renderLinear(d); return; }
@@ -15785,7 +15956,7 @@ html:root .page > *{ flex-shrink:0; }
   // 구조 관측에서 고를 수 있는 모델 — 기존 nnv-tab 과 같은 목록(switchNnModel 인자와 동일)
   // [V33.150] 신규 위원 5종 추가 — 종전엔 고전 6종만 구조를 볼 수 있었다.
   //   FLOW·XALPHA·STACK·MEMO·이중헤드는 위원회에서 실제로 투표하는데 내부를 볼 방법이 없었다.
-  var MODELS = [['dnn','DNN 딥넷'],['mind','MIND 스태킹'],['gbdt','GBDT'],['xgb','XGBoost'],['lgb','LightGBM'],['cat','CatBoost'],
+  var MODELS = [['overview','전체 구조'],['dnn','DNN 딥넷'],['mind','MIND 스태킹'],['gbdt','GBDT'],['xgb','XGBoost'],['lgb','LightGBM'],['cat','CatBoost'],
                 ['flow','FLOW 수급'],['xalpha','XALPHA 알파'],['memo','MEMO 기억'],['stack','STACK 결합'],
                 ['dualbull','이중헤드 강세'],['dualbear','이중헤드 약세']];
   /* [V33.153] 모델 목록은 ★구조 관측일 때만★ 나타난다(사용자 요청).
