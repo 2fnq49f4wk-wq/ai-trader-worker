@@ -8,7 +8,7 @@
      인데, 지금까지 화면에서 그걸 알 방법이 전혀 없었다(카카오톡 인앱 브라우저는 특히 강하게 캐시한다).
      서버가 내려주는 build 와 이 값을 비교해 다르면 배너로 알린다.
      ※ src/index.js 의 _BUILD_VER 와 항상 같아야 한다 — check-html-js 가 강제한다. -->
-<meta name="lux-build" content="V33.209">
+<meta name="lux-build" content="V33.210">
 <title>LUX-ENGINE V10</title>
 <!-- ══ [V33.156] 설치형 앱(PWA) — 폰·PC 에서 홈화면/독에 담아 앱처럼 연다 ══
      · manifest  : 이름·아이콘·standalone 표시(주소창 없이 앱처럼)
@@ -13791,8 +13791,22 @@ html[data-theme="light"] #page-nnviz .nlv-sec-h{ border-color:transparent; color
         + (d.note && d.noteOk===false ? '<br>마지막 학습 시도: <code>'+esc(d.note)+'</code>' : '');
       ban.style.display='block';
     }
-    var top = (d.topFeatures||[]).slice(0,20);
-    var rows = top.map(function(f){
+    var rows = NNV_coefRows(d);
+    stage.innerHTML = '<div class="nnv-lin-wrap">'
+      + '<div class="nnv-lin-head"><span>← 확률을 낮추는 축</span><span>확률을 높이는 축 →</span></div>'
+      + rows + '</div>';
+    comm.innerHTML = '<div style="font-size:10px;color:#6f84aa;line-height:1.6;">'
+      + '막대는 <b>표준화 계수</b>다 — 입력을 평균 0·표준편차 1 로 맞춘 뒤 학습했으므로 축끼리 크기를 그대로 비교할 수 있다. '
+      + '부호는 방향이다(오른쪽 = 그 축이 커질수록 상승확률↑). 절편 b = <b>'+(d.b!=null?d.b.toFixed(3):'—')+'</b>'
+      + (d.baseRate!=null? ' · 기저 승률 <b>'+pct(d.baseRate)+'</b>':'')
+      + (d.purged? ' · 경계 퍼징으로 학습표본 <b>'+d.purged.toLocaleString()+'</b>건 제외(라벨 누출 차단)':'')
+      + (d.valUniq!=null? ' · 검증 평균 고유도 <b>'+d.valUniq.toFixed(2)+'</b>(유효 '+(d.valN||0).toLocaleString()+'/'+(d.valNRaw||0).toLocaleString()+')':'')
+      + '</div>';
+  }
+
+  // 부호 있는 표준화 계수 막대 — 선형 렌더러와 STACK 렌더러가 같은 것을 그린다.
+  function NNV_coefRows(d, lim){
+    return (d.topFeatures||[]).slice(0, lim||20).map(function(f){
       var w = Math.max(2, Math.abs(f.strength||0)*50);
       var pos = (f.dir||1) >= 0;
       return '<div class="nnv-lin-row" title="'+esc(f.name)+' 계수 '+(f.w!=null?f.w.toFixed(4):'—')+'">'
@@ -13804,14 +13818,131 @@ html[data-theme="light"] #page-nnviz .nlv-sec-h{ border-color:transparent; color
         +'<div class="nnv-lin-w '+(pos?'pos':'neg')+'">'+(f.w>=0?'+':'')+(f.w!=null?f.w.toFixed(3):'—')+'</div>'
       +'</div>';
     }).join('');
-    stage.innerHTML = '<div class="nnv-lin-wrap">'
+  }
+
+  /* ═══ [V33.209] STACK 구조 — 결합기가 선형일 수도, 아닐 수도 있다 ═══════════
+     STACK 은 전문가 8명의 확률 + 참여마스크를 받아 ★위원회 결론을 통째로 대체★ 하는 자리다.
+     그 결합기를 비선형으로 열었으므로, 이 화면이 답해야 하는 질문이 하나 늘었다:
+       ① 지금 무엇으로 결합하고 있나(lin / gbdt / mlp / blend)
+       ② 왜 그것인가 — 후보들을 같은 자로 재서 무엇에 이겼나
+       ③ 그 헤드는 안이 어떻게 생겼나 — 트리는 무엇을 보고 갈랐고, 신경망은 무엇을 조합하나
+     ★특히 중요한 것은 ①★ 이다. 헤드가 gbdt 인데 계수 막대를 모델처럼 보여주면,
+     화면이 ★배포되지 않은 함수★ 를 설명하게 된다. 그래서 계수는 헤드가 선형일 때만
+     '모델' 이고, 아닐 때는 '참고(실제 결합에는 안 쓰임)' 라고 명시한다. */
+  var NNV_HEADNAME = { lin:'선형 로지스틱', gbdt:'GBDT (부스팅 트리)', mlp:'MLP (은닉 1층)', blend:'혼합 (로짓 평균)' };
+  function NNV_renderStack(d){
+    var stage=document.getElementById('nnvStage'), chips=document.getElementById('nnvChips'),
+        comm=document.getElementById('nnvComm'), legend=document.getElementById('nnvLegend'),
+        sub=document.getElementById('nnvSub'), ban=document.getElementById('nnvBanner'),
+        roles=document.getElementById('nnvRoles');
+    if(legend) legend.style.display='none'; if(roles) roles.innerHTML='';
+    if(!d || !d.trained){ NNV_renderLinear(d); return; }   // 미학습·판 불일치 문구는 한 곳에만 둔다
+
+    var head = d.head || 'lin', hn = NNV_HEADNAME[head] || head;
+    var A = d.admit || null;
+    var tier = A ? (A.tier==='full'?'정식 합류':(A.admit?'잠정 합류 ×'+(A.mult!=null?A.mult.toFixed(2):'?'):'합류 보류')) : '—';
+    var tierCls = A ? (A.tier==='full'?'good':(A.admit?'warn':'off')) : '';
+    sub.textContent = 'STACK — 메타모델 · 입력 '+d.inputDim+'차원(전문가 확률 8 + 참여마스크 8) · 결합 '+hn
+      + (d.trainedAt? ' · 학습 '+new Date(d.trainedAt).toLocaleDateString('ko-KR') : '');
+    chips.innerHTML =
+      chip('결합 헤드', hn, head==='lin'?'':'good') +
+      chip('합류 상태', tier, tierCls) +
+      chip('학습 표본', d.n!=null? d.n.toLocaleString():'—','') +
+      chip('검증 정확도', pct(d.valAcc),'') +
+      chip('블록 IC', d.valICBlock!=null? d.valICBlock.toFixed(3):'—', (d.valICBlock||0)>0.012?'good':'warn') +
+      chip('유의성 t', (d.valICt!=null? d.valICt.toFixed(2):'—')+(d.tMinUsed!=null?' / '+d.tMinUsed:''),
+           (d.valICt!=null && d.tMinUsed!=null && d.valICt>=d.tMinUsed)?'good':'warn') +
+      chip('전진검증', d.fwdN!=null? (d.fwdN.toLocaleString()+' / '+(d.minFwd||0).toLocaleString()):'—',
+           d.fwdN>=(d.minFwd||0)?'good':'warn');
+    if(ban){
+      ban.className = 'nnv-banner ' + (A && A.admit ? 'on' : 'off');
+      ban.innerHTML = (A && A.admit ? '✅ ' : '⚠️ ') + '<b>'+esc(tier)+'</b>'
+        + (A && A.why ? ' — '+esc(A.why) : '')
+        + (d.note && d.noteOk===false ? '<br>마지막 학습 시도: <code>'+esc(d.note)+'</code>' : '');
+      ban.style.display='block';
+    }
+
+    var html = '';
+
+    // ── ② 헤드 경합표 — 무엇에 이겨서 지금 이것인가 ──────────────────────────
+    if(d.heads && d.heads.length){
+      var lin0 = null; for(var q=0;q<d.heads.length;q++) if(d.heads[q].head==='lin') lin0=d.heads[q];
+      var mxlb = 0; d.heads.forEach(function(h){ if((h.accLB||0)>mxlb) mxlb=h.accLB||0; });
+      html += '<div class="nnv-hd-box"><div class="nnv-hd-t">결합기 후보 — 같은 자(정확도의 Wilson 하한)로 잰다</div>';
+      html += d.heads.map(function(h){
+        var lb = h.accLB||0, w = mxlb>0? Math.max(3, lb/mxlb*100) : 3;
+        var gap = (lin0 && h.head!=='lin') ? (lb - (lin0.accLB||0)) : null;
+        return '<div class="nnv-hd-row'+(h.win?' win':'')+'">'
+          +'<div class="nnv-hd-nm">'+(h.win?'<b>▶ </b>':'')+esc(NNV_HEADNAME[h.head]||h.head)+'</div>'
+          +'<div class="nnv-hd-bar"><span style="width:'+w.toFixed(1)+'%"></span></div>'
+          +'<div class="nnv-hd-v">하한 <b>'+(lb*100).toFixed(1)+'%</b><span class="nnv-hd-acc">정확도 '+((h.acc||0)*100).toFixed(1)+'%</span>'
+          +(gap!=null? '<span class="nnv-hd-gap '+(gap>=0?'pos':'neg')+'">'+(gap>=0?'+':'')+(gap*100).toFixed(1)+'%p vs 선형</span>':'')
+          +(h.nTrees? '<span class="nnv-hd-acc">트리 '+h.nTrees+'</span>':'')
+          +'</div></div>';
+      }).join('');
+      html += '<div class="nnv-hd-note">선형이 기본값이다. 갈아타려면 <b>하한에서 0.5%p</b> 앞서야 한다 — 우연히 앞선 정도로는 결합기를 바꾸지 않는다.'
+        + (d.headK>1 && d.tMinBase!=null
+            ? ' 후보 '+d.headK+'개 중 최고를 골랐으므로 유의성 문턱을 <b>'+d.tMinBase+' → '+d.tMinUsed+'</b> 로 올려서 판정했다(K개 최댓값은 단일검정과 다른 분포다).'
+            : ' 선형이 그대로 이겨서 다중검정 벌점은 없다.')
+        + '</div></div>';
+    }
+
+    // ── ③ 이긴 헤드의 속 ─────────────────────────────────────────────────
+    var nl = d.nl || null;
+    if(nl && nl.gbdt){
+      var g = nl.gbdt;
+      html += '<div class="nnv-hd-box"><div class="nnv-hd-t">GBDT — 무엇을 보고 갈랐나 (분할이득 비중)</div>';
+      if(g.top && g.top.length){
+        var gmx = g.top[0].share||1;
+        html += g.top.map(function(r){
+          return '<div class="nnv-hd-row"><div class="nnv-hd-nm">'+esc(r.name)+'</div>'
+            +'<div class="nnv-hd-bar"><span class="imp" style="width:'+Math.max(3,(r.share/gmx*100)).toFixed(1)+'%"></span></div>'
+            +'<div class="nnv-hd-v"><b>'+(r.share*100).toFixed(1)+'%</b></div></div>';
+        }).join('');
+      } else {
+        html += '<div class="nnv-hd-note">분할이득 기록이 없다 — 이 모델은 이득 수집 이전 판으로 학습됐다.</div>';
+      }
+      html += '<div class="nnv-hd-note">트리 <b>'+g.nTrees+'</b>개 · 분할 <b>'+g.nSplits+'</b>회 · 최대깊이 <b>'+g.maxDepth+'</b>'
+        +(g.eta!=null?' · 셔링크 η '+g.eta:'')
+        +'. 분할 <b>횟수</b>가 아니라 <b>이득</b>으로 잰다 — 횟수로 세면 값이 잘게 쪼개지는 축이 과대평가된다.</div></div>';
+    }
+    if(nl && nl.mlp){
+      var m = nl.mlp;
+      html += '<div class="nnv-hd-box"><div class="nnv-hd-t">MLP — 무엇을 조합해서 보나 (은닉 노드별 상위 입력)</div>';
+      html += (m.units||[]).map(function(u){
+        var pos = (u.out||0) >= 0;
+        return '<div class="nnv-mlp-u">'
+          +'<div class="nnv-mlp-h"><b>h'+u.i+'</b>'
+            +'<span class="nnv-mlp-out '+(pos?'pos':'neg')+'">출력 기여 '+(pos?'+':'')+u.out+'</span></div>'
+          +'<div class="nnv-proto-mk">'+(u.top||[]).map(function(t){
+              return '<span class="nnv-mk '+(t.w>=0?'p':'n')+'">'+esc(t.name)+' '+(t.w>=0?'+':'')+t.w+'</span>';
+            }).join('')+'</div></div>';
+      }).join('');
+      html += '<div class="nnv-hd-note">은닉 <b>'+m.H+'</b>노드 · 파라미터 <b>'+(m.params||0).toLocaleString()+'</b>개 · tanh. '
+        +'노드 하나가 입력 몇 개를 <b>곱이 아니라 합</b>으로 모은 뒤 tanh 로 휘는 축이다 — 그 축들을 다시 더하는 데서 상호작용이 나온다. '
+        +'출력 기여가 큰 순서로 정렬했다.</div></div>';
+    }
+
+    // ── ① 계수: 헤드가 선형일 때만 '모델' 이다 ───────────────────────────
+    html += '<div class="nnv-hd-box"><div class="nnv-hd-t">'
+      + (head==='lin'
+          ? '선형 계수 — <b>이것이 지금 돌아가는 결합기다</b>'
+          : '선형 계수 — <b>참고용</b>. 지금 결합은 '+esc(hn)+' 이 하고 있어 이 계수는 쓰이지 않는다'
+            + (head==='blend' ? ' (혼합의 1/3 지분으로만 들어간다)' : ''))
+      + '</div>'
       + '<div class="nnv-lin-head"><span>← 확률을 낮추는 축</span><span>확률을 높이는 축 →</span></div>'
-      + rows + '</div>';
+      + NNV_coefRows(d, 16) + '</div>';
+
+    stage.innerHTML = '<div class="nnv-lin-wrap">'+html+'</div>';
     comm.innerHTML = '<div style="font-size:10px;color:#6f84aa;line-height:1.6;">'
-      + '막대는 <b>표준화 계수</b>다 — 입력을 평균 0·표준편차 1 로 맞춘 뒤 학습했으므로 축끼리 크기를 그대로 비교할 수 있다. '
-      + '부호는 방향이다(오른쪽 = 그 축이 커질수록 상승확률↑). 절편 b = <b>'+(d.b!=null?d.b.toFixed(3):'—')+'</b>'
+      + 'STACK 은 <b>전문가 8명의 확률과 "그 전문가가 그 판에 있었는가"(참여마스크)</b>를 받아 최종 확률을 낸다. '
+      + '투표를 대체하는 자리라 문턱이 다른 위원보다 높다. '
+      + '결합기를 비선형으로 연 이유는 <b>조건부 신뢰</b>다 — "MIND 는 GBDT 도 같이 강할 때만 믿을 만하다" 같은 규칙은 '
+      + '고정 가중치(선형)로는 원리상 표현되지 않는다. '
+      + '다만 <b>홀드아웃은 후보 선택에 쓰지 않는다</b> — 조기종료는 학습구간 뒤 15% 안에서만 한다. '
+      + '절편 b = <b>'+(d.b!=null?d.b.toFixed(3):'—')+'</b>'
       + (d.baseRate!=null? ' · 기저 승률 <b>'+pct(d.baseRate)+'</b>':'')
-      + (d.purged? ' · 경계 퍼징으로 학습표본 <b>'+d.purged.toLocaleString()+'</b>건 제외(라벨 누출 차단)':'')
+      + (d.purged? ' · 경계 퍼징으로 학습표본 <b>'+d.purged.toLocaleString()+'</b>건 제외':'')
       + (d.valUniq!=null? ' · 검증 평균 고유도 <b>'+d.valUniq.toFixed(2)+'</b>(유효 '+(d.valN||0).toLocaleString()+'/'+(d.valNRaw||0).toLocaleString()+')':'')
       + '</div>';
   }
@@ -13998,7 +14129,10 @@ html[data-theme="light"] #page-nnviz .nlv-sec-h{ border-color:transparent; color
     if(d && d.kind === 'overview'){ NNV_renderOverview(d); return; }
     // [V33.150] 구조가 다른 위원은 다른 렌더러로 — 트리 렌더러에 넣으면 GBDT 로 오표기된다.
     if(d && d.kind === 'memo'){ NNV_renderMemo(d); return; }
-    if(d && d.kind && ['flow','xalpha','stack','dualbull','dualbear'].indexOf(d.kind) !== -1){ NNV_renderLinear(d); return; }
+    // [V33.209] STACK 은 이제 선형이 아닐 수 있다 — 헤드(lin/gbdt/mlp/blend)에 따라 그림이 다르다.
+    //   선형 렌더러에 넣으면 ★쓰이지도 않는 계수★ 를 모델인 것처럼 그리게 된다.
+    if(d && d.kind === 'stack'){ NNV_renderStack(d); return; }
+    if(d && d.kind && ['flow','xalpha','dualbull','dualbear'].indexOf(d.kind) !== -1){ NNV_renderLinear(d); return; }
     if(d && d.kind && d.kind!=='dnn'){ NNV_renderSimple(d); return; }
     if(!d || !d.trained){
       // [V10] 미학습이어도 구조(dims)로 미리보기 시각화 — 영상처럼 지금 바로 신경망을 볼 수 있게.
@@ -14596,6 +14730,58 @@ html[data-theme="light"] #page-nnviz .nlv-sec-h{ border-color:transparent; color
 #page-nnviz .nnv-mk.p{border-color:#1d4a6b;color:#7fc4e8;}
 #page-nnviz .nnv-mk.n{border-color:#6b2a3a;color:#f0919f;}
 @media (max-width:600px){ #page-nnviz .nnv-lin-row{grid-template-columns:92px 1fr 50px;font-size:9.5px;} }
+
+/* ── [V33.209] STACK 헤드 경합·비선형 헤드 요약 ─────────────────────────────
+   이 블록이 답하는 것은 "지금 무엇으로 결합하는가" 다. 이긴 헤드에 ▶ 를 붙이고
+   하한 막대를 나란히 세워, 왜 그것이 이겼는지가 한 눈에 읽히게 한다. */
+#page-nnviz .nnv-hd-box{border:1px solid #16233c;border-radius:8px;padding:9px 10px;margin:0 0 10px;
+  background:rgba(18,30,52,.35);}
+#page-nnviz .nnv-hd-t{font-size:10.5px;color:#8ea6cc;margin-bottom:7px;letter-spacing:.01em;}
+#page-nnviz .nnv-hd-t b{color:#cfe0f7;font-weight:650;}
+#page-nnviz .nnv-hd-row{display:grid;grid-template-columns:132px 1fr auto;gap:8px;align-items:center;
+  padding:3px 4px;border-radius:4px;}
+#page-nnviz .nnv-hd-row.win{background:rgba(60,140,110,.12);}
+#page-nnviz .nnv-hd-nm{font-size:10px;color:#9fb4d4;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
+#page-nnviz .nnv-hd-row.win .nnv-hd-nm{color:#7fe0b0;}
+#page-nnviz .nnv-hd-bar{height:8px;background:#101b2f;border-radius:4px;overflow:hidden;}
+#page-nnviz .nnv-hd-bar>span{display:block;height:100%;background:linear-gradient(90deg,#2b5f8a,#4a9fd8);}
+#page-nnviz .nnv-hd-bar>span.imp{background:linear-gradient(90deg,#6b4a8a,#a878d8);}
+#page-nnviz .nnv-hd-row.win .nnv-hd-bar>span{background:linear-gradient(90deg,#2f7a5c,#4fd39a);}
+#page-nnviz .nnv-hd-v{font-family:'IBM Plex Mono',monospace;font-size:9px;color:#8fa4c4;
+  display:flex;gap:7px;align-items:baseline;white-space:nowrap;}
+#page-nnviz .nnv-hd-v b{color:#d6e6fb;}
+#page-nnviz .nnv-hd-acc{color:#61748f;}
+#page-nnviz .nnv-hd-gap.pos{color:#4fd39a;} #page-nnviz .nnv-hd-gap.neg{color:#f0919f;}
+#page-nnviz .nnv-hd-note{font-size:9.5px;color:#6f84aa;line-height:1.65;margin-top:7px;
+  padding-top:6px;border-top:1px dashed #17253e;}
+#page-nnviz .nnv-hd-note b{color:#9fb8dc;}
+#page-nnviz .nnv-mlp-u{padding:5px 4px;border-bottom:1px solid rgba(22,35,60,.7);}
+#page-nnviz .nnv-mlp-u:last-child{border-bottom:0;}
+#page-nnviz .nnv-mlp-h{display:flex;gap:8px;align-items:baseline;font-size:9.5px;color:#8ea6cc;}
+#page-nnviz .nnv-mlp-h b{font-family:'IBM Plex Mono',monospace;color:#cfe0f7;}
+#page-nnviz .nnv-mlp-out{font-family:'IBM Plex Mono',monospace;font-size:9px;}
+#page-nnviz .nnv-mlp-out.pos{color:#4fd39a;} #page-nnviz .nnv-mlp-out.neg{color:#f0919f;}
+@media (max-width:600px){
+  #page-nnviz .nnv-hd-row{grid-template-columns:1fr;gap:3px;}
+  #page-nnviz .nnv-hd-v{flex-wrap:wrap;font-size:8.5px;}
+  #page-nnviz .nnv-hd-nm{white-space:normal;}
+}
+html[data-theme="light"] #page-nnviz .nnv-hd-box{background:#f6f9fe;border-color:#dbe5f2;}
+html[data-theme="light"] #page-nnviz .nnv-hd-t{color:#4a5f80;}
+html[data-theme="light"] #page-nnviz .nnv-hd-t b{color:#1d2b45;}
+html[data-theme="light"] #page-nnviz .nnv-hd-nm{color:#4a5f80;}
+html[data-theme="light"] #page-nnviz .nnv-hd-row.win{background:#e7f7f0;}
+html[data-theme="light"] #page-nnviz .nnv-hd-row.win .nnv-hd-nm{color:#137a51;}
+html[data-theme="light"] #page-nnviz .nnv-hd-bar{background:#e3eaf5;}
+html[data-theme="light"] #page-nnviz .nnv-hd-v{color:#5b6f8d;}
+html[data-theme="light"] #page-nnviz .nnv-hd-v b{color:#1d2b45;}
+html[data-theme="light"] #page-nnviz .nnv-hd-acc{color:#8496ae;}
+html[data-theme="light"] #page-nnviz .nnv-hd-note{color:#5b6f8d;border-top-color:#dbe5f2;}
+html[data-theme="light"] #page-nnviz .nnv-hd-note b{color:#2b3d5c;}
+html[data-theme="light"] #page-nnviz .nnv-mlp-h{color:#4a5f80;}
+html[data-theme="light"] #page-nnviz .nnv-mlp-h b{color:#1d2b45;}
+html[data-theme="light"] #page-nnviz .nnv-mlp-u{border-bottom-color:#e6edf7;}
+
 
 /* 모델 구조 선택 버튼 (구조 관측 전용) */
 .rail-models{display:grid;grid-template-columns:1fr 1fr;gap:4px;padding:0 8px 9px;}

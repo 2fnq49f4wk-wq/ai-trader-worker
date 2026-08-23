@@ -2788,7 +2788,7 @@ async function applySignalTypeWeights(DB, cfg) {
 // ============================================================================
 // [V33.55] 빌드 버전 — SWR L2 캐시 키에 섞어 '배포 = 판단 캐시 자동 무효화'를 만든다.
 //   판정 로직을 고쳐도 옛 캐시가 최대 1시간 재배포되던 문제를 구조적으로 없앤다.
-const _BUILD_VER = "V33.209";
+const _BUILD_VER = "V33.210";
 
 // ═══ [V33.171] 평가 순서 계획 — ★승격과 순환을 교차해 굶주림을 구조적으로 없앤다★ ═══
 //   V33.50 의 형태트리거는 "급한 몇 종목을 앞으로 당긴다"는 의도였으나, 실제 운영로그에서는
@@ -25891,7 +25891,9 @@ async function _miniLogisticTrain(DB, opts) {
             // 씨앗 고정 — 같은 표본이면 같은 트리가 나온다(위 _gbdtFit 의 rng 주석 참조).
             let _s = 20250209 >>> 0;
             const _rng = function () { _s = (_s * 1664525 + 1013904223) >>> 0; return _s / 4294967296; };
-            _gb = _gbdtFit(_tr, _in, { D: D, maxTrees: _num(opts.nlTrees, 160), deadline: _dl, rng: _rng });
+            // collectImp: 분할이득을 피처별로 누적한다 — 화면이 "무엇을 보고 갈랐나" 를 말할 수 있어야 한다.
+            //   (분할 ★횟수★ 로 세면 값이 잘게 쪼개지는 연속 피처가 과대평가된다. 이득이 옳은 자다.)
+            _gb = _gbdtFit(_tr, _in, { D: D, maxTrees: _num(opts.nlTrees, 160), deadline: _dl, rng: _rng, collectImp: true });
             if (_gb && _gb.trees && _gb.trees.length) {
               const ps = [];
               for (let i = nvalStart; i < N; i++) ps.push(_clamp(_sigmoid(_gbdtRaw(_gb, Z[i])), 0.001, 0.999));
@@ -26024,7 +26026,9 @@ async function _miniLogisticTrain(DB, opts) {
       head: _headTag,
       heads: _heads,                              // 후보 전원의 정확도·하한(무엇에 지고 이겼는지의 증거)
       headK: _headK, tMinBase: _tMinBase,          // 다중검정 보정 전/후 문턱
-      gbdt: _nlin && _nlin.gbdt ? { trees: _nlin.gbdt.trees, eta: _nlin.gbdt.eta, bias: _nlin.gbdt.bias } : null,
+      gbdt: _nlin && _nlin.gbdt
+        ? { trees: _nlin.gbdt.trees, eta: _nlin.gbdt.eta, bias: _nlin.gbdt.bias, importance: _nlin.gbdt.importance || null }
+        : null,
       mlp: _nlin && _nlin.mlp
         ? { W1: _nlin.mlp.W1, b1: _nlin.mlp.b1, W2: _nlin.mlp.W2, b2: _nlin.mlp.b2, H: _nlin.mlp.H, D: _nlin.mlp.D }
         : null,
@@ -32137,9 +32141,60 @@ async function mlLinearVizData(DB, name) {
       fwdDays: _num(m.fwdDays, 0), minFwd: ICGATE.minForward, minFwdDays: FWDLED.minDays,
       trusted: !!m.trusted, holdPass: !!m.holdPass, admit: expertAdmit(m),
       trainedAt: _num(m.ts, null), featVer: _num(m.featVer, null),
+      // ── [V33.209] 결합 헤드 ── 이 모델이 ★선형인지 비선형인지★ 와, 무엇에 이겨서 그렇게 됐는지.
+      //   화면이 계수 막대만 그리면 헤드가 gbdt/mlp 일 때 ★쓰이지도 않는 계수★ 를 보여주게 된다.
+      head: m.head || "lin", heads: Array.isArray(m.heads) ? m.heads : null,
+      headK: _num(m.headK, null), tMinBase: _num(m.tMinBase, null),
+      nl: _metaHeadDetail(m, fn),
       note: note ? String(note.msg || "") : null, noteOk: note ? !!note.ok : null, noteTs: note ? _num(note.ts, null) : null
     };
   } catch (e) { return { kind: name, model: label, trained: false, error: e && e.message }; }
+}
+
+/* [V33.209] 비선형 헤드의 ★속★ 을 화면이 읽을 수 있는 형태로 낸다.
+   선형 모델은 계수 막대 하나로 다 보이지만, 트리와 신경망은 그렇지 않다. 그렇다고
+   "비선형이라 못 보여준다" 로 두면 그 순간 이 자리가 블랙박스가 된다 — 위원회 결론을
+   통째로 대체하는 자리를 블랙박스로 두는 건 안 된다. 각자에게 맞는 요약을 낸다:
+     · GBDT — 피처별 ★분할이득 합★. "무엇을 보고 갈랐나".
+     · MLP  — 은닉 노드마다 |가중치| 상위 입력 3개와 출력 기여. "무엇을 조합해서 보나". */
+function _metaHeadDetail(m, fn) {
+  try {
+    const head = m && m.head ? m.head : "lin";
+    if (head === "lin") return null;
+    const out = { head: head };
+    if (m.gbdt && Array.isArray(m.gbdt.trees)) {
+      let nSplit = 0, maxDepth = 0;
+      const walk = function (nd, d) {
+        if (!nd || nd.f === undefined) { if (d > maxDepth) maxDepth = d; return; }
+        nSplit++; walk(nd.l, d + 1); walk(nd.r, d + 1);
+      };
+      for (const t of m.gbdt.trees) walk(t, 0);
+      const imp = Array.isArray(m.gbdt.importance) ? m.gbdt.importance : null;
+      let tot = 0; if (imp) for (const v of imp) tot += _num(v, 0);
+      out.gbdt = {
+        nTrees: m.gbdt.trees.length, nSplits: nSplit, maxDepth: maxDepth, eta: _num(m.gbdt.eta, null),
+        top: imp && tot > 0
+          ? imp.map(function (v, j) { return { name: fn[j] || ("f" + j), share: +(_num(v, 0) / tot).toFixed(4) }; })
+              .filter(function (r) { return r.share > 0; })
+              .sort(function (a, b) { return b.share - a.share; }).slice(0, 12)
+          : null
+      };
+    }
+    if (m.mlp && Array.isArray(m.mlp.W1)) {
+      const H = _num(m.mlp.H, m.mlp.W1.length), D = _num(m.mlp.D, 0);
+      const units = [];
+      for (let h = 0; h < H; h++) {
+        const r = m.mlp.W1[h] || [];
+        const top = [];
+        for (let j = 0; j < D; j++) top.push({ name: fn[j] || ("f" + j), w: +_num(r[j], 0).toFixed(3) });
+        top.sort(function (a, b) { return Math.abs(b.w) - Math.abs(a.w); });
+        units.push({ i: h, out: +_num(m.mlp.W2[h], 0).toFixed(3), top: top.slice(0, 3) });
+      }
+      units.sort(function (a, b) { return Math.abs(b.out) - Math.abs(a.out); });
+      out.mlp = { H: H, D: D, params: H * (D + 2) + 1, units: units };
+    }
+    return out;
+  } catch (e) { return null; }
 }
 // MEMO — 계수가 없다. 원형(prototype) 하나하나가 "비슷했던 과거 국면" 이고,
 //   그 원형의 승률·표본수가 곧 모델의 내용이다. 원형을 승률순으로 보인다.
