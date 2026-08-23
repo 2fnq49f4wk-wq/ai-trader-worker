@@ -8,7 +8,7 @@
      인데, 지금까지 화면에서 그걸 알 방법이 전혀 없었다(카카오톡 인앱 브라우저는 특히 강하게 캐시한다).
      서버가 내려주는 build 와 이 값을 비교해 다르면 배너로 알린다.
      ※ src/index.js 의 _BUILD_VER 와 항상 같아야 한다 — check-html-js 가 강제한다. -->
-<meta name="lux-build" content="V33.214">
+<meta name="lux-build" content="V33.215">
 <title>LUX-ENGINE V10</title>
 <!-- ══ [V33.156] 설치형 앱(PWA) — 폰·PC 에서 홈화면/독에 담아 앱처럼 연다 ══
      · manifest  : 이름·아이콘·standalone 표시(주소창 없이 앱처럼)
@@ -3238,9 +3238,11 @@ html[data-theme="light"] ::placeholder{color:#8fa0b8;opacity:1;}
   }
   #page-nnviz .nnv-live{grid-template-columns:1fr;gap:10px;}
   #page-nnviz .nlv-feed{max-height:240px;}
-  #page-nnviz .nnv-tabs{overflow-x:auto;flex-wrap:nowrap;-webkit-overflow-scrolling:touch;padding-bottom:4px;}
-  #page-nnviz .nnv-tabs::-webkit-scrollbar{height:0;}
-  #page-nnviz .nnv-tab{flex:0 0 auto;}
+  /* [V33.215] 폰에서도 가로 스크롤을 쓰지 않는다 — 밀려난 탭이 안 보이는 건 여기서도 같다.
+     칸을 좁혀 2열로 접히게 한다(13개가 7줄이지만 전부 보인다). */
+  #page-nnviz .nnv-tabs{grid-template-columns:repeat(auto-fill, minmax(108px, 1fr));gap:.25rem;padding:.45rem .45rem .55rem;}
+  #page-nnviz .nnv-tab{font-size:.68rem;padding:.4rem .45rem;}
+  #page-nnviz .nnv-nav-h{font-size:.56rem;padding:.42rem .15rem .08rem;}
   /* 모바일 전용 인라인 전환기 + 운용상태 (우측 사이드바가 없으므로) */
   .m-brainbar{display:grid!important;}
   .m-aimode{display:block!important;}
@@ -4262,24 +4264,34 @@ html[data-theme="light"] .m-brainbar button.active{color:#0b4f9e;background:rgba
     <!-- [V33.1] 구조 관측 뷰 — 기본 숨김. 우측 사이드바에서 "구조 관측"으로 전환할 때만 표시·로드된다.
          (작동 화면만 볼 땐 무거운 /api/nn-viz 요청과 SVG 렌더가 아예 발생하지 않음) -->
     <div id="nnvStruct" style="display:none;">
-    <div class="nnv-tabs" id="nnvTabs" style="display:flex;gap:6px;margin:2px 0 10px;">
-      <!-- [V33.206] ★전체 구조★ — 종전엔 모델별 탭만 있어서 "이것들이 어떻게 하나가 되는지" 가
-           화면 어디에도 없었다. 각 모델의 내부는 볼 수 있는데 결합 순서는 못 봤다.
-           이 탭이 그 층을 그린다: 전문가 8명 → IC가중 → STACK(통합) → 보정 → 로그오즈 층. -->
-      <button class="nnv-tab active" data-model="overview" onclick="switchNnModel('overview')"><svg class="lux-star-svg lux-ico" viewBox="0 0 100 100" aria-hidden="true"><use href="#luxStarSym"/></svg> 전체 구조</button>
-      <button class="nnv-tab" data-model="dnn" onclick="switchNnModel('dnn')"><svg class="lux-star-svg lux-ico" viewBox="0 0 100 100" aria-hidden="true"><use href="#luxStarSym"/></svg> DNN (딥넷)</button>
-      <button class="nnv-tab" data-model="mind" onclick="switchNnModel('mind')"><svg class="lux-star-svg lux-ico" viewBox="0 0 100 100" aria-hidden="true"><use href="#luxStarSym"/></svg> MIND (스태킹)</button>
-      <button class="nnv-tab" data-model="gbdt" onclick="switchNnModel('gbdt')"><svg class="lux-star-svg lux-ico" viewBox="0 0 100 100" aria-hidden="true"><use href="#luxStarSym"/></svg> GBDT (부스팅트리)</button>
-      <button class="nnv-tab" data-model="xgb" onclick="switchNnModel('xgb')"><svg class="lux-star-svg lux-ico" viewBox="0 0 100 100" aria-hidden="true"><use href="#luxStarSym"/></svg> XGBoost</button>
-      <button class="nnv-tab" data-model="lgb" onclick="switchNnModel('lgb')"><svg class="lux-star-svg lux-ico" viewBox="0 0 100 100" aria-hidden="true"><use href="#luxStarSym"/></svg> LightGBM</button>
-      <button class="nnv-tab" data-model="cat" onclick="switchNnModel('cat')"><svg class="lux-star-svg lux-ico" viewBox="0 0 100 100" aria-hidden="true"><use href="#luxStarSym"/></svg> CatBoost</button>
-      <!-- [V33.150] 신규 위원 5종 — 이들도 위원회에서 실제로 투표한다. 내부를 볼 수 있어야 한다. -->
-      <button class="nnv-tab" data-model="flow" onclick="switchNnModel('flow')"><svg class="lux-star-svg lux-ico" viewBox="0 0 100 100" aria-hidden="true"><use href="#luxStarSym"/></svg> FLOW (수급·피어)</button>
-      <button class="nnv-tab" data-model="xalpha" onclick="switchNnModel('xalpha')"><svg class="lux-star-svg lux-ico" viewBox="0 0 100 100" aria-hidden="true"><use href="#luxStarSym"/></svg> XALPHA (형식알파)</button>
-      <button class="nnv-tab" data-model="memo" onclick="switchNnModel('memo')"><svg class="lux-star-svg lux-ico" viewBox="0 0 100 100" aria-hidden="true"><use href="#luxStarSym"/></svg> MEMO (유사상황)</button>
-      <button class="nnv-tab" data-model="stack" onclick="switchNnModel('stack')"><svg class="lux-star-svg lux-ico" viewBox="0 0 100 100" aria-hidden="true"><use href="#luxStarSym"/></svg> STACK (위원회 결합)</button>
-      <button class="nnv-tab" data-model="dualbull" onclick="switchNnModel('dualbull')"><svg class="lux-star-svg lux-ico" viewBox="0 0 100 100" aria-hidden="true"><use href="#luxStarSym"/></svg> 이중헤드 강세</button>
-      <button class="nnv-tab" data-model="dualbear" onclick="switchNnModel('dualbear')"><svg class="lux-star-svg lux-ico" viewBox="0 0 100 100" aria-hidden="true"><use href="#luxStarSym"/></svg> 이중헤드 약세</button>
+    <div class="nnv-tabs nnv-nav" id="nnvTabs">
+      <!-- [V33.215] ★탭 13개가 가로 스크롤 알약 안에 숨어 있었다.★
+           overflow-x:auto 에 스크롤바까지 감춰 놓아, 데스크톱에서는 오른쪽으로 밀려난
+           마지막 두 개(이중헤드 강세·약세)가 ★존재 자체를 알 수 없었다★ — 스크롤 단서가
+           아무것도 없다. 사용자가 "이중헤드 약세는 어디로 날아갔냐" 고 물은 게 이것이다.
+           → 가로 스크롤을 없애고 ★줄바꿈 그리드★ 로 바꾼다. 13개가 언제나 전부 보인다.
+           그리고 납작한 한 줄이 아니라 ★모델이 실제로 결합되는 층★ 으로 묶는다:
+             위원 8명이 투표 → STACK 이 그 투표를 대체 → 이중헤드가 방향을 따로 본다.
+           ※ 컨테이너 안에 <div> 를 중첩하지 않는다 — 배선 검사가 이 블록을 첫 </div> 까지로
+             읽으므로, 중첩하면 뒤쪽 탭이 검사에서 통째로 빠진다(검사를 무력화한다).
+             그래서 묶음 제목은 <span> 이고 버튼은 전부 형제다(CSS 그리드가 배치한다). -->
+      <span class="nnv-nav-h">지도</span>
+      <button class="nnv-tab active" data-model="overview" onclick="switchNnModel('overview')"><span class="nnv-tab-dot" data-dot="overview"></span>전체 구조</button>
+      <span class="nnv-nav-h">위원 · 8명이 투표한다</span>
+      <button class="nnv-tab" data-model="mind" onclick="switchNnModel('mind')"><span class="nnv-tab-dot" data-dot="mind"></span>MIND 스태킹</button>
+      <button class="nnv-tab" data-model="dnn" onclick="switchNnModel('dnn')"><span class="nnv-tab-dot" data-dot="dnn"></span>DNN 딥넷</button>
+      <button class="nnv-tab" data-model="gbdt" onclick="switchNnModel('gbdt')"><span class="nnv-tab-dot" data-dot="gbdt"></span>GBDT</button>
+      <button class="nnv-tab" data-model="xgb" onclick="switchNnModel('xgb')"><span class="nnv-tab-dot" data-dot="xgb"></span>XGBoost</button>
+      <button class="nnv-tab" data-model="lgb" onclick="switchNnModel('lgb')"><span class="nnv-tab-dot" data-dot="lgb"></span>LightGBM</button>
+      <button class="nnv-tab" data-model="cat" onclick="switchNnModel('cat')"><span class="nnv-tab-dot" data-dot="cat"></span>CatBoost</button>
+      <button class="nnv-tab" data-model="flow" onclick="switchNnModel('flow')"><span class="nnv-tab-dot" data-dot="flow"></span>FLOW 수급</button>
+      <button class="nnv-tab" data-model="xalpha" onclick="switchNnModel('xalpha')"><span class="nnv-tab-dot" data-dot="xalpha"></span>XALPHA 알파</button>
+      <button class="nnv-tab" data-model="memo" onclick="switchNnModel('memo')"><span class="nnv-tab-dot" data-dot="memo"></span>MEMO 기억</button>
+      <span class="nnv-nav-h">결합 · 투표를 통째로 대체한다</span>
+      <button class="nnv-tab" data-model="stack" onclick="switchNnModel('stack')"><span class="nnv-tab-dot" data-dot="stack"></span>STACK 메타</button>
+      <span class="nnv-nav-h">방향 분리 · 오름과 내림을 따로 본다</span>
+      <button class="nnv-tab" data-model="dualbull" onclick="switchNnModel('dualbull')"><span class="nnv-tab-dot" data-dot="dualbull"></span>이중헤드 강세</button>
+      <button class="nnv-tab" data-model="dualbear" onclick="switchNnModel('dualbear')"><span class="nnv-tab-dot" data-dot="dualbear"></span>이중헤드 약세</button>
     </div>
     <div class="nnv-sub" id="nnvSub">신경망 구조·가중치 강도를 실시간으로 관측합니다.</div>
     <div class="nnv-banner" id="nnvBanner" style="display:none;"></div>
@@ -12981,21 +12993,44 @@ html[data-theme="light"] #page-nnviz{
 /* ── 모델 탭 — 세그먼티드 컨트롤 ──────────────────────────────────────────
    버튼 6개가 각자 떠 있으면 '선택지'로 안 읽힌다. 하나의 트랙 위에서
    선택된 알약이 미끄러지는 형태가 "여럿 중 하나"를 가장 정확히 말한다. */
+/* [V33.215] ★알약 한 줄 → 층으로 묶인 줄바꿈 그리드★
+   종전엔 inline-flex + overflow-x:auto + 스크롤바 숨김이라, 13번째 탭이 오른쪽으로
+   밀려나면 데스크톱에서 존재를 알 방법이 없었다. 이제 auto-fill 그리드라 전부 보인다.
+   묶음 제목(.nnv-nav-h)은 전체 열을 차지해 층 경계를 만든다 — 컨테이너 안에 <div> 를
+   중첩하지 않고도 계층이 생긴다(배선 검사가 이 블록을 통째로 읽어야 하므로 중첩 금지). */
 #page-nnviz .nnv-tabs{
-  display:inline-flex !important; gap:.15rem !important;
-  padding:.2rem; border-radius:999px;
+  display:grid !important;
+  grid-template-columns:repeat(auto-fill, minmax(132px, 1fr));
+  gap:.3rem .3rem;
+  padding:.55rem .6rem .65rem; border-radius:14px;
   background:var(--ap-mat-light);
   border:1px solid var(--ap-hair);
   -webkit-backdrop-filter:blur(12px) saturate(160%);
   backdrop-filter:blur(12px) saturate(160%);
-  max-width:100%; overflow-x:auto; scrollbar-width:none;
+  max-width:100%;
 }
-#page-nnviz .nnv-tabs::-webkit-scrollbar{ display:none; }
+#page-nnviz .nnv-nav-h{
+  grid-column:1/-1; font-size:.62rem; font-weight:700; letter-spacing:.09em;
+  text-transform:uppercase; color:var(--t3, #6f84aa); opacity:.85;
+  padding:.5rem .2rem .1rem; border-top:1px solid var(--ap-hair);
+  margin-top:.15rem;
+}
+#page-nnviz .nnv-nav-h:first-child{ border-top:0; margin-top:0; padding-top:.1rem; }
+#page-nnviz .nnv-tab-dot{
+  width:6px; height:6px; border-radius:50%; flex:0 0 auto;
+  background:var(--ap-hair); box-shadow:none; transition:background .2s;
+}
+#page-nnviz .nnv-tab-dot.on{ background:#4fd39a; box-shadow:0 0 0 2px rgba(79,211,154,.18); }
+#page-nnviz .nnv-tab-dot.prov{ background:#f0b429; box-shadow:0 0 0 2px rgba(240,180,41,.18); }
+#page-nnviz .nnv-tab-dot.off{ background:#7b8aa3; opacity:.5; }
+#page-nnviz .nnv-tab-dot.bad{ background:#f0919f; box-shadow:0 0 0 2px rgba(240,145,159,.16); }
 #page-nnviz .nnv-tab{
-  font:inherit; font-size:.75rem; font-weight:550; letter-spacing:-.003em;
-  white-space:nowrap; border:none; background:transparent; color:var(--ap-ink2);
-  border-radius:999px; padding:.4rem .8rem; cursor:pointer;
-  display:inline-flex; align-items:center; gap:.35rem;
+  font:inherit; font-size:.735rem; font-weight:550; letter-spacing:-.003em;
+  /* [V33.215] 그리드 칸 안에서 좌측 정렬 + 넘치면 말줄임. nowrap 은 유지하되 칸이 폭을 준다. */
+  white-space:nowrap; overflow:hidden; text-overflow:ellipsis;
+  border:1px solid transparent; background:transparent; color:var(--ap-ink2);
+  border-radius:9px; padding:.42rem .55rem; cursor:pointer;
+  display:flex; align-items:center; justify-content:flex-start; gap:.4rem; min-width:0;
   transition:color var(--ap-dur-fast) var(--ap-ease-out),
              background-color var(--ap-dur-fast) var(--ap-ease-out),
              transform var(--ap-dur-fast) var(--ap-ease-out);
@@ -14021,6 +14056,58 @@ html[data-theme="light"] #page-nnviz .nlv-sec-h{ border-color:transparent; color
      그래서 모델 카드가 아니라 ★층(layer)★ 을 그린다. 그리고 위원마다
      '지금 투표하는가 / 아니면 왜 빠졌는가' 를 같은 줄에 적는다 — 빠진 이유가
      안 보이면 사람은 그 위원이 없는 줄 안다. */
+  /* [V33.215] ★탭마다 그 모델이 지금 투표하고 있는지를 점으로 표시한다.★
+     종전엔 탭 이름만 있어서, 어느 모델이 실제로 위원회에 들어가 있는지 보려면
+     탭을 하나씩 눌러 봐야 했다(13번). 전체 구조 응답이 이미 위원별 합류상태를
+     들고 있으므로 그걸 그대로 칠한다 — 화면이 새 사실을 지어내지 않는다.
+     · 초록 = 정식 합류(가중 1.0)   · 노랑 = 잠정 합류(가중 ×mult)
+     · 빨강 = 학습됐는데 합류 보류   · 회색 = 미학습/판 불일치
+     xgb·lgb·cat 은 위원회에서 'boost' 한 자리로 묶여 투표하므로 그 상태를 함께 쓴다. */
+  function NNV_paintDots(d){
+    try{
+      var map = {};
+      (d.experts||[]).forEach(function(e){
+        if(!e || !e.name) return;
+        var cls = !e.trained ? 'off'
+                : (e.featVerOk === false) ? 'off'
+                : (e.tier === 'full') ? 'on'
+                : (e.tier === 'provisional' || e.voting) ? 'prov' : 'bad';
+        map[e.name] = cls;
+      });
+      if(map.boost){ ['xgb','lgb','cat'].forEach(function(k){ if(!map[k]) map[k]=map.boost; }); }
+      var st = d.stack||{};
+      /* expertAdmit 의 tier 는 none/reject/pending/provisional/full 다.
+         _ov.stack 은 voting 필드를 싣지 않으므로 tier 로만 판정한다 — 없는 필드를 추측하면
+         전부 '보류' 로 칠해져 화면이 사실과 달라진다. */
+      map.stack = !st.trained ? 'off'
+                : (st.featVerOk === false) ? 'off'
+                : (st.tier === 'full') ? 'on'
+                : (st.tier === 'provisional') ? 'prov' : 'bad';
+      // _ov.dual 은 ★배열★ 이고 이름이 dual_bull/dual_bear 다(객체가 아니다).
+      //   탭의 data-model 은 dualbull/dualbear 이므로 밑줄을 지워 맞춘다.
+      (d.dual||[]).forEach(function(o){
+        if(!o || !o.name) return;
+        map[o.name.replace('_','')] =
+          !o.trained ? 'off'
+          : (o.tier === 'full') ? 'on'
+          : (o.tier === 'provisional') ? 'prov' : 'bad';
+      });
+      map.overview = 'on';
+      var dots = document.querySelectorAll('.nnv-tab-dot');
+      for(var i=0;i<dots.length;i++){
+        var k = dots[i].getAttribute('data-dot');
+        dots[i].className = 'nnv-tab-dot' + (map[k] ? ' '+map[k] : '');
+        var b = dots[i].parentNode;
+        if(b && b.setAttribute){
+          b.setAttribute('title', ({on:'정식 합류 — 가중 1.0 으로 투표 중',
+            prov:'잠정 합류 — 증거가 덜 쌓여 가중을 줄여 투표 중',
+            bad:'합류 보류 — 학습은 됐지만 문턱 미달',
+            off:'미학습 또는 판(featVer) 불일치'})[map[k]] || '상태 미상');
+        }
+      }
+    }catch(e){}
+  }
+
   function NNV_renderOverview(d){
     var stage=document.getElementById('nnvStage'), chips=document.getElementById('nnvChips'),
         comm=document.getElementById('nnvComm'), legend=document.getElementById('nnvLegend'),
@@ -14029,6 +14116,7 @@ html[data-theme="light"] #page-nnviz .nlv-sec-h{ border-color:transparent; color
     if(legend) legend.style.display='none';
     if(roles) roles.innerHTML='';
     var ex = d.experts||[], st = d.stack||{}, cb = d.combine||{}, nv = d.votingCount||0;
+    NNV_paintDots(d);   // [V33.215] 탭의 상태 점 — 전체 구조를 불러온 순간의 사실로 칠한다
     sub.textContent = '전체 구조 — 전문가 '+ex.length+'명 중 ★'+nv+'명 투표 중★ → IC가중 결합 → STACK(통합 메타모델) → 보정 → 로그오즈 층';
 
     chips.innerHTML =
@@ -14793,15 +14881,18 @@ html[data-theme="light"] #page-nnviz .nnv-mlp-h b{color:#1d2b45;}
 html[data-theme="light"] #page-nnviz .nnv-mlp-u{border-bottom-color:#e6edf7;}
 
 
-/* 모델 구조 선택 버튼 (구조 관측 전용) */
-.rail-models{display:grid;grid-template-columns:1fr 1fr;gap:4px;padding:0 8px 9px;}
-.rail-model{
-  cursor:pointer;padding:7px 4px;border:1px solid var(--bd);border-radius:7px;background:transparent;
-  color:var(--t2);font-family:'IBM Plex Mono',monospace;font-size:9.5px;letter-spacing:.2px;
+/* [V33.215] 모델 선택 버튼 13개를 걷어낸 자리 — 사이드바는 '지금 무엇을 보고 있나' 만 말한다.
+   선택 자체는 화면 안 '신경망 지도' 그리드가 한다(층으로 묶이고 상태 점이 붙는다). */
+.rail-now{
+  margin:0 8px 6px;padding:8px 10px;border:1px solid var(--acc);border-radius:8px;
+  background:var(--s2);color:var(--acc);font-weight:700;font-size:11px;
+  font-family:'IBM Plex Mono',monospace;letter-spacing:.2px;
   white-space:nowrap;overflow:hidden;text-overflow:ellipsis;
 }
-.rail-model:hover{color:var(--t1);border-color:var(--acc);}
-.rail-model.active{color:var(--acc);border-color:var(--acc);background:var(--s2);font-weight:700;}
+.rail-hint{
+  margin:0 8px 10px;font-size:9.5px;line-height:1.55;color:var(--t3, #6f84aa);
+}
+.rail-hint b{color:var(--t2);font-weight:650;}
 /* 바로가기 버튼 */
 .rail-links{display:flex;gap:5px;padding:0 10px 10px;}
 .rail-link{
@@ -14817,8 +14908,8 @@ html[data-theme="light"] #page-nnviz .nnv-mlp-u{border-bottom-color:#e6edf7;}
 .rail-views{padding:6px 6px 7px;}
 .rail-view{padding:6px 8px;}
 .rail-view b{font-size:10.5px;}
-.rail-models{padding:0 6px 8px;gap:3px;}
-.rail-model{padding:6px 3px;font-size:9px;}
+.rail-now{margin:0 6px 5px;padding:7px 8px;font-size:10.5px;}
+.rail-hint{margin:0 6px 9px;font-size:9px;}
 .rail-links{padding:0 8px 9px;gap:4px;}
 .rail-link{padding:7px 3px;font-size:9.5px;}
 .rail-item{padding:7px 8px 8px;}
@@ -15991,13 +16082,18 @@ html:root .page > *{ flex-shrink:0; }
       // ── 구조 관측 전용: 모델 선택(DNN·MIND·GBDT·XGB·LGB·Cat). 구조 뷰일 때만 펼쳐진다.
       // 구조 관측 전용 — 부팅 시점에 이미 숨겨 두고, syncRailModels 가 뷰에 맞춰 켠다.
       //   (기본값을 '보임' 으로 두면 부팅 직후 한 프레임 깜빡였다가 사라진다)
+      /* [V33.215] ★같은 탐색을 두 곳에서 하지 않는다.★
+         종전엔 화면 안 탭 13개와 사이드바 버튼 13개가 ★완전히 같은 일★ 을 했다.
+         둘 다 유지하려니 목록을 두 곳에 적어야 했고(그래서 배선 검사가 '사이드바/탭 불일치'
+         라는 항목을 따로 갖고 있다), 사이드바의 세로 예산도 13칸을 먹었다.
+         이제 모델 선택은 ★화면 안 그리드 하나★ 로 모은다 — 거기서는 층으로 묶이고
+         상태 점까지 붙으므로 사이드바 목록보다 말해 주는 것이 많다.
+         사이드바에는 '지금 무엇을 보고 있나 + 거기로 가는 길' 만 남긴다. */
       +'<div class="rail-sec" id="railModelsSec" style="display:none;">'
-        +'<div class="rail-sec-h">신경망·모델 구조 <span style="letter-spacing:0;text-transform:none;">· 누르면 구조 화면</span></div>'
-        +'<div class="rail-models" id="railModels">'
-          + MODELS.map(function(m){
-              return '<button type="button" class="rail-model" data-model="'+m[0]+'">'+esc(m[1])+'</button>';
-            }).join('')
-      +'</div></div>'
+        +'<div class="rail-sec-h">지금 보는 모델</div>'
+        +'<div class="rail-now" id="railNow">전체 구조</div>'
+        +'<div class="rail-hint">모델 선택은 화면 위쪽 <b>신경망 지도</b>에서 — 층별로 묶여 있고 점이 합류 상태를 보여준다.</div>'
+      +'</div>'
       +'<div class="rail-body" id="railBody">'
         +'<div class="rail-sec"><div class="rail-sec-h">AI 운용 상태</div><div id="railAiMode" class="rail-ai">확인 중…</div></div>'
         +'<div class="rail-sec"><div class="rail-sec-h">바로가기</div>'
@@ -16018,16 +16114,6 @@ html:root .page > *{ flex-shrink:0; }
     $id('railViews').addEventListener('click', function(e){
       var b = e.target.closest ? e.target.closest('.rail-view') : null;
       if(b) setBrainView(b.getAttribute('data-view'));
-    });
-    // 모델 구조 선택 — 작동 화면 중이면 구조 뷰로 넘어가면서 해당 모델을 연다.
-    $id('railModels').addEventListener('click', function(e){
-      var b = e.target.closest ? e.target.closest('.rail-model') : null;
-      if(!b) return;
-      var m = b.getAttribute('data-model');
-      if(!document.querySelector('#page-nnviz.active')) go('nnviz');
-      if(BVIEW !== 'struct') setBrainView('struct');
-      try{ if(typeof window.switchNnModel === 'function') window.switchNnModel(m); }catch(err){}
-      syncRailModels(m);
     });
     // 바로가기(AI 리포트·WHAT-IF)
     el.addEventListener('click', function(e){
@@ -16155,24 +16241,23 @@ html:root .page > *{ flex-shrink:0; }
   var MODELS = [['overview','전체 구조'],['dnn','DNN 딥넷'],['mind','MIND 스태킹'],['gbdt','GBDT'],['xgb','XGBoost'],['lgb','LightGBM'],['cat','CatBoost'],
                 ['flow','FLOW 수급'],['xalpha','XALPHA 알파'],['memo','MEMO 기억'],['stack','STACK 결합'],
                 ['dualbull','이중헤드 강세'],['dualbear','이중헤드 약세']];
-  /* [V33.153] 모델 목록은 ★구조 관측일 때만★ 나타난다(사용자 요청).
-     종전엔 작동 화면에서도 12개 버튼이 늘 자리를 차지했다 — 그 화면에서는 누를 이유가 없는
-     버튼이라 사이드바의 세로 예산만 먹었다. 표시 여부와 활성 표시를 ★한 함수에서★ 정한다:
-     두 곳으로 갈리면 '보이는데 활성표시가 없는' 어긋난 상태가 생긴다. */
+  /* [V33.153] 모델 표시는 ★구조 관측일 때만★ 나타난다(사용자 요청).
+     [V33.215] 버튼 13개는 화면 안 '신경망 지도' 로 옮겼다 — 여기는 '지금 보는 모델' 만 적는다.
+     표시 여부와 이름 갱신을 ★한 함수에서★ 정한다: 두 곳으로 갈리면 어긋난 상태가 생긴다. */
   function syncRailModels(active){
     var sec = document.getElementById('railModelsSec');
     if(sec) sec.style.display = (BVIEW === 'struct') ? '' : 'none';
-    if(BVIEW !== 'struct'){
-      var off = document.querySelectorAll('.rail-model');
-      for(var k=0;k<off.length;k++) off[k].classList.remove('active');
-      return;
-    }
+    if(BVIEW !== 'struct') return;
     if(!active){
       var cur = document.querySelector('#nnvTabs .nnv-tab.active');
       active = cur ? cur.getAttribute('data-model') : 'dnn';
     }
-    var bs = document.querySelectorAll('.rail-model');
-    for(var i=0;i<bs.length;i++) bs[i].classList.toggle('active', bs[i].getAttribute('data-model') === active);
+    var now = document.getElementById('railNow');
+    if(now){
+      var lbl = active;
+      for(var i=0;i<MODELS.length;i++) if(MODELS[i][0] === active) lbl = MODELS[i][1];
+      now.textContent = lbl;
+    }
   }
   var MOB = { built:false, drawer:null, scrim:null };
 

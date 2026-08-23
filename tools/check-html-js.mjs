@@ -343,7 +343,24 @@ try {
 try {
   const hv = readFileSync(new URL("../public/index.html", import.meta.url), "utf8");
   const sv = readFileSync(new URL("../src/index.js", import.meta.url), "utf8");
-  const tabsBlock = (hv.match(/<div class="nnv-tabs"[\s\S]*?<\/div>/) || [""])[0];
+  /* [V33.215] ★컨테이너를 정규식으로 자르지 않는다.★ 종전엔 `<div class="nnv-tabs"…첫 </div>`
+     로 잘랐는데, 그 방식은 두 가지로 무너진다:
+       ① 클래스에 수식어가 붙으면(`class="nnv-tabs nnv-nav"`) 아예 안 잡혀 탭이 0개가 된다.
+       ② 안에 <div> 를 하나라도 중첩하면 첫 </div> 에서 끊겨 뒤쪽 탭이 검사에서 통째로 빠진다.
+     ②가 특히 위험하다 — 검사는 계속 초록불인데 라우팅 없는 탭이 조용히 늘어난다.
+     → id 로 찾아 여는/닫는 <div> 를 세어 정확한 범위를 잡는다. */
+  const tabsBlock = (function () {
+    const i = hv.indexOf('id="nnvTabs"');
+    if (i < 0) return "";
+    const open = hv.lastIndexOf("<div", i);
+    let d = 0, k = open;
+    while (k < hv.length) {
+      if (hv.startsWith("<div", k)) d++;
+      else if (hv.startsWith("</div>", k)) { d--; if (!d) return hv.slice(open, k + 6); }
+      k++;
+    }
+    return "";
+  })();
   const tabs = [...tabsBlock.matchAll(/data-model="([^"]+)"/g)].map((m) => m[1]);
   /* [V33.206] ★창을 넓힌다 — 계약은 그대로다.★ 종전 정규식은 `if (path === "/api/nn-viz")`
      처럼 ★닫는 괄호까지★ 요구해서, 같은 경로를 쿼리로 가르는 분기
@@ -364,6 +381,22 @@ try {
   else if (missing.length) { nbad++; console.error(`  FAIL 탭은 있는데 서버 라우팅이 없다: ${missing.join(", ")} — 그 탭은 조용히 DNN 구조를 보여준다`); }
   else console.log(`  ok   구조 관측 탭 ${tabs.length}종(${tabs.join(",")})이 전부 서버 라우팅과 이어져 있다`);
   // 프론트 MODELS(사이드바 목록)와 탭 목록이 어긋나면 사이드바에서 고른 모델이 활성표시가 안 된다.
+  /* [V33.215] ★탭이 스크롤 뒤에 숨으면 없는 것과 같다.★ 실제로 그렇게 됐다:
+     .nnv-tabs 가 overflow-x:auto 인데 스크롤바까지 감춰서(scrollbar-width:none +
+     ::-webkit-scrollbar{display:none}), 13번째 탭(이중헤드 약세)이 오른쪽으로 밀려나면
+     데스크톱에서는 ★존재를 알 수 있는 단서가 하나도 없었다★.
+     계약: 스크롤바를 감추려면 줄바꿈해야 한다(grid 또는 flex-wrap:wrap). 둘 다 아니면 막는다.
+     ※ 좁은 화면(모바일)의 가로 스크롤은 예외다 — 거기서는 스와이프가 자연스러운 단서다. */
+  {
+    const deskRule = (hv.match(/#page-nnviz \.nnv-tabs\{[\s\S]*?\}/) || [""])[0];
+    const hidesBar = /scrollbar-width:\s*none/.test(deskRule) ||
+      /#page-nnviz \.nnv-tabs::-webkit-scrollbar\{[^}]*display:\s*none/.test(hv);
+    const wraps = /display:\s*grid/.test(deskRule) || /flex-wrap:\s*wrap/.test(deskRule);
+    if (hidesBar && !wraps) {
+      nbad++;
+      console.error("  FAIL 구조 관측 탭이 스크롤바를 감춘 채 한 줄로 흐른다 — 밀려난 탭은 화면에서 사라진다(줄바꿈하게 할 것)");
+    } else console.log("  ok   구조 관측 탭이 줄바꿈한다 — 스크롤 뒤로 숨는 탭이 없다");
+  }
   const rail = [...((hv.match(/var MODELS = \[[\s\S]*?\];/) || [""])[0]).matchAll(/\['(\w+)'/g)].map((m) => m[1]);
   const diff = tabs.filter((t) => !rail.includes(t)).concat(rail.filter((r) => !tabs.includes(r)));
   if (!diff.length) console.log("  ok   사이드바 모델 목록과 탭 목록이 같다");
