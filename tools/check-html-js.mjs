@@ -350,13 +350,17 @@ try {
      ②가 특히 위험하다 — 검사는 계속 초록불인데 라우팅 없는 탭이 조용히 늘어난다.
      → id 로 찾아 여는/닫는 <div> 를 세어 정확한 범위를 잡는다. */
   const tabsBlock = (function () {
-    const i = hv.indexOf('id="nnvTabs"');
+    /* 주석을 먼저 지운다 — 주석 본문이 태그를 언급하면(예: "<div> 를 중첩하지 않는다")
+       여는/닫는 개수를 세는 이 로직이 어긋난다. 짝이 맞으면 우연히 통과하지만,
+       한쪽만 적힌 순간 블록 경계가 엉뚱한 데서 끊겨 뒤쪽 탭이 통째로 빠진다. */
+    const clean = hv.replace(/<!--[\s\S]*?-->/g, "");
+    const i = clean.indexOf('id="nnvTabs"');
     if (i < 0) return "";
-    const open = hv.lastIndexOf("<div", i);
+    const open = clean.lastIndexOf("<div", i);
     let d = 0, k = open;
-    while (k < hv.length) {
-      if (hv.startsWith("<div", k)) d++;
-      else if (hv.startsWith("</div>", k)) { d--; if (!d) return hv.slice(open, k + 6); }
+    while (k < clean.length) {
+      if (clean.startsWith("<div", k)) d++;
+      else if (clean.startsWith("</div>", k)) { d--; if (!d) return clean.slice(open, k + 6); }
       k++;
     }
     return "";
