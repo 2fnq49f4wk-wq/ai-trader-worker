@@ -19,6 +19,17 @@ on:
         description: '배포 후 즉시 학습 1회 실행'
         type: boolean
         default: false
+      # [V33.204] 10층(4,580,070) DNN 이 valAcc 49.3% 로 2층 폴백(53.3%)보다 낮게 측정됐다.
+      #   깊이를 추측으로 정하지 않고 ★같은 표본·같은 분할·같은 시드★ 로 후보를 재서 고른다.
+      #   기본은 꺼짐 — 정기 6시간 실행에서 후보를 셋씩 학습하면 Modal 크레딧($21/$30)을 넘긴다.
+      depth_sweep:
+        description: 'DNN 깊이 스윕(10층/6층/3층/2층을 같은 표본으로 비교해 승자 채택) — run_now 와 함께 켜야 함'
+        type: boolean
+        default: false
+      sweep_seeds:
+        description: '순위 매길 때 후보당 시드 수(승자는 전체 시드로 재학습)'
+        type: string
+        default: '2'
 
 jobs:
   deploy:
@@ -55,4 +66,14 @@ jobs:
         env:
           MODAL_TOKEN_ID: ${{ secrets.MODAL_TOKEN_ID }}
           MODAL_TOKEN_SECRET: ${{ secrets.MODAL_TOKEN_SECRET }}
-        run: modal run trainer/modal/modal_train.py
+          DEPTH_SWEEP: ${{ inputs.depth_sweep }}
+          SWEEP_SEEDS: ${{ inputs.sweep_seeds }}
+        # 스윕은 후보 넷을 학습하므로 정기 실행보다 오래 걸린다 — 켤 때만 인자를 붙인다.
+        run: |
+          if [ "$DEPTH_SWEEP" = "true" ]; then
+            echo "★DNN 깊이 스윕★ — 후보당 시드 ${SWEEP_SEEDS:-2}, 승자만 전체 시드로 재학습"
+            modal run trainer/modal/modal_train.py \
+              --depth-sweep --sweep-seeds "${SWEEP_SEEDS:-2}"
+          else
+            modal run trainer/modal/modal_train.py
+          fi

@@ -43,7 +43,8 @@ SEEDS_OVERRIDE = 6     # 4→6 앙상블(로짓평균 안정화). 업로드~27MB
     timeout=3600,
     gpu="T4",  # GPU 가속(20분→~2분). 12h마다 2분이라 월 크레딧 $1 수준(무료 $30 내).
 )
-def train_job(epochs: int = EPOCHS_DEFAULT, dry: bool = False):
+def train_job(epochs: int = EPOCHS_DEFAULT, dry: bool = False,
+              depth_sweep: bool = False, sweep_seeds: int = 2):
     import os, json, math, time
     import numpy as np
     import requests
@@ -225,146 +226,205 @@ def train_job(epochs: int = EPOCHS_DEFAULT, dry: bool = False):
     #   (심층 degradation·기울기 불안정 → valAcc 정체의 구조적 원인). 각 은닉층에 BatchNorm을 넣어 깊은
     #   망이 '실제로' 학습되게 한다(용량 유지, 오히려 표현력 개방). 추론은 BN을 앞 선형층에 접어(fold)
     #   내보내므로 Worker의 평면 relu(Wx+b) 추론이 그대로 동일 결과를 낸다(추론측 변경 0).
-    class MLP(nn.Module):
-        def __init__(self):
-            super().__init__()
-            self.lins = nn.ModuleList([nn.Linear(dims[l], dims[l + 1]) for l in range(len(dims) - 1)])
-            self.bns = nn.ModuleList([nn.BatchNorm1d(dims[l + 1]) for l in range(len(dims) - 2)])  # 은닉층만(출력층 제외)
-            for lin in self.lins:
-                nn.init.kaiming_normal_(lin.weight, nonlinearity="relu"); nn.init.zeros_(lin.bias)
-        def forward(self, x, train=True):
-            n = len(self.lins)
-            for i, lin in enumerate(self.lins):
-                x = lin(x)
-                if i < n - 1:
-                    x = self.bns[i](x)                 # BatchNorm(선형 뒤·ReLU 앞) — 학습모드=배치통계, 평가모드=러닝통계
-                    x = torch.relu(x)
-                    if train and dropout > 0:
-                        x = torch.nn.functional.dropout(x, p=dropout, training=True)
-            return x
+    # [V33.204] ★깊이를 재서 결정한다 — 추측으로 정하지 않는다.★
+    #   실측(2026-08-22): 10층 4,580,070 파라미터 모델이 valAcc 49.3% 로, 워커 폴백 2층(53.3%)보다
+    #   낮았다. 그래서 신뢰 게이트가 외부 모델을 거부하고 워커가 자가학습으로 내려갔다(wDnn=0).
+    #   "깊으면 좋다" 도 "얕으면 좋다" 도 이 데이터에서는 확인된 적이 없다 — 잰 적이 없으니까.
+    #   → 같은 표본·같은 분할·같은 시드로 후보 깊이를 학습해 ★같은 자로★ 비교한다.
+    #   비교 기준은 valAcc 가 아니라 ★유효표본 Wilson 하한(lb)★ 이다. 워커의 승격 게이트가
+    #   보는 것이 그 값이고, 다른 자로 뽑으면 "여기선 이겼는데 저기선 떨어지는" 모델을 고르게 된다.
+    def fit_arch(dims, tag=""):
+        class MLP(nn.Module):
+            def __init__(self):
+                super().__init__()
+                self.lins = nn.ModuleList([nn.Linear(dims[l], dims[l + 1]) for l in range(len(dims) - 1)])
+                self.bns = nn.ModuleList([nn.BatchNorm1d(dims[l + 1]) for l in range(len(dims) - 2)])  # 은닉층만(출력층 제외)
+                for lin in self.lins:
+                    nn.init.kaiming_normal_(lin.weight, nonlinearity="relu"); nn.init.zeros_(lin.bias)
+            def forward(self, x, train=True):
+                n = len(self.lins)
+                for i, lin in enumerate(self.lins):
+                    x = lin(x)
+                    if i < n - 1:
+                        x = self.bns[i](x)                 # BatchNorm(선형 뒤·ReLU 앞) — 학습모드=배치통계, 평가모드=러닝통계
+                        x = torch.relu(x)
+                        if train and dropout > 0:
+                            x = torch.nn.functional.dropout(x, p=dropout, training=True)
+                return x
 
-    def wilson_lb(acc, n, z=1.64):
-        if n <= 0: return 0.0
-        z2 = z * z; den = 1 + z2 / n; cen = acc + z2 / (2 * n)
-        rad = z * math.sqrt((acc * (1 - acc) + z2 / (4 * n)) / n)
-        return max(0.0, (cen - rad) / den)
+        def wilson_lb(acc, n, z=1.64):
+            if n <= 0: return 0.0
+            z2 = z * z; den = 1 + z2 / n; cen = acc + z2 / (2 * n)
+            rad = z * math.sqrt((acc * (1 - acc) + z2 / (4 * n)) / n)
+            return max(0.0, (cen - rad) / den)
 
-    def one_seed(seed):
-        torch.manual_seed(seed); np.random.seed(seed)
-        net = MLP().to(dev)
-        opt = torch.optim.AdamW(net.parameters(), lr=lr, weight_decay=l2)
-        sched = torch.optim.lr_scheduler.CosineAnnealingLR(opt, T_max=ep, eta_min=lr * lr_floor)
-        best, best_state, wait, patience = 1e9, None, 0, max(15, ep // 12)
-        ntr = Xtr.shape[0]
-        for e in range(ep):
-            net.train(); perm = torch.randperm(ntr, device=dev)
-            for bs in range(0, ntr, batch):
-                bi = perm[bs:bs + batch]
-                xb, yb, mb = Xtr[bi], Ytr[bi], Mtr[bi]
-                wc = torch.where(yb > 0.5, torch.tensor(w_pos, device=dev), torch.tensor(w_neg, device=dev))
-                if mixup_p > 0 and np.random.rand() < mixup_p and xb.shape[0] > 1:
-                    lam = 0.2 + np.random.rand() * 0.6
-                    j = torch.randperm(xb.shape[0], device=dev)
-                    xb = lam * xb + (1 - lam) * xb[j]; yb = lam * yb + (1 - lam) * yb[j]
-                    mb = lam * mb + (1 - lam) * mb[j]; wc = lam * wc + (1 - lam) * wc[j]
-                if input_noise > 0:
-                    xb = xb + input_noise * torch.randn_like(xb)
-                ys = yb * (1 - label_smooth) + label_smooth / 2
-                logit = net(xb, True).squeeze(-1)
-                loss = nn.functional.binary_cross_entropy_with_logits(logit, ys, reduction="none")
-                loss = (loss * wc * mb).mean()
-                opt.zero_grad(); loss.backward()
-                torch.nn.utils.clip_grad_norm_(net.parameters(), 5.0); opt.step()
-            sched.step()
-            net.eval()
+        def one_seed(seed):
+            torch.manual_seed(seed); np.random.seed(seed)
+            net = MLP().to(dev)
+            opt = torch.optim.AdamW(net.parameters(), lr=lr, weight_decay=l2)
+            sched = torch.optim.lr_scheduler.CosineAnnealingLR(opt, T_max=ep, eta_min=lr * lr_floor)
+            best, best_state, wait, patience = 1e9, None, 0, max(15, ep // 12)
+            ntr = Xtr.shape[0]
+            for e in range(ep):
+                net.train(); perm = torch.randperm(ntr, device=dev)
+                for bs in range(0, ntr, batch):
+                    bi = perm[bs:bs + batch]
+                    xb, yb, mb = Xtr[bi], Ytr[bi], Mtr[bi]
+                    wc = torch.where(yb > 0.5, torch.tensor(w_pos, device=dev), torch.tensor(w_neg, device=dev))
+                    if mixup_p > 0 and np.random.rand() < mixup_p and xb.shape[0] > 1:
+                        lam = 0.2 + np.random.rand() * 0.6
+                        j = torch.randperm(xb.shape[0], device=dev)
+                        xb = lam * xb + (1 - lam) * xb[j]; yb = lam * yb + (1 - lam) * yb[j]
+                        mb = lam * mb + (1 - lam) * mb[j]; wc = lam * wc + (1 - lam) * wc[j]
+                    if input_noise > 0:
+                        xb = xb + input_noise * torch.randn_like(xb)
+                    ys = yb * (1 - label_smooth) + label_smooth / 2
+                    logit = net(xb, True).squeeze(-1)
+                    loss = nn.functional.binary_cross_entropy_with_logits(logit, ys, reduction="none")
+                    loss = (loss * wc * mb).mean()
+                    opt.zero_grad(); loss.backward()
+                    torch.nn.utils.clip_grad_norm_(net.parameters(), 5.0); opt.step()
+                sched.step()
+                net.eval()
+                with torch.no_grad():
+                    vl = nn.functional.binary_cross_entropy_with_logits(net(Xva, False).squeeze(-1), Yva).item()
+                if vl < best - 1e-5:
+                    best, wait = vl, 0
+                    best_state = {k: v.detach().clone() for k, v in net.state_dict().items()}
+                else:
+                    wait += 1
+                    if wait >= patience: break
+            if best_state: net.load_state_dict(best_state)
+            return net
+
+        nets = []
+        for sd in range(K):
+            t0 = time.time(); nets.append(one_seed(1000 + sd * 7))
+            print(f"  {tag + ' ' if tag else ''}시드 {sd+1}/{K} ({time.time()-t0:.1f}s)")
+
+        with torch.no_grad():
+            zsum = torch.zeros(Xva.shape[0], device=dev)
+            for net in nets:
+                net.eval(); zsum += net(Xva, False).squeeze(-1)
+            pva = torch.sigmoid(zsum / len(nets))
+            # [V11.1 관측] 기저율·다수클래스 베이스라인·AUC — "정확도 낮음"이 모델 문제인지
+            #   클래스 불균형/분포이동 문제인지 구분하는 진단 지표(로그 전용, 게이트엔 미사용).
+            base = Yva.mean().item()
+            majority = max(base, 1 - base)
+            ys = Yva.cpu().numpy(); ps = pva.cpu().numpy()
+            order = np.argsort(ps); ranks = np.empty_like(order, dtype=np.float64); ranks[order] = np.arange(1, len(ps) + 1)
+            npos = ys.sum(); nneg = len(ys) - npos
+            auc = float((ranks[ys > 0.5].sum() - npos * (npos + 1) / 2) / (npos * nneg)) if npos > 0 and nneg > 0 else 0.5
+
+        # ── [V12.33 임계값 캘리브레이션] 31%형 겉보기 붕괴 수정 ──
+        #   원인: 균형가중 학습 + 검증 라벨 쏠림 상황에서 고정 0.5 컷은 다수클래스보다 못한 정확도로 붕괴.
+        #   해법: 검증 앞 절반(캘리브레이션)에서 균형정확도 최대 임계값 τ*를 찾아 각 시드망 마지막 층
+        #   bias에 -logit(τ*)로 굽는다 → Worker의 0.5 기준 추론이 그대로 캘리브레이션 반영.
+        #   정확도는 τ* 선택에 쓰지 않은 '뒤 절반'에서 산출(정직한 홀드아웃).
+        half = max(20, len(ps) // 2)
+        if len(ps) - half >= 20:
+            ps_c, ys_c = ps[:half], ys[:half]
+            taus = np.unique(np.quantile(ps_c, np.linspace(0.05, 0.95, 37)))
+            # [V12.42] 균형정확도→원(raw)정확도 기준으로 τ* 선택 변경 — Worker 신뢰게이트는 "원정확도
+            #   Wilson 하한"으로 mind와 비교하는데, DNN만 균형정확도 τ*를 쓰면 게이트에서 구조적으로
+            #   불리(60.3%로 표시되던 원인). MIND V12.39 캘리브레이션과 동일 기준으로 통일.
+            def _rawacc(th):
+                return float(((ps_c >= th) == (ys_c > 0.5)).mean())
+            tau = float(taus[int(np.argmax([_rawacc(t) for t in taus]))])
+            tau = min(max(tau, 1e-4), 1 - 1e-4)
+            delta = math.log(tau / (1 - tau))
             with torch.no_grad():
-                vl = nn.functional.binary_cross_entropy_with_logits(net(Xva, False).squeeze(-1), Yva).item()
-            if vl < best - 1e-5:
-                best, wait = vl, 0
-                best_state = {k: v.detach().clone() for k, v in net.state_dict().items()}
-            else:
-                wait += 1
-                if wait >= patience: break
-        if best_state: net.load_state_dict(best_state)
-        return net
+                for net in nets:
+                    net.lins[-1].bias.data -= float(delta)   # 임계값을 가중치에 영구 반영(업로드에 포함)
+            psc = np.clip(ps, 1e-6, 1 - 1e-6)
+            p_adj = 1.0 / (1.0 + np.exp(-(np.log(psc / (1 - psc)) - delta)))
+            ys_t, p_t = ys[half:], p_adj[half:]
+            acc = float(((p_t >= 0.5) == (ys_t > 0.5)).mean())
+            n_eval = len(p_t)
+            print(f"   캘리브레이션: τ*={tau:.3f} (logit 시프트 {delta:+.3f}) — 검증 전반 {half}건으로 선택, 후반 {n_eval}건으로 평가")
+        else:
+            acc = float(((ps >= 0.5) == (ys > 0.5)).mean()); n_eval = len(ps)
+        # [V33.115] ★Wilson 하한을 유효표본수로 잰다★
+        #   n_eval 은 ★명목★ 이다. 10일 지평 라벨은 같은 종목에서 겹치므로 독립 관측이 아니고,
+        #   명목 n 으로 재면 하한이 실제보다 좁게(=낙관적으로) 나온다. 겹침의 역수를 합한
+        #   유효표본수로 재야 "정확도 하한 X% 이상" 이라는 승격 게이트가 제 뜻을 가진다.
+        _dnn_uw = UNIQ[va[len(va) - n_eval:]]
+        _dnn_neff = max(8, int(round(float(_dnn_uw.sum()))))
+        lb = wilson_lb(acc, _dnn_neff)
+        if _dnn_neff < n_eval:
+            print(f"   유효표본 {_dnn_neff}/{n_eval} (평균 고유도 {_dnn_uw.mean():.3f}) — 하한을 유효표본으로 산출 {lb:.4f}")
+        # [V32.9] ★과적합 진단★ 학습셋 정확도를 검증셋과 비교 — 격차가 크면 과적합(→데이터·규제 필요),
+        #   격차가 작고 둘 다 낮으면 신호/피처 한계(→피처 품질·라벨 개선 필요). 캘리브레이션 반영 후 평가.
+        try:
+            with torch.no_grad():
+                ztr = torch.zeros(Xtr.shape[0], device=dev)
+                for net in nets:
+                    net.eval(); ztr += net(Xtr, False).squeeze(-1)
+                ptr = torch.sigmoid(ztr / len(nets)).cpu().numpy()
+                ytr_np = Ytr.cpu().numpy()
+            train_acc = float(((ptr >= 0.5) == (ytr_np > 0.5)).mean())
+            gap = train_acc - acc
+            verdict = "과적합 경향(→표본·종류·규제↑ 필요)" if gap > 0.05 else "과적합 낮음(→신호·피처·라벨 품질이 병목)"
+            print(f"   [과적합진단] train {train_acc*100:.2f}% vs val {acc*100:.2f}% → 격차 {gap*100:+.2f}%p — {verdict}")
+        except Exception as _e:
+            print("   [과적합진단] train acc 계산 실패:", _e)
+        print(f"③ 앙상블 valAcc {acc*100:.2f}% (Wilson하한 {lb*100:.2f}%, n={n_eval})")
+        print(f"   진단: 기저율(양성비율) {base*100:.1f}% | 다수클래스 베이스라인 {majority*100:.1f}% | AUC {auc:.3f}")
+        if acc < majority - 0.02:
+            print("   ⚠️ 정확도가 '전부 다수클래스 찍기'보다 낮음 — 분포이동(최근 시장≠과거 패턴) 또는 과적합 신호")
+        if auc < 0.52:
+            print("   ⚠️ AUC<0.52 — 현재 피처만으론 판별력 자체가 약함. 데이터 축적/피처 확장이 근본 해법")
 
-    nets = []
-    for sd in range(K):
-        t0 = time.time(); nets.append(one_seed(1000 + sd * 7))
-        print(f"  시드 {sd+1}/{K} ({time.time()-t0:.1f}s)")
+        return {"nets": nets, "acc": acc, "lb": lb, "n_eval": n_eval, "dims": list(dims),
+                "auc": auc, "base": base, "majority": majority,
+                "params": int(sum(dims[i] * dims[i+1] + dims[i+1] for i in range(len(dims)-1)))}
 
-    with torch.no_grad():
-        zsum = torch.zeros(Xva.shape[0], device=dev)
-        for net in nets:
-            net.eval(); zsum += net(Xva, False).squeeze(-1)
-        pva = torch.sigmoid(zsum / len(nets))
-        # [V11.1 관측] 기저율·다수클래스 베이스라인·AUC — "정확도 낮음"이 모델 문제인지
-        #   클래스 불균형/분포이동 문제인지 구분하는 진단 지표(로그 전용, 게이트엔 미사용).
-        base = Yva.mean().item()
-        majority = max(base, 1 - base)
-        ys = Yva.cpu().numpy(); ps = pva.cpu().numpy()
-        order = np.argsort(ps); ranks = np.empty_like(order, dtype=np.float64); ranks[order] = np.arange(1, len(ps) + 1)
-        npos = ys.sum(); nneg = len(ys) - npos
-        auc = float((ranks[ys > 0.5].sum() - npos * (npos + 1) / 2) / (npos * nneg)) if npos > 0 and nneg > 0 else 0.5
-
-    # ── [V12.33 임계값 캘리브레이션] 31%형 겉보기 붕괴 수정 ──
-    #   원인: 균형가중 학습 + 검증 라벨 쏠림 상황에서 고정 0.5 컷은 다수클래스보다 못한 정확도로 붕괴.
-    #   해법: 검증 앞 절반(캘리브레이션)에서 균형정확도 최대 임계값 τ*를 찾아 각 시드망 마지막 층
-    #   bias에 -logit(τ*)로 굽는다 → Worker의 0.5 기준 추론이 그대로 캘리브레이션 반영.
-    #   정확도는 τ* 선택에 쓰지 않은 '뒤 절반'에서 산출(정직한 홀드아웃).
-    half = max(20, len(ps) // 2)
-    if len(ps) - half >= 20:
-        ps_c, ys_c = ps[:half], ys[:half]
-        taus = np.unique(np.quantile(ps_c, np.linspace(0.05, 0.95, 37)))
-        # [V12.42] 균형정확도→원(raw)정확도 기준으로 τ* 선택 변경 — Worker 신뢰게이트는 "원정확도
-        #   Wilson 하한"으로 mind와 비교하는데, DNN만 균형정확도 τ*를 쓰면 게이트에서 구조적으로
-        #   불리(60.3%로 표시되던 원인). MIND V12.39 캘리브레이션과 동일 기준으로 통일.
-        def _rawacc(th):
-            return float(((ps_c >= th) == (ys_c > 0.5)).mean())
-        tau = float(taus[int(np.argmax([_rawacc(t) for t in taus]))])
-        tau = min(max(tau, 1e-4), 1 - 1e-4)
-        delta = math.log(tau / (1 - tau))
-        with torch.no_grad():
-            for net in nets:
-                net.lins[-1].bias.data -= float(delta)   # 임계값을 가중치에 영구 반영(업로드에 포함)
-        psc = np.clip(ps, 1e-6, 1 - 1e-6)
-        p_adj = 1.0 / (1.0 + np.exp(-(np.log(psc / (1 - psc)) - delta)))
-        ys_t, p_t = ys[half:], p_adj[half:]
-        acc = float(((p_t >= 0.5) == (ys_t > 0.5)).mean())
-        n_eval = len(p_t)
-        print(f"   캘리브레이션: τ*={tau:.3f} (logit 시프트 {delta:+.3f}) — 검증 전반 {half}건으로 선택, 후반 {n_eval}건으로 평가")
+    # ── [V33.204] 깊이 스윕 ───────────────────────────────────────────────────
+    #   기본은 꺼져 있다. Modal 무료 크레딧이 이미 $21/$30 수준이라, 6시간마다 도는 정기 실행에서
+    #   후보를 셋씩 학습하면 예산을 넘긴다. 스윕은 ★사람이 한 번 부를 때만★ 돈다.
+    #   후보 순위는 적은 시드(빠르고 싸다)로 매기고, ★이긴 구성만★ 전체 시드로 다시 학습해 내보낸다.
+    #   순위와 최종 모델을 같은 실행에서 만드는 것이 중요하다 — 표본이 하루만 달라져도
+    #   "그때 이겼던 구성" 이 오늘도 이긴다는 보장이 없기 때문이다.
+    if depth_sweep:
+        cands = [
+            ("10층(현행)", list(hidden)),
+            ("6층",        [512, 256, 128, 96, 64, 32]),
+            ("3층",        [256, 128, 64]),
+            ("2층(워커폴백)", [128, 64]),
+        ]
+        _K_full = K
+        K = max(1, int(sweep_seeds))
+        print(f"②-S 깊이 스윕 — 후보 {len(cands)}종 × 시드 {K} (순위용) · 같은 표본/분할/시드")
+        rank = []
+        for tag, hid in cands:
+            t0 = time.time()
+            r = fit_arch([D] + list(hid) + [1], tag)
+            r["tag"] = tag; r["hidden"] = list(hid); r["secs"] = round(time.time() - t0, 1)
+            rank.append(r)
+            print(f"   · {tag:14s} dims={'-'.join(map(str,r['dims']))} 파라미터 {r['params']:,} "
+                  f"valAcc {r['acc']*100:.2f}% 하한 {r['lb']*100:.2f}% AUC {r['auc']:.3f} ({r['secs']}s)")
+        # ★하한(lb)으로 고른다★ — 워커 승격 게이트가 보는 값이다. 동률이면 valAcc, 그다음 작은 모델.
+        rank.sort(key=lambda r: (-r["lb"], -r["acc"], r["params"]))
+        win = rank[0]
+        print(f"②-S 승자: {win['tag']} (하한 {win['lb']*100:.2f}%) — 2위 {rank[1]['tag']} "
+              f"하한 {rank[1]['lb']*100:.2f}% · 차이 {(win['lb']-rank[1]['lb'])*100:+.2f}%p")
+        if (win["lb"] - rank[1]["lb"]) < 0.005:
+            print("   ⚠️ 1·2위 하한 차이가 0.5%p 미만 — 이 표본에서 둘을 가를 근거가 약하다"
+                  "(다음 스윕에서 뒤집힐 수 있음). 작은 모델을 택했는지 위 정렬 규칙을 확인할 것.")
+        hidden = win["hidden"]; dims = [D] + list(hidden) + [1]
+        K = _K_full
+        print(f"② 승자 재학습 — dims={'-'.join(map(str,dims))} seeds={K}")
+        _fin = fit_arch(dims, win["tag"] + "/최종")
+        nets, acc, lb, n_eval = _fin["nets"], _fin["acc"], _fin["lb"], _fin["n_eval"]
+        print(f"③ 앙상블 valAcc {acc*100:.2f}% (Wilson하한 {lb*100:.2f}%, n={n_eval}) — {win['tag']}")
+        sweep_note = {"winner": win["tag"], "ranking": [
+            {"tag": r["tag"], "dims": r["dims"], "params": r["params"],
+             "valAcc": round(r["acc"], 4), "lb": round(r["lb"], 4), "auc": round(r["auc"], 4)}
+            for r in rank]}
     else:
-        acc = float(((ps >= 0.5) == (ys > 0.5)).mean()); n_eval = len(ps)
-    # [V33.115] ★Wilson 하한을 유효표본수로 잰다★
-    #   n_eval 은 ★명목★ 이다. 10일 지평 라벨은 같은 종목에서 겹치므로 독립 관측이 아니고,
-    #   명목 n 으로 재면 하한이 실제보다 좁게(=낙관적으로) 나온다. 겹침의 역수를 합한
-    #   유효표본수로 재야 "정확도 하한 X% 이상" 이라는 승격 게이트가 제 뜻을 가진다.
-    _dnn_uw = UNIQ[va[len(va) - n_eval:]]
-    _dnn_neff = max(8, int(round(float(_dnn_uw.sum()))))
-    lb = wilson_lb(acc, _dnn_neff)
-    if _dnn_neff < n_eval:
-        print(f"   유효표본 {_dnn_neff}/{n_eval} (평균 고유도 {_dnn_uw.mean():.3f}) — 하한을 유효표본으로 산출 {lb:.4f}")
-    # [V32.9] ★과적합 진단★ 학습셋 정확도를 검증셋과 비교 — 격차가 크면 과적합(→데이터·규제 필요),
-    #   격차가 작고 둘 다 낮으면 신호/피처 한계(→피처 품질·라벨 개선 필요). 캘리브레이션 반영 후 평가.
-    try:
-        with torch.no_grad():
-            ztr = torch.zeros(Xtr.shape[0], device=dev)
-            for net in nets:
-                net.eval(); ztr += net(Xtr, False).squeeze(-1)
-            ptr = torch.sigmoid(ztr / len(nets)).cpu().numpy()
-            ytr_np = Ytr.cpu().numpy()
-        train_acc = float(((ptr >= 0.5) == (ytr_np > 0.5)).mean())
-        gap = train_acc - acc
-        verdict = "과적합 경향(→표본·종류·규제↑ 필요)" if gap > 0.05 else "과적합 낮음(→신호·피처·라벨 품질이 병목)"
-        print(f"   [과적합진단] train {train_acc*100:.2f}% vs val {acc*100:.2f}% → 격차 {gap*100:+.2f}%p — {verdict}")
-    except Exception as _e:
-        print("   [과적합진단] train acc 계산 실패:", _e)
-    print(f"③ 앙상블 valAcc {acc*100:.2f}% (Wilson하한 {lb*100:.2f}%, n={n_eval})")
-    print(f"   진단: 기저율(양성비율) {base*100:.1f}% | 다수클래스 베이스라인 {majority*100:.1f}% | AUC {auc:.3f}")
-    if acc < majority - 0.02:
-        print("   ⚠️ 정확도가 '전부 다수클래스 찍기'보다 낮음 — 분포이동(최근 시장≠과거 패턴) 또는 과적합 신호")
-    if auc < 0.52:
-        print("   ⚠️ AUC<0.52 — 현재 피처만으론 판별력 자체가 약함. 데이터 축적/피처 확장이 근본 해법")
+        _fin = fit_arch(dims)
+        nets, acc, lb, n_eval = _fin["nets"], _fin["acc"], _fin["lb"], _fin["n_eval"]
+        sweep_note = None
 
     # [V32.11] BatchNorm 접기(fold) — 각 은닉층 BN을 앞 선형층 가중치/바이어스에 흡수해
     #   Worker 평면 추론 relu(W'x+b')이 relu(BN(Wx+b))와 정확히 동일해진다.
@@ -394,7 +454,8 @@ def train_job(epochs: int = EPOCHS_DEFAULT, dry: bool = False):
         js_nets.append({"W": Wl, "b": bl, "dims": dims})
 
     if dry:
-        print("--dry: 업로드 생략"); return {"ok": True, "valAcc": acc, "uploaded": False}
+        print("--dry: 업로드 생략")
+        return {"ok": True, "valAcc": acc, "uploaded": False, "depthSweep": sweep_note}
 
     # ── [V12.35] 분할 업로드: begin → net×K → commit ──
     #   6시드 앙상블은 ~37MB라 한 번에 보내면 Worker(메모리 128MB)가 request.json()에서 죽어 503.
@@ -480,7 +541,7 @@ def train_job(epochs: int = EPOCHS_DEFAULT, dry: bool = False):
             _train_and_upload_scalp(BASE, KEY, HDR, featver)
         except Exception as e:
             print("단타 학습/업로드 예외(무시):", e)
-    return {"ok": True, "valAcc": acc, "trust": res.get("trust")}
+    return {"ok": True, "valAcc": acc, "trust": res.get("trust"), "depthSweep": sweep_note}
 
 
 # ============================================================================
