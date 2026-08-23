@@ -2788,7 +2788,7 @@ async function applySignalTypeWeights(DB, cfg) {
 // ============================================================================
 // [V33.55] 빌드 버전 — SWR L2 캐시 키에 섞어 '배포 = 판단 캐시 자동 무효화'를 만든다.
 //   판정 로직을 고쳐도 옛 캐시가 최대 1시간 재배포되던 문제를 구조적으로 없앤다.
-const _BUILD_VER = "V33.221";
+const _BUILD_VER = "V33.222";
 
 // ═══ [V33.171] 평가 순서 계획 — ★승격과 순환을 교차해 굶주림을 구조적으로 없앤다★ ═══
 //   V33.50 의 형태트리거는 "급한 몇 종목을 앞으로 당긴다"는 의도였으나, 실제 운영로그에서는
@@ -2881,7 +2881,7 @@ const AI_PARAMS = {
   // ── OHLCV 타임프레임 ── 시가/고가/저가/종가/거래량을 어떤 봉 주기로 볼지.
   //   진입필터 AI(LUXML/DNN)는 일봉(D1) 기준으로 학습·추론. 분봉(5m/1m)은 스캘프 실행 전용.
   timeframe: "1d",                 // 모델 기준 봉: "1d"(일봉). 참고: KR 5분봉·1분봉은 실시간 감시용
-  intradayTimeframe: "5m",
+  intradayTimeframe: "1m",   // [V33.222] 단타 기준봉 — 실제 값은 SCALP_BAR_MIN 이 정한다(표시·호환용)
 
   // ── 기술적 지표 기간(Technical Indicators) ── 모델 입력 피처 계산 파라미터.
   //   (구현: DEFAULT_CFG의 rsiPeriod/maPeriod/atrPeriod/bbStdMult + mlBuildFeatures/_mlStructFeats)
@@ -3412,8 +3412,10 @@ const DEFAULT_CFG = {
   //   장중 급락 칼날잡기·VWAP 추격매수를 차단해 진입 품질 향상. fetch는 maxPerCycle로 통제.
   intradayConfirm: {
     enabled: true,
-    interval: "5m",        // 5분봉 (1m은 노이즈↑)
-    momMin: -1.5,          // 최근 3봉(15분) 수익률 ≤ -1.5%면 진입 차단
+    // [V33.222] interval 은 비워 두면 기준봉(SCALP_BAR_MIN)에서 파생된다 — 두 곳에 적지 않는다.
+    //   모멘텀 창 길이는 SCALP_MOM_MIN(모듈 상수)이 정한다 — 저수준 fetch 함수가 cfg 를 못 받으므로
+    //   여기에 두면 화면에서 바꿔도 아무 일이 없는 손잡이가 된다(죽은설정 검사가 그걸 잡는다).
+    momMin: -1.5,          // 최근 SCALP_MOM_MIN 분 수익률 ≤ -1.5%면 진입 차단
     vwapMaxPct: 3.5,       // 가격이 VWAP보다 +3.5% 초과면 추격으로 보고 차단
     vwapBoostPct: 0.5,     // 가격이 VWAP ±0.5% 이내: 최적 진입대 → confidence boost
     momBoostMin: 0.8,      // recentMom ≥ 0.8%: 분봉 상승추세 확인 → 진입 강화
@@ -8315,6 +8317,27 @@ async function fetchIntraday(symbol) {
   return { symbol: symbol, price: price, prevClose: prevClose, closes: closes };
 }
 
+/* ══ [V33.222] ★단타 기준봉을 1분봉으로 — 상수를 한 곳에서 파생시킨다★ ══════════
+   종전엔 '5' 가 코드 곳곳에 흩어져 있었다: 네이버 엔드포인트(minute5), 야후 기본 interval,
+   라벨 지평(horizonBars 12 = 12×5분), 세션 봉 수(78 = 6.5시간×12), 모멘텀 창(3봉=15분),
+   업로드 메타(barMin: 5, horizonMin = horizonBars×5).
+   그 중 하나만 바꾸면 나머지가 조용히 어긋난다 — 지평이 60분인 줄 알았는데 12분이 되거나,
+   sessFrac 이 1.2 상한에 붙어 '장중 경과' 가 늘 최대값이 되는 식이다.
+   → 봉 길이를 ★한 상수★ 로 두고 나머지를 전부 그것에서 계산한다. 바꾸려면 여기 한 줄만 고친다.
+
+   ★1분봉으로 가는 대가★ 도 적어 둔다(공짜가 아니다):
+     · 잡음이 커진다 — 같은 창(예: 20봉)이 100분에서 20분으로 줄어 신호 대 잡음이 나빠진다.
+       그래서 창을 ★분 단위로★ 정의하고 봉 수는 거기서 파생시킨다(아래 _barsFor).
+     · 표본 의미가 달라진다 → STIN_FEATVER 를 올려 옛 표본과 섞이지 않게 한다.
+     · 세션당 봉이 5배라 fetch 응답이 커진다(요청 수는 그대로 1회/종목). */
+const SCALP_BAR_MIN = 1;                       // 단타 기준봉(분). 5 로 되돌리면 전부 따라온다.
+const SCALP_SESSION_MIN = 390;                 // 정규장 길이(분) — 미국 6.5시간 기준
+const SCALP_MOM_MIN = 15;                      // 최근 모멘텀 창(분)
+const SCALP_VWAPSLOPE_MIN = 30;                // VWAP 기울기 창(분)
+function _barsFor(minutes) {                   // '분' 을 봉 수로. 최소 1봉은 보장한다.
+  return Math.max(1, Math.round(_num(minutes, 0) / SCALP_BAR_MIN));
+}
+
 // ═══════════════════════════════════════════════════════════════════════
 // [분봉] 진입 타이밍 확인용 분봉(intraday minute candle) 조회
 // ───────────────────────────────────────────────────────────────────────
@@ -8324,17 +8347,30 @@ async function fetchIntraday(symbol) {
 async function fetchMinuteBars(symbol, opts) {
   // [V58] KR 분봉 — 네이버 fchart sise.nhn (XML, timeframe=minute)
   //   포맷: <item data="날짜시간|시가|고가|저가|종가|거래량"/>
-  //   count=80: 5분봉 기준 장중 400분(6.5시간) 이상 — 당일 전체 커버
+  //   [V33.222] 봉 길이는 SCALP_BAR_MIN 이 정한다 — 아래 엔드포인트 선택이 그것을 따른다.
   if (symbol.endsWith(".KS") || symbol.endsWith(".KQ")) {
     // [핵심FIX] 구 m.stock.naver.com/.../candle/minute?timeframe=5 가 404로 폐기됨 → KR 분봉이 0개라
     //   KR 스캘프가 전혀 작동 못 했음(거래빈도 저하 주원인). api.stock.naver.com 네이티브 5분봉으로 교체.
     //   필드: localDateTime, currentPrice(종가), openPrice/highPrice/lowPrice, accumulatedTradingVolume.
     const code = symbol.split(".")[0];
+    /* [V33.222] 봉 길이에 맞는 엔드포인트를 고른다. 네이버는 minute(1분)·minute5 를 따로 낸다.
+       ★1분봉 경로가 막혀 있으면 5분봉으로 떨어진다★ — 여기서 예외를 던지면 KR 단타가 통째로
+       멈추는데, 그건 '봉이 조금 굵다' 보다 훨씬 나쁜 결과다. 어느 쪽을 썼는지는 반환값에 남긴다. */
+    const _ep = SCALP_BAR_MIN <= 1 ? "minute" : "minute" + SCALP_BAR_MIN;
     __fetchBudget.used++;
-    const r = await fetch(
-      "https://api.stock.naver.com/chart/domestic/item/" + code + "/minute5",
+    let r = await fetch(
+      "https://api.stock.naver.com/chart/domestic/item/" + code + "/" + _ep,
       { headers: { "User-Agent": "Mozilla/5.0", "Referer": "https://m.stock.naver.com/" } }
     );
+    let _usedEp = _ep;
+    if (!r.ok && _ep !== "minute5") {
+      __fetchBudget.used++;
+      r = await fetch(
+        "https://api.stock.naver.com/chart/domestic/item/" + code + "/minute5",
+        { headers: { "User-Agent": "Mozilla/5.0", "Referer": "https://m.stock.naver.com/" } }
+      );
+      _usedEp = "minute5";
+    }
     if (!r.ok) throw new Error("naver candle/minute " + r.status);
     let rows;
     try { rows = await r.json(); } catch(e) { throw new Error("naver candle/minute parse"); }
@@ -8374,24 +8410,25 @@ async function fetchMinuteBars(symbol, opts) {
     const vwap = vv > 0 ? pv / vv : null;
     let vwapSlope = null;
     {
-      const lookV = Math.min(6, vwapSeries.length - 1);
+      // [V33.222] 창을 ★분★ 으로 잡는다. 종전 상수 6봉은 5분봉 전제(30분)라 1분봉이면 6분이 된다.
+      const lookV = Math.min(_barsFor(SCALP_VWAPSLOPE_MIN), vwapSeries.length - 1);
       const vNow = vwapSeries[vwapSeries.length - 1];
       const vPast = lookV > 0 ? vwapSeries[vwapSeries.length - 1 - lookV] : null;
       if (vNow != null && vPast != null && vPast > 0) vwapSlope = ((vNow - vPast) / vPast) * 100 / lookV;
     }
-    const n = Math.min(3, closes.length - 1);
+    const n = Math.min(_barsFor(SCALP_MOM_MIN), closes.length - 1);
     const recentMom = n > 0
       ? ((closes[closes.length - 1] - closes[closes.length - 1 - n]) / closes[closes.length - 1 - n]) * 100
       : 0;
     return {
-      symbol: symbol, interval: "5m", price: price, vwap: vwap, vwapSlope: vwapSlope,
+      symbol: symbol, interval: SCALP_BAR_MIN + "m", price: price, vwap: vwap, vwapSlope: vwapSlope,
       recentMom: recentMom, dayHigh: Math.max.apply(null, highs), dayLow: Math.min.apply(null, lows),
       closes: closes, highs: highs, lows: lows, volumes: volumes, times: times, opens: opens
     };
   }
 
   // US 종목 — 기존 Yahoo v8 chart 분봉
-  const interval = (opts && opts.interval) || "5m";
+  const interval = (opts && opts.interval) || (SCALP_BAR_MIN + "m");   // [V33.222] 기준봉에서 파생
   const range = (opts && opts.range) || "1d";
   const j = await yahooFetch("https://query1.finance.yahoo.com/v8/finance/chart/" +
     encodeURIComponent(symbol) + "?interval=" + interval + "&range=" + range);
@@ -8448,13 +8485,13 @@ async function fetchMinuteBars(symbol, opts) {
   const vwap = vv > 0 ? pv / vv : null;
   let vwapSlope = null;
   {
-    const lookV = Math.min(6, vwapSeries.length - 1);
+    const lookV = Math.min(_barsFor(SCALP_VWAPSLOPE_MIN), vwapSeries.length - 1);
     const vNow = vwapSeries[vwapSeries.length - 1];
     const vPast = lookV > 0 ? vwapSeries[vwapSeries.length - 1 - lookV] : null;
     if (vNow != null && vPast != null && vPast > 0) vwapSlope = ((vNow - vPast) / vPast) * 100 / lookV;
   }
-  // 최근 모멘텀 — 마지막 N봉(기본 3봉=15분) 수익률
-  const n = Math.min(3, closes.length - 1);
+  // 최근 모멘텀 — [V33.222] 15분 창(봉 수는 기준봉에서 파생). 종전 상수 3봉은 5분봉 전제였다.
+  const n = Math.min(_barsFor(SCALP_MOM_MIN), closes.length - 1);
   const recentMom = n > 0
     ? ((closes[closes.length - 1] - closes[closes.length - 1 - n]) / closes[closes.length - 1 - n]) * 100
     : 0;
@@ -17378,7 +17415,7 @@ async function runTradingCycle(env) {
                 //   지표(RSI·MACD·볼린저·ADX)는 연속 시계열만 있으면 되므로 전일 봉이 붙는 순간
                 //   개장 첫 봉부터 산출이 가능해진다. 단, 규칙엔진이 쓰는 세션값(VWAP·dayHigh/Low)은
                 //   오늘 봉 기준이어야 하므로 fetchMinuteBars 가 그 필드들을 오늘분으로 유지한다.
-                const _scalpMb = await _enrichRun("scalp", function () { return fetchMinuteBars(symbol, { interval: "5m", range: "2d" }); });   // [V33.172] 지갑 결제
+                const _scalpMb = await _enrichRun("scalp", function () { return fetchMinuteBars(symbol, { interval: SCALP_BAR_MIN + "m", range: "2d" }); });   // [V33.172] 지갑 결제
                 // [V33.40] ★장중 단타 학습표본 관측★ 이미 받아온 분봉을 그대로 재사용하므로 추가
                 //   fetch 가 0이다. 피처는 라이브 판정과 같은 mlBuildFeatures 로 만들어 학습/추론
                 //   정합을 유지한다. 저장은 전량 R2(대기 버퍼도 R2) — D1 은 건드리지 않는다.
@@ -18727,7 +18764,7 @@ async function runTradingCycle(env) {
               if (strategy !== "scalp" && _ic && _ic.enabled !== false && minuteFetchUsed < (_ic.maxPerCycle || 60) && fetchBudgetLeft() > 5) {
                 try {
                   minuteFetchUsed++;
-                  const _mb = await _phaseRun("intra", function () { return fetchMinuteBars(symbol, { interval: _ic.interval || "5m" }); });   // [V33.172] 계측만 — 거래 확정 경로는 막지 않는다
+                  const _mb = await _phaseRun("intra", function () { return fetchMinuteBars(symbol, { interval: _ic.interval || (SCALP_BAR_MIN + "m") }); });   // [V33.172] 계측만 — 거래 확정 경로는 막지 않는다
                   const _conf = confirmIntradayEntry(_mb, price, _ic);
                   if (!_conf.ok) {
                     incBlock(_conf.reason.split(" ")[0] + "[" + strategy + "]");
@@ -19911,7 +19948,7 @@ async function handleRequest(request, env, ctx) {
                      minConfluence: _num(_sc.minConfluence, 3),
                      convOK: _st ? (_st.convMaxDiff == null || _st.convMaxDiff <= 0.03) : null,
                      trainedAt: _st ? _st.trainedAt : null,
-                     ifeatVer: STIN_FEATVER, ifeatN: STIN_IFEAT_N, horizonMin: STIN.horizonBars * 5 };
+                     ifeatVer: STIN_FEATVER, ifeatN: STIN_IFEAT_N, horizonMin: STIN.horizonMin };
           // R2 대기버퍼 + 오늘 저장분 집계 — D1 은 전혀 건드리지 않는다.
           try {
             const _R2 = _bigR2();
@@ -20994,7 +21031,7 @@ async function handleRequest(request, env, ctx) {
         // [V33.46] 장중 미시구조 피처 스키마 — 트레이너는 x 뒤에 ix 를 이어붙여 학습하고,
         //   업로드 시 ifeatVer 를 되돌려줘야 서버가 차원을 검증할 수 있다.
         ifeatVer: STIN_FEATVER, ifeatN: STIN_IFEAT_N, ifeatNames: STIN_IFEAT_NAMES,
-        horizonBars: STIN.horizonBars, barMin: 5, total: out.length,
+        horizonBars: STIN.horizonBars, barMin: SCALP_BAR_MIN, total: out.length,
         offset: _off, hasMore: _hasMore, pageSize: _pgSize,   // [V33.98] 트레이너 페이징
         liveEnabled: !!_sc.enabled, config: _mlExportConfig(), samples: out }, { headers: cors });
     }
@@ -28988,7 +29025,11 @@ async function mlScalpDecide(DB, featVec, opts) {
 //   D1 은 전혀 건드리지 않는다(대기 버퍼도 R2 오브젝트 하나를 read-modify-write).
 const STIN = {
   pendKey: "st/intraday/pending.json",
-  horizonBars: 12,        // 5분봉 12개 = 60분 뒤 실현수익으로 라벨
+  /* [V33.222] 지평은 ★분★ 으로 못 박고 봉 수는 거기서 계산한다.
+     종전 `horizonBars: 12` 는 5분봉을 전제로 한 숫자라, 봉 길이를 바꾸면 지평이 조용히 달라진다
+     (1분봉이면 12분 지평이 된다 — 라벨의 뜻이 바뀌는데 아무 데도 안 적힌다). */
+  horizonMin: 60,                        // 라벨 지평(분) — 관측 60분 뒤 실현수익
+  get horizonBars() { return _barsFor(this.horizonMin); },
   minGapMin: 25,          // 같은 종목을 이 간격보다 자주 관측하지 않는다(중복 표본 억제)
   tpPct: 1.2, stopPct: 1.2, // 장중 배리어(일봉 3%보다 타이트 — 60분 지평에 맞춤)
   // [V33.64] ★400 은 라벨 지연과 맞지 않는 값이었다★
@@ -29029,7 +29070,10 @@ function _stinDay() { const d = new Date(Date.now() + 9 * 3600000); return d.toI
 //     일봉 RSI 는 며칠의 과열을, 분봉 RSI 는 몇십 분의 과열을 말한다 — 단타에 쓸 수 있는 건 후자다.
 const STIN_TA_N = 20;   // [V33.70] 14 → 20 (상위 타임프레임 6종 추가)
 const STIN_IFEAT_N = 44;   // 미시구조 24 + 분봉 기술 20                                  // 미시구조 24 + 분봉 기술 14
-const STIN_FEATVER = 4;                                   // 장중 피처 스키마 버전
+/* [V33.222] 4 → 5. 차원은 그대로지만 ★모든 피처의 뜻이 바뀌었다★ — 기준봉이 5분에서 1분으로
+   내려가면서 '최근 n봉' 창이 전부 1/5 시간으로 줄었다. 옛 표본과 섞으면 다른 시간축의 값을
+   같은 열에 넣는 것이 된다(조회가 featver 로 걸리므로 DELETE 불필요 — 자연 소멸). */
+const STIN_FEATVER = 5;                                   // 장중 피처 스키마 버전
 const STIN_IFEAT_NAMES = ["i_r5m", "i_r15m", "i_r30m", "i_r60m", "i_vwapDev", "i_relVol",
                           "i_rangePos", "i_vol5m", "i_gap", "i_sessFrac", "i_upStreak", "i_volTrend",
                           "i_ofi", "i_vpin", "i_kyleLam", "i_amihud", "i_rollSpr", "i_jumpFrac",
@@ -29219,7 +29263,8 @@ function stinIntradayFeat(mb, price, prevClose) {
     // 9) 시가 갭 — 오버나이트 이벤트의 잔존 영향
     const gapPct = (prevClose > 0 && c[0] > 0) ? rp(c[0], prevClose) : 0;
     // 10) 장중 경과 비율 — 개장 직후와 마감 직전은 성격이 완전히 다르다(단타의 필수 조건변수)
-    const sessFrac = _clamp(_sessN / 78, 0, 1.2);   // [V33.70] 오늘 세션 봉 수 기준(연속배열 아님)
+    // [V33.222] 분모를 기준봉에서 파생한다 — 78 은 5분봉 전제(6.5시간×12)라 1분봉이면 늘 상한에 붙는다.
+    const sessFrac = _clamp(_sessN / _barsFor(SCALP_SESSION_MIN), 0, 1.2);
     // 11) 연속 상승봉 — 모멘텀 지속성
     let streak = 0;
     for (let i = n - 1; i > 0 && streak < 8; i--) { if (c[i] > c[i - 1]) streak++; else break; }
@@ -29401,7 +29446,10 @@ function stinObserve(pend, symbol, market, feat, price, ifeat) {
 //     상단·하단 어느 것도 안 닿으면 수직배리어(시간만료) → 종료 수익률 부호.
 function stinLabel(pend, priceOf) {
   if (!pend) return 0;
-  const now = Date.now(), horizonMs = STIN.horizonBars * 5 * 60000;
+  /* [V33.222] ★여기가 5분봉을 전제로 ms 를 만들고 있었다.★ horizonBars × 5분 이라는 식은
+     봉이 1분이 되는 순간 지평을 60분이 아니라 ★5시간★ 으로 계산한다 — 라벨이 전혀 다른
+     시점의 수익으로 붙는데 예외도 안 난다. 지평은 분으로 적혀 있으니 그걸 그대로 쓴다. */
+  const now = Date.now(), horizonMs = STIN.horizonMin * 60000;
   const keep = [];
   let labeled = 0;
   for (const it of pend.items) {
@@ -29503,7 +29551,11 @@ async function stinBackfill(DB, opts) {
     let wm = {};
     try { const w = await getState(DB, "stin_bf_wm", null); if (w && typeof w === "object" && w.v) wm = w.v; } catch (e) {}
     // [V33.106] 검증된 range 를 기억한다 — 매 회차 탐색하면 그게 곧 헛 fetch 다.
-    let _bfRange = "60d", _rangeProbed = false, _rangeDemoted = false;
+    /* [V33.222] ★1분봉은 과거 범위가 짧다.★ 야후는 interval=1m 을 대략 최근 7일까지만 준다
+       (5분봉은 60일). 그대로 60d 를 요청하면 응답이 비거나 오류가 나서 소급생성이 통째로 멈춘다.
+       봉이 5배 촘촘하므로 7일치 1분봉(≈2,730봉)이 30일치 5분봉(≈2,340봉)보다 오히려 많다 —
+       기간은 줄지만 표본 수는 손해가 아니다. 그 사실을 코드가 알고 범위를 고른다. */
+    let _bfRange = SCALP_BAR_MIN <= 1 ? "7d" : "60d", _rangeProbed = false, _rangeDemoted = false;
     try {
       const _rs = await getState(DB, "stin_bf_range", null);
       if (_rs && _rs.v) { _bfRange = String(_rs.v); _rangeProbed = true; }
@@ -29546,12 +29598,12 @@ async function stinBackfill(DB, opts) {
       //   다만 야후는 interval×range 조합에 까다로워 60d 가 거부될 수 있으므로,
       //   첫 성공/실패를 상태에 기록해 그 다음부터는 검증된 range 만 쓴다(헛 fetch 0).
       try {
-        mb = await fetchMinuteBars(sym, { interval: "5m", range: _bfRange });
+        mb = await fetchMinuteBars(sym, { interval: SCALP_BAR_MIN + "m", range: _bfRange });
       } catch (e) {
         if (_bfRange !== "1mo" && !_rangeProbed) {
           // 긴 range 가 거부됐다 — 종전 range 로 되돌리고 그 사실을 남긴다(다음 회차부터 바로 1mo).
           _bfRange = "1mo"; _rangeProbed = true; _rangeDemoted = true;
-          try { mb = await fetchMinuteBars(sym, { interval: "5m", range: "1mo" }); }
+          try { mb = await fetchMinuteBars(sym, { interval: SCALP_BAR_MIN + "m", range: SCALP_BAR_MIN <= 1 ? "5d" : "1mo" }); }
           catch (e2) { symFail++; continue; }
         } else { symFail++; continue; }
       }
@@ -42039,6 +42091,9 @@ export {
   // [V33.107] 상황별 반성기억(TradingAgents) 검증용
   _expRegBucket, _expRegIC, EXPREG,
   // [V33.113] 유의성 자유도 보정 검증용
+  // [V33.222] 단타 기준봉 — 게이트가 봉 길이에 맞춰 기대값을 계산할 수 있어야 한다.
+  //   (봉 수로 적힌 기대값은 봉 길이가 바뀌면 다른 시간을 뜻하게 된다)
+  SCALP_BAR_MIN, SCALP_SESSION_MIN, _barsFor,
   _tSf, _normInv, _tToZ, _icBlockStats,
   // [V33.114] 표본 고유도(de Prado) 검증용
   // [V33.115] _importedValN — 외부 트레이너 업로드의 유효표본수 선택기(tools/check-uniqueness.mjs)

@@ -146,7 +146,12 @@ const bad = (msg) => { fails++; console.log("  FAIL " + msg); };
 //   [V33.106] 같은 fetch 1회로 봉을 2배 받는 경로. 야후가 60d 를 실제로 주면 그대로 쓰고,
 //   1mo 분량만 오면 자동 강등한다 — 그 판정이 실제로 도는지 확인한다.
 {
-  const LONG = synthBars(3400, 777);          // 60일치 상당
+  /* [V33.222] ★고정 봉 수는 봉 길이가 바뀌면 다른 기간을 뜻한다.★
+     3400봉은 5분봉일 때 60일치지만 1분봉이면 9일치다 — 같은 숫자가 다른 시험이 된다.
+     기간(분)으로 잡고 봉 수를 파생시킨다. 아래 기대값들도 같은 방식으로 스케일한다. */
+  const _BM = M.SCALP_BAR_MIN || 5;
+  const LONG_MIN = 3400 * 5;                  // 종전 시험이 다루던 실제 기간(분)
+  const LONG = synthBars(Math.round(LONG_MIN / _BM), 777);
   const prevBars = BARS_REF.cur;
   BARS_REF.cur = LONG;
   const daily = JSON.stringify(synthDaily(300));
@@ -157,10 +162,15 @@ const bad = (msg) => { fails++; console.log("  FAIL " + msg); };
   const n = r2._objs.reduce(function (a, x) { return a + x.o.n; }, 0);
   console.log("  [긴range] " + res);
   const rs = JSON.parse(db._state.get("stin_bf_range") || "null");
-  if (rs && rs.v === "60d" && !rs.demoted) ok("긴 range 유지 (봉이 실제로 길면 강등 안 함)");
-  else bad("긴 range 가 강등됐다 — " + JSON.stringify(rs));
-  if (n > 400) ok("긴 range 수율 " + n + "건/2종목 (1mo 대비 약 2배)");
-  else bad("긴 range 인데 수율이 " + n + "건뿐");
+  /* 계약의 실질은 "봉이 실제로 길게 오면 강등하지 않는다" 이다. 시작 range 는 봉 길이가 정한다
+     — 1분봉은 야후가 약 7일까지만 주므로 60d 로 시작하는 것 자체가 틀린 요청이다. */
+  const _wantRange = _BM <= 1 ? "7d" : "60d";
+  if (rs && rs.v === _wantRange && !rs.demoted) ok("긴 range 유지 (" + _wantRange + " · 봉이 실제로 길면 강등 안 함)");
+  else bad("긴 range 가 강등됐다 — " + JSON.stringify(rs) + " (기대 " + _wantRange + ")");
+  // 수율도 봉 길이에 따라 달라진다: 표본 간격(minGapMin)이 분 단위라 1분봉이면 봉 25개마다 1건.
+  const _wantN = Math.round(400 * (5 / _BM) / (5 / _BM));   // 기간이 같으면 표본 수도 같아야 한다
+  if (n > _wantN) ok("긴 range 수율 " + n + "건/2종목 (봉 " + _BM + "분 기준)");
+  else bad("긴 range 인데 수율이 " + n + "건뿐 (기대 >" + _wantN + ")");
 
   // 마감시한 0 이면 한 종목도 안 돈다(벽시계 가드가 실제로 먹는지).
   const db2 = fakeDB([["daily:AAA", daily], ["daily:BBB", daily]]);
@@ -293,6 +303,44 @@ const bad = (msg) => { fails++; console.log("  FAIL " + msg); };
   // V33.110 의 사실 자체가 유지되는지 — 폴백이 되살아나면 위 문구 금지도 뜻이 없다.
   if (/D1 폴백 제거/.test(src)) ok("소스: 장중 표본의 D1 폴백 제거가 유지된다(문구 계약의 전제)");
   else bad("소스에서 'D1 폴백 제거' 근거가 사라졌다 — 폴백이 되살아났다면 위 문구 계약을 재검토할 것");
+}
+
+/* ── [V33.222] 기준봉 파생 계약 — '5' 가 다시 흩어지지 않게 ─────────────────────
+   봉 길이는 상수 하나(SCALP_BAR_MIN)여야 하고, 시간 개념(지평·세션·창)은 전부 ★분★ 으로
+   적힌 뒤 _barsFor 로 봉 수가 되어야 한다. 봉 수를 직접 상수로 쓰면 봉 길이를 바꾸는 순간
+   그 값이 다른 시간을 뜻하게 되는데, 아무 데도 안 적혀 조용히 어긋난다.
+   실제로 그랬다: horizonBars 12(=60분) · sessFrac 분모 78 · 모멘텀 3봉 · barMin 5. */
+{
+  const { readFileSync: _rf } = await import("node:fs");
+  // 주석은 지우고 ★코드만★ 본다 — 주석이 옛 상태를 설명하면(예: "종전엔 barMin: 5 였다")
+  //   그 문장이 잔재로 잡혀 거짓 실패가 난다.
+  const src2 = _rf(new URL("../src/index.js", import.meta.url), "utf8")
+    .replace(/\/\*[\s\S]*?\*\//g, " ").replace(/\/\/[^\n]*/g, " ");
+  const bm = M.SCALP_BAR_MIN;
+  if (!(typeof bm === "number" && bm > 0)) bad("SCALP_BAR_MIN 이 내보내지지 않는다 — 게이트가 봉 길이를 알 수 없다");
+  else ok("기준봉 상수 SCALP_BAR_MIN = " + bm + "분");
+
+  // 지평은 분으로 적히고 봉 수는 파생돼야 한다.
+  if (!/horizonMin:\s*60/.test(src2) || !/get horizonBars\(\)\s*\{\s*return _barsFor\(this\.horizonMin\)/.test(src2))
+    bad("STIN 라벨 지평이 분(horizonMin)에서 파생되지 않는다 — 봉을 바꾸면 지평이 조용히 달라진다");
+  else ok("라벨 지평이 분으로 적히고 봉 수는 파생된다(horizonBars = _barsFor(horizonMin))");
+  if (M.STIN && M.STIN.horizonBars !== Math.max(1, Math.round(60 / bm)))
+    bad("지평 봉 수가 기준봉과 안 맞는다: " + (M.STIN && M.STIN.horizonBars));
+  else ok("지평 " + (M.STIN ? M.STIN.horizonBars : "?") + "봉 = 60분 (기준봉 " + bm + "분)");
+
+  // 봉 수를 직접 박은 잔재가 없어야 한다.
+  const strays = [];
+  if (/_sessN \/ 78\b/.test(src2)) strays.push("세션 분모 78(5분봉 전제)");
+  if (/barMin:\s*5\b/.test(src2)) strays.push("barMin: 5");
+  if (/horizonBars \* 5\b/.test(src2)) strays.push("horizonBars * 5");
+  if (/interval:\s*"5m"/.test(src2)) strays.push('interval: "5m" 하드코딩');
+  if (/Math\.min\(3, closes\.length - 1\)/.test(src2)) strays.push("모멘텀 3봉 하드코딩");
+  if (strays.length) bad("기준봉과 무관하게 박힌 상수가 남아 있다: " + strays.join(" · "));
+  else ok("봉 수를 직접 박은 잔재가 없다(세션·barMin·지평·interval·모멘텀 전부 파생)");
+
+  // _barsFor 는 최소 1봉을 보장해야 한다 — 0봉이면 나눗셈·인덱싱이 무너진다.
+  if (M._barsFor && M._barsFor(0) >= 1 && M._barsFor(0.4) >= 1) ok("_barsFor 는 최소 1봉을 보장한다");
+  else bad("_barsFor 가 0 을 돌려줄 수 있다 — 0봉 창은 나눗셈·인덱싱을 무너뜨린다");
 }
 
 console.log(fails ? "\n단타 파이프라인 검증 실패 " + fails + "건" : "\n  ok   단타 표본 파이프라인 통과");
