@@ -8,7 +8,7 @@
      인데, 지금까지 화면에서 그걸 알 방법이 전혀 없었다(카카오톡 인앱 브라우저는 특히 강하게 캐시한다).
      서버가 내려주는 build 와 이 값을 비교해 다르면 배너로 알린다.
      ※ src/index.js 의 _BUILD_VER 와 항상 같아야 한다 — check-html-js 가 강제한다. -->
-<meta name="lux-build" content="V33.212">
+<meta name="lux-build" content="V33.214">
 <title>LUX-ENGINE V10</title>
 <!-- ══ [V33.156] 설치형 앱(PWA) — 폰·PC 에서 홈화면/독에 담아 앱처럼 연다 ══
      · manifest  : 이름·아이콘·standalone 표시(주소창 없이 앱처럼)
@@ -13867,20 +13867,30 @@ html[data-theme="light"] #page-nnviz .nlv-sec-h{ border-color:transparent; color
     // ── ② 헤드 경합표 — 무엇에 이겨서 지금 이것인가 ──────────────────────────
     if(d.heads && d.heads.length){
       var lin0 = null; for(var q=0;q<d.heads.length;q++) if(d.heads[q].head==='lin') lin0=d.heads[q];
-      var mxlb = 0; d.heads.forEach(function(h){ if((h.accLB||0)>mxlb) mxlb=h.accLB||0; });
-      html += '<div class="nnv-hd-box"><div class="nnv-hd-t">결합기 후보 — 같은 자(정확도의 Wilson 하한)로 잰다</div>';
+      // [V33.214] 자는 블록 IC 하한이다 — 합류를 판정하는 통계와 같은 것으로 고른다.
+      //   (0.5 문턱 정확도는 기저확률이 0.5 에서 멀면 후보를 원리상 구별하지 못한다.)
+      var mxlb = 0; d.heads.forEach(function(h){ if(Math.abs(h.icLB||0)>mxlb) mxlb=Math.abs(h.icLB||0); });
+      html += '<div class="nnv-hd-box"><div class="nnv-hd-t">결합기 후보 — 같은 자(블록 IC 의 1σ 하한)로 잰다</div>';
       html += d.heads.map(function(h){
-        var lb = h.accLB||0, w = mxlb>0? Math.max(3, lb/mxlb*100) : 3;
-        var gap = (lin0 && h.head!=='lin') ? (lb - (lin0.accLB||0)) : null;
+        var lb = h.icLB||0, w = mxlb>0? Math.max(3, Math.abs(lb)/mxlb*100) : 3;
+        var gap = (lin0 && h.head!=='lin') ? (lb - (lin0.icLB||0)) : null;
         return '<div class="nnv-hd-row'+(h.win?' win':'')+'">'
           +'<div class="nnv-hd-nm">'+(h.win?'<b>▶ </b>':'')+esc(NNV_HEADNAME[h.head]||h.head)+'</div>'
           +'<div class="nnv-hd-bar"><span style="width:'+w.toFixed(1)+'%"></span></div>'
-          +'<div class="nnv-hd-v">하한 <b>'+(lb*100).toFixed(1)+'%</b><span class="nnv-hd-acc">정확도 '+((h.acc||0)*100).toFixed(1)+'%</span>'
-          +(gap!=null? '<span class="nnv-hd-gap '+(gap>=0?'pos':'neg')+'">'+(gap>=0?'+':'')+(gap*100).toFixed(1)+'%p vs 선형</span>':'')
+          +'<div class="nnv-hd-v">IC하한 <b>'+lb.toFixed(3)+'</b>'
+          +'<span class="nnv-hd-acc">IC '+(h.ic!=null?h.ic.toFixed(3):'—')+' · t '+(h.icT!=null?h.icT.toFixed(1):'—')+'</span>'
+          +'<span class="nnv-hd-acc">정확도 '+((h.acc||0)*100).toFixed(1)+'%</span>'
+          +(gap!=null? '<span class="nnv-hd-gap '+(gap>=0?'pos':'neg')+'">'+(gap>=0?'+':'')+gap.toFixed(3)+' vs 선형</span>':'')
           +(h.nTrees? '<span class="nnv-hd-acc">트리 '+h.nTrees+'</span>':'')
           +'</div></div>';
       }).join('');
-      html += '<div class="nnv-hd-note">선형이 기본값이다. 갈아타려면 <b>하한에서 0.5%p</b> 앞서야 한다 — 우연히 앞선 정도로는 결합기를 바꾸지 않는다.'
+      if(d.headDegenerate){
+        html += '<div class="nnv-hd-note">⚠️ <b>후보 전원의 정확도가 같다</b>('+((d.valAcc||0)*100).toFixed(1)+'%). '
+          +'기저 승률이 0.5 에서 멀어 <b>넷 다 홀드아웃을 다수 클래스 하나로 찍고 있다</b> — '
+          +'0.5 문턱의 정확도로는 후보를 원리상 구별할 수 없다는 뜻이다. 그래서 순위를 재는 IC 로 고른다.</div>';
+      }
+      html += '<div class="nnv-hd-note">선형이 기본값이다. 갈아타려면 <b>IC 하한에서 0.005</b> 앞서야 한다 — 우연히 앞선 정도로는 결합기를 바꾸지 않는다. '
+        + 'IC 하한 = IC − 표준오차 = IC·(1 − 1/t) 이라, t 가 1 이하인 후보는 하한이 0 아래로 내려간다(증거 없음).'
         + (d.headK>1 && d.tMinBase!=null
             ? ' 후보 '+d.headK+'개 중 최고를 골랐으므로 유의성 문턱을 <b>'+d.tMinBase+' → '+d.tMinUsed+'</b> 로 올려서 판정했다(K개 최댓값은 단일검정과 다른 분포다).'
             : ' 선형이 그대로 이겨서 다중검정 벌점은 없다.')

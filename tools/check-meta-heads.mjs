@@ -108,9 +108,26 @@ const seg = (from, to, len) => {
     if (!(iPre > 0 && iSel > iPre))
       no("헤드: 유효표본수를 헤드 경합 뒤에 잰다 — 자가 후보를 따라 움직인다");
     else ok("유효표본수(하한의 n)는 헤드 경합 ★전★ 에 한 번만 잰다");
-    if (!/_wilsonLB\(acc, _nEffPre\)/.test(s2) || !/_wilsonLB\(a, _nEffPre\)/.test(s2))
-      no("헤드: 후보 비교에 같은 자(_nEffPre 기준 Wilson 하한)를 쓰지 않는다");
-    else ok("모든 후보를 같은 자로 잰다 — 정확도의 Wilson 하한");
+    /* [V33.214] 자가 바뀌었다 — 정확도 하한 → 블록 IC 하한. 실측이 그렇게 시켰다:
+       첫 STACK 학습에서 네 후보가 소수점까지 같은 정확도를 냈다(52.7% 하한 ×4).
+       기저 승률이 57.2% 라 0.5 문턱에서는 넷 다 다수 클래스를 찍은 것이다 —
+       정확도는 그 상황에서 후보를 원리상 구별하지 못한다. 같은 모델의 IC 는 0.108 이었다.
+       게다가 합류 판정 자체가 블록 IC·t 로 이뤄진다. 고르는 자와 판정하는 자가 달랐던 것이다.
+       계약의 실질은 그대로다: ★후보 전원을 같은 자로, 선택 전에 정해진 자로 잰다.★ */
+    if (!/const _mk = function \(tag, ps, extra\)/.test(s2))
+      no("헤드: 후보를 공통 생성기(_mk)로 만들지 않는다 — 후보마다 다른 자가 쓰일 수 있다");
+    else ok("후보 전원이 하나의 생성기(_mk)를 지난다 — 자가 후보마다 달라질 수 없다");
+    const _mkBody = (s2.match(/const _mk = function[\s\S]{0,400}?\n\s*\};/) || [""])[0];
+    if (!/_icLB\(ps\)/.test(_mkBody))
+      no("헤드: 후보의 자가 블록 IC 하한(_icLB)이 아니다 — 합류를 판정하는 통계와 다른 자로 고른다");
+    else ok("후보를 재는 자는 블록 IC 하한 — 합류 판정과 같은 통계다");
+    if (!/_wilsonLB\(a, _nEffPre\)/.test(_mkBody))
+      no("헤드: 정확도 하한을 함께 기록하지 않는다 — 붕괴 여부를 사후에 볼 수 없다");
+    else ok("정확도 하한도 함께 기록한다(진단용 — 선택에는 쓰지 않는다)");
+    // 붕괴 보고: 후보 정확도가 전부 같으면 그 사실을 말해야 한다.
+    if (!/_accSame/.test(s2) || !/_degenerate/.test(s2))
+      no("헤드: 후보 정확도가 전부 같을 때(다수 클래스 붕괴) 그 사실을 남기지 않는다");
+    else ok("후보 정확도가 전부 같으면 '다수 클래스 붕괴' 로 기록·보고한다");
     /* ★선택문 자체★ 를 본다. 마진 상수가 파일 어딘가에 있기만 하면 통과하게 두면,
        선택은 정확도로 하면서 상수만 남겨 두는 변경이 그대로 지나간다(실측으로 뚫렸다). */
     const _sel = s2.match(/for \(let c = 1; c < _cand\.length; c\+\+\) \{[\s\S]{0,300}?\n\s*\}/);
@@ -123,6 +140,21 @@ const seg = (from, to, len) => {
       no("헤드: 마진 값이 설정에서 오지 않는다");
     else ok("선형이 기본값이고, 갈아타려면 ★하한★ 에서 마진만큼 앞서야 한다(선택문 확인)");
   }
+}
+
+// ── ③-2 자(IC 하한)의 정의가 경합보다 먼저 있는가 ──────────────────────────
+{
+  const iLB = src.indexOf("const _icLB = function (ps)");
+  const iKeys = src.indexOf("let _blkKeys = null;");
+  const iSel = src.indexOf("if (opts.nonlinear) {");
+  if (iLB < 0) no("헤드: 블록 IC 하한 자(_icLB)가 없다");
+  else if (!(iKeys > 0 && iKeys < iLB && iLB < iSel))
+    no("헤드: 블록키·IC 자가 헤드 경합보다 뒤에 정의된다 — 자가 후보를 보고 정해질 수 있다");
+  else ok("블록키와 IC 자가 헤드 경합 ★전★ 에 정의된다");
+  const seg = src.slice(iLB, iLB + 700);
+  if (!/1 - 1 \/ t/.test(seg))
+    no("헤드: IC 하한이 표준오차를 빼지 않는다 — t 가 낮은 후보가 그대로 이길 수 있다");
+  else ok("IC 하한 = IC − se = IC·(1 − 1/t) — t 가 낮으면 하한이 0 이하로 내려간다");
 }
 
 // ── ④ 다중검정 보정 ───────────────────────────────────────────────────────
@@ -262,6 +294,42 @@ const seg = (from, to, len) => {
   }
   if (rt > 1e-12) no(`헤드: 채점 왕복이 학습 때 확률과 다르다(최대차 ${rt.toExponential(2)})`);
   else ok("채점 왕복 오차 0 — 학습한 함수와 배포되는 함수가 같다");
+
+  /* [V33.214] ★자를 바꾼 이유를 숫자로 남긴다.★
+     운영 실측에서 네 후보가 소수점까지 같은 정확도를 냈다. 원인은 기저확률이 0.5 에서 멀면
+     0.5 문턱의 정확도가 '전부 다수 클래스' 로 붕괴한다는 것이다. 그 상황을 재현해
+     ⑴ 정확도는 서로 다른 두 모형을 구별하지 못하고 ⑵ IC 는 구별한다는 것을 확인한다.
+     이게 깨지면 자를 되돌려도 된다는 뜻이므로, 계약의 근거로 남겨야 한다. */
+  {
+    let s2 = 31337 >>> 0;
+    const u2 = () => { s2 = (s2 * 1664525 + 1013904223) >>> 0; return s2 / 4294967296; };
+    const M = 1200, BASE = 0.572;              // 실측과 같은 기저 승률
+    const yy = [], good = [], bad2 = [];
+    for (let i = 0; i < M; i++) {
+      const y = u2() < BASE ? 1 : 0;
+      yy.push(y);
+      // 좋은 모형: 순위에 신호가 있지만 확률은 전부 0.5 위(다수 클래스 쪽)
+      good.push(0.52 + 0.22 * (y ? u2() * 0.6 + 0.4 : u2() * 0.6));
+      // 나쁜 모형: 순위에 신호가 없다. 역시 전부 0.5 위.
+      bad2.push(0.52 + 0.22 * u2());
+    }
+    const accOf2 = (ps) => { let c = 0; for (let i = 0; i < M; i++) if ((ps[i] >= 0.5 ? 1 : 0) === yy[i]) c++; return c / M; };
+    const icOf = (ps) => {
+      let mx = 0, my = 0;
+      for (let i = 0; i < M; i++) { mx += ps[i]; my += yy[i]; }
+      mx /= M; my /= M;
+      let sxx = 0, syy2 = 0, sxy = 0;
+      for (let i = 0; i < M; i++) { const dx = ps[i] - mx, dy = yy[i] - my; sxx += dx * dx; syy2 += dy * dy; sxy += dx * dy; }
+      return sxy / Math.sqrt(sxx * syy2);
+    };
+    const aG = accOf2(good), aB = accOf2(bad2), iG = icOf(good), iB = icOf(bad2);
+    if (Math.abs(aG - aB) > 1e-12)
+      no(`헤드: 붕괴 재현이 실패했다 — 정확도가 두 모형을 구별한다(${(aG * 100).toFixed(1)}% vs ${(aB * 100).toFixed(1)}%)`);
+    else ok(`기저 57.2% 에서 0.5 문턱 정확도는 좋은 모형과 무신호 모형을 구별하지 못한다(둘 다 ${(aG * 100).toFixed(1)}%) — 정확도를 자로 쓸 수 없는 이유`);
+    if (!(iG - iB > 0.15))
+      no(`헤드: 같은 상황에서 IC 도 구별하지 못한다(${iG.toFixed(3)} vs ${iB.toFixed(3)}) — 자 교체의 근거가 없다`);
+    else ok(`같은 상황에서 IC 는 구별한다 — 좋은 모형 ${iG.toFixed(3)} vs 무신호 ${iB.toFixed(3)} (차이 ${(iG - iB).toFixed(3)})`);
+  }
 }
 
 if (bad) { console.error(`\n메타 헤드 계약 위반 ${bad}건 — 배포 차단`); process.exit(1); }

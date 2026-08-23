@@ -2788,7 +2788,7 @@ async function applySignalTypeWeights(DB, cfg) {
 // ============================================================================
 // [V33.55] 빌드 버전 — SWR L2 캐시 키에 섞어 '배포 = 판단 캐시 자동 무효화'를 만든다.
 //   판정 로직을 고쳐도 옛 캐시가 최대 1시간 재배포되던 문제를 구조적으로 없앤다.
-const _BUILD_VER = "V33.212";
+const _BUILD_VER = "V33.214";
 
 // ═══ [V33.171] 평가 순서 계획 — ★승격과 순환을 교차해 굶주림을 구조적으로 없앤다★ ═══
 //   V33.50 의 형태트리거는 "급한 몇 종목을 앞으로 당긴다"는 의도였으나, 실제 운영로그에서는
@@ -25921,14 +25921,43 @@ async function _miniLogisticTrain(DB, opts) {
       let c = 0; for (let i = 0; i < ps.length; i++) if ((ps[i] >= 0.5 ? 1 : 0) === yv[i]) c++;
       return c / Math.max(1, ps.length);
     };
-    let pv = _linP, _headTag = "lin", _heads = null, _nlin = null;
+    /* [V33.214] ★블록키와 IC 자를 헤드 경합보다 먼저 만든다.★
+       종전엔 경합을 정확도로 하고 IC 는 그 뒤에 한 번만 쟀는데, 첫 실측에서 그 자가
+       ★후보를 구별하지 못한다★ 는 것이 드러났다(아래 _icLB 주석 참조). */
+    let _blkKeys = null;
+    if (opts.dayBlocks) {
+      _blkKeys = [];
+      for (let i = nvalStart; i < N; i++) _blkKeys.push(Math.floor(_num(T[i], 0) / 86400000));
+    }
+    /* 후보를 고르는 자 — ★위원회 합류를 실제로 판정하는 것과 같은 통계★ 로 잰다.
+       [V33.209] 는 정확도의 Wilson 하한으로 골랐다. 첫 STACK 실측에서 그게 무너졌다:
+           결합=lin (lin 52.7%하한 / gbdt 52.7% / mlp 52.7% / blend 52.7%)
+       서로 다른 네 모형이 소수점까지 같은 값을 낼 수는 없다 — 넷 다 홀드아웃 전체를
+       ★다수 클래스 하나로★ 찍고 있었던 것이다(기저 승률 57.2% = valAcc 57.2%).
+       0.5 문턱의 정확도는 기저확률이 0.5 에서 멀면 이렇게 붕괴한다. 그런데 같은 모델의
+       IC 는 0.108 이었다 — ★순위에는 신호가 있는데 자가 그걸 못 본 것이다.★
+       게다가 합류 판정은 애초에 블록 IC 와 t 로 한다. 고르는 자와 판정하는 자가 달랐다.
+       → 블록 IC 의 1σ 하한으로 고른다. se = |IC|/t 이므로 하한 = IC − se = IC·(1 − 1/t).
+         t ≤ 1 이면 하한이 0 이하로 내려간다 — "증거 없음" 이 그렇게 표현되는 게 맞다. */
+    const _icLB = function (ps) {
+      const st = _icBlockStats(ps, yv, 5, _blkKeys);
+      const b = (st.blockIC != null) ? _num(st.blockIC, 0) : _num(st.ic, 0);
+      const t = _num(st.t, 0);
+      const lb = (t > 1e-6) ? b * (1 - 1 / t) : (b > 0 ? 0 : b);
+      return { st: st, ic: b, t: t, lb: lb };
+    };
+    let pv = _linP, _headTag = "lin", _heads = null, _nlin = null, _degenerate = false;
     let acc = _accOf(_linP);
     // ══ [V33.209] ★비선형 헤드 경합 — 선형이 기본값이고, 이기려면 하한에서 이겨야 한다★ ══
     //   opts.nonlinear 를 켠 모델(STACK)만 여기 들어온다. 나머지는 위 로지스틱 그대로다.
     if (opts.nonlinear) {
       try {
         const _dl = Date.now() + _num(opts.nlBudgetMs, 12000);   // CPU 예산 — 넘으면 그 자리에서 멈춘다
-        const _cand = [{ tag: "lin", p: _linP, acc: acc, lb: _wilsonLB(acc, _nEffPre) }];
+        const _mk = function (tag, ps, extra) {
+          const e = _icLB(ps), a = _accOf(ps);
+          return Object.assign({ tag: tag, p: ps, acc: a, accLB: _wilsonLB(a, _nEffPre), ic: e.ic, t: e.t, lb: e.lb }, extra || {});
+        };
+        const _cand = [_mk("lin", _linP)];
         // ── ① GBDT(히스토그램 부스팅) ── 조기종료는 학습구간 뒤 15% 로만 한다(홀드아웃 불가침).
         let _gb = null;
         try {
@@ -25946,8 +25975,7 @@ async function _miniLogisticTrain(DB, opts) {
             if (_gb && _gb.trees && _gb.trees.length) {
               const ps = [];
               for (let i = nvalStart; i < N; i++) ps.push(_clamp(_sigmoid(_gbdtRaw(_gb, Z[i])), 0.001, 0.999));
-              const a = _accOf(ps);
-              _cand.push({ tag: "gbdt", p: ps, acc: a, lb: _wilsonLB(a, _nEffPre), nTrees: _gb.trees.length });
+              _cand.push(_mk("gbdt", ps, { nTrees: _gb.trees.length }));
             } else { _gb = null; }
           }
         } catch (e) { _gb = null; }
@@ -25958,8 +25986,7 @@ async function _miniLogisticTrain(DB, opts) {
           if (_mp) {
             const ps = [];
             for (let i = nvalStart; i < N; i++) ps.push(_mlpProb(_mp, Z[i]));
-            const a = _accOf(ps);
-            _cand.push({ tag: "mlp", p: ps, acc: a, lb: _wilsonLB(a, _nEffPre) });
+            _cand.push(_mk("mlp", ps));
           }
         } catch (e) { _mp = null; }
         // ── ③ 혼합(로짓 평균) ── 세 헤드가 서로 다른 실패를 한다면 평균이 둘 다보다 낫다.
@@ -25970,21 +25997,26 @@ async function _miniLogisticTrain(DB, opts) {
             let sum = 0; for (let c = 0; c < _cand.length; c++) sum += _logitD(_cand[c].p[k]);
             ps.push(_clamp(_sigmoid(sum / _cand.length), 0.001, 0.999));
           }
-          const a = _accOf(ps);
-          _cand.push({ tag: "blend", p: ps, acc: a, lb: _wilsonLB(a, _nEffPre) });
+          _cand.push(_mk("blend", ps));
         }
-        // ── 선택 ── 자는 하나뿐이다: 정확도의 Wilson 하한. 동률이면 단순한 쪽(선형)이 이긴다.
-        //   ③ 다중검정: 하한이 선형보다 nlMargin 이상 높아야 갈아탄다. 우연히 앞선 정도로는 안 바꾼다.
+        // ── 선택 ── 자는 하나뿐이다: 블록 IC 의 1σ 하한(합류를 판정하는 것과 같은 통계).
+        //   동률이면 단순한 쪽(선형)이 이긴다. ③ 다중검정: 하한이 선형보다 nlMargin 이상
+        //   높아야 갈아탄다 — 우연히 앞선 정도로는 결합기를 바꾸지 않는다.
         const _lin = _cand[0];
         const _mar = _num(opts.nlMargin, 0.005);
         let _win = _lin;
         for (let c = 1; c < _cand.length; c++) {
           if (_cand[c].lb > _win.lb + (_win === _lin ? _mar : 0)) _win = _cand[c];
         }
+        // 정확도가 후보 전원 동일하면 그건 넷 다 다수 클래스를 찍고 있다는 뜻이다 —
+        //   화면과 로그가 그 사실을 말해야 한다(같은 숫자 네 개를 나란히 보여주는 대신).
+        const _accSame = _cand.every(function (c) { return Math.abs(c.acc - _cand[0].acc) < 1e-9; });
         _heads = _cand.map(function (c) {
-          return { head: c.tag, acc: +c.acc.toFixed(4), accLB: +c.lb.toFixed(4),
+          return { head: c.tag, acc: +c.acc.toFixed(4), accLB: +c.accLB.toFixed(4),
+                   ic: +c.ic.toFixed(4), icT: +c.t.toFixed(2), icLB: +c.lb.toFixed(4),
                    nTrees: c.nTrees != null ? c.nTrees : undefined, win: c === _win };
         });
+        _degenerate = _accSame;
         if (_win !== _lin) {
           pv = _win.p; acc = _win.acc; _headTag = _win.tag;
           _nlin = { gbdt: (_headTag === "gbdt" || _headTag === "blend") ? _gb : null,
@@ -26004,11 +26036,6 @@ async function _miniLogisticTrain(DB, opts) {
     /* [V33.155] opts.dayBlocks 면 ★그날의 횡단면★ 단위로 블록을 나눈다(키 = 표본의 날짜).
        횡단면 알파(XALPHA)는 "같은 날 유니버스 안에서의 상대 순위" 가 신호라, 연속 슬라이스로
        나누면 블록 간 분산이 모델이 아니라 시장 국면을 재게 된다. 나머지 모델은 종전 그대로. */
-    let _blkKeys = null;
-    if (opts.dayBlocks) {
-      _blkKeys = [];
-      for (let i = nvalStart; i < N; i++) _blkKeys.push(Math.floor(_num(T[i], 0) / 86400000));
-    }
     const _st = _icBlockStats(pv, yv, 5, _blkKeys);
     const ic = _num(_st.ic, 0);
     // [V33.89] 기저확률(양성비율)을 함께 저장한다 — 이중헤드 사분면 경계를 절대값이 아니라
@@ -26073,7 +26100,8 @@ async function _miniLogisticTrain(DB, opts) {
       //   scoreFn 이 이 필드를 보고 갈라진다 — 모델 안에 무엇으로 채점할지가 같이 실려 있어야
       //   ★학습한 것과 다른 식으로 채점되는 사고★ 가 원천적으로 안 난다.
       head: _headTag,
-      heads: _heads,                              // 후보 전원의 정확도·하한(무엇에 지고 이겼는지의 증거)
+      heads: _heads,                              // 후보 전원의 IC·정확도·하한(무엇에 지고 이겼는지의 증거)
+      headDegenerate: _degenerate,                // 0.5 문턱에서 후보가 전부 다수 클래스로 붕괴했는가
       headK: _headK, tMinBase: _tMinBase,          // 다중검정 보정 전/후 문턱
       gbdt: _nlin && _nlin.gbdt
         ? { trees: _nlin.gbdt.trees, eta: _nlin.gbdt.eta, bias: _nlin.gbdt.bias, importance: _nlin.gbdt.importance || null }
@@ -26086,8 +26114,12 @@ async function _miniLogisticTrain(DB, opts) {
     return "[" + opts.tag + "] 학습완료 표본 " + N + " valAcc " + (acc * 100).toFixed(1) + "% IC " + ic.toFixed(4) +
            (_heads
              ? " 결합=" + _headTag + "(" + _heads.map(function (h) {
-                 return h.head + " " + (h.accLB * 100).toFixed(1) + "%하한";
+                 return h.head + " IC하한 " + h.icLB.toFixed(3) + "(t" + h.icT.toFixed(1) + ")";
                }).join(" / ") + (_headK > 1 ? " · 다중검정 t문턱 " + _tMinBase + "→" + _tMin : "") + ")"
+               + (_degenerate
+                   ? " ※후보 전원 정확도 동일(" + (acc * 100).toFixed(1) + "%) — 0.5 문턱에서는 넷 다 다수 클래스를 찍는다."
+                     + " 정확도로는 구별이 안 되므로 IC 하한으로 골랐다."
+                   : "")
              : "") +
            (_bIC != null ? " 블록IC " + _bIC.toFixed(4) + " t " + (_tv || 0).toFixed(2) : " (블록 부족)") +
            (_fwd && _fwd.ready ? " 전진IC " + _num(_fwd.ic, 0).toFixed(4) + "(n" + _fwd.n + ")"
@@ -26209,11 +26241,42 @@ function stackScore(model, featVec) {
 const ALTBF = { batchDates: 6, maxPerRun: 1200, minIdx: 30 };
 
 // ts(ms) → 종가배열 인덱스. 오늘이 마지막 봉이라는 가정 하에 거래일 수만큼 되돌린다.
+/* [V33.213] ★비율 근사(252/365)가 자기가 내건 무결성 규칙을 어기고 있었다.★
+
+   바로 위 주석의 규칙은 분명하다 — "봉 인덱스는 항상 '내림'으로 잡는다. 하루라도 미래 봉이
+   섞이면 학습이 오염되고 그건 백테스트 사기가 된다." 그리고 종전 코드는 ceil 을 쓰면서
+   "★올림★ = 과거로 더 감 = 안전" 이라고 적어 두었다. 그 주장이 틀렸다.
+
+   비율은 평일당 0.69 봉이라 ★짧은 구간에서 되돌림이 모자란다.★ 실측(400개 일수 전수):
+       캘린더  4일 → 현행 3봉 되돌림 / 실제 거래일 4일   ← 미래 봉 1개가 섞인다
+       캘린더  5일 → 현행 4봉        / 실제 5일          ← 1개
+       캘린더 10일 → 현행 7봉        / 실제 8일          ← 1개
+       400개 일수 중 ★31개★ 에서 되돌림 부족(= 룩어헤드) 발생.
+   ceil 은 소수점만 올릴 뿐, 비율 자체가 1 보다 작다는 사실을 보정하지 못한다.
+
+   백필은 FLOW·XALPHA 표본의 사실상 전부다(각 3만여 건). 거기에 미래 봉이 섞이면
+   그 두 모델의 측정된 엣지가 부풀고, 게이트도 같이 부푼다.
+
+   → ★실제 평일을 센다.★ 주말 구조가 정확히 반영되므로 되돌림 부족이 원리상 사라진다
+     (실측 0/400). 대신 공휴일만큼 ★더 과거로★ 간다(1년에 약 10~15봉) — 그건 정보 손실이지
+     오염이 아니다. 규칙이 요구하는 방향이 그쪽이다.
+
+   ※ 정확히 맞히려면 봉의 실제 날짜가 필요한데 daily: 캐시가 그걸 저장하지 않는다.
+     캐시 스키마에 times 를 넣으면 이 근사 자체가 없어진다 — 별도 작업으로 남긴다. */
 function _altBarIdx(len, ts, nowTs) {
-  const calDays = Math.max(0, (nowTs - ts) / 86400000);
-  const tradingBack = Math.ceil(calDays * (252 / 365));   // ★올림★ = 과거로 더 감 = 안전
-  const idx = len - 1 - tradingBack;
-  return idx;
+  const A = new Date(_num(ts, 0)), B = new Date(_num(nowTs, 0));
+  A.setUTCHours(0, 0, 0, 0); B.setUTCHours(0, 0, 0, 0);
+  const a = A.getTime(), b = B.getTime();
+  if (!(b > a)) return len - 1;
+  const days = Math.round((b - a) / 86400000);
+  // 주 단위로 세고 나머지 며칠만 훑는다 — 몇 년치라도 상수 시간에 가깝다.
+  const weeks = Math.floor(days / 7);
+  let back = weeks * 5;
+  for (let d = weeks * 7 + 1; d <= days; d++) {
+    const wd = new Date(a + d * 86400000).getUTCDay();
+    if (wd !== 0 && wd !== 6) back++;
+  }
+  return len - 1 - back;
 }
 function _sliceTo(arr, idx) { return Array.isArray(arr) ? arr.slice(0, idx + 1) : null; }
 

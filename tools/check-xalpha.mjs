@@ -28,11 +28,11 @@ function _num(v,d){var n=Number(v);return isFinite(n)?n:d;}
 function _clamp(v,a,b){return v<a?a:(v>b?b:v);}
 ${cblk("XALPHA")}
 const XA_NALPHA=10; const XA_DECAY_D=5;
-${grab("_xaDelta")}${grab("_xaCorr")}${grab("_xaTsRank")}${grab("_xaXsRank")}${grab("_rvAnnPct")}
+${grab("_xaDelta")}${grab("_xaCorr")}${grab("_xaTsRank")}${grab("_xaXsRank")}${grab("_rvAnnPct")}${grab("_altBarIdx")}
 ${grab("xalphaRawAlphas")}${grab("xalphaDecayAlphas")}${grab("xalphaBuildPanel")}${grab("xalphaBuildFeat")}
 ${grab("_tToZ")}${grab("_tSf")}${grab("_icBlockStats")}
 ({raw:xalphaRawAlphas,dec:xalphaDecayAlphas,panel:xalphaBuildPanel,feat:xalphaBuildFeat,
-  blk:_icBlockStats,XALPHA,XA_NALPHA,XA_DECAY_D});
+  blk:_icBlockStats,barIdx:_altBarIdx,XALPHA,XA_NALPHA,XA_DECAY_D});
 `).runInNewContext({ Math, Number, Array, isFinite, Map });
 
 let fails = 0;
@@ -203,6 +203,44 @@ const mkUni = (n, bars) => {
   chk(/STALL=\$\(\(STALL\+1\)\)/.test(wf) && /STALL.*-ge 5/.test(wf),
     "스윕 워크플로가 커서 정지를 5회차에 감지해 멈춘다",
     "스윕 워크플로에 커서 정지 가드가 없다 — 제자리 반복이 제한시간까지 간다");
+}
+
+// ── [V33.213] 소급생성 봉 인덱스 — ★미래 봉이 절대 섞이면 안 된다★ ────────────
+/*  이 저장소의 무결성 규칙은 명시돼 있다: "봉 인덱스는 항상 '내림'으로 잡는다.
+    하루라도 미래 봉이 섞이면 학습이 오염되고 그건 백테스트 사기가 된다."
+    그런데 종전 구현(ceil(캘린더일 × 252/365))은 ceil 을 근거로 안전하다고 적어 두고도
+    짧은 구간에서 되돌림이 모자랐다 — 비율이 1 보다 작다는 사실을 ceil 이 못 덮는다.
+    백필은 FLOW·XALPHA 표본의 사실상 전부(각 3만여 건)라, 여기서 새면 두 모델의
+    측정 엣지가 통째로 부푼다. 그래서 계약을 재현으로 확인한다. */
+{
+  const _D = 86400000;
+  const _wd = (a, b) => {
+    let n = 0; const A = new Date(a), B = new Date(b);
+    A.setUTCHours(0, 0, 0, 0); B.setUTCHours(0, 0, 0, 0);
+    for (let t = A.getTime() + _D; t <= B.getTime(); t += _D) { const d = new Date(t).getUTCDay(); if (d !== 0 && d !== 6) n++; }
+    return n;
+  };
+  const _L = 2000;
+  let _leak = 0, _mism = 0, _worst = null;
+  for (let base = 0; base < 7; base++) {
+    const now = Date.UTC(2026, 7, 17 + base);
+    for (let cal = 0; cal <= 1460; cal++) {
+      const ts = now - cal * _D;
+      const back = _L - 1 - M.barIdx(_L, ts, now);
+      const w = _wd(ts, now);
+      if (back !== w) _mism++;
+      // 실제 거래일 = 평일 − 공휴일(미국 연 10일 가정). 그보다 적게 되돌리면 미래 봉이 섞인다.
+      const tds = Math.max(0, Math.round(w - (cal / 365.25) * 10));
+      if (back < tds) { _leak++; if (!_worst) _worst = `캘린더 ${cal}일: 되돌림 ${back} < 거래일 ${tds}`; }
+    }
+  }
+  chk(_mism === 0, "소급 봉 인덱스가 실제 평일 수와 정확히 일치한다(주말 구조 반영)",
+      `소급 봉 인덱스가 평일 수와 어긋난다 ${_mism}건 — 비율 근사가 남아 있다`);
+  chk(_leak === 0, "소급 봉 인덱스: 룩어헤드 0 / 10,227 조합 — 미래 봉이 섞이지 않는다",
+      `소급 봉 인덱스가 되돌림 부족(룩어헤드)을 낸다 ${_leak}건 — ${_worst}`);
+  chk(M.barIdx(_L, Date.UTC(2027, 0, 1), Date.UTC(2026, 0, 1)) === _L - 1 && M.barIdx(_L, 0, 0) === _L - 1,
+      "소급 봉 인덱스 경계(동일·미래 시각)가 마지막 봉으로 안전 처리된다",
+      "소급 봉 인덱스가 경계에서 배열 범위를 벗어난다");
 }
 
 console.log(fails ? "\nXALPHA 계약 위반 " + fails + "건 — 배포 차단" : "\n  ok   XALPHA 계약 통과");
