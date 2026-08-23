@@ -2788,7 +2788,7 @@ async function applySignalTypeWeights(DB, cfg) {
 // ============================================================================
 // [V33.55] 빌드 버전 — SWR L2 캐시 키에 섞어 '배포 = 판단 캐시 자동 무효화'를 만든다.
 //   판정 로직을 고쳐도 옛 캐시가 최대 1시간 재배포되던 문제를 구조적으로 없앤다.
-const _BUILD_VER = "V33.227";
+const _BUILD_VER = "V33.228";
 
 // ═══ [V33.171] 평가 순서 계획 — ★승격과 순환을 교차해 굶주림을 구조적으로 없앤다★ ═══
 //   V33.50 의 형태트리거는 "급한 몇 종목을 앞으로 당긴다"는 의도였으나, 실제 운영로그에서는
@@ -29617,10 +29617,20 @@ async function stinBackfill(DB, opts) {
        (5분봉은 60일). 그대로 60d 를 요청하면 응답이 비거나 오류가 나서 소급생성이 통째로 멈춘다.
        봉이 5배 촘촘하므로 7일치 1분봉(≈2,730봉)이 30일치 5분봉(≈2,340봉)보다 오히려 많다 —
        기간은 줄지만 표본 수는 손해가 아니다. 그 사실을 코드가 알고 범위를 고른다. */
-    let _bfRange = SCALP_BAR_MIN <= 1 ? "7d" : "60d", _rangeProbed = false, _rangeDemoted = false;
+    /* [V33.228] ★기억한 range 는 '그때의 봉 길이' 에서만 검증된 값이다.★
+       V33.222 에서 5분봉→1분봉으로 바꿨는데, 상태에 남아 있던 "60d"(5분봉 시절에 통과한 값)를
+       그대로 되살려 interval=1m&range=60d 를 요청했다. 야후는 그 조합을 주지 않는다 —
+       120종목 전부 실패(성공 0 실패 120)로 소급생성이 통째로 멈춰 있었다.
+       봉 길이가 바뀌면 기억은 무효다. 현재 봉에서 성립하는 range 만 되살린다. */
+    const _bfRangeOk = SCALP_BAR_MIN <= 1 ? ["7d", "5d", "1d"] : ["60d", "1mo", "5d", "1d"];
+    const _bfRangeTop = _bfRangeOk[0];              // 이 봉 길이에서 가장 긴(=표본이 많은) 범위
+    const _bfRangeAlt = _bfRangeOk[1];              // 거부당했을 때 물러설 범위
+    let _bfRange = _bfRangeTop, _rangeProbed = false, _rangeDemoted = false;
     try {
       const _rs = await getState(DB, "stin_bf_range", null);
-      if (_rs && _rs.v) { _bfRange = String(_rs.v); _rangeProbed = true; }
+      const _rv = (_rs && _rs.v != null) ? String(_rs.v) : "";
+      const _rb = (_rs && _rs.bar != null) ? _num(_rs.bar, 0) : SCALP_BAR_MIN;   // 구 레코드엔 bar 가 없다
+      if (_rv && _rb === SCALP_BAR_MIN && _bfRangeOk.indexOf(_rv) >= 0) { _bfRange = _rv; _rangeProbed = true; }
     } catch (e) {}
     // [V33.106] 벽시계 마감시한 — 종목 수가 아니라 '실제로 쓴 시간' 으로 멈춘다.
     //   회선이 빠른 날엔 더 많이 돌고, 느린 날엔 알아서 접는다(사이클 폭주 방지).
@@ -29662,10 +29672,12 @@ async function stinBackfill(DB, opts) {
       try {
         mb = await fetchMinuteBars(sym, { interval: SCALP_BAR_MIN + "m", range: _bfRange });
       } catch (e) {
-        if (_bfRange !== "1mo" && !_rangeProbed) {
-          // 긴 range 가 거부됐다 — 종전 range 로 되돌리고 그 사실을 남긴다(다음 회차부터 바로 1mo).
-          _bfRange = "1mo"; _rangeProbed = true; _rangeDemoted = true;
-          try { mb = await fetchMinuteBars(sym, { interval: SCALP_BAR_MIN + "m", range: SCALP_BAR_MIN <= 1 ? "5d" : "1mo" }); }
+        if (_bfRange !== _bfRangeAlt && !_rangeProbed) {
+          /* 긴 range 가 거부됐다 — 한 단계 물러서고 그 사실을 남긴다(다음 회차부터 바로 그 값).
+             [V33.228] 종전엔 _bfRange 에 "1mo" 를 넣고 실제 요청은 다른 값으로 보냈다.
+             1분봉에서는 상태에 "1mo"(1분봉이 못 쓰는 값)가 굳어져 다음 회차가 또 전멸한다. */
+          _bfRange = _bfRangeAlt; _rangeProbed = true; _rangeDemoted = true;
+          try { mb = await fetchMinuteBars(sym, { interval: SCALP_BAR_MIN + "m", range: _bfRange }); }
           catch (e2) { symFail++; continue; }
         } else { symFail++; continue; }
       }
@@ -29673,7 +29685,10 @@ async function stinBackfill(DB, opts) {
         // 응답이 실제로 길어졌는지 확인 — 200 으로 오면서 1mo 분량만 주는 경우도 걸러낸다.
         const _n0 = (mb && ((mb.allCloses && mb.allCloses.length) || (mb.closes && mb.closes.length))) || 0;
         _rangeProbed = true;
-        if (_bfRange !== "1mo" && _n0 < 2200 && !/\.(KS|KQ)$/i.test(sym)) { _bfRange = "1mo"; _rangeDemoted = true; }
+        // [V33.228] 임계 2200 은 5분봉 60d(≈3,400봉) 전제였다. 봉 길이에서 기대 봉수를 만든다.
+        //   1분봉 7d ≈ 5거래일 × 390분 ≈ 1,950봉 → 그 65% 를 하한으로 본다.
+        const _expect = Math.round(_barsFor(SCALP_SESSION_MIN) * (_bfRangeTop === "60d" ? 43 : 5) * 0.65);
+        if (_bfRange !== _bfRangeAlt && _n0 < _expect && !/\.(KS|KQ)$/i.test(sym)) { _bfRange = _bfRangeAlt; _rangeDemoted = true; }
       }
       const c = mb && (mb.allCloses && mb.allCloses.length ? mb.allCloses : mb.closes);
       // [V33.104] 60+H(=72) → 40. 루프는 i=24 에서 시작해 i+H 까지 필요하므로 37봉이면
@@ -29772,7 +29787,7 @@ async function stinBackfill(DB, opts) {
       if (_flushed + made.length >= _num(cfg.maxSamples, 4000)) break;
     }
     // 검증된 range 를 남긴다 — 다음 회차부터 탐색 없이 바로 쓴다.
-    try { if (_rangeProbed) await setState(DB, "stin_bf_range", { v: _bfRange, demoted: !!_rangeDemoted, ts: Date.now() }); } catch (e) {}
+    try { if (_rangeProbed) await setState(DB, "stin_bf_range", { v: _bfRange, bar: SCALP_BAR_MIN, demoted: !!_rangeDemoted, ts: Date.now() }); } catch (e) {}
     _cov = "전체 " + all.length + "종목 중 " + off + "~" + ((off + _procN) % all.length) + " 구간(" + _procN + "종목)";
     try { await setState(DB, "stin_bf_offset", { v: (off + Math.max(1, _procN)) % all.length, ts: Date.now() }); } catch (e) {}
     // 워터마크 저장 — 유니버스에서 빠진 종목은 정리해 무한 증가를 막는다.
@@ -29803,7 +29818,7 @@ async function stinBackfill(DB, opts) {
     return "[ST-BACKFILL] +" + _total + "표본(" + _files + "파일) / " + _cov +
            " (성공 " + symOk + " 실패 " + symFail + " 짧음 " + skipShort + " 기수확 " + skipDup +
            ", range " + _bfRange + (_rangeDemoted ? "↓" : "") +
-           ", " + (Date.now() - _t0bf) + "ms) — 저장된 5분봉";
+           ", " + (Date.now() - _t0bf) + "ms) — 저장된 " + SCALP_BAR_MIN + "분봉";
   } catch (e) { return "[ST-BACKFILL] fail: " + (e && e.message); }
 }
 

@@ -9,6 +9,7 @@
 //   CI 게이트로 쓰기 위해 "표본 > 0" 과 "라이브/백필 피처 정합" 두 가지를 단언한다.
 
 import assert from "node:assert";
+import fs from "node:fs";
 
 // ── 합성 5분봉 생성: 22거래일 × 78봉 = 1,716봉 (야후 range=1mo 와 같은 규모) ──
 function synthBars(n, seed) {
@@ -38,9 +39,30 @@ const BARS = synthBars(1716, 12345);
 const BARS_REF = { cur: BARS };
 
 // ── 야후 chart 응답 스텁 ──
+/* [V33.228] 야후는 interval 마다 최대 range 가 다르다 — 1분봉은 약 7일까지만 준다.
+   종전 스텁은 어떤 조합이든 200 을 돌려줘서 "1분봉인데 60일을 요청한다" 는 실패를
+   재현할 수 없었다(프로덕션에서 120종목 전량 실패로 드러났다). 실제 제약을 스텁에 넣는다. */
+function _yahooMaxDays(intervalMin) {
+  if (intervalMin <= 1) return 7;
+  return 60;
+}
+function _rangeDays(r) {
+  const m = /^(\d+)(d|mo|y)$/.exec(String(r || ""));
+  if (!m) return 1;
+  const n = Number(m[1]);
+  return m[2] === "mo" ? n * 30 : (m[2] === "y" ? n * 365 : n);
+}
 globalThis.fetch = async function (url) {
   const u = String(url);
   if (u.indexOf("/v8/finance/chart/") >= 0) {
+    {
+      const mi = /[?&]interval=(\d+)m\b/.exec(u), mr = /[?&]range=([^&]+)/.exec(u);
+      const iv = mi ? Number(mi[1]) : 5;
+      if (mr && _rangeDays(mr[1]) > _yahooMaxDays(iv)) {
+        // 실제 야후와 같이 422 로 거절한다(yahooFetch 가 재시도 없이 예외로 올린다).
+        return { ok: false, status: 422, async json() { return {}; }, async text() { return "range too long"; } };
+      }
+    }
     const B = BARS_REF.cur;
     return {
       ok: true, status: 200,
@@ -341,6 +363,44 @@ const bad = (msg) => { fails++; console.log("  FAIL " + msg); };
   // _barsFor 는 최소 1봉을 보장해야 한다 — 0봉이면 나눗셈·인덱싱이 무너진다.
   if (M._barsFor && M._barsFor(0) >= 1 && M._barsFor(0.4) >= 1) ok("_barsFor 는 최소 1봉을 보장한다");
   else bad("_barsFor 가 0 을 돌려줄 수 있다 — 0봉 창은 나눗셈·인덱싱을 무너뜨린다");
+}
+
+// ══ 1-d) ★기억한 range 가 봉 길이 변경을 넘어 되살아나지 않는가★ ═══════════════
+//   [V33.228] V33.222 에서 5분봉→1분봉으로 바꿨는데, 상태에 남아 있던 "60d"(5분봉 시절
+//   검증값)를 그대로 되살려 interval=1m&range=60d 를 요청했다. 야후가 그 조합을 거절해
+//   ★120종목 전량 실패(성공 0 · 표본 0)★ 로 소급생성이 통째로 멈춰 있었다.
+//   회귀 재현: 옛 봉 길이의 range 를 상태에 심어 놓고도 표본이 나와야 한다.
+{
+  const _BM = M.SCALP_BAR_MIN || 5;
+  const daily = JSON.stringify(synthDaily(300));
+  const stale = _BM <= 1 ? "60d" : "7d";       // '지금 봉에서는 틀린' 옛 range
+  // (a) bar 필드가 없는 구 레코드 — 마이그레이션 이전에 쓰인 형태
+  // (b) bar 필드가 다른 봉 길이를 가리키는 레코드
+  for (const seed of [{ v: stale, ts: 1 }, { v: stale, bar: _BM === 5 ? 1 : 5, ts: 1 }]) {
+    const db = fakeDB([["daily:AAA", daily], ["daily:BBB", daily], ["stin_bf_range", JSON.stringify(seed)]]);
+    const r2 = { _n: 0, async put(k, b) { this._n += JSON.parse(b).n; } };
+    M._setR2ForTest(r2);
+    const res = await M.stinBackfill(db, { maxSyms: 2, maxSamples: 100000 });
+    const tag = seed.bar == null ? "bar 필드 없는 구 레코드" : "다른 봉(" + seed.bar + "분)에서 검증된 값";
+    if (r2._n > 0) ok("낡은 range 무시 — " + tag + " (" + stale + ") 를 심어도 +" + r2._n + "표본");
+    else bad("낡은 range 가 되살아나 전량 실패했다 — " + tag + ": " + res);
+    // 저장된 range 는 지금 봉에서 성립하는 값이어야 하고, 봉 길이가 함께 남아야 한다.
+    const rs = JSON.parse(db._state.get("stin_bf_range") || "null");
+    const okList = _BM <= 1 ? ["7d", "5d", "1d"] : ["60d", "1mo", "5d", "1d"];
+    if (rs && okList.indexOf(String(rs.v)) >= 0 && Number(rs.bar) === _BM)
+      ok("저장 range 가 지금 봉에서 유효하고 bar=" + rs.bar + " 가 함께 남는다 (" + rs.v + ")");
+    else bad("저장 range 가 지금 봉에 안 맞거나 bar 표기가 없다: " + JSON.stringify(rs));
+  }
+
+  // 강등 경로도 봉 길이에서 파생돼야 한다 — 1분봉에서 "1mo" 로 물러서면 또 전멸한다.
+  const src3 = fs.readFileSync(new URL("../src/index.js", import.meta.url), "utf8");
+  const bf = src3.slice(src3.indexOf("async function stinBackfill"), src3.indexOf("async function stinFlush"));
+  const hard = [];
+  if (/_bfRange\s*=\s*"1mo"/.test(bf)) hard.push('_bfRange = "1mo" 하드코딩');
+  if (/_bfRange\s*!==\s*"1mo"/.test(bf)) hard.push('_bfRange !== "1mo" 하드코딩');
+  if (/저장된 5분봉/.test(bf)) hard.push("로그 문구에 '5분봉' 고정");
+  if (hard.length) bad("소급생성 range 가 봉 길이와 무관하게 박혀 있다: " + hard.join(" · "));
+  else ok("소급생성 range·강등·로그가 전부 기준봉에서 파생된다");
 }
 
 console.log(fails ? "\n단타 파이프라인 검증 실패 " + fails + "건" : "\n  ok   단타 표본 파이프라인 통과");
