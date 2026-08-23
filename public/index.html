@@ -8,7 +8,7 @@
      인데, 지금까지 화면에서 그걸 알 방법이 전혀 없었다(카카오톡 인앱 브라우저는 특히 강하게 캐시한다).
      서버가 내려주는 build 와 이 값을 비교해 다르면 배너로 알린다.
      ※ src/index.js 의 _BUILD_VER 와 항상 같아야 한다 — check-html-js 가 강제한다. -->
-<meta name="lux-build" content="V33.215">
+<meta name="lux-build" content="V33.216">
 <title>LUX-ENGINE V10</title>
 <!-- ══ [V33.156] 설치형 앱(PWA) — 폰·PC 에서 홈화면/독에 담아 앱처럼 연다 ══
      · manifest  : 이름·아이콘·standalone 표시(주소창 없이 앱처럼)
@@ -13020,10 +13020,13 @@ html[data-theme="light"] #page-nnviz{
   width:6px; height:6px; border-radius:50%; flex:0 0 auto;
   background:var(--ap-hair); box-shadow:none; transition:background .2s;
 }
-#page-nnviz .nnv-tab-dot.on{ background:#4fd39a; box-shadow:0 0 0 2px rgba(79,211,154,.18); }
-#page-nnviz .nnv-tab-dot.prov{ background:#f0b429; box-shadow:0 0 0 2px rgba(240,180,41,.18); }
-#page-nnviz .nnv-tab-dot.off{ background:#7b8aa3; opacity:.5; }
-#page-nnviz .nnv-tab-dot.bad{ background:#f0919f; box-shadow:0 0 0 2px rgba(240,145,159,.16); }
+/* 상태 점 — 위원회 카드(.nlv-cm .cm-dot)와 ★같은 토큰★ 을 쓴다. 두 화면이 같은
+   색으로 같은 뜻을 말해야 '통합된 화면' 이다(색을 따로 정하면 곧 갈라진다). */
+#page-nnviz .nnv-tab-dot.on{ background:var(--ap-tint); opacity:1;
+  box-shadow:0 0 0 2px color-mix(in srgb, var(--ap-tint) 20%, transparent); }
+#page-nnviz .nnv-tab-dot.prov{ background:var(--ap-tint); opacity:.55; }
+#page-nnviz .nnv-tab-dot.off{ background:var(--ap-ink3); opacity:.4; }
+#page-nnviz .nnv-tab-dot.bad{ background:var(--amber,#fbbf24); opacity:.9; }
 #page-nnviz .nnv-tab{
   font:inherit; font-size:.735rem; font-weight:550; letter-spacing:-.003em;
   /* [V33.215] 그리드 칸 안에서 좌측 정렬 + 넘치면 말줄임. nowrap 은 유지하되 칸이 폭을 준다. */
@@ -13109,6 +13112,23 @@ html[data-theme="light"] #page-nnviz{
   display:grid; grid-template-columns:repeat(auto-fill,minmax(150px,1fr)); gap:.26rem;
   background:none; border:none; margin-top:.15rem;
 }
+/* [V33.216] 층 제목 — 전체 열을 차지해 역할 경계를 만든다.
+   구조 관측의 .nnv-nav-h 와 같은 문법이라 두 화면이 같은 언어로 읽힌다. */
+#page-nnviz .nlv-cm-lh{
+  grid-column:1/-1; font-size:.6rem; font-weight:700; letter-spacing:.08em;
+  text-transform:uppercase; color:var(--ap-ink3); opacity:.85;
+  padding:.5rem .1rem .12rem; border-top:1px solid var(--ap-hair); margin-top:.2rem;
+}
+#page-nnviz .nlv-cm-lh:first-child{ border-top:0; margin-top:0; padding-top:.05rem; }
+/* 투표하지 않는 층은 막대 대신 역할을 적는다 — 같은 자리에 다른 뜻의 막대를 두지 않는다.
+   색은 전부 토큰으로 — 하드코딩하면 라이트 테마용 CSS 를 또 적게 되고 두 벌은 드리프트한다. */
+#page-nnviz .nlv-cm .cm-role{
+  grid-area:bar; font-size:.55rem; letter-spacing:.06em; text-transform:uppercase;
+  color:var(--ap-ink3); opacity:.9; padding-top:.12rem;
+}
+#page-nnviz .nlv-cm.cm-meta{ border-color:color-mix(in srgb, var(--ap-tint) 34%, transparent); }
+#page-nnviz .nlv-cm.cm-meta .cm-role{ color:var(--ap-tint); opacity:.85; }
+#page-nnviz .nlv-cm.cm-shift{ border-color:color-mix(in srgb, var(--ap-ink2) 30%, transparent); }
 #page-nnviz .nlv-cm{
   display:grid;
   grid-template-columns:auto 1fr auto;
@@ -17120,19 +17140,34 @@ html:root .page > *{ flex-shrink:0; }
      (MIND·DNN·GBDT·XGB·LGB·Cat)뿐이었다. FLOW·XALPHA·MEMO(투표 위원), STACK(결합 대체),
      이중헤드(사분면 프라이어)는 ★화면에 존재하지 않았다★ — 잠정합류로 실제 투표하고 있는데도.
      역할이 서로 다르므로 한 줄로 뭉뚱그리지 않고 역할을 같이 적는다. */
-  var CMROSTER = [
-    ['mind',   'MIND',   '위원장'],
-    ['dnn',    'DNN',    '딥넷'],
-    ['gbdt',   'GBDT',   '트리'],
-    ['xgb',    'XGB',    '부스터'],
-    ['lgb',    'LGB',    '부스터'],
-    ['cat',    'CAT',    '부스터'],
-    ['flow',   'FLOW',   '수급'],
-    ['xalpha', 'XALPHA', '형식알파'],
-    ['memo',   'MEMO',   '기억'],
-    ['stack',  'STACK',  '결합대체'],
-    ['dual',   'DUAL',   '사분면']
+  /* [V33.216] ★역할이 다른 셋을 한 줄로 세우지 않는다.★
+     종전엔 11명이 한 목록에 나란히 있고 전부 '발언권' 막대를 달고 있었다. 그런데
+     그 막대가 뜻하는 것이 셋 다 다르다:
+       · 위원 9명 — 진짜 투표 가중치다. 막대끼리 비교가 성립한다.
+       · STACK   — 투표하지 않는다. 합류하면 위원회 결합확률을 ★통째로 대체★ 한다.
+                   여기에 '발언권 1.0' 막대를 달면 "11명 중 하나" 로 읽힌다 — 사실과 다르다.
+       · DUAL    — 투표하지도, 대체하지도 않는다. 실측 사분면 로짓만큼 확률을 ★민다★.
+     구조 관측의 '신경망 지도' 와 같은 층으로 묶어 두 화면이 한 언어를 쓰게 한다. */
+  var CMLAYERS = [
+    ['위원 · 8자리로 투표한다', 'vote', [
+      ['mind',   'MIND',   '위원장'],
+      ['dnn',    'DNN',    '딥넷'],
+      ['gbdt',   'GBDT',   '트리'],
+      ['xgb',    'XGB',    '부스터'],
+      ['lgb',    'LGB',    '부스터'],
+      ['cat',    'CAT',    '부스터'],
+      ['flow',   'FLOW',   '수급'],
+      ['xalpha', 'XALPHA', '형식알파'],
+      ['memo',   'MEMO',   '기억']
+    ]],
+    ['결합 · 투표를 통째로 대체한다', 'meta', [
+      ['stack',  'STACK',  '메타모델']
+    ]],
+    ['방향 · 확률을 밀어 준다', 'shift', [
+      ['dual',   'DUAL',   '사분면 프라이어']
+    ]]
   ];
+  var CMROSTER = CMLAYERS.reduce(function(a,l){ return a.concat(l[2]); }, []);
   // 위원 하나의 상태를 ★한 곳에서★ 판정한다 — KPI 타일과 목록이 다른 말을 하면 안 된다.
   function cmState(key, mode){
     var c = mode.committee || {}, alt = mode.alt || {};
@@ -17178,7 +17213,8 @@ html:root .page > *{ flex-shrink:0; }
       return;
     }
     var nFull = 0, nProv = 0;
-    var html = CMROSTER.map(function(r){
+    var html = CMLAYERS.map(function(L){
+      return '<span class="nlv-cm-lh">'+esc(L[0])+'</span>' + L[2].map(function(r){
       var st = cmState(r[0], mode);
       if(st.cls === 'ok') nFull++; else if(st.cls === 'prov') nProv++;
       // 학습이 멈춘 위원은 마지막 학습 시도 결과를 그대로 붙인다(로그를 뒤지지 않게).
@@ -17189,16 +17225,23 @@ html:root .page > *{ flex-shrink:0; }
          같은 자리에 같은 축의 막대를 두면 11명의 발언권 분포가 한눈에 읽힌다.
          정식=1.0, 잠정=배수, 그 외=0 — 막대가 없다는 것 자체가 '표가 없다'는 뜻이다. */
       var wgt = st.cls === 'ok' ? 1 : (st.cls === 'prov' ? (st.mult != null ? st.mult : 0) : 0);
-      return '<div class="nlv-cm '+st.cls+'" title="'+esc(tip)+'">'
+      /* 막대는 ★투표 가중치★ 를 뜻한다. 그러니 투표하는 층에만 그린다 —
+         대체하는 STACK 과 밀어 주는 DUAL 에 같은 막대를 달면 "11명 중 하나" 로 읽힌다. */
+      var bar = (L[1] === 'vote')
+        ? '<span class="cm-w"><i style="width:'+(Math.max(0,Math.min(1,wgt))*100).toFixed(1)+'%"></i></span>'
+        : '<span class="cm-role">'+(L[1]==='meta' ? '투표 대체' : '확률 이동')+'</span>';
+      return '<div class="nlv-cm '+st.cls+' cm-'+L[1]+'" title="'+esc(tip)+'">'
         +'<span class="cm-dot" aria-hidden="true"></span>'
         +'<span class="cn">'+esc(r[1])+'</span>'
         +'<span class="cr">'+esc(r[2])+'</span>'
         +'<span class="cs">'+esc(st.tag)+'</span>'
-        +'<span class="cm-w"><i style="width:'+(Math.max(0,Math.min(1,wgt))*100).toFixed(1)+'%"></i></span>'
+        + bar
       +'</div>';
+      }).join('');
     }).join('');
     el.innerHTML = html;
-    if(sub) sub.textContent = '정식 '+nFull+' · 잠정 '+nProv+' · 대기 '+(CMROSTER.length-nFull-nProv);
+    var nVote = CMLAYERS[0][2].length;
+    if(sub) sub.textContent = '투표 위원 '+nVote+'자리 · 정식 '+nFull+' · 잠정 '+nProv+' · 대기 '+(CMROSTER.length-nFull-nProv);
   }
 
   // KPI 3타일 — 위원회 가동 / 처리속도 / 스캔 소요
