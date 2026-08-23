@@ -2788,7 +2788,7 @@ async function applySignalTypeWeights(DB, cfg) {
 // ============================================================================
 // [V33.55] 빌드 버전 — SWR L2 캐시 키에 섞어 '배포 = 판단 캐시 자동 무효화'를 만든다.
 //   판정 로직을 고쳐도 옛 캐시가 최대 1시간 재배포되던 문제를 구조적으로 없앤다.
-const _BUILD_VER = "V33.223";
+const _BUILD_VER = "V33.224";
 
 // ═══ [V33.171] 평가 순서 계획 — ★승격과 순환을 교차해 굶주림을 구조적으로 없앤다★ ═══
 //   V33.50 의 형태트리거는 "급한 몇 종목을 앞으로 당긴다"는 의도였으나, 실제 운영로그에서는
@@ -8371,6 +8371,11 @@ async function fetchMinuteBars(symbol, opts) {
       );
       _usedEp = "minute5";
     }
+    /* [V33.224] ★어느 엔드포인트가 실제로 쓰였는지 세어 둔다.★
+       폴백은 조용히 동작한다 — 1분봉을 요청했는데 5분봉으로 돌고 있어도 화면·로그 어디에도
+       안 남으면 "1분봉으로 바꿨다" 를 믿을 근거가 없다. 사이클 로그의 gates= 에 함께 실린다.
+       (이 세션에서는 외부 호출이 막혀 1분 엔드포인트를 검증할 수 없었다 — 그래서 세는 것이다.) */
+    try { __scalpDiag["bar_" + _usedEp] = (__scalpDiag["bar_" + _usedEp] || 0) + 1; } catch (e) {}
     if (!r.ok) throw new Error("naver candle/minute " + r.status);
     let rows;
     try { rows = await r.json(); } catch(e) { throw new Error("naver candle/minute parse"); }
@@ -8421,7 +8426,7 @@ async function fetchMinuteBars(symbol, opts) {
       ? ((closes[closes.length - 1] - closes[closes.length - 1 - n]) / closes[closes.length - 1 - n]) * 100
       : 0;
     return {
-      symbol: symbol, interval: SCALP_BAR_MIN + "m", price: price, vwap: vwap, vwapSlope: vwapSlope,
+      symbol: symbol, interval: SCALP_BAR_MIN + "m", barSrc: _usedEp, price: price, vwap: vwap, vwapSlope: vwapSlope,
       recentMom: recentMom, dayHigh: Math.max.apply(null, highs), dayLow: Math.min.apply(null, lows),
       closes: closes, highs: highs, lows: lows, volumes: volumes, times: times, opens: opens
     };
