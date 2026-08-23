@@ -330,10 +330,24 @@ try {
     if (lightDupes === 0) console.log("  ok   위원회 카드에 라이트 전용 덧칠이 없다 — 색 정의가 한 곳뿐이다");
     else { cbad++; console.error(`  FAIL 라이트 전용 .nlv-cm 규칙 ${lightDupes}건 — 색 정의가 두 곳으로 갈렸다`); }
   }
-  // 상태를 색만으로 말하지 않는다 — 점·글자·막대가 같은 사실을 중복해서 말해야 한다.
-  if (/<span class="cm-dot"/.test(hk) && /<span class="cs">/.test(hk) && /<span class="cm-w">/.test(hk))
-    console.log("  ok   상태를 색·글자·막대 셋으로 말한다(색각 이상·흑백 캡처에서도 읽힌다)");
-  else { cbad++; console.error("  FAIL 상태 표시가 색에만 의존한다"); }
+  /* 상태를 ★색만으로★ 말하지 않는다 — 색각 이상·흑백 캡처에서도 읽혀야 한다.
+     [V33.219] 클래스 이름이 아니라 ★채널★ 을 센다. 종전엔 cm-dot·cs·cm-w 세 이름을 요구했는데,
+     그러면 같은 보장을 더 나은 도형으로 바꿀 때(막대+점 → 채워지는 고리) 계약이 가로막는다.
+     지켜야 하는 것은 이름이 아니라 "색 말고 두 가지 이상으로 말한다" 이다:
+       · 글자 채널 — 상태 문구(.cs)
+       · 기하 채널 — 길이/각도로 크기를 말하는 것(고리의 --w 호 길이, 또는 막대 폭) */
+  {
+    const textCh = /<span class="cs">/.test(hk);
+    const geomCh = (/class="cm-ring"[^>]*--w:/.test(hk) || /--w:'\+/.test(hk))   // 고리 호 길이
+                || /<span class="cm-w">/.test(hk);                               // 또는 종전 막대
+    if (textCh && geomCh)
+      console.log("  ok   상태를 색 외에 글자·기하(호 길이) 두 채널로 말한다(색각 이상·흑백에서도 읽힌다)");
+    else {
+      cbad++;
+      console.error("  FAIL 상태 표시가 색에만 의존한다 — 글자 채널" + (textCh ? " O" : " X") +
+                    " · 기하 채널" + (geomCh ? " O" : " X"));
+    }
+  }
   rtBad += cbad;
 } catch (e) { console.error("  FAIL 위원회 카드 토큰 검사 실패:", e.message); rtBad += 1; }
 
@@ -371,7 +385,17 @@ try {
      (`if (path === "/api/nn-viz" && ...model === "overview")`)를 못 봤다.
      그러면 실제로 라우팅된 탭을 "라우팅 없음" 으로 잘못 잡는다. 검사가 봐야 하는 것은
      "그 모델 이름이 nn-viz 처리부 어딘가에서 실제로 갈라지는가" 이므로 그 범위를 다 담는다. */
-  const route = (sv.match(/if \(path === "\/api\/nn-viz"[\s\S]{0,9000}?await mlDNNVizData\(env\.DB\)\);/) || [""])[0];
+  /* [V33.219] ★고정 길이 창(9000자)으로 자르지 않는다.★ 핸들러에 코드가 조금만 늘어도
+     창을 넘어가 "라우팅이 없다" 는 거짓 실패가 난다(실제로 그렇게 났다). 더 나쁜 경우는
+     반대다 — 창이 짧아 뒤쪽 분기를 못 보면 라우팅 없는 탭을 놓친다.
+     시작(첫 nn-viz 분기)과 끝(DNN 폴백)을 실제 위치로 잡는다. */
+  const route = (function () {
+    const a = sv.indexOf('if (path === "/api/nn-viz"');
+    if (a < 0) return "";
+    const b = sv.indexOf("await mlDNNVizData(env.DB));", a);
+    if (b < 0) return "";
+    return sv.slice(a, b + "await mlDNNVizData(env.DB));".length);
+  })();
   const linKeys = [...(sv.match(/const _LINVIZ = \{[\s\S]*?\n\};/) || [""])[0].matchAll(/^\s{2}(\w+):\s*\{/gm)].map((m) => m[1]);
   const missing = tabs.filter((t) => {
     // overview 는 선형/트리 렌더러가 아니라 ★전용 분기★ 로 간다(층 구조를 그리므로).

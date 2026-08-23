@@ -2788,7 +2788,7 @@ async function applySignalTypeWeights(DB, cfg) {
 // ============================================================================
 // [V33.55] 빌드 버전 — SWR L2 캐시 키에 섞어 '배포 = 판단 캐시 자동 무효화'를 만든다.
 //   판정 로직을 고쳐도 옛 캐시가 최대 1시간 재배포되던 문제를 구조적으로 없앤다.
-const _BUILD_VER = "V33.218";
+const _BUILD_VER = "V33.219";
 
 // ═══ [V33.171] 평가 순서 계획 — ★승격과 순환을 교차해 굶주림을 구조적으로 없앤다★ ═══
 //   V33.50 의 형태트리거는 "급한 몇 종목을 앞으로 당긴다"는 의도였으나, 실제 운영로그에서는
@@ -20506,6 +20506,18 @@ async function handleRequest(request, env, ctx) {
                      featVer: cal.featVer != null ? cal.featVer : null } : null
       };
       _ov.votingCount = _ov.experts.filter(function (e) { return e.voting; }).length;
+      /* [V33.219] ★봉 날짜 캐시 재구축 진행률.★ V33.217 이 daily: 캐시에 days 를 넣기 시작했고,
+         옛 캐시는 '건드릴 때 다시 받기' 로 자연히 새 스키마가 된다 — 그런데 그게 어디까지
+         왔는지 볼 방법이 없었다. 화면이 진행을 못 보면 "됐다" 를 믿을 근거가 없다.
+         ★행을 가져오지 않고 DB 안에서 센다★ — daily: 한 행이 수십 KB 라 980행을 실어 오면
+         그것만으로 응답이 무거워진다. json_extract 로 존재 여부만 집계한다. */
+      try {
+        const _cc = await env.DB.prepare(
+          "SELECT COUNT(*) n, SUM(CASE WHEN json_extract(v,'$.days') IS NOT NULL THEN 1 ELSE 0 END) w" +
+          " FROM state WHERE k >= 'daily:' AND k < 'daily;'"
+        ).first();
+        _ov.cache = { dailyN: _num(_cc && _cc.n, 0), dailyDays: _num(_cc && _cc.w, 0) };
+      } catch (e) { _ov.cache = null; }
       return Response.json(_ov, { headers: cors });
     }
 
