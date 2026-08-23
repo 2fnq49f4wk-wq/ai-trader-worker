@@ -362,5 +362,67 @@ const F = new Function(DEPS + STUB + body + "\n return {" + NAMES.join(",") + "}
   }
 }
 
+// ── ⑪ 실현변동성 — 하방 반편차의 분모, 그리고 두 값이 같은 자인가 ──────────
+/*  이 자리에서 실제로 값이 틀어져 기능 하나가 죽어 있었다.
+    semivariance 의 표준 정의는 (1/n)·Σ_{r<0} r² 이고, 대칭분포에서 그 값이 σ²/2 다.
+    ×2 보정은 ★분모가 전체 n 일 때만★ σ² 를 준다. 종전 코드는 분모를 '음수의 개수'
+    (≈ n/2)로 두고 ×2 를 곱해 2σ² 를 만들었다 — 변동성이 √2 배 부푼다.
+    그 값이 Math.min(전체, 하방) 에 들어가니, 하방이 채택될 일이 거의 없었다.
+    게다가 전체는 평균을 빼고 하방은 안 빼서 ★애초에 비교가 성립하지 않는 두 자★ 였다. */
+{
+  const grab = (name) => {
+    const i = src.indexOf("function " + name + "(");
+    if (i < 0) return null;
+    let d = 0, j = src.indexOf("{", i);
+    for (let k = j; k < src.length; k++) {
+      if (src[k] === "{") d++;
+      else if (src[k] === "}") { d--; if (d === 0) return src.slice(i, k + 1); }
+    }
+    return null;
+  };
+  const rv = grab("_rvAnnPct"), sd = grab("_semiDevAnnPct");
+  if (!rv || !sd) no("수식감사: 실현변동성 헬퍼(_rvAnnPct/_semiDevAnnPct)가 없다");
+  else {
+    // 분모 계약 — 하방도 전체 n 으로 나눠야 ×2 가 σ² 를 준다.
+    if (!/dn2 \/ n \* 2/.test(sd))
+      no("수식감사: 하방 반편차를 전체 n 이 아닌 값으로 나눈다 — ×2 보정이 성립하지 않아 √2 배 부푼다");
+    else ok("하방 반편차는 전체 n 으로 나눈다(×2 보정이 σ² 를 주는 유일한 분모)");
+    if (/s2 \/ n\s*-|- *m *\* *m|mu \* mu/.test(rv))
+      no("수식감사: 단기 실현변동성이 표본평균을 뺀다 — 하방 쪽과 자가 달라져 Math.min 비교가 무너진다");
+    else ok("단기 실현변동성은 표본평균을 빼지 않는다(하방 쪽과 같은 자)");
+    // 호출부: 두 값이 실제로 이 헬퍼들에서 나와야 한다.
+    const i = src.indexOf("_vt.useDownsideVol");
+    const seg = i > 0 ? src.slice(i - 900, i + 700) : "";
+    if (!/_rvAnnPct\(_lr, 252\)/.test(seg) || !/_semiDevAnnPct\(_lr, 252\)/.test(seg))
+      no("수식감사: 목표변동성 스로틀이 공용 헬퍼를 쓰지 않는다 — 두 자가 다시 갈라질 수 있다");
+    else ok("목표변동성 스로틀의 두 값이 같은 헬퍼에서 나온다");
+  }
+
+  // 수치 재현 — 대칭분포에서 하방변동성은 전체변동성과 같아야 한다(±5%).
+  {
+    let sd0 = 2024 >>> 0;
+    const u = () => { sd0 = (sd0 * 1664525 + 1013904223) >>> 0; return sd0 / 4294967296; };
+    const g = () => { const a = Math.max(1e-12, u()), b = u(); return Math.sqrt(-2 * Math.log(a)) * Math.cos(2 * Math.PI * b); };
+    const SIG = 0.012, LB = 20, T = 40000, ANN = Math.sqrt(252) * 100;
+    let tot = 0, now = 0, fix = 0, k = 0;
+    for (let t = 0; t < T; t++) {
+      let s2 = 0, dn2 = 0, nDn = 0;
+      for (let i = 0; i < LB; i++) { const r = SIG * g(); s2 += r * r; if (r < 0) { dn2 += r * r; nDn++; } }
+      if (nDn < 5) continue;
+      tot += Math.sqrt(s2 / LB) * ANN;
+      now += Math.sqrt(dn2 / nDn * 2) * ANN;   // 종전 분모
+      fix += Math.sqrt(dn2 / LB * 2) * ANN;    // 표준 분모
+      k++;
+    }
+    const rNow = now / tot, rFix = fix / tot;
+    if (!(rNow > 1.25))
+      no(`수식감사: 종전 분모가 부풀지 않는다(비율 ${rNow.toFixed(3)}) — 재현이 계약을 증명하지 못한다`);
+    else ok(`종전 분모(÷음수개수)는 대칭분포에서 ${((rNow - 1) * 100).toFixed(1)}% 부푼다 — Math.min 이 하방을 고를 수 없었던 이유`);
+    if (!(Math.abs(rFix - 1) < 0.05))
+      no(`수식감사: 표준 분모가 전체변동성과 안 맞는다(비율 ${rFix.toFixed(3)})`);
+    else ok(`표준 분모(÷전체 n)는 대칭분포에서 전체변동성과 일치한다(비율 ${rFix.toFixed(3)})`);
+  }
+}
+
 if (bad) { console.error(`\n수치 계산식 위반 ${bad}건 — 배포 차단`); process.exit(1); }
 console.log("  ok   수치 계산식 감사 통과");

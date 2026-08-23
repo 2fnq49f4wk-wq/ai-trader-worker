@@ -28,7 +28,7 @@ function _num(v,d){var n=Number(v);return isFinite(n)?n:d;}
 function _clamp(v,a,b){return v<a?a:(v>b?b:v);}
 ${cblk("XALPHA")}
 const XA_NALPHA=10; const XA_DECAY_D=5;
-${grab("_xaDelta")}${grab("_xaCorr")}${grab("_xaTsRank")}${grab("_xaXsRank")}
+${grab("_xaDelta")}${grab("_xaCorr")}${grab("_xaTsRank")}${grab("_xaXsRank")}${grab("_rvAnnPct")}
 ${grab("xalphaRawAlphas")}${grab("xalphaDecayAlphas")}${grab("xalphaBuildPanel")}${grab("xalphaBuildFeat")}
 ${grab("_tToZ")}${grab("_tSf")}${grab("_icBlockStats")}
 ({raw:xalphaRawAlphas,dec:xalphaDecayAlphas,panel:xalphaBuildPanel,feat:xalphaBuildFeat,

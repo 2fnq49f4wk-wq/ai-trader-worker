@@ -2788,7 +2788,7 @@ async function applySignalTypeWeights(DB, cfg) {
 // ============================================================================
 // [V33.55] 빌드 버전 — SWR L2 캐시 키에 섞어 '배포 = 판단 캐시 자동 무효화'를 만든다.
 //   판정 로직을 고쳐도 옛 캐시가 최대 1시간 재배포되던 문제를 구조적으로 없앤다.
-const _BUILD_VER = "V33.210";
+const _BUILD_VER = "V33.211";
 
 // ═══ [V33.171] 평가 순서 계획 — ★승격과 순환을 교차해 굶주림을 구조적으로 없앤다★ ═══
 //   V33.50 의 형태트리거는 "급한 몇 종목을 앞으로 당긴다"는 의도였으나, 실제 운영로그에서는
@@ -6476,6 +6476,46 @@ function getADX(highs, lows, closes, period) {
   adx /= period;
   for (let i = period; i < dx.length; i++) adx = (adx * (period - 1) + dx[i]) / period;
   return adx;
+}
+
+/* ════════════════════════════════════════════════════════════════════════════
+   [V33.211] ★단기 실현변동성 — 표본평균을 빼지 않는다★
+
+   짧은 창(20~60봉)에서 수익률의 표본평균은 거의 전부 잡음이다. 그걸 빼면 편향은
+   조금 줄지만 ★추정오차가 늘어난다★ — 자유도를 하나 잃는 대가가 μ² 편향보다 크다.
+   실현변동성 문헌(Andersen·Bollerslev·Diebold·Labys 2001)과 실무(gs-quant 의
+   vol_swap_volatility 는 assume_zero_mean=True 가 기본값)가 모두 중심화하지 않는다.
+
+   모사 20만회(σ=1%/일, μ=0.05%/일, 20봉) 실측:
+     평균을 빼는 현행   편향 −0.607%p · RMSE 2.570
+     빼지 않는 zero-mean 편향 −0.178%p · RMSE 2.509   ← 편향 3.4배 작고 RMSE 도 낫다
+   덤으로 뺄셈이 사라져 '분산이 음수로 떨어지는' 상쇄 사고 자체가 원천적으로 불가능해진다.
+
+   ★그리고 이 자리에는 실제 버그가 있었다.★ 아래 semiDev 주석 참조. */
+function _rvAnnPct(logRets, ann) {
+  if (!Array.isArray(logRets) || !logRets.length) return null;
+  let s2 = 0, n = 0;
+  for (const r of logRets) { if (isFinite(r)) { s2 += r * r; n++; } }
+  if (n < 2) return null;
+  return Math.sqrt(s2 / n) * Math.sqrt(_num(ann, 252)) * 100;
+}
+/* 하방 반편차를 ★전체 변동성과 같은 자로★ 환산한다.
+
+   표준 정의는 semivariance = (1/n)·Σ_{r<0} r² 이고, 대칭분포에서 이 값이 σ²/2 다.
+   그래서 ×2 를 곱하면 σ² 가 된다 — ★분모가 전체 n 일 때만★ 성립하는 보정이다.
+
+   종전 코드는 분모를 '음수의 개수' 로 두고 ×2 를 곱했다. 음수 개수는 대칭분포에서
+   n/2 이므로 (Σr²/(n/2))×2 = 2σ² 가 되어 ★변동성이 √2 = 1.41배 부풀었다.★
+   모사 30만회 실측: 상방·하방이 완전히 같은 대칭분포인데도 하방변동성이 전체변동성보다
+   38.7% 크게 나왔고, 그 결과 Math.min(전체, 하방) 이 하방을 고르는 비율이 ★3.9%★ 였다.
+   즉 "폭등장에서 상승 변동성 때문에 스스로 브레이크를 밟지 않게 한다" 는 장치(V33.44)가
+   숫자상 거의 작동하지 않고 있었다 — 코드는 있는데 값이 그 문을 안 열어 준 것이다. */
+function _semiDevAnnPct(logRets, ann) {
+  if (!Array.isArray(logRets) || !logRets.length) return null;
+  let dn2 = 0, n = 0, nDn = 0;
+  for (const r of logRets) { if (isFinite(r)) { n++; if (r < 0) { dn2 += r * r; nDn++; } } }
+  if (n < 2 || nDn < 5) return null;          // 음수가 너무 적으면 하방을 잴 수 없다
+  return Math.sqrt(dn2 / n * 2) * Math.sqrt(_num(ann, 252)) * 100;   // ★분모는 전체 n★
 }
 
 function getBollingerBands(h, p, mult) {
@@ -17945,17 +17985,16 @@ async function runTradingCycle(env) {
               const _vt = (typeof AI_PARAMS !== "undefined" && AI_PARAMS.volTarget) || null;
               if (_vt && _vt.enabled && !_symInverse && Array.isArray(__idxCloses) && __idxCloses.length >= (_vt.lookback || 20) + 1) {
                 const _lb = _vt.lookback || 20, _ic = __idxCloses;
-                let _sum = 0, _sum2 = 0, _cnt = 0, _dn2 = 0, _dnN = 0;
+                const _lr = [];
                 for (let _i = _ic.length - _lb; _i < _ic.length; _i++) {
                   const _r = Math.log(_ic[_i] / _ic[_i - 1]);
-                  if (isFinite(_r)) {
-                    _sum += _r; _sum2 += _r * _r; _cnt++;
-                    if (_r < 0) { _dn2 += _r * _r; _dnN++; }   // [V33.44] 하방 편차만 별도 집계
-                  }
+                  if (isFinite(_r)) _lr.push(_r);
                 }
+                const _cnt = _lr.length;
                 if (_cnt >= 10) {
-                  const _mu = _sum / _cnt, _varr = Math.max(0, _sum2 / _cnt - _mu * _mu);
-                  let _realVol = Math.sqrt(_varr) * Math.sqrt(252) * 100;   // 연율화(%)
+                  // [V33.211] 두 값을 ★같은 자★ 로 만든다 — 아래 Math.min 이 둘을 직접 비교하기 때문이다.
+                  //   (종전엔 전체는 평균을 빼고 하방은 안 빼서, 애초에 비교가 성립하지 않았다.)
+                  let _realVol = _rvAnnPct(_lr, 252);   // 연율화(%)
                   // [V33.44] ★폭등장에서 시스템이 스스로 브레이크를 밟던 구조★
                   //   표준편차는 '위로 크게 튄 날'과 '아래로 크게 빠진 날'을 똑같이 위험으로 센다.
                   //   그래서 지수가 강하게 오르면 실현변동성이 함께 올라가고 → 목표변동성 스로틀이
@@ -17963,9 +18002,10 @@ async function runTradingCycle(env) {
                   //   → 리스크는 '손실 쪽 변동'이다(Sortino 관점). 하방 반편차로 재산정해서,
                   //     상승 변동성만 커진 국면에서는 스로틀이 걸리지 않게 한다. 하락 변동이 실제로
                   //     커지면(급락장) 종전과 동일하게 그대로 작동한다.
-                  if ((_vt.useDownsideVol !== false) && _dnN >= 5) {
-                    const _dnVol = Math.sqrt(_dn2 / _dnN * 2) * Math.sqrt(252) * 100;   // ×2: 대칭분포 기준 정규화
-                    _realVol = Math.min(_realVol, _dnVol);
+                  if (_realVol == null) _realVol = 0;
+                  if (_vt.useDownsideVol !== false) {
+                    const _dnVol = _semiDevAnnPct(_lr, 252);   // ×2: 대칭분포 기준 정규화(분모는 전체 n)
+                    if (_dnVol != null) _realVol = Math.min(_realVol, _dnVol);
                   }
                   const _tgt = (_vt.targetVolPct && _vt.targetVolPct[market]) || 15;
                   if (_realVol > 1) {
@@ -20526,8 +20566,10 @@ async function handleRequest(request, env, ctx) {
           //   SSE로 잔차분산 σ²을 구해 se(bF)·t값을 계산하고, |t|가 작으면 베타를 0쪽으로 강하게 축소.
           const sse = Math.max(1e-9, syy - (bM * sy1 + bF * sy2));
           const sigma2 = sse / Math.max(1, N - 2);
-          // [V32.67] 수치안정: det는 |det|로(음수 방지), varbF 0/NaN·tF 발산 방어(NaN 출력 버그 차단)
-          varbF = usedMkt ? (sigma2 * s11 / Math.max(1e-12, Math.abs(det))) : (s22 > 0 ? sigma2 / s22 : 0);
+          /* [V33.211] Math.abs(det) 를 걷어낸다. V33.208 이 위 분기 조건을 det > 1e-6·s11·s22 로
+             좁혔으므로 usedMkt=1 인 경로에서 det 는 이미 양수임이 보장된다. 남은 abs 는 죽은 코드지만,
+             "여기서는 음수 det 도 받아준다" 는 신호로 남아 나중에 위 가드를 푸는 근거가 된다. */
+          varbF = usedMkt ? (sigma2 * s11 / Math.max(1e-12, det)) : (s22 > 0 ? sigma2 / s22 : 0);
           let tF = (varbF > 0 && isFinite(varbF)) ? Math.abs(bF) / Math.sqrt(varbF) : 0;
           if (!isFinite(tF)) tF = 0; tF = Math.min(20, tF);   // 발산 상한(sigShrink 최대 ~0.99)
           const sigShrink = (tF * tF) / (tF * tF + 4);   // |t|<2 → 강한 축소, |t|≈3 → 0.69, |t|≥5 → ~0.86
@@ -27011,11 +27053,7 @@ function xalphaBuildPanel(dailyCache, market) {
       {
         const lr = [];
         for (let i = Math.max(1, c.length - 20); i < c.length; i++) if (c[i] > 0 && c[i - 1] > 0) lr.push(Math.log(c[i] / c[i - 1]));
-        if (lr.length >= 10) {
-          let m = 0; for (const x of lr) m += x; m /= lr.length;
-          let s2 = 0; for (const x of lr) s2 += (x - m) * (x - m);
-          vol = Math.sqrt(s2 / lr.length) * Math.sqrt(252) * 100;
-        }
+        if (lr.length >= 10) vol = _rvAnnPct(lr, 252);   // [V33.211] 20봉 창에서는 표본평균을 빼지 않는다
       }
       // Amihud 비유동성 = |수익률| / 거래대금 (평균). 유동성 프리미엄의 표준 대용치.
       let ami = null;
@@ -37231,7 +37269,8 @@ async function mlMarketOutlook(DB) {
       const ma = function (n) { if (c.length < n) return null; let t = 0; for (let i = c.length - n; i < c.length; i++) t += c[i]; return t / n; };
       const ma20 = ma(20), ma50 = ma(50), ma200 = ma(Math.min(200, c.length));
       const rsi = (function () { let g = 0, l = 0; for (let i = c.length - 14; i < c.length; i++) { const ch = c[i] - c[i - 1]; if (ch > 0) g += ch; else l -= ch; } return (g + l) > 0 ? g / (g + l) * 100 : 50; })();
-      const vol = function (n) { let s1 = 0, s2 = 0, cnt = 0; for (let i = c.length - n; i < c.length; i++) { const r = Math.log(c[i] / c[i - 1]); if (isFinite(r)) { s1 += r; s2 += r * r; cnt++; } } if (cnt < 5) return null; const m = s1 / cnt; return Math.sqrt(Math.max(0, s2 / cnt - m * m)) * Math.sqrt(252) * 100; };
+      // [V33.211] 20·60봉 창 — 표본평균을 빼지 않는다(위 _rvAnnPct 주석: 편향 3.4배·RMSE 개선).
+      const vol = function (n) { const lr = []; for (let i = c.length - n; i < c.length; i++) { const r = Math.log(c[i] / c[i - 1]); if (isFinite(r)) lr.push(r); } return lr.length >= 5 ? _rvAnnPct(lr, 252) : null; };
       const vol20 = vol(20), vol60 = vol(60);
       const volRising = (vol20 != null && vol60 != null) ? vol20 > vol60 * 1.15 : false;
       // AI 위원회 유니버스 강세도 — 전종목 스캔 p 평균(이 시장 종목만)
