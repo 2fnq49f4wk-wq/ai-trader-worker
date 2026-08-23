@@ -449,5 +449,95 @@ const F = new Function(DEPS + STUB + body + "\n return {" + NAMES.join(",") + "}
   }
 }
 
+// ── ⑫ 부호·범위 계약 무작위 검사 ──────────────────────────────────────────
+/*  "양수가 나와야 하는 자리에서 음수가 나온다" 는 사고를 ★한 번 찾고 끝내지 않기 위한★ 검사다.
+    사람이 눈으로 훑는 방식은 V33.208·V33.211·V33.212 에서 세 번 다 놓친 것이 있었다.
+    그래서 계약을 코드로 적고 무작위·적대적 입력을 대량으로 던진다:
+      · 변동성·반편차 → ≥ 0 (제곱합이므로 정의상 음수 불가)
+      · 확률 채점기   → [0,1]
+      · 고유도 가중   → (0,1]
+    입력에는 원화 고가주 수준(1e7), 음수, 0, NaN, Infinity, 동일값을 섞는다. */
+{
+  const grab2 = (name) => {
+    const i = src.indexOf("function " + name + "(");
+    if (i < 0) return null;
+    let d = 0;
+    for (let k = src.indexOf("{", i); k < src.length; k++) {
+      if (src[k] === "{") d++;
+      else if (src[k] === "}") { d--; if (!d) return src.slice(i, k + 1); }
+    }
+    return null;
+  };
+  const need = ["_rvAnnPct", "_semiDevAnnPct", "_mlpProb", "_uniqWeights"];
+  const parts = need.map(grab2);
+  if (parts.some((x) => !x)) {
+    no("수식감사: 부호·범위 검사 대상 함수를 못 찾았다 — " +
+       need.filter((n, i) => !parts[i]).join(", "));
+  } else {
+    const pre = "function _num(v,d){const n=Number(v);return isFinite(n)?n:d;}\n" +
+                "function _clamp(v,a,b){return v<a?a:(v>b?b:v);}\n";
+    let F;
+    try {
+      F = new Function(pre + parts.join("\n") +
+        "\nreturn {_rvAnnPct,_semiDevAnnPct,_mlpProb,_uniqWeights};")();
+    } catch (e) { F = null; no("수식감사: 부호·범위 검사 대상 함수 구성 실패 — " + e.message); }
+    if (F) {
+      let sd0 = 4242 >>> 0;
+      const u = () => { sd0 = (sd0 * 1664525 + 1013904223) >>> 0; return sd0 / 4294967296; };
+      const gz = () => { const a = Math.max(1e-12, u()), b = u(); return Math.sqrt(-2 * Math.log(a)) * Math.cos(2 * Math.PI * b); };
+      const viol = [];
+      // ⑴ 변동성·반편차 ≥ 0, NaN 금지
+      for (let t = 0; t < 30000; t++) {
+        const n = 5 + Math.floor(u() * 60);
+        const scale = [1e-9, 1e-4, 1, 1e3, 1e7][Math.floor(u() * 5)];
+        const drift = (u() * 2 - 1) * scale;
+        const lr = [];
+        for (let i = 0; i < n; i++) {
+          const pick = u();
+          lr.push(pick < 0.03 ? 0 : pick < 0.05 ? NaN : pick < 0.07 ? Infinity : drift + scale * gz());
+        }
+        for (const [nm, fn] of [["_rvAnnPct", F._rvAnnPct], ["_semiDevAnnPct", F._semiDevAnnPct]]) {
+          const v = fn(lr, 252);
+          if (v == null) continue;
+          if (!isFinite(v)) { viol.push(`${nm} 비유한 ${v}`); break; }
+          if (v < 0) { viol.push(`${nm} 음수 ${v} (규모 ${scale})`); break; }
+        }
+        if (viol.length) break;
+      }
+      // ⑵ 확률 채점기 [0,1]
+      for (let t = 0; t < 20000 && !viol.length; t++) {
+        const D = 4 + Math.floor(u() * 20), H = 2 + Math.floor(u() * 12);
+        const big = [1, 1e3, 1e8, 1e-8][Math.floor(u() * 4)];
+        const W1 = []; for (let h = 0; h < H; h++) { const r = []; for (let j = 0; j < D; j++) r.push((u() * 2 - 1) * big); W1.push(r); }
+        const W2 = []; for (let h = 0; h < H; h++) W2.push((u() * 2 - 1) * big);
+        const b1 = []; for (let h = 0; h < H; h++) b1.push((u() * 2 - 1) * big);
+        const m = { W1, b1, W2, b2: (u() * 2 - 1) * big, H, D };
+        const z = []; for (let j = 0; j < D; j++) z.push(u() < 0.05 ? (u() < 0.5 ? NaN : Infinity) : (u() * 8 - 4));
+        const pv = F._mlpProb(m, z);
+        if (pv == null) continue;
+        if (!isFinite(pv) || pv < 0 || pv > 1) viol.push(`_mlpProb 범위 이탈 ${pv}`);
+      }
+      // ⑶ 고유도 가중 (0,1]
+      for (let t = 0; t < 4000 && !viol.length; t++) {
+        const n = 3 + Math.floor(u() * 40);
+        const T = [], S = [];
+        const t0 = 1.7e12;
+        for (let i = 0; i < n; i++) {
+          T.push(u() < 0.1 ? t0 : t0 + Math.floor(u() * 40) * 86400000);   // 같은 날 뭉침 포함
+          S.push("S" + Math.floor(u() * 3));
+        }
+        let w;
+        try { w = F._uniqWeights(T, S, 5 * 86400000); } catch (e) { viol.push("_uniqWeights 예외 " + e.message); break; }
+        if (!Array.isArray(w)) { viol.push("_uniqWeights 배열 아님"); break; }
+        for (const v of w) {
+          if (!isFinite(v) || v <= 0 || v > 1 + 1e-9) { viol.push(`_uniqWeights 범위 이탈 ${v}`); break; }
+        }
+      }
+      if (viol.length) no("수식감사: 부호·범위 계약 위반 — " + viol.slice(0, 3).join(" · "));
+      else ok("무작위 5.4만회(규모 1e−9~1e8 · NaN·∞·0·동일값 혼입) — 변동성·반편차 음수 0건, 확률 [0,1] 이탈 0건, 고유도 가중 (0,1] 유지");
+    }
+  }
+}
+
 if (bad) { console.error(`\n수치 계산식 위반 ${bad}건 — 배포 차단`); process.exit(1); }
 console.log("  ok   수치 계산식 감사 통과");
