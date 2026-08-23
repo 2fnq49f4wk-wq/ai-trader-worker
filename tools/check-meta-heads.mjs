@@ -157,6 +157,31 @@ const seg = (from, to, len) => {
   else ok("IC 하한 = IC − se = IC·(1 − 1/t) — t 가 낮으면 하한이 0 이하로 내려간다");
 }
 
+// ── ③-3 혼합 지분은 ★내부검증★ 에서만 나온다 ────────────────────────────────
+/*  홀드아웃으로 지분을 맞추면 그 홀드아웃은 더 이상 검증셋이 아니다.
+    그렇다고 등가중으로 두면 가장 약한 구성원이 지분을 그냥 가져간다 —
+    운영 실측이 그것이었다(lin 0.016 / gbdt 0.060 / mlp −0.026 → blend −0.026).
+    답은 학습구간 안의 내부검증이다: 거기서 기저(절편만)보다 나은 만큼만 지분을 준다. */
+{
+  const i = src.indexOf("if (_cand.length >= 3) {");
+  const seg = i > 0 ? src.slice(i, i + 3200) : "";
+  if (!seg) no("헤드: 혼합 구성 블록을 찾을 수 없다");
+  else {
+    if (/nvalStart/.test(seg))
+      no("헤드: 혼합 지분 계산이 홀드아웃(nvalStart)을 참조한다 — 지분을 홀드아웃으로 맞추면 검증이 무너진다");
+    else ok("혼합 지분 계산이 홀드아웃을 참조하지 않는다");
+    if (!/_trHi2 = ntr - _nIn2/.test(seg))
+      no("헤드: 혼합 지분이 학습구간 뒤쪽 내부검증에서 계산되지 않는다");
+    else ok("혼합 지분은 학습구간 뒤 15%(내부검증)에서만 계산된다");
+    if (!/Math\.max\(0, _baseLoss - L\)/.test(seg))
+      no("헤드: 기저보다 못한 구성원에게 지분 0 을 주지 않는다 — 약한 헤드가 혼합을 끌어내린다");
+    else ok("기저(절편만)보다 못한 구성원은 지분 0 — 약한 헤드가 혼합을 끌어내리지 못한다");
+    if (!/\.length >= 2/.test(seg))
+      no("헤드: 지분을 가진 구성원이 하나뿐일 때도 '혼합' 후보를 만든다 — 그건 그 헤드 자신이다");
+    else ok("지분 보유 구성원이 둘 이상일 때만 혼합 후보를 만든다");
+  }
+}
+
 // ── ④ 다중검정 보정 ───────────────────────────────────────────────────────
 {
   const s2 = seg("const _tMinBase = _tMin;", "const _bIC =", 1800);
@@ -282,18 +307,32 @@ const seg = (from, to, len) => {
 
   // 채점 왕복 — 학습 때 확률과 stackScore 의 확률이 같아야 한다(표준화 좌표 일치 확인).
   const mean = new Array(D).fill(0), std = new Array(D).fill(1);
-  const model = { w, b, mean, std, head: "blend", gbdt: { trees: g1.trees, eta: g1.eta, bias: g1.bias }, mlp };
+  /* [V33.218] 혼합이 ★등가중에서 지분가중으로★ 바뀌었다. 채점기가 지분을 안 읽고 다시
+     평균을 내면 학습한 함수와 배포되는 함수가 달라진다 — 예외도 안 나므로 화면상 멀쩡해 보인다.
+     지분을 일부러 치우치게 주고, 채점기가 그 지분을 그대로 재현하는지 잰다. */
+  const bw = [{ head: "lin", share: 0.5 }, { head: "gbdt", share: 0.35 }, { head: "mlp", share: 0.15 }];
+  const model = { w, b, mean, std, head: "blend", blendW: bw,
+                  gbdt: { trees: g1.trees, eta: g1.eta, bias: g1.bias }, mlp };
   const lgt = (p) => Math.log(Math.max(1e-4, Math.min(1 - 1e-4, p)) / (1 - Math.max(1e-4, Math.min(1 - 1e-4, p))));
   let rt = 0;
   for (let i = ntr; i < N; i++) {
     const pl = 1 / (1 + Math.exp(-(function () { let z = b; for (let j = 0; j < D; j++) z += w[j] * X[i][j]; return z; })()));
     const pg = Math.max(0.001, Math.min(0.999, 1 / (1 + Math.exp(-H._gbdtRaw(g1, X[i])))));
     const pm = H._mlpProb(mlp, X[i]);
-    const want = Math.max(0.001, Math.min(0.999, 1 / (1 + Math.exp(-((lgt(pl) + lgt(pg) + lgt(pm)) / 3)))));
+    const mix = 0.5 * lgt(pl) + 0.35 * lgt(pg) + 0.15 * lgt(pm);
+    const want = Math.max(0.001, Math.min(0.999, 1 / (1 + Math.exp(-mix))));
     rt = Math.max(rt, Math.abs(H.stackScore(model, X[i]) - want));
   }
   if (rt > 1e-12) no(`헤드: 채점 왕복이 학습 때 확률과 다르다(최대차 ${rt.toExponential(2)})`);
-  else ok("채점 왕복 오차 0 — 학습한 함수와 배포되는 함수가 같다");
+  else ok("채점 왕복 오차 0 — 지분가중 혼합이 학습한 그대로 채점된다");
+  // 지분이 유실되면 조용히 다른 함수가 되면 안 된다 — 선형으로 되돌아가야 한다.
+  {
+    const gone = Object.assign({}, model); delete gone.blendW;
+    const pl0 = 1 / (1 + Math.exp(-(function () { let z = b; for (let j = 0; j < D; j++) z += w[j] * X[ntr][j]; return z; })()));
+    if (Math.abs(H.stackScore(gone, X[ntr]) - pl0) > 1e-12)
+      no("헤드: 혼합 지분이 유실됐는데 선형으로 되돌아가지 않는다 — 학습 때와 다른 식으로 채점된다");
+    else ok("혼합 지분 유실 시 선형 폴백");
+  }
 
   /* [V33.214] ★자를 바꾼 이유를 숫자로 남긴다.★
      운영 실측에서 네 후보가 소수점까지 같은 정확도를 냈다. 원인은 기저확률이 0.5 에서 멀면
@@ -329,6 +368,53 @@ const seg = (from, to, len) => {
     if (!(iG - iB > 0.15))
       no(`헤드: 같은 상황에서 IC 도 구별하지 못한다(${iG.toFixed(3)} vs ${iB.toFixed(3)}) — 자 교체의 근거가 없다`);
     else ok(`같은 상황에서 IC 는 구별한다 — 좋은 모형 ${iG.toFixed(3)} vs 무신호 ${iB.toFixed(3)} (차이 ${(iG - iB).toFixed(3)})`);
+  }
+
+  /* [V33.218] ★등가중 혼합이 왜 안 되는지를 숫자로 남긴다.★
+     운영 실측: lin 0.016 / gbdt 0.060 / mlp −0.026 → blend −0.026.
+     혼합이 가장 약한 구성원을 그대로 따라갔다 — 셋이면 무신호 헤드가 1/3 지분을 그냥 가져간다.
+     내부검증에서 기저(절편만)보다 나은 만큼만 지분을 주면 그 헤드는 자동으로 0 이 된다.
+     이게 깨지면 등가중으로 되돌려도 된다는 뜻이므로 계약의 근거로 남긴다. */
+  {
+    let s3 = 20260823 >>> 0;
+    const u3 = () => { s3 = (s3 * 1664525 + 1013904223) >>> 0; return s3 / 4294967296; };
+    const M3 = 1600, BASE3 = 0.572;
+    const yy = [], good = [], mid = [], junk = [];
+    for (let i = 0; i < M3; i++) {
+      const y = u3() < BASE3 ? 1 : 0; yy.push(y);
+      good.push(0.5 + 0.30 * (y ? u3() * 0.5 + 0.5 : u3() * 0.5));
+      mid.push(0.5 + 0.22 * (y ? u3() * 0.6 + 0.4 : u3() * 0.6));
+      junk.push(0.5 + 0.25 * u3());                     // 신호 없음
+    }
+    const lg = (p) => { const q = Math.max(1e-4, Math.min(1 - 1e-4, p)); return Math.log(q / (1 - q)); };
+    const icOf3 = (ps) => {
+      let mx = 0, my = 0; for (let i = 0; i < M3; i++) { mx += ps[i]; my += yy[i]; } mx /= M3; my /= M3;
+      let sxx = 0, syy = 0, sxy = 0;
+      for (let i = 0; i < M3; i++) { const dx = ps[i] - mx, dy = yy[i] - my; sxx += dx * dx; syy += dy * dy; sxy += dx * dy; }
+      return sxy / Math.sqrt(sxx * syy);
+    };
+    const llOf = (ps) => { let a = 0; for (let i = 0; i < M3; i++) { const p = Math.max(1e-6, Math.min(1 - 1e-6, ps[i])); a += -(yy[i] * Math.log(p) + (1 - yy[i]) * Math.log(1 - p)); } return a / M3; };
+    const baseLoss = llOf(new Array(M3).fill(BASE3));
+    const mem = [good, mid, junk];
+    const gains = mem.map((p) => Math.max(0, baseLoss - llOf(p)));
+    const tot = gains.reduce((a, b) => a + b, 0);
+    const eq = [], wt = [];
+    for (let k = 0; k < M3; k++) {
+      let se = 0; for (const p of mem) se += lg(p[k]);
+      eq.push(1 / (1 + Math.exp(-se / mem.length)));
+      let sw = 0; for (let c = 0; c < mem.length; c++) if (gains[c] > 0) sw += (gains[c] / tot) * lg(mem[c][k]);
+      wt.push(1 / (1 + Math.exp(-sw)));
+    }
+    const best = Math.max(...mem.map(icOf3)), icEq = icOf3(eq), icWt = icOf3(wt);
+    if (!(gains[2] === 0))
+      no("헤드: 무신호 구성원이 지분 0 을 받지 않는다 — 기저 비교가 작동하지 않는다");
+    else ok(`무신호 구성원은 지분 0 (기저 손실 ${baseLoss.toFixed(4)} 보다 나쁘다)`);
+    if (!(icEq < best))
+      no(`헤드: 등가중 혼합이 최고 단일헤드보다 나쁘지 않다(${icEq.toFixed(3)} vs ${best.toFixed(3)}) — 재현이 문제를 못 만든다`);
+    else ok(`등가중 혼합은 최고 단일헤드보다 나쁘다 ${icEq.toFixed(3)} < ${best.toFixed(3)} — 약한 구성원이 끌어내린다`);
+    if (!(icWt > best))
+      no(`헤드: 지분가중 혼합이 최고 단일헤드를 못 넘는다(${icWt.toFixed(3)} vs ${best.toFixed(3)}) — 혼합할 이유가 없다`);
+    else ok(`지분가중 혼합은 최고 단일헤드를 넘는다 ${icWt.toFixed(3)} > ${best.toFixed(3)} (등가중 ${icEq.toFixed(3)})`);
   }
 }
 

@@ -8,7 +8,7 @@
      인데, 지금까지 화면에서 그걸 알 방법이 전혀 없었다(카카오톡 인앱 브라우저는 특히 강하게 캐시한다).
      서버가 내려주는 build 와 이 값을 비교해 다르면 배너로 알린다.
      ※ src/index.js 의 _BUILD_VER 와 항상 같아야 한다 — check-html-js 가 강제한다. -->
-<meta name="lux-build" content="V33.217">
+<meta name="lux-build" content="V33.218">
 <title>LUX-ENGINE V10</title>
 <!-- ══ [V33.156] 설치형 앱(PWA) — 폰·PC 에서 홈화면/독에 담아 앱처럼 연다 ══
      · manifest  : 이름·아이콘·standalone 표시(주소창 없이 앱처럼)
@@ -13943,6 +13943,20 @@ html[data-theme="light"] #page-nnviz .nlv-sec-h{ border-color:transparent; color
         html += '<div class="nnv-hd-note">⚠️ <b>후보 전원의 정확도가 같다</b>('+((d.valAcc||0)*100).toFixed(1)+'%). '
           +'기저 승률이 0.5 에서 멀어 <b>넷 다 홀드아웃을 다수 클래스 하나로 찍고 있다</b> — '
           +'0.5 문턱의 정확도로는 후보를 원리상 구별할 수 없다는 뜻이다. 그래서 순위를 재는 IC 로 고른다.</div>';
+      }
+      if(d.blendW && d.blendW.length){
+        // [V33.218] 혼합 지분은 ★내부검증★ 에서 기저(절편만)보다 나은 만큼만 준다.
+        //   홀드아웃으로 맞추면 그 홀드아웃이 학습셋이 되고, 등가중으로 두면 가장 약한
+        //   구성원이 1/n 지분을 그냥 가져간다(실측: 무신호 MLP 가 혼합을 끌어내렸다).
+        html += '<div class="nnv-hd-note">혼합 지분 — '
+          + d.blendW.map(function(m){
+              var sh = (m.share||0)*100;
+              return '<b>'+esc(NNV_HEADNAME[m.head]||m.head)+' '+sh.toFixed(0)+'%</b>'
+                + (m.innerLoss!=null ? '<span class="nnv-hd-acc"> 내부손실 '+m.innerLoss.toFixed(3)+'</span>' : '');
+            }).join(' · ')
+          + (d.blendBaseLoss!=null ? ' · 기저(절편만) '+d.blendBaseLoss.toFixed(3) : '')
+          + '. 학습구간 뒤 15%(내부검증)에서 기저보다 나은 만큼만 지분을 준다 — '
+          + '홀드아웃은 건드리지 않고, 기저보다 못한 헤드는 <b>지분 0</b> 이다.</div>';
       }
       html += '<div class="nnv-hd-note">선형이 기본값이다. 갈아타려면 <b>IC 하한에서 0.005</b> 앞서야 한다 — 우연히 앞선 정도로는 결합기를 바꾸지 않는다. '
         + 'IC 하한 = IC − 표준오차 = IC·(1 − 1/t) 이라, t 가 1 이하인 후보는 하한이 0 아래로 내려간다(증거 없음).'

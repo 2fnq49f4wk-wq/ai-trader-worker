@@ -2788,7 +2788,7 @@ async function applySignalTypeWeights(DB, cfg) {
 // ============================================================================
 // [V33.55] 빌드 버전 — SWR L2 캐시 키에 섞어 '배포 = 판단 캐시 자동 무효화'를 만든다.
 //   판정 로직을 고쳐도 옛 캐시가 최대 1시간 재배포되던 문제를 구조적으로 없앤다.
-const _BUILD_VER = "V33.217";
+const _BUILD_VER = "V33.218";
 
 // ═══ [V33.171] 평가 순서 계획 — ★승격과 순환을 교차해 굶주림을 구조적으로 없앤다★ ═══
 //   V33.50 의 형태트리거는 "급한 몇 종목을 앞으로 당긴다"는 의도였으나, 실제 운영로그에서는
@@ -26010,6 +26010,7 @@ async function _miniLogisticTrain(DB, opts) {
       return { st: st, ic: b, t: t, lb: lb };
     };
     let pv = _linP, _headTag = "lin", _heads = null, _nlin = null, _degenerate = false;
+    let _blendW = null, _blendBase = null;   // [V33.218] 혼합 지분과 그 근거(내부검증 기저손실)
     let acc = _accOf(_linP);
     // ══ [V33.209] ★비선형 헤드 경합 — 선형이 기본값이고, 이기려면 하한에서 이겨야 한다★ ══
     //   opts.nonlinear 를 켠 모델(STACK)만 여기 들어온다. 나머지는 위 로지스틱 그대로다.
@@ -26052,15 +26053,68 @@ async function _miniLogisticTrain(DB, opts) {
             _cand.push(_mk("mlp", ps));
           }
         } catch (e) { _mp = null; }
-        // ── ③ 혼합(로짓 평균) ── 세 헤드가 서로 다른 실패를 한다면 평균이 둘 다보다 낫다.
-        //   ★가중치를 홀드아웃으로 맞추지 않는다★ — 맞추는 순간 홀드아웃이 학습셋이 된다. 동등가중만.
+        /* ── ③ 혼합 ── 서로 다른 실패를 하는 헤드끼리 섞으면 각자보다 나을 수 있다.
+           [V33.209] 는 ★동등가중 로짓 평균★ 이었다. 홀드아웃으로 가중치를 맞추면 그 홀드아웃이
+           학습셋이 되므로 그걸 피한 것인데, 첫 운영 실측에서 동등가중의 대가가 드러났다:
+               lin IC하한 0.016 / gbdt 0.060 / mlp −0.026 / blend −0.026
+           혼합이 ★가장 약한 구성원을 그대로 따라갔다★ — MLP 가 셋 중 1/3 지분을 그냥 가져간다.
+           평균은 구성원이 비슷하게 쓸 만할 때만 좋은 방법이다.
+
+           ★홀드아웃을 건드리지 않고 가중치를 정하는 방법이 있다★ — 학습구간 안의 내부검증이다.
+           GBDT 의 트리 수와 MLP 의 에폭을 고르는 데 이미 쓰고 있는 그 15% 조각이다.
+           거기서 각 헤드의 로그손실을 재고, ★기저확률만 찍는 모형(절편만)★ 보다 못한 헤드는
+           지분 0 을 준다. 나머지는 '기저보다 얼마나 나은가' 에 비례해 나눈다.
+           손잡이가 없다 — 문턱은 '기저보다 나은가' 하나뿐이라 맞출 것이 없다. */
         if (_cand.length >= 3) {
-          const ps = [];
-          for (let k = 0; k < _linP.length; k++) {
-            let sum = 0; for (let c = 0; c < _cand.length; c++) sum += _logitD(_cand[c].p[k]);
-            ps.push(_clamp(_sigmoid(sum / _cand.length), 0.001, 0.999));
+          const _nIn2 = Math.max(20, Math.floor(ntr * 0.15)), _trHi2 = ntr - _nIn2;
+          const _wSum = function (lo, hi) { let a = 0; for (let i = lo; i < hi; i++) a += uw[i]; return a; };
+          const _innerW = _wSum(_trHi2, ntr);
+          // 기저: 학습구간(내부검증 제외)의 양성비율만 찍는 모형
+          let _pBase = 0, _bw = 0;
+          for (let i = 0; i < _trHi2; i++) { _pBase += Y[i] * uw[i]; _bw += uw[i]; }
+          _pBase = _bw > 0 ? _clamp(_pBase / _bw, 1e-4, 1 - 1e-4) : 0.5;
+          const _ll = function (pf) {
+            if (!(_innerW > 0)) return Infinity;
+            let a = 0;
+            for (let i = _trHi2; i < ntr; i++) {
+              const p = _clamp(pf(i), 1e-6, 1 - 1e-6);
+              a += -(Y[i] * Math.log(p) + (1 - Y[i]) * Math.log(1 - p)) * uw[i];
+            }
+            return a / _innerW;
+          };
+          const _baseLoss = _ll(function () { return _pBase; });
+          const _linAt = function (i) {
+            let z = b; for (let j = 0; j < D; j++) z += w[j] * Z[i][j];
+            return 1 / (1 + Math.exp(-_clamp(z, -30, 30)));
+          };
+          const _lossOf = {
+            lin: _ll(_linAt),
+            gbdt: _gb ? _ll(function (i) { return _clamp(_sigmoid(_gbdtRaw(_gb, Z[i])), 0.001, 0.999); }) : Infinity,
+            mlp: _mp ? _ll(function (i) { return _mlpProb(_mp, Z[i]); }) : Infinity
+          };
+          const _mem = [];
+          let _tot = 0;
+          for (let c = 0; c < _cand.length; c++) {
+            const t = _cand[c].tag, L = _lossOf[t];
+            const gain = (isFinite(L) && isFinite(_baseLoss)) ? Math.max(0, _baseLoss - L) : 0;
+            _mem.push({ tag: t, p: _cand[c].p, loss: L, gain: gain });
+            _tot += gain;
           }
-          _cand.push(_mk("blend", ps));
+          _blendW = _mem.map(function (m) {
+            return { head: m.tag, innerLoss: isFinite(m.loss) ? +m.loss.toFixed(5) : null,
+                     share: _tot > 0 ? +(m.gain / _tot).toFixed(4) : 0 };
+          });
+          _blendBase = isFinite(_baseLoss) ? +_baseLoss.toFixed(5) : null;
+          // 지분을 가진 구성원이 둘 이상일 때만 혼합이 뜻이 있다(하나면 그 헤드 자신이다).
+          if (_tot > 0 && _mem.filter(function (m) { return m.gain > 0; }).length >= 2) {
+            const ps = [];
+            for (let k = 0; k < _linP.length; k++) {
+              let sum = 0;
+              for (const m of _mem) if (m.gain > 0) sum += (m.gain / _tot) * _logitD(m.p[k]);
+              ps.push(_clamp(_sigmoid(sum), 0.001, 0.999));
+            }
+            _cand.push(_mk("blend", ps));
+          }
         }
         // ── 선택 ── 자는 하나뿐이다: 블록 IC 의 1σ 하한(합류를 판정하는 것과 같은 통계).
         //   동률이면 단순한 쪽(선형)이 이긴다. ③ 다중검정: 하한이 선형보다 nlMargin 이상
@@ -26165,6 +26219,7 @@ async function _miniLogisticTrain(DB, opts) {
       head: _headTag,
       heads: _heads,                              // 후보 전원의 IC·정확도·하한(무엇에 지고 이겼는지의 증거)
       headDegenerate: _degenerate,                // 0.5 문턱에서 후보가 전부 다수 클래스로 붕괴했는가
+      blendW: _blendW, blendBaseLoss: _blendBase, // 혼합 지분 — 내부검증에서 기저보다 나은 만큼만 준다
       headK: _headK, tMinBase: _tMinBase,          // 다중검정 보정 전/후 문턱
       gbdt: _nlin && _nlin.gbdt
         ? { trees: _nlin.gbdt.trees, eta: _nlin.gbdt.eta, bias: _nlin.gbdt.bias, importance: _nlin.gbdt.importance || null }
@@ -26255,13 +26310,25 @@ function stackScore(model, featVec) {
       return _mlpProb(model.mlp, z);
     }
     if (head === "blend") {
-      // 학습 때와 같은 구성원·같은 등가중 로짓 평균이어야 한다. 한 명이라도 빠지면 평균의 의미가 달라진다.
-      const ps = [flowScore(model, featVec)];
-      if (model.gbdt) ps.push(_clamp(_sigmoid(_gbdtRaw(model.gbdt, z)), 0.001, 0.999));
-      if (model.mlp) ps.push(_mlpProb(model.mlp, z));
-      if (ps.length < 2 || ps.some(function (v) { return v == null; })) return flowScore(model, featVec);
-      let sum = 0; for (const v of ps) sum += _logitD(v);
-      return _clamp(_sigmoid(sum / ps.length), 0.001, 0.999);
+      /* [V33.218] 학습이 정한 ★지분(blendW)★ 을 그대로 쓴다. 종전엔 여기서 등가중 평균을
+         다시 계산했는데, 학습 쪽이 가중 평균으로 바뀌면 그 순간 ★학습한 함수와 배포되는 함수가
+         달라진다★. 어느 쪽도 예외를 던지지 않으므로 화면상으로는 멀쩡해 보인다 — 가장 나쁜 종류다.
+         지분은 모델에 실려 있고, 여기서는 읽기만 한다. */
+      const pOf = { lin: flowScore(model, featVec) };
+      if (model.gbdt) pOf.gbdt = _clamp(_sigmoid(_gbdtRaw(model.gbdt, z)), 0.001, 0.999);
+      if (model.mlp) pOf.mlp = _mlpProb(model.mlp, z);
+      const W = Array.isArray(model.blendW) ? model.blendW : null;
+      if (!W) return flowScore(model, featVec);          // 지분이 없으면 학습 때 식을 복원할 수 없다
+      let sum = 0, tot = 0;
+      for (const m of W) {
+        const sh = _num(m && m.share, 0);
+        if (!(sh > 0)) continue;
+        const p = pOf[m && m.head];
+        if (p == null) return flowScore(model, featVec); // 구성원이 유실되면 지분 합이 달라진다 → 선형으로
+        sum += sh * _logitD(p); tot += sh;
+      }
+      if (!(tot > 0)) return flowScore(model, featVec);
+      return _clamp(_sigmoid(sum / tot), 0.001, 0.999);
     }
     return flowScore(model, featVec);
   } catch (e) { return null; }
@@ -32333,6 +32400,8 @@ async function mlLinearVizData(DB, name) {
       //   화면이 계수 막대만 그리면 헤드가 gbdt/mlp 일 때 ★쓰이지도 않는 계수★ 를 보여주게 된다.
       head: m.head || "lin", heads: Array.isArray(m.heads) ? m.heads : null,
       headK: _num(m.headK, null), tMinBase: _num(m.tMinBase, null),
+      // [V33.218] 혼합 지분과 그 근거 — 화면이 "왜 이 비율인가" 를 말할 수 있어야 한다.
+      blendW: Array.isArray(m.blendW) ? m.blendW : null, blendBaseLoss: _num(m.blendBaseLoss, null),
       nl: _metaHeadDetail(m, fn),
       note: note ? String(note.msg || "") : null, noteOk: note ? !!note.ok : null, noteTs: note ? _num(note.ts, null) : null
     };
