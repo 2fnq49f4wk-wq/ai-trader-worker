@@ -2788,7 +2788,7 @@ async function applySignalTypeWeights(DB, cfg) {
 // ============================================================================
 // [V33.55] 빌드 버전 — SWR L2 캐시 키에 섞어 '배포 = 판단 캐시 자동 무효화'를 만든다.
 //   판정 로직을 고쳐도 옛 캐시가 최대 1시간 재배포되던 문제를 구조적으로 없앤다.
-const _BUILD_VER = "V33.229";
+const _BUILD_VER = "V33.230";
 
 // ═══ [V33.171] 평가 순서 계획 — ★승격과 순환을 교차해 굶주림을 구조적으로 없앤다★ ═══
 //   V33.50 의 형태트리거는 "급한 몇 종목을 앞으로 당긴다"는 의도였으나, 실제 운영로그에서는
@@ -29637,8 +29637,24 @@ async function stinBackfill(DB, opts) {
     //   야후 5m 는 1개월 롤링 창, 네이버 minute5 는 당일치를 준다. 전 종목을 계속 회전하면
     //   같은 봉을 매 바퀴 다시 표본으로 만들어 사본이 무한 증식한다(표본수만 부풀고 과적합).
     //   그 봉 시각보다 새로운 봉만 표본으로 만든다.
-    let wm = {};
-    try { const w = await getState(DB, "stin_bf_wm", null); if (w && typeof w === "object" && w.v) wm = w.v; } catch (e) {}
+    let wm = {}, _wmReset = 0;
+    try {
+      const w = await getState(DB, "stin_bf_wm", null);
+      if (w && typeof w === "object" && w.v) {
+        /* ══ [V33.230] ★봉 길이가 바뀌면 워터마크도 무효다.★ ══
+           워터마크는 '이 종목에서 마지막으로 표본을 만든 봉 시각' 이다. 5분봉 시절의 값이
+           금요일 종가에 찍혀 있으면, 1분봉으로 바꾼 뒤 같은 기간을 다시 받아도 ★전부★
+           그 시각 이전이라 통째로 건너뛴다. 실측이 그것이었다:
+             +1표본 … 성공 1 실패 36 짧음 0 ★기수확 1022★
+           1분봉으로 바꾼 이유는 같은 기간을 5배 촘촘히 보기 위해서인데, 그 촘촘해진 봉들이
+           전부 '이미 수확함' 으로 버려지고 있었다 — 바꾼 효과가 0 이다.
+           옛 표본은 fv(STIN_FEATVER)가 달라 학습에서 이미 갈려 있으므로(V33.222 에서 4→5),
+           다시 훑어도 사본이 되지 않는다. 봉 길이가 바뀐 그 한 번만 비운다. */
+        const _wb = _num(w.bar, 0);
+        if (_wb && _wb !== SCALP_BAR_MIN) { _wmReset = Object.keys(w.v).length; }
+        else wm = w.v;
+      }
+    } catch (e) {}
     // [V33.106] 검증된 range 를 기억한다 — 매 회차 탐색하면 그게 곧 헛 fetch 다.
     /* [V33.222] ★1분봉은 과거 범위가 짧다.★ 야후는 interval=1m 을 대략 최근 7일까지만 준다
        (5분봉은 60일). 그대로 60d 를 요청하면 응답이 비거나 오류가 나서 소급생성이 통째로 멈춘다.
@@ -29649,7 +29665,14 @@ async function stinBackfill(DB, opts) {
        그대로 되살려 interval=1m&range=60d 를 요청했다. 야후는 그 조합을 주지 않는다 —
        120종목 전부 실패(성공 0 실패 120)로 소급생성이 통째로 멈춰 있었다.
        봉 길이가 바뀌면 기억은 무효다. 현재 봉에서 성립하는 range 만 되살린다. */
-    const _bfRangeOk = SCALP_BAR_MIN <= 1 ? ["7d", "5d", "1d"] : ["60d", "1mo", "5d", "1d"];
+    /* [V33.230] ★"7d" 는 야후가 아는 range 값이 아니다.★ 열거값은 1d·5d·1mo·3mo·6mo·1y·…
+       뿐이고 7d 는 그 안에 없다. 1분봉의 과거 한도가 7일이라는 사실과 '7d 라고 요청할 수
+       있다' 는 서로 다른 이야기인데 V33.228 이 그 둘을 섞었다. 실측 로그가 그대로 말했다:
+         [ST-BACKFILL] +1표본 … (성공 1 실패 36 … , range 5d↓)
+       매 회차 첫 종목을 7d 로 태워 실패시키고 5d 로 내려앉는다 — 결과는 맞는데 헛 fetch 가
+       하나씩 붙고, 로그의 ↓ 가 '야후가 거부했다' 는 잘못된 인상을 남긴다.
+       1분봉에서 실제로 쓸 수 있는 최댓값은 5d 다. 그것을 처음부터 요청한다. */
+    const _bfRangeOk = SCALP_BAR_MIN <= 1 ? ["5d", "1d"] : ["60d", "1mo", "5d", "1d"];
     const _bfRangeTop = _bfRangeOk[0];              // 이 봉 길이에서 가장 긴(=표본이 많은) 범위
     const _bfRangeAlt = _bfRangeOk[1];              // 거부당했을 때 물러설 범위
     let _bfRange = _bfRangeTop, _rangeProbed = false, _rangeDemoted = false;
@@ -29712,10 +29735,14 @@ async function stinBackfill(DB, opts) {
         // 응답이 실제로 길어졌는지 확인 — 200 으로 오면서 1mo 분량만 주는 경우도 걸러낸다.
         const _n0 = (mb && ((mb.allCloses && mb.allCloses.length) || (mb.closes && mb.closes.length))) || 0;
         _rangeProbed = true;
-        // [V33.228] 임계 2200 은 5분봉 60d(≈3,400봉) 전제였다. 봉 길이에서 기대 봉수를 만든다.
-        //   1분봉 7d ≈ 5거래일 × 390분 ≈ 1,950봉 → 그 65% 를 하한으로 본다.
-        const _expect = Math.round(_barsFor(SCALP_SESSION_MIN) * (_bfRangeTop === "60d" ? 43 : 5) * 0.65);
-        if (_bfRange !== _bfRangeAlt && _n0 < _expect && !/\.(KS|KQ)$/i.test(sym)) { _bfRange = _bfRangeAlt; _rangeDemoted = true; }
+        /* [V33.228] 임계 2200 은 5분봉 60d(≈3,400봉) 전제였다. 봉 길이에서 기대 봉수를 만든다.
+           [V33.230] 이 확인은 ★더 긴 범위를 시험해 본★ 경우에만 뜻이 있다(5분봉의 60d vs 1mo).
+           1분봉의 최댓값 5d 는 물러설 곳이 1d 뿐이라, 짧다고 내려가면 표본이 5분의 1로 준다 —
+           고치려는 것보다 나쁜 결과다. 그 경우엔 짧은 응답을 그대로 쓴다. */
+        const _expect = Math.round(_barsFor(SCALP_SESSION_MIN) * 43 * 0.65);
+        if (_bfRangeTop === "60d" && _bfRange !== _bfRangeAlt && _n0 < _expect && !/\.(KS|KQ)$/i.test(sym)) {
+          _bfRange = _bfRangeAlt; _rangeDemoted = true;
+        }
       }
       const c = mb && (mb.allCloses && mb.allCloses.length ? mb.allCloses : mb.closes);
       // [V33.104] 60+H(=72) → 40. 루프는 i=24 에서 시작해 i+H 까지 필요하므로 37봉이면
@@ -29822,7 +29849,7 @@ async function stinBackfill(DB, opts) {
       const live = new Set(all);
       const wm2 = {};
       for (const k2 in wm) if (live.has(k2)) wm2[k2] = wm[k2];
-      await setState(DB, "stin_bf_wm", { v: wm2, ts: Date.now() });
+      await setState(DB, "stin_bf_wm", { v: wm2, bar: SCALP_BAR_MIN, ts: Date.now() });
     } catch (e) {}
     // 마지막 잔여분까지 내보낸다(청크 플러시와 같은 경로).
     await _flushChunk(made);
@@ -29845,7 +29872,10 @@ async function stinBackfill(DB, opts) {
     return "[ST-BACKFILL] +" + _total + "표본(" + _files + "파일) / " + _cov +
            " (성공 " + symOk + " 실패 " + symFail + " 짧음 " + skipShort + " 기수확 " + skipDup +
            ", range " + _bfRange + (_rangeDemoted ? "↓" : "") +
-           ", " + (Date.now() - _t0bf) + "ms) — 저장된 " + SCALP_BAR_MIN + "분봉";
+           ", " + (Date.now() - _t0bf) + "ms)" +
+           (_wmReset ? " · 봉 길이가 바뀌어 워터마크 " + _wmReset + "종목분을 비웠다(같은 기간을 " +
+                       SCALP_BAR_MIN + "분 해상도로 다시 훑는다)" : "") +
+           " — 저장된 " + SCALP_BAR_MIN + "분봉";
   } catch (e) { return "[ST-BACKFILL] fail: " + (e && e.message); }
 }
 

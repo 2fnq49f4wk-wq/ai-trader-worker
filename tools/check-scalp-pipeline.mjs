@@ -46,6 +46,11 @@ function _yahooMaxDays(intervalMin) {
   if (intervalMin <= 1) return 7;
   return 60;
 }
+/* [V33.230] 야후의 range 는 자유 숫자가 아니라 ★열거값★ 이다. "7d" 는 그 안에 없다 —
+   1분봉의 과거 한도가 7일이라는 사실과 '7d 라고 요청할 수 있다' 는 다른 이야기인데,
+   V33.228 이 그 둘을 섞어 매 회차 첫 종목을 헛되이 태웠다(실측 로그: range 5d↓).
+   스텁이 열거값을 알아야 그 실수를 오프라인에서 잡는다. */
+const YAHOO_RANGES = ["1d", "5d", "1mo", "3mo", "6mo", "1y", "2y", "5y", "10y", "ytd", "max"];
 function _rangeDays(r) {
   const m = /^(\d+)(d|mo|y)$/.exec(String(r || ""));
   if (!m) return 1;
@@ -58,6 +63,11 @@ globalThis.fetch = async function (url) {
     {
       const mi = /[?&]interval=(\d+)m\b/.exec(u), mr = /[?&]range=([^&]+)/.exec(u);
       const iv = mi ? Number(mi[1]) : 5;
+      if (mr && YAHOO_RANGES.indexOf(String(mr[1])) < 0) {
+        // 열거에 없는 range 는 야후가 422 로 되돌린다("60d" 는 예외적으로 받는다).
+        if (String(mr[1]) !== "60d")
+          return { ok: false, status: 422, async json() { return {}; }, async text() { return "invalid range"; } };
+      }
       if (mr && _rangeDays(mr[1]) > _yahooMaxDays(iv)) {
         // 실제 야후와 같이 422 로 거절한다(yahooFetch 가 재시도 없이 예외로 올린다).
         return { ok: false, status: 422, async json() { return {}; }, async text() { return "range too long"; } };
@@ -186,9 +196,9 @@ const bad = (msg) => { fails++; console.log("  FAIL " + msg); };
   const rs = JSON.parse(db._state.get("stin_bf_range") || "null");
   /* 계약의 실질은 "봉이 실제로 길게 오면 강등하지 않는다" 이다. 시작 range 는 봉 길이가 정한다
      — 1분봉은 야후가 약 7일까지만 주므로 60d 로 시작하는 것 자체가 틀린 요청이다. */
-  const _wantRange = _BM <= 1 ? "7d" : "60d";
-  if (rs && rs.v === _wantRange && !rs.demoted) ok("긴 range 유지 (" + _wantRange + " · 봉이 실제로 길면 강등 안 함)");
-  else bad("긴 range 가 강등됐다 — " + JSON.stringify(rs) + " (기대 " + _wantRange + ")");
+  const _wantRange = _BM <= 1 ? "5d" : "60d";
+  if (rs && rs.v === _wantRange && !rs.demoted) ok("긴 range 유지 (" + _wantRange + " · 봉이 실제로 길면 강등 안 함 · 헛 fetch 0)");
+  else bad("긴 range 가 강등됐다 — " + JSON.stringify(rs) + " (기대 " + _wantRange + ") · 첫 요청이 야후 열거값이 아닐 수 있다");
   // 수율도 봉 길이에 따라 달라진다: 표본 간격(minGapMin)이 분 단위라 1분봉이면 봉 25개마다 1건.
   const _wantN = Math.round(400 * (5 / _BM) / (5 / _BM));   // 기간이 같으면 표본 수도 같아야 한다
   if (n > _wantN) ok("긴 range 수율 " + n + "건/2종목 (봉 " + _BM + "분 기준)");
@@ -373,7 +383,7 @@ const bad = (msg) => { fails++; console.log("  FAIL " + msg); };
 {
   const _BM = M.SCALP_BAR_MIN || 5;
   const daily = JSON.stringify(synthDaily(300));
-  const stale = _BM <= 1 ? "60d" : "7d";       // '지금 봉에서는 틀린' 옛 range
+  const stale = _BM <= 1 ? "60d" : "7d";   // '지금 봉에서는 틀린' 옛 range       // '지금 봉에서는 틀린' 옛 range
   // (a) bar 필드가 없는 구 레코드 — 마이그레이션 이전에 쓰인 형태
   // (b) bar 필드가 다른 봉 길이를 가리키는 레코드
   for (const seed of [{ v: stale, ts: 1 }, { v: stale, bar: _BM === 5 ? 1 : 5, ts: 1 }]) {
@@ -386,7 +396,7 @@ const bad = (msg) => { fails++; console.log("  FAIL " + msg); };
     else bad("낡은 range 가 되살아나 전량 실패했다 — " + tag + ": " + res);
     // 저장된 range 는 지금 봉에서 성립하는 값이어야 하고, 봉 길이가 함께 남아야 한다.
     const rs = JSON.parse(db._state.get("stin_bf_range") || "null");
-    const okList = _BM <= 1 ? ["7d", "5d", "1d"] : ["60d", "1mo", "5d", "1d"];
+    const okList = _BM <= 1 ? ["5d", "1d"] : ["60d", "1mo", "5d", "1d"];
     if (rs && okList.indexOf(String(rs.v)) >= 0 && Number(rs.bar) === _BM)
       ok("저장 range 가 지금 봉에서 유효하고 bar=" + rs.bar + " 가 함께 남는다 (" + rs.v + ")");
     else bad("저장 range 가 지금 봉에 안 맞거나 bar 표기가 없다: " + JSON.stringify(rs));
@@ -401,6 +411,43 @@ const bad = (msg) => { fails++; console.log("  FAIL " + msg); };
   if (/저장된 5분봉/.test(bf)) hard.push("로그 문구에 '5분봉' 고정");
   if (hard.length) bad("소급생성 range 가 봉 길이와 무관하게 박혀 있다: " + hard.join(" · "));
   else ok("소급생성 range·강등·로그가 전부 기준봉에서 파생된다");
+}
+
+// ══ 1-e) ★봉 길이가 바뀌면 워터마크도 무효인가★ ═══════════════════════════════
+//   [V33.230] 워터마크는 '이 종목에서 마지막으로 표본을 만든 봉 시각' 이다. 5분봉 시절의
+//   값이 남아 있으면 1분봉으로 바꾼 뒤 같은 기간을 다시 받아도 전부 그 시각 이전이라
+//   통째로 건너뛴다 — 실측: "+1표본 … 성공 1 실패 36 짧음 0 ★기수확 1022★".
+//   봉을 촘촘하게 바꾼 목적이 정확히 그 촘촘해진 봉을 보는 것인데, 그게 0 이 된다.
+{
+  const _BM = M.SCALP_BAR_MIN || 5;
+  const daily = JSON.stringify(synthDaily(300));
+
+  // 1회차로 워터마크를 만든다.
+  const db = fakeDB([["daily:AAA", daily], ["daily:BBB", daily]]);
+  const r2 = { _n: 0, async put(k, b) { this._n += JSON.parse(b).n; } };
+  M._setR2ForTest(r2);
+  await M.stinBackfill(db, { maxSyms: 2, maxSamples: 100000 });
+  const first = r2._n;
+  const wm = JSON.parse(db._state.get("stin_bf_wm") || "null");
+  if (wm && Number(wm.bar) === _BM) ok("워터마크에 봉 길이(bar=" + wm.bar + ")가 함께 남는다");
+  else bad("워터마크에 봉 길이가 없다 — 봉이 바뀌어도 무효화할 근거가 없다: " + JSON.stringify(wm && wm.bar));
+
+  // 같은 워터마크로 다시 돌리면 0건이어야 한다(중복 차단은 그대로 살아 있어야 한다).
+  r2._n = 0;
+  await M.stinBackfill(db, { maxSyms: 2, maxSamples: 100000 });
+  if (r2._n === 0) ok("같은 봉 길이에서는 워터마크가 그대로 중복을 막는다");
+  else bad("워터마크 중복차단이 깨졌다 (+" + r2._n + ")");
+
+  // 봉 길이가 달랐던 것으로 표기를 바꿔 두면 다시 훑어야 한다.
+  const wm2 = Object.assign({}, wm, { bar: _BM === 5 ? 1 : 5 });
+  db._state.set("stin_bf_wm", JSON.stringify(wm2));
+  r2._n = 0;
+  const res3 = await M.stinBackfill(db, { maxSyms: 2, maxSamples: 100000 });
+  if (r2._n >= first * 0.9)
+    ok("봉 길이가 바뀐 워터마크는 비워지고 같은 기간을 다시 훑는다 (+" + r2._n + " · 1회차 " + first + ")");
+  else bad("봉이 바뀌었는데 옛 워터마크가 새 봉을 막는다 (+" + r2._n + " · 1회차 " + first + "): " + res3);
+  if (/워터마크/.test(res3)) ok("워터마크를 비운 사실을 로그가 말한다(조용한 재훑기 아님)");
+  else bad("워터마크를 조용히 비웠다 — 사본 증식과 구별할 수 없다: " + res3);
 }
 
 console.log(fails ? "\n단타 파이프라인 검증 실패 " + fails + "건" : "\n  ok   단타 표본 파이프라인 통과");
