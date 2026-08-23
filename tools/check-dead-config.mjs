@@ -24,7 +24,35 @@ const i0 = src.indexOf("const DEFAULT_CFG = {");
 if (i0 < 0) { bad("DEFAULT_CFG 를 찾지 못했다"); process.exit(1); }
 let d = 0, j = i0 + "const DEFAULT_CFG = ".length; const start = j;
 for (; j < src.length; j++) { const c = src[j]; if (c === "{") d++; else if (c === "}") { d--; if (d === 0) { j++; break; } } }
-const strip = (t) => t.replace(/\/\/[^\n]*/g, "").replace(/\/\*[\s\S]*?\*\//g, "");
+/* [V33.217] ★주석 제거를 정규식 두 번으로 하면 코드를 통째로 삼킨다.★
+   종전: 줄주석을 정규식으로 먼저 지우고 그 다음 블록주석을 지웠다. 둘 다 문맥을 모른다:
+     · 블록주석 안의 URL(`https://…`)이 '줄주석' 으로 잡혀 그 줄 끝까지 먹는다 —
+       그러다 블록을 닫는 종료기호를 같이 먹으면 ★그 뒤 코드가 다음 종료기호까지 주석 취급★ 된다.
+     · 줄주석 안에 별표+슬래시가 들어간 표기(예: TR_ / SC_ 같은 와일드카드 나열)가
+       블록주석 종료로 잡혀 짝이 어긋난다. 실제로 src 에는 종료기호가 시작기호보다 4개 많다.
+   그 결과 이 검사는 ★코드 일부를 못 보고 있었다★ — 실측: 배선 420개로 세던 것이
+   제대로 세면 423개다(sectorNews.posScaleMax·negScaleMin, analyst/sectorNews.refreshHours).
+   즉 "아무도 안 읽는다" 는 판정이 그만큼 헐거웠다.
+   → 한 번만 훑으며 상태(문자열·줄주석·블록주석)를 들고 간다. */
+const strip = (t) => {
+  let out = "", i = 0, st = 0;   // 0=코드 1=줄주석 2=블록주석 3='' 4="" 5=``
+  while (i < t.length) {
+    const c = t[i], n = t[i + 1];
+    if (st === 0) {
+      if (c === "/" && n === "/") { st = 1; i += 2; continue; }
+      if (c === "/" && n === "*") { st = 2; i += 2; continue; }
+      if (c === "'") st = 3; else if (c === '"') st = 4; else if (c === "`") st = 5;
+      out += c; i++; continue;
+    }
+    if (st === 1) { if (c === "\n") { st = 0; out += c; } i++; continue; }
+    if (st === 2) { if (c === "*" && n === "/") { st = 0; i += 2; } else { if (c === "\n") out += c; i++; } continue; }
+    // 문자열 안 — 이스케이프를 건너뛰고 그대로 살린다(코드다).
+    if (c === "\\") { out += c + (n || ""); i += 2; continue; }
+    if ((st === 3 && c === "'") || (st === 4 && c === '"') || (st === 5 && c === "`")) st = 0;
+    out += c; i++;
+  }
+  return out;
+};
 const blk = strip(src.slice(start, j));
 const rest = strip(src.slice(0, i0) + src.slice(j));
 
@@ -62,9 +90,7 @@ const RETIRED = {
   clvStrongMin: "구 CLV 사이징 잔재", clvWeakMax: "구 CLV 사이징 잔재",
   clvStrongScale: "구 CLV 사이징 잔재", clvWeakScale: "구 CLV 사이징 잔재",
   obvUpScale: "구 OBV 사이징 잔재", obvDownScale: "구 OBV 사이징 잔재",
-  posScaleMax: "구 사이징 잔재", negScaleMin: "구 사이징 잔재",
   minMult: "구 사이징 잔재", minBudget: "구 사이징 잔재",
-  riskOnBoost: "대체: mktCtx.sizeScale", riskOffScale: "대체: mktCtx.sizeScale",
   rsTiltBoost: "대체: xsPanel 횡단면 랭크", rsTiltCut: "대체: xsPanel 횡단면 랭크",
   weeklyMisalignScale: "구 주간정렬 잔재", targetAtrPct: "구 변동성 타깃 잔재",
   beatBoost: "대체: earnCorr 실측 서프라이즈 상관", missScale: "대체: earnCorr",
@@ -80,7 +106,6 @@ const RETIRED = {
   softTimeStopMinutesKR: "구 소프트 타임스탑 잔재", softTimeStopMinPnlKR: "구 소프트 타임스탑 잔재",
   eodProfitTakeBeforeMin: "구 EOD 익절 잔재", forceCloseBeforeMinClose: "구 EOD 청산 잔재",
   usIntradayGate: "대체: intradayConfirm", cycleLockRefreshAt: "구 락 갱신 잔재",
-  refreshHours: "구 캐시 갱신 잔재", refreshMinutes: "구 캐시 갱신 잔재",
   fallbackOnFail: "구 폴백 플래그 잔재", fallbackToLegacy: "구 폴백 플래그 잔재"
 };
 

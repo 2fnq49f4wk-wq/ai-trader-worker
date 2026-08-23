@@ -2788,7 +2788,7 @@ async function applySignalTypeWeights(DB, cfg) {
 // ============================================================================
 // [V33.55] 빌드 버전 — SWR L2 캐시 키에 섞어 '배포 = 판단 캐시 자동 무효화'를 만든다.
 //   판정 로직을 고쳐도 옛 캐시가 최대 1시간 재배포되던 문제를 구조적으로 없앤다.
-const _BUILD_VER = "V33.216";
+const _BUILD_VER = "V33.217";
 
 // ═══ [V33.171] 평가 순서 계획 — ★승격과 순환을 교차해 굶주림을 구조적으로 없앤다★ ═══
 //   V33.50 의 형태트리거는 "급한 몇 종목을 앞으로 당긴다"는 의도였으나, 실제 운영로그에서는
@@ -7847,10 +7847,15 @@ async function analystRevFitNightly(DB) {
       const cl = d && Array.isArray(d.closes) ? d.closes : null;
       if (!cl || cl.length < 60) continue;
       scanned++;
+      const _dys = (d && Array.isArray(d.days) && d.days.length === cl.length) ? d.days : null;
       for (const e of done) {
-        const i0 = _altBarIdx(cl.length, _num(e.t, 0), now);
-        const i1 = i0 + Math.round(H * (252 / 365));
-        if (!(i0 >= 0 && i1 < cl.length)) continue;
+        const i0 = _altBarIdx(cl.length, _num(e.t, 0), now, _dys);
+        /* [V33.217] 지평 끝도 ★날짜로★ 찾는다. 종전엔 i0 + round(H × 252/365) 로 봉 수를
+           환산했는데, 그 환산은 공휴일·휴장을 모른다 — 지평이 실제보다 길거나 짧은 구간의
+           수익률로 라벨을 만들게 된다. days 가 있으면 'e.t + H일' 의 봉을 바로 찾으면 된다. */
+        const i1 = _dys ? _altBarIdx(cl.length, _num(e.t, 0) + H * 86400000, now, _dys)
+                        : i0 + Math.round(H * (252 / 365));
+        if (!(i0 >= 0 && i1 > i0 && i1 < cl.length)) continue;
         const p0 = _num(cl[i0], 0), p1 = _num(cl[i1], 0);
         if (!(p0 > 0 && p1 > 0)) continue;
         X.push(_clamp(_num(e.s, 0), -1, 1));
@@ -8501,6 +8506,33 @@ function confirmIntradayEntry(mb, price, rules) {
 //   엔드포인트: m.stock.naver.com/api/stock/{code}/candle/day
 //   포맷: [{openPrice, highPrice, lowPrice, closePrice, volume, localDate}]
 //   pageSize=1500: 5년치(~1260거래일) 확보
+/* [V33.217] ★봉의 날짜를 캐시에 함께 저장한다 — 근사를 없애기 위해서다.★
+
+   소급생성(백필)은 "이 표본의 시각이 봉 배열의 몇 번째인가" 를 알아야 그 시점으로 잘라낸
+   피처를 만들 수 있다. 그런데 daily: 캐시가 봉 날짜를 저장하지 않아서, 지금까지 그 인덱스를
+   ★추정★ 해 왔다:
+     · V33.212 이전 — ceil(캘린더일 × 252/365). 짧은 구간에서 되돌림이 모자라 룩어헤드가 났다
+                      (전수 재현 10,227 조합 중 47건).
+     · V33.213      — 평일 세기. 룩어헤드는 0 이 됐지만 공휴일만큼 과거로 더 간다(연 10~15봉).
+                      오염은 아니지만 피처가 그만큼 어긋난 자리에서 만들어진다.
+   봉 날짜가 있으면 둘 다 필요 없다 — 이분탐색으로 정확히 맞는 봉을 찾으면 된다.
+
+   저장은 ★에폭 이후 일수★(정수)로 한다. ms 로 넣으면 13자리 × 320봉이라 종목당 4.5KB 인데,
+   일수는 5자리라 1.9KB 다. 그리고 우리가 비교하는 것은 어차피 '날짜' 이지 시각이 아니다. */
+function _dayNumOf(ms) {
+  const n = Number(ms);
+  return isFinite(n) ? Math.floor(n / 86400000) : null;
+}
+// 네이버 일봉 행 → 일수. localDate("YYYYMMDD") 또는 localDateTime("YYYYMMDDHHmm").
+//   KST 기준 날짜를 그대로 쓴다(한국장 봉이므로 그 날짜가 곧 거래일이다).
+function _naverDayNum(row) {
+  const dt = String((row && (row.localDate || row.localDateTime)) || "");
+  if (dt.length < 8) return null;
+  const y = Number(dt.slice(0, 4)), m = Number(dt.slice(4, 6)), d = Number(dt.slice(6, 8));
+  if (!(y > 1970 && m >= 1 && m <= 12 && d >= 1 && d <= 31)) return null;
+  return _dayNumOf(Date.UTC(y, m - 1, d));
+}
+
 async function fetchDailyFullNaver(code) {
   const now = new Date();
   const toS = now.getUTCFullYear() +
@@ -8521,19 +8553,24 @@ async function fetchDailyFullNaver(code) {
   let rows;
   try { rows = await r.json(); } catch (e) { throw new Error("naver candle/day parse fail"); }
   if (!Array.isArray(rows)) throw new Error("naver candle/day bad format");
-  const closes = [], highs = [], lows = [], volumes = [], opens = [];
+  const closes = [], highs = [], lows = [], volumes = [], opens = [], days = [];
   for (const row of rows) {
     const c = Number(row.closePrice);
     if (!(c > 0)) continue;
+    // [V33.217] 날짜를 못 읽는 행은 ★버린다★ — 날짜 없는 봉을 섞으면 배열 정렬이 어긋나
+    //   그 뒤 모든 인덱스가 한 칸씩 밀린다(가격은 맞는데 시점이 틀린 피처가 만들어진다).
+    const dn = _naverDayNum(row);
+    if (dn == null) continue;
     const o = Number(row.openPrice), h = Number(row.highPrice), l = Number(row.lowPrice), v = Number(row.volume != null ? row.volume : row.accumulatedTradingVolume);
     opens.push(o > 0 ? o : c);
     highs.push(h > 0 ? h : c);
     lows.push(l > 0 ? l : c);
     closes.push(c);
     volumes.push(v >= 0 ? v : 0);
+    days.push(dn);
   }
   if (closes.length === 0) throw new Error("naver candle/day empty");
-  return { closes, highs, lows, volumes, opens };
+  return { closes, highs, lows, volumes, opens, days };
 }
 
 async function fetchDailyFull(symbol) {
@@ -8542,9 +8579,9 @@ async function fetchDailyFull(symbol) {
   if (isKR) {
     // [V58] KR 일봉 — 네이버 api.stock (실시간). [폴백FIX] Workers에서 네이버 차단/실패 시 Yahoo .KS/.KQ로 폴백.
     const code = symbol.split(".")[0];
-    let closes, highs, lows, volumes, opens;
+    let closes, highs, lows, volumes, opens, days;
     try {
-      ({ closes, highs, lows, volumes, opens } = await fetchDailyFullNaver(code));
+      ({ closes, highs, lows, volumes, opens, days } = await fetchDailyFullNaver(code));
     } catch (eNaver) {
       // Yahoo v8 일봉 폴백 — 네이버가 Workers IP를 막거나 포맷이 바뀌어도 일봉이 끊기지 않게.
       const j = await yahooFetch("https://query1.finance.yahoo.com/v8/finance/chart/" + encodeURIComponent(symbol) + "?interval=1d&range=5y");
@@ -8552,15 +8589,19 @@ async function fetchDailyFull(symbol) {
       const quote = (result && result.indicators && result.indicators.quote && result.indicators.quote[0]) || null;
       if (!result || !quote) throw eNaver;
       const rc = quote.close || [], rh = quote.high || [], rl = quote.low || [], rv = quote.volume || [], ro = quote.open || [];
-      closes = []; highs = []; lows = []; volumes = []; opens = [];
+      const rt = result.timestamp || [];   // [V33.217] 봉 시각(초) — 같은 루프에서 정렬을 지켜 담는다
+      closes = []; highs = []; lows = []; volumes = []; opens = []; days = [];
       for (let i = 0; i < rc.length; i++) {
         const c = rc[i];
         if (typeof c !== "number" || !isFinite(c) || c <= 0) continue;
+        const dn = (typeof rt[i] === "number" && rt[i] > 0) ? _dayNumOf(rt[i] * 1000) : null;
+        if (dn == null) continue;          // 날짜 없는 봉은 버린다(정렬이 어긋나면 전 구간이 밀린다)
         closes.push(c);
         highs.push((typeof rh[i] === "number" && rh[i] > 0) ? rh[i] : c);
         lows.push((typeof rl[i] === "number" && rl[i] > 0) ? rl[i] : c);
         volumes.push((typeof rv[i] === "number" && rv[i] > 0) ? rv[i] : 0);
         opens.push((typeof ro[i] === "number" && ro[i] > 0) ? ro[i] : c);
+        days.push(dn);
       }
       if (closes.length === 0) throw eNaver;
     }
@@ -8580,6 +8621,7 @@ async function fetchDailyFull(symbol) {
     return { symbol: symbol, price: lastClose, prevClose: prevClose,
       closes: closes.slice(-T), highs: highs.slice(-T), lows: lows.slice(-T),
       volumes: volumes.slice(-T), opens: opens.slice(-T),
+      days: Array.isArray(days) ? days.slice(-T) : null,
       ret1y: ret1y, ret5y: ret5y, vol: vol, avgVol20: avgVol20 };
   }
 
@@ -8601,15 +8643,19 @@ async function fetchDailyFull(symbol) {
   const rawVols = quote.volume || [];
   const rawOpens = quote.open || [];
   // 인덱스 정렬을 유지하면서 null을 가진 row 전체를 제거
-  const closes = [], highs = [], lows = [], volumes = [], opens = [];
+  const rawTs = result.timestamp || [];   // [V33.217] 봉 시각(초)
+  const closes = [], highs = [], lows = [], volumes = [], opens = [], days = [];
   for (let i = 0; i < rawCloses.length; i++) {
     const c = rawCloses[i], h = rawHighs[i], l = rawLows[i], v = rawVols[i], o = rawOpens[i];
     if (typeof c !== "number" || isNaN(c) || c <= 0) continue;
+    const dn = (typeof rawTs[i] === "number" && rawTs[i] > 0) ? _dayNumOf(rawTs[i] * 1000) : null;
+    if (dn == null) continue;            // 날짜 없는 봉은 버린다(위 KR 분기와 같은 이유)
     closes.push(c);
     highs.push((typeof h === "number" && !isNaN(h) && h > 0) ? h : c);
     lows.push((typeof l === "number" && !isNaN(l) && l > 0) ? l : c);
     volumes.push((typeof v === "number" && !isNaN(v) && v > 0) ? v : 0);
     opens.push((typeof o === "number" && !isNaN(o) && o > 0) ? o : c);
+    days.push(dn);
   }
   if (closes.length === 0) throw new Error("no daily close");
   // [V9.2] stale meta 가드 — 야후가 접미사 오류(코스닥 종목 .KS 조회 등) 시 일봉 캔들은
@@ -8641,7 +8687,7 @@ async function fetchDailyFull(symbol) {
   const T = 320;  // MA200·52주(252) 룩백 모두 보존
   return { symbol: symbol, price: price, prevClose: prevClose,
     closes: closes.slice(-T), highs: highs.slice(-T), lows: lows.slice(-T),
-    volumes: volumes.slice(-T), opens: opens.slice(-T),
+    volumes: volumes.slice(-T), opens: opens.slice(-T), days: days.slice(-T),
     ret1y: ret1y, ret5y: ret5y, vol: vol, avgVol20: avgVol20 };
 }
 
@@ -8754,9 +8800,18 @@ async function fetchOptionsSignal(DB, symbol) {
   } catch (e) { return null; }
 }
 
+/* [V33.217] ★캐시에 봉 날짜(days)가 없으면 신선해도 낡은 것으로 본다.★
+   스키마가 올라갔으므로 옛 캐시는 소급생성이 필요로 하는 정보를 못 준다. 그렇다고 전량
+   DELETE 하면 한 번에 980종목이 비어 그 사이 판단이 멈춘다 — 대신 ★건드릴 때 다시 받게★ 한다.
+   round-robin 스캔이 유니버스를 한 바퀴 돌면 자연히 전부 새 스키마가 된다(별도 이관 작업 불필요).
+   폭주 위험은 없다: 어차피 daily 캐시는 cacheMinutes 마다 만료되고, 그 재조회 경로를 그대로 탄다
+   (fetch 예산 가드 __fetchBudget 이 요청 단위로 상한을 건다). */
+function _dailyCacheOk(c) {
+  return !!(c && Array.isArray(c.closes) && Array.isArray(c.days) && c.days.length === c.closes.length);
+}
 async function getDailyCached(DB, symbol, cacheMinutes) {
   const cached = await getState(DB, "daily:" + symbol, null);
-  if (cached && cached.ts && (Date.now() - cached.ts) < cacheMinutes * 60 * 1000) {
+  if (cached && cached.ts && (Date.now() - cached.ts) < cacheMinutes * 60 * 1000 && _dailyCacheOk(cached)) {
     return cached;
   }
   const data = await fetchDailyFull(symbol);
@@ -8766,6 +8821,7 @@ async function getDailyCached(DB, symbol, cacheMinutes) {
     lows: data.lows,          // [신규]
     volumes: data.volumes,
     opens: data.opens,        // [V52] 갭 분석용
+    days: data.days || null,  // [V33.217] 봉별 '에폭 이후 일수' — 소급생성이 시점을 정확히 찾는 근거
     prevClose: data.prevClose,
     ts: Date.now()
   };
@@ -14051,7 +14107,11 @@ async function refreshDailyShard(env, market, shard) {
           if (fb && fb.data) {
             daily = {
               closes: fb.data.closes, highs: fb.data.highs, lows: fb.data.lows,
-              volumes: fb.data.volumes, prevClose: fb.data.prevClose,
+              volumes: fb.data.volumes, opens: fb.data.opens, prevClose: fb.data.prevClose,
+              // [V33.217] ★days 를 여기서도 실어야 한다.★ 이 자리가 빠지면 방금 올린 스키마를
+              //   ★되돌려 쓰는★ 셈이 된다 — 좋은 캐시를 날짜 없는 캐시로 덮어쓰고, 소급생성은
+              //   다시 근사로 떨어진다. 캐시를 쓰는 곳이 셋이면 셋 다 같은 것을 써야 한다.
+              days: fb.data.days || null,
               ret1y: fb.data.ret1y, ret5y: fb.data.ret5y, vol: fb.data.vol, avgVol20: fb.data.avgVol20,  // [V67]
               ts: Date.now()
             };
@@ -16345,7 +16405,9 @@ async function runTradingCycle(env) {
           try {
             // 캐시 우선, 만료 시 fallback fetch
             let cached = await getState(DB, "daily:" + symbol, null);
-            if (cached && cached.ts && (Date.now() - cached.ts) < cacheMin * 60 * 1000) {
+            // [V33.217] 신선도 판정을 getDailyCached 와 ★같은 함수★ 로 한다 —
+            //   여기만 days 를 안 보면 이 경로로 들어온 종목은 영원히 옛 스키마로 남는다.
+            if (cached && cached.ts && (Date.now() - cached.ts) < cacheMin * 60 * 1000 && _dailyCacheOk(cached)) {
               return { symbol: symbol, daily: cached };
             }
             // 예산 소진 시 실제 fetch 생략 — 있으면 캐시값 사용, 없으면 null
@@ -16357,7 +16419,8 @@ async function runTradingCycle(env) {
             if (fb && fb.data) {
               const toCache = {
                 closes: fb.data.closes, highs: fb.data.highs, lows: fb.data.lows,
-                volumes: fb.data.volumes, prevClose: fb.data.prevClose, ts: Date.now()
+                volumes: fb.data.volumes, opens: fb.data.opens, prevClose: fb.data.prevClose,
+                days: fb.data.days || null, ts: Date.now()   // [V33.217] 위와 같은 이유
               };
               await setState(DB, "daily:" + symbol, toCache);
               return { symbol: symbol, daily: toCache };
@@ -26263,16 +26326,33 @@ const ALTBF = { batchDates: 6, maxPerRun: 1200, minIdx: 30 };
 
    ※ 정확히 맞히려면 봉의 실제 날짜가 필요한데 daily: 캐시가 그걸 저장하지 않는다.
      캐시 스키마에 times 를 넣으면 이 근사 자체가 없어진다 — 별도 작업으로 남긴다. */
-function _altBarIdx(len, ts, nowTs) {
+function _altBarIdx(len, ts, nowTs, days) {
+  /* [V33.217] ★봉 날짜가 있으면 추정하지 않는다.★ daily: 캐시가 days(에폭 이후 일수)를
+     싣기 시작했으므로, 표본 시각의 날짜보다 크지 않은 ★마지막 봉★ 을 이분탐색으로 찾는다.
+     이게 정확한 답이다 — 공휴일·휴장·상장 공백을 전부 실제 데이터가 답한다.
+     · 룩어헤드 불가: 조건이 day <= target 이라 미래 봉을 절대 고르지 않는다.
+     · 어긋남 0: 평일 세기가 공휴일만큼 과거로 밀던 오차(연 10~15봉)가 사라진다.
+     days 가 없는 옛 캐시는 아래 평일 세기로 떨어진다(V33.213) — 스키마가 한 바퀴 도는 동안의 다리다. */
+  if (Array.isArray(days) && days.length === len && len > 0) {
+    const target = Math.floor(_num(ts, 0) / 86400000);
+    if (days[0] > target) return -1;                 // 표본이 이 종목의 첫 봉보다 앞선다 → 만들 수 없다
+    let lo = 0, hi = len - 1, ans = -1;
+    while (lo <= hi) {
+      const mid = (lo + hi) >> 1;
+      if (_num(days[mid], 0) <= target) { ans = mid; lo = mid + 1; }
+      else hi = mid - 1;
+    }
+    return ans;
+  }
   const A = new Date(_num(ts, 0)), B = new Date(_num(nowTs, 0));
   A.setUTCHours(0, 0, 0, 0); B.setUTCHours(0, 0, 0, 0);
   const a = A.getTime(), b = B.getTime();
   if (!(b > a)) return len - 1;
-  const days = Math.round((b - a) / 86400000);
+  const nDays = Math.round((b - a) / 86400000);
   // 주 단위로 세고 나머지 며칠만 훑는다 — 몇 년치라도 상수 시간에 가깝다.
-  const weeks = Math.floor(days / 7);
+  const weeks = Math.floor(nDays / 7);
   let back = weeks * 5;
-  for (let d = weeks * 7 + 1; d <= days; d++) {
+  for (let d = weeks * 7 + 1; d <= nDays; d++) {
     const wd = new Date(a + d * 86400000).getUTCDay();
     if (wd !== 0 && wd !== 6) back++;
   }
@@ -26375,7 +26455,7 @@ async function altSampleBackfill(DB, opts) {
       const snap = {};
       for (const sy in universe) {
         const u = universe[sy];
-        const idx = _altBarIdx(u.closes.length, ts0, now);
+        const idx = _altBarIdx(u.closes.length, ts0, now, u.days);
         if (idx < ALTBF.minIdx) continue;
         snap[sy] = {
           closes: _sliceTo(u.closes, idx), opens: _sliceTo(u.opens, idx),

@@ -243,5 +243,58 @@ const mkUni = (n, bars) => {
       "소급 봉 인덱스가 경계에서 배열 범위를 벗어난다");
 }
 
+// ── [V33.217] 봉 날짜가 있으면 ★추정하지 않는다★ ─────────────────────────
+/*  daily: 캐시가 days(에폭 이후 일수)를 싣기 시작했다. 그러면 소급생성은 표본 시각의
+    날짜보다 크지 않은 마지막 봉을 이분탐색으로 ★정확히★ 찾을 수 있다 —
+    공휴일·휴장·상장 공백을 실제 데이터가 답하므로 근사가 필요 없다.
+    폴백(평일 세기)은 남겨 두되, days 가 있을 때 그 폴백으로 떨어지면 안 된다. */
+{
+  const _D2 = 86400000;
+  // 실제에 가까운 달력: 평일에서 공휴일을 빼고 1,000봉을 만든다.
+  const _hol = new Set();
+  { let sd = 7; const rr = () => { sd = (sd * 1103515245 + 12345) >>> 0; return sd / 4294967296; };
+    for (let y = 2022; y <= 2026; y++) for (let k = 0; k < 10; k++) {
+      _hol.add(Math.floor(Date.UTC(y, Math.floor(rr() * 12), 1 + Math.floor(rr() * 28)) / _D2)); } }
+  const _days = []; let _t = Date.UTC(2022, 0, 3);
+  while (_days.length < 1000) {
+    const dn = Math.floor(_t / _D2), w = new Date(_t).getUTCDay();
+    if (w !== 0 && w !== 6 && !_hol.has(dn)) _days.push(dn);
+    _t += _D2;
+  }
+  const _len = _days.length, _now = _days[_len - 1] * _D2;
+  const _truth = (ts) => { const tg = Math.floor(ts / _D2); let a = -1; for (let i = 0; i < _len; i++) if (_days[i] <= tg) a = i; return a; };
+  let _bad = 0, _lead = 0, _fbOff = 0;
+  for (let b = 0; b < 900; b++) {
+    const ts = _now - b * _D2;
+    const got = M.barIdx(_len, ts, _now, _days), want = _truth(ts);
+    if (got !== want) _bad++;
+    if (got > want) _lead++;
+    _fbOff += Math.abs(M.barIdx(_len, ts, _now, null) - want);
+  }
+  chk(_bad === 0, "봉 날짜가 있으면 소급 인덱스가 ★정확히★ 맞는다(공휴일 포함 900개 시점, 오차 0)",
+      `봉 날짜가 있는데도 인덱스가 어긋난다 ${_bad}건 — 근사로 떨어지고 있다`);
+  chk(_lead === 0, "봉 날짜 경로에서도 미래 봉을 고르지 않는다",
+      `봉 날짜 경로가 미래 봉을 고른다 ${_lead}건 — 룩어헤드`);
+  // 폴백이 실제로 더 나쁜지 확인 — 아니면 이 기능이 값을 못 만든다는 뜻이다.
+  chk(_fbOff / 900 > 1, `폴백(평일 세기)은 평균 ${(_fbOff / 900).toFixed(2)}봉 어긋난다 — 날짜를 저장할 이유`,
+      "폴백과 정확 경로의 차이가 없다 — 재현이 이 기능의 근거를 증명하지 못한다");
+  chk(M.barIdx(_len, (_days[0] - 5) * _D2, _now, _days) === -1,
+      "첫 봉보다 앞선 표본은 만들지 않는다(-1)",
+      "첫 봉보다 앞선 표본에 유효 인덱스를 준다 — 없는 과거를 지어낸다");
+}
+
+// [V33.217] 캐시를 쓰는 곳이 셋이면 셋 다 days 를 실어야 한다.
+//   한 곳이라도 빠지면 좋은 캐시를 날짜 없는 캐시로 덮어써 스키마가 되돌아간다.
+{
+  const w = [...src.matchAll(/setState\(DB, "daily:" \+ symbol/g)].length;
+  const withDays = [...src.matchAll(/days: (?:data|fb\.data)\.days/g)].length;
+  chk(w >= 3 && withDays >= 3,
+      `daily 캐시 기록 ${w}곳이 전부 days 를 싣는다`,
+      `daily 캐시 기록 ${w}곳 중 days 를 싣는 곳이 ${withDays}곳뿐 — 빠진 경로가 스키마를 되돌린다`);
+  const fresh = [...src.matchAll(/_dailyCacheOk\(cach/g)].length;
+  chk(fresh >= 2, "신선도 판정이 전부 같은 함수(_dailyCacheOk)를 쓴다 — 한 경로만 옛 스키마로 남지 않는다",
+      "신선도 판정이 경로마다 다르다 — days 없는 캐시가 어떤 경로에서는 영원히 신선하다");
+}
+
 console.log(fails ? "\nXALPHA 계약 위반 " + fails + "건 — 배포 차단" : "\n  ok   XALPHA 계약 통과");
 process.exit(fails ? 1 : 0);
