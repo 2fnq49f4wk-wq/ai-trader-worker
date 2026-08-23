@@ -8,7 +8,7 @@
      인데, 지금까지 화면에서 그걸 알 방법이 전혀 없었다(카카오톡 인앱 브라우저는 특히 강하게 캐시한다).
      서버가 내려주는 build 와 이 값을 비교해 다르면 배너로 알린다.
      ※ src/index.js 의 _BUILD_VER 와 항상 같아야 한다 — check-html-js 가 강제한다. -->
-<meta name="lux-build" content="V33.222">
+<meta name="lux-build" content="V33.223">
 <title>LUX-ENGINE V10</title>
 <!-- ══ [V33.156] 설치형 앱(PWA) — 폰·PC 에서 홈화면/독에 담아 앱처럼 연다 ══
      · manifest  : 이름·아이콘·standalone 표시(주소창 없이 앱처럼)
@@ -1980,6 +1980,38 @@ html[data-theme="light"] .table tbody tr:nth-child(even){background:rgba(20,30,5
 /* [V12.23] 헤드라인·원자재·채권 — 항상 3개 한 줄(폰 제외). 좁은 화면은 셀을 조밀하게 압축해
    RSI 열까지 패널 안에 수납. */
 .fv-bottom{display:grid;grid-template-columns:1.1fr 1fr 1fr;gap:8px;}
+
+/* ══ [V33.223] 대시보드 무스크롤 모드 ═════════════════════════════════════════
+   요청: "지금 보여지는 모든 정보 스크롤 안 하고도 볼 수 있게 함축".
+   ★정보를 버리지 않고★ 한 화면에 넣으려면 세로를 먹는 순서대로 줄여야 한다.
+   실측 세로 예산(1440×900 기준):
+     히트맵 360px · 헤드라인 목록 · 선물표 · 타일 4개 · 지수/브레드스 줄 · 무버스 표 2개
+   가장 큰 덩어리가 히트맵(360px 고정)이고, 그 다음이 목록류의 자유 증식이다.
+
+   그래서 이 모드는 셋만 한다 — 어느 것도 항목을 감추지 않는다:
+     ① 뷰포트 높이에 비례해 히트맵을 줄인다(360 → 화면의 22%, 최소 150px).
+     ② 목록·표에 max-height + 내부 스크롤을 준다 — 페이지는 안 움직이고 블록 안에서만 움직인다.
+        (블록 밖으로 넘치지 않으므로 '한 화면' 이 유지되고, 항목은 전부 접근 가능하다)
+     ③ 여백·글자를 한 단계 좁힌다.
+   ★키가 작은 화면에서만 켠다★ — 큰 화면에서까지 줄이면 읽기만 나빠진다. */
+@media (min-width:1000px) and (max-height:1100px){
+  #page-dashboard #fvHeatmap{ height:clamp(150px, 22vh, 360px) !important; }
+  #page-dashboard .fv-headlines{ max-height:clamp(120px, 18vh, 260px); overflow-y:auto; }
+  #page-dashboard .fv-movers-grid{ max-height:clamp(130px, 20vh, 300px); overflow-y:auto; }
+  #page-dashboard .fv-bottom .fv-panel > div:not(.fv-panel-head){
+    max-height:clamp(120px, 18vh, 280px); overflow-y:auto;
+  }
+  #page-dashboard .fv-tiles [id$="Body"]{ max-height:clamp(90px, 13vh, 200px); overflow-y:auto; }
+  #page-dashboard .fv-deck{ gap:6px; }
+  #page-dashboard .fv-panel-head{ padding:4px 9px; }
+  #page-dashboard .fv-table td{ padding:3px 8px; }
+  #page-dashboard .fv-table th{ padding:3px 8px; }
+  /* 내부 스크롤바는 얇게 — 블록마다 굵은 막대가 생기면 그게 더 시끄럽다. */
+  #page-dashboard [class*="fv-"]::-webkit-scrollbar{ width:6px; height:6px; }
+  #page-dashboard [class*="fv-"]::-webkit-scrollbar-thumb{
+    background:var(--bd); border-radius:3px;
+  }
+}
 /* 하단 테이블: 셀 패딩 축소 + 이름 열 말줄임 — 좁은 패널에서도 4열(RSI까지) 전부 표시 */
 .fv-bottom .fv-table th,.fv-bottom .fv-table td{padding:4px 7px;}
 .fv-bottom .fv-table td:first-child{max-width:140px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
@@ -13050,6 +13082,58 @@ html[data-theme="light"] #page-nnviz{
   margin-top:.15rem;
 }
 #page-nnviz .nnv-nav-h:first-child{ border-top:0; margin-top:0; padding-top:.1rem; }
+
+/* ══ [V33.223] 신경망 구조도 ═══════════════════════════════════════════════════
+   층·노드·간선. 색은 전부 토큰 — 상태는 ★채도★ 로만 구분하고, 굵기가 발언권을 말한다.
+   (색을 여러 개 쓰면 '노드마다 다른 뜻' 으로 읽힌다. 여기서 다른 것은 세기뿐이다.) */
+#page-nnviz .nnv-net{
+  display:block; width:100%; height:auto; margin:.2rem 0 .9rem;
+  background:radial-gradient(120% 120% at 50% 0%, var(--ap-mat-light), transparent 70%);
+  border:1px solid var(--ap-hair); border-radius:var(--ap-r-md);
+}
+/* 간선 — 흐름은 왼쪽에서 오른쪽. */
+#page-nnviz .nnv-net .ne{ fill:none; stroke:var(--ap-ink3); }
+#page-nnviz .nnv-net .ne.in{ stroke-width:.7; opacity:.32; }
+#page-nnviz .nnv-net .ne.vote{ stroke:var(--ap-tint); opacity:.72; stroke-linecap:round; }
+#page-nnviz .nnv-net .ne.vote.mute{ stroke:var(--ap-ink3); opacity:.16; stroke-dasharray:3 4; }
+#page-nnviz .nnv-net .ne.flow{ stroke:var(--ap-ink3); stroke-width:1.6; opacity:.5; }
+/* STACK 우회선 — 결합 노드를 건너뛴다(투표가 아니라 대체이므로 굵고 다르게 간다). */
+#page-nnviz .nnv-net .ne.stack{ stroke:var(--ap-tint); stroke-width:3.4; opacity:.9; stroke-linecap:round; }
+/* DUAL — 옆에서 들어오는 보조 경로. 점선이라 투표선과 헷갈리지 않는다. */
+#page-nnviz .nnv-net .ne.dual{ stroke:var(--ap-ink2); stroke-width:1.6; opacity:.6; stroke-dasharray:4 3; }
+#page-nnviz .nnv-net .ne.dual.mute{ opacity:.18; }
+/* 노드 */
+#page-nnviz .nnv-net .nn rect{
+  fill:var(--ap-mat); stroke:var(--ap-hair-top); stroke-width:1;
+}
+#page-nnviz .nnv-net .nn text{
+  text-anchor:middle; font-family:inherit; fill:var(--ap-ink2);
+  font-size:8.5px; letter-spacing:-.002em;
+}
+#page-nnviz .nnv-net .nn text.l0{ font-size:10px; font-weight:700; fill:var(--ap-ink); }
+#page-nnviz .nnv-net .nn text.l1{ font-variant-numeric:tabular-nums; }
+#page-nnviz .nnv-net .nn text.l2{ font-size:8px; fill:var(--ap-ink3); }
+/* 상태 — 채도만 다르다. 정식은 테두리가 강조되고, 억제·미학습은 물러난다. */
+#page-nnviz .nnv-net .nn.full rect{ stroke:var(--ap-tint); stroke-width:1.6;
+  fill:color-mix(in srgb, var(--ap-tint) 12%, var(--ap-mat)); }
+#page-nnviz .nnv-net .nn.prov rect{ stroke:color-mix(in srgb, var(--ap-tint) 55%, transparent); }
+#page-nnviz .nnv-net .nn.bad  rect{ stroke:var(--amber,#fbbf24); }
+#page-nnviz .nnv-net .nn.off  rect{ opacity:.42; }
+#page-nnviz .nnv-net .nn.off  text{ opacity:.7; }
+#page-nnviz .nnv-net .nn.input rect,
+#page-nnviz .nnv-net .nn.comb rect,
+#page-nnviz .nnv-net .nn.cal rect,
+#page-nnviz .nnv-net .nn.out rect{ fill:var(--ap-mat-light); }
+#page-nnviz .nnv-net .nn.out rect{ stroke:var(--ap-tint); stroke-width:1.6; }
+#page-nnviz .nnv-net .nn.stackn rect{ stroke:var(--ap-tint); stroke-width:1.6;
+  fill:color-mix(in srgb, var(--ap-tint) 14%, var(--ap-mat)); }
+#page-nnviz .nnv-net .nn.dualn rect{ stroke-dasharray:4 3; }
+@media (max-width:700px){
+  /* 폰에서는 도식이 작아져 글자가 뭉갠다 — 가로 스크롤로 원래 크기를 지킨다.
+     여기서는 스크롤이 자연스러운 단서다(탭과 달리 '숨은 항목' 이 아니라 이어진 그림이다). */
+  #page-nnviz .nnv-net{ min-width:680px; }
+  #page-nnviz .nnv-net-wrap{ overflow-x:auto; -webkit-overflow-scrolling:touch; }
+}
 #page-nnviz .nnv-tab-dot{
   width:6px; height:6px; border-radius:50%; flex:0 0 auto;
   background:var(--ap-hair); box-shadow:none; transition:background .2s;
@@ -14202,6 +14286,101 @@ html[data-theme="light"] #page-nnviz .nlv-sec-h{ border-color:transparent; color
     }catch(e){}
   }
 
+  /* ══ [V33.223] AI 두뇌관측 — ★신경망 도식★ ═══════════════════════════════════
+     사용자가 말한 '기하학적' 은 이것이다: DNN 그림처럼 층과 노드와 간선으로 그린다.
+     종전 화면은 층마다 제목 + 목록 + 설명문이라, 구조가 ★글로 적혀 있었다★.
+
+     이 도식이 지키는 것:
+       · 노드는 ★그 위원의 작은 작동화면★ 이다 — 이름·검증정확도·IC·상태가 노드 안에 있다.
+         (별도 화면을 또 만들지 않는다. 위원 11명을 한 화면에서 동시에 보는 것이 목적이다.)
+       · 간선 굵기 = ★발언권★. 투표 가중이 0 이면 선이 사실상 사라진다 — 억제된 위원이
+         "연결은 돼 있는데 표가 없다" 는 사실이 도형으로 읽힌다.
+       · STACK 이 합류하면 결합 노드를 ★우회하는 굵은 선★ 이 생긴다. STACK 은 투표에
+         참여하는 게 아니라 결합을 통째로 대체하기 때문이다 — 그 차이가 그림에 나온다.
+       · DUAL 은 출력 직전에 옆에서 들어온다(확률을 민다). 투표선과 다른 색·점선.
+
+     구현은 ★순수 SVG★ 다. HTML 노드를 얹고 간선을 그리려면 DOM 을 측정해야 하는데,
+     그 측정은 폰트 로딩·리사이즈에 흔들려 선이 노드에서 떨어진다. 좌표를 우리가 계산하면
+     그런 어긋남이 원리상 없다. */
+  function NNV_netSvg(d){
+    var ex = (d.experts||[]).slice(), st = d.stack||{}, du = d.dual||[], cb = d.combine||{};
+    var NW = 132, NH = 46, GAP = 10;                 // 노드 크기·간격
+    var COLX = [22, 210, 430, 600, 742];             // 층별 x (입력·전문가·결합·보정·출력)
+    var H = Math.max(280, ex.length * (NH + GAP) + 40);
+    var W = 880;
+    var cy = H / 2;
+    var e = function (t) { return String(t == null ? '' : t).replace(/[&<>"]/g, function (c) {
+      return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]; }); };
+    var wOf = function (x) { return (x && x.tier === 'full') ? 1 : ((x && x.mult != null) ? x.mult : 0); };
+
+    var parts = [];
+    // ── 간선 먼저(노드 아래로 깔린다) ──
+    var x0 = COLX[0] + 54, x1 = COLX[1], x2 = COLX[1] + NW, x3 = COLX[2];
+    ex.forEach(function (m, i) {
+      var y = 24 + i * (NH + GAP) + NH / 2;
+      // 입력 → 전문가
+      parts.push('<path class="ne in" d="M' + x0 + ' ' + cy + ' C' + ((x0 + x1) / 2) + ' ' + cy + ',' +
+                 ((x0 + x1) / 2) + ' ' + y + ',' + x1 + ' ' + y + '"/>');
+      // 전문가 → 결합 (굵기 = 발언권)
+      var w = Math.max(0, Math.min(1, wOf(m)));
+      var sw = (0.6 + w * 5).toFixed(2);
+      parts.push('<path class="ne vote' + (w > 0 ? '' : ' mute') + '" stroke-width="' + sw + '" d="M' + x2 + ' ' + y +
+                 ' C' + ((x2 + x3) / 2) + ' ' + y + ',' + ((x2 + x3) / 2) + ' ' + cy + ',' + x3 + ' ' + cy + '"/>');
+    });
+    // 결합 → 보정 → 출력
+    parts.push('<path class="ne flow" d="M' + (COLX[2] + 96) + ' ' + cy + ' L' + COLX[3] + ' ' + cy + '"/>');
+    parts.push('<path class="ne flow" d="M' + (COLX[3] + 84) + ' ' + cy + ' L' + COLX[4] + ' ' + cy + '"/>');
+    // STACK 우회선 — 합류했을 때만. 결합 노드를 건너뛴다(대체이므로).
+    var stOn = st.trained && (st.tier === 'full' || st.tier === 'provisional');
+    if (stOn) {
+      var sy = H - 26;
+      parts.push('<path class="ne stack" d="M' + x2 + ' ' + sy + ' C' + ((x2 + COLX[3]) / 2) + ' ' + sy + ',' +
+                 ((x2 + COLX[3]) / 2) + ' ' + cy + ',' + COLX[3] + ' ' + cy + '"/>');
+    }
+    // DUAL — 출력 직전에 옆에서 들어온다(확률 이동)
+    var duOn = du.some(function (o) { return o && (o.tier === 'full' || o.tier === 'provisional'); });
+    parts.push('<path class="ne dual' + (duOn ? '' : ' mute') + '" d="M' + (COLX[3] + 42) + ' ' + (H - 14) +
+               ' L' + (COLX[3] + 42) + ' ' + (cy + 22) + '"/>');
+
+    // ── 노드 ──
+    var node = function (x, y, w, h, cls, lines, tip) {
+      // 툴팁(<title>)은 ★그룹 안★ 에 있어야 그 노드에 붙는다. 형제로 두면 아무 데도 안 붙는다.
+      var o = '<g class="nn ' + cls + '">' + (tip ? '<title>' + e(tip) + '</title>' : '') +
+              '<rect x="' + x + '" y="' + y + '" width="' + w + '" height="' + h + '" rx="8"/>';
+      lines.forEach(function (L, k) {
+        o += '<text class="l' + k + '" x="' + (x + w / 2) + '" y="' + (y + 15 + k * 12) + '">' + e(L) + '</text>';
+      });
+      return o + '</g>';
+    };
+    parts.push(node(COLX[0], cy - 26, 54, 52, 'input', ['입력', String(d.inputDim || 65) + '차원']));
+    ex.forEach(function (m, i) {
+      var y = 24 + i * (NH + GAP);
+      var cls = !m.trained ? 'off' : (m.featVerOk === false ? 'off'
+               : (m.tier === 'full' ? 'full' : (m.tier === 'provisional' ? 'prov' : 'bad')));
+      var l2 = (m.valAcc != null ? m.valAcc.toFixed(1) + '%' : '—') +
+               (m.ic != null ? '  IC ' + m.ic.toFixed(3) : '');
+      var w = wOf(m);
+      var l3 = !m.trained ? '미학습' : (w > 0 ? ('가중 ×' + w.toFixed(2)) : '표 없음');
+      parts.push(node(COLX[1], y, NW, NH, cls, [String(m.name || '').toUpperCase(), l2, l3],
+        (m.label || m.name) + (m.why ? ' — ' + m.why : '')));
+    });
+    parts.push(node(COLX[2], cy - 30, 96, 60, 'comb',
+      ['IC 결합', 'w=exp(' + (cb.icTemp || 60) + '·IC)', ex.filter(function (m) { return wOf(m) > 0; }).length + '표']));
+    parts.push(node(COLX[3], cy - 26, 84, 52, 'cal',
+      ['보정', cb.cal ? (cb.cal.mode === 'temp' ? 'T=' + (cb.cal.T != null ? cb.cal.T.toFixed(2) : '—') : cb.cal.mode) : '없음']));
+    parts.push(node(COLX[4], cy - 30, 108, 60, 'out', ['최종 확률', '로그오즈 층']));
+    if (stOn) {
+      parts.push(node(COLX[2], H - 52, 96, 44, 'stackn',
+        ['STACK', (st.head || 'lin') + ' · ×' + (st.mult != null ? st.mult.toFixed(2) : '?')],
+        'STACK 은 투표하지 않는다 — 합류하면 결합확률을 통째로 대체한다. ' + (st.why || '')));
+    }
+    parts.push(node(COLX[3] + 4, H - 46, 76, 38, 'dualn' + (duOn ? '' : ' off'),
+      ['이중헤드', duOn ? '확률 이동' : '미측정']));
+
+    return '<svg class="nnv-net" viewBox="0 0 ' + W + ' ' + H + '" preserveAspectRatio="xMidYMid meet" role="img" ' +
+           'aria-label="AI 두뇌 신경망 구조도">' + parts.join('') + '</svg>';
+  }
+
   function NNV_renderOverview(d){
     var stage=document.getElementById('nnvStage'), chips=document.getElementById('nnvChips'),
         comm=document.getElementById('nnvComm'), legend=document.getElementById('nnvLegend'),
@@ -14299,6 +14478,10 @@ html[data-theme="light"] #page-nnviz .nlv-sec-h{ border-color:transparent; color
 
     stage.innerHTML =
       '<div class="nnv-ov">'
+      /* [V33.223] 맨 위에 신경망 도식 — 구조를 글로 읽기 전에 그림으로 본다.
+         아래 목록은 그대로 둔다(도식은 한눈, 목록은 근거). */
+      + '<div class="nnv-ov-lh">신경망 구조 <small>노드 = 위원의 작동 상태 · 간선 굵기 = 발언권</small></div>'
+      + '<div class="nnv-net-wrap">' + NNV_netSvg(d) + '</div>'
       + '<div class="nnv-ov-lh">① 전문가 — 각자 독립 학습</div>' + rows
       + '<div class="nnv-ov-lh">② IC 소프트맥스 결합 <small>w = exp('+(cb.icTemp||60)+' × IC), IC ∈ ['+((cb.icClamp||[])[0])+', '+((cb.icClamp||[])[1])+']</small></div>'
       + '<div class="nnv-ov-note">정확도가 아니라 IC 로 가중합니다 — 정확도로 하면 실력차가 51~54% 라는 좁은 구간에 뭉쳐 사실상 단순평균이 됩니다.'
