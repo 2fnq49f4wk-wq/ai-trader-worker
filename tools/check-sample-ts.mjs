@@ -23,7 +23,10 @@ const LOGGERS = ['flowLogSample', 'xalphaLogSample', 'stackLogSample'];
 
 console.log('① 표본 로거가 관측 시각을 받는가');
 for (const fn of LOGGERS) {
-  if (new RegExp('async function ' + fn + '\\(DB, market, symbol, featVec, pnlPct, tsMs\\)').test(S))
+  /* [V33.227] 뒤에 인자가 더 붙어도(예: src) 계약은 그대로다 — 지켜야 하는 것은
+     "★tsMs 를 받는가★" 이지 인자 개수가 아니다. 개수로 고정하면 진짜 계약과 무관한
+     확장이 검사에 막히고, 그러면 검사를 느슨하게 고치고 싶어진다. */
+  if (new RegExp('async function ' + fn + '\\(DB, market, symbol, featVec, pnlPct, tsMs\\b').test(S))
     ok(fn + ' 이 tsMs 를 받는다');
   else bad(fn + ' 이 여전히 적재 시각만 쓴다');
 }
@@ -38,7 +41,8 @@ console.log('② 소급생성이 원본 행의 ts 를 물려주는가 (이게 �
   const calls = [
     [/xalphaLogSample\(DB, mk, sy, f, _num\(r\.pnl_pct, 0\), _num\(r\.ts, 0\)\)/, 'XALPHA 소급생성'],
     [/flowLogSample\(DB, mk, sy, fv, _num\(r\.pnl_pct, 0\), _num\(r\.ts, 0\)\)/, 'FLOW 소급생성'],
-    [/stackLogSample\(DB, r\.market \|\| "us", r\.symbol \|\| null, fv, _num\(r\.pnl_pct, 0\), _num\(r\.ts, 0\)\)/, 'STACK 소급생성']
+    // 뒤에 인자가 더 붙어도 통과시키되, ★ts 자리에 _num(r.ts, 0) 이 오는 것★ 은 그대로 요구한다.
+    [/stackLogSample\(DB, r\.market \|\| "us", r\.symbol \|\| null, fv, _num\(r\.pnl_pct, 0\), _num\(r\.ts, 0\)[,)]/, 'STACK 소급생성']
   ];
   for (const [re, label] of calls) {
     if (re.test(S)) ok(label + ' 이 원본 ts 를 넘긴다');

@@ -2788,7 +2788,7 @@ async function applySignalTypeWeights(DB, cfg) {
 // ============================================================================
 // [V33.55] 빌드 버전 — SWR L2 캐시 키에 섞어 '배포 = 판단 캐시 자동 무효화'를 만든다.
 //   판정 로직을 고쳐도 옛 캐시가 최대 1시간 재배포되던 문제를 구조적으로 없앤다.
-const _BUILD_VER = "V33.226";
+const _BUILD_VER = "V33.227";
 
 // ═══ [V33.171] 평가 순서 계획 — ★승격과 순환을 교차해 굶주림을 구조적으로 없앤다★ ═══
 //   V33.50 의 형태트리거는 "급한 몇 종목을 앞으로 당긴다"는 의도였으나, 실제 운영로그에서는
@@ -25886,7 +25886,10 @@ async function _miniLogisticTrain(DB, opts) {
       });
     } catch (e) {}
     const rows = await DB.prepare(
-      "SELECT id, ts, symbol, feat, label, pnl_pct FROM " + opts.table + " WHERE featver = ? ORDER BY ts DESC LIMIT ?"
+      /* [V33.227] src 를 함께 읽는다(있는 표만). 홀드아웃 IC 를 ★경로별로★ 쪼개 보고하려는 것이다 —
+         "표본을 더했더니 t 가 떨어졌다" 를 만났을 때 어느 경로가 희석했는지 추측하지 않게. */
+      "SELECT id, ts, symbol, feat, label, pnl_pct" + (opts.srcCol ? ", src" : "") +
+      " FROM " + opts.table + " WHERE featver = ? ORDER BY ts DESC LIMIT ?"
     ).bind(opts.featVer, opts.window).all();
     const raw = (rows && rows.results) || [];
     // [V33.104] 적합에 실제로 들어간 행의 최대 id — 다음 밤 전진검증이 "학습에 안 쓰인 행"을
@@ -25900,7 +25903,7 @@ async function _miniLogisticTrain(DB, opts) {
       return "[" + opts.tag + "] 표본 " + raw.length + "/" + opts.minN + " — 학습 대기";
     }
     const D = opts.D;
-    const X = [], Y = [], P = [], T = [], S = [];
+    const X = [], Y = [], P = [], T = [], S = [], SRC = [];
     for (const r of raw) {
       let v; try { v = JSON.parse(r.feat); } catch (e) { continue; }
       if (!Array.isArray(v) || v.length !== D) continue;
@@ -25922,12 +25925,12 @@ async function _miniLogisticTrain(DB, opts) {
       //   (ml_samples 를 쓰는 이중헤드는 opts.labelFn 으로 pnl 에서 직접 만든다 — 위 참조)
       Y.push(_y);
       P.push(_num(r.pnl_pct, 0));
-      T.push(_num(r.ts, 0)); S.push(String(r.symbol || ""));
+      T.push(_num(r.ts, 0)); S.push(String(r.symbol || "")); SRC.push(r.src == null ? "" : String(r.src));
     }
     const N = X.length;
     if (N < opts.minN) return "[" + opts.tag + "] 유효표본 " + N + " — 학습 대기";
     // 시간순(최신이 앞) → 뒤집어 오래된 것부터. 마지막 20% 를 홀드아웃(시간 분리).
-    X.reverse(); Y.reverse(); P.reverse(); T.reverse(); S.reverse();
+    X.reverse(); Y.reverse(); P.reverse(); T.reverse(); S.reverse(); SRC.reverse();
     const nval = Math.max(100, Math.floor(N * 0.2));
     /* [V33.155] ★홀드아웃 경계는 고정이다 — 퍼징은 학습쪽만 자른다★
        종전엔 퍼징이 ntr 을 줄인 뒤 검증 루프를 `i = ntr` 부터 돌렸다. 그러면 잘라낸 구간이
@@ -26207,6 +26210,24 @@ async function _miniLogisticTrain(DB, opts) {
     /* [V33.155] opts.dayBlocks 면 ★그날의 횡단면★ 단위로 블록을 나눈다(키 = 표본의 날짜).
        횡단면 알파(XALPHA)는 "같은 날 유니버스 안에서의 상대 순위" 가 신호라, 연속 슬라이스로
        나누면 블록 간 분산이 모델이 아니라 시장 국면을 재게 된다. 나머지 모델은 종전 그대로. */
+    /* [V33.227] 홀드아웃 IC 를 ★표본 경로별★ 로도 잰다. 전체 IC 하나로는
+       "어느 population 이 신호를 갖고 어느 쪽이 희석하는가" 를 알 수 없다. */
+    let _srcIC = null;
+    if (opts.srcCol) {
+      try {
+        const _by = {};
+        for (let i = nvalStart; i < N; i++) {
+          const k = SRC[i] || "?";
+          (_by[k] || (_by[k] = { p: [], y: [] }));
+          _by[k].p.push(pv[i - nvalStart]); _by[k].y.push(yv[i - nvalStart]);
+        }
+        _srcIC = Object.keys(_by).map(function (k) {
+          const g = _by[k];
+          if (g.p.length < 30) return { src: k, n: g.p.length, ic: null };
+          return { src: k, n: g.p.length, ic: +_pearson(g.p, g.y).toFixed(4) };
+        }).sort(function (a, b) { return b.n - a.n; });
+      } catch (e) { _srcIC = null; }
+    }
     const _st = _icBlockStats(pv, yv, 5, _blkKeys);
     const ic = _num(_st.ic, 0);
     // [V33.89] 기저확률(양성비율)을 함께 저장한다 — 이중헤드 사분면 경계를 절대값이 아니라
@@ -26284,6 +26305,11 @@ async function _miniLogisticTrain(DB, opts) {
       trusted: _trusted };
     await setState(DB, opts.stateKey, model);
     return "[" + opts.tag + "] 학습완료 표본 " + N + " valAcc " + (acc * 100).toFixed(1) + "% IC " + ic.toFixed(4) +
+           (_srcIC && _srcIC.length > 1
+             ? " 경로별IC[" + _srcIC.map(function (r) {
+                 return r.src + " " + (r.ic == null ? "n" + r.n + " 부족" : r.ic.toFixed(3) + "(n" + r.n + ")");
+               }).join(" / ") + "]"
+             : "") +
            (_heads
              ? " 결합=" + _headTag + "(" + _heads.map(function (h) {
                  return h.head + " IC하한 " + h.icLB.toFixed(3) + "(t" + h.icT.toFixed(1) + ")";
@@ -27018,7 +27044,15 @@ const STACKML = {
   //   전부 경계를 넘는 것으로 보여 학습셋이 통째로 잘렸다(운영 실측: XALPHA 학습표본 0/800).
   //   이제 원본 행의 관측 시각을 물려준다. 옛 표본과 섞으면 퍼징이 다시 오판하므로 판을 가른다
   //   (DELETE 불필요 — 조회가 featver 로 걸린다. 소급생성은 장외 10분마다 도니 하루면 다시 찬다).
-  featVer: 4,
+  /* [V33.227] 4 → 5. 차원은 그대로다 — 바뀐 것은 ★표본의 청결도★ 다.
+     종전 홀드아웃 소급표본은 OOF 창이 보장하지 않는 memo·rule 슬롯까지 채웠다.
+     memo 는 학습창이 최근 구간이라 그 행들을 in-sample 로 채점했을 수 있고, 그러면 STACK 이
+     부풀려진 확률에서 "memo 를 믿어라" 를 배운다. 실측이 그 방향과 맞는다:
+         표본 6,331 → 블록IC 0.1254 · t 1.73
+         표본 6,931 → 블록IC 0.0295 · t 0.91   (600건 더했는데 t 가 절반)
+     표본이 늘수록 나빠지는 것은 '표본 부족' 이 아니라 ★섞인 표본★ 의 모양이다.
+     옛 표본과 섞으면 오염이 그대로 남으므로 판으로 가른다(DELETE 불필요 — 조회가 featver 로 걸린다). */
+  featVer: 5,
   minTrainSamples: 600,     // 14차원이라 600건이면 수렴한다
   trainWindow: 40000,
   l2: 1.5,                  // 전문가 확률끼리 상관이 높아 규제를 조금 세게
@@ -27029,12 +27063,17 @@ const STACKML = {
   nlMargin: 0.005           // 선형을 갈아치우려면 정확도 ★하한★ 에서 이만큼 앞서야 한다(0.5%p)
 };
 
-async function stackLogSample(DB, market, symbol, featVec, pnlPct, tsMs) {
+async function stackLogSample(DB, market, symbol, featVec, pnlPct, tsMs, src) {
   try {
     if (!STACKML.enabled || !Array.isArray(featVec) || featVec.length !== 16) return;
-    await DB.prepare("CREATE TABLE IF NOT EXISTS stack_samples (id INTEGER PRIMARY KEY AUTOINCREMENT, ts INTEGER, market TEXT, symbol TEXT, feat TEXT, label INTEGER, pnl_pct REAL, featver INTEGER)").run();
-    await DB.prepare("INSERT INTO stack_samples (ts, market, symbol, feat, label, pnl_pct, featver) VALUES (?,?,?,?,?,?,?)")
-      .bind(_num(tsMs, 0) > 0 ? _num(tsMs, 0) : Date.now(), market, symbol, JSON.stringify(featVec), _num(pnlPct, 0) > 0 ? 1 : 0, _num(pnlPct, 0), STACKML.featVer).run();
+    await DB.prepare("CREATE TABLE IF NOT EXISTS stack_samples (id INTEGER PRIMARY KEY AUTOINCREMENT, ts INTEGER, market TEXT, symbol TEXT, feat TEXT, label INTEGER, pnl_pct REAL, featver INTEGER, src TEXT)").run();
+    /* [V33.227] ★표본이 어느 경로에서 왔는지 남긴다.★ 종전엔 라이브 청산·에폭 소급·홀드아웃 소급이
+       표에서 구분되지 않아, "표본을 600건 더했더니 t 가 절반이 됐다" 를 만났을 때 어느 쪽이
+       희석했는지 ★추측밖에 할 수 없었다★. 한 글자를 남기면 다음엔 재서 답할 수 있다.
+       구표에는 컬럼이 없으므로 ALTER 를 시도하고, 이미 있으면 조용히 넘어간다. */
+    try { await DB.prepare("ALTER TABLE stack_samples ADD COLUMN src TEXT").run(); } catch (e) {}
+    await DB.prepare("INSERT INTO stack_samples (ts, market, symbol, feat, label, pnl_pct, featver, src) VALUES (?,?,?,?,?,?,?,?)")
+      .bind(_num(tsMs, 0) > 0 ? _num(tsMs, 0) : Date.now(), market, symbol, JSON.stringify(featVec), _num(pnlPct, 0) > 0 ? 1 : 0, _num(pnlPct, 0), STACKML.featVer, src || "live").run();
   } catch (e) {}
 }
 // ════════════════════════════════════════════════════════════════════════════
@@ -27088,10 +27127,20 @@ async function stackSampleBackfill(DB, opts) {
        쓰고 버리던 것을 쓰는 것이다).
        → 학습기가 홀드아웃 시작 시각(minTs)을 올려주면, 그 이후 ts 를 가진 행도 누출없는
          구간으로 쓴다. 커서를 따로 두어 에폭 경로와 섞이지 않게 한다. */
-    let _oofMinTs = 0, _oofN = 0;
+    let _oofMinTs = 0, _oofN = 0, _oofModels = null;
     try {
       const _ow = await getState(DB, "stack_oof_window", null);
-      if (_ow && _num(_ow.minTs, 0) > 0) { _oofMinTs = _num(_ow.minTs, 0); _oofN = _num(_ow.n, 0); }
+      if (_ow && _num(_ow.minTs, 0) > 0) {
+        _oofMinTs = _num(_ow.minTs, 0); _oofN = _num(_ow.n, 0);
+        /* [V33.227] ★이 목록을 읽어 놓고 쓰지 않고 있었다.★
+           외부 학습기가 보내는 창은 "ts >= minTs 구간을 ★이 모델들이★ 학습한 적 없다" 는 뜻이다
+           (실측: ["dnn","gbdt","boost","mind"]). 그런데 소급생성은 그 목록을 무시하고
+           memo·rule 까지 채웠다. memo 는 ml_samples 로 학습하고 학습창이 최근 구간이라,
+           OOF 창 안의 행을 memo 로 채점하면 ★in-sample 확률★ 이 나온다.
+           그러면 STACK 은 "memo 를 믿어라" 를 부풀려진 확률에서 배우고, 라이브에서 무너진다.
+           V33.104 가 겪은 사고(in-sample 로 학습해 IC 0.566·t 7.51)의 좁은 재발이다. */
+        if (Array.isArray(_ow.models) && _ow.models.length) _oofModels = _ow.models.slice();
+      }
     } catch (e) {}
     // 커서와 에폭 중 큰 쪽부터 — 되감아도 누출 구간으로는 절대 못 돌아간다.
     const _from = Math.max(_num(st.lastId, 0), _ep);
@@ -27135,11 +27184,16 @@ async function stackSampleBackfill(DB, opts) {
       let v; try { v = JSON.parse(r.feat); } catch (e) { skipped++; continue; }
       if (!Array.isArray(v) || v.length !== LUXML.featNames.length) { skipped++; continue; }
       const P = {}, M = {};
-      try { if (mind) { const s = await mlMindScore(DB, mind, v, ens); if (s && typeof s.p === "number") { P.mind = s.p; M.mind = 1; } } } catch (e) {}
-      try { if (dnn) { const p = mlDNNScore(dnn, v); if (p != null) { P.dnn = p; M.dnn = 1; } } } catch (e) {}
-      try { if (gbdt) { const p = mlGBDTScore(gbdt, v); if (p != null) { P.gbdt = p; M.gbdt = 1; } } } catch (e) {}
+      /* [V33.227] 홀드아웃 경로에서는 ★창이 보장한 모델만★ 채운다.
+         보장 없는 슬롯은 마스크 0 으로 남긴다 — 그게 마스크 차원을 처음부터 넣어 둔 이유다
+         ("그 전문가가 없었다" 는 유효한 정보다). 에폭 경로는 '전문가가 학습한 적 없는 행' 이라는
+         다른 기준으로 이미 누출이 없으므로 종전대로 전부 채운다. */
+      const _allow = function (k) { return _src !== "홀드아웃" || !_oofModels || _oofModels.indexOf(k) >= 0; };
+      try { if (mind && _allow("mind")) { const s = await mlMindScore(DB, mind, v, ens); if (s && typeof s.p === "number") { P.mind = s.p; M.mind = 1; } } } catch (e) {}
+      try { if (dnn && _allow("dnn")) { const p = mlDNNScore(dnn, v); if (p != null) { P.dnn = p; M.dnn = 1; } } } catch (e) {}
+      try { if (gbdt && _allow("gbdt")) { const p = mlGBDTScore(gbdt, v); if (p != null) { P.gbdt = p; M.gbdt = 1; } } } catch (e) {}
       try {
-        if (boosters && boosters.length) {
+        if (boosters && boosters.length && _allow("boost")) {
           let bz = 0, bw = 0, n2 = 0;
           for (const b of boosters) {
             const pB = mlGBDTScore(b.model, v); if (pB == null) continue;
@@ -27150,9 +27204,10 @@ async function stackSampleBackfill(DB, opts) {
           if (bw > 0 && n2 > 0) { P.boost = _clamp(_sigmoid(bz / bw), 0.001, 0.999); M.boost = 1; }
         }
       } catch (e) {}
-      try { if (memo && memo.trusted && memo.luxFeatVer === LUXML.featVer) { const p = memoScore(memo, v); if (p != null) { P.memo = p; M.memo = 1; } } } catch (e) {}
+      try { if (memo && _allow("memo") && memo.trusted && memo.luxFeatVer === LUXML.featVer) { const p = memoScore(memo, v); if (p != null) { P.memo = p; M.memo = 1; } } } catch (e) {}
       try {
-        if (mind && _iR >= 0 && typeof mind.ruleAccLB === "number" && mind.ruleAccLB > 0.5) {
+        // rule 은 mind 의 학습에서 파생된 임계(ruleTau)를 쓰므로 mind 의 보장을 따른다.
+        if (mind && _allow("mind") && _iR >= 0 && typeof mind.ruleAccLB === "number" && mind.ruleAccLB > 0.5) {
           const raw = _clamp(_num(v[_iR], 0.5), 0.01, 0.99);
           const tau = _clamp(_num(mind.ruleTau, 0.5), 0.01, 0.99);
           P.rule = _clamp(_sigmoid(_logit(raw) - _logit(tau)), 0.01, 0.99); M.rule = 1;
@@ -27165,7 +27220,8 @@ async function stackSampleBackfill(DB, opts) {
       const fv = [];
       for (const k of SLOTS) fv.push(P[k] != null ? _clamp(P[k], 0.001, 0.999) : 0.5);
       for (const k of SLOTS) fv.push(M[k] ? 1 : 0);
-      await stackLogSample(DB, r.market || "us", r.symbol || null, fv, _num(r.pnl_pct, 0), _num(r.ts, 0));   // [V33.173] 원본 행의 관측 시각
+      await stackLogSample(DB, r.market || "us", r.symbol || null, fv, _num(r.pnl_pct, 0), _num(r.ts, 0),
+        _src === "홀드아웃" ? "oof" : "epoch");   // [V33.173] 원본 행의 관측 시각 · [V33.227] 경로
       made++;
     }
     /* [V33.205] 어느 경로에서 읽었는지에 따라 ★그 경로의 커서만★ 전진시킨다.
@@ -27204,6 +27260,7 @@ async function stackTrainNightly(DB) {
     //   FLOW/XALPHA/MEMO 는 자기 피처를 직접 읽는 1차 전문가라 선형으로 두는 편이 해석 가능하고,
     //   비선형이 필요하면 그건 위(메타) 층에서 하는 게 스태킹의 분업이다.
     nonlinear: true, nlHidden: STACKML.nlHidden, nlTrees: STACKML.nlTrees, nlMargin: STACKML.nlMargin,
+    srcCol: true,   // [V33.227] stack_samples 만 src 컬럼을 갖는다(경로별 IC 보고)
     // [V33.91] STACK 은 위원회 결합확률을 ★통째로 대체★ 하는 자리다. 잘못 들어오면
     //   다른 전문가와 섞여 희석되는 게 아니라 혼자 결정한다 → 유의성 문턱을 더 높게 잡는다.
     // [V33.143] ★그런데 값이 2.2 였다 — 공통 문턱 2.50 보다 오히려 낮다.★

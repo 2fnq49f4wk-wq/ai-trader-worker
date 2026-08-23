@@ -112,5 +112,42 @@ const no = (m) => { console.error("  FAIL " + m); bad++; };
   else ok(`경계를 12일(엠바고 6일 초과) 과거로 물리면 학습셋 ${leakBad.length}건이 열린다 — 단조 전진이 필요한 이유`);
 }
 
+// ── [V33.227] ★창이 보장한 모델만 채운다★ ────────────────────────────────────
+/*  외부 학습기가 보내는 OOF 창은 models 목록을 함께 싣는다 —
+    "ts >= minTs 구간을 ★이 모델들이★ 학습한 적 없다"(실측: dnn·gbdt·boost·mind).
+    그런데 소급생성은 그 목록을 ★읽어만 놓고 쓰지 않아★ memo·rule 까지 채우고 있었다.
+    memo 는 ml_samples 로 학습하고 학습창이 최근 구간이라, OOF 창 안의 행을 memo 로 채점하면
+    in-sample 확률이 나온다. 그러면 STACK 이 부풀려진 확률에서 "memo 를 믿어라" 를 배운다.
+    실측이 그 방향과 맞았다: 표본 6,331(t 1.73) → 6,931(t 0.91). 더할수록 나빠졌다. */
+{
+  const i2 = src.indexOf("async function stackSampleBackfill");
+  const fn = i2 >= 0 ? src.slice(i2, src.indexOf("\n}\n", i2)) : "";
+  if (!fn) no("STACK-OOF: 소급생성 함수를 찾지 못했다 — 검사가 헛돈다");
+  else {
+    if (!/_oofModels/.test(fn))
+      no("STACK-OOF: 창의 models 목록을 읽지 않는다 — 보장 없는 슬롯까지 채우게 된다");
+    else ok("창의 models 목록을 읽는다");
+    const allow = (fn.match(/const _allow = function \(k\)[^\n]*\n/) || [""])[0];
+    if (!/_src !== "홀드아웃"/.test(allow) || !/_oofModels\.indexOf\(k\) >= 0/.test(allow))
+      no("STACK-OOF: 홀드아웃 경로에서 슬롯을 창의 목록으로 거르지 않는다");
+    else ok("홀드아웃 경로는 창이 보장한 슬롯만 채운다(에폭 경로는 다른 기준이라 그대로)");
+    // 채점되는 슬롯 전부가 _allow 를 지나야 한다 — 하나라도 빠지면 그 슬롯이 오염 통로다.
+    const slots = ["mind", "dnn", "gbdt", "boost", "memo"];
+    const missed = slots.filter(function (k) { return !new RegExp('_allow\\("' + k + '"\\)').test(fn); });
+    if (missed.length) no("STACK-OOF: _allow 를 안 지나는 슬롯이 있다 — " + missed.join(", "));
+    else ok("채점 슬롯 전부가 _allow 를 지난다(mind·dnn·gbdt·boost·memo)");
+  }
+
+  // 오염된 판과 섞이지 않게 판이 올라갔는가
+  const fv = (src.match(/featVer:\s*(\d+),\s*\n\s*minTrainSamples:\s*600/) || [])[1];
+  if (!(Number(fv) >= 5)) no("STACK-OOF: 오염 발견 후에도 STACKML.featVer 가 그대로다 — 옛 표본과 섞인다");
+  else ok(`STACKML.featVer = ${fv} — 오염된 표본과 판이 갈렸다`);
+
+  // 경로 태그가 남는가 — 다음엔 추측 대신 잴 수 있어야 한다
+  if (!/src \|\| "live"/.test(src) || !/_src === "홀드아웃" \? "oof" : "epoch"/.test(src))
+    no("STACK-OOF: 표본에 경로(src)를 남기지 않는다 — 어느 경로가 희석했는지 잴 수 없다");
+  else ok("표본에 경로(live/epoch/oof)를 남긴다 — 경로별 IC 를 잴 수 있다");
+}
+
 if (bad) { console.error(`\nSTACK 홀드아웃 계약 위반 ${bad}건 — 배포 차단`); process.exit(1); }
 console.log("  ok   STACK 홀드아웃 계약 통과 — 문을 열되 누출 쪽으로는 안 열린다");
