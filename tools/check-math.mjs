@@ -362,6 +362,31 @@ const F = new Function(DEPS + STUB + body + "\n return {" + NAMES.join(",") + "}
   }
 }
 
+// ── ⑩-3 파일 전체에서 ★중심화하지 않은 기울기/상관★ 을 찾는다 ────────────────
+/*  V33.208 은 _olsSlope 와 _pearson 을 고쳤다. 그런데 V33.212 에서 ★같은 산식의 사본 둘★ 이
+    다른 함수 안에 인라인으로 남아 있는 것이 발견됐다(trend·linfit). 이름으로 검사하면
+    이런 사본을 영원히 못 잡는다 — 산식 모양으로 찾아야 한다.
+    잡으려는 모양: (n·Σxy − Σx·Σy) 또는 (n·Σxx − Σx·Σx) — 두 큰 수의 차로 공분산·분산을 만드는 형태. */
+{
+  const pat = /([A-Za-z_$][\w.$]*)\s*\*\s*([A-Za-z_$][\w.$]*)\s*-\s*([A-Za-z_$][\w.$]*)\s*\*\s*([A-Za-z_$][\w.$]*)/g;
+  const hits = [];
+  let m;
+  while ((m = pat.exec(src))) {
+    const [all, a, b, c, d] = m;
+    // n·Σxy − Σx·Σy 꼴: 첫 항의 한쪽이 개수(n/cnt/m/count)이고, 뒤 항은 두 합의 곱
+    const isCount = (v) => /^(n|m|cnt|count|N|len|_n|_cnt)$/.test(v);
+    if (!(isCount(a) || isCount(b))) continue;
+    const sums = [c, d];
+    if (!sums.every((v) => /^s[xy]{1,2}$|^S[xy]{1,2}$|^sum/.test(v))) continue;
+    const ln = src.slice(0, m.index).split("\n").length;
+    hits.push(`줄 ${ln}: ${all.trim()}`);
+  }
+  if (hits.length)
+    no("수식감사: 중심화하지 않은 기울기/공분산 산식이 남아 있다 — " + hits.join(" · ") +
+       " (큰 값 위의 작은 변동에서 두 큰 수의 차가 상쇄된다. _olsSlope/_pearson 으로 모을 것)");
+  else ok("파일 전체에 중심화하지 않은 기울기·공분산 산식이 없다(이름이 아니라 산식 모양으로 확인)");
+}
+
 // ── ⑪ 실현변동성 — 하방 반편차의 분모, 그리고 두 값이 같은 자인가 ──────────
 /*  이 자리에서 실제로 값이 틀어져 기능 하나가 죽어 있었다.
     semivariance 의 표준 정의는 (1/n)·Σ_{r<0} r² 이고, 대칭분포에서 그 값이 σ²/2 다.

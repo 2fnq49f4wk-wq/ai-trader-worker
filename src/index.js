@@ -2788,7 +2788,7 @@ async function applySignalTypeWeights(DB, cfg) {
 // ============================================================================
 // [V33.55] 빌드 버전 — SWR L2 캐시 키에 섞어 '배포 = 판단 캐시 자동 무효화'를 만든다.
 //   판정 로직을 고쳐도 옛 캐시가 최대 1시간 재배포되던 문제를 구조적으로 없앤다.
-const _BUILD_VER = "V33.211";
+const _BUILD_VER = "V33.212";
 
 // ═══ [V33.171] 평가 순서 계획 — ★승격과 순환을 교차해 굶주림을 구조적으로 없앤다★ ═══
 //   V33.50 의 형태트리거는 "급한 몇 종목을 앞으로 당긴다"는 의도였으나, 실제 운영로그에서는
@@ -8805,9 +8805,14 @@ function taDetectPatterns(dailyData) {
   function trend(end, m) {
     const st = Math.max(0, end - m), cnt = end - st;
     if (cnt < 3) return 0;
-    let sx = 0, sy = 0, sxy = 0, sxx = 0;
-    for (let i = st; i < end; i++) { const x = i - st, y = cs[i].c; sx += x; sy += y; sxy += x * y; sxx += x * x; }
-    const slope = (cnt * sxy - sx * sy) / Math.max(1e-9, cnt * sxx - sx * sx);
+    /* [V33.212] 지름길 산식(n·Σxy − Σx·Σy)을 쓰지 않는다 — V33.208 이 _olsSlope 에서 고친 것과
+       같은 종류다. 큰 값 위의 작은 변동(원화 고가주)에서 두 큰 수의 차가 상쇄된다.
+       ★정의를 두 벌 들고 있는 것 자체가 문제였다★ — 한쪽만 고치면 다른 쪽이 남는다. 한 곳으로 모은다. */
+    const xs = [], ys = [];
+    for (let i = st; i < end; i++) { xs.push(i - st); ys.push(cs[i].c); }
+    let sy = 0; for (const y of ys) sy += y;
+    const slope = _olsSlope(xs, ys);
+    if (slope == null || !(Math.abs(sy) > 1e-9)) return 0;
     return slope / (sy / cnt) * 100;
   }
   // ── 캔들 패턴 (최근 3봉) ──
@@ -8858,9 +8863,11 @@ function taDetectPatterns(dailyData) {
   function linfit(pts) {
     if (pts.length < 2) return null;
     const m = pts.length;
-    let sx = 0, sy = 0, sxy = 0, sxx = 0;
-    pts.forEach(function(p){ sx += p.i; sy += p.v; sxy += p.i * p.v; sxx += p.i * p.i; });
-    const slope = (m * sxy - sx * sy) / Math.max(1e-9, m * sxx - sx * sx);
+    // [V33.212] 위 trend() 와 같은 이유로 중심화된 _olsSlope 로 모은다.
+    const xs = pts.map(function (p) { return p.i; }), ys = pts.map(function (p) { return p.v; });
+    let sy = 0; for (const v of ys) sy += v;
+    const slope = _olsSlope(xs, ys);
+    if (slope == null || !(Math.abs(sy) > 1e-9)) return null;
     return slope / (sy / m) * 100;
   }
   const last = cs[n - 1].c, tol = 0.02;
