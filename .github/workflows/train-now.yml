@@ -22,7 +22,9 @@ on:
         default: xalpha
         # [V33.179] dual(이중헤드 강세/약세)이 빠져 있었다 — 화면에서 '합류 보류' 로 가장 눈에 띄는
         #   위원인데 정작 손으로 돌릴 수가 없어, 고치고도 다음 야간까지 확인할 방법이 없었다.
-        options: [xalpha, flow, stack, memo, dual, mind, gbdt, dnn, l1, all]
+        # [V33.205] stackbf(소급생성)가 빠져 있었다 — stack(학습기)만 있어서 "표본이 쌓이는지"를
+        #   확인하려면 전체 파이프라인(13회차·8분)을 돌리는 수밖에 없었다. 재료와 학습은 다른 일이다.
+        options: [xalpha, flow, stackbf, stack, memo, dual, mind, gbdt, dnn, l1, all]
 
 concurrency:
   group: worker-training
