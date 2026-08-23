@@ -190,7 +190,165 @@ const F = new Function(DEPS + STUB + body + "\n return {" + NAMES.join(",") + "}
   if (!e) ok("백분위(양끝·중앙·보간·빈배열) · 로짓↔시그모이드 왕복 · ★온도는 0.5 를 못 옮긴다★");
 }
 
-// ── ⑧ 저장되는 지표에 범위 가드가 있는가 ──────────────────────────────────
+// ── ⑧ ★음수가 될 수 없는 양이 음수(또는 NaN)로 나오지 않는가★ ─────────────
+//   사용자 지적: "양수가 나와야 하는 계산식에서 음수가 나온 경우가 있었다."
+//   실제로 이 저장소가 반복해 막아 온 두 가지 경로가 있다:
+//     ① E[X²]−E[X]² 분산 지름길 — 부동소수 상쇄로 음수가 되고 sqrt 가 NaN 을 낸다
+//     ② sqrt 안의 뺄셈 — 인자가 음수면 조용히 NaN 이 흘러간다
+//   전수 조사 결과 ①은 전부 Math.max(0,…) 로 막혀 있었고, ②의 두 곳
+//   (켈리 corrDiv · _icEffective)도 앞선 클램프·가드로 안전했다.
+//   그래서 여기서는 ★적대적 입력★ 을 실제로 넣어 성질이 깨지는지 본다 — 코드를 읽는 것과
+//   값을 넣어 보는 것은 다르다(이 세션에서 읽고 세운 가설이 여러 번 계측에 뒤집혔다).
+{
+  let e = 0;
+  const ADV = {
+    "전부 음수":       [-1.2, -0.5, -3.1, -0.8, -2.2, -0.1, -1.9, -0.4],
+    "전부 동일":       [2, 2, 2, 2, 2, 2],
+    "전부 0":          [0, 0, 0, 0, 0],
+    "한쪽 극단":       [100, -0.001, -0.001, -0.001, -0.001, -0.001],
+    "극단 왜도":       [-0.01, -0.01, -0.01, -0.01, -0.01, 50],
+    "미세값":          [1e-12, -1e-12, 1e-12, -1e-12, 1e-12, -1e-12]
+  };
+  for (const [name, R] of Object.entries(ADV)) {
+    const m = F._srMoments(R), g = F._edgeStats(R);
+    // 표준편차는 정의상 음수가 될 수 없다
+    if (!(g.sd >= 0) || !isFinite(g.sd)) { e++; no(`부호감사: [${name}] 표준편차 ${g.sd} — 음수/NaN 이 될 수 없다`); }
+    // 첨도는 정의상 음수가 될 수 없다(원첨도 = 4차적률/σ⁴)
+    if (!(m.kurt >= 0) || !isFinite(m.kurt)) { e++; no(`부호감사: [${name}] 첨도 ${m.kurt} — 음수/NaN 이 될 수 없다`); }
+    // 자유도·표본수는 음수가 될 수 없다
+    if (!(g.df >= 0) || !(g.n >= 0)) { e++; no(`부호감사: [${name}] 자유도/표본수가 음수다`); }
+    // t·SR·왜도는 음수가 ★될 수 있다★ — 다만 NaN 은 안 된다(값이 없는 것과 다르다)
+    if (!isFinite(g.t) || !isFinite(m.sr) || !isFinite(m.skew)) { e++; no(`부호감사: [${name}] t/SR/왜도에 NaN — 음수는 되지만 NaN 은 안 된다`); }
+    // 확률은 [0,1] 밖으로 못 나간다
+    const ps = F._probSR(m, 0);
+    if (ps != null && !(ps >= 0 && ps <= 1)) { e++; no(`부호감사: [${name}] PSR ${ps} 가 [0,1] 밖이다`); }
+  }
+  // Wilson 하한 — 어떤 입력에도 음수가 될 수 없다(하한이 0 미만이면 의미가 없다)
+  for (const [pv, nv] of [[0, 5], [0.001, 5], [1, 5], [0.5, 1], [0.02, 8]]) {
+    const lb = F._wilsonLB(pv, nv, 2.58);
+    if (!(lb >= 0) || !isFinite(lb)) { e++; no(`부호감사: Wilson 하한 p=${pv} n=${nv} → ${lb} (음수/NaN 불가)`); }
+  }
+  // 기대 최대 SR — 시도가 늘수록 커지는 ★양수★ 다(음수면 다중검정 보정이 반대로 작동한다)
+  for (const K of [2, 3, 5, 11, 50, 500]) {
+    const v = F._expectedMaxSR(0.1, K);
+    if (!(v >= 0) || !isFinite(v)) { e++; no(`부호감사: 기대 최대 SR K=${K} → ${v} — 음수면 DSR 이 PSR 보다 커진다(보정이 뒤집힘)`); }
+  }
+  // 유효표본수 — 음수·NaN 불가
+  for (const [nv, uv] of [[100, -0.5], [100, 0], [0, 0.5], [-10, 0.5], [100, NaN]]) {
+    const v = F._effN(nv, uv);
+    if (!(v >= 0) || !isFinite(v)) { e++; no(`부호감사: 유효표본 n=${nv} u=${uv} → ${v} (음수/NaN 불가)`); }
+  }
+  // 백분위 — 정렬 배열의 최소~최대 밖으로 나갈 수 없다
+  const SS = [-5, -1, 0, 3, 9];
+  for (const q of [0, 0.13, 0.5, 0.87, 1]) {
+    const v = F._pctile(SS, q);
+    if (!(v >= SS[0] && v <= SS[SS.length - 1])) { e++; no(`부호감사: 백분위 q=${q} → ${v} 가 [${SS[0]}, ${SS[SS.length - 1]}] 밖이다`); }
+  }
+  // 시그모이드는 (0,1) 을 절대 못 벗어난다 — 극단 로짓에서도
+  for (const z of [-1e6, -50, 0, 50, 1e6]) {
+    const v = F._sigmoid(z);
+    if (!(v >= 0 && v <= 1) || !isFinite(v)) { e++; no(`부호감사: 시그모이드(${z}) = ${v} 가 [0,1] 밖이다`); }
+  }
+  if (!e) ok(`적대적 입력 ${Object.keys(ADV).length}종(전부음수·동일·0·극단왜도·미세값) — 표준편차·첨도·자유도·Wilson하한·기대최대SR·유효표본·백분위·시그모이드 전부 부호와 범위 유지, NaN 0건`);
+}
+
+// ── ⑨ 분산 지름길에 상쇄 가드가 남아 있는가 ────────────────────────────────
+//   E[X²] − E[X]² 는 크기가 비슷한 두 수의 뺄셈이라 ★부동소수 상쇄로 음수가 될 수 있다★
+//   → sqrt 가 NaN 을 내고, 그 NaN 이 조용히 지표를 타고 흐른다.
+//   ★이 검사의 정규식을 세 번 고쳤고 그때마다 코드가 아니라 검사가 틀렸다★:
+//     sqrt(s2 / n)      — 편차제곱합, 정의상 ≥ 0
+//     sqrt(−2 · ln p)   — Box–Muller·역정규의 단항 마이너스, 인자가 언제나 양수
+//     sqrt(p · (1 − p)) — 베르누이 분산, p ∈ [0,1] 이면 ≥ 0
+//   진짜 위험은 ★마이너스 뒤에 같은 변수의 제곱★ 이 오는 형태다(그게 E[X]² 항이다).
+//   역참조(\1)로 그것만 지목한다 — 넓게 잡아 오탐을 내면 검사는 곧 꺼진다.
+{
+  /* 마이너스는 ★이항★ 이어야 한다 — exp(−a·a)·exp(−x·x/2) 처럼 단항 마이너스 뒤의 제곱은
+     지수함수 인자라 언제나 안전하다(오탐 2건이 그것이었다). 앞에 단어/닫는괄호를 요구한다. */
+  const RE = /[\w\)\]]\s*-\s*(?:[\w.$]+\s*\*\s*)?([A-Za-z_$][\w.$]*)\s*\*\s*\1\b/g;
+  const lines = src.split("\n");
+  const hits = [];
+  lines.forEach((ln, i) => {
+    RE.lastIndex = 0;
+    if (!RE.test(ln)) return;
+    if (/^\s*(\/\/|\*|\/\*)/.test(ln)) return;               // 주석은 코드가 아니다
+    hits.push({ n: i + 1, s: ln.trim() });
+  });
+  /* 가드로 인정하는 형태는 둘이다:
+       ① Math.max(0, …) / Math.max(1e-…, …)  — 음수를 0 으로 끌어올린다
+       ② 그 다음 줄에서 ★그 변수의 양수 검사★  — 음수면 아예 그 경로를 안 쓴다(더 엄격하다)
+     ②를 안 봐주면 "abs 를 벗기고 부호로 막는" 더 나은 수정이 오히려 위반으로 잡힌다. */
+  const unguarded = hits.filter((h) => {
+    if (/Math\.max\(\s*(?:0|1e-)/.test(h.s)) return false;
+    const nm = (h.s.match(/^(?:const|let|var)\s+([A-Za-z_$][\w$]*)\s*=/) || [])[1];
+    if (nm) {
+      const win = lines.slice(h.n, h.n + 3).join(" ");
+      const re = new RegExp("\\b" + nm.replace(/[$]/g, "\\$&") + "\\s*>\\s*(?:0\\b|1e-|[\\w.]+\\s*\\*)");
+      if (re.test(win)) return false;
+    }
+    return true;
+  });
+  if (!hits.length)
+    no("부호감사: 분산 지름길을 하나도 못 찾았다 — 검사가 헛돌고 있다(패턴이 바뀌었는지 확인할 것)");
+  else if (unguarded.length)
+    no(`부호감사: 분산 지름길에 상쇄 가드가 없다 ${unguarded.length}곳 — 음수 분산 → sqrt NaN\n    `
+       + unguarded.slice(0, 4).map((h) => h.n + ": " + h.s.slice(0, 100)).join("\n    "));
+  else
+    ok(`분산 지름길(E[X²]−E[X]²) ${hits.length}곳 전부 상쇄 가드(Math.max) 보유 — 줄 ${hits.map((h) => h.n).join(", ")}`);
+}
+
+// ── ⑨-2 ★상관·회귀가 중심화돼 있는가 — 실측으로 재현한다★ ─────────────────
+//   V33.208 이 고친 실제 버그다. 중심화하지 않은 n·Σx² − (Σx)² 는 x 가 크고 변동이 작으면
+//   ★분산이 음수★ 로 나오고(실측 −6144), sqrt 가 NaN 이 되고, NaN 비교가 전부 거짓이라
+//   상관이 ★조용히 0 으로 삼켜진다★. 참 상관이 +1 인 구간에서 "관계 없음" 이 나온다.
+//   예외도 안 나고 로그도 안 남으므로, 이 검사가 없으면 다음에도 못 잡는다.
+{
+  const pearson = (() => {
+    const m = src.match(/^function _pearson\([\s\S]*?\n\}/m);
+    if (!m) { no("부호감사: _pearson 을 못 찾았다"); return null; }
+    return new Function("function _num(v,d){const n=Number(v);return isFinite(n)?n:d;}"
+      + "function _clamp(v,a,b){return v<a?a:(v>b?b:v);}" + m[0] + "return _pearson;")();
+  })();
+  const ols = (() => {
+    const m = src.match(/^function _olsSlope\([\s\S]*?\n\}/m);
+    if (!m) { no("부호감사: _olsSlope 을 못 찾았다"); return null; }
+    return new Function("function _num(v,d){const n=Number(v);return isFinite(n)?n:d;}"
+      + m[0] + "return _olsSlope;")();
+  })();
+  if (pearson && ols) {
+    let e = 0;
+    // ★버그를 냈던 바로 그 입력★ — 큰 수준값에 미세 변동(주가·지수·시가총액에서 늘 생긴다)
+    const mk = (base, step) => { const a = [], b = []; for (let i = 0; i < 40; i++) {
+      a.push(base + (i % 3) * step); b.push(base + (i % 3) * step * 2); } return [a, b]; };
+    for (const [base, step] of [[9e7, 0.01], [7.1e4, 0.5], [1e6, 0.001], [3.2e9, 1]]) {
+      const [a, b] = mk(base, step);
+      const r = pearson(a, b);
+      if (!(r > 0.99)) { e++; no(`부호감사: 상관 — 수준 ${base.toExponential()} 변동 ${step} 에서 r=${r} (참값 ≈ +1). 중심화하지 않으면 분산이 음수가 되어 0 으로 삼켜진다`); }
+    }
+    // 음의 상관도 그대로 나와야 한다
+    { const a = [], b = []; for (let i = 0; i < 40; i++) { a.push(1e7 + i * 0.5); b.push(1e7 - i * 0.5); }
+      const r = pearson(a, b);
+      if (!(r < -0.99)) { e++; no(`부호감사: 음의 상관이 ${r} — 참값 ≈ −1`); } }
+    // 상관은 [−1, 1] 을 절대 못 벗어난다
+    for (const [base, step] of [[1e9, 1e-6], [1, 1e6]]) {
+      const [a, b] = mk(base, step); const r = pearson(a, b);
+      if (!(r >= -1 && r <= 1) || !isFinite(r)) { e++; no(`부호감사: 상관 ${r} 이 [−1,1] 밖이거나 NaN`); }
+    }
+    // 회귀 기울기 — 큰 수준값에서도 참 기울기를 낸다
+    { const x = [], y = []; for (let i = 0; i < 60; i++) { const v = 71000 + Math.sin(i / 7) * 80;
+        x.push(v); y.push(1234 + 1.5 * v); }
+      const b = ols(x, y);
+      if (b == null || Math.abs(b - 1.5) > 1e-6) { e++; no(`부호감사: 회귀 기울기 ${b} (참값 1.5) — 중심화 없이는 유효숫자가 날아간다`); } }
+    // 분산 0(전부 같은 값)에서는 판정하지 않는다 — 0 으로 나누면 무한대가 흐른다
+    if (ols([5, 5, 5, 5], [1, 2, 3, 4]) !== null) { e++; no("부호감사: 분산 0 인데 기울기를 냈다"); }
+    if (pearson([5, 5, 5], [1, 2, 3]) !== 0) { e++; no("부호감사: 분산 0 인데 상관을 냈다"); }
+    // 소스에 중심화가 실제로 남아 있는가(누가 '최적화' 로 되돌리면 조용히 재발한다)
+    if (/n \* sxx - sx \* sx/.test(src))
+      { e++; no("부호감사: 중심화하지 않은 n·Σx² − (Σx)² 가 되살아났다 — 분산이 음수가 될 수 있다"); }
+    if (!e) ok("상관·회귀 중심화 — 수준 9e7·7.1e4·1e6·3.2e9 에서 r≈+1 재현 · 음의상관 · [−1,1] · 기울기 1.5 · 분산0 판정보류");
+  }
+}
+
+// ── ⑩ 저장되는 지표에 범위 가드가 있는가 ──────────────────────────────────
 //   XALPHA valAcc 2.4159 는 ★분류 정확도가 1 을 넘은 값★ 이었고, 그 상태로 화면에 떴다.
 //   산식을 아무리 고쳐도 다음에 또 어긋나면 같은 일이 난다 — 내보내는 자리에서 막는다.
 {

@@ -2788,7 +2788,7 @@ async function applySignalTypeWeights(DB, cfg) {
 // ============================================================================
 // [V33.55] 빌드 버전 — SWR L2 캐시 키에 섞어 '배포 = 판단 캐시 자동 무효화'를 만든다.
 //   판정 로직을 고쳐도 옛 캐시가 최대 1시간 재배포되던 문제를 구조적으로 없앤다.
-const _BUILD_VER = "V33.207";
+const _BUILD_VER = "V33.208";
 
 // ═══ [V33.171] 평가 순서 계획 — ★승격과 순환을 교차해 굶주림을 구조적으로 없앤다★ ═══
 //   V33.50 의 형태트리거는 "급한 몇 종목을 앞으로 당긴다"는 의도였으나, 실제 운영로그에서는
@@ -20512,8 +20512,12 @@ async function handleRequest(request, env, ctx) {
             s11 += d1 * d1; s22 += d2 * d2; s12 += d1 * d2; sy1 += dy * d1; sy2 += dy * d2; syy += dy * dy;
           }
           let bM = 0, bF = 0, r2 = 0, usedMkt = 1, varbF = 0;
+          /* [V33.208] det = s11·s22 − s12² 는 그램 행렬식이라 ★정의상 ≥ 0★ 이다(코시–슈바르츠).
+             종전엔 Math.abs(det) 로 문턱을 봤는데, 그러면 상쇄로 음수가 된 det 가 그대로 제수로
+             쓰여 ★두 베타의 부호가 함께 뒤집힌다.★ 음수 det 는 유효한 값이 아니라 수치 붕괴이므로
+             폴백(단일팩터)으로 보내는 것이 맞다. 문턱은 상대값이라 스케일에 안전하다. */
           const det = s11 * s22 - s12 * s12;
-          if (s11 > 0 && s22 > 0 && Math.abs(det) > 1e-6 * s11 * s22) {
+          if (s11 > 0 && s22 > 0 && det > 1e-6 * s11 * s22) {
             bM = (sy1 * s22 - sy2 * s12) / det;
             bF = (sy2 * s11 - sy1 * s12) / det;
           } else { usedMkt = 0; bM = 0; bF = s22 > 0 ? sy2 / s22 : 0; }
@@ -24713,23 +24717,50 @@ function _mlXSPanelFeats(closes, panel, barsAgo) {
 //   • statArbSignal    : Z-score 진입/청산/손절 + 반감기·상관 자격심사 → 페어 신호
 //   순수 수학·fetch 0. 파라미터는 AI_PARAMS.statArb. (자동 체결은 미배선 — 분석/신호 제공)
 // ============================================================================
+/* [V33.208] ★중심화하지 않은 합은 분산을 음수로 만든다.★
+   종전: den = n·Σx² − (Σx)². 수학적으로는 n²·Var(x) 라 ★반드시 ≥ 0★ 인데,
+   x 가 크고 변동이 작으면(주가 71,000원대 · 지수 · 시가총액) 두 거대한 수의 뺄셈이 되어
+   유효숫자가 다 날아간다. 실측: x ≈ 9e7, 변동 0.01 →
+       n·Σx² = 1.8155249918e+13
+       (Σx)²  = 1.8155238650e+13
+       차이   = ★−6144★     ← 분산이 음수다
+   그 음수가 sqrt 로 들어가면 NaN 이 되고, NaN 비교는 전부 거짓이라 ★조용히 0 으로 삼켜진다★.
+   즉 참 상관이 +1 인 구간에서 "상관 없음(0)" 이 나온다 — 예외도 안 나고 로그도 안 남는다.
+   → 평균을 먼저 빼고 누적한다(2패스). Σ(x−x̄)² 는 ★제곱합이라 음수가 원천적으로 불가능하다.★
+     지수(exact) 산술에서는 종전 식과 완전히 같은 값이다 — n 배수가 서로 약분된다. */
 function _olsSlope(x, y) {  // y = a + b·x 의 기울기 b
   const n = Math.min(x.length, y.length);
   if (n < 3) return null;
-  let sx = 0, sy = 0, sxx = 0, sxy = 0;
-  for (let i = 0; i < n; i++) { sx += x[i]; sy += y[i]; sxx += x[i] * x[i]; sxy += x[i] * y[i]; }
-  const den = n * sxx - sx * sx;
-  if (Math.abs(den) < 1e-12) return null;
-  return (n * sxy - sx * sy) / den;
+  let mx = 0, my = 0;
+  for (let i = 0; i < n; i++) { mx += _num(x[i], 0); my += _num(y[i], 0); }
+  mx /= n; my /= n;
+  let sxx = 0, sxy = 0;
+  for (let i = 0; i < n; i++) {
+    const dx = _num(x[i], 0) - mx;
+    sxx += dx * dx; sxy += dx * (_num(y[i], 0) - my);
+  }
+  if (!(sxx > 1e-12)) return null;   // 분산 0(전부 같은 값) — 기울기가 정의되지 않는다
+  return sxy / sxx;
 }
+/* [V33.208] 같은 결함 — 그리고 여기가 더 나쁘다. 상관은 ★피처로 직접 들어가는 값★ 이라
+   0 으로 삼켜지면 모델이 "관계 없음" 을 학습한다. 실측 재현:
+     x = 9e7 + (i%3)·0.01,  y = 9e7 + (i%3)·0.02   (참 상관 +1)
+     종전 → vx = −6144(음수 분산) · sqrt(vx·vy) = NaN · 반환 ★0★
+     중심화 → 0.9999999999932  (참값)
+   중심화 후 sxx·syy 는 제곱합이라 음수가 불가능하므로 sqrt 가 NaN 을 낼 수 없다. */
 function _pearson(x, y) {
   const n = Math.min(x.length, y.length);
   if (n < 3) return 0;
-  let sx = 0, sy = 0, sxx = 0, syy = 0, sxy = 0;
-  for (let i = 0; i < n; i++) { sx += x[i]; sy += y[i]; sxx += x[i] * x[i]; syy += y[i] * y[i]; sxy += x[i] * y[i]; }
-  const cov = n * sxy - sx * sy, vx = n * sxx - sx * sx, vy = n * syy - sy * sy;
-  const den = Math.sqrt(vx * vy);
-  return den > 1e-12 ? _clamp(cov / den, -1, 1) : 0;
+  let mx = 0, my = 0;
+  for (let i = 0; i < n; i++) { mx += _num(x[i], 0); my += _num(y[i], 0); }
+  mx /= n; my /= n;
+  let sxx = 0, syy = 0, sxy = 0;
+  for (let i = 0; i < n; i++) {
+    const dx = _num(x[i], 0) - mx, dy = _num(y[i], 0) - my;
+    sxx += dx * dx; syy += dy * dy; sxy += dx * dy;
+  }
+  const den = Math.sqrt(sxx * syy);
+  return den > 1e-12 ? _clamp(sxy / den, -1, 1) : 0;
 }
 // 페어 스프레드 Z-score + 헤지비 + 상관. a,b: 종가배열(오래된→최신, 동일 길이 권장).
 function pairSpreadZScore(a, b, lookback) {
