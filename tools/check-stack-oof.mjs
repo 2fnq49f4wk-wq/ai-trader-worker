@@ -1,0 +1,116 @@
+// [V33.205] STACK 홀드아웃(OOF) 계약 게이트
+//   STACK 은 "여러 모델을 하나로 통합" 하는 자리다 — 전문가 8명의 확률 8개 + 참여마스크 8개를
+//   입력으로 받아 최종 확률을 내고, 투표를 ★통째로 대체★ 한다.
+//   그런데 표본이 47.7일 동안 1,275건(≈27건/일)밖에 안 모여 퍼징 후 350/600 으로 대기 중이었다.
+//   원인은 누출 방지 규칙이다: '전문가가 학습한 적 없는 행' 만 쓰는데, 그 기준선(stack_expert_epoch)이
+//   ★매일 밤 현재로 갱신★ 되므로 하루치밖에 안 남는다.
+//
+//   그 규칙 자체는 옳다 — V33.104 가 실측으로 확인했다(in-sample 로 학습했더니 IC 0.566 · t 7.51
+//   이라는 비현실적 수치가 나왔고, 그건 "전문가를 전적으로 믿어라" 를 배운 것이었다).
+//   틀린 것은 그것이 ★유일한★ 누출없는 경로라고 본 것이다. 외부 학습기는 시간순 뒤쪽 20%를
+//   홀드아웃으로 떼고 퍼지·엠바고를 건 뒤 앞쪽만으로 학습하므로, 업로드된 모델은 그 구간을
+//   학습한 적이 없다 — 그 구간이 곧 out-of-fold 다(추가 GPU 비용 0).
+//
+//   이 게이트가 지키는 것은 하나다: ★그 문을 열되, 누출 쪽으로는 절대 안 열리게★.
+import fs from "node:fs";
+const src = fs.readFileSync("src/index.js", "utf8");
+const py = fs.readFileSync("trainer/modal/modal_train.py", "utf8");
+let bad = 0;
+const ok = (m) => console.log("  ok   " + m);
+const no = (m) => { console.error("  FAIL " + m); bad++; };
+
+// ── ① 경계는 앞으로만 간다 ★가장 중요★ ────────────────────────────────────
+//   경계를 과거로 되돌리면 이미 학습에 쓰인 구간이 '누출없음' 으로 열린다 — V33.104 사고의 재발.
+{
+  const i = src.indexOf('path === "/api/stack-oof-window"');
+  if (i < 0) no("STACK-OOF: 경계 수신 엔드포인트가 없다");
+  else {
+    const seg = src.slice(i, i + 2600);
+    if (!/_mt < _pv/.test(seg))
+      no("STACK-OOF: 경계가 과거로 되돌아가는 것을 막지 않는다 — 학습에 쓰인 구간이 열린다");
+    else ok("경계는 단조 전진만 허용(과거로 되돌리면 409 로 거절)");
+    if (!/_trainAuthed\(\)/.test(seg)) no("STACK-OOF: 경계 수신에 인증이 없다");
+    else ok("경계 수신은 TRAIN_KEY 인증 필요");
+    if (!/featVer 불일치/.test(seg)) no("STACK-OOF: featVer 를 확인하지 않는다 — 판이 다른 경계를 받는다");
+    else ok("featVer 일치 확인");
+    if (!/minTs 가 미래다/.test(seg)) no("STACK-OOF: 미래 시각을 거절하지 않는다");
+    else ok("미래 시각 거절");
+  }
+}
+
+// ── ② 에폭 경로를 대체하지 않고 '추가' 한다 ──────────────────────────────
+//   에폭 경로는 신규 수확분(전문가가 아직 못 본 행)을 잡는다. 둘은 겹치지 않는 다른 구간이다.
+{
+  const i = src.indexOf("async function stackSampleBackfill");
+  const seg = src.slice(i, i + 12000);
+  if (!/stack_expert_epoch/.test(seg)) no("STACK-OOF: 에폭 경로가 사라졌다 — 신규 수확분을 못 잡는다");
+  else ok("에폭 경로 유지(신규 수확분) + 홀드아웃 경로 추가");
+  if (!/stack_oof_cursor/.test(seg))
+    no("STACK-OOF: 홀드아웃 경로에 전용 커서가 없다 — 에폭 커서와 섞이면 신규분을 건너뛴다");
+  else ok("홀드아웃 전용 커서(ts 와 id 의 순서가 다르므로 섞으면 안 된다)");
+  if (!/if \(_src === "홀드아웃"\)/.test(seg))
+    no("STACK-OOF: 읽은 경로에 따라 커서를 갈라 전진시키지 않는다");
+  else ok("읽은 경로의 커서만 전진");
+  // 홀드아웃 조회는 반드시 ts 하한을 건다 — id 만으로 뽑으면 과거 구간이 섞인다(소급표본은 ts 과거·id 큼).
+  if (!/WHERE ts >= \? AND id > \? AND featver = \?/.test(seg))
+    no("STACK-OOF: 홀드아웃 조회에 ts 하한이 없다 — 소급표본(ts 과거·id 큼)이 섞여 누출된다");
+  else ok("홀드아웃 조회에 ts 하한(누출 구간 차단)");
+}
+
+// ── ③ 학습기가 보내는 경계가 실제 분할 경계와 같은가 ─────────────────────
+{
+  if (!/samples\.sort\(key=lambda s: s\.get\("ts", 0\)\)/.test(py))
+    no("STACK-OOF: 학습기가 표본을 시간순 정렬하지 않는다 — TS[N-n_val] 이 경계가 아니다");
+  else ok("학습기는 표본을 시간순 정렬한다");
+  if (!/_oof_min_ts = int\(TS\[N - n_val\]\)/.test(py))
+    no("STACK-OOF: 학습기가 보내는 경계가 홀드아웃 첫 표본의 ts 가 아니다");
+  else ok("보내는 경계 = 홀드아웃 첫 표본의 ts (분할과 같은 식)");
+  if (!/"\/api\/stack-oof-window"/.test(py)) no("STACK-OOF: 학습기가 경계를 보내지 않는다");
+  else ok("학습기가 학습 후 경계를 통지한다");
+  // 네 모델이 같은 분할 규칙을 쓰는지 — 하나라도 다르면 그 모델엔 누출이 남는다.
+  const tails = py.match(/nval = max\(\d+, int\(N \* (VALFRAC|0\.2)\)\)/g) || [];
+  if (tails.length < 3)
+    no(`STACK-OOF: 외부 모델들이 같은 홀드아웃 비율을 쓰는지 확인 불가(${tails.length}건만 확인됨)`);
+  else ok(`외부 모델 ${tails.length + 1}종이 같은 규칙(뒤쪽 20%)으로 홀드아웃을 뗀다`);
+  if (!/VALFRAC = 64, 600, 50, 0\.2|VALFRAC = 0\.2|, 0\.2$/m.test(py) && !/MAXBINS, MAXTREES, PATIENCE, VALFRAC = 64, 600, 50, 0\.2/.test(py))
+    no("STACK-OOF: GBDT 의 VALFRAC 이 0.2 가 아니다 — 다른 경계를 쓴다");
+  else ok("GBDT VALFRAC = 0.2 (DNN·부스터·MIND 와 동일)");
+}
+
+// ── ④ 수치 재현 — 경계 규칙이 실제로 누출을 막는가 ────────────────────────
+//   "ts >= minTs 인 행은 그 모델이 학습한 적이 없다" 가 성립해야 한다.
+//   학습셋은 (인덱스 < N-n_val) AND (ts < 경계 - 엠바고) 이므로, 경계 이상 ts 는 학습셋에 있을 수 없다.
+{
+  const N = 5000, valFrac = 0.2, embargoMs = 6 * 86400000;
+  const TS = [];
+  let t = Date.UTC(2026, 0, 1);
+  for (let i = 0; i < N; i++) { if (i % 40 === 0) t += 86400000; TS.push(t); }  // 하루에 40건(동률 다수)
+  const nVal = Math.max(20, Math.floor(N * valFrac));
+  const minTs = TS[N - nVal];
+  const cutTs = minTs - embargoMs;
+  // 학습셋 구성(학습기와 같은 식)
+  const train = [];
+  for (let i = 0; i < N; i++) if (i < N - nVal && TS[i] < cutTs) train.push(i);
+  // 워커가 '누출없음' 으로 여는 집합
+  const opened = [];
+  for (let i = 0; i < N; i++) if (TS[i] >= minTs) opened.push(i);
+  const trainSet = new Set(train);
+  const leak = opened.filter((i) => trainSet.has(i));
+  if (leak.length) no(`STACK-OOF: 경계 규칙이 학습셋 ${leak.length}건을 '누출없음' 으로 연다`);
+  else ok(`경계 규칙 재현 — 열린 ${opened.length}건 중 학습셋과 겹치는 행 0건(동률 ts 다수 조건에서)`);
+  /* 경계를 과거로 물리면 누출이 생겨야 한다 — 검사가 무의미하지 않다는 증명.
+     ★엠바고(6일)보다 더 물려야 한다★: 그 안쪽은 학습셋에서 이미 잘려 있는 완충구간이라
+     조금 물리는 것만으로는 학습셋에 닿지 않는다. 이 완충이 존재한다는 것 자체가
+     '경계가 조금 흔들려도 바로 누출은 아니다' 를 뜻하지만, 단조 전진을 포기할 이유는 아니다 —
+     아래처럼 엠바고를 넘겨 물리는 순간 학습셋이 통째로 열린다. */
+  const badMin = minTs - 12 * 86400000;
+  const openedBad = [];
+  for (let i = 0; i < N; i++) if (TS[i] >= badMin) openedBad.push(i);
+  const leakBad = openedBad.filter((i) => trainSet.has(i));
+  if (!leakBad.length)
+    no("STACK-OOF: 경계를 과거로 물려도 누출이 안 생긴다 — 재현이 계약을 증명하지 못한다");
+  else ok(`경계를 12일(엠바고 6일 초과) 과거로 물리면 학습셋 ${leakBad.length}건이 열린다 — 단조 전진이 필요한 이유`);
+}
+
+if (bad) { console.error(`\nSTACK 홀드아웃 계약 위반 ${bad}건 — 배포 차단`); process.exit(1); }
+console.log("  ok   STACK 홀드아웃 계약 통과 — 문을 열되 누출 쪽으로는 안 열린다");

@@ -2788,7 +2788,7 @@ async function applySignalTypeWeights(DB, cfg) {
 // ============================================================================
 // [V33.55] 빌드 버전 — SWR L2 캐시 키에 섞어 '배포 = 판단 캐시 자동 무효화'를 만든다.
 //   판정 로직을 고쳐도 옛 캐시가 최대 1시간 재배포되던 문제를 구조적으로 없앤다.
-const _BUILD_VER = "V33.203";
+const _BUILD_VER = "V33.205";
 
 // ═══ [V33.171] 평가 순서 계획 — ★승격과 순환을 교차해 굶주림을 구조적으로 없앤다★ ═══
 //   V33.50 의 형태트리거는 "급한 몇 종목을 앞으로 당긴다"는 의도였으나, 실제 운영로그에서는
@@ -21225,6 +21225,41 @@ async function handleRequest(request, env, ctx) {
     //   Worker의 _fmTrain은 CPU예산 안에 미수렴이라 MIND가 학습을 못 하던 근본문제 해결(FM만 GPU로 이관).
     //   FM단독(experts=["fm"], meta=항등)으로 MIND 모델을 조립해 즉시 위원장 가동. ?activate=1 + probe정합 +
     //   valAccLB 절대바닥 통과 시 라이브(mind_model) 승격, 아니면 섀도우(mind_fm_ext).
+    /* [V33.205] ★외부 학습기의 홀드아웃 경계를 받는다 — STACK 을 굶기지 않기 위해서.★
+       Modal 은 표본을 시간순으로 정렬해 뒤쪽 20%를 홀드아웃으로 떼고 퍼지·엠바고를 건 뒤
+       ★앞쪽만★ 으로 학습한다(DNN·GBDT·부스터·MIND 전부 같은 규칙). 그래서 업로드되어
+       지금 워커에 실려 있는 모델들은 그 구간을 학습한 적이 없다 — 그 구간을 지금 모델로
+       채점하면 그것이 out-of-fold 예측이고, 스태킹(STACK)이 요구하는 값이 바로 그것이다.
+       추가 GPU 비용은 0 이다: 이미 만들어 valAcc 계산에만 쓰고 버리던 성질을 쓰는 것이다.
+       필요한 정보는 ★경계 시각 하나★ 뿐이라 모델을 다시 올릴 필요가 없다.
+       ★단조 전진만 허용한다★ — 경계를 과거로 되돌리면 이미 학습에 쓰인 구간이 '누출없음'
+       으로 열려 V33.104 가 고친 사고(IC 0.566·t 7.51)가 그대로 재발한다. */
+    if (path === "/api/stack-oof-window" && request.method === "POST") {
+      const au = _trainAuthed(); if (!au.ok) return Response.json({ error: au.msg }, { status: au.code, headers: cors });
+      let body; try { body = await request.json(); } catch (e) { return Response.json({ error: "bad json" }, { status: 400, headers: cors }); }
+      if (_num(body.featVer, -1) !== LUXML.featVer)
+        return Response.json({ error: "featVer 불일치 (서버 " + LUXML.featVer + ")" }, { status: 400, headers: cors });
+      const _mt = Math.floor(_num(body.minTs, 0));
+      if (!(_mt > 0) || !isFinite(_mt))
+        return Response.json({ error: "minTs 필요(홀드아웃 첫 표본의 관측 시각)" }, { status: 400, headers: cors });
+      if (_mt > Date.now() + 86400000)
+        return Response.json({ error: "minTs 가 미래다" }, { status: 400, headers: cors });
+      const _prev = await getState(env.DB, "stack_oof_window", null);
+      const _pv = _num(_prev && _prev.minTs, 0);
+      if (_pv > 0 && _mt < _pv) {
+        return Response.json({ ok: false, kept: _pv, rejected: _mt,
+          error: "경계는 뒤로 못 간다 — 과거로 되돌리면 학습에 쓰인 구간이 열려 누출이 재발한다" },
+          { status: 409, headers: cors });
+      }
+      const _rec = { minTs: _mt, n: Math.max(0, Math.floor(_num(body.n, 0))),
+                     models: Array.isArray(body.models) ? body.models.slice(0, 12).map(String) : [],
+                     featVer: LUXML.featVer, ts: Date.now() };
+      await setState(env.DB, "stack_oof_window", _rec);
+      try { await log(env.DB, "INFO", null, "[STACK-OOF] 홀드아웃 경계 " +
+              new Date(_mt).toISOString().slice(0, 10) + " (표본 " + _rec.n + "건, 모델 " +
+              (_rec.models.join("/") || "미기재") + ") — 이 구간은 누출없이 채점할 수 있다"); } catch (e) {}
+      return Response.json({ ok: true, window: _rec }, { headers: cors });
+    }
     if (path === "/api/fm-import" && request.method === "POST") {
       const au = _trainAuthed(); if (!au.ok) return Response.json({ error: au.msg }, { status: au.code, headers: cors });
       let body; try { body = await request.json(); } catch (e) { return Response.json({ error: "bad json" }, { status: 400, headers: cors }); }
@@ -26274,16 +26309,48 @@ async function stackSampleBackfill(DB, opts) {
     }
     const st = (await getState(DB, "stack_bf_cursor", null)) || { lastId: 0, made: 0 };
     const lim = Math.max(50, Math.floor(_num(cfg.maxPerRun, STACKBF.maxPerRun)));
+    /* ══ [V33.205] ★누출 없는 행이 하루치씩만 생겨 STACK 이 영원히 못 찼다★ ══
+       실측: 표본 1,275건 / 관측기간 47.7일(≈27건/일) · 퍼징 후 350/600 — 대기.
+       FLOW·XALPHA 가 소급생성으로 30,518건을 받은 것과 대조적이다. STACK 만 굶은 이유는
+       위 에폭 규칙이다: '지난 밤 재학습 직전의 최대 id 이후' 만 쓰는데, 그 기준선이
+       ★매일 밤 현재로 갱신★ 되므로(stackExpertEpochStamp) 하루치밖에 안 남는다.
+       그 규칙 자체는 옳다 — 틀린 건 그것이 ★유일한★ 누출없는 경로라고 본 것이다.
+
+       외부 학습기(Modal)는 표본을 시간순으로 정렬해 ★뒤쪽 20%를 홀드아웃★ 으로 떼고,
+       퍼지·엠바고까지 걸어 ★앞쪽만★ 으로 학습한다(DNN·GBDT·부스터·MIND 모두 같은 규칙).
+       즉 업로드되어 지금 워커에 실려 있는 그 모델들은 ★홀드아웃 구간을 학습한 적이 없다★.
+       그 구간을 지금 모델로 채점하면 그것이 곧 out-of-fold 예측이다 — Wolpert 스태킹이
+       요구하는 바로 그 값이고, 추가 GPU 비용은 0 이다(이미 만들어 놓고 valAcc 계산에만
+       쓰고 버리던 것을 쓰는 것이다).
+       → 학습기가 홀드아웃 시작 시각(minTs)을 올려주면, 그 이후 ts 를 가진 행도 누출없는
+         구간으로 쓴다. 커서를 따로 두어 에폭 경로와 섞이지 않게 한다. */
+    let _oofMinTs = 0, _oofN = 0;
+    try {
+      const _ow = await getState(DB, "stack_oof_window", null);
+      if (_ow && _num(_ow.minTs, 0) > 0) { _oofMinTs = _num(_ow.minTs, 0); _oofN = _num(_ow.n, 0); }
+    } catch (e) {}
     // 커서와 에폭 중 큰 쪽부터 — 되감아도 누출 구간으로는 절대 못 돌아간다.
     const _from = Math.max(_num(st.lastId, 0), _ep);
-    const rows = (await DB.prepare(
+    let rows = (await DB.prepare(
       // [V33.173] ts 를 함께 읽는다 — 소급생성 표본의 '관측 시각'을 원본에서 물려주기 위해서.
       "SELECT id, ts, market, symbol, feat, label, pnl_pct FROM ml_samples WHERE id > ? AND featver = ? ORDER BY id ASC LIMIT ?"
     ).bind(_from, LUXML.featVer, lim).all()).results || [];
+    let _src = "에폭";
+    if (!rows.length && _oofMinTs > 0) {
+      /* 에폭 경로가 마르면 홀드아웃 경로로 넘어간다. 커서가 따로인 이유는 ts 와 id 의 순서가
+         일치하지 않기 때문이다 — 소급표본은 ts 가 과거인데 id 는 크다(V33.173). */
+      const _oc = _num((await getState(DB, "stack_oof_cursor", null) || {}).lastId, 0);
+      rows = (await DB.prepare(
+        "SELECT id, ts, market, symbol, feat, label, pnl_pct FROM ml_samples WHERE ts >= ? AND id > ? AND featver = ? ORDER BY id ASC LIMIT ?"
+      ).bind(_oofMinTs, _oc, LUXML.featVer, lim).all()).results || [];
+      if (rows.length) _src = "홀드아웃";
+    }
     if (!rows.length) {
       // 되감기 없음 — 되감으면 전문가가 이미 학습한 행으로 돌아가 누출이 재발한다.
       //   새 수확분이 들어올 때까지 기다린다(하루 수천 건이 들어오므로 곧 재개된다).
-      return "[STACK-BF] 새 표본 대기 (에폭 " + _ep + " 이후 미도착, 누적생성 " + _num(st.made, 0) + ")";
+      return "[STACK-BF] 새 표본 대기 (에폭 " + _ep + " 이후 미도착, 누적생성 " + _num(st.made, 0) + ")" +
+             (_oofMinTs > 0 ? " · 홀드아웃 구간도 소진(경계 " + new Date(_oofMinTs).toISOString().slice(0, 10) + ")"
+                            : " · 홀드아웃 경계 미수신(외부 학습기가 아직 안 올렸다)");
     }
     // 채점기는 사이클 1회만 로드한다(표본마다 다시 읽으면 D1 이 죽는다).
     const mind = await mlMindLoad(DB);
@@ -26337,9 +26404,16 @@ async function stackSampleBackfill(DB, opts) {
       await stackLogSample(DB, r.market || "us", r.symbol || null, fv, _num(r.pnl_pct, 0), _num(r.ts, 0));   // [V33.173] 원본 행의 관측 시각
       made++;
     }
-    await setState(DB, "stack_bf_cursor", { lastId: lastId, made: _num(st.made, 0) + made, ts: Date.now() });
-    return "[STACK-BF] +" + made + "표본 (건너뜀 " + skipped + ", 커서 " + lastId + ", 에폭 " + _ep +
-           ", 누적 " + (_num(st.made, 0) + made) + ") — 누출없음";
+    /* [V33.205] 어느 경로에서 읽었는지에 따라 ★그 경로의 커서만★ 전진시킨다.
+       섞으면 에폭 커서가 홀드아웃 구간의 id 로 튀어, 나중에 들어올 신규 수확분을 통째로 건너뛴다. */
+    if (_src === "홀드아웃") {
+      await setState(DB, "stack_oof_cursor", { lastId: lastId, ts: Date.now() });
+      await setState(DB, "stack_bf_cursor", { lastId: _num(st.lastId, 0), made: _num(st.made, 0) + made, ts: Date.now() });
+    } else {
+      await setState(DB, "stack_bf_cursor", { lastId: lastId, made: _num(st.made, 0) + made, ts: Date.now() });
+    }
+    return "[STACK-BF] +" + made + "표본 (" + _src + "경로 · 건너뜀 " + skipped + ", 커서 " + lastId +
+           ", 에폭 " + _ep + ", 누적 " + (_num(st.made, 0) + made) + ") — 누출없음";
   } catch (e) { return "[STACK-BF] fail: " + (e && e.message); }
 }
 

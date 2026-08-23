@@ -541,6 +541,28 @@ def train_job(epochs: int = EPOCHS_DEFAULT, dry: bool = False,
             _train_and_upload_scalp(BASE, KEY, HDR, featver)
         except Exception as e:
             print("단타 학습/업로드 예외(무시):", e)
+        # ── [V33.205] 홀드아웃 경계를 워커에 알린다 ─────────────────────────────
+        #   위 모델들(DNN·GBDT·부스터·MIND)은 전부 ★시간순 뒤쪽 20%★ 를 홀드아웃으로 떼고
+        #   퍼지·엠바고를 건 뒤 앞쪽만으로 학습한다. 즉 방금 업로드한 모델들은 그 구간을
+        #   ★학습한 적이 없다★ — 그 구간을 워커가 지금 모델로 채점하면 그게 out-of-fold 예측이고,
+        #   스태킹(STACK)이 요구하는 값이 정확히 그것이다.
+        #   STACK 은 지금 "전문가가 학습한 적 없는 행" 을 하루치씩만 얻어(≈27건/일) 47.7일 동안
+        #   1,275건밖에 못 모았다. 이 경계 하나면 그 구간이 통째로 열린다 — 추가 GPU 비용 0.
+        #   ★모델이 아니라 경계 시각 하나만 보낸다★ (수십 MB 업로드가 아니라 한 줄이다).
+        try:
+            _oof_min_ts = int(TS[N - n_val])          # 홀드아웃 첫 표본의 관측 시각
+            _r = requests.post(BASE + "/api/stack-oof-window", params={"key": KEY}, headers=HDR,
+                               data=json.dumps({"featVer": featver, "minTs": _oof_min_ts,
+                                                "n": int(n_val),
+                                                "models": ["dnn", "gbdt", "boost", "mind"]}),
+                               timeout=60)
+            if _r.status_code == 200:
+                print(f"⑨ STACK 홀드아웃 경계 통지 — minTs={_oof_min_ts} ({int(n_val)}건)")
+            else:
+                # 409 = 경계를 과거로 되돌리려 함(워커가 막는다). 실패해도 학습 결과엔 영향 없다.
+                print(f"⑨ STACK 경계 통지 실패 {_r.status_code}: {_r.text[:200]}")
+        except Exception as e:
+            print("STACK 경계 통지 예외(무시):", e)
     return {"ok": True, "valAcc": acc, "trust": res.get("trust"), "depthSweep": sweep_note}
 
 
