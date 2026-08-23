@@ -2788,7 +2788,7 @@ async function applySignalTypeWeights(DB, cfg) {
 // ============================================================================
 // [V33.55] 빌드 버전 — SWR L2 캐시 키에 섞어 '배포 = 판단 캐시 자동 무효화'를 만든다.
 //   판정 로직을 고쳐도 옛 캐시가 최대 1시간 재배포되던 문제를 구조적으로 없앤다.
-const _BUILD_VER = "V33.208";
+const _BUILD_VER = "V33.209";
 
 // ═══ [V33.171] 평가 순서 계획 — ★승격과 순환을 교차해 굶주림을 구조적으로 없앤다★ ═══
 //   V33.50 의 형태트리거는 "급한 몇 종목을 앞으로 당긴다"는 의도였으나, 실제 운영로그에서는
@@ -25563,6 +25563,143 @@ async function flowLogSample(DB, market, symbol, featVec, pnlPct, tsMs) {
 //   이 함수는 실패해도 ★던지지 않고 문자열을 돌려준다★ — 그 문자열은 로그로만 갔다.
 //   그래서 flow·stack 이 7일째 재학습을 멈춘 것을 운영화면 어디에서도 알 수 없었고,
 //   모델 ts 를 손으로 비교해야 겨우 드러났다. 결과를 상태로 남겨 /api/ai-mode 가 싣게 한다.
+// ════════════════════════════════════════════════════════════════════════════
+// [V33.209] ★메타모델 비선형 헤드 — 선형 로지스틱을 대체할 후보들★
+//
+//  왜 필요한가: STACK 은 전문가 8명의 확률 + 참여마스크 8개(16차원)를 받아 결합확률을
+//  ★통째로 대체★ 하는 자리다. 그런데 지금까지 그 결합이 로지스틱 회귀 — 즉 ★선형★ 이었다.
+//  선형 결합기는 "각 전문가에게 고정 가중치를 준다" 는 뜻이라, 정작 스태킹에서 값이 나오는
+//  구조를 표현하지 못한다:
+//    · 조건부 신뢰 — "MIND 는 GBDT 도 같이 강할 때만 믿을 만하다"(상호작용)
+//    · 마스크 상호작용 — "FLOW 가 빠진 판에서는 BOOST 의 가중치가 달라야 한다"
+//    · 비단조 반응 — "확률 0.9 는 0.7 보다 오히려 덜 맞더라"(과신 구간)
+//  Wolpert(1992)가 스태킹을 제안할 때부터 메타학습기는 선형일 필요가 없다.
+//
+//  왜 두 종류인가: 표 형태 데이터에서 트리와 신경망은 서로 다른 실패를 한다
+//  (Grinsztajn et al., NeurIPS 2022 — 트리가 대체로 낫지만 매끄러운 함수에선 반대).
+//  어느 쪽이 이길지는 우리 표본이 정한다 — 그래서 둘 다 재고 ★같은 자로★ 고른다.
+//
+//  ★공정성 규칙★ 세 가지를 지킨다. 이걸 어기면 "비선형이 더 좋다" 는 결론이 그냥 과적합이다.
+//   ① 같은 분할: 퍼징으로 정해진 학습구간(0..ntr)과 홀드아웃(nvalStart..N)을 그대로 쓴다.
+//   ② 조기종료는 학습구간 안에서: 홀드아웃으로 트리 수·에폭을 고르면 그 홀드아웃 성적은
+//      더 이상 홀드아웃이 아니다. 학습구간의 뒤 15% 를 내부검증으로 떼어 거기서 멈춘다.
+//   ③ 다중검정 보정: 헤드를 K개 재고 최고를 고르면 최고값은 우연히 부풀어 있다.
+//      선택 후 유의성 문턱을 헤드 수만큼 올리고, 선형을 이기려면 ★하한★ 에서 마진을 요구한다.
+
+// 은닉층 1장짜리 MLP. Z(표준화 완료) 를 받아 확률을 낸다.
+//   uw = 표본 고유도 가중(겹친 라벨의 발언권을 나눈다 — de Prado AFML 4장), 로지스틱과 동일.
+function _mlpFit(Z, Y, uw, lo, hi, D, o) {
+  o = o || {};
+  const H = Math.max(4, Math.min(24, Math.floor(_num(o.hidden, 10))));
+  const epochs = Math.max(20, Math.floor(_num(o.epochs, 400)));
+  const lr = _num(o.lr, 0.02);
+  const nAll = hi - lo;
+  if (nAll < 40) return null;
+  // ② 내부검증 — 학습구간의 뒤 15% (시간순). 홀드아웃은 건드리지 않는다.
+  const nIn = Math.max(20, Math.floor(nAll * 0.15));
+  const trHi = hi - nIn;
+  if (trHi - lo < 30) return null;
+  let sw = 0; for (let i = lo; i < trHi; i++) sw += uw[i];
+  if (!(sw > 0)) return null;
+  const lam = _num(o.l2, 1) / sw;
+  // 초기화: tanh 은닉층이라 Xavier(입출력 팬 평균) 로 잡는다. 시드 고정 — 밤마다 값이 흔들리면
+  //   "어제보다 좋아졌다" 가 모델 개선인지 난수인지 구별할 수 없다.
+  let _seed = 20250209 >>> 0;
+  const rnd = function () { _seed = (_seed * 1664525 + 1013904223) >>> 0; return _seed / 4294967296; };
+  const sc = Math.sqrt(6 / (D + H));
+  const W1 = new Array(H), b1 = new Array(H).fill(0);
+  for (let h = 0; h < H; h++) { const r = new Array(D); for (let j = 0; j < D; j++) r[j] = (rnd() * 2 - 1) * sc; W1[h] = r; }
+  /* [V33.209] ★출력층을 0 으로 두면 안 된다.★ 역전파에서 은닉층 기울기는
+     d1 = e·W2[h]·(1−tanh²) 이다 — W2 가 전부 0 이면 첫 스텝의 은닉 기울기가 통째로 0 이 되어
+     W1 이 움직이지 않는다. 결국 '무작위로 뽑아 고정된 은닉 피처 위의 선형 회귀' 가 되어
+     비선형 헤드를 만든 이유가 사라진다. 작은 난수로 대칭을 깬다. */
+  const W2 = new Array(H); for (let h = 0; h < H; h++) W2[h] = (rnd() * 2 - 1) * sc;
+  let b2 = 0;
+  /* [V33.209] ★최적화기는 Adam(Kingma & Ba 2015)★ — 전배치 경사하강은 여기서 안 된다.
+     로지스틱은 볼록이라 lr 0.08 · 220스텝이면 수렴하지만, MLP 는 파라미터마다 기울기 크기가
+     수십 배 차이나서 같은 스텝수로는 출발점 근처에서 멈춘다(모사실험에서 정확도 45.6% —
+     ★동전보다 나쁘다★, 즉 학습이 안 된 것이다). Adam 은 파라미터별로 스텝을 정규화해
+     같은 예산 안에서 수렴한다. 난수 셔플이 없어 결정적이다(재현성 유지). */
+  const mW1 = new Array(H), vW1 = new Array(H);
+  for (let h = 0; h < H; h++) { mW1[h] = new Array(D).fill(0); vW1[h] = new Array(D).fill(0); }
+  const mb1 = new Array(H).fill(0), vb1 = new Array(H).fill(0);
+  const mW2 = new Array(H).fill(0), vW2 = new Array(H).fill(0);
+  let mb2 = 0, vb2 = 0;
+  const B1 = 0.9, B2 = 0.999, EPS = 1e-8;
+  const hid = new Array(H);
+  const fwd = function (x) {
+    let z2 = b2;
+    for (let h = 0; h < H; h++) {
+      let a = b1[h]; const r = W1[h];
+      for (let j = 0; j < D; j++) a += r[j] * x[j];
+      const t = Math.tanh(_clamp(a, -12, 12));
+      hid[h] = t; z2 += W2[h] * t;
+    }
+    return 1 / (1 + Math.exp(-_clamp(z2, -30, 30)));
+  };
+  const innerLoss = function () {
+    let ll = 0, wsum = 0;
+    for (let i = trHi; i < hi; i++) {
+      const p = _clamp(fwd(Z[i]), 1e-6, 1 - 1e-6), u = uw[i];
+      ll += -(Y[i] * Math.log(p) + (1 - Y[i]) * Math.log(1 - p)) * u; wsum += u;
+    }
+    return wsum > 0 ? ll / wsum : Infinity;
+  };
+  let best = null, bestLoss = Infinity, wait = 0, step = 0;
+  const patience = Math.max(8, Math.floor(_num(o.patience, 25)));
+  for (let ep = 0; ep < epochs; ep++) {
+    if (o.deadline && Date.now() > o.deadline) break;
+    const gW1 = new Array(H), gb1 = new Array(H).fill(0);
+    for (let h = 0; h < H; h++) gW1[h] = new Array(D).fill(0);
+    const gW2 = new Array(H).fill(0); let gb2 = 0;
+    for (let i = lo; i < trHi; i++) {
+      const x = Z[i], p = fwd(x), e = (p - Y[i]) * uw[i];
+      gb2 += e;
+      for (let h = 0; h < H; h++) {
+        gW2[h] += e * hid[h];
+        const d1 = e * W2[h] * (1 - hid[h] * hid[h]);   // tanh' = 1 − tanh²
+        gb1[h] += d1;
+        const g = gW1[h];
+        for (let j = 0; j < D; j++) g[j] += d1 * x[j];
+      }
+    }
+    step++;
+    const bc1 = 1 - Math.pow(B1, step), bc2 = 1 - Math.pow(B2, step);
+    const _adam = function (g, m, v) {
+      const mm = B1 * m + (1 - B1) * g, vv = B2 * v + (1 - B2) * g * g;
+      return [lr * (mm / bc1) / (Math.sqrt(vv / bc2) + EPS), mm, vv];
+    };
+    let r0 = _adam(gb2 / sw, mb2, vb2); b2 -= r0[0]; mb2 = r0[1]; vb2 = r0[2];
+    for (let h = 0; h < H; h++) {
+      r0 = _adam(gW2[h] / sw + lam * W2[h], mW2[h], vW2[h]); W2[h] -= r0[0]; mW2[h] = r0[1]; vW2[h] = r0[2];
+      r0 = _adam(gb1[h] / sw, mb1[h], vb1[h]); b1[h] -= r0[0]; mb1[h] = r0[1]; vb1[h] = r0[2];
+      const r = W1[h], g = gW1[h], mr = mW1[h], vr = vW1[h];
+      for (let j = 0; j < D; j++) { r0 = _adam(g[j] / sw + lam * r[j], mr[j], vr[j]); r[j] -= r0[0]; mr[j] = r0[1]; vr[j] = r0[2]; }
+    }
+    if ((ep & 3) === 0 || ep === epochs - 1) {
+      const vl = innerLoss();
+      if (isFinite(vl) && vl < bestLoss - 1e-6) {
+        bestLoss = vl; wait = 0;
+        best = { W1: W1.map(function (r) { return r.slice(); }), b1: b1.slice(), W2: W2.slice(), b2: b2, H: H, D: D };
+      } else { wait++; if (wait >= patience) break; }
+    }
+  }
+  if (best) best.innerLoss = +bestLoss.toFixed(5);
+  return best;
+}
+
+// 표준화된 벡터 → 확률. _mlpFit 의 순전파와 같은 식이다(학습·추론이 갈라지지 않게 한 곳에서 쓴다).
+function _mlpProb(m, z) {
+  if (!m || !Array.isArray(m.W1)) return null;
+  let s = _num(m.b2, 0);
+  for (let h = 0; h < m.H; h++) {
+    let a = _num(m.b1[h], 0); const r = m.W1[h];
+    for (let j = 0; j < m.D; j++) a += _num(r[j], 0) * _num(z[j], 0);
+    s += _num(m.W2[h], 0) * Math.tanh(_clamp(a, -12, 12));
+  }
+  return _clamp(1 / (1 + Math.exp(-_clamp(s, -30, 30))), 0.001, 0.999);
+}
+
 async function _miniLogisticTrain(DB, opts) {
   //   본문은 내부 클로저로 둔다 — 결과 문자열을 한 곳에서 가로채 상태로 남기기 위해서다.
   //   (함수를 둘로 쪼개면 바깥 함수가 opts 를 안 읽게 되어 배선 검사가 '죽은 인자' 로 잡는다.
@@ -25576,7 +25713,9 @@ async function _miniLogisticTrain(DB, opts) {
       _fwd = await icForwardCheck(DB, {
         stateKey: opts.stateKey, table: opts.table, featVer: opts.featVer,
         sampleFeatVer: opts.sampleFeatVer != null ? opts.sampleFeatVer : opts.featVer,
-        scoreFn: function (m, v) { return flowScore(m, v); },
+        // [V33.209] 전진검증도 ★그 모델이 실제로 쓰는 채점기★ 로 해야 한다.
+        //   선형으로 재고 비선형으로 운용하면 게이트가 다른 모델을 검증한 셈이 된다.
+        scoreFn: function (m, v) { return opts.nonlinear ? stackScore(m, v) : flowScore(m, v); },
         labelFn: opts.labelFn
       });
     } catch (e) {}
@@ -25718,18 +25857,96 @@ async function _miniLogisticTrain(DB, opts) {
       b -= lr * (gb / sumWtr);
     }
     // 검증 — 정확도와 IC 를 함께 잰다.
-    let correct = 0; const pv = [], yv = [];
-    for (let i = nvalStart; i < N; i++) {   // ★ntr 이 아니라 nvalStart★ — 퍼징 구간은 학습에서만 빠진다
+    const yv = [];
+    for (let i = nvalStart; i < N; i++) yv.push(Y[i]);   // ★ntr 이 아니라 nvalStart★ — 퍼징 구간은 학습에서만 빠진다
+    const _linP = [];
+    for (let i = nvalStart; i < N; i++) {
       let z = b; for (let j = 0; j < D; j++) z += w[j] * Z[i][j];
-      const p = 1 / (1 + Math.exp(-_clamp(z, -30, 30)));
-      pv.push(p); yv.push(Y[i]);
-      if ((p >= 0.5 ? 1 : 0) === Y[i]) correct++;
+      _linP.push(1 / (1 + Math.exp(-_clamp(z, -30, 30))));
     }
-    const acc = correct / Math.max(1, N - nvalStart);   // 분모 = 실제로 돈 횟수
+    // 홀드아웃 고유도 가중합 — 정확도 하한의 n 은 명목수가 아니라 이 유효표본수다.
+    //   ★헤드 선택보다 먼저 잰다★ — 후보를 고르는 자(하한)가 후보에 따라 달라지면 안 된다.
+    let _nEffPre = 0; for (let i = nvalStart; i < N; i++) _nEffPre += uw[i];
+    _nEffPre = Math.max(8, Math.round(_nEffPre));
+    const _accOf = function (ps) {
+      let c = 0; for (let i = 0; i < ps.length; i++) if ((ps[i] >= 0.5 ? 1 : 0) === yv[i]) c++;
+      return c / Math.max(1, ps.length);
+    };
+    let pv = _linP, _headTag = "lin", _heads = null, _nlin = null;
+    let acc = _accOf(_linP);
+    // ══ [V33.209] ★비선형 헤드 경합 — 선형이 기본값이고, 이기려면 하한에서 이겨야 한다★ ══
+    //   opts.nonlinear 를 켠 모델(STACK)만 여기 들어온다. 나머지는 위 로지스틱 그대로다.
+    if (opts.nonlinear) {
+      try {
+        const _dl = Date.now() + _num(opts.nlBudgetMs, 12000);   // CPU 예산 — 넘으면 그 자리에서 멈춘다
+        const _cand = [{ tag: "lin", p: _linP, acc: acc, lb: _wilsonLB(acc, _nEffPre) }];
+        // ── ① GBDT(히스토그램 부스팅) ── 조기종료는 학습구간 뒤 15% 로만 한다(홀드아웃 불가침).
+        let _gb = null;
+        try {
+          const _nIn = Math.max(20, Math.floor(ntr * 0.15)), _trHi = ntr - _nIn;
+          if (_trHi > 30) {
+            const _tr = [], _in = [];
+            for (let i = 0; i < _trHi; i++) _tr.push({ x: Z[i], y: Y[i], mw: uw[i] });
+            for (let i = _trHi; i < ntr; i++) _in.push({ x: Z[i], y: Y[i], mw: uw[i] });
+            // 씨앗 고정 — 같은 표본이면 같은 트리가 나온다(위 _gbdtFit 의 rng 주석 참조).
+            let _s = 20250209 >>> 0;
+            const _rng = function () { _s = (_s * 1664525 + 1013904223) >>> 0; return _s / 4294967296; };
+            _gb = _gbdtFit(_tr, _in, { D: D, maxTrees: _num(opts.nlTrees, 160), deadline: _dl, rng: _rng });
+            if (_gb && _gb.trees && _gb.trees.length) {
+              const ps = [];
+              for (let i = nvalStart; i < N; i++) ps.push(_clamp(_sigmoid(_gbdtRaw(_gb, Z[i])), 0.001, 0.999));
+              const a = _accOf(ps);
+              _cand.push({ tag: "gbdt", p: ps, acc: a, lb: _wilsonLB(a, _nEffPre), nTrees: _gb.trees.length });
+            } else { _gb = null; }
+          }
+        } catch (e) { _gb = null; }
+        // ── ② MLP(은닉 1층) ──
+        let _mp = null;
+        try {
+          _mp = _mlpFit(Z, Y, uw, 0, ntr, D, { hidden: _num(opts.nlHidden, 10), l2: _num(opts.l2, 1), deadline: _dl });
+          if (_mp) {
+            const ps = [];
+            for (let i = nvalStart; i < N; i++) ps.push(_mlpProb(_mp, Z[i]));
+            const a = _accOf(ps);
+            _cand.push({ tag: "mlp", p: ps, acc: a, lb: _wilsonLB(a, _nEffPre) });
+          }
+        } catch (e) { _mp = null; }
+        // ── ③ 혼합(로짓 평균) ── 세 헤드가 서로 다른 실패를 한다면 평균이 둘 다보다 낫다.
+        //   ★가중치를 홀드아웃으로 맞추지 않는다★ — 맞추는 순간 홀드아웃이 학습셋이 된다. 동등가중만.
+        if (_cand.length >= 3) {
+          const ps = [];
+          for (let k = 0; k < _linP.length; k++) {
+            let sum = 0; for (let c = 0; c < _cand.length; c++) sum += _logitD(_cand[c].p[k]);
+            ps.push(_clamp(_sigmoid(sum / _cand.length), 0.001, 0.999));
+          }
+          const a = _accOf(ps);
+          _cand.push({ tag: "blend", p: ps, acc: a, lb: _wilsonLB(a, _nEffPre) });
+        }
+        // ── 선택 ── 자는 하나뿐이다: 정확도의 Wilson 하한. 동률이면 단순한 쪽(선형)이 이긴다.
+        //   ③ 다중검정: 하한이 선형보다 nlMargin 이상 높아야 갈아탄다. 우연히 앞선 정도로는 안 바꾼다.
+        const _lin = _cand[0];
+        const _mar = _num(opts.nlMargin, 0.005);
+        let _win = _lin;
+        for (let c = 1; c < _cand.length; c++) {
+          if (_cand[c].lb > _win.lb + (_win === _lin ? _mar : 0)) _win = _cand[c];
+        }
+        _heads = _cand.map(function (c) {
+          return { head: c.tag, acc: +c.acc.toFixed(4), accLB: +c.lb.toFixed(4),
+                   nTrees: c.nTrees != null ? c.nTrees : undefined, win: c === _win };
+        });
+        if (_win !== _lin) {
+          pv = _win.p; acc = _win.acc; _headTag = _win.tag;
+          _nlin = { gbdt: (_headTag === "gbdt" || _headTag === "blend") ? _gb : null,
+                    mlp: (_headTag === "mlp" || _headTag === "blend") ? _mp : null };
+        }
+      } catch (e) { _heads = null; }
+    }
+    let correct = 0;
+    for (let i = 0; i < pv.length; i++) if ((pv[i] >= 0.5 ? 1 : 0) === yv[i]) correct++;
+    acc = correct / Math.max(1, N - nvalStart);   // 분모 = 실제로 돈 횟수
     // [V33.114] ★유효표본수★ — 홀드아웃의 고유도 가중합. 겹친 표본을 한 건으로 세지 않는다.
     //   Wilson 하한·저장되는 valN 이 모두 이 값을 쓴다(명목 n 을 쓰면 과신한다).
-    let _nEff = 0; for (let i = nvalStart; i < N; i++) _nEff += uw[i];
-    _nEff = Math.max(8, Math.round(_nEff));
+    const _nEff = _nEffPre;   // [V33.209] 헤드 경합 ★전★ 에 잰 값을 그대로 쓴다 — 자가 후보를 따라 움직이면 안 된다
     const _uBar = +(_nEff / Math.max(1, N - nvalStart)).toFixed(3);   // 평균 고유도(0~1)
     // [V33.91] IC 를 한 덩어리로 재지 않고 홀드아웃을 5블록으로 나눠 유의성까지 잰다.
     //   순수 잡음 모델이 raw IC 게이트를 43~49% 통과하던 것을 7~8% 로 낮춘다(_icBlockStats 주석 참조).
@@ -25752,7 +25969,22 @@ async function _miniLogisticTrain(DB, opts) {
     // [V33.93] 본페로니 보정 문턱 — 여러 모델을 매일 밤 동시검정하므로 1.65 는 근거가 없다.
     // [V33.143] 그 '여러' 를 ★세어서★ 정한다. 상수 8 은 모델이 늘어도 안 따라왔다.
     let _fam = null; try { _fam = await getState(DB, "ic_family", null); } catch (e) {}
-    const _tMin = _num(opts.icTMin, icTMinNow(_fam, { strict: !!opts.strictGate }));
+    let _tMin = _num(opts.icTMin, icTMinNow(_fam, { strict: !!opts.strictGate }));
+    /* [V33.209] ★헤드를 여럿 재고 최고를 골랐으면 그 최고값은 우연히 부풀어 있다.★
+       K개 후보의 최대값은 단일 검정과 같은 분포가 아니다 — 같은 문턱을 대면 비선형 헤드가
+       "우연히 앞선 것" 만으로 위원회 결합을 통째로 가져간다. 본페로니 방향으로 문턱을 올린다:
+       유의수준을 K로 나누는 것은 정규분위수에서 Φ⁻¹(1−α/K) 이므로, 후보가 늘수록 t 문턱이 오른다.
+       (선형이 그대로 이겼으면 고른 게 아니므로 올리지 않는다 — 벌은 ★갈아탄 경우★ 에만 준다.) */
+    const _tMinBase = _tMin;
+    let _headK = 1;
+    if (_heads && _heads.length > 1 && _headTag !== "lin" && opts.icTMin == null) {
+      _headK = _heads.length;
+      // 가족 크기에 헤드 수를 곱해 같은 산식(icBonferroniT: z = Φ⁻¹(1 − α/k))에 다시 넣는다.
+      //   문턱을 새로 발명하지 않는다 — 이미 쓰고 있는 자를 넓힐 뿐이다.
+      const _kFam = (_fam && _num(_fam.k, 0) > 0) ? _num(_fam.k, 0) : ICGATE.familyFallback;
+      const _tAdj = icTMinNow({ k: _kFam * _headK }, { strict: !!opts.strictGate });
+      if (isFinite(_tAdj) && _tAdj > _tMin) _tMin = _tAdj;
+    }
     const _bIC = (_st.blockIC != null) ? _st.blockIC : null;
     const _tv = (_st.t != null) ? _st.t : null;
     // 블록 통계를 못 구할 만큼 홀드아웃이 작으면(블록당 20건 미만) 유의성을 확인할 수 없다 →
@@ -25786,9 +26018,24 @@ async function _miniLogisticTrain(DB, opts) {
       // [V33.179] 전진창에서 걸러낸 과거(소급) 표본 수 — 종전 음수 IC 의 출처를 숫자로 남긴다.
       fwdPastSkipped: _fwd ? _fwd.pastSkipped : null,
       holdPass: _holdPass,
+      // ══ [V33.209] 결합 헤드 ══ 선형이 기본값이고, 비선형은 하한에서 이겼을 때만 들어온다.
+      //   scoreFn 이 이 필드를 보고 갈라진다 — 모델 안에 무엇으로 채점할지가 같이 실려 있어야
+      //   ★학습한 것과 다른 식으로 채점되는 사고★ 가 원천적으로 안 난다.
+      head: _headTag,
+      heads: _heads,                              // 후보 전원의 정확도·하한(무엇에 지고 이겼는지의 증거)
+      headK: _headK, tMinBase: _tMinBase,          // 다중검정 보정 전/후 문턱
+      gbdt: _nlin && _nlin.gbdt ? { trees: _nlin.gbdt.trees, eta: _nlin.gbdt.eta, bias: _nlin.gbdt.bias } : null,
+      mlp: _nlin && _nlin.mlp
+        ? { W1: _nlin.mlp.W1, b1: _nlin.mlp.b1, W2: _nlin.mlp.W2, b2: _nlin.mlp.b2, H: _nlin.mlp.H, D: _nlin.mlp.D }
+        : null,
       trusted: _trusted };
     await setState(DB, opts.stateKey, model);
     return "[" + opts.tag + "] 학습완료 표본 " + N + " valAcc " + (acc * 100).toFixed(1) + "% IC " + ic.toFixed(4) +
+           (_heads
+             ? " 결합=" + _headTag + "(" + _heads.map(function (h) {
+                 return h.head + " " + (h.accLB * 100).toFixed(1) + "%하한";
+               }).join(" / ") + (_headK > 1 ? " · 다중검정 t문턱 " + _tMinBase + "→" + _tMin : "") + ")"
+             : "") +
            (_bIC != null ? " 블록IC " + _bIC.toFixed(4) + " t " + (_tv || 0).toFixed(2) : " (블록 부족)") +
            (_fwd && _fwd.ready ? " 전진IC " + _num(_fwd.ic, 0).toFixed(4) + "(n" + _fwd.n + ")"
                                : " 전진" + (_fwd ? _fwd.n : 0) + "/" + ICGATE.minForward) +
@@ -25827,6 +26074,48 @@ function flowScore(model, featVec) {
       z += model.w[j] * v;
     }
     return _clamp(1 / (1 + Math.exp(-_clamp(z, -30, 30))), 0.001, 0.999);
+  } catch (e) { return null; }
+}
+
+// ════════════════════════════════════════════════════════════════════════════
+// [V33.209] ★메타모델 채점기 — 학습이 고른 헤드로 갈라진다★
+//   model.head 가 무엇으로 학습됐는지를 들고 있다. 채점 쪽에서 다시 판단하지 않는다.
+//   (원시벡터 → 학습 때와 ★같은★ 표준화(train 구간 평균·표준편차, ±4 클램프)를 먼저 적용한다.
+//    비선형 헤드는 그 표준화된 좌표에서 학습됐으므로 이 단계를 건너뛰면 완전히 다른 함수가 된다.)
+function _metaStdz(model, featVec) {
+  const D = Array.isArray(model.mean) ? model.mean.length : 0;
+  if (!(D > 0) || !Array.isArray(featVec) || featVec.length !== D) return null;
+  const z = new Array(D);
+  for (let j = 0; j < D; j++) {
+    z[j] = _clamp((_num(featVec[j], 0) - _num(model.mean[j], 0)) / (_num(model.std[j], 1) || 1), -4, 4);
+  }
+  return z;
+}
+function stackScore(model, featVec) {
+  try {
+    if (!model) return null;
+    const head = model.head || "lin";
+    if (head === "lin") return flowScore(model, featVec);
+    const z = _metaStdz(model, featVec);
+    if (!z) return null;
+    if (head === "gbdt") {
+      if (!model.gbdt) return flowScore(model, featVec);   // 헤드가 유실되면 선형으로 되돌아간다(무응답보다 낫다)
+      return _clamp(_sigmoid(_gbdtRaw(model.gbdt, z)), 0.001, 0.999);
+    }
+    if (head === "mlp") {
+      if (!model.mlp) return flowScore(model, featVec);
+      return _mlpProb(model.mlp, z);
+    }
+    if (head === "blend") {
+      // 학습 때와 같은 구성원·같은 등가중 로짓 평균이어야 한다. 한 명이라도 빠지면 평균의 의미가 달라진다.
+      const ps = [flowScore(model, featVec)];
+      if (model.gbdt) ps.push(_clamp(_sigmoid(_gbdtRaw(model.gbdt, z)), 0.001, 0.999));
+      if (model.mlp) ps.push(_mlpProb(model.mlp, z));
+      if (ps.length < 2 || ps.some(function (v) { return v == null; })) return flowScore(model, featVec);
+      let sum = 0; for (const v of ps) sum += _logitD(v);
+      return _clamp(_sigmoid(sum / ps.length), 0.001, 0.999);
+    }
+    return flowScore(model, featVec);
   } catch (e) { return null; }
 }
 
@@ -26416,7 +26705,11 @@ const STACKML = {
   minTrainSamples: 600,     // 14차원이라 600건이면 수렴한다
   trainWindow: 40000,
   l2: 1.5,                  // 전문가 확률끼리 상관이 높아 규제를 조금 세게
-  icFloor: 0.015            // 투표를 대체하는 자리라 문턱을 FLOW/XALPHA 보다 높게
+  icFloor: 0.015,           // 투표를 대체하는 자리라 문턱을 FLOW/XALPHA 보다 높게
+  // ── [V33.209] 비선형 헤드 ──
+  nlHidden: 10,             // MLP 은닉 노드 수. 16입력에 10이면 파라미터 ~180 — 600표본에서 감당 가능한 크기
+  nlTrees: 160,             // GBDT 최대 트리(내부검증 조기종료가 실제 수를 정한다)
+  nlMargin: 0.005           // 선형을 갈아치우려면 정확도 ★하한★ 에서 이만큼 앞서야 한다(0.5%p)
 };
 
 async function stackLogSample(DB, market, symbol, featVec, pnlPct, tsMs) {
@@ -26590,6 +26883,10 @@ async function stackTrainNightly(DB) {
     featVer: STACKML.featVer, D: 16,
     minN: STACKML.minTrainSamples, window: STACKML.trainWindow,
     l2: STACKML.l2, icFloor: STACKML.icFloor,
+    // [V33.209] ★비선형 헤드 경합을 켜는 곳은 여기 하나다.★ STACK 만 켠다 —
+    //   FLOW/XALPHA/MEMO 는 자기 피처를 직접 읽는 1차 전문가라 선형으로 두는 편이 해석 가능하고,
+    //   비선형이 필요하면 그건 위(메타) 층에서 하는 게 스태킹의 분업이다.
+    nonlinear: true, nlHidden: STACKML.nlHidden, nlTrees: STACKML.nlTrees, nlMargin: STACKML.nlMargin,
     // [V33.91] STACK 은 위원회 결합확률을 ★통째로 대체★ 하는 자리다. 잘못 들어오면
     //   다른 전문가와 섞여 희석되는 게 아니라 혼자 결정한다 → 유의성 문턱을 더 높게 잡는다.
     // [V33.143] ★그런데 값이 2.2 였다 — 공통 문턱 2.50 보다 오히려 낮다.★
@@ -33080,7 +33377,7 @@ async function mlDeepDecide(DB, featVec, opts) {
           //   대신 로짓 공간에서 증거 배수만큼 ★혼합★ 한다 — 증거가 차면 자연히 대체에 수렴한다.
           const _sa = expertAdmit(sm);
           if (sm && _sa.admit && sm.featVer === STACKML.featVer) {
-            const pS = flowScore(sm, _stackFeat);
+            const pS = stackScore(sm, _stackFeat);   // [V33.209] 헤드(lin/gbdt/mlp/blend)에 따라 갈라진다
             if (pS != null) {
               if (_sa.tier === "full") { pCombined = pS; _usedStack = true; }
               else {
@@ -33640,8 +33937,18 @@ function _gbdtBuild(hp, grad, hess, idx, depth, cols, imp) {
 //   opts: {maxTrees, deadline, fixedTrees(조기종료 대신 고정 트리수), collectImp}
 function _gbdtFit(train, val, opts) {
   opts = opts || {};
-  const D = LUXML.featNames.length;
+  // [V33.209] 차원은 호출자가 정한다. 종전엔 LUXML(65) 로 못박혀 있어 STACK(16차원) 같은
+  //   ★다른 판의 표본★ 에는 쓸 수 없었다 — 히스토그램 컷을 없는 열까지 만들려다 undefined 를 읽는다.
+  //   기본값은 종전 그대로라 기존 호출부(단타 GBDT)의 동작은 한 글자도 달라지지 않는다.
+  const D = _num(opts.D, 0) > 0 ? Math.floor(opts.D) : LUXML.featNames.length;
   const maxTrees = opts.maxTrees || GBDT.maxTrees;
+  /* [V33.209] ★난수원을 호출자가 넘길 수 있게 한다.★ 행·열 서브샘플이 Math.random 이라
+     같은 표본으로 두 번 돌리면 다른 모델이 나온다(실측: 트리 1/3/1/4개, 정확도 54.1/54.1/54.1/50.3%).
+     단타 GBDT 는 그래도 됐다 — 그 자리는 매일 밤 통째로 다시 학습하는 단일 모델이니까.
+     그런데 메타모델의 ★헤드 경합★ 은 다르다: 후보끼리 하한 0.5%p 차이로 승부를 가리는데
+     후보 자체가 밤마다 흔들리면 "비선형이 이겼다" 가 모델 성질이 아니라 그 밤의 난수가 된다.
+     → 씨앗을 주면 결정적으로 돈다. 안 주면 종전 그대로(Math.random) — 기존 호출부는 무변화. */
+  const _rand = (typeof opts.rng === "function") ? opts.rng : Math.random;
   const X = train.map(function (d) { return d.x; });
   const hp = _gbdtHistPrep(X, D);   // [V12.49] 히스토그램 컷·bin 인덱스 — fit당 1회(트리마다 재사용)
   let pos = 0; for (const t of train) pos += t.y;
@@ -33671,11 +33978,11 @@ function _gbdtFit(train, val, opts) {
       hess[i] = Math.max(p * (1 - p) * w, 1e-6);
     }
     const idx = [];
-    for (let i = 0; i < train.length; i++) if (Math.random() < GBDT.subsample) idx.push(i);
+    for (let i = 0; i < train.length; i++) if (_rand() < GBDT.subsample) idx.push(i);
     if (idx.length < 20) continue;
     const cols = [];
-    for (let f = 0; f < D; f++) if (Math.random() < GBDT.colsample) cols.push(f);
-    if (!cols.length) cols.push(Math.floor(Math.random() * D));
+    for (let f = 0; f < D; f++) if (_rand() < GBDT.colsample) cols.push(f);
+    if (!cols.length) cols.push(Math.floor(_rand() * D));
     const tree = _gbdtBuild(hp, grad, hess, idx, 0, cols, imp);
     model.trees.push(tree);
     for (let i = 0; i < train.length; i++) raws[i] += GBDT.eta * _gbdtTreeOut(tree, train[i].x);

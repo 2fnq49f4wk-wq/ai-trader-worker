@@ -156,10 +156,24 @@ const score = (m, rows) => rows.map((r) => 1 / (1 + Math.exp(-(m.w * r.x + m.b))
   if (/for \(let i = nvalStart; i < N; i\+\+\) \{/.test(fn))
     ok("검증 루프가 nvalStart 부터 돈다(퍼징 구간은 학습에서만 빠진다)");
   else bad("검증 루프가 퍼징된 ntr 부터 돈다 — 잘라낸 구간이 홀드아웃에 섞인다");
-  if (/const acc = correct \/ Math\.max\(1, N - nvalStart\);/.test(fn))
+  /* [V33.209] 이름이 아니라 ★분모★ 를 본다. 헤드 경합이 들어오면서 acc 가 const 에서 let 으로
+     바뀌었는데, 이름만 보던 검사는 그걸 계약 위반으로 읽었다(계약은 그대로였다).
+     지키려는 것은 하나다: 정확도의 분모가 실제로 돈 횟수(N − nvalStart)와 같아야 한다.
+     그게 어긋나서 XALPHA valAcc 가 2.4159 로 나왔던 것이다. */
+  if (/\bacc = correct \/ Math\.max\(1, N - nvalStart\);/.test(fn))
     ok("정확도 분모가 실제로 돈 횟수와 같다(1 을 넘을 수 없다)");
   else bad("정확도 분모가 루프 횟수와 다르다 — valAcc 가 1 을 넘을 수 있다");
-  if (/let _nEff = 0; for \(let i = nvalStart; i < N; i\+\+\)/.test(fn))
+  // 후보 확률 배열도 전부 같은 구간에서 만들어져야 한다 — 하나라도 길이가 다르면 위 분모가 거짓말이 된다.
+  {
+    const mk = fn.match(/for \(let i = nvalStart; i < N; i\+\+\)/g) || [];
+    if (mk.length >= 2) ok(`홀드아웃 구간 순회가 ${mk.length}곳 전부 nvalStart..N 으로 같다`);
+    else bad("홀드아웃 순회 구간이 한 곳뿐이거나 서로 다르다 — 후보끼리 다른 구간을 잰다");
+    if (/for \(let i = ntr; i < N; i\+\+\)/.test(fn))
+      bad("홀드아웃을 ntr 부터 도는 곳이 남아 있다 — 퍼징 구간이 검증에 섞인다");
+    else ok("퍼징된 ntr 부터 홀드아웃을 도는 곳은 없다");
+  }
+  if (/_nEffPre = 0; for \(let i = nvalStart; i < N; i\+\+\)/.test(fn) ||
+      /let _nEff = 0; for \(let i = nvalStart; i < N; i\+\+\)/.test(fn))
     ok("유효표본수도 같은 구간에서 센다");
   else bad("유효표본수를 다른 구간에서 센다 — 고유도·Wilson 하한이 어긋난다");
   if (/const _bound = _num\(T\[nvalStart\], 0\);/.test(fn))
