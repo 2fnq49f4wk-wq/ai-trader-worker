@@ -2788,7 +2788,7 @@ async function applySignalTypeWeights(DB, cfg) {
 // ============================================================================
 // [V33.55] 빌드 버전 — SWR L2 캐시 키에 섞어 '배포 = 판단 캐시 자동 무효화'를 만든다.
 //   판정 로직을 고쳐도 옛 캐시가 최대 1시간 재배포되던 문제를 구조적으로 없앤다.
-const _BUILD_VER = "V33.228";
+const _BUILD_VER = "V33.229";
 
 // ═══ [V33.171] 평가 순서 계획 — ★승격과 순환을 교차해 굶주림을 구조적으로 없앤다★ ═══
 //   V33.50 의 형태트리거는 "급한 몇 종목을 앞으로 당긴다"는 의도였으나, 실제 운영로그에서는
@@ -27127,7 +27127,7 @@ async function stackSampleBackfill(DB, opts) {
        쓰고 버리던 것을 쓰는 것이다).
        → 학습기가 홀드아웃 시작 시각(minTs)을 올려주면, 그 이후 ts 를 가진 행도 누출없는
          구간으로 쓴다. 커서를 따로 두어 에폭 경로와 섞이지 않게 한다. */
-    let _oofMinTs = 0, _oofN = 0, _oofModels = null;
+    let _oofMinTs = 0, _oofN = 0, _oofModels = null, _rewound = false;
     try {
       const _ow = await getState(DB, "stack_oof_window", null);
       if (_ow && _num(_ow.minTs, 0) > 0) {
@@ -27152,7 +27152,32 @@ async function stackSampleBackfill(DB, opts) {
     if (!rows.length && _oofMinTs > 0) {
       /* 에폭 경로가 마르면 홀드아웃 경로로 넘어간다. 커서가 따로인 이유는 ts 와 id 의 순서가
          일치하지 않기 때문이다 — 소급표본은 ts 가 과거인데 id 는 크다(V33.173). */
-      const _oc = _num((await getState(DB, "stack_oof_cursor", null) || {}).lastId, 0);
+      /* ══ [V33.228] ★판(featVer)이 바뀌면 홀드아웃 커서를 되감아야 한다.★ ══
+         V33.227 이 누출을 고치며 STACKML.featVer 를 4→5 로 올렸다. 옛 판 표본 6,931건은
+         학습에서 빠지므로 STACK 은 즉시 표본 0 이 됐는데, 커서는 홀드아웃 창 끝에 그대로
+         서 있었다 — 소급생성은 "홀드아웃 구간도 소진" 만 반복하고, 새 판 표본은 에폭 경로의
+         하루 27건씩만 들어온다. 문턱 600 을 채우는 데 몇 주가 걸린다는 뜻이다(실측 samples 0).
+
+         되감아도 누출이 아니다. 이 경로의 누출 차단은 ★ts >= _oofMinTs★ 가 한다 — 외부
+         학습기가 "이 구간은 어떤 전문가도 학습한 적 없다" 고 보증한 창이고, 그 경계는 뒤로
+         못 간다(단조 전진, 409 거절). 커서는 같은 행을 두 번 만들지 않기 위한 쪽수표일 뿐이다.
+
+         되감기 조건은 '판이 다르다' 가 아니라 ★지금 판으로 만든 홀드아웃 표본이 아직 0★ 이다.
+         구 커서에는 판 표기가 없어 '다른 판인지' 를 알 수 없는데, 이 조건은 그것을 몰라도
+         성립한다 — 0 건이면 되감아도 사본이 생길 수 없고, 1건이라도 있으면 이미 이 판으로
+         훑은 것이므로 절대 되감지 않는다. 판 표기는 앞으로를 위해 함께 남긴다. */
+      const _ocSt = (await getState(DB, "stack_oof_cursor", null)) || {};
+      let _oc = _num(_ocSt.lastId, 0);
+      if (_oc > 0 && _num(_ocSt.fv, 0) !== STACKML.featVer) {
+        let _haveFv = -1;
+        try {
+          const _c2 = await DB.prepare(
+            "SELECT COUNT(*) AS c FROM stack_samples WHERE featver = ? AND src = 'oof'"
+          ).bind(STACKML.featVer).first();
+          _haveFv = _num(_c2 && _c2.c, 0);
+        } catch (e) {}
+        if (_haveFv === 0) { _oc = 0; _rewound = true; }
+      }
       rows = (await DB.prepare(
         "SELECT id, ts, market, symbol, feat, label, pnl_pct FROM ml_samples WHERE ts >= ? AND id > ? AND featver = ? ORDER BY id ASC LIMIT ?"
       ).bind(_oofMinTs, _oc, LUXML.featVer, lim).all()).results || [];
@@ -27227,13 +27252,15 @@ async function stackSampleBackfill(DB, opts) {
     /* [V33.205] 어느 경로에서 읽었는지에 따라 ★그 경로의 커서만★ 전진시킨다.
        섞으면 에폭 커서가 홀드아웃 구간의 id 로 튀어, 나중에 들어올 신규 수확분을 통째로 건너뛴다. */
     if (_src === "홀드아웃") {
-      await setState(DB, "stack_oof_cursor", { lastId: lastId, ts: Date.now() });
+      await setState(DB, "stack_oof_cursor", { lastId: lastId, fv: STACKML.featVer, ts: Date.now() });
       await setState(DB, "stack_bf_cursor", { lastId: _num(st.lastId, 0), made: _num(st.made, 0) + made, ts: Date.now() });
     } else {
       await setState(DB, "stack_bf_cursor", { lastId: lastId, made: _num(st.made, 0) + made, ts: Date.now() });
     }
     return "[STACK-BF] +" + made + "표본 (" + _src + "경로 · 건너뜀 " + skipped + ", 커서 " + lastId +
-           ", 에폭 " + _ep + ", 누적 " + (_num(st.made, 0) + made) + ") — 누출없음";
+           ", 에폭 " + _ep + ", 누적 " + (_num(st.made, 0) + made) + ")" +
+           (_rewound ? " — 판 v" + STACKML.featVer + " 표본 0 이라 홀드아웃 커서를 처음으로 되감았다(창 경계는 그대로)" : "") +
+           " — 누출없음";
   } catch (e) { return "[STACK-BF] fail: " + (e && e.message); }
 }
 
@@ -42174,6 +42201,9 @@ export {
   computeCashFromTrades, _krSellTaxRate, _slipRate,
   // [V33.107] 상황별 반성기억(TradingAgents) 검증용
   _expRegBucket, _expRegIC, EXPREG,
+  // [V33.228] STACK 홀드아웃 커서 계약 검증용 — tools/check-stack-oof.mjs 가 실제로 돌린다.
+  //   판(featVer)이 올라간 뒤 커서가 창 끝에 서서 소급생성이 영영 멈추는 회귀를 잡는다.
+  stackSampleBackfill, STACKML,
   // [V33.113] 유의성 자유도 보정 검증용
   // [V33.222] 단타 기준봉 — 게이트가 봉 길이에 맞춰 기대값을 계산할 수 있어야 한다.
   //   (봉 수로 적힌 기대값은 봉 길이가 바뀌면 다른 시간을 뜻하게 된다)

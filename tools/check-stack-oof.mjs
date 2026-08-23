@@ -149,5 +149,99 @@ const no = (m) => { console.error("  FAIL " + m); bad++; };
   else ok("표본에 경로(live/epoch/oof)를 남긴다 — 경로별 IC 를 잴 수 있다");
 }
 
+
+// ── ⑤ ★판이 올라가면 홀드아웃 커서가 되감기는가★ ─────────────────────────────
+//   [V33.228] V33.227 이 누출을 고치며 STACKML.featVer 를 4→5 로 올렸다. 옛 판 표본 6,931건은
+//   학습에서 빠져 STACK 은 즉시 표본 0 이 됐는데, 홀드아웃 커서는 창 끝에 그대로 서 있었다.
+//   소급생성은 "홀드아웃 구간도 소진" 만 반복하고, 새 판 표본은 에폭 경로의 하루 27건씩만
+//   들어온다 — 문턱 600 까지 몇 주가 걸린다는 뜻이다(실측 samples 0).
+//
+//   되감기가 누출이 아닌 이유: 이 경로의 차단은 ts >= minTs 가 한다(단조 전진하는 창 경계).
+//   커서는 사본을 막는 쪽수표일 뿐이다. 그래서 되감기 조건은 '판이 다르다' 가 아니라
+//   ★지금 판으로 만든 홀드아웃 표본이 0★ 이다 — 0 이면 사본이 생길 수 없고,
+//   1건이라도 있으면 이미 훑은 것이므로 절대 되감지 않는다.
+//
+//   정적 문구 검사로는 이 계약을 지킬 수 없다(커서 값이 답이다). 실제로 돌려서 ★홀드아웃
+//   조회에 어떤 커서가 묶였는지★ 를 본다.
+{
+  const M = await import("../src/index.js");
+  const FV = M.STACKML.featVer;
+  const OOF_MIN = Date.now() - 30 * 86400000;
+
+  function db(oofCursor, oofSampleCount) {
+    const seen = { oofBind: null, epochBind: null };
+    const state = {
+      stack_expert_epoch: { id: 100 },
+      stack_bf_cursor: { lastId: 5000, made: 6931 },
+      stack_oof_window: { minTs: OOF_MIN, n: 6931, models: ["dnn", "gbdt", "boost", "mind"] },
+      stack_oof_cursor: oofCursor
+    };
+    return {
+      _seen: seen,
+      prepare(sql) {
+        const st = {
+          _a: [],
+          bind(...a) { st._a = a; return st; },
+          async first() {
+            if (/SELECT v FROM state WHERE k = \?/.test(sql)) {
+              const v = state[st._a[0]];
+              return v === undefined ? null : { v: JSON.stringify(v) };
+            }
+            if (/COUNT\(\*\) AS c FROM stack_samples/.test(sql)) return { c: oofSampleCount };
+            if (/MAX\(id\) AS m FROM ml_samples/.test(sql)) return { m: 20000 };
+            return null;
+          },
+          async all() {
+            if (/FROM ml_samples WHERE ts >= \? AND id > \?/.test(sql)) { seen.oofBind = st._a.slice(); return { results: [] }; }
+            if (/FROM ml_samples WHERE id > \?/.test(sql)) { seen.epochBind = st._a.slice(); return { results: [] }; }
+            return { results: [] };
+          },
+          async run() { return { success: true }; }
+        };
+        return st;
+      },
+      async batch(a) { for (const x of a) await x.run(); return []; }
+    };
+  }
+
+  // (a) 판 표기 없는 옛 커서 + 지금 판 홀드아웃 표본 0 → 되감아야 한다(프로덕션이 갇혀 있던 상태)
+  {
+    const d = db({ lastId: 9000 }, 0);
+    await M.stackSampleBackfill(d, {});
+    const b = d._seen.oofBind;
+    if (b && b[1] === 0) ok("판 v" + FV + " 표본 0 · 옛 커서(9000) → 홀드아웃 커서를 0 으로 되감았다");
+    else no("STACK-OOF: 판이 올라갔는데 커서가 " + (b ? b[1] : "?") + " 에 머문다 — 소급생성이 영영 막힌다");
+    if (b && b[0] === OOF_MIN) ok("되감아도 창 경계(ts >= minTs)는 그대로다 — 누출 쪽은 안 열린다");
+    else no("STACK-OOF: 되감으면서 창 경계까지 흔들렸다 — " + JSON.stringify(b));
+  }
+
+  // (b) 지금 판으로 이미 만든 홀드아웃 표본이 있으면 절대 되감지 않는다(사본 증식 차단)
+  {
+    const d = db({ lastId: 9000 }, 3);
+    await M.stackSampleBackfill(d, {});
+    const b = d._seen.oofBind;
+    if (b && b[1] === 9000) ok("지금 판 표본이 이미 있으면 되감지 않는다(사본 증식 차단)");
+    else no("STACK-OOF: 이미 훑은 판인데 커서를 되감았다 — 같은 행이 두 번 표본이 된다: " + JSON.stringify(b));
+  }
+
+  // (c) 커서에 지금 판이 적혀 있으면 표본 수와 무관하게 유지한다
+  {
+    const d = db({ lastId: 9000, fv: FV }, 0);
+    await M.stackSampleBackfill(d, {});
+    const b = d._seen.oofBind;
+    if (b && b[1] === 9000) ok("커서에 지금 판이 적혀 있으면 그대로 이어간다");
+    else no("STACK-OOF: 같은 판인데 커서를 되감았다: " + JSON.stringify(b));
+  }
+
+  // 앞으로를 위해 판 표기를 남기는가 — 이게 없으면 다음 판 변경 때 또 (a) 로 돌아간다
+  {
+    const i = src.indexOf("async function stackSampleBackfill");
+    const seg = src.slice(i, i + 14000);
+    if (/setState\(DB, "stack_oof_cursor", \{ lastId: lastId, fv: STACKML\.featVer/.test(seg))
+      ok("홀드아웃 커서에 판(fv)을 함께 남긴다 — 다음 판 변경은 자동으로 판별된다");
+    else no("STACK-OOF: 커서에 판 표기를 안 남긴다 — 다음 featVer 변경 때 같은 정지가 재발한다");
+  }
+}
+
 if (bad) { console.error(`\nSTACK 홀드아웃 계약 위반 ${bad}건 — 배포 차단`); process.exit(1); }
 console.log("  ok   STACK 홀드아웃 계약 통과 — 문을 열되 누출 쪽으로는 안 열린다");
