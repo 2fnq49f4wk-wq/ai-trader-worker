@@ -232,5 +232,57 @@ const score = (m, rows) => rows.map((r) => 1 / (1 + Math.exp(-(m.w * r.x + m.b))
   }
 }
 
+
+/* ── [V33.220] BRAIN — ★홀드아웃이 미래여야 한다★ ────────────────────────────
+   조회가 `ORDER BY ts DESC` 라 앞이 최신인데, 아래 코드는 전부 '앞이 과거' 를 가정한다.
+   그 어긋남으로 세 가지가 동시에 틀어져 있었다:
+     ① val = 뒤 → DESC 에서 뒤는 가장 오래된 구간 = ★과거를 검증셋으로★ 썼다
+     ② 엠바고 퍼지가 상시 폴백 → 누출 차단이 사실상 꺼져 있었다
+     ③ 드리프트 창축소가 최신을 버리고 ★가장 오래된 400건★ 만 남겼다
+   실측: valAcc 27.5%(하한 10.1%) — 동전보다 한참 아래.
+   계약: 불러온 직후 시간순으로 뒤집어야 아래 로직이 의도대로 읽힌다. */
+{
+  const src3 = readFileSync(new URL("../src/index.js", import.meta.url), "utf8");
+  const i = src3.indexOf("async function mlBrainTrainNightly");
+  const fn = i >= 0 ? src3.slice(i, src3.indexOf("\n}\n", i)) : "";
+  if (!fn) bad("BRAIN 학습 함수를 찾지 못했다 — 검사가 헛돈다");
+  else {
+    const iSel = fn.indexOf("ORDER BY ts DESC");
+    const iRev = fn.indexOf("data.reverse()");
+    const iSplit = fn.indexOf("const val = Z.slice(N - nVal)");
+    if (iSel < 0) ok("BRAIN 조회가 ts DESC 가 아니다 — 뒤집기가 필요 없다");
+    else if (iRev > iSel && iRev < iSplit)
+      ok("BRAIN: ts DESC 로 받은 뒤 시간순으로 뒤집는다 — 홀드아웃이 ★미래★ 다");
+    else
+      bad("BRAIN: ts DESC 로 받고 뒤집지 않는다 — 홀드아웃이 과거가 되고(미래로 과거를 맞힌다), " +
+          "엠바고 퍼지가 상시 폴백하며, 드리프트 창축소가 최신 대신 가장 오래된 구간을 남긴다");
+    const iShrink = fn.indexOf("BRAIN.phMinWindow");
+    if (iShrink > 0 && iRev > 0 && iRev < iShrink)
+      ok("BRAIN: 드리프트 창축소가 뒤집기 ★뒤★ 에 온다 — 최신 창만 남는다");
+    else if (iShrink > 0)
+      bad("BRAIN: 드리프트 창축소가 뒤집기보다 앞에 온다 — 최신을 버리고 과거를 남긴다");
+  }
+
+  // 수치 재현: 방향이 뒤집히면 '미래로 과거를 맞히는' 구성이 된다는 것을 보인다.
+  {
+    const N = 1000, nVal = 200;
+    const rows = [];
+    for (let i = 0; i < N; i++) rows.push({ ts: i });      // ts 0=가장 과거
+    const desc = rows.slice().sort((a, b) => b.ts - a.ts); // 조회 결과(DESC)
+    const valWrong = desc.slice(N - nVal);                 // 뒤집지 않았을 때의 검증셋
+    const chrono = desc.slice().reverse();
+    const valRight = chrono.slice(N - nVal);
+    const trWrong = desc.slice(0, N - nVal), trRight = chrono.slice(0, N - nVal);
+    const maxTs = (a) => Math.max(...a.map((r) => r.ts));
+    const minTs = (a) => Math.min(...a.map((r) => r.ts));
+    if (!(minTs(valWrong) < maxTs(trWrong)))
+      bad("BRAIN 재현 실패: 뒤집지 않은 구성이 '미래로 과거를 맞히는' 형태가 아니다");
+    else ok(`뒤집기 없으면 검증셋(ts ${minTs(valWrong)}~${maxTs(valWrong)})이 학습셋(~${maxTs(trWrong)})보다 과거다 — 미래로 과거를 맞힌다`);
+    if (!(minTs(valRight) > maxTs(trRight)))
+      bad("BRAIN 재현 실패: 뒤집은 구성에서도 검증셋이 미래가 아니다");
+    else ok(`뒤집으면 검증셋(ts ${minTs(valRight)}~)이 학습셋(~${maxTs(trRight)})보다 전부 미래다`);
+  }
+}
+
 console.log(fails ? "\n퍼징 계약 위반 " + fails + "건 — 배포 차단" : "\n  ok   퍼징 계약 통과");
 process.exit(fails ? 1 : 0);

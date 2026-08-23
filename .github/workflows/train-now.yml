@@ -101,6 +101,7 @@ jobs:
           #   skipped(deadline) 로 표기한 뒤 resume 경로를 돌려준다. 종전 워크플로는 그 값을
           #   쓰지 않고 한 번만 불렀다 — 그래서 파이프라인 ★뒷단이 매번 통째로 안 돌았다★.
           #   하필 확률 보정(calibrate)·자가평가(selfreview)·원장통계(portstats)가 그 자리에 있다.
+          FINISHED=0
           while [ "$ROUND" -lt 40 ]; do
             ROUND=$((ROUND+1))
             # [V33.195] 회차당 예산을 240초 → 150초로 줄인다. 마감시한은 ★단계 사이★ 에서만
@@ -166,7 +167,11 @@ jobs:
             [ -n "$CRASH" ] && { case ",$SKIP," in *",$CRASH,"*) : ;; *) SKIP="${SKIP:+$SKIP,}$CRASH";; esac; }
             echo "회차 $ROUND: $LINE" | tee -a trainlog.txt
             printf '%s' "$JSON" > "result-$ROUND.json"
-            [ -z "$NEXT" ] && break
+            # [V33.220] 완주 표시는 ★이번 회차의 NEXT★ 로 한다. 종전엔 루프 밖에서 FROM 을 봤는데,
+            #   FROM 은 ★직전 회차의 재개 지점★ 이라 여러 회차로 완주하면 항상 비어 있지 않다.
+            #   그래서 41단계를 전부 돌고도 done=0 → 빨간 X 가 떴다(실측: 실행 41 · 미실행 0 인데 실패).
+            #   초록/빨강이 사실과 반대면 그 신호는 그때부터 아무도 안 믿는다.
+            if [ -z "$NEXT" ]; then FINISHED=1; break; fi
             FROM="$NEXT"
             sleep 3
           done
@@ -174,7 +179,7 @@ jobs:
           echo "code=$CODE" >> "$GITHUB_OUTPUT"
           # 완주 여부 = 남은 재개 지점이 없는가. 마지막 HTTP 코드로 판정하면
           # '재시도 끝에 완주' 가 실패로 보이고 '한 회차만 돌고 멈춤' 이 성공으로 보인다.
-          [ -z "$FROM" ] && echo "done=1" >> "$GITHUB_OUTPUT" || echo "done=0" >> "$GITHUB_OUTPUT"
+          [ "${FINISHED:-0}" = "1" ] && echo "done=1" >> "$GITHUB_OUTPUT" || echo "done=0" >> "$GITHUB_OUTPUT"
           echo "skipped=$SKIP" >> "$GITHUB_OUTPUT"
           # 완주했을 때가 정작 값이 나오는 때다 — 단계별 결과를 작업 로그에도 찍는다.
           echo ""
