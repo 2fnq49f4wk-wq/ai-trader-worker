@@ -438,16 +438,24 @@ const bad = (msg) => { fails++; console.log("  FAIL " + msg); };
   if (r2._n === 0) ok("같은 봉 길이에서는 워터마크가 그대로 중복을 막는다");
   else bad("워터마크 중복차단이 깨졌다 (+" + r2._n + ")");
 
-  // 봉 길이가 달랐던 것으로 표기를 바꿔 두면 다시 훑어야 한다.
-  const wm2 = Object.assign({}, wm, { bar: _BM === 5 ? 1 : 5 });
-  db._state.set("stin_bf_wm", JSON.stringify(wm2));
-  r2._n = 0;
-  const res3 = await M.stinBackfill(db, { maxSyms: 2, maxSamples: 100000 });
-  if (r2._n >= first * 0.9)
-    ok("봉 길이가 바뀐 워터마크는 비워지고 같은 기간을 다시 훑는다 (+" + r2._n + " · 1회차 " + first + ")");
-  else bad("봉이 바뀌었는데 옛 워터마크가 새 봉을 막는다 (+" + r2._n + " · 1회차 " + first + "): " + res3);
-  if (/워터마크/.test(res3)) ok("워터마크를 비운 사실을 로그가 말한다(조용한 재훑기 아님)");
-  else bad("워터마크를 조용히 비웠다 — 사본 증식과 구별할 수 없다: " + res3);
+  /* 두 형태 모두 비워져야 한다:
+       (a) 다른 봉 길이가 적힌 레코드
+       (b) ★표기가 아예 없는 구 레코드★ — 지금 프로덕션이 갇혀 있는 형태다.
+     (b) 를 빼면 게이트는 통과하는데 실제 정지는 안 풀린다(V33.229 에서 같은 함정을 겪었다). */
+  const forms = [
+    ["다른 봉(" + (_BM === 5 ? 1 : 5) + "분)이 적힌 레코드", Object.assign({}, wm, { bar: _BM === 5 ? 1 : 5 })],
+    ["봉 표기가 없는 구 레코드", { v: wm.v, ts: wm.ts }]
+  ];
+  for (const [tag, rec] of forms) {
+    db._state.set("stin_bf_wm", JSON.stringify(rec));
+    r2._n = 0;
+    const res3 = await M.stinBackfill(db, { maxSyms: 2, maxSamples: 100000 });
+    if (r2._n >= first * 0.9)
+      ok("워터마크 무효화 — " + tag + " → 같은 기간을 다시 훑는다 (+" + r2._n + " · 1회차 " + first + ")");
+    else bad("옛 워터마크가 새 봉을 막는다 — " + tag + " (+" + r2._n + " · 1회차 " + first + "): " + res3);
+    if (/워터마크/.test(res3)) ok("비운 사실을 로그가 말한다 — " + tag);
+    else bad("워터마크를 조용히 비웠다 — 사본 증식과 구별할 수 없다: " + res3);
+  }
 }
 
 console.log(fails ? "\n단타 파이프라인 검증 실패 " + fails + "건" : "\n  ok   단타 표본 파이프라인 통과");
