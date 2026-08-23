@@ -2788,7 +2788,7 @@ async function applySignalTypeWeights(DB, cfg) {
 // ============================================================================
 // [V33.55] 빌드 버전 — SWR L2 캐시 키에 섞어 '배포 = 판단 캐시 자동 무효화'를 만든다.
 //   판정 로직을 고쳐도 옛 캐시가 최대 1시간 재배포되던 문제를 구조적으로 없앤다.
-const _BUILD_VER = "V33.206";
+const _BUILD_VER = "V33.207";
 
 // ═══ [V33.171] 평가 순서 계획 — ★승격과 순환을 교차해 굶주림을 구조적으로 없앤다★ ═══
 //   V33.50 의 형태트리거는 "급한 몇 종목을 앞으로 당긴다"는 의도였으나, 실제 운영로그에서는
@@ -32059,10 +32059,21 @@ function _dnnHeInit(nout, nin) {
    서로 다른 시점의 스냅샷일 수 있다. 그때 ★같은 모델을 보고 있는지★ 를 판별할 수 있는 것은
    학습시각뿐이다. 값이 다른데 trainedAt 이 같으면 그건 버그이고, trainedAt 이 다르면
    한쪽이 낡은 것이다 — 화면이 그 둘을 구분할 수 있어야 한다. */
+/* [V33.207] ★분류 정확도가 1 을 넘은 채로 화면에 떠 있던 적이 있다.★
+   운영 스냅샷 실측: xalpha.acc = 2.4159. 산식 버그(루프 범위와 분모가 어긋남)의 잔재였는데,
+   그 값이 아무 저항 없이 사실표 → 화면까지 그대로 흘러갔다. 산식을 고쳐도 다음에 또
+   어긋나면 같은 일이 난다 — ★내보내는 자리에서 막는다.★
+   조용히 잘라내지(clamp) 않는다. 자르면 2.4159 가 1.0 이 되어 "완벽한 모델" 로 보인다.
+   범위를 벗어난 값은 ★값이 아니라 고장★ 이므로 null 로 내리고 사유를 함께 싣는다. */
+function _rate01(x) {
+  if (typeof x !== "number" || !isFinite(x)) return null;
+  if (x < 0 || x > 1) return null;
+  return x;
+}
 function _modelFacts(trust, meta, opts) {
   const o = opts || {};
   const t = trust || null;
-  const pct = function (x) { return (typeof x === "number" && isFinite(x)) ? +(x * 100).toFixed(1) : null; };
+  const pct = function (x) { const v = _rate01(x); return (v == null) ? null : +(v * 100).toFixed(1); };
   const pick = function (a, b) { return (a != null) ? a : (b != null ? b : null); };
   const raw = t ? pick(_num(t[o.accKey], null), _num(t.valAcc, null)) : null;
   const lb = t ? pick(_num(t[o.lbKey], null), _num(t.valAccLB, null)) : null;
@@ -32076,6 +32087,10 @@ function _modelFacts(trust, meta, opts) {
        게이트가 보는 것은 accLB 이므로 floor 와 함께 놓아 왜 막혔는지가 한 줄로 읽히게 한다. */
     valAcc: pct(raw),
     accLB: pct(lb),
+    /* 범위를 벗어나 버려진 값이 있으면 그 사실을 남긴다 — null 만 보고는
+       "아직 학습 안 됨" 과 "값이 고장남" 을 구별할 수 없다. */
+    rangeBad: ((raw != null && _rate01(raw) == null) || (lb != null && _rate01(lb) == null))
+      ? { valAcc: raw, accLB: lb, note: "정확도가 0~1 밖이다 — 산식 오류(표시 보류)" } : null,
     floor: (o.floor != null) ? pct(o.floor) : null,
     w: t ? _num(t[o.wKey], null) : null,
     source: t ? (t.source || "worker") : null,
