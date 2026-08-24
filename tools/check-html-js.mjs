@@ -456,22 +456,33 @@ try {
 try {
   const hc = readFileSync(new URL("../public/index.html", import.meta.url), "utf8");
   let ebad = 0;
-  /* [V33.237] 경제 캘린더가 .cmbd-grid 에서 .fv-cal-row(어닝과 한 줄)로 옮겨졌다.
-     계약은 컨테이너 이름이 아니라 ★7열 표가 좁은 칸에 갇히지 않는가★ 이므로, 그 표가
-     실제로 들어 있는 줄을 보고 거기서 더 넓은 몫을 받는지 확인한다. */
-  const econRow = /class="fv-cal-row"[\s\S]{0,1200}?📅 ECONOMIC CALENDAR/.test(hc);
-  if (econRow) console.log("  ok   경제지표 캘린더가 캘린더 줄(.fv-cal-row) 안에 있다");
-  else { ebad++; console.error("  FAIL 경제지표 캘린더가 캘린더 줄 밖으로 나갔다 — 폭 계약을 걸 곳이 없다"); }
-  const cols = (hc.match(/\.fv-cal-row\{[^}]*grid-template-columns:\s*([^;]+);/) || [])[1] || "";
-  const fr = [...cols.matchAll(/([\d.]+)fr/g)].map((x) => +x[1]);
-  /* 어닝 4열 vs 경제 7열 — 뒤(경제)가 더 넓어야 한다. 같은 폭이면 오른쪽 열이 잘린다. */
-  if (fr.length === 2 && fr[1] > fr[0] * 1.15)
-    console.log(`  ok   경제지표 칸이 어닝 칸보다 넓다 (${cols.trim()}) — 7열 표와 4열 표에 같은 폭을 주지 않는다`);
-  else { ebad++; console.error(`  FAIL .fv-cal-row 가 "${cols.trim()}" — 7열 표가 좁은 칸에 갇혀 오른쪽 열이 잘린다`); }
-  /* 한 칸이 520px 아래로 내려가기 전에 한 줄씩 쌓아야 한다(실측 필요폭 523px). */
-  if (/@media\(max-width:1100px\)\{\.fv-cal-row\{grid-template-columns:1fr;\}\}/.test(hc.replace(/\s+/g, "")))
-    console.log("  ok   1100px 미만에서 캘린더 줄이 한 줄씩 쌓인다 — 7열 표가 눌리기 전에 편다");
-  else { ebad++; console.error("  FAIL 캘린더 줄에 좁은 폭 폴백이 없다 — 반칸이 520px 아래로 내려가면 표가 잘린다"); }
+  /* [V33.238] ★계약을 컨테이너 이름에 걸지 않는다.★
+     이 검사는 패널이 옮겨질 때마다 두 번 깨졌다(.cmbd-grid → .fv-cal-row → .fv-bottom).
+     매번 이름을 고쳐 쓰면 결국 검사를 지우고 싶어진다. 지켜야 하는 것은
+     "7열 표가 그 줄에서 가장 넓은 몫을 받는가" 이므로, 표가 ★실제로 들어 있는 줄★ 을
+     HTML 에서 찾아 거기서 판정한다. 앞으로 어디로 옮겨도 따라간다. */
+  const ECON = "\u{1F4C5} ECONOMIC CALENDAR";
+  const econAt = hc.indexOf(ECON);
+  const rowRe = /<div class="(fv-bottom|fv-cal-row|cmbd-grid|fv3-grid)">/g;
+  let rowCls = null, rowStart = -1, rm;
+  while ((rm = rowRe.exec(hc)) !== null) { if (rm.index < econAt) { rowCls = rm[1]; rowStart = rm.index; } else break; }
+  if (rowCls) console.log(`  ok   경제지표 캘린더가 들어 있는 줄을 찾았다 — .${rowCls}`);
+  else { ebad++; console.error("  FAIL 경제지표 캘린더가 어느 격자 줄에도 없다 — 폭 계약을 걸 곳이 없다"); }
+  if (rowCls) {
+    // 그 줄 안에서 econ 이 몇 번째 패널인가
+    const seg = hc.slice(rowStart, econAt);
+    const idx = (seg.match(/<div class="fv-panel">/g) || []).length - 1;
+    const cols = (hc.match(new RegExp("\\." + rowCls + "\\{[^}]*grid-template-columns:\\s*([^;]+);")) || [])[1] || "";
+    const fr = [...cols.matchAll(/([\d.]+)fr/g)].map((x) => +x[1]);
+    if (fr.length > 1 && idx >= 0 && idx < fr.length && fr[idx] === Math.max(...fr) && fr[idx] > Math.min(...fr) * 1.15)
+      console.log(`  ok   그 줄에서 경제지표 칸이 가장 넓다 (.${rowCls} ${cols.trim()} · ${idx + 1}번째) — 7열 표에 짧은 표와 같은 폭을 주지 않는다`);
+    else { ebad++; console.error(`  FAIL 경제지표 칸이 그 줄에서 가장 넓지 않다 (.${rowCls} "${cols.trim()}" · ${idx + 1}번째) — 오른쪽 열이 잘린다`); }
+    /* 한 칸이 520px 아래로 내려가기 전에 한 줄씩 쌓아야 한다(실측 필요폭 523px). */
+    const flat = hc.replace(/\s+/g, "");
+    if (new RegExp("@media\\(max-width:1100px\\)\\{\\." + rowCls + "\\{grid-template-columns:1fr;\\}\\}").test(flat))
+      console.log(`  ok   1100px 미만에서 .${rowCls} 가 한 줄씩 쌓인다 — 7열 표가 눌리기 전에 편다`);
+    else { ebad++; console.error(`  FAIL .${rowCls} 에 좁은 폭 폴백이 없다 — 칸이 520px 아래로 내려가면 표가 잘린다`); }
+  }
   if (/td\.econ-name\{[^}]*max-width:[^}]*text-overflow:\s*ellipsis/.test(hc))
     console.log("  ok   지표명 칸이 묶여 있다 — 긴 이름이 표 전체를 밀어내지 못한다");
   else { ebad++; console.error("  FAIL 지표명 칸에 max-width/ellipsis 가 없다 — 긴 지표명 하나가 표를 패널 밖으로 민다"); }
