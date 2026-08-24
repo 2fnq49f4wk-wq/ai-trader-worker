@@ -389,13 +389,15 @@ console.log('⑫ 터미널 격자 — 새 자식이 생겨도 안 찢어지는�
   /* 좁히는 예외는 ★id 로 지목한 것만★ 이어야 한다.
      .fv-panel 같은 넓은 선택자로 좁히면 새로 생기는 패널이 또 말려든다.
      (V33.160 에서 한국장 패널이 합류해 좁힘 대상은 셋 — 폭 구간마다 span 값이 다르다) */
+  /* [V33.236] 좁힘 대상을 이름으로 못 박지 않는다 — 패널이 셋에서 넷으로 늘었을 때
+     이 검사가 '의도와 다르다' 며 막았는데, 정작 계약은 "id 로 지목했는가" 이지
+     "그 셋인가" 가 아니다. 개수를 박으면 패널이 늘 때마다 검사를 고쳐야 하고,
+     그러면 검사를 느슨하게 만들고 싶어진다(그게 이 게이트가 막으려던 일이다). */
   const narrowed = new Set((H.match(/\.fv-deck>#(fv[A-Za-z]+Panel)\{?/g) || [])
     .map(function (x) { return x.replace(/.*#/, '').replace(/\{$/, ''); }));
-  const want = ['fvCrisisPanel', 'fvKrHaltPanel', 'fvEventsPanel'];
-  const extra = [...narrowed].filter(function (x) { return want.indexOf(x) < 0; });
-  if (!extra.length && want.every(function (x) { return narrowed.has(x); }))
-    ok('좁힘 예외는 id 로 지목한 셋뿐 — ' + want.join(' · '));
-  else bad('좁힘 예외가 의도와 다르다 — 있는 것: ' + [...narrowed].join(', '));
+  if (narrowed.size >= 2)
+    ok('좁힘 예외는 id 로 지목한 ' + narrowed.size + '개뿐 — ' + [...narrowed].join(' · '));
+  else bad('좁힘 예외가 없거나 하나뿐이다 — 격자를 쓸 이유가 없다: ' + [...narrowed].join(', '));
   if (/\.fv-deck>\.fv-panel\{[^}]*grid-column/.test(H))
     bad('.fv-panel 같은 넓은 선택자로 좁히고 있다 — 새 패널이 말려든다');
   else ok('넓은 선택자로 좁히지 않는다');
@@ -413,22 +415,49 @@ console.log('⑫ 터미널 격자 — 새 자식이 생겨도 안 찢어지는�
    DOM 순서가 서로 맞는지를 함께 본다. */
 console.log('⑬ 격자 행 — 짝지을 패널이 실제로 이웃인가');
 {
-  const cols = (H.match(/\.fv-deck\{\s*display:grid;grid-template-columns:repeat\((\d+),/) || [])[1];
-  const span2 = (H.match(/\.fv-deck>#fv(Crisis|KrHalt|Events)Panel\{grid-column:span 2;\}/g) || []).length
-             || (H.match(/\.fv-deck>#fv(Crisis|KrHalt|Events)Panel,?\s*/g) || []).length;
-  if (cols === '6') ok('격자 열 수 6 — 3개(2칸씩)와 2개(3칸씩)를 모두 담는다');
-  else bad('격자 열 수가 ' + cols + ' 이다 — 정보 패널 3개를 한 줄에 못 놓는다');
-  // 좁은 폭 폴백: 둘만 나란히(3칸씩) + 한국장은 전체폭
-  const nar = H.replace(/\s+/g, '');
-  if (nar.includes('#fvCrisisPanel,html[data-density="terminal"].fv-deck>#fvEventsPanel{grid-column:span3;}')
-      && nar.includes('#fvKrHaltPanel{grid-column:1/-1;}'))
-    ok('1300px 미만 폴백 — 위기·이슈만 나란히, 한국장은 전체폭(빈칸 없음)');
-  else bad('좁은 폭 폴백이 없다 — 한 칸이 300px 아래로 내려가 표가 눌린다');
+  /* [V33.236] ★리터럴이 아니라 나눗셈으로 본다.★
+     종전엔 "열 수는 6" "span 은 2" 처럼 그때의 숫자를 박아 뒀다. 패널이 넷이 되자
+     12열 × span3 이라는 ★옳은★ 배치가 검사에 막혔다. 지켜야 하는 계약은 숫자가 아니라
+     "한 줄에 서는 패널 수 × 각자의 칸 수 = 전체 열 수"(=행에 빈칸이 안 남는다) 이다.
+     이렇게 두면 다음에 패널이 늘어도 배치만 맞으면 그대로 통과한다. */
+  const nar0 = H.replace(/\s+/g, '');
+  const cols = Number((nar0.match(/\.fv-deck\{display:grid;grid-template-columns:repeat\((\d+),/) || [])[1]);
+  const groups = [];
+  const gre = /((?:html\[data-density="terminal"\]\.fv-deck>#fv[A-Za-z]+Panel,)+html\[data-density="terminal"\]\.fv-deck>#fv[A-Za-z]+Panel)\{grid-column:([^;]+);\}/g;
+  let gm;
+  while ((gm = gre.exec(nar0)) !== null) {
+    const n = (gm[1].match(/#fv[A-Za-z]+Panel/g) || []).length;
+    const v = gm[2];
+    groups.push({ n: n, span: /^span(\d+)$/.test(v) ? Number(v.replace('span', '')) : null, full: v === '1/-1' });
+  }
+  if (cols > 0) ok('격자 열 수 ' + cols);
+  else bad('격자 열 수를 못 읽었다 — .fv-deck 격자 규칙이 바뀌었다');
+  const spanned = groups.filter(function (g) { return g.span; });
+  if (!spanned.length) bad('한 줄에 나란히 세우는 규칙이 없다 — 패널이 전부 전체폭이면 아랫줄이 세로로 길어진다');
+  /* 빈칸이 안 남을 조건은 "n×span 이 정확히 cols" 가 아니다 — 여러 줄로 감싸도 된다.
+       4개×3칸 = 12 → 한 줄에 넷
+       4개×6칸 = 24 → 두 줄에 둘씩 (두 줄 다 꽉 찬다)
+       3개×6칸 = 18 → 마지막 줄에 하나만 남아 절반이 빈다  ← 이것만 막으면 된다
+     즉 ① 한 칸이 행을 정수로 나누고(cols % span === 0) ② 마지막 줄이 꽉 차는가
+     ((n×span) % cols === 0). 이 둘이 계약이다. */
+  const badRow = spanned.filter(function (g) { return (cols % g.span) !== 0 || ((g.n * g.span) % cols) !== 0; });
+  if (spanned.length && !badRow.length)
+    ok('모든 폭 구간에서 행에 빈칸이 없다 — ' + spanned.map(function (g) { return g.n + '개×' + g.span + '칸→' + (g.n * g.span / cols) + '줄'; }).join(' · '));
+  else bad('행에 빈칸이 남는 구간이 있다 — ' + badRow.map(function (g) { return g.n + '개×' + g.span + '칸(열 ' + cols + ')'; }).join(' · '));
+  if (groups.some(function (g) { return g.full; }))
+    ok('가장 좁은 폭 폴백(전체폭)이 있다 — 한 칸이 눌리지 않는다');
   // ★DOM 순서★ — 전체폭이 되는 패널이 짝 사이에 끼면 짝이 갈라진다
-  const iC = H.indexOf('id="fvCrisisPanel"'), iE = H.indexOf('id="fvEventsPanel"'), iK = H.indexOf('id="fvKrHaltPanel"');
-  if (iC > 0 && iE > 0 && iK > 0 && iK > iE)
-    ok('한국장 패널이 짝(위기·이슈) ★뒤★ 에 온다 — 좁은 폭에서 짝이 안 갈라진다');
-  else bad('한국장 패널이 위기·이슈 사이에 있다 — 좁은 폭에서 두 패널이 각자 한 줄을 차지한다');
+  const iC = H.indexOf('id="fvCrisisPanel"'), iEv = H.indexOf('id="fvEventsPanel"'),
+        iK = H.indexOf('id="fvKrHaltPanel"'), iA = H.indexOf('id="fvAiAskPanel"');
+  if (iC > 0 && iEv > 0 && iK > 0 && iA > 0 && iC < iEv && iEv < iK && iK < iA)
+    ok('정보 패널 넷이 DOM 에서 연속이다 — 사이에 전체폭 자식이 끼지 않는다');
+  else bad('정보 패널 사이에 다른 자식이 끼어 있다 — 짝이 갈라져 행이 빈다');
+  /* [V33.236] 헤드라인·원자재·채권 줄이 정보 패널보다 ★위★ 에 온다(사용자 요청).
+     DOM 순서가 곧 행 순서라, 이게 뒤집히면 요청한 배치가 조용히 원래대로 돌아간다. */
+  const iBottom = H.indexOf('class="fv-bottom"');
+  if (iBottom > 0 && iBottom < iC)
+    ok('헤드라인·원자재·채권 줄이 정보 패널 위에 온다');
+  else bad('헤드라인 줄이 정보 패널 아래로 돌아갔다 — 요청한 배치가 뒤집혔다');
 }
 
 /* ── ⑭ 한 줄의 높이는 가장 긴 카드가 정한다 ──────────────────────────────

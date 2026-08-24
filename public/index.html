@@ -8,7 +8,7 @@
      인데, 지금까지 화면에서 그걸 알 방법이 전혀 없었다(카카오톡 인앱 브라우저는 특히 강하게 캐시한다).
      서버가 내려주는 build 와 이 값을 비교해 다르면 배너로 알린다.
      ※ src/index.js 의 _BUILD_VER 와 항상 같아야 한다 — check-html-js 가 강제한다. -->
-<meta name="lux-build" content="V33.235">
+<meta name="lux-build" content="V33.236">
 <title>LUX-ENGINE V10</title>
 <!-- ══ [V33.156] 설치형 앱(PWA) — 폰·PC 에서 홈화면/독에 담아 앱처럼 연다 ══
      · manifest  : 이름·아이콘·standalone 표시(주소창 없이 앱처럼)
@@ -3512,7 +3512,9 @@ html[data-theme="light"] .m-brainbar button.active{color:#0b4f9e;background:rgba
                 <button class="llm-btn" id="btnFvHeatRefresh">↻</button>
               </span>
             </div>
-            <div id="fvHeatmap" style="height:360px;background:#000;"></div>
+            <!-- [V33.236] 무버스 표(max-height:414)와 높이를 맞춘다. 종전 360 이라 히트맵
+                 아래에 54px 죽은 여백이 남아 그 줄이 실제보다 헐거워 보였다. -->
+            <div id="fvHeatmap" style="height:414px;background:#000;"></div>
           </div>
         </div>
         <!-- 헤드라인 + 선물 + 환율/채권 -->
@@ -3523,6 +3525,36 @@ html[data-theme="light"] .m-brainbar button.active{color:#0b4f9e;background:rgba
           <div class="fv-panel-head">AI 운용 상태 <span class="fv-panel-sub" id="fvAiModeBadge">확인 중…</span></div>
           <div id="fvAiModeBody" style="padding:8px 10px;font-size:11px;line-height:1.6;color:var(--t2);">로딩 중…</div>
         </div>
+        <!-- [V33.236] ★헤드라인·원자재·채권을 정보 패널 위로 올린다(사용자 요청).★
+             시세성 정보(뉴스·선물·환율)는 훑는 빈도가 높아 위쪽이 맞고, 위기 게이지·이슈·
+             매매정지·질의는 필요할 때 내려다보는 것이라 아래가 맞다. DOM 순서가 곧 행 순서다. -->
+        <div class="fv-bottom">
+          <div class="fv-panel">
+            <div class="fv-panel-head">HEADLINES</div>
+            <div class="fv-headlines" id="fvHeadlines"><div class="empty">뉴스 로딩 중...</div></div>
+          </div>
+          <div class="fv-panel">
+            <!-- [V9.11] 중복 COMMODITIES 창(아래쪽) 통합 — RSI 컬럼 + 실행/리셋 버튼 이곳으로 이전 -->
+            <div class="fv-panel-head">FUTURES / COMMODITIES <span class="fv-panel-sub" id="cmTradeInfo">실시간(장중)</span>
+              <span style="margin-left:auto;display:flex;gap:4px;">
+                <button type="button" id="btnRunCM" class="btn" style="font-size:9px;padding:2px 8px;">▶ 실행</button>
+                <button type="button" id="btnResetCM" class="btn danger" style="font-size:9px;padding:2px 8px;">↺</button>
+              </span>
+            </div>
+            <table class="fv-table"><thead><tr><th>Name</th><th class="right">Last</th><th class="right">Change %</th><th class="right">RSI</th></tr></thead><tbody id="fvFutures"></tbody></table>
+          </div>
+          <div class="fv-panel">
+            <!-- [V9.11] 중복 BONDS 창(아래쪽) 통합 — 국채 실행 버튼 이곳으로 이전 -->
+            <div class="fv-panel-head">FOREX &amp; BONDS
+              <span style="margin-left:auto;display:flex;gap:4px;">
+                <button type="button" id="btnRunBDUS" class="btn" style="font-size:9px;padding:2px 8px;">▶ US</button>
+                <button type="button" id="btnRunBDKR" class="btn" style="font-size:9px;padding:2px 8px;">▶ KR</button>
+              </span>
+            </div>
+            <table class="fv-table"><thead><tr><th>Pair</th><th class="right">Last</th><th class="right">Change %</th></tr></thead><tbody id="fvForex"></tbody></table>
+          </div>
+        </div>
+
         <!-- [V32.19] 지정학·위기 게이지 패널 — 전쟁 등 국제이슈 대비 상태를 상시 시각화 -->
         <div class="fv-panel" id="fvCrisisPanel" style="margin-bottom:8px;">
           <div class="fv-panel-head" id="fvCrisisHead" style="cursor:pointer;" title="클릭하면 접거나 펼쳐요">
@@ -3577,32 +3609,6 @@ html[data-theme="light"] .m-brainbar button.active{color:#0b4f9e;background:rgba
               <button class="fv-askchip" data-q="내 포지션 알려줘">💼 내 포지션</button>
             </div>
             <div id="fvAiAskBody" style="margin-top:8px;font-size:11px;line-height:1.7;color:var(--t2);white-space:pre-wrap;"></div>
-          </div>
-        </div>
-        <div class="fv-bottom">
-          <div class="fv-panel">
-            <div class="fv-panel-head">HEADLINES</div>
-            <div class="fv-headlines" id="fvHeadlines"><div class="empty">뉴스 로딩 중...</div></div>
-          </div>
-          <div class="fv-panel">
-            <!-- [V9.11] 중복 COMMODITIES 창(아래쪽) 통합 — RSI 컬럼 + 실행/리셋 버튼 이곳으로 이전 -->
-            <div class="fv-panel-head">FUTURES / COMMODITIES <span class="fv-panel-sub" id="cmTradeInfo">실시간(장중)</span>
-              <span style="margin-left:auto;display:flex;gap:4px;">
-                <button type="button" id="btnRunCM" class="btn" style="font-size:9px;padding:2px 8px;">▶ 실행</button>
-                <button type="button" id="btnResetCM" class="btn danger" style="font-size:9px;padding:2px 8px;">↺</button>
-              </span>
-            </div>
-            <table class="fv-table"><thead><tr><th>Name</th><th class="right">Last</th><th class="right">Change %</th><th class="right">RSI</th></tr></thead><tbody id="fvFutures"></tbody></table>
-          </div>
-          <div class="fv-panel">
-            <!-- [V9.11] 중복 BONDS 창(아래쪽) 통합 — 국채 실행 버튼 이곳으로 이전 -->
-            <div class="fv-panel-head">FOREX &amp; BONDS
-              <span style="margin-left:auto;display:flex;gap:4px;">
-                <button type="button" id="btnRunBDUS" class="btn" style="font-size:9px;padding:2px 8px;">▶ US</button>
-                <button type="button" id="btnRunBDKR" class="btn" style="font-size:9px;padding:2px 8px;">▶ KR</button>
-              </span>
-            </div>
-            <table class="fv-table"><thead><tr><th>Pair</th><th class="right">Last</th><th class="right">Change %</th></tr></thead><tbody id="fvForex"></tbody></table>
           </div>
         </div>
       </div>
@@ -15279,8 +15285,12 @@ html[data-theme="light"] .rail{background:#fff;}
      [위기2][빈2] / [한국장4] / [이슈2][빈2] 로 화면 절반이 비었다.
      셋을 한 줄에 나란히 놓으려면 3으로 나뉘는 열 수가 필요하다. 6열은 3(2칸씩)과
      2(3칸씩) 를 모두 담고, 전체폭 항목은 1/-1 이라 그대로다. */
+  /* [V33.236] 6열 → ★12열★.
+     6 은 넷으로 나뉘지 않는다. 그래서 정보 패널이 넷이 되자(위기·이슈·매매정지·질의)
+     셋만 2칸씩 서고 AI 질의는 늘 전체폭을 먹어 아랫줄이 두 줄로 갈라졌다.
+     12 는 2·3·4·6 으로 모두 나뉜다 — 폭이 줄어도 빈칸 없이 접힌다. */
   html[data-density="terminal"] .fv-deck{
-    display:grid;grid-template-columns:repeat(6,minmax(0,1fr));align-items:start;
+    display:grid;grid-template-columns:repeat(12,minmax(0,1fr));align-items:start;
   }
   /* [V33.159] ★기본값을 뒤집는다 — 자식을 이름으로 열거하지 않는다.★
      종전엔 "전체폭으로 펼 자식" 을 하나하나 적었다. 그래서 목록에 없는 자식이 하나라도
@@ -15291,19 +15301,39 @@ html[data-theme="light"] .rail{background:#fff;}
      → 모든 자식을 전체폭으로 두고, ★좁힐 것만★ 예외로 적는다. 앞으로 자식이 늘어도 안전하다. */
   html[data-density="terminal"] .fv-deck>*{grid-column:1/-1;}
   /* AI 운용 상태는 두뇌 페이지 사이드바로 이동해 여기선 숨김 — 남은 두 패널이 폭을 나눠 갖는다 */
-  /* 정보 패널 셋은 한 줄에 나란히 — 6열 ÷ 3 = 각 2칸 */
+  /* [V33.236] 정보 패널 ★넷★ 을 아랫줄 한 줄에 — 12 ÷ 4 = 각 3칸 */
   html[data-density="terminal"] .fv-deck>#fvCrisisPanel,
+  html[data-density="terminal"] .fv-deck>#fvEventsPanel,
   html[data-density="terminal"] .fv-deck>#fvKrHaltPanel,
-  html[data-density="terminal"] .fv-deck>#fvEventsPanel{grid-column:span 2;}
-  /* 1300px 미만에서는 한 칸이 300px 아래로 내려가 표가 눌린다 —
-     그때는 둘(3칸씩)만 나란히 두고 한국장은 전체폭으로 편다(빈칸이 안 생긴다). */
-  @media(max-width:1299px){
+  html[data-density="terminal"] .fv-deck>#fvAiAskPanel{grid-column:span 3;}
+  /* 한 칸이 340px 아래로 내려가면 표·입력창이 눌린다 → 2×2(각 6칸, 빈칸 0) */
+  @media(max-width:1599px){
     html[data-density="terminal"] .fv-deck>#fvCrisisPanel,
-    html[data-density="terminal"] .fv-deck>#fvEventsPanel{grid-column:span 3;}
-    html[data-density="terminal"] .fv-deck>#fvKrHaltPanel{grid-column:1/-1;}
+    html[data-density="terminal"] .fv-deck>#fvEventsPanel,
+    html[data-density="terminal"] .fv-deck>#fvKrHaltPanel,
+    html[data-density="terminal"] .fv-deck>#fvAiAskPanel{grid-column:span 6;}
+  }
+  @media(max-width:1099px){
+    html[data-density="terminal"] .fv-deck>#fvCrisisPanel,
+    html[data-density="terminal"] .fv-deck>#fvEventsPanel,
+    html[data-density="terminal"] .fv-deck>#fvKrHaltPanel,
+    html[data-density="terminal"] .fv-deck>#fvAiAskPanel{grid-column:1/-1;}
+  }
+  /* 넷이 나란히 서면 한 칸이 ~380px 다. 그 폭에서 내부를 2단으로 또 쪼개면 글자가 뭉갠다 —
+     패널이 좁아지는 그 폭에서만 내부를 1단으로 되돌린다. */
+  @media(min-width:1600px){
+    html[data-density="terminal"] #fvEventsBody{columns:1;}
+    html[data-density="terminal"] #fvCrisisBody .crisis-wrap{grid-template-columns:minmax(0,1fr);gap:8px;}
   }
   html[data-density="terminal"] .fv-deck>.fv-panel{margin-bottom:0!important;}
   html[data-density="terminal"] .fv-deck{padding:6px 6px 0;gap:6px;}
+  /* [V33.236] 밀도 모드에서는 무버스·히트맵 줄을 함께 키운다 — 행 padding 이 이미 2.5px 라
+     같은 높이에 훨씬 많은 행이 들어간다(참고 화면의 조밀한 시그널 표와 같은 방식). */
+  html[data-density="terminal"] .fv-mid .fv-movers-grid{max-height:470px;}
+  html[data-density="terminal"] #fvHeatmap{height:470px;}
+  /* 헤드라인은 제목이 잘리는 게 가장 아까운 칸이라 폭을 더 준다 */
+  html[data-density="terminal"] .fv-bottom{grid-template-columns:1.45fr 1fr 1fr;}
+  html[data-density="terminal"] .fv-headlines{max-height:290px;}
   html[data-density="terminal"] .dash-grid{gap:6px;padding:6px;}
   html[data-density="terminal"] .page-body{padding:12px 14px;}
   html[data-density="terminal"] .pipeline-bar{margin:0 6px;border-radius:3px;}
