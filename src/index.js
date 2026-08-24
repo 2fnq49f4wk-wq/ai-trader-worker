@@ -9,7 +9,7 @@
 //     더 예쁘게 접는 일이다.
 //
 //  ② 앞으로 성능 강화는 전부 "자체 탑재 AI" 쪽에 한다.
-//     대상: LUXML(일봉 65차원 위원회) · MIND(FM 위원장) · DNN · GBDT/XGB/LGB/Cat ·
+//     대상: LUXML(일봉 69차원 위원회) · MIND(FM 위원장) · DNN · GBDT/XGB/LGB/Cat ·
 //           STIN(분봉 단타) · 감성학습(sentiLex) · 실적상관학습(earnCorr) · 밴딧 · 캘리브레이션.
 //     새 기능·논문·공개모델을 붙일 자리는 위 목록이지 규칙엔진이 아니다.
 //     (근거: 원장 2개월 실측에서 규칙엔진 신호들은 승률·평균수익률이 양수여도 금액 기준
@@ -2788,7 +2788,7 @@ async function applySignalTypeWeights(DB, cfg) {
 // ============================================================================
 // [V33.55] 빌드 버전 — SWR L2 캐시 키에 섞어 '배포 = 판단 캐시 자동 무효화'를 만든다.
 //   판정 로직을 고쳐도 옛 캐시가 최대 1시간 재배포되던 문제를 구조적으로 없앤다.
-const _BUILD_VER = "V33.238";
+const _BUILD_VER = "V33.239";
 
 // ═══ [V33.171] 평가 순서 계획 — ★승격과 순환을 교차해 굶주림을 구조적으로 없앤다★ ═══
 //   V33.50 의 형태트리거는 "급한 몇 종목을 앞으로 당긴다"는 의도였으나, 실제 운영로그에서는
@@ -3116,7 +3116,7 @@ const AI_PARAMS = {
   //   표본은 지금부터 쌓인다 — 이게 가장 오래 걸리는 선행조건이라 먼저 심는다.
   aiScalp: {
     // [V33.52] ★false 로 전환★ — 이건 '일봉 2거래일' 스트림(V33.38)이라 단타와 무관하다.
-    //   단타 지평은 60분이고 피처는 5분봉 38차원인데, 이 스트림은 일봉 65차원에 2거래일 라벨이라
+    //   단타 지평은 60분이고 피처는 5분봉 38차원인데, 이 스트림은 일봉 69차원에 2거래일 라벨이라
     //   스키마부터 달라 단타 모델이 쓸 수 없다. 그런데도 수확마다 D1 쓰기를 늘리고,
     //   '2거래일 대기'라는 단타에 불필요한 거래일 지연을 만들었다.
     //   실제 단타 표본은 R2 장중 파이프라인(STIN)이 60분 만에 만든다.
@@ -27728,9 +27728,15 @@ const LUXML = {
     "ret120",      // 120일(≈6개월) 수익률 %
     "mom12_1",     // 12-1 모멘텀 % — 252봉전 대비 21봉전(최근 1개월 제외) — 고전적 모멘텀 팩터
     "volAdjMom",   // 변동성조정 모멘텀 — ret60 / (ATR%×√60) — 리스크 대비 추세강도
-    "dist52wHigh"  // 52주(252봉) 고점 대비 거리 %(0=신고가, 음수=조정) — 신고가 모멘텀
+    "dist52wHigh", // 52주(252봉) 고점 대비 거리 %(0=신고가, 음수=조정) — 신고가 모멘텀
+    // ── [V33.239] 하이킨아시 추세반전 (4) — 잔진동을 지운 캔들의 지속·소진·전환 ──
+    "haRun",       // 같은 색 연속 봉수(부호=방향, ±10봉 정규화) — 추세 지속·소진 정도
+    "haBodyR",     // 몸통/전체범위 0~1 — 작을수록 도지(힘의 균형, 전환 예고)
+    "haShadow",    // (위꼬리−아래꼬리)/범위 −1~1 — 꼬리 비대칭(방향 해석은 모델에 맡긴다)
+    "haRev"        // 전환신호 −1~1 — 긴 런을 끊은 색전환(+강세전환) / 몸통 소진(−추세반대)
   ],
-  featVer: 13,  // ★V32.10: 라이브전용 이벤트/뉴스 16종 제거(train/serve 스큐) + 장기모멘텀 6종 추가(75→65).
+  featVer: 14,  // ★V33.239: 하이킨아시 추세반전 4종 추가(65→69). featVer 상향 → 캐치업 수확이 딥이력에서 재구축.
+  //   ★V32.10: 라이브전용 이벤트/뉴스 16종 제거(train/serve 스큐) + 장기모멘텀 6종 추가(75→65).
                 //   구버전(12) 표본은 featver 분리로 자동 정리·전종목 재수확. 라벨 지평 5→10, 임계 1.0→1.5.
 
   minSamplesGate: 150,
@@ -27987,6 +27993,87 @@ async function _mlLoadIndexCloses(DB, mkt) {
 //   ev(선택): 이벤트 피처 이름→값 객체. lux_news.mlCollectEvents가 채움. 없으면 전부 0.
 //   volumes/opens/market(선택): [V4] 시장구조 피처용 — 없으면 해당 피처 중립값.
 // [V12.87] 기술적 상승패턴 피처 — 차트패턴·다기간 컨센서스·MA정배열(전부 순수 OHLCV, 수확 복원 가능).
+/* ══ [V33.239] 하이킨아시(平均足) 추세반전 피처 4종 ══════════════════════════
+   사용자 요청: "하이킨아시 추세 반전 매매법도 학습시켜서 사용하게".
+
+   하이킨아시는 봉을 평균으로 다시 그려 잔진동을 지운 캔들이다:
+     haClose = (O+H+L+C)/4
+     haOpen  = (직전 haOpen + 직전 haClose)/2      ← 재귀. 첫 봉은 (O+C)/2
+     haHigh  = max(H, haOpen, haClose) · haLow = min(L, haOpen, haClose)
+   ★haOpen 이 재귀★ 라 중간부터 계산하면 값이 달라진다 — 창 처음부터 순차로 만든다.
+
+   반전 매매법이 보는 것은 세 가지다:
+     ① 같은 색이 몇 봉 이어졌나(추세 지속) — 길수록 소진에 가깝다
+     ② 몸통이 갑자기 작아졌나(도지) — 힘의 균형, 전환 예고
+     ③ 색이 뒤집혔나 — 특히 ★긴 런을 끊은★ 전환일수록 의미가 크다
+   이 셋을 그대로 피처로 낸다. 문턱을 손으로 정하지 않는다 — 얼마나 믿을지는
+   위원회가 실측 IC 로 정한다(이 저장소가 다른 피처에 쓰는 것과 같은 규칙).
+
+   ※ 꼬리 비대칭(haShadow)의 ★부호가 무슨 뜻인지는 박지 않는다.★ "아래꼬리 없음=강세" 는
+     흔한 해석이지만 국면마다 다르고 여기서 검증한 적이 없다. 방향은 모델이 배우게 두고,
+     여기서는 관측값만 정직하게 낸다. */
+function _mlHeikinFeats(closes, highs, lows, opens) {
+  const o = { haRun: 0, haBodyR: 0, haShadow: 0, haRev: 0 };
+  try {
+    if (!Array.isArray(closes) || closes.length < 12) return o;
+    const n = closes.length;
+    const H = (Array.isArray(highs) && highs.length === n) ? highs : closes;
+    const L = (Array.isArray(lows) && lows.length === n) ? lows : closes;
+    const O = (Array.isArray(opens) && opens.length === n) ? opens : closes;
+    const c0 = _num(closes[0], 0);
+    let prevHaO = (_num(O[0], c0) + c0) / 2;
+    let prevHaC = (_num(O[0], c0) + _num(H[0], c0) + _num(L[0], c0) + c0) / 4;
+    const col = new Array(n).fill(0), body = new Array(n).fill(0);
+    col[0] = prevHaC > prevHaO ? 1 : (prevHaC < prevHaO ? -1 : 0);
+    let haO = prevHaO, haC = prevHaC, haH = prevHaC, haL = prevHaC;
+    for (let i = 1; i < n; i++) {
+      const c = _num(closes[i], 0), oo = _num(O[i], c), hh = _num(H[i], c), ll = _num(L[i], c);
+      haC = (oo + hh + ll + c) / 4;
+      haO = (prevHaO + prevHaC) / 2;
+      haH = Math.max(hh, haO, haC); haL = Math.min(ll, haO, haC);
+      col[i] = haC > haO ? 1 : (haC < haO ? -1 : 0);
+      const r0 = haH - haL;
+      body[i] = r0 > 1e-12 ? Math.abs(haC - haO) / r0 : 0;
+      prevHaO = haO; prevHaC = haC;
+    }
+    const rng = haH - haL;
+    o.haBodyR = rng > 1e-12 ? _clamp(Math.abs(haC - haO) / rng, 0, 1) : 0;
+    o.haShadow = rng > 1e-12
+      ? _clamp(((haH - Math.max(haO, haC)) - (Math.min(haO, haC) - haL)) / rng, -1, 1) : 0;
+    const cNow = col[n - 1];
+    if (cNow !== 0) {
+      let run = 1;
+      while (n - 1 - run >= 0 && col[n - 1 - run] === cNow) run++;
+      o.haRun = _clamp(cNow * Math.min(run, 10) / 10, -1, 1);
+      if (run === 1) {
+        // 방금 뒤집혔다 — 끊긴 직전 런이 길수록 강한 전환이다.
+        const cPrev = col[n - 2];
+        let pr = 0;
+        if (cPrev !== 0 && cPrev !== cNow) { let k = n - 2; while (k >= 0 && col[k] === cPrev) { pr++; k--; } }
+        if (pr >= 3) o.haRev = _clamp(cNow * Math.min(1, pr / 6), -1, 1);
+      } else if (run >= 3) {
+        /* 색은 그대로인데 몸통이 눌렸다 — 소진 조짐. 방향은 현재 추세의 ★반대★ 다.
+           [V33.239] 판정을 ★절대 비율이 아니라 최근 대비 수축★ 으로 한다.
+           종전엔 haBodyR < 0.35 였는데, 저변동 횡보에서는 몸통비가 늘 작아서 늘 켜졌다
+           (합성 실측: 횡보 80봉에서 haRev 0.50 — 아무 일도 없는데 전환이라 외쳤다).
+           소진의 실체는 "몸통이 작다" 가 아니라 ★"예전보다 줄었다"★ 이므로 직전 봉들의
+           중앙값과 견준다. 그러면 같은 크기의 몸통이어도 국면에 따라 다르게 읽힌다. */
+        const hist = [];
+        for (let k = Math.max(1, n - 11); k < n - 1; k++) hist.push(body[k]);
+        if (hist.length >= 5) {
+          hist.sort(function (a, b) { return a - b; });
+          const med = hist[Math.floor(hist.length / 2)];
+          if (med > 1e-6 && o.haBodyR < med * 0.5) {
+            const shrink = _clamp(1 - o.haBodyR / med, 0, 1);   // 얼마나 줄었나
+            o.haRev = _clamp(-cNow * Math.min(1, run / 8) * shrink, -1, 1);
+          }
+        }
+      }
+    }
+  } catch (e) {}
+  return o;
+}
+
 function _mlPatternFeats(closes, highs, lows, opens) {
   const o = { chartPat: 0, tfConsBull: 0, maStack: 0 };
   try {
@@ -28106,6 +28193,9 @@ function mlBuildFeatures(args) {
     const mom = _mlMomFeats(closes, f.atrPct);
     f.ret10 = mom.ret10; f.ret60 = mom.ret60; f.ret120 = mom.ret120;
     f.mom12_1 = mom.mom12_1; f.volAdjMom = mom.volAdjMom; f.dist52wHigh = mom.dist52wHigh;
+    // [V33.239] 하이킨아시 추세반전 4종 — OHLC 파생이라 수확·라이브가 같은 분포다.
+    const ha = _mlHeikinFeats(closes, args.highs, args.lows, args.opens);
+    f.haRun = ha.haRun; f.haBodyR = ha.haBodyR; f.haShadow = ha.haShadow; f.haRev = ha.haRev;
     return LUXML.featNames.map(function(n){ return _num(f[n], 0); });
   } catch (e) {
     return LUXML.featNames.map(function(){ return 0; });
@@ -42354,6 +42444,8 @@ export {
   // [V33.228] STACK 홀드아웃 커서 계약 검증용 — tools/check-stack-oof.mjs 가 실제로 돌린다.
   //   판(featVer)이 올라간 뒤 커서가 창 끝에 서서 소급생성이 영영 멈추는 회귀를 잡는다.
   stackSampleBackfill, stackLogSample, STACKML,
+  // [V33.239] 하이킨아시 추세반전 피처 검증용 — tools/check-heikin.mjs 가 수치로 확인한다.
+  _mlHeikinFeats,
   // 보정 가족 검증용 — tools/check-calibration.mjs 가 실제로 적합시켜 본다.
   calFitBest, _fitPlatt, _fitTemp, _calApply, _calNLL, _calECE, CALFAM,
   // [V33.113] 유의성 자유도 보정 검증용
