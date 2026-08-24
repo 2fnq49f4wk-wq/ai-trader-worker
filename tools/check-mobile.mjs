@@ -393,11 +393,13 @@ console.log('⑫ 터미널 격자 — 새 자식이 생겨도 안 찢어지는�
      이 검사가 '의도와 다르다' 며 막았는데, 정작 계약은 "id 로 지목했는가" 이지
      "그 셋인가" 가 아니다. 개수를 박으면 패널이 늘 때마다 검사를 고쳐야 하고,
      그러면 검사를 느슨하게 만들고 싶어진다(그게 이 게이트가 막으려던 일이다). */
+  /* [V33.241] 좁힘 예외의 ★개수★ 는 계약이 아니다. 정보 패널이 다단(.fv-intel-wrap)으로
+     옮겨가 격자에서 좁힐 자식이 0 이 됐는데, 개수를 요구하던 검사가 그걸 위반으로 봤다.
+     계약은 "좁힐 때는 id 로 지목한다"(넓은 선택자 금지)이고 그건 바로 아래에서 본다. */
   const narrowed = new Set((H.match(/\.fv-deck>#(fv[A-Za-z]+Panel)\{?/g) || [])
     .map(function (x) { return x.replace(/.*#/, '').replace(/\{$/, ''); }));
-  if (narrowed.size >= 2)
-    ok('좁힘 예외는 id 로 지목한 ' + narrowed.size + '개뿐 — ' + [...narrowed].join(' · '));
-  else bad('좁힘 예외가 없거나 하나뿐이다 — 격자를 쓸 이유가 없다: ' + [...narrowed].join(', '));
+  ok(narrowed.size ? '좁힘 예외는 id 로 지목한 ' + narrowed.size + '개 — ' + [...narrowed].join(' · ')
+                   : '격자에서 좁히는 자식이 없다 — 전부 전체폭 행이다(정보 패널은 다단으로 이동)');
   if (/\.fv-deck>\.fv-panel\{[^}]*grid-column/.test(H))
     bad('.fv-panel 같은 넓은 선택자로 좁히고 있다 — 새 패널이 말려든다');
   else ok('넓은 선택자로 좁히지 않는다');
@@ -413,6 +415,7 @@ console.log('⑫ 터미널 격자 — 새 자식이 생겨도 안 찢어지는�
    그 둘이 각각 혼자 한 줄을 차지해 화면 절반이 비었다(1000~1680px 네 폭 모두).
    자식은 전부 제 폭을 가졌는데 ★행★ 이 비었다. 그래서 열 수와 짝의 개수, 그리고
    DOM 순서가 서로 맞는지를 함께 본다. */
+const chkIn = (c, id) => { if (c) console.log('  ok   ' + id + ' 이 다단 래퍼 안에 있다'); else { console.log('  FAIL ' + id + ' 이 다단 래퍼 밖에 있다 — 혼자 격자 행을 차지한다'); fails++; } };
 console.log('⑬ 격자 행 — 짝지을 패널이 실제로 이웃인가');
 {
   /* [V33.236] ★리터럴이 아니라 나눗셈으로 본다.★
@@ -433,7 +436,6 @@ console.log('⑬ 격자 행 — 짝지을 패널이 실제로 이웃인가');
   if (cols > 0) ok('격자 열 수 ' + cols);
   else bad('격자 열 수를 못 읽었다 — .fv-deck 격자 규칙이 바뀌었다');
   const spanned = groups.filter(function (g) { return g.span; });
-  if (!spanned.length) bad('한 줄에 나란히 세우는 규칙이 없다 — 패널이 전부 전체폭이면 아랫줄이 세로로 길어진다');
   /* 빈칸이 안 남을 조건은 "n×span 이 정확히 cols" 가 아니다 — 여러 줄로 감싸도 된다.
        4개×3칸 = 12 → 한 줄에 넷
        4개×6칸 = 24 → 두 줄에 둘씩 (두 줄 다 꽉 찬다)
@@ -441,9 +443,41 @@ console.log('⑬ 격자 행 — 짝지을 패널이 실제로 이웃인가');
      즉 ① 한 칸이 행을 정수로 나누고(cols % span === 0) ② 마지막 줄이 꽉 차는가
      ((n×span) % cols === 0). 이 둘이 계약이다. */
   const badRow = spanned.filter(function (g) { return (cols % g.span) !== 0 || ((g.n * g.span) % cols) !== 0; });
-  if (spanned.length && !badRow.length)
+  if (!spanned.length)
+    ok('격자에 나란히 세우는 규칙이 없다 — 행이 없으니 행에 빈칸도 없다');
+  else if (!badRow.length)
     ok('모든 폭 구간에서 행에 빈칸이 없다 — ' + spanned.map(function (g) { return g.n + '개×' + g.span + '칸→' + (g.n * g.span / cols) + '줄'; }).join(' · '));
   else bad('행에 빈칸이 남는 구간이 있다 — ' + badRow.map(function (g) { return g.n + '개×' + g.span + '칸(열 ' + cols + ')'; }).join(' · '));
+
+  /* ── [V33.241] ★정보 패널은 행 높이에 묶이지 않아야 한다.★ ──
+     격자는 한 줄의 높이를 가장 긴 카드가 정한다. 짝의 길이가 다르면 짧은 쪽 아래가
+     반드시 빈다 — align-items:start 로 카드를 안 늘려도 ★행이 잡아둔 높이★ 는 그대로다.
+     실제로 그 공백을 없애려고 카드 높이를 190px 로 조였다가 ★내용이 잘렸다★
+     (지정학 권고 문장이 중간에서 끊김). 원인이 카드가 아니라 행이었기 때문이다.
+     그래서 이 넷은 CSS 다단(columns)으로 흘린다 — 행이 없으므로 공백이 생길 자리가 없다.
+     실측(1194px, 내용 비대칭 주입): AI질의가 자기 내용 높이 87px 로 남는다(종전엔 348px 로 늘어남). */
+  const wrapCss = (H.match(/\.fv-intel-wrap\{([^}]*)\}/) || [])[1] || '';
+  /* [V33.241] ★속성 경계를 요구한다.★ 처음엔 /columns:\s*\d/ 로 적었는데
+     grid-template-columns:1fr 의 "columns:1" 에도 걸려서, 다단을 격자로 되돌리는 변이를
+     놓쳤다(변이 시험에서 잡혔다). columns 는 ★독립 속성★ 일 때만 다단이다. */
+  if (/(^|;)\s*columns:\s*\d/.test(wrapCss))
+    ok('정보 패널이 다단(.fv-intel-wrap columns)으로 흐른다 — 행 높이에 안 묶인다');
+  else bad('.fv-intel-wrap 이 다단이 아니다 — 격자로 되돌아가면 짧은 카드 아래가 다시 빈다: "' + wrapCss.trim() + '"');
+  const kidCss = (H.match(/\.fv-intel-wrap\s*>\s*\.fv-panel\{([^}]*)\}/) || [])[1] || '';
+  if (/break-inside:\s*avoid/.test(kidCss))
+    ok('카드가 열 경계에서 쪼개지지 않는다(break-inside:avoid)');
+  else bad('카드에 break-inside:avoid 가 없다 — 한 카드가 두 열에 걸쳐 잘린다');
+  for (const id of ['fvCrisisPanel', 'fvEventsPanel', 'fvKrHaltPanel', 'fvAiAskPanel']) {
+    const wi = H.indexOf('class="fv-intel-wrap"'), pi = H.indexOf('id="' + id + '"');
+    const we = H.indexOf('class="fv-cal-row"') > wi ? H.indexOf('class="fv-cal-row"') : H.length;
+    chkIn(wi > 0 && pi > wi, id);
+  }
+  /* 높이 상한으로 내용을 자르지 않는다 — 공백의 원인은 카드가 아니라 행이었다. */
+  const capped = ['fvCrisisBody', 'fvEventsBody', 'fvKrHaltBody'].filter(function (id) {
+    return new RegExp('#' + id + '[^{}]*\\{[^}]*max-height:\\s*\\d+px').test(H);
+  });
+  if (!capped.length) ok('정보 패널 본문에 높이 상한이 없다 — 내용이 잘리지 않는다');
+  else bad('본문에 높이 상한이 남아 있다(' + capped.join(', ') + ') — 공백은 행 탓인데 내용을 자르고 있다');
   if (groups.some(function (g) { return g.full; }))
     ok('가장 좁은 폭 폴백(전체폭)이 있다 — 한 칸이 눌리지 않는다');
   // ★DOM 순서★ — 전체폭이 되는 패널이 짝 사이에 끼면 짝이 갈라진다
