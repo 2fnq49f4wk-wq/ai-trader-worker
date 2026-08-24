@@ -456,17 +456,26 @@ console.log('⑬ 격자 행 — 짝지을 패널이 실제로 이웃인가');
      (지정학 권고 문장이 중간에서 끊김). 원인이 카드가 아니라 행이었기 때문이다.
      그래서 이 넷은 CSS 다단(columns)으로 흘린다 — 행이 없으므로 공백이 생길 자리가 없다.
      실측(1194px, 내용 비대칭 주입): AI질의가 자기 내용 높이 87px 로 남는다(종전엔 348px 로 늘어남). */
+  /* [V33.242] 계약을 "다단인가" 에서 ★"같은 줄의 타일 높이가 같은가"★ 로 바꾼다.
+     다단(V33.241)도 공백을 못 없앴다 — 카드의 자연 높이가 제각각인데다 ★개수까지 변하기★
+     때문이다(한국장 매매정지는 장 상태에 따라 사라진다). 실측: 카드가 3개로 줄자 다단 균형이
+     무너져 지정학 오른쪽이 통째로 비었다.
+     구멍이 안 생기는 실제 조건은 "높이를 맞추려는 시도" 가 아니라 ★처음부터 같은 키★ 다.
+     헤드리스 실측(1194/1366/1900px × 카드 3·4개): 모든 줄이 높이 308 · 폭 100% 로 채워진다. */
   const wrapCss = (H.match(/\.fv-intel-wrap\{([^}]*)\}/) || [])[1] || '';
-  /* [V33.241] ★속성 경계를 요구한다.★ 처음엔 /columns:\s*\d/ 로 적었는데
-     grid-template-columns:1fr 의 "columns:1" 에도 걸려서, 다단을 격자로 되돌리는 변이를
-     놓쳤다(변이 시험에서 잡혔다). columns 는 ★독립 속성★ 일 때만 다단이다. */
-  if (/(^|;)\s*columns:\s*\d/.test(wrapCss))
-    ok('정보 패널이 다단(.fv-intel-wrap columns)으로 흐른다 — 행 높이에 안 묶인다');
-  else bad('.fv-intel-wrap 이 다단이 아니다 — 격자로 되돌아가면 짧은 카드 아래가 다시 빈다: "' + wrapCss.trim() + '"');
+  if (/display:\s*flex/.test(wrapCss) && /flex-wrap:\s*wrap/.test(wrapCss))
+    ok('정보 패널이 줄바꿈 타일(flex-wrap)로 놓인다 — 개수가 변해도 그 줄을 균등분할한다');
+  else bad('.fv-intel-wrap 이 flex-wrap 이 아니다 — 카드 개수가 변하면 배치가 무너진다: "' + wrapCss.trim() + '"');
   const kidCss = (H.match(/\.fv-intel-wrap\s*>\s*\.fv-panel\{([^}]*)\}/) || [])[1] || '';
-  if (/break-inside:\s*avoid/.test(kidCss))
-    ok('카드가 열 경계에서 쪼개지지 않는다(break-inside:avoid)');
-  else bad('카드에 break-inside:avoid 가 없다 — 한 카드가 두 열에 걸쳐 잘린다');
+  if (/(^|;)\s*height:\s*\d+px/.test(kidCss))
+    ok('타일 높이가 고정이다 — 같은 줄의 타일이 전부 같은 키라 빌 자리가 없다');
+  else bad('타일에 고정 높이가 없다 — 자연 높이가 제각각이면 짧은 쪽 아래가 빈다: "' + kidCss.trim() + '"');
+  /* 높이를 고정했으면 넘치는 내용은 ★타일 안에서★ 볼 수 있어야 한다. 이게 없으면
+     V33.240 에서 저지른 '내용 잘라내기' 가 그대로 재현된다. */
+  const bodyCss = (H.match(/\.fv-intel-wrap\s*>\s*\.fv-panel\s*>\s*\*:not\(\.fv-panel-head\)\{([^}]*)\}/) || [])[1] || '';
+  if (/overflow-y:\s*auto/.test(bodyCss) && /min-height:\s*0/.test(bodyCss))
+    ok('넘치는 내용은 타일 안에서 스크롤된다 — 고정 높이가 내용을 자르지 않는다');
+  else bad('타일 본문에 내부 스크롤이 없다 — 고정 높이가 곧 내용 잘라내기가 된다: "' + bodyCss.trim() + '"');
   for (const id of ['fvCrisisPanel', 'fvEventsPanel', 'fvKrHaltPanel', 'fvAiAskPanel']) {
     const wi = H.indexOf('class="fv-intel-wrap"'), pi = H.indexOf('id="' + id + '"');
     const we = H.indexOf('class="fv-cal-row"') > wi ? H.indexOf('class="fv-cal-row"') : H.length;
@@ -542,7 +551,9 @@ console.log('⑭ 행 높이 — 긴 카드가 화면 밖으로 자라지 않는�
        원인이었다(AI질의가 한국장 높이까지 늘어나 그 아래가 통째로 빔).
        나머지 셋(높이 상한·내부 스크롤·표가 남는 높이를 채움)이 진짜 원칙이라 그대로 둔다.
        '늘리지 않는다' 는 ⑬-b 가 반대 방향으로 지킨다. */
-    ['max-height:min(46vh,460px);', '정보 카드 상한이 보통 카드의 키 근처(460px)'],
+    /* [V33.242] 정보 카드의 상한은 이제 .fv-intel-wrap 의 ★고정 타일 높이★ 가 정한다 —
+       max-height(자랄 수 있는 한도)보다 강한 조건이라 이 항목은 여기서 뺀다.
+       ⑬ 이 "타일 높이가 고정인가 + 넘치면 안에서 스크롤되는가" 로 지킨다. */
   ]) { if (flat.includes(t)) ok(why); else bad(why + ' — 그 규칙이 없다'); }
   // 내용을 지우는 방식이 아니어야 한다 — 넘치면 잘리는 게 아니라 스크롤해야 한다
   if (/#fvCrisisBody,\s*html\[data-density="terminal"\]\s*#fvEventsBody,\s*html\[data-density="terminal"\]\s*#fvKrHaltBody\{ flex:1 1 auto; min-height:0; overflow-y:auto; \}/.test(H))
