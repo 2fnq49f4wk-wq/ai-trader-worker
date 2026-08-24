@@ -86,9 +86,18 @@ const genBiased = (n) => {
   for (let p = 0.02; p <= 0.98; p += 0.01) { const q = _calApply(fit, p); if (q < prev - 1e-9) mono = false; prev = q; }
   chk(mono, "보정 후에도 확률 순위가 보존된다(단조 증가) — 보정이 순위를 뒤집지 않는다",
     "보정기가 단조가 아니다 — 확률이 높을수록 덜 맞다고 주장하는 꼴이라 순위가 뒤집힌다");
-  chk(_num0(fit.a) >= 0 && _num0(fit.b) >= 0 || fit.mode === "temp",
-    "베타/플랫 계수가 음수로 적합되지 않는다(Kull et al. 2017 의 단조 제약)",
-    "보정 계수가 음수다 — 단조 제약이 걸려 있지 않다");
+  /* [V33.234] 부호 제약은 ★가족마다 다르다★ — 종전엔 둘을 뭉쳐 놓았다.
+       beta : a·log(q) − b·log(1−q) + c → a,b 는 형상 모수라 둘 다 ≥0 이어야 단조다(c 는 자유).
+       platt: a·z + b               → 단조를 정하는 건 ★a 뿐★ 이고 b 는 절편이라 부호가 자유다.
+     b<0 인 플랫은 "기저율이 예측보다 낮으니 통째로 내려라" 라는 뜻이고, 그게 정확히
+     이번에 고친 치우침 보정이다. 실제 단조성은 바로 위에서 수치로 확인하고 있으므로
+     (0.02~0.98 전 구간 스윕) 이 검사는 그 근거인 부호만 가족에 맞게 본다. */
+  const _mono = fit.mode === "beta" ? (_num0(fit.a) >= 0 && _num0(fit.b) >= 0)
+              : fit.mode === "platt" ? (_num0(fit.a) >= 0)
+              : _num0(fit.T) > 0;
+  chk(_mono,
+    "가족별 단조 제약을 지킨다(Kull et al. 2017) — " + fit.mode + " a " + _num0(fit.a) + " b " + _num0(fit.b),
+    "보정 계수가 단조 제약을 어긴다 — " + fit.mode + " a " + _num0(fit.a) + " b " + _num0(fit.b));
   function _num0(v) { return (typeof v === "number" && isFinite(v)) ? v : 0; }
 }
 
@@ -164,6 +173,78 @@ const genBiased = (n) => {
   chk(byProp === 0 && byIdx > 0,
     `속성 접근은 항상 0 · 인덱스 접근은 ${(byIdx / pairs.length).toFixed(3)} — 죽은 진단의 모양을 재현`,
     "재현 실패: 속성 접근이 0 이 아니다 — 이 계약의 근거가 성립하지 않는다");
+}
+
+
+// ── ★적합 실패한 가족을 '보정 없음' 으로 채점하지 않는가★ ──────────────────
+//   [V33.234] 실측 committee_cal: mode "temp" · T 6(탐색 상한) · ece 0.109
+//     cv{temp 0.69518, platt 0.70638, beta 0.72794} · nllRaw 0.70638
+//   ★cv.platt 이 nllRaw 와 소수 5자리까지 같다★ — _calCV 가 적합 실패 폴드를 { T:1 }
+//   (=보정 없음)로 채점하기 때문이다. 즉 플랫이 매 폴드 null 로 떨어졌다는 서명이다.
+//   원인: 기울기가 0 이하면 _fitPlatt 이 ★절편까지 통째로 버렸다★. 기반 모델이 동전
+//   언저리(MIND 48.2%)라 위원회 확률이 결과와 약하게 역상관이면 늘 이 경로로 간다.
+//   그 결과 온도가 T=6 에서 이기는데, 온도는 로짓을 나눌 뿐이라 0.5 로만 수렴한다 —
+//   양성률 0.395 를 원리적으로 못 맞춘다(ece 가 10.9% 에서 안 내려간 이유).
+{
+  const M = await import("../src/index.js");
+  const mkPairs = (slopeSign) => {
+    let seed = 999; const rnd = () => (seed = (seed * 1664525 + 1013904223) >>> 0) / 4294967296;
+    const out = [];
+    for (let i = 0; i < 400; i++) {
+      const p = 0.495 + rnd() * 0.02;
+      out.push([p, (rnd() < 0.395 - slopeSign * (p - 0.505) * 3.0) ? 1 : 0]);
+    }
+    return out;
+  };
+  const nllOf = (pairs, f) => { let t = 0; for (const r of pairs) { const p = Math.min(1 - 1e-6, Math.max(1e-6, f(r[0]))); t += -(r[1] * Math.log(p) + (1 - r[1]) * Math.log(1 - p)); } return t / pairs.length; };
+
+  // (a) 역상관 — 기울기가 음수로 나오는 실제 상황
+  {
+    const pairs = mkPairs(1);
+    const raw = M._fitPlatt(pairs);
+    chk(raw && raw.a === 0 && raw.flat === true && isFinite(raw.b),
+      "기울기 ≤ 0 이면 단조 원뿔로 투영해 절편만 적합한다 — " + JSON.stringify(raw),
+      "기울기가 음수라고 절편까지 버린다(null) — 교차검증이 '보정 없음' 으로 채점한다: " + JSON.stringify(raw));
+
+    const fit = M.calFitBest(pairs, {});
+    chk(fit.cv.platt !== fit.nllRaw,
+      "cv.platt 이 nllRaw 와 갈린다 — 플랫이 폴드마다 실제로 적합된다 (" + fit.cv.platt + " vs " + fit.nllRaw + ")",
+      "cv.platt === nllRaw (" + fit.nllRaw + ") — 프로덕션 실측과 같은 서명이다(매 폴드 null)");
+    chk(fit.ece < 0.02,
+      "보정 후 ECE " + fit.ece + " (보정 전 " + fit.eceRaw + ") — 치우침이 실제로 잡힌다",
+      "보정 후 ECE 가 " + fit.ece + " 로 남는다 — 온도는 치우침을 표현할 수 없다");
+    chk(!(fit.mode === "temp" && Math.abs(M._num ? 0 : 0) === 0 && fit.T >= 6),
+      "온도가 탐색 상한(6)에 붙은 채로 채택되지 않는다 — 선택된 가족 " + fit.chosen,
+      "온도가 상한 T=" + fit.T + " 로 채택됐다 — 최적값이 아니라 제약이다");
+
+    // 적용 경로가 a=0 을 조용히 무시하지 않는가 — _calZ 의 가드에 걸리면 보정이 사라진다
+    const applied = M._calApply(raw, 0.504);
+    chk(Math.abs(applied - 1 / (1 + Math.exp(-raw.b))) < 1e-6,
+      "절편 보정기가 적용 경로를 실제로 통과한다 (0.504 → " + applied.toFixed(3) + ")",
+      "a=0 을 이상값으로 보고 무시했다 — 보정기를 만들어 놓고 안 쓴다 (0.504 → " + applied.toFixed(3) + ")");
+    // 옛 레코드(flat 표시 없는 a=0)는 종전대로 무시돼야 한다 — 동작을 바꾸지 않는다
+    const legacy = M._calApply({ mode: "platt", a: 0, b: -0.42 }, 0.504);
+    chk(Math.abs(legacy - 0.504) < 1e-6,
+      "flat 표시가 없는 옛 a=0 레코드는 종전대로 무시된다 (0.504 유지)",
+      "옛 레코드의 동작이 바뀌었다 (0.504 → " + legacy.toFixed(3) + ")");
+
+    // 온도로는 원리적으로 못 맞춘다는 것을 수치로 남긴다
+    const sig = (x) => 1 / (1 + Math.exp(-x)), lg = (p) => Math.log(p / (1 - p));
+    const posRate = pairs.reduce((a, r) => a + r[1], 0) / pairs.length;
+    const nT = nllOf(pairs, (p) => sig(lg(p) / 100)), nB = nllOf(pairs, () => posRate);
+    chk(nB < nT - 0.01,
+      "온도는 아무리 키워도(T=100) NLL " + nT.toFixed(5) + " — 절편 보정 " + nB.toFixed(5) + " 에 못 미친다",
+      "재현 실패: 온도와 절편의 차이가 안 나온다 — 이 계약의 근거를 다시 볼 것");
+  }
+
+  // (b) 정상 상관 — 기울기가 양수면 종전과 한 글자도 다르지 않아야 한다
+  {
+    const pairs = mkPairs(-1);
+    const raw = M._fitPlatt(pairs);
+    chk(raw && raw.a > 0 && !raw.flat,
+      "기울기가 양수면 종전대로 2모수 플랫 (a " + (raw && raw.a) + ")",
+      "정상 상관인데 절편만 적합으로 눕혔다 — 순위 정보를 버린다: " + JSON.stringify(raw));
+  }
 }
 
 console.log(fails ? "\n확률 보정 계약 위반 " + fails + "건 — 배포 차단" : "\n  ok   확률 보정 계약 통과");

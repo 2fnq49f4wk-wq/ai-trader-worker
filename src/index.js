@@ -2788,7 +2788,7 @@ async function applySignalTypeWeights(DB, cfg) {
 // ============================================================================
 // [V33.55] 빌드 버전 — SWR L2 캐시 키에 섞어 '배포 = 판단 캐시 자동 무효화'를 만든다.
 //   판정 로직을 고쳐도 옛 캐시가 최대 1시간 재배포되던 문제를 구조적으로 없앤다.
-const _BUILD_VER = "V33.233";
+const _BUILD_VER = "V33.234";
 
 // ═══ [V33.171] 평가 순서 계획 — ★승격과 순환을 교차해 굶주림을 구조적으로 없앤다★ ═══
 //   V33.50 의 형태트리거는 "급한 몇 종목을 앞으로 당긴다"는 의도였으나, 실제 운영로그에서는
@@ -31895,7 +31895,10 @@ function _calZ(cal, p) {
   }
   if (m === "platt") {
     const a = Math.max(0, _num(cal.a, 0)), b = _num(cal.b, 0);
-    if (!(a > 0)) return z;
+    /* [V33.234] a=0 은 두 가지일 수 있다 — 값이 깨진 것과 ★일부러 눕힌 것★.
+       flat 표시가 있으면 후자다(순위 정보가 없다고 판단해 절편만 맞춘 보정기).
+       표시가 없는 a=0 은 종전대로 무시한다 — 옛 레코드의 동작을 바꾸지 않는다. */
+    if (!(a > 0) && !(cal.flat && isFinite(b))) return z;
     return a * z + b;
   }
   const T = _num(cal.T, 1);
@@ -31916,7 +31919,9 @@ function _calDesc(cal) {
   if (!cal) return "없음";
   const m = String(cal.mode || "temp");
   if (m === "beta") return "베타(a " + _num(cal.a, 0).toFixed(2) + " b " + _num(cal.b, 0).toFixed(2) + " c " + _num(cal.c, 0).toFixed(2) + ")";
-  if (m === "platt") return "플랫(a " + _num(cal.a, 0).toFixed(2) + " b " + _num(cal.b, 0).toFixed(2) + ")";
+  if (m === "platt") return cal.flat
+    ? "절편만(기저율 " + (1 / (1 + Math.exp(-_num(cal.b, 0)))).toFixed(3) + " · 위원회 점수에 순위정보 없음)"
+    : "플랫(a " + _num(cal.a, 0).toFixed(2) + " b " + _num(cal.b, 0).toFixed(2) + ")";
   return "온도(T " + _num(cal.T, 1).toFixed(2) + ")";
 }
 
@@ -31997,11 +32002,38 @@ function _fitBeta(pairs) {
   }
   return { mode: "beta", a: +w[0].toFixed(6), b: +w[1].toFixed(6), c: +w[2].toFixed(6) };
 }
+/* ══ [V33.234] ★기울기가 0 이하라고 절편까지 버리면 안 된다.★ ══
+   실측(committee_cal, 표본 400):
+     mode "temp" · T 6(=탐색 상한) · cv{temp 0.69518, platt 0.70638, beta 0.72794}
+     ece 0.109 · 구간 0.5-0.6 에 397건 — 예측 0.504 vs 실제 0.395
+   ★cv.platt 이 nllRaw 와 소수 5자리까지 똑같다(0.70638)★ — 우연이 아니라 서명이다.
+   _calCV 는 적합이 null 이면 { T:1 }(=보정 없음)로 채점하므로, 플랫이 ★매 폴드 전부★
+   null 로 떨어졌다는 뜻이다. 그래서 교차검증은 플랫을 '절편까지 포함한 보정' 이 아니라
+   '보정을 아예 안 한 것' 으로 채점했고, 온도가 T=6 에서 이겼다.
+
+   그런데 T=6 은 최적값이 아니라 ★제약★ 이다(탐색 상한). 온도는 로짓을 나눌 뿐이라
+   아무리 키워도 0.5 로만 수렴한다 — 양성률 0.395 를 원리적으로 못 맞춘다.
+   기반 모델이 동전 언저리(MIND 48.2% · DNN 49.7%)라 위원회 확률이 결과와 약하게
+   ★역상관★ 이면 플랫 기울기가 음수로 나오고, 그때마다 이 경로가 발동한다.
+
+   고치는 방법은 베타 보정이 이미 쓰고 있는 처방과 같다(Kull et al. 2017) — 단조 제약을
+   어긴 항을 ★빼고 다시 적합한다★. 플랫만 그 처방을 못 받고 통째로 버려지고 있었다.
+   기울기를 0 으로 투영하면 "이 점수에는 쓸 만한 순위 정보가 없다 — 기저율을 답하라" 가
+   되고, 그건 '보정 없음' 보다 언제나 정직하다. 채택 여부는 그대로 교차검증이 정한다
+   (여기서 무엇을 강요하지 않는다 — 공정한 후보를 하나 돌려줄 뿐이다).
+   합성 재현: NLL 0.69622(보정없음) · 0.69364(T=6) · ★0.67093(기울기0+절편)★,
+             ECE 0.1139 · 0.1086 · ★0.0000★ */
 function _fitPlatt(pairs) {
   const D = _calDesign(pairs, "platt");
   const w = _logregFitCore(D.X, D.y, CALFAM.ridge, 2, D.X.length);
-  if (!w || !(w[0] > 0)) return null;
-  return { mode: "platt", a: +w[0].toFixed(6), b: +w[1].toFixed(6) };
+  if (!w) return null;                    // 적합 자체가 실패했다 — 돌려줄 후보가 없다
+  if (w[0] > 0) return { mode: "platt", a: +w[0].toFixed(6), b: +w[1].toFixed(6) };
+  // 기울기 ≤ 0 → 단조 원뿔로 투영(a=0)하고 절편만 다시 적합한다.
+  const X0 = [], y0 = D.y;
+  for (let i = 0; i < D.X.length; i++) X0.push([1]);
+  const w0 = _logregFitCore(X0, y0, CALFAM.ridge, 1, X0.length);
+  if (!w0) return null;
+  return { mode: "platt", a: 0, b: +w0[0].toFixed(6), flat: true };
 }
 function _fitTemp(pairs, lo, hi) {
   const _n = function (T) {
@@ -42307,6 +42339,8 @@ export {
   // [V33.228] STACK 홀드아웃 커서 계약 검증용 — tools/check-stack-oof.mjs 가 실제로 돌린다.
   //   판(featVer)이 올라간 뒤 커서가 창 끝에 서서 소급생성이 영영 멈추는 회귀를 잡는다.
   stackSampleBackfill, stackLogSample, STACKML,
+  // 보정 가족 검증용 — tools/check-calibration.mjs 가 실제로 적합시켜 본다.
+  calFitBest, _fitPlatt, _fitTemp, _calApply, _calNLL, _calECE, CALFAM,
   // [V33.113] 유의성 자유도 보정 검증용
   // [V33.222] 단타 기준봉 — 게이트가 봉 길이에 맞춰 기대값을 계산할 수 있어야 한다.
   //   (봉 수로 적힌 기대값은 봉 길이가 바뀌면 다른 시간을 뜻하게 된다)
