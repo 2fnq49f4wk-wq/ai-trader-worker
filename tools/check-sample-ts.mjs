@@ -41,8 +41,11 @@ console.log('② 소급생성이 원본 행의 ts 를 물려주는가 (이게 �
   const calls = [
     [/xalphaLogSample\(DB, mk, sy, f, _num\(r\.pnl_pct, 0\), _num\(r\.ts, 0\)\)/, 'XALPHA 소급생성'],
     [/flowLogSample\(DB, mk, sy, fv, _num\(r\.pnl_pct, 0\), _num\(r\.ts, 0\)\)/, 'FLOW 소급생성'],
-    // 뒤에 인자가 더 붙어도 통과시키되, ★ts 자리에 _num(r.ts, 0) 이 오는 것★ 은 그대로 요구한다.
-    [/stackLogSample\(DB, r\.market \|\| "us", r\.symbol \|\| null, fv, _num\(r\.pnl_pct, 0\), _num\(r\.ts, 0\)[,)]/, 'STACK 소급생성']
+    /* 뒤에 인자가 더 붙어도 통과시키되, ★ts 자리에 _num(r.ts, 0) 이 오는 것★ 은 그대로 요구한다.
+       [V33.233] 소급생성은 적재를 묶어 보내므로 로거를 직접 부르지 않고 INSERT 문을 만들어 쌓는다
+       (표본당 D1 왕복 3회가 회차 상한의 실체였다). 지켜야 하는 계약은 "원본 행의 ts 를 넘기는가"
+       이지 어느 함수를 부르는가가 아니다 — 함수 이름만 넓히고 인자 자리는 그대로 못 박는다. */
+    [/(?:stackLogSample|_stackInsStmt)\(DB, r\.market \|\| "us", r\.symbol \|\| null, fv, _num\(r\.pnl_pct, 0\),\s*_num\(r\.ts, 0\)[,)]/, 'STACK 소급생성']
   ];
   for (const [re, label] of calls) {
     if (re.test(S)) ok(label + ' 이 원본 ts 를 넘긴다');

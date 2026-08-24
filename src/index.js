@@ -2788,7 +2788,7 @@ async function applySignalTypeWeights(DB, cfg) {
 // ============================================================================
 // [V33.55] 빌드 버전 — SWR L2 캐시 키에 섞어 '배포 = 판단 캐시 자동 무효화'를 만든다.
 //   판정 로직을 고쳐도 옛 캐시가 최대 1시간 재배포되던 문제를 구조적으로 없앤다.
-const _BUILD_VER = "V33.232";
+const _BUILD_VER = "V33.233";
 
 // ═══ [V33.171] 평가 순서 계획 — ★승격과 순환을 교차해 굶주림을 구조적으로 없앤다★ ═══
 //   V33.50 의 형태트리거는 "급한 몇 종목을 앞으로 당긴다"는 의도였으나, 실제 운영로그에서는
@@ -27063,17 +27063,35 @@ const STACKML = {
   nlMargin: 0.005           // 선형을 갈아치우려면 정확도 ★하한★ 에서 이만큼 앞서야 한다(0.5%p)
 };
 
+/* ══ [V33.233] ★표본 한 건마다 스키마를 다시 만들고 있었다.★ ══
+   종전 stackLogSample 은 매 호출에서 CREATE TABLE + ALTER + INSERT 를 ★차례로 await★ 했다.
+   스키마는 행마다 달라지지 않는데 D1 왕복이 표본당 3회다 — 소급생성 600건이면 1,800회.
+   그게 회당 600건이라는 상한의 실체였고, 그 속도로는 홀드아웃 창(≈37,000행)을 채우는 데
+   야간 60회가 걸린다. 스키마는 아이솔레이트당 한 번만 보장하고, 적재는 묶어서 보낸다. */
+let __stackSchemaOk = false;
+async function _stackEnsureSchema(DB) {
+  if (__stackSchemaOk) return;
+  await DB.prepare("CREATE TABLE IF NOT EXISTS stack_samples (id INTEGER PRIMARY KEY AUTOINCREMENT, ts INTEGER, market TEXT, symbol TEXT, feat TEXT, label INTEGER, pnl_pct REAL, featver INTEGER, src TEXT)").run();
+  /* [V33.227] ★표본이 어느 경로에서 왔는지 남긴다.★ 종전엔 라이브 청산·에폭 소급·홀드아웃 소급이
+     표에서 구분되지 않아, "표본을 600건 더했더니 t 가 절반이 됐다" 를 만났을 때 어느 쪽이
+     희석했는지 ★추측밖에 할 수 없었다★. 한 글자를 남기면 다음엔 재서 답할 수 있다.
+     구표에는 컬럼이 없으므로 ALTER 를 시도하고, 이미 있으면 조용히 넘어간다. */
+  try { await DB.prepare("ALTER TABLE stack_samples ADD COLUMN src TEXT").run(); } catch (e) {}
+  __stackSchemaOk = true;
+}
+const _STACK_INS = "INSERT INTO stack_samples (ts, market, symbol, feat, label, pnl_pct, featver, src) VALUES (?,?,?,?,?,?,?,?)";
+function _stackInsStmt(DB, market, symbol, featVec, pnlPct, tsMs, src) {
+  // ts 는 ★원본 행의 관측 시각★ 이 우선이다 — 적재 시각으로 뭉치면 퍼징이 학습셋을 통째로 지운다.
+  return DB.prepare(_STACK_INS)
+    .bind(_num(tsMs, 0) > 0 ? _num(tsMs, 0) : Date.now(), market, symbol, JSON.stringify(featVec),
+      _num(pnlPct, 0) > 0 ? 1 : 0, _num(pnlPct, 0), STACKML.featVer, src || "live");
+}
+// 단건 적재(라이브 청산 경로) — 호출 빈도가 낮아 왕복 1회면 충분하다.
 async function stackLogSample(DB, market, symbol, featVec, pnlPct, tsMs, src) {
   try {
     if (!STACKML.enabled || !Array.isArray(featVec) || featVec.length !== 16) return;
-    await DB.prepare("CREATE TABLE IF NOT EXISTS stack_samples (id INTEGER PRIMARY KEY AUTOINCREMENT, ts INTEGER, market TEXT, symbol TEXT, feat TEXT, label INTEGER, pnl_pct REAL, featver INTEGER, src TEXT)").run();
-    /* [V33.227] ★표본이 어느 경로에서 왔는지 남긴다.★ 종전엔 라이브 청산·에폭 소급·홀드아웃 소급이
-       표에서 구분되지 않아, "표본을 600건 더했더니 t 가 절반이 됐다" 를 만났을 때 어느 쪽이
-       희석했는지 ★추측밖에 할 수 없었다★. 한 글자를 남기면 다음엔 재서 답할 수 있다.
-       구표에는 컬럼이 없으므로 ALTER 를 시도하고, 이미 있으면 조용히 넘어간다. */
-    try { await DB.prepare("ALTER TABLE stack_samples ADD COLUMN src TEXT").run(); } catch (e) {}
-    await DB.prepare("INSERT INTO stack_samples (ts, market, symbol, feat, label, pnl_pct, featver, src) VALUES (?,?,?,?,?,?,?,?)")
-      .bind(_num(tsMs, 0) > 0 ? _num(tsMs, 0) : Date.now(), market, symbol, JSON.stringify(featVec), _num(pnlPct, 0) > 0 ? 1 : 0, _num(pnlPct, 0), STACKML.featVer, src || "live").run();
+    await _stackEnsureSchema(DB);
+    await _stackInsStmt(DB, market, symbol, featVec, pnlPct, tsMs, src).run();
   } catch (e) {}
 }
 // ════════════════════════════════════════════════════════════════════════════
@@ -27088,7 +27106,10 @@ async function stackLogSample(DB, market, symbol, featVec, pnlPct, tsMs, src) {
 //   mind·dnn·gbdt·boost·memo·rule 을 그 자리에서 다시 채점할 수 있다 — 그게 STACK 의 입력이다.
 //   ★flow·xalpha 는 자기 피처가 따로 필요해 소급이 안 된다★ → 참여마스크를 0 으로 둔다.
 //   마스크 차원을 처음부터 넣어 둔 이유가 정확히 이것이다("그 전문가가 없었다"는 유효한 정보).
-const STACKBF = { maxPerRun: 600, minIdx: 0 };
+/* [V33.233] maxPerRun 은 ★한 묶음★ 의 크기다(회차 총량이 아니다). 총량은 벽시계가 정한다 —
+   stinBackfill 이 같은 이유로 이미 그렇게 한다(V33.106). 회선·D1 이 빠른 밤엔 더 많이 돌고
+   느린 밤엔 알아서 접는다. 상한을 숫자로 못 박으면 그 숫자가 맞는지 잴 방법이 없다. */
+const STACKBF = { maxPerRun: 600, minIdx: 0, deadlineMs: 20000, insChunk: 50 };
 async function stackSampleBackfill(DB, opts) {
   const cfg = opts || {};
   try {
@@ -27213,7 +27234,23 @@ async function stackSampleBackfill(DB, opts) {
     if (!mind && !dnn && !gbdt && !(boosters && boosters.length) && !memo)
       return "[STACK-BF] 채점 가능한 전문가가 없다 — 위원회 학습 먼저";
 
+    /* [V33.233] ★회차 총량을 벽시계가 정한다.★ 종전엔 한 회차가 rows 한 묶음(600행)에서
+       끝났다 — 표본당 D1 왕복 3회라는 비용 때문에 그 이상을 못 돌았기 때문이다. 그 비용을
+       걷어냈으니(스키마 1회 + 묶음 적재) 남은 제약은 시간뿐이다. 시간이 남는 만큼 다음
+       묶음을 이어서 훑는다(stinBackfill 이 같은 이유로 쓰는 방식이다). */
+    await _stackEnsureSchema(DB);
+    const _t0sb = Date.now();
+    const _sbDeadline = _num(cfg.deadlineMs, STACKBF.deadlineMs);
+    const _insChunk = Math.max(1, _num(cfg.insChunk, STACKBF.insChunk));
+    let _pendIns = [], _batches = 0;
+    const _flushIns = async function () {
+      if (!_pendIns.length) return;
+      const b = _pendIns; _pendIns = [];
+      await DB.batch(b);
+    };
+
     let made = 0, lastId = _num(st.lastId, 0), skipped = 0;
+    while (true) {
     for (const r of rows) {
       lastId = _num(r.id, lastId);
       let v; try { v = JSON.parse(r.feat); } catch (e) { skipped++; continue; }
@@ -27255,9 +27292,28 @@ async function stackSampleBackfill(DB, opts) {
       const fv = [];
       for (const k of SLOTS) fv.push(P[k] != null ? _clamp(P[k], 0.001, 0.999) : 0.5);
       for (const k of SLOTS) fv.push(M[k] ? 1 : 0);
-      await stackLogSample(DB, r.market || "us", r.symbol || null, fv, _num(r.pnl_pct, 0), _num(r.ts, 0),
-        _src === "홀드아웃" ? "oof" : "epoch");   // [V33.173] 원본 행의 관측 시각 · [V33.227] 경로
+      // [V33.173] 원본 행의 관측 시각 · [V33.227] 경로 · [V33.233] 묶음으로 보낸다
+      _pendIns.push(_stackInsStmt(DB, r.market || "us", r.symbol || null, fv, _num(r.pnl_pct, 0),
+        _num(r.ts, 0), _src === "홀드아웃" ? "oof" : "epoch"));
+      if (_pendIns.length >= _insChunk) await _flushIns();
       made++;
+    }
+    await _flushIns();
+    _batches++;
+    // 시간이 남으면 같은 경로에서 다음 묶음을 이어 훑는다. 경계·경로는 그대로다.
+    if (Date.now() - _t0sb > _sbDeadline) break;
+    let _nx;
+    if (_src === "홀드아웃") {
+      _nx = (await DB.prepare(
+        "SELECT id, ts, market, symbol, feat, label, pnl_pct FROM ml_samples WHERE ts >= ? AND id > ? AND featver = ? ORDER BY id ASC LIMIT ?"
+      ).bind(_oofMinTs, lastId, LUXML.featVer, lim).all()).results || [];
+    } else {
+      _nx = (await DB.prepare(
+        "SELECT id, ts, market, symbol, feat, label, pnl_pct FROM ml_samples WHERE id > ? AND featver = ? ORDER BY id ASC LIMIT ?"
+      ).bind(lastId, LUXML.featVer, lim).all()).results || [];
+    }
+    if (!_nx.length) break;
+    rows = _nx;
     }
     /* [V33.205] 어느 경로에서 읽었는지에 따라 ★그 경로의 커서만★ 전진시킨다.
        섞으면 에폭 커서가 홀드아웃 구간의 id 로 튀어, 나중에 들어올 신규 수확분을 통째로 건너뛴다. */
@@ -27267,7 +27323,8 @@ async function stackSampleBackfill(DB, opts) {
     } else {
       await setState(DB, "stack_bf_cursor", { lastId: lastId, made: _num(st.made, 0) + made, ts: Date.now() });
     }
-    return "[STACK-BF] +" + made + "표본 (" + _src + "경로 · 건너뜀 " + skipped + ", 커서 " + lastId +
+    return "[STACK-BF] +" + made + "표본 (" + _src + "경로 · 묶음 " + _batches + "회 " +
+           (Date.now() - _t0sb) + "ms · 건너뜀 " + skipped + ", 커서 " + lastId +
            ", 에폭 " + _ep + ", 누적 " + (_num(st.made, 0) + made) + ")" +
            (_rewound ? " — 판 v" + STACKML.featVer + " 표본 0 이라 홀드아웃 커서를 창 처음으로 되감았다(창 경계는 그대로 · 같은 창을 새 판으로 전부 다시 만든다)" : "") +
            " — 누출없음";
@@ -42249,7 +42306,7 @@ export {
   _expRegBucket, _expRegIC, EXPREG,
   // [V33.228] STACK 홀드아웃 커서 계약 검증용 — tools/check-stack-oof.mjs 가 실제로 돌린다.
   //   판(featVer)이 올라간 뒤 커서가 창 끝에 서서 소급생성이 영영 멈추는 회귀를 잡는다.
-  stackSampleBackfill, STACKML,
+  stackSampleBackfill, stackLogSample, STACKML,
   // [V33.113] 유의성 자유도 보정 검증용
   // [V33.222] 단타 기준봉 — 게이트가 봉 길이에 맞춰 기대값을 계산할 수 있어야 한다.
   //   (봉 수로 적힌 기대값은 봉 길이가 바뀌면 다른 시간을 뜻하게 된다)

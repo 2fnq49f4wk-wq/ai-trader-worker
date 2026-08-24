@@ -247,5 +247,122 @@ const no = (m) => { console.error("  FAIL " + m); bad++; };
   }
 }
 
+
+// ── ⑥ ★적재 비용과 회차 총량★ ────────────────────────────────────────────────
+//   [V33.233] stackLogSample 이 표본마다 CREATE TABLE + ALTER + INSERT 를 차례로 await 했다.
+//   스키마는 행마다 달라지지 않는데 D1 왕복이 표본당 3회 — 600건이면 1,800회다.
+//   그게 "회당 600건" 이라는 상한의 실체였고, 그 속도로는 홀드아웃 창(≈37,000행)을 채우는 데
+//   야간 60회가 걸린다(실측: [STACK] 표본 1200 … 블록 부족 → 유의성 미측정).
+//   비용을 걷어내고 총량은 벽시계가 정하게 했다. 그 계약을 실제로 돌려서 확인한다.
+{
+  const M2 = await import("../src/index.js");
+  const D = M2.LUXML.featNames.length;
+  const OOF_MIN = Date.now() - 30 * 86400000;
+
+  // 문장 종류별 실행 횟수를 세는 D1 — 왕복 비용이 계약이므로 세는 것 말고 볼 방법이 없다.
+  function countingDb(opts) {
+    const o = opts || {};
+    const n = { create: 0, alter: 0, insert: 0, batch: 0, batched: 0, mlq: 0 };
+    const binds = { oof: [], epoch: [] };
+    const state = o.state || {};
+    let served = 0;
+    const mk = (sql) => {
+      const st = {
+        _a: [],
+        bind(...a) { st._a = a; return st; },
+        async first() {
+          if (/SELECT v FROM state WHERE k = \?/.test(sql)) {
+            const v = state[st._a[0]];
+            return v === undefined ? null : { v: JSON.stringify(v) };
+          }
+          if (/COUNT\(\*\) AS c FROM stack_samples/.test(sql)) return { c: 5 };   // 되감기 없음
+          if (/MAX\(id\) AS m FROM ml_samples/.test(sql)) return { m: 900000 };
+          return null;
+        },
+        async all() {
+          const isOof = /FROM ml_samples WHERE ts >= \?/.test(sql);
+          const isEp = /FROM ml_samples WHERE id > \?/.test(sql);
+          if (!isOof && !isEp) return { results: [] };
+          n.mlq++;
+          (isOof ? binds.oof : binds.epoch).push(st._a.slice());
+          if (isEp) return { results: [] };            // 에폭 경로는 말랐다 → 홀드아웃으로 넘어간다
+          if (served >= (o.pages || 0)) return { results: [] };
+          served++;
+          const lim = Number(st._a[3]) || 600;
+          const from = Number(st._a[1]) || 0;
+          const out = [];
+          for (let i = 1; i <= lim; i++) {
+            out.push({ id: from + i, ts: OOF_MIN + i * 1000, market: "us", symbol: "AAA",
+                       feat: JSON.stringify(new Array(D).fill(0)), label: 1, pnl_pct: 0.5 });
+          }
+          return { results: out };
+        },
+        async run() {
+          if (/CREATE TABLE IF NOT EXISTS stack_samples/.test(sql)) n.create++;
+          else if (/ALTER TABLE stack_samples/.test(sql)) n.alter++;
+          else if (/INSERT INTO stack_samples/.test(sql)) n.insert++;
+          return { success: true };
+        }
+      };
+      return st;
+    };
+    return { _n: n, _binds: binds, prepare: mk,
+             async batch(a) { n.batch++; n.batched += a.length; for (const x of a) await x.run(); return []; } };
+  }
+
+  // (a) 스키마는 아이솔레이트당 한 번 — 표본마다가 아니다.
+  {
+    const d = countingDb({});
+    const fv = new Array(16).fill(0.5);
+    for (let i = 0; i < 5; i++) await M2.stackLogSample(d, "us", "AAA", fv, 1.0, Date.now(), "live");
+    if (d._n.create <= 1 && d._n.alter <= 1)
+      ok("스키마 보장은 표본마다가 아니라 최대 1회 (CREATE " + d._n.create + " / ALTER " + d._n.alter + " · 표본 5건)");
+    else no("STACK-BF: 표본마다 스키마를 다시 만든다 — CREATE " + d._n.create + " ALTER " + d._n.alter + " (표본 5건)");
+    if (d._n.insert === 5) ok("단건 적재 경로는 표본당 INSERT 1회");
+    else no("STACK-BF: 단건 적재가 " + d._n.insert + "회 (표본 5건)");
+  }
+  {
+    const fn = src.slice(src.indexOf("async function stackLogSample"), src.indexOf("async function stackLogSample") + 700);
+    if (/CREATE TABLE IF NOT EXISTS stack_samples/.test(fn))
+      no("STACK-BF: stackLogSample 안에 CREATE TABLE 이 다시 들어왔다 — 표본당 왕복이 늘어난다");
+    else ok("stackLogSample 본문에 스키마 DDL 이 없다");
+  }
+
+  // (b) 회차 총량은 벽시계가 정한다 — 한 묶음에서 끝나지 않는다.
+  const _stateBase = {
+    stack_expert_epoch: { id: 100 },
+    stack_bf_cursor: { lastId: 5000, made: 0 },
+    stack_oof_window: { minTs: OOF_MIN, n: 40000, models: ["dnn", "gbdt", "boost", "mind"] },
+    stack_oof_cursor: { lastId: 9000, fv: M2.STACKML.featVer },
+    memo_model: { trusted: false }        // 이른 반환만 피한다(채점은 창 목록이 막는다)
+  };
+  {
+    const d = countingDb({ pages: 4, state: JSON.parse(JSON.stringify(_stateBase)) });
+    await M2.stackSampleBackfill(d, { maxPerRun: 20, deadlineMs: 30000 });
+    if (d._binds.oof.length >= 2)
+      ok("시간이 남으면 다음 묶음을 이어 훑는다 (홀드아웃 조회 " + d._binds.oof.length + "회)");
+    else no("STACK-BF: 한 묶음에서 회차가 끝난다 — 창을 채우는 데 야간 수십 회가 걸린다 (조회 " + d._binds.oof.length + "회)");
+
+    // ★묶음이 늘어도 누출 가드는 매 조회에 그대로 걸려야 한다★ — SQL 을 복제했으므로 여기가 위험하다.
+    const badTs = d._binds.oof.filter(function (b) { return b[0] !== OOF_MIN; });
+    if (!badTs.length) ok("모든 묶음이 같은 창 경계(ts >= minTs)를 건다 — 복제된 조회도 예외 없다");
+    else no("STACK-BF: 창 경계가 빠진 묶음 조회가 있다 — " + JSON.stringify(badTs[0]));
+
+    // 커서는 앞으로만 간다(묶음마다 되감기면 같은 행을 무한히 다시 만든다).
+    let mono = true;
+    for (let i = 1; i < d._binds.oof.length; i++) if (Number(d._binds.oof[i][1]) <= Number(d._binds.oof[i - 1][1])) mono = false;
+    if (mono) ok("묶음 사이에서 커서가 단조 전진한다");
+    else no("STACK-BF: 묶음 사이에서 커서가 되감긴다 — 같은 행이 반복 표본이 된다");
+  }
+
+  // (c) 마감시한이 실제로 멈춘다 — 무한히 돌면 워커가 죽는다.
+  {
+    const d = countingDb({ pages: 50, state: JSON.parse(JSON.stringify(_stateBase)) });
+    await M2.stackSampleBackfill(d, { maxPerRun: 20, deadlineMs: -1 });
+    if (d._binds.oof.length === 1) ok("마감시한 가드 동작 (deadlineMs=-1 → 묶음 1회로 종료)");
+    else no("STACK-BF: 마감시한을 무시했다 — 홀드아웃 조회 " + d._binds.oof.length + "회");
+  }
+}
+
 if (bad) { console.error(`\nSTACK 홀드아웃 계약 위반 ${bad}건 — 배포 차단`); process.exit(1); }
 console.log("  ok   STACK 홀드아웃 계약 통과 — 문을 열되 누출 쪽으로는 안 열린다");
