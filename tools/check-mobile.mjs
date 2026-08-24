@@ -460,6 +460,36 @@ console.log('⑬ 격자 행 — 짝지을 패널이 실제로 이웃인가');
   else bad('헤드라인 줄이 정보 패널 아래로 돌아갔다 — 요청한 배치가 뒤집혔다');
 }
 
+/* ── ⑬-b 공백의 두 가지 출처 ────────────────────────────────────────────────
+   [V33.240] 사용자 스크린샷 두 장에서 같은 증상이 다른 원인으로 나왔다.
+
+   (가) ★짝이 맞는데 마지막을 풀스팬★ — .fv3-grid 의 :last-child{grid-column:1/-1} 은
+        패널이 셋이던 시절 규칙이다(3번째가 빈 칸 옆에 남는 걸 막으려던 것).
+        어닝이 빠져 둘이 되자 짝이 맞는데도 마지막이 펴져 그 옆이 통째로 비었다
+        (실측 1194px: INDICATOR w501 · INSIDER w1010).
+        목적은 "홀수라 짝이 없을 때만" 이므로 :nth-child(odd) 를 함께 걸어야 한다.
+
+   (나) ★한 줄을 같은 높이로 늘림★ — .fv-deck{align-items:stretch} 는 짧은 카드를
+        긴 카드 높이까지 늘린다. 그 아래가 그대로 공백이다(AI질의 vs 한국장 매매정지).
+        start 로 두면 아랫변이 들쭉날쭉해지는 대신 공백이 사라진다. */
+console.log('⑬-b 공백 — 짝 맞는 격자를 펴지 않는가 · 짧은 카드를 늘리지 않는가');
+{
+  const flat = H.replace(/\s+/g, '');
+  // (가) last-child 풀스팬은 반드시 nth-child(odd) 와 함께여야 한다
+  const spans = [...H.matchAll(/([.#][\w-]+)\s*>\s*\.fv-panel:last-child([^{]*)\{grid-column:\s*1\/-1/g)];
+  const naked = spans.filter((m) => !/nth-child\(odd\)/.test(m[2]));
+  if (!naked.length)
+    ok('마지막 패널 풀스팬은 홀수(:nth-child(odd))일 때만 — 짝이 맞으면 옆 칸이 안 빈다'
+       + (spans.length ? ' (' + spans.length + '곳)' : ''));
+  else bad('짝이 맞아도 마지막을 풀스팬한다 — ' + naked.map((m) => m[1]).join(', ') + ' (옆 칸이 통째로 빈다)');
+  // (나) .fv-deck 를 같은 높이로 늘리지 않는다 — ★마지막에 이기는 선언★ 을 본다
+  const decl = [...H.matchAll(/\.fv-deck\{[^}]*align-items:\s*(\w+)/g)].map((m) => m[1]);
+  const last = decl.length ? decl[decl.length - 1] : null;
+  if (last && last !== 'stretch')
+    ok(`.fv-deck 의 마지막 align-items 선언이 "${last}" — 짧은 카드를 늘리지 않는다`);
+  else bad(`.fv-deck 가 "${last}" 로 끝난다 — 짧은 카드가 긴 카드 높이까지 늘어나 그 아래가 공백이 된다`);
+}
+
 /* ── ⑭ 한 줄의 높이는 가장 긴 카드가 정한다 ──────────────────────────────
    ⑬ 은 "행이 폭을 다 쓰는가" 를 봤다. 폭이 다 차도 ★높이★ 가 어긋나면 옆 카드 아래가
    통째로 빈다 — 실측: 기술적분석 스크리너가 1,183px 로 자라 옆 캘린더 카드를 같이
@@ -472,7 +502,12 @@ console.log('⑭ 행 높이 — 긴 카드가 화면 밖으로 자라지 않는�
     ['.cmbd-grid>.fv-panel{max-height:min(62vh,620px);}', '캘린더·기술적분석 카드가 뷰포트에 묶인다'],
     ['.cmbd-grid#taResult{flex:1 1auto;min-height:0;overflow-y:auto;}'.replace(/\s/g, ''), '스크리너는 카드 안에서 스크롤한다'],
     ['max-height:none!important;flex:1 1auto;min-height:0;overflow:auto;'.replace(/\s/g, ''), '캘린더 표가 고정 320px 대신 남는 높이를 채운다'],
-    ['.fv-deck{align-items:stretch;}', '한 줄의 카드들이 같은 높이가 된다'],
+    /* [V33.240] ★.fv-deck{align-items:stretch} 는 이 검사 자신의 원칙과 어긋나 있었다.★
+       바로 위에 "짧은 카드를 늘리는 게 아니라 긴 카드를 묶는 것" 이라 적어 놓고,
+       목록의 이 한 줄만 정확히 그 반대를 요구했다 — 그리고 그게 사용자가 본 공백의
+       원인이었다(AI질의가 한국장 높이까지 늘어나 그 아래가 통째로 빔).
+       나머지 셋(높이 상한·내부 스크롤·표가 남는 높이를 채움)이 진짜 원칙이라 그대로 둔다.
+       '늘리지 않는다' 는 ⑬-b 가 반대 방향으로 지킨다. */
     ['max-height:min(46vh,460px);', '정보 카드 상한이 보통 카드의 키 근처(460px)'],
   ]) { if (flat.includes(t)) ok(why); else bad(why + ' — 그 규칙이 없다'); }
   // 내용을 지우는 방식이 아니어야 한다 — 넘치면 잘리는 게 아니라 스크롤해야 한다
