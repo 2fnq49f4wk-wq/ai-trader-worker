@@ -8,7 +8,7 @@
      인데, 지금까지 화면에서 그걸 알 방법이 전혀 없었다(카카오톡 인앱 브라우저는 특히 강하게 캐시한다).
      서버가 내려주는 build 와 이 값을 비교해 다르면 배너로 알린다.
      ※ src/index.js 의 _BUILD_VER 와 항상 같아야 한다 — check-html-js 가 강제한다. -->
-<meta name="lux-build" content="V33.236">
+<meta name="lux-build" content="V33.237">
 <title>LUX-ENGINE V10</title>
 <!-- ══ [V33.156] 설치형 앱(PWA) — 폰·PC 에서 홈화면/독에 담아 앱처럼 연다 ══
      · manifest  : 이름·아이콘·standalone 표시(주소창 없이 앱처럼)
@@ -2076,7 +2076,9 @@ html[data-theme="light"] .sb-brand-name{color:#fff;}
 /* ════ [V59] COMMODITIES/BONDS/ECON/TA 패널 그리드 — 한 화면 효율 배치 ════ */
 /* [V33.150] 균등분할이 아니다 — 왼쪽은 7열 표, 오른쪽은 입력 한 줄 + 결과다.
    같은 폭을 주면 표만 잘린다. 실측으로 정한 비율(econ 게이트가 넘침 0 을 강제한다). */
-.cmbd-grid{display:grid;grid-template-columns:1.35fr 1fr;gap:8px;padding:8px;}
+/* [V33.237] 경제 캘린더가 캘린더 줄로 빠져 여기 남는 건 기술적분석 하나뿐이다 —
+   2열로 두면 오른쪽 절반이 영구히 빈다. 한 칸으로 되돌린다. */
+.cmbd-grid{display:grid;grid-template-columns:1fr;gap:8px;padding:8px;}
 @media(max-width:900px){.cmbd-grid{grid-template-columns:1fr;}}
 .cmbd-grid .fv-panel{display:flex;flex-direction:column;min-width:0;overflow-x:auto;}
 .cmbd-grid .fv-table{width:100%;}
@@ -2197,7 +2199,15 @@ html[data-theme="light"] .sb-brand-name{color:#fff;}
 html[data-theme="light"] .port-card .port-total{color:#13171c;}
 
 /* ════ [V60] FINVIZ ROW — 어닝스/내부자/지표임팩트 3열 + 가독성 보강 ════ */
-.fv3-grid{display:grid;grid-template-columns:1fr 1.15fr 1.15fr;gap:8px;padding:8px;align-items:stretch;}
+/* [V33.237] 어닝·경제 캘린더 줄 — 채권 줄 바로 아래. 둘 다 '날짜 → 일정' 표라 폭을 반씩 나눈다. */
+/* 어닝은 4열(Date·Ticker·Company·EPS), 경제는 7열(일시·영향·지표·실제·예상·이전·서프) —
+   같은 폭을 주면 7열 표의 오른쪽이 패널 overflow 안으로 숨는다(V33.150 실측: 523px 필요).
+   경제 쪽에 더 준다. 한 칸이 520px 아래로 내려가는 폭에서는 아예 한 줄씩 쌓는다. */
+.fv-cal-row{display:grid;grid-template-columns:1fr 1.35fr;gap:8px;}
+@media(max-width:1100px){.fv-cal-row{grid-template-columns:1fr;}}
+/* [V33.237] 어닝이 캘린더 줄로 빠져 이 격자는 둘(지표임팩트·내부자거래)만 남는다.
+   3열을 그대로 두면 오른쪽 한 칸이 통째로 빈다. */
+.fv3-grid{display:grid;grid-template-columns:1fr 1fr;gap:8px;padding:8px;align-items:stretch;}
 /* [V62] 2열 구간에선 세 번째 패널이 빈 칸 옆에 어색하게 떨어지지 않게 풀스팬 */
 @media(max-width:1300px){
   .fv3-grid{grid-template-columns:1fr 1fr;}
@@ -2216,7 +2226,8 @@ html[data-theme="light"] .port-card .port-total{color:#13171c;}
 }
 /* TOP MOVERS 패널을 히트맵 높이에 맞춰 늘리고 내부 스크롤 — 하단 빈 공간 제거 */
 .fv-mid .fv-panel{display:flex;flex-direction:column;min-width:0;}
-.fv-mid .fv-movers-grid{flex:1 1 auto;max-height:414px;overflow-y:auto;align-items:start;}
+/* [V33.237] 414 → 330. 이 줄이 화면 위쪽을 크게 먹어 아래 정보가 밀려 있었다(사용자 요청). */
+.fv-mid .fv-movers-grid{flex:1 1 auto;max-height:330px;overflow-y:auto;align-items:start;}
 /* 가독성: 핀비즈 밀도 유지하되 본문 폰트 한 단계 업 + 행 간격 확보 */
 .fv-table{font-size:11px;}
 .fv-table td{padding:5px 10px;line-height:1.45;}
@@ -3512,9 +3523,9 @@ html[data-theme="light"] .m-brainbar button.active{color:#0b4f9e;background:rgba
                 <button class="llm-btn" id="btnFvHeatRefresh">↻</button>
               </span>
             </div>
-            <!-- [V33.236] 무버스 표(max-height:414)와 높이를 맞춘다. 종전 360 이라 히트맵
-                 아래에 54px 죽은 여백이 남아 그 줄이 실제보다 헐거워 보였다. -->
-            <div id="fvHeatmap" style="height:414px;background:#000;"></div>
+            <!-- [V33.237] 무버스 표와 높이를 맞춘다 — 어긋나면 짧은 쪽 아래가 죽은 여백이 된다.
+                 [V33.237] 414 → 330 으로 함께 축소(사용자 요청). -->
+            <div id="fvHeatmap" style="height:330px;background:#000;"></div>
           </div>
         </div>
         <!-- 헤드라인 + 선물 + 환율/채권 -->
@@ -3525,7 +3536,31 @@ html[data-theme="light"] .m-brainbar button.active{color:#0b4f9e;background:rgba
           <div class="fv-panel-head">AI 운용 상태 <span class="fv-panel-sub" id="fvAiModeBadge">확인 중…</span></div>
           <div id="fvAiModeBody" style="padding:8px 10px;font-size:11px;line-height:1.6;color:var(--t2);">로딩 중…</div>
         </div>
-        <!-- [V33.236] ★헤드라인·원자재·채권을 정보 패널 위로 올린다(사용자 요청).★
+        <!-- [V33.237] ★어닝·경제 캘린더를 채권 줄 바로 아래로(사용자 요청).★
+             둘 다 "날짜 → 일정" 을 읽는 표라 나란히 두면 한 번에 훑힌다. 종전엔 어닝은
+             워치리스트 위, 경제는 기술적분석 옆에 떨어져 있어 같은 성격을 두 번 찾아야 했다. -->
+        <div class="fv-cal-row">
+<div class="fv-panel">
+            <div class="fv-panel-head">🗓 EARNINGS CALENDAR <span class="fv-panel-sub">실적 발표 일정</span>
+              <button type="button" id="btnEarnRefresh" class="btn" style="margin-left:auto;font-size:9px;padding:2px 8px;">↻</button>
+            </div>
+            <div class="fv3-scroll">
+              <table class="fv-table"><thead><tr><th>Date</th><th>Ticker</th><th>Company</th><th class="right">EPS Est</th></tr></thead><tbody id="earnBody"><tr><td colspan="4" class="empty">로딩 중...</td></tr></tbody></table>
+            </div>
+          </div>
+<div class="fv-panel">
+            <div class="fv-panel-head">📅 ECONOMIC CALENDAR <span class="fv-panel-sub">영향도 · 발표치 vs 예상</span>
+              <button type="button" id="btnEconRefresh" class="btn" style="margin-left:auto;font-size:9px;padding:2px 8px;">↻</button>
+            </div>
+            <div style="max-height:320px;overflow:auto;-webkit-overflow-scrolling:touch;">
+              <!-- [V33.150] 열 폭을 정하는 건 값이 아니라 ★헤더 글자★ 였다 — "Expected" 가 65px 를 잡는데
+                   값 "49.2" 는 30px 다. 뜻은 그대로 두고 글자만 줄인다(툴팁에 원 이름). -->
+              <table class="fv-table"><thead><tr><th>일시</th><th title="영향도">영향</th><th>지표</th><th class="right" title="Actual — 발표치">실제</th><th class="right" title="Expected — 시장 예상치">예상</th><th class="right" title="Prior — 직전치">이전</th><th class="right econ-sur-h" title="서프라이즈 — 예상 대비 비율">서프</th></tr></thead><tbody id="econBody"><tr><td colspan="7" class="empty">로딩 중...</td></tr></tbody></table>
+            </div>
+          </div>
+        </div>
+
+        <!-- [V33.237] ★헤드라인·원자재·채권을 정보 패널 위로 올린다(사용자 요청).★
              시세성 정보(뉴스·선물·환율)는 훑는 빈도가 높아 위쪽이 맞고, 위기 게이지·이슈·
              매매정지·질의는 필요할 때 내려다보는 것이라 아래가 맞다. DOM 순서가 곧 행 순서다. -->
         <div class="fv-bottom">
@@ -3667,22 +3702,6 @@ html[data-theme="light"] .m-brainbar button.active{color:#0b4f9e;background:rgba
       <!-- ════ [V60 FINVIZ ROW] 어닝스 캘린더 + 내부자 거래 + 지표 임팩트 — 워치리스트 위 배치 ════ -->
       <div class="fv3-grid">
         <div class="fv-panel">
-          <div class="fv-panel-head">🗓 EARNINGS CALENDAR <span class="fv-panel-sub">실적 발표 일정</span>
-            <button type="button" id="btnEarnRefresh" class="btn" style="margin-left:auto;font-size:9px;padding:2px 8px;">↻</button>
-          </div>
-          <div class="fv3-scroll">
-            <table class="fv-table"><thead><tr><th>Date</th><th>Ticker</th><th>Company</th><th class="right">EPS Est</th></tr></thead><tbody id="earnBody"><tr><td colspan="4" class="empty">로딩 중...</td></tr></tbody></table>
-          </div>
-        </div>
-        <div class="fv-panel">
-          <div class="fv-panel-head">🧾 INSIDER TRADING <span class="fv-panel-sub">SEC Form 4 최신 공시</span>
-            <button type="button" id="btnInsiderRefresh" class="btn" style="margin-left:auto;font-size:9px;padding:2px 8px;">↻</button>
-          </div>
-          <div class="fv3-scroll">
-            <table class="fv-table"><thead><tr><th>Ticker</th><th>Company</th><th>Insider</th><th class="right">Filed</th></tr></thead><tbody id="insiderBody"><tr><td colspan="4" class="empty">로딩 중...</td></tr></tbody></table>
-          </div>
-        </div>
-        <div class="fv-panel">
           <div class="fv-panel-head">⚡ INDICATOR IMPACT <span class="fv-panel-sub">발표 당일 지수 반응</span>
             <button type="button" id="btnImpactRefresh" class="btn" style="margin-left:auto;font-size:9px;padding:2px 8px;">↻</button>
           </div>
@@ -3690,7 +3709,15 @@ html[data-theme="light"] .m-brainbar button.active{color:#0b4f9e;background:rgba
             <table class="fv-table"><thead><tr><th>Date</th><th>지표</th><th class="right">서프라이즈</th><th class="right">지수 반응</th></tr></thead><tbody id="impactBody"><tr><td colspan="4" class="empty">로딩 중...</td></tr></tbody></table>
           </div>
         </div>
-      </div>
+      <div class="fv-panel">
+          <div class="fv-panel-head">🧾 INSIDER TRADING <span class="fv-panel-sub">SEC Form 4 최신 공시</span>
+            <button type="button" id="btnInsiderRefresh" class="btn" style="margin-left:auto;font-size:9px;padding:2px 8px;">↻</button>
+          </div>
+          <div class="fv3-scroll">
+            <table class="fv-table"><thead><tr><th>Ticker</th><th>Company</th><th>Insider</th><th class="right">Filed</th></tr></thead><tbody id="insiderBody"><tr><td colspan="4" class="empty">로딩 중...</td></tr></tbody></table>
+          </div>
+        </div>
+        </div>
 
       <!-- ════ [V10.5] WATCHLIST — 대시보드 통합 ════
            [V33.1] 대시보드에서 제거(사용자 요청) — 종목 목록은 "종목 상세" 페이지에서 본다.
@@ -3752,16 +3779,6 @@ html[data-theme="light"] .m-brainbar button.active{color:#0b4f9e;background:rgba
 
       <!-- ════ [V59] 경제지표 캘린더 + 기술적 분석 ════ -->
       <div class="cmbd-grid">
-        <div class="fv-panel">
-          <div class="fv-panel-head">📅 ECONOMIC CALENDAR <span class="fv-panel-sub">영향도 · 발표치 vs 예상</span>
-            <button type="button" id="btnEconRefresh" class="btn" style="margin-left:auto;font-size:9px;padding:2px 8px;">↻</button>
-          </div>
-          <div style="max-height:320px;overflow:auto;-webkit-overflow-scrolling:touch;">
-            <!-- [V33.150] 열 폭을 정하는 건 값이 아니라 ★헤더 글자★ 였다 — "Expected" 가 65px 를 잡는데
-                 값 "49.2" 는 30px 다. 뜻은 그대로 두고 글자만 줄인다(툴팁에 원 이름). -->
-            <table class="fv-table"><thead><tr><th>일시</th><th title="영향도">영향</th><th>지표</th><th class="right" title="Actual — 발표치">실제</th><th class="right" title="Expected — 시장 예상치">예상</th><th class="right" title="Prior — 직전치">이전</th><th class="right econ-sur-h" title="서프라이즈 — 예상 대비 비율">서프</th></tr></thead><tbody id="econBody"><tr><td colspan="7" class="empty">로딩 중...</td></tr></tbody></table>
-          </div>
-        </div>
         <div class="fv-panel">
           <div class="fv-panel-head">📐 TECHNICAL ANALYSIS <span class="fv-panel-sub">캔들/차트 패턴 자동 감지</span>
             <button type="button" id="btnTaBack" class="btn" style="margin-left:auto;font-size:9px;padding:2px 8px;display:none;">← 스크리너</button>
@@ -15285,7 +15302,7 @@ html[data-theme="light"] .rail{background:#fff;}
      [위기2][빈2] / [한국장4] / [이슈2][빈2] 로 화면 절반이 비었다.
      셋을 한 줄에 나란히 놓으려면 3으로 나뉘는 열 수가 필요하다. 6열은 3(2칸씩)과
      2(3칸씩) 를 모두 담고, 전체폭 항목은 1/-1 이라 그대로다. */
-  /* [V33.236] 6열 → ★12열★.
+  /* [V33.237] 6열 → ★12열★.
      6 은 넷으로 나뉘지 않는다. 그래서 정보 패널이 넷이 되자(위기·이슈·매매정지·질의)
      셋만 2칸씩 서고 AI 질의는 늘 전체폭을 먹어 아랫줄이 두 줄로 갈라졌다.
      12 는 2·3·4·6 으로 모두 나뉜다 — 폭이 줄어도 빈칸 없이 접힌다. */
@@ -15301,7 +15318,7 @@ html[data-theme="light"] .rail{background:#fff;}
      → 모든 자식을 전체폭으로 두고, ★좁힐 것만★ 예외로 적는다. 앞으로 자식이 늘어도 안전하다. */
   html[data-density="terminal"] .fv-deck>*{grid-column:1/-1;}
   /* AI 운용 상태는 두뇌 페이지 사이드바로 이동해 여기선 숨김 — 남은 두 패널이 폭을 나눠 갖는다 */
-  /* [V33.236] 정보 패널 ★넷★ 을 아랫줄 한 줄에 — 12 ÷ 4 = 각 3칸 */
+  /* [V33.237] 정보 패널 ★넷★ 을 아랫줄 한 줄에 — 12 ÷ 4 = 각 3칸 */
   html[data-density="terminal"] .fv-deck>#fvCrisisPanel,
   html[data-density="terminal"] .fv-deck>#fvEventsPanel,
   html[data-density="terminal"] .fv-deck>#fvKrHaltPanel,
@@ -15327,10 +15344,18 @@ html[data-theme="light"] .rail{background:#fff;}
   }
   html[data-density="terminal"] .fv-deck>.fv-panel{margin-bottom:0!important;}
   html[data-density="terminal"] .fv-deck{padding:6px 6px 0;gap:6px;}
-  /* [V33.236] 밀도 모드에서는 무버스·히트맵 줄을 함께 키운다 — 행 padding 이 이미 2.5px 라
+  /* [V33.237] 밀도 모드에서는 무버스·히트맵 줄을 함께 키운다 — 행 padding 이 이미 2.5px 라
      같은 높이에 훨씬 많은 행이 들어간다(참고 화면의 조밀한 시그널 표와 같은 방식). */
-  html[data-density="terminal"] .fv-mid .fv-movers-grid{max-height:470px;}
-  html[data-density="terminal"] #fvHeatmap{height:470px;}
+  html[data-density="terminal"] .fv-mid .fv-movers-grid{max-height:330px;}
+  html[data-density="terminal"] #fvHeatmap{height:330px;}
+  /* [V33.237] 한국장 매매정지 — 코스피/코스닥 두 블록이 세로로 길어 옆 칸까지 늘렸다.
+     행 간격을 조이고 넘치면 그 안에서만 스크롤한다(패널이 화면을 밀지 않게). */
+  html[data-density="terminal"] #fvKrHaltBody{max-height:280px;overflow-y:auto;padding:6px 9px!important;}
+  html[data-density="terminal"] #fvKrHaltBody *{line-height:1.35;}
+  /* AI 질의 — 답이 없을 땐 입력 한 줄이면 충분한데 칩·빈 본문이 높이를 잡고 있었다. */
+  html[data-density="terminal"] #fvAiAskPanel>div:not(.fv-panel-head){padding:6px 9px!important;}
+  html[data-density="terminal"] #fvAiAskBody{max-height:200px;overflow-y:auto;}
+  html[data-density="terminal"] #fvAiAskPanel .fv-askchip{font-size:9px;padding:2px 6px;}
   /* 헤드라인은 제목이 잘리는 게 가장 아까운 칸이라 폭을 더 준다 */
   html[data-density="terminal"] .fv-bottom{grid-template-columns:1.45fr 1fr 1fr;}
   html[data-density="terminal"] .fv-headlines{max-height:290px;}
