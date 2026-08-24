@@ -2788,7 +2788,7 @@ async function applySignalTypeWeights(DB, cfg) {
 // ============================================================================
 // [V33.55] 빌드 버전 — SWR L2 캐시 키에 섞어 '배포 = 판단 캐시 자동 무효화'를 만든다.
 //   판정 로직을 고쳐도 옛 캐시가 최대 1시간 재배포되던 문제를 구조적으로 없앤다.
-const _BUILD_VER = "V33.244";
+const _BUILD_VER = "V33.245";
 
 // ═══ [V33.171] 평가 순서 계획 — ★승격과 순환을 교차해 굶주림을 구조적으로 없앤다★ ═══
 //   V33.50 의 형태트리거는 "급한 몇 종목을 앞으로 당긴다"는 의도였으나, 실제 운영로그에서는
@@ -21077,6 +21077,7 @@ async function handleRequest(request, env, ctx) {
         //   그래서 워치독의 신선도 계산도 항상 9999(=낡음)로 떨어져, 주소를 고쳐도 6시간마다
         //   무조건 GPU 를 돌리게 돼 있었다. 모델 레코드에는 이미 찍고 있었는데 trust 에만 빠졌다.
         let trust = { wDnn: 0, trusted: false, dnnAcc: valAcc, dnnAccLB: valAccLB, mindAcc: mindLB, source: "external",
+                      featVer: LUXML.featVer,   // [V33.245] 신선도는 시각만으로 재지 않는다 — 판이 다르면 새것이어도 못 쓴다
                       trainedAt: Date.now(),
                       valN: valN, valNRaw: _num(_vs.valNRaw, valN), valUniq: _num(_vs.valUniq, null) };
         // [V12.54] 절대실력 게이트 — MIND 상대비교 폐기. 외부학습분은 val 라벨이 없어 다수클래스 기저를
@@ -21198,6 +21199,7 @@ async function handleRequest(request, env, ctx) {
       let mindLB = 0.5;
       try { const mm = await mlMindLoad(env.DB); if (mm) mindLB = (typeof mm.valAccLB === "number") ? mm.valAccLB : _wilsonLB(_num(mm.valAcc, 0.5), _num(mm.valN, 30)); } catch (e) {}
       let trust = { wDnn: 0, trusted: false, dnnAcc: net.valAcc, dnnAccLB: net.valAccLB, mindAcc: mindLB, source: "external",
+                    featVer: LUXML.featVer,   // [V33.245] 동상
                     trainedAt: Date.now(),
                     valN: net.valN, valNRaw: net.valNRaw, valUniq: net.valUniq };
       // [V12.54] 절대실력 게이트 — MIND 상대비교 폐기(외부학습분은 val 라벨 부재로 trustFloor만 적용).
@@ -21423,7 +21425,7 @@ async function handleRequest(request, env, ctx) {
       // 트러스트 계산(라이브 GBDT와 동일 로직).
       let mindLB = 0.5;
       try { const mm = await mlMindLoad(env.DB); if (mm) mindLB = (typeof mm.valAccLB === "number") ? mm.valAccLB : _wilsonLB(_num(mm.valAcc, 0.5), _num(mm.valN, 30)); } catch (e) {}
-      let trust = { wGbdt: 0, trusted: false, gbdtAcc: model.valAcc, gbdtAccLB: model.valAccLB, mindAcc: mindLB, source: "external", trainedAt: Date.now(), selfAcc: selfAcc != null ? +selfAcc.toFixed(4) : null, selfN: selfN, convMaxDiff: convMaxDiff != null ? +convMaxDiff.toFixed(4) : null, convN: convN,
+      let trust = { wGbdt: 0, trusted: false, gbdtAcc: model.valAcc, gbdtAccLB: model.valAccLB, mindAcc: mindLB, source: "external", featVer: LUXML.featVer, trainedAt: Date.now(), selfAcc: selfAcc != null ? +selfAcc.toFixed(4) : null, selfN: selfN, convMaxDiff: convMaxDiff != null ? +convMaxDiff.toFixed(4) : null, convN: convN,
         valN: model.valN, valNRaw: model.valNRaw, valUniq: model.valUniq };
       trust.valIC = _vIC; trust.valRankIC = _vRIC;
       trust.valN = valN;                                   // [V33.91] Fisher z 하한 계산에 필요
@@ -39183,7 +39185,21 @@ async function _luxAutoRetrainModal(env) {
     // 외부(Modal) 수신 신선도
     const S = await getStates(DB, ["mind_model", "dnn_trust", "gbdt_trust", "xgb_trust", "lgb_trust", "cat_trust"]);
     let freshestAge = Infinity, anyExt = false;
-    for (const k of Object.keys(S)) { const o = S[k]; if (o && o.source === "external" && o.trainedAt) { anyExt = true; const a = (now - o.trainedAt) / 3600000; if (a < freshestAge) freshestAge = a; } }
+    /* [V33.245] ★신선하다 ≠ 쓸 수 있다.★ 종전엔 trainedAt 만 봤다. featVer 를 올린 직후엔
+       외부 모델 전부가 "몇 시간 전 학습" 이라 freshestAge ≤ 14h 로 걸려 '정상 — 트리거 불필요'
+       가지로 빠졌다. 정작 그 모델들은 낡은 판이라 위원회에 한 명도 못 들어간다 —
+       가장 재학습이 급한 순간에 자동 재학습이 가장 확실히 잠기는 구조였다.
+       그러니 ★현재 판과 일치하는 모델만★ 신선도에 센다.
+       표기가 없는 낡은 레코드는 '모르니 통과' 가 아니라 '아니다' 로 본다(V33.231 과 같은 함정 —
+       프로덕션 레코드엔 새 필드가 없다). 헛트리거 비용은 8h 쿨다운 안의 Modal 1회뿐이다. */
+    const _wantFV = (typeof LUXML !== "undefined") ? LUXML.featVer : null;
+    let staleFV = 0;
+    for (const k of Object.keys(S)) {
+      const o = S[k];
+      if (!(o && o.source === "external" && o.trainedAt)) continue;
+      if (_wantFV != null && o.featVer !== _wantFV) { staleFV++; continue; }
+      anyExt = true; const a = (now - o.trainedAt) / 3600000; if (a < freshestAge) freshestAge = a;
+    }
     // 정상 — 트리거 불필요. [V33.235] 건너뛴 사유도 함께 지운다(지금은 아무것도 못 하고 있는 게 아니다).
     if (anyExt && freshestAge <= 14) { meta.lastOk = now; meta.freshestAgeH = +freshestAge.toFixed(1); delete meta.lastSkip; try { await setState(DB, "modal_retrain_auto", meta); } catch (e) {} return; }
     // 학습표본 충분 여부(부족하면 재학습해도 승격 안 됨 → 스킵)
@@ -39199,9 +39215,9 @@ async function _luxAutoRetrainModal(env) {
       });
       httpStatus = r.status; ok = (r.status === 204);
     } catch (e) { httpStatus = -1; }
-    meta.ts = now; meta.triggered = ok; meta.httpStatus = httpStatus; meta.freshestAgeH = isFinite(freshestAge) ? +freshestAge.toFixed(1) : null; meta.anyExt = anyExt; delete meta.lastSkip;
+    meta.ts = now; meta.triggered = ok; meta.httpStatus = httpStatus; meta.freshestAgeH = isFinite(freshestAge) ? +freshestAge.toFixed(1) : null; meta.anyExt = anyExt; meta.staleFeatVer = staleFV; delete meta.lastSkip;
     try { await setState(DB, "modal_retrain_auto", meta); } catch (e) {}
-    try { await log(DB, ok ? "INFO" : "WARN", null, "[MODAL-AUTO] 외부학습 지연 감지(최신수신 " + (isFinite(freshestAge) ? freshestAge.toFixed(1) + "h 전" : "이력없음") + ", 표본 " + nSamp + ") → 재학습 자동 트리거 " + (ok ? "성공(재배포+즉시학습)" : "실패(GitHub " + httpStatus + ")")); } catch (e) {}
+    try { await log(DB, ok ? "INFO" : "WARN", null, "[MODAL-AUTO] 외부학습 지연 감지(최신수신 " + (isFinite(freshestAge) ? freshestAge.toFixed(1) + "h 전" : "이력없음") + (staleFV ? ", featVer 낙오 " + staleFV + "종" : "") + ", 표본 " + nSamp + ") → 재학습 자동 트리거 " + (ok ? "성공(재배포+즉시학습)" : "실패(GitHub " + httpStatus + ")")); } catch (e) {}
   } catch (e) { /* silent — 자동 재트리거는 부가기능이라 실패해도 본 사이클 무영향 */ }
 }
 
@@ -42241,7 +42257,27 @@ export default {
               if (_ir) await log(env.DB, "INFO", null, _ir);
             }
           } catch (e) {}
-          const _PIPE_VER = "V33.78-label";   // 배포 시 파이프라인 1회 강제 재실행(국면·판단 즉시 재산출)   // 배포 시 파이프라인 1회 강제 재실행(신규 스키마 반영)
+          /* ══ [V33.245] ★스키마는 올랐는데 도장은 어제 것 그대로였다★ ══
+             _PIPE_VER 은 "배포하면 야간 파이프라인을 한 번 강제로 다시 돌린다" 를 위해
+             ★손으로 적는★ 상수다. 그런데 V33.78 이후 160 빌드가 넘도록 아무도 손대지 않았다.
+             손으로 적는 상수는 결국 안 적힌다 — 그게 이번에 터졌다.
+
+             V33.239 가 LUXML.featVer 를 13→14 로 올렸다(하이킨아시 4종, 65→69). 그런데
+             그날 낮 12:18 에 이미 v13 으로 학습을 마쳐 ai_stage:* 에 ★오늘 도장★ 이 찍혀
+             있었고, _stg 는 도장이 오늘이면 그냥 return 한다. 결과:
+               · 표본풀 — 캐치업 수확이 밤새 v14 로 51.7만건 재구축(설계대로 동작)
+               · 모델   — MIND·L1·BRAIN·DNN·GBDT 전부 v13 에 갇힘 → featVerOk:false
+               · 위원회 — 전원 낙마 → aiReady:false, mode=RULE_FALLBACK
+             "미학습" 이 무더기로 뜬 실체가 이것이다. 모델은 멀쩡히 있는데 판이 달라서
+             아무도 못 읽는 상태였다.
+
+             ★모델을 무효화하는 것은 '배포' 가 아니라 'featVer' 다.★ 그러니 사람의 기억이
+             아니라 featVer 에서 키를 만든다 — 어느 판이든 올라가면 그 즉시 딱 한 번
+             도장이 지워지고 파이프라인이 새 판으로 다시 완주한다. 다음에 누가 featVer 를
+             올리든, 이 줄을 고칠 필요가 없다. */
+          const _PIPE_VER = "V33.78-label|f" + LUXML.featVer + "." + LUXML.featNames.length
+            + "-flow" + FLOWML.featVer + "-xa" + XALPHA.featVer + "-st" + STACKML.featVer
+            + "-memo" + MEMOML.featVer + "-dual" + DUALHEAD.featVer + "-i" + STIN_FEATVER;
           try {
             const _pv = await getState(env.DB, "ai_pipeline_ver", null);
             if (_pv !== _PIPE_VER) {

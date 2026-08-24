@@ -262,6 +262,13 @@ jobs:
       #   표본 부족처럼 보였지만 한 칸이 빠진 것이었다. 모든 내보내기 경로의 필드를 맞춰 검사한다.
       - name: 표본 전달 검사 (종목 필드 · 스냅샷 스키마 판)
         run: node tools/check-ml-export.mjs
+      # [V33.245] featVer 를 올렸는데 모델이 안 따라온다. V33.239 가 13→14(65→69) 로 판을
+      #   올렸지만 그날 낮 v13 으로 찍힌 ai_stage 도장이 살아남아 야간 파이프라인이 잠겼고,
+      #   외부 자동 재학습은 trainedAt 만 보느라 "10.8h 전 학습" 을 신선하다고 판정했다.
+      #   결과: 표본은 51.7만건 v14 인데 MIND·DNN·GBDT 전부 v13 → 위원회 전원 낙마,
+      #   aiReady:false / RULE_FALLBACK. 판 상향이 재학습으로 이어지는지 계약으로 고정한다.
+      - name: featVer 무효화 검사 (판 상향 → 재학습 전파)
+        run: node tools/check-featver-invalidation.mjs
       # cloudflare/wrangler-action 대신 로컬에서 검증된 방식 그대로 실행
       # (wrangler-action@v3의 npx 자동설치가 4.86.0을 요구하며 실패하던 문제 회피)
       - name: Install wrangler
