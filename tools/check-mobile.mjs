@@ -472,6 +472,23 @@ console.log('⑬ 격자 행 — 짝지을 패널이 실제로 이웃인가');
   else bad('타일에 고정 높이가 없다 — 자연 높이가 제각각이면 짧은 쪽 아래가 빈다: "' + kidCss.trim() + '"');
   /* 높이를 고정했으면 넘치는 내용은 ★타일 안에서★ 볼 수 있어야 한다. 이게 없으면
      V33.240 에서 저지른 '내용 잘라내기' 가 그대로 재현된다. */
+  /* [V33.243] 사용자 지정 배치 — 셋(지정학·이슈·매매정지)은 한 줄, AI 질의는 한 줄짜리 바.
+     AI 질의가 타일에 섞여 있으면 답이 없을 때도 옆 카드 높이만큼 자리를 잡고 그 아래가 빈다. */
+  const wrapOpen = H.indexOf('class="fv-intel-wrap"');
+  const wrapSeg = wrapOpen > 0 ? H.slice(wrapOpen, H.indexOf('id="fvAiAskPanel"')) : '';
+  const inWrap = ['fvCrisisPanel', 'fvEventsPanel', 'fvKrHaltPanel'].filter(function (id) { return wrapSeg.indexOf('id="' + id + '"') >= 0; });
+  if (inWrap.length === 3) ok('타일 줄에 셋이 들어 있다(지정학·이슈·매매정지) — 한 줄에 나란히');
+  else bad('타일 줄의 구성이 셋이 아니다 — ' + inWrap.join(', '));
+  if (wrapOpen > 0 && H.indexOf('id="fvAiAskPanel"') > wrapOpen && !/fvAiAskPanel/.test(wrapSeg))
+    ok('AI 질의는 타일 줄 ★밖★ 의 한 줄짜리 바다 — 답이 없을 때 자리를 안 잡는다');
+  else bad('AI 질의가 타일 줄 안에 있다 — 옆 카드 높이만큼 자리를 잡고 그 아래가 빈다');
+  /* ★flex-direction 을 명시했는가.★ 터미널 규칙(.fv-deck>.fv-panel{flex-direction:column})이
+     먼저 걸려 있어서, row 를 안 적으면 아래 flex-basis 가 너비가 아니라 ★높이★ 로 먹는다.
+     실측에서 내용이 28px 뿐인 줄이 260px(=basis 값)로 부풀었다 — 헤드리스로 잡은 함정이다. */
+  const aiCss = (H.match(/#fvAiAskPanel\{([^}]*)\}/) || [])[1] || '';
+  if (/flex-direction:\s*row/.test(aiCss))
+    ok('AI 바가 flex-direction:row 를 명시한다 — basis 가 높이로 새지 않는다');
+  else bad('AI 바에 flex-direction 이 없다 — 상위 column 규칙 탓에 basis 가 높이가 된다: "' + aiCss.trim() + '"');
   const bodyCss = (H.match(/\.fv-intel-wrap\s*>\s*\.fv-panel\s*>\s*\*:not\(\.fv-panel-head\)\{([^}]*)\}/) || [])[1] || '';
   if (/overflow-y:\s*auto/.test(bodyCss) && /min-height:\s*0/.test(bodyCss))
     ok('넘치는 내용은 타일 안에서 스크롤된다 — 고정 높이가 내용을 자르지 않는다');
