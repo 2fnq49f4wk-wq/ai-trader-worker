@@ -2788,7 +2788,7 @@ async function applySignalTypeWeights(DB, cfg) {
 // ============================================================================
 // [V33.55] 빌드 버전 — SWR L2 캐시 키에 섞어 '배포 = 판단 캐시 자동 무효화'를 만든다.
 //   판정 로직을 고쳐도 옛 캐시가 최대 1시간 재배포되던 문제를 구조적으로 없앤다.
-const _BUILD_VER = "V33.245";
+const _BUILD_VER = "V33.246";
 
 // ═══ [V33.171] 평가 순서 계획 — ★승격과 순환을 교차해 굶주림을 구조적으로 없앤다★ ═══
 //   V33.50 의 형태트리거는 "급한 몇 종목을 앞으로 당긴다"는 의도였으나, 실제 운영로그에서는
@@ -29862,7 +29862,48 @@ async function stinBackfill(DB, opts) {
       _flushed += arr.length; _files++; arr.length = 0;
     };
     const made = [];
-    let symOk = 0, symFail = 0, skipShort = 0, skipDup = 0;
+    let symOk = 0, symFail = 0, skipShort = 0, skipDup = 0, skipClosed = 0;
+    /* ══ [V33.246] ★네이버는 '지금 세션' 밖에는 줄 것이 없다★ ══
+       실측(프로덕션 로그 27사이클, KST 06:33~08:38): KR 종목이 ★100% 실패★ 한다.
+       유니버스는 US/KR 을 번갈아 끼우므로(US 560 · KR 403) 0~805 는 교대, 806+ 는 US 전용이다.
+       그래서 각 구간의 KR 개수가 곧 실패 수여야 하는데 — 실제로 정확히 그렇다:
+         934~34(68종목) KR 17 → 실패 17      897~33(104종목) KR 16 → 실패 16
+         926~77(119종목) KR 38 → 실패 38     34~111(77종목)  KR 39 → 실패 39
+         866~934(68종목) KR  0 → 실패  0
+       추정이 아니라 동정(同定)이다. 그리고 저 로그의 시각은 전부 ★한국장 개장 전★ 이다.
+       네이버 분봉은 당일 세션만 준다 — 개장 전에는 빈 배열이라 그대로 예외가 된다.
+
+       비용이 표시보다 크다. 회차는 벽시계 25초로 끊기는데, KR 한 종목이 실패까지
+       약 300ms(1분봉 404 → 5분봉 폴백, 왕복 2회)를 쓴다. 60종목이면 ★18초★ —
+       25초 예산의 7할이 한 번도 성공한 적 없는 호출에 들어간다. 그 탓에 같은 회차에서
+       US 는 12종목밖에 못 본다(US 전용 구간에서는 68~96종목을 본다).
+       즉 이건 '실패가 좀 있다' 가 아니라 ★소급생성 처리량의 문제★ 다.
+
+       고칠 것은 '실패를 줄이는' 게 아니라 ★줄 것이 없는 시각에 묻지 않는 것★ 이다.
+       한국장 세션이 시작되기 전이면 네이버에 오늘 봉이 없고, 어제 봉은 이미 워터마크가
+       덮었다 — 어느 쪽이든 수확량은 0 이다. 건너뛰어도 잃는 표본이 없다.
+       장중~장마감 후(09:00~24:00 KST)에는 그날 세션이 살아 있으므로 그대로 훑는다.
+       주말은 새 세션이 없으므로 금요일 저녁 수확분이 마지막이다. */
+    const _krSessionLive = function () {
+      try {
+        const k = getKST(new Date());
+        return k.day >= 1 && k.day <= 5 && k.totalMin >= 540;   // 09:00 KST 개장 이후
+      } catch (e) { return true; }   // 판정 못 하면 종전대로 시도한다(막지 않는다)
+    }();
+    /* [V33.246] 실패를 세기만 하고 ★이유를 안 남겨★ 이 진단에 로그 왕복이 한 번 더 들었다.
+       무엇이 몇 번 실패했는지는 한 줄이면 되는 정보다. 상위 3종을 로그에 싣는다. */
+    const _failWhy = {};
+    const _why = function (e) {
+      let m = (e && e.message) ? String(e.message) : "unknown";
+      m = m.replace(/\s+for\s+\S+$/, "").slice(0, 40);   // 종목코드만 떼고 사유는 그대로(404 와 empty 는 다른 이야기다)
+      _failWhy[m] = (_failWhy[m] || 0) + 1;
+    };
+    const _failTop = function () {
+      const ks = Object.keys(_failWhy);
+      if (!ks.length) return "";
+      ks.sort(function (x, y) { return _failWhy[y] - _failWhy[x]; });
+      return "(" + ks.slice(0, 3).map(function (k) { return k + " " + _failWhy[k]; }).join(", ") + ")";
+    };
     // [V33.106] ★마감시한을 넣으면 회전 오프셋을 '실제로 본 종목 수' 만큼만 밀어야 한다★
     //   종전엔 picked.length 만큼 통째로 밀었다. 그땐 항상 전량을 돌았으니 맞았지만,
     //   이제 시간이 다 되면 중간에서 끊긴다 — 그대로 밀면 못 본 종목이 회전에서 통째로
@@ -29875,6 +29916,10 @@ async function stinBackfill(DB, opts) {
       _procN++;
       // [V33.72] 시장을 심볼에서 판정한다 — KR 이 대상에 들어왔으므로 "us" 고정은 오라벨이 된다.
       const _mkt = /\.(KS|KQ)$/i.test(sym) ? "kr" : "us";
+      /* [V33.246] 줄 것이 없는 시각엔 묻지 않는다(위 _krSessionLive 주석 참조).
+         ★건너뛴 것을 실패로 세지 않는다★ — 휴장은 고장이 아니고, 둘을 섞으면
+         자가진단이 정상 상태를 놓고 "모듈 실패 반복" 을 울린다(실제로 울리고 있었다). */
+      if (_mkt === "kr" && !_krSessionLive) { skipClosed++; continue; }
       const _wmTs = _num(wm[sym], 0);
       let _newWm = _wmTs;
       let mb = null;
@@ -29893,8 +29938,8 @@ async function stinBackfill(DB, opts) {
              1분봉에서는 상태에 "1mo"(1분봉이 못 쓰는 값)가 굳어져 다음 회차가 또 전멸한다. */
           _bfRange = _bfRangeAlt; _rangeProbed = true; _rangeDemoted = true;
           try { mb = await fetchMinuteBars(sym, { interval: SCALP_BAR_MIN + "m", range: _bfRange }); }
-          catch (e2) { symFail++; continue; }
-        } else { symFail++; continue; }
+          catch (e2) { symFail++; _why(e2); continue; }
+        } else { symFail++; _why(e); continue; }
       }
       if (!_rangeProbed) {
         // 응답이 실제로 길어졌는지 확인 — 200 으로 오면서 1mo 분량만 주는 경우도 걸러낸다.
@@ -30020,7 +30065,8 @@ async function stinBackfill(DB, opts) {
     await _flushChunk(made);
     const _total = _flushed;
     if (!_total) return "[ST-BACKFILL] 0건 — " + _cov +
-      " (성공 " + symOk + " 실패 " + symFail + " 짧음 " + skipShort + " 기수확 " + skipDup +
+      " (성공 " + symOk + " 실패 " + symFail + _failTop() + " 짧음 " + skipShort + " 기수확 " + skipDup +
+      (skipClosed ? " 휴장건너뜀 " + skipClosed : "") +
       ", range " + _bfRange + ")";
     try {
       const d0 = _stinDay();
@@ -30035,7 +30081,8 @@ async function stinBackfill(DB, opts) {
       }));
     } catch (e) {}
     return "[ST-BACKFILL] +" + _total + "표본(" + _files + "파일) / " + _cov +
-           " (성공 " + symOk + " 실패 " + symFail + " 짧음 " + skipShort + " 기수확 " + skipDup +
+           " (성공 " + symOk + " 실패 " + symFail + _failTop() + " 짧음 " + skipShort + " 기수확 " + skipDup +
+           (skipClosed ? " 휴장건너뜀 " + skipClosed : "") +
            ", range " + _bfRange + (_rangeDemoted ? "↓" : "") +
            ", " + (Date.now() - _t0bf) + "ms)" +
            (_wmReset ? " · 봉 길이가 바뀌어 워터마크 " + _wmReset + "종목분을 비웠다(같은 기간을 " +

@@ -269,6 +269,12 @@ jobs:
       #   aiReady:false / RULE_FALLBACK. 판 상향이 재학습으로 이어지는지 계약으로 고정한다.
       - name: featVer 무효화 검사 (판 상향 → 재학습 전파)
         run: node tools/check-featver-invalidation.mjs
+      # [V33.246] KR 종목이 소급생성에서 100% 실패하고 있었다(로그 27사이클, 잔차 4/12건).
+      #   네이버 분봉은 '지금 세션' 만 준다 — 개장 전엔 빈 배열이라 그대로 예외가 된다.
+      #   벽시계 25초 예산의 7할이 한 번도 성공한 적 없는 호출에 들어가 US 처리량을 깎았다.
+      #   세션 밖엔 부르지 않는다. 실측 재현 + 개장전/장중 실제 실행으로 무손실을 확인한다.
+      - name: KR 장중 창 검사 (헛 fetch · 휴장≠고장 · 실패 사유)
+        run: node tools/check-kr-intraday-window.mjs
       # cloudflare/wrangler-action 대신 로컬에서 검증된 방식 그대로 실행
       # (wrangler-action@v3의 npx 자동설치가 4.86.0을 요구하며 실패하던 문제 회피)
       - name: Install wrangler
