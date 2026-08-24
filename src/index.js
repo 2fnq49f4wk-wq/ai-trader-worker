@@ -2788,7 +2788,7 @@ async function applySignalTypeWeights(DB, cfg) {
 // ============================================================================
 // [V33.55] 빌드 버전 — SWR L2 캐시 키에 섞어 '배포 = 판단 캐시 자동 무효화'를 만든다.
 //   판정 로직을 고쳐도 옛 캐시가 최대 1시간 재배포되던 문제를 구조적으로 없앤다.
-const _BUILD_VER = "V33.234";
+const _BUILD_VER = "V33.235";
 
 // ═══ [V33.171] 평가 순서 계획 — ★승격과 순환을 교차해 굶주림을 구조적으로 없앤다★ ═══
 //   V33.50 의 형태트리거는 "급한 몇 종목을 앞으로 당긴다"는 의도였으나, 실제 운영로그에서는
@@ -21627,7 +21627,7 @@ async function handleRequest(request, env, ctx) {
          내용은 야간 파이프라인과 모델 학습에서만 바뀌므로 초 단위 신선도가 필요 없다.
          다른 조회들과 같은 SWR 을 태운다 — 오래됐어도 즉시 주고 갱신은 뒤에서 한다. */
       return await swrJson("ai-selfcheck", 60000, 3600000, async function () {
-        return await aiSelfCheck(env.DB);
+        return await aiSelfCheck(env.DB, env);
       });
     }
     // [V12.132] 딥이력 수집 즉시 진단/실행 — 장외 20분 락을 기다리지 않고 원인을 확인한다.
@@ -35255,7 +35255,9 @@ async function mlDataHealth(DB) {
 // [V12.64] ★자가 오류 진단★ AI 레이어 전체를 한 번에 점검해 문제(errors)·경고(warnings)를 목록화한다.
 //   "오류를 스스로 찾게" — 모델 미학습·정지·스태일·신뢰 0·위원회 불참·표본 붕괴·드리프트·클래스 퇴화를
 //   규칙으로 검출. /api/ai/selfcheck로 노출(대시보드·수동 점검). 읽기 전용(부작용 0).
-async function aiSelfCheck(DB) {
+/* [V33.235] env 를 함께 받는다 — GITHUB_TOKEN 존재 여부는 상태에 남은 부스러기가 아니라
+   ★지금 바인딩되어 있는가★ 로 답해야 한다. 상태만 믿으면 등록해도 에러가 안 사라진다. */
+async function aiSelfCheck(DB, env) {
   const R = { ts: Date.now(), errors: [], warnings: [], ok: [], models: {} };
   const nowT = Date.now();
   const ageH = function (t) { return (typeof t === "number" && t > 0) ? Math.round((nowT - t) / 3600000) : null; };
@@ -35267,8 +35269,13 @@ async function aiSelfCheck(DB) {
     try {
       const _MS = await getStates(DB, ["modal_retrain_auto", "mind_model", "dnn_trust", "gbdt_trust", "xgb_trust", "lgb_trust", "cat_trust"]);
       const _auto = _MS["modal_retrain_auto"] || {};
+      /* [V33.235] ★있는지 없는지는 바인딩에게 묻는다.★ 종전엔 상태에 남은 lastSkip 부스러기로
+         판단했는데, 그 부스러기는 '실제로 디스패치한' 가지에서만 지워졌다. 토큰을 등록해도
+         외부 학습이 신선하면 그 가지에 도달하지 못해 에러가 영원히 남는다(사용자 실측).
+         env 가 없으면(옛 호출 경로) 종전 부스러기로 물러난다 — 없던 정보를 지어내지 않는다. */
+      const _ghTok = env ? !!env.GITHUB_TOKEN : (_auto.lastSkip !== "no_github_token");
       R.modal = {
-        githubTokenSet: _auto.lastSkip !== "no_github_token",
+        githubTokenSet: _ghTok,
         lastDispatchAgeH: ageH(_auto.ts), lastDispatchOk: _auto.triggered === true, httpStatus: _auto.httpStatus || null,
         lastSkip: _auto.lastSkip || null, lastCheckAgeH: ageH(_auto.checkTs)
       };
@@ -35287,7 +35294,7 @@ async function aiSelfCheck(DB) {
       R.modal.externalModels = _extN + "/6";
       if (_extN === 0) R.errors.push("외부(Modal) 학습 산출물 0개 — 학습이 Worker 로 도달하지 않음. modal-deploy 워크플로/시크릿 확인");
       else if (_extStale.length) R.warnings.push("외부 학습 지연·누락: " + _extStale.join(", "));
-      if (_auto.lastSkip === "no_github_token") R.errors.push("GITHUB_TOKEN 미설정 — 학습 지연 시 자동 재트리거가 동작하지 않음(수동 실행만 가능)");
+      if (!_ghTok) R.errors.push("GITHUB_TOKEN 미설정 — 학습 지연 시 자동 재트리거가 동작하지 않음(수동 실행만 가능)");
     } catch (e) {}
     // [V33.20] ★D1 저장 구성 실측★ "무엇을 R2로 옮길 가치가 있나"를 추정이 아니라 숫자로 답한다.
     //   SUM(LENGTH(v))는 해당 구간의 값을 실제로 읽으므로 가볍지 않다 → 6시간 캐시로 드물게만 잰다.
@@ -39075,12 +39082,20 @@ async function _luxAutoRetrainModal(env) {
     if (meta.checkTs && (now - meta.checkTs) < 30 * 60000) return;   // 30분 재확인 스로틀(매분 부하 방지)
     meta.checkTs = now;
     if (!env.GITHUB_TOKEN) { meta.lastSkip = "no_github_token"; try { await setState(DB, "modal_retrain_auto", meta); } catch (e) {} return; }
+    /* ══ [V33.235] ★사유는 사라질 줄도 알아야 한다.★ ══
+       lastSkip 은 아래 '실제로 디스패치한' 가지에서만 지워졌다. 그런데 토큰을 등록하고 나면
+       외부 학습이 신선해져(≤14h) 그 아래 '정상 — 트리거 불필요' 가지로 빠져나가고,
+       그 가지는 lastSkip 을 건드리지 않는다. 결과적으로 ★토큰을 넣어도 화면은 영원히
+       "GITHUB_TOKEN 미설정" 을 읽는다★ — 고쳤는데 고쳐졌다고 말해 주지 않는 상태다.
+       여기까지 왔다는 것 자체가 토큰이 있다는 증거이므로, 그 사유는 지금 지운다. */
+    if (meta.lastSkip === "no_github_token") delete meta.lastSkip;
     if (meta.ts && (now - meta.ts) < 8 * 3600000) { try { await setState(DB, "modal_retrain_auto", meta); } catch (e) {} return; }   // 트리거 쿨다운 8h
     // 외부(Modal) 수신 신선도
     const S = await getStates(DB, ["mind_model", "dnn_trust", "gbdt_trust", "xgb_trust", "lgb_trust", "cat_trust"]);
     let freshestAge = Infinity, anyExt = false;
     for (const k of Object.keys(S)) { const o = S[k]; if (o && o.source === "external" && o.trainedAt) { anyExt = true; const a = (now - o.trainedAt) / 3600000; if (a < freshestAge) freshestAge = a; } }
-    if (anyExt && freshestAge <= 14) { meta.lastOk = now; meta.freshestAgeH = +freshestAge.toFixed(1); try { await setState(DB, "modal_retrain_auto", meta); } catch (e) {} return; }   // 정상 — 트리거 불필요
+    // 정상 — 트리거 불필요. [V33.235] 건너뛴 사유도 함께 지운다(지금은 아무것도 못 하고 있는 게 아니다).
+    if (anyExt && freshestAge <= 14) { meta.lastOk = now; meta.freshestAgeH = +freshestAge.toFixed(1); delete meta.lastSkip; try { await setState(DB, "modal_retrain_auto", meta); } catch (e) {} return; }
     // 학습표본 충분 여부(부족하면 재학습해도 승격 안 됨 → 스킵)
     let nSamp = 0; try { const r = await DB.prepare("SELECT COUNT(*) c FROM ml_samples WHERE featver=?").bind((typeof LUXML !== "undefined") ? LUXML.featVer : null).first(); nSamp = (r && r.c) || 0; } catch (e) {}
     if (nSamp < 200) { meta.lastSkip = "insufficient_samples:" + nSamp; try { await setState(DB, "modal_retrain_auto", meta); } catch (e) {} return; }
