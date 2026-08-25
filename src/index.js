@@ -2798,7 +2798,7 @@ async function applySignalTypeWeights(DB, cfg) {
 // ============================================================================
 // [V33.55] 빌드 버전 — SWR L2 캐시 키에 섞어 '배포 = 판단 캐시 자동 무효화'를 만든다.
 //   판정 로직을 고쳐도 옛 캐시가 최대 1시간 재배포되던 문제를 구조적으로 없앤다.
-const _BUILD_VER = "V33.255";
+const _BUILD_VER = "V33.256";
 
 // ═══ [V33.171] 평가 순서 계획 — ★승격과 순환을 교차해 굶주림을 구조적으로 없앤다★ ═══
 //   V33.50 의 형태트리거는 "급한 몇 종목을 앞으로 당긴다"는 의도였으나, 실제 운영로그에서는
@@ -21699,6 +21699,15 @@ async function handleRequest(request, env, ctx) {
       const _pgSize = 20000;
       const _off = Math.max(0, Math.floor(_num(url.searchParams.get("offset"), 0)));
       let _hasMore = false;
+      /* [V33.255] ★V33.98 의 '페이징' 은 트레이너 쪽에만 있었다.★
+         서버는 offset 을 읽어서 응답에 그대로 되비출 뿐 한 번도 쓰지 않았고,
+         _hasMore 는 false 로 선언된 뒤 어디서도 다시 대입되지 않는다. 그래서
+           · 트레이너는 첫 페이지를 받고 hasMore=false 를 보고 즉시 루프를 끝낸다
+           · 하루 표본이 60,000 을 넘으면 넘은 만큼이 조용히 사라진다
+           · 그런데 응답은 "더 없다" 고 말한다 — 잘렸다는 사실 자체가 안 보인다
+         스캔 상한도 (오프셋 + 한 페이지) 로 옮긴다. 60,000 고정이면 offset 을
+         아무리 올려도 그 벽을 못 넘는다 — 페이징을 켜도 결과가 같아진다. */
+      const _scanCap = Math.min(200000, _off + _pgSize + 1);   // +1: '더 있나' 를 알기 위한 한 건
       // [V33.110] D1 폴백 제거 — R2 가 없으면 내보낼 표본이 없다(폴백이 아니라 명시적 실패).
       if (!R2) return Response.json({ error: "R2 미바인딩 — 장중 표본 없음", samples: [], hasMore: false }, { status: 503, headers: cors });
       try {
@@ -21712,20 +21721,23 @@ async function handleRequest(request, env, ctx) {
               const j = JSON.parse(await g.text());
               for (const sm of (j.samples || [])) out.push(sm);
             } catch (e) {}
-            if (out.length > 60000) break;
+            if (out.length >= _scanCap) break;
           }
-          if (!lr.truncated || out.length > 60000) break;
+          if (!lr.truncated || out.length >= _scanCap) break;
           cursor = lr.cursor;
         }
       } catch (e) { return Response.json({ error: "R2 조회 실패: " + (e && e.message) }, { status: 500, headers: cors }); }
+      _hasMore = out.length > _off + _pgSize;
+      const _page = out.slice(_off, _off + _pgSize);
       const _sc = (typeof AI_PARAMS !== "undefined" && AI_PARAMS.aiScalp) || {};
       return Response.json({ featVer: LUXML.featVer, featNames: LUXML.featNames, day: day,
         // [V33.46] 장중 미시구조 피처 스키마 — 트레이너는 x 뒤에 ix 를 이어붙여 학습하고,
         //   업로드 시 ifeatVer 를 되돌려줘야 서버가 차원을 검증할 수 있다.
         ifeatVer: STIN_FEATVER, ifeatN: STIN_IFEAT_N, ifeatNames: STIN_IFEAT_NAMES,
-        horizonBars: STIN.horizonBars, barMin: SCALP_BAR_MIN, total: out.length,
+        horizonBars: STIN.horizonBars, barMin: SCALP_BAR_MIN, total: _page.length,
         offset: _off, hasMore: _hasMore, pageSize: _pgSize,   // [V33.98] 트레이너 페이징
-        liveEnabled: !!_sc.enabled, config: _mlExportConfig(), samples: out }, { headers: cors });
+        scanned: out.length,                                  // [V33.255] 이번 스캔에서 본 건수
+        liveEnabled: !!_sc.enabled, config: _mlExportConfig(), samples: _page }, { headers: cors });
     }
 
     // POST /api/dnn-import — 외부에서 학습한 3M 가중치 업로드 → 검증 → 청크저장 → 신뢰게이트 갱신.

@@ -87,10 +87,16 @@ jobs:
               # ★타임아웃과 HTTP 오류를 구분해 적는다★ — 브라우저의 "Load failed" 가 못 하던 일이다.
               printf '%-24s  curl실패 rc=%s%s\n' "$p" "$RC" "$([ "$RC" = "28" ] && echo '  ← 타임아웃(느림)')" >> probe.txt
             else
-              set -- $OUT
-              printf '%-24s  HTTP %s  %ss  %s bytes\n' "$p" "$1" "$2" "$3" >> probe.txt
+              # ★여기가 오래 틀려 있었다.★ 루프 위에서 IFS=',' 를 걸어둔 채라
+              #   `set -- $OUT` 이 공백이 아니라 쉼표로 쪼갠다 — curl 이 준 "200 1.2 3456" 이
+              #   통째로 $1 에 들어가고 $2·$3 은 빈다. 그래서 출력이 "HTTP 200 1.2 3456  s   bytes"
+              #   처럼 깨져 나왔고, 상태코드 비교도 전부 거짓이 된다. 여기서만 IFS 를 되돌린다.
+              CODE=$(IFS=' '; set -- $OUT; echo "$1")
+              SECS=$(IFS=' '; set -- $OUT; echo "$2")
+              SIZE=$(IFS=' '; set -- $OUT; echo "$3")
+              printf '%-24s  HTTP %s  %ss  %s bytes\n' "$p" "$CODE" "$SECS" "$SIZE" >> probe.txt
               # 본문을 실을 때는 ★읽을 수 있게★ 싣는다 — JSON 한 줄이면 눈으로 못 읽는다.
-              if [ "${DUMP:-0}" != "0" ] && [ "$1" = "200" ]; then
+              if [ "${DUMP:-0}" != "0" ] && [ "$CODE" = "200" ]; then
                 {
                   echo ""
                   echo "── $p ──"

@@ -315,6 +315,13 @@ jobs:
       #   평가기 본문에서 실제로 내보내는 이름을 뽑아 양방향으로 대조한다.
       - name: 신호 대장 검사 (허구 이름 금지 · 살아 있는 신호는 전부 등재)
         run: node tools/check-signal-registry.mjs
+      # [V33.255] 단타 학습이 featVer 를 올릴 때마다 죽고 있었다 —
+      #   장중 표본은 기록 시점의 featVer 로 저장되는데 트레이너가 x 의 폭을 안 쟀다
+      #   (ix 는 재면서). np.array 가 inhomogeneous shape 로 죽고, 스윙은 멀쩡하니
+      #   화면엔 아무 표시도 안 난다. 겸사겸사 V33.98 의 '페이징' 도 확인한다 —
+      #   서버는 offset 을 되비추기만 했고 hasMore 는 false 로 굳어 있었다.
+      - name: 단타 표본 폭·페이징 검사 (오류 재현 · 누락/중복 0)
+        run: node tools/check-scalp-featdim.mjs
       # cloudflare/wrangler-action 대신 로컬에서 검증된 방식 그대로 실행
       # (wrangler-action@v3의 npx 자동설치가 4.86.0을 요구하며 실패하던 문제 회피)
       - name: Install wrangler

@@ -1530,6 +1530,17 @@ def _train_and_upload_scalp(BASE, KEY, HDR, featver):
     MAE = []                                   # [V33.120] |최대역행| / 배리어폭 — 경로 품질
     ifeatver, ifeatn, ifeatnames = None, 0, []
     skipped_old = 0
+    # [V33.255] ★일봉 피처 x 의 폭은 아무도 검사하지 않고 있었다.★
+    #   ix 는 fv/ifeatn 으로 걸러내면서 x 는 그대로 통과시켰다. 그런데 R2 의 장중 표본은
+    #   ★만들어진 시점의 LUXML.featVer 로 기록된다.★ featVer 가 65→69 로 오르면 같은 날짜
+    #   버킷 안에 65칸짜리와 69칸짜리가 섞이고, np.array 가 그 자리에서 죽는다:
+    #     ValueError: setting an array element with a sequence.
+    #     The requested array has an inhomogeneous shape after 1 dimensions.
+    #     The detected shape was (8293,) + inhomogeneous part.
+    #   그래서 featVer 를 올릴 때마다 단타 학습이 조용히 멈췄다(스윙은 멀쩡하니 안 보인다).
+    #   서버가 응답에 featNames 로 ★지금의 폭★ 을 알려주므로 그것에 맞추면 된다.
+    xn = 0
+    skipped_xdim = 0
     # [V33.72] 같은 (종목, 봉시각) 표본은 한 번만 쓴다.
     #   백필이 전 종목을 회전하며 도는데 야후 5분봉은 1개월 롤링 창이라, 워터마크가 없던
     #   시기에 만들어진 파일에는 같은 봉이 여러 번 들어있을 수 있다. 사본이 섞이면
@@ -1555,6 +1566,8 @@ def _train_and_upload_scalp(BASE, KEY, HDR, featver):
             if ifeatver is None:
                 ifeatver = j.get("ifeatVer"); ifeatn = int(j.get("ifeatN") or 0)
                 ifeatnames = j.get("ifeatNames") or []
+            if not xn:
+                xn = len(j.get("featNames") or [])
             _batch = j.get("samples", []) or []
             _page_samples.extend(_batch)
             if not j.get("hasMore"):
@@ -1564,6 +1577,9 @@ def _train_and_upload_scalp(BASE, KEY, HDR, featver):
             for sm in _page_samples:
                 x = sm.get("x")
                 if not isinstance(x, list):
+                    continue
+                if xn and len(x) != xn:
+                    skipped_xdim += 1     # 옛 featVer 로 기록된 표본 — 폭이 달라 섞을 수 없다
                     continue
                 ix = sm.get("ix")
                 if ifeatver and (not isinstance(ix, list) or len(ix) != ifeatn or sm.get("fv") != ifeatver):
@@ -1590,6 +1606,7 @@ def _train_and_upload_scalp(BASE, KEY, HDR, featver):
     N = len(Y)
     print(f"⑧ 단타(장중) 학습 — 표본 {N}건 / 최근 {days}일"
           + (f" (구스키마 {skipped_old}건 제외)" if skipped_old else "")
+          + (f" (일봉피처 폭 불일치 {skipped_xdim}건 제외 / 기준 {xn}칸)" if skipped_xdim else "")
           + (f" (중복 {dup_drop}건 제외)" if dup_drop else "")
           + (f" / 장중피처 v{ifeatver}×{ifeatn}" if ifeatver else " / 장중피처 없음"))
     # [V33.98] 워커의 신뢰 문턱이 n>=3000 이다. 1500 에서 학습해 올리면 서버가 무조건
@@ -1597,6 +1614,12 @@ def _train_and_upload_scalp(BASE, KEY, HDR, featver):
     if N < 3000:
         print(f"   표본 부족({N}/3000) — 생략. 더 쌓이면 자동으로 학습된다."); return
 
+    # ★여기가 종전에 죽던 자리다.★ 위 필터를 뚫고도 폭이 어긋나면 역추적 불가능한
+    #   ValueError 대신 무엇이 몇 칸이었는지를 남기고 멈춘다 — 다음 사람이 로그만 보고 안다.
+    _w = sorted({len(r) for r in X})
+    if len(_w) != 1:
+        from collections import Counter
+        print(f"   ✗ 표본 폭이 섞였다 {dict(Counter(len(r) for r in X))} — 기준 {xn}칸. 생략."); return
     X = np.array(X, dtype=np.float64); Y = np.array(Y, dtype=int); TS = np.array(TS)
     PNL = np.array(PNL, dtype=np.float64)
     BAR = np.array(BAR); HM = np.array(HM, dtype=np.float64)
