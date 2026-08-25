@@ -68,6 +68,18 @@ console.log("② 배선 — 라벨 함수가 피처를 받는가 · 비선형이
   chk(/const thr = _dualThrPct\(featVec\)/.test(dh), "두 헤드가 정규화된 문턱을 쓴다", "절대 문턱이 그대로다");
   chk(M.DUALHEAD.featVer >= 2, "featVer 를 올렸다(" + M.DUALHEAD.featVer + ") — 라벨의 뜻이 바뀌었다",
     "판을 안 올렸다 — 옛 라벨 표본·모델과 섞인다");
+  /* [V33.252] ★비선형을 켜면 창 크기가 메모리 계약이 된다.★
+     V33.251 을 그대로 배포했더니 train-now dual 이 HTTP 503 ×4 로 워커를 죽였다
+     (60000행 × 69 의 X+Z 두 벌 위에 GBDT 구간배열·MLP 가 얹혀 128MB 를 넘겼다).
+     STACK 은 같은 기계를 쓰지만 표본이 9,691건이라 창 40000 에 닿은 적이 없다 —
+     같은 설정이 전혀 다른 부하였다. 창과 비선형은 짝으로 움직여야 한다. */
+  chk(M.DUALHEAD.trainWindow <= 24000,
+    "비선형을 켠 창이 " + M.DUALHEAD.trainWindow + "행 — 요청당 128MB 안에서 도는 크기",
+    "창이 " + M.DUALHEAD.trainWindow + "행이다 — 비선형과 함께면 워커가 503 으로 죽는다(실측)");
+  chk(M.DUALHEAD.trainWindow >= M.DUALHEAD.minTrainSamples * 8,
+    "그래도 최소표본(" + M.DUALHEAD.minTrainSamples + ")의 " +
+      Math.floor(M.DUALHEAD.trainWindow / M.DUALHEAD.minTrainSamples) + "배는 된다",
+    "창을 너무 줄여 학습할 표본이 없다");
   // 비선형 경합은 '이겨야 채택' 이다 — 공짜로 주는 게 아닌지 확인
   chk(/const _cand = \[_mk\("lin", _linP\)\]/.test(S),
     "선형이 기본 후보로 남아 있다(비선형이 못 이기면 선형 채택)",
