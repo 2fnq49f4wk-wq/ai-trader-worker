@@ -288,6 +288,12 @@ jobs:
       #   고유도는 정상값이다. 학습이 감당할 크기와 평가가 필요한 크기를 분리한다.
       - name: MIND 평가표본 검사 (학습창≠평가창 · FM CPU 중립 · 자 휘기 금지)
         run: node tools/check-mind-eval-size.mjs
+      # [V33.249] 위원장(MIND)을 FM 에서 트리로 교체. FM 은 GPU 완전수렴(시드 6 · 검증 51,800행
+      #   · 유효 3,555)에서도 47.9% 였고, 같은 표본 같은 날 트리는 53.5~54.2%(IC t 2.5~4.7)였다.
+      #   CPU·수렴이 아니라 모델 형태가 안 맞는 것이다. 자리·안전장치는 그대로 두고 내용물만 바꾼다.
+      #   합성 트리를 실제로 위원장 슬롯에 넣고 채점해 트리 확률과 일치하는지 확인한다.
+      - name: 트리 위원장 검사 (실채점 일치 · 안전장치 동등 · 사본 금지)
+        run: node tools/check-mind-tree.mjs
       # cloudflare/wrangler-action 대신 로컬에서 검증된 방식 그대로 실행
       # (wrangler-action@v3의 npx 자동설치가 4.86.0을 요구하며 실패하던 문제 회피)
       - name: Install wrangler

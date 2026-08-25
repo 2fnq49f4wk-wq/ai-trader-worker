@@ -548,11 +548,26 @@ def train_job(epochs: int = EPOCHS_DEFAULT, dry: bool = False,
             _train_per_market(BASE, KEY, HDR, MKT, X, Y, TS, PNL, featver, D, UNIQ)
         except Exception as e:
             print("시장별 분리학습 예외(무시):", e)
-        print("⑦ MIND(FM) 외부학습 — 위원장 모델 GPU 완전수렴")
+        # ── [V33.249] ⑦ 위원장(MIND) — FM 에서 ★트리★ 로 교체 ──────────────────
+        #   실측(2026-08-25, 표본 518,004): FM 은 GPU 완전수렴(K=8 · 시드 6 · 검증 51,800행
+        #   · 유효 3,555)에서도 valAcc 47.9% / 하한 46.6% 로 trustFloor(50.5%)를 못 넘었다.
+        #   같은 표본 같은 날 트리들은 53.5~54.2%(IC t 2.5~4.7)다. CPU·수렴 문제가 아니라
+        #   ★모델 형태가 이 과제에 안 맞는 것★ 이다. 위원장 자리는 두고 내용물을 바꾼다.
+        #
+        #   ★gbdt_model 의 사본이 되면 안 된다.★ 같은 설정·같은 시드면 위원회에 같은 의견이
+        #   두 표 들어가고, 결합의 전제인 다양성이 사라진다. 더 깊고(6) 더 느리게(0.02)
+        #   더 적게 뽑아(sub/col 0.7) 다른 시드로 돌린다 — 같은 학습기, 다른 관점.
+        print("⑦ MIND(위원장) 외부학습 — 트리 앙상블 (V33.249: FM 47.9% → 트리로 교체)")
         try:
-            _train_and_upload_fm(BASE, KEY, HDR, X, Y, TS, PNL, featver, D, UNIQ)
+            _train_and_upload_gbdt(BASE, KEY, HDR, X, Y, TS, featver, D, UNIQ,
+                                   endpoint="/api/mind-import", tag="MIND(tree)",
+                                   hp={"eta": 0.02, "depth": 6, "sub": 0.7, "col": 0.7,
+                                       "trees": 800, "minchild": 8.0, "seed": 77003,
+                                       "algo": "gbdt-deep"})
         except Exception as e:
-            print("FM(MIND) 학습/업로드 예외(무시):", e)
+            print("MIND(트리) 학습/업로드 예외(무시):", e)
+        # FM 은 더 이상 위원장 슬롯을 차지하지 않는다. 참고 지표로도 남기지 않는다 —
+        # 47.9% 짜리를 매일 2분씩 GPU 로 다시 확인할 이유가 없다(필요하면 이 줄을 되살린다).
         # [V33.41] 장중 단타 모델 — 표본 소스·라벨 지평·업로드 슬롯이 전부 위원회와 분리돼 있어
         #   여기서 실패해도 위 스윙 모델들에는 영향이 없다(그래서 맨 마지막에, 예외도 삼킨다).
         try:
@@ -590,7 +605,10 @@ def train_job(epochs: int = EPOCHS_DEFAULT, dry: bool = False,
 #   leaf w = -G/(H+λ). 여기선 그 포맷을 그대로 산출한다(독립 모델 — Worker가 채점만 하면 됨).
 #   기본 업로드는 섀도우(비활성) — Worker가 자체 표본으로 self-검증 후 수동 승격(?activate=1).
 # ============================================================================
-def _train_and_upload_gbdt(BASE, KEY, HDR, X, Y, TS, featver, D, UNIQ=None):
+def _train_and_upload_gbdt(BASE, KEY, HDR, X, Y, TS, featver, D, UNIQ=None,
+                           endpoint="/api/gbdt-import", tag="GBDT", hp=None):
+    """[V33.249] endpoint/tag/hp 를 받아 ★같은 학습기★ 를 위원장 슬롯에도 쓴다.
+       코드를 복제하지 않는다 — 복제하면 한쪽만 고쳐지는 날이 반드시 온다."""
     import numpy as np, math, json, time, requests
     # [V32.9] GBDT 강화: 학습률↓+트리↑(저LR·다트리=일반화 향상, 표준 부스팅 정석) + 행/열 서브샘플
     #   (stochastic GBDT — 과적합↓·일반화↑). 표(tabular) 금융데이터엔 딥넷보다 GBDT가 보통 강함.
@@ -599,10 +617,18 @@ def _train_and_upload_gbdt(BASE, KEY, HDR, X, Y, TS, featver, D, UNIQ=None):
     ETA, MAXDEPTH, LAM, GAMMA, MINCHILD = 0.03, 4, 1.0, 0.1, 5.0
     MAXBINS, MAXTREES, PATIENCE, VALFRAC = 64, 600, 50, 0.2
     SUBSAMPLE, COLSAMPLE = 0.8, 0.8
-    rng = np.random.default_rng(12345)
+    _seed = 12345
+    if hp:
+        # 위원장 슬롯은 ★다른 설정·다른 시드★ 로 돌린다 — 같은 값이면 gbdt_model 의 사본일 뿐이고
+        # 위원회에 같은 의견이 두 표 들어간다. 다양성이 결합의 전제다.
+        ETA = hp.get("eta", ETA); MAXDEPTH = hp.get("depth", MAXDEPTH)
+        SUBSAMPLE = hp.get("sub", SUBSAMPLE); COLSAMPLE = hp.get("col", COLSAMPLE)
+        MAXTREES = hp.get("trees", MAXTREES); MINCHILD = hp.get("minchild", MINCHILD)
+        _seed = hp.get("seed", _seed)
+    rng = np.random.default_rng(_seed)
     N = len(Y)
     if N < 400:
-        print(f"GBDT: 표본 부족 {N} — 생략"); return
+        print(f"{tag}: 표본 부족 {N} — 생략"); return
     order = np.argsort(TS)
     Xs = X[order].astype(np.float64); Ys = Y[order].astype(np.float64)
     nval = max(200, int(N * VALFRAC))
@@ -611,7 +637,7 @@ def _train_and_upload_gbdt(BASE, KEY, HDR, X, Y, TS, featver, D, UNIQ=None):
     UWva = _uw_pick(UNIQ, N, order[-nval:])
     Ntr = len(Ytr)
     if Ntr < 200:
-        print("GBDT: train 부족 — 생략"); return
+        print(f"{tag}: train 부족 — 생략"); return
     pos = float(Ytr.sum()); neg = Ntr - pos
     wPos = Ntr / (2 * pos) if pos > 0 else 1.0
     wNeg = Ntr / (2 * neg) if neg > 0 else 1.0
@@ -719,22 +745,23 @@ def _train_and_upload_gbdt(BASE, KEY, HDR, X, Y, TS, featver, D, UNIQ=None):
     model = {"trees": trees, "eta": ETA, "bias": float(bias), "valAcc": round(vacc, 4),
              "valAccLB": round(vlb, 4), "valN": int(nval), "n": int(N), "featVer": featver, "probe": probe}
     model.update(_uniq_fields(UWva))
-    print(f"GBDT: trees={len(trees)} valAcc={vacc:.3f} lb={vlb:.3f} (유효 {_neff}/{nval}) → 업로드(activate)")
+    if hp and hp.get("algo"): model["algo"] = hp["algo"]
+    print(f"{tag}: trees={len(trees)} valAcc={vacc:.3f} lb={vlb:.3f} (유효 {_neff}/{nval}) → 업로드(activate)")
     for attempt in range(4):
         try:
             # [V32.15] activate=1 — sane(변환정합)+trustFloor 통과 시 라이브 승격(DNN과 동일 정책).
-            r = requests.post(BASE + "/api/gbdt-import", params={"key": KEY, "activate": "1"}, headers=HDR,
+            r = requests.post(BASE + endpoint, params={"key": KEY, "activate": "1"}, headers=HDR,
                               data=json.dumps(model), timeout=180)
             if r.status_code == 200:
-                print("GBDT 업로드 OK:", json.dumps(r.json(), ensure_ascii=False)); return
+                print(f"{tag} 업로드 OK:", json.dumps(r.json(), ensure_ascii=False)); return
             b = r.text[:300]
             if r.status_code >= 500 and (("D1" in b) or ("overloaded" in b) or ("queued" in b)) and attempt < 3:
-                print(f"GBDT 업로드 D1 과부하 — 30s 후 재시도 {attempt+1}/3"); time.sleep(30); continue
-            print("GBDT 업로드 실패:", r.status_code, b); return
+                print(f"{tag} 업로드 D1 과부하 — 30s 후 재시도 {attempt+1}/3"); time.sleep(30); continue
+            print(f"{tag} 업로드 실패:", r.status_code, b); return
         except requests.exceptions.ReadTimeout:
             if attempt < 3:
-                print(f"GBDT 업로드 타임아웃 — 20s 후 재시도 {attempt+1}/3"); time.sleep(20); continue
-    print("GBDT 업로드 최종 실패")
+                print(f"{tag} 업로드 타임아웃 — 20s 후 재시도 {attempt+1}/3"); time.sleep(20); continue
+    print(f"{tag} 업로드 최종 실패")
 
 
 # ============================================================================

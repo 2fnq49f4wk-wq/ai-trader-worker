@@ -2788,7 +2788,7 @@ async function applySignalTypeWeights(DB, cfg) {
 // ============================================================================
 // [V33.55] 빌드 버전 — SWR L2 캐시 키에 섞어 '배포 = 판단 캐시 자동 무효화'를 만든다.
 //   판정 로직을 고쳐도 옛 캐시가 최대 1시간 재배포되던 문제를 구조적으로 없앤다.
-const _BUILD_VER = "V33.248";
+const _BUILD_VER = "V33.249";
 
 // ═══ [V33.171] 평가 순서 계획 — ★승격과 순환을 교차해 굶주림을 구조적으로 없앤다★ ═══
 //   V33.50 의 형태트리거는 "급한 몇 종목을 앞으로 당긴다"는 의도였으나, 실제 운영로그에서는
@@ -19839,11 +19839,14 @@ async function handleRequest(request, env, ctx) {
             "SELECT " +
             " (SELECT json_extract(v,'$.featVer') FROM state WHERE k='mind_model') mfv," +
             " (SELECT json_type(v,'$.fm')         FROM state WHERE k='mind_model') mfm," +
+            // [V33.249] 코어가 트리인 위원장도 '저장됨' 으로 판정해야 한다(본문은 읽지 않는다).
+            " (SELECT json_array_length(v,'$.trees') FROM state WHERE k='mind_model') mtrees," +
             " (SELECT json_type(v,'$.meta')       FROM state WHERE k='mind_model') mmeta," +
             " (SELECT json_extract(v,'$.featVer') FROM state WHERE k='gbdt_model') gfv," +
             " (SELECT json_array_length(v,'$.trees') FROM state WHERE k='gbdt_model') gtrees"
           ).first();
-          mindOk = !!(_probe && _probe.mfv === LUXML.featVer && _probe.mfm && _probe.mmeta);
+          mindOk = !!(_probe && _probe.mfv === LUXML.featVer && _probe.mmeta &&
+                      (_probe.mfm || _num(_probe.mtrees, 0) > 0));
           // featVer 정합은 메타로 판정 — 본문을 읽지 않는다(구모델 오판 방지는 그대로 유지).
           dnnOk = !!(_dt && _dt.trusted && _dMeta && (_dMeta.chunks > 0 || _dMeta.r2) &&
                      (typeof _dMeta.featVer !== "number" || _dMeta.featVer === LUXML.featVer));
@@ -21613,6 +21616,84 @@ async function handleRequest(request, env, ctx) {
               (_rec.models.join("/") || "미기재") + ") — 이 구간은 누출없이 채점할 수 있다"); } catch (e) {}
       return Response.json({ ok: true, window: _rec }, { headers: cors });
     }
+    /* ══ [V33.249] POST /api/mind-import — 위원장 슬롯에 ★트리 앙상블★ 을 올린다 ══
+       FM 은 GPU 완전수렴에서도 47.9% 였다(시드 6 · 검증 51,800행 · 유효 3,555).
+       같은 표본 같은 날 트리는 53.5~54.2%(IC t 2.5~4.7). 자리는 두고 내용물을 바꾼다.
+       ★안전장치는 FM 경로와 똑같이 건다★ — 위원장은 신뢰게이트가 없는 자리라
+       (1) 변환정합 probe ≤0.03 과 (2) valAccLB ≥ trustFloor 둘 다 통과해야 승격한다.
+       V33.14 가 바로 이 probe 로 표준화 불일치(conv 0.6265)를 잡아냈다. */
+    if (path === "/api/mind-import" && request.method === "POST") {
+      const au = _trainAuthed(); if (!au.ok) return Response.json({ error: au.msg }, { status: au.code, headers: cors });
+      let body; try { body = await request.json(); } catch (e) { return Response.json({ error: "bad json" }, { status: 400, headers: cors }); }
+      if (_num(body.featVer, -1) !== LUXML.featVer) return Response.json({ error: "featVer 불일치 (서버 " + LUXML.featVer + ")" }, { status: 400, headers: cors });
+      if (!Array.isArray(body.trees) || !body.trees.length) return Response.json({ error: "trees 없음" }, { status: 400, headers: cors });
+      const _D = LUXML.featNames.length;
+      // 트리 구조 검증 — gbdt-import 와 같은 기준(잎 {w} / 분기 {f,t,l,r}, 피처 인덱스 범위, 깊이 상한).
+      const _validTree = function (node, depth) {
+        if (!node || typeof node !== "object" || depth > 24) return false;
+        if (node.w !== undefined) return isFinite(node.w);
+        if (!(typeof node.f === "number" && node.f >= 0 && node.f < _D)) return false;
+        if (typeof node.t !== "number" || !isFinite(node.t)) return false;
+        return _validTree(node.l, depth + 1) && _validTree(node.r, depth + 1);
+      };
+      for (let i = 0; i < body.trees.length; i++) {
+        if (!_validTree(body.trees[i], 0)) return Response.json({ error: "트리 " + i + " 구조 불일치" }, { status: 400, headers: cors });
+      }
+      const _mAcc = _clamp(_num(body.valAcc, 0), 0, 1);
+      const _mvn = _importedValN(body, 30);
+      const _mN = _mvn.n;
+      const _mLB = (body.valAccLB != null) ? _clamp(_num(body.valAccLB, 0), 0, 1) : _wilsonLB(_mAcc, _mN);
+      const _core = { trees: body.trees, eta: _num(body.eta, GBDT.eta), bias: _num(body.bias, 0) };
+      // 변환정합 probe — 워커의 트리 스코어러가 학습기 확률을 재현하는가.
+      let _cMax = null, _cN = 0;
+      try {
+        if (Array.isArray(body.probe) && body.probe.length) {
+          let md = 0, cnt = 0;
+          for (const pr of body.probe) {
+            if (!pr || !Array.isArray(pr.x) || pr.x.length !== _D || typeof pr.p !== "number") continue;
+            const sc = mlGBDTScore(_core, pr.x.map(function (t) { return _num(t, 0); }));
+            if (sc == null) continue;
+            const dd = Math.abs(sc - pr.p); if (dd > md) md = dd; cnt++;
+          }
+          if (cnt > 0) { _cMax = md; _cN = cnt; }
+        }
+      } catch (e) {}
+      const _cOK = (_cMax == null) || (_cMax <= 0.03);
+      const _mSane = _cOK && _mLB >= MIND.trustFloor;
+      const _mAct = url.searchParams.get("activate") === "1";
+      const _mPromote = _mAct && _mSane;
+      /* 트리단독 위원장 조립 — experts=["tree"], meta 항등(w=[1],b=0).
+         mlMindScore 는 코어 로짓을 항상 밀어 넣고 l1/ens 는 experts 목록으로만 켠다 —
+         목록이 ["tree"] 면 코어 하나뿐이므로 e.length 1 = meta.w.length 1 로 맞는다. */
+      const _mindTree = { trees: _core.trees, eta: _core.eta, bias: _core.bias,
+        meta: { w: [1], b: 0 }, experts: ["tree"],
+        featVer: LUXML.featVer, n: Math.max(0, Math.floor(_num(body.n, 0))),
+        valAcc: +_mAcc.toFixed(4), valAccLB: +_mLB.toFixed(4), valN: _mN,
+        valNRaw: _mvn.raw, valUniq: _mvn.uniq, nTrees: _core.trees.length,
+        leakFree: true, fmAcc: +_mAcc.toFixed(4), ruleAcc: null, ruleAccLB: null, ruleN: 0, ruleTau: 0.5,
+        algo: (typeof body.algo === "string" ? body.algo.slice(0, 24) : "tree"),
+        source: "external", trainedAt: Date.now() };
+      try {
+        if (_mPromote) {
+          await setState(env.DB, "mind_model", _mindTree);
+          await setState(env.DB, "mind_guard", { live: [], distrust: false, baseAcc: +_mAcc.toFixed(4) });
+        } else {
+          await setState(env.DB, "mind_tree_ext", _mindTree);
+        }
+      } catch (e) { return Response.json({ error: "저장 실패: " + (e && e.message) }, { status: 500, headers: cors }); }
+      try {
+        await log(env.DB, "INFO", null, "[MIND-EXT] 트리 위원장 외부업로드 trees=" + _core.trees.length +
+          " valAcc=" + (_mAcc * 100).toFixed(1) + "%(하한 " + (_mLB * 100).toFixed(1) + "%, 유효 " + _mN + "/" + _mvn.raw + ")" +
+          (_cMax != null ? " conv=" + _cMax.toFixed(4) + "/" + _cN : "") +
+          " → " + (_mPromote ? "라이브 위원장 승격" : "섀도우 저장" + (_mAct && !_mSane ? "(정합/바닥 미달)" : "")));
+      } catch (e) {}
+      return Response.json({ ok: true, activated: _mPromote, shadow: !_mPromote, sane: _mSane,
+        valAcc: +_mAcc.toFixed(4), valAccLB: +_mLB.toFixed(4), valN: _mN, nTrees: _core.trees.length,
+        convMaxDiff: _cMax != null ? +_cMax.toFixed(4) : null, convN: _cN,
+        note: _mPromote ? "외부 트리로 MIND(위원장)가 가동됩니다"
+                        : (_mAct && !_mSane ? "정합/검증바닥 미달 — 섀도우 유지" : "섀도우 저장 완료") }, { headers: cors });
+    }
+
     if (path === "/api/fm-import" && request.method === "POST") {
       const au = _trainAuthed(); if (!au.ok) return Response.json({ error: au.msg }, { status: au.code, headers: cors });
       let body; try { body = await request.json(); } catch (e) { return Response.json({ error: "bad json" }, { status: 400, headers: cors }); }
@@ -31993,7 +32074,14 @@ async function mlMindTrainNightly(DB) {
 }
 
 async function mlMindLoad(DB) {
-  try { const m = await getState(DB, "mind_model", null); if (!m || m.featVer !== LUXML.featVer || !m.fm || !m.meta) return null; return m; } catch (e) { return null; }
+  /* [V33.249] 위원장의 ★코어 학습기★ 는 FM 이거나 트리앙상블이다.
+     FM 은 GPU 완전수렴(시드 6 · 검증 51,800행 · 유효 3,555)에서도 47.9% 였다 —
+     같은 표본에서 트리는 53.5~54.2%(IC t 2.5~4.7). 모델 형태가 이 과제에 안 맞는 것이지
+     자원이 부족했던 게 아니다. 자리는 그대로 두고 내용물을 바꾼다. */
+  try { const m = await getState(DB, "mind_model", null);
+    if (!m || m.featVer !== LUXML.featVer || !m.meta) return null;
+    if (!m.fm && !(Array.isArray(m.trees) && m.trees.length)) return null;
+    return m; } catch (e) { return null; }
 }
 
 // 스태킹 결합확률 + 불확실성(앙상블에서 차용)
@@ -32003,10 +32091,15 @@ async function mlMindScore(DB, mind, featVec, ensCache) {
     let l1 = null, ens = ensCache;
     try { if (mind.experts.indexOf("l1") !== -1) l1 = await mlLoadModel(DB); } catch (e) {}
     if (ens === undefined) { try { ens = (mind.experts.indexOf("ens") !== -1) ? await mlBrainLoad(DB) : null; } catch (e) { ens = null; } }
-    const z = _mindStd(featVec.map(function (v) { return _num(v, 0); }), mind.mean, mind.std);
+    /* [V33.249] 코어가 트리면 z 표준화가 필요 없다(트리는 원피처를 그대로 가른다).
+       FM 일 때만 z 를 만든다 — 트리 MIND 에는 mean/std 가 아예 없으므로 미리 부르면 안 된다. */
+    const _isTree = !mind.fm && Array.isArray(mind.trees) && mind.trees.length > 0;
+    const z = _isTree ? null : _mindStd(featVec.map(function (v) { return _num(v, 0); }), mind.mean, mind.std);
+    const _corePos = _isTree ? mlGBDTScore(mind, featVec) : _sigmoid(_fmRaw(mind.fm, z));
+    if (_corePos == null) return null;
     const e = [];
     if (mind.experts.indexOf("l1") !== -1) e.push(_logit(l1 ? mlScore(l1, featVec) : 0.5));
-    e.push(_logit(_clamp(_sigmoid(_fmRaw(mind.fm, z)), 1e-4, 1 - 1e-4)));
+    e.push(_logit(_clamp(_corePos, 1e-4, 1 - 1e-4)));
     let unc = 0;
     if (mind.experts.indexOf("ens") !== -1) { const sc = ens ? mlBrainScore(ens, featVec) : null; e.push(_logit(sc ? sc.p : 0.5)); unc = sc ? sc.uncertainty : 0; }
     const p = (e.length === mind.meta.w.length) ? _metaPredict(mind.meta, e) : _clamp(_sigmoid(e[e.length - 1]), 0.001, 0.999);
@@ -32866,18 +32959,30 @@ async function mlMindVizData(DB) {
       let _sn = 0; try { const _r = await DB.prepare("SELECT COUNT(*) c FROM ml_samples WHERE featver=?").bind(LUXML.featVer).first(); _sn = (_r && _r.c) || 0; } catch (e) {}
       return { kind: "mind", trained: false, samples: _sn, minTrainSamples: MIND.minTrainSamples, featVer: LUXML.featVer, featNames: fn, inputFeatures: _if, topFeatures: _if.slice(0, 20) };
     }
-    const D = fn.length, K = m.fm.K;
-    // 피처 영향도 = |선형항 w| + 인수분해항 V행의 L2노름(상호작용 기여) — 둘을 합쳐 0~1 정규화.
+    const D = fn.length, K = m.fm ? m.fm.K : null;
     const raw = new Array(D).fill(0);
-    for (let j = 0; j < D; j++) {
-      let vnorm = 0; for (let f = 0; f < K; f++) vnorm += m.fm.V[j][f] * m.fm.V[j][f];
-      raw[j] = Math.abs(m.fm.w[j]) + Math.sqrt(vnorm);
+    if (m.fm) {
+      // 피처 영향도 = |선형항 w| + 인수분해항 V행의 L2노름(상호작용 기여) — 둘을 합쳐 0~1 정규화.
+      for (let j = 0; j < D; j++) {
+        let vnorm = 0; for (let f = 0; f < K; f++) vnorm += m.fm.V[j][f] * m.fm.V[j][f];
+        raw[j] = Math.abs(m.fm.w[j]) + Math.sqrt(vnorm);
+      }
+    } else {
+      /* [V33.249] 트리 위원장의 영향도 — 그 피처로 가른 횟수를 센다(얕은 분할일수록 크게).
+         FM 의 |w|+‖V‖ 와 같은 자는 아니지만, 화면이 묻는 것("무엇을 보고 판단하나")에는
+         같은 방식으로 답한다. 정규화가 0~1 이라 두 형태를 나란히 읽을 수 있다. */
+      const walk = function (nd, depth) {
+        if (!nd || nd.f === undefined) return;
+        if (nd.f >= 0 && nd.f < D) raw[nd.f] += 1 / (1 + depth);
+        walk(nd.l, depth + 1); walk(nd.r, depth + 1);
+      };
+      for (const t of (m.trees || [])) walk(t, 0);
     }
     let mx = 0; for (const v of raw) if (v > mx) mx = v;
     const strength = raw.map(function (v) { return mx > 0 ? +(v / mx).toFixed(3) : 0; });
     const inputFeatures = fn.map(function (nm, j) { return { i: j, name: nm, role: FEAT_ROLES[nm] || "", liveOnly: _LIVE_ONLY_FEATS.has(nm), strength: strength[j] }; });
     const topFeatures = inputFeatures.slice().sort(function (a, b) { return b.strength - a.strength; }).slice(0, 20);
-    const expertNames = { l1: "L1 로지스틱", fm: "인수분해기계(FM)", ens: "신경망 앙상블(BRAIN)" };
+    const expertNames = { l1: "L1 로지스틱", fm: "인수분해기계(FM)", tree: "트리 앙상블", ens: "신경망 앙상블(BRAIN)" };
     const experts = (m.experts || []).map(function (nm, i) { return { name: expertNames[nm] || nm, weight: +(m.meta.w[i] || 0).toFixed(3) }; });
     const g = await mlGuardState(DB);
     const mindLB = (typeof m.valAccLB === "number") ? m.valAccLB : _wilsonLB(_num(m.valAcc, 0.5), _num(m.valN, 30));
@@ -33087,7 +33192,10 @@ async function mlMindStatus(DB) {
     const g = await mlGuardState(DB);
     if (!m) return { trained: false, guard: g };
     return { trained: true, n: m.n, valAcc: m.valAcc, fmAcc: m.fmAcc, valLogLoss: m.valLogLoss,
-      experts: m.experts, metaWeights: m.meta.w.map(function (v) { return +v.toFixed(3); }), fmK: m.fm.K, trainedAt: m.trainedAt,
+      experts: m.experts, metaWeights: m.meta.w.map(function (v) { return +v.toFixed(3); }),
+      core: m.fm ? "fm" : "tree",                                     // [V33.249] 코어 학습기 종류
+      fmK: m.fm ? m.fm.K : null, nTrees: Array.isArray(m.trees) ? m.trees.length : null,
+      trainedAt: m.trainedAt,
       guard: { distrust: !!g.distrust, liveAcc: g.liveAcc, baseAcc: g.baseAcc, liveN: (g.live || []).length } };
   } catch (e) { return { trained: false, error: e && e.message }; }
 }
@@ -42629,6 +42737,9 @@ export {
   stackSampleBackfill, stackLogSample, STACKML,
   // [V33.239] 하이킨아시 추세반전 피처 검증용 — tools/check-heikin.mjs 가 수치로 확인한다.
   _mlHeikinFeats,
+  // [V33.249] 트리 위원장 검증용 — tools/check-mind-tree.mjs 가 실제로 채점해 본다.
+  //   FM 위원장과 트리 위원장이 ★같은 확률★ 을 내는지는 문구로 못 지킨다 — 돌려봐야 안다.
+  mlMindScore, mlGBDTScore,
   // 보정 가족 검증용 — tools/check-calibration.mjs 가 실제로 적합시켜 본다.
   calFitBest, _fitPlatt, _fitTemp, _calApply, _calNLL, _calECE, CALFAM,
   // [V33.113] 유의성 자유도 보정 검증용
