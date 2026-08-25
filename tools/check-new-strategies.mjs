@@ -211,9 +211,20 @@ console.log("⑥ 배선");
   chk(/if \(!sig && _rvOn\)/.test(ev),
     "기존 신호가 없을 때만 평가한다(같은 종목 중복진입 방지 — SNAP 과 같은 규약)",
     "기존 신호와 겹쳐 발화할 수 있다");
-  chk(/signalExpectancy\(eventData\.sigTypeStats, sig\.name/.test(ev),
-    "지는 신호 가지치기를 신규 전략에도 똑같이 건다",
-    "새 전략만 기대값 게이트를 면제받는다");
+  /* [V33.251] 가지치기는 _pickBestSignal 안으로 옮겼다(선택과 같은 자리에서 판단해야
+     "후보 중 최선" 이 성립한다). 계약은 그대로이므로 ★위치가 아니라 동작★ 으로 확인한다 —
+     신규 전략 이름으로 지는 이력을 만들어 실제로 걸러지는지 돌려 본다. */
+  chk(/_pickBestSignal\(_cands/.test(ev), "선택기를 거친다(가지치기가 그 안에 있다)", "선택기를 안 거친다");
+  {
+    const losing = { XS_ARB: { trades: 40, wins: 6, sumPnlPct: 40 * -3.0 } };
+    const cand = { name: "XS_ARB", confidence: 0.95, type: "SNAP", detail: "x", members: ["XS_ARB"] };
+    chk(!M._pickBestSignal([cand], losing),
+      "신규 전략도 실현기대 −3.0%/건이면 걸러진다(confidence 0.95 무시)",
+      "새 전략만 기대값 게이트를 면제받는다");
+    chk(!!M._pickBestSignal([cand], {}),
+      "이력이 없으면 정상 통과한다(가지치기가 신규를 무조건 막지 않는다)",
+      "이력 없는 신규까지 막힌다");
+  }
   chk(/eventData\.rvPanel = await getState\(DB, "rv_panel"/.test(S),
     "사이클이 상대가치 패널을 주입한다", "패널이 주입되지 않아 페어·횡단면이 영영 null 이다");
   chk(/_stg\("rvpanel"/.test(S), "야간 파이프라인에 rvpanel 단계가 등록됐다", "패널을 만드는 단계가 없다");

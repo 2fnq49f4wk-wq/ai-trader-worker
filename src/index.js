@@ -2788,7 +2788,7 @@ async function applySignalTypeWeights(DB, cfg) {
 // ============================================================================
 // [V33.55] 빌드 버전 — SWR L2 캐시 키에 섞어 '배포 = 판단 캐시 자동 무효화'를 만든다.
 //   판정 로직을 고쳐도 옛 캐시가 최대 1시간 재배포되던 문제를 구조적으로 없앤다.
-const _BUILD_VER = "V33.250";
+const _BUILD_VER = "V33.251";
 
 // ═══ [V33.171] 평가 순서 계획 — ★승격과 순환을 교차해 굶주림을 구조적으로 없앤다★ ═══
 //   V33.50 의 형태트리거는 "급한 몇 종목을 앞으로 당긴다"는 의도였으나, 실제 운영로그에서는
@@ -12088,6 +12088,56 @@ function evaluateXsArbEntry(price, dailyData, cfg, market, rvCtx) {
 
 /* ── 사이클이 종목별 맥락을 뽑아 쓰는 헬퍼 — 패널이 낡았으면 ★쓰지 않는다★.
       낡은 관계로 조용히 매매하는 것이 이 계열에서 가장 위험하다(공적분은 깨진다). ── */
+/* ══ [V33.251] 여러 후보 중 하나를 고른다 — 그리고 왜 골랐는지 남긴다 ══════════
+   점수 = 축소된 실현기대값 + 작은 confidence 보정.
+     · 축소   exp × n/(n+SHRINK_K) — 표본이 적은 신호는 0 쪽으로 당긴다(운 제거)
+     · 보정   (confidence − 0.5) × TIE_W — 이력이 같거나 없을 때만 실질적으로 작용한다
+   지는 신호(축소 전 기대값이 바닥 아래)는 후보에서 아예 뺀다 — 종전 가지치기와 같은 자다.
+   고른 이유를 signal.pickWhy 에 적는다. 나중에 "왜 이걸 샀나" 를 원장에서 되짚을 수 있어야 한다. */
+/* ★문턱은 비대칭이다 — 의도한 것이다.★
+   지는 신호를 빼는 데는 6건이면 충분하고(빼서 손해 볼 것이 없다),
+   이기는 신호를 ★인정하는★ 데는 30건을 요구한다. 비용이 다르기 때문이다:
+   지는 신호를 하나 더 트레이드하는 손해 > 좋은 신호를 며칠 늦게 인정하는 손해.
+
+   그리고 이 대칭을 깨지 않으면 실제로 사고가 난다 — 첫 설계(shrinkK 만으로 축소)에서
+   게이트가 그것을 잡았다: n6 ×5.0%(축소 1.43)가 n200 ×1.2%(축소 1.12)를 이겼다.
+   후보를 매일 수천 번 고르는 구조에서 ★최댓값은 위로 편향된다★(V33.202 의 DSR 과 같은 이야기).
+   6건의 운을 실적으로 인정하면 그 편향을 그대로 사게 된다. */
+const SIGPICK = { shrinkK: 15, trustN: 30, pruneN: 6, tieW: 0.6, hardFloorExp: -1.0 };
+function _pickBestSignal(cands, sigStats) {
+  if (!cands || !cands.length) return null;
+  const scored = [];
+  for (const c of cands) {
+    if (!c || !c.name) continue;
+    // ① 가지치기 — 문턱 낮게(6건). 지는 것은 빨리 뺀다.
+    const _pr = signalExpectancy(sigStats, c.name, SIGPICK.pruneN);
+    if (_pr && _pr.exp <= SIGPICK.hardFloorExp) continue;
+    // ② 실적 인정 — 문턱 높게(30건). 그 아래는 '모름'(0) 이지 '나쁨' 이 아니다.
+    const st = signalExpectancy(sigStats, c.name, SIGPICK.trustN);
+    const n = st ? st.n : 0;
+    const shrunk = st ? st.exp * (n / (n + SIGPICK.shrinkK)) : 0;
+    const tie = (_num(c.confidence, 0.5) - 0.5) * SIGPICK.tieW;
+    scored.push({ c: c, score: shrunk + tie, exp: st ? st.exp : null, n: n, shrunk: shrunk,
+                  seenN: _pr ? _pr.n : (st ? st.n : 0) });
+  }
+  if (!scored.length) return null;
+  scored.sort(function (a, b) { return b.score - a.score; });
+  const best = scored[0];
+  const sig = best.c;
+  try {
+    sig.pickWhy = "후보 " + scored.length + "중 선택 · 점수 " + best.score.toFixed(3) +
+      (best.n > 0 ? " (실현기대 " + best.exp.toFixed(2) + "%/건 n" + best.n + " → 축소 " + best.shrunk.toFixed(3) + ")"
+                  : (best.seenN > 0 ? " (이력 " + best.seenN + "건 < 인정문턱 " + SIGPICK.trustN + " — 아직 '모름' 으로 둔다)"
+                                    : " (이력 없음 — confidence 로 결정)"));
+    if (scored.length > 1) {
+      sig.pickAlts = scored.slice(1, 4).map(function (x) {
+        return x.c.name + " " + x.score.toFixed(3);
+      }).join(", ");
+    }
+  } catch (e) {}
+  return sig;
+}
+
 function rvContextFor(panel, symbol) {
   try {
     if (!panel || !panel.ts) return null;
@@ -12642,18 +12692,30 @@ function evaluateAllStrategies(price, dayPct, dailyData, cfg, signalStats, regim
   const _rvOn = (cfg.rvStrat && cfg.rvStrat.enabled !== false) && RVSTRAT.enabled !== false;
   const _rvCtx = _rvOn ? rvContextFor(eventData && eventData.rvPanel, dailyData && dailyData.symbol) : null;
   if (!sig && _rvOn) {
-    sig = evaluateIndexFlowEntry(price, dailyData, cfg, market, _rvCtx)
-       || evaluateVolSpikeRevertEntry(price, dayPct, dailyData, cfg, regime, market)
-       || evaluatePairOuEntry(price, dailyData, cfg, market, _rvCtx)
-       || evaluateXsArbEntry(price, dailyData, cfg, market, _rvCtx)
-       || evaluateVolTargetTrendEntry(price, dailyData, cfg, regime, market)
-       || null;
-    /* 지는 신호 가지치기 — 기존 SNAP 과 똑같은 자를 쓴다(신호별 실현 기대값이 바닥 아래면 진입 거부).
-       새 전략이라고 예외를 두지 않는다. 오히려 이런 계열이 초기에 잘 보이고 오래 지지 못한다. */
-    if (sig && eventData && eventData.sigTypeStats) {
-      const _se = signalExpectancy(eventData.sigTypeStats, sig.name, 6);
-      if (_se && _se.exp <= -1.0) sig = null;
-    }
+    /* ══ [V33.251] ★첫 번째로 걸리는 것이 아니라, 가장 나은 것을 고른다★ ══
+       종전엔 `A || B || C` 였다 — 우선순위 목록이지 선택이 아니다. 다섯 중 셋이 동시에
+       발화해도 코드 순서상 앞선 것이 이겼다. 그건 "가장 맞다고 생각하는 전략" 이 아니다.
+
+       무엇으로 고르는가가 핵심이다. ★confidence 로 고르면 안 된다★ —
+       그 값은 평가기마다 손으로 정한 식이라 전략 사이에 비교 가능한 자가 아니다
+       (XR_FLOW 의 0.6 과 VS_REV 의 0.6 은 같은 뜻이 아니다).
+       ML 확률도 자가 못 된다 — 위원회는 ★피처★ 를 보고 채점하므로 어느 신호가 걸렸든 같은 p 다.
+
+       전략 사이에서 실제로 비교 가능한 것은 ★그 신호가 지금까지 실제로 번 돈★ 이다.
+       sigTypeStats 가 신호별 실현 손익을 이미 쌓고 있다(자동 가지치기가 쓰는 그 값).
+       다만 표본이 적으면 운이 섞이므로 0 쪽으로 축소한다: exp × n/(n+k).
+       n=6 이면 지분 0.29, n=60 이면 0.80 — 갓 나온 신호가 운 좋은 3건으로 이기지 못한다.
+       이력이 아예 없으면(신규 전략) 0 으로 두고 confidence 로만 미세 조정한다 —
+       즉 ★모르는 전략은 아는 전략을 이기지 못하지만, 아무도 이력이 없으면 순서가 남는다.★
+       켈리 사이징은 그대로다 — 여기서 고르는 것은 '무엇을 살까' 이고, 크기는 그 다음 층이다. */
+    const _cands = [];
+    const _push = function (x) { if (x) _cands.push(x); };
+    _push(evaluateIndexFlowEntry(price, dailyData, cfg, market, _rvCtx));
+    _push(evaluateVolSpikeRevertEntry(price, dayPct, dailyData, cfg, regime, market));
+    _push(evaluatePairOuEntry(price, dailyData, cfg, market, _rvCtx));
+    _push(evaluateXsArbEntry(price, dailyData, cfg, market, _rvCtx));
+    _push(evaluateVolTargetTrendEntry(price, dailyData, cfg, regime, market));
+    sig = _pickBestSignal(_cands, eventData && eventData.sigTypeStats);
   }
 
 
@@ -26537,7 +26599,10 @@ async function _miniLogisticTrain(DB, opts) {
       //   null 을 돌려주면 그 표본은 건너뛴다(라벨을 만들 수 없는 행).
       let _y;
       if (typeof opts.labelFn === "function") {
-        _y = opts.labelFn(r);
+        /* [V33.251] 라벨 함수에 ★파싱된 피처 벡터★ 도 넘긴다 — 이 자리는 이미 v 를 갖고 있다.
+           이중헤드가 종목 자신의 변동성(atrPct)으로 문턱을 정규화하는 데 쓴다.
+           기존 라벨 함수들은 두 번째 인자를 안 읽으므로 동작이 바뀌지 않는다. */
+        _y = opts.labelFn(r, v);
         if (_y == null) continue;
       } else {
         _y = r.label ? 1 : 0;
@@ -27524,15 +27589,70 @@ function memoScore(model, featVec) {
   } catch (e) { return null; }
 }
 
+/* ══ [V33.251] ★표본을 아무리 넣어도 안 되던 이유 — 질문이 종목마다 달랐다★ ══
+   실측(featVer 14, 표본 60,000):
+     [DUAL-BULL] 블록IC 0.0005 t 0.01   → 합류 보류
+     [DUAL-BEAR] 블록IC −0.0190 t −0.61 → 합류 보류
+   같은 피처로 트리들은 IC 0.08~0.09(t 2.52~4.74)를 낸다. 표본 6만에 IC 가 0 이면
+   ★표본이 부족한 게 아니다.★ 사용자 관찰("아무리 표본을 넣어도")이 정확했다.
+
+   원인 둘.
+
+   ① 라벨이 종목마다 다른 질문이었다 — thrPct 2.0 은 ★절대★ 문턱이다.
+      유니버스는 한국 표본 421,691 + 미국 95,966 이 섞여 있다(오늘 실측).
+      라벨 지평 10일에서 일간변동성 1% 종목의 기대이동은 약 3.2%, 4% 종목은 약 12.6% 다.
+      같은 "±2%" 가 앞 종목엔 0.6σ 사건이고 뒤 종목엔 0.16σ — 사실상 동전던지기다.
+      한 벡터가 두 질문에 동시에 답할 수는 없다. ★피처를 늘려도 풀리지 않는 종류의 문제다★
+      (목표가 일관되지 않으면 용량을 키워도 배울 것이 없다).
+      → 문턱을 종목 자신의 변동성으로 정규화한다: k × atrPct × √지평.
+        "자기 기준으로 크게 움직였는가" 는 모든 종목에서 같은 질문이다.
+
+   ② 선형 모델이었다. 이 데이터에서 선형/FM 은 트리에 크게 진다 —
+      오늘만 해도 FM 위원장 47.9% vs 트리 53.5~54.2%(V33.249) 였다.
+      비선형 헤드 경합(GBDT·MLP·혼합)은 ★이미 구현돼 있고★ STACK 만 쓰고 있었다.
+      켜기만 하면 된다. 그리고 그 경합은 블록 IC 하한으로 고르므로,
+      비선형이 실제로 이기지 못하면 선형이 그대로 채택된다 — 공짜로 얻는 게 아니라 이겨야 얻는다.
+
+   라벨의 ★뜻★ 이 바뀌므로 판을 올린다(옛 표본·모델과 섞이면 안 된다 — 이 저장소의 규칙). */
 const DUALHEAD = {
   enabled: true,
-  featVer: 1,
-  thrPct: 2.0,            // 상승/하락 판정 문턱(%) — ±2% 를 '의미 있는 움직임'으로 본다
+  featVer: 2,
+  /* 문턱 = max(thrFloorPct, thrSigma × atrPct × √지평).
+     바닥을 두는 이유: 초저변동성 종목에서 문턱이 0.3% 같은 값으로 내려가면
+     라벨이 호가 잡음을 세게 된다 — 정규화가 반대로 해를 끼치는 구간이다. */
+  thrSigma: 0.6,
+  thrFloorPct: 1.0,
+  atrClampLo: 0.3, atrClampHi: 15,   // atrPct 이상치 방어(0 이나 100 같은 값이 들어오면 문턱이 붕괴한다)
+  thrPct: 2.0,            // [V33.251] 폐기 예정 — atrPct 를 못 읽는 행의 폴백으로만 남긴다
   minTrainSamples: 1200,
   trainWindow: 60000,
   l2: 1.2,
-  icFloor: 0.012
+  icFloor: 0.012,
+  // [V33.251] 비선형 헤드 경합(STACK 과 같은 기계). 이기지 못하면 선형이 채택된다.
+  nonlinear: true, nlTrees: 160, nlBudgetMs: 12000
 };
+/* atrPct 의 위치는 ★이름으로★ 찾는다 — 인덱스를 손으로 적으면 피처가 재배열되는 날 조용히 틀린다.
+   ★모듈 최상단에서 미리 계산하면 안 된다★ — DUALHEAD 는 LUXML 보다 위에 선언돼 있어
+   const 의 TDZ 에 걸린다(typeof 조차 던진다. 실제로 ReferenceError 로 확인했다).
+   호출 시점에 한 번만 찾아 기억한다. */
+let _dualAtrIdx = null;
+function _dualAtrIndex() {
+  if (_dualAtrIdx === null) {
+    try { _dualAtrIdx = LUXML.featNames.indexOf("atrPct"); } catch (e) { _dualAtrIdx = -1; }
+  }
+  return _dualAtrIdx;
+}
+/* 종목 자신의 변동성으로 정규화한 문턱(%) — 두 헤드가 공유한다. */
+function _dualThrPct(featVec) {
+  const D = DUALHEAD;
+  const _ai = _dualAtrIndex();
+  if (_ai < 0 || !Array.isArray(featVec)) return D.thrPct;
+  const a = _num(featVec[_ai], null);
+  if (a == null || !isFinite(a) || !(a > 0)) return D.thrPct;
+  const atr = _clamp(a, D.atrClampLo, D.atrClampHi);
+  const h = Math.max(1, _num(AI_PARAMS.predictionHorizonDays, 10));
+  return Math.max(D.thrFloorPct, D.thrSigma * atr * Math.sqrt(h));
+}
 
 // 두 헤드를 같은 표본에서 서로 다른 라벨로 학습한다.
 async function dualHeadTrainNightly(DB) {
@@ -27544,12 +27664,17 @@ async function dualHeadTrainNightly(DB) {
       featVer: LUXML.featVer, D: LUXML.featNames.length,
       minN: DUALHEAD.minTrainSamples, window: DUALHEAD.trainWindow,
       l2: DUALHEAD.l2, icFloor: DUALHEAD.icFloor,
-      // ★라벨만 바꾼다★ — 같은 피처, 같은 표본, 다른 질문.
-      labelFn: function (row) {
+      // [V33.251] 비선형 헤드 경합을 켠다 — 선형이 기본값이고, 이기려면 블록 IC 하한에서 이겨야 한다.
+      nonlinear: DUALHEAD.nonlinear, nlTrees: DUALHEAD.nlTrees, nlBudgetMs: DUALHEAD.nlBudgetMs,
+      /* ★라벨만 바꾼다★ — 같은 피처, 같은 표본, 다른 질문.
+         [V33.251] 그 '다른 질문' 이 종목마다 또 달라지면 안 된다. 문턱을 그 종목의
+         변동성으로 정규화해 "자기 기준으로 크게 움직였는가" 라는 ★하나의★ 질문으로 만든다. */
+      labelFn: function (row, featVec) {
         const pnl = _num(row && row.pnl_pct, null);
         if (pnl == null) return null;
-        return side === "bull" ? (pnl >= DUALHEAD.thrPct ? 1 : 0)
-                               : (pnl <= -DUALHEAD.thrPct ? 1 : 0);
+        const thr = _dualThrPct(featVec);
+        return side === "bull" ? (pnl >= thr ? 1 : 0)
+                               : (pnl <= -thr ? 1 : 0);
       }
     });
     out.push(r);
@@ -29373,7 +29498,7 @@ async function icForwardCheck(DB, opts) {
         if (!Array.isArray(v)) continue;
         const p = o.scoreFn(prev, v);
         if (p == null || !isFinite(p)) continue;
-        const y = (typeof o.labelFn === "function") ? o.labelFn(r) : (r.label ? 1 : 0);
+        const y = (typeof o.labelFn === "function") ? o.labelFn(r, v) : (r.label ? 1 : 0);   // [V33.251] 전진검증도 같은 인자
         if (y == null) continue;
         pv.push(p); yv.push(y);
       }
@@ -43238,6 +43363,10 @@ export {
   stackSampleBackfill, stackLogSample, STACKML,
   // [V33.239] 하이킨아시 추세반전 피처 검증용 — tools/check-heikin.mjs 가 수치로 확인한다.
   _mlHeikinFeats,
+  // [V33.251] 이중헤드 라벨 정규화 검증용 — tools/check-dualhead.mjs 가 수치로 확인한다.
+  DUALHEAD, _dualThrPct,
+  // [V33.251] 전략 선택 검증용 — 축소·동점처리·가지치기를 수치로 확인한다.
+  _pickBestSignal, SIGPICK, signalExpectancy,
   // [V33.250] 신규 전략 5종 검증용 — tools/check-new-strategies.mjs 가 실제로 돌려 본다.
   RVSTRAT, rvBuildPanel, rvContextFor, evaluateIndexFlowEntry, evaluateVolTargetTrendEntry,
   evaluateVolSpikeRevertEntry, evaluatePairOuEntry, evaluateXsArbEntry,
