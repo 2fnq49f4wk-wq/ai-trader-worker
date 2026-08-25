@@ -139,5 +139,115 @@ console.log("④ 배선 — 수확·라이브 공통 경로에 실제로 실려 
   chk(!bad.length, "피처 벡터에 NaN/Infinity 가 없다", `유한하지 않은 값 ${bad.length}개 — 학습이 통째로 깨진다`);
 }
 
+/* ══ [V33.254] ★피처만 있고 진입이 없었다★ ══════════════════════════════════
+   V33.239 는 사용자 요청("하이킨아시 추세 반전 매매법도 학습시켜서 ★사용하게★")의
+   앞 절반만 했다 — 위원회는 haRun·haBodyR·haShadow·haRev 를 '학습' 하는데, 그것으로
+   ★진입하는 전략★ 이 없었다. 모델이 보는 것과 손이 하는 것이 달랐다.
+   여기서는 그 진입 규칙이 ①실제로 발화하고 ②아무 때나 켜지지 않는지 돌려서 확인한다. */
+console.log("⑦ HA_REV 진입 전략 (피처가 아니라 규칙으로)");
+{
+  const M2 = await import("../src/index.js");
+  const CFG = { atrPeriod: 14, rvStrat: { enabled: true } };
+  /* 하이킨아시 색은 haC vs haO 로 정해지고 haO 는 재귀평균이라, 원하는 패턴을 얻으려면
+     ★실제 가격열★ 을 만들어 함수에 통과시켜야 한다. 상승추세(MA200 위) → 짧은 하락(빨강 런)
+     → 강한 반등(초록 전환) 순서로 만든다. */
+  const mk = (revBars, up) => {
+    const c = [], h = [], l = [], o = [];
+    let px = 100;
+    for (let i = 0; i < 240; i++) { px *= 1.0025; c.push(px); o.push(px * 0.999); h.push(px * 1.004); l.push(px * 0.996); }
+    for (let i = 0; i < 6; i++) { px *= 0.978; c.push(px); o.push(px * 1.012); h.push(px * 1.014); l.push(px * 0.997); }  // 빨강 런
+    for (let i = 0; i < revBars; i++) { px *= up; c.push(px); o.push(px * 0.985); h.push(px * 1.004); l.push(px * 0.984); } // 초록 전환
+    return { closes: c, highs: h, lows: l, opens: o, volumes: c.map(() => 1e6) };
+  };
+  /* ★1봉 +3% 로는 색이 안 뒤집힌다.★ 하이킨아시는 haO 가 재귀평균이라 평활되기 때문이다 —
+     실측: 반등 1봉 +3% 에서 haRun −0.70(아직 빨강), haRev 0.58 은 '소진' 가지에서 나온 값이다.
+     그건 우리가 일부러 제외하는 자리다(아직 빨강인데 사는 것 = 칼날). 실제로 뒤집히는 크기로 만든다. */
+  const d = mk(1, 1.05);
+  const ha = M2._mlHeikinFeats(d.closes, d.highs, d.lows, d.opens);
+  console.log("   합성 전환봉의 하이킨아시: haRun " + ha.haRun.toFixed(2) +
+              " haRev " + ha.haRev.toFixed(2) + " haBodyR " + ha.haBodyR.toFixed(2));
+  const sig = M2.evaluateHeikinReversalEntry(d.closes[d.closes.length - 1], d, CFG, null, "us");
+  chk(!!sig && sig.name === "HA_REV", "긴 빨강 런을 끊은 초록 전환에서 발화 — " + (sig ? sig.detail : "null"),
+    "전환을 만들었는데 발화하지 않는다 (haRun " + ha.haRun.toFixed(2) + " haRev " + ha.haRev.toFixed(2) +
+    " haBodyR " + ha.haBodyR.toFixed(2) + ")");
+  chk(!!sig && /강세전환만/.test(sig.detail),
+    "문구가 '강세 전환만(공매도 없음)' 을 명시한다 — 반전 매매법이 양방향으로 오해되지 않게",
+    "한계 표기가 없다");
+
+  // 추세 없는 횡보에서는 침묵해야 한다(V33.239 가 겪은 '아무 일 없는데 전환' 재발 방지)
+  {
+    const c = [], h = [], l = [], o = [];
+    let px = 100;
+    for (let i = 0; i < 250; i++) { px *= (1 + (i % 2 ? 0.0008 : -0.0008)); c.push(px); o.push(px * 0.9995); h.push(px * 1.001); l.push(px * 0.999); }
+    const flat = { closes: c, highs: h, lows: l, opens: o, volumes: c.map(() => 1e6) };
+    chk(!M2.evaluateHeikinReversalEntry(c[c.length - 1], flat, CFG, null, "us"),
+      "저변동 횡보에서는 침묵한다", "횡보에서도 전환이라 외친다");
+  }
+  // 하락추세(MA200 아래)에서는 침묵 — 떨어지는 칼날
+  {
+    const c = [], h = [], l = [], o = [];
+    let px = 300;
+    for (let i = 0; i < 240; i++) { px *= 0.994; c.push(px); o.push(px * 1.004); h.push(px * 1.006); l.push(px * 0.997); }
+    for (let i = 0; i < 1; i++) { px *= 1.03; c.push(px); o.push(px * 0.985); h.push(px * 1.004); l.push(px * 0.984); }
+    const bear = { closes: c, highs: h, lows: l, opens: o, volumes: c.map(() => 1e6) };
+    chk(!M2.evaluateHeikinReversalEntry(c[c.length - 1], bear, CFG, null, "us"),
+      "MA200 아래 구조적 하락에서는 침묵한다(반전이 아니라 칼날)", "하락추세에서도 산다");
+  }
+  /* ★전환봉에서만 산다 — 그 다음 봉은 추격이다.★
+     haRev 는 run===1(방금 뒤집힘)일 때만 값을 갖는다. 실측으로 그 성질을 고정한다:
+     반등 2봉 +5% 는 이미 run=2 라 haRev 0.00 → 침묵해야 한다. */
+  {
+    const d2 = mk(2, 1.05);
+    const ha2 = M2._mlHeikinFeats(d2.closes, d2.highs, d2.lows, d2.opens);
+    chk(!M2.evaluateHeikinReversalEntry(d2.closes[d2.closes.length - 1], d2, CFG, null, "us"),
+      "전환 다음 봉(run " + Math.round(Math.abs(ha2.haRun) * 10) + ")에서는 침묵한다 — 추격하지 않는다",
+      "전환 이후에도 계속 발화한다 — 같은 전환을 여러 번 사게 된다");
+  }
+  /* ★가드마다 그것이 ★유일한 차단자★ 인 케이스를 쓴다.★
+     처음엔 한 케이스로 둘을 같이 시험했는데, 소진(haRun<0)이면서 몸통도 작은 자리라
+     두 가드가 서로를 가렸다 — 어느 쪽을 지워도 게이트가 안 물었다(변이시험에서 드러났다).
+     조건을 갈라 각각 단독으로 막게 만든다. */
+  // (a) haRun>0 가드만이 막는 자리 — 아직 빨강인데 haRev 0.51, 몸통 0.336(문턱 0.30 통과)
+  {
+    const c = [], h = [], l = [], o = [];
+    let px = 100;
+    for (let i = 0; i < 240; i++) { px *= 1.0025; c.push(px); o.push(px * 0.999); h.push(px * 1.0005); l.push(px * 0.9995); }
+    for (let i = 0; i < 6; i++) { px *= 0.97; c.push(px); o.push(px * 1.031); h.push(px * 1.0315); l.push(px * 0.9995); }
+    px *= 0.999; c.push(px); o.push(px * 1.004); h.push(px * 1.07); l.push(px * 0.93);
+    const d3 = { closes: c, highs: h, lows: l, opens: o, volumes: c.map(() => 1e6) };
+    const ha3 = M2._mlHeikinFeats(c, h, l, o);
+    chk(ha3.haRun < 0 && ha3.haRev >= 0.5 && ha3.haBodyR >= 0.30,
+      "합성: 빨강(haRun " + ha3.haRun.toFixed(2) + ") · haRev " + ha3.haRev.toFixed(2) +
+        " · 몸통 " + ha3.haBodyR.toFixed(2) + " — ★haRun 가드만★ 이 막는 자리",
+      "이 케이스를 재현하지 못해 다음 단언이 무의미하다");
+    chk(!M2.evaluateHeikinReversalEntry(c[c.length - 1], d3, CFG, null, "us"),
+      "haRev·몸통이 다 통과해도 색이 빨강이면 사지 않는다(확인된 전환만)",
+      "빨강인 채로 산다 — 떨어지는 칼날이고 VS_REV 와 근거가 겹친다");
+  }
+  // (b) 몸통 가드만이 막는 자리 — 뒤집혔고(haRun>0) haRev 1.00 인데 몸통 0.125
+  {
+    const c = [], h = [], l = [], o = [];
+    let px = 100;
+    for (let i = 0; i < 240; i++) { px *= 1.0025; c.push(px); o.push(px * 0.999); h.push(px * 1.004); l.push(px * 0.996); }
+    for (let i = 0; i < 6; i++) { px *= 0.978; c.push(px); o.push(px * 1.012); h.push(px * 1.014); l.push(px * 0.997); }
+    px *= 1.04; c.push(px); o.push(px * 0.985); h.push(px * 1.03); l.push(px * 0.97);
+    const d4 = { closes: c, highs: h, lows: l, opens: o, volumes: c.map(() => 1e6) };
+    const ha4 = M2._mlHeikinFeats(c, h, l, o);
+    chk(ha4.haRun > 0 && ha4.haRev >= 0.5 && ha4.haBodyR < 0.30,
+      "합성: 전환(haRun " + ha4.haRun.toFixed(2) + ") · haRev " + ha4.haRev.toFixed(2) +
+        " · 몸통 " + ha4.haBodyR.toFixed(3) + " — ★몸통 가드만★ 이 막는 자리",
+      "이 케이스를 재현하지 못해 다음 단언이 무의미하다");
+    chk(!M2.evaluateHeikinReversalEntry(c[c.length - 1], d4, CFG, null, "us"),
+      "도지에서 뒤집힌 전환은 사지 않는다(확신 없는 전환)",
+      "몸통 없는 전환도 산다 — 전환의 '강도' 를 안 본다");
+  }
+  // 후보 풀·레짐 분류에 편입됐는가
+  const SRC = (await import("node:fs")).readFileSync(new URL("../src/index.js", import.meta.url), "utf8");
+  chk(/_push\(evaluateHeikinReversalEntry/.test(SRC),
+    "후보 풀에 들어가 다른 전략과 실현기대값으로 경쟁한다",
+    "만들어만 두고 후보에 안 넣었다 — V33.239 와 같은 실수의 반복이다");
+  chk(/"VS_REV", "HA_REV"/.test(SRC), "레짐 틸트(회귀 계열) 분류에 등록됐다", "레짐 보정에서 빠진다");
+}
+
 console.log(fails ? "\n하이킨아시 계약 위반 " + fails + "건 — 배포 차단" : "\n  ok   하이킨아시 추세반전 계약 통과");
 process.exit(fails ? 1 : 0);

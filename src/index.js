@@ -2788,7 +2788,7 @@ async function applySignalTypeWeights(DB, cfg) {
 // ============================================================================
 // [V33.55] 빌드 버전 — SWR L2 캐시 키에 섞어 '배포 = 판단 캐시 자동 무효화'를 만든다.
 //   판정 로직을 고쳐도 옛 캐시가 최대 1시간 재배포되던 문제를 구조적으로 없앤다.
-const _BUILD_VER = "V33.253";
+const _BUILD_VER = "V33.254";
 
 // ═══ [V33.171] 평가 순서 계획 — ★승격과 순환을 교차해 굶주림을 구조적으로 없앤다★ ═══
 //   V33.50 의 형태트리거는 "급한 몇 종목을 앞으로 당긴다"는 의도였으나, 실제 운영로그에서는
@@ -3217,7 +3217,7 @@ const AI_PARAMS = {
     // [V33.250] 신규 5종도 성격대로 분류한다 — 빠뜨리면 레짐 틸트에서 조용히 제외된다.
     //   XR_FLOW(편입 플로우)·VT_TREND(추세)는 돌파 계열, PR_OU·XS_ARB·VS_REV 는 회귀 계열.
     breakoutSigs: ["TR_BREAKOUT", "SW_VOL_SPK", "SC_VBURST", "SC_MOMENTUM", "SC_VWAP", "TR_52W", "XR_FLOW", "VT_TREND"],
-    revertSigs:   ["TR_PULLBACK", "SC_PULLBACK", "SW_GOLDEN", "SN_OVERSOLD", "SC_PANIC_INV", "PR_OU", "XS_ARB", "VS_REV"],
+    revertSigs:   ["TR_PULLBACK", "SC_PULLBACK", "SW_GOLDEN", "SN_OVERSOLD", "SC_PANIC_INV", "PR_OU", "XS_ARB", "VS_REV", "HA_REV"],
     // 국면×성격 부적합 시 사이즈 배수(0 이면 진입 자체를 막지 않고 축소만 — 안전 우선)
     mismatchMult: 0.6,
     matchMult: 1.1
@@ -3669,7 +3669,8 @@ const DEFAULT_CFG = {
     vt: { enabled: true },   // 변동성 타겟 추세
     pr: { enabled: true },   // 공적분 페어 OU — ★롱 다리만★
     vs: { enabled: true },   // 거래량 급증 평균회귀
-    xs: { enabled: true }    // 횡단면 통계차익 — ★롱 다리만★
+    xs: { enabled: true },   // 횡단면 통계차익 — ★롱 다리만★
+    ha: { enabled: true }    // 하이킨아시 추세반전 — ★강세 전환만★
   },
   // [V51] 전략별 사이클 예산 분리 — trend/scalp가 같은 현금풀을 두고 경쟁해 단타가 굶던 문제 해결.
   //   각 시장 가용현금을 비율로 쪼개 전략별 독립 예산으로 사용. 대시보드 슬라이더로 조절.
@@ -11704,7 +11705,15 @@ const RVSTRAT = {
         closePosMax: 0.45, rsi2Max: 8, aboveMa200: true },
 
   // ── ⑤ XS_ARB 횡단면 통계차익(롱 다리만) ──
-  xs: { enabled: true, retDays: 5, minResidZ: -1.8, minPeers: 12, maxAtrPct: 6, minAboveMa200: true }
+  xs: { enabled: true, retDays: 5, minResidZ: -1.8, minPeers: 12, maxAtrPct: 6, minAboveMa200: true },
+
+  /* ── ⑥ [V33.254] HA_REV 하이킨아시 추세반전 ──
+     V33.239 는 사용자 요청("하이킨아시 추세 반전 매매법도 학습시켜서 ★사용하게★")의
+     ★앞 절반만★ 했다 — 피처 4종(haRun·haBodyR·haShadow·haRev)을 넣어 위원회가 '학습' 은
+     하는데, 그것으로 ★진입하는 전략★ 이 없었다. 모델이 보는 것과 손이 하는 것이 달랐다.
+     같은 관측을 진입 규칙으로도 쓴다(XALPHA 가 피처이면서 XS_ARB 가 규칙인 것과 같은 구조). */
+  ha: { enabled: true, minRev: 0.5, minBody: 0.30, maxAtrPct: 6,
+        maxOffHighPct: 22, minDropRun: -0.25, requireMa200: true }
 };
 
 /* ── 최소제곱 기울기(로그가격) — 공적분 β ── */
@@ -12088,6 +12097,57 @@ function evaluateXsArbEntry(price, dailyData, cfg, market, rvCtx) {
 
 /* ── 사이클이 종목별 맥락을 뽑아 쓰는 헬퍼 — 패널이 낡았으면 ★쓰지 않는다★.
       낡은 관계로 조용히 매매하는 것이 이 계열에서 가장 위험하다(공적분은 깨진다). ── */
+/* ══ [V33.254] HA_REV — 하이킨아시 추세반전 진입 ═══════════════════════════════
+   하이킨아시는 봉을 평균으로 다시 그려 잔진동을 지운 캔들이다. 반전 매매법이 보는 것은
+   ★색이 뒤집혔는가★, 그리고 ★얼마나 긴 추세를 끊고 뒤집혔는가★ 다.
+
+   _mlHeikinFeats 가 그 관측을 이미 낸다(V33.239) — 여기서는 그것을 ★진입 조건★ 으로 쓴다:
+     · haRev  전환 강도. 방금 초록으로 뒤집혔고 직전 빨강 런이 3봉 이상이면 +(pr/6)
+              (같은 값이 '현재 추세 소진' 에서도 나올 수 있어 haRun 부호로 갈라야 한다)
+     · haRun  부호 = 현재 색, 크기 = 연속 봉수/10.
+              방금 뒤집혔으면 run=1 이므로 ★+0.1★ 이다 — 즉 haRun>0 이면 '확인된 전환'.
+              haRun<0 인데 haRev>0 이면 아직 빨강인 채 몸통만 줄어든 '소진 조짐' 이다.
+     · haBodyR 몸통비. 전환봉의 몸통이 도지면 확신이 없다 — 최소 몸통을 요구한다.
+
+   ★공매도가 없으므로 강세 전환만 거래한다.★ 약세 전환(초록 런을 끊는 빨강)은 진입 신호가
+   아니라 ★청산★ 정보인데, 이 엔진의 청산은 별도 경로(committeeExit·손절)라 여기서 다루지 않는다.
+   그 사실을 detail 에 적는다 — "반전 매매법을 넣었다" 가 양방향을 뜻하지 않게.
+
+   ★소진(haRun<0)은 잡지 않는다.★ 아직 빨강인 봉에서 사는 것은 떨어지는 칼날이고,
+   그 자리는 이미 VS_REV(대량거래 투매 되돌림)가 다른 근거로 본다. 여기서는 ★확인된 전환★ 만. */
+function evaluateHeikinReversalEntry(price, dailyData, cfg, regime, market) {
+  const R = (cfg && cfg.rvStrat && cfg.rvStrat.ha) || RVSTRAT.ha;
+  if (!R || R.enabled === false) return null;
+  const closes = dailyData && dailyData.closes;
+  if (!Array.isArray(closes) || closes.length < 210) return null;
+  const ha = _mlHeikinFeats(closes, dailyData.highs, dailyData.lows, dailyData.opens);
+  if (!ha) return null;
+  // ① 확인된 강세 전환인가 — haRev 가 양수이면서 현재 색이 초록(haRun>0)
+  if (!(ha.haRev >= (R.minRev != null ? R.minRev : 0.5))) return null;
+  if (!(ha.haRun > 0)) return null;                       // 소진 조짐은 제외(위 주석)
+  // ② 전환봉의 몸통이 있는가 — 도지에서 뒤집힌 것은 확신이 아니다
+  if (!(ha.haBodyR >= (R.minBody != null ? R.minBody : 0.30))) return null;
+  // ③ 구조적 하락은 '반전' 이 아니다 — 상승추세 안의 되돌림에서만
+  if (R.requireMa200 !== false) {
+    const ma200 = getMA(closes, 200);
+    if (!(ma200 != null && price > ma200)) return null;
+  }
+  // ④ 고점 대비 낙폭 상한 — 너무 깊이 무너진 뒤의 전환은 되돌림이 아니라 데드캣일 수 있다
+  const hi20 = getNDayHigh(closes, 20);
+  if (hi20 != null && hi20 > 0) {
+    const off = ((hi20 - price) / hi20) * 100;
+    if (off > (R.maxOffHighPct != null ? R.maxOffHighPct : 22)) return null;
+  }
+  const atr = getATR(closes, (cfg && cfg.atrPeriod) || 14, dailyData.highs, dailyData.lows);
+  const atrPct = (atr != null && price > 0) ? (atr / price * 100) : null;
+  if (atrPct != null && atrPct > (R.maxAtrPct || 6)) return null;
+  return { name: "HA_REV", weight: 0.9, type: "SNAP",
+    confidence: _clamp(0.52 + ha.haRev * 0.2 + (ha.haBodyR - 0.3) * 0.3, 0.5, 0.82),
+    detail: "하이킨아시 강세전환 rev" + ha.haRev.toFixed(2) + " 몸통" + (ha.haBodyR * 100).toFixed(0) +
+            "% 꼬리" + ha.haShadow.toFixed(2) + " ★강세전환만(공매도 없음)★",
+    members: ["HA_REV"] };
+}
+
 /* ══ [V33.251] 여러 후보 중 하나를 고른다 — 그리고 왜 골랐는지 남긴다 ══════════
    점수 = 축소된 실현기대값 + 작은 confidence 보정.
      · 축소   exp × n/(n+SHRINK_K) — 표본이 적은 신호는 0 쪽으로 당긴다(운 제거)
@@ -12715,6 +12775,7 @@ function evaluateAllStrategies(price, dayPct, dailyData, cfg, signalStats, regim
     _push(evaluatePairOuEntry(price, dailyData, cfg, market, _rvCtx));
     _push(evaluateXsArbEntry(price, dailyData, cfg, market, _rvCtx));
     _push(evaluateVolTargetTrendEntry(price, dailyData, cfg, regime, market));
+    _push(evaluateHeikinReversalEntry(price, dailyData, cfg, regime, market));   // [V33.254]
     sig = _pickBestSignal(_cands, eventData && eventData.sigTypeStats);
   }
 
@@ -43393,6 +43454,8 @@ export {
   DUALHEAD, _dualThrPct,
   // [V33.251] 전략 선택 검증용 — 축소·동점처리·가지치기를 수치로 확인한다.
   _pickBestSignal, SIGPICK, signalExpectancy,
+  // [V33.254] 하이킨아시 진입 전략 검증용
+  evaluateHeikinReversalEntry,
   // [V33.250] 신규 전략 5종 검증용 — tools/check-new-strategies.mjs 가 실제로 돌려 본다.
   RVSTRAT, rvBuildPanel, rvContextFor, evaluateIndexFlowEntry, evaluateVolTargetTrendEntry,
   evaluateVolSpikeRevertEntry, evaluatePairOuEntry, evaluateXsArbEntry,

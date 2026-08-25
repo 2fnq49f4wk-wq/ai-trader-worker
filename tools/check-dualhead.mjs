@@ -167,9 +167,21 @@ console.log("④ 배선 — 우선순위가 아니라 선택인가");
     "`A || B || C` 우선순위 사슬이 사라졌다",
     "여전히 첫 번째로 걸리는 것을 쓴다 — 선택이 아니다");
   chk(/_pickBestSignal\(_cands/.test(ev), "후보를 모아 _pickBestSignal 로 고른다", "선택기를 호출하지 않는다");
-  const pushes = (ev.match(/_push\(evaluate/g) || []).length;
-  chk(pushes === 5, "다섯 평가기 전부가 후보에 들어간다(" + pushes + "/5)",
-    "후보에 " + pushes + "개만 들어간다 — 나머지는 평가조차 안 된다");
+  /* [V33.254] ★개수를 박지 않는다.★ 처음엔 `pushes === 5` 로 적었는데 HA_REV 를 넣자마자
+     깨졌다 — 게이트는 옳게 반응했지만, 전략을 추가할 때마다 숫자를 고쳐야 하는 계약은
+     결국 "숫자만 올리고 넘어가는" 습관을 만든다. 계약을 성질로 바꾼다:
+     ★cfg.rvStrat 를 읽는 평가기(= 신규 전략군)는 예외 없이 후보 풀에 있어야 한다.★
+     그러면 다음에 누가 여섯 번째, 일곱 번째를 만들어도 자동으로 검사된다. */
+  const evalFns = [...S.matchAll(/function (evaluate[A-Za-z]+Entry)\s*\(/g)].map(m => m[1]);
+  const rvFns = evalFns.filter(function (fn) {
+    const i = S.indexOf("function " + fn + " (") >= 0 ? S.indexOf("function " + fn + " (") : S.indexOf("function " + fn + "(");
+    return i >= 0 && /cfg && cfg\.rvStrat/.test(S.slice(i, i + 900));
+  });
+  chk(rvFns.length >= 6, "신규 전략군 평가기 " + rvFns.length + "개를 찾았다", "평가기를 못 찾았다");
+  const missing = rvFns.filter(fn => ev.indexOf("_push(" + fn) < 0);
+  chk(missing.length === 0,
+    "그 " + rvFns.length + "개가 예외 없이 후보 풀에 있다 (" + rvFns.map(f => f.replace(/^evaluate|Entry$/g, "")).join(", ") + ")",
+    "후보 풀에 빠진 평가기: " + missing.join(", ") + " — 만들어만 두고 안 쓰는 상태다");
   // 켈리는 그대로인가 — 사용자가 명시적으로 버리지 말라고 한 것
   chk(/_md\.sizeMult = _md\.allow \? mlKellySize\(_md\.p, _md\.uncertainty\) : 1/.test(S),
     "켈리 사이징이 그대로 살아 있다(선택은 '무엇을', 켈리는 '얼마나')",
