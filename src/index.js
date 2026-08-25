@@ -31952,9 +31952,20 @@ async function mlMindTrainNightly(DB) {
     const _methodChanged = leakFree && _prevUsable && prevMind.leakFree !== true;
     const regressed = (prevLB != null && !_methodChanged && accLB < prevLB - MIND.regressGuardMargin) || (accLB < majorityAcc - 0.03);
     if (regressed) {
+      /* [V33.248] ★거부하려면 무엇으로 쟀는지 함께 말해야 한다.★
+         이 문장은 두 판 넘게 MIND 를 막았는데, 그동안 ★몇 행으로 쟀는지★ 를 한 번도 말하지 않았다.
+         그래서 "하한이 낮다" 를 볼 때마다 그게 모델이 나쁜 것인지 표본이 적은 것인지 알 수 없었고,
+         알아내는 데 로그 왕복이 여러 번 들었다(실제로 그렇게 알아냈다 — 평가 600행·유효 40건).
+         게다가 꼬리의 "CPU예산 초과로 미수렴했을 가능성" 은 ★추측을 단정처럼 적은 것★ 이다.
+         이번 실측이 그 추측을 반증한다: 모델은 미수렴한 게 아니라 다수클래스에 못 미쳤다.
+         추측을 빼고 측정을 넣는다 — 창·평가행·고유도·유효표본을 그대로 싣는다. */
+      const _how = " [창 " + N + "행 · 평가 " + valNRaw + "행 · 고유도 " + _uBar.toFixed(4) +
+                   " → 유효 " + valN + "건]";
       const _msg = "[MIND] ⚠️ 회귀가드 발동 — 신규 valAcc " + (valAcc * 100).toFixed(1) + "%(하한 " + (accLB * 100).toFixed(1) +
         "%)가 " + (prevLB != null ? "기존 하한 " + (prevLB * 100).toFixed(1) + "%" : "다수클래스 기준 " + (majorityAcc * 100).toFixed(1) + "%") +
-        "보다 크게 낮아 발행 거부(기존 모델 유지). CPU예산 초과로 미수렴했을 가능성 — fmMaxSamples/fmBudgetMs 점검 필요.";
+        "보다 크게 낮아 발행 거부(기존 모델 유지)." + _how +
+        (valN < 150 ? " 유효표본이 작다 — 모델이 나쁜 게 아니라 ★못 재는★ 상태일 수 있다(평가창 점검)."
+                    : " 표본은 충분하다 — 모델 자체가 기준선에 못 미친다.");
       try { await log(DB, "ERROR", null, _msg); } catch (e2) {}
       return _msg;
     }
@@ -31973,7 +31984,8 @@ async function mlMindTrainNightly(DB) {
       liveBaseN: _prevGuard ? _prevGuard.liveBaseN : null,
       liveBaseAt: _prevGuard ? _prevGuard.liveBaseAt : null });
 
-    return "[MIND] n=" + N + " 결합valAcc=" + (valAcc * 100).toFixed(1) + "%(하한 " + (accLB * 100).toFixed(1) + "%) (FM단독 " + (fmAcc * 100).toFixed(1) +
+    return "[MIND] n=" + N + " 결합valAcc=" + (valAcc * 100).toFixed(1) + "%(하한 " + (accLB * 100).toFixed(1) +
+           "%, 평가 " + valNRaw + "행·고유도 " + _uBar.toFixed(4) + "→유효 " + valN + "건) (FM단독 " + (fmAcc * 100).toFixed(1) +
            "%) 전문가=" + expertNames.join("+") + " meta_w=[" + meta.w.map(function (v) { return v.toFixed(2); }).join(",") + "]";
   } catch (e) {
     return "[MIND] train fail: " + (e && e.message);

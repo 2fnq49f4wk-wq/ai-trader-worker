@@ -143,5 +143,31 @@ console.log("⑤ 메모리 — 창을 키운 만큼의 계약");
     "로더가 원본을 붙들고 있다 — 창을 키우면 그대로 128MB 를 친다");
 }
 
+console.log("⑥ 거부 사유가 자기 숫자를 말하는가");
+{
+  const seg = S.slice(S.indexOf("const _how ="), S.indexOf("await log(DB, \"ERROR\"", S.indexOf("const _how =")));
+  chk(seg.length > 50, "회귀가드 메시지 조립부를 찾았다", "메시지 조립부를 못 찾았다");
+  for (const [tok, what] of [["N", "창 크기"], ["valNRaw", "평가 행수"], ["_uBar", "고유도"], ["valN", "유효표본"]]) {
+    chk(new RegExp("\\b" + tok + "\\b").test(seg), "거부 사유에 " + what + "(" + tok + ")가 실린다",
+      "거부 사유에 " + what + "가 없다 — '하한이 낮다' 가 모델 탓인지 표본 탓인지 알 수 없다");
+  }
+  chk(/valN < 150/.test(seg),
+    "유효표본이 작으면 '못 재는 상태' 라고 구분해 말한다",
+    "표본 부족과 모델 불량을 같은 문장으로 뭉갠다 — 그게 이번 진단을 늦춘 원인이다");
+  /* ★또 주석에 걸렸다.★ 이 세션에서 check-snapshot-drift 가 똑같이 자기 설명 주석을
+     코드로 세어 실패했다. 같은 실수를 반복하지 않도록 여기서도 ★내보내는 문자열★ 만 본다 —
+     _msg 조립문 안의 주석 아닌 줄에서만 찾는다. */
+  const msgStmt = S.slice(S.indexOf("const _msg = \"[MIND] ⚠️"), S.indexOf(";", S.indexOf('"보다 크게 낮아 발행 거부')));
+  const msgCode = msgStmt.split("\n").filter(l => !/^\s*(\/\/|\*|\/\*)/.test(l)).join("\n");
+  chk(!/CPU예산/.test(msgCode),
+    "추측을 단정처럼 적던 꼬리 문구가 내보내는 문장에서 사라졌다",
+    "'CPU예산 초과로 미수렴' 추측이 실제 출력 문장에 남아 있다 — 이번 실측이 그 추측을 반증했다");
+  // 성공 문장에도 같은 근거가 실려야 한다(거부일 때만 보이면 비교가 안 된다)
+  const okLine = S.slice(S.indexOf('return "[MIND] n=" + N'), S.indexOf('return "[MIND] n=" + N') + 400);
+  chk(/valNRaw/.test(okLine) && /_uBar/.test(okLine),
+    "발행 성공 문장에도 같은 근거가 실린다(거부와 비교 가능)",
+    "성공 문장에는 근거가 없다 — 두 경우를 나란히 못 놓는다");
+}
+
 console.log(fails ? "\n✗ MIND 평가표본 검사 " + fails + "건 실패" : "\n✓ MIND 평가표본 검사 통과");
 process.exit(fails ? 1 : 0);
