@@ -322,6 +322,13 @@ jobs:
       #   서버는 offset 을 되비추기만 했고 hasMore 는 false 로 굳어 있었다.
       - name: 단타 표본 폭·페이징 검사 (오류 재현 · 누락/중복 0)
         run: node tools/check-scalp-featdim.mjs
+      # [V33.257] 자가진단이 "보조 모델 1종" 이라 적고 있었다. 같은 응답의 externalTrain 에는
+      #   6종이 전부 trained·ageH 5 였고 XGB 0.5354 / LGB 0.5324 / Cat 0.5409 로 멀쩡했다.
+      #   식이 (DNN?1:0)+(GBDT?1:0) 두 칸짜리였다 — 부스터 3종·이중헤드가 안 세진다.
+      #   틀린 숫자보다 그 숫자를 보고 ★멀쩡한 것을 고치러 들어가는 것★ 이 더 비싸다.
+      #   보고가 위원회와 같은 함수를 쓰는지만 본다(맞는 숫자는 내일 또 틀린다).
+      - name: 자가진단 명단 검사 (보고가 위원회와 같은 함수를 쓰는가)
+        run: node tools/check-selfcheck-roster.mjs
       # cloudflare/wrangler-action 대신 로컬에서 검증된 방식 그대로 실행
       # (wrangler-action@v3의 npx 자동설치가 4.86.0을 요구하며 실패하던 문제 회피)
       - name: Install wrangler

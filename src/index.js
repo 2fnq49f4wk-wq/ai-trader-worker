@@ -2798,7 +2798,7 @@ async function applySignalTypeWeights(DB, cfg) {
 // ============================================================================
 // [V33.55] 빌드 버전 — SWR L2 캐시 키에 섞어 '배포 = 판단 캐시 자동 무효화'를 만든다.
 //   판정 로직을 고쳐도 옛 캐시가 최대 1시간 재배포되던 문제를 구조적으로 없앤다.
-const _BUILD_VER = "V33.256";
+const _BUILD_VER = "V33.257";
 
 // ═══ [V33.171] 평가 순서 계획 — ★승격과 순환을 교차해 굶주림을 구조적으로 없앤다★ ═══
 //   V33.50 의 형태트리거는 "급한 몇 종목을 앞으로 당긴다"는 의도였으나, 실제 운영로그에서는
@@ -36487,10 +36487,46 @@ async function aiSelfCheck(DB, env) {
       if (typeof mind.valAccLB === "number" && mind.valAccLB < 0.5) R.warnings.push("MIND 검증 하한 " + (mind.valAccLB * 100).toFixed(1) + "% < 50% (신호 미약)");
       if (mind.leakFree !== true) R.warnings.push("MIND 누수측정(구버전) — 재학습 시 OOF 정직수치로 전환됨");
     }
-    // 위원회 조화 — 신뢰받는 보조 모델 유무
-    const nTrusted = (dnnT && dnnT.trusted ? 1 : 0) + (gT && gT.trusted ? 1 : 0);
-    if (nTrusted === 0) R.warnings.push("DNN·GBDT 모두 미신뢰 — 위원회가 MIND 단독(다양성 부족). 절대게이트 통과 대기");
-    else R.ok.push("보조 모델 " + nTrusted + "종 위원회 합류");
+    /* [V33.257] ★이 줄은 위원회를 세는 척하면서 두 명만 보고 있었다.★
+       종전 nTrusted = (DNN 신뢰?1:0) + (GBDT 신뢰?1:0) 이다. 그런데 실제 위원회에는
+       V32.65 부터 부스터 3종(XGB·LGB·Cat)이, V33.251 부터 이중헤드 2종이 들어간다.
+       그래서 XGB·LGB·Cat 이 전부 valAcc 0.53~0.54 로 멀쩡히 투표하고 있는 날에도
+       화면은 "보조 모델 1종" 이라고 적었다 — ★모델이 안 도는 게 아니라 세는 자가
+       두 칸짜리였다.★ 진단기가 틀리면 멀쩡한 것을 고치러 들어가게 된다.
+       명단은 손으로 다시 적지 않는다. ★위원회가 실제로 싣는 그 함수를 그대로 부른다★
+       (_boostersCached) — 그래야 문턱이 바뀌어도 보고와 실물이 갈라지지 않는다. */
+    let _bst = []; try { _bst = await _boostersCached(DB) || []; } catch (e) {}
+    let _dBull = null, _dBear = null;
+    try { const _DS = await getStates(DB, ["dual_bull_model", "dual_bear_model"]);
+          _dBull = _DS["dual_bull_model"]; _dBear = _DS["dual_bear_model"]; } catch (e) {}
+    /* 이중헤드도 조건을 다시 적지 않는다 — ★판정 함수를 그대로 불러 본다.★
+       (판·trusted·짝 조건이 dualHeadJudge 안에 있고, 둘은 쌍으로만 투표한다.
+        0 벡터로 한 번 불러 null 이 아니면 그 쌍이 살아 있는 것이다.) */
+    let _dualOn = false;
+    try {
+      const _z = new Array(LUXML.featNames.length).fill(0);
+      _dualOn = dualHeadJudge(_dBull, _dBear, _z, {}) != null;
+    } catch (e) {}
+    const _roster = [];
+    if (dnnT && dnnT.trusted) _roster.push("DNN");
+    if (gT && gT.trusted) _roster.push("GBDT");
+    for (const b of _bst) _roster.push(String(b.name || "?").toUpperCase());
+    if (_dualOn) _roster.push("DUAL(강세+약세)");
+    const nTrusted = _roster.length;
+    R.committee = { n: nTrusted, members: _roster };
+    if (nTrusted === 0) R.warnings.push("보조 위원 0명 — 위원회가 MIND 단독(다양성 부족). 절대게이트 통과 대기");
+    else R.ok.push("보조 모델 " + nTrusted + "종 위원회 합류 (" + _roster.join(", ") + ")");
+    /* ★빠진 위원은 조용히 빠지지 않는다.★ 학습은 됐는데 문턱에서 걸린 것과
+       아예 학습이 안 된 것은 처방이 전혀 다르다 — 그 둘을 구분해 적는다. */
+    if (dnnT && !dnnT.trusted)
+      R.warnings.push("DNN 미신뢰 accLB " + (_num(dnnT.dnnAccLB, 0) * 100).toFixed(2) +
+        "% — 학습은 되는데 위원회에 못 든다(가중 0). GPU 는 계속 태우고 있다");
+    for (const nm of ["xgb", "lgb", "cat"]) {
+      if (_roster.indexOf(nm.toUpperCase()) >= 0) continue;
+      let t = null; try { t = await getState(DB, nm + "_trust", null); } catch (e) {}
+      if (t) R.warnings.push(nm.toUpperCase() + " 미합류 accLB " + (_num(t.gbdtAccLB, 0) * 100).toFixed(2) +
+        "% (문턱 " + (_num(GBDT.trustFloor, 0.505) * 100).toFixed(1) + "%)");
+    }
     if ((dnnT && dnnT.reason === "err")) R.errors.push("DNN 학습 오류: " + (dnnT.err || "?"));
     // 가드 상태
     const guard = await getState(DB, "mind_guard", null);
@@ -43460,6 +43496,7 @@ export default {
 // [검증용 named export] Cloudflare Worker는 default export만 사용하므로 무해.
 //   로컬 백테스트/단위검증 스크립트에서 핵심 함수를 직접 호출하기 위함.
 export {
+  dualHeadJudge, _boostersCached,   // [V33.257] 자가진단 명단 검사가 '위원회가 쓰는 그 함수' 를 직접 돌린다
   DEFAULT_CFG, AI_PARAMS, migrateCfgToMarkets, evaluateAllStrategies, evaluateTrendEntry, evaluateSnapEntry,
   evaluateSell, backtestSymbol, backtestStats, backtestStatsBySignal,
   getRSI, getMA, getATR, getNDayHigh, getStrategyRules, fetchDailyForBacktest,
