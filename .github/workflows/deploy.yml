@@ -307,6 +307,14 @@ jobs:
       #   전략 선택도 함께: 첫 번째로 걸리는 것이 아니라 실현기대값으로 고른다(켈리는 유지).
       - name: 이중헤드·전략선택 검사 (라벨 정규화 · 비대칭 문턱 · 켈리 보존)
         run: node tools/check-dualhead.mjs
+      # [V33.255] 신호 이름이 선언과 실재 두 방향으로 갈라져 있었다.
+      #   ① 설정에만 있는 허구: phaseAdapt 의 TR_52W · SN_OVERSOLD — 내보내는 평가기가 없다.
+      #   ② 실재하는데 대장에 없음: 신규 6종이 SIGNAL_TYPES 에 빠져 signal_type_stats 가
+      #      영원히 비었다 → _pickBestSignal 이 실현기대값 대신 confidence 비교로 퇴화.
+      #   둘 다 조용히 아무 일도 안 일어나는 종류라 로그로는 잡히지 않는다.
+      #   평가기 본문에서 실제로 내보내는 이름을 뽑아 양방향으로 대조한다.
+      - name: 신호 대장 검사 (허구 이름 금지 · 살아 있는 신호는 전부 등재)
+        run: node tools/check-signal-registry.mjs
       # cloudflare/wrangler-action 대신 로컬에서 검증된 방식 그대로 실행
       # (wrangler-action@v3의 npx 자동설치가 4.86.0을 요구하며 실패하던 문제 회피)
       - name: Install wrangler

@@ -2435,7 +2435,17 @@ async function applySectorGroupWeights(DB, cfg) {
 const SIGNAL_TYPES = [
   "TR_PULLBACK", "TR_BREAKOUT", "TR_SQUEEZE", "TR_RS_LEADER",
   "SN_RSI2",
-  "SC_VWAP", "SC_MOMENTUM", "SC_PULLBACK", "SC_PANIC_INV", "SC_PANIC_BOUNCE", "SC_VBURST"
+  "SC_VWAP", "SC_MOMENTUM", "SC_PULLBACK", "SC_PANIC_INV", "SC_PANIC_BOUNCE", "SC_VBURST",
+  // [V33.255] ★신규 6종이 여기 없어서 학습층이 통째로 죽어 있었다.★
+  //   executeSell 의 성과 누적은 `SIGNAL_TYPES.indexOf(entrySignalName) >= 0` 로 잠겨 있다.
+  //   목록에 없으면 signal_type_stats 에 단 한 건도 쌓이지 않고, 그러면
+  //   signalExpectancy 는 영원히 null 을 돌려준다. 그 결과 _pickBestSignal 안에서
+  //     · 가지치기(_pr)     — 지는 전략이 있어도 절대 걸러지지 않고
+  //     · 실현기대(shrunk)  — 항상 0 이라 점수가 tie(=confidence) 만 남는다
+  //   즉 "실현 기대값으로 고른다"고 만든 장치가 신규 6종에 대해서는
+  //   ★손으로 적은 confidence 비교★ 로 퇴화한다 — 바로 그것을 안 하려고 만든 장치인데.
+  //   표본이 쌓이길 기다리는 문제가 아니라 영원히 쌓이지 않는 구조였다.
+  "XR_FLOW", "VT_TREND", "VS_REV", "PR_OU", "XS_ARB", "HA_REV"
 ];
 // [V33.82] ★켈리 기준 신호별 베팅 비중★ (사용자 지시: 집중투자)
 //   종전 가중은 [0.7, 1.3] 범위였다. 즉 아무리 좋은 신호도 30% 더 사는 게 전부고,
@@ -2788,7 +2798,7 @@ async function applySignalTypeWeights(DB, cfg) {
 // ============================================================================
 // [V33.55] 빌드 버전 — SWR L2 캐시 키에 섞어 '배포 = 판단 캐시 자동 무효화'를 만든다.
 //   판정 로직을 고쳐도 옛 캐시가 최대 1시간 재배포되던 문제를 구조적으로 없앤다.
-const _BUILD_VER = "V33.254";
+const _BUILD_VER = "V33.255";
 
 // ═══ [V33.171] 평가 순서 계획 — ★승격과 순환을 교차해 굶주림을 구조적으로 없앤다★ ═══
 //   V33.50 의 형태트리거는 "급한 몇 종목을 앞으로 당긴다"는 의도였으나, 실제 운영로그에서는
@@ -3216,8 +3226,17 @@ const AI_PARAMS = {
     //   보합장에서 돌파는 휩쏘로 죽고, 폭등장에서 되돌림은 기다리다 못 산다. 서로 반대로 눌러준다.
     // [V33.250] 신규 5종도 성격대로 분류한다 — 빠뜨리면 레짐 틸트에서 조용히 제외된다.
     //   XR_FLOW(편입 플로우)·VT_TREND(추세)는 돌파 계열, PR_OU·XS_ARB·VS_REV 는 회귀 계열.
-    breakoutSigs: ["TR_BREAKOUT", "SW_VOL_SPK", "SC_VBURST", "SC_MOMENTUM", "SC_VWAP", "TR_52W", "XR_FLOW", "VT_TREND"],
-    revertSigs:   ["TR_PULLBACK", "SC_PULLBACK", "SW_GOLDEN", "SN_OVERSOLD", "SC_PANIC_INV", "PR_OU", "XS_ARB", "VS_REV", "HA_REV"],
+    // [V33.255] ★이 목록은 코드가 아니라 기억에서 쓰여 있었다.★ V33.44 에서 처음 넣을 때
+    //   TR_52W · SN_OVERSOLD 를 적었는데 ★두 이름을 내보내는 평가기가 이 저장소에 없다.★
+    //   반대로 그때 이미 존재하던 TR_SQUEEZE · TR_RS_LEADER 는 빠져 있었다. 즉 실재하는
+    //   신호는 틸트에서 제외되고, 실재하지 않는 신호가 자리를 차지하고 있었다.
+    //   특히 SN_OVERSOLD 자리는 SN_RSI2 여야 했다 — SN 계열은 그것 하나뿐이고,
+    //   원장 실측 켈리가 가장 높은(f* 0.525) 신호가 보합장 가산을 한 번도 못 받았다.
+    //   TR_SQUEEZE 는 `price > bbPrev.upper` 로 직전 밴드 상단을 뚫을 때만 나가므로 돌파다.
+    //   TR_RS_LEADER 는 '리더를 눌림에 산다' 라 돌파도 회귀도 아니어서 ★분류하지 않는다★
+    //   (미분류 = 틸트 없음 = 지금 동작 그대로. 근거 없이 밀지 않는다).
+    breakoutSigs: ["TR_BREAKOUT", "TR_SQUEEZE", "SW_VOL_SPK", "SC_VBURST", "SC_MOMENTUM", "SC_VWAP", "XR_FLOW", "VT_TREND"],
+    revertSigs:   ["TR_PULLBACK", "SC_PULLBACK", "SW_GOLDEN", "SN_RSI2", "SC_PANIC_INV", "PR_OU", "XS_ARB", "VS_REV", "HA_REV"],
     // 국면×성격 부적합 시 사이즈 배수(0 이면 진입 자체를 막지 않고 축소만 — 안전 우선)
     mismatchMult: 0.6,
     matchMult: 1.1
