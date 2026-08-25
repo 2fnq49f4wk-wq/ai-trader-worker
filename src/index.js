@@ -20927,6 +20927,13 @@ async function handleRequest(request, env, ctx) {
       // [V11.1] 스냅샷 앵커 — 다페이지 수집 중 야간수확이 새 행을 삽입하면 OFFSET이 밀려 중복/누락.
       //   첫 페이지가 anchorTs(현재 최신 ts)를 반환하고, 이후 페이지는 beforeTs로 그 시점을 고정.
       const beforeTs = Number(url.searchParams.get("beforeTs")) || 0;
+      /* [V33.247] ★"첫 페이지" 를 offset 으로 판정하면 안 된다.★
+         트레이너는 2페이지부터 ★커서★ 로 넘어가고 offset 을 아예 보내지 않는다(V33.12).
+         그러면 `Number(...get("offset")) || 0` 이 0 이 되어 ★모든 페이지가 첫 페이지★ 로 잡힌다.
+         그래서 "표본 수집 시작" 한 줄이 회차마다 26번씩 찍히고 있었다 — 실제로 이번 진단에서
+         같은 줄이 반복돼 로그를 읽기 어려웠다. 진단하려고 보는 로그를 진단 대상이 스스로
+         덮어쓰는 셈이다. 커서가 없을 때만 첫 페이지다. */
+      const _firstPage = offset === 0 && !Number(url.searchParams.get("cursorTs"));
       // [V33.27] R2 스냅샷이 신선하면 거기서 파트를 그대로 서빙한다 — D1 은 전혀 건드리지 않는다.
       //   (학습 1회당 17만 행 × 9페이지 조회가 D1 폭주의 최대 유발원이었다)
       try {
@@ -20947,7 +20954,7 @@ async function handleRequest(request, env, ctx) {
               const _snapN = _num(_snap.total, 0);
               if (Math.abs(_live - _snapN) > Math.max(50, _snapN * 0.25)) {
                 _snapOk = false;
-                if (offset === 0) {
+                if (_firstPage) {
                   try { ctx.waitUntil(log(env.DB, "WARN", null, "[ML-EXPORT] 스냅샷 무시 — 사진 " + _snapN +
                     "건 vs 실제 " + _live + "건. D1 에서 직접 내보낸다(featVer " + LUXML.featVer + ").")); } catch (e) {}
                 }
@@ -20964,7 +20971,7 @@ async function handleRequest(request, env, ctx) {
             const _o = await _R2.get(_mlSnapKey(LUXML.featVer, _part));
             if (_o) {
               const _arr = JSON.parse(await _o.text());
-              if (offset === 0) {
+              if (_firstPage) {
                 try { ctx.waitUntil(log(env.DB, "INFO", null, "[ML-EXPORT] 외부 트레이너가 표본 수집 시작 — R2 스냅샷 " + _snap.parts + "파트/total=" + _snap.total)); } catch (e) {}
               }
               return Response.json({ featVer: LUXML.featVer, featNames: LUXML.featNames, total: _snap.total,
@@ -20997,7 +21004,7 @@ async function handleRequest(request, env, ctx) {
       const raw = (rows && rows.results) ? rows.results : [];
       // [V33.12] 트레이너가 표본을 실제로 당겨갔다는 증거를 로그에 남긴다(첫 페이지 1건만).
       //   이게 안 찍히면 Modal 크론이 아예 워커에 도달하지 않은 것 — 원인 분리에 결정적.
-      if (offset === 0) {
+      if (_firstPage) {
         try { ctx.waitUntil(log(env.DB, "INFO", null, "[ML-EXPORT] 외부 트레이너가 표본 수집 시작 — featVer=" + LUXML.featVer + " total=" + total)); } catch (e) {}
       }
       const out = [];

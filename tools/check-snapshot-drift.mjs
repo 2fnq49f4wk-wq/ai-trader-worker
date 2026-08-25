@@ -82,9 +82,38 @@ console.log("② 무효화 지점");
   chk(!/offset\s*[=!<>]==?\s*0\s*\)?\s*&&/.test(cond.replace(/if \(offset === 0\) \{[\s\S]*?\}/g, "")),
     "판정 자체는 offset 과 무관하다 — 모든 페이지가 같은 소스를 쓴다",
     "판정이 offset 에 걸려 있다 — 0페이지는 D1, 1페이지는 R2 로 섞인 표본이 만들어진다");
-  chk(/offset === 0/.test(cond),
+  chk(/_firstPage/.test(cond),
     "로그는 첫 페이지에서만 남긴다(26페이지가 같은 줄을 26번 찍지 않게)",
     "무효화 로그가 페이지마다 찍힌다");
+}
+
+/* ── ④ '첫 페이지' 판정 — offset 으로는 알 수 없다 ── */
+console.log("④ 첫 페이지 판정 (커서 페이지네이션)");
+{
+  const exp = S.slice(S.indexOf('if (path === "/api/ml-export")'), S.indexOf('/api/ml-export-st'));
+  chk(/const _firstPage = offset === 0 && !Number\(url\.searchParams\.get\("cursorTs"\)\)/.test(exp),
+    "첫 페이지 = offset 0 ★그리고★ 커서 없음",
+    "첫 페이지를 offset 으로만 판정한다 — 커서 페이지는 offset 을 안 보내므로 전부 첫 페이지가 된다");
+  const logs = (exp.match(/ctx\.waitUntil\(log\(env\.DB, "(INFO|WARN)", null, "\[ML-EXPORT\]/g) || []).length;
+  const guarded = (exp.match(/if \(_firstPage\) \{/g) || []).length;
+  chk(logs > 0 && guarded === logs,
+    "ML-EXPORT 로그 " + logs + "곳 전부가 첫 페이지 판정으로 묶여 있다",
+    "로그 " + logs + "곳 중 " + guarded + "곳만 묶여 있다 — 나머지가 페이지마다 찍힌다");
+  // 실측 재현: 트레이너의 파라미터 형태로 페이지마다 판정해 본다
+  const page = (q) => {
+    const off = Number(q.offset) || 0, cur = Number(q.cursorTs) || 0;
+    return off === 0 && !cur;
+  };
+  const trainerPages = [{ offset: 0 }, { cursorTs: 1787, cursorId: 9 }, { cursorTs: 1786, cursorId: 8 },
+                        { cursorTs: 1785, cursorId: 7 }];
+  const firsts = trainerPages.filter(page).length;
+  chk(firsts === 1,
+    "트레이너의 4페이지 요청 중 첫 페이지로 잡히는 것은 1개뿐이다",
+    "4페이지 중 " + firsts + "개가 첫 페이지로 잡힌다 — 로그가 그만큼 반복된다");
+  const oldPage = (q) => (Number(q.offset) || 0) === 0;
+  chk(trainerPages.filter(oldPage).length === 4,
+    "옛 판정(offset 만)으로는 4개 전부 첫 페이지 — 관측된 로그 반복과 일치",
+    "재현 실패 — 로그 반복의 원인 진단이 틀렸다");
 }
 
 /* ── ③ 학습기 — 크래시 대신 이유를 적고 멈추는가 ── */
