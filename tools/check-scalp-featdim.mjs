@@ -68,10 +68,17 @@ out = {"kept": len(X), "dropped": dropped, "widths": widths}
 X2, _ = collect(samples, False)
 try:
     import numpy as np
-    np.array(X2, dtype=np.float64)
+    out["numpy"] = True
+except Exception:
+    out["numpy"] = False
+if out["numpy"]:
+    try:
+        np.array(X2, dtype=np.float64)
+        out["raw_error"] = None
+    except Exception as e:
+        out["raw_error"] = type(e).__name__ + ": " + str(e)[:90]
+else:
     out["raw_error"] = None
-except Exception as e:
-    out["raw_error"] = type(e).__name__ + ": " + str(e)[:90]
 out["raw_widths"] = dict(Counter(len(r) for r in X2))
 print(json.dumps(out))
 `;
@@ -90,10 +97,19 @@ print(json.dumps(out))
   chk(r.widths.length === 1 && r.widths[0] === 69,
     "남은 표본의 폭이 단 하나다 — np.array 가 죽지 않는다", "폭이 여전히 섞여 있다: " + JSON.stringify(r.widths));
 
-  // ③ 고치기 전 동작이 정말 그 오류였는지 — 재현 없이 '고쳤다' 고 말하지 않는다
+  /* ③ 고치기 전 동작이 정말 그 오류였는지 — 재현 없이 '고쳤다' 고 말하지 않는다.
+     ★numpy 가 없으면 통과시키지 않는다.★ 이 검사는 처음 CI 에서 바로 이것 때문에
+     떨어졌다(러너에 numpy 가 없었다). 그때 "없으면 건너뛴다" 로 고쳤다면 이 절은
+     영원히 초록인데 아무것도 재현하지 않는 장식이 된다 — 이 저장소가 가장 자주
+     당한 실패 방식이다. 도구가 없으면 없다고 말하고 실패한다. */
+  chk(r.numpy === true,
+    "numpy 로 실제 배열 변환을 시도할 수 있다",
+    "numpy 가 없어 운영 오류를 재현할 수 없다 — 워크플로에 numpy 설치 단계가 필요하다(건너뛰지 않는다)");
   chk(r.raw_error != null && /inhomogeneous/.test(r.raw_error),
     "필터를 끄면 운영과 같은 오류가 재현된다 → " + r.raw_error,
-    "필터를 꺼도 오류가 안 난다 — 이 검사가 재현하는 것이 그 버그가 맞는지 알 수 없다");
+    r.numpy === true
+      ? "필터를 꺼도 오류가 안 난다 — 이 검사가 재현하는 것이 그 버그가 맞는지 알 수 없다"
+      : "numpy 부재로 재현 불가(위 항목 참조)");
   chk(JSON.stringify(r.raw_widths) === JSON.stringify({ "65": 12, "69": 30 }),
     "재현 시 폭 분포가 " + JSON.stringify(r.raw_widths) + " 로 갈렸다",
     "폭 분포가 예상과 다르다: " + JSON.stringify(r.raw_widths));
