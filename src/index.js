@@ -2788,7 +2788,7 @@ async function applySignalTypeWeights(DB, cfg) {
 // ============================================================================
 // [V33.55] 빌드 버전 — SWR L2 캐시 키에 섞어 '배포 = 판단 캐시 자동 무효화'를 만든다.
 //   판정 로직을 고쳐도 옛 캐시가 최대 1시간 재배포되던 문제를 구조적으로 없앤다.
-const _BUILD_VER = "V33.247";
+const _BUILD_VER = "V33.248";
 
 // ═══ [V33.171] 평가 순서 계획 — ★승격과 순환을 교차해 굶주림을 구조적으로 없앤다★ ═══
 //   V33.50 의 형태트리거는 "급한 몇 종목을 앞으로 당긴다"는 의도였으나, 실제 운영로그에서는
@@ -31481,8 +31481,36 @@ const MIND = {
   // [V32.6] 25000→15000 롤백. V12.118의 실험(25000)이 풀 24만에서 "valAcc 58.7% 미수렴 → 회귀가드
   //   발동(기존 모델 유지)"으로 실패했다(로그 확인). 코드 주석의 롤백 조건이 충족돼 15000으로 되돌린다 —
   //   FM(고정 20에폭 SGD)이 CPU 예산(fmBudgetMs) 안에 수렴하는 크기. 작지만 수렴하는 MIND가 미수렴보다 낫다.
-  trainWindow: 15000,
-  fmK: 8, fmEpochs: 20, fmLr: 0.03, fmL2w: 0.001, fmL2v: 0.003, fmBudgetMs: 20000, fmMaxSamples: 50000,
+  /* ══ [V33.248] ★학습이 감당할 크기와 평가가 필요한 크기는 다른 수다★ ══
+     이 창은 FM(고정 20에폭 SGD)이 CPU 예산 안에 ★수렴★ 하는 크기로 정해졌다 —
+     V12.38·V32.6 이 60000·25000 에서 미수렴을 겪고 두 번 되돌린 근거가 그것이다.
+     그 판단은 학습에 대해서는 옳다. 그런데 같은 상수가 ★평가 표본 수★ 도 정한다.
+     평가는 전방계산뿐이라 비용이 전혀 다른데, 한 숫자에 묶여 있었다.
+
+     그 결과가 이것이다(실측 재현):
+       15,000 →(val ×0.2) 3,000 →(메타 뒤40%) 1,200 →(τ* 뒤절반) 600
+       600 × 고유도 0.0667 = ★유효 40건★ → Wilson 하한 41.2% (관측 41.1%)
+     다수클래스 50.4% 에 3%p 를 뺀 47.4% 를 못 넘어 회귀가드가 발행을 거부했다.
+     표본풀은 518,000건인데 위원장은 600행으로 심사받고 있었던 것이다.
+
+     ★고유도 0.0667 은 정상값이다.★ 일봉·10일 라벨 지평이면 한 종목의 ±10일 창에
+     15봉쯤이 겹치므로 1/15 가 맞다 — 여기를 건드리면 안 된다.
+
+     그래서 둘을 분리한다:
+       · trainWindow 15000 → 30000 (평가 표본을 늘린다. 메모리 2배 ≈ 35MB — 다른
+         학습기들이 쓰는 40000~180000 보다 여전히 작다)
+       · fmMaxSamples 50000 → 12000 ★FM 학습량을 지금과 똑같이 못 박는다★
+         (지금도 train = 15000 - 3000 = 12000 이라 상한 50000 은 놀고 있었다.
+          창을 키워도 FM 이 보는 행 수는 12,000 그대로 — CPU 중립이다.)
+     이 둘이 짝이다. 창만 키우면 FM 이 24,000 행을 받아 V12.38 의 미수렴이 재발한다. */
+  trainWindow: 30000,
+  fmK: 8, fmEpochs: 20, fmLr: 0.03, fmL2w: 0.001, fmL2v: 0.003, fmBudgetMs: 20000, fmMaxSamples: 12000,
+  /* [V33.248] 검증분을 쓰는 두 소비자에게 ★필요한 만큼만★ 준다 — 나머지는 정직한 측정 몫이다.
+     · 메타는 전문가 2~3명의 로짓을 받는 로지스틱이다. 파라미터가 3~4개인데 1,800행을 먹었다.
+     · τ* 는 36분위 중 하나를 고르는 일이다. 600행을 먹었다.
+     둘 다 수백 행이면 충분하고, 남는 행은 전부 Wilson 하한을 좁히는 데 쓰는 게 맞다.
+     검증분이 작을 때는 상한이 걸리지 않아 종전과 동작이 완전히 같다(작은 풀 무회귀). */
+  metaTrainCap: 1200, tauCalibCap: 600,
   // [V12.41] FM 멀티시드 — 단일 학습의 무작위성(초기화·셔플)으로 valAcc가 43~64%를 오가며
   //   회귀가드 문턱(다수클래스-3%p)을 넘을락말락 하던 분산 문제. 시드 N개를 학습해 검증 앞절반
   //   정확도 최고를 선택(DNN 멀티시드와 동일 원리).
@@ -31726,7 +31754,8 @@ async function mlMindTrainNightly(DB) {
     });
     // [V4 누출 수정] 메타를 val 전체로 학습하고 같은 val로 평가하던 낙관편향 제거:
     //   시간순 앞 60%로 메타 학습 → 뒤 40%로만 평가(진짜 미래 성능).
-    const mCut = Math.max(10, Math.floor(metaRows.length * 0.6));
+    // [V33.248] 60% 를 주되 metaTrainCap 을 넘기지 않는다 — 남는 행은 아래 평가로 간다.
+    const mCut = Math.max(10, Math.min(Math.floor(metaRows.length * 0.6), MIND.metaTrainCap || 1e9));
     const metaTrainRows = metaRows.slice(0, mCut);
     const metaEvalRows = metaRows.slice(mCut);
     const meta = _metaTrain(metaTrainRows);
@@ -31739,7 +31768,8 @@ async function mlMindTrainNightly(DB) {
     //   찾아 meta.b에 -logit(τ*)로 굽는다 → 이후 0.5 기준 추론이 그대로 캘리브레이션 반영.
     //   정확도는 τ* 선택에 쓰지 않은 '뒤 절반'에서 산출(정직한 홀드아웃).
     let evalR = evalRows;
-    const halfE = Math.floor(evalRows.length / 2);
+    // [V33.248] 절반을 주되 tauCalibCap 을 넘기지 않는다(36분위 선택에 600행이면 족하다).
+    const halfE = Math.max(1, Math.min(Math.floor(evalRows.length / 2), MIND.tauCalibCap || 1e9));
     if (halfE >= 20 && evalRows.length - halfE >= 20) {
       const psC = [];
       for (let i = 0; i < halfE; i++) psC.push(_metaPredict(meta, evalRows[i].e));

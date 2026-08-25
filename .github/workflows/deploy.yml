@@ -281,6 +281,13 @@ jobs:
       #   신선도를 시계로만 재지 않는다. 그리고 학습기는 크래시 대신 이유를 적고 멈춘다.
       - name: 표본 스냅샷 드리프트 검사 (굶은 사진 · 소스 혼합 · 학습기 가드 위치)
         run: node tools/check-snapshot-drift.mjs
+      # [V33.248] "MIND 미학습 · 위원장 부재" 의 실체. 표본풀 518,000건인데 위원장은 600행으로
+      #   심사받고 있었다 — trainWindow 15,000 이 val ×0.2 → 메타 뒤40% → τ* 뒤절반 을 거쳐
+      #   600행이 되고, 고유도 0.0667 을 곱해 유효 40건. Wilson 하한 41.2%(관측 41.1%)가
+      #   다수클래스 47.4% 선을 못 넘어 회귀가드가 발행을 거부했다.
+      #   고유도는 정상값이다. 학습이 감당할 크기와 평가가 필요한 크기를 분리한다.
+      - name: MIND 평가표본 검사 (학습창≠평가창 · FM CPU 중립 · 자 휘기 금지)
+        run: node tools/check-mind-eval-size.mjs
       # cloudflare/wrangler-action 대신 로컬에서 검증된 방식 그대로 실행
       # (wrangler-action@v3의 npx 자동설치가 4.86.0을 요구하며 실패하던 문제 회피)
       - name: Install wrangler
