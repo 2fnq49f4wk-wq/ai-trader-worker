@@ -275,6 +275,12 @@ jobs:
       #   세션 밖엔 부르지 않는다. 실측 재현 + 개장전/장중 실제 실행으로 무손실을 확인한다.
       - name: KR 장중 창 검사 (헛 fetch · 휴장≠고장 · 실패 사유)
         run: node tools/check-kr-intraday-window.mjs
+      # [V33.247] 화면 3/8. Modal 학습이 3연속 IndexError(size 8)로 죽고 있었다.
+      #   워커 익스포트가 total=8 짜리 R2 스냅샷을 D1(51.7만)보다 우선 서빙했기 때문이다 —
+      #   featVer 13→14 직후 v14 풀이 8건이던 순간에 찍힌 사진이 26시간 진실 행세를 했다.
+      #   신선도를 시계로만 재지 않는다. 그리고 학습기는 크래시 대신 이유를 적고 멈춘다.
+      - name: 표본 스냅샷 드리프트 검사 (굶은 사진 · 소스 혼합 · 학습기 가드 위치)
+        run: node tools/check-snapshot-drift.mjs
       # cloudflare/wrangler-action 대신 로컬에서 검증된 방식 그대로 실행
       # (wrangler-action@v3의 npx 자동설치가 4.86.0을 요구하며 실패하던 문제 회피)
       - name: Install wrangler

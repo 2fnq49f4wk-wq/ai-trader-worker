@@ -2788,7 +2788,7 @@ async function applySignalTypeWeights(DB, cfg) {
 // ============================================================================
 // [V33.55] 빌드 버전 — SWR L2 캐시 키에 섞어 '배포 = 판단 캐시 자동 무효화'를 만든다.
 //   판정 로직을 고쳐도 옛 캐시가 최대 1시간 재배포되던 문제를 구조적으로 없앤다.
-const _BUILD_VER = "V33.246";
+const _BUILD_VER = "V33.247";
 
 // ═══ [V33.171] 평가 순서 계획 — ★승격과 순환을 교차해 굶주림을 구조적으로 없앤다★ ═══
 //   V33.50 의 형태트리거는 "급한 몇 종목을 앞으로 당긴다"는 의도였으나, 실제 운영로그에서는
@@ -9382,11 +9382,41 @@ async function mlSnapshotBuildStep(DB, deadline) {
   const fv = LUXML.featVer;
   let st = await getState(DB, _mlSnapStateKey(fv), null);
   const nowT = Date.now();
+  /* ══ [V33.247] ★사진 한 장이 26시간 동안 진실 행세를 했다★ ══
+     이 스냅샷은 뜨는 순간의 풀 크기(total)를 박아 두고, 12시간은 다시 뜨지 않으며,
+     익스포트는 그것을 26시간까지 D1 보다 ★우선해서★ 서빙한다.
+
+     그 조합이 featVer 상향과 만나면 이렇게 된다. V33.239 가 판을 13→14 로 올린
+     직후 v14 풀에는 8건뿐이었다(캐치업 수확이 아직 안 돌았으니 당연하다).
+     하필 그때 스냅샷이 떠서 total=8 · parts=1 로 done 도장을 찍었다.
+     몇 시간 뒤 풀은 설계대로 517,924건이 됐는데 — 익스포트는 계속 8건을 내줬다:
+
+       [ML-EXPORT] 외부 트레이너가 표본 수집 시작 — R2 스냅샷 1파트/total=8  (매 회차)
+
+     그래서 Modal 학습기가 세 번 연속 죽었다(IndexError: index -12, size 8).
+     DNN·XGB·LGB·Cat 이 v14 로 못 올라온 실체가 이것이다.
+
+     ★신선도를 시계로만 재면 안 된다.★ 풀이 저 밑에서 100배가 됐는데 "12시간 안 지났다"
+     는 이유로 굶은 사진을 계속 내주는 것은, 캐시가 아니라 오답이다.
+     살아 있는 풀과 사진이 크게 어긋나면 시각과 무관하게 다시 뜬다. */
+  let _live = -1;
+  try { const _c0 = await DB.prepare("SELECT COUNT(*) c FROM ml_samples WHERE featver=?").bind(fv).first(); _live = (_c0 && _c0.c) || 0; } catch (e) {}
+  const _drift = (st && st.done && _live >= 0)
+    ? Math.abs(_live - _num(st.total, 0)) > Math.max(50, _num(st.total, 0) * 0.25) : false;
+  if (_drift) {
+    /* done 을 내려 두면 익스포트가 ★모든 페이지★ 에서 D1 로 폴백한다(느리지만 옳다).
+       페이지마다 검사하지 않는 이유가 이것이다 — 0페이지만 폴백하고 1페이지가 R2 면
+       두 소스가 섞인 표본이 만들어진다. 무효화는 한 곳에서, 통째로. */
+    try { st.done = false; await setState(DB, _mlSnapStateKey(fv), st); } catch (e) {}
+    try { await log(DB, "INFO", null, "[R2] 표본 스냅샷 무효 — 사진 " + _num(st.total, 0) + "건 vs 실제 " + _live +
+      "건. 다시 뜰 때까지 트레이너는 D1 에서 읽는다(featVer " + fv + ")."); } catch (e) {}
+    st = null;   // 아래에서 새로 시작한다
+  }
   // 12시간마다 새로 뜬다. 진행 중이면 이어서.
   if (st && st.done && (nowT - (st.ts || 0)) < 12 * 3600000) return { done: true, fresh: true };
   if (!st || st.done) {
-    const c = await DB.prepare("SELECT COUNT(*) c FROM ml_samples WHERE featver=?").bind(fv).first();
-    const total = (c && c.c) || 0;
+    const total = _live >= 0 ? _live
+      : (await (async function () { const c = await DB.prepare("SELECT COUNT(*) c FROM ml_samples WHERE featver=?").bind(fv).first(); return (c && c.c) || 0; })());
     st = { done: false, ts: nowT, anchorTs: nowT, total: total, parts: Math.ceil(total / MLSNAP_PART), next: 0 };
     await setState(DB, _mlSnapStateKey(fv), st);
   }
@@ -20903,7 +20933,28 @@ async function handleRequest(request, env, ctx) {
         const _R2 = _bigR2();
         if (_R2) {
           const _snap = await getState(env.DB, _mlSnapStateKey(LUXML.featVer), null);
-          if (_snap && _snap.done && (Date.now() - (_snap.ts || 0)) < 26 * 3600000) {
+          /* [V33.247] ★사진이 살아 있는 풀과 크게 다르면 서빙하지 않는다.★
+             스냅샷 빌더는 ★장외에만★ 돈다(거래 우선). 그래서 무효화를 빌더에만 두면
+             장중 내내 굶은 사진이 계속 나간다 — 실제로 total=8 이 그렇게 서빙됐다.
+             여기서도 본다. 값은 _mlCountsCached(60초 인메모리 GROUP BY 1회)라 페이지마다
+             D1 을 때리지 않고, 판정이 offset 과 무관하므로 ★모든 페이지가 같은 소스★ 를 쓴다
+             (0페이지만 폴백하면 두 소스가 섞인 표본이 만들어진다). */
+          let _snapOk = !!(_snap && _snap.done && (Date.now() - (_snap.ts || 0)) < 26 * 3600000);
+          if (_snapOk) {
+            try {
+              const _cc = await _mlCountsCached(env.DB);
+              const _live = (_cc && _cc.curTotal) || 0;
+              const _snapN = _num(_snap.total, 0);
+              if (Math.abs(_live - _snapN) > Math.max(50, _snapN * 0.25)) {
+                _snapOk = false;
+                if (offset === 0) {
+                  try { ctx.waitUntil(log(env.DB, "WARN", null, "[ML-EXPORT] 스냅샷 무시 — 사진 " + _snapN +
+                    "건 vs 실제 " + _live + "건. D1 에서 직접 내보낸다(featVer " + LUXML.featVer + ").")); } catch (e) {}
+                }
+              }
+            } catch (e) { /* 카운트를 못 재면 종전대로 스냅샷을 쓴다 */ }
+          }
+          if (_snapOk) {
             const _part = Math.floor(offset / MLSNAP_PART);
             if (_part >= _snap.parts) {
               return Response.json({ featVer: LUXML.featVer, featNames: LUXML.featNames, total: _snap.total,

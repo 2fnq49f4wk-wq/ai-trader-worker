@@ -143,6 +143,24 @@ def train_job(epochs: int = EPOCHS_DEFAULT, dry: bool = False,
     samples = [s for s in samples if isinstance(s.get("x"), list) and len(s["x"]) == D]
     samples.sort(key=lambda s: s.get("ts", 0))
     N = len(samples)
+    # ── [V33.247] 표본이 너무 적으면 ★여기서★ 멈춘다 ────────────────────────────
+    #   아래 공통 전처리에 이런 줄이 있다:
+    #       n_val = max(20, int(N * val_frac));  cut_ts = TS[N - n_val] - embargo_ms
+    #   N 이 20 보다 작으면 TS[음수] 가 되어 IndexError 로 죽는다. 실제로 그렇게 죽었다:
+    #       IndexError: index -12 is out of bounds for axis 0 with size 8
+    #   개별 학습기에는 저마다 '표본 부족' 가드가 있지만(GBDT<400 · 부스팅<500 · FM<200)
+    #   전부 이 줄 ★뒤★ 라 한 번도 도달하지 못했다. 가드가 크래시 지점보다 뒤에 있으면
+    #   없는 것과 같다.
+    #   그리고 크래시는 원인을 말해 주지 않는다 — 워크플로가 빨갛게 죽을 뿐이라, 표본이
+    #   굶었다는 사실(워커의 R2 스냅샷이 total=8 로 굳어 있었다)을 알아내는 데 로그를
+    #   여러 번 왕복해야 했다. 이유를 적고 정상 종료한다.
+    _MIN_N = 200          # 가장 낮은 개별 문턱(FM)과 맞춘다 — 이보다 적으면 아무도 못 배운다
+    if N < _MIN_N:
+        print(f"   ⚠️ 표본 부족 {N}/{_MIN_N} — 학습을 건너뛴다.")
+        print(f"      워커 /api/ml-export 가 featVer={featver} 로 이만큼만 내려줬다는 뜻이다.")
+        print("      풀은 큰데 이 수가 작다면 R2 스냅샷이 낡아 굳은 것을 의심할 것")
+        print("      (워커 로그의 '[ML-EXPORT] … R2 스냅샷 N파트/total=M' 이 실제 풀과 맞는지 본다).")
+        return {"ok": False, "reason": "insufficient samples", "n": N, "featVer": featver}
     X = np.array([s["x"] for s in samples], dtype=np.float64)
     # [V33.78] ★라벨을 절대수익으로 재계산★ (사용자 지시)
     #   워커가 저장한 y 는 수집 당시 설정(alpha=지수 대비 초과수익)으로 매긴 값이다.
