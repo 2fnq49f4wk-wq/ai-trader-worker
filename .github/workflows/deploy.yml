@@ -294,6 +294,12 @@ jobs:
       #   합성 트리를 실제로 위원장 슬롯에 넣고 채점해 트리 확률과 일치하는지 확인한다.
       - name: 트리 위원장 검사 (실채점 일치 · 안전장치 동등 · 사본 금지)
         run: node tools/check-mind-tree.mjs
+      # [V33.250] 신규 전략 5종(지수리밸런스·변동성타겟추세·페어OU·거래량급증역추세·횡단면차익).
+      #   합성 데이터로 다섯을 실제로 돌려 발화/침묵을 확인하고, OU 반감기·분산비·OLS β 를
+      #   알려진 값과 대조한다. 공매도가 없어 페어·횡단면은 롱 다리만이라는 ★한계 표기★ 가
+      #   신호 문구에 남아 있는지, VT_TREND 의 사이즈 배율이 실제 수량에 연결됐는지도 본다.
+      - name: 신규 전략 검사 (발화·침묵 · 수학 · 한계표기 · 사이즈 연결)
+        run: node tools/check-new-strategies.mjs
       # cloudflare/wrangler-action 대신 로컬에서 검증된 방식 그대로 실행
       # (wrangler-action@v3의 npx 자동설치가 4.86.0을 요구하며 실패하던 문제 회피)
       - name: Install wrangler

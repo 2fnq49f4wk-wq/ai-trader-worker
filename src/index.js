@@ -2788,7 +2788,7 @@ async function applySignalTypeWeights(DB, cfg) {
 // ============================================================================
 // [V33.55] 빌드 버전 — SWR L2 캐시 키에 섞어 '배포 = 판단 캐시 자동 무효화'를 만든다.
 //   판정 로직을 고쳐도 옛 캐시가 최대 1시간 재배포되던 문제를 구조적으로 없앤다.
-const _BUILD_VER = "V33.249";
+const _BUILD_VER = "V33.250";
 
 // ═══ [V33.171] 평가 순서 계획 — ★승격과 순환을 교차해 굶주림을 구조적으로 없앤다★ ═══
 //   V33.50 의 형태트리거는 "급한 몇 종목을 앞으로 당긴다"는 의도였으나, 실제 운영로그에서는
@@ -3214,8 +3214,10 @@ const AI_PARAMS = {
     threshDelta: { RANGE: 0.05, MELTUP: -0.03, TREND_UP: -0.01, TREND_DOWN: 0.04, CRASH: 0.06 },
     // 신호 성격 분류 — 돌파(추세추종형) vs 되돌림(평균회귀형).
     //   보합장에서 돌파는 휩쏘로 죽고, 폭등장에서 되돌림은 기다리다 못 산다. 서로 반대로 눌러준다.
-    breakoutSigs: ["TR_BREAKOUT", "SW_VOL_SPK", "SC_VBURST", "SC_MOMENTUM", "SC_VWAP", "TR_52W"],
-    revertSigs:   ["TR_PULLBACK", "SC_PULLBACK", "SW_GOLDEN", "SN_OVERSOLD", "SC_PANIC_INV"],
+    // [V33.250] 신규 5종도 성격대로 분류한다 — 빠뜨리면 레짐 틸트에서 조용히 제외된다.
+    //   XR_FLOW(편입 플로우)·VT_TREND(추세)는 돌파 계열, PR_OU·XS_ARB·VS_REV 는 회귀 계열.
+    breakoutSigs: ["TR_BREAKOUT", "SW_VOL_SPK", "SC_VBURST", "SC_MOMENTUM", "SC_VWAP", "TR_52W", "XR_FLOW", "VT_TREND"],
+    revertSigs:   ["TR_PULLBACK", "SC_PULLBACK", "SW_GOLDEN", "SN_OVERSOLD", "SC_PANIC_INV", "PR_OU", "XS_ARB", "VS_REV"],
     // 국면×성격 부적합 시 사이즈 배수(0 이면 진입 자체를 막지 않고 축소만 — 안전 우선)
     mismatchMult: 0.6,
     matchMult: 1.1
@@ -3658,6 +3660,16 @@ const DEFAULT_CFG = {
     trend: true,
     scalp: true,  // [V50] 분봉 단타 활성화 (KR 포함 — scalpRules.usOnly=false)
     snap: true    // [V52] 스냅백(상승추세 내 과매도 단기반등) 활성화
+  },
+  /* [V33.250] 신규 5종 토글. 기본값은 코드 상수 RVSTRAT 이고 여기서 종목별·계열별로 끌 수 있다.
+     enabled:false 면 다섯 전부 평가하지 않는다(패널 조회도 건너뛴다). */
+  rvStrat: {
+    enabled: true,
+    xr: { enabled: true },   // 지수 리밸런스 플로우(대리지표)
+    vt: { enabled: true },   // 변동성 타겟 추세
+    pr: { enabled: true },   // 공적분 페어 OU — ★롱 다리만★
+    vs: { enabled: true },   // 거래량 급증 평균회귀
+    xs: { enabled: true }    // 횡단면 통계차익 — ★롱 다리만★
   },
   // [V51] 전략별 사이클 예산 분리 — trend/scalp가 같은 현금풀을 두고 경쟁해 단타가 굶던 문제 해결.
   //   각 시장 가용현금을 비율로 쪼개 전략별 독립 예산으로 사용. 대시보드 슬라이더로 조절.
@@ -11653,6 +11665,440 @@ function weeklyAboveMA(closes, maWeeks) {
 //   투매됐을 때 평균회귀 반등을 2~5일 먹는다. TREND(순응)·SCALP(분봉)와 직교하는 수익원.
 //   과거 meanrev 실패(승률 0%) 원인 = 약세장 과매도 반전 → BEAR 차단 + 장기추세 게이트 + 칼날 문턱으로 배제.
 //   데이터: 일봉 closes/highs/lows만 사용 — 추가 fetch 0.
+/* ═══════════════════════════════════════════════════════════════════════════
+   [V33.250] 신규 전략 5종 — 지수리밸런스 · 변동성타겟추세 · 페어OU · 거래량급증역추세 · 횡단면차익
+
+   ★먼저 정직하게: 이 엔진은 공매도를 하지 않는다.★ 하방 수단은 인버스 ETF 매수뿐이다
+   (SH·SQQQ·SPXU·252670.KS …). 그래서 아래 다섯 중 둘은 교과서 형태 그대로가 아니다:
+     · 페어(PR_OU)     — 롱/숏 스프레드가 아니라 ★싼 다리만 롱★ 이다. 시장중립이 아니다.
+     · 횡단면(XS_ARB)  — 롱숏 북의 ★롱 다리만★ 이다. 시장 베타가 남는다.
+   나머지 셋(XR_FLOW·VT_TREND·VS_REV)은 롱온리로도 원형 그대로 성립한다.
+   이 사실을 신호 detail 과 화면에 그대로 적는다 — 이름만 페어인 것을 페어라고 부르면
+   성적을 잘못 읽게 된다.
+
+   지수 리밸런스(XR_FLOW)도 한계를 적어 둔다: 이 엔진에는 ★지수 편입/제외 공시 피드가 없다.★
+   대신 공개된 정기변경 일정(코스피200 6·12월 정기변경, S&P 분기 리밸런스)과 실시간 시총
+   순위(mcap_shares 의 가격×주식수)로 ★순위 밴드 진입★ 을 본다. 공시를 아는 게 아니라
+   "공시가 날 만한 자리에 왔다" 를 보는 대리지표다.
+   ═══════════════════════════════════════════════════════════════════════════ */
+const RVSTRAT = {
+  enabled: true,
+  // ── 공통 ──
+  panelMaxSyms: 220,        // 패널 1회 구축이 훑는 종목 상한(야간 CPU 예산)
+  panelDeadlineMs: 12000,   // 벽시계 마감 — 종목 수가 아니라 실제로 쓴 시간으로 멈춘다
+  panelStaleH: 30,          // 이보다 낡은 패널은 쓰지 않는다(전략이 조용히 옛 관계로 매매하는 것 방지)
+
+  // ── ① XR_FLOW 지수 리밸런스 플로우 ──
+  xr: { enabled: true, bandLo: 180, bandHi: 260, windowDays: 25, minRankJump: 12, maxAtrPct: 6 },
+
+  // ── ② VT_TREND 변동성 타겟 추세 ──
+  vt: { enabled: true, targetVolPct: 1.6, volLookback: 20, minAdx: 18,
+        sizeMin: 0.4, sizeMax: 1.8, maxRealVolPct: 6.0 },
+
+  // ── ③ PR_OU 공적분 페어 OU 스프레드(롱 다리만) ──
+  pr: { enabled: true, minCorr: 0.7, lookback: 120, minHalfLife: 2, maxHalfLife: 30,
+        entryZ: -2.0, maxVarRatio: 0.85, topPairs: 60, minPrice: 1 },
+
+  // ── ④ VS_REV 거래량 급증 평균회귀 ──
+  vs: { enabled: true, volMult: 3.0, minDropPct: -4.0, maxDropPct: -18.0,
+        closePosMax: 0.45, rsi2Max: 8, aboveMa200: true },
+
+  // ── ⑤ XS_ARB 횡단면 통계차익(롱 다리만) ──
+  xs: { enabled: true, retDays: 5, minResidZ: -1.8, minPeers: 12, maxAtrPct: 6, minAboveMa200: true }
+};
+
+/* ── 최소제곱 기울기(로그가격) — 공적분 β ── */
+function _rvOlsBeta(ya, yb) {
+  const n = Math.min(ya.length, yb.length);
+  if (n < 20) return null;
+  let sa = 0, sb = 0;
+  for (let i = 0; i < n; i++) { sa += ya[i]; sb += yb[i]; }
+  const ma = sa / n, mb = sb / n;
+  let num = 0, den = 0;
+  for (let i = 0; i < n; i++) { const x = yb[i] - mb, y = ya[i] - ma; num += x * y; den += x * x; }
+  if (!(den > 1e-12)) return null;
+  return { beta: num / den, alpha: ma - (num / den) * mb };
+}
+
+/* ── OU 반감기 — 스프레드의 AR(1) 계수에서. Δs_t = φ·s_{t-1} + ε 로 회귀해
+      halfLife = −ln2 / ln(1+φ). φ ≥ 0 이면 평균회귀가 아니다(발산) → null. ── */
+function _rvHalfLife(sp) {
+  const n = sp.length;
+  if (n < 30) return null;
+  const x = [], dy = [];
+  for (let i = 1; i < n; i++) { x.push(sp[i - 1]); dy.push(sp[i] - sp[i - 1]); }
+  const r = _rvOlsBeta(dy, x);
+  if (!r) return null;
+  const phi = r.beta;
+  if (!(phi < -1e-6) || phi <= -2) return null;          // 회귀력이 없거나 진동발산
+  const hl = -Math.log(2) / Math.log(1 + phi);
+  return (isFinite(hl) && hl > 0) ? hl : null;
+}
+
+/* ── 분산비(Lo–MacKinlay) — 랜덤워크면 ≈1, 평균회귀면 <1.
+      공적분 검정을 ADF 없이 값싸게 대신한다(워커 CPU 예산 안에서 도는 자). ── */
+function _rvVarRatio(sp, q) {
+  const n = sp.length;
+  if (n < 40 || q < 2) return null;
+  const d1 = [];
+  for (let i = 1; i < n; i++) d1.push(sp[i] - sp[i - 1]);
+  const dq = [];
+  for (let i = q; i < n; i += 1) dq.push(sp[i] - sp[i - q]);
+  const varOf = function (a) {
+    if (a.length < 2) return null;
+    let m = 0; for (const v of a) m += v; m /= a.length;
+    let s = 0; for (const v of a) s += (v - m) * (v - m);
+    return s / (a.length - 1);
+  };
+  const v1 = varOf(d1), vq = varOf(dq);
+  if (v1 == null || vq == null || !(v1 > 1e-12)) return null;
+  return (vq / q) / v1;
+}
+
+function _rvZ(arr, v) {
+  const n = arr.length;
+  if (n < 20) return null;
+  let m = 0; for (const x of arr) m += x; m /= n;
+  let s = 0; for (const x of arr) s += (x - m) * (x - m);
+  s = Math.sqrt(s / Math.max(1, n - 1));
+  return (s > 1e-12) ? (v - m) / s : null;
+}
+/* ══ [V33.250] 상대가치 패널 — 페어·횡단면은 ★한 종목만 봐서는 만들 수 없다★ ══
+   evaluateAllStrategies 는 종목 하나의 일봉만 받는다(설계상 그렇다). 그래서 교차종목
+   관계는 야간에 한 번 계산해 상태에 두고, 사이클은 그것을 읽기만 한다 —
+   mlBuildXSPanel(V33 xspanel)이 같은 이유로 쓰는 방식이다. */
+async function rvBuildPanel(DB) {
+  if (!RVSTRAT.enabled) return null;
+  const t0 = Date.now();
+  try {
+    let syms = [];
+    try { syms = (await histSymbolKeys(DB, 400)).filter(function (s) { return s && s[0] !== "^"; }); } catch (e) {}
+    if (syms.length < 30) {
+      const dks = await DB.prepare("SELECT k FROM state WHERE k >= 'daily:' AND k < 'daily;' ORDER BY k LIMIT 400").all();
+      syms = (((dks && dks.results) || []).map(function (r) { return r.k.slice(6); })).filter(function (s) { return s && s[0] !== "^"; });
+    }
+    if (syms.length < 20) return "[RV] 대상 부족 " + syms.length;
+    syms = syms.slice(0, RVSTRAT.panelMaxSyms);
+
+    // 일봉 적재 — 로그종가만 남기고 원본은 즉시 놓아준다(메모리 계약: V33.201).
+    const LB = RVSTRAT.pr.lookback;
+    const px = {};      // sym → 로그종가 배열(최근 LB)
+    const lastC = {};   // sym → 최종 종가
+    for (let i = 0; i < syms.length; i++) {
+      if (Date.now() - t0 > RVSTRAT.panelDeadlineMs) break;
+      const sym = syms[i];
+      let dd = null;
+      try { dd = (await histGet(DB, sym)) || (await getState(DB, "daily:" + sym, null)); } catch (e) {}
+      const c = dd && dd.closes;
+      if (!Array.isArray(c) || c.length < LB + 10) continue;
+      const tail = c.slice(c.length - LB);
+      let ok = true; const lg = [];
+      for (const v of tail) { if (!(v > RVSTRAT.pr.minPrice)) { ok = false; break; } lg.push(Math.log(v)); }
+      if (!ok) continue;
+      px[sym] = lg; lastC[sym] = tail[tail.length - 1];
+    }
+    const keys = Object.keys(px);
+    if (keys.length < 12) return "[RV] 가격이력 부족 " + keys.length;
+
+    /* ── ⑤ 횡단면 잔차 — 시장(같은 시장 전체) 평균을 뺀 k일 수익률 ──
+       "이 종목이 시장 대비 얼마나 싸졌나" 를 z 로 만든다. 섹터가 있으면 섹터를 먼저 뺀다. */
+    const RD = RVSTRAT.xs.retDays;
+    const retOf = function (lg) { return (lg.length > RD) ? (lg[lg.length - 1] - lg[lg.length - 1 - RD]) * 100 : null; };
+    const byMkt = {};
+    for (const s of keys) {
+      const mkt = /\.(KS|KQ)$/i.test(s) ? "kr" : "us";
+      const r = retOf(px[s]); if (r == null) continue;
+      (byMkt[mkt] = byMkt[mkt] || []).push({ s: s, r: r, sec: (typeof SECTOR_MAP !== "undefined" && SECTOR_MAP[s]) || null });
+    }
+    const xs = {};
+    for (const mkt of Object.keys(byMkt)) {
+      const rows = byMkt[mkt];
+      if (rows.length < RVSTRAT.xs.minPeers) continue;
+      // 섹터 평균(표본 5 이상인 섹터만) → 없으면 시장 평균
+      const secSum = {}, secN = {};
+      for (const r of rows) if (r.sec) { secSum[r.sec] = (secSum[r.sec] || 0) + r.r; secN[r.sec] = (secN[r.sec] || 0) + 1; }
+      let mSum = 0; for (const r of rows) mSum += r.r;
+      const mMean = mSum / rows.length;
+      const resid = rows.map(function (r) {
+        const base = (r.sec && secN[r.sec] >= 5) ? (secSum[r.sec] / secN[r.sec]) : mMean;
+        return { s: r.s, e: r.r - base };
+      });
+      const es = resid.map(function (r) { return r.e; });
+      for (const r of resid) {
+        const z = _rvZ(es, r.e);
+        if (z != null) xs[r.s] = { z: +z.toFixed(3), n: rows.length, mkt: mkt };
+      }
+    }
+
+    /* ── ③ 페어 — 상관 상위 후보만 공적분 검정(전수 조합은 CPU 예산 밖이다) ──
+       logA = α + β·logB 로 β 를 잡고 스프레드의 분산비·OU 반감기를 본다.
+       ★공매도가 없으므로 스프레드를 '거래' 하지는 못한다★ — 싼 다리를 롱할 뿐이다. */
+    const dlog = {};
+    for (const s of keys) {
+      const a = px[s], d = [];
+      for (let i = Math.max(1, a.length - 60); i < a.length; i++) d.push(a[i] - a[i - 1]);
+      dlog[s] = d;
+    }
+    const corr = function (A, B) {
+      const n = Math.min(A.length, B.length);
+      if (n < 30) return 0;
+      const a = A.slice(A.length - n), b = B.slice(B.length - n);
+      let ma = 0, mb = 0; for (let i = 0; i < n; i++) { ma += a[i]; mb += b[i]; }
+      ma /= n; mb /= n;
+      let sa = 0, sb = 0, sab = 0;
+      for (let i = 0; i < n; i++) { const x = a[i] - ma, y = b[i] - mb; sa += x * x; sb += y * y; sab += x * y; }
+      return (sa > 1e-12 && sb > 1e-12) ? sab / Math.sqrt(sa * sb) : 0;
+    };
+    const pairs = {};
+    let pairN = 0;
+    for (let i = 0; i < keys.length && pairN < RVSTRAT.pr.topPairs; i++) {
+      if (Date.now() - t0 > RVSTRAT.panelDeadlineMs * 2) break;
+      const A = keys[i], isKA = /\.(KS|KQ)$/i.test(A);
+      let best = null;
+      for (let j = 0; j < keys.length; j++) {
+        if (j === i) continue;
+        const B = keys[j];
+        if (/\.(KS|KQ)$/i.test(B) !== isKA) continue;          // 같은 시장끼리만
+        const c = corr(dlog[A], dlog[B]);
+        if (c < RVSTRAT.pr.minCorr) continue;
+        if (!best || c > best.c) best = { B: B, c: c };
+      }
+      if (!best) continue;
+      const ols = _rvOlsBeta(px[A], px[best.B]);
+      if (!ols || !(ols.beta > 0.05) || ols.beta > 20) continue;
+      const sp = [];
+      for (let t = 0; t < px[A].length; t++) sp.push(px[A][t] - ols.alpha - ols.beta * px[best.B][t]);
+      const vr = _rvVarRatio(sp, 5);
+      if (vr == null || vr > RVSTRAT.pr.maxVarRatio) continue;   // 랜덤워크에 가까우면 페어가 아니다
+      const hl = _rvHalfLife(sp);
+      if (hl == null || hl < RVSTRAT.pr.minHalfLife || hl > RVSTRAT.pr.maxHalfLife) continue;
+      const z = _rvZ(sp, sp[sp.length - 1]);
+      if (z == null) continue;
+      pairs[A] = { b: best.B, beta: +ols.beta.toFixed(4), corr: +best.c.toFixed(3),
+                   z: +z.toFixed(3), hl: +hl.toFixed(1), vr: +vr.toFixed(3) };
+      pairN++;
+    }
+
+    /* ── ① 시총순위 — 실시간(가격×주식수) 대 정적(MCAP_RANK) ──
+       "지금 몇 위인가" 와 "예전에 몇 위였나" 의 차이가 곧 밴드로 올라오는 속도다.
+       주식수(mcap_shares)가 없는 종목은 순위에서 뺀다 — 모르면서 아는 척하지 않는다. */
+    const rank = {};
+    try {
+      const shares = (await getState(DB, "mcap_shares", {})) || {};
+      const caps = [];
+      for (const s of keys) {
+        const sh = _num(shares[s] && (shares[s].shares != null ? shares[s].shares : shares[s]), 0);
+        if (!(sh > 0) || !(lastC[s] > 0)) continue;
+        caps.push({ s: s, cap: sh * lastC[s], kr: /\.(KS|KQ)$/i.test(s) });
+      }
+      for (const mkt of ["kr", "us"]) {
+        const rows = caps.filter(function (r) { return r.kr === (mkt === "kr"); })
+                         .sort(function (a2, b2) { return b2.cap - a2.cap; });
+        for (let i = 0; i < rows.length; i++) {
+          const prev = (typeof MCAP_RANK !== "undefined" && MCAP_RANK[rows[i].s]) || 0;
+          rank[rows[i].s] = { now: i + 1, prev: prev, mkt: mkt };
+        }
+      }
+    } catch (e) {}
+
+    const rec = { ts: Date.now(), xs: xs, pairs: pairs, rank: rank, nSym: keys.length,
+                  nPair: pairN, nRank: Object.keys(rank).length, ms: Date.now() - t0, retDays: RD };
+    await setState(DB, "rv_panel", rec);
+    return "[RV] 상대가치 패널 — 종목 " + keys.length + " · 횡단면 " + Object.keys(xs).length +
+           " · 페어 " + pairN + "쌍 · 시총순위 " + Object.keys(rank).length + " (" + (Date.now() - t0) + "ms)";
+  } catch (e) { return "[RV] 실패: " + (e && e.message); }
+}
+/* ── 실현변동성(일간 로그수익 표준편차, %) — VT/VS 가 공유한다 ── */
+function _rvRealVolPct(closes, n) {
+  if (!Array.isArray(closes) || closes.length < n + 2) return null;
+  const d = [];
+  for (let i = closes.length - n; i < closes.length; i++) {
+    if (closes[i] > 0 && closes[i - 1] > 0) d.push(Math.log(closes[i] / closes[i - 1]));
+  }
+  if (d.length < Math.max(5, Math.floor(n * 0.6))) return null;
+  let m = 0; for (const v of d) m += v; m /= d.length;
+  let s = 0; for (const v of d) s += (v - m) * (v - m);
+  return Math.sqrt(s / Math.max(1, d.length - 1)) * 100;
+}
+
+/* ══ ① XR_FLOW — 지수 리밸런스 플로우 (대리지표) ═══════════════════════════
+   ★공시 피드가 없다.★ 정기변경 일정은 공개돼 있고 결정론적이라 달력은 코드로 둘 수 있지만,
+   "무엇이 들어가고 나가는지" 는 발표 전까지 알 수 없다. 대신 실시간 시총순위가 편입 밴드로
+   ★올라오는 것★ 을 본다 — 패시브 자금이 사야 할 자리에 미리 서는 고전적 방식이다.
+   맞히는 게 아니라 확률을 사는 것이므로 이름과 detail 에 '대리' 를 적어 둔다. */
+function _rvIndexReviewNear(market, nowMs, windowDays) {
+  // 코스피200: 6월·12월 정기변경(선물 만기 다음 거래일 전후). S&P: 3·6·9·12월 3번째 금요일.
+  const d = new Date(nowMs);
+  const y = d.getUTCFullYear();
+  const months = (market === "kr") ? [5, 11] : [2, 5, 8, 11];   // 0-based
+  let best = null;
+  for (const yy of [y - 1, y, y + 1]) {
+    for (const mo of months) {
+      // 그 달 3번째 금요일
+      const first = new Date(Date.UTC(yy, mo, 1));
+      let fri = 1 + ((5 - first.getUTCDay() + 7) % 7) + 14;
+      const t = Date.UTC(yy, mo, fri);
+      const dd = Math.abs(t - nowMs) / 86400000;
+      if (best == null || dd < best) best = dd;
+    }
+  }
+  return (best != null && best <= windowDays) ? best : null;
+}
+function evaluateIndexFlowEntry(price, dailyData, cfg, market, rvCtx) {
+  const R = (cfg && cfg.rvStrat && cfg.rvStrat.xr) || RVSTRAT.xr;
+  if (!R || R.enabled === false) return null;
+  if (!rvCtx || !rvCtx.rank || !(rvCtx.rank.now > 0)) return null;
+  const days = _rvIndexReviewNear(market, Date.now(), R.windowDays);
+  if (days == null) return null;                                   // 정기변경 창 밖
+  const now = rvCtx.rank.now, prev = _num(rvCtx.rank.prev, 0);
+  if (!(now >= R.bandLo && now <= R.bandHi)) return null;           // 편입 밴드가 아니다
+  if (!(prev > 0 && (prev - now) >= R.minRankJump)) return null;    // 순위가 실제로 올라오고 있는가
+  const closes = dailyData && dailyData.closes;
+  if (!Array.isArray(closes) || closes.length < 60) return null;
+  const ma50 = getMA(closes, 50);
+  if (!(ma50 != null && price > ma50)) return null;                 // 내려가며 밴드에 드는 건 제외
+  const atr = getATR(closes, (cfg && cfg.atrPeriod) || 14, dailyData.highs, dailyData.lows);
+  const atrPct = (atr != null && price > 0) ? (atr / price * 100) : null;
+  if (atrPct != null && atrPct > (R.maxAtrPct || 6)) return null;
+  const conf = _clamp(0.52 + (prev - now) / 200 + (R.windowDays - days) / (R.windowDays * 12), 0.5, 0.8);
+  return { name: "XR_FLOW", weight: 0.85, type: "TREND", confidence: conf,
+    detail: "지수정기변경 D-" + days.toFixed(0) + " 시총순위 " + prev + "→" + now +
+            "(밴드 " + R.bandLo + "~" + R.bandHi + ") ★대리지표: 편입공시 아님★",
+    members: ["XR_FLOW"] };
+}
+
+/* ══ ② VT_TREND — 변동성 타겟 추세 ═══════════════════════════════════════
+   진입 판정은 추세지만, 이 전략의 요점은 ★크기★ 다. 같은 신호라도 변동성이 두 배면
+   절반만 산다(목표변동성/실현변동성). sizeMult 를 신호에 실어 보낸다. */
+function evaluateVolTargetTrendEntry(price, dailyData, cfg, regime, market) {
+  const R = (cfg && cfg.rvStrat && cfg.rvStrat.vt) || RVSTRAT.vt;
+  if (!R || R.enabled === false) return null;
+  const closes = dailyData && dailyData.closes;
+  if (!Array.isArray(closes) || closes.length < 210) return null;
+  const ma50 = getMA(closes, 50), ma200 = getMA(closes, 200);
+  if (!(ma50 != null && ma200 != null && price > ma50 && ma50 > ma200)) return null;
+  const adx = (dailyData.highs && dailyData.lows) ? getADX(dailyData.highs, dailyData.lows, closes, 14) : null;
+  if (!(adx != null && adx >= (R.minAdx || 18))) return null;
+  const rv = _rvRealVolPct(closes, R.volLookback || 20);
+  if (rv == null || !(rv > 1e-6)) return null;
+  if (rv > (R.maxRealVolPct || 6)) return null;                     // 너무 시끄러우면 타겟팅도 무의미
+  const sizeMult = _clamp((R.targetVolPct || 1.6) / rv, R.sizeMin || 0.4, R.sizeMax || 1.8);
+  // 20일 신고가 근처에서만 — 추세추종은 '가고 있는 것' 을 사는 것이다.
+  const hi20 = getNDayHigh(closes, 20);
+  if (!(hi20 != null && price >= hi20 * 0.97)) return null;
+  return { name: "VT_TREND", weight: 1.0, type: "TREND",
+    confidence: _clamp(0.55 + (adx - 18) / 120, 0.5, 0.85),
+    sizeMult: +sizeMult.toFixed(3),
+    detail: "ADX " + adx.toFixed(0) + " 실현변동성 " + rv.toFixed(2) + "%/일 → 목표 " +
+            (R.targetVolPct || 1.6) + "% 기준 사이즈 ×" + sizeMult.toFixed(2),
+    members: ["VT_TREND"] };
+}
+
+/* ══ ④ VS_REV — 거래량 급증 평균회귀 ══════════════════════════════════════
+   같은 '거래량 급증' 을 기존 SW_VOL_SPK·SC_VBURST 는 ★돌파★ 로 읽는다. 이건 반대다 —
+   패닉 투매(대량거래 + 큰 하락 + 저가권 마감)를 되돌림 대상으로 본다.
+   그래서 상승추세(MA200 위) 안에서만, 그리고 하락폭이 과하지 않을 때만 잡는다. */
+function evaluateVolSpikeRevertEntry(price, dayPct, dailyData, cfg, regime, market) {
+  const R = (cfg && cfg.rvStrat && cfg.rvStrat.vs) || RVSTRAT.vs;
+  if (!R || R.enabled === false) return null;
+  const closes = dailyData && dailyData.closes, vols = dailyData && dailyData.volumes;
+  if (!Array.isArray(closes) || closes.length < 210 || !Array.isArray(vols) || vols.length < 25) return null;
+  if (!(typeof dayPct === "number")) return null;
+  if (!(dayPct <= (R.minDropPct != null ? R.minDropPct : -4))) return null;
+  if (dayPct < (R.maxDropPct != null ? R.maxDropPct : -18)) return null;   // 추락은 칼날 — 제외
+  // 거래량 배수(장중이면 volPaceMult 로 풀데이 환산 — 기존 규약 그대로)
+  let v0 = _num(vols[vols.length - 1], 0) * _num(dailyData.volPaceMult, 1);
+  let s = 0, n = 0;
+  for (let i = vols.length - 21; i < vols.length - 1; i++) { const v = _num(vols[i], 0); if (v > 0) { s += v; n++; } }
+  if (!(n >= 10 && s > 0)) return null;
+  const mult = v0 / (s / n);
+  if (!(mult >= (R.volMult || 3))) return null;
+  // 저가권 마감 — 되돌릴 여지가 있는 자리
+  const hi = _num(dailyData.highs && dailyData.highs[dailyData.highs.length - 1], 0);
+  const lo = _num(dailyData.lows && dailyData.lows[dailyData.lows.length - 1], 0);
+  let cpos = null;
+  if (hi > lo) cpos = (price - lo) / (hi - lo);
+  if (cpos != null && cpos > (R.closePosMax != null ? R.closePosMax : 0.45)) return null;
+  if (R.aboveMa200 !== false) {
+    const ma200 = getMA(closes, 200);
+    if (!(ma200 != null && price > ma200)) return null;
+  }
+  const rsi2 = getRSI(closes, 2);
+  if (rsi2 != null && rsi2 > (R.rsi2Max != null ? R.rsi2Max : 8)) return null;
+  return { name: "VS_REV", weight: 0.9, type: "SNAP",
+    confidence: _clamp(0.52 + (mult - 3) / 40 + Math.min(0, dayPct + 4) / -60, 0.5, 0.82),
+    detail: "거래량 ×" + mult.toFixed(1) + " " + dayPct.toFixed(1) + "% 종가위치 " +
+            (cpos != null ? (cpos * 100).toFixed(0) + "%" : "?") + (rsi2 != null ? " RSI2 " + rsi2.toFixed(0) : ""),
+    members: ["VS_REV"] };
+}
+/* ══ ③ PR_OU — 공적분 페어 OU 스프레드 (★롱 다리만★) ═══════════════════════
+   교과서: 스프레드 z 가 −2 면 A 를 롱, B 를 숏. 이 엔진은 공매도를 하지 않는다.
+   그래서 ★A 만 산다★ — B 는 사지도 팔지도 않고 '싼지 판단하는 자' 로만 쓴다.
+   결과적으로 시장중립이 아니고 베타가 남는다. 그것을 감수할 만한가는 성적이 답한다:
+   신호 이름을 따로 두었으므로 sigTypeStats 가 PR_OU 만의 승률·기대값을 따로 쌓는다.
+   detail 에 '롱다리만' 을 적어 화면에서 페어로 오해하지 않게 한다. */
+function evaluatePairOuEntry(price, dailyData, cfg, market, rvCtx) {
+  const R = (cfg && cfg.rvStrat && cfg.rvStrat.pr) || RVSTRAT.pr;
+  if (!R || R.enabled === false) return null;
+  const p = rvCtx && rvCtx.pair;
+  if (!p || !p.b) return null;
+  if (!(p.z <= (R.entryZ != null ? R.entryZ : -2))) return null;       // 싼 쪽으로 벌어졌을 때만
+  if (!(p.corr >= (R.minCorr || 0.7))) return null;
+  if (!(p.hl >= (R.minHalfLife || 2) && p.hl <= (R.maxHalfLife || 30))) return null;
+  if (!(p.vr <= (R.maxVarRatio || 0.85))) return null;
+  const closes = dailyData && dailyData.closes;
+  if (!Array.isArray(closes) || closes.length < 60) return null;
+  // 공적분이 깨지는 전형: 한쪽만 추세적으로 무너지는 경우 → MA50 아래로 이탈했으면 제외
+  const ma50 = getMA(closes, 50);
+  if (!(ma50 != null && price > ma50 * 0.93)) return null;
+  return { name: "PR_OU", weight: 0.85, type: "SNAP",
+    confidence: _clamp(0.52 + (Math.abs(p.z) - 2) / 12 + (0.85 - p.vr) / 3, 0.5, 0.82),
+    detail: "페어 " + p.b + " β" + p.beta + " z" + p.z + " 반감기 " + p.hl + "일 VR" + p.vr +
+            " ★롱다리만(공매도 없음 — 시장중립 아님)★",
+    members: ["PR_OU"] };
+}
+
+/* ══ ⑤ XS_ARB — 횡단면 통계차익 (★롱 다리만★) ════════════════════════════
+   시장(또는 섹터) 평균을 뺀 k일 잔차수익의 z 가 크게 음수면 '동료 대비 과하게 밀린 것' 이다.
+   교과서 롱숏 북의 롱 다리에 해당한다 — 숏 다리가 없으므로 시장 베타가 남는다.
+   XALPHA(횡단면 랭크 모델)와 다른 점: 저건 ★모델 입력 피처★ 이고 이건 ★진입 규칙★ 이다.
+   같은 관측을 쓰지만 하나는 학습기에, 하나는 체결에 들어간다. */
+function evaluateXsArbEntry(price, dailyData, cfg, market, rvCtx) {
+  const R = (cfg && cfg.rvStrat && cfg.rvStrat.xs) || RVSTRAT.xs;
+  if (!R || R.enabled === false) return null;
+  const x = rvCtx && rvCtx.xs;
+  if (!x || typeof x.z !== "number") return null;
+  if (!(x.n >= (R.minPeers || 12))) return null;
+  if (!(x.z <= (R.minResidZ != null ? R.minResidZ : -1.8))) return null;
+  const closes = dailyData && dailyData.closes;
+  if (!Array.isArray(closes) || closes.length < 210) return null;
+  if (R.minAboveMa200 !== false) {
+    const ma200 = getMA(closes, 200);
+    if (!(ma200 != null && price > ma200)) return null;    // 구조적 하락은 '싼 것' 이 아니다
+  }
+  const atr = getATR(closes, (cfg && cfg.atrPeriod) || 14, dailyData.highs, dailyData.lows);
+  const atrPct = (atr != null && price > 0) ? (atr / price * 100) : null;
+  if (atrPct != null && atrPct > (R.maxAtrPct || 6)) return null;
+  return { name: "XS_ARB", weight: 0.85, type: "SNAP",
+    confidence: _clamp(0.52 + (Math.abs(x.z) - 1.8) / 10, 0.5, 0.8),
+    detail: "횡단면 잔차 z" + x.z.toFixed(2) + " (동료 " + x.n + "종목, " +
+            (rvCtx.retDays || 5) + "일) ★롱다리만(숏 없음 — 베타 잔존)★",
+    members: ["XS_ARB"] };
+}
+
+/* ── 사이클이 종목별 맥락을 뽑아 쓰는 헬퍼 — 패널이 낡았으면 ★쓰지 않는다★.
+      낡은 관계로 조용히 매매하는 것이 이 계열에서 가장 위험하다(공적분은 깨진다). ── */
+function rvContextFor(panel, symbol) {
+  try {
+    if (!panel || !panel.ts) return null;
+    if ((Date.now() - panel.ts) > RVSTRAT.panelStaleH * 3600000) return null;
+    return { xs: (panel.xs && panel.xs[symbol]) || null,
+             pair: (panel.pairs && panel.pairs[symbol]) || null,
+             rank: (panel.rank && panel.rank[symbol]) || null,
+             retDays: panel.retDays || 5, ts: panel.ts };
+  } catch (e) { return null; }
+}
+
 function evaluateSnapEntry(price, dayPct, dailyData, cfg, regime, market) {
   const sn = Object.assign({}, DEFAULT_CFG.snapRules || {}, (cfg && cfg.snapRules) || {});
   const closes = dailyData && dailyData.closes;
@@ -12186,6 +12632,29 @@ function classifyEarningsReaction(dailyData, cfg) {
 function evaluateAllStrategies(price, dayPct, dailyData, cfg, signalStats, regime, market, intraday, secData, eventData) {
   if (cfg.strategies && cfg.strategies.trend === false) return [];
   let sig = evaluateTrendEntry(price, dayPct, dailyData, cfg, regime, market);
+
+  /* ══ [V33.250] 신규 5종 — 기존 신호가 없을 때만 평가한다 ═══════════════════
+     ★같은 종목에 두 신호가 겹치면 중복진입이 된다.★ SNAP 이 trend 뒤에 오는 것과 같은 규약이다.
+     순서는 '더 구체적인 조건일수록 앞' 으로 둔다 — 지수 정기변경 창(연 2~4회, D±25)이 가장 좁고,
+     페어·횡단면은 패널이 있어야 하며, 변동성타겟 추세는 사실상 상시라 맨 뒤다.
+     각각 sigType 이 따로라 sigTypeStats 가 전략별 승률·기대값을 독립으로 쌓는다
+     (자동 가지치기·자가차단도 그 단위로 걸린다). */
+  const _rvOn = (cfg.rvStrat && cfg.rvStrat.enabled !== false) && RVSTRAT.enabled !== false;
+  const _rvCtx = _rvOn ? rvContextFor(eventData && eventData.rvPanel, dailyData && dailyData.symbol) : null;
+  if (!sig && _rvOn) {
+    sig = evaluateIndexFlowEntry(price, dailyData, cfg, market, _rvCtx)
+       || evaluateVolSpikeRevertEntry(price, dayPct, dailyData, cfg, regime, market)
+       || evaluatePairOuEntry(price, dailyData, cfg, market, _rvCtx)
+       || evaluateXsArbEntry(price, dailyData, cfg, market, _rvCtx)
+       || evaluateVolTargetTrendEntry(price, dailyData, cfg, regime, market)
+       || null;
+    /* 지는 신호 가지치기 — 기존 SNAP 과 똑같은 자를 쓴다(신호별 실현 기대값이 바닥 아래면 진입 거부).
+       새 전략이라고 예외를 두지 않는다. 오히려 이런 계열이 초기에 잘 보이고 오래 지지 못한다. */
+    if (sig && eventData && eventData.sigTypeStats) {
+      const _se = signalExpectancy(eventData.sigTypeStats, sig.name, 6);
+      if (_se && _se.exp <= -1.0) sig = null;
+    }
+  }
 
 
   // [V33.112] ★Vision 단독 진입 삭제★ — 인증 없는 외부 입력이 매수를 일으킬 수 있었다.
@@ -15846,6 +16315,10 @@ async function runTradingCycle(env) {
     let _sigTypeStats = {};
     try { _sigTypeStats = await getState(DB, "signal_type_stats", {}) || {}; } catch (e) {}
     try { eventData.sigTypeStats = _sigTypeStats; } catch (e) {}
+    /* [V33.250] 상대가치 패널(페어·횡단면·시총순위)을 사이클에 실어 보낸다 — 읽기 1회.
+       evaluateAllStrategies 는 종목 하나만 보므로 교차종목 관계는 여기서 주입해야 한다.
+       패널이 낡으면 rvContextFor 가 스스로 null 을 돌려준다(낡은 공적분으로 매매 금지). */
+    try { eventData.rvPanel = await getState(DB, "rv_panel", null); } catch (e) {}
     let cash = await computeAllCash(DB, cfg);
     // [V9.1] executeBuy/Sell이 거래마다 cash 전체를 저장하므로, cm 키가 누락된 옛 상태를
     //   읽었을 때 원자재 현금이 사라지지 않도록 보강.
@@ -18429,6 +18902,17 @@ async function runTradingCycle(env) {
             // 리스크 기반 수량
             const riskDollar = equity * (riskPct / 100) * combW;
             let qty = Math.floor(riskDollar / stopDist);
+            /* [V33.250] ★신호 자신이 요구하는 크기 배율★ — VT_TREND(변동성 타겟)가 쓴다.
+               이 계열의 요점은 진입 조건이 아니라 크기다: 같은 신호라도 실현변동성이 두 배면
+               절반만 산다(목표변동성/실현변동성). 아래 ML 사이징(_md.sizeMult, 켈리)과는
+               ★다른 층★ 이라 곱해서 함께 적용한다 — ML 이 미준비여도 이건 걸려야 한다
+               (규칙층의 성질이지 학습층의 성질이 아니다).
+               이걸 연결하지 않으면 VT_TREND 는 숫자만 붙은 추세진입이 된다. */
+            if (signal && typeof signal.sizeMult === "number" && signal.sizeMult > 0 && signal.sizeMult !== 1) {
+              const _sgm = _clamp(signal.sizeMult, 0.2, 2.0);
+              qty = Math.max(0, Math.floor(qty * _sgm));
+              signal.sizeMultApplied = +_sgm.toFixed(3);
+            }
             // === [LUX-AI] 이벤트/감성 → 피처 → 반사실후보 로깅 → 게이트/사이징 ===
             //   결정 사다리: deep(mind⊕dnn) → mind스태킹 → 톰슨밴딧 → (없으면)규칙엔진 원수량.
             //   미학습/기권/불신이면 규칙엔진 수량 유지(거래영향 0). 모든 실패는 무해 폴백.
@@ -21933,6 +22417,7 @@ async function handleRequest(request, env, ctx) {
         // deephist 는 크론과 동일하게 전용 fetch 예산을 새로 부여하고 들어간다(앞 단계 잔량으로 돌면 조기중단).
         ["deephist", function (DB) { try { resetFetchBudget(380); } catch (e) {} return harvestDeepFetchNightly(DB); }],
         ["xspanel", function (DB) { return mlBuildXSPanel(DB); }],
+        ["rvpanel", function (DB) { return rvBuildPanel(DB); }],
         ["harvest", function (DB) { return mlMarketHarvestNightly(DB); }],
         // [V33.104] 전문가 재학습 앞 — 누출없는 STACK 표본 생성 후 기준선 갱신(크론과 동일 순서).
         ["stackbf", function (DB) { return stackSampleBackfill(DB, {}); }],
@@ -32863,9 +33348,21 @@ async function scalpConfluenceFitNightly(DB) {
 //     같은 데이터를 다시 쪼개 재채점하는 게 아니라 새 데이터로만 판단한다(V33.93 원칙).
 async function mindShadowPromoteNightly(DB) {
   try {
-    const sh = await getState(DB, "mind_fm_ext", null);
+    /* [V33.250] 섀도우는 이제 둘이다 — FM(mind_fm_ext)과 트리(mind_tree_ext).
+       ★트리를 먼저 본다.★ 같은 표본에서 FM 47.9% vs 트리 53.5~54.2% 였다(V33.249).
+       둘 다 있으면 전진검증을 트리로 먼저 하고, 통과하면 그 자리에서 승격한다.
+       (이 함수가 없으면 mind_tree_ext 는 쓰기만 하고 아무도 안 읽는 죽은 키가 된다 —
+        check-order 게이트가 그 상태를 바로 잡아냈다. V33.101 이 FM 에서 겪은 그대로다.) */
+    /* 키를 변수로 돌리지 않고 ★이름 그대로★ 읽는다. check-order 의 죽은-키 검사는
+       getState(DB, "리터럴") 만 '읽음' 으로 세는데, 그건 까다로운 게 아니라 옳다 —
+       변수 키로 감추면 사람도 grep 으로 못 찾는다. */
+    const _shTree = await getState(DB, "mind_tree_ext", null);
+    const _shFm = _shTree ? null : await getState(DB, "mind_fm_ext", null);
+    const _shKey = _shTree ? "mind_tree_ext" : (_shFm ? "mind_fm_ext" : null);
+    const sh = _shTree || _shFm;
     if (!sh) return null;                                   // 섀도우 없음 — 조용히 넘어간다
-    if (sh.featVer !== LUXML.featVer) return "[MIND-SHADOW] featVer 불일치 — 폐기 대기";
+    const _shWhat = (_shKey === "mind_tree_ext") ? "트리" : "FM";
+    if (sh.featVer !== LUXML.featVer) return "[MIND-SHADOW] " + _shWhat + " featVer 불일치 — 폐기 대기";
     const since = _num(sh.trainedAt, 0);
     if (!(since > 0)) return "[MIND-SHADOW] 업로드 시각 없음 — 판정 불가";
     const rs = await DB.prepare(
@@ -32896,7 +33393,7 @@ async function mindShadowPromoteNightly(DB) {
     const icOK = (st.blockIC != null && st.t != null) && st.blockIC >= 0.012 && st.t >= _shTMin;
     const accOK = accLB >= MIND.trustFloor;
     if (!(icOK || accOK))
-      return "[MIND-SHADOW] 전진검증 미달 (정확도하한 " + (accLB * 100).toFixed(1) + "% / 블록IC " +
+      return "[MIND-SHADOW] " + _shWhat + " 전진검증 미달 (정확도하한 " + (accLB * 100).toFixed(1) + "% / 블록IC " +
              (st.blockIC != null ? st.blockIC.toFixed(4) : "—") + " t " + (st.t != null ? st.t.toFixed(2) : "—") + ") — 섀도우 유지";
     // 승격 — 전진검증 수치로 메타를 갱신해서 올린다(업로드 당시 수치를 그대로 쓰지 않는다).
     const promoted = Object.assign({}, sh, {
@@ -32908,8 +33405,9 @@ async function mindShadowPromoteNightly(DB) {
     });
     await setState(DB, "mind_model", promoted);
     await setState(DB, "mind_guard", { live: [], distrust: false, baseAcc: +acc.toFixed(4) });
-    await setState(DB, "mind_fm_ext", null);
-    return "[MIND-SHADOW] ★전진검증 통과 → 위원장 승격★ 정확도 " + (acc * 100).toFixed(1) +
+    if (_shKey === "mind_tree_ext") await setState(DB, "mind_tree_ext", null);
+    else await setState(DB, "mind_fm_ext", null);
+    return "[MIND-SHADOW] ★전진검증 통과 → 위원장 승격★ (" + (_shKey === "mind_tree_ext" ? "트리" : "FM") + ") 정확도 " + (acc * 100).toFixed(1) +
            "%(하한 " + (accLB * 100).toFixed(1) + "%) 블록IC " + (st.blockIC != null ? st.blockIC.toFixed(4) : "—") +
            " t " + (st.t != null ? st.t.toFixed(2) : "—") + " · 전진표본 " + pv.length;
   } catch (e) { return "[MIND-SHADOW] fail: " + (e && e.message); }
@@ -42581,6 +43079,9 @@ export default {
             await _stg("deephist", async function () { return await harvestDeepFetchNightly(env.DB); });
             // (2.45) [XS] 유니버스 횡단면 랭크 패널 — 수확 전에 갱신(수확이 z-score 정규화에 사용)
             await _stg("xspanel", async function () { return await mlBuildXSPanel(env.DB); });
+            // [V33.250] 상대가치 패널 — 페어(공적분·OU) · 횡단면 잔차 · 실시간 시총순위.
+            //   xspanel 과 같은 이유로 여기 있다(한 종목만 봐서는 만들 수 없는 관계).
+            await _stg("rvpanel", async function () { return await rvBuildPanel(env.DB); });
             // (2.5) [HARVEST] 시장 자기지도 표본 수확 — 전 종목 일봉에서 "피처→N일 뒤 방향" 대량 편입
             await _stg("harvest", async function () { return await mlMarketHarvestNightly(env.DB); });
             // [V12.122] ★재구축기 재학습 가속★ _stg는 하루 1회만 학습을 허용하는데, 표본풀이 재구축
@@ -42737,6 +43238,10 @@ export {
   stackSampleBackfill, stackLogSample, STACKML,
   // [V33.239] 하이킨아시 추세반전 피처 검증용 — tools/check-heikin.mjs 가 수치로 확인한다.
   _mlHeikinFeats,
+  // [V33.250] 신규 전략 5종 검증용 — tools/check-new-strategies.mjs 가 실제로 돌려 본다.
+  RVSTRAT, rvBuildPanel, rvContextFor, evaluateIndexFlowEntry, evaluateVolTargetTrendEntry,
+  evaluateVolSpikeRevertEntry, evaluatePairOuEntry, evaluateXsArbEntry,
+  _rvOlsBeta, _rvHalfLife, _rvVarRatio, _rvRealVolPct,
   // [V33.249] 트리 위원장 검증용 — tools/check-mind-tree.mjs 가 실제로 채점해 본다.
   //   FM 위원장과 트리 위원장이 ★같은 확률★ 을 내는지는 문구로 못 지킨다 — 돌려봐야 안다.
   mlMindScore, mlGBDTScore,
