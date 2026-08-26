@@ -94,11 +94,30 @@ console.log("④ 첫 페이지 판정 (커서 페이지네이션)");
   chk(/const _firstPage = offset === 0 && !Number\(url\.searchParams\.get\("cursorTs"\)\)/.test(exp),
     "첫 페이지 = offset 0 ★그리고★ 커서 없음",
     "첫 페이지를 offset 으로만 판정한다 — 커서 페이지는 offset 을 안 보내므로 전부 첫 페이지가 된다");
-  const logs = (exp.match(/ctx\.waitUntil\(log\(env\.DB, "(INFO|WARN)", null, "\[ML-EXPORT\]/g) || []).length;
-  const guarded = (exp.match(/if \(_firstPage\) \{/g) || []).length;
-  chk(logs > 0 && guarded === logs,
-    "ML-EXPORT 로그 " + logs + "곳 전부가 첫 페이지 판정으로 묶여 있다",
-    "로그 " + logs + "곳 중 " + guarded + "곳만 묶여 있다 — 나머지가 페이지마다 찍힌다");
+  /* [V33.260] 종전엔 "ML-EXPORT 로그 개수 == if(_firstPage) 개수" 로 셌다. 그건 프록시다 —
+     ML-EXPORT 와 무관한 _firstPage 블록을 하나만 더 넣어도(실제로 DNN 구성 판단을 넣으며
+     그랬다) 개수가 어긋나 멀쩡한 코드가 실패한다. 반대로 로그를 가드 밖으로 빼면서 다른
+     가드를 하나 더 넣으면 개수가 맞아 통과한다 — 양방향으로 틀린다.
+     세는 대신 ★실제로 안에 들어 있는지★ 를 본다: 각 로그 위치에서 가장 가까운
+     `if (_firstPage) {` 를 찾아 거기서부터 로그까지 중괄호 깊이가 한 번도 0 이 되지
+     않으면 그 블록 안이다. */
+  const inFirstPage = (idx) => {
+    const g = exp.lastIndexOf("if (_firstPage) {", idx);
+    if (g < 0) return false;
+    let d = 0;
+    for (let k = exp.indexOf("{", g); k < idx; k++) {
+      const c = exp[k];
+      if (c === "{") d++;
+      else if (c === "}") { d--; if (d === 0) return false; }   // 블록이 로그 전에 닫혔다
+    }
+    return d > 0;
+  };
+  const re = /ctx\.waitUntil\(log\(env\.DB, "(?:INFO|WARN)", null, "\[ML-EXPORT\]/g;
+  let m, logs = 0, outside = [];
+  while ((m = re.exec(exp)) !== null) { logs++; if (!inFirstPage(m.index)) outside.push(m.index); }
+  chk(logs > 0 && outside.length === 0,
+    "ML-EXPORT 로그 " + logs + "곳 전부가 첫 페이지 블록 ★안에★ 있다(개수가 아니라 포함관계로 확인)",
+    "로그 " + logs + "곳 중 " + outside.length + "곳이 가드 밖이다 — 페이지마다 찍힌다");
   // 실측 재현: 트레이너의 파라미터 형태로 페이지마다 판정해 본다
   const page = (q) => {
     const off = Number(q.offset) || 0, cur = Number(q.cursorTs) || 0;

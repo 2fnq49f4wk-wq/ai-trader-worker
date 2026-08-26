@@ -128,9 +128,17 @@ def train_job(epochs: int = EPOCHS_DEFAULT, dry: bool = False,
     #   가벼운 규제로 내려가지 않게(종전 dropout 0.42는 너무 약했음). 규제↑ + 정제된 피처(65종) +
     #   데이터↑ 조합으로 큰 모델을 유지하면서 일반화를 지킨다.
     Nall = len([s for s in samples if isinstance(s.get("x"), list) and len(s["x"]) == D])
+    # [V33.260] ★이 사다리는 손으로 쓴 값이고, 워커가 보낸 dropout·l2 를 매번 덮어써 왔다.★
+    #   즉 워커의 DNN.dropout(0.42)·DNN.l2(9e-4)는 Modal 경로에서 한 번도 쓰인 적이 없는
+    #   죽은 손잡이였다. 그리고 사다리 맨 윗칸은 표본 18만 시절에 쓴 것인데 지금은 51만이다 —
+    #   규모가 3배가 됐는데 규제는 그대로다. 트리들이 같은 표본에서 53~54% 를 내는 동안
+    #   이 망은 47.3% 였다. 과적합을 막는 값이 ★학습 자체를 막고 있었을 수 있다.★
+    #   근거 없이 반대로 밀지는 않는다. 사다리를 ★기본값★ 으로 두고, 아래 스윕이 실제로
+    #   재서 이긴 구성이 있으면 그것을 쓴다(측정이 없으면 종전 동작 그대로다).
     if Nall < 60000:      dropout, l2, mixup_p, input_noise = 0.62, 5e-3, 0.35, 0.12   # 데이터 기근 → 매우 강한 규제
     elif Nall < 150000:   dropout, l2, mixup_p, input_noise = 0.55, 3e-3, 0.30, 0.10   # 중간 → 강한 규제
     else:                 dropout, l2, mixup_p, input_noise = 0.50, 1.5e-3, 0.25, 0.08  # 데이터 충분해도 규제 유지(과적합 방지)
+    _reg_base = dict(dropout=dropout, l2=l2, mixup_p=mixup_p, input_noise=input_noise)
     # [V11.1] 배치·에폭도 데이터 규모에 맞춤 — 300k×에폭400×배치32면 GPU로도 timeout(3600s) 초과.
     #   대용량일수록 배치↑(스텝수↓)·에폭↓(1에폭당 갱신이 이미 많음). 조기종료가 최적점을 잡음.
     if Nall >= 150000:    batch, ep = 256, min(ep, 120)
@@ -251,7 +259,13 @@ def train_job(epochs: int = EPOCHS_DEFAULT, dry: bool = False,
     #   → 같은 표본·같은 분할·같은 시드로 후보 깊이를 학습해 ★같은 자로★ 비교한다.
     #   비교 기준은 valAcc 가 아니라 ★유효표본 Wilson 하한(lb)★ 이다. 워커의 승격 게이트가
     #   보는 것이 그 값이고, 다른 자로 뽑으면 "여기선 이겼는데 저기선 떨어지는" 모델을 고르게 된다.
-    def fit_arch(dims, tag=""):
+    def fit_arch(dims, tag="", reg=None):
+        # [V33.260] 규제를 인자로 받는다 — 종전엔 바깥 지역변수를 캡처해서
+        #   "같은 자로 비교" 를 규제 축으로는 아예 할 수 없었다(깊이만 바꿀 수 있었다).
+        _r = reg or _reg_base
+        dropout = _r["dropout"]; l2 = _r["l2"]
+        mixup_p = _r["mixup_p"]; input_noise = _r["input_noise"]
+
         class MLP(nn.Module):
             def __init__(self):
                 super().__init__()
@@ -403,23 +417,58 @@ def train_job(epochs: int = EPOCHS_DEFAULT, dry: bool = False,
     #   후보 순위는 적은 시드(빠르고 싸다)로 매기고, ★이긴 구성만★ 전체 시드로 다시 학습해 내보낸다.
     #   순위와 최종 모델을 같은 실행에서 만드는 것이 중요하다 — 표본이 하루만 달라져도
     #   "그때 이겼던 구성" 이 오늘도 이긴다는 보장이 없기 때문이다.
-    if depth_sweep:
-        cands = [
-            ("10층(현행)", list(hidden)),
+    # [V33.260] 워커가 스윕을 시킬 수 있다 — 신뢰 못 하는 상태일 때만 켜서 보낸다.
+    #   정상일 때는 안 켜지므로 정기 실행의 추가 비용은 0 이다.
+    _want_sweep = bool(cfg.get("archSweep"))
+    if _want_sweep and not depth_sweep:
+        print(f"②-S 워커 요청으로 스윕을 켠다 — 사유: {cfg.get('archSweepWhy') or '(미기재)'}")
+    if depth_sweep or _want_sweep:
+        # 깊이 축
+        depth_cands = [
+            ("10층(기본)", list(hidden)),
             ("6층",        [512, 256, 128, 96, 64, 32]),
             ("3층",        [256, 128, 64]),
             ("2층(워커폴백)", [128, 64]),
         ]
+        # 규제 축 — 사다리값(현행) 대비 ★완화★ 만 후보로 둔다.
+        #   방향에 근거가 있다: 같은 표본에서 트리는 53~54%, 이 망은 47.3% 다. 규제를 더 조이면
+        #   이미 못 배우는 망을 더 못 배우게 할 뿐이다. 그래도 '완화가 낫다' 를 단정하지 않는다 —
+        #   현행을 후보에 그대로 두고 ★같은 자로 붙인다.★ 현행이 이기면 현행이 남는다.
+        def _reg(mul_do, mul_l2, mul_mix, mul_noise):
+            return dict(dropout=round(_reg_base["dropout"] * mul_do, 4),
+                        l2=_reg_base["l2"] * mul_l2,
+                        mixup_p=round(_reg_base["mixup_p"] * mul_mix, 4),
+                        input_noise=round(_reg_base["input_noise"] * mul_noise, 4))
+        reg_cands = [
+            ("규제 현행", dict(_reg_base)),
+            ("규제 완화", _reg(0.5, 0.3, 0.4, 0.5)),
+            ("규제 최소", _reg(0.2, 0.1, 0.0, 0.0)),
+        ]
         _K_full = K
         K = max(1, int(sweep_seeds))
-        print(f"②-S 깊이 스윕 — 후보 {len(cands)}종 × 시드 {K} (순위용) · 같은 표본/분할/시드")
+        print(f"②-S 구성 스윕 — 깊이 {len(depth_cands)}종 × 시드 {K} · 같은 표본/분할/시드")
         rank = []
-        for tag, hid in cands:
+        for tag, hid in depth_cands:
             t0 = time.time()
             r = fit_arch([D] + list(hid) + [1], tag)
-            r["tag"] = tag; r["hidden"] = list(hid); r["secs"] = round(time.time() - t0, 1)
+            r["tag"] = tag; r["hidden"] = list(hid); r["reg"] = dict(_reg_base)
+            r["secs"] = round(time.time() - t0, 1)
             rank.append(r)
             print(f"   · {tag:14s} dims={'-'.join(map(str,r['dims']))} 파라미터 {r['params']:,} "
+                  f"valAcc {r['acc']*100:.2f}% 하한 {r['lb']*100:.2f}% AUC {r['auc']:.3f} ({r['secs']}s)")
+        # ★깊이 승자 위에서만 규제를 흔든다.★ 전조합(4×3=12)은 예산을 넘긴다 —
+        #   두 축을 곱해서 재는 대신, 이긴 깊이에 대해서만 규제를 재는 좌표하강이다.
+        rank.sort(key=lambda r: (-r["lb"], -r["acc"], r["params"]))
+        _dwin = rank[0]
+        print(f"②-S 깊이 승자: {_dwin['tag']} (하한 {_dwin['lb']*100:.2f}%) — 이 깊이에서 규제를 잰다")
+        for rtag, rcfg in reg_cands[1:]:      # '현행' 은 위에서 이미 쟀다
+            t0 = time.time()
+            r = fit_arch([D] + list(_dwin["hidden"]) + [1], rtag, reg=rcfg)
+            r["tag"] = _dwin["tag"] + "+" + rtag; r["hidden"] = list(_dwin["hidden"]); r["reg"] = rcfg
+            r["secs"] = round(time.time() - t0, 1)
+            rank.append(r)
+            print(f"   · {r['tag']:20s} do={rcfg['dropout']} l2={rcfg['l2']:.1e} "
+                  f"mix={rcfg['mixup_p']} noise={rcfg['input_noise']} → "
                   f"valAcc {r['acc']*100:.2f}% 하한 {r['lb']*100:.2f}% AUC {r['auc']:.3f} ({r['secs']}s)")
         # ★하한(lb)으로 고른다★ — 워커 승격 게이트가 보는 값이다. 동률이면 valAcc, 그다음 작은 모델.
         rank.sort(key=lambda r: (-r["lb"], -r["acc"], r["params"]))
@@ -430,15 +479,26 @@ def train_job(epochs: int = EPOCHS_DEFAULT, dry: bool = False,
             print("   ⚠️ 1·2위 하한 차이가 0.5%p 미만 — 이 표본에서 둘을 가를 근거가 약하다"
                   "(다음 스윕에서 뒤집힐 수 있음). 작은 모델을 택했는지 위 정렬 규칙을 확인할 것.")
         hidden = win["hidden"]; dims = [D] + list(hidden) + [1]
+        _reg_win = win.get("reg") or dict(_reg_base)
         K = _K_full
-        print(f"② 승자 재학습 — dims={'-'.join(map(str,dims))} seeds={K}")
-        _fin = fit_arch(dims, win["tag"] + "/최종")
+        print(f"② 승자 재학습 — dims={'-'.join(map(str,dims))} seeds={K} "
+              f"do={_reg_win['dropout']} l2={_reg_win['l2']:.1e}")
+        _fin = fit_arch(dims, win["tag"] + "/최종", reg=_reg_win)
         nets, acc, lb, n_eval = _fin["nets"], _fin["acc"], _fin["lb"], _fin["n_eval"]
         print(f"③ 앙상블 valAcc {acc*100:.2f}% (Wilson하한 {lb*100:.2f}%, n={n_eval}) — {win['tag']}")
-        sweep_note = {"winner": win["tag"], "ranking": [
+        sweep_note = {"winner": win["tag"], "reg": _reg_win, "ranking": [
             {"tag": r["tag"], "dims": r["dims"], "params": r["params"],
              "valAcc": round(r["acc"], 4), "lb": round(r["lb"], 4), "auc": round(r["auc"], 4)}
             for r in rank]}
+        # ★잰 값을 저장한다 — 이것이 없어서 V33.204 의 측정이 매번 버려졌다.★
+        try:
+            _ar = requests.post(BASE + "/api/dnn-arch", params={"key": KEY}, headers=HDR, timeout=60, json={
+                "featVer": featver, "hidden": list(hidden), "lb": round(lb, 4), "acc": round(acc, 4),
+                "auc": round(_fin.get("auc") or 0, 4), "n": int(Nall),
+                "ranking": [{"tag": r["tag"], "lb": round(r["lb"], 4), "acc": round(r["acc"], 4)} for r in rank]})
+            print(f"②-S 구성 저장 {_ar.status_code}: {str(_ar.text)[:160]}")
+        except Exception as _e:
+            print("②-S 구성 저장 실패(다음 학습은 기본값으로 돈다):", _e)
     else:
         _fin = fit_arch(dims)
         nets, acc, lb, n_eval = _fin["nets"], _fin["acc"], _fin["lb"], _fin["n_eval"]

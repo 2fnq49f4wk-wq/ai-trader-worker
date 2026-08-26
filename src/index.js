@@ -2798,7 +2798,7 @@ async function applySignalTypeWeights(DB, cfg) {
 // ============================================================================
 // [V33.55] 빌드 버전 — SWR L2 캐시 키에 섞어 '배포 = 판단 캐시 자동 무효화'를 만든다.
 //   판정 로직을 고쳐도 옛 캐시가 최대 1시간 재배포되던 문제를 구조적으로 없앤다.
-const _BUILD_VER = "V33.259";
+const _BUILD_VER = "V33.260";
 
 // ═══ [V33.171] 평가 순서 계획 — ★승격과 순환을 교차해 굶주림을 구조적으로 없앤다★ ═══
 //   V33.50 의 형태트리거는 "급한 몇 종목을 앞으로 당긴다"는 의도였으나, 실제 운영로그에서는
@@ -9388,8 +9388,59 @@ async function histSymbolKeys(DB, limit) {
 //   → 표본을 파트 단위(2만건)로 R2 에 떠 두고, 트레이너는 그 스냅샷을 읽게 한다.
 //     INSERT 는 그대로 D1(정상), 읽기 부하만 R2 로 넘어간다. 이게 D1 폭주를 실제로 줄인다.
 // [V33.27] 트레이너에 내려보내는 학습 하이퍼파라미터 — D1/R2 경로가 동일한 값을 쓰도록 한 곳에 둔다.
-function _mlExportConfig() {
-  return { hidden: DNN.hidden, seeds: DNN.seeds, dropout: DNN.dropout, l2: DNN.l2, labelSmooth: DNN.labelSmooth,
+/* ══ [V33.260] ★잰 값이 다음 학습에 반영되지 않았다 — 그래서 매번 같은 답이 나왔다.★ ══
+   V33.204 는 깊이를 재는 스윕을 만들었고, 2026-08-22 실측에서 10층이 valAcc 49.3% 로
+   워커 폴백 2층(53.3%)보다 낮다는 것을 확인했다. 그런데 그 결과가 ★어디에도 저장되지
+   않는다.★ 스윕은 사람이 부를 때만 돌고, 끝나면 승자를 그 실행 안에서만 쓰고 버린다.
+   정기 실행(6시간)은 여전히 cfg.hidden(10층)으로 학습한다.
+
+   그래서 운영이 이 상태다: DNN accLB 47.27% — ★동전 던지기보다 낮다.★ wDnn 0 이라
+   위원회에 못 들어가고, 그러면서 6시간마다 GPU 는 계속 탄다. 같은 표본으로 트리들은
+   53~54% 를 낸다. 즉 데이터에 신호가 없는 게 아니라 이 구성이 그 신호를 못 잡는다.
+
+   ※ 10층은 V33.193 에서 ★사용자 지시★ 로 되돌린 값이다. 그 지시를 무시하지 않는다 —
+     기본값은 그대로 두고, ★실측이 이겼을 때만★ 그 값을 쓴다. 근거가 지시를 대체하는
+     것이 아니라, 근거가 없을 때의 기본값이 지시라는 뜻이다.
+
+   여기서 고치는 것:
+     ① 스윕 승자를 dnn_arch 에 저장하고, 다음 학습이 그 값으로 돈다(측정 → 반영).
+     ② 워커가 ★스스로 스윕을 요청한다★ — 신뢰 못 하는 상태일 때만. 신뢰하면 요청하지
+        않으므로 정상일 때 추가 비용은 0 이다. 같은 판·같은 규모에서 이미 재 봤으면
+        다시 재지 않는다(예산이 유한하다. 무한 스윕은 고치는 게 아니라 태우는 것이다). */
+const DNNARCH = {
+  stateKey: "dnn_arch",
+  rescaleRatio: 0.35,   // 표본이 이 비율 이상 변하면 '다른 규모' 로 보고 다시 잰다
+  minSweepGapH: 20      // 같은 조건에서 재측정을 조르지 않는다(하루 한 번꼴)
+};
+/* 스윕을 요청할지 판단한다. ★요청 사유를 함께 돌려준다★ — 조용히 켜고 끄면
+   나중에 "왜 GPU 를 더 썼나" 에 아무도 답할 수 없다. */
+function _dnnArchDecide(archRec, dnnTrust, poolN) {
+  const A = archRec && archRec.featVer === LUXML.featVer ? archRec : null;
+  const hidden = (A && Array.isArray(A.hidden) && A.hidden.length) ? A.hidden : DNN.hidden;
+  const measured = !!(A && Array.isArray(A.hidden) && A.hidden.length);
+  const trusted = !!(dnnTrust && dnnTrust.trusted);
+  let sweep = false, why = null;
+  if (trusted) {
+    why = "DNN 신뢰 중 — 스윕 불필요";
+  } else if (!A) {
+    sweep = true; why = "이 판(featVer " + LUXML.featVer + ")에서 구성을 잰 적이 없다";
+  } else if (_num(A.n, 0) > 0 && poolN > 0 &&
+             Math.abs(poolN - _num(A.n, 0)) / _num(A.n, 1) > DNNARCH.rescaleRatio) {
+    sweep = true; why = "표본이 " + _num(A.n, 0) + " → " + poolN + " 로 크게 변했다(규모가 다르면 답도 다르다)";
+  } else if (_num(A.ts, 0) > 0 && (Date.now() - _num(A.ts, 0)) / 3600000 < DNNARCH.minSweepGapH) {
+    why = "최근 " + ((Date.now() - _num(A.ts, 0)) / 3600000).toFixed(1) + "h 전에 쟀다 — 재측정 보류";
+  } else {
+    sweep = true; why = "측정값(" + hidden.join("-") + ")으로도 신뢰 문턱을 못 넘었다 — 다시 잰다";
+  }
+  return { hidden: hidden, measured: measured, sweep: sweep, why: why };
+}
+
+function _mlExportConfig(arch) {
+  const A = arch || null;
+  return { hidden: (A && A.hidden) || DNN.hidden, seeds: DNN.seeds, dropout: DNN.dropout, l2: DNN.l2, labelSmooth: DNN.labelSmooth,
+           /* 트레이너가 스스로 켜는 게 아니라 ★워커가 시킨다★ — 신뢰 상태를 아는 쪽이 워커다. */
+           archSweep: !!(A && A.sweep), archSweepWhy: (A && A.why) || null,
+           archMeasured: !!(A && A.measured),
            inputNoise: DNN.inputNoise, mixupP: DNN.mixupP, stdClip: DNN.stdClip, valFrac: DNN.valFrac,
            embargoDays: LUXML.embargoDays || 6, hvSrcWeight: (typeof HARVEST !== "undefined" ? HARVEST.srcWeight : 1),
            recencyHalfLifeDays: LUXML.recencyHalfLifeDays || 45, recencyFloor: LUXML.recencyFloor || 0.35,
@@ -21570,6 +21621,21 @@ async function handleRequest(request, env, ctx) {
          같은 줄이 반복돼 로그를 읽기 어려웠다. 진단하려고 보는 로그를 진단 대상이 스스로
          덮어쓰는 셈이다. 커서가 없을 때만 첫 페이지다. */
       const _firstPage = offset === 0 && !Number(url.searchParams.get("cursorTs"));
+      /* [V33.260] 구성 결정은 ★첫 페이지에서 한 번만★ 한다 — 트레이너는 config 를 첫 응답에서
+         읽고, 뒷페이지의 것은 쓰지 않는다. 페이지마다 상태를 읽으면 D1 왕복만 는다. */
+      let _arch = null;
+      if (_firstPage) {
+        try {
+          const _AS = await getStates(env.DB, [DNNARCH.stateKey, "dnn_trust"]);
+          let _pn = 0;
+          try { const _c = await env.DB.prepare("SELECT COUNT(*) n FROM ml_samples WHERE featver = ?").bind(LUXML.featVer).first(); _pn = _num(_c && _c.n, 0); } catch (e) {}
+          _arch = _dnnArchDecide(_AS[DNNARCH.stateKey], _AS["dnn_trust"], _pn);
+          if (_arch.sweep) {
+            try { ctx.waitUntil(log(env.DB, "INFO", null, "[DNN-ARCH] 구성 스윕 요청 — " + _arch.why +
+              " (현재 " + _arch.hidden.join("-") + (_arch.measured ? ", 실측값" : ", 기본값") + ")")); } catch (e) {}
+          }
+        } catch (e) { _arch = null; }
+      }
       // [V33.27] R2 스냅샷이 신선하면 거기서 파트를 그대로 서빙한다 — D1 은 전혀 건드리지 않는다.
       //   (학습 1회당 17만 행 × 9페이지 조회가 D1 폭주의 최대 유발원이었다)
       try {
@@ -21602,7 +21668,7 @@ async function handleRequest(request, env, ctx) {
             if (_part >= _snap.parts) {
               return Response.json({ featVer: LUXML.featVer, featNames: LUXML.featNames, total: _snap.total,
                 offset: offset, returned: 0, anchorTs: _snap.anchorTs, source: "r2", samples: [],
-                config: _mlExportConfig() }, { headers: cors });
+                config: _mlExportConfig(_arch) }, { headers: cors });
             }
             const _o = await _R2.get(_mlSnapKey(LUXML.featVer, _part));
             if (_o) {
@@ -21612,7 +21678,7 @@ async function handleRequest(request, env, ctx) {
               }
               return Response.json({ featVer: LUXML.featVer, featNames: LUXML.featNames, total: _snap.total,
                 offset: offset, returned: _arr.length, anchorTs: _snap.anchorTs, source: "r2",
-                config: _mlExportConfig(), samples: _arr }, { headers: cors });
+                config: _mlExportConfig(_arch), samples: _arr }, { headers: cors });
             }
           }
         }
@@ -21656,7 +21722,7 @@ async function handleRequest(request, env, ctx) {
       return Response.json({
         featVer: LUXML.featVer, featNames: LUXML.featNames, total: total, offset: offset, returned: out.length, anchorTs: anchorTs,
         nextCursorTs: _last ? _num(_last.ts, 0) : null, nextCursorId: _last ? _num(_last.id, 0) : null,
-        config: _mlExportConfig(),
+        config: _mlExportConfig(_arch),
         samples: out
       }, { headers: cors });
     }
@@ -22235,6 +22301,42 @@ async function handleRequest(request, env, ctx) {
        필요한 정보는 ★경계 시각 하나★ 뿐이라 모델을 다시 올릴 필요가 없다.
        ★단조 전진만 허용한다★ — 경계를 과거로 되돌리면 이미 학습에 쓰인 구간이 '누출없음'
        으로 열려 V33.104 가 고친 사고(IC 0.566·t 7.51)가 그대로 재발한다. */
+    /* ══ [V33.260] POST /api/dnn-arch — 스윕이 잰 구성을 저장한다 ══
+       이것이 없어서 V33.204 의 측정이 매번 버려졌다. 저장하는 값은 ★워커의 승격
+       게이트가 보는 것과 같은 자★ 로 뽑힌 승자다(유효표본 Wilson 하한).
+       기본값(사용자 지시로 정해진 10층)을 지우지 않는다 — 이 레코드가 없거나 판이
+       다르면 그대로 기본값으로 돌아간다. 근거가 있을 때만 근거를 쓴다. */
+    if (path === "/api/dnn-arch" && request.method === "POST") {
+      const au = _trainAuthed(); if (!au.ok) return Response.json({ error: au.msg }, { status: au.code, headers: cors });
+      let body; try { body = await request.json(); } catch (e) { return Response.json({ error: "bad json" }, { status: 400, headers: cors }); }
+      if (_num(body.featVer, -1) !== LUXML.featVer)
+        return Response.json({ error: "featVer 불일치 (서버 " + LUXML.featVer + ")" }, { status: 400, headers: cors });
+      const h = Array.isArray(body.hidden) ? body.hidden.map(function (v) { return Math.floor(_num(v, 0)); }) : null;
+      if (!h || !h.length || h.length > 24 || h.some(function (v) { return !(v >= 1 && v <= 4096); }))
+        return Response.json({ error: "hidden 이 형식에 안 맞는다(1~24층, 층당 1~4096)" }, { status: 400, headers: cors });
+      const _lb = _num(body.lb, null);
+      if (_lb == null || !(_lb >= 0 && _lb <= 1))
+        return Response.json({ error: "lb(유효표본 Wilson 하한) 필요" }, { status: 400, headers: cors });
+      /* ★이겼다고 주장하는 것과 이긴 것은 다르다.★ 순위표를 함께 받아서, 승자가 정말
+         그 표에서 하한 최상위인지 서버가 다시 확인한다. 트레이너를 믿되 검산한다. */
+      const rk = Array.isArray(body.ranking) ? body.ranking.slice(0, 12) : [];
+      if (rk.length) {
+        let top = -1; for (const r of rk) { const v = _num(r && r.lb, -1); if (v > top) top = v; }
+        if (top > _lb + 1e-9)
+          return Response.json({ error: "승자 하한(" + _lb.toFixed(4) + ")이 순위표 최상위(" + top.toFixed(4) + ")보다 낮다" },
+            { status: 400, headers: cors });
+      }
+      const rec = { hidden: h, lb: +_lb.toFixed(4), acc: _num(body.acc, null), auc: _num(body.auc, null),
+                    n: Math.max(0, Math.floor(_num(body.n, 0))), featVer: LUXML.featVer,
+                    ranking: rk.map(function (r) { return { tag: String((r && r.tag) || "?").slice(0, 24),
+                      lb: _num(r && r.lb, null), acc: _num(r && r.acc, null) }; }),
+                    ts: Date.now() };
+      await setState(env.DB, DNNARCH.stateKey, rec);
+      try { await log(env.DB, "INFO", null, "[DNN-ARCH] 구성 확정 " + h.join("-") +
+        " 하한 " + (rec.lb * 100).toFixed(2) + "% (표본 " + rec.n + ", 후보 " + rec.ranking.length + "종) — 다음 학습부터 이 구성으로 돈다"); } catch (e) {}
+      return Response.json({ ok: true, arch: rec }, { headers: cors });
+    }
+
     if (path === "/api/stack-oof-window" && request.method === "POST") {
       const au = _trainAuthed(); if (!au.ok) return Response.json({ error: au.msg }, { status: au.code, headers: cors });
       let body; try { body = await request.json(); } catch (e) { return Response.json({ error: "bad json" }, { status: 400, headers: cors }); }
@@ -36382,7 +36484,13 @@ async function aiSelfCheck(DB, env) {
         const o = _MS[_mm[k]];
         const ext = !!(o && o.source === "external");
         const ah = o ? ageH(o.trainedAt) : null;
-        R.externalTrain[k] = { trained: !!o, external: ext, ageH: ah, valAcc: (o && (o.valAcc != null ? o.valAcc : o.gbdtAcc)) || null };
+        /* [V33.260] ★DNN 만 valAcc 가 null 이던 이유 — 필드 이름이 다르다.★
+           mind_model 은 valAcc, 부스터 계열은 gbdtAcc, 그런데 dnn_trust 는 ★dnnAcc★ 로
+           저장한다(dnn-import 의 trust 레코드). 여기서는 앞의 둘만 보고 있었다.
+           그래서 화면이 "DNN valAcc null" 을 몇 달째 보여줬고, '학습이 안 됐나' 로 읽히게
+           만들었다. 실제로는 학습은 됐고 성적이 나빴다 — 전혀 다른 처방이 필요한 상태다. */
+        R.externalTrain[k] = { trained: !!o, external: ext, ageH: ah,
+          valAcc: (o && (o.valAcc != null ? o.valAcc : (o.gbdtAcc != null ? o.gbdtAcc : o.dnnAcc))) || null };
         if (ext) _extN++;
         if (!o) _extStale.push(k + "(미학습)"); else if (ah != null && ah > 24) _extStale.push(k + "(" + ah + "h)");
       }
@@ -43503,6 +43611,7 @@ export default {
 // [검증용 named export] Cloudflare Worker는 default export만 사용하므로 무해.
 //   로컬 백테스트/단위검증 스크립트에서 핵심 함수를 직접 호출하기 위함.
 export {
+  _dnnArchDecide, DNNARCH, DNN,     // [V33.260] 측정-반영 고리 검사
   dualHeadJudge, _boostersCached,   // [V33.257] 자가진단 명단 검사가 '위원회가 쓰는 그 함수' 를 직접 돌린다
   DEFAULT_CFG, AI_PARAMS, migrateCfgToMarkets, evaluateAllStrategies, evaluateTrendEntry, evaluateSnapEntry,
   evaluateSell, backtestSymbol, backtestStats, backtestStatsBySignal,

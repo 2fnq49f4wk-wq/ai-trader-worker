@@ -42,9 +42,17 @@ const params = (D, hidden) => {
 // ── ① GPU 와 워커 구조가 분리됐는가 ────────────────────────────────────────
 {
   const gpu = params(65, DNN.hidden), wk = params(65, DNNW.hidden);
-  chk(/return \{ hidden: DNN\.hidden, seeds: DNN\.seeds/.test(src),
-    "/api/dnn-config 는 정식(GPU) 구조를 내려보낸다 — Modal 이 큰 망을 학습한다",
-    "트레이너에 내려가는 구조가 DNN.hidden 이 아니다 — GPU 가 워커용 작은 망을 학습하게 된다");
+  /* [V33.260] 종전엔 `hidden: DNN.hidden` 이라는 ★문자열★ 을 고정했다. 그런데 이 절의
+     진짜 계약은 "GPU 가 워커 폴백용 작은 망을 학습하지 않는다" 이지 특정 표현식이 아니다.
+     구성이 실측값으로 대체될 수 있게 되면서(측정 → 저장 → 반영) 표현식이 바뀌었고,
+     문자열 고정은 멀쩡한 코드를 막았다. 계약을 표현식이 아니라 ★성질★ 로 적는다. */
+  const _cfgFn = src.slice(src.indexOf("function _mlExportConfig("), src.indexOf("const MLSNAP_PART"));
+  chk(/hidden:\s*\(A && A\.hidden\) \|\| DNN\.hidden/.test(_cfgFn) || /hidden:\s*DNN\.hidden/.test(_cfgFn),
+    "트레이너에 내려가는 구조는 정식(GPU) 구조이거나 그것을 이긴 실측 구성이다",
+    "내려가는 구조의 출처가 DNN.hidden 도 실측값도 아니다");
+  chk(!/hidden:\s*DNNW\./.test(_cfgFn),
+    "워커 폴백 구조(DNNW)를 트레이너에 내려보내지 않는다 — GPU 가 작은 망을 학습하면 안 된다",
+    "★DNNW(워커 폴백) 구조가 트레이너로 내려간다★ — GPU 가 워커용 작은 망을 학습하게 된다");
   chk(/const dims = \[D\]\.concat\(DNNW\.hidden\)/.test(src),
     "워커 폴백은 DNNW.hidden 으로 학습한다(GPU 구조와 분리)",
     "워커 폴백이 아직 GPU 구조로 학습한다 — CPU 300s 안에서 수렴할 수 없다");

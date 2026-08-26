@@ -334,6 +334,13 @@ jobs:
       #   보고가 위원회와 같은 함수를 쓰는지만 본다(맞는 숫자는 내일 또 틀린다).
       - name: 자가진단 명단 검사 (보고가 위원회와 같은 함수를 쓰는가)
         run: node tools/check-selfcheck-roster.mjs
+      # [V33.260] DNN accLB 47.27% — 동전 던지기보다 낮은데 6시간마다 GPU 는 계속 탄다.
+      #   같은 51만 표본에서 트리들은 53~54% 다. 데이터에 신호가 없는 게 아니다.
+      #   그리고 그 사실은 V33.204 스윕이 이미 쟀는데(10층 49.3% vs 2층 53.3%)
+      #   ★결과가 어디에도 저장되지 않아★ 정기 실행은 매번 같은 구성으로 돌았다.
+      #   이 검사는 성능이 아니라 ★측정 → 저장 → 다음 학습에 반영★ 고리가 닫혀 있는지만 본다.
+      - name: DNN 구성 측정-반영 고리 검사 (잰 값이 실제로 쓰이는가)
+        run: node tools/check-dnn-arch.mjs
       # cloudflare/wrangler-action 대신 로컬에서 검증된 방식 그대로 실행
       # (wrangler-action@v3의 npx 자동설치가 4.86.0을 요구하며 실패하던 문제 회피)
       - name: Install wrangler
