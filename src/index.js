@@ -2977,7 +2977,7 @@ async function applySignalTypeWeights(DB, cfg) {
 // ============================================================================
 // [V33.55] 빌드 버전 — SWR L2 캐시 키에 섞어 '배포 = 판단 캐시 자동 무효화'를 만든다.
 //   판정 로직을 고쳐도 옛 캐시가 최대 1시간 재배포되던 문제를 구조적으로 없앤다.
-const _BUILD_VER = "V33.263";
+const _BUILD_VER = "V33.264";
 
 // ═══ [V33.171] 평가 순서 계획 — ★승격과 순환을 교차해 굶주림을 구조적으로 없앤다★ ═══
 //   V33.50 의 형태트리거는 "급한 몇 종목을 앞으로 당긴다"는 의도였으나, 실제 운영로그에서는
@@ -12025,6 +12025,199 @@ function _rvZ(arr, v) {
    evaluateAllStrategies 는 종목 하나의 일봉만 받는다(설계상 그렇다). 그래서 교차종목
    관계는 야간에 한 번 계산해 상태에 두고, 사이클은 그것을 읽기만 한다 —
    mlBuildXSPanel(V33 xspanel)이 같은 이유로 쓰는 방식이다. */
+/* ══ [V33.264] 옵션 미시구조 — ★시계를 돌린다★ ═══════════════════════════════
+   요청: gamma exposure · 0DTE · open interest · convexity · delta-gamma Taylor 를 학습시켜라.
+
+   ★먼저 정직하게 짚어야 할 제약이 있다.★ 이 저장소에 이미 적혀 있는 문장이다:
+       "과거 옵션데이터는 수확 불가 → ML 피처로 쓰면 분포불일치."
+   야후는 ★현재 체인만★ 준다. 과거 체인은 안 준다. 그래서 51만 개 과거 표본에
+   GEX 를 소급해 넣을 방법이 없다. 지금 당장 피처로 밀어 넣으면 과거 표본엔 0 이,
+   최근 표본엔 값이 들어간다 — 모델은 "GEX 가 0 이 아니면 최근 데이터" 를 배운다.
+   그건 학습이 아니라 오염이고, featVer 를 올려 51만 표본을 재구축한 뒤에 발견하면
+   되돌리는 데 또 하루가 든다.
+
+   그래서 이 단계는 ★기록만★ 한다. 오늘부터 날짜별로 쌓고, 충분히 모이면 그때
+   피처로 승격한다. 지금 이 단계가 하는 일은 학습 파이프라인을 ★건드리지 않는다★ —
+   featVer 도, 표본도, 모델도 그대로다. 실패해도 매매에 영향이 0 이어야 한다.
+
+   야후 체인은 그릭스를 주지 않는다(strike / openInterest / impliedVolatility / expiration).
+   델타·감마는 IV 에서 블랙숄즈로 직접 구한다. 그 수학은 워커에 넣기 전에
+   답을 아는 값으로 검산했다(풋콜 패리티 Δcall−Δput=1, 감마 콜=풋,
+   해석해 vs 수치미분 오차 ~1e-6, 0DTE 감마가 30일물의 5.5배). */
+const OPTMICRO = {
+  enabled: true,
+  symbols: ["SPY", "QQQ"],   // 지수부터. 개별주로 넓히는 건 예산을 보고 나중에.
+  maxExpiries: 3,            // 근월부터 이만큼 — 0DTE/근월이 감마를 지배한다
+  rate: 0.04,                // 무위험이자율(그릭스용). 감마는 r 에 거의 둔감하다.
+  minBudgetReserve: 40,      // fetch 예산이 이보다 적으면 아예 손대지 않는다
+  keepDays: 400,             // 기록 보존일 — 이만큼 쌓이면 피처 승격을 검토할 수 있다
+  contractCap: 4000,         // 한 만기당 계약 수 상한(방어)
+  /* ★언제부터 학습에 쓸 수 있나★ 를 숫자로 못 박는다. 없으면 "충분히 쌓이면" 이라는
+     말만 남고 아무도 판단하지 않는다. 60거래일 ≈ 3개월 — 라벨 지평(10일)의 6배라
+     최소한 겹치지 않는 구간이 여러 개 나온다. 이 값에 도달하면 화면이 그렇게 말한다. */
+  promoteMinDays: 60
+};
+function _bsNormCdf(x) {
+  // Abramowitz-Stegun 7.1.26 — 워커에 erf 가 없다.
+  const sgn = x < 0 ? -1 : 1; const ax = Math.abs(x) / Math.SQRT2;
+  const t = 1 / (1 + 0.3275911 * ax);
+  const y = 1 - ((((1.061405429 * t - 1.453152027) * t + 1.421413741) * t - 0.284496736) * t + 0.254829592) * t * Math.exp(-ax * ax);
+  return 0.5 * (1 + sgn * y);
+}
+function _bsNormPdf(x) { return Math.exp(-0.5 * x * x) / Math.sqrt(2 * Math.PI); }
+/* 델타·감마. 반환 null 은 "못 구했다" 이지 0 이 아니다 — 0 으로 뭉개면 그 계약이
+   조용히 '감마 없음' 으로 합산되어 GEX 를 낮게 만든다. */
+function _bsDeltaGamma(S, K, T, sigma, isCall, r) {
+  if (!(S > 0 && K > 0 && T > 0 && sigma > 0) || !isFinite(S) || !isFinite(K) || !isFinite(sigma)) return null;
+  const sq = sigma * Math.sqrt(T);
+  if (!(sq > 1e-12)) return null;
+  const d1 = (Math.log(S / K) + (_num(r, 0.04) + 0.5 * sigma * sigma) * T) / sq;
+  if (!isFinite(d1)) return null;
+  const delta = isCall ? _bsNormCdf(d1) : _bsNormCdf(d1) - 1;
+  const gamma = _bsNormPdf(d1) / (S * sq);
+  if (!isFinite(delta) || !isFinite(gamma)) return null;
+  return { delta: delta, gamma: gamma };
+}
+/* 체인 한 장 → 지표. 순수 함수라 오프라인에서 그대로 검사할 수 있다(게이트가 그렇게 쓴다). */
+function optMicroFromChain(spot, expiries, nowMs, cfg) {
+  const C = cfg || OPTMICRO;
+  const S = _num(spot, 0);
+  if (!(S > 0) || !Array.isArray(expiries) || !expiries.length) return null;
+  let oiCall = 0, oiPut = 0, gex = 0, oiTot = 0, oi0 = 0, absGamma = 0, dgUp = 0, dgDn = 0, used = 0, skipped = 0;
+  for (const ex of expiries) {
+    const expMs = _num(ex && ex.expirationMs, 0);
+    if (!(expMs > 0)) { skipped++; continue; }
+    // 연 단위 잔존만기. 만기 당일은 0 이 되어 감마가 발산하므로 최소 1/2 영업일로 바닥을 둔다.
+    const T = Math.max(0.5 / 252, (expMs - nowMs) / (365 * 86400000));
+    const dte = (expMs - nowMs) / 86400000;
+    const rows = [].concat(Array.isArray(ex.calls) ? ex.calls.map(function (c) { return { c: c, call: true }; }) : [],
+                           Array.isArray(ex.puts) ? ex.puts.map(function (c) { return { c: c, call: false }; }) : []);
+    let n = 0;
+    for (const row of rows) {
+      if (++n > _num(C.contractCap, 4000)) break;
+      const K = _num(row.c && row.c.strike, 0);
+      const oi = Math.max(0, _num(row.c && row.c.openInterest, 0));
+      const iv = _num(row.c && row.c.impliedVolatility, 0);
+      if (!(K > 0) || !(oi > 0)) { continue; }
+      const g = _bsDeltaGamma(S, K, T, iv, row.call, C.rate);
+      if (!g) { skipped++; continue; }
+      used++;
+      oiTot += oi;
+      if (row.call) oiCall += oi; else oiPut += oi;
+      if (dte <= 1.0) oi0 += oi;
+      /* GEX — 딜러 관점 통상 규약: 딜러는 콜을 롱, 풋을 숏 감마로 본다.
+         1%p 이동당 델타 변화량(주식 수)으로 환산: Γ × OI × 100 × S² × 0.01. */
+      const notional = g.gamma * oi * 100 * S * S * 0.01;
+      gex += row.call ? notional : -notional;
+      absGamma += Math.abs(notional);
+      /* 델타-감마 테일러 — ±1% 이동에 딜러가 헤지로 사고팔아야 하는 주식 수 근사.
+         2차항이 있어야 큰 이동에서 맞는다(검산: ΔS=10 에서 오차 1.70 → 0.27). */
+      const dS = S * 0.01;
+      const sgn = row.call ? 1 : -1;
+      dgUp += sgn * (g.delta * dS + 0.5 * g.gamma * dS * dS) * oi * 100 / S;
+      dgDn += sgn * (g.delta * -dS + 0.5 * g.gamma * dS * dS) * oi * 100 / S;
+    }
+  }
+  if (!used) return null;
+  return {
+    spot: +S.toFixed(4),
+    oiCall: oiCall, oiPut: oiPut, oiTotal: oiTot,
+    putCall: oiCall > 0 ? +(oiPut / oiCall).toFixed(4) : null,
+    dte0Share: oiTot > 0 ? +(oi0 / oiTot).toFixed(4) : null,   // 0DTE 미결제 비중
+    gex: +gex.toFixed(1),                                       // 순 감마 노출(주식 수 환산)
+    gexPerOi: oiTot > 0 ? +(gex / oiTot).toFixed(4) : null,
+    convexity: +absGamma.toFixed(1),                            // 방향 무관 볼록성 총량
+    gexRatio: absGamma > 0 ? +(gex / absGamma).toFixed(4) : null, // −1~1: 순감마의 쏠림 정도
+    dgTaylorUp: +dgUp.toFixed(1), dgTaylorDn: +dgDn.toFixed(1),
+    contracts: used, skipped: skipped
+  };
+}
+/* 읽는 쪽 — ★쓰기만 하고 아무도 안 읽는 기록은 죽은 기록이다.★ (선언순서 게이트가
+   정확히 그 이유로 이 코드를 한 번 막았다.) 지금 단계에서 이 값을 ★매매에 쓰지 않는다★ —
+   사이징을 조용히 바꾸면 "기록만 한다" 는 말이 거짓이 된다. 대신 화면이 읽는다:
+   며칠 쌓였는지, 마지막 값이 무엇인지, 언제쯤 피처로 승격할 수 있는지. */
+async function optMicroLatest(DB) {
+  try {
+    const idx = await getState(DB, "optx_index", null);
+    if (!idx || !Array.isArray(idx.days) || !idx.days.length) return null;
+    const day = idx.days[idx.days.length - 1];
+    const rec = await getState(DB, "optx:" + day, null);
+    if (!rec) return { days: idx.days.length, latest: day, rec: null };
+    return { days: idx.days.length, latest: day, ageH: +((Date.now() - _num(rec.ts, 0)) / 3600000).toFixed(1),
+             syms: rec.syms || {}, promoteAt: OPTMICRO.promoteMinDays };
+  } catch (e) { return null; }
+}
+
+/* 야간 수집기 — ★기록만 한다.★ 학습 파이프라인(featVer·표본·모델)을 건드리지 않는다.
+   실패해도 매매에 영향이 0 이어야 하므로: 예산이 모자라면 아예 시작하지 않고,
+   한 심볼이 죽어도 나머지를 계속하며, 어떤 예외도 문자열로 돌려준다(_stg 가 로그로 남긴다). */
+async function optMicroNightly(DB) {
+  const C = OPTMICRO;
+  if (!C || C.enabled === false) return "[OPTX] 꺼져 있음";
+  try {
+    if (fetchBudgetLeft() < _num(C.minBudgetReserve, 40))
+      return "[OPTX] fetch 예산 부족(" + fetchBudgetLeft() + ") — 건너뜀. 다음 밤에 다시 시도한다";
+    const day = new Date().toISOString().slice(0, 10);
+    const rec = { ts: Date.now(), day: day, syms: {} };
+    const notes = [];
+    for (const sym of (C.symbols || [])) {
+      try {
+        if (fetchBudgetLeft() < 8) { notes.push(sym + ":예산중단"); break; }
+        __fetchBudget.used++;
+        const j0 = await yahooFetch("https://query1.finance.yahoo.com/v7/finance/options/" + encodeURIComponent(sym));
+        const r0 = j0 && j0.optionChain && j0.optionChain.result && j0.optionChain.result[0];
+        if (!r0) { notes.push(sym + ":체인없음"); continue; }
+        const spot = _num(r0.quote && (r0.quote.regularMarketPrice != null ? r0.quote.regularMarketPrice : r0.quote.previousClose), 0);
+        const dates = Array.isArray(r0.expirationDates) ? r0.expirationDates.slice(0, Math.max(1, _num(C.maxExpiries, 3))) : [];
+        const packs = [];
+        // 첫 응답에 담겨 온 만기는 그대로 쓴다(추가 요청 0).
+        const first = r0.options && r0.options[0];
+        if (first) packs.push({ expirationMs: _num(first.expirationDate, 0) * 1000, calls: first.calls, puts: first.puts });
+        for (const d of dates) {
+          if (packs.length >= _num(C.maxExpiries, 3)) break;
+          const ms = _num(d, 0) * 1000;
+          if (packs.some(function (p) { return p.expirationMs === ms; })) continue;
+          if (fetchBudgetLeft() < 6) { notes.push(sym + ":만기예산중단"); break; }
+          __fetchBudget.used++;
+          const j = await yahooFetch("https://query1.finance.yahoo.com/v7/finance/options/" + encodeURIComponent(sym) + "?date=" + _num(d, 0));
+          const rr = j && j.optionChain && j.optionChain.result && j.optionChain.result[0];
+          const op = rr && rr.options && rr.options[0];
+          if (op) packs.push({ expirationMs: _num(op.expirationDate, 0) * 1000, calls: op.calls, puts: op.puts });
+        }
+        const met = optMicroFromChain(spot, packs, Date.now(), C);
+        if (met) { met.expiries = packs.length; rec.syms[sym] = met; }
+        else notes.push(sym + ":계약없음");
+      } catch (e) { notes.push(sym + ":" + ((e && e.message) || "실패").slice(0, 40)); }
+    }
+    const n = Object.keys(rec.syms).length;
+    if (!n) return "[OPTX] 수집 0건" + (notes.length ? " — " + notes.join(", ") : "");
+    /* 날짜별 한 행 + 색인. ★덮어쓰기가 아니라 날짜 키★ 라 하루 여러 번 돌아도 그날 것만 갱신된다. */
+    await setState(DB, "optx:" + day, rec);
+    let idx = (await getState(DB, "optx_index", null)) || { days: [] };
+    if (!Array.isArray(idx.days)) idx.days = [];
+    if (idx.days.indexOf(day) < 0) idx.days.push(day);
+    idx.days.sort();
+    const keep = Math.max(30, _num(C.keepDays, 400));
+    while (idx.days.length > keep) {
+      const old = idx.days.shift();
+      try { await DB.prepare("DELETE FROM state WHERE k = ?").bind("optx:" + old).run(); } catch (e) {}
+    }
+    idx.ts = Date.now(); idx.n = idx.days.length; idx.latest = day;
+    await setState(DB, "optx_index", idx);
+    const parts = [];
+    for (const k of Object.keys(rec.syms)) {
+      const m = rec.syms[k];
+      parts.push(k + " GEX " + (m.gex / 1e6).toFixed(1) + "M · 0DTE " +
+        (m.dte0Share != null ? (m.dte0Share * 100).toFixed(0) + "%" : "?") +
+        " · P/C " + (m.putCall != null ? m.putCall.toFixed(2) : "?") +
+        " · 계약 " + m.contracts);
+    }
+    return "[OPTX] 옵션 미시구조 " + n + "종 기록(누적 " + idx.days.length + "일) — " + parts.join(" | ") +
+      (notes.length ? " · 비고 " + notes.join(", ") : "") +
+      (idx.days.length < 60 ? " ★아직 학습용 아님(기록 단계)★" : " — 피처 승격 검토 가능");
+  } catch (e) { return "[OPTX] 실패: " + ((e && e.message) || "?"); }
+}
+
 /* ══ [V33.261] 유니버스 건강검진 — 죽은 티커를 사람의 기억이 아니라 데이터가 잡는다 ══
    종목을 늘릴 때마다 같은 질문을 받는다: "상장폐지 안 됐나? 사명 바뀌었나? 합병됐나?"
    그때마다 사람이 확인하는 방식은 두 가지로 실패한다 — 확인이 틀릴 수 있고, 확인한
@@ -22953,6 +23146,7 @@ async function handleRequest(request, env, ctx) {
         ["xspanel", function (DB) { return mlBuildXSPanel(DB); }],
         ["rvpanel", function (DB) { return rvBuildPanel(DB); }],
         ["univhealth", function (DB) { return univHealthNightly(DB); }],
+        ["optmicro", function (DB) { return optMicroNightly(DB); }],
         ["harvest", function (DB) { return mlMarketHarvestNightly(DB); }],
         // [V33.104] 전문가 재학습 앞 — 누출없는 STACK 표본 생성 후 기준선 갱신(크론과 동일 순서).
         ["stackbf", function (DB) { return stackSampleBackfill(DB, {}); }],
@@ -37000,6 +37194,24 @@ async function aiSelfCheck(DB, env) {
         }
       }
     } catch (e) {}
+    /* [V33.264] 옵션 미시구조 기록 진행 — ★지금은 학습에 쓰지 않는다.★ 과거 체인을
+       구할 수 없어 소급이 불가능하므로, 오늘부터 쌓아 문턱에 닿으면 그때 피처로 올린다.
+       진행 상황이 화면에 안 보이면 "쌓고 있다" 는 말은 확인할 수 없는 주장이 된다. */
+    try {
+      const _ox = await optMicroLatest(DB);
+      if (_ox) {
+        R.optMicro = { days: _ox.days, latest: _ox.latest, ageH: _ox.ageH, promoteAt: _ox.promoteAt };
+        const _need = _num(_ox.promoteAt, 60);
+        const _sy = Object.keys(_ox.syms || {});
+        if (_ox.days >= _need)
+          R.ok.push("옵션 미시구조 " + _ox.days + "일 누적 — 피처 승격 문턱(" + _need + "일) 도달");
+        else
+          R.ok.push("옵션 미시구조 기록 중 " + _ox.days + "/" + _need + "일" +
+            (_sy.length ? " (" + _sy.join(",") + ")" : "") + " — 아직 학습에 쓰지 않는다(과거 체인 소급 불가)");
+        if (_ox.ageH != null && _ox.ageH > 48)
+          R.warnings.push("옵션 미시구조 마지막 기록 " + _ox.ageH + "h 전 — 야간 수집이 멈췄는지 확인");
+      }
+    } catch (e) {}
     // 가드 상태
     const guard = await getState(DB, "mind_guard", null);
     if (guard && guard.distrust) R.errors.push("자기감시 distrust 발동(라이브 정확도 급락) — ML 개입 중단 중");
@@ -43835,6 +44047,8 @@ export default {
             await _stg("rvpanel", async function () { return await rvBuildPanel(env.DB); });
             // [V33.261] 유니버스 건강검진 — 죽은 티커는 시세가 안 들어온다. 데이터가 말하게 한다.
             await _stg("univhealth", async function () { return await univHealthNightly(env.DB); });
+            // [V33.264] 옵션 미시구조 기록 — 학습 파이프라인은 건드리지 않는다(오늘부터 시계만 돌린다).
+            await _stg("optmicro", async function () { return await optMicroNightly(env.DB); });
             // (2.5) [HARVEST] 시장 자기지도 표본 수확 — 전 종목 일봉에서 "피처→N일 뒤 방향" 대량 편입
             await _stg("harvest", async function () { return await mlMarketHarvestNightly(env.DB); });
             // [V12.122] ★재구축기 재학습 가속★ _stg는 하루 1회만 학습을 허용하는데, 표본풀이 재구축
@@ -43972,6 +44186,7 @@ export default {
 export {
   _dnnArchDecide, DNNARCH, DNN, DNNW,   // [V33.260] 측정-반영 고리 검사
   _dnnAdmit,                        // [V33.262] DNN 승격 판정(정확도 길 · IC 길)
+  optMicroFromChain, _bsDeltaGamma, OPTMICRO,   // [V33.264] 옵션 미시구조
   dualHeadJudge, _boostersCached,   // [V33.257] 자가진단 명단 검사가 '위원회가 쓰는 그 함수' 를 직접 돌린다
   DEFAULT_CFG, AI_PARAMS, migrateCfgToMarkets, evaluateAllStrategies, evaluateTrendEntry, evaluateSnapEntry,
   evaluateSell, backtestSymbol, backtestStats, backtestStatsBySignal,

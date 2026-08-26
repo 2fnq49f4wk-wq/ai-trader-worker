@@ -355,6 +355,13 @@ jobs:
       #   이 검사는 "문턱을 낮췄나" 를 묻는다 — IC 길은 정확도 바닥을 여전히 요구해야 한다.
       - name: DNN 승격 판정 검사 (은닉층 보존 · IC 길이 무르지 않은가)
         run: node tools/check-dnn-admit.mjs
+      # [V33.264] 옵션 미시구조(GEX·0DTE·OI·convexity·델타감마 테일러) — ★기록 단계★.
+      #   야후는 현재 체인만 준다. 과거 체인이 없으니 51만 표본에 소급이 불가능하고,
+      #   지금 피처로 밀어 넣으면 모델은 "GEX가 0이 아니면 최근 데이터" 를 배운다.
+      #   그래서 오늘부터 쌓기만 한다. 이 검사는 ①수학이 맞는가(답을 아는 값으로 검산)
+      #   ②기록이 학습을 건드리지 않는가, 실패해도 야간 파이프라인을 안 끊는가를 본다.
+      - name: 옵션 미시구조 검사 (그릭스 검산 · 기록이 학습을 안 건드리는가)
+        run: node tools/check-opt-micro.mjs
       # cloudflare/wrangler-action 대신 로컬에서 검증된 방식 그대로 실행
       # (wrangler-action@v3의 npx 자동설치가 4.86.0을 요구하며 실패하던 문제 회피)
       - name: Install wrangler
