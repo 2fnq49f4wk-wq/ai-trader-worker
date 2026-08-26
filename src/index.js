@@ -2921,7 +2921,7 @@ async function applySignalTypeWeights(DB, cfg) {
 // ============================================================================
 // [V33.55] 빌드 버전 — SWR L2 캐시 키에 섞어 '배포 = 판단 캐시 자동 무효화'를 만든다.
 //   판정 로직을 고쳐도 옛 캐시가 최대 1시간 재배포되던 문제를 구조적으로 없앤다.
-const _BUILD_VER = "V33.261";
+const _BUILD_VER = "V33.262";
 
 // ═══ [V33.171] 평가 순서 계획 — ★승격과 순환을 교차해 굶주림을 구조적으로 없앤다★ ═══
 //   V33.50 의 형태트리거는 "급한 몇 종목을 앞으로 당긴다"는 의도였으나, 실제 운영로그에서는
@@ -22059,11 +22059,13 @@ async function handleRequest(request, env, ctx) {
                       featVer: LUXML.featVer,   // [V33.245] 신선도는 시각만으로 재지 않는다 — 판이 다르면 새것이어도 못 쓴다
                       trainedAt: Date.now(),
                       valN: valN, valNRaw: _num(_vs.valNRaw, valN), valUniq: _num(_vs.valUniq, null) };
-        // [V12.54] 절대실력 게이트 — MIND 상대비교 폐기. 외부학습분은 val 라벨이 없어 다수클래스 기저를
-        //   못 구하므로 trustFloor 절대문턱만 적용(외부 학습기가 자체 홀드아웃으로 valAccLB를 보고).
-        if (valAccLB >= DNN.trustFloor) {
-          const eD = Math.exp(DNN.trustTemp * (valAccLB - 0.5)), eM = Math.exp(DNN.trustTemp * (mindLB - 0.5));
-          trust.wDnn = +(eD / (eD + eM)).toFixed(4); trust.trusted = true;
+        // [V33.262] 판정은 _dnnAdmit 한 곳에만 있다 — 아래 단발 업로드 경로도 같은 함수를 쓴다.
+        {
+          const _icT = _num(_vs.valICt, null);
+          const _ad = _dnnAdmit(valAccLB, _icT, mindLB);
+          trust.wDnn = _ad.wDnn; trust.trusted = _ad.trusted;
+          trust.admitPath = _ad.path; trust.admitWhy = _ad.why;
+          trust.valICt = _icT; trust.valICBlock = _num(_vs.valICBlock, null);
         }
         await setState(env.DB, "dnn_trust", trust);
         try { await log(env.DB, "INFO", null, "[DNN] 외부업로드 저장 " + (saveInfo.bytes / 1048576).toFixed(1) + "MB/" + saveInfo.chunks + "청크 valAcc=" + (valAcc * 100).toFixed(1) + "% wDnn=" + trust.wDnn); } catch (e) {}
@@ -22091,6 +22093,10 @@ async function handleRequest(request, env, ctx) {
         await setState(env.DB, "dnn_stage", { featVer: LUXML.featVer, mean: body.mean.map(function (v) { return _num(v, 0); }),
           std: body.std.map(function (v) { return _num(v, 1); }), dims: dims, seeds: seeds, valAcc: +dnnAcc.toFixed(4),
           valAccLB: +dnnLB.toFixed(4), valN: valN, valNRaw: _vn.raw, valUniq: _vn.uniq,
+          /* [V33.262] ★IC 도 여기 담아 둔다.★ 커밋 단계의 body 에는 가중치만 오고 성적이 없다 —
+             valAcc 를 인자로 넘기는 이유가 그것이다(V33.170 이 스코프로 8일치를 버린 그 자리).
+             처음엔 커밋에서 body.valICt 를 읽게 썼다가 같은 함정에 다시 빠질 뻔했다. */
+          valICt: _num(body.valICt, null), valICBlock: _num(body.valICBlock, null),
           n: Math.max(0, Math.floor(_num(body.n, 0))), ts: Date.now() });
         return Response.json({ ok: true, staged: "begin", seeds: seeds }, { headers: cors });
       }
@@ -22181,10 +22187,12 @@ async function handleRequest(request, env, ctx) {
                     featVer: LUXML.featVer,   // [V33.245] 동상
                     trainedAt: Date.now(),
                     valN: net.valN, valNRaw: net.valNRaw, valUniq: net.valUniq };
-      // [V12.54] 절대실력 게이트 — MIND 상대비교 폐기(외부학습분은 val 라벨 부재로 trustFloor만 적용).
-      if (dnnLB >= DNN.trustFloor) {
-        const eD = Math.exp(DNN.trustTemp * (dnnLB - 0.5)), eM = Math.exp(DNN.trustTemp * (mindLB - 0.5));
-        trust.wDnn = +(eD / (eD + eM)).toFixed(4); trust.trusted = true;
+      // [V33.262] 위 분할커밋 경로와 ★같은 판정 함수★ 를 쓴다. 규칙을 두 곳에 적으면 갈라진다.
+      {
+        const _ad = _dnnAdmit(dnnLB, _num(body.valICt, null), mindLB);
+        trust.wDnn = _ad.wDnn; trust.trusted = _ad.trusted;
+        trust.admitPath = _ad.path; trust.admitWhy = _ad.why;
+        trust.valICt = _num(body.valICt, null); trust.valICBlock = _num(body.valICBlock, null);
       }
       await setState(env.DB, "dnn_trust", trust);
       try { await log(env.DB, "INFO", null, "[DNN] 외부업로드 저장 " + (saveInfo.bytes / 1048576).toFixed(1) + "MB/" + saveInfo.chunks + "청크 valAcc=" + (dnnAcc * 100).toFixed(1) + "% wDnn=" + trust.wDnn); } catch (e) {}
@@ -34316,6 +34324,11 @@ const DNN = {
   stdClip: 6,            // [V9.1] 윈저화 표준화 클램프(±σ) — 팬테일 이상치 안정화
   valFrac: 0.2,
   trustFloor: 0.505,     // 검증정확도 이 미만이면 신뢰 0
+  /* [V33.262] IC 경로로 들어온 모델의 지분 배수. 정확도로 이긴 게 아니라 ★순위 능력★ 으로
+     들어왔으므로 같은 발언권을 주지 않는다. 값의 근거는 이 저장소가 이미 쓰던 것과 맞춘다 —
+     ICGATE.provisional.fwdWeak(0.60)보다 보수적으로, 이중헤드 잠정합류(×0.25)보다는 관대하게.
+     정확도 경로로 승격되면 이 배수는 적용되지 않는다(전액). */
+  icPathWeightMult: 0.35,
   // [V33.77] IC 대체 문턱 — 정확도로는 못 보던 랭킹 능력을 인정한다.
   //   업계 기준 IC 0.02~0.08 이 "좋은" 모델이므로 0.015 는 '쓸모 있음'의 최소선이다.
   icFloor: 0.015,
@@ -34944,6 +34957,43 @@ async function mlDNNTrainNightly(DB) {
 // [V10] 대형 DNN 메모리 캐시 — 청크 모델을 매 사이클 재조립하지 않도록(D1 read 폭증·지연 방지).
 //   메타(1 read)의 trainedAt만 확인 → 안 바뀌었으면 메모리 재사용, 바뀌었을 때만 전체 청크 로드.
 var __dnnMemCache = null;   // { trainedAt, model }
+/* ══ [V33.262] DNN 승격 판정 — ★한 곳에만 둔다★ ══════════════════════════════
+   업로드 경로가 둘이다(분할 커밋 / 단발). 종전엔 두 곳에 규칙이 따로 적혀 있었고,
+   둘 다 "정확도 하한 ≥ trustFloor" 하나만 봤다. 규칙이 두 곳에 있으면 언젠가 갈라진다 —
+   실제로 이번에 한쪽만 고치려다 그 갈림을 만들 뻔했다. 판정은 여기 하나뿐이다.
+
+   두 갈래 길은 부스터(_boostersCached)가 이미 쓰는 것과 ★같은 자·같은 값★ 이다:
+     ① 정확도 길 : accLB ≥ DNN.trustFloor(0.505)
+     ② IC 길     : accLB ≥ GBDT.icPathAccFloor(0.49) ★그리고★ 블록IC t ≥ provisional.tMin(1.65)
+   ②는 ①보다 무르지 않다. 정확도 바닥을 여전히 요구하고 유의성 조건이 하나 더 붙는다.
+   ICGATE.provisional 의 주석이 그 문턱의 뜻을 그대로 말한다 —
+   "이보다 낮으면 ★잡음과 구별되지 않는다★ → 제외". */
+function _dnnAdmit(accLB, icT, mindLB) {
+  const _acc = _num(accLB, 0);
+  const _t = (icT == null) ? null : _num(icT, null);
+  const accPath = _acc >= _num(DNN.trustFloor, 0.505);
+  const icPath = !accPath && _acc >= _num(GBDT.icPathAccFloor, 0.49) &&
+                 _t != null && isFinite(_t) && _t >= _num(ICGATE.provisional && ICGATE.provisional.tMin, 1.65);
+  if (!accPath && !icPath) {
+    /* ★어느 조건이 막았는지 정확히 적는다.★ 처음엔 무조건 "블록IC t 가 낮다" 로 적었는데,
+       accLB 가 IC 경로의 정확도 바닥(0.49)에도 못 미치면 IC 가 아무리 높아도 막힌다 —
+       그때 IC 를 탓하면 엉뚱한 곳을 고치러 간다. 실제로 운영 현재값(0.4727)이 그 경우다. */
+    const _tMin = _num(ICGATE.provisional && ICGATE.provisional.tMin, 1.65);
+    const _floorMiss = _acc < _num(GBDT.icPathAccFloor, 0.49);
+    let _why = "accLB " + _acc.toFixed(4) + " < 정확도 경로 " + DNN.trustFloor;
+    if (_floorMiss) _why += " · IC 경로도 불가 — 정확도 바닥 " + _num(GBDT.icPathAccFloor, 0.49) + " 미달(IC 값과 무관)";
+    else if (_t == null) _why += " · 블록IC 미보고(IC 경로 판정 불가)";
+    else _why += " · 블록IC t " + _t.toFixed(2) + " < " + _tMin + "(IC 경로 미달)";
+    return { trusted: false, wDnn: 0, path: null, why: _why };
+  }
+  const eD = Math.exp(DNN.trustTemp * (_acc - 0.5)), eM = Math.exp(DNN.trustTemp * (_num(mindLB, 0.5) - 0.5));
+  const w = eD / (eD + eM);
+  return { trusted: true, path: accPath ? "acc" : "ic",
+           wDnn: +(icPath ? w * _num(DNN.icPathWeightMult, 0.35) : w).toFixed(4),
+           why: accPath ? "정확도 경로(accLB " + _acc.toFixed(4) + ")"
+                        : "IC 경로(accLB " + _acc.toFixed(4) + " · 블록IC t " + _t.toFixed(2) + ") — 잠정 지분 ×" + _num(DNN.icPathWeightMult, 0.35) };
+}
+
 async function mlDNNLoad(DB) {
   try {
     const meta = await getState(DB, "dnn_model:meta", null);
@@ -35764,7 +35814,14 @@ async function mlDNNVizData(DB) {
       const dimsC = _cachedHeavy.dims || [];
       const committeeC = [];
       if (mindAcc != null) committeeC.push({ name: "MIND", role: "스태킹", acc: +mindAcc.toFixed(3), w: null, trusted: true });
-      committeeC.push({ name: "DNN", role: dimsC.length + "층 딥넷", acc: trust ? +_num(trust.dnnAccLB, _num(trust.dnnAcc, 0)).toFixed(3) : null, w: trust ? _num(trust.wDnn, 0) : 0, trusted: !!(trust && trust.trusted) });
+      // [V33.262] 캐시 경로도 같은 자로 센다 — 두 경로가 다른 숫자를 말하면 그것부터 버그다.
+      {
+        const _hn = Math.max(0, (Array.isArray(dimsC) ? dimsC.length : 0) - 2);
+        const _fb = _hn > 0 && _hn === DNNW.hidden.length && _hn !== DNN.hidden.length;
+        committeeC.push({ name: "DNN", role: "은닉 " + _hn + "층 딥넷" + (_fb ? "(★워커 폴백★ — GPU 망 미탑재)" : "(GPU)"),
+          hiddenLayers: _hn, expectedHidden: DNN.hidden.length, fallback: _fb,
+          acc: trust ? +_num(trust.dnnAccLB, _num(trust.dnnAcc, 0)).toFixed(3) : null, w: trust ? _num(trust.wDnn, 0) : 0, trusted: !!(trust && trust.trusted) });
+      }
       if (gtrust) committeeC.push({ name: "GBDT", role: "부스팅트리", acc: +_num(gtrust.gbdtAccLB, _num(gtrust.gbdtAcc, 0)).toFixed(3), w: _num(gtrust.wGbdt, 0), trusted: !!gtrust.trusted });
       return Object.assign({}, _cachedHeavy, {
         trust: trust ? { wDnn: trust.wDnn, trusted: !!trust.trusted, dnnAcc: trust.dnnAcc } : null,
@@ -35818,7 +35875,21 @@ async function mlDNNVizData(DB) {
     const params = paramsPerNet * nets.length;   // [V10] 앙상블 전체 파라미터(시드 곱)
     const committee = [];
     if (mindAcc != null) committee.push({ name: "MIND", role: "스태킹", acc: +mindAcc.toFixed(3), w: null, trusted: true });
-    committee.push({ name: "DNN", role: dims.length + "층 딥넷", acc: trust ? +_num(trust.dnnAccLB, _num(trust.dnnAcc, 0)).toFixed(3) : null, w: trust ? _num(trust.wDnn, 0) : 0, trusted: !!(trust && trust.trusted) });
+    /* ══ [V33.262] ★"딥넷이 4층으로 줄었다" 는 화면이 잘못 세고 있었던 것이다.★ ══
+       dims 는 [입력, 은닉…, 출력] 이다. 그런데 라벨이 dims.length 를 그대로 "층" 이라
+       불렀다. 그러면
+         · 은닉 10층 GPU 망(DNN.hidden) → dims 12개 → "12층 딥넷"
+         · 은닉  2층 워커 폴백(DNNW.hidden) → dims  4개 → ★"4층 딥넷"★
+       설정은 V33.193 이후 한 번도 바뀐 적이 없다(은닉 10층 그대로). 화면의 "4" 는
+       ★층이 줄어서가 아니라 지금 실려 있는 것이 워커 폴백이라는 뜻★ 이었다.
+       숫자 하나가 두 가지를 동시에 감추고 있었다 — 세는 법이 틀렸다는 것과,
+       GPU 망이 안 실려 있다는 것. 둘 다 드러나게 적는다. */
+    const _hidN = Math.max(0, (Array.isArray(dims) ? dims.length : 0) - 2);
+    const _srcNow = m.source || "worker";   // source 는 아래에서 선언된다(const, TDZ) — 여기선 원본에서 직접 읽는다
+    const _isFallback = (_srcNow === "worker") || (_hidN > 0 && _hidN === DNNW.hidden.length && _hidN !== DNN.hidden.length);
+    committee.push({ name: "DNN", role: "은닉 " + _hidN + "층 딥넷" + (_isFallback ? "(★워커 폴백★ — GPU 망 미탑재)" : "(GPU)"),
+      hiddenLayers: _hidN, expectedHidden: DNN.hidden.length, fallback: _isFallback,
+      acc: trust ? +_num(trust.dnnAccLB, _num(trust.dnnAcc, 0)).toFixed(3) : null, w: trust ? _num(trust.wDnn, 0) : 0, trusted: !!(trust && trust.trusted) });
     if (gtrust) committee.push({ name: "GBDT", role: "부스팅트리", acc: +_num(gtrust.gbdtAccLB, _num(gtrust.gbdtAcc, 0)).toFixed(3), w: _num(gtrust.wGbdt, 0), trusted: !!gtrust.trusted });
     // [V11] 3M이 실제 거래결정에 기여 중인가? 신뢰게이트 통과(trusted & wDnn>0) 여부 = 실동작 여부.
     const active = !!(trust && trust.trusted && _num(trust.wDnn, 0) > 0);
@@ -43843,7 +43914,8 @@ export default {
 // [검증용 named export] Cloudflare Worker는 default export만 사용하므로 무해.
 //   로컬 백테스트/단위검증 스크립트에서 핵심 함수를 직접 호출하기 위함.
 export {
-  _dnnArchDecide, DNNARCH, DNN,     // [V33.260] 측정-반영 고리 검사
+  _dnnArchDecide, DNNARCH, DNN, DNNW,   // [V33.260] 측정-반영 고리 검사
+  _dnnAdmit,                        // [V33.262] DNN 승격 판정(정확도 길 · IC 길)
   dualHeadJudge, _boostersCached,   // [V33.257] 자가진단 명단 검사가 '위원회가 쓰는 그 함수' 를 직접 돌린다
   DEFAULT_CFG, AI_PARAMS, migrateCfgToMarkets, evaluateAllStrategies, evaluateTrendEntry, evaluateSnapEntry,
   evaluateSell, backtestSymbol, backtestStats, backtestStatsBySignal,

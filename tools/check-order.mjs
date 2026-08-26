@@ -380,11 +380,24 @@ for (const k of reads) {
     const s = src.indexOf(name); if (s < 0) return null;
     const o = src.indexOf("[", s); let d = 0, e = -1;
     for (let k = o; k < src.length; k++) { if (src[k] === "[") d++; else if (src[k] === "]") { d--; if (d === 0) { e = k + 1; break; } } }
-    try { return JSON.parse(src.slice(o, e).replace(/\/\/[^\n]*/g, "").replace(/,(\s*])/, "$1").replace(/'/g, '"')); } catch (e2) { return null; }
+    /* [V33.262] 블록주석(/* … *\/)을 안 지워서 V33.261 의 설명주석이 들어오자마자 파싱이 깨졌다.
+       줄주석만 지우고 있었다. 블록주석을 먼저 지우고, 후행쉼표는 전역으로 지운다. */
+    try {
+      const raw = src.slice(o, e)
+        .replace(/\/\*[\s\S]*?\*\//g, "")   // 블록주석
+        .replace(/\/\/[^\n]*/g, "")          // 줄주석
+        .replace(/,(\s*])/g, "$1")           // 후행쉼표(전역)
+        .replace(/'/g, '"');
+      return JSON.parse(raw);
+    } catch (e2) { return null; }
   };
   const KR = grabArr("const DEFAULT_KR = [");
   const US = grabArr("const DEFAULT_US = [");
-  if (!KR) console.error("  WARN 티커: DEFAULT_KR 파싱 실패 — 접미사 검사 생략");
+  /* ★읽지 못했으면 통과가 아니라 실패다.★ 종전엔 WARN 한 줄 찍고 접미사 검사를 통째로
+     건너뛰었다 — 그러면 유니버스에 주석 한 줄만 넣어도 접미사 검사가 조용히 사라지고,
+     화면은 계속 초록이다. 검사가 스스로 꺼지는 길을 열어두면 언젠가 반드시 꺼진 채로 간다.
+     (이번에 실제로 그랬다: V33.261 의 블록주석이 들어오자 바로 이 상태가 됐다.) */
+  if (!KR) { console.error("  FAIL 티커: DEFAULT_KR 을 파싱하지 못했다 — 접미사 검사를 할 수 없다(건너뛰지 않는다)"); bad++; }
   else {
     const badSfx = KR.filter((s) => !/\.(KS|KQ)$/.test(s));
     if (badSfx.length) { console.error(`  FAIL 티커: KR 접미사 규칙 위반(.KS/.KQ 아님) — ${badSfx.slice(0, 6).join(", ")}`); bad += badSfx.length; }

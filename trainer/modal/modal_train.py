@@ -373,9 +373,11 @@ def train_job(epochs: int = EPOCHS_DEFAULT, dry: bool = False,
             ys_t, p_t = ys[half:], p_adj[half:]
             acc = float(((p_t >= 0.5) == (ys_t > 0.5)).mean())
             n_eval = len(p_t)
+            _p_ic, _y_ic = p_t, ys_t          # [V33.262] IC 도 ★같은 정직한 구간★ 으로 잰다
             print(f"   캘리브레이션: τ*={tau:.3f} (logit 시프트 {delta:+.3f}) — 검증 전반 {half}건으로 선택, 후반 {n_eval}건으로 평가")
         else:
             acc = float(((ps >= 0.5) == (ys > 0.5)).mean()); n_eval = len(ps)
+            _p_ic, _y_ic = ps, ys
         # [V33.115] ★Wilson 하한을 유효표본수로 잰다★
         #   n_eval 은 ★명목★ 이다. 10일 지평 라벨은 같은 종목에서 겹치므로 독립 관측이 아니고,
         #   명목 n 으로 재면 하한이 실제보다 좁게(=낙관적으로) 나온다. 겹침의 역수를 합한
@@ -407,9 +409,20 @@ def train_job(epochs: int = EPOCHS_DEFAULT, dry: bool = False,
         if auc < 0.52:
             print("   ⚠️ AUC<0.52 — 현재 피처만으론 판별력 자체가 약함. 데이터 축적/피처 확장이 근본 해법")
 
-        return {"nets": nets, "acc": acc, "lb": lb, "n_eval": n_eval, "dims": list(dims),
-                "auc": auc, "base": base, "majority": majority,
-                "params": int(sum(dims[i] * dims[i+1] + dims[i+1] for i in range(len(dims)-1)))}
+        # [V33.262] ★블록 IC 를 DNN 도 낸다.★ 이 도구(_ic_block_fields)는 이미 있었고
+        #   부스터·MIND 는 쓰는데 DNN 만 안 썼다. 그래서 DNN 은 '0.5 문턱 정확도' 라는
+        #   ★이 저장소가 이미 깨진 자라고 판정한 것(V33.214)★ 하나로만 심사받고 있었다.
+        #   순위를 맞히는 힘이 있어도 정확도가 동전 근처면 탈락한다 — 부스터였다면 통과했을 모델이.
+        #   ★정확도를 잰 그 구간으로 IC 도 잰다.★ τ* 선택에 쓴 앞 절반에서 재면 그만큼
+        #   낙관적으로 나온다 — 자를 하나 더 들이면서 그 자를 휘게 만들 이유가 없다.
+        _icf = _ic_block_fields(_p_ic, _y_ic)
+        out = {"nets": nets, "acc": acc, "lb": lb, "n_eval": n_eval, "dims": list(dims),
+               "auc": auc, "base": base, "majority": majority,
+               "params": int(sum(dims[i] * dims[i+1] + dims[i+1] for i in range(len(dims)-1)))}
+        out.update(_icf)
+        if "valICt" in out:
+            print(f"   블록IC {out['valICBlock']:.4f} t {out['valICt']:.2f} (K={out['valICK']}) — 정확도와 별개의 자")
+        return out
 
     # ── [V33.204] 깊이 스윕 ───────────────────────────────────────────────────
     #   기본은 꺼져 있다. Modal 무료 크레딧이 이미 $21/$30 수준이라, 6시간마다 도는 정기 실행에서
@@ -574,6 +587,11 @@ def train_job(epochs: int = EPOCHS_DEFAULT, dry: bool = False,
     _dnn_meta = {"featVer": featver, "mean": mean.tolist(), "std": std.tolist(), "dims": dims,
                  "seeds": len(js_nets), "valAcc": round(acc, 4), "valAccLB": round(lb, 4),
                  "valN": n_eval, "n": N}
+    # [V33.262] 블록 IC 를 함께 올린다 — 워커의 승격 판정에 ★정확도 말고 다른 자★ 가 하나 더 생겼다.
+    #   부스터가 이미 쓰던 그 자다(같은 함수·같은 문턱). 없으면 워커는 정확도 경로만 본다.
+    for _k in ("valICBlock", "valICIR", "valICt", "valICK"):
+        if _k in _fin:
+            _dnn_meta[_k] = _fin[_k]
     try:
         _dnn_meta.update(_uniq_fields(_dnn_uw))
     except Exception as _e:

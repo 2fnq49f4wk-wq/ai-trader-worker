@@ -349,6 +349,12 @@ jobs:
       #   운영이 데이터로 잡는다(univHealthNightly). 그 배선까지 확인한다.
       - name: 한국 유니버스 검사 (접미사 · 세 표 동기 · 죽은 티커 탐지 배선)
         run: node tools/check-kr-universe.mjs
+      # [V33.262] 화면의 "4층 딥넷" 은 층이 줄어서가 아니라 dims.length 를 그대로 '층' 이라
+      #   부른 탓이었다(dims=[입력,은닉…,출력]). 은닉 10층은 "12층", 폴백 2층은 "4층" 으로 나온다.
+      #   그리고 진짜 문제: 부스터에는 IC 길이 있는데 DNN 승격만 정확도 길 하나였다.
+      #   이 검사는 "문턱을 낮췄나" 를 묻는다 — IC 길은 정확도 바닥을 여전히 요구해야 한다.
+      - name: DNN 승격 판정 검사 (은닉층 보존 · IC 길이 무르지 않은가)
+        run: node tools/check-dnn-admit.mjs
       # cloudflare/wrangler-action 대신 로컬에서 검증된 방식 그대로 실행
       # (wrangler-action@v3의 npx 자동설치가 4.86.0을 요구하며 실패하던 문제 회피)
       - name: Install wrangler
