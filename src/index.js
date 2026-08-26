@@ -313,6 +313,27 @@ const DEFAULT_KR = [
   "093050.KS","007700.KS","298000.KS","001250.KS","011760.KS",
   "004150.KS","213500.KS","014820.KS","017940.KS",
   "272450.KS","089590.KS","298690.KS",
+  /* ══ [V33.261] 한국 유니버스 확장 — 대기업 중심 50종목 ══════════════════════════
+     시장접미사는 네이버 기준(KOSPI=.KS / KOSDAQ=.KQ). 41종은 유가증권, 9종은 코스닥이다.
+     선정 기준: ★오래 상장돼 있고 규모가 있는 곳★ — 상장폐지·피인수·합병 위험은
+     소형주와 그룹 재편에 몰려 있어서, 그 위험을 선정 단계에서 줄이는 것이 가장 확실하다.
+     ※ 사전 확인의 한계를 분명히 적어 둔다: 이 환경에서 야후·네이버 금융은 프록시가
+       막고 있어 종목별 실시간 대조를 할 수 없었다. 그래서 (a) 위험이 낮은 이름으로
+       고르고, (b) 의심스러운 몇 건만 웹검색으로 직접 확인했으며(아이마켓코리아 KOSPI
+       122900 정상·2026 2분기 실적 공시 / KG모빌리티 003620 KOSPI 정상 / 파라다이스는
+       2024 코스피 이전이라 기존 .KS 표기가 맞음), (c) ★남은 위험은 운영이 스스로
+       잡도록★ 유니버스 건강검진을 함께 넣었다(아래 UNIVHEALTH). 죽은 티커는 시세가
+       계속 비므로, 사람의 기억이 아니라 데이터가 말하게 하는 편이 오래 간다. */
+  "031430.KS","105630.KS","005610.KS","003920.KS","027410.KS",
+  "031440.KS","084690.KS","122900.KS","002320.KS","002020.KS",
+  "003070.KS","069260.KS","002240.KS","007810.KS","025540.KS",
+  "015750.KS","006650.KS","004430.KS","007690.KS","344820.KS",
+  "014830.KS","161000.KS","004690.KS","001630.KS","005250.KS",
+  "085620.KS","001200.KS","210980.KS","042670.KS","097230.KS",
+  "456040.KS","108670.KS","005960.KS","016380.KS","003620.KS",
+  "013890.KS","181710.KS","214320.KS","267850.KS","010780.KS",
+  "336370.KS","194480.KQ","417200.KQ","348210.KQ","200130.KQ",
+  "060250.KQ","030520.KQ","053800.KQ","032190.KQ","025900.KQ",
 ];
 
 // ETF 심볼 셋 (레버리지 ETF 리스크 처리용)
@@ -1309,7 +1330,58 @@ const NAME_MAP = {
   "091170.KS":"KODEX 은행",
   "192090.KS":"TIGER 차이나CSI300",
   "329200.KS":"TIGER 리츠부동산인프라",
-  "232080.KS":"TIGER 코스닥150"
+  "232080.KS":"TIGER 코스닥150",
+  // [V33.261] 유니버스 확장 50종 — 코드·시장·표기 한 곳에서 함께 갱신한다
+  "031430.KS": "신세계인터내셔날",
+  "105630.KS": "한세실업",
+  "005610.KS": "SPC삼립",
+  "003920.KS": "남양유업",
+  "027410.KS": "BGF",
+  "031440.KS": "신세계푸드",
+  "084690.KS": "대상홀딩스",
+  "122900.KS": "아이마켓코리아",
+  "002320.KS": "한진",
+  "002020.KS": "코오롱",
+  "003070.KS": "코오롱글로벌",
+  "069260.KS": "휴켐스",
+  "002240.KS": "고려제강",
+  "007810.KS": "코리아써키트",
+  "025540.KS": "한국단자공업",
+  "015750.KS": "성우하이텍",
+  "006650.KS": "대한유화",
+  "004430.KS": "송원산업",
+  "007690.KS": "국도화학",
+  "344820.KS": "KCC글라스",
+  "014830.KS": "유니드",
+  "161000.KS": "애경케미칼",
+  "004690.KS": "삼천리",
+  "001630.KS": "종근당홀딩스",
+  "005250.KS": "녹십자홀딩스",
+  "085620.KS": "미래에셋생명",
+  "001200.KS": "유진투자증권",
+  "210980.KS": "SK디앤디",
+  "042670.KS": "HD현대인프라코어",
+  "097230.KS": "HJ중공업",
+  "456040.KS": "OCI",
+  "108670.KS": "LX하우시스",
+  "005960.KS": "동부건설",
+  "016380.KS": "KG스틸",
+  "003620.KS": "KG모빌리티",
+  "013890.KS": "지누스",
+  "181710.KS": "NHN",
+  "214320.KS": "이노션",
+  "267850.KS": "아세아시멘트",
+  "010780.KS": "아이에스동서",
+  "336370.KS": "솔루스첨단소재",
+  "194480.KQ": "데브시스터즈",
+  "417200.KQ": "LS머트리얼즈",
+  "348210.KQ": "넥스틴",
+  "200130.KQ": "콜마비앤에이치",
+  "060250.KQ": "NHN KCP",
+  "030520.KQ": "한글과컴퓨터",
+  "053800.KQ": "안랩",
+  "032190.KQ": "다우데이타",
+  "025900.KQ": "동화기업",
 };
 
 // 시가총액 순위 (UI 시총순 정렬용 — 값이 작을수록 대형주)
@@ -2238,7 +2310,58 @@ const MCAP_RANK = {
   "091170.KS":321,
   "192090.KS":322,
   "329200.KS":323,
-  "232080.KS":324
+  "232080.KS":324,
+  // [V33.261] 확장 50종 — 정적 순위 폴백(실시간 시총 = 가격 × mcap_shares 가 우선)
+  "031430.KS": 403,
+  "105630.KS": 404,
+  "005610.KS": 405,
+  "003920.KS": 406,
+  "027410.KS": 407,
+  "031440.KS": 408,
+  "084690.KS": 409,
+  "122900.KS": 410,
+  "002320.KS": 411,
+  "002020.KS": 412,
+  "003070.KS": 413,
+  "069260.KS": 414,
+  "002240.KS": 415,
+  "007810.KS": 416,
+  "025540.KS": 417,
+  "015750.KS": 418,
+  "006650.KS": 419,
+  "004430.KS": 420,
+  "007690.KS": 421,
+  "344820.KS": 422,
+  "014830.KS": 423,
+  "161000.KS": 424,
+  "004690.KS": 425,
+  "001630.KS": 426,
+  "005250.KS": 427,
+  "085620.KS": 428,
+  "001200.KS": 429,
+  "210980.KS": 430,
+  "042670.KS": 431,
+  "097230.KS": 432,
+  "456040.KS": 433,
+  "108670.KS": 434,
+  "005960.KS": 435,
+  "016380.KS": 436,
+  "003620.KS": 437,
+  "013890.KS": 438,
+  "181710.KS": 439,
+  "214320.KS": 440,
+  "267850.KS": 441,
+  "010780.KS": 442,
+  "336370.KS": 443,
+  "194480.KQ": 444,
+  "417200.KQ": 445,
+  "348210.KQ": 446,
+  "200130.KQ": 447,
+  "060250.KQ": 448,
+  "030520.KQ": 449,
+  "053800.KQ": 450,
+  "032190.KQ": 451,
+  "025900.KQ": 452,
 };
 
 const US_INDICES = ["^IXIC", "^DJI", "^GSPC", "^RUT"];   // [V12.28] 러셀2000 추가(종목상세 지수 뷰)
@@ -2798,7 +2921,7 @@ async function applySignalTypeWeights(DB, cfg) {
 // ============================================================================
 // [V33.55] 빌드 버전 — SWR L2 캐시 키에 섞어 '배포 = 판단 캐시 자동 무효화'를 만든다.
 //   판정 로직을 고쳐도 옛 캐시가 최대 1시간 재배포되던 문제를 구조적으로 없앤다.
-const _BUILD_VER = "V33.260";
+const _BUILD_VER = "V33.261";
 
 // ═══ [V33.171] 평가 순서 계획 — ★승격과 순환을 교차해 굶주림을 구조적으로 없앤다★ ═══
 //   V33.50 의 형태트리거는 "급한 몇 종목을 앞으로 당긴다"는 의도였으나, 실제 운영로그에서는
@@ -11846,6 +11969,90 @@ function _rvZ(arr, v) {
    evaluateAllStrategies 는 종목 하나의 일봉만 받는다(설계상 그렇다). 그래서 교차종목
    관계는 야간에 한 번 계산해 상태에 두고, 사이클은 그것을 읽기만 한다 —
    mlBuildXSPanel(V33 xspanel)이 같은 이유로 쓰는 방식이다. */
+/* ══ [V33.261] 유니버스 건강검진 — 죽은 티커를 사람의 기억이 아니라 데이터가 잡는다 ══
+   종목을 늘릴 때마다 같은 질문을 받는다: "상장폐지 안 됐나? 사명 바뀌었나? 합병됐나?"
+   그때마다 사람이 확인하는 방식은 두 가지로 실패한다 — 확인이 틀릴 수 있고, 확인한
+   시점 이후에 벌어지는 일은 아무도 모른다. 상장폐지는 종목을 넣는 날이 아니라
+   ★넣고 나서 아무 때나★ 일어난다.
+
+   그런데 이 시스템에는 이미 답이 들어와 있다. 죽은 티커는 시세가 안 들어온다.
+   일봉은 state 의 `daily:심볼` 에 쌓이고, 성공적으로 저장될 때만 updated_ts 가 오른다.
+   그러니 ★같은 시장의 다른 종목들은 갱신되는데 이 종목만 안 갱신되면★ 그것이 신호다.
+   시장 전체가 멈춘 것(휴장·장애)과 한 종목만 멈춘 것을 구분하려면 절대 시각이 아니라
+   ★같은 시장의 중앙값 대비★ 로 봐야 한다.
+
+   ★"아직 안 받아온 것" 과 "받아오다 끊긴 것" 은 전혀 다르다.★ 방금 추가한 50종목은
+   당연히 기록이 없다 — 그걸 죽었다고 말하면 경보가 곧 소음이 되고, 소음이 된 경보는
+   진짜 상장폐지를 덮는다. 그래서 처음 본 시각(firstSeen)을 따로 적고, 유예가 지나도
+   끝내 한 번도 안 들어온 종목만 '미수신' 으로 올린다. */
+const UNIVHEALTH = {
+  staleDays: 7,        // 같은 시장 중앙값보다 이만큼 뒤처지면 '끊김'
+  graceDays: 3,        // 새로 넣은 종목이 첫 시세를 받을 때까지 주는 유예
+  minCohort: 20,       // 중앙값을 믿으려면 같은 시장에 최소 이만큼은 있어야 한다
+  maxReport: 25
+};
+async function univHealthNightly(DB) {
+  try {
+    /* ★유니버스는 설정이 이긴다.★ 화면에서 종목을 지우거나 더한 것을 무시하고 상수만 보면,
+       사용자가 뺀 종목을 "시세가 안 들어온다" 며 계속 경고하게 된다. 설정 키 이름은
+       krTickers/usTickers 다(universeKr 이 아니다 — 처음에 그렇게 적었다가 선언순서
+       게이트가 존재하지도 않는 loadConfig 를 잡아내면서 함께 드러났다). */
+    const cfg = migrateCfgToMarkets(Object.assign({}, DEFAULT_CFG, await getState(DB, "cfg", {})));
+    const uni = { kr: (cfg && cfg.krTickers) || DEFAULT_KR, us: (cfg && cfg.usTickers) || DEFAULT_US };
+    const rows = ((await DB.prepare("SELECT k, updated_ts FROM state WHERE k LIKE 'daily:%'").all()) || {}).results || [];
+    const seen = {};
+    for (const r of rows) seen[String(r.k).slice(6)] = _num(r.updated_ts, 0);
+
+    const prev = (await getState(DB, "univ_health", null)) || {};
+    const first = (prev && prev.firstSeen) || {};
+    const now = Date.now();
+    const out = { ts: now, firstSeen: {}, markets: {} };
+    let totalBad = 0;
+
+    for (const mk of ["kr", "us"]) {
+      const list = Array.isArray(uni[mk]) ? uni[mk] : [];
+      const have = [], missing = [];
+      for (const sym of list) {
+        // 처음 보는 종목의 firstSeen 은 지금으로 찍는다(유예 시작점).
+        out.firstSeen[sym] = _num(first[sym], 0) || now;
+        const t = _num(seen[sym], 0);
+        if (t > 0) have.push({ sym: sym, ts: t }); else missing.push(sym);
+      }
+      if (have.length < UNIVHEALTH.minCohort) {
+        out.markets[mk] = { n: list.length, ok: have.length, note: "표본 부족 — 판단 보류" };
+        continue;
+      }
+      const ts = have.map(function (h) { return h.ts; }).sort(function (a, b) { return a - b; });
+      const med = ts[Math.floor(ts.length / 2)];
+      const cut = med - UNIVHEALTH.staleDays * 86400000;
+      const stale = have.filter(function (h) { return h.ts < cut; })
+                        .sort(function (a, b) { return a.ts - b.ts; })
+                        .map(function (h) { return h.sym + "(" + ((med - h.ts) / 86400000).toFixed(0) + "일 뒤처짐)"; });
+      // 유예가 지나도 한 번도 안 들어온 것만 센다 — 방금 넣은 종목은 여기 안 들어온다.
+      const never = missing.filter(function (sy) {
+        return (now - _num(out.firstSeen[sy], now)) > UNIVHEALTH.graceDays * 86400000;
+      });
+      const pending = missing.length - never.length;
+      out.markets[mk] = { n: list.length, ok: have.length, medAgeH: +((now - med) / 3600000).toFixed(1),
+                          stale: stale.slice(0, UNIVHEALTH.maxReport), staleN: stale.length,
+                          never: never.slice(0, UNIVHEALTH.maxReport), neverN: never.length,
+                          pending: pending };
+      totalBad += stale.length + never.length;
+    }
+    await setState(DB, "univ_health", out);
+    const parts = [];
+    for (const mk of ["kr", "us"]) {
+      const m = out.markets[mk]; if (!m) continue;
+      parts.push(mk.toUpperCase() + " " + m.ok + "/" + m.n +
+        (m.staleN ? " 끊김 " + m.staleN : "") + (m.neverN ? " 미수신 " + m.neverN : "") +
+        (m.pending ? " 대기 " + m.pending : ""));
+    }
+    return "[UNIV] 유니버스 건강검진 — " + parts.join(" · ") +
+      (totalBad ? " ★확인 필요★ " + (out.markets.kr && out.markets.kr.stale || []).concat(
+        (out.markets.kr && out.markets.kr.never) || []).slice(0, 8).join(", ") : " (이상 없음)");
+  } catch (e) { return "[UNIV] 실패: " + (e && e.message); }
+}
+
 async function rvBuildPanel(DB) {
   if (!RVSTRAT.enabled) return null;
   const t0 = Date.now();
@@ -22681,6 +22888,7 @@ async function handleRequest(request, env, ctx) {
         ["deephist", function (DB) { try { resetFetchBudget(380); } catch (e) {} return harvestDeepFetchNightly(DB); }],
         ["xspanel", function (DB) { return mlBuildXSPanel(DB); }],
         ["rvpanel", function (DB) { return rvBuildPanel(DB); }],
+        ["univhealth", function (DB) { return univHealthNightly(DB); }],
         ["harvest", function (DB) { return mlMarketHarvestNightly(DB); }],
         // [V33.104] 전문가 재학습 앞 — 누출없는 STACK 표본 생성 후 기준선 갱신(크론과 동일 순서).
         ["stackbf", function (DB) { return stackSampleBackfill(DB, {}); }],
@@ -36643,6 +36851,28 @@ async function aiSelfCheck(DB, env) {
         "% (문턱 " + (_num(GBDT.trustFloor, 0.505) * 100).toFixed(1) + "%)");
     }
     if ((dnnT && dnnT.reason === "err")) R.errors.push("DNN 학습 오류: " + (dnnT.err || "?"));
+    /* [V33.261] 유니버스 건강 — 종목을 늘릴 때마다 사람에게 "상장폐지 안 됐나" 를 묻는 대신,
+       시세가 안 들어오는 종목을 데이터가 지목하게 한다. 사람의 확인은 넣는 날 한 번뿐이고
+       상장폐지는 그 뒤 아무 때나 일어난다. */
+    try {
+      const _uh = await getState(DB, "univ_health", null);
+      if (_uh && _uh.markets) {
+        R.universe = { ts: _uh.ts, markets: _uh.markets };
+        for (const _mk of ["kr", "us"]) {
+          const _m = _uh.markets[_mk]; if (!_m) continue;
+          const _lab = _mk.toUpperCase();
+          if (_num(_m.staleN, 0) > 0)
+            R.warnings.push(_lab + " 시세 끊긴 종목 " + _m.staleN + "건 — 상장폐지·거래정지·티커 변경 의심: " +
+              (_m.stale || []).slice(0, 6).join(", "));
+          if (_num(_m.neverN, 0) > 0)
+            R.warnings.push(_lab + " 시세가 한 번도 안 들어온 종목 " + _m.neverN + "건 — 코드·시장접미사(.KS/.KQ) 확인 필요: " +
+              (_m.never || []).slice(0, 6).join(", "));
+          if (!_num(_m.staleN, 0) && !_num(_m.neverN, 0))
+            R.ok.push(_lab + " 유니버스 " + _m.ok + "/" + _m.n + " 시세 정상" +
+              (_num(_m.pending, 0) ? " (신규 " + _m.pending + "건 첫 수신 대기)" : ""));
+        }
+      }
+    } catch (e) {}
     // 가드 상태
     const guard = await getState(DB, "mind_guard", null);
     if (guard && guard.distrust) R.errors.push("자기감시 distrust 발동(라이브 정확도 급락) — ML 개입 중단 중");
@@ -43476,6 +43706,8 @@ export default {
             // [V33.250] 상대가치 패널 — 페어(공적분·OU) · 횡단면 잔차 · 실시간 시총순위.
             //   xspanel 과 같은 이유로 여기 있다(한 종목만 봐서는 만들 수 없는 관계).
             await _stg("rvpanel", async function () { return await rvBuildPanel(env.DB); });
+            // [V33.261] 유니버스 건강검진 — 죽은 티커는 시세가 안 들어온다. 데이터가 말하게 한다.
+            await _stg("univhealth", async function () { return await univHealthNightly(env.DB); });
             // (2.5) [HARVEST] 시장 자기지도 표본 수확 — 전 종목 일봉에서 "피처→N일 뒤 방향" 대량 편입
             await _stg("harvest", async function () { return await mlMarketHarvestNightly(env.DB); });
             // [V12.122] ★재구축기 재학습 가속★ _stg는 하루 1회만 학습을 허용하는데, 표본풀이 재구축
