@@ -2505,7 +2505,63 @@ const SECTOR_GROUP_MAP = {
   "SNOW":"TECH","NET":"TECH","MDB":"TECH","ZS":"TECH","OKTA":"TECH","TEAM":"TECH","SHOP":"TECH","MSTR":"TECH",
   "BABA":"CONSUMER","PDD":"CONSUMER","JD":"CONSUMER","MELI":"CONSUMER","SE":"CONSUMER","SPOT":"CONSUMER",
   "RBLX":"CONSUMER","DKNG":"CONSUMER","TM":"CONSUMER","RIVN":"CONSUMER",
-  "NVO":"HEALTH","SOFI":"FINANCE"
+  "NVO":"HEALTH","SOFI":"FINANCE",
+  /* [V33.263] 확장 50종 업종 배정 — 이게 없으면 전부 OTHER 한 바구니로 떨어져
+     섹터 그룹 성과학습(computeGroupWeight)·뉴스 감성 사이징이 이 종목들에겐
+     사실상 꺼진 것과 같다. 예외가 아니라 ★조용한 무효화★ 라 안 보인다.
+     지주사는 주력 자회사 업종을 따른다(대상홀딩스=식품, 종근당홀딩스=헬스케어).
+     성우하이텍·KG모빌리티는 자동차라 CONSUMER(기존 005380/000270 과 같은 바구니),
+     동화기업은 건자재·전해액이라 RESOURCES 로 둔다. */
+  "031430.KS": "CONSUMER",
+  "105630.KS": "CONSUMER",
+  "005610.KS": "CONSUMER",
+  "003920.KS": "CONSUMER",
+  "027410.KS": "CONSUMER",
+  "031440.KS": "CONSUMER",
+  "084690.KS": "CONSUMER",
+  "122900.KS": "INDUSTRIAL",
+  "002320.KS": "INDUSTRIAL",
+  "002020.KS": "RESOURCES",
+  "003070.KS": "INDUSTRIAL",
+  "069260.KS": "RESOURCES",
+  "002240.KS": "RESOURCES",
+  "007810.KS": "TECH",
+  "025540.KS": "TECH",
+  "015750.KS": "CONSUMER",
+  "006650.KS": "RESOURCES",
+  "004430.KS": "RESOURCES",
+  "007690.KS": "RESOURCES",
+  "344820.KS": "RESOURCES",
+  "014830.KS": "RESOURCES",
+  "161000.KS": "RESOURCES",
+  "004690.KS": "INDUSTRIAL",
+  "001630.KS": "HEALTH",
+  "005250.KS": "HEALTH",
+  "085620.KS": "FINANCE",
+  "001200.KS": "FINANCE",
+  "210980.KS": "INDUSTRIAL",
+  "042670.KS": "INDUSTRIAL",
+  "097230.KS": "INDUSTRIAL",
+  "456040.KS": "RESOURCES",
+  "108670.KS": "INDUSTRIAL",
+  "005960.KS": "INDUSTRIAL",
+  "016380.KS": "INDUSTRIAL",
+  "003620.KS": "CONSUMER",
+  "013890.KS": "CONSUMER",
+  "181710.KS": "TECH",
+  "214320.KS": "CONSUMER",
+  "267850.KS": "INDUSTRIAL",
+  "010780.KS": "INDUSTRIAL",
+  "336370.KS": "RESOURCES",
+  "194480.KQ": "TECH",
+  "417200.KQ": "TECH",
+  "348210.KQ": "TECH",
+  "200130.KQ": "HEALTH",
+  "060250.KQ": "TECH",
+  "030520.KQ": "TECH",
+  "053800.KQ": "TECH",
+  "032190.KQ": "TECH",
+  "025900.KQ": "RESOURCES",
 };
 // 종목 → 그룹 (cfg에 추가 매핑 있으면 우선). 미매핑은 OTHER.
 function getSectorGroup(symbol, cfg) {
@@ -2921,7 +2977,7 @@ async function applySignalTypeWeights(DB, cfg) {
 // ============================================================================
 // [V33.55] 빌드 버전 — SWR L2 캐시 키에 섞어 '배포 = 판단 캐시 자동 무효화'를 만든다.
 //   판정 로직을 고쳐도 옛 캐시가 최대 1시간 재배포되던 문제를 구조적으로 없앤다.
-const _BUILD_VER = "V33.262";
+const _BUILD_VER = "V33.263";
 
 // ═══ [V33.171] 평가 순서 계획 — ★승격과 순환을 교차해 굶주림을 구조적으로 없앤다★ ═══
 //   V33.50 의 형태트리거는 "급한 몇 종목을 앞으로 당긴다"는 의도였으나, 실제 운영로그에서는

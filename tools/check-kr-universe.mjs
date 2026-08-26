@@ -66,6 +66,44 @@ console.log("\n② 세 표가 함께 갱신됐는가 (CLAUDE.md 규칙)");
   chk(lazy.length === 0, "이름 자리에 코드를 넣어 때운 곳이 없다", "이름이 코드 그대로: " + lazy.join(", "));
 }
 
+console.log("\n②-b 섹터 그룹 — 네 번째 표를 빠뜨리지 않았는가");
+{
+  /* [V33.263] CLAUDE.md 는 세 표(DEFAULT_KR·NAME_MAP·MCAP_RANK)를 말하지만, 실제로는
+     네 번째가 있다 — SECTOR_GROUP_MAP. 여기 없으면 getSectorGroup 이 "OTHER" 를 돌려주고
+     그 종목은 섹터 성과학습(computeGroupWeight)·뉴스 감성 사이징에서 ★한 바구니로
+     뭉개진다.★ 예외가 아니라 조용한 무효화라 화면에도 로그에도 안 나온다.
+     ※ 기존 종목 상당수도 미지정이다(오래된 부채). 그건 이 검사가 강제하지 않는다 —
+       한꺼번에 채우는 건 별개 작업이고, 근거 없이 업종을 찍는 건 채우는 게 아니다.
+       다만 ★새로 넣는 종목★ 은 반드시 배정하게 한다. 부채를 늘리지 않는 것이 먼저다. */
+  const sg = seg("const SECTOR_GROUP_MAP", "function getSectorGroup");
+  const smap = {};
+  for (const m of sg.matchAll(/"([^"]+)"\s*:\s*"([A-Z_]+)"/g)) smap[m[1]] = m[2];
+  const GROUPS = new Set(["CONSUMER", "FINANCE", "HEALTH", "INDUSTRIAL", "RESOURCES", "TECH"]);
+  /* seg(a,b) 는 b 를 파일 전체에서 찾는다 — 시작점 뒤에서 찾아야 한다.
+     처음에 그걸 놓쳐 확장분이 0종으로 잡혔고, ★그 뒤 세 검사가 빈 목록 위에서 전부
+     통과★ 했다("모든 원소가 X" 는 원소가 없으면 참이다). 공허한 통과는 통과가 아니다. */
+  const _a = S.indexOf("[V33.261] 한국 유니버스 확장");
+  const _b = _a >= 0 ? S.indexOf("];", _a) : -1;
+  const added = (_a >= 0 && _b > _a)
+    ? [...S.slice(_a, _b).matchAll(/"([0-9A-Z]{6})\.(KS|KQ)"/g)].map(m => m[1] + "." + m[2]) : [];
+  chk(added.length === 50, "V33.261 확장분 " + added.length + "종을 찾았다",
+    "확장분 추출이 " + added.length + "종 — 블록 구조가 바뀌었다(아래 검사가 공허하게 통과한다)");
+  if (added.length === 0) { console.log("  FAIL 확장분이 비어 아래 업종 검사를 수행할 수 없다"); fails++; }
+  const noSec = added.filter(c => !smap[c]);
+  chk(noSec.length === 0,
+    "확장 50종 전부 업종이 배정돼 있다 — 섹터 학습이 이 종목들에도 돈다",
+    "업종 미배정 " + noSec.length + "종 — 전부 OTHER 한 바구니로 뭉개진다: " + noSec.slice(0, 8).join(", "));
+  const badG = added.filter(c => smap[c] && !GROUPS.has(smap[c]));
+  chk(badG.length === 0, "배정된 업종이 전부 실재하는 그룹이다",
+    "없는 그룹명: " + badG.map(c => c + "=" + smap[c]).join(", ") + " — 오타면 OTHER 와 다를 바 없다");
+  const dist = {};
+  for (const c of added) dist[smap[c] || "OTHER"] = (dist[smap[c] || "OTHER"] || 0) + 1;
+  const mx = Math.max(...Object.values(dist));
+  chk(mx <= added.length * 0.5,
+    "한 업종에 쏠리지 않았다 (" + Object.entries(dist).map(x => x[0] + " " + x[1]).join(" · ") + ")",
+    "한 업종에 " + mx + "/" + added.length + " 가 몰렸다 — 귀찮아서 한 곳에 몰아넣은 것은 배정이 아니다");
+}
+
 console.log("\n③ 상장폐지는 사전에 못 막는다 — 운영이 데이터로 잡는가");
 {
   chk(/async function univHealthNightly\(DB\)/.test(S),
