@@ -213,5 +213,41 @@ const INTENDED = {
   else ok("의도된 역방향 예외 " + Object.keys(INTENDED).length + "건 모두 유효");
 }
 
+/* ─────────────────────────────────────────────────────────────────────────
+   [V33.259] 관측 가능성 — 단계가 도는 것과 ★돌았는지 볼 수 있는 것★ 은 다르다
+
+   rv_panel 이 실제로 그랬다. V33.250 에서 xspanel 바로 뒤에 넣었고 크론·수동
+   파이프라인 양쪽에 제대로 배선돼 있었는데, /api/pipeline 의 단계 목록에는
+   형제인 xs_panel 만 있고 rv_panel 이 빠졌다. 그 결과 "PR_OU·XS_ARB 가 아직
+   한 번도 발화하지 않았다" 를 만났을 때 ★패널이 없어서인지 조건이 안 맞아서인지
+   구분할 수가 없었다★. 로그는 하루 한 줄이라 조회 창(약 3시간) 밖으로 밀린다.
+
+   패널류는 '하루 한 번 만들어 온종일 읽는' 물건이라 신선도가 곧 기능이다.
+   그러니 패널을 만드는 단계는 예외 없이 화면 목록에 있어야 한다. */
+{
+  console.log("");
+  const _sub = src.slice(src.indexOf('path === "/api/pipeline"'));
+  const _subs = _sub.slice(0, _sub.indexOf("];"));
+  const shown = [...new Set([..._subs.matchAll(/key:\s*"([a-z_0-9:]+)"/g)].map(m => m[1]))];
+  // 패널을 만드는 함수가 어느 상태 키에 쓰는지 코드에서 뽑는다 — 목록을 손으로 적지 않는다.
+  const wanted = [];
+  for (const fn of ["mlBuildXSPanel", "rvBuildPanel"]) {
+    const i = src.indexOf("\nasync function " + fn + "(");
+    if (i < 0) { bad(fn + " 를 찾지 못했다"); continue; }
+    let j = src.indexOf("{", i), d = 0, k = j;
+    for (; k < src.length; k++) { const c = src[k]; if (c === "{") d++; else if (c === "}") { d--; if (d === 0) break; } }
+    const body = src.slice(j, k + 1);
+    const m = [...body.matchAll(/setState\(\s*DB\s*,\s*"([a-z_0-9]+)"/g)].map(x => x[1]);
+    for (const key of m) wanted.push({ fn: fn, key: key });
+  }
+  ok("패널 생성기가 쓰는 상태 키 " + wanted.length + "개를 코드에서 뽑았다 (" +
+     wanted.map(w => w.key).join(", ") + ")");
+  const unseen = wanted.filter(w => shown.indexOf(w.key) < 0);
+  if (unseen.length) {
+    bad("화면 단계 목록에 없는 패널: " + unseen.map(w => w.key + "(" + w.fn + ")").join(", ") +
+        " → 돌았는지 볼 수 없다");
+  } else ok("패널 " + wanted.length + "종이 전부 /api/pipeline 단계 목록에 있다 — 신선도를 눈으로 잰다");
+}
+
 console.log(fails ? "\n파이프라인 그래프 위반 " + fails + "건" : "\n  ok   파이프라인 그래프 통과");
 process.exit(fails ? 1 : 0);

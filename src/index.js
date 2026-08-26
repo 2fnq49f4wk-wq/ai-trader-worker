@@ -2798,7 +2798,7 @@ async function applySignalTypeWeights(DB, cfg) {
 // ============================================================================
 // [V33.55] 빌드 버전 — SWR L2 캐시 키에 섞어 '배포 = 판단 캐시 자동 무효화'를 만든다.
 //   판정 로직을 고쳐도 옛 캐시가 최대 1시간 재배포되던 문제를 구조적으로 없앤다.
-const _BUILD_VER = "V33.258";
+const _BUILD_VER = "V33.259";
 
 // ═══ [V33.171] 평가 순서 계획 — ★승격과 순환을 교차해 굶주림을 구조적으로 없앤다★ ═══
 //   V33.50 의 형태트리거는 "급한 몇 종목을 앞으로 당긴다"는 의도였으나, 실제 운영로그에서는
@@ -20407,6 +20407,13 @@ async function handleRequest(request, env, ctx) {
           { key: "mkt_context",         label: "시장 컨텍스트", staleMs: 24 * 3600000, sessionOnly: true },
           { key: "sector_news_sentiment", label: "뉴스 감성",   staleMs: 24 * 3600000 },
           { key: "xs_panel",            label: "횡단면 패널",   staleMs: 36 * 3600000 },
+          /* [V33.259] ★rv_panel 이 이 목록에 없었다.★ V33.250 에서 xspanel 바로 뒤에
+             같은 이유로(한 종목만 봐서는 만들 수 없는 관계) 넣은 단계인데, 화면 목록에는
+             형제인 xs_panel 만 있고 rv_panel 은 빠졌다. 그래서 "PR_OU·XS_ARB 가 아직
+             한 번도 발화하지 않았다" 를 만났을 때, 패널이 안 만들어진 것인지 조건이
+             안 맞은 것인지 ★구분할 방법이 없었다★. 로그는 하루 한 줄이라 창 밖으로 밀린다.
+             관측할 수 없으면 고칠 수 없다. */
+          { key: "rv_panel",            label: "상대가치 패널", staleMs: 36 * 3600000 },
           // [V33.3] ★"표본 수확"이 항상 노란불(STALE)이던 버그★ — 수확기는
           //   "hv_offset:v" + LUXML.featVer 에 기록하는데(현재 v13) 여기만 v12로 굳어 있어
           //   존재하지 않는 키를 보고 있었다. featVer를 따라가도록 수정.
