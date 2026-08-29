@@ -652,6 +652,16 @@ def train_job(epochs: int = EPOCHS_DEFAULT, dry: bool = False,
             _train_and_upload_scalp(BASE, KEY, HDR, featver)
         except Exception as e:
             print("단타 학습/업로드 예외(무시):", e)
+        # ── [V33.267] ⑨ SEQ(Transformer) — DNN 승급 요청의 결과물 ────────────────
+        #   위 모델들은 전부 "한 시점의 벡터 하나" 만 본다. 이것만 같은 종목의 최근 L 봉을
+        #   순서대로 본다 — 정보가 며칠에 걸쳐 스며드는 구간(FOMC 전후·OpEx 주간)을 볼 수 있는
+        #   유일한 위원이다. 표본은 위와 ★같은 것을 재사용★ 하므로 export 부하가 0 이고,
+        #   여기서 실패해도 위 모델들에는 영향이 없다(그래서 맨 뒤에서, 예외를 삼킨다).
+        print("⑨ SEQ(Transformer) 외부학습")
+        try:
+            _train_and_upload_seq(BASE, KEY, HDR, X, Y, TS, SYM, featver, D, UNIQ, cfg)
+        except Exception as e:
+            print("SEQ 학습/업로드 예외(무시):", e)
         # ── [V33.205] 홀드아웃 경계를 워커에 알린다 ─────────────────────────────
         #   위 모델들(DNN·GBDT·부스터·MIND)은 전부 ★시간순 뒤쪽 20%★ 를 홀드아웃으로 떼고
         #   퍼지·엠바고를 건 뒤 앞쪽만으로 학습한다. 즉 방금 업로드한 모델들은 그 구간을
@@ -683,6 +693,175 @@ def train_job(epochs: int = EPOCHS_DEFAULT, dry: bool = False,
 #   leaf w = -G/(H+λ). 여기선 그 포맷을 그대로 산출한다(독립 모델 — Worker가 채점만 하면 됨).
 #   기본 업로드는 섀도우(비활성) — Worker가 자체 표본으로 self-검증 후 수동 승격(?activate=1).
 # ============================================================================
+def _build_sequences(X, TS, SYM, L):
+    """[V33.267] ★내보내기 형식을 안 바꾸고★ 시퀀스를 만든다.
+
+    표본은 이미 (종목 s, 시각 ts) 를 갖고 있다. 같은 종목의 과거 표본을 시간순으로
+    쌓으면 그대로 [L, D] 가 된다. 익스포트도 워커도 고칠 필요가 없다.
+
+    ★미래를 보면 안 된다.★ 각 표본 i 의 시퀀스는 ts <= ts_i 인 같은 종목 표본들의
+    마지막 L 개다(자기 자신 포함, 가장 최신이 맨 뒤). 정렬은 종목 안에서만 한다.
+    앞이 모자라면 ★가장 오래된 행으로 채운다★ — 0 으로 채우면 표준화 후 '평균값 봉'
+    이 되어 없는 과거를 지어내는 셈이고, 워커 추론도 같은 규칙을 쓴다.
+    """
+    import numpy as np
+    N, D = X.shape
+    order = np.lexsort((TS, SYM))            # 종목 → 시각 순
+    seq_idx = np.empty((N, L), dtype=np.int64)
+    start = 0
+    while start < N:
+        end = start
+        cur = SYM[order[start]]
+        while end < N and SYM[order[end]] == cur:
+            end += 1
+        grp = order[start:end]               # 이 종목의 표본(시각 오름차순)
+        for k in range(len(grp)):
+            lo = max(0, k - L + 1)
+            win = grp[lo:k + 1]
+            if len(win) < L:                 # 앞을 가장 오래된 행으로 채운다
+                win = np.concatenate([np.full(L - len(win), win[0], dtype=np.int64), win])
+            seq_idx[grp[k]] = win
+        start = end
+    return seq_idx
+
+
+def _train_and_upload_seq(BASE, KEY, HDR, X, Y, TS, SYM, featver, D, UNIQ=None, cfg=None):
+    """[V33.267] Transformer 인코더(시퀀스). 요청: DNN 을 Transformer 로 승급.
+
+    비용을 재보고 골랐다 — L=16·d=32·1층·2헤드는 종목당 곱셈 약 19만 회로, 현행
+    DNN(763,345×6시드 = 460만)보다 ★25배 싸다.★ 무거워서 못 쓰는 규모가 아니다.
+
+    ★nn.TransformerEncoderLayer 를 쓰지 않는다.★ 그 모듈의 내부 규약(노름 위치·
+    어텐션 스케일·바이어스 병합)을 역추적해 워커 JS 와 맞추는 것보다, 워커와 똑같은
+    순서의 명시적 연산으로 짜는 편이 안전하다. 이 저장소는 학습·추론 불일치로
+    여러 번 당했다(V32.11 BatchNorm 접기가 그 흔적이다).
+    """
+    import numpy as np, math, json, time, requests
+    try:
+        import torch, torch.nn as nn
+    except Exception as e:
+        print("⑨ SEQ 생략 — torch 없음:", e); return None
+
+    C = (cfg or {}).get("seq") or {}
+    if C.get("enabled") is False:
+        print("⑨ SEQ 생략 — 워커가 껐다(SEQML.enabled=false)"); return None
+    L = int(C.get("L", 16)); dm = int(C.get("d", 32)); Hh = int(C.get("heads", 2))
+    ff = dm * int(C.get("ffMult", 4))
+    N = len(Y)
+    if N < 20000:
+        print(f"⑨ SEQ 생략 — 표본 부족({N}/20000)"); return None
+    if dm % Hh != 0:
+        print(f"⑨ SEQ 생략 — d({dm}) 가 heads({Hh}) 로 안 나눠짐"); return None
+
+    dev = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    t0 = time.time()
+    seq_idx = _build_sequences(X, TS, np.asarray(SYM), L)
+    print(f"⑨ SEQ 시퀀스 조립 {N}×{L} ({time.time()-t0:.1f}s) — 익스포트 변경 0")
+
+    # 표준화는 ★학습 구간에서만★ 구한다(검증 통계가 새면 그만큼 낙관적으로 나온다)
+    n_val = max(200, int(N * 0.2))
+    tr_end = N - n_val
+    mean = X[:tr_end].mean(axis=0); std = X[:tr_end].std(axis=0); std[std < 1e-9] = 1.0
+    Xn = np.clip((X - mean) / std, -6, 6).astype(np.float32)
+
+    class SeqFormer(nn.Module):
+        def __init__(self):
+            super().__init__()
+            self.win = nn.Linear(D, dm); self.pos = nn.Parameter(torch.zeros(L, dm))
+            self.ln1 = nn.LayerNorm(dm, eps=1e-5)
+            self.q = nn.Linear(dm, dm); self.k = nn.Linear(dm, dm)
+            self.v = nn.Linear(dm, dm); self.o = nn.Linear(dm, dm)
+            self.ln2 = nn.LayerNorm(dm, eps=1e-5)
+            self.f1 = nn.Linear(dm, ff); self.f2 = nn.Linear(ff, dm)
+            self.lnf = nn.LayerNorm(dm, eps=1e-5); self.head = nn.Linear(dm, 1)
+            nn.init.normal_(self.pos, std=0.02)
+        def forward(self, x):                      # x: [B, L, D]
+            h = self.win(x) + self.pos             # [B,L,dm]
+            a = self.ln1(h)
+            B = a.shape[0]; dh = dm // Hh
+            q = self.q(a).view(B, L, Hh, dh).transpose(1, 2)   # [B,H,L,dh]
+            k = self.k(a).view(B, L, Hh, dh).transpose(1, 2)
+            v = self.v(a).view(B, L, Hh, dh).transpose(1, 2)
+            sc = torch.matmul(q, k.transpose(-1, -2)) / math.sqrt(dh)
+            w = torch.softmax(sc, dim=-1)
+            ctx = torch.matmul(w, v).transpose(1, 2).reshape(B, L, dm)
+            h = h + self.o(ctx)
+            h = h + self.f2(torch.relu(self.f1(self.ln2(h))))
+            return self.head(self.lnf(h[:, -1, :])).squeeze(-1)
+
+    Xt = torch.tensor(Xn, device=dev)
+    Yt = torch.tensor(Y.astype(np.float32), device=dev)
+    Si = torch.tensor(seq_idx, device=dev)
+    tr = torch.arange(0, tr_end, device=dev); va = torch.arange(tr_end, N, device=dev)
+    net = SeqFormer().to(dev)
+    opt = torch.optim.AdamW(net.parameters(), lr=1e-3, weight_decay=1e-2)
+    ep = int(C.get("epochs", 12)); bs = 512
+    pos = float(Y[:tr_end].sum()); wpos = tr_end / (2 * pos) if pos > 0 else 1.0
+    wneg = tr_end / (2 * (tr_end - pos)) if (tr_end - pos) > 0 else 1.0
+    for e in range(ep):
+        net.train(); perm = tr[torch.randperm(tr_end, device=dev)]
+        for b in range(0, tr_end, bs):
+            bi = perm[b:b + bs]
+            xb = Xt[Si[bi]]                        # [B,L,D] — 시퀀스 게더
+            yb = Yt[bi]
+            wc = torch.where(yb > 0.5, torch.tensor(wpos, device=dev), torch.tensor(wneg, device=dev))
+            loss = (nn.functional.binary_cross_entropy_with_logits(net(xb), yb, reduction="none") * wc).mean()
+            opt.zero_grad(); loss.backward()
+            torch.nn.utils.clip_grad_norm_(net.parameters(), 1.0)
+            opt.step()
+    net.eval()
+    with torch.no_grad():
+        pv = []
+        for b in range(0, len(va), 1024):
+            pv.append(torch.sigmoid(net(Xt[Si[va[b:b + 1024]]])).cpu().numpy())
+        pva = np.concatenate(pv)
+    yva = Y[tr_end:]
+    acc = float(((pva >= 0.5) == (yva > 0.5)).mean())
+    uw = UNIQ[tr_end:] if (UNIQ is not None and len(UNIQ) == N) else np.ones(len(yva))
+    neff = max(8, int(round(float(uw.sum()))))
+    z = 1.64; z2 = z * z; den = 1 + z2 / neff; cen = acc + z2 / (2 * neff)
+    rad = z * math.sqrt((acc * (1 - acc) + z2 / (4 * neff)) / neff)
+    lb = max(0.0, (cen - rad) / den)
+    icf = _ic_block_fields(pva, yva)
+    print(f"⑨ SEQ valAcc {acc*100:.2f}% 하한 {lb*100:.2f}% (유효 {neff}/{len(yva)})"
+          + (f" 블록IC {icf['valICBlock']:.4f} t {icf['valICt']:.2f}" if "valICt" in icf else ""))
+
+    # ── 가중치를 워커 규약(row-major W[out][in])으로 내보낸다
+    def W(m): return np.round(m.weight.detach().cpu().numpy().astype(np.float64), 6).tolist()
+    def B_(m): return np.round(m.bias.detach().cpu().numpy().astype(np.float64), 6).tolist()
+    def P(t): return np.round(t.detach().cpu().numpy().astype(np.float64), 6).tolist()
+    model = {"featVer": featver, "L": L, "D": int(D), "d": dm, "heads": Hh,
+             "mean": np.round(mean, 6).tolist(), "std": np.round(std, 6).tolist(),
+             "Win": W(net.win), "bin": B_(net.win), "pos": P(net.pos),
+             "ln1g": P(net.ln1.weight), "ln1b": P(net.ln1.bias),
+             "Wq": W(net.q), "bq": B_(net.q), "Wk": W(net.k), "bk": B_(net.k),
+             "Wv": W(net.v), "bv": B_(net.v), "Wo": W(net.o), "bo": B_(net.o),
+             "ln2g": P(net.ln2.weight), "ln2b": P(net.ln2.bias),
+             "W1": W(net.f1), "b1": B_(net.f1), "W2": W(net.f2), "b2": B_(net.f2),
+             "lng": P(net.lnf.weight), "lnb": P(net.lnf.bias),
+             "Wh": P(net.head.weight)[0], "bh": float(P(net.head.bias)[0])}
+
+    # ★probe — 워커가 이 확률을 재현 못 하면 승격을 거부한다.★ 표준화 ★전★ 원본을 싣는다
+    #   (워커가 자기 mean/std 로 표준화하는 경로까지 함께 검증해야 의미가 있다).
+    rng = np.random.default_rng(7)
+    pi = rng.choice(len(va), size=min(24, len(va)), replace=False)
+    probe = []
+    for i in pi:
+        gi = seq_idx[tr_end + int(i)]
+        probe.append({"x": X[gi].astype(np.float64).round(6).tolist(), "p": float(pva[int(i)])})
+
+    payload = {"model": model, "valAcc": round(acc, 4), "valAccLB": round(lb, 4),
+               "valN": int(len(yva)), "n": int(N), "featVer": featver, "probe": probe}
+    payload.update(icf)
+    try:
+        r = requests.post(BASE + "/api/seq-import", params={"key": KEY}, headers=HDR,
+                          data=json.dumps(payload), timeout=300)
+        print(f"⑨ SEQ 업로드 {r.status_code}: {str(r.text)[:220]}")
+    except Exception as e:
+        print("⑨ SEQ 업로드 실패:", e)
+    return {"acc": acc, "lb": lb}
+
+
 def _train_and_upload_gbdt(BASE, KEY, HDR, X, Y, TS, featver, D, UNIQ=None,
                            endpoint="/api/gbdt-import", tag="GBDT", hp=None):
     """[V33.249] endpoint/tag/hp 를 받아 ★같은 학습기★ 를 위원장 슬롯에도 쓴다.

@@ -368,6 +368,13 @@ jobs:
       #   정렬용 근사 ts 를 달력에 쓰는 것(2000봉이면 800일 어긋난다) ③FOMC 표 만료.
       - name: 달력 사건 피처 검사 (OpEx 전수 · FOMC 표 만료 · obsTs 배선)
         run: node tools/check-calendar-feats.mjs
+      # [V33.267] SEQ — DNN 을 Transformer 로 승급. 위험은 성능이 아니라 ★학습·추론 불일치★ 다
+      #   (V32.11 BatchNorm 접기에서 겪었다). 그래서 이 검사는 성적을 묻지 않는다:
+      #   ①워커 JS 가 정말 그 수식인가(numpy 독립구현과 대조) ②트레이너가 같은 순서로 계산하는가
+      #   ③시퀀스 자리가 정말 '그 봉' 인가 ④★위원회를 직접 돌려★ 표가 들어가는가(저장만 하는
+      #   죽은 레코드가 되지 않게) 를 본다.
+      - name: SEQ Transformer 검사 (수식 정합 · 시퀀스 정렬 · 위원회 배선)
+        run: node tools/check-seqformer.mjs
       # cloudflare/wrangler-action 대신 로컬에서 검증된 방식 그대로 실행
       # (wrangler-action@v3의 npx 자동설치가 4.86.0을 요구하며 실패하던 문제 회피)
       - name: Install wrangler

@@ -2977,7 +2977,7 @@ async function applySignalTypeWeights(DB, cfg) {
 // ============================================================================
 // [V33.55] 빌드 버전 — SWR L2 캐시 키에 섞어 '배포 = 판단 캐시 자동 무효화'를 만든다.
 //   판정 로직을 고쳐도 옛 캐시가 최대 1시간 재배포되던 문제를 구조적으로 없앤다.
-const _BUILD_VER = "V33.266";
+const _BUILD_VER = "V33.267";
 
 // ═══ [V33.171] 평가 순서 계획 — ★승격과 순환을 교차해 굶주림을 구조적으로 없앤다★ ═══
 //   V33.50 의 형태트리거는 "급한 몇 종목을 앞으로 당긴다"는 의도였으나, 실제 운영로그에서는
@@ -9628,6 +9628,9 @@ function _mlExportConfig(arch) {
            // [V33.78] 라벨 정의를 트레이너에 알려준다 — 트레이너가 pnl 에서 Y 를 재계산할지 판단한다.
            prediction: { target: (AI_PARAMS.prediction && AI_PARAMS.prediction.target) || "binary",
                          horizonDays: (AI_PARAMS.prediction && AI_PARAMS.prediction.horizonDays) || 10 },
+           /* [V33.267] 시퀀스 모델 형상은 ★워커가 정한다★ — 여기서 L/d/heads 를 바꾸면
+              트레이너가 그 형상으로 학습해 올린다. 두 곳에 따로 적어 두면 언젠가 갈라진다. */
+           seq: { enabled: !!SEQML.enabled, L: SEQML.L, d: SEQML.d, heads: SEQML.heads, ffMult: SEQML.ffMult },
            icFloor: (typeof GBDT !== "undefined" && GBDT.icFloor != null) ? GBDT.icFloor : 0.015 };
 }
 const MLSNAP_PART = 20000;
@@ -12025,6 +12028,150 @@ function _rvZ(arr, v) {
    evaluateAllStrategies 는 종목 하나의 일봉만 받는다(설계상 그렇다). 그래서 교차종목
    관계는 야간에 한 번 계산해 상태에 두고, 사이클은 그것을 읽기만 한다 —
    mlBuildXSPanel(V33 xspanel)이 같은 이유로 쓰는 방식이다. */
+/* ══ [V33.267] SEQ — 시퀀스 모델(Transformer 인코더) ═══════════════════════
+   요청: DNN 을 Transformer 로 승급시켜라(어려우면 RNN).
+
+   ■ 왜 가능한가 — 내보내기 형식을 안 바꿔도 된다
+     표본은 이미 (종목 s, 시각 ts) 를 갖고 있다. 그러니 트레이너가 같은 종목의 과거
+     표본을 시간순으로 쌓으면 [L, D] 시퀀스가 나온다. 워커도, 익스포트도 안 고친다.
+
+   ■ 왜 Transformer 를 택했나 — 비용을 재보고 정했다
+     L=16 · d=32 · 1층 · 2헤드면 종목당 곱셈 약 19만 회다. 지금 DNN 은 은닉 10층
+     763,345 파라미터 × 6시드 = ★460만 회★ 다. 즉 이 Transformer 는 현행 DNN 보다
+     ★25배 싸다.★ "무거워서 못 쓴다" 는 이 규모에서는 사실이 아니다.
+
+   ■ 진짜 위험은 비용이 아니라 ★학습·추론 불일치★ 다
+     이 저장소가 여러 번 당한 자리다(V32.11 의 BatchNorm 접기가 그 흔적이다).
+     그래서 두 가지를 지킨다:
+       ① 트레이너도 nn.TransformerEncoderLayer 를 쓰지 않고 ★아래와 똑같은 순서의
+          명시적 텐서 연산★ 으로 짠다. 내부 규약을 역추적해야 하는 모듈은 안 쓴다.
+       ② 업로드에 probe(입력 시퀀스 + 트레이너가 낸 확률)를 실어, 워커가 자기 추론으로
+          그 확률을 재현하지 못하면 ★승격을 거부한다.★ 기존 GBDT·단타 경로와 같은 장치다.
+
+   ■ 구조(프리노름) — 워커와 트레이너가 이 순서를 글자 그대로 공유한다
+     H_t = Win·x_t + bin + pos_t
+     A   = LN(H; ln1);  Q,K,V = A·Wq,Wk,Wv (+b)
+     헤드별 softmax(QKᵀ/√dh)·V → concat → ·Wo + bo → H += O
+     B   = LN(H; ln2);  F = relu(B·W1+b1)·W2+b2 → H += F
+     z   = LN(H_{L-1}; ln)·Wh + bh;  p = sigmoid(z)
+     ★마지막 시점만 읽는다★ — 예측 시점이 그 자리이고, 평균을 내면 오래된 봉이
+     현재 판단을 희석한다. */
+const SEQML = {
+  enabled: true,
+  L: 16,            // 되돌아보는 표본 수(같은 종목, 시간순)
+  d: 32,            // 모델 차원
+  heads: 2,
+  ffMult: 4,
+  probeTol: 0.03,   // 트레이너 확률 재현 허용오차 — 기존 경로와 같은 값
+  trustFloor: 0.505,
+  icPathAccFloor: 0.49,
+  icPathWeightMult: 0.35,
+  /* 실측(2026-08-29, 320봉·L16): 종목당 조립 ★3.0ms★. 종전 상한 8ms 는 워커가 3배만
+     느려도 ★전 종목이 기권★ 해 모델이 조용히 사라지는 값이었다 — 이 저장소가 반복해 당한
+     '조용한 무력화' 그대로다. 실측의 8배로 잡고, 대신 사이클 총량으로 따로 막는다. */
+  maxSeqBudgetMs: 25,     // 종목당 조립 상한
+  maxCycleBudgetMs: 1500  // 사이클 총량 상한 — 넘으면 남은 종목은 SEQ 불참(로그에 건수가 남는다)
+};
+function _sqLn(v, g, b) {
+  const n = v.length;
+  let m = 0; for (let i = 0; i < n; i++) m += v[i]; m /= n;
+  let s = 0; for (let i = 0; i < n; i++) { const t = v[i] - m; s += t * t; }
+  const inv = 1 / Math.sqrt(s / n + 1e-5);
+  const o = new Array(n);
+  for (let i = 0; i < n; i++) o[i] = (v[i] - m) * inv * _num(g[i], 1) + _num(b[i], 0);
+  return o;
+}
+/* row-major W[out][in] 규약 — 트레이너가 그대로 내보낸다. */
+function _sqMatVec(W, b, v) {
+  const out = new Array(W.length);
+  for (let i = 0; i < W.length; i++) {
+    const Wi = W[i]; let s = b ? _num(b[i], 0) : 0;
+    for (let j = 0; j < Wi.length; j++) s += _num(Wi[j], 0) * v[j];
+    out[i] = s;
+  }
+  return out;
+}
+function _sqSoftmax(a) {
+  let mx = -Infinity; for (const x of a) if (x > mx) mx = x;
+  let sum = 0; const o = new Array(a.length);
+  for (let i = 0; i < a.length; i++) { const e = Math.exp(a[i] - mx); o[i] = e; sum += e; }
+  if (!(sum > 0)) return a.map(function () { return 1 / a.length; });
+  for (let i = 0; i < o.length; i++) o[i] /= sum;
+  return o;
+}
+/* seq: [L][D] — 오래된 것부터 최신 순. 짧으면 ★앞을 가장 오래된 행으로 채운다★
+   (0 으로 채우면 표준화 후 '평균값 봉' 이 되어 없는 과거를 지어내는 셈이다). */
+function seqFormerScore(model, seq) {
+  try {
+    if (!model || !Array.isArray(seq) || !seq.length) return null;
+    const L = Math.max(1, Math.floor(_num(model.L, SEQML.L)));
+    const D = Math.max(1, Math.floor(_num(model.D, 0)));
+    const d = Math.max(1, Math.floor(_num(model.d, 0)));
+    const H = Math.max(1, Math.floor(_num(model.heads, 1)));
+    if (!(D > 0 && d > 0) || d % H !== 0) return null;
+    const dh = d / H, scale = 1 / Math.sqrt(dh);
+    // ── 표준화 + 길이 정규화
+    const rows = [];
+    for (let t = 0; t < L; t++) {
+      const src = seq[Math.max(0, seq.length - L + t)];
+      if (!Array.isArray(src) || src.length !== D) return null;
+      const z = new Array(D);
+      for (let j = 0; j < D; j++) {
+        const sd = _num(model.std[j], 1);
+        z[j] = _clamp((_num(src[j], 0) - _num(model.mean[j], 0)) / (sd > 1e-9 ? sd : 1), -6, 6);
+      }
+      rows.push(z);
+    }
+    // ── 입력사영 + 위치
+    let Hm = [];
+    for (let t = 0; t < L; t++) {
+      const h = _sqMatVec(model.Win, model.bin, rows[t]);
+      const pt = model.pos[t];
+      for (let i = 0; i < d; i++) h[i] += _num(pt[i], 0);
+      Hm.push(h);
+    }
+    // ── 어텐션(프리노름)
+    const A = Hm.map(function (h) { return _sqLn(h, model.ln1g, model.ln1b); });
+    const Q = A.map(function (a) { return _sqMatVec(model.Wq, model.bq, a); });
+    const K = A.map(function (a) { return _sqMatVec(model.Wk, model.bk, a); });
+    const V = A.map(function (a) { return _sqMatVec(model.Wv, model.bv, a); });
+    const ctx = [];
+    for (let t = 0; t < L; t++) ctx.push(new Array(d).fill(0));
+    for (let hh = 0; hh < H; hh++) {
+      const off = hh * dh;
+      for (let t = 0; t < L; t++) {
+        const sc = new Array(L);
+        for (let u = 0; u < L; u++) {
+          let s = 0; for (let i = 0; i < dh; i++) s += Q[t][off + i] * K[u][off + i];
+          sc[u] = s * scale;
+        }
+        const w = _sqSoftmax(sc);
+        for (let i = 0; i < dh; i++) {
+          let s = 0; for (let u = 0; u < L; u++) s += w[u] * V[u][off + i];
+          ctx[t][off + i] = s;
+        }
+      }
+    }
+    for (let t = 0; t < L; t++) {
+      const o = _sqMatVec(model.Wo, model.bo, ctx[t]);
+      for (let i = 0; i < d; i++) Hm[t][i] += o[i];
+    }
+    // ── FFN(프리노름)
+    for (let t = 0; t < L; t++) {
+      const b1v = _sqMatVec(model.W1, model.b1, _sqLn(Hm[t], model.ln2g, model.ln2b));
+      for (let i = 0; i < b1v.length; i++) if (b1v[i] < 0) b1v[i] = 0;
+      const f = _sqMatVec(model.W2, model.b2, b1v);
+      for (let i = 0; i < d; i++) Hm[t][i] += f[i];
+    }
+    // ── 마지막 시점 → 확률
+    const last = _sqLn(Hm[L - 1], model.lng, model.lnb);
+    let z = _num(model.bh, 0);
+    for (let i = 0; i < d; i++) z += _num(model.Wh[i], 0) * last[i];
+    if (!isFinite(z)) return null;
+    return 1 / (1 + Math.exp(-_clamp(z, -30, 30)));
+  } catch (e) { return null; }
+}
+
 /* ══ [V33.265] 달력 사건 — OpEx 와 FOMC ═════════════════════════════════════
    옵션 지표(V33.264)와 달리 이것들은 ★과거를 전부 재구성할 수 있다.★ 날짜만 있으면
    되기 때문이다. 그래서 이쪽은 진짜로 학습 가능하다 — featVer 를 올려 소급해 넣는다.
@@ -17961,7 +18108,8 @@ async function runTradingCycle(env) {
       let evalProcessed = 0, evalTimedOut = false, _evalAdv = 0;
       // [V33.172] 부가조회 공용 지갑 — 기능별 개별 예산의 합이 예산을 넘던 문제를 총량으로 막는다.
       //   phase 는 '어디에 시간이 갔는지'를 사이클마다 한 줄로 남기기 위한 계측이다(D1 write 0).
-      const _enrich = { spent: 0, budget: 0, flowRefresh: 0, skipped: 0, slow: [] };
+      const _enrich = { spent: 0, budget: 0, flowRefresh: 0, skipped: 0, slow: [],
+                       seqMs: 0, seqBuilt: 0, seqSkip: 0 };   // [V33.267] SEQ 조립 계측
       const _phase = { scalp: 0, flow: 0, opt: 0, intra: 0, decide: 0, news: 0 };
       let _symPrevT0 = 0, _symPrev = "", _symTotalMs = 0;   // [V33.172] 종목당 소요시간 계측
       // 부가조회 한 건을 지갑에서 결제한다. 잔액이 없으면 아예 실행하지 않고 건너뛴 횟수를 센다.
@@ -18009,6 +18157,7 @@ async function runTradingCycle(env) {
       let __socialK = null;   // [V33.109] 소셜 로그오즈 계수(social_k) — 미측정이면 개입 0
       let __xaModel = null, __xaPanel = null;   // [V33.79] XALPHA — 형식알파 + 횡단면 랭크
       let __stackModel = null;   // [V33.80] STACK 메타모델(투표 대체)
+      let __seqModel = null;    // [V33.267] SEQ Transformer — 사이클 1회 로드(승격 게이트 통과분만)
       let __memoModel = null;    // [V33.92] MEMO 유사상황 기억 전문가
       let __techK = null, __finalCal = null;   // [V33.94] 실측 기술계수 · 최종보정 온도(사이클 1회)
       let __blendK = null;                    // [V33.96] 결정블렌드 실측 계수
@@ -18051,6 +18200,7 @@ async function runTradingCycle(env) {
           catch (e) { __flowModel = __flowModel || null; }
           try { if (XALPHA.enabled) __xaModel = await getState(DB, "xalpha_model", null); } catch (e2) {}
           try { if (STACKML.enabled) __stackModel = await getState(DB, "stack_model", null); } catch (e2) {}
+          try { if (SEQML.enabled) __seqModel = await _seqCached(DB); } catch (e2) {}
           try { if (MEMOML.enabled) __memoModel = await getState(DB, "memo_model", null); } catch (e2) {}
           try { __techK = await getState(DB, "tech_prior_k", null); __finalCal = await getState(DB, "final_cal", null); __blendK = await getState(DB, "decision_blend_k", null); } catch (e2) {}
           // [V33.109] 소셜 계수(측정 전엔 0) — 사이클 1회 로드.
@@ -19779,7 +19929,24 @@ async function runTradingCycle(env) {
                     if (__xaFeat) signal.xaFeat = __xaFeat;
                   }
                 } catch (e) {}
-                try { _md = await mlDeepDecide(DB, signal.mlFeat, { mind: __mind, guard: __guard, ens: __ensemble, trust: __dnnTrust, dnn: __dnn, gbdtTrust: __gbdtTrust, gbdt: __gbdt, cal: __cal, evstats: __evStats, portStats: __portStats, shock: await _luxMarketShockCached(DB), sym: symbol, evCtx: await _luxEventContextCached(DB), applyEventPrior: true, market: market, flowFeat: __flowFeat, flowModel: __flowModel, xaFeat: __xaFeat, xaModel: __xaModel, stackModel: __stackModel, memoModel: __memoModel, dualBull: __dualBull, dualBear: __dualBear, dualShift: __dualShift, techK: __techK, finalCal: __finalCal }); } catch (e) {}
+                /* [V33.267] SEQ 입력 조립 — ★모델이 실제로 투표할 수 있을 때만★ 만든다.
+                   L−1 봉치를 다시 계산하는 일이라 공짜가 아니다. 승격 못 한 모델을 위해
+                   종목마다 15번씩 피처를 굽는 건 순수 낭비다(네트워크 0, CPU 는 0 이 아니다). */
+                let __seqFeat = null;
+                try {
+                  if (__seqModel && _enrich.seqMs < _num(SEQML.maxCycleBudgetMs, 1500)) {
+                    const _sqT0 = Date.now();
+                    __seqFeat = seqBuildFeat({
+                      closes: daily.closes, volumes: daily.volumes, opens: daily.opens,
+                      highs: daily.highs, lows: daily.lows, days: daily.days,
+                      idxCloses: __idxCloses, sectorCloses: _secCloses, xsPanel: __xsPanel,
+                      regime: (regime && regime.regime) ? regime.regime : "NEUTRAL", market: market
+                    }, signal.mlFeat, _num(__seqModel.L, SEQML.L), SEQML.maxSeqBudgetMs);
+                    _enrich.seqMs += Date.now() - _sqT0;
+                    if (__seqFeat) { signal.seqFeat = __seqFeat; _enrich.seqBuilt++; } else _enrich.seqSkip++;
+                  } else if (__seqModel) _enrich.seqSkip++;
+                } catch (e) {}
+                try { _md = await mlDeepDecide(DB, signal.mlFeat, { mind: __mind, guard: __guard, ens: __ensemble, trust: __dnnTrust, dnn: __dnn, gbdtTrust: __gbdtTrust, gbdt: __gbdt, cal: __cal, evstats: __evStats, portStats: __portStats, shock: await _luxMarketShockCached(DB), sym: symbol, evCtx: await _luxEventContextCached(DB), applyEventPrior: true, market: market, seqFeat: __seqFeat, seqModel: __seqModel, flowFeat: __flowFeat, flowModel: __flowModel, xaFeat: __xaFeat, xaModel: __xaModel, stackModel: __stackModel, memoModel: __memoModel, dualBull: __dualBull, dualBear: __dualBear, dualShift: __dualShift, techK: __techK, finalCal: __finalCal }); } catch (e) {}
                 if (!_md) { try { _md = await mlMindDecide(DB, signal.mlFeat, { mind: __mind, guard: __guard, ens: __ensemble }); } catch (e) {} }
                 // [V5] AI 픽 수집 — 개입 여부와 무관하게 예측 자체는 기록(종목당 1회)
                 try {
@@ -20173,6 +20340,9 @@ async function runTradingCycle(env) {
             Math.round(_enrich.spent) + "/" + _enrich.budget + "ms" +
             (_enrich.skipped ? "(예산소진 " + _enrich.skipped + "건 생략)" : "") +
             (_enrich.flowRefresh ? " · FLOW갱신 " + _enrich.flowRefresh + "종목" : "") +
+            /* [V33.267] ★조립 0건이면 SEQ 는 없는 위원이다.★ 숫자가 안 보이면 아무도 못 알아챈다. */
+            ((_enrich.seqBuilt || _enrich.seqSkip) ? " · SEQ " + _enrich.seqBuilt + "종목 " +
+              Math.round(_enrich.seqMs) + "ms" + (_enrich.seqSkip ? "(기권 " + _enrich.seqSkip + ")" : "") : "") +
             (_pp.length ? " — " + _pp.join(", ") : "") +
             (_enrich.slow.length ? " · 느린종목 " + _enrich.slow.join(", ") : ""));
         }
@@ -22855,6 +23025,73 @@ async function handleRequest(request, env, ctx) {
        필요한 정보는 ★경계 시각 하나★ 뿐이라 모델을 다시 올릴 필요가 없다.
        ★단조 전진만 허용한다★ — 경계를 과거로 되돌리면 이미 학습에 쓰인 구간이 '누출없음'
        으로 열려 V33.104 가 고친 사고(IC 0.566·t 7.51)가 그대로 재발한다. */
+    /* ══ [V33.267] POST /api/seq-import — Transformer 인코더 업로드 ══════════
+       ★probe 를 먼저 본다.★ 성적이 아무리 좋아도 워커가 트레이너의 확률을 재현하지
+       못하면 그 모델은 여기서 다른 값을 낼 것이고, 그건 좋은 모델이 아니라 ★다른 모델★ 이다.
+       기존 GBDT·단타 경로와 같은 장치이고, 허용오차도 같은 0.03 을 쓴다. */
+    if (path === "/api/seq-import" && request.method === "POST") {
+      const au = _trainAuthed(); if (!au.ok) return Response.json({ error: au.msg }, { status: au.code, headers: cors });
+      let body; try { body = await request.json(); } catch (e) { return Response.json({ error: "bad json" }, { status: 400, headers: cors }); }
+      if (_num(body.featVer, -1) !== LUXML.featVer)
+        return Response.json({ error: "featVer 불일치 (서버 " + LUXML.featVer + ")" }, { status: 400, headers: cors });
+      const m = body.model;
+      const D = LUXML.featNames.length;
+      if (!m || _num(m.D, 0) !== D)
+        return Response.json({ error: "입력 차원 불일치 (서버 " + D + ")" }, { status: 400, headers: cors });
+      // 형상 검사 — 잘못된 구조가 저장되면 매 사이클 종목마다 null 을 뱉는다(조용한 무력화).
+      const _dm = Math.floor(_num(m.d, 0)), _L = Math.floor(_num(m.L, 0)), _H = Math.floor(_num(m.heads, 0));
+      const _sq = function (W, r, c) { return Array.isArray(W) && W.length === r && Array.isArray(W[0]) && W[0].length === c; };
+      const shapeErr =
+        !(_dm > 0 && _L > 0 && _H > 0 && _dm % _H === 0) ? "d/L/heads 형식" :
+        !_sq(m.Win, _dm, D) ? "Win" : !_sq(m.pos, _L, _dm) ? "pos" :
+        (!_sq(m.Wq, _dm, _dm) || !_sq(m.Wk, _dm, _dm) || !_sq(m.Wv, _dm, _dm) || !_sq(m.Wo, _dm, _dm)) ? "QKVO" :
+        !_sq(m.W1, _dm * 4, _dm) ? "W1" : !_sq(m.W2, _dm, _dm * 4) ? "W2" :
+        !(Array.isArray(m.Wh) && m.Wh.length === _dm) ? "Wh" :
+        !(Array.isArray(m.mean) && m.mean.length === D && Array.isArray(m.std) && m.std.length === D) ? "mean/std" : null;
+      if (shapeErr) return Response.json({ error: "형상 불일치: " + shapeErr }, { status: 400, headers: cors });
+
+      /* ★정합 probe★ — 트레이너가 낸 확률을 워커 추론이 재현하는가. */
+      let maxDiff = null, probeN = 0;
+      try {
+        if (Array.isArray(body.probe) && body.probe.length) {
+          let md = 0, cnt = 0;
+          for (const pr of body.probe) {
+            if (!pr || !Array.isArray(pr.x) || typeof pr.p !== "number") continue;
+            const sc = seqFormerScore(m, pr.x);
+            if (sc == null) continue;
+            const dd = Math.abs(sc - pr.p); if (dd > md) md = dd; cnt++;
+          }
+          if (cnt > 0) { maxDiff = md; probeN = cnt; }
+        }
+      } catch (e) {}
+      if (maxDiff == null)
+        return Response.json({ error: "probe 없음 — 정합을 확인할 수 없으면 승격하지 않는다" }, { status: 400, headers: cors });
+      if (maxDiff > _num(SEQML.probeTol, 0.03)) {
+        try { await log(env.DB, "WARN", null, "[SEQ] 정합 실패 maxDiff " + maxDiff.toFixed(4) +
+          " > " + SEQML.probeTol + " (probe " + probeN + "건) — 저장하지 않는다. 학습·추론이 다른 모델이다."); } catch (e) {}
+        return Response.json({ error: "정합 실패 maxDiff " + maxDiff.toFixed(4), probeN: probeN }, { status: 400, headers: cors });
+      }
+
+      const lb = _clamp(_num(body.valAccLB, 0), 0, 1);
+      const icT = _num(body.valICt, null);
+      const ad = _dnnAdmit(lb, icT, 0.5);   // DNN 과 ★같은 자★ — 정확도 길 · IC 길
+      const rec = Object.assign({}, m, { featVer: LUXML.featVer, source: "external", trainedAt: Date.now(),
+        valAcc: _num(body.valAcc, null), valAccLB: lb, valN: _num(body.valN, 0), n: _num(body.n, 0),
+        valICt: icT, valICBlock: _num(body.valICBlock, null),
+        probeMaxDiff: +maxDiff.toFixed(5), probeN: probeN,
+        trusted: ad.trusted, w: ad.trusted ? ad.wDnn : 0, admitPath: ad.path, admitWhy: ad.why });
+      await setBigState(env.DB, "seq_model", rec);
+      /* 작은 동반 레코드 — 큰 모델(수백 KB)을 읽지 않고도 "실리는가/왜 안 실리는가" 를 답한다.
+         DNN 의 dnn_trust · 부스터의 xgb_trust 와 같은 배치다: ★읽는 쪽 게이트★ 가 이걸 본다. */
+      await setState(env.DB, "seq_trust", { trusted: ad.trusted, wSeq: ad.trusted ? ad.wDnn : 0,
+        seqAccLB: lb, seqAcc: _num(body.valAcc, null), valICt: icT, valN: _num(body.valN, 0),
+        L: _L, d: _dm, heads: _H, admitPath: ad.path, why: ad.why,
+        probeMaxDiff: +maxDiff.toFixed(5), featVer: LUXML.featVer, ts: Date.now() });
+      try { await log(env.DB, "INFO", null, "[SEQ] Transformer 저장 — 정합 maxDiff " + maxDiff.toFixed(4) +
+        "(probe " + probeN + ") · accLB " + (lb * 100).toFixed(2) + "% · " + ad.why); } catch (e) {}
+      return Response.json({ ok: true, probeMaxDiff: maxDiff, probeN: probeN, trusted: ad.trusted, why: ad.why }, { headers: cors });
+    }
+
     /* ══ [V33.260] POST /api/dnn-arch — 스윕이 잰 구성을 저장한다 ══
        이것이 없어서 V33.204 의 측정이 매번 버려졌다. 저장하는 값은 ★워커의 승격
        게이트가 보는 것과 같은 자★ 로 뽑힌 승자다(유효표본 Wilson 하한).
@@ -35417,6 +35654,96 @@ async function _boostersCached(DB) {
     return out;
   } catch (e) { return []; }
 }
+
+/* ══ [V33.267] SEQ(Transformer) 를 ★읽는 쪽★ ═══════════════════════════════
+   /api/seq-import 가 저장만 하고 아무도 안 읽으면 그건 모델이 아니라 로그다
+   (optx: 가 정확히 그 상태였다). 여기서 위원회 입력으로 잇는다.
+   · _seqCached  : 5분 메모 로드. 승격 게이트(trusted·w>0·featVer)를 ★읽는 쪽에서도★ 본다
+     — 저장 시점 판정만 고치면 이미 trusted 로 앉아 있는 모델이 다음 업로드까지 그대로 투표한다
+       (V33.191 에서 부스터로 겪은 그대로다).
+   · seqBuildFeat: 같은 종목의 최근 L 봉에 대해 피처를 다시 만들어 [L][D] 를 만든다.
+     ★마지막 자리는 이미 만들어 둔 라이브 벡터를 그대로 쓴다★ — 다시 만들면 값이
+     미세하게 달라져 다른 위원들과 다른 입력을 보게 된다(그리고 공짜로 한 번 더 계산한다).
+     과거 자리는 ★수확기와 같은 규약★ 으로 만든다(strategy "hv", ev {}, sigWeight/confluence 1)
+     — 트레이너가 시퀀스를 잇는 원본 표본 대다수가 수확 행이기 때문이다. */
+let __seqMemCache = null;
+async function _seqCached(DB) {
+  try {
+    if (!SEQML.enabled) return null;
+    const g = (typeof globalThis !== "undefined") ? globalThis : {};
+    const c = g.__seqCache;
+    if (c && (Date.now() - c.ts) < 300000) return c.val;
+    /* ★작은 것부터 본다.★ seq_trust 는 한 행이고 seq_model 은 수백 KB 다. 승격 못 한
+       모델 때문에 사이클마다 큰 레코드를 읽는 일이 없어야 한다. 그리고 게이트를 여기
+       ★읽는 쪽에도★ 다시 두는 이유는 V33.191 과 같다 — 저장 시점 판정만 고치면
+       이미 trusted 로 앉아 있는 레코드가 다음 업로드까지 그대로 투표한다. */
+    let t = null; try { t = await getState(DB, "seq_trust", null); } catch (e) {}
+    let val = null;
+    if (t && t.trusted && _num(t.wSeq, 0) > 0 && _num(t.featVer, -1) === LUXML.featVer) {
+      let m = null;
+      try { m = await getBigState(DB, "seq_model", null); } catch (e) { m = null; }
+      if (m && _num(m.featVer, -1) === LUXML.featVer && m.trusted && _num(m.w, 0) > 0
+          && Array.isArray(m.Win) && Array.isArray(m.pos) && _num(m.D, 0) === LUXML.featNames.length) {
+        val = m;
+      }
+    }
+    g.__seqCache = { ts: Date.now(), val: val };
+    __seqMemCache = val;
+    return val;
+  } catch (e) { return null; }
+}
+
+/* 화면용 한 줄. ★승격 못 한 상태도 그대로 적는다★ — 명단에서 빼 버리면
+   "왜 SEQ 가 없지" 를 물어볼 단서가 화면 어디에도 안 남는다(DNN 층수에서 겪은 그대로다). */
+function _seqRosterRow(t) {
+  if (!t) return null;
+  const _stale = _num(t.featVer, -1) !== LUXML.featVer;
+  return { name: "SEQ", role: "시퀀스 Transformer(L" + _num(t.L, SEQML.L) + "·d" + _num(t.d, SEQML.d) +
+             "·헤드" + _num(t.heads, SEQML.heads) + ")" +
+             (_stale ? "(★구 featVer★ — 재학습 대기)" : (t.admitPath === "ic" ? "(IC 경로 잠정)" : "")),
+           acc: +_num(t.seqAccLB, 0).toFixed(3), w: _stale ? 0 : _num(t.wSeq, 0),
+           trusted: !!t.trusted && !_stale, why: t.why || null, probeMaxDiff: _num(t.probeMaxDiff, null) };
+}
+
+/* base: 라이브 봉에서 mlBuildFeatures 에 넘긴 것과 같은 인자 묶음.
+   live: 그 인자로 이미 만들어진 피처벡터(마지막 자리).
+   days: 봉별 에폭일수(closes 와 길이가 같아야 한다) — 없으면 ★달력 피처를 지어내지 않고★
+         과거 자리는 obsTs null 로 둔다(fomcKnown=0 = "모른다"). 날짜를 빼서 때우면
+         15봉 전이 6일쯤 어긋나 학습 때 붙은 달력과 다른 값이 실린다. */
+function seqBuildFeat(base, live, L, budgetMs) {
+  try {
+    if (!Array.isArray(live) || !live.length) return null;
+    const closes = Array.isArray(base.closes) ? base.closes : [];
+    const n = closes.length;
+    const LL = Math.max(2, Math.floor(_num(L, SEQML.L)));
+    if (n < 40) return null;   // 피처가 성립하는 최소 룩백(ma20·ret20 등)을 못 채우면 시작하지 않는다
+    const days = (Array.isArray(base.days) && base.days.length === n) ? base.days : null;
+    const t0 = Date.now(), budget = _num(budgetMs, SEQML.maxSeqBudgetMs);
+    const sl = function (a, e) { return Array.isArray(a) && a.length === n ? a.slice(0, e) : null; };
+    const out = [];
+    for (let k = LL - 1; k >= 1; k--) {
+      if ((Date.now() - t0) > budget) return null;   // 예산 초과 — 반쪽 시퀀스를 넘기느니 이 종목은 기권한다
+      const e = n - k;                                // 그 시점까지의 봉 개수(끝 배타)
+      if (e < 30) { out.length = 0; continue; }       // 앞쪽이 모자라면 그만큼 짧게 — 채점기가 가장 오래된 행으로 앞을 채운다
+      const c = closes[e - 1];
+      const pc = e >= 2 ? closes[e - 2] : 0;
+      const f = mlBuildFeatures({
+        closes: closes.slice(0, e), volumes: sl(base.volumes, e), opens: sl(base.opens, e),
+        highs: sl(base.highs, e), lows: sl(base.lows, e),
+        idxCloses: base.idxCloses, sectorCloses: base.sectorCloses,
+        xsPanel: base.xsPanel, barsAgo: k,
+        price: c, prevClose: pc, dayPct: (pc > 0 ? (c / pc - 1) * 100 : 0),
+        regime: base.regime, sigWeight: 1, confluence: 1,
+        strategy: "hv", market: base.market, ev: {},
+        obsTs: days ? _num(days[e - 1], 0) * 86400000 : null
+      });
+      if (!Array.isArray(f) || f.length !== live.length) return null;
+      out.push(f);
+    }
+    out.push(live);
+    return out.length >= 2 ? out : null;
+  } catch (e) { return null; }
+}
 // [V32.59] 전문가 실측정확도 5분 메모(위원회 루프에서 종목마다 재로딩 방지 — CPU 안전).
 // ════════════════════════════════════════════════════════════════════════════
 // [V33.107] ★TradingAgents 이식 — 상황별 반성기억(Reflection Memory)★
@@ -35643,6 +35970,26 @@ async function mlDeepDecide(DB, featVec, opts) {
         }
         // [V33.94] wMul 제거 — IC 가중이 이미 신뢰도를 반영한다(손으로 0.8 을 또 곱하면 이중 계상).
         if (bw > 0 && bUsed > 0) { const pBoost = _clamp(_sigmoid(bz / bw), 0.001, 0.999); experts.push({ name: "boost", p: pBoost, z: _logitD(pBoost), acc: bAccMax, ic: bICMax }); }
+      }
+    } catch (e) {}
+    /* ── [V33.267] SEQ(Transformer) 합류 ──────────────────────────────────
+       다른 위원들은 전부 ★한 시점의 벡터★ 하나만 본다. 이 위원만 같은 종목의 최근 L 봉을
+       순서대로 본다 — 정보가 며칠에 걸쳐 스며드는 구간(FOMC 전후·OpEx 주간)에서 다른
+       축을 보는 표다. 시퀀스를 못 만들면(예산 초과·이력 부족) ★조용히 불참★ 한다:
+       반쪽 시퀀스로 억지 투표를 시키면 그 표는 잡음이다.
+       승격 자는 DNN 과 같다(정확도 길 · IC 길) — 저장 때 이미 판정돼 w 에 실려 있다. */
+    try {
+      if (Array.isArray(opts.seqFeat) && opts.seqFeat.length) {
+        const sm = (opts.seqModel !== undefined) ? opts.seqModel : await _seqCached(DB);
+        if (sm) {
+          const pS = seqFormerScore(sm, opts.seqFeat);
+          if (pS != null && Math.abs(pS - 0.5) > 1e-4) {
+            const _sp = _clamp(pS, 0.001, 0.999);
+            experts.push({ name: "seq", p: _sp, z: _logitD(_sp),
+                           acc: _num(sm.valAccLB, 0.5), ic: _icEffective(sm),
+                           tier: (sm.admitPath === "ic") ? "prov" : undefined });
+          }
+        }
       }
     } catch (e) {}
     // ── [V33.149] ★전문가의 name 은 식별자다 — 표시용 표식을 섞으면 안 된다★
@@ -36160,6 +36507,7 @@ async function mlDNNVizData(DB) {
   try {
     const trust = await getState(DB, "dnn_trust", null);
     let gtrust = null; try { gtrust = await getState(DB, "gbdt_trust", null); } catch (e) {}
+    let strust = null; try { strust = await getState(DB, "seq_trust", null); } catch (e) {}   // [V33.267] SEQ 명단용(작은 레코드 1행)
     // [V12.35] 위원회 표시는 하한(LB)으로 통일 — DNN/GBDT는 AccLB로 표시되고 가중치도 전부 하한 기반이므로,
     //   MIND만 점추정(valAcc)으로 보이면 "표시 정확도↑인데 실제 가중치↓" 모순이 생긴다. mind도 valAccLB 사용.
     let mindAcc = null; try { const mm = await mlMindLoad(DB); if (mm) mindAcc = (typeof mm.valAccLB === "number") ? mm.valAccLB : _wilsonLB(_num(mm.valAcc, 0.5), _num(mm.valN, 30)); } catch (e) {}
@@ -36184,6 +36532,7 @@ async function mlDNNVizData(DB) {
           acc: trust ? +_num(trust.dnnAccLB, _num(trust.dnnAcc, 0)).toFixed(3) : null, w: trust ? _num(trust.wDnn, 0) : 0, trusted: !!(trust && trust.trusted) });
       }
       if (gtrust) committeeC.push({ name: "GBDT", role: "부스팅트리", acc: +_num(gtrust.gbdtAccLB, _num(gtrust.gbdtAcc, 0)).toFixed(3), w: _num(gtrust.wGbdt, 0), trusted: !!gtrust.trusted });
+      { const _sr = _seqRosterRow(strust); if (_sr) committeeC.push(_sr); }
       return Object.assign({}, _cachedHeavy, {
         trust: trust ? { wDnn: trust.wDnn, trusted: !!trust.trusted, dnnAcc: trust.dnnAcc } : null,
         active: !!(trust && trust.trusted && _num(trust.wDnn, 0) > 0),
@@ -36252,6 +36601,7 @@ async function mlDNNVizData(DB) {
       hiddenLayers: _hidN, expectedHidden: DNN.hidden.length, fallback: _isFallback,
       acc: trust ? +_num(trust.dnnAccLB, _num(trust.dnnAcc, 0)).toFixed(3) : null, w: trust ? _num(trust.wDnn, 0) : 0, trusted: !!(trust && trust.trusted) });
     if (gtrust) committee.push({ name: "GBDT", role: "부스팅트리", acc: +_num(gtrust.gbdtAccLB, _num(gtrust.gbdtAcc, 0)).toFixed(3), w: _num(gtrust.wGbdt, 0), trusted: !!gtrust.trusted });
+    { const _sr = _seqRosterRow(strust); if (_sr) committee.push(_sr); }
     // [V11] 3M이 실제 거래결정에 기여 중인가? 신뢰게이트 통과(trusted & wDnn>0) 여부 = 실동작 여부.
     const active = !!(trust && trust.trusted && _num(trust.wDnn, 0) > 0);
     const source = m.source || "worker";   // "external"=외부GPU 업로드, "worker"=야간 자가학습
@@ -44306,6 +44656,8 @@ export {
   _dnnAdmit,                        // [V33.262] DNN 승격 판정(정확도 길 · IC 길)
   optMicroFromChain, _bsDeltaGamma, OPTMICRO,   // [V33.264] 옵션 미시구조
   _calFeats, _opexCtx, _fomcCtx, FOMC_DAYS, _thirdFriday,   // [V33.265] 달력 사건
+  seqFormerScore, SEQML, seqBuildFeat, _seqRosterRow,   // [V33.267] 시퀀스 Transformer(채점·입력조립·명단)
+  mlDeepDecide,                     // [V33.267] 검사가 위원회를 ★직접 돌려★ 표가 실제로 들어가는지 본다
   dualHeadJudge, _boostersCached,   // [V33.257] 자가진단 명단 검사가 '위원회가 쓰는 그 함수' 를 직접 돌린다
   DEFAULT_CFG, AI_PARAMS, migrateCfgToMarkets, evaluateAllStrategies, evaluateTrendEntry, evaluateSnapEntry,
   evaluateSell, backtestSymbol, backtestStats, backtestStatsBySignal,
