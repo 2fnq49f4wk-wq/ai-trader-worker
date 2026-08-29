@@ -150,7 +150,7 @@ const DEFAULT_US = [
   "ALL","TGT","AZO","CTVA","CARR",
   "AJG","MET","NDAQ","PSA","F",
   "AME","NUE","ADSK","COR","EBAY",
-  "FAST","EA","TER","MCHP","ETR",
+  "FAST","TER","MCHP","ETR",
   "COIN","XEL","ROK","EW","CAH",
   "VST","DAL","EXC","TTWO","WAB",
   "HPE","GRMN","FITB","CMG","VTR",
@@ -172,8 +172,8 @@ const DEFAULT_US = [
   "DOW","KHC","FOXA","FICO","IR",
   "OTIS","CNP","WRB","TPL","TPR",
   "NRG","EIX","ROL","PPL","FOX",
-  "CINF","AVB","CFG","EXPE","XYL",
-  "FE","ES","STZ","EQR","DXCM",
+  "CINF","VMRK","CFG","EXPE","XYL",
+  "FE","ES","STZ","DXCM",
   "FSLR","HUBB","JBHT","AWK","CTSH",
   "WTW","BG","LYB","SYF","NTAP",
   "EXE","TSN","DG","PPG","RF",
@@ -636,7 +636,6 @@ const NAME_MAP = {
   "COR":"Cencora",
   "EBAY":"eBay",
   "FAST":"Fastenal",
-  "EA":"Electronic Arts",
   "TER":"Teradyne",
   "MCHP":"Microchip",
   "ETR":"Entergy",
@@ -746,14 +745,17 @@ const NAME_MAP = {
   "PPL":"PPL",
   "FOX":"Fox B",
   "CINF":"Cincinnati Financial",
-  "AVB":"AvalonBay",
+  /* [V33.266] AVB·EQR 은 2026-08-17 대등합병으로 사라졌다. 존속법인이 사명을
+     Vivmark Residential 로 바꾸고 8-18 부터 VMRK 로 거래된다(합산 시총 약 510억 달러).
+     AVB 1주 → 존속법인 2.793주. 두 티커 다 죽었으므로 하나를 남기는 게 아니라
+     ★둘을 지우고 살아 있는 하나를 넣는다.★ */
+  "VMRK":"Vivmark Residential",
   "CFG":"Citizens Financial",
   "EXPE":"Expedia",
   "XYL":"Xylem",
   "FE":"FirstEnergy",
   "ES":"Eversource",
   "STZ":"Constellation Brands",
-  "EQR":"Equity Residential",
   "DXCM":"DexCom",
   "FSLR":"First Solar",
   "HUBB":"Hubbell",
@@ -1616,7 +1618,6 @@ const MCAP_RANK = {
   "COR":224,
   "EBAY":225,
   "FAST":226,
-  "EA":227,
   "TER":228,
   "MCHP":229,
   "ETR":230,
@@ -1726,14 +1727,13 @@ const MCAP_RANK = {
   "PPL":334,
   "FOX":335,
   "CINF":336,
-  "AVB":337,
+  "VMRK":337,
   "CFG":338,
   "EXPE":339,
   "XYL":340,
   "FE":341,
   "ES":342,
   "STZ":343,
-  "EQR":344,
   "DXCM":345,
   "FSLR":346,
   "HUBB":347,
@@ -2977,7 +2977,7 @@ async function applySignalTypeWeights(DB, cfg) {
 // ============================================================================
 // [V33.55] 빌드 버전 — SWR L2 캐시 키에 섞어 '배포 = 판단 캐시 자동 무효화'를 만든다.
 //   판정 로직을 고쳐도 옛 캐시가 최대 1시간 재배포되던 문제를 구조적으로 없앤다.
-const _BUILD_VER = "V33.265";
+const _BUILD_VER = "V33.266";
 
 // ═══ [V33.171] 평가 순서 계획 — ★승격과 순환을 교차해 굶주림을 구조적으로 없앤다★ ═══
 //   V33.50 의 형태트리거는 "급한 몇 종목을 앞으로 당긴다"는 의도였으나, 실제 운영로그에서는

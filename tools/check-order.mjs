@@ -399,6 +399,23 @@ for (const k of reads) {
      (이번에 실제로 그랬다: V33.261 의 블록주석이 들어오자 바로 이 상태가 됐다.) */
   if (!KR) { console.error("  FAIL 티커: DEFAULT_KR 을 파싱하지 못했다 — 접미사 검사를 할 수 없다(건너뛰지 않는다)"); bad++; }
   else {
+    /* ══ [V33.266] ★죽은 티커 재등장 방지★ ══════════════════════════════════
+       상장폐지·합병으로 사라진 종목은 지워도 다시 들어온다 — 옛 목록을 복사하거나,
+       "왜 없지?" 하고 되넣는다. 왜 죽었는지를 코드에 남겨두지 않으면 그 판단을
+       매번 다시 해야 하고, 그때 웹검색이 막혀 있으면 그냥 넣게 된다.
+       ※ 여기 있는 것은 ★확인된 것만★ 이다. 의심만으로 넣지 않는다 —
+         실제로 이번에 Q(Qnity)·SPCX(SpaceX)·FISV(Fiserv)·MRSH(Marsh) 를
+         "이상하다" 고 의심했다가 넷 다 멀쩡한 현행 티커임을 확인했다. */
+    const DEAD = {
+      "AVB":  "2026-08-17 EQR 과 대등합병 → 존속법인 Vivmark Residential(VMRK). AVB 1주 → 2.793주",
+      "EQR":  "2026-08-17 AVB 와 대등합병. 존속법인이 사명·티커 변경(EQR → VMRK, 8-18 거래개시)",
+      "EA":   "2026-08-04 PIF·Silver Lake·Affinity 의 550억 달러 인수 완료 → 나스닥 상장폐지(주당 $210 현금)"
+    };
+    const zombie = Object.keys(DEAD).filter((t) => US.indexOf(t) >= 0 || KR.indexOf(t) >= 0);
+    if (zombie.length) {
+      for (const z of zombie) console.error(`  FAIL 티커: 죽은 종목이 유니버스에 있다 — ${z} (${DEAD[z]})`);
+      bad += zombie.length;
+    }
     const badSfx = KR.filter((s) => !/\.(KS|KQ)$/.test(s));
     if (badSfx.length) { console.error(`  FAIL 티커: KR 접미사 규칙 위반(.KS/.KQ 아님) — ${badSfx.slice(0, 6).join(", ")}`); bad += badSfx.length; }
     if (US) {
