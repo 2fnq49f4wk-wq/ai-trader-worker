@@ -375,6 +375,14 @@ jobs:
       #   죽은 레코드가 되지 않게) 를 본다.
       - name: SEQ Transformer 검사 (수식 정합 · 시퀀스 정렬 · 위원회 배선)
         run: node tools/check-seqformer.mjs
+      # [V33.268] 최적정지(Longstaff-Schwartz). "지금 팔까 더 들고 갈까" 는 미국식 옵션의
+      #   조기행사와 같은 문제다. 몬테카를로는 틀려도 그럴듯한 숫자를 내므로, 이 검사는
+      #   ★답을 아는 문제★ 로 검산한다: 논문(2001) Table 1 공표값 6건, 그리고 Merton 정리
+      #   (배당 없는 주식의 미국식 콜 = 유럽식 콜). 둘 다 외부 기준이라 구현이 틀리면 못 맞춘다.
+      #   그리고 교과서 문제와 실제 청산 판단이 ★같은 엔진★ 인지, 근거가 쌓이기 전에
+      #   실거래를 안 흔드는지(advisoryOnly)까지 본다.
+      - name: 최적정지 검사 (논문 공표값 대조 · Merton 정리 · 자문 규율)
+        run: node tools/check-lsm.mjs
       # cloudflare/wrangler-action 대신 로컬에서 검증된 방식 그대로 실행
       # (wrangler-action@v3의 npx 자동설치가 4.86.0을 요구하며 실패하던 문제 회피)
       - name: Install wrangler

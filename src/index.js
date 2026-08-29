@@ -2977,7 +2977,7 @@ async function applySignalTypeWeights(DB, cfg) {
 // ============================================================================
 // [V33.55] 빌드 버전 — SWR L2 캐시 키에 섞어 '배포 = 판단 캐시 자동 무효화'를 만든다.
 //   판정 로직을 고쳐도 옛 캐시가 최대 1시간 재배포되던 문제를 구조적으로 없앤다.
-const _BUILD_VER = "V33.267";
+const _BUILD_VER = "V33.268";
 
 // ═══ [V33.171] 평가 순서 계획 — ★승격과 순환을 교차해 굶주림을 구조적으로 없앤다★ ═══
 //   V33.50 의 형태트리거는 "급한 몇 종목을 앞으로 당긴다"는 의도였으나, 실제 운영로그에서는
@@ -12294,6 +12294,301 @@ const OPTMICRO = {
      최소한 겹치지 않는 구간이 여러 개 나온다. 이 값에 도달하면 화면이 그렇게 말한다. */
   promoteMinDays: 60
 };
+
+/* ══ [V33.268] 최적정지(Optimal Stopping) — Longstaff-Schwartz 최소제곱 몬테카를로 ══
+   요청: "monte carlo methods for american option pricing 이론 참고해서 전체 업그레이드".
+
+   ★왜 이 이론이 이 시스템에 붙는가.★
+   보유 포지션의 "지금 팔까, 더 들고 갈까" 는 값을 매기는 문제가 아니라 ★언제 멈출까★
+   의 문제다. 미국식 옵션의 조기행사 결정과 수학적으로 같은 문제다:
+     · 행사가치(exercise) = 지금 청산했을 때의 손익
+     · 계속가치(continuation) = 앞으로 최적으로 행동했을 때 기대 손익
+     · 최적 정지 = 행사가치 > 계속가치 인 첫 시점
+   계속가치는 닫힌 형태가 없다. Longstaff & Schwartz(2001)의 방법은 이것을
+   ★경로를 뿌리고, 시점마다 '계속가치를 상태변수로 회귀' 해 근사★ 하는 것이다.
+   뒤에서 앞으로 내려오며 각 시점의 정지 여부를 갱신한다.
+
+   ★핵심 규율 — 회귀의 대상은 '미래의 실현값' 이지 '미래의 추정값' 이 아니다.★
+   각 경로는 지금까지 정한 정책 하에서 ★실제로 언제 멈춰 얼마를 받았는지★ 를 들고
+   내려온다(cf, tau). 그 실현값을 회귀의 y 로 쓴다. 여기서 추정치를 다시 회귀하면
+   오차가 시점마다 누적된다(그리고 값이 낙관적으로 부풀어 오른다).
+
+   ★검증 가능성이 이 구현의 설계 목표다.★ 아래 _lsmCore 는 두 곳이 같이 쓴다:
+     ① lsmAmericanPut — 교과서 문제. 답을 아는 값과 대조한다(게이트가 그렇게 쓴다).
+     ② lsmExitValue   — 실제 보유 포지션의 청산 판단.
+   ②만 있으면 "이 숫자가 맞는지" 를 물을 방법이 없다. ①이 ②와 ★같은 엔진★ 이라서
+   ①의 검산이 ②의 근거가 된다. 다른 엔진을 두 개 쓰면 그 연결이 끊긴다. */
+const LSM = {
+  enabled: true,
+  paths: 600,          // 경로 수 — 워커 예산 안에서 정한 값(아래 maxMs 로 다시 막는다)
+  deg: 3,              // 다항 기저 차수(1, x, x², x³) — Longstaff-Schwartz 의 라게르 대신 단순 다항
+  ridge: 1e-8,         // 정규방정식 안정화(특이행렬 방지) — 값에는 영향이 없는 크기
+  block: 5,            // 블록 부트스트랩 길이(일) — 변동성 군집을 보존한다
+  maxMs: 20,           // 종목당 상한
+  minEdgeBps: 25,      // 계속가치가 이만큼(=0.25%p) 커야 '더 들고 간다' 고 말한다
+  /* ★측정 전에는 결정을 바꾸지 않는다.★ 이 값이 true 인 동안 lsmExitValue 는
+     기록·표시에만 쓰이고 매도 판단에는 손을 대지 않는다. OPTMICRO 와 같은 규율이다 —
+     새 신호가 실거래를 흔들기 전에 먼저 자기 성적을 남겨야 한다. */
+  advisoryOnly: true,
+  maxCycleMs: 400,    // 사이클 총량 상한 — 자문 하나 때문에 사이클이 늘어나면 안 된다
+  logMax: 400,        // 불일치 기록 상한(링버퍼)
+  promoteMinN: 40     // 승격을 논하기 시작하는 최소 유효표본(동률 제외)
+};
+/* 재현 가능한 난수 — 검사가 같은 답을 두 번 얻을 수 있어야 한다. */
+function _lsmRng(seed) {
+  let s = (Math.floor(seed) || 1) >>> 0;
+  return function () { s = (s * 1664525 + 1013904223) >>> 0; return (s >>> 8) / 16777216; };
+}
+/* Box-Muller — 워커에 정규난수가 없다. */
+function _lsmNorm(rng) {
+  let u = rng(); if (u < 1e-12) u = 1e-12;
+  return Math.sqrt(-2 * Math.log(u)) * Math.cos(2 * Math.PI * rng());
+}
+/* 정규방정식 + 리지. 가우스 소거(부분 피벗). 특이하면 null — 그 시점은 회귀를 건너뛴다
+   (계속가치를 모르면 ★멈추지 않는다★ 로 둔다. 모르는 것을 근거로 청산하지 않는다). */
+function _lsmLstsq(X, y, k, ridge) {
+  const A = [], b = new Array(k).fill(0);
+  for (let i = 0; i < k; i++) A.push(new Array(k).fill(0));
+  for (let n = 0; n < X.length; n++) {
+    const x = X[n];
+    for (let i = 0; i < k; i++) { b[i] += x[i] * y[n]; for (let j = 0; j < k; j++) A[i][j] += x[i] * x[j]; }
+  }
+  for (let i = 0; i < k; i++) A[i][i] += ridge * (A[i][i] + 1);
+  for (let c = 0; c < k; c++) {
+    let p = c; for (let r = c + 1; r < k; r++) if (Math.abs(A[r][c]) > Math.abs(A[p][c])) p = r;
+    if (!(Math.abs(A[p][c]) > 1e-12)) return null;
+    if (p !== c) { const t = A[p]; A[p] = A[c]; A[c] = t; const tb = b[p]; b[p] = b[c]; b[c] = tb; }
+    for (let r = c + 1; r < k; r++) {
+      const f = A[r][c] / A[c][c]; if (!f) continue;
+      for (let j = c; j < k; j++) A[r][j] -= f * A[c][j];
+      b[r] -= f * b[c];
+    }
+  }
+  const w = new Array(k).fill(0);
+  for (let i = k - 1; i >= 0; i--) {
+    let s = b[i]; for (let j = i + 1; j < k; j++) s -= A[i][j] * w[j];
+    w[i] = s / A[i][i]; if (!isFinite(w[i])) return null;
+  }
+  return w;
+}
+/* ── LSM 후진귀납 본체 ────────────────────────────────────────────────────────
+   S    : [paths][steps+1] 가격 행렬(경로마다 0..steps 시점)
+   pay  : (price, t) → 그 시점에 멈췄을 때 받는 값
+   opt  : { disc: 스텝당 할인율, itmOnly: 행사가치>0 인 경로만 회귀(옵션 문제),
+            dead: [paths] 그 시점 이후 강제 종료(배리어) 인덱스 또는 null, deg, ridge }
+   반환 : { value: t=0 에서의 계속가치, exercise0: t=0 행사가치, stop: 멈춰야 하는가,
+            tau: 평균 정지 시점 }
+   ★t=0 은 회귀하지 않는다.★ 그 시점의 상태는 경로마다 같으므로 회귀할 분산이 없다 —
+   대신 계속가치의 몬테카를로 평균과 행사가치를 직접 비교한다(이것이 표준 처리다). */
+function _lsmCore(S, pay, opt) {
+  const O = opt || {};
+  const n = S.length; if (!n) return null;
+  const steps = S[0].length - 1; if (steps < 1) return null;
+  const deg = Math.max(1, Math.floor(_num(O.deg, LSM.deg)));
+  const k = deg + 1, ridge = _num(O.ridge, LSM.ridge), disc = _num(O.disc, 1);
+  const itmOnly = O.itmOnly !== false;
+  const dead = Array.isArray(O.dead) ? O.dead : null;   // dead[i] = 강제 종료 시점(없으면 null/Infinity)
+  const endT = new Array(n), cf = new Array(n), tau = new Array(n);
+  for (let i = 0; i < n; i++) {
+    const d = dead ? _num(dead[i], Infinity) : Infinity;
+    endT[i] = Math.min(steps, isFinite(d) ? d : steps);
+    cf[i] = pay(S[i][endT[i]], endT[i]);
+    tau[i] = endT[i];
+  }
+  let sc = 1; for (let i = 0; i < n; i++) { const a = Math.abs(S[i][0]); if (a > 0) { sc = a; break; } }
+  for (let t = steps - 1; t >= 1; t--) {
+    const idx = [];
+    for (let i = 0; i < n; i++) {
+      if (t >= endT[i]) continue;                       // 이미 배리어로 끝난 경로 — 여기 선택권이 없다
+      if (itmOnly && !(pay(S[i][t], t) > 0)) continue;
+      idx.push(i);
+    }
+    if (idx.length <= k) continue;                      // 표본이 계수보다 적으면 회귀하지 않는다(멈추지 않음)
+    const X = [], y = [];
+    for (const i of idx) {
+      const x = S[i][t] / sc, row = new Array(k);
+      let p = 1; for (let j = 0; j < k; j++) { row[j] = p; p *= x; }
+      X.push(row);
+      y.push(cf[i] * Math.pow(disc, tau[i] - t));       // ★실현값★ 을 t 시점으로 할인
+    }
+    const w = _lsmLstsq(X, y, k, ridge);
+    if (!w) continue;
+    for (let a = 0; a < idx.length; a++) {
+      const i = idx[a], ex = pay(S[i][t], t);
+      let cont = 0; for (let j = 0; j < k; j++) cont += w[j] * X[a][j];
+      if (ex > cont) { cf[i] = ex; tau[i] = t; }
+    }
+  }
+  let v = 0; for (let i = 0; i < n; i++) v += cf[i] * Math.pow(disc, tau[i]);
+  v /= n;
+  let mt = 0; for (let i = 0; i < n; i++) mt += tau[i]; mt /= n;
+  const ex0 = pay(S[0][0], 0);
+  return { value: v, exercise0: ex0, stop: ex0 >= v, tau: mt, paths: n, steps: steps };
+}
+/* ── 기록과 채점 ─────────────────────────────────────────────────────────────
+   ★새 판단기가 실거래를 흔들기 전에 자기 성적부터 남긴다.★ OPTMICRO 와 같은 규율이다.
+   여기 쌓는 건 "규칙과 LSM 이 ★서로 다르게 말한★ 순간" 뿐이다. 둘이 같은 말을 한 건은
+   비교할 것이 없어서 성적에 아무 정보도 주지 않는다(그리고 D1 을 채운다).
+   채점은 지평이 지난 뒤 그날 종가로 한다 — "그때 팔았어야 했나" 를 사후에 답하는 것이다. */
+async function lsmNoteDisagree(DB, market, symbol, rec) {
+  try {
+    if (!LSM.enabled || !rec) return;
+    const key = "lsm_log";
+    const cur = (await getState(DB, key, null)) || { rows: [] };
+    const rows = Array.isArray(cur.rows) ? cur.rows : [];
+    rows.push({ m: market, s: symbol, ts: Date.now(), px: rec.px, entry: rec.entry,
+                ruleSell: !!rec.ruleSell, lsmHold: !!rec.lsmHold, edge: rec.edgeBps,
+                h: rec.horizonDays, done: false });
+    while (rows.length > _num(LSM.logMax, 400)) rows.shift();
+    await setState(DB, key, { rows: rows, ts: Date.now() });
+  } catch (e) {}
+}
+/* 야간 채점. 지평이 지난 행만 본다. 새로 시세를 받지 않는다 — 이미 캐시된 일봉만 쓴다
+   (성적표 하나 만들자고 지갑을 열지 않는다. 캐시가 없으면 그 행은 다음 밤으로 미룬다). */
+async function lsmScoreNightly(DB) {
+  try {
+    if (!LSM.enabled) return "[LSM] 꺼짐";
+    const cur = await getState(DB, "lsm_log", null);
+    const rows = (cur && Array.isArray(cur.rows)) ? cur.rows : [];
+    if (!rows.length) return "[LSM] 기록 없음 — 규칙과 다르게 말한 순간이 아직 없다";
+    const st = (await getState(DB, "lsm_stats", null)) || { n: 0, lsmBetter: 0, ruleBetter: 0, tie: 0, sumGain: 0 };
+    let scored = 0, pend = 0, noData = 0;
+    for (const r of rows) {
+      if (r.done) continue;
+      const ageD = (Date.now() - _num(r.ts, 0)) / 86400000;
+      if (ageD < _num(r.h, 10)) { pend++; continue; }
+      let dd = null; try { dd = await getState(DB, "daily:" + r.s, null); } catch (e) {}
+      const cl = dd && Array.isArray(dd.closes) ? dd.closes : null;
+      if (!cl || !cl.length) { noData++; continue; }
+      const later = _num(cl[cl.length - 1], 0);
+      if (!(later > 0) || !(_num(r.px, 0) > 0)) { r.done = true; continue; }
+      /* 규칙이 팔자고 했으면 규칙의 결과는 그 시점 가격, LSM(보유)의 결과는 지평 뒤 가격.
+         반대면 뒤집는다. 양쪽 다 ★같은 자★ 로 잰다 — 진입가 대비 %. */
+      const pxNow = ((_num(r.px, 0) - _num(r.entry, 0)) / _num(r.entry, 1)) * 100;
+      const pxLater = ((later - _num(r.entry, 0)) / _num(r.entry, 1)) * 100;
+      const ruleOut = r.ruleSell ? pxNow : pxLater;
+      const lsmOut = r.lsmHold ? pxLater : pxNow;
+      const gain = lsmOut - ruleOut;
+      st.n++; st.sumGain += gain;
+      if (gain > 0.05) st.lsmBetter++; else if (gain < -0.05) st.ruleBetter++; else st.tie++;
+      r.done = true; scored++;
+    }
+    st.ts = Date.now();
+    st.avgGain = st.n ? +(st.sumGain / st.n).toFixed(3) : null;
+    /* ★승격 조건을 여기 적어 둔다 — 나중에 눈대중으로 정하지 않게.★
+       부호검정(sign test) 정규근사: 절반이 우연이라는 가설 아래 z = (k − n/2)/√(n/4).
+       동률은 표본에서 뺀다(부호가 없다). 기준은 다른 승격 게이트와 같은 1.65 다. */
+    const eff = st.lsmBetter + st.ruleBetter;
+    st.z = eff >= 1 ? +(((st.lsmBetter - eff / 2) / Math.sqrt(eff / 4))).toFixed(2) : null;
+    st.readyToPromote = !!(eff >= _num(LSM.promoteMinN, 40) && st.z != null &&
+                           st.z >= _num(ICGATE.provisional && ICGATE.provisional.tMin, 1.65) &&
+                           _num(st.avgGain, 0) > 0);
+    await setState(DB, "lsm_stats", st);
+    await setState(DB, "lsm_log", { rows: rows.filter(function (r) { return !r.done; }).slice(-_num(LSM.logMax, 400)), ts: Date.now() });
+    return "[LSM] 채점 " + scored + "건(대기 " + pend + " · 시세없음 " + noData + ") — 누적 " + st.n +
+           "건 LSM우세 " + st.lsmBetter + " / 규칙우세 " + st.ruleBetter + " / 동률 " + st.tie +
+           " · 평균차 " + (st.avgGain == null ? "—" : st.avgGain + "%p") +
+           " · z " + (st.z == null ? "—" : st.z) + (st.readyToPromote ? " · ★승격 조건 충족★" : " (승격 미달)");
+  } catch (e) { return "[LSM] 채점 예외: " + (e && e.message); }
+}
+/* ── ① 교과서 문제: 미국식 풋. ★답을 아는 값과 대조하기 위해 존재한다.★ ──────────
+   Longstaff & Schwartz(2001) Table 1 의 기준값과, "배당 없는 주식의 미국식 콜 =
+   유럽식 콜"(Merton) 이라는 정리가 이 엔진의 검산 근거다. 게이트가 둘 다 쓴다. */
+function lsmAmericanPut(S0, K, r, sigma, T, steps, paths, seed, isCall) {
+  if (!(S0 > 0 && K > 0 && sigma > 0 && T > 0 && steps >= 1 && paths >= 8)) return null;
+  const dt = T / steps, drift = (r - 0.5 * sigma * sigma) * dt, vol = sigma * Math.sqrt(dt);
+  const rng = _lsmRng(_num(seed, 20260829));
+  const M = [];
+  /* 대조변량(antithetic) — 같은 경로 수로 분산을 줄인다. 짝수로 맞춘다. */
+  const half = Math.floor(paths / 2);
+  for (let i = 0; i < half; i++) {
+    const zs = new Array(steps); for (let t = 0; t < steps; t++) zs[t] = _lsmNorm(rng);
+    for (const sgn of [1, -1]) {
+      const row = new Array(steps + 1); row[0] = S0;
+      for (let t = 1; t <= steps; t++) row[t] = row[t - 1] * Math.exp(drift + vol * sgn * zs[t - 1]);
+      M.push(row);
+    }
+  }
+  const pay = isCall ? function (p) { return Math.max(p - K, 0); }
+                     : function (p) { return Math.max(K - p, 0); };
+  const res = _lsmCore(M, pay, { disc: Math.exp(-r * dt), itmOnly: true });
+  if (!res) return null;
+  /* 미국식 값은 ★즉시 행사★ 를 밑으로 깔고 있다 — 회귀가 실패해 계속가치가 낮게 나와도
+     내재가치 아래로는 못 내려간다. 이건 근사가 아니라 정의다. */
+  return Math.max(res.value, pay(S0));
+}
+/* ── ② 실제 쓰임: 보유 포지션의 "지금 팔까, 더 들고 갈까" ─────────────────────
+   경로는 ★그 종목 자신의 과거 수익률★ 에서 블록 부트스트랩으로 만든다. GBM 을 쓰면
+   꼬리와 변동성 군집이 사라져, 정확히 손절이 걸리는 상황을 과소평가한다.
+   drift 는 ★기본이 0★ 이다. 여기에 과거 평균수익률을 넣으면 그건 모델이 아니라 모멘텀을
+   몰래 다시 넣는 것이다. 위원회가 낸 확률(pUp)이 있을 때만, 그 확률만큼 기울인다.
+   반환은 전부 ★진입가 대비 %★ 다. */
+function lsmExitValue(o) {
+  try {
+    if (!LSM.enabled || !o) return null;
+    const entry = _num(o.entry, 0), price = _num(o.price, 0);
+    const rets = Array.isArray(o.rets) ? o.rets.filter(function (v) { return isFinite(v) && Math.abs(v) < 0.5; }) : [];
+    const steps = Math.max(1, Math.min(60, Math.floor(_num(o.horizonDays, 10))));
+    if (!(entry > 0 && price > 0) || rets.length < 60) return null;
+    const t0 = Date.now(), budget = _num(o.maxMs, LSM.maxMs);
+    const N = Math.max(16, Math.floor(_num(o.paths, LSM.paths) / 2) * 2);
+    const B = Math.max(1, Math.floor(_num(LSM.block, 5)));
+    const rng = _lsmRng(_num(o.seed, 20260829));
+    /* 확률 기울임: pUp 0.5 면 0. 로그오즈를 지평 전체에 걸쳐 나눠 싣는다 —
+       하루치 초과수익을 '확률이 말한 만큼' 만 준다(임의의 배율을 곱하지 않는다). */
+    const pUp = _num(o.pUp, null);
+    let tilt = 0;
+    if (pUp != null && pUp > 0.001 && pUp < 0.999) {
+      let sd = 0; for (const r of rets) sd += r * r; sd = Math.sqrt(sd / rets.length);
+      tilt = (pUp - 0.5) * 2 * sd;   // |pUp−0.5|=0.5 → 하루 1σ. 그 이상은 못 넣는다.
+    }
+    const stop = _num(o.stopPrice, 0);
+    const M = [], dead = [];
+    for (let i = 0; i < N; i++) {
+      if ((Date.now() - t0) > budget) return null;   // 예산 초과 — 반쪽 계산을 답이라고 내놓지 않는다
+      const row = new Array(steps + 1); row[0] = price;
+      let d = Infinity, b = 0, pos = 0;
+      for (let t = 1; t <= steps; t++) {
+        if (b === 0) { pos = Math.floor(rng() * rets.length); b = B; }
+        const r = rets[pos % rets.length] + tilt; pos++; b--;
+        row[t] = row[t - 1] * (1 + r);
+        /* ★손절을 손절가에 체결시키면 안 된다.★ 처음엔 row[t] = stop 으로 적었는데,
+           그러면 100.2 → 99.3 으로 갭하락한 경로도 99.5 에 팔아 준 것이 되어 ★실제보다
+           유리한 체결★ 을 가정하게 된다. 손절이 촘촘할수록 이 이득이 커져서, 손절을
+           조일수록 계속가치가 올라가는 (틀린) 결과가 나왔다. 강제청산은 선택지를 뺏는
+           ★제약★ 이므로 계속가치를 올릴 수 없다 — 그게 최적정지 문제의 정의다.
+           갭을 뚫고 내려간 값 그대로 체결한다(보수적이고, 실제에 가깝다). */
+        if (stop > 0 && row[t] <= stop && !isFinite(d)) d = t;
+      }
+      for (let t = (isFinite(d) ? d + 1 : steps + 1); t <= steps; t++) row[t] = row[d];
+      M.push(row); dead.push(d);
+    }
+    const pay = function (p) { return (p - entry) / entry * 100; };
+    /* ★itmOnly=false★ — 옵션과 달리 청산은 손실 구간에서도 선택지다.
+       "돈이 안 되면 회귀에서 빼는" 규칙을 그대로 옮기면 손실 포지션의 정지 판단이 통째로 빠진다. */
+    const res = _lsmCore(M, pay, { itmOnly: false, dead: dead, disc: 1 });
+    if (!res) return null;
+    /* 손절 체결 통계 — ★검사가 '유리한 체결' 가정을 직접 확인할 수 있게★ 내보낸다.
+       초기 구현은 갭하락 경로도 손절가에 팔아 줬다. 숫자로 안 보이면 그런 가정은
+       코드를 한 줄씩 읽지 않는 한 드러나지 않는다. */
+    let hits = 0, fillSum = 0, worstFill = null;
+    for (let i = 0; i < dead.length; i++) {
+      if (!isFinite(dead[i])) continue;
+      const f = pay(M[i][dead[i]]);
+      hits++; fillSum += f;
+      if (worstFill == null || f > worstFill) worstFill = f;   // 가장 '유리했던' 체결
+    }
+    const exitNow = pay(price), holdV = res.value;
+    const edgeBps = Math.round((holdV - exitNow) * 100);   // %p → bp
+    return { exitNow: +exitNow.toFixed(3), holdValue: +holdV.toFixed(3), edgeBps: edgeBps,
+             hold: edgeBps >= _num(LSM.minEdgeBps, 25), meanTauDays: +res.tau.toFixed(2),
+             paths: res.paths, steps: steps, tiltUsed: +tilt.toFixed(5),
+             stopHits: hits, stopFillAvg: hits ? +(fillSum / hits).toFixed(3) : null,
+             stopFillBest: worstFill == null ? null : +worstFill.toFixed(3),
+             stopPnl: stop > 0 ? +((stop - entry) / entry * 100).toFixed(3) : null,
+             advisory: !!LSM.advisoryOnly, ms: Date.now() - t0 };
+  } catch (e) { return null; }
+}
 function _bsNormCdf(x) {
   // Abramowitz-Stegun 7.1.26 — 워커에 erf 가 없다.
   const sgn = x < 0 ? -1 : 1; const ax = Math.abs(x) / Math.SQRT2;
@@ -18110,6 +18405,7 @@ async function runTradingCycle(env) {
       //   phase 는 '어디에 시간이 갔는지'를 사이클마다 한 줄로 남기기 위한 계측이다(D1 write 0).
       const _enrich = { spent: 0, budget: 0, flowRefresh: 0, skipped: 0, slow: [],
                        seqMs: 0, seqBuilt: 0, seqSkip: 0 };   // [V33.267] SEQ 조립 계측
+      const _lsmCycle = { ms: 0, n: 0, dis: 0 };   // [V33.268] 최적정지 자문 계측(사이클 총량 상한)
       const _phase = { scalp: 0, flow: 0, opt: 0, intra: 0, decide: 0, news: 0 };
       let _symPrevT0 = 0, _symPrev = "", _symTotalMs = 0;   // [V33.172] 종목당 소요시간 계측
       // 부가조회 한 건을 지갑에서 결제한다. 잔액이 없으면 아예 실행하지 않고 건너뛴 횟수를 센다.
@@ -18653,6 +18949,39 @@ async function runTradingCycle(env) {
             //   '외부에서 POST 한 값' 뿐이었다. 소비·수신·생성 전부 제거한다.
             // 매도 판단 ([V12] crashGate.deRisk → 손절·트레일 타이트닝)
             const sellDecision = evaluateSell(held, price, daily, dailyRsi, dailyMa, dailyMaShort, mcfg, canTrade, market, deRiskOpts);
+            /* [V33.268] 최적정지 자문 — ★결정은 안 바꾼다(LSM.advisoryOnly).★
+               규칙과 다르게 말한 순간만 남겨서 성적을 쌓는다. 근거가 쌓이기 전에
+               실거래를 흔드는 건 이 저장소가 반복해 후회한 일이다. */
+            try {
+              if (LSM.enabled && daily && Array.isArray(daily.closes) && daily.closes.length >= 61
+                  && _lsmCycle.ms < _num(LSM.maxCycleMs, 400)) {
+                const _cl = daily.closes, _rt = [];
+                for (let _i = Math.max(1, _cl.length - 250); _i < _cl.length; _i++)
+                  if (_cl[_i - 1] > 0) _rt.push(_cl[_i] / _cl[_i - 1] - 1);
+                const _sp = (held.meta && typeof held.meta.stopPrice === "number") ? held.meta.stopPrice : 0;
+                const _t0 = Date.now();
+                const _lv = lsmExitValue({ entry: held.avg, price: price, rets: _rt, stopPrice: _sp,
+                  horizonDays: _num(AI_PARAMS.predictionHorizonDays, 10),
+                  /* ★기울임 없음(drift 0).★ 여기서 과거 평균수익률을 넣으면 그건 모델이 아니라
+                     모멘텀을 몰래 다시 넣는 것이고, 다른 예측기의 확률을 끌어오면 그 예측기의
+                     성적이 이 판단에 섞여 무엇을 재는지 모르게 된다. 이 계산이 답하는 질문은
+                     알파가 아니라 ★경로★ 다: "이 종목의 실제 수익률 분포와 내 손절 위치에서,
+                     더 들고 가는 쪽이 지금 파는 쪽보다 나은가." */
+                  pUp: null,
+                  seed: (symbol.charCodeAt(0) * 7919 + _cl.length) });
+                _lsmCycle.ms += Date.now() - _t0;
+                if (_lv) {
+                  _lsmCycle.n++;
+                  held._lsm = _lv;   // 화면·로그가 읽는다
+                  if (!!sellDecision.sell !== !_lv.hold) {
+                    _lsmCycle.dis++;
+                    await lsmNoteDisagree(DB, market, symbol, { px: price, entry: held.avg,
+                      ruleSell: !!sellDecision.sell, lsmHold: !!_lv.hold, edgeBps: _lv.edgeBps,
+                      horizonDays: _lv.steps });
+                  }
+                }
+              }
+            } catch (e) {}
             if (sellDecision.minHoldLock) {
               const heldHours = held.opened_ts ? (Date.now() - held.opened_ts) / 3600000 : 0;
               const pnlRate = ((price - held.avg) / held.avg) * 100;
@@ -23474,6 +23803,7 @@ async function handleRequest(request, env, ctx) {
         ["rvpanel", function (DB) { return rvBuildPanel(DB); }],
         ["univhealth", function (DB) { return univHealthNightly(DB); }],
         ["optmicro", function (DB) { return optMicroNightly(DB); }],
+        ["lsmscore", function (DB) { return lsmScoreNightly(DB); }],
         ["harvest", function (DB) { return mlMarketHarvestNightly(DB); }],
         // [V33.104] 전문가 재학습 앞 — 누출없는 STACK 표본 생성 후 기준선 갱신(크론과 동일 순서).
         ["stackbf", function (DB) { return stackSampleBackfill(DB, {}); }],
@@ -37673,6 +38003,31 @@ async function aiSelfCheck(DB, env) {
           R.warnings.push("옵션 미시구조 마지막 기록 " + _ox.ageH + "h 전 — 야간 수집이 멈췄는지 확인");
       }
     } catch (e) {}
+    /* [V33.268] 최적정지(Longstaff-Schwartz) 자문 성적 — ★지금은 결정을 안 바꾼다.★
+       규칙과 다르게 말한 순간만 모아 지평 뒤에 사후 채점하고, 부호검정 z 가 다른 승격
+       게이트와 같은 문턱(1.65)을 넘고 평균차가 양수일 때만 승격을 논한다.
+       이 줄이 화면에 없으면 "쌓고 있다" 는 말은 확인할 수 없는 주장이 된다. */
+    try {
+      const _lz = await getState(DB, "lsm_stats", null);
+      const _lg = await getState(DB, "lsm_log", null);
+      const _pend = (_lg && Array.isArray(_lg.rows)) ? _lg.rows.length : 0;
+      if (_lz || _pend) {
+        const _eff = _lz ? _num(_lz.lsmBetter, 0) + _num(_lz.ruleBetter, 0) : 0;
+        R.lsm = { mode: LSM.advisoryOnly ? "자문(결정 미반영)" : "반영", n: _lz ? _num(_lz.n, 0) : 0,
+                  lsmBetter: _lz ? _num(_lz.lsmBetter, 0) : 0, ruleBetter: _lz ? _num(_lz.ruleBetter, 0) : 0,
+                  tie: _lz ? _num(_lz.tie, 0) : 0, avgGain: _lz ? _lz.avgGain : null, z: _lz ? _lz.z : null,
+                  pending: _pend, needN: _num(LSM.promoteMinN, 40), effN: _eff,
+                  readyToPromote: !!(_lz && _lz.readyToPromote) };
+        if (_lz && _lz.readyToPromote)
+          R.ok.push("최적정지 자문 승격 조건 충족 — 유효 " + _eff + "건 · z " + _lz.z + " · 평균차 " + _lz.avgGain + "%p");
+        else if (_eff >= _num(LSM.promoteMinN, 40) && _lz && _num(_lz.avgGain, 0) <= 0)
+          R.warnings.push("최적정지 자문: 표본은 찼는데(유효 " + _eff + "건) 규칙보다 낫다는 근거가 없다(평균차 " +
+                      _lz.avgGain + "%p · z " + _lz.z + ") — 승격하지 않는다");
+        else
+          R.ok.push("최적정지 자문 기록 중 — 채점 " + (_lz ? _num(_lz.n, 0) : 0) + "건(유효 " + _eff +
+                    "/" + _num(LSM.promoteMinN, 40) + ") · 대기 " + _pend + "건 · 지금은 결정을 바꾸지 않는다");
+      }
+    } catch (e) {}
     // 가드 상태
     const guard = await getState(DB, "mind_guard", null);
     if (guard && guard.distrust) R.errors.push("자기감시 distrust 발동(라이브 정확도 급락) — ML 개입 중단 중");
@@ -44517,6 +44872,9 @@ export default {
             await _stg("univhealth", async function () { return await univHealthNightly(env.DB); });
             // [V33.264] 옵션 미시구조 기록 — 학습 파이프라인은 건드리지 않는다(오늘부터 시계만 돌린다).
             await _stg("optmicro", async function () { return await optMicroNightly(env.DB); });
+            /* [V33.268] 최적정지 자문 채점 — 규칙과 다르게 말한 순간을 지평 뒤에 사후 채점한다.
+               승격(실거래 반영)은 이 성적이 부호검정 z ≥ 1.65 를 넘긴 뒤에 논한다. */
+            await _stg("lsmscore", async function () { return await lsmScoreNightly(env.DB); });
             // (2.5) [HARVEST] 시장 자기지도 표본 수확 — 전 종목 일봉에서 "피처→N일 뒤 방향" 대량 편입
             await _stg("harvest", async function () { return await mlMarketHarvestNightly(env.DB); });
             // [V12.122] ★재구축기 재학습 가속★ _stg는 하루 1회만 학습을 허용하는데, 표본풀이 재구축
@@ -44656,6 +45014,7 @@ export {
   _dnnAdmit,                        // [V33.262] DNN 승격 판정(정확도 길 · IC 길)
   optMicroFromChain, _bsDeltaGamma, OPTMICRO,   // [V33.264] 옵션 미시구조
   _calFeats, _opexCtx, _fomcCtx, FOMC_DAYS, _thirdFriday,   // [V33.265] 달력 사건
+  LSM, lsmAmericanPut, lsmExitValue, _lsmCore, _lsmLstsq,   // [V33.268] 최적정지(Longstaff-Schwartz)
   seqFormerScore, SEQML, seqBuildFeat, _seqRosterRow,   // [V33.267] 시퀀스 Transformer(채점·입력조립·명단)
   mlDeepDecide,                     // [V33.267] 검사가 위원회를 ★직접 돌려★ 표가 실제로 들어가는지 본다
   dualHeadJudge, _boostersCached,   // [V33.257] 자가진단 명단 검사가 '위원회가 쓰는 그 함수' 를 직접 돌린다
