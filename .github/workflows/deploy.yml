@@ -391,6 +391,12 @@ jobs:
       #   화면 코드는 index.html 안에 있어 ★그 텍스트를 떼어 그대로 실행★ 한다(브라우저 안 띄운다).
       - name: SEQ 3D 관측 검사 (가중치 출처 · 어텐션 단일구현 · 사영 수학)
         run: node tools/check-seq3d.mjs
+      # [V33.272] STACK 에 SEQ 슬롯. 위원 목록이 이 파일에 손으로 네 번 적혀 있었다 —
+      #   하나만 고치고 셋을 놓치면 STACK 이 "그 자리는 boost" 라고 배운 채로 다른 확률을
+      #   받는다(성적으로만 드러나는 사고). 지금은 STACK_SLOTS 하나뿐이고, 이 검사가
+      #   그 사실과, 소급생성이 seq 를 정직하게 기권하는지(ts 근사로 재구성하지 않는지)를 본다.
+      - name: STACK·SEQ 배선 검사 (슬롯 단일출처 · 라이브 결합 · 소급생성 기권)
+        run: node tools/check-stack-seq.mjs
       # cloudflare/wrangler-action 대신 로컬에서 검증된 방식 그대로 실행
       # (wrangler-action@v3의 npx 자동설치가 4.86.0을 요구하며 실패하던 문제 회피)
       - name: Install wrangler

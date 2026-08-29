@@ -138,8 +138,12 @@ const no = (m) => { console.error("  FAIL " + m); bad++; };
     else ok("채점 슬롯 전부가 _allow 를 지난다(mind·dnn·gbdt·boost·memo)");
   }
 
-  // 오염된 판과 섞이지 않게 판이 올라갔는가
-  const fv = (src.match(/featVer:\s*(\d+),\s*\n\s*minTrainSamples:\s*600/) || [])[1];
+  /* 오염된 판과 섞이지 않게 판이 올라갔는가.
+     [V33.272] ★인접 매칭을 버렸다.★ featVer 와 minTrainSamples 사이에 주석 한 줄만 끼어도
+     이 정규식이 깨졌다 — 실제로 SEQ 슬롯을 더하며 그 사이에 설명을 적었더니 걸렸다.
+     "STACKML 선언부 안에서" 찾는 것으로 바꾼다 — 두 필드가 붙어 있을 필요가 없다. */
+  const _stBlk = (src.match(/const STACKML = \{[\s\S]*?\n\};/) || [""])[0];
+  const fv = (_stBlk.match(/featVer:\s*(\d+)/) || [])[1];
   if (!(Number(fv) >= 5)) no("STACK-OOF: 오염 발견 후에도 STACKML.featVer 가 그대로다 — 옛 표본과 섞인다");
   else ok(`STACKML.featVer = ${fv} — 오염된 표본과 판이 갈렸다`);
 
@@ -313,7 +317,10 @@ const no = (m) => { console.error("  FAIL " + m); bad++; };
   // (a) 스키마는 아이솔레이트당 한 번 — 표본마다가 아니다.
   {
     const d = countingDb({});
-    const fv = new Array(16).fill(0.5);
+    /* [V33.272] ★16 을 손으로 적지 않는다.★ SEQ 슬롯이 더해져 차원이 18 이 됐다 —
+       여기서 옛 값을 고집하면 stackLogSample 의 길이 가드가 조용히 거부해 이 검사
+       자체가 "적재 0 회" 를 정상으로 오인하게 된다(실제로 그렇게 걸렸다). */
+    const fv = new Array(M2.STACK_SLOTS.length * 2).fill(0.5);
     for (let i = 0; i < 5; i++) await M2.stackLogSample(d, "us", "AAA", fv, 1.0, Date.now(), "live");
     if (d._n.create <= 1 && d._n.alter <= 1)
       ok("스키마 보장은 표본마다가 아니라 최대 1회 (CREATE " + d._n.create + " / ALTER " + d._n.alter + " · 표본 5건)");

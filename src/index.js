@@ -2977,7 +2977,7 @@ async function applySignalTypeWeights(DB, cfg) {
 // ============================================================================
 // [V33.55] 빌드 버전 — SWR L2 캐시 키에 섞어 '배포 = 판단 캐시 자동 무효화'를 만든다.
 //   판정 로직을 고쳐도 옛 캐시가 최대 1시간 재배포되던 문제를 구조적으로 없앤다.
-const _BUILD_VER = "V33.271";
+const _BUILD_VER = "V33.272";
 
 // ═══ [V33.171] 평가 순서 계획 — ★승격과 순환을 교차해 굶주림을 구조적으로 없앤다★ ═══
 //   V33.50 의 형태트리거는 "급한 몇 종목을 앞으로 당긴다"는 의도였으나, 실제 운영로그에서는
@@ -22488,7 +22488,7 @@ async function handleRequest(request, env, ctx) {
       _ov.stack = {
         trained: !!stackM, featVer: stackM ? stackM.featVer : null, wantVer: STACKML.featVer,
         featVerOk: !!(stackM && stackM.featVer === STACKML.featVer),
-        dim: 16, slots: ["mind", "dnn", "gbdt", "boost", "flow", "xalpha", "memo", "rule"],
+        dim: STACK_SLOTS.length * 2, slots: STACK_SLOTS,   // [V33.272] 세 번째로 숨어 있던 손복사
         n: stackM ? _num(stackM.n, null) : null, minN: STACKML.minTrainSamples,
         valAcc: _pc(stackM ? _num(stackM.valAcc, null) : null),
         ic: stackM ? +_num(stackM.valICBlock, 0).toFixed(4) : null,
@@ -29390,6 +29390,12 @@ function dualHeadJudge(bullM, bearM, featVec, opts) {
 //   입력: 전문가 7명의 확률 7개 + 참여마스크 7개 = 14차원.
 //   참여마스크를 함께 넣는 이유: "그 전문가가 오늘 없었다"와 "있었는데 0.5였다"는 다른 정보다.
 //   마스크가 없으면 결측을 중립값으로 채우는 순간 두 경우가 구분되지 않아 메타모델이 헷갈린다.
+/* [V33.272] ★위원 슬롯 목록을 한 곳에만 둔다.★ 종전엔 이 배열이 두 곳
+   (mlDeepDecide 의 라이브 결합, stackSampleBackfill 의 소급생성)에 손으로 각각 적혀
+   있었다 — 하나만 고치고 다른 쪽을 놓치면 STACK 이 "3번 자리는 boost" 라고 배운
+   채로 "3번 자리는 flow" 인 벡터를 받게 된다. 눈으로는 안 보이고 성적으로만 드러나는
+   사고다. seq 를 넣으며 하나로 합친다. */
+const STACK_SLOTS = ["mind", "dnn", "gbdt", "boost", "flow", "xalpha", "memo", "seq", "rule"];
 const STACKML = {
   enabled: true,
   // [V33.104] 2 → 3. 차원은 그대로 16 이지만 ★표본의 성질★ 이 바뀌었다 —
@@ -29410,14 +29416,23 @@ const STACKML = {
          표본 6,331 → 블록IC 0.1254 · t 1.73
          표본 6,931 → 블록IC 0.0295 · t 0.91   (600건 더했는데 t 가 절반)
      표본이 늘수록 나빠지는 것은 '표본 부족' 이 아니라 ★섞인 표본★ 의 모양이다.
-     옛 표본과 섞으면 오염이 그대로 남으므로 판으로 가른다(DELETE 불필요 — 조회가 featver 로 걸린다). */
-  featVer: 5,
-  minTrainSamples: 600,     // 14차원이라 600건이면 수렴한다
+     옛 표본과 섞으면 오염이 그대로 남으므로 판으로 가른다(DELETE 불필요 — 조회가 featver 로 걸린다).
+     [V33.272] 5 → 6. ★차원이 실제로 바뀐다★ — SEQ 슬롯이 더해져 8확률+8마스크(16)에서
+     9확률+9마스크(18)가 된다. 옛 16차원 표본과 섞으면 벡터 자리가 통째로 밀린다
+     (17번째 값이 옛 표본에선 없던 자리인데 새 모델은 그걸 seq확률로 읽는다) — 반드시
+     판을 가른다. STACK_SLOTS.length*2 로 계산하므로 다음에 슬롯이 또 늘어도 이 숫자
+     자체는 손댈 필요가 없다(다만 featVer 는 그때도 올려야 한다 — 차원이 바뀌므로). */
+  featVer: 6,
+  /* [V33.272] ★minTrainSamples 는 안 건드린다.★ 14→16차원 때(MEMO 합류)도 이 값은
+     600 그대로였다 — "차원이 늘었으니 표본도 더" 는 그럴듯하지만 잰 적이 없다.
+     추측으로 문턱을 올리면 근거 없이 승격을 늦추는 것과 같다(다른 문턱들은 전부
+     실측·전진검증으로 정했다). 표본이 실제로 부족하면 icFloor·strictGate 가 잡는다. */
+  minTrainSamples: 600,
   trainWindow: 40000,
   l2: 1.5,                  // 전문가 확률끼리 상관이 높아 규제를 조금 세게
   icFloor: 0.015,           // 투표를 대체하는 자리라 문턱을 FLOW/XALPHA 보다 높게
   // ── [V33.209] 비선형 헤드 ──
-  nlHidden: 10,             // MLP 은닉 노드 수. 16입력에 10이면 파라미터 ~180 — 600표본에서 감당 가능한 크기
+  nlHidden: 10,             // MLP 은닉 노드 수. 18입력에 10이면 파라미터 ~200 — 700표본에서 감당 가능한 크기
   nlTrees: 160,             // GBDT 최대 트리(내부검증 조기종료가 실제 수를 정한다)
   nlMargin: 0.005           // 선형을 갈아치우려면 정확도 ★하한★ 에서 이만큼 앞서야 한다(0.5%p)
 };
@@ -29448,7 +29463,7 @@ function _stackInsStmt(DB, market, symbol, featVec, pnlPct, tsMs, src) {
 // 단건 적재(라이브 청산 경로) — 호출 빈도가 낮아 왕복 1회면 충분하다.
 async function stackLogSample(DB, market, symbol, featVec, pnlPct, tsMs, src) {
   try {
-    if (!STACKML.enabled || !Array.isArray(featVec) || featVec.length !== 16) return;
+    if (!STACKML.enabled || !Array.isArray(featVec) || featVec.length !== STACK_SLOTS.length * 2) return;
     await _stackEnsureSchema(DB);
     await _stackInsStmt(DB, market, symbol, featVec, pnlPct, tsMs, src).run();
   } catch (e) {}
@@ -29644,13 +29659,21 @@ async function stackSampleBackfill(DB, opts) {
           P.rule = _clamp(_sigmoid(_logit(raw) - _logit(tau)), 0.01, 0.99); M.rule = 1;
         }
       } catch (e) {}
+      /* [V33.272] ★seq 는 여기서 채우지 않는다 — 채울 수 없다.★ 다른 전문가는 이 행의
+         피처벡터 v(오늘 한 시점) 하나로 다시 채점할 수 있지만, SEQ 는 같은 종목의 최근
+         L봉 ★시퀀스★ 가 있어야 채점된다. ml_samples.ts 는 "봉 수 × 1일" 근사(V33.173 주석 —
+         2000봉이면 800일 가까이 어긋난다)라 그 시각으로 정확한 봉 인덱스를 되짚을 수 없다 —
+         틀린 자리를 갖다 붙이면 이 저장소가 반복해 당한 '조용한 오염'이 그대로 재현된다.
+         → seq 슬롯은 이 소급생성 경로에서는 항상 마스크 0 이고, ★라이브 청산 표본
+         (stackLogSample, pos.meta.stackFeat)★ 에서만 실제 값이 들어온다 — 그건 결정
+         당시 진짜 계산된 값이라 재구성이 필요 없다. 거래가 쌓일수록 seq 마스크가 있는
+         표본 비율이 자연히 올라간다. */
       // 전문가가 2명 미만이면 스태킹 표본으로 의미가 없다.
       const nExp = Object.keys(P).length;
       if (nExp < 2) { skipped++; continue; }
-      const SLOTS = ["mind", "dnn", "gbdt", "boost", "flow", "xalpha", "memo", "rule"];
       const fv = [];
-      for (const k of SLOTS) fv.push(P[k] != null ? _clamp(P[k], 0.001, 0.999) : 0.5);
-      for (const k of SLOTS) fv.push(M[k] ? 1 : 0);
+      for (const k of STACK_SLOTS) fv.push(P[k] != null ? _clamp(P[k], 0.001, 0.999) : 0.5);
+      for (const k of STACK_SLOTS) fv.push(M[k] ? 1 : 0);
       // [V33.173] 원본 행의 관측 시각 · [V33.227] 경로 · [V33.233] 묶음으로 보낸다
       _pendIns.push(_stackInsStmt(DB, r.market || "us", r.symbol || null, fv, _num(r.pnl_pct, 0),
         _num(r.ts, 0), _src === "홀드아웃" ? "oof" : "epoch"));
@@ -29706,7 +29729,7 @@ async function stackTrainNightly(DB) {
   if (!STACKML.enabled) return null;
   return await _miniLogisticTrain(DB, {
     table: "stack_samples", stateKey: "stack_model", tag: "STACK",
-    featVer: STACKML.featVer, D: 16,
+    featVer: STACKML.featVer, D: STACK_SLOTS.length * 2,
     minN: STACKML.minTrainSamples, window: STACKML.trainWindow,
     l2: STACKML.l2, icFloor: STACKML.icFloor,
     // [V33.209] ★비선형 헤드 경합을 켜는 곳은 여기 하나다.★ STACK 만 켠다 —
@@ -35264,9 +35287,8 @@ const _LINVIZ = {
   flow:     { key: "flow_model",      label: "FLOW (수급·피어)",        names: function () { return FLOWML.featNames; }, ver: function () { return FLOWML.featVer; } },
   xalpha:   { key: "xalpha_model",    label: "XALPHA (형식알파·랭크)",  names: function () { return XALPHA.featNames; }, ver: function () { return XALPHA.featVer; } },
   stack:    { key: "stack_model",     label: "STACK (위원회 결합)",      names: function () {
-      // 입력은 전문가 확률 8 + 참여마스크 8 = 16. 이름을 그대로 지어 줘야 화면이 읽힌다.
-      const sl = ["mind", "dnn", "gbdt", "boost", "flow", "xalpha", "memo", "rule"];
-      return sl.map(function (x) { return "p:" + x; }).concat(sl.map(function (x) { return "참여:" + x; }));
+      // [V33.272] 네 번째로 숨어 있던 손복사 — STACK_SLOTS 하나로 합친다.
+      return STACK_SLOTS.map(function (x) { return "p:" + x; }).concat(STACK_SLOTS.map(function (x) { return "참여:" + x; }));
     } },
   dualbull: { key: "dual_bull_model", label: "이중헤드 · 강세",          names: function () { return LUXML.featNames; } },
   dualbear: { key: "dual_bear_model", label: "이중헤드 · 약세",          names: function () { return LUXML.featNames; } }
@@ -36676,16 +36698,17 @@ async function mlDeepDecide(DB, featVec, opts) {
     //   Numerai 메타모델·Kaggle 상위 해법이 공통으로 쓰는 표준 결합 방식이고,
     //   "여러 모델을 하나의 정교한 모델로 통합"이라는 요구에 정확히 대응한다.
     //   학습 전에는 기존 IC 가중 투표를 그대로 쓴다(공백 없음).
-    // [V33.92] MEMO 합류로 슬롯이 8개가 된다 → STACK 입력은 8확률+8마스크 = 16차원.
-    //   STACKML.featVer 를 올려 옛 14차원 표본·모델과 섞이지 않게 한다(차원 불일치 사고 방지).
-    const _EXPERT_SLOTS = ["mind", "dnn", "gbdt", "boost", "flow", "xalpha", "memo", "rule"];
+    // [V33.92] MEMO 합류로 슬롯이 8개가 됐고, [V33.272] SEQ 합류로 9개가 된다 →
+    //   STACK 입력은 9확률+9마스크 = 18차원. 목록은 STACK_SLOTS 하나뿐이다 —
+    //   여기와 stackSampleBackfill 이 각자 배열을 들고 있으면 어긋나는 순간 STACK 이
+    //   "그 자리는 boost" 라고 배운 채로 다른 전문가의 확률을 받게 된다.
     let _stackFeat = null;
     try {
       const _byName = {};
       for (const ex of experts) _byName[ex.name] = ex;
       _stackFeat = [];
-      for (const nm of _EXPERT_SLOTS) _stackFeat.push(_byName[nm] ? _clamp(_byName[nm].p, 0.001, 0.999) : 0.5);
-      for (const nm of _EXPERT_SLOTS) _stackFeat.push(_byName[nm] ? 1 : 0);   // 참여 여부 마스크
+      for (const nm of STACK_SLOTS) _stackFeat.push(_byName[nm] ? _clamp(_byName[nm].p, 0.001, 0.999) : 0.5);
+      for (const nm of STACK_SLOTS) _stackFeat.push(_byName[nm] ? 1 : 0);   // 참여 여부 마스크
     } catch (e) { _stackFeat = null; }
 
     let pCombined = experts[0].p;        // 단일 전문가면 그 확률 그대로
@@ -45297,7 +45320,7 @@ export {
   _expRegBucket, _expRegIC, EXPREG,
   // [V33.228] STACK 홀드아웃 커서 계약 검증용 — tools/check-stack-oof.mjs 가 실제로 돌린다.
   //   판(featVer)이 올라간 뒤 커서가 창 끝에 서서 소급생성이 영영 멈추는 회귀를 잡는다.
-  stackSampleBackfill, stackLogSample, STACKML,
+  stackSampleBackfill, stackLogSample, STACKML, STACK_SLOTS,   // [V33.272] 검사가 슬롯 목록을 직접 본다
   // [V33.239] 하이킨아시 추세반전 피처 검증용 — tools/check-heikin.mjs 가 수치로 확인한다.
   _mlHeikinFeats,
   // [V33.251] 이중헤드 라벨 정규화 검증용 — tools/check-dualhead.mjs 가 수치로 확인한다.
