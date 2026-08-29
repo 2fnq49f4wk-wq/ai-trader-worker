@@ -106,6 +106,57 @@ console.log("\n② 어텐션은 ★채점에 쓰이는 그 함수★ 에서 나�
     "표본 없이도 어텐션을 그린다 — 그건 관측이 아니라 장식이다");
 }
 
+console.log("\n②-b 노드 ★값★ — 가중치만으로는 못 그린다(입력이 있어야 존재한다)");
+{
+  const m = mkModel();
+  const v = M._seqVizFrom(m, null);
+  chk(v.nodes && v.nodes.proj.length === L && v.nodes.proj[0].length === dm &&
+      v.nodes.attn.length === L && v.nodes.ffn.length === L,
+    `단계별 노드 값을 ${L}시점 × ${dm}차원으로 낸다(사영·어텐션뒤·FFN뒤)`, "노드 값을 안 낸다 — 그리면 그건 지어낸 것이다");
+  /* 세 단계가 같은 배열이면 그건 한 번 계산해 세 번 붙인 것이다 — 그림만 셋으로 보인다. */
+  const same = JSON.stringify(v.nodes.proj) === JSON.stringify(v.nodes.attn) ||
+               JSON.stringify(v.nodes.attn) === JSON.stringify(v.nodes.ffn);
+  chk(!same, "세 단계의 노드 값이 서로 다르다(잔차가 실제로 더해진다)", "★단계들이 같은 값이다 — 한 번 계산해 세 번 붙였다★");
+  /* 캡처가 채점 경로 그 자체인지 — 값을 바꾸면 확률도 따라 움직여야 한다. */
+  const m2 = mkModel(); for (let i = 0; i < dm; i++) m2.bin[i] += 3;
+  const v2 = M._seqVizFrom(m2, null);
+  chk(JSON.stringify(v2.nodes.proj) !== JSON.stringify(v.nodes.proj) && v2.attnP !== v.attnP,
+    "가중치를 바꾸면 노드 값과 확률이 함께 움직인다(같은 계산에서 나온다)",
+    "가중치를 바꿔도 노드 값이 그대로다 — 채점과 다른 곳에서 나온 수다");
+  chk(Array.isArray(v.nodes.ffLive) && v.nodes.ffLive.length === L && v.nodes.ffLive.every(x => x >= 0 && x <= (v.ffHidden || 0)),
+    `시점마다 FFN 활성 유닛 수를 센다 (t${L - 1}: ${v.nodes.ffLive[L - 1]}/${v.ffHidden})`, "활성 유닛을 안 센다");
+  chk(Array.isArray(v.vizSeq) && v.vizSeq.length === L && v.vizSeq[0].length === D,
+    "표본 입력값도 함께 내려간다(피처를 눌렀을 때 '그때 값' 을 보여줄 수 있다)", "표본 입력을 안 내려보낸다 — 피처 상세가 반쪽이 된다");
+}
+
+console.log("\n②-c 눌러서 볼 수 있는가 — 피처 75개·노드 32개가 낱개로 있는가");
+{
+  const draw = grabFn("sq3Draw") || "", pick = grabFn("sq3DrawPick") || "";
+  chk(/NB=IF\?IF\.length:24/.test(draw.replace(/\s/g, "")),
+    "입력 피처를 ★낱개로★ 그린다(묶으면 무엇이 세게 들어가는지 못 묻는다)",
+    "입력을 묶음 막대로만 그린다 — 개별 피처를 가리킬 수 없다");
+  chk(/data-pick="feat:/.test(draw) && /data-pick="node:/.test(draw) && /data-pick="step:/.test(draw),
+    "피처·노드·시점이 전부 클릭 대상이다", "클릭 대상이 없다 — 볼 수는 있어도 물어볼 수는 없다");
+  chk(/<title>/.test(draw), "마우스를 올리면 이름과 값이 뜬다(네이티브 title)", "툴팁이 없다");
+  chk(/d\.nodes\[nk\]\[t2\]/.test(draw.replace(/\s/g, "")) || /d\.nodes\[nk\] && d\.nodes\[nk\]\[t2\]/.test(draw),
+    "카드 안 칸은 저장된 노드 ★값★ 을 그린다", "카드 안이 가중치 노름뿐이다 — 값이 아니다");
+  chk(/neg\?'255,110,140':'0,224,255'/.test(draw.replace(/\s/g, "")),
+    "부호를 색으로 나눈다(절댓값만 그리면 밀어 올린 노드와 눌러 내린 노드가 같아 보인다)", "부호가 안 보인다");
+  chk(/addEventListener\('click'/.test(HV) && /data-pick/.test(HV),
+    "클릭은 위임으로 받는다(SVG 를 매 프레임 다시 만들므로 개별 리스너는 죽는다)", "개별 리스너를 단다 — 회전 한 번에 죽는다");
+  /* ★설명 문장을 찾으면 안 된다.★ 처음엔 '받는 주목' 이라는 말을 찾았는데, 필드 라벨에서
+     그 말을 지워도 아래 설명 문단에 같은 말이 남아 검사가 통과했다. 세어야 할 것은 말이 아니라
+     ★계산★ 이다: 행(내가 보는 것)과 열(내가 받는 것)은 다른 합이다. 열 합을 실제로 구하는가. */
+  chk(/col\+=\(d\.attn\[hh\]\[r2\]&&d\.attn\[hh\]\[r2\]\[t\]\)\|\|0/.test(pick.replace(/\s/g, "")),
+    "'받는 주목' 을 어텐션 행렬의 ★열★ 로 실제 계산한다(행과 열은 다른 값이다)",
+    "★열 합을 구하지 않는다 — 행 하나로 두 방향을 다 말하면 그 중 하나는 틀린 값이다★");
+  chk(/보는 비중/.test(pick), "두 방향을 화면에 구분해 적는다", "방향 구분이 화면에 없다");
+  chk(/그 표본이 지나갈 때의 실제 값/.test(pick),
+    "노드 상세가 '가중치가 아니라 그 표본의 값' 이라고 명시한다", "값의 출처를 안 적는다");
+  chk(/SQ3\.cells && SQ3\.spin/.test(HV) && /SQ3\.spin=false/.test(HV.replace(/\s/g, "")),
+    "낱개 보기를 켜면 자동회전을 멈춘다(조용히 느려지지 않는다)", "낱개 + 회전을 같이 돌린다 — 프레임이 끊긴다");
+}
+
 console.log("\n③ 미학습·구 판 — 모르는 것을 아는 것처럼 그리지 않는가");
 {
   const v = M._seqVizFrom(null, null);

@@ -2977,7 +2977,7 @@ async function applySignalTypeWeights(DB, cfg) {
 // ============================================================================
 // [V33.55] 빌드 버전 — SWR L2 캐시 키에 섞어 '배포 = 판단 캐시 자동 무효화'를 만든다.
 //   판정 로직을 고쳐도 옛 캐시가 최대 1시간 재배포되던 문제를 구조적으로 없앤다.
-const _BUILD_VER = "V33.269";
+const _BUILD_VER = "V33.270";
 
 // ═══ [V33.171] 평가 순서 계획 — ★승격과 순환을 교차해 굶주림을 구조적으로 없앤다★ ═══
 //   V33.50 의 형태트리거는 "급한 몇 종목을 앞으로 당긴다"는 의도였으나, 실제 운영로그에서는
@@ -12101,8 +12101,10 @@ function _sqSoftmax(a) {
 }
 /* seq: [L][D] — 오래된 것부터 최신 순. 짧으면 ★앞을 가장 오래된 행으로 채운다★
    (0 으로 채우면 표준화 후 '평균값 봉' 이 되어 없는 과거를 지어내는 셈이다). */
-/* cap(선택): { attn: [heads][L][L] } 를 채운다. ★관측용으로 두 번째 구현을 만들지 않는다★ —
-   화면이 그리는 어텐션은 반드시 채점에 쓰이는 그 계산에서 나와야 한다. 없으면 아무 일도 안 한다. */
+/* cap(선택): 관측용으로 중간값을 담아 준다 — { attn:[heads][L][L], proj:[L][d], hAttn:[L][d], hFfn:[L][d] }.
+   ★관측용으로 두 번째 구현을 만들지 않는다★ — 화면이 그리는 값은 반드시 채점에 쓰이는 그
+   계산에서 나와야 한다. cap 이 없으면 아무 일도 안 하고, 있어도 채점 결과는 한 비트도 안 바뀐다
+   (검사가 그것을 확인한다). 노드 '값' 은 입력이 있어야만 존재한다 — 가중치만으로는 못 그린다. */
 function seqFormerScore(model, seq, cap) {
   try {
     if (!model || !Array.isArray(seq) || !seq.length) return null;
@@ -12132,6 +12134,7 @@ function seqFormerScore(model, seq, cap) {
       for (let i = 0; i < d; i++) h[i] += _num(pt[i], 0);
       Hm.push(h);
     }
+    if (cap) cap.proj = Hm.map(function (h) { return h.slice(); });
     // ── 어텐션(프리노름)
     const A = Hm.map(function (h) { return _sqLn(h, model.ln1g, model.ln1b); });
     const Q = A.map(function (a) { return _sqMatVec(model.Wq, model.bq, a); });
@@ -12159,13 +12162,17 @@ function seqFormerScore(model, seq, cap) {
       const o = _sqMatVec(model.Wo, model.bo, ctx[t]);
       for (let i = 0; i < d; i++) Hm[t][i] += o[i];
     }
+    if (cap) cap.hAttn = Hm.map(function (h) { return h.slice(); });
     // ── FFN(프리노름)
     for (let t = 0; t < L; t++) {
       const b1v = _sqMatVec(model.W1, model.b1, _sqLn(Hm[t], model.ln2g, model.ln2b));
       for (let i = 0; i < b1v.length; i++) if (b1v[i] < 0) b1v[i] = 0;
       const f = _sqMatVec(model.W2, model.b2, b1v);
       for (let i = 0; i < d; i++) Hm[t][i] += f[i];
+      if (cap) { let live = 0; for (let i = 0; i < b1v.length; i++) if (b1v[i] > 1e-9) live++;
+                 (cap.ffLive || (cap.ffLive = []))[t] = live; }
     }
+    if (cap) cap.hFfn = Hm.map(function (h) { return h.slice(); });
     // ── 마지막 시점 → 확률
     const last = _sqLn(Hm[L - 1], model.lng, model.lnb);
     let z = _num(model.bh, 0);
@@ -12486,7 +12493,7 @@ function _seqVizFrom(m, t) {
     let ffDead = 0; for (const v of ffN) if (v < 0.05) ffDead++;
     const headW = _sqNorm01((m.Wh || []).map(function (v) { return Math.abs(_num(v, 0)); }));
     /* ★어텐션은 실제 표본에서만.★ 없으면 null — 화면이 그 사실을 적는다. */
-    let attn = null, attnP = null, attnErr = null;
+    let attn = null, attnP = null, attnErr = null, nodes = null;
     try {
       if (Array.isArray(m.vizSeq) && m.vizSeq.length) {
         const cap = {};
@@ -12494,6 +12501,11 @@ function _seqVizFrom(m, t) {
         if (p != null && cap.attn && cap.attn.length) {
           attn = cap.attn.map(function (hd) { return hd.map(function (row) { return row.map(function (w) { return +w.toFixed(4); }); }); });
           attnP = +p.toFixed(4);
+          /* 노드 ★값★ — 가중치만으로는 못 그린다. 이건 저 표본이 지나갈 때 각 시점·각 노드가
+             실제로 가졌던 수다. 소수 3자리로 줄여 보낸다(16×32×3 ≈ 12KB). */
+          const rnd3 = function (M2) { return M2.map(function (row) { return row.map(function (v) { return +_num(v, 0).toFixed(3); }); }); };
+          nodes = { proj: rnd3(cap.proj || []), attn: rnd3(cap.hAttn || []), ffn: rnd3(cap.hFfn || []),
+                    ffLive: (cap.ffLive || []).slice() };
         } else attnErr = "표본으로 재현이 안 됩니다(모델 형상 확인 필요)";
       } else attnErr = "관측용 표본이 없습니다 — 다음 학습 업로드부터 실제 어텐션이 표시됩니다";
     } catch (e) { attnErr = "어텐션 계산 예외"; }
@@ -12514,7 +12526,9 @@ function _seqVizFrom(m, t) {
       featNames: fn.slice(), inputFeatures: inputFeatures, topFeatures: topFeatures,
       posStrength: posStrength, headStats: headStats,
       ffStrength: ffN, ffDead: ffDead, headWeight: headW,
-      attn: attn, attnP: attnP, attnErr: attnErr, vizP: (m.vizP == null ? null : _num(m.vizP, null)),
+      attn: attn, attnP: attnP, attnErr: attnErr, nodes: nodes,
+      vizSeq: Array.isArray(m.vizSeq) ? m.vizSeq.map(function (r) { return r.map(function (v) { return +_num(v, 0).toFixed(3); }); }) : null,
+      vizP: (m.vizP == null ? null : _num(m.vizP, null)),
       trust: t || null
     };
   }
@@ -35330,7 +35344,9 @@ const DNN = {
      되돌리라는 지시를 받았다. 그대로 되돌린다.
 
      되돌리면서 남기는 사실(판단이 아니라 측정값이다):
-       · 넷당 763,345 파라미터 · Modal 이 6시드로 덮어쓰므로 총 4,580,070.
+       · 넷당 파라미터는 입력 차원에 따라 변한다 — featVer 13(65피처) 때 763,345 였고,
+         featVer 15(75피처)인 지금은 ★769,745★, Modal 이 6시드로 덮어쓰므로 총 4,618,470.
+         (이 주석의 숫자가 한 번 낡았다. 그래서 화면은 주석이 아니라 아래를 본다.)
          이 숫자는 이제 ★코드가 dims 에서 세어★ 화면으로 내려간다(_dnnParamCount).
          종전에는 화면이 "3M" 이라는 문자열을 들고 있어서, 구조를 바꾸는 순간 거짓이 됐다.
        · 학습은 Modal(T4 GPU)이 맡는다 — 표본 185,408건 전부 · 400에폭 · 조기종료 · 6시드.

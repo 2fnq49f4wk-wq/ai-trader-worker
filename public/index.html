@@ -8,7 +8,7 @@
      인데, 지금까지 화면에서 그걸 알 방법이 전혀 없었다(카카오톡 인앱 브라우저는 특히 강하게 캐시한다).
      서버가 내려주는 build 와 이 값을 비교해 다르면 배너로 알린다.
      ※ src/index.js 의 _BUILD_VER 와 항상 같아야 한다 — check-html-js 가 강제한다. -->
-<meta name="lux-build" content="V33.269">
+<meta name="lux-build" content="V33.270">
 <title>LUX-ENGINE V10</title>
 <!-- ══ [V33.156] 설치형 앱(PWA) — 폰·PC 에서 홈화면/독에 담아 앱처럼 연다 ══
      · manifest  : 이름·아이콘·standalone 표시(주소창 없이 앱처럼)
@@ -12567,6 +12567,19 @@ setTimeout(function(){ var o=document.getElementById('lux-intro-overlay'); if(o&
   touch-action:none;cursor:grab;}
 #page-nnviz .sq3-wrap:active{cursor:grabbing;}
 #page-nnviz .sq3-wrap svg{display:block;width:100%;height:auto;user-select:none;}
+#page-nnviz .sq3-pick{display:none;padding:11px 13px;border-top:1px solid #16223c;
+  background:linear-gradient(180deg,rgba(56,189,248,.07),rgba(10,17,32,.5));
+  font-family:'IBM Plex Mono',monospace;font-size:11px;line-height:1.7;color:#cdddf7;}
+#page-nnviz .sq3-pick b{color:#eaf2ff;}
+#page-nnviz .sq3-pick .sq3-dim{color:#7c90b5;font-size:10px;margin-top:5px;line-height:1.6;}
+#page-nnviz .sq3-kv{display:grid;grid-template-columns:auto auto;gap:2px 14px;justify-content:start;margin-top:6px;}
+#page-nnviz .sq3-kv span{color:#6f84aa;font-size:10px;}
+#page-nnviz .sq3-kv b.pos{color:#00e0ff;} #page-nnviz .sq3-kv b.neg{color:#ff6e8c;}
+#page-nnviz .sq3-bars{display:flex;align-items:flex-end;gap:1.5px;height:32px;margin:8px 0 2px;}
+#page-nnviz .sq3-bars i{flex:1;min-width:2px;border-radius:1px;display:block;}
+#page-nnviz .sq3-bars i.pos{background:#00e0ff;opacity:.75;} #page-nnviz .sq3-bars i.neg{background:#ff6e8c;opacity:.75;}
+#page-nnviz .sq3-bars i.sel{opacity:1;box-shadow:0 0 0 1px #ffd666;}
+#page-nnviz .sq3-hit{cursor:pointer;}
 #page-nnviz .sq3-note{padding:10px 13px;border-top:1px solid #16223c;background:rgba(10,17,32,.4);
   font-family:'IBM Plex Mono',monospace;font-size:10.5px;line-height:1.75;color:#9fb4dc;}
 #page-nnviz .sq3-note b{color:#eaf2ff;}
@@ -14935,7 +14948,10 @@ html[data-theme="light"] #page-nnviz .nlv-sec-h{ border-color:transparent; color
      단계 5개가 한 자리로 겹쳐 아무것도 안 읽힌다 — 돌려보다 그 각도에 닿으면 화면이
      고장난 것처럼 보인다. ±60° 로 묶고, 자동회전은 그 안에서 왕복시킨다. */
   var SQ3 = { yaw: -0.62, pitch: 0.30, spin: true, head: -1, row: -1, drag: null, raf: 0, data: null,
-              dir: 1, YAW_MAX: 0.85, PITCH_MIN: 0.12, PITCH_MAX: 0.80 };
+              dir: 1, YAW_MAX: 0.85, PITCH_MIN: 0.12, PITCH_MAX: 0.80,
+              pick: null,      // {kind:'feat', i} | {kind:'node', stage, t, j} | {kind:'step', t}
+              cells: false,    // 노드를 낱개로 그린다(느려서 기본은 묶음)
+              allFeat: false };
   function sq3Clamp(v, lo, hi){ return v < lo ? lo : (v > hi ? hi : v); }
   function sq3Proj(p, C){
     var cy=Math.cos(C.yaw), sy=Math.sin(C.yaw), cp=Math.cos(C.pitch), sp=Math.sin(C.pitch);
@@ -15036,10 +15052,13 @@ html[data-theme="light"] #page-nnviz .nlv-sec-h{ border-color:transparent; color
       + '<select class="sq3-sel" id="sq3Row">';
     for(var t=0;t<L;t++) ctl += '<option value="'+t+'"'+(SQ3.row===t?' selected':'')+'>t'+t+(t===L-1?' (지금)':(' (−'+(L-1-t)+'봉)'))+'</option>';
     ctl += '</select>'
-      + '<button class="sq3-b'+(SQ3.spin?' on':'')+'" id="sq3Spin" style="margin-left:10px;">자동회전</button>'
+      + '<button class="sq3-b'+(SQ3.cells?' on':'')+'" id="sq3Cells" style="margin-left:10px;">노드 낱개</button>'
+      + '<button class="sq3-b'+(SQ3.allFeat?' on':'')+'" id="sq3AllFeat">피처 '+((data.D)||75)+'개 전부</button>'
+      + '<button class="sq3-b'+(SQ3.spin?' on':'')+'" id="sq3Spin">자동회전</button>'
       + '<button class="sq3-b" id="sq3Reset">시점 초기화</button>'
-      + '<span class="sq3-hint">드래그로 돌려볼 수 있습니다</span></div>';
+      + '<span class="sq3-hint">카드·피처를 누르면 값이 나옵니다 · 드래그로 회전</span></div>';
     stage.innerHTML = ctl + '<div class="sq3-wrap"><svg id="sq3Svg" viewBox="0 0 900 460" preserveAspectRatio="xMidYMid meet"></svg></div>'
+      + '<div class="sq3-pick" id="sq3Pick"></div>'
       + '<div class="sq3-note" id="sq3Note"></div>';
     var svg = document.getElementById('sq3Svg');
     /* ── 이벤트 ─────────────────────────────────────────────────────────── */
@@ -15051,7 +15070,30 @@ html[data-theme="light"] #page-nnviz .nlv-sec-h{ border-color:transparent; color
     var spinB=document.getElementById('sq3Spin');
     if(spinB) spinB.onclick=function(){ SQ3.spin=!SQ3.spin; spinB.classList.toggle('on',SQ3.spin); sq3Tick(); };
     var resB=document.getElementById('sq3Reset');
-    if(resB) resB.onclick=function(){ SQ3.yaw=-0.62; SQ3.pitch=0.30; sq3Draw(); };
+    if(resB) resB.onclick=function(){ SQ3.yaw=-0.62; SQ3.pitch=0.30; SQ3.pick=null; sq3Draw(); };
+    var cellB=document.getElementById('sq3Cells');
+    if(cellB) cellB.onclick=function(){
+      SQ3.cells=!SQ3.cells; cellB.classList.toggle('on',SQ3.cells);
+      /* 낱개는 장당 32칸 × 16시점 × 3단계라 회전과 같이 돌리면 프레임이 끊긴다.
+         조용히 느려지느니 회전을 멈추고 그렇다고 적는다. */
+      if(SQ3.cells && SQ3.spin){ SQ3.spin=false; if(spinB) spinB.classList.remove('on'); }
+      sq3Tick(); sq3Draw();
+    };
+    var afB=document.getElementById('sq3AllFeat');
+    if(afB) afB.onclick=function(){ SQ3.allFeat=!SQ3.allFeat; afB.classList.toggle('on',SQ3.allFeat);
+      NNV_renderRoles(SQ3.allFeat ? Object.assign({}, data, { topFeatures: null }) : data); };
+    /* 클릭 위임 — SVG 는 매 프레임 통째로 다시 만들어지므로 개별 노드에 리스너를 달 수 없다. */
+    svg.addEventListener('click', function(e){
+      var t=e.target, k=null;
+      while(t && t!==svg){ k=t.getAttribute && t.getAttribute('data-pick'); if(k) break; t=t.parentNode; }
+      if(!k){ SQ3.pick=null; sq3Draw(); return; }
+      var b=k.split(':');
+      if(b[0]==='feat') SQ3.pick={kind:'feat', i:+b[1]};
+      else if(b[0]==='node') SQ3.pick={kind:'node', stage:b[1], t:+b[2], j:+b[3]};
+      else if(b[0]==='step'){ SQ3.pick={kind:'step', t:+b[1]}; SQ3.row=+b[1];
+        var rs=document.getElementById('sq3Row'); if(rs) rs.value=String(SQ3.row); }
+      sq3Draw();
+    });
     var down=function(e){ var p=(e.touches&&e.touches[0])||e; SQ3.drag={x:p.clientX,y:p.clientY}; SQ3.spin=false;
       if(spinB) spinB.classList.remove('on'); };
     var move=function(e){ if(!SQ3.drag) return; var p=(e.touches&&e.touches[0])||e;
@@ -15064,6 +15106,54 @@ html[data-theme="light"] #page-nnviz .nlv-sec-h{ border-color:transparent; color
     window.addEventListener('mouseup',up); svg.addEventListener('touchend',up);
     sq3Draw(); sq3Tick();
     NNV_renderRoles(data);
+  }
+  /* 누른 것의 ★값★ 을 적는다. 그림은 크기를 보여 주고 이 칸은 수를 보여 준다 —
+     둘 중 하나만 있으면 "저게 얼마인데?" 를 물어볼 방법이 없다. */
+  function sq3DrawPick(d, L, attnRow){
+    var host=document.getElementById('sq3Pick'); if(!host) return;
+    var P=SQ3.pick;
+    if(!P || !d.trained){ host.innerHTML=''; host.style.display='none'; return; }
+    host.style.display='block';
+    var h='';
+    if(P.kind==='feat'){
+      var f=(d.inputFeatures||[])[P.i];
+      if(!f){ host.innerHTML=''; host.style.display='none'; return; }
+      var val=(d.vizSeq&&d.vizSeq[SQ3.row])?d.vizSeq[SQ3.row][P.i]:null;
+      var rank=(d.inputFeatures||[]).filter(function(x){ return (x.strength||0)>(f.strength||0); }).length+1;
+      h='<b>입력 피처 #'+P.i+' · '+sq3Esc(f.name)+'</b>'+(f.role?(' <span class="sq3-dim">'+sq3Esc(f.role)+'</span>'):'')
+        +'<div class="sq3-kv"><span>영향도 |Win 열|</span><b>'+Math.round((f.strength||0)*100)+'%</b>'
+        +'<span>순위</span><b>'+rank+' / '+(d.D||0)+'</b>'
+        +'<span>표본값 (t'+SQ3.row+')</span><b>'+(val==null?'—':val)+'</b></div>'
+        +'<div class="sq3-dim">영향도는 이 피처가 들어가는 Win 열의 노름입니다 — 모델이 실제로 이 입력을 얼마나 쓰는가.'
+        +' 표본값은 관측용으로 보관한 학습 표본 1건의 그 시점 값입니다.</div>';
+    } else if(P.kind==='node'){
+      var row=(d.nodes&&d.nodes[P.stage])?d.nodes[P.stage][P.t]:null;
+      if(!row){ host.innerHTML=''; host.style.display='none'; return; }
+      var nm={proj:'사영+위치', attn:'어텐션 뒤(잔차 포함)', ffn:'FFN 뒤(잔차 포함)'}[P.stage]||P.stage;
+      var mx=0; for(var i=0;i<row.length;i++) mx=Math.max(mx,Math.abs(row[i]));
+      h='<b>노드 '+P.j+' · '+nm+' · t'+P.t+(P.t===L-1?'(지금)':(' (−'+(L-1-P.t)+'봉)'))+'</b>'
+        +'<div class="sq3-kv"><span>값</span><b class="'+(row[P.j]<0?'neg':'pos')+'">'+row[P.j]+'</b>'
+        +'<span>이 시점 최대|값|</span><b>'+mx.toFixed(3)+'</b>'
+        +'<span>같은 단계 폭</span><b>'+row.length+'차원</b></div>'
+        +'<div class="sq3-bars">'+row.map(function(v,j){
+            var w=mx>0?Math.abs(v)/mx:0;
+            return '<i class="'+(v<0?'neg':'pos')+(j===P.j?' sel':'')+'" style="height:'+(4+26*w).toFixed(1)+'px" title="노드 '+j+' = '+v+'"></i>';
+          }).join('')+'</div>'
+        +'<div class="sq3-dim">가중치가 아니라 ★그 표본이 지나갈 때의 실제 값★ 입니다(파랑 +, 분홍 −).</div>';
+    } else if(P.kind==='step'){
+      var t=P.t, live=(d.nodes&&d.nodes.ffLive)?d.nodes.ffLive[t]:null;
+      var outW=null;
+      if(d.attn){ outW=0; for(var hh=0;hh<d.attn.length;hh++){ var col=0;
+          for(var r2=0;r2<L;r2++) col+=(d.attn[hh][r2]&&d.attn[hh][r2][t])||0; outW+=col/L; } outW/=d.attn.length; }
+      h='<b>시점 t'+t+(t===L-1?' (지금)':(' — '+(L-1-t)+'봉 전'))+'</b>'
+        +'<div class="sq3-kv"><span>위치 임베딩 강도</span><b>'+(d.posStrength?Math.round((d.posStrength[t]||0)*100)+'%':'—')+'</b>'
+        +'<span>t'+SQ3.row+'이 이 시점을 보는 비중</span><b>'+(attnRow?(attnRow[t]*100).toFixed(1)+'%':'—')+'</b>'
+        +'<span>이 시점이 ★받는★ 주목(평균)</span><b>'+(outW==null?'—':(outW*100).toFixed(1)+'%')+'</b>'
+        +'<span>FFN 활성 유닛</span><b>'+(live==null?'—':(live+' / '+(d.ffHidden||0)))+'</b></div>'
+        +'<div class="sq3-dim">"보는 비중" 은 지금 고른 시점이 이 시점을 얼마나 보느냐이고,'
+        +' "받는 주목" 은 모든 시점이 이 시점을 평균 얼마나 보느냐입니다 — 방향이 다릅니다.</div>';
+    }
+    host.innerHTML=h;
   }
   function sq3Tick(){
     if(SQ3.raf){ cancelAnimationFrame(SQ3.raf); SQ3.raf=0; }
@@ -15143,15 +15233,21 @@ html[data-theme="light"] #page-nnviz .nlv-sec-h{ border-color:transparent; color
         var quad=sq3Quad([{x:S.x-6,y:-cardH/2,z:qz-40},{x:S.x+6,y:-cardH/2,z:qz+40},
                           {x:S.x+6,y:cardH/2,z:qz+40},{x:S.x-6,y:cardH/2,z:qz-40}],C);
         push(quad.z,'<path d="'+quad.d+'" fill="rgba(20,34,60,.72)" stroke="#2a4270" stroke-width="1"/>');
+        /* ★피처를 낱개로 그린다.★ 묶어 놓으면 "무엇이 세게 들어가는가" 를 물어볼 수가 없다 —
+           75줄 각각이 자기 이름을 달고, 눌러서 값을 볼 수 있어야 관측이다. */
         var IF=(trained&&d.inputFeatures)?d.inputFeatures:null;
-        var NB=24;
+        var NB=IF?IF.length:24, th=(cardH-4)/NB;
         for(var bi=0;bi<NB;bi++){
-          var v=0;
-          if(IF){ var a0=Math.floor(bi*IF.length/NB), a1=Math.floor((bi+1)*IF.length/NB);
-            for(var k2=a0;k2<a1;k2++) v=Math.max(v, IF[k2].strength||0); }
-          var yy=-cardH/2+2+bi*((cardH-4)/NB), q2=sq3Quad([{x:S.x-5,y:yy,z:qz-36},{x:S.x+5,y:yy,z:qz+36},
-            {x:S.x+5,y:yy+((cardH-4)/NB)-0.7,z:qz+36},{x:S.x-5,y:yy+((cardH-4)/NB)-0.7,z:qz-36}],C);
-          push(q2.z+0.4,'<path d="'+q2.d+'" fill="'+(IF?('rgba(74,163,255,'+(0.18+0.72*v).toFixed(2)+')'):'rgba(120,140,175,.16)')+'"/>');
+          var v=IF?(IF[bi].strength||0):0;
+          var yy=-cardH/2+2+bi*th, q2=sq3Quad([{x:S.x-5,y:yy,z:qz-36},{x:S.x+5,y:yy,z:qz+36},
+            {x:S.x+5,y:yy+Math.max(0.35,th-0.25),z:qz+36},{x:S.x-5,y:yy+Math.max(0.35,th-0.25),z:qz-36}],C);
+          var sel=(SQ3.pick&&SQ3.pick.kind==='feat'&&SQ3.pick.i===bi);
+          var ttl=IF?('<title>'+sq3Esc(IF[bi].name)+(IF[bi].role?(' — '+sq3Esc(IF[bi].role)):'')
+                     +'\n영향도 '+Math.round(v*100)+'%'
+                     +(d.vizSeq&&d.vizSeq[SQ3.row]?('\n표본값 '+d.vizSeq[SQ3.row][bi]):'')+'</title>'):'';
+          push(q2.z+0.4,'<path class="sq3-hit" data-pick="feat:'+bi+'" d="'+q2.d+'" fill="'
+            +(IF?('rgba('+(sel?'255,214,102':'74,163,255')+','+(0.20+0.75*v).toFixed(2)+')'):'rgba(120,140,175,.16)')
+            +'"'+(sel?' stroke="#ffd666" stroke-width="0.8"':'')+'>'+ttl+'</path>');
         }
         continue;
       }
@@ -15178,22 +15274,41 @@ html[data-theme="light"] #page-nnviz .nlv-sec-h{ border-color:transparent; color
         push(qc.z,'<path d="'+qc.d+'" fill="'+base+'" stroke="'+strk+'" stroke-width="'+(isRow?1.6:1)+'"/>');
         /* 카드 안 밴드 — 단계마다 ★그 단계가 실제로 쓰는 값★ 을 그린다.
            proj: 위치 임베딩 강도 / attn: 이 시점이 받는 주목의 총량 / ffn: FFN 은닉 활성 분포 */
-        var NBAND=8, arr=null;
-        if(S.key==='proj' && trained && d.posStrength) arr=[d.posStrength[t2]||0];
+        /* 노드 ★값★ 이 있으면 그것을 그린다(가중치 노름이 아니라 저 표본이 지나갈 때의 수).
+           낱개(d개)로 그리는 건 선택한 시점이거나 '노드 낱개' 를 켰을 때만 — 16시점×32노드×3단계
+           = 1,536장을 매 프레임 다시 만들면 자동회전이 끊긴다. 묶음은 그 최댓값이다. */
+        var nk = (S.key==='proj')?'proj':(S.key==='attn'?'attn':'ffn');
+        var nodeRow = (trained && d.nodes && d.nodes[nk] && d.nodes[nk][t2]) ? d.nodes[nk][t2] : null;
+        var arr=null;
+        if(nodeRow){ var mxA=0; for(var q3=0;q3<nodeRow.length;q3++) mxA=Math.max(mxA,Math.abs(nodeRow[q3]));
+          arr=nodeRow.map(function(v){ return mxA>0?Math.abs(v)/mxA:0; }); }
+        else if(S.key==='proj' && trained && d.posStrength) arr=[d.posStrength[t2]||0];
         else if(S.key==='attn' && attnRow) arr=[attnRow[t2]/(attnMax||1)];
         else if(S.key==='ffn' && trained && d.ffStrength) arr=d.ffStrength;
+        var cells = (SQ3.cells || isRow) && nodeRow;
+        var NBAND = cells ? nodeRow.length : 8, ch=(cardH-6)/NBAND;
         for(var bi2=0;bi2<NBAND;bi2++){
-          var vv=0;
-          if(arr){ if(arr.length===1) vv=arr[0];
+          var vv=0, neg=false;
+          if(cells){ vv=arr[bi2]; neg=nodeRow[bi2]<0; }
+          else if(arr){ if(arr.length===1) vv=arr[0];
             else { var b0=Math.floor(bi2*arr.length/NBAND), b1=Math.floor((bi2+1)*arr.length/NBAND);
               for(var k3=b0;k3<b1;k3++) vv=Math.max(vv,arr[k3]); } }
-          var by=-cardH/2+3+bi2*((cardH-6)/NBAND);
+          var by=-cardH/2+3+bi2*ch;
           var qb=sq3Quad([{x:S.x-cardW+3,y:by,z:z},{x:S.x+cardW-3,y:by,z:z},
-                          {x:S.x+cardW-3,y:by+((cardH-6)/NBAND)-1.5,z:z},{x:S.x-cardW+3,y:by+((cardH-6)/NBAND)-1.5,z:z}],C);
-          var fill = arr ? ('rgba('+(S.key==='ffn'?'125,75,255':'56,189,248')+','+(0.10+0.70*vv).toFixed(2)+')')
-                         : 'rgba(120,140,175,.10)';
-          push(qb.z+0.3,'<path d="'+qb.d+'" fill="'+fill+'"/>');
+                          {x:S.x+cardW-3,y:by+Math.max(0.4,ch-(cells?0.25:1.5)),z:z},
+                          {x:S.x-cardW+3,y:by+Math.max(0.4,ch-(cells?0.25:1.5)),z:z}],C);
+          /* 부호를 색으로 나눈다 — 절댓값만 그리면 "밀어 올린 노드" 와 "눌러 내린 노드" 가 같아 보인다. */
+          var rgb = !arr ? '120,140,175' : (cells ? (neg?'255,110,140':'0,224,255') : (S.key==='ffn'?'125,75,255':'56,189,248'));
+          var qs = cells ? ('<path class="sq3-hit" data-pick="node:'+nk+':'+t2+':'+bi2+'" d="'+qb.d+'" fill="rgba('+rgb+','+(0.12+0.75*vv).toFixed(2)+')">'
+                    +'<title>'+nk+' · t'+t2+' · 노드 '+bi2+'\n값 '+nodeRow[bi2]+'</title></path>')
+                  : ('<path d="'+qb.d+'" fill="rgba('+rgb+','+(arr?(0.10+0.70*vv):0.10).toFixed(2)+')"/>');
+          push(qb.z+0.3, qs);
         }
+        /* 카드 자체도 누를 수 있어야 한다 — 시점을 고르는 가장 자연스러운 동작이다. */
+        push(qc.z+0.1,'<path class="sq3-hit" data-pick="step:'+t2+'" d="'+qc.d+'" fill="transparent">'
+          +'<title>t'+t2+(t2===L-1?' (지금)':(' (−'+(L-1-t2)+'봉)'))
+          +(attnRow?('\n주목 '+(attnRow[t2]*100).toFixed(1)+'%'):'')
+          +(d.nodes&&d.nodes.ffLive?('\nFFN 활성 '+d.nodes.ffLive[t2]+'/'+(d.ffHidden||0)):'')+'</title></path>');
         if(si===1){
           var lp=sq3Proj({x:S.x-cardW-4,y:0,z:z},C);
           push(lp.z,'<text x="'+lp.X.toFixed(1)+'" y="'+lp.Y.toFixed(1)+'" text-anchor="end" '
@@ -15214,6 +15329,7 @@ html[data-theme="light"] #page-nnviz .nlv-sec-h{ border-color:transparent; color
     }
     parts.sort(function(a,b){ return b.z-a.z; });   // 화가 알고리즘 — 먼 것부터
     svg.innerHTML = parts.map(function(p){ return p.s; }).join('');
+    sq3DrawPick(d, L, attnRow);
     /* ── 설명 ── */
     var note=document.getElementById('sq3Note'); if(!note) return;
     if(!trained){
