@@ -400,7 +400,8 @@ try {
   const missing = tabs.filter((t) => {
     // overview 는 선형/트리 렌더러가 아니라 ★전용 분기★ 로 간다(층 구조를 그리므로).
     if (t === "overview") return !route.includes('=== "overview"');
-    if (t === "dnn" || t === "mind" || t === "memo") return !route.includes('"' + t + '"') && t !== "dnn";
+    /* [V33.269] seq 도 전용 분기다(3D Transformer — 선형·트리 렌더러로 못 그린다). */
+    if (t === "dnn" || t === "mind" || t === "memo" || t === "seq") return !route.includes('"' + t + '"') && t !== "dnn";
     if (["gbdt", "xgb", "lgb", "cat"].includes(t)) return !route.includes('"' + t + '"');
     return !linKeys.includes(t);
   });

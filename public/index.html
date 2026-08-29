@@ -8,7 +8,7 @@
      인데, 지금까지 화면에서 그걸 알 방법이 전혀 없었다(카카오톡 인앱 브라우저는 특히 강하게 캐시한다).
      서버가 내려주는 build 와 이 값을 비교해 다르면 배너로 알린다.
      ※ src/index.js 의 _BUILD_VER 와 항상 같아야 한다 — check-html-js 가 강제한다. -->
-<meta name="lux-build" content="V33.268">
+<meta name="lux-build" content="V33.269">
 <title>LUX-ENGINE V10</title>
 <!-- ══ [V33.156] 설치형 앱(PWA) — 폰·PC 에서 홈화면/독에 담아 앱처럼 연다 ══
      · manifest  : 이름·아이콘·standalone 표시(주소창 없이 앱처럼)
@@ -4390,6 +4390,7 @@ html[data-theme="light"] .m-brainbar button.active{color:#0b4f9e;background:rgba
       <button class="nnv-tab" data-model="flow" onclick="switchNnModel('flow')"><span class="nnv-tab-dot" data-dot="flow"></span>FLOW 수급</button>
       <button class="nnv-tab" data-model="xalpha" onclick="switchNnModel('xalpha')"><span class="nnv-tab-dot" data-dot="xalpha"></span>XALPHA 알파</button>
       <button class="nnv-tab" data-model="memo" onclick="switchNnModel('memo')"><span class="nnv-tab-dot" data-dot="memo"></span>MEMO 기억</button>
+      <button class="nnv-tab" data-model="seq" onclick="switchNnModel('seq')"><span class="nnv-tab-dot" data-dot="seq"></span>SEQ 트랜스포머 3D</button>
       <span class="nnv-nav-h">결합 · 투표를 통째로 대체한다</span>
       <button class="nnv-tab" data-model="stack" onclick="switchNnModel('stack')"><span class="nnv-tab-dot" data-dot="stack"></span>STACK 메타</button>
       <span class="nnv-nav-h">방향 분리 · 오름과 내림을 따로 본다</span>
@@ -12549,6 +12550,30 @@ setTimeout(function(){ var o=document.getElementById('lux-intro-overlay'); if(o&
 #page-nnviz svg.lux-ico{width:0.82em;height:0.82em;display:inline-block;vertical-align:-0.08em;}
 #page-nnviz .nnv-legend{display:flex;flex-wrap:wrap;gap:14px;margin-top:12px;font-size:10.5px;color:#8497ba;font-family:'IBM Plex Mono',monospace;}
 #page-nnviz .nnv-legend i{display:inline-block;width:10px;height:10px;border-radius:50%;margin-right:5px;vertical-align:middle;}
+/* ── [V33.269] SEQ 3D 관측 ─────────────────────────────────────────────────
+   무대는 어둡게(깊이감이 배경 대비로 읽힌다), 조작부는 기존 nnv-tab 과 같은 언어로. */
+#page-nnviz .sq3-ctl{display:flex;flex-wrap:wrap;align-items:center;gap:6px;padding:9px 11px;
+  border-bottom:1px solid #16223c;background:rgba(10,17,32,.55);}
+#page-nnviz .sq3-lab{font-family:'IBM Plex Mono',monospace;font-size:9.5px;color:#6f84aa;
+  text-transform:uppercase;letter-spacing:.8px;margin-right:2px;}
+#page-nnviz .sq3-b{cursor:pointer;font-family:'IBM Plex Mono',monospace;font-size:10.5px;color:#7c90b5;
+  background:rgba(20,30,52,.7);border:1px solid #1e2c48;border-radius:7px;padding:4px 9px;transition:.15s;}
+#page-nnviz .sq3-b:hover{color:#cdddf7;border-color:#3a63b0;}
+#page-nnviz .sq3-b.on{color:#eaf2ff;background:rgba(70,130,255,.18);border-color:#4a83ff;}
+#page-nnviz .sq3-sel{font-family:'IBM Plex Mono',monospace;font-size:10.5px;color:#cdddf7;
+  background:rgba(20,30,52,.85);border:1px solid #1e2c48;border-radius:7px;padding:4px 7px;}
+#page-nnviz .sq3-hint{margin-left:auto;font-family:'IBM Plex Mono',monospace;font-size:9.5px;color:#5f79a2;}
+#page-nnviz .sq3-wrap{position:relative;background:radial-gradient(130% 130% at 50% 8%,#0d1729,#05080f 72%);
+  touch-action:none;cursor:grab;}
+#page-nnviz .sq3-wrap:active{cursor:grabbing;}
+#page-nnviz .sq3-wrap svg{display:block;width:100%;height:auto;user-select:none;}
+#page-nnviz .sq3-note{padding:10px 13px;border-top:1px solid #16223c;background:rgba(10,17,32,.4);
+  font-family:'IBM Plex Mono',monospace;font-size:10.5px;line-height:1.75;color:#9fb4dc;}
+#page-nnviz .sq3-note b{color:#eaf2ff;}
+@media (max-width:760px){
+  #page-nnviz .sq3-hint{display:none;}
+  #page-nnviz .sq3-ctl{gap:5px;padding:8px;}
+}
 #page-nnviz .nnv-comm{margin-top:16px;display:grid;gap:9px;}
 #page-nnviz .nnv-comm-row{display:grid;grid-template-columns:74px 1fr 116px;align-items:center;gap:10px;}
 #page-nnviz .nnv-comm-name{font-family:'Space Grotesk',sans-serif;font-weight:700;font-size:12.5px;color:#dbe6fb;}
@@ -14542,6 +14567,9 @@ html[data-theme="light"] #page-nnviz .nlv-sec-h{ border-color:transparent; color
     // [V33.209] STACK 은 이제 선형이 아닐 수 있다 — 헤드(lin/gbdt/mlp/blend)에 따라 그림이 다르다.
     //   선형 렌더러에 넣으면 ★쓰이지도 않는 계수★ 를 모델인 것처럼 그리게 된다.
     if(d && d.kind === 'stack'){ NNV_renderStack(d); return; }
+    /* [V33.269] SEQ 는 축이 셋(피처·시점·단계)이라 납작하게 그리면 "어느 시점이 어느
+       시점을 보는가" 가 접혀 사라진다 — 그게 이 모델을 넣은 이유인데. 전용 3D 렌더러로. */
+    if(d && d.kind === 'seq'){ NNV_renderSeq3D(d); return; }
     if(d && d.kind && ['flow','xalpha','dualbull','dualbear'].indexOf(d.kind) !== -1){ NNV_renderLinear(d); return; }
     if(d && d.kind && d.kind!=='dnn'){ NNV_renderSimple(d); return; }
     if(!d || !d.trained){
@@ -14890,6 +14918,325 @@ html[data-theme="light"] #page-nnviz .nlv-sec-h{ border-color:transparent; color
     });
   }
   // [V11] 파라미터(입력 피처) 역할 패널 — 각 파라미터가 무슨 일을 하고 학습된 영향도가 얼마인지.
+  /* ══ [V33.269] SEQ Transformer — 3D 관측 ═══════════════════════════════════
+     ★왜 3D 인가.★ 다른 위원은 전부 "한 시점의 벡터 하나 → 층" 이라 2D 로 충분하다.
+     이 모델만 축이 ★셋★ 이다: 피처(D) · 시점(L) · 단계(사영→어텐션→FFN→출력).
+     납작하게 그리면 그 중 하나가 반드시 접힌다 — 특히 "어느 시점이 어느 시점을
+     쳐다보는가" 가 사라진다. 그게 이 모델을 넣은 이유인데.
+
+     ★그리는 숫자는 전부 저장된 가중치와 실제 계산에서 나온다.★
+     어텐션은 입력에 따라 달라지므로, 학습 표본 1건을 그대로 들고 있다가 ★채점에
+     쓰이는 그 함수★ 로 계산한 값을 쓴다. 표본이 없으면 안 그리고 그렇다고 적는다.
+     (V33.195 에서 딥넷 미리보기가 난수를 그렸다. 그건 관측이 아니라 장식이었다.)
+
+     외부 3D 라이브러리를 안 쓴다 — 카메라 하나와 사영 한 줄이면 되는 일에
+     번들을 얹으면 이 페이지의 로딩만 무거워진다. */
+  /* ★자유회전은 좋은 기본값이 아니다.★ 무대축(X)을 정면으로 보는 각도(yaw ±90°)에서는
+     단계 5개가 한 자리로 겹쳐 아무것도 안 읽힌다 — 돌려보다 그 각도에 닿으면 화면이
+     고장난 것처럼 보인다. ±60° 로 묶고, 자동회전은 그 안에서 왕복시킨다. */
+  var SQ3 = { yaw: -0.62, pitch: 0.30, spin: true, head: -1, row: -1, drag: null, raf: 0, data: null,
+              dir: 1, YAW_MAX: 0.85, PITCH_MIN: 0.12, PITCH_MAX: 0.80 };
+  function sq3Clamp(v, lo, hi){ return v < lo ? lo : (v > hi ? hi : v); }
+  function sq3Proj(p, C){
+    var cy=Math.cos(C.yaw), sy=Math.sin(C.yaw), cp=Math.cos(C.pitch), sp=Math.sin(C.pitch);
+    var x = p.x*cy + p.z*sy, z = -p.x*sy + p.z*cy;
+    var y = p.y*cp - z*sp;  z = p.y*sp + z*cp;
+    var f = C.dist/(C.dist + z);
+    return { X: C.cx + x*f*C.s, Y: C.cy - y*f*C.s, f: f, z: z };
+  }
+  function sq3Quad(pts, C){
+    var q = pts.map(function(p){ return sq3Proj(p, C); });
+    var dz = 0; for(var i=0;i<q.length;i++) dz += q[i].z; dz/=q.length;
+    return { d: 'M'+q.map(function(p){return p.X.toFixed(1)+','+p.Y.toFixed(1);}).join('L')+'Z', z: dz, q: q };
+  }
+  function sq3Esc(v){ return String(v==null?'':v).replace(/[<>&"]/g, function(c){ return {'<':'&lt;','>':'&gt;','&':'&amp;','"':'&quot;'}[c]; }); }
+  /* 단계(stage) 는 실제 계산 순서 그대로다 — 그림이 코드보다 친절하면 안 된다(다른 걸 말하게 된다). */
+  function sq3Stages(d){
+    var dd = d.d || 32, L = d.L || 16;
+    return [
+      { x:-360, key:'in',   name:'입력',      sub: (d.D||75)+'개 피처' },
+      { x:-160, key:'proj', name:'사영+위치',  sub: dd+'차원 × '+L+'시점' },
+      { x:  60, key:'attn', name:'어텐션',    sub: (d.heads||2)+'헤드 · 시점끼리 본다' },
+      { x: 265, key:'ffn',  name:'FFN',      sub: (d.ffHidden||dd*4)+' → '+dd },
+      { x: 430, key:'out',  name:'출력',      sub:'마지막 시점만 → σ' }
+    ];
+  }
+  /* 선택한 헤드(−1=전체 평균)에서 row 시점이 각 과거 시점을 보는 비중.
+     ★없으면 null 이다 — 0 으로 채우면 "아무 데도 안 본다" 는 ★틀린 말★ 을 그리게 된다.★ */
+  function sq3AttnRow(d, head, row, L){
+    if(!d || !d.trained || !d.attn || !d.attn.length) return null;
+    var hs = (head===-1) ? d.attn : (d.attn[head] ? [d.attn[head]] : null);
+    if(!hs || !hs.length) return null;
+    var out = new Array(L).fill(0), used = 0;
+    for(var hi=0;hi<hs.length;hi++){
+      var r = hs[hi] && hs[hi][row]; if(!r) continue;
+      for(var u=0;u<L && u<r.length;u++) out[u] += r[u];
+      used++;
+    }
+    if(!used) return null;
+    for(var j=0;j<L;j++) out[j] /= used;
+    return out;
+  }
+  function NNV_renderSeq3D(data){
+    SQ3.data = data;
+    var stage=document.getElementById('nnvStage'), chips=document.getElementById('nnvChips'),
+        comm=document.getElementById('nnvComm'), legend=document.getElementById('nnvLegend'),
+        sub=document.getElementById('nnvSub'), ban=document.getElementById('nnvBanner');
+    if(legend) legend.style.display='none';
+    if(comm) comm.innerHTML='';
+    var L=data.L||(data.cfg&&data.cfg.L)||16, dd=data.d||(data.cfg&&data.cfg.d)||32,
+        H=data.heads||(data.cfg&&data.cfg.heads)||2, D=data.D||(data.cfg&&data.cfg.D)||75;
+    if(SQ3.row < 0 || SQ3.row >= L) SQ3.row = L-1;   // 기본은 ★마지막 시점★ — 실제로 읽는 자리다
+    sub.textContent = data.trained
+      ? ('시퀀스 Transformer · 되돌아보는 시점 '+L+' · 모델차원 '+dd+' · 헤드 '+H+' · 파라미터 '+(data.params||0).toLocaleString()+'개')
+      : ('시퀀스 Transformer · 구조 L'+L+'·d'+dd+'·헤드'+H+' (아직 학습된 가중치 없음)');
+    /* ── 배너: 왜 실리는지 / 왜 안 실리는지 ─────────────────────────────── */
+    if(ban){
+      if(!data.trained){
+        ban.className='nnv-banner off';
+        ban.innerHTML='🌱 <b>학습 대기</b> — 저장된 시퀀스 모델이 없습니다. 아래 그림의 <b>층·시점·차원은 실제 설정</b>이고, '
+          +'<b>가중치 강도와 어텐션은 표시하지 않습니다</b>(학습 전에는 알 수 없는 값입니다).';
+        ban.style.display='block';
+      } else if(data.featVer!=null && data.serverFeatVer!=null && data.featVer!==data.serverFeatVer){
+        ban.className='nnv-banner off';
+        ban.innerHTML='⚠️ <b>구 featVer</b> — 저장된 모델은 판 '+data.featVer+', 서버는 판 '+data.serverFeatVer
+          +' 입니다. 이 모델은 <b>투표에 실리지 않습니다</b>(재학습 대기).';
+        ban.style.display='block';
+      } else if(!data.trusted){
+        ban.className='nnv-banner off';
+        ban.innerHTML='⛔ <b>미승격</b> — 학습은 됐지만 승격 문턱을 못 넘어 <b>투표에 실리지 않습니다</b>. '
+          +'사유: '+sq3Esc(data.admitWhy||'—');
+        ban.style.display='block';
+      } else {
+        ban.className='nnv-banner'+(data.admitPath==='ic'?' gate':' on');
+        ban.innerHTML=(data.admitPath==='ic'?'🟡 <b>IC 경로 잠정 합류</b>':'✅ <b>정식 합류</b>')
+          +' — 지분 w '+(data.w||0).toFixed(3)+' · '+sq3Esc(data.admitWhy||'')
+          +' · 학습·추론 정합 오차 <b>'+(data.probeMaxDiff==null?'—':data.probeMaxDiff)+'</b>'
+          +(data.probeN?(' (probe '+data.probeN+'건)'):'');
+        ban.style.display='block';
+      }
+    }
+    /* ── 칩 ─────────────────────────────────────────────────────────────── */
+    var acc = (data.valAccLB==null)?null:(data.valAccLB*100);
+    chips.innerHTML =
+      chip('되돌아보는 시점', L+'개','') +
+      chip('모델 차원', dd+'','') +
+      chip('어텐션 헤드', H+'개','') +
+      chip('입력 피처', D+'개','') +
+      chip('파라미터', (data.params?data.params.toLocaleString():'—'),'') +
+      chip('검증 하한', acc==null?'—':(acc.toFixed(1)+'%'), acc==null?'':(acc>=50.5?'good':(acc>=49?'warn':'off'))) +
+      chip('블록 IC t', data.valICt==null?'—':(+data.valICt).toFixed(2), (data.valICt!=null&&data.valICt>=1.65)?'good':'warn') +
+      chip('투표 지분', data.trusted?((data.w||0).toFixed(3)):'0', data.trusted?'good':'off');
+    /* ── 조작부 ─────────────────────────────────────────────────────────── */
+    var ctl = '<div class="sq3-ctl">'
+      + '<span class="sq3-lab">헤드</span>'
+      + '<button class="sq3-b'+(SQ3.head===-1?' on':'')+'" data-head="-1">전체</button>';
+    for(var h=0;h<H;h++) ctl += '<button class="sq3-b'+(SQ3.head===h?' on':'')+'" data-head="'+h+'">#'+h+'</button>';
+    ctl += '<span class="sq3-lab" style="margin-left:10px;">보는 시점</span>'
+      + '<select class="sq3-sel" id="sq3Row">';
+    for(var t=0;t<L;t++) ctl += '<option value="'+t+'"'+(SQ3.row===t?' selected':'')+'>t'+t+(t===L-1?' (지금)':(' (−'+(L-1-t)+'봉)'))+'</option>';
+    ctl += '</select>'
+      + '<button class="sq3-b'+(SQ3.spin?' on':'')+'" id="sq3Spin" style="margin-left:10px;">자동회전</button>'
+      + '<button class="sq3-b" id="sq3Reset">시점 초기화</button>'
+      + '<span class="sq3-hint">드래그로 돌려볼 수 있습니다</span></div>';
+    stage.innerHTML = ctl + '<div class="sq3-wrap"><svg id="sq3Svg" viewBox="0 0 900 460" preserveAspectRatio="xMidYMid meet"></svg></div>'
+      + '<div class="sq3-note" id="sq3Note"></div>';
+    var svg = document.getElementById('sq3Svg');
+    /* ── 이벤트 ─────────────────────────────────────────────────────────── */
+    stage.querySelectorAll('.sq3-b[data-head]').forEach(function(b){
+      b.onclick=function(){ SQ3.head = parseInt(b.getAttribute('data-head'),10);
+        stage.querySelectorAll('.sq3-b[data-head]').forEach(function(x){ x.classList.toggle('on', x===b); }); sq3Draw(); };
+    });
+    var rowSel=document.getElementById('sq3Row'); if(rowSel) rowSel.onchange=function(){ SQ3.row=parseInt(rowSel.value,10); sq3Draw(); };
+    var spinB=document.getElementById('sq3Spin');
+    if(spinB) spinB.onclick=function(){ SQ3.spin=!SQ3.spin; spinB.classList.toggle('on',SQ3.spin); sq3Tick(); };
+    var resB=document.getElementById('sq3Reset');
+    if(resB) resB.onclick=function(){ SQ3.yaw=-0.62; SQ3.pitch=0.30; sq3Draw(); };
+    var down=function(e){ var p=(e.touches&&e.touches[0])||e; SQ3.drag={x:p.clientX,y:p.clientY}; SQ3.spin=false;
+      if(spinB) spinB.classList.remove('on'); };
+    var move=function(e){ if(!SQ3.drag) return; var p=(e.touches&&e.touches[0])||e;
+      SQ3.yaw = sq3Clamp(SQ3.yaw + (p.clientX-SQ3.drag.x)*0.007, -SQ3.YAW_MAX, SQ3.YAW_MAX);
+      SQ3.pitch = sq3Clamp(SQ3.pitch + (p.clientY-SQ3.drag.y)*0.005, SQ3.PITCH_MIN, SQ3.PITCH_MAX);
+      SQ3.drag={x:p.clientX,y:p.clientY}; sq3Draw(); if(e.cancelable) e.preventDefault(); };
+    var up=function(){ SQ3.drag=null; };
+    svg.addEventListener('mousedown',down); svg.addEventListener('touchstart',down,{passive:true});
+    window.addEventListener('mousemove',move); svg.addEventListener('touchmove',move,{passive:false});
+    window.addEventListener('mouseup',up); svg.addEventListener('touchend',up);
+    sq3Draw(); sq3Tick();
+    NNV_renderRoles(data);
+  }
+  function sq3Tick(){
+    if(SQ3.raf){ cancelAnimationFrame(SQ3.raf); SQ3.raf=0; }
+    if(!SQ3.spin) return;
+    var step=function(){
+      var pg=document.getElementById('page-nnviz');
+      if(!SQ3.spin || !document.getElementById('sq3Svg') || !pg || !pg.classList.contains('active')){ SQ3.raf=0; return; }
+      SQ3.yaw += 0.0035*SQ3.dir;
+      if(SQ3.yaw >= SQ3.YAW_MAX){ SQ3.yaw = SQ3.YAW_MAX; SQ3.dir = -1; }
+      else if(SQ3.yaw <= -SQ3.YAW_MAX){ SQ3.yaw = -SQ3.YAW_MAX; SQ3.dir = 1; }
+      sq3Draw(); SQ3.raf=requestAnimationFrame(step);
+    };
+    SQ3.raf=requestAnimationFrame(step);
+  }
+  function sq3Draw(){
+    var svg=document.getElementById('sq3Svg'), d=SQ3.data; if(!svg||!d) return;
+    var L=d.L||(d.cfg&&d.cfg.L)||16, dd=d.d||(d.cfg&&d.cfg.d)||32,
+        H=d.heads||(d.cfg&&d.cfg.heads)||2, trained=!!d.trained;
+    var ST=sq3Stages(d);
+    var zPitch = Math.max(9, Math.min(20, 260/Math.max(1,L)));   // 시점을 깊이축에 편다(L 이 커져도 안 터진다)
+    var zOf=function(t){ return (t-(L-1)/2)*zPitch; };
+    var cardH=46, cardW=9;
+    /* ★자동 맞춤★ — 회전하면 투영 크기가 변한다. 고정 배율이면 어떤 각도에서는 화면 밖으로
+       나가고 어떤 각도에서는 위쪽에 쪼그라든다(처음 그렸을 때 실제로 그랬다).
+       장면의 바운딩박스 8꼭짓점을 먼저 투영해 배율·중심을 정한다 — 두 번 그리지 않는다. */
+    var C={ yaw:SQ3.yaw, pitch:SQ3.pitch, dist:1100, s:1, cx:0, cy:0 };
+    (function fit(){
+      /* ★박스는 실제로 그리는 것 전부를 덮어야 한다.★ 처음엔 카드만 넣었는데, 바닥 격자
+         (−cardH/2−18)와 출력 노드 아래 확률 글자가 박스 밖이라 화면 밑으로 잘려 나갔다. */
+      var x0=ST[0].x-24, x1=ST[ST.length-1].x+40, y0=-cardH/2-52, y1=cardH/2+70,
+          z0=zOf(0)-zPitch, z1=zOf(L-1)+zPitch;
+      var mnX=1e9,mxX=-1e9,mnY=1e9,mxY=-1e9;
+      for(var a=0;a<2;a++) for(var b=0;b<2;b++) for(var c=0;c<2;c++){
+        var q=sq3Proj({x:a?x1:x0,y:b?y1:y0,z:c?z1:z0},C);
+        if(q.X<mnX)mnX=q.X; if(q.X>mxX)mxX=q.X; if(q.Y<mnY)mnY=q.Y; if(q.Y>mxY)mxY=q.Y;
+      }
+      var sx=(900-40)/Math.max(1,mxX-mnX), sy=(460-40)/Math.max(1,mxY-mnY);
+      /* ★부호 하나가 장면을 위로 밀어 올렸다.★ 탐색은 s=1·중심 0 으로 했으므로 그때의
+         화면좌표는 (Y_probe)=−y·f 다. 최종 화면좌표는 cy + Y_probe·s 이고, 이것이
+         한가운데(230)에 오려면 cy = 230 − 중심·s 다. + 로 쓰면 중심이 두 배로 밀린다. */
+      C.s=Math.min(sx,sy); C.cx=450-(mnX+mxX)/2*C.s; C.cy=230-(mnY+mxY)/2*C.s;
+    })();
+    var parts=[];   // {z, svg}
+    var push=function(z,s){ parts.push({z:z,s:s}); };
+    /* ── 바닥 격자 — 깊이감의 기준선(없으면 회전이 안 읽힌다) ── */
+    for(var gi=0;gi<=L;gi++){
+      var gz=zOf(0)-zPitch/2+gi*zPitch;
+      var a=sq3Proj({x:ST[0].x-20,y:-cardH/2-18,z:gz},C), b=sq3Proj({x:ST[ST.length-1].x+20,y:-cardH/2-18,z:gz},C);
+      push(a.z-1,'<path d="M'+a.X.toFixed(1)+','+a.Y.toFixed(1)+'L'+b.X.toFixed(1)+','+b.Y.toFixed(1)
+        +'" stroke="rgba(90,130,200,.13)" stroke-width="1" fill="none"/>');
+    }
+    /* ── 어텐션 곡선: 선택 시점(row) 이 각 과거 시점을 얼마나 보는가 ──
+       ★임계 아래는 안 그린다★ — L² 개를 전부 그리면 아무것도 안 보인다(그건 그림이 아니라 안개다). */
+    var attnRow=sq3AttnRow(d, SQ3.head, SQ3.row, L), attnMax=0;
+    if(attnRow) for(var u2=0;u2<L;u2++) if(attnRow[u2]>attnMax) attnMax=attnRow[u2];
+    var thr = 1/(2*L);
+    if(attnRow){
+      for(var u3=0;u3<L;u3++){
+        var w=attnRow[u3]; if(!(w>thr)) continue;
+        var p0=sq3Proj({x:ST[1].x+cardW,y:0,z:zOf(u3)},C);
+        var p1=sq3Proj({x:ST[2].x-cardW,y:0,z:zOf(SQ3.row)},C);
+        var mx=(p0.X+p1.X)/2, my=(p0.Y+p1.Y)/2 - 34*(w/(attnMax||1)) - 8;
+        var rel=w/(attnMax||1);
+        var col = (SQ3.head===-1)?'#38bdf8':(SQ3.head===0?'#7d4bff':'#00e0ff');
+        push(Math.min(p0.z,p1.z),'<path d="M'+p0.X.toFixed(1)+','+p0.Y.toFixed(1)+'Q'+mx.toFixed(1)+','+my.toFixed(1)
+          +' '+p1.X.toFixed(1)+','+p1.Y.toFixed(1)+'" fill="none" stroke="'+col+'" stroke-width="'
+          +(0.6+2.6*rel).toFixed(2)+'" opacity="'+(0.18+0.62*rel).toFixed(2)+'" stroke-linecap="round"/>');
+      }
+    }
+    /* ── 단계별 카드 ── */
+    for(var si=0;si<ST.length;si++){
+      var S=ST[si];
+      if(S.key==='in'){
+        /* 입력은 시점마다 같은 ★모양★ 이라 한 장만 세우고, 피처 강도를 눈금으로 그린다.
+           강도는 |Win 의 그 피처 열| — 안 쓰는 피처는 낮다. 학습 전에는 안 그린다. */
+        var qz=zOf((L-1)/2);
+        var quad=sq3Quad([{x:S.x-6,y:-cardH/2,z:qz-40},{x:S.x+6,y:-cardH/2,z:qz+40},
+                          {x:S.x+6,y:cardH/2,z:qz+40},{x:S.x-6,y:cardH/2,z:qz-40}],C);
+        push(quad.z,'<path d="'+quad.d+'" fill="rgba(20,34,60,.72)" stroke="#2a4270" stroke-width="1"/>');
+        var IF=(trained&&d.inputFeatures)?d.inputFeatures:null;
+        var NB=24;
+        for(var bi=0;bi<NB;bi++){
+          var v=0;
+          if(IF){ var a0=Math.floor(bi*IF.length/NB), a1=Math.floor((bi+1)*IF.length/NB);
+            for(var k2=a0;k2<a1;k2++) v=Math.max(v, IF[k2].strength||0); }
+          var yy=-cardH/2+2+bi*((cardH-4)/NB), q2=sq3Quad([{x:S.x-5,y:yy,z:qz-36},{x:S.x+5,y:yy,z:qz+36},
+            {x:S.x+5,y:yy+((cardH-4)/NB)-0.7,z:qz+36},{x:S.x-5,y:yy+((cardH-4)/NB)-0.7,z:qz-36}],C);
+          push(q2.z+0.4,'<path d="'+q2.d+'" fill="'+(IF?('rgba(74,163,255,'+(0.18+0.72*v).toFixed(2)+')'):'rgba(120,140,175,.16)')+'"/>');
+        }
+        continue;
+      }
+      if(S.key==='out'){
+        var pz=zOf(L-1);
+        var o=sq3Proj({x:S.x,y:0,z:pz},C);
+        var lastP=sq3Proj({x:ST[3].x+cardW,y:0,z:pz},C);
+        push(o.z-0.5,'<path d="M'+lastP.X.toFixed(1)+','+lastP.Y.toFixed(1)+'L'+o.X.toFixed(1)+','+o.Y.toFixed(1)
+          +'" stroke="#00e676" stroke-width="2" opacity=".75"/>');
+        var pr = (d.attnP!=null)? d.attnP : null;
+        push(o.z,'<circle cx="'+o.X.toFixed(1)+'" cy="'+o.Y.toFixed(1)+'" r="'+(11*o.f).toFixed(1)
+          +'" fill="#00e676" opacity=".9"/><circle cx="'+o.X.toFixed(1)+'" cy="'+o.Y.toFixed(1)+'" r="'
+          +(17*o.f).toFixed(1)+'" fill="none" stroke="#00e676" opacity=".35"/>'
+          +'<text x="'+o.X.toFixed(1)+'" y="'+(o.Y+30*o.f).toFixed(1)+'" text-anchor="middle" fill="#9fe8c0" '
+          +'font-size="'+(10*o.f).toFixed(1)+'" font-family="IBM Plex Mono,monospace">'+(pr==null?'σ':('σ '+(pr*100).toFixed(1)+'%'))+'</text>');
+        continue;
+      }
+      for(var t2=0;t2<L;t2++){
+        var z=zOf(t2), isRow=(t2===SQ3.row), isLast=(t2===L-1);
+        var qc=sq3Quad([{x:S.x-cardW,y:-cardH/2,z:z},{x:S.x+cardW,y:-cardH/2,z:z},
+                        {x:S.x+cardW,y:cardH/2,z:z},{x:S.x-cardW,y:cardH/2,z:z}],C);
+        var base = isRow? 'rgba(56,189,248,.20)' : (isLast? 'rgba(0,230,118,.13)' : 'rgba(20,34,60,.66)');
+        var strk = isRow? '#38bdf8' : (isLast? '#00e676' : '#22345a');
+        push(qc.z,'<path d="'+qc.d+'" fill="'+base+'" stroke="'+strk+'" stroke-width="'+(isRow?1.6:1)+'"/>');
+        /* 카드 안 밴드 — 단계마다 ★그 단계가 실제로 쓰는 값★ 을 그린다.
+           proj: 위치 임베딩 강도 / attn: 이 시점이 받는 주목의 총량 / ffn: FFN 은닉 활성 분포 */
+        var NBAND=8, arr=null;
+        if(S.key==='proj' && trained && d.posStrength) arr=[d.posStrength[t2]||0];
+        else if(S.key==='attn' && attnRow) arr=[attnRow[t2]/(attnMax||1)];
+        else if(S.key==='ffn' && trained && d.ffStrength) arr=d.ffStrength;
+        for(var bi2=0;bi2<NBAND;bi2++){
+          var vv=0;
+          if(arr){ if(arr.length===1) vv=arr[0];
+            else { var b0=Math.floor(bi2*arr.length/NBAND), b1=Math.floor((bi2+1)*arr.length/NBAND);
+              for(var k3=b0;k3<b1;k3++) vv=Math.max(vv,arr[k3]); } }
+          var by=-cardH/2+3+bi2*((cardH-6)/NBAND);
+          var qb=sq3Quad([{x:S.x-cardW+3,y:by,z:z},{x:S.x+cardW-3,y:by,z:z},
+                          {x:S.x+cardW-3,y:by+((cardH-6)/NBAND)-1.5,z:z},{x:S.x-cardW+3,y:by+((cardH-6)/NBAND)-1.5,z:z}],C);
+          var fill = arr ? ('rgba('+(S.key==='ffn'?'125,75,255':'56,189,248')+','+(0.10+0.70*vv).toFixed(2)+')')
+                         : 'rgba(120,140,175,.10)';
+          push(qb.z+0.3,'<path d="'+qb.d+'" fill="'+fill+'"/>');
+        }
+        if(si===1){
+          var lp=sq3Proj({x:S.x-cardW-4,y:0,z:z},C);
+          push(lp.z,'<text x="'+lp.X.toFixed(1)+'" y="'+lp.Y.toFixed(1)+'" text-anchor="end" '
+            +'fill="'+(isRow?'#8fd0ff':(isLast?'#7fe6ac':'#5f79a2'))+'" font-size="'+(8.5*lp.f).toFixed(1)
+            +'" font-family="IBM Plex Mono,monospace" dominant-baseline="middle">t'+t2+'</text>');
+        }
+      }
+    }
+    /* ── 단계 이름표 ── */
+    for(var si2=0;si2<ST.length;si2++){
+      /* 이름표는 카드 위로 확실히 띄우고, 이웃끼리 한 칸씩 엇갈리게 둔다 — 비스듬히 보면
+         가로로 이웃한 이름표가 서로 겹친다(처음 그렸을 때 'FFN' 이 카드 위에 얹혔다). */
+      var S2=ST[si2], lp2=sq3Proj({x:S2.x,y:cardH/2+38+((si2%2)?18:0),z:zOf((L-1)/2)},C);
+      push(-1e9,'<text x="'+lp2.X.toFixed(1)+'" y="'+(lp2.Y-8).toFixed(1)+'" text-anchor="middle" fill="#cdddf7" '
+        +'font-size="12" font-family="Space Grotesk,sans-serif" font-weight="700">'+sq3Esc(S2.name)+'</text>'
+        +'<text x="'+lp2.X.toFixed(1)+'" y="'+(lp2.Y+5).toFixed(1)+'" text-anchor="middle" fill="#6f84aa" '
+        +'font-size="9.5" font-family="IBM Plex Mono,monospace">'+sq3Esc(S2.sub)+'</text>');
+    }
+    parts.sort(function(a,b){ return b.z-a.z; });   // 화가 알고리즘 — 먼 것부터
+    svg.innerHTML = parts.map(function(p){ return p.s; }).join('');
+    /* ── 설명 ── */
+    var note=document.getElementById('sq3Note'); if(!note) return;
+    if(!trained){
+      note.innerHTML='🌱 <b>구조만 표시</b> — 시점 '+L+'개 · 차원 '+dd+' · 헤드 '+H+' 는 실제 설정값입니다. '
+        +'가중치 강도와 어텐션은 <b>학습 전에는 알 수 없어 그리지 않습니다</b>.';
+      return;
+    }
+    if(!d.attn){
+      note.innerHTML='📐 <b>가중치 강도만 표시</b> — '+sq3Esc(d.attnErr||'어텐션 표본 없음')
+        +'. 어텐션은 <b>입력에 따라 달라져</b> 표본 없이는 그릴 수 없습니다(아무 값이나 채우지 않습니다).';
+      return;
+    }
+    var order=[]; for(var oi=0;oi<L;oi++) order.push({t:oi,w:attnRow[oi]});
+    order.sort(function(a,b){ return b.w-a.w; });
+    var top=order.slice(0,3).map(function(o){ return 't'+o.t+(o.t===L-1?'(지금)':('(−'+(L-1-o.t)+'봉)'))+' '+(o.w*100).toFixed(0)+'%'; });
+    note.innerHTML='🔎 <b>t'+SQ3.row+(SQ3.row===L-1?'(지금)':('(−'+(L-1-SQ3.row)+'봉)'))+'</b> 시점이 가장 많이 보는 곳: <b>'
+      +top.join(' · ')+'</b>'
+      +(SQ3.head===-1?' <span style="opacity:.7">(헤드 '+H+'개 평균)</span>':' <span style="opacity:.7">(헤드 #'+SQ3.head+')</span>')
+      +'<br><span style="opacity:.75">이 어텐션은 <b>학습 표본 1건</b>에 대해 채점에 쓰이는 그 함수로 실제 계산한 값입니다'
+      +(d.vizP!=null?(' — 트레이너가 낸 확률 '+(d.vizP*100).toFixed(1)+'%, 워커 재현 '+(d.attnP*100).toFixed(1)+'%'):'')
+      +'. 굵기·밝기는 주목의 크기이고, '+(100/(2*L)).toFixed(1)+'% 미만은 그리지 않습니다(전부 그리면 안개가 됩니다).</span>'
+      +(d.ffDead? ('<br><span style="color:#ffc107">⚠ FFN 은닉 '+(d.ffHidden||0)+'개 중 <b>'+d.ffDead+'개</b>가 사실상 죽어 있습니다(가중치 노름이 최대의 5% 미만).</span>'):'');
+  }
   function NNV_renderRoles(d){
     var host=document.getElementById('nnvRoles'); if(!host) return;
     var feats=d && (d.topFeatures||d.inputFeatures);
@@ -16635,7 +16982,7 @@ html:root .page > *{ flex-shrink:0; }
   // [V33.150] 신규 위원 5종 추가 — 종전엔 고전 6종만 구조를 볼 수 있었다.
   //   FLOW·XALPHA·STACK·MEMO·이중헤드는 위원회에서 실제로 투표하는데 내부를 볼 방법이 없었다.
   var MODELS = [['overview','전체 구조'],['dnn','DNN 딥넷'],['mind','MIND 스태킹'],['gbdt','GBDT'],['xgb','XGBoost'],['lgb','LightGBM'],['cat','CatBoost'],
-                ['flow','FLOW 수급'],['xalpha','XALPHA 알파'],['memo','MEMO 기억'],['stack','STACK 결합'],
+                ['flow','FLOW 수급'],['xalpha','XALPHA 알파'],['memo','MEMO 기억'],['seq','SEQ 트랜스포머 3D'],['stack','STACK 결합'],
                 ['dualbull','이중헤드 강세'],['dualbear','이중헤드 약세']];
   /* [V33.153] 모델 표시는 ★구조 관측일 때만★ 나타난다(사용자 요청).
      [V33.215] 버튼 13개는 화면 안 '신경망 지도' 로 옮겼다 — 여기는 '지금 보는 모델' 만 적는다.

@@ -2977,7 +2977,7 @@ async function applySignalTypeWeights(DB, cfg) {
 // ============================================================================
 // [V33.55] 빌드 버전 — SWR L2 캐시 키에 섞어 '배포 = 판단 캐시 자동 무효화'를 만든다.
 //   판정 로직을 고쳐도 옛 캐시가 최대 1시간 재배포되던 문제를 구조적으로 없앤다.
-const _BUILD_VER = "V33.268";
+const _BUILD_VER = "V33.269";
 
 // ═══ [V33.171] 평가 순서 계획 — ★승격과 순환을 교차해 굶주림을 구조적으로 없앤다★ ═══
 //   V33.50 의 형태트리거는 "급한 몇 종목을 앞으로 당긴다"는 의도였으나, 실제 운영로그에서는
@@ -12101,7 +12101,9 @@ function _sqSoftmax(a) {
 }
 /* seq: [L][D] — 오래된 것부터 최신 순. 짧으면 ★앞을 가장 오래된 행으로 채운다★
    (0 으로 채우면 표준화 후 '평균값 봉' 이 되어 없는 과거를 지어내는 셈이다). */
-function seqFormerScore(model, seq) {
+/* cap(선택): { attn: [heads][L][L] } 를 채운다. ★관측용으로 두 번째 구현을 만들지 않는다★ —
+   화면이 그리는 어텐션은 반드시 채점에 쓰이는 그 계산에서 나와야 한다. 없으면 아무 일도 안 한다. */
+function seqFormerScore(model, seq, cap) {
   try {
     if (!model || !Array.isArray(seq) || !seq.length) return null;
     const L = Math.max(1, Math.floor(_num(model.L, SEQML.L)));
@@ -12146,6 +12148,7 @@ function seqFormerScore(model, seq) {
           sc[u] = s * scale;
         }
         const w = _sqSoftmax(sc);
+        if (cap) { (cap.attn || (cap.attn = []))[hh] || (cap.attn[hh] = []); cap.attn[hh][t] = w; }
         for (let i = 0; i < dh; i++) {
           let s = 0; for (let u = 0; u < L; u++) s += w[u] * V[u][off + i];
           ctx[t][off + i] = s;
@@ -12424,6 +12427,105 @@ function _lsmCore(S, pay, opt) {
   let mt = 0; for (let i = 0; i < n; i++) mt += tau[i]; mt /= n;
   const ex0 = pay(S[0][0], 0);
   return { value: v, exercise0: ex0, stop: ex0 >= v, tau: mt, paths: n, steps: steps };
+}
+/* ══ [V33.269] SEQ 관측 데이터 — 3D Transformer 화면이 읽는 그 값 ═══════════════
+   ★모르는 것은 안 그린다.★ 이 화면이 그리는 숫자는 전부 저장된 가중치에서 나온다:
+     · 피처 영향도  = |Win[:, j]| (그 피처가 들어가는 열의 노름) — 안 쓰는 피처는 낮게 나온다
+     · 위치 영향도  = |pos[t]|
+     · 헤드 규모    = 헤드별 Wq/Wk/Wv/Wo 부분행렬 노름
+     · 어텐션       = ★학습 표본 1건에서 실제로 계산한 값★ (seqFormerScore 의 캡처)
+   어텐션은 입력에 따라 달라진다. 표본이 없으면 null 을 주고 화면이 "표본 없음" 이라고 적는다 —
+   난수로 채우지 않는다(V33.195 에서 딥넷 미리보기가 그랬고, 그건 관측이 아니라 장식이었다). */
+function _sqColNorm(W, cols) {
+  const out = new Array(cols).fill(0);
+  for (let i = 0; i < W.length; i++) { const Wi = W[i];
+    for (let j = 0; j < cols; j++) { const v = _num(Wi[j], 0); out[j] += v * v; } }
+  for (let j = 0; j < cols; j++) out[j] = Math.sqrt(out[j]);
+  return out;
+}
+function _sqRowNorm(W) {
+  return W.map(function (r) { let s = 0; for (const v of r) { const x = _num(v, 0); s += x * x; } return Math.sqrt(s); });
+}
+function _sqNorm01(a) {
+  let mx = 0; for (const v of a) if (v > mx) mx = v;
+  return a.map(function (v) { return mx > 0 ? +(v / mx).toFixed(4) : 0; });
+}
+/* 순수 함수로 떼어 둔다 — ★검사가 진짜 모델을 넣고 직접 돌릴 수 있게.★ D1·R2 를 타는 함수는
+   오프라인에서 못 돌리고, 그러면 이 화면의 숫자는 아무도 검산하지 않은 채로 배포된다.
+   (optMicroFromChain 을 같은 이유로 이렇게 뒀다.) */
+function _seqVizFrom(m, t) {
+  {
+    const cfgShape = { L: SEQML.L, d: SEQML.d, heads: SEQML.heads, ffMult: SEQML.ffMult, D: LUXML.featNames.length };
+    if (!m || !Array.isArray(m.Win)) {
+      /* 미학습 — ★구조는 사실이고 강도는 비어 있다.★ 둘을 섞어 적지 않는다. */
+      return { kind: "seq", trained: false, cfg: cfgShape, featNames: LUXML.featNames.slice(),
+               trust: t || null, why: t ? t.why : null,
+               note: "아직 저장된 시퀀스 모델이 없습니다 — 구조만 표시합니다(가중치 강도는 알 수 없습니다)." };
+    }
+    const D = Math.floor(_num(m.D, cfgShape.D)), d = Math.floor(_num(m.d, cfgShape.d));
+    const L = Math.floor(_num(m.L, cfgShape.L)), H = Math.floor(_num(m.heads, cfgShape.heads));
+    const dh = H > 0 ? d / H : d;
+    const fn = LUXML.featNames;
+    const inS = _sqNorm01(_sqColNorm(m.Win, D));
+    const inputFeatures = [];
+    for (let j = 0; j < D; j++)
+      inputFeatures.push({ i: j, name: fn[j] || ("f" + j), role: (typeof FEAT_ROLES !== "undefined" ? (FEAT_ROLES[fn[j]] || "") : ""), strength: inS[j] });
+    const topFeatures = inputFeatures.slice().sort(function (a, b) { return b.strength - a.strength; }).slice(0, 20);
+    const posStrength = _sqNorm01((m.pos || []).map(function (r) { let s = 0; for (const v of r) { const x = _num(v, 0); s += x * x; } return Math.sqrt(s); }));
+    /* 헤드별 규모 — 부분행렬(그 헤드가 쓰는 출력 행들)의 노름. 어떤 헤드가 죽어 있는지 보인다. */
+    const headStats = [];
+    for (let h = 0; h < H; h++) {
+      const a = h * dh, b = a + dh;
+      const nrm = function (W) { let s = 0; for (let i = a; i < b && i < W.length; i++) for (const v of W[i]) { const x = _num(v, 0); s += x * x; } return +Math.sqrt(s).toFixed(4); };
+      headStats.push({ h: h, q: nrm(m.Wq), k: nrm(m.Wk), v: nrm(m.Wv),
+                       o: +Math.sqrt(_sqColNorm(m.Wo, d).slice(a, b).reduce(function (x, y) { return x + y * y; }, 0)).toFixed(4) });
+    }
+    /* FFN — 은닉 유닛이 몇 개나 실제로 살아 있는가(행 노름이 최대의 5% 미만이면 사실상 죽은 유닛). */
+    const ffRows = _sqRowNorm(m.W1 || []);
+    const ffN = _sqNorm01(ffRows);
+    let ffDead = 0; for (const v of ffN) if (v < 0.05) ffDead++;
+    const headW = _sqNorm01((m.Wh || []).map(function (v) { return Math.abs(_num(v, 0)); }));
+    /* ★어텐션은 실제 표본에서만.★ 없으면 null — 화면이 그 사실을 적는다. */
+    let attn = null, attnP = null, attnErr = null;
+    try {
+      if (Array.isArray(m.vizSeq) && m.vizSeq.length) {
+        const cap = {};
+        const p = seqFormerScore(m, m.vizSeq, cap);
+        if (p != null && cap.attn && cap.attn.length) {
+          attn = cap.attn.map(function (hd) { return hd.map(function (row) { return row.map(function (w) { return +w.toFixed(4); }); }); });
+          attnP = +p.toFixed(4);
+        } else attnErr = "표본으로 재현이 안 됩니다(모델 형상 확인 필요)";
+      } else attnErr = "관측용 표본이 없습니다 — 다음 학습 업로드부터 실제 어텐션이 표시됩니다";
+    } catch (e) { attnErr = "어텐션 계산 예외"; }
+    let params = 0;
+    params += d * D + d;                     // Win + bin
+    params += L * d;                          // pos
+    params += 4 * (d * d + d);                // Wq,Wk,Wv,Wo (+bias)
+    params += d * (4 * d) + 4 * d + (4 * d) * d + d;  // W1,b1,W2,b2
+    params += d + 1;                          // Wh, bh
+    params += 6 * d;                          // ln1/ln2/lnf (g,b)
+    return {
+      kind: "seq", trained: true, L: L, D: D, d: d, heads: H, dh: dh, ffHidden: (m.W1 || []).length,
+      params: params, cfg: cfgShape,
+      trusted: !!m.trusted, w: _num(m.w, 0), admitPath: m.admitPath || null, admitWhy: m.admitWhy || null,
+      valAcc: m.valAcc, valAccLB: m.valAccLB, valN: m.valN, n: m.n, valICt: m.valICt,
+      probeMaxDiff: m.probeMaxDiff, probeN: m.probeN, trainedAt: m.trainedAt, source: m.source || null,
+      featVer: _num(m.featVer, null), serverFeatVer: LUXML.featVer,
+      featNames: fn.slice(), inputFeatures: inputFeatures, topFeatures: topFeatures,
+      posStrength: posStrength, headStats: headStats,
+      ffStrength: ffN, ffDead: ffDead, headWeight: headW,
+      attn: attn, attnP: attnP, attnErr: attnErr, vizP: (m.vizP == null ? null : _num(m.vizP, null)),
+      trust: t || null
+    };
+  }
+}
+async function mlSeqVizData(DB) {
+  try {
+    const t = await getState(DB, "seq_trust", null);
+    let m = null;
+    try { m = await getBigState(DB, "seq_model", null); } catch (e) {}
+    return _seqVizFrom(m, t);
+  } catch (e) { return { kind: "seq", trained: false, error: e && e.message }; }
 }
 /* ── 기록과 채점 ─────────────────────────────────────────────────────────────
    ★새 판단기가 실거래를 흔들기 전에 자기 성적부터 남긴다.★ OPTMICRO 와 같은 규율이다.
@@ -22330,6 +22432,7 @@ async function handleRequest(request, env, ctx) {
       // [V33.150] 신규 위원 5종 추가 — 선형(계수) / 원형(기억) 은 트리·층 렌더러로 못 그린다.
       const data = modelSel === "mind" ? await mlMindVizData(env.DB)
         : (["gbdt", "xgb", "lgb", "cat"].indexOf(modelSel) !== -1) ? await mlTreeVizData(env.DB, modelSel)
+        : (modelSel === "seq") ? await mlSeqVizData(env.DB)
         : (modelSel === "memo") ? await mlMemoVizData(env.DB)
         : (_LINVIZ[modelSel] ? await mlLinearVizData(env.DB, modelSel)
         : await mlDNNVizData(env.DB));
@@ -23404,7 +23507,12 @@ async function handleRequest(request, env, ctx) {
       const lb = _clamp(_num(body.valAccLB, 0), 0, 1);
       const icT = _num(body.valICt, null);
       const ad = _dnnAdmit(lb, icT, 0.5);   // DNN 과 ★같은 자★ — 정확도 길 · IC 길
+      /* [V33.269] 관측용 표본 1건 — ★어텐션은 입력에 따라 달라지므로 입력 없이는 그릴 수 없다.★
+         화면에 아무 숫자나 채우느니(그건 관측이 아니라 장식이다) 학습 표본 한 건을 그대로
+         들고 있다가 그 위에서 실제로 계산한다. probe 는 트레이너가 검증구간에서 뽑은 진짜 행이다. */
+      const _vz = (Array.isArray(body.probe) && body.probe[0] && Array.isArray(body.probe[0].x)) ? body.probe[0].x : null;
       const rec = Object.assign({}, m, { featVer: LUXML.featVer, source: "external", trainedAt: Date.now(),
+        vizSeq: _vz, vizP: (_vz && body.probe[0] && typeof body.probe[0].p === "number") ? body.probe[0].p : null,
         valAcc: _num(body.valAcc, null), valAccLB: lb, valN: _num(body.valN, 0), n: _num(body.n, 0),
         valICt: icT, valICBlock: _num(body.valICBlock, null),
         probeMaxDiff: +maxDiff.toFixed(5), probeN: probeN,
@@ -45015,6 +45123,7 @@ export {
   optMicroFromChain, _bsDeltaGamma, OPTMICRO,   // [V33.264] 옵션 미시구조
   _calFeats, _opexCtx, _fomcCtx, FOMC_DAYS, _thirdFriday,   // [V33.265] 달력 사건
   LSM, lsmAmericanPut, lsmExitValue, _lsmCore, _lsmLstsq,   // [V33.268] 최적정지(Longstaff-Schwartz)
+  mlSeqVizData, _seqVizFrom,        // [V33.269] SEQ 3D 관측 데이터(순수부는 검사가 직접 돌린다)
   seqFormerScore, SEQML, seqBuildFeat, _seqRosterRow,   // [V33.267] 시퀀스 Transformer(채점·입력조립·명단)
   mlDeepDecide,                     // [V33.267] 검사가 위원회를 ★직접 돌려★ 표가 실제로 들어가는지 본다
   dualHeadJudge, _boostersCached,   // [V33.257] 자가진단 명단 검사가 '위원회가 쓰는 그 함수' 를 직접 돌린다
