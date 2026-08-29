@@ -199,12 +199,20 @@ console.log("\n④~⑦ MEMO — 잡음 72축 + 신호 3축 데이터로 실제 �
 
     console.log("\n⑦ 자가 신호축을 살리고 잡음축을 죽였는가");
     {
-      const live = model.scale.filter(v => v >= 0.2).length;
+      const live = model.scale.filter(v => v > 0).length;
       const sigScale = SIG.map(j => model.scale[j]);
       const noiseMax = Math.max(...model.scale.filter((_, j) => !SIG.includes(j)));
       console.log(`       유효축 ${live}/${D} · 신호축 가중 [${sigScale.map(v => v.toFixed(2)).join(", ")}] · 잡음축 최대 ${noiseMax.toFixed(2)}`);
-      chk(live < D * 0.5, `자가 축 절반 이상을 눌러 껐다(유효 ${live}/${D})`,
+      chk(live < D * 0.5, `자가 축 절반 이상을 완전히 껐다(유효 ${live}/${D})`,
         `자가 거의 아무 축도 안 껐다(유효 ${live}/${D}) — 등가중과 다를 게 없다`);
+      /* [V33.274] 잡음바닥 — 순수잡음 축은 '작은 가중' 이 아니라 ★0★ 이어야 한다.
+         V33.273 은 |r| 을 그대로 나눠 잡음축이 0.2~0.5 를 받았고, 운영에서 유효축 36/75 로
+         나타나 IC 가 문턱 앞에서 멎었다. 우연으로 설명되는 몫을 빼면 스스로 0 이 된다. */
+      const nz = model.scale.filter((_, j) => !SIG.includes(j)).filter(v => v > 0).length;
+      chk(nz <= 3, `잡음축이 가중 0 으로 완전히 죽었다(살아남은 잡음축 ${nz}/${D - 3})`,
+        `★잡음축 ${nz}개가 아직 가중을 갖는다 — 잡음바닥이 안 빠졌다★`);
+      chk(M.MEMOML.relNoiseZ === 2, "잡음바닥 배수 2 (우연 몫만 뺀다 — 문턱 완화가 아니다)",
+        "잡음바닥 배수가 바뀌었다");
       chk(sigScale.every(v => v > noiseMax * 0.9),
         "신호축 셋이 모든 잡음축보다 무겁다 — 이웃을 신호가 정한다",
         `신호축이 잡음축에 밀린다(신호 ${Math.min(...sigScale).toFixed(2)} vs 잡음 ${noiseMax.toFixed(2)})`);

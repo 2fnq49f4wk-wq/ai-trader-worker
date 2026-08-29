@@ -28981,7 +28981,13 @@ const MEMOML = {
   iters: 6,                // 온라인 k-means 반복
   shrinkN: 40,             // 원형 표본이 적으면 기저확률로 수축
   icFloor: 0.012,
-  icTMin: 2.50              // [V33.93] 본페로니 — 전문가 8종 동시검정
+  icTMin: 2.50,             // [V33.93] 본페로니 — 전문가 8종 동시검정
+  /* [V33.274] 관련도 가중의 ★잡음바닥★ 배수. 무신호 축이라도 |r| 은 0 이 아니다 —
+     표본 ntr 에서 상관의 표준오차는 1/√ntr 이므로 그만큼은 우연으로 나온다.
+     안 빼면 순수잡음 축이 0.3~0.5 의 가중을 받아 거리에 그대로 남는다
+     (V33.273 운영 실측: 유효축 36/75 — 그 대부분이 이 잡음이었다).
+     2 는 이 저장소가 다른 곳에서 쓰는 것과 같은 취지의 보수적 배수다. */
+  relNoiseZ: 2
 };
 
 // 원형 책 만들기 — 표준화 → k-means(고정 반복) → 원형별 승률·평균손익 집계.
@@ -29084,12 +29090,21 @@ async function memoTrainNightly(DB) {
       const ysd = Math.sqrt(Math.max(ybar * (1 - ybar), 0));   // 이진 라벨의 표준편차
       const r = new Array(D).fill(0);
       let rmax = 0;
+      /* [V33.274] ★잡음바닥을 뺀다.★ V33.273 은 |r| 을 그대로 max 로 나눴는데, 무신호 축도
+         표본잡음으로 |r| ≈ 1/√ntr 을 얻는다. 운영 표본(ntr≈11,800)에서 그 값은 0.0092 이고,
+         실제 최대 |r| 이 0.05 남짓이라 ★순수잡음 축이 가중 0.2~0.5 를 받아 거리에 그대로
+         남았다★ — 그래서 유효축이 36/75 였고 IC 가 0.0373 에서 멎었다(문턱 미달).
+         빼고 나면 우연으로 설명되는 축은 스스로 0 이 되고, 남는 축만 이웃을 정한다.
+         이건 완화가 아니라 ★같은 자를 더 정확하게 만드는 것★ 이다 — 이 저장소가 Wilson 하한과
+         본페로니로 늘 해 온 것과 같은 교정이다(잰 값에서 우연 몫을 빼고 본다). */
+      const _rFloor = _num(MEMOML.relNoiseZ, 2) / Math.sqrt(Math.max(ntr, 2));
       for (let j = 0; j < D; j++) {
         let sx = 0, sxx = 0, sxy = 0;
         for (let i = 0; i < ntr; i++) { const v = Z[i][j]; sx += v; sxx += v * v; sxy += v * (Y[i] - ybar); }
         const mx = sx / ntr;
         const sdx = Math.sqrt(Math.max(sxx / ntr - mx * mx, 0));
-        r[j] = (sdx > 1e-9 && ysd > 1e-9) ? Math.abs((sxy / ntr) / (sdx * ysd)) : 0;
+        const _raw = (sdx > 1e-9 && ysd > 1e-9) ? Math.abs((sxy / ntr) / (sdx * ysd)) : 0;
+        r[j] = Math.max(0, _raw - _rFloor);
         if (r[j] > rmax) rmax = r[j];
       }
       // 전 축이 무신호면(rmax≈0) 가중을 포기하고 등가중으로 둔다 — 0 으로 나누지 않는다.
@@ -29175,8 +29190,9 @@ async function memoTrainNightly(DB) {
                        && _num(_fwd.t, -9) >= ICGATE.forwardTMin);
     await setState(DB, "memo_model", model);
     // [V33.273] 자가 실제로 몇 축을 살렸는지 남긴다 — 안 보이면 다음에 또 추측하게 된다.
-    let _liveAx = 0; for (let j = 0; j < D; j++) if (scale[j] >= 0.2) _liveAx++;
+    let _liveAx = 0; for (let j = 0; j < D; j++) if (scale[j] > 0) _liveAx++;
     return "[MEMO] 원형 " + protos.length + "개 (표본 " + ntr + ") 가중거리 유효축 " + _liveAx + "/" + D +
+           "(잡음바닥 " + (_num(MEMOML.relNoiseZ, 2) / Math.sqrt(Math.max(ntr, 2))).toFixed(4) + " 제거)" +
            " valAcc " + (model.valAcc * 100).toFixed(1) +
            "% IC " + model.valIC.toFixed(4) + (model.valICt != null ? " t " + model.valICt.toFixed(2) : "") +
            (model.fwdReady ? " 전진IC " + _num(model.fwdIC, 0).toFixed(4) + "(n" + model.fwdN + ")"
