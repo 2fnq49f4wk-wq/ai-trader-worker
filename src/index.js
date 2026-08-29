@@ -29057,6 +29057,53 @@ async function memoTrainNightly(DB) {
     for (let j = 0; j < D; j++) { std[j] = Math.sqrt(std[j] / ntr); if (!(std[j] > 1e-6)) std[j] = 1; }
     const Z = X.map(function (x) { return x.map(function (v, j) { return _clamp((v - mean[j]) / std[j], -4, 4); }); });
 
+    /* ══ [V33.273] ★MEMO 가 동전던지기였던 이유 — 자가 75차원을 전부 같은 무게로 셌다★ ══
+       실측(2026-08-29 야간): 원형 128개 · 표본 14,827 · valAcc 49.6% · IC 0.0130 · t 0.67 → 보류.
+       표본이 1만 4천인데 정확도가 기저 아래다. 이건 ★표본 부족이 아니다★.
+
+       원인은 거리다. 원형 배정도 추론도 d² = Σ_j (z_j − c_j)² 로, 예측력 있는 축과
+       잡음 축이 정확히 같은 발언권을 갖는다. 그런데 이 저장소는 그 잡음의 크기를 이미
+       재 놓았다 — ★같은 밤 [BANDIT] 이 "유의 피처 0/67" 을 보고한다.★ 75축 중 신호를
+       지닌 축은 소수이고 나머지가 거리의 대부분을 만든다는 뜻이다. 고차원 최근접이웃이
+       무너지는 교과서적 조건이다(Beyer 1999; Aggarwal 2001) — 잡음축이 늘수록 모든 점이
+       서로 등거리로 수렴해 '가장 닮은 과거' 라는 개념 자체가 의미를 잃는다.
+       MEMO 는 그 개념 하나로 서 있는 모델이므로, 여기가 무너지면 정확도가 기저로 간다.
+
+       고치는 방법은 문턱을 낮추는 게 아니라 ★자를 바꾸는 것★ 이다. 축마다 라벨과의
+       점이연 상관 |r_j| 를 재고 그 크기로 축을 눌러 z'_j = (|r_j|/max|r|)·z_j 로 옮긴 뒤
+       거리를 잰다(관련도 가중 kNN — Wettschereck·Aha·Mohri 1997). 신호 없는 축은 스스로
+       0 으로 수렴해 거리에서 사라지고, 남은 축이 이웃을 정한다. 원형 개수도 문턱도 안 건드린다.
+
+       ★상관은 학습구간(0..ntr)에서만 잰다★ — 홀드아웃(nvalStart 이후)은 한 번도 안 본다.
+       자를 홀드아웃으로 깎으면 그 홀드아웃 점수는 그 순간부터 증거가 아니다. 이 저장소가
+       반복해 당한 오염이 정확히 그 모양이었다(V33.104: in-sample 채점으로 IC 0.566).
+       ntr 은 위에서 퍼징으로 이미 잘라 둔 경계이므로 라벨 지평 누출도 함께 막힌다. */
+    const scale = new Array(D).fill(1);
+    {
+      let ybar = 0; for (let i = 0; i < ntr; i++) ybar += Y[i]; ybar /= ntr;
+      const ysd = Math.sqrt(Math.max(ybar * (1 - ybar), 0));   // 이진 라벨의 표준편차
+      const r = new Array(D).fill(0);
+      let rmax = 0;
+      for (let j = 0; j < D; j++) {
+        let sx = 0, sxx = 0, sxy = 0;
+        for (let i = 0; i < ntr; i++) { const v = Z[i][j]; sx += v; sxx += v * v; sxy += v * (Y[i] - ybar); }
+        const mx = sx / ntr;
+        const sdx = Math.sqrt(Math.max(sxx / ntr - mx * mx, 0));
+        r[j] = (sdx > 1e-9 && ysd > 1e-9) ? Math.abs((sxy / ntr) / (sdx * ysd)) : 0;
+        if (r[j] > rmax) rmax = r[j];
+      }
+      // 전 축이 무신호면(rmax≈0) 가중을 포기하고 등가중으로 둔다 — 0 으로 나누지 않는다.
+      if (rmax > 1e-9) for (let j = 0; j < D; j++) scale[j] = +(r[j] / rmax).toFixed(4);
+    }
+    // 축을 실제로 눌러 둔다 — 이후 k-means·원형·홀드아웃 채점이 전부 같은 공간에서 돈다.
+    //   (X 는 안 건드린다 — 홀드아웃 채점은 memoScore(model, X[i]) 로 ★추론과 같은 경로★ 를 탄다)
+    for (let i = 0; i < N; i++) { const z = Z[i]; for (let j = 0; j < D; j++) z[j] *= scale[j]; }
+    /* 발언권이 큰 축부터 더하면 아래 거리 루프의 조기중단(d2 >= bd)이 훨씬 빨리 걸린다.
+       합은 순서와 무관하므로 ★결과는 같고 시간만 준다★ — k-means 가 이 함수의 CPU 대부분이다
+       (ntr×K×D = 1.2만×128×75 ≈ 1.15억 회/반복). 가중으로 죽은 축이 뒤로 가면 그만큼 덜 돈다. */
+    const ord = new Array(D); for (let j = 0; j < D; j++) ord[j] = j;
+    ord.sort(function (a, b) { return scale[b] - scale[a]; });
+
     // k-means++ 대신 결정적 초기화(고르게 뽑기) — 워커에서 재현 가능해야 진단이 된다.
     const K = Math.min(MEMOML.K, Math.floor(ntr / 20));
     if (K < 8) return "[MEMO] 학습표본 부족(원형 " + K + "개)";
@@ -29068,7 +29115,7 @@ async function memoTrainNightly(DB) {
         let bi = 0, bd = Infinity;
         for (let k = 0; k < K; k++) {
           let d2 = 0; const c = C[k], z = Z[i];
-          for (let j = 0; j < D; j++) { const t = z[j] - c[j]; d2 += t * t; if (d2 >= bd) break; }
+          for (let q = 0; q < D; q++) { const j = ord[q]; const t = z[j] - c[j]; d2 += t * t; if (d2 >= bd) break; }
           if (d2 < bd) { bd = d2; bi = k; }
         }
         assign[i] = bi;
@@ -29093,6 +29140,11 @@ async function memoTrainNightly(DB) {
     }
     if (protos.length < 8) return "[MEMO] 유효 원형 " + protos.length + "개 — 대기";
     const model = { protos: protos, mean: mean, std: std, base: +base.toFixed(4),
+                    /* [V33.273] ★자를 모델 안에 같이 싣는다.★ 학습이 쓴 공간과 추론이 쓰는 공간이
+                       갈라지면 원형은 엉뚱한 자리에 있고 아무도 그걸 눈으로 못 본다 — 성적으로만
+                       드러나는 사고다(V33.272 가 STACK 슬롯에서 막은 것과 같은 종류).
+                       ord 는 조기중단 순서일 뿐 결과에 영향이 없다(합은 순서 무관). */
+                    scale: scale, ord: ord,
                     featVer: MEMOML.featVer, luxFeatVer: LUXML.featVer, n: ntr,
                     purged: _purged,   // [V33.156] 다른 모델과 같은 근거를 남긴다(홀드아웃 신뢰의 바탕)
                     ts: Date.now() };
@@ -29122,7 +29174,10 @@ async function memoTrainNightly(DB) {
     model.trusted = !!(model.holdPass && _fwd && _fwd.ready && _num(_fwd.ic, -1) > ICGATE.forwardFloor
                        && _num(_fwd.t, -9) >= ICGATE.forwardTMin);
     await setState(DB, "memo_model", model);
-    return "[MEMO] 원형 " + protos.length + "개 (표본 " + ntr + ") valAcc " + (model.valAcc * 100).toFixed(1) +
+    // [V33.273] 자가 실제로 몇 축을 살렸는지 남긴다 — 안 보이면 다음에 또 추측하게 된다.
+    let _liveAx = 0; for (let j = 0; j < D; j++) if (scale[j] >= 0.2) _liveAx++;
+    return "[MEMO] 원형 " + protos.length + "개 (표본 " + ntr + ") 가중거리 유효축 " + _liveAx + "/" + D +
+           " valAcc " + (model.valAcc * 100).toFixed(1) +
            "% IC " + model.valIC.toFixed(4) + (model.valICt != null ? " t " + model.valICt.toFixed(2) : "") +
            (model.fwdReady ? " 전진IC " + _num(model.fwdIC, 0).toFixed(4) + "(n" + model.fwdN + ")"
                            : " 전진" + model.fwdN + "/" + ICGATE.minForward) +
@@ -29146,13 +29201,19 @@ function memoScore(model, featVec) {
     if (featVec.length !== D) return null;
     const z = new Array(D);
     for (let j = 0; j < D; j++) z[j] = _clamp((_num(featVec[j], 0) - model.mean[j]) / (model.std[j] || 1), -4, 4);
+    /* [V33.273] ★학습이 축을 누른 그대로 여기서도 누른다.★ 원형은 눌린 공간에 찍혀 있으므로
+       안 누르고 재면 전혀 다른 이웃이 뽑힌다. 구 모델에는 scale 이 없다 — 그건 등가중으로
+       학습된 모델이므로 아무것도 곱하지 않는 것이 맞다(전진검증이 어제 모델을 채점한다). */
+    const _sc = (Array.isArray(model.scale) && model.scale.length === D) ? model.scale : null;
+    if (_sc) for (let j = 0; j < D; j++) z[j] *= _sc[j];
+    const _ord = (Array.isArray(model.ord) && model.ord.length === D) ? model.ord : null;
     // 최근접 M개 — 부분정렬 대신 삽입으로 상위 M만 유지(할당 최소화)
     const M = Math.max(1, MEMOML.neighbors);
     const bestD = new Array(M).fill(Infinity), bestI = new Array(M).fill(-1);
     for (let k = 0; k < model.protos.length; k++) {
       const c = model.protos[k].c;
       let d2 = 0;
-      for (let j = 0; j < D; j++) { const t = z[j] - c[j]; d2 += t * t; if (d2 >= bestD[M - 1]) break; }
+      for (let q = 0; q < D; q++) { const j = _ord ? _ord[q] : q; const t = z[j] - c[j]; d2 += t * t; if (d2 >= bestD[M - 1]) break; }
       if (d2 < bestD[M - 1]) {
         let q = M - 1;
         while (q > 0 && bestD[q - 1] > d2) { bestD[q] = bestD[q - 1]; bestI[q] = bestI[q - 1]; q--; }
@@ -33129,7 +33190,13 @@ function mlCollectEvents(args) {
 const LUXNOISE = {
   permTrials: 3,
   dropFloor: 0.003,
-  minValForTest: 30
+  minValForTest: 30,
+  /* [V33.273] 군집 순열검정용. clusterRho 는 "이 둘은 서로를 대신할 수 있다" 의 경계다 —
+     V33.133 이 몬테카를로로 붕괴를 재현한 값(rho≥0.6)을 그대로 쓴다. 새로 발명하지 않는다.
+     corrRows 는 상관 추정에만 쓰는 행 상한(상관은 4천 행이면 충분히 안정적이다 —
+     검정 자체는 홀드아웃 전체로 한다). */
+  clusterRho: 0.6,
+  corrRows: 4000
 };
 
 const LUXBANDIT = {
@@ -33185,6 +33252,113 @@ function mlPermutationTest(val, w, b) {
     }
   } catch (e) {}
   return result;
+}
+
+/* ══ [V33.273] ★상관강건 그룹 순열검정 — 밴딧을 실제로 켠다★ ══
+   V33.133 의 진단은 옳았다: 피처 상관이 높으면 순열중요도는 전부 0 쪽으로 붕괴한다
+   (Strobl 2008; Hooker & Mentch 2019). 상관된 짝이 정보를 대신 들고 있으면 한 축만
+   섞어도 정확도가 안 떨어지기 때문이다. 그런데 그때 내린 결론("문턱을 건드리지 말고
+   끄는 쪽이 옳다")은 ★검정을 그대로 둔 채★ 내린 것이었다. 그 뒤 운영 실측은 계속
+   같은 자리다 — 2026-08-29 야간 "유의 피처 0/67 → 밴딧 미가동". 즉 이 시스템에서
+   컨텍스트 밴딧은 ★한 번도 켜진 적이 없다★. 꺼져 있는 기능은 성능이 0 이다.
+
+   상관된 짝이 서로를 대신하는 것이 원인이라면, 짝을 ★같이★ 섞으면 된다:
+     ① 살아 있는(w≠0) 축끼리 상관을 재고 |rho| ≥ clusterRho 로 단일연결 군집을 만든다.
+     ② 군집을 통째로 섞는다 — 행 순서를 한 번 섞어 그 군집의 열 ★전부★ 에 같은 순열을
+        적용한다. 군집 내부의 상호구조는 그대로 보존되고, 라벨과의 연결만 끊긴다.
+        그래서 "옆 축이 대신 들고 있어서 안 떨어진다" 가 원천적으로 성립하지 않는다.
+     ③ 하락이 문턱을 넘는 군집만 신호 군집이다. 대표 1개(|w| 최대)만 컨텍스트로 쓴다.
+
+   ★문턱(dropFloor)은 그대로 둔다.★ 낮춰서 통과시키는 게 아니라, 상관 아래에서도
+   유효한 검정으로 바꾸는 것이다 — V33.133 이 경계한 "잡음으로 사이즈를 흔드는" 위험은
+   문턱을 낮출 때 생기지, 검정을 고칠 때 생기지 않는다. 군집당 대표 하나만 남기는 것도
+   원설계 의도와 같다(밴딧 차원이 작을수록 UCB 분산항이 안정적이다).
+   조건부 순열(Strobl 의 원안)은 조건부 분포 추정이 필요해 워커 예산 밖이다 —
+   군집 단위 순열은 같은 취지의 계산 가능한 근사다. */
+
+// 상관 단일연결 군집 — |rho| ≥ rho 인 축들을 한 덩어리로 묶는다(유니온-파인드).
+//   상관 추정에만 앞쪽 maxRows 행을 쓴다(검정 본체는 홀드아웃 전체를 쓴다).
+function _corrClusters(val, idxs, rho, maxRows) {
+  const n = Math.min(val.length, Math.max(30, maxRows | 0));
+  const m = idxs.length;
+  const mu = new Array(m).fill(0), sd = new Array(m).fill(0);
+  for (let a = 0; a < m; a++) {
+    const j = idxs[a];
+    let s = 0, ss = 0;
+    for (let i = 0; i < n; i++) { const v = _num(val[i].z[j], 0); s += v; ss += v * v; }
+    mu[a] = s / n;
+    sd[a] = Math.sqrt(Math.max(ss / n - mu[a] * mu[a], 0));
+  }
+  const par = new Array(m); for (let a = 0; a < m; a++) par[a] = a;
+  const find = function (a) { while (par[a] !== a) { par[a] = par[par[a]]; a = par[a]; } return a; };
+  for (let a = 0; a < m; a++) {
+    for (let b = a + 1; b < m; b++) {
+      if (!(sd[a] > 1e-9 && sd[b] > 1e-9)) continue;
+      if (find(a) === find(b)) continue;      // 이미 같은 덩어리 — 재는 의미가 없다(결과 동일, 시간만 절약)
+      const ja = idxs[a], jb = idxs[b];
+      let c = 0;
+      for (let i = 0; i < n; i++) c += (_num(val[i].z[ja], 0) - mu[a]) * (_num(val[i].z[jb], 0) - mu[b]);
+      if (Math.abs((c / n) / (sd[a] * sd[b])) >= rho) par[find(a)] = find(b);
+    }
+  }
+  const buck = new Map();
+  for (let a = 0; a < m; a++) {
+    const r = find(a);
+    if (!buck.has(r)) buck.set(r, []);
+    buck.get(r).push(idxs[a]);
+  }
+  return Array.from(buck.values());
+}
+
+function mlGroupedPermutationTest(val, w, b, opts) {
+  const D = w.length;
+  const out = { baseAcc: 0, clusters: [] };
+  try {
+    if (!Array.isArray(val) || val.length < LUXNOISE.minValForTest) return out;
+    const active = [];
+    for (let j = 0; j < D; j++) if (w[j] !== 0) active.push(j);
+    if (active.length < 1) return out;
+    const base = _valAccAt(val, w, b, D);
+    out.baseAcc = base;
+    const groups = _corrClusters(val, active,
+      _num(opts && opts.rho, LUXNOISE.clusterRho), _num(opts && opts.maxRows, LUXNOISE.corrRows));
+    const n = val.length;
+    const perm = new Array(n);
+    const inG = new Uint8Array(D);
+    for (const g of groups) {
+      inG.fill(0); for (const j of g) inG[j] = 1;
+      let dropSum = 0;
+      for (let t = 0; t < LUXNOISE.permTrials; t++) {
+        // 행 순서를 ★한 번★ 섞어 군집의 열 전부에 같은 순열을 준다 — 군집 내부 구조는 보존된다.
+        for (let i = 0; i < n; i++) perm[i] = i;
+        for (let i = n - 1; i > 0; i--) {
+          const k = Math.floor(Math.random() * (i + 1));
+          const tmp = perm[i]; perm[i] = perm[k]; perm[k] = tmp;
+        }
+        let correct = 0;
+        for (let i = 0; i < n; i++) {
+          const zi = val[i].z, zp = val[perm[i]].z;
+          let z = b;
+          for (let q = 0; q < active.length; q++) {
+            const j = active[q];
+            z += w[j] * (inG[j] ? zp[j] : zi[j]);
+          }
+          if ((_sigmoid(z) >= 0.5 ? 1 : 0) === val[i].y) correct++;
+        }
+        dropSum += (base - correct / n);
+      }
+      const avgDrop = dropSum / LUXNOISE.permTrials;
+      let rep = g[0], bw = -1;
+      for (const j of g) { const a = Math.abs(w[j]); if (a > bw) { bw = a; rep = j; } }
+      out.clusters.push({
+        members: g.slice(), rep: rep, size: g.length,
+        drop: +avgDrop.toFixed(4), signal: avgDrop > LUXNOISE.dropFloor,
+        name: LUXML.featNames[rep]
+      });
+    }
+    out.clusters.sort(function (x, y) { return y.drop - x.drop; });
+  } catch (e) {}
+  return out;
 }
 
 // mlTrainNightly의 원본조회→표준화→분할을 동일 순서로 재현(결정적)해
@@ -33243,18 +33417,59 @@ async function mlBanditNoiseNightly(DB) {
     //   정확히 그 조건이다. 여기서 문턱을 낮추거나 상위 N개를 강제 편입하면 밴딧이 ★잡음으로
     //   사이즈를 흔들게★ 되므로 기준은 건드리지 않는다 — 끄는 쪽이 옳다. 대신 보이게 만든다.
     const _nTested = test.features.length;
-    const _alive = _nTested - exNames.length;
-    const _off = _alive < LUXBANDIT.minContextDim;
+    let _alive = _nTested - exNames.length;
+    let _off = _alive < LUXBANDIT.minContextDim;
+    result.mode = "perFeature";
+
+    /* [V33.273] ★낱개 검정이 붕괴했으면 군집 단위로 다시 잰다.★
+       위 진단대로라면 지금 상태(전부 제외)는 '신호가 없다' 가 아니라 '이 자로는 못 잰다' 다.
+       못 재는 자를 그대로 두고 기능을 끄면 그건 영구 정지다 — 실제로 그래 왔다.
+       군집 순열은 같은 문턱(dropFloor)을 쓰되 상관 아래에서도 유효하다. 그래도 못 넘으면
+       그때는 정말 신호가 없는 것이므로 종전처럼 끈다("모르면 안 믿는다"는 그대로다). */
+    let _grpSig = null;
+    if (_off && test.features.length >= LUXBANDIT.minContextDim) {
+      const _grp = mlGroupedPermutationTest(val, model.w, model.b, null);
+      const _sig = (_grp.clusters || []).filter(function (c) { return c.signal; });
+      result.groupTest = {
+        nClusters: (_grp.clusters || []).length, nSignal: _sig.length,
+        rho: LUXNOISE.clusterRho,
+        top: (_grp.clusters || []).slice(0, 6).map(function (c) {
+          return { name: c.name, size: c.size, drop: c.drop, signal: c.signal };
+        })
+      };
+      if (_sig.length >= LUXBANDIT.minContextDim) {
+        /* 신호 군집의 ★대표만★ 남긴다 — 같은 군집의 나머지는 중복 정보이고,
+           신호 없는 군집은 통째로 제외다. 그래서 컨텍스트 차원이 자연히 작게 유지된다. */
+        const _keep = {}; for (const c of _sig) _keep[c.rep] = 1;
+        const _ex = [];
+        for (let j = 0; j < model.w.length; j++) if (model.w[j] !== 0 && !_keep[j]) _ex.push(j);
+        result.excludedIdx = _ex;
+        result.mode = "grouped";
+        _grpSig = _sig;
+        _alive = _sig.length;
+        _off = false;
+      }
+    }
+
     result.contextDim = _alive;
     result.banditOff = _off;
     result.why = _off
       ? ("유의 피처 " + _alive + "/" + _nTested + "개 (문턱 drop>" + LUXNOISE.dropFloor + ") → 컨텍스트 차원 부족으로 밴딧 미가동. " +
-         "피처 상관이 높으면 순열중요도가 전부 0 쪽으로 붕괴하는 알려진 성질 — 모델에 신호가 없다는 뜻은 아니다.")
-      : ("유의 피처 " + _alive + "/" + _nTested + "개 → 밴딧 가동");
+         "낱개·군집 두 자로 다 재봤고 둘 다 문턱 미달이다 — 이 표본에서는 사이즈를 흔들 근거가 없다.")
+      : (result.mode === "grouped"
+          ? ("낱개 검정은 상관으로 붕괴(0/" + _nTested + ") → 군집 순열로 재측정: 신호 군집 " +
+             _alive + "/" + result.groupTest.nClusters + "개(|rho|≥" + LUXNOISE.clusterRho +
+             ") → 군집 대표만 컨텍스트로 밴딧 가동")
+          : ("유의 피처 " + _alive + "/" + _nTested + "개 → 밴딧 가동"));
     await setState(DB, "noise_filter", result);
     return "[BANDIT] 노이즈검정 baseAcc=" + (test.baseAcc * 100).toFixed(1) + "% | 컨텍스트제외 " +
-           exNames.length + "개" + (_off ? " → ★밴딧 미가동(컨텍스트 " + _alive + "차원 < " + LUXBANDIT.minContextDim + ")★" : "") +
-           ": " + exNames.join(",");
+           (result.excludedIdx || []).length + "개" +
+           (_grpSig
+             ? (" | ★낱개 0/" + _nTested + " 붕괴 → 군집 순열 재측정★ 신호군집 " + _alive + "/" +
+                result.groupTest.nClusters + " → 밴딧 가동: " +
+                _grpSig.map(function (c) { return c.name + "(x" + c.size + " drop " + c.drop.toFixed(4) + ")"; }).join(","))
+             : (_off ? " → ★밴딧 미가동(컨텍스트 " + _alive + "차원 < " + LUXBANDIT.minContextDim + ")★" : "") +
+               ": " + exNames.join(","));
   } catch (e) {
     return "[BANDIT] noise test fail: " + (e && e.message);
   }
@@ -45293,6 +45508,11 @@ export default {
 // [검증용 named export] Cloudflare Worker는 default export만 사용하므로 무해.
 //   로컬 백테스트/단위검증 스크립트에서 핵심 함수를 직접 호출하기 위함.
 export {
+  /* [V33.273] 밴딧 상관강건 검정 · MEMO 관련도 가중거리 — tools/check-bandit-memo.mjs 가
+     실제로 돌린다. 두 고침 다 "성적으로만 드러나는" 종류라 문장으로는 못 지킨다. */
+  mlPermutationTest, mlGroupedPermutationTest, _corrClusters, mlBanditContext,
+  mlBanditNoiseNightly, LUXNOISE, LUXBANDIT,
+  memoScore, memoTrainNightly, MEMOML,
   _dnnArchDecide, DNNARCH, DNN, DNNW,   // [V33.260] 측정-반영 고리 검사
   _dnnAdmit,                        // [V33.262] DNN 승격 판정(정확도 길 · IC 길)
   optMicroFromChain, _bsDeltaGamma, OPTMICRO,   // [V33.264] 옵션 미시구조

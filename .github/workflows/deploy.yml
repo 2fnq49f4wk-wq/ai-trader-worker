@@ -397,6 +397,14 @@ jobs:
       #   그 사실과, 소급생성이 seq 를 정직하게 기권하는지(ts 근사로 재구성하지 않는지)를 본다.
       - name: STACK·SEQ 배선 검사 (슬롯 단일출처 · 라이브 결합 · 소급생성 기권)
         run: node tools/check-stack-seq.mjs
+      # [V33.273] 미달 모델 둘을 실제로 끌어올린 고침. 둘 다 "성적으로만 드러나는" 종류다 —
+      #   밴딧: 낱개 순열이 피처 상관 아래에서 붕괴해 67/67 이 제외되고 ★한 번도 켜진 적이
+      #   없었다★(운영 실측 "컨텍스트 0차원 < 2"). 군집을 통째로 섞어 다시 잰다 — 문턱은 그대로다.
+      #   MEMO: 거리가 75축을 등가중으로 세, 잡음축이 이웃을 정했다(valAcc 49.6% — 기저 아래).
+      #   축마다 라벨 상관으로 눌러 잰다. 이 검사는 ★완화가 아니라 개선★ 인지까지 본다
+      #   (dropFloor·icFloor·원형 수가 그대로여야 통과한다).
+      - name: 밴딧 상관강건 검정 · MEMO 가중거리 검사 (붕괴 재현 · 위양성 · 누출 · 완화금지)
+        run: node tools/check-bandit-memo.mjs
       # cloudflare/wrangler-action 대신 로컬에서 검증된 방식 그대로 실행
       # (wrangler-action@v3의 npx 자동설치가 4.86.0을 요구하며 실패하던 문제 회피)
       - name: Install wrangler
