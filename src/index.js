@@ -2977,7 +2977,7 @@ async function applySignalTypeWeights(DB, cfg) {
 // ============================================================================
 // [V33.55] 빌드 버전 — SWR L2 캐시 키에 섞어 '배포 = 판단 캐시 자동 무효화'를 만든다.
 //   판정 로직을 고쳐도 옛 캐시가 최대 1시간 재배포되던 문제를 구조적으로 없앤다.
-const _BUILD_VER = "V33.264";
+const _BUILD_VER = "V33.265";
 
 // ═══ [V33.171] 평가 순서 계획 — ★승격과 순환을 교차해 굶주림을 구조적으로 없앤다★ ═══
 //   V33.50 의 형태트리거는 "급한 몇 종목을 앞으로 당긴다"는 의도였으나, 실제 운영로그에서는
@@ -12025,6 +12025,96 @@ function _rvZ(arr, v) {
    evaluateAllStrategies 는 종목 하나의 일봉만 받는다(설계상 그렇다). 그래서 교차종목
    관계는 야간에 한 번 계산해 상태에 두고, 사이클은 그것을 읽기만 한다 —
    mlBuildXSPanel(V33 xspanel)이 같은 이유로 쓰는 방식이다. */
+/* ══ [V33.265] 달력 사건 — OpEx 와 FOMC ═════════════════════════════════════
+   옵션 지표(V33.264)와 달리 이것들은 ★과거를 전부 재구성할 수 있다.★ 날짜만 있으면
+   되기 때문이다. 그래서 이쪽은 진짜로 학습 가능하다 — featVer 를 올려 소급해 넣는다.
+
+   ■ OpEx — 월물 옵션 만기(매월 세 번째 금요일). 3·6·9·12월은 네마녀(quadruple witching):
+     지수선물·지수옵션·개별주선물·개별주옵션이 동시 만기라 만기주 수급이 크게 흔들린다.
+     순수 산술이라 2000~2030 전수검사(372개월)에서 위반 0건을 확인했다.
+
+   ■ FOMC — 발표는 2일 회의의 ★둘째 날★ 오후 2시(ET)에 나온다. 그 날이 사건일이다.
+     pre-FOMC announcement drift(Lucca-Moench)는 발표 직전에 초과수익이 몰린다는 관측이고,
+     발표 후에는 정보가 서서히 퍼진다(gradual information diffusion). 방향이 다른
+     두 현상이라 '남은 일수' 와 '지난 일수' 를 따로 싣는다.
+
+     ★FOMC 는 산술로 못 구한다.★ 표가 필요하고 표는 언젠가 끝난다. 그래서 두 가지를 지킨다:
+       ① 표 밖의 날짜는 ★모른다고 말한다★(fomcKnown=0). 가장 가까운 날짜로 때우면
+          2019년 표본에 2021년 회의를 붙이게 된다 — 값이 아니라 거짓이다.
+       ② 표가 곧 끝나면 ★배포가 막힌다★(게이트). 조용히 만료되면 그날부터 전 표본이
+          fomcKnown=0 이 되고 아무도 모른 채 피처 셋이 죽는다. */
+const OPEXCAL = { clampDays: 45 };
+function _thirdFriday(y, m) {
+  const first = new Date(Date.UTC(y, m, 1));
+  const shift = (5 - first.getUTCDay() + 7) % 7;
+  return Date.UTC(y, m, 1 + shift + 14);
+}
+function _opexCtx(ms) {
+  const t = Number(ms);
+  if (!isFinite(t) || t <= 0) return null;
+  const d = new Date(t);
+  const y = d.getUTCFullYear(), m = d.getUTCMonth();
+  const cur = _thirdFriday(y, m);
+  const next = t <= cur ? cur : _thirdFriday(m === 11 ? y + 1 : y, m === 11 ? 0 : m + 1);
+  const prev = t <= cur ? _thirdFriday(m === 0 ? y - 1 : y, m === 0 ? 11 : m - 1) : cur;
+  const nextM = new Date(next).getUTCMonth();
+  const toNext = Math.round((next - t) / 86400000);
+  return {
+    toNext: toNext, sincePrev: Math.round((t - prev) / 86400000),
+    inWeek: (toNext >= 0 && toNext <= 4) ? 1 : 0,      // 만기주 = 만기 금요일 포함 월~금
+    quad: (nextM === 2 || nextM === 5 || nextM === 8 || nextM === 11) ? 1 : 0
+  };
+}
+/* FOMC 발표일(회의 2일차). 출처: 연준 공식 일정.
+   ※ 2021년부터 시작한다 — 2020년은 3월 긴급 인하(3/3·3/15)로 정례 일정이 사실상
+     무너진 해라, 정례표만 넣으면 그해 표본에 틀린 값이 들어간다. 모르는 편이 낫다. */
+const FOMC_DAYS = [
+  "2021-01-27","2021-03-17","2021-04-28","2021-06-16","2021-07-28","2021-09-22","2021-11-03","2021-12-15",
+  "2022-01-26","2022-03-16","2022-05-04","2022-06-15","2022-07-27","2022-09-21","2022-11-02","2022-12-14",
+  "2023-02-01","2023-03-22","2023-05-03","2023-06-14","2023-07-26","2023-09-20","2023-11-01","2023-12-13",
+  "2024-01-31","2024-03-20","2024-05-01","2024-06-12","2024-07-31","2024-09-18","2024-11-07","2024-12-18",
+  "2025-01-29","2025-03-19","2025-05-07","2025-06-18","2025-07-30","2025-09-17","2025-10-29","2025-12-10",
+  "2026-01-28","2026-03-18","2026-04-29","2026-06-17","2026-07-29","2026-09-16","2026-10-28","2026-12-09",
+  // 2027 잠정 일정(연준 2025-09-05 발표). 게이트가 "표가 102일 뒤 끝난다" 고 배포를 막아 연장했다 —
+  // 조용히 만료됐다면 그날부터 fomcKnown 이 전부 0 이 되고 아무도 몰랐을 것이다.
+  "2027-01-27","2027-03-17","2027-04-28","2027-06-09","2027-07-28","2027-09-15","2027-10-27","2027-12-08"
+];
+let _fomcMs = null;
+function _fomcTable() {
+  if (_fomcMs === null) {
+    _fomcMs = [];
+    for (const d of FOMC_DAYS) { const t = Date.parse(d + "T00:00:00Z"); if (isFinite(t)) _fomcMs.push(t); }
+    _fomcMs.sort(function (a, b) { return a - b; });
+  }
+  return _fomcMs;
+}
+function _fomcCtx(ms) {
+  const t = Number(ms);
+  const T = _fomcTable();
+  if (!isFinite(t) || t <= 0 || !T.length) return null;
+  if (t < T[0] || t > T[T.length - 1] + 400 * 86400000) return null;   // ★표 밖이면 모른다★
+  let prev = null, next = null;
+  for (const x of T) { if (x <= t) prev = x; else { next = x; break; } }
+  return { since: prev == null ? null : Math.round((t - prev) / 86400000),
+           to: next == null ? null : Math.round((next - t) / 86400000) };
+}
+/* 피처 6종. ★obsTs 가 없으면 값을 지어내지 않는다★ — 전부 0 + fomcKnown=0 으로 두고
+   모델이 known 을 보고 그 구간을 무시하게 한다. 0 을 진짜 값처럼 섞으면
+   V12.47(원핫 4개가 영구 0이던 사고)과 같은 죽은 입력이 된다. */
+function _calFeats(obsTs) {
+  const C = _clamp(_num(OPEXCAL.clampDays, 45), 5, 200);
+  const out = { opexToNext: 0, opexWeek: 0, opexQuad: 0, fomcTo: 0, fomcSince: 0, fomcKnown: 0 };
+  const ox = _opexCtx(obsTs);
+  if (ox) { out.opexToNext = _clamp(ox.toNext, 0, C); out.opexWeek = ox.inWeek; out.opexQuad = ox.quad; }
+  const fo = _fomcCtx(obsTs);
+  if (fo) {
+    out.fomcKnown = 1;
+    out.fomcTo = fo.to == null ? C : _clamp(fo.to, 0, C);
+    out.fomcSince = fo.since == null ? C : _clamp(fo.since, 0, C);
+  }
+  return out;
+}
+
 /* ══ [V33.264] 옵션 미시구조 — ★시계를 돌린다★ ═══════════════════════════════
    요청: gamma exposure · 0DTE · open interest · convexity · delta-gamma Taylor 를 학습시켜라.
 
@@ -18371,7 +18461,7 @@ async function runTradingCycle(env) {
                       highs: daily.highs, lows: daily.lows, idxCloses: __idxCloses, xsPanel: __xsPanel, barsAgo: 0,
                       price: price, prevClose: daily.prevClose,
                       dayPct: daily.prevClose > 0 ? (price / daily.prevClose - 1) * 100 : 0,
-                      regime: (regime && regime.regime) ? regime.regime : "NEUTRAL", strategy: "trend", market: market, ev: {} });
+                      regime: (regime && regime.regime) ? regime.regime : "NEUTRAL", strategy: "trend", market: market, ev: {}, obsTs: Date.now() });
                     const _mdx = await mlDeepDecide(DB, _fx, { mind: __mind, guard: __guard, ens: __ensemble, trust: __dnnTrust, dnn: __dnn, gbdtTrust: __gbdtTrust, gbdt: __gbdt, cal: __cal, evstats: __evStats });
                     // [V12.90] ★청산도 기술+뉴스 블렌드로 통일★ — 진입은 그래프 중심인데 청산이 위원회 원시
                     //   확률만 쓰면 기술적으로 강한 종목을 노이즈로 파는 모순. 진입과 동일 기준으로 통합확률 산출.
@@ -18587,7 +18677,7 @@ async function runTradingCycle(env) {
                       idxCloses: null, sectorCloses: null, xsPanel: null, barsAgo: 0,
                       price: price, prevClose: daily.closes[daily.closes.length - 2] || price,
                       dayPct: dayPct, regime: (regime && regime.regime) || "NEUTRAL",
-                      strategy: "scalp", market: market, ev: {}
+                      strategy: "scalp", market: market, ev: {}, obsTs: Date.now()
                     });
                     // [V33.64] ★장중피처가 없으면 관측하지 않는다★
                     //   _sfi(장중 38차원)가 null 이면 ix 없는 표본이 되고, 트레이너는 스키마 불일치로
@@ -18986,7 +19076,7 @@ async function runTradingCycle(env) {
                     regime: (regime && regime.regime) ? regime.regime : "NEUTRAL",
                     sigWeight: (typeof signal.weight === "number") ? signal.weight : 1,
                     confluence: (signal.members) ? signal.members.length : 1,
-                    strategy: strategy, market: market, ev: {}
+                    strategy: strategy, market: market, ev: {}, obsTs: Date.now()
                   });
                   // 손절폭은 이 시점에 아직 확정 전이라 ATR 기반 근사치를 쓴다(라벨 시 손절 반영용).
                   let _sp0 = 5;
@@ -19642,7 +19732,7 @@ async function runTradingCycle(env) {
                   regime: (regime && regime.regime) ? regime.regime : "NEUTRAL",
                   sigWeight: (typeof signal.weight === "number") ? signal.weight : 1,
                   confluence: (signal.members) ? signal.members.length : 1,
-                  strategy: strategy, market: market, ev: _col.ev
+                  strategy: strategy, market: market, ev: _col.ev, obsTs: Date.now()
                 });
                 signal.mlEvKeys = _col.evKeys;
                 // 반사실 후보 로깅 — 실매수 무관, 종목당 1회만 배치수집(사이클 끝에 1회 커밋 → D1 write 절약).
@@ -23557,7 +23647,7 @@ async function handleRequest(request, env, ctx) {
                 highs: dd.highs, lows: dd.lows, idxCloses: idxCache[refMkt],
                 price: price, prevClose: dd.prevClose,
                 dayPct: dd.prevClose > 0 ? (price / dd.prevClose - 1) * 100 : 0,
-                regime: "NEUTRAL", strategy: pos.strategy || "trend", market: refMkt, ev: {}
+                regime: "NEUTRAL", strategy: pos.strategy || "trend", market: refMkt, ev: {}, obsTs: Date.now()
               });
               let p = null;
               if (mind) {
@@ -29177,9 +29267,21 @@ const LUXML = {
     "haRun",       // 같은 색 연속 봉수(부호=방향, ±10봉 정규화) — 추세 지속·소진 정도
     "haBodyR",     // 몸통/전체범위 0~1 — 작을수록 도지(힘의 균형, 전환 예고)
     "haShadow",    // (위꼬리−아래꼬리)/범위 −1~1 — 꼬리 비대칭(방향 해석은 모델에 맡긴다)
-    "haRev"        // 전환신호 −1~1 — 긴 런을 끊은 색전환(+강세전환) / 몸통 소진(−추세반대)
+    "haRev",       // 전환신호 −1~1 — 긴 런을 끊은 색전환(+강세전환) / 몸통 소진(−추세반대)
+    /* ── [V33.265] 달력 사건 (6) — OpEx · FOMC ─────────────────────────────
+       옵션 미시구조(GEX 등)와 달리 이것들은 ★날짜만 있으면 과거를 전부 재구성할 수
+       있다.★ 그래서 소급이 가능하고, 진짜로 학습 대상이 된다.
+       fomcKnown 은 ★결측 표식★ 이다 — 표 밖 구간(2021 이전)이나 봉 날짜를 모르는
+       표본에서 0 이 된다. 이게 없으면 모델은 "FOMC 까지 0일" 을 진짜 값으로 읽는다. */
+    "opexToNext",  // 다음 월물 만기(세 번째 금요일)까지 일수, 0~45 클램프
+    "opexWeek",    // 만기주(만기 금요일 포함 월~금)면 1
+    "opexQuad",    // 다음 만기가 네마녀(3·6·9·12월)면 1 — 만기 수급 규모가 다르다
+    "fomcTo",      // 다음 FOMC 발표까지 일수 0~45 — pre-FOMC drift 구간
+    "fomcSince",   // 직전 FOMC 발표 후 경과일 0~45 — 정보확산(post-FOMC) 구간
+    "fomcKnown"    // ★1이면 위 두 값이 실제 값, 0이면 모른다★ (표 밖·날짜 미상)
   ],
-  featVer: 14,  // ★V33.239: 하이킨아시 추세반전 4종 추가(65→69). featVer 상향 → 캐치업 수확이 딥이력에서 재구축.
+  featVer: 15,  // ★V33.265: 달력사건 6종 추가(69→75) — OpEx 3 + FOMC 3. 소급 가능해 캐치업 수확이 딥이력에서 재구축.
+  //   ★V33.239: 하이킨아시 추세반전 4종 추가(65→69). featVer 상향 → 캐치업 수확이 딥이력에서 재구축.
   //   ★V32.10: 라이브전용 이벤트/뉴스 16종 제거(train/serve 스큐) + 장기모멘텀 6종 추가(75→65).
                 //   구버전(12) 표본은 featver 분리로 자동 정리·전종목 재수확. 라벨 지평 5→10, 임계 1.0→1.5.
 
@@ -29580,6 +29682,9 @@ function mlBuildFeatures(args) {
     const strat  = (args.strategy || "swing").toLowerCase();
     const ev     = args.ev || {};
     const mkt    = (args.market || "").toLowerCase();
+    /* [V33.265] 관측 시각 — 달력 피처의 유일한 입력. ★없으면 지어내지 않는다.★
+       여기서 Date.now() 로 때우면 과거 표본에 오늘 날짜의 달력이 붙는다. */
+    const _cal   = _calFeats(_num(args.obsTs, null));
 
     const f = {
       rsi14:       rsi,
@@ -29640,6 +29745,12 @@ function mlBuildFeatures(args) {
     // [V33.239] 하이킨아시 추세반전 4종 — OHLC 파생이라 수확·라이브가 같은 분포다.
     const ha = _mlHeikinFeats(closes, args.highs, args.lows, args.opens);
     f.haRun = ha.haRun; f.haBodyR = ha.haBodyR; f.haShadow = ha.haShadow; f.haRev = ha.haRev;
+    /* [V33.265] 달력 사건 6종 — 위 파생들과 달리 ★가격이 아니라 날짜★ 에서 나온다.
+       그래서 obsTs 가 없으면 계산할 것이 없고, 그때는 전부 0 + fomcKnown=0 이다.
+       ★여기서 Date.now() 로 때우면 과거 표본에 오늘 날짜의 달력이 붙는다★ — 모델은
+       "2022년 3월의 FOMC 까지 3일" 같은 거짓을 배우게 된다. 모르면 모른다고 둔다. */
+    f.opexToNext = _cal.opexToNext; f.opexWeek = _cal.opexWeek; f.opexQuad = _cal.opexQuad;
+    f.fomcTo = _cal.fomcTo; f.fomcSince = _cal.fomcSince; f.fomcKnown = _cal.fomcKnown;
     return LUXML.featNames.map(function(n){ return _num(f[n], 0); });
   } catch (e) {
     return LUXML.featNames.map(function(){ return 0; });
@@ -31453,7 +31564,7 @@ async function stinBackfill(DB, opts) {
             highs: (dd.highs || []).slice(0, dSlice.length), lows: (dd.lows || []).slice(0, dSlice.length),
             idxCloses: null, sectorCloses: null, xsPanel: null, barsAgo: 0,
             price: px, prevClose: dSlice[dSlice.length - 2] || px, dayPct: 0,
-            regime: "NEUTRAL", strategy: "scalp", market: _mkt, ev: {}
+            regime: "NEUTRAL", strategy: "scalp", market: _mkt, ev: {}, obsTs: Date.now()
           });
         } catch (e) { continue; }
         if (!Array.isArray(base) || base.length !== LUXML.featNames.length) continue;
@@ -37488,6 +37599,13 @@ async function mlMarketHarvestNightly(DB, opts) {
           idxCloses: idxHist, sectorCloses: secHist,
           xsPanel: xsPanel, barsAgo: L - 1 - i,
           price: c, prevClose: i > 0 ? closes[i - 1] : 0, dayPct: dayPct,
+          /* [V33.265] ★달력 피처에는 진짜 봉 날짜를 준다.★ 아래 ts 는 정렬용 근사
+             (baseTs − 봉수×1일)라 2000봉이면 800일 가까이 어긋난다 — 시간순 분할에는
+             단조롭기만 하면 되지만 달력에는 치명적이다("2022년 3월" 이 "2024년"이 된다).
+             dd.days[i] 는 V33.217 이 넣은 봉별 에폭일수라 그 자체가 정확한 날짜다.
+             없으면(옛 캐시) null 을 주고 피처는 '모른다'(fomcKnown=0)가 된다. */
+          obsTs: (Array.isArray(dd.days) && dd.days.length === closes.length && dd.days[i] != null)
+                   ? _num(dd.days[i], 0) * 86400000 : null,
           regime: hvRegime, strategy: "hv", market: mkt, ev: {}
         });
         // [V9.9] Triple-Barrier 라벨(de Prado): 손절/익절/시간 — 경로에서 먼저 닿는 배리어가 라벨.
@@ -38947,7 +39065,7 @@ async function stockAnalysisReport(DB, symbol, marketCap) {
       const feat = mlBuildFeatures({
         closes: dd.closes, volumes: dd.volumes, opens: dd.opens, highs: dd.highs, lows: dd.lows,
         idxCloses: await _mlLoadIndexCloses(DB, mkt), price: price, prevClose: dd.prevClose,
-        dayPct: dayPct, regime: "NEUTRAL", strategy: "trend", market: mkt, ev: {}
+        dayPct: dayPct, regime: "NEUTRAL", strategy: "trend", market: mkt, ev: {}, obsTs: Date.now()
       });
       const md = await mlDeepDecide(DB, feat, {});
       if (md && typeof md.p === "number") ai = md;
@@ -39089,7 +39207,7 @@ async function crowdGet(DB, symbol) {
         closes: dd.closes, volumes: dd.volumes, opens: dd.opens,
         highs: dd.highs, lows: dd.lows, idxCloses: await _mlLoadIndexCloses(DB, mkt),
         price: price, prevClose: dd.prevClose, dayPct: dayPct,
-        regime: "NEUTRAL", strategy: "trend", market: mkt, ev: {}
+        regime: "NEUTRAL", strategy: "trend", market: mkt, ev: {}, obsTs: Date.now()
       });
       function vd(p) { return p >= 0.60 ? "매수" : p >= 0.52 ? "약매수" : p > 0.48 ? "중립" : p > 0.40 ? "약매도" : "매도"; }
       const md = await mlDeepDecide(DB, feat, {});
@@ -39375,7 +39493,7 @@ async function mlUniverseScanNightly(DB, opts) {
         highs: dd.highs, lows: dd.lows, idxCloses: idxCache[mkt],
         price: price, prevClose: dd.prevClose,
         dayPct: dd.prevClose > 0 ? (price / dd.prevClose - 1) * 100 : 0,
-        regime: "NEUTRAL", strategy: "trend", market: mkt, ev: {}
+        regime: "NEUTRAL", strategy: "trend", market: mkt, ev: {}, obsTs: Date.now()
       });
       let p = null;
       if (mind) {
@@ -44187,6 +44305,7 @@ export {
   _dnnArchDecide, DNNARCH, DNN, DNNW,   // [V33.260] 측정-반영 고리 검사
   _dnnAdmit,                        // [V33.262] DNN 승격 판정(정확도 길 · IC 길)
   optMicroFromChain, _bsDeltaGamma, OPTMICRO,   // [V33.264] 옵션 미시구조
+  _calFeats, _opexCtx, _fomcCtx, FOMC_DAYS, _thirdFriday,   // [V33.265] 달력 사건
   dualHeadJudge, _boostersCached,   // [V33.257] 자가진단 명단 검사가 '위원회가 쓰는 그 함수' 를 직접 돌린다
   DEFAULT_CFG, AI_PARAMS, migrateCfgToMarkets, evaluateAllStrategies, evaluateTrendEntry, evaluateSnapEntry,
   evaluateSell, backtestSymbol, backtestStats, backtestStatsBySignal,

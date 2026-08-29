@@ -362,6 +362,12 @@ jobs:
       #   ②기록이 학습을 건드리지 않는가, 실패해도 야간 파이프라인을 안 끊는가를 본다.
       - name: 옵션 미시구조 검사 (그릭스 검산 · 기록이 학습을 안 건드리는가)
         run: node tools/check-opt-micro.mjs
+      # [V33.265] 달력 사건 피처(OpEx 3 + FOMC 3, featVer 14→15 · 69→75).
+      #   옵션 체인과 달리 날짜만 있으면 과거를 전부 재구성할 수 있어 소급 학습이 된다.
+      #   조용히 죽는 길이 셋이라 전부 막는다: ①obsTs 를 안 넘기는 호출부 ②수확기가
+      #   정렬용 근사 ts 를 달력에 쓰는 것(2000봉이면 800일 어긋난다) ③FOMC 표 만료.
+      - name: 달력 사건 피처 검사 (OpEx 전수 · FOMC 표 만료 · obsTs 배선)
+        run: node tools/check-calendar-feats.mjs
       # cloudflare/wrangler-action 대신 로컬에서 검증된 방식 그대로 실행
       # (wrangler-action@v3의 npx 자동설치가 4.86.0을 요구하며 실패하던 문제 회피)
       - name: Install wrangler
