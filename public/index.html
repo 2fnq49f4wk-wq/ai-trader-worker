@@ -8,7 +8,7 @@
      인데, 지금까지 화면에서 그걸 알 방법이 전혀 없었다(카카오톡 인앱 브라우저는 특히 강하게 캐시한다).
      서버가 내려주는 build 와 이 값을 비교해 다르면 배너로 알린다.
      ※ src/index.js 의 _BUILD_VER 와 항상 같아야 한다 — check-html-js 가 강제한다. -->
-<meta name="lux-build" content="V33.270">
+<meta name="lux-build" content="V33.271">
 <title>LUX-ENGINE V10</title>
 <!-- ══ [V33.156] 설치형 앱(PWA) — 폰·PC 에서 홈화면/독에 담아 앱처럼 연다 ══
      · manifest  : 이름·아이콘·standalone 표시(주소창 없이 앱처럼)
@@ -4374,13 +4374,15 @@ html[data-theme="light"] .m-brainbar button.active{color:#0b4f9e;background:rgba
            아무것도 없다. 사용자가 "이중헤드 약세는 어디로 날아갔냐" 고 물은 게 이것이다.
            → 가로 스크롤을 없애고 ★줄바꿈 그리드★ 로 바꾼다. 13개가 언제나 전부 보인다.
            그리고 납작한 한 줄이 아니라 ★모델이 실제로 결합되는 층★ 으로 묶는다:
-             위원 8명이 투표 → STACK 이 그 투표를 대체 → 이중헤드가 방향을 따로 본다.
+             위원들이 투표 → STACK 이 그 투표를 대체 → 이중헤드가 방향을 따로 본다.
            ※ 컨테이너 안에 <div> 를 중첩하지 않는다 — 배선 검사가 이 블록을 첫 </div> 까지로
              읽으므로, 중첩하면 뒤쪽 탭이 검사에서 통째로 빠진다(검사를 무력화한다).
              그래서 묶음 제목은 <span> 이고 버튼은 전부 형제다(CSS 그리드가 배치한다). -->
       <span class="nnv-nav-h">지도</span>
       <button class="nnv-tab active" data-model="overview" onclick="switchNnModel('overview')"><span class="nnv-tab-dot" data-dot="overview"></span>전체 구조</button>
-      <span class="nnv-nav-h">위원 · 8명이 투표한다</span>
+      <!-- [V33.271] 숫자를 손으로 적지 않는다 — SEQ 가 붙으면서 8이 9가 됐다. 세는 곳은
+           전체 구조 화면(ex.length)뿐이고, 여기 지도는 개수를 말하지 않는다. -->
+      <span class="nnv-nav-h">위원 · 각자 투표한다</span>
       <button class="nnv-tab" data-model="mind" onclick="switchNnModel('mind')"><span class="nnv-tab-dot" data-dot="mind"></span>MIND 스태킹</button>
       <button class="nnv-tab" data-model="dnn" onclick="switchNnModel('dnn')"><span class="nnv-tab-dot" data-dot="dnn"></span>DNN 딥넷</button>
       <button class="nnv-tab" data-model="gbdt" onclick="switchNnModel('gbdt')"><span class="nnv-tab-dot" data-dot="gbdt"></span>GBDT</button>
@@ -12562,6 +12564,15 @@ setTimeout(function(){ var o=document.getElementById('lux-intro-overlay'); if(o&
 #page-nnviz .sq3-b.on{color:#eaf2ff;background:rgba(70,130,255,.18);border-color:#4a83ff;}
 #page-nnviz .sq3-sel{font-family:'IBM Plex Mono',monospace;font-size:10.5px;color:#cdddf7;
   background:rgba(20,30,52,.85);border:1px solid #1e2c48;border-radius:7px;padding:4px 7px;}
+#page-nnviz .sq3-ctl2{border-top:none;background:rgba(10,17,32,.35);}
+#page-nnviz .sq3-b.sq3-z{min-width:26px;text-align:center;font-size:13px;line-height:1;padding:3px 0;}
+#page-nnviz .sq3-zv{font-family:'IBM Plex Mono',monospace;font-size:10.5px;color:#cdddf7;min-width:38px;text-align:center;}
+#page-nnviz .sq3-role{margin-top:7px;padding:7px 9px;border-left:2px solid #4a83ff;background:rgba(70,130,255,.08);
+  border-radius:0 6px 6px 0;font-size:10.5px;line-height:1.75;}
+#page-nnviz .sq3-role .sq3-rl{color:#6f84aa;font-size:9.5px;text-transform:uppercase;letter-spacing:.6px;margin-right:5px;}
+#page-nnviz .sq3-role i{font-style:normal;}
+#page-nnviz .sq3-role i.pos{color:#00e0ff;} #page-nnviz .sq3-role i.neg{color:#ff6e8c;}
+#page-nnviz .sq3-dim2{color:#6f84aa;font-size:9.5px;}
 #page-nnviz .sq3-hint{margin-left:auto;font-family:'IBM Plex Mono',monospace;font-size:9.5px;color:#5f79a2;}
 #page-nnviz .sq3-wrap{position:relative;background:radial-gradient(130% 130% at 50% 8%,#0d1729,#05080f 72%);
   touch-action:none;cursor:grab;}
@@ -14951,7 +14962,8 @@ html[data-theme="light"] #page-nnviz .nlv-sec-h{ border-color:transparent; color
               dir: 1, YAW_MAX: 0.85, PITCH_MIN: 0.12, PITCH_MAX: 0.80,
               pick: null,      // {kind:'feat', i} | {kind:'node', stage, t, j} | {kind:'step', t}
               cells: false,    // 노드를 낱개로 그린다(느려서 기본은 묶음)
-              allFeat: false };
+              allFeat: false,
+              zoom: 1, panX: 0, panY: 0, blk: -1 };   // -1 = 마지막 블록(출력에 가장 가깝다)
   function sq3Clamp(v, lo, hi){ return v < lo ? lo : (v > hi ? hi : v); }
   function sq3Proj(p, C){
     var cy=Math.cos(C.yaw), sy=Math.sin(C.yaw), cp=Math.cos(C.pitch), sp=Math.sin(C.pitch);
@@ -14967,21 +14979,36 @@ html[data-theme="light"] #page-nnviz .nlv-sec-h{ border-color:transparent; color
   }
   function sq3Esc(v){ return String(v==null?'':v).replace(/[<>&"]/g, function(c){ return {'<':'&lt;','>':'&gt;','&':'&amp;','"':'&quot;'}[c]; }); }
   /* 단계(stage) 는 실제 계산 순서 그대로다 — 그림이 코드보다 친절하면 안 된다(다른 걸 말하게 된다). */
-  function sq3Stages(d){
-    var dd = d.d || 32, L = d.L || 16;
-    return [
-      { x:-360, key:'in',   name:'입력',      sub: (d.D||75)+'개 피처' },
-      { x:-160, key:'proj', name:'사영+위치',  sub: dd+'차원 × '+L+'시점' },
-      { x:  60, key:'attn', name:'어텐션',    sub: (d.heads||2)+'헤드 · 시점끼리 본다' },
-      { x: 265, key:'ffn',  name:'FFN',      sub: (d.ffHidden||dd*4)+' → '+dd },
-      { x: 430, key:'out',  name:'출력',      sub:'마지막 시점만 → σ' }
-    ];
+  function sq3Stages(d, sel){
+    var dd = d.d || (d.cfg&&d.cfg.d) || 32, L = d.L || (d.cfg&&d.cfg.L) || 16,
+        H = d.heads || (d.cfg&&d.cfg.heads) || 2, NB = d.layers || (d.cfg&&d.cfg.layers) || 1;
+    var b = (sel==null || sel<0 || sel>=NB) ? NB-1 : sel;
+    /* ★블록을 전부 한 줄에 늘어놓지 않는다.★ 처음엔 (어텐션→FFN)×N 을 그대로 폈는데,
+       2층이면 기둥이 7개가 되어 시점 16개 더미끼리 겹쳐 아무것도 안 읽혔다(실제로 그랬다).
+       블록들은 ★같은 모양★ 이라 하나를 자세히 보는 편이 낫다 — 어느 층을 보는지는 '층'
+       버튼과 이름표가 말한다. 층 수를 숨기는 게 아니라, 한 번에 한 층씩 보여 주는 것이다. */
+    var tag = NB>1 ? (' · 층 '+(b+1)+'/'+NB) : '';
+    var st = [ { key:'in',   name:'입력',      sub:(d.D||75)+'개 피처', tone:'in' },
+               { key:'proj', name:'사영+위치',  sub:dd+'차원 × '+L+'시점', tone:'proj' },
+               { key:'attn', blk:b, name:'어텐션'+(NB>1?(' #'+(b+1)):''), sub:H+'헤드 · 시점끼리 본다'+tag, tone:'attn' },
+               { key:'ffn',  blk:b, name:'FFN'+(NB>1?(' #'+(b+1)):''),   sub:(d.ffHidden||dd*4)+' → '+dd+tag, tone:'ffn' },
+               { key:'out',  name:'출력',      sub:'마지막 시점만 → σ', tone:'out' } ];
+    var span = 620, x0 = -span/2;
+    for(var i=0;i<st.length;i++) st[i].x = x0 + span*(i/(st.length-1));
+    return st;
   }
   /* 선택한 헤드(−1=전체 평균)에서 row 시점이 각 과거 시점을 보는 비중.
      ★없으면 null 이다 — 0 으로 채우면 "아무 데도 안 본다" 는 ★틀린 말★ 을 그리게 된다.★ */
-  function sq3AttnRow(d, head, row, L){
-    if(!d || !d.trained || !d.attn || !d.attn.length) return null;
-    var hs = (head===-1) ? d.attn : (d.attn[head] ? [d.attn[head]] : null);
+  /* 블록 bi 의 어텐션(없으면 마지막 블록). 층이 여럿이면 ★어느 층의 어텐션인지★ 를
+     말하지 않고 그리는 것은 거짓말이다 — 층마다 보는 곳이 다르다. */
+  function sq3AttnOf(d, blk){
+    if(!d || !d.trained || !d.attnByBlock || !d.attnByBlock.length) return null;
+    var b = (blk==null || blk<0 || blk>=d.attnByBlock.length) ? d.attnByBlock.length-1 : blk;
+    return d.attnByBlock[b] || null;
+  }
+  function sq3AttnRow(d, head, row, L, blk){
+    var A = sq3AttnOf(d, blk); if(!A) return null;
+    var hs = (head===-1) ? A : (A[head] ? [A[head]] : null);
     if(!hs || !hs.length) return null;
     var out = new Array(L).fill(0), used = 0;
     for(var hi=0;hi<hs.length;hi++){
@@ -15044,19 +15071,33 @@ html[data-theme="light"] #page-nnviz .nlv-sec-h{ border-color:transparent; color
       chip('블록 IC t', data.valICt==null?'—':(+data.valICt).toFixed(2), (data.valICt!=null&&data.valICt>=1.65)?'good':'warn') +
       chip('투표 지분', data.trusted?((data.w||0).toFixed(3)):'0', data.trusted?'good':'off');
     /* ── 조작부 ─────────────────────────────────────────────────────────── */
+    var NBLK = data.layers || (data.cfg&&data.cfg.layers) || 1;
+    /* ★조작부를 두 줄로 나눈다.★ 한 줄에 아홉 개를 밀어 넣으니 좁은 화면에서 줄바꿈이
+       제멋대로 일어나 무엇이 무엇의 짝인지 안 보였다. 위=무엇을 볼까, 아래=어떻게 볼까. */
     var ctl = '<div class="sq3-ctl">'
       + '<span class="sq3-lab">헤드</span>'
       + '<button class="sq3-b'+(SQ3.head===-1?' on':'')+'" data-head="-1">전체</button>';
     for(var h=0;h<H;h++) ctl += '<button class="sq3-b'+(SQ3.head===h?' on':'')+'" data-head="'+h+'">#'+h+'</button>';
+    if(NBLK>1){
+      ctl += '<span class="sq3-lab" style="margin-left:10px;">층</span>';
+      for(var bq=0;bq<NBLK;bq++)
+        ctl += '<button class="sq3-b'+((SQ3.blk===bq||(SQ3.blk===-1&&bq===NBLK-1))?' on':'')+'" data-blk="'+bq+'">#'+(bq+1)+'</button>';
+    }
     ctl += '<span class="sq3-lab" style="margin-left:10px;">보는 시점</span>'
       + '<select class="sq3-sel" id="sq3Row">';
     for(var t=0;t<L;t++) ctl += '<option value="'+t+'"'+(SQ3.row===t?' selected':'')+'>t'+t+(t===L-1?' (지금)':(' (−'+(L-1-t)+'봉)'))+'</option>';
-    ctl += '</select>'
-      + '<button class="sq3-b'+(SQ3.cells?' on':'')+'" id="sq3Cells" style="margin-left:10px;">노드 낱개</button>'
-      + '<button class="sq3-b'+(SQ3.allFeat?' on':'')+'" id="sq3AllFeat">피처 '+((data.D)||75)+'개 전부</button>'
+    ctl += '</select></div>'
+      + '<div class="sq3-ctl sq3-ctl2">'
+      + '<span class="sq3-lab">확대</span>'
+      + '<button class="sq3-b sq3-z" id="sq3ZOut">−</button>'
+      + '<span class="sq3-zv" id="sq3ZV">'+Math.round(SQ3.zoom*100)+'%</span>'
+      + '<button class="sq3-b sq3-z" id="sq3ZIn">+</button>'
+      + '<button class="sq3-b" id="sq3Fit">화면맞춤</button>'
+      + '<span class="sq3-lab" style="margin-left:10px;">보기</span>'
+      + '<button class="sq3-b'+(SQ3.cells?' on':'')+'" id="sq3Cells">노드 낱개</button>'
+      + '<button class="sq3-b'+(SQ3.allFeat?' on':'')+'" id="sq3AllFeat">피처 '+((data.D)||75)+'개</button>'
       + '<button class="sq3-b'+(SQ3.spin?' on':'')+'" id="sq3Spin">자동회전</button>'
-      + '<button class="sq3-b" id="sq3Reset">시점 초기화</button>'
-      + '<span class="sq3-hint">카드·피처를 누르면 값이 나옵니다 · 드래그로 회전</span></div>';
+      + '<span class="sq3-hint">휠=확대 · 드래그=회전 · Shift+드래그=이동 · 클릭=값 보기</span></div>';
     stage.innerHTML = ctl + '<div class="sq3-wrap"><svg id="sq3Svg" viewBox="0 0 900 460" preserveAspectRatio="xMidYMid meet"></svg></div>'
       + '<div class="sq3-pick" id="sq3Pick"></div>'
       + '<div class="sq3-note" id="sq3Note"></div>';
@@ -15069,6 +15110,25 @@ html[data-theme="light"] #page-nnviz .nlv-sec-h{ border-color:transparent; color
     var rowSel=document.getElementById('sq3Row'); if(rowSel) rowSel.onchange=function(){ SQ3.row=parseInt(rowSel.value,10); sq3Draw(); };
     var spinB=document.getElementById('sq3Spin');
     if(spinB) spinB.onclick=function(){ SQ3.spin=!SQ3.spin; spinB.classList.toggle('on',SQ3.spin); sq3Tick(); };
+    stage.querySelectorAll('.sq3-b[data-blk]').forEach(function(b){
+      b.onclick=function(){ SQ3.blk=parseInt(b.getAttribute('data-blk'),10);
+        stage.querySelectorAll('.sq3-b[data-blk]').forEach(function(x){ x.classList.toggle('on', x===b); }); sq3Draw(); };
+    });
+    var zv=document.getElementById('sq3ZV');
+    var setZoom=function(z){ SQ3.zoom=Math.max(0.4, Math.min(6, z)); if(zv) zv.textContent=Math.round(SQ3.zoom*100)+'%'; sq3Draw(); };
+    var zi=document.getElementById('sq3ZIn'); if(zi) zi.onclick=function(){ setZoom(SQ3.zoom*1.25); };
+    var zo=document.getElementById('sq3ZOut'); if(zo) zo.onclick=function(){ setZoom(SQ3.zoom/1.25); };
+    var fitB=document.getElementById('sq3Fit');
+    if(fitB) fitB.onclick=function(){ SQ3.panX=0; SQ3.panY=0; SQ3.yaw=-0.62; SQ3.pitch=0.30; setZoom(1); };
+    /* 휠 확대는 ★커서 자리를 붙잡고★ 늘린다 — 화면 중앙만 늘리면 보려던 곳이 밖으로 나간다. */
+    svg.addEventListener('wheel', function(e){
+      e.preventDefault();
+      var r=svg.getBoundingClientRect(), k=900/Math.max(1,r.width);
+      var mx=(e.clientX-r.left)*k, my=(e.clientY-r.top)*(460/Math.max(1,r.height));
+      var f=e.deltaY<0?1.12:1/1.12, nz=Math.max(0.4, Math.min(6, SQ3.zoom*f)), rf=nz/SQ3.zoom;
+      SQ3.panX = mx - (mx - SQ3.panX)*rf; SQ3.panY = my - (my - SQ3.panY)*rf;
+      setZoom(nz);
+    }, {passive:false});
     var resB=document.getElementById('sq3Reset');
     if(resB) resB.onclick=function(){ SQ3.yaw=-0.62; SQ3.pitch=0.30; SQ3.pick=null; sq3Draw(); };
     var cellB=document.getElementById('sq3Cells');
@@ -15089,17 +15149,23 @@ html[data-theme="light"] #page-nnviz .nlv-sec-h{ border-color:transparent; color
       if(!k){ SQ3.pick=null; sq3Draw(); return; }
       var b=k.split(':');
       if(b[0]==='feat') SQ3.pick={kind:'feat', i:+b[1]};
-      else if(b[0]==='node') SQ3.pick={kind:'node', stage:b[1], t:+b[2], j:+b[3]};
+      else if(b[0]==='node') SQ3.pick={kind:'node', stage:b[1], t:+b[2], j:+b[3], blk:+(b[4]||0)};
       else if(b[0]==='step'){ SQ3.pick={kind:'step', t:+b[1]}; SQ3.row=+b[1];
         var rs=document.getElementById('sq3Row'); if(rs) rs.value=String(SQ3.row); }
       sq3Draw();
     });
-    var down=function(e){ var p=(e.touches&&e.touches[0])||e; SQ3.drag={x:p.clientX,y:p.clientY}; SQ3.spin=false;
-      if(spinB) spinB.classList.remove('on'); };
+    var down=function(e){ var p=(e.touches&&e.touches[0])||e;
+      SQ3.drag={x:p.clientX,y:p.clientY,pan:!!(e.shiftKey||(e.touches&&e.touches.length>1))};
+      SQ3.spin=false; if(spinB) spinB.classList.remove('on'); };
     var move=function(e){ if(!SQ3.drag) return; var p=(e.touches&&e.touches[0])||e;
-      SQ3.yaw = sq3Clamp(SQ3.yaw + (p.clientX-SQ3.drag.x)*0.007, -SQ3.YAW_MAX, SQ3.YAW_MAX);
-      SQ3.pitch = sq3Clamp(SQ3.pitch + (p.clientY-SQ3.drag.y)*0.005, SQ3.PITCH_MIN, SQ3.PITCH_MAX);
-      SQ3.drag={x:p.clientX,y:p.clientY}; sq3Draw(); if(e.cancelable) e.preventDefault(); };
+      var dx=p.clientX-SQ3.drag.x, dy=p.clientY-SQ3.drag.y;
+      if(SQ3.drag.pan){ var r=svg.getBoundingClientRect();
+        SQ3.panX += dx*(900/Math.max(1,r.width)); SQ3.panY += dy*(460/Math.max(1,r.height)); }
+      else {
+        SQ3.yaw = sq3Clamp(SQ3.yaw + dx*0.007, -SQ3.YAW_MAX, SQ3.YAW_MAX);
+        SQ3.pitch = sq3Clamp(SQ3.pitch + dy*0.005, SQ3.PITCH_MIN, SQ3.PITCH_MAX);
+      }
+      SQ3.drag.x=p.clientX; SQ3.drag.y=p.clientY; sq3Draw(); if(e.cancelable) e.preventDefault(); };
     var up=function(){ SQ3.drag=null; };
     svg.addEventListener('mousedown',down); svg.addEventListener('touchstart',down,{passive:true});
     window.addEventListener('mousemove',move); svg.addEventListener('touchmove',move,{passive:false});
@@ -15126,25 +15192,52 @@ html[data-theme="light"] #page-nnviz .nlv-sec-h{ border-color:transparent; color
         +'<span>표본값 (t'+SQ3.row+')</span><b>'+(val==null?'—':val)+'</b></div>'
         +'<div class="sq3-dim">영향도는 이 피처가 들어가는 Win 열의 노름입니다 — 모델이 실제로 이 입력을 얼마나 쓰는가.'
         +' 표본값은 관측용으로 보관한 학습 표본 1건의 그 시점 값입니다.</div>';
+      /* ★역방향도 보여 준다.★ "이 피처를 누가 읽는가" 는 "이 노드가 뭘 읽는가" 와 같은 표를
+         반대로 읽은 것인데, 화면에 하나만 있으면 그 절반은 물어볼 수가 없다. */
+      var readers=(d.nodeRoles||[]).map(function(nr){
+        var hit=null; for(var q=0;q<nr.top.length;q++) if(nr.top[q].i===P.i) hit=nr.top[q];
+        return hit?{j:nr.j,w:hit.w,out:nr.out}:null; }).filter(Boolean)
+        .sort(function(a,b){ return Math.abs(b.w)-Math.abs(a.w); }).slice(0,5);
+      if(readers.length) h+='<div class="sq3-role"><span class="sq3-rl">이 피처를 주로 읽는 노드</span> '
+        +readers.map(function(x){ return '<b>#'+x.j+'</b> <i class="'+(x.w<0?'neg':'pos')+'">'+(x.w>0?'+':'')+x.w+'</i>'
+          +' <span class="sq3-dim2">(출력 몫 '+Math.round((x.out||0)*100)+'%)</span>'; }).join(' · ')+'</div>';
     } else if(P.kind==='node'){
-      var row=(d.nodes&&d.nodes[P.stage])?d.nodes[P.stage][P.t]:null;
+      var row=null, blk=P.blk||0;
+      if(d.nodes){ if(P.stage==='proj') row=d.nodes.proj&&d.nodes.proj[P.t];
+        else { var bb=d.nodes.byBlock&&d.nodes.byBlock[blk]; row=bb&&bb[P.stage]&&bb[P.stage][P.t]; } }
       if(!row){ host.innerHTML=''; host.style.display='none'; return; }
-      var nm={proj:'사영+위치', attn:'어텐션 뒤(잔차 포함)', ffn:'FFN 뒤(잔차 포함)'}[P.stage]||P.stage;
+      var nb=(d.layers||1)>1?(' #'+(blk+1)):'';
+      var nm={proj:'사영+위치', attn:'어텐션 뒤'+nb+'(잔차 포함)', ffn:'FFN 뒤'+nb+'(잔차 포함)'}[P.stage]||P.stage;
       var mx=0; for(var i=0;i<row.length;i++) mx=Math.max(mx,Math.abs(row[i]));
+      /* ★"이 노드가 무슨 일을 하는가".★ DNN 화면이 피처 역할을 보여 주듯, 여기선 모델 차원
+         하나가 ①무엇을 읽고 ②최종 확률에 얼마나 실리는가를 적는다. 읽는 것은 Win 의 그 ★행★
+         이라 사영층에서만 말할 수 있다 — 깊은 블록의 노드는 이미 섞여 있어서 이렇게 못 읽는다.
+         모르는 것을 아는 척하지 않으려고 그 사실도 같이 적는다. */
+      var role=(d.nodeRoles||[])[P.j], roleH='';
+      if(role){
+        roleH='<div class="sq3-role"><span class="sq3-rl">이 노드가 읽는 것</span> '
+          +role.top.map(function(t2){ return '<b>'+sq3Esc(t2.name)+'</b> <i class="'+(t2.w<0?'neg':'pos')+'">'+(t2.w>0?'+':'')+t2.w+'</i>'; }).join(' · ')
+          +'<br><span class="sq3-rl">최종 확률에 실리는 몫</span> <b>'+Math.round((role.out||0)*100)+'%</b>'
+          +' <span class="sq3-dim2">(|Wh['+P.j+']| — 마지막 시점의 이 노드가 출력 로짓에 곱해지는 크기)</span>'
+          +(P.stage!=='proj'?'<br><span class="sq3-dim2">※ "읽는 것" 은 <b>사영층 기준</b>입니다. 이 단계의 노드는 어텐션·FFN 을 지나며 이미 섞여 있어, 입력 피처로 되짚는 것은 근사입니다.</span>':'')
+          +'</div>';
+      }
       h='<b>노드 '+P.j+' · '+nm+' · t'+P.t+(P.t===L-1?'(지금)':(' (−'+(L-1-P.t)+'봉)'))+'</b>'
         +'<div class="sq3-kv"><span>값</span><b class="'+(row[P.j]<0?'neg':'pos')+'">'+row[P.j]+'</b>'
-        +'<span>이 시점 최대|값|</span><b>'+mx.toFixed(3)+'</b>'
+        +'<span>이 시점 최대|값|</span><b>'+mx.toFixed(2)+'</b>'
         +'<span>같은 단계 폭</span><b>'+row.length+'차원</b></div>'
+        +roleH
         +'<div class="sq3-bars">'+row.map(function(v,j){
             var w=mx>0?Math.abs(v)/mx:0;
             return '<i class="'+(v<0?'neg':'pos')+(j===P.j?' sel':'')+'" style="height:'+(4+26*w).toFixed(1)+'px" title="노드 '+j+' = '+v+'"></i>';
           }).join('')+'</div>'
-        +'<div class="sq3-dim">가중치가 아니라 ★그 표본이 지나갈 때의 실제 값★ 입니다(파랑 +, 분홍 −).</div>';
+        +'<div class="sq3-dim">막대는 가중치가 아니라 ★그 표본이 지나갈 때의 실제 값★ 입니다(파랑 +, 분홍 −).</div>';
     } else if(P.kind==='step'){
-      var t=P.t, live=(d.nodes&&d.nodes.ffLive)?d.nodes.ffLive[t]:null;
+      var t=P.t, bb0=(d.nodes&&d.nodes.byBlock)?d.nodes.byBlock[0]:null, live=bb0?bb0.ffLive[t]:null;
       var outW=null;
-      if(d.attn){ outW=0; for(var hh=0;hh<d.attn.length;hh++){ var col=0;
-          for(var r2=0;r2<L;r2++) col+=(d.attn[hh][r2]&&d.attn[hh][r2][t])||0; outW+=col/L; } outW/=d.attn.length; }
+      var AB=sq3AttnOf(d, SQ3.blk);
+      if(AB){ outW=0; for(var hh=0;hh<AB.length;hh++){ var col=0;
+          for(var r2=0;r2<L;r2++) col+=(AB[hh][r2]&&AB[hh][r2][t])||0; outW+=col/L; } outW/=AB.length; }
       h='<b>시점 t'+t+(t===L-1?' (지금)':(' — '+(L-1-t)+'봉 전'))+'</b>'
         +'<div class="sq3-kv"><span>위치 임베딩 강도</span><b>'+(d.posStrength?Math.round((d.posStrength[t]||0)*100)+'%':'—')+'</b>'
         +'<span>t'+SQ3.row+'이 이 시점을 보는 비중</span><b>'+(attnRow?(attnRow[t]*100).toFixed(1)+'%':'—')+'</b>'
@@ -15172,8 +15265,12 @@ html[data-theme="light"] #page-nnviz .nlv-sec-h{ border-color:transparent; color
     var svg=document.getElementById('sq3Svg'), d=SQ3.data; if(!svg||!d) return;
     var L=d.L||(d.cfg&&d.cfg.L)||16, dd=d.d||(d.cfg&&d.cfg.d)||32,
         H=d.heads||(d.cfg&&d.cfg.heads)||2, trained=!!d.trained;
-    var ST=sq3Stages(d);
-    var zPitch = Math.max(9, Math.min(20, 260/Math.max(1,L)));   // 시점을 깊이축에 편다(L 이 커져도 안 터진다)
+    var ST=sq3Stages(d, SQ3.blk);
+    /* ★더미 폭이 기둥 간격보다 넓으면 반드시 겹친다.★ 화면 X 로 보면 시점 더미는
+       (L×zPitch)·sin(yaw), 기둥 간격은 간격·cos(yaw) 만큼 차지한다. yaw 한계 0.85 에서
+       tan=1.14 이므로, 더미 폭을 기둥 간격의 0.6배 아래로 눌러 둔다. */
+    var _stGap = 620/4;
+    var zPitch = Math.min(14, Math.max(7, (_stGap*0.6/1.14)/Math.max(1,L)*1.0 + 6));
     var zOf=function(t){ return (t-(L-1)/2)*zPitch; };
     var cardH=46, cardW=9;
     /* ★자동 맞춤★ — 회전하면 투영 크기가 변한다. 고정 배율이면 어떤 각도에서는 화면 밖으로
@@ -15183,18 +15280,21 @@ html[data-theme="light"] #page-nnviz .nlv-sec-h{ border-color:transparent; color
     (function fit(){
       /* ★박스는 실제로 그리는 것 전부를 덮어야 한다.★ 처음엔 카드만 넣었는데, 바닥 격자
          (−cardH/2−18)와 출력 노드 아래 확률 글자가 박스 밖이라 화면 밑으로 잘려 나갔다. */
-      var x0=ST[0].x-24, x1=ST[ST.length-1].x+40, y0=-cardH/2-52, y1=cardH/2+70,
+      var x0=ST[0].x-24, x1=ST[ST.length-1].x+40, y0=-cardH/2-48, y1=cardH/2+62,
           z0=zOf(0)-zPitch, z1=zOf(L-1)+zPitch;
       var mnX=1e9,mxX=-1e9,mnY=1e9,mxY=-1e9;
       for(var a=0;a<2;a++) for(var b=0;b<2;b++) for(var c=0;c<2;c++){
         var q=sq3Proj({x:a?x1:x0,y:b?y1:y0,z:c?z1:z0},C);
         if(q.X<mnX)mnX=q.X; if(q.X>mxX)mxX=q.X; if(q.Y<mnY)mnY=q.Y; if(q.Y>mxY)mxY=q.Y;
       }
-      var sx=(900-40)/Math.max(1,mxX-mnX), sy=(460-40)/Math.max(1,mxY-mnY);
+      var sx=(900-26)/Math.max(1,mxX-mnX), sy=(460-26)/Math.max(1,mxY-mnY);
       /* ★부호 하나가 장면을 위로 밀어 올렸다.★ 탐색은 s=1·중심 0 으로 했으므로 그때의
          화면좌표는 (Y_probe)=−y·f 다. 최종 화면좌표는 cy + Y_probe·s 이고, 이것이
          한가운데(230)에 오려면 cy = 230 − 중심·s 다. + 로 쓰면 중심이 두 배로 밀린다. */
       C.s=Math.min(sx,sy); C.cx=450-(mnX+mxX)/2*C.s; C.cy=230-(mnY+mxY)/2*C.s;
+      /* ★맞춤 위에 확대를 얹는다.★ 맞춤은 "전체가 보이는 배율" 이고 확대는 "그보다 얼마나
+         더 볼까" 다. 둘을 한 숫자로 합치면 회전할 때마다 확대율이 제멋대로 변한다. */
+      C.s *= SQ3.zoom; C.cx = 450 + (C.cx-450)*SQ3.zoom + SQ3.panX; C.cy = 230 + (C.cy-230)*SQ3.zoom + SQ3.panY;
     })();
     var parts=[];   // {z, svg}
     var push=function(z,s){ parts.push({z:z,s:s}); };
@@ -15207,7 +15307,7 @@ html[data-theme="light"] #page-nnviz .nlv-sec-h{ border-color:transparent; color
     }
     /* ── 어텐션 곡선: 선택 시점(row) 이 각 과거 시점을 얼마나 보는가 ──
        ★임계 아래는 안 그린다★ — L² 개를 전부 그리면 아무것도 안 보인다(그건 그림이 아니라 안개다). */
-    var attnRow=sq3AttnRow(d, SQ3.head, SQ3.row, L), attnMax=0;
+    var attnRow=sq3AttnRow(d, SQ3.head, SQ3.row, L, SQ3.blk), attnMax=0;
     if(attnRow) for(var u2=0;u2<L;u2++) if(attnRow[u2]>attnMax) attnMax=attnRow[u2];
     var thr = 1/(2*L);
     if(attnRow){
@@ -15269,22 +15369,31 @@ html[data-theme="light"] #page-nnviz .nlv-sec-h{ border-color:transparent; color
         var z=zOf(t2), isRow=(t2===SQ3.row), isLast=(t2===L-1);
         var qc=sq3Quad([{x:S.x-cardW,y:-cardH/2,z:z},{x:S.x+cardW,y:-cardH/2,z:z},
                         {x:S.x+cardW,y:cardH/2,z:z},{x:S.x-cardW,y:cardH/2,z:z}],C);
-        var base = isRow? 'rgba(56,189,248,.20)' : (isLast? 'rgba(0,230,118,.13)' : 'rgba(20,34,60,.66)');
-        var strk = isRow? '#38bdf8' : (isLast? '#00e676' : '#22345a');
-        push(qc.z,'<path d="'+qc.d+'" fill="'+base+'" stroke="'+strk+'" stroke-width="'+(isRow?1.6:1)+'"/>');
+        var TN={in:'#4aa3ff',proj:'#38bdf8',attn:'#00e0ff',ffn:'#7d4bff',out:'#00e676'}[S.tone]||'#38bdf8';
+        var base = isRow? 'rgba(56,189,248,.20)' : (isLast? 'rgba(0,230,118,.10)' : 'rgba(20,34,60,.66)');
+        var strk = isRow? '#ffd666' : (isLast? '#00e676' : TN);
+        var sop  = isRow? 1 : (isLast? .8 : .30);
+        push(qc.z,'<path d="'+qc.d+'" fill="'+base+'" stroke="'+strk+'" stroke-opacity="'+sop+'" stroke-width="'+(isRow?1.8:1)+'"/>');
         /* 카드 안 밴드 — 단계마다 ★그 단계가 실제로 쓰는 값★ 을 그린다.
            proj: 위치 임베딩 강도 / attn: 이 시점이 받는 주목의 총량 / ffn: FFN 은닉 활성 분포 */
         /* 노드 ★값★ 이 있으면 그것을 그린다(가중치 노름이 아니라 저 표본이 지나갈 때의 수).
            낱개(d개)로 그리는 건 선택한 시점이거나 '노드 낱개' 를 켰을 때만 — 16시점×32노드×3단계
            = 1,536장을 매 프레임 다시 만들면 자동회전이 끊긴다. 묶음은 그 최댓값이다. */
+        /* 단계마다 ★그 블록의★ 값을 집는다 — 층이 둘인데 같은 값을 두 번 그리면 그림이
+           "두 층이 같은 일을 한다" 고 말하게 된다(안 그렇다). */
         var nk = (S.key==='proj')?'proj':(S.key==='attn'?'attn':'ffn');
-        var nodeRow = (trained && d.nodes && d.nodes[nk] && d.nodes[nk][t2]) ? d.nodes[nk][t2] : null;
+        var nSrc = null;
+        if(trained && d.nodes){
+          if(nk==='proj') nSrc = d.nodes.proj;
+          else { var bb = d.nodes.byBlock && d.nodes.byBlock[S.blk||0]; nSrc = bb ? bb[nk] : null; }
+        }
+        var nodeRow = (nSrc && nSrc[t2]) ? nSrc[t2] : null;
         var arr=null;
         if(nodeRow){ var mxA=0; for(var q3=0;q3<nodeRow.length;q3++) mxA=Math.max(mxA,Math.abs(nodeRow[q3]));
           arr=nodeRow.map(function(v){ return mxA>0?Math.abs(v)/mxA:0; }); }
         else if(S.key==='proj' && trained && d.posStrength) arr=[d.posStrength[t2]||0];
         else if(S.key==='attn' && attnRow) arr=[attnRow[t2]/(attnMax||1)];
-        else if(S.key==='ffn' && trained && d.ffStrength) arr=d.ffStrength;
+        else if(S.key==='ffn' && trained) arr=(d.ffStrengthByBlock&&d.ffStrengthByBlock[S.blk||0])||d.ffStrength;
         var cells = (SQ3.cells || isRow) && nodeRow;
         var NBAND = cells ? nodeRow.length : 8, ch=(cardH-6)/NBAND;
         for(var bi2=0;bi2<NBAND;bi2++){
@@ -15299,8 +15408,8 @@ html[data-theme="light"] #page-nnviz .nlv-sec-h{ border-color:transparent; color
                           {x:S.x-cardW+3,y:by+Math.max(0.4,ch-(cells?0.25:1.5)),z:z}],C);
           /* 부호를 색으로 나눈다 — 절댓값만 그리면 "밀어 올린 노드" 와 "눌러 내린 노드" 가 같아 보인다. */
           var rgb = !arr ? '120,140,175' : (cells ? (neg?'255,110,140':'0,224,255') : (S.key==='ffn'?'125,75,255':'56,189,248'));
-          var qs = cells ? ('<path class="sq3-hit" data-pick="node:'+nk+':'+t2+':'+bi2+'" d="'+qb.d+'" fill="rgba('+rgb+','+(0.12+0.75*vv).toFixed(2)+')">'
-                    +'<title>'+nk+' · t'+t2+' · 노드 '+bi2+'\n값 '+nodeRow[bi2]+'</title></path>')
+          var qs = cells ? ('<path class="sq3-hit" data-pick="node:'+nk+':'+t2+':'+bi2+':'+(S.blk||0)+'" d="'+qb.d+'" fill="rgba('+rgb+','+(0.12+0.75*vv).toFixed(2)+')">'
+                    +'<title>'+sq3Esc(S.name)+' · t'+t2+' · 노드 '+bi2+'\n값 '+nodeRow[bi2]+'</title></path>')
                   : ('<path d="'+qb.d+'" fill="rgba('+rgb+','+(arr?(0.10+0.70*vv):0.10).toFixed(2)+')"/>');
           push(qb.z+0.3, qs);
         }
@@ -15308,7 +15417,7 @@ html[data-theme="light"] #page-nnviz .nlv-sec-h{ border-color:transparent; color
         push(qc.z+0.1,'<path class="sq3-hit" data-pick="step:'+t2+'" d="'+qc.d+'" fill="transparent">'
           +'<title>t'+t2+(t2===L-1?' (지금)':(' (−'+(L-1-t2)+'봉)'))
           +(attnRow?('\n주목 '+(attnRow[t2]*100).toFixed(1)+'%'):'')
-          +(d.nodes&&d.nodes.ffLive?('\nFFN 활성 '+d.nodes.ffLive[t2]+'/'+(d.ffHidden||0)):'')+'</title></path>');
+          +((d.nodes&&d.nodes.byBlock&&d.nodes.byBlock[0])?('\nFFN 활성 '+d.nodes.byBlock[0].ffLive[t2]+'/'+(d.ffHidden||0)):'')+'</title></path>');
         if(si===1){
           var lp=sq3Proj({x:S.x-cardW-4,y:0,z:z},C);
           push(lp.z,'<text x="'+lp.X.toFixed(1)+'" y="'+lp.Y.toFixed(1)+'" text-anchor="end" '
@@ -15321,10 +15430,23 @@ html[data-theme="light"] #page-nnviz .nlv-sec-h{ border-color:transparent; color
     for(var si2=0;si2<ST.length;si2++){
       /* 이름표는 카드 위로 확실히 띄우고, 이웃끼리 한 칸씩 엇갈리게 둔다 — 비스듬히 보면
          가로로 이웃한 이름표가 서로 겹친다(처음 그렸을 때 'FFN' 이 카드 위에 얹혔다). */
-      var S2=ST[si2], lp2=sq3Proj({x:S2.x,y:cardH/2+38+((si2%2)?18:0),z:zOf((L-1)/2)},C);
-      push(-1e9,'<text x="'+lp2.X.toFixed(1)+'" y="'+(lp2.Y-8).toFixed(1)+'" text-anchor="middle" fill="#cdddf7" '
-        +'font-size="12" font-family="Space Grotesk,sans-serif" font-weight="700">'+sq3Esc(S2.name)+'</text>'
-        +'<text x="'+lp2.X.toFixed(1)+'" y="'+(lp2.Y+5).toFixed(1)+'" text-anchor="middle" fill="#6f84aa" '
+      /* ★이름표는 원근을 따르지 않는다.★ 3D 로 그리면 뒤쪽 단계 글자가 작아져 안 읽힌다 —
+         위치만 투영하고 크기는 화면 고정이다. 그리고 단계 위 끝까지 얇은 지시선을 내려
+         "이 이름이 어느 기둥의 것인지" 를 눈이 한 번에 잇게 한다. */
+      /* ★이름표의 기준은 '그 기둥에서 화면상 가장 높은 카드' 다.★ 가운데 깊이를 기준으로
+         잡았더니, 각도에 따라 먼 카드가 그보다 위로 올라와 글자를 뚫고 나왔다.
+         기둥의 모든 시점 카드 윗변을 투영해 그 중 가장 높은 점 위에 놓는다. */
+      var S2=ST[si2], topY=1e9, anc=sq3Proj({x:S2.x,y:cardH/2,z:zOf((L-1)/2)},C);
+      for(var tq=0;tq<L;tq++){ var pq=sq3Proj({x:S2.x,y:cardH/2,z:zOf(tq)},C); if(pq.Y<topY) topY=pq.Y; }
+      anc={X:anc.X, Y:topY};
+      var ly=anc.Y-26-((si2%2)?17:0);
+      var TONE={in:'#4aa3ff',proj:'#38bdf8',attn:'#00e0ff',ffn:'#7d4bff',out:'#00e676'}[S2.tone]||'#8fd0ff';
+      push(-1e9,'<path d="M'+anc.X.toFixed(1)+','+anc.Y.toFixed(1)+'L'+anc.X.toFixed(1)+','+(ly+6).toFixed(1)
+        +'" stroke="'+TONE+'" stroke-width="1" opacity=".35"/>'
+        +'<circle cx="'+anc.X.toFixed(1)+'" cy="'+(ly+6).toFixed(1)+'" r="2.4" fill="'+TONE+'" opacity=".85"/>'
+        +'<text x="'+anc.X.toFixed(1)+'" y="'+(ly-4).toFixed(1)+'" text-anchor="middle" fill="#eaf2ff" '
+        +'font-size="12.5" font-family="Space Grotesk,sans-serif" font-weight="700">'+sq3Esc(S2.name)+'</text>'
+        +'<text x="'+anc.X.toFixed(1)+'" y="'+(ly+8.5).toFixed(1)+'" text-anchor="middle" fill="#7c90b5" '
         +'font-size="9.5" font-family="IBM Plex Mono,monospace">'+sq3Esc(S2.sub)+'</text>');
     }
     parts.sort(function(a,b){ return b.z-a.z; });   // 화가 알고리즘 — 먼 것부터

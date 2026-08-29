@@ -745,7 +745,8 @@ def _train_and_upload_seq(BASE, KEY, HDR, X, Y, TS, SYM, featver, D, UNIQ=None, 
     C = (cfg or {}).get("seq") or {}
     if C.get("enabled") is False:
         print("⑨ SEQ 생략 — 워커가 껐다(SEQML.enabled=false)"); return None
-    L = int(C.get("L", 16)); dm = int(C.get("d", 32)); Hh = int(C.get("heads", 2))
+    L = int(C.get("L", 16)); dm = int(C.get("d", 64)); Hh = int(C.get("heads", 4))
+    NL = max(1, min(6, int(C.get("layers", 2))))
     ff = dm * int(C.get("ffMult", 4))
     N = len(Y)
     if N < 20000:
@@ -764,80 +765,139 @@ def _train_and_upload_seq(BASE, KEY, HDR, X, Y, TS, SYM, featver, D, UNIQ=None, 
     mean = X[:tr_end].mean(axis=0); std = X[:tr_end].std(axis=0); std[std < 1e-9] = 1.0
     Xn = np.clip((X - mean) / std, -6, 6).astype(np.float32)
 
-    class SeqFormer(nn.Module):
-        def __init__(self):
+    class SeqBlock(nn.Module):
+        """인코더 블록 하나 — 워커 JS 의 블록 하나와 ★연산 순서가 같다★."""
+        def __init__(self, dm, Hh, ff):
             super().__init__()
-            self.win = nn.Linear(D, dm); self.pos = nn.Parameter(torch.zeros(L, dm))
+            self.dm = dm; self.Hh = Hh
             self.ln1 = nn.LayerNorm(dm, eps=1e-5)
             self.q = nn.Linear(dm, dm); self.k = nn.Linear(dm, dm)
             self.v = nn.Linear(dm, dm); self.o = nn.Linear(dm, dm)
             self.ln2 = nn.LayerNorm(dm, eps=1e-5)
             self.f1 = nn.Linear(dm, ff); self.f2 = nn.Linear(ff, dm)
+        def forward(self, h):
+            a = self.ln1(h)
+            B = a.shape[0]; L2 = a.shape[1]; dh = self.dm // self.Hh
+            q = self.q(a).view(B, L2, self.Hh, dh).transpose(1, 2)   # [B,H,L,dh]
+            k = self.k(a).view(B, L2, self.Hh, dh).transpose(1, 2)
+            v = self.v(a).view(B, L2, self.Hh, dh).transpose(1, 2)
+            sc = torch.matmul(q, k.transpose(-1, -2)) / math.sqrt(dh)
+            w = torch.softmax(sc, dim=-1)
+            ctx = torch.matmul(w, v).transpose(1, 2).reshape(B, L2, self.dm)
+            h = h + self.o(ctx)
+            h = h + self.f2(torch.relu(self.f1(self.ln2(h))))
+            return h
+
+    class SeqFormer(nn.Module):
+        """[V33.271] 블록을 ★N개★ 쌓는다. 1층은 '시점끼리 한 번 본다' 가 전부라
+           2단계 관계(A→B→C)를 못 쓴다 — 정보가 며칠에 걸쳐 퍼지는 걸 보라고 넣은
+           모델이니 그 깊이가 본질에 가깝다."""
+        def __init__(self, dm=None, Hh_=None, nl=None):
+            super().__init__()
+            dm = dm or globals().get("_dm_", 0)
+            self.dm = dm
+            self.win = nn.Linear(D, dm); self.pos = nn.Parameter(torch.zeros(L, dm))
+            self.blocks = nn.ModuleList([SeqBlock(dm, Hh_, dm * int(C.get("ffMult", 4))) for _ in range(nl)])
             self.lnf = nn.LayerNorm(dm, eps=1e-5); self.head = nn.Linear(dm, 1)
             nn.init.normal_(self.pos, std=0.02)
         def forward(self, x):                      # x: [B, L, D]
             h = self.win(x) + self.pos             # [B,L,dm]
-            a = self.ln1(h)
-            B = a.shape[0]; dh = dm // Hh
-            q = self.q(a).view(B, L, Hh, dh).transpose(1, 2)   # [B,H,L,dh]
-            k = self.k(a).view(B, L, Hh, dh).transpose(1, 2)
-            v = self.v(a).view(B, L, Hh, dh).transpose(1, 2)
-            sc = torch.matmul(q, k.transpose(-1, -2)) / math.sqrt(dh)
-            w = torch.softmax(sc, dim=-1)
-            ctx = torch.matmul(w, v).transpose(1, 2).reshape(B, L, dm)
-            h = h + self.o(ctx)
-            h = h + self.f2(torch.relu(self.f1(self.ln2(h))))
+            for blk in self.blocks:
+                h = blk(h)
             return self.head(self.lnf(h[:, -1, :])).squeeze(-1)
 
     Xt = torch.tensor(Xn, device=dev)
     Yt = torch.tensor(Y.astype(np.float32), device=dev)
     Si = torch.tensor(seq_idx, device=dev)
     tr = torch.arange(0, tr_end, device=dev); va = torch.arange(tr_end, N, device=dev)
-    net = SeqFormer().to(dev)
-    opt = torch.optim.AdamW(net.parameters(), lr=1e-3, weight_decay=1e-2)
+    yva = Y[tr_end:]
+    uw = UNIQ[tr_end:] if (UNIQ is not None and len(UNIQ) == N) else np.ones(len(yva))
+    neff = max(8, int(round(float(uw.sum()))))
     ep = int(C.get("epochs", 12)); bs = 512
     pos = float(Y[:tr_end].sum()); wpos = tr_end / (2 * pos) if pos > 0 else 1.0
     wneg = tr_end / (2 * (tr_end - pos)) if (tr_end - pos) > 0 else 1.0
-    for e in range(ep):
-        net.train(); perm = tr[torch.randperm(tr_end, device=dev)]
-        for b in range(0, tr_end, bs):
-            bi = perm[b:b + bs]
-            xb = Xt[Si[bi]]                        # [B,L,D] — 시퀀스 게더
-            yb = Yt[bi]
-            wc = torch.where(yb > 0.5, torch.tensor(wpos, device=dev), torch.tensor(wneg, device=dev))
-            loss = (nn.functional.binary_cross_entropy_with_logits(net(xb), yb, reduction="none") * wc).mean()
-            opt.zero_grad(); loss.backward()
-            torch.nn.utils.clip_grad_norm_(net.parameters(), 1.0)
-            opt.step()
-    net.eval()
-    with torch.no_grad():
-        pv = []
-        for b in range(0, len(va), 1024):
-            pv.append(torch.sigmoid(net(Xt[Si[va[b:b + 1024]]])).cpu().numpy())
-        pva = np.concatenate(pv)
-    yva = Y[tr_end:]
-    acc = float(((pva >= 0.5) == (yva > 0.5)).mean())
-    uw = UNIQ[tr_end:] if (UNIQ is not None and len(UNIQ) == N) else np.ones(len(yva))
-    neff = max(8, int(round(float(uw.sum()))))
-    z = 1.64; z2 = z * z; den = 1 + z2 / neff; cen = acc + z2 / (2 * neff)
-    rad = z * math.sqrt((acc * (1 - acc) + z2 / (4 * neff)) / neff)
-    lb = max(0.0, (cen - rad) / den)
+
+    def fit_seq(dm_, Hh_, nl_, tag=""):
+        """한 구성을 학습하고 (하한, 정확도, 확률, 모델) 을 돌려준다."""
+        net_ = SeqFormer(dm_, Hh_, nl_).to(dev)
+        opt_ = torch.optim.AdamW(net_.parameters(), lr=1e-3, weight_decay=1e-2)
+        for _e in range(ep):
+            net_.train(); perm = tr[torch.randperm(tr_end, device=dev)]
+            for b in range(0, tr_end, bs):
+                bi = perm[b:b + bs]
+                xb = Xt[Si[bi]]                    # [B,L,D] — 시퀀스 게더
+                yb = Yt[bi]
+                wc = torch.where(yb > 0.5, torch.tensor(wpos, device=dev), torch.tensor(wneg, device=dev))
+                loss = (nn.functional.binary_cross_entropy_with_logits(net_(xb), yb, reduction="none") * wc).mean()
+                opt_.zero_grad(); loss.backward()
+                torch.nn.utils.clip_grad_norm_(net_.parameters(), 1.0)
+                opt_.step()
+        net_.eval()
+        with torch.no_grad():
+            pv_ = []
+            for b in range(0, len(va), 1024):
+                pv_.append(torch.sigmoid(net_(Xt[Si[va[b:b + 1024]]])).cpu().numpy())
+            p_ = np.concatenate(pv_)
+        a_ = float(((p_ >= 0.5) == (yva > 0.5)).mean())
+        z = 1.64; z2 = z * z; den = 1 + z2 / neff; cen = a_ + z2 / (2 * neff)
+        rad = z * math.sqrt((a_ * (1 - a_) + z2 / (4 * neff)) / neff)
+        lb_ = max(0.0, (cen - rad) / den)
+        npar = sum(pp.numel() for pp in net_.parameters())
+        print(f"⑨{tag} d{dm_}·헤드{Hh_}·{nl_}층 ({npar:,}p) → valAcc {a_*100:.2f}% 하한 {lb_*100:.2f}%")
+        return lb_, a_, p_, net_, npar
+
+    # ── ★용량을 내가 고르지 않는다 — 재서 고른다.★ ────────────────────────────
+    #   V33.267 은 d32·1층이었고 "이 과제에 충분하다" 는 근거가 없었다(그렇게 적었다).
+    #   과소적합이 걱정이면 키우면 되지만, 키운 게 나은지도 재 봐야 아는 것이다.
+    #   후보를 같은 표본·같은 분할로 학습해 ★유효표본 Wilson 하한★ 으로 겨룬다 —
+    #   워커의 승격 게이트가 보는 것과 같은 자다. 이긴 구성을 /api/seq-arch 로 돌려주면
+    #   워커가 다음부터 그 형상을 내려준다(DNNARCH 와 같은 배치).
+    cands = [(dm, Hh, NL)]
+    if C.get("sweep") is not False and N >= 60000:
+        for c in [(dm, Hh, max(1, NL - 1)), (dm * 2 if dm <= 64 else dm, min(8, Hh * 2), NL),
+                  (max(16, dm // 2), max(1, Hh // 2), NL)]:
+            if c not in cands and c[0] % c[1] == 0:
+                cands.append(c)
+    best = None; table = []
+    for (cd, ch, cl) in cands:
+        try:
+            r_ = fit_seq(cd, ch, cl, tag="-스윕" if len(cands) > 1 else "")
+        except Exception as e:
+            print(f"⑨ 후보 d{cd}·헤드{ch}·{cl}층 실패(건너뜀): {e}"); continue
+        table.append({"d": cd, "heads": ch, "layers": cl, "accLB": round(r_[0], 4),
+                      "acc": round(r_[1], 4), "params": int(r_[4])})
+        if best is None or r_[0] > best[0]:
+            best = r_; dm, Hh, NL = cd, ch, cl
+    if best is None:
+        print("⑨ SEQ 생략 — 후보를 하나도 학습하지 못했다"); return None
+    if len(table) > 1:
+        table.sort(key=lambda r: -r["accLB"])
+        print("⑨ 스윕 순위: " + " | ".join(f"d{r['d']}h{r['heads']}x{r['layers']}층 {r['accLB']*100:.2f}%" for r in table))
+        try:
+            requests.post(BASE + "/api/seq-arch", params={"key": KEY}, headers=HDR, timeout=60,
+                          data=json.dumps({"featVer": featver, "d": dm, "heads": Hh, "layers": NL,
+                                           "table": table, "n": int(N)}))
+        except Exception as e:
+            print("⑨ seq-arch 업로드 예외(무시):", e)
+    lb, acc, pva, net, nparam = best
     icf = _ic_block_fields(pva, yva)
-    print(f"⑨ SEQ valAcc {acc*100:.2f}% 하한 {lb*100:.2f}% (유효 {neff}/{len(yva)})"
+    print(f"⑨ SEQ 채택 d{dm}·헤드{Hh}·{NL}층 valAcc {acc*100:.2f}% 하한 {lb*100:.2f}% (유효 {neff}/{len(yva)})"
           + (f" 블록IC {icf['valICBlock']:.4f} t {icf['valICt']:.2f}" if "valICt" in icf else ""))
 
     # ── 가중치를 워커 규약(row-major W[out][in])으로 내보낸다
     def W(m): return np.round(m.weight.detach().cpu().numpy().astype(np.float64), 6).tolist()
     def B_(m): return np.round(m.bias.detach().cpu().numpy().astype(np.float64), 6).tolist()
     def P(t): return np.round(t.detach().cpu().numpy().astype(np.float64), 6).tolist()
-    model = {"featVer": featver, "L": L, "D": int(D), "d": dm, "heads": Hh,
+    blocks = [{"ln1g": P(bk_.ln1.weight), "ln1b": P(bk_.ln1.bias),
+               "Wq": W(bk_.q), "bq": B_(bk_.q), "Wk": W(bk_.k), "bk": B_(bk_.k),
+               "Wv": W(bk_.v), "bv": B_(bk_.v), "Wo": W(bk_.o), "bo": B_(bk_.o),
+               "ln2g": P(bk_.ln2.weight), "ln2b": P(bk_.ln2.bias),
+               "W1": W(bk_.f1), "b1": B_(bk_.f1), "W2": W(bk_.f2), "b2": B_(bk_.f2)}
+              for bk_ in net.blocks]
+    model = {"featVer": featver, "L": L, "D": int(D), "d": dm, "heads": Hh, "layers": len(blocks),
              "mean": np.round(mean, 6).tolist(), "std": np.round(std, 6).tolist(),
              "Win": W(net.win), "bin": B_(net.win), "pos": P(net.pos),
-             "ln1g": P(net.ln1.weight), "ln1b": P(net.ln1.bias),
-             "Wq": W(net.q), "bq": B_(net.q), "Wk": W(net.k), "bk": B_(net.k),
-             "Wv": W(net.v), "bv": B_(net.v), "Wo": W(net.o), "bo": B_(net.o),
-             "ln2g": P(net.ln2.weight), "ln2b": P(net.ln2.bias),
-             "W1": W(net.f1), "b1": B_(net.f1), "W2": W(net.f2), "b2": B_(net.f2),
+             "blocks": blocks,
              "lng": P(net.lnf.weight), "lnb": P(net.lnf.bias),
              "Wh": P(net.head.weight)[0], "bh": float(P(net.head.bias)[0])}
 

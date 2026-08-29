@@ -43,13 +43,18 @@ let _s = 99; const rnd = () => { _s = (_s * 1103515245 + 12345) & 0x7fffffff; re
 const mat = (a, b) => Array.from({ length: a }, () => Array.from({ length: b }, () => rnd() * 0.4));
 const vec = (n, f) => Array.from({ length: n }, () => (f == null ? rnd() * 0.4 : f));
 const D = M.LUXML.featNames.length, dm = 32, L = 16, H = 2;
+const mkBlock = () => ({
+  ln1g: vec(dm, 1), ln1b: vec(dm), Wq: mat(dm, dm), bq: vec(dm), Wk: mat(dm, dm), bk: vec(dm),
+  Wv: mat(dm, dm), bv: vec(dm), Wo: mat(dm, dm), bo: vec(dm),
+  ln2g: vec(dm, 1), ln2b: vec(dm), W1: mat(dm * 4, dm), b1: vec(dm * 4), W2: mat(dm, dm * 4), b2: vec(dm)
+});
+/* ★픽스처는 다층이다.★ 단층으로만 검사하면 층을 늘리는 순간 이 검사가 지키던 것이
+   전부 빠져나간다(블록별 어텐션·블록별 노드가 정확히 그 자리다). */
 const mkModel = (over) => Object.assign({
   featVer: M.LUXML.featVer, L, D, d: dm, heads: H, trusted: true, w: 0.31, admitPath: "acc",
   admitWhy: "정확도 경로", valAccLB: 0.512, valICt: 2.4, probeMaxDiff: 0.0009, probeN: 64, trainedAt: Date.now(),
   mean: vec(D), std: vec(D).map(v => Math.abs(v) + 0.5), Win: mat(dm, D), bin: vec(dm), pos: mat(L, dm),
-  ln1g: vec(dm, 1), ln1b: vec(dm), Wq: mat(dm, dm), bq: vec(dm), Wk: mat(dm, dm), bk: vec(dm),
-  Wv: mat(dm, dm), bv: vec(dm), Wo: mat(dm, dm), bo: vec(dm),
-  ln2g: vec(dm, 1), ln2b: vec(dm), W1: mat(dm * 4, dm), b1: vec(dm * 4), W2: mat(dm, dm * 4), b2: vec(dm),
+  blocks: [mkBlock(), mkBlock()],
   lng: vec(dm, 1), lnb: vec(dm), Wh: vec(dm), bh: rnd(),
   vizSeq: Array.from({ length: L }, () => Array.from({ length: D }, () => rnd() * 2)), vizP: 0.58
 }, over || {});
@@ -76,20 +81,22 @@ console.log("① 화면이 그리는 숫자가 ★저장된 가중치★ 에서 
     "피처 이름이 서버 featNames 순서와 정확히 일치한다", "★이름과 값이 어긋난다 — 다른 피처 강도를 그 이름으로 그린다★");
   /* FFN 죽은 유닛 — 실제로 0 인 행을 넣으면 세어야 한다. */
   const m3 = mkModel();
-  for (let i = 0; i < 20; i++) for (let j = 0; j < dm; j++) m3.W1[i][j] = 0;
+  for (let i = 0; i < 20; i++) for (let j = 0; j < dm; j++) m3.blocks[0].W1[i][j] = 0;
   const v3 = M._seqVizFrom(m3, null);
-  chk(v3.ffDead >= 20, `죽은 FFN 유닛을 센다 (0 으로 만든 20개 중 ${v3.ffDead}개 검출)`,
-    `죽은 유닛을 못 센다 (${v3.ffDead}) — "잘 돌고 있다" 는 그림만 남는다`);
+  chk(v3.ffDeadByBlock[0] >= 20, `죽은 FFN 유닛을 블록별로 센다 (블록0 에서 0 으로 만든 20개 중 ${v3.ffDeadByBlock[0]}개 검출)`,
+    `죽은 유닛을 못 센다 (${JSON.stringify(v3.ffDeadByBlock)}) — "잘 돌고 있다" 는 그림만 남는다`);
 }
 
 console.log("\n② 어텐션은 ★채점에 쓰이는 그 함수★ 에서 나오는가");
 {
   const m = mkModel();
   const v = M._seqVizFrom(m, null);
-  chk(v.attn && v.attn.length === H && v.attn[0].length === L && v.attn[0][0].length === L,
-    `어텐션 ${H}헤드 × ${L}×${L} 을 낸다`, "어텐션을 못 낸다");
+  const A0 = v.attnByBlock && v.attnByBlock[0];
+  chk(A0 && v.attnByBlock.length === (v.layers || 1) && A0.length === H && A0[0].length === L && A0[0][0].length === L,
+    `어텐션을 ★블록별로★ 낸다 (${v.layers}층 × ${H}헤드 × ${L}×${L}) — 층마다 보는 곳이 다르다`,
+    "어텐션을 못 내거나 블록 구분이 없다 — 층이 여럿인데 하나로 뭉치면 어느 층의 그림인지 말할 수 없다");
   let worst = 0;
-  for (const hd of v.attn) for (const row of hd) worst = Math.max(worst, Math.abs(row.reduce((a, b) => a + b, 0) - 1));
+  for (const bl of v.attnByBlock) for (const hd of bl) for (const row of hd) worst = Math.max(worst, Math.abs(row.reduce((a, b) => a + b, 0) - 1));
   chk(worst < 5e-3, `어텐션 각 행의 합이 1 이다(softmax — 최대 오차 ${worst.toExponential(1)})`,
     `행 합이 1 이 아니다(오차 ${worst}) — 정규화 안 된 값을 비중처럼 그린다`);
   chk(/const p = seqFormerScore\(m, m\.vizSeq, cap\)/.test(code),
@@ -101,7 +108,7 @@ console.log("\n② 어텐션은 ★채점에 쓰이는 그 함수★ 에서 나�
     "어텐션을 캡처해도 채점 결과가 한 비트도 안 바뀐다", "★관측이 채점을 바꾼다★");
   /* 표본이 없으면 ★안 그린다★ */
   const vNo = M._seqVizFrom(mkModel({ vizSeq: null }), null);
-  chk(vNo.attn === null && !!vNo.attnErr,
+  chk(vNo.attnByBlock === null && !!vNo.attnErr,
     `표본이 없으면 어텐션을 지어내지 않고 사유를 적는다 ("${String(vNo.attnErr).slice(0, 30)}…")`,
     "표본 없이도 어텐션을 그린다 — 그건 관측이 아니라 장식이다");
 }
@@ -110,21 +117,48 @@ console.log("\n②-b 노드 ★값★ — 가중치만으로는 못 그린다(�
 {
   const m = mkModel();
   const v = M._seqVizFrom(m, null);
+  const B0 = v.nodes && v.nodes.byBlock && v.nodes.byBlock[0];
   chk(v.nodes && v.nodes.proj.length === L && v.nodes.proj[0].length === dm &&
-      v.nodes.attn.length === L && v.nodes.ffn.length === L,
-    `단계별 노드 값을 ${L}시점 × ${dm}차원으로 낸다(사영·어텐션뒤·FFN뒤)`, "노드 값을 안 낸다 — 그리면 그건 지어낸 것이다");
-  /* 세 단계가 같은 배열이면 그건 한 번 계산해 세 번 붙인 것이다 — 그림만 셋으로 보인다. */
-  const same = JSON.stringify(v.nodes.proj) === JSON.stringify(v.nodes.attn) ||
-               JSON.stringify(v.nodes.attn) === JSON.stringify(v.nodes.ffn);
-  chk(!same, "세 단계의 노드 값이 서로 다르다(잔차가 실제로 더해진다)", "★단계들이 같은 값이다 — 한 번 계산해 세 번 붙였다★");
+      B0 && B0.attn.length === L && B0.ffn.length === L && v.nodes.byBlock.length === (v.layers || 1),
+    `단계별 노드 값을 ★블록별로★ ${L}시점 × ${dm}차원으로 낸다 (${v.layers}층)`,
+    "노드 값을 안 내거나 블록 구분이 없다 — 층이 여럿인데 하나로 뭉치면 '두 층이 같은 일을 한다' 는 그림이 된다");
+  /* 단계·블록이 같은 배열이면 그건 한 번 계산해 여러 번 붙인 것이다 — 그림만 여럿으로 보인다. */
+  const B1 = v.nodes.byBlock[1];
+  const same = JSON.stringify(v.nodes.proj) === JSON.stringify(B0.attn) ||
+               JSON.stringify(B0.attn) === JSON.stringify(B0.ffn) ||
+               (B1 && JSON.stringify(B0.ffn) === JSON.stringify(B1.ffn));
+  chk(!same, "단계도 블록도 서로 다른 값이다(잔차가 실제로 쌓인다)", "★같은 값을 여러 번 붙였다 — 층이 실제로 안 도는 것이다★");
   /* 캡처가 채점 경로 그 자체인지 — 값을 바꾸면 확률도 따라 움직여야 한다. */
   const m2 = mkModel(); for (let i = 0; i < dm; i++) m2.bin[i] += 3;
   const v2 = M._seqVizFrom(m2, null);
   chk(JSON.stringify(v2.nodes.proj) !== JSON.stringify(v.nodes.proj) && v2.attnP !== v.attnP,
     "가중치를 바꾸면 노드 값과 확률이 함께 움직인다(같은 계산에서 나온다)",
     "가중치를 바꿔도 노드 값이 그대로다 — 채점과 다른 곳에서 나온 수다");
-  chk(Array.isArray(v.nodes.ffLive) && v.nodes.ffLive.length === L && v.nodes.ffLive.every(x => x >= 0 && x <= (v.ffHidden || 0)),
-    `시점마다 FFN 활성 유닛 수를 센다 (t${L - 1}: ${v.nodes.ffLive[L - 1]}/${v.ffHidden})`, "활성 유닛을 안 센다");
+  chk(Array.isArray(B0.ffLive) && B0.ffLive.length === L && B0.ffLive.every(x => x >= 0 && x <= (v.ffHidden || 0)),
+    `시점마다 FFN 활성 유닛 수를 센다 (블록0 t${L - 1}: ${B0.ffLive[L - 1]}/${v.ffHidden})`, "활성 유닛을 안 센다");
+  /* ★노드 역할★ — DNN 이 피처 역할을 보여 주듯, 모델 차원 하나가 무엇을 읽는지. */
+  chk(Array.isArray(v.nodeRoles) && v.nodeRoles.length === dm && v.nodeRoles[0].top.length === 3,
+    `노드 ${dm}개마다 '무엇을 읽는가(상위 3피처)' 와 '출력에 실리는 몫' 을 낸다`, "노드 역할을 안 낸다 — 노드를 눌러도 할 말이 없다");
+  {
+    /* 노드 j 의 Win 행을 한 피처로 몰면 그 피처가 1위로 올라와야 한다 — 역할이 진짜 그 행에서 나오는지. */
+    const mR = mkModel(); const J = 3, FI = 21;
+    for (let k = 0; k < D; k++) mR.Win[J][k] = 0;
+    mR.Win[J][FI] = 5;
+    const vR = M._seqVizFrom(mR, null);
+    chk(vR.nodeRoles[J].top[0].i === FI && vR.nodeRoles[J].top[0].name === M.LUXML.featNames[FI],
+      `노드 역할이 Win 의 그 ★행★ 에서 나온다 (노드 ${J} → ${M.LUXML.featNames[FI]})`,
+      "노드 역할이 가중치를 안 따라간다 — 화면 설명이 모델과 무관하다");
+    /* '출력에 실리는 몫' 도 실제 Wh 를 따라야 한다 — 상수로 두면 어느 노드가 결과를
+       움직이는지 화면이 아무 말도 못 하면서 말하는 것처럼 보인다. */
+    const mO = mkModel(); const JO = 9;
+    for (let k = 0; k < dm; k++) mO.Wh[k] = 0.01;
+    mO.Wh[JO] = 9;
+    const vO = M._seqVizFrom(mO, null);
+    const topOut = vO.nodeRoles.slice().sort((a, b) => b.out - a.out)[0];
+    chk(topOut && topOut.j === JO && vO.nodeRoles[JO].out > 0.9,
+      `'출력에 실리는 몫' 이 |Wh| 를 따라간다 (노드 ${JO} 가 1위, ${(vO.nodeRoles[JO].out * 100).toFixed(0)}%)`,
+      "출력 몫이 가중치를 안 따라간다 — 어느 노드가 결과를 움직이는지 말하지 못한다");
+  }
   chk(Array.isArray(v.vizSeq) && v.vizSeq.length === L && v.vizSeq[0].length === D,
     "표본 입력값도 함께 내려간다(피처를 눌렀을 때 '그때 값' 을 보여줄 수 있다)", "표본 입력을 안 내려보낸다 — 피처 상세가 반쪽이 된다");
 }
@@ -138,8 +172,10 @@ console.log("\n②-c 눌러서 볼 수 있는가 — 피처 75개·노드 32개�
   chk(/data-pick="feat:/.test(draw) && /data-pick="node:/.test(draw) && /data-pick="step:/.test(draw),
     "피처·노드·시점이 전부 클릭 대상이다", "클릭 대상이 없다 — 볼 수는 있어도 물어볼 수는 없다");
   chk(/<title>/.test(draw), "마우스를 올리면 이름과 값이 뜬다(네이티브 title)", "툴팁이 없다");
-  chk(/d\.nodes\[nk\]\[t2\]/.test(draw.replace(/\s/g, "")) || /d\.nodes\[nk\] && d\.nodes\[nk\]\[t2\]/.test(draw),
-    "카드 안 칸은 저장된 노드 ★값★ 을 그린다", "카드 안이 가중치 노름뿐이다 — 값이 아니다");
+  chk(/nSrc=d\.nodes\.byBlock&&d\.nodes\.byBlock\[S\.blk\|\|0\]/.test(draw.replace(/\s/g, "").replace("varbb=", "nSrc=")) ||
+      /d\.nodes\.byBlock\[S\.blk/.test(draw.replace(/\s/g, "")),
+    "카드 안 칸은 ★그 블록의★ 노드 값을 그린다(층마다 다른 값이다)",
+    "카드 안이 가중치 노름뿐이거나 블록 구분이 없다");
   chk(/neg\?'255,110,140':'0,224,255'/.test(draw.replace(/\s/g, "")),
     "부호를 색으로 나눈다(절댓값만 그리면 밀어 올린 노드와 눌러 내린 노드가 같아 보인다)", "부호가 안 보인다");
   chk(/addEventListener\('click'/.test(HV) && /data-pick/.test(HV),
@@ -147,7 +183,7 @@ console.log("\n②-c 눌러서 볼 수 있는가 — 피처 75개·노드 32개�
   /* ★설명 문장을 찾으면 안 된다.★ 처음엔 '받는 주목' 이라는 말을 찾았는데, 필드 라벨에서
      그 말을 지워도 아래 설명 문단에 같은 말이 남아 검사가 통과했다. 세어야 할 것은 말이 아니라
      ★계산★ 이다: 행(내가 보는 것)과 열(내가 받는 것)은 다른 합이다. 열 합을 실제로 구하는가. */
-  chk(/col\+=\(d\.attn\[hh\]\[r2\]&&d\.attn\[hh\]\[r2\]\[t\]\)\|\|0/.test(pick.replace(/\s/g, "")),
+  chk(/col\+=\(AB\[hh\]\[r2\]&&AB\[hh\]\[r2\]\[t\]\)\|\|0/.test(pick.replace(/\s/g, "")),
     "'받는 주목' 을 어텐션 행렬의 ★열★ 로 실제 계산한다(행과 열은 다른 값이다)",
     "★열 합을 구하지 않는다 — 행 하나로 두 방향을 다 말하면 그 중 하나는 틀린 값이다★");
   chk(/보는 비중/.test(pick), "두 방향을 화면에 구분해 적는다", "방향 구분이 화면에 없다");
@@ -220,11 +256,12 @@ console.log("\n④ 3D 사영이 정말 3D 인가 — 회전·원근·깊이순�
 console.log("\n⑤ 어텐션 집계 — 어느 시점이 어느 시점을 보는가(이 화면의 존재 이유)");
 {
   const src = grabFn("sq3AttnRow");
-  chk(!!src, "집계 함수를 화면 코드에서 떼어 왔다", "집계 함수를 못 찾는다");
-  const f = new Function(src + "\nreturn sq3AttnRow;")();
+  chk(!!src && !!grabFn("sq3AttnOf"), "집계 함수를 화면 코드에서 떼어 왔다", "집계 함수를 못 찾는다");
+  const f0 = new Function(grabFn("sq3AttnOf") + "\n" + src + "\nreturn sq3AttnRow;")();
+  const f = (dd, h, r, L2) => f0(dd, h, r, L2, -1);
   /* 헤드 0 은 t=3 만, 헤드 1 은 t=9 만 보게 만든 인공 어텐션 — 집계가 어느 헤드를 봤는지 드러난다. */
   const one = (k) => { const r = new Array(L).fill(0); r[k] = 1; return r; };
-  const d = { trained: true, attn: [Array.from({ length: L }, () => one(3)), Array.from({ length: L }, () => one(9))] };
+  const d = { trained: true, attnByBlock: [[Array.from({ length: L }, () => one(3)), Array.from({ length: L }, () => one(9))]] };
   const h0 = f(d, 0, L - 1, L), h1 = f(d, 1, L - 1, L), all = f(d, -1, L - 1, L);
   chk(h0 && h0[3] === 1 && h0[9] === 0, "헤드 #0 을 고르면 헤드 #0 만 본다", "헤드 선택이 안 먹는다 — 다른 헤드가 섞인다");
   chk(h1 && h1[9] === 1 && h1[3] === 0, "헤드 #1 을 고르면 헤드 #1 만 본다", "헤드 선택이 안 먹는다");
@@ -232,18 +269,18 @@ console.log("\n⑤ 어텐션 집계 — 어느 시점이 어느 시점을 보는
     "'전체' 는 헤드 평균이다(합이 아니다 — 합이면 비중이 1 을 넘는다)", "전체 집계가 평균이 아니다");
   chk(Math.abs(all.reduce((a, b) => a + b, 0) - 1) < 1e-9, "집계 결과의 합이 1 이다", "집계 합이 1 이 아니다 — 비중으로 못 읽는다");
   /* 행 선택 — 다른 시점을 고르면 다른 행을 봐야 한다. */
-  const d2 = { trained: true, attn: [Array.from({ length: L }, (_, t) => one(t))] };
+  const d2 = { trained: true, attnByBlock: [[Array.from({ length: L }, (_, t) => one(t))]] };
   chk(f(d2, 0, 2, L)[2] === 1 && f(d2, 0, 11, L)[11] === 1,
     "보는 시점을 바꾸면 그 시점의 행을 읽는다", "★행 선택이 고정돼 있다 — 어느 시점을 골라도 같은 그림이다★");
   /* ★없으면 null.★ 0 배열을 주면 화면은 "아무 데도 안 본다" 는 틀린 말을 그린다. */
-  chk(f({ trained: false }, -1, 0, L) === null && f({ trained: true, attn: null }, -1, 0, L) === null,
+  chk(f({ trained: false }, -1, 0, L) === null && f({ trained: true, attnByBlock: null }, -1, 0, L) === null,
     "어텐션이 없으면 null 이다(0 으로 채우지 않는다)", "없는 어텐션을 0 으로 채운다 — '안 본다' 는 틀린 그림이 된다");
   /* ★미학습 표시인데 어텐션 배열이 남아 있는 상태★ 는 실제로 생긴다(캐시된 옛 응답 위에
      새 미학습 응답이 얹히는 경로). 그때 옛 어텐션을 그리면 학습도 안 된 모델이
      "이 시점을 본다" 고 말하게 된다 — trained 를 보는 이유가 그것이다. */
-  chk(f({ trained: false, attn: [Array.from({ length: L }, () => one(3))] }, -1, L - 1, L) === null,
+  chk(f({ trained: false, attnByBlock: [[Array.from({ length: L }, () => one(3))]] }, -1, L - 1, L) === null,
     "미학습 응답에 옛 어텐션이 남아 있어도 그리지 않는다", "★미학습인데 남아 있던 어텐션을 그린다★");
-  chk(f({ trained: true, attn: [] }, 5, 0, L) === null, "없는 헤드를 고르면 null 이다", "없는 헤드에서 값을 만든다");
+  chk(f({ trained: true, attnByBlock: [[]] }, 5, 0, L) === null, "없는 헤드를 고르면 null 이다", "없는 헤드에서 값을 만든다");
 }
 
 console.log("\n⑥ 배선 — 탭·라우팅·기본 시점");

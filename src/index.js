@@ -2977,7 +2977,7 @@ async function applySignalTypeWeights(DB, cfg) {
 // ============================================================================
 // [V33.55] 빌드 버전 — SWR L2 캐시 키에 섞어 '배포 = 판단 캐시 자동 무효화'를 만든다.
 //   판정 로직을 고쳐도 옛 캐시가 최대 1시간 재배포되던 문제를 구조적으로 없앤다.
-const _BUILD_VER = "V33.270";
+const _BUILD_VER = "V33.271";
 
 // ═══ [V33.171] 평가 순서 계획 — ★승격과 순환을 교차해 굶주림을 구조적으로 없앤다★ ═══
 //   V33.50 의 형태트리거는 "급한 몇 종목을 앞으로 당긴다"는 의도였으나, 실제 운영로그에서는
@@ -9630,7 +9630,11 @@ function _mlExportConfig(arch) {
                          horizonDays: (AI_PARAMS.prediction && AI_PARAMS.prediction.horizonDays) || 10 },
            /* [V33.267] 시퀀스 모델 형상은 ★워커가 정한다★ — 여기서 L/d/heads 를 바꾸면
               트레이너가 그 형상으로 학습해 올린다. 두 곳에 따로 적어 두면 언젠가 갈라진다. */
-           seq: { enabled: !!SEQML.enabled, L: SEQML.L, d: SEQML.d, heads: SEQML.heads, ffMult: SEQML.ffMult },
+           /* [V33.271] 저장된 스윕 승자가 있으면 ★그것★ 을 내려준다 — 없으면 기본값.
+              측정이 있을 때만 측정을 쓴다(측정이 없는데 쓴 척하지 않는다). */
+           seq: Object.assign({ enabled: !!SEQML.enabled, L: SEQML.L, d: SEQML.d, heads: SEQML.heads,
+                                layers: SEQML.layers, ffMult: SEQML.ffMult },
+                              (arch && arch.seq) ? { d: arch.seq.d, heads: arch.seq.heads, layers: arch.seq.layers } : {}),
            icFloor: (typeof GBDT !== "undefined" && GBDT.icFloor != null) ? GBDT.icFloor : 0.015 };
 }
 const MLSNAP_PART = 20000;
@@ -12059,8 +12063,23 @@ function _rvZ(arr, v) {
 const SEQML = {
   enabled: true,
   L: 16,            // 되돌아보는 표본 수(같은 종목, 시간순)
-  d: 32,            // 모델 차원
-  heads: 2,
+  /* ══ [V33.271] 용량을 올린다 — ★근거는 실측이고, 최종 결정은 스윕이 한다.★ ══
+     V33.267 은 d32·1층·15,745 파라미터였다. 그 크기를 고른 이유는 워커 예산이었고,
+     "이 과제에 충분하다" 는 근거는 없었다(그때 그렇게 적었다). 재 보니 여유가 있었다.
+
+       구성            파라미터   워커 1회 추론(실측)
+       d32 L16 H2 1층    15,745      0.50ms
+       d64 L16 H4 1층    56,065      1.36ms
+       d64 L16 H4 2층   105,537      2.3ms  ← 지금 값
+       DNN(비교)      4,618,470      (6시드 앙상블, 이미 매 사이클 돈다)
+
+     즉 DNN 의 1/44 이고, 종목당 조립(3.0ms)에 2.3ms 를 더하는 정도다.
+     ★그래도 이건 '내가 고른 값' 이다.★ 그래서 트레이너가 후보 몇 개를 실제로 학습해
+     검증 하한으로 겨루고, 이긴 구성을 /api/seq-arch 로 되돌려 준다(DNNARCH 와 같은 배치).
+     이 기본값은 그 측정이 없을 때의 출발점이다. */
+  d: 64,            // 모델 차원
+  heads: 4,
+  layers: 2,        // 인코더 블록 수 — 1층은 "시점끼리 한 번 본다" 가 전부다
   ffMult: 4,
   probeTol: 0.03,   // 트레이너 확률 재현 허용오차 — 기존 경로와 같은 값
   trustFloor: 0.505,
@@ -12135,44 +12154,59 @@ function seqFormerScore(model, seq, cap) {
       Hm.push(h);
     }
     if (cap) cap.proj = Hm.map(function (h) { return h.slice(); });
-    // ── 어텐션(프리노름)
-    const A = Hm.map(function (h) { return _sqLn(h, model.ln1g, model.ln1b); });
-    const Q = A.map(function (a) { return _sqMatVec(model.Wq, model.bq, a); });
-    const K = A.map(function (a) { return _sqMatVec(model.Wk, model.bk, a); });
-    const V = A.map(function (a) { return _sqMatVec(model.Wv, model.bv, a); });
-    const ctx = [];
-    for (let t = 0; t < L; t++) ctx.push(new Array(d).fill(0));
-    for (let hh = 0; hh < H; hh++) {
-      const off = hh * dh;
-      for (let t = 0; t < L; t++) {
-        const sc = new Array(L);
-        for (let u = 0; u < L; u++) {
-          let s = 0; for (let i = 0; i < dh; i++) s += Q[t][off + i] * K[u][off + i];
-          sc[u] = s * scale;
-        }
-        const w = _sqSoftmax(sc);
-        if (cap) { (cap.attn || (cap.attn = []))[hh] || (cap.attn[hh] = []); cap.attn[hh][t] = w; }
-        for (let i = 0; i < dh; i++) {
-          let s = 0; for (let u = 0; u < L; u++) s += w[u] * V[u][off + i];
-          ctx[t][off + i] = s;
+    /* ── 인코더 블록 반복 ─────────────────────────────────────────────────
+       ★1층은 "시점끼리 한 번 본다" 가 전부다.★ 한 블록의 어텐션은 각 시점을 다른 시점의
+       1차 조합으로 섞는다. 두 블록이면 "이미 섞인 것" 을 다시 섞으므로, 2단계 관계
+       (A 가 B 를 보고 B 가 C 를 봤다는 사실)를 쓸 수 있다 — 정보가 며칠에 걸쳐 퍼지는
+       구간을 보라고 넣은 모델이니 그 깊이가 본질에 가깝다.
+       옛 단층 형식(평면 필드)도 그대로 받는다 — 블록 하나로 감싸면 같은 계산이다. */
+    const blocks = Array.isArray(model.blocks) && model.blocks.length ? model.blocks : [{
+      ln1g: model.ln1g, ln1b: model.ln1b, Wq: model.Wq, bq: model.bq, Wk: model.Wk, bk: model.bk,
+      Wv: model.Wv, bv: model.bv, Wo: model.Wo, bo: model.bo,
+      ln2g: model.ln2g, ln2b: model.ln2b, W1: model.W1, b1: model.b1, W2: model.W2, b2: model.b2
+    }];
+    if (cap) { cap.attn = []; cap.hAttn = []; cap.hFfn = []; cap.ffLive = []; }
+    for (let bi = 0; bi < blocks.length; bi++) {
+      const B = blocks[bi];
+      if (!B || !Array.isArray(B.Wq) || !Array.isArray(B.W1)) return null;
+      // ── 어텐션(프리노름)
+      const A = Hm.map(function (h) { return _sqLn(h, B.ln1g, B.ln1b); });
+      const Q = A.map(function (a) { return _sqMatVec(B.Wq, B.bq, a); });
+      const K = A.map(function (a) { return _sqMatVec(B.Wk, B.bk, a); });
+      const V = A.map(function (a) { return _sqMatVec(B.Wv, B.bv, a); });
+      const ctx = [];
+      for (let t = 0; t < L; t++) ctx.push(new Array(d).fill(0));
+      for (let hh = 0; hh < H; hh++) {
+        const off = hh * dh;
+        for (let t = 0; t < L; t++) {
+          const sc = new Array(L);
+          for (let u = 0; u < L; u++) {
+            let s2 = 0; for (let i = 0; i < dh; i++) s2 += Q[t][off + i] * K[u][off + i];
+            sc[u] = s2 * scale;
+          }
+          const w = _sqSoftmax(sc);
+          if (cap) { (cap.attn[bi] || (cap.attn[bi] = []))[hh] || (cap.attn[bi][hh] = []); cap.attn[bi][hh][t] = w; }
+          for (let i = 0; i < dh; i++) {
+            let s3 = 0; for (let u = 0; u < L; u++) s3 += w[u] * V[u][off + i];
+            ctx[t][off + i] = s3;
+          }
         }
       }
+      for (let t = 0; t < L; t++) {
+        const o = _sqMatVec(B.Wo, B.bo, ctx[t]);
+        for (let i = 0; i < d; i++) Hm[t][i] += o[i];
+      }
+      if (cap) cap.hAttn[bi] = Hm.map(function (h) { return h.slice(); });
+      // ── FFN(프리노름)
+      const live = new Array(L).fill(0);
+      for (let t = 0; t < L; t++) {
+        const b1v = _sqMatVec(B.W1, B.b1, _sqLn(Hm[t], B.ln2g, B.ln2b));
+        for (let i = 0; i < b1v.length; i++) if (b1v[i] < 0) b1v[i] = 0; else if (b1v[i] > 1e-9) live[t]++;
+        const f = _sqMatVec(B.W2, B.b2, b1v);
+        for (let i = 0; i < d; i++) Hm[t][i] += f[i];
+      }
+      if (cap) { cap.hFfn[bi] = Hm.map(function (h) { return h.slice(); }); cap.ffLive[bi] = live; }
     }
-    for (let t = 0; t < L; t++) {
-      const o = _sqMatVec(model.Wo, model.bo, ctx[t]);
-      for (let i = 0; i < d; i++) Hm[t][i] += o[i];
-    }
-    if (cap) cap.hAttn = Hm.map(function (h) { return h.slice(); });
-    // ── FFN(프리노름)
-    for (let t = 0; t < L; t++) {
-      const b1v = _sqMatVec(model.W1, model.b1, _sqLn(Hm[t], model.ln2g, model.ln2b));
-      for (let i = 0; i < b1v.length; i++) if (b1v[i] < 0) b1v[i] = 0;
-      const f = _sqMatVec(model.W2, model.b2, b1v);
-      for (let i = 0; i < d; i++) Hm[t][i] += f[i];
-      if (cap) { let live = 0; for (let i = 0; i < b1v.length; i++) if (b1v[i] > 1e-9) live++;
-                 (cap.ffLive || (cap.ffLive = []))[t] = live; }
-    }
-    if (cap) cap.hFfn = Hm.map(function (h) { return h.slice(); });
     // ── 마지막 시점 → 확률
     const last = _sqLn(Hm[L - 1], model.lng, model.lnb);
     let z = _num(model.bh, 0);
@@ -12462,7 +12496,8 @@ function _sqNorm01(a) {
    (optMicroFromChain 을 같은 이유로 이렇게 뒀다.) */
 function _seqVizFrom(m, t) {
   {
-    const cfgShape = { L: SEQML.L, d: SEQML.d, heads: SEQML.heads, ffMult: SEQML.ffMult, D: LUXML.featNames.length };
+    const cfgShape = { L: SEQML.L, d: SEQML.d, heads: SEQML.heads, layers: SEQML.layers,
+                       ffMult: SEQML.ffMult, D: LUXML.featNames.length };
     if (!m || !Array.isArray(m.Win)) {
       /* 미학습 — ★구조는 사실이고 강도는 비어 있다.★ 둘을 섞어 적지 않는다. */
       return { kind: "seq", trained: false, cfg: cfgShape, featNames: LUXML.featNames.slice(),
@@ -12479,55 +12514,90 @@ function _seqVizFrom(m, t) {
       inputFeatures.push({ i: j, name: fn[j] || ("f" + j), role: (typeof FEAT_ROLES !== "undefined" ? (FEAT_ROLES[fn[j]] || "") : ""), strength: inS[j] });
     const topFeatures = inputFeatures.slice().sort(function (a, b) { return b.strength - a.strength; }).slice(0, 20);
     const posStrength = _sqNorm01((m.pos || []).map(function (r) { let s = 0; for (const v of r) { const x = _num(v, 0); s += x * x; } return Math.sqrt(s); }));
+    const BLK = Array.isArray(m.blocks) && m.blocks.length ? m.blocks : [m];
     /* 헤드별 규모 — 부분행렬(그 헤드가 쓰는 출력 행들)의 노름. 어떤 헤드가 죽어 있는지 보인다. */
     const headStats = [];
-    for (let h = 0; h < H; h++) {
-      const a = h * dh, b = a + dh;
-      const nrm = function (W) { let s = 0; for (let i = a; i < b && i < W.length; i++) for (const v of W[i]) { const x = _num(v, 0); s += x * x; } return +Math.sqrt(s).toFixed(4); };
-      headStats.push({ h: h, q: nrm(m.Wq), k: nrm(m.Wk), v: nrm(m.Wv),
-                       o: +Math.sqrt(_sqColNorm(m.Wo, d).slice(a, b).reduce(function (x, y) { return x + y * y; }, 0)).toFixed(4) });
+    for (let bi = 0; bi < BLK.length; bi++) {
+      const B = BLK[bi], hs = [];
+      for (let h = 0; h < H; h++) {
+        const a = h * dh, b = a + dh;
+        const nrm = function (W) { let s = 0; for (let i = a; i < b && i < (W || []).length; i++) for (const v of W[i]) { const x = _num(v, 0); s += x * x; } return +Math.sqrt(s).toFixed(4); };
+        hs.push({ h: h, q: nrm(B.Wq), k: nrm(B.Wk), v: nrm(B.Wv),
+                  o: +Math.sqrt(_sqColNorm(B.Wo || [], d).slice(a, b).reduce(function (x, y) { return x + y * y; }, 0)).toFixed(4) });
+      }
+      headStats.push(hs);
     }
     /* FFN — 은닉 유닛이 몇 개나 실제로 살아 있는가(행 노름이 최대의 5% 미만이면 사실상 죽은 유닛). */
-    const ffRows = _sqRowNorm(m.W1 || []);
-    const ffN = _sqNorm01(ffRows);
-    let ffDead = 0; for (const v of ffN) if (v < 0.05) ffDead++;
+    const ffStrengthB = [], ffDeadB = [];
+    for (let bi = 0; bi < BLK.length; bi++) {
+      const n01 = _sqNorm01(_sqRowNorm(BLK[bi].W1 || []));
+      let dead = 0; for (const v of n01) if (v < 0.05) dead++;
+      ffStrengthB.push(n01); ffDeadB.push(dead);
+    }
+    const ffN = ffStrengthB[0] || [], ffDead = ffDeadB.reduce(function (a, b) { return a + b; }, 0);
     const headW = _sqNorm01((m.Wh || []).map(function (v) { return Math.abs(_num(v, 0)); }));
+    /* ── [V33.271] ★각 노드가 무슨 일을 하는가.★ DNN 화면이 피처 역할을 보여 주듯, 여기선
+       모델 차원 하나하나가 ①무엇을 읽고 ②최종 확률에 얼마나 실리는가를 적는다.
+         읽는 것  = Win 의 그 ★행★ (노드 j 로 들어가는 75개 피처의 가중치) 상위 3개
+         싣는 것  = |Wh[j]| — 마지막 시점의 그 노드가 출력 로짓에 곱해지는 크기
+       깊은 블록의 노드는 섞여 있어 이렇게 못 읽는다. 그래서 ★사영층에 한해★ 적고,
+       화면도 그 사실을 적는다 — 아는 만큼만 말한다. */
+    const nodeRoles = [];
+    for (let j = 0; j < d; j++) {
+      const row = (m.Win && m.Win[j]) ? m.Win[j] : [];
+      const idx = [];
+      for (let k = 0; k < row.length && k < D; k++) idx.push({ i: k, w: _num(row[k], 0) });
+      idx.sort(function (a, b) { return Math.abs(b.w) - Math.abs(a.w); });
+      let mag = 0; for (const e of idx) mag += e.w * e.w; mag = Math.sqrt(mag);
+      nodeRoles.push({ j: j, mag: +mag.toFixed(4), out: headW[j] != null ? headW[j] : 0,
+        top: idx.slice(0, 3).map(function (e) { return { i: e.i, name: fn[e.i] || ("f" + e.i), w: +e.w.toFixed(4) }; }) });
+    }
     /* ★어텐션은 실제 표본에서만.★ 없으면 null — 화면이 그 사실을 적는다. */
-    let attn = null, attnP = null, attnErr = null, nodes = null;
+    let attnB = null, attnP = null, attnErr = null, nodes = null;
     try {
       if (Array.isArray(m.vizSeq) && m.vizSeq.length) {
         const cap = {};
         const p = seqFormerScore(m, m.vizSeq, cap);
-        if (p != null && cap.attn && cap.attn.length) {
-          attn = cap.attn.map(function (hd) { return hd.map(function (row) { return row.map(function (w) { return +w.toFixed(4); }); }); });
+        if (p != null && cap.attn && cap.attn.length && cap.attn[0]) {
+          /* [V33.271] 블록별 [heads][L][L]. 화면 기본은 ★마지막 블록★ 이다 — 출력에 가장 가깝다. */
+          attnB = cap.attn.map(function (bl) { return bl.map(function (hd) { return hd.map(function (row) { return row.map(function (w) { return +w.toFixed(3); }); }); }); });
           attnP = +p.toFixed(4);
           /* 노드 ★값★ — 가중치만으로는 못 그린다. 이건 저 표본이 지나갈 때 각 시점·각 노드가
              실제로 가졌던 수다. 소수 3자리로 줄여 보낸다(16×32×3 ≈ 12KB). */
-          const rnd3 = function (M2) { return M2.map(function (row) { return row.map(function (v) { return +_num(v, 0).toFixed(3); }); }); };
-          nodes = { proj: rnd3(cap.proj || []), attn: rnd3(cap.hAttn || []), ffn: rnd3(cap.hFfn || []),
-                    ffLive: (cap.ffLive || []).slice() };
+          /* ★소수 2자리.★ 화면이 그리는 것은 막대 하나와 숫자 하나다 — 3자리째는 아무 데도
+             안 보이는데 응답만 키운다(2층 d64 에서 97KB → 65KB). 그리고 ★중복을 안 보낸다★:
+             마지막 블록은 byBlock 의 마지막 원소이므로 따로 또 싣지 않는다(화면이 집어 쓴다). */
+          const rnd2 = function (M2) { return (M2 || []).map(function (row) { return row.map(function (v) { return +_num(v, 0).toFixed(2); }); }); };
+          nodes = { proj: rnd2(cap.proj),
+                    byBlock: cap.hAttn.map(function (_, bi) {
+                      return { attn: rnd2(cap.hAttn[bi]), ffn: rnd2(cap.hFfn[bi]), ffLive: (cap.ffLive[bi] || []).slice() };
+                    }) };
         } else attnErr = "표본으로 재현이 안 됩니다(모델 형상 확인 필요)";
       } else attnErr = "관측용 표본이 없습니다 — 다음 학습 업로드부터 실제 어텐션이 표시됩니다";
     } catch (e) { attnErr = "어텐션 계산 예외"; }
+    /* ffStrength 는 블록별로 다 보내면 커진다 — 첫 블록만 남기고 나머지는 죽은 유닛 수로 요약한다. */
+    const ffStrengthKeep = ffStrengthB.slice(0, 2);
     let params = 0;
     params += d * D + d;                     // Win + bin
     params += L * d;                          // pos
-    params += 4 * (d * d + d);                // Wq,Wk,Wv,Wo (+bias)
-    params += d * (4 * d) + 4 * d + (4 * d) * d + d;  // W1,b1,W2,b2
+    params += BLK.length * (4 * (d * d + d)                       // Wq,Wk,Wv,Wo (+bias)
+                          + d * (4 * d) + 4 * d + (4 * d) * d + d  // W1,b1,W2,b2
+                          + 4 * d);                                 // ln1/ln2 (g,b)
     params += d + 1;                          // Wh, bh
-    params += 6 * d;                          // ln1/ln2/lnf (g,b)
+    params += 2 * d;                          // 최종 LN(g,b)
     return {
-      kind: "seq", trained: true, L: L, D: D, d: d, heads: H, dh: dh, ffHidden: (m.W1 || []).length,
+      kind: "seq", trained: true, L: L, D: D, d: d, heads: H, dh: dh, layers: BLK.length,
+      ffHidden: ((BLK[0] && BLK[0].W1) || []).length,
       params: params, cfg: cfgShape,
       trusted: !!m.trusted, w: _num(m.w, 0), admitPath: m.admitPath || null, admitWhy: m.admitWhy || null,
       valAcc: m.valAcc, valAccLB: m.valAccLB, valN: m.valN, n: m.n, valICt: m.valICt,
       probeMaxDiff: m.probeMaxDiff, probeN: m.probeN, trainedAt: m.trainedAt, source: m.source || null,
       featVer: _num(m.featVer, null), serverFeatVer: LUXML.featVer,
       featNames: fn.slice(), inputFeatures: inputFeatures, topFeatures: topFeatures,
-      posStrength: posStrength, headStats: headStats,
-      ffStrength: ffN, ffDead: ffDead, headWeight: headW,
-      attn: attn, attnP: attnP, attnErr: attnErr, nodes: nodes,
-      vizSeq: Array.isArray(m.vizSeq) ? m.vizSeq.map(function (r) { return r.map(function (v) { return +_num(v, 0).toFixed(3); }); }) : null,
+      posStrength: posStrength, headStats: headStats, nodeRoles: nodeRoles,
+      ffStrength: ffN, ffStrengthByBlock: ffStrengthKeep, ffDead: ffDead, ffDeadByBlock: ffDeadB, headWeight: headW,
+      attnByBlock: attnB, attnP: attnP, attnErr: attnErr, nodes: nodes,
+      vizSeq: Array.isArray(m.vizSeq) ? m.vizSeq.map(function (r) { return r.map(function (v) { return +_num(v, 0).toFixed(2); }); }) : null,
       vizP: (m.vizP == null ? null : _num(m.vizP, null)),
       trust: t || null
     };
@@ -22322,8 +22392,9 @@ async function handleRequest(request, env, ctx) {
         _g("committee_cal"), _g("stack_oof_window"), _g("stack_bf_cursor"), _g("stack_oof_cursor")
       ]);
       let boosters = null; try { boosters = await _boostersCached(env.DB); } catch (e) {}
-      const [flowM, xaM, memoM, dBull, dBear] = await Promise.all([
-        _g("flow_model"), _g("xalpha_model"), _g("memo_model"), _g("dual_bull_model"), _g("dual_bear_model")
+      const [flowM, xaM, memoM, dBull, dBear, seqT] = await Promise.all([
+        _g("flow_model"), _g("xalpha_model"), _g("memo_model"), _g("dual_bull_model"), _g("dual_bear_model"),
+        _g("seq_trust")   // [V33.271] SEQ 는 작은 동반 레코드만 읽는다(큰 모델은 안 건드린다)
       ]);
       /* 위원 한 명을 '지금 실제로 투표하는가' 기준으로 적는다 — 화면에 좋아 보이는 값이 아니라
          ★결정 경로가 실제로 보는 값★ 이다(admit·featVer 일치·신뢰게이트). */
@@ -22387,6 +22458,19 @@ async function handleRequest(request, env, ctx) {
           ic: memoM ? _num(memoM.valICBlock, null) : null, icT: memoM ? _num(memoM.valICt, null) : null,
           n: memoM ? _num(memoM.n, null) : null, minN: MEMOML.minTrainSamples,
           voting: !!(memoM && expertAdmit(memoM).admit) }),
+        /* [V33.271] SEQ — ★DNN 을 대체한 게 아니라 새로 붙은 위원이다.★ 목록에 없으면
+           "전체 구조" 화면이 위원을 하나 빠뜨린 채로 그린다(그게 곧 거짓말이 된다). */
+        _row("seq", "SEQ (시퀀스 Transformer — 최근 " + SEQML.L + "봉을 순서대로)", { kind: "seq",
+          trained: !!(seqT && seqT.seqAccLB != null), featVer: seqT ? seqT.featVer : null,
+          featVerOk: !!(seqT && seqT.featVer === LUXML.featVer),
+          valAcc: seqT ? _num(seqT.seqAcc, null) : null, accLB: seqT ? _num(seqT.seqAccLB, null) : null,
+          floor: _num(SEQML.trustFloor, 0.505), icT: seqT ? _num(seqT.valICt, null) : null,
+          n: seqT ? _num(seqT.valN, null) : null,
+          voting: !!(seqT && seqT.trusted && _num(seqT.wSeq, 0) > 0 && seqT.featVer === LUXML.featVer),
+          mult: seqT ? _num(seqT.wSeq, 0) : null,
+          tier: seqT ? (seqT.admitPath === "ic" ? "prov" : "full") : null,
+          why: seqT ? ((seqT.featVer !== LUXML.featVer) ? ("구 featVer " + seqT.featVer + " — 재학습 대기") : (seqT.why || "")) : "미학습",
+          params: null }),
         _row("rule", "RULE (규칙엔진)", { kind: "rule", trained: true, voting: true,
           accLB: mindM ? _num(mindM.ruleAccLB, null) : null,
           why: "상시 — 기술지표 기반 사전확률" })
@@ -22788,10 +22872,18 @@ async function handleRequest(request, env, ctx) {
       let _arch = null;
       if (_firstPage) {
         try {
-          const _AS = await getStates(env.DB, [DNNARCH.stateKey, "dnn_trust"]);
+          const _AS = await getStates(env.DB, [DNNARCH.stateKey, "dnn_trust", "seq_arch"]);
           let _pn = 0;
           try { const _c = await env.DB.prepare("SELECT COUNT(*) n FROM ml_samples WHERE featver = ?").bind(LUXML.featVer).first(); _pn = _num(_c && _c.n, 0); } catch (e) {}
           _arch = _dnnArchDecide(_AS[DNNARCH.stateKey], _AS["dnn_trust"], _pn);
+          /* [V33.271] SEQ 스윕 승자 — ★판이 같을 때만★ 쓴다. 피처가 바뀌면 그때 잰 용량은
+             다른 문제에 대한 답이라 근거가 아니다. */
+          try {
+            const _sa = _AS["seq_arch"];
+            if (_sa && _num(_sa.featVer, -1) === LUXML.featVer && _num(_sa.d, 0) > 0)
+              _arch.seq = { d: Math.floor(_num(_sa.d, SEQML.d)), heads: Math.floor(_num(_sa.heads, SEQML.heads)),
+                            layers: Math.floor(_num(_sa.layers, SEQML.layers)) };
+          } catch (e) {}
           if (_arch.sweep) {
             try { ctx.waitUntil(log(env.DB, "INFO", null, "[DNN-ARCH] 구성 스윕 요청 — " + _arch.why +
               " (현재 " + _arch.hidden.join("-") + (_arch.measured ? ", 실측값" : ", 기본값") + ")")); } catch (e) {}
@@ -23487,11 +23579,25 @@ async function handleRequest(request, env, ctx) {
       // 형상 검사 — 잘못된 구조가 저장되면 매 사이클 종목마다 null 을 뱉는다(조용한 무력화).
       const _dm = Math.floor(_num(m.d, 0)), _L = Math.floor(_num(m.L, 0)), _H = Math.floor(_num(m.heads, 0));
       const _sq = function (W, r, c) { return Array.isArray(W) && W.length === r && Array.isArray(W[0]) && W[0].length === c; };
+      /* [V33.271] 블록 배열을 받는다. 옛 평면 형식도 그대로 통과시킨다(블록 1개와 같은 계산이다) —
+         형식 하나 바뀌었다고 이미 검증된 경로를 끊을 이유가 없다. */
+      const _blks = Array.isArray(m.blocks) && m.blocks.length ? m.blocks : [m];
+      let _bErr = null;
+      for (let _i = 0; _i < _blks.length; _i++) {
+        const B = _blks[_i];
+        if (!B || !_sq(B.Wq, _dm, _dm) || !_sq(B.Wk, _dm, _dm) || !_sq(B.Wv, _dm, _dm) || !_sq(B.Wo, _dm, _dm)) { _bErr = "블록" + _i + " QKVO"; break; }
+        if (!_sq(B.W1, _dm * 4, _dm)) { _bErr = "블록" + _i + " W1"; break; }
+        if (!_sq(B.W2, _dm, _dm * 4)) { _bErr = "블록" + _i + " W2"; break; }
+      }
+      const _declL = body.model && body.model.layers != null ? Math.floor(_num(body.model.layers, 0)) : null;
       const shapeErr =
         !(_dm > 0 && _L > 0 && _H > 0 && _dm % _H === 0) ? "d/L/heads 형식" :
+        !(_blks.length >= 1 && _blks.length <= 8) ? "블록 수(1~8)" :
+        /* 스스로 적은 층 수와 실제 블록 수가 다르면 그건 ★다른 모델★ 이다 — 트레이너가
+           2층을 학습해 놓고 1블록만 보내면 워커는 조용히 반쪽 모델을 돌리게 된다. */
+        (_declL != null && _declL !== _blks.length) ? ("층 수 불일치(적힌 " + _declL + " ≠ 실제 " + _blks.length + ")") :
         !_sq(m.Win, _dm, D) ? "Win" : !_sq(m.pos, _L, _dm) ? "pos" :
-        (!_sq(m.Wq, _dm, _dm) || !_sq(m.Wk, _dm, _dm) || !_sq(m.Wv, _dm, _dm) || !_sq(m.Wo, _dm, _dm)) ? "QKVO" :
-        !_sq(m.W1, _dm * 4, _dm) ? "W1" : !_sq(m.W2, _dm, _dm * 4) ? "W2" :
+        _bErr ? _bErr :
         !(Array.isArray(m.Wh) && m.Wh.length === _dm) ? "Wh" :
         !(Array.isArray(m.mean) && m.mean.length === D && Array.isArray(m.std) && m.std.length === D) ? "mean/std" : null;
       if (shapeErr) return Response.json({ error: "형상 불일치: " + shapeErr }, { status: 400, headers: cors });
@@ -23536,11 +23642,41 @@ async function handleRequest(request, env, ctx) {
          DNN 의 dnn_trust · 부스터의 xgb_trust 와 같은 배치다: ★읽는 쪽 게이트★ 가 이걸 본다. */
       await setState(env.DB, "seq_trust", { trusted: ad.trusted, wSeq: ad.trusted ? ad.wDnn : 0,
         seqAccLB: lb, seqAcc: _num(body.valAcc, null), valICt: icT, valN: _num(body.valN, 0),
-        L: _L, d: _dm, heads: _H, admitPath: ad.path, why: ad.why,
+        L: _L, d: _dm, heads: _H, layers: _blks.length, admitPath: ad.path, why: ad.why,
         probeMaxDiff: +maxDiff.toFixed(5), featVer: LUXML.featVer, ts: Date.now() });
       try { await log(env.DB, "INFO", null, "[SEQ] Transformer 저장 — 정합 maxDiff " + maxDiff.toFixed(4) +
         "(probe " + probeN + ") · accLB " + (lb * 100).toFixed(2) + "% · " + ad.why); } catch (e) {}
       return Response.json({ ok: true, probeMaxDiff: maxDiff, probeN: probeN, trusted: ad.trusted, why: ad.why }, { headers: cors });
+    }
+
+    /* ══ [V33.271] POST /api/seq-arch — 스윕이 잰 용량을 저장한다 ══════════════
+       ★"과소적합이 걱정된다" 는 말로 크기를 정하지 않는다.★ 트레이너가 후보들을 같은
+       표본·같은 분할로 학습해 유효표본 Wilson 하한(= 워커 승격 게이트가 보는 그 자)으로
+       겨루고, 이긴 구성을 여기 남긴다. 이 레코드가 없으면 SEQML 기본값 그대로 간다 —
+       근거가 있을 때만 근거를 쓴다(DNNARCH 와 같은 규율). */
+    if (path === "/api/seq-arch" && request.method === "POST") {
+      const au = _trainAuthed(); if (!au.ok) return Response.json({ error: au.msg }, { status: au.code, headers: cors });
+      let body; try { body = await request.json(); } catch (e) { return Response.json({ error: "bad json" }, { status: 400, headers: cors }); }
+      if (_num(body.featVer, -1) !== LUXML.featVer)
+        return Response.json({ error: "featVer 불일치 (서버 " + LUXML.featVer + ")" }, { status: 400, headers: cors });
+      const dW = Math.floor(_num(body.d, 0)), hW = Math.floor(_num(body.heads, 0)), lW = Math.floor(_num(body.layers, 0));
+      if (!(dW >= 8 && dW <= 512 && hW >= 1 && hW <= 16 && dW % hW === 0 && lW >= 1 && lW <= 6))
+        return Response.json({ error: "형상 범위 밖 (d 8~512 · heads 1~16 · d%heads==0 · layers 1~6)" }, { status: 400, headers: cors });
+      const tbl = Array.isArray(body.table) ? body.table : [];
+      /* ★승자가 정말 표의 1등인지 확인한다.★ 트레이너가 다른 걸 보내도 여기서 걸린다 —
+         저장하는 순간 이 값이 다음 학습의 형상이 되므로, 근거 없는 값이 앉으면 안 된다. */
+      if (tbl.length) {
+        let top = null;
+        for (const r of tbl) if (!top || _num(r.accLB, -1) > _num(top.accLB, -1)) top = r;
+        if (!top || Math.floor(_num(top.d, 0)) !== dW || Math.floor(_num(top.heads, 0)) !== hW || Math.floor(_num(top.layers, 0)) !== lW)
+          return Response.json({ error: "승자가 표의 1등이 아니다 — 저장하지 않는다" }, { status: 400, headers: cors });
+      }
+      const rec = { d: dW, heads: hW, layers: lW, table: tbl.slice(0, 12), n: _num(body.n, 0),
+                    featVer: LUXML.featVer, ts: Date.now() };
+      await setState(env.DB, "seq_arch", rec);
+      try { await log(env.DB, "INFO", null, "[SEQ] 용량 스윕 승자 d" + dW + "·헤드" + hW + "·" + lW + "층 저장" +
+        (tbl.length ? (" (후보 " + tbl.length + "개 중)") : "")); } catch (e) {}
+      return Response.json({ ok: true, d: dW, heads: hW, layers: lW }, { headers: cors });
     }
 
     /* ══ [V33.260] POST /api/dnn-arch — 스윕이 잰 구성을 저장한다 ══

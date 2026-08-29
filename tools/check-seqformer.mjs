@@ -152,6 +152,16 @@ console.log("\n⑤ 트레이너가 워커와 같은 순서로 계산하는가");
   chk(/h = self\.win\(x\) \+ self\.pos/.test(py), "입력사영 + 위치 순서가 워커와 같다", "입력 단계 순서가 다르다");
   chk(/h = h \+ self\.o\(ctx\)/.test(py) && /h = h \+ self\.f2\(torch\.relu\(self\.f1\(self\.ln2\(h\)\)\)\)/.test(py),
     "프리노름 잔차 구조가 워커와 같다(LN→attn→+ , LN→FFN→+)", "잔차/노름 위치가 워커와 다르다");
+  chk(/for blk in self\.blocks:/.test(py) && /h = blk\(h\)/.test(py),
+    "블록을 N개 쌓는다(층을 늘리면 실제로 반복한다)", "블록이 하나로 고정돼 있다 — 층 설정이 무의미하다");
+  chk(/"blocks": blocks/.test(py) && /for bk_ in net\.blocks\]/.test(py) && /"layers": len\(blocks\)/.test(py),
+    "블록 전부를 내보내고 층 수도 함께 적는다", "일부 블록만 내보내거나 층 수를 안 적는다");
+  /* ★소스만 보고는 부족하다.★ net.blocks[:1] 같은 변이는 위 정규식을 그대로 통과할 수 있다.
+     서버가 ★적힌 층 수와 실제 블록 수가 다르면 거부★ 하는지를 함께 못 박는다 —
+     그러면 반쪽 모델은 소스가 어떻게 생겼든 저장되지 않는다. */
+  chk(/_declL != null && _declL !== _blks\.length/.test(code) && /층 수 불일치/.test(S),
+    "★적힌 층 수 ≠ 실제 블록 수★ 면 업로드를 거부한다(반쪽 모델이 조용히 앉지 않는다)",
+    "층 수와 블록 수가 달라도 저장한다 — 워커가 반쪽 모델을 돌리게 된다");
   chk(/self\.head\(self\.lnf\(h\[:, -1, :\]\)\)/.test(py), "마지막 시점만 읽는다(워커와 동일)", "풀링 방식이 워커와 다르다");
   chk(/np\.lexsort\(\(TS, SYM\)\)/.test(py), "시퀀스를 종목→시각 순으로 쌓는다", "정렬 기준이 없다 — 시간이 섞인다");
   chk(/win = np\.concatenate\(\[np\.full\(L - len\(win\), win\[0\]/.test(py),
@@ -303,8 +313,29 @@ console.log("\n⑨ 트레이너 본류가 실제로 이 학습을 부르는가")
   const py2 = PY2.split("\n").filter(l => !/^\s*#/.test(l)).join("\n");
   chk(/_train_and_upload_seq\(BASE, KEY, HDR, X, Y, TS, SYM, featver, D, UNIQ, cfg\)/.test(py2),
     "본류가 SEQ 학습을 호출한다(정의만 해 두면 영원히 안 돈다)", "정의만 있고 아무도 안 부른다");
-  chk(/seq: \{ enabled: !!SEQML\.enabled, L: SEQML\.L, d: SEQML\.d, heads: SEQML\.heads/.test(code),
-    "형상은 워커가 내려준다(두 곳에 따로 적으면 언젠가 갈라진다)", "트레이너가 형상을 스스로 정한다");
+  chk(/enabled: !!SEQML\.enabled, L: SEQML\.L, d: SEQML\.d, heads: SEQML\.heads,[\s\S]{0,60}layers: SEQML\.layers/.test(code),
+    "형상(층 포함)은 워커가 내려준다 — 두 곳에 따로 적으면 언젠가 갈라진다", "트레이너가 형상을 스스로 정한다");
+}
+
+console.log("\n⑩ ★용량을 말로 정하지 않는다★ — 재서 정하는 고리가 있는가");
+{
+  const PY3 = readFileSync(new URL("../trainer/modal/modal_train.py", import.meta.url), "utf8");
+  const py3 = PY3.split("\n").filter(l => !/^\s*#/.test(l)).join("\n");
+  chk(/def fit_seq\(dm_, Hh_, nl_/.test(py3) && /for \(cd, ch, cl\) in cands/.test(py3),
+    "후보 구성들을 ★같은 표본·같은 분할★ 로 학습해 겨룬다", "구성이 하나뿐이다 — 크기를 고른 근거가 없다");
+  chk(/if best is None or r_\[0\] > best\[0\]/.test(py3),
+    "이기는 기준은 ★유효표본 Wilson 하한★ 이다(워커 승격 게이트와 같은 자)", "다른 자로 이긴 걸 고른다");
+  chk(/api\/seq-arch/.test(py3), "이긴 구성을 서버로 되돌려 준다(측정이 버려지지 않는다)", "측정하고 버린다 — V33.204 에서 그랬다");
+  const ep = code.slice(code.indexOf('path === "/api/seq-arch"'), code.indexOf('path === "/api/seq-arch"') + 2600);
+  /* ★메시지 문자열을 찾으면 안 된다.★ if 를 죽여도 문구는 남아 통과한다(그 변이가 실제로
+     통과했다). 세어야 할 것은 ★비교식★ 이다 — 보내온 d/heads/layers 가 표의 1등과 같은가. */
+  chk(/if\(!top\|\|Math\.floor\(_num\(top\.d,0\)\)!==dW\|\|Math\.floor\(_num\(top\.heads,0\)\)!==hW\|\|Math\.floor\(_num\(top\.layers,0\)\)!==lW\)/.test(ep.replace(/\s/g, "")),
+    "저장 전에 ★승자가 정말 표의 1등인지★ 비교한다", "보내온 값을 그대로 앉힌다 — 근거 없는 형상이 다음 학습을 정한다");
+  chk(/featVer 불일치/.test(ep), "판이 다르면 안 받는다(옛 판에서 잰 용량은 다른 문제의 답이다)", "판을 안 본다");
+  chk(/_num\(_sa\.featVer, -1\) === LUXML\.featVer/.test(code),
+    "내려줄 때도 판을 다시 본다", "저장된 값을 판 확인 없이 내려준다");
+  chk(/seq: Object\.assign\(/.test(code) && /arch && arch\.seq/.test(code),
+    "측정이 있으면 측정을, 없으면 기본값을 내려준다", "측정 없이도 측정한 척한다");
 }
 
 console.log(fails === 0 ? "\n✓ SEQ Transformer 검사 통과" : "\n✗ " + fails + "건 실패");
