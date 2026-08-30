@@ -2981,7 +2981,7 @@ async function applySignalTypeWeights(DB, cfg) {
    화면·자가진단이 계속 "V33.272" 를 보고했다(운영 스냅샷이 그대로 그랬다). 배포는 됐는데
    ★배포됐다는 사실만 거짓말★ 을 하고 있었으니, "내 고침이 올라간 건가" 를 화면으로 확인할
    방법이 없었다. tools/check-build-ver.mjs 가 이제 소스에 적힌 최신 버전과 이 값을 대조한다. */
-const _BUILD_VER = "V33.281";
+const _BUILD_VER = "V33.282";
 
 // ═══ [V33.171] 평가 순서 계획 — ★승격과 순환을 교차해 굶주림을 구조적으로 없앤다★ ═══
 //   V33.50 의 형태트리거는 "급한 몇 종목을 앞으로 당긴다"는 의도였으나, 실제 운영로그에서는
@@ -4209,6 +4209,15 @@ const DEFAULT_CFG = {
     maxMult: 2.0,        // 거래당 리스크 최대 2배
     concMult: 2.0,       // 종목당 비중 상한 2배 (집중투자) — 단타 6% → 12%
     minKelly: 0.05,      // 실측 켈리가 이 이상일 때만 배수 개방
+    /* ══ [V33.282] ★표본 바닥 — 이게 없어서 9건으로 레버리지가 열릴 수 있었다★ ══════
+       운영 스냅샷: scalpLev { kelly: −0.5514, n: ★9★, minKelly: 0.05 }.
+       화면은 "닫힘 켈리 -0.551 < 0.05" 라고 적었다 — 마치 ★재 봤더니 엣지가 음수★ 인 것처럼.
+       9건으로는 아무것도 못 잰다. 지금은 우연히 음수라 닫혀 있을 뿐이고, 같은 9건이
+       우연히 이겼다면 켈리가 양수로 나와 ★증폭이 열렸을 것★ 이다(수축 n/(n+30)을 곱해도
+       9건이면 0.23배라 원값 0.22 만 넘으면 문턱 0.05 를 통과한다).
+       방향이 안전한 쪽으로 틀렸을 뿐, 게이트에 표본 바닥이 ★없다는 사실★ 은 그대로다.
+       30 은 이미 수축식이 쓰고 있는 수와 같다 — 새 숫자를 발명하지 않는다. */
+    minSamples: 30,
     ddCut: 6,            // 계좌 고점 대비 −6% 넘게 밀리면 배수 즉시 1.0
     // ── [V33.119] leverageDecide 공용 파라미터 ──
     //   변동성 타게팅의 천장을 국면·추세품질이 연다. 종전 volTarget.scaleMax(1.2)는
@@ -10333,7 +10342,14 @@ function leverageDecide(o) {
     if (isScalp) {
       const k = _num(o && o.kelly, null);
       const minK = _num(c.minKelly, 0.05);
+      /* [V33.282] ★표본이 모자라면 켈리를 아예 안 본다.★ 값이 있다고 잰 것이 아니다 —
+         9건짜리 켈리는 부호가 우연으로 뒤집힌다. 못 재면 증폭하지 않는다(배수 1). */
+      const kN = _num(o && o.kellyN, null);
+      const minN = _num(c.minSamples, 30);
       if (!(o && o.modelTrusted)) { out.why.push("단타: 모델 미신뢰 → 엣지배수 1"); }
+      else if (kN != null && kN < minN) {
+        out.why.push("단타: 켈리 표본 " + kN + "/" + minN + " — 못 잰다(부호가 우연으로 뒤집히는 구간) → 엣지배수 1");
+      }
       else if (k == null || k < minK) { out.why.push("단타: 켈리 " + (k == null ? "미측정" : k.toFixed(3)) + " < " + minK + " → 엣지배수 1"); }
       else {
         const kc = _clamp(k, 0, 0.4);
@@ -20153,6 +20169,7 @@ async function runTradingCycle(env) {
                   phase: (regime && regime.phase) || null, er: (regime && regime.er) != null ? regime.er : null,
                   realVolPct: _lvRealVol, targetVolPct: _lvTargetVol,
                   kelly: (typeof _st.kelly === "number") ? _st.kelly : null,
+                  kellyN: _num(_st.n, null),   // [V33.282] 몇 건으로 잰 켈리인지 — 바닥 판정에 쓴다
                   modelTrusted: !!_st.trusted,
                   maeMult: _num(_st.maeMult, 1), maeNote: _st.maeNote,
                   ddPct: _num(__ddPctNow, 0),
@@ -22107,7 +22124,14 @@ async function handleRequest(request, env, ctx) {
                → FLOW·XALPHA·STACK·MEMO 와 ★같은 증거★ 를 싣는다. 이름이 같으면 값도 같아야 한다. */
             const _one = function (m) {
               if (!m) return null;
-              const _ok = m.featVer === DUALHEAD.featVer;
+              /* ★[V33.282] 내가 V33.280 에서 넣은 회귀다.★ 비교 대상을 DUALHEAD.featVer(2)로
+                 바꿨는데, 이중헤드 모델이 실제로 저장하는 값은 dualHeadTrainNightly 가 넘기는
+                 ★LUXML.featVer(15)★ 다. 그래서 _ok 가 늘 false → admit=null → 사이드바가
+                 "보류" 를 적었다. 두뇌 화면은 모델을 직접 읽어 "잠정" 이라고 적으니 또 갈렸다.
+                 DUALHEAD.featVer 는 캐시 키에만 쓰이는 ★라벨 판★ 이지 모델 판이 아니다 —
+                 이름이 비슷해서 헷갈렸고, 그게 정확히 이 저장소가 반복해 당하는 사고다.
+                 읽는 쪽은 ★쓰는 쪽이 넣는 값★ 을 봐야 한다. 검사가 그 둘을 대조한다. */
+              const _ok = m.featVer === LUXML.featVer;
               return { trained: _ok, trusted: !!m.trusted,
                        ic: _num(m.valIC, null), icBlock: _num(m.valICBlock, null), icT: _num(m.valICt, null),
                        acc: _num(m.valAcc, null), base: _num(m.baseRate, null), n: _num(m.n, null),
@@ -22116,6 +22140,27 @@ async function handleRequest(request, env, ctx) {
                        fwdN: _num(m.fwdN, 0), minFwd: ICGATE.minForward, ts: _num(m.ts, null) };
             };
             _alt.dual = { samples: _dn, minN: DUALHEAD.minTrainSamples, bull: _one(_dbm), bear: _one(_drm) };
+          } catch (e) {}
+          /* [V33.282] ★SEQ 가 사이드바에 아예 없었다.★ 위원회에 앉아 투표하는데(STACK_SLOTS
+             9번째 · mlDeepDecide 가 seqFormerScore 를 부른다) /api/ai-mode 가 안 실어 줘서
+             사이드바가 그릴 수가 없었다 — "왜 SEQ 는 표시가 안 되냐" 가 정확히 그것이다.
+             SEQ 는 큰 모델을 안 건드리고 동반 레코드(seq_trust)만 읽는다. */
+          try {
+            const _sq = await getState(env.DB, "seq_trust", null);
+            const _sqOk = !!(_sq && _sq.featVer === LUXML.featVer);
+            _alt.seq = {
+              trained: !!(_sq && _sq.seqAccLB != null), featVerOk: _sqOk,
+              featVer: _sq ? _num(_sq.featVer, null) : null, wantVer: LUXML.featVer,
+              trusted: !!(_sq && _sq.trusted && _sqOk),
+              acc: _sq ? _num(_sq.seqAcc, null) : null, accLB: _sq ? _num(_sq.seqAccLB, null) : null,
+              floor: _num(SEQML.trustFloor, 0.505),
+              icBlock: _sq ? _num(_sq.valICBlock, null) : null, icT: _sq ? _num(_sq.valICt, null) : null,
+              // 지분(wSeq)과 승격 경로는 seq-import 가 판정해 적어 둔 값이다 — 여기서 다시 안 매긴다.
+              mult: _sq ? _num(_sq.wSeq, 0) : null,
+              tier: _sq ? (_sq.admitPath === "ic" ? "provisional" : "full") : null,
+              why: _sq ? (_sq.why || _sq.admitWhy || null) : null,
+              params: _sq ? _num(_sq.params, null) : null, n: _sq ? _num(_sq.valN, null) : null,
+              ts: _sq ? _num(_sq.trainedAt, null) : null };
           } catch (e) {}
           // [V33.90] 실제 원장 기준 성과통계(NautilusTrader PortfolioAnalyzer) + 전역 거래상태.
           try { _alt.port = await getState(env.DB, "port_stats", null); } catch (e) {}
@@ -22238,6 +22283,7 @@ async function handleRequest(request, env, ctx) {
             } catch (e) {}
             _alt.scalpLev = { enabled: _lvc.enabled !== false, trusted: !!(_stT && _stT.trusted),
               kelly: _kk, n: nW + nL, why: _scWhy2, minKelly: _num(_lvc.minKelly, 0.05),
+              minSamples: _num(_lvc.minSamples, 30),   // [V33.282] 화면이 '못 잰 것' 과 '재봤더니 나쁜 것' 을 구분하게
               maxMult: _num(_lvc.maxMult, 2), concMult: _num(_lvc.concMult, 2), ddCut: _num(_lvc.ddCut, 6) };
             // [V33.119] ★폭등 레버리지가 지금 열려 있는가★ — 실제 결정기를 그대로 돌려 보여준다.
             //   화면이 설정값만 보여주면 "왜 안 열리지" 를 알 수 없다. 결정기가 낸 사유를 그대로 싣는다.
