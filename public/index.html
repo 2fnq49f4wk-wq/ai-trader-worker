@@ -12577,7 +12577,10 @@ setTimeout(function(){ var o=document.getElementById('lux-intro-overlay'); if(o&
 #page-nnviz .sq3-wrap{position:relative;background:radial-gradient(130% 130% at 50% 8%,#0d1729,#05080f 72%);
   touch-action:none;cursor:grab;}
 #page-nnviz .sq3-wrap:active{cursor:grabbing;}
-#page-nnviz .sq3-wrap svg{display:block;width:100%;height:auto;user-select:none;}
+#page-nnviz .sq3-wrap svg{display:block;width:100%;height:auto;user-select:none;
+  /* [V33.276] ★터치는 이 svg 위에서 시작한다.★ touch-action 은 상속되지 않아 wrap 에만
+     걸어 두면 브라우저가 핀치를 페이지 확대로 가로챈다 — 두 손가락이 여기 도달하지 못했다. */
+  touch-action:none;-webkit-user-select:none;}
 #page-nnviz .sq3-pick{display:none;padding:11px 13px;border-top:1px solid #16223c;
   background:linear-gradient(180deg,rgba(56,189,248,.07),rgba(10,17,32,.5));
   font-family:'IBM Plex Mono',monospace;font-size:11px;line-height:1.7;color:#cdddf7;}
@@ -14964,8 +14967,21 @@ html[data-theme="light"] #page-nnviz .nlv-sec-h{ border-color:transparent; color
               pick: null,      // {kind:'feat', i} | {kind:'node', stage, t, j} | {kind:'step', t}
               cells: false,    // 노드를 낱개로 그린다(느려서 기본은 묶음)
               allFeat: false,
+              /* [V33.276] 확대 범위를 넓힌다 — 종전 상한 6배로는 노드 낱개를 못 들여다봤다.
+                 손가락으로 벌리면 금방 천장에 닿아 "더 안 커진다" 가 된다. */
+              ZMIN: 0.4, ZMAX: 16,
+              need: 0,         // 프레임 병합용 rAF 핸들 — 아래 sq3Need 참조
+              busy: false,     // 손가락/마우스가 움직이는 중인가(가벼운 프레임을 그린다)
               zoom: 1, panX: 0, panY: 0, blk: -1 };   // -1 = 마지막 블록(출력에 가장 가깝다)
   function sq3Clamp(v, lo, hi){ return v < lo ? lo : (v > hi ? hi : v); }
+  /* ★입력은 프레임보다 훨씬 자주 온다.★ 터치는 초당 120번까지 오는데 이 그림은 매번
+     SVG 문자열을 통째로 다시 만들어 innerHTML 로 갈아끼운다(노드 낱개면 장당 1,500조각).
+     이벤트마다 그리면 그리는 일이 밀려 손가락이 화면을 앞질러 간다 — '무겁다' 의 정체다.
+     값은 즉시 갱신하되 ★그리기만 한 프레임에 한 번으로 모은다★. */
+  function sq3Need(){
+    if(SQ3.need) return;
+    SQ3.need = requestAnimationFrame(function(){ SQ3.need = 0; sq3Draw(); });
+  }
   function sq3Proj(p, C){
     var cy=Math.cos(C.yaw), sy=Math.sin(C.yaw), cp=Math.cos(C.pitch), sp=Math.sin(C.pitch);
     var x = p.x*cy + p.z*sy, z = -p.x*sy + p.z*cy;
@@ -15098,7 +15114,8 @@ html[data-theme="light"] #page-nnviz .nlv-sec-h{ border-color:transparent; color
       + '<button class="sq3-b'+(SQ3.cells?' on':'')+'" id="sq3Cells">노드 낱개</button>'
       + '<button class="sq3-b'+(SQ3.allFeat?' on':'')+'" id="sq3AllFeat">피처 '+((data.D)||75)+'개</button>'
       + '<button class="sq3-b'+(SQ3.spin?' on':'')+'" id="sq3Spin">자동회전</button>'
-      + '<span class="sq3-hint">휠=확대 · 드래그=회전 · Shift+드래그=이동 · 클릭=값 보기</span></div>';
+      + '<span class="sq3-hint">손가락: 끌기=회전 · 두 손가락=확대·이동 · 더블탭=확대/되돌리기'
+      + ' <span class="sq3-dim">|</span> 마우스: 휠=확대 · 드래그=회전 · Shift+드래그=이동 · 클릭=값 보기</span></div>';
     stage.innerHTML = ctl + '<div class="sq3-wrap"><svg id="sq3Svg" viewBox="0 0 900 460" preserveAspectRatio="xMidYMid meet"></svg></div>'
       + '<div class="sq3-pick" id="sq3Pick"></div>'
       + '<div class="sq3-note" id="sq3Note"></div>';
@@ -15116,19 +15133,18 @@ html[data-theme="light"] #page-nnviz .nlv-sec-h{ border-color:transparent; color
         stage.querySelectorAll('.sq3-b[data-blk]').forEach(function(x){ x.classList.toggle('on', x===b); }); sq3Draw(); };
     });
     var zv=document.getElementById('sq3ZV');
-    var setZoom=function(z){ SQ3.zoom=Math.max(0.4, Math.min(6, z)); if(zv) zv.textContent=Math.round(SQ3.zoom*100)+'%'; sq3Draw(); };
+    var setZoom=function(z){ SQ3.zoom=Math.max(SQ3.ZMIN, Math.min(SQ3.ZMAX, z));
+      if(zv) zv.textContent=Math.round(SQ3.zoom*100)+'%'; sq3Need(); };
     var zi=document.getElementById('sq3ZIn'); if(zi) zi.onclick=function(){ setZoom(SQ3.zoom*1.25); };
     var zo=document.getElementById('sq3ZOut'); if(zo) zo.onclick=function(){ setZoom(SQ3.zoom/1.25); };
     var fitB=document.getElementById('sq3Fit');
     if(fitB) fitB.onclick=function(){ SQ3.panX=0; SQ3.panY=0; SQ3.yaw=-0.62; SQ3.pitch=0.30; setZoom(1); };
+    /* 확대 배수를 더 크게 잡는다 — 노드 낱개를 들여다보려면 6배로는 모자랐다. */
     /* 휠 확대는 ★커서 자리를 붙잡고★ 늘린다 — 화면 중앙만 늘리면 보려던 곳이 밖으로 나간다. */
     svg.addEventListener('wheel', function(e){
       e.preventDefault();
-      var r=svg.getBoundingClientRect(), k=900/Math.max(1,r.width);
-      var mx=(e.clientX-r.left)*k, my=(e.clientY-r.top)*(460/Math.max(1,r.height));
-      var f=e.deltaY<0?1.12:1/1.12, nz=Math.max(0.4, Math.min(6, SQ3.zoom*f)), rf=nz/SQ3.zoom;
-      SQ3.panX = mx - (mx - SQ3.panX)*rf; SQ3.panY = my - (my - SQ3.panY)*rf;
-      setZoom(nz);
+      var v=_vb(e.clientX, e.clientY);
+      zoomAt(SQ3.zoom*(e.deltaY<0?1.12:1/1.12), v.x, v.y);
     }, {passive:false});
     var resB=document.getElementById('sq3Reset');
     if(resB) resB.onclick=function(){ SQ3.yaw=-0.62; SQ3.pitch=0.30; SQ3.pick=null; sq3Draw(); };
@@ -15155,22 +15171,87 @@ html[data-theme="light"] #page-nnviz .nlv-sec-h{ border-color:transparent; color
         var rs=document.getElementById('sq3Row'); if(rs) rs.value=String(SQ3.row); }
       sq3Draw();
     });
-    var down=function(e){ var p=(e.touches&&e.touches[0])||e;
-      SQ3.drag={x:p.clientX,y:p.clientY,pan:!!(e.shiftKey||(e.touches&&e.touches.length>1))};
-      SQ3.spin=false; if(spinB) spinB.classList.remove('on'); };
-    var move=function(e){ if(!SQ3.drag) return; var p=(e.touches&&e.touches[0])||e;
+    /* ══ [V33.276] 조작 — ★손가락을 따라와야 한다★ ═══════════════════════════
+       종전 회전은 yaw += dx 였다. 그런데 이 사영에서 카메라를 향한 면의 화면X 는
+       x' = cos(θ − yaw) 이고, 그 면은 θ − yaw = −90° 이므로 dX/dyaw = sin(−90°) = −1 이다.
+       즉 ★오른쪽으로 끌면 앞면이 왼쪽으로 갔다.★ 마우스에서는 취향 문제로 넘어갈 수도
+       있지만, 화면을 직접 만지는 터치에서는 그냥 고장으로 읽힌다 — 사용자가 그렇게 봤다.
+       부호를 뒤집어 ★잡은 면이 손가락을 따라가게★ 한다.
+       (pitch 는 이미 맞다: 아래로 끌면 꼭대기가 아래로 간다. 재보고 그대로 둔다.) */
+    var _vb=function(cx,cy){ var r=svg.getBoundingClientRect();
+      return { x:(cx-r.left)*(900/Math.max(1,r.width)), y:(cy-r.top)*(460/Math.max(1,r.height)) }; };
+    /* 확대는 ★붙잡은 자리를 고정한 채★ 늘린다 — 중앙만 늘리면 보려던 곳이 화면 밖으로 나간다.
+       휠·핀치·더블탭이 전부 이 하나를 쓴다(세 곳에 따로 적으면 언젠가 서로 달라진다). */
+    var zoomAt=function(nz, vx, vy){
+      nz=Math.max(SQ3.ZMIN, Math.min(SQ3.ZMAX, nz));
+      var rf=nz/SQ3.zoom;
+      SQ3.panX = vx - (vx-SQ3.panX)*rf; SQ3.panY = vy - (vy-SQ3.panY)*rf;
+      setZoom(nz);
+    };
+    var _pinch=null;
+    var _tD=function(t){ var a=t[0],b=t[1];
+      return Math.sqrt((b.clientX-a.clientX)*(b.clientX-a.clientX)+(b.clientY-a.clientY)*(b.clientY-a.clientY)); };
+    var _tM=function(t){ var a=t[0],b=t[1]; return {x:(a.clientX+b.clientX)/2, y:(a.clientY+b.clientY)/2}; };
+    var _stopSpin=function(){ SQ3.spin=false; if(spinB) spinB.classList.remove('on'); };
+    var down=function(e){
+      /* 두 손가락 — 벌리면 확대, 같이 움직이면 이동. 종전엔 두 손가락이 '이동' 으로만
+         잡혀 있었고 확대는 아예 없었다(버튼으로 중앙만 늘릴 수 있었다). */
+      if(e.touches && e.touches.length>=2){
+        SQ3.drag=null; _pinch={ d:_tD(e.touches), m:_tM(e.touches) };
+        SQ3.busy=true; _stopSpin(); return;
+      }
+      var p=(e.touches&&e.touches[0])||e;
+      SQ3.drag={x:p.clientX,y:p.clientY,pan:!!(e.shiftKey||e.button===1)};
+      SQ3.busy=true; _stopSpin();
+    };
+    var move=function(e){
+      if(_pinch && e.touches && e.touches.length>=2){
+        var nd=_tD(e.touches), m=_tM(e.touches);
+        var v=_vb(m.x,m.y), v0=_vb(_pinch.m.x,_pinch.m.y);
+        SQ3.panX += v.x-v0.x; SQ3.panY += v.y-v0.y;   // 두 손가락 중심을 따라 장면도 움직인다
+        if(_pinch.d>4 && nd>4) zoomAt(SQ3.zoom*(nd/_pinch.d), v.x, v.y);
+        _pinch.d=nd; _pinch.m=m;
+        sq3Need(); if(e.cancelable) e.preventDefault(); return;
+      }
+      if(!SQ3.drag) return;
+      var p=(e.touches&&e.touches[0])||e;
       var dx=p.clientX-SQ3.drag.x, dy=p.clientY-SQ3.drag.y;
       if(SQ3.drag.pan){ var r=svg.getBoundingClientRect();
         SQ3.panX += dx*(900/Math.max(1,r.width)); SQ3.panY += dy*(460/Math.max(1,r.height)); }
       else {
-        SQ3.yaw = sq3Clamp(SQ3.yaw + dx*0.007, -SQ3.YAW_MAX, SQ3.YAW_MAX);
+        SQ3.yaw = sq3Clamp(SQ3.yaw - dx*0.007, -SQ3.YAW_MAX, SQ3.YAW_MAX);
         SQ3.pitch = sq3Clamp(SQ3.pitch + dy*0.005, SQ3.PITCH_MIN, SQ3.PITCH_MAX);
       }
-      SQ3.drag.x=p.clientX; SQ3.drag.y=p.clientY; sq3Draw(); if(e.cancelable) e.preventDefault(); };
-    var up=function(){ SQ3.drag=null; };
+      SQ3.drag.x=p.clientX; SQ3.drag.y=p.clientY; sq3Need(); if(e.cancelable) e.preventDefault(); };
+    /* 손을 떼면 ★제대로 된 프레임★ 을 한 장 그린다 — 움직이는 동안은 가볍게 그렸기 때문이다. */
+    var up=function(e){
+      if(e && e.touches && e.touches.length===1 && _pinch){
+        // 손가락 하나를 뗐다 — 남은 하나로 회전을 이어받는다(그 자리에서 튀지 않게 기준을 새로 잡는다)
+        _pinch=null; SQ3.drag={x:e.touches[0].clientX,y:e.touches[0].clientY,pan:false}; return;
+      }
+      if(e && e.touches && e.touches.length>=2) return;
+      SQ3.drag=null; _pinch=null;
+      if(SQ3.busy){ SQ3.busy=false; sq3Need(); }
+    };
     svg.addEventListener('mousedown',down); svg.addEventListener('touchstart',down,{passive:true});
     window.addEventListener('mousemove',move); svg.addEventListener('touchmove',move,{passive:false});
-    window.addEventListener('mouseup',up); svg.addEventListener('touchend',up);
+    window.addEventListener('mouseup',up);
+    svg.addEventListener('touchend',up); svg.addEventListener('touchcancel',up);
+    /* ★더블탭으로 확대★ — 손가락 하나로도 들여다볼 수 있어야 한다(핀치가 어려운 손도 있다).
+       누른 자리를 붙잡고 2.5배로 가고, 이미 확대돼 있으면 화면맞춤으로 되돌린다. */
+    var _lastTap=0, _lastTapXY=null;
+    svg.addEventListener('touchend', function(e){
+      if(!e.changedTouches || e.changedTouches.length!==1 || (e.touches&&e.touches.length)) return;
+      var t=e.changedTouches[0], now=Date.now();
+      var far = _lastTapXY && (Math.abs(t.clientX-_lastTapXY.x)>28 || Math.abs(t.clientY-_lastTapXY.y)>28);
+      if(now-_lastTap<300 && !far){
+        var v=_vb(t.clientX,t.clientY);
+        if(SQ3.zoom>1.2){ SQ3.panX=0; SQ3.panY=0; setZoom(1); }
+        else zoomAt(2.5, v.x, v.y);
+        _lastTap=0; _lastTapXY=null; if(e.cancelable) e.preventDefault(); return;
+      }
+      _lastTap=now; _lastTapXY={x:t.clientX,y:t.clientY};
+    }, {passive:false});
     sq3Draw(); sq3Tick();
     NNV_renderRoles(data);
   }
@@ -15251,7 +15332,9 @@ html[data-theme="light"] #page-nnviz .nlv-sec-h{ border-color:transparent; color
   }
   function sq3Tick(){
     if(SQ3.raf){ cancelAnimationFrame(SQ3.raf); SQ3.raf=0; }
-    if(!SQ3.spin) return;
+    /* 자동회전이 꺼지면 툴팁이 살아 있는 프레임을 한 장 다시 그린다 —
+       회전 중엔 lite 로 그렸으므로 그대로 두면 마우스를 올려도 아무것도 안 뜬다. */
+    if(!SQ3.spin){ sq3Need(); return; }
     var step=function(){
       var pg=document.getElementById('page-nnviz');
       if(!SQ3.spin || !document.getElementById('sq3Svg') || !pg || !pg.classList.contains('active')){ SQ3.raf=0; return; }
@@ -15267,6 +15350,12 @@ html[data-theme="light"] #page-nnviz .nlv-sec-h{ border-color:transparent; color
     var L=d.L||(d.cfg&&d.cfg.L)||16, dd=d.d||(d.cfg&&d.cfg.d)||32,
         H=d.heads||(d.cfg&&d.cfg.heads)||2, trained=!!d.trained;
     var ST=sq3Stages(d, SQ3.blk);
+    /* ══ [V33.276] ★움직이는 동안은 툴팁을 만들지 않는다.★
+       <title> 은 마우스를 ★멈춰야★ 뜨는 것이고, 손가락으로 돌리는 중에는 아무도 못 본다.
+       그런데 비용은 그 순간에 다 든다 — 노드 낱개 켜면 16시점 × 32노드 × 3단계 = 1,536개를
+       매 프레임 문자열로 만들고 이스케이프하고 DOM 으로 파싱한다. 회전이 끊기던 이유다.
+       손을 떼거나 자동회전이 멈추면 아래 up()·sq3Tick() 이 제대로 된 프레임을 한 장 그린다. */
+    var lite = SQ3.busy || SQ3.spin;
     /* ★더미 폭이 기둥 간격보다 넓으면 반드시 겹친다.★ 화면 X 로 보면 시점 더미는
        (L×zPitch)·sin(yaw), 기둥 간격은 간격·cos(yaw) 만큼 차지한다. yaw 한계 0.85 에서
        tan=1.14 이므로, 더미 폭을 기둥 간격의 0.6배 아래로 눌러 둔다. */
@@ -15343,7 +15432,7 @@ html[data-theme="light"] #page-nnviz .nlv-sec-h{ border-color:transparent; color
           var yy=-cardH/2+2+bi*th, q2=sq3Quad([{x:S.x-5,y:yy,z:qz-36},{x:S.x+5,y:yy,z:qz+36},
             {x:S.x+5,y:yy+Math.max(0.35,th-0.25),z:qz+36},{x:S.x-5,y:yy+Math.max(0.35,th-0.25),z:qz-36}],C);
           var sel=(SQ3.pick&&SQ3.pick.kind==='feat'&&SQ3.pick.i===bi);
-          var ttl=IF?('<title>'+sq3Esc(IF[bi].name)+(IF[bi].role?(' — '+sq3Esc(IF[bi].role)):'')
+          var ttl=(IF&&!lite)?('<title>'+sq3Esc(IF[bi].name)+(IF[bi].role?(' — '+sq3Esc(IF[bi].role)):'')
                      +'\n영향도 '+Math.round(v*100)+'%'
                      +(d.vizSeq&&d.vizSeq[SQ3.row]?('\n표본값 '+d.vizSeq[SQ3.row][bi]):'')+'</title>'):'';
           push(q2.z+0.4,'<path class="sq3-hit" data-pick="feat:'+bi+'" d="'+q2.d+'" fill="'
@@ -15410,15 +15499,15 @@ html[data-theme="light"] #page-nnviz .nlv-sec-h{ border-color:transparent; color
           /* 부호를 색으로 나눈다 — 절댓값만 그리면 "밀어 올린 노드" 와 "눌러 내린 노드" 가 같아 보인다. */
           var rgb = !arr ? '120,140,175' : (cells ? (neg?'255,110,140':'0,224,255') : (S.key==='ffn'?'125,75,255':'56,189,248'));
           var qs = cells ? ('<path class="sq3-hit" data-pick="node:'+nk+':'+t2+':'+bi2+':'+(S.blk||0)+'" d="'+qb.d+'" fill="rgba('+rgb+','+(0.12+0.75*vv).toFixed(2)+')">'
-                    +'<title>'+sq3Esc(S.name)+' · t'+t2+' · 노드 '+bi2+'\n값 '+nodeRow[bi2]+'</title></path>')
+                    +(lite?'':'<title>'+sq3Esc(S.name)+' · t'+t2+' · 노드 '+bi2+'\n값 '+nodeRow[bi2]+'</title>')+'</path>')
                   : ('<path d="'+qb.d+'" fill="rgba('+rgb+','+(arr?(0.10+0.70*vv):0.10).toFixed(2)+')"/>');
           push(qb.z+0.3, qs);
         }
         /* 카드 자체도 누를 수 있어야 한다 — 시점을 고르는 가장 자연스러운 동작이다. */
         push(qc.z+0.1,'<path class="sq3-hit" data-pick="step:'+t2+'" d="'+qc.d+'" fill="transparent">'
-          +'<title>t'+t2+(t2===L-1?' (지금)':(' (−'+(L-1-t2)+'봉)'))
+          +(lite?'':'<title>t'+t2+(t2===L-1?' (지금)':(' (−'+(L-1-t2)+'봉)'))
           +(attnRow?('\n주목 '+(attnRow[t2]*100).toFixed(1)+'%'):'')
-          +((d.nodes&&d.nodes.byBlock&&d.nodes.byBlock[0])?('\nFFN 활성 '+d.nodes.byBlock[0].ffLive[t2]+'/'+(d.ffHidden||0)):'')+'</title></path>');
+          +((d.nodes&&d.nodes.byBlock&&d.nodes.byBlock[0])?('\nFFN 활성 '+d.nodes.byBlock[0].ffLive[t2]+'/'+(d.ffHidden||0)):'')+'</title>')+'</path>');
         if(si===1){
           var lp=sq3Proj({x:S.x-cardW-4,y:0,z:z},C);
           push(lp.z,'<text x="'+lp.X.toFixed(1)+'" y="'+lp.Y.toFixed(1)+'" text-anchor="end" '
