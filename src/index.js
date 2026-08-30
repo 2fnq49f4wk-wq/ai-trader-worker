@@ -12306,6 +12306,50 @@ function _calFeats(obsTs) {
   return out;
 }
 
+/* ══ [V33.275] ★날짜만으로 되살릴 수 있는 피처 — 이 목록이 유일한 출처다★ ══════
+   featNames 의 꼬리 6칸과 반드시 같아야 한다. 아래 _calBackfillX 가 그걸 ★확인하고★
+   아니면 아무것도 안 한다 — 순서를 손으로 두 번 적는 순간 조용히 어긋나기 때문이다. */
+const CAL_FEATS = ["opexToNext", "opexWeek", "opexQuad", "fomcTo", "fomcSince", "fomcKnown"];
+// 표본 시각이 이것보다 앞이면 날짜를 믿지 않는다(0·null·쓰레기 값 방어). 2000-01-01.
+const CAL_MIN_TS = 946684800000;
+
+/* ══ [V33.275] ★단타 표본 6.7만 건이 폭 불일치로 통째로 버려지고 있었다★ ══════════
+   Modal 실측(2026-08-29):
+     ⑧ 단타(장중) 학습 — 표본 16건 / 최근 14일
+        (일봉피처 폭 불일치 ★67,623건 제외★ / 기준 75칸) → 표본 부족(16/3000) — 생략
+   wrangler.toml 이 "이 시스템에서 가장 성적이 좋은 모델(valAccLB 0.6196 vs 기저 0.5248)"
+   이라고 적어 둔 그 모델이, 표본 6만 7천을 못 쓰고 16건으로 굶고 있었다.
+
+   원인은 고장이 아니라 ★판갈이의 그림자★ 다. V33.265 가 달력사건 6종을 더해 69→75 로
+   올렸고, ml_samples(일봉)는 featver 로 갈라 캐치업 수확이 딥이력에서 재구축했다.
+   그런데 R2 에 쌓인 ★장중 표본★ 에는 그 재구축 경로가 없다 — 69칸으로 기록된 채 남았고,
+   트레이너는 len(x) != 75 로 전부 버린다. 아무도 틀리지 않았는데 모델 하나가 굶는다.
+
+   ★그런데 이 6칸은 되살릴 수 있다.★ V33.265 가 그 자리에 직접 적어 둔 문장이다:
+     "옵션 미시구조(GEX 등)와 달리 이것들은 날짜만 있으면 과거를 전부 재구성할 수 있다."
+   표본은 자기 관측시각(ts)을 들고 있으므로, 그 날짜로 달력 6칸을 계산해 뒤에 붙이면
+   ★근사가 아니라 원래 값과 같은 값★ 이 된다(같은 _calFeats 를 라이브와 공유한다).
+
+   안전장치 — 되살리지 않아야 할 것은 되살리지 않는다:
+     · 폭이 정확히 D−6 일 때만 손댄다. 65칸(V33.239 이전) 은 하이킨아시가 빠진 판이고
+       그건 가격 이력이 있어야 해서 날짜로 못 만든다 → 그대로 버려진다(정직한 탈락).
+     · 달력 6종이 featNames 의 ★꼬리★ 가 아니면 아무것도 안 한다 — 앞 69칸의 뜻이
+       보존된다는 보장이 없어지기 때문이다.
+     · ts 가 2000년 이전이면(0·결측) 손대지 않는다. Date.now() 로 때우지 않는다 —
+       그건 과거 표본에 오늘 달력을 붙이는 짓이고, V33.265 가 명시적으로 금지한 것이다. */
+function _calBackfillX(x, ts) {
+  try {
+    const names = LUXML.featNames, D = names.length, C = CAL_FEATS.length;
+    if (!Array.isArray(x) || x.length !== D - C) return null;
+    if (!(_num(ts, 0) > CAL_MIN_TS)) return null;
+    for (let i = 0; i < C; i++) if (names[D - C + i] !== CAL_FEATS[i]) return null;
+    const c = _calFeats(_num(ts, 0));
+    const out = x.slice();
+    for (let i = 0; i < C; i++) out.push(_num(c[CAL_FEATS[i]], 0));
+    return out;
+  } catch (e) { return null; }
+}
+
 /* ══ [V33.264] 옵션 미시구조 — ★시계를 돌린다★ ═══════════════════════════════
    요청: gamma exposure · 0DTE · open interest · convexity · delta-gamma Taylor 를 학습시켜라.
 
@@ -23056,6 +23100,19 @@ async function handleRequest(request, env, ctx) {
       } catch (e) { return Response.json({ error: "R2 조회 실패: " + (e && e.message) }, { status: 500, headers: cors }); }
       _hasMore = out.length > _off + _pgSize;
       const _page = out.slice(_off, _off + _pgSize);
+      /* [V33.275] ★내보내기 직전에 옛 판(69칸) 표본의 달력 6칸을 되살린다.★
+         트레이너에서 하지 않는다 — 그러면 달력 계산이 JS 와 파이썬 두 곳에 살게 되고,
+         이 저장소가 반복해 당한 '두 곳에 적힌 규칙이 갈라지는' 사고가 그대로 재현된다.
+         여기서 하면 라이브와 ★같은 _calFeats★ 를 쓰고, 트레이너는 75칸만 받는다.
+         되살리지 못한 건은 손대지 않는다 — 트레이너가 종전대로 걸러내고, 아래 숫자가
+         '왜 아직 모자라나' 를 답한다(조용히 사라지는 표본을 만들지 않는다). */
+      let _calFix = 0, _calSkip = 0;
+      for (const sm of _page) {
+        if (!sm || !Array.isArray(sm.x)) continue;
+        if (sm.x.length === LUXML.featNames.length) continue;   // 이미 현재 판
+        const _fixed = _calBackfillX(sm.x, sm.ts);
+        if (_fixed) { sm.x = _fixed; _calFix++; } else _calSkip++;
+      }
       const _sc = (typeof AI_PARAMS !== "undefined" && AI_PARAMS.aiScalp) || {};
       return Response.json({ featVer: LUXML.featVer, featNames: LUXML.featNames, day: day,
         // [V33.46] 장중 미시구조 피처 스키마 — 트레이너는 x 뒤에 ix 를 이어붙여 학습하고,
@@ -23064,6 +23121,8 @@ async function handleRequest(request, env, ctx) {
         horizonBars: STIN.horizonBars, barMin: SCALP_BAR_MIN, total: _page.length,
         offset: _off, hasMore: _hasMore, pageSize: _pgSize,   // [V33.98] 트레이너 페이징
         scanned: out.length,                                  // [V33.255] 이번 스캔에서 본 건수
+        // [V33.275] 옛 판 표본을 몇 건 되살렸는지 / 몇 건은 못 되살렸는지 — 보이게 둔다.
+        calBackfilled: _calFix, calUnfixable: _calSkip,
         liveEnabled: !!_sc.enabled, config: _mlExportConfig(), samples: _page }, { headers: cors });
     }
 
@@ -45526,6 +45585,8 @@ export default {
 export {
   /* [V33.273] 밴딧 상관강건 검정 · MEMO 관련도 가중거리 — tools/check-bandit-memo.mjs 가
      실제로 돌린다. 두 고침 다 "성적으로만 드러나는" 종류라 문장으로는 못 지킨다. */
+  // [V33.275] 달력 소급복원 — tools/check-cal-backfill.mjs 가 라이브 조립과 대조한다.
+  _calBackfillX, CAL_FEATS,
   mlPermutationTest, mlGroupedPermutationTest, _corrClusters, mlBanditContext,
   mlBanditNoiseNightly, LUXNOISE, LUXBANDIT,
   memoScore, memoTrainNightly, MEMOML,

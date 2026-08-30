@@ -1858,6 +1858,7 @@ def _train_and_upload_scalp(BASE, KEY, HDR, featver):
     #   서버가 응답에 featNames 로 ★지금의 폭★ 을 알려주므로 그것에 맞추면 된다.
     xn = 0
     skipped_xdim = 0
+    cal_fix = 0; cal_unfix = 0     # [V33.275] 서버가 되살린 옛 판 표본 수
     # [V33.72] 같은 (종목, 봉시각) 표본은 한 번만 쓴다.
     #   백필이 전 종목을 회전하며 도는데 야후 5분봉은 1개월 롤링 창이라, 워터마크가 없던
     #   시기에 만들어진 파일에는 같은 봉이 여러 번 들어있을 수 있다. 사본이 섞이면
@@ -1885,6 +1886,11 @@ def _train_and_upload_scalp(BASE, KEY, HDR, featver):
                 ifeatnames = j.get("ifeatNames") or []
             if not xn:
                 xn = len(j.get("featNames") or [])
+            # [V33.275] 서버가 옛 판(달력 이전) 표본의 6칸을 되살려 보낸다 — 그 수를 합산해 보고한다.
+            #   되살리기 자체는 ★서버에서★ 한다(라이브와 같은 _calFeats 를 쓴다). 여기서 다시
+            #   구현하면 달력 계산이 JS·파이썬 두 곳에 살게 되고 언젠가 갈라진다.
+            cal_fix += int(j.get("calBackfilled") or 0)
+            cal_unfix += int(j.get("calUnfixable") or 0)
             _batch = j.get("samples", []) or []
             _page_samples.extend(_batch)
             if not j.get("hasMore"):
@@ -1923,7 +1929,9 @@ def _train_and_upload_scalp(BASE, KEY, HDR, featver):
     N = len(Y)
     print(f"⑧ 단타(장중) 학습 — 표본 {N}건 / 최근 {days}일"
           + (f" (구스키마 {skipped_old}건 제외)" if skipped_old else "")
-          + (f" (일봉피처 폭 불일치 {skipped_xdim}건 제외 / 기준 {xn}칸)" if skipped_xdim else "")
+          + (f" (달력 소급복원 {cal_fix}건)" if cal_fix else "")
+          + (f" (일봉피처 폭 불일치 {skipped_xdim}건 제외 / 기준 {xn}칸"
+             + (f" · 복원불가 {cal_unfix}건" if cal_unfix else "") + ")" if skipped_xdim else "")
           + (f" (중복 {dup_drop}건 제외)" if dup_drop else "")
           + (f" / 장중피처 v{ifeatver}×{ifeatn}" if ifeatver else " / 장중피처 없음"))
     # [V33.98] 워커의 신뢰 문턱이 n>=3000 이다. 1500 에서 학습해 올리면 서버가 무조건

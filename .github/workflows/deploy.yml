@@ -405,6 +405,12 @@ jobs:
       #   (dropFloor·icFloor·원형 수가 그대로여야 통과한다).
       - name: 밴딧 상관강건 검정 · MEMO 가중거리 검사 (붕괴 재현 · 위양성 · 누출 · 완화금지)
         run: node tools/check-bandit-memo.mjs
+      # [V33.275] 단타 표본 6.7만 건이 폭 불일치로 버려지고 있었다(Modal 실측: 표본 16건).
+      #   달력 6칸은 날짜만으로 되살릴 수 있어 복원한다 — 되살리기는 조용히 오염되기 가장
+      #   쉬운 종류라, 복원값이 ★라이브 조립과 오차 0★ 인지와, 날짜로 못 만드는 것(65칸·
+      #   ts 결측)은 ★안 만드는지★ 를 함께 본다. 파이썬이 달력을 재구현하면 실패시킨다.
+      - name: 달력 소급복원 검사 (라이브 동일값 · 기권 조건 · 단일 구현)
+        run: node tools/check-cal-backfill.mjs
       # cloudflare/wrangler-action 대신 로컬에서 검증된 방식 그대로 실행
       # (wrangler-action@v3의 npx 자동설치가 4.86.0을 요구하며 실패하던 문제 회피)
       - name: Install wrangler
