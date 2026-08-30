@@ -23368,7 +23368,11 @@ async function handleRequest(request, env, ctx) {
       const _vn = _importedValN(body, 30);         // [V33.115] 유효표본수 우선
       const vN = _vn.n;
       const vLB = (body.valAccLB != null) ? _clamp(_num(body.valAccLB, 0), 0, 1) : _wilsonLB(vAcc, vN);
-      const model = { trees: body.trees, base: _num(body.base, 0), lr: _num(body.lr, 0.1),
+      /* [V33.277] 트레이너는 lr/base 로 보낸다 — 채점기가 읽는 eta/bias 로 옮겨 담는다.
+         기본값 1 은 트레이너 계약(lr:1.0, base 가 나머지를 흡수)과 같다. 종전 기본값
+         0.1 은 어차피 채점기가 안 읽어서 아무 뜻도 없던 숫자다. */
+      const _sf = _gbdtScoreFields(body, 1);
+      const model = { trees: body.trees, eta: _sf.eta, bias: _sf.bias,
                       featVer: LUXML.featVer, ifeatVer: _ifv, dim: _D,
                       valAcc: +vAcc.toFixed(4), valAccLB: +vLB.toFixed(4), valN: vN,
                       valNRaw: _vn.raw, valUniq: _vn.uniq,
@@ -23465,7 +23469,8 @@ async function handleRequest(request, env, ctx) {
       // [V33.77] valIC/valRankIC 수용 — 위원회 가중의 새 기준. 없으면 null 로 두고 정확도 환산 폴백.
       const _vIC = (typeof body.valIC === "number" && isFinite(body.valIC)) ? _clamp(body.valIC, -0.5, 0.5) : null;
       const _vRIC = (typeof body.valRankIC === "number" && isFinite(body.valRankIC)) ? _clamp(body.valRankIC, -0.5, 0.5) : null;
-      const model = { trees: body.trees, eta: _num(body.eta, GBDT.eta), bias: _num(body.bias, 0),
+      const _gf = _gbdtScoreFields(body, GBDT.eta);   // [V33.277] 단타와 같은 번역기를 쓴다
+      const model = { trees: body.trees, eta: _gf.eta, bias: _gf.bias,
         nTrees: body.trees.length, featVer: LUXML.featVer, valAcc: +gAcc.toFixed(4), valAccLB: +gLB.toFixed(4),
         valN: valN, valNRaw: _vn.raw, valUniq: _vn.uniq,
         n: Math.max(0, Math.floor(_num(body.n, 0))), trainedAt: Date.now(), source: "external",
@@ -23827,7 +23832,8 @@ async function handleRequest(request, env, ctx) {
       const _mvn = _importedValN(body, 30);
       const _mN = _mvn.n;
       const _mLB = (body.valAccLB != null) ? _clamp(_num(body.valAccLB, 0), 0, 1) : _wilsonLB(_mAcc, _mN);
-      const _core = { trees: body.trees, eta: _num(body.eta, GBDT.eta), bias: _num(body.bias, 0) };
+      // [V33.277] MIND 트리 위원장도 같은 번역기를 쓴다 — 채점기가 읽는 이름은 한 벌뿐이다.
+      const _core = Object.assign({ trees: body.trees }, _gbdtScoreFields(body, GBDT.eta));
       // 변환정합 probe — 워커의 트리 스코어러가 학습기 확률을 재현하는가.
       let _cMax = null, _cN = 0;
       try {
@@ -37731,6 +37737,26 @@ function _gbdtTreeOut(tree, x) {
   while (n.f !== undefined) n = (x[n.f] < n.t) ? n.l : n.r;
   return n.w;
 }
+/* ══ [V33.277] ★채점기가 읽는 이름은 하나뿐이다 — bias·eta★ ═══════════════════
+   _gbdtRaw 는 model.bias 와 model.eta 만 읽는다. 그런데 업로드를 받는 곳이 둘인데
+   서로 ★다른 이름으로★ 저장하고 있었다:
+     · /api/gbdt-import  → eta / bias   (채점기와 같다 — 잘 동작했다)
+     · /api/scalp-import → base / lr    (채점기가 못 찾는다)
+   그래서 단타 모델은 ★base 가 통째로 사라지고 eta 가 0.06(스윙 기본값)으로 대체된 채★
+   채점됐다. 트레이너는 margin = Σ(트리)×1.0 + base 로 확률을 내는데 워커는
+   Σ(트리)×0.06 + 0 을 냈으니, 변환정합 probe 가 통과할 수가 없다.
+   2026-08-30 실측: convMaxDiff 0.4132 (문턱 0.03) → "정합 미달" 로 승격 거부.
+   ★게이트는 제 일을 했다★ — 이름이 갈라진 그 순간부터 단타 모델은 승격될 수 없었고,
+   설령 승격됐다면 라이브에서 엉뚱한 확률로 매매했을 것이다.
+
+   라이브러리마다 용어가 다르다(lr/base vs eta/bias). 그 번역을 ★여기 한 곳에서만★ 한다 —
+   저장하는 쪽이 각자 이름을 정하면 언젠가 또 갈라진다. */
+function _gbdtScoreFields(body, defEta) {
+  return {
+    eta: _num(body.eta != null ? body.eta : body.lr, defEta),
+    bias: _num(body.bias != null ? body.bias : body.base, 0)
+  };
+}
 function _gbdtRaw(model, x) {
   let s = model.bias || 0;
   const trees = model.trees, eta = model.eta || GBDT.eta;
@@ -45633,6 +45659,9 @@ export {
   // [V33.249] 트리 위원장 검증용 — tools/check-mind-tree.mjs 가 실제로 채점해 본다.
   //   FM 위원장과 트리 위원장이 ★같은 확률★ 을 내는지는 문구로 못 지킨다 — 돌려봐야 안다.
   mlMindScore, mlGBDTScore,
+  // [V33.277] 업로드 이름 → 채점 이름 번역 — tools/check-gbdt-fields.mjs 가 실제로 돌린다.
+  //   이 번역이 어긋나면 모델은 학습돼도 영원히 승격 못 하고, 승격되면 엉뚱하게 채점한다.
+  _gbdtScoreFields, _gbdtRaw, GBDT,
   // 보정 가족 검증용 — tools/check-calibration.mjs 가 실제로 적합시켜 본다.
   calFitBest, _fitPlatt, _fitTemp, _calApply, _calNLL, _calECE, CALFAM,
   // [V33.113] 유의성 자유도 보정 검증용
