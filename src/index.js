@@ -2977,7 +2977,11 @@ async function applySignalTypeWeights(DB, cfg) {
 // ============================================================================
 // [V33.55] 빌드 버전 — SWR L2 캐시 키에 섞어 '배포 = 판단 캐시 자동 무효화'를 만든다.
 //   판정 로직을 고쳐도 옛 캐시가 최대 1시간 재배포되던 문제를 구조적으로 없앤다.
-const _BUILD_VER = "V33.272";
+/* [V33.280] ★이 줄이 일곱 번 배포되는 동안 멈춰 있었다.★ V33.273~279 를 배포하고도
+   화면·자가진단이 계속 "V33.272" 를 보고했다(운영 스냅샷이 그대로 그랬다). 배포는 됐는데
+   ★배포됐다는 사실만 거짓말★ 을 하고 있었으니, "내 고침이 올라간 건가" 를 화면으로 확인할
+   방법이 없었다. tools/check-build-ver.mjs 가 이제 소스에 적힌 최신 버전과 이 값을 대조한다. */
+const _BUILD_VER = "V33.280";
 
 // ═══ [V33.171] 평가 순서 계획 — ★승격과 순환을 교차해 굶주림을 구조적으로 없앤다★ ═══
 //   V33.50 의 형태트리거는 "급한 몇 종목을 앞으로 당긴다"는 의도였으나, 실제 운영로그에서는
@@ -22091,7 +22095,26 @@ async function handleRequest(request, env, ctx) {
             const _drm = await getState(env.DB, "dual_bear_model", null);
             let _dn = 0;
             try { const r = await env.DB.prepare("SELECT COUNT(*) c FROM ml_samples WHERE featver = ?").bind(LUXML.featVer).first(); _dn = _num(r && r.c, 0); } catch (e) {}
-            const _one = function (m) { return m ? { trained: m.featVer === LUXML.featVer, trusted: !!m.trusted, ic: _num(m.valIC, null), acc: _num(m.valAcc, null), base: _num(m.baseRate, null), n: _num(m.n, null) } : null; };
+            /* ══ [V33.280] ★사이드바와 두뇌 화면이 갈라진 자리★ ══════════════════════
+               종전 _one 은 trusted / valIC(원시) 만 실었다. 그런데
+                 · trusted 는 ★홀드아웃+전진검증 둘 다★ 통과해야 켜지는 엄격 플래그다
+                 · 위원회 실제 합류 여부는 expertAdmit 이 정한다(전진 대기 중이면 '잠정 합류')
+               그래서 사이드바는 "IC 미달 대기" 라고 적고, 같은 순간 두뇌 화면은
+               "잠정 합류 ×0.25 · t 4.26" 이라고 적었다 — 운영 스냅샷이 정확히 그 상태였다.
+               ★둘 다 맞는 말이 아니라, 사이드바가 틀린 것이다★(IC 는 미달이 아니었다).
+               게다가 사이드바는 원시 IC(0.289)를, 두뇌 화면은 게이트가 실제로 보는
+               블록 IC(0.268)를 적어 숫자까지 달랐다.
+               → FLOW·XALPHA·STACK·MEMO 와 ★같은 증거★ 를 싣는다. 이름이 같으면 값도 같아야 한다. */
+            const _one = function (m) {
+              if (!m) return null;
+              const _ok = m.featVer === DUALHEAD.featVer;
+              return { trained: _ok, trusted: !!m.trusted,
+                       ic: _num(m.valIC, null), icBlock: _num(m.valICBlock, null), icT: _num(m.valICt, null),
+                       acc: _num(m.valAcc, null), base: _num(m.baseRate, null), n: _num(m.n, null),
+                       admit: _ok ? expertAdmit(m) : null,
+                       holdPass: !!m.holdPass, fwdReady: !!m.fwdReady,
+                       fwdN: _num(m.fwdN, 0), minFwd: ICGATE.minForward, ts: _num(m.ts, null) };
+            };
             _alt.dual = { samples: _dn, minN: DUALHEAD.minTrainSamples, bull: _one(_dbm), bear: _one(_drm) };
           } catch (e) {}
           // [V33.90] 실제 원장 기준 성과통계(NautilusTrader PortfolioAnalyzer) + 전역 거래상태.

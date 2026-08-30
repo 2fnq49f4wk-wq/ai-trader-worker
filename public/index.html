@@ -8,7 +8,7 @@
      인데, 지금까지 화면에서 그걸 알 방법이 전혀 없었다(카카오톡 인앱 브라우저는 특히 강하게 캐시한다).
      서버가 내려주는 build 와 이 값을 비교해 다르면 배너로 알린다.
      ※ src/index.js 의 _BUILD_VER 와 항상 같아야 한다 — check-html-js 가 강제한다. -->
-<meta name="lux-build" content="V33.272">
+<meta name="lux-build" content="V33.280">
 <title>LUX-ENGINE V10</title>
 <!-- ══ [V33.156] 설치형 앱(PWA) — 폰·PC 에서 홈화면/독에 담아 앱처럼 연다 ══
      · manifest  : 이름·아이콘·standalone 표시(주소창 없이 앱처럼)
@@ -18777,11 +18777,36 @@ html:root .page > *{ flex-shrink:0; }
             if(!d) return ['이중헤드(강세/약세)', '<span class="sub">—</span>'];
             var b = d.bull, r = d.bear;
             if(!b || !r) return [ico(null)+' 이중헤드(강세/약세)', col('표본수집', C.amb)+' <span class="sub">'+n0(d.samples)+' / '+n0(d.minN)+'</span>'];
-            var okB = b.trusted, okR = r.trusted;
-            var body = col(okB&&okR ? '가동' : (okB||okR ? '한쪽만 가동' : 'IC 미달 대기'), okB&&okR ? C.pos : C.amb)
-              + ' <span class="sub">상승 IC '+(has(b.ic)?b.ic.toFixed(3):'—')+'(기저 '+(has(b.base)?(b.base*100).toFixed(0)+'%':'—')+')'
-              + ' · 하락 IC '+(has(r.ic)?r.ic.toFixed(3):'—')+'(기저 '+(has(r.base)?(r.base*100).toFixed(0)+'%':'—')+')</span>';
-            return [ico(okB&&okR ? true : null)+' 이중헤드(강세/약세)', body];
+            /* ══ [V33.280] ★여기가 두뇌 화면과 갈라져 있었다★ ═══════════════════════
+               종전엔 b.trusted 만 보고 "IC 미달 대기" 라고 적었다. 그런데 trusted 는
+               홀드아웃+전진검증을 ★둘 다★ 통과해야 켜지는 엄격 플래그이고, 위원회 합류
+               여부는 admit 이 정한다 — 전진표본을 모으는 중이면 '잠정 합류(가중 ×N)' 다.
+               같은 순간 두뇌 화면은 "잠정 합류 ×0.25 · t 4.26" 을 적고 있었다.
+               ★IC 가 미달이어서 안 실린 게 아니라, 이미 실려 있었다.★
+               그리고 여기서 적던 IC 는 원시값(0.289)인데 게이트가 보는 것은 블록 IC(0.268)다 —
+               이름이 같으면 값도 같아야 한다. FLOW·XALPHA 와 같은 자로 통일한다. */
+            var aB=b.admit, aR=r.admit;
+            var mult=function(a){ return (a&&has(a.mult)) ? ' ×'+a.mult.toFixed(2) : ''; };
+            var one=function(a,ok){
+              if(a&&a.admit) return (a.tier==='full'?'가동':'잠정가동')+mult(a);
+              if(ok) return '가동';
+              return a&&a.why ? '보류' : '대기';
+            };
+            var sB=one(aB,b.trusted), sR=one(aR,r.trusted);
+            var live=(aB&&aB.admit)||(aR&&aR.admit)||b.trusted||r.trusted;
+            var both=((aB&&aB.admit)||b.trusted)&&((aR&&aR.admit)||r.trusted);
+            /* 게이트가 실제로 보는 자(블록 IC)를 적는다. 없으면 원시값을 적되 그렇다고 밝힌다. */
+            var icOf=function(x){ return has(x.icBlock) ? {v:x.icBlock, lab:'블록IC'} : {v:x.ic, lab:'IC(원시)'}; };
+            var iB=icOf(b), iR=icOf(r);
+            var body = col(both?('가동'+(aB&&aB.tier==='provisional'?'(잠정)':'')):(live?('한쪽만 '+sB+'/'+sR):'보류'),
+                           both ? C.pos : (live ? C.amb : C.neg))
+              + ' <span class="sub">상승 '+sB+' '+iB.lab+' '+(has(iB.v)?iB.v.toFixed(3):'—')
+              + (has(b.icT)?(' t '+b.icT.toFixed(2)):'')+'(기저 '+(has(b.base)?(b.base*100).toFixed(0)+'%':'—')+')'
+              + ' · 하락 '+sR+' '+iR.lab+' '+(has(iR.v)?iR.v.toFixed(3):'—')
+              + (has(r.icT)?(' t '+r.icT.toFixed(2)):'')+'(기저 '+(has(r.base)?(r.base*100).toFixed(0)+'%':'—')+')'
+              + (has(b.fwdN)&&has(b.minFwd)&&!(b.fwdReady&&r.fwdReady) ? (' · 전진 '+n0(b.fwdN)+'/'+n0(b.minFwd)) : '')
+              + '</span>';
+            return [ico(both ? true : (live ? null : false))+' 이중헤드(강세/약세)', body];
           })(),
           ['기존표본 소급', bfTxt],
           (function(){
