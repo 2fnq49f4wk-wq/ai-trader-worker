@@ -8,7 +8,7 @@
      인데, 지금까지 화면에서 그걸 알 방법이 전혀 없었다(카카오톡 인앱 브라우저는 특히 강하게 캐시한다).
      서버가 내려주는 build 와 이 값을 비교해 다르면 배너로 알린다.
      ※ src/index.js 의 _BUILD_VER 와 항상 같아야 한다 — check-html-js 가 강제한다. -->
-<meta name="lux-build" content="V33.280">
+<meta name="lux-build" content="V33.281">
 <title>LUX-ENGINE V10</title>
 <!-- ══ [V33.156] 설치형 앱(PWA) — 폰·PC 에서 홈화면/독에 담아 앱처럼 연다 ══
      · manifest  : 이름·아이콘·standalone 표시(주소창 없이 앱처럼)
@@ -16105,6 +16105,22 @@ html[data-theme="light"] #page-nnviz .nnv-mlp-u{border-bottom-color:#e6edf7;}
 .rail-ai .tbl td.vl .em{color:var(--t1);font-weight:700;}
 .rail-ai .tbl td.vl .nil{color:var(--t3);opacity:.45;}
 .rail-ai .sub{color:var(--t3);font-size:9px;}
+/* ── [V33.281] 위원회 행 — ★이름이 잘려 아무도 누군지 몰랐다★ ──────────────────
+   종전엔 이 표도 td.lb(width 52px · nowrap)를 썼다. 그런데 위원 이름은 "XALPHA 형식알파",
+   "이중헤드(강세/약세)", "단타 경로(MAE)" 처럼 길고, 증거줄은 "잠정가동 ×0.57 · IC 0.277 ·
+   t 2.64(원 3.37·df9) · 전진검증 4,000/400" 처럼 더 길다. 둘을 9.5px 두 칸에 밀어 넣으니
+   운영 화면이 "XALP… / MEM… / 이중헤…" 가 됐다 — 이름을 못 읽으면 나머지 숫자도 소용없다.
+   → 이름은 ★한 줄 통째로★, 증거는 그 아래 줄로 내린다. 자리를 다투지 않으니 둘 다 읽힌다. */
+.rail-ai .cm-list{display:flex;flex-direction:column;gap:1px;margin:2px 0 4px;}
+.rail-ai .cm-it{padding:5px 0;border-bottom:1px solid rgba(128,128,128,.13);}
+.rail-ai .cm-it:last-child{border-bottom:0;}
+.rail-ai .cm-nm{font-size:10px;color:var(--t1);font-weight:600;letter-spacing:.2px;
+  white-space:normal;word-break:keep-all;line-height:1.35;}
+.rail-ai .cm-ev{font-size:9.5px;color:var(--t2);line-height:1.55;margin-top:2px;
+  word-break:break-word;font-variant-numeric:tabular-nums;}
+html[data-theme="light"] .rail-ai .cm-it{border-bottom-color:rgba(0,0,0,.09);}
+html[data-theme="light"] .rail-ai .cm-nm{color:var(--lt-ink);}
+html[data-theme="light"] .rail-ai .cm-ev{color:var(--lt-ink2);}
 .rail-ai .gauge{height:3px;background:var(--bd,#2a2a2a);border-radius:2px;margin:3px 0 1px;overflow:hidden;}
 .rail-ai .gauge>i{display:block;height:100%;font-style:normal;}
 html[data-theme="light"] .rail-ai .tbl td{border-bottom-color:rgba(0,0,0,.09);}
@@ -18758,8 +18774,15 @@ html:root .page > *{ flex-shrink:0; }
       ? '<span class="sub">소급생성 '+n0(alt.backfill.made)+'건 (커서 '+n0(alt.backfill.cursor)+')</span>'
       : '<span class="sub">대기</span>';
     // [V33.126] 제목을 바꾼다 — '신규 모델'은 별개 실험처럼 읽힌다. 이들은 이미 위원회 소속이다.
+    /* [V33.281] 위원회는 tbl(2칸) 대신 2줄 목록으로 — 이름과 증거가 자리를 안 다툰다. */
+    var cmList = function(rows){
+      return '<div class="cm-list">' + rows.filter(function(r){ return r; }).map(function(r){
+        return '<div class="cm-it"><div class="cm-nm">'+r[0]+'</div>'
+             + '<div class="cm-ev">'+(has(r[1]) ? r[1] : NIL)+'</div></div>';
+      }).join('') + '</div>';
+    };
     h += sec('위원회 (신규 전문가)')
-      + tbl([
+      + cmList([
           arow('FLOW', alt.flow, '피어그래프·공매도·내부자'),
           arow('XALPHA', alt.xalpha, '형식알파·횡단면 랭크'),
           arow('STACK', alt.stack, '전문가 통합(투표 대체)'),

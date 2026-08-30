@@ -73,5 +73,23 @@ console.log("\n③~④ 사이드바가 admit 으로 말하고, 게이트와 같�
   chk(/' t '\+b\.icT\.toFixed\(2\)/.test(t), "유의성 t 도 함께 적는다(두뇌 화면과 같은 값)", "t 가 없다");
 }
 
+console.log("\n⑤ 위원 이름이 잘리지 않는가 (운영 화면이 'XALP… / MEM… / 이중헤…' 였다)");
+{
+  chk(/h \+= sec\('위원회 \(신규 전문가\)'\)\s*\n\s*\+ cmList\(\[/.test(HV),
+    "위원회는 2줄 목록으로 그린다(이름과 증거가 자리를 안 다툰다)",
+    "★위원회가 아직 2칸 표를 쓴다 — 긴 이름이 잘린다★");
+  const css = /\.rail-ai \.cm-nm\{([\s\S]*?)\}/.exec(HV);
+  chk(!!css && !/text-overflow:\s*ellipsis/.test(css[1]) && /white-space:\s*normal/.test(css[1]),
+    "위원 이름 줄에 말줄임이 없다 — 길면 줄바꿈한다", "★이름이 여전히 말줄임된다★");
+  chk(!!css && !/width:\s*\d+px/.test(css[1]),
+    "이름 칸에 고정 폭이 없다(52px 고정이 잘림의 원인이었다)", "이름 칸이 아직 고정 폭이다");
+  const ev = /\.rail-ai \.cm-ev\{([\s\S]*?)\}/.exec(HV);
+  chk(!!ev && /tabular-nums/.test(ev[1]),
+    "증거줄 숫자는 자릿수가 맞춰진다(값이 흔들려도 눈이 안 흔들린다)", "증거줄에 tabular-nums 가 없다");
+  /* 다른 섹션은 종전 표를 그대로 쓴다 — 위원회만 바꾼 것이지 전체를 헤집지 않았다. */
+  chk(/\+ tbl\(\[ trow\('미국장'/.test(HV),
+    "진입 문턱 등 다른 섹션은 종전 표 그대로다(필요한 곳만 바꿨다)", "다른 섹션까지 바뀌었다");
+}
+
 console.log(fails === 0 ? "\n✓ 사이드바·두뇌 화면 일치 검사 통과" : "\n✗ " + fails + "건 실패");
 process.exit(fails ? 1 : 0);
