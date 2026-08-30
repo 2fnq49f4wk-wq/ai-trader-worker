@@ -110,6 +110,43 @@ console.log("\n④ 펼침 — 겹치면 벌릴 수 있는가");
     "카드 폭을 넓혔다 — 비스듬히 봐도 카드로 읽힌다", "카드가 여전히 실오라기다");
 }
 
+console.log("\n④-b 시점 이동 — 옮긴 자리를 축으로 도는가 (초점 고정 해소)");
+{
+  const F = new Function(grabFn("sq3Proj") + "\nreturn sq3Proj;")();
+  const base = { yaw: -0.62, pitch: 0.30, dist: 1100, s: 1, cx: 450, cy: 230 };
+  const P = { x: 160, y: 0, z: 90 };            // 화면 오른쪽 뒤에 있는 어떤 점(보고 싶은 것)
+  /* 피벗을 그 점에 두면 ★회전해도 그 점은 제자리★ 여야 한다 — 그게 "축을 옮겼다" 는 뜻이다. */
+  const withP = y => F(P, Object.assign({}, base, { yaw: y, px: P.x, py: P.y, pz: P.z }));
+  const noP   = y => F(P, Object.assign({}, base, { yaw: y }));
+  const a0 = withP(base.yaw), a1 = withP(base.yaw + 0.45);
+  const b0 = noP(base.yaw),   b1 = noP(base.yaw + 0.45);
+  const movedWith = Math.hypot(a1.X - a0.X, a1.Y - a0.Y);
+  const movedNo   = Math.hypot(b1.X - b0.X, b1.Y - b0.Y);
+  console.log(`       회전 0.45rad — 축을 그 점에 두면 ${movedWith.toFixed(2)}px 이동 · 종전(중심 축)은 ${movedNo.toFixed(2)}px`);
+  chk(movedWith < 0.001,
+    "축을 옮긴 점은 회전해도 제자리다 — 보던 것이 달아나지 않는다",
+    `★축을 옮겼는데도 그 점이 ${movedWith.toFixed(2)}px 움직인다 — 피벗이 안 먹는다★`);
+  chk(movedNo > 20,
+    `종전 방식은 같은 점이 ${movedNo.toFixed(0)}px 밀려난다 — 사용자가 말한 "초점 고정" 이 이것이다`,
+    "종전 방식도 안 밀린다 — 이 검사가 원인을 잘못 짚었다");
+  /* ★기존 계약은 그대로여야 한다★ — px/py/pz 없는 C 는 종전과 한 치도 달라지면 안 된다
+     (check-seq3d.mjs 가 그 계약 위에서 원근·깊이·상하를 잰다). */
+  const q = F({ x: 100, y: 40, z: -70 }, base);
+  const q2 = F({ x: 100, y: 40, z: -70 }, Object.assign({}, base, { px: 0, py: 0, pz: 0 }));
+  chk(q.X === q2.X && q.Y === q2.Y && q.z === q2.z,
+    "피벗이 없으면(또는 0이면) 종전 사영과 완전히 같다 — 기존 계약 불변",
+    "★피벗을 안 줘도 결과가 달라졌다 — 기존 검사들의 바탕이 흔들린다★");
+  chk(/panWorld=function\(dxs, dys\)/.test(HV) && /SQ3\.pivot\.x -= wx\*cy;  SQ3\.pivot\.z -= wx\*sy;/.test(HV),
+    "이동이 피벗을 월드에서 옮긴다(화면만 미는 게 아니다)", "이동이 여전히 화면만 민다");
+  chk(/var C0=\{ yaw:C\.yaw, pitch:C\.pitch, dist:C\.dist, s:1, cx:0, cy:0 \};/.test(HV),
+    "자동맞춤은 피벗 없이 액자를 잡는다 — 안 그러면 옮긴 만큼을 매 프레임 취소한다",
+    "★맞춤이 피벗을 포함해 재서 이동이 상쇄된다★");
+  chk(/id="sq3Mode"/.test(HV) && /id="sq3Center"/.test(HV),
+    "손가락 하나 이동 모드와 중심 되돌리기 버튼이 있다", "이동 모드/되돌리기 버튼이 없다");
+  chk(/SQ3\.pivot=\{x:0,y:0,z:0\};\n      SQ3\.yaw=-0\.62/.test(HV.replace(/\r/g, "")),
+    "화면맞춤이 피벗도 되돌린다 — 안 그러면 '맞춤' 이 안 맞는다", "화면맞춤이 피벗을 남긴다");
+}
+
 console.log("\n⑤ DNN — 층이 묶여 보이는가 · 강도가 색으로 읽히는가");
 {
   const dr = grabFn("NNV_drawSVG") || "";

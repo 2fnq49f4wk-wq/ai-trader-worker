@@ -23791,10 +23791,43 @@ async function handleRequest(request, env, ctx) {
         return Response.json({ error: "minTs 가 미래다" }, { status: 400, headers: cors });
       const _prev = await getState(env.DB, "stack_oof_window", null);
       const _pv = _num(_prev && _prev.minTs, 0);
+      /* ══ [V33.279] ★이 규칙은 틀려 있었다 — 매 실행 409 로 거부되고 있었다★ ══════════
+         운영 실측(2026-08-30, 매 Modal 실행마다 반복):
+           STACK 경계 통지 실패 409: kept 2026-05-24 · rejected 2026-01-29
+
+         종전 규칙은 minTs 를 "여기까지 썼다" 는 ★누적 워터마크★ 로 봤다. 그런데 이 값은
+         그런 것이 아니다 — 학습기가 보내는 뜻은 "★지금 이 모델들이★ ts ≥ minTs 구간을
+         학습한 적 없다" 이고, 그래서 payload 에 models 가 같이 온다.
+         전문가는 Modal 실행마다 ★전부 다시 학습★ 된다. 표본 풀이 50만 → 56만으로 커지면
+         마지막 20% 홀드아웃은 시간상 ★더 과거로 뻗는다★ — minTs 가 앞당겨지는 게 정상이다.
+         세대가 다른 두 주장을 시각만으로 비교해 뒤로 못 간다고 막으면, STACK 은 넉 달치
+         멀쩡한 구간을 영영 못 쓴다(지금 그 상태다 — 전진표본 0/400 의 한 원인이다).
+
+         고치되 ★누출 방어는 유지한다★: 되감기는 "이 창을 기록한 뒤 전문가가 실제로 다시
+         학습됐을 때" 만 받는다. 그때만 옛 창이 낡은 세대의 것이 되기 때문이다.
+         판정은 ★가장 오래된★ 전문가를 기준으로 한다(하나라도 안 바뀌었으면 그 모델에겐
+         그 구간이 여전히 in-sample 이다) — 관대한 max 가 아니라 보수적인 min 이다. */
+      let _rewindOK = false, _oldest = 0;
       if (_pv > 0 && _mt < _pv) {
-        return Response.json({ ok: false, kept: _pv, rejected: _mt,
-          error: "경계는 뒤로 못 간다 — 과거로 되돌리면 학습에 쓰인 구간이 열려 누출이 재발한다" },
-          { status: 409, headers: cors });
+        const _KEY = { dnn: "dnn_trust", gbdt: "gbdt_model", mind: "mind_model",
+                       boost: "lgb_trust", xgb: "xgb_trust", lgb: "lgb_trust", cat: "cat_trust" };
+        const _names = Array.isArray(body.models) ? body.models.map(String) : [];
+        const _keys = [];
+        for (const nm of _names) { const k = _KEY[nm]; if (k) { if (_keys.indexOf(k) === -1) _keys.push(k); } else { _keys.length = 0; break; } }
+        if (_keys.length) {
+          _oldest = Infinity;
+          const _S = await getStates(env.DB, _keys);
+          for (const k of _keys) { const t = _num(_S[k] && _S[k].trainedAt, 0); if (t < _oldest) _oldest = t; }
+          // 창을 기록한 시각 이후에 ★전원★ 다시 학습됐는가.
+          _rewindOK = isFinite(_oldest) && _oldest > _num(_prev && _prev.ts, 0);
+        }
+        if (!_rewindOK) {
+          return Response.json({ ok: false, kept: _pv, rejected: _mt,
+            oldestExpertAt: isFinite(_oldest) ? _oldest : null, prevAt: _num(_prev && _prev.ts, 0),
+            error: "경계를 뒤로 되돌리려면 그 창을 기록한 뒤 전문가가 전부 다시 학습돼 있어야 한다 — " +
+                   "아직 옛 세대 모델이 남아 있어 그 구간은 in-sample 이다(누출 방어)" },
+            { status: 409, headers: cors });
+        }
       }
       const _rec = { minTs: _mt, n: Math.max(0, Math.floor(_num(body.n, 0))),
                      models: Array.isArray(body.models) ? body.models.slice(0, 12).map(String) : [],
@@ -23802,8 +23835,12 @@ async function handleRequest(request, env, ctx) {
       await setState(env.DB, "stack_oof_window", _rec);
       try { await log(env.DB, "INFO", null, "[STACK-OOF] 홀드아웃 경계 " +
               new Date(_mt).toISOString().slice(0, 10) + " (표본 " + _rec.n + "건, 모델 " +
-              (_rec.models.join("/") || "미기재") + ") — 이 구간은 누출없이 채점할 수 있다"); } catch (e) {}
-      return Response.json({ ok: true, window: _rec }, { headers: cors });
+              (_rec.models.join("/") || "미기재") + ")" +
+              (_rewindOK ? " ★세대 교체로 경계를 " + new Date(_pv).toISOString().slice(0, 10) +
+                           " → " + new Date(_mt).toISOString().slice(0, 10) + " 로 앞당김" +
+                           "(전문가 전원이 이 창 기록 이후 재학습됨)★" : "") +
+              " — 이 구간은 누출없이 채점할 수 있다"); } catch (e) {}
+      return Response.json({ ok: true, window: _rec, rewound: _rewindOK }, { headers: cors });
     }
     /* ══ [V33.249] POST /api/mind-import — 위원장 슬롯에 ★트리 앙상블★ 을 올린다 ══
        FM 은 GPU 완전수렴에서도 47.9% 였다(시드 6 · 검증 51,800행 · 유효 3,555).
