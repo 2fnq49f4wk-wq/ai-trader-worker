@@ -2981,7 +2981,7 @@ async function applySignalTypeWeights(DB, cfg) {
    화면·자가진단이 계속 "V33.272" 를 보고했다(운영 스냅샷이 그대로 그랬다). 배포는 됐는데
    ★배포됐다는 사실만 거짓말★ 을 하고 있었으니, "내 고침이 올라간 건가" 를 화면으로 확인할
    방법이 없었다. tools/check-build-ver.mjs 가 이제 소스에 적힌 최신 버전과 이 값을 대조한다. */
-const _BUILD_VER = "V33.282";
+const _BUILD_VER = "V33.283";
 
 // ═══ [V33.171] 평가 순서 계획 — ★승격과 순환을 교차해 굶주림을 구조적으로 없앤다★ ═══
 //   V33.50 의 형태트리거는 "급한 몇 종목을 앞으로 당긴다"는 의도였으나, 실제 운영로그에서는
@@ -29149,6 +29149,10 @@ const MEMOML = {
   neighbors: 8,            // 추론 시 참조할 최근접 원형 수
   minTrainSamples: 4000,
   trainWindow: 24000,      // Worker 메모리·CPU 예산 안에서 도는 크기
+  /* [V33.283] 그 창을 몇 개 구간으로 나눠 ★시간에 펼쳐★ 읽을지. 읽는 행 수는 그대로다.
+     24 면 구간당 1,000행 — 이력 전체에 24개 시점 섬이 생긴다. 홀드아웃(마지막 20%)이
+     대여섯 섬을 덮으므로, 종전 '대여섯 날' 에서 '대여섯 시점 구간' 으로 넓어진다. */
+  islands: 24,
   iters: 6,                // 온라인 k-means 반복
   shrinkN: 40,             // 원형 표본이 적으면 기저확률로 수축
   icFloor: 0.012,
@@ -29180,10 +29184,57 @@ async function memoTrainNightly(DB) {
         labelFn: function (r) { return _labelOfRow(r); }
       });
     } catch (e) {}
-    const rows = await DB.prepare(
-      "SELECT id, ts, feat, label, pnl_pct FROM ml_samples WHERE featver = ? ORDER BY ts DESC LIMIT ?"
-    ).bind(LUXML.featVer, MEMOML.trainWindow).all();
-    const raw = (rows && rows.results) || [];
+    /* ══ [V33.283] ★MEMO 의 병목은 자가 아니라 창이었다★ ═══════════════════════════
+       운영 스냅샷이 이상한 모양을 보였다:
+         홀드아웃 블록IC 0.0252 · t 0.66   ← 게이트가 보는 값(미달)
+         전진(학습 이후) IC 0.1462 · n 798 ← ★홀드아웃의 5.8배★
+       보통은 반대다(홀드아웃이 낙관적이고 전진이 나쁘다). 뒤집혀 있다는 건 모델에
+       신호가 없다는 뜻이 아니라 ★홀드아웃이 그 신호를 볼 수 없는 모양★ 이라는 뜻이다.
+
+       왜 그런가 — 창이 "가장 최근 24,000행" 이었다. 그런데 수확은 한 봉 날짜에 전 종목을
+       한꺼번에 쌓는다(660종목). 즉 24,000행은 ★고작 30여 봉 날짜★ 다. 홀드아웃(마지막
+       20%)은 그중 대여섯 날. 블록 5개로 쪼개면 한 블록이 하루 남짓이라, 그 t 는 "그 주에
+       무슨 일이 있었나" 를 재는 값이 된다 — 실력이 아니라 그 주의 운이다.
+       게다가 이웃한 날의 표본은 라벨 구간(10일)이 통째로 겹친다. 같은 밤 [고유도] 가
+       "20,000건이 실제로는 1,252건어치" 라고 보고하는 그 겹침이다.
+
+       고침: 같은 크기(예산 불변)를 ★시간에 펼쳐서★ 읽는다. id 범위를 여러 구간으로 나눠
+       각 구간에서 조금씩 가져오면, 같은 24,000행이 30일이 아니라 이력 전체에 흩어진다.
+        · 홀드아웃이 여러 국면을 덮는다 → t 가 '그 주의 운' 이 아니라 실력을 잰다
+        · 이웃 표본끼리 안 겹친다 → 유효표본이 늘어난다(고유도가 곧 t 다)
+        · 그리고 이게 MEMO 의 본래 목적에 맞다 — "유사했던 ★과거★ 상황을 꺼내 본다" 는
+          모델의 기억이 7주뿐이면 그건 기억이 아니다.
+       ★메모리·CPU 예산은 그대로다★ — 읽는 행 수는 안 늘리고 어디서 읽느냐만 바꾼다. */
+    let raw = [];
+    let _spanLo = 0, _spanHi = 0, _islands = 0;
+    try {
+      const _rg = await DB.prepare(
+        "SELECT MIN(id) lo, MAX(id) hi, COUNT(*) c FROM ml_samples WHERE featver = ?"
+      ).bind(LUXML.featVer).first();
+      const _lo = _num(_rg && _rg.lo, 0), _hi = _num(_rg && _rg.hi, 0), _cnt = _num(_rg && _rg.c, 0);
+      const _B = Math.max(1, Math.min(MEMOML.islands, Math.floor(MEMOML.trainWindow / 200)));
+      if (_hi > _lo && _cnt > MEMOML.trainWindow) {
+        const _per = Math.max(1, Math.floor(MEMOML.trainWindow / _B));
+        const _step = (_hi - _lo) / _B;
+        for (let b = 0; b < _B; b++) {
+          const _a = Math.floor(_lo + b * _step), _z = Math.floor(_lo + (b + 1) * _step);
+          const r = await DB.prepare(
+            "SELECT id, ts, feat, label, pnl_pct FROM ml_samples WHERE featver = ? AND id >= ? AND id < ? ORDER BY id ASC LIMIT ?"
+          ).bind(LUXML.featVer, _a, _z, _per).all();
+          const rr = (r && r.results) || [];
+          if (rr.length) { _islands++; for (const x of rr) raw.push(x); }
+        }
+        raw.sort(function (a, b2) { return _num(b2.ts, 0) - _num(a.ts, 0); });   // 아래 루프는 ts DESC 를 기대한다
+      }
+    } catch (e) { raw = []; }
+    // 표본이 창보다 적으면(초기·판갈이 직후) 종전대로 최근 것부터 — 나눌 것이 없다.
+    if (!raw.length) {
+      const rows = await DB.prepare(
+        "SELECT id, ts, feat, label, pnl_pct FROM ml_samples WHERE featver = ? ORDER BY ts DESC LIMIT ?"
+      ).bind(LUXML.featVer, MEMOML.trainWindow).all();
+      raw = (rows && rows.results) || [];
+    }
+    for (const r of raw) { const t = _num(r.ts, 0); if (t > 0) { if (!_spanLo || t < _spanLo) _spanLo = t; if (t > _spanHi) _spanHi = t; } }
     // [V33.104] 적합에 들어간 행의 최대 id — 다음 밤 전진검증의 배타 기준.
     let _maxId = 0; for (const r of raw) { const _i = _num(r.id, 0); if (_i > _maxId) _maxId = _i; }
     // [V33.178] 관측 시각의 최대값 — 전진검증이 '과거 소급표본' 을 미래로 착각하지 않게 한다(위 주석 참조).
@@ -29362,7 +29413,13 @@ async function memoTrainNightly(DB) {
     await setState(DB, "memo_model", model);
     // [V33.273] 자가 실제로 몇 축을 살렸는지 남긴다 — 안 보이면 다음에 또 추측하게 된다.
     let _liveAx = 0; for (let j = 0; j < D; j++) if (scale[j] > 0) _liveAx++;
-    return "[MEMO] 원형 " + protos.length + "개 (표본 " + ntr + ") 가중거리 유효축 " + _liveAx + "/" + D +
+    /* [V33.283] ★창이 며칠치인지 적는다.★ 이 줄이 없어서 "홀드아웃 t 가 왜 안 오르나" 를
+       추측으로 답해 왔다 — 창이 30일인지 2년인지 화면 어디에도 없었다. 다음 실행부터는
+       이 숫자가 직접 답한다(펼침이 실제로 먹었는지도 여기서 보인다). */
+    const _spanD = (_spanHi > _spanLo) ? Math.round((_spanHi - _spanLo) / 86400000) : 0;
+    return "[MEMO] 원형 " + protos.length + "개 (표본 " + ntr +
+           " · 창 " + _spanD + "일" + (_islands ? ("/" + _islands + "구간") : "(연속)") + ")" +
+           " 가중거리 유효축 " + _liveAx + "/" + D +
            "(잡음바닥 " + (_num(MEMOML.relNoiseZ, 2) / Math.sqrt(Math.max(ntr, 2))).toFixed(4) + " 제거)" +
            " valAcc " + (model.valAcc * 100).toFixed(1) +
            "% IC " + model.valIC.toFixed(4) + (model.valICt != null ? " t " + model.valICt.toFixed(2) : "") +

@@ -282,6 +282,74 @@ console.log("\n④~⑦ MEMO — 잡음 72축 + 신호 3축 데이터로 실제 �
   }
 }
 
+console.log("\n⑨ 학습창이 시간에 펼쳐지는가 (홀드아웃이 '그 주의 운' 을 재던 문제)");
+{
+  /* 수확은 한 봉 날짜에 전 종목을 한꺼번에 쌓는다. 그래서 "가장 최근 24,000행" 은
+     고작 30여 ★날★ 이었고, 홀드아웃(마지막 20%)은 대여섯 날 — 블록 5개면 하루씩이다.
+     그 t 는 실력이 아니라 그 주의 운을 잰다. 같은 크기를 시간에 펼쳐 읽으면 해결된다.
+     ★읽는 행 수는 안 늘린다★ — 예산은 그대로고 어디서 읽느냐만 바뀐다. */
+  const SYMS = 600, DAYS = 500, DAY = 86400000;
+  const T0 = Date.parse("2024-01-01T00:00:00Z");
+  const all = [];   // id 는 수확 순서 = 날짜 순서(운영과 같은 모양)
+  for (let d = 0; d < DAYS; d++) for (let k = 0; k < SYMS; k++)
+    all.push({ id: d * SYMS + k + 1, ts: T0 + d * DAY });
+  const asked = [];
+  const DB = {
+    prepare(sql) {
+      const q = { args: [] };
+      q.bind = function () { q.args = Array.from(arguments); return q; };
+      q.first = async () => {
+        if (/MIN\(id\) lo/.test(sql)) return { lo: 1, hi: all.length, c: all.length };
+        return null;
+      };
+      q.all = async () => {
+        if (/id >= \? AND id < \?/.test(sql)) {
+          const [, a, z, lim] = q.args;
+          asked.push([a, z]);
+          return { results: all.filter(r => r.id >= a && r.id < z).slice(0, lim) };
+        }
+        if (/ORDER BY ts DESC/.test(sql)) return { results: all.slice(-q.args[1]).reverse() };
+        return { results: [] };
+      };
+      q.run = async () => ({});
+      return q;
+    }
+  };
+  const W = M.MEMOML.trainWindow, B = M.MEMOML.islands;
+  // 위 코드가 실제로 부르는 것과 같은 순서로 구간을 만들어, 모아진 행의 ★기간★ 을 잰다.
+  const rg = await DB.prepare("SELECT MIN(id) lo, MAX(id) hi, COUNT(*) c FROM ml_samples WHERE featver = ?").bind(15).first();
+  const nB = Math.max(1, Math.min(B, Math.floor(W / 200)));
+  const per = Math.max(1, Math.floor(W / nB)), step = (rg.hi - rg.lo) / nB;
+  let got = [];
+  for (let b = 0; b < nB; b++) {
+    const a = Math.floor(rg.lo + b * step), z = Math.floor(rg.lo + (b + 1) * step);
+    const r = await DB.prepare("SELECT id, ts, feat, label, pnl_pct FROM ml_samples WHERE featver = ? AND id >= ? AND id < ? ORDER BY id ASC LIMIT ?").bind(15, a, z, per).all();
+    got = got.concat(r.results);
+  }
+  const spanOf = rows => { const t = rows.map(r => r.ts); return Math.round((Math.max(...t) - Math.min(...t)) / DAY); };
+  const oldRows = all.slice(-W);
+  console.log(`       종전(최근 ${W}행) → ${spanOf(oldRows)}일 · 펼침(${nB}구간) → ${spanOf(got)}일 · 읽은 행 ${got.length}`);
+  chk(got.length <= W, `읽는 행 수는 예산 안이다 (${got.length} ≤ ${W}) — 크기를 안 늘렸다`,
+    `★행 수가 늘었다(${got.length} > ${W}) — 메모리·CPU 예산을 깬다★`);
+  chk(spanOf(got) > spanOf(oldRows) * 5,
+    `같은 크기가 훨씬 넓은 기간을 덮는다 (${spanOf(oldRows)}일 → ${spanOf(got)}일)`,
+    `펼침이 안 먹는다 (${spanOf(oldRows)}일 → ${spanOf(got)}일)`);
+  // 홀드아웃(마지막 20%)이 여러 국면을 덮는가 — 이게 t 가 실력을 재게 하는 조건이다.
+  const chrono = got.slice().sort((a, b) => a.ts - b.ts);
+  const hv = chrono.slice(Math.floor(chrono.length * 0.8));
+  const hvOld = oldRows.slice().sort((a, b) => a.ts - b.ts).slice(Math.floor(oldRows.length * 0.8));
+  console.log(`       홀드아웃 기간 — 종전 ${spanOf(hvOld)}일 → 펼침 ${spanOf(hv)}일`);
+  chk(spanOf(hv) > spanOf(hvOld) * 5,
+    `홀드아웃이 '그 주' 가 아니라 여러 국면을 덮는다 (${spanOf(hvOld)}일 → ${spanOf(hv)}일)`,
+    "홀드아웃 기간이 안 넓어졌다 — t 는 여전히 그 주의 운을 잰다");
+  chk(/islands: 24,/.test(S) && /Math\.min\(MEMOML\.islands/.test(S),
+    "구간 수가 설정에 있고 코드가 그것을 쓴다", "구간 수가 손으로 박혀 있다");
+  chk(/if \(!raw\.length\) \{/.test(S),
+    "표본이 창보다 적으면 종전 방식으로 되돌아간다(초기·판갈이 직후 안전)", "폴백 경로가 없다");
+  chk(/창 " \+ _spanD \+ "일"/.test(S),
+    "학습창이 며칠치인지 로그에 남는다 — 다음 실행이 스스로 답한다", "창 기간이 안 보인다");
+}
+
 console.log("\n⑧ 완화가 아니라 개선인지 — 문턱·원형 수가 그대로인가");
 {
   chk(M.MEMOML.K === 128 && M.MEMOML.neighbors === 8,
