@@ -2981,7 +2981,7 @@ async function applySignalTypeWeights(DB, cfg) {
    화면·자가진단이 계속 "V33.272" 를 보고했다(운영 스냅샷이 그대로 그랬다). 배포는 됐는데
    ★배포됐다는 사실만 거짓말★ 을 하고 있었으니, "내 고침이 올라간 건가" 를 화면으로 확인할
    방법이 없었다. tools/check-build-ver.mjs 가 이제 소스에 적힌 최신 버전과 이 값을 대조한다. */
-const _BUILD_VER = "V33.290";
+const _BUILD_VER = "V33.291";
 
 // ═══ [V33.171] 평가 순서 계획 — ★승격과 순환을 교차해 굶주림을 구조적으로 없앤다★ ═══
 //   V33.50 의 형태트리거는 "급한 몇 종목을 앞으로 당긴다"는 의도였으나, 실제 운영로그에서는
@@ -28329,7 +28329,9 @@ async function _miniLogisticTrain(DB, opts) {
     const rows = await DB.prepare(
       /* [V33.227] src 를 함께 읽는다(있는 표만). 홀드아웃 IC 를 ★경로별로★ 쪼개 보고하려는 것이다 —
          "표본을 더했더니 t 가 떨어졌다" 를 만났을 때 어느 경로가 희석했는지 추측하지 않게. */
-      "SELECT id, ts, symbol, feat, label, pnl_pct" + (opts.srcCol ? ", src" : "") +
+      /* [V33.291] market 도 읽는다 — IC 에서 ★시장 고정효과★ 를 빼기 위해서다.
+         네 표(ml/flow/xalpha/stack_samples) 모두 이 컬럼을 갖고 있다. */
+      "SELECT id, ts, market, symbol, feat, label, pnl_pct" + (opts.srcCol ? ", src" : "") +
       " FROM " + opts.table + " WHERE featver = ? ORDER BY ts DESC LIMIT ?"
     ).bind(opts.featVer, opts.window).all();
     const raw = (rows && rows.results) || [];
@@ -28344,7 +28346,7 @@ async function _miniLogisticTrain(DB, opts) {
       return "[" + opts.tag + "] 표본 " + raw.length + "/" + opts.minN + " — 학습 대기";
     }
     const D = opts.D;
-    const X = [], Y = [], P = [], T = [], S = [], SRC = [];
+    const X = [], Y = [], P = [], T = [], S = [], SRC = [], MK = [];
     for (const r of raw) {
       let v; try { v = JSON.parse(r.feat); } catch (e) { continue; }
       if (!Array.isArray(v) || v.length !== D) continue;
@@ -28370,11 +28372,12 @@ async function _miniLogisticTrain(DB, opts) {
       Y.push(_y);
       P.push(_num(r.pnl_pct, 0));
       T.push(_num(r.ts, 0)); S.push(String(r.symbol || "")); SRC.push(r.src == null ? "" : String(r.src));
+      MK.push(r.market == null ? "" : String(r.market));
     }
     const N = X.length;
     if (N < opts.minN) return "[" + opts.tag + "] 유효표본 " + N + " — 학습 대기";
     // 시간순(최신이 앞) → 뒤집어 오래된 것부터. 마지막 20% 를 홀드아웃(시간 분리).
-    X.reverse(); Y.reverse(); P.reverse(); T.reverse(); S.reverse(); SRC.reverse();
+    X.reverse(); Y.reverse(); P.reverse(); T.reverse(); S.reverse(); SRC.reverse(); MK.reverse();
     const nval = Math.max(100, Math.floor(N * 0.2));
     /* [V33.155] ★홀드아웃 경계는 고정이다 — 퍼징은 학습쪽만 자른다★
        종전엔 퍼징이 ntr 을 줄인 뒤 검증 루프를 `i = ntr` 부터 돌렸다. 그러면 잘라낸 구간이
@@ -28493,6 +28496,12 @@ async function _miniLogisticTrain(DB, opts) {
       _blkKeys = [];
       for (let i = nvalStart; i < N; i++) _blkKeys.push(Math.floor(_num(T[i], 0) / 86400000));
     }
+    /* [V33.291] 홀드아웃 각 표본의 시장 — 블록 안에서 시장 평균을 빼는 데 쓴다(_icBlockStats 주석).
+       ★고르는 자와 판정하는 자가 같아야 한다★(V33.214) — 그래서 헤드 경합에도 같이 넘긴다.
+       시장이 하나뿐이면 상수를 빼는 것이라 값이 안 변한다. */
+    const _mkKeys = [];
+    for (let i = nvalStart; i < N; i++) _mkKeys.push(MK[i] || "");
+    let _mkN = 0; { const _u = {}; for (const m of _mkKeys) if (m) _u[m] = 1; _mkN = Object.keys(_u).length; }
     /* 후보를 고르는 자 — ★위원회 합류를 실제로 판정하는 것과 같은 통계★ 로 잰다.
        [V33.209] 는 정확도의 Wilson 하한으로 골랐다. 첫 STACK 실측에서 그게 무너졌다:
            결합=lin (lin 52.7%하한 / gbdt 52.7% / mlp 52.7% / blend 52.7%)
@@ -28504,7 +28513,7 @@ async function _miniLogisticTrain(DB, opts) {
        → 블록 IC 의 1σ 하한으로 고른다. se = |IC|/t 이므로 하한 = IC − se = IC·(1 − 1/t).
          t ≤ 1 이면 하한이 0 이하로 내려간다 — "증거 없음" 이 그렇게 표현되는 게 맞다. */
     const _icLB = function (ps) {
-      const st = _icBlockStats(ps, yv, 5, _blkKeys);
+      const st = _icBlockStats(ps, yv, 5, _blkKeys, _mkKeys);
       const b = (st.blockIC != null) ? _num(st.blockIC, 0) : _num(st.ic, 0);
       const t = _num(st.t, 0);
       const lb = (t > 1e-6) ? b * (1 - 1 / t) : (b > 0 ? 0 : b);
@@ -28672,7 +28681,7 @@ async function _miniLogisticTrain(DB, opts) {
         }).sort(function (a, b) { return b.n - a.n; });
       } catch (e) { _srcIC = null; }
     }
-    const _st = _icBlockStats(pv, yv, 5, _blkKeys);
+    const _st = _icBlockStats(pv, yv, 5, _blkKeys, _mkKeys);
     const ic = _num(_st.ic, 0);
     // [V33.89] 기저확률(양성비율)을 함께 저장한다 — 이중헤드 사분면 경계를 절대값이 아니라
     //   각 헤드의 기저확률 기준으로 잡기 위해서다. 문턱을 절대값으로 두면 라벨 희소도가 다른
@@ -28720,6 +28729,13 @@ async function _miniLogisticTrain(DB, opts) {
       valICIR: _st.icir != null ? +_st.icir.toFixed(3) : null,
       valICt: _tv != null ? +_tv.toFixed(3) : null, valICK: _st.K,
       valICtRaw: _st.tRaw != null ? _st.tRaw : null, valICdf: _st.df != null ? _st.df : null,
+      /* [V33.291] ★시장을 섞어 재면 얼마였는지★ 를 함께 남긴다. 게이트가 보는 값(valICBlock)은
+         시장 고정효과를 뺀 값이고, 아래 셋은 종전 방식으로 잰 값이다. 두 숫자의 차이가 곧
+         "이 모델이 시장 절편에서 공짜로 받던 몫" 이다 — 안 남기면 다음에 또 추측하게 된다. */
+      valICPooled: _st.icPooled != null ? +_st.icPooled.toFixed(5) : null,
+      valICBlockPooled: _st.blockICPooled != null ? +_st.blockICPooled.toFixed(5) : null,
+      valICtPooled: _st.tPooled != null ? +_st.tPooled.toFixed(3) : null,
+      mktFixed: !!_st.mktFixed, mktN: _mkN,
       // [V33.143] ★어떤 문턱으로 판정했는지를 모델에 남긴다.★ expertAdmit 은 동기 함수라
       //   DB 를 못 읽는다. 상수를 다시 읽게 하면 학습 때와 판정 때의 문턱이 어긋날 수 있다.
       tMinUsed: _tMin, icFamilyK: _fam ? _num(_fam.k, null) : null,
@@ -28764,6 +28780,12 @@ async function _miniLogisticTrain(DB, opts) {
                    : "")
              : "") +
            (_bIC != null ? " 블록IC " + _bIC.toFixed(4) + " t " + (_tv || 0).toFixed(2) : " (블록 부족)") +
+           /* [V33.291] 시장 고정효과를 빼기 전 값도 적는다 — 게이트가 보는 숫자가 왜 달라졌는지
+              로그 한 줄로 답해야 한다(안 적으면 "갑자기 t 가 떨어졌다" 로만 보인다). */
+           (_st.mktFixed && _st.blockICPooled != null && _mkN > 1
+             ? " [시장" + _mkN + "개 섞어재면 " + _num(_st.blockICPooled, 0).toFixed(4) +
+               " t " + _num(_st.tPooled, 0).toFixed(2) + " — 그 차이가 시장절편 몫]"
+             : "") +
            (_fwd && _fwd.ready ? " 전진IC " + _num(_fwd.ic, 0).toFixed(4) + "(n" + _fwd.n + ")"
                                : " 전진" + (_fwd ? _fwd.n : 0) + "/" + ICGATE.minForward) +
            // [V33.179] 걸러낸 과거표본 수를 함께 적는다 — 종전 전진 IC 가 무엇으로 계산됐는지의 증거.
@@ -29476,14 +29498,23 @@ async function memoTrainNightly(DB) {
                     purged: _purged,   // [V33.156] 다른 모델과 같은 근거를 남긴다(홀드아웃 신뢰의 바탕)
                     ts: Date.now() };
     // 홀드아웃 채점 → IC 유의성(다른 모델과 같은 기준)
-    const pv = [], yv = [];
-    for (let i = nvalStart; i < N; i++) { const p = memoScore(model, X[i]); if (p == null) continue; pv.push(p); yv.push(Y[i]); }
-    const st = _icBlockStats(pv, yv, 5);
+    const pv = [], yv = [], mv = [];
+    for (let i = nvalStart; i < N; i++) {
+      const p = memoScore(model, X[i]); if (p == null) continue;
+      pv.push(p); yv.push(Y[i]);
+      // [V33.291] 시장은 표를 다시 안 읽어도 된다 — 피처 안의 원핫이 곧 시장이다(_mktOf).
+      mv.push(_mktOK ? String(_mktOf(X[i])) : "");
+    }
+    const st = _icBlockStats(pv, yv, 5, null, _mktOK ? mv : null);
     let correct = 0; for (let i = 0; i < pv.length; i++) if ((pv[i] >= 0.5 ? 1 : 0) === yv[i]) correct++;
     model.valAcc = +(correct / Math.max(1, pv.length)).toFixed(4);
     model.valN = pv.length;
     model.valIC = +_num(st.ic, 0).toFixed(5);
     model.valICBlock = st.blockIC != null ? +st.blockIC.toFixed(5) : null;
+    // [V33.291] 섞어 잰 값도 남긴다 — 차이가 곧 시장절편에서 공짜로 받던 몫이다.
+    model.valICBlockPooled = st.blockICPooled != null ? +st.blockICPooled.toFixed(5) : null;
+    model.valICtPooled = st.tPooled != null ? +st.tPooled.toFixed(3) : null;
+    model.mktFixed = !!st.mktFixed;
     model.valICIR = st.icir != null ? +st.icir.toFixed(3) : null;
     model.valICt = st.t != null ? +st.t.toFixed(3) : null;
     model.fwdIC = _fwd ? _fwd.ic : null; model.fwdICt = _fwd ? _fwd.t : null;
@@ -31229,7 +31260,29 @@ function _tToZ(t, df) {
    퀀트 주식에서 표준은 ‘일별 횡단면 IC 를 낸 뒤 그 시계열로 ICIR’ 이다 — keys 경로가 그것이다.
    ★기본 동작은 바꾸지 않는다★(keys 없으면 종전과 동일). V33.113 이 연속 슬라이스로 재놓은
    오탐률 보정을 통째로 흔들지 않기 위해서다. 쓰는 곳에서만 켠다. */
-function _icBlockStats(pv, yv, K, keys) {
+/* ══ [V33.291] ★시장을 섞은 채 재면, 시장 안 실력이 0 이어도 IC 가 나온다★ ═══════════
+   MEMO 가 시장 원핫을 거리에서 지운 사고(V33.288)를 고치고 나서, 같은 질문을 ★자★ 에도
+   던져 봤다 — 우리가 쓰는 IC 는 시장을 어떻게 다루는가. 답: 아무렇게도 안 다룬다.
+   미국 표본과 한국 표본을 한 통에 넣고 Pearson 을 잰다.
+
+   몬테카를로(N=20,000, 시장 안 실력 ★정확히 0★, 모델이 아는 것은 시장 절편뿐):
+       기저 US 0.55 / KR 0.45 → 섞어 잰 IC ★0.1004★   시장 안 IC 0.0025 / −0.0012
+       기저 US 0.53 / KR 0.47 → 섞어 잰 IC  0.0570    시장 안 IC 0.0065 /  0.0051
+       기저 US 0.51 / KR 0.49 → 섞어 잰 IC  0.0172    시장 안 IC 0.0066 /  0.0051
+       블록 5개로 재면 ★블록IC 0.0953 · t 13.27★ — icFloor 0.012 과 본페로니 t 를
+       여유 있게 통과한다. ★실력이 0 인데 정식합류한다.★
+   이유는 단순하다. 두 시장의 기저승률이 다르면, "시장을 아는 것" 만으로 p 와 y 가 같이
+   움직인다. 그리고 시장 원핫은 LUXML 75피처 안에 있으므로 ★어떤 모델이든 공짜로 안다★.
+   t 가 특히 위험하다 — 이 편향은 잡음이 아니라 ★체계적★ 이라 블록마다 같은 값이 나오고,
+   블록 간 분산이 0 에 가까워져 t 가 폭발한다.
+
+   고침: 블록 안에서 ★시장별 평균을 뺀 뒤★ 상관을 잰다(고정효과 within 추정량).
+   그러면 "미국이 한국보다 낫다" 는 몫은 사라지고 ★같은 시장 안에서 종목을 갈라 세우는
+   힘★ 만 남는다 — 위원회가 실제로 쓰는 것이 그것이다(사이징·게이트는 시장별로 따로 돈다).
+   한 시장뿐인 블록에서는 상수를 빼는 것이라 ★값이 안 변한다★ — 뺄 게 없으면 아무 일도 없다.
+   mkeys 를 안 주면 종전과 완전히 같다(기존 호출자 전부 그대로 동작한다).
+   섞어 잰 값도 함께 돌려준다(icPooled/blockICPooled/tPooled) — 바뀐 폭을 눈으로 봐야 한다. */
+function _icBlockStats(pv, yv, K, keys, mkeys) {
   try {
     const n = Math.min(pv.length, yv.length);
     const _c = function (a, b) {
@@ -31240,49 +31293,104 @@ function _icBlockStats(pv, yv, K, keys) {
       for (let i = 0; i < m; i++) { const x = a[i] - ma, y = b[i] - mb; sa += x * x; sb += y * y; sab += x * y; }
       return (sa > 1e-12 && sb > 1e-12) ? sab / Math.sqrt(sa * sb) : null;
     };
-    const all = _c(pv.slice(0, n), yv.slice(0, n));
-    // [V33.113] 표본이 많으면 블록을 더 쪼갠다 — 자유도(K−1)가 커질수록 t 문턱이 정직해진다.
-    //   블록은 최소 200표본을 유지해 블록 자체의 독립성 가정을 깨지 않는다.
-    const ics = [];
-    if (Array.isArray(keys) && keys.length >= n) {
-      // ── 키(날짜)별 블록 — 각 블록이 '그날의 횡단면' 이다 ──
-      const by = new Map();
-      for (let i = 0; i < n; i++) {
-        const k2 = keys[i];
-        if (k2 == null) continue;
-        let g = by.get(k2); if (!g) { g = { p: [], y: [] }; by.set(k2, g); }
-        g.p.push(pv[i]); g.y.push(yv[i]);
+    /* 시장별 평균을 빼고 이어 붙인다. 4건 미만 그룹은 버린다 — 두세 건의 평균을 빼는 것은
+       고정효과 제거가 아니라 그 그룹을 통째로 0 으로 만드는 것이다(정보가 아니라 훼손이다). */
+    const _dm = function (a, b, mk) {
+      if (!mk) return { a: a, b: b };
+      const g = new Map();
+      for (let i = 0; i < a.length; i++) {
+        const k2 = (mk[i] == null || mk[i] === "") ? "?" : String(mk[i]);
+        let s2 = g.get(k2); if (!s2) { s2 = { a: [], b: [] }; g.set(k2, s2); }
+        s2.a.push(a[i]); s2.b.push(b[i]);
       }
-      // 하루가 너무 얇으면 그날의 횡단면 상관은 잡음이다 — 버린다(억지로 넣으면 분산만 키운다).
-      const days = [...by.keys()].sort();
-      for (const d of days) {
-        const g = by.get(d);
-        if (g.p.length < 12) continue;
-        const c = _c(g.p, g.y);
-        if (c != null) ics.push(c);
+      const A = [], B = [];
+      g.forEach(function (s2) {
+        const m2 = s2.a.length;
+        if (m2 < 4) return;
+        let ma = 0, mb = 0; for (let i = 0; i < m2; i++) { ma += s2.a[i]; mb += s2.b[i]; }
+        ma /= m2; mb /= m2;
+        for (let i = 0; i < m2; i++) { A.push(s2.a[i] - ma); B.push(s2.b[i] - mb); }
+      });
+      return { a: A, b: B };
+    };
+    const _run = function (mk) {
+      const w0 = _dm(pv.slice(0, n), yv.slice(0, n), mk ? mk.slice(0, n) : null);
+      const all = _c(w0.a, w0.b);
+      // [V33.113] 표본이 많으면 블록을 더 쪼갠다 — 자유도(K−1)가 커질수록 t 문턱이 정직해진다.
+      //   블록은 최소 200표본을 유지해 블록 자체의 독립성 가정을 깨지 않는다.
+      const ics = [];
+      if (Array.isArray(keys) && keys.length >= n) {
+        // ── 키(날짜)별 블록 — 각 블록이 '그날의 횡단면' 이다 ──
+        //   [V33.291] 그 횡단면은 ★시장 안★ 에서만 뜻이 있다(랭크가 시장별 패널로 만들어진다 —
+        //   xalphaBuildPanel 이 panelUS/panelKR 을 따로 세운다). 아래 _dm 이 그 경계를 세운다.
+        const by = new Map();
+        for (let i = 0; i < n; i++) {
+          const k2 = keys[i];
+          if (k2 == null) continue;
+          let g = by.get(k2); if (!g) { g = { p: [], y: [], m: [] }; by.set(k2, g); }
+          g.p.push(pv[i]); g.y.push(yv[i]); g.m.push(mk ? mk[i] : null);
+        }
+        // 하루가 너무 얇으면 그날의 횡단면 상관은 잡음이다 — 버린다(억지로 넣으면 분산만 키운다).
+        const days = [...by.keys()].sort();
+        for (const d of days) {
+          const g = by.get(d);
+          if (g.p.length < 12) continue;
+          const w = _dm(g.p, g.y, mk ? g.m : null);
+          const c = _c(w.a, w.b);
+          if (c != null) ics.push(c);
+        }
+        if (all == null) return { ic: 0, blockIC: null, icir: null, t: null, K: 0 };
+      } else {
+        const kWant = Math.max(2, Math.floor(K || 5));
+        const k = Math.max(kWant, Math.min(12, Math.floor(n / 200)));
+        const bs = Math.floor(n / k);
+        if (bs < 20 || all == null) return { ic: all == null ? 0 : all, blockIC: null, icir: null, t: null, K: 0 };
+        for (let i = 0; i < k; i++) {
+          const w = _dm(pv.slice(i * bs, (i + 1) * bs), yv.slice(i * bs, (i + 1) * bs),
+                        mk ? mk.slice(i * bs, (i + 1) * bs) : null);
+          const c = _c(w.a, w.b);
+          if (c != null) ics.push(c);
+        }
       }
-      if (all == null) return { ic: 0, blockIC: null, icir: null, t: null, K: 0 };
-    } else {
-      const kWant = Math.max(2, Math.floor(K || 5));
-      const k = Math.max(kWant, Math.min(12, Math.floor(n / 200)));
-      const bs = Math.floor(n / k);
-      if (bs < 20 || all == null) return { ic: all == null ? 0 : all, blockIC: null, icir: null, t: null, K: 0 };
-      for (let i = 0; i < k; i++) {
-        const c = _c(pv.slice(i * bs, (i + 1) * bs), yv.slice(i * bs, (i + 1) * bs));
-        if (c != null) ics.push(c);
-      }
+      if (ics.length < 2) return { ic: all, blockIC: null, icir: null, t: null, K: 0 };
+      let m = 0; for (const v of ics) m += v; m /= ics.length;
+      let s2 = 0; for (const v of ics) s2 += (v - m) * (v - m);
+      const sd = Math.sqrt(s2 / Math.max(1, ics.length - 1));
+      const icir = sd > 1e-9 ? m / sd : (m > 0 ? 9 : 0);
+      const tRaw = icir * Math.sqrt(ics.length);
+      // [V33.113] 게이트가 쓰는 값은 ★자유도 보정된 z★ 다. t 를 그대로 정규 문턱과 비교하면
+      //   df=4 에서 오탐률이 의도의 5배가 된다(실측 23.8% vs 5%).
+      const z = _tToZ(tRaw, Math.max(1, ics.length - 1));
+      return { ic: all, blockIC: m, icir: icir, t: z, tRaw: +tRaw.toFixed(3), df: ics.length - 1, K: ics.length };
+    };
+    const _mk = (Array.isArray(mkeys) && mkeys.length >= n) ? mkeys : null;
+    const out = _run(_mk);
+    if (_mk) {
+      // 섞어 재면 얼마였는지도 남긴다 — 바뀐 폭이 안 보이면 이 변경을 검증할 수가 없다.
+      const raw = _run(null);
+      out.icPooled = raw.ic; out.blockICPooled = raw.blockIC; out.tPooled = raw.t;
+      out.mktFixed = true;
     }
-    if (ics.length < 2) return { ic: all, blockIC: null, icir: null, t: null, K: 0 };
-    let m = 0; for (const v of ics) m += v; m /= ics.length;
-    let s2 = 0; for (const v of ics) s2 += (v - m) * (v - m);
-    const sd = Math.sqrt(s2 / Math.max(1, ics.length - 1));
-    const icir = sd > 1e-9 ? m / sd : (m > 0 ? 9 : 0);
-    const tRaw = icir * Math.sqrt(ics.length);
-    // [V33.113] 게이트가 쓰는 값은 ★자유도 보정된 z★ 다. t 를 그대로 정규 문턱과 비교하면
-    //   df=4 에서 오탐률이 의도의 5배가 된다(실측 23.8% vs 5%).
-    const z = _tToZ(tRaw, Math.max(1, ics.length - 1));
-    return { ic: all, blockIC: m, icir: icir, t: z, tRaw: +tRaw.toFixed(3), df: ics.length - 1, K: ics.length };
+    return out;
   } catch (e) { return { ic: 0, blockIC: null, icir: null, t: null, K: 0 }; }
+}
+/* [V33.291] 피처벡터에서 시장을 읽는다 — 표를 다시 안 읽어도 된다.
+   시장 원핫(mktUS/mktKR/mktCM)은 LUXML 75피처 안에 있으므로, ml_samples 로 학습·채점하는
+   모든 자리에서 이 한 줄이면 시장 고정효과를 뺄 수 있다. 이름표 위치는 한 번만 찾아 둔다
+   (featNames 는 모듈 상수라 실행 중 안 바뀐다). 못 찾으면 "" 를 돌려주고, 그러면
+   _icBlockStats 는 그 표본을 한 그룹으로 묶는다 — 즉 ★종전과 같은 값★ 이 나온다. */
+let _MKT_IDX_CACHE = null;
+function _mktOfVec(v) {
+  try {
+    if (!Array.isArray(v)) return "";
+    if (!_MKT_IDX_CACHE) {
+      const fn = LUXML.featNames;
+      _MKT_IDX_CACHE = ["mktUS", "mktKR", "mktCM"].map(function (nm) { return fn.indexOf(nm); });
+    }
+    const I = _MKT_IDX_CACHE, NM = ["us", "kr", "cm"];
+    for (let m = 0; m < 3; m++) { const j = I[m]; if (j >= 0 && j < v.length && _num(v[j], 0) > 0.5) return NM[m]; }
+    return "";
+  } catch (e) { return ""; }
 }
 // ════════════════════════════════════════════════════════════════════════════
 // [V33.93] ★전진검증 — V33.91 이 세운 t 게이트의 논리 비약을 메운다★
@@ -31608,7 +31716,9 @@ async function icForwardCheck(DB, opts) {
     //   순간 안 센 행이 영구히 버려진다(ts 순서와 id 순서는 일치하지 않는다).
     const _selAt = o.hasInsTs ? "COALESCE(ins_ts, ts) AS ats" : "ts AS ats";
     const _st0 = DB.prepare(
-      "SELECT id, ts, " + _selAt + ", feat, label, pnl_pct FROM " + o.table +
+      // [V33.291] market 도 읽는다 — 전진 IC 에서도 시장 고정효과를 뺀다(_icBlockStats 주석).
+      //   홀드아웃만 고치고 전진을 그냥 두면 두 자가 달라져 비교가 성립하지 않는다.
+      "SELECT id, ts, market, " + _selAt + ", feat, label, pnl_pct FROM " + o.table +
       " WHERE featver = ? AND " + _where + " ORDER BY " + _order + " LIMIT 4000"
     );
     const rs = await (_tsGuard > 0
@@ -31632,7 +31742,7 @@ async function icForwardCheck(DB, opts) {
     // 이번 배치(= 아직 세지 않은 행)의 IC 를 잰다.
     let _batchN = 0;
     if (rows.length >= FWDLED.minBatch) {
-      const pv = [], yv = [];
+      const pv = [], yv = [], mv = [];
       for (const r of rows) {
         let v; try { v = JSON.parse(r.feat); } catch (e) { continue; }
         if (!Array.isArray(v)) continue;
@@ -31640,10 +31750,11 @@ async function icForwardCheck(DB, opts) {
         if (p == null || !isFinite(p)) continue;
         const y = (typeof o.labelFn === "function") ? o.labelFn(r, v) : (r.label ? 1 : 0);   // [V33.251] 전진검증도 같은 인자
         if (y == null) continue;
-        pv.push(p); yv.push(y);
+        pv.push(p); yv.push(y); mv.push(r.market == null ? "" : String(r.market));
       }
       if (pv.length >= FWDLED.minBatch) {
-        const _bst = _icBlockStats(pv, yv, 2);
+        let _mkAny = 0; { const _u = {}; for (const m of mv) if (m) _u[m] = 1; _mkAny = Object.keys(_u).length; }
+        const _bst = _icBlockStats(pv, yv, 2, null, _mkAny > 1 ? mv : null);
         const _bic = _num(_bst.ic, null);
         if (_bic != null && isFinite(_bic)) {
           _batchN = pv.length;
@@ -34817,7 +34928,8 @@ async function mlMindTrainNightly(DB) {
         if (ens && _ensLF) { let ac = 0; for (const m of _ensLF.members) ac += _brainRawP(m, t.z); const pv = _clamp(ac / _ensLF.members.length, 1e-6, 1 - 1e-6); e.push(_logit(_clamp(_sigmoid(_logit(pv) / _ensLF.T), 1e-4, 1 - 1e-4))); }
         return e;
       };
-      const _lfRows = val.map(function (t) { return { e: _lfLogit(t), y: t.y }; });
+      // [V33.291] 시장도 같이 들고 다닌다 — 아래 IC 에서 시장 고정효과를 빼기 위해서다.
+      const _lfRows = val.map(function (t) { return { e: _lfLogit(t), y: t.y, m: _mktOfVec(t.x) }; });
       const _lfCut = Math.max(10, Math.floor(_lfRows.length * 0.6));
       const _lfMeta = _metaTrain(_lfRows.slice(0, _lfCut));
       let _lfEval = _lfRows.slice(_lfCut);
@@ -34849,9 +34961,9 @@ async function mlMindTrainNightly(DB) {
       //   ★측정된 IC 0.05 짜리 전문가의 20배★ 발언권이 근거 없이 위원장에게 갔다.
       //   여기 _lfEval 은 누수 제거된 정직 홀드아웃이라 그대로 재면 된다 — 추측할 이유가 없었다.
       try {
-        const _pv = [], _yv = [];
-        for (const r of _lfEval) { _pv.push(_metaPredict(_lfMeta, r.e)); _yv.push(r.y); }
-        const _s = _icBlockStats(_pv, _yv, 5);
+        const _pv = [], _yv = [], _mvv = [];
+        for (const r of _lfEval) { _pv.push(_metaPredict(_lfMeta, r.e)); _yv.push(r.y); _mvv.push(r.m || ""); }
+        const _s = _icBlockStats(_pv, _yv, 5, null, _mvv);
         mindIC = _num(_s.ic, null);
         mindICBlock = _s.blockIC != null ? +_s.blockIC.toFixed(5) : null;
         mindICt = _s.t != null ? +_s.t.toFixed(3) : null;
@@ -34899,9 +35011,9 @@ async function mlMindTrainNightly(DB) {
         ruleAccLB = +_wilsonLB(rc / hold.length, ruleN).toFixed(4);
         // [V33.93] 규칙엔진 전문가도 IC 를 측정한다(같은 홀드아웃, 같은 잣대).
         try {
-          const _rp = [], _ry = [];
-          for (const t2 of hold) { _rp.push(_clamp(_sigmoid(_logit(_clamp(_num(t2.x[_tiR], 0.5), 0.01, 0.99)) - _logit(ruleTau)), 0.001, 0.999)); _ry.push(t2.y); }
-          const _rs = _icBlockStats(_rp, _ry, 5);
+          const _rp = [], _ry = [], _rm = [];
+          for (const t2 of hold) { _rp.push(_clamp(_sigmoid(_logit(_clamp(_num(t2.x[_tiR], 0.5), 0.01, 0.99)) - _logit(ruleTau)), 0.001, 0.999)); _ry.push(t2.y); _rm.push(_mktOfVec(t2.x)); }
+          const _rs = _icBlockStats(_rp, _ry, 5, null, _rm);   // [V33.291] 시장 고정효과 제거
           ruleIC = _num(_rs.ic, null);
           ruleICBlock = _rs.blockIC != null ? +_rs.blockIC.toFixed(5) : null;
           ruleICt = _rs.t != null ? +_rs.t.toFixed(3) : null;
@@ -35790,13 +35902,13 @@ async function mindShadowPromoteNightly(DB) {
     const rows = (rs && rs.results) || [];
     if (rows.length < ICGATE.minForward)
       return "[MIND-SHADOW] 전진표본 " + rows.length + "/" + ICGATE.minForward + " — 대기";
-    const pv = [], yv = [];
+    const pv = [], yv = [], mvv = [];   // [V33.291] mvv = 행별 시장(고정효과 제거용)
     for (const r of rows) {
       let v; try { v = JSON.parse(r.feat); } catch (e) { continue; }
       if (!Array.isArray(v) || v.length !== LUXML.featNames.length) continue;
       const sc = await mlMindScore(DB, sh, v, null);
       if (!sc || typeof sc.p !== "number") continue;
-      pv.push(sc.p); yv.push(_labelOfRow(r));
+      pv.push(sc.p); yv.push(_labelOfRow(r)); mvv.push(_mktOfVec(v));   // [V33.291]
     }
     if (pv.length < ICGATE.minForward)
       return "[MIND-SHADOW] 유효 전진표본 " + pv.length + "/" + ICGATE.minForward + " — 대기";
@@ -35807,7 +35919,7 @@ async function mindShadowPromoteNightly(DB) {
     const _uBar = await mlPoolUniqGet(DB);
     const _nEff = _effN(pv.length, _uBar);
     const accLB = _wilsonLB(acc, _nEff);
-    const st = _icBlockStats(pv, yv, 5);
+    const st = _icBlockStats(pv, yv, 5, null, mvv);   // [V33.291] 시장 고정효과 제거
     const _shTMin = icTMinNow(await getState(DB, "ic_family", null));
     const icOK = (st.blockIC != null && st.t != null) && st.blockIC >= 0.012 && st.t >= _shTMin;
     const accOK = accLB >= MIND.trustFloor;
@@ -37081,18 +37193,20 @@ async function expertRegimeFitNightly(DB) {
     const memo = await getState(DB, "memo_model", null);
     if (!mind && !dnn && !gbdt && !memo) return "[EXPREG] 채점 가능한 전문가 없음";
     // 버킷별 (p, y) 수집
-    const acc = {};   // name → bucket → { p:[], y:[] }
+    const acc = {};   // name → bucket → { p:[], y:[], m:[] }
+    let _curMkt = "";   // [V33.291] 지금 행의 시장 — put 이 셀마다 같이 쌓는다
     const put = function (nm, bk, p, y) {
       if (p == null || !isFinite(p)) return;
       (acc[nm] = acc[nm] || {});
-      (acc[nm][bk] = acc[nm][bk] || { p: [], y: [] });
-      acc[nm][bk].p.push(p); acc[nm][bk].y.push(y);
+      (acc[nm][bk] = acc[nm][bk] || { p: [], y: [], m: [] });
+      acc[nm][bk].p.push(p); acc[nm][bk].y.push(y); acc[nm][bk].m.push(_curMkt);
     };
     for (const r of rows) {
       let v; try { v = JSON.parse(r.feat); } catch (e) { continue; }
       if (!Array.isArray(v) || v.length !== LUXML.featNames.length) continue;
       const bk = _expRegBucket(v); if (!bk) continue;
       const y = _labelOfRow(r); if (y == null) continue;
+      _curMkt = _mktOfVec(v);   // [V33.291] 아래 put 들이 이 값을 함께 쌓는다
       try { if (mind) { const sc = await mlMindScore(DB, mind, v, ens); if (sc && typeof sc.p === "number") put("mind", bk, sc.p, y); } } catch (e) {}
       try { if (dnn) put("dnn", bk, mlDNNScore(dnn, v), y); } catch (e) {}
       try { if (gbdt) put("gbdt", bk, mlGBDTScore(gbdt, v), y); } catch (e) {}
@@ -37104,7 +37218,7 @@ async function expertRegimeFitNightly(DB) {
       for (const bk of Object.keys(acc[nm])) {
         const c = acc[nm][bk]; nCells++;
         if (c.p.length < EXPREG.minBucketN) { tbl[nm][bk] = { n: c.p.length, ic: null, t: null }; continue; }
-        const st = _icBlockStats(c.p, c.y, 5);
+        const st = _icBlockStats(c.p, c.y, 5, null, c.m || null);   // [V33.291] 시장 고정효과 제거
         tbl[nm][bk] = { n: c.p.length,
                         ic: st.blockIC != null ? +st.blockIC.toFixed(5) : (st.ic != null ? +st.ic.toFixed(5) : null),
                         t: st.t != null ? +st.t.toFixed(3) : null };

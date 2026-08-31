@@ -128,7 +128,8 @@ const mkUni = (n, bars) => {
 {
   chk(/dayBlocks: true/.test(src), "XALPHA 학습이 일별 블록으로 유의성을 잰다",
     "XALPHA 가 연속 슬라이스로 유의성을 잰다 — 횡단면 알파에 맞지 않는 검정이다");
-  chk(/function _icBlockStats\(pv, yv, K, keys\)/.test(src) && /Array\.isArray\(keys\)/.test(src),
+  /* [V33.291] 인자에 mkeys 가 붙었다(시장 고정효과). 계약은 "keys 를 주면 그 키로 나눈다" 다. */
+  chk(/function _icBlockStats\(pv, yv, K, keys/.test(src) && /Array\.isArray\(keys\)/.test(src),
     "_icBlockStats 가 keys 를 받으면 그 키로 블록을 나눈다(기본 동작은 그대로)",
     "_icBlockStats 에 키 블록 경로가 없다");
   // ★귀무에서 더 엄격한가★ — 느슨해지는 변경이면 게이트를 푸는 것과 같다.

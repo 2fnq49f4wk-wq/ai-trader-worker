@@ -92,7 +92,9 @@ console.log("\n③ IC 길이 정확도 길보다 무르지 않은가 — 돌려�
 
 console.log("\n④ 트레이너가 IC 를 실제로 재서 올리는가");
 {
-  chk(/_icf = _ic_block_fields\(_p_ic, _y_ic\)/.test(pyCode),
+  /* [V33.291] 인자에 mkt 가 붙었다(시장 고정효과 제거). 계약은 "fit_arch 가 블록 IC 를 낸다"
+     이므로 인자 목록까지 못 박지 않는다 — 못 박으면 고칠 때마다 계약이 아니라 숫자가 깨진다. */
+  chk(/_icf = _ic_block_fields\(_p_ic, _y_ic/.test(pyCode),
     "fit_arch 가 블록 IC 를 낸다(이미 있던 도구 — DNN 만 안 쓰고 있었다)", "DNN 이 블록 IC 를 계산하지 않는다");
   chk(/_p_ic, _y_ic = p_t, ys_t/.test(pyCode) && /_p_ic, _y_ic = ps, ys/.test(pyCode),
     "IC 를 ★정확도를 잰 그 구간★ 으로 잰다(두 분기 모두)",

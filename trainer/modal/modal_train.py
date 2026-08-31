@@ -106,6 +106,7 @@ def train_job(epochs: int = EPOCHS_DEFAULT, dry: bool = False,
 
     print("① 표본 수집")
     samples, cfg, featver, featnames = fetch_all()
+    _set_mkt_cols(featnames)   # [V33.291] 시장 원핫 열 위치 — IC 에서 시장 고정효과를 빼는 데 쓴다
     if not samples:
         print("표본 0 — 종료"); return {"ok": False, "reason": "no samples"}
 
@@ -344,6 +345,8 @@ def train_job(epochs: int = EPOCHS_DEFAULT, dry: bool = False,
             base = Yva.mean().item()
             majority = max(base, 1 - base)
             ys = Yva.cpu().numpy(); ps = pva.cpu().numpy()
+            # [V33.291] 검증 행의 시장 — ★정규화 전 X★ 에서 읽는다(Xn 은 표준화돼 원핫이 0/1 이 아니다).
+            _mk_va = _mkt_of_X(X[va])
             order = np.argsort(ps); ranks = np.empty_like(order, dtype=np.float64); ranks[order] = np.arange(1, len(ps) + 1)
             npos = ys.sum(); nneg = len(ys) - npos
             auc = float((ranks[ys > 0.5].sum() - npos * (npos + 1) / 2) / (npos * nneg)) if npos > 0 and nneg > 0 else 0.5
@@ -374,10 +377,12 @@ def train_job(epochs: int = EPOCHS_DEFAULT, dry: bool = False,
             acc = float(((p_t >= 0.5) == (ys_t > 0.5)).mean())
             n_eval = len(p_t)
             _p_ic, _y_ic = p_t, ys_t          # [V33.262] IC 도 ★같은 정직한 구간★ 으로 잰다
+            _m_ic = _mk_va[half:] if _mk_va is not None else None   # [V33.291] 같은 구간의 시장
             print(f"   캘리브레이션: τ*={tau:.3f} (logit 시프트 {delta:+.3f}) — 검증 전반 {half}건으로 선택, 후반 {n_eval}건으로 평가")
         else:
             acc = float(((ps >= 0.5) == (ys > 0.5)).mean()); n_eval = len(ps)
             _p_ic, _y_ic = ps, ys
+            _m_ic = _mk_va   # [V33.291]
         # [V33.115] ★Wilson 하한을 유효표본수로 잰다★
         #   n_eval 은 ★명목★ 이다. 10일 지평 라벨은 같은 종목에서 겹치므로 독립 관측이 아니고,
         #   명목 n 으로 재면 하한이 실제보다 좁게(=낙관적으로) 나온다. 겹침의 역수를 합한
@@ -415,7 +420,7 @@ def train_job(epochs: int = EPOCHS_DEFAULT, dry: bool = False,
         #   순위를 맞히는 힘이 있어도 정확도가 동전 근처면 탈락한다 — 부스터였다면 통과했을 모델이.
         #   ★정확도를 잰 그 구간으로 IC 도 잰다.★ τ* 선택에 쓴 앞 절반에서 재면 그만큼
         #   낙관적으로 나온다 — 자를 하나 더 들이면서 그 자를 휘게 만들 이유가 없다.
-        _icf = _ic_block_fields(_p_ic, _y_ic)
+        _icf = _ic_block_fields(_p_ic, _y_ic, mkt=_m_ic)   # [V33.291] 시장 고정효과 제거
         out = {"nets": nets, "acc": acc, "lb": lb, "n_eval": n_eval, "dims": list(dims),
                "auc": auc, "base": base, "majority": majority,
                "params": int(sum(dims[i] * dims[i+1] + dims[i+1] for i in range(len(dims)-1)))}
@@ -1196,16 +1201,77 @@ def _neff_of(w):
         return 8
 
 
-def _calc_ic_blocks(pred, y, K=5):
+# ── [V33.291] ★시장을 섞어 재면 시장 안 실력이 0 이어도 IC 가 나온다★ ─────────────
+#   워커 _icBlockStats 주석과 같은 사고다. 몬테카를로(N=20,000, 시장 안 실력 정확히 0):
+#       기저 US 0.55 / KR 0.45 → 섞어 잰 블록IC 0.0953 · t 13.27  ← 게이트를 그냥 통과한다
+#       시장 평균을 빼면            블록IC 0.0058 · t  1.69
+#   ★여기(파이썬)도 같이 고쳐야 한다.★ 워커만 고치면 외부 학습 모델(DNN·GBDT·부스터·단타)만
+#   부풀린 자로 재는 ★비대칭★ 이 생긴다 — 이 저장소가 _importedICz 로 이미 한 번 막은 사고다.
+#   시장은 피처행렬의 원핫에서 읽는다(워커 _mktOfVec 과 같은 규칙) — 별도 배관이 필요 없다.
+_MKT_COLS = None
+
+def _set_mkt_cols(featnames):
+    """main 이 featNames 를 받은 직후 한 번 부른다."""
+    global _MKT_COLS
+    try:
+        fn = list(featnames)
+        _MKT_COLS = [(fn.index(n) if n in fn else -1) for n in ("mktUS", "mktKR", "mktCM")]
+    except Exception:
+        _MKT_COLS = None
+
+def _mkt_of_X(Xva):
+    """피처행렬 → 행별 시장 문자열. 못 읽으면 None(= 종전과 같은 계산)."""
+    import numpy as np
+    try:
+        if _MKT_COLS is None: return None
+        A = np.asarray(Xva, dtype=np.float64)
+        if A.ndim != 2: return None
+        if any((c < 0 or c >= A.shape[1]) for c in _MKT_COLS): return None
+        out = np.full(A.shape[0], "", dtype=object)
+        for nm, c in zip(("us", "kr", "cm"), _MKT_COLS):
+            sel = (A[:, c] > 0.5) & (out == "")
+            out[sel] = nm
+        return out
+    except Exception:
+        return None
+
+def _demean_by(a, b, mk):
+    """시장별 평균을 빼고 이어 붙인다(고정효과 within 추정량). 4건 미만 그룹은 버린다."""
+    import numpy as np
+    if mk is None: return a, b
+    A, B = [], []
+    for g in set(mk.tolist()):
+        sel = (mk == g)
+        if int(sel.sum()) < 4: continue
+        aa = a[sel]; bb = b[sel]
+        A.append(aa - aa.mean()); B.append(bb - bb.mean())
+    if not A: return a[:0], b[:0]
+    return np.concatenate(A), np.concatenate(B)
+
+
+def _calc_ic_blocks(pred, y, K=5, mkt=None):
     import numpy as np
     try:
         p = np.asarray(pred, dtype=np.float64); t = np.asarray(y, dtype=np.float64)
         n = min(len(p), len(t))
-        bs = n // max(2, int(K))
+        # [V33.291] ★블록 수 규칙을 워커와 맞춘다.★ 워커 _icBlockStats 는 V33.113 부터
+        #   "표본이 많으면 블록을 더 쪼갠다"(k = max(K, min(12, n//200)))인데 여기만 K 고정 5 였다.
+        #   같은 표본·같은 예측인데 두 언어가 다른 값을 냈다(실측 차 3.1e-4, df 4 vs 11).
+        #   외부 모델과 내부 모델이 다른 자로 심사받는 것이라 그 자체가 비대칭이다.
+        K = max(2, int(K))
+        K = max(K, min(12, n // 200))
+        bs = n // K
         if bs < 20: return None, None, None, 0
+        mk = None
+        if mkt is not None:
+            mk = np.asarray(mkt, dtype=object)
+            if len(mk) < n: mk = None
         ics = []
         for k in range(int(K)):
             a = p[k * bs:(k + 1) * bs]; b = t[k * bs:(k + 1) * bs]
+            if mk is not None:
+                a, b = _demean_by(a, b, mk[k * bs:(k + 1) * bs])
+            if len(a) < 8: continue
             if a.std() < 1e-12 or b.std() < 1e-12: continue
             c = float(np.corrcoef(a, b)[0, 1])
             if np.isfinite(c): ics.append(c)
@@ -1218,12 +1284,21 @@ def _calc_ic_blocks(pred, y, K=5):
         return None, None, None, 0
 
 
-def _ic_block_fields(pred, y, K=5):
-    """모델 dict 에 그대로 합칠 블록 IC 필드."""
-    bic, icir, tv, k = _calc_ic_blocks(pred, y, K)
+def _ic_block_fields(pred, y, K=5, mkt=None):
+    """모델 dict 에 그대로 합칠 블록 IC 필드.
+       [V33.291] mkt 를 주면 게이트가 보는 값은 ★시장 고정효과를 뺀★ 값이 되고,
+       섞어 잰 값은 valICBlockPooled/valICtPooled 로 따로 남는다(바뀐 폭을 봐야 한다)."""
+    bic, icir, tv, k = _calc_ic_blocks(pred, y, K, mkt)
     if bic is None: return {}
-    return {"valICBlock": round(bic, 5), "valICIR": round(icir, 3),
-            "valICt": round(tv, 3), "valICK": int(k)}
+    out = {"valICBlock": round(bic, 5), "valICIR": round(icir, 3),
+           "valICt": round(tv, 3), "valICK": int(k)}
+    if mkt is not None:
+        pb, _pi, pt, _pk = _calc_ic_blocks(pred, y, K, None)
+        if pb is not None:
+            out["valICBlockPooled"] = round(pb, 5)
+            out["valICtPooled"] = round(pt, 3)
+            out["mktFixed"] = True
+    return out
 
 
 # ============================================================================
@@ -1607,7 +1682,7 @@ def _train_and_upload_boosters(BASE, KEY, HDR, X, Y, TS, featver, D, PNL=None, U
         model = {"trees": trees, "eta": 1.0, "bias": bias, "valAcc": round(vacc, 4),
                  "valAccLB": round(vlb, 4), "valN": int(nval), "n": int(N), "featVer": featver, "probe": probe,
                  "valIC": round(_ic, 5), "valRankIC": round(_ric, 5)}
-        model.update(_ic_block_fields(proba_lib, Yva))
+        model.update(_ic_block_fields(proba_lib, Yva, mkt=_mkt_of_X(Xva)))   # [V33.291]
         model.update(_uniq_fields(UWva))
         if vaccW is not None: model["valAccW"] = round(vaccW, 4)
         print(f"{name}: trees={len(trees)} valAcc={vacc:.3f} lb={vlb:.3f}(유효 {_neff}/{nval}) IC={_ic:.4f} RankIC={_ric:.4f}"
@@ -2094,7 +2169,7 @@ def _train_and_upload_scalp(BASE, KEY, HDR, featver):
              "valAcc": round(acc, 4), "valAccLB": round(lb, 4), "valN": int(n), "n": int(N),
              "posRate": round(pos_rate, 4), "horizonBars": 12, "probe": probe,
              "valIC": round(_sic, 5), "valRankIC": round(_sric, 5)}
-    model.update(_ic_block_fields(proba, Yva))
+    model.update(_ic_block_fields(proba, Yva, mkt=_mkt_of_X(Xva)))   # [V33.291]
     model.update(_uniq_fields(UWva))
     if "valICt" in model:
         print(f"   blockIC {model['valICBlock']:.4f} t {model['valICt']:.2f} (유의성 게이트용)")
