@@ -8,7 +8,7 @@
      인데, 지금까지 화면에서 그걸 알 방법이 전혀 없었다(카카오톡 인앱 브라우저는 특히 강하게 캐시한다).
      서버가 내려주는 build 와 이 값을 비교해 다르면 배너로 알린다.
      ※ src/index.js 의 _BUILD_VER 와 항상 같아야 한다 — check-html-js 가 강제한다. -->
-<meta name="lux-build" content="V33.289">
+<meta name="lux-build" content="V33.290">
 <title>LUX-ENGINE V10</title>
 <!-- ══ [V33.156] 설치형 앱(PWA) — 폰·PC 에서 홈화면/독에 담아 앱처럼 연다 ══
      · manifest  : 이름·아이콘·standalone 표시(주소창 없이 앱처럼)
@@ -14992,7 +14992,9 @@ html[data-theme="light"] #page-nnviz .nlv-sec-h{ border-color:transparent; color
      단계 5개가 한 자리로 겹쳐 아무것도 안 읽힌다 — 돌려보다 그 각도에 닿으면 화면이
      고장난 것처럼 보인다. ±60° 로 묶고, 자동회전은 그 안에서 왕복시킨다. */
   var SQ3 = { yaw: -0.62, pitch: 0.30, spin: true, head: -1, row: -1, drag: null, raf: 0, data: null,
-              dir: 1, YAW_MAX: 0.85, PITCH_MIN: 0.12, PITCH_MAX: 0.80,
+              /* [V33.290] YAW_MIN = 자동회전이 내려가지 않는 하한. 그 아래는 단계가 겹친다
+                 (측정: 0.30 에서 간격/카드폭 = 1.04). 손 조작에는 안 건다. */
+              dir: 1, YAW_MAX: 0.85, YAW_MIN: 0.34, PITCH_MIN: 0.12, PITCH_MAX: 0.80,
               pick: null,      // {kind:'feat', i} | {kind:'node', stage, t, j} | {kind:'step', t}
               cells: false,    // 노드를 낱개로 그린다(느려서 기본은 묶음)
               allFeat: false,
@@ -15071,7 +15073,20 @@ html[data-theme="light"] #page-nnviz .nlv-sec-h{ border-color:transparent; color
          시점 한 장 화면 폭 ≈ 38.8 (★4.3배★) · 깊이엔 5장뿐이라 안 겹친다.
        두 번의 튜닝(V33.276 조작 · V33.278 단서)으로 안 되던 이유가 이것이다 —
        튜닝 문제가 아니라 ★배치가 기하학적으로 불가능★ 했다. */
-    var zSpan = 220, z0 = -zSpan/2;
+    /* ══ [V33.290] ★단계가 서로 겹쳐 있었다 — 깊이 축이 너무 짧았다★ ══════════════
+       V33.284 가 축을 맞바꾼 것은 맞았는데, 깊이(zSpan 220)를 그대로 뒀다. 재보면 이렇다
+       (같은 시점의 이웃 단계 사이 화면 간격 ÷ 카드 화면 폭, 1 미만이면 겹친다):
+           yaw 0.00 → 0.03   0.20 → 0.29   0.30 → 0.45   0.50 → 0.83   0.62 → ★1.10★
+       즉 ★|yaw| < 0.62 에서는 다섯 단계가 서로 위에 포개진다.★ 기본각이 0.62 라
+       간신히 붙어 있었고, 자동회전은 −0.85 ↔ +0.85 를 훑으며 ★0 을 지나간다★ —
+       그때는 다섯 단계가 완전히 한 장으로 겹쳐, 앞의 것 하나만 보인다.
+       두 번의 시도(V33.276·V33.278)가 안 먹힌 이유와 같은 종류다: 튜닝이 아니라 ★기하★ 다.
+       깊이를 220 → 460 으로 넓히고 카드 폭을 xPitch 의 0.40 → 0.32 로 좁힌다:
+           yaw 0.30 → 1.04   0.62 → ★2.55★   0.85 → 4.27  (0.30 부터 안 겹친다)
+       대가도 적는다 — 장면이 깊어져 맞춤배율이 줄고, 기본각에서 카드 폭이
+       31.1px → 20.1px 가 된다. 단계 간격은 39.8px → 70.4px 로 넓어진다.
+       ★겹쳐서 안 보이는 것보다 좁아도 갈라져 보이는 편이 낫다.★ */
+    var zSpan = 460, z0 = -zSpan/2;
     for(var i=0;i<st.length;i++) st[i].z = z0 + zSpan*(i/(st.length-1));
     return st;
   }
@@ -15433,9 +15448,16 @@ html[data-theme="light"] #page-nnviz .nlv-sec-h{ border-color:transparent; color
     var step=function(){
       var pg=document.getElementById('page-nnviz');
       if(!SQ3.spin || !document.getElementById('sq3Svg') || !pg || !pg.classList.contains('active')){ SQ3.raf=0; return; }
+      /* [V33.290] ★자동회전이 0 을 지나가지 않게 한다.★ yaw 0 은 깊이 축이 화면 X 에
+         전혀 안 실리는 각도라(x' = x·cos+z·sin, sin0=0) 다섯 단계가 정확히 포개진다.
+         종전 −0.85↔+0.85 왕복은 매 주기 그 자리를 지나갔다 — 보고 있으면 그림이 주기적으로
+         한 덩어리로 뭉쳤다. 지금 보고 있는 쪽에서만 왕복한다(손으로는 여전히 어디든 갈 수 있다 —
+         정면에서 보고 싶은 사람을 막을 이유는 없다). */
+      var _sg = SQ3.yaw < 0 ? -1 : 1;
       SQ3.yaw += 0.0035*SQ3.dir;
-      if(SQ3.yaw >= SQ3.YAW_MAX){ SQ3.yaw = SQ3.YAW_MAX; SQ3.dir = -1; }
-      else if(SQ3.yaw <= -SQ3.YAW_MAX){ SQ3.yaw = -SQ3.YAW_MAX; SQ3.dir = 1; }
+      var _ay = Math.abs(SQ3.yaw);
+      if(_ay >= SQ3.YAW_MAX){ SQ3.yaw = _sg*SQ3.YAW_MAX; SQ3.dir = -_sg; }
+      else if(_ay <= SQ3.YAW_MIN){ SQ3.yaw = _sg*SQ3.YAW_MIN; SQ3.dir = _sg; }
       sq3Draw(); SQ3.raf=requestAnimationFrame(step);
     };
     SQ3.raf=requestAnimationFrame(step);
@@ -15458,7 +15480,7 @@ html[data-theme="light"] #page-nnviz .nlv-sec-h{ border-color:transparent; color
        펼침은 그 간격을 조절한다(겹침 걱정이 없어졌으므로 순수하게 '더 크게 보기' 다). */
     var xPitch = (620/Math.max(1,L)) * sq3Clamp(isFinite(SQ3.spread)?SQ3.spread:1, SQ3.SPREAD_MIN, SQ3.SPREAD_MAX);
     var xOf=function(t){ return (t-(L-1)/2)*xPitch; };
-    var cardH=52, cardW=Math.max(6, xPitch*0.40);
+    var cardH=52, cardW=Math.max(6, xPitch*0.32);   // [V33.290] 0.40 → 0.32 (위 zSpan 주석)
     /* ★자동 맞춤★ — 회전하면 투영 크기가 변한다. 고정 배율이면 어떤 각도에서는 화면 밖으로
        나가고 어떤 각도에서는 위쪽에 쪼그라든다(처음 그렸을 때 실제로 그랬다).
        장면의 바운딩박스 8꼭짓점을 먼저 투영해 배율·중심을 정한다 — 두 번 그리지 않는다. */
@@ -15563,25 +15585,89 @@ html[data-theme="light"] #page-nnviz .nlv-sec-h{ border-color:transparent; color
       if(S.key==='in'){
         /* 입력은 시점마다 같은 ★모양★ 이라 한 장만 세우고, 피처 강도를 눈금으로 그린다.
            강도는 |Win 의 그 피처 열| — 안 쓰는 피처는 낮다. 학습 전에는 안 그린다. */
-        var qx0=xOf(0)-cardW, qx1=xOf(L-1)+cardW, qz=S.z;
-        var quad=sq3Quad([{x:qx0,y:-cardH/2,z:qz},{x:qx1,y:-cardH/2,z:qz},
-                          {x:qx1,y:cardH/2,z:qz},{x:qx0,y:cardH/2,z:qz}],C);
-        push(quad.z,'<path d="'+quad.d+'" fill="rgba(20,34,60,.72)" stroke="#2a4270" stroke-width="1"/>');
-        /* ★피처를 낱개로 그린다.★ 묶어 놓으면 "무엇이 세게 들어가는가" 를 물어볼 수가 없다 —
-           75줄 각각이 자기 이름을 달고, 눌러서 값을 볼 수 있어야 관측이다. */
+        /* ══ [V33.290] ★입력만 시점 축을 안 쓰고 있었다★ ═══════════════════════════
+           종전 입력 단계는 시점 전체를 가로지르는 ★슬래브 한 장★ 이었고, 그 위에 그린 값은
+           |Win 의 그 피처 열| — ★시점과 무관한 가중치 성질★ 이다. 그런데 이 그림에서 가로축은
+           '시점(과거→지금)' 이라고 바닥 눈금과 안내문이 말한다. 즉 ★시간이 뜻인 축 위에
+           시간에 따라 변하지 않는 양을 발라 놓고 있었다.★ 축이 뜻하는 것과 그 위에 그린 것이
+           다른 것 — MEMO 가 시장 원핫에서 당한 것과 같은 종류의 오류다.
+           고침: 표본이 있으면(vizSeq) 다른 단계와 똑같이 ★시점마다 카드를 세우고★, 그 카드에
+           ★그 봉이 실제로 넣은 값★ 을 그린다(부호는 색으로 — 밀어 올린 축과 눌러 내린 축은
+           같은 것이 아니다). 표본이 없으면(학습 전·probe 없음) 종전 슬래브로 물러선다 —
+           그때는 시점별로 보여 줄 값이 정말로 없기 때문이다.
+           그리고 ★75줄을 52 높이에 다 넣으면 한 줄이 0.7px★ 라 읽지도 누르지도 못했다.
+           중요도 상위 24개만 그리고, '피처 N개' 를 켜면 전부 그린다(그건 사용자가 고른 것이다). */
         var IF=(trained&&d.inputFeatures)?d.inputFeatures:null;
-        var NB=IF?IF.length:24, th=(cardH-4)/NB;
-        for(var bi=0;bi<NB;bi++){
-          var v=IF?(IF[bi].strength||0):0;
-          var yy=-cardH/2+2+bi*th, q2=sq3Quad([{x:qx0,y:yy,z:qz},{x:qx1,y:yy,z:qz},
-            {x:qx1,y:yy+Math.max(0.35,th-0.25),z:qz},{x:qx0,y:yy+Math.max(0.35,th-0.25),z:qz}],C);
-          var sel=(SQ3.pick&&SQ3.pick.kind==='feat'&&SQ3.pick.i===bi);
-          var ttl=(IF&&!lite)?('<title>'+sq3Esc(IF[bi].name)+(IF[bi].role?(' — '+sq3Esc(IF[bi].role)):'')
-                     +'\n영향도 '+Math.round(v*100)+'%'
-                     +(d.vizSeq&&d.vizSeq[SQ3.row]?('\n표본값 '+d.vizSeq[SQ3.row][bi]):'')+'</title>'):'';
-          push(q2.z+0.4,'<path class="sq3-hit" data-pick="feat:'+bi+'" d="'+q2.d+'" fill="'
-            +(IF?('rgba('+(sel?'255,214,102':'74,163,255')+','+(0.20+0.75*v).toFixed(2)+')'):'rgba(120,140,175,.16)')
-            +'"'+(sel?' stroke="#ffd666" stroke-width="0.8"':'')+'>'+ttl+'</path>');
+        var IDX=null;
+        if(IF){
+          IDX=[]; for(var ii=0;ii<IF.length;ii++) IDX.push(ii);
+          if(!SQ3.allFeat && IDX.length>24){
+            IDX.sort(function(a,b){ return (IF[b].strength||0)-(IF[a].strength||0); });
+            IDX=IDX.slice(0,24).sort(function(a,b){ return a-b; });
+          }
+        }
+        var VS=(trained&&IF&&Array.isArray(d.vizSeq)&&d.vizSeq.length>=L)?d.vizSeq:null;
+        var inTip=function(fi,t){
+          if(!IF||lite) return '';
+          var rv=(VS&&VS[t])?VS[t][fi]:((d.vizSeq&&d.vizSeq[SQ3.row])?d.vizSeq[SQ3.row][fi]:null);
+          return '<title>'+sq3Esc(IF[fi].name)+(IF[fi].role?(' — '+sq3Esc(IF[fi].role)):'')
+                 +'\n영향도 '+Math.round((IF[fi].strength||0)*100)+'%'
+                 +(rv!=null?('\n표본값(t'+t+') '+rv):'')+'</title>';
+        };
+        if(!VS){
+          // ── 표본 없음 — 시점별로 그릴 값이 없다. 종전대로 한 장에 ★가중치 강도★ 를 그린다. ──
+          var qx0=xOf(0)-cardW, qx1=xOf(L-1)+cardW, qz=S.z;
+          var quad=sq3Quad([{x:qx0,y:-cardH/2,z:qz},{x:qx1,y:-cardH/2,z:qz},
+                            {x:qx1,y:cardH/2,z:qz},{x:qx0,y:cardH/2,z:qz}],C);
+          push(quad.z,'<path d="'+quad.d+'" fill="rgba(20,34,60,.72)" stroke="#2a4270" stroke-width="1"/>');
+          var NB=IDX?IDX.length:24, th=(cardH-4)/NB;
+          for(var bi=0;bi<NB;bi++){
+            var fi0=IDX?IDX[bi]:bi, v=IF?(IF[fi0].strength||0):0;
+            var yy=-cardH/2+2+bi*th, q2=sq3Quad([{x:qx0,y:yy,z:qz},{x:qx1,y:yy,z:qz},
+              {x:qx1,y:yy+Math.max(0.35,th-0.25),z:qz},{x:qx0,y:yy+Math.max(0.35,th-0.25),z:qz}],C);
+            var sel=(SQ3.pick&&SQ3.pick.kind==='feat'&&SQ3.pick.i===fi0);
+            push(q2.z+0.4,'<path class="sq3-hit" data-pick="feat:'+fi0+'" d="'+q2.d+'" fill="'
+              +(IF?('rgba('+(sel?'255,214,102':'74,163,255')+','+(0.20+0.75*v).toFixed(2)+')'):'rgba(120,140,175,.16)')
+              +'"'+(sel?' stroke="#ffd666" stroke-width="0.8"':'')+'>'+inTip(fi0,SQ3.row)+'</path>');
+          }
+          continue;
+        }
+        /* 정규화는 ★행렬 전체의 최댓값★ 으로 한다 — 시점마다 따로 정규화하면 "조용했던 봉" 이
+           강했던 봉과 똑같이 진해져, 시점끼리 비교한다는 이 그림의 목적이 사라진다. */
+        var vmax=0;
+        for(var vt=0;vt<L;vt++){ var vr=VS[vt]||[];
+          for(var vk=0;vk<IDX.length;vk++){ var va=Math.abs(+vr[IDX[vk]]||0); if(va>vmax) vmax=va; } }
+        for(var t0=0;t0<L;t0++){
+          var _cx0=xOf(t0), isRow0=(t0===SQ3.row), isLast0=(t0===L-1), A0=amp(t0, si);
+          var qc0=sq3Quad([{x:_cx0-cardW,y:-cardH/2,z:S.z},{x:_cx0+cardW,y:-cardH/2,z:S.z},
+                           {x:_cx0+cardW,y:cardH/2,z:S.z},{x:_cx0-cardW,y:cardH/2,z:S.z}],C);
+          push(qc0.z,'<path d="'+qc0.d+'" fill="rgba('+(isRow0?'56,189,248':(isLast0?'0,230,118':'20,34,60'))+','
+            +((isRow0?.20:(isLast0?.10:.66))*A0).toFixed(3)+')" stroke="'+(isRow0?'#ffd666':(isLast0?'#00e676':'#4aa3ff'))
+            +'" stroke-opacity="'+((isRow0?1:(isLast0?.8:.30))*A0).toFixed(3)+'" stroke-width="'+(isRow0?2.2:1)+'"/>');
+          /* 낱개는 고른 시점(또는 '노드 낱개')에서만 — 24줄 × 16시점을 매 프레임 만들면 회전이 끊긴다. */
+          var full0=(SQ3.cells||isRow0), NB0=full0?IDX.length:8, th0=(cardH-6)/NB0;
+          for(var b0=0;b0<NB0;b0++){
+            var vv0=0, neg0=false, fi1=-1;
+            if(full0){ fi1=IDX[b0]; var rw=+((VS[t0]||[])[fi1])||0;
+                       vv0=vmax>0?Math.abs(rw)/vmax:0; neg0=rw<0; }
+            else { var g0=Math.floor(b0*IDX.length/NB0), g1=Math.floor((b0+1)*IDX.length/NB0);
+                   for(var g2=g0;g2<g1;g2++){ var r2=+((VS[t0]||[])[IDX[g2]])||0;
+                     var a2=vmax>0?Math.abs(r2)/vmax:0; if(a2>vv0){ vv0=a2; neg0=r2<0; } } }
+            var by0=-cardH/2+3+b0*th0;
+            var qb0=sq3Quad([{x:_cx0-cardW+2,y:by0,z:S.z},{x:_cx0+cardW-2,y:by0,z:S.z},
+                             {x:_cx0+cardW-2,y:by0+Math.max(0.4,th0-(full0?0.25:1.5)),z:S.z},
+                             {x:_cx0-cardW+2,y:by0+Math.max(0.4,th0-(full0?0.25:1.5)),z:S.z}],C);
+            var sel0=(full0&&SQ3.pick&&SQ3.pick.kind==='feat'&&SQ3.pick.i===fi1);
+            var rgb0=sel0?'255,214,102':(neg0?'255,110,140':'0,224,255');
+            push(qb0.z+0.3, full0
+              ? ('<path class="sq3-hit" data-pick="feat:'+fi1+'" d="'+qb0.d+'" fill="rgba('+rgb0+','
+                 +((0.12+0.75*vv0)*A0).toFixed(3)+')"'+(sel0?' stroke="#ffd666" stroke-width="0.8"':'')+'>'
+                 +inTip(fi1,t0)+'</path>')
+              : ('<path d="'+qb0.d+'" fill="rgba('+rgb0+','+((0.10+0.70*vv0)*A0).toFixed(3)+')"/>'));
+          }
+          push(qc0.z+0.1,'<path class="sq3-hit" data-pick="step:'+t0+'" d="'+qc0.d+'" fill="transparent">'
+            +(lite?'':'<title>입력 · t'+t0+(isLast0?' (지금)':(' (−'+(L-1-t0)+'봉)'))+'\n피처 '
+              +IDX.length+'개'+(SQ3.allFeat?'(전체)':'(중요도 상위)')+'</title>')+'</path>');
         }
         continue;
       }

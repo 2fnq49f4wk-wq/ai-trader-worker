@@ -166,7 +166,11 @@ console.log("\n②-b 노드 ★값★ — 가중치만으로는 못 그린다(�
 console.log("\n②-c 눌러서 볼 수 있는가 — 피처 75개·노드 32개가 낱개로 있는가");
 {
   const draw = grabFn("sq3Draw") || "", pick = grabFn("sq3DrawPick") || "";
-  chk(/NB=IF\?IF\.length:24/.test(draw.replace(/\s/g, "")),
+  /* [V33.290] 종전엔 `NB=IF?IF.length:24` 라는 식을 찾았다. 입력이 시점별 카드로 바뀌며
+     그 식이 사라지자 검사가 깨졌는데, ★계약은 안 깨졌다★ — 피처는 여전히 낱개로 그려지고
+     각자 자기 자리를 갖는다. 계약을 직접 묻는다: 피처마다 고를 수 있는 표(data-pick)가 붙는가.
+     (몇 개가 실제로 나오는지는 check-seq3d-render 가 렌더해서 센다.) */
+  chk(/data-pick="feat:/.test(draw),
     "입력 피처를 ★낱개로★ 그린다(묶으면 무엇이 세게 들어가는지 못 묻는다)",
     "입력을 묶음 막대로만 그린다 — 개별 피처를 가리킬 수 없다");
   chk(/data-pick="feat:/.test(draw) && /data-pick="node:/.test(draw) && /data-pick="step:/.test(draw),
@@ -244,7 +248,10 @@ console.log("\n④ 3D 사영이 정말 3D 인가 — 회전·원근·깊이순�
   chk(clamped && parseFloat(clamped[1]) <= 1.2,
     `회전 각도가 ±${clamped ? clamped[1] : "?"}rad 로 묶여 있다 — 단계가 겹치는 정면 각도에 못 간다`,
     "회전에 한계가 없다 — 무대축 정면에서 단계 5개가 한 자리로 겹쳐 아무것도 안 읽힌다");
-  chk(/SQ3\.dir = -1/.test(HV) && /SQ3\.dir = 1/.test(HV),
+  /* [V33.290] 부호가 상수(-1/1)에서 방향변수(_sg)로 바뀌었다 — 자동회전이 정면을 안 지나게
+     한쪽에서만 돌기 때문이다. 계약("한계에 닿으면 돌아선다")은 그대로다.
+     실제로 왕복하는지는 check-seq3d-render ⑥ 이 틱을 3,000회 돌려 확인한다. */
+  chk(/SQ3\.dir = -?_sg/.test(HV) || (/SQ3\.dir = -1/.test(HV) && /SQ3\.dir = 1/.test(HV)),
     "자동회전은 한계 안에서 왕복한다(한계에 닿아 멈추지 않는다)", "자동회전이 한계에서 멎는다");
   chk(/sq3Clamp\(SQ3\.yaw/.test(HV) && /sq3Clamp\(SQ3\.pitch/.test(HV),
     "드래그도 같은 한계를 따른다(손으로는 넘어갈 수 있으면 한계가 아니다)", "드래그가 한계를 무시한다");
