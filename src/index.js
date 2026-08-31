@@ -2981,7 +2981,7 @@ async function applySignalTypeWeights(DB, cfg) {
    화면·자가진단이 계속 "V33.272" 를 보고했다(운영 스냅샷이 그대로 그랬다). 배포는 됐는데
    ★배포됐다는 사실만 거짓말★ 을 하고 있었으니, "내 고침이 올라간 건가" 를 화면으로 확인할
    방법이 없었다. tools/check-build-ver.mjs 가 이제 소스에 적힌 최신 버전과 이 값을 대조한다. */
-const _BUILD_VER = "V33.291";
+const _BUILD_VER = "V33.292";
 
 // ═══ [V33.171] 평가 순서 계획 — ★승격과 순환을 교차해 굶주림을 구조적으로 없앤다★ ═══
 //   V33.50 의 형태트리거는 "급한 몇 종목을 앞으로 당긴다"는 의도였으나, 실제 운영로그에서는
@@ -23237,7 +23237,7 @@ async function handleRequest(request, env, ctx) {
         // [V33.262] 판정은 _dnnAdmit 한 곳에만 있다 — 아래 단발 업로드 경로도 같은 함수를 쓴다.
         {
           const _icT = _num(_vs.valICt, null);
-          const _ad = _dnnAdmit(valAccLB, _icT, mindLB);
+          const _ad = _dnnAdmit(valAccLB, _icT, mindLB, _num(_vs.accBase, null));   // [V33.292]
           trust.wDnn = _ad.wDnn; trust.trusted = _ad.trusted;
           trust.admitPath = _ad.path; trust.admitWhy = _ad.why;
           trust.valICt = _icT; trust.valICBlock = _num(_vs.valICBlock, null);
@@ -23464,7 +23464,10 @@ async function handleRequest(request, env, ctx) {
       // 신뢰 게이트 — 정합(≤0.03) + 다수클래스 대비 우위 + 표본 하한.
       //   장중 라벨은 양성비율이 치우칠 수 있어 "다수클래스 베이스라인 + 1.5%p" 를 요구한다.
       const _pos = (model.posRate != null) ? model.posRate : 0.5;
-      const _baseline = Math.max(_pos, 1 - _pos);
+      /* [V33.292] ★합쳐서 본 다수클래스는 기준점이 못 된다.★ 기저가 시장마다 다르면
+         "미국엔 사고 한국엔 팔아라" 만 배운 모델이 이 값을 훌쩍 넘는다(실력 0 인데).
+         트레이너가 시장가중 무실력 정확도를 보내면 그것을 쓴다 — 없으면 종전 그대로. */
+      const _baseline = Math.max(Math.max(_pos, 1 - _pos), _clamp(_num(body.accBase, 0), 0, 0.9));
       const convOK = (convMaxDiff == null) || (convMaxDiff <= 0.03);
       // ══ [V33.97] ★단타 모델이 학습돼도 절대 신뢰될 수 없던 두 번째 벽★ ══
       //   종전 조건은 `valAccLB >= 다수클래스 베이스라인 + 1.5%p` 하나뿐이었다.
@@ -23604,7 +23607,9 @@ async function handleRequest(request, env, ctx) {
       //   IC 가 실려 오면 icFloor(0.015)만 넘어도 신뢰한다 — 정확도로는 안 보이던 랭킹 능력을
       //   가진 모델이 위원회에 들어올 수 있게 된다.
       const _icFloor = (GBDT.icFloor != null) ? GBDT.icFloor : 0.015;
-      const _passAcc = gLB >= GBDT.trustFloor;
+      // [V33.292] 문턱의 기준점을 ★실력 없이 도달 가능한 정확도★ 로 올린다(_noSkillAcc 주석).
+      const _gAccFloor = _accFloor(GBDT.trustFloor, _num(body.accBase, null));
+      const _passAcc = gLB >= _gAccFloor;
       // [V33.91] ★점추정 IC 로 신뢰 문턱을 열지 않는다★
       //   순수 잡음 모델이 raw IC 게이트를 43~49% 통과한다는 걸 실측했다(_icBlockStats 주석).
       //   외부 트레이너가 블록 통계(valICBlock/valICt)를 실어 보내면 그 유의성으로,
@@ -23759,7 +23764,8 @@ async function handleRequest(request, env, ctx) {
 
       const lb = _clamp(_num(body.valAccLB, 0), 0, 1);
       const icT = _num(body.valICt, null);
-      const ad = _dnnAdmit(lb, icT, 0.5);   // DNN 과 ★같은 자★ — 정확도 길 · IC 길
+      // [V33.292] 무실력 기준점도 같이 넘긴다 — 트레이너가 안 보내면 종전과 같다.
+      const ad = _dnnAdmit(lb, icT, 0.5, _num(body.accBase, null));   // DNN 과 ★같은 자★ — 정확도 길 · IC 길
       /* [V33.269] 관측용 표본 1건 — ★어텐션은 입력에 따라 달라지므로 입력 없이는 그릴 수 없다.★
          화면에 아무 숫자나 채우느니(그건 관측이 아니라 장식이다) 학습 표본 한 건을 그대로
          들고 있다가 그 위에서 실제로 계산한다. probe 는 트레이너가 검증구간에서 뽑은 진짜 행이다. */
@@ -23775,6 +23781,7 @@ async function handleRequest(request, env, ctx) {
          DNN 의 dnn_trust · 부스터의 xgb_trust 와 같은 배치다: ★읽는 쪽 게이트★ 가 이걸 본다. */
       await setState(env.DB, "seq_trust", { trusted: ad.trusted, wSeq: ad.trusted ? ad.wDnn : 0,
         seqAccLB: lb, seqAcc: _num(body.valAcc, null), valICt: icT, valN: _num(body.valN, 0),
+        accBase: _num(body.accBase, null),   // [V33.292] 화면이 "그 정확도가 좋은 건가" 를 답할 수 있어야 한다
         L: _L, d: _dm, heads: _H, layers: _blks.length, admitPath: ad.path, why: ad.why,
         probeMaxDiff: +maxDiff.toFixed(5), featVer: LUXML.featVer, ts: Date.now() });
       try { await log(env.DB, "INFO", null, "[SEQ] Transformer 저장 — 정합 maxDiff " + maxDiff.toFixed(4) +
@@ -23955,7 +23962,7 @@ async function handleRequest(request, env, ctx) {
         }
       } catch (e) {}
       const _cOK = (_cMax == null) || (_cMax <= 0.03);
-      const _mSane = _cOK && _mLB >= MIND.trustFloor;
+      const _mSane = _cOK && _mLB >= _accFloor(MIND.trustFloor, _num(body.accBase, null));   // [V33.292]
       const _mAct = url.searchParams.get("activate") === "1";
       const _mPromote = _mAct && _mSane;
       /* 트리단독 위원장 조립 — experts=["tree"], meta 항등(w=[1],b=0).
@@ -24025,7 +24032,7 @@ async function handleRequest(request, env, ctx) {
       } catch (e) {}
       // 위원장(게이트 없음)이라 안전바닥을 둔다: 변환정합(≤0.03) + valAccLB ≥ trustFloor.
       const convOK = (convMaxDiff == null) || (convMaxDiff <= 0.03);
-      const _sane = convOK && vLB >= MIND.trustFloor;
+      const _sane = convOK && vLB >= _accFloor(MIND.trustFloor, _num(body.accBase, null));   // [V33.292]
       const activate = url.searchParams.get("activate") === "1";
       const promote = activate && _sane;
       // FM단독 MIND 조립 — experts=["fm"], meta 항등(w=[1],b=0) → mlMindScore가 캘리브FM 확률 그대로.
@@ -28682,6 +28689,8 @@ async function _miniLogisticTrain(DB, opts) {
       } catch (e) { _srcIC = null; }
     }
     const _st = _icBlockStats(pv, yv, 5, _blkKeys, _mkKeys);
+    // [V33.292] 같은 홀드아웃에서 '실력 없이 도달 가능한 정확도' 도 잰다(위 _noSkillAcc 주석).
+    const _accBase = _noSkillAcc(yv, _mkKeys), _accBasePool = _noSkillAcc(yv, null);
     const ic = _num(_st.ic, 0);
     // [V33.89] 기저확률(양성비율)을 함께 저장한다 — 이중헤드 사분면 경계를 절대값이 아니라
     //   각 헤드의 기저확률 기준으로 잡기 위해서다. 문턱을 절대값으로 두면 라벨 희소도가 다른
@@ -28732,6 +28741,10 @@ async function _miniLogisticTrain(DB, opts) {
       /* [V33.291] ★시장을 섞어 재면 얼마였는지★ 를 함께 남긴다. 게이트가 보는 값(valICBlock)은
          시장 고정효과를 뺀 값이고, 아래 셋은 종전 방식으로 잰 값이다. 두 숫자의 차이가 곧
          "이 모델이 시장 절편에서 공짜로 받던 몫" 이다 — 안 남기면 다음에 또 추측하게 된다. */
+      /* [V33.292] ★실력 없이 도달 가능한 정확도★ — 정확도로 심사하는 자리의 기준점.
+         valAcc 옆에 이 값이 없으면 "52% 면 좋은 건가" 를 아무도 못 답한다. */
+      valAccBase: _accBase != null ? +_accBase.toFixed(4) : null,
+      valAccBasePooled: _accBasePool != null ? +_accBasePool.toFixed(4) : null,
       valICPooled: _st.icPooled != null ? +_st.icPooled.toFixed(5) : null,
       valICBlockPooled: _st.blockICPooled != null ? +_st.blockICPooled.toFixed(5) : null,
       valICtPooled: _st.tPooled != null ? +_st.tPooled.toFixed(3) : null,
@@ -28764,7 +28777,12 @@ async function _miniLogisticTrain(DB, opts) {
         : null,
       trusted: _trusted };
     await setState(DB, opts.stateKey, model);
-    return "[" + opts.tag + "] 학습완료 표본 " + N + " valAcc " + (acc * 100).toFixed(1) + "% IC " + ic.toFixed(4) +
+    return "[" + opts.tag + "] 학습완료 표본 " + N + " valAcc " + (acc * 100).toFixed(1) + "%" +
+           /* [V33.292] 정확도는 ★무엇에 대비해서★ 인지 없이는 못 읽는다. 실력 없이 얻는 값을 옆에 적는다. */
+           (_accBase != null ? "(무실력 " + (_accBase * 100).toFixed(1) + "%" +
+             (_accBasePool != null && Math.abs(_accBase - _accBasePool) > 0.002
+               ? " · 시장무시 " + (_accBasePool * 100).toFixed(1) + "%" : "") + ")" : "") +
+           " IC " + ic.toFixed(4) +
            (_srcIC && _srcIC.length > 1
              ? " 경로별IC[" + _srcIC.map(function (r) {
                  return r.src + " " + (r.ic == null ? "n" + r.n + " 부족" : r.ic.toFixed(3) + "(n" + r.n + ")");
@@ -31374,6 +31392,46 @@ function _icBlockStats(pv, yv, K, keys, mkeys) {
     return out;
   } catch (e) { return { ic: 0, blockIC: null, icir: null, t: null, K: 0 }; }
 }
+/* ══ [V33.292] ★정확도 게이트에도 같은 구멍이 있었다★ ═══════════════════════════
+   V33.291 은 IC 에서 시장 고정효과를 뺐다. 그런데 이 저장소는 정확도로도 심사한다:
+       단타   valAccLB ≥ ★다수클래스 베이스라인★ + 1.5%p     (max(pos, 1−pos))
+       GBDT/DNN/MIND/SEQ  valAccLB ≥ ★고정 0.505★
+   둘 다 "시장 안 실력" 을 안 묻는다. 시장만 아는 모델이 얻는 정확도는
+       Σ_m (n_m/N)·max(기저_m, 1−기저_m)
+   인데, 기저 US 0.55 / KR 0.45 면 그 값이 ★0.55★ 다. 반면
+     · 합쳐서 본 다수클래스 베이스라인은 0.50 (양성비율이 0.5 라 아무것도 안 걸린다)
+     · 고정 문턱은 0.505
+   ★시장 안 실력이 0 인 모델이 두 문턱을 다 넘는다.★ IC 에서 본 것과 같은 사고이고,
+   여기서는 더 단순하다 — "미국엔 사고, 한국엔 팔아라" 만 배워도 55% 를 맞힌다.
+
+   고침: 문턱의 기준점을 ★실력 없이 도달 가능한 정확도★ 로 바꾼다. 이 값은
+   정의상 합쳐 본 다수클래스보다 크거나 같고, 상수 예측기가 얻는 값보다도 크거나 같다
+   (상수 예측기는 모든 시장에서 같은 답을 내므로 시장별 최적을 못 고른다).
+   즉 ★한 자로 두 구멍을 다 막는다.★ 시장이 하나면 종전 다수클래스와 정확히 같다.
+   문턱 상수(0.505 · +1.5%p)는 안 건드린다 — 바꾸는 것은 ★무엇에 대해 그만큼인가★ 다. */
+function _noSkillAcc(yv, mkeys) {
+  try {
+    const n = yv ? yv.length : 0;
+    if (!(n > 0)) return null;
+    const mk = (Array.isArray(mkeys) && mkeys.length >= n) ? mkeys : null;
+    const g = new Map();
+    for (let i = 0; i < n; i++) {
+      const k = mk ? ((mkeys[i] == null || mkeys[i] === "") ? "?" : String(mkeys[i])) : "*";
+      let s2 = g.get(k); if (!s2) { s2 = { n: 0, pos: 0 }; g.set(k, s2); }
+      s2.n++; if (_num(yv[i], 0) > 0.5) s2.pos++;
+    }
+    let acc = 0, tot = 0;
+    g.forEach(function (s2) {
+      /* 표본이 너무 적은 시장의 '최적 상수' 는 그 시장의 운이다 — 기준점을 낮추는 쪽으로
+         작용하면 안 되므로, 작은 그룹은 0.5(정보 없음)로 본다. */
+      const r = s2.pos / s2.n;
+      acc += s2.n * (s2.n >= 30 ? Math.max(r, 1 - r) : 0.5);
+      tot += s2.n;
+    });
+    return tot > 0 ? acc / tot : null;
+  } catch (e) { return null; }
+}
+
 /* [V33.291] 피처벡터에서 시장을 읽는다 — 표를 다시 안 읽어도 된다.
    시장 원핫(mktUS/mktKR/mktCM)은 LUXML 75피처 안에 있으므로, ml_samples 로 학습·채점하는
    모든 자리에서 이 한 줄이면 시장 고정효과를 뺄 수 있다. 이름표 위치는 한 번만 찾아 둔다
@@ -36932,10 +36990,20 @@ var __dnnMemCache = null;   // { trainedAt, model }
    ②는 ①보다 무르지 않다. 정확도 바닥을 여전히 요구하고 유의성 조건이 하나 더 붙는다.
    ICGATE.provisional 의 주석이 그 문턱의 뜻을 그대로 말한다 —
    "이보다 낮으면 ★잡음과 구별되지 않는다★ → 제외". */
-function _dnnAdmit(accLB, icT, mindLB) {
+/* [V33.292] accBase = ★실력 없이 도달 가능한 정확도★(시장가중 다수클래스, _noSkillAcc 주석).
+   안 주면 종전 그대로다(구 트레이너 호환). 주면 문턱이 ★올라가기만★ 한다 — 상수(0.505)를
+   바꾸는 게 아니라 "무엇에 대해 0.505 인가" 를 고치는 것이다. */
+function _accFloor(base, noSkill) {
+  const f = _num(base, 0.505);
+  const b = _num(noSkill, null);
+  if (b == null || !isFinite(b)) return f;
+  return Math.max(f, _clamp(b, 0.5, 0.9));
+}
+function _dnnAdmit(accLB, icT, mindLB, accBase) {
   const _acc = _num(accLB, 0);
   const _t = (icT == null) ? null : _num(icT, null);
-  const accPath = _acc >= _num(DNN.trustFloor, 0.505);
+  const _fl = _accFloor(DNN.trustFloor, accBase);
+  const accPath = _acc >= _fl;
   const icPath = !accPath && _acc >= _num(GBDT.icPathAccFloor, 0.49) &&
                  _t != null && isFinite(_t) && _t >= _num(ICGATE.provisional && ICGATE.provisional.tMin, 1.65);
   if (!accPath && !icPath) {
@@ -36944,7 +37012,9 @@ function _dnnAdmit(accLB, icT, mindLB) {
        그때 IC 를 탓하면 엉뚱한 곳을 고치러 간다. 실제로 운영 현재값(0.4727)이 그 경우다. */
     const _tMin = _num(ICGATE.provisional && ICGATE.provisional.tMin, 1.65);
     const _floorMiss = _acc < _num(GBDT.icPathAccFloor, 0.49);
-    let _why = "accLB " + _acc.toFixed(4) + " < 정확도 경로 " + DNN.trustFloor;
+    let _why = "accLB " + _acc.toFixed(4) + " < 정확도 경로 " + _fl.toFixed(4) +
+               (_fl > _num(DNN.trustFloor, 0.505) + 1e-9
+                 ? "(무실력 기준 " + _num(accBase, 0).toFixed(4) + " 이 상수 " + DNN.trustFloor + " 보다 높다)" : "");
     if (_floorMiss) _why += " · IC 경로도 불가 — 정확도 바닥 " + _num(GBDT.icPathAccFloor, 0.49) + " 미달(IC 값과 무관)";
     else if (_t == null) _why += " · 블록IC 미보고(IC 경로 판정 불가)";
     else _why += " · 블록IC t " + _t.toFixed(2) + " < " + _tMin + "(IC 경로 미달)";
@@ -40701,7 +40771,11 @@ async function socialObserveNightly(DB) {
       if (!(px > 0) || !(it.p > 0)) continue;
       if (Date.now() - _num(it.t, 0) < 20 * 3600000) { keep.push(it); continue; }   // 아직 하루 안 지남
       const ret = (px / it.p - 1) * 100;
-      b.v.push([+_num(it.sc, 0).toFixed(4), ret > 0 ? 1 : 0, +ret.toFixed(3)]);
+      /* [V33.292] ★시장도 같이 적는다.★ 이 계수는 두 시장에 하나로 쓰이는데, 지금까지
+         IC 를 시장 섞은 채 재고 있었다(V33.291 과 같은 사고). 종전 줄은 3칸이라
+         아래 적합이 4번째 칸이 없으면 그냥 종전대로 잰다 — 며칠이면 새 줄로 채워진다. */
+      b.v.push([+_num(it.sc, 0).toFixed(4), ret > 0 ? 1 : 0, +ret.toFixed(3),
+                /\.(KS|KQ)$/i.test(String(it.s || "")) ? "kr" : "us"]);
       labeled++;
     }
     b.v = b.v.slice(-SOCIAL.bufWindow);
@@ -40736,7 +40810,11 @@ async function socialCoefFitNightly(DB) {
     const yv = v.map(function (r) { return r[1] ? 1 : 0; });
     let pos = 0; for (const y of yv) pos += y;
     if (pos < 40 || v.length - pos < 40) return "[SOCIALK] 승/패 편중(" + pos + "/" + v.length + ") — 대기";
-    const st = _icBlockStats(pv, yv, 5);
+    /* [V33.292] 4번째 칸(시장)이 붙은 줄이 충분하면 시장 고정효과를 뺀다.
+       섞여 있으면(구 줄이 많으면) 종전대로 잰다 — 반쯤 아는 자로 재느니 종전 자가 낫다. */
+    const mv = v.map(function (r) { return (r && r.length > 3 && r[3]) ? String(r[3]) : ""; });
+    let _mkOK = 0; for (const m of mv) if (m) _mkOK++;
+    const st = _icBlockStats(pv, yv, 5, null, _mkOK >= v.length * 0.9 ? mv : null);
     const t = _num(st.t, 0);
     // 로그오즈 계수로 환산: IC 를 그대로 쓰지 않고 유의성으로 수축한다(다른 계수와 같은 원칙).
     const k = _clamp(_num(st.blockIC != null ? st.blockIC : st.ic, 0) * 4, -0.6, 0.6) * _coefShrink(t);
@@ -46128,7 +46206,7 @@ export {
   // [V33.222] 단타 기준봉 — 게이트가 봉 길이에 맞춰 기대값을 계산할 수 있어야 한다.
   //   (봉 수로 적힌 기대값은 봉 길이가 바뀌면 다른 시간을 뜻하게 된다)
   SCALP_BAR_MIN, SCALP_SESSION_MIN, _barsFor,
-  _tSf, _normInv, _tToZ, _icBlockStats,
+  _tSf, _normInv, _tToZ, _icBlockStats, _noSkillAcc, _accFloor, _mktOfVec,
   // [V33.114] 표본 고유도(de Prado) 검증용
   // [V33.115] _importedValN — 외부 트레이너 업로드의 유효표본수 선택기(tools/check-uniqueness.mjs)
   _uniqWeights, _wilsonLB, _importedValN, mlPoolUniqNightly, mlPoolUniqGet, _effN,

@@ -97,9 +97,16 @@ console.log("③ 안전장치 동등성");
     "변환정합 probe 를 워커의 트리 스코어러로 직접 재현한다",
     "probe 검증이 없다 — V33.14(표준화 불일치 conv 0.6265)를 못 잡는다");
   chk(/_cMax <= 0\.03/.test(ep), "정합 허용오차가 FM 경로와 같은 0.03 이다", "정합 문턱이 다르거나 없다");
-  chk(/_mLB >= MIND\.trustFloor/.test(ep), "검증 하한이 MIND.trustFloor 를 넘어야 승격한다", "trustFloor 게이트가 없다");
-  chk(/_mSane = _cOK && _mLB >= MIND\.trustFloor/.test(ep),
+  /* [V33.292] 문턱의 ★기준점★ 이 상수에서 _accFloor(상수, 무실력 정확도) 로 바뀌었다.
+     그 함수는 상수보다 낮은 값을 절대 안 돌려주므로(Math.max) 계약은 더 세졌을 뿐이다.
+     계약은 "MIND.trustFloor 에서 나온 문턱을 넘어야 하고, 정합과 ★함께★ 통과해야 한다" 다. */
+  chk(/_mLB >= (_accFloor\()?MIND\.trustFloor/.test(ep),
+    "검증 하한이 MIND.trustFloor(이상)를 넘어야 승격한다", "trustFloor 게이트가 없다");
+  chk(/_mSane = _cOK && _mLB >= (_accFloor\()?MIND\.trustFloor/.test(ep),
     "두 조건을 ★모두★ 통과해야 sane 이다", "두 안전장치가 OR 로 느슨해졌다");
+  chk(/function _accFloor\(base, noSkill\)[\s\S]{0,400}Math\.max\(f,/.test(S),
+    "그 기준점은 상수보다 ★낮아질 수 없다★(Math.max) — 완화 경로가 아니다",
+    "★기준점이 상수보다 낮아질 수 있다 — 게이트가 느슨해질 수 있다★");
   chk(/mind_tree_ext/.test(ep), "미달이면 라이브가 아니라 섀도우로 저장한다", "미달분이 라이브 위원장을 덮어쓸 수 있다");
   chk(/_validTree/.test(ep) && /node\.f < _D/.test(ep),
     "트리 구조·피처 인덱스를 검증한다(범위 밖 인덱스는 채점에서 undefined 가 된다)",

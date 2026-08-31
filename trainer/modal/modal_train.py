@@ -594,7 +594,9 @@ def train_job(epochs: int = EPOCHS_DEFAULT, dry: bool = False,
                  "valN": n_eval, "n": N}
     # [V33.262] 블록 IC 를 함께 올린다 — 워커의 승격 판정에 ★정확도 말고 다른 자★ 가 하나 더 생겼다.
     #   부스터가 이미 쓰던 그 자다(같은 함수·같은 문턱). 없으면 워커는 정확도 경로만 본다.
-    for _k in ("valICBlock", "valICIR", "valICt", "valICK"):
+    # [V33.292] accBase(무실력 정확도)도 같이 올린다 — 워커의 정확도 문턱 기준점이다.
+    for _k in ("valICBlock", "valICIR", "valICt", "valICK", "accBase", "accBasePooled",
+               "valICBlockPooled", "valICtPooled"):
         if _k in _fin:
             _dnn_meta[_k] = _fin[_k]
     try:
@@ -885,7 +887,7 @@ def _train_and_upload_seq(BASE, KEY, HDR, X, Y, TS, SYM, featver, D, UNIQ=None, 
         except Exception as e:
             print("⑨ seq-arch 업로드 예외(무시):", e)
     lb, acc, pva, net, nparam = best
-    icf = _ic_block_fields(pva, yva)
+    icf = _ic_block_fields(pva, yva, mkt=_mkt_of_X(X[tr_end:]))   # [V33.291/292]
     print(f"⑨ SEQ 채택 d{dm}·헤드{Hh}·{NL}층 valAcc {acc*100:.2f}% 하한 {lb*100:.2f}% (유효 {neff}/{len(yva)})"
           + (f" 블록IC {icf['valICBlock']:.4f} t {icf['valICt']:.2f}" if "valICt" in icf else ""))
 
@@ -1249,6 +1251,33 @@ def _demean_by(a, b, mk):
     return np.concatenate(A), np.concatenate(B)
 
 
+def _no_skill_acc(y, mkt=None):
+    """[V33.292] ★실력 없이 도달 가능한 정확도★ = Σ_m (n_m/N)·max(기저_m, 1−기저_m).
+       워커 _noSkillAcc 과 같은 규칙(30건 미만 그룹은 0.5 로 본다).
+       시장이 하나면 종전 다수클래스와 정확히 같다."""
+    import numpy as np
+    try:
+        yy = np.asarray(y, dtype=np.float64)
+        n = len(yy)
+        if n <= 0: return None
+        if mkt is None:
+            groups = [np.ones(n, dtype=bool)]
+        else:
+            mk = np.asarray(mkt, dtype=object)
+            if len(mk) < n: groups = [np.ones(n, dtype=bool)]
+            else: groups = [(mk == g) for g in set(mk[:n].tolist())]
+        acc = 0.0; tot = 0
+        for sel in groups:
+            m = int(sel.sum())
+            if m <= 0: continue
+            r = float((yy[sel] > 0.5).mean())
+            acc += m * (max(r, 1.0 - r) if m >= 30 else 0.5)
+            tot += m
+        return (acc / tot) if tot > 0 else None
+    except Exception:
+        return None
+
+
 def _calc_ic_blocks(pred, y, K=5, mkt=None):
     import numpy as np
     try:
@@ -1292,6 +1321,12 @@ def _ic_block_fields(pred, y, K=5, mkt=None):
     if bic is None: return {}
     out = {"valICBlock": round(bic, 5), "valICIR": round(icir, 3),
            "valICt": round(tv, 3), "valICK": int(k)}
+    # [V33.292] 정확도 게이트의 기준점도 같은 자리에서 낸다 — 두 자가 갈라지면 안 된다.
+    _ab = _no_skill_acc(y, mkt)
+    if _ab is not None:
+        out["accBase"] = round(_ab, 4)
+        _abp = _no_skill_acc(y, None)
+        if _abp is not None: out["accBasePooled"] = round(_abp, 4)
     if mkt is not None:
         pb, _pi, pt, _pk = _calc_ic_blocks(pred, y, K, None)
         if pb is not None:

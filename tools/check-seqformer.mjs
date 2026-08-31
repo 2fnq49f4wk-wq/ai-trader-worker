@@ -131,7 +131,8 @@ console.log("\n④ 승격은 정합을 통과해야만 — 성적이 좋아도 �
     "probe 가 없으면 거부한다(정합을 확인할 수 없으면 승격 없음)", "probe 없이도 저장한다");
   chk(/if \(maxDiff > _num\(SEQML\.probeTol, 0\.03\)\)/.test(ep),
     "정합 오차가 허용치를 넘으면 ★저장 자체를 거부★ 한다", "정합 실패 모델을 저장한다");
-  chk(/const ad = _dnnAdmit\(lb, icT, 0\.5\)/.test(ep),
+  /* [V33.292] 인자에 무실력 기준점이 붙었다. 계약은 "DNN 과 같은 함수로 판정한다" 다. */
+  chk(/const ad = _dnnAdmit\(lb, icT, 0\.5/.test(ep),
     "승격 판정은 DNN 과 ★같은 자★ 를 쓴다(정확도 길 · IC 길)", "별도 판정 기준을 만들었다 — 자가 갈라진다");
   chk(/shapeErr/.test(ep) && /형상 불일치/.test(S),
     "형상 검사 — 잘못된 구조는 매 종목 null 을 뱉는 조용한 무력화가 된다", "형상 검사가 없다");

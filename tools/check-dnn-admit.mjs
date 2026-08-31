@@ -99,7 +99,9 @@ console.log("\n④ 트레이너가 IC 를 실제로 재서 올리는가");
   chk(/_p_ic, _y_ic = p_t, ys_t/.test(pyCode) && /_p_ic, _y_ic = ps, ys/.test(pyCode),
     "IC 를 ★정확도를 잰 그 구간★ 으로 잰다(두 분기 모두)",
     "IC 평가 구간이 정확도와 다르다 — τ* 선택에 쓴 구간에서 재면 낙관적으로 나온다");
-  chk(/for _k in \("valICBlock", "valICIR", "valICt", "valICK"\)/.test(pyCode),
+  /* [V33.292] 목록이 늘었다(accBase 등). 계약은 "IC 필드를 업로드 메타에 싣는다" 이므로
+     목록 전체를 못 박지 않는다 — 못 박으면 필드를 더할 때마다 계약이 아니라 숫자가 깨진다. */
+  chk(/for _k in \("valICBlock", "valICIR", "valICt", "valICK"/.test(pyCode),
     "업로드 메타에 IC 필드를 싣는다", "IC 를 계산만 하고 안 올린다 — 워커는 못 본다");
   // 커밋 단계에는 성적이 없다(V33.170 의 그 스코프 사고) → 스테이징에 담겨야 한다
   chk(/valICt: _num\(body\.valICt, null\), valICBlock:/.test(code),
