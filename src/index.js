@@ -2981,7 +2981,7 @@ async function applySignalTypeWeights(DB, cfg) {
    화면·자가진단이 계속 "V33.272" 를 보고했다(운영 스냅샷이 그대로 그랬다). 배포는 됐는데
    ★배포됐다는 사실만 거짓말★ 을 하고 있었으니, "내 고침이 올라간 건가" 를 화면으로 확인할
    방법이 없었다. tools/check-build-ver.mjs 가 이제 소스에 적힌 최신 버전과 이 값을 대조한다. */
-const _BUILD_VER = "V33.287";
+const _BUILD_VER = "V33.288";
 
 // ═══ [V33.171] 평가 순서 계획 — ★승격과 순환을 교차해 굶주림을 구조적으로 없앤다★ ═══
 //   V33.50 의 형태트리거는 "급한 몇 종목을 앞으로 당긴다"는 의도였으나, 실제 운영로그에서는
@@ -29356,39 +29356,110 @@ async function memoTrainNightly(DB) {
     const ord = new Array(D); for (let j = 0; j < D; j++) ord[j] = j;
     ord.sort(function (a, b) { return scale[b] - scale[a]; });
 
-    // k-means++ 대신 결정적 초기화(고르게 뽑기) — 워커에서 재현 가능해야 진단이 된다.
-    const K = Math.min(MEMOML.K, Math.floor(ntr / 20));
-    if (K < 8) return "[MEMO] 학습표본 부족(원형 " + K + "개)";
-    const C = [];
-    for (let k = 0; k < K; k++) C.push(Z[Math.floor(k * ntr / K)].slice());
-    const assign = new Array(ntr).fill(0);
-    for (let it = 0; it < MEMOML.iters; it++) {
-      for (let i = 0; i < ntr; i++) {
-        let bi = 0, bd = Infinity;
-        for (let k = 0; k < K; k++) {
-          let d2 = 0; const c = C[k], z = Z[i];
-          for (let q = 0; q < D; q++) { const j = ord[q]; const t = z[j] - c[j]; d2 += t * t; if (d2 >= bd) break; }
-          if (d2 < bd) { bd = d2; bi = k; }
-        }
-        assign[i] = bi;
+    /* ══ [V33.288] ★자를 고치면서 시장 경계까지 지워버렸다★ ══════════════════
+       V33.273 은 거리의 축마다 |r_j| 를 재 그 크기로 눌렀다(관련도 가중 kNN). 예측축에는
+       맞는 처방이다. 그런데 그 자가 mktUS/mktKR/mktCM 원핫에도 그대로 적용됐다.
+       시장 원핫은 라벨과의 상관이 거의 없다 — 미국 승률 0.51, 한국 0.49 면 |r| ≈ 0.01 로,
+       운영 표본(ntr≈11,800)의 잡음바닥 2/√ntr = 0.018 보다 작다. 즉 V33.274 가 넘치는
+       잡음을 빼면서 ★시장축을 가중 0 으로 만들어 거리에서 아예 지워버렸다★.
+       그래서 지금 MEMO 는 삼성전자의 오늘과 ★가장 닮은 과거★ 를 찾을 때 엔비디아의
+       어느 날을 꺼내 쓸 수 있었다. 원형 128개가 전부 혼합 원형이었다는 뜻이다.
+
+       ★관련도 가중은 예측변수에 쓰는 것이지 분할변수에 쓰는 것이 아니다.★
+       시장은 "얼마나 예측력이 있느냐" 로 무게를 줄 축이 아니라, 그 안에서만 이웃을
+       찾아야 하는 ★칸막이★ 다. 거래시간대·호가단위·상하한가·결제주기·기준지수가 다른
+       표본끼리 평균낸 원형은 어느 시장에도 없는 자리를 가리킨다.
+
+       고침: 원형책을 ★시장별로 나눠 세우고★, 추론도 같은 시장의 책만 뒤진다.
+       · 피처를 바꾸지 않는다 — LUXML.featVer 동결, 표본풀 그대로(SCALP 가 당한 고아화 없음).
+       · 수축 목표도 ★그 시장의 기저★ 로 바꾼다 — 한국 기저로 미국 원형을 당기면 그게 오염이다.
+       · CPU 는 거의 그대로다 — Σ n_m·K_m 이며 K_m = min(K, ⌊n_m/20⌋) 이므로
+         운영 분포(US~60%, KR~35%, CM~5%)에서 종전 ntr·K 와 거의 같다.
+       · 자기 책을 세울 만큼 표본이 없는 시장은 한 권(m=-1)으로 모은다 — 버리지 않는다.
+       ★구 모델 호환★: mktIdx 가 없는 모델은 종전대로 전체 책을 뒤진다(전진검증이 어제
+       모델을 채점하므로 그 경로를 깨면 오늘 밤의 증거가 통째로 사라진다).
+
+       ★아직 안 고친 것 — 자(scale)는 여전히 전 시장 공통이다.★ 칸막이는 "누구와 이웃이
+       되는가" 만 고친다. 시장마다 ★신호축이 다르면★(예: 미국은 모멘텀, 한국은 평균회귀)
+       공통 자는 두 시장의 상관을 평균내 양쪽 다 약하게 잡는다. 부호가 반대인 축이면
+       marginal |r| 이 0 이 되어 아예 지워진다 — 칸막이만으론 못 잡는 모양이다.
+       고치려면 자도 책마다 따로 재야 하는데, 그러면 잡음바닥이 2/√n_m 으로 올라가
+       살아남는 축이 줄어든다(KR n≈4,100 → 0.031, 지금 0.018 의 1.7배). 이득/손해가
+       데이터에 달렸다는 뜻이므로 ★재고 나서★ 바꾼다 — 칸막이 효과와 섞어 한 번에
+       바꾸면 어느 쪽이 무엇을 했는지 또 못 가른다(V33.283 에서 겪은 그 일). */
+    const _MKI = ["mktUS", "mktKR", "mktCM"].map(function (nm) { return LUXML.featNames.indexOf(nm); });
+    const _mktOK = _MKI.every(function (i) { return i >= 0 && i < D; });
+    const _mktOf = function (x) {
+      for (let m = 0; m < 3; m++) if (_num(x[_MKI[m]], 0) > 0.5) return m;
+      return 3;                                    // 원핫이 비어 있는 행 — 이상치로 따로 모은다
+    };
+    const _books = [], _pool = [];
+    if (!_mktOK) {
+      const _all = []; for (let i = 0; i < ntr; i++) _all.push(i);
+      _books.push({ m: -1, idx: _all });            // 피처 이름이 바뀌었다 — 종전 단일책으로 안전 복귀
+    } else {
+      const _g = [[], [], [], []];
+      for (let i = 0; i < ntr; i++) _g[_mktOf(X[i])].push(i);
+      for (let m = 0; m < 4; m++) {
+        if (m < 3 && Math.floor(_g[m].length / 20) >= 8) _books.push({ m: m, idx: _g[m] });
+        else for (let q = 0; q < _g[m].length; q++) _pool.push(_g[m][q]);
       }
-      const sum = [], cnt = new Array(K).fill(0);
-      for (let k = 0; k < K; k++) sum.push(new Array(D).fill(0));
-      for (let i = 0; i < ntr; i++) { const k = assign[i], z = Z[i], s = sum[k]; for (let j = 0; j < D; j++) s[j] += z[j]; cnt[k]++; }
-      for (let k = 0; k < K; k++) if (cnt[k] > 0) for (let j = 0; j < D; j++) C[k][j] = sum[k][j] / cnt[k];
+      if (Math.floor(_pool.length / 20) >= 8) _books.push({ m: -1, idx: _pool });
     }
-    // 원형별 결과 집계
-    const nk = new Array(K).fill(0), wk = new Array(K).fill(0), pk = new Array(K).fill(0);
-    for (let i = 0; i < ntr; i++) { const k = assign[i]; nk[k]++; wk[k] += Y[i]; pk[k] += P[i]; }
+    if (!_books.length) return "[MEMO] 시장별 학습표본 부족(총 " + ntr + ") — 대기";
+
+    // k-means++ 대신 결정적 초기화(고르게 뽑기) — 워커에서 재현 가능해야 진단이 된다.
+    const _fitBook = function (idx, K) {
+      const n = idx.length;
+      const C = [];
+      for (let k = 0; k < K; k++) C.push(Z[idx[Math.floor(k * n / K)]].slice());
+      const assign = new Array(n).fill(0);
+      for (let it = 0; it < MEMOML.iters; it++) {
+        for (let i = 0; i < n; i++) {
+          let bi = 0, bd = Infinity; const z = Z[idx[i]];
+          for (let k = 0; k < K; k++) {
+            let d2 = 0; const c = C[k];
+            for (let q = 0; q < D; q++) { const j = ord[q]; const t = z[j] - c[j]; d2 += t * t; if (d2 >= bd) break; }
+            if (d2 < bd) { bd = d2; bi = k; }
+          }
+          assign[i] = bi;
+        }
+        const sum = [], cnt = new Array(K).fill(0);
+        for (let k = 0; k < K; k++) sum.push(new Array(D).fill(0));
+        for (let i = 0; i < n; i++) { const k = assign[i], z = Z[idx[i]], s = sum[k]; for (let j = 0; j < D; j++) s[j] += z[j]; cnt[k]++; }
+        for (let k = 0; k < K; k++) if (cnt[k] > 0) for (let j = 0; j < D; j++) C[k][j] = sum[k][j] / cnt[k];
+      }
+      return { C: C, assign: assign };
+    };
+
     let base = 0; for (let i = 0; i < ntr; i++) base += Y[i]; base /= ntr;
-    const protos = [];
-    for (let k = 0; k < K; k++) {
-      if (nk[k] < 5) continue;                     // 표본 너무 적은 원형은 버린다
-      const wr = wk[k] / nk[k];
-      // 표본수 수축 — 20건짜리 원형의 승률 0.8 을 그대로 믿으면 안 된다.
-      const sh = nk[k] / (nk[k] + MEMOML.shrinkN);
-      protos.push({ c: C[k].map(function (v) { return +v.toFixed(3); }), n: nk[k],
-                    p: +(base + (wr - base) * sh).toFixed(4), pnl: +(pk[k] / nk[k]).toFixed(3) });
+    const protos = [], _bookInfo = [];
+    for (let b = 0; b < _books.length; b++) {
+      const idx = _books[b].idx, n = idx.length;
+      /* ★원형 하나가 담는 표본 수를 종전과 똑같이 유지한다.★ 책마다 K 를 128 로 채우면
+         칸막이가 아니라 ★해상도 증설★ 이 섞여 들어가 무엇이 효과를 냈는지 못 가른다.
+         게다가 원형이 잘아지면 수축(shrinkN 40)이 더 세게 걸려 신호가 기저로 눌린다.
+         K_m = K·n_m/ntr 이면 표본/원형 비도, 수축 세기도, 총 원형 수도 종전과 같다 —
+         ★바뀌는 것은 "누구와 이웃이 되는가" 하나뿐이다.★
+         CPU 는 Σ n_m·K_m = K·Σn_m²/ntr 이라 오히려 준다(운영 분포에서 약 0.5배). */
+      const K = Math.min(Math.floor(n / 20), Math.max(8, Math.round(MEMOML.K * n / ntr)));
+      if (K < 8) continue;
+      const fit = _fitBook(idx, K);
+      // 원형별 결과 집계
+      const nk = new Array(K).fill(0), wk = new Array(K).fill(0), pk = new Array(K).fill(0);
+      for (let i = 0; i < n; i++) { const k = fit.assign[i]; nk[k]++; wk[k] += Y[idx[i]]; pk[k] += P[idx[i]]; }
+      let bm = 0; for (let i = 0; i < n; i++) bm += Y[idx[i]]; bm /= n;   // ★그 시장의 기저★
+      let _kept = 0;
+      for (let k = 0; k < K; k++) {
+        if (nk[k] < 5) continue;                   // 표본 너무 적은 원형은 버린다
+        const wr = wk[k] / nk[k];
+        // 표본수 수축 — 20건짜리 원형의 승률 0.8 을 그대로 믿으면 안 된다.
+        const sh = nk[k] / (nk[k] + MEMOML.shrinkN);
+        protos.push({ c: fit.C[k].map(function (v) { return +v.toFixed(3); }), n: nk[k], m: _books[b].m,
+                      p: +(bm + (wr - bm) * sh).toFixed(4), pnl: +(pk[k] / nk[k]).toFixed(3) });
+        _kept++;
+      }
+      _bookInfo.push({ m: _books[b].m, n: n, k: _kept, base: +bm.toFixed(4) });
     }
     if (protos.length < 8) return "[MEMO] 유효 원형 " + protos.length + "개 — 대기";
     const model = { protos: protos, mean: mean, std: std, base: +base.toFixed(4),
@@ -29397,6 +29468,10 @@ async function memoTrainNightly(DB) {
                        드러나는 사고다(V33.272 가 STACK 슬롯에서 막은 것과 같은 종류).
                        ord 는 조기중단 순서일 뿐 결과에 영향이 없다(합은 순서 무관). */
                     scale: scale, ord: ord,
+                    /* [V33.288] ★칸막이도 모델 안에 싣는다.★ 추론이 LUXML.featNames 의 순서를
+                       다시 읽으면, 이름표가 바뀐 날 학습공간과 추론공간이 조용히 갈라진다 —
+                       scale/ord 를 실어 둔 것과 정확히 같은 이유다. */
+                    mktIdx: _mktOK ? _MKI : null, books: _bookInfo,
                     featVer: MEMOML.featVer, luxFeatVer: LUXML.featVer, n: ntr,
                     purged: _purged,   // [V33.156] 다른 모델과 같은 근거를 남긴다(홀드아웃 신뢰의 바탕)
                     ts: Date.now() };
@@ -29432,8 +29507,15 @@ async function memoTrainNightly(DB) {
        추측으로 답해 왔다 — 창이 30일인지 2년인지 화면 어디에도 없었다. 다음 실행부터는
        이 숫자가 직접 답한다(펼침이 실제로 먹었는지도 여기서 보인다). */
     const _spanD = (_spanHi > _spanLo) ? Math.round((_spanHi - _spanLo) / 86400000) : 0;
+    /* [V33.288] 시장별 책이 실제로 몇 권·몇 개로 섰는지 남긴다 — 안 적으면
+       "칸막이가 먹었나" 를 또 추측으로 답하게 된다(V33.283 이 창 일수로 겪은 그 일). */
+    const _MKN = { "0": "US", "1": "KR", "2": "CM", "-1": "모듬" };
+    const _bookStr = _bookInfo.map(function (b) {
+      return (_MKN[String(b.m)] || "?") + " " + b.k + "/" + b.n;
+    }).join(" · ");
     return "[MEMO] 원형 " + protos.length + "개 (표본 " + ntr +
            " · 창 " + _spanD + "일" + (_islands ? ("/" + _islands + "구간") : "(연속)") + ")" +
+           " 시장책[" + _bookStr + "]" +
            " 가중거리 유효축 " + _liveAx + "/" + D +
            "(잡음바닥 " + (_num(MEMOML.relNoiseZ, 2) / Math.sqrt(Math.max(ntr, 2))).toFixed(4) + " 제거)" +
            " valAcc " + (model.valAcc * 100).toFixed(1) +
@@ -29466,11 +29548,30 @@ function memoScore(model, featVec) {
     const _sc = (Array.isArray(model.scale) && model.scale.length === D) ? model.scale : null;
     if (_sc) for (let j = 0; j < D; j++) z[j] *= _sc[j];
     const _ord = (Array.isArray(model.ord) && model.ord.length === D) ? model.ord : null;
+    /* [V33.288] ★같은 시장의 원형만 본다.★ 시장 원핫은 관련도 가중(V33.273/274)에 눌려
+       거리에서 사라지므로, 거리에 맡겨 두면 한국 종목의 '가장 닮은 과거' 로 미국 표본이
+       뽑힌다. 시장은 무게를 줄 축이 아니라 칸막이다 — 위 학습부 주석 참조.
+       구 모델(mktIdx 없음)은 종전대로 전체를 뒤진다 — 그 모델은 혼합책으로 학습됐으므로
+       그렇게 재는 것이 맞다(전진검증이 어제 모델을 채점한다). */
+    const _P = model.protos;
+    let _sel = null;
+    const _mi = (Array.isArray(model.mktIdx) && model.mktIdx.length === 3) ? model.mktIdx : null;
+    if (_mi) {
+      let qm = 3;
+      for (let m = 0; m < 3; m++) if (_num(featVec[_mi[m]], 0) > 0.5) { qm = m; break; }
+      _sel = [];
+      for (let k = 0; k < _P.length; k++) if (_P[k].m === qm) _sel.push(k);
+      // 그 시장 책이 없으면 모듬책(m=-1) → 그것도 없으면 종전대로 전체.
+      if (!_sel.length) for (let k = 0; k < _P.length; k++) if (_P[k].m === -1) _sel.push(k);
+      if (!_sel.length) _sel = null;
+    }
     // 최근접 M개 — 부분정렬 대신 삽입으로 상위 M만 유지(할당 최소화)
     const M = Math.max(1, MEMOML.neighbors);
     const bestD = new Array(M).fill(Infinity), bestI = new Array(M).fill(-1);
-    for (let k = 0; k < model.protos.length; k++) {
-      const c = model.protos[k].c;
+    const _NL = _sel ? _sel.length : _P.length;
+    for (let u = 0; u < _NL; u++) {
+      const k = _sel ? _sel[u] : u;
+      const c = _P[k].c;
       let d2 = 0;
       for (let q = 0; q < D; q++) { const j = _ord ? _ord[q] : q; const t = z[j] - c[j]; d2 += t * t; if (d2 >= bestD[M - 1]) break; }
       if (d2 < bestD[M - 1]) {
