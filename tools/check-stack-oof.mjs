@@ -42,7 +42,18 @@ const no = (m) => { console.error("  FAIL " + m); bad++; };
 //   에폭 경로는 신규 수확분(전문가가 아직 못 본 행)을 잡는다. 둘은 겹치지 않는 다른 구간이다.
 {
   const i = src.indexOf("async function stackSampleBackfill");
-  const seg = src.slice(i, i + 12000);
+  /* [V33.286] 고정 길이(12,000자)로 자르고 있었다. 함수가 길어지면 뒷부분이 창 밖으로
+     밀려나 ★있는 코드를 없다고★ 말한다(V33.286 을 넣자 실제로 그랬다).
+     중괄호를 세어 함수 끝까지 가져온다 — 검사가 코드 길이에 흔들리면 안 된다. */
+  const seg = (function () {
+    let dep = 0, st = -1;
+    for (let j = i; j < src.length; j++) {
+      const c = src[j];
+      if (c === "{") { if (st < 0) st = j; dep++; }
+      else if (c === "}") { dep--; if (dep === 0 && st >= 0) return src.slice(i, j + 1); }
+    }
+    return src.slice(i, i + 12000);
+  })();
   if (!/stack_expert_epoch/.test(seg)) no("STACK-OOF: 에폭 경로가 사라졌다 — 신규 수확분을 못 잡는다");
   else ok("에폭 경로 유지(신규 수확분) + 홀드아웃 경로 추가");
   if (!/stack_oof_cursor/.test(seg))

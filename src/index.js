@@ -2981,7 +2981,7 @@ async function applySignalTypeWeights(DB, cfg) {
    화면·자가진단이 계속 "V33.272" 를 보고했다(운영 스냅샷이 그대로 그랬다). 배포는 됐는데
    ★배포됐다는 사실만 거짓말★ 을 하고 있었으니, "내 고침이 올라간 건가" 를 화면으로 확인할
    방법이 없었다. tools/check-build-ver.mjs 가 이제 소스에 적힌 최신 버전과 이 값을 대조한다. */
-const _BUILD_VER = "V33.285";
+const _BUILD_VER = "V33.286";
 
 // ═══ [V33.171] 평가 순서 계획 — ★승격과 순환을 교차해 굶주림을 구조적으로 없앤다★ ═══
 //   V33.50 의 형태트리거는 "급한 몇 종목을 앞으로 당긴다"는 의도였으나, 실제 운영로그에서는
@@ -29843,6 +29843,8 @@ async function stackSampleBackfill(DB, opts) {
        → 학습기가 홀드아웃 시작 시각(minTs)을 올려주면, 그 이후 ts 를 가진 행도 누출없는
          구간으로 쓴다. 커서를 따로 두어 에폭 경로와 섞이지 않게 한다. */
     let _oofMinTs = 0, _oofN = 0, _oofModels = null, _rewound = false;
+    let _gapFrom = 0, _gapTo = 0;   // [V33.286] 이번 회차가 '빈 구간 메우기' 였는가
+    let _oc0 = 0, _covPrev = 0;     // 읽을 때의 커서·커버시작(저장할 때 그대로 되쓴다)
     try {
       const _ow = await getState(DB, "stack_oof_window", null);
       if (_ow && _num(_ow.minTs, 0) > 0) {
@@ -29903,10 +29905,37 @@ async function stackSampleBackfill(DB, opts) {
         } catch (e) {}
         if (_haveFv === 0) { _oc = 0; _rewound = true; }
       }
-      rows = (await DB.prepare(
-        "SELECT id, ts, market, symbol, feat, label, pnl_pct FROM ml_samples WHERE ts >= ? AND id > ? AND featver = ? ORDER BY id ASC LIMIT ?"
-      ).bind(_oofMinTs, _oc, LUXML.featVer, lim).all()).results || [];
-      if (rows.length) _src = "홀드아웃";
+      /* ══ [V33.286] ★경계는 열렸는데 커서가 이미 지나가 있었다★ ═══════════════════
+         V33.279 로 경계 통지가 통과했다(실측: 2026-05-24 → 2026-01-30, 200).
+         그런데 그 다음 소급생성은 ★+1건★ 이었고 경로도 에폭이었다. 왜인가:
+         이 커서는 ★id 고수위★ 다(id > _oc). 그런데 새로 열린 넉 달치는 ts 가 더 과거라
+         ★id 가 더 작다★ — id > _oc 가 통째로 걸러낸다. 문이 열렸는데 지나갈 수가 없었다.
+         종전 되감기는 ★featVer 가 바뀔 때만★ 돈다(그때만 사본이 안 생기니까). 경계가
+         앞당겨진 경우는 아무도 처리하지 않았다.
+
+         고침: '어디부터 훑었는가(covFromTs)' 를 커서에 함께 남기고, 경계가 그보다
+         앞당겨지면 ★그 사이 구간만★ 따로 훑는다(ts >= 새경계 AND ts < 이미훑은시작).
+         그 구간의 행은 종전 경계 아래라 ★한 번도 안 훑은 것★ 이므로 사본이 생기지 않는다 —
+         전체를 되감는 게 아니라 ★빈 구간만 메운다.★ */
+      const _cov = _num(_ocSt.covFromTs, 0);
+      _oc0 = _oc; _covPrev = _cov;
+      if (_oofMinTs > 0 && _cov > 0 && _oofMinTs < _cov) {
+        const _gid = _num(_ocSt.gapId, 0);
+        rows = (await DB.prepare(
+          "SELECT id, ts, market, symbol, feat, label, pnl_pct FROM ml_samples WHERE ts >= ? AND ts < ? AND id > ? AND featver = ? ORDER BY id ASC LIMIT ?"
+        ).bind(_oofMinTs, _cov, _gid, LUXML.featVer, lim).all()).results || [];
+        if (rows.length) { _src = "홀드아웃"; _gapFrom = _oofMinTs; _gapTo = _cov; }   // 로그가 이 사실을 적는다
+        else {
+          await setState(DB, "stack_oof_cursor", { lastId: _oc, fv: STACKML.featVer,
+            covFromTs: _oofMinTs, gapId: 0, ts: Date.now() });
+        }
+      }
+      if (!rows.length) {
+        rows = (await DB.prepare(
+          "SELECT id, ts, market, symbol, feat, label, pnl_pct FROM ml_samples WHERE ts >= ? AND id > ? AND featver = ? ORDER BY id ASC LIMIT ?"
+        ).bind(_oofMinTs, _oc, LUXML.featVer, lim).all()).results || [];
+        if (rows.length) _src = "홀드아웃";
+      }
     }
     if (!rows.length) {
       // 되감기 없음 — 되감으면 전문가가 이미 학습한 행으로 돌아가 누출이 재발한다.
@@ -30020,12 +30049,27 @@ async function stackSampleBackfill(DB, opts) {
     /* [V33.205] 어느 경로에서 읽었는지에 따라 ★그 경로의 커서만★ 전진시킨다.
        섞으면 에폭 커서가 홀드아웃 구간의 id 로 튀어, 나중에 들어올 신규 수확분을 통째로 건너뛴다. */
     if (_src === "홀드아웃") {
-      await setState(DB, "stack_oof_cursor", { lastId: lastId, fv: STACKML.featVer, ts: Date.now() });
+      /* [V33.286] 빈 구간을 메우는 중이면 ★그 구간의 커서만★ 옮긴다 — lastId 를 건드리면
+         평소 경로가 앞으로 튀어 신규 수확분을 건너뛴다(V33.205 가 에폭 커서에서 겪은 것과
+         같은 사고다). covFromTs 는 '어디부터 훑었는가' 이므로 처음 한 번만 기록된다. */
+      if (_gapTo > 0) {
+        // 빈 구간 회차 — 평소 커서(lastId)와 커버시작은 그대로 두고 구간 커서만 전진.
+        await setState(DB, "stack_oof_cursor", { lastId: _oc0, fv: STACKML.featVer,
+          covFromTs: _covPrev, gapId: lastId, ts: Date.now() });
+      } else {
+        await setState(DB, "stack_oof_cursor", { lastId: lastId, fv: STACKML.featVer,
+          covFromTs: _covPrev || _oofMinTs, gapId: 0, ts: Date.now() });
+      }
       await setState(DB, "stack_bf_cursor", { lastId: _num(st.lastId, 0), made: _num(st.made, 0) + made, ts: Date.now() });
     } else {
       await setState(DB, "stack_bf_cursor", { lastId: lastId, made: _num(st.made, 0) + made, ts: Date.now() });
     }
-    return "[STACK-BF] +" + made + "표본 (" + _src + "경로 · 묶음 " + _batches + "회 " +
+    return "[STACK-BF] +" + made + "표본 (" + _src + "경로" +
+           /* [V33.286] 빈 구간을 메우는 중이면 그 사실과 구간을 적는다 — 안 적으면
+              "왜 갑자기 옛날 표본이 늘지" 를 다음에 또 추측하게 된다. */
+           (_gapTo > 0 ? ("★신규개방구간 " + new Date(_gapFrom).toISOString().slice(0, 10) +
+                          "~" + new Date(_gapTo).toISOString().slice(0, 10) + " 메우는 중★") : "") +
+           " · 묶음 " + _batches + "회 " +
            (Date.now() - _t0sb) + "ms · 건너뜀 " + skipped + ", 커서 " + lastId +
            ", 에폭 " + _ep + ", 누적 " + (_num(st.made, 0) + made) + ")" +
            (_rewound ? " — 판 v" + STACKML.featVer + " 표본 0 이라 홀드아웃 커서를 창 처음으로 되감았다(창 경계는 그대로 · 같은 창을 새 판으로 전부 다시 만든다)" : "") +
