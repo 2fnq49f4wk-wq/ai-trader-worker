@@ -34,41 +34,53 @@ function grabFn(name) {
   return null;
 }
 
-console.log("① 안개·초점이 실제로 앞뒤를 가르는가 — 화면 코드의 amp 식을 떼어 잰다");
+console.log("① 축 배치가 기하학적으로 가능한가 — 이게 안 되면 어떤 튜닝도 소용없다");
 {
-  /* 식을 손으로 옮겨 적지 않는다 — index.html 의 그 줄을 그대로 떼어 돌린다. */
-  const m = /var amp=function\(t\)\{([\s\S]*?)\n    \};/.exec(HV);
-  chk(!!m, "amp(세기) 식을 화면 코드에서 떼어 왔다", "amp 식을 못 찾는다 — 검사가 헛돈다");
-  if (m) {
-    const L = 16;
-    const mk = (row, focus) => {
-      const _zc = []; for (let t = 0; t < L; t++) _zc.push(t * 10);   // 앞(t0) → 뒤(t15)
-      const SQ3 = { row, focus };
-      return new Function("_zc", "_zmn", "_zmx", "SQ3", "L",
-        "return function(t){" + m[1] + "\n};")(_zc, 0, (L - 1) * 10, SQ3, L);
-    };
-    const a = mk(8, true);
-    console.log(`       t0 ${a(0).toFixed(3)} · t8(선택) ${a(8).toFixed(3)} · t14 ${a(14).toFixed(3)} · t15(지금) ${a(15).toFixed(3)}`);
-    // 안개: 선택·마지막을 뺀 나머지는 뒤로 갈수록 흐려져야 한다.
-    const plain = [1, 2, 3, 4, 5, 6, 7, 9, 10, 11, 12, 13, 14];
-    let mono = true;
-    for (let i = 1; i < plain.length; i++) if (a(plain[i]) > a(plain[i - 1]) + 1e-9) mono = false;
-    chk(mono, "뒤로 갈수록 흐려진다 — 깊이가 세기로 읽힌다", "★안개가 단조롭지 않다 — 앞뒤가 안 갈린다★");
-    // 초점: 선택한 시점이 이웃보다 확실히 도드라져야 한다.
-    chk(a(8) > a(7) * 1.8 && a(8) > a(9) * 1.8,
-      `선택 시점이 이웃보다 확실히 도드라진다 (t8 ${a(8).toFixed(3)} vs t7 ${a(7).toFixed(3)})`,
-      "선택 시점이 이웃과 구별되지 않는다 — 초점이 일을 안 한다");
-    chk(a(15) > a(14) * 1.8, "'지금'(마지막 시점)도 항상 도드라진다 — 모델이 실제로 읽는 자리다",
-      "마지막 시점이 묻힌다");
-    // 끄면 종전 그림으로 — 안개만 남고 초점은 사라져야 한다.
-    const b = mk(8, false);
-    chk(Math.abs(b(8) - b(7)) < 0.08 && b(0) > b(14),
-      "강조를 끄면 초점은 사라지고 안개만 남는다(종전 그림으로 되돌릴 수 있다)",
-      "강조를 꺼도 그림이 안 돌아온다");
-    // ★세기만 바꾼다★ — 눌린 카드도 0 이 아니어야 한다(없는 척하면 안 된다).
-    let minA = 1; for (let t = 0; t < L; t++) minA = Math.min(minA, a(t));
-    chk(minA > 0.1, `가장 눌린 시점도 ${minA.toFixed(3)} 으로 남는다 — 지우는 게 아니라 누르는 것이다`,
-      `★어떤 시점이 사실상 사라진다(${minA.toFixed(3)}) — 없는 척하는 그림이 된다★`);
+  /* ★두 번의 튜닝이 실패한 이유★ — 많은 축(시점 16)이 깊이에, 적은 축(단계 5)이 가로에
+     있었다. 원근은 깊이를 압축하므로 그 배치는 반드시 겹친다. 계산으로 확인한다:
+     깊이축이 화면 가로로 번지는 폭이 기둥 간격을 넘으면 서로 뭉갠다. */
+  const L = 16, yaw = 0.62;
+  const zSpan = /var zSpan = (\d+)/.exec(HV), xp = /var xPitch = \(620\/Math\.max\(1,L\)\)/.test(HV);
+  chk(!!zSpan && xp, `단계는 깊이(${zSpan && zSpan[1]}), 시점은 가로다`, "축 배치를 못 찾는다");
+  if (zSpan) {
+    const stages = 5;
+    const xPitch = 620 / L;                                   // 시점 한 칸의 화면 폭
+    const smear = (+zSpan[1]) * Math.sin(yaw);                // 깊이가 가로로 번지는 폭
+    // 종전 배치(시점이 깊이): 깊이 250 · 기둥 간격 155
+    const oldSmear = 250 * Math.sin(yaw), oldGap = 620 / (stages - 1), oldPerStep = oldSmear / L;
+    console.log(`       종전 — 시점 한 장 폭 ${oldPerStep.toFixed(1)} · 깊이번짐 ${oldSmear.toFixed(0)} vs 기둥간격 ${oldGap.toFixed(0)} (${(oldSmear / oldGap).toFixed(2)}배)`);
+    console.log(`       지금 — 시점 한 장 폭 ${xPitch.toFixed(1)} · 깊이엔 단계 ${stages}장뿐(번짐 ${smear.toFixed(0)})`);
+    chk(oldSmear / oldGap > 0.9,
+      `종전 배치는 기둥끼리 겹쳤다(${(oldSmear / oldGap).toFixed(2)}배) — 튜닝으로는 못 고칠 문제였다`,
+      "종전 배치가 안 겹친다 — 이 검사가 원인을 잘못 짚었다");
+    chk(xPitch > oldPerStep * 3,
+      `시점 한 장이 ${(xPitch / oldPerStep).toFixed(1)}배 넓어졌다 (${oldPerStep.toFixed(1)} → ${xPitch.toFixed(1)})`,
+      `넓어지지 않았다 (${oldPerStep.toFixed(1)} → ${xPitch.toFixed(1)})`);
+    chk(smear < xPitch * L * 0.6,
+      `깊이엔 단계 ${stages}장뿐이라 안 겹친다(번짐 ${smear.toFixed(0)} < 무대 폭 ${(xPitch * L).toFixed(0)})`,
+      "깊이가 여전히 무대를 넘어 번진다");
+  }
+}
+
+console.log("\n①-b 안개는 단계를, 초점은 시점을 맡는가 (종전엔 둘 다 깊이라 싸웠다)");
+{
+  const fg = /var fogOf=function\(si\)\{([\s\S]*?)\n    \};/.exec(HV);
+  const fc = /var focOf=function\(t\)\{(.*?)\};/.exec(HV);
+  chk(!!fg && !!fc, "안개(단계)와 초점(시점) 식을 화면 코드에서 떼어 왔다", "식을 못 찾는다 — 검사가 헛돈다");
+  if (fg && fc) {
+    const nS = 5;
+    const _sc = []; for (let i = 0; i < nS; i++) _sc.push(i * 10);
+    const fog = new Function("_sc", "_smn", "_smx", "return function(si){" + fg[1] + "\n};")(_sc, 0, (nS - 1) * 10);
+    const foc = new Function("SQ3", "L", "return function(t){" + fc[1] + "};")({ row: 8, focus: true }, 16);
+    console.log(`       안개 앞단계 ${fog(0).toFixed(3)} → 뒤단계 ${fog(nS - 1).toFixed(3)} · 초점 t8 ${foc(8)} vs t7 ${foc(7)}`);
+    let mono = true; for (let i = 1; i < nS; i++) if (fog(i) > fog(i - 1) + 1e-9) mono = false;
+    chk(mono && fog(nS - 1) < fog(0), "뒤쪽 단계가 흐려진다 — 파이프라인이 층으로 읽힌다", "★안개가 단조롭지 않다★");
+    chk(foc(8) > foc(7) * 1.8 && foc(15) > foc(14) * 1.8,
+      "보고 있는 시점과 '지금'만 또렷하다", "초점이 시점을 안 가른다");
+    chk(fog(nS - 1) > 0.2 && foc(0) > 0.2,
+      "가장 눌린 것도 사라지지 않는다 — 지우는 게 아니라 누르는 것이다", "★어떤 것이 사실상 사라진다★");
+    chk(/var amp=function\(t,si\)\{ return fogOf\(si==null\?0:si\)\*focOf\(t\); \};/.test(HV),
+      "둘을 곱해 쓴다(담당이 갈려 서로 안 싸운다)", "안개와 초점이 한 축에 겹쳐 걸려 있다");
   }
 }
 
@@ -98,16 +110,17 @@ console.log("\n③ 바닥 시점 눈금 — 툴팁 없이도 깊이의 뜻이 �
 
 console.log("\n④ 펼침 — 겹치면 벌릴 수 있는가");
 {
-  chk(/spread: 1\.5, SPREAD_MIN: 0\.6, SPREAD_MAX: 3\.2/.test(HV),
-    "펼침 배수와 범위가 있다(기본 1.5 — 종전보다 벌려 시작한다)", "펼침 설정이 없다");
-  chk(/\* sq3Clamp\(isFinite\(SQ3\.spread\)\?SQ3\.spread:1\.5, SQ3\.SPREAD_MIN, SQ3\.SPREAD_MAX\)/.test(HV),
-    "시점 간격이 펼침 배수를 실제로 곱한다", "펼침이 간격에 반영되지 않는다 — 버튼만 있고 효과가 없다");
+  chk(/spread: 1, SPREAD_MIN: 0\.6, SPREAD_MAX: 3\.2/.test(HV),
+    "펼침 배수와 범위가 있다(기본 1 — 겹침이 없어져 응급수단이 아니게 됐다)", "펼침 설정이 없다");
+  chk(/\* sq3Clamp\(isFinite\(SQ3\.spread\)\?SQ3\.spread:1, SQ3\.SPREAD_MIN, SQ3\.SPREAD_MAX\)/.test(HV),
+    "시점 간격(가로)이 펼침 배수를 실제로 곱한다", "펼침이 간격에 반영되지 않는다 — 버튼만 있고 효과가 없다");
   chk(/id="sq3SpIn"/.test(HV) && /id="sq3SpOut"/.test(HV) && /id="sq3Focus"/.test(HV),
     "펼침 ±·시점 강조 버튼이 화면에 있다", "조작 버튼이 없다");
   chk(/setSpread\(SQ3\.spread\*1\.25\)/.test(HV) && /sq3Need\(\); \};\n    var spI/.test(HV.replace(/\r/g, "")),
     "펼침도 프레임 병합으로 그린다(V33.276 규약)", "펼침이 직접 그린다");
-  chk(/카드가 9 폭 × 46 높이면/.test(HV) && /cardH=46, cardW=13;/.test(HV),
-    "카드 폭을 넓혔다 — 비스듬히 봐도 카드로 읽힌다", "카드가 여전히 실오라기다");
+  chk(/var cardH=52, cardW=Math\.max\(6, xPitch\*0\.40\);/.test(HV),
+    "카드 폭이 시점 간격에 따라간다 — 펼치면 카드도 같이 커진다(고정폭이 아니다)",
+    "카드 폭이 여전히 고정이다");
 }
 
 console.log("\n④-b 시점 이동 — 옮긴 자리를 축으로 도는가 (초점 고정 해소)");
