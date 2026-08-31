@@ -14,6 +14,23 @@
 //   이 게이트가 지키는 것은 하나다: ★그 문을 열되, 누출 쪽으로는 절대 안 열리게★.
 import fs from "node:fs";
 const src = fs.readFileSync("src/index.js", "utf8");
+
+/* ══ [V33.289] ★고정 길이로 자르는 검사는 게이트가 아니라 지뢰다★ ══════════════
+   V33.286 이 이 파일의 한 곳(12,000자)을 중괄호 세기로 고쳤는데, ★같은 병이 다른 곳에
+   두 군데 더 있었다★(14,000자·700자). 이번에 주석 몇 줄을 더하자 그중 하나가 곧바로
+   "있는 코드를 없다" 고 말하며 배포를 막았다. 한 번 고칠 게 아니라 ★수단을 없앤다★ —
+   함수 몸통은 여기 하나로만 떼어 온다. */
+function fnBody(head) {
+  const i = src.indexOf(head);
+  if (i < 0) return "";
+  let dep = 0, st = -1;
+  for (let j = i; j < src.length; j++) {
+    const c = src[j];
+    if (c === "{") { if (st < 0) st = j; dep++; }
+    else if (c === "}") { dep--; if (dep === 0 && st >= 0) return src.slice(i, j + 1); }
+  }
+  return src.slice(i);
+}
 const py = fs.readFileSync("trainer/modal/modal_train.py", "utf8");
 let bad = 0;
 const ok = (m) => console.log("  ok   " + m);
@@ -41,19 +58,8 @@ const no = (m) => { console.error("  FAIL " + m); bad++; };
 // ── ② 에폭 경로를 대체하지 않고 '추가' 한다 ──────────────────────────────
 //   에폭 경로는 신규 수확분(전문가가 아직 못 본 행)을 잡는다. 둘은 겹치지 않는 다른 구간이다.
 {
-  const i = src.indexOf("async function stackSampleBackfill");
-  /* [V33.286] 고정 길이(12,000자)로 자르고 있었다. 함수가 길어지면 뒷부분이 창 밖으로
-     밀려나 ★있는 코드를 없다고★ 말한다(V33.286 을 넣자 실제로 그랬다).
-     중괄호를 세어 함수 끝까지 가져온다 — 검사가 코드 길이에 흔들리면 안 된다. */
-  const seg = (function () {
-    let dep = 0, st = -1;
-    for (let j = i; j < src.length; j++) {
-      const c = src[j];
-      if (c === "{") { if (st < 0) st = j; dep++; }
-      else if (c === "}") { dep--; if (dep === 0 && st >= 0) return src.slice(i, j + 1); }
-    }
-    return src.slice(i, i + 12000);
-  })();
+  /* [V33.286/289] 고정 길이로 자르지 않는다 — 위 fnBody 주석 참조. */
+  const seg = fnBody("async function stackSampleBackfill");
   if (!/stack_expert_epoch/.test(seg)) no("STACK-OOF: 에폭 경로가 사라졌다 — 신규 수확분을 못 잡는다");
   else ok("에폭 경로 유지(신규 수확분) + 홀드아웃 경로 추가");
   if (!/stack_oof_cursor/.test(seg))
@@ -131,8 +137,7 @@ const no = (m) => { console.error("  FAIL " + m); bad++; };
     in-sample 확률이 나온다. 그러면 STACK 이 부풀려진 확률에서 "memo 를 믿어라" 를 배운다.
     실측이 그 방향과 맞았다: 표본 6,331(t 1.73) → 6,931(t 0.91). 더할수록 나빠졌다. */
 {
-  const i2 = src.indexOf("async function stackSampleBackfill");
-  const fn = i2 >= 0 ? src.slice(i2, src.indexOf("\n}\n", i2)) : "";
+  const fn = fnBody("async function stackSampleBackfill");
   if (!fn) no("STACK-OOF: 소급생성 함수를 찾지 못했다 — 검사가 헛돈다");
   else {
     if (!/_oofModels/.test(fn))
@@ -254,8 +259,7 @@ const no = (m) => { console.error("  FAIL " + m); bad++; };
 
   // 앞으로를 위해 판 표기를 남기는가 — 이게 없으면 다음 판 변경 때 또 (a) 로 돌아간다
   {
-    const i = src.indexOf("async function stackSampleBackfill");
-    const seg = src.slice(i, i + 14000);
+    const seg = fnBody("async function stackSampleBackfill");
     if (/setState\(DB, "stack_oof_cursor", \{ lastId: lastId, fv: STACKML\.featVer/.test(seg))
       ok("홀드아웃 커서에 판(fv)을 함께 남긴다 — 다음 판 변경은 자동으로 판별된다");
     else no("STACK-OOF: 커서에 판 표기를 안 남긴다 — 다음 featVer 변경 때 같은 정지가 재발한다");
@@ -340,7 +344,7 @@ const no = (m) => { console.error("  FAIL " + m); bad++; };
     else no("STACK-BF: 단건 적재가 " + d._n.insert + "회 (표본 5건)");
   }
   {
-    const fn = src.slice(src.indexOf("async function stackLogSample"), src.indexOf("async function stackLogSample") + 700);
+    const fn = fnBody("async function stackLogSample");
     if (/CREATE TABLE IF NOT EXISTS stack_samples/.test(fn))
       no("STACK-BF: stackLogSample 안에 CREATE TABLE 이 다시 들어왔다 — 표본당 왕복이 늘어난다");
     else ok("stackLogSample 본문에 스키마 DDL 이 없다");

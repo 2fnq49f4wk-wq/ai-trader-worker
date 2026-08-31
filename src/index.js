@@ -2981,7 +2981,7 @@ async function applySignalTypeWeights(DB, cfg) {
    화면·자가진단이 계속 "V33.272" 를 보고했다(운영 스냅샷이 그대로 그랬다). 배포는 됐는데
    ★배포됐다는 사실만 거짓말★ 을 하고 있었으니, "내 고침이 올라간 건가" 를 화면으로 확인할
    방법이 없었다. tools/check-build-ver.mjs 가 이제 소스에 적힌 최신 버전과 이 값을 대조한다. */
-const _BUILD_VER = "V33.288";
+const _BUILD_VER = "V33.289";
 
 // ═══ [V33.171] 평가 순서 계획 — ★승격과 순환을 교차해 굶주림을 구조적으로 없앤다★ ═══
 //   V33.50 의 형태트리거는 "급한 몇 종목을 앞으로 당긴다"는 의도였으나, 실제 운영로그에서는
@@ -30018,7 +30018,30 @@ async function stackSampleBackfill(DB, opts) {
          앞당겨지면 ★그 사이 구간만★ 따로 훑는다(ts >= 새경계 AND ts < 이미훑은시작).
          그 구간의 행은 종전 경계 아래라 ★한 번도 안 훑은 것★ 이므로 사본이 생기지 않는다 —
          전체를 되감는 게 아니라 ★빈 구간만 메운다.★ */
-      const _cov = _num(_ocSt.covFromTs, 0);
+      /* ══ [V33.289] ★V33.286 은 자기 문을 자기가 잠갔다★ ═══════════════════════════
+         운영 실측(2026-08-31 00:47, V33.286 배포 후):
+             [STACK-BF] +2표본 (★에폭★경로 · 커서 1770747, 에폭 1770744, 누적 32480)
+         빈 구간 경로가 한 번도 안 돌았다. 이유는 covFromTs 의 ★최초 기록값★ 이었다.
+
+         covFromTs 는 "어디부터 훑었는가" 인데, 없을 때 아래 저장부가 `_covPrev || _oofMinTs`
+         로 ★지금 경계★ 를 적는다. 그런데 지금 경계는 이미 앞당겨진 값(2026-01-30)이고
+         실제로 훑은 시작은 옛 경계(2026-05-24)다. 즉 홀드아웃 회차가 한 번 돌면
+         "2026-01-30 부터 전부 훑었다" 고 스스로 선언해 버린다 → _oofMinTs < _cov 가
+         영영 거짓 → ★열어 둔 넉 달치가 그 순간 봉인된다.★
+
+         고침: 최초값을 ★추측하지 말고 잰다.★ 이미 만들어 둔 홀드아웃 표본의 최소 ts 가
+         곧 "어디까지 덮었는가" 다 — 커서(id 고수위)와 달리 ts 로 물어보므로 id 순서와
+         ts 순서가 어긋나는 이 표(V33.173)에서도 뜻이 흔들리지 않는다.
+         표본이 아직 하나도 없으면 덮은 구간도 없으므로 빈 구간 개념 자체가 없다(0). */
+      let _cov = _num(_ocSt.covFromTs, 0);
+      if (!(_cov > 0)) {
+        try {
+          const _mn = await DB.prepare(
+            "SELECT MIN(ts) AS m FROM stack_samples WHERE featver = ? AND src = 'oof'"
+          ).bind(STACKML.featVer).first();
+          _cov = _num(_mn && _mn.m, 0);
+        } catch (e) {}
+      }
       _oc0 = _oc; _covPrev = _cov;
       if (_oofMinTs > 0 && _cov > 0 && _oofMinTs < _cov) {
         const _gid = _num(_ocSt.gapId, 0);
