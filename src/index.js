@@ -2981,7 +2981,7 @@ async function applySignalTypeWeights(DB, cfg) {
    화면·자가진단이 계속 "V33.272" 를 보고했다(운영 스냅샷이 그대로 그랬다). 배포는 됐는데
    ★배포됐다는 사실만 거짓말★ 을 하고 있었으니, "내 고침이 올라간 건가" 를 화면으로 확인할
    방법이 없었다. tools/check-build-ver.mjs 가 이제 소스에 적힌 최신 버전과 이 값을 대조한다. */
-const _BUILD_VER = "V33.284";
+const _BUILD_VER = "V33.285";
 
 // ═══ [V33.171] 평가 순서 계획 — ★승격과 순환을 교차해 굶주림을 구조적으로 없앤다★ ═══
 //   V33.50 의 형태트리거는 "급한 몇 종목을 앞으로 당긴다"는 의도였으나, 실제 운영로그에서는
@@ -29149,10 +29149,24 @@ const MEMOML = {
   neighbors: 8,            // 추론 시 참조할 최근접 원형 수
   minTrainSamples: 4000,
   trainWindow: 24000,      // Worker 메모리·CPU 예산 안에서 도는 크기
-  /* [V33.283] 그 창을 몇 개 구간으로 나눠 ★시간에 펼쳐★ 읽을지. 읽는 행 수는 그대로다.
-     24 면 구간당 1,000행 — 이력 전체에 24개 시점 섬이 생긴다. 홀드아웃(마지막 20%)이
-     대여섯 섬을 덮으므로, 종전 '대여섯 날' 에서 '대여섯 시점 구간' 으로 넓어진다. */
-  islands: 24,
+  /* ══ [V33.285] ★펼쳐 봤고, 나빠졌다 — 되돌린다★ ═══════════════════════════════
+     V33.283 은 "창이 39일뿐이라 홀드아웃이 그 주의 운을 잰다" 는 진단으로 창을 24구간에
+     펼쳤다. 창은 의도대로 열렸다(운영 실측 ★2,665일★/24구간, 표본 18,942).
+     그런데 성적이 떨어졌다:
+         V33.272 (recency)   valAcc 50.2% · IC ★+0.0351★ · t  0.66
+         V33.283 (24구간)     valAcc 47.1% · IC ★−0.0030★ · t −0.57
+     진단의 앞부분("홀드아웃이 좁아 못 잰다")은 맞았을 수 있지만, 처방이 틀렸다 —
+     7.3년치를 한 원형책에 섞으면 ★2019년의 이웃★ 을 오늘의 유사사례로 꺼내게 된다.
+     MEMO 는 '닮은 과거' 로 사는 모델이라 국면이 다르면 그 이웃은 도움이 안 된다.
+
+     ★그리고 두 숫자는 사실 비교 대상도 아니다.★ 창을 바꾸면 홀드아웃도 같이 바뀌므로
+     모델과 잣대를 한 번에 둘 다 바꾼 셈이다. 그래서 "어느 창이 옳은가" 는 이 실험으로는
+     못 답한다 — 답하려면 ★홀드아웃을 고정한 채★ 학습창만 바꿔 재야 한다(퍼지드
+     워크포워드). 그건 K폴드 × 후보 수만큼 학습해야 해서 이 단계의 예산을 다시 짜야 한다.
+
+     지금은 되돌린다(0 = 종전 recency). 펼침 경로와 그 검사는 그대로 남겨 둔다 —
+     다음에 워크포워드로 제대로 재고 나서 이 숫자를 바꾼다. 추측으로 세 번째를 고르지 않는다. */
+  islands: 0,
   iters: 6,                // 온라인 k-means 반복
   shrinkN: 40,             // 원형 표본이 적으면 기저확률로 수축
   icFloor: 0.012,
@@ -29212,8 +29226,9 @@ async function memoTrainNightly(DB) {
         "SELECT MIN(id) lo, MAX(id) hi, COUNT(*) c FROM ml_samples WHERE featver = ?"
       ).bind(LUXML.featVer).first();
       const _lo = _num(_rg && _rg.lo, 0), _hi = _num(_rg && _rg.hi, 0), _cnt = _num(_rg && _rg.c, 0);
-      const _B = Math.max(1, Math.min(MEMOML.islands, Math.floor(MEMOML.trainWindow / 200)));
-      if (_hi > _lo && _cnt > MEMOML.trainWindow) {
+      const _B = Math.max(1, Math.min(_num(MEMOML.islands, 0), Math.floor(MEMOML.trainWindow / 200)));
+      // [V33.285] islands 0 = 펼치지 않는다(종전 recency). 아래 폴백이 최근 것부터 읽는다.
+      if (_num(MEMOML.islands, 0) > 0 && _hi > _lo && _cnt > MEMOML.trainWindow) {
         const _per = Math.max(1, Math.floor(MEMOML.trainWindow / _B));
         const _step = (_hi - _lo) / _B;
         for (let b = 0; b < _B; b++) {

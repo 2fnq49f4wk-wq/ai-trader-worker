@@ -282,72 +282,48 @@ console.log("\n④~⑦ MEMO — 잡음 72축 + 신호 3축 데이터로 실제 �
   }
 }
 
-console.log("\n⑨ 학습창이 시간에 펼쳐지는가 (홀드아웃이 '그 주의 운' 을 재던 문제)");
+console.log("\n⑨ 학습창 — 기구가 살아 있고, 선택이 ★측정★ 에 근거하는가");
 {
-  /* 수확은 한 봉 날짜에 전 종목을 한꺼번에 쌓는다. 그래서 "가장 최근 24,000행" 은
-     고작 30여 ★날★ 이었고, 홀드아웃(마지막 20%)은 대여섯 날 — 블록 5개면 하루씩이다.
-     그 t 는 실력이 아니라 그 주의 운을 잰다. 같은 크기를 시간에 펼쳐 읽으면 해결된다.
-     ★읽는 행 수는 안 늘린다★ — 예산은 그대로고 어디서 읽느냐만 바뀐다. */
+  /* V33.283 은 창을 24구간으로 펼쳤다. 창은 의도대로 열렸다(운영 실측 2,665일).
+     그런데 성적이 떨어졌다(IC +0.0351 → −0.0030). 그래서 V33.285 에서 되돌렸다.
+     ★기구는 남겨 둔다★ — 다음에 홀드아웃을 고정한 워크포워드로 제대로 재려면 필요하다.
+     이 검사는 이제 "펼쳐져 있는가" 가 아니라 두 가지를 본다:
+       ① 펼침 기구가 켜면 실제로 동작하는가(죽은 코드를 남기지 않는다)
+       ② 지금의 선택(끔)이 ★측정한 숫자와 함께★ 기록돼 있는가(추측으로 정하지 않았다) */
   const SYMS = 600, DAYS = 500, DAY = 86400000;
   const T0 = Date.parse("2024-01-01T00:00:00Z");
-  const all = [];   // id 는 수확 순서 = 날짜 순서(운영과 같은 모양)
+  const all = [];
   for (let d = 0; d < DAYS; d++) for (let k = 0; k < SYMS; k++)
     all.push({ id: d * SYMS + k + 1, ts: T0 + d * DAY });
-  const asked = [];
-  const DB = {
-    prepare(sql) {
-      const q = { args: [] };
-      q.bind = function () { q.args = Array.from(arguments); return q; };
-      q.first = async () => {
-        if (/MIN\(id\) lo/.test(sql)) return { lo: 1, hi: all.length, c: all.length };
-        return null;
-      };
-      q.all = async () => {
-        if (/id >= \? AND id < \?/.test(sql)) {
-          const [, a, z, lim] = q.args;
-          asked.push([a, z]);
-          return { results: all.filter(r => r.id >= a && r.id < z).slice(0, lim) };
-        }
-        if (/ORDER BY ts DESC/.test(sql)) return { results: all.slice(-q.args[1]).reverse() };
-        return { results: [] };
-      };
-      q.run = async () => ({});
-      return q;
-    }
-  };
-  const W = M.MEMOML.trainWindow, B = M.MEMOML.islands;
-  // 위 코드가 실제로 부르는 것과 같은 순서로 구간을 만들어, 모아진 행의 ★기간★ 을 잰다.
-  const rg = await DB.prepare("SELECT MIN(id) lo, MAX(id) hi, COUNT(*) c FROM ml_samples WHERE featver = ?").bind(15).first();
-  const nB = Math.max(1, Math.min(B, Math.floor(W / 200)));
-  const per = Math.max(1, Math.floor(W / nB)), step = (rg.hi - rg.lo) / nB;
-  let got = [];
-  for (let b = 0; b < nB; b++) {
-    const a = Math.floor(rg.lo + b * step), z = Math.floor(rg.lo + (b + 1) * step);
-    const r = await DB.prepare("SELECT id, ts, feat, label, pnl_pct FROM ml_samples WHERE featver = ? AND id >= ? AND id < ? ORDER BY id ASC LIMIT ?").bind(15, a, z, per).all();
-    got = got.concat(r.results);
-  }
+  const W = M.MEMOML.trainWindow;
   const spanOf = rows => { const t = rows.map(r => r.ts); return Math.round((Math.max(...t) - Math.min(...t)) / DAY); };
-  const oldRows = all.slice(-W);
-  console.log(`       종전(최근 ${W}행) → ${spanOf(oldRows)}일 · 펼침(${nB}구간) → ${spanOf(got)}일 · 읽은 행 ${got.length}`);
-  chk(got.length <= W, `읽는 행 수는 예산 안이다 (${got.length} ≤ ${W}) — 크기를 안 늘렸다`,
-    `★행 수가 늘었다(${got.length} > ${W}) — 메모리·CPU 예산을 깬다★`);
-  chk(spanOf(got) > spanOf(oldRows) * 5,
-    `같은 크기가 훨씬 넓은 기간을 덮는다 (${spanOf(oldRows)}일 → ${spanOf(got)}일)`,
-    `펼침이 안 먹는다 (${spanOf(oldRows)}일 → ${spanOf(got)}일)`);
-  // 홀드아웃(마지막 20%)이 여러 국면을 덮는가 — 이게 t 가 실력을 재게 하는 조건이다.
-  const chrono = got.slice().sort((a, b) => a.ts - b.ts);
-  const hv = chrono.slice(Math.floor(chrono.length * 0.8));
-  const hvOld = oldRows.slice().sort((a, b) => a.ts - b.ts).slice(Math.floor(oldRows.length * 0.8));
-  console.log(`       홀드아웃 기간 — 종전 ${spanOf(hvOld)}일 → 펼침 ${spanOf(hv)}일`);
-  chk(spanOf(hv) > spanOf(hvOld) * 5,
-    `홀드아웃이 '그 주' 가 아니라 여러 국면을 덮는다 (${spanOf(hvOld)}일 → ${spanOf(hv)}일)`,
-    "홀드아웃 기간이 안 넓어졌다 — t 는 여전히 그 주의 운을 잰다");
-  chk(/islands: 24,/.test(S) && /Math\.min\(MEMOML\.islands/.test(S),
-    "구간 수가 설정에 있고 코드가 그것을 쓴다", "구간 수가 손으로 박혀 있다");
+
+  // ① 기구 — islands 를 켠 값으로 두고 같은 산식을 돌려 본다(설정과 무관하게 코드가 사는가).
+  const B = 24, per = Math.floor(W / B), step = (all.length - 1) / B;
+  let got = [];
+  for (let b = 0; b < B; b++) {
+    const a = Math.floor(1 + b * step), z = Math.floor(1 + (b + 1) * step);
+    got = got.concat(all.filter(r => r.id >= a && r.id < z).slice(0, per));
+  }
+  console.log(`       펼침 기구(24구간 가정) → ${spanOf(got)}일 · 종전 recency → ${spanOf(all.slice(-W))}일 · 읽은 행 ${got.length}`);
+  chk(got.length <= W, `읽는 행 수는 예산 안이다 (${got.length} ≤ ${W})`, "행 수가 예산을 넘는다");
+  chk(spanOf(got) > spanOf(all.slice(-W)) * 5,
+    `켜면 실제로 넓어진다 (${spanOf(all.slice(-W))}일 → ${spanOf(got)}일) — 죽은 코드가 아니다`,
+    "펼침 기구가 동작하지 않는다");
+  chk(/if \(_num\(MEMOML\.islands, 0\) > 0 && _hi > _lo/.test(S),
+    "islands 0 이면 펼치지 않고 종전 경로로 간다(스위치가 실제로 갈린다)", "스위치가 안 걸려 있다");
   chk(/if \(!raw\.length\) \{/.test(S),
-    "표본이 창보다 적으면 종전 방식으로 되돌아간다(초기·판갈이 직후 안전)", "폴백 경로가 없다");
+    "표본이 창보다 적거나 펼침이 꺼져 있으면 최근 것부터 읽는다(폴백)", "폴백 경로가 없다");
+
+  // ② 선택의 근거 — 숫자 없이 상수만 바꿔 두면 다음 사람이 또 추측한다.
+  chk(M.MEMOML.islands === 0, `지금 선택은 recency(islands ${M.MEMOML.islands})`, "선택이 바뀌었다");
+  const doc = /islands: 0,/.test(S) && /IC ★\+0\.0351★/.test(S) && /IC ★−0\.0030★/.test(S);
+  chk(doc, "그 선택 옆에 ★재서 나온 두 숫자★ 가 함께 적혀 있다(추측이 아니라 측정)",
+    "★선택만 있고 근거 숫자가 없다 — 다음에 또 추측하게 된다★");
+  chk(/퍼지드\s*\n?\s*워크포워드|워크포워드/.test(S),
+    "제대로 답하려면 무엇이 필요한지도 적혀 있다(홀드아웃 고정 워크포워드)", "다음 단계가 안 적혀 있다");
   chk(/창 " \+ _spanD \+ "일"/.test(S),
-    "학습창이 며칠치인지 로그에 남는다 — 다음 실행이 스스로 답한다", "창 기간이 안 보인다");
+    "학습창이 며칠치인지 로그에 남는다 — 이 숫자가 이번 판단의 근거였다", "창 기간이 안 보인다");
 }
 
 console.log("\n⑧ 완화가 아니라 개선인지 — 문턱·원형 수가 그대로인가");
