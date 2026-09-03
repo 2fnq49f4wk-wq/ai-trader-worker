@@ -77,9 +77,16 @@ let grpFound = 0;
   for (let b = 0; b < nB; b++) for (let k = 0; k < bs; k++) {
     w[b * bs + k] = ([0, 2].includes(b) ? beta / bs : 0.02) ;
   }
-  const per = M.mlPermutationTest(rows, w, 0);
+  /* [V33.299] ★순열의 난수를 고정한다.★ 두 검정은 운영에서 Math.random 으로 섞는다 —
+     그건 맞다(순열이 고정되면 순열검정이 아니다). 그런데 검사가 그걸 그대로 쓰면
+     같은 소스가 실행마다 다른 답을 낸다. 실제로 그랬다: 같은 커밋(V33.295)이 CI 에서
+     한 번 ✗, 두 번 ✓ 였다. ★흔들리는 검사는 게이트가 아니라 지뢰다★ —
+     이 저장소가 고정길이 슬라이스에서 이미 한 번 배운 것과 같은 종류의 병이다. */
+  const permRng = (function () { let q = 20260903;
+    return function () { q = (q * 1103515245 + 12345) & 0x7fffffff; return q / 0x7fffffff; }; })();
+  const per = M.mlPermutationTest(rows, w, 0, { rng: permRng });
   const perAlive = per.features.filter(f => f.signal).length;
-  const grp = M.mlGroupedPermutationTest(rows, w, 0, null);
+  const grp = M.mlGroupedPermutationTest(rows, w, 0, { rng: permRng });
   const sig = (grp.clusters || []).filter(c => c.signal);
   grpFound = sig.length;
 
@@ -112,7 +119,9 @@ console.log("\n② 진짜 무신호에는 군집 검정도 침묵하는가 (위�
 {
   const { rows, dim } = makeBlocks({ n: 3000, nBlocks: 6, blockSize: 10, signalBlocks: [], beta: 0 });
   const w = new Array(dim).fill(0.1);
-  const grp = M.mlGroupedPermutationTest(rows, w, 0, null);
+  const rng2 = (function () { let q = 771113;
+    return function () { q = (q * 1103515245 + 12345) & 0x7fffffff; return q / 0x7fffffff; }; })();
+  const grp = M.mlGroupedPermutationTest(rows, w, 0, { rng: rng2 });   // [V33.299] 재현 가능하게
   const sig = (grp.clusters || []).filter(c => c.signal);
   console.log(`       무신호 데이터 → 신호 군집 ${sig.length}/${grp.clusters.length}`);
   chk(sig.length < M.LUXBANDIT.minContextDim,
@@ -334,6 +343,37 @@ console.log("\n⑧ 완화가 아니라 개선인지 — 문턱·원형 수가 �
   chk(M.MEMOML.minTrainSamples === 4000, "MEMO 최소표본 4000 그대로", "MEMO 최소표본이 낮아졌다");
   chk(M.LUXNOISE.dropFloor === 0.003 && M.LUXBANDIT.minContextDim === 2,
     "밴딧 문턱 둘 다 그대로", "★밴딧 문턱이 완화됐다★");
+}
+
+/* ══ ⑩ [V33.299] ★검사가 흔들리면 그건 게이트가 아니라 지뢰다★ ══════════════════
+   실측: 같은 커밋(V33.295)이 CI 에서 ①만 한 번 실패하고, 같은 소스로 두 번 통과했다.
+   원인은 순열검정이 Math.random 으로 섞기 때문이다 — 운영에서는 그게 맞지만
+   검사가 그대로 쓰면 재현이 안 된다. 시드를 넣을 수 있게 만들었으니, ★정말 재현되는지★
+   와 ★그래도 진짜로 섞고는 있는지★ 를 둘 다 확인한다(고정 = 안 섞음, 이 아니어야 한다). */
+console.log("\n⑩ 순열검정이 시드로 재현되는가 (흔들리는 검사 금지)");
+{
+  const mk = (seed) => { let q = seed;
+    return function () { q = (q * 1103515245 + 12345) & 0x7fffffff; return q / 0x7fffffff; }; };
+  const { rows, dim } = makeBlocks({ n: 2500, nBlocks: 5, blockSize: 8, signalBlocks: [0], beta: 2.4 });
+  const w = new Array(dim).fill(0.05); for (let k = 0; k < 8; k++) w[k] = 0.3;
+  const a1 = M.mlGroupedPermutationTest(rows, w, 0, { rng: mk(4242) });
+  const a2 = M.mlGroupedPermutationTest(rows, w, 0, { rng: mk(4242) });
+  const b1 = M.mlGroupedPermutationTest(rows, w, 0, { rng: mk(9999) });
+  const dropsOf = (r) => (r.clusters || []).map(c => c.drop.toFixed(6)).join(",");
+  chk(dropsOf(a1) === dropsOf(a2),
+    "같은 시드면 같은 답이다 — 검사가 실행마다 흔들리지 않는다",
+    `★같은 시드인데 답이 다르다 — 시드가 실제로 안 먹는다★`);
+  chk(dropsOf(a1) !== dropsOf(b1),
+    "다른 시드면 다른 답이다 — 시드를 넣었다고 순열을 멈춘 게 아니다",
+    "★시드를 바꿔도 같다 — 섞지 않고 있다(순열검정이 아니다)★");
+  const p1 = M.mlPermutationTest(rows, w, 0, { rng: mk(31337) });
+  const p2 = M.mlPermutationTest(rows, w, 0, { rng: mk(31337) });
+  const pd = (r) => r.features.map(f => f.drop.toFixed(6)).join(",");
+  chk(pd(p1) === pd(p2), "낱개 순열검정도 시드로 재현된다", "★낱개 순열검정이 시드를 안 쓴다★");
+  // 운영 경로는 그대로여야 한다 — rng 를 안 주면 Math.random 이다.
+  chk(/\(opts && typeof opts\.rng === "function"\) \? opts\.rng : Math\.random/.test(code),
+    "rng 를 안 주면 운영은 종전대로 Math.random 을 쓴다(순열이 고정되면 순열검정이 아니다)",
+    "운영 기본 난수가 바뀌었다");
 }
 
 console.log(fails === 0 ? "\n✓ 밴딧 상관강건 검정 · MEMO 가중거리 검사 통과" : "\n✗ " + fails + "건 실패");

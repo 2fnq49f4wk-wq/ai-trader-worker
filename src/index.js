@@ -2981,7 +2981,7 @@ async function applySignalTypeWeights(DB, cfg) {
    화면·자가진단이 계속 "V33.272" 를 보고했다(운영 스냅샷이 그대로 그랬다). 배포는 됐는데
    ★배포됐다는 사실만 거짓말★ 을 하고 있었으니, "내 고침이 올라간 건가" 를 화면으로 확인할
    방법이 없었다. tools/check-build-ver.mjs 가 이제 소스에 적힌 최신 버전과 이 값을 대조한다. */
-const _BUILD_VER = "V33.298";
+const _BUILD_VER = "V33.299";
 
 // ═══ [V33.171] 평가 순서 계획 — ★승격과 순환을 교차해 굶주림을 구조적으로 없앤다★ ═══
 //   V33.50 의 형태트리거는 "급한 몇 종목을 앞으로 당긴다"는 의도였으나, 실제 운영로그에서는
@@ -33870,7 +33870,12 @@ function _valAccAt(val, w, b, D) {
   return val.length ? correct / val.length : 0;
 }
 
-function mlPermutationTest(val, w, b) {
+/* [V33.299] ★난수를 밖에서 넣을 수 있게 한다.★ 운영에서는 Math.random 이 맞다 —
+   순열이 고정되면 그건 순열검정이 아니다. 그런데 ★검사에서는 반대★ 다: 같은 소스가
+   실행마다 다른 답을 내면 그건 게이트가 아니라 지뢰다(실측: 같은 커밋이 CI 에서
+   한 번 실패하고 두 번 통과했다 — check-bandit-memo ①). rng 를 주면 재현된다. */
+function mlPermutationTest(val, w, b, opts) {
+  const _rnd = (opts && typeof opts.rng === "function") ? opts.rng : Math.random;
   const D = w.length;
   const result = { baseAcc: 0, features: [] };
   try {
@@ -33883,7 +33888,7 @@ function mlPermutationTest(val, w, b) {
       for (let t = 0; t < LUXNOISE.permTrials; t++) {
         const shuf = val.map(function (row) { return row.z[j]; });
         for (let i = shuf.length - 1; i > 0; i--) {
-          const k = Math.floor(Math.random() * (i + 1));
+          const k = Math.floor(_rnd() * (i + 1));
           const tmp = shuf[i]; shuf[i] = shuf[k]; shuf[k] = tmp;
         }
         let correct = 0;
@@ -33961,6 +33966,7 @@ function _corrClusters(val, idxs, rho, maxRows) {
 }
 
 function mlGroupedPermutationTest(val, w, b, opts) {
+  const _rndG = (opts && typeof opts.rng === "function") ? opts.rng : Math.random;   // [V33.299] 위 주석 참조
   const D = w.length;
   const out = { baseAcc: 0, clusters: [] };
   try {
@@ -33982,7 +33988,7 @@ function mlGroupedPermutationTest(val, w, b, opts) {
         // 행 순서를 ★한 번★ 섞어 군집의 열 전부에 같은 순열을 준다 — 군집 내부 구조는 보존된다.
         for (let i = 0; i < n; i++) perm[i] = i;
         for (let i = n - 1; i > 0; i--) {
-          const k = Math.floor(Math.random() * (i + 1));
+          const k = Math.floor(_rndG() * (i + 1));
           const tmp = perm[i]; perm[i] = perm[k]; perm[k] = tmp;
         }
         let correct = 0;
