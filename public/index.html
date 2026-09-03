@@ -8,7 +8,7 @@
      인데, 지금까지 화면에서 그걸 알 방법이 전혀 없었다(카카오톡 인앱 브라우저는 특히 강하게 캐시한다).
      서버가 내려주는 build 와 이 값을 비교해 다르면 배너로 알린다.
      ※ src/index.js 의 _BUILD_VER 와 항상 같아야 한다 — check-html-js 가 강제한다. -->
-<meta name="lux-build" content="V33.300">
+<meta name="lux-build" content="V33.301">
 <title>LUX-ENGINE V10</title>
 <!-- ══ [V33.156] 설치형 앱(PWA) — 폰·PC 에서 홈화면/독에 담아 앱처럼 연다 ══
      · manifest  : 이름·아이콘·standalone 표시(주소창 없이 앱처럼)
@@ -3388,6 +3388,92 @@ html[data-theme="light"] .m-brainbar button.active{color:#0b4f9e;background:rgba
       });
     })['catch'](function(){ /* 등록 실패는 치명적이지 않다 — 웹으로 계속 쓴다 */ });
   });
+})();
+</script>
+<script>
+/* ══ [V33.301] ★명부(roster) — 화면은 위원 상태를 판정하지 않는다★ ══════════════════
+   사이드바와 '구조 관측'(신경망 지도)이 같은 위원을 두고 다른 불을 켜는 사고가 반복됐다.
+   V33.181·V33.195·V33.280·V33.282 가 전부 같은 사고이고, 매번 ★값 하나★ 만 고쳤다.
+   이번 실측은 한 화면 안에서도 갈렸다 — FLOW '○ 잠정가동 ×0.60' / SEQ '● 잠정가동 ×0.17'.
+
+   진짜 원인은 "불이 들어오는가" 를 답하는 술어가 화면에 여섯 개 있었다는 것이다
+   (_adm / tier==='full' / trusted&&mult>0 / both&&live / trusted||trained / 지도의 tier).
+   → 판정을 전부 서버(buildRoster)로 올리고, 화면은 ★state 를 읽어 색만 칠한다.★
+     이 파일 어디에도 admit·trusted·tier 로 불을 켜는 코드가 다시 생기면 안 된다
+     (tools/check-roster-single-source.mjs 가 그것을 막는다).
+
+   두 엔드포인트가 같은 함수의 결과를 싣기 때문에, 화면이 갈라지려면 서버가 같은 DB 에서
+   두 번 다른 답을 내야 한다 — 같은 함수·같은 입력이라 원리상 불가능하다.
+   여기에 더해 ★도착한 명부끼리도 대조★ 한다: 두 화면의 state 가 다르면 그건 캐시가
+   낡은 것이므로, 최신 ts 를 채택하고 어긋난 키를 LUXR.drift 에 남긴다(조용히 안 넘어간다). */
+(function(){
+  var GLYPH = { on:'●', prov:'◐', bad:'○', off:'○' };
+  var COLOR = { on:'var(--pos)', prov:'var(--amber,#fbbf24)', bad:'var(--neg)', off:'var(--t3)' };
+  var TXT = { on:'정식 합류 — 가중 1.0 으로 투표 중',
+              prov:'잠정 합류 — 증거가 덜 쌓여 가중을 줄여 투표 중',
+              bad:'합류 보류 — 학습은 됐지만 문턱 미달이거나 아직 못 쟀다',
+              off:'미학습 또는 판(featVer) 불일치' };
+  var R = {
+    list: [], map: {}, ts: 0, src: null, drift: [],
+    /* 명부를 받는다. 늦게 온 것이 더 낡을 수 있으므로(SWR 캐시) ts 로 고른다. */
+    set: function(list, src, ts){
+      if(!list || !list.length) return R;
+      var t = ts || Date.now();
+      var m = {};
+      for(var i=0;i<list.length;i++){ var e=list[i]; if(e && e.key) m[e.key]=e; }
+      if(R.ts){
+        var d = [];
+        for(var k in m){ if(R.map[k] && R.map[k].state !== m[k].state) d.push(k+':'+R.map[k].state+'→'+m[k].state); }
+        R.drift = d;   // 비어 있어야 정상이다. 남으면 한쪽 응답이 낡은 캐시라는 뜻이다.
+      }
+      if(t >= R.ts){ R.list = list; R.map = m; R.ts = t; R.src = src || null; }
+      return R;
+    },
+    get: function(key){ return R.map[R.alias[key] || key] || null; },
+    /* 별칭·집계도 ★여기 한 곳에서★ 푼다. 화면마다 'boost 는 셋 중 하나라도 켜지면' 을
+       각자 구현하면 그 순간 규칙이 또 둘이 된다. */
+    alias: { dualbull:'dual_bull', dualbear:'dual_bear' },
+    GROUP: { boost: ['xgb','lgb','cat'] },
+    state: function(key){
+      var k = R.alias[key] || key;
+      var g = R.GROUP[k];
+      if(g){
+        var rank = ['on','prov','bad','off'];
+        for(var i=0;i<rank.length;i++)
+          for(var j=0;j<g.length;j++) if(R.map[g[j]] && R.map[g[j]].state === rank[i]) return rank[i];
+        return 'off';
+      }
+      var e = R.map[k]; return e ? e.state : null;
+    },
+    /* 불 하나. ★모든 화면이 이 함수만 부른다★ — 모양도 색도 여기 한 곳에서 정해진다.
+       ★명부가 아직 없을 때 '꺼짐' 으로 그리지 않는다★ — 낡은 캐시로 먼저 그린 첫 프레임에서
+       전원이 죽은 것처럼 보이고, 그건 화면이 없는 사고를 지어내는 것이다(V33.146 과 같은 실수). */
+    dot: function(key){
+      if(!R.list.length) return '<span style="color:var(--t3);" title="상태 확인 중">·</span>';
+      var st = R.state(key) || 'off';
+      return '<span style="color:'+COLOR[st]+';" title="'+TXT[st]+'">'+GLYPH[st]+'</span>';
+    },
+    cls: function(key){ return R.state(key) || 'off'; },
+    txt: function(key){ return TXT[R.state(key) || 'off']; },
+    /* 상태 ★글자★ 도 같은 곳에서 낸다 — 불은 명부에서, 글자는 화면에서 만들면
+       "○ 인데 잠정가동" 같은 모순이 다시 생긴다(그게 사용자가 본 화면이다). */
+    tag: function(key){
+      var st = R.state(key), e = R.get(key);
+      if(st === 'on') return '정식 합류';
+      if(st === 'prov') return '잠정 합류 ×'+((e && e.mult != null) ? e.mult.toFixed(2) : '?');
+      if(st === 'bad') return (e && e.tier === 'pending') ? '판정 대기' : '합류 보류';
+      return (e && e.trained) ? '판 불일치' : '미학습';
+    },
+    chipCls: function(key){ var st = R.state(key); return st==='on'?'good':(st==='prov'?'warn':'off'); },
+    /* 좌석 집계 — 두 화면이 각자 세면 또 갈라진다. */
+    tally: function(){
+      var seats = R.list.filter(function(e){ return e && e.seat; });
+      var c = function(s){ return seats.filter(function(e){ return e.state===s; }).length; };
+      return { seats: seats.length, on: c('on'), prov: c('prov'), live: c('on')+c('prov') };
+    },
+    ready: function(){ return R.list.length > 0; }
+  };
+  window.LUXR = R;
 })();
 </script>
 </head>
@@ -12368,29 +12454,36 @@ html[data-theme="light"] .m-brainbar button.active{color:#0b4f9e;background:rgba
     var badge = $('fvAiModeBadge'), body = $('fvAiModeBody');
     if (!badge || !body) return;
     fetch('/api/ai-mode').then(function(r){ return r.json(); }).then(function(d){
+      /* [V33.301] 명부를 ★받는 즉시★ 공유 저장소에 넣는다 — 이 패널도, 사이드바도,
+         두뇌 관측도 전부 여기서 읽는다. 화면마다 admit/trusted 를 다시 해석하지 않는다. */
+      try { if (d && d.alt && d.alt.roster) LUXR.set(d.alt.roster, 'ai-mode'); } catch (e) {}
       var ai = d && d.aiReady;
       badge.innerHTML = ai
         ? '<span style="color:#2ec46b;font-weight:700;">◉ AI 자율운용</span>'
         : '<span style="color:#e0a83a;font-weight:700;">◎ 규칙엔진 비상운용 (AI 학습·신뢰 대기)</span>';
-      var c = (d && d.committee) || {};
-      // [V32.64] 세련된 상태 인디케이터 — ● 가동 / ◐ 섀도우 / ○ 대기 (컬러 도트)
-      var ON = '<span style="color:#2ec46b;">●</span>', SH = '<span style="color:#e0a83a;">◐</span>', OFF = '<span style="color:#5b6472;">○</span>';
-      var st = function(b){ return b ? ON : OFF; };
-      var bst = function(o){ return !o ? OFF : (o.trusted ? ON : (o.shadow ? SH : OFF)); };
-      var models = 'MIND '+st(c.mind)+' &nbsp; DNN '+st(c.dnn)+' &nbsp; GBDT '+st(c.gbdt)+' &nbsp; XGB '+bst(c.xgb)+' &nbsp; LGB '+bst(c.lgb)+' &nbsp; Cat '+bst(c.cat);
+      /* [V33.301] ★c.mind / c.xgb.trusted 로 불을 켜지 않는다.★ 그 술어가 사이드바·두뇌
+         관측과 달라서 같은 위원이 화면마다 다른 색이었다. 명부의 state 만 읽는다. */
+      var models = ['mind','dnn','gbdt','xgb','lgb','cat'].map(function(k){
+        return ({mind:'MIND',dnn:'DNN',gbdt:'GBDT',xgb:'XGB',lgb:'LGB',cat:'Cat'})[k] + ' ' + LUXR.dot(k);
+      }).join(' &nbsp; ');
       var html = '<div style="letter-spacing:.2px;"><span style="color:var(--t3);">위원회</span> &nbsp; '+models+'</div>'
-        + '<div style="color:var(--t3,#889);font-size:9.5px;margin-top:2px;">● 가동 · ◐ 섀도우(학습완료·미신뢰) · ○ 대기</div>';
+        + '<div style="color:var(--t3,#889);font-size:9.5px;margin-top:2px;">● 정식 합류 · ◐ 잠정 합류(가중 축소·투표 중) · ○ 보류/미학습</div>';
       // [V33.81] 신규 3모델 — 학습 대기 중이어도 표본 진행이 보이게 한다.
       try {
         var A = (d && d.alt) || {};
-        var am = function(nm, o){
-          if (!o) return nm + ' ' + OFF;
-          if (o.trusted) return nm + ' ' + ON + ' <span style="color:var(--t3);">IC ' + (o.ic != null ? o.ic.toFixed(3) : '—') + '</span>';
-          if (o.trained) return nm + ' ' + SH + ' <span style="color:var(--t3);">IC ' + (o.ic != null ? o.ic.toFixed(3) : '—') + ' 미달</span>';
-          return nm + ' ' + OFF + ' <span style="color:var(--t3);">' + (o.samples || 0) + '/' + (o.minN || 0) + '</span>';
+        /* [V33.301] 불은 명부에서, 숫자는 alt 에서 — ★불을 켜는 판정은 여기서 안 한다.★ */
+        var am = function(key, nm, o){
+          var d0 = LUXR.dot(key);
+          if (!o) return nm + ' ' + d0;
+          var stt = LUXR.state(key);
+          if (stt === 'on' || stt === 'prov')
+            return nm + ' ' + d0 + ' <span style="color:var(--t3);">IC ' + (o.ic != null ? o.ic.toFixed(3) : '—') + '</span>';
+          if (o.trained) return nm + ' ' + d0 + ' <span style="color:var(--t3);">IC ' + (o.ic != null ? o.ic.toFixed(3) : '—') + ' 미달</span>';
+          return nm + ' ' + d0 + ' <span style="color:var(--t3);">' + (o.samples || 0) + '/' + (o.minN || 0) + '</span>';
         };
         html += '<div style="margin-top:5px;letter-spacing:.2px;"><span style="color:var(--t3);">신규모델</span> &nbsp; '
-              + am('FLOW', A.flow) + ' &nbsp; ' + am('XALPHA', A.xalpha) + ' &nbsp; ' + am('STACK', A.stack) + '</div>';
+              + am('flow', 'FLOW', A.flow) + ' &nbsp; ' + am('xalpha', 'XALPHA', A.xalpha) + ' &nbsp; ' + am('stack', 'STACK', A.stack)
+              + ' &nbsp; ' + am('memo', 'MEMO', A.memo) + ' &nbsp; ' + am('seq', 'SEQ', A.seq) + '</div>';
         if (A.backfill && A.backfill.made) {
           html += '<div style="color:var(--t3,#889);font-size:9.5px;margin-top:2px;">기존표본 소급생성 '
                 + A.backfill.made.toLocaleString() + '건 — 새 거래를 기다리지 않고 과거 결과로 학습 중</div>';
@@ -13870,6 +13963,10 @@ html[data-theme="light"] #page-nnviz .nlv-sec-h{ border-color:transparent; color
       try{ var c2=localStorage.getItem(cacheKey); if(c2){ NNV_render(JSON.parse(c2)); painted=true; } }catch(e){}
     }
     fetch('/api/nn-viz?model='+encodeURIComponent(model)).then(function(r){return r.json();}).then(function(d){
+      /* [V33.301] 어느 탭을 열든 명부부터 넣는다. 아래 렌더러들은 '합류 상태' 를
+         d.admit 으로 다시 계산하지 않고 이 명부에서 읽는다. */
+      try { if (d && d.roster) LUXR.set(d.roster, 'nn-viz:'+model); } catch(e){}
+      NNV.curKey = model;
       NNV_render(d);
       try{ localStorage.setItem(cacheKey, JSON.stringify(d)); }catch(e){}
     })['catch'](function(e){
@@ -14023,9 +14120,9 @@ html[data-theme="light"] #page-nnviz .nlv-sec-h{ border-color:transparent; color
       comm.innerHTML=''; stage.innerHTML='<div class="nnv-empty">🌱 '+esc(d&&d.model||'')+' 학습 대기 중…</div>';
       return;
     }
-    var A = d.admit || null;
-    var tier = A ? (A.tier==='full'?'정식 합류':(A.admit?'잠정 합류 ×'+(A.mult!=null?A.mult.toFixed(2):'?'):'합류 보류')) : '—';
-    var tierCls = A ? (A.tier==='full'?'good':(A.admit?'warn':'off')) : '';
+    /* [V33.301] 합류 상태는 ★명부★ 에서 읽는다 — d.admit 을 여기서 다시 해석하면
+       같은 위원의 탭 글자와 탭 점이 서로 다른 근거로 그려진다. */
+    var tier = LUXR.tag(NNV.curKey), tierCls = LUXR.chipCls(NNV.curKey);
     sub.textContent = d.model+' — L2 로지스틱 · 입력 '+d.inputDim+'차원 · 표준화 계수'
       + (d.trainedAt? ' · 학습 '+new Date(d.trainedAt).toLocaleDateString('ko-KR') : '');
     chips.innerHTML =
@@ -14038,9 +14135,11 @@ html[data-theme="light"] #page-nnviz .nlv-sec-h{ border-color:transparent; color
       chip('전진검증', d.fwdN!=null? (d.fwdN.toLocaleString()+' / '+(d.minFwd||0).toLocaleString()
            +(d.fwdDays!=null?' · '+d.fwdDays+'일':'')):'—', d.fwdN>=(d.minFwd||0)?'good':'warn');
     if(ban){
-      ban.className = 'nnv-banner ' + (A && A.admit ? 'on' : 'off');
-      ban.innerHTML = (A && A.admit ? '✅ ' : '⚠️ ') + '<b>'+esc(tier)+'</b>'
-        + (A && A.why ? ' — '+esc(A.why) : '')
+      var _onL = (LUXR.state(NNV.curKey) === 'on' || LUXR.state(NNV.curKey) === 'prov');
+      var _eL = LUXR.get(NNV.curKey);
+      ban.className = 'nnv-banner ' + (_onL ? 'on' : 'off');
+      ban.innerHTML = (_onL ? '✅ ' : '⚠️ ') + '<b>'+esc(tier)+'</b>'
+        + (_eL && _eL.why ? ' — '+esc(_eL.why) : '')
         + (d.note && d.noteOk===false ? '<br>마지막 학습 시도: <code>'+esc(d.note)+'</code>' : '');
       ban.style.display='block';
     }
@@ -14093,9 +14192,7 @@ html[data-theme="light"] #page-nnviz .nlv-sec-h{ border-color:transparent; color
     if(!d || !d.trained){ NNV_renderLinear(d); return; }   // 미학습·판 불일치 문구는 한 곳에만 둔다
 
     var head = d.head || 'lin', hn = NNV_HEADNAME[head] || head;
-    var A = d.admit || null;
-    var tier = A ? (A.tier==='full'?'정식 합류':(A.admit?'잠정 합류 ×'+(A.mult!=null?A.mult.toFixed(2):'?'):'합류 보류')) : '—';
-    var tierCls = A ? (A.tier==='full'?'good':(A.admit?'warn':'off')) : '';
+    var tier = LUXR.tag('stack'), tierCls = LUXR.chipCls('stack');
     sub.textContent = 'STACK — 메타모델 · 입력 '+d.inputDim+'차원(전문가 확률 8 + 참여마스크 8) · 결합 '+hn
       + (d.trainedAt? ' · 학습 '+new Date(d.trainedAt).toLocaleDateString('ko-KR') : '');
     chips.innerHTML =
@@ -14109,9 +14206,11 @@ html[data-theme="light"] #page-nnviz .nlv-sec-h{ border-color:transparent; color
       chip('전진검증', d.fwdN!=null? (d.fwdN.toLocaleString()+' / '+(d.minFwd||0).toLocaleString()):'—',
            d.fwdN>=(d.minFwd||0)?'good':'warn');
     if(ban){
-      ban.className = 'nnv-banner ' + (A && A.admit ? 'on' : 'off');
-      ban.innerHTML = (A && A.admit ? '✅ ' : '⚠️ ') + '<b>'+esc(tier)+'</b>'
-        + (A && A.why ? ' — '+esc(A.why) : '')
+      var _onS = (LUXR.state('stack') === 'on' || LUXR.state('stack') === 'prov');
+      var _eS = LUXR.get('stack');
+      ban.className = 'nnv-banner ' + (_onS ? 'on' : 'off');
+      ban.innerHTML = (_onS ? '✅ ' : '⚠️ ') + '<b>'+esc(tier)+'</b>'
+        + (_eS && _eS.why ? ' — '+esc(_eS.why) : '')
         + (d.note && d.noteOk===false ? '<br>마지막 학습 시도: <code>'+esc(d.note)+'</code>' : '');
       ban.style.display='block';
     }
@@ -14243,17 +14342,18 @@ html[data-theme="light"] #page-nnviz .nlv-sec-h{ border-color:transparent; color
       return;
     }
     var A = d.admit || null;
-    var tier = A ? (A.tier==='full'?'정식 합류':(A.admit?'잠정 합류 ×'+(A.mult!=null?A.mult.toFixed(2):'?'):'합류 보류')) : '—';
+    var tier = LUXR.tag('memo');
     sub.textContent = 'MEMO — k-means 원형 '+d.K+'개 · 입력 '+d.inputDim+'차원 · 비모수(국소) 위원';
     chips.innerHTML =
-      chip('합류 상태', tier, A&&A.tier==='full'?'good':(A&&A.admit?'warn':'off')) +
+      chip('합류 상태', tier, LUXR.chipCls('memo')) +
       chip('원형 수', d.K+'개','good') +
       chip('학습 표본', d.n!=null? d.n.toLocaleString():'—','') +
       chip('기저 승률', pct(d.baseRate),'') +
       chip('블록 IC', d.valICBlock!=null? d.valICBlock.toFixed(3):'—',(d.valICBlock||0)>0.012?'good':'warn') +
       chip('전진검증', (d.fwdN||0).toLocaleString()+' / '+(d.minFwd||0).toLocaleString(), d.fwdN>=(d.minFwd||0)?'good':'warn');
-    if(ban){ ban.className='nnv-banner '+(A&&A.admit?'on':'off');
-      ban.innerHTML=(A&&A.admit?'✅ ':'⚠️ ')+'<b>'+esc(tier)+'</b>'+(A&&A.why?' — '+esc(A.why):''); ban.style.display='block'; }
+    if(ban){ var _onM = (LUXR.state('memo')==='on'||LUXR.state('memo')==='prov');
+      ban.className='nnv-banner '+(_onM?'on':'off');
+      ban.innerHTML=(_onM?'✅ ':'⚠️ ')+'<b>'+esc(tier)+'</b>'+(A&&A.why?' — '+esc(A.why):''); ban.style.display='block'; }
     var base = d.baseRate!=null? d.baseRate : 0.5;
     var rows = (d.protos||[]).map(function(pr){
       var edge = (pr.winRate!=null? pr.winRate:base) - base;
@@ -14302,15 +14402,15 @@ html[data-theme="light"] #page-nnviz .nlv-sec-h{ border-color:transparent; color
     var el = document.getElementById('railGlance');
     if(!el) return;
     try{
-      var ex = d.experts||[], st = d.stack||{}, cc = d.cache||null;
-      var seats = ex.length, live = 0, prov = 0;
-      ex.forEach(function(e){
-        if(e.tier === 'full') live++; else if(e.tier === 'provisional' || e.voting) prov++;
-      });
+      var st = d.stack||{}, cc = d.cache||null;
+      /* [V33.301] 좌석 집계도 ★명부★ 로 한다 — experts[] 를 여기서 다시 세면 사이드바의
+         'n/m 가동' 과 숫자가 갈린다(그게 정확히 반복된 사고다). */
+      var _t = LUXR.tally();
+      var seats = _t.seats, live = _t.on, prov = _t.prov;
       // [V33.222] 좌석 칸 도형은 걷어냈다(사용자 요청) — 숫자만 남긴다.
       // ② 결합기 — 헤드 이름 하나. 비선형이면 강조된다.
       var head = st.head || 'lin';
-      var headOn = st.tier === 'full' || st.tier === 'provisional';
+      var headOn = LUXR.state('stack') === 'on' || LUXR.state('stack') === 'prov';
       // ③ 봉 날짜 재구축 — 링 하나. 100%면 근사가 완전히 사라졌다는 뜻이다.
       var cw = cc ? (cc.dailyN>0 ? cc.dailyDays/cc.dailyN : 0) : null;
       el.innerHTML =
@@ -14330,33 +14430,15 @@ html[data-theme="light"] #page-nnviz .nlv-sec-h{ border-color:transparent; color
 
   function NNV_paintDots(d){
     try{
+      /* ══ [V33.301] ★여기서 판정하지 않는다.★ ═══════════════════════════════════
+         종전 이 함수는 experts[]·stack·dual[] 세 갈래를 각각 다른 필드로 해석해
+         불을 켰다. 사이드바는 또 다른 술어로 켰다 — 같은 위원이 화면마다 다른 색이
+         된 원인이 이것이다(실측: 사이드바는 꺼져 있고 구조 관측은 켜져 있었다).
+         이제 서버 명부(buildRoster)의 state 를 ★그대로★ 칠한다. */
       var map = {};
-      (d.experts||[]).forEach(function(e){
-        if(!e || !e.name) return;
-        var cls = !e.trained ? 'off'
-                : (e.featVerOk === false) ? 'off'
-                : (e.tier === 'full') ? 'on'
-                : (e.tier === 'provisional' || e.voting) ? 'prov' : 'bad';
-        map[e.name] = cls;
-      });
-      if(map.boost){ ['xgb','lgb','cat'].forEach(function(k){ if(!map[k]) map[k]=map.boost; }); }
-      var st = d.stack||{};
-      /* expertAdmit 의 tier 는 none/reject/pending/provisional/full 다.
-         _ov.stack 은 voting 필드를 싣지 않으므로 tier 로만 판정한다 — 없는 필드를 추측하면
-         전부 '보류' 로 칠해져 화면이 사실과 달라진다. */
-      map.stack = !st.trained ? 'off'
-                : (st.featVerOk === false) ? 'off'
-                : (st.tier === 'full') ? 'on'
-                : (st.tier === 'provisional') ? 'prov' : 'bad';
-      // _ov.dual 은 ★배열★ 이고 이름이 dual_bull/dual_bear 다(객체가 아니다).
-      //   탭의 data-model 은 dualbull/dualbear 이므로 밑줄을 지워 맞춘다.
-      (d.dual||[]).forEach(function(o){
-        if(!o || !o.name) return;
-        map[o.name.replace('_','')] =
-          !o.trained ? 'off'
-          : (o.tier === 'full') ? 'on'
-          : (o.tier === 'provisional') ? 'prov' : 'bad';
-      });
+      (d.roster||[]).forEach(function(e){ if(e && e.key) map[e.key] = e.state; });
+      // 탭의 data-dot 철자(dualbull/dualbear·boost)는 LUXR 이 별칭·집계로 푼다 — 여기선 안 푼다.
+      ['dualbull','dualbear','boost'].forEach(function(k){ map[k] = LUXR.state(k); });
       map.overview = 'on';
       var dots = document.querySelectorAll('.nnv-tab-dot');
       for(var i=0;i<dots.length;i++){
@@ -14366,7 +14448,7 @@ html[data-theme="light"] #page-nnviz .nlv-sec-h{ border-color:transparent; color
         if(b && b.setAttribute){
           b.setAttribute('title', ({on:'정식 합류 — 가중 1.0 으로 투표 중',
             prov:'잠정 합류 — 증거가 덜 쌓여 가중을 줄여 투표 중',
-            bad:'합류 보류 — 학습은 됐지만 문턱 미달',
+            bad:'합류 보류 — 학습은 됐지만 문턱 미달이거나 아직 못 쟀다',
             off:'미학습 또는 판(featVer) 불일치'})[map[k]] || '상태 미상');
         }
       }
@@ -14398,7 +14480,17 @@ html[data-theme="light"] #page-nnviz .nlv-sec-h{ border-color:transparent; color
     var cy = H / 2;
     var e = function (t) { return String(t == null ? '' : t).replace(/[&<>"]/g, function (c) {
       return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]; }); };
-    var wOf = function (x) { return (x && x.tier === 'full') ? 1 : ((x && x.mult != null) ? x.mult : 0); };
+    /* [V33.301] 색은 ★명부★, 굵기(발언권)는 그 위원의 가중이다. 노드 색을 여기서 다시
+       tier 로 판정하면 탭의 점·사이드바와 또 갈라진다. */
+    var NCLS = { on:'full', prov:'prov', bad:'bad', off:'off' };
+    var clsOf = function (x) { return NCLS[LUXR.state(x && x.name) || 'off'] || 'off'; };
+    var wOf = function (x) {
+      var r = LUXR.get(x && x.name);
+      var st = LUXR.state(x && x.name);
+      if (st === 'off' || st === 'bad') return 0;
+      if (st === 'on') return 1;
+      return (r && r.mult != null) ? r.mult : ((x && x.mult != null) ? x.mult : 0);
+    };
 
     var parts = [];
     // ── 간선 먼저(노드 아래로 깔린다) ──
@@ -14418,14 +14510,15 @@ html[data-theme="light"] #page-nnviz .nlv-sec-h{ border-color:transparent; color
     parts.push('<path class="ne flow" d="M' + (COLX[2] + 96) + ' ' + cy + ' L' + COLX[3] + ' ' + cy + '"/>');
     parts.push('<path class="ne flow" d="M' + (COLX[3] + 84) + ' ' + cy + ' L' + COLX[4] + ' ' + cy + '"/>');
     // STACK 우회선 — 합류했을 때만. 결합 노드를 건너뛴다(대체이므로).
-    var stOn = st.trained && (st.tier === 'full' || st.tier === 'provisional');
+    var stOn = LUXR.state('stack') === 'on' || LUXR.state('stack') === 'prov';
     if (stOn) {
       var sy = H - 26;
       parts.push('<path class="ne stack" d="M' + x2 + ' ' + sy + ' C' + ((x2 + COLX[3]) / 2) + ' ' + sy + ',' +
                  ((x2 + COLX[3]) / 2) + ' ' + cy + ',' + COLX[3] + ' ' + cy + '"/>');
     }
     // DUAL — 출력 직전에 옆에서 들어온다(확률 이동)
-    var duOn = du.some(function (o) { return o && (o.tier === 'full' || o.tier === 'provisional'); });
+    var duOn = ['dual_bull','dual_bear'].some(function (k) {
+      var q = LUXR.state(k); return q === 'on' || q === 'prov'; });
     parts.push('<path class="ne dual' + (duOn ? '' : ' mute') + '" d="M' + (COLX[3] + 42) + ' ' + (H - 14) +
                ' L' + (COLX[3] + 42) + ' ' + (cy + 22) + '"/>');
 
@@ -14442,14 +14535,13 @@ html[data-theme="light"] #page-nnviz .nlv-sec-h{ border-color:transparent; color
     parts.push(node(COLX[0], cy - 26, 54, 52, 'input', ['입력', String(d.inputDim || 65) + '차원']));
     ex.forEach(function (m, i) {
       var y = 24 + i * (NH + GAP);
-      var cls = !m.trained ? 'off' : (m.featVerOk === false ? 'off'
-               : (m.tier === 'full' ? 'full' : (m.tier === 'provisional' ? 'prov' : 'bad')));
+      var cls = clsOf(m);
       var l2 = (m.valAcc != null ? m.valAcc.toFixed(1) + '%' : '—') +
                (m.ic != null ? '  IC ' + m.ic.toFixed(3) : '');
       var w = wOf(m);
-      var l3 = !m.trained ? '미학습' : (w > 0 ? ('가중 ×' + w.toFixed(2)) : '표 없음');
+      var l3 = (cls === 'off') ? '미학습' : (w > 0 ? ('가중 ×' + w.toFixed(2)) : '표 없음');
       parts.push(node(COLX[1], y, NW, NH, cls, [String(m.name || '').toUpperCase(), l2, l3],
-        (m.label || m.name) + (m.why ? ' — ' + m.why : '')));
+        (m.label || m.name) + ' — ' + LUXR.txt(m.name) + (m.why ? ' · ' + m.why : '')));
     });
     parts.push(node(COLX[2], cy - 30, 96, 60, 'comb',
       ['IC 결합', 'w=exp(' + (cb.icTemp || 60) + '·IC)', ex.filter(function (m) { return wOf(m) > 0; }).length + '표']));
@@ -14475,21 +14567,28 @@ html[data-theme="light"] #page-nnviz .nlv-sec-h{ border-color:transparent; color
         roles=document.getElementById('nnvRoles');
     if(legend) legend.style.display='none';
     if(roles) roles.innerHTML='';
-    var ex = d.experts||[], st = d.stack||{}, cb = d.combine||{}, nv = d.votingCount||0;
+    /* [V33.301] ★명부부터 넣는다.★ 아래 모든 불(탭 점·한눈 요약·도식)은 이 값을 읽는다 —
+       사이드바가 읽는 것과 ★같은 서버 함수가 만든 같은 배열★ 이다. */
+    try { if (d.roster) LUXR.set(d.roster, 'nn-viz'); } catch(e){}
+    var ex = d.experts||[], st = d.stack||{}, cb = d.combine||{};
+    var _tl = LUXR.tally(), nv = _tl.live, nseat = _tl.seats;
     NNV_paintDots(d);   // [V33.215] 탭의 상태 점 — 전체 구조를 불러온 순간의 사실로 칠한다
     NNV_paintGlance(d); // [V33.219] 사이드바 한눈 요약도 같은 응답으로 채운다
-    sub.textContent = '전체 구조 — 전문가 '+ex.length+'명 중 ★'+nv+'명 투표 중★ → IC가중 결합 → STACK(통합 메타모델) → 보정 → 로그오즈 층';
+    sub.textContent = '전체 구조 — 전문가 '+nseat+'명 중 ★'+nv+'명 투표 중★ → IC가중 결합 → STACK(통합 메타모델) → 보정 → 로그오즈 층';
 
     chips.innerHTML =
-      chip('투표 중인 위원', nv+' / '+ex.length, nv>=4?'good':'warn') +
-      chip('통합 메타모델(STACK)', st.trained? (st.tier==='full'?'대체 가동':'잠정 ×'+(st.mult!=null?st.mult.toFixed(2):'—')) : '학습 대기', st.trained?'good':'warn') +
+      chip('투표 중인 위원', nv+' / '+nseat, nv>=4?'good':'warn') +
+      /* [V33.301] STACK 도 명부의 state 로 적는다 — 종전엔 trained 만 보고 '가동' 이라 적어
+         학습만 되고 합류는 못 한 상태를 초록으로 칠했다(탭 점은 같은 순간 '보류' 였다). */
+      chip('통합 메타모델(STACK)', LUXR.tag('stack'), LUXR.chipCls('stack')) +
       chip('STACK 표본', (st.n!=null? st.n.toLocaleString():'—')+' / '+(st.minN!=null? st.minN.toLocaleString():'—'), (st.n!=null&&st.minN!=null&&st.n>=st.minN)?'good':'warn') +
       chip('확률 보정', cb.cal? (cb.cal.mode==='beta'?'베타':cb.cal.mode==='platt'?'플랫':'온도 T='+(cb.cal.T!=null?cb.cal.T.toFixed(2):'—')) : '없음', cb.cal?'':'warn') +
       chip('피처 판(featVer)', esc(d.featVer), 'good');
 
     if(ban){
-      ban.className = st.trained? 'nnv-banner on' : 'nnv-banner off';
-      ban.innerHTML = st.trained
+      var _stOn = (LUXR.state('stack') === 'on' || LUXR.state('stack') === 'prov');
+      ban.className = _stOn? 'nnv-banner on' : 'nnv-banner off';
+      ban.innerHTML = _stOn
         ? '✅ <b>통합 메타모델 가동</b> — STACK 이 전문가 '+(st.slots||[]).length+'명의 확률을 입력으로 받아 최종 확률을 냅니다. 사람이 정한 가중이 아니라 <b>결과로부터 배운 결합</b>입니다.'
         : '🌱 <b>통합 메타모델 학습 대기</b> — 전문가들의 확률을 하나로 묶는 STACK 이 아직 표본을 모으는 중입니다. 그동안은 아래 ②의 IC가중 결합이 최종 확률을 냅니다(공백 없음).';
       ban.style.display='block';
@@ -14537,17 +14636,17 @@ html[data-theme="light"] #page-nnviz .nlv-sec-h{ border-color:transparent; color
       : '홀드아웃 경계 미수신 — 외부 학습기가 아직 안 올렸습니다';
 
     var stackBox =
-      '<div class="nnv-ov-stack'+(st.trained?' on':'')+'">'
+      '<div class="nnv-ov-stack'+((LUXR.state('stack')==='on'||LUXR.state('stack')==='prov')?' on':'')+'">'
       + '<div class="nnv-ov-sh">③ STACK — 통합 메타모델 <small>'+(st.dim||16)+'차원 = 전문가확률 8 + 참여마스크 8</small></div>'
       + '<div class="nnv-ov-sb">'+(st.slots||[]).map(function(k){
             var e = ex.filter(function(x){return x.name===k;})[0];
             return '<span class="nnv-ov-slot'+(e&&e.voting?' on':'')+'">'+k+'</span>'; }).join('')+'</div>'
       + '<div class="nnv-ov-sm">'
-        + (st.trained
+        + ((LUXR.state('stack')==='on'||LUXR.state('stack')==='prov')
             ? '검증 '+(st.valAcc!=null?st.valAcc.toFixed(1)+'%':'—')
               + (st.ic!=null? ' · 블록IC '+st.ic.toFixed(4):'')
               + (st.icT!=null? ' (t '+st.icT.toFixed(2)+')':'')
-              + ' · ' + (st.tier==='full'? '<b>결합확률을 통째로 대체</b>' : '로짓 혼합 ×'+(st.mult!=null?st.mult.toFixed(2):'—'))
+              + ' · ' + (LUXR.state('stack')==='on'? '<b>결합확률을 통째로 대체</b>' : '로짓 혼합 ×'+(st.mult!=null?st.mult.toFixed(2):'—'))
             : '표본 <b>'+(st.n!=null?st.n.toLocaleString():'—')+' / '+(st.minN!=null?st.minN.toLocaleString():'—')+'</b> — 퍼징 후 문턱을 넘으면 자동 학습')
         + '</div>'
       + '<div class="nnv-ov-sf">'+oofLine
@@ -18463,7 +18562,10 @@ html:root .page > *{ flex-shrink:0; }
       ['cat',    'CAT',    '부스터'],
       ['flow',   'FLOW',   '수급'],
       ['xalpha', 'XALPHA', '형식알파'],
-      ['memo',   'MEMO',   '기억']
+      ['memo',   'MEMO',   '기억'],
+      /* [V33.301] SEQ 가 이 목록에도 없었다 — 투표하는 위원이 화면 목록에서 빠지면
+         '몇 명 중 몇 명' 이 곧 거짓말이 된다(사이드바 신규모델 칸에만 있었다). */
+      ['seq',    'SEQ',    '시퀀스']
     ]],
     ['결합 · 투표를 통째로 대체한다', 'meta', [
       ['stack',  'STACK',  '메타모델']
@@ -18473,45 +18575,35 @@ html:root .page > *{ flex-shrink:0; }
     ]]
   ];
   var CMROSTER = CMLAYERS.reduce(function(a,l){ return a.concat(l[2]); }, []);
-  // 위원 하나의 상태를 ★한 곳에서★ 판정한다 — KPI 타일과 목록이 다른 말을 하면 안 된다.
+  /* ══ [V33.301] ★판정하지 않는다 — 명부(LUXR)를 옮겨 적을 뿐이다.★ ═════════════
+     종전 cmState 는 위원 종류마다 다른 자를 댔다:
+       고전 3종 → committee[key](불리언) · 부스터 → trusted(읽는 쪽 증거문턱을 모른다)
+       DUAL → chain.dualShift          · 나머지 → alt[key].admit
+     그리고 같은 화면의 다른 칸들(신규모델 목록·신경망 지도·두뇌 도식)은 또 각자 다른 자를
+     댔다. 그래서 같은 위원이 한 화면에서 ●, 옆 화면에서 ○ 였다.
+     이제 색·태그·발언권 전부 서버 명부의 state/mult 에서 나온다. cls 이름만 이 화면의
+     CSS 에 맞춰 바꾼다(on→ok, prov→prov, bad/off→warn/off). */
+  var CMCLS = { on:'ok', prov:'prov', bad:'warn', off:'off' };
   function cmState(key, mode){
-    var c = mode.committee || {}, alt = mode.alt || {};
-    if(key === 'mind' || key === 'dnn' || key === 'gbdt')
-      return c[key] ? {on:1, tag:'정식', cls:'ok', mult:1} : {on:0, tag:'미학습', cls:'off'};
-    if(key === 'xgb' || key === 'lgb' || key === 'cat'){
-      var b = c[key];
-      if(!b) return {on:0, tag:'없음', cls:'off'};
-      return b.trusted ? {on:1, tag:'정식', cls:'ok', mult:1}
-                       : {on:0, tag:'보류', cls:'warn', why:(b.reason||'신뢰문턱 미달')};
-    }
-    if(key === 'dual'){
-      // 이중헤드는 투표하지 않는다 — 실측 사분면 로짓만큼 확률을 민다.
-      //   그래서 '가동' 의 근거는 모델 학습 여부가 아니라 ★실측표가 있는가★ 다.
-      // ★chain 은 alt 아래에 있다★ — mode.chain 으로 읽으면 항상 undefined 라
-      //   실측표가 멀쩡히 있는데도 영원히 '미측정' 으로 보인다(첫 판에서 실제로 그랬다).
-      var ch = (mode.alt && mode.alt.chain) || mode.chain;
-      var sh = ch && ch.dualShift;
-      var d = alt.dual || {};
-      if(sh && sh.shift) return {on:1, tag:'가동', cls:'ok', mult:1, why:'실측 사분면 로짓 적용 (n '+(sh.n||0)+')'};
-      return {on:0, tag:'미측정', cls:'off',
-              why:(d.bull&&d.bull.trained ? '헤드는 학습됨 — 사분면 실측표 대기' : '학습 대기')};
-    }
+    if(!LUXR.ready()) return { on:0, tag:'확인 중', cls:'', mult:0, why:null };
+    var e = LUXR.get(key), stt = LUXR.state(key) || 'off';
+    var cls = CMCLS[stt] || 'off';
+    var alt = (mode && mode.alt) || {};
     var m = alt[key];
-    if(!m) return {on:0, tag:'없음', cls:'off'};
-    if(!m.trained) return {on:0, tag:'미학습', cls:'off',
-      why:'표본 '+(m.samples||0)+'/'+(m.minN||0)+(m.note?' · '+m.note:'')};
-    var a = m.admit;
-    if(a && a.tier === 'full') return {on:1, tag:'정식', cls:'ok', mult:1, why:a.why};
-    if(a && a.admit) return {on:1, tag:'잠정 ×'+(a.mult!=null?a.mult.toFixed(2):'?'), cls:'prov',
-                             mult:(a.mult!=null?a.mult:0), why:a.why};
-    /* [V33.188] '재 봤더니 못 미쳤다' 와 '아직 잴 수 없다' 를 나눠 적는다.
-       홀드아웃 블록이 사흘치뿐이면 그 t 는 모델의 방향이 아니라 그 사흘의 국면이다. */
-    if(a && a.tier === 'pending') return {on:0, tag:'판정 대기', cls:'warn', why:a.why};
-    return {on:0, tag:'보류', cls:'warn', why:(a&&a.why)||'판정 대기'};
+    var why = (e && e.why) || null;
+    if(stt === 'off' && m && !m.trained && (m.samples != null))
+      why = '표본 '+(m.samples||0)+'/'+(m.minN||0)+(m.note?' · '+m.note:'');
+    var tag = stt === 'on' ? '정식'
+            : stt === 'prov' ? ('잠정 ×'+((e && e.mult != null) ? e.mult.toFixed(2) : '?'))
+            : stt === 'bad' ? ((e && e.tier === 'pending') ? '판정 대기' : '보류')
+            : ((e && e.trained) ? '판 불일치' : '미학습');
+    return { on: (stt === 'on' || stt === 'prov') ? 1 : 0, tag: tag, cls: cls,
+             mult: stt === 'on' ? 1 : ((e && e.mult != null) ? e.mult : 0), why: why };
   }
   function renderCommittee(d){
     var el = $id('nlvCommittee'); if(!el) return;
     var mode = d.mode || {}, sub = $id('nlvCmSub');
+    try { if (mode.alt && mode.alt.roster) LUXR.set(mode.alt.roster, 'nlv'); } catch(e){}
     if(!mode.committee){
       el.innerHTML = '<div class="nlv-empty">위원회 상태 확인 중…</div>';
       if(sub) sub.textContent = '확인 중';
@@ -18563,12 +18655,15 @@ html:root .page > *{ flex-shrink:0; }
        "6 / 6"(완전가동)이라 적었다. 실제로는 FLOW·MEMO 가 잠정합류로 투표 중이고
        STACK 도 결합에 섞이고 있었는데, 화면은 그 5명의 존재 자체를 부정하고 있었다.
        목록과 타일이 다른 말을 하지 않도록 판정 함수를 공유한다. */
-    var c = mode.committee, on = 0, prov = 0;
-    if(c) CMROSTER.forEach(function(r){
-      var st2 = cmState(r[0], mode);
-      if(st2.cls === 'ok') on++; else if(st2.cls === 'prov'){ on++; prov++; }
-    });
-    var tot = CMROSTER.length;
+    /* [V33.301] ★타일도 명부로 센다.★ CMROSTER 는 화면 배치용 목록이라 결합기(STACK)와
+       사분면(DUAL)까지 들어 있다 — 그걸 좌석 수로 쓰면 우측 레일의 'n/m 가동' 과
+       숫자가 어긋난다(그 어긋남이 이 화면들이 서로 다른 말을 하는 또 하나의 통로였다).
+       좌석의 정의는 서버 명부의 seat 플래그다. */
+    try { if (mode.alt && mode.alt.roster) LUXR.set(mode.alt.roster, 'kpi'); } catch(e){}
+    /* 명부가 아직 없으면 '0 / 0'(전원 정지)이 아니라 '—'(미확인) 이어야 한다 — V33.146 계약. */
+    var c = (mode.committee && LUXR.ready()) ? mode.committee : null;
+    var _kt = LUXR.tally();
+    var on = _kt.live, prov = _kt.prov, tot = _kt.seats;
     var dur = scan.durMs ? (scan.durMs/1000).toFixed(0)+'초' : '—';
     var st = [
       // [V33.146] committee 가 아예 없으면 '0 / N'(전원 정지)이 아니라 '—'(미확인)이다.
@@ -18586,6 +18681,9 @@ html:root .page > *{ flex-shrink:0; }
   function renderRailAiMode(mode, picks){
     var el = $id('railAiMode'), mob = $id('mobAiMode');
     if(!el && !mob) return;
+    /* [V33.301] 이 레일이 사용자가 "불이 안 들어와 있다" 고 가리킨 그 화면이다.
+       아래 모든 불은 ★서버 명부★ 에서 나온다 — 여기서 admit/trusted 를 다시 읽지 않는다. */
+    try { if (mode && mode.alt && mode.alt.roster) LUXR.set(mode.alt.roster, 'rail'); } catch(e){}
     var put = function(html){ if(el) el.innerHTML = html; if(mob) mob.innerHTML = html; };
     // ═══ [V33.56] AI 운용 상태 — 표 레이아웃 ═══
     //   원칙: 값이 없어도 행은 항상 그린다(빈칸 "—"). 있다/없다가 아니라 '무엇이 비었는가'가 보여야
@@ -18727,25 +18825,31 @@ html:root .page > *{ flex-shrink:0; }
 
     // ⑤ 위원회 — 6모델 항상 표시
     var c = mode.committee || {}, dg = mode.diag || {};
-    var ico = function(v){
-      if(v === true) return col('●', C.pos);
-      if(v && v.trusted) return col('●', C.pos);
-      if(v && v.shadow)  return col('◐', C.amb);
-      return col('○', C.dim);
-    };
+    /* [V33.301] ★불은 명부에서만 나온다.★ 종전 ico(v) 는 인자에 따라 다섯 갈래로
+       해석했고(true / trusted / shadow / null / false), 부르는 쪽마다 다른 것을 넘겼다 —
+       그래서 같은 등급(잠정)인 FLOW 는 ○, SEQ 는 ● 였다(사용자 화면 실측).
+       이제 위원 키 하나만 넘긴다. 판정은 서버(buildRoster)가 이미 했다. */
+    var ico = function(key){ return LUXR.dot(key); };
+    /* 위원이 아닌 것(레버리지 게이트·MAE 경로 등)의 열림/닫힘 표시. ★명부와 섞지 않는다★ —
+       예전엔 이것도 ico() 를 같이 써서, 인자 모양이 늘어나며 위원 판정까지 흐려졌다. */
+    var gate = function(on){ return on ? col('●', C.pos) : col('○', C.dim); };
     // [V33.57] 부스팅 3종도 값 칸을 채운다 — 종전엔 ● 는 켜지는데 옆이 항상 빈칸이라
     //   "불은 들어왔는데 작동 안 하는 것 아니냐"는 오해를 샀다(실제로는 UI 가 값을 안 넘겼을 뿐).
     //   섀도우(미승격)면 그렇다고 명시하고, 정확도·가중치를 함께 보여준다.
-    var brow = function(nm, o){
-      if(!o) return [ico(null)+' '+nm, '<span class="sub">미학습</span>'];
+    var brow = function(key, nm, o){
+      if(!o) return [ico(key)+' '+nm, '<span class="sub">미학습</span>'];
       var parts = [];
       // [V33.195] 부스터도 같은 규칙 — '검증' 과 '하한' 을 구분해 적는다.
       if(has(o.accLB)) parts.push('하한 '+(o.accLB*100).toFixed(1)+'%');
       if(has(o.w) && o.w > 0) parts.push('w='+o.w);
       var body = parts.length ? parts.join(' · ') : null;
-      var tag = o.trusted ? col('가동', C.pos)
+      /* [V33.301] ★o.trusted 로 '가동' 이라 적지 않는다.★ 위원회가 실제로 쓰는 판정은
+         _boostersCached 의 증거문턱까지 본다(V33.191) — 화면만 trusted 를 보면
+         XGB 0.4836 짜리를 '가동' 이라 적는다. 명부의 state 를 그대로 옮긴다. */
+      var stt = LUXR.state(key);
+      var tag = stt === 'on' ? col('가동', C.pos)
               : (o.promoted ? col('검증 미달', C.amb) : col('섀도우', C.amb));
-      return [ico(o)+' '+nm, tag + (body ? ' <span class="sub">'+body+'</span>' : '')
+      return [ico(key)+' '+nm, tag + (body ? ' <span class="sub">'+body+'</span>' : '')
         + (o.source ? ' <span class="sub">·'+(o.source==='external'?'Modal':'Worker')+'</span>' : '')];
     };
     /* [V33.195] ★같은 모델을 두 화면이 다른 숫자로 말하던 것을 끝낸다.★
@@ -18761,7 +18865,7 @@ html:root .page > *{ flex-shrink:0; }
       if(has(floor))    parts.push('문턱 '+floor+'%');
       return parts.join(' · ');
     };
-    var mrow = function(nm, on, d, floor){
+    var mrow = function(key, nm, d, floor){
       var msg = null;
       if(d){
         if(!d.stored)          msg = '<span class="sub">모델 없음 — 학습 미완료</span>';
@@ -18791,7 +18895,7 @@ html:root .page > *{ flex-shrink:0; }
                + (d.accLBNominal*100).toFixed(1)+'% 로 통과 — 고유도 보정으로 미달('
                + (has(d.uniqCost)?'−'+(d.uniqCost*100).toFixed(1)+'%p':'')+')</span>';
       }
-      return [ico(on)+' '+nm, msg];
+      return [ico(key)+' '+nm, msg];
     };
     var alt0 = mode.alt || {};   // [V33.126] 위원회 인원수 계산에 필요 — 아래 신규모델 섹션과 같은 객체.
     // [V33.126] 위원회 헤더에 ★실제로 몇 명이 표결에 참여하는가★ 를 띄운다.
@@ -18800,33 +18904,24 @@ html:root .page > *{ flex-shrink:0; }
     //   (FLOW·XALPHA·MEMO 는 experts[] 합류, STACK 은 위원회 자체를 대체, 이중헤드는 사분면 판정)
     //   단지 ★IC 유의성 게이트를 아직 못 넘어서★ 표결에 안 들어가는 것뿐이다.
     //   같은 칸에 모아 놓고 "가동 n명 / 대기 m명" 으로 한 줄에 보이게 한다.
-    var _altT = alt0 || {};
-    var ch0 = _altT.chain || null;
-    var _adm = function(m){ return !!(m && m.admit && m.admit.admit); };
-    var _memb = [
-      {on: !!(dg.mind && dg.mind.trusted)}, {on: !!(dg.dnn && dg.dnn.trusted)}, {on: !!(dg.gbdt && dg.gbdt.trusted)},
-      {on: !!(c.xgb && c.xgb.trusted)}, {on: !!(c.lgb && c.lgb.trusted)}, {on: !!(c.cat && c.cat.trusted)},
-      /* [V33.149] ★trusted 가 아니라 admit 으로 센다★ — 엔진은 expertAdmit 으로 합류를 정하고
-         잠정(provisional)도 실제로 ★가중 ×mult 로 투표★ 한다. 화면만 trusted 를 봐서
-         투표 중인 위원을 '대기' 로 적었다. 판정 기준이 엔진과 달랐던 것이다. */
-      {on: _adm(_altT.flow)}, {on: _adm(_altT.xalpha)},
-      {on: _adm(_altT.stack)}, {on: _adm(_altT.memo)},
-      {on: !!(ch0 && ch0.dualShift && ch0.dualShift.shift)}
-    ];
-    var _nOn = 0; for (var _mi = 0; _mi < _memb.length; _mi++) if (_memb[_mi].on) _nOn++;
-    h += sec('위원회', col(_nOn + '/' + _memb.length + ' 가동', _nOn >= 3 ? C.pos : (_nOn >= 1 ? C.amb : C.neg)))
+    /* [V33.301] ★인원수도 명부에서 센다.★ 종전엔 여기서 여섯 갈래(trusted·admit·dualShift)로
+       각자 세고, 구조 관측은 experts[] 를 또 따로 셌다 — 같은 순간 두 화면의 'n/m' 이
+       달랐다. 좌석의 정의(chair·expert)도 서버가 정한다. */
+    var _tl = LUXR.tally();
+    var _nOn = _tl.live, _nSeat = _tl.seats;
+    h += sec('위원회', col(_nOn + '/' + _nSeat + ' 가동', _nOn >= 3 ? C.pos : (_nOn >= 1 ? C.amb : C.neg)))
       + tbl([
-          mrow('MIND', c.mind, dg.mind, null),
-          mrow('DNN',  c.dnn,  dg.dnn,  dg.dnn && dg.dnn.floor),
-          mrow('GBDT', c.gbdt, dg.gbdt, null),
-          brow('XGB', c.xgb), brow('LGB', c.lgb), brow('Cat', c.cat)
+          mrow('mind', 'MIND', dg.mind, null),
+          mrow('dnn',  'DNN',  dg.dnn,  dg.dnn && dg.dnn.floor),
+          mrow('gbdt', 'GBDT', dg.gbdt, null),
+          brow('xgb', 'XGB', c.xgb), brow('lgb', 'LGB', c.lgb), brow('cat', 'Cat', c.cat)
         ]);
 
     // [V33.81] 신규 3모델(FLOW·XALPHA·STACK) — 학습 대기 중에도 표본 진행이 보이게 한다.
     //   "만들어놨는데 화면에 안 보인다"가 반복돼서, 값이 없어도 행은 항상 그린다.
     var alt = alt0;
-    var arow = function(nm, o, desc){
-      if(!o) return [ico(null)+' '+nm, '<span class="sub">'+desc+'</span>'];
+    var arow = function(key, nm, o, desc){
+      if(!o) return [ico(key)+' '+nm, '<span class="sub">'+desc+'</span>'];
       var body;
       // [V33.91] IC 옆에 유의성(t)을 같이 보여준다 — 운으로 높은 IC 와 실력을 구분해야 한다.
       // [V33.93] 유의성(t) + 전진검증(학습 이후 표본 성적)을 함께 보여준다.
@@ -18842,15 +18937,17 @@ html:root .page > *{ flex-shrink:0; }
          잠정합류(expertAdmit tier=provisional)로 ★실제 투표 중인★ 위원을 '전진검증 대기'
          라고 적었다. 화면이 "안 돌고 있다" 고 말하는 동안 그 위원은 가중 ×0.40 으로
          표를 던지고 있었다. 합류 판정은 admit 하나만 쓴다. */
-      var A = o.admit || null;
+      /* [V33.301] 글자도 ★명부★ 에서 낸다. 불과 글자가 다른 근거로 만들어지면
+         "○ 인데 잠정가동" 이 또 생긴다 — 그게 사용자가 화면에서 본 그것이다. */
+      var E = LUXR.get(key), ST = LUXR.state(key);
       var icTxt = 'IC '+(has(o.icBlock)?o.icBlock.toFixed(3):(has(o.ic)?o.ic.toFixed(3):'—'));
-      if(A && A.tier === 'full')      body = col('가동', C.pos)+' <span class="sub">'+icTxt+sig+fwd+'</span>';
-      else if(A && A.admit)           body = col('잠정가동 ×'+(has(A.mult)?A.mult.toFixed(2):'?'), C.amb)
+      if(ST === 'on')                 body = col('가동', C.pos)+' <span class="sub">'+icTxt+sig+fwd+'</span>';
+      else if(ST === 'prov')          body = col('잠정가동 ×'+((E&&E.mult!=null)?E.mult.toFixed(2):'?'), C.amb)
                                         +' <span class="sub">'+icTxt+sig+fwd+'</span>';
       /* [V33.188] 관측 블록이 모자라 ★판정 자체를 못 한★ 경우를 '합류 보류'(=재 봤더니 못 미침)와
          구분한다. 앞은 기다리는 것이고 뒤는 고치는 것이라 사람이 취할 행동이 다르다. */
-      else if(A && A.tier === 'pending') body = col('판정 대기', C.amb)+' <span class="sub">'+esc(A.why||'')+'</span>';
-      else if(o.trained)              body = col('합류 보류', C.neg)+' <span class="sub">'+esc(A&&A.why?A.why:'판정 대기')+'</span>';
+      else if(E && E.tier === 'pending') body = col('판정 대기', C.amb)+' <span class="sub">'+esc(E.why||'')+'</span>';
+      else if(o.trained && ST === 'bad') body = col('합류 보류', C.neg)+' <span class="sub">'+esc(E&&E.why?E.why:'판정 대기')+'</span>';
       /* [V33.181] ★판 불일치를 '표본수집' 이라 적지 않는다.★ 종전엔 모델이 아예 없는 것과
          옛 판(featVer) 모델이라 못 쓰는 것을 한 갈래로 묶어, 표본이 문턱을 넘었는데도
          "표본수집 980 / 800" 이라고 적었다(운영 스냅샷 실측). 표본은 다 찼는데 왜 학습이
@@ -18870,7 +18967,10 @@ html:root .page > *{ flex-shrink:0; }
         if(ageH > 36) body += ' <span class="sub">· ⚠ 마지막 학습 '+Math.floor(ageH/24)+'일 전</span>';
       }
       if(o.note && o.noteOk === false) body += ' <span class="sub">· '+esc(String(o.note).slice(0,90))+'</span>';
-      return [ico((A && A.tier === 'full') ? true : null)+' '+nm, body];
+      /* [V33.301] ★여기가 사용자 화면에서 갈라진 자리다.★ 종전엔 tier==='full' 일 때만
+         ● 였고 잠정은 ○ 였다 — 그런데 바로 아래 SEQ 행은 잠정에도 ● 를 켰다. 같은 화면
+         안에서 같은 등급이 다른 색이었다. 불은 명부 하나에서만 나온다. */
+      return [ico(key)+' '+nm, body];
     };
     var bfTxt = alt.backfill && alt.backfill.made
       ? '<span class="sub">소급생성 '+n0(alt.backfill.made)+'건 (커서 '+n0(alt.backfill.cursor)+')</span>'
@@ -18885,15 +18985,15 @@ html:root .page > *{ flex-shrink:0; }
     };
     h += sec('위원회 (신규 전문가)')
       + cmList([
-          arow('FLOW', alt.flow, '피어그래프·공매도·내부자'),
-          arow('XALPHA', alt.xalpha, '형식알파·횡단면 랭크'),
-          arow('STACK', alt.stack, '전문가 통합(투표 대체)'),
+          arow('flow', 'FLOW', alt.flow, '피어그래프·공매도·내부자'),
+          arow('xalpha', 'XALPHA', alt.xalpha, '형식알파·횡단면 랭크'),
+          arow('stack', 'STACK', alt.stack, '전문가 통합(투표 대체)'),
           (function(){
             // [V33.92] MEMO — 유사했던 과거 상황의 실제 결과를 꺼내 보는 비모수 전문가.
             var m = alt.memo;
             if(!m) return ['MEMO(유사상황 기억)', '<span class="sub">—</span>'];
-            var r = arow('MEMO(유사상황 기억)', m, '과거 유사국면 실측결과');
-            if(m.trusted && m.protos) r[1] += ' <span class="sub">· 원형 '+n0(m.protos)+'개</span>';
+            var r = arow('memo', 'MEMO(유사상황 기억)', m, '과거 유사국면 실측결과');
+            if(m.protos) r[1] += ' <span class="sub">· 원형 '+n0(m.protos)+'개</span>';
             return r;
           })(),
           (function(){
@@ -18903,14 +19003,17 @@ html:root .page > *{ flex-shrink:0; }
                화면이 다시 매기면 두뇌 화면과 또 갈라진다(이번에 이중헤드가 그랬다). */
             var q = alt.seq;
             if(!q) return ['SEQ(시퀀스 Transformer)', '<span class="sub">—</span>'];
-            if(!q.trained) return [ico(null)+' SEQ(시퀀스 Transformer)',
+            if(!q.trained) return [ico('seq')+' SEQ(시퀀스 Transformer)',
               col('학습 대기', C.amb)+' <span class="sub">외부 GPU 학습 대기</span>'];
-            if(!q.featVerOk) return [ico(false)+' SEQ(시퀀스 Transformer)',
+            if(!q.featVerOk) return [ico('seq')+' SEQ(시퀀스 Transformer)',
               col('판 불일치', C.amb)+' <span class="sub">모델 판 '+n0(q.featVer)+' · 서버 '+n0(q.wantVer)+' — 재학습 대기</span>'];
-            var live = q.trusted && has(q.mult) && q.mult > 0;
-            var tag = live ? (q.tier==='full' ? '가동' : '잠정가동 ×'+q.mult.toFixed(2)) : '보류';
-            return [ico(live ? true : false)+' SEQ(시퀀스 Transformer)',
-              col(tag, live ? (q.tier==='full'?C.pos:C.amb) : C.neg)
+            /* [V33.301] 종전엔 여기만 ★잠정에도 ●★ 를 켰다(다른 행은 ○). 그 비대칭이
+               사용자가 본 그 화면이다 — FLOW ○ 잠정 ×0.60 / SEQ ● 잠정 ×0.17. */
+            var _sst = LUXR.state('seq');
+            var live = (_sst === 'on' || _sst === 'prov');
+            var tag = live ? (_sst === 'on' ? '가동' : '잠정가동 ×'+(has(q.mult)?q.mult.toFixed(2):'?')) : '보류';
+            return [ico('seq')+' SEQ(시퀀스 Transformer)',
+              col(tag, live ? (_sst === 'on' ? C.pos : C.amb) : C.neg)
               + ' <span class="sub">정확도하한 '+(has(q.accLB)?(q.accLB*100).toFixed(1)+'%':'—')
               + (has(q.floor)?(' / 문턱 '+(q.floor*100).toFixed(1)+'%'):'')
               + (has(q.icBlock)?(' · 블록IC '+q.icBlock.toFixed(3)):'')
@@ -18923,7 +19026,7 @@ html:root .page > *{ flex-shrink:0; }
             var d = alt.dual;
             if(!d) return ['이중헤드(강세/약세)', '<span class="sub">—</span>'];
             var b = d.bull, r = d.bear;
-            if(!b || !r) return [ico(null)+' 이중헤드(강세/약세)', col('표본수집', C.amb)+' <span class="sub">'+n0(d.samples)+' / '+n0(d.minN)+'</span>'];
+            if(!b || !r) return [ico('dual')+' 이중헤드(강세/약세)', col('표본수집', C.amb)+' <span class="sub">'+n0(d.samples)+' / '+n0(d.minN)+'</span>'];
             /* ══ [V33.280] ★여기가 두뇌 화면과 갈라져 있었다★ ═══════════════════════
                종전엔 b.trusted 만 보고 "IC 미달 대기" 라고 적었다. 그런데 trusted 는
                홀드아웃+전진검증을 ★둘 다★ 통과해야 켜지는 엄격 플래그이고, 위원회 합류
@@ -18932,20 +19035,24 @@ html:root .page > *{ flex-shrink:0; }
                ★IC 가 미달이어서 안 실린 게 아니라, 이미 실려 있었다.★
                그리고 여기서 적던 IC 는 원시값(0.289)인데 게이트가 보는 것은 블록 IC(0.268)다 —
                이름이 같으면 값도 같아야 한다. FLOW·XALPHA 와 같은 자로 통일한다. */
-            var aB=b.admit, aR=r.admit;
-            var mult=function(a){ return (a&&has(a.mult)) ? ' ×'+a.mult.toFixed(2) : ''; };
-            var one=function(a,ok){
-              if(a&&a.admit) return (a.tier==='full'?'가동':'잠정가동')+mult(a);
-              if(ok) return '가동';
-              return a&&a.why ? '보류' : '대기';
+            /* [V33.301] ★여기서도 admit/trusted 를 직접 읽지 않는다.★ 종전엔 admit 이 없으면
+               trusted 로 물러서는 폴백이 있었는데, 그 폴백은 신경망 지도에는 없었다 —
+               같은 헤드가 한 화면에서 '가동', 다른 화면에서 '보류' 로 나온 통로 중 하나다. */
+            var one=function(key){
+              var st=LUXR.state(key), e=LUXR.get(key);
+              if(st==='on') return '가동';
+              if(st==='prov') return '잠정가동'+((e&&e.mult!=null)?(' ×'+e.mult.toFixed(2)):'');
+              if(st==='bad') return (e&&e.tier==='pending')?'판정 대기':'보류';
+              return '대기';
             };
-            var sB=one(aB,b.trusted), sR=one(aR,r.trusted);
-            var live=(aB&&aB.admit)||(aR&&aR.admit)||b.trusted||r.trusted;
-            var both=((aB&&aB.admit)||b.trusted)&&((aR&&aR.admit)||r.trusted);
+            var _lv=function(key){ var st=LUXR.state(key); return st==='on'||st==='prov'; };
+            var sB=one('dual_bull'), sR=one('dual_bear');
+            var live=_lv('dual_bull')||_lv('dual_bear');
+            var both=_lv('dual_bull')&&_lv('dual_bear');
             /* 게이트가 실제로 보는 자(블록 IC)를 적는다. 없으면 원시값을 적되 그렇다고 밝힌다. */
             var icOf=function(x){ return has(x.icBlock) ? {v:x.icBlock, lab:'블록IC'} : {v:x.ic, lab:'IC(원시)'}; };
             var iB=icOf(b), iR=icOf(r);
-            var body = col(both?('가동'+(aB&&aB.tier==='provisional'?'(잠정)':'')):(live?('한쪽만 '+sB+'/'+sR):'보류'),
+            var body = col(both?('가동'+(LUXR.state('dual_bull')==='prov'?'(잠정)':'')):(live?('한쪽만 '+sB+'/'+sR):'보류'),
                            both ? C.pos : (live ? C.amb : C.neg))
               + ' <span class="sub">상승 '+sB+' '+iB.lab+' '+(has(iB.v)?iB.v.toFixed(3):'—')
               + (has(b.icT)?(' t '+b.icT.toFixed(2)):'')+'(기저 '+(has(b.base)?(b.base*100).toFixed(0)+'%':'—')+')'
@@ -18953,7 +19060,10 @@ html:root .page > *{ flex-shrink:0; }
               + (has(r.icT)?(' t '+r.icT.toFixed(2)):'')+'(기저 '+(has(r.base)?(r.base*100).toFixed(0)+'%':'—')+')'
               + (has(b.fwdN)&&has(b.minFwd)&&!(b.fwdReady&&r.fwdReady) ? (' · 전진 '+n0(b.fwdN)+'/'+n0(b.minFwd)) : '')
               + '</span>';
-            return [ico(both ? true : (live ? null : false))+' 이중헤드(강세/약세)', body];
+            /* [V33.301] 두 헤드는 명부에서 각각 판정된 상태를 ★그대로★ 하나씩 켠다 —
+               한 개의 불로 뭉치면 '강세만 합류' 를 표현할 자리가 없어 또 화면마다 달라졌다.
+               신경망 지도의 dualbull/dualbear 점과 정확히 같은 값이다. */
+            return [ico('dual_bull')+ico('dual_bear')+' 이중헤드(강세/약세)', body];
           })(),
           ['기존표본 소급', bfTxt],
           (function(){
@@ -18961,19 +19071,19 @@ html:root .page > *{ flex-shrink:0; }
             var L = alt.scalpLev;
             if(!L) return ['단타 레버리지', '<span class="sub">—</span>'];
             if(!L.enabled) return ['단타 레버리지', '<span class="sub">비활성</span>'];
-            if(!L.trusted) return [ico(null)+' 단타 레버리지', col('닫힘', C.amb)+' <span class="sub">단타모델 미신뢰</span>'];
-            if(!has(L.kelly)) return [ico(null)+' 단타 레버리지', col('닫힘', C.amb)+' <span class="sub">켈리 미측정 (표본 '+n0(L.n)+')'+(L.why?(' — '+esc(L.why)):'')+'</span>'];
+            if(!L.trusted) return [gate(null)+' 단타 레버리지', col('닫힘', C.amb)+' <span class="sub">단타모델 미신뢰</span>'];
+            if(!has(L.kelly)) return [gate(null)+' 단타 레버리지', col('닫힘', C.amb)+' <span class="sub">켈리 미측정 (표본 '+n0(L.n)+')'+(L.why?(' — '+esc(L.why)):'')+'</span>'];
             /* ══ [V33.282] ★'못 잰 것' 과 '재봤더니 나쁜 것' 을 구분한다★ ══════════════
                운영 스냅샷은 "닫힘 켈리 -0.551 < 0.05" 였다 — 마치 엣지를 재 봤더니 음수인 것처럼.
                그런데 표본은 ★9건★ 이었다. 9건짜리 켈리는 부호가 우연으로 뒤집힌다.
                지금 닫혀 있는 건 실력 판정이 아니라 그냥 ★모르는 것★ 이고, 화면은 그렇게 말해야 한다.
                (게이트 자체도 V33.282 에서 표본 바닥을 갖게 됐다 — 종전엔 9건으로 증폭이 열릴 수 있었다.) */
-            if(has(L.minSamples) && L.n < L.minSamples) return [ico(null)+' 단타 레버리지',
+            if(has(L.minSamples) && L.n < L.minSamples) return [gate(null)+' 단타 레버리지',
               col('닫힘 — 표본 부족', C.amb)+' <span class="sub">거래 '+n0(L.n)+'/'+n0(L.minSamples)
               + '건 — 이 구간에선 켈리 부호가 우연으로 뒤집힌다(참고값 '+L.kelly.toFixed(3)+')</span>'];
-            if(L.kelly < L.minKelly) return [ico(null)+' 단타 레버리지', col('닫힘', C.neg)+' <span class="sub">켈리 '+L.kelly.toFixed(3)+' &lt; '+L.minKelly+' <span class="sub">(거래 '+n0(L.n)+'건)</span></span>'];
+            if(L.kelly < L.minKelly) return [gate(null)+' 단타 레버리지', col('닫힘', C.neg)+' <span class="sub">켈리 '+L.kelly.toFixed(3)+' &lt; '+L.minKelly+' <span class="sub">(거래 '+n0(L.n)+'건)</span></span>'];
             var mult = Math.min(L.maxMult, 1 + (Math.min(L.kelly,0.4)/0.20)*(L.maxMult-1));
-            return [ico(true)+' 단타 레버리지', col('×'+mult.toFixed(2), C.pos)+' <span class="sub">켈리 '+L.kelly.toFixed(3)+' · 집중 ×'+L.concMult+' · DD컷 '+L.ddCut+'%</span>'];
+            return [gate(true)+' 단타 레버리지', col('×'+mult.toFixed(2), C.pos)+' <span class="sub">켈리 '+L.kelly.toFixed(3)+' · 집중 ×'+L.concMult+' · DD컷 '+L.ddCut+'%</span>'];
           })(),
           // [V33.119] ★폭등 레버리지★ — 지금 천장이 열렸는지, 안 열렸으면 무엇이 모자란지.
           //   설정값만 보여주면 "왜 안 열리지" 를 알 수 없다. 결정기가 낸 사유를 그대로 싣는다.
@@ -18992,7 +19102,7 @@ html:root .page > *{ flex-shrink:0; }
               return body;
             };
             var anyOpen = (S.us && S.us.mult > 1.05) || (S.kr && S.kr.mult > 1.05);
-            return [ico(anyOpen ? true : null)+' 폭등 레버리지',
+            return [gate(anyOpen ? true : null)+' 폭등 레버리지',
               one('美', S.us) + '<br>' + one('韓', S.kr)
               + ' <span class="sub">— 천장: 장타 폭등 ×'+S.ceilMeltup+' / 추세 ×'+S.ceilTrend+' · 단타 폭등 ×'+S.scalpCeilMeltup
               + ' (ER '+S.erMin+'↑부터 열려 '+S.erFull+'에서 만개)</span>'];
@@ -19001,12 +19111,12 @@ html:root .page > *{ flex-shrink:0; }
           (function(){
             var M = mode.alt && mode.alt.scalpMae;
             if(!M) return ['단타 경로(MAE)', '<span class="sub">미측정 — 백필 표본 대기</span>'];
-            if(!M.ready) return [ico(null)+' 단타 경로(MAE)',
+            if(!M.ready) return [gate(null)+' 단타 경로(MAE)',
               '<span class="sub">표본 '+n0(M.n)+'/'+n0(M.need)+' 대기'
               + (M.nLiveSkipped ? ' · 라이브 '+n0(M.nLiveSkipped)+'건 제외(1분 관측은 고저 미포착)' : '')+'</span>'];
             var c = M.mult >= 1 ? C.pos : (M.mult > 0 ? C.amb : C.neg);
             var tag = M.mult >= 1 ? '통과' : (M.mult > 0 ? '부분 제한' : '차단');
-            return [ico(M.mult > 0 ? true : false)+' 단타 경로(MAE)',
+            return [gate(M.mult > 0 ? true : false)+' 단타 경로(MAE)',
               col(tag, c)+' <span class="sub">역행/손절폭 p80 '+(has(M.ratio)?M.ratio.toFixed(2):'—')
               + (has(M.median)?' (중앙 '+M.median.toFixed(2)+')':'')
               + ' · 계수 ×'+M.mult.toFixed(2)

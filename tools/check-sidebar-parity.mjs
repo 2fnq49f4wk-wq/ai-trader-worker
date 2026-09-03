@@ -62,10 +62,15 @@ console.log("\n③~④ 사이드바가 admit 으로 말하고, 게이트와 같�
   const blk = /var d = alt\.dual;[\s\S]*?이중헤드\(강세\/약세\)', body\];/.exec(HV);
   chk(!!blk, "사이드바 이중헤드 칸을 찾았다", "사이드바 칸을 못 찾는다");
   const t = blk ? blk[0] : "";
-  chk(/var aB=b\.admit, aR=r\.admit;/.test(t), "사이드바가 admit 을 읽는다", "사이드바가 여전히 admit 을 안 본다");
+  /* [V33.301] 판정이 서버 명부(buildRoster)로 올라갔다. 사이드바가 admit 을 ★직접★ 읽으면
+     그건 판정이 다시 화면으로 내려온 것이고, 곧 두뇌 화면과 갈라진다. 명부만 읽어야 한다. */
+  chk(/LUXR\.state\('dual_bull'\)/.test(t) && !/b\.admit/.test(t),
+    "사이드바가 ★서버 명부★ 로 상태를 말한다(admit 을 화면에서 다시 해석하지 않는다)",
+    "사이드바가 admit/trusted 를 직접 해석한다 — 두뇌 화면과 갈라질 자리다");
   chk(!/'IC 미달 대기'/.test(t), "'IC 미달 대기' 문구가 사라졌다 — 사실이 아니었다", "★틀린 문구가 남아 있다★");
-  chk(/a\.tier==='full'\?'가동':'잠정가동'/.test(t),
-    "합류/잠정합류를 tier 로 구분해 적는다(FLOW·XALPHA 와 같은 말)", "상태 문구가 admit 과 무관하다");
+  chk(/if\(st==='on'\) return '가동';[\s\S]{0,120}?if\(st==='prov'\) return '잠정가동'/.test(t),
+    "합류/잠정합류를 명부 state 로 구분해 적는다(FLOW·XALPHA·SEQ 와 같은 말)",
+    "상태 문구가 명부와 무관하다 — 불과 글자가 다른 근거로 만들어진다");
   chk(/has\(x\.icBlock\) \? \{v:x\.icBlock, lab:'블록IC'\}/.test(t),
     "게이트가 보는 블록 IC 를 적는다 — 없을 때만 원시값을 쓰고 그렇다고 밝힌다",
     "★사이드바가 여전히 원시 IC 를 'IC' 라고 적는다 — 두뇌 화면과 숫자가 다르다★");

@@ -2981,7 +2981,7 @@ async function applySignalTypeWeights(DB, cfg) {
    화면·자가진단이 계속 "V33.272" 를 보고했다(운영 스냅샷이 그대로 그랬다). 배포는 됐는데
    ★배포됐다는 사실만 거짓말★ 을 하고 있었으니, "내 고침이 올라간 건가" 를 화면으로 확인할
    방법이 없었다. tools/check-build-ver.mjs 가 이제 소스에 적힌 최신 버전과 이 값을 대조한다. */
-const _BUILD_VER = "V33.300";
+const _BUILD_VER = "V33.301";
 
 // ═══ [V33.171] 평가 순서 계획 — ★승격과 순환을 교차해 굶주림을 구조적으로 없앤다★ ═══
 //   V33.50 의 형태트리거는 "급한 몇 종목을 앞으로 당긴다"는 의도였으나, 실제 운영로그에서는
@@ -22077,6 +22077,10 @@ async function handleRequest(request, env, ctx) {
           };
           const _bf = await getState(env.DB, "alt_bf_cursor", null);
           _alt = {
+            /* [V33.301] ★명부는 여기서 만들지 않는다 — 한 곳(buildRoster)에서 받아 싣는다.★
+               구조 관측(/api/nn-viz?model=overview)도 ★같은 함수★ 를 부른다. 사이드바가
+               위원 불을 스스로 판정하던 술어들(admit·trusted·tier 제각각)은 전부 걷어냈다. */
+            roster: await buildRoster(env.DB),
             flow: await _mk("flow_model", "flow_samples", FLOWML.minTrainSamples, FLOWML.featVer),
             xalpha: await _mk("xalpha_model", "xalpha_samples", XALPHA.minTrainSamples, XALPHA.featVer),
             stack: await _mk("stack_model", "stack_samples", STACKML.minTrainSamples, STACKML.featVer),
@@ -22622,7 +22626,12 @@ async function handleRequest(request, env, ctx) {
                      ece: _pc(_num(cal.ece, null)), eceRaw: _pc(_num(cal.eceRaw, null)),
                      featVer: cal.featVer != null ? cal.featVer : null } : null
       };
-      _ov.votingCount = _ov.experts.filter(function (e) { return e.voting; }).length;
+      /* [V33.301] ★불을 켜는 근거는 experts[]/dual[]/stack 이 아니라 명부다.★
+         이 세 갈래는 각자 다른 필드(voting·tier·trained)를 실었고, 화면은 그것을 다시
+         해석했다 — 사이드바와 갈라진 자리가 정확히 거기다. 두 화면이 같은 배열을 읽는다. */
+      _ov.roster = await buildRoster(env.DB);
+      _ov.tally = rosterTally(_ov.roster);
+      _ov.votingCount = _ov.tally.live;
       /* [V33.219] ★봉 날짜 캐시 재구축 진행률.★ V33.217 이 daily: 캐시에 days 를 넣기 시작했고,
          옛 캐시는 '건드릴 때 다시 받기' 로 자연히 새 스키마가 된다 — 그런데 그게 어디까지
          왔는지 볼 방법이 없었다. 화면이 진행을 못 보면 "됐다" 를 믿을 근거가 없다.
@@ -22647,6 +22656,9 @@ async function handleRequest(request, env, ctx) {
         : (modelSel === "memo") ? await mlMemoVizData(env.DB)
         : (_LINVIZ[modelSel] ? await mlLinearVizData(env.DB, modelSel)
         : await mlDNNVizData(env.DB));
+      /* [V33.301] 모델 탭 하나만 열어도 ★명부를 함께 싣는다★ — 그 탭의 '합류 상태' 글자와
+         옆 탭의 점이 서로 다른 근거로 그려지면 그게 곧 이 사고의 다음 재발이다. */
+      try { if (data && typeof data === "object") data.roster = await buildRoster(env.DB); } catch (e) {}
       return Response.json(data, { headers: cors });
     }
 
@@ -31781,6 +31793,238 @@ function expertAdmit(m) {
              why: "잠정 — 홀드아웃 t " + t.toFixed(2) + "(문턱 " + _fT.toFixed(2) +
                   (m.icFamilyK ? ", 동시검정 " + m.icFamilyK + "종" : "") + ") · " + fwdWhy + " → 가중 ×" + mult.toFixed(2) };
   } catch (e) { return { admit: false, mult: 0, tier: "none", why: "판정 실패" }; }
+}
+
+/* ══ [V33.301] ★명부(roster) — 위원 상태의 유일한 출처★ ══════════════════════════
+   이 저장소가 반복해서 당한 사고: 사이드바와 '구조 관측' 이 같은 위원을 두고 다른 불을
+   켰다. V33.181 · V33.195 · V33.280 · V33.282 가 전부 같은 사고의 재발이고, 그때마다
+   ★고친 것은 값 하나★ 였다 — 구조는 그대로 뒀다. 그래서 또 났다.
+   이번 실측(사용자 화면): ★같은 화면 안에서조차★ FLOW 는 '○ 잠정가동 ×0.60',
+   SEQ 는 '● 잠정가동 ×0.17' 이었다. 등급이 같은데(둘 다 잠정) 불이 달랐다.
+
+   원인은 값이 아니라 ★판정이 여러 곳에 있다는 것★ 이다. 화면에는 "이 위원에 불이
+   들어오는가" 를 각자 답하는 술어가 여섯 개 있었다:
+     ① _memb[] 의 _adm(admit.admit)        ② arow() 의 tier === 'full'
+     ③ SEQ 행의 trusted && mult > 0        ④ 이중헤드 행의 both / live
+     ⑤ am() 의 trusted / trained           ⑥ 신경망 지도의 tier → on/prov/bad/off
+   여섯이 서로 다른 답을 내는 것은 버그가 아니라 ★설계의 결과★ 다. 하나를 고쳐도
+   나머지 다섯이 남아 있으면 다음 화면에서 또 갈라진다.
+
+   → 판정을 서버로 옮기고 ★하나만 남긴다.★ buildRoster 가 명부를 만들고,
+     /api/ai-mode(사이드바)와 /api/nn-viz?model=overview(구조 관측)가 ★같은 함수★ 를
+     불러 ★같은 배열★ 을 싣는다. 화면은 state 를 읽어 색만 칠한다 — 다시 판정하지 않는다.
+     두 화면이 갈라지려면 이제 buildRoster 가 같은 DB 에서 서로 다른 답을 내야 하는데,
+     같은 함수·같은 입력이므로 원리상 불가능하다.
+
+   state 는 ⑥(신경망 지도)이 쓰던 ★옳은 규칙★ 그대로다 — 나머지 다섯을 여기에 맞춘다:
+     off  = 모델이 없거나 판(featVer) 불일치 — 잴 것이 없다
+     on   = 정식 합류(tier full) — 가중 1.0 으로 투표 중
+     prov = 잠정 합류(tier provisional) — 가중을 줄여 ★실제로 투표 중★
+     bad  = 학습은 됐는데 문턱 미달(reject) 또는 아직 못 잰 상태(pending)              */
+const ROSTER_STATE_TXT = {
+  on:   "정식 합류 — 가중 1.0 으로 투표 중",
+  prov: "잠정 합류 — 증거가 덜 쌓여 가중을 줄여 투표 중",
+  bad:  "합류 보류 — 학습은 됐지만 문턱 미달이거나 아직 못 쟀다",
+  off:  "미학습 또는 판(featVer) 불일치"
+};
+function rosterCls(o) {
+  if (!o || !o.trained) return "off";
+  if (o.featVerOk === false) return "off";
+  if (o.tier === "full") return "on";
+  if (o.tier === "provisional") return "prov";
+  return "bad";
+}
+/* role: chair·expert = ★좌석★(위원회 표결 인원). combiner(STACK)·quadrant(이중헤드)·
+   prior(RULE)는 표결 인원이 아니다 — 좌석에 섞으면 두 화면의 'n/m 가동' 이 또 달라진다. */
+const ROSTER_SEAT_ROLES = { chair: 1, expert: 1 };
+async function buildRoster(DB) {
+  const out = [];
+  const add = function (key, name, role, o) {
+    const e = {
+      key: key, name: name, role: role, seat: !!ROSTER_SEAT_ROLES[role],
+      trained: !!o.trained,
+      featVerOk: o.featVerOk !== false,
+      tier: o.tier || null,
+      mult: (typeof o.mult === "number" && isFinite(o.mult)) ? +o.mult.toFixed(4) : null,
+      featVer: (o.featVer != null && o.featVer !== "") ? o.featVer : null,
+      wantVer: o.wantVer != null ? o.wantVer : null,
+      why: o.why || null
+    };
+    e.state = rosterCls(e);
+    e.stateTxt = ROSTER_STATE_TXT[e.state] || null;
+    out.push(e);
+    return e;
+  };
+  /* 본문(MB급)을 워커로 끌어오지 않는다 — 판정에 필요한 건 featVer 와 '구성요소가 있는가'
+     뿐이다(V33.13 이 사이드바에서 배운 것과 같은 이유). */
+  let probe = null;
+  try {
+    probe = await DB.prepare(
+      "SELECT " +
+      " (SELECT json_extract(v,'$.featVer') FROM state WHERE k='mind_model') mfv," +
+      " (SELECT json_type(v,'$.fm')         FROM state WHERE k='mind_model') mfm," +
+      " (SELECT json_array_length(v,'$.trees') FROM state WHERE k='mind_model') mtrees," +
+      " (SELECT json_type(v,'$.meta')       FROM state WHERE k='mind_model') mmeta," +
+      " (SELECT json_extract(v,'$.featVer') FROM state WHERE k='gbdt_model') gfv," +
+      " (SELECT json_array_length(v,'$.trees') FROM state WHERE k='gbdt_model') gtrees"
+    ).first();
+  } catch (e) {}
+  let S = {};
+  try {
+    S = (await getStates(DB, ["dnn_trust", "gbdt_trust", "dnn_model:meta",
+      "xgb_trust", "lgb_trust", "cat_trust", "xgb_trust_ext", "lgb_trust_ext", "cat_trust_ext",
+      "flow_model", "xalpha_model", "stack_model", "memo_model",
+      "dual_bull_model", "dual_bear_model", "seq_trust", "dual_quad_shift"])) || {};
+  } catch (e) { S = {}; }
+  let boosters = []; try { boosters = (await _boostersCached(DB)) || []; } catch (e) {}
+  const _live = {}; boosters.forEach(function (b) { _live[b.name] = b; });
+
+  // ① 위원장 — 신뢰게이트가 없다(있으면 기준선이 사라진다). 판만 맞으면 full.
+  const mStored = !!(probe && probe.mmeta && (probe.mfm || _num(probe.mtrees, 0) > 0));
+  const mVerOk = !!(probe && probe.mfv === LUXML.featVer);
+  add("mind", "MIND (위원장 · 인수분해기계 FM)", "chair", {
+    trained: mStored, featVerOk: mVerOk, featVer: probe ? probe.mfv : null, wantVer: LUXML.featVer,
+    tier: (mStored && mVerOk) ? "full" : "none", mult: (mStored && mVerOk) ? 1 : 0,
+    why: !mStored ? "모델 없음" : (!mVerOk ? "판 불일치 — 재학습 대기" : "위원장 — 신뢰게이트 없이 항상 참여")
+  });
+
+  // ② DNN — 본문은 청크/R2 에 있다. 저장 여부는 meta 로만 본다.
+  const dt = S["dnn_trust"], dMeta = S["dnn_model:meta"];
+  const dStored = !!(dMeta && (_num(dMeta.chunks, 0) > 0 || dMeta.r2));
+  const dVerOk = !!(dMeta && (typeof dMeta.featVer !== "number" || dMeta.featVer === LUXML.featVer));
+  const dOn = !!(dt && dt.trusted && _num(dt.wDnn, 0) > 0 && dStored && dVerOk);
+  add("dnn", "DNN (다층 퍼셉트론)", "expert", {
+    trained: dStored, featVerOk: dVerOk,
+    featVer: dMeta ? _num(dMeta.featVer, null) : null, wantVer: LUXML.featVer,
+    tier: dOn ? "full" : "reject", mult: dOn ? _num(dt.wDnn, 0) : 0,
+    why: dOn ? "신뢰 통과" : (!dStored ? "모델 없음" : (!dVerOk ? "판 불일치 — 재학습 대기"
+         : ((dt && dt.reason) || "정확도 하한이 문턱 미달 — 자동 억제")))
+  });
+
+  // ③ GBDT
+  const gt = S["gbdt_trust"];
+  const gStored = !!(probe && _num(probe.gtrees, 0) > 0);
+  const gVerOk = !!(probe && probe.gfv === LUXML.featVer);
+  const gOn = !!(gt && gt.trusted && gStored && gVerOk);
+  add("gbdt", "GBDT (부스팅 트리)", "expert", {
+    trained: gStored, featVerOk: gVerOk, featVer: probe ? probe.gfv : null, wantVer: LUXML.featVer,
+    tier: gOn ? "full" : "reject", mult: gOn ? 1 : 0,
+    why: gOn ? "신뢰 통과" : (!gStored ? "모델 없음" : (!gVerOk ? "판 불일치 — 재학습 대기"
+         : ((gt && gt.reason) || "정확도 하한이 문턱 미달 — 자동 억제")))
+  });
+
+  /* ④ 부스팅 3종 — ★가동 판정은 위원회가 실제로 쓰는 그 함수(_boostersCached)로 한다.★
+     화면이 <name>_trust.trusted 만 보면, V33.191 이 읽는 쪽에 다시 둔 증거 문턱을
+     화면은 모르는 채 '가동' 이라 적는다(실측 XGB 0.4836 이 그 상태였다). */
+  [["xgb", "XGB"], ["lgb", "LGB"], ["cat", "CatBoost"]].forEach(function (p) {
+    const nm = p[0];
+    const t = S[nm + "_trust"] || S[nm + "_trust_ext"] || null;
+    const promoted = !!S[nm + "_trust"];
+    const on = !!_live[nm];
+    add(nm, p[1], "expert", {
+      trained: !!t, featVerOk: true,
+      tier: on ? "full" : "reject", mult: on ? 0.8 : 0,
+      why: on ? "합의 가중 ×0.8" : (!t ? "모델 없음"
+           : (!promoted ? "섀도우(미승격) — 업로드는 됐지만 승격 안 됨" : "검증 미달 — 억제"))
+    });
+  });
+
+  /* ⑤ 스스로 학습하는 선형 위원들 — 합류 판정은 expertAdmit 하나로 한다.
+        ★판이 다르면 admit 을 아예 안 매긴다★(V33.177): 옛 판 모델의 옛 합격 기록이
+        화면에 '잠정가동' 으로 남아, 실거래에서는 이미 빠진 위원을 가동 중이라 적었다. */
+  const _lin = function (key, name, m, want, minKey) {
+    const ok = !!(m && m.featVer === want);
+    const a = ok ? expertAdmit(m) : null;
+    add(key, name, "expert", {
+      trained: !!m, featVerOk: !m ? true : ok,
+      featVer: m ? _num(m.featVer, null) : null, wantVer: want,
+      tier: a ? a.tier : null, mult: a ? a.mult : 0,
+      why: a ? a.why : (!m ? "모델 없음" : "판 불일치 — 재학습 대기")
+    });
+  };
+  _lin("flow", "FLOW (수급·피어)", S["flow_model"], FLOWML.featVer);
+  _lin("xalpha", "XALPHA (형식알파 · 횡단면 랭크)", S["xalpha_model"], XALPHA.featVer);
+
+  // ⑥ MEMO — 판 필드 이름이 luxFeatVer 다(ml_samples 를 그대로 쓰기 때문).
+  const mo = S["memo_model"];
+  const moOk = !!(mo && mo.luxFeatVer === LUXML.featVer);
+  const moA = moOk ? expertAdmit(mo) : null;
+  add("memo", "MEMO (원형 기억)", "expert", {
+    trained: !!mo, featVerOk: !mo ? true : moOk,
+    featVer: mo ? _num(mo.luxFeatVer, null) : null, wantVer: LUXML.featVer,
+    tier: moA ? moA.tier : null, mult: moA ? moA.mult : 0,
+    why: moA ? moA.why : (!mo ? "모델 없음" : "판 불일치 — 재학습 대기")
+  });
+
+  /* ⑦ SEQ — 승격 판정은 /api/seq-import 가 이미 해서 seq_trust 에 적어 뒀다.
+        여기서 다시 매기면 그 순간 또 두 개의 자가 생긴다. 적힌 것을 옮기기만 한다. */
+  const sq = S["seq_trust"];
+  const sqOk = !!(sq && sq.featVer === LUXML.featVer);
+  const sqOn = !!(sq && sq.trusted && _num(sq.wSeq, 0) > 0 && sqOk);
+  add("seq", "SEQ (시퀀스 Transformer)", "expert", {
+    trained: !!(sq && sq.seqAccLB != null), featVerOk: !sq ? true : sqOk,
+    featVer: sq ? _num(sq.featVer, null) : null, wantVer: LUXML.featVer,
+    tier: sqOn ? (sq.admitPath === "ic" ? "provisional" : "full") : (sq ? "reject" : null),
+    mult: sq ? _num(sq.wSeq, 0) : 0,
+    why: sq ? (!sqOk ? "판 불일치 — 재학습 대기" : (sq.why || sq.admitWhy || null)) : "미학습"
+  });
+
+  // ⑧ RULE — 상시. 기술지표 사전확률이라 학습·게이트가 없다.
+  add("rule", "RULE (규칙엔진 — 사전확률)", "prior", {
+    trained: true, featVerOk: true, tier: "full", mult: 1,
+    why: "상시 — 기술지표 기반 사전확률"
+  });
+
+  /* ⑨ STACK — 위원이 아니라 ★결합기★ 다(투표에 끼는 게 아니라 결합을 통째로 대체한다).
+        좌석에 넣으면 인원수가 한 명 늘어 보인다 — 그 오해가 V33.126 의 출발점이었다. */
+  const sm = S["stack_model"];
+  const smOk = !!(sm && sm.featVer === STACKML.featVer);
+  const smA = smOk ? expertAdmit(sm) : null;
+  add("stack", "STACK (전문가 통합 — 결합기)", "combiner", {
+    trained: !!sm, featVerOk: !sm ? true : smOk,
+    featVer: sm ? _num(sm.featVer, null) : null, wantVer: STACKML.featVer,
+    tier: smA ? smA.tier : null, mult: smA ? smA.mult : 0,
+    why: smA ? smA.why : (!sm ? "모델 없음" : "판 불일치 — 재학습 대기")
+  });
+
+  /* ⑩ 이중헤드 — 위원이 아니라 ★사분면 판정★ 이다. 저장하는 쪽이 넣는 판은
+        DUALHEAD.featVer 가 아니라 LUXML.featVer 다(V33.282 에서 내가 낸 회귀). */
+  [["dual_bull", "이중헤드 강세", S["dual_bull_model"]], ["dual_bear", "이중헤드 약세", S["dual_bear_model"]]]
+    .forEach(function (p) {
+      const m = p[2];
+      const ok = !!(m && m.featVer === LUXML.featVer);
+      const a = ok ? expertAdmit(m) : null;
+      add(p[0], p[1], "quadrant", {
+        trained: !!m, featVerOk: !m ? true : ok,
+        featVer: m ? _num(m.featVer, null) : null, wantVer: LUXML.featVer,
+        tier: a ? a.tier : null, mult: a ? a.mult : 0,
+        why: a ? a.why : (!m ? "모델 없음" : "판 불일치 — 재학습 대기")
+      });
+    });
+  /* ⑪ DUAL 묶음 한 줄 — 사이드바 위원회 목록은 강세/약세를 한 행으로 보여 준다.
+        ★이 행의 '가동' 근거는 헤드가 학습됐는가가 아니라 실측 사분면표가 있는가★ 다
+        (그게 없으면 확률을 밀 값 자체가 없다). 그 판정도 여기서 한 번만 한다. */
+  const _dsh = S["dual_quad_shift"];
+  const _dTrained = !!(S["dual_bull_model"] && S["dual_bear_model"]);
+  const _dOn = !!(_dsh && _dsh.shift);
+  add("dual", "이중헤드 (사분면 프라이어)", "quadrant", {
+    trained: _dTrained || _dOn, featVerOk: true,
+    tier: _dOn ? "full" : "reject", mult: _dOn ? 1 : 0,
+    why: _dOn ? ("실측 사분면 로짓 적용 (n " + _num(_dsh.n, 0) + ")")
+              : (_dTrained ? "헤드는 학습됨 — 사분면 실측표 대기" : "학습 대기")
+  });
+  return out;
+}
+/* 명부에서 좌석 집계 — 두 화면이 같은 함수로 센다(각자 세면 또 갈라진다). */
+function rosterTally(roster) {
+  const r = Array.isArray(roster) ? roster : [];
+  const seats = r.filter(function (e) { return e && e.seat; });
+  return {
+    seats: seats.length,
+    on: seats.filter(function (e) { return e.state === "on"; }).length,
+    prov: seats.filter(function (e) { return e.state === "prov"; }).length,
+    live: seats.filter(function (e) { return e.state === "on" || e.state === "prov"; }).length
+  };
 }
 // ═══ [V33.140] ★전진검증이 구조적으로 못 채워지던 이유 — 창이 매일 밤 리셋됐다★ ═══
 //   전진표본은 "학습 당시 존재하지 않았던 행"(id > 학습때 기록한 maxId)으로 고른다.
@@ -46289,6 +46533,7 @@ export {
   seqFormerScore, SEQML, seqBuildFeat, _seqRosterRow,   // [V33.267] 시퀀스 Transformer(채점·입력조립·명단)
   mlDeepDecide,                     // [V33.267] 검사가 위원회를 ★직접 돌려★ 표가 실제로 들어가는지 본다
   dualHeadJudge, _boostersCached,   // [V33.257] 자가진단 명단 검사가 '위원회가 쓰는 그 함수' 를 직접 돌린다
+  buildRoster, rosterCls, rosterTally, ROSTER_STATE_TXT,   // [V33.301] 명부 — 두 화면이 같은 함수를 부른다
   DEFAULT_CFG, AI_PARAMS, migrateCfgToMarkets, evaluateAllStrategies, evaluateTrendEntry, evaluateSnapEntry,
   evaluateSell, backtestSymbol, backtestStats, backtestStatsBySignal,
   getRSI, getMA, getATR, getNDayHigh, getStrategyRules, fetchDailyForBacktest,

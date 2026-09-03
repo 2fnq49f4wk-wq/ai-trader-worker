@@ -35,10 +35,18 @@ try {
   const m = html.match(/function renderRailAiMode[\s\S]*?\n  \}/);
   if (!m) { console.error("  WARN renderRailAiMode 추출 실패 — 런타임 검사 생략"); }
   else {
+    /* [V33.301] ★명부(LUXR)를 흉내 내지 않는다 — 실물을 그대로 실어 돌린다.★
+       renderRailAiMode 의 모든 불이 이제 LUXR 을 거치므로, 가짜 스텁을 쓰면 검사가
+       ★검사하지 않는 코드★ 를 통과시킨다(이 저장소가 fixture 로 이미 한 번 당했다). */
+    const lux = html.match(/\(function\(\)\{\s*var GLYPH[\s\S]*?window\.LUXR = R;\s*\}\)\(\);/);
+    if (!lux) throw new Error("LUXR 모듈을 추출하지 못했다 — 명부가 사라졌거나 모양이 바뀌었다");
     const harness = `
       var STORE = {};
+      var window = {};
       function esc(x){ return String(x==null?'':x); }
       function $id(id){ return { set innerHTML(v){ STORE[id] = v; } }; }
+      ${lux[0]}
+      var LUXR = window.LUXR;
       ${m[0]}
       var CASES = {
         empty:   [{ aiReady:false }, []],
@@ -51,6 +59,24 @@ try {
                  pending:232,filesToday:0,store:'R2',r2Bound:true,live:true,trusted:false,trained:false,
                  horizonMin:60,ifeatVer:3,ifeatN:38,minConfluence:3},
           samples:{total:173955,featVer:13,today:0,yesterday:0},
+          /* [V33.301] 서버 buildRoster 가 내려주는 모양. 위원 불·인원수는 전부 여기서 나온다. */
+          roster:[
+            {key:'mind',name:'MIND',role:'chair',seat:true,trained:true,featVerOk:true,tier:'full',mult:1,state:'on'},
+            {key:'dnn',name:'DNN',role:'expert',seat:true,trained:true,featVerOk:true,tier:'full',mult:0.41,state:'on'},
+            {key:'gbdt',name:'GBDT',role:'expert',seat:true,trained:true,featVerOk:true,tier:'full',mult:1,state:'on'},
+            {key:'xgb',name:'XGB',role:'expert',seat:true,trained:true,featVerOk:true,tier:'full',mult:0.8,state:'on'},
+            {key:'lgb',name:'LGB',role:'expert',seat:true,trained:false,featVerOk:true,tier:null,mult:0,state:'off'},
+            {key:'cat',name:'CatBoost',role:'expert',seat:true,trained:true,featVerOk:true,tier:'reject',mult:0,state:'bad'},
+            {key:'flow',name:'FLOW',role:'expert',seat:true,trained:false,featVerOk:true,tier:null,mult:0,state:'off'},
+            {key:'xalpha',name:'XALPHA',role:'expert',seat:true,trained:true,featVerOk:true,tier:'provisional',mult:0.6,state:'prov'},
+            {key:'memo',name:'MEMO',role:'expert',seat:true,trained:true,featVerOk:true,tier:'provisional',mult:0.17,state:'prov'},
+            {key:'seq',name:'SEQ',role:'expert',seat:true,trained:true,featVerOk:true,tier:'reject',mult:0,state:'bad'},
+            {key:'rule',name:'RULE',role:'prior',seat:false,trained:true,featVerOk:true,tier:'full',mult:1,state:'on'},
+            {key:'stack',name:'STACK',role:'combiner',seat:false,trained:false,featVerOk:true,tier:null,mult:0,state:'off'},
+            {key:'dual_bull',name:'이중헤드 강세',role:'quadrant',seat:false,trained:true,featVerOk:true,tier:'provisional',mult:0.25,state:'prov'},
+            {key:'dual_bear',name:'이중헤드 약세',role:'quadrant',seat:false,trained:true,featVerOk:true,tier:'reject',mult:0,state:'bad'},
+            {key:'dual',name:'이중헤드',role:'quadrant',seat:false,trained:true,featVerOk:true,tier:'full',mult:1,state:'on'}
+          ],
           committee:{mind:true,dnn:true,gbdt:true,
             xgb:{trusted:true,accLB:0.53,w:0.39,source:'external',promoted:true},lgb:null,cat:null},
           diag:{dnn:{stored:true,featVerOk:true,trusted:true,w:0.41,source:'external'}},
@@ -195,9 +221,10 @@ try {
   chk(/function cmState\(key, mode\)/,
     "위원 상태 판정이 cmState 한 곳에 모여 있다(타일·목록이 같은 답을 쓴다)",
     "위원 상태 판정이 흩어져 있다 — 타일과 목록이 어긋난다");
-  chk(/CMROSTER\.forEach\(function\s*\(r\)\s*\{[\s\S]{0,200}?cmState\(r\[0\], mode\)/,
-    "KPI 타일이 신규 위원까지 포함한 전체 명부를 센다",
-    "KPI 타일이 고전 6종만 센다 — 잠정합류로 투표 중인 신규 위원이 화면에서 지워진다");
+  /* [V33.301] 세는 곳이 여럿이면 숫자가 갈린다 — 좌석 집계는 LUXR.tally() 하나뿐이다. */
+  chk(/var _kt = LUXR\.tally\(\);\s*\n\s*var on = _kt\.live, prov = _kt\.prov, tot = _kt\.seats;/,
+    "KPI 타일이 서버 명부의 좌석으로 센다(레일의 'n/m 가동' 과 같은 수)",
+    "KPI 타일이 자체 명단을 센다 — 레일과 분모가 어긋난다");
   rtBad += cbad;
 } catch (e) { console.error("  FAIL 거짓상태 보고 검사 실패:", e.message); rtBad += 1; }
 
