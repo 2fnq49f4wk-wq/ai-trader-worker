@@ -2981,7 +2981,7 @@ async function applySignalTypeWeights(DB, cfg) {
    화면·자가진단이 계속 "V33.272" 를 보고했다(운영 스냅샷이 그대로 그랬다). 배포는 됐는데
    ★배포됐다는 사실만 거짓말★ 을 하고 있었으니, "내 고침이 올라간 건가" 를 화면으로 확인할
    방법이 없었다. tools/check-build-ver.mjs 가 이제 소스에 적힌 최신 버전과 이 값을 대조한다. */
-const _BUILD_VER = "V33.299";
+const _BUILD_VER = "V33.300";
 
 // ═══ [V33.171] 평가 순서 계획 — ★승격과 순환을 교차해 굶주림을 구조적으로 없앤다★ ═══
 //   V33.50 의 형태트리거는 "급한 몇 종목을 앞으로 당긴다"는 의도였으나, 실제 운영로그에서는
@@ -28691,6 +28691,10 @@ async function _miniLogisticTrain(DB, opts) {
     const _st = _icBlockStats(pv, yv, 5, _blkKeys, _mkKeys);
     // [V33.292] 같은 홀드아웃에서 '실력 없이 도달 가능한 정확도' 도 잰다(위 _noSkillAcc 주석).
     const _accBase = _noSkillAcc(yv, _mkKeys), _accBasePool = _noSkillAcc(yv, null);
+    /* [V33.300] ★홀드아웃이 며칠을 담는가 — 그리고 그 안에 겹치지 않는 관측이 몇 개인가.★
+       아래 _effBlocks 주석 참조. 블록 t 의 자유도는 이 수를 넘을 수 없다. */
+    const _hSpanD = _holdSpanDays(T, nvalStart, N);
+    const _effB = _effBlocks(_hSpanD, _num(opts.labelSpanMs, AI_PARAMS.predictionHorizonDays * 86400000));
     const ic = _num(_st.ic, 0);
     // [V33.89] 기저확률(양성비율)을 함께 저장한다 — 이중헤드 사분면 경계를 절대값이 아니라
     //   각 헤드의 기저확률 기준으로 잡기 위해서다. 문턱을 절대값으로 두면 라벨 희소도가 다른
@@ -28743,6 +28747,8 @@ async function _miniLogisticTrain(DB, opts) {
          "이 모델이 시장 절편에서 공짜로 받던 몫" 이다 — 안 남기면 다음에 또 추측하게 된다. */
       /* [V33.292] ★실력 없이 도달 가능한 정확도★ — 정확도로 심사하는 자리의 기준점.
          valAcc 옆에 이 값이 없으면 "52% 면 좋은 건가" 를 아무도 못 답한다. */
+      // [V33.300] 유의성을 ★잴 수 있었는지★ 의 근거 — 블록 수(슬라이스)가 아니라 관측 기간이다.
+      valICspanD: _hSpanD, valICeff: _effB,
       valAccBase: _accBase != null ? +_accBase.toFixed(4) : null,
       valAccBasePooled: _accBasePool != null ? +_accBasePool.toFixed(4) : null,
       valICPooled: _st.icPooled != null ? +_st.icPooled.toFixed(5) : null,
@@ -28798,6 +28804,10 @@ async function _miniLogisticTrain(DB, opts) {
                    : "")
              : "") +
            (_bIC != null ? " 블록IC " + _bIC.toFixed(4) + " t " + (_tv || 0).toFixed(2) : " (블록 부족)") +
+           /* [V33.300] 그 t 를 ★잴 수 있었는지★ 를 옆에 적는다. 슬라이스 12개와
+              겹치지 않는 관측 1개는 전혀 다른 이야기인데 종전엔 앞의 것만 보였다. */
+           " [홀드아웃 " + _hSpanD + "일 · 겹치지않는관측 " + _effB + "개" +
+           (_effB < _num(ICGATE.minBlocks, 5) ? " ★판정불가★" : "") + "]" +
            /* [V33.291] 시장 고정효과를 빼기 전 값도 적는다 — 게이트가 보는 숫자가 왜 달라졌는지
               로그 한 줄로 답해야 한다(안 적으면 "갑자기 t 가 떨어졌다" 로만 보인다). */
            (_st.mktFixed && _st.blockICPooled != null && _mkN > 1
@@ -29524,11 +29534,15 @@ async function memoTrainNightly(DB) {
       mv.push(_mktOK ? String(_mktOf(X[i])) : "");
     }
     const st = _icBlockStats(pv, yv, 5, null, _mktOK ? mv : null);
+    // [V33.300] 홀드아웃 달력기간 · 겹치지 않는 관측 수(아래 _effBlocks 주석)
+    const _hSpanD = _holdSpanDays(T, nvalStart, N);
+    const _effB = _effBlocks(_hSpanD, AI_PARAMS.predictionHorizonDays * 86400000);
     let correct = 0; for (let i = 0; i < pv.length; i++) if ((pv[i] >= 0.5 ? 1 : 0) === yv[i]) correct++;
     model.valAcc = +(correct / Math.max(1, pv.length)).toFixed(4);
     model.valN = pv.length;
     model.valIC = +_num(st.ic, 0).toFixed(5);
     model.valICBlock = st.blockIC != null ? +st.blockIC.toFixed(5) : null;
+    model.valICspanD = _hSpanD; model.valICeff = _effB;   // [V33.300]
     // [V33.291] 섞어 잰 값도 남긴다 — 차이가 곧 시장절편에서 공짜로 받던 몫이다.
     model.valICBlockPooled = st.blockICPooled != null ? +st.blockICPooled.toFixed(5) : null;
     model.valICtPooled = st.tPooled != null ? +st.tPooled.toFixed(3) : null;
@@ -29578,6 +29592,8 @@ async function memoTrainNightly(DB) {
               이걸 적는데 MEMO 만 빠져 있었다. 그래서 이번 실측에서 IC 가 +0.0351 → −0.0325 로
               뒤집힌 것이 ★시장 절편을 뺀 탓★ 인지 ★칸막이가 깎은 탓★ 인지 못 갈랐다.
               한 줄이 없어서 진단을 못 하는 것 — 이 저장소가 반복해 당한 그 모양이다. */
+           " [홀드아웃 " + _hSpanD + "일 · 겹치지않는관측 " + _effB + "개" +
+           (_effB < _num(ICGATE.minBlocks, 5) ? " ★판정불가★" : "") + "]" +
            (model.mktFixed && model.valICBlockPooled != null
              ? " [섞어재면 " + _num(model.valICBlockPooled, 0).toFixed(4) +
                " t " + _num(model.valICtPooled, 0).toFixed(2) + " — 그 차이가 시장절편 몫]"
@@ -31486,6 +31502,45 @@ function _noSkillAcc(yv, mkeys) {
   } catch (e) { return null; }
 }
 
+/* ══ [V33.300] ★"블록 5개 미만이면 못 잰 것" 이라는 가드가 한 번도 발동한 적이 없다★ ══
+   ICGATE.minBlocks 의 주석은 "홀드아웃 블록(★=서로 다른 날★)이 이보다 적으면 유의성 판정
+   자체를 보류한다" 이다. 그런데 expertAdmit 이 실제로 세는 값은 _icBlockStats 가 만든
+   ★슬라이스 개수★ 이고, 그 개수는
+       k = Math.max(kWant(5), Math.min(12, floor(n / 200)))
+   이라 ★언제나 5 이상★ 이다. 즉 `_K < minBlocks` 분기는 구조적으로 도달할 수 없는 죽은 코드였다.
+
+   왜 이게 치명적인가 — 이 저장소가 라벨 지평 10일을 쓰기 때문이다.
+   MEMO 운영 실측: 학습창 67일 → 홀드아웃(뒤 20%) 약 ★13일★.
+   13일 안에 10일짜리 라벨 구간은 ★1.3개★ 밖에 안 들어간다. 그런데 코드는 그 13일을
+   12조각으로 잘라 "블록 12개" 라고 보고하고, 그 12개의 분산으로 t 를 만든다.
+   그 t 가 재는 것은 실력이 아니라 ★그 2주에 시장이 올랐나 내렸나★ 다.
+   MEMO 의 블록IC 가 +0.0351 과 −0.0390 사이를 오간 것, STACK 이 표본을 늘릴수록
+   음수로 굳은 것, 신규 모델이 죄다 '잠정' 에 멈춘 것 — 전부 같은 자리에서 나온다.
+
+   ★고침은 문턱을 건드리지 않는다.★ 세는 대상을 주석이 원래 말하던 것으로 되돌린다:
+   홀드아웃이 담은 ★달력 기간★ 을 ★라벨 지평★ 으로 나눈, 겹치지 않는 관측의 수.
+   이 값이 minBlocks 아래면 '못 미쳤다' 가 아니라 ★'아직 못 쟀다'★ 로 판정한다.
+   V33.188 이 그 구분을 만든 이유가 그것이다 — "앞은 기다리는 것이고 뒤는 고치는 것이다.
+   화면이 둘을 같은 문장으로 말하면 사람이 잘못 고친다." 실제로 그렇게 됐다. */
+function _holdSpanDays(T, from, to) {
+  try {
+    let lo = Infinity, hi = -Infinity;
+    for (let i = from; i < to; i++) {
+      const t = _num(T[i], 0); if (!(t > 0)) continue;
+      if (t < lo) lo = t; if (t > hi) hi = t;
+    }
+    if (!isFinite(lo) || !isFinite(hi) || hi <= lo) return 0;
+    return Math.round((hi - lo) / 86400000);
+  } catch (e) { return 0; }
+}
+/* 겹치지 않는 관측 수 = 홀드아웃 달력기간 ÷ 라벨 지평.
+   지평이 10일이면 13일짜리 홀드아웃은 1개다 — 슬라이스를 몇 개로 자르든 그 사실은 안 변한다. */
+function _effBlocks(spanDays, labelSpanMs) {
+  const h = Math.max(1, Math.round(_num(labelSpanMs, 0) / 86400000));
+  const d = Math.max(0, _num(spanDays, 0));
+  return Math.floor(d / h);
+}
+
 /* [V33.291] 피처벡터에서 시장을 읽는다 — 표를 다시 안 읽어도 된다.
    시장 원핫(mktUS/mktKR/mktCM)은 LUXML 75피처 안에 있으므로, ml_samples 로 학습·채점하는
    모든 자리에서 이 한 줄이면 시장 고정효과를 뺄 수 있다. 이름표 위치는 한 번만 찾아 둔다
@@ -31675,12 +31730,23 @@ function expertAdmit(m) {
 
     // [V33.188] 블록 수 부족은 ★'못 미쳤다' 가 아니라 '아직 못 쟀다' 다★ (ICGATE.minBlocks 주석).
     //   trusted 지름길보다 앞에 둔다 — 사흘치로 얻은 유의성으로 정식 합류시키면 안 된다.
+    /* [V33.300] ★세는 대상을 슬라이스에서 '겹치지 않는 관측' 으로 바꾼다.★
+       종전 _K = valICdf + 1 은 _icBlockStats 가 만든 조각 수인데 그 값은 언제나 5 이상이라
+       이 분기가 한 번도 발동한 적이 없다(위 _effBlocks 주석 — 죽은 가드였다).
+       구 모델 레코드에는 valICeff 가 없다 — 그때는 종전대로 조각 수를 본다(호환). */
+    const _eff = (m.valICeff != null && isFinite(_num(m.valICeff, NaN))) ? _num(m.valICeff, 0) : null;
     const _K = (m.valICdf != null && isFinite(_num(m.valICdf, NaN))) ? _num(m.valICdf, 0) + 1 : null;
     const _minK = _num(ICGATE.minBlocks, 5);
-    if (_K != null && _K < _minK)
+    const _useK = (_eff != null) ? _eff : _K;
+    if (_useK != null && _useK < _minK)
       return { admit: false, mult: 0, tier: "pending",
-               why: "홀드아웃 블록 " + _K + "개 < " + _minK + " — 관측 날짜가 모자라 유의성을 판정할 수 없다" +
-                    (t != null ? "(t " + t.toFixed(2) + " 은 사흘 남짓의 한 국면일 뿐이다)" : "") };
+               why: (_eff != null
+                      ? ("홀드아웃 " + _num(m.valICspanD, 0) + "일 = 겹치지 않는 관측 " + _eff + "개 < " + _minK +
+                         " — ★못 미친 게 아니라 아직 못 쟀다★(라벨 지평 " +
+                         AI_PARAMS.predictionHorizonDays + "일). 관측 기간이 " +
+                         (_minK * AI_PARAMS.predictionHorizonDays) + "일은 돼야 판정할 수 있다")
+                      : ("홀드아웃 블록 " + _K + "개 < " + _minK + " — 관측 날짜가 모자라 유의성을 판정할 수 없다")) +
+                    (t != null ? " (t " + t.toFixed(2) + " 은 그 기간의 한 국면일 뿐이다)" : "") };
     if (m.trusted) return { admit: true, mult: 1, tier: "full", why: "홀드아웃·전진 모두 통과" };
     if (P.enabled === false) return { admit: false, mult: 0, tier: "reject", why: "잠정합류 비활성" };
     if (t == null || bIC == null) return { admit: false, mult: 0, tier: "reject", why: "블록 유의성 미측정" };
@@ -46266,7 +46332,7 @@ export {
   // [V33.222] 단타 기준봉 — 게이트가 봉 길이에 맞춰 기대값을 계산할 수 있어야 한다.
   //   (봉 수로 적힌 기대값은 봉 길이가 바뀌면 다른 시간을 뜻하게 된다)
   SCALP_BAR_MIN, SCALP_SESSION_MIN, _barsFor,
-  _tSf, _normInv, _tToZ, _icBlockStats, _noSkillAcc, _accFloor, _mktOfVec,
+  _tSf, _normInv, _tToZ, _icBlockStats, _noSkillAcc, _accFloor, _mktOfVec, _holdSpanDays, _effBlocks,
   // [V33.114] 표본 고유도(de Prado) 검증용
   // [V33.115] _importedValN — 외부 트레이너 업로드의 유효표본수 선택기(tools/check-uniqueness.mjs)
   _uniqWeights, _wilsonLB, _importedValN, mlPoolUniqNightly, mlPoolUniqGet, _effN,
