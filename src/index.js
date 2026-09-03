@@ -2981,7 +2981,7 @@ async function applySignalTypeWeights(DB, cfg) {
    화면·자가진단이 계속 "V33.272" 를 보고했다(운영 스냅샷이 그대로 그랬다). 배포는 됐는데
    ★배포됐다는 사실만 거짓말★ 을 하고 있었으니, "내 고침이 올라간 건가" 를 화면으로 확인할
    방법이 없었다. tools/check-build-ver.mjs 가 이제 소스에 적힌 최신 버전과 이 값을 대조한다. */
-const _BUILD_VER = "V33.292";
+const _BUILD_VER = "V33.294";
 
 // ═══ [V33.171] 평가 순서 계획 — ★승격과 순환을 교차해 굶주림을 구조적으로 없앤다★ ═══
 //   V33.50 의 형태트리거는 "급한 몇 종목을 앞으로 당긴다"는 의도였으나, 실제 운영로그에서는
@@ -29568,7 +29568,20 @@ async function memoTrainNightly(DB) {
            " 가중거리 유효축 " + _liveAx + "/" + D +
            "(잡음바닥 " + (_num(MEMOML.relNoiseZ, 2) / Math.sqrt(Math.max(ntr, 2))).toFixed(4) + " 제거)" +
            " valAcc " + (model.valAcc * 100).toFixed(1) +
-           "% IC " + model.valIC.toFixed(4) + (model.valICt != null ? " t " + model.valICt.toFixed(2) : "") +
+           /* [V33.294] ★게이트가 보는 값을 적는다.★ 종전 이 줄은 valIC(전구간 IC)를 적고
+              t 는 블록 t 를 적었다 — 서로 다른 두 통계를 한 자리에 나란히 놓은 셈이라,
+              "IC 는 이런데 t 가 왜 저러냐" 를 읽는 사람이 매번 다시 물어야 했다.
+              판정은 valICBlock 과 valICt 로 한다(expertAdmit). 그 둘을 적는다. */
+           "% 블록IC " + _num(model.valICBlock, 0).toFixed(4) +
+           (model.valICt != null ? " t " + model.valICt.toFixed(2) : "") +
+           /* [V33.294] ★섞어 재면 얼마였는지 함께 적는다.★ _miniLogisticTrain 은 V33.291 부터
+              이걸 적는데 MEMO 만 빠져 있었다. 그래서 이번 실측에서 IC 가 +0.0351 → −0.0325 로
+              뒤집힌 것이 ★시장 절편을 뺀 탓★ 인지 ★칸막이가 깎은 탓★ 인지 못 갈랐다.
+              한 줄이 없어서 진단을 못 하는 것 — 이 저장소가 반복해 당한 그 모양이다. */
+           (model.mktFixed && model.valICBlockPooled != null
+             ? " [섞어재면 " + _num(model.valICBlockPooled, 0).toFixed(4) +
+               " t " + _num(model.valICtPooled, 0).toFixed(2) + " — 그 차이가 시장절편 몫]"
+             : "") +
            (model.fwdReady ? " 전진IC " + _num(model.fwdIC, 0).toFixed(4) + "(n" + model.fwdN + ")"
                            : " 전진" + model.fwdN + "/" + ICGATE.minForward) +
            " → " + (function () { const a = expertAdmit(model); return a.tier === "full" ? "위원회 정식합류"
