@@ -95,6 +95,14 @@ jobs:
         run: |
           set +e
           : > trainlog.txt
+          # ══ [V33.296] ★V33.293 이 만든 위험 — 단일 단계 이어부르기에 시간 상한이 없었다★
+          #   종전 단일 단계는 1회차로 끝나서 --max-time 900 노출이 한 번이었다. 이어부르기를
+          #   넣으면서 최악이 40회 × 900초 = ★10시간★ 이 됐다. 실제로 이 실행이 80분을 넘겨
+          #   40회차 상한에도 안 닿았다 — 회차당 2분 이상 걸린다는 뜻이다(표가 커지며 느려졌다).
+          #   회차 수만으로는 못 막는다. ★벽시계로 막는다.★
+          #   빈 구간 메우기는 한 번에 다 끝낼 일이 아니다 — 남으면 다음 실행이 커서에서 이어 간다.
+          LOOP_BUDGET=1500            # 25분. 이 시간을 넘기면 다음 회차를 시작하지 않는다.
+          LOOP_T0=$(date +%s)
           FROM=""; ROUND=0; CODE=""; SOFT=0; SKIP=""; SKIPPED_ANY=0
           # [V33.192] ★target=all 은 한 번으로 안 끝난다 — 재개까지 돌려야 '전체'다.★
           #   워커는 1요청 CPU 상한(300s) 때문에 240초에서 스스로 끊고 남은 단계를
@@ -103,6 +111,12 @@ jobs:
           #   하필 확률 보정(calibrate)·자가평가(selfreview)·원장통계(portstats)가 그 자리에 있다.
           FINISHED=0
           while [ "$ROUND" -lt 40 ]; do
+            # [V33.296] 회차 ★시작 전★ 에 예산을 본다 — 시작한 회차는 끝까지 두어야
+            #   서버 커서가 어중간한 자리에 남지 않는다.
+            if [ "$(( $(date +%s) - LOOP_T0 ))" -ge "$LOOP_BUDGET" ]; then
+              echo "회차 예산 ${LOOP_BUDGET}초 소진 — 여기서 끊는다(서버 커서가 이어받는다)" | tee -a trainlog.txt
+              break
+            fi
             ROUND=$((ROUND+1))
             # [V33.195] 회차당 예산을 240초 → 150초로 줄인다. 마감시한은 ★단계 사이★ 에서만
             #   재므로, 240초를 다 쓴 뒤 또 무거운 단계를 시작하면 한 회차가 452초까지 간다(실측).
@@ -112,7 +126,11 @@ jobs:
             #   하므로 여기서 넘길 것이 없다 — 다시 부르기만 하면 이어서 돈다.
             [ -n "$FROM" ] && [ "$TARGET" = "all" ] && Q="$Q&from=$FROM"
             echo "POST $URL/api/ai/train-now?$Q"
-            BODY=$(curl -sS --max-time 900 -w '\n%{http_code}' -X POST \
+            # [V33.296] 한 회차의 상한도 목표에 맞춘다. all 은 워커가 150초에서 스스로 끊고
+            #   응답을 만드는 데 시간이 더 걸릴 수 있어 넉넉히 둔다. 단일 단계는 한 단계만
+            #   도는 호출이라 900초를 기다릴 이유가 없다 — 그만큼 걸리면 그건 정상이 아니다.
+            RT=900; [ "$TARGET" != "all" ] && RT=180
+            BODY=$(curl -sS --max-time "$RT" -w '\n%{http_code}' -X POST \
               -H "X-Train-Key: $TRAIN_KEY" \
               "$URL/api/ai/train-now?$Q")
             CODE=$(printf '%s' "$BODY" | tail -n1)
