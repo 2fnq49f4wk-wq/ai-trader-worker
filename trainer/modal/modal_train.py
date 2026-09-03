@@ -1266,12 +1266,26 @@ def _no_skill_acc(y, mkt=None):
             mk = np.asarray(mkt, dtype=object)
             if len(mk) < n: groups = [np.ones(n, dtype=bool)]
             else: groups = [(mk == g) for g in set(mk[:n].tolist())]
+        # [V33.295] 그룹별로 ★자기 비율★ 을 쓴다(옌센이 그대로 성립한다). 표본이 너무 적어
+        #   비율을 못 믿는 그룹은 ★가장 큰 그룹에 합친다★ — 합치는 것은 분할을 거칠게 만들
+        #   뿐이라 부등식이 유지된다. 0.5 를 섞으면 기준점이 내려가 게이트가 느슨해진다
+        #   (워커 _noSkillAcc 주석: 운영 실측이 그 불가능한 값을 잡아냈다).
+        cnt = [(int(sel.sum()), sel) for sel in groups]
+        cnt = [c for c in cnt if c[0] > 0]
+        if not cnt: return None
+        bi = max(range(len(cnt)), key=lambda i: cnt[i][0])
+        merged = cnt[bi][1].copy()
+        keep = []
+        for i, (m, sel) in enumerate(cnt):
+            if i == bi: continue
+            if m < 8: merged = merged | sel
+            else: keep.append((m, sel))
+        keep.append((int(merged.sum()), merged))
         acc = 0.0; tot = 0
-        for sel in groups:
-            m = int(sel.sum())
+        for m, sel in keep:
             if m <= 0: continue
             r = float((yy[sel] > 0.5).mean())
-            acc += m * (max(r, 1.0 - r) if m >= 30 else 0.5)
+            acc += m * max(r, 1.0 - r)
             tot += m
         return (acc / tot) if tot > 0 else None
     except Exception:
