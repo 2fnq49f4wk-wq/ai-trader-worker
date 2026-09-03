@@ -28,9 +28,20 @@ process.stdin.on("end", () => {
     return;
   }
   if (d.target !== "all") {
-    console.log("RESUME=");
+    /* ══ [V33.293] ★한 회차로 안 끝나는 단일 단계도 있다★ ═══════════════════════
+       실측(2026-09-03): STACK 소급생성이 드디어 빈 구간을 메우기 시작했는데,
+           [STACK-BF] +1800표본 (홀드아웃경로★신규개방구간 2026-01-31~2026-05-24 메우는 중★)
+       회차당 1,800건이다. 워커 1요청 예산(STACKBF.deadlineMs 20초)이 그만큼이고, 그건
+       ★야간 파이프라인에 맞춘 값이라 옳다★ — 한 단계가 예산을 다 쓰면 뒷단이 안 돈다.
+       문제는 넉 달치 빈 구간이 그 속도로는 두 달 걸린다는 것이다.
+       그런데 이건 ★한 번만 하면 되는 일★ 이다. 그러면 야간 예산을 늘릴 게 아니라
+       손으로 돌리는 이 워크플로가 다 메울 때까지 다시 부르면 된다.
+       "메우는 중" 은 서버가 스스로 적은 말이므로, 그 말이 사라질 때까지 이어 돈다. */
+    const line = String(d.result || "(응답 없음)");
+    const more = /메우는 중/.test(line) && /\+[1-9][0-9]*표본/.test(line);
+    console.log("RESUME=" + (more ? "again" : ""));
     console.log("CRASH=");
-    console.log("LINE=" + String(d.result || "(응답 없음)").slice(0, 300).replace(/\s+/g, " "));
+    console.log("LINE=" + line.slice(0, 300).replace(/\s+/g, " "));
     return;
   }
   const res = d.results || {};

@@ -108,7 +108,9 @@ jobs:
             #   재므로, 240초를 다 쓴 뒤 또 무거운 단계를 시작하면 한 회차가 452초까지 간다(실측).
             #   짧게 끊으면 워커에 여유가 남아 다음 회차가 자원한도에 걸릴 확률이 준다.
             Q="target=$TARGET&deadlineMs=150000"
-            [ -n "$FROM" ] && Q="$Q&from=$FROM"
+            # [V33.293] from= 은 all 의 재개지점이다. 단일 단계의 재개는 ★서버가 든 커서★ 가
+            #   하므로 여기서 넘길 것이 없다 — 다시 부르기만 하면 이어서 돈다.
+            [ -n "$FROM" ] && [ "$TARGET" = "all" ] && Q="$Q&from=$FROM"
             echo "POST $URL/api/ai/train-now?$Q"
             BODY=$(curl -sS --max-time 900 -w '\n%{http_code}' -X POST \
               -H "X-Train-Key: $TRAIN_KEY" \
