@@ -669,6 +669,17 @@ def train_job(epochs: int = EPOCHS_DEFAULT, dry: bool = False,
             _train_and_upload_seq(BASE, KEY, HDR, X, Y, TS, SYM, featver, D, UNIQ, cfg)
         except Exception as e:
             print("SEQ 학습/업로드 예외(무시):", e)
+        # ── [V33.305] ⑩ MEMO(원형 기억) — 워커 CPU 에서 가장 무거웠던 학습 ─────────
+        #   워커 야간은 k-means 를 14억 회 돌아야 해서 창을 24,000행(67일)으로 묶을 수밖에
+        #   없었다. 여기서는 그 제약이 없다 — 표본을 훨씬 크게 잡고, 워커 예산은 그만큼 빈다.
+        #   표본은 위와 ★같은 것을 재사용★ 하므로 export 부하가 0 이고, 실패해도 위 모델들에
+        #   영향이 없다(그래서 뒤에서, 예외를 삼킨다).
+        print("⑩ MEMO(원형 기억) 외부학습")
+        try:
+            _train_and_upload_memo(BASE, KEY, HDR, X, Y, TS, PNL, featver, D,
+                                   featnames=featnames, cfg=cfg, SYM=SYM)
+        except Exception as e:
+            print("MEMO 학습/업로드 예외(무시):", e)
         # ── [V33.205] 홀드아웃 경계를 워커에 알린다 ─────────────────────────────
         #   위 모델들(DNN·GBDT·부스터·MIND)은 전부 ★시간순 뒤쪽 20%★ 를 홀드아웃으로 떼고
         #   퍼지·엠바고를 건 뒤 앞쪽만으로 학습한다. 즉 방금 업로드한 모델들은 그 구간을
@@ -1827,6 +1838,328 @@ def _train_and_upload_boosters(BASE, KEY, HDR, X, Y, TS, featver, D, PNL=None, U
         print("CatBoost 실패(무시):", repr(e))
         traceback.print_exc()
 
+
+
+
+# ============================================================================
+# [V33.305] MEMO(원형 기억) 외부학습 — ★워커 CPU 에서 GPU 쪽으로 옮긴 것 중 가장 무거운 것★
+#
+#  왜 옮기나 (사용자 지시: "클라우드플레어로 학습이 필수인 애들 말고는 모달로 보내라")
+#    워커 야간의 memoTrainNightly 는 k-means 를 돈다 — 표본 24,000 × 원형 128 × 축 75 ×
+#    6반복 ≈ ★14억 회★ 다. 그래서 워커에서는 창을 24,000행(67일)으로 묶을 수밖에 없었고,
+#    그 좁은 창이 V33.303 이 고친 "홀드아웃 13일" 문제의 뿌리이기도 하다.
+#    여기서는 그 제약이 없다 — 표본을 훨씬 크게 잡을 수 있고, 워커 야간 예산도 그만큼 빈다.
+#
+#  ★같은 모델이어야 한다★ — 워커의 memoScore 가 이 원형책을 그대로 채점한다.
+#    그래서 아래 _memo_fit / _memo_score 는 워커 memoTrainNightly / memoScore 의 ★식과
+#    반올림까지★ 옮긴 것이다(원형 좌표 3자리·확률 4자리·가중 4자리).
+#    tools/check-memo-modal.mjs 가 두 언어를 같은 모델·같은 벡터로 돌려 대조한다 —
+#    이 저장소가 반복해 당한 '조용한 오염'은 언제나 두 구현이 갈라진 자리에서 났다.
+# ============================================================================
+MEMO_CFG = {
+    "K": 128, "iters": 6, "neighbors": 8, "shrinkN": 40,
+    "relNoiseZ": 2, "minTrain": 4000, "minHold": 400,
+    # 워커는 24,000 이 상한이었다. 여기서는 그럴 이유가 없다 — 다만 무한정도 아니다
+    # (k-means 는 O(n·K·D) 라 표본이 커지면 GPU 시간이 그대로 돈이다).
+    "trainMax": 160000,
+    "holdDays": 60,        # 워커 MEMOML.holdDays 와 같은 값 — 게이트가 이 둘을 대조한다
+    "holdCap": 30000,      # 홀드아웃 채점은 싸다(거리 계산 1회) — 워커보다 넉넉히 본다
+}
+
+
+def _memo_fit(X, Y, PNL, MKT, cfg=None):
+    """원형책을 만든다. X 는 ★학습구간만★ (홀드아웃은 절대 넣지 않는다).
+       반환은 워커 memo_model 과 같은 모양의 dict."""
+    import numpy as np
+    c = dict(MEMO_CFG); c.update(cfg or {})
+    Xtr = np.asarray(X, dtype=np.float64)
+    Ytr = np.asarray(Y, dtype=np.float64)
+    Ptr = np.asarray(PNL, dtype=np.float64)
+    ntr, D = Xtr.shape
+    if ntr < c["minTrain"]:
+        return None, "학습표본 %d/%d 부족" % (ntr, c["minTrain"])
+
+    mean = Xtr.mean(axis=0)
+    std = Xtr.std(axis=0)
+    std = np.where(std > 1e-6, std, 1.0)
+    Z = np.clip((Xtr - mean) / std, -4.0, 4.0)
+
+    # 관련도 가중(V33.273/274) — 잡음바닥 relNoiseZ/√ntr 을 뺀 |점이연 상관|.
+    ybar = float(Ytr.mean())
+    ysd = float(np.sqrt(max(ybar * (1.0 - ybar), 0.0)))
+    mx = Z.mean(axis=0)
+    sdx = np.sqrt(np.maximum((Z * Z).mean(axis=0) - mx * mx, 0.0))
+    cov = ((Z * (Ytr - ybar)[:, None]).mean(axis=0))
+    denom = sdx * ysd
+    raw = np.where(denom > 1e-9, np.abs(cov / np.where(denom > 1e-9, denom, 1.0)), 0.0)
+    rfloor = float(c["relNoiseZ"]) / np.sqrt(max(ntr, 2))
+    r = np.maximum(0.0, raw - rfloor)
+    rmax = float(r.max()) if r.size else 0.0
+    if rmax > 1e-9:
+        scale = np.round(r / rmax, 4)          # 워커: +(r/rmax).toFixed(4)
+    else:
+        scale = np.ones(D)
+    Z = Z * scale
+    ordv = list(map(int, np.argsort(-scale, kind="stable")))
+
+    # 시장 칸막이 — 원핫에서 시장을 읽는다(워커 _mktOf 와 같은 규약: US 0 · KR 1 · CM 2 · 없음 3)
+    mk = np.asarray(MKT, dtype=np.int64) if MKT is not None else np.full(ntr, -1, dtype=np.int64)
+    books = []
+    if MKT is not None:
+        for m in (0, 1, 2):
+            idx = np.nonzero(mk == m)[0]
+            if idx.size >= 200:
+                books.append((m, idx))
+        covered = sum(int(i.size) for _, i in books)
+        if not books or covered < 0.5 * ntr:
+            books = [(-1, np.arange(ntr))]
+    else:
+        books = [(-1, np.arange(ntr))]
+
+    base = float(Ytr.mean())
+    protos = []
+    bookinfo = []
+    for m, idx in books:
+        n = int(idx.size)
+        K = int(min(n // 20, max(8, round(c["K"] * n / ntr))))
+        if K < 8:
+            continue
+        Zb = Z[idx]
+        C = Zb[[int(k * n // K) for k in range(K)]].copy()   # 워커: Z[idx[floor(k*n/K)]]
+        assign = np.zeros(n, dtype=np.int64)
+        for _ in range(int(c["iters"])):
+            d2 = ((Zb[:, None, :] - C[None, :, :]) ** 2).sum(axis=2) if n * K * Zb.shape[1] < 6e8 \
+                else _memo_chunk_dist(Zb, C)
+            assign = d2.argmin(axis=1)
+            for k in range(K):
+                sel = assign == k
+                if sel.any():
+                    C[k] = Zb[sel].mean(axis=0)
+        bm = float(Ytr[idx].mean())
+        kept = 0
+        for k in range(K):
+            sel = idx[assign == k]
+            nk = int(sel.size)
+            if nk < 5:
+                continue
+            wr = float(Ytr[sel].mean())
+            sh = nk / (nk + float(c["shrinkN"]))
+            protos.append({
+                "c": [float(round(v, 3)) for v in C[k]],      # 워커: +v.toFixed(3)
+                "n": nk, "m": int(m),
+                "p": float(round(bm + (wr - bm) * sh, 4)),
+                "pnl": float(round(float(Ptr[sel].mean()), 3)),
+            })
+            kept += 1
+        bookinfo.append({"m": int(m), "n": n, "k": kept, "base": float(round(bm, 4))})
+    if len(protos) < 8:
+        return None, "유효 원형 %d개" % len(protos)
+    return {
+        "protos": protos,
+        "mean": [float(v) for v in mean], "std": [float(v) for v in std],
+        "scale": [float(v) for v in scale], "ord": ordv,
+        "base": float(round(base, 4)), "books": bookinfo,
+        "n": int(ntr),
+    }, None
+
+
+def _memo_chunk_dist(Zb, C):
+    """표본이 크면 (n,K,D) 를 한 번에 만들면 메모리가 터진다 — 조각내서 같은 값을 만든다."""
+    import numpy as np
+    n = Zb.shape[0]
+    out = np.empty((n, C.shape[0]), dtype=np.float64)
+    step = max(1, int(4e7 // max(1, C.shape[0] * C.shape[1])))
+    for a in range(0, n, step):
+        b = min(n, a + step)
+        out[a:b] = ((Zb[a:b, None, :] - C[None, :, :]) ** 2).sum(axis=2)
+    return out
+
+
+def _memo_score(model, xrow, mkt_idx=None, neighbors=8):
+    """★워커 memoScore 의 그대로 옮김★ — 표준화 → scale → 같은 시장 원형만 → 최근접 M개 →
+       1/(1+d²) 가중 평균. 값이 갈라지면 게이트가 잡는다."""
+    import numpy as np
+    mean = np.asarray(model["mean"], dtype=np.float64)
+    std = np.asarray(model["std"], dtype=np.float64)
+    scale = np.asarray(model.get("scale") or np.ones(mean.size), dtype=np.float64)
+    x = np.asarray(xrow, dtype=np.float64)
+    z = np.clip((x - mean) / np.where(std != 0, std, 1.0), -4.0, 4.0) * scale
+    P = model["protos"]
+    sel = range(len(P))
+    mi = model.get("mktIdx")
+    if mi and len(mi) == 3:
+        qm = 3
+        for m in range(3):
+            if float(x[mi[m]]) > 0.5:
+                qm = m
+                break
+        s2 = [k for k in range(len(P)) if P[k].get("m") == qm]
+        if not s2:
+            s2 = [k for k in range(len(P)) if P[k].get("m") == -1]
+        if s2:
+            sel = s2
+    M = max(1, int(neighbors))
+    d2 = []
+    for k in sel:
+        c = np.asarray(P[k]["c"], dtype=np.float64)
+        t = z - c
+        d2.append((float(t @ t), k))
+    if not d2:
+        return None
+    d2.sort(key=lambda e: e[0])
+    ws = 0.0
+    ps = 0.0
+    for dd, k in d2[:M]:
+        w = 1.0 / (1.0 + dd)
+        ws += w
+        ps += w * float(P[k]["p"])
+    if ws <= 0:
+        return None
+    return float(min(max(ps / ws, 0.001), 0.999))
+
+
+def _memo_score_all(model, Xh, MKTh, neighbors=8):
+    """홀드아웃 전량 채점 — 위 _memo_score 와 ★같은 식★ 을 행렬로 한 번에 돈다."""
+    import numpy as np
+    mean = np.asarray(model["mean"], dtype=np.float64)
+    std = np.asarray(model["std"], dtype=np.float64)
+    scale = np.asarray(model.get("scale") or np.ones(mean.size), dtype=np.float64)
+    Xh = np.asarray(Xh, dtype=np.float64)
+    Z = np.clip((Xh - mean) / np.where(std != 0, std, 1.0), -4.0, 4.0) * scale
+    P = model["protos"]
+    C = np.asarray([p["c"] for p in P], dtype=np.float64)
+    PM = np.asarray([p["m"] for p in P], dtype=np.int64)
+    PP = np.asarray([p["p"] for p in P], dtype=np.float64)
+    has_book = model.get("mktIdx") is not None and len(set(PM.tolist())) > 1
+    M = max(1, int(neighbors))
+    out = np.full(Z.shape[0], np.nan)
+    groups = {}
+    for i in range(Z.shape[0]):
+        g = int(MKTh[i]) if (has_book and MKTh is not None) else -999
+        groups.setdefault(g, []).append(i)
+    for g, rows in groups.items():
+        if has_book:
+            keep = np.nonzero(PM == g)[0]
+            if keep.size == 0:
+                keep = np.nonzero(PM == -1)[0]
+            if keep.size == 0:
+                keep = np.arange(C.shape[0])
+        else:
+            keep = np.arange(C.shape[0])
+        Cg = C[keep]
+        Pg = PP[keep]
+        idx = np.asarray(rows, dtype=np.int64)
+        step = max(1, int(4e7 // max(1, Cg.shape[0] * Cg.shape[1])))
+        for a in range(0, idx.size, step):
+            b = min(idx.size, a + step)
+            Zb = Z[idx[a:b]]
+            d2 = ((Zb[:, None, :] - Cg[None, :, :]) ** 2).sum(axis=2)
+            mm = min(M, Cg.shape[0])
+            part = np.argpartition(d2, mm - 1, axis=1)[:, :mm]
+            dd = np.take_along_axis(d2, part, axis=1)
+            w = 1.0 / (1.0 + dd)
+            pv = Pg[part]
+            out[idx[a:b]] = np.clip((w * pv).sum(axis=1) / w.sum(axis=1), 0.001, 0.999)
+    return out
+
+
+def _train_and_upload_memo(BASE, KEY, HDR, X, Y, TS, PNL, featver, D, featnames=None, cfg=None,
+                           SYM=None):
+    import numpy as np
+    c = dict(MEMO_CFG)
+    c.update(cfg or {})
+    Xa = np.asarray(X, dtype=np.float64)
+    Ya = np.asarray(Y, dtype=np.float64)
+    Pa = np.asarray(PNL, dtype=np.float64) if PNL is not None else np.zeros(len(Y))
+    Ta = np.asarray(TS, dtype=np.float64)
+    order = np.argsort(Ta, kind="stable")
+    Xa, Ya, Pa, Ta = Xa[order], Ya[order], Pa[order], Ta[order]
+
+    day = 86400000.0
+    hold_ms = float(c["holdDays"]) * day
+    emb_ms = float((cfg or {}).get("horizonDays", 10)) * day
+    ts_max = float(Ta.max())
+    hold_from = ts_max - hold_ms
+    train_hi = hold_from - emb_ms
+    tr_idx = np.nonzero(Ta < train_hi)[0]
+    ho_idx = np.nonzero(Ta >= hold_from)[0]
+    if tr_idx.size > c["trainMax"]:
+        tr_idx = tr_idx[-int(c["trainMax"]):]
+    if ho_idx.size > c["holdCap"]:
+        ho_idx = ho_idx[np.linspace(0, ho_idx.size - 1, int(c["holdCap"])).astype(np.int64)]
+    if tr_idx.size < c["minTrain"] or ho_idx.size < c["minHold"]:
+        print("MEMO 건너뜀 — 학습 %d · 홀드아웃 %d (이력이 %d일)"
+              % (tr_idx.size, ho_idx.size, int((ts_max - float(Ta.min())) / day)))
+        return None
+
+    mcols = _set_mkt_cols(featnames) if featnames else None
+    MK_all = _mkt_of_X(Xa) if mcols else None
+    MKi = None
+    if MK_all is not None:
+        _map = {"us": 0, "kr": 1, "cm": 2}
+        MKi = np.asarray([_map.get(str(v), 3) for v in MK_all], dtype=np.int64)
+
+    model, why = _memo_fit(Xa[tr_idx], Ya[tr_idx], Pa[tr_idx],
+                           MKi[tr_idx] if MKi is not None else None, c)
+    if model is None:
+        print("MEMO 학습 불가 —", why)
+        return None
+    model["mktIdx"] = list(mcols) if mcols else None
+    model["luxFeatVer"] = int(featver)
+    model["featVer"] = 1                       # 워커 MEMOML.featVer
+    model["source"] = "external"
+    model["purged"] = 0                        # 엠바고가 달력으로 이미 갈라 놓았다
+    model["maxId"] = 0
+    model["maxTs"] = int(ts_max)
+
+    ph = _memo_score_all(model, Xa[ho_idx], MKi[ho_idx] if MKi is not None else None,
+                         int(c["neighbors"]))
+    ok = ~np.isnan(ph)
+    ph, yh = ph[ok], Ya[ho_idx][ok]
+    mkh = (MK_all[ho_idx][ok] if MK_all is not None else None)
+    if ph.size < 200:
+        print("MEMO 홀드아웃 채점 %d건 — 건너뜀" % ph.size)
+        return None
+    acc = float(((ph >= 0.5).astype(np.float64) == yh).mean())
+    icf = _ic_block_fields(ph.tolist(), yh.tolist(), 5, mkh)
+    th = Ta[ho_idx][ok]
+    span_d = int(max(0, round((float(th.max()) - float(th.min())) / day)))
+    eff = int(span_d // int((cfg or {}).get("horizonDays", 10)))
+    model.update(icf)
+    model["valAcc"] = round(acc, 4)
+    model["valN"] = int(ph.size)
+    # [V33.306] ★고유도 보정된 유효표본수를 함께 보낸다★ — 10일 라벨이 겹치므로 명목 n 은
+    #   독립 증거 수가 아니다. 워커 _importedValN 이 이 값을 게이트에 쓴다(V33.115 의 자).
+    try:
+        _sy = np.asarray(SYM)[order][ho_idx][ok] if SYM is not None else None
+        _uw = _uniq_weights(th, _sy, float((cfg or {}).get("horizonDays", 10)) * day)
+        model.update(_uniq_fields(_uw))
+    except Exception as _e:
+        print("MEMO 고유도 계산 생략:", _e)
+    model["valICspanD"] = span_d
+    model["valICeff"] = eff
+    model["valIC"] = icf.get("valICBlock")
+
+    # ★정합 probe★ — 워커 memoScore 가 이 원형책을 그대로 재현하는지 업로드마다 확인한다.
+    #   두 언어가 갈라지면 성적으로만 드러나는 조용한 오염이 된다(이 저장소가 반복해 당한 것).
+    #   scalar 판(_memo_score)으로 만든다 — 워커와 ★더하는 순서까지★ 같게 하려는 것이다.
+    _pi = np.linspace(0, ho_idx.size - 1, min(40, ho_idx.size)).astype(np.int64)
+    model["probe"] = [{"x": [float(v) for v in Xa[ho_idx[i]]],
+                       "p": _memo_score(model, Xa[ho_idx[i]], neighbors=int(c["neighbors"]))}
+                      for i in _pi]
+    model["probe"] = [q for q in model["probe"] if q["p"] is not None]
+
+    print("MEMO 원형 %d개 · 학습 %d행 · 홀드아웃 %d행/%d일(관측 %d개) · valAcc %.1f%% · 블록IC %s t %s · probe %d건"
+          % (len(model["protos"]), int(tr_idx.size), int(ph.size), span_d, eff, acc * 100,
+             icf.get("valICBlock"), icf.get("valICt"), len(model["probe"])))
+    try:
+        r = requests.post(BASE + "/api/memo-import", params={"key": KEY, "activate": "1"},
+                          headers=HDR, data=json.dumps(model), timeout=180)
+        print("MEMO 업로드", r.status_code, r.text[:300])
+        return r.status_code == 200
+    except Exception as e:
+        print("MEMO 업로드 예외:", e)
+        return None
 
 # ============================================================================
 # [V32.16] MIND(FM=인수분해기계) 외부학습 — Worker의 _fmTrain은 CPU예산(20s) 안에 20에폭·

@@ -2981,7 +2981,7 @@ async function applySignalTypeWeights(DB, cfg) {
    화면·자가진단이 계속 "V33.272" 를 보고했다(운영 스냅샷이 그대로 그랬다). 배포는 됐는데
    ★배포됐다는 사실만 거짓말★ 을 하고 있었으니, "내 고침이 올라간 건가" 를 화면으로 확인할
    방법이 없었다. tools/check-build-ver.mjs 가 이제 소스에 적힌 최신 버전과 이 값을 대조한다. */
-const _BUILD_VER = "V33.304";
+const _BUILD_VER = "V33.306";
 
 // ═══ [V33.171] 평가 순서 계획 — ★승격과 순환을 교차해 굶주림을 구조적으로 없앤다★ ═══
 //   V33.50 의 형태트리거는 "급한 몇 종목을 앞으로 당긴다"는 의도였으나, 실제 운영로그에서는
@@ -23837,6 +23837,119 @@ async function handleRequest(request, env, ctx) {
       return Response.json({ ok: true, probeMaxDiff: maxDiff, probeN: probeN, trusted: ad.trusted, why: ad.why }, { headers: cors });
     }
 
+
+    /* ══ [V33.306] POST /api/memo-import — MEMO(원형 기억)를 외부(Modal)에서 받는다 ══════
+       ■ 왜 옮기나 (사용자 지시: "클라우드플레어로 학습이 필수인 애들 말고는 모달로 보내라")
+         워커 야간의 memoTrainNightly 는 k-means 를 돈다 — 표본 24,000 × 원형 128 × 축 75 ×
+         6반복 ≈ ★14억 회★. 이 저장소에서 워커 CPU 를 가장 많이 먹는 학습이고, 그 예산 때문에
+         창을 24,000행(67일)으로 묶을 수밖에 없었다. 그 좁은 창이 V33.303 이 고친
+         "홀드아웃 13일" 문제의 뿌리이기도 하다. 밖에서 학습하면 두 제약이 함께 풀린다.
+
+       ■ ★받되, 믿지는 않는다★ — 두 언어가 갈라지면 성적으로만 드러나는 조용한 오염이 된다
+         (이 저장소가 반복해 당한 사고다). 그래서 seq-import 와 같은 규율을 건다:
+           · 형상 검사 — 원형 좌표·mean/std/scale/ord 가 전부 서버 차원과 맞는가
+           · ★정합 probe★ — 트레이너가 낸 확률을 ★워커 memoScore 가 재현하는가★.
+             probe 가 없거나 어긋나면 승격하지 않는다. "아마 같겠지" 로 넘어가지 않는다.
+           · 판(featVer) 대조 — 다른 판의 피처로 만든 원형책은 좌표계가 다르다.
+         전진검증(fwd_ledger)은 ★워커에 그대로 남는다★ — 그건 싸고(표본 채점 1회),
+         '어제 모델을 오늘 도착한 표본으로 채점' 이라 워커 쪽에서 도는 것이 맞다. */
+    if (path === "/api/memo-import" && request.method === "POST") {
+      const au = _trainAuthed(); if (!au.ok) return Response.json({ error: au.msg }, { status: au.code, headers: cors });
+      let body; try { body = await request.json(); } catch (e) { return Response.json({ error: "bad json" }, { status: 400, headers: cors }); }
+      const D = LUXML.featNames.length;
+      if (_num(body.luxFeatVer, -1) !== LUXML.featVer)
+        return Response.json({ error: "luxFeatVer 불일치 (서버 " + LUXML.featVer + ")" }, { status: 400, headers: cors });
+      const _arr = function (a, n) { return Array.isArray(a) && a.length === n; };
+      const P = body.protos;
+      const shapeErr =
+        !(Array.isArray(P) && P.length >= 8) ? "protos(8개 이상)" :
+        !_arr(body.mean, D) ? "mean" : !_arr(body.std, D) ? "std" :
+        !_arr(body.scale, D) ? "scale" : !_arr(body.ord, D) ? "ord" :
+        (body.mktIdx != null && !_arr(body.mktIdx, 3)) ? "mktIdx" : null;
+      if (shapeErr) return Response.json({ error: "형상 불일치: " + shapeErr }, { status: 400, headers: cors });
+      for (let i = 0; i < P.length; i++) {
+        const q = P[i];
+        if (!q || !_arr(q.c, D) || !(_num(q.n, 0) >= 1) || !(typeof q.p === "number" && isFinite(q.p)))
+          return Response.json({ error: "원형 " + i + " 형식 불일치" }, { status: 400, headers: cors });
+      }
+      /* ★정합 probe★ — 트레이너의 확률을 워커 추론이 재현하는가(seq-import 와 같은 자). */
+      let maxDiff = null, probeN = 0;
+      try {
+        if (Array.isArray(body.probe) && body.probe.length) {
+          let md = 0, cnt = 0;
+          for (const pr of body.probe) {
+            if (!pr || !Array.isArray(pr.x) || typeof pr.p !== "number") continue;
+            const sc = memoScore(body, pr.x);
+            if (sc == null) continue;
+            const dd = Math.abs(sc - pr.p); if (dd > md) md = dd; cnt++;
+          }
+          if (cnt > 0) { maxDiff = md; probeN = cnt; }
+        }
+      } catch (e) {}
+      if (maxDiff == null)
+        return Response.json({ error: "probe 없음 — 정합을 확인할 수 없으면 승격하지 않는다" }, { status: 400, headers: cors });
+      if (maxDiff > _num(MEMOML.probeMaxDiff, 1e-6))
+        return Response.json({ error: "정합 불일치 maxDiff " + maxDiff.toExponential(2) +
+          " > " + _num(MEMOML.probeMaxDiff, 1e-6) + " — 트레이너와 워커가 다른 답을 낸다(승격 안 함)",
+          probeN: probeN }, { status: 400, headers: cors });
+
+      /* 전진검증 필드는 ★워커가 이미 갖고 있는 것을 물려준다★ — 밖에서 학습했다고 어제까지
+         쌓은 전진 원장을 버릴 이유가 없다(원장은 fwd_ledger:memo_model 에 따로 산다). */
+      let _prev = null; try { _prev = await getState(env.DB, "memo_model", null); } catch (e) {}
+      const model = {
+        protos: P, mean: body.mean, std: body.std, scale: body.scale, ord: body.ord,
+        mktIdx: body.mktIdx || null, books: Array.isArray(body.books) ? body.books : null,
+        base: _num(body.base, null), n: Math.floor(_num(body.n, 0)),
+        featVer: MEMOML.featVer, luxFeatVer: LUXML.featVer,
+        purged: Math.floor(_num(body.purged, 0)),
+        /* [V33.306] ★유효표본수로 받는다★ — 명목 n 을 그대로 쓰면 라벨이 겹치는 홀드아웃에서
+           외부 모델만 √(1/고유도) 배 관대한 자로 심사받는다(V33.115 가 고친 그 비대칭). */
+        valAcc: _num(body.valAcc, null),
+        valN: _importedValN(body, 0).n, valNRaw: _importedValN(body, 0).raw,
+        valUniq: _importedValN(body, 0).uniq,
+        valIC: _num(body.valIC, null),
+        valICBlock: _num(body.valICBlock, null), valICt: _num(body.valICt, null),
+        valICIR: _num(body.valICIR, null), valICK: Math.floor(_num(body.valICK, 0)) || null,
+        valICBlockPooled: _num(body.valICBlockPooled, null),
+        valICtPooled: _num(body.valICtPooled, null), mktFixed: !!body.mktFixed,
+        valAccBase: _num(body.accBase, null),
+        valICspanD: Math.floor(_num(body.valICspanD, 0)),
+        valICeff: Math.floor(_num(body.valICeff, 0)),
+        maxId: Math.floor(_num(body.maxId, 0)), maxTs: Math.floor(_num(body.maxTs, 0)),
+        // 전진 원장이 만든 값은 그대로 이어받는다(밖에서 학습해도 원장은 워커 것이다)
+        fwdIC: _prev ? _num(_prev.fwdIC, null) : null, fwdICt: _prev ? _num(_prev.fwdICt, null) : null,
+        fwdN: _prev ? _num(_prev.fwdN, 0) : 0, fwdReady: !!(_prev && _prev.fwdReady),
+        fwdDays: _prev ? _num(_prev.fwdDays, 0) : 0,
+        fwdWhy: _prev ? (_prev.fwdWhy || null) : null,
+        source: "external", trainedAt: Date.now(), probeMaxDiff: maxDiff, probeN: probeN,
+        ts: Date.now()
+      };
+      /* 신뢰 판정은 ★워커가 한다★ — 트레이너가 보낸 trusted 를 그대로 믿지 않는다.
+         (V33.113 이 배운 것: 업로드 경로만 관대하면 외부 모델이 다른 자로 심사받는다) */
+      model.holdPass = !!(model.valICBlock != null && model.valICt != null &&
+                          model.valICBlock >= MEMOML.icFloor && model.valICt >= _num(MEMOML.icTMin, 2.5));
+      const ad = expertAdmit(model);
+      model.trusted = !!(ad.tier === "full");
+      try { await setState(env.DB, "memo_model", model); } catch (e) {
+        return Response.json({ error: "저장 실패: " + (e && e.message) }, { status: 500, headers: cors });
+      }
+      try {
+        await setState(env.DB, "train_note:memo_model", {
+          msg: "[MEMO/외부] 원형 " + P.length + "개 · 학습 " + model.n + "행 · 홀드아웃 " +
+               model.valN + "행/" + model.valICspanD + "일(겹치지않는관측 " + model.valICeff + "개)" +
+               " valAcc " + (model.valAcc != null ? (model.valAcc * 100).toFixed(1) : "?") + "%" +
+               " 블록IC " + (model.valICBlock != null ? model.valICBlock.toFixed(4) : "?") +
+               (model.valICt != null ? " t " + model.valICt.toFixed(2) : "") +
+               " 정합 " + maxDiff.toExponential(1) + "(" + probeN + "건) → " + ad.why,
+          ok: true, ts: Date.now()
+        });
+      } catch (e) {}
+      try { await log(env.DB, "INFO", null, "[MEMO-IMPORT] 원형 " + P.length + "개 · 정합 " +
+        maxDiff.toExponential(1) + " · " + ad.tier + " " + ad.why); } catch (e) {}
+      return Response.json({ ok: true, probeMaxDiff: maxDiff, probeN: probeN,
+        tier: ad.tier, mult: ad.mult, trusted: model.trusted, why: ad.why }, { headers: cors });
+    }
+
     /* ══ [V33.271] POST /api/seq-arch — 스윕이 잰 용량을 저장한다 ══════════════
        ★"과소적합이 걱정된다" 는 말로 크기를 정하지 않는다.★ 트레이너가 후보들을 같은
        표본·같은 분할로 학습해 유효표본 Wilson 하한(= 워커 승격 게이트가 보는 그 자)으로
@@ -29382,6 +29495,15 @@ const MEMOML = {
   holdDays: 60,            // ICGATE.minBlocks(5) × 지평(10일) = 50일에 여유 20% — 관측 6개
   holdCap: 9000,           // 홀드아웃에서 읽을 최대 행(기간은 12칸 균등추출로 지킨다)
   holdBuckets: 12,
+  /* ══ [V33.306] ★이 학습을 워커 밖으로 내보낸다★ ═════════════════════════════════
+     k-means 가 표본 24,000 × 원형 128 × 축 75 × 6반복 ≈ 14억 회다 — 이 저장소에서 워커
+     CPU 를 가장 많이 먹는 학습이고, 그 예산 때문에 창을 24,000행(67일)으로 묶을 수밖에
+     없었다. 밖(Modal)에서 학습하면 표본을 훨씬 크게 잡을 수 있고 워커 야간 예산도 빈다.
+     ★워커 학습기는 지우지 않는다★ — 외부 모델이 신선하면 적합만 건너뛰고, 오래되면
+     종전대로 스스로 학습한다(외부가 멈춰도 위원이 비지 않는다). 전진검증은 언제나
+     워커가 한다 — 싸고, '어제 모델을 오늘 도착분으로 채점' 이라 여기가 제자리다. */
+  externalMaxAgeH: 30,     // 이보다 신선한 외부 모델이 있으면 워커는 적합을 건너뛴다
+  probeMaxDiff: 1e-6,      // 트레이너 확률 ↔ 워커 memoScore 최대 허용 차(그 이상은 승격 거부)
   iters: 6,                // 온라인 k-means 반복
   shrinkN: 40,             // 원형 표본이 적으면 기저확률로 수축
   icFloor: 0.012,
@@ -29412,6 +29534,41 @@ async function memoTrainNightly(DB) {
         scoreFn: function (m, v) { return memoScore(m, v); },
         labelFn: function (r) { return _labelOfRow(r); }
       });
+    } catch (e) {}
+    /* ══ [V33.306] ★신선한 외부 모델이 있으면 적합을 건너뛴다★ ═══════════════════════
+       k-means 14억 회가 이 함수의 CPU 대부분이다. Modal 이 방금 만들어 올린 원형책이
+       있는데 워커가 같은 일을 다시 하는 것은 순수 낭비다(그리고 그 사이 다른 야간 단계가
+       예산에 밀린다). ★전진검증은 위에서 이미 돌았다★ — 그 결과만 외부 모델에 얹어
+       저장하고 끝낸다. 외부가 멈추면(신선도 초과) 아래 종전 경로로 그대로 내려간다 —
+       위원이 비는 일은 없다. */
+    try {
+      const _ext = await getState(DB, "memo_model", null);
+      const _extOk = !!(_ext && _ext.source === "external" && _ext.luxFeatVer === LUXML.featVer &&
+                        Array.isArray(_ext.protos) && _ext.protos.length >= 8);
+      const _ageH = _ext ? (Date.now() - _num(_ext.trainedAt, _num(_ext.ts, 0))) / 3600000 : 1e9;
+      if (_extOk && _ageH < _num(MEMOML.externalMaxAgeH, 30)) {
+        if (_fwd) {
+          _ext.fwdIC = _fwd.ic; _ext.fwdICt = _fwd.t; _ext.fwdN = _fwd.n;
+          _ext.fwdReady = !!_fwd.ready; _ext.fwdDays = _num(_fwd.days, 0);
+          _ext.fwdBatchN = _num(_fwd.batchN, 0); _ext.fwdWhy = _fwd.why || null;
+          _ext.fwdFetched = _num(_fwd.fetched, 0); _ext.fwdKept = _num(_fwd.kept, 0);
+          const _ad2 = expertAdmit(_ext);
+          _ext.trusted = !!(_ad2.tier === "full");
+          try { await setState(DB, "memo_model", _ext); } catch (e2) {}
+        }
+        const _a3 = expertAdmit(_ext);
+        return "[MEMO] 외부(Modal) 원형 " + _ext.protos.length + "개 사용 — 워커 적합 건너뜀(" +
+               _ageH.toFixed(1) + "시간 전 업로드 · 정합 " +
+               (_ext.probeMaxDiff != null ? Number(_ext.probeMaxDiff).toExponential(1) : "?") + ")" +
+               " 블록IC " + (_ext.valICBlock != null ? _num(_ext.valICBlock, 0).toFixed(4) : "?") +
+               (_ext.valICt != null ? " t " + _num(_ext.valICt, 0).toFixed(2) : "") +
+               " [홀드아웃 " + _num(_ext.valICspanD, 0) + "일 · 겹치지않는관측 " + _num(_ext.valICeff, 0) + "개]" +
+               (_ext.fwdReady ? " 전진IC " + _num(_ext.fwdIC, 0).toFixed(4) + "(n" + _num(_ext.fwdN, 0) + ")"
+                              : " 전진" + _num(_ext.fwdN, 0) + "/" + ICGATE.minForward) +
+               " → " + (_a3.tier === "full" ? "위원회 정식합류"
+                        : _a3.admit ? ("위원회 잠정합류(가중 ×" + _a3.mult.toFixed(2) + ") — " + _a3.why)
+                        : ("합류 보류 — " + _a3.why));
+      }
     } catch (e) {}
     /* ══ [V33.283] ★MEMO 의 병목은 자가 아니라 창이었다★ ═══════════════════════════
        운영 스냅샷이 이상한 모양을 보였다:
