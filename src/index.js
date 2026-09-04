@@ -2981,7 +2981,7 @@ async function applySignalTypeWeights(DB, cfg) {
    화면·자가진단이 계속 "V33.272" 를 보고했다(운영 스냅샷이 그대로 그랬다). 배포는 됐는데
    ★배포됐다는 사실만 거짓말★ 을 하고 있었으니, "내 고침이 올라간 건가" 를 화면으로 확인할
    방법이 없었다. tools/check-build-ver.mjs 가 이제 소스에 적힌 최신 버전과 이 값을 대조한다. */
-const _BUILD_VER = "V33.301";
+const _BUILD_VER = "V33.303";
 
 // ═══ [V33.171] 평가 순서 계획 — ★승격과 순환을 교차해 굶주림을 구조적으로 없앤다★ ═══
 //   V33.50 의 형태트리거는 "급한 몇 종목을 앞으로 당긴다"는 의도였으나, 실제 운영로그에서는
@@ -22055,6 +22055,8 @@ async function handleRequest(request, env, ctx) {
               //   flow 는 홀드아웃도 통과하고 전진 IC 도 양수인데 대기였다 — 이유는 전진 t 였고
               //   그 값이 어디에도 안 나왔다. 판정 결과(tier·why)를 판정 함수에서 그대로 낸다.
               fwdICt: m ? _num(m.fwdICt, null) : null,
+              // [V33.303] '0/400' 이 왜 0 인지 — 학습기가 계측해 남긴 문장을 그대로 화면에 준다.
+              fwdWhy: m ? (m.fwdWhy || null) : null,
               fwdDays: m ? _num(m.fwdDays, 0) : 0, fwdBatchN: m ? _num(m.fwdBatchN, 0) : 0,
               minFwdDays: FWDLED.minDays,
               // [V33.177] ★판이 다른 모델은 admit 도 함께 죽인다★
@@ -22100,6 +22102,7 @@ async function handleRequest(request, env, ctx) {
               fwdIC: _mo ? _num(_mo.fwdIC, null) : null, fwdN: _mo ? _num(_mo.fwdN, 0) : 0,
               // [V33.177] FLOW/XALPHA/STACK 와 같은 이유로 같은 자로 가둔다 — 옛 판은 admit 도 null.
               fwdICt: _mo ? _num(_mo.fwdICt, null) : null,
+              fwdWhy: _mo ? (_mo.fwdWhy || null) : null,   // [V33.303]
               admit: (_mo && _mo.luxFeatVer === LUXML.featVer) ? expertAdmit(_mo) : null,
               fwdDays: _mo ? _num(_mo.fwdDays, 0) : 0, fwdBatchN: _mo ? _num(_mo.fwdBatchN, 0) : 0,
               minFwdDays: FWDLED.minDays,
@@ -22538,19 +22541,28 @@ async function handleRequest(request, env, ctx) {
           valAcc: mindM ? _num(mindM.valAcc, null) : null, accLB: _mindLB,
           n: mindM ? _num(mindM.n, null) : null, voting: !!mindM,
           tier: "full", mult: 1, why: mindM ? "위원장 — 신뢰게이트 없이 항상 참여" : "모델 없음" }),
+        /* ══ [V33.303] ★같은 모델의 '문턱' 을 두 화면이 다른 값으로 적고 있었다★ ═══════
+           사이드바(_diag.dnn)는 floor 를 ★DNN.trustFloor(0.505)★ 로 적는데 여기는
+           ★MIND 하한★ 을 적었다. 실측(2026-09-04): DNN accLB 51.6% · 이 화면의 문턱 52.1% —
+           화면만 보면 "문턱 미달인데 왜 가동이냐" 가 된다. 그런데 게이트(_dnnAdmit)가 실제로
+           보는 것은 _accFloor(DNN.trustFloor, 무실력기준) 이고 MIND 하한은 ★가중치 계산★ 에만
+           쓴다. 즉 이 화면이 없는 문턱을 적어 스스로 모순을 만들고 있었다.
+           V33.303 이 '불' 을 한 곳으로 모았고, 이건 같은 사고의 ★숫자★ 판이다 —
+           이름이 같으면 값도 같아야 한다. 게이트가 쓰는 상수를 그대로 적는다. */
         _row("dnn", "DNN (다층 퍼셉트론)", { kind: "mlp",
           trained: !!(dnnT && dnnT.dnnAcc != null), valAcc: dnnT ? _num(dnnT.dnnAcc, null) : null,
-          accLB: _dnnLB, floor: _mindLB,
+          accLB: _dnnLB, floor: _num(DNN.trustFloor, 0.505),
           voting: !!(dnnT && dnnT.trusted && _num(dnnT.wDnn, 0) > 0),
           mult: dnnT ? _num(dnnT.wDnn, 0) : null,
-          why: (dnnT && dnnT.trusted) ? "신뢰 통과" :
-               ((_dnnLB != null && _mindLB != null && _dnnLB < _mindLB)
-                 ? "하한 " + (_dnnLB * 100).toFixed(1) + "% < MIND 하한 " + (_mindLB * 100).toFixed(1) + "%"
-                 : (dnnT && dnnT.reason) || "미학습"),
+          why: (dnnT && dnnT.trusted)
+                 ? ("신뢰 통과" + (_dnnLB != null && _mindLB != null && _dnnLB < _mindLB
+                      ? " · 하한 " + (_dnnLB * 100).toFixed(1) + "% 는 위원장(" + (_mindLB * 100).toFixed(1) +
+                        "%)보다 낮아 지분이 그만큼 줄어 있다(문턱이 아니라 가중치 문제)" : ""))
+                 : ((dnnT && dnnT.reason) || "미학습"),
           params: dnnT ? _num(dnnT.params, null) : null }),
         _row("gbdt", "GBDT (부스팅 트리)", { kind: "tree",
           trained: !!(gT && gT.gbdtAcc != null), valAcc: gT ? _num(gT.gbdtAcc, null) : null,
-          accLB: gT ? _num(gT.gbdtAccLB, null) : null, floor: _mindLB,
+          accLB: gT ? _num(gT.gbdtAccLB, null) : null, floor: _num(GBDT.trustFloor, 0.505),
           voting: !!(gT && gT.trusted), why: (gT && gT.trusted) ? "신뢰 통과" : ((gT && gT.reason) || "미학습") }),
         _row("boost", "BOOST (XGB·LGB·CatBoost 합의)", { kind: "tree",
           trained: !!(boosters && boosters.length), n: boosters ? boosters.length : 0,
@@ -28772,6 +28784,9 @@ async function _miniLogisticTrain(DB, opts) {
       tMinUsed: _tMin, icFamilyK: _fam ? _num(_fam.k, null) : null,
       purged: _purged,   // [V33.141] 경계 누출로 잘라낸 학습표본 수 — 홀드아웃 신뢰의 근거
       fwdIC: _fwd ? _fwd.ic : null, fwdICt: _fwd ? _fwd.t : null,
+      // [V33.303] '0/400' 이 왜 0 인지 — 계측값을 모델에 남긴다(화면·로그가 같은 문장을 쓴다).
+      fwdWhy: _fwd ? (_fwd.why || null) : "전진검증 실행 안 됨(어제 모델 없음 또는 판 불일치)",
+      fwdFetched: _fwd ? _num(_fwd.fetched, 0) : 0, fwdKept: _fwd ? _num(_fwd.kept, 0) : 0,
       fwdN: _fwd ? _fwd.n : 0, fwdReady: !!(_fwd && _fwd.ready),
       // [V33.140] 원장이 며칠치인지 — "표본이 왜 아직 모자라나" 를 화면이 답할 수 있어야 한다
       fwdDays: _fwd ? _num(_fwd.days, 0) : 0, fwdBatchN: _fwd ? _num(_fwd.batchN, 0) : 0,
@@ -28827,7 +28842,12 @@ async function _miniLogisticTrain(DB, opts) {
                " t " + _num(_st.tPooled, 0).toFixed(2) + " — 그 차이가 시장절편 몫]"
              : "") +
            (_fwd && _fwd.ready ? " 전진IC " + _num(_fwd.ic, 0).toFixed(4) + "(n" + _fwd.n + ")"
-                               : " 전진" + (_fwd ? _fwd.n : 0) + "/" + ICGATE.minForward) +
+                               : " 전진" + (_fwd ? _fwd.n : 0) + "/" + ICGATE.minForward +
+                                 /* [V33.303] ★0 이 왜 0 인지 여기서 답한다.★ 종전엔 이 자리가
+                                    "전진0/400" 한 줄뿐이라, 고를 행이 없는 건지·배치하한에 못
+                                    미친 건지·라벨을 못 만든 건지 구분할 방법이 없었다. */
+                                 (_fwd && _fwd.why ? "[" + _fwd.why + "]"
+                                                   : (!_fwd ? "[전진검증 미실행 — 어제 모델 없음 또는 판 불일치]" : ""))) +
            // [V33.179] 걸러낸 과거표본 수를 함께 적는다 — 종전 전진 IC 가 무엇으로 계산됐는지의 증거.
            (_fwd && _num(_fwd.pastSkipped, 0) > 0 ? " (과거표본 " + _fwd.pastSkipped + "건 제외)" : "") +
            " → " + (function () { const a = expertAdmit(model); return a.tier === "full" ? "위원회 정식합류"
@@ -29229,6 +29249,43 @@ const MEMOML = {
      지금은 되돌린다(0 = 종전 recency). 펼침 경로와 그 검사는 그대로 남겨 둔다 —
      다음에 워크포워드로 제대로 재고 나서 이 숫자를 바꾼다. 추측으로 세 번째를 고르지 않는다. */
   islands: 0,
+  /* ══ [V33.303] ★홀드아웃을 '행의 마지막 20%' 가 아니라 달력에 못 박는다★ ═══════════
+     V33.285 는 "창을 펼쳤더니 나빠졌다" 며 islands 를 0 으로 되돌리고, 그 자리에 이렇게
+     적어 뒀다 — "창을 바꾸면 홀드아웃도 같이 바뀌므로 모델과 잣대를 한 번에 둘 다 바꾼
+     셈이다. 답하려면 ★홀드아웃을 고정한 채★ 학습창만 바꿔 재야 한다." 그 고정을 지금 한다.
+
+     ■ 왜 지금인가 — 실측이 잣대가 틀렸다고 직접 말한다(2026-09-04 운영)
+         홀드아웃 블록IC ★−0.0390★ (t −1.88)   ← 게이트가 보는 값
+         전진(진짜 표본밖) IC ★+0.14781★ (t 2.421 · n 1,028 · 2일)
+       부호가 반대다. 그리고 같은 밤 로그가 "섞어재면 −0.0113 t −0.40" 이라 적는다 —
+       즉 −0.039 의 대부분은 ★그 13일 시장이 어디로 갔나★ 이지 모델이 아니다.
+
+     ■ 왜 13일인가
+       창이 "가장 최근 24,000행" 인데 수확은 한 봉 날짜에 전 종목을 함께 쌓는다.
+       그래서 24,000행 = ★67일★ 이고 그 20% 는 13일이다. 라벨 지평이 10일이므로
+       13일 안에 겹치지 않는 관측은 ★1개★ — V33.300 이 '못 쟀다' 로 판정하는 바로 그 상태다.
+       그런데 표에는 ★564,735행(4년치)★ 이 있다. 잴 재료가 없던 게 아니라 안 읽었다.
+
+     ■ 무엇을 바꾸나 — ★홀드아웃만★ 바꾼다(학습창 규칙은 그대로 recency)
+       · 홀드아웃 = 가장 최근 holdDays 일. 이 구간을 12칸으로 나눠 고르게 뽑아
+         ★기간은 유지하되 행 수는 holdCap 으로 묶는다★(메모리·CPU 예산 불변).
+       · 학습 = 홀드아웃 시작 − 엠바고(라벨 지평 1회) ★이전★ 에서 recency 로 trainWindow.
+         경계가 달력으로 벌어져 있으므로 라벨 구간이 홀드아웃으로 못 뻗는다(퍼징은 안전망으로 유지).
+       · 결과: 홀드아웃 기간이 ★언제나 holdDays★ 라 겹치지 않는 관측이 minBlocks 이상이 된다.
+         그리고 학습창을 어떻게 바꾸든 잣대가 안 흔들린다 — V33.285 가 못 한 비교가 가능해진다.
+     ■ 이력이 짧으면(판갈이 직후 등) 종전 방식으로 물러선다. 그때는 로그가 그렇다고 적는다.
+
+     ■ ★대가를 숨기지 않는다★ — 원형책이 holdDays+엠바고만큼 오래된 구간에서 만들어진다.
+       종전 배포본은 '최근 67일' 로 만들어졌고, 이 판은 '−70일 ~ −137일' 로 만들어진다.
+       그렇게 하는 이유는 ★잰 것과 배포한 것이 같아야★ 하기 때문이다 — 최근 데이터로 다시
+       적합해 배포하면서 옛 구간의 IC 를 화면에 적으면, 그건 이 저장소가 반복해 고쳐 온
+       '화면과 엔진이 다른 말을 한다' 의 통계 판이 된다.
+       신선도를 되찾으려면 ★두 번 적합★ 해야 한다(측정용 1회 + 배포용 1회). k-means 가 이
+       함수 CPU 의 대부분이라 예산을 다시 짜야 하는 변경이므로, 추측으로 지금 넣지 않는다.
+       (V33.285 가 "추측으로 세 번째를 고르지 않는다" 고 적은 것과 같은 규율이다.) */
+  holdDays: 60,            // ICGATE.minBlocks(5) × 지평(10일) = 50일에 여유 20% — 관측 6개
+  holdCap: 9000,           // 홀드아웃에서 읽을 최대 행(기간은 12칸 균등추출로 지킨다)
+  holdBuckets: 12,
   iters: 6,                // 온라인 k-means 반복
   shrinkN: 40,             // 원형 표본이 적으면 기저확률로 수축
   icFloor: 0.012,
@@ -29304,6 +29361,54 @@ async function memoTrainNightly(DB) {
         raw.sort(function (a, b2) { return _num(b2.ts, 0) - _num(a.ts, 0); });   // 아래 루프는 ts DESC 를 기대한다
       }
     } catch (e) { raw = []; }
+    /* ══ [V33.303] ★달력에 못 박은 홀드아웃★ — 위 MEMOML.holdDays 주석 참조 ══════════
+       읽는 순서가 곧 배열 순서다(아래 루프가 ts DESC 를 기대한다). 홀드아웃이 전부
+       학습보다 최신이므로 [홀드아웃 ts DESC] + [학습 ts DESC] 를 이으면 전체가 ts DESC 다. */
+    let _holdFrom = 0, _calHold = 0, _calWhy = null;
+    if (!raw.length) {
+      const _hMs = Math.max(1, _num(MEMOML.holdDays, 60)) * 86400000;
+      const _emb = _num(AI_PARAMS.predictionHorizonDays, 10) * 86400000;
+      let _tsMax = 0, _tsMin = 0;
+      try {
+        const _r = await DB.prepare(
+          "SELECT MAX(ts) mx, MIN(ts) mn FROM ml_samples WHERE featver = ?"
+        ).bind(LUXML.featVer).first();
+        _tsMax = _num(_r && _r.mx, 0); _tsMin = _num(_r && _r.mn, 0);
+      } catch (e) {}
+      /* 이력이 홀드아웃+엠바고+학습을 다 담을 만큼 길어야 한다. 아니면 종전 방식으로 물러선다 —
+         짧은 이력에서 억지로 떼면 학습이 굶는다(그건 잣대를 고치는 게 아니라 모델을 죽이는 것). */
+      const _need = _hMs + _emb + 30 * 86400000;
+      if (_tsMax > 0 && _tsMin > 0 && (_tsMax - _tsMin) >= _need) {
+        const _hf = _tsMax - _hMs;
+        const _B = Math.max(2, Math.floor(_num(MEMOML.holdBuckets, 12)));
+        const _per = Math.max(1, Math.floor(_num(MEMOML.holdCap, 9000) / _B));
+        const _step = _hMs / _B;
+        const _hold = [];
+        for (let b = _B - 1; b >= 0; b--) {          // 최신 칸부터 — 이어 붙이면 ts DESC 가 된다
+          const _a = Math.floor(_hf + b * _step), _z = Math.floor(_hf + (b + 1) * _step) + 1;
+          const r2 = await DB.prepare(
+            "SELECT id, ts, feat, label, pnl_pct FROM ml_samples" +
+            " WHERE featver = ? AND ts >= ? AND ts < ? ORDER BY ts DESC LIMIT ?"
+          ).bind(LUXML.featVer, _a, _z, _per).all();
+          const rr = (r2 && r2.results) || [];
+          for (const x of rr) _hold.push(x);
+        }
+        const r3 = await DB.prepare(
+          "SELECT id, ts, feat, label, pnl_pct FROM ml_samples" +
+          " WHERE featver = ? AND ts < ? ORDER BY ts DESC LIMIT ?"
+        ).bind(LUXML.featVer, _hf - _emb, MEMOML.trainWindow).all();
+        const _tr = (r3 && r3.results) || [];
+        if (_hold.length >= 400 && _tr.length >= MEMOML.minTrainSamples) {
+          raw = _hold.concat(_tr);
+          _holdFrom = _hf; _calHold = _hold.length;
+        } else {
+          _calWhy = "홀드아웃 " + _hold.length + "행 · 학습 " + _tr.length + "행 — 부족";
+        }
+      } else if (_tsMax > 0 && _tsMin > 0) {
+        _calWhy = "이력 " + Math.round((_tsMax - _tsMin) / 86400000) + "일 < 필요 " +
+                  Math.round(_need / 86400000) + "일";
+      }
+    }
     // 표본이 창보다 적으면(초기·판갈이 직후) 종전대로 최근 것부터 — 나눌 것이 없다.
     if (!raw.length) {
       const rows = await DB.prepare(
@@ -29330,7 +29435,15 @@ async function memoTrainNightly(DB) {
     const N = X.length;
     if (N < MEMOML.minTrainSamples) return "[MEMO] 표본 " + N + "/" + MEMOML.minTrainSamples + " — 대기";
     const mean = new Array(D).fill(0), std = new Array(D).fill(0);
-    const nval = Math.max(200, Math.floor(N * 0.2));
+    /* [V33.303] 홀드아웃 경계는 ★달력★ 이다 — 행 비율이 아니라 위에서 정한 날짜로 가른다.
+       달력 경로가 못 섰으면(짧은 이력) 종전대로 마지막 20%. */
+    let nval = Math.max(200, Math.floor(N * 0.2));
+    if (_holdFrom > 0) {
+      let _s = N; while (_s > 0 && _num(T[_s - 1], 0) >= _holdFrom) _s--;
+      const _nv = N - _s;
+      if (_nv >= 200 && _s >= MEMOML.minTrainSamples) nval = _nv;
+      else { _calWhy = "달력 경계로 가르면 홀드아웃 " + _nv + " · 학습 " + _s + " — 되돌림"; _holdFrom = 0; }
+    }
     /* ══ [V33.156] ★MEMO 에만 퍼징이 없었다★ ══
        _miniLogisticTrain(flow·xalpha·stack·dual)은 V33.141 부터 경계 퍼징을 한다.
        그런데 MEMO 는 같은 ml_samples 를, 같은 10일 라벨 지평으로 쓰면서 퍼징이 없었다 —
@@ -29564,6 +29677,9 @@ async function memoTrainNightly(DB) {
     model.fwdIC = _fwd ? _fwd.ic : null; model.fwdICt = _fwd ? _fwd.t : null;
     model.fwdN = _fwd ? _fwd.n : 0; model.fwdReady = !!(_fwd && _fwd.ready);
     model.fwdDays = _fwd ? _num(_fwd.days, 0) : 0; model.fwdBatchN = _fwd ? _num(_fwd.batchN, 0) : 0;
+    // [V33.303] MEMO 도 같은 계측을 싣는다 — 모델마다 다른 말을 하면 안 된다.
+    model.fwdWhy = _fwd ? (_fwd.why || null) : "전진검증 실행 안 됨(어제 모델 없음 또는 판 불일치)";
+    model.fwdFetched = _fwd ? _num(_fwd.fetched, 0) : 0; model.fwdKept = _fwd ? _num(_fwd.kept, 0) : 0;
     model.fwdMode = _fwd ? (_fwd.mode || null) : null; model.maxId = _maxId; model.maxTs = _maxTs;
     model.fwdPastSkipped = _fwd ? _fwd.pastSkipped : null;   // [V33.179] 위 주석 참조
     // [V33.143] 문턱을 가족 크기에서 구한다(MEMOML.icTMin 상수 대신). 기록도 남긴다.
@@ -29590,6 +29706,12 @@ async function memoTrainNightly(DB) {
     }).join(" · ");
     return "[MEMO] 원형 " + protos.length + "개 (표본 " + ntr +
            " · 창 " + _spanD + "일" + (_islands ? ("/" + _islands + "구간") : "(연속)") + ")" +
+           /* [V33.303] 잣대가 달력에 못 박혔는지 ★로그가 말한다★ — 이 줄이 없으면
+              다음에 또 "홀드아웃이 왜 13일이냐" 를 코드를 읽어 알아내야 한다. */
+           (_holdFrom > 0
+             ? " 달력홀드아웃[" + _num(MEMOML.holdDays, 60) + "일 · " + _calHold + "행/" +
+               _num(MEMOML.holdBuckets, 12) + "칸 · 엠바고 " + _num(AI_PARAMS.predictionHorizonDays, 10) + "일]"
+             : " 달력홀드아웃없음[" + (_calWhy || "이력 부족") + " — 종전 마지막20%]") +
            " 시장책[" + _bookStr + "]" +
            " 가중거리 유효축 " + _liveAx + "/" + D +
            "(잡음바닥 " + (_num(MEMOML.relNoiseZ, 2) / Math.sqrt(Math.max(ntr, 2))).toFixed(4) + " 제거)" +
@@ -29611,7 +29733,8 @@ async function memoTrainNightly(DB) {
                " t " + _num(model.valICtPooled, 0).toFixed(2) + " — 그 차이가 시장절편 몫]"
              : "") +
            (model.fwdReady ? " 전진IC " + _num(model.fwdIC, 0).toFixed(4) + "(n" + model.fwdN + ")"
-                           : " 전진" + model.fwdN + "/" + ICGATE.minForward) +
+                           : " 전진" + model.fwdN + "/" + ICGATE.minForward +
+                             (model.fwdWhy ? "[" + model.fwdWhy + "]" : "")) +
            " → " + (function () { const a = expertAdmit(model); return a.tier === "full" ? "위원회 정식합류"
              : a.admit ? ("위원회 잠정합류(가중 ×" + a.mult.toFixed(2) + ") — " + a.why) : ("합류 보류 — " + a.why); })();
    } catch (e) { return "[MEMO] 학습 실패: " + (e && e.message); }
@@ -32161,8 +32284,19 @@ async function icForwardCheck(DB, opts) {
       } catch (e) {}
     }
 
+    /* ══ [V33.303] ★"전진표본 0/400" 이 왜 0 인지 아무도 못 말한다★ ═══════════════
+       실측(2026-09-04): 같은 ml_samples 를 쓰는데 MEMO 는 전진 1,028건(2일)을 받고
+       이중헤드 강세·약세는 ★둘 다 0★ 이다. 그런데 화면도 로그도 "0/400 축적 중" 한 줄뿐이라,
+       (a) 고를 행이 없는 건지 (b) 골랐는데 배치 하한(30)에 못 미친 건지 (c) 라벨을 못 만든
+       건지 (d) IC 가 NaN 이라 원장에 못 적은 건지 구분이 안 된다 — 넷은 처방이 전부 다르다.
+       이 저장소가 반복해 배운 것이 그것이다: ★가설은 계측해서 확인한다.★ 세어서 돌려준다. */
+    let _fetched = rows.length, _kept = 0, _why = null;
     // 이번 배치(= 아직 세지 않은 행)의 IC 를 잰다.
     let _batchN = 0;
+    if (rows.length < FWDLED.minBatch)
+      _why = "고른 행 " + rows.length + " < 배치하한 " + FWDLED.minBatch +
+             (_tsGuard > 0 ? (" (기준 관측시각 " + new Date(_tsGuard).toISOString().slice(0, 10) +
+                              " 이후" + (_pastSkipped ? " · 과거표본 " + _pastSkipped + "건 제외" : "") + ")") : "");
     if (rows.length >= FWDLED.minBatch) {
       const pv = [], yv = [], mv = [];
       for (const r of rows) {
@@ -32174,10 +32308,16 @@ async function icForwardCheck(DB, opts) {
         if (y == null) continue;
         pv.push(p); yv.push(y); mv.push(r.market == null ? "" : String(r.market));
       }
+      _kept = pv.length;
+      if (pv.length < FWDLED.minBatch)
+        _why = "행 " + rows.length + "건 중 채점 가능 " + pv.length + " < " + FWDLED.minBatch +
+               " — 피처 파싱·라벨 생성에서 걸러졌다";
       if (pv.length >= FWDLED.minBatch) {
         let _mkAny = 0; { const _u = {}; for (const m of mv) if (m) _u[m] = 1; _mkAny = Object.keys(_u).length; }
         const _bst = _icBlockStats(pv, yv, 2, null, _mkAny > 1 ? mv : null);
         const _bic = _num(_bst.ic, null);
+        if (!(_bic != null && isFinite(_bic)))
+          _why = "채점 " + pv.length + "건의 IC 가 NaN — 라벨이 한쪽으로 쏠려 상관이 정의되지 않는다";
         if (_bic != null && isFinite(_bic)) {
           _batchN = pv.length;
           // 하루 = 한 블록. 같은 날 두 번 돌아도 hwm 덕에 ★서로 겹치지 않는★ 배치이므로
@@ -32221,6 +32361,11 @@ async function icForwardCheck(DB, opts) {
              blockIC: _icPooled != null ? +_icPooled.toFixed(5) : null,
              t: _t, ready: _ready, mode: _mode,
              days: _v.length, batchN: _batchN, df: _df, minDays: FWDLED.minDays,
+             // [V33.303] 이번 회차가 무엇을 보고 무엇을 남겼는지 — 0 이 왜 0 인지의 답.
+             fetched: _fetched, kept: _kept,
+             why: _why || (_nSum > 0 && _v.length < FWDLED.minDays
+                             ? ("날짜 " + _v.length + "/" + FWDLED.minDays + " — 표본은 찼지만 날짜가 모자라 t 를 못 만든다")
+                             : null),
              // [V33.179] 계측 결과 — 전진창에서 걸러낸 '과거(소급적재)' 행 수. 위 주석 참조.
              pastSkipped: _pastSkipped, tsGuard: _tsGuard || null };
   } catch (e) { return null; }
