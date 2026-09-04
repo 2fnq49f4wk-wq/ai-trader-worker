@@ -94,7 +94,9 @@ console.log('④ FLOW 가 평가 루프에서 네트워크를 무제한으로 �
   const cnt = (S.match(/if \(opts && opts\.noFetch\) return cached \? cached\.v : null;/g) || []).length;
   if (cnt === 2) ok('캐시전용일 때 ★네트워크로 나가지 않는다★ (2곳 모두)');
   else bad('noFetch 처리가 ' + cnt + '곳뿐이다(2곳 필요)');
-  if (/flowBuildFeat\(DB, symbol, market, __dailyCacheForFlow, \{ noFetch: _flowNoFetch \}\)/.test(S))
+  /* [V33.304] 호출에 프리로드 표(pre)가 함께 실린다 — 계약은 그대로다("상한에 닿으면
+     캐시전용으로 부른다"). 인자 리터럴 대신 ★그 계약★ 을 본다. */
+  if (/flowBuildFeat\(DB, symbol, market, __dailyCacheForFlow,[\s\S]{0,120}?noFetch: _flowNoFetch/.test(S))
     ok('평가 루프가 상한 도달 시 캐시전용으로 부른다');
   else bad('평가 루프가 캐시전용 모드를 넘기지 않는다');
 }

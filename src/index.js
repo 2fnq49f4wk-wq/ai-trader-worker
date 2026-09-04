@@ -2981,7 +2981,7 @@ async function applySignalTypeWeights(DB, cfg) {
    화면·자가진단이 계속 "V33.272" 를 보고했다(운영 스냅샷이 그대로 그랬다). 배포는 됐는데
    ★배포됐다는 사실만 거짓말★ 을 하고 있었으니, "내 고침이 올라간 건가" 를 화면으로 확인할
    방법이 없었다. tools/check-build-ver.mjs 가 이제 소스에 적힌 최신 버전과 이 값을 대조한다. */
-const _BUILD_VER = "V33.303";
+const _BUILD_VER = "V33.304";
 
 // ═══ [V33.171] 평가 순서 계획 — ★승격과 순환을 교차해 굶주림을 구조적으로 없앤다★ ═══
 //   V33.50 의 형태트리거는 "급한 몇 종목을 앞으로 당긴다"는 의도였으나, 실제 운영로그에서는
@@ -18700,6 +18700,8 @@ async function runTradingCycle(env) {
       // [V33.78] FLOW — 모델과 피어계산용 일봉캐시를 사이클당 1회만 준비한다.
       //   일봉캐시는 이미 daily: 로 D1 에 있으니 한 번 훑어 메모리에 올린다(종목마다 재조회 금지).
       let __flowModel = null, __dailyCacheForFlow = {}, __flowCollect = false;
+      /* [V33.304] FLOW 포지셔닝·풋콜 캐시 — ★사이클당 1회★ 로 읽는다(아래 프리로드 참조). */
+      let __flowSideCache = null;
       let __socialK = null;   // [V33.109] 소셜 로그오즈 계수(social_k) — 미측정이면 개입 0
       let __xaModel = null, __xaPanel = null;   // [V33.79] XALPHA — 형식알파 + 횡단면 랭크
       let __stackModel = null;   // [V33.80] STACK 메타모델(투표 대체)
@@ -18839,6 +18841,27 @@ async function runTradingCycle(env) {
                 } catch (e2) {}
               }
             }
+            /* ══ [V33.304] ★flow 6,737ms 의 정체 — CPU 가 아니라 D1 왕복이었다★ ═══════════
+               운영 실측: 부가조회 지갑 7,242/7,200ms 소진 · 그중 ★flow 6,737ms★.
+               그런데 같은 사이클에 flow 가 네트워크를 탄 종목은 ★6개★ 뿐이다.
+               남는 설명은 하나다 — flowBuildFeat 은 종목마다
+                   getState("flowpos:"+심볼)  ·  getState("flowopt:"+심볼)
+               둘을 부른다. 평가 124종목이면 ★D1 왕복 248회★ 다. 왕복 1회가 25ms 남짓이니
+               그것만으로 6초가 넘는다. 캐시 적중이어도 왕복은 그대로 든다.
+               바로 위에서 daily: 1,000행을 ★질의 한 번★ 으로 읽고 있다 — 같은 자리에 같은
+               방법을 쓴다. 값도 판정도 하나 안 바뀌고, 왕복만 248 → 1 이 된다.
+               (갱신이 일어나면 이 표도 같이 갱신해 같은 사이클 안에서 어긋나지 않게 한다) */
+            try {
+              const _fs = await DB.prepare(
+                "SELECT k, v FROM state WHERE (k >= 'flowpos:' AND k < 'flowpos;')" +
+                " OR (k >= 'flowopt:' AND k < 'flowopt;')"
+              ).all();
+              const _m = {};
+              for (const _r of ((_fs && _fs.results) || [])) {
+                try { _m[String(_r.k)] = (typeof _r.v === "string") ? JSON.parse(_r.v) : _r.v; } catch (e3) {}
+              }
+              __flowSideCache = _m;   // ★있음/없음이 확정된 표★ — 없는 키를 D1 에 다시 묻지 않는다
+            } catch (e2) { __flowSideCache = null; }
             // [V33.79] 횡단면 패널 — 시장 단위로 1회만 만든다(종목마다 돌면 O(N²)).
             try { if (XALPHA.enabled) __xaPanel = xalphaBuildPanel(__dailyCacheForFlow, market); } catch (e2) {}
             // [V33.83] 보유분 평균 상관 — 켈리의 동시베팅 보정에 쓴다(네트워크 0).
@@ -20493,7 +20516,8 @@ async function runTradingCycle(env) {
                     const _flowNoFetch = (_enrich.flowRefresh >= ENRICH.flowRefreshPerCycle);
                     __flowFeat = await _enrichRun("flow", async function () {
                       const _t = Date.now();
-                      const _r = await flowBuildFeat(DB, symbol, market, __dailyCacheForFlow, { noFetch: _flowNoFetch });
+                      const _r = await flowBuildFeat(DB, symbol, market, __dailyCacheForFlow,
+                        { noFetch: _flowNoFetch, pre: __flowSideCache });   // [V33.304] 사이클 프리로드 표
                       // 200ms 넘게 걸렸으면 네트워크를 탔다고 본다(캐시 적중은 D1 read 2회로 훨씬 싸다)
                       if (!_flowNoFetch && (Date.now() - _t) > 200) _enrich.flowRefresh++;
                       return _r;
@@ -27539,6 +27563,54 @@ const FLOWML = {
 // 피어 상관 구조 — 캐시된 일봉만 사용한다(네트워크 호출 0).
 //   같은 시장 종목 중 상관 상위 K개를 골라 그들의 최근 움직임을 요약한다.
 //   HIST/GRU-PFG 가 그래프로 푸는 "종목 간 공유 정보"를 가벼운 통계로 근사한 것.
+/* ══ [V33.304] ★CPU 한도를 태우던 자리 — 같은 로그를 사이클마다 400만 번 다시 찍었다★ ══
+   운영 실측(2026-09-04 스냅샷):
+     [EVAL-COST] US 종목당 평균 1342ms · 부가조회 ★7242/7200ms(예산소진)★
+                 · FLOW갱신 6종목 · scalp 505ms, ★flow 6737ms★
+     [EVAL-COST] KR … 부가조회 7278/7200ms(★예산소진 30건 생략★) · scalp 4003ms
+     [TIME-CAP]  KR 평가 37/446종목(8%) 후 중단
+   부가조회 지갑(7.2초)의 93% 를 flow 하나가 먹고, 그 바람에 scalp·옵션 조회가 30건
+   생략되고 평가가 8% 에서 끊겼다. 그런데 그 사이클에 flow 가 ★네트워크를 탄 것은 6종목★
+   뿐이다 — 즉 6.7초는 fetch 대기가 아니라 ★순수 CPU★ 다.
+
+   무엇이 그 CPU 를 먹었나 — 이 함수다. 종목 하나를 평가할 때마다
+     · 유니버스 전체(같은 시장 ~550종목)를 돌면서
+     · 종목마다 _logret 으로 ★60개짜리 배열을 새로 만들고 Math.log 를 60번★ 부르고
+     · _corr 안에서 slice 로 배열을 두 개 더 만들고 60원소를 네 번 훑는다
+   평가 124종목 기준 한 사이클에 ★Math.log 약 400만 번 · 배열 20만 개 생성★ 이다.
+   ★그런데 그 값들은 전부 같다★ — dailyCache 는 사이클당 1회 만들어 놓고 안 바뀐다.
+   같은 계산을 종목 수만큼 반복한 것이지, 필요한 일을 한 게 아니다.
+
+   ★고치되 숫자는 한 자리도 안 바꾼다★ — 성능(정확도)을 낮춰 CPU 를 버는 게 아니라,
+   같은 답을 구하는 데 드는 낭비만 걷어낸다:
+     ① 종목별 로그수익 배열을 사이클 캐시에 ★한 번만★ 만든다(WeakMap — dailyCache 가
+        사라지면 같이 사라진다. dailyCache 에 필드를 붙이면 for..in 이 그걸 종목으로 읽는다).
+     ② 길이가 같은(운영에서 거의 전부인) 경우 평균·제곱합을 미리 재 두고 상관은 ★한 번만★
+        훑는다. 계산 순서와 식이 종전과 같으므로 결과는 ★비트 단위로 동일★ 하다
+        (sa = Σ(A[i]−ma)² 를 같은 순서로 더한다 · 최종식도 sab/√(sa·sb) 그대로).
+     ③ 길이가 다르면 종전 _corr 을 그대로 탄다(폴백을 지운 적 없다).
+   검사(tools/check-flow-peer-cpu.mjs)가 ①②③ 을 실제로 돌려 옛 구현과 대조한다. */
+const __PEER_MEMO = new WeakMap();
+function _peerSeries(dailyCache, sy) {
+  let mem = __PEER_MEMO.get(dailyCache);
+  if (!mem) { mem = new Map(); __PEER_MEMO.set(dailyCache, mem); }
+  let e = mem.get(sy);
+  if (e !== undefined) return e;
+  const d = dailyCache[sy];
+  const c = d && d.closes;
+  if (!Array.isArray(c)) { mem.set(sy, null); return null; }
+  const v = [];
+  for (let i = Math.max(1, c.length - 60); i < c.length; i++) {
+    if (c[i] > 0 && c[i - 1] > 0) v.push(Math.log(c[i] / c[i - 1]));
+  }
+  const n = v.length;
+  let m = 0; for (let i = 0; i < n; i++) m += v[i];
+  m = n > 0 ? m / n : 0;
+  let s = 0; for (let i = 0; i < n; i++) { const x = v[i] - m; s += x * x; }
+  e = { v: v, m: m, s: s };
+  mem.set(sy, e);
+  return e;
+}
 async function flowPeerFeat(DB, symbol, market, dailyCache) {
   try {
     const me = dailyCache && dailyCache[symbol];
@@ -27555,7 +27627,8 @@ async function flowPeerFeat(DB, symbol, market, dailyCache) {
       }
       return out;
     };
-    const mine = _logret(me.closes, 60);
+    const _meS = _peerSeries(dailyCache, symbol);
+    const mine = _meS ? _meS.v : _logret(me.closes, 60);
     if (mine.length < 25) return null;
     const _corr = function (a, b) {
       const n = Math.min(a.length, b.length);
@@ -27568,6 +27641,16 @@ async function flowPeerFeat(DB, symbol, market, dailyCache) {
       for (let i = 0; i < n; i++) { const x = A[i] - ma, y = B[i] - mb; sa += x * x; sb += y * y; sab += x * y; }
       return (sa > 1e-12 && sb > 1e-12) ? sab / Math.sqrt(sa * sb) : 0;
     };
+    /* 길이가 같으면(운영에서 거의 전부) 미리 재 둔 평균·제곱합을 쓰고 곱합만 한 번 훑는다.
+       ★식과 순서가 위 _corr 과 같다★ — 그래서 값이 달라질 수가 없다. */
+    const _corrFast = function (aE, bE) {
+      const n = aE.v.length;
+      if (n < 20 || bE.v.length !== n) return null;   // null = 폴백해라
+      let sab = 0;
+      const A = aE.v, B = bE.v, ma = aE.m, mb = bE.m;
+      for (let i = 0; i < n; i++) sab += (A[i] - ma) * (B[i] - mb);
+      return (aE.s > 1e-12 && bE.s > 1e-12) ? sab / Math.sqrt(aE.s * bE.s) : 0;
+    };
     const cands = [];
     for (const sy in dailyCache) {
       if (sy === symbol) continue;
@@ -27575,7 +27658,10 @@ async function flowPeerFeat(DB, symbol, market, dailyCache) {
       if ((market === "kr") !== isKR) continue;      // 같은 시장끼리만
       const d = dailyCache[sy];
       if (!d || !Array.isArray(d.closes) || d.closes.length < 25) continue;
-      const c = _corr(mine, _logret(d.closes, 60));
+      const _pe = _peerSeries(dailyCache, sy);
+      let c = null;
+      if (_meS && _pe) c = _corrFast(_meS, _pe);
+      if (c == null) c = _corr(mine, _pe ? _pe.v : _logret(d.closes, 60));
       if (c > 0.25) cands.push({ sy: sy, c: c });
       if (cands.length > 400) break;                  // 상한 — CPU 보호
     }
@@ -28081,7 +28167,11 @@ async function analystDetail(DB, symbol, force) {
 async function flowFetchPositioning(DB, symbol, opts) {
   try {
     const key = "flowpos:" + symbol;
-    const cached = await getState(DB, key, null);
+    /* [V33.304] 사이클 프리로드 표가 있으면 D1 왕복을 하지 않는다 — 표는 '있음/없음' 이
+       확정돼 있으므로 없는 키를 다시 묻는 것도 낭비다(그게 왕복 248회의 절반이었다). */
+    const _pre = (opts && opts.pre) || null;
+    const cached = _pre ? (Object.prototype.hasOwnProperty.call(_pre, key) ? _pre[key] : null)
+                        : await getState(DB, key, null);
     if (cached && (Date.now() - _num(cached.ts, 0)) < 20 * 3600000) return cached.v;
     // [V33.172] ★평가 루프 안에서는 네트워크 갱신을 하지 않는다★ — 아래 flowFetchPutCall 도 같다.
     //   이 두 함수는 종목마다 야후를 때린다(quoteSummary 3모듈 + 옵션체인 전량).
@@ -28125,6 +28215,8 @@ async function flowFetchPositioning(DB, symbol, opts) {
       instOwn: inst != null ? _clamp(inst, 0, 1) : null
     };
     await setState(DB, key, { v: v, ts: Date.now() });
+    // [V33.304] 같은 사이클 안에서 프리로드 표와 어긋나지 않게 방금 받은 값을 표에도 넣는다.
+    if (_pre) _pre[key] = { v: v, ts: Date.now() };
     return v;
   } catch (e) { return null; }
 }
@@ -28134,7 +28226,9 @@ async function flowFetchPutCall(DB, symbol, opts) {
   try {
     if (/\.(KS|KQ)$/.test(symbol) || /=F$/.test(symbol)) return null;
     const key = "flowopt:" + symbol;
-    const cached = await getState(DB, key, null);
+    const _pre = (opts && opts.pre) || null;   // [V33.304] 위 flowFetchPositioning 과 같은 이유
+    const cached = _pre ? (Object.prototype.hasOwnProperty.call(_pre, key) ? _pre[key] : null)
+                        : await getState(DB, key, null);
     if (cached && (Date.now() - _num(cached.ts, 0)) < 20 * 3600000) return cached.v;
     if (opts && opts.noFetch) return cached ? cached.v : null;   // [V33.172] 평가 루프에서는 옵션체인을 받지 않는다
     if (fetchBudgetLeft() < 3) return cached ? cached.v : null;
@@ -28148,6 +28242,8 @@ async function flowFetchPutCall(DB, symbol, opts) {
     // 로그비율 — 0 중심 대칭(1.0 배면 0). 극단값 클램프.
     const v = (cOI > 0 && pOI > 0) ? _clamp(Math.log(pOI / cOI), -2, 2) : null;
     await setState(DB, key, { v: v, ts: Date.now() });
+    // [V33.304] 같은 사이클 안에서 프리로드 표와 어긋나지 않게 방금 받은 값을 표에도 넣는다.
+    if (_pre) _pre[key] = { v: v, ts: Date.now() };
     return v;
   } catch (e) { return null; }
 }
@@ -46679,6 +46775,7 @@ export {
   mlDeepDecide,                     // [V33.267] 검사가 위원회를 ★직접 돌려★ 표가 실제로 들어가는지 본다
   dualHeadJudge, _boostersCached,   // [V33.257] 자가진단 명단 검사가 '위원회가 쓰는 그 함수' 를 직접 돌린다
   buildRoster, rosterCls, rosterTally, ROSTER_STATE_TXT,   // [V33.301] 명부 — 두 화면이 같은 함수를 부른다
+  flowPeerFeat, _peerSeries,   // [V33.304] 피어 상관 — 검사가 옛 구현과 값·속도를 직접 대조한다
   DEFAULT_CFG, AI_PARAMS, migrateCfgToMarkets, evaluateAllStrategies, evaluateTrendEntry, evaluateSnapEntry,
   evaluateSell, backtestSymbol, backtestStats, backtestStatsBySignal,
   getRSI, getMA, getATR, getNDayHigh, getStrategyRules, fetchDailyForBacktest,
