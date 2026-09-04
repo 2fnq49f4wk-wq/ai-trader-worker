@@ -31,6 +31,15 @@ on:
         description: '본문도 함께 싣는다 (앞부분 몇 글자, 0이면 끄기)'
         type: string
         default: '0'
+      # [V33.302] ★앞부분 몇 글자★ 로는 필요한 필드에 못 닿는다.
+      #   /api/nn-viz 응답은 앞쪽 수천 글자가 피처 이름·계수라, 정작 봐야 할
+      #   fwdN·fwdDays·valICeff 는 잘려 나간다. 실제로 이 도구로 진단하려다
+      #   두 번 헛돌았다 — 자를 자리를 사람이 못 정한다.
+      #   → 키 이름으로 고른다. 스칼라 잎만 'a.b.c = 값' 으로 평평하게 찍는다.
+      pick:
+        description: '이 정규식에 맞는 키만 골라 찍는다(예: fwd|valIC|tier|acc)'
+        type: string
+        default: ''
 
 concurrency:
   group: worker-probe
@@ -74,6 +83,7 @@ jobs:
           PATHS: ${{ inputs.paths }}
           TMO: ${{ inputs.timeout }}
           DUMP: ${{ inputs.dump }}
+          PICK: ${{ inputs.pick }}
         run: |
           set +e
           : > probe.txt
@@ -95,6 +105,15 @@ jobs:
               SECS=$(IFS=' '; set -- $OUT; echo "$2")
               SIZE=$(IFS=' '; set -- $OUT; echo "$3")
               printf '%-24s  HTTP %s  %ss  %s bytes\n' "$p" "$CODE" "$SECS" "$SIZE" >> probe.txt
+              # [V33.302] 키로 고르기 — 필요한 필드만 평평하게 찍는다(자를 자리를 사람이 안 정한다).
+              if [ -n "${PICK:-}" ] && [ "$CODE" = "200" ]; then
+                {
+                  echo ""
+                  echo "── $p · 키 '$PICK' ──"
+                  python3 tools/probe-pick.py body.bin "$PICK" 2>&1 || echo "(고르기 실패)"
+                  echo ""
+                } >> probe.txt
+              fi
               # 본문을 실을 때는 ★읽을 수 있게★ 싣는다 — JSON 한 줄이면 눈으로 못 읽는다.
               if [ "${DUMP:-0}" != "0" ] && [ "$CODE" = "200" ]; then
                 {
