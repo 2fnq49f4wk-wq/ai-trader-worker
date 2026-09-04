@@ -32,6 +32,10 @@ this.DNN=DNN; this.DNNW=DNNW; this._coefShrink=_coefShrink;
 `).runInContext(ctx);
 const { DNN, DNNW, _coefShrink } = ctx;
 
+chk(/requireTrustedModel:\s*true/.test(code),
+  "AI_PRIMARY는 신뢰된 DNN/GBDT 중 하나가 있어야 진입한다",
+  "AI_PRIMARY가 신뢰 모델 없이 MIND 단독으로 신규 진입할 수 있다");
+
 const params = (D, hidden) => {
   const dims = [D].concat(hidden).concat([1]);
   let w = 0, b = 0;

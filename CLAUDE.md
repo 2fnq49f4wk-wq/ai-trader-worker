@@ -1,11 +1,14 @@
 # 작업 지침 (사용자 지정)
 
 ## 브랜치·배포
-- **항상 `main` 브랜치에서 직접 작업하고 배포한다.** 별도 feature 브랜치나 PR 우회 없이
-  main에 바로 커밋·푸시한다. (2026-07-20 사용자 지시)
+- Claude와 Codex 모두 작업 전에 루트 `AGENTS.md`와 `AI_HANDOFF.md`를 읽는다.
+- **`main`에서 직접 편집하지 않는다.** 작업별 브랜치에서 커밋하고 PR로 공유한다. 검증된 PR만
+  `main`에 병합하여 프로덕션 배포와 작업 중간 체크포인트를 분리한다.
 - `main` push 시 GitHub Actions `Deploy to Cloudflare Workers`가 프로덕션(Cloudflare Worker)에
   자동 배포한다. `trainer/modal/**` 변경 시 `Deploy Modal Trainer`가 Modal 학습기를 재배포한다.
 - 배포 전 안전게이트: `node --check src/index.js` 통과 필수(구문오류 시 배포 차단).
+- 토큰 소진·중단 가능성이 있으면 완성 전이라도 안전한 최소 단위로 커밋하되, `AI_HANDOFF.md`에
+  미완료 상태·마지막 검증·다음 명령을 기록한다. 다른 AI는 그 커밋부터 이어서 작업한다.
 
 ## 한국주식 종목 추가 규칙
 - 티커는 **네이버 기준**: KOSPI = `.KS`, KOSDAQ = `.KQ` (접미사 주의).
