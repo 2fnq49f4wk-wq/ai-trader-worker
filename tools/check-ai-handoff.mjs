@@ -1,0 +1,35 @@
+import { readFileSync } from "node:fs";
+
+const agents = readFileSync(new URL("../AGENTS.md", import.meta.url), "utf8");
+const claude = readFileSync(new URL("../CLAUDE.md", import.meta.url), "utf8");
+const handoff = readFileSync(new URL("../AI_HANDOFF.md", import.meta.url), "utf8");
+const src = readFileSync(new URL("../src/index.js", import.meta.url), "utf8");
+
+let failures = 0;
+function check(condition, message) {
+  if (condition) console.log("  ok   " + message);
+  else { console.error("  FAIL " + message); failures++; }
+}
+
+check(claude.includes("AGENTS.md") && claude.includes("AI_HANDOFF.md"),
+  "Claude가 공통 규약과 인계 상태를 읽는다");
+check(agents.includes("git status --short --branch") && agents.includes("git log -5 --oneline"),
+  "새 AI가 실제 Git 상태를 먼저 확인한다");
+check(agents.includes("같은 작업 트리에서 두 AI를 동시에 실행하지 않는다"),
+  "동시 편집은 worktree로 격리한다");
+check(agents.includes("토큰이 부족해지거나 작업을 중단하기 전") && agents.includes("커밋"),
+  "토큰 소진 전 커밋 체크포인트 규약이 있다");
+check(/- Status: (complete|in_progress|blocked)/.test(handoff)
+    && /- Branch: \S+/.test(handoff)
+    && /- Last commit: .+/.test(handoff),
+  "인계 문서에 상태·브랜치·마지막 커밋이 있다");
+check(agents.includes("비밀키") && !/(sk-ant-|ghp_|github_pat_)/.test(handoff),
+  "인계 문서가 비밀을 공유하지 않는 계약을 가진다");
+check(/requireTrustedModel:\s*true/.test(src),
+  "AI_PRIMARY는 검증된 DNN/GBDT 없이 신규 진입하지 않는다");
+check(/EXTERNAL_LLM_DISABLED\s*=\s*true/.test(src)
+    && /EXTERNAL_AI_API_DISABLED\s*=\s*true/.test(src),
+  "의도적으로 비활성화한 Claude·외부 AI 정책을 유지한다");
+
+console.log(failures ? `\nAI 인계 계약 위반 ${failures}건` : "\n  ok   AI 인계 계약 통과");
+process.exit(failures ? 1 : 0);
