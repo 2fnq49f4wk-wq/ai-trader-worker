@@ -8,7 +8,7 @@
 - Owner: Claude Code
 - Branch: claude/ai-brain-visualization-sidebar-4shzpz
 - Last commit: HEAD (this change; verify with `git log -1 --oneline`)
-- Scope: V33.306 — MEMO(원형 기억) 학습을 워커에서 Modal로 이관(정합 probe 필수), 워커 폴백 유지
+- Scope: V33.307 — 야간 단계별 비용 계측 + 검사를 PR 에서도 실행(배포는 push 전용)
 - Base: `main`(V33.304) 위에 얹었다. 사용자의 V33.305(검증된 모델만 AI 자율진입 · AGENTS.md ·
   `tools/check-ai-handoff.mjs`)는 `codex/find-issues-with-embedded-ai-models` 에만 있고 아직
   `main` 에 없다 — 그래서 이 문서의 검증 목록에는 `check-ai-handoff.mjs` 를 넣지 않았다.
@@ -32,11 +32,28 @@
   · `memoTrainNightly` 는 그대로 남아 있고, 외부 모델이 30시간 이내로 신선할 때만 적합을
     건너뛴다. ★전진검증은 건너뛰기보다 앞에서 항상 돈다.★
 
+### V33.307 추가분
+
+- 야간 파이프라인 `_stg` 가 단계별 소요시간을 잰다. 느린 단계(≥500ms)만 `ai_stage_cost` 에
+  ★오늘 기록과 합쳐★ 즉시 쓴다 — 파이프라인이 중간에 죽어도 남는다(그게 제일 보고 싶은
+  경우다). 완주 시 `[STAGE-COST]` 한 줄, `/api/ai-mode` 의 `alt.stageCost` 로도 읽는다.
+  → 다음 Modal 이관 대상은 이 표를 하룻밤 받아 보고 고른다. 추측으로 고르지 않는다.
+- `deploy.yml` 이 `pull_request` 에서도 검사 80종을 돌린다. ★배포 성격 단계 5개는
+  `github.event_name == 'push'` 로 막았다★ — PR 이 프로덕션에 배포하면 안 된다.
+  주의: 이미 `if` 를 갖고 있던 단계(`Enable R2 binding`, `R2 status summary`)는 조건을
+  ★합쳐서★ 걸어야 한다. 처음에 `if` 를 한 줄 더 붙였다가 YAML 중복 키로 push 가드가
+  조용히 죽었고(뒤엣것이 이긴다), `tools/check-stage-cost.mjs` ④가 그것을 잡았다.
+
 ## Remaining work
 
-- FLOW·XALPHA·STACK·DUAL 은 아직 워커 학습이다. 같은 방식(정합 probe + 워커 폴백)으로
-  옮길 수 있으나 이번 변경에 포함하지 않았다 — MEMO 가 CPU 의 대부분(k-means 약 14억 회)이라
-  먼저 옮겼고, 나머지는 실제 야간 로그로 비용을 재고 나서 정한다.
+- FLOW·XALPHA·STACK·DUAL 은 아직 워커 학습이다. ★V33.307 의 `alt.stageCost` 를 하룻밤
+  받아 보고 대상을 고른다.★ 현재까지 기록으로 확인된 것:
+  · DUAL — DUALHEAD 주석에 "요청당 128MB 를 넘겨 워커가 죽었다 · train-now dual 이 HTTP 503
+    4회 연속" 이 남아 있다. 그래서 창을 60,000 → 20,000 으로 줄였다. 밖으로 옮기면 그 제약이
+    풀린다. ★단, `DUALHEAD.nonlinear: true` 라 비선형 헤드 경합(lin/gbdt/mlp/blend)까지
+    옮겨야 성능이 안 깎인다★ — 선형만 옮기면 그건 성능 저하다. 추측으로 하지 않는다.
+  · STACK·FLOW·XALPHA — 각자 자기 표(stack/flow/xalpha_samples)로 학습하는데 Modal 은 지금
+    `ml_samples` 만 내려받는다(`/api/ml-export`). 옮기려면 export 경로부터 필요하다.
 - 외부(Modal) 업로드 모델(SEQ·DNN·GBDT·부스터)은 V33.300 의 "홀드아웃 기간이 모자라면
   못 쟀다" 가드를 거치지 않는다. 트레이너가 홀드아웃 달력기간을 함께 올려야 닫힌다.
 - FLOW·XALPHA 는 표본 표 자체가 21일치라 판정 불가 상태다(코드 문제가 아니라 시간 문제).
@@ -47,10 +64,11 @@
   - `node tools/check-model-evidence.mjs`
   - `node tools/check-syntax.mjs src/index.js`
   - `node tools/check-memo-modal.mjs`   (두 언어 정합 — 파이썬을 실제로 돌린다)
+  - `node tools/check-stage-cost.mjs`   (PR 이 배포하지 않는지 — YAML 을 실제로 파싱해 본다)
   - `node tools/check-flow-peer-cpu.mjs` (옛 구현과 값 대조)
   - `node tools/check-holdout-anchor.mjs`
   - `for f in tools/check-*.mjs; do node "$f" >/dev/null || echo "FAIL $f"; done`
-- 이번 세션 실행 결과: 위 전부 통과(게이트 82종), `node --check src/index.js` 통과,
+- 이번 세션 실행 결과: 위 전부 통과(게이트 81종), `node --check src/index.js` 통과,
   `python3 -c compile(modal_train.py)` 통과.
 - 실측 대조값: MEMO 정합 probe 40건 최대 차 1.11e-16 (허용 1e-6).
 
