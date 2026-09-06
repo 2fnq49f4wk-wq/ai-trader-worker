@@ -2981,7 +2981,7 @@ async function applySignalTypeWeights(DB, cfg) {
    화면·자가진단이 계속 "V33.272" 를 보고했다(운영 스냅샷이 그대로 그랬다). 배포는 됐는데
    ★배포됐다는 사실만 거짓말★ 을 하고 있었으니, "내 고침이 올라간 건가" 를 화면으로 확인할
    방법이 없었다. tools/check-build-ver.mjs 가 이제 소스에 적힌 최신 버전과 이 값을 대조한다. */
-const _BUILD_VER = "V33.306";
+const _BUILD_VER = "V33.307";
 
 // ═══ [V33.171] 평가 순서 계획 — ★승격과 순환을 교차해 굶주림을 구조적으로 없앤다★ ═══
 //   V33.50 의 형태트리거는 "급한 몇 종목을 앞으로 당긴다"는 의도였으나, 실제 운영로그에서는
@@ -22199,6 +22199,18 @@ async function handleRequest(request, env, ctx) {
           try { _alt.audit = await getState(env.DB, "ledger_audit", null); } catch (e) {}
           // [V33.95] 게이트 감사 — 고확률 차단이 실제로 손해였는지.
           try { _alt.gate = await getState(env.DB, "gate_audit", null); } catch (e) {}
+          /* [V33.307] 야간 단계별 비용 — "다음엔 뭘 Modal 로 옮길까" 를 추측이 아니라
+             이 표로 정한다. 느린 단계만 기록되므로 목록이 짧다(위 _stg 주석 참조). */
+          try {
+            const _sc = await getState(env.DB, "ai_stage_cost", null);
+            if (_sc && _sc.ms) {
+              const _rows = Object.keys(_sc.ms).map(function (k) { return { nm: k, ms: _num(_sc.ms[k], 0) }; })
+                .sort(function (a, b) { return b.ms - a.ms; });
+              let _tot = 0; for (const r of _rows) _tot += r.ms;
+              _alt.stageCost = { day: _sc.day || null, ts: _num(_sc.ts, null),
+                                 totalMs: _tot, n: _rows.length, top: _rows.slice(0, 10) };
+            }
+          } catch (e) {}
           // [V33.101] 전략별 신호 성과 — 계산·저장까지 해놓고 읽는 곳이 없던 값을 노출한다.
           try {
             const _sss = await getState(env.DB, "signal_stats_strat", null);
@@ -46747,12 +46759,37 @@ export default {
             //   하루 종일 CPU를 태우던 문제 수정. 각 단계가 끝날 때마다 오늘 날짜 도장을 찍어,
             //   재시도는 미완료 단계부터 "이어서" 진행 → 몇 번의 재시도에 걸쳐 반드시 완주한다.
             //   단계 자체가 CPU예산 초과로 죽으면 그 단계부터 재개(멱등 — 각 학습은 재실행 무해).
+            /* ══ [V33.307] ★어느 단계가 얼마를 먹는지 아무도 재고 있지 않았다★ ═══════════
+               V33.306 을 내면서 "다음엔 뭘 Modal 로 옮길까" 를 정하려는데, 근거가 없었다.
+               이 저장소의 규율은 "추측으로 세 번째를 고르지 않는다"(V33.285) 인데 정작
+               ★고를 재료★ 가 없다. 실제로 이 파이프라인은 비용을 사고로만 알아냈다 —
+               DUALHEAD 주석이 그 기록이다: "요청당 128MB 를 넘겨 워커가 죽었다 …
+               train-now dual 이 HTTP 503 을 4회 연속 냈다". 죽고 나서야 알았다는 뜻이다.
+
+               → 단계마다 걸린 시간을 잰다. 계측이라 동작은 하나도 안 바뀐다.
+               ★쓰기를 늘리지 않는다★ — 느린 단계(costMinMs 이상)만 기록한다. 대부분의
+               단계는 수십 ms 라 애초에 관심 밖이고, 관심 있는 것은 몇 개뿐이다.
+               ★중간에 죽어도 남아야 한다★ — 그게 제일 보고 싶은 경우다. 그래서 끝에
+               한 번 몰아 쓰지 않고, 느린 단계가 끝날 때마다 오늘 기록에 ★합쳐★ 쓴다
+               (파이프라인은 죽으면 그 단계부터 재개하므로 기록도 이어 붙어야 한다). */
+            const _stgCost = { day: _aiDay, ms: {}, ts: 0 };
+            try {
+              const _prev = await getState(env.DB, "ai_stage_cost", null);
+              if (_prev && _prev.day === _aiDay && _prev.ms) _stgCost.ms = _prev.ms;
+            } catch (e) {}
+            const _STG_COST_MIN_MS = 500;
             const _stg = async function (nm, fn) {
               try {
                 if ((await getState(env.DB, "ai_stage:" + nm, null)) === _aiDay) return;   // 오늘 이미 완료
+                const _t0 = Date.now();
                 const _r = await fn();
+                const _ms = Date.now() - _t0;
                 if (_r) await log(env.DB, "INFO", null, _r);
                 await setState(env.DB, "ai_stage:" + nm, _aiDay);
+                if (_ms >= _STG_COST_MIN_MS) {
+                  _stgCost.ms[nm] = _ms; _stgCost.ts = Date.now();
+                  try { await setState(env.DB, "ai_stage_cost", _stgCost); } catch (e2) {}
+                }
               } catch (e) { try { await log(env.DB, "ERROR", null, "[STAGE:" + nm + "] " + (e && e.message)); } catch (e2) {} }
             };
             // (1) 반사실 후보 라벨링 — 성숙분(N일 경과)을 손절반영 경로로 라벨링해 표본 편입
@@ -46898,6 +46935,18 @@ export default {
             await setState(env.DB, "ai_trained_day", _aiDay);
             try { await env.DB.prepare("DELETE FROM state WHERE k = 'ai_train_lock'").run(); } catch (e2) {}
             try { await log(env.DB, "INFO", null, "[SCHED] 야간 AI 파이프라인 완주(" + _aiDay + ")"); } catch (e2) {}
+            /* [V33.307] 완주한 날의 비용표를 한 줄로 남긴다 — 다음에 "뭘 옮길까" 를
+               코드를 읽어 추측하지 않고 이 줄을 읽고 정한다. */
+            try {
+              const _rows = Object.keys(_stgCost.ms).map(function (k) { return [k, _num(_stgCost.ms[k], 0)]; })
+                .sort(function (a, b) { return b[1] - a[1]; });
+              if (_rows.length) {
+                let _tot = 0; for (const r of _rows) _tot += r[1];
+                await log(env.DB, "INFO", null, "[STAGE-COST] 총 " + (_tot / 1000).toFixed(1) + "초(" +
+                  _STG_COST_MIN_MS + "ms 이상 " + _rows.length + "단계) — " +
+                  _rows.slice(0, 8).map(function (r) { return r[0] + " " + (r[1] / 1000).toFixed(1) + "s"; }).join(" · "));
+              }
+            } catch (e2) {}
           }
         }
       } catch (e) { try { await log(env.DB, "ERROR", null, "[SCHED] AI train fail: " + e.message); } catch (e2) {} }

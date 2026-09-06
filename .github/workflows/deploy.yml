@@ -1,7 +1,17 @@
 name: Deploy to Cloudflare Workers
 
+# [V33.307] ★검사가 PR 에서 돌지 않으면 "검증된 PR만 병합" 이 성립하지 않는다★
+#   종전엔 main 직접 커밋이 규칙이라 push 하나로 충분했다(검사 → 배포가 한 줄이었다).
+#   그런데 작업 브랜치 + PR 로 바꾸면 검사가 ★병합 후에야★ 돈다 — 프로덕션 배포가
+#   이미 시작된 뒤다. 실제로 PR #5 에 붙은 초록불은 Cloudflare 빌드 하나뿐이었고
+#   게이트 80종은 한 번도 안 돌았다(사람이 로컬에서 돌린 것이 전부였다).
+#   → PR 에서도 같은 검사를 돌린다. ★배포 단계만 push 로 막는다★ — PR 이 프로덕션에
+#     배포하는 일은 절대 없어야 한다(아래 각 배포 단계의 if: github.event_name == 'push').
 on:
   push:
+    branches:
+      - main
+  pull_request:
     branches:
       - main
 
@@ -469,6 +479,12 @@ jobs:
       #   (두 언어가 갈라지면 성적으로만 드러나는 조용한 오염이 된다)
       - name: MEMO 외부학습 검사 (두 언어 정합 · probe 필수 · 워커 폴백 유지)
         run: node tools/check-memo-modal.mjs
+      # [V33.307] ① 야간 단계별 비용을 재는가(다음 이관 대상을 추측이 아니라 표로 고르게)
+      #   ② ★검사는 PR 에서 돌고 배포는 push 에서만 도는가★ — 이 검사가 실제로 사고를 잡았다.
+      #   처음엔 이미 if 를 갖고 있던 두 단계에 if 를 한 줄 더 붙였는데, YAML 중복 키는
+      #   뒤엣것이 이기므로 push 가드가 조용히 죽어 ★PR 이 프로덕션에 배포하는★ 상태였다.
+      - name: 단계비용 계측 · PR 검사 계약 검사 (죽어도 남는 기록 · PR 은 배포 금지)
+        run: node tools/check-stage-cost.mjs
       # [V33.272] STACK 에 SEQ 슬롯. 위원 목록이 이 파일에 손으로 네 번 적혀 있었다 —
       #   하나만 고치고 셋을 놓치면 STACK 이 "그 자리는 boost" 라고 배운 채로 다른 확률을
       #   받는다(성적으로만 드러나는 사고). 지금은 STACK_SLOTS 하나뿐이고, 이 검사가
@@ -524,12 +540,14 @@ jobs:
       # cloudflare/wrangler-action 대신 로컬에서 검증된 방식 그대로 실행
       # (wrangler-action@v3의 npx 자동설치가 4.86.0을 요구하며 실패하던 문제 회피)
       - name: Install wrangler
+        if: github.event_name == 'push'   # [V33.307] PR 에서는 배포하지 않는다(검사만)
         run: npm install -g wrangler@4.100.0
       # [V33.15] 대형모델(DNN 32MB) 전용 R2 버킷을 자동으로 준비한다 — 수동 작업 0.
       #   버킷이 실제로 존재하는 것을 확인했을 때만 wrangler.toml 의 바인딩 주석을 푼다(러너 안에서만).
       #   토큰에 R2 권한이 없거나 R2 미활성 계정이면 ok=false 로 떨어진다. 대형모델은 D1 청크로
       #   폴백하지만(그 경로는 실제로 동작한다), ★장중 표본 수집은 V33.110 부터 중단된다★.
       - name: Prepare R2 bucket for big models
+        if: github.event_name == 'push'   # [V33.307] PR 에서는 배포하지 않는다(검사만)
         id: r2
         continue-on-error: true
         env:
@@ -567,7 +585,9 @@ jobs:
           fi
           exit 0
       - name: Enable R2 binding
-        if: steps.r2.outputs.ok == 'true'
+        # [V33.307] 기존 조건과 ★합쳐서★ 건다 — if 를 두 줄 쓰면 YAML 중복 키가 되어
+        #   뒤엣것이 이기고 push 가드가 조용히 죽는다(PR 이 배포한다).
+        if: github.event_name == 'push' && steps.r2.outputs.ok == 'true'
         run: |
           set -e
           sed -i \
@@ -587,7 +607,7 @@ jobs:
           grep -q '^bucket_name = "ai-trader-models"' wrangler.toml || { echo "::error::bucket_name 줄 해제 실패"; exit 1; }
           echo "✅ R2 바인딩 활성화 확인"
       - name: R2 status summary
-        if: always()
+        if: always() && github.event_name == 'push'   # [V33.307] 위와 같은 이유로 합쳐서 건다
         run: |
           if grep -q '^\[\[r2_buckets\]\]' wrangler.toml; then
             echo "### ✅ R2 바인딩 활성 — 장중 표본이 R2 경로로 쌓인다" >> "$GITHUB_STEP_SUMMARY"
@@ -600,6 +620,7 @@ jobs:
             echo "Cloudflare 대시보드에서 R2 를 활성화한 뒤 다시 push 하면 자동으로 붙는다." >> "$GITHUB_STEP_SUMMARY"
           fi
       - name: Deploy
+        if: github.event_name == 'push'   # [V33.307] PR 에서는 배포하지 않는다(검사만)
         run: wrangler deploy
         env:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
