@@ -6,9 +6,9 @@
 
 - Status: complete
 - Owner: Claude Code
-- Branch: claude/ai-brain-visualization-sidebar-4shzpz
+- Branch: `main` (직접 작업 — 2026-09-07 사용자 지시 "항상 main에 작업")
 - Last commit: HEAD (this change; verify with `git log -1 --oneline`)
-- Scope: V33.307 — 야간 단계별 비용 계측 + 검사를 PR 에서도 실행(배포는 push 전용)
+- Scope: V33.308 — 두뇌 관측 탭 전환 시 다른 모델이 보이던 버그
 - Base: `main`(V33.304) 위에 얹었다. 사용자의 V33.305(검증된 모델만 AI 자율진입 · AGENTS.md ·
   `tools/check-ai-handoff.mjs`)는 `codex/find-issues-with-embedded-ai-models` 에만 있고 아직
   `main` 에 없다 — 그래서 이 문서의 검증 목록에는 `check-ai-handoff.mjs` 를 넣지 않았다.
@@ -31,6 +31,23 @@
     심사받지 않게 한다.
   · `memoTrainNightly` 는 그대로 남아 있고, 외부 모델이 30시간 이내로 신선할 때만 적합을
     건너뛴다. ★전진검증은 건너뛰기보다 앞에서 항상 돈다.★
+
+### V33.308 추가분
+
+- ★두뇌 관측에서 탭을 옮기면 다른 모델 그림이 나왔다(주로 DNN).★ 원인이 셋이었다:
+  · openNnViz 를 부르는 자리가 다섯(탭 클릭 · 화면 전환 · showPage · resize · 새로고침)인데
+    ★도착 순서대로 무조건 그렸다★. 제일 무거운 DNN 응답(21MB 청크)이 뒤늦게 와서 덮었다.
+  · `NNV_render` 분기가 kind 를 보다가 아무 데도 안 걸리면 ★말없이 DNN 렌더러로 떨어졌다★.
+    `mlDNNVizData` 만 kind 를 안 달고 있어서, 늦은 응답·옛 캐시·모르는 모델키 셋이 전부
+    "DNN" 이라는 한 증상으로 나왔다.
+  · `NNV.curKey` 를 응답이 온 뒤에 바꿔서, 캐시로 먼저 그린 첫 화면이 ★이전 모델의 합류
+    상태★ 를 이름표로 달았다(V33.306 이후).
+- 고침: 응답에 `reqModel`·`kind`(DNN 포함 전 경로) 를 새기고, 화면은 보낸 순서(`NNV.seq`)를
+  세어 최신 요청의 응답만 그린다. 모델이 어긋나면 `NNV_render` 가 `false` 를 돌려주고
+  아무것도 안 그린다 — 캐시에도 안 남긴다. `curKey` 는 요청을 보내는 순간 맞춘다.
+- `tools/check-nnviz-switch.mjs` — 가짜 DOM·가짜 fetch 로 그 경합을 ★실제로 재현해★ 본다
+  (느린 DNN → 빠른 MEMO). 변이(순서 표 제거 / kind 확인 제거)를 넣으면 실패한다.
+  탭 목록 14개 키가 전부 서버 분기에 있는지도 본다 — 모르는 키는 기본값 DNN 으로 샌다.
 
 ### V33.307 추가분
 

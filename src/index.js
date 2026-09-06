@@ -2981,7 +2981,7 @@ async function applySignalTypeWeights(DB, cfg) {
    화면·자가진단이 계속 "V33.272" 를 보고했다(운영 스냅샷이 그대로 그랬다). 배포는 됐는데
    ★배포됐다는 사실만 거짓말★ 을 하고 있었으니, "내 고침이 올라간 건가" 를 화면으로 확인할
    방법이 없었다. tools/check-build-ver.mjs 가 이제 소스에 적힌 최신 버전과 이 값을 대조한다. */
-const _BUILD_VER = "V33.307";
+const _BUILD_VER = "V33.308";
 
 // ═══ [V33.171] 평가 순서 계획 — ★승격과 순환을 교차해 굶주림을 구조적으로 없앤다★ ═══
 //   V33.50 의 형태트리거는 "급한 몇 종목을 앞으로 당긴다"는 의도였으나, 실제 운영로그에서는
@@ -22692,6 +22692,7 @@ async function handleRequest(request, env, ctx) {
         ).first();
         _ov.cache = { dailyN: _num(_cc && _cc.n, 0), dailyDays: _num(_cc && _cc.w, 0) };
       } catch (e) { _ov.cache = null; }
+      _ov.reqModel = "overview";
       return Response.json(_ov, { headers: cors });
     }
 
@@ -22707,6 +22708,19 @@ async function handleRequest(request, env, ctx) {
       /* [V33.301] 모델 탭 하나만 열어도 ★명부를 함께 싣는다★ — 그 탭의 '합류 상태' 글자와
          옆 탭의 점이 서로 다른 근거로 그려지면 그게 곧 이 사고의 다음 재발이다. */
       try { if (data && typeof data === "object") data.roster = await buildRoster(env.DB); } catch (e) {}
+      /* [V33.308] ★응답은 자기가 어느 탭의 것인지 반드시 말한다.★
+         종전엔 화면이 "이 그림이 내가 누른 탭의 것인가" 를 확인할 방법이 없었다. 탭을 빨리
+         옮기면 ★먼저 보낸 느린 응답이 나중에 도착해 새 탭 화면을 덮어썼다★ — DNN 이
+         제일 무거워서(21MB 청크) 대개 DNN 이 뒤늦게 튀어나왔다. "memo 를 눌렀는데 dnn 이
+         보인다" 가 그것이다. 화면은 reqModel 로 응답을 골라 버릴 수 있어야 한다.
+         그리고 kind 는 모델키와 같아야 한다(overview·mind·gbdt…·dnn 전부) — 어긋나면
+         화면의 분기가 엉뚱한 렌더러로 간다. 서버가 먼저 확인한다. */
+      try {
+        if (data && typeof data === "object") {
+          data.reqModel = modelSel;
+          if (data.kind !== modelSel) data.kindMismatch = String(data.kind == null ? "(없음)" : data.kind);
+        }
+      } catch (e) {}
       return Response.json(data, { headers: cors });
     }
 
@@ -38753,6 +38767,7 @@ async function mlDNNVizData(DB) {
       if (gtrust) committeeC.push({ name: "GBDT", role: "부스팅트리", acc: +_num(gtrust.gbdtAccLB, _num(gtrust.gbdtAcc, 0)).toFixed(3), w: _num(gtrust.wGbdt, 0), trusted: !!gtrust.trusted });
       { const _sr = _seqRosterRow(strust); if (_sr) committeeC.push(_sr); }
       return Object.assign({}, _cachedHeavy, {
+        kind: "dnn",
         trust: trust ? { wDnn: trust.wDnn, trusted: !!trust.trusted, dnnAcc: trust.dnnAcc } : null,
         active: !!(trust && trust.trusted && _num(trust.wDnn, 0) > 0),
         committee: committeeC,
@@ -38768,7 +38783,7 @@ async function mlDNNVizData(DB) {
          ★세어서★ 내려보낸다. 미학습 미리보기는 정식(GPU) 구조 기준이고, 워커 폴백이 만들
          구조는 따로 함께 싣는다 — 둘은 다른 망이고 화면이 그걸 구분할 수 있어야 한다. */
       const _dimsPrev = [_fn.length].concat(DNN.hidden).concat([1]);
-      return { trained: false, hidden: DNN.hidden, dims: _dimsPrev, inputDim: _fn.length, seeds: DNN.seeds, trust: trust || null,
+      return { kind: "dnn", trained: false, hidden: DNN.hidden, dims: _dimsPrev, inputDim: _fn.length, seeds: DNN.seeds, trust: trust || null,
         paramsPerNet: _dnnParamCount(_dimsPrev), params: _dnnParamCount(_dimsPrev) * Math.max(1, _num(DNN.seeds, 1)),
         workerDims: [_fn.length].concat(DNNW.hidden).concat([1]),
         workerParamsPerNet: _dnnParamCount([_fn.length].concat(DNNW.hidden).concat([1])),
@@ -38847,11 +38862,12 @@ async function mlDNNVizData(DB) {
     };
     if (_meta && _meta.ts) { try { await setState(DB, "nn_viz_cache", { metaTs: _meta.ts, heavy: heavy }); } catch (e) {} }
     return Object.assign({}, heavy, {
+      kind: "dnn",
       trust: trust ? { wDnn: trust.wDnn, trusted: !!trust.trusted, dnnAcc: trust.dnnAcc } : null,
       active: active, committee: committee,
       config: { dropout: DNN.dropout, adamW: !!DNN.adamW, cosineLR: !!DNN.cosineLR, optimizer: DNN.adamW ? "AdamW+cosine" : "Adam", batchNorm: true, arch: "심층 MLP + BatchNorm(추론 fold)" }
     });
-  } catch (e) { return { trained: false, error: e && e.message }; }
+  } catch (e) { return { kind: "dnn", trained: false, error: e && e.message }; }
 }
 
 // ============================================================================

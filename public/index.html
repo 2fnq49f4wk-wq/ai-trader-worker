@@ -8,7 +8,7 @@
      인데, 지금까지 화면에서 그걸 알 방법이 전혀 없었다(카카오톡 인앱 브라우저는 특히 강하게 캐시한다).
      서버가 내려주는 build 와 이 값을 비교해 다르면 배너로 알린다.
      ※ src/index.js 의 _BUILD_VER 와 항상 같아야 한다 — check-html-js 가 강제한다. -->
-<meta name="lux-build" content="V33.307">
+<meta name="lux-build" content="V33.308">
 <title>LUX-ENGINE V10</title>
 <!-- ══ [V33.156] 설치형 앱(PWA) — 폰·PC 에서 홈화면/독에 담아 앱처럼 연다 ══
      · manifest  : 이름·아이콘·standalone 표시(주소창 없이 앱처럼)
@@ -13903,7 +13903,11 @@ html[data-theme="light"] #page-nnviz .nlv-sec-h{ border-color:transparent; color
 </style>
 <script>
 (function(){
-  var NNV = { timer:null, model:'overview' };
+  /* [V33.308] seq — ★보낸 순서★ 를 세는 표. 응답이 도착했을 때 이 표가 아직 최신이면
+     그 그림은 지금 보고 있는 탭의 것이고, 아니면 이미 지나간 탭의 것이라 버린다.
+     curKey 는 '지금 화면이 누구를 그리고 있는가' — 렌더러들이 이 값으로 합류 상태를
+     읽으므로(LUXR.tag) 응답이 아니라 ★요청을 보내는 순간★ 에 맞춘다. */
+  var NNV = { timer:null, model:'overview', seq:0, curKey:'overview' };
   // [V12.36] 두뇌 모델 탭 전환 — DNN(레이어 SVG) / MIND·GBDT(피처 영향도 막대)
   window.switchNnModel = function(m){
     if(NNV.model===m) return;
@@ -13952,24 +13956,36 @@ html[data-theme="light"] #page-nnviz .nlv-sec-h{ border-color:transparent; color
     var stage=document.getElementById('nnvStage'); if(!stage) return;
     var model = NNV.model || 'overview';
     var cacheKey = 'nnvCache_'+model;
+    /* [V33.308] ★탭을 옮기면 이전 탭의 응답은 그 순간 무효다.★
+       이 함수를 부르는 자리가 여럿이다 — 탭 클릭(switchNnModel) · 화면 전환(setBrainView) ·
+       showPage('nnviz') · resize/orientationchange 재로드 · 헤더 새로고침. 그래서 요청이
+       겹치는데 종전엔 ★도착 순서대로 무조건 그렸다★. 앞서 보낸 무거운 응답(DNN 은 21MB
+       청크라 제일 느리다)이 뒤늦게 도착해 새 탭 그림을 덮었고, 그게 "memo 를 눌렀는데
+       dnn 이 보인다" 였다. 보낸 순서를 세어 최신 요청의 응답만 그린다.
+       curKey 도 여기서 맞춘다 — 응답을 기다렸다 바꾸면 캐시로 먼저 그린 첫 화면이
+       ★이전 모델의 합류 상태★ 를 이름표로 달게 된다(V33.306 이후). */
+    NNV.curKey = model;
+    var reqId = ++NNV.seq;
     // [V12.5 로딩속도] 마지막 성공 데이터로 즉시 렌더(체감 0ms) → 백그라운드로 최신 데이터 갱신
     var painted=false;
     if(!refreshOnly){
-      try{ var c=localStorage.getItem(cacheKey); if(c){ NNV_render(JSON.parse(c)); painted=true; } }catch(e){}
+      try{ var c=localStorage.getItem(cacheKey); if(c){ painted = (NNV_render(JSON.parse(c), model) !== false); } }catch(e){}
       if(!painted) stage.innerHTML='<div class="nnv-empty">불러오는 중…</div>';
     } else if(modelSwitch){
       // 모델 탭 전환 시엔 이전 모델 화면이 잔상으로 남지 않게 즉시 로딩 표시
       stage.innerHTML='<div class="nnv-empty">불러오는 중…</div>';
-      try{ var c2=localStorage.getItem(cacheKey); if(c2){ NNV_render(JSON.parse(c2)); painted=true; } }catch(e){}
+      try{ var c2=localStorage.getItem(cacheKey); if(c2){ painted = (NNV_render(JSON.parse(c2), model) !== false); } }catch(e){}
     }
     fetch('/api/nn-viz?model='+encodeURIComponent(model)).then(function(r){return r.json();}).then(function(d){
+      if(reqId !== NNV.seq) return;   // ★이미 다른 탭으로 옮겼다 — 이 응답은 그 화면의 것이 아니다★
       /* [V33.301] 어느 탭을 열든 명부부터 넣는다. 아래 렌더러들은 '합류 상태' 를
          d.admit 으로 다시 계산하지 않고 이 명부에서 읽는다. */
       try { if (d && d.roster) LUXR.set(d.roster, 'nn-viz:'+model); } catch(e){}
       NNV.curKey = model;
-      NNV_render(d);
+      if(NNV_render(d, model) === false) return;   // 모델이 어긋난 응답은 캐시에도 남기지 않는다
       try{ localStorage.setItem(cacheKey, JSON.stringify(d)); }catch(e){}
     })['catch'](function(e){
+      if(reqId !== NNV.seq) return;   // 지나간 탭의 실패로 지금 화면을 덮지 않는다
       /* [V33.198] ★"엔진이 응답하지 않습니다" 는 거짓일 수 있다.★ 이 catch 는 통신 실패뿐
          아니라 ★렌더러가 던진 예외★ 에도 걸린다. 실제로 V33.195 의 ReferenceError 가 여기로
          떨어져, 서버가 200 을 정상 반환하는 동안 화면은 엔진을 탓하고 있었다.
@@ -14682,7 +14698,28 @@ html[data-theme="light"] #page-nnviz .nlv-sec-h{ border-color:transparent; color
     comm.innerHTML='';
   }
 
-  function NNV_render(d){
+  function NNV_render(d, want){
+    /* [V33.308] ★이 그림이 지금 누른 탭의 것인지 먼저 확인한다.★
+       종전 분기는 아래에서 kind 를 하나씩 보다가, 아무 데도 안 걸리면 ★말없이 DNN 렌더러★
+       로 떨어졌다. 그래서 (ㄱ) 늦게 온 다른 탭 응답 (ㄴ) kind 가 없는 옛 localStorage 캐시
+       (ㄷ) 서버가 모르는 모델키 — 셋 다 화면엔 "DNN" 으로 나왔다. 원인은 셋인데 증상이
+       하나라 어디가 틀렸는지 알 수도 없었다. 이제 DNN 도 kind:"dnn" 을 명시로 받는다.
+       규칙 하나: ★응답의 kind 는 요청한 모델키와 같아야 한다★(overview·mind·gbdt·xgb·
+       lgb·cat·flow·xalpha·memo·seq·stack·dualbull·dualbear·dnn 전부 그렇게 맞춰져 있다).
+       어긋나면 그리지 않고 false 를 돌려준다 — 호출한 쪽이 '안 그려졌다' 를 알 수 있게.
+       kind 가 아예 없는 payload 는 옛 캐시뿐이고, 그건 DNN 탭에서만 통과시킨다. */
+    if(want == null) want = NNV.curKey || NNV.model || 'overview';
+    if(d && typeof d === 'object'){
+      if(d.reqModel && d.reqModel !== want){
+        console.warn('[NNV] 다른 탭의 응답이라 버린다 — 응답', d.reqModel, '≠ 요청', want);
+        return false;
+      }
+      var _k = d.kind || null;
+      if(_k ? (_k !== want) : (want !== 'dnn')){
+        console.warn('[NNV] 모델이 어긋난 데이터라 그리지 않는다 — kind', _k, '≠ 요청', want);
+        return false;
+      }
+    }
     // [V12.3] 노드 클릭 툴팁용 — 입력 피처명 → 역할 맵
     NNV.roles={}; try{ ((d&&(d.inputFeatures||d.topFeatures))||[]).forEach(function(f){ if(f&&f.name) NNV.roles[f.name]={role:f.role||''}; }); }catch(e){}
     var stage=document.getElementById('nnvStage'), chips=document.getElementById('nnvChips'),
@@ -14698,6 +14735,8 @@ html[data-theme="light"] #page-nnviz .nlv-sec-h{ border-color:transparent; color
        시점을 보는가" 가 접혀 사라진다 — 그게 이 모델을 넣은 이유인데. 전용 3D 렌더러로. */
     if(d && d.kind === 'seq'){ NNV_renderSeq3D(d); return; }
     if(d && d.kind && ['flow','xalpha','dualbull','dualbear'].indexOf(d.kind) !== -1){ NNV_renderLinear(d); return; }
+    /* [V33.308] 여기까지 온 kind 는 위 확인을 통과했으니 요청한 탭의 것이다.
+       dnn 만 아래 층 렌더러로 가고, 나머지 알려진 위원은 경량 렌더러로 간다. */
     if(d && d.kind && d.kind!=='dnn'){ NNV_renderSimple(d); return; }
     if(!d || !d.trained){
       // [V10] 미학습이어도 구조(dims)로 미리보기 시각화 — 영상처럼 지금 바로 신경망을 볼 수 있게.
