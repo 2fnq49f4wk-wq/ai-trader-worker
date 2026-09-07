@@ -298,20 +298,24 @@ try {
   rtBad += pbad;
 } catch (e) { console.error("  FAIL 파이프라인 폰 레이아웃 검사 실패:", e.message); rtBad += 1; }
 
-// ── [V33.153] 구조 관측 모델 목록은 그 뷰에서만 보인다 ──────────────────────
-//   작동 화면에서는 누를 이유가 없는 버튼 12개가 사이드바 세로 예산만 먹었다.
-//   ★표시 여부와 활성 표시가 한 함수에서 나와야★ '보이는데 활성표시가 없는' 어긋난 상태가 없다.
+// ── [V33.313] 작동 화면·구조 관측을 한 창으로 합쳤다 — 뷰 전환 자체가 없다 ──
+//   V33.153 은 "모델 목록은 구조 관측 뷰에서만 보인다"를 지켰다. 이제 구조 관측이
+//   늘 보이므로 그 전제 자체가 사라졌다 — 사이드바의 중복 목록(railModelsSec)과
+//   뷰 전환 버튼(#railViews)을 걷어냈다. 남아 있으면 오히려 ★죽은 UI★ 다.
 try {
   const hr = readFileSync(new URL("../public/index.html", import.meta.url), "utf8");
   let sbad = 0;
-  if (/function syncRailModels\(active\)\{[\s\S]{0,320}?railModelsSec[\s\S]{0,120}?BVIEW === 'struct'/.test(hr))
-    console.log("  ok   모델 목록 표시를 syncRailModels 가 BVIEW 로 정한다(활성 표시와 같은 곳)");
-  else { sbad++; console.error("  FAIL 모델 목록 표시가 뷰와 연결돼 있지 않다 — 작동 화면에서도 버튼이 남는다"); }
-  if (/id="railModelsSec" style="display:none;"/.test(hr))
-    console.log("  ok   초기값이 숨김 — 부팅 직후 한 프레임 깜빡였다가 사라지지 않는다");
-  else { sbad++; console.error("  FAIL 모델 목록 초기값이 '보임' — 작동 화면 부팅 시 깜빡인다"); }
+  if (!/id="railModelsSec"/.test(hr))
+    console.log("  ok   사이드바 중복 모델 목록(railModelsSec)이 없다 — 신경망 지도 하나만 남았다");
+  else { sbad++; console.error("  FAIL railModelsSec 이 아직 있다 — 전환할 뷰가 없는데 죽은 UI가 남았다"); }
+  if (!/id="railViews"/.test(hr))
+    console.log("  ok   사이드바 뷰 전환 버튼(#railViews)이 없다 — 전환할 데가 없다");
+  else { sbad++; console.error("  FAIL #railViews 가 아직 있다 — 전환할 뷰가 없는데 버튼이 남았다"); }
+  if (/id="nnvStruct" class="nnv-struct-sec"/.test(hr) && !/id="nnvStruct" style="display:none/.test(hr))
+    console.log("  ok   구조 관측(#nnvStruct)이 부팅 시 숨겨져 있지 않다 — 작동 화면과 늘 함께 보인다");
+  else { sbad++; console.error("  FAIL #nnvStruct 가 여전히 숨김으로 시작한다 — 합쳤다는 말과 다르다"); }
   rtBad += sbad;
-} catch (e) { console.error("  FAIL 모델 목록 표시 검사 실패:", e.message); rtBad += 1; }
+} catch (e) { console.error("  FAIL 뷰 합침 검사 실패:", e.message); rtBad += 1; }
 
 // ── [V33.153] 위원회 구성은 깔때기 카드 ★안에 있으면 안 된다★ ────────────────
 //   V33.149 는 '자리가 남아서' 깔때기 카드 안에 넣었는데, 그러자 히어로 두 카드의 무게가

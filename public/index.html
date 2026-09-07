@@ -8,7 +8,7 @@
      인데, 지금까지 화면에서 그걸 알 방법이 전혀 없었다(카카오톡 인앱 브라우저는 특히 강하게 캐시한다).
      서버가 내려주는 build 와 이 값을 비교해 다르면 배너로 알린다.
      ※ src/index.js 의 _BUILD_VER 와 항상 같아야 한다 — check-html-js 가 강제한다. -->
-<meta name="lux-build" content="V33.312">
+<meta name="lux-build" content="V33.313">
 <title>LUX-ENGINE V10</title>
 <!-- ══ [V33.156] 설치형 앱(PWA) — 폰·PC 에서 홈화면/독에 담아 앱처럼 연다 ══
      · manifest  : 이름·아이콘·standalone 표시(주소창 없이 앱처럼)
@@ -4471,9 +4471,8 @@ html[data-theme="light"] .m-brainbar button.active{color:#0b4f9e;background:rgba
       <div class="nlv-picks-grid" id="nlvPicksGrid"><div class="nlv-empty">후보 종목을 불러오는 중…</div></div>
     </div>
 
-    <!-- [V33.1] 구조 관측 뷰 — 기본 숨김. 우측 사이드바에서 "구조 관측"으로 전환할 때만 표시·로드된다.
-         (작동 화면만 볼 땐 무거운 /api/nn-viz 요청과 SVG 렌더가 아예 발생하지 않음) -->
-    <div id="nnvStruct" style="display:none;">
+    <!-- [V33.313] 작동 화면·구조 관측을 한 창으로 합쳤다(사용자 지시) — 더 이상 감추지 않는다. -->
+    <div id="nnvStruct" class="nnv-struct-sec">
     <div class="nnv-tabs nnv-nav" id="nnvTabs">
       <!-- [V33.215] ★탭 13개가 가로 스크롤 알약 안에 숨어 있었다.★
            overflow-x:auto 에 스크롤바까지 감춰 놓아, 데스크톱에서는 오른쪽으로 밀려난
@@ -17536,8 +17535,6 @@ html:root .page > *{ flex-shrink:0; }
     // 현재 어떤 화면인지 사이드바가 스스로 표시하고, 두뇌가 아니면 "돌아가기"를 띄운다.
     var back = $id('railBack');
     if(back) back.style.display = (pageId === 'nnviz') ? 'none' : '';
-    var views = $id('railViews');
-    if(views) views.style.display = (pageId === 'nnviz') ? '' : 'none';
     var lbl = $id('railWhere');
     if(lbl) lbl.textContent = ({ report:'AI 리포트', whatif:'WHAT-IF' })[pageId] || 'AI 두뇌';
     var links = document.querySelectorAll('.rail-link');
@@ -17556,26 +17553,9 @@ html:root .page > *{ flex-shrink:0; }
         +'<span class="rail-title"><b id="railWhere">AI 두뇌</b></span>'
         +'<button type="button" class="rail-btn" id="railDensity" title="터미널 밀도 — 대시보드를 조밀한 터미널 그리드로 전환/해제">▮</button>'
       +'</div>'
-      // ── 뷰 전환: 작동 화면 ↔ 구조 관측 (구조는 여기서 켤 때만 로드된다)
-      +'<div class="rail-views" id="railViews">'
-        +'<button type="button" class="rail-view active" data-view="live" title="작동 화면 — AI 스캔·판정"><b><span class="ic">◉</span><span class="tx">작동 화면</span></b><small>스캔·판정 실시간</small></button>'
-        +'<button type="button" class="rail-view" data-view="struct" title="구조 관측 — 모델 내부 구조·가중치"><b><span class="ic">◈</span><span class="tx">구조 관측</span></b><small>모델 내부·가중치</small></button>'
-      +'</div>'
-      // ── 구조 관측 전용: 모델 선택(DNN·MIND·GBDT·XGB·LGB·Cat). 구조 뷰일 때만 펼쳐진다.
-      // 구조 관측 전용 — 부팅 시점에 이미 숨겨 두고, syncRailModels 가 뷰에 맞춰 켠다.
-      //   (기본값을 '보임' 으로 두면 부팅 직후 한 프레임 깜빡였다가 사라진다)
-      /* [V33.215] ★같은 탐색을 두 곳에서 하지 않는다.★
-         종전엔 화면 안 탭 13개와 사이드바 버튼 13개가 ★완전히 같은 일★ 을 했다.
-         둘 다 유지하려니 목록을 두 곳에 적어야 했고(그래서 배선 검사가 '사이드바/탭 불일치'
-         라는 항목을 따로 갖고 있다), 사이드바의 세로 예산도 13칸을 먹었다.
-         이제 모델 선택은 ★화면 안 그리드 하나★ 로 모은다 — 거기서는 층으로 묶이고
-         상태 점까지 붙으므로 사이드바 목록보다 말해 주는 것이 많다.
-         사이드바에는 '지금 무엇을 보고 있나 + 거기로 가는 길' 만 남긴다. */
-      +'<div class="rail-sec" id="railModelsSec" style="display:none;">'
-        +'<div class="rail-sec-h">지금 보는 모델</div>'
-        +'<div class="rail-now" id="railNow">전체 구조</div>'
-        +'<div class="rail-hint">모델 선택은 화면 위쪽 <b>신경망 지도</b>에서 — 층별로 묶여 있고 점이 합류 상태를 보여준다.</div>'
-      +'</div>'
+      /* [V33.313] ★작동 화면·구조 관측이 한 창으로 합쳐지면서 이 두 구역은 뜻을 잃었다★ —
+         전환할 데가 없으니 "작동 화면/구조 관측" 버튼도, "지금 보는 모델" 표시도 필요 없다.
+         모델 선택은 화면 위쪽 신경망 지도(#nnvTabs)가 늘 보이는 채로 그 일을 한다. */
       +'<div class="rail-body" id="railBody">'
         /* [V33.219] ★한눈 요약 — 글이 아니라 도형으로.★
            아래 'AI 운용 상태' 는 정확하지만 빽빽한 표라, 사이드바를 열자마자 알고 싶은 셋
@@ -17598,10 +17578,6 @@ html:root .page > *{ flex-shrink:0; }
     shell.appendChild(el);
     RAIL.el = el; RAIL.body = $id('railStocks'); RAIL.cnt = $id('railCnt');
 
-    $id('railViews').addEventListener('click', function(e){
-      var b = e.target.closest ? e.target.closest('.rail-view') : null;
-      if(b) setBrainView(b.getAttribute('data-view'));
-    });
     // 바로가기(AI 리포트·WHAT-IF)
     el.addEventListener('click', function(e){
       var b = e.target.closest ? e.target.closest('.rail-link') : null;
@@ -17841,15 +17817,14 @@ html:root .page > *{ flex-shrink:0; }
       var fab = $id('cmdkFab'); if(fab) fab.click();
     });
 
-    // 두뇌 페이지: 폰에는 우측 사이드바가 없으므로 인라인 전환기 + 운용상태를 넣는다.
+    // 두뇌 페이지: 폰에는 우측 사이드바가 없으므로 바로가기 + 운용상태를 넣는다.
+    // [V33.313] 작동·구조가 한 창이 되면서 전환 버튼은 없앴다 — 둘 다 늘 보인다.
     var host = document.querySelector('#page-nnviz .nnviz-content');
     var liveEl = $id('nnvLive');
     if(host && liveEl){
       var bb = document.createElement('div');
       bb.className = 'm-brainbar';
-      bb.innerHTML = '<button type="button" data-view="live" class="active">◉ 작동 화면</button>'
-        + '<button type="button" data-view="struct">◈ 구조 관측</button>'
-        + '<button type="button" data-goto="report">📋 AI 리포트</button>'
+      bb.innerHTML = '<button type="button" data-goto="report">📋 AI 리포트</button>'
         + '<button type="button" data-goto="whatif">🧪 WHAT-IF</button>'
         + '<button type="button" data-tools="1">⚙ 관리 도구</button>';
       bb.addEventListener('click', function(e){
@@ -17865,7 +17840,6 @@ html:root .page > *{ flex-shrink:0; }
           return;
         }
         if(b.getAttribute('data-goto')) go(b.getAttribute('data-goto'));
-        else setBrainView(b.getAttribute('data-view'));
       });
       host.insertBefore(bb, liveEl);
       // 운용상태는 작동 화면 "뒤"에 — 시각화가 먼저 보여야 한다(앞에 두면 코어가 화면 밖으로 밀린다).
@@ -18407,48 +18381,21 @@ html:root .page > *{ flex-shrink:0; }
     document.addEventListener('touchend', end, { passive:true });
     document.addEventListener('touchcancel', end, { passive:true });
   }
-  // 두뇌 페이지 안의 뷰: 'live'(작동 화면) | 'struct'(구조 관측)
+  /* [V33.313] ★작동 화면과 구조 관측을 한 창으로 합쳤다★(사용자 지시: "작동화면과 구조
+     관측을 합쳐줘 ... 완전히 새롭게 디자인해줘"). 종전엔 BVIEW 로 둘을 전환하며 안 보이는
+     쪽은 데이터도 안 받아왔다 — 이제 둘 다 늘 화면에 있으므로 둘 다 늘 받아온다.
+     BVIEW 는 남겨 둔다(다른 곳에서 값을 읽는 코드가 아직 있다) — 값은 항상 'live'. */
   var BVIEW = 'live';
-  try{ if(localStorage.getItem('luxBrainView') === 'struct') BVIEW = 'struct'; }catch(e){}
 
-
-  // 작동 화면 ↔ 구조 관측 전환. 구조는 여기서 켤 때 비로소 /api/nn-viz 를 부른다.
-  function setBrainView(v){
-    if(v !== 'struct') v = 'live';
-    BVIEW = v;
-    try{ localStorage.setItem('luxBrainView', v); }catch(e){}
-    var live = $id('nnvLive'), struct = $id('nnvStruct'), picks = $id('nlvPicksWrap');
-    if(live) live.style.display = (v === 'live') ? '' : 'none';
-    if(picks) picks.style.display = (v === 'live') ? '' : 'none';
-    if(struct) struct.style.display = (v === 'struct') ? '' : 'none';
-    /* [V33.311] 헤더는 두 화면이 함께 쓴다 — 지금 어느 화면인지 이름표를 맞춘다.
-       작동 화면 전용 요약(연결 상태·NOW 브리핑)은 구조 관측에선 뜻이 없으니 같이 숨긴다. */
-    var eyebrow = $id('nnvEyebrow'), titleTxt = $id('nnvTitleTxt'), headcopy = $id('nnvHeadcopy'),
-        healthbar = $id('nnvHealthbar'), opsBrief = $id('opsBrief');
-    if(v === 'struct'){
-      if(eyebrow) eyebrow.textContent = 'LUX INTELLIGENCE · STRUCTURE';
-      if(titleTxt) titleTxt.textContent = 'AI 두뇌 관측';
-      if(headcopy) headcopy.textContent = '선택한 위원의 내부 구조 — 층·계수·원형을 실제 학습 결과 그대로 그립니다.';
-    } else {
-      if(eyebrow) eyebrow.textContent = 'LUX INTELLIGENCE · OPERATIONS';
-      if(titleTxt) titleTxt.textContent = 'AI 작동 관제실';
-      if(headcopy) headcopy.textContent = '스캔부터 위원회 투표, 진입 게이트까지 실제 엔진 상태를 한 화면에서 추적합니다.';
-    }
-    if(healthbar) healthbar.style.display = (v === 'live') ? '' : 'none';
-    if(opsBrief) opsBrief.style.display = (v === 'live') ? '' : 'none';
-    // 사이드바(PC)·인라인 바(모바일) 양쪽 버튼 상태를 함께 맞춘다
-    var btns = document.querySelectorAll('#railViews .rail-view, .m-brainbar button');
-    for(var i=0;i<btns.length;i++) btns[i].classList.toggle('active', btns[i].getAttribute('data-view') === v);
-    try{ syncRailModels(); }catch(e){}
+  // 부팅 1회: 작동 데이터 + 구조 데이터를 함께 로드한다. 이후로는 아무것도 전환하지 않는다.
+  function setBrainView(){
     var onBrain = !!document.querySelector('#page-nnviz.active');
     if(!onBrain) return;
-    if(v === 'struct'){
-      stopFeed();                                     // 판정 스트림 타이머 정지(안 보이는 화면은 안 돌린다)
-      if(typeof window.openNnViz === 'function') window.openNnViz();   // 여기서 처음으로 구조 데이터 요청
-    } else {
-      try{ if(typeof window.closeNnViz === 'function') window.closeNnViz(); }catch(e){}
-      if(LIVE.data){ renderCore(LIVE.data); renderCenter(LIVE.data); startFeed(); }
-      else loadLive(false);
+    if(LIVE.data){ renderCore(LIVE.data); renderCenter(LIVE.data); startFeed(); }
+    else loadLive(false);
+    if(typeof window.openNnViz === 'function' && !window.__nnvStructBooted){
+      window.__nnvStructBooted = true;
+      window.openNnViz();   // 구조 데이터 — 이제 진입 즉시 함께 받아온다
     }
   }
 
@@ -19772,7 +19719,7 @@ html:root .page > *{ flex-shrink:0; }
       railBuild();
       railRender();
       buildMobileShell();
-      setBrainView(BVIEW);   // 저장된 뷰 복원(기본 '작동 화면')
+      setBrainView();   // 작동·구조 데이터를 함께 로드한다(V33.313 — 더 이상 전환하지 않는다)
       railGate();
       var pauseBtn = $id('nlvPause');
       if(pauseBtn) pauseBtn.addEventListener('click', function(){
@@ -19855,7 +19802,8 @@ html:root .page > *{ flex-shrink:0; }
     var nn = $id('page-nnviz');
     if(nn && nn.classList.contains('active')){
       liveStart();
-      if(BVIEW === 'struct' && typeof window.openNnViz === 'function') window.openNnViz();
+      // [V33.313] 작동·구조를 한 창에서 함께 보이므로 여기서도 함께 새로고침한다.
+      if(typeof window.openNnViz === 'function') window.openNnViz();
     }
   }
 
@@ -19926,19 +19874,17 @@ html:root .page > *{ flex-shrink:0; }
       wrapped2.__luxLiveHooked = true;
       window.showPage = wrapped2;
     }
-    // 구조 관측은 "구조 관측" 버튼을 눌렀을 때만 로드 — showPage('nnviz')가 자동 호출하는
-    // openNnViz()를 작동 화면 모드에서는 통과시키지 않는다.
+    /* [V33.313] 작동·구조가 한 창이 됐다 — "구조 관측 모드일 때만 로드" 하던 문을 없앤다.
+       헤더 "↻ 새로고침"(openNnViz(1))도 이제 둘 다 함께 새로고침하는 게 맞다. */
     var onv = window.openNnViz;
-    if(typeof onv === 'function' && !onv.__luxViewGated){
-      var gated = function(refreshOnly){
-        // 작동 화면에서는 구조를 로드하지 않는다. 다만 헤더 "↻ 새로고침"(openNnViz(1))은
-        // 지금 보고 있는 화면 — 즉 작동 화면 데이터 — 를 다시 불러오는 게 자연스럽다.
-        if(BVIEW !== 'struct'){ if(refreshOnly) loadLive(true); return; }
+    if(typeof onv === 'function' && !onv.__luxRefreshesBoth){
+      var both = function(refreshOnly){
+        if(refreshOnly) loadLive(true);
         return onv.apply(this, arguments);
       };
-      gated.__luxViewGated = true;
-      gated.__orig = onv;
-      window.openNnViz = gated;
+      both.__luxRefreshesBoth = true;
+      both.__orig = onv;
+      window.openNnViz = both;
     }
   }
 
@@ -19972,7 +19918,10 @@ html:root .page > *{ flex-shrink:0; }
    renderPicksGraph 등)는 손대지 않는다 — 실거래 로직을 건드리지 않고 그림만 간다.
    ═══════════════════════════════════════════════════════════════════════════ */
 
-#page-nnviz{
+/* [V33.313] :root 로 옮긴다 — 작동·구조를 합치면서 사이드바(.rail)도 같은 팔레트를 써야
+   하는데, .rail 은 #page-nnviz 의 형제 요소라 그 스코프 밖에서는 이 토큰을 못 읽는다.
+   CSS 커스텀 프로퍼티는 자손에게만 내려가므로, 공통 조상(:root)에 둬야 둘 다 닿는다. */
+:root{
   --ops-void:#020409;
   --ops-bg0:#04060c; --ops-bg1:#070a14; --ops-bg2:#0a0e1c; --ops-bg3:#0d1324;
   --ops-line:#1c2947; --ops-line2:#141d34; --ops-line-soft:rgba(120,165,230,.16);
@@ -19984,8 +19933,8 @@ html:root .page > *{ flex-shrink:0; }
   --ops-r:14px; --ops-r-lg:22px;
   --ops-panel:rgba(255,255,255,.02); --ops-panel-hi:rgba(62,203,255,.05);
   --ops-cyan-soft:#7fc4f0;
-  font-variant-numeric:tabular-nums;
 }
+#page-nnviz{ font-variant-numeric:tabular-nums; }
 
 /* ═══ 배경 — 성간 대기층: 짙은 바탕 + 성근 별 + 공학 격자 + 수평선 발광 ═══ */
 #page-nnviz .nnviz-content{
@@ -20275,7 +20224,7 @@ html[data-theme="light"] #page-nnviz .nnviz-content{
 }
 html[data-theme="light"] #page-nnviz .nnviz-content::before{opacity:0;}
 html[data-theme="light"] #page-nnviz .nnviz-content::after{opacity:.4;}
-html[data-theme="light"] #page-nnviz{--ops-ink:#0f2338;--ops-ink2:#3f5a7d;--ops-ink3:#6c85a6;--ops-panel:rgba(11,108,212,.04);--ops-panel-hi:rgba(11,108,212,.08);--ops-cyan-soft:#1a6fc4;}
+html[data-theme="light"]{--ops-ink:#0f2338;--ops-ink2:#3f5a7d;--ops-ink3:#6c85a6;--ops-panel:rgba(11,108,212,.04);--ops-panel-hi:rgba(11,108,212,.08);--ops-cyan-soft:#1a6fc4;--ops-bg0:#eef3fb;--ops-bg1:#f4f8fd;--ops-line:rgba(37,86,137,.16);--ops-line2:rgba(37,86,137,.12);}
 html[data-theme="light"] #page-nnviz .nnv-eyebrow{color:#1a6fc4 !important;}
 html[data-theme="light"] #page-nnviz .nnv-title{color:#0f2338 !important;text-shadow:none;}
 html[data-theme="light"] #page-nnviz .nnv-healthbar,html[data-theme="light"] #page-nnviz .nlv-strip{background:rgba(255,255,255,.8);border-color:rgba(37,86,137,.16);}
@@ -20291,6 +20240,82 @@ html[data-theme="light"] #page-nnviz .ops-label,html[data-theme="light"] #page-n
 html[data-theme="light"] #page-nnviz .nlv-toplist,html[data-theme="light"] #page-nnviz .nlv-kpi{background:#dfe9f5;border-top-color:#dfe9f5;}
 html[data-theme="light"] #page-nnviz .nlv-top,html[data-theme="light"] #page-nnviz .nlv-stat{background:#eef4fb;}
 
+
+/* ═══════════════════════════════════════════════════════════════════════════
+   [V33.313] 작동 화면 + 구조 관측을 한 창으로 — 그리고 구조 관측 쪽이 아직 남 옷을
+   입고 있던 문제
+
+   ★왜 "완전히 새롭게" 했다는데도 옛 모습이 보였나★ V33.312 는 .nlv-*(작동 화면)만
+   새로 그렸다. 구조 관측(#nnvStruct — DNN·트리·선형·MEMO·SEQ 렌더러, 탭, 우측 사이드바)
+   은 손대지 않았다 — 그 화면은 "Apple 재질" 토큰 체계(--ap-tint 파랑 #4a9eff, 유리질감
+   블러)로 그려져 있었다. 전환 모드였을 때는 안 보이니 몰랐는데, 이제 두 화면을 한 창에
+   합치면서 같은 화면 안에 ★서로 다른 브랜드의 두 UI★ 가 붙어 있는 게 드러났다.
+
+   ★고치는 법★ 구조 관측 쪽 수백 개 규칙을 하나하나 새로 쓰지 않는다 — 그 규칙들이 이미
+   읽고 있는 공용 토큰(--ap-tint·--ap-mat-*·--ap-hair·--ap-ink 등, .nnv-tab 능동 상태·
+   칩·코멘트 카드·범례가 전부 이걸 쓴다)의 ★값만★ 미션컨트롤 팔레트로 새로 정의한다.
+   토큰을 읽는 쪽은 그대로인데 색만 바뀐다 — 렌더러 로직은 한 줄도 안 건드린다.
+
+   사이드바(.rail)도 같은 방식 — .rail 은 #page-nnviz 의 형제 요소라 --ops-*/--ap-* 를
+   못 읽으므로, .rail 이 실제로 읽는 전역 토큰(--s1·--s2·--bd·--bd2·--t1~3·--acc)의 값을
+   .rail 스코프 안에서만 다시 정의한다 — 앱의 다른 화면(대시보드 등)은 전혀 안 바뀐다.
+   ═══════════════════════════════════════════════════════════════════════════ */
+
+/* ① 구조 관측 — Apple 재질 토큰을 미션컨트롤 팔레트로 재정의(다크 기준) */
+#page-nnviz{
+  --ap-ink:        var(--ops-ink);
+  --ap-ink2:       var(--ops-ink2);
+  --ap-ink3:       var(--ops-ink3);
+  --ap-tint:       var(--ops-cyan);
+  --ap-tint-soft:  var(--ops-cyan-dim);
+  --ap-mat-heavy:  var(--ops-bg1);
+  --ap-mat:        rgba(15,24,42,.86);
+  --ap-mat-light:  rgba(62,203,255,.06);
+  --ap-hair:       var(--ops-line);
+  --ap-hair-top:   rgba(62,203,255,.22);
+  --ap-shadow-l:   0 40px 120px rgba(0,0,0,.6);
+  -webkit-backdrop-filter:none !important; backdrop-filter:none !important;
+}
+html[data-theme="light"] #page-nnviz{
+  --ap-tint:      var(--ops-cyan-soft);
+  --ap-tint-soft: rgba(26,111,196,.12);
+  --ap-mat-heavy: #f4f8fd;
+  --ap-mat:       rgba(255,255,255,.86);
+  --ap-mat-light: rgba(11,108,212,.05);
+  --ap-hair:      var(--ops-line);
+}
+/* .nnv-tab 은 옛 리터럴(#4a83ff 등)이 --ap-* 보다 먼저 있어 소스순서로 밀린다 —
+   그래도 확실히 이기도록 여기서 한 번 더 못박는다. */
+#page-nnviz .nnv-tab.active{color:var(--ops-ink) !important;background:rgba(62,203,255,.14) !important;border-color:var(--ops-cyan) !important;box-shadow:0 0 12px rgba(62,203,255,.28) !important;}
+#page-nnviz .nnv-tab{background:rgba(62,203,255,.04) !important;border-color:var(--ops-line) !important;color:var(--ops-ink3) !important;}
+#page-nnviz .nnv-tab:hover{color:var(--ops-ink) !important;border-color:rgba(62,203,255,.4) !important;}
+#page-nnviz .nnv-tabs{background:transparent !important;}
+#page-nnviz .nnv-stage,#page-nnviz .nnv-chip,#page-nnviz .nnv-comm,#page-nnviz .nnv-tip{
+  background:var(--ap-mat) !important;border-color:var(--ap-hair) !important;
+}
+
+/* ② 구조 관측 섹션 — 작동 화면과 이어지는 하나의 창임을 눈으로도 말한다 */
+.nnv-struct-sec{
+  margin-top:18px;padding-top:16px;border-top:1px solid var(--ops-line2);
+}
+.nnv-struct-sec::before{
+  content:'구조 관측 · STRUCTURE';display:flex;align-items:center;gap:8px;margin-bottom:12px;
+  font:700 10px/1.3 var(--ops-mono);letter-spacing:.22em;color:#7fc4f0;text-transform:uppercase;
+}
+
+/* ③ 우측 사이드바 — 이 페이지 밖으로는 절대 새지 않게 .rail 스코프 안에서만
+   전역 토큰을 다시 정의한다(대시보드 등 다른 화면은 원래 값 그대로). */
+body:has(#page-nnviz.active) .rail{
+  --s1:var(--ops-bg1); --s2:rgba(62,203,255,.1);
+  --bd:var(--ops-line); --bd2:var(--ops-line2);
+  --t1:var(--ops-ink); --t2:var(--ops-ink2); --t3:var(--ops-ink3);
+  --acc:var(--ops-cyan);
+  border-left-color:var(--ops-line);
+}
+
+@media (prefers-reduced-motion:reduce){
+  #page-nnviz .nnv-tab{transition:none;}
+}
 
 /* [V33.312] 좁은 화면 전용 @media 는 두지 않는다 — check-mobile.mjs 가 "폰 블록 뒤
    좁은폭 규칙 금지"를 강제한다(순서로 이겨 기존 폰 레이아웃을 조용히 덮을 수 있어서).
