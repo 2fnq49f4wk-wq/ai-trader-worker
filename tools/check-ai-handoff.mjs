@@ -3,6 +3,8 @@ import { readFileSync } from "node:fs";
 const agents = readFileSync(new URL("../AGENTS.md", import.meta.url), "utf8");
 const claude = readFileSync(new URL("../CLAUDE.md", import.meta.url), "utf8");
 const handoff = readFileSync(new URL("../AI_HANDOFF.md", import.meta.url), "utf8");
+const deployGuide = readFileSync(new URL("../DEPLOY_WITH_CLAUDE.md", import.meta.url), "utf8");
+const deployScript = readFileSync(new URL("./deploy-with-claude.sh", import.meta.url), "utf8");
 const src = readFileSync(new URL("../src/index.js", import.meta.url), "utf8");
 
 let failures = 0;
@@ -20,6 +22,13 @@ check(agents.includes("`main`에서 직렬로 작업한다")
   "Claude와 Codex가 main에서 직렬로 인계한다");
 check(claude.includes("git pull --ff-only origin main") && claude.includes("git push origin main"),
   "Claude가 main 동기화 순서를 따른다");
+check(claude.includes("deploy-with-claude.sh --push") && deployGuide.includes("deploy-with-claude.sh --push"),
+  "Claude가 한 명령으로 V33.309 배포 인계를 실행할 수 있다");
+check(deployScript.includes("git fetch origin main")
+    && deployScript.includes("git rebase origin/main")
+    && deployScript.includes("git push origin main:main")
+    && !/push[^\n]*--force/.test(deployScript),
+  "배포 도구가 원격을 먼저 합치고 검사 후 main을 강제 없이 push한다");
 check(agents.includes("토큰이 부족해지거나 작업을 중단하기 전") && agents.includes("커밋"),
   "토큰 소진 전 커밋 체크포인트 규약이 있다");
 check(/- Status: (complete|in_progress|blocked)/.test(handoff)

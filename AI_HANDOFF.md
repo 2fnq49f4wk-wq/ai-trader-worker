@@ -8,7 +8,7 @@
 - Owner: Codex
 - Branch: main
 - Last commit: HEAD (verify with `git log -1 --oneline`)
-- Scope: V33.309 AI 작동 관제실 전면 재설계 및 두뇌 관측 오류 가시화
+- Scope: V33.309 AI 작동 관제실을 Claude Code에서 안전하게 배포할 수 있는 인계 도구 추가
 
 ## Completed
 
@@ -19,6 +19,7 @@
 - 관측 API에 15초 타임아웃과 오류 로그를 추가해 무한 로딩 및 무음 실패를 막았다.
 - AI 작동 관제실 계약 검사를 배포 CI에 추가했다.
 - Claude API 및 Cloudflare Workers AI 비활성화 정책은 변경하지 않았다.
+- Claude Code에서 한 명령으로 fetch·rebase·전체검사·main push를 수행하는 배포 스크립트와 안내서를 추가했다.
 
 ## Remaining work
 
@@ -26,6 +27,7 @@
 - 이 작업의 빌드 표식은 충돌을 피하려고 다음 번호인 V33.309로 올렸다.
 - 네트워크가 가능한 다음 담당자는 구현을 시작하기 전에 `git fetch origin main`, `git rebase origin/main`으로 원격 변경을 합치고 전체 검사를 다시 실행한다.
 - rebase 충돌 시 `public/index.html`의 AI 두뇌 블록과 빌드 버전을 특히 확인한다. 원격 최신 UI를 무조건 덮어쓰지 않는다.
+- 네트워크와 GitHub 인증이 가능한 Claude Code에서 `bash tools/deploy-with-claude.sh --push`를 실행한다.
 
 ## Validation
 

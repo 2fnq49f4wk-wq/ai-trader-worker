@@ -6,6 +6,9 @@
   `git push origin main` 순서를 지킨다. push가 실패하면 `AI_HANDOFF.md`에 원인과 미푸시 커밋을 남긴다.
 - `main` push 시 GitHub Actions `Deploy to Cloudflare Workers`가 프로덕션(Cloudflare Worker)에
   자동 배포한다. `trainer/modal/**` 변경 시 `Deploy Modal Trainer`가 Modal 학습기를 재배포한다.
+- Codex가 남긴 V33.309를 배포할 때는 `DEPLOY_WITH_CLAUDE.md`를 읽고
+  `bash tools/deploy-with-claude.sh --push`를 실행한다. 이 스크립트는 원격 변경을 먼저 합치고,
+  전체 계약 검사가 통과해야만 `main`을 push한다. force push로 우회하지 않는다.
 - 배포 전 안전게이트: `node --check src/index.js` 통과 필수(구문오류 시 배포 차단).
 - 토큰 소진·중단 가능성이 있으면 완성 전이라도 안전한 최소 단위로 커밋하되, `AI_HANDOFF.md`에
   미완료 상태·마지막 검증·다음 명령을 기록한다. 다른 AI는 그 커밋부터 이어서 작업한다.
