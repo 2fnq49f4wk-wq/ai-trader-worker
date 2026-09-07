@@ -1,4 +1,5 @@
 import fs from "node:fs";
+import vm from "node:vm";
 
 const html = fs.readFileSync(new URL("../public/index.html", import.meta.url), "utf8");
 let failures = 0;
@@ -33,6 +34,55 @@ check(/class="ops-brief"/.test(html) && ["opsDecision", "opsTopSignal", "opsComm
 check(/function renderOpsBrief\(d\)/.test(html) && /renderOpsBrief\(d\)/.test(html),
   "작동 요약이 실제 응답으로 갱신된다",
   "작동 요약이 정적 장식이거나 렌더 경로에 연결되지 않았다");
+
+// [Codex V33.314] Execute production functions, including both sides of the chart race.
+const nodes = new Map();
+const el = id => { if (!nodes.has(id)) nodes.set(id, { textContent:'', innerHTML:'' }); return nodes.get(id); };
+const pending = new Map();
+const ctx = vm.createContext({
+  $id:el, ago:()=> '1m', quoteOf:()=> null, esc:String, console,
+  fetch:url=>new Promise((resolve,reject)=>pending.set(new URL(url,'https://test.local').searchParams.get('symbol'),{resolve,reject})),
+  drawLineChart:(box,cs,sym)=>{ box.innerHTML = 'chart:' + sym; }, TP:{ cache:{}, sym:null, wait:null },
+});
+function evaluateBetween(start, end) {
+  const a = html.indexOf(start), b = html.indexOf(end,a);
+  if (a < 0 || b < 0) throw Error('Production function missing: ' + start);
+  vm.runInContext(html.slice(a,b),ctx);
+}
+evaluateBetween('  function rankedLivePicks(d){','  /* ══ [V33.144]');
+evaluateBetween('  function verdictOf(pk){','  /* [V33.7]');
+evaluateBetween('  function renderCore(d){','  // 종가 선 그래프');
+const data = { picks:[{symbol:'LOW',p:.53},{symbol:'HIGH',p:.75},{symbol:'SKIP',p:.99,abstain:true}],
+  mode:{alt:{roster:[{state:'on'},{state:'prov'},{state:'off'}]}}, scan:{} };
+ctx.renderOpsBrief(data);
+ctx.renderCore(data);
+check(el('opsTopName').textContent === 'HIGH' && el('nlvTpSym').textContent === 'HIGH',
+  '요약과 차트가 같은 최상위 후보를 고른다', '요약과 차트의 정렬 기준이 다르다');
+check(el('opsCommittee').textContent === '2/3', '서버 on/prov 명부를 가동 인원으로 센다', '정상 위원회가 0명으로 보인다');
+check(el('opsTopSignal').textContent === '0.75', '랭크 점수를 확률 퍼센트로 오인시키지 않는다', '랭크를 승률처럼 표시한다');
+ctx.TP.cache.CACHED = [{c:1},{c:2}];
+ctx.loadTopPickChart('CACHED');
+pending.get('HIGH').reject(Error('late failure'));
+await new Promise(resolve=>setImmediate(resolve));
+check(el('nlvTpChart').innerHTML === 'chart:CACHED', '늦은 실패가 캐시에서 전환한 새 차트를 덮지 않는다', '이전 요청 실패가 새 차트를 덮었다');
+ctx.loadTopPickChart('OLD');
+ctx.loadTopPickChart('NEW');
+pending.get('NEW').resolve({ok:true,json:async()=>({candles:[{c:3},{c:4}]})});
+await new Promise(resolve=>setImmediate(resolve));
+pending.get('OLD').resolve({ok:true,json:async()=>({candles:[]})});
+await new Promise(resolve=>setImmediate(resolve));
+check(el('nlvTpChart').innerHTML === 'chart:NEW', '늦은 빈 응답이 현재 차트를 지우지 않는다', '늦은 빈 응답이 현재 차트를 지웠다');
+ctx.loadTopPickChart('ERROR');
+pending.get('ERROR').resolve({ok:false,status:500,json:async()=>({candles:[{c:1},{c:2}]})});
+await new Promise(resolve=>setImmediate(resolve));
+check(el('nlvTpChart').innerHTML.includes('조회 실패'), '차트 HTTP 오류를 데이터로 그리지 않는다', 'HTTP 오류 응답을 차트로 그렸다');
+ctx.renderCore({picks:[{symbol:'ABSTAIN',p:.9,abstain:true}]});
+check(el('nlvTpSym').textContent === '—', '전원 기권이면 최우선 신호를 지어내지 않는다', '기권 종목을 최우선 후보로 표시한다');
+const css = fs.readFileSync(new URL('../public/brain-console.css', import.meta.url),'utf8');
+check(html.includes('/brain-console.css?v=33.314') && css.includes('prefers-reduced-motion'),
+  '흑백 스타일과 모션 감소가 연결되어 있다', '흑백 콘솔 스타일 배선이 없다');
+check((html.match(/class="nnv-tab(?: active)?" data-model=/g)||[]).length === 14,
+  '14개 모델 탭을 보존했다', '모델 탭이 사라졌다');
 
 if (failures) {
   console.error(`\n✗ AI 작동 관제실 계약 ${failures}건 실패`);

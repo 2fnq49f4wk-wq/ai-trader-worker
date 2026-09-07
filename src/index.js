@@ -2981,7 +2981,7 @@ async function applySignalTypeWeights(DB, cfg) {
    화면·자가진단이 계속 "V33.272" 를 보고했다(운영 스냅샷이 그대로 그랬다). 배포는 됐는데
    ★배포됐다는 사실만 거짓말★ 을 하고 있었으니, "내 고침이 올라간 건가" 를 화면으로 확인할
    방법이 없었다. tools/check-build-ver.mjs 가 이제 소스에 적힌 최신 버전과 이 값을 대조한다. */
-const _BUILD_VER = "V33.313";
+const _BUILD_VER = "V33.314";
 
 // ═══ [V33.171] 평가 순서 계획 — ★승격과 순환을 교차해 굶주림을 구조적으로 없앤다★ ═══
 //   V33.50 의 형태트리거는 "급한 몇 종목을 앞으로 당긴다"는 의도였으나, 실제 운영로그에서는
@@ -9411,12 +9411,12 @@ async function _cycState(DB, k, def) {
   return v;
 }
 
-async function getState(DB, k, def) {
+async function getState(DB, k, def, strict = false) {
   try {
     const row = await DB.prepare("SELECT v FROM state WHERE k = ?").bind(k).first();
     if (!row) return def;
-    try { return JSON.parse(row.v); } catch (e) { return def; }
-  } catch (e) { return def; }
+    try { return JSON.parse(row.v); } catch (e) { if (strict) throw e; return def; }
+  } catch (e) { if (strict) throw e; return def; }
 }
 
 // [V12.128] 여러 state 키를 단일 쿼리로 — 순차 getState N회(=D1 왕복 N회)를 1회로 접는다.
@@ -9501,9 +9501,10 @@ async function _readChunks(DB, key, n) {
   return parts.join("");
 }
 async function getBigState(DB, key, def) {
+  // [Codex V33.314] Storage failures belong to the I/O layer, not JSON parsing.
+  const str = await getBigStateRaw(DB, key);
+  if (str == null) return def;
   try {
-    const str = await getBigStateRaw(DB, key);   // [V33.13] R2/D1 경로 판단을 한 곳으로 통일
-    if (str == null) return def;
     const parsed = JSON.parse(str); _bigLoadMark(key, true, "ok"); return parsed;
   } catch (e) { _bigLoadMark(key, false, "json_parse", e); return def; }
 }
@@ -9511,7 +9512,9 @@ async function getBigState(DB, key, def) {
 //   업로드 커밋에서 37MB를 request.json()으로 파싱하면 Worker 128MB를 초과(503)하므로,
 //   시드별로 이미 직렬화된 JSON 문자열을 이어붙여 dnn_model 청크를 만든다(문자열은 파싱보다 훨씬 가벼움).
 async function getBigStateRaw(DB, key) {
-  const meta = await getState(DB, key + ":meta", null);
+  let meta;
+  try { meta = await getState(DB, key + ":meta", null, true); }
+  catch (e) { _bigLoadMark(key, false, "meta_read_error", e); return null; }
   if (!meta) { _bigLoadMark(key, false, "meta_missing"); return null; }
   // [V33.13] R2에 보관된 모델 — 객체 GET 1회로 끝(D1 큐를 전혀 쓰지 않음).
   if (meta.r2) {
@@ -9522,14 +9525,20 @@ async function getBigStateRaw(DB, key) {
       if (!obj) { _bigLoadMark(key, false, "r2_object_missing"); return null; }
       const str = await obj.text();
       if (meta.len && str.length !== meta.len) { _bigLoadMark(key, false, "length_mismatch"); return null; }
-      return str;
+      _bigLoadMark(key, true, "ok"); return str;
     } catch (e) { _bigLoadMark(key, false, "r2_get_error", e); return null; }
   }
   if (!meta.chunks) { _bigLoadMark(key, false, "chunks_missing"); return null; }
-  const str = await _readChunks(DB, key, meta.chunks);   // [V33.13] 순차 왕복 → IN 묶음 읽기
+  // [Codex V33.314] Reject corrupt counts before allocating an array or querying D1.
+  if (!Number.isSafeInteger(meta.chunks) || meta.chunks < 1 || meta.chunks > 1024) {
+    _bigLoadMark(key, false, "chunks_invalid"); return null;
+  }
+  let str;
+  try { str = await _readChunks(DB, key, meta.chunks); }
+  catch (e) { _bigLoadMark(key, false, "chunk_read_error", e); return null; }
   if (str == null) { _bigLoadMark(key, false, "chunk_incomplete"); return null; }
   if (meta.len && str.length !== meta.len) { _bigLoadMark(key, false, "length_mismatch"); return null; }
-  return str;
+  _bigLoadMark(key, true, "ok"); return str;
 }
 // [V33.22] ★딥이력(hist:) 저장소 추상화 — D1에서 R2로★
 //   hist: 는 종목당 2400봉×5배열(약 120KB) × 625종목 ≈ 71MB 로, D1 안에서 dnn_model(32MB)보다 크다.
@@ -37923,11 +37932,14 @@ async function _seqCached(DB) {
        모델 때문에 사이클마다 큰 레코드를 읽는 일이 없어야 한다. 그리고 게이트를 여기
        ★읽는 쪽에도★ 다시 두는 이유는 V33.191 과 같다 — 저장 시점 판정만 고치면
        이미 trusted 로 앉아 있는 레코드가 다음 업로드까지 그대로 투표한다. */
-    let t = null; try { t = await getState(DB, "seq_trust", null); } catch (e) {}
+    // [Codex V33.314] A transient read failure is not five minutes of negative evidence.
+    let t = null;
+    try { t = await getState(DB, "seq_trust", null, true); } catch (e) { return null; }
     let val = null;
     if (t && t.trusted && _num(t.wSeq, 0) > 0 && _num(t.featVer, -1) === LUXML.featVer) {
       let m = null;
       try { m = await getBigState(DB, "seq_model", null); } catch (e) { m = null; }
+      if (!m) return null; // Retry on the next request; never vote using a stale model.
       if (m && _num(m.featVer, -1) === LUXML.featVer && m.trusted && _num(m.w, 0) > 0
           && Array.isArray(m.Win) && Array.isArray(m.pos) && _num(m.D, 0) === LUXML.featNames.length) {
         val = m;

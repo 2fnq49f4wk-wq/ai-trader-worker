@@ -1,0 +1,9 @@
+# Codex V33.314: source-extraction regression tests must work on Windows and CI alike.
+*.js text eol=lf
+*.mjs text eol=lf
+*.html text eol=lf
+*.css text eol=lf
+*.py text eol=lf
+*.yml text eol=lf
+# Legacy UTF-16 backup must remain byte-for-byte unchanged.
+"src/index 50.js" -text

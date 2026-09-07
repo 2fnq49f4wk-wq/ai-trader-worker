@@ -8,7 +8,7 @@
      인데, 지금까지 화면에서 그걸 알 방법이 전혀 없었다(카카오톡 인앱 브라우저는 특히 강하게 캐시한다).
      서버가 내려주는 build 와 이 값을 비교해 다르면 배너로 알린다.
      ※ src/index.js 의 _BUILD_VER 와 항상 같아야 한다 — check-html-js 가 강제한다. -->
-<meta name="lux-build" content="V33.313">
+<meta name="lux-build" content="V33.314">
 <title>LUX-ENGINE V10</title>
 <!-- ══ [V33.156] 설치형 앱(PWA) — 폰·PC 에서 홈화면/독에 담아 앱처럼 연다 ══
      · manifest  : 이름·아이콘·standalone 표시(주소창 없이 앱처럼)
@@ -4363,16 +4363,23 @@ html[data-theme="light"] .m-brainbar button.active{color:#0b4f9e;background:rgba
   <div class="nnviz-content">
     <div class="nnv-head">
       <div class="nnv-heading">
-        <div class="nnv-eyebrow" id="nnvEyebrow">LUX INTELLIGENCE · OPERATIONS</div>
-        <div class="nnv-title"><span class="dot"></span><span id="nnvTitleTxt">AI 작동 관제실</span></div>
+        <!-- [Codex V33.314] Monochrome mission console; existing control IDs remain stable. -->
+        <div class="nnv-eyebrow" id="nnvEyebrow">LUX / INTELLIGENCE SYSTEMS</div>
+        <div class="nnv-title"><span class="dot"></span><span id="nnvTitleTxt">MISSION CONTROL</span></div>
         <div class="nnv-headcopy" id="nnvHeadcopy">스캔부터 위원회 투표, 진입 게이트까지 실제 엔진 상태를 한 화면에서 추적합니다.</div>
       </div>
       <div class="nnv-head-actions">
-        <button class="nnv-btn" onclick="redeployBrain()" title="Modal 학습기를 재배포하고 즉시 1회 재학습(GitHub Actions 수동 실행)">🚀 재학습·재배포</button>
-        <button class="nnv-btn" onclick="openModalActions()" title="관리 키 없이 GitHub Actions 페이지에서 직접 실행 — Run workflow → run_now 체크 → Run">🐙 GitHub에서 실행(키 불필요)</button>
+        <button class="nnv-btn" onclick="redeployBrain()" title="Modal 학습기를 재배포하고 즉시 1회 재학습(GitHub Actions 수동 실행)">재학습·재배포 ↗</button>
+        <button class="nnv-btn" onclick="openModalActions()" title="관리 키 없이 GitHub Actions 페이지에서 직접 실행 — Run workflow → run_now 체크 → Run">GitHub에서 실행 ↗</button>
         <button class="nnv-btn" onclick="openNnViz(1)">↻ 새로고침</button>
       </div>
     </div>
+    <nav class="mission-nav" aria-label="두뇌 페이지 바로가기">
+      <a href="#opsBrief"><span>01</span> 작동 현황</a>
+      <a href="#nnvStruct"><span>02</span> 모델 관측</a>
+      <a href="#nlvPicksWrap"><span>03</span> 후보 종목</a>
+      <a href="#nlvFeed"><span>04</span> 판정 로그</a>
+    </nav>
     <div class="nnv-healthbar" id="nnvHealthbar" role="status" aria-live="polite">
       <span class="nnv-health-title"><i></i><b>엔진 연결 확인 중</b></span>
       <span class="nnv-health-source pending" data-source="picks">PICKS</span>
@@ -4387,7 +4394,7 @@ html[data-theme="light"] .m-brainbar button.active{color:#0b4f9e;background:rgba
         <p id="opsDecisionWhy">최신 스캔과 위원회 응답을 기다리고 있습니다.</p>
       </div>
       <dl class="ops-metrics">
-        <div><dt>TOP SIGNAL</dt><dd id="opsTopSignal">—</dd><small id="opsTopName">후보 없음</small></div>
+        <div><dt>TOP RANK · 순위 점수</dt><dd id="opsTopSignal">—</dd><small id="opsTopName">후보 없음</small></div>
         <div><dt>COMMITTEE</dt><dd id="opsCommittee">—</dd><small id="opsCommitteeState">명부 확인 중</small></div>
         <div><dt>SCAN AGE</dt><dd id="opsScanAge">—</dd><small id="opsScanMarket">시장 확인 중</small></div>
       </dl>
@@ -4409,7 +4416,7 @@ html[data-theme="light"] .m-brainbar button.active{color:#0b4f9e;background:rgba
       <div class="nlv-hero">
         <!-- 최우선 후보 — 위원회가 가장 높게 본 종목의 실제 가격 흐름(선 그래프) -->
         <div class="nlv-core">
-          <div class="nlv-sec-h">최우선 후보 <small>위원회 승률 1위</small>
+          <div class="nlv-sec-h">최우선 후보 <small>위원회 랭크 1위</small>
             <span class="nlv-tf" id="nlvTf"></span>
           </div>
           <div class="nlv-tp">
@@ -18018,20 +18025,27 @@ html:root .page > *{ flex-shrink:0; }
       throw err;
     }).then(function(data){ if(timer) clearTimeout(timer); return data; }, function(err){ if(timer) clearTimeout(timer); throw err; });
   }
+  // [Codex V33.314] One ranking for the summary and chart; malformed/abstaining rows are not signals.
+  function rankedLivePicks(d){
+    return (d && Array.isArray(d.picks) ? d.picks : []).filter(function(p){
+      var rank = p && (p.rankP != null ? p.rankP : p.p);
+      return p && !p.abstain && typeof rank === 'number' && isFinite(rank);
+    }).sort(function(a,b){ return (b.rankP != null ? b.rankP : b.p) - (a.rankP != null ? a.rankP : a.p); });
+  }
   function renderOpsBrief(d){
-    d = d || {}; var picks = Array.isArray(d.picks) ? d.picks : [];
-    var active = picks.filter(function(p){ return !p.abstain; }).sort(function(a,b){
-      return ((b.rankP != null ? b.rankP : b.p) || 0) - ((a.rankP != null ? a.rankP : a.p) || 0);
-    });
+    d = d || {};
+    var active = rankedLivePicks(d);
     var top = active[0], mode = d.mode || {}, scan = d.scan || {};
     var decision = $id('opsDecision'), why = $id('opsDecisionWhy');
     if(decision) decision.textContent = top ? ((top.rankP != null ? top.rankP : top.p) >= .60 ? '진입 후보 감시 중' : '관망 · 신호 축적 중') : '판정 가능한 후보 없음';
     if(why) why.textContent = top ? ((top.symbol || '')+' 신호가 현재 위원회 최상위입니다. 주문 여부는 모든 안전 게이트 통과 후 결정됩니다.') : '기권 종목을 제외한 최신 후보가 없습니다.';
     var ts = $id('opsTopSignal'), tn = $id('opsTopName');
-    if(ts) ts.textContent = top ? Math.round(((top.rankP != null ? top.rankP : top.p) || 0)*100)+'%' : '—';
+    // [Codex V33.314] rankP includes ranking adjustments: never label it as a win probability.
+    if(ts) ts.textContent = top ? (top.rankP != null ? top.rankP : top.p).toFixed(2) : '—';
     if(tn) tn.textContent = top ? (top.symbol || '이름 없음') : '후보 없음';
     var roster = mode.alt && Array.isArray(mode.alt.roster) ? mode.alt.roster : [];
-    var on = roster.filter(function(x){ return x && (x.state === 'live' || x.state === 'provisional'); }).length;
+    // [Codex V33.314] buildRoster emits on/prov, not live/provisional (which always displayed zero).
+    var on = roster.filter(function(x){ return x && (x.state === 'on' || x.state === 'prov'); }).length;
     var ce = $id('opsCommittee'), cs = $id('opsCommitteeState');
     if(ce) ce.textContent = roster.length ? on+'/'+roster.length : '—';
     if(cs) cs.textContent = roster.length ? (on === roster.length ? '전원 응답' : '일부 위원 대기') : '명부 확인 중';
@@ -18413,10 +18427,11 @@ html:root .page > *{ flex-shrink:0; }
   var TP = { sym:null, wait:null, cache:{} };
 
   function renderCore(d){
-    var picks = (d.picks || []).filter(function(p){ return !p.abstain; });
-    var top = picks[0] || (d.picks || [])[0] || null;
+    var picks = rankedLivePicks(d);
+    var top = picks[0] || null;
     var symEl=$id('nlvTpSym'), nmEl=$id('nlvTpName'), pEl=$id('nlvTpP'), vdEl=$id('nlvTpVd');
     if(!top){
+      TP.sym = null; TP.seq = (TP.seq || 0) + 1; TP.wait = null;
       if(symEl) symEl.textContent = '—';
       if(nmEl) nmEl.textContent = '';
       if(pEl) pEl.textContent = '—';
@@ -18438,19 +18453,24 @@ html:root .page > *{ flex-shrink:0; }
   // 최우선 후보의 일봉 종가를 받아 선 그래프로. 종목이 바뀔 때만 새로 요청한다.
   function loadTopPickChart(sym){
     var box = $id('nlvTpChart'); if(!box) return;
-    if(TP.cache[sym]){ drawLineChart(box, TP.cache[sym], sym); return; }
     if(TP.sym === sym && TP.wait) return;
+    // [Codex V33.314] Cached switches also invalidate earlier requests; failures cannot erase a newer chart.
     TP.sym = sym;
+    var seq = TP.seq = (TP.seq || 0) + 1;
+    TP.wait = null;
+    if(TP.cache[sym]){ drawLineChart(box, TP.cache[sym], sym); return; }
     box.innerHTML = '<div class="nlv-empty">차트 불러오는 중…</div>';
     TP.wait = fetch('/api/chart?symbol=' + encodeURIComponent(sym) + '&interval=1d&range=6mo')
-      .then(function(r){ return r.json(); })
+      .then(function(r){ if(!r.ok) throw new Error('HTTP ' + r.status); return r.json(); })
       .then(function(dd){
+        if(TP.seq !== seq) return;
         TP.wait = null;
         var cs = (dd && dd.candles) || [];
         if(cs.length < 2){ box.innerHTML = '<div class="nlv-empty">일봉 데이터 없음</div>'; return; }
         TP.cache[sym] = cs;
         if(TP.sym === sym) drawLineChart(box, cs, sym);
       })['catch'](function(){
+        if(TP.seq !== seq) return;
         TP.wait = null;
         box.innerHTML = '<div class="nlv-empty">차트 조회 실패</div>';
       });
@@ -19672,6 +19692,8 @@ html:root .page > *{ flex-shrink:0; }
       if(!mode) return;
       acc.mode = mode;
       if(!acc.scan || acc.scan.ts == null) acc.scan = mode.scan || acc.scan;
+      // [Codex V33.314] An empty candidate list must not suppress the committee summary.
+      renderOpsBrief(acc);
       /* [V33.146] ★렌더 실패가 '운용 상태'로 둔갑하지 않게 격리한다★
          종전엔 여기서 renderRailAiMode 가 던지면 .then 이 통째로 중단되고 아래 catch 가
          조용히 삼켰다. 그러면 acc.mode 는 채워졌는데 paintLive 가 안 돌아 상단 배지와
@@ -20322,5 +20344,7 @@ body:has(#page-nnviz.active) .rail{
    히어로·위원회·후보 그리드는 전부 grid auto-fit(minmax)로 폭에 맞춰 재배치된다. */
 </style>
 
+<!-- [Codex V33.314] Dedicated scoped design system. See AI_HANDOFF.md before changing model/UI contracts. -->
+<link rel="stylesheet" href="/brain-console.css?v=33.314">
 </body>
 </html>

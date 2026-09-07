@@ -39,12 +39,13 @@ try {
 
 // ② esbuild — wrangler 가 쓰는 파서로 한 번 더. 여기서 통과해야 실제 배포가 된다.
 try {
-  execFileSync("npx", ["--no-install", "esbuild", "--bundle", "--format=esm", "--outfile=/dev/null", target],
-               { stdio: "pipe" });
+  // [Codex V33.314] npx.cmd cannot be execFileSync'ed on Windows; /dev/null is also POSIX-only.
+  const { buildSync } = await import("esbuild");
+  buildSync({ entryPoints: [target], bundle: true, format: "esm", write: false, logLevel: "silent" });
   console.log("  ok   esbuild 파싱 (wrangler 와 동일 파서)");
 } catch (e) {
-  const out = ((e.stderr ? e.stderr.toString() : "") + (e.stdout ? e.stdout.toString() : "")).trim();
-  if (/esbuild.*not found|ENOENT|npm ERR/i.test(out) && !/ERROR\]/.test(out)) {
+  const out = ((e.stderr ? e.stderr.toString() : "") + (e.stdout ? e.stdout.toString() : "") + String(e)).trim();
+  if (e.code === 'ERR_MODULE_NOT_FOUND') {
     console.log("  WARN esbuild 미설치 — 이 검사는 건너뛴다(CI 에서는 반드시 설치할 것)");
   } else {
     console.error("  FAIL esbuild 파싱 실패:\n" + out.split("\n").slice(0, 14).join("\n"));

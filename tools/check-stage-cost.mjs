@@ -71,7 +71,7 @@ console.log("\n④ 검사는 PR 에서 돌고, 배포는 push 에서만 도는�
 {
   const y = execFileSync("python3", ["-c", `
 import json, yaml
-d = yaml.safe_load(open(${JSON.stringify(YML_PATH)}))
+d = yaml.safe_load(open(${JSON.stringify(YML_PATH)}, encoding="utf-8"))
 on = d[True] if True in d else d["on"]
 steps = d["jobs"]["deploy"]["steps"]
 print(json.dumps({

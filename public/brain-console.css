@@ -1,0 +1,128 @@
+/* Codex V33.314 — LUX monochrome mission console.
+ * Keep DOM IDs, event handlers, model tabs and risk policy intact. Claude: see AI_HANDOFF.md.
+ * Neutral tokens cover legacy renderers; only their drawing surfaces are desaturated.
+ */
+body:has(#page-nnviz.active) {
+  --ops-void:#050505; --ops-bg0:#050505; --ops-bg1:#0b0b0b; --ops-bg2:#111; --ops-bg3:#191919;
+  --ops-line:#383838; --ops-line2:#272727; --ops-line-soft:#303030;
+  --ops-ink:#f5f5f5; --ops-ink2:#c5c5c5; --ops-ink3:#999;
+  --ops-cyan:#f5f5f5; --ops-cyan-soft:#ddd; --ops-cyan-dim:#303030;
+  --ops-green:#eee; --ops-amber:#c5c5c5; --ops-red:#b0b0b0; --ops-purple:#aaa;
+  --ops-panel:#101010; --ops-panel-hi:#1c1c1c; --ops-r:0px; --ops-r-lg:0px;
+  --acc:#eee; --s1:#0b0b0b; --s2:#161616; --bd:#333; --bd2:#242424;
+  --t1:#f5f5f5; --t2:#bdbdbd; --t3:#999;
+  background:#050505;
+}
+html[data-theme="light"] body:has(#page-nnviz.active) {
+  --ops-void:#fff; --ops-bg0:#fff; --ops-bg1:#fafafa; --ops-bg2:#f0f0f0; --ops-bg3:#e5e5e5;
+  --ops-line:#b8b8b8; --ops-line2:#dedede; --ops-line-soft:#ddd;
+  --ops-ink:#111; --ops-ink2:#383838; --ops-ink3:#626262;
+  --ops-cyan:#111; --ops-cyan-soft:#333; --ops-cyan-dim:#e5e5e5;
+  --ops-green:#111; --ops-amber:#444; --ops-red:#555; --ops-purple:#666;
+  --ops-panel:#fff; --ops-panel-hi:#ededed;
+  --acc:#111; --s1:#fff; --s2:#eee; --bd:#bbb; --bd2:#ddd; --t1:#111; --t2:#444; --t3:#666;
+  background:#fff;
+}
+body #page-nnviz {
+  --ap-ink:var(--ops-ink); --ap-ink2:var(--ops-ink2); --ap-ink3:var(--ops-ink3);
+  --ap-tint:var(--ops-cyan); --ap-tint-soft:var(--ops-cyan-dim);
+  --ap-mat-heavy:var(--ops-bg1); --ap-mat:var(--ops-panel); --ap-mat-thin:var(--ops-bg2);
+  --ap-hair:var(--ops-line); --ap-hair-strong:var(--ops-line); --ap-green:var(--ops-ink);
+  color:var(--ops-ink); min-width:0;
+}
+html:is(:root,[data-theme]) body #page-nnviz .nnviz-content {
+  display:flex; flex-direction:column; gap:24px; padding:clamp(16px,3vw,48px);
+  background:var(--ops-bg0)!important; border:0!important; border-radius:0!important;
+  box-shadow:none!important; overflow:visible;
+}
+html:is(:root,[data-theme]) body #page-nnviz .nnviz-content::before,
+html:is(:root,[data-theme]) body #page-nnviz .nnviz-content::after { content:none; }
+html:is(:root,[data-theme]) body #page-nnviz .nnv-head { margin:0; padding:0 0 28px; align-items:flex-start; border-bottom:1px solid var(--ops-line); }
+html:is(:root,[data-theme]) body #page-nnviz .nnv-heading { max-width:none; flex:1 1 420px; }
+html:is(:root,[data-theme]) body #page-nnviz .nnv-eyebrow { color:var(--ops-ink3)!important; font-size:10px!important; letter-spacing:.28em!important; margin-bottom:20px; }
+html:is(:root,[data-theme]) body #page-nnviz .nnv-eyebrow::before, html:is(:root,[data-theme]) body #page-nnviz .nnv-title .dot { display:none; }
+html:is(:root,[data-theme]) body #page-nnviz .nnv-title { color:var(--ops-ink)!important; font:500 clamp(28px,4vw,66px)/1.04 var(--ops-head)!important; letter-spacing:-.055em!important; text-shadow:none!important; }
+html:is(:root,[data-theme]) body #page-nnviz .nnv-headcopy { color:var(--ops-ink3)!important; font-size:12px; line-height:1.8; max-width:600px; margin-top:20px; }
+html:is(:root,[data-theme]) body #page-nnviz .nnv-head > .nnv-head-actions { display:flex!important; flex-wrap:wrap; gap:8px; align-self:flex-end; }
+html:is(:root,[data-theme]) body #page-nnviz :is(.nnv-btn,.nlv-btn) {
+  background:transparent!important; border:1px solid var(--ops-line)!important; color:var(--ops-ink)!important;
+  border-radius:0!important; box-shadow:none!important; min-height:36px; padding:8px 12px; font-size:11px;
+}
+html:is(:root,[data-theme]) body #page-nnviz :is(.nnv-btn,.nlv-btn):hover { background:var(--ops-ink)!important; color:var(--ops-bg0)!important; }
+html:is(:root,[data-theme]) body #page-nnviz :is(button,a):focus-visible { outline:2px solid var(--ops-ink); outline-offset:4px; }
+#page-nnviz .mission-nav { display:flex; gap:clamp(16px,3vw,42px); flex-wrap:wrap; padding:0 0 20px; border-bottom:1px solid var(--ops-line2); }
+#page-nnviz .mission-nav a { color:var(--ops-ink2); font-size:12px; text-decoration:none; padding:8px 0; }
+#page-nnviz .mission-nav a:hover { color:var(--ops-ink); text-decoration:underline; text-underline-offset:6px; }
+#page-nnviz .mission-nav span { font:10px var(--ops-mono); color:var(--ops-ink3); margin-right:9px; }
+#page-nnviz :is(#opsBrief,#nnvStruct,#nlvPicksWrap,#nlvFeed) { scroll-margin-top:90px; }
+html:is(:root,[data-theme]) body #page-nnviz .nnv-healthbar { margin:0; padding:12px 0; border:0; background:transparent; border-radius:0; gap:12px; flex-wrap:wrap; }
+html:is(:root,[data-theme]) body #page-nnviz :is(.nnv-health-title,.nnv-health-time) { color:var(--ops-ink2)!important; }
+html:is(:root,[data-theme]) body #page-nnviz .nnv-health-source { color:var(--ops-ink2)!important; background:transparent!important; border:1px solid var(--ops-line)!important; border-radius:0; padding:6px 9px; }
+html:is(:root,[data-theme]) body #page-nnviz .nnv-health-source.ok::before { content:'✓ '; }
+html:is(:root,[data-theme]) body #page-nnviz .nnv-health-source.error { border-style:dashed!important; }
+html:is(:root,[data-theme]) body #page-nnviz .nnv-health-source.error::before { content:'! '; }
+html:is(:root,[data-theme]) body #page-nnviz .nnv-health-source.pending::before { content:'… '; }
+html:is(:root,[data-theme]) body #page-nnviz .nnv-health-title i { background:var(--ops-ink)!important; box-shadow:none!important; animation:none!important; }
+html:is(:root,[data-theme]) body #page-nnviz .ops-brief { display:grid; grid-template-columns:repeat(auto-fit,minmax(min(100%,420px),1fr)); gap:0; margin:0; border:1px solid var(--ops-line); }
+html:is(:root,[data-theme]) body #page-nnviz .ops-brief-main { background:var(--ops-ink)!important; color:var(--ops-bg0)!important; padding:28px!important; border:0!important; border-radius:0!important; box-shadow:none!important; }
+html:is(:root,[data-theme]) body #page-nnviz .ops-brief-main :is(strong,p,.ops-label) { color:inherit!important; }
+html:is(:root,[data-theme]) body #page-nnviz .ops-brief-main strong { font-size:clamp(22px,2.5vw,34px)!important; font-weight:500; letter-spacing:-.04em; margin:18px 0 12px; }
+html:is(:root,[data-theme]) body #page-nnviz .ops-brief-main p { opacity:.75; font-size:12px; line-height:1.8; }
+html:is(:root,[data-theme]) body #page-nnviz .ops-metrics { gap:0; margin:0; grid-template-columns:repeat(auto-fit,minmax(90px,1fr)); }
+html:is(:root,[data-theme]) body #page-nnviz .ops-metrics>div { background:var(--ops-bg1)!important; border:0!important; border-left:1px solid var(--ops-line2)!important; border-radius:0!important; padding:24px 16px; display:flex; flex-direction:column; justify-content:center; }
+html:is(:root,[data-theme]) body #page-nnviz .ops-metrics dd { color:var(--ops-ink)!important; font:400 clamp(25px,3vw,40px)/1.4 var(--ops-mono); margin:16px 0 12px; }
+html:is(:root,[data-theme]) body #page-nnviz .ops-metrics :is(dt,small) { color:var(--ops-ink3)!important; font-size:10px; }
+html:is(:root,[data-theme]) body #page-nnviz :is(.ops-brief-main,.ops-metrics>div,.nlv-core,.nlv-funnel-wrap,.nlv-panel,.nlv-picks)::before,
+html:is(:root,[data-theme]) body #page-nnviz :is(.ops-brief-main,.ops-metrics>div,.nlv-core,.nlv-funnel-wrap,.nlv-panel,.nlv-picks)::after { content:none; }
+html:is(:root,[data-theme]) body #page-nnviz .nnv-live { display:flex; flex-direction:column; gap:24px; margin:0; }
+html:is(:root,[data-theme]) body #page-nnviz .nlv-strip { background:transparent; border:0; border-bottom:1px solid var(--ops-line2); border-radius:0; padding:0 0 12px; margin:0; }
+html:is(:root,[data-theme]) body #page-nnviz .nlv-tagline { color:var(--ops-ink2); letter-spacing:.2em; }
+html:is(:root,[data-theme]) body #page-nnviz .nlv-tagline::before { box-shadow:none; background:var(--ops-ink); animation:none!important; }
+html:is(:root,[data-theme]) body #page-nnviz :is(.nlv-hero,.nlv-lower) { display:grid; grid-template-columns:repeat(auto-fit,minmax(min(100%,380px),1fr)); gap:24px; margin:0; }
+html:is(:root,[data-theme]) body #page-nnviz :is(.nlv-core,.nlv-funnel-wrap,.nlv-panel,.nlv-picks,.nlv-cmlist) { background:var(--ops-panel)!important; border:1px solid var(--ops-line)!important; border-radius:0!important; box-shadow:none!important; }
+html:is(:root,[data-theme]) body #page-nnviz :is(.nlv-sec-h,.nlv-picks-head) { padding:18px 20px!important; font-size:12px!important; color:var(--ops-ink)!important; letter-spacing:.04em!important; }
+html:is(:root,[data-theme]) body #page-nnviz .nlv-sec-h::before { width:14px; height:1px; border-radius:0; background:var(--ops-ink); box-shadow:none; }
+html:is(:root,[data-theme]) body #page-nnviz .nlv-sec-h small { font-size:10px!important; color:var(--ops-ink3)!important; }
+html:is(:root,[data-theme]) body #page-nnviz .nlv-tp { padding:24px 20px 12px!important; }
+html:is(:root,[data-theme]) body #page-nnviz .nlv-tp-id .sym { color:var(--ops-ink)!important; font-size:28px!important; }
+html:is(:root,[data-theme]) body #page-nnviz .nlv-tp-num .p { color:var(--ops-ink)!important; font-size:34px!important; font-weight:400!important; }
+html:is(:root,[data-theme]) body #page-nnviz .nlv-tp-chart { padding:12px 20px 20px; }
+html:is(:root,[data-theme]) body #page-nnviz :is(.nlv-toplist,.nlv-kpi) { background:var(--ops-line2)!important; border-color:var(--ops-line2)!important; }
+html:is(:root,[data-theme]) body #page-nnviz :is(.nlv-top,.nlv-stat) { background:var(--ops-bg1)!important; }
+html:is(:root,[data-theme]) body #page-nnviz .nlv-cmrow { margin:0; }
+html:is(:root,[data-theme]) body #page-nnviz .nlv-cmlist { display:grid!important; grid-template-columns:repeat(auto-fit,minmax(150px,1fr))!important; gap:1px!important; padding:0!important; background:var(--ops-line2)!important; }
+html:is(:root,[data-theme]) body #page-nnviz .nlv-cm { display:flex!important; flex-wrap:wrap; gap:10px!important; padding:18px!important; border:0!important; border-radius:0!important; background:var(--ops-bg1)!important; min-height:84px; box-shadow:none!important; }
+html:is(:root,[data-theme]) body #page-nnviz .nlv-cm:hover { background:var(--ops-panel-hi)!important; }
+html:is(:root,[data-theme]) body #page-nnviz .nlv-cm .cm-dot { box-shadow:none!important; background:var(--ops-ink3)!important; }
+html:is(:root,[data-theme]) body #page-nnviz .nlv-cm.ok .cm-dot { background:var(--ops-ink)!important; }
+html:is(:root,[data-theme]) body #page-nnviz .nlv-cm.prov .cm-dot { border-radius:0!important; }
+html:is(:root,[data-theme]) body #page-nnviz .nlv-cm.warn .cm-dot { background:transparent!important; border:1px solid var(--ops-ink3); }
+html:is(:root,[data-theme]) body #page-nnviz .nlv-cm .cm-role { display:block!important; flex-basis:100%; color:var(--ops-ink3); font-size:10px; line-height:1.5; }
+html:is(:root,[data-theme]) body #page-nnviz .nlv-cm .cm-w { display:block!important; color:var(--ops-ink2); }
+html:is(:root,[data-theme]) body #page-nnviz .nlv-step { padding:9px 0; border-bottom:1px solid var(--ops-line2); }
+html:is(:root,[data-theme]) body #page-nnviz .nlv-step i { box-shadow:none!important; }
+html:is(:root,[data-theme]) body #page-nnviz .nlv-step b { color:var(--ops-ink2); }
+html:is(:root,[data-theme]) body #page-nnviz .nlv-feed { font-size:11px; line-height:1.85; max-height:340px; }
+html:is(:root,[data-theme]) body #page-nnviz .nlv-line { padding:7px 18px; }
+html:is(:root,[data-theme]) body #page-nnviz .nlv-line:is(.buy,.warn) { background:var(--ops-bg2); }
+html:is(:root,[data-theme]) body #page-nnviz .nlv-line .b em { color:var(--ops-ink)!important; }
+html:is(:root,[data-theme]) body #page-nnviz .nlv-picks { margin:0; }
+html:is(:root,[data-theme]) body #page-nnviz .nlv-picks-grid { grid-template-columns:repeat(auto-fit,minmax(min(100%,190px),1fr))!important; gap:1px!important; padding:0!important; background:var(--ops-line2); }
+html:is(:root,[data-theme]) body #page-nnviz .nlv-pick { background:var(--ops-bg1)!important; border:0!important; border-radius:0!important; padding:20px!important; }
+html:is(:root,[data-theme]) body #page-nnviz .nlv-pick:hover { background:var(--ops-panel-hi)!important; transform:none; }
+html:is(:root,[data-theme]) body #page-nnviz .nlv-pick-bar>span { background:var(--ops-ink2); }
+html:is(:root,[data-theme]) body #page-nnviz #nnvStruct { margin:0; padding:28px 0 0; border-top:1px solid var(--ops-line); }
+html:is(:root,[data-theme]) body #page-nnviz #nnvStruct::before { content:'MODEL OBSERVATORY / 모델 구조와 검증'; display:block; color:var(--ops-ink)!important; letter-spacing:.13em; font:500 14px var(--ops-mono); margin-bottom:24px; }
+html:is(:root,[data-theme]) body #page-nnviz .nnv-tabs { gap:6px!important; padding:0!important; }
+html:is(:root,[data-theme]) body #page-nnviz .nnv-nav-h { color:var(--ops-ink3)!important; letter-spacing:.06em; padding-top:14px; }
+html:is(:root,[data-theme]) body #page-nnviz .nnv-tab { border-radius:0!important; background:transparent!important; border:1px solid var(--ops-line)!important; color:var(--ops-ink2)!important; box-shadow:none!important; min-height:42px; padding:10px 12px!important; }
+html:is(:root,[data-theme]) body #page-nnviz .nnv-tab.active { background:var(--ops-ink)!important; color:var(--ops-bg0)!important; border-color:var(--ops-ink)!important; box-shadow:none!important; }
+html:is(:root,[data-theme]) body #page-nnviz .nnv-tab:hover { border-color:var(--ops-ink)!important; }
+html:is(:root,[data-theme]) body #page-nnviz :is(.nnv-stage,.nnv-chip,.nnv-comm,.nnv-tip) { background:var(--ops-bg1)!important; border-color:var(--ops-line)!important; border-radius:0!important; box-shadow:none!important; }
+html:is(:root,[data-theme]) body #page-nnviz :is(.nnv-stage,.nlv-tp-chart,.nlv-funnel,.nlv-pick svg,.nnv-legend,.nnv-tab-dot,.nnv-banner,.nnv-chips,.nlv-strip-tags,.nlv-toplist,.nlv-kpi,.nnv-roles,.nnv-comm,.nlv-tp) { filter:grayscale(1); }
+html body:has(#page-nnviz.active) .rail { background:var(--ops-bg1)!important; border-color:var(--ops-line)!important; --s2:var(--ops-bg2); filter:grayscale(1); }
+html body:has(#page-nnviz.active) :is(.topbar,.nav,.sidebar,.m-appbar,.m-tabbar) { filter:grayscale(1); }
+/* Layout is intrinsically responsive: no fixed-width pane and no hidden model tabs. */
+@media (prefers-reduced-motion:reduce) {
+  #page-nnviz *,#page-nnviz *::before,#page-nnviz *::after { animation:none!important; transition:none!important; scroll-behavior:auto!important; }
+}

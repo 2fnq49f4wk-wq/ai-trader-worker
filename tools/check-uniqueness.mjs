@@ -18,6 +18,7 @@
 //   재구현으로 비교하면 재구현이 틀렸을 때 조용히 통과한다 — 그건 검사가 아니다.
 
 import fs from "node:fs";
+import { fileURLToPath } from "node:url";
 import { execFileSync } from "node:child_process";
 import { _uniqWeights, _wilsonLB, _importedValN, mlPoolUniqNightly, mlPoolUniqGet, _effN }
   from "../src/index.js";
@@ -122,7 +123,8 @@ const DAY = 86400000;
   } else {
     const shim = `
 import ast, json, sys
-src = open(${JSON.stringify(new URL("../trainer/modal/modal_train.py", import.meta.url).pathname)}).read()
+# Codex V33.314: file URLs are not native Windows paths; Korean source is UTF-8.
+src = open(${JSON.stringify(fileURLToPath(new URL("../trainer/modal/modal_train.py", import.meta.url)))}, encoding="utf-8").read()
 tree = ast.parse(src)
 fns = [n for n in tree.body if isinstance(n, ast.FunctionDef) and n.name in ("_uniq_weights", "_uniq_fields")]
 mod = ast.Module(body=fns, type_ignores=[])

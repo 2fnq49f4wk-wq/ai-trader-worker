@@ -4,6 +4,62 @@
 
 ## Current handoff
 
+- Status: complete (implementation and local validation; verify the deployment run for this commit)
+- Owner: Codex
+- Branch: `main` — user explicitly requested direct main work, no PR.
+- Last commit: HEAD (V33.314; resolve with `git log -1 --oneline`)
+- Base: `6c87c2a` / V33.313, fresh clone and `git fetch origin main` reconfirmed before commit.
+- Scope: V33.314 — monochrome AI brain redesign, model loading recovery, truthful UI and portable validation.
+
+### Codex changes — 2026-09-08
+
+- `public/brain-console.css`: dedicated page-scoped black/white design, large mission header, section navigation,
+  inverse decision panel, responsive summary and content grids, square model controls, readable committee tiles,
+  restored model roles/weights, explicit connection status symbols, light theme and reduced-motion support.
+  Existing renderer surfaces use grayscale to remove hard-coded blue from SVG/canvas without rewriting
+  numerical renderers. Other pages retain their theme. Existing legacy CSS remains as the compatibility base;
+  the versioned stylesheet is the final authority for the brain page.
+- Preserved 14 model tabs, training/GitHub/refresh actions, candidate charts, log pause, pipeline folding,
+  model visualizers, and sidebar asset/budget/open-symbol functions. Header actions now remain visible on mobile.
+- `rankedLivePicks`: summary and main chart select the same highest-rank non-abstaining candidate without
+  mutating server data. All-abstaining scans no longer invent a top candidate. `rankP` is a rank score, not a
+  calibrated probability: display it as a decimal with an explicit label, separately from the chart's `p`.
+- Committee summary now understands actual `buildRoster` states `on`/`prov` (old `live`/`provisional`
+  comparison always counted zero), and still updates when no candidate is available.
+- Chart request sequence guards cover late success, empty responses, errors, cached switches and cleared
+  candidates. A previous request can no longer erase a newer chart. Non-2xx responses display an error.
+- `getState` gained opt-in strict reads; legacy callers retain their fallback behavior. Large model metadata
+  failures now record `meta_read_error`, D1 chunk failures `chunk_read_error`, and invalid chunk counts are
+  rejected before allocation. Valid raw reads clear stale health errors; JSON corruption remains distinguished.
+- SEQ trust/model I/O failures no longer cache null for five minutes. Next request can recover; successful
+  loads and explicitly untrusted models retain caching, and no stale model is used to bypass admission.
+- Regression cases were added to the already-wired `check-ai-ops-ui.mjs` and `check-big-load-health.mjs`.
+  No CI gate was removed and no workflow wiring changed.
+- `.gitattributes` standardizes source LF for Windows/CI source-extraction checks, excludes the legacy UTF-16
+  `src/index 50.js` backup. `check-syntax.mjs` uses esbuild's API (no Windows `npx.cmd` or `/dev/null` issue).
+  Python verification uses native paths and explicit UTF-8 for the affected fixtures. Ignore local node_modules.
+- Implementation comments carry `[Codex V33.314]`; no credentials are saved in tracked files or git remotes.
+
+### Verification and deployment
+
+- All 86 `tools/check-*.mjs` gates passed locally with Node 24, Python 3.11 (`PYTHONUTF8=1`), esbuild 0.28.1;
+  `node --check src/index.js` also passed. CI repeats its configured checks on Node 22.
+- Reproduced storage failures/recovery, SEQ negative-cache recovery, rank selection, roster states, and chart
+  races using the production functions. Existing SEQ inference, MEMO cross-language, holdout, model evidence,
+  accounting and risk-policy contracts remain in the full suite.
+- Chromium preview: 1440px desktop and 390px mobile, no horizontal document overflow, 14 model controls
+  retained. Read-only production API preview verified matching summary/chart symbol, on/prov counts,
+  MEMO structure render and pipeline folding. Also exercised connection-failure UI and light theme.
+- Main push triggers `Deploy to Cloudflare Workers`. Check the run associated with this exact commit before
+  assuming production is current; the live HTML meta `lux-build` and worker build should both be V33.314.
+- No retraining or order was triggered during verification. No claim of increased predictive accuracy.
+- No changes to `wrangler.toml`, D1/R2 bindings, cron, model upload paths, external-AI policy, or
+  `AI_PARAMS.requireTrustedModel` (remains user-authorized `false`).
+- Earlier data-history limitations and external-trainer holdout-calendar work described below remain open;
+  this change fixes proven code defects, not statistical evidence that has not yet accumulated.
+
+## Previous handoff — V33.313 (historical context)
+
 - Status: complete
 - Owner: Claude Code
 - Branch: `main` (직접 작업 — 2026-09-07 사용자 지시 "항상 main에 작업")
