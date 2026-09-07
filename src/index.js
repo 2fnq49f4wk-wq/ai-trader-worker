@@ -2981,7 +2981,7 @@ async function applySignalTypeWeights(DB, cfg) {
    화면·자가진단이 계속 "V33.272" 를 보고했다(운영 스냅샷이 그대로 그랬다). 배포는 됐는데
    ★배포됐다는 사실만 거짓말★ 을 하고 있었으니, "내 고침이 올라간 건가" 를 화면으로 확인할
    방법이 없었다. tools/check-build-ver.mjs 가 이제 소스에 적힌 최신 버전과 이 값을 대조한다. */
-const _BUILD_VER = "V33.315";
+const _BUILD_VER = "V33.316";
 
 // ═══ [V33.171] 평가 순서 계획 — ★승격과 순환을 교차해 굶주림을 구조적으로 없앤다★ ═══
 //   V33.50 의 형태트리거는 "급한 몇 종목을 앞으로 당긴다"는 의도였으나, 실제 운영로그에서는
@@ -24828,6 +24828,32 @@ async function handleRequest(request, env, ctx) {
         return b.p - a.p;                                                // 그다음 확률 순
       });
       return out;
+      });
+    }
+
+    // ── [V33.316] 반사실(counterfactual) 후보 열람 — "사지 않았다면 어떻게 됐을지" 배우려고
+    //   ml_candidates 에 쌓아 두는 표본을 화면에서도 보게 한다(읽기 전용, feat 벡터는 안 보낸다).
+    //   AI 두뇌 화면의 "AI 반사실 후보" 패널이 이 응답을 그대로 쓴다(사용자 요청).
+    if (path === "/api/cf-candidates") {
+      return await swrJson("cf-candidates", 30000, 3600000, async function () {
+        const out = { ts: Date.now(), items: [], unlabeledTotal: 0, featVer: LUXML.featVer };
+        try {
+          const rs = await env.DB.prepare(
+            "SELECT market, symbol, strategy, entry_price, stop_pct, horizon, ts FROM ml_candidates" +
+            " WHERE labeled = 0 AND featver = ? ORDER BY ts DESC LIMIT 16"
+          ).bind(LUXML.featVer).all();
+          out.items = ((rs && rs.results) || []).map(function (r) {
+            return { market: r.market, symbol: r.symbol, strategy: r.strategy,
+              entryPrice: r.entry_price, stopPct: r.stop_pct, horizon: r.horizon, ts: r.ts };
+          });
+        } catch (e) {}
+        try {
+          const c = await env.DB.prepare(
+            "SELECT COUNT(*) n FROM ml_candidates WHERE labeled = 0 AND featver = ?"
+          ).bind(LUXML.featVer).first();
+          out.unlabeledTotal = (c && c.n) || 0;
+        } catch (e) {}
+        return out;
       });
     }
 

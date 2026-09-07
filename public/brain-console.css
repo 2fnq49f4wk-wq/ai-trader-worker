@@ -1,22 +1,23 @@
-/* Codex V33.314 — LUX monochrome mission console.
- * Keep DOM IDs, event handlers, model tabs and risk policy intact. Claude: see AI_HANDOFF.md.
- * Neutral tokens cover legacy renderers; only their drawing surfaces are desaturated.
+/* [V33.316] ★색을 되살린다★ — 사용자: "물빠진색인데 색좀 수정하고 ... 글자에는 색 넣어줘."
+ * V33.314 는 의도적으로 회색조 하나로 통일했다("Neutral tokens... desaturated") — 정확히
+ * 그 선택이 문제였다. 레이아웃·구조(간격·모바일 반응형·모델 카드)는 그대로 두고 색만
+ * 미션컨트롤 팔레트(시안/그린/앰버/레드)로 되돌린다 — 아래 filter:grayscale(1) 도 같이 뗀다.
  */
 body:has(#page-nnviz.active) {
-  --ops-void:#050505; --ops-bg0:#050505; --ops-bg1:#0b0b0b; --ops-bg2:#111; --ops-bg3:#191919;
-  --ops-line:#383838; --ops-line2:#272727; --ops-line-soft:#303030;
-  --ops-ink:#f5f5f5; --ops-ink2:#c5c5c5; --ops-ink3:#999;
-  --ops-cyan:#f5f5f5; --ops-cyan-soft:#ddd; --ops-cyan-dim:#303030;
-  --ops-green:#eee; --ops-amber:#c5c5c5; --ops-red:#b0b0b0; --ops-purple:#aaa;
-  --ops-panel:#101010; --ops-panel-hi:#1c1c1c; --ops-r:0px; --ops-r-lg:0px;
+  --ops-void:#04060c; --ops-bg0:#05070d; --ops-bg1:#0a0e1a; --ops-bg2:#0d1220; --ops-bg3:#111a2e;
+  --ops-line:#28365a; --ops-line2:#1a2540; --ops-line-soft:#22304f;
+  --ops-ink:#f4f8ff; --ops-ink2:#9ab0d6; --ops-ink3:#5e75a0;
+  --ops-cyan:#3ecbff; --ops-cyan-soft:#7fc4f0; --ops-cyan-dim:rgba(62,203,255,.2);
+  --ops-green:#33e6a8; --ops-amber:#ffbe3d; --ops-red:#ff5c74; --ops-purple:#a78bff;
+  --ops-panel:#0d1424; --ops-panel-hi:rgba(62,203,255,.08); --ops-r:0px; --ops-r-lg:0px;
 }
 html[data-theme="light"] body:has(#page-nnviz.active) {
-  --ops-void:#fff; --ops-bg0:#fff; --ops-bg1:#fafafa; --ops-bg2:#f0f0f0; --ops-bg3:#e5e5e5;
-  --ops-line:#b8b8b8; --ops-line2:#dedede; --ops-line-soft:#ddd;
-  --ops-ink:#111; --ops-ink2:#383838; --ops-ink3:#626262;
-  --ops-cyan:#111; --ops-cyan-soft:#333; --ops-cyan-dim:#e5e5e5;
-  --ops-green:#111; --ops-amber:#444; --ops-red:#555; --ops-purple:#666;
-  --ops-panel:#fff; --ops-panel-hi:#ededed;
+  --ops-void:#fff; --ops-bg0:#fff; --ops-bg1:#f4f8fd; --ops-bg2:#eaf1fa; --ops-bg3:#dfe9f5;
+  --ops-line:#c3d4ea; --ops-line2:#dbe5f2; --ops-line-soft:#e6edf7;
+  --ops-ink:#0f2338; --ops-ink2:#3f5a7d; --ops-ink3:#6c85a6;
+  --ops-cyan:#0b6cd4; --ops-cyan-soft:#1a6fc4; --ops-cyan-dim:rgba(11,108,212,.1);
+  --ops-green:#0f9d63; --ops-amber:#a5730a; --ops-red:#c62a45; --ops-purple:#6c4fd8;
+  --ops-panel:#fff; --ops-panel-hi:#eef4fb;
 }
 body #page-nnviz {
   --ap-ink:var(--ops-ink); --ap-ink2:var(--ops-ink2); --ap-ink3:var(--ops-ink3);
@@ -53,6 +54,8 @@ html:is(:root,[data-theme]) body #page-nnviz :is(button,a):focus-visible { outli
 html:is(:root,[data-theme]) body #page-nnviz .nnv-healthbar { margin:0; padding:12px 0; border:0; background:transparent; border-radius:0; gap:12px; flex-wrap:wrap; }
 html:is(:root,[data-theme]) body #page-nnviz :is(.nnv-health-title,.nnv-health-time) { color:var(--ops-ink2)!important; }
 html:is(:root,[data-theme]) body #page-nnviz .nnv-health-source { color:var(--ops-ink2)!important; background:transparent!important; border:1px solid var(--ops-line)!important; border-radius:0; padding:6px 9px; }
+html:is(:root,[data-theme]) body #page-nnviz .nnv-health-source.ok { color:var(--ops-green)!important; border-color:var(--ops-green)!important; }
+html:is(:root,[data-theme]) body #page-nnviz .nnv-health-source.error { color:var(--ops-red)!important; border-color:var(--ops-red)!important; }
 html:is(:root,[data-theme]) body #page-nnviz .nnv-health-source.ok::before { content:'✓ '; }
 html:is(:root,[data-theme]) body #page-nnviz .nnv-health-source.error { border-style:dashed!important; }
 html:is(:root,[data-theme]) body #page-nnviz .nnv-health-source.error::before { content:'! '; }
@@ -88,10 +91,10 @@ html:is(:root,[data-theme]) body #page-nnviz .nlv-cmrow { margin:0; }
 html:is(:root,[data-theme]) body #page-nnviz .nlv-cmlist { display:grid!important; grid-template-columns:repeat(auto-fit,minmax(150px,1fr))!important; gap:1px!important; padding:0!important; background:var(--ops-line2)!important; }
 html:is(:root,[data-theme]) body #page-nnviz .nlv-cm { display:flex!important; flex-wrap:wrap; gap:10px!important; padding:18px!important; border:0!important; border-radius:0!important; background:var(--ops-bg1)!important; min-height:84px; box-shadow:none!important; }
 html:is(:root,[data-theme]) body #page-nnviz .nlv-cm:hover { background:var(--ops-panel-hi)!important; }
-html:is(:root,[data-theme]) body #page-nnviz .nlv-cm .cm-dot { box-shadow:none!important; background:var(--ops-ink3)!important; }
-html:is(:root,[data-theme]) body #page-nnviz .nlv-cm.ok .cm-dot { background:var(--ops-ink)!important; }
-html:is(:root,[data-theme]) body #page-nnviz .nlv-cm.prov .cm-dot { border-radius:0!important; }
-html:is(:root,[data-theme]) body #page-nnviz .nlv-cm.warn .cm-dot { background:transparent!important; border:1px solid var(--ops-ink3); }
+html:is(:root,[data-theme]) body #page-nnviz .nlv-cm .cm-dot { box-shadow:none!important; background:var(--ops-ink3)!important; border-radius:50%!important; }
+html:is(:root,[data-theme]) body #page-nnviz .nlv-cm.ok .cm-dot { background:var(--ops-cyan)!important; box-shadow:0 0 6px var(--ops-cyan)!important; }
+html:is(:root,[data-theme]) body #page-nnviz .nlv-cm.prov .cm-dot { background:var(--ops-cyan)!important; opacity:.55; }
+html:is(:root,[data-theme]) body #page-nnviz .nlv-cm.warn .cm-dot { background:transparent!important; border:1px solid var(--ops-amber); }
 html:is(:root,[data-theme]) body #page-nnviz .nlv-cm .cm-role { display:block!important; flex-basis:100%; color:var(--ops-ink3); font-size:10px; line-height:1.5; }
 html:is(:root,[data-theme]) body #page-nnviz .nlv-cm .cm-w { display:block!important; color:var(--ops-ink2); }
 html:is(:root,[data-theme]) body #page-nnviz .nlv-step { padding:9px 0; border-bottom:1px solid var(--ops-line2); }
@@ -101,6 +104,8 @@ html:is(:root,[data-theme]) body #page-nnviz .nlv-feed { font-size:11px; line-he
 html:is(:root,[data-theme]) body #page-nnviz .nlv-line { padding:7px 18px; }
 html:is(:root,[data-theme]) body #page-nnviz .nlv-line:is(.buy,.warn) { background:var(--ops-bg2); }
 html:is(:root,[data-theme]) body #page-nnviz .nlv-line .b em { color:var(--ops-ink)!important; }
+html:is(:root,[data-theme]) body #page-nnviz .nlv-line.buy .b em { color:var(--ops-cyan)!important; }
+html:is(:root,[data-theme]) body #page-nnviz .nlv-line.warn .b em { color:var(--ops-amber)!important; }
 html:is(:root,[data-theme]) body #page-nnviz .nlv-picks { margin:0; }
 html:is(:root,[data-theme]) body #page-nnviz .nlv-picks-grid { grid-template-columns:repeat(auto-fit,minmax(min(100%,190px),1fr))!important; gap:1px!important; padding:0!important; background:var(--ops-line2); }
 html:is(:root,[data-theme]) body #page-nnviz .nlv-pick { background:var(--ops-bg1)!important; border:0!important; border-radius:0!important; padding:20px!important; }
@@ -111,13 +116,50 @@ html:is(:root,[data-theme]) body #page-nnviz #nnvStruct::before { content:'MODEL
 html:is(:root,[data-theme]) body #page-nnviz .nnv-tabs { gap:6px!important; padding:0!important; }
 html:is(:root,[data-theme]) body #page-nnviz .nnv-nav-h { color:var(--ops-ink3)!important; letter-spacing:.06em; padding-top:14px; }
 html:is(:root,[data-theme]) body #page-nnviz .nnv-tab { border-radius:0!important; background:transparent!important; border:1px solid var(--ops-line)!important; color:var(--ops-ink2)!important; box-shadow:none!important; min-height:42px; padding:10px 12px!important; }
-html:is(:root,[data-theme]) body #page-nnviz .nnv-tab.active { background:var(--ops-ink)!important; color:var(--ops-bg0)!important; border-color:var(--ops-ink)!important; box-shadow:none!important; }
+html:is(:root,[data-theme]) body #page-nnviz .nnv-tab.active { background:var(--ops-cyan)!important; color:var(--ops-bg0)!important; border-color:var(--ops-cyan)!important; box-shadow:0 0 12px var(--ops-cyan-dim)!important; }
 html:is(:root,[data-theme]) body #page-nnviz .nnv-tab:hover { border-color:var(--ops-ink)!important; }
 html:is(:root,[data-theme]) body #page-nnviz :is(.nnv-stage,.nnv-chip,.nnv-comm,.nnv-tip) { background:var(--ops-bg1)!important; border-color:var(--ops-line)!important; border-radius:0!important; box-shadow:none!important; }
-html:is(:root,[data-theme]) body #page-nnviz :is(.nnv-stage,.nlv-tp-chart,.nlv-funnel,.nlv-pick svg,.nnv-legend,.nnv-tab-dot,.nnv-banner,.nnv-chips,.nlv-strip-tags,.nlv-toplist,.nlv-kpi,.nnv-roles,.nnv-comm,.nlv-tp) { filter:grayscale(1); }
-html body:has(#page-nnviz.active) .rail { background:var(--ops-bg1)!important; border-color:var(--ops-line)!important; --s2:var(--ops-bg2); filter:grayscale(1); }
+html body:has(#page-nnviz.active) .rail { background:var(--ops-bg1)!important; border-color:var(--ops-line)!important; --s2:var(--ops-bg2); }
 /* Codex V33.315: left navigation and mobile shell retain their original design. */
 /* Layout is intrinsically responsive: no fixed-width pane and no hidden model tabs. */
+
+/* ═══ [V33.316] AI 스캔 순회 — 필름스트립. 카드 하나가 몇 초마다 스포트라이트를 받는다 ═══ */
+#page-nnviz .nlv-scanwrap { border:1px solid var(--ops-line); }
+#page-nnviz .nlv-scanrail {
+  display:flex; gap:1px; overflow-x:auto; overflow-y:hidden; background:var(--ops-line2);
+  scroll-snap-type:x proximity; -webkit-overflow-scrolling:touch;
+}
+#page-nnviz .nlv-scanrail::-webkit-scrollbar { height:4px; }
+#page-nnviz .nlv-scanrail::-webkit-scrollbar-thumb { background:var(--ops-line); }
+#page-nnviz .nlv-scancard {
+  flex:0 0 148px; scroll-snap-align:center; background:var(--ops-bg1); padding:14px;
+  cursor:pointer; border-top:2px solid transparent; transition:border-color .25s,background .25s;
+}
+#page-nnviz .nlv-scancard:hover { background:var(--ops-panel-hi); }
+#page-nnviz .nlv-scancard.is-now { border-top-color:var(--ops-cyan); background:var(--ops-panel-hi); }
+#page-nnviz .nlv-scancard-top { display:flex; align-items:baseline; justify-content:space-between; gap:6px; }
+#page-nnviz .nlv-scancard-top .sym { font:600 12.5px 'IBM Plex Mono',monospace; color:var(--ops-ink); white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+#page-nnviz .nlv-scancard-top .stamp { font:700 9px/1 'IBM Plex Mono',monospace; letter-spacing:.06em; padding:3px 6px; white-space:nowrap; }
+#page-nnviz .nlv-scancard.pass .stamp { color:var(--ops-bg0); background:var(--ops-cyan); }
+#page-nnviz .nlv-scancard.watch .stamp { color:var(--ops-bg0); background:var(--ops-amber); }
+#page-nnviz .nlv-scancard.reject .stamp { color:var(--ops-ink3); background:transparent; border:1px solid var(--ops-line); text-decoration:line-through; }
+#page-nnviz .nlv-scancard .nlv-pick-chart,#page-nnviz .nlv-scancard .nlv-pick-nochart { margin:8px 0; height:38px; }
+#page-nnviz .nlv-scancard.reject .nlv-pick-chart svg { opacity:.4; }
+#page-nnviz .nlv-scancard-foot { display:flex; justify-content:space-between; gap:6px; font-size:9.5px; color:var(--ops-ink3); }
+#page-nnviz .nlv-scancard.pass .nlv-scancard-foot .rank { color:var(--ops-cyan); font-weight:700; }
+#page-nnviz .nlv-scancard-foot .tech { overflow:hidden; text-overflow:ellipsis; white-space:nowrap; max-width:70px; }
+
+/* ═══ AI 반사실 후보 ═══ */
+#page-nnviz .nlv-cf { margin:0; border:1px solid var(--ops-line); }
+#page-nnviz .nlv-cf-grid { display:grid; grid-template-columns:repeat(auto-fill,minmax(150px,1fr)); gap:1px; background:var(--ops-line2); padding:0; }
+#page-nnviz .nlv-cf-item { background:var(--ops-bg1); padding:12px 14px; cursor:pointer; display:flex; flex-direction:column; gap:4px; }
+#page-nnviz .nlv-cf-item:hover { background:var(--ops-panel-hi); }
+#page-nnviz .nlv-cf-item .sym { font:600 12px 'IBM Plex Mono',monospace; color:var(--ops-ink); }
+#page-nnviz .nlv-cf-item .strat { font-size:9.5px; color:var(--ops-purple); text-transform:uppercase; letter-spacing:.04em; }
+#page-nnviz .nlv-cf-item .entry { font-size:10px; color:var(--ops-ink2); }
+#page-nnviz .nlv-cf-item .age { font-size:9px; color:var(--ops-ink3); }
+
 @media (prefers-reduced-motion:reduce) {
   #page-nnviz *,#page-nnviz *::before,#page-nnviz *::after { animation:none!important; transition:none!important; scroll-behavior:auto!important; }
+  #page-nnviz .nlv-scanrail { scroll-behavior:auto!important; }
 }

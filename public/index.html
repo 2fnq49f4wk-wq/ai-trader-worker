@@ -8,7 +8,7 @@
      인데, 지금까지 화면에서 그걸 알 방법이 전혀 없었다(카카오톡 인앱 브라우저는 특히 강하게 캐시한다).
      서버가 내려주는 build 와 이 값을 비교해 다르면 배너로 알린다.
      ※ src/index.js 의 _BUILD_VER 와 항상 같아야 한다 — check-html-js 가 강제한다. -->
-<meta name="lux-build" content="V33.315">
+<meta name="lux-build" content="V33.316">
 <title>LUX-ENGINE V10</title>
 <!-- ══ [V33.156] 설치형 앱(PWA) — 폰·PC 에서 홈화면/독에 담아 앱처럼 연다 ══
      · manifest  : 이름·아이콘·standalone 표시(주소창 없이 앱처럼)
@@ -3569,7 +3569,11 @@ html[data-theme="light"] .m-brainbar button.active{color:#0b4f9e;background:rgba
         <span class="nav-item-icon">🧪</span>
         <span class="nav-item-label">WHAT-IF</span>
       </div>
-      <div class="nav-item" data-page="news">
+      <!-- [V33.316] NEWS는 이제 별도 화면이 아니다 — showPage('news')가 지표&환율(#page-macro)의
+           뉴스 탭으로 곧장 연결한다(Codex V33.315). 두 nav-item을 같이 두면 뉴스를 눌러도
+           "지표&환율" 쪽만 활성 표시돼 사용자가 "제대로 안 됐다"고 느낀 그 지점이다.
+           report/whatif 와 같은 규약으로 감춘다 — showPage·즐겨찾기 링크가 이 id를 계속 쓴다. -->
+      <div class="nav-item" data-page="news" style="display:none;">
         <span class="nav-item-icon">📰</span>
         <span class="nav-item-label">NEWS</span>
       </div>
@@ -4424,6 +4428,15 @@ html[data-theme="light"] .m-brainbar button.active{color:#0b4f9e;background:rgba
         <span class="nlv-strip-tags" id="nlvStripTags"></span>
       </div>
 
+      <!-- [V33.316] ★스캔 순회★ — "다른 퀀트 AI 처럼 지금 분석 중인 종목을 순차적으로,
+           탈락이면 탈락이라고" (사용자 요청). /api/ai-picks 는 이미 야간 전종목 스캔 결과를
+           기권·랭크까지 담아 내려준다 — 새 API 없이 그 배열을 필름스트립으로 넘겨 보여준다.
+           카드 하나가 몇 초마다 스포트라이트(is-now)를 받으며 가운데로 스크롤된다. -->
+      <div class="nlv-scanwrap" id="nlvScanWrap">
+        <div class="nlv-sec-h">AI 스캔 순회 <small id="nlvScanSub">유니버스 확인 중</small></div>
+        <div class="nlv-scanrail" id="nlvScanRail"><div class="nlv-empty">스캔 결과를 기다리는 중…</div></div>
+      </div>
+
       <!-- ② 히어로 — 좌: 판정 코어 / 우: 판정 깔때기(유니버스→진입후보) -->
       <div class="nlv-hero">
         <!-- 최우선 후보 — 위원회가 가장 높게 본 종목의 실제 가격 흐름(선 그래프) -->
@@ -4488,6 +4501,16 @@ html[data-theme="light"] .m-brainbar button.active{color:#0b4f9e;background:rgba
         <span class="nlv-picks-sub" id="nlvPicksSub">—</span>
       </div>
       <div class="nlv-picks-grid" id="nlvPicksGrid"><div class="nlv-empty">후보 종목을 불러오는 중…</div></div>
+    </div>
+
+    <!-- [V33.316] AI 반사실(counterfactual) 후보 — "사지 않았다면 어떻게 됐을지" 배우려고
+         쌓아 두는 표본을 화면에서도 보게 한다(읽기 전용, /api/cf-candidates). 사용자 요청. -->
+    <div class="nlv-cf" id="nlvCfWrap">
+      <div class="nlv-picks-head">
+        <span>AI 반사실 후보 <small style="font-weight:400;">· 사지 않은 종목의 사후 라벨링 대기열</small></span>
+        <span class="nlv-picks-sub" id="nlvCfSub">—</span>
+      </div>
+      <div class="nlv-cf-grid" id="nlvCfGrid"><div class="nlv-empty">불러오는 중…</div></div>
     </div>
 
     <!-- [V33.313] 작동 화면·구조 관측을 한 창으로 합쳤다(사용자 지시) — 더 이상 감추지 않는다. -->
@@ -17689,8 +17712,10 @@ html:root .page > *{ flex-shrink:0; }
     { id:'dashboard', ic:'◈', tx:'대시보드' }, { id:'detail', ic:'📈', tx:'종목' },
     { id:'positions', ic:'◉', tx:'포지션' },   { id:'macro', ic:'📊', tx:'지표&환율' },
     { id:'report', ic:'📋', tx:'AI 리포트', brain:true },  { id:'nnviz', ic:'✦', tx:'AI 두뇌' },
-    { id:'whatif', ic:'🧪', tx:'WHAT-IF', brain:true },    { id:'news', ic:'📰', tx:'NEWS' },
+    { id:'whatif', ic:'🧪', tx:'WHAT-IF', brain:true },
     { id:'trades', ic:'◷', tx:'TRADES' },      { id:'vision', ic:'◑', tx:'AI VISION' }
+    // [V33.316] NEWS 항목은 뺐다 — showPage('news')가 지표&환율의 뉴스 탭으로 아예 넘어간다
+    // (Codex V33.315). 드로어에 둘 다 두면 뉴스를 눌러도 지표&환율만 켜진 채 보였다.
   ];
   var TABS = ['dashboard','detail','nnviz','positions'];
   // 우측 사이드바가 떠 있는 화면 — 두뇌 + 그 사이드바에서 여는 화면들
@@ -18396,12 +18421,13 @@ html:root .page > *{ flex-shrink:0; }
   function setBrainView(){
     var onBrain = !!document.querySelector('#page-nnviz.active');
     if(!onBrain) return;
-    if(LIVE.data){ renderCore(LIVE.data); renderCenter(LIVE.data); startFeed(); }
+    if(LIVE.data){ renderCore(LIVE.data); renderCenter(LIVE.data); renderScanCarousel(LIVE.data); startFeed(); startScan(); }
     else loadLive(false);
     if(typeof window.openNnViz === 'function' && !window.__nnvStructBooted){
       window.__nnvStructBooted = true;
       window.openNnViz();   // 구조 데이터 — 이제 진입 즉시 함께 받아온다
     }
+    loadCfCandidates();   // [V33.316] AI 반사실 후보 — 부팅 1회
   }
 
   function verdictOf(pk){
@@ -19638,15 +19664,124 @@ html:root .page > *{ flex-shrink:0; }
   //      함께 묶여 화면이 통째로 대기했다. → 엔드포인트별로 도착하는 대로 부분 렌더.
   //   2) 첫 진입 시 캐시가 없어 무조건 네트워크를 기다렸다. → 마지막 성공 데이터를
   //      localStorage 에 저장해 두고 즉시 그린 뒤(체감 0ms) 최신값으로 덮어쓴다.
+  /* [V33.316] ★스캔 순회 필름스트립★ — "다른 퀀트 AI 처럼 지금 분석 중인 종목을
+     순차적으로, 탈락이면 탈락이라고" (사용자 요청). 새 데이터를 부르지 않는다 —
+     /api/ai-picks 는 이미 야간 전종목 스캔 결과를 기권 여부·랭크까지 담아 내려주므로
+     그 배열(picks)을 그대로 카드로 늘어놓고, 몇 초마다 하나씩 스포트라이트를 옮긴다.
+     rankP 는 위원회 랭크이지 보정된 확률이 아니다 — "확률"이라 적지 않는다(Codex V33.314
+     가 이미 이 구분을 못박았다: rankP·p 혼용은 잘못된 정밀도 인식을 만든다). */
+  var SCAN = { idx:0, timer:null, hover:false, n:0 };
+  function scanVerdict(pk){
+    var rank = (pk.rankP != null ? pk.rankP : pk.p) || 0;
+    if(pk.abstain) return { cls:'reject', label:'탈락' };
+    if(rank >= 0.60) return { cls:'pass', label:'통과' };
+    if(rank >= 0.52) return { cls:'watch', label:'관찰' };
+    return { cls:'reject', label:'탈락' };
+  }
+  function renderScanCarousel(d){
+    var rail = $id('nlvScanRail'); if(!rail) return;
+    var picks = (d.picks || []).slice(0, 40);
+    var scan = d.scan || {};
+    var sub = $id('nlvScanSub');
+    if(sub){
+      var prog = (scan.total != null) ? ((scan.scanned != null ? scan.scanned : picks.length) + ' / ' + scan.total + '종목') : (picks.length + '종목 확인');
+      sub.textContent = prog + (scan.ts ? ' · 최근 스캔 ' + ago(scan.ts) : '');
+    }
+    if(!picks.length){
+      rail.innerHTML = '<div class="nlv-empty">스캔 결과를 기다리는 중…</div>';
+      SCAN.n = 0;
+      return;
+    }
+    SCAN.n = picks.length;
+    rail.innerHTML = picks.map(function(pk, i){
+      var vd = scanVerdict(pk);
+      var rank = (pk.rankP != null ? pk.rankP : pk.p) || 0;
+      var q = quoteOf(pk.symbol);
+      return '<div class="nlv-scancard ' + vd.cls + '" data-i="' + i + '" data-sym="' + esc(pk.symbol) + '" title="' + esc(pk.symbol) + ' 상세 열기">'
+        + '<div class="nlv-scancard-top"><span class="sym">' + esc(pk.symbol) + '</span><span class="stamp">' + vd.label + '</span></div>'
+        + pickChart(q && q.spark)
+        + '<div class="nlv-scancard-foot"><span class="rank">랭크 ' + Math.round(rank * 100) + '</span>'
+          + (pk.techLabel ? '<span class="tech">' + esc(pk.techLabel) + '</span>' : '') + '</div>'
+      + '</div>';
+    }).join('');
+    if(!rail.__scanBound){
+      rail.__scanBound = true;
+      rail.addEventListener('click', function(e){
+        var c = e.target.closest ? e.target.closest('.nlv-scancard') : null;
+        if(c && typeof window.openStockDetail === 'function') window.openStockDetail(c.getAttribute('data-sym'));
+      });
+      rail.addEventListener('pointerenter', function(){ SCAN.hover = true; });
+      rail.addEventListener('pointerleave', function(){ SCAN.hover = false; });
+    }
+    scanHighlight();
+  }
+  function scanHighlight(){
+    var rail = $id('nlvScanRail'); if(!rail) return;
+    var cards = rail.querySelectorAll('.nlv-scancard');
+    if(!cards.length) return;
+    if(SCAN.idx >= cards.length) SCAN.idx = 0;
+    for(var i=0;i<cards.length;i++) cards[i].classList.toggle('is-now', i === SCAN.idx);
+    var reduce = !!(window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches);
+    try{ cards[SCAN.idx].scrollIntoView({ behavior: reduce ? 'auto' : 'smooth', inline: 'center', block: 'nearest' }); }catch(e){}
+  }
+  function startScan(){
+    if(SCAN.timer) return;
+    SCAN.timer = setInterval(function(){
+      if(LIVE.paused || SCAN.hover || !SCAN.n) return;
+      SCAN.idx = (SCAN.idx + 1) % SCAN.n;
+      scanHighlight();
+    }, 2200);
+  }
+  function stopScan(){ if(SCAN.timer){ clearInterval(SCAN.timer); SCAN.timer = null; } }
+
+  // [V33.316] AI 반사실(counterfactual) 후보 — 읽기 전용 열람. 30초 캐시 응답이라 부담 없다.
+  var CF = { ts:0, wait:null };
+  function loadCfCandidates(){
+    if(CF.wait) return CF.wait;
+    CF.wait = fetch('/api/cf-candidates').then(function(r){
+      if(!r.ok) throw new Error('HTTP ' + r.status);
+      return r.json();
+    }).then(function(d){ CF.wait = null; renderCfCandidates(d); return d; })
+      ['catch'](function(e){
+        CF.wait = null;
+        var el = $id('nlvCfGrid');
+        if(el) el.innerHTML = '<div class="nlv-empty">조회 실패 — ' + esc(String((e && e.message) || e)) + '</div>';
+      });
+    return CF.wait;
+  }
+  function renderCfCandidates(d){
+    var grid = $id('nlvCfGrid'), sub = $id('nlvCfSub'); if(!grid) return;
+    var items = (d && d.items) || [];
+    if(sub) sub.textContent = (d && d.unlabeledTotal != null) ? ('대기 ' + d.unlabeledTotal + '건 · 최근 ' + items.length + '건 표시') : '—';
+    if(!items.length){ grid.innerHTML = '<div class="nlv-empty">최근 반사실 후보가 없습니다</div>'; return; }
+    grid.innerHTML = items.map(function(c){
+      return '<div class="nlv-cf-item" data-sym="' + esc(c.symbol) + '" title="' + esc(c.symbol) + ' 상세 열기">'
+        + '<span class="sym">' + esc(c.symbol) + '</span>'
+        + '<span class="strat">' + esc(c.strategy || '—') + '</span>'
+        + '<span class="entry">진입가 ' + fmtPx(c.entryPrice, c.market) + '</span>'
+        + '<span class="age">' + ago(c.ts) + '</span>'
+      + '</div>';
+    }).join('');
+    if(!grid.__bound){
+      grid.__bound = true;
+      grid.addEventListener('click', function(e){
+        var c = e.target.closest ? e.target.closest('.nlv-cf-item') : null;
+        if(c && typeof window.openStockDetail === 'function') window.openStockDetail(c.getAttribute('data-sym'));
+      });
+    }
+  }
+
   function paintLive(d, pipeSteps){
     LIVE.data = d;
     if(BVIEW !== 'live') return;   // 구조 관측 중이면 무거운 코어 SVG·스트림은 그리지 않는다
     renderOpsBrief(d);
     renderCore(d);
     renderCenter(d);
+    renderScanCarousel(d);
     renderPicksGraph(d);
     if(pipeSteps) renderPipe(pipeSteps, d);
     startFeed();
+    startScan();
   }
   function cacheLive(d, pipeSteps){
     try{ localStorage.setItem('luxLiveCache', JSON.stringify({ d:d, pipe:pipeSteps||null, ts:Date.now() })); }catch(e){}
@@ -19718,6 +19853,7 @@ html:root .page > *{ flex-shrink:0; }
     LIVE.active = false;
     if(LIVE.timer){ clearInterval(LIVE.timer); LIVE.timer = null; }
     stopFeed();
+    stopScan();
   }
 
   /* ═════════════════════════════════════════════════════════════

@@ -5,9 +5,52 @@
 ## Current handoff
 
 - Status: complete locally; deployment must be checked against this exact HEAD after push.
-- Owner: Codex
+- Owner: Claude
 - Branch: main (direct main authorized; no PR)
-- Last commit: HEAD / V33.315 (resolve with git log -1)
+- Last commit: HEAD / V33.316 (resolve with git log -1)
+- Base: V33.315 (Codex, pulled via fast-forward `git pull --ff-only origin main`), deployment verified live.
+- Scope: 사용자가 "코덱스로 고친 AI 두뇌가 물빠진색"이라 지적 — brain-console.css 의 의도적
+  `filter:grayscale(1)` + 무채색 토큰을 되돌려 채도 있는 미션컨트롤 팔레트로 복원. 동시에
+  "다른 퀀트 AI 처럼 스캔중인 종목을 순차적으로 차트+확률로 보여주고 탈락이면 탈락이라 표시,
+  AI 반사실 후보도 보여달라"는 요청에 맞춰 두 개의 새 패널(AI 스캔 순회 필름스트립, AI 반사실
+  후보 목록)을 추가. 마지막으로 "지표환율/뉴스 통합이 제대로 안 된 것 같다"는 지적을
+  코드로 확인해 NEWS 내비게이션 중복 항목을 제거(진짜 원인은 통합 로직이 아니라 `showPage()`가
+  `news`→`macro` 로 id 를 바꿔치기 하면서 내비 하이라이트가 어긋난 것이었음).
+
+### Claude V33.316 — 2026-09-07
+
+- **색 복원** (`public/brain-console.css`): 두 곳의 `filter:grayscale(1)` 을 제거하고, 다크/라이트
+  토큰을 시안(`#3ecbff`)/그린(`#33e6a8`)/앰버(`#ffbe3d`)/레드(`#ff5c74`)/퍼플(`#a78bff`) 기반의
+  채도 있는 팔레트로 재정의. `.nnv-health-source.ok/.error`, `.nlv-cm .cm-dot` 상태색, `.nlv-line
+  .buy/.warn em`, `.nnv-tab.active` 를 잉크 반전 대신 시안 강조로 교체.
+- **AI 스캔 순회** (`#nlvScanWrap`/`#nlvScanRail`): `/api/ai-picks` 의 전체 유니버스 스캔 배열을
+  가로 필름스트립으로 순차 하이라이트(2.2초 간격, hover/reduced-motion 시 정지)하며 종목별
+  미니 차트(`pickChart`)와 랭크 점수, `abstain`/랭크 임계값 기반 통과·관찰·탈락 스탬프를 표시.
+  `rankP` 는 위원회 순위 점수이지 보정된 확률이 아니므로 "확률" 대신 "랭크"로 표기(Codex
+  V33.314 의 구분을 그대로 따름).
+- **AI 반사실 후보** (`#nlvCfWrap`): 신규 읽기 전용 엔드포인트 `/api/cf-candidates` (`src/index.js`)
+  가 `ml_candidates` 테이블에서 아직 라벨링 안 된 표본 최근 16건 + 대기 총건수를 반환(30초/1시간
+  SWR 캐시, feat 벡터는 응답에 포함하지 않음). 프런트는 종목·전략·진입가·경과시간을 카드로 표시.
+- **NEWS 내비 중복 제거**: 데스크톱 `data-page="news"` 항목에 `report`/`whatif` 와 동일한 방식으로
+  `display:none`, 모바일 `NAVS` 배열에서 `news` 항목 삭제. `지표&환율` 탭이 이미 뉴스를 흡수하고
+  있어 두 항목이 공존하면 `showPage()`의 id 치환 때문에 NEWS 클릭 시 하이라이트가 어긋났음.
+- **레이아웃**: `.nlv-scanwrap` 이 `#nnvLive` 의 2번째 자식으로 추가되며 컴팩트(768px+/650px+)
+  operations 그리드의 3-트랙 가정이 깨졌던 것을 `grid-template-rows`에 트랙을 하나 추가해 수정,
+  `.nnviz-content`의 `overflow:hidden`→`overflow-y:auto` 로 방어.
+- 검증: `node --check src/index.js` 통과, 86종 게이트 전체 통과, 헤드리스 크로미움(CDP)으로
+  1600×1000/800×700 스크린샷 확인 — `.rail` computed `filter:none`(그레이스케일 해제 확인),
+  스캔/반사실 패널 DOM 존재·display 정상, 컴팩트 그리드 레이아웃 깨짐 없음. 실 백엔드가 없는
+  로컬 정적 서버라 `/api/ai-picks`/`/api/cf-candidates` 응답은 404 로 처리되었고(정상적인 에러
+  UI 로 표시됨), 실 데이터가 있는 프로덕션에서 카드 렌더링을 재확인할 필요는 남아 있음.
+- 학습·주문 트리거 없음, `AI_PARAMS.requireTrustedModel`/`EXTERNAL_LLM_DISABLED`/
+  `EXTERNAL_AI_API_DISABLED` 등 정책 값 변경 없음, 시크릿 없음.
+- Push 후 GitHub Actions 배포 확인 필요 — 정확한 실행 run 과 실서비스 `lux-build`/`/api/selfcheck`
+  의 `build` 필드가 V33.316 인지 확인할 것 (`tools/*` 워크플로 프로브 사용, 직접 HTTPS 불가 환경).
+
+## Previous handoff — V33.315
+
+- Owner: Codex
+- Last commit: V33.315 (resolve with `git log`)
 - Base: 4da5c84 / V33.314; its deployment run 34146231149 succeeded and live version was verified.
 - Scope: compact brain workspace, rebuilt responsive model topology, unified indicators/FX/news.
 

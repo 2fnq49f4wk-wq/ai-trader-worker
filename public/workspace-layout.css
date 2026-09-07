@@ -79,9 +79,15 @@ html:is(:root,[data-theme]) body #page-nnviz[data-brain-view="operations"] .nlv-
   html:is(:root,[data-theme]) body #page-nnviz[data-brain-view="operations"] .ops-metrics dd { font-size:21px; margin:3px 0; }
   html:is(:root,[data-theme]) body #page-nnviz[data-brain-view="operations"] .nnv-healthbar { min-height:24px; }
   html:is(:root,[data-theme]) body #page-nnviz[data-brain-view="operations"] .nlv-strip { flex-wrap:nowrap; overflow-x:auto; white-space:nowrap; }
-  html:is(:root,[data-theme]) body #page-nnviz[data-brain-view="operations"] .nnviz-content { height:calc(100dvh - 24px); box-sizing:border-box; overflow:hidden; }
+  /* [V33.316] overflow:hidden → overflow-y:auto — 스캔 필름스트립을 새로 넣으면서 4행이
+     됐다. 그리드 트랙 계산이 어긋나는 화면 크기가 있어도 내용이 조용히 잘리는 대신
+     스크롤되게 한다(잘림은 사용자가 알아챌 수 없다 — 스크롤은 알아챌 수 있다). */
+  html:is(:root,[data-theme]) body #page-nnviz[data-brain-view="operations"] .nnviz-content { height:calc(100dvh - 24px); box-sizing:border-box; overflow-y:auto; }
   #page-nnviz[data-brain-view="operations"] :is(.nnv-head,.mission-nav,.nnv-healthbar,.ops-brief) { flex-shrink:0; }
-  html:is(:root,[data-theme]) body #page-nnviz[data-brain-view="operations"] .nnv-live { flex:1; min-height:0; display:grid; grid-template-rows:auto minmax(170px,1fr) auto; }
+  html:is(:root,[data-theme]) body #page-nnviz[data-brain-view="operations"] .nnv-live { flex:1; min-height:0; display:grid; grid-template-rows:auto auto minmax(170px,1fr) auto; }
+  #page-nnviz[data-brain-view="operations"] .nlv-scanwrap { flex-shrink:0; max-height:150px; overflow:hidden; }
+  #page-nnviz[data-brain-view="operations"] .nlv-scancard { flex:0 0 118px; padding:9px; }
+  #page-nnviz[data-brain-view="operations"] .nlv-scancard .nlv-pick-chart,#page-nnviz[data-brain-view="operations"] .nlv-scancard .nlv-pick-nochart { height:26px; margin:5px 0; }
   #page-nnviz[data-brain-view="operations"] .nlv-hero { min-height:0; }
   #page-nnviz[data-brain-view="operations"] :is(.nlv-core,.nlv-funnel-wrap) { min-height:0; overflow:auto; }
   html:is(:root,[data-theme]) body #page-nnviz[data-brain-view="operations"] .nlv-core { display:flex; flex-direction:column; }
