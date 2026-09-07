@@ -4,6 +4,38 @@
 
 ## Current handoff
 
+- Status: complete locally; deployment must be checked against this exact HEAD after push.
+- Owner: Codex
+- Branch: main (direct main authorized; no PR)
+- Last commit: HEAD / V33.315 (resolve with git log -1)
+- Base: 4da5c84 / V33.314; its deployment run 34146231149 succeeded and live version was verified.
+- Scope: compact brain workspace, rebuilt responsive model topology, unified indicators/FX/news.
+
+### Codex V33.315 — 2026-09-08
+
+- Added page-scoped workspace-layout.css and UI-only workspace-ui.js. Operations, models and research
+  views retain existing DOM/actions and all 14 model tabs. Workstation operation view fits viewport;
+  dense panel contents may scroll internally. Mobile uses a natural vertical flow.
+- Replaced the fixed-width overview SVG with keyboard-operable model cards, actual dimensions/slots,
+  server roster states and correct provisional STACK blending. Original model evidence remains in details.
+- Removed brain-theme overrides affecting the left sidebar/global theme tokens. Other page designs untouched.
+- Moved existing news controls into the macro page; original news and FX routes alias the integrated view.
+  Added view and sector filters, preserving refresh controls, tables and source links.
+- Fixed FX polling checking a nonexistent page-fx, avoided duplicate initial macro/FX refreshes,
+  added active-page news refresh, and retained last good data with an error stamp on request failure.
+- Restricted external news links to HTTP(S), added noopener/noreferrer, escaped fallback publication text.
+- Added production-function regression cases to the existing wired check-ai-ops-ui.mjs.
+- All 86 tools/check-*.mjs passed (Node 24, PYTHONUTF8=1); worker syntax and git diff --check passed.
+- Browser: 390x844, 768x1024, 1024x768, 1440x900 without horizontal document overflow.
+  Workstation operation container bottom stays inside viewport; DNN graph navigation and TECH filter tested.
+  Read-only preview proxies selected live APIs; unrelated API 503 toasts in preview are intentional.
+- No training/orders triggered, predictive-accuracy claim, policy change, bindings/cron change or secrets saved.
+- Push auto-deploys through GitHub Actions; verify exact commit run and live lux-build V33.315,
+  workspace-layout.css and workspace-ui.js. Actual live host is ai-trader-app.blauenacht08.workers.dev.
+- Earlier trainer/data-history limitations below remain open. Comments tagged Codex identify changed code.
+
+## Previous handoff — V33.314
+
 - Status: complete (implementation and local validation; verify the deployment run for this commit)
 - Owner: Codex
 - Branch: `main` — user explicitly requested direct main work, no PR.

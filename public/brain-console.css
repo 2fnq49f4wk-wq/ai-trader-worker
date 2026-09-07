@@ -9,9 +9,6 @@ body:has(#page-nnviz.active) {
   --ops-cyan:#f5f5f5; --ops-cyan-soft:#ddd; --ops-cyan-dim:#303030;
   --ops-green:#eee; --ops-amber:#c5c5c5; --ops-red:#b0b0b0; --ops-purple:#aaa;
   --ops-panel:#101010; --ops-panel-hi:#1c1c1c; --ops-r:0px; --ops-r-lg:0px;
-  --acc:#eee; --s1:#0b0b0b; --s2:#161616; --bd:#333; --bd2:#242424;
-  --t1:#f5f5f5; --t2:#bdbdbd; --t3:#999;
-  background:#050505;
 }
 html[data-theme="light"] body:has(#page-nnviz.active) {
   --ops-void:#fff; --ops-bg0:#fff; --ops-bg1:#fafafa; --ops-bg2:#f0f0f0; --ops-bg3:#e5e5e5;
@@ -20,8 +17,6 @@ html[data-theme="light"] body:has(#page-nnviz.active) {
   --ops-cyan:#111; --ops-cyan-soft:#333; --ops-cyan-dim:#e5e5e5;
   --ops-green:#111; --ops-amber:#444; --ops-red:#555; --ops-purple:#666;
   --ops-panel:#fff; --ops-panel-hi:#ededed;
-  --acc:#111; --s1:#fff; --s2:#eee; --bd:#bbb; --bd2:#ddd; --t1:#111; --t2:#444; --t3:#666;
-  background:#fff;
 }
 body #page-nnviz {
   --ap-ink:var(--ops-ink); --ap-ink2:var(--ops-ink2); --ap-ink3:var(--ops-ink3);
@@ -121,7 +116,7 @@ html:is(:root,[data-theme]) body #page-nnviz .nnv-tab:hover { border-color:var(-
 html:is(:root,[data-theme]) body #page-nnviz :is(.nnv-stage,.nnv-chip,.nnv-comm,.nnv-tip) { background:var(--ops-bg1)!important; border-color:var(--ops-line)!important; border-radius:0!important; box-shadow:none!important; }
 html:is(:root,[data-theme]) body #page-nnviz :is(.nnv-stage,.nlv-tp-chart,.nlv-funnel,.nlv-pick svg,.nnv-legend,.nnv-tab-dot,.nnv-banner,.nnv-chips,.nlv-strip-tags,.nlv-toplist,.nlv-kpi,.nnv-roles,.nnv-comm,.nlv-tp) { filter:grayscale(1); }
 html body:has(#page-nnviz.active) .rail { background:var(--ops-bg1)!important; border-color:var(--ops-line)!important; --s2:var(--ops-bg2); filter:grayscale(1); }
-html body:has(#page-nnviz.active) :is(.topbar,.nav,.sidebar,.m-appbar,.m-tabbar) { filter:grayscale(1); }
+/* Codex V33.315: left navigation and mobile shell retain their original design. */
 /* Layout is intrinsically responsive: no fixed-width pane and no hidden model tabs. */
 @media (prefers-reduced-motion:reduce) {
   #page-nnviz *,#page-nnviz *::before,#page-nnviz *::after { animation:none!important; transition:none!important; scroll-behavior:auto!important; }

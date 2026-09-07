@@ -8,7 +8,7 @@
      인데, 지금까지 화면에서 그걸 알 방법이 전혀 없었다(카카오톡 인앱 브라우저는 특히 강하게 캐시한다).
      서버가 내려주는 build 와 이 값을 비교해 다르면 배너로 알린다.
      ※ src/index.js 의 _BUILD_VER 와 항상 같아야 한다 — check-html-js 가 강제한다. -->
-<meta name="lux-build" content="V33.314">
+<meta name="lux-build" content="V33.315">
 <title>LUX-ENGINE V10</title>
 <!-- ══ [V33.156] 설치형 앱(PWA) — 폰·PC 에서 홈화면/독에 담아 앱처럼 연다 ══
      · manifest  : 이름·아이콘·standalone 표시(주소창 없이 앱처럼)
@@ -4067,16 +4067,7 @@ html[data-theme="light"] .m-brainbar button.active{color:#0b4f9e;background:rgba
 
     <!-- ══ PAGE: NEWS ══ -->
     <div class="page" id="page-news">
-      <div class="page-header">
-        <span class="page-title">📰 NEWS · 섹터 뉴스</span>
-        <div class="page-actions">
-          <span id="newsStamp" style="font-size:10px;color:var(--t3);"></span>
-          <button type="button" id="btnRefreshNews" class="btn">↻ 새로고침</button>
-        </div>
-      </div>
-      <div id="newsBody" style="padding:14px 20px;">
-        <div class="empty">뉴스 불러오는 중...</div>
-      </div>
+      <!-- Codex V33.315: legacy route alias; live news nodes now belong to the market workspace. -->
     </div><!-- /news -->
 
     <!-- ══ PAGE: TRADES ══ -->
@@ -4303,8 +4294,16 @@ html[data-theme="light"] .m-brainbar button.active{color:#0b4f9e;background:rgba
 
 <!-- ══ [V12.117] 지표&환율 — 경제지표+환율 통합 페이지(종전 별도 두 페이지를 병합) ══ -->
 <div class="page" id="page-macro">
-  <div class="page-header"><span class="page-title">📊 지표 &amp; 환율</span></div>
-
+  <!-- [Codex V33.315] One workspace; original element IDs and refresh handlers are preserved. -->
+  <header class="market-header"><div><span class="market-eyebrow">LUX / MARKET INTELLIGENCE</span><h1>MARKET BRIEF</h1><p>경제지표, 환율, 섹터 뉴스로 시장의 맥락을 함께 읽습니다.</p></div><span class="market-edition">지표 · 환율 · 뉴스</span></header>
+  <nav class="market-tabs" aria-label="마켓 브리핑 보기">
+    <button type="button" data-market-tab="all" aria-pressed="true">전체 브리핑</button>
+    <button type="button" data-market-tab="macro" aria-pressed="false">경제지표</button>
+    <button type="button" data-market-tab="fx" aria-pressed="false">환율</button>
+    <button type="button" data-market-tab="news" aria-pressed="false">뉴스</button>
+  </nav>
+  <div class="market-grid"><div class="market-data">
+  <section class="market-card market-econ" aria-label="경제지표">
   <div class="im-sec-head"><span class="im-sec-ico">📊</span><span class="im-sec-title">주요 경제지표</span><span class="im-sec-sub">미국 &amp; 한국 핵심 매크로 · 기준일 <b id="macroToday">—</b></span></div>
   <div class="modal-macro" style="max-width:940px;">
     <div style="display:flex;align-items:center;justify-content:space-between;gap:10px;flex-wrap:wrap;margin-bottom:14px;">
@@ -4329,7 +4328,9 @@ html[data-theme="light"] .m-brainbar button.active{color:#0b4f9e;background:rgba
     <div class="macro-disclaimer">※ 수치는 매일 07:00(KST) 자동 갱신됩니다. 참고용이므로 공식 사이트에서 확인하세요.</div>
   </div>
 
-  <div class="im-sec-head" style="margin-top:22px;"><span class="im-sec-ico">💱</span><span class="im-sec-title">환율</span><span class="im-sec-sub">주요 통화 환율 · 매일 06:30(KST) 자동 갱신</span></div>
+  </section>
+  <section class="market-card market-fx" aria-label="환율">
+  <div class="im-sec-head"><span class="im-sec-ico">💱</span><span class="im-sec-title">환율</span><span class="im-sec-sub">주요 통화 환율 · 화면 표시 중 30초마다 확인</span></div>
   <div class="modal-macro" style="max-width:940px;">
     <div style="display:flex;align-items:center;justify-content:space-between;gap:10px;flex-wrap:wrap;margin-bottom:14px;">
       <span id="fxStamp" style="font-size:10px;color:var(--t3);">—</span>
@@ -4343,6 +4344,18 @@ html[data-theme="light"] .m-brainbar button.active{color:#0b4f9e;background:rgba
     </div>
     <div class="macro-disclaimer">※ 야후 파이낸스 기준. 실거래 전 공식 고시환율을 확인하세요.</div>
   </div>
+  </section></div>
+  <section class="market-card market-news" id="marketNews" aria-label="섹터 뉴스" data-sector="all">
+    <div class="market-news-head"><div><span class="market-eyebrow">SECTOR DISPATCH</span><h2>시장 뉴스</h2></div><button type="button" id="btnRefreshNews" class="btn">↻ 새로고침</button></div>
+    <p id="newsStamp" class="market-stamp" role="status">뉴스 확인 중</p>
+    <nav class="market-sectors" aria-label="뉴스 섹터 필터">
+      <button data-news-sector="all" aria-pressed="true">전체</button><button data-news-sector="TECH" aria-pressed="false">기술</button>
+      <button data-news-sector="FINANCE" aria-pressed="false">금융</button><button data-news-sector="HEALTH" aria-pressed="false">헬스케어</button>
+      <button data-news-sector="CONSUMER" aria-pressed="false">소비재</button><button data-news-sector="INDUSTRIAL" aria-pressed="false">산업재</button>
+      <button data-news-sector="RESOURCES" aria-pressed="false">원자재</button>
+    </nav>
+    <div id="newsBody"><div class="empty">뉴스 불러오는 중...</div></div>
+  </section></div>
 </div>
 
 <!-- ══ [V9.12] AI 월간 리포트 — 팝업 모달→일반 페이지 전환 ══ -->
@@ -4359,7 +4372,7 @@ html[data-theme="light"] .m-brainbar button.active{color:#0b4f9e;background:rgba
 </div>
 
 <!-- [V9.12] 팝업 모달→일반 페이지 전환 -->
-<div class="page" id="page-nnviz">
+<div class="page" id="page-nnviz" data-brain-view="operations">
   <div class="nnviz-content">
     <div class="nnv-head">
       <div class="nnv-heading">
@@ -4374,11 +4387,10 @@ html[data-theme="light"] .m-brainbar button.active{color:#0b4f9e;background:rgba
         <button class="nnv-btn" onclick="openNnViz(1)">↻ 새로고침</button>
       </div>
     </div>
-    <nav class="mission-nav" aria-label="두뇌 페이지 바로가기">
-      <a href="#opsBrief"><span>01</span> 작동 현황</a>
-      <a href="#nnvStruct"><span>02</span> 모델 관측</a>
-      <a href="#nlvPicksWrap"><span>03</span> 후보 종목</a>
-      <a href="#nlvFeed"><span>04</span> 판정 로그</a>
+    <nav class="mission-nav" aria-label="두뇌 작업 화면">
+      <button type="button" data-brain-tab="operations" aria-pressed="true">01 작동 화면</button>
+      <button type="button" data-brain-tab="models" aria-pressed="false">02 모델 구조</button>
+      <button type="button" data-brain-tab="research" aria-pressed="false">03 후보 · 로그</button>
     </nav>
     <div class="nnv-healthbar" id="nnvHealthbar" role="status" aria-live="polite">
       <span class="nnv-health-title"><i></i><b>엔진 연결 확인 중</b></span>
@@ -7094,6 +7106,11 @@ html[data-theme="light"] .m-brainbar button.active{color:#0b4f9e;background:rgba
 
   // === [NEWS] 섹터 뉴스 렌더링 ===
   var _newsData = null;
+  // [Codex V33.315] Remote headlines are data, never inline JavaScript or executable URLs.
+  function newsSafeUrl(value) {
+    try { var u = new URL(String(value || '')); return /^https?:$/.test(u.protocol) ? u.href : null; }
+    catch(e) { return null; }
+  }
 
   function renderNews(data) {
     var body = $('newsBody');
@@ -7123,7 +7140,7 @@ html[data-theme="light"] .m-brainbar button.active{color:#0b4f9e;background:rgba
       var chipCls = score == null ? 'neu' : score > 0.05 ? 'pos' : score < -0.05 ? 'neg' : 'neu';
       var chipTxt = score == null ? '—' : (score >= 0 ? '+' : '') + score.toFixed(2) + (scale != null ? ' ×' + scale.toFixed(2) : '');
 
-      html += '<div class="news-sector">' +
+      html += '<div class="news-sector" data-sector="' + grp + '">' +
         '<div class="news-sector-head">' +
           '<span class="news-sector-name">' + grp + ' <small style="font-size:9px;color:var(--t3);font-weight:400;">' + (groupLabel[grp]||'') + '</small></span>' +
           '<span class="news-sector-chip ' + chipCls + '">' + chipTxt + '</span>' +
@@ -7134,7 +7151,7 @@ html[data-theme="light"] .m-brainbar button.active{color:#0b4f9e;background:rgba
       } else {
         items.forEach(function(item) {
           var title = item.title || '';
-          var link  = item.link  || '#';
+          var link  = newsSafeUrl(item.link);
           var pub   = item.pub   ? _fmtPubDate(item.pub) : '';
           // 긍정/부정 키워드로 점 색 결정
           var low = title.toLowerCase();
@@ -7144,8 +7161,8 @@ html[data-theme="light"] .m-brainbar button.active{color:#0b4f9e;background:rgba
           html += '<div class="news-item">' +
             '<span class="news-dot ' + dotCls + '"></span>' +
             '<div>' +
-              '<div class="news-title" onclick="window.open(\'' + escapeAttr(link) + '\',\'_blank\')">' + escapeHtml(title) + '</div>' +
-              (pub ? '<div class="news-pub">' + pub + '</div>' : '') +
+              (link ? '<a class="news-title" href="' + escapeHtml(link) + '" target="_blank" rel="noopener noreferrer">' + escapeHtml(title) + '</a>' : '<span class="news-title">' + escapeHtml(title) + '</span>') +
+              (pub ? '<div class="news-pub">' + escapeHtml(pub) + '</div>' : '') +
             '</div>' +
           '</div>';
         });
@@ -7170,8 +7187,21 @@ html[data-theme="light"] .m-brainbar button.active{color:#0b4f9e;background:rgba
 
   function loadNews() {
     return api('/api/news').then(function(data){ renderNews(data); })
-      ['catch'](function(e){ var b=$('newsBody'); if(b) b.innerHTML='<div class="news-empty">뉴스 로드 실패: '+escapeHtml(e.message)+'</div>'; });
+      ['catch'](function(e){
+        var stamp=$('newsStamp'); if(stamp) stamp.textContent='연결 오류 · 마지막 수집 내용 유지';
+        var b=$('newsBody'); if(b && !_newsData) b.innerHTML='<div class="news-empty">뉴스 로드 실패: '+escapeHtml(e.message)+'</div>';
+      });
   }
+  var __newsTimer = null;
+  function newsStartLive(){
+    if(__newsTimer) return;
+    loadNews();
+    __newsTimer=setInterval(function(){
+      var pg=$('page-macro'); if(pg && pg.classList.contains('active') && !document.hidden) loadNews();
+    },120000);
+  }
+  function newsStopLive(){ if(__newsTimer){clearInterval(__newsTimer);__newsTimer=null;} }
+  window.newsStartLive=newsStartLive; window.newsStopLive=newsStopLive;
 
   function refreshNews() {
     var btn = $('btnRefreshNews');
@@ -10525,12 +10555,12 @@ html[data-theme="light"] .m-brainbar button.active{color:#0b4f9e;background:rgba
 
   function macroLoadAndRender() {
     macroRenderAll();  // 먼저 폴백/기존값으로 즉시 렌더
-    fetch('/api/macro')
-      .then(function(r) { return r.json(); })
+    return fetch('/api/macro')
+      .then(function(r) { if(!r.ok) throw Error('HTTP '+r.status); return r.json(); })
       .then(function(data) {
         if (data && !data.empty) { macroMergeAuto(data); macroRenderAll(); }
       })
-      .catch(function() { /* 네트워크 실패 시 폴백값 유지 */ });
+      .catch(function() { var stamp=$('macroStamp'); if(stamp) stamp.textContent='연결 오류 · 이전/기본 지표 유지'; });
   }
 
   // [V9.12] 팝업→페이지 전환 — 표시는 showPage()가 담당, 여기선 데이터 로드만.
@@ -10539,8 +10569,8 @@ html[data-theme="light"] .m-brainbar button.active{color:#0b4f9e;background:rgba
   //   페이지가 보이는 동안만 60초 주기로 다시 받고, 벗어나면 타이머를 끈다(불필요한 호출 방지).
   var __macroTimer = null;
   function macroStartLive() {
-    macroLoadAndRender();
     if (__macroTimer) return;
+    macroLoadAndRender();
     __macroTimer = setInterval(function () {
       var pg = document.getElementById('page-macro');
       if (!pg || !pg.classList.contains('active') || document.hidden) return;   // 안 보이면 건너뜀
@@ -10613,18 +10643,19 @@ html[data-theme="light"] .m-brainbar button.active{color:#0b4f9e;background:rgba
     body.innerHTML = rows || '<tr><td colspan="3" style="color:var(--dim);padding:14px;">데이터 없음</td></tr>';
   }
   function fxLoadAndRender() {
-    fetch('/api/fx').then(function(r){ return r.json(); })
+    return fetch('/api/fx').then(function(r){ if(!r.ok) throw Error('HTTP '+r.status); return r.json(); })
       .then(function(data){ fxRender(data); })
-      .catch(function(){ fxRender(null); });
+      .catch(function(){ var stamp=$('fxStamp'); if(stamp) stamp.textContent='연결 오류 · 마지막 환율 유지'; });
   }
   // [V9.12] 팝업→페이지 전환 — 표시는 showPage()가 담당, 여기선 데이터 로드만.
   // [V33.33] 환율은 시세성이라 30초 주기로 — 지표(월간 발표치)보다 자주 바뀐다.
   var __fxTimer = null;
   function fxStartLive() {
-    fxLoadAndRender();
     if (__fxTimer) return;
+    fxLoadAndRender();
     __fxTimer = setInterval(function () {
-      var pg = document.getElementById('page-fx');
+      // [Codex V33.315] page-fx was removed during the earlier macro/FX merge.
+      var pg = document.getElementById('page-macro');
       if (!pg || !pg.classList.contains('active') || document.hidden) return;
       fxLoadAndRender();
     }, 30000);
@@ -12417,6 +12448,14 @@ html[data-theme="light"] .m-brainbar button.active{color:#0b4f9e;background:rgba
   //   변수를 참조해 첫 줄($)에서 ReferenceError → 페이지 전환·ECON·TA·VISION
   //   와이어링 전체가 죽어 있었음. 같은 스코프로 합쳐 해결.
   function showPage(id){
+    // [Codex V33.315] Keep sidebar markup/styles and saved news links; route both entries to one workspace.
+    var marketTab = id === 'news' ? 'news' : (id === 'fx' ? 'fx' : 'all');
+    if(id === 'news' || id === 'fx') id = 'macro';
+    if(id === 'macro') {
+      var marketPage=document.getElementById('page-macro');
+      if(marketPage) marketPage.setAttribute('data-market-view',marketTab);
+      if(window.luxMarketView) window.luxMarketView(marketTab);
+    }
     // [V9.12] 지표/환율/AI리포트/AI두뇌 팝업→페이지 전환: 나가는 페이지가 nnviz면 실시간 갱신 타이머 정지
     try { if (document.getElementById('page-nnviz') && document.getElementById('page-nnviz').classList.contains('active') && id !== 'nnviz' && typeof closeNnViz === 'function') closeNnViz(); } catch(e){}
     document.querySelectorAll('.page').forEach(function(p){p.classList.remove('active');});
@@ -12440,6 +12479,7 @@ html[data-theme="light"] .m-brainbar button.active{color:#0b4f9e;background:rgba
       // [V12.117] 지표+환율 통합 페이지 — 두 로더를 함께 호출
       try { openMacro(); } catch(e){}
       try { openFx(); } catch(e){}
+      try { newsStartLive(); } catch(e){}
     } else if (id === 'report') {
       try { openMonthlyReport(); } catch(e){}
     } else if (id === 'nnviz') {
@@ -14514,93 +14554,42 @@ html[data-theme="light"] #page-nnviz .nlv-sec-h{ border-color:transparent; color
      구현은 ★순수 SVG★ 다. HTML 노드를 얹고 간선을 그리려면 DOM 을 측정해야 하는데,
      그 측정은 폰트 로딩·리사이즈에 흔들려 선이 노드에서 떨어진다. 좌표를 우리가 계산하면
      그런 어긋남이 원리상 없다. */
+  // [Codex V33.315] Rebuilt topology: responsive stages and keyboard-operable model nodes.
+  // Legacy function name remains for callers; the graph now uses semantic HTML, not a fixed 880px SVG.
   function NNV_netSvg(d){
-    var ex = (d.experts||[]).slice(), st = d.stack||{}, du = d.dual||[], cb = d.combine||{};
-    var NW = 132, NH = 46, GAP = 10;                 // 노드 크기·간격
-    var COLX = [22, 210, 430, 600, 742];             // 층별 x (입력·전문가·결합·보정·출력)
-    var H = Math.max(280, ex.length * (NH + GAP) + 40);
-    var W = 880;
-    var cy = H / 2;
-    var e = function (t) { return String(t == null ? '' : t).replace(/[&<>"]/g, function (c) {
-      return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]; }); };
-    /* [V33.301] 색은 ★명부★, 굵기(발언권)는 그 위원의 가중이다. 노드 색을 여기서 다시
-       tier 로 판정하면 탭의 점·사이드바와 또 갈라진다. */
-    var NCLS = { on:'full', prov:'prov', bad:'bad', off:'off' };
-    var clsOf = function (x) { return NCLS[LUXR.state(x && x.name) || 'off'] || 'off'; };
-    var wOf = function (x) {
-      var r = LUXR.get(x && x.name);
-      var st = LUXR.state(x && x.name);
-      if (st === 'off' || st === 'bad') return 0;
-      if (st === 'on') return 1;
-      return (r && r.mult != null) ? r.mult : ((x && x.mult != null) ? x.mult : 0);
-    };
-
-    var parts = [];
-    // ── 간선 먼저(노드 아래로 깔린다) ──
-    var x0 = COLX[0] + 54, x1 = COLX[1], x2 = COLX[1] + NW, x3 = COLX[2];
-    ex.forEach(function (m, i) {
-      var y = 24 + i * (NH + GAP) + NH / 2;
-      // 입력 → 전문가
-      parts.push('<path class="ne in" d="M' + x0 + ' ' + cy + ' C' + ((x0 + x1) / 2) + ' ' + cy + ',' +
-                 ((x0 + x1) / 2) + ' ' + y + ',' + x1 + ' ' + y + '"/>');
-      // 전문가 → 결합 (굵기 = 발언권)
-      var w = Math.max(0, Math.min(1, wOf(m)));
-      var sw = (0.6 + w * 5).toFixed(2);
-      parts.push('<path class="ne vote' + (w > 0 ? '' : ' mute') + '" stroke-width="' + sw + '" d="M' + x2 + ' ' + y +
-                 ' C' + ((x2 + x3) / 2) + ' ' + y + ',' + ((x2 + x3) / 2) + ' ' + cy + ',' + x3 + ' ' + cy + '"/>');
-    });
-    // 결합 → 보정 → 출력
-    parts.push('<path class="ne flow" d="M' + (COLX[2] + 96) + ' ' + cy + ' L' + COLX[3] + ' ' + cy + '"/>');
-    parts.push('<path class="ne flow" d="M' + (COLX[3] + 84) + ' ' + cy + ' L' + COLX[4] + ' ' + cy + '"/>');
-    // STACK 우회선 — 합류했을 때만. 결합 노드를 건너뛴다(대체이므로).
-    var stOn = LUXR.state('stack') === 'on' || LUXR.state('stack') === 'prov';
-    if (stOn) {
-      var sy = H - 26;
-      parts.push('<path class="ne stack" d="M' + x2 + ' ' + sy + ' C' + ((x2 + COLX[3]) / 2) + ' ' + sy + ',' +
-                 ((x2 + COLX[3]) / 2) + ' ' + cy + ',' + COLX[3] + ' ' + cy + '"/>');
+    var ex=d.experts||[], st=d.stack||{}, cb=d.combine||{};
+    var tags={on:'정식 합류',prov:'잠정 합류',bad:'합류 보류',off:'미학습 / 판 불일치'};
+    function modelNode(key,label,detail){
+      var state=LUXR.state(key)||'off';
+      var jump=String(key||'').toLowerCase().replace('dual_bull','dualbull').replace('dual_bear','dualbear');
+      var allowed=['mind','dnn','gbdt','xgb','lgb','cat','flow','xalpha','memo','seq','stack','dualbull','dualbear'];
+      var content='<span class="brain-map-state">'+esc(tags[state]||state)+'</span><strong>'+esc(label)+'</strong><small>'+esc(detail)+'</small>';
+      return allowed.indexOf(jump)>=0
+        ? '<button type="button" class="brain-map-node" data-state="'+esc(state)+'" onclick="switchNnModel(\''+jump+'\')">'+content+'</button>'
+        : '<div class="brain-map-node" data-state="'+esc(state)+'">'+content+'</div>';
     }
-    // DUAL — 출력 직전에 옆에서 들어온다(확률 이동)
-    var duOn = ['dual_bull','dual_bear'].some(function (k) {
-      var q = LUXR.state(k); return q === 'on' || q === 'prov'; });
-    parts.push('<path class="ne dual' + (duOn ? '' : ' mute') + '" d="M' + (COLX[3] + 42) + ' ' + (H - 14) +
-               ' L' + (COLX[3] + 42) + ' ' + (cy + 22) + '"/>');
-
-    // ── 노드 ──
-    var node = function (x, y, w, h, cls, lines, tip) {
-      // 툴팁(<title>)은 ★그룹 안★ 에 있어야 그 노드에 붙는다. 형제로 두면 아무 데도 안 붙는다.
-      var o = '<g class="nn ' + cls + '">' + (tip ? '<title>' + e(tip) + '</title>' : '') +
-              '<rect x="' + x + '" y="' + y + '" width="' + w + '" height="' + h + '" rx="8"/>';
-      lines.forEach(function (L, k) {
-        o += '<text class="l' + k + '" x="' + (x + w / 2) + '" y="' + (y + 15 + k * 12) + '">' + e(L) + '</text>';
-      });
-      return o + '</g>';
-    };
-    parts.push(node(COLX[0], cy - 26, 54, 52, 'input', ['입력', String(d.inputDim || 65) + '차원']));
-    ex.forEach(function (m, i) {
-      var y = 24 + i * (NH + GAP);
-      var cls = clsOf(m);
-      var l2 = (m.valAcc != null ? m.valAcc.toFixed(1) + '%' : '—') +
-               (m.ic != null ? '  IC ' + m.ic.toFixed(3) : '');
-      var w = wOf(m);
-      var l3 = (cls === 'off') ? '미학습' : (w > 0 ? ('가중 ×' + w.toFixed(2)) : '표 없음');
-      parts.push(node(COLX[1], y, NW, NH, cls, [String(m.name || '').toUpperCase(), l2, l3],
-        (m.label || m.name) + ' — ' + LUXR.txt(m.name) + (m.why ? ' · ' + m.why : '')));
-    });
-    parts.push(node(COLX[2], cy - 30, 96, 60, 'comb',
-      ['IC 결합', 'w=exp(' + (cb.icTemp || 60) + '·IC)', ex.filter(function (m) { return wOf(m) > 0; }).length + '표']));
-    parts.push(node(COLX[3], cy - 26, 84, 52, 'cal',
-      ['보정', cb.cal ? (cb.cal.mode === 'temp' ? 'T=' + (cb.cal.T != null ? cb.cal.T.toFixed(2) : '—') : cb.cal.mode) : '없음']));
-    parts.push(node(COLX[4], cy - 30, 108, 60, 'out', ['최종 확률', '로그오즈 층']));
-    if (stOn) {
-      parts.push(node(COLX[2], H - 52, 96, 44, 'stackn',
-        ['STACK', (st.head || 'lin') + ' · ×' + (st.mult != null ? st.mult.toFixed(2) : '?')],
-        'STACK 은 투표하지 않는다 — 합류하면 결합확률을 통째로 대체한다. ' + (st.why || '')));
-    }
-    parts.push(node(COLX[3] + 4, H - 46, 76, 38, 'dualn' + (duOn ? '' : ' off'),
-      ['이중헤드', duOn ? '확률 이동' : '미측정']));
-
-    return '<svg class="nnv-net" viewBox="0 0 ' + W + ' ' + H + '" preserveAspectRatio="xMidYMid meet" role="img" ' +
-           'aria-label="AI 두뇌 신경망 구조도">' + parts.join('') + '</svg>';
+    var experts=ex.map(function(m){
+      var metric=typeof m.valAcc==='number' ? '검증 '+m.valAcc.toFixed(1)+'%' : '검증 자료 없음';
+      if(typeof m.accLB==='number') metric+=' · 하한 '+m.accLB.toFixed(1)+'%';
+      return modelNode(m.name,String(m.name||'').toUpperCase(),metric);
+    }).join('');
+    var stackState=LUXR.state('stack');
+    var stackMode=stackState==='on' ? 'IC 결합확률 대체' : stackState==='prov' ? 'IC 결합과 로짓 혼합' : 'IC 결합 유지 · 승격 대기';
+    var cal=cb.cal ? (cb.cal.mode==='beta'?'베타':cb.cal.mode==='platt'?'플랫':'온도')+' 보정' : '보정 모델 없음';
+    return '<div class="brain-map" role="group" aria-label="입력에서 최종 판정까지 모델 처리 구조">'
+      +'<section class="brain-map-lane"><div class="brain-map-label">01 / MARKET INPUT <span>↓</span></div>'
+      +'<div class="brain-map-node"><strong>시장 데이터 → 피처 벡터</strong><small>'+esc(d.inputDim!=null?d.inputDim:'—')+'차원 · 피처 판 '+esc(d.featVer)+' · 같은 입력, 독립된 전문가</small></div></section>'
+      +'<section class="brain-map-lane"><div class="brain-map-label">02 / EXPERT COMMITTEE <span>모델을 눌러 내부 관측 ↓</span></div><div class="brain-map-experts">'+experts+'</div></section>'
+      +'<section class="brain-map-lane"><div class="brain-map-label">03 / COMBINATION ROUTING <span>↓</span></div><div class="brain-map-routing">'
+      +'<div class="brain-map-node"><strong>IC 가중 결합</strong><small>전문가 증거에 따른 기본 결합 경로</small></div>'
+      +modelNode('stack','STACK / '+String(st.head||'—').toUpperCase(),stackMode+' · '+(st.slots||[]).length+'개 입력 슬롯')
+      +'</div></section>'
+      +'<section class="brain-map-lane"><div class="brain-map-label">04 / CALIBRATION & DECISION</div><div class="brain-map-routing">'
+      +'<div class="brain-map-node"><strong>확률 보정</strong><small>'+esc(cal)+' → 로그오즈 층</small></div>'
+      +'<div class="brain-map-node"><strong>독립 증거 + 방향 판정</strong><small>기술 · 사건 · 충격 · 불일치 · 이중헤드</small></div>'
+      +'<div class="brain-map-node"><strong>최종 보정 → 진입 게이트</strong><small>모델의 예측과 실제 주문 여부는 별도 단계</small></div></div>'
+      +'<div class="brain-map-routing">'+(d.dual||[]).map(function(m){return modelNode(m.name,m.label||m.name,'보조 방향 모델 · 위원회 투표와 구분');}).join('')+'</div></section>'
+      +'<div class="brain-map-foot">실선: 정식 합류 · 점선: 잠정 합류 · 상태와 수치는 서버 명부 기준. 아래 검증 근거에서 표본·하한·IC·홀드아웃을 확인할 수 있습니다.</div></div>';
   }
 
   function NNV_renderOverview(d){
@@ -14680,7 +14669,7 @@ html[data-theme="light"] #page-nnviz .nlv-sec-h{ border-color:transparent; color
 
     var stackBox =
       '<div class="nnv-ov-stack'+((LUXR.state('stack')==='on'||LUXR.state('stack')==='prov')?' on':'')+'">'
-      + '<div class="nnv-ov-sh">③ STACK — 통합 메타모델 <small>'+(st.dim||16)+'차원 = 전문가확률 8 + 참여마스크 8</small></div>'
+      + '<div class="nnv-ov-sh">③ STACK — 통합 메타모델 <small>'+esc(st.dim!=null?st.dim:'—')+'차원 · 전문가확률 '+(st.slots||[]).length+' + 참여마스크 '+(st.slots||[]).length+'</small></div>'
       + '<div class="nnv-ov-sb">'+(st.slots||[]).map(function(k){
             var e = ex.filter(function(x){return x.name===k;})[0];
             return '<span class="nnv-ov-slot'+(e&&e.voting?' on':'')+'">'+k+'</span>'; }).join('')+'</div>'
@@ -14709,8 +14698,9 @@ html[data-theme="light"] #page-nnviz .nlv-sec-h{ border-color:transparent; color
       '<div class="nnv-ov">'
       /* [V33.223] 맨 위에 신경망 도식 — 구조를 글로 읽기 전에 그림으로 본다.
          아래 목록은 그대로 둔다(도식은 한눈, 목록은 근거). */
-      + '<div class="nnv-ov-lh">신경망 구조 <small>노드 = 위원의 작동 상태 · 간선 굵기 = 발언권</small></div>'
+      + '<div class="nnv-ov-lh">모델 처리 구조 <small>시장 입력 → 전문가 → 결합 → 최종 판정</small></div>'
       + '<div class="nnv-net-wrap">' + NNV_netSvg(d) + '</div>'
+      + '<details class="nnv-evidence"><summary>모델별 검증 근거 · 표본 · 홀드아웃 펼치기</summary>'
       + '<div class="nnv-ov-lh">① 전문가 — 각자 독립 학습</div>' + rows
       + '<div class="nnv-ov-lh">② IC 소프트맥스 결합 <small>w = exp('+(cb.icTemp||60)+' × IC), IC ∈ ['+((cb.icClamp||[])[0])+', '+((cb.icClamp||[])[1])+']</small></div>'
       + '<div class="nnv-ov-note">정확도가 아니라 IC 로 가중합니다 — 정확도로 하면 실력차가 51~54% 라는 좁은 구간에 뭉쳐 사실상 단순평균이 됩니다.'
@@ -14721,6 +14711,7 @@ html[data-theme="light"] #page-nnviz .nlv-sec-h{ border-color:transparent; color
       + '<div class="nnv-ov-lh">⑤ 로그오즈 층 <small>여기부터는 전부 덧셈 — 보정된 기저확률에 독립 증거를 더한다</small></div>'
       + '<div class="nnv-ov-note">기술 프라이어 · 사건 틸트 · 충격 프라이어 · 전문가 불일치 · 이중헤드 사분면 → 최종보정(T2)</div>'
       + '<div class="nnv-ov-lh">보조 — 사분면 판정(위원 아님)</div>' + dualRows
+      + '</details>'
       + '</div>';
     comm.innerHTML='';
   }
@@ -19855,8 +19846,10 @@ html:root .page > *{ flex-shrink:0; }
     try{
       if(id === 'macro'){ if(window.macroStartLive) window.macroStartLive(); }
       else if(window.macroStopLive) window.macroStopLive();
-      if(id === 'fx'){ if(window.fxStartLive) window.fxStartLive(); }
+      if(id === 'macro'){ if(window.fxStartLive) window.fxStartLive(); }
       else if(window.fxStopLive) window.fxStopLive();
+      if(id === 'macro'){ if(window.newsStartLive) window.newsStartLive(); }
+      else if(window.newsStopLive) window.newsStopLive();
     }catch(e){}
     try{ railGate(id); }catch(e){}
     try{ railRender(); }catch(e){}
@@ -20345,6 +20338,8 @@ body:has(#page-nnviz.active) .rail{
 </style>
 
 <!-- [Codex V33.314] Dedicated scoped design system. See AI_HANDOFF.md before changing model/UI contracts. -->
-<link rel="stylesheet" href="/brain-console.css?v=33.314">
+<link rel="stylesheet" href="/brain-console.css?v=33.315">
+<link rel="stylesheet" href="/workspace-layout.css?v=33.315">
+<script src="/workspace-ui.js?v=33.315"></script>
 </body>
 </html>

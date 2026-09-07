@@ -1,0 +1,154 @@
+/* Codex V33.315 — only #page-nnviz / #page-macro. No left-sidebar or unrelated page rules. */
+#page-nnviz { --ap-radius:0; }
+html:is(:root,[data-theme]) body #page-nnviz .nnviz-content { padding:14px; margin:10px; gap:10px; }
+html:is(:root,[data-theme]) body #page-nnviz .nnv-head { padding:0 0 10px; gap:10px; align-items:center; }
+html:is(:root,[data-theme]) body #page-nnviz .nnv-heading { flex:1 1 260px; }
+html:is(:root,[data-theme]) body #page-nnviz .nnv-title { font-size:clamp(22px,2.2vw,32px)!important; }
+html:is(:root,[data-theme]) body #page-nnviz .nnv-eyebrow { font-size:8px!important; margin:0 0 7px; }
+html:is(:root,[data-theme]) body #page-nnviz .nnv-headcopy { font-size:10px; margin:6px 0 0; line-height:1.4; }
+html:is(:root,[data-theme]) body #page-nnviz .nnv-head > .nnv-head-actions { gap:5px; margin:0; }
+html:is(:root,[data-theme]) body #page-nnviz :is(.nnv-btn,.nlv-btn) { padding:5px 8px; min-height:30px; font-size:10px; max-width:none!important; }
+html:is(:root,[data-theme]) body #page-nnviz .mission-nav { gap:6px; padding:0; border:0; }
+#page-nnviz .mission-nav button { flex:1; min-height:36px; cursor:pointer; border:1px solid var(--ops-line); color:var(--ops-ink2); background:transparent; font:500 11px var(--ops-mono); }
+#page-nnviz .mission-nav button[aria-pressed="true"] { background:var(--ops-ink); color:var(--ops-bg0); border-color:var(--ops-ink); }
+html:is(:root,[data-theme]) body #page-nnviz .nnv-healthbar { padding:2px 0; gap:6px; font-size:9px; }
+html:is(:root,[data-theme]) body #page-nnviz .nnv-health-source { padding:4px 6px; font-size:8px; }
+html:is(:root,[data-theme]) body #page-nnviz .ops-brief { grid-template-columns:repeat(auto-fit,minmax(min(100%,250px),1fr)); }
+html:is(:root,[data-theme]) body #page-nnviz .ops-brief-main { padding:12px 14px!important; }
+html:is(:root,[data-theme]) body #page-nnviz .ops-brief-main strong { font-size:19px!important; margin:6px 0; }
+html:is(:root,[data-theme]) body #page-nnviz .ops-brief-main p { font-size:10px; line-height:1.4; margin:0; }
+html:is(:root,[data-theme]) body #page-nnviz .ops-metrics>div { padding:10px 12px; }
+html:is(:root,[data-theme]) body #page-nnviz .ops-metrics dd { font-size:25px; line-height:1.2; margin:5px 0; }
+html:is(:root,[data-theme]) body #page-nnviz .ops-metrics :is(dt,small) { font-size:8px; }
+html:is(:root,[data-theme]) body #page-nnviz .nnv-live { gap:10px; }
+html:is(:root,[data-theme]) body #page-nnviz :is(.nlv-hero,.nlv-lower) { gap:10px; grid-template-columns:repeat(auto-fit,minmax(min(100%,250px),1fr)); }
+html:is(:root,[data-theme]) body #page-nnviz :is(.nlv-sec-h,.nlv-picks-head) { padding:10px 12px!important; font-size:11px!important; }
+html:is(:root,[data-theme]) body #page-nnviz .nlv-sec-h small { font-size:9px!important; }
+html:is(:root,[data-theme]) body #page-nnviz .nlv-strip { padding:0 0 5px; font-size:9px; }
+html:is(:root,[data-theme]) body #page-nnviz .nlv-tp { padding:10px 12px 4px!important; }
+html:is(:root,[data-theme]) body #page-nnviz .nlv-tp-id .sym { font-size:22px!important; }
+html:is(:root,[data-theme]) body #page-nnviz .nlv-tp-num .p { font-size:24px!important; }
+html:is(:root,[data-theme]) body #page-nnviz .nlv-tp-chart { padding:5px 12px; }
+html:is(:root,[data-theme]) body #page-nnviz .nlv-cmlist { grid-template-columns:repeat(auto-fit,minmax(104px,1fr))!important; }
+html:is(:root,[data-theme]) body #page-nnviz .nlv-cm { min-height:46px; padding:8px!important; gap:5px!important; }
+html:is(:root,[data-theme]) body #page-nnviz .nlv-cm .cm-role { font-size:8px; }
+html:is(:root,[data-theme]) body #page-nnviz .nlv-cm .cn { font-size:10px!important; }
+#page-nnviz[data-brain-view="operations"] :is(#nnvStruct,#nlvPicksWrap,.nlv-lower),
+#page-nnviz[data-brain-view="models"] :is(#nnvLive,#opsBrief,#nlvPicksWrap),
+#page-nnviz[data-brain-view="research"] :is(#nnvStruct,#opsBrief,.nlv-strip,.nlv-hero,.nlv-cmrow) { display:none!important; }
+#page-nnviz[data-brain-view="models"] #nnvStruct { border:0; padding-top:4px; }
+html:is(:root,[data-theme]) body #page-nnviz .nnv-tabs { display:flex!important; flex-wrap:wrap; margin:0 0 10px; }
+html:is(:root,[data-theme]) body #page-nnviz .nnv-nav-h { position:absolute; width:1px; height:1px; overflow:hidden; clip-path:inset(50%); }
+html:is(:root,[data-theme]) body #page-nnviz .nnv-tabs .nnv-tab { min-height:30px; padding:6px 9px!important; font-size:10px!important; flex:0 1 auto; }
+html:is(:root,[data-theme]) body #page-nnviz #nnvStruct::before { display:none; }
+#page-nnviz .nnv-evidence { border-top:1px solid var(--ops-line); margin-top:16px; }
+#page-nnviz .nnv-evidence summary { padding:14px 8px; color:var(--ops-ink); cursor:pointer; font-size:12px; }
+#page-nnviz .brain-map { display:flex; flex-direction:column; gap:12px; padding:12px; color:var(--ops-ink); }
+#page-nnviz .brain-map-routing { display:grid; grid-template-columns:repeat(auto-fit,minmax(min(100%,190px),1fr)); gap:8px; }
+#page-nnviz .brain-map-lane { min-width:0; display:flex; flex-direction:column; gap:8px; }
+#page-nnviz .brain-map-label { display:flex; justify-content:space-between; align-items:center; min-height:30px; color:var(--ops-ink3); font:10px var(--ops-mono); border-bottom:1px solid var(--ops-line); }
+#page-nnviz .brain-map-node { border:1px solid var(--ops-line); padding:12px; background:var(--ops-panel); display:block; text-align:left; color:var(--ops-ink); border-radius:0; min-width:0; }
+#page-nnviz button.brain-map-node { width:100%; cursor:pointer; }
+#page-nnviz button.brain-map-node:hover { border-color:var(--ops-ink); background:var(--ops-panel-hi); }
+#page-nnviz .brain-map-node strong { font:500 12px var(--ops-mono); display:block; }
+#page-nnviz .brain-map-node small { display:block; color:var(--ops-ink3); font-size:10px; line-height:1.6; margin-top:6px; overflow-wrap:anywhere; }
+#page-nnviz .brain-map-node[data-state="prov"] { border-style:dashed; }
+#page-nnviz .brain-map-node[data-state="off"],#page-nnviz .brain-map-node[data-state="bad"] { opacity:.65; }
+#page-nnviz .brain-map-state { float:right; font-size:9px; color:var(--ops-ink2); }
+#page-nnviz .brain-map-experts { display:grid; grid-template-columns:repeat(auto-fit,minmax(135px,1fr)); gap:6px; }
+#page-nnviz .brain-map-foot { grid-column:1/-1; font-size:10px; color:var(--ops-ink3); border-top:1px solid var(--ops-line); padding-top:12px; line-height:1.6; }
+html:is(:root,[data-theme]) body #page-nnviz[data-brain-view="operations"] .nlv-cmlist { grid-template-columns:repeat(auto-fit,minmax(90px,1fr))!important; }
+html:is(:root,[data-theme]) body #page-nnviz[data-brain-view="operations"] .nlv-cm { min-height:34px; padding:7px!important; }
+html:is(:root,[data-theme]) body #page-nnviz[data-brain-view="operations"] .nlv-cm :is(.cm-role,.cm-w) { display:none!important; }
+html:is(:root,[data-theme]) body #page-nnviz[data-brain-view="operations"] .nlv-sec-h small { display:none; }
+html:is(:root,[data-theme]) body #page-nnviz[data-brain-view="operations"] .nlv-tp { flex-wrap:nowrap; gap:5px; }
+html:is(:root,[data-theme]) body #page-nnviz[data-brain-view="operations"] .nlv-tp-id .sym { font-size:18px!important; }
+#page-nnviz[data-brain-view="operations"] .nlv-tp-num .vd { max-width:145px; font-size:8px; white-space:normal; }
+#page-nnviz[data-brain-view="operations"] .nlv-funnel { padding:8px 12px; gap:6px; }
+#page-nnviz[data-brain-view="operations"] .nlv-fstep { grid-template-columns:76px minmax(0,1fr) 44px; gap:5px; padding:0!important; }
+#page-nnviz[data-brain-view="operations"] .nlv-fbar { height:9px; }
+#page-nnviz[data-brain-view="operations"] .nlv-stat { padding:5px 8px; }
+#page-nnviz[data-brain-view="operations"] .nlv-stat .v { font-size:12px; }
+#page-nnviz[data-brain-view="operations"] .nlv-top { padding:5px 8px; }
+/* At workstation sizes, only the operation view is sized to the viewport. Evidence remains scrollable. */
+@media (min-width:768px) and (min-height:650px) {
+  #page-nnviz[data-brain-view="operations"] .nnv-headcopy { display:none; }
+  html:is(:root,[data-theme]) body #page-nnviz[data-brain-view="operations"] .nnviz-content { gap:7px; padding:10px; }
+  html:is(:root,[data-theme]) body #page-nnviz[data-brain-view="operations"] .ops-brief-main { padding:8px 10px!important; }
+  html:is(:root,[data-theme]) body #page-nnviz[data-brain-view="operations"] .ops-metrics>div { padding:6px 8px; }
+  html:is(:root,[data-theme]) body #page-nnviz[data-brain-view="operations"] .ops-metrics dd { font-size:21px; margin:3px 0; }
+  html:is(:root,[data-theme]) body #page-nnviz[data-brain-view="operations"] .nnv-healthbar { min-height:24px; }
+  html:is(:root,[data-theme]) body #page-nnviz[data-brain-view="operations"] .nlv-strip { flex-wrap:nowrap; overflow-x:auto; white-space:nowrap; }
+  html:is(:root,[data-theme]) body #page-nnviz[data-brain-view="operations"] .nnviz-content { height:calc(100dvh - 24px); box-sizing:border-box; overflow:hidden; }
+  #page-nnviz[data-brain-view="operations"] :is(.nnv-head,.mission-nav,.nnv-healthbar,.ops-brief) { flex-shrink:0; }
+  html:is(:root,[data-theme]) body #page-nnviz[data-brain-view="operations"] .nnv-live { flex:1; min-height:0; display:grid; grid-template-rows:auto minmax(170px,1fr) auto; }
+  #page-nnviz[data-brain-view="operations"] .nlv-hero { min-height:0; }
+  #page-nnviz[data-brain-view="operations"] :is(.nlv-core,.nlv-funnel-wrap) { min-height:0; overflow:auto; }
+  html:is(:root,[data-theme]) body #page-nnviz[data-brain-view="operations"] .nlv-core { display:flex; flex-direction:column; }
+  html:is(:root,[data-theme]) body #page-nnviz[data-brain-view="operations"] .nlv-tp-chart { flex:1; min-height:85px; max-height:220px; }
+  #page-nnviz[data-brain-view="operations"] .nlv-tp-chart svg { height:100%; max-height:210px; width:100%; }
+  #page-nnviz[data-brain-view="operations"] .nlv-cmrow { max-height:155px; overflow:auto; }
+}
+/* Market workspace uses independent neutral tokens; never redefines global site colors. */
+#page-macro { --mk-bg:#0c0c0c; --mk-panel:#141414; --mk-ink:#f1f1f1; --mk-muted:#aaa; --mk-line:#303030; color:var(--mk-ink); padding:clamp(14px,2vw,28px); background:var(--mk-bg); }
+html[data-theme="light"] #page-macro { --mk-bg:#f5f5f3; --mk-panel:#fff; --mk-ink:#171717; --mk-muted:#666; --mk-line:#d8d8d4; }
+#page-macro .market-header { display:flex; flex-wrap:wrap; gap:12px; justify-content:space-between; align-items:center; padding:4px 0 20px; border-bottom:1px solid var(--mk-line); }
+#page-macro .market-eyebrow { font:9px 'IBM Plex Mono',monospace; letter-spacing:.18em; color:var(--mk-muted); }
+#page-macro .market-header h1 { margin:9px 0; font:500 clamp(25px,3vw,36px)/1 'Space Grotesk',sans-serif; letter-spacing:-.04em; }
+#page-macro .market-header p { margin:0; color:var(--mk-muted); font-size:12px; line-height:1.6; }
+#page-macro .market-edition { font-size:10px; color:var(--mk-muted); border:1px solid var(--mk-line); padding:8px 10px; }
+#page-macro :is(.market-tabs,.market-sectors) { display:flex; flex-wrap:wrap; gap:6px; margin:16px 0; }
+#page-macro :is(.market-tabs,.market-sectors) button { background:transparent; border:1px solid var(--mk-line); color:var(--mk-muted); padding:9px 12px; font-size:11px; min-height:36px; cursor:pointer; }
+#page-macro :is(.market-tabs,.market-sectors) button[aria-pressed="true"] { background:var(--mk-ink); color:var(--mk-bg); border-color:var(--mk-ink); }
+#page-macro .market-grid { display:grid; grid-template-columns:repeat(auto-fit,minmax(min(100%,340px),1fr)); align-items:start; gap:16px; }
+#page-macro .market-data { display:grid; gap:16px; min-width:0; }
+#page-macro .market-card { background:var(--mk-panel); border:1px solid var(--mk-line); padding:16px; min-width:0; overflow:hidden; }
+#page-macro .im-sec-head { margin:0 0 12px!important; padding:0; flex-wrap:wrap; gap:7px; }
+#page-macro .im-sec-ico { display:none; }
+#page-macro .im-sec-title { font-size:14px; color:var(--mk-ink); }
+#page-macro .im-sec-sub { font-size:10px; color:var(--mk-muted); }
+html body #page-macro .modal-macro { margin:0; padding:0; max-width:none!important; border:0; border-radius:0; box-shadow:none; background:transparent; }
+html body #page-macro .macro-table-wrap { border:0; border-radius:0; overflow-x:auto; }
+html body #page-macro .macro-table { width:100%; border-collapse:collapse; table-layout:auto; }
+html body #page-macro .macro-table th { font-size:9px; letter-spacing:0; padding:10px 7px; background:transparent; color:var(--mk-muted); white-space:normal; }
+html body #page-macro .macro-table td { font-size:11px; padding:11px 7px; border-color:var(--mk-line); color:var(--mk-ink); }
+html body #page-macro .macro-table .val { font-size:13px; }
+html body #page-macro .macro-mkt-head { background:transparent; color:var(--mk-muted); margin:12px 0 0; padding:7px 0; font-size:11px; border-radius:0; }
+html body #page-macro .macro-next { margin:0; gap:8px; flex-wrap:wrap; }
+html body #page-macro .macro-next-card { min-width:120px; padding:10px; border-radius:0; background:transparent; border:1px solid var(--mk-line); }
+html body #page-macro .macro-disclaimer { font-size:9px; line-height:1.5; color:var(--mk-muted); padding:10px 0 0; margin-top:10px; background:none; border:0; }
+#page-macro :is(.btn,.llm-btn) { background:transparent; color:var(--mk-ink); border:1px solid var(--mk-line); border-radius:0; padding:7px 10px; min-height:34px; font-size:10px; cursor:pointer; }
+#page-macro .market-news-head { display:flex; gap:8px; align-items:center; justify-content:space-between; }
+#page-macro .market-news-head h2 { margin:7px 0 0; font-size:18px; font-weight:500; }
+#page-macro .market-stamp { color:var(--mk-muted); font-size:10px; margin:10px 0; }
+#page-macro .market-sectors { gap:4px; }
+#page-macro .market-sectors button { padding:6px 9px; font-size:10px; }
+#page-macro .news-grid { display:grid; grid-template-columns:1fr; gap:20px; }
+#page-macro .news-sector { background:transparent; border:0; border-radius:0; padding:0; }
+#page-macro .news-sector[hidden] { display:none; }
+#page-macro .news-sector-head { padding:8px 0; border-bottom:1px solid var(--mk-line); }
+#page-macro .news-sector-name { color:var(--mk-ink); font:500 11px 'IBM Plex Mono',monospace; }
+#page-macro .news-sector-chip { font-size:10px; }
+#page-macro .news-item { padding:13px 0; border-bottom:1px solid var(--mk-line); display:grid; grid-template-columns:5px 1fr; gap:10px; }
+#page-macro .news-title { display:block; text-decoration:none; font-size:13px; font-weight:400; line-height:1.6; color:var(--mk-ink); overflow-wrap:anywhere; }
+#page-macro a.news-title:hover { text-decoration:underline; text-underline-offset:4px; }
+#page-macro .news-pub { font:9px 'IBM Plex Mono',monospace; color:var(--mk-muted); margin-top:7px; }
+#page-macro .news-empty { color:var(--mk-muted); font-size:12px; padding:14px 0; }
+#page-macro[data-market-view="news"] .market-data,
+#page-macro[data-market-view="macro"] :is(.market-fx,.market-news),
+#page-macro[data-market-view="fx"] :is(.market-econ,.market-news) { display:none; }
+#page-macro:not([data-market-view="all"]) .market-grid { grid-template-columns:minmax(0,1fr); }
+#page-macro :is(button,a):focus-visible { outline:2px solid var(--mk-ink); outline-offset:3px; }
+/* Codex: outrank the legacy glass-table theme only inside the unified workspace. */
+html:is(:root,[data-theme]) body #page-macro :is(.im-sec-head,.macro-table-wrap,.macro-mkt-head,.news-sector-head,.news-item) { background:transparent!important; border-radius:0!important; box-shadow:none!important; }
+html:is(:root,[data-theme]) body #page-macro .macro-table { table-layout:fixed; min-width:520px; }
+html:is(:root,[data-theme]) body #page-macro .macro-table :is(th,td) { padding:8px 6px!important; background:transparent!important; color:var(--mk-ink)!important; white-space:normal; overflow-wrap:anywhere; font-size:10px!important; }
+html:is(:root,[data-theme]) body #page-macro .macro-table :is(.val,.ind-name,.relday) { color:var(--mk-ink)!important; font-size:11px!important; }
+html:is(:root,[data-theme]) body #page-macro .macro-table tbody tr { background:transparent!important; }
+html:is(:root,[data-theme]) body #page-macro .macro-table-wrap { overflow-x:auto!important; border:0!important; }
+@media (min-width:1100px) {
+  #page-macro[data-market-view="news"] .news-grid { grid-template-columns:repeat(2,minmax(0,1fr)); }
+}
+@media (prefers-reduced-motion:reduce) {
+  #page-macro *,#page-nnviz .brain-map * { animation:none!important; transition:none!important; }
+}

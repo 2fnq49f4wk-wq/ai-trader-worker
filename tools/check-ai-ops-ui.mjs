@@ -79,10 +79,39 @@ check(el('nlvTpChart').innerHTML.includes('조회 실패'), '차트 HTTP 오류�
 ctx.renderCore({picks:[{symbol:'ABSTAIN',p:.9,abstain:true}]});
 check(el('nlvTpSym').textContent === '—', '전원 기권이면 최우선 신호를 지어내지 않는다', '기권 종목을 최우선 후보로 표시한다');
 const css = fs.readFileSync(new URL('../public/brain-console.css', import.meta.url),'utf8');
-check(html.includes('/brain-console.css?v=33.314') && css.includes('prefers-reduced-motion'),
+check(html.includes('/brain-console.css?v=33.315') && css.includes('prefers-reduced-motion'),
   '흑백 스타일과 모션 감소가 연결되어 있다', '흑백 콘솔 스타일 배선이 없다');
 check((html.match(/class="nnv-tab(?: active)?" data-model=/g)||[]).length === 14,
   '14개 모델 탭을 보존했다', '모델 탭이 사라졌다');
+
+// [Codex V33.315] Unified workspaces, topology, and regressions found during integration.
+const ui = fs.readFileSync(new URL('../public/workspace-ui.js', import.meta.url),'utf8');
+new vm.Script(ui); // External script is not covered by the inline HTML syntax checker.
+ctx.URL = URL;
+evaluateBetween('  function newsSafeUrl(value)', '  function renderNews(data)');
+check(ctx.newsSafeUrl('javascript:alert(1)') === null && ctx.newsSafeUrl('data:text/html,test') === null,
+  '뉴스 링크가 실행 가능한 프로토콜을 거부한다', '뉴스 링크가 실행 가능한 URL을 허용한다');
+check(ctx.newsSafeUrl('https://example.com/news?a=1&b=2') === 'https://example.com/news?a=1&b=2',
+  '정상 원문 링크는 보존한다', '정상 뉴스 링크를 막았다');
+check(html.includes('escapeHtml(pub)') && html.includes('rel="noopener noreferrer"'),
+  '뉴스 날짜를 이스케이프하고 원문 탭을 분리한다', '뉴스 외부 데이터가 HTML/오프너 경계를 넘는다');
+ctx.LUXR = {state:key=>key==='stack'?'prov':'on'};
+evaluateBetween('  function NNV_netSvg(d){','  function NNV_renderOverview(d){');
+const topology=ctx.NNV_netSvg({inputDim:75,featVer:9,experts:[{name:'dnn',valAcc:53},{name:'seq',valAcc:54}],stack:{slots:['dnn','seq']},combine:{},dual:[]});
+check(topology.includes('75차원') && topology.includes('IC 결합과 로짓 혼합') && topology.includes("switchNnModel('seq')"),
+  '새 구조도는 실제 차원·잠정 혼합·모델 이동을 표현한다', '구조도가 실제 경로나 모델 연결을 잃었다');
+check(!topology.includes('<svg') && topology.includes('brain-map-experts'),
+  '고정폭 구조도를 반응형 모델 카드로 교체했다', '구조도가 여전히 고정폭 그림이다');
+check(/if\(id === 'news' \|\| id === 'fx'\) id = 'macro'/.test(html),
+  '뉴스와 환율의 기존 진입점이 통합 화면을 연다', '옛 진입점이 빈 페이지를 연다');
+const fxStart = html.slice(html.indexOf('  function fxStartLive()'),html.indexOf('  function fxStopLive()'));
+check(fxStart.includes("getElementById('page-macro')") && !fxStart.includes("getElementById('page-fx')"),
+  '환율 폴링은 실제 통합 페이지를 확인한다', '환율 폴링이 삭제된 페이지를 확인한다');
+for(const id of ['newsBody','newsStamp','fxBody','macroUsBody','macroKrBody','btnRefreshNews','btnFxRefresh','btnMacroRefresh']) {
+  check(html.split('id="'+id+'"').length === 2, id+'는 한 개만 보존된다', id+'가 사라지거나 중복됐다');
+}
+check(!/--(?:acc|s1|s2|t1|t2|t3):/.test(css.slice(0,css.indexOf('body #page-nnviz'))) && !css.includes(':is(.topbar,.nav,.sidebar'),
+  '두뇌 스타일이 왼쪽 메뉴의 토큰/필터를 변경하지 않는다', '두뇌 스타일이 사이드바까지 변경한다');
 
 if (failures) {
   console.error(`\n✗ AI 작동 관제실 계약 ${failures}건 실패`);
