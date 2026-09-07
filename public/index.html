@@ -8,7 +8,7 @@
      인데, 지금까지 화면에서 그걸 알 방법이 전혀 없었다(카카오톡 인앱 브라우저는 특히 강하게 캐시한다).
      서버가 내려주는 build 와 이 값을 비교해 다르면 배너로 알린다.
      ※ src/index.js 의 _BUILD_VER 와 항상 같아야 한다 — check-html-js 가 강제한다. -->
-<meta name="lux-build" content="V33.307">
+<meta name="lux-build" content="V33.309">
 <title>LUX-ENGINE V10</title>
 <!-- ══ [V33.156] 설치형 앱(PWA) — 폰·PC 에서 홈화면/독에 담아 앱처럼 연다 ══
      · manifest  : 이름·아이콘·standalone 표시(주소창 없이 앱처럼)
@@ -4380,6 +4380,18 @@ html[data-theme="light"] .m-brainbar button.active{color:#0b4f9e;background:rgba
       <span class="nnv-health-source pending" data-source="pipe">PIPELINE</span>
       <span class="nnv-health-time" id="nnvHealthTime">—</span>
     </div>
+    <section class="ops-brief" aria-label="AI 현재 작동 요약">
+      <div class="ops-brief-main">
+        <span class="ops-label">NOW / DECISION STATE</span>
+        <strong id="opsDecision">실시간 판정 준비 중</strong>
+        <p id="opsDecisionWhy">최신 스캔과 위원회 응답을 기다리고 있습니다.</p>
+      </div>
+      <dl class="ops-metrics">
+        <div><dt>TOP SIGNAL</dt><dd id="opsTopSignal">—</dd><small id="opsTopName">후보 없음</small></div>
+        <div><dt>COMMITTEE</dt><dd id="opsCommittee">—</dd><small id="opsCommitteeState">명부 확인 중</small></div>
+        <div><dt>SCAN AGE</dt><dd id="opsScanAge">—</dd><small id="opsScanMarket">시장 확인 중</small></div>
+      </dl>
+    </section>
     <!-- ══ [V33] AI 실시간 스캔·판정 형상화 ══
          "두뇌가 무슨 일을 하는지"를 글자 대신 눈에 보이게: 종목을 훑는 스캔 빔 →
          피처/위원회 투표 → 게이트 통과·기권 → 판정 코어로 수렴. 전부 실데이터 기반
@@ -17990,6 +18002,27 @@ html:root .page > *{ flex-shrink:0; }
       throw err;
     }).then(function(data){ if(timer) clearTimeout(timer); return data; }, function(err){ if(timer) clearTimeout(timer); throw err; });
   }
+  function renderOpsBrief(d){
+    d = d || {}; var picks = Array.isArray(d.picks) ? d.picks : [];
+    var active = picks.filter(function(p){ return !p.abstain; }).sort(function(a,b){
+      return ((b.rankP != null ? b.rankP : b.p) || 0) - ((a.rankP != null ? a.rankP : a.p) || 0);
+    });
+    var top = active[0], mode = d.mode || {}, scan = d.scan || {};
+    var decision = $id('opsDecision'), why = $id('opsDecisionWhy');
+    if(decision) decision.textContent = top ? ((top.rankP != null ? top.rankP : top.p) >= .60 ? '진입 후보 감시 중' : '관망 · 신호 축적 중') : '판정 가능한 후보 없음';
+    if(why) why.textContent = top ? ((top.symbol || '')+' 신호가 현재 위원회 최상위입니다. 주문 여부는 모든 안전 게이트 통과 후 결정됩니다.') : '기권 종목을 제외한 최신 후보가 없습니다.';
+    var ts = $id('opsTopSignal'), tn = $id('opsTopName');
+    if(ts) ts.textContent = top ? Math.round(((top.rankP != null ? top.rankP : top.p) || 0)*100)+'%' : '—';
+    if(tn) tn.textContent = top ? (top.symbol || '이름 없음') : '후보 없음';
+    var roster = mode.alt && Array.isArray(mode.alt.roster) ? mode.alt.roster : [];
+    var on = roster.filter(function(x){ return x && (x.state === 'live' || x.state === 'provisional'); }).length;
+    var ce = $id('opsCommittee'), cs = $id('opsCommitteeState');
+    if(ce) ce.textContent = roster.length ? on+'/'+roster.length : '—';
+    if(cs) cs.textContent = roster.length ? (on === roster.length ? '전원 응답' : '일부 위원 대기') : '명부 확인 중';
+    var sa = $id('opsScanAge'), sm = $id('opsScanMarket');
+    if(sa) sa.textContent = scan.ts ? ago(scan.ts) : '—';
+    if(sm) sm.textContent = [scan.market, scan.phase].filter(Boolean).join(' · ') || '시장 확인 중';
+  }
   /* ══ [V33.144] ★AI 운용상태가 영원히 "확인 중…" 이던 이유★ ══
      renderRailAiMode 를 부르는 곳이 loadLive ★한 곳뿐★ 이었고, loadLive 는
      liveStart() 안에서만 돌며 liveStart 는 `id === 'nnviz'` 일 때만 호출된다.
@@ -19593,6 +19626,7 @@ html:root .page > *{ flex-shrink:0; }
   function paintLive(d, pipeSteps){
     LIVE.data = d;
     if(BVIEW !== 'live') return;   // 구조 관측 중이면 무거운 코어 SVG·스트림은 그리지 않는다
+    renderOpsBrief(d);
     renderCore(d);
     renderCenter(d);
     renderPicksGraph(d);
@@ -19864,7 +19898,7 @@ html:root .page > *{ flex-shrink:0; }
 </script>
 
 <style>
-/* V33.307 — AI 작동 관제실. 장식보다 상태 계층과 장애 가시성을 먼저 둔다. */
+/* V33.309 — AI 작동 관제실. 장식보다 상태 계층과 장애 가시성을 먼저 둔다. */
 #page-nnviz{--ops-bg:#07101e;--ops-card:rgba(13,25,43,.86);--ops-line:rgba(133,169,218,.16);--ops-cyan:#53d7ff;--ops-green:#59e1a8;--ops-amber:#ffc66d;}
 #page-nnviz .nnviz-content{background:radial-gradient(circle at 82% -5%,rgba(42,123,180,.22),transparent 34%),linear-gradient(145deg,#07101e 0%,#091523 48%,#07101b 100%);border:1px solid rgba(124,178,234,.2);border-radius:24px;padding:28px;box-shadow:0 24px 80px rgba(0,0,0,.42);}
 #page-nnviz .nnviz-content:before{content:"";position:absolute;inset:0;pointer-events:none;opacity:.18;background-image:linear-gradient(rgba(83,215,255,.08) 1px,transparent 1px),linear-gradient(90deg,rgba(83,215,255,.08) 1px,transparent 1px);background-size:32px 32px;mask-image:linear-gradient(to bottom,#000,transparent 42%);}
@@ -19874,16 +19908,16 @@ html:root .page > *{ flex-shrink:0; }
 #page-nnviz .nnv-head-actions{display:flex;gap:8px;align-items:center;flex-wrap:wrap;justify-content:flex-end}
 #page-nnviz .nnv-btn{border-radius:10px;border-color:rgba(129,173,221,.22);background:rgba(11,27,47,.82);min-height:36px;padding:0 12px;color:#a9bfd8}
 #page-nnviz .nnv-btn:hover{color:#eef8ff;border-color:rgba(83,215,255,.55);background:rgba(19,48,76,.92)}
-.nnv-healthbar{position:relative;display:flex;align-items:center;gap:8px;min-height:46px;padding:8px 12px;margin-bottom:16px;border:1px solid var(--ops-line);border-radius:14px;background:rgba(4,13,25,.72);backdrop-filter:blur(12px)}
+.nnv-healthbar{position:relative;display:flex;flex-wrap:wrap;align-items:center;gap:8px;min-height:46px;padding:8px 12px;margin-bottom:16px;border:1px solid var(--ops-line);border-radius:14px;background:rgba(4,13,25,.72);backdrop-filter:blur(12px)}
 .nnv-health-title{display:flex;align-items:center;gap:8px;margin-right:auto;color:#d8e8f8;font-size:12px}.nnv-health-title i{width:8px;height:8px;border-radius:50%;background:var(--ops-amber);box-shadow:0 0 14px var(--ops-amber)}
 .nnv-healthbar:not(.has-error) .nnv-health-title i{background:var(--ops-green);box-shadow:0 0 14px var(--ops-green)}.nnv-healthbar.has-error .nnv-health-title i{background:#ff7082;box-shadow:0 0 14px #ff7082}
 .nnv-health-source{padding:5px 8px;border-radius:7px;border:1px solid transparent;font:700 9px/1 'Space Grotesk',sans-serif;letter-spacing:.1em}.nnv-health-source.pending{color:#9aacbf;background:rgba(148,163,184,.1)}.nnv-health-source.ok{color:#7ce8bb;background:rgba(57,209,146,.1);border-color:rgba(57,209,146,.22)}.nnv-health-source.error{color:#ff9eaa;background:rgba(255,79,103,.11);border-color:rgba(255,79,103,.24)}.nnv-health-time{color:#6f88a4;font-size:10px;margin-left:4px}
+.ops-brief{position:relative;display:grid;grid-template-columns:repeat(auto-fit,minmax(min(100%,420px),1fr));gap:12px;margin:0 0 16px}.ops-brief-main,.ops-metrics>div{border:1px solid var(--ops-line);background:linear-gradient(145deg,rgba(17,35,57,.96),rgba(8,20,35,.88));box-shadow:0 16px 38px rgba(0,0,0,.2)}.ops-brief-main{padding:clamp(18px,2vw,22px);border-radius:18px}.ops-label,.ops-metrics dt{display:block;font:700 9px/1.2 'Space Grotesk',sans-serif;letter-spacing:.16em;color:#6383a3}.ops-brief-main strong{display:block;margin-top:14px;font:700 clamp(20px,2.1vw,28px)/1.2 'Space Grotesk',sans-serif;color:#f1f8ff;letter-spacing:-.025em}.ops-brief-main p{margin:8px 0 0;color:#8199b4;font-size:11px;line-height:1.55}.ops-metrics{display:grid;grid-template-columns:repeat(auto-fit,minmax(90px,1fr));gap:8px;margin:0;min-height:96px}.ops-metrics>div{display:flex;min-width:0;flex-direction:column;justify-content:center;padding:clamp(10px,1.5vw,16px);border-radius:14px}.ops-metrics dd{margin:10px 0 5px;font:700 clamp(20px,2.4vw,31px)/1 'Space Grotesk',sans-serif;color:var(--ops-cyan);letter-spacing:-.04em}.ops-metrics small{overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:#7d95b0;font-size:10px}
 #page-nnviz .nlv-strip,#page-nnviz .nlv-core,#page-nnviz .nlv-funnel-wrap,#page-nnviz .nlv-cmrow,#page-nnviz .nlv-panel,#page-nnviz .nlv-picks{background:var(--ops-card);border-color:var(--ops-line);box-shadow:0 14px 34px rgba(0,0,0,.17);backdrop-filter:blur(10px)}
 #page-nnviz .nlv-core,#page-nnviz .nlv-funnel-wrap,#page-nnviz .nlv-panel,#page-nnviz .nlv-cmrow,#page-nnviz .nlv-picks{border-radius:16px}
 #page-nnviz .nlv-sec-h{color:#e6f1fc;letter-spacing:.02em}#page-nnviz .nlv-sec-h small{color:#6f89a7;font-weight:500}
 #page-nnviz .nlv-tp-num .p{color:var(--ops-cyan);text-shadow:0 0 22px rgba(83,215,255,.28)}
-@media(max-width:760px){#page-nnviz .nnviz-content{margin:8px;padding:16px;border-radius:18px}#page-nnviz .nnv-head{align-items:flex-start;flex-direction:column}.nnv-headcopy{font-size:12px}.nnv-healthbar{display:grid;grid-template-columns:repeat(3,1fr)}.nnv-health-title,.nnv-health-time{grid-column:1/-1}.nnv-health-source{text-align:center;padding:7px 4px}.nnv-health-time{margin:0}}
-html[data-theme="light"] #page-nnviz{--ops-card:rgba(255,255,255,.9);--ops-line:rgba(37,86,137,.14)}html[data-theme="light"] #page-nnviz .nnviz-content{background:radial-gradient(circle at 82% -5%,rgba(65,159,219,.15),transparent 34%),linear-gradient(145deg,#f5f9fd,#edf4fa);box-shadow:0 22px 60px rgba(48,78,110,.12)}html[data-theme="light"] #page-nnviz .nnv-title,html[data-theme="light"] #page-nnviz .nlv-sec-h{color:#102b45}html[data-theme="light"] .nnv-healthbar{background:rgba(255,255,255,.76)}html[data-theme="light"] .nnv-health-title{color:#24425f}
+html[data-theme="light"] #page-nnviz{--ops-card:rgba(255,255,255,.9);--ops-line:rgba(37,86,137,.14)}html[data-theme="light"] #page-nnviz .nnviz-content{background:radial-gradient(circle at 82% -5%,rgba(65,159,219,.15),transparent 34%),linear-gradient(145deg,#f5f9fd,#edf4fa);box-shadow:0 22px 60px rgba(48,78,110,.12)}html[data-theme="light"] #page-nnviz .nnv-title,html[data-theme="light"] #page-nnviz .nlv-sec-h,html[data-theme="light"] .ops-brief-main strong{color:#102b45}html[data-theme="light"] .nnv-healthbar{background:rgba(255,255,255,.76)}html[data-theme="light"] .nnv-health-title{color:#24425f}html[data-theme="light"] .ops-brief-main,html[data-theme="light"] .ops-metrics>div{background:rgba(255,255,255,.82)}
 </style>
 
 </body>

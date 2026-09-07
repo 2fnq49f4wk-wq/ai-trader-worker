@@ -24,9 +24,15 @@ check(/AbortController/.test(html) && /15000/.test(html),
 check(/PICKS\.lastError/.test(html) && /liveHealth\('picks', 'error'\)/.test(html),
   "캐시 폴백 중에도 최신 PICKS 요청 실패를 숨기지 않는다",
   "오래된 PICKS 캐시가 최신 정상 응답처럼 보일 수 있다");
-check(/@media\(max-width:760px\)/.test(html) && /\.nnv-healthbar\{display:grid/.test(html),
-  "모바일에서도 연결 상태와 조작부가 재배치된다",
-  "새 관제실의 모바일 레이아웃이 없다");
+check(/repeat\(auto-fit,minmax\(min\(100%,420px\),1fr\)\)/.test(html) && /repeat\(auto-fit,minmax\(90px,1fr\)\)/.test(html),
+  "추가 미디어쿼리 없이 관제 요약이 가용 폭에 맞춰 재배치된다",
+  "새 관제실의 유동형 모바일 레이아웃이 없다");
+check(/class="ops-brief"/.test(html) && ["opsDecision", "opsTopSignal", "opsCommittee", "opsScanAge"].every(id => html.includes(`id="${id}"`)),
+  "판정·최상위 신호·위원회·스캔 최신성을 한 눈에 보는 작동 요약이 있다",
+  "AI 작동 화면의 핵심 요약 계층이 없다");
+check(/function renderOpsBrief\(d\)/.test(html) && /renderOpsBrief\(d\)/.test(html),
+  "작동 요약이 실제 응답으로 갱신된다",
+  "작동 요약이 정적 장식이거나 렌더 경로에 연결되지 않았다");
 
 if (failures) {
   console.error(`\n✗ AI 작동 관제실 계약 ${failures}건 실패`);

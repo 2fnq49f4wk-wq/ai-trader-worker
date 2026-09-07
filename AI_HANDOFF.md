@@ -8,11 +8,12 @@
 - Owner: Codex
 - Branch: main
 - Last commit: HEAD (verify with `git log -1 --oneline`)
-- Scope: AI 작동 관제실 전면 재설계 및 두뇌 관측 오류 가시화
+- Scope: V33.309 AI 작동 관제실 전면 재설계 및 두뇌 관측 오류 가시화
 
 ## Completed
 
 - AI 작동 화면을 관제실 중심의 정보 계층, 연결 상태 바, 반응형 모바일 레이아웃으로 재설계했다.
+- 판정 상태·최상위 신호·위원회 합류·스캔 최신성을 첫 화면에서 읽는 작동 요약을 추가했다.
 - PICKS, COMMITTEE, PIPELINE 세 데이터 소스의 성공·대기·오류를 서로 구분해 표시한다.
 - `/api/ai-mode`, `/api/pipeline`, `/api/ai-picks`의 HTTP 오류가 정상 데이터로 처리되거나 오래된 캐시에 가려지는 문제를 수정했다.
 - 관측 API에 15초 타임아웃과 오류 로그를 추가해 무한 로딩 및 무음 실패를 막았다.
@@ -21,7 +22,8 @@
 
 ## Remaining work
 
-- GitHub 원격에 사용자 측 최신 커밋이 있다고 전달받았으나 이 환경의 HTTPS 프록시가 GitHub CONNECT를 403으로 차단해 fetch/rebase 및 push를 실행하지 못했다.
+- 라이브 사이트가 V33.308이라고 사용자에게 전달받았지만 로컬 HEAD는 V33.307이었다. 이 환경의 HTTPS 프록시가 GitHub CONNECT를 403으로 차단해 라이브 응답과 원격 V33.308 소스를 독립 검증하지 못했다.
+- 이 작업의 빌드 표식은 충돌을 피하려고 다음 번호인 V33.309로 올렸다.
 - 네트워크가 가능한 다음 담당자는 구현을 시작하기 전에 `git fetch origin main`, `git rebase origin/main`으로 원격 변경을 합치고 전체 검사를 다시 실행한다.
 - rebase 충돌 시 `public/index.html`의 AI 두뇌 블록과 빌드 버전을 특히 확인한다. 원격 최신 UI를 무조건 덮어쓰지 않는다.
 
