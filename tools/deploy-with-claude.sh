@@ -27,19 +27,21 @@ fi
 echo "[1/5] 원격 main 조회"
 git fetch origin main
 
-echo "[2/5] 원격 V33.308 이후에 로컬 변경 재배치"
+echo "[2/5] 원격 최신 main을 바탕으로 만든 변경인지 확인"
 if ! git merge-base --is-ancestor origin/main HEAD; then
-  git rebase origin/main || {
-    cat >&2 <<'EOF'
-ERROR: 자동 rebase 중 충돌이 발생했습니다.
-  1. git status로 충돌 파일을 확인합니다.
-  2. public/index.html은 원격 변경을 지우지 말고 V33.309 관제실 변경과 합칩니다.
-  3. 해결 후 git add <파일> && git rebase --continue 를 실행합니다.
-  4. 이 스크립트를 다시 실행합니다.
-되돌리려면 git rebase --abort 를 실행하세요.
+  cat >&2 <<'EOF'
+ERROR: 원격 main에 이 작업공간에 없는 변경이 있습니다.
+오래된 바닥에서 만든 UI 커밋을 자동 rebase하거나 그대로 배포하지 않습니다.
+
+Claude Code 작업 순서:
+  1. origin/main에서 깨끗한 새 브랜치/작업트리를 만듭니다.
+  2. 현재 UI의 요구사항과 의도만 참고해 최신 코드 위에서 다시 구현합니다.
+  3. 원격의 최신 check-*.mjs와 deploy.yml을 기준으로 전체 검사를 실행합니다.
+  4. 검증된 결과만 main에 반영합니다.
+
+현재 로컬 커밋을 force push하거나 기계적으로 rebase하지 마세요.
 EOF
-    exit 3
-  }
+  exit 3
 fi
 
 echo "[3/5] V33.309 빌드 표식과 핵심 계약 검사"
@@ -66,4 +68,3 @@ echo "[5/5] main push → GitHub Actions → Cloudflare 프로덕션 배포"
 git push origin main:main
 echo "배포 트리거 완료: $(git rev-parse --short HEAD)"
 echo "GitHub Actions: https://github.com/2fnq49f4wk-wq/ai-trader-worker/actions/workflows/deploy.yml"
-
