@@ -2,7 +2,14 @@
 
 ## 브랜치·배포
 - **항상 `main` 브랜치에서 직접 작업하고 배포한다.** 별도 feature 브랜치나 PR 우회 없이
-  main에 바로 커밋·푸시한다. (2026-07-20 사용자 지시)
+  main에 바로 커밋·푸시한다. (2026-07-20 사용자 지시 / 2026-09-07 재확인)
+- **작업 시작 전 반드시 최신 `main` 을 바닥으로 삼는다** (Claude·Codex 등 도구 공통):
+  `git fetch origin main && git log --oneline -1 origin/main` 로 최신 판을 확인하고,
+  로컬이 그보다 뒤져 있으면 먼저 맞춘 뒤에 코드를 고친다.
+  ※ 2026-09-07 사고: 다른 도구가 V33.304 에서 갈라진 옛 브랜치 위에서 V33.309 를 만들었다.
+    그 바닥엔 V33.306·307·308 이 통째로 없어 게이트가 80종(현재 82종)뿐이었다.
+    뒤진 바닥의 변경이 얹히면 새 게이트가 조용히 사라진다 —
+    `tools/check-stale-base.mjs` 가 배선 누락과 버전 되감기를 막는다.
 - `main` push 시 GitHub Actions `Deploy to Cloudflare Workers`가 프로덕션(Cloudflare Worker)에
   자동 배포한다. `trainer/modal/**` 변경 시 `Deploy Modal Trainer`가 Modal 학습기를 재배포한다.
 - 배포 전 안전게이트: `node --check src/index.js` 통과 필수(구문오류 시 배포 차단).

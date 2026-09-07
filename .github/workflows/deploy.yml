@@ -20,7 +20,11 @@ jobs:
     runs-on: ubuntu-latest
     name: Deploy
     steps:
+      # [V33.310] 깊이 2 — check-stale-base 가 "버전이 뒤로 갔는가" 를 보려면 직전 커밋이
+      #   필요하다. 기본값(깊이 1)이면 그 판정이 조용히 건너뛰어진다.
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 2
       - name: Setup Node
         uses: actions/setup-node@v4
         with:
@@ -493,6 +497,13 @@ jobs:
       #   이 검사는 가짜 DOM·가짜 fetch 로 그 경합을 ★실제로 재현해★ 본다.
       - name: 두뇌관측 탭 전환 검사 (늦은 응답 폐기 · 모델 어긋난 그림 금지)
         run: node tools/check-nnviz-switch.mjs
+      # [V33.310] ★게이트가 자기 자신의 실종을 못 본다★ — 게이트는 이 파일에 한 줄씩 손으로
+      #   배선된다. 뒤진 바닥(예: V33.304 에서 갈라진 V33.305 브랜치, 게이트 80종)의
+      #   deploy.yml 이 얹히면 새 게이트가 목록에서 사라지는데, 그 사라짐을 알아챌 사람이
+      #   바로 사라진 그 게이트다. 파일은 저장소에 남아 있어 ls 로도 티가 안 난다.
+      #   그래서 "파일 목록 = 배선 목록" 을 강제하고, 버전이 뒤로 가는지도 함께 본다.
+      - name: 뒤진 바닥 검사 (게이트 배선 누락 · 빌드 버전 되감기)
+        run: node tools/check-stale-base.mjs
       # [V33.272] STACK 에 SEQ 슬롯. 위원 목록이 이 파일에 손으로 네 번 적혀 있었다 —
       #   하나만 고치고 셋을 놓치면 STACK 이 "그 자리는 boost" 라고 배운 채로 다른 확률을
       #   받는다(성적으로만 드러나는 사고). 지금은 STACK_SLOTS 하나뿐이고, 이 검사가

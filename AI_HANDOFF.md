@@ -8,7 +8,8 @@
 - Owner: Claude Code
 - Branch: `main` (직접 작업 — 2026-09-07 사용자 지시 "항상 main에 작업")
 - Last commit: HEAD (this change; verify with `git log -1 --oneline`)
-- Scope: V33.308 — 두뇌 관측 탭 전환 시 다른 모델이 보이던 버그
+- Scope: V33.310 — 뒤진 바닥에서 온 변경이 게이트를 조용히 떨어뜨리는 것을 막는 검사
+  (V33.309 는 다른 도구가 로컬에서 쓰고 있어 비워 둔다 — 304 → 306 의 빈칸과 같은 이유)
 - Base: `main`(V33.304) 위에 얹었다. 사용자의 V33.305(검증된 모델만 AI 자율진입 · AGENTS.md ·
   `tools/check-ai-handoff.mjs`)는 `codex/find-issues-with-embedded-ai-models` 에만 있고 아직
   `main` 에 없다 — 그래서 이 문서의 검증 목록에는 `check-ai-handoff.mjs` 를 넣지 않았다.
@@ -31,6 +32,27 @@
     심사받지 않게 한다.
   · `memoTrainNightly` 는 그대로 남아 있고, 외부 모델이 30시간 이내로 신선할 때만 적합을
     건너뛴다. ★전진검증은 건너뛰기보다 앞에서 항상 돈다.★
+
+### V33.310 추가분
+
+- ★뒤진 바닥 사고.★ 다른 도구(Codex)가 `codex/find-issues-with-embedded-ai-models`
+  (V33.305, V33.304 에서 분기) 위에서 V33.309 를 만들었다. 그 바닥엔 V33.306·307·308 이
+  통째로 없다 — 게이트가 80종이고 지금 main 은 82종이다.
+- ★왜 위험한가:★ 게이트는 deploy.yml 에 손으로 배선된다. 뒤진 deploy.yml 이 얹히면
+  새 게이트가 목록에서 사라지는데, 그 사라짐을 알아챌 사람이 바로 사라진 그 게이트다.
+  파일은 저장소에 남아 있어 `ls tools/` 로도 티가 안 난다.
+- `tools/check-stale-base.mjs` — ① `tools/check-*.mjs` 전부가 deploy.yml 에 배선돼 있는가
+  (반대로 없는 파일을 부르지 않는가도 함께 본다) ② `_BUILD_VER` 가 직전 커밋보다
+  뒤로 가지 않았는가. 워크플로 체크아웃을 `fetch-depth: 2` 로 올려 ②가 CI 에서 실제로 돈다.
+- CLAUDE.md 에 "작업 시작 전 최신 `main` 을 바닥으로 삼는다" 를 도구 공통 규칙으로 적었다.
+
+#### 아직 사용자 판단이 필요한 것
+
+- `AI_PARAMS.requireTrustedModel` — main 은 `false`(2026-07-22 사용자 지시로 완화),
+  V33.305 브랜치는 `true`. 매수 여부를 가르는 운용 정책이라 임의로 바꾸지 않았다.
+- V33.305 의 `AGENTS.md` · `tools/check-ai-handoff.mjs` 는 아직 main 에 없다.
+  가져올 때 그 안의 CLAUDE.md 문구("main 에서 직접 편집하지 않는다")는
+  2026-09-07 지시("항상 main 에 작업")와 충돌하므로 그대로 옮기면 안 된다.
 
 ### V33.308 추가분
 
