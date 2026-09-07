@@ -6,7 +6,7 @@
 
 - Status: complete
 - Owner: Codex
-- Branch: work
+- Branch: main
 - Last commit: HEAD (this change; verify with `git log -1 --oneline`)
 - Scope: 대형모델 R2/D1 로딩 실패 관측성 추가
 
@@ -16,10 +16,12 @@
 - Claude와 Codex가 같은 Git 커밋, 검사 결과, 남은 작업을 기준으로 인계하도록 공통 규약을 추가했다.
 - Claude API 및 Cloudflare Workers AI 비활성화 정책은 변경하지 않았다.
 - 대형모델 로딩 실패를 미학습과 구분하도록 원인·시각·누적 횟수를 메모리에 기록하고 `/api/r2-status`에 노출했다.
+- 로컬 `main`에 V33.305~306 변경을 반영했다. `origin`은 등록됐지만 실행 환경 프록시가 GitHub CONNECT를 차단해 아직 push되지 않았다.
 
 ## Remaining work
 
-- 검증구간 재사용 제거는 모델 승격 통계 의미를 바꾸므로 별도 변경으로 진행한다.
+- 미푸시 커밋: `bcfd7b7`, `e5a36f6` 및 이 인계 갱신 커밋. 네트워크가 열리면 먼저 `git push origin main`을 실행한다.
+- 그 다음 검증구간 재사용 제거를 진행한다. 모델 승격 통계 의미를 바꾸므로 앞선 변경과 섞지 않는다.
 
 ## Validation
 

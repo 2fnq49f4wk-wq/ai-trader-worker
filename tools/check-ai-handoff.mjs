@@ -15,8 +15,11 @@ check(claude.includes("AGENTS.md") && claude.includes("AI_HANDOFF.md"),
   "Claude가 공통 규약과 인계 상태를 읽는다");
 check(agents.includes("git status --short --branch") && agents.includes("git log -5 --oneline"),
   "새 AI가 실제 Git 상태를 먼저 확인한다");
-check(agents.includes("같은 작업 트리에서 두 AI를 동시에 실행하지 않는다"),
-  "동시 편집은 worktree로 격리한다");
+check(agents.includes("`main`에서 직렬로 작업한다")
+    && agents.includes("같은 작업 트리에서 두 AI를 동시에 실행하지 않는다"),
+  "Claude와 Codex가 main에서 직렬로 인계한다");
+check(claude.includes("git pull --ff-only origin main") && claude.includes("git push origin main"),
+  "Claude가 main 동기화 순서를 따른다");
 check(agents.includes("토큰이 부족해지거나 작업을 중단하기 전") && agents.includes("커밋"),
   "토큰 소진 전 커밋 체크포인트 규약이 있다");
 check(/- Status: (complete|in_progress|blocked)/.test(handoff)

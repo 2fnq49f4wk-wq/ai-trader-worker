@@ -2,8 +2,8 @@
 
 ## 브랜치·배포
 - Claude와 Codex 모두 작업 전에 루트 `AGENTS.md`와 `AI_HANDOFF.md`를 읽는다.
-- **`main`에서 직접 편집하지 않는다.** 작업별 브랜치에서 커밋하고 PR로 공유한다. 검증된 PR만
-  `main`에 병합하여 프로덕션 배포와 작업 중간 체크포인트를 분리한다.
+- **항상 `main`에서 직렬로 작업한다.** 작업 전 `git pull --ff-only origin main`, 작업 후 검사·커밋·
+  `git push origin main` 순서를 지킨다. push가 실패하면 `AI_HANDOFF.md`에 원인과 미푸시 커밋을 남긴다.
 - `main` push 시 GitHub Actions `Deploy to Cloudflare Workers`가 프로덕션(Cloudflare Worker)에
   자동 배포한다. `trainer/modal/**` 변경 시 `Deploy Modal Trainer`가 Modal 학습기를 재배포한다.
 - 배포 전 안전게이트: `node --check src/index.js` 통과 필수(구문오류 시 배포 차단).
