@@ -38,11 +38,23 @@ jobs:
         run: npm install --no-save esbuild@0.28.1
       - name: Syntax check
         run: node tools/check-syntax.mjs src/index.js
+      # [V33.311] Claude·Codex 인계 계약 — 다른 도구가 이어받아도 규약·경계를 잃지 않는가.
+      #   V33.305(codex)에서 가져오되, requireTrustedModel 값 자체는 강제하지 않는다
+      #   (2026-07-22 사용자 지시로 false — 실매매 리스크는 사용자 결정 사항).
+      - name: AI handoff contract check
+        run: node tools/check-ai-handoff.mjs
+      # [V33.309] 대형모델(R2/D1 청크) 로딩 실패를 '미학습' 과 구분해 원인별로 남긴다.
+      - name: Big model load health check
+        run: node tools/check-big-load-health.mjs
       # [V33.61] 프론트(public/index.html)의 인라인 <script> 도 반드시 검사한다.
       #   위 검사는 src/index.js 만 본다 — 실제로 V33.60 에서 HTML 인라인 스크립트의
       #   중괄호가 어긋나 우측 사이드바·AI두뇌 창이 통째로 죽었는데 게이트를 그대로 통과했다.
       - name: Frontend inline script check
         run: node tools/check-html-js.mjs
+      # [V33.309/311] AI 작동 관제실 — 연결 텔레메트리·NOW 브리핑이 실데이터에 배선돼
+      #   있는가, HTTP 오류가 정상 응답으로 오인되지 않는가, 유동형 모바일 레이아웃인가.
+      - name: AI operations UI contract check
+        run: node tools/check-ai-ops-ui.mjs
       # [V33.84] 선언·사용 순서 계약 — node --check 가 못 잡는 TDZ 를 막는다.
       #   실제로 V33.83 켈리 블록이 stopDist 선언보다 앞에 놓여 매 진입마다 ReferenceError 가
       #   났고, 자기 try/catch 에 삼켜져 '기능이 있는데 전혀 안 도는' 상태로 배포됐다.

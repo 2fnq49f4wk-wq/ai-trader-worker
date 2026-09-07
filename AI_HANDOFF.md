@@ -8,13 +8,43 @@
 - Owner: Claude Code
 - Branch: `main` (직접 작업 — 2026-09-07 사용자 지시 "항상 main에 작업")
 - Last commit: HEAD (this change; verify with `git log -1 --oneline`)
-- Scope: V33.310 — 뒤진 바닥에서 온 변경이 게이트를 조용히 떨어뜨리는 것을 막는 검사
-  (V33.309 는 다른 도구가 로컬에서 쓰고 있어 비워 둔다 — 304 → 306 의 빈칸과 같은 이유)
-- Base: `main`(V33.304) 위에 얹었다. 사용자의 V33.305(검증된 모델만 AI 자율진입 · AGENTS.md ·
-  `tools/check-ai-handoff.mjs`)는 `codex/find-issues-with-embedded-ai-models` 에만 있고 아직
-  `main` 에 없다 — 그래서 이 문서의 검증 목록에는 `check-ai-handoff.mjs` 를 넣지 않았다.
-  V33.305 가 `main` 에 병합되면 그 줄을 되살린다. 버전 번호 305 는 그쪽이 쓰고 있으므로
-  이 작업은 306 을 유지한다(304 → 306 의 빈칸은 의도적이다).
+- Scope: V33.311 — `codex/find-issues-with-embedded-ai-models`(V33.305~V33.309)에서 가져올
+  것을 골라 `main`(V33.310) 위에 얹고, AI 작동 관제실을 미션컨트롤 방향으로 다시 그렸다.
+- Base: `main`(V33.310). V33.305~309 는 여전히 `codex/find-issues-with-embedded-ai-models`
+  브랜치에만 있다 — 병합하지 않고 필요한 부분만 옮겨 왔다(아래 "가져온 것" 참고). 그 브랜치를
+  그대로 rebase/merge 하지 않는다 — V33.306·307·308·310 이 없는 바닥이라 게이트가 80종뿐이고,
+  얹으면 `check-stale-base.mjs` 가 막는다.
+
+### V33.305~309 에서 가져온 것 / 가져오지 않은 것
+
+- **가져옴**: `AGENTS.md`(도구 공통 규약), `CLAUDE.md`의 인계 순서 문구,
+  `tools/check-big-load-health.mjs`(대형모델 로딩 실패를 '미학습'과 구분 — `_bigLoadMark`/
+  `_bigLoadStatus`, `/api/r2-status`·`/api/scalp-status` 응답에 `bigLoads` 필드),
+  `tools/check-ai-ops-ui.mjs`와 그 배선(연결 텔레메트리·NOW 브리핑·HTTP 오류 가시화 —
+  `liveHealth`/`liveFetchJSON`/`renderOpsBrief`, `loadPicks`의 `r.ok` 확인).
+- **가져오되 값은 바꿈**: `tools/check-ai-handoff.mjs` — 원본은 `requireTrustedModel:true` 를
+  강제했다. 그 값은 2026-07-22 사용자 지시로 `false` 로 완화된 실매매 리스크 정책이라
+  2026-09-07 재확인(사용자: "false 유지") 후 강제 조건을 뺐다. 대신 그 값 옆에 날짜 있는
+  근거 주석이 있는지만 본다 — 조용한 값 뒤집기 자체를 막는다.
+- **가져오지 않음**: `src/index.js`의 `requireTrustedModel: true` 자체(위 이유로 `false` 유지),
+  `tools/check-model-evidence.mjs`의 `requireTrustedModel:true` 단정 추가분.
+
+### AI 작동 관제실 재설계 (미션컨트롤 방향 — 사용자 요청 "완전히 새롭고 세련되게 spacex 느낌")
+
+- 이 화면(`.nlv-*`)은 이미 짙은 남색(#060910~#090e1a) + 시안 발광(#38bdf8) + IBM Plex Mono
+  계기 숫자로 그려져 있었다 — 그 색·글꼴을 그대로 물려받아 완성했다(전면 교체가 아니라
+  기존 언어를 끝까지 미는 방향 — 이미 있던 걸 갈아엎는 게 더 위험하고 저렴했다).
+- 헤더: eyebrow 라벨("LUX INTELLIGENCE · OPERATIONS/STRUCTURE")·제목·부제가 작동/구조
+  화면 전환에 맞춰 텍스트를 바꾼다(`setBrainView`).
+- 연결 텔레메트리 바(`#nnvHealthbar`) — PICKS/COMMITTEE/PIPELINE 세 소스를 독립 상태로,
+  LED 점 + 몬 라벨. NOW/DECISION 브리핑(`.ops-brief`) — 판정·최상위 신호·위원회·스캔
+  최신성을 코너 브래킷 카드로. 둘 다 작동 화면에서만 보이고 구조 관측에선 숨는다.
+  격자 대기층(`.nnviz-content::after`)은 아래로 갈수록 옅어져 내용을 가리지 않는다.
+  `prefers-reduced-motion` 대응 포함. 좁은 화면 전용 `@media` 는 두지 않았다
+  (`check-mobile.mjs` 가 "폰 블록 뒤 좁은폭 규칙 금지"를 강제 — grid auto-fit로 대신 해결).
+- 헤드리스 Chromium(CDP)으로 실제 렌더를 두 화면 다 확인했다: 라이브 뷰(연결 오류 상태 —
+  백엔드 없는 오프라인 시험 환경이라 의도된 것)와 구조 뷰(제목·부제 전환, 코너 브래킷)
+  모두 정상.
 
 ## Completed
 

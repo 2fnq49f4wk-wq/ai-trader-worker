@@ -8,7 +8,7 @@
      인데, 지금까지 화면에서 그걸 알 방법이 전혀 없었다(카카오톡 인앱 브라우저는 특히 강하게 캐시한다).
      서버가 내려주는 build 와 이 값을 비교해 다르면 배너로 알린다.
      ※ src/index.js 의 _BUILD_VER 와 항상 같아야 한다 — check-html-js 가 강제한다. -->
-<meta name="lux-build" content="V33.310">
+<meta name="lux-build" content="V33.311">
 <title>LUX-ENGINE V10</title>
 <!-- ══ [V33.156] 설치형 앱(PWA) — 폰·PC 에서 홈화면/독에 담아 앱처럼 연다 ══
      · manifest  : 이름·아이콘·standalone 표시(주소창 없이 앱처럼)
@@ -4362,15 +4362,36 @@ html[data-theme="light"] .m-brainbar button.active{color:#0b4f9e;background:rgba
 <div class="page" id="page-nnviz">
   <div class="nnviz-content">
     <div class="nnv-head">
-      <div>
-        <div class="nnv-title"><span class="dot"></span>AI 두뇌 관측</div>
+      <div class="nnv-heading">
+        <div class="nnv-eyebrow" id="nnvEyebrow">LUX INTELLIGENCE · OPERATIONS</div>
+        <div class="nnv-title"><span class="dot"></span><span id="nnvTitleTxt">AI 작동 관제실</span></div>
+        <div class="nnv-headcopy" id="nnvHeadcopy">스캔부터 위원회 투표, 진입 게이트까지 실제 엔진 상태를 한 화면에서 추적합니다.</div>
       </div>
-      <div style="display:flex;gap:8px;align-items:center;">
+      <div class="nnv-head-actions">
         <button class="nnv-btn" onclick="redeployBrain()" title="Modal 학습기를 재배포하고 즉시 1회 재학습(GitHub Actions 수동 실행)">🚀 재학습·재배포</button>
         <button class="nnv-btn" onclick="openModalActions()" title="관리 키 없이 GitHub Actions 페이지에서 직접 실행 — Run workflow → run_now 체크 → Run">🐙 GitHub에서 실행(키 불필요)</button>
         <button class="nnv-btn" onclick="openNnViz(1)">↻ 새로고침</button>
       </div>
     </div>
+    <div class="nnv-healthbar" id="nnvHealthbar" role="status" aria-live="polite">
+      <span class="nnv-health-title"><i></i><b>엔진 연결 확인 중</b></span>
+      <span class="nnv-health-source pending" data-source="picks">PICKS</span>
+      <span class="nnv-health-source pending" data-source="mode">COMMITTEE</span>
+      <span class="nnv-health-source pending" data-source="pipe">PIPELINE</span>
+      <span class="nnv-health-time" id="nnvHealthTime">—</span>
+    </div>
+    <section class="ops-brief" id="opsBrief" aria-label="AI 현재 작동 요약">
+      <div class="ops-brief-main">
+        <span class="ops-label">NOW · DECISION STATE</span>
+        <strong id="opsDecision">실시간 판정 준비 중</strong>
+        <p id="opsDecisionWhy">최신 스캔과 위원회 응답을 기다리고 있습니다.</p>
+      </div>
+      <dl class="ops-metrics">
+        <div><dt>TOP SIGNAL</dt><dd id="opsTopSignal">—</dd><small id="opsTopName">후보 없음</small></div>
+        <div><dt>COMMITTEE</dt><dd id="opsCommittee">—</dd><small id="opsCommitteeState">명부 확인 중</small></div>
+        <div><dt>SCAN AGE</dt><dd id="opsScanAge">—</dd><small id="opsScanMarket">시장 확인 중</small></div>
+      </dl>
+    </section>
     <!-- ══ [V33] AI 실시간 스캔·판정 형상화 ══
          "두뇌가 무슨 일을 하는지"를 글자 대신 눈에 보이게: 종목을 훑는 스캔 빔 →
          피처/위원회 투표 → 게이트 통과·기권 → 판정 코어로 수렴. 전부 실데이터 기반
@@ -17423,19 +17444,24 @@ html:root .page > *{ flex-shrink:0; }
   /* ─────────────────────────────────────────────────────────────
      공용: AI 픽 캐시 — 우측 사이드바(종목별 승률)와 두뇌 패널이 함께 쓴다.
      ───────────────────────────────────────────────────────────── */
-  var PICKS = { ts:0, data:null, wait:null };
+  var PICKS = { ts:0, data:null, wait:null, lastError:null };
   function loadPicks(force){
     if(!force && PICKS.data && Date.now()-PICKS.ts < 180000) return Promise.resolve(PICKS.data);
     if(PICKS.wait) return PICKS.wait;
-    PICKS.wait = fetch('/api/ai-picks').then(function(r){ return r.json(); }).then(function(d){
-      PICKS.data = d; PICKS.ts = Date.now(); PICKS.wait = null;
+    /* [V33.309] HTTP 500 도 r.json() 만 되면 성공으로 취급하던 문제 — 관제실이
+       서버 오류를 정상 응답처럼 그렸다. r.ok 를 먼저 본다. */
+    PICKS.wait = fetch('/api/ai-picks').then(function(r){
+      if(!r.ok) throw new Error('HTTP '+r.status);
+      return r.json();
+    }).then(function(d){
+      PICKS.data = d; PICKS.ts = Date.now(); PICKS.wait = null; PICKS.lastError = null;
       d.__bySym = {};
       (d.picks||[]).forEach(function(p){
         var prev = d.__bySym[p.symbol];
         if(!prev || (p.p||0) > (prev.p||0)) d.__bySym[p.symbol] = p;
       });
       return d;
-    })['catch'](function(){ PICKS.wait = null; return PICKS.data; });
+    })['catch'](function(err){ PICKS.wait = null; PICKS.lastError = err || new Error('AI picks 조회 실패'); return PICKS.data; });
     return PICKS.wait;
   }
 
@@ -17981,7 +18007,64 @@ html:root .page > *{ flex-shrink:0; }
         · 우: 파이프라인 단계(실제 state 신선도) + 판정 스트림(실제 스캔 결과 재생)
         전부 서버 실데이터. 연출만 하고 수치는 만들지 않는다.
      ═════════════════════════════════════════════════════════════ */
-  var LIVE = { timer:null, paused:false, active:false, data:null };
+  var LIVE = { timer:null, paused:false, active:false, data:null,
+    health:{ picks:'pending', mode:'pending', pipe:'pending' }, lastFresh:0 };
+
+  /* [V33.309] 관측 화면의 실패를 빈 데이터나 정상 대기로 위장하지 않는다. 기존 요청은
+     HTTP 500도 JSON만 파싱되면 성공으로 취급했고 catch는 전부 삼켜서, 캐시 화면이
+     최신처럼 남았다. */
+  function liveHealth(source, state){
+    LIVE.health[source] = state;
+    var bar = $id('nnvHealthbar'); if(!bar) return;
+    var nodes = bar.querySelectorAll('.nnv-health-source'), failed = 0, ready = 0;
+    for(var i=0;i<nodes.length;i++){
+      var key = nodes[i].getAttribute('data-source'), value = LIVE.health[key] || 'pending';
+      nodes[i].className = 'nnv-health-source ' + value;
+      nodes[i].setAttribute('aria-label', key + ' ' + value);
+      if(value === 'error') failed++; else if(value === 'ok') ready++;
+    }
+    var title = bar.querySelector('.nnv-health-title b');
+    if(title) title.textContent = failed ? '일부 데이터 연결 오류' : (ready === 3 ? '모든 엔진 연결 정상' : '엔진 연결 확인 중');
+    bar.classList.toggle('has-error', failed > 0);
+    var tm = $id('nnvHealthTime');
+    if(tm) tm.textContent = LIVE.lastFresh ? ('최근 동기화 ' + hms(LIVE.lastFresh)) : '응답 대기';
+  }
+  function liveFetchJSON(url, source){
+    liveHealth(source, 'pending');
+    var ctl = typeof AbortController !== 'undefined' ? new AbortController() : null;
+    var timer = ctl ? setTimeout(function(){ ctl.abort(); }, 15000) : null;
+    return fetch(url, ctl ? { signal:ctl.signal } : undefined).then(function(r){
+      if(!r.ok) throw new Error('HTTP ' + r.status);
+      return r.json();
+    }).then(function(data){
+      LIVE.lastFresh = Date.now(); liveHealth(source, 'ok'); return data;
+    })['catch'](function(err){
+      liveHealth(source, 'error');
+      try{ console.error('[AI 관제실] '+source+' 조회 실패', err); }catch(_){}
+      throw err;
+    }).then(function(data){ if(timer) clearTimeout(timer); return data; }, function(err){ if(timer) clearTimeout(timer); throw err; });
+  }
+  function renderOpsBrief(d){
+    d = d || {}; var picks = Array.isArray(d.picks) ? d.picks : [];
+    var active = picks.filter(function(p){ return !p.abstain; }).sort(function(a,b){
+      return ((b.rankP != null ? b.rankP : b.p) || 0) - ((a.rankP != null ? a.rankP : a.p) || 0);
+    });
+    var top = active[0], mode = d.mode || {}, scan = d.scan || {};
+    var decision = $id('opsDecision'), why = $id('opsDecisionWhy');
+    if(decision) decision.textContent = top ? ((top.rankP != null ? top.rankP : top.p) >= .60 ? '진입 후보 감시 중' : '관망 · 신호 축적 중') : '판정 가능한 후보 없음';
+    if(why) why.textContent = top ? ((top.symbol || '')+' 신호가 현재 위원회 최상위입니다. 주문 여부는 모든 안전 게이트 통과 후 결정됩니다.') : '기권 종목을 제외한 최신 후보가 없습니다.';
+    var ts = $id('opsTopSignal'), tn = $id('opsTopName');
+    if(ts) ts.textContent = top ? Math.round(((top.rankP != null ? top.rankP : top.p) || 0)*100)+'%' : '—';
+    if(tn) tn.textContent = top ? (top.symbol || '이름 없음') : '후보 없음';
+    var roster = mode.alt && Array.isArray(mode.alt.roster) ? mode.alt.roster : [];
+    var on = roster.filter(function(x){ return x && (x.state === 'live' || x.state === 'provisional'); }).length;
+    var ce = $id('opsCommittee'), cs = $id('opsCommitteeState');
+    if(ce) ce.textContent = roster.length ? on+'/'+roster.length : '—';
+    if(cs) cs.textContent = roster.length ? (on === roster.length ? '전원 응답' : '일부 위원 대기') : '명부 확인 중';
+    var sa = $id('opsScanAge'), sm = $id('opsScanMarket');
+    if(sa) sa.textContent = scan.ts ? ago(scan.ts) : '—';
+    if(sm) sm.textContent = [scan.market, scan.phase].filter(Boolean).join(' · ') || '시장 확인 중';
+  }
   /* ══ [V33.144] ★AI 운용상태가 영원히 "확인 중…" 이던 이유★ ══
      renderRailAiMode 를 부르는 곳이 loadLive ★한 곳뿐★ 이었고, loadLive 는
      liveStart() 안에서만 돌며 liveStart 는 `id === 'nnviz'` 일 때만 호출된다.
@@ -18338,6 +18421,21 @@ html:root .page > *{ flex-shrink:0; }
     if(live) live.style.display = (v === 'live') ? '' : 'none';
     if(picks) picks.style.display = (v === 'live') ? '' : 'none';
     if(struct) struct.style.display = (v === 'struct') ? '' : 'none';
+    /* [V33.311] 헤더는 두 화면이 함께 쓴다 — 지금 어느 화면인지 이름표를 맞춘다.
+       작동 화면 전용 요약(연결 상태·NOW 브리핑)은 구조 관측에선 뜻이 없으니 같이 숨긴다. */
+    var eyebrow = $id('nnvEyebrow'), titleTxt = $id('nnvTitleTxt'), headcopy = $id('nnvHeadcopy'),
+        healthbar = $id('nnvHealthbar'), opsBrief = $id('opsBrief');
+    if(v === 'struct'){
+      if(eyebrow) eyebrow.textContent = 'LUX INTELLIGENCE · STRUCTURE';
+      if(titleTxt) titleTxt.textContent = 'AI 두뇌 관측';
+      if(headcopy) headcopy.textContent = '선택한 위원의 내부 구조 — 층·계수·원형을 실제 학습 결과 그대로 그립니다.';
+    } else {
+      if(eyebrow) eyebrow.textContent = 'LUX INTELLIGENCE · OPERATIONS';
+      if(titleTxt) titleTxt.textContent = 'AI 작동 관제실';
+      if(headcopy) headcopy.textContent = '스캔부터 위원회 투표, 진입 게이트까지 실제 엔진 상태를 한 화면에서 추적합니다.';
+    }
+    if(healthbar) healthbar.style.display = (v === 'live') ? '' : 'none';
+    if(opsBrief) opsBrief.style.display = (v === 'live') ? '' : 'none';
     // 사이드바(PC)·인라인 바(모바일) 양쪽 버튼 상태를 함께 맞춘다
     var btns = document.querySelectorAll('#railViews .rail-view, .m-brainbar button');
     for(var i=0;i<btns.length;i++) btns[i].classList.toggle('active', btns[i].getAttribute('data-view') === v);
@@ -19585,6 +19683,7 @@ html:root .page > *{ flex-shrink:0; }
   function paintLive(d, pipeSteps){
     LIVE.data = d;
     if(BVIEW !== 'live') return;   // 구조 관측 중이면 무거운 코어 SVG·스트림은 그리지 않는다
+    renderOpsBrief(d);
     renderCore(d);
     renderCenter(d);
     renderPicksGraph(d);
@@ -19611,15 +19710,18 @@ html:root .page > *{ flex-shrink:0; }
     }
 
     // ① 픽 — 코어/후보 그래프의 주 데이터. 오는 즉시 그린다.
+    liveHealth('picks', 'pending');
     var pPicks = loadPicks(force).then(function(pk){
-      if(!pk) return;
+      if(PICKS.lastError){ liveHealth('picks', 'error'); try{ console.error('[AI 관제실] picks 조회 실패', PICKS.lastError); }catch(_){} }
+      if(!pk){ liveHealth('picks', 'error'); return; }
+      if(!PICKS.lastError){ LIVE.lastFresh = Date.now(); liveHealth('picks', 'ok'); }
       acc.picks = pk.picks || [];
       if(pk.scan) acc.scan = pk.scan;
       paintLive(acc, pipeSteps); cacheLive(acc, pipeSteps);
-    })['catch'](function(){});
+    })['catch'](function(e){ liveHealth('picks', 'error'); try{ console.error('[AI 관제실] picks 조회 실패', e); }catch(_){} });
 
     // ② 운용모드 — 위원회 상태(사이드바)와 하단 지표. 느려도 ①을 막지 않는다.
-    var pMode = fetch('/api/ai-mode').then(function(r){ return r.json(); }).then(function(mode){
+    var pMode = liveFetchJSON('/api/ai-mode', 'mode').then(function(mode){
       if(!mode) return;
       acc.mode = mode;
       if(!acc.scan || acc.scan.ts == null) acc.scan = mode.scan || acc.scan;
@@ -19636,7 +19738,7 @@ html:root .page > *{ flex-shrink:0; }
     })['catch'](function(){});
 
     // ③ 파이프라인 — 우측 단계 표시만 담당.
-    var pPipe = fetch('/api/pipeline').then(function(r){ return r.json(); }).then(function(pipe){
+    var pPipe = liveFetchJSON('/api/pipeline', 'pipe').then(function(pipe){
       if(!pipe || !pipe.steps) return;
       pipeSteps = pipe.steps;
       if(BVIEW === 'live') renderPipe(pipeSteps, acc);
@@ -19851,6 +19953,125 @@ html:root .page > *{ flex-shrink:0; }
   window.addEventListener('load', function(){ setTimeout(function(){ try{ boot(); }catch(e){} }, 0); });
 })();
 </script>
+
+<style>
+/* ═══════════════════════════════════════════════════════════════════════════
+   [V33.311] AI 작동 관제실 — 미래지향적 관제실(SpaceX 미션컨트롤 어휘) 재설계
+
+   아래 .nlv-* 패널은 이미 짙은 남색(#060910~#090e1a) + 시안 발광(#38bdf8) +
+   IBM Plex Mono 계기 숫자로 그려져 있었다(구조 관측과 다른, 이 화면만의 언어).
+   여기서는 그 색·글꼴을 ★그대로★ 물려받아 헤더·연결 텔레메트리·NOW 브리핑을
+   완성하고, 기존 패널에는 최소한의 손질(상단 발광선 하나)만 더해 화면 전체가
+   하나의 계기판으로 읽히게 한다. 장식이 상태를 가리면 안 된다 — 격자·스윕은
+   전부 낮은 불투명도, pointer-events:none, prefers-reduced-motion 대응.
+   ═══════════════════════════════════════════════════════════════════════════ */
+#page-nnviz{
+  --ops-void:#04070d; --ops-bg0:#060910; --ops-bg1:#090e1a; --ops-bg2:#080d18;
+  --ops-line:#17233e; --ops-line2:#14203a;
+  --ops-ink:#eaf2ff; --ops-ink2:#8fa6c8; --ops-ink3:#5f79a2;
+  --ops-cyan:#38bdf8; --ops-green:#2ee6a8; --ops-amber:#ffc107; --ops-red:#ff5c7a;
+  --ops-mono:'IBM Plex Mono',monospace; --ops-head:'Space Grotesk',sans-serif;
+}
+
+/* ── 대기층 — 미션컨트롤의 배경이 되는 격자. 아래로 갈수록 옅어져 내용을 가리지 않는다. */
+#page-nnviz .nnviz-content::after{
+  content:'';position:absolute;inset:0;border-radius:inherit;pointer-events:none;z-index:0;
+  background-image:linear-gradient(rgba(56,189,248,.055) 1px,transparent 1px),
+    linear-gradient(90deg,rgba(56,189,248,.055) 1px,transparent 1px);
+  background-size:34px 34px;
+  -webkit-mask-image:linear-gradient(to bottom,#000,transparent 58%);
+  mask-image:linear-gradient(to bottom,#000,transparent 58%);
+}
+
+/* ── 헤더 — 지금 보는 화면이 무엇인지(작동/구조) 이름표부터 밝힌다. ── */
+#page-nnviz .nnv-head{position:relative;z-index:1;align-items:flex-end;gap:14px;flex-wrap:wrap;}
+#page-nnviz .nnv-heading{max-width:640px;min-width:0;}
+#page-nnviz .nnv-eyebrow{
+  font:700 10px/1.4 var(--ops-mono);letter-spacing:.24em;color:#7fb6e6;margin-bottom:7px;
+  display:flex;align-items:center;gap:7px;text-transform:uppercase;
+}
+#page-nnviz .nnv-eyebrow::before{content:'';width:14px;height:1px;background:var(--ops-cyan);box-shadow:0 0 6px var(--ops-cyan);}
+#page-nnviz .nnv-headcopy{margin-top:8px;color:var(--ops-ink2);font-size:12.5px;line-height:1.55;}
+#page-nnviz .nnv-head-actions{display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin-left:auto;}
+#page-nnviz .nnv-head-actions .nnv-btn{
+  border-radius:8px;border:1px solid var(--ops-line);background:rgba(11,20,36,.7);
+  color:var(--ops-ink2);font-family:var(--ops-mono);font-size:10.5px;letter-spacing:.02em;
+  transition:border-color .15s,color .15s,box-shadow .15s;
+}
+#page-nnviz .nnv-head-actions .nnv-btn:hover{color:var(--ops-ink);border-color:var(--ops-cyan);box-shadow:0 0 0 1px rgba(56,189,248,.25),0 0 16px rgba(56,189,248,.18);}
+
+/* ── 연결 텔레메트리 — PICKS·COMMITTEE·PIPELINE 세 소스를 각자 상태로 보여준다.
+      오류를 캐시 화면이나 정상 대기 뒤로 숨기지 않는다(paintLive/liveHealth 배선). ── */
+#page-nnviz .nnv-healthbar{
+  position:relative;z-index:1;display:flex;flex-wrap:wrap;align-items:center;gap:9px;
+  min-height:42px;padding:8px 13px;margin:14px 0 14px;border:1px solid var(--ops-line);
+  border-radius:12px;background:linear-gradient(90deg,rgba(56,189,248,.06),rgba(9,14,26,.62));
+  font-family:var(--ops-mono);
+}
+#page-nnviz .nnv-health-title{display:flex;align-items:center;gap:8px;margin-right:auto;color:var(--ops-ink);font-size:11.5px;}
+#page-nnviz .nnv-health-title i{width:7px;height:7px;border-radius:50%;background:var(--ops-amber);box-shadow:0 0 10px var(--ops-amber);flex:none;}
+#page-nnviz .nnv-healthbar:not(.has-error) .nnv-health-title i{background:var(--ops-green);box-shadow:0 0 10px var(--ops-green);animation:opsLed 2.2s ease-in-out infinite;}
+#page-nnviz .nnv-healthbar.has-error .nnv-health-title i{background:var(--ops-red);box-shadow:0 0 10px var(--ops-red);}
+#page-nnviz .nnv-health-source{padding:4px 9px;border-radius:6px;border:1px solid transparent;font:700 9px/1 var(--ops-mono);letter-spacing:.12em;transition:all .15s;}
+#page-nnviz .nnv-health-source.pending{color:var(--ops-ink3);background:rgba(148,163,184,.09);}
+#page-nnviz .nnv-health-source.ok{color:#7ce8bb;background:rgba(46,230,168,.1);border-color:rgba(46,230,168,.24);}
+#page-nnviz .nnv-health-source.error{color:#ff9eaa;background:rgba(255,92,122,.12);border-color:rgba(255,92,122,.28);}
+#page-nnviz .nnv-health-time{color:var(--ops-ink3);font-size:9.5px;margin-left:auto;white-space:nowrap;}
+@keyframes opsLed{0%,100%{opacity:1;}50%{opacity:.55;}}
+
+/* ── NOW / DECISION 브리핑 — 판정·최상위 신호·위원회·스캔 최신성을 한눈에. ── */
+#page-nnviz .ops-brief{
+  position:relative;z-index:1;display:grid;grid-template-columns:repeat(auto-fit,minmax(min(100%,420px),1fr));
+  gap:11px;margin:0 0 16px;
+}
+#page-nnviz .ops-brief-main,#page-nnviz .ops-metrics>div{
+  position:relative;border:1px solid var(--ops-line);
+  background:linear-gradient(165deg,rgba(17,32,54,.92),rgba(7,12,22,.86));
+  box-shadow:0 16px 38px rgba(0,0,0,.24);
+}
+#page-nnviz .ops-brief-main::before,#page-nnviz .ops-brief-main::after,
+#page-nnviz .ops-metrics>div::before,#page-nnviz .ops-metrics>div::after{
+  content:'';position:absolute;width:9px;height:9px;pointer-events:none;opacity:.6;
+}
+#page-nnviz .ops-brief-main::before,#page-nnviz .ops-metrics>div::before{top:-1px;left:-1px;border-top:1.5px solid var(--ops-cyan);border-left:1.5px solid var(--ops-cyan);}
+#page-nnviz .ops-brief-main::after,#page-nnviz .ops-metrics>div::after{bottom:-1px;right:-1px;border-bottom:1.5px solid var(--ops-cyan);border-right:1.5px solid var(--ops-cyan);}
+#page-nnviz .ops-brief-main{padding:clamp(16px,2vw,20px);border-radius:14px;}
+#page-nnviz .ops-label{display:block;font:700 9px/1.2 var(--ops-mono);letter-spacing:.16em;color:var(--ops-ink3);}
+#page-nnviz .ops-brief-main strong{display:block;margin-top:13px;font:700 clamp(19px,2vw,26px)/1.2 var(--ops-head);color:var(--ops-ink);letter-spacing:-.02em;}
+#page-nnviz .ops-brief-main p{margin:8px 0 0;color:var(--ops-ink2);font-size:11px;line-height:1.55;}
+#page-nnviz .ops-metrics{display:grid;grid-template-columns:repeat(auto-fit,minmax(90px,1fr));gap:8px;margin:0;min-height:96px;}
+#page-nnviz .ops-metrics>div{display:flex;min-width:0;flex-direction:column;justify-content:center;padding:clamp(10px,1.5vw,15px);border-radius:12px;}
+#page-nnviz .ops-metrics dd{margin:9px 0 4px;font:700 clamp(19px,2.2vw,28px)/1 var(--ops-head);color:var(--ops-cyan);letter-spacing:-.03em;text-shadow:0 0 20px rgba(56,189,248,.25);}
+#page-nnviz .ops-metrics small{overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:var(--ops-ink3);font-size:10px;}
+
+/* ── 기존 패널에 발광선 하나만 더해 같은 계기판의 일부처럼 묶는다(구조는 그대로). ── */
+#page-nnviz .nlv-core,#page-nnviz .nlv-funnel-wrap,#page-nnviz .nlv-panel{
+  position:relative;border-top:1px solid rgba(56,189,248,.32);
+  box-shadow:0 18px 40px rgba(0,0,0,.26),inset 0 1px 0 rgba(56,189,248,.05);
+}
+#page-nnviz .nlv-sec-h{position:relative;}
+#page-nnviz .nlv-sec-h::before{content:'';width:5px;height:5px;border-radius:50%;background:var(--ops-cyan);box-shadow:0 0 6px var(--ops-cyan);margin-right:2px;flex:none;}
+
+@media (prefers-reduced-motion:reduce){
+  #page-nnviz .nnv-healthbar:not(.has-error) .nnv-health-title i{animation:none;}
+}
+
+/* ── 라이트 테마 — 격자·발광은 낮추고 재질은 유리판으로. ── */
+html[data-theme="light"] #page-nnviz .nnviz-content::after{opacity:.5;}
+html[data-theme="light"] #page-nnviz .nnv-eyebrow{color:#3f6fa8;}
+html[data-theme="light"] #page-nnviz .nnv-healthbar{background:rgba(255,255,255,.78);border-color:rgba(37,86,137,.16);}
+html[data-theme="light"] #page-nnviz .nnv-health-title{color:#1d3450;}
+html[data-theme="light"] #page-nnviz .ops-brief-main,html[data-theme="light"] #page-nnviz .ops-metrics>div{
+  background:rgba(255,255,255,.86);border-color:rgba(37,86,137,.14);box-shadow:0 14px 30px rgba(30,60,100,.1);
+}
+html[data-theme="light"] #page-nnviz .ops-brief-main strong{color:#102b45;}
+html[data-theme="light"] #page-nnviz .ops-label,html[data-theme="light"] #page-nnviz .nnv-health-time{color:#5c7594;}
+
+/* [V33.311] 좁은 화면 전용 @media 는 일부러 안 둔다 — check-mobile.mjs 가 "폰 블록
+   뒤에 좁은폭 규칙을 또 두지 않는다"(순서로 이겨 기존 폰 레이아웃을 조용히 덮을 수
+   있어서)를 강제한다. 헤더 버튼은 기존 반응형 규칙(3310행대)이, 텔레메트리·브리핑은
+   위 grid auto-fit(minmax)이 추가 미디어쿼리 없이 이미 폭에 맞춰 재배치한다. */
+</style>
 
 </body>
 </html>
