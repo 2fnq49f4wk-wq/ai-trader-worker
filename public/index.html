@@ -8,7 +8,7 @@
      인데, 지금까지 화면에서 그걸 알 방법이 전혀 없었다(카카오톡 인앱 브라우저는 특히 강하게 캐시한다).
      서버가 내려주는 build 와 이 값을 비교해 다르면 배너로 알린다.
      ※ src/index.js 의 _BUILD_VER 와 항상 같아야 한다 — check-html-js 가 강제한다. -->
-<meta name="lux-build" content="V33.306">
+<meta name="lux-build" content="V33.307">
 <title>LUX-ENGINE V10</title>
 <!-- ══ [V33.156] 설치형 앱(PWA) — 폰·PC 에서 홈화면/독에 담아 앱처럼 연다 ══
      · manifest  : 이름·아이콘·standalone 표시(주소창 없이 앱처럼)
@@ -4362,14 +4362,23 @@ html[data-theme="light"] .m-brainbar button.active{color:#0b4f9e;background:rgba
 <div class="page" id="page-nnviz">
   <div class="nnviz-content">
     <div class="nnv-head">
-      <div>
-        <div class="nnv-title"><span class="dot"></span>AI 두뇌 관측</div>
+      <div class="nnv-heading">
+        <div class="nnv-eyebrow">LUX INTELLIGENCE / OPERATIONS</div>
+        <div class="nnv-title"><span class="dot"></span>AI 작동 관제실</div>
+        <div class="nnv-headcopy">스캔부터 위원회 투표, 진입 게이트까지 실제 엔진 상태를 한 화면에서 추적합니다.</div>
       </div>
-      <div style="display:flex;gap:8px;align-items:center;">
+      <div class="nnv-head-actions">
         <button class="nnv-btn" onclick="redeployBrain()" title="Modal 학습기를 재배포하고 즉시 1회 재학습(GitHub Actions 수동 실행)">🚀 재학습·재배포</button>
         <button class="nnv-btn" onclick="openModalActions()" title="관리 키 없이 GitHub Actions 페이지에서 직접 실행 — Run workflow → run_now 체크 → Run">🐙 GitHub에서 실행(키 불필요)</button>
         <button class="nnv-btn" onclick="openNnViz(1)">↻ 새로고침</button>
       </div>
+    </div>
+    <div class="nnv-healthbar" id="nnvHealthbar" role="status" aria-live="polite">
+      <span class="nnv-health-title"><i></i><b>엔진 연결 확인 중</b></span>
+      <span class="nnv-health-source pending" data-source="picks">PICKS</span>
+      <span class="nnv-health-source pending" data-source="mode">COMMITTEE</span>
+      <span class="nnv-health-source pending" data-source="pipe">PIPELINE</span>
+      <span class="nnv-health-time" id="nnvHealthTime">—</span>
     </div>
     <!-- ══ [V33] AI 실시간 스캔·판정 형상화 ══
          "두뇌가 무슨 일을 하는지"를 글자 대신 눈에 보이게: 종목을 훑는 스캔 빔 →
@@ -17384,19 +17393,22 @@ html:root .page > *{ flex-shrink:0; }
   /* ─────────────────────────────────────────────────────────────
      공용: AI 픽 캐시 — 우측 사이드바(종목별 승률)와 두뇌 패널이 함께 쓴다.
      ───────────────────────────────────────────────────────────── */
-  var PICKS = { ts:0, data:null, wait:null };
+  var PICKS = { ts:0, data:null, wait:null, lastError:null };
   function loadPicks(force){
     if(!force && PICKS.data && Date.now()-PICKS.ts < 180000) return Promise.resolve(PICKS.data);
     if(PICKS.wait) return PICKS.wait;
-    PICKS.wait = fetch('/api/ai-picks').then(function(r){ return r.json(); }).then(function(d){
-      PICKS.data = d; PICKS.ts = Date.now(); PICKS.wait = null;
+    PICKS.wait = fetch('/api/ai-picks').then(function(r){
+      if(!r.ok) throw new Error('HTTP '+r.status);
+      return r.json();
+    }).then(function(d){
+      PICKS.data = d; PICKS.ts = Date.now(); PICKS.wait = null; PICKS.lastError = null;
       d.__bySym = {};
       (d.picks||[]).forEach(function(p){
         var prev = d.__bySym[p.symbol];
         if(!prev || (p.p||0) > (prev.p||0)) d.__bySym[p.symbol] = p;
       });
       return d;
-    })['catch'](function(){ PICKS.wait = null; return PICKS.data; });
+    })['catch'](function(err){ PICKS.wait = null; PICKS.lastError = err || new Error('AI picks 조회 실패'); return PICKS.data; });
     return PICKS.wait;
   }
 
@@ -17942,7 +17954,42 @@ html:root .page > *{ flex-shrink:0; }
         · 우: 파이프라인 단계(실제 state 신선도) + 판정 스트림(실제 스캔 결과 재생)
         전부 서버 실데이터. 연출만 하고 수치는 만들지 않는다.
      ═════════════════════════════════════════════════════════════ */
-  var LIVE = { timer:null, paused:false, active:false, data:null };
+  var LIVE = { timer:null, paused:false, active:false, data:null,
+    health:{ picks:'pending', mode:'pending', pipe:'pending' }, lastFresh:0 };
+
+  /* 관측 화면의 실패를 빈 데이터나 정상 대기로 위장하지 않는다. 기존 요청은 HTTP 500도
+     JSON만 파싱되면 성공으로 취급했고 catch는 전부 삼켜서, 캐시 화면이 최신처럼 남았다. */
+  function liveHealth(source, state){
+    LIVE.health[source] = state;
+    var bar = $id('nnvHealthbar'); if(!bar) return;
+    var nodes = bar.querySelectorAll('.nnv-health-source'), failed = 0, ready = 0;
+    for(var i=0;i<nodes.length;i++){
+      var key = nodes[i].getAttribute('data-source'), value = LIVE.health[key] || 'pending';
+      nodes[i].className = 'nnv-health-source ' + value;
+      nodes[i].setAttribute('aria-label', key + ' ' + value);
+      if(value === 'error') failed++; else if(value === 'ok') ready++;
+    }
+    var title = bar.querySelector('.nnv-health-title b');
+    if(title) title.textContent = failed ? '일부 데이터 연결 오류' : (ready === 3 ? '모든 엔진 연결 정상' : '엔진 연결 확인 중');
+    bar.classList.toggle('has-error', failed > 0);
+    var tm = $id('nnvHealthTime');
+    if(tm) tm.textContent = LIVE.lastFresh ? ('최근 동기화 ' + hms(LIVE.lastFresh)) : '응답 대기';
+  }
+  function liveFetchJSON(url, source){
+    liveHealth(source, 'pending');
+    var ctl = typeof AbortController !== 'undefined' ? new AbortController() : null;
+    var timer = ctl ? setTimeout(function(){ ctl.abort(); }, 15000) : null;
+    return fetch(url, ctl ? { signal:ctl.signal } : undefined).then(function(r){
+      if(!r.ok) throw new Error('HTTP ' + r.status);
+      return r.json();
+    }).then(function(data){
+      LIVE.lastFresh = Date.now(); liveHealth(source, 'ok'); return data;
+    })['catch'](function(err){
+      liveHealth(source, 'error');
+      try{ console.error('[AI 관제실] '+source+' 조회 실패', err); }catch(_){}
+      throw err;
+    }).then(function(data){ if(timer) clearTimeout(timer); return data; }, function(err){ if(timer) clearTimeout(timer); throw err; });
+  }
   /* ══ [V33.144] ★AI 운용상태가 영원히 "확인 중…" 이던 이유★ ══
      renderRailAiMode 를 부르는 곳이 loadLive ★한 곳뿐★ 이었고, loadLive 는
      liveStart() 안에서만 돌며 liveStart 는 `id === 'nnviz'` 일 때만 호출된다.
@@ -19572,15 +19619,18 @@ html:root .page > *{ flex-shrink:0; }
     }
 
     // ① 픽 — 코어/후보 그래프의 주 데이터. 오는 즉시 그린다.
+    liveHealth('picks', 'pending');
     var pPicks = loadPicks(force).then(function(pk){
-      if(!pk) return;
+      if(PICKS.lastError){ liveHealth('picks', 'error'); try{ console.error('[AI 관제실] picks 조회 실패', PICKS.lastError); }catch(_){} }
+      if(!pk){ liveHealth('picks', 'error'); return; }
+      if(!PICKS.lastError){ LIVE.lastFresh = Date.now(); liveHealth('picks', 'ok'); }
       acc.picks = pk.picks || [];
       if(pk.scan) acc.scan = pk.scan;
       paintLive(acc, pipeSteps); cacheLive(acc, pipeSteps);
-    })['catch'](function(){});
+    })['catch'](function(e){ liveHealth('picks', 'error'); try{ console.error('[AI 관제실] picks 조회 실패', e); }catch(_){} });
 
     // ② 운용모드 — 위원회 상태(사이드바)와 하단 지표. 느려도 ①을 막지 않는다.
-    var pMode = fetch('/api/ai-mode').then(function(r){ return r.json(); }).then(function(mode){
+    var pMode = liveFetchJSON('/api/ai-mode', 'mode').then(function(mode){
       if(!mode) return;
       acc.mode = mode;
       if(!acc.scan || acc.scan.ts == null) acc.scan = mode.scan || acc.scan;
@@ -19597,7 +19647,7 @@ html:root .page > *{ flex-shrink:0; }
     })['catch'](function(){});
 
     // ③ 파이프라인 — 우측 단계 표시만 담당.
-    var pPipe = fetch('/api/pipeline').then(function(r){ return r.json(); }).then(function(pipe){
+    var pPipe = liveFetchJSON('/api/pipeline', 'pipe').then(function(pipe){
       if(!pipe || !pipe.steps) return;
       pipeSteps = pipe.steps;
       if(BVIEW === 'live') renderPipe(pipeSteps, acc);
@@ -19812,6 +19862,29 @@ html:root .page > *{ flex-shrink:0; }
   window.addEventListener('load', function(){ setTimeout(function(){ try{ boot(); }catch(e){} }, 0); });
 })();
 </script>
+
+<style>
+/* V33.307 — AI 작동 관제실. 장식보다 상태 계층과 장애 가시성을 먼저 둔다. */
+#page-nnviz{--ops-bg:#07101e;--ops-card:rgba(13,25,43,.86);--ops-line:rgba(133,169,218,.16);--ops-cyan:#53d7ff;--ops-green:#59e1a8;--ops-amber:#ffc66d;}
+#page-nnviz .nnviz-content{background:radial-gradient(circle at 82% -5%,rgba(42,123,180,.22),transparent 34%),linear-gradient(145deg,#07101e 0%,#091523 48%,#07101b 100%);border:1px solid rgba(124,178,234,.2);border-radius:24px;padding:28px;box-shadow:0 24px 80px rgba(0,0,0,.42);}
+#page-nnviz .nnviz-content:before{content:"";position:absolute;inset:0;pointer-events:none;opacity:.18;background-image:linear-gradient(rgba(83,215,255,.08) 1px,transparent 1px),linear-gradient(90deg,rgba(83,215,255,.08) 1px,transparent 1px);background-size:32px 32px;mask-image:linear-gradient(to bottom,#000,transparent 42%);}
+#page-nnviz .nnv-head{position:relative;align-items:flex-end;margin-bottom:18px;}
+#page-nnviz .nnv-heading{max-width:680px}.nnv-eyebrow{font:700 10px/1.4 'Space Grotesk',sans-serif;letter-spacing:.22em;color:#70a9d4;margin-bottom:8px}
+#page-nnviz .nnv-title{font-size:clamp(24px,3vw,38px);letter-spacing:-.035em;color:#f3f8ff}.nnv-headcopy{margin-top:9px;color:#8ca3bf;font-size:13px;line-height:1.55}
+#page-nnviz .nnv-head-actions{display:flex;gap:8px;align-items:center;flex-wrap:wrap;justify-content:flex-end}
+#page-nnviz .nnv-btn{border-radius:10px;border-color:rgba(129,173,221,.22);background:rgba(11,27,47,.82);min-height:36px;padding:0 12px;color:#a9bfd8}
+#page-nnviz .nnv-btn:hover{color:#eef8ff;border-color:rgba(83,215,255,.55);background:rgba(19,48,76,.92)}
+.nnv-healthbar{position:relative;display:flex;align-items:center;gap:8px;min-height:46px;padding:8px 12px;margin-bottom:16px;border:1px solid var(--ops-line);border-radius:14px;background:rgba(4,13,25,.72);backdrop-filter:blur(12px)}
+.nnv-health-title{display:flex;align-items:center;gap:8px;margin-right:auto;color:#d8e8f8;font-size:12px}.nnv-health-title i{width:8px;height:8px;border-radius:50%;background:var(--ops-amber);box-shadow:0 0 14px var(--ops-amber)}
+.nnv-healthbar:not(.has-error) .nnv-health-title i{background:var(--ops-green);box-shadow:0 0 14px var(--ops-green)}.nnv-healthbar.has-error .nnv-health-title i{background:#ff7082;box-shadow:0 0 14px #ff7082}
+.nnv-health-source{padding:5px 8px;border-radius:7px;border:1px solid transparent;font:700 9px/1 'Space Grotesk',sans-serif;letter-spacing:.1em}.nnv-health-source.pending{color:#9aacbf;background:rgba(148,163,184,.1)}.nnv-health-source.ok{color:#7ce8bb;background:rgba(57,209,146,.1);border-color:rgba(57,209,146,.22)}.nnv-health-source.error{color:#ff9eaa;background:rgba(255,79,103,.11);border-color:rgba(255,79,103,.24)}.nnv-health-time{color:#6f88a4;font-size:10px;margin-left:4px}
+#page-nnviz .nlv-strip,#page-nnviz .nlv-core,#page-nnviz .nlv-funnel-wrap,#page-nnviz .nlv-cmrow,#page-nnviz .nlv-panel,#page-nnviz .nlv-picks{background:var(--ops-card);border-color:var(--ops-line);box-shadow:0 14px 34px rgba(0,0,0,.17);backdrop-filter:blur(10px)}
+#page-nnviz .nlv-core,#page-nnviz .nlv-funnel-wrap,#page-nnviz .nlv-panel,#page-nnviz .nlv-cmrow,#page-nnviz .nlv-picks{border-radius:16px}
+#page-nnviz .nlv-sec-h{color:#e6f1fc;letter-spacing:.02em}#page-nnviz .nlv-sec-h small{color:#6f89a7;font-weight:500}
+#page-nnviz .nlv-tp-num .p{color:var(--ops-cyan);text-shadow:0 0 22px rgba(83,215,255,.28)}
+@media(max-width:760px){#page-nnviz .nnviz-content{margin:8px;padding:16px;border-radius:18px}#page-nnviz .nnv-head{align-items:flex-start;flex-direction:column}.nnv-headcopy{font-size:12px}.nnv-healthbar{display:grid;grid-template-columns:repeat(3,1fr)}.nnv-health-title,.nnv-health-time{grid-column:1/-1}.nnv-health-source{text-align:center;padding:7px 4px}.nnv-health-time{margin:0}}
+html[data-theme="light"] #page-nnviz{--ops-card:rgba(255,255,255,.9);--ops-line:rgba(37,86,137,.14)}html[data-theme="light"] #page-nnviz .nnviz-content{background:radial-gradient(circle at 82% -5%,rgba(65,159,219,.15),transparent 34%),linear-gradient(145deg,#f5f9fd,#edf4fa);box-shadow:0 22px 60px rgba(48,78,110,.12)}html[data-theme="light"] #page-nnviz .nnv-title,html[data-theme="light"] #page-nnviz .nlv-sec-h{color:#102b45}html[data-theme="light"] .nnv-healthbar{background:rgba(255,255,255,.76)}html[data-theme="light"] .nnv-health-title{color:#24425f}
+</style>
 
 </body>
 </html>
