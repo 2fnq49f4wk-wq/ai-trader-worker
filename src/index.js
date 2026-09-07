@@ -2981,7 +2981,7 @@ async function applySignalTypeWeights(DB, cfg) {
    화면·자가진단이 계속 "V33.272" 를 보고했다(운영 스냅샷이 그대로 그랬다). 배포는 됐는데
    ★배포됐다는 사실만 거짓말★ 을 하고 있었으니, "내 고침이 올라간 건가" 를 화면으로 확인할
    방법이 없었다. tools/check-build-ver.mjs 가 이제 소스에 적힌 최신 버전과 이 값을 대조한다. */
-const _BUILD_VER = "V33.305";
+const _BUILD_VER = "V33.306";
 
 // ═══ [V33.171] 평가 순서 계획 — ★승격과 순환을 교차해 굶주림을 구조적으로 없앤다★ ═══
 //   V33.50 의 형태트리거는 "급한 몇 종목을 앞으로 당긴다"는 의도였으나, 실제 운영로그에서는
@@ -9463,9 +9463,25 @@ async function setBigState(DB, key, v) {
 //   활성화: wrangler.toml 의 [[r2_buckets]] 주석 해제 + `wrangler r2 bucket create ai-trader-models`.
 let __R2 = null;
 function _bigR2() { return __R2 || null; }
+// [V33.306] 대형모델 로딩 실패를 '미학습(null)'과 구분한다. D1에 진단을 쓰면 장애 때
+// 부하를 더하므로 아이솔레이트 메모리에 키별 마지막 결과와 누적 횟수만 제한적으로 남긴다.
+let __bigLoadHealth = new Map();
+function _bigLoadMark(key, ok, reason, err) {
+  const old = __bigLoadHealth.get(key) || { failures: 0 };
+  const row = { ok: !!ok, reason: reason || (ok ? "ok" : "unknown"), at: Date.now(),
+    failures: ok ? old.failures : old.failures + 1 };
+  if (err) row.error = String((err && err.message) || err).slice(0, 180);
+  __bigLoadHealth.delete(key); __bigLoadHealth.set(key, row);
+  while (__bigLoadHealth.size > 24) __bigLoadHealth.delete(__bigLoadHealth.keys().next().value);
+}
+function _bigLoadStatus() {
+  const out = {};
+  for (const [key, row] of __bigLoadHealth.entries()) out[key] = Object.assign({}, row);
+  return out;
+}
 // [V33.103] 로컬 검증 전용 — R2 바인딩을 주입해 표본 파이프라인을 오프라인에서 재현한다.
 //   Worker 런타임은 이 함수를 호출하지 않는다(named export 만 참조).
-function _setR2ForTest(r2) { __R2 = r2 || null; }
+function _setR2ForTest(r2) { __R2 = r2 || null; __bigLoadHealth = new Map(); }
 const BIGSTATE_CHUNKS_PER_QUERY = 8;   // 8×400KB = 약 3.2MB/응답 — D1 응답 한도 안쪽
 async function _readChunks(DB, key, n) {
   const parts = new Array(n);
@@ -9487,31 +9503,31 @@ async function getBigState(DB, key, def) {
   try {
     const str = await getBigStateRaw(DB, key);   // [V33.13] R2/D1 경로 판단을 한 곳으로 통일
     if (str == null) return def;
-    return JSON.parse(str);
-  } catch (e) { return def; }
+    const parsed = JSON.parse(str); _bigLoadMark(key, true, "ok"); return parsed;
+  } catch (e) { _bigLoadMark(key, false, "json_parse", e); return def; }
 }
 // [V12.35] 대형모델 OOM 회피용 원문(String) I/O — 중첩배열을 JS 객체로 파싱하지 않고 문자열 그대로 다룬다.
 //   업로드 커밋에서 37MB를 request.json()으로 파싱하면 Worker 128MB를 초과(503)하므로,
 //   시드별로 이미 직렬화된 JSON 문자열을 이어붙여 dnn_model 청크를 만든다(문자열은 파싱보다 훨씬 가벼움).
 async function getBigStateRaw(DB, key) {
   const meta = await getState(DB, key + ":meta", null);
-  if (!meta) return null;
+  if (!meta) { _bigLoadMark(key, false, "meta_missing"); return null; }
   // [V33.13] R2에 보관된 모델 — 객체 GET 1회로 끝(D1 큐를 전혀 쓰지 않음).
   if (meta.r2) {
     const R2 = _bigR2();
-    if (!R2) return null;                       // 바인딩이 사라졌으면 읽을 방법이 없다 — 조용한 오판 방지
+    if (!R2) { _bigLoadMark(key, false, "r2_unbound"); return null; }
     try {
       const obj = await R2.get("big/" + key + ".json");
-      if (!obj) return null;
+      if (!obj) { _bigLoadMark(key, false, "r2_object_missing"); return null; }
       const str = await obj.text();
-      if (meta.len && str.length !== meta.len) return null;
+      if (meta.len && str.length !== meta.len) { _bigLoadMark(key, false, "length_mismatch"); return null; }
       return str;
-    } catch (e) { return null; }
+    } catch (e) { _bigLoadMark(key, false, "r2_get_error", e); return null; }
   }
-  if (!meta.chunks) return null;
+  if (!meta.chunks) { _bigLoadMark(key, false, "chunks_missing"); return null; }
   const str = await _readChunks(DB, key, meta.chunks);   // [V33.13] 순차 왕복 → IN 묶음 읽기
-  if (str == null) return null;
-  if (meta.len && str.length !== meta.len) return null;
+  if (str == null) { _bigLoadMark(key, false, "chunk_incomplete"); return null; }
+  if (meta.len && str.length !== meta.len) { _bigLoadMark(key, false, "length_mismatch"); return null; }
   return str;
 }
 // [V33.22] ★딥이력(hist:) 저장소 추상화 — D1에서 R2로★
@@ -21704,7 +21720,7 @@ async function handleRequest(request, env, ctx) {
         // [V33.180] ★없는 폴백을 있다고 답하고 있었다.★ V33.110 이 장중 표본의 D1 폴백을 제거했다 —
         //   R2 가 없으면 우회하지 않고 ★수집이 멈춘다★. 대형모델의 D1 청크 폴백만 실제로 남아 있다.
         //   종전 응답은 그 둘을 뭉뚱그려 "D1 폴백" 이라 답해, 멈춘 상태를 동작 중으로 읽게 만들었다.
-        return Response.json({ bound: false,
+        return Response.json({ bound: false, bigLoads: _bigLoadStatus(),
           note: "R2 미바인딩 — 장중(단타) 표본 수집 중단(V33.110 이후 폴백 없음). 대형모델만 D1 청크로 동작",
           scalpCollection: "stopped", fallback: "대형모델만 D1 청크" }, { headers: cors });
       }
@@ -21751,7 +21767,7 @@ async function handleRequest(request, env, ctx) {
       } catch (e) {}
       let pendN = null;
       try { const g = await R2.get(STIN.pendKey); if (g) { const j = JSON.parse(await g.text()); pendN = (j.items || []).length; } } catch (e) {}
-      const out = { bound: true, total: total, bytes: bytes, listTruncated: truncated,
+      const out = { bound: true, total: total, bytes: bytes, listTruncated: truncated, bigLoads: _bigLoadStatus(),
         newestTs: newest || null, groups: groups,
         today: { day: _stinDay(), files: todayFiles, bytes: todayBytes, pending: pendN },
         ts: Date.now() };
@@ -46782,7 +46798,7 @@ export {
   // [V33.103] 단타 표본 파이프라인 로컬 검증용 — tools/check-scalp-pipeline.mjs 가 쓴다.
   //   프로덕션 코드 경로에는 영향이 없다(named export 는 Worker 가 읽지 않는다).
   stinBackfill, stinIntradayFeat, stinChartFeat, stinObserve, stinLabel, mlBuildFeatures,
-  STIN, STIN_IFEAT_N, STIN_FEATVER, LUXML, _setR2ForTest,
+  STIN, STIN_IFEAT_N, STIN_FEATVER, LUXML, _setR2ForTest, getBigState, _bigLoadStatus,
   // [V33.105] 확률 계수 적합기 검증용 — tools/check-prob-fitters.mjs
   shockPriorFitNightly, decisionBlendFitNightly, _shockLogitShift, _coefShrink, SHOCKCAL,
   // [V33.193] 확률적/디플레이션 샤프 검증용 — tools/check-edge-stats.mjs

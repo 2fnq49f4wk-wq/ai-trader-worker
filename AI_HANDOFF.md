@@ -8,17 +8,18 @@
 - Owner: Codex
 - Branch: work
 - Last commit: HEAD (this change; verify with `git log -1 --oneline`)
-- Scope: AI_PRIMARY 신뢰 모델 필수화 및 공통 AI 인계 규약 도입
+- Scope: 대형모델 R2/D1 로딩 실패 관측성 추가
 
 ## Completed
 
 - DNN/GBDT가 모두 미신뢰이면 AI_PRIMARY 신규 진입을 차단하도록 정책을 복원했다.
 - Claude와 Codex가 같은 Git 커밋, 검사 결과, 남은 작업을 기준으로 인계하도록 공통 규약을 추가했다.
 - Claude API 및 Cloudflare Workers AI 비활성화 정책은 변경하지 않았다.
+- 대형모델 로딩 실패를 미학습과 구분하도록 원인·시각·누적 횟수를 메모리에 기록하고 `/api/r2-status`에 노출했다.
 
 ## Remaining work
 
-- 없음. 후속 고위험 개선(검증구간 재사용 제거, R2 로딩 오류 관측성)은 별도 PR로 진행한다.
+- 검증구간 재사용 제거는 모델 승격 통계 의미를 바꾸므로 별도 변경으로 진행한다.
 
 ## Validation
 
@@ -26,6 +27,7 @@
   - `node tools/check-ai-handoff.mjs`
   - `node tools/check-model-evidence.mjs`
   - `node tools/check-syntax.mjs`
+  - `node tools/check-big-load-health.mjs`
 
 ## Recovery notes
 

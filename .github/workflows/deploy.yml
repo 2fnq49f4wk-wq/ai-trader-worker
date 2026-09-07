@@ -26,6 +26,8 @@ jobs:
         run: node tools/check-syntax.mjs src/index.js
       - name: AI handoff contract check
         run: node tools/check-ai-handoff.mjs
+      - name: Big model load health check
+        run: node tools/check-big-load-health.mjs
       # [V33.61] 프론트(public/index.html)의 인라인 <script> 도 반드시 검사한다.
       #   위 검사는 src/index.js 만 본다 — 실제로 V33.60 에서 HTML 인라인 스크립트의
       #   중괄호가 어긋나 우측 사이드바·AI두뇌 창이 통째로 죽었는데 게이트를 그대로 통과했다.
