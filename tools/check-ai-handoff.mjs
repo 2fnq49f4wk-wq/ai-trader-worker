@@ -5,6 +5,7 @@ const claude = readFileSync(new URL("../CLAUDE.md", import.meta.url), "utf8");
 const handoff = readFileSync(new URL("../AI_HANDOFF.md", import.meta.url), "utf8");
 const deployGuide = readFileSync(new URL("../DEPLOY_WITH_CLAUDE.md", import.meta.url), "utf8");
 const deployScript = readFileSync(new URL("./deploy-with-claude.sh", import.meta.url), "utf8");
+const packageScript = readFileSync(new URL("./package-codex-delivery.sh", import.meta.url), "utf8");
 const src = readFileSync(new URL("../src/index.js", import.meta.url), "utf8");
 
 let failures = 0;
@@ -20,8 +21,8 @@ check(agents.includes("git status --short --branch") && agents.includes("git log
 check(agents.includes("`main`에서 직렬로 작업한다")
     && agents.includes("같은 작업 트리에서 두 AI를 동시에 실행하지 않는다"),
   "Claude와 Codex가 main에서 직렬로 인계한다");
-check(claude.includes("git pull --ff-only origin main") && claude.includes("git push origin main"),
-  "Claude가 main 동기화 순서를 따른다");
+check(claude.includes("git pull --ff-only origin main") && claude.includes("별도 배포 지시 없이는 push하지 않는다"),
+  "Claude가 main을 먼저 동기화하고 기본적으로 push하지 않는다");
 check(claude.includes("오래된 코드 바닥") && deployGuide.includes("origin/main의 최신 코드 위에서"),
   "Claude가 V33.309를 그대로 배포하지 않고 최신 main에서 다시 구현한다");
 check(deployScript.includes("git fetch origin main")
@@ -30,6 +31,11 @@ check(deployScript.includes("git fetch origin main")
     && !/git rebase origin\/main/.test(deployScript)
     && !/push[^\n]*--force/.test(deployScript),
   "배포 도구가 최신 원격 기반이 아니면 중단하고 자동 rebase·force push하지 않는다");
+check(agents.includes("결과는 검사·커밋한 뒤 변경 파일과 패치·체크섬을 담은 ZIP으로 전달한다")
+    && deployScript.includes("AI의 직접 배포는 중지됐습니다")
+    && packageScript.includes("changes.patch")
+    && packageScript.includes("SHA256SUMS"),
+  "사용자 지시대로 직접 배포를 막고 변경 결과를 ZIP과 체크섬으로 전달한다");
 check(agents.includes("토큰이 부족해지거나 작업을 중단하기 전") && agents.includes("커밋"),
   "토큰 소진 전 커밋 체크포인트 규약이 있다");
 check(/- Status: (complete|in_progress|blocked)/.test(handoff)

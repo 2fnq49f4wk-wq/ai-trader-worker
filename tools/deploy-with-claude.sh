@@ -3,6 +3,12 @@
 # main push가 곧 Cloudflare 프로덕션 배포이므로 force push는 의도적으로 지원하지 않는다.
 set -Eeuo pipefail
 
+if [[ "${1:-}" == "--push" ]]; then
+  echo "ERROR: 사용자 정책에 따라 AI의 직접 배포는 중지됐습니다." >&2
+  echo "ZIP 생성: bash tools/package-codex-delivery.sh <기준-ref> <이름>" >&2
+  exit 4
+fi
+
 ROOT="$(git rev-parse --show-toplevel 2>/dev/null || true)"
 if [[ -z "$ROOT" ]]; then
   echo "ERROR: Git 저장소 안에서 실행하세요." >&2

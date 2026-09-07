@@ -8,7 +8,7 @@
 - Owner: Codex
 - Branch: main
 - Last commit: HEAD (verify with `git log -1 --oneline`)
-- Scope: 최신 원격 main 기반 재구현 전까지 오래된 V33.309 배포 차단
+- Scope: 최신 원격 main 기반 재구현 및 ZIP 전용 전달 정책
 
 ## Completed
 
@@ -20,6 +20,7 @@
 - AI 작동 관제실 계약 검사를 배포 CI에 추가했다.
 - Claude API 및 Cloudflare Workers AI 비활성화 정책은 변경하지 않았다.
 - 배포 스크립트가 원격 최신 이력이 빠진 로컬 변경을 자동 rebase하거나 push하지 않고 중단하도록 고쳤다.
+- 사용자 지시에 따라 AI 직접 배포를 기본 금지하고 변경 파일·패치·체크섬 ZIP 전달 도구를 추가했다.
 
 ## Remaining work
 
@@ -27,6 +28,7 @@
 - Codex 환경은 Envoy allowlist에 `github.com`이 없어 fetch가 계속 CONNECT 403으로 실패한다.
 - GitHub 접근이 가능한 다음 담당자는 `origin/main`에서 새 worktree를 만들고 최신 코드·83개 게이트를 기준으로 AI 작동화면을 다시 구현한다.
 - 로컬 V33.309 커밋은 요구사항 참고용이다. 자동 rebase, 통째 cherry-pick, force push, 직접 배포를 하지 않는다.
+- V33.310 소스를 확보하기 전에는 UI를 다시 수정했다고 주장하지 않는다. 확보 후 최신 기반에서 재구현하고 ZIP으로만 전달한다.
 
 ## Validation
 

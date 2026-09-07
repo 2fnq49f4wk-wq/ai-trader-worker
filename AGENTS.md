@@ -21,6 +21,9 @@
 ## Cloudflare 안전 규약
 
 - `main` push는 프로덕션 Worker 자동 배포임을 전제로 한다.
+- 사용자 최신 지시에 따라 AI는 수정 완료 후에도 `git push`, GitHub Actions 실행, `wrangler deploy`를
+  하지 않는다. 결과는 검사·커밋한 뒤 변경 파일과 패치·체크섬을 담은 ZIP으로 전달한다.
+- 사용자가 특정 작업에 대해 명시적으로 배포를 다시 지시한 경우에만 위 금지를 해제한다.
 - `wrangler.toml`, D1/R2 바인딩, cron, 모델 업로드 경로 변경은 코드 검증과 별도로 명시한다.
 - Claude API 호출 비활성화 상수는 사용자가 의도적으로 정한 정책이다. 별도 요청 없이 활성화하지 않는다.
 - 모델 변경 전 최소 `node tools/check-model-evidence.mjs`와 관련 계약 검사를 실행한다.
