@@ -1,23 +1,25 @@
-/* [V33.316] ★색을 되살린다★ — 사용자: "물빠진색인데 색좀 수정하고 ... 글자에는 색 넣어줘."
- * V33.314 는 의도적으로 회색조 하나로 통일했다("Neutral tokens... desaturated") — 정확히
- * 그 선택이 문제였다. 레이아웃·구조(간격·모바일 반응형·모델 카드)는 그대로 두고 색만
- * 미션컨트롤 팔레트(시안/그린/앰버/레드)로 되돌린다 — 아래 filter:grayscale(1) 도 같이 뗀다.
+/* [V33.317] ★배경은 다시 모노크롬, 글자만 색★ — 사용자: "배경색 푸른색은 빼라 ...
+ * 글자만 색 넣고 다시 모노크롬화시켜 배경이랑 창 색은." V33.316 은 배경 토큰(bg0-3/line/
+ * panel)까지 시안 색조로 물들여 전체 화면이 파랗게 보였다. 이번엔 표면(배경·테두리·창)
+ * 토큰은 순수 무채색으로 되돌리고, 상태를 나타내는 글자색(강조 토큰)만 남긴다.
+ * filter:grayscale(1) 은 여전히 걸지 않는다(그러면 강조 글자색까지 지워진다) — 대신
+ * 아래 개별 규칙에서 배경/테두리엔 회색 토큰만, color(글자)엔 강조 토큰만 쓰도록 분리했다.
  */
 body:has(#page-nnviz.active) {
-  --ops-void:#04060c; --ops-bg0:#05070d; --ops-bg1:#0a0e1a; --ops-bg2:#0d1220; --ops-bg3:#111a2e;
-  --ops-line:#28365a; --ops-line2:#1a2540; --ops-line-soft:#22304f;
-  --ops-ink:#f4f8ff; --ops-ink2:#9ab0d6; --ops-ink3:#5e75a0;
+  --ops-void:#050506; --ops-bg0:#060607; --ops-bg1:#0c0c0e; --ops-bg2:#101012; --ops-bg3:#161618;
+  --ops-line:#2c2c30; --ops-line2:#1c1c1e; --ops-line-soft:#242426;
+  --ops-ink:#f2f2f4; --ops-ink2:#a4a4aa; --ops-ink3:#6c6c74;
   --ops-cyan:#3ecbff; --ops-cyan-soft:#7fc4f0; --ops-cyan-dim:rgba(62,203,255,.2);
   --ops-green:#33e6a8; --ops-amber:#ffbe3d; --ops-red:#ff5c74; --ops-purple:#a78bff;
-  --ops-panel:#0d1424; --ops-panel-hi:rgba(62,203,255,.08); --ops-r:0px; --ops-r-lg:0px;
+  --ops-panel:#0e0e10; --ops-panel-hi:rgba(255,255,255,.045); --ops-r:0px; --ops-r-lg:0px;
 }
 html[data-theme="light"] body:has(#page-nnviz.active) {
-  --ops-void:#fff; --ops-bg0:#fff; --ops-bg1:#f4f8fd; --ops-bg2:#eaf1fa; --ops-bg3:#dfe9f5;
-  --ops-line:#c3d4ea; --ops-line2:#dbe5f2; --ops-line-soft:#e6edf7;
-  --ops-ink:#0f2338; --ops-ink2:#3f5a7d; --ops-ink3:#6c85a6;
+  --ops-void:#fff; --ops-bg0:#fff; --ops-bg1:#f6f6f7; --ops-bg2:#eeeeef; --ops-bg3:#e4e4e6;
+  --ops-line:#d2d2d6; --ops-line2:#e2e2e5; --ops-line-soft:#ebebee;
+  --ops-ink:#161618; --ops-ink2:#54545c; --ops-ink3:#7a7a82;
   --ops-cyan:#0b6cd4; --ops-cyan-soft:#1a6fc4; --ops-cyan-dim:rgba(11,108,212,.1);
   --ops-green:#0f9d63; --ops-amber:#a5730a; --ops-red:#c62a45; --ops-purple:#6c4fd8;
-  --ops-panel:#fff; --ops-panel-hi:#eef4fb;
+  --ops-panel:#fff; --ops-panel-hi:rgba(0,0,0,.035);
 }
 body #page-nnviz {
   --ap-ink:var(--ops-ink); --ap-ink2:var(--ops-ink2); --ap-ink3:var(--ops-ink3);
@@ -116,7 +118,7 @@ html:is(:root,[data-theme]) body #page-nnviz #nnvStruct::before { content:'MODEL
 html:is(:root,[data-theme]) body #page-nnviz .nnv-tabs { gap:6px!important; padding:0!important; }
 html:is(:root,[data-theme]) body #page-nnviz .nnv-nav-h { color:var(--ops-ink3)!important; letter-spacing:.06em; padding-top:14px; }
 html:is(:root,[data-theme]) body #page-nnviz .nnv-tab { border-radius:0!important; background:transparent!important; border:1px solid var(--ops-line)!important; color:var(--ops-ink2)!important; box-shadow:none!important; min-height:42px; padding:10px 12px!important; }
-html:is(:root,[data-theme]) body #page-nnviz .nnv-tab.active { background:var(--ops-cyan)!important; color:var(--ops-bg0)!important; border-color:var(--ops-cyan)!important; box-shadow:0 0 12px var(--ops-cyan-dim)!important; }
+html:is(:root,[data-theme]) body #page-nnviz .nnv-tab.active { background:var(--ops-bg2)!important; color:var(--ops-cyan)!important; border-color:var(--ops-ink)!important; box-shadow:none!important; }
 html:is(:root,[data-theme]) body #page-nnviz .nnv-tab:hover { border-color:var(--ops-ink)!important; }
 html:is(:root,[data-theme]) body #page-nnviz :is(.nnv-stage,.nnv-chip,.nnv-comm,.nnv-tip) { background:var(--ops-bg1)!important; border-color:var(--ops-line)!important; border-radius:0!important; box-shadow:none!important; }
 html body:has(#page-nnviz.active) .rail { background:var(--ops-bg1)!important; border-color:var(--ops-line)!important; --s2:var(--ops-bg2); }
@@ -139,10 +141,13 @@ html body:has(#page-nnviz.active) .rail { background:var(--ops-bg1)!important; b
 #page-nnviz .nlv-scancard.is-now { border-top-color:var(--ops-cyan); background:var(--ops-panel-hi); }
 #page-nnviz .nlv-scancard-top { display:flex; align-items:baseline; justify-content:space-between; gap:6px; }
 #page-nnviz .nlv-scancard-top .sym { font:600 12.5px 'IBM Plex Mono',monospace; color:var(--ops-ink); white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
-#page-nnviz .nlv-scancard-top .stamp { font:700 9px/1 'IBM Plex Mono',monospace; letter-spacing:.06em; padding:3px 6px; white-space:nowrap; }
-#page-nnviz .nlv-scancard.pass .stamp { color:var(--ops-bg0); background:var(--ops-cyan); }
-#page-nnviz .nlv-scancard.watch .stamp { color:var(--ops-bg0); background:var(--ops-amber); }
-#page-nnviz .nlv-scancard.reject .stamp { color:var(--ops-ink3); background:transparent; border:1px solid var(--ops-line); text-decoration:line-through; }
+#page-nnviz .nlv-scancard-top .stamp {
+  font:700 9px/1 'IBM Plex Mono',monospace; letter-spacing:.06em; padding:3px 6px; white-space:nowrap;
+  background:transparent; border:1px solid var(--ops-line);
+}
+#page-nnviz .nlv-scancard.pass .stamp { color:var(--ops-cyan); }
+#page-nnviz .nlv-scancard.watch .stamp { color:var(--ops-amber); }
+#page-nnviz .nlv-scancard.reject .stamp { color:var(--ops-ink3); text-decoration:line-through; }
 #page-nnviz .nlv-scancard .nlv-pick-chart,#page-nnviz .nlv-scancard .nlv-pick-nochart { margin:8px 0; height:38px; }
 #page-nnviz .nlv-scancard.reject .nlv-pick-chart svg { opacity:.4; }
 #page-nnviz .nlv-scancard-foot { display:flex; justify-content:space-between; gap:6px; font-size:9.5px; color:var(--ops-ink3); }

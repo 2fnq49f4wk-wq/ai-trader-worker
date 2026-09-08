@@ -7,7 +7,50 @@
 - Status: complete locally; deployment must be checked against this exact HEAD after push.
 - Owner: Claude
 - Branch: main (direct main authorized; no PR)
-- Last commit: HEAD / V33.316 (resolve with git log -1)
+- Last commit: HEAD / V33.317 (resolve with git log -1)
+- Base: V33.316 (같은 세션, 직전 커밋), deployment verified live before this round started.
+- Scope: V33.316 을 배포한 직후 사용자가 재지적 — "배경색 푸른색은 빼라 두뇌 관측에서 글자만
+  색 넣고 다시 모노크롬화시켜 배경이랑 창 색은 그리고 최우선 후보 말고 실시간으로 스캔하는
+  종목 그래프랑 확률 ai가 판단하는 정보 띄우라고." V33.316 은 배경 토큰(`--ops-bg0~3`,
+  `--ops-line`, `--ops-panel`)까지 시안 색조로 물들여 화면 전체가 파랗게 보였다 — 이번엔
+  표면(배경·테두리·창) 토큰만 순수 무채색으로 되돌리고, 상태를 나타내는 글자색(강조 토큰)은
+  남겼다. 또한 히어로 카드("최우선 후보")가 위원회 랭크1위에 고정돼 있던 것을, 아래 필름스트립
+  (AI 스캔 순회)이 지금 스포트라이트하는 실시간 스캔 대상을 그대로 따라가도록 다시 연결했다.
+
+### Claude V33.317 — 2026-09-08
+
+- **배경 모노크롬화** (`public/brain-console.css`): `--ops-bg0/1/2/3`, `--ops-line`,
+  `--ops-line2`, `--ops-panel`, `--ops-panel-hi`, `--ops-ink*` 토큰을 순수 무채색(R=G=B에
+  가까운 회색/검정/흰색)으로 재정의. 강조 토큰(`--ops-cyan/green/amber/red/purple`)은 그대로
+  두되, 이걸 큰 배경 면에 칠하던 곳만 골라 고쳤다: `.nnv-tab.active` 는 시안으로 꽉 채우던
+  배경 대신 회색 배경 + 시안 글자로, `.nlv-scancard.pass/watch/reject .stamp` 는 색이 채워진
+  배지 대신 투명 배경 + 테두리(회색) + 색 있는 글자로 바꿔 "글자만 색, 배경은 무채색" 원칙을
+  일관되게 적용했다. 계산된 배경색을 헤드리스 크로미움으로 확인(`.rail`/`.nlv-core`/
+  `.nnviz-content` 모두 R≈G≈B).
+- **히어로 = 실시간 스캔 대상** (`public/index.html`): "최우선 후보 <small>위원회 랭크 1위</small>"
+  로 고정 표시하던 카드를 "실시간 스캔 종목"으로 바꾸고, `renderCore(d)`(committee 랭크1위를
+  `rankedLivePicks(d)`로 뽑아 그리던 함수)를 `renderCoreFromScan()`으로 교체 — 필름스트립이
+  관리하는 `SCAN.list`/`SCAN.idx`(지금 스포트라이트 중인 스캔 대상)를 그대로 그린다. 필름스트립
+  스크롤이 자동으로 넘어갈 때마다(`scanHighlight()`), 스캔 카드를 클릭할 때마다 히어로도 함께
+  갱신된다. `scanVerdict()`(통과/관찰/탈락)를 재사용해 필름스트립과 같은 어휘로 표시하므로,
+  기권(탈락) 종목이 지금 스캔 대상이어도 감추지 않고 "탈락"이라 보여준다(첫 요청부터의 요구사항).
+  committee 랭크1위 자체를 보여주는 자리는 이제 없다 — `opsTopName`/`opsTopSignal`(맨 위 요약
+  배너)은 원래 로직 그대로 committee 기준을 유지한다(사용자가 지적한 건 히어로 카드였다).
+- **회귀 테스트 갱신** (`tools/check-ai-ops-ui.mjs`): 옛 계약("요약과 차트가 같은 최상위 후보를
+  고른다")을 새 계약("히어로는 위원회 랭크1위가 아니라 지금 스포트라이트 중인 스캔 대상을
+  따라간다" + "기권 종목도 지금 스캔 중이면 탈락이라 표시하며 숨기지 않는다" + "스캔 결과가
+  비어 있으면 억지로 종목을 지어내지 않는다")로 다시 썼다 — 옛 테스트를 지우기만 한 게 아니라
+  새 동작을 검증하는 assert 로 교체했다.
+- `_BUILD_VER`/`lux-build`/CSS·JS 쿼리스트링을 V33.317 로 함께 올림.
+- 검증: `node --check src/index.js` 통과, 86종 게이트 전체 통과(`check-ai-ops-ui.mjs` 포함),
+  헤드리스 크로미움 1600×1100/390×844 스크린샷으로 배경 무채색·레이아웃 정상·히어로 라벨
+  변경 확인.
+- 학습·주문 트리거 없음, 정책 값(`AI_PARAMS.requireTrustedModel` 등) 변경 없음, 시크릿 없음.
+
+## Previous handoff — V33.316
+
+- Owner: Claude
+- Last commit: V33.316 (resolve with `git log`)
 - Base: V33.315 (Codex, pulled via fast-forward `git pull --ff-only origin main`), deployment verified live.
 - Scope: 사용자가 "코덱스로 고친 AI 두뇌가 물빠진색"이라 지적 — brain-console.css 의 의도적
   `filter:grayscale(1)` + 무채색 토큰을 되돌려 채도 있는 미션컨트롤 팔레트로 복원. 동시에

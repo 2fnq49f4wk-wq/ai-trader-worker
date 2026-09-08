@@ -35,7 +35,10 @@ check(/function renderOpsBrief\(d\)/.test(html) && /renderOpsBrief\(d\)/.test(ht
   "작동 요약이 실제 응답으로 갱신된다",
   "작동 요약이 정적 장식이거나 렌더 경로에 연결되지 않았다");
 
-// [Codex V33.314] Execute production functions, including both sides of the chart race.
+// [Claude V33.317] Execute production functions. The hero card (#nlvTpChart 등) no longer
+// mirrors the committee's rank-1 pick — it follows SCAN.list/SCAN.idx, the same rotation the
+// scan filmstrip drives, per the user's explicit request ("최우선 후보 말고 실시간으로 스캔하는
+// 종목 그래프랑 확률 ... 띄우라고"). renderOpsBrief's own top-signal summary is untouched.
 const nodes = new Map();
 const el = id => { if (!nodes.has(id)) nodes.set(id, { textContent:'', innerHTML:'' }); return nodes.get(id); };
 const pending = new Map();
@@ -43,6 +46,7 @@ const ctx = vm.createContext({
   $id:el, ago:()=> '1m', quoteOf:()=> null, esc:String, console,
   fetch:url=>new Promise((resolve,reject)=>pending.set(new URL(url,'https://test.local').searchParams.get('symbol'),{resolve,reject})),
   drawLineChart:(box,cs,sym)=>{ box.innerHTML = 'chart:' + sym; }, TP:{ cache:{}, sym:null, wait:null },
+  SCAN:{ idx:0, list:[] },
 });
 function evaluateBetween(start, end) {
   const a = html.indexOf(start), b = html.indexOf(end,a);
@@ -51,18 +55,27 @@ function evaluateBetween(start, end) {
 }
 evaluateBetween('  function rankedLivePicks(d){','  /* ══ [V33.144]');
 evaluateBetween('  function verdictOf(pk){','  /* [V33.7]');
-evaluateBetween('  function renderCore(d){','  // 종가 선 그래프');
+evaluateBetween('  function scanVerdict(pk){','  function renderScanCarousel(d){');
+evaluateBetween('  function renderCore(){','  // 종가 선 그래프');
 const data = { picks:[{symbol:'LOW',p:.53},{symbol:'HIGH',p:.75},{symbol:'SKIP',p:.99,abstain:true}],
   mode:{alt:{roster:[{state:'on'},{state:'prov'},{state:'off'}]}}, scan:{} };
 ctx.renderOpsBrief(data);
-ctx.renderCore(data);
-check(el('opsTopName').textContent === 'HIGH' && el('nlvTpSym').textContent === 'HIGH',
-  '요약과 차트가 같은 최상위 후보를 고른다', '요약과 차트의 정렬 기준이 다르다');
+ctx.SCAN.list = data.picks; ctx.SCAN.idx = 0;   // 'LOW' — 위원회 랭크1위(HIGH)와 일부러 다르게 둔다
+ctx.renderCore();
+check(el('opsTopName').textContent === 'HIGH' && el('nlvTpSym').textContent === 'LOW',
+  '히어로는 위원회 랭크1위가 아니라 지금 스포트라이트 중인 실시간 스캔 대상을 따라간다',
+  '히어로가 여전히 위원회 랭크1위에 고정되어 있다(실시간 스캔 연동 실패)');
 check(el('opsCommittee').textContent === '2/3', '서버 on/prov 명부를 가동 인원으로 센다', '정상 위원회가 0명으로 보인다');
 check(el('opsTopSignal').textContent === '0.75', '랭크 점수를 확률 퍼센트로 오인시키지 않는다', '랭크를 승률처럼 표시한다');
+ctx.SCAN.idx = 2;   // 'SKIP' — abstain(기권)이어도 지금 스캔 중이면 "탈락"이라 보여야지 감추면 안 된다
+ctx.renderCore();
+check(el('nlvTpSym').textContent === 'SKIP' && el('nlvTpVd').innerHTML.includes('탈락'),
+  '기권 종목도 지금 스캔 중이면 숨기지 않고 "탈락"이라 표시한다',
+  '실시간 스캔 대상인 기권 종목을 히어로에서 감췄다');
+ctx.SCAN.idx = 0;
 ctx.TP.cache.CACHED = [{c:1},{c:2}];
 ctx.loadTopPickChart('CACHED');
-pending.get('HIGH').reject(Error('late failure'));
+pending.get('LOW').reject(Error('late failure'));
 await new Promise(resolve=>setImmediate(resolve));
 check(el('nlvTpChart').innerHTML === 'chart:CACHED', '늦은 실패가 캐시에서 전환한 새 차트를 덮지 않는다', '이전 요청 실패가 새 차트를 덮었다');
 ctx.loadTopPickChart('OLD');
@@ -76,10 +89,11 @@ ctx.loadTopPickChart('ERROR');
 pending.get('ERROR').resolve({ok:false,status:500,json:async()=>({candles:[{c:1},{c:2}]})});
 await new Promise(resolve=>setImmediate(resolve));
 check(el('nlvTpChart').innerHTML.includes('조회 실패'), '차트 HTTP 오류를 데이터로 그리지 않는다', 'HTTP 오류 응답을 차트로 그렸다');
-ctx.renderCore({picks:[{symbol:'ABSTAIN',p:.9,abstain:true}]});
-check(el('nlvTpSym').textContent === '—', '전원 기권이면 최우선 신호를 지어내지 않는다', '기권 종목을 최우선 후보로 표시한다');
+ctx.SCAN.list = []; ctx.SCAN.idx = 0;
+ctx.renderCore();
+check(el('nlvTpSym').textContent === '—', '스캔 결과가 비어 있으면 억지로 종목을 지어내지 않는다', '스캔 결과가 없는데도 종목을 표시한다');
 const css = fs.readFileSync(new URL('../public/brain-console.css', import.meta.url),'utf8');
-check(html.includes('/brain-console.css?v=33.315') && css.includes('prefers-reduced-motion'),
+check(html.includes('/brain-console.css?v=33.317') && css.includes('prefers-reduced-motion'),
   '흑백 스타일과 모션 감소가 연결되어 있다', '흑백 콘솔 스타일 배선이 없다');
 check((html.match(/class="nnv-tab(?: active)?" data-model=/g)||[]).length === 14,
   '14개 모델 탭을 보존했다', '모델 탭이 사라졌다');

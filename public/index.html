@@ -8,7 +8,7 @@
      인데, 지금까지 화면에서 그걸 알 방법이 전혀 없었다(카카오톡 인앱 브라우저는 특히 강하게 캐시한다).
      서버가 내려주는 build 와 이 값을 비교해 다르면 배너로 알린다.
      ※ src/index.js 의 _BUILD_VER 와 항상 같아야 한다 — check-html-js 가 강제한다. -->
-<meta name="lux-build" content="V33.316">
+<meta name="lux-build" content="V33.317">
 <title>LUX-ENGINE V10</title>
 <!-- ══ [V33.156] 설치형 앱(PWA) — 폰·PC 에서 홈화면/독에 담아 앱처럼 연다 ══
      · manifest  : 이름·아이콘·standalone 표시(주소창 없이 앱처럼)
@@ -4439,9 +4439,11 @@ html[data-theme="light"] .m-brainbar button.active{color:#0b4f9e;background:rgba
 
       <!-- ② 히어로 — 좌: 판정 코어 / 우: 판정 깔때기(유니버스→진입후보) -->
       <div class="nlv-hero">
-        <!-- 최우선 후보 — 위원회가 가장 높게 본 종목의 실제 가격 흐름(선 그래프) -->
+        <!-- [V33.317] 실시간 스캔 종목 — "최우선 후보"(위원회 랭크 1위 고정)가 아니라
+             지금 순회 중인 스캔 대상을 그대로 보여준다(사용자 요청). 아래 필름스트립
+             (#nlvScanRail)이 몇 초마다 넘기는 종목과 이 카드가 같이 움직인다. -->
         <div class="nlv-core">
-          <div class="nlv-sec-h">최우선 후보 <small>위원회 랭크 1위</small>
+          <div class="nlv-sec-h">실시간 스캔 종목 <small id="nlvTpSub">유니버스 확인 중</small>
             <span class="nlv-tf" id="nlvTf"></span>
           </div>
           <div class="nlv-tp">
@@ -18421,7 +18423,7 @@ html:root .page > *{ flex-shrink:0; }
   function setBrainView(){
     var onBrain = !!document.querySelector('#page-nnviz.active');
     if(!onBrain) return;
-    if(LIVE.data){ renderCore(LIVE.data); renderCenter(LIVE.data); renderScanCarousel(LIVE.data); startFeed(); startScan(); }
+    if(LIVE.data){ renderScanCarousel(LIVE.data); renderCore(LIVE.data); renderCenter(LIVE.data); startFeed(); startScan(); }
     else loadLive(false);
     if(typeof window.openNnViz === 'function' && !window.__nnvStructBooted){
       window.__nnvStructBooted = true;
@@ -18439,31 +18441,40 @@ html:root .page > *{ flex-shrink:0; }
   }
 
   /* [V33.7] 방사형 별/광선 그래픽 폐기 — "장난감 같다"는 지적에 맞춰
-     최우선 후보의 실제 가격 흐름(선 그래프)을 보여주는 실무형 패널로 교체했다.
-     캔들이 아니라 종가 선 그래프이며, 구간 최고/최저를 표기한다. */
+     실제 가격 흐름(선 그래프)을 보여주는 실무형 패널로 교체했다.
+     캔들이 아니라 종가 선 그래프이며, 구간 최고/최저를 표기한다.
+     [V33.317] ★"최우선 후보"(위원회 랭크 1위 고정) 폐기★ — 사용자: "최우선 후보 말고
+     실시간으로 스캔하는 종목 그래프랑 확률, ai가 판단하는 정보 띄우라고." 이 카드는
+     이제 아래 필름스트립(#nlvScanRail)이 지금 스포트라이트하는 종목을 그대로 따라간다
+     — renderCoreFromScan()이 실제 렌더러이고, renderCore()는 호출부 정리를 최소화하려는
+     얇은 별칭이다(SCAN.list/scanHighlight()는 이 파일 뒤쪽에서 정의된다). */
   var TP = { sym:null, wait:null, cache:{} };
 
-  function renderCore(d){
-    var picks = rankedLivePicks(d);
-    var top = picks[0] || null;
-    var symEl=$id('nlvTpSym'), nmEl=$id('nlvTpName'), pEl=$id('nlvTpP'), vdEl=$id('nlvTpVd');
+  function renderCore(){ renderCoreFromScan(); }
+
+  function renderCoreFromScan(){
+    var list = (SCAN.list || []);
+    var top = list[SCAN.idx] || null;
+    var symEl=$id('nlvTpSym'), nmEl=$id('nlvTpName'), pEl=$id('nlvTpP'), vdEl=$id('nlvTpVd'), subEl=$id('nlvTpSub');
     if(!top){
       TP.sym = null; TP.seq = (TP.seq || 0) + 1; TP.wait = null;
       if(symEl) symEl.textContent = '—';
       if(nmEl) nmEl.textContent = '';
       if(pEl) pEl.textContent = '—';
       if(vdEl) vdEl.textContent = '스캔 결과 대기';
-      var c0 = $id('nlvTpChart'); if(c0) c0.innerHTML = '<div class="nlv-empty">야간 스캔이 1회 이상 돌아야 표시됩니다</div>';
+      if(subEl) subEl.textContent = '유니버스 확인 중';
+      var c0 = $id('nlvTpChart'); if(c0) c0.innerHTML = '<div class="nlv-empty">스캔 결과를 기다리는 중…</div>';
       return;
     }
     var q = quoteOf(top.symbol);
-    var vd = verdictOf(top);
-    var rank = (top.rankP != null ? top.rankP : top.p);
+    var vd = scanVerdict(top);
+    var rank = (top.rankP != null ? top.rankP : top.p) || 0;
     if(symEl) symEl.textContent = top.symbol;
     if(nmEl) nmEl.textContent = (q && q.name && q.name !== top.symbol) ? q.name : '';
-    if(pEl) pEl.textContent = (top.p*100).toFixed(1) + '%';
+    if(pEl) pEl.textContent = ((top.p||0)*100).toFixed(1) + '%';
     if(vdEl) vdEl.innerHTML = esc(vd.label) + ' · 랭크 ' + rank.toFixed(2)
       + (top.techLabel ? ' · ' + esc(top.techLabel) : '');
+    if(subEl) subEl.textContent = '지금 판단 중 · ' + (SCAN.idx+1) + ' / ' + list.length;
     loadTopPickChart(top.symbol);
   }
 
@@ -19670,7 +19681,7 @@ html:root .page > *{ flex-shrink:0; }
      그 배열(picks)을 그대로 카드로 늘어놓고, 몇 초마다 하나씩 스포트라이트를 옮긴다.
      rankP 는 위원회 랭크이지 보정된 확률이 아니다 — "확률"이라 적지 않는다(Codex V33.314
      가 이미 이 구분을 못박았다: rankP·p 혼용은 잘못된 정밀도 인식을 만든다). */
-  var SCAN = { idx:0, timer:null, hover:false, n:0 };
+  var SCAN = { idx:0, timer:null, hover:false, n:0, list:[] };
   function scanVerdict(pk){
     var rank = (pk.rankP != null ? pk.rankP : pk.p) || 0;
     if(pk.abstain) return { cls:'reject', label:'탈락' };
@@ -19689,10 +19700,12 @@ html:root .page > *{ flex-shrink:0; }
     }
     if(!picks.length){
       rail.innerHTML = '<div class="nlv-empty">스캔 결과를 기다리는 중…</div>';
-      SCAN.n = 0;
+      SCAN.n = 0; SCAN.list = [];
+      renderCoreFromScan();
       return;
     }
     SCAN.n = picks.length;
+    SCAN.list = picks;   // [V33.317] 히어로(#nlvTpChart)가 이 배열의 SCAN.idx 번째를 따라간다
     rail.innerHTML = picks.map(function(pk, i){
       var vd = scanVerdict(pk);
       var rank = (pk.rankP != null ? pk.rankP : pk.p) || 0;
@@ -19708,7 +19721,10 @@ html:root .page > *{ flex-shrink:0; }
       rail.__scanBound = true;
       rail.addEventListener('click', function(e){
         var c = e.target.closest ? e.target.closest('.nlv-scancard') : null;
-        if(c && typeof window.openStockDetail === 'function') window.openStockDetail(c.getAttribute('data-sym'));
+        if(!c) return;
+        var i = parseInt(c.getAttribute('data-i'), 10);
+        if(!isNaN(i)){ SCAN.idx = i; scanHighlight(); }   // 클릭한 종목을 바로 히어로에 띄운다
+        if(typeof window.openStockDetail === 'function') window.openStockDetail(c.getAttribute('data-sym'));
       });
       rail.addEventListener('pointerenter', function(){ SCAN.hover = true; });
       rail.addEventListener('pointerleave', function(){ SCAN.hover = false; });
@@ -19716,6 +19732,7 @@ html:root .page > *{ flex-shrink:0; }
     scanHighlight();
   }
   function scanHighlight(){
+    renderCoreFromScan();
     var rail = $id('nlvScanRail'); if(!rail) return;
     var cards = rail.querySelectorAll('.nlv-scancard');
     if(!cards.length) return;
@@ -19775,9 +19792,9 @@ html:root .page > *{ flex-shrink:0; }
     LIVE.data = d;
     if(BVIEW !== 'live') return;   // 구조 관측 중이면 무거운 코어 SVG·스트림은 그리지 않는다
     renderOpsBrief(d);
+    renderScanCarousel(d);   // SCAN.list 를 먼저 채운 뒤 renderCore()가 그 중 스포트라이트를 그린다
     renderCore(d);
     renderCenter(d);
-    renderScanCarousel(d);
     renderPicksGraph(d);
     if(pipeSteps) renderPipe(pipeSteps, d);
     startFeed();
@@ -20474,8 +20491,8 @@ body:has(#page-nnviz.active) .rail{
 </style>
 
 <!-- [Codex V33.314] Dedicated scoped design system. See AI_HANDOFF.md before changing model/UI contracts. -->
-<link rel="stylesheet" href="/brain-console.css?v=33.315">
-<link rel="stylesheet" href="/workspace-layout.css?v=33.315">
-<script src="/workspace-ui.js?v=33.315"></script>
+<link rel="stylesheet" href="/brain-console.css?v=33.317">
+<link rel="stylesheet" href="/workspace-layout.css?v=33.317">
+<script src="/workspace-ui.js?v=33.317"></script>
 </body>
 </html>
