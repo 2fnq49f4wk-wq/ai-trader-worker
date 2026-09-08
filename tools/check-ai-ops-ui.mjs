@@ -93,7 +93,7 @@ ctx.SCAN.list = []; ctx.SCAN.idx = 0;
 ctx.renderCore();
 check(el('nlvTpSym').textContent === '—', '스캔 결과가 비어 있으면 억지로 종목을 지어내지 않는다', '스캔 결과가 없는데도 종목을 표시한다');
 const css = fs.readFileSync(new URL('../public/brain-console.css', import.meta.url),'utf8');
-check(html.includes('/brain-console.css?v=33.319') && css.includes('prefers-reduced-motion'),
+check(html.includes('/brain-console.css?v=33.320') && css.includes('prefers-reduced-motion'),
   '흑백 스타일과 모션 감소가 연결되어 있다', '흑백 콘솔 스타일 배선이 없다');
 check((html.match(/class="nnv-tab(?: active)?" data-model=/g)||[]).length === 14,
   '14개 모델 탭을 보존했다', '모델 탭이 사라졌다');

@@ -94,7 +94,9 @@ html:is(:root,[data-theme]) body #page-nnviz[data-brain-view="operations"] .nlv-
   html:is(:root,[data-theme]) body #page-nnviz[data-brain-view="operations"] .nnv-live { display:flex; flex-direction:column; }
   #page-nnviz[data-brain-view="operations"] .nlv-scancard { flex:0 0 132px; padding:10px; }
   #page-nnviz[data-brain-view="operations"] .nlv-scancard .nlv-pick-chart,#page-nnviz[data-brain-view="operations"] .nlv-scancard .nlv-pick-nochart { height:30px; margin:5px 0; }
-  html:is(:root,[data-theme]) body #page-nnviz[data-brain-view="operations"] .nlv-tp-chart { min-height:150px; }
+  /* [V33.320] 그래프 viewBox 가 460×124 로 낮아졌다 — 150px 를 억지로 잡아 두면 그
+     아래가 빈다. 자연 높이(폭×비율)로 두고, 대신 최소 확보만 얇게 건다. */
+  html:is(:root,[data-theme]) body #page-nnviz[data-brain-view="operations"] .nlv-tp-chart { min-height:0; }
   #page-nnviz[data-brain-view="operations"] .nlv-tp-chart svg { width:100%; height:auto; }
 }
 /* Market workspace uses independent neutral tokens; never redefines global site colors. */

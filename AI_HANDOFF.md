@@ -7,7 +7,40 @@
 - Status: complete locally; deployment must be checked against this exact HEAD after push.
 - Owner: Claude
 - Branch: main (direct main authorized; no PR)
-- Last commit: HEAD / V33.319 (resolve with git log -1)
+- Last commit: HEAD / V33.320 (resolve with git log -1)
+- Base: V33.319 (같은 세션, 직전 커밋), 배포 run 34175414914 성공 확인 후 시작.
+- Scope: 사용자 지시 — "카드 비율 다시 맞춰 그리고 작은 글씨로 해서 지표 옆에 쓰이게하고
+  그래프 크기를 줄여". 실시간 스캔 종목 카드가 세로로만 길어진 것을 바로잡았다.
+
+### Claude V33.320 — 2026-09-08
+
+- **그래프 축소** (`public/index.html`): `drawLineChart` 의 viewBox 를 460×190(2.4:1) →
+  460×124(3.7:1) 로 눕혔다. svg 가 `width:100%; height:auto` 라 그려지는 높이는 전적으로
+  viewBox 비율이 정한다 — 카드 폭 550px 기준 약 227px → 약 148px. 폭은 그대로 다 쓰고
+  높이만 줄어든다. 축 여백(padT 12→9, padB 18→15)도 함께 줄여 그래프가 눌리지 않게 했다.
+  자리도 같이 줄였다: `.nlv-tp-chart` 의 `min-height:172px` → `0`(컴팩트 뷰의 150px 도 해제)
+  — 안 줄이면 낮아진 그래프 아래에 빈 공간만 남는다.
+- **지표를 세로 레일로, 판단 근거를 그 옆에** (`public/index.html`, `public/brain-console.css`):
+  새 래퍼 `.nlv-detail`(flex)로 지표와 판단 근거를 나란히 놓고, 글자를 한 단계씩 줄였다.
+  ★가로 타일을 세로 목록으로 바꾼 이유★: 9개를 가로 3열로 깔면 3줄(≈80px)에서 끝나 옆
+  근거 칸(≈200px)보다 훨씬 짧고, 그 아래가 빈 검은 덩어리로 남았다(첫 시도에서 실제로 그랬다).
+  한 줄에 하나씩 세우니 높이가 근거 칸과 맞아 빈 칸이 사라졌다.
+  구분선도 '간격으로 컨테이너 배경 비추기'에서 셀 테두리로 바꿨다 — 남는 자리가 어두운
+  선 색 그대로 드러나지 않게. 좁은 화면에서는 flex-wrap 으로 위아래로 돌아간다(모바일 확인).
+- **주석 경계표 보존** (`public/index.html`): `tools/check-ai-ops-ui.mjs` 가 `// 종가 선 그래프`
+  를 코드 구간 잘라내기 경계로 쓴다. 처음에 이 주석을 블록 주석으로 바꿨다가 게이트가
+  함수를 못 찾아 실패했다 — 첫 줄을 원래 문구 그대로 되돌리고 설명은 아래에 덧붙였으며,
+  그 사실을 주석에 적어 두어 다음 사람이 같은 데 걸리지 않게 했다.
+- 검증: `node --check` 통과, 86종 게이트 전체 통과, `git diff --check` 통과. 헤드리스
+  크로미움 확인 — 데스크톱(1600×1000)에서 지표 레일과 근거 칸 높이가 맞아 빈 칸 없음,
+  모바일(390×844)에서 두 칸이 정상적으로 위아래로 쌓임(각 303px)이고 가로 오버플로 없음
+  (scrollWidth == clientWidth), 그래프는 데스크톱 ≈148px · 모바일 75px 로 축소 확인.
+- 학습·주문 트리거 없음, 정책 값 변경 없음, 시크릿 없음.
+
+## Previous handoff — V33.319
+
+- Owner: Claude
+- Last commit: V33.319 (resolve with `git log`)
 - Base: V33.318 (같은 세션, 직전 커밋), 배포 run 34174328087 성공 확인 후 시작.
 - Scope: 사용자 지적 2건 — ① V33.318 로 넣은 스캔 지표가 화면에 안 보인다 ② 확률의 근거가
   무엇인지도 표시해 달라.

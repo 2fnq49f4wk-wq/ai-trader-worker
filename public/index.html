@@ -8,7 +8,7 @@
      인데, 지금까지 화면에서 그걸 알 방법이 전혀 없었다(카카오톡 인앱 브라우저는 특히 강하게 캐시한다).
      서버가 내려주는 build 와 이 값을 비교해 다르면 배너로 알린다.
      ※ src/index.js 의 _BUILD_VER 와 항상 같아야 한다 — check-html-js 가 강제한다. -->
-<meta name="lux-build" content="V33.319">
+<meta name="lux-build" content="V33.320">
 <title>LUX-ENGINE V10</title>
 <!-- ══ [V33.156] 설치형 앱(PWA) — 폰·PC 에서 홈화면/독에 담아 앱처럼 연다 ══
      · manifest  : 이름·아이콘·standalone 표시(주소창 없이 앱처럼)
@@ -4467,14 +4467,19 @@ html[data-theme="light"] .m-brainbar button.active{color:#0b4f9e;background:rgba
             </div>
           </div>
           <div class="nlv-tp-chart" id="nlvTpChart"><div class="nlv-empty">차트 불러오는 중…</div></div>
-          <!-- [V33.318] 지금 스캔 중인 종목의 실제 지표(MACD·RSI·거래량·수익률·ATR·상대강도).
-               [V33.319] 야간 스캔이 픽에 실어 보낸 값(pk.ta)이 있으면 그걸 쓰고, 없으면
-               /api/ta-explain 로 그 종목만 즉석 계산해 채운다 — 스캔이 하루 한 번이라
-               배포 직후엔 계속 비어 있었기 때문이다. -->
-          <div class="nlv-ta" id="nlvTpTa"></div>
-          <!-- [V33.319] 판단 근거 — "확률의 근거가 된것이 뭔지도 표시하게해"(사용자 요청).
-               랭크 분해(엔진과 같은 가중치)와 기술 근거·다기간 컨센서스를 적는다. -->
-          <div class="nlv-why" id="nlvTpWhy"></div>
+          <!-- [V33.320] 지표와 판단 근거를 ★나란히★ 둔다(사용자: "작은 글씨로 해서 지표
+               옆에 쓰이게하고"). 종전엔 지표 아래에 근거가 또 쌓여 카드가 세로로만 길어졌다.
+               좁은 화면에서는 flex-wrap 으로 자연히 위아래가 된다. -->
+          <div class="nlv-detail">
+            <!-- [V33.318] 지금 스캔 중인 종목의 실제 지표(MACD·RSI·거래량·수익률·ATR·상대강도).
+                 [V33.319] 야간 스캔이 픽에 실어 보낸 값(pk.ta)이 있으면 그걸 쓰고, 없으면
+                 /api/ta-explain 로 그 종목만 즉석 계산해 채운다 — 스캔이 하루 한 번이라
+                 배포 직후엔 계속 비어 있었기 때문이다. -->
+            <div class="nlv-ta" id="nlvTpTa"></div>
+            <!-- [V33.319] 판단 근거 — "확률의 근거가 된것이 뭔지도 표시하게해"(사용자 요청).
+                 랭크 분해(엔진과 같은 가중치)와 기술 근거·다기간 컨센서스를 적는다. -->
+            <div class="nlv-why" id="nlvTpWhy"></div>
+          </div>
           <div class="nlv-toplist" id="nlvTopList"></div>
         </div>
 
@@ -18530,9 +18535,16 @@ html:root .page > *{ flex-shrink:0; }
   }
 
   // 종가 선 그래프 — 그리드 + 면적 그라디언트 + 최고/최저 표기 + 현재가 마커
+  //   ※ 이 주석 첫 줄은 tools/check-ai-ops-ui.mjs 가 코드 구간을 잘라낼 때 쓰는 경계표다.
+  //     문구를 바꾸면 게이트가 함수를 못 찾는다 — 설명은 아래에 덧붙인다.
+  //   [V33.320] ★가로로 눕힌다★ — 사용자: "그래프 크기를 줄여."
+  //     svg 는 width:100% · height:auto 라 그려지는 높이는 전적으로 viewBox 비율이 정한다.
+  //     종전 460×190(2.4:1)은 카드 폭이 550px일 때 약 227px까지 자라 카드를 혼자 차지했다.
+  //     460×124(3.7:1)로 낮추면 같은 폭에서 약 148px — 폭은 그대로 다 쓰면서 높이만 준다.
+  //     축 여백(padT/padB)도 함께 줄여야 그래프 자체가 눌리지 않는다.
   function drawLineChart(box, cs, sym){
     var tf = $id('nlvTf');
-    var W = 460, H = 190, padL = 6, padR = 52, padT = 12, padB = 18;
+    var W = 460, H = 124, padL = 6, padR = 52, padT = 9, padB = 15;
     // [V33.9] null 종가를 걸러낼 때 원본 인덱스도 같이 들고 간다.
     //   종전엔 closes 만 걸러 쓰고 날짜 라벨은 cs[cs.length-n] 으로 역산해, 중간에 null 이
     //   하나라도 있으면 축의 시작 날짜가 엉뚱한 봉을 가리켰다.
@@ -20476,7 +20488,9 @@ html:root .page > *{ flex-shrink:0; }
 #page-nnviz .nlv-tp-num .p{display:block;font-family:var(--ops-head);font-size:30px;font-weight:700;line-height:1.05;color:var(--ops-cyan);text-shadow:0 0 26px rgba(62,203,255,.32);}
 #page-nnviz .nlv-tp-num .p.neg{color:var(--ops-ink2);text-shadow:none;}
 #page-nnviz .nlv-tp-num .vd{display:block;font-family:var(--ops-mono);font-size:10px;color:var(--ops-ink3);margin-top:3px;}
-#page-nnviz .nlv-tp-chart{flex:1 1 auto;min-height:172px;padding:2px 9px 9px;}
+/* [V33.320] 그래프를 낮춘다 — viewBox 를 460x124 로 눕혔으므로 자리도 같이 줄인다.
+   min-height 를 172px 로 두면 낮아진 그래프 아래에 빈 공간만 남는다. */
+#page-nnviz .nlv-tp-chart{flex:0 0 auto;min-height:0;padding:2px 9px 8px;}
 #page-nnviz .nlv-tp-chart svg{display:block;width:100%;height:auto;}
 #page-nnviz .lc-grid{stroke:var(--ops-line2);stroke-width:.6;}
 #page-nnviz .lc-axis{fill:var(--ops-ink3);font-size:8.5px;font-family:var(--ops-mono);}
@@ -20694,8 +20708,8 @@ body:has(#page-nnviz.active) .rail{
 </style>
 
 <!-- [Codex V33.314] Dedicated scoped design system. See AI_HANDOFF.md before changing model/UI contracts. -->
-<link rel="stylesheet" href="/brain-console.css?v=33.319">
-<link rel="stylesheet" href="/workspace-layout.css?v=33.319">
-<script src="/workspace-ui.js?v=33.319"></script>
+<link rel="stylesheet" href="/brain-console.css?v=33.320">
+<link rel="stylesheet" href="/workspace-layout.css?v=33.320">
+<script src="/workspace-ui.js?v=33.320"></script>
 </body>
 </html>
