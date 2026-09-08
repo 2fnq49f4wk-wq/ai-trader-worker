@@ -2981,7 +2981,7 @@ async function applySignalTypeWeights(DB, cfg) {
    화면·자가진단이 계속 "V33.272" 를 보고했다(운영 스냅샷이 그대로 그랬다). 배포는 됐는데
    ★배포됐다는 사실만 거짓말★ 을 하고 있었으니, "내 고침이 올라간 건가" 를 화면으로 확인할
    방법이 없었다. tools/check-build-ver.mjs 가 이제 소스에 적힌 최신 버전과 이 값을 대조한다. */
-const _BUILD_VER = "V33.318";
+const _BUILD_VER = "V33.319";
 
 // ═══ [V33.171] 평가 순서 계획 — ★승격과 순환을 교차해 굶주림을 구조적으로 없앤다★ ═══
 //   V33.50 의 형태트리거는 "급한 몇 종목을 앞으로 당긴다"는 의도였으나, 실제 운영로그에서는
@@ -24773,7 +24773,14 @@ async function handleRequest(request, env, ctx) {
     if (path === "/api/ai-picks") {
       // [V33.56] 60s→20s — 상태 1행 조회
       return await swrJson("ai-picks", 20000, 3600000, async function () {
-      const out = { ts: null, picks: [], scan: null };
+      /* [V33.319] rankWeights — 화면이 "이 랭크가 어떻게 나왔나"를 ★엔진과 같은 수로★
+         분해할 수 있게 가중치를 함께 내린다. 스캔의 계산은 이렇다:
+           rankP = clamp(p + tech가중×tech + blue가중×blue, .01, .99)
+           rankTilted = evTilt 가 있으면 rankP × (1 + evTilt)
+         프런트에 상수를 베껴 두면 엔진 설정이 바뀌는 날 화면만 옛 수로 남는다. */
+      const out = { ts: null, picks: [], scan: null,
+        rankWeights: { tech: (LUXML.pickTechWeight != null ? LUXML.pickTechWeight : 0.22),
+                       blue: (LUXML.pickBlueWeight != null ? LUXML.pickBlueWeight : 0.10) } };
       const _S = await getStates(env.DB, ["ai_picks:us", "ai_picks:kr", "ai_picks:cm", "ai_picks:scan"]);
       for (const mk of ["us", "kr", "cm"]) {
         try {
@@ -24853,6 +24860,72 @@ async function handleRequest(request, env, ctx) {
           ).bind(LUXML.featVer).first();
           out.unlabeledTotal = (c && c.n) || 0;
         } catch (e) {}
+        return out;
+      });
+    }
+
+    /* ── [V33.319] 한 종목의 지표와 "무엇을 보고 그렇게 봤나" 즉석 조회 ──────────────
+       왜 필요했나: V33.318 은 야간 스캔이 픽에 지표(ta)를 실어 보내게 했다. 그런데 스캔은
+       하루 한 번 돈다 — 배포 직후엔 저장된 픽이 전부 옛 코드가 만든 것이라 ta 가 없고,
+       화면은 계속 비어 있었다(사용자: "스캔 지표 추가된거 안보이고"). 다음 밤까지 기다리게
+       두는 대신, ★지금 보고 있는 그 한 종목만★ 즉석에서 계산해 준다.
+       비용: 새로 받아오지 않는다. 이미 있는 일봉 캐시(daily:<sym>)와 지수 캐시만 읽는다.
+       캐시가 없으면 없다고 답한다 — 지어내지 않는다.
+       일관성: 숫자는 스캔이 쓰는 것과 ★같은 함수★(mlBuildFeatures → luxTaFromFeat)로
+       만든다. 나중에 스캔이 픽에 채워 넣는 값과 이 응답이 어긋날 수 없다.
+       reasons 는 taPredictDirection 이 점수를 쌓으며 남긴 근거 문자열이다 —
+       ★기술 점수의 근거★ 이지 위원회 확률 p 의 근거가 아니다(p 는 100여개 피처를 본
+       신경망 합의 결과다). 화면도 그 둘을 반드시 구분해서 적어야 한다. */
+    if (path === "/api/ta-explain") {
+      const _sym = String(url.searchParams.get("symbol") || "").trim().slice(0, 24);
+      if (!_sym || !/^[A-Za-z0-9.^=\-]+$/.test(_sym)) {
+        return Response.json({ error: "symbol required" }, { status: 400, headers: cors });
+      }
+      return await swrJson("ta-explain:" + _sym, 60000, 3600000, async function () {
+        const out = { symbol: _sym, ts: Date.now(), available: false, ta: null,
+          reasons: [], upProb: null, confidence: null, tf: null, reason: null };
+        let dd = null;
+        try { dd = await getState(env.DB, "daily:" + _sym, null); } catch (e) {}
+        if (!dd || !Array.isArray(dd.closes) || dd.closes.length < 30) {
+          out.reason = "일봉 캐시 없음 — 야간 수집 대상이 아니거나 아직 모이지 않았습니다";
+          return out;
+        }
+        const closes = dd.closes, price = closes[closes.length - 1];
+        if (!(price > 0)) { out.reason = "가격 없음"; return out; }
+        const mkt = /\.(KS|KQ)$/.test(_sym) ? "kr" : ((/=F$|-USD$/.test(_sym)) ? "cm" : "us");
+        let idxCloses = null;
+        try { idxCloses = await _mlLoadIndexCloses(env.DB, mkt); } catch (e) {}
+        try {
+          const feat = mlBuildFeatures({
+            closes: closes, volumes: dd.volumes, opens: dd.opens,
+            highs: dd.highs, lows: dd.lows, idxCloses: idxCloses,
+            price: price, prevClose: dd.prevClose,
+            dayPct: dd.prevClose > 0 ? (price / dd.prevClose - 1) * 100 : 0,
+            regime: "NEUTRAL", strategy: "trend", market: mkt, ev: {}, obsTs: Date.now()
+          });
+          const ta = luxTaFromFeat(feat);
+          if (Object.keys(ta).length) { out.ta = ta; out.available = true; }
+        } catch (e) {}
+        try {
+          const pred = taPredictDirection(
+            { closes: closes, highs: dd.highs, lows: dd.lows, volumes: dd.volumes, opens: dd.opens },
+            (typeof AI_PARAMS !== "undefined") ? AI_PARAMS : {});
+          if (pred) {
+            out.reasons = (pred.reasons || []).slice(0, 8);
+            out.upProb = pred.upProb != null ? pred.upProb : null;
+            out.confidence = pred.confidence != null ? pred.confidence : null;
+          }
+        } catch (e) {}
+        try {
+          const ts2 = techSummaryMultiTF(closes, dd.highs, dd.lows);
+          if (ts2) {
+            out.tf = {};
+            for (const k of ["now", "week", "month", "year"]) {
+              if (ts2[k]) out.tf[k] = { score: ts2[k].score, label: ts2[k].label };
+            }
+          }
+        } catch (e) {}
+        if (!out.available && !out.reason) out.reason = "지표 계산에 필요한 봉이 부족합니다";
         return out;
       });
     }
@@ -27334,6 +27407,26 @@ function taPredictDirection(bars, params) {
   return res;
 }
 
+
+/* [V33.319] 화면에 보여줄 지표 목록 — ★한 곳에서만 정한다.★
+   야간 스캔(mlNightlyScan)과 즉석 조회(/api/ta-explain)가 각자 목록을 들고 있으면
+   언젠가 갈라져서, 같은 종목인데 두 화면 숫자가 다르게 보인다. 단위는 피처 정의 그대로:
+     rsi14 0~100 · macdH = MACD 히스토그램을 가격 %로 정규화 · volSurge = 당일/20일평균 배수
+     ret5·ret20 % · atrPct = ATR/가격 % · rs20 = 지수 대비 20일 상대강도 %p
+     maStack -1~1 정배열도 · taUpProb 0~1 기술적 상승확률 */
+const LUX_TA_KEYS = ["rsi14", "macdH", "volSurge", "ret5", "ret20", "atrPct", "rs20", "maStack", "taUpProb"];
+// 피처 벡터(featNames 순서의 숫자 배열)에서 위 항목만 이름표를 붙여 뽑는다.
+function luxTaFromFeat(feat) {
+  const o = {};
+  if (!Array.isArray(feat)) return o;
+  for (const k of LUX_TA_KEYS) {
+    const i = LUXML.featNames.indexOf(k);
+    if (i < 0) continue;
+    const v = feat[i];
+    if (typeof v === "number" && isFinite(v)) o[k] = +v.toFixed(3);
+  }
+  return o;
+}
 
 // ── ML 피처 6종 압축(순수 OHLCV) — mlBuildFeatures가 호출 ──
 //   maSlope20, disparity20, rsiDiverg, bbSqueeze, fibSig, taUpProb
@@ -42167,17 +42260,8 @@ async function mlUniverseScanNightly(DB, opts) {
     const idxCache = {};   // [V7] 시장별 지수(상대강도) 1회 로드
     for (const mk of ["us", "kr", "cm"]) { try { idxCache[mk] = await _mlLoadIndexCloses(DB, mk); } catch (e) { idxCache[mk] = null; } }
     /* [V33.318] ★스캔 카드에 실제 지표를 실어 보낸다★ — 사용자: "실시간 스캔에 해당 주식
-       관련 데이터 더 띄워 macd 지표같은거."
-       추가 계산은 0 이다. 아래 mlBuildFeatures 가 이미 이 값들을 전부 구해 놓는다 —
-       다만 반환이 featNames 순서의 '숫자 배열'이라 이름으로 못 꺼낸다. 여기서 이름→위치
-       색인을 한 번만 만들어 두고, 픽마다 그 자리 값만 뽑아 붙인다.
-       단위는 피처 정의 그대로다(화면도 같은 단위로 적어야 거짓말이 안 된다):
-         rsi14 0~100 · macdH = MACD 히스토그램을 가격 % 로 정규화 · volSurge = 당일/20일평균
-         ret5·ret20 = % 수익률 · atrPct = ATR/가격 % · rs20 = 지수 대비 20일 상대강도 %p
-         maStack -1~1 정배열도 · taUpProb 0~1 기술적 상승확률 */
-    const _taKeys = ["rsi14", "macdH", "volSurge", "ret5", "ret20", "atrPct", "rs20", "maStack", "taUpProb"];
-    const _taIdx = {};
-    for (const k of _taKeys) { const i = LUXML.featNames.indexOf(k); if (i >= 0) _taIdx[k] = i; }
+       관련 데이터 더 띄워 macd 지표같은거." 추가 계산은 0 이다 — 아래 mlBuildFeatures 가
+       이미 구해 놓은 값을 luxTaFromFeat 이 이름표를 붙여 뽑아 준다(목록·단위는 LUX_TA_KEYS). */
     for (const it of order) {
       if (Date.now() > deadline) break;
       const sym = it.sym, mkt = it.mkt;
@@ -42215,9 +42299,8 @@ async function mlUniverseScanNightly(DB, opts) {
         const _et = _luxEventTiltFor(sym, _evCtx.evs, _evCtx.mc, _conf, _eff);
         const rankTilted = _et.tilt !== 0 ? _clamp(rankP * (1 + _et.tilt), 0.01, 0.99) : rankP;
         const _pk = { symbol: sym, market: mkt, p: +p.toFixed(3), rankP: +rankTilted.toFixed(3), rankBase: +rankP.toFixed(3), tech: _pt.tech, techLabel: _pt.label, blue: +_pt.blue.toFixed(2), strategy: "scan" };
-        // [V33.318] 위 색인으로 피처 벡터에서 지표만 뽑아 붙인다(추가 계산·추가 fetch 0).
-        const _ta = {};
-        for (const k in _taIdx) { const v = feat[_taIdx[k]]; if (typeof v === "number" && isFinite(v)) _ta[k] = +v.toFixed(3); }
+        // [V33.318] 피처 벡터에서 지표만 뽑아 붙인다(추가 계산·추가 fetch 0).
+        const _ta = luxTaFromFeat(feat);
         if (Object.keys(_ta).length) _pk.ta = _ta;
         if (_et.tilt !== 0) { _pk.evTilt = _et.tilt; _pk.evTags = (_et.align[0] && _et.align[0].tags) ? _et.align.map(function (a) { return a.code; }).slice(0, 3) : undefined; }
         picks.push(_pk);

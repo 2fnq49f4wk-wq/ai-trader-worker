@@ -8,7 +8,7 @@
      인데, 지금까지 화면에서 그걸 알 방법이 전혀 없었다(카카오톡 인앱 브라우저는 특히 강하게 캐시한다).
      서버가 내려주는 build 와 이 값을 비교해 다르면 배너로 알린다.
      ※ src/index.js 의 _BUILD_VER 와 항상 같아야 한다 — check-html-js 가 강제한다. -->
-<meta name="lux-build" content="V33.318">
+<meta name="lux-build" content="V33.319">
 <title>LUX-ENGINE V10</title>
 <!-- ══ [V33.156] 설치형 앱(PWA) — 폰·PC 에서 홈화면/독에 담아 앱처럼 연다 ══
      · manifest  : 이름·아이콘·standalone 표시(주소창 없이 앱처럼)
@@ -4468,8 +4468,13 @@ html[data-theme="light"] .m-brainbar button.active{color:#0b4f9e;background:rgba
           </div>
           <div class="nlv-tp-chart" id="nlvTpChart"><div class="nlv-empty">차트 불러오는 중…</div></div>
           <!-- [V33.318] 지금 스캔 중인 종목의 실제 지표(MACD·RSI·거래량·수익률·ATR·상대강도).
-               야간 스캔이 피처 벡터에서 뽑아 함께 내려준 값을 그대로 적는다(사용자 요청). -->
+               [V33.319] 야간 스캔이 픽에 실어 보낸 값(pk.ta)이 있으면 그걸 쓰고, 없으면
+               /api/ta-explain 로 그 종목만 즉석 계산해 채운다 — 스캔이 하루 한 번이라
+               배포 직후엔 계속 비어 있었기 때문이다. -->
           <div class="nlv-ta" id="nlvTpTa"></div>
+          <!-- [V33.319] 판단 근거 — "확률의 근거가 된것이 뭔지도 표시하게해"(사용자 요청).
+               랭크 분해(엔진과 같은 가중치)와 기술 근거·다기간 컨센서스를 적는다. -->
+          <div class="nlv-why" id="nlvTpWhy"></div>
           <div class="nlv-toplist" id="nlvTopList"></div>
         </div>
 
@@ -18478,6 +18483,7 @@ html:root .page > *{ flex-shrink:0; }
       if(subEl) subEl.textContent = '유니버스 확인 중';
       var c0 = $id('nlvTpChart'); if(c0) c0.innerHTML = '<div class="nlv-empty">스캔 결과를 기다리는 중…</div>';
       var t0 = $id('nlvTpTa'); if(t0) t0.innerHTML = '';
+      var w0 = $id('nlvTpWhy'); if(w0) w0.innerHTML = '';
       return;
     }
     var q = quoteOf(top.symbol);
@@ -18489,7 +18495,11 @@ html:root .page > *{ flex-shrink:0; }
     if(vdEl) vdEl.innerHTML = esc(vd.label) + ' · 랭크 ' + rank.toFixed(2)
       + (top.techLabel ? ' · ' + esc(top.techLabel) : '');
     if(subEl) subEl.textContent = '지금 판단 중 · ' + (SCAN.idx+1) + ' / ' + list.length;
-    renderTaPanel(top.ta);   // [V33.318] 이 종목의 실제 지표(MACD·RSI·거래량·수익률·ATR·상대강도)
+    // [V33.318] 이 종목의 실제 지표. 스캔이 실어 보낸 값이 있으면 그걸 먼저 그리고,
+    // [V33.319] 없으면 /api/ta-explain 응답이 오는 대로 채운다(스캔은 하루 한 번뿐이라서).
+    renderTaPanel(top.ta);
+    renderWhy(top, TAX.cache[top.symbol]);   // 랭크 분해는 저장된 픽만으로 바로 그린다
+    loadTaExplain(top.symbol, top);          // 기술 근거·다기간 추세는 도착하면 덧그린다
     loadTopPickChart(top.symbol);
   }
 
@@ -19750,13 +19760,119 @@ html:root .page > *{ flex-shrink:0; }
   function renderTaPanel(ta){
     var el = $id('nlvTpTa'); if(!el) return;
     var ms = taMetrics(ta);
-    if(!ms.length){ el.innerHTML = '<div class="nlv-ta-none">지표는 다음 야간 스캔부터 표시됩니다</div>'; return; }
+    if(!ms.length){ el.innerHTML = '<div class="nlv-ta-none">지표 계산 중…</div>'; return; }
     el.innerHTML = ms.map(function(m){
       return '<div class="nlv-ta-cell" title="' + esc(m.title) + '">'
         + '<span class="k">' + esc(m.label) + '</span>'
         + '<span class="v' + taDirCls(m.dir) + '">' + esc(m.txt) + '</span>'
       + '</div>';
     }).join('');
+  }
+
+  /* [V33.319] ★지표가 화면에 안 보이던 이유★ — 야간 스캔은 하루 한 번 돈다. V33.318 을
+     배포해도 저장된 픽은 전부 옛 코드가 만든 것이라 ta 가 없어, 다음 밤까지 빈 칸이었다
+     (사용자: "스캔 지표 추가된거 안보이고"). 그래서 지금 보고 있는 ★그 한 종목만★
+     /api/ta-explain 로 즉석 조회한다 — 서버도 새로 받아오지 않고 일봉 캐시만 읽으며,
+     스캔과 같은 함수로 계산하므로 나중에 스캔이 채워 넣는 값과 어긋나지 않는다.
+     심볼당 한 번만 부르고 결과를 캐시한다(순회가 되돌아와도 다시 부르지 않는다). */
+  var TAX = { cache:{}, wait:{}, seq:0 };
+  function loadTaExplain(sym, pk){
+    if(!sym) return;
+    if(TAX.cache[sym] !== undefined){ applyTaExplain(sym, TAX.cache[sym], pk); return; }
+    if(TAX.wait[sym]) return;
+    TAX.wait[sym] = 1;
+    fetch('/api/ta-explain?symbol=' + encodeURIComponent(sym)).then(function(r){
+      if(!r.ok) throw new Error('HTTP ' + r.status);
+      return r.json();
+    }).then(function(d){
+      delete TAX.wait[sym];
+      TAX.cache[sym] = d || null;
+      applyTaExplain(sym, TAX.cache[sym], pk);
+    })['catch'](function(){
+      delete TAX.wait[sym];
+      TAX.cache[sym] = null;   // 실패도 기억한다 — 매 순회마다 다시 두드리지 않게
+      applyTaExplain(sym, null, pk);
+    });
+  }
+  // 응답이 늦게 와도, 그 사이 스포트라이트가 옮겨갔으면 남의 칸에 그리지 않는다.
+  function applyTaExplain(sym, d, pk){
+    var cur = (SCAN.list || [])[SCAN.idx];
+    if(!cur || cur.symbol !== sym) return;
+    if(d && d.ta && !(pk && pk.ta)) renderTaPanel(d.ta);
+    else if(!(pk && pk.ta) && !(d && d.ta)){
+      var el = $id('nlvTpTa');
+      if(el) el.innerHTML = '<div class="nlv-ta-none">'
+        + esc((d && d.reason) || '지표를 계산할 수 없습니다') + '</div>';
+    }
+    renderWhy(cur, d);
+  }
+
+  /* [V33.319] ★확률의 근거★ — 사용자: "확률의 근거가 된것이 뭔지도 표시하게해."
+     ★두 가지를 반드시 구분해서 적는다.★
+       · 확률 p 는 위원회(신경망 여러 모델의 합의)가 100여개 피처를 보고 낸 값이다.
+         어떤 한 지표가 p 를 만들었다고 말할 수 없다 — 그렇게 적으면 거짓말이다.
+       · 랭크(rankP)는 그 p 에 기술점수·대형주점수를 ★더하고★ 이벤트 틸트를 곱한 값이라,
+         산수 그대로 분해할 수 있다. 가중치는 서버가 rankWeights 로 내려준 실제 엔진 값이다.
+       · 기술 근거(reasons)는 taPredictDirection 이 기술점수를 쌓으며 남긴 근거이지
+         p 의 근거가 아니다 — 제목에 "기술 근거"라고 못박는다. */
+  var RANKW = { tech:0.22, blue:0.10 };
+  function renderWhy(pk, ex){
+    var el = $id('nlvTpWhy'); if(!el) return;
+    if(!pk){ el.innerHTML = ''; return; }
+    var rows = [];
+    var p = (pk.p != null) ? pk.p : null;
+    var rank = (pk.rankP != null) ? pk.rankP : null;
+    if(p != null){
+      rows.push('<div class="w-row"><span class="w-k">위원회 확률 <em>p</em></span>'
+        + '<span class="w-v">' + (p*100).toFixed(1) + '%</span>'
+        + '<span class="w-n">모델 합의 — 단일 지표가 아니라 피처 전체를 본 값</span></div>');
+    }
+    /* 가산 항목은 ★엔진이 실제로 그 산수를 한 픽★ 에만 적는다. 진입루프가 만든 픽
+       (ai_picks:us/kr/cm)에는 rankP 가 없다 — 랭크를 매긴 적이 없으니 가산도 없었다.
+       그런 픽에 가산을 적으면 합계 없는 숫자가 떠서, 안 한 계산을 한 것처럼 보인다. */
+    if(rank != null && pk.tech != null && isFinite(pk.tech)){
+      var tAdd = RANKW.tech * pk.tech;
+      rows.push('<div class="w-row"><span class="w-k">기술 가산</span>'
+        + '<span class="w-v' + taDirCls(tAdd > 0 ? 1 : (tAdd < 0 ? -1 : 0)) + '">'
+        + (tAdd>0?'+':'') + tAdd.toFixed(3) + '</span>'
+        + '<span class="w-n">가중 ' + RANKW.tech + ' × 기술점수 ' + (+pk.tech).toFixed(2)
+        + (pk.techLabel ? ' · ' + esc(pk.techLabel) : '') + '</span></div>');
+    }
+    if(rank != null && pk.blue != null && isFinite(pk.blue) && pk.blue > 0){
+      var bAdd = RANKW.blue * pk.blue;
+      rows.push('<div class="w-row"><span class="w-k">대형주 가산</span>'
+        + '<span class="w-v up">+' + bAdd.toFixed(3) + '</span>'
+        + '<span class="w-n">가중 ' + RANKW.blue + ' × 시총순위 점수 ' + (+pk.blue).toFixed(2) + '</span></div>');
+    }
+    if(rank != null && pk.evTilt != null && isFinite(pk.evTilt) && pk.evTilt !== 0){
+      rows.push('<div class="w-row"><span class="w-k">이벤트 틸트</span>'
+        + '<span class="w-v' + taDirCls(pk.evTilt > 0 ? 1 : -1) + '">×' + (1+pk.evTilt).toFixed(3) + '</span>'
+        + '<span class="w-n">활성 이슈 정렬'
+        + (pk.evTags && pk.evTags.length ? ' · ' + esc(pk.evTags.join(', ')) : '') + '</span></div>');
+    }
+    if(rank != null){
+      rows.push('<div class="w-row w-sum"><span class="w-k">= 최종 랭크</span>'
+        + '<span class="w-v">' + rank.toFixed(3) + '</span>'
+        + '<span class="w-n">이 값으로 후보 순위를 매긴다(확률이 아니다)</span></div>');
+    }
+    var html = '<div class="nlv-why-h">판단 근거</div>';
+    if(rows.length) html += '<div class="nlv-why-rows">' + rows.join('') + '</div>';
+    if(ex && ex.reasons && ex.reasons.length){
+      html += '<div class="nlv-why-tags"><span class="w-lab">기술 근거</span>'
+        + ex.reasons.map(function(r){ return '<span class="w-tag">' + esc(r) + '</span>'; }).join('')
+        + '</div>';
+    }
+    if(ex && ex.tf){
+      var order = [['now','지금'],['week','1주'],['month','1달'],['year','1년']], tfs = [];
+      order.forEach(function(o){
+        var t = ex.tf[o[0]]; if(!t) return;
+        var dir = t.score >= 0.15 ? 1 : (t.score <= -0.15 ? -1 : 0);
+        tfs.push('<span class="w-tf"><b>' + o[1] + '</b> <i class="' + (taDirCls(dir).trim()||'nu') + '">'
+          + esc(t.label) + '</i></span>');
+      });
+      if(tfs.length) html += '<div class="nlv-why-tags"><span class="w-lab">다기간 추세</span>' + tfs.join('') + '</div>';
+    }
+    el.innerHTML = html;
   }
   // 카드용 — 좁으니 MACD·RSI·거래량 셋만
   function taChipsCompact(ta){
@@ -19908,6 +20024,12 @@ html:root .page > *{ flex-shrink:0; }
       if(!PICKS.lastError){ LIVE.lastFresh = Date.now(); liveHealth('picks', 'ok'); }
       acc.picks = pk.picks || [];
       if(pk.scan) acc.scan = pk.scan;
+      /* [V33.319] 랭크 가중치는 ★서버가 내려준 실제 엔진 값★ 을 쓴다. 프런트에 상수를
+         베껴 두면 엔진 설정이 바뀌는 날 화면만 옛 수로 남아 근거가 틀려진다. */
+      if(pk.rankWeights){
+        if(pk.rankWeights.tech != null) RANKW.tech = pk.rankWeights.tech;
+        if(pk.rankWeights.blue != null) RANKW.blue = pk.rankWeights.blue;
+      }
       paintLive(acc, pipeSteps); cacheLive(acc, pipeSteps);
     })['catch'](function(e){ liveHealth('picks', 'error'); try{ console.error('[AI 관제실] picks 조회 실패', e); }catch(_){} });
 
@@ -20572,8 +20694,8 @@ body:has(#page-nnviz.active) .rail{
 </style>
 
 <!-- [Codex V33.314] Dedicated scoped design system. See AI_HANDOFF.md before changing model/UI contracts. -->
-<link rel="stylesheet" href="/brain-console.css?v=33.318">
-<link rel="stylesheet" href="/workspace-layout.css?v=33.318">
-<script src="/workspace-ui.js?v=33.318"></script>
+<link rel="stylesheet" href="/brain-console.css?v=33.319">
+<link rel="stylesheet" href="/workspace-layout.css?v=33.319">
+<script src="/workspace-ui.js?v=33.319"></script>
 </body>
 </html>

@@ -175,6 +175,43 @@ html body:has(#page-nnviz.active) .rail { background:var(--ops-bg1)!important; b
 #page-nnviz .nlv-ta-cell .v.dn { color:var(--ops-red); }
 #page-nnviz .nlv-ta-none { padding:10px 12px; font-size:10px; color:var(--ops-ink3); border-top:1px solid var(--ops-line2); }
 
+/* ═══ [V33.319] 판단 근거 — 랭크 산수 + 기술 근거 + 다기간 추세 ═══ */
+#page-nnviz .nlv-why { border-top:1px solid var(--ops-line2); padding:10px 12px 12px; }
+#page-nnviz .nlv-why:empty { display:none; }
+#page-nnviz .nlv-why-h {
+  font:600 9px/1 'IBM Plex Mono',monospace; letter-spacing:.14em; text-transform:uppercase;
+  color:var(--ops-ink3); margin-bottom:8px;
+}
+#page-nnviz .nlv-why-rows { display:flex; flex-direction:column; gap:5px; }
+#page-nnviz .nlv-why .w-row {
+  display:grid; grid-template-columns:minmax(72px,auto) minmax(56px,auto) 1fr; gap:8px;
+  align-items:baseline; font-size:10.5px; line-height:1.45;
+}
+#page-nnviz .nlv-why .w-k { color:var(--ops-ink2); white-space:nowrap; }
+#page-nnviz .nlv-why .w-k em { font-style:normal; color:var(--ops-ink3); }
+#page-nnviz .nlv-why .w-v {
+  font:600 11.5px/1.2 'IBM Plex Mono',monospace; color:var(--ops-ink); text-align:right; white-space:nowrap;
+}
+#page-nnviz .nlv-why .w-v.up { color:var(--ops-green); }
+#page-nnviz .nlv-why .w-v.dn { color:var(--ops-red); }
+#page-nnviz .nlv-why .w-n { color:var(--ops-ink3); font-size:9.5px; min-width:0; overflow-wrap:anywhere; }
+#page-nnviz .nlv-why .w-sum { border-top:1px solid var(--ops-line2); padding-top:6px; margin-top:1px; }
+#page-nnviz .nlv-why .w-sum .w-k,#page-nnviz .nlv-why .w-sum .w-v { color:var(--ops-ink); }
+#page-nnviz .nlv-why-tags { display:flex; flex-wrap:wrap; align-items:center; gap:4px 6px; margin-top:9px; }
+#page-nnviz .nlv-why-tags .w-lab {
+  font:600 8.5px/1 'IBM Plex Mono',monospace; letter-spacing:.1em; text-transform:uppercase;
+  color:var(--ops-ink3); margin-right:2px;
+}
+#page-nnviz .nlv-why-tags .w-tag {
+  font:500 9.5px/1.3 'IBM Plex Mono',monospace; color:var(--ops-ink2);
+  border:1px solid var(--ops-line); padding:3px 6px; white-space:nowrap;
+}
+#page-nnviz .nlv-why-tags .w-tf { font-size:9.5px; color:var(--ops-ink3); border:1px solid var(--ops-line); padding:3px 6px; white-space:nowrap; }
+#page-nnviz .nlv-why-tags .w-tf b { font-weight:600; color:var(--ops-ink3); }
+#page-nnviz .nlv-why-tags .w-tf i { font-style:normal; color:var(--ops-ink2); }
+#page-nnviz .nlv-why-tags .w-tf i.up { color:var(--ops-green); }
+#page-nnviz .nlv-why-tags .w-tf i.dn { color:var(--ops-red); }
+
 /* ═══ AI 반사실 후보 ═══ */
 #page-nnviz .nlv-cf { margin:0; border:1px solid var(--ops-line); }
 #page-nnviz .nlv-cf-grid { display:grid; grid-template-columns:repeat(auto-fill,minmax(150px,1fr)); gap:1px; background:var(--ops-line2); padding:0; }

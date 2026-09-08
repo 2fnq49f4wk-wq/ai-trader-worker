@@ -7,7 +7,48 @@
 - Status: complete locally; deployment must be checked against this exact HEAD after push.
 - Owner: Claude
 - Branch: main (direct main authorized; no PR)
-- Last commit: HEAD / V33.318 (resolve with git log -1)
+- Last commit: HEAD / V33.319 (resolve with git log -1)
+- Base: V33.318 (같은 세션, 직전 커밋), 배포 run 34174328087 성공 확인 후 시작.
+- Scope: 사용자 지적 2건 — ① V33.318 로 넣은 스캔 지표가 화면에 안 보인다 ② 확률의 근거가
+  무엇인지도 표시해 달라.
+
+### Claude V33.319 — 2026-09-08
+
+- **지표가 안 보이던 진짜 이유**: V33.318 은 야간 스캔이 픽에 `ta` 를 실어 보내게 했는데,
+  ★스캔은 하루 한 번 돈다★. 배포 직후엔 저장된 픽이 전부 옛 코드가 만든 것이라 `ta` 가 없고,
+  화면은 다음 밤까지 계속 비어 있었다. "다음 스캔부터 보입니다"라고 안내만 하고 끝낼 일이
+  아니었다 — 기능을 넣고 아무것도 안 보이는 상태로 둔 것이다.
+- **`/api/ta-explain?symbol=` 신규(읽기 전용)** (`src/index.js`): 지금 보고 있는 ★그 한
+  종목만★ 즉석 계산한다. 새로 받아오지 않는다 — 이미 있는 일봉 캐시(`daily:<sym>`)와 지수
+  캐시만 읽고, 없으면 없다고 답한다(지어내지 않는다). 숫자는 스캔이 쓰는 것과 같은 함수
+  (`mlBuildFeatures` → `luxTaFromFeat`)로 만들어, 나중에 스캔이 채워 넣는 값과 어긋날 수 없다.
+  응답: `ta`(9종) + `reasons`(taPredictDirection 이 점수를 쌓으며 남긴 근거 문자열) +
+  `tf`(다기간 컨센서스 now/week/month/year) + `upProb`/`confidence`. SWR 60초 캐시.
+- **지표 목록 단일화** (`src/index.js`): `LUX_TA_KEYS` + `luxTaFromFeat()` 를 만들어 스캔과
+  즉석 조회가 ★같은 목록·같은 단위★ 를 쓰게 했다. 각자 목록을 들고 있으면 언젠가 갈라져
+  같은 종목인데 두 화면 숫자가 달라진다.
+- **판단 근거 패널** (`public/index.html`, `public/brain-console.css`): 사용자 요청("확률의
+  근거가 된것이 뭔지도"). ★두 가지를 반드시 구분해 적는다★ —
+    · 확률 `p` 는 위원회(신경망 합의)가 100여개 피처를 보고 낸 값이다. 어떤 한 지표가 p 를
+      만들었다고 말할 수 없어서, "모델 합의 — 단일 지표가 아니라 피처 전체를 본 값"이라 적는다.
+    · 랭크는 산수 그대로 분해된다: `p + 기술가중×tech + 대형주가중×blue` → `×(1+evTilt)`.
+      가중치는 하드코딩하지 않고 서버가 `/api/ai-picks` 의 `rankWeights` 로 내려준 실제 엔진
+      값을 쓴다(엔진 설정이 바뀌는 날 화면만 옛 수로 남지 않게).
+    · `reasons` 는 ★기술 점수★ 의 근거이지 p 의 근거가 아니라서, 제목을 "기술 근거"로 못박았다.
+  가산 항목은 `rankP` 가 있는 픽(= 엔진이 실제로 그 산수를 한 픽)에만 적는다 — 진입루프가
+  만든 픽에는 랭크가 없으므로 합계 없는 숫자를 띄우지 않는다.
+- 이미 저장된 픽도 `p`/`tech`/`blue`/`rankP` 를 갖고 있어, 랭크 분해는 ★야간 스캔을 기다리지
+  않고 즉시★ 보인다. 지표는 ta-explain 이 채운다.
+- 검증: `node --check` 통과, 86종 게이트 전체 통과, `git diff --check` 통과. 헤드리스
+  크로미움에 ★ta 가 없는 픽★(배포 직후 실제 상황)을 주입해 확인 — 지표 9종이 즉석 조회로
+  채워지고, 판단 근거가 p·기술가산·대형주가산·최종랭크·기술근거·다기간추세까지 렌더됨.
+  일봉 캐시가 없는 경우(available:false)도 확인 — 지표 칸은 사유를 적고, 랭크 분해는 그대로.
+- 학습·주문 트리거 없음, 정책 값 변경 없음, 시크릿 없음.
+
+## Previous handoff — V33.318
+
+- Owner: Claude
+- Last commit: V33.318 (resolve with `git log`)
 - Base: V33.317 (같은 세션, 직전 커밋), 배포 run 34172044453 성공 확인 후 시작.
 - Scope: 사용자 지시 5건 — ① 지표&환율 화면 이름을 "뉴스·환율"로 ② 뉴스를 보려고 내리면
   반쪽이 비는 비율 문제 재설계 ③ 작동 화면에서 "위원회 구성" 제거 ④ 잘려 있던 "판정 깔때기"·
