@@ -4,6 +4,39 @@
 
 ## Current handoff
 
+- Status: complete locally; deployment must be checked against this exact HEAD after push.
+- Owner: Claude
+- Branch: main (direct main authorized; no PR)
+- Last commit: HEAD / V33.325 (resolve with git log -1)
+- Base: b7b61a8 / V33.324 (Codex). 작업 전 `git fetch origin main` → 3커밋 뒤져 있어
+  `git pull --ff-only` 로 맞춘 뒤 시작했다(CLAUDE.md 규칙).
+- Scope: 사용자 지적 — "AI 두뇌 작동 로그가 오류난거 같은데 글씨가 세로로 쓰인다".
+
+### Claude V33.325 — 2026-09-08
+
+- **원인: 매달린 선택자(dangling selector) 하나.** `public/index.html` 인라인 CSS 에
+  '스크롤 경계 페이드' 규칙이 있었고 선택자가 `#page-nnviz .nlv-feed, #page-nnviz .nlv-toplist`
+  였다. 언젠가 `.nlv-toplist` 를 이 페이드에서 빼면서 ★선언 블록을 통째로 지우고
+  `#page-nnviz .nlv-feed,` 만 쉼표째 남겼다.★ CSS 는 그 쉼표를 다음 규칙까지 이어 읽으므로,
+  판정 로그가 바로 아래 "최우선 후보 카드" 규칙
+  (`display:grid; grid-template-columns:repeat(3,1fr)`)을 그대로 물려받았다.
+- **증상이 왜 '세로 글씨'였나(실측)**: `.nlv-feed` 가 3열 그리드가 되면서 로그 줄 하나하나가
+  칸에 갇혀 `.nlv-line` 이 141×300px 이 됐고, 줄 안의 `58px 1fr` 에서 본문 칸이 36px 로
+  짜부라져 글자가 한 자씩 세로로 쌓였다. 고친 뒤 같은 화면에서 줄 435×56px,
+  본문 칸 330px, 트랙 `58px 329.5px` — 정상 가로 흐름.
+- **고친 방법**: 매달린 선택자 한 줄을 지웠다. 페이드 마스크는 이미 선언이 사라진
+  유물이고 현재 두뇌 콘솔은 평면·무채색 디자인이라 되살리지 않았다. 사고 경위를 그 자리에
+  주석으로 남겼다.
+- **재발 방지 게이트** (`tools/check-ai-ops-ui.mjs`): 인라인 `<style>` 을 중괄호 깊이를 세며
+  훑어(@media 안쪽 포함) `.nlv-feed` 가 들어간 선택자 목록 중 `display:grid` 나
+  `grid-template-columns` 를 선언하는 규칙이 있으면 실패시킨다. ★버그를 일부러 되살려
+  게이트가 실제로 잡는 것을 확인한 뒤★ 원복했다(FAIL 메시지에 붙어버린 선택자를 그대로 출력).
+- 검증: `node --check` 통과, 87종 게이트 전체 통과, `git diff --check` 통과.
+  1366px·390px 두 폭에서 로그가 정상 가로 흐름이고 가로 오버플로 없음.
+- 학습·주문 트리거 없음, 정책 값 변경 없음, 시크릿 없음.
+
+## Previous handoff — V33.324
+
 - Status: complete; V33.324 deployed and verified in the production browser.
 - Owner: Codex
 - Branch: main (direct main and live deployment explicitly requested)

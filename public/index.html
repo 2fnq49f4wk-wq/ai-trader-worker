@@ -8,8 +8,8 @@
      인데, 지금까지 화면에서 그걸 알 방법이 전혀 없었다(카카오톡 인앱 브라우저는 특히 강하게 캐시한다).
      서버가 내려주는 build 와 이 값을 비교해 다르면 배너로 알린다.
      ※ src/index.js 의 _BUILD_VER 와 항상 같아야 한다 — check-html-js 가 강제한다. -->
-<meta name="lux-build" content="V33.324">
-<script src="/neural-observatory.js?v=33.324"></script>
+<meta name="lux-build" content="V33.325">
+<script src="/neural-observatory.js?v=33.325"></script>
 <title>LUX-ENGINE V10</title>
 <!-- ══ [V33.156] 설치형 앱(PWA) — 폰·PC 에서 홈화면/독에 담아 앱처럼 연다 ══
      · manifest  : 이름·아이콘·standalone 표시(주소창 없이 앱처럼)
@@ -13554,13 +13554,18 @@ html[data-theme="light"] #page-nnviz{
   padding:.85rem 1rem 1rem;
 }
 
-/* ── 스크롤 경계 — 1px 선 대신 페이드 ─────────────────────────────────────
-   떠 있는 크롬과 콘텐츠가 만나는 자리에만 마스크를 준다. 선을 그으면 잘린 느낌이,
-   페이드를 주면 '아래로 이어진다'는 느낌이 남는다. */
-/* ★.nlv-toplist 는 여기서 뺐다★ — 스크롤하지 않는 3칸 그리드라 페이드가 걸리면
-   카드 위아래만 이유 없이 흐려진다. 이 마스크는 '아래로 이어진다' 를 말하는 장치이므로
-   실제로 이어지는 것에만 쓴다. */
-#page-nnviz .nlv-feed,
+/* [V33.325] ★판정 로그 글씨가 세로로 쓰이던 버그 — 원인은 매달린 선택자 하나★
+   여기에는 '스크롤 경계 페이드' 규칙이 있었고, 선택자가 이랬다:
+       #page-nnviz .nlv-feed,
+       #page-nnviz .nlv-toplist { mask-image: ...; }
+   나중에 .nlv-toplist 를 이 페이드에서 빼면서 ★선언 블록을 통째로 지우고
+   `#page-nnviz .nlv-feed,` 만 쉼표를 단 채 남겨 두었다.★ CSS 는 그 쉼표를 다음
+   규칙까지 이어 읽는다 — 그래서 판정 로그(.nlv-feed)가 바로 아래 "최우선 후보 카드"의
+   `display:grid; grid-template-columns:repeat(3,1fr)` 을 그대로 뒤집어썼다.
+   결과: 로그 줄 하나하나가 3열 그리드 칸(실측 ≈141px)에 갇히고, 줄 안의 `58px 1fr`
+   에서 본문 칸이 36px 로 짜부라져 ★글자가 한 자씩 세로로★ 흘렀다.
+   쉼표 하나가 규칙 두 개를 붙여 버린 사고다. 매달린 선택자를 지운다 —
+   페이드 마스크는 이미 사라졌고(지금 두뇌 콘솔은 평면·무채색이다) 되살리지 않는다. */
 
 /* ── 최우선 후보 카드 ────────────────────────────────────────────────────
    [V33.153] 위원회 카드와 같은 재질로 맞춘다. 종전엔 여기만 1px 격자선 + 하드코딩 색이라
@@ -19592,9 +19597,9 @@ body:has(#page-nnviz.active) .rail{
 </style>
 
 <!-- [Codex V33.314] Dedicated scoped design system. See AI_HANDOFF.md before changing model/UI contracts. -->
-<link rel="stylesheet" href="/brain-console.css?v=33.324">
-<link rel="stylesheet" href="/workspace-layout.css?v=33.324">
-<link rel="stylesheet" href="/neural-observatory.css?v=33.324">
-<script src="/workspace-ui.js?v=33.324"></script>
+<link rel="stylesheet" href="/brain-console.css?v=33.325">
+<link rel="stylesheet" href="/workspace-layout.css?v=33.325">
+<link rel="stylesheet" href="/neural-observatory.css?v=33.325">
+<script src="/workspace-ui.js?v=33.325"></script>
 </body>
 </html>
