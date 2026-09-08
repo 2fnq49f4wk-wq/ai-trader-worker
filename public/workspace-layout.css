@@ -22,6 +22,11 @@ html:is(:root,[data-theme]) body #page-nnviz .ops-metrics dd { font-size:25px; l
 html:is(:root,[data-theme]) body #page-nnviz .ops-metrics :is(dt,small) { font-size:8px; }
 html:is(:root,[data-theme]) body #page-nnviz .nnv-live { gap:10px; }
 html:is(:root,[data-theme]) body #page-nnviz :is(.nlv-hero,.nlv-lower) { gap:10px; grid-template-columns:repeat(auto-fit,minmax(min(100%,250px),1fr)); }
+/* [V33.321] ★히어로를 1열로★ — "실시간 스캔 종목"(차트+지표+근거)과 "판정 깔때기"는
+   내용 높이가 3배 넘게 차이 난다. 2열로 세우면 짧은 쪽이 stretch 되어 그 아래가 통째로
+   빈다(사용자 화면에서 깔때기 칸 절반 이상이 검은 여백이었다). 각자 제 줄에서 전체 폭을
+   쓰게 하고, 남는 폭은 블록 안에서 가로로 나눠 쓴다 — 뉴스·환율 화면과 같은 원칙. */
+html:is(:root,[data-theme]) body #page-nnviz .nlv-hero { grid-template-columns:minmax(0,1fr); }
 html:is(:root,[data-theme]) body #page-nnviz :is(.nlv-sec-h,.nlv-picks-head) { padding:10px 12px!important; font-size:11px!important; }
 html:is(:root,[data-theme]) body #page-nnviz .nlv-sec-h small { font-size:9px!important; }
 html:is(:root,[data-theme]) body #page-nnviz .nlv-strip { padding:0 0 5px; font-size:9px; }

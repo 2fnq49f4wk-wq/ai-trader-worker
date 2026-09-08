@@ -162,21 +162,34 @@ html body:has(#page-nnviz.active) .rail { background:var(--ops-bg1)!important; b
 #page-nnviz .nlv-scancard-ta .t { color:var(--ops-ink3); white-space:nowrap; }
 #page-nnviz .nlv-scancard-ta .t.up { color:var(--ops-green); }
 #page-nnviz .nlv-scancard-ta .t.dn { color:var(--ops-red); }
-/* [V33.320] 지표(왼쪽 세로 레일) + 판단 근거(오른쪽) — 카드가 세로로만 길어지지 않게
-   나란히 놓는다. 좁아지면 wrap 되어 자연스럽게 위아래로 돌아간다.
-   ★지표를 가로 타일이 아니라 세로 목록으로 세운 이유★: 가로로 3열씩 깔면 3줄(≈80px)에서
-   끝나 옆 근거 칸(≈200px)보다 훨씬 짧고, 그 아래가 빈 검은 덩어리로 남았다. 9개를 한 줄씩
-   세우면 높이가 근거 칸과 맞아떨어져 빈 칸이 안 생긴다.
+/* [V33.321] ★차트 | 지표 | 근거 를 한 줄에★
+   V33.320 은 지표와 근거만 나란히 뒀는데, 실제 사용 화면(1366px)에서 이 카드 폭이
+   477px 뿐이라 156+300px 기준을 넘겨 그대로 세로로 접혔다 — 카드는 722px까지 길어지고,
+   옆 "판정 깔때기"는 내용이 짧은데 같은 높이로 늘어나 큰 빈 칸이 생겼다.
+   ★교훈은 뉴스·환율 화면과 같다★: 높이가 크게 다른 블록을 나란히 세우면 반드시 한쪽이
+   빈다. 그래서 카드를 제 줄 전체 폭으로 넓히고(.nlv-hero 1열), 그 넓어진 폭 안에서
+   차트·지표·근거를 가로로 나눈다. 폭이 남으니 접히지 않고 카드 높이도 3분의 1로 준다.
    구분선은 '간격으로 배경 비추기'가 아니라 셀 테두리로 그린다 — 그래야 남는 자리가
    컨테이너 배경(어두운 선 색) 그대로 드러나지 않는다. */
-#page-nnviz .nlv-detail {
+#page-nnviz .nlv-body {
   display:flex; flex-wrap:wrap; align-items:stretch; gap:0;
   background:var(--ops-panel); border-top:1px solid var(--ops-line2); margin-top:auto;
 }
+/* 차트는 넓은 화면에서 혼자 커지지 않게 상한을 둔다(상한이 없으면 초광폭에서 다시 커진다). */
+#page-nnviz .nlv-body > .nlv-tp-chart {
+  flex:1.6 1 300px; min-width:0; max-width:560px;
+  border-right:1px solid var(--ops-line2); display:flex; flex-direction:column; justify-content:center;
+}
+/* ★grow 는 반드시 1 이상★ — 좁은 화면에서 제 줄로 접혔을 때 남는 폭을 다 먹어야 한다.
+   0 이면 168px 에 머물러 오른쪽이 비고(실측 135px), 0.5 로 두면 남는 폭의 절반만 먹어
+   역시 빈다(실측 67px). flex-grow 합이 1 미만이면 남은 공간이 전부 분배되지 않는다.
+   대신 넓은 화면에서 레일이 과하게 벌어지는 건 max-width 로 잡되, ★한 줄에 셋이 다
+   들어가는 폭에서만★ 건다 — 접히는 폭에서 상한을 걸면 그게 그대로 빈칸이 된다. */
 #page-nnviz .nlv-ta {
-  flex:1 1 156px; max-width:100%; min-width:0; display:flex; flex-direction:column;
+  flex:1 1 168px; max-width:100%; min-width:0; display:flex; flex-direction:column;
   background:transparent; border-right:1px solid var(--ops-line2);
 }
+@media (min-width:1200px) { #page-nnviz .nlv-body > .nlv-ta { max-width:300px; } }
 #page-nnviz .nlv-ta-cell {
   padding:4px 9px; min-width:0; border-bottom:1px solid var(--ops-line2);
   display:flex; align-items:baseline; justify-content:space-between; gap:6px;
@@ -184,7 +197,7 @@ html body:has(#page-nnviz.active) .rail { background:var(--ops-bg1)!important; b
 #page-nnviz .nlv-ta-cell:last-child { border-bottom:0; }
 #page-nnviz .nlv-ta-cell .k { font:500 8px/1.3 'IBM Plex Mono',monospace; letter-spacing:.05em; color:var(--ops-ink3); text-transform:uppercase; white-space:nowrap; }
 #page-nnviz .nlv-ta-cell .v { font:600 10.5px/1.3 'IBM Plex Mono',monospace; color:var(--ops-ink2); white-space:nowrap; }
-#page-nnviz .nlv-detail > .nlv-why { flex:1 1 300px; min-width:0; }
+#page-nnviz .nlv-body > .nlv-why { flex:1.2 1 260px; min-width:0; }
 #page-nnviz .nlv-ta-cell .v.up { color:var(--ops-green); }
 #page-nnviz .nlv-ta-cell .v.dn { color:var(--ops-red); }
 #page-nnviz .nlv-ta-none { padding:10px 12px; font-size:10px; color:var(--ops-ink3); border-top:1px solid var(--ops-line2); }
@@ -233,7 +246,10 @@ html body:has(#page-nnviz.active) .rail { background:var(--ops-bg1)!important; b
 
 /* ═══ AI 반사실 후보 ═══ */
 #page-nnviz .nlv-cf { margin:0; border:1px solid var(--ops-line); }
-#page-nnviz .nlv-cf-grid { display:grid; grid-template-columns:repeat(auto-fill,minmax(150px,1fr)); gap:1px; background:var(--ops-line2); padding:0; }
+/* [V33.321] auto-fill → auto-fit — auto-fill 은 항목이 모자라도 빈 트랙을 만들어 두어,
+   4건만 있을 때 오른쪽이 컨테이너 배경색 그대로 남았다. auto-fit 은 빈 트랙을 접어
+   있는 항목이 폭을 나눠 갖는다. */
+#page-nnviz .nlv-cf-grid { display:grid; grid-template-columns:repeat(auto-fit,minmax(150px,1fr)); gap:1px; background:var(--ops-line2); padding:0; }
 #page-nnviz .nlv-cf-item { background:var(--ops-bg1); padding:12px 14px; cursor:pointer; display:flex; flex-direction:column; gap:4px; }
 #page-nnviz .nlv-cf-item:hover { background:var(--ops-panel-hi); }
 #page-nnviz .nlv-cf-item .sym { font:600 12px 'IBM Plex Mono',monospace; color:var(--ops-ink); }

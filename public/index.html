@@ -8,7 +8,7 @@
      인데, 지금까지 화면에서 그걸 알 방법이 전혀 없었다(카카오톡 인앱 브라우저는 특히 강하게 캐시한다).
      서버가 내려주는 build 와 이 값을 비교해 다르면 배너로 알린다.
      ※ src/index.js 의 _BUILD_VER 와 항상 같아야 한다 — check-html-js 가 강제한다. -->
-<meta name="lux-build" content="V33.320">
+<meta name="lux-build" content="V33.321">
 <title>LUX-ENGINE V10</title>
 <!-- ══ [V33.156] 설치형 앱(PWA) — 폰·PC 에서 홈화면/독에 담아 앱처럼 연다 ══
      · manifest  : 이름·아이콘·standalone 표시(주소창 없이 앱처럼)
@@ -4466,11 +4466,12 @@ html[data-theme="light"] .m-brainbar button.active{color:#0b4f9e;background:rgba
               <span class="vd" id="nlvTpVd">불러오는 중</span>
             </div>
           </div>
-          <div class="nlv-tp-chart" id="nlvTpChart"><div class="nlv-empty">차트 불러오는 중…</div></div>
-          <!-- [V33.320] 지표와 판단 근거를 ★나란히★ 둔다(사용자: "작은 글씨로 해서 지표
-               옆에 쓰이게하고"). 종전엔 지표 아래에 근거가 또 쌓여 카드가 세로로만 길어졌다.
-               좁은 화면에서는 flex-wrap 으로 자연히 위아래가 된다. -->
-          <div class="nlv-detail">
+          <!-- [V33.321] ★차트·지표·근거를 한 줄에 가로로★ — V33.320 은 지표와 근거만
+               나란히 뒀는데, 사용자 화면(1366px)에서 이 카드 폭이 477px밖에 안 돼 156+300px
+               기준이 넘쳐 그대로 세로로 접혔다. 카드를 제 줄 전체 폭으로 넓히고(.nlv-hero
+               1열), 안에서 셋을 가로로 배치한다 — 폭이 남으니 접힐 일이 없고 카드도 낮아진다. -->
+          <div class="nlv-body">
+            <div class="nlv-tp-chart" id="nlvTpChart"><div class="nlv-empty">차트 불러오는 중…</div></div>
             <!-- [V33.318] 지금 스캔 중인 종목의 실제 지표(MACD·RSI·거래량·수익률·ATR·상대강도).
                  [V33.319] 야간 스캔이 픽에 실어 보낸 값(pk.ta)이 있으면 그걸 쓰고, 없으면
                  /api/ta-explain 로 그 종목만 즉석 계산해 채운다 — 스캔이 하루 한 번이라
@@ -20708,8 +20709,8 @@ body:has(#page-nnviz.active) .rail{
 </style>
 
 <!-- [Codex V33.314] Dedicated scoped design system. See AI_HANDOFF.md before changing model/UI contracts. -->
-<link rel="stylesheet" href="/brain-console.css?v=33.320">
-<link rel="stylesheet" href="/workspace-layout.css?v=33.320">
-<script src="/workspace-ui.js?v=33.320"></script>
+<link rel="stylesheet" href="/brain-console.css?v=33.321">
+<link rel="stylesheet" href="/workspace-layout.css?v=33.321">
+<script src="/workspace-ui.js?v=33.321"></script>
 </body>
 </html>
