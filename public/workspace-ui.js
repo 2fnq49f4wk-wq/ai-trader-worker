@@ -10,13 +10,16 @@
   }
   window.luxBrainView = function (view) {
     if (!brain || ['operations', 'models', 'research'].indexOf(view) < 0) return;
+    var keepY = window.scrollY || document.documentElement.scrollTop || 0;
+    var keepLocal = brain.scrollTop || 0;
     brain.setAttribute('data-brain-view', view);
     paintButtons(brain, 'data-brain-tab', view);
     // Existing renderers need visible dimensions after a view is revealed.
     if (view === 'models') requestAnimationFrame(function () {
       if (typeof window.openNnViz === 'function') window.openNnViz();
+      window.scrollTo(window.scrollX || 0, keepY);
+      brain.scrollTop = keepLocal;
     });
-    brain.scrollTop = 0;
   };
   window.luxMarketView = function (view) {
     if (!market || ['all', 'macro', 'fx', 'news'].indexOf(view) < 0) return;

@@ -8,7 +8,7 @@
      인데, 지금까지 화면에서 그걸 알 방법이 전혀 없었다(카카오톡 인앱 브라우저는 특히 강하게 캐시한다).
      서버가 내려주는 build 와 이 값을 비교해 다르면 배너로 알린다.
      ※ src/index.js 의 _BUILD_VER 와 항상 같아야 한다 — check-html-js 가 강제한다. -->
-<meta name="lux-build" content="V33.322">
+<meta name="lux-build" content="V33.323">
 <title>LUX-ENGINE V10</title>
 <!-- ══ [V33.156] 설치형 앱(PWA) — 폰·PC 에서 홈화면/독에 담아 앱처럼 연다 ══
      · manifest  : 이름·아이콘·standalone 표시(주소창 없이 앱처럼)
@@ -15003,7 +15003,7 @@ html[data-theme="light"] #page-nnviz .nlv-sec-h{ border-color:transparent; color
       var op=(0.07+0.30*e.str).toFixed(3), sw=(0.16+0.40*e.str).toFixed(2);
       var mx=(e.x1+e.x2)/2;
       var dStr='M'+e.x1.toFixed(1)+' '+e.y1.toFixed(1)+' C'+mx.toFixed(1)+' '+e.y1.toFixed(1)+' '+mx.toFixed(1)+' '+e.y2.toFixed(1)+' '+e.x2.toFixed(1)+' '+e.y2.toFixed(1);
-      return '<path class="nnedge-static" data-a="'+e.l+'-'+e.ai+'" data-b="'+(e.l+1)+'-'+e.bi+'" d="'+dStr+'" fill="none" stroke="rgba(150,205,255,'+op+')" stroke-width="'+sw+'"/>';
+      return '<path class="nnedge-static nnedge-flow" data-a="'+e.l+'-'+e.ai+'" data-b="'+(e.l+1)+'-'+e.bi+'" d="'+dStr+'" fill="none" stroke="rgba(230,238,248,'+op+')" stroke-width="'+sw+'"/>';
     }).join('');
     var nodes='', heads='', foots='', featLabels='', hits=[];
     var nHidden=0;
@@ -15022,27 +15022,28 @@ html[data-theme="light"] #page-nnviz .nlv-sec-h{ border-color:transparent; color
     var bandBg='';
     for(var _bi=0;_bi<cols;_bi++){
       var _bw=meta[_bi].w+14, _bh=meta[_bi].rowsN*dyN+16, _bk=layers[_bi].kind;
-      var _bc = _bk==='input'?'74,163,255':(_bk==='output'?'0,230,118':'110,150,220');
-      bandBg+='<rect x="'+(bands[_bi].cx-_bw/2).toFixed(1)+'" y="'+(yMid-_bh/2).toFixed(1)
-        +'" width="'+_bw.toFixed(1)+'" height="'+_bh.toFixed(1)+'" rx="8"'
-        +' fill="rgba('+_bc+',0.045)" stroke="rgba('+_bc+',0.16)" stroke-width="0.8"/>';
+      var _bc = _bk==='input'?'245,245,245':(_bk==='output'?'255,255,255':'190,190,190');
+      bandBg+='<g class="nnv-slice"><rect x="'+(bands[_bi].cx-_bw/2).toFixed(1)+'" y="'+(yMid-_bh/2).toFixed(1)
+        +'" width="'+_bw.toFixed(1)+'" height="'+_bh.toFixed(1)+'" rx="0"'
+        +' fill="rgba('+_bc+',0.038)" stroke="rgba('+_bc+',0.20)" stroke-width="0.8"/>'
+        +'<line x1="'+(bands[_bi].cx-_bw/2).toFixed(1)+'" y1="'+yMid.toFixed(1)+'" x2="'+(bands[_bi].cx+_bw/2).toFixed(1)+'" y2="'+yMid.toFixed(1)+'" stroke="rgba(255,255,255,.12)" stroke-width=".5"/></g>';
     }
     for(var li=0;li<cols;li++){
       var kind=layers[li].kind, cx=bands[li].cx;
-      var hd = kind==='input'?'#4aa3ff':(kind==='output'?'#00e676':'#9fc2ff');
+      var hd = kind==='input'?'#f5f5f5':(kind==='output'?'#ffffff':'#cfcfcf');
       var depthT = cols>2 ? li/(cols-1) : 0;
-      var fill = kind==='input'?'#7dc0ff':(kind==='output'?'#7dffb8':mixHex('#e6efff','#9fd2ff',depthT));
+      var fill = kind==='input'?'#f7f7f7':(kind==='output'?'#ffffff':mixHex('#bdbdbd','#f5f5f5',depthT));
       /* [V33.278] ★강도를 밝기로도 말한다.★ 종전엔 층 안 모든 뉴런이 ★같은 색★ 이고
          크기와 투명도만 달랐다 — 둘 다 약한 채널이라 "어느 뉴런이 일하는가" 가 안 읽혔다.
          약한 쪽은 층 색의 어두운 끝, 강한 쪽은 밝은 끝으로 섞는다. 순서·자리는 그대로다. */
-      var dimC = kind==='input'?'#183253':(kind==='output'?'#0f3a26':'#1b2a45');
+      var dimC = kind==='input'?'#202020':(kind==='output'?'#282828':'#171717');
       var isHidden = (kind!=='input' && kind!=='output'); if(isHidden) nHidden++;
       // [V32.15] 층별 tag/act 오버라이드 — 트리앙상블(GBDT/XGB/LGB/Cat)을 DNN과 같은 레이어 도식으로
       //   그리되 배지·활성함수 라벨만 트리 의미(TREES/분기/Σ)로 바꾼다. 미지정이면 DNN 기본값.
       var tag = layers[li].tag || (kind==='input'?'IN':(kind==='output'?'OUT':'H'+nHidden));
       var act = layers[li].act || (kind==='input'?'FEAT':(kind==='output'?'σ':'ReLU'));
       // 층 헤더 배지: 층 태그 + 뉴런수 — 전 층이 "몇 번째 층인지" 즉시 보이게
-      heads+='<rect x="'+(cx-21)+'" y="13" width="42" height="20" rx="10" fill="rgba(70,130,255,0.10)" stroke="'+hd+'" stroke-opacity="0.55" stroke-width="1"/>'
+      heads+='<rect x="'+(cx-21)+'" y="13" width="42" height="20" rx="0" fill="rgba(255,255,255,0.06)" stroke="'+hd+'" stroke-opacity="0.55" stroke-width="1"/>'
         +'<text x="'+cx+'" y="27" text-anchor="middle" font-family="IBM Plex Mono,monospace" font-size="10.5" font-weight="700" fill="'+hd+'">'+tag+'</text>'
         +'<text x="'+cx+'" y="46" text-anchor="middle" font-family="IBM Plex Mono,monospace" font-size="9" fill="#8fa6c8">'+layers[li].size+'n</text>';
       var col2=shown[li], allS=layers[li].strength||[];
@@ -15065,21 +15066,22 @@ html[data-theme="light"] #page-nnviz .nlv-sec-h{ border-color:transparent; color
         }
       }
       // 하단: 활성함수
-      foots+='<text x="'+cx+'" y="'+(H-footH+22)+'" text-anchor="middle" font-family="IBM Plex Mono,monospace" font-size="8.5" fill="#61789c">'+act+'</text>';
+      foots+='<text x="'+cx+'" y="'+(H-footH+22)+'" text-anchor="middle" font-family="IBM Plex Mono,monospace" font-size="8.5" fill="#8b8b8b">'+act+'</text>';
     }
     // 좌상단 층수 요약 — "몇 층짜리 뇌인가"가 그림 안에서 바로 읽히게
-    var summary='<text x="14" y="28" font-family="Space Grotesk,sans-serif" font-size="13" font-weight="700" fill="#eaf2ff">'+cols+' LAYERS</text>'
-      +'<text x="14" y="44" font-family="IBM Plex Mono,monospace" font-size="8.5" fill="#7c90b5">입력 1 · 은닉 '+nHidden+' · 출력 1</text>';
+    var summary='<text x="14" y="28" font-family="Space Grotesk,sans-serif" font-size="13" font-weight="700" fill="#f5f5f5">'+cols+' LAYERS</text>'
+      +'<text x="14" y="44" font-family="IBM Plex Mono,monospace" font-size="8.5" fill="#9c9c9c">입력 1 · 은닉 '+nHidden+' · 출력 1</text>';
     // [V12.24 로딩속도] 1프레임: 노드·라벨·헤더만 즉시 페인트(체감 로딩) → 다음 프레임에 엣지 4.5K 삽입
     /* [V33.278] 강도 범례 — 밝기가 무엇을 뜻하는지 그림 안에서 답한다.
        색으로 말하기 시작했으면 그 색의 뜻도 같이 있어야 한다(아니면 그냥 예뻐진 것뿐이다). */
     var lg='', lgx=14, lgy=H-footH+6;
     for(var _s=0;_s<=10;_s++){
       lg+='<rect x="'+(lgx+_s*7)+'" y="'+lgy+'" width="7" height="7" fill="'
-        +mixHex('#1b2a45','#9fd2ff',_s/10)+'"/>';
+        +mixHex('#202020','#f5f5f5',_s/10)+'"/>';
     }
-    lg+='<text x="'+(lgx+82)+'" y="'+(lgy+6.5)+'" font-family="IBM Plex Mono,monospace" font-size="8" fill="#7c90b5">뉴런 강도 약 → 강</text>';
-    stage.innerHTML='<div class="nnv-scroll"><svg viewBox="0 0 '+W+' '+H+'" preserveAspectRatio="xMidYMid meet" style="min-width:'+W+'px;background:radial-gradient(120% 90% at 50% 8%,#0d1a2e,#050810 72%);">'+bandBg+nodes+featLabels+heads+foots+summary+lg+'</svg></div>';
+    lg+='<text x="'+(lgx+82)+'" y="'+(lgy+6.5)+'" font-family="IBM Plex Mono,monospace" font-size="8" fill="#9c9c9c">뉴런 강도 약 → 강</text>';
+    // Codex V33.316: monochrome neural observatory, with CSS-only signal pulses and capped SVG nodes.
+    stage.innerHTML='<div class="nnv-scroll nnv-neural-deck"><svg class="nnv-neural-svg" viewBox="0 0 '+W+' '+H+'" preserveAspectRatio="xMidYMid meet" style="min-width:'+W+'px;">'+bandBg+nodes+featLabels+heads+foots+summary+lg+'</svg></div>';
     var svgEl=stage.querySelector('svg');
     svgEl.__hits=hits;
     requestAnimationFrame(function(){ try{
@@ -15404,7 +15406,7 @@ html[data-theme="light"] #page-nnviz .nlv-sec-h{ border-color:transparent; color
       + '<button class="sq3-b'+(SQ3.spin?' on':'')+'" id="sq3Spin">자동회전</button>'
       + '<span class="sq3-hint">가로=시점(과거→지금) · 깊이=단계(입력→출력) · <b>펼침</b>으로 시점을 더 벌립니다 · <b>손가락 이동</b>을 켜면 한 손가락으로 옮깁니다(옮긴 자리를 축으로 회전) · 두 손가락=확대·이동 · 더블탭=확대/되돌리기'
       + ' <span class="sq3-dim">|</span> 마우스: 휠=확대 · 드래그=회전 · Shift+드래그=이동 · 클릭=값 보기</span></div>';
-    stage.innerHTML = ctl + '<div class="sq3-wrap"><svg id="sq3Svg" viewBox="0 0 900 460" preserveAspectRatio="xMidYMid meet"></svg></div>'
+    stage.innerHTML = ctl + '<div class="sq3-wrap sq3-neural"><svg id="sq3Svg" viewBox="0 0 900 460" preserveAspectRatio="xMidYMid meet"></svg></div>'
       + '<div class="sq3-pick" id="sq3Pick"></div>'
       + '<div class="sq3-note" id="sq3Note"></div>';
     var svg = document.getElementById('sq3Svg');
@@ -20709,8 +20711,8 @@ body:has(#page-nnviz.active) .rail{
 </style>
 
 <!-- [Codex V33.314] Dedicated scoped design system. See AI_HANDOFF.md before changing model/UI contracts. -->
-<link rel="stylesheet" href="/brain-console.css?v=33.322">
-<link rel="stylesheet" href="/workspace-layout.css?v=33.322">
-<script src="/workspace-ui.js?v=33.322"></script>
+<link rel="stylesheet" href="/brain-console.css?v=33.323">
+<link rel="stylesheet" href="/workspace-layout.css?v=33.323">
+<script src="/workspace-ui.js?v=33.323"></script>
 </body>
 </html>

@@ -5,11 +5,24 @@
 ## Current handoff
 
 - Status: complete locally; deployment must be checked against this exact HEAD after push.
-- Owner: Claude
+- Owner: Codex
 - Branch: main (direct main authorized; no PR)
-- Last commit: HEAD / V33.322 (resolve with git log -1)
-- Base: V33.321 (같은 세션, 직전 커밋), 배포 run 34179972779 성공 확인 후 시작.
-- Scope: 사용자 지시 — "판정 깔때기 크기 아주 조금 줄여라".
+- Last commit: HEAD / V33.323 (resolve with git log -1)
+- Base: abece41 / V33.322 from origin/main. User said they had edited brain observatory separately, so Codex fast-forwarded before applying this patch.
+- Scope: 사용자 지시 — "최근 스캔에서 반사실 후보 보다가 갱신될 때 화면이 위로 올라가는 문제 해결, 모델 구조 인공신경망 디자인 완전 변경, SEQ 3D 구조관측 3D 모델링 변경, 렉 없이 살아움직이는 느낌".
+
+### Codex V33.323 — 2026-09-08
+
+- 최신 GitHub 코드 우선: 로컬 수정분을 stash 한 뒤 origin/main V33.322로 fast-forward, 충돌은 upstream V33.322 로직을 유지하고 이 UI 패치만 다시 얹었다.
+- `public/workspace-ui.js`: 두뇌관측 모델 뷰 재렌더가 더 이상 `brain.scrollTop = 0`을 강제하지 않는다. 현재 window/page scroll과 page-local scroll을 저장했다가 기존 `openNnViz()` 재호출 후 복원해, 최근 스캔/반사실 후보를 보는 중 갱신이 화면을 맨 위로 끌어올리지 않게 했다.
+- `public/index.html` + `public/workspace-layout.css`: DNN 신경망 관측은 기존 데이터, 노드 hit-test, 툴팁, 포커스 하이라이트, 4,500 edge cap을 유지하면서 흑백 slice deck, square layer plates, CSS-only signal flow로 다시 디자인했다.
+- SEQ 3D 관측은 기존 projection/control/pick/data mapping은 유지하고 `.sq3-neural` wireframe stage와 가벼운 CSS pulse/flow로 다시 모델링했다. `prefers-reduced-motion`에서는 애니메이션이 꺼진다.
+- `tools/check-ai-ops-ui.mjs`: 스크롤 보존 계약과 새 DNN/SEQ 렌더 훅을 회귀 검사에 추가했다.
+- 검증: V33.323 기준 모든 `tools/check-*.mjs` 통과, `node --check src/index.js` 통과, `git diff --check --cached` 통과. 로컬 preview `127.0.0.1:8766`에서 V33.323 로드, DNN 2,428 nodes / 4,500 capped flow edges, SEQ 3D SVG stage 생성, document horizontal overflow 없음.
+- 스크린샷: `outputs/brain-dnn-v33.316.png`, `outputs/brain-seq-v33.316.png`는 같은 시각 패치의 rebase 전 캡처다(최종 버전 번호만 V33.323으로 올라감).
+- 학습·주문 트리거 없음, 정책 값/바인딩/크론 변경 없음, 다른 페이지 디자인 변경 없음.
+
+## Previous handoff — V33.322
 
 ### Claude V33.322 — 2026-09-08
 
