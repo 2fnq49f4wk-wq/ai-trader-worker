@@ -2981,7 +2981,7 @@ async function applySignalTypeWeights(DB, cfg) {
    화면·자가진단이 계속 "V33.272" 를 보고했다(운영 스냅샷이 그대로 그랬다). 배포는 됐는데
    ★배포됐다는 사실만 거짓말★ 을 하고 있었으니, "내 고침이 올라간 건가" 를 화면으로 확인할
    방법이 없었다. tools/check-build-ver.mjs 가 이제 소스에 적힌 최신 버전과 이 값을 대조한다. */
-const _BUILD_VER = "V33.317";
+const _BUILD_VER = "V33.318";
 
 // ═══ [V33.171] 평가 순서 계획 — ★승격과 순환을 교차해 굶주림을 구조적으로 없앤다★ ═══
 //   V33.50 의 형태트리거는 "급한 몇 종목을 앞으로 당긴다"는 의도였으나, 실제 운영로그에서는
@@ -42166,6 +42166,18 @@ async function mlUniverseScanNightly(DB, opts) {
     const evstats = await getState(DB, "ml_evstats", null);
     const idxCache = {};   // [V7] 시장별 지수(상대강도) 1회 로드
     for (const mk of ["us", "kr", "cm"]) { try { idxCache[mk] = await _mlLoadIndexCloses(DB, mk); } catch (e) { idxCache[mk] = null; } }
+    /* [V33.318] ★스캔 카드에 실제 지표를 실어 보낸다★ — 사용자: "실시간 스캔에 해당 주식
+       관련 데이터 더 띄워 macd 지표같은거."
+       추가 계산은 0 이다. 아래 mlBuildFeatures 가 이미 이 값들을 전부 구해 놓는다 —
+       다만 반환이 featNames 순서의 '숫자 배열'이라 이름으로 못 꺼낸다. 여기서 이름→위치
+       색인을 한 번만 만들어 두고, 픽마다 그 자리 값만 뽑아 붙인다.
+       단위는 피처 정의 그대로다(화면도 같은 단위로 적어야 거짓말이 안 된다):
+         rsi14 0~100 · macdH = MACD 히스토그램을 가격 % 로 정규화 · volSurge = 당일/20일평균
+         ret5·ret20 = % 수익률 · atrPct = ATR/가격 % · rs20 = 지수 대비 20일 상대강도 %p
+         maStack -1~1 정배열도 · taUpProb 0~1 기술적 상승확률 */
+    const _taKeys = ["rsi14", "macdH", "volSurge", "ret5", "ret20", "atrPct", "rs20", "maStack", "taUpProb"];
+    const _taIdx = {};
+    for (const k of _taKeys) { const i = LUXML.featNames.indexOf(k); if (i >= 0) _taIdx[k] = i; }
     for (const it of order) {
       if (Date.now() > deadline) break;
       const sym = it.sym, mkt = it.mkt;
@@ -42203,6 +42215,10 @@ async function mlUniverseScanNightly(DB, opts) {
         const _et = _luxEventTiltFor(sym, _evCtx.evs, _evCtx.mc, _conf, _eff);
         const rankTilted = _et.tilt !== 0 ? _clamp(rankP * (1 + _et.tilt), 0.01, 0.99) : rankP;
         const _pk = { symbol: sym, market: mkt, p: +p.toFixed(3), rankP: +rankTilted.toFixed(3), rankBase: +rankP.toFixed(3), tech: _pt.tech, techLabel: _pt.label, blue: +_pt.blue.toFixed(2), strategy: "scan" };
+        // [V33.318] 위 색인으로 피처 벡터에서 지표만 뽑아 붙인다(추가 계산·추가 fetch 0).
+        const _ta = {};
+        for (const k in _taIdx) { const v = feat[_taIdx[k]]; if (typeof v === "number" && isFinite(v)) _ta[k] = +v.toFixed(3); }
+        if (Object.keys(_ta).length) _pk.ta = _ta;
         if (_et.tilt !== 0) { _pk.evTilt = _et.tilt; _pk.evTags = (_et.align[0] && _et.align[0].tags) ? _et.align.map(function (a) { return a.code; }).slice(0, 3) : undefined; }
         picks.push(_pk);
       }

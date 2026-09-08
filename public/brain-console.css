@@ -154,6 +154,27 @@ html body:has(#page-nnviz.active) .rail { background:var(--ops-bg1)!important; b
 #page-nnviz .nlv-scancard.pass .nlv-scancard-foot .rank { color:var(--ops-cyan); font-weight:700; }
 #page-nnviz .nlv-scancard-foot .tech { overflow:hidden; text-overflow:ellipsis; white-space:nowrap; max-width:70px; }
 
+/* ═══ [V33.318] 스캔 종목 지표 — 배경은 무채색, 방향은 글자색으로만 말한다 ═══ */
+#page-nnviz .nlv-scancard-ta {
+  display:flex; flex-wrap:wrap; gap:3px 6px; margin-top:7px; padding-top:6px;
+  border-top:1px solid var(--ops-line2); font:600 9px/1.4 'IBM Plex Mono',monospace;
+}
+#page-nnviz .nlv-scancard-ta .t { color:var(--ops-ink3); white-space:nowrap; }
+#page-nnviz .nlv-scancard-ta .t.up { color:var(--ops-green); }
+#page-nnviz .nlv-scancard-ta .t.dn { color:var(--ops-red); }
+/* grid 대신 flex — 마지막 줄에 남는 칸이 생기면 셀들이 늘어나 폭을 다 채운다(그리드는
+   빈 트랙이 컨테이너 배경색 그대로 드러나 검은 덩어리처럼 보였다). */
+#page-nnviz .nlv-ta {
+  display:flex; flex-wrap:wrap; gap:1px;
+  background:var(--ops-line2); border-top:1px solid var(--ops-line2); margin-top:auto;
+}
+#page-nnviz .nlv-ta-cell { flex:1 1 78px; background:var(--ops-panel); padding:8px 10px; display:flex; flex-direction:column; gap:3px; min-width:0; }
+#page-nnviz .nlv-ta-cell .k { font:500 8.5px/1 'IBM Plex Mono',monospace; letter-spacing:.06em; color:var(--ops-ink3); text-transform:uppercase; }
+#page-nnviz .nlv-ta-cell .v { font:600 13px/1.2 'IBM Plex Mono',monospace; color:var(--ops-ink2); white-space:nowrap; }
+#page-nnviz .nlv-ta-cell .v.up { color:var(--ops-green); }
+#page-nnviz .nlv-ta-cell .v.dn { color:var(--ops-red); }
+#page-nnviz .nlv-ta-none { padding:10px 12px; font-size:10px; color:var(--ops-ink3); border-top:1px solid var(--ops-line2); }
+
 /* ═══ AI 반사실 후보 ═══ */
 #page-nnviz .nlv-cf { margin:0; border:1px solid var(--ops-line); }
 #page-nnviz .nlv-cf-grid { display:grid; grid-template-columns:repeat(auto-fill,minmax(150px,1fr)); gap:1px; background:var(--ops-line2); padding:0; }

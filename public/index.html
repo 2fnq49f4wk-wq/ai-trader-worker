@@ -8,7 +8,7 @@
      인데, 지금까지 화면에서 그걸 알 방법이 전혀 없었다(카카오톡 인앱 브라우저는 특히 강하게 캐시한다).
      서버가 내려주는 build 와 이 값을 비교해 다르면 배너로 알린다.
      ※ src/index.js 의 _BUILD_VER 와 항상 같아야 한다 — check-html-js 가 강제한다. -->
-<meta name="lux-build" content="V33.317">
+<meta name="lux-build" content="V33.318">
 <title>LUX-ENGINE V10</title>
 <!-- ══ [V33.156] 설치형 앱(PWA) — 폰·PC 에서 홈화면/독에 담아 앱처럼 연다 ══
      · manifest  : 이름·아이콘·standalone 표시(주소창 없이 앱처럼)
@@ -3548,10 +3548,12 @@ html[data-theme="light"] .m-brainbar button.active{color:#0b4f9e;background:rgba
         <span class="nav-item-label">POSITIONS</span>
       </div>
       <!-- [V9.10/9.12] 액션바·AI픽 바에서 이동 — 대시보드·종목상세와 동일하게 일반 페이지로 표시 -->
-      <!-- [V12.117] 지표+환율 통합 — 별도 페이지였던 두 개를 하나의 nav-item/페이지로 병합 -->
+      <!-- [V12.117] 지표+환율 통합 — 별도 페이지였던 두 개를 하나의 nav-item/페이지로 병합
+           [V33.318] 이름을 "뉴스·환율"로 바꾼다(사용자 요청). V33.315에서 뉴스가 이 화면으로
+           흡수됐는데 이름만 "지표&환율"이라, 뉴스를 찾는 사람이 이 항목을 그냥 지나쳤다. -->
       <div class="nav-item" data-page="macro">
-        <span class="nav-item-icon">📊</span>
-        <span class="nav-item-label">지표&amp;환율</span>
+        <span class="nav-item-icon">📰</span>
+        <span class="nav-item-label">뉴스&middot;환율</span>
       </div>
       <!-- [V33.3] AI 리포트는 좌측 네비에서 내리고 "AI 두뇌" 우측 사이드바 바로가기로 이동(사용자 요청).
            요소는 숨겨서 남긴다 — showPage('report')·모바일 드로어가 data-page를 참조한다. -->
@@ -4299,14 +4301,32 @@ html[data-theme="light"] .m-brainbar button.active{color:#0b4f9e;background:rgba
 <!-- ══ [V12.117] 지표&환율 — 경제지표+환율 통합 페이지(종전 별도 두 페이지를 병합) ══ -->
 <div class="page" id="page-macro">
   <!-- [Codex V33.315] One workspace; original element IDs and refresh handlers are preserved. -->
-  <header class="market-header"><div><span class="market-eyebrow">LUX / MARKET INTELLIGENCE</span><h1>MARKET BRIEF</h1><p>경제지표, 환율, 섹터 뉴스로 시장의 맥락을 함께 읽습니다.</p></div><span class="market-edition">지표 · 환율 · 뉴스</span></header>
+  <!-- [V33.318] 화면 이름을 "뉴스·환율"로 통일한다(사용자 요청) — 좌측 네비/모바일 드로어와 같은 이름. -->
+  <header class="market-header"><div><span class="market-eyebrow">LUX / MARKET INTELLIGENCE</span><h1>뉴스 &middot; 환율</h1><p>섹터 뉴스, 환율, 경제지표로 시장의 맥락을 함께 읽습니다.</p></div><span class="market-edition">뉴스 · 환율 · 지표</span></header>
   <nav class="market-tabs" aria-label="마켓 브리핑 보기">
     <button type="button" data-market-tab="all" aria-pressed="true">전체 브리핑</button>
-    <button type="button" data-market-tab="macro" aria-pressed="false">경제지표</button>
-    <button type="button" data-market-tab="fx" aria-pressed="false">환율</button>
     <button type="button" data-market-tab="news" aria-pressed="false">뉴스</button>
+    <button type="button" data-market-tab="fx" aria-pressed="false">환율</button>
+    <button type="button" data-market-tab="macro" aria-pressed="false">경제지표</button>
   </nav>
-  <div class="market-grid"><div class="market-data">
+  <!-- [V33.318] ★뉴스를 맨 위·전체 폭으로★ — 종전엔 .market-grid 가 2열이라 왼쪽에 짧은
+       지표/환율 표가, 오른쪽에 긴 뉴스 목록이 놓였다. 뉴스를 읽으려 스크롤을 내리면
+       왼쪽 절반이 통째로 비었다(사용자: "뉴스 보려고 창 내리면 반쪽이 비여있어").
+       이제 세로로 쌓고, 뉴스는 제 줄에서 전체 폭을 다단으로 쓴다. DOM 순서도 함께
+       바꿔 화면 순서와 탭 순서가 어긋나지 않게 한다. -->
+  <div class="market-grid">
+  <section class="market-card market-news" id="marketNews" aria-label="섹터 뉴스" data-sector="all">
+    <div class="market-news-head"><div><span class="market-eyebrow">SECTOR DISPATCH</span><h2>시장 뉴스</h2></div><button type="button" id="btnRefreshNews" class="btn">↻ 새로고침</button></div>
+    <p id="newsStamp" class="market-stamp" role="status">뉴스 확인 중</p>
+    <nav class="market-sectors" aria-label="뉴스 섹터 필터">
+      <button data-news-sector="all" aria-pressed="true">전체</button><button data-news-sector="TECH" aria-pressed="false">기술</button>
+      <button data-news-sector="FINANCE" aria-pressed="false">금융</button><button data-news-sector="HEALTH" aria-pressed="false">헬스케어</button>
+      <button data-news-sector="CONSUMER" aria-pressed="false">소비재</button><button data-news-sector="INDUSTRIAL" aria-pressed="false">산업재</button>
+      <button data-news-sector="RESOURCES" aria-pressed="false">원자재</button>
+    </nav>
+    <div id="newsBody"><div class="empty">뉴스 불러오는 중...</div></div>
+  </section>
+  <div class="market-data">
   <section class="market-card market-econ" aria-label="경제지표">
   <div class="im-sec-head"><span class="im-sec-ico">📊</span><span class="im-sec-title">주요 경제지표</span><span class="im-sec-sub">미국 &amp; 한국 핵심 매크로 · 기준일 <b id="macroToday">—</b></span></div>
   <div class="modal-macro" style="max-width:940px;">
@@ -4349,17 +4369,7 @@ html[data-theme="light"] .m-brainbar button.active{color:#0b4f9e;background:rgba
     <div class="macro-disclaimer">※ 야후 파이낸스 기준. 실거래 전 공식 고시환율을 확인하세요.</div>
   </div>
   </section></div>
-  <section class="market-card market-news" id="marketNews" aria-label="섹터 뉴스" data-sector="all">
-    <div class="market-news-head"><div><span class="market-eyebrow">SECTOR DISPATCH</span><h2>시장 뉴스</h2></div><button type="button" id="btnRefreshNews" class="btn">↻ 새로고침</button></div>
-    <p id="newsStamp" class="market-stamp" role="status">뉴스 확인 중</p>
-    <nav class="market-sectors" aria-label="뉴스 섹터 필터">
-      <button data-news-sector="all" aria-pressed="true">전체</button><button data-news-sector="TECH" aria-pressed="false">기술</button>
-      <button data-news-sector="FINANCE" aria-pressed="false">금융</button><button data-news-sector="HEALTH" aria-pressed="false">헬스케어</button>
-      <button data-news-sector="CONSUMER" aria-pressed="false">소비재</button><button data-news-sector="INDUSTRIAL" aria-pressed="false">산업재</button>
-      <button data-news-sector="RESOURCES" aria-pressed="false">원자재</button>
-    </nav>
-    <div id="newsBody"><div class="empty">뉴스 불러오는 중...</div></div>
-  </section></div>
+  </div>
 </div>
 
 <!-- ══ [V9.12] AI 월간 리포트 — 팝업 모달→일반 페이지 전환 ══ -->
@@ -4457,6 +4467,9 @@ html[data-theme="light"] .m-brainbar button.active{color:#0b4f9e;background:rgba
             </div>
           </div>
           <div class="nlv-tp-chart" id="nlvTpChart"><div class="nlv-empty">차트 불러오는 중…</div></div>
+          <!-- [V33.318] 지금 스캔 중인 종목의 실제 지표(MACD·RSI·거래량·수익률·ATR·상대강도).
+               야간 스캔이 피처 벡터에서 뽑아 함께 내려준 값을 그대로 적는다(사용자 요청). -->
+          <div class="nlv-ta" id="nlvTpTa"></div>
           <div class="nlv-toplist" id="nlvTopList"></div>
         </div>
 
@@ -17712,7 +17725,7 @@ html:root .page > *{ flex-shrink:0; }
   //  brain:true = "AI 두뇌"에 속한 화면. 좌측 네비/모바일 드로어에서 빼고 두뇌 화면에서만 연다.
   var NAVS = [
     { id:'dashboard', ic:'◈', tx:'대시보드' }, { id:'detail', ic:'📈', tx:'종목' },
-    { id:'positions', ic:'◉', tx:'포지션' },   { id:'macro', ic:'📊', tx:'지표&환율' },
+    { id:'positions', ic:'◉', tx:'포지션' },   { id:'macro', ic:'📰', tx:'뉴스·환율' },
     { id:'report', ic:'📋', tx:'AI 리포트', brain:true },  { id:'nnviz', ic:'✦', tx:'AI 두뇌' },
     { id:'whatif', ic:'🧪', tx:'WHAT-IF', brain:true },
     { id:'trades', ic:'◷', tx:'TRADES' },      { id:'vision', ic:'◑', tx:'AI VISION' }
@@ -18464,6 +18477,7 @@ html:root .page > *{ flex-shrink:0; }
       if(vdEl) vdEl.textContent = '스캔 결과 대기';
       if(subEl) subEl.textContent = '유니버스 확인 중';
       var c0 = $id('nlvTpChart'); if(c0) c0.innerHTML = '<div class="nlv-empty">스캔 결과를 기다리는 중…</div>';
+      var t0 = $id('nlvTpTa'); if(t0) t0.innerHTML = '';
       return;
     }
     var q = quoteOf(top.symbol);
@@ -18475,6 +18489,7 @@ html:root .page > *{ flex-shrink:0; }
     if(vdEl) vdEl.innerHTML = esc(vd.label) + ' · 랭크 ' + rank.toFixed(2)
       + (top.techLabel ? ' · ' + esc(top.techLabel) : '');
     if(subEl) subEl.textContent = '지금 판단 중 · ' + (SCAN.idx+1) + ' / ' + list.length;
+    renderTaPanel(top.ta);   // [V33.318] 이 종목의 실제 지표(MACD·RSI·거래량·수익률·ATR·상대강도)
     loadTopPickChart(top.symbol);
   }
 
@@ -19689,6 +19704,71 @@ html:root .page > *{ flex-shrink:0; }
     if(rank >= 0.52) return { cls:'watch', label:'관찰' };
     return { cls:'reject', label:'탈락' };
   }
+
+  /* [V33.318] ★스캔 종목의 실제 지표★ — 사용자: "실시간 스캔에 해당 주식 관련 데이터
+     더 띄워 macd 지표같은거." 서버가 pk.ta 로 실어 보낸 값을 ★단위 그대로★ 적는다.
+       macdH  : MACD 히스토그램을 가격 % 로 정규화한 값(원값 아님 — 종목간 비교가 되게)
+       rsi14  : 0~100 원값 · volSurge : 당일 거래량 / 20일 평균 (배수)
+       ret5·ret20 : % 수익률 · atrPct : ATR/가격 % · rs20 : 지수 대비 20일 상대강도 %p
+       maStack: -1~1 이동평균 정배열도 · taUpProb : 0~1 기술적 상승확률
+     값이 없는 항목은 지어내지 않고 그냥 뺀다(옛 스캔 결과엔 ta 자체가 없다).
+     dir: 1=강세색(시안) -1=약세색(레드) 0=무채색 — 배경이 아니라 '글자'에만 색이 붙는다. */
+  function taMetrics(ta){
+    if(!ta) return [];
+    var out = [];
+    function add(key, label, txt, dir, title){
+      if(ta[key] == null || !isFinite(ta[key])) return;
+      out.push({ label:label, txt:txt(ta[key]), dir:dir(ta[key]), title:title });
+    }
+    add('macdH', 'MACD', function(v){ return (v>0?'+':'') + v.toFixed(2) + '%'; },
+      function(v){ return v > 0 ? 1 : (v < 0 ? -1 : 0); },
+      'MACD(12,26,9) 히스토그램 — 가격 대비 %로 정규화. 양수=상승 모멘텀 가속');
+    add('rsi14', 'RSI', function(v){ return v.toFixed(0); },
+      function(v){ return v >= 70 ? -1 : (v >= 55 ? 1 : (v <= 30 ? 1 : 0)); },
+      'RSI(14) — 70 이상 과열, 30 이하 과매도');
+    add('volSurge', '거래량', function(v){ return '×' + v.toFixed(1); },
+      function(v){ return v >= 1.5 ? 1 : (v < 0.7 ? -1 : 0); },
+      '당일 거래량 / 최근 20일 평균 거래량');
+    add('ret5', '5일', function(v){ return (v>0?'+':'') + v.toFixed(1) + '%'; },
+      function(v){ return v > 0 ? 1 : (v < 0 ? -1 : 0); }, '최근 5거래일 수익률');
+    add('ret20', '20일', function(v){ return (v>0?'+':'') + v.toFixed(1) + '%'; },
+      function(v){ return v > 0 ? 1 : (v < 0 ? -1 : 0); }, '최근 20거래일 수익률');
+    add('rs20', '상대강도', function(v){ return (v>0?'+':'') + v.toFixed(1) + '%p'; },
+      function(v){ return v > 0 ? 1 : (v < 0 ? -1 : 0); }, '시장지수 대비 20일 초과수익(%p)');
+    add('atrPct', 'ATR', function(v){ return v.toFixed(1) + '%'; },
+      function(){ return 0; }, 'ATR(14) / 가격 — 일간 변동성');
+    add('maStack', '정배열', function(v){ return (v>0?'+':'') + v.toFixed(2); },
+      function(v){ return v > 0.3 ? 1 : (v < -0.3 ? -1 : 0); },
+      '이동평균 정배열도 -1~1 (MA5>20>50>200 이면 +1)');
+    add('taUpProb', '기술확률', function(v){ return Math.round(v*100) + '%'; },
+      function(v){ return v >= 0.55 ? 1 : (v <= 0.45 ? -1 : 0); },
+      '순수 기술적 분석 기반 상승확률 — 위원회 확률과는 별개 신호');
+    return out;
+  }
+  function taDirCls(dir){ return dir > 0 ? ' up' : (dir < 0 ? ' dn' : ''); }
+  // 히어로용 — 지표 타일 전체
+  function renderTaPanel(ta){
+    var el = $id('nlvTpTa'); if(!el) return;
+    var ms = taMetrics(ta);
+    if(!ms.length){ el.innerHTML = '<div class="nlv-ta-none">지표는 다음 야간 스캔부터 표시됩니다</div>'; return; }
+    el.innerHTML = ms.map(function(m){
+      return '<div class="nlv-ta-cell" title="' + esc(m.title) + '">'
+        + '<span class="k">' + esc(m.label) + '</span>'
+        + '<span class="v' + taDirCls(m.dir) + '">' + esc(m.txt) + '</span>'
+      + '</div>';
+    }).join('');
+  }
+  // 카드용 — 좁으니 MACD·RSI·거래량 셋만
+  function taChipsCompact(ta){
+    var ms = taMetrics(ta).filter(function(m){
+      return m.label === 'MACD' || m.label === 'RSI' || m.label === '거래량';
+    });
+    if(!ms.length) return '';
+    return '<div class="nlv-scancard-ta">' + ms.map(function(m){
+      return '<span class="t' + taDirCls(m.dir) + '" title="' + esc(m.title) + '">'
+        + esc(m.label) + ' ' + esc(m.txt) + '</span>';
+    }).join('') + '</div>';
+  }
   function renderScanCarousel(d){
     var rail = $id('nlvScanRail'); if(!rail) return;
     var picks = (d.picks || []).slice(0, 40);
@@ -19715,6 +19795,7 @@ html:root .page > *{ flex-shrink:0; }
         + pickChart(q && q.spark)
         + '<div class="nlv-scancard-foot"><span class="rank">랭크 ' + Math.round(rank * 100) + '</span>'
           + (pk.techLabel ? '<span class="tech">' + esc(pk.techLabel) + '</span>' : '') + '</div>'
+        + taChipsCompact(pk.ta)   // [V33.318] MACD·RSI·거래량
       + '</div>';
     }).join('');
     if(!rail.__scanBound){
@@ -20491,8 +20572,8 @@ body:has(#page-nnviz.active) .rail{
 </style>
 
 <!-- [Codex V33.314] Dedicated scoped design system. See AI_HANDOFF.md before changing model/UI contracts. -->
-<link rel="stylesheet" href="/brain-console.css?v=33.317">
-<link rel="stylesheet" href="/workspace-layout.css?v=33.317">
-<script src="/workspace-ui.js?v=33.317"></script>
+<link rel="stylesheet" href="/brain-console.css?v=33.318">
+<link rel="stylesheet" href="/workspace-layout.css?v=33.318">
+<script src="/workspace-ui.js?v=33.318"></script>
 </body>
 </html>

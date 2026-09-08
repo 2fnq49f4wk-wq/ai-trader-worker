@@ -7,7 +7,58 @@
 - Status: complete locally; deployment must be checked against this exact HEAD after push.
 - Owner: Claude
 - Branch: main (direct main authorized; no PR)
-- Last commit: HEAD / V33.317 (resolve with git log -1)
+- Last commit: HEAD / V33.318 (resolve with git log -1)
+- Base: V33.317 (같은 세션, 직전 커밋), 배포 run 34172044453 성공 확인 후 시작.
+- Scope: 사용자 지시 5건 — ① 지표&환율 화면 이름을 "뉴스·환율"로 ② 뉴스를 보려고 내리면
+  반쪽이 비는 비율 문제 재설계 ③ 작동 화면에서 "위원회 구성" 제거 ④ 잘려 있던 "판정 깔때기"·
+  "실시간 스캔 종목"을 완전하게 복구 ⑤ 실시간 스캔에 MACD 등 종목 지표 추가.
+
+### Claude V33.318 — 2026-09-08
+
+- **화면 이름 통일** (`public/index.html`): 좌측 네비·모바일 드로어·페이지 헤더를 전부
+  "뉴스·환율"로 맞추고, 탭 순서도 전체 브리핑 → 뉴스 → 환율 → 경제지표로 바꿨다.
+  V33.315에서 뉴스가 이 화면에 흡수됐는데 이름만 옛 이름이라 뉴스를 찾는 사람이 지나쳤다.
+- **뉴스·환율 레이아웃 재설계** (`public/index.html`, `public/workspace-layout.css`):
+  종전 `.market-grid` 는 2열이라 짧은 지표/환율 열과 긴 뉴스 열이 나란히 섰고, 뉴스를 읽으려
+  내려가면 반대쪽 절반이 통째로 비었다. 세 블록(뉴스·경제지표·환율)은 길이 차가 커서 무엇을
+  옆에 세워도 한쪽이 빈다 — 전부 제 줄에서 전체 폭을 쓰도록 세로로 쌓고, 남는 폭은 블록
+  ★안에서★ 채운다(뉴스는 다단 그리드, 표는 5열/3열이 넓게 펴진다). 뉴스 카드는 DOM 순서도
+  맨 앞으로 옮겨 화면 순서와 탭 순서를 맞췄다.
+- **≥1600px 에서 페이지가 쪼그라들던 진짜 원인** (`public/workspace-layout.css`):
+  `.page` 는 세로 flex 컨테이너(`.content`)의 아이템인데 `@media(min-width:1600px)` 에서
+  `margin:0 auto` 가 걸린다. ★교차축 auto 마진은 flex 의 stretch 를 끈다★ — 그 순간 페이지는
+  내용 폭(측정값 572px)으로 줄어든 뒤 가운데 정렬돼, 뉴스만 보는 뷰에서 양옆이 통째로 비었다.
+  전체 브리핑에선 경제지표 표(min-width:520px)가 폭을 벌려 증상이 가려져 있었다.
+  `#page-macro` 에 `width:100%` 를 주어 1720px 까지 채우고 그 이상에서만 가운데 정렬되는
+  원래 의도로 되돌렸다(이 페이지에만 한정 — 다른 화면의 전역 레이아웃은 건드리지 않았다).
+- **작동 화면에서 "위원회 구성" 제거** (`public/workspace-layout.css`): DOM 을 지우지 않고
+  `data-brain-view="operations"` 에서만 감춘다 — `#nlvCommittee` 를 찾는 renderCommittee 가
+  조용히 죽지 않게. 명부는 "02 모델 구조" 뷰에 그대로 있고, 맨 위 요약의 COMMITTEE 지표
+  (`#opsCommittee`)도 그대로라 가동 인원은 계속 보인다.
+- **잘린 패널 복구** (`public/workspace-layout.css`): V33.315~316 은 작동 화면을 100dvh 에
+  맞추려고 `.nnviz-content` 에 높이를 고정하고 자식마다 max-height + overflow 를 걸었다.
+  그래서 스캔 필름스트립은 `max-height:150px; overflow:hidden` 에 잘려 카드 아랫단이 사라졌고,
+  판정 깔때기는 `minmax(170px,1fr)` 칸 안에서 스크롤 막대에 갇혔다. 높이 고정과 클램프를
+  전부 걷어내 자연 높이로 흐르게 했다(페이지가 그냥 스크롤된다). 밀도(패딩·글자 크기)는 유지.
+- **실시간 스캔 종목 지표** (`src/index.js`, `public/index.html`, `public/brain-console.css`):
+  야간 스캔이 이미 `mlBuildFeatures` 로 구해 놓는 값을 픽에 실어 보낸다 — ★추가 계산·추가
+  fetch 0★. 반환이 featNames 순서의 숫자 배열이라, 이름→위치 색인을 루프 밖에서 한 번 만들고
+  픽마다 그 자리 값만 뽑아 `pk.ta` 로 붙였다(9종: rsi14·macdH·volSurge·ret5·ret20·atrPct·
+  rs20·maStack·taUpProb, 40종목만 저장되므로 크기 부담 없음). 화면은 ★피처 정의 그대로의
+  단위★ 로 적는다 — macdH 는 MACD 히스토그램을 가격 %로 정규화한 값이라 "원 MACD 값"이라
+  적지 않고, volSurge 는 20일 평균 대비 배수로 적는다. 스캔 카드엔 MACD·RSI·거래량 3종,
+  히어로엔 9종 전부를 타일로. 방향은 ★글자색★ 으로만 말한다(배경은 무채색 유지).
+  옛 스캔 결과엔 `ta` 가 없으므로 "지표는 다음 야간 스캔부터 표시됩니다"로 정직하게 비운다.
+- 검증: `node --check` 통과, 86종 게이트 전체 통과, `git diff --check` 통과. 헤드리스
+  크로미움에 API 목업을 주입해(1600×1000 / 390×844) 다섯 건 모두 눈으로 확인 — 뉴스 3단
+  전체 폭, 지표 타일 마지막 줄까지 채움, 필름스트립·깔때기 잘림 없음, 위원회 구성 사라짐,
+  모바일 가로 오버플로 없음(scrollWidth == clientWidth).
+- 학습·주문 트리거 없음, 정책 값 변경 없음, 시크릿 없음.
+
+## Previous handoff — V33.317
+
+- Owner: Claude
+- Last commit: V33.317 (resolve with `git log`)
 - Base: V33.316 (같은 세션, 직전 커밋), deployment verified live before this round started.
 - Scope: V33.316 을 배포한 직후 사용자가 재지적 — "배경색 푸른색은 빼라 두뇌 관측에서 글자만
   색 넣고 다시 모노크롬화시켜 배경이랑 창 색은 그리고 최우선 후보 말고 실시간으로 스캔하는
