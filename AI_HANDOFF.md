@@ -4,6 +4,26 @@
 
 ## Current handoff
 
+- Status: V33.324 replacement renderer implemented and browser-verified locally; verify live build after main push.
+- Owner: Codex
+- Branch: main (direct main and live deployment explicitly requested)
+- Last commit: HEAD / V33.324 (resolve with git log -1)
+- Base: a5d8e14 / V33.323; origin/main was fetched and matched before work.
+- Scope: delete existing DNN-family and SEQ visualization designs and implement new responsive living neural scenes.
+
+### Codex V33.324 — 2026-09-09
+
+- Deleted old SVG neural renderer, node tooltip/hit-test renderer, SEQ card geometry, animation/gesture renderer, and their dedicated styles (~1,100 HTML lines). Model payload/status/banner and admission logic remain in existing adapters.
+- New `public/neural-observatory.js` + `.css`: independent Canvas engine. DNN has golden-angle neuron bodies and moving axon signals; SEQ has 3D helical time/stage bundles with perspective, camera orbit, pinch/drag/keyboard, zoom, fit, head/block/time and individual node selectors.
+- Every DNN neuron retains its source index/value (live payload: 2,428). SEQ overview samples non-selected time slices for speed; selected time includes every dimension, and full-detail mode exposes all 2,737 nodes. Only measured attention carries numeric edge weights. Animation is explicitly marked illustrative, not live activation.
+- DNN static raster cache; <=100 moving signals, 30fps scheduling, device pixel ratio capped at 1.5. Intersection/visibility observers stop hidden scenes; replacement mount disposes the prior renderer. Reduced-motion disables motion by default. Full-detail selection stops automatic rotation.
+- New engine executable tests replace old SVG-shape assertions; retained server-side SEQ training/weight/probe checks. The new gate is wired into deploy.yml. Browser probe tests detail nodes, actual inspector data, head/block/time, zoom, keyboard fit, pause/resume and hidden-scene pause/resume.
+- Browser: 390x844, 820x1180, 1366x900 observed without document horizontal overflow. SEQ overview average Canvas draw ~2.4ms; mixed full-detail interaction probe ~5.5ms in this browser (not a physical-device frame-rate guarantee). Screenshots in workspace `outputs/neural324-*`.
+- Final validation: all 87 `tools/check-*.mjs` gates passed; after final mobile layout/cache adjustments, neural engine, inline JS, AI operations checks and `git diff --check` passed again. DNN cached average draw ~0.47ms. Narrow DNN uses a 3-column serpentine arrangement rather than shrinking all 12 layers into one tiny row.
+- No training/order actions, model algorithm, binding or cron changes. Old shared status panels/sidebar remain outside this renderer scope.
+
+## Previous handoff — V33.323
+
 - Status: complete locally; deployment must be checked against this exact HEAD after push.
 - Owner: Codex
 - Branch: main (direct main authorized; no PR)

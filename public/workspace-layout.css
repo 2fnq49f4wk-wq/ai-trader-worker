@@ -66,58 +66,6 @@ html:is(:root,[data-theme]) body #page-nnviz #nnvStruct::before { display:none; 
 #page-nnviz .brain-map-state { float:right; font-size:9px; color:var(--ops-ink2); }
 #page-nnviz .brain-map-experts { display:grid; grid-template-columns:repeat(auto-fit,minmax(135px,1fr)); gap:6px; }
 #page-nnviz .brain-map-foot { grid-column:1/-1; font-size:10px; color:var(--ops-ink3); border-top:1px solid var(--ops-line); padding-top:12px; line-height:1.6; }
-/* Codex V33.316: model observatory redraw. Scope stays inside #page-nnviz; data paths and click handlers are unchanged. */
-#page-nnviz .nnv-neural-deck {
-  background:
-    linear-gradient(90deg, rgba(255,255,255,.045) 1px, transparent 1px) 0 0/28px 28px,
-    linear-gradient(180deg, rgba(255,255,255,.035) 1px, transparent 1px) 0 0/28px 28px,
-    radial-gradient(95% 110% at 50% 45%, #181818 0%, #070707 72%);
-  border:1px solid var(--ops-line);
-  min-height:360px;
-}
-#page-nnviz .nnv-neural-svg {
-  background:transparent!important;
-  filter:drop-shadow(0 0 12px rgba(255,255,255,.08));
-}
-#page-nnviz .nnv-neural-svg .nnv-slice rect {
-  shape-rendering:geometricPrecision;
-}
-#page-nnviz .nnv-neural-svg .nnv-node {
-  filter:drop-shadow(0 0 5px rgba(255,255,255,.25));
-}
-#page-nnviz.active .nnv-neural-svg .nnv-node.nnv-core {
-  animation:nnvAliveNode 2.4s ease-in-out infinite;
-}
-#page-nnviz.active .nnv-neural-svg .nnedge-flow {
-  stroke-dasharray:4 18;
-  animation:nnvSignalFlow 3.8s linear infinite;
-}
-#page-nnviz .sq3-neural {
-  background:
-    linear-gradient(90deg, rgba(255,255,255,.05) 1px, transparent 1px) 0 0/30px 30px,
-    linear-gradient(180deg, rgba(255,255,255,.035) 1px, transparent 1px) 0 0/30px 30px,
-    radial-gradient(100% 120% at 48% 42%, #1a1a1a 0%, #050505 74%)!important;
-  border-top:1px solid var(--ops-line);
-  min-height:360px;
-}
-#page-nnviz .sq3-neural svg {
-  filter:drop-shadow(0 0 14px rgba(255,255,255,.10));
-}
-#page-nnviz .sq3-neural path:not(.sq3-hit),
-#page-nnviz .sq3-neural circle {
-  vector-effect:non-scaling-stroke;
-}
-#page-nnviz.active .sq3-neural circle {
-  animation:sq3NeuronBreath 2.8s ease-in-out infinite;
-}
-#page-nnviz.active .sq3-neural path[stroke] {
-  stroke-dasharray:10 18;
-  animation:sq3WireFlow 5.2s linear infinite;
-}
-@keyframes nnvSignalFlow { to { stroke-dashoffset:-44; } }
-@keyframes nnvAliveNode { 0%,100% { opacity:.58; } 50% { opacity:1; } }
-@keyframes sq3WireFlow { to { stroke-dashoffset:-56; } }
-@keyframes sq3NeuronBreath { 0%,100% { opacity:.72; } 50% { opacity:1; } }
 html:is(:root,[data-theme]) body #page-nnviz[data-brain-view="operations"] .nlv-cmlist { grid-template-columns:repeat(auto-fit,minmax(90px,1fr))!important; }
 html:is(:root,[data-theme]) body #page-nnviz[data-brain-view="operations"] .nlv-cm { min-height:34px; padding:7px!important; }
 html:is(:root,[data-theme]) body #page-nnviz[data-brain-view="operations"] .nlv-cm :is(.cm-role,.cm-w) { display:none!important; }

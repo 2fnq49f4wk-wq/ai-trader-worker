@@ -163,40 +163,6 @@ console.log("\n②-b 노드 ★값★ — 가중치만으로는 못 그린다(�
     "표본 입력값도 함께 내려간다(피처를 눌렀을 때 '그때 값' 을 보여줄 수 있다)", "표본 입력을 안 내려보낸다 — 피처 상세가 반쪽이 된다");
 }
 
-console.log("\n②-c 눌러서 볼 수 있는가 — 피처 75개·노드 32개가 낱개로 있는가");
-{
-  const draw = grabFn("sq3Draw") || "", pick = grabFn("sq3DrawPick") || "";
-  /* [V33.290] 종전엔 `NB=IF?IF.length:24` 라는 식을 찾았다. 입력이 시점별 카드로 바뀌며
-     그 식이 사라지자 검사가 깨졌는데, ★계약은 안 깨졌다★ — 피처는 여전히 낱개로 그려지고
-     각자 자기 자리를 갖는다. 계약을 직접 묻는다: 피처마다 고를 수 있는 표(data-pick)가 붙는가.
-     (몇 개가 실제로 나오는지는 check-seq3d-render 가 렌더해서 센다.) */
-  chk(/data-pick="feat:/.test(draw),
-    "입력 피처를 ★낱개로★ 그린다(묶으면 무엇이 세게 들어가는지 못 묻는다)",
-    "입력을 묶음 막대로만 그린다 — 개별 피처를 가리킬 수 없다");
-  chk(/data-pick="feat:/.test(draw) && /data-pick="node:/.test(draw) && /data-pick="step:/.test(draw),
-    "피처·노드·시점이 전부 클릭 대상이다", "클릭 대상이 없다 — 볼 수는 있어도 물어볼 수는 없다");
-  chk(/<title>/.test(draw), "마우스를 올리면 이름과 값이 뜬다(네이티브 title)", "툴팁이 없다");
-  chk(/nSrc=d\.nodes\.byBlock&&d\.nodes\.byBlock\[S\.blk\|\|0\]/.test(draw.replace(/\s/g, "").replace("varbb=", "nSrc=")) ||
-      /d\.nodes\.byBlock\[S\.blk/.test(draw.replace(/\s/g, "")),
-    "카드 안 칸은 ★그 블록의★ 노드 값을 그린다(층마다 다른 값이다)",
-    "카드 안이 가중치 노름뿐이거나 블록 구분이 없다");
-  chk(/neg\?'255,110,140':'0,224,255'/.test(draw.replace(/\s/g, "")),
-    "부호를 색으로 나눈다(절댓값만 그리면 밀어 올린 노드와 눌러 내린 노드가 같아 보인다)", "부호가 안 보인다");
-  chk(/addEventListener\('click'/.test(HV) && /data-pick/.test(HV),
-    "클릭은 위임으로 받는다(SVG 를 매 프레임 다시 만들므로 개별 리스너는 죽는다)", "개별 리스너를 단다 — 회전 한 번에 죽는다");
-  /* ★설명 문장을 찾으면 안 된다.★ 처음엔 '받는 주목' 이라는 말을 찾았는데, 필드 라벨에서
-     그 말을 지워도 아래 설명 문단에 같은 말이 남아 검사가 통과했다. 세어야 할 것은 말이 아니라
-     ★계산★ 이다: 행(내가 보는 것)과 열(내가 받는 것)은 다른 합이다. 열 합을 실제로 구하는가. */
-  chk(/col\+=\(AB\[hh\]\[r2\]&&AB\[hh\]\[r2\]\[t\]\)\|\|0/.test(pick.replace(/\s/g, "")),
-    "'받는 주목' 을 어텐션 행렬의 ★열★ 로 실제 계산한다(행과 열은 다른 값이다)",
-    "★열 합을 구하지 않는다 — 행 하나로 두 방향을 다 말하면 그 중 하나는 틀린 값이다★");
-  chk(/보는 비중/.test(pick), "두 방향을 화면에 구분해 적는다", "방향 구분이 화면에 없다");
-  chk(/그 표본이 지나갈 때의 실제 값/.test(pick),
-    "노드 상세가 '가중치가 아니라 그 표본의 값' 이라고 명시한다", "값의 출처를 안 적는다");
-  chk(/SQ3\.cells && SQ3\.spin/.test(HV) && /SQ3\.spin=false/.test(HV.replace(/\s/g, "")),
-    "낱개 보기를 켜면 자동회전을 멈춘다(조용히 느려지지 않는다)", "낱개 + 회전을 같이 돌린다 — 프레임이 끊긴다");
-}
-
 console.log("\n③ 미학습·구 판 — 모르는 것을 아는 것처럼 그리지 않는가");
 {
   const v = M._seqVizFrom(null, null);
@@ -213,82 +179,8 @@ console.log("\n③ 미학습·구 판 — 모르는 것을 아는 것처럼 그�
     "미학습 화면이 '강도는 표시하지 않는다' 고 명시한다", "미학습인데 그림만 그럴듯하게 그린다");
 }
 
-console.log("\n④ 3D 사영이 정말 3D 인가 — 회전·원근·깊이순서");
-{
-  const src = [grabFn("sq3Proj"), grabFn("sq3Quad")].filter(Boolean).join("\n");
-  chk(!!grabFn("sq3Proj") && !!grabFn("sq3Quad"), "사영 함수를 화면 코드에서 떼어 왔다", "사영 함수를 못 찾는다 — 검사가 헛돈다");
-  const F = new Function(src + "\nreturn { sq3Proj: sq3Proj, sq3Quad: sq3Quad };")();
-  const C = { yaw: 0, pitch: 0, dist: 900, s: 1, cx: 450, cy: 250 };
-  /* 원근 — 멀리 있는 같은 크기의 것이 작게 보여야 한다. 아니면 그건 3D 가 아니라 기울인 2D 다. */
-  const near = F.sq3Proj({ x: 100, y: 0, z: -200 }, C), far = F.sq3Proj({ x: 100, y: 0, z: 200 }, C);
-  chk(Math.abs(near.X - C.cx) > Math.abs(far.X - C.cx) && near.f > far.f,
-    `원근이 있다 (가까운 쪽 배율 ${near.f.toFixed(3)} > 먼 쪽 ${far.f.toFixed(3)})`,
-    "원근이 없다 — 깊이가 크기로 안 나타나면 3D 로 안 읽힌다");
-  /* 회전 — yaw 를 돌리면 화면 좌표가 바뀌어야 한다(안 바뀌면 드래그가 죽은 것이다). */
-  const p0 = F.sq3Proj({ x: 100, y: 0, z: 0 }, C);
-  const p1 = F.sq3Proj({ x: 100, y: 0, z: 0 }, Object.assign({}, C, { yaw: 0.7 }));
-  chk(Math.abs(p0.X - p1.X) > 1, `yaw 회전이 화면에 반영된다 (Δ ${Math.abs(p0.X - p1.X).toFixed(1)}px)`,
-    "yaw 를 돌려도 그림이 안 변한다 — 회전이 죽어 있다");
-  const q0 = F.sq3Proj({ x: 0, y: 100, z: 0 }, C);
-  const q1 = F.sq3Proj({ x: 0, y: 100, z: 0 }, Object.assign({}, C, { pitch: 0.7 }));
-  chk(Math.abs(q0.Y - q1.Y) > 1, `pitch 회전이 화면에 반영된다 (Δ ${Math.abs(q0.Y - q1.Y).toFixed(1)}px)`,
-    "pitch 를 돌려도 그림이 안 변한다");
-  /* ★Y 축은 위가 위여야 한다★ — SVG 는 Y 가 아래로 자란다. 부호를 빼먹으면 그림이 뒤집힌다. */
-  const up = F.sq3Proj({ x: 0, y: 50, z: 0 }, C), dn = F.sq3Proj({ x: 0, y: -50, z: 0 }, C);
-  chk(up.Y < dn.Y, "위(y+)가 화면에서 위로 간다(SVG 의 뒤집힌 Y 를 처리한다)", "★그림이 위아래로 뒤집혀 있다★");
-  /* 깊이 정렬 — 화가 알고리즘의 근거값이 실제 깊이를 따라야 한다. */
-  const qn = F.sq3Quad([{x:0,y:0,z:-200},{x:10,y:0,z:-200},{x:10,y:10,z:-200},{x:0,y:10,z:-200}], C);
-  const qf = F.sq3Quad([{x:0,y:0,z:200},{x:10,y:0,z:200},{x:10,y:10,z:200},{x:0,y:10,z:200}], C);
-  chk(qf.z > qn.z, `깊이값이 먼 면에서 더 크다 (먼 ${qf.z.toFixed(0)} > 가까운 ${qn.z.toFixed(0)}) — 정렬 기준이 산다`,
-    "깊이값이 거꾸로다 — 먼 면이 가까운 면을 덮는다");
-  /* ★무대축을 정면으로 보면 단계 5개가 한 자리에 겹친다★ — 돌려보다 그 각도에 닿으면
-     화면이 고장난 것처럼 보인다. 한계가 없으면 그 각도는 반드시 나온다(자동회전이 계속
-     같은 방향으로 도니까). 실제로 처음엔 그랬다. */
-  const clamped = /YAW_MAX:\s*([0-9.]+)/.exec(HV);
-  chk(clamped && parseFloat(clamped[1]) <= 1.2,
-    `회전 각도가 ±${clamped ? clamped[1] : "?"}rad 로 묶여 있다 — 단계가 겹치는 정면 각도에 못 간다`,
-    "회전에 한계가 없다 — 무대축 정면에서 단계 5개가 한 자리로 겹쳐 아무것도 안 읽힌다");
-  /* [V33.290] 부호가 상수(-1/1)에서 방향변수(_sg)로 바뀌었다 — 자동회전이 정면을 안 지나게
-     한쪽에서만 돌기 때문이다. 계약("한계에 닿으면 돌아선다")은 그대로다.
-     실제로 왕복하는지는 check-seq3d-render ⑥ 이 틱을 3,000회 돌려 확인한다. */
-  chk(/SQ3\.dir = -?_sg/.test(HV) || (/SQ3\.dir = -1/.test(HV) && /SQ3\.dir = 1/.test(HV)),
-    "자동회전은 한계 안에서 왕복한다(한계에 닿아 멈추지 않는다)", "자동회전이 한계에서 멎는다");
-  chk(/sq3Clamp\(SQ3\.yaw/.test(HV) && /sq3Clamp\(SQ3\.pitch/.test(HV),
-    "드래그도 같은 한계를 따른다(손으로는 넘어갈 수 있으면 한계가 아니다)", "드래그가 한계를 무시한다");
-  chk(/parts\.sort\(function\(a,b\)\{ return b\.z-a\.z; \}\)/.test(HV.replace(/\s+/g, " ").replace(/parts\.sort\(function \(a, b\) \{ return b\.z - a\.z; \}\)/, "parts.sort(function(a,b){ return b.z-a.z; })")) ||
-      /parts\.sort\([\s\S]{0,60}b\.z\s*-\s*a\.z/.test(HV),
-    "먼 것부터 그린다(화가 알고리즘)", "정렬 없이 그린다 — 앞뒤가 뒤섞인다");
-}
-
-console.log("\n⑤ 어텐션 집계 — 어느 시점이 어느 시점을 보는가(이 화면의 존재 이유)");
-{
-  const src = grabFn("sq3AttnRow");
-  chk(!!src && !!grabFn("sq3AttnOf"), "집계 함수를 화면 코드에서 떼어 왔다", "집계 함수를 못 찾는다");
-  const f0 = new Function(grabFn("sq3AttnOf") + "\n" + src + "\nreturn sq3AttnRow;")();
-  const f = (dd, h, r, L2) => f0(dd, h, r, L2, -1);
-  /* 헤드 0 은 t=3 만, 헤드 1 은 t=9 만 보게 만든 인공 어텐션 — 집계가 어느 헤드를 봤는지 드러난다. */
-  const one = (k) => { const r = new Array(L).fill(0); r[k] = 1; return r; };
-  const d = { trained: true, attnByBlock: [[Array.from({ length: L }, () => one(3)), Array.from({ length: L }, () => one(9))]] };
-  const h0 = f(d, 0, L - 1, L), h1 = f(d, 1, L - 1, L), all = f(d, -1, L - 1, L);
-  chk(h0 && h0[3] === 1 && h0[9] === 0, "헤드 #0 을 고르면 헤드 #0 만 본다", "헤드 선택이 안 먹는다 — 다른 헤드가 섞인다");
-  chk(h1 && h1[9] === 1 && h1[3] === 0, "헤드 #1 을 고르면 헤드 #1 만 본다", "헤드 선택이 안 먹는다");
-  chk(all && Math.abs(all[3] - 0.5) < 1e-9 && Math.abs(all[9] - 0.5) < 1e-9,
-    "'전체' 는 헤드 평균이다(합이 아니다 — 합이면 비중이 1 을 넘는다)", "전체 집계가 평균이 아니다");
-  chk(Math.abs(all.reduce((a, b) => a + b, 0) - 1) < 1e-9, "집계 결과의 합이 1 이다", "집계 합이 1 이 아니다 — 비중으로 못 읽는다");
-  /* 행 선택 — 다른 시점을 고르면 다른 행을 봐야 한다. */
-  const d2 = { trained: true, attnByBlock: [[Array.from({ length: L }, (_, t) => one(t))]] };
-  chk(f(d2, 0, 2, L)[2] === 1 && f(d2, 0, 11, L)[11] === 1,
-    "보는 시점을 바꾸면 그 시점의 행을 읽는다", "★행 선택이 고정돼 있다 — 어느 시점을 골라도 같은 그림이다★");
-  /* ★없으면 null.★ 0 배열을 주면 화면은 "아무 데도 안 본다" 는 틀린 말을 그린다. */
-  chk(f({ trained: false }, -1, 0, L) === null && f({ trained: true, attnByBlock: null }, -1, 0, L) === null,
-    "어텐션이 없으면 null 이다(0 으로 채우지 않는다)", "없는 어텐션을 0 으로 채운다 — '안 본다' 는 틀린 그림이 된다");
-  /* ★미학습 표시인데 어텐션 배열이 남아 있는 상태★ 는 실제로 생긴다(캐시된 옛 응답 위에
-     새 미학습 응답이 얹히는 경로). 그때 옛 어텐션을 그리면 학습도 안 된 모델이
-     "이 시점을 본다" 고 말하게 된다 — trained 를 보는 이유가 그것이다. */
-  chk(f({ trained: false, attnByBlock: [[Array.from({ length: L }, () => one(3))]] }, -1, L - 1, L) === null,
-    "미학습 응답에 옛 어텐션이 남아 있어도 그리지 않는다", "★미학습인데 남아 있던 어텐션을 그린다★");
-  chk(f({ trained: true, attnByBlock: [[]] }, 5, 0, L) === null, "없는 헤드를 고르면 null 이다", "없는 헤드에서 값을 만든다");
-}
+// Codex: geometry, attention and node mapping run against the replacement engine.
+await import('./check-neural-engine.mjs');
 
 console.log("\n⑥ 배선 — 탭·라우팅·기본 시점");
 {
@@ -298,9 +190,6 @@ console.log("\n⑥ 배선 — 탭·라우팅·기본 시점");
     "서버가 seq 를 전용 렌더러 데이터로 보낸다", "★탭은 있는데 라우팅이 없다 — 조용히 DNN 구조를 보여준다★");
   chk(/d\.kind === 'seq'\)\{ NNV_renderSeq3D\(d\); return; \}/.test(HV),
     "화면이 kind==='seq' 를 3D 렌더러로 보낸다", "3D 렌더러로 안 간다 — 다른 렌더러가 잘못 그린다");
-  const seq3d = grabFn("NNV_renderSeq3D") || "";
-  chk(/SQ3\.row = L-1/.test(seq3d.replace(/\s/g, " ")) || /SQ3\.row\s*=\s*L\s*-\s*1/.test(seq3d),
-    "기본으로 보는 시점은 ★마지막★ 이다 — 모델이 실제로 읽는 자리다", "기본 시점이 마지막이 아니다 — 첫 화면이 안 쓰이는 자리를 보여준다");
   chk(/vizSeq: _vz/.test(code) && /body\.probe\[0\]/.test(code),
     "관측용 표본은 probe(트레이너 검증구간 실제 행)에서 온다", "관측 표본의 출처가 없다");
 }

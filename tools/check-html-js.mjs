@@ -685,7 +685,7 @@ console.log("\n⑨ 렌더러 스코프 — 도우미가 그 자리에 있는가"
   const sbd = (m) => { sbad++; console.error("  FAIL " + m); };
   const hv9 = readFileSync(new URL("../public/index.html", import.meta.url), "utf8");
   const HELPERS = ["has", "pct", "esc", "chip", "n0", "col", "ico"];
-  const SCOPES = [["두뇌관측(NNV)", "window.openNnViz", "// [V12 재디자인] 전 층 가시화"]];
+  const SCOPES = [["두뇌관측(NNV)", "window.openNnViz", "// Codex V33.324: legacy SVG"]];
   for (const [nm, a, b] of SCOPES) {
     const i0 = hv9.indexOf(a), i1 = hv9.indexOf(b, i0);
     if (i0 < 0 || i1 < 0) { sbd(nm + " 스코프를 찾지 못했다 — 표식이 바뀌었으면 이 게이트도 함께 고칠 것"); continue; }

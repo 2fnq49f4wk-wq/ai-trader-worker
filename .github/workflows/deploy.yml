@@ -51,6 +51,8 @@ jobs:
       #   중괄호가 어긋나 우측 사이드바·AI두뇌 창이 통째로 죽었는데 게이트를 그대로 통과했다.
       - name: Frontend inline script check
         run: node tools/check-html-js.mjs
+      - name: Canvas neural observatory contracts
+        run: node tools/check-neural-engine.mjs
       # [V33.309/311] AI 작동 관제실 — 연결 텔레메트리·NOW 브리핑이 실데이터에 배선돼
       #   있는가, HTTP 오류가 정상 응답으로 오인되지 않는가, 유동형 모바일 레이아웃인가.
       - name: AI operations UI contract check
