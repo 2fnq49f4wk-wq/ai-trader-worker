@@ -73,10 +73,14 @@ html:is(:root,[data-theme]) body #page-nnviz[data-brain-view="operations"] .nlv-
 html:is(:root,[data-theme]) body #page-nnviz[data-brain-view="operations"] .nlv-tp { flex-wrap:nowrap; gap:5px; }
 html:is(:root,[data-theme]) body #page-nnviz[data-brain-view="operations"] .nlv-tp-id .sym { font-size:18px!important; }
 #page-nnviz[data-brain-view="operations"] .nlv-tp-num .vd { max-width:145px; font-size:8px; white-space:normal; }
-#page-nnviz[data-brain-view="operations"] .nlv-funnel { padding:8px 12px; gap:6px; }
+/* [V33.322] 판정 깔때기만 한 단계 더 촘촘하게(사용자: "아주 조금 줄여라").
+   글자 크기는 건드리지 않고 여백·막대 두께만 줄인다 — 읽는 데 지장 없는 선에서. */
+#page-nnviz[data-brain-view="operations"] .nlv-funnel { padding:5px 12px 6px; gap:3px; }
 #page-nnviz[data-brain-view="operations"] .nlv-fstep { grid-template-columns:76px minmax(0,1fr) 44px; gap:5px; padding:0!important; }
-#page-nnviz[data-brain-view="operations"] .nlv-fbar { height:9px; }
-#page-nnviz[data-brain-view="operations"] .nlv-stat { padding:5px 8px; }
+#page-nnviz[data-brain-view="operations"] .nlv-fbar { height:8px; }
+#page-nnviz[data-brain-view="operations"] .nlv-stat { padding:4px 8px; }
+/* 카드 머리글도 이 카드에서만 살짝 낮춘다(다른 카드 머리글은 그대로 둔다). */
+html:is(:root,[data-theme]) body #page-nnviz[data-brain-view="operations"] .nlv-funnel-wrap .nlv-sec-h { padding:7px 12px!important; }
 #page-nnviz[data-brain-view="operations"] .nlv-stat .v { font-size:12px; }
 #page-nnviz[data-brain-view="operations"] .nlv-top { padding:5px 8px; }
 /* At workstation sizes, only the operation view is sized to the viewport. Evidence remains scrollable. */

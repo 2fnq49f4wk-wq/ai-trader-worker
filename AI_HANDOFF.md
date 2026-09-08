@@ -7,7 +7,26 @@
 - Status: complete locally; deployment must be checked against this exact HEAD after push.
 - Owner: Claude
 - Branch: main (direct main authorized; no PR)
-- Last commit: HEAD / V33.321 (resolve with git log -1)
+- Last commit: HEAD / V33.322 (resolve with git log -1)
+- Base: V33.321 (같은 세션, 직전 커밋), 배포 run 34179972779 성공 확인 후 시작.
+- Scope: 사용자 지시 — "판정 깔때기 크기 아주 조금 줄여라".
+
+### Claude V33.322 — 2026-09-08
+
+- **판정 깔때기만 한 단계 촘촘하게** (`public/workspace-layout.css`): 글자 크기는 그대로 두고
+  여백·막대 두께만 줄였다 — `.nlv-funnel` 패딩 8px→5/6px, 행 간격 6px→3px, 막대 9px→8px,
+  KPI 칸 패딩 5px→4px. 카드 머리글도 이 카드에서만 10px→7px 로 낮췄다(다른 카드 머리글은
+  건드리지 않았다 — 실측으로 "실시간 스캔 종목" 머리글이 35px 로 유지되는 것 확인).
+- 실측: `.nlv-funnel-wrap` 287px → 262px(-25px, 약 9%). 머리글 35→29, 본문 174→157,
+  KPI 46→44. "아주 조금"이라는 요청에 맞춘 폭이며, 5개 행·수치·퍼센트는 그대로 읽힌다.
+- 검증: `node --check` 통과, 86종 게이트 전체 통과, `git diff --check` 통과, 1366px 화면
+  스크린샷으로 가독성 확인.
+- 학습·주문 트리거 없음, 정책 값 변경 없음, 시크릿 없음.
+
+## Previous handoff — V33.321
+
+- Owner: Claude
+- Last commit: V33.321 (resolve with `git log`)
 - Base: V33.320 (같은 세션, 직전 커밋), 배포 run 34178419604 성공 확인 후 시작.
 - Scope: 사용자가 실제 화면 캡처와 함께 "이걸 비율이 맞다 하는거냐? 다시 디자인해". V33.320 의
   가로 배치가 사용자 화면 폭에서 그대로 접혀 있었다 — 추측 말고 실측으로 원인을 잡고 재설계.
