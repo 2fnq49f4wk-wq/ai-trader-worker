@@ -4,7 +4,7 @@
 
 ## Current handoff
 
-- Status: V33.324 replacement renderer implemented and browser-verified locally; verify live build after main push.
+- Status: complete; V33.324 deployed and verified in the production browser.
 - Owner: Codex
 - Branch: main (direct main and live deployment explicitly requested)
 - Last commit: HEAD / V33.324 (resolve with git log -1)
@@ -20,6 +20,7 @@
 - New engine executable tests replace old SVG-shape assertions; retained server-side SEQ training/weight/probe checks. The new gate is wired into deploy.yml. Browser probe tests detail nodes, actual inspector data, head/block/time, zoom, keyboard fit, pause/resume and hidden-scene pause/resume.
 - Browser: 390x844, 820x1180, 1366x900 observed without document horizontal overflow. SEQ overview average Canvas draw ~2.4ms; mixed full-detail interaction probe ~5.5ms in this browser (not a physical-device frame-rate guarantee). Screenshots in workspace `outputs/neural324-*`.
 - Final validation: all 87 `tools/check-*.mjs` gates passed; after final mobile layout/cache adjustments, neural engine, inline JS, AI operations checks and `git diff --check` passed again. DNN cached average draw ~0.47ms. Narrow DNN uses a 3-column serpentine arrangement rather than shrinking all 12 layers into one tiny row.
+- Live evidence: implementation commit `b5b5fa530969cdc5604364a3a8bef9405ef9f92a`; GitHub deployment run `34269735567` completed successfully. Production returned `lux-build=V33.324`. Production SEQ browser probe at 1366x900 passed detail/block/head/time/zoom/pause/hidden-resume; DNN at 390x844 rendered 2,428 neurons / 2,992 structural edges without horizontal overflow, average cached draw 0.64ms. No browser JS errors. Final screenshots: `outputs/neural324-live-seq.png`, `outputs/neural324-live-dnn-mobile.png`. This follow-up handoff commit changes documentation only.
 - No training/order actions, model algorithm, binding or cron changes. Old shared status panels/sidebar remain outside this renderer scope.
 
 ## Previous handoff — V33.323
