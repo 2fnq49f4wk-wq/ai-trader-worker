@@ -208,6 +208,8 @@ jobs:
       #   한편 정확도 하한이 동전보다 낮은 부스터(XGB 0.4836)가 위원회에서 표를 던지고 있었다.
       - name: 모델 증거 계약 검사 (GPU/워커 분리 · 표본 대표성 · 위원 자격)
         run: node tools/check-model-evidence.mjs
+      - name: Forward ledger and strategy route regression
+        run: node tools/check-forward-route.mjs
       # [V33.201] 학습 파이프라인이 brain 에서 매번 죽었다(503). 시간은 45/150초로 남아 있었으니
       #   시간이 아니라 ★요청당 128MB★ 를 넘긴 것이다 — 6만 행짜리 표본을 원본 문자열·파싱본·
       #   표준화 사본 세 벌로 들고 있었다(65차원 × 60,000 = 한 벌 약 38MB).

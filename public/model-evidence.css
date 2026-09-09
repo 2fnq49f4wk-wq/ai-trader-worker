@@ -1,0 +1,25 @@
+/* Codex V33.329: scoped monochrome evidence workbench; no sidebar or other-page overrides. */
+#page-nnviz:not([data-brain-view="models"]) .model-evidence{display:none}
+#page-nnviz .model-evidence{margin:12px 0 18px;border:1px solid #343434;background:linear-gradient(145deg,#191919,#0c0c0c);border-radius:14px;padding:20px;color:#eee;contain:layout style}
+#page-nnviz .model-evidence header{display:flex;align-items:center;justify-content:space-between;gap:14px;flex-wrap:wrap}
+#page-nnviz .evidence-eyebrow{font-size:10px;letter-spacing:.16em;color:#aaa}
+#page-nnviz .model-evidence h3{margin:7px 0 0;font-size:19px;letter-spacing:-.035em;font-weight:600}
+#page-nnviz #modelEvidenceCount{font:12px ui-monospace,monospace;padding:8px 11px;border:1px solid #555;border-radius:6px;white-space:nowrap}
+#page-nnviz .evidence-intro{font-size:12px;line-height:1.7;color:#bbb;margin:12px 0 16px;max-width:85ch}
+#page-nnviz .evidence-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(min(100%,280px),1fr));gap:7px;align-items:start}
+#page-nnviz .evidence-card{min-width:0;border:1px solid #363636;background:#111;border-radius:8px;overflow:hidden}
+#page-nnviz .evidence-card summary{display:flex;align-items:center;gap:10px;min-height:48px;padding:10px 12px;cursor:pointer;list-style:none;box-sizing:border-box}
+#page-nnviz .evidence-card summary::-webkit-details-marker{display:none}
+#page-nnviz .evidence-card summary:after{content:'+';color:#aaa;font:16px monospace}
+#page-nnviz .evidence-card[open] summary:after{content:'−'}
+#page-nnviz .evidence-card summary:hover{background:#232323}
+#page-nnviz .evidence-card summary:focus-visible{outline:2px solid #fff;outline-offset:-3px}
+#page-nnviz .evidence-name{font:600 12px ui-monospace,monospace;letter-spacing:.04em;margin-right:auto}
+#page-nnviz .evidence-tier{font-size:11px;color:#ccc;border:1px solid #4b4b4b;padding:3px 6px;border-radius:4px;white-space:nowrap}
+#page-nnviz [data-tier=full] .evidence-tier{background:#eee;color:#111;border-color:#eee}
+#page-nnviz [data-tier=provisional] .evidence-tier{border-style:dashed}
+#page-nnviz .evidence-weight{font:11px ui-monospace,monospace;color:#aaa}
+#page-nnviz .evidence-reason,#page-nnviz .evidence-measures{font-size:12px;line-height:1.7;margin:0;padding:0 12px 12px;overflow-wrap:anywhere}
+#page-nnviz .evidence-measures{color:#aaa;font-size:11px;border-top:1px solid #292929;padding-top:10px}
+#page-nnviz .model-evidence footer{margin-top:14px;font-size:10px;line-height:1.6;color:#aaa}
+@media(max-width:600px){#page-nnviz .model-evidence{padding:14px;border-radius:10px}#page-nnviz .model-evidence h3{font-size:17px}#page-nnviz .evidence-card summary{min-height:48px}}

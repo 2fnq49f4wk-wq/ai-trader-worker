@@ -1,0 +1,41 @@
+// Codex V33.329: execute production functions, including repeated forward queries.
+import assert from 'node:assert/strict';
+import { readFileSync } from 'node:fs';
+import { icForwardCheck, selectAiEntryRoute } from '../src/index.js';
+const cfg = {strategies:{trend:true,snap:true}};
+assert.equal(selectAiEntryRoute(true,null,cfg,new Set()),'trend');
+assert.equal(selectAiEntryRoute(true,{name:'SNAP'},cfg,new Set()),'snap');
+assert.equal(selectAiEntryRoute(true,null,cfg,new Set(['trend'])),null);
+assert.equal(selectAiEntryRoute(false,null,cfg,new Set()),null);
+assert.equal(selectAiEntryRoute(false,{name:'SNAP'},cfg,new Set(['snap'])),null);
+assert.equal(selectAiEntryRoute(true,{name:'SNAP'},{strategies:{snap:false}},new Set()),'trend');
+const src=readFileSync(new URL('../src/index.js',import.meta.url),'utf8');
+assert.match(src,/stratResults = stratResults\.filter\(function\(sr\)\{ return sr\.strategy === "scalp"; \}\)/,'AI entry cannot erase evaluated scalp');
+assert.match(src,/const _snapEntry = _snapCandidate && _snapCandidate.signal/,'snap reuses qualified setup');
+const ui=readFileSync(new URL('../public/model-evidence.js',import.meta.url),'utf8');
+assert.doesNotMatch(ui,/\b(?:fetch|setInterval|setTimeout)\s*\(/,'evidence adds no network or polling load');
+assert.doesNotMatch(ui,/\.innerHTML\s*=/,'evidence strings are text, not HTML');
+const state = new Map([['model',JSON.stringify({ts:Date.now()-86400000,maxId:10,maxTs:100,featVer:1})]]);
+let rows=Array.from({length:40},(_,i)=>({id:i+11,ts:200,ats:200,market:'US',feat:JSON.stringify([i%2]),label:i%2}));
+const db={prepare(sql){let args;return {bind(...a){args=a;return this;},async first(){
+ if(sql.startsWith('SELECT v'))return state.has(args[0])?{v:state.get(args[0])}:null;
+ if(sql.includes('COUNT(*)'))return {n:0};
+ throw Error(sql);
+},async run(){assert.match(sql,/INSERT INTO state/);state.set(args[0],args[1]);return {};},async all(){
+ assert.match(sql,/ORDER BY id ASC/);return {results:rows.filter(r=>r.id>args[1] && r.ts>args[2])};
+}};}};
+const opts={stateKey:'model',table:'samples',featVer:1,scoreFn:(_,v)=>v[0]};
+const first=await icForwardCheck(db,opts);
+assert.equal(first?.mode,'id+ts');assert.equal(first.batchN,40);assert.equal(first.n,40);
+assert.equal(JSON.parse(state.get('fwd_ledger:model')).hwmId,50);
+const second=await icForwardCheck(db,opts);
+assert.equal(second.fetched,0);assert.equal(second.n,40,'same observations cannot count twice');
+rows=rows.concat(Array.from({length:10},(_,i)=>({...rows[i],id:51+i})));
+assert.equal((await icForwardCheck(db,opts)).n,40,'small batches stay pending');
+rows=rows.concat(Array.from({length:20},(_,i)=>({...rows[i],id:61+i})));
+assert.equal((await icForwardCheck(db,opts)).n,70,'pending small batch retained until 30');
+state.set('fwd_ledger:model',JSON.stringify({ver:3,featVer:1,hwmId:0,hwmTs:200,v:[{key:'old',ts:Date.now(),n:4000,ic:0.3}]}));
+assert.equal((await icForwardCheck(db,opts)).n,70,'unverifiable legacy ledger reset before counting');
+state.set('fwd_ledger:model',JSON.stringify({ver:3,featVer:1,hwmId:80,hwmTs:0,v:[{key:'old',ts:Date.now()-46*86400000,n:4000,ic:0.3}]}));
+assert.equal((await icForwardCheck(db,opts)).n,0,'expired evidence removed even without new batch');
+console.log('PASS: real forward cursor, duplicate prevention, small batch, legacy repair, expiry, valid strategy routing');

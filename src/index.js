@@ -2981,7 +2981,7 @@ async function applySignalTypeWeights(DB, cfg) {
    화면·자가진단이 계속 "V33.272" 를 보고했다(운영 스냅샷이 그대로 그랬다). 배포는 됐는데
    ★배포됐다는 사실만 거짓말★ 을 하고 있었으니, "내 고침이 올라간 건가" 를 화면으로 확인할
    방법이 없었다. tools/check-build-ver.mjs 가 이제 소스에 적힌 최신 버전과 이 값을 대조한다. */
-const _BUILD_VER = "V33.328";
+const _BUILD_VER = "V33.329";
 
 // ═══ [V33.171] 평가 순서 계획 — ★승격과 순환을 교차해 굶주림을 구조적으로 없앤다★ ═══
 //   V33.50 의 형태트리거는 "급한 몇 종목을 앞으로 당긴다"는 의도였으나, 실제 운영로그에서는
@@ -13581,6 +13581,15 @@ function rvContextFor(panel, symbol) {
   } catch (e) { return null; }
 }
 
+// Codex V33.329: route only to a strategy with its own valid setup. A full bucket
+// never turns a trend signal into an unvalidated mean-reversion trade.
+function selectAiEntryRoute(trendEligible, snapSignal, cfg, held) {
+  const enabled = (cfg && cfg.strategies) || {};
+  if (snapSignal && enabled.snap !== false && !held.has("snap")) return "snap";
+  if (trendEligible && enabled.trend !== false && !held.has("trend")) return "trend";
+  return null;
+}
+
 function evaluateSnapEntry(price, dayPct, dailyData, cfg, regime, market) {
   const sn = Object.assign({}, DEFAULT_CFG.snapRules || {}, (cfg && cfg.snapRules) || {});
   const closes = dailyData && dailyData.closes;
@@ -14862,6 +14871,8 @@ async function executeBuy(DB, market, symbol, strategy, qty, price, signal, dail
           strategy: strategy, feePaid: fee, feeRemaining: fee,
           atrAtEntry: dailyAtr, stopPrice: stopPrice, peakPrice: price,
           signal: signal.name, signalMembers: signal.members || [signal.name],
+          // Codex V33.329: retain actual entry setup for outcome audits without changing confluence votes.
+          aiSetup: signal.setup || null,
           tp1Done: false, originalQty: qty,
           // [LUX-AI] 청산 시 학습용 — 진입 피처/사건키/모델확률/밴딧 컨텍스트
           entryFeatures: (signal && Array.isArray(signal.mlFeat)) ? signal.mlFeat : null,
@@ -19600,11 +19611,13 @@ async function runTradingCycle(env) {
           //   __aiReady가 아니면 규칙엔진이 비상 폴백으로 매매(아무것도 폐기/주입하지 않음).
           try {
             const _ap = (typeof AI_PARAMS !== "undefined") ? AI_PARAMS.aiPrimary : null;
+            const _aiSetups = stratResults.filter(function(sr){return sr.strategy !== "scalp";});
             // [V12.71] AI 자율운용: __aiReady면 AI가 단독 드라이버(규칙 진입 폐기 → AI가 스스로 종목 선정·진입).
             //   __aiReady가 아니면 규칙엔진이 비상 폴백으로 매매(stratResults 유지). 후보는 AI 야간 스캔픽 우선,
             //   보조로 상승추세 사전필터 — 최종 허용/차단·사이즈는 아래 위원회(mlDeepDecide + metaHardFilter)가 결정.
-            if (_ap && _ap.enabled && __aiReady) stratResults = [];   // AI 준비완료 → 규칙 진입신호 폐기(AI 단독 판단)
-            if (_ap && _ap.enabled && __aiReady && stratResults.length === 0 && !heldSymbols.has(symbol) && !strategiesHeldNow.has("trend")
+            // Codex V33.329: the independently evaluated intraday path was being erased here.
+            if (_ap && _ap.enabled && __aiReady) stratResults = stratResults.filter(function(sr){ return sr.strategy === "scalp"; });
+            if (_ap && _ap.enabled && __aiReady && stratResults.length === 0 && !heldSymbols.has(symbol)
                 && !crashGate.blockNew && canTrade && aiPrimaryUsed < (_ap.maxPerCycle || 8)
                 && closes.length >= 55) {
               const _picked = !!(__aiPickPool && __aiPickPool.has(symbol));   // AI가 야간 전종목 스캔에서 스스로 고른 종목
@@ -19625,7 +19638,13 @@ async function runTradingCycle(env) {
                   _techBuy = _tfBull >= 3 && _tf.now && String(_tf.now.label).indexOf("적극매도") < 0;
                 }
               } catch (e) {}
-              if (_picked || _uptrend || _techBuy) {
+              // Reuse fully qualified setups: reversal, BEAR, snapEdge, learned expectancy,
+              // and self-healing have already run. Do not introduce a second weaker evaluator.
+              const _snapCandidate = _aiSetups.find(function(sr){return sr.strategy === "snap";});
+              const _trendCandidate = _aiSetups.find(function(sr){return sr.strategy === "trend";});
+              const _snapEntry = _snapCandidate && _snapCandidate.signal;
+              const _aiStrat = selectAiEntryRoute(_picked || _uptrend || _techBuy || !!_trendCandidate, _snapEntry, cfg, strategiesHeldNow);
+              if (_aiStrat) {
                 aiPrimaryUsed++;
                 // [V33.39] ★AI 가 전략을 하나만 쓰던 문제★ 종전엔 무조건 strategy:"trend" 로 넣었다.
                 //   규칙엔진은 trend/scalp/snap 세 버킷을 쓰는데 AI 진입만 전부 trend 로 몰려서
@@ -19636,15 +19655,8 @@ async function runTradingCycle(env) {
                 //   분리돼 있으므로(getStrategyRules) 라우팅만으로 실제 운용이 달라진다.
                 //   · snap : 상승추세 안의 눌림(과매도) — 되돌림 노림, 짧은 보유
                 //   · trend: 추세 정렬 + 다중 타임프레임 매수 — 추종, 긴 보유
-                let _aiStrat = "trend";
-                try {
-                  const _rsiNow = (dailyRsi != null) ? dailyRsi : null;
-                  if (_uptrend && _rsiNow != null && _rsiNow <= 45) _aiStrat = "snap";
-                } catch (e) {}
-                // 이미 그 버킷을 보유 중이면 다른 빈 버킷으로 — 한 종목이 같은 전략을 중복 점유하지 않게.
-                if (strategiesHeldNow.has(_aiStrat)) _aiStrat = (_aiStrat === "snap") ? "trend" : "snap";
                 stratResults.push({ strategy: _aiStrat, weight: (_ap.baseWeight || 0.6),
-                  signal: { name: "AI_PRIMARY", members: ["AI_PRIMARY"], picked: _picked, techBuy: _techBuy, tfBull: _tfBull, isAiPrimary: true, aiStrat: _aiStrat, weight: (_ap.baseWeight || 0.6) } });
+                  signal: { name: "AI_PRIMARY", members: ["AI_PRIMARY"], setup: _aiStrat === "snap" ? _snapEntry.name : (_trendCandidate && _trendCandidate.signal ? _trendCandidate.signal.name : "TREND_ALIGNMENT"), picked: _picked, techBuy: _techBuy, tfBull: _tfBull, isAiPrimary: true, aiStrat: _aiStrat, weight: (_ap.baseWeight || 0.6) } });
               }
             }
           } catch (e) {}
@@ -22133,6 +22145,8 @@ async function handleRequest(request, env, ctx) {
               //   운으로 높은 IC 와 실력으로 높은 IC 가 같아 보인다.
               icBlock: m ? _num(m.valICBlock, null) : null,
               icT: m ? _num(m.valICt, null) : null,
+              // Codex V33.329: expose measured duration, not an inferred progress percentage.
+              holdDays: m ? _num(m.valICspanD, null) : null,
               // [V33.113] 자유도 보정 전 원값과 df — "왜 t 가 낮아졌나" 를 화면에서 설명한다.
               icTRaw: m ? _num(m.valICtRaw, null) : null, icDf: m ? _num(m.valICdf, null) : null,
               // [V33.93] 전진검증 — 학습 이후 도착한 표본에서의 성적.
@@ -32827,6 +32841,17 @@ async function icForwardCheck(DB, opts) {
       _where = "ts > ?"; _mode = "ts"; _order = "ats ASC";
       _bindVal = Math.max(_num(prev.ts, 0), _num(_led.hwmTs, 0));
     }
+    // Codex V33.329: id+ts used the ID cursor but previously wrote the timestamp cursor.
+    // Existing ledgers with rows and no ID watermark cannot establish non-duplication.
+    if (_mode === "id+ts" && _led.v.length && !(_num(_led.hwmId, 0) > 0)) {
+      _led.v = []; _led.hwmTs = 0;
+      _led.repair = "V33.329: ID 체크포인트 없는 전진 통계를 재측정";
+      await setState(DB, _lkey, _led);
+    }
+    // Expire by elapsed time, including runs with no new batch, not just entry count.
+    const _cutoff = Date.now() - FWDLED.keepDays * 86400000;
+    const _freshRows = _led.v.filter(function(e){return e && _num(e.ts, 0) >= _cutoff;});
+    if (_freshRows.length !== _led.v.length) { _led.v = _freshRows; await setState(DB, _lkey, _led); }
     //   정렬을 필터와 ★같은 열★ 로 맞춘다 — 다르면 LIMIT 이 중간을 건너뛰어, hwm 을 올리는
     //   순간 안 센 행이 영구히 버려진다(ts 순서와 id 순서는 일치하지 않는다).
     const _selAt = o.hasInsTs ? "COALESCE(ins_ts, ts) AS ats" : "ts AS ats";
@@ -32905,7 +32930,7 @@ async function icForwardCheck(DB, opts) {
           // ★세고 나서야 고수위를 옮긴다★ — minBatch 에 못 미쳐 건너뛴 행은 버리지 않고
           //   다음 회차에 다시 집어 든다(작은 배치를 버리면 표본이 조용히 새어나간다).
           const _last = rows[rows.length - 1];
-          if (_mode === "id") { const _mx = _num(_last.id, 0); if (_mx > _num(_led.hwmId, 0)) _led.hwmId = _mx; }
+          if (_mode === "id" || _mode === "id+ts") { const _mx = _num(_last.id, 0); if (_mx > _num(_led.hwmId, 0)) _led.hwmId = _mx; }
           else { const _mx = _num(_last.ats, 0); if (_mx > _num(_led.hwmTs, 0)) _led.hwmTs = _mx; }
           try { await setState(DB, _lkey, _led); } catch (e) {}
         }
@@ -47381,6 +47406,7 @@ export {
   pyramidDecide,
   // [V33.120] 단타 경로 문지기(MAE) — tools/check-leverage.mjs
   aiEntryFloor, expertAdmit, ICGATE, icBonferroniT, icTMinNow,
+  selectAiEntryRoute, icForwardCheck,
   // [V33.326] 공용 미니 트레이너의 달력 홀드아웃 — tools/check-mini-holdout.mjs 가
   //   "이 설정으로 정말 minBlocks 를 넘기나" 를 산수로 직접 검증한다(_effBlocks 는 이미 나간다).
   MINIHOLD,

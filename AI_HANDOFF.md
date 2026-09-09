@@ -4,13 +4,22 @@
 
 ## Current handoff
 
-- Status: complete locally; deployment must be checked against this exact HEAD after push.
-- Owner: Claude
+- Status: V33.329 implementation verified locally; production deployment and post-fix retraining pending.
+- Owner: Codex
 - Branch: main (direct main authorized; no PR)
-- Last commit: HEAD / V33.327 (resolve with git log -1)
-- Base: 7705ccc / V33.326 (같은 세션). 배포 성공·live build V33.326 확인 후 시작.
-- Scope: 사용자 지시 — "다른 문제 없는지 확인하고 수정해". 프로덕션 자가진단(/api/selfcheck)이
-  스스로 낸 warn 을 근거로 두 건을 고쳤다.
+- Last commit: HEAD / V33.329 (resolve with git log -1)
+- Base: f8251c4 / V33.328, fetched and fast-forwarded before edits; no concurrent upstream changes at final fetch.
+- Scope: 사용자 요청 — 매매법/신규 모델 합류 문제 수정, 기존 틀 유지 디자인 개선.
+
+### Codex V33.329 — 2026-09-09
+
+- Detailed evidence and limits: `docs/CODEX-TRADING-AUDIT-V33.329.md`.
+- Fixed AI_PRIMARY erasing scalp, contradictory snap routing and unvalidated bucket fallback. Reuses existing qualified setups and retains downstream risk gates. Records `meta.aiSetup` for audits. No model architecture or risk threshold changes.
+- Fixed icForwardCheck id+ts cursor, legacy unverifiable ledger repair, and elapsed-time expiry. Forward statistics may drop after invalid/expired evidence is removed; do not relabel that as a model regression or force trusted=true.
+- Added model-only monochrome evidence panel with server roster status/reasons, weights and measured validation values. Existing polling, no new network requests/timers, no sidebar/other page style changes. Keyed nodes preserve disclosures during refresh.
+- Tests: all 92 `tools/check-*.mjs` passed with PYTHONUTF8=1, NODE_NO_WARNINGS=1. New real-function regression is wired into deploy.yml. `git diff --check` passed. Browser local checks 390x844 / 820x1180 / desktop1262: no horizontal overflow; 13 model cards render; native details remain open across refresh. Preview only proxies read-only allowlisted production APIs; nonallowlisted preview503s are not app failures.
+- Initial authorized FLOW retrain run34363716458 succeeded on V33.328: 70day/7block holdout, t0.448 -> reject (honest failure, not stuck-duration). Other latest-model retraining and exact deployed build must be confirmed after push.
+- No secret, binding, cron, schema migration, model upload route or manual order changes. Previous Claude work preserved below.
 
 ### Claude V33.327 — 2026-09-09
 
