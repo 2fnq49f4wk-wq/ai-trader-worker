@@ -11023,10 +11023,22 @@ function _slipRate(market, ts) {
 // [V29 새 회계 — 단일 원장] cash를 별도 저장하지 않고 trades에서 실시간 계산.
 //   가용현금 = 초기자본 + 입금 − Σ매수금액(수수료포함) + Σ매도대금(수수료·세금차감)
 //   trades 테이블이 유일한 진실. cash와 positions가 구조적으로 어긋날 수 없음.
+/* [V33.328] ★슬리브별 초기자본은 여기 한 곳에서만 고른다.★
+   종전엔 같은 표가 세 벌이었고 ★둘이 틀렸다★:
+     · applyCashflowToTWR — us/kr/cm 삼항이라 bdus·bdkr 이 cm($100,000)으로 떨어졌다.
+       bdkr 은 원화 ₩100,000,000 이다 — 1,000배 어긋난 값으로 TWR 이 시작된다.
+     · auditAccounting  — 숫자를 통째로 박아 두어(100000 / 100000000) cfg 를 아예 안 본다.
+       초기자본을 설정에서 바꾸면 ASSET_INFLATE 문턱이 같이 안 움직인다.
+   지금은 둘 다 us/kr 로만 불려 증상이 없다. 하지만 채권 슬리브가 그 경로에 들어오는 날
+   조용히 틀린 값이 나온다 — 이 저장소가 "한 곳만 고쳐져" 겪은 사고와 같은 모양이라 먼저 합친다. */
+function _initialCashFor(cfg, market) {
+  const m = { us: cfg.initialCashUS, kr: cfg.initialCashKR, cm: cfg.initialCashCM,
+              bdus: cfg.initialCashBDUS, bdkr: cfg.initialCashBDKR };
+  return (m[market] != null) ? m[market] : cfg.initialCashCM;
+}
 async function computeCashFromTrades(DB, market, cfg) {
   // [BOND] 통화별 슬리브 추가: cm·bdus=USD(무세금), bdkr=KRW(거래세). 기존 us/kr/cm 동작 불변.
-  const _initMap = { us: cfg.initialCashUS, kr: cfg.initialCashKR, cm: cfg.initialCashCM, bdus: cfg.initialCashBDUS, bdkr: cfg.initialCashBDKR };
-  const initial = (_initMap[market] != null) ? _initMap[market] : cfg.initialCashCM;
+  const initial = _initialCashFor(cfg, market);
   const _isKRW = (market === "kr" || market === "bdkr");
   const feeRate = _isKRW ? (cfg.feeKR || 0) : (cfg.feeUS || 0);
   // [회계 재설계] deposits = 누적 입금액(inflows), outflows = 누적 출금액.
@@ -11307,7 +11319,7 @@ async function computePortfolioValue(DB, market, cfg) {
 //   flow: 입금은 양수, 출금은 음수. valueBeforeFlow: 흐름 적용 직전 평가액.
 async function applyCashflowToTWR(DB, market, valueBeforeFlow, flow, cfg) {
   const key = "twr:" + market;
-  const initial = market === "us" ? cfg.initialCashUS : (market === "kr" ? cfg.initialCashKR : cfg.initialCashCM);
+  const initial = _initialCashFor(cfg, market);   // [V33.328] 채권 슬리브가 cm 금액으로 떨어지던 것 수정
   let twr = await getState(DB, key, null);
   if (!twr || typeof twr.factor !== "number" || typeof twr.lastValue !== "number") {
     twr = { factor: 1, lastValue: (typeof initial === "number" ? initial : valueBeforeFlow) };
@@ -21062,7 +21074,7 @@ async function runTradingCycle(env) {
     try { for (const _mk in __thrWhy) await setState(DB, "ai_thr_why:" + _mk, Object.assign({ ts: Date.now() }, __thrWhy[_mk])); } catch (e) {}
     // [V25 감사 A] 사이클 종료 시 회계 무결성 검증 — 거래한 시장만.
     for (const mkt of marketsToTrade) {
-      await auditAccounting(DB, mkt, cash);
+      await auditAccounting(DB, mkt, cash, cfg);
     }
     const cycleMs = Date.now() - cycleStartedAt;
     // [실시간] fastWatch가 쓸 거래가능 시장 목록 기록 — 휴장/엔진OFF/윈도우 판정 재사용.
@@ -21286,7 +21298,7 @@ async function runFastWatch(env, cronStart) {
 //   D1에 스냅샷 저장. 다음 사이클에 직전 스냅샷과 비교해 비정상 급변을 감지/경고한다.
 //   "현금 + 보유평가"는 시세 변동으로 자연히 바뀌므로, 단순 절대 임계가 아니라
 //   투자원금(invested) 대비 비정상(예: 현금이 갑자기 2배↑, 음수 등)을 잡는다.
-async function auditAccounting(DB, market, cash) {
+async function auditAccounting(DB, market, cash, cfg) {
   try {
     // [회계 재설계] positions 테이블 raw row를 직접 조회한다.
     //   (getPositions는 "symbol::strategy" 키 map을 반환 → for...of/avg_price 순회가 깨져
@@ -21309,7 +21321,9 @@ async function auditAccounting(DB, market, cash) {
     // 2) 중복 포지션 (KQ 마이그레이션 등으로 생기는 이중 계상)
     if (dups.length > 0) flags.push("DUP_POS(" + dups.join(",") + ")");
     // 3) 투자원금이 비정상적으로 큼 — 초기자본 대비 과투자 (현금 회계 붕괴 징후)
-    const initial = market === "us" ? 100000 : (market === "kr" ? 100000000 : 100000);
+    // [V33.328] 숫자를 박지 않는다 — 설정에서 초기자본을 바꾸면 이 문턱도 함께 움직여야 한다.
+    //   cfg 가 안 넘어온 옛 호출을 대비해 종전 값으로 폴백한다(동작 불변).
+    const initial = cfg ? _initialCashFor(cfg, market) : (market === "us" ? 100000 : (market === "kr" ? 100000000 : 100000));
     const totalAsset = cashVal + invested;
     if (totalAsset > initial * 2) flags.push("ASSET_INFLATE(total=" + Math.round(totalAsset) + " vs init=" + initial + ")");
     if (flags.length > 0) {

@@ -103,5 +103,30 @@ function cut(start, end) {
   if (!direct("ml_samples")) bad("ml_samples 의 구 판 정리가 사라졌다");
 }
 
+// ── ⑤ 슬리브별 초기자본 표가 한 벌인가 ────────────────────────────────────
+//   종전엔 세 벌이었고 ★둘이 틀렸다★. applyCashflowToTWR 는 us/kr/cm 삼항이라
+//   bdkr(₩100,000,000)이 cm($100,000)으로 떨어졌다 — 통화가 다른데 1,000배 어긋난다.
+//   auditAccounting 은 숫자를 박아 두어 설정을 바꿔도 ASSET_INFLATE 문턱이 안 따라왔다.
+//   지금은 둘 다 us/kr 로만 불려 증상이 없다 — 증상이 없을 때 합쳐 두는 것이 요점이다.
+{
+  const src = cut("function _initialCashFor(cfg, market) {", "async function computeCashFromTrades");
+  const ctx = vm.createContext({});
+  vm.runInContext(src + "\n globalThis.__f = _initialCashFor;", ctx);
+  const cfg = { initialCashUS: 1, initialCashKR: 2, initialCashCM: 3, initialCashBDUS: 4, initialCashBDKR: 5 };
+  const got = ["us", "kr", "cm", "bdus", "bdkr"].map((m) => ctx.__f(cfg, m)).join(",");
+  if (got === "1,2,3,4,5") ok("슬리브 5종이 각자 제 초기자본을 받는다(채권이 원자재 금액으로 떨어지지 않는다)");
+  else bad(`슬리브별 초기자본이 어긋난다: ${got} (기대 1,2,3,4,5)`);
+  if (ctx.__f(cfg, "없는슬리브") === 3) ok("모르는 슬리브는 종전대로 cm 금액으로 폴백한다(동작 불변)");
+  else bad("알 수 없는 슬리브 폴백이 바뀌었다");
+
+  const users = (S.match(/_initialCashFor\(cfg, market\)/g) || []).length;
+  if (users >= 3) ok(`초기자본을 고르는 곳 ${users}군데가 전부 같은 표를 쓴다`);
+  else bad(`_initialCashFor 사용이 ${users}곳뿐이다 — 어딘가 제 사본으로 돌아갔다`);
+
+  const twr = cut("async function applyCashflowToTWR(DB, market, valueBeforeFlow, flow, cfg) {", "\n  let twr =");
+  if (!/initialCashCM/.test(twr)) ok("TWR 초기화가 더는 us/kr/cm 삼항을 쓰지 않는다");
+  else bad("★TWR 초기화가 다시 삼항으로 돌아갔다 — 채권 슬리브가 통화가 다른 금액으로 시작한다★");
+}
+
 if (fails) { console.error(`\n✗ 단일 출처 계약 ${fails}건 실패`); process.exit(1); }
 console.log("\n✓ 단일 출처 계약 통과 — 합쳐 둔 규칙이 다시 갈라지지 않았다");
