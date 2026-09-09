@@ -159,6 +159,12 @@ jobs:
       #   합쳐 둔 두 곳(SEC Form 4 파서 · 시세 병합 필드표)이 다시 갈라지는지 본다.
       - name: Single-source contract check
         run: node tools/check-single-source.mjs
+      # [V33.330] 프리·애프터마켓 — 세션은 맞는데 값이 비는 것을 잡는다.
+      #   실측: 미국 애프터마켓 중 mstate=POST 인데 post/postPct 가 전부 null 이었다.
+      #   화면은 정규장 종가 등락에서 멈추고, 시간외에 아무 일 없던 것처럼 읽힌다.
+      #   표시 규칙·저장 경로·자가진단 감지기 셋을 함께 못박는다.
+      - name: Pre/after-market contract check
+        run: node tools/check-overmarket.mjs
       # [V33.140] 전진검증 누적 원장 — 창이 매일 밤 리셋돼 ★구조적으로★ 못 채워지던 것을 고쳤다.
       #   (memo: 총표본 177,868 인데 전진 357 = 어제 유입과 정확히 일치)
       #   교착 해소와 통계 정직성을 함께 본다: 잡음 통과율이 문턱의 명목값과 맞는지,

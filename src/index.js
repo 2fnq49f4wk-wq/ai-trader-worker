@@ -2981,7 +2981,7 @@ async function applySignalTypeWeights(DB, cfg) {
    화면·자가진단이 계속 "V33.272" 를 보고했다(운영 스냅샷이 그대로 그랬다). 배포는 됐는데
    ★배포됐다는 사실만 거짓말★ 을 하고 있었으니, "내 고침이 올라간 건가" 를 화면으로 확인할
    방법이 없었다. tools/check-build-ver.mjs 가 이제 소스에 적힌 최신 버전과 이 값을 대조한다. */
-const _BUILD_VER = "V33.329";
+const _BUILD_VER = "V33.330";
 
 // ═══ [V33.171] 평가 순서 계획 — ★승격과 순환을 교차해 굶주림을 구조적으로 없앤다★ ═══
 //   V33.50 의 형태트리거는 "급한 몇 종목을 앞으로 당긴다"는 의도였으나, 실제 운영로그에서는
@@ -11560,8 +11560,23 @@ async function saveIndex(DB, symbol, region, data) {
 }
 
 async function saveQuote(DB, symbol, market, q) {
+  /* [V33.330] ★시간외 5필드를 통째로 날리던 자리★
+     이 함수는 setState 로 quote 객체를 ★전부 덮어쓴다★. 그런데 필드 목록에
+     mstate/pre/prePct/post/postPct 가 없어서, 가격 샤드(refreshPriceShard)가
+     COALESCE 로 공들여 지켜 온 시간외 값이 이 경로 한 번에 사라졌다.
+     지금은 수동 POST /api/refresh_quotes 에서만 불려 증상이 드물지만,
+     한 번 불리면 그 시장 전 종목의 프리·애프터 표시가 다음 샤드 갱신까지 빈다.
+     q 에 새 값이 있으면 쓰고, 없으면 기존 quote 에서 그대로 이어받는다. */
+  let _prev = null;
+  try { _prev = await getState(DB, "quote:" + symbol, null); } catch (e) {}
+  const _keep = function (k) {
+    if (q[k] !== undefined && q[k] !== null) return q[k];
+    return (_prev && _prev[k] !== undefined) ? _prev[k] : null;
+  };
   await setState(DB, "quote:" + symbol, {
     market: market, price: q.price, prevClose: q.prevClose,
+    mstate: _keep("mstate"), pre: _keep("pre"), prePct: _keep("prePct"),
+    post: _keep("post"), postPct: _keep("postPct"),
     dayPct: q.dayPct, rsi: q.dailyRsi, ma: q.dailyMa, atr: q.dailyAtr,
     dailyAtr: q.dailyAtr, dailyMa: q.dailyMa, dailyMaShort: q.dailyMaShort,
     bbLower: q.bbLower, bbUpper: q.bbUpper,
@@ -15950,6 +15965,10 @@ async function refreshQuotesOnly(env, market) {
       const return20 = getNDayReturn(closes, 20);
       await saveQuote(DB, symbol, market, {
         price: price, prevClose: prevClose, dayPct: dayPct,
+        // [V33.330] fetchQuoteViaChart 가 이미 계산해 준 시간외 값을 ★버리지 않고★ 넘긴다.
+        //   종전엔 여기서 손으로 필드를 골라 담느라 mstate/pre/post 가 조용히 빠졌다.
+        mstate: intra.mstate, pre: intra.pre, prePct: intra.prePct,
+        post: intra.post, postPct: intra.postPct,
         dailyRsi: dailyRsi, dailyMa: dailyMa, dailyMaShort: dailyMaShort, dailyAtr: dailyAtr,
         bbLower: bb ? bb.lower : null, bbUpper: bb ? bb.upper : null,
         return20: return20,
@@ -43854,6 +43873,30 @@ async function _luxSelfCheck(DB) {
     if (!S["tag_returns"]) add("info", "이벤트엔진", "tag_returns 없음(첫 스캔 전) — 이벤트 확증 대기");
     const mdH = ageH(S["macro_data"] && S["macro_data"].ts);
     if (mdH != null && mdH > 48) add("warn", "거시", "macro_data " + mdH.toFixed(0) + "h 전 — 금리/거시 갱신 지연");
+    /* [V33.330] ★시간외(프리·애프터) 시세가 오는지 스스로 본다.★
+       실측(2026-09-09 19:46 ET, 애프터마켓 한창): 미국 종목이 mstate="POST" 인데
+       post·postPct 가 전부 null 이었다. 세션 판정은 맞는데 ★가격이 안 온다★ —
+       화면은 정규장 종가 등락을 그대로 보여 주고, 시간외에 아무 일도 없었던 것처럼 읽힌다.
+       한국(네이버)은 같은 시각 프리마켓이 정상 동작했다 — 표시 계층이 아니라 미국 수집 경로 문제다.
+       이걸 아무도 못 잡은 이유는 감지기가 없어서다. v7Dead 는 계산만 하고 ★한 번도 안 읽는다★.
+       "세션은 PRE/POST 라는데 그 값이 비어 있다" 는 조합을 여기서 소리 내게 한다. */
+    try {
+      const _qs = await DB.prepare(
+        "SELECT v FROM state WHERE k >= 'quote:' AND k < 'quote;' LIMIT 800"
+      ).all();
+      let _sess = 0, _have = 0;
+      for (const _r of ((_qs && _qs.results) || [])) {
+        let _q = null; try { _q = JSON.parse(_r.v); } catch (e) { continue; }
+        if (!_q || _q.market !== "us") continue;
+        if (_q.mstate === "PRE") { _sess++; if (typeof _q.pre === "number" && _q.pre > 0) _have++; }
+        else if (_q.mstate === "POST" || _q.mstate === "POSTPOST") { _sess++; if (typeof _q.post === "number" && _q.post > 0) _have++; }
+      }
+      // 표본이 적으면 우연일 수 있다 — 20종목 이상이 같은 세션인데 10% 미만만 값이 있을 때만 말한다.
+      if (_sess >= 20 && _have < _sess * 0.1)
+        add("warn", "시간외",
+          "미국 시간외 시세가 안 들어온다 — 세션 표시 " + _sess + "종목 중 값이 있는 건 " + _have +
+          "종목뿐. 화면 등락율이 정규장 종가에서 멈춘다(수집원 v7 의 preMarket/postMarket 필드 확인 필요)");
+    } catch (e) {}
     // [V32.55] ★성능·처리량 지표★ — fetch/로딩 속도, 유입 데이터량, AI 스캔 속도·스캔량
     try {
       if (scan) perf.scan = { scanned: scan.scanned || 0, total: scan.total || 0, durMs: scan.durMs != null ? scan.durMs : null, rate: scan.rate != null ? scan.rate : null, ageH: scH != null ? +scH.toFixed(1) : null, coverage: (scan.total ? Math.round((scan.scanned / scan.total) * 100) : null) };
