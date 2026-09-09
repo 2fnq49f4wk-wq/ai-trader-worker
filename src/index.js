@@ -40634,6 +40634,29 @@ async function mlMarketHarvestNightly(DB, opts) {
         if (!(_r && _r.meta && _r.meta.changes)) break;   // 더 지울 구 표본 없으면 조기 종료
       }
     } catch (e) {}
+    /* [V33.328] ★구 featVer 정리를 ml_samples 에만 해 왔다.★
+       flow/xalpha/stack/단타 네 표는 판이 올라가도 옛 행이 영영 남았다.
+       모든 조회가 `WHERE featver = 현재판` 으로 거르니 ★학습에는 안 읽히지만★,
+       그 죽은 행이 D1 을 채우고 (featver, ts) 인덱스까지 불려 새 표본이 자랄 자리를 잠식한다.
+       ml_samples 에 있는 정리를 나머지 넷에도 똑같이 준다 —
+       "한 곳만 고쳐져 나머지가 조용히 굶는" 이 저장소의 단골 함정이라 여기서 함께 맞춘다.
+       읽히지 않는 행만 지우므로 모델 동작은 바뀌지 않는다. 표당 배치 2회로 timeout 을 피한다. */
+    try {
+      const _altPrune = [
+        ["flow_samples", FLOWML.featVer], ["xalpha_samples", XALPHA.featVer],
+        ["stack_samples", STACKML.featVer], ["ml_samples_st", LUXML.featVer]
+      ];
+      for (const _pr of _altPrune) {
+        const _tb = _pr[0], _fv = _pr[1];
+        if (_fv == null) continue;                        // 판을 모르면 손대지 않는다
+        for (let _p = 0; _p < 2; _p++) {
+          const _r2 = await DB.prepare(
+            "DELETE FROM " + _tb + " WHERE id IN (SELECT id FROM " + _tb + " WHERE featver != ? ORDER BY id LIMIT 50000)"
+          ).bind(_fv).run();
+          if (!(_r2 && _r2.meta && _r2.meta.changes)) break;
+        }
+      }
+    } catch (e) {}
     const _diagHv = "cand=" + _hv.cand + "(일봉" + (_hv.candD||0) + "+딥" + (_hv.candH||0) + ") 처리=" + scanned + " 봉=" + _hv.bars +
       " [탈락 진입조건=" + _hv.rejEntry + " 라벨=" + _hv.rejLabel + " 가격=" + _hv.rejPrice + " 봉수미달=" + _hv.symShort + "]" +
       " 단타표본=" + _hv.stMade + " 준비=" + _hv.prologueMs + "ms 총=" + (Date.now() - _hvT0) + "ms/" + (opts.budgetMs || HARVEST.budgetMs || 45000) + "ms" +

@@ -81,5 +81,27 @@ function cut(start, end) {
   else bad("symbol 보정이 없다 — quote:undefined 로 저장돼 원자재 시세가 통째로 사라진다");
 }
 
+// ── ④ 표본 표의 '구 판 정리' 가 한 표에만 있지 않은가 ─────────────────────
+//   V33.328 이전엔 ml_samples 에만 있었다. 나머지 넷은 판이 올라가도 옛 행이 영영 남아
+//   D1 과 (featver, ts) 인덱스를 채웠다 — 학습은 못 읽는 행인데 자리는 차지한다.
+//   표를 새로 만들 때 정리를 빠뜨리는 것이 이 저장소의 단골이라, ★표 목록에서★ 확인한다.
+{
+  const tables = [...new Set([...S.matchAll(/CREATE TABLE IF NOT EXISTS ([a-z_]+) ?\(/g)].map((m) => m[1]))]
+    .filter((t) => new RegExp("CREATE TABLE IF NOT EXISTS " + t + " ?\\([^;]{0,400}featver").test(S));
+  if (tables.length < 4) bad(`featver 를 가진 표본 표를 ${tables.length}개밖에 못 찾았다 — 이 검사가 헛돈다`);
+  /* 표 하나가 '구 판 정리' 를 받는 방법은 두 가지다:
+       ① 직접 DELETE … featver != ?  (ml_samples · ml_candidates)
+       ② _altPrune 목록에 실려 공용 루프가 지운다 (V33.328 에서 넷을 여기 실었다) */
+  const direct = (t) => new RegExp("DELETE FROM " + t + "\\b[\\s\\S]{0,160}?featver != ").test(S);
+  const li = S.indexOf("const _altPrune = [");
+  const inList = li < 0 ? [] : [...S.slice(li, S.indexOf("];", li)).matchAll(/"([a-z_]+)"/g)].map((m) => m[1]);
+  const missing = tables.filter((t) => !direct(t) && inList.indexOf(t) < 0);
+  if (!missing.length && inList.length >= 4)
+    ok(`featver 표본 표 ${tables.length}개(${tables.join(",")})가 전부 구 판 정리를 받는다`);
+  else
+    bad(`구 판 정리가 없는 표본 표: ${missing.join(", ") || "(_altPrune 목록을 못 읽었다)"} — 죽은 행이 D1 과 인덱스를 채운다`);
+  if (!direct("ml_samples")) bad("ml_samples 의 구 판 정리가 사라졌다");
+}
+
 if (fails) { console.error(`\n✗ 단일 출처 계약 ${fails}건 실패`); process.exit(1); }
 console.log("\n✓ 단일 출처 계약 통과 — 합쳐 둔 규칙이 다시 갈라지지 않았다");
