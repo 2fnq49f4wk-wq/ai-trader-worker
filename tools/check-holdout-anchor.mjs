@@ -132,10 +132,16 @@ console.log("\n⑦ 같은 모델의 '문턱' 을 두 화면이 다르게 적지 
 
 console.log("\n⑧ 변이 시험 — 계약을 깨면 이 검사가 실패하는가");
 {
+  /* [V33.326] ★replace → replaceAll★ — 이 변이 시험이 스스로 헛돌게 된 적이 있다.
+     V33.326 이 공용 미니 트레이너(flow·xalpha·stack·이중헤드)에도 같은 달력 홀드아웃을
+     넣으면서 `_calWhy = "이력 " +` 이 ★두 곳★ 이 됐다. String.replace 는 첫 번째만 바꾸므로
+     변이가 미니 트레이너 쪽만 지웠고, 정규식은 남은 MEMO 쪽에 걸려 "계약이 지켜진다" 고
+     답했다 — 즉 계약을 다 지워도 통과하는 상태였다. 이 검사가 그걸 스스로 잡아 실패했다.
+     같은 계약을 지키는 자리가 늘어난 만큼, 변이도 ★전부★ 지워야 의미가 있다. */
   const muts = [
-    [S.replace("_hf - _emb, MEMOML.trainWindow", "_hf, MEMOML.trainWindow"),
+    [S.replaceAll("_hf - _emb, MEMOML.trainWindow", "_hf, MEMOML.trainWindow"),
      /_hf - _emb, MEMOML\.trainWindow/, "엠바고를 빼면"],
-    [S.replace("_calWhy = \"이력 \" +", "_calWhy = null; void (\"이력 \" +"),
+    [S.replaceAll("_calWhy = \"이력 \" +", "_calWhy = null; void (\"이력 \" +"),
      /_calWhy = "이력 " \+/, "물러선 이유를 지우면"]
   ];
   for (const [mutated, re, why] of muts)

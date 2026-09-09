@@ -132,6 +132,14 @@ jobs:
       #   전진 IC 가 음수인 모델은 어떤 홀드아웃 성적으로도 못 들어오는지 함께 확인한다.
       - name: Committee expert admission contract check
         run: node tools/check-expert-admit.mjs
+      # [V33.326] 달력 홀드아웃 — 위 자격검사를 ★통과할 기회 자체가 있는가★ 를 본다.
+      #   운영에서 flow·xalpha·stack·이중헤드가 전원 t 5.46/4.92 로 유의한데도
+      #   "홀드아웃 21일 = 관측 2개 < 5" 로 영구 대기였다. 홀드아웃을 행 비율(20%)로 자르면
+      #   수확이 한 날짜에 전 종목을 쌓아 기간이 20일대로 짧아지기 때문이다.
+      #   V33.303 이 MEMO 만 달력으로 고쳐 두어 나머지는 그대로 남았다 — 그 반쪽을 채운 뒤,
+      #   설정이 정말 minBlocks 를 넘기는지 산수로 못박는다(지평이 바뀌면 여기서 걸린다).
+      - name: Mini trainer calendar holdout contract check
+        run: node tools/check-mini-holdout.mjs
       # [V33.140] 전진검증 누적 원장 — 창이 매일 밤 리셋돼 ★구조적으로★ 못 채워지던 것을 고쳤다.
       #   (memo: 총표본 177,868 인데 전진 357 = 어제 유입과 정확히 일치)
       #   교착 해소와 통계 정직성을 함께 본다: 잡음 통과율이 문턱의 명목값과 맞는지,

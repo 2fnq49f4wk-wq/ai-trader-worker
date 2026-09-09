@@ -7,7 +7,55 @@
 - Status: complete locally; deployment must be checked against this exact HEAD after push.
 - Owner: Claude
 - Branch: main (direct main authorized; no PR)
-- Last commit: HEAD / V33.325 (resolve with git log -1)
+- Last commit: HEAD / V33.326 (resolve with git log -1)
+- Base: 9bb942b / V33.325. 작업 전 `git fetch origin main` 확인(뒤처짐 0).
+- Scope: 사용자 지적 — "또 신규 위원들 작동 안하는데 원인 분석해서 수정해라".
+
+### Claude V33.326 — 2026-09-09
+
+- **원인(운영 실측으로 확정)**: worker-probe 로 프로덕션 `/api/ai-mode` 를 떠 보니 공용
+  트레이너(`_miniLogisticTrain`)를 쓰는 위원이 ★전원★ 같은 자리에 걸려 있었다.
+    FLOW 21일=관측 2개(t 5.46) · XALPHA 24일=2개(t 2.94) · STACK 38일=3개(t -0.88)
+    · 이중헤드 강세 25일=2개(t 2.57) · 약세 25일=2개(t 4.92)  → 전부 tier=pending, mult=0
+  t 가 5.46·4.92 로 충분히 유의한데도 합류를 못 한다 — 문턱 미달이 아니라 ★기간이 모자라
+  판정 자체가 보류★ 됐다(expertAdmit 의 minBlocks=5 게이트).
+  기간이 짧았던 이유는 홀드아웃을 '행의 마지막 20%' 로 잘랐기 때문이다. 수확이 한 날짜에
+  전 종목을 쌓으므로 8,000행이 21일밖에 안 되고, 라벨 지평 10일 기준 겹치지 않는 관측이
+  2개뿐이다. ★표에는 재료가 있는데 안 읽은 것★ — 창(40,000행)은 100일 넘게 덮는다.
+- **왜 '또' 인가 — 반쪽만 고쳐져 있었다**: V33.303 이 MEMO 에 대해 정확히 같은 진단을 하고
+  달력 고정으로 고쳤는데, 그 수정이 `MEMOML` 안에만 들어가 같은 병을 앓는 flow·xalpha·
+  stack·이중헤드는 그대로 남았다. MEMO 는 지금 이 게이트에 안 걸린다(t -1.37 로 '못 미침'
+  판정을 받는다) — 그게 대조군이다.
+- **고침** (`src/index.js`): 공용 트레이너에도 같은 달력 홀드아웃을 넣었다. 홀드아웃 =
+  가장 최근 `MINIHOLD.days()` 일을 12칸으로 나눠 균등추출(기간은 지키고 행은 holdCap 9000 으로
+  묶음 — CPU·메모리 예산 불변), 학습 = 홀드아웃 시작 − 엠바고(지평 1회) 이전에서 최근
+  window 행. 분할 경계는 행 비율이 아니라 ★시각(ts)★ 으로 잡는다(파싱 탈락이 있어 행 수로는
+  못 맞춘다). 이력이 짧으면 종전 20% 로 물러서고 로그에 이유를 적는다.
+- **기간을 상수로 박지 않았다**: `MINIHOLD.days()` 가 `minBlocks × 지평` 에서 계산한다.
+  지평이 10→15 로 바뀌는 날 상수 60 은 조용히 부족해지고 위원들은 다시 대기로 돌아간다 —
+  방금 겪은 그 사고다. 여유는 40% 로 잡았다: 칸별 균등추출이 ★가장 오래된 칸에서 한 칸 폭만큼
+  기간을 깎기★ 때문에 20%(60일)로는 실측 55~58일, 관측이 정확히 5개로 문턱에 걸친다
+  (행/일 380·1500·4000 세 밀도로 시뮬레이션해 확인). 70일이면 65~68일 → 관측 6개로 여유 1개.
+  대가는 숨기지 않는다 — 배포 모델이 홀드아웃+엠바고(80일)만큼 오래된 구간에서 적합된다.
+- **새 게이트** `tools/check-mini-holdout.mjs` (deploy.yml 배선 완료): 설정이 정말 minBlocks 를
+  넘기는지 ★산수로★ 검증한다. ① 목표 기간 ② 칸 손실을 뺀 최악 기간에 ★여유 1개★ ③ 학습 몫
+  ④ 공용 트레이너가 실제로 달력 분할을 하는지 ⑤ MEMO 와 설정이 갈라지지 않았는지.
+  세 가지 되돌림(여유 1.2 로 축소 · 지평 15 로 변경 · 시각경계 삭제)을 실제로 넣어 ★전부
+  잡히는 것을 확인★ 한 뒤 원복했다.
+- **기존 게이트 강화** (`tools/check-holdout-anchor.mjs`): 이 판으로 `_calWhy = "이력 "` 이 두
+  곳이 되면서, 변이 시험의 `String.replace`(첫 번째만 치환)가 헛돌게 됐다 — 계약을 다 지워도
+  통과하는 상태였다. ★그 검사가 스스로 실패해서 알려줬다.★ `replaceAll` 로 바꿔 전부 지워야
+  잡히도록 되돌렸다.
+- 검증: `node --check` 통과, 88종 게이트 전체 통과, `git diff --check` 통과.
+- 배포 후 확인할 것: 다음 야간 학습이 돌고 나서 worker-probe 로 `/api/ai-mode` 를 다시 떠,
+  flow·xalpha·stack·이중헤드의 `valICspanD` 가 60일대로 오르고 `valICeff ≥ 5` 가 되는지,
+  그리고 tier 가 pending 을 벗어나는지 본다. ★학습이 한 번 돌기 전에는 옛 레코드 그대로다.★
+- 학습·주문 트리거 없음, 정책 값(requireTrustedModel 등) 변경 없음, 시크릿 없음.
+
+## Previous handoff — V33.325
+
+- Owner: Claude
+- Last commit: V33.325 (resolve with `git log`)
 - Base: b7b61a8 / V33.324 (Codex). 작업 전 `git fetch origin main` → 3커밋 뒤져 있어
   `git pull --ff-only` 로 맞춘 뒤 시작했다(CLAUDE.md 규칙).
 - Scope: 사용자 지적 — "AI 두뇌 작동 로그가 오류난거 같은데 글씨가 세로로 쓰인다".

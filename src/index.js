@@ -2981,7 +2981,7 @@ async function applySignalTypeWeights(DB, cfg) {
    화면·자가진단이 계속 "V33.272" 를 보고했다(운영 스냅샷이 그대로 그랬다). 배포는 됐는데
    ★배포됐다는 사실만 거짓말★ 을 하고 있었으니, "내 고침이 올라간 건가" 를 화면으로 확인할
    방법이 없었다. tools/check-build-ver.mjs 가 이제 소스에 적힌 최신 버전과 이 값을 대조한다. */
-const _BUILD_VER = "V33.325";
+const _BUILD_VER = "V33.326";
 
 // ═══ [V33.171] 평가 순서 계획 — ★승격과 순환을 교차해 굶주림을 구조적으로 없앤다★ ═══
 //   V33.50 의 형태트리거는 "급한 몇 종목을 앞으로 당긴다"는 의도였으나, 실제 운영로그에서는
@@ -28717,6 +28717,28 @@ function _mlpProb(m, z) {
   return _clamp(1 / (1 + Math.exp(-_clamp(s, -30, 30))), 0.001, 0.999);
 }
 
+/* [V33.326] 공용 미니 트레이너(flow·xalpha·stack·이중헤드)의 달력 홀드아웃 설정.
+   MEMOML.holdDays/holdCap/holdBuckets 와 같은 뜻이지만, 기간만은 ★상수로 박지 않는다★:
+   필요한 기간은 결국 expertAdmit 의 minBlocks × 라벨 지평이므로 그 둘에서 계산한다.
+   지평(predictionHorizonDays)이 10→15 로 바뀌는 날 상수 60 은 조용히 부족해지고,
+   위원들은 다시 '아직 못 쟀다' 로 돌아간다 — 이 저장소가 방금 겪은 그 사고다. */
+const MINIHOLD = {
+  holdCap: 9000,        // 홀드아웃에서 읽을 최대 행(기간은 12칸 균등추출로 지킨다)
+  holdBuckets: 12,
+  minTrainDays: 30,     // 홀드아웃·엠바고를 뗀 뒤에도 학습이 이만큼은 남아야 한다
+  /* 필요기간(minBlocks × 지평 = 50일)에 ★40%★ 를 얹는다. 20% 로는 모자란다 —
+     칸별 균등추출이 각 칸에서 '최신 _per 행' 만 뽑으므로 ★가장 오래된 칸에서 한 칸 폭만큼
+     기간이 깎인다★. 시뮬레이션(행/일 380·1500·4000 세 밀도)에서 60일 목표는 실측 55~58일,
+     즉 관측이 정확히 5개로 문턱에 걸쳤다 — 하루만 밀려도 다시 '판정불가' 로 돌아간다.
+     70일이면 실측 65~68일로 관측 6개가 되어 한 개의 여유가 생긴다.
+     대가는 숨기지 않는다: 배포 모델이 홀드아웃+엠바고(80일)만큼 오래된 구간에서 적합된다.
+     그 대가를 치르는 이유는, 치르지 않으면 이 위원들이 ★영원히 합류하지 못하기★ 때문이다. */
+  days: function () {
+    return Math.max(70, Math.ceil(_num(ICGATE.minBlocks, 5) *
+      _num(AI_PARAMS.predictionHorizonDays, 10) * 1.4));
+  }
+};
+
 async function _miniLogisticTrain(DB, opts) {
   //   본문은 내부 클로저로 둔다 — 결과 문자열을 한 곳에서 가로채 상태로 남기기 위해서다.
   //   (함수를 둘로 쪼개면 바깥 함수가 opts 를 안 읽게 되어 배선 검사가 '죽은 인자' 로 잡는다.
@@ -28736,15 +28758,84 @@ async function _miniLogisticTrain(DB, opts) {
         labelFn: opts.labelFn
       });
     } catch (e) {}
-    const rows = await DB.prepare(
-      /* [V33.227] src 를 함께 읽는다(있는 표만). 홀드아웃 IC 를 ★경로별로★ 쪼개 보고하려는 것이다 —
-         "표본을 더했더니 t 가 떨어졌다" 를 만났을 때 어느 경로가 희석했는지 추측하지 않게. */
-      /* [V33.291] market 도 읽는다 — IC 에서 ★시장 고정효과★ 를 빼기 위해서다.
-         네 표(ml/flow/xalpha/stack_samples) 모두 이 컬럼을 갖고 있다. */
-      "SELECT id, ts, market, symbol, feat, label, pnl_pct" + (opts.srcCol ? ", src" : "") +
-      " FROM " + opts.table + " WHERE featver = ? ORDER BY ts DESC LIMIT ?"
-    ).bind(opts.featVer, opts.window).all();
-    const raw = (rows && rows.results) || [];
+    /* [V33.227] src 를 함께 읽는다(있는 표만). 홀드아웃 IC 를 ★경로별로★ 쪼개 보고하려는 것이다 —
+       "표본을 더했더니 t 가 떨어졌다" 를 만났을 때 어느 경로가 희석했는지 추측하지 않게. */
+    /* [V33.291] market 도 읽는다 — IC 에서 ★시장 고정효과★ 를 빼기 위해서다.
+       네 표(ml/flow/xalpha/stack_samples) 모두 이 컬럼을 갖고 있다. */
+    const _COLS = "SELECT id, ts, market, symbol, feat, label, pnl_pct" + (opts.srcCol ? ", src" : "");
+    /* ══ [V33.326] ★달력에 못 박은 홀드아웃 — 신규 위원이 영원히 '아직 못 쟀다' 였던 원인★ ═══
+       운영 실측(2026-09-09 프로브)에서 이 트레이너를 쓰는 위원이 ★전원★ 같은 자리에 걸려 있었다:
+         FLOW 홀드아웃 21일=관측 2개(t 5.46) · XALPHA 24일=2개(t 2.94) · STACK 38일=3개
+         · 이중헤드 강세/약세 25일=2개(t 2.57 / 4.92)  → 전부 tier=pending, mult=0
+       t 는 5.46·4.92 로 충분히 유의한데도 합류를 못 한다. 문턱을 못 넘은 게 아니라
+       ★기간이 모자라 판정 자체가 보류★ 되기 때문이다(expertAdmit 의 minBlocks 게이트).
+
+       왜 기간이 짧았나 — 홀드아웃을 '행의 마지막 20%' 로 잘랐기 때문이다. 수확은 한 봉
+       날짜에 전 종목을 함께 쌓으므로 8,000행이 21일밖에 안 된다. 라벨 지평이 10일이라
+       그 안의 겹치지 않는 관측은 2개, 필요한 5개에 구조적으로 못 미친다.
+       ★표에는 재료가 있는데 안 읽은 것이다★ — 창(40,000행)은 100일 넘게 덮는다.
+
+       V33.303 이 MEMO 에 대해 정확히 이 문제를 진단하고 달력 고정으로 고쳤다. 그런데 그
+       수정이 MEMOML 안에만 들어가, 같은 병을 앓는 flow·xalpha·stack·이중헤드(모두 이
+       공용 트레이너를 쓴다)는 그대로 남았다. 그 빠진 절반을 여기서 채운다 —
+       MEMO 는 지금 이 게이트에 안 걸린다(t -1.37 로 '못 미침' 판정을 받는다). 그게 대조군이다.
+
+       방식은 MEMO 와 같다: 홀드아웃 = 가장 최근 holdDays 일을 12칸으로 나눠 고르게 뽑아
+       ★기간은 지키되 행 수는 holdCap 으로 묶는다★(메모리·CPU 예산 불변).
+       학습 = 홀드아웃 시작 − 엠바고(라벨 지평 1회) 이전에서 종전대로 최근 window 행.
+       이력이 짧으면(판갈이 직후 등) 종전 20% 방식으로 물러서고, 로그에 그렇다고 적는다. */
+    let raw = [], _holdFrom = 0, _calHold = 0, _calWhy = null;
+    {
+      const _hMs = MINIHOLD.days() * 86400000;
+      const _emb = _num(AI_PARAMS.predictionHorizonDays, 10) * 86400000;
+      const _need = _hMs + _emb + _num(MINIHOLD.minTrainDays, 30) * 86400000;
+      let _tsMax = 0, _tsMin = 0;
+      try {
+        const _r = await DB.prepare(
+          "SELECT MAX(ts) mx, MIN(ts) mn FROM " + opts.table + " WHERE featver = ?"
+        ).bind(opts.featVer).first();
+        _tsMax = _num(_r && _r.mx, 0); _tsMin = _num(_r && _r.mn, 0);
+      } catch (e) {}
+      if (_tsMax > 0 && _tsMin > 0 && (_tsMax - _tsMin) >= _need) {
+        const _hf = _tsMax - _hMs;
+        const _B = Math.max(2, Math.floor(_num(MINIHOLD.holdBuckets, 12)));
+        const _per = Math.max(1, Math.floor(_num(MINIHOLD.holdCap, 9000) / _B));
+        const _step = _hMs / _B;
+        const _hold = [];
+        try {
+          for (let b = _B - 1; b >= 0; b--) {   // 최신 칸부터 — 이어 붙이면 전체가 ts DESC 다
+            const _a = Math.floor(_hf + b * _step), _z = Math.floor(_hf + (b + 1) * _step) + 1;
+            const r2 = await DB.prepare(
+              _COLS + " FROM " + opts.table +
+              " WHERE featver = ? AND ts >= ? AND ts < ? ORDER BY ts DESC LIMIT ?"
+            ).bind(opts.featVer, _a, _z, _per).all();
+            for (const x of ((r2 && r2.results) || [])) _hold.push(x);
+          }
+          const r3 = await DB.prepare(
+            _COLS + " FROM " + opts.table +
+            " WHERE featver = ? AND ts < ? ORDER BY ts DESC LIMIT ?"
+          ).bind(opts.featVer, _hf - _emb, opts.window).all();
+          const _tr = (r3 && r3.results) || [];
+          /* 학습이 굶으면 안 된다 — 잣대를 고치려다 모델을 죽이는 건 고친 게 아니다.
+             학습 행이 그 모델이 선언한 최소표본을 ★혼자서★ 넘을 때만 달력 분할을 쓴다. */
+          if (_hold.length >= 150 && _tr.length >= opts.minN) {
+            raw = _hold.concat(_tr);
+            _holdFrom = _hf; _calHold = _hold.length;
+          } else {
+            _calWhy = "홀드아웃 " + _hold.length + "행 · 학습 " + _tr.length + "행 — 부족";
+          }
+        } catch (e) { _calWhy = "달력분할 실패: " + (e && e.message); }
+      } else if (_tsMax > 0 && _tsMin > 0) {
+        _calWhy = "이력 " + Math.round((_tsMax - _tsMin) / 86400000) + "일 < 필요 " +
+                  Math.round(_need / 86400000) + "일";
+      }
+    }
+    if (!raw.length) {
+      const rows = await DB.prepare(
+        _COLS + " FROM " + opts.table + " WHERE featver = ? ORDER BY ts DESC LIMIT ?"
+      ).bind(opts.featVer, opts.window).all();
+      raw = (rows && rows.results) || [];
+    }
     // [V33.104] 적합에 실제로 들어간 행의 최대 id — 다음 밤 전진검증이 "학습에 안 쓰인 행"을
     //   집합적으로 정확히 고르는 기준이 된다(ts 의미가 표마다 달라 시각 비교는 못 믿는다).
     let _maxId = 0; for (const r of raw) { const _i = _num(r.id, 0); if (_i > _maxId) _maxId = _i; }
@@ -28788,7 +28879,24 @@ async function _miniLogisticTrain(DB, opts) {
     if (N < opts.minN) return "[" + opts.tag + "] 유효표본 " + N + " — 학습 대기";
     // 시간순(최신이 앞) → 뒤집어 오래된 것부터. 마지막 20% 를 홀드아웃(시간 분리).
     X.reverse(); Y.reverse(); P.reverse(); T.reverse(); S.reverse(); SRC.reverse(); MK.reverse();
-    const nval = Math.max(100, Math.floor(N * 0.2));
+    let nval = Math.max(100, Math.floor(N * 0.2));
+    /* [V33.326] 달력 분할이 성립했으면 경계를 ★행 비율이 아니라 시각★ 으로 잡는다.
+       파싱에서 걸러진 행이 있어 _calHold 를 그대로 못 쓴다 — 실제 배열의 ts 로 첫
+       홀드아웃 위치를 찾는다(위에서 홀드아웃 전체가 학습보다 최신이라 경계는 하나뿐이다).
+       그렇게 얻은 홀드아웃이 너무 얇으면(파싱 탈락이 많았던 경우) 종전 20% 로 물러선다. */
+    let _calSpanD = 0;
+    if (_holdFrom > 0 && _calHold > 0) {
+      let _b = -1;
+      for (let i = 0; i < N; i++) { if (_num(T[i], 0) >= _holdFrom) { _b = i; break; } }
+      const _nv = (_b >= 0) ? (N - _b) : 0;
+      if (_b > 0 && _nv >= 100 && (N - _nv) >= opts.minN) {
+        nval = _nv;
+        _calSpanD = Math.round((_num(T[N - 1], 0) - _num(T[_b], 0)) / 86400000);
+      } else {
+        _calWhy = "달력 홀드아웃 " + _nv + "행 · 학습 " + (N - _nv) + "행 — 파싱 후 부족";
+        _holdFrom = 0;
+      }
+    }
     /* [V33.155] ★홀드아웃 경계는 고정이다 — 퍼징은 학습쪽만 자른다★
        종전엔 퍼징이 ntr 을 줄인 뒤 검증 루프를 `i = ntr` 부터 돌렸다. 그러면 잘라낸 구간이
        그대로 ★홀드아웃에 흡수★ 된다. 증상이 숫자로 남아 있었다 — 운영 스냅샷의
@@ -29214,6 +29322,13 @@ async function _miniLogisticTrain(DB, opts) {
               겹치지 않는 관측 1개는 전혀 다른 이야기인데 종전엔 앞의 것만 보였다. */
            " [홀드아웃 " + _hSpanD + "일 · 겹치지않는관측 " + _effB + "개" +
            (_effB < _num(ICGATE.minBlocks, 5) ? " ★판정불가★" : "") + "]" +
+           /* [V33.326] 홀드아웃을 달력으로 떼었는지, 못 떼고 물러섰는지를 같은 줄에 적는다 —
+              "왜 아직 관측이 모자라나" 를 로그 한 줄로 답할 수 있어야 한다. */
+           (_holdFrom > 0
+             ? " 달력홀드아웃[" + MINIHOLD.days() + "일 · " + _calHold + "행/" +
+               _num(MINIHOLD.holdBuckets, 12) + "칸 · 실측 " + _calSpanD + "일 · 엠바고 " +
+               _num(AI_PARAMS.predictionHorizonDays, 10) + "일]"
+             : (_calWhy ? " 달력홀드아웃못함[" + _calWhy + "]" : "")) +
            /* [V33.291] 시장 고정효과를 빼기 전 값도 적는다 — 게이트가 보는 숫자가 왜 달라졌는지
               로그 한 줄로 답해야 한다(안 적으면 "갑자기 t 가 떨어졌다" 로만 보인다). */
            (_st.mktFixed && _st.blockICPooled != null && _mkN > 1
@@ -47211,6 +47326,9 @@ export {
   pyramidDecide,
   // [V33.120] 단타 경로 문지기(MAE) — tools/check-leverage.mjs
   aiEntryFloor, expertAdmit, ICGATE, icBonferroniT, icTMinNow,
+  // [V33.326] 공용 미니 트레이너의 달력 홀드아웃 — tools/check-mini-holdout.mjs 가
+  //   "이 설정으로 정말 minBlocks 를 넘기나" 를 산수로 직접 검증한다(_effBlocks 는 이미 나간다).
+  MINIHOLD,
   scalpMaeFitNightly, scalpMaeMult, SCALPMAE,
   FIN_TOOLS, finToolsRun,
   // [V33.110] 소셜 멀티소스 검증용 — tools/check-social.mjs
