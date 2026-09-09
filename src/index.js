@@ -2981,7 +2981,7 @@ async function applySignalTypeWeights(DB, cfg) {
    화면·자가진단이 계속 "V33.272" 를 보고했다(운영 스냅샷이 그대로 그랬다). 배포는 됐는데
    ★배포됐다는 사실만 거짓말★ 을 하고 있었으니, "내 고침이 올라간 건가" 를 화면으로 확인할
    방법이 없었다. tools/check-build-ver.mjs 가 이제 소스에 적힌 최신 버전과 이 값을 대조한다. */
-const _BUILD_VER = "V33.327";
+const _BUILD_VER = "V33.328";
 
 // ═══ [V33.171] 평가 순서 계획 — ★승격과 순환을 교차해 굶주림을 구조적으로 없앤다★ ═══
 //   V33.50 의 형태트리거는 "급한 몇 종목을 앞으로 당긴다"는 의도였으나, 실제 운영로그에서는
@@ -8188,6 +8188,35 @@ async function updateAnalystConsensus(DB, cfg, force) {
   return result;
 }
 
+// [V33.328] ★SEC Form 4 원문 파싱은 여기 한 곳에서만 한다★
+//   종전엔 야간 갱신(updateInsiderFeedNow)과 /api/insider 안의 __buildInsider 가
+//   같은 정규식·같은 묶음 규칙을 각자 한 벌씩 갖고 ★같은 키(insider_feed)★ 에 썼다.
+//   그 키는 화면용이 아니라 PEAD·사이징(sig.insiderNote)과 AI 피처(insiderBuy) 가 읽는
+//   거래 입력이다. SEC 제목 형식이 바뀌었을 때 한쪽만 고치면, 고친 쪽이 채운 값을
+//   못 고친 쪽이 곧바로 덮어써 원인이 안 보이는 채로 피처가 0 이 된다.
+//   (신규 위원이 MEMO 한 곳만 고쳐져 굶던 것과 같은 부류의 함정이다.)
+function _secForm4Parse(xml, rev) {
+  const dec = function (s) { return String(s || "").replace(/&amp;/g, "&").replace(/&lt;/g, "<").replace(/&gt;/g, ">").replace(/&quot;/g, '"').replace(/&#39;/g, "'").trim(); };
+  const byAcc = {}, order = [];
+  String(xml || "").split("<entry>").slice(1).forEach(function (en) {
+    const title = (en.match(/<title>([\s\S]*?)<\/title>/) || [])[1] || "";
+    const linkM = en.match(/<link[^>]*href="([^"]+)"/);
+    const upd = (en.match(/<updated>([^<]+)<\/updated>/) || [])[1] || "";
+    const link = linkM ? dec(linkM[1]) : "";
+    const accM = link.match(/(\d{10}-\d{2}-\d{6})/);
+    const acc = accM ? accM[1] : link;
+    const tm = dec(title).match(/^4(\/A)? - (.*?) \((\d{10})\) \((Issuer|Reporting|Filer)\)/);
+    if (!tm) return;
+    if (!byAcc[acc]) { byAcc[acc] = { date: upd, link: link, amended: !!tm[1] }; order.push(acc); }
+    const rec = byAcc[acc];
+    if (tm[4] === "Issuer") { rec.company = tm[2]; rec.cik = tm[3]; rec.ticker = (rev && rev[tm[3]]) || null; }
+    else { rec.insider = tm[2]; }
+  });
+  return order.map(function (a) { return byAcc[a]; })
+    .filter(function (f) { return f.company || f.insider; })
+    .slice(0, 40);
+}
+
 // [V12.123] ★내부자거래 피드 자동 갱신★ — /api/insider는 지금까지 프론트가 그 페이지를 열 때만
 //   호출되는 수동 엔드포인트였다. 아무도 페이지를 안 열면 insider_feed가 영영 안 채워져, PEAD·사이징
 //   로직(sig.insiderNote)과 AI 피처(insiderBuy)가 구조적으로 항상 0이었다(사용자 리포트: "내부자거래
@@ -8204,26 +8233,10 @@ async function updateInsiderFeedNow(DB) {
       { headers: { "User-Agent": UA, "Accept": "application/atom+xml" } });
     if (!r.ok) return cached;
     const xml = await r.text();
-    const dec = function (s) { return String(s || "").replace(/&amp;/g, "&").replace(/&lt;/g, "<").replace(/&gt;/g, ">").replace(/&quot;/g, '"').replace(/&#39;/g, "'").trim(); };
     const cikMap = await getState(DB, "sec_cik_map", null);
     const rev = {};
     if (cikMap && cikMap.map) for (const t in cikMap.map) { if (!rev[cikMap.map[t]]) rev[cikMap.map[t]] = t; }
-    const byAcc = {}, order = [];
-    xml.split("<entry>").slice(1).forEach(function (en) {
-      const title = (en.match(/<title>([\s\S]*?)<\/title>/) || [])[1] || "";
-      const linkM = en.match(/<link[^>]*href="([^"]+)"/);
-      const upd = (en.match(/<updated>([^<]+)<\/updated>/) || [])[1] || "";
-      const link = linkM ? dec(linkM[1]) : "";
-      const accM = link.match(/(\d{10}-\d{2}-\d{6})/);
-      const acc = accM ? accM[1] : link;
-      const tm = dec(title).match(/^4(\/A)? - (.*?) \((\d{10})\) \((Issuer|Reporting|Filer)\)/);
-      if (!tm) return;
-      if (!byAcc[acc]) { byAcc[acc] = { date: upd, link: link, amended: !!tm[1] }; order.push(acc); }
-      const rec = byAcc[acc];
-      if (tm[4] === "Issuer") { rec.company = tm[2]; rec.cik = tm[3]; rec.ticker = rev[tm[3]] || null; }
-      else { rec.insider = tm[2]; }
-    });
-    const filings = order.map(function (a) { return byAcc[a]; }).filter(function (f) { return f.company || f.insider; }).slice(0, 40);
+    const filings = _secForm4Parse(xml, rev);   // [V33.328] 파싱은 공용 한 곳
     const payload = { filings: filings, ts: Date.now() };
     try { await setState(DB, "insider_feed", payload); } catch (e2) {}
     try { await log(DB, "INFO", null, "[INSIDER] Form4 피드 갱신 " + filings.length + "건"); } catch (e2) {}
@@ -17082,37 +17095,12 @@ async function executeSellCM(DB, symbol, pos, sellQty, price, reason, cfg, cash)
 // 원자재 시세 저장 — 기존 quote와 병합 후 전체 객체로 저장(json_set 미사용).
 //   partial=true면 가격 관련 필드만 갱신하고 일봉지표(rsi/ma/atr 등)는 기존값 보존.
 async function saveQuoteCM(DB, symbol, q, partial) {
-  let prev = {};
-  try {
-    const existing = await getState(DB, "quote:" + symbol, null);
-    if (existing && typeof existing === "object") prev = existing;
-  } catch (e) {}
-
-  const merged = {
-    market: "cm",
-    // 가격 필드 — 항상 새 값으로 갱신
-    price: (typeof q.price === "number" && q.price > 0) ? q.price : (prev.price != null ? prev.price : null),
-    prevClose: (typeof q.prevClose === "number" && q.prevClose > 0) ? q.prevClose : (prev.prevClose != null ? prev.prevClose : null),
-    dayPct: (typeof q.dayPct === "number") ? q.dayPct : (prev.dayPct != null ? prev.dayPct : null),
-    // 일봉 지표 — partial이면 기존값 보존, 아니면 새 값(없으면 기존값)
-    rsi:          partial ? (prev.rsi ?? null)          : (q.dailyRsi ?? prev.rsi ?? null),
-    ma:           partial ? (prev.ma ?? null)           : (q.dailyMa ?? prev.ma ?? null),
-    atr:          partial ? (prev.atr ?? null)          : (q.dailyAtr ?? prev.atr ?? null),
-    dailyAtr:     partial ? (prev.dailyAtr ?? null)     : (q.dailyAtr ?? prev.dailyAtr ?? null),
-    dailyMa:      partial ? (prev.dailyMa ?? null)      : (q.dailyMa ?? prev.dailyMa ?? null),
-    dailyMaShort: partial ? (prev.dailyMaShort ?? null) : (q.dailyMaShort ?? prev.dailyMaShort ?? null),
-    bbLower:      partial ? (prev.bbLower ?? null)      : (q.bbLower ?? prev.bbLower ?? null),
-    bbUpper:      partial ? (prev.bbUpper ?? null)      : (q.bbUpper ?? prev.bbUpper ?? null),
-    return20:     partial ? (prev.return20 ?? null)     : (q.return20 ?? prev.return20 ?? null),
-    return5:  partial ? (prev.return5  ?? null) : (q.return5  ?? prev.return5  ?? null),  // [V67]
-    return60: partial ? (prev.return60 ?? null) : (q.return60 ?? prev.return60 ?? null),
-    ret1y:    partial ? (prev.ret1y    ?? null) : (q.ret1y    ?? prev.ret1y    ?? null),
-    ret5y:    partial ? (prev.ret5y    ?? null) : (q.ret5y    ?? prev.ret5y    ?? null),
-    vol:      partial ? (prev.vol      ?? null) : (q.vol      ?? prev.vol      ?? null),
-    avgVol20: partial ? (prev.avgVol20 ?? null) : (q.avgVol20 ?? prev.avgVol20 ?? null),
-    ts: Date.now()
-  };
-  await setState(DB, "quote:" + symbol, merged);
+  // [V33.328] ★병합 규칙은 saveQuoteAlt 한 곳에만 둔다★ — 여기 있던 사본은 지웠다.
+  //   두 함수가 필드까지 똑같은 사본이었다(주석에도 "saveQuoteCM 일반화" 라고 적혀 있었다).
+  //   그 상태에선 새 일봉지표를 한쪽에만 추가해도 아무 경고 없이 통과하고,
+  //   다른 슬리브만 그 지표를 영영 못 받는다 — 신규 위원이 MEMO 만 고쳐져 굶던 것과 같은 함정이다.
+  //   CM 호출자는 q 에 symbol 을 안 싣는다(부분갱신 경로). 그래서 여기서 채워 넘긴다.
+  return await saveQuoteAlt(DB, "cm", (q && q.symbol === symbol) ? q : Object.assign({}, q, { symbol: symbol }), partial);
 }
 
 // [V8.9] 원자재 가격만 매분 갱신 (거래는 16:00에만).
@@ -26356,30 +26344,11 @@ async function handleRequest(request, env, ctx) {
           { headers: { "User-Agent": UA, "Accept": "application/atom+xml" } });
         if (!r.ok) throw new Error("sec http " + r.status);
         const xml = await r.text();
-        const dec = function(s){ return String(s||"").replace(/&amp;/g,"&").replace(/&lt;/g,"<").replace(/&gt;/g,">").replace(/&quot;/g,'"').replace(/&#39;/g,"'").trim(); };
         // CIK→티커 역매핑 (기존 sec_cik_map 캐시 재사용)
         const cikMap = await getState(env.DB, "sec_cik_map", null);
         const rev = {};
         if (cikMap && cikMap.map) for (const t in cikMap.map) { if (!rev[cikMap.map[t]]) rev[cikMap.map[t]] = t; }
-        const byAcc = {};
-        const order = [];
-        xml.split("<entry>").slice(1).forEach(function(en){
-          const title = (en.match(/<title>([\s\S]*?)<\/title>/) || [])[1] || "";
-          const linkM = en.match(/<link[^>]*href="([^"]+)"/);
-          const upd = (en.match(/<updated>([^<]+)<\/updated>/) || [])[1] || "";
-          const link = linkM ? dec(linkM[1]) : "";
-          const accM = link.match(/(\d{10}-\d{2}-\d{6})/);
-          const acc = accM ? accM[1] : link;
-          const tm = dec(title).match(/^4(\/A)? - (.*?) \((\d{10})\) \((Issuer|Reporting|Filer)\)/);
-          if (!tm) return;
-          if (!byAcc[acc]) { byAcc[acc] = { date: upd, link: link, amended: !!tm[1] }; order.push(acc); }
-          const rec = byAcc[acc];
-          if (tm[4] === "Issuer") { rec.company = tm[2]; rec.cik = tm[3]; rec.ticker = rev[tm[3]] || null; }
-          else { rec.insider = tm[2]; }
-        });
-        const filings = order.map(function(a){ return byAcc[a]; })
-          .filter(function(f){ return f.company || f.insider; })
-          .slice(0, 40);
+        const filings = _secForm4Parse(xml, rev);   // [V33.328] 야간 갱신과 ★같은★ 파서
         const payload = { filings: filings, ts: Date.now() };
         try { await setState(env.DB, ck, payload); } catch (e2) {}
         return payload;

@@ -93,8 +93,15 @@ ctx.SCAN.list = []; ctx.SCAN.idx = 0;
 ctx.renderCore();
 check(el('nlvTpSym').textContent === '—', '스캔 결과가 비어 있으면 억지로 종목을 지어내지 않는다', '스캔 결과가 없는데도 종목을 표시한다');
 const css = fs.readFileSync(new URL('../public/brain-console.css', import.meta.url),'utf8');
-check(html.includes('/brain-console.css?v=33.327') && css.includes('prefers-reduced-motion'),
-  '흑백 스타일과 모션 감소가 연결되어 있다', '흑백 콘솔 스타일 배선이 없다');
+/* [V33.328] 캐시무효화 번호를 ★리터럴로 박지 않는다★ — 종전엔 '?v=33.327' 이 적혀 있어
+   판을 올릴 때마다 이 게이트가 무관하게 깨졌다. 그렇게 깨지는 검사는 "게이트를 숫자만
+   고쳐 통과시키는" 습관을 만들고, 그 습관이 진짜 계약까지 무디게 만든다.
+   지켜야 할 것은 특정 숫자가 아니라 ★빌드 판과 캐시무효화가 함께 움직인다★ 는 것이다. */
+const BUILDV = (html.match(/<meta name="lux-build" content="V(\d+)\.(\d+)">/) || []);
+const VQ = BUILDV.length ? `?v=${BUILDV[1]}.${BUILDV[2]}` : '?v=<판을 못 읽음>';
+check(html.includes('/brain-console.css' + VQ) && css.includes('prefers-reduced-motion'),
+  `흑백 스타일과 모션 감소가 연결되어 있다(캐시무효화 ${VQ} 가 빌드 판과 같다)`,
+  `흑백 콘솔 스타일 배선이 없거나 캐시무효화가 빌드 판(${VQ})과 어긋난다 — 옛 CSS 가 그대로 남는다`);
 check((html.match(/class="nnv-tab(?: active)?" data-model=/g)||[]).length === 14,
   '14개 모델 탭을 보존했다', '모델 탭이 사라졌다');
 
@@ -104,8 +111,8 @@ new vm.Script(ui); // External script is not covered by the inline HTML syntax c
 check(!ui.includes('brain.scrollTop = 0;') && ui.includes('keepY') && ui.includes('keepLocal'),
   '두뇌관측 탭 재렌더가 사용자의 스크롤 위치를 보존한다', '두뇌관측 탭 전환이 화면을 맨 위로 밀 수 있다');
 const layoutCss = fs.readFileSync(new URL('../public/workspace-layout.css', import.meta.url),'utf8');
-check(html.includes('/neural-observatory.js?v=33.327') && html.includes('/neural-observatory.css?v=33.327') && layoutCss.includes('prefers-reduced-motion'),
-  'DNN/SEQ 관측 디자인은 새 렌더 훅과 모션 감소 가드를 가진다', '새 관측 디자인 훅 또는 모션 감소 가드가 없다');
+check(html.includes('/neural-observatory.js' + VQ) && html.includes('/neural-observatory.css' + VQ) && layoutCss.includes('prefers-reduced-motion'),
+  'DNN/SEQ 관측 디자인은 새 렌더 훅과 모션 감소 가드를 가진다', `새 관측 디자인 훅이 없거나 캐시무효화가 빌드 판(${VQ})과 어긋난다`);
 ctx.URL = URL;
 evaluateBetween('  function newsSafeUrl(value)', '  function renderNews(data)');
 check(ctx.newsSafeUrl('javascript:alert(1)') === null && ctx.newsSafeUrl('data:text/html,test') === null,

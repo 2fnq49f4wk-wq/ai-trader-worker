@@ -146,6 +146,19 @@ jobs:
       #   소스에서 실제 함수를 꺼내 돌린다 — 특히 거래 확정 경로에 상한이 없는지 함께 본다.
       - name: Enrichment budget per-call cap check
         run: node tools/check-enrich-budget.mjs
+      # [V33.328] ★게이트가 조용히 헛도는 것★ 을 막는 메타검사.
+      #   같은 날 두 번 났다: check-holdout-anchor 는 소스에 같은 문구가 둘이 되자
+      #   돌연변이 시험이 아무것도 안 시험한 채 통과했고, check-eval-cost 는 꺼내 돌리던
+      #   함수가 새 변수를 쓰자 하네스가 죽어 문자열 대조로 주저앉았다. 둘 다 초록불이었다.
+      #   대다수 게이트는 indexOf 앵커로 소스를 잘라 본다 — 앵커가 사라지면 slice(-1,…) 이
+      #   빈 문자열이 되고 부정 단언이 전부 참이 된다. 그 경로를 여기서 먼저 깬다.
+      - name: Gate anchor liveness meta-check
+        run: node tools/check-gate-anchors.mjs
+      # [V33.328] 단일 출처 — 같은 규칙의 사본이 둘이면 한쪽만 고쳐진다.
+      #   신규 위원이 MEMO 한 곳만 고쳐져 계속 굶던 것과 같은 부류.
+      #   합쳐 둔 두 곳(SEC Form 4 파서 · 시세 병합 필드표)이 다시 갈라지는지 본다.
+      - name: Single-source contract check
+        run: node tools/check-single-source.mjs
       # [V33.140] 전진검증 누적 원장 — 창이 매일 밤 리셋돼 ★구조적으로★ 못 채워지던 것을 고쳤다.
       #   (memo: 총표본 177,868 인데 전진 357 = 어제 유입과 정확히 일치)
       #   교착 해소와 통계 정직성을 함께 본다: 잡음 통과율이 문턱의 명목값과 맞는지,
