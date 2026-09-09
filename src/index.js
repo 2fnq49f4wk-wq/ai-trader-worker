@@ -2981,7 +2981,7 @@ async function applySignalTypeWeights(DB, cfg) {
    화면·자가진단이 계속 "V33.272" 를 보고했다(운영 스냅샷이 그대로 그랬다). 배포는 됐는데
    ★배포됐다는 사실만 거짓말★ 을 하고 있었으니, "내 고침이 올라간 건가" 를 화면으로 확인할
    방법이 없었다. tools/check-build-ver.mjs 가 이제 소스에 적힌 최신 버전과 이 값을 대조한다. */
-const _BUILD_VER = "V33.326";
+const _BUILD_VER = "V33.327";
 
 // ═══ [V33.171] 평가 순서 계획 — ★승격과 순환을 교차해 굶주림을 구조적으로 없앤다★ ═══
 //   V33.50 의 형태트리거는 "급한 몇 종목을 앞으로 당긴다"는 의도였으나, 실제 운영로그에서는
@@ -3010,7 +3010,21 @@ const _BUILD_VER = "V33.326";
 const ENRICH = {
   share: 0.40,          // 평가예산 중 부가조회에 허용하는 총량(나머지 60% 는 평가가 확보)
   flowRefreshPerCycle: 6,   // FLOW 콜드미스 네트워크 갱신은 사이클당 이만큼만(점진적 워밍)
-  slowSymMs: 1200       // 이 시간을 넘긴 종목은 느린 종목으로 계측에 남긴다
+  slowSymMs: 1200,      // 이 시간을 넘긴 종목은 느린 종목으로 계측에 남긴다
+  /* [V33.327] ★한 건이 지갑을 통째로 비우지 못하게 한다★
+     지갑은 '쓰기 전' 잔액만 봤다 — 한 번 시작한 조회는 얼마가 걸리든 끝까지 기다렸다.
+     운영 실측(2026-09-09 자가진단 warn):
+       [EVAL-COST] KR 부가조회 6773/7200ms — scalp 6773ms · 느린종목 052690.KS:★7071ms★
+       [EVAL-COST] KR 부가조회 7470/7200ms(★예산소진 14건 생략★) — scalp 7470ms
+     한 종목이 7,071ms 를 쓰면 그 사이클의 부가조회는 사실상 끝이다. 뒤 종목 14개가
+     통째로 생략됐고, 그 결과가 TIME-CAP 경고 72회 반복("KR 평가 35/446종목(8%) 후 중단")이다.
+     한 건이 기다릴 수 있는 시간에 상한을 둔다 — 넘으면 그 건만 포기하고(지갑이 비었을 때와
+     같은 undefined) 나머지 종목이 제 몫을 쓴다.
+     값의 근거: 같은 로그의 다른 느린 종목이 1,278~1,579ms 다(그게 '느린' 축이다).
+     2,000ms 는 그보다 넉넉히 위라 정상 조회는 그대로 끝나고, 병적인 건만 끊긴다.
+     ※ 기다리기를 멈추는 것이지 요청을 취소하는 건 아니다(AbortController 가 안 깔려 있다).
+       그래도 루프가 그 건에 붙잡히지 않는 것이 요점이다. */
+  perCallMs: 2000
 };
 
 const LIVETRIG = {
@@ -18678,18 +18692,35 @@ async function runTradingCycle(env) {
       let evalProcessed = 0, evalTimedOut = false, _evalAdv = 0;
       // [V33.172] 부가조회 공용 지갑 — 기능별 개별 예산의 합이 예산을 넘던 문제를 총량으로 막는다.
       //   phase 는 '어디에 시간이 갔는지'를 사이클마다 한 줄로 남기기 위한 계측이다(D1 write 0).
-      const _enrich = { spent: 0, budget: 0, flowRefresh: 0, skipped: 0, slow: [],
+      const _enrich = { spent: 0, budget: 0, flowRefresh: 0, skipped: 0, slow: [], timedOut: 0,
                        seqMs: 0, seqBuilt: 0, seqSkip: 0 };   // [V33.267] SEQ 조립 계측
       const _lsmCycle = { ms: 0, n: 0, dis: 0 };   // [V33.268] 최적정지 자문 계측(사이클 총량 상한)
       const _phase = { scalp: 0, flow: 0, opt: 0, intra: 0, decide: 0, news: 0 };
       let _symPrevT0 = 0, _symPrev = "", _symTotalMs = 0;   // [V33.172] 종목당 소요시간 계측
       // 부가조회 한 건을 지갑에서 결제한다. 잔액이 없으면 아예 실행하지 않고 건너뛴 횟수를 센다.
       //   ★핵심 평가(신호생성·판정)는 이 지갑을 쓰지 않는다★ — 부가정보 때문에 본체가 굶으면 안 된다.
+      /* [V33.327] 한 건에도 상한을 건다 — 위 ENRICH.perCallMs 주석 참조.
+         기다리는 시간은 ★남은 잔액과 1건 상한 중 작은 쪽★ 이다(잔액보다 더 기다릴 이유가 없다).
+         시간이 넘으면 지갑이 비었을 때와 ★같은 undefined★ 를 돌려준다 — 호출부는 이미
+         그 값을 '부가정보 없음' 으로 다루고 있으므로 새로 다뤄야 할 경우가 늘지 않는다.
+         ★거래 확정 경로(_phaseRun)는 건드리지 않는다★ — 그쪽은 지갑도 상한도 없이 통과시킨다
+         (조회를 건너뛰면 확인 실패가 진입 차단으로 읽히는 사고가 난다. 바로 아래 주석). */
       const _enrichRun = async function (kind, fn) {
         if (_enrich.spent >= _enrich.budget) { _enrich.skipped++; return undefined; }
         const _t0 = Date.now();
-        try { return await fn(); }
-        finally { const _d = Date.now() - _t0; _enrich.spent += _d; if (_phase[kind] != null) _phase[kind] += _d; }
+        const _cap = Math.max(250, Math.min(_num(ENRICH.perCallMs, 2000),
+                                            _enrich.budget - _enrich.spent));
+        let _tm = null, _hit = false;
+        try {
+          return await Promise.race([
+            fn(),
+            new Promise(function (res) { _tm = setTimeout(function () { _hit = true; res(undefined); }, _cap); })
+          ]);
+        } finally {
+          if (_tm) clearTimeout(_tm);
+          if (_hit) _enrich.timedOut++;
+          const _d = Date.now() - _t0; _enrich.spent += _d; if (_phase[kind] != null) _phase[kind] += _d;
+        }
       };
       // [V33.172] ★거래 확정 경로는 지갑으로 막지 않는다 — 재기만 한다★
       //   진입 직전 분봉확인·옵션심리는 '이미 매수하기로 한 종목'에만 걸린다(건수도 이미 상한이 있다).
@@ -20968,6 +20999,10 @@ async function runTradingCycle(env) {
             "[EVAL-COST] " + market.toUpperCase() + " 종목당 평균 " + _per + "ms · 부가조회 " +
             Math.round(_enrich.spent) + "/" + _enrich.budget + "ms" +
             (_enrich.skipped ? "(예산소진 " + _enrich.skipped + "건 생략)" : "") +
+            /* [V33.327] 상한에 걸려 포기한 건수 — 안 적으면 "왜 부가정보가 비었나" 를
+               다음에 또 코드를 읽어 알아내야 한다(상한값을 조정할 근거도 여기서 나온다). */
+            (_enrich.timedOut ? "(1건상한 " + _num(ENRICH.perCallMs, 2000) + "ms 초과 " +
+              _enrich.timedOut + "건 포기)" : "") +
             (_enrich.flowRefresh ? " · FLOW갱신 " + _enrich.flowRefresh + "종목" : "") +
             /* [V33.267] ★조립 0건이면 SEQ 는 없는 위원이다.★ 숫자가 안 보이면 아무도 못 알아챈다. */
             ((_enrich.seqBuilt || _enrich.seqSkip) ? " · SEQ " + _enrich.seqBuilt + "종목 " +
@@ -28763,6 +28798,20 @@ async function _miniLogisticTrain(DB, opts) {
     /* [V33.291] market 도 읽는다 — IC 에서 ★시장 고정효과★ 를 빼기 위해서다.
        네 표(ml/flow/xalpha/stack_samples) 모두 이 컬럼을 갖고 있다. */
     const _COLS = "SELECT id, ts, market, symbol, feat, label, pnl_pct" + (opts.srcCol ? ", src" : "");
+    /* [V33.326] ★(featver, ts) 인덱스를 여기서 보장한다★ — 이 인덱스를 필요로 하는 코드가
+       직접 만든다(있으면 no-op). 실측: ml_samples 에는 idx_samples_fv_ts 가 있는데
+       flow_samples·xalpha_samples·stack_samples 에는 ★인덱스가 하나도 없다★(PK 뿐).
+       종전에도 `WHERE featver=? ORDER BY ts DESC LIMIT 40000` 이 전체 스캔+정렬이었지만
+       한 번이라 넘어갔다. 그런데 위 달력 분할은 칸마다 범위 질의를 던져 ★질의가 13개★ 가
+       된다 — 인덱스가 없으면 그 13개가 전부 풀스캔이 되어 야간 학습 예산을 태운다.
+       즉 이 인덱스는 '있으면 좋은 것' 이 아니라 위 변경의 ★전제★ 다.
+       표 이름은 코드 상수지만 DDL 이라 한 번 더 좁혀서 넣는다. */
+    if (/^[a-z_]+$/.test(String(opts.table || ""))) {
+      try {
+        await DB.prepare("CREATE INDEX IF NOT EXISTS idx_" + opts.table + "_fv_ts ON " +
+                         opts.table + "(featver, ts)").run();
+      } catch (e) {}
+    }
     /* ══ [V33.326] ★달력에 못 박은 홀드아웃 — 신규 위원이 영원히 '아직 못 쟀다' 였던 원인★ ═══
        운영 실측(2026-09-09 프로브)에서 이 트레이너를 쓰는 위원이 ★전원★ 같은 자리에 걸려 있었다:
          FLOW 홀드아웃 21일=관측 2개(t 5.46) · XALPHA 24일=2개(t 2.94) · STACK 38일=3개

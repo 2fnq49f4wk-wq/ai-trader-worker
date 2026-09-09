@@ -140,6 +140,12 @@ jobs:
       #   설정이 정말 minBlocks 를 넘기는지 산수로 못박는다(지평이 바뀌면 여기서 걸린다).
       - name: Mini trainer calendar holdout contract check
         run: node tools/check-mini-holdout.mjs
+      # [V33.327] 부가조회 지갑 — 한 건이 사이클을 통째로 굶기지 못하는가.
+      #   운영 자가진단 warn: 052690.KS 한 종목이 7,071ms 를 써서 7,200ms 예산을 비우고
+      #   뒤 종목 14개가 '예산소진 생략' 됐다(그 결과가 TIME-CAP 72회 반복).
+      #   소스에서 실제 함수를 꺼내 돌린다 — 특히 거래 확정 경로에 상한이 없는지 함께 본다.
+      - name: Enrichment budget per-call cap check
+        run: node tools/check-enrich-budget.mjs
       # [V33.140] 전진검증 누적 원장 — 창이 매일 밤 리셋돼 ★구조적으로★ 못 채워지던 것을 고쳤다.
       #   (memo: 총표본 177,868 인데 전진 357 = 어제 유입과 정확히 일치)
       #   교착 해소와 통계 정직성을 함께 본다: 잡음 통과율이 문턱의 명목값과 맞는지,

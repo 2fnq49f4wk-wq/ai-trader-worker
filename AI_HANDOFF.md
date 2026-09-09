@@ -7,7 +7,52 @@
 - Status: complete locally; deployment must be checked against this exact HEAD after push.
 - Owner: Claude
 - Branch: main (direct main authorized; no PR)
-- Last commit: HEAD / V33.326 (resolve with git log -1)
+- Last commit: HEAD / V33.327 (resolve with git log -1)
+- Base: 7705ccc / V33.326 (같은 세션). 배포 성공·live build V33.326 확인 후 시작.
+- Scope: 사용자 지시 — "다른 문제 없는지 확인하고 수정해". 프로덕션 자가진단(/api/selfcheck)이
+  스스로 낸 warn 을 근거로 두 건을 고쳤다.
+
+### Claude V33.327 — 2026-09-09
+
+- **① 부가조회 지갑: 한 건이 사이클을 통째로 굶겼다** (`src/index.js`)
+  자가진단 warn 3건 중 2건이 같은 사고를 가리켰다:
+    `[EVAL-COST] KR 부가조회 6773/7200ms — scalp 6773ms · 느린종목 052690.KS:★7071ms★`
+    `[EVAL-COST] KR 부가조회 7470/7200ms(★예산소진 14건 생략★)`
+    `[TIME-CAP] ★72회 반복★ — KR 평가 35/446종목(8%) 후 중단`
+  원인: `_enrichRun` 이 지갑을 ★쓰기 전 잔액★ 만 봤다. 한 번 시작한 조회는 얼마가 걸리든
+  끝까지 기다렸다 — 한 종목이 7,071ms 를 쓰면 7,200ms 예산이 그 자리에서 끝난다.
+  고침: 1건 상한(`ENRICH.perCallMs` 2,000ms)을 두고, 기다리는 시간은 ★남은 잔액과 상한 중
+  작은 쪽★ 으로 한다. 넘으면 그 건만 포기하고 지갑이 비었을 때와 같은 `undefined` 를
+  돌려준다(호출부가 이미 그 값을 다룬다). 값 근거: 같은 로그의 다른 느린 종목이
+  1,278~1,579ms 라 2,000ms 는 정상 조회를 안 깎고 병적인 건만 끊는다.
+  ★거래 확정 경로(`_phaseRun`)는 손대지 않았다★ — 거기에 상한을 걸면 "조회 실패 → 진입 차단"
+  이라는 조용한 사고가 난다(코드 주석이 이미 경고하고 있던 지점).
+  검증(실측): 새 게이트가 7,071ms 건을 2,003ms 에 끊고, 종전에 전부 생략되던 뒤 14종목이
+  전부 조회되는 것을 확인. 상한 제거·거래경로에 상한 추가 두 회귀를 넣어 둘 다 잡히는 것도 확인.
+- **② flow/xalpha/stack_samples 에 인덱스가 없었다** (`src/index.js`)
+  `ml_samples` 에는 `idx_samples_fv_ts(featver, ts)` 가 있는데 나머지 셋에는 ★인덱스가
+  하나도 없었다★(PK 뿐). 종전에도 `WHERE featver=? ORDER BY ts DESC LIMIT 40000` 이
+  전체 스캔+정렬이었지만 질의가 하나라 넘어갔다. 그런데 V33.326 의 달력 분할은 칸마다
+  범위 질의를 던져 ★질의가 13개★ 가 된다 — 인덱스가 없으면 그게 전부 풀스캔이 되어
+  야간 예산을 태운다. 즉 이 인덱스는 V33.326 의 ★전제★ 다.
+  인덱스를 필요로 하는 코드(`_miniLogisticTrain`)가 직접 `CREATE INDEX IF NOT EXISTS` 로
+  보장한다(야간 1회, 있으면 no-op). 표 이름은 코드 상수지만 DDL 이라 `^[a-z_]+$` 로 한 번 더 좁혔다.
+- **새 게이트** `tools/check-enrich-budget.mjs` (deploy.yml 배선): 소스에서 `_enrichRun` 을
+  꺼내 ★실제로 돌려★ 7항목을 본다 — 병적인 건 절단, 뒤 종목 회복, 정상 조회 보존, 지갑 소진
+  계약 유지, 오류 전파, ★거래 확정 경로에 상한 없음★, 잔액 우선.
+- **기존 게이트 보수** (`tools/check-eval-cost.mjs`): 같은 함수를 떼어 돌리는 하네스에
+  `_num`·`_enrich.timedOut` 이 없어 ReferenceError 로 죽었다. 빠진 것을 채워 ★계속 실제로
+  돌게★ 두었다(문자열 검사로 후퇴하지 않았다).
+- 남겨 둔 것(고치지 않고 보고만): `perf.scan.coverage 10%` 는 증분 스캔의 설계상 회전이라
+  결함이 아니다. XALPHA 는 전진 IC 가 음수(-0.039)인데 `fwdReady=false` 라 조기 거부에
+  안 걸린다 — 문턱 설계에 관한 판단이라 근거 없이 손대지 않았다.
+- 검증: `node --check` 통과, 89종 게이트 전체 통과, `git diff --check` 통과.
+- 학습·주문 트리거 없음, 정책 값 변경 없음, 시크릿 없음.
+
+## Previous handoff — V33.326
+
+- Owner: Claude
+- Last commit: V33.326 (resolve with `git log`)
 - Base: 9bb942b / V33.325. 작업 전 `git fetch origin main` 확인(뒤처짐 0).
 - Scope: 사용자 지적 — "또 신규 위원들 작동 안하는데 원인 분석해서 수정해라".
 

@@ -32,8 +32,13 @@ console.log('① 부가조회 총량 상한이 존재하고 안전한가');
 
 console.log('② 지갑이 비면 ★실행 자체를★ 안 하는가 (실제 소스를 떼어 돌린다)');
 {
+  /* [V33.327] 하네스를 ★프로덕션과 같은 모양★ 으로 맞춘다.
+     _enrichRun 이 1건 상한(ENRICH.perCallMs)을 쓰면서 `_num` 과 `_enrich.timedOut` 을
+     참조하게 됐다 — 하네스에 없으면 ReferenceError 로 이 검사가 죽는다(실제로 죽었다).
+     빠진 것을 채워 ★같은 함수를 계속 실제로 돌린다★(문자열 검사로 후퇴하지 않는다). */
   const F = new Function('ENRICH', `
-    const _enrich = { spent:0, budget:100, flowRefresh:0, skipped:0, slow:[] };
+    const _num = (v, d) => { const n = Number(v); return Number.isFinite(n) ? n : d; };
+    const _enrich = { spent:0, budget:100, flowRefresh:0, skipped:0, slow:[], timedOut:0 };
     const _phase = { scalp:0, flow:0, opt:0, intra:0, decide:0, news:0 };
     ${grab('const _enrichRun = async function')};
     ${grab('const _phaseRun = async function')};
