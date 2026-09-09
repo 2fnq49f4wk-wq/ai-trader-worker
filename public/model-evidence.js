@@ -28,6 +28,7 @@
       card.querySelector('.evidence-reason').textContent=r.why||'상세 근거 응답 대기';
       var m=alt[r.key], measures=[];
       if(m){
+        if(Number.isFinite(m.ts))measures.push('학습 '+new Date(m.ts).toLocaleString('ko-KR'));
         if(m.holdDays!=null)measures.push('홀드아웃 '+m.holdDays+'일');
         if(m.icT!=null)measures.push('홀드아웃 t '+Number(m.icT).toFixed(2));
         if(m.minFwd)measures.push('전진 표본 '+(m.fwdN||0)+' / '+m.minFwd);

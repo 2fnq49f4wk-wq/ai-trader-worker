@@ -4,7 +4,7 @@
 
 ## Current handoff
 
-- Status: V33.329 implementation verified locally; production deployment and post-fix retraining pending.
+- Status: V33.329 ab4e950 deployed and live-verified; all four targeted retrains succeeded. Final evidence-panel sizing/docs commit requires its own deployment confirmation.
 - Owner: Codex
 - Branch: main (direct main authorized; no PR)
 - Last commit: HEAD / V33.329 (resolve with git log -1)
@@ -18,7 +18,9 @@
 - Fixed icForwardCheck id+ts cursor, legacy unverifiable ledger repair, and elapsed-time expiry. Forward statistics may drop after invalid/expired evidence is removed; do not relabel that as a model regression or force trusted=true.
 - Added model-only monochrome evidence panel with server roster status/reasons, weights and measured validation values. Existing polling, no new network requests/timers, no sidebar/other page style changes. Keyed nodes preserve disclosures during refresh.
 - Tests: all 92 `tools/check-*.mjs` passed with PYTHONUTF8=1, NODE_NO_WARNINGS=1. New real-function regression is wired into deploy.yml. `git diff --check` passed. Browser local checks 390x844 / 820x1180 / desktop1262: no horizontal overflow; 13 model cards render; native details remain open across refresh. Preview only proxies read-only allowlisted production APIs; nonallowlisted preview503s are not app failures.
-- Initial authorized FLOW retrain run34363716458 succeeded on V33.328: 70day/7block holdout, t0.448 -> reject (honest failure, not stuck-duration). Other latest-model retraining and exact deployed build must be confirmed after push.
+- Deploy run34365326410 succeeded for ab4e950. Live browser build V33.329, 13 model cards; 390/820/1366px widths no overflow. Forced evidence refresh preserved same DOM node, open=true, focus=true, scrollDelta=0. Final tablet grid refined to two277.5px columns /586px panel height; phone remains312px single column. Full92 gates passed again after sizing refinement.
+- Authorized serial retrains on deployed V33.329: XALPHA34365561250, DUAL34365640535, STACK34365908600, FLOW34365985009 — all success. Verified actual live model timestamps, not just workflow conclusions. DUAL bull/bear now provisional×0.25 with holdout t4.269/5.818 (was pending from25day/2effective blocks); genuine forward0/400 still required for full. FLOW/XALPHA/STACK now70day/7effective blocks but reject at t0.448/0.296/-0.934. Old FLOW/XALPHA unverifiable4000-row forward ledgers correctly reset to0. Model shape selection remains evidence-driven: STACK lin selected over gbdt/mlp/blend; none passed holdout. SEQ remains provisional; MEMO remains reject, not retrained in this targeted pass.
+- ai-mode uses20s SWR and can return the prior snapshot immediately after training; re-read after refresh and compare model ts with training logs before claiming current state. Latest verified ts: FLOW1788965286885, XALPHA1788965059382, STACK1788965252443, DUAL bull1788965139961/bear1788965201838.
 - No secret, binding, cron, schema migration, model upload route or manual order changes. Previous Claude work preserved below.
 
 ### Claude V33.327 — 2026-09-09
