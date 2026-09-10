@@ -165,6 +165,11 @@ jobs:
       #   표시 규칙·저장 경로·자가진단 감지기 셋을 함께 못박는다.
       - name: Pre/after-market contract check
         run: node tools/check-overmarket.mjs
+      # [V33.331] 시간외 거래 — 가격·시각(서머타임)·집행 셋을 함께 본다.
+      #   지키는 것은 "시간외에 거래가 된다" 가 아니라 "값이 미덥지 않으면 거래하지 않는다" 쪽이다.
+      #   특히 시간외 값이 없을 때 정규장 가격으로 떨어지면 16시 값으로 20시에 거래하게 된다.
+      - name: Extended-hours trading contract check
+        run: node tools/check-ext-trading.mjs
       # [V33.140] 전진검증 누적 원장 — 창이 매일 밤 리셋돼 ★구조적으로★ 못 채워지던 것을 고쳤다.
       #   (memo: 총표본 177,868 인데 전진 357 = 어제 유입과 정확히 일치)
       #   교착 해소와 통계 정직성을 함께 본다: 잡음 통과율이 문턱의 명목값과 맞는지,

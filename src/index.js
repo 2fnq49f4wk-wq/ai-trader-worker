@@ -2981,7 +2981,7 @@ async function applySignalTypeWeights(DB, cfg) {
    화면·자가진단이 계속 "V33.272" 를 보고했다(운영 스냅샷이 그대로 그랬다). 배포는 됐는데
    ★배포됐다는 사실만 거짓말★ 을 하고 있었으니, "내 고침이 올라간 건가" 를 화면으로 확인할
    방법이 없었다. tools/check-build-ver.mjs 가 이제 소스에 적힌 최신 버전과 이 값을 대조한다. */
-const _BUILD_VER = "V33.330";
+const _BUILD_VER = "V33.331";
 
 // ═══ [V33.171] 평가 순서 계획 — ★승격과 순환을 교차해 굶주림을 구조적으로 없앤다★ ═══
 //   V33.50 의 형태트리거는 "급한 몇 종목을 앞으로 당긴다"는 의도였으나, 실제 운영로그에서는
@@ -3625,6 +3625,26 @@ const DEFAULT_CFG = {
     intervalMs: 8000,     // [V63] 9000→8000 — 서브틱 간격 단축, 같은 시간창에 1틱 더 (청산 반응속도↑)
     maxSymbols: 50,       // 폴링 대상 상한 (1 배치=1 subrequest)
     maxElapsedMs: 52000   // invocation 총 경과 상한 (다음 cron과 겹침 방지)
+  },
+  /* [V33.331] ★시간외(프리·애프터) 거래.★
+     종전엔 시간외에 가격만 갱신하고 거래는 통째로 쉬었다. 그 사이에 실적 발표가 나면
+     보유종목이 −15% 로 벌어진 채 다음 개장까지 그대로 들고 있어야 했다 —
+     ★위험은 시간외에 생기는데 대응만 정규장에 묶여 있었다.★
+     그래서 시간외에도 청산·진입을 연다. 다만 시간외는 정규장과 성질이 다르다:
+     호가가 얇아 스프레드가 넓고, 한 호가에 몇 %씩 튀며, 오호가·오입력도 잦다.
+     그래서 ①크기를 줄이고 ②세션당 신규 진입 수를 묶고 ③값이 낡거나 이상하면 아예 손대지 않는다.
+     entries:false 로 두면 ★청산만★ 한다 — 보수적으로 쓰고 싶을 때의 설정이다. */
+  extTrade: {
+    enabled: true,
+    us: { pre: true, post: true },      // 미국 프리 07:00~09:30 · 애프터 16:00~20:00 ET
+    kr: { pre: true, post: true },      // 한국 장전 08:00~09:00 · 장후 15:30~20:00 KST
+    entries: true,                      // false = 청산만(신규 진입 금지)
+    sizeMult: 0.5,                      // 시간외 신규 진입 크기 배수 — 얇은 호가에 전액을 싣지 않는다
+    maxNewPerSession: 2,                // 한 세션에 새로 여는 종목 수 상한
+    minPickP: 0.62,                     // 그날 위원회가 이 확률 이상으로 본 종목만 진입 대상
+    freshMs: 420000,                    // 시간외 가격 신선도(7분) — 낡은 값으로는 거래하지 않는다
+    maxMovePct: 12,                     // 시간외 변동이 이보다 크면 손대지 않는다(이상호가·오입력 방어)
+    minPrice: 3                         // 초저가는 시간외 스프레드를 감당 못 한다
   },
   // [분봉] 진입 직전 장중 타이밍 확인 — 후보 종목에만 분봉 1회 조회(전 종목 X)
   //   장중 급락 칼날잡기·VWAP 추격매수를 차단해 진입 품질 향상. fetch는 maxPerCycle로 통제.
@@ -4832,7 +4852,39 @@ function migrateCfgToMarkets(cfg) {
 // [V8.6] 미국 DST(서머타임) 자동 판정
 // 2007년 이후 규칙: 3월 둘째 일요일 02:00 ET ~ 11월 첫째 일요일 02:00 ET
 // 반환: UTC 대비 ET 오프셋(-4 = EDT 서머타임, -5 = EST 겨울)
+/* [V33.331] ★서머타임을 손으로 계산하지 않는다.★
+   아래 폴백은 "2007년 이후 미국 규칙"을 코드로 옮긴 것이라, 규칙이 바뀌면 조용히 틀린다
+   (미국은 상시 서머타임 법안이 반복 발의된다). 플랫폼에는 IANA 표준시 데이터가 이미 있고
+   Workers 런타임도 이를 싣고 있으니, ★그쪽에 물어보고★ 실패할 때만 손계산으로 내려간다.
+   한 번 만든 포매터와 분 단위 결과를 캐시한다 — 세션 판정은 사이클마다 여러 번 불린다. */
+const __tzFmt = {};
+const __tzCache = {};
+function _tzOffsetHours(now, tz) {
+  try {
+    const minKey = tz + ":" + Math.floor(now.getTime() / 60000);
+    if (__tzCache[minKey] !== undefined) return __tzCache[minKey];
+    if (!__tzFmt[tz]) {
+      __tzFmt[tz] = new Intl.DateTimeFormat("en-US", {
+        timeZone: tz, hour12: false, year: "numeric", month: "2-digit",
+        day: "2-digit", hour: "2-digit", minute: "2-digit", second: "2-digit"
+      });
+    }
+    const p = {};
+    for (const x of __tzFmt[tz].formatToParts(now)) if (x.type !== "literal") p[x.type] = x.value;
+    let h = Number(p.hour); if (h === 24) h = 0;            // 일부 런타임이 자정을 24로 준다
+    const asUTC = Date.UTC(Number(p.year), Number(p.month) - 1, Number(p.date || p.day),
+                           h, Number(p.minute), Number(p.second));
+    if (!isFinite(asUTC)) return null;
+    const diffH = Math.round((asUTC - (now.getTime() - now.getMilliseconds())) / 60000) / 60;
+    if (!isFinite(diffH) || Math.abs(diffH) > 14) return null;
+    if (Object.keys(__tzCache).length > 64) { for (const k in __tzCache) delete __tzCache[k]; }
+    __tzCache[minKey] = diffH;
+    return diffH;
+  } catch (e) { return null; }
+}
 function getUSEtOffset(now) {
+  const _tz = _tzOffsetHours(now, "America/New_York");
+  if (_tz != null) return _tz;                              // 표준시 DB 가 답하면 그대로 쓴다
   const year = now.getUTCFullYear();
   // 3월 둘째 일요일 찾기 (UTC 기준 자정 사용 — 약간의 경계 오차는 무시)
   function nthSundayOfMonth(y, monthIdx, n) {
@@ -5285,6 +5337,50 @@ function isExtendedHoursWindow(market) {
       ((kst.totalMin >= 480 && kst.totalMin < 540) || (kst.totalMin >= 930 && kst.totalMin < 1200));
   }
   return false;
+}
+
+/* [V33.331] ★지금 이 시장이 "시간외 거래" 세션인가★ — "pre" / "post" / null.
+   isExtendedHoursWindow(가격 갱신용)과 ★일부러 분리한다★. 가격은 언제나 받아도 되지만
+   거래는 설정으로 열고 닫을 수 있어야 하고, 시장·세션별로 따로 꺼야 할 때가 있다.
+   창은 isExtendedHoursWindow 와 같은 시각을 쓴다 — 두 벌이 되면 한쪽만 고쳐진다. */
+function extTradeSession(market, cfg) {
+  const et = (cfg && cfg.extTrade) || DEFAULT_CFG.extTrade;
+  if (!et || et.enabled === false) return null;
+  const m = et[market];
+  if (!m) return null;
+  const now = new Date();
+  if (market === "us") {
+    const t = getUSEt(now);
+    if (t.day < 1 || t.day > 5) return null;
+    if (m.pre && t.totalMin >= 420 && t.totalMin < 570) return "pre";
+    if (m.post && t.totalMin >= 960 && t.totalMin < 1200) return "post";
+    return null;
+  }
+  if (market === "kr") {
+    const t = getKST(now);
+    if (t.day < 1 || t.day > 5) return null;
+    if (m.pre && t.totalMin >= 480 && t.totalMin < 540) return "pre";
+    if (m.post && t.totalMin >= 930 && t.totalMin < 1200) return "post";
+    return null;
+  }
+  return null;
+}
+
+/* [V33.331] 시간외 거래에 쓸 가격을 ★명시적으로★ 고른다.
+   여기서 null 을 돌려주면 그 종목은 이번엔 건드리지 않는다 —
+   ★정규장 가격으로 조용히 떨어지면 안 된다.★ 그건 "16시에 본 값으로 20시에 거래"라는 뜻이고,
+   시간외에 20% 빠진 종목을 멀쩡한 값으로 사는 사고가 된다. 없으면 없는 대로 쉬는 게 맞다. */
+function extTradePrice(q, session, cfg) {
+  const et = (cfg && cfg.extTrade) || DEFAULT_CFG.extTrade;
+  if (!q || !session) return null;
+  const px = (session === "pre") ? q.pre : q.post;
+  const pct = (session === "pre") ? q.prePct : q.postPct;
+  if (!(typeof px === "number" && isFinite(px) && px > 0)) return null;
+  if (px < _num(et.minPrice, 3)) return null;
+  if (typeof pct === "number" && isFinite(pct) && Math.abs(pct) > _num(et.maxMovePct, 12)) return null;
+  const _ts = _num(q.ts, 0);
+  if (_ts > 0 && (Date.now() - _ts) > _num(et.freshMs, 420000)) return null;   // 낡은 값으로는 거래 안 함
+  return px;
 }
 
 // [V8.6] 엔진이 거래해도 되는 시간
@@ -7083,6 +7179,50 @@ async function fetchQuoteViaChartFallback(symbol) {
   return null;
 }
 
+/* [V33.331] ★미국 시간외 실거래가를 분봉에서 직접 뽑는다.★
+   v7 이 preMarket·postMarket 필드를 안 줄 때의 마지막 수단이다. 일봉(interval=1d)으로는
+   시간외를 절대 못 본다 — 시간외 체결은 일봉에 안 들어가고, meta.regularMarketPrice 는
+   마감 후엔 정규장 종가라 "차이 없음"으로 읽힌다(V33.330 에서 확인한 구조적 한계).
+   includePrePost=true 를 붙인 분봉만이 프리·애프터 체결을 실제로 담는다.
+   종목당 1 subrequest 라 호출부가 개수를 묶어 쓴다(보유종목 우선). */
+async function fetchExtendedQuoteUS(symbol) {
+  const j = await yahooFetch("https://query1.finance.yahoo.com/v8/finance/chart/" +
+    encodeURIComponent(symbol) + "?interval=5m&range=1d&includePrePost=true");
+  const r = j && j.chart && j.chart.result && j.chart.result[0];
+  if (!r) return null;
+  const meta = r.meta || {};
+  const ctp = meta.currentTradingPeriod || {};
+  const pre = ctp.pre, reg = ctp.regular, post = ctp.post;
+  const ts = r.timestamp || [];
+  const closes = (r.indicators && r.indicators.quote && r.indicators.quote[0] &&
+                  r.indicators.quote[0].close) || [];
+  const inWin = function (w, t) { return !!(w && typeof w.start === "number" && t >= w.start && t < w.end); };
+  let lastPre = null, lastPost = null, lastReg = null;
+  for (let i = 0; i < ts.length; i++) {
+    const c = closes[i];
+    if (!(typeof c === "number" && isFinite(c) && c > 0)) continue;
+    const t = ts[i];
+    if (inWin(pre, t)) lastPre = c;
+    else if (inWin(post, t)) lastPost = c;
+    else if (inWin(reg, t)) lastReg = c;
+  }
+  // 기준가 — 프리는 전일종가 대비, 애프터는 ★정규장 종가★ 대비(야후 표기와 같은 규칙).
+  const prevClose = (typeof meta.chartPreviousClose === "number" && meta.chartPreviousClose > 0)
+    ? meta.chartPreviousClose : null;
+  const regClose = (typeof meta.regularMarketPrice === "number" && meta.regularMarketPrice > 0)
+    ? meta.regularMarketPrice : lastReg;
+  const nowSec = Math.floor(Date.now() / 1000);
+  const o = {};
+  if (inWin(pre, nowSec) && lastPre != null) {
+    o.mstate = "PRE"; o.pre = lastPre;
+    o.prePct = (prevClose > 0) ? ((lastPre - prevClose) / prevClose) * 100 : 0;
+  } else if (inWin(post, nowSec) && lastPost != null) {
+    o.mstate = "POST"; o.post = lastPost;
+    o.postPct = (regClose > 0) ? ((lastPost - regClose) / regClose) * 100 : 0;
+  } else return null;   // 시간외 창이 아니거나 체결이 없다 — 값을 지어내지 않는다
+  return o;
+}
+
 // [프리/애프터마켓] 네이버 realtime data(d)에서 한국 시간외 실시간 시세를 추출 → quote에 mstate/pre/post 부여.
 //   d.ms: "OPEN"(정규장)/"CLOSE". 시간외는 d.overMarketPriceInfo(KRX) 또는 d.nxtOverMarketPriceInfo(넥스트레이드)에 담긴다.
 //   tradingSessionType: BEFORE_MARKET(장전 시간외) / AFTER_MARKET(장후 시간외). overPrice는 "341,500" 같은 콤마 문자열.
@@ -7244,9 +7384,21 @@ async function fetchBatchQuotes(symbols, opts) {
     }
     return got;
   }
-  function v7Url(slice) {
+  /* [V33.331] ★시간외 필드를 명시적으로 요구한다.★
+     V33.330 실측: 애프터마켓 한창(19:46 ET)에 미국 종목이 marketState="POST" 인데
+     postMarketPrice 가 통째로 없었다. 야후 v7 은 fields 를 안 주면 기본 필드셋만 돌려주고,
+     그 기본셋이 계속 좁아져 왔다 — 우리가 안 물어봐서 안 온 것이다.
+     fields= 를 거부하는 환경도 있을 수 있어, 첫 배치가 0건이면 ★필드 없이 한 번 더★ 본 뒤에야
+     v7 이 죽었다고 판정한다(있는 길을 스스로 닫지 않는다). */
+  const V7_FIELDS = [
+    "symbol", "marketState", "regularMarketPrice", "regularMarketPreviousClose",
+    "regularMarketChangePercent", "preMarketPrice", "preMarketChangePercent",
+    "postMarketPrice", "postMarketChangePercent", "sharesOutstanding", "marketCap"
+  ].join(",");
+  function v7Url(slice, withFields) {
     let url = "https://query1.finance.yahoo.com/v7/finance/quote?symbols=" +
               slice.map(function(s){ return encodeURIComponent(s); }).join(",");
+    if (withFields) url += "&fields=" + V7_FIELDS;
     if (auth && auth.crumb) url += "&crumb=" + encodeURIComponent(auth.crumb);
     return url;
   }
@@ -7257,21 +7409,34 @@ async function fetchBatchQuotes(symbols, opts) {
   //   naverXV에 이미 가격이 담긴 KR 종목은 v7 조회에서 제외(예산 절약, 접미사 오류 원천 차단)
   const v7Targets = symbols.filter(function(s){ return !out[s] && !naverXV[s]; });
   for (let i = 0; i < v7Targets.length; i += BATCH) slices.push(v7Targets.slice(i, i + BATCH));
-  let v7Dead = false;
+  let v7Dead = false, v7Fields = true, v7First = 0;
   if (slices.length > 0 && fetchBudgetLeft() > 0) {
-    // 1) 첫 배치로 v7 생존 확인
-    let firstGot = 0;
-    try { firstGot = parseV7(await yahooFetch(v7Url(slices[0]), v7Headers)); } catch (e) {}
-    if (firstGot === 0) {
+    // 1) 첫 배치로 v7 생존 확인 — 먼저 fields 를 붙여서 본다.
+    try { v7First = parseV7(await yahooFetch(v7Url(slices[0], true), v7Headers)); } catch (e) {}
+    if (v7First === 0 && fetchBudgetLeft() > 0) {
+      // fields= 자체를 거부하는 경우 — 필드 없이 한 번만 더. 이래도 0이면 진짜 죽은 것이다.
+      v7Fields = false;
+      try { v7First = parseV7(await yahooFetch(v7Url(slices[0], false), v7Headers)); } catch (e) {}
+    }
+    if (v7First === 0) {
       v7Dead = true;
     } else if (slices.length > 1) {
-      // 2) 나머지 배치 병렬 실행 (예산 내)
+      // 2) 나머지 배치 병렬 실행 (예산 내) — 첫 배치에서 통한 방식 그대로.
       const rest = slices.slice(1).filter(function(){ return fetchBudgetLeft() > 0; });
       await Promise.all(rest.map(async function(slice){
         if (fetchBudgetLeft() <= 0) return;
-        try { parseV7(await yahooFetch(v7Url(slice), v7Headers)); } catch (e) {}
+        try { parseV7(await yahooFetch(v7Url(slice, v7Fields), v7Headers)); } catch (e) {}
       }));
     }
+  }
+  /* [V33.331] ★v7 상태를 기록한다.★ 종전엔 v7Dead 를 계산만 하고 한 번도 안 읽어서,
+     미국 시세의 1차 수집원이 죽어도 아무 신호가 없었다 — 시간외 결측을 오래 못 본 이유다. */
+  if (opts.DB) {
+    try {
+      await setState(opts.DB, "yahoo_v7", {
+        dead: v7Dead, fields: v7Fields, first: v7First, slices: slices.length, ts: Date.now()
+      });
+    } catch (e) {}
   }
 
   // --- 2) v7 으로 채워지지 않은 심볼만 v8 chart 로 폴백 ---
@@ -7299,6 +7464,41 @@ async function fetchBatchQuotes(symbols, opts) {
     }));
     for (const r of results) {
       if (r.q) out[r.sym] = r.q;
+    }
+  }
+
+  /* --- 2.5) [V33.331] ★미국 시간외 보강★ ---
+     v7 이 세션(marketState)만 주고 가격을 안 줄 때, 분봉(includePrePost)에서 직접 채운다.
+     종목당 1 subrequest 라 무제한으로 돌리면 예산을 태운다 — 세 겹으로 묶는다:
+       ① 미국 시간외 창일 때만  ② 값이 실제로 비어 있는 종목만
+       ③ 보유종목 먼저(opts.extPriority), 나머지는 회전하며 상한(extMax)까지만.
+     못 채운 종목은 다음 사이클로 넘어간다 — 값을 지어내지 않는다. */
+  if (isExtendedHoursWindow("us")) {
+    const _lack = function (s) {
+      if (s.endsWith(".KS") || s.endsWith(".KQ")) return false;
+      const q = out[s];
+      if (!q || !(q.price > 0)) return false;
+      if (q.mstate === "PRE") return !(typeof q.pre === "number" && q.pre > 0);
+      if (q.mstate === "POST" || q.mstate === "POSTPOST") return !(typeof q.post === "number" && q.post > 0);
+      return true;   // 세션 표시조차 없다(=v8 폴백으로 들어온 종목) — 확인 대상
+    };
+    const _pri = Array.isArray(opts.extPriority) ? opts.extPriority.filter(_lack) : [];
+    const _rest = symbols.filter(function (s) { return _lack(s) && _pri.indexOf(s) < 0; });
+    const _off = (typeof opts.extOffset === "number" && opts.extOffset >= 0) ? opts.extOffset : 0;
+    const _rot = _rest.length ? _rest.slice(_off % _rest.length).concat(_rest.slice(0, _off % _rest.length)) : [];
+    const _cap = (typeof opts.extMax === "number" && opts.extMax >= 0) ? opts.extMax : 24;
+    const _todo = _pri.concat(_rot).slice(0, _cap);
+    const EBATCH = 6;
+    for (let i = 0; i < _todo.length; i += EBATCH) {
+      if (fetchBudgetLeft() < 10) break;   // 코어용 예비는 남긴다
+      const _sl = _todo.slice(i, i + EBATCH);
+      const _rs = await Promise.all(_sl.map(async function (sym) {
+        try { return { sym: sym, x: await fetchExtendedQuoteUS(sym) }; }
+        catch (e) { return { sym: sym, x: null }; }
+      }));
+      for (const _r of _rs) {
+        if (_r.x && out[_r.sym]) Object.assign(out[_r.sym], _r.x);
+      }
     }
   }
 
@@ -16057,7 +16257,19 @@ async function refreshPriceShard(env, market, shard) {
   const nowTs = Date.now();
   // [V15] v7 batch(crumb) 우선 — 50종목 1호출. 누락분만 chart 폴백.
   const tFetch0 = Date.now();
-  const bq = await fetchBatchQuotes(symbols, { maxFallback: symbols.length, DB: DB });
+  /* [V33.331] 시간외 보강은 ★보유종목부터★ — 시간외에 손절/익절 판단이 걸린 건 보유분이다.
+     들고 있지 않은 종목의 시간외 가격은 못 채워도 다음 회전에서 채우면 되지만,
+     보유종목의 시간외 가격이 비면 그 시간 동안 위험을 못 본다. */
+  let _held = [];
+  try {
+    const _hr = await DB.prepare("SELECT DISTINCT symbol FROM positions WHERE market = ?").bind(market).all();
+    _held = ((_hr && _hr.results) || []).map(function (r) { return r.symbol; })
+      .filter(function (s) { return symbols.indexOf(s) >= 0; });
+  } catch (e) {}
+  const bq = await fetchBatchQuotes(symbols, {
+    maxFallback: symbols.length, DB: DB,
+    extPriority: _held, extOffset: shard * 7, extMax: 24
+  });
   const tFetch = Date.now() - tFetch0;
   const results = symbols.map(function(symbol){
     const q = bq[symbol];
@@ -17705,8 +17917,13 @@ async function runTradingCycle(env) {
     //   scheduled() 쪽 트리거는 엔진 disabled 상태에서도 동작하므로 커버리지 손실도 없다.
 
     // [V58] 거래 윈도우 기준 — KR 네이버 실시간, 정규장 09:00~15:30 KST
-    let usCanTrade = isTradingWindow("us");
-    let krCanTrade = isTradingWindow("kr");
+    /* [V33.331] 시간외 세션도 "거래 가능"에 포함한다.
+       실제 시간외 매매는 fastWatch 가 집행한다(보유종목 청산 + 그날 픽 진입) —
+       메인 루프의 무거운 평가(일봉 라운드로빈·전종목 위원회)는 시간외에 돌리지 않는다.
+       여기에 넣는 이유는 이 값이 fastwatch:markets 로 내려가 fastWatch 의 대상 명단이 되기 때문이다. */
+    const _usExtSess = extTradeSession("us", cfg), _krExtSess = extTradeSession("kr", cfg);
+    let usCanTrade = isTradingWindow("us") || !!_usExtSess;
+    let krCanTrade = isTradingWindow("kr") || !!_krExtSess;
 
     // [V22] 휴장일 자동 판정(A) — 시간상 열려있어도 지수 신선도로 오늘 개장 여부 확인.
     if (usCanTrade) {
@@ -21199,8 +21416,17 @@ async function runFastWatch(env, cronStart) {
 
     // 직전 거래 사이클이 판정한 "거래가능 시장"만 (휴장/엔진/윈도우 로직 재사용, 90s 신선도)
     const fwm = await getState(DB, "fastwatch:markets", null);
-    if (!fwm || !fwm.ts || (Date.now() - fwm.ts) > 90000 || !Array.isArray(fwm.list) || fwm.list.length === 0) return;
-    const markets = fwm.list.filter(function(m){ return m === "us" || m === "kr"; });
+    const _fwFresh = !!(fwm && fwm.ts && (Date.now() - fwm.ts) <= 90000 && Array.isArray(fwm.list));
+    const markets = _fwFresh ? fwm.list.filter(function(m){ return m === "us" || m === "kr"; }) : [];
+    /* [V33.331] ★시간외 세션은 명단을 직접 확인한다.★
+       fastwatch:markets 는 메인 사이클이 써 주는데, 그 사이클이 한 번 걸러지면(락 경쟁·예산)
+       명단이 낡아 시간외 감시가 통째로 쉬어 버린다. 시간외는 사고가 나는 시간대라
+       남의 기록에 기대지 않고 여기서 다시 판정한다. */
+    const extSess = {};
+    for (const _m of ["us", "kr"]) {
+      const _s = extTradeSession(_m, cfg);
+      if (_s) { extSess[_m] = _s; if (markets.indexOf(_m) < 0) markets.push(_m); }
+    }
     if (markets.length === 0) return;
 
     const maxElapsed = fw.maxElapsedMs || 52000;
@@ -21215,7 +21441,7 @@ async function runFastWatch(env, cronStart) {
     // [V33.44] 메인 사이클이 저장한 국면 위상을 청산 루프에서도 그대로 쓴다(시장별).
     let _phaseState = null; try { _phaseState = await getState(DB, "mkt_phase", null); } catch (e) {}
     const deRiskOpts = { active: false, vixValue: vixVal, phase: null, phaseByMarket: _phaseState };
-    const cash = await computeAllCash(DB, cfg);
+    let cash = await computeAllCash(DB, cfg);   // [V33.331] 시간외 진입이 executeBuy 반환값으로 갱신한다
 
     // 시장별 보유 포지션 + 캐시 일봉 사전 로드 (틱마다 재로드 안 함)
     // [V33.12] ★D1 과부하("D1 DB is overloaded")의 최대 단일 원인★
@@ -21224,9 +21450,12 @@ async function runFastWatch(env, cronStart) {
     //   일봉뿐이므로, 보유 심볼만 모아 단일 IN 쿼리 1회로 읽는다(읽는 행 980→보유 수십).
     const ctxByMarket = {};
     const _posByMkt = {}, _needSyms = {};
+    /* [V33.331] 시간외 ★신규 진입★ 을 하려면 보유가 0인 시장도 명단에 있어야 한다.
+       종전엔 "보유 없음 = 감시 불필요" 로 건너뛰었다 — 청산만 하던 때는 맞는 말이었다. */
+    const _extEntryOn = !!(cfg.extTrade && cfg.extTrade.enabled !== false && cfg.extTrade.entries !== false);
     for (const market of markets) {
       const positions = await getPositions(DB, market);
-      if (Object.keys(positions).length === 0) continue;
+      if (Object.keys(positions).length === 0 && !(extSess[market] && _extEntryOn)) continue;
       _posByMkt[market] = positions;
       for (const pk of Object.keys(positions)) { const _s = positions[pk] && positions[pk].symbol; if (_s) _needSyms[_s] = 1; }
     }
@@ -21250,7 +21479,8 @@ async function runFastWatch(env, cronStart) {
     const activeMarkets = Object.keys(ctxByMarket);
     if (activeMarkets.length === 0) return;  // 보유 포지션 없음 → 감시 불필요
 
-    let fastSells = 0, ticksDone = 0;
+    let fastSells = 0, ticksDone = 0, extBuys = 0;
+    const _extBought = new Set();   // 이 호출에서 시간외로 이미 산 종목 — 틱이 반복돼도 두 번 사지 않는다
     for (let t = 0; t < ticks; t++) {
       if ((Date.now() - cronStart) + interval > maxElapsed) break;  // 다음 서브틱이 예산 초과면 종료
       await _sleep(interval);
@@ -21258,11 +21488,31 @@ async function runFastWatch(env, cronStart) {
       for (const market of activeMarkets) {
         const c = ctxByMarket[market];
         const mcfg = c.mcfg;
-        const uniq = Array.from(new Set(Object.keys(c.positions).map(function(k){ return c.positions[k].symbol; }))).slice(0, fw.maxSymbols || 50);
+        const _xs0 = extSess[market] || null;
+        const _heldSyms = Array.from(new Set(Object.keys(c.positions).map(function(k){ return c.positions[k].symbol; })));
+        /* [V33.331] 시간외 진입 후보 — ★그날 위원회가 이미 통과시킨 종목★ 에서만 고른다.
+           시간외에 전종목 평가를 새로 돌리는 건 예산상 불가능하고, 얇은 호가에서 새 판단을
+           내리는 것도 위험하다. "낮에 사도 좋다고 본 종목을, 시간외 가격으로 산다"까지가 한계다. */
+        let _cand = [];
+        if (_xs0 && _extEntryOn) {
+          try {
+            const _pk = await getState(DB, "ai_picks:" + market, null);
+            const _minP = _num(cfg.extTrade && cfg.extTrade.minPickP, 0.62);
+            _cand = (((_pk && _pk.picks) || [])
+              .filter(function (p) { return p && !p.abstain && _num(p.p, 0) >= _minP && _heldSyms.indexOf(p.symbol) < 0; })
+              .map(function (p) { return p.symbol; })).slice(0, 8);
+          } catch (e) {}
+        }
+        const uniq = Array.from(new Set(_heldSyms.concat(_cand))).slice(0, fw.maxSymbols || 50);
         if (uniq.length === 0) continue;
         if (fetchBudgetLeft() <= 2) break;
         let quotes = {};
-        try { quotes = await fetchBatchQuotes(uniq, { maxFallback: uniq.length, DB: DB }); }
+        try {
+          quotes = await fetchBatchQuotes(uniq, {
+            maxFallback: uniq.length, DB: DB,
+            extPriority: uniq, extMax: uniq.length     // 감시 대상은 전부 시간외 값을 채운다
+          });
+        }
         catch (e) { continue; }
         for (const posKey of Object.keys(c.positions)) {
           const held = c.positions[posKey];
@@ -21272,8 +21522,19 @@ async function runFastWatch(env, cronStart) {
           //   순회하므로 여기서 명시적으로 건너뛴다(안 그러면 헤지가 트레일/손절로 청산돼 슬리브가 붕괴).
           if (held.strategy === "hedge") continue;
           const q = quotes[held.symbol];
-          if (!q || !(typeof q.price === "number" && q.price > 0)) continue;
-          const price = q.price;
+          if (!q) continue;
+          /* [V33.331] 시간외 세션이면 ★시간외 체결가★ 로 판단한다.
+             정규장 가격으로 떨어지면 "16시 값으로 20시에 손절" 이 되어 규칙이 거짓말을 한다.
+             시간외 값이 없거나 가드에 걸리면 그 종목은 이번 틱에 건너뛴다(쉬는 게 맞다). */
+          const _xs = extSess[market] || null;
+          let price;
+          if (_xs) {
+            price = extTradePrice(q, _xs, cfg);
+            if (price == null) continue;
+          } else {
+            if (!(typeof q.price === "number" && q.price > 0)) continue;
+            price = q.price;
+          }
           const stratName = held.strategy || "trend";
           const daily = c.dailyMap[held.symbol];
           if (!daily || !daily.closes || daily.closes.length < 25) continue;
@@ -21308,17 +21569,80 @@ async function runFastWatch(env, cronStart) {
               const wasFull = sellDecision.sellQty >= held.qty;
               await executeSell(DB, market, held.symbol, held, sellDecision.sellQty, price, sellDecision.reason, mcfg, cash);
               fastSells++;
-              await log(DB, "INFO", held.symbol, "[FAST] " + sellDecision.reason);
+              // [V33.331] 시간외 체결은 그 사실을 남긴다 — 나중에 원장을 볼 때 정규장과 구분돼야 한다.
+              //   (reason 문자열 자체는 안 건드린다 — executeSell 의 STOP·쿨다운 판정이 접두에 의존한다)
+              await log(DB, "INFO", held.symbol, "[FAST]" + (_xs ? "[시간외 " + _xs + "]" : "") + " " + sellDecision.reason);
               if (wasFull) delete c.positions[posKey];  // 부분매도는 executeSell이 held.qty를 in-place 감소
             } catch (e) { try { await log(DB, "ERROR", held.symbol, "[FAST] sell fail: " + e.message); } catch (e2) {} }
           } else if (posDirty) {
             try { await savePosition(DB, market, held.symbol, stratName, held); } catch (e) {}
           }
         }
+
+        /* [V33.331] ★시간외 신규 진입.★
+           청산과 달리 진입은 "안 하면 기회를 놓칠 뿐" 이고, 잘못 하면 얇은 호가에 물린다.
+           그래서 안전한 쪽으로 기울여 놓았다:
+             · 그날 위원회가 minPickP 이상으로 본 종목만(새 판단을 시간외에 내리지 않는다)
+             · 크기는 sizeMult 배(기본 0.5) — 현금 기준이라 계좌 전체보다 보수적이다
+             · 한 세션에 maxNewPerSession 종목까지만(세션 카운터를 D1 에 남겨 틱·크론을 넘어 센다)
+             · 시간외 가격이 없거나 낡았거나 과하게 튀면 아예 안 산다(extTradePrice 가 null)
+           entries:false 면 이 블록 전체가 돌지 않는다 — 청산만 하는 운용이 된다. */
+        if (_xs0 && _extEntryOn && _cand.length && fetchBudgetLeft() > 2) {
+          try {
+            const _et = cfg.extTrade || DEFAULT_CFG.extTrade;
+            const _sKey = "ext_entry:" + market + ":" + _xs0 + ":" +
+              (market === "kr" ? kstTradingDayKey(new Date())
+                               : (function (p) { return p.year + "-" + p.month + "-" + p.date; })(getUSEt(new Date())));
+            const _ctr = (await getState(DB, _sKey, null)) || { n: 0 };
+            let _room = _num(_et.maxNewPerSession, 2) - _num(_ctr.n, 0);
+            let _made = 0;                       // ★이 세션·이 시장에서만★ 센다(전체 누적과 섞이면 상한이 틀린다)
+            if (_room > 0) {
+              const _sz = getTrendSizing(cfg, market);
+              /* ★정규장 진입에 걸려 있는 상한을 시간외라고 건너뛰면 안 된다.★
+                 메인 루프는 executeBuy 앞에서 동시보유·히트를 걸러 준다 — 이 경로는 그 루프 밖이라
+                 여기서 직접 센다. 안 그러면 "시간외에만 포지션이 불어나는" 구멍이 된다. */
+              let _openN = 0;
+              try {
+                const _cr = await DB.prepare("SELECT COUNT(DISTINCT symbol) n FROM positions WHERE market = ?")
+                  .bind(market).first();
+                _openN = _num(_cr && _cr.n, 0);
+              } catch (e) { _openN = 9999; }        // 못 세면 사지 않는다(모르면 쉰다)
+              const _maxConc = _num(_sz.maxConcurrent, 10);
+              for (const _sym of _cand) {
+                if (_room <= 0) break;
+                if (_openN >= _maxConc) break;                 // 동시보유 상한
+                if (_extBought.has(market + "|" + _sym)) continue;   // 이 호출에서 이미 산 종목
+                const _q = quotes[_sym];
+                const _px = extTradePrice(_q, _xs0, cfg);
+                if (_px == null) continue;
+                // 현금은 매수마다 줄어든다 — 루프 밖에서 한 번 읽어 두면 두 번째 매수가 없는 돈을 쓴다.
+                const _budget = _num(cash[market], 0) * (_num(_sz.maxPositionPct, 10) / 100) * _num(_et.sizeMult, 0.5);
+                const _qty = Math.floor(_budget / _px);
+                if (!(_qty > 0)) continue;
+                if (_qty * _px > _num(cash[market], 0)) continue;   // 현금을 넘겨 사지 않는다
+                const _d = c.dailyMap[_sym];
+                const _atr = (_d && _d.closes && _d.closes.length >= (mcfg.atrPeriod || 14) + 1)
+                  ? getATR(_d.closes, mcfg.atrPeriod || 14, _d.highs || null, _d.lows || null) : null;
+                cash = await executeBuy(DB, market, _sym, "trend", _qty, _px,
+                  "EXT_" + _xs0.toUpperCase(), _atr, mcfg, cash);
+                _room--; _made++; extBuys++; _openN++; _extBought.add(market + "|" + _sym);
+                await log(DB, "INFO", _sym, "[FAST][시간외 " + _xs0 + "] 진입 " + _qty + "주 @" + _px +
+                  " (크기 ×" + _num(_et.sizeMult, 0.5) + " · 세션 잔여 " + _room + ")");
+              }
+              if (_made > 0) {
+                try { await setState(DB, _sKey, { n: _num(_ctr.n, 0) + _made, ts: Date.now() }); } catch (e) {}
+              }
+            }
+          } catch (e) {
+            try { await log(DB, "ERROR", null, "[FAST] 시간외 진입 실패: " + (e && e.message)); } catch (e2) {}
+          }
+        }
       }
     }
     if (ticksDone > 0) {
-      await log(DB, "INFO", null, "[FAST] watch ticks=" + ticksDone + " sells=" + fastSells + " mkts=" + activeMarkets.join(","));
+      await log(DB, "INFO", null, "[FAST] watch ticks=" + ticksDone + " sells=" + fastSells +
+        (extBuys ? " 시간외매수=" + extBuys : "") + " mkts=" + activeMarkets.join(",") +
+        (Object.keys(extSess).length ? " 시간외=" + Object.keys(extSess).map(function(m){ return m + ":" + extSess[m]; }).join(",") : ""));
     }
   } catch (e) {
     try { await log(DB, "ERROR", null, "[FAST] watch fail: " + e.message); } catch (e2) {}
@@ -43880,6 +44204,18 @@ async function _luxSelfCheck(DB) {
        한국(네이버)은 같은 시각 프리마켓이 정상 동작했다 — 표시 계층이 아니라 미국 수집 경로 문제다.
        이걸 아무도 못 잡은 이유는 감지기가 없어서다. v7Dead 는 계산만 하고 ★한 번도 안 읽는다★.
        "세션은 PRE/POST 라는데 그 값이 비어 있다" 는 조합을 여기서 소리 내게 한다. */
+    /* [V33.331] 미국 시세 1차 수집원(야후 v7)의 생사를 말한다.
+       v7 이 죽으면 v8 폴백이 라운드로빈으로 천천히 채우는데, 그 경로는 ★시간외를 못 만든다★.
+       즉 v7 사망 = 시간외 시세 전면 결측이다. 종전엔 이 사실이 어디에도 안 남았다. */
+    try {
+      const _v7 = await getState(DB, "yahoo_v7", null);
+      if (_v7 && _v7.ts) {
+        const _v7h = ageH(_v7.ts);
+        if (_v7.dead) add("error", "시세", "야후 v7(미국 시세 1차 수집원)이 응답하지 않는다 — v8 폴백은 시간외를 못 만든다(시간외 시세 전면 결측)");
+        else if (!_v7.fields) add("warn", "시세", "야후 v7 이 fields 지정을 거부해 기본 필드셋으로 받는 중 — 프리·애프터 값이 빠질 수 있다");
+        else if (_v7h != null && _v7h > 6) add("warn", "시세", "v7 상태 기록이 " + _v7h.toFixed(1) + "h 전 — 가격 샤드가 안 돌고 있을 수 있다");
+      }
+    } catch (e) {}
     try {
       const _qs = await DB.prepare(
         "SELECT v FROM state WHERE k >= 'quote:' AND k < 'quote;' LIMIT 800"
