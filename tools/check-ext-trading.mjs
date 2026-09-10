@@ -182,9 +182,27 @@ const _num = (v, d) => { const n = Number(v); return Number.isFinite(n) ? n : d;
   if (/_num\(_et\.sizeMult, 0\.5\)/.test(fw))
     ok("시간외 진입 크기를 배수로 줄인다 — 얇은 호가에 전액을 싣지 않는다");
   else bad("시간외에도 정규장과 같은 크기로 산다");
-  if (/_extEntryOn = !!\(cfg\.extTrade && cfg\.extTrade\.enabled !== false && cfg\.extTrade\.entries !== false\)/.test(fw))
-    ok("entries:false 로 두면 청산만 한다 — 보수적으로 쓸 여지를 남긴다");
-  else bad("청산만 하는 설정이 없다");
+  if (/cfg\.extTrade\.entries !== false && cfg\.extTrade\.fastEntries === true/.test(fw))
+    ok("entries:false 는 청산만 · fastEntries 는 기본 off — 메인 사이클과 fastWatch 가 같은 종목을 두 번 사지 않는다");
+  else bad("★fastWatch 진입이 기본으로 켜져 있다 — 메인 사이클과 이중 매수 경로가 된다★");
+
+  /* ★시간외 전 종목 거래★ — 메인 사이클이 시간외에도 유니버스 전체를 평가한다.
+     여기서 지키는 것은 "돈다"가 아니라 ★정규장 가격으로 돌지 않는다★ 는 쪽이다. */
+  const cyc = S.slice(S.indexOf("const extSessMkt = extOnly ? extTradeSession(market, cfg) : null;"),
+                      S.indexOf("// [통계FIX] tried=0 무음 처리 방지"));
+  if (!cyc) bad("메인 사이클의 시간외 구간을 못 찾았다");
+  if (/if \(extOnly && !extSessMkt\) continue;/.test(cyc))
+    ok("시간외 거래를 껐거나 창 밖이면 종전대로 가격만 갱신하고 빠진다");
+  else bad("시간외 스위치가 메인 사이클에 안 걸린다");
+  if (/const _xp = extTradePrice\(bq, extSessMkt, cfg\);\n\s*if \(_xp == null\) \{ extNoPrice\+\+; continue; \}/.test(cyc))
+    ok("전 종목 평가도 시간외 체결가를 쓰고, 값이 없는 종목은 평가에서 뺀다(개수를 센다)");
+  else bad("★전 종목 평가가 정규장 가격으로 돈다 — 16시 값으로 20시에 거래하게 된다★");
+  if (/price: evPrice, prevClose: bq\.prevClose/.test(cyc))
+    ok("평가에 넘기는 가격이 시간외 값이고, 기준가는 전일 정규장 종가다(dayPct 의미 유지)");
+  else bad("평가에 넘기는 가격이 시간외 값이 아니다");
+  if (/const rrSymbols = extSessMkt \? \[\] : tickers\.slice/.test(cyc) && /if \(!extSessMkt\) await setState\(DB, rrKey/.test(cyc))
+    ok("시간외엔 일봉을 새로 받지 않고 회전 위치도 전진시키지 않는다 — 봉이 안 변하고, 정규장 순회에 구멍을 내지 않는다");
+  else bad("시간외에 일봉 라운드로빈을 돌린다 — 예산만 태우고 정규장 순회가 어긋난다");
 
   /* ★정규장 진입에 걸린 상한을 시간외라고 건너뛰면 안 된다.★
      이 경로는 메인 루프 밖이라 동시보유·현금·중복을 스스로 세야 한다 —

@@ -8,8 +8,8 @@
      인데, 지금까지 화면에서 그걸 알 방법이 전혀 없었다(카카오톡 인앱 브라우저는 특히 강하게 캐시한다).
      서버가 내려주는 build 와 이 값을 비교해 다르면 배너로 알린다.
      ※ src/index.js 의 _BUILD_VER 와 항상 같아야 한다 — check-html-js 가 강제한다. -->
-<meta name="lux-build" content="V33.331">
-<script src="/neural-observatory.js?v=33.331"></script>
+<meta name="lux-build" content="V33.332">
+<script src="/neural-observatory.js?v=33.332"></script>
 <title>LUX-ENGINE V10</title>
 <!-- ══ [V33.156] 설치형 앱(PWA) — 폰·PC 에서 홈화면/독에 담아 앱처럼 연다 ══
      · manifest  : 이름·아이콘·standalone 표시(주소창 없이 앱처럼)
@@ -18667,9 +18667,33 @@ html:root .page > *{ flex-shrink:0; }
   }
   function taDirCls(dir){ return dir > 0 ? ' up' : (dir < 0 ? ' dn' : ''); }
   // 히어로용 — 지표 타일 전체
-  function renderTaPanel(ta){
+  /* [V33.332] DMA·스토캐스틱 슬로우는 ★ML 피처 벡터가 아니라 기술 컨센서스 쪽★ 지표라
+     ta(=luxTaFromFeat) 에 없다. /api/ta-explain 이 extra 로 따로 내려주는 값을 여기 붙인다.
+     (피처 벡터에 넣으려면 featVer 를 올려야 하고 그러면 학습표본이 전부 죽는다) */
+  function taExtraMetrics(ex){
+    if(!ex) return [];
+    var out = [];
+    if(ex.dmaPct != null && isFinite(ex.dmaPct)){
+      var dUp = (ex.amaPct != null) ? (ex.dmaPct > ex.amaPct) : (ex.dmaPct > 0);
+      out.push({ label:'DMA', txt: (ex.dmaPct>=0?'+':'') + ex.dmaPct.toFixed(2) + '%'
+          + (ex.dmaCross>0?' ▲':(ex.dmaCross<0?' ▼':'')),
+        dir: (ex.dmaCross>0?1:(ex.dmaCross<0?-1:(dUp?1:-1))),
+        title:'DMA(10,50) = 단기MA − 장기MA 를 가격 %로. 시그널선(AMA'
+          + (ex.amaPct!=null?' '+ex.amaPct.toFixed(2)+'%':'') + ') 위면 상승 우위, ▲는 상향돌파' });
+    }
+    if(ex.stochK != null && isFinite(ex.stochK)){
+      var k = ex.stochK, ob = k>=80, os = k<=20;
+      out.push({ label:'스토캐스틱', txt: k.toFixed(0) + (ex.stochD!=null?'/'+ex.stochD.toFixed(0):'')
+          + (ex.stochCross>0?' ▲':(ex.stochCross<0?' ▼':'')),
+        dir: (ex.stochCross>0?1:(ex.stochCross<0?-1:(os?1:(ob?-1:0)))),
+        title:'스토캐스틱 슬로우(14,3,3) %K/%D — 평활한 값이라 하루 노이즈에 덜 흔들린다. '
+          + (ob?'80↑ 과매수':(os?'20↓ 과매도':'중립대')) + ', ▲는 %K가 %D를 상향돌파' });
+    }
+    return out;
+  }
+  function renderTaPanel(ta, extra){
     var el = $id('nlvTpTa'); if(!el) return;
-    var ms = taMetrics(ta);
+    var ms = taMetrics(ta).concat(taExtraMetrics(extra));
     if(!ms.length){ el.innerHTML = '<div class="nlv-ta-none">지표 계산 중…</div>'; return; }
     el.innerHTML = ms.map(function(m){
       return '<div class="nlv-ta-cell" title="' + esc(m.title) + '">'
@@ -18708,7 +18732,8 @@ html:root .page > *{ flex-shrink:0; }
   function applyTaExplain(sym, d, pk){
     var cur = (SCAN.list || [])[SCAN.idx];
     if(!cur || cur.symbol !== sym) return;
-    if(d && d.ta && !(pk && pk.ta)) renderTaPanel(d.ta);
+    // [V33.332] 픽에 ta 가 이미 있어도 DMA·스토캐스틱(extra)은 즉석 조회에서만 온다 — 그 경우도 다시 그린다.
+    if(d && (d.ta || d.extra)) renderTaPanel((d.ta || (pk && pk.ta)), d.extra);
     else if(!(pk && pk.ta) && !(d && d.ta)){
       var el = $id('nlvTpTa');
       if(el) el.innerHTML = '<div class="nlv-ta-none">'
@@ -19606,11 +19631,11 @@ body:has(#page-nnviz.active) .rail{
 </style>
 
 <!-- [Codex V33.314] Dedicated scoped design system. See AI_HANDOFF.md before changing model/UI contracts. -->
-<link rel="stylesheet" href="/brain-console.css?v=33.331">
-<link rel="stylesheet" href="/workspace-layout.css?v=33.331">
-<link rel="stylesheet" href="/neural-observatory.css?v=33.331">
-<link rel="stylesheet" href="/model-evidence.css?v=33.331.1">
-<script src="/model-evidence.js?v=33.331.1"></script>
-<script src="/workspace-ui.js?v=33.331"></script>
+<link rel="stylesheet" href="/brain-console.css?v=33.332">
+<link rel="stylesheet" href="/workspace-layout.css?v=33.332">
+<link rel="stylesheet" href="/neural-observatory.css?v=33.332">
+<link rel="stylesheet" href="/model-evidence.css?v=33.332.1">
+<script src="/model-evidence.js?v=33.332.1"></script>
+<script src="/workspace-ui.js?v=33.332"></script>
 </body>
 </html>

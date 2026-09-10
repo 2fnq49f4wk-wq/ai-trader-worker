@@ -2981,7 +2981,7 @@ async function applySignalTypeWeights(DB, cfg) {
    화면·자가진단이 계속 "V33.272" 를 보고했다(운영 스냅샷이 그대로 그랬다). 배포는 됐는데
    ★배포됐다는 사실만 거짓말★ 을 하고 있었으니, "내 고침이 올라간 건가" 를 화면으로 확인할
    방법이 없었다. tools/check-build-ver.mjs 가 이제 소스에 적힌 최신 버전과 이 값을 대조한다. */
-const _BUILD_VER = "V33.331";
+const _BUILD_VER = "V33.332";
 
 // ═══ [V33.171] 평가 순서 계획 — ★승격과 순환을 교차해 굶주림을 구조적으로 없앤다★ ═══
 //   V33.50 의 형태트리거는 "급한 몇 종목을 앞으로 당긴다"는 의도였으나, 실제 운영로그에서는
@@ -3639,6 +3639,13 @@ const DEFAULT_CFG = {
     us: { pre: true, post: true },      // 미국 프리 07:00~09:30 · 애프터 16:00~20:00 ET
     kr: { pre: true, post: true },      // 한국 장전 08:00~09:00 · 장후 15:30~20:00 KST
     entries: true,                      // false = 청산만(신규 진입 금지)
+    /* [V33.332] fastWatch 안의 '그날 픽' 진입은 ★기본으로 끈다.★
+       V33.332 부터 메인 사이클이 시간외에도 유니버스 전체를 평가·진입한다 — 훨씬 넓고,
+       정규장과 같은 게이트(위원회·히트·동시보유)를 그대로 통과한다.
+       그 상태에서 fastWatch 가 따로 사는 것은 ★같은 종목을 두 경로가 각각 사는 길★ 이다
+       (메인이 분 0에 사고, 같은 분의 fastWatch 는 매수 전 포지션 스냅샷을 들고 또 산다).
+       메인 경로를 껐을 때의 예비 수단으로만 남긴다. */
+    fastEntries: false,
     sizeMult: 0.5,                      // 시간외 신규 진입 크기 배수 — 얇은 호가에 전액을 싣지 않는다
     maxNewPerSession: 2,                // 한 세션에 새로 여는 종목 수 상한
     minPickP: 0.62,                     // 그날 위원회가 이 확률 이상으로 본 종목만 진입 대상
@@ -6864,6 +6871,87 @@ function getBollingerBands(h, p, mult) {
   return { upper: ma + mult * std, lower: ma - mult * std, mid: ma };
 }
 
+
+/* [V33.332] ★DMA — 이동평균 차이(국내 HTS 표준형).★
+     DMA선 = MA(단기) − MA(장기)   ·   AMA선(시그널) = DMA선의 이동평균
+   해석: DMA > 0 이면 단기가 장기 위(상승 추세), DMA 가 AMA 를 위로 뚫으면 매수 신호.
+   ※ 'DMA' 는 Displaced MA(이동평균을 N봉 밀어 놓은 것)를 뜻하기도 한다. 여기서는
+     국내 HTS 에서 통용되는 ★이동평균 차이★ 를 구현했다 — 스토캐스틱과 같이 쓰이는 그 지표다.
+   가격으로 나눠 %로 정규화한다 — 안 그러면 30만원짜리와 3달러짜리의 DMA 를 같은 잣대로
+   못 본다(위원회는 종목을 섞어 보므로 절대값은 쓸 수 없다).
+   반환 {dma, ama, dmaPct, amaPct, cross} · cross: +1 골든(상향돌파) / -1 데드 / 0 없음. */
+function getDMA(closes, shortP, longP, sigP) {
+  shortP = shortP || 10; longP = longP || 50; sigP = sigP || 10;
+  if (!Array.isArray(closes) || closes.length < longP + sigP + 1) return null;
+  const dmaAt = function (endIdx) {
+    const seg = closes.slice(0, endIdx + 1);
+    const ms = getMA(seg, shortP), ml = getMA(seg, longP);
+    return (ms == null || ml == null) ? null : (ms - ml);
+  };
+  const series = [];
+  for (let i = closes.length - sigP - 1; i < closes.length; i++) {
+    const v = dmaAt(i);
+    if (v == null) return null;
+    series.push(v);
+  }
+  const dma = series[series.length - 1];
+  const prev = series[series.length - 2];
+  const ama = getMA(series, sigP);
+  const amaPrev = getMA(series.slice(0, series.length - 1), sigP);
+  if (ama == null) return null;
+  const px = closes[closes.length - 1];
+  let cross = 0;
+  if (amaPrev != null) {
+    if (prev <= amaPrev && dma > ama) cross = 1;
+    else if (prev >= amaPrev && dma < ama) cross = -1;
+  }
+  return {
+    dma: dma, ama: ama, cross: cross,
+    dmaPct: px > 0 ? (dma / px) * 100 : 0,
+    amaPct: px > 0 ? (ama / px) * 100 : 0
+  };
+}
+
+/* [V33.332] ★스토캐스틱 슬로우(스무딩).★
+   Fast %K = (종가 − n일최저) / (n일최고 − n일최저) × 100   ← 원시값, 톱니처럼 튄다
+   Slow %K = Fast %K 의 이동평균(kSmooth)                   ← ★이 평활이 '스무딩'★
+   Slow %D = Slow %K 의 이동평균(dSmooth)                    ← 시그널선
+   Fast 를 그대로 쓰면 하루 노이즈에 과매수/과매도가 번갈아 켜져 신호가 못 쓰게 된다.
+   그래서 실무에서는 거의 항상 슬로우를 쓴다. 기본 (14, 3, 3).
+   고가·저가가 없으면 종가로 대체한다 — 있으면 정확히, 없으면 근사로(계산을 포기하지 않는다).
+   반환 {k, d, kFast, cross} · cross: +1 %K가 %D 상향돌파 / -1 하향 / 0 없음. */
+function getStochSlow(highs, lows, closes, n, kSmooth, dSmooth) {
+  n = n || 14; kSmooth = kSmooth || 3; dSmooth = dSmooth || 3;
+  if (!Array.isArray(closes)) return null;
+  const H = (Array.isArray(highs) && highs.length === closes.length) ? highs : closes;
+  const L = (Array.isArray(lows) && lows.length === closes.length) ? lows : closes;
+  const need = n + kSmooth + dSmooth;
+  if (closes.length < need) return null;
+  const fastK = [];
+  for (let i = n - 1; i < closes.length; i++) {
+    let hi = -Infinity, lo = Infinity;
+    for (let j = i - n + 1; j <= i; j++) {
+      const h = _num(H[j], closes[j]), l = _num(L[j], closes[j]);
+      if (h > hi) hi = h;
+      if (l < lo) lo = l;
+    }
+    // 최고=최저(거래정지·상하한 고정)면 중립 50 — 0으로 나누지 않는다.
+    fastK.push((hi > lo) ? ((closes[i] - lo) / (hi - lo)) * 100 : 50);
+  }
+  if (fastK.length < kSmooth + dSmooth) return null;
+  const slowK = [];
+  for (let i = kSmooth - 1; i < fastK.length; i++) slowK.push(getMA(fastK.slice(0, i + 1), kSmooth));
+  if (slowK.length < dSmooth + 1) return null;
+  const k = slowK[slowK.length - 1], kPrev = slowK[slowK.length - 2];
+  const d = getMA(slowK, dSmooth);
+  const dPrev = getMA(slowK.slice(0, slowK.length - 1), dSmooth);
+  let cross = 0;
+  if (d != null && dPrev != null) {
+    if (kPrev <= dPrev && k > d) cross = 1;
+    else if (kPrev >= dPrev && k < d) cross = -1;
+  }
+  return { k: k, d: d, kFast: fastK[fastK.length - 1], cross: cross };
+}
 
 // [신규] N일 수익률 계산
 function getNDayReturn(h, n) {
@@ -18629,7 +18717,14 @@ async function runTradingCycle(env) {
 
       // [프리/애프터마켓] 시간외 전용 시장은 가격 배치만 갱신하고 종료 — 일봉 라운드로빈/평가/거래는 정규장에서만.
       //   (시간외에 무거운 일봉 fetch를 돌리지 않아 fetch 예산·CPU 추정치 절약 → 사용량 가드 보호)
-      if (extOnly) continue;
+      /* [V33.332] ★시간외에도 전 종목을 정규장과 똑같이 평가·거래한다.★
+         종전엔 여기서 통째로 빠져나가, 시간외 거래는 fastWatch 가 보는 "보유종목 + 그날 픽"
+         에만 걸렸다. 사용자 지시대로 유니버스 전체를 연다.
+         단 ★일봉 라운드로빈 갱신은 하지 않는다★ — 일봉은 시간외에 변하지 않는다.
+         없는 변화를 받으러 수백 건을 fetch 하면 예산만 태우고 얻는 게 없다.
+         캐시된 일봉으로 평가하고(아래 missingDaily 일괄 로드), 가격만 시간외 체결가를 쓴다. */
+      const extSessMkt = extOnly ? extTradeSession(market, cfg) : null;
+      if (extOnly && !extSessMkt) continue;   // 시간외 거래를 껐거나 창 밖 — 종전대로 가격만 갱신
 
       // --- (2) 일봉 라운드로빈 갱신 대상 선정 ---
       // [거래확대] 라운드로빈 슬라이스를 "캐시시간"이 아니라 "사이클당 fetch 능력"에 묶는다.
@@ -18644,12 +18739,14 @@ async function runTradingCycle(env) {
       if (typeof rrIdx !== "number" || rrIdx < 0) rrIdx = 0;
       const perCycle = maxDailyPerCycle;
       const rrStart = (rrIdx % sliceCount) * perCycle;
-      const rrSymbols = tickers.slice(rrStart, rrStart + perCycle);
-      await setState(DB, rrKey, (rrIdx + 1) % sliceCount);
+      // [V33.332] 시간외엔 일봉을 새로 받지 않는다 — 봉이 안 변하므로 받을 게 없다.
+      //   회전 위치(rrIdx)도 전진시키지 않는다. 시간외에 헛돌리면 정규장 순회에 구멍이 난다.
+      const rrSymbols = extSessMkt ? [] : tickers.slice(rrStart, rrStart + perCycle);
+      if (!extSessMkt) await setState(DB, rrKey, (rrIdx + 1) % sliceCount);
 
       // 보유 종목 추가 (중복 제거)
       const dailyTargets = new Set(rrSymbols);
-      for (const key in positions) dailyTargets.add(positions[key].symbol);
+      if (!extSessMkt) { for (const key in positions) dailyTargets.add(positions[key].symbol); }
 
       // --- 일봉 갱신 (배치 10개씩, subrequest 예산 내) ---
       //   [V11] 캐시 히트는 fetch 0 — 만료/미존재 종목만 "남은 예산"만큼 실제 fetch 하고,
@@ -18755,11 +18852,24 @@ async function runTradingCycle(env) {
           }
         }
       }
+      let extNoPrice = 0;
       for (const symbol of tickers) {
         const bq = batchQuotes[symbol];
         if (!bq) continue;
         // [V9.1] 가격 정합성 — 0/음수/NaN/무한대는 거래 대상에서 제외(가격 표시는 별도).
         if (!(typeof bq.price === "number" && isFinite(bq.price) && bq.price > 0)) continue;
+        /* [V33.332] ★시간외에는 시간외 체결가로 평가한다.★
+           정규장 가격으로 평가하면 16시 값으로 20시에 사고파는 셈이 된다.
+           값이 없거나 가드(노후·과대변동·초저가)에 걸리면 그 종목은 이번엔 평가하지 않는다 —
+           시간외에 체결이 없는 종목이 대부분이므로 이건 정상이고, 개수만 세어 로그에 남긴다.
+           prevClose 는 두 세션 모두 ★전일 정규장 종가★ 를 쓴다 — 그래야 dayPct 가
+           "어제 종가 대비 지금까지의 누적 변동"이라는 평소 의미를 그대로 유지한다. */
+        let evPrice = bq.price;
+        if (extSessMkt) {
+          const _xp = extTradePrice(bq, extSessMkt, cfg);
+          if (_xp == null) { extNoPrice++; continue; }
+          evPrice = _xp;
+        }
         // 일봉: dailyMap 에서 동기 조회 (위에서 결측분까지 모두 채워둠).
         const daily = dailyMap[symbol];
         // 일봉이 아직 없으면 평가 스킵(가격은 이미 UI에 저장됨)
@@ -18769,12 +18879,12 @@ async function runTradingCycle(env) {
         const refClose = (typeof daily.closes[daily.closes.length - 1] === "number" && daily.closes[daily.closes.length - 1] > 0)
           ? daily.closes[daily.closes.length - 1] : (bq.prevClose || bq.price);
         if (refClose > 0) {
-          const devPct = Math.abs((bq.price - refClose) / refClose) * 100;
+          const devPct = Math.abs((evPrice - refClose) / refClose) * 100;
           if (devPct > 60) { priceAnomalyCount++; continue; }
         }
         fetched.push({
           symbol: symbol,
-          intra: { symbol: symbol, price: bq.price, prevClose: bq.prevClose, closes: [] },
+          intra: { symbol: symbol, price: evPrice, prevClose: bq.prevClose, closes: [] },
           daily: daily, intraOk: true, intraErr: null, dailyErr: null
         });
       }
@@ -18784,7 +18894,10 @@ async function runTradingCycle(env) {
       const prefetchMs = Date.now() - prefetchStart;
       await log(DB, "INFO", null, "prefetch[" + market + "] universe=" + tickers.length +
         " priced=" + Object.keys(batchQuotes).length + " dailyRefresh=" + dailyTargetArr.length +
-        " evaluable=" + fetched.length + " in " + prefetchMs + "ms");
+        " evaluable=" + fetched.length +
+        // [V33.332] 시간외엔 "몇 종목이 시간외 체결가가 없어 빠졌나"가 핵심 진단값이다.
+        (extSessMkt ? " [시간외 " + extSessMkt + " · 체결가없어제외 " + extNoPrice + "]" : "") +
+        " in " + prefetchMs + "ms");
 
       // [통계FIX] tried=0 무음 처리 방지 — 평가가능 0종목이면 ERROR로 집계(데이터 전멸 → 거래 마비 신호).
       if (tickers.length > 0 && fetched.length === 0) {
@@ -21452,7 +21565,9 @@ async function runFastWatch(env, cronStart) {
     const _posByMkt = {}, _needSyms = {};
     /* [V33.331] 시간외 ★신규 진입★ 을 하려면 보유가 0인 시장도 명단에 있어야 한다.
        종전엔 "보유 없음 = 감시 불필요" 로 건너뛰었다 — 청산만 하던 때는 맞는 말이었다. */
-    const _extEntryOn = !!(cfg.extTrade && cfg.extTrade.enabled !== false && cfg.extTrade.entries !== false);
+    // [V33.332] fastEntries 를 켰을 때만 fastWatch 가 직접 산다 — 기본은 메인 사이클이 전담한다.
+    const _extEntryOn = !!(cfg.extTrade && cfg.extTrade.enabled !== false &&
+                           cfg.extTrade.entries !== false && cfg.extTrade.fastEntries === true);
     for (const market of markets) {
       const positions = await getPositions(DB, market);
       if (Object.keys(positions).length === 0 && !(extSess[market] && _extEntryOn)) continue;
@@ -25308,6 +25423,19 @@ async function handleRequest(request, env, ctx) {
             out.reasons = (pred.reasons || []).slice(0, 8);
             out.upProb = pred.upProb != null ? pred.upProb : null;
             out.confidence = pred.confidence != null ? pred.confidence : null;
+            /* [V33.332] DMA·스토캐스틱을 화면에 그대로 내려 준다.
+               이 둘은 ML 피처 벡터(luxTaFromFeat)가 아니라 기술 컨센서스 쪽 지표라
+               ta 에 안 실린다 — 따로 실어야 화면에서 볼 수 있다.
+               (피처 벡터에 넣으려면 featVer 를 올려야 하고 그러면 학습표본이 전부 죽는다) */
+            const _c = pred.components || {};
+            out.extra = {
+              dmaPct: _c.dmaPct != null ? _c.dmaPct : null,
+              amaPct: _c.amaPct != null ? _c.amaPct : null,
+              dmaCross: _num(_c.dmaCross, 0),
+              stochK: _c.stochK != null ? _c.stochK : null,
+              stochD: _c.stochD != null ? _c.stochD : null,
+              stochCross: _num(_c.stochCross, 0)
+            };
           }
         } catch (e) {}
         try {
@@ -27721,7 +27849,13 @@ function fibAnalyze(highs, lows, closes, params) {
 function taPredictDirection(bars, params) {
   const T = Object.assign({ patternConfCutoff: 0.6, maSlopeMinPctPerBar: 0.05, maSlopeWindow: 10,
     maDisparityLimitPct: 8, divergenceLookback: 20, bbSqueezeRatio: 0.6, bbSqueezeHistWin: 120,
-    breakoutVolMult: 2.5, breakoutHighLookback: 20, adxTrendMin: 20 }, (params && params.technical) || params || {});
+    breakoutVolMult: 2.5, breakoutHighLookback: 20, adxTrendMin: 20,
+    /* [V33.332] DMA·스토캐스틱 슬로우 파라미터/가중치 — ★설정으로 뺀다.★
+       기존 항목들과 같은 크기대(0.3~0.9)로 잡았다. 새 지표를 크게 넣으면 검증된 기존
+       신호를 덮어써 버린다 — 지표는 늘리되 판단의 무게중심은 옮기지 않는다. */
+    dmaShort: 10, dmaLong: 50, dmaSignal: 10, dmaW: 0.4, dmaCrossW: 0.3,
+    stochN: 14, stochK: 3, stochD: 3, stochOB: 80, stochOS: 20, stochW: 0.25, stochCrossW: 0.45
+  }, (params && params.technical) || params || {});
   const fibP = (params && params.fibonacci) || {};
   const res = { upProb: 0.5, dir: "up", confidence: 0, patternConf: 0, fibSig: 0, reasons: [], components: {} };
   try {
@@ -27765,6 +27899,32 @@ function taPredictDirection(bars, params) {
     if (fib.fibSig !== 0) { score += 0.6 * fib.fibSig; R.push("피보" + (fib.nearest ? fib.nearest.r : "") + (fib.fibSig > 0 ? "지지" : "저항")); }
     // 차트패턴(신뢰도 커트라인 통과 시)
     if (pat.conf >= T.patternConfCutoff && pat.dir !== 0) { score += 0.8 * pat.dir * pat.conf; R.push("패턴" + (pat.dir > 0 ? "강세" : "약세") + pat.conf.toFixed(2)); }
+    /* [V33.332] ★DMA — 이동평균 차이.★ MA기울기가 "지금 오르는가"라면 DMA 는
+       "단기와 장기의 간격이 벌어지는가"를 본다. 시그널선(AMA) 돌파는 추세 전환의 초입이라
+       기울기보다 먼저 켜지는 경우가 많아, 기울기와 겹치지 않는 정보를 준다. */
+    const dmaR = getDMA(closes, T.dmaShort, T.dmaLong, T.dmaSignal);
+    if (dmaR) {
+      if (dmaR.dma > dmaR.ama) { score += T.dmaW; }
+      else if (dmaR.dma < dmaR.ama) { score -= T.dmaW; }
+      if (dmaR.cross > 0) { score += T.dmaCrossW; R.push("DMA골든" + dmaR.dmaPct.toFixed(2) + "%"); }
+      else if (dmaR.cross < 0) { score -= T.dmaCrossW; R.push("DMA데드" + dmaR.dmaPct.toFixed(2) + "%"); }
+    }
+    /* [V33.332] ★스토캐스틱 슬로우(스무딩).★ 과매수/과매도 자체보다
+       ★과매도에서 %K가 %D를 위로 뚫는 순간★ 이 신호다 — 그래서 교차에 더 큰 가중을 준다.
+       추세장에서 스토캐스틱은 80 이상에 오래 붙어 있으므로(추세 지속), 단순 과매수를
+       크게 깎으면 상승 추세를 계속 거스른다. 그래서 수준(stochW)은 작게, 교차(stochCrossW)는 크게. */
+    const stR = getStochSlow(highs, lows, closes, T.stochN, T.stochK, T.stochD);
+    if (stR && stR.k != null && stR.d != null) {
+      if (stR.k >= T.stochOB) { score -= T.stochW; }
+      else if (stR.k <= T.stochOS) { score += T.stochW; }
+      if (stR.cross > 0 && stR.k <= T.stochOB) {
+        score += T.stochCrossW * (stR.k <= T.stochOS ? 1 : 0.6);
+        R.push("스토캐스틱골든" + stR.k.toFixed(0));
+      } else if (stR.cross < 0 && stR.k >= T.stochOS) {
+        score -= T.stochCrossW * (stR.k >= T.stochOB ? 1 : 0.6);
+        R.push("스토캐스틱데드" + stR.k.toFixed(0));
+      }
+    }
     // 스퀴즈: 응축 상태면 방향확신 약화(팽창 대기) — score를 0쪽으로 약간 수축
     if (squeeze < T.bbSqueezeRatio) { score *= 0.85; R.push("스퀴즈응축"); }
 
@@ -27777,7 +27937,12 @@ function taPredictDirection(bars, params) {
     res.fibSig = +fib.fibSig.toFixed(4);
     res.components = { slope: +slope.toFixed(3), disp: +disp.toFixed(2), rsi: +rsi.toFixed(1),
       macdH: macd ? +macd.hist.toFixed(4) : 0, adx: +adx.toFixed(1), pctB: +pctB.toFixed(3),
-      squeeze: +squeeze.toFixed(3), brk: +brk.toFixed(3), diverg: +diverg.toFixed(3) };
+      squeeze: +squeeze.toFixed(3), brk: +brk.toFixed(3), diverg: +diverg.toFixed(3),
+      // [V33.332] 새 지표도 화면이 읽을 수 있게 같이 싣는다 — 안 실으면 "왜 그렇게 봤나"를 못 본다.
+      dmaPct: dmaR ? +dmaR.dmaPct.toFixed(3) : null, amaPct: dmaR ? +dmaR.amaPct.toFixed(3) : null,
+      dmaCross: dmaR ? dmaR.cross : 0,
+      stochK: stR ? +stR.k.toFixed(1) : null, stochD: stR ? +stR.d.toFixed(1) : null,
+      stochCross: stR ? stR.cross : 0 };
   } catch (e) {}
   return res;
 }

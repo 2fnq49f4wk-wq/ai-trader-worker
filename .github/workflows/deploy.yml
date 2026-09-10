@@ -170,6 +170,11 @@ jobs:
       #   특히 시간외 값이 없을 때 정규장 가격으로 떨어지면 16시 값으로 20시에 거래하게 된다.
       - name: Extended-hours trading contract check
         run: node tools/check-ext-trading.mjs
+      # [V33.332] DMA · 스토캐스틱 슬로우 — 수식이 아니라 성질을 검사한다.
+      #   추세 방향과 부호가 맞는가, '슬로우'가 정말 평활돼 fast 보다 덜 흔들리는가,
+      #   상하한가(고가=저가)에서 0으로 나누지 않는가, 그리고 새 지표가 기존 판단을 덮어쓰지 않는가.
+      - name: Indicator contract check (DMA / Stochastic slow)
+        run: node tools/check-indicators.mjs
       # [V33.140] 전진검증 누적 원장 — 창이 매일 밤 리셋돼 ★구조적으로★ 못 채워지던 것을 고쳤다.
       #   (memo: 총표본 177,868 인데 전진 357 = 어제 유입과 정확히 일치)
       #   교착 해소와 통계 정직성을 함께 본다: 잡음 통과율이 문턱의 명목값과 맞는지,
