@@ -102,9 +102,14 @@ const _num = (v, d) => { const n = Number(v); return Number.isFinite(n) ? n : d;
   if (ctx.f({ post: 1.2, postPct: -1, extTs: now }, "post", cfg) === null)
     ok("초저가(1.2달러)는 시간외 스프레드를 감당 못 해 제외한다");
   else bad("초저가 종목을 시간외에 거래한다");
-  if (ctx.f({ post: 300, postPct: -1, ts: now - 900000 }, "post", cfg) === null)
-    ok("15분 지난 값으로는 거래하지 않는다(신선도 7분)");
+  /* [V33.340] 신선도는 ★체결 시각(extTs)★ 으로 잰다. q.ts 는 가격 샤드가 쓴 시각이라
+     체결 시각이 아니다 — 그걸로 재면 5시간 전 체결이 '방금' 으로 통과한다. */
+  if (ctx.f({ post: 300, postPct: -1, extTs: now - 900000 }, "post", cfg) === null)
+    ok("15분 지난 ★체결★ 로는 거래하지 않는다(신선도 7분)");
   else bad("★낡은 가격으로 거래한다★");
+  if (ctx.f({ post: 300, postPct: -1, ts: now }, "post", cfg) === null)
+    ok("가격 샤드가 쓴 시각(q.ts)은 체결 시각으로 인정하지 않는다");
+  else bad("★q.ts 를 체결 시각으로 오인한다★");
   if (ctx.f({ pre: 205, prePct: 1.5, extTs: now }, "pre", cfg) === 205)
     ok("프리 세션은 pre 값을 쓴다(post 와 섞이지 않는다)");
   else bad("프리/애프터 값이 섞인다");
@@ -203,7 +208,7 @@ const _num = (v, d) => { const n = Number(v); return Number.isFinite(n) ? n : d;
   /* ★시간외 전 종목 거래★ — 메인 사이클이 시간외에도 유니버스 전체를 평가한다.
      여기서 지키는 것은 "돈다"가 아니라 ★정규장 가격으로 돌지 않는다★ 는 쪽이다. */
   const cyc = S.slice(S.indexOf("const extSessMkt = extOnly ? extTradeSession(market, cfg) : null;"),
-                      S.indexOf("// [통계FIX] tried=0 무음 처리 방지"));
+                      S.indexOf("/* [통계FIX] tried=0 무음 처리 방지"));
   if (!cyc) bad("메인 사이클의 시간외 구간을 못 찾았다");
   if (/if \(extOnly && !extSessMkt\) continue;/.test(cyc))
     ok("시간외 거래를 껐거나 창 밖이면 종전대로 가격만 갱신하고 빠진다");

@@ -2981,7 +2981,7 @@ async function applySignalTypeWeights(DB, cfg) {
    화면·자가진단이 계속 "V33.272" 를 보고했다(운영 스냅샷이 그대로 그랬다). 배포는 됐는데
    ★배포됐다는 사실만 거짓말★ 을 하고 있었으니, "내 고침이 올라간 건가" 를 화면으로 확인할
    방법이 없었다. tools/check-build-ver.mjs 가 이제 소스에 적힌 최신 버전과 이 값을 대조한다. */
-const _BUILD_VER = "V33.341";
+const _BUILD_VER = "V33.342";
 
 // ═══ [V33.171] 평가 순서 계획 — ★승격과 순환을 교차해 굶주림을 구조적으로 없앤다★ ═══
 //   V33.50 의 형태트리거는 "급한 몇 종목을 앞으로 당긴다"는 의도였으나, 실제 운영로그에서는
@@ -19231,10 +19231,28 @@ async function runTradingCycle(env) {
         } catch (e) {}
       }
 
-      // [통계FIX] tried=0 무음 처리 방지 — 평가가능 0종목이면 ERROR로 집계(데이터 전멸 → 거래 마비 신호).
+      /* [통계FIX] tried=0 무음 처리 방지 — 평가가능 0종목이면 ERROR로 집계(데이터 전멸 → 거래 마비 신호).
+         ★[V33.342] 사유를 지어내지 않는다.★ 이 문장은 원인을 "일봉결측" 으로 ★박아 두고★ 있었다.
+         2026-09-10 11:41 UTC(미국 장전) 프로브 실측: "US 평가가능 0종목(priced=556, 일봉결측)"
+         이 ERROR 가 15회 반복되고 있었는데, 같은 순간 시간외 차단 집계는
+         ★시각미상 0 · 낡은체결 389★ 이었다 — 일봉은 멀쩡했고 걸린 곳은 시간외 신선도 가드다.
+         평가 루프에서 시간외 가드가 일봉 검사보다 ★앞★ 에 있으므로, 시간외에는 이 문장이
+         언제나 엉뚱한 곳을 가리킨다. 그리고 시간외에 체결이 드문 것은 ★정상★ 이다 —
+         정상 상태를 ERROR 로 15번 적으면 진짜 사고가 그 사이에 묻힌다.
+         → 시간외에는 실제 차단 구성을 적고, 등급도 사실에 맞춘다. */
       if (tickers.length > 0 && fetched.length === 0) {
-        await log(DB, "ERROR", null, "[FETCH] " + market.toUpperCase() + " 평가가능 0종목(priced=" +
-          Object.keys(batchQuotes).length + ", 일봉결측) — tried=0, 데이터 소스 점검");
+        if (extSessMkt) {
+          const _bs = extBlockSummary(extBlock);
+          const _real = _num(extBlock.nots, 0) > _num(extBlock.stale, 0) + _num(extBlock.noprice, 0);
+          await log(DB, _real ? "ERROR" : "INFO", null,
+            "[FETCH] " + market.toUpperCase() + " 시간외 " + extSessMkt + " 평가가능 0종목(priced=" +
+            Object.keys(batchQuotes).length + ") — " + (_bs || "사유 미상") +
+            (_real ? " · ★체결 시각을 못 받고 있다 — 수집 경로 점검★"
+                   : " · 시간외에 체결이 드문 것은 정상이다(일봉과 무관)"));
+        } else {
+          await log(DB, "ERROR", null, "[FETCH] " + market.toUpperCase() + " 평가가능 0종목(priced=" +
+            Object.keys(batchQuotes).length + ", 일봉결측) — tried=0, 데이터 소스 점검");
+        }
       }
       // [통계FIX] 스테일 캐시가 evaluable>0으로 가려도, 실제 일봉 fetch가 전멸하면 별도 ERROR로 노출.
       if (dailyFetchTried >= 5 && dailyFetchFail === dailyFetchTried) {
@@ -45147,11 +45165,26 @@ async function _luxSelfCheck(DB) {
         const _by = _eb.by || {};
         const _nots = _num(_by.nots, 0), _stale = _num(_by.stale, 0);
         const _blocked = _num(_eb.blocked, 0);
-        if (_blocked >= 20 && (_nots + _stale) > _blocked * 0.5)
+        /* [V33.342] ★'시각미상' 과 '낡은체결' 은 정반대의 상태다 — 한 문장으로 묶으면 안 된다.★
+           실측(2026-09-10 미국 장전): 시각미상 0 · 낡은체결 389 인데, 종전 문구는
+           "수집 경로가 체결 시각을 안 준다" 고 말했다. ★정확히 반대다★ — 시각은 잘 들어오고
+           있었고(v7 preMarketTime 이 살아 있다), 그 시각이 말해 준 사실은 "장전에는 대부분
+           종목이 몇십 분째 체결이 없다" 는 것이다. 그건 고장이 아니라 시장의 성질이다.
+             · 시각미상 우세 → 수집 경로 고장. 고쳐야 한다.
+             · 낡은체결 우세 → 시간외의 정상 모습. 가드가 제 일을 하는 중이다.
+           고장을 정상으로 읽는 것도 나쁘지만, ★정상을 고장으로 읽으면 멀쩡한 걸 고치러 간다.★ */
+        if (_blocked >= 20 && _nots > _blocked * 0.3)
           add("warn", "시간외",
-            _mk.toUpperCase() + " 시간외 거래가 시각 문제로 막히는 중 — 제외 " + _blocked +
-            "종목 중 시각미상 " + _nots + " · 낡은체결 " + _stale +
-            ". 체결이 없는 게 아니라 수집 경로가 체결 시각을 안 준다(v7 preMarketTime/postMarketTime · v8 분봉 봉시각 확인)");
+            _mk.toUpperCase() + " 시간외 체결 시각이 안 들어온다 — 제외 " + _blocked +
+            "종목 중 ★시각미상 " + _nots + "★(낡은체결 " + _stale + "). 값은 있는데 언제 찍혔는지를 모르면 " +
+            "거래할 수 없다(v7 preMarketTime/postMarketTime · v8 분봉 봉시각 확인)");
+        else if (_blocked >= 20 && _stale > _blocked * 0.5)
+          add("info", "시간외",
+            _mk.toUpperCase() + " 시간외 " + (_eb.sess === "pre" ? "장전" : "장후") + " — 제외 " + _blocked +
+            "종목 중 낡은체결 " + _stale + " · 시각미상 " + _nots +
+            ". 시간외엔 체결 자체가 드물어 대부분 종목의 마지막 체결이 오래됐다(정상). " +
+            "가드가 그 값으로 거래하는 것을 막고 있다 — 신선도 문턱 " +
+            (_num((DEFAULT_CFG.extTrade || {}).freshMs, 420000) / 60000).toFixed(0) + "분");
       }
     } catch (e) {}
     // [V32.55] ★성능·처리량 지표★ — fetch/로딩 속도, 유입 데이터량, AI 스캔 속도·스캔량
@@ -48449,7 +48482,26 @@ export default {
           //   죽은 실행으로 보고 자동 해제(영구 교착 방지).
           const _aiLock = await getState(env.DB, "ai_train_lock", null);
           const _aiLockFresh = _aiLock && (Date.now() - _aiLock < 900000);
-          if (_aiLast !== _aiDay && !_aiLockFresh) {
+          /* ══ [V33.342] ★V33.337 이 고친 결함이 한 단계 위에 그대로 있었다★ ══════════════
+             V33.337 은 단계(_stg)가 "아직 준비 안 됐다" 를 말할 수 있게 했다 — ⟳ 를 돌려주면
+             완료 도장 대신 12분짜리 '대기' 표식을 찍고 같은 날 다시 돈다.
+             그런데 ★파이프라인 전체★ 는 끝에서 ai_trained_day 를 ★무조건★ 찍는다. 그리고
+             진입 게이트가 `_aiLast !== _aiDay` 다 — 즉 도장이 찍히는 순간 그날은 닫힌다.
+             대기 중인 단계가 남아 있어도 다시 들어올 길이 없다.
+
+             ★실측(2026-09-10 11:41 UTC 프로브)★ V33.339 배포 5.5시간 뒤에도
+             "committee_cal featVer 불일치(15≠17) — 확률 보정 무시 중" 이 그대로였다.
+             보정 단계는 ⟳ 를 정상적으로 돌려주고 있었는데, 그 재시도를 ★허락하는 쪽★ 이 없었다.
+             단계에 "다시 오겠다" 고 말할 권한을 줘 놓고 문을 잠근 셈이다.
+
+             → 대기 중인 단계가 하나라도 있으면 그날을 닫지 않는다. 쿨다운을 두고 다시 들어와
+               ★대기 단계만★ 돌린다(끝난 단계는 자기 도장으로 즉시 빠지므로 재진입이 싸다).
+             ※ 무한정 열어 두지는 않는다 — 하루 단위로 도는 것들이 있으므로 상한을 둔다. */
+          const _partial = await getState(env.DB, "ai_pipe_partial", null);
+          const _partialToday = !!(_partial && _partial.day === _aiDay);
+          const _partialCool = _partialToday && (Date.now() - _num(_partial.ts, 0)) < 6 * 60000;
+          const _resume = _partialToday && !_partialCool;
+          if ((_aiLast !== _aiDay || _resume) && !_aiLockFresh) {
             await setState(env.DB, "ai_train_lock", Date.now());
             // [V12.40 단계별 체크포인트] trainWindow 확대 후 전체 파이프라인 CPU가 300s 한도를 넘겨
             //   invocation이 중간에 죽고, 완료플래그를 못 찍어 15분마다 "처음부터" 무한 재시도하며
@@ -48648,9 +48700,39 @@ export default {
             //   전체 재학습을 완주했으니 플래그를 해제 → 다음 거래 사이클의 mlDriftCheck가 새 모델
             //   기준으로 재평가(여전히 미달이면 다시 셋). 이로써 "열화→재학습→해소" 루프가 실제로 닫힌다.
             try { await env.DB.prepare("DELETE FROM state WHERE k = 'model_drift'").run(); } catch (e) {}
-            await setState(env.DB, "ai_trained_day", _aiDay);
-            try { await env.DB.prepare("DELETE FROM state WHERE k = 'ai_train_lock'").run(); } catch (e2) {}
-            try { await log(env.DB, "INFO", null, "[SCHED] 야간 AI 파이프라인 완주(" + _aiDay + ")"); } catch (e2) {}
+            /* [V33.342] ★대기 중인 단계가 있으면 그날을 닫지 않는다.★
+               (근거는 위 진입 게이트 주석 — 보정 단계가 5.5시간 동안 재시도를 못 받았다) */
+            let _waitStages = [];
+            try {
+              const _wr = await env.DB.prepare(
+                "SELECT k, v FROM state WHERE k >= 'ai_stage:' AND k < 'ai_stage;'").all();
+              for (const _r of ((_wr && _wr.results) || [])) {
+                let _v = _r.v; try { _v = JSON.parse(_r.v); } catch (e2) {}
+                if (typeof _v === "string" && _v.indexOf(_aiDay + "|wait|") === 0) _waitStages.push(String(_r.k).slice(9));
+              }
+            } catch (e2) {}
+            /* 상한 — 하루 종일 열어 두면 하루 단위로 도는 것들이 밀린다. 6시간 뒤엔 닫되
+               ★누가 못 끝냈는지 이름을 적는다★(조용히 닫으면 이 결함이 그대로 반복된다). */
+            const _openedAt = _partialToday ? _num(_partial.openedAt, Date.now()) : Date.now();
+            const _tooLong = (Date.now() - _openedAt) > 6 * 3600000;
+            if (_waitStages.length > 0 && !_tooLong) {
+              await setState(env.DB, "ai_pipe_partial",
+                { day: _aiDay, waiting: _waitStages.slice(0, 12), n: _waitStages.length,
+                  openedAt: _openedAt, ts: Date.now() });
+              try { await env.DB.prepare("DELETE FROM state WHERE k = 'ai_train_lock'").run(); } catch (e2) {}
+              try { await log(env.DB, "INFO", null, "[SCHED] 야간 파이프라인 부분 완주(" + _aiDay + ") — 준비 대기 " +
+                _waitStages.length + "단계(" + _waitStages.slice(0, 6).join(", ") + ") · 6분 뒤 이어서 돈다"); } catch (e2) {}
+            } else {
+              if (_waitStages.length > 0) {
+                try { await log(env.DB, "WARN", null, "[SCHED] 야간 파이프라인 — " + _waitStages.length +
+                  "단계가 6시간째 준비 대기(" + _waitStages.slice(0, 6).join(", ") +
+                  ") · 그날을 닫는다. 표본·모델이 왜 안 차는지 확인 필요"); } catch (e2) {}
+              }
+              try { await env.DB.prepare("DELETE FROM state WHERE k = 'ai_pipe_partial'").run(); } catch (e2) {}
+              await setState(env.DB, "ai_trained_day", _aiDay);
+              try { await env.DB.prepare("DELETE FROM state WHERE k = 'ai_train_lock'").run(); } catch (e2) {}
+              try { await log(env.DB, "INFO", null, "[SCHED] 야간 AI 파이프라인 완주(" + _aiDay + ")"); } catch (e2) {}
+            }
             /* [V33.307] 완주한 날의 비용표를 한 줄로 남긴다 — 다음에 "뭘 옮길까" 를
                코드를 읽어 추측하지 않고 이 줄을 읽고 정한다. */
             try {

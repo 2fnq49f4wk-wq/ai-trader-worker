@@ -216,6 +216,13 @@ jobs:
       #   "DNN 검증 미달" 의 상당 부분이 실력이 아니라 자의 길이였다.
       - name: Split and embargo contract check
         run: node tools/check-split-embargo.mjs
+      # [V33.342] 야간 파이프라인 재개 — "다시 오겠다"고 말한 단계가 실제로 다시 오는가.
+      #   V33.337 은 단계가 ⟳ 로 재시도를 요청할 수 있게 했는데, 파이프라인 전체는 끝에서
+      #   ai_trained_day 를 무조건 찍었다. 도장이 찍히면 그날은 닫히므로 대기 단계는
+      #   재시도를 못 받는다 — 실측으로 committee_cal 이 두 판(15→17)을 건너뛰었다.
+      #   조건식을 소스에서 뽑아 상태기계를 실제로 굴려 확인한다.
+      - name: Nightly pipeline resume check
+        run: node tools/check-pipeline-resume.mjs
       # [V33.140] 전진검증 누적 원장 — 창이 매일 밤 리셋돼 ★구조적으로★ 못 채워지던 것을 고쳤다.
       #   (memo: 총표본 177,868 인데 전진 357 = 어제 유입과 정확히 일치)
       #   교착 해소와 통계 정직성을 함께 본다: 잡음 통과율이 문턱의 명목값과 맞는지,
