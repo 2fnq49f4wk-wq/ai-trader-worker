@@ -2981,7 +2981,7 @@ async function applySignalTypeWeights(DB, cfg) {
    화면·자가진단이 계속 "V33.272" 를 보고했다(운영 스냅샷이 그대로 그랬다). 배포는 됐는데
    ★배포됐다는 사실만 거짓말★ 을 하고 있었으니, "내 고침이 올라간 건가" 를 화면으로 확인할
    방법이 없었다. tools/check-build-ver.mjs 가 이제 소스에 적힌 최신 버전과 이 값을 대조한다. */
-const _BUILD_VER = "V33.340";
+const _BUILD_VER = "V33.341";
 
 // ═══ [V33.171] 평가 순서 계획 — ★승격과 순환을 교차해 굶주림을 구조적으로 없앤다★ ═══
 //   V33.50 의 형태트리거는 "급한 몇 종목을 앞으로 당긴다"는 의도였으나, 실제 운영로그에서는
@@ -10131,6 +10131,24 @@ function _mlExportConfig(arch) {
            archMeasured: !!(A && A.measured),
            inputNoise: DNN.inputNoise, mixupP: DNN.mixupP, stdClip: DNN.stdClip, valFrac: DNN.valFrac,
            embargoDays: LUXML.embargoDays || 6, hvSrcWeight: (typeof HARVEST !== "undefined" ? HARVEST.srcWeight : 1),
+           /* [V33.341] ★죽은 손잡이 하나를 살린다.★ liveSrcWeight 는 워커의 자체 학습기
+              다섯 곳이 쓰는데, 내려보내지 않아 ★Modal 은 그런 값이 있는 줄도 몰랐다★
+              (trainer: `np.where(HV > 0, hv_w, 1.0)` — 라이브는 언제나 1.0).
+              위원회에 앉는 모델은 전부 external 이므로, 실거래 표본을 우대한다는 설정이
+              정작 위원회에는 한 번도 적용된 적이 없다. V33.260 이 dropout·l2 에서
+              잡은 것과 같은 종류다 — 학습기가 둘인데 설정 통로가 하나만 넓었다. */
+           liveSrcWeight: LUXML.liveSrcWeight || 1,
+           /* ★수확이 만들 수 없는 칸★ 의 위치를 이름이 아니라 인덱스로 내려보낸다.
+              트레이너가 이 칸들을 저장된 표본에서도 중립으로 눌러야 학습·검증·서빙이
+              같은 분포 위에 선다. 여기서 세어 보내므로 featNames 가 바뀌어도 안 어긋난다. */
+           liveCtxNeutral: LUXML.liveCtxNeutral !== false,
+           liveCtxIdx: LUXML.featNames.reduce(function (a, n, i) {
+             if (_LIVE_ONLY_FEATS.has(n)) a.push(i); return a;
+           }, []),
+           liveCtxVal: LUXML.featNames.reduce(function (a, n, i) {
+             if (_LIVE_ONLY_FEATS.has(n)) a.push((n === "sigWeight" || n === "confluence") ? 1 : 0);
+             return a;
+           }, []),
            recencyHalfLifeDays: LUXML.recencyHalfLifeDays || 45, recencyFloor: LUXML.recencyFloor || 0.35,
            epochs: DNN.epochs, batch: DNN.batch, lr: DNN.lr, lrFloorFrac: DNN.lrFloorFrac,
            trustFloor: DNN.trustFloor, trustTemp: DNN.trustTemp, trustMargin: DNN.trustMargin,
@@ -11457,11 +11475,53 @@ function _krSellTaxRate(cfg, symbol, market, ts) {
 //   ※ 체결가(price) 자체는 건드리지 않는다. 원장의 price 는 '그때의 시장가'라는 뜻을 유지하고,
 //     비용은 수수료와 같은 방식으로 현금에서 차감한다(재생식과 실행식이 같은 함수를 쓴다).
 const SLIPPAGE_FROM = Date.UTC(2026, 7, 3);   // 2026-08-03 이후 체결부터 적용
+/* ══ [V33.341] ★시간외 체결 비용을 정규장 값으로 잡고 있었다★ ═══════════════════
+   이 함수는 ts 를 받는데 ★시각을 세율 적용 여부에만 쓰고 세션은 안 봤다.★
+   그래서 V33.332 가 시간외 거래를 전 종목으로 연 뒤에도, 장전·장후 체결이
+   정규장과 똑같은 5bp(미국)·8bp(한국)로 기록된다.
+
+   시간외 호가는 그럴 수가 없다 — 마켓메이커 의무가 없고 장부가 얇아 스프레드가
+   정규장의 여러 배다. 그 비용을 낮게 잡으면 세 가지가 한꺼번에 틀어진다:
+     ① 원장이 시간외 거래를 실제보다 잘한 것으로 적는다
+     ② 그 pnl 이 학습 라벨이 된다 — 모델이 "시간외가 유리하다" 고 배운다
+     ③ 켈리·사이징이 부풀린 엣지 위에서 크기를 정한다
+   ★비용을 낮게 잡는 것은 수익을 지어내는 것과 같다.★
+
+   ※ 배수는 ★측정이 아니라 가정★ 이다 — 그렇게 적어 둔다. 미국 대형주의 시간외 호가폭은
+     정규장의 3~5배대가 흔하고 얇은 종목은 그보다 훨씬 크다. 보수적으로 3배를 쓴다.
+     실측 체결 데이터가 쌓이면 이 상수 대신 그 값을 쓸 것.
+   ※ 소급 적용하지 않는다 — 시간외 거래를 연 판(V33.331, 2026-09-10)부터만 건다.
+     과거 원장을 조용히 다시 쓰면 현금 체크포인트와 어긋난다(SLIPPAGE_FROM 과 같은 규율). */
+const EXT_SLIP_FROM = Date.UTC(2026, 8, 10);   // 2026-09-10 — 시간외 거래를 연 판부터
+const EXT_SLIP_MULT = 3;
+/* 체결 ★시각★ 의 세션을 본다(지금이 아니라). 원장 재생이 실행과 어긋나면 안 되기 때문이다.
+   비용은 정책이 아니라 물리라서 cfg.extTrade 스위치를 보지 않는다 — 시간외에 체결됐으면
+   그 스위치를 나중에 껐더라도 그때 낸 비용은 시간외 비용이다. */
+function _extSessionAt(market, ts) {
+  const d = new Date(ts);
+  if (market === "us" || market === "bdus") {
+    const t = getUSEt(d);
+    if (t.day < 1 || t.day > 5) return null;
+    if (t.totalMin >= 420 && t.totalMin < 570) return "pre";
+    if (t.totalMin >= 960 && t.totalMin < 1200) return "post";
+    return null;
+  }
+  if (market === "kr" || market === "bdkr") {
+    const t = getKST(d);
+    if (t.day < 1 || t.day > 5) return null;
+    if (t.totalMin >= 480 && t.totalMin < 540) return "pre";
+    if (t.totalMin >= 930 && t.totalMin < 1200) return "post";
+    return null;
+  }
+  return null;   // cm(암호화폐)은 24시간 — 시간외라는 개념이 없다
+}
 function _slipRate(market, ts) {
   if (!(typeof ts === "number" && isFinite(ts) && ts >= SLIPPAGE_FROM)) return 0;
   // 반스프레드 + 소액 시장충격의 보수적 근사. 한국장이 호가단위·유동성 때문에 더 크다.
   //   us/cm/bdus = 5bp, kr/bdkr = 8bp. (대형주 기준 실측 스프레드의 절반 수준)
-  return (market === "kr" || market === "bdkr") ? 0.0008 : 0.0005;
+  const base = (market === "kr" || market === "bdkr") ? 0.0008 : 0.0005;
+  if (ts >= EXT_SLIP_FROM && _extSessionAt(market, ts)) return base * EXT_SLIP_MULT;
+  return base;
 }
 
 // [V29 새 회계 — 단일 원장] cash를 별도 저장하지 않고 trades에서 실시간 계산.
@@ -32278,10 +32338,50 @@ const LUXML = {
   //   비-hv 표본을 이 배수로 올려 그 피처들이 실제 그래디언트를 받게 한다(과적합 방지 위해 과하지 않게).
   //   결과 비율: 라이브 1.5 vs harvest 0.6 = 2.5배. (harvest는 이 피처들을 원천 복원 불가 — 문서화)
   liveSrcWeight: 1.5,
+  /* ══ [V33.341] ★신호 컨텍스트 6종을 수확 규약으로 통일한다★ ═════════════════
+     이 값이 true 면 mlBuildFeatures 가 sigWeight·confluence·전략원핫4 를
+     ★언제나 수확과 같은 값★ 으로 적는다(1 · 1 · 0000).
+
+     ★왜★ — 이 여섯은 원리적으로 수확이 만들 수 없다. 과거 봉에는 규칙엔진 신호가
+     없기 때문이다. 그래서 표본 풀의 80%(수확)에서 이 칸들은 상수이고, ★라이브 추론에서만★
+     값이 튄다. 표준화하면 라이브 한 건마다 6칸이 3σ 근처로 솟는다 — 망은 학습에서
+     본 적 없는 자리에 매번 놓인다. 트리는 상수 칸을 아예 안 쪼개서 무해하지만
+     심층 MLP 는 그렇지 않다.
+     ★증거★ 같은 표본에서 트리 3종은 52~54%, DNN 은 ★48.8%★ (동전 이하)였다.
+     이 비대칭은 "신호가 약해서" 로는 설명되지 않는다 — 트리와 망을 가르는 것은
+     상수 입력의 취급 하나뿐이다.
+
+     ★어쩌다 이렇게 됐나★ V12.47 이 "전략원핫 4개가 항상 0인 죽은 입력" 을 고쳐
+     현재 전략명(trend/scalp/snap)에 맞췄다. 고치기 전엔 ★모든 행이 0★ 이라 죽었지만
+     무해했다. 고친 뒤로 라이브만 1 이 되면서 스큐가 태어났다. 죽은 입력을 살렸는데
+     살아난 곳이 라이브뿐이면, 그건 살린 게 아니라 스큐를 만든 것이다.
+
+     ★왜 지우지 않고 상수로 두나★ featNames 중간에서 빼면 뒤 칸 인덱스가 전부 밀려
+     기존 표본 83만 건의 의미가 통째로 어긋난다(되돌릴 수 없다). V13 이 이벤트 16종을
+     뺄 때와 같은 이유로, 자리는 두고 값을 중립으로 고정한다.
+
+     ★잃는 것★ 규칙엔진 신호의 세기·합류도 정보다. 다만 그건 애초에 배울 수 없었다 —
+     수확에 없고, 라이브를 올려 주기로 했던 liveSrcWeight 는 ★Modal 경로에서 한 번도
+     전달된 적이 없다★(바로 아래에서 함께 고친다). 배울 수 없는 것을 서빙에서만
+     먹이는 것이 지금까지의 상태였다. */
+  liveCtxNeutral: true,
 
   // ── [V4] 신뢰학습(reliable training) 공통 다이얼 ──
   cvFolds: 5,            // Purged 워크포워드 교차검증 폴드 수(선형/저비용 모델)
-  embargoDays: 6,        // 학습/검증 경계 엠바고 — 라벨 horizon(5일) 겹침 누출 차단
+  /* ══ [V33.341] ★엠바고는 라벨 지평보다 짧으면 안 된다★ ═══════════════════════
+     종전 값은 6 이고 주석은 "라벨 horizon(5일)" 이었다. 그런데 V32.10 이 지평을
+     ★5 → 10 으로 올렸다★ (AI_PARAMS.predictionHorizonDays: 10). 엠바고는 따라가지 않았고
+     주석만 옛말로 남았다 — 그 뒤로 경계에서 ★4일치가 그냥 샜다★.
+     학습표본 관측시각 T 의 라벨은 T+10 까지의 가격으로 정해진다. 검증이 V 에서 시작하면
+     T > V−10 인 학습표본은 결과 구간이 검증과 겹친다. 6일만 비우면 4일이 남는다.
+     ★손으로 적은 숫자가 다른 손으로 적은 숫자를 따라가지 못한 것★ 이므로,
+     이제 지평에서 파생시킨다 — 지평을 바꾸면 엠바고가 자동으로 따라온다.
+     ※ 실측(시뮬레이션, 지평 10일·표본 2.8만): 엠바고 0일↔10일 검증정확도 차이 0.14%p.
+       크지 않다. 고치는 이유는 성능이 아니라 ★모델마다 다른 자를 없애기 위해서★ 다. */
+  get embargoDays() {
+    const h = (typeof AI_PARAMS !== "undefined" && AI_PARAMS.predictionHorizonDays) || 10;
+    return Math.max(6, Math.ceil(h));
+  },
   recencyHalfLifeDays: 45, // 표본 시간감쇠 반감기(최근 표본 우대)
   recencyFloor: 0.35     // 오래된 표본 최저 가중
 };
@@ -32668,6 +32768,14 @@ function mlBuildFeatures(args) {
       stratMom:    strat === "snap" ? 1 : 0,
       stratMR:     LEGACY_STRATEGIES.indexOf(strat) >= 0 ? 1 : 0
     };
+    /* [V33.341] ★수확이 만들 수 없는 칸은 라이브에서도 만들지 않는다.★
+       (근거는 LUXML.liveCtxNeutral 주석 — 트리 52~54% vs DNN 48.8% 의 비대칭)
+       한 곳에서만 덮어쓴다. 수확·라이브·반사실이 전부 이 함수를 지나므로,
+       여기만 지나면 세 출처가 원리적으로 같은 분포가 된다. */
+    if (LUXML.liveCtxNeutral !== false) {
+      f.sigWeight = 1; f.confluence = 1;
+      f.stratSwing = 0; f.stratDay = 0; f.stratMom = 0; f.stratMR = 0;
+    }
     // [V32.10] 이벤트/뉴스 16종은 featNames에서 제거됨(train/serve 스큐) — 채우는 루프 삭제.
     // [V4] 시장구조 13종
     const sx = _mlStructFeats(closes, args.volumes, args.opens, price, _num(args.prevClose, 0));

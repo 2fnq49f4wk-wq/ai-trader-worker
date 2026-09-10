@@ -84,10 +84,14 @@ const no = (m) => { console.error("  FAIL " + m); bad++; };
   else ok("보내는 경계 = 홀드아웃 첫 표본의 ts (분할과 같은 식)");
   if (!/"\/api\/stack-oof-window"/.test(py)) no("STACK-OOF: 학습기가 경계를 보내지 않는다");
   else ok("학습기가 학습 후 경계를 통지한다");
-  // 네 모델이 같은 분할 규칙을 쓰는지 — 하나라도 다르면 그 모델엔 누출이 남는다.
-  const tails = py.match(/nval = max\(\d+, int\(N \* (VALFRAC|0\.2)\)\)/g) || [];
-  if (tails.length < 3)
-    no(`STACK-OOF: 외부 모델들이 같은 홀드아웃 비율을 쓰는지 확인 불가(${tails.length}건만 확인됨)`);
+  /* [V33.341] ★같은 비율★ 만으로는 부족했다 — 감사에서 드러난 실제 문제는 비율이 아니라
+     ★엠바고★ 였다. DNN 만 경계를 비우고 GBDT·부스터·시장별·MIND 는 안 비웠다.
+     라벨 지평이 10일인데 경계를 안 비우면 그만큼 겹친다(de Prado). 그리고 그 모델들이
+     바로 위원회에 앉아 실제 돈을 거는 모델들이다.
+     → 이제 분할은 공용 헬퍼 하나(_split_ts)가 낸다. ★같은 함수를 부르는지★ 를 본다. */
+  const tails = py.match(/_split_ts\(/g) || [];
+  if (tails.length < 6)
+    no(`STACK-OOF: 분할을 공용 헬퍼로 안 하는 학습기가 있다(_split_ts 호출 ${tails.length}곳 — 정의 1 + 호출 5 이상이어야 한다)`);
   else ok(`외부 모델 ${tails.length + 1}종이 같은 규칙(뒤쪽 20%)으로 홀드아웃을 뗀다`);
   if (!/VALFRAC = 64, 600, 50, 0\.2|VALFRAC = 0\.2|, 0\.2$/m.test(py) && !/MAXBINS, MAXTREES, PATIENCE, VALFRAC = 64, 600, 50, 0\.2/.test(py))
     no("STACK-OOF: GBDT 의 VALFRAC 이 0.2 가 아니다 — 다른 경계를 쓴다");

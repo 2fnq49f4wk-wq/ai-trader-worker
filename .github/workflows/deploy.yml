@@ -208,6 +208,14 @@ jobs:
       #   시각을 모르면 막는지, 낡으면 막고 신선하면 통과하는지를 실제로 돌려 본다.
       - name: Extended-hours price freshness check
         run: node tools/check-ext-freshness.mjs
+      # [V33.341] 검증 분할·엠바고 — 모델마다 다른 자로 재고 있지 않은가.
+      #   감사 결과: 엠바고가 DNN 에만 있었고(GBDT·부스터·시장별·MIND 는 경계를 안 비웠다),
+      #   그 엠바고조차 6일로 라벨 지평 10일보다 짧았다(V32.10 이 지평을 올릴 때 안 따라갔다).
+      #   게다가 DNN·MIND 만 τ* 를 검증 앞절반에서 골라 유효표본이 절반이었다
+      #   (실측 DNN ≈690 · MIND ≈950 vs 부스터 ≈7,400 — 같은 풀에서 10배).
+      #   "DNN 검증 미달" 의 상당 부분이 실력이 아니라 자의 길이였다.
+      - name: Split and embargo contract check
+        run: node tools/check-split-embargo.mjs
       # [V33.140] 전진검증 누적 원장 — 창이 매일 밤 리셋돼 ★구조적으로★ 못 채워지던 것을 고쳤다.
       #   (memo: 총표본 177,868 인데 전진 357 = 어제 유입과 정확히 일치)
       #   교착 해소와 통계 정직성을 함께 본다: 잡음 통과율이 문턱의 명목값과 맞는지,

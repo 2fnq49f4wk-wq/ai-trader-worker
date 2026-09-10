@@ -122,6 +122,20 @@ def train_job(epochs: int = EPOCHS_DEFAULT, dry: bool = False,
     mixup_p = cfg.get("mixupP", 0.2); std_clip = cfg.get("stdClip", 6)
     val_frac = cfg.get("valFrac", 0.2); batch = cfg.get("batch", 32)
     embargo_ms = cfg.get("embargoDays", 6) * 86400000; hv_w = cfg.get("hvSrcWeight", 1.0)
+    # [V33.341] 엠바고는 ★라벨 지평 이상★ 이어야 뜻이 있다 — 짧으면 그 차이만큼 그냥 샌다.
+    try:
+        _HORIZON_MS = float((cfg or {}).get("prediction", {}).get("horizonDays") or 10) * 86400000
+    except Exception:
+        _HORIZON_MS = 10 * 86400000
+    globals()["_HORIZON_MS"] = _HORIZON_MS
+    globals()["_EMBARGO_MS"] = max(float(embargo_ms), _HORIZON_MS)
+    if _HORIZON_MS > embargo_ms:
+        print(f"   ⚠️ 엠바고({embargo_ms/86400000:.0f}일)가 라벨 지평({_HORIZON_MS/86400000:.0f}일)보다 짧다"
+              f" — 지평으로 올려 쓴다(그 차이만큼 경계에서 라벨이 샌다).")
+    # [V33.341] 실거래 표본 가중 — 종전엔 이 값을 아예 안 읽어 라이브가 언제나 1.0 이었다.
+    #   워커는 자체 학습기 다섯 곳에서 이 값을 쓰는데 Modal 로는 내려오지도 않았다.
+    #   위원회에 앉는 모델은 전부 external 이므로, 그 설정은 위원회에 한 번도 닿은 적이 없다.
+    live_w = float(cfg.get("liveSrcWeight", 1.0) or 1.0)
     hl_days = cfg.get("recencyHalfLifeDays", 45); rec_floor = cfg.get("recencyFloor", 0.35)
 
     # [V32.10 성능강화·적응형 정규화] ★모델 축소 없이 과적합 방지★ 노이즈 큰 금융 tabular에선 3M망이
@@ -171,6 +185,27 @@ def train_job(epochs: int = EPOCHS_DEFAULT, dry: bool = False,
         print("      (워커 로그의 '[ML-EXPORT] … R2 스냅샷 N파트/total=M' 이 실제 풀과 맞는지 본다).")
         return {"ok": False, "reason": "insufficient samples", "n": N, "featVer": featver}
     X = np.array([s["x"] for s in samples], dtype=np.float64)
+    # ══ [V33.341] ★수확이 만들 수 없는 칸을 학습에서도 눌러 둔다★ ═══════════════════
+    #   sigWeight · confluence · 전략원핫4 는 과거 봉에서 복원할 수 없다(규칙엔진 신호가
+    #   없으므로). 그래서 표본의 80%(수확)에서 상수이고 ★라이브에서만★ 값이 튄다.
+    #   표준화하면 라이브 한 건마다 이 칸들이 3σ 근처로 솟아, 망은 학습에서 본 적 없는
+    #   자리에 매번 놓인다. 트리는 상수 칸을 안 쪼개서 무해하다 —
+    #   그래서 같은 표본에서 트리 3종 52~54%, DNN 48.8%(동전 이하) 라는 비대칭이 나왔다.
+    #   워커가 V33.341 부터 서빙에서 이 칸들을 중립으로 적으므로, 학습·검증도 같은 자리에
+    #   서야 한다. 저장된 옛 표본에는 아직 라이브 값이 남아 있으니 ★여기서 눌러★ 맞춘다.
+    #   (표본을 버리지 않는다 — 값만 규약에 맞춘다.)
+    _lc_idx = list(cfg.get("liveCtxIdx") or [])
+    _lc_val = list(cfg.get("liveCtxVal") or [])
+    if cfg.get("liveCtxNeutral") and _lc_idx and len(_lc_idx) == len(_lc_val):
+        _moved = 0
+        for _k, _c in enumerate(_lc_idx):
+            if 0 <= _c < X.shape[1]:
+                _moved += int((X[:, _c] != _lc_val[_k]).sum())
+                X[:, _c] = _lc_val[_k]
+        print(f"   신호컨텍스트 중립화: {len(_lc_idx)}칸 고정 — 값이 바뀐 셀 {_moved}개")
+        print("      (수확이 만들 수 없는 칸이라 학습·검증·서빙을 같은 분포 위에 세운다)")
+    elif _lc_idx:
+        print(f"   신호컨텍스트 중립화 꺼짐 — {len(_lc_idx)}칸이 라이브에서만 값을 갖는다(스큐 주의)")
     # [V33.78] ★라벨을 절대수익으로 재계산★ (사용자 지시)
     #   워커가 저장한 y 는 수집 당시 설정(alpha=지수 대비 초과수익)으로 매긴 값이다.
     #   라벨 정의를 절대수익으로 바꾸면 과거 표본을 통째로 버려야 할 것 같지만, pnl 이 함께
@@ -230,15 +265,14 @@ def train_job(epochs: int = EPOCHS_DEFAULT, dry: bool = False,
     else:
         UNIQ = _uniq_weights(TS, SYM, _hor_d * 86400000.0)
     print(f"   표본 고유도: 평균 {UNIQ.mean():.3f} · 유효 {UNIQ.sum():.0f}/{N} (라벨지평 {_hor_d:.0f}일, 종목 {_nsym}개)")
-    mw = np.clip(absp / pnl_scale, 0.3, 3.0) * np.where(HV > 0, hv_w, 1.0) * recency * UNIQ
+    mw = np.clip(absp / pnl_scale, 0.3, 3.0) * np.where(HV > 0, hv_w, live_w) * recency * UNIQ
+    print(f"   출처 가중: 수확 ×{hv_w} · 실거래 ×{live_w} (수확 {int((HV > 0).sum())} · 실거래 {int((HV <= 0).sum())}건)")
 
-    n_val = max(20, int(N * val_frac))
-    cut_ts = TS[N - n_val] - embargo_ms
-    idx = np.arange(N)
-    tr_mask = (idx < N - n_val) & (TS < cut_ts)
-    if tr_mask.sum() < 60:
-        tr_mask = idx < N - n_val
-    tr = idx[tr_mask]; va = idx[N - n_val:]
+    # [V33.341] 분할은 공용 헬퍼 한 곳에서 — 학습기마다 다른 자를 쓰지 않는다.
+    #   (표본은 위에서 이미 ts 오름차순 정렬돼 있어 order 는 항등이다.)
+    _ord, tr, cal, va, n_val, _emb = _split_ts(TS, val_frac, embargo_ms, min_val=20,
+                                               horizon_ms=_HORIZON_MS, cal_frac=0.10)
+    print(f"   분할: 학습 {len(tr)} · 보정 {len(cal)} · 검증 {len(va)} · 엠바고 {_emb/86400000:.0f}일")
     pos = Y[tr].sum()
     w_pos = len(tr) / (2 * pos) if pos > 0 else 1.0
     w_neg = len(tr) / (2 * (len(tr) - pos)) if (len(tr) - pos) > 0 else 1.0
@@ -248,6 +282,10 @@ def train_job(epochs: int = EPOCHS_DEFAULT, dry: bool = False,
     Mtr = torch.tensor(mw[tr], dtype=torch.float32, device=dev)
     Xva = torch.tensor(Xn[va], dtype=torch.float32, device=dev)
     Yva = torch.tensor(Y[va], dtype=torch.float32, device=dev)
+    # [V33.341] τ* 전용 보정 구간 — 학습에서 뺐고, 엠바고가 검증과 갈라 놓는다.
+    _hasCal = len(cal) >= 50
+    Xcal = torch.tensor(Xn[cal], dtype=torch.float32, device=dev) if _hasCal else None
+    Ycal = Y[cal] if _hasCal else None
 
     # [V32.11] ★모델 축소 없이 강화 — BatchNorm★ 12층 평면 MLP는 정규화가 없어 깊이가 학습에 안 먹혔다
     #   (심층 degradation·기울기 불안정 → valAcc 정체의 구조적 원인). 각 은닉층에 BatchNorm을 넣어 깊은
@@ -353,12 +391,26 @@ def train_job(epochs: int = EPOCHS_DEFAULT, dry: bool = False,
 
         # ── [V12.33 임계값 캘리브레이션] 31%형 겉보기 붕괴 수정 ──
         #   원인: 균형가중 학습 + 검증 라벨 쏠림 상황에서 고정 0.5 컷은 다수클래스보다 못한 정확도로 붕괴.
-        #   해법: 검증 앞 절반(캘리브레이션)에서 균형정확도 최대 임계값 τ*를 찾아 각 시드망 마지막 층
-        #   bias에 -logit(τ*)로 굽는다 → Worker의 0.5 기준 추론이 그대로 캘리브레이션 반영.
-        #   정확도는 τ* 선택에 쓰지 않은 '뒤 절반'에서 산출(정직한 홀드아웃).
-        half = max(20, len(ps) // 2)
-        if len(ps) - half >= 20:
-            ps_c, ys_c = ps[:half], ys[:half]
+        #   해법: 균형정확도 최대 임계값 τ*를 찾아 각 시드망 마지막 층 bias에 -logit(τ*)로 굽는다
+        #   → Worker의 0.5 기준 추론이 그대로 캘리브레이션 반영.
+        # ── [V33.341] ★τ* 를 검증에서 고르지 않는다★ ─────────────────────────────
+        #   종전엔 검증 앞 절반으로 τ* 를 고르고 뒤 절반으로만 채점했다. 정직하긴 했지만
+        #   ★이 모델만 유효표본이 절반★ 이 된다. 승격 게이트는 Wilson 하한을 보므로
+        #   표본이 절반이면 하한이 그만큼 내려간다 — 실측 DNN 유효표본 ≈690 · MIND ≈950 인데
+        #   부스터는 ≈7,400 이었다. 같은 풀에서 10배 차이다.
+        #   즉 "DNN 검증 미달" 의 상당 부분은 실력이 아니라 ★자의 길이★ 였다.
+        #   → τ* 는 학습 구간의 꼬리(cal)에서 고른다. 학습에서 뺐으니 예측이 부풀지 않고,
+        #     엠바고가 검증과 갈라 놓으니 누출도 없다. 검증은 ★전부★ 채점에 쓴다.
+        _cal_src = None
+        if _hasCal:
+            with torch.no_grad():
+                _zc = torch.zeros(Xcal.shape[0], device=dev)
+                for net in nets:
+                    net.eval(); _zc += net(Xcal, False).squeeze(-1)
+                _cal_src = (torch.sigmoid(_zc / len(nets)).cpu().numpy(), Ycal)
+        half = 0 if _cal_src is not None else max(20, len(ps) // 2)
+        if _cal_src is not None or len(ps) - half >= 20:
+            ps_c, ys_c = _cal_src if _cal_src is not None else (ps[:half], ys[:half])
             taus = np.unique(np.quantile(ps_c, np.linspace(0.05, 0.95, 37)))
             # [V12.42] 균형정확도→원(raw)정확도 기준으로 τ* 선택 변경 — Worker 신뢰게이트는 "원정확도
             #   Wilson 하한"으로 mind와 비교하는데, DNN만 균형정확도 τ*를 쓰면 게이트에서 구조적으로
@@ -964,10 +1016,12 @@ def _train_and_upload_gbdt(BASE, KEY, HDR, X, Y, TS, featver, D, UNIQ=None,
     N = len(Y)
     if N < 400:
         print(f"{tag}: 표본 부족 {N} — 생략"); return
-    order = np.argsort(TS)
+    # [V33.341] 엠바고 분할(공용 헬퍼) — 종전엔 경계를 안 비워 라벨 지평만큼 겹쳤다.
+    order, _tri, _cali, _vai, nval, _emb = _split_ts(TS, VALFRAC, _EMBARGO_MS, min_val=200, horizon_ms=_HORIZON_MS)
     Xs = X[order].astype(np.float64); Ys = Y[order].astype(np.float64)
-    nval = max(200, int(N * VALFRAC))
-    Xtr, Ytr, Xva, Yva = Xs[:-nval], Ys[:-nval], Xs[-nval:], Ys[-nval:]
+    Xtr, Ytr = Xs[_tri], Ys[_tri]
+    Xva, Yva = Xs[_vai], Ys[_vai]
+    print(f"   GBDT 분할: 학습 {len(_tri)} · 검증 {len(_vai)} · 엠바고 {_emb/86400000:.0f}일")
     # [V33.115] 검증구간 고유도 — 정렬 후 뒤 nval 개의 ★원본 인덱스★ 로 뽑아야 한다.
     UWva = _uw_pick(UNIQ, N, order[-nval:])
     Ntr = len(Ytr)
@@ -1206,6 +1260,57 @@ def _uw_pick(UNIQ, n_total, idx):
         return np.ones(idx.size, dtype=np.float64)
 
 
+# ══ [V33.341] ★시간순 분할과 엠바고를 한 곳에서만 정한다★ ═══════════════════════
+#   운영 감사 결과, 이 파일 안에서 검증 분할이 ★모델마다 달랐다★:
+#     · DNN(train_job)        : 엠바고 있음(cut_ts = TS[N-n_val] - embargo_ms)
+#     · GBDT · XGB/LGB/CAT · 시장별 · MIND(FM) · SCALP : ★엠바고 없음★ (Xs[:-nval])
+#   라벨 지평이 10일인데 경계를 안 비우면, 경계 직전 학습표본의 결과 구간이 검증 구간과
+#   겹친다(de Prado purging). 그 모델들이 바로 ★위원회에 앉아 실제 돈을 거는 모델들★ 이다.
+#   즉 승격 게이트가 "정직하게 잰 모델(DNN)" 과 "겹쳐서 잰 모델(트리들)" 을 같은 문턱으로
+#   비교해 왔다 — 문턱이 아니라 자가 달랐다.
+#
+#   그리고 엠바고 길이 자체도 어긋나 있었다: LUXML.embargoDays = 6 인데 지평은 10 이다.
+#   V32.10 이 지평을 5→10 으로 올릴 때 엠바고는 따라가지 않았고, 주석은 아직도
+#   "라벨 horizon(5일)" 이라고 적혀 있었다. 지평보다 짧은 엠바고는 그 차이만큼 그냥 샌다.
+#   → 엠바고는 ★지평 이상★ 으로 강제한다. 여기 한 곳에서.
+#
+#   ※ 실측(시뮬레이션, 라벨지평 10일·표본 2.8만): 엠바고 0일과 10일의 검증정확도 차이는
+#     0.14%p 였다. 크지 않다 — 이걸 "성능이 4%p 뛴다" 로 팔지 않는다. 고치는 이유는
+#     ★같은 자로 재기 위해서★ 다. 모델마다 자가 다르면 그 위의 어떤 비교도 뜻이 없다.
+def _split_ts(TS, val_frac, embargo_ms, min_val=200, horizon_ms=0, cal_frac=0.0):
+    """시간순 정렬 인덱스와 (학습, 보정, 검증) 인덱스를 돌려준다. 엠바고는 지평 이상으로 강제.
+
+    ★보정(cal) 구간이 왜 필요한가★
+      DNN 과 MIND 는 임계값 τ* 를 골라 마지막 층 bias 에 접어 넣는다(워커의 0.5 추론이
+      그 보정을 그대로 쓰게 하려고). 그런데 종전엔 그 τ* 를 ★검증 앞 절반★ 에서 고르고
+      ★뒤 절반★ 으로만 채점했다. 정직하긴 한데, 그 결과 이 둘만 유효표본이 절반이 된다.
+      승격 게이트는 Wilson 하한을 보므로, 표본이 절반이면 하한이 그만큼 내려간다 —
+      실측 비교: DNN 유효표본 ≈690 · MIND ≈950 vs XGB ≈7,400. ★같은 풀인데 10배 차이다.★
+      그래서 "DNN 검증 미달" 의 상당 부분은 실력이 아니라 ★자의 길이★ 였다.
+      → τ* 는 ★학습 구간의 꼬리★ 에서 고른다. 그 구간은 학습에서 빼므로 예측이 부풀지 않고,
+        엠바고가 검증과 갈라 놓으므로 누출도 없다. 검증은 ★전부★ 채점에 쓴다.
+    """
+    import numpy as np
+    n = len(TS)
+    order = np.argsort(TS, kind="stable")
+    ts_s = np.asarray(TS, dtype=np.float64)[order]
+    nval = max(min_val, int(n * val_frac))
+    nval = min(nval, max(1, n - 1))
+    emb = max(float(embargo_ms or 0), float(horizon_ms or 0))
+    cut_ts = ts_s[n - nval] - emb
+    idx = np.arange(n)
+    tr_mask = (idx < n - nval) & (ts_s < cut_ts)
+    if tr_mask.sum() < 60:              # 엠바고가 학습을 다 먹으면 엠바고를 포기한다
+        tr_mask = idx < n - nval        # (표본이 적을 땐 학습이 아예 없는 것보다 낫다)
+    tr = idx[tr_mask]
+    cal = np.array([], dtype=int)
+    if cal_frac and cal_frac > 0 and len(tr) > 400:
+        ncal = int(len(tr) * cal_frac)
+        ncal = max(50, min(ncal, len(tr) // 3))     # 학습을 1/3 넘게 떼지 않는다
+        cal, tr = tr[-ncal:], tr[:-ncal]
+    return order, tr, cal, idx[n - nval:], nval, emb
+
+
 def _neff_of(w):
     import numpy as np
     try:
@@ -1409,10 +1514,11 @@ def _train_per_market(BASE, KEY, HDR, MKT, X, Y, TS, PNL, featver, D, UNIQ=None)
             continue
         Xm, Ym, TSm = X[sel], Y[sel], TS[sel]
         PNLm = PNL[sel] if PNL is not None and len(PNL) == len(Y) else None
-        order = np.argsort(TSm)
+    # [V33.341] 엠바고 분할(공용 헬퍼) — 종전엔 경계를 안 비워 라벨 지평만큼 겹쳤다.
+        order, _tri, _cali, _vai, nval, _emb = _split_ts(TSm, 0.2, _EMBARGO_MS, min_val=200, horizon_ms=_HORIZON_MS)
         Xs, Ys = Xm[order].astype(np.float64), Ym[order].astype(int)
-        nval = max(200, int(n * 0.2))
-        Xtr, Ytr, Xva, Yva = Xs[:-nval], Ys[:-nval], Xs[-nval:], Ys[-nval:]
+        Xtr, Ytr = Xs[_tri], Ys[_tri]
+        Xva, Yva = Xs[_vai], Ys[_vai]
         # [V33.115] 검증구간 고유도 — sel(부분집합) → order(정렬) 두 번 접혔으므로
         #   원본 인덱스로 되돌려서 뽑는다. 겹침은 같은 종목 안에서만 세므로 시장별로 나눠도 값이 같다.
         UWva = _uw_pick(UNIQ, len(Y), np.flatnonzero(sel)[order][-nval:])
@@ -1662,10 +1768,12 @@ def _train_and_upload_boosters(BASE, KEY, HDR, X, Y, TS, featver, D, PNL=None, U
     N = len(Y)
     if N < 500:
         print(f"부스팅: 표본 부족 {N} — 생략"); return
-    order = np.argsort(TS)
+    # [V33.341] 엠바고 분할(공용 헬퍼) — 종전엔 경계를 안 비워 라벨 지평만큼 겹쳤다.
+    order, _tri, _cali, _vai, nval, _emb = _split_ts(TS, 0.2, _EMBARGO_MS, min_val=200, horizon_ms=_HORIZON_MS)
     Xs = X[order].astype(np.float64); Ys = Y[order].astype(int)
-    nval = max(200, int(N * 0.2))
-    Xtr, Ytr, Xva, Yva = Xs[:-nval], Ys[:-nval], Xs[-nval:], Ys[-nval:]
+    Xtr, Ytr = Xs[_tri], Ys[_tri]
+    Xva, Yva = Xs[_vai], Ys[_vai]
+    print(f"   부스팅 분할: 학습 {len(_tri)} · 검증 {len(_vai)} · 엠바고 {_emb/86400000:.0f}일")
     UWva = _uw_pick(UNIQ, N, order[-nval:])     # [V33.115] 검증구간 고유도
 
     # ── [V33.75] 변동성 스케일 크기가중 (Lim·Zohren·Roberts 2019 / Moskowitz·Ooi·Pedersen 2012) ──
@@ -2173,22 +2281,26 @@ def _train_and_upload_fm(BASE, KEY, HDR, X, Y, TS, PNL, featver, D, UNIQ=None):
     if N < 200:
         print(f"FM: 표본 부족 {N} — 생략"); return
     K = 8; L2W = 1e-3; L2V = 3e-3; EPOCHS = 80; SEEDS = 6
-    order = np.argsort(TS)
+    # [V33.341] 엠바고 분할(공용 헬퍼) — 종전엔 경계를 안 비워 라벨 지평만큼 겹쳤다.
+    order, _tri, _cali, _vai, _nv0, _emb = _split_ts(TS, 0.2, _EMBARGO_MS, min_val=60,
+                                                     horizon_ms=_HORIZON_MS, cal_frac=0.10)
     Xs = X[order].astype(np.float64); Ys = Y[order].astype(np.float64)
     Ps = np.abs(PNL[order].astype(np.float64))
-    nval = max(60, int(N * 0.2))
+    nval = len(_vai)
     # [V33.115] ★표준화 누출 수정★ — 종전엔 평균·표준편차를 검증분 포함 전체로 잡았다.
     #   MIND 는 이 mean/std 를 그대로 업로드해 워커 추론에 쓰므로, 검증분포가 스며들면
     #   검증성적이 부풀 뿐 아니라 그 편향이 라이브 추론까지 따라간다. 학습구간만으로 잡는다.
     #   (train_job·_miniLogisticTrain 에서 잡은 것과 같은 실수 — 세 곳이 같았다)
-    mean = Xs[:-nval].mean(axis=0); std = Xs[:-nval].std(axis=0); std[std < 1e-6] = 1.0
+    # [V33.341] 학습구간은 이제 ★엠바고를 뺀★ 인덱스(_tri)다 — 경계 표본이 통계에도 안 섞인다.
+    mean = Xs[_tri].mean(axis=0); std = Xs[_tri].std(axis=0); std[std < 1e-6] = 1.0
     Z = (Xs - mean) / std
     Z = np.clip(Z, -6, 6)
-    Ztr, Ytr = Z[:-nval], Ys[:-nval]; Zva, Yva = Z[-nval:], Ys[-nval:]
-    UWva = _uw_pick(UNIQ, N, order[-nval:])     # [V33.115] 검증구간 고유도
+    Ztr, Ytr = Z[_tri], Ys[_tri]; Zva, Yva = Z[_vai], Ys[_vai]
+    UWva = _uw_pick(UNIQ, N, order[_vai])       # [V33.115] 검증구간 고유도
     # 표본가중: |pnl| 중앙값 정규화(0.3~3.0) × 균형 클래스가중
-    pscale = np.median(Ps[:-nval]) if np.median(Ps[:-nval]) > 1e-6 else 1.0
-    mw = np.clip(Ps[:-nval] / pscale, 0.3, 3.0)
+    _Ptr = Ps[_tri]
+    pscale = np.median(_Ptr) if np.median(_Ptr) > 1e-6 else 1.0
+    mw = np.clip(_Ptr / pscale, 0.3, 3.0)
     pos = float(Ytr.sum()); ntr = len(Ytr)
     wpos = ntr / (2 * pos) if pos > 0 else 1.0
     wneg = ntr / (2 * (ntr - pos)) if (ntr - pos) > 0 else 1.0
@@ -2227,33 +2339,46 @@ def _train_and_upload_fm(BASE, KEY, HDR, X, Y, TS, PNL, featver, D, UNIQ=None):
             V -= lr * (mV / (1 - b1 ** t)) / (np.sqrt(vV / (1 - b2 ** t)) + eps)
         return w, V, b
 
-    # 멀티시드 — 검증 앞절반 균형정확도로 최고 선택(뒤절반은 정직측정 보존)
-    selN = max(20, nval // 2)
+    # ── [V33.341] ★시드 선택과 τ* 를 검증에서 떼어 낸다★ ──────────────────────
+    #   종전엔 검증 앞절반으로 시드를 고르고 τ* 를 굽고, 뒤절반으로만 채점했다.
+    #   정직하긴 했지만 ★이 모델만 유효표본이 절반★ 이 되어 Wilson 하한이 구조적으로
+    #   낮게 나온다(실측 MIND ≈950 vs 부스터 ≈7,400 — 같은 풀에서 8배 차이).
+    #   → 학습에서 뺀 보정 구간(cal)으로 고르고, 검증은 ★전부★ 채점에 쓴다.
+    #     엠바고가 보정과 검증을 갈라 놓으므로 누출은 없다.
+    _useCal = len(_cali) >= 50
+    if _useCal:
+        Zsel, Ysel = Z[_cali], Ys[_cali]
+    else:
+        _sn = max(20, nval // 2)
+        Zsel, Ysel = Zva[:_sn], Yva[:_sn]
     best = None; best_bal = -1
     for s in range(SEEDS):
         w, V, b = train_one(s)
-        praw = fm_raw(Zva[:selN], w, V, b); up = sigmoid(praw) >= 0.5
-        yv = Yva[:selN] > 0.5
+        praw = fm_raw(Zsel, w, V, b); up = sigmoid(praw) >= 0.5
+        yv = Ysel > 0.5
         tp = np.sum(up & yv); fn = np.sum(~up & yv); tn = np.sum(~up & ~yv); fp = np.sum(up & ~yv)
         bal = 0.5 * ((tp / max(1, tp + fn)) + (tn / max(1, tn + fp)))
         if bal > best_bal: best_bal = bal; best = (w, V, b)
     w, V, b = best
-    # τ* 캘리브레이션 — 앞절반에서 정확도 최대 임계를 b에 구움(0.5컷 정합)
-    fps = sigmoid(fm_raw(Zva[:selN], w, V, b)); fsort = np.sort(fps)
+    # τ* 캘리브레이션 — 보정 구간에서 정확도 최대 임계를 b에 구움(0.5컷 정합)
+    fps = sigmoid(fm_raw(Zsel, w, V, b)); fsort = np.sort(fps)
     bt, bs = 0.5, -1
     for q in range(2, 37):
         tau = fsort[int((q / 38) * (len(fsort) - 1))]
-        acc = np.mean((fps >= tau).astype(int) == (Yva[:selN] > 0.5).astype(int))
+        acc = np.mean((fps >= tau).astype(int) == (Ysel > 0.5).astype(int))
         if acc > bs: bs = acc; bt = tau
     bt = min(max(bt, 1e-4), 1 - 1e-4)
     b -= math.log(bt / (1 - bt))
-    # 뒤절반 정직 홀드아웃 정확도 + Wilson 하한
-    hold = slice(selN, nval)
+    # 정직 홀드아웃 — 보정을 따로 뺐으면 검증 전체, 아니면 종전대로 뒤절반
+    _hs = 0 if _useCal else max(20, nval // 2)
+    hold = slice(_hs, nval)
     ph = sigmoid(fm_raw(Zva[hold], w, V, b))
     yh = Yva[hold] > 0.5
-    vacc = float(np.mean((ph >= 0.5) == yh)); nh = int(nval - selN)
-    # [V33.115] 하한은 유효표본수로 — 홀드아웃(뒤절반)에 해당하는 고유도만 쓴다.
-    _uwh = UWva[selN:nval]
+    vacc = float(np.mean((ph >= 0.5) == yh)); nh = int(nval - _hs)
+    print(f"   MIND 채점 구간: {'검증 전체' if _useCal else '검증 뒤절반'} {nh}건"
+          f" (τ*·시드선택 {'보정구간 ' + str(len(_cali)) + '건' if _useCal else '검증 앞절반'})")
+    # [V33.115] 하한은 유효표본수로 — 채점에 쓴 구간의 고유도만 쓴다.
+    _uwh = UWva[_hs:nval]
     _neff = _neff_of(_uwh)
     z16 = 1.64; den = 1 + z16 * z16 / _neff
     vlb = max(0.0, ((vacc + z16 * z16 / (2 * _neff)) - z16 * math.sqrt((vacc * (1 - vacc) + z16 * z16 / (4 * _neff)) / _neff)) / den)

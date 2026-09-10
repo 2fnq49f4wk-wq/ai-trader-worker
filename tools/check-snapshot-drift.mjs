@@ -143,13 +143,15 @@ console.log("③ 학습기 표본 부족 가드");
      코드로 세면, 주석을 지웠다 썼다 하는 것만으로 계약이 통과·실패한다. 실행되는 줄만 센다. */
   const _codeLines = PY.split("\n").map((l, i) => ({ l, i }))
     .filter(x => !/^\s*#/.test(x.l));
-  const _cutLine = _codeLines.find(x => x.l.includes("cut_ts = TS[N - n_val]"));
+  /* [V33.341] 분할이 공용 헬퍼(_split_ts)로 옮겨졌다 — 크래시 지점은 그 ★호출★ 이다.
+     (헬퍼 안에서 ts_s[n - nval] 를 읽으므로 N 이 작으면 거기서 죽는다.) */
+  const _cutLine = _codeLines.find(x => x.l.includes("_split_ts(TS, val_frac"));
   const _guardLine = _codeLines.find(x => x.l.includes("_MIN_N ="));
   const iCut = _cutLine ? _cutLine.i : -1;
   const iGuard = _guardLine ? _guardLine.i : -1;
   chk(iGuard > 0, "표본 부족 가드가 있다(실행되는 줄 " + (iGuard + 1) + ")", "가드가 없다 — N<20 이면 IndexError 로 죽는다");
   chk(iGuard > 0 && iCut > 0 && iGuard < iCut,
-    "가드(" + (iGuard + 1) + "행)가 크래시 지점(" + (iCut + 1) + "행 cut_ts = TS[N - n_val]) ★앞★ 에 있다",
+    "가드(" + (iGuard + 1) + "행)가 크래시 지점(" + (iCut + 1) + "행 _split_ts 호출) ★앞★ 에 있다",
     "가드가 크래시 뒤에 있다 — 개별 학습기 문턱들과 같은 실수(도달 불가)");
   // 크래시 재현: 실측 N=8 로 옛 식이 정말 음수 인덱스를 만드는가
   const N = 8, valFrac = 0.2;
