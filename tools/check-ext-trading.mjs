@@ -76,7 +76,9 @@ const _num = (v, d) => { const n = Number(v); return Number.isFinite(n) ? n : d;
 
 // ── ③ ★가격 가드★ — 미덥지 않으면 거래하지 않는다 ──────────────────────
 {
-  const src = cut("function extTradePrice(q, session, cfg) {", "\n// [V8.6] 엔진이 거래해도 되는 시간");
+  /* [V33.340] 판정 본문이 extTradePriceEx 로 옮겨졌다(막은 이유를 함께 돌려주기 위해).
+     extTradePrice 는 그 값을 꺼내 주는 얇은 껍데기다 — 둘 다 떼어 와야 실행 검사가 된다. */
+  const src = cut("function extTradePriceEx(q, session, cfg) {", "\n// [V8.6] 엔진이 거래해도 되는 시간");
   const ctx = vm.createContext({
     DEFAULT_CFG: { extTrade: { minPrice: 3, maxMovePct: 12, freshMs: 420000 } },
     _num, Date, isFinite
@@ -85,28 +87,28 @@ const _num = (v, d) => { const n = Number(v); return Number.isFinite(n) ? n : d;
   const cfg = { extTrade: { minPrice: 3, maxMovePct: 12, freshMs: 420000 } };
   const now = Date.now();
 
-  if (ctx.f({ price: 330, post: 300, postPct: -9.1, ts: now }, "post", cfg) === 300)
+  if (ctx.f({ price: 330, post: 300, postPct: -9.1, extTs: now }, "post", cfg) === 300)
     ok("정상 애프터 값(-9.1%)은 그대로 쓴다 — 큰 하락이라고 무시하지 않는다");
   else bad("정상 시간외 값을 못 쓴다");
 
   // ★핵심★ — 값이 없을 때 정규장 가격으로 떨어지면 안 된다
-  const none = ctx.f({ price: 330.65, dayPct: -2.28, post: null, postPct: null, ts: now }, "post", cfg);
+  const none = ctx.f({ price: 330.65, dayPct: -2.28, post: null, postPct: null, extTs: now }, "post", cfg);
   if (none === null) ok("★시간외 값이 없으면 null — 정규장 가격으로 조용히 떨어지지 않는다★");
   else bad(`★시간외 값이 없는데 ${none} 을 돌려준다 — 16시 값으로 20시에 거래하게 된다★`);
 
-  if (ctx.f({ post: 300, postPct: -30, ts: now }, "post", cfg) === null)
+  if (ctx.f({ post: 300, postPct: -30, extTs: now }, "post", cfg) === null)
     ok("변동 -30%(상한 12% 초과)는 손대지 않는다 — 이상호가·오입력 방어");
   else bad("비정상 변동에도 거래한다");
-  if (ctx.f({ post: 1.2, postPct: -1, ts: now }, "post", cfg) === null)
+  if (ctx.f({ post: 1.2, postPct: -1, extTs: now }, "post", cfg) === null)
     ok("초저가(1.2달러)는 시간외 스프레드를 감당 못 해 제외한다");
   else bad("초저가 종목을 시간외에 거래한다");
   if (ctx.f({ post: 300, postPct: -1, ts: now - 900000 }, "post", cfg) === null)
     ok("15분 지난 값으로는 거래하지 않는다(신선도 7분)");
   else bad("★낡은 가격으로 거래한다★");
-  if (ctx.f({ pre: 205, prePct: 1.5, ts: now }, "pre", cfg) === 205)
+  if (ctx.f({ pre: 205, prePct: 1.5, extTs: now }, "pre", cfg) === 205)
     ok("프리 세션은 pre 값을 쓴다(post 와 섞이지 않는다)");
   else bad("프리/애프터 값이 섞인다");
-  if (ctx.f({ pre: 205, prePct: 1.5, ts: now }, "post", cfg) === null)
+  if (ctx.f({ pre: 205, prePct: 1.5, extTs: now }, "post", cfg) === null)
     ok("애프터 세션인데 pre 값만 있으면 거래하지 않는다");
   else bad("세션과 다른 값을 끌어다 쓴다");
 }
@@ -206,8 +208,8 @@ const _num = (v, d) => { const n = Number(v); return Number.isFinite(n) ? n : d;
   if (/if \(extOnly && !extSessMkt\) continue;/.test(cyc))
     ok("시간외 거래를 껐거나 창 밖이면 종전대로 가격만 갱신하고 빠진다");
   else bad("시간외 스위치가 메인 사이클에 안 걸린다");
-  if (/const _xp = extTradePrice\(bq, extSessMkt, cfg\);\n\s*if \(_xp == null\) \{ extNoPrice\+\+; continue; \}/.test(cyc))
-    ok("전 종목 평가도 시간외 체결가를 쓰고, 값이 없는 종목은 평가에서 뺀다(개수를 센다)");
+  if (/const _xr = extTradePriceEx\(bq, extSessMkt, cfg\);\n\s*if \(_xr\.px == null\) \{ extNoPrice\+\+; extBlock\[_xr\.why\]/.test(cyc))
+    ok("전 종목 평가도 시간외 체결가를 쓰고, 빠진 종목은 ★이유별로★ 센다(체결없음과 시각미상은 다른 상태다)");
   else bad("★전 종목 평가가 정규장 가격으로 돈다 — 16시 값으로 20시에 거래하게 된다★");
   if (/price: evPrice, prevClose: bq\.prevClose/.test(cyc))
     ok("평가에 넘기는 가격이 시간외 값이고, 기준가는 전일 정규장 종가다(dayPct 의미 유지)");

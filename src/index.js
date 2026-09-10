@@ -2981,7 +2981,7 @@ async function applySignalTypeWeights(DB, cfg) {
    화면·자가진단이 계속 "V33.272" 를 보고했다(운영 스냅샷이 그대로 그랬다). 배포는 됐는데
    ★배포됐다는 사실만 거짓말★ 을 하고 있었으니, "내 고침이 올라간 건가" 를 화면으로 확인할
    방법이 없었다. tools/check-build-ver.mjs 가 이제 소스에 적힌 최신 버전과 이 값을 대조한다. */
-const _BUILD_VER = "V33.339";
+const _BUILD_VER = "V33.340";
 
 // ═══ [V33.171] 평가 순서 계획 — ★승격과 순환을 교차해 굶주림을 구조적으로 없앤다★ ═══
 //   V33.50 의 형태트리거는 "급한 몇 종목을 앞으로 당긴다"는 의도였으나, 실제 운영로그에서는
@@ -5379,6 +5379,8 @@ function normalizeExtUS(o, state) {
   if (o.mstate == null) o.mstate = s;
   if (!keep.pre) { o.pre = null; o.prePct = null; }
   if (!keep.post) { o.post = null; o.postPct = null; }
+  // [V33.340] 값이 지워지면 그 값의 시각도 지운다 — 남으면 다음 세션 값이 옛 시각을 물려받는다.
+  if (!keep.pre && !keep.post) o.extTs = null;
   return o;
 }
 
@@ -5413,17 +5415,53 @@ function extTradeSession(market, cfg) {
    여기서 null 을 돌려주면 그 종목은 이번엔 건드리지 않는다 —
    ★정규장 가격으로 조용히 떨어지면 안 된다.★ 그건 "16시에 본 값으로 20시에 거래"라는 뜻이고,
    시간외에 20% 빠진 종목을 멀쩡한 값으로 사는 사고가 된다. 없으면 없는 대로 쉬는 게 맞다. */
-function extTradePrice(q, session, cfg) {
+/* [V33.340] ★막은 이유를 함께 돌려준다.★ 가드를 조이면 거래가 줄어드는데, 그때
+   "체결이 없어서 안 샀다" 와 "값은 있는데 시각을 몰라 막았다" 는 전혀 다른 상태다.
+   앞은 정상이고 뒤는 수집 경로가 고장난 것이다. 개수만 세면 둘이 한 숫자로 뭉개져,
+   수집원이 시각을 안 주기 시작해도 "오늘은 시간외 체결이 없었나 보다" 로 읽힌다 —
+   이 저장소가 반복해서 당한 바로 그 함정이다(v7Dead 를 계산만 하고 안 읽던 것과 같다).
+   판정은 여기 한 곳이고, extTradePrice 는 가격만 꺼내 주는 얇은 껍데기다. */
+function extTradePriceEx(q, session, cfg) {
   const et = (cfg && cfg.extTrade) || DEFAULT_CFG.extTrade;
-  if (!q || !session) return null;
+  if (!q || !session) return { px: null, why: "noq" };
   const px = (session === "pre") ? q.pre : q.post;
   const pct = (session === "pre") ? q.prePct : q.postPct;
-  if (!(typeof px === "number" && isFinite(px) && px > 0)) return null;
-  if (px < _num(et.minPrice, 3)) return null;
-  if (typeof pct === "number" && isFinite(pct) && Math.abs(pct) > _num(et.maxMovePct, 12)) return null;
-  const _ts = _num(q.ts, 0);
-  if (_ts > 0 && (Date.now() - _ts) > _num(et.freshMs, 420000)) return null;   // 낡은 값으로는 거래 안 함
-  return px;
+  if (!(typeof px === "number" && isFinite(px) && px > 0)) return { px: null, why: "noprice" };
+  if (px < _num(et.minPrice, 3)) return { px: null, why: "lowprice" };
+  if (typeof pct === "number" && isFinite(pct) && Math.abs(pct) > _num(et.maxMovePct, 12)) return { px: null, why: "bigmove" };
+  /* ══ [V33.340] ★이 가드는 지금까지 한 번도 걸린 적이 없다.★ ═════════════════
+     종전 코드는 q.ts 를 읽었는데, 거래 경로가 넘기는 quote 는 fetchBatchQuotes 가
+     만든 객체다 — 거기엔 ts 필드가 ★아예 없다★(있는 건 DB 에 저장된 행뿐이고, 그
+     행의 ts 는 '가격 샤드가 마지막으로 쓴 시각' 이지 체결 시각이 아니다).
+     그래서 `_ts > 0` 이 항상 거짓이 되어 신선도 검사가 통째로 건너뛰어졌다.
+     실측 확인: {pre:100} 을 넣으면 100 이 그대로 나온다 — 5시간 전 체결가여도 같다.
+
+     ★왜 위험한가★ 얇은 종목은 프리마켓에 04:05 한 번 찍고 09:00 까지 체결이 없다.
+     fetchExtendedQuoteUS 는 '창 안의 마지막 체결' 을 고르므로 그 04:05 값을 돌려주고,
+     그 값으로 손절이 나가거나 신규 진입이 들어갔다. 설정 주석은 "낡은 값으로는
+     거래하지 않는다" 라고 적혀 있었지만 코드는 그렇게 하지 않았다.
+
+     → 이제 ★값을 만든 쪽이 체결 시각(extTs)을 함께 싣는다★(v7 preMarketTime/postMarketTime ·
+       v8 분봉의 봉 시각 · 네이버 폴링은 호출 시각). 그리고 시각을 ★모르면 거래하지 않는다★ —
+       이 저장소의 원칙 그대로다. 표시(applyDisplayOverMarket)는 종전대로 마지막 체결을
+       계속 보여 준다. 화면에 마지막 체결이 남는 것과 그 값으로 돈을 거는 것은 다른 문제다. */
+  const _ets = _num(q.extTs, 0);
+  if (!(_ets > 0)) return { px: null, why: "nots" };                            // 시각 미상 — 거래 금지
+  if ((Date.now() - _ets) > _num(et.freshMs, 420000)) return { px: null, why: "stale" };
+  return { px: px, why: null };
+}
+function extTradePrice(q, session, cfg) { return extTradePriceEx(q, session, cfg).px; }
+/* 사람이 읽는 한 줄. 개수를 세는 쪽이 이 표를 쓰고, 문구를 자기 말로 다시 적지 않는다. */
+const EXT_BLOCK_TXT = {
+  noq: "시세없음", noprice: "체결없음", lowprice: "초저가", bigmove: "과대변동",
+  nots: "★체결시각 미상★", stale: "낡은체결"
+};
+function extBlockSummary(cnt) {
+  const parts = [];
+  for (const k of ["noprice", "nots", "stale", "bigmove", "lowprice", "noq"]) {
+    if (_num(cnt && cnt[k], 0) > 0) parts.push(EXT_BLOCK_TXT[k] + " " + cnt[k]);
+  }
+  return parts.join(" · ");
 }
 
 // [V8.6] 엔진이 거래해도 되는 시간
@@ -7268,7 +7306,8 @@ async function fetchQuoteViaChart(symbol) {
     price = live;
     prevClose = (typeof meta.chartPreviousClose === "number" && meta.chartPreviousClose > 0) ? meta.chartPreviousClose : live;
   }
-  const ctp = meta.currentTradingPeriod && meta.currentTradingPeriod.regular;
+  const _cp = meta.currentTradingPeriod || {};
+  const ctp = _cp.regular;
   const nowSec = Math.floor(Date.now() / 1000);
   const inRegular = !!(ctp && typeof ctp.start === "number" && typeof ctp.end === "number"
                        && nowSec >= ctp.start && nowSec < ctp.end);
@@ -7276,11 +7315,35 @@ async function fetchQuoteViaChart(symbol) {
   if (inRegular) {
     if (live > 0) price = live;   // 정규장 중엔 라이브(오늘 일봉과 사실상 동일)
     o.mstate = "REGULAR";
-  } else if (live > 0 && price > 0 && Math.abs(live - price) / price > 1e-6) {
-    // 시간외 가격 분리 — 정규장 시작 5.5h 이내 전이면 장전(프리), 그 외(마감 후·심야)는 장후로 간주
-    const isPre = !!(ctp && nowSec < ctp.start && (ctp.start - nowSec) < 5.5 * 3600);
-    if (isPre) { o.mstate = "PRE"; o.pre = live; o.prePct = ((live - price) / price) * 100; }
-    else { o.mstate = "POST"; o.post = live; o.postPct = ((live - price) / price) * 100; }
+  } else if (live > 0 && price > 0) {
+    /* ══ [V33.340] ★추측을 측정으로 바꾼다.★ ═══════════════════════════════════
+       종전 판정은 두 개의 추측 위에 서 있었다:
+         ① "live 와 일봉 종가가 다르면 그건 시간외 체결이다"
+            → 마감 후 meta.regularMarketPrice 는 보통 ★정규장 종가★ 다(V33.330 에서 확인).
+              두 값이 갈리는 건 대개 시간외 체결이 아니라 일봉 갱신 지연이다.
+              즉 이 조건은 시간외 가격이 아닌 것을 시간외 가격이라 부를 수 있었다.
+         ② "정규장 시작 5.5시간 전 안쪽이면 장전"
+            → 창을 손으로 적은 것이다. 야후가 창을 meta.currentTradingPeriod.pre/post 로
+              이미 주는데도 안 읽었다(서머타임·조기폐장을 우리가 다시 계산하는 셈).
+       야후는 그 값이 ★언제 찍혔는지★ 도 준다(meta.regularMarketTime). 그러니 물어보면 된다:
+       그 시각이 pre 창 안이면 프리 체결이고, post 창 안이면 애프터 체결이다. 둘 다 아니면
+       그건 정규장 값이고, 시간외 가격이 아니다 — 그때는 아무것도 만들지 않는다.
+       이 경로는 폴백이라 값이 없어도 fetchExtendedQuoteUS 가 분봉에서 채운다. */
+    const _lt = (typeof meta.regularMarketTime === "number" && meta.regularMarketTime > 0)
+      ? meta.regularMarketTime : 0;
+    const _in = function (w) {
+      return !!(w && typeof w.start === "number" && typeof w.end === "number"
+                && _lt >= w.start && _lt < w.end);
+    };
+    if (_in(_cp.pre)) {
+      o.mstate = "PRE"; o.pre = live; o.extTs = _lt * 1000;
+      o.prePct = ((live - price) / price) * 100;
+    } else if (_in(_cp.post)) {
+      o.mstate = "POST"; o.post = live; o.extTs = _lt * 1000;
+      o.postPct = ((live - price) / price) * 100;
+    }
+    /* 창 밖이면 mstate 를 여기서 정하지 않는다 — 시각은 batchQuotes 의 normalizeExtUS 가
+       ★우리 시계★ 로 찍는다(수집원이 세션을 안 줘도 우리가 안다, V33.339). */
   }
   const dayPct = prevClose ? ((price - prevClose) / prevClose) * 100 : 0;
   return Object.assign({ price: price, prevClose: prevClose || price, dayPct: dayPct }, o);
@@ -7329,13 +7392,17 @@ async function fetchExtendedQuoteUS(symbol) {
   const closes = (r.indicators && r.indicators.quote && r.indicators.quote[0] &&
                   r.indicators.quote[0].close) || [];
   const inWin = function (w, t) { return !!(w && typeof w.start === "number" && t >= w.start && t < w.end); };
-  let lastPre = null, lastPost = null, lastReg = null;
+  /* [V33.340] ★그 값이 언제 찍힌 값인지 함께 들고 나온다.★
+     분봉의 마지막 체결은 ★몇 시간 전★ 일 수 있다 — 얇은 종목은 04:05 에 한 번 찍고
+     09:00 까지 아무 체결이 없다. 종전엔 그 04:05 값을 "지금 값" 으로 내보냈고,
+     extTradePrice 의 신선도 가드는 quote 에 시각이 없어 한 번도 안 걸렸다(아래 참조). */
+  let lastPre = null, lastPost = null, lastReg = null, preT = 0, postT = 0;
   for (let i = 0; i < ts.length; i++) {
     const c = closes[i];
     if (!(typeof c === "number" && isFinite(c) && c > 0)) continue;
     const t = ts[i];
-    if (inWin(pre, t)) lastPre = c;
-    else if (inWin(post, t)) lastPost = c;
+    if (inWin(pre, t)) { lastPre = c; preT = t; }
+    else if (inWin(post, t)) { lastPost = c; postT = t; }
     else if (inWin(reg, t)) lastReg = c;
   }
   // 기준가 — 프리는 전일종가 대비, 애프터는 ★정규장 종가★ 대비(야후 표기와 같은 규칙).
@@ -7346,10 +7413,10 @@ async function fetchExtendedQuoteUS(symbol) {
   const nowSec = Math.floor(Date.now() / 1000);
   const o = {};
   if (inWin(pre, nowSec) && lastPre != null) {
-    o.mstate = "PRE"; o.pre = lastPre;
+    o.mstate = "PRE"; o.pre = lastPre; o.extTs = preT * 1000;
     o.prePct = (prevClose > 0) ? ((lastPre - prevClose) / prevClose) * 100 : 0;
   } else if (inWin(post, nowSec) && lastPost != null) {
-    o.mstate = "POST"; o.post = lastPost;
+    o.mstate = "POST"; o.post = lastPost; o.extTs = postT * 1000;
     o.postPct = (regClose > 0) ? ((lastPost - regClose) / regClose) * 100 : 0;
   } else return null;   // 시간외 창이 아니거나 체결이 없다 — 값을 지어내지 않는다
   return o;
@@ -7397,6 +7464,11 @@ function applyKrOverMarket(o, d) {
   } else {
     o.mstate = "POST"; o.post = op; o.postPct = pct;
   }
+  /* [V33.340] 네이버 realtime 폴링은 ★호출 시점의 값★ 이다(과거 봉을 훑지 않는다).
+     그래서 지금 시각을 그대로 체결 시각으로 적는다 — 미국처럼 '몇 시간 전 마지막 체결'
+     문제가 생기지 않는 경로지만, 신선도 가드가 시장마다 다른 규칙을 갖지 않으려면
+     ★모든 시간외 값이 자기 시각을 들고 다녀야★ 한다. */
+  o.extTs = Date.now();
   return o;
 }
 
@@ -7505,11 +7577,14 @@ async function fetchBatchQuotes(symbols, opts) {
           o.pre = row.preMarketPrice;
           o.prePct = (typeof row.preMarketChangePercent === "number") ? row.preMarketChangePercent
                    : (prevClose ? ((row.preMarketPrice - prevClose) / prevClose) * 100 : 0);
+          // [V33.340] 야후는 초 단위 epoch 로 준다 — ms 로 맞춘다.
+          if (typeof row.preMarketTime === "number" && row.preMarketTime > 0) o.extTs = row.preMarketTime * 1000;
         }
         if (typeof row.postMarketPrice === "number" && row.postMarketPrice > 0) {
           o.post = row.postMarketPrice;
           o.postPct = (typeof row.postMarketChangePercent === "number") ? row.postMarketChangePercent
                     : (price ? ((row.postMarketPrice - price) / price) * 100 : 0);
+          if (typeof row.postMarketTime === "number" && row.postMarketTime > 0) o.extTs = row.postMarketTime * 1000;
         }
         out[sym] = o; got++;
       }
@@ -7525,7 +7600,11 @@ async function fetchBatchQuotes(symbols, opts) {
   const V7_FIELDS = [
     "symbol", "marketState", "regularMarketPrice", "regularMarketPreviousClose",
     "regularMarketChangePercent", "preMarketPrice", "preMarketChangePercent",
-    "postMarketPrice", "postMarketChangePercent", "sharesOutstanding", "marketCap"
+    "postMarketPrice", "postMarketChangePercent",
+    /* [V33.340] ★시각도 함께 묻는다.★ 값만 받으면 그게 5분 전 체결인지 5시간 전
+       체결인지 알 수 없고, 알 수 없으면 거래 가드를 세울 수가 없다. */
+    "preMarketTime", "postMarketTime",
+    "sharesOutstanding", "marketCap"
   ].join(",");
   function v7Url(slice, withFields) {
     let url = "https://query1.finance.yahoo.com/v7/finance/quote?symbols=" +
@@ -11952,6 +12031,8 @@ async function saveQuote(DB, symbol, market, q) {
     mstate: (market === "us") ? _sessNow : _keep("mstate"),
     pre: _keepExt("pre", _mask.pre), prePct: _keepExt("prePct", _mask.pre),
     post: _keepExt("post", _mask.post), postPct: _keepExt("postPct", _mask.post),
+    // [V33.340] 체결 시각은 값과 ★같이★ 살고 같이 죽는다 — 따로 두면 짝이 어긋난다.
+    extTs: _keepExt("extTs", _mask.pre || _mask.post),
     dayPct: q.dayPct, rsi: q.dailyRsi, ma: q.dailyMa, atr: q.dailyAtr,
     dailyAtr: q.dailyAtr, dailyMa: q.dailyMa, dailyMaShort: q.dailyMaShort,
     bbLower: q.bbLower, bbUpper: q.bbUpper,
@@ -16411,7 +16492,7 @@ async function refreshQuotesOnly(env, market) {
         // [V33.330] fetchQuoteViaChart 가 이미 계산해 준 시간외 값을 ★버리지 않고★ 넘긴다.
         //   종전엔 여기서 손으로 필드를 골라 담느라 mstate/pre/post 가 조용히 빠졌다.
         mstate: intra.mstate, pre: intra.pre, prePct: intra.prePct,
-        post: intra.post, postPct: intra.postPct,
+        post: intra.post, postPct: intra.postPct, extTs: intra.extTs,
         dailyRsi: dailyRsi, dailyMa: dailyMa, dailyMaShort: dailyMaShort, dailyAtr: dailyAtr,
         bbLower: bb ? bb.lower : null, bbUpper: bb ? bb.upper : null,
         return20: return20,
@@ -16530,7 +16611,7 @@ async function refreshPriceShard(env, market, shard) {
   const results = symbols.map(function(symbol){
     const q = bq[symbol];
     if (q && q.price != null) return { symbol: symbol, ok: true, price: q.price, prevClose: q.prevClose, dayPct: q.dayPct,
-      mstate: q.mstate, pre: q.pre, prePct: q.prePct, post: q.post, postPct: q.postPct };
+      mstate: q.mstate, pre: q.pre, prePct: q.prePct, post: q.post, postPct: q.postPct, extTs: q.extTs };
     return { symbol: symbol, ok: false };
   });
 
@@ -16544,6 +16625,7 @@ async function refreshPriceShard(env, market, shard) {
       const _prePct = (typeof r.prePct === "number") ? r.prePct : null;
       const _post = (typeof r.post === "number" && r.post > 0) ? r.post : null;
       const _postPct = (typeof r.postPct === "number") ? r.postPct : null;
+      const _extTs = (typeof r.extTs === "number" && r.extTs > 0) ? r.extTs : null;
       // [V18] 신규 quote 기본값 (해당 키가 없을 때 INSERT)
       /* [V33.339] ★지난 세션 값은 COALESCE 로 지켜서는 안 된다.★ COALESCE 는 "새 값이 없으면
          옛 값" 인데, 세션이 바뀌면 옛 값은 '아직 못 받은 값' 이 아니라 ★이미 끝난 값★ 이다.
@@ -16551,9 +16633,11 @@ async function refreshPriceShard(env, market, shard) {
       const _mask = (market === "us") ? extKeepMaskUS(_m || usMarketStateNow()) : { pre: true, post: true };
       const _clrPre = _mask.pre ? 0 : 1;
       const _clrPost = _mask.post ? 0 : 1;
+      const _clrExt = (_clrPre && _clrPost) ? 1 : 0;
       const fresh = { market: market, price: r.price, prevClose: r.prevClose, dayPct: r.dayPct, ts: nowTs,
         mstate: _m, pre: _clrPre ? null : _pre, prePct: _clrPre ? null : _prePct,
-        post: _clrPost ? null : _post, postPct: _clrPost ? null : _postPct };
+        post: _clrPost ? null : _post, postPct: _clrPost ? null : _postPct,
+        extTs: _clrExt ? null : _extTs };
       // ON CONFLICT: 기존 JSON에서 가격 3필드 + ts만 갱신, 일봉 지표(rsi/ma/atr 등)는 보존.
       // [프리/애프터마켓] 시간외 5필드는 COALESCE — 새 값 있으면 갱신, 없으면(null) 기존값 유지(잔상 제거는 cron이 mstate로 처리).
       // [V33] json_valid 가드 — 기존 v가 깨진 JSON이면 json_set이 실패하므로,
@@ -16567,10 +16651,11 @@ async function refreshPriceShard(env, market, shard) {
           "'$.pre', CASE WHEN ?12 = 1 THEN NULL ELSE COALESCE(?8, json_extract(v, '$.pre')) END, " +
           "'$.prePct', CASE WHEN ?12 = 1 THEN NULL ELSE COALESCE(?9, json_extract(v, '$.prePct')) END, " +
           "'$.post', CASE WHEN ?13 = 1 THEN NULL ELSE COALESCE(?10, json_extract(v, '$.post')) END, " +
-          "'$.postPct', CASE WHEN ?13 = 1 THEN NULL ELSE COALESCE(?11, json_extract(v, '$.postPct')) END) " +
+          "'$.postPct', CASE WHEN ?13 = 1 THEN NULL ELSE COALESCE(?11, json_extract(v, '$.postPct')) END, " +
+          "'$.extTs', CASE WHEN ?15 = 1 THEN NULL ELSE COALESCE(?14, json_extract(v, '$.extTs')) END) " +
           "ELSE ?2 END, updated_ts = ?6"
         ).bind("quote:" + r.symbol, JSON.stringify(fresh), r.price, r.prevClose, r.dayPct, nowTs,
-          _m, _pre, _prePct, _post, _postPct, _clrPre, _clrPost)
+          _m, _pre, _prePct, _post, _postPct, _clrPre, _clrPost, _extTs, _clrExt)
       );
       ok++;
     } else if (r) { fail++; }
@@ -19027,7 +19112,7 @@ async function runTradingCycle(env) {
           }
         }
       }
-      let extNoPrice = 0;
+      let extNoPrice = 0; const extBlock = {};
       for (const symbol of tickers) {
         const bq = batchQuotes[symbol];
         if (!bq) continue;
@@ -19041,9 +19126,9 @@ async function runTradingCycle(env) {
            "어제 종가 대비 지금까지의 누적 변동"이라는 평소 의미를 그대로 유지한다. */
         let evPrice = bq.price;
         if (extSessMkt) {
-          const _xp = extTradePrice(bq, extSessMkt, cfg);
-          if (_xp == null) { extNoPrice++; continue; }
-          evPrice = _xp;
+          const _xr = extTradePriceEx(bq, extSessMkt, cfg);
+          if (_xr.px == null) { extNoPrice++; extBlock[_xr.why] = _num(extBlock[_xr.why], 0) + 1; continue; }
+          evPrice = _xr.px;
         }
         // 일봉: dailyMap 에서 동기 조회 (위에서 결측분까지 모두 채워둠).
         const daily = dailyMap[symbol];
@@ -19071,8 +19156,20 @@ async function runTradingCycle(env) {
         " priced=" + Object.keys(batchQuotes).length + " dailyRefresh=" + dailyTargetArr.length +
         " evaluable=" + fetched.length +
         // [V33.332] 시간외엔 "몇 종목이 시간외 체결가가 없어 빠졌나"가 핵심 진단값이다.
-        (extSessMkt ? " [시간외 " + extSessMkt + " · 체결가없어제외 " + extNoPrice + "]" : "") +
+        (extSessMkt ? " [시간외 " + extSessMkt + " · 제외 " + extNoPrice +
+          (extBlockSummary(extBlock) ? "(" + extBlockSummary(extBlock) + ")" : "") + "]" : "") +
         " in " + prefetchMs + "ms");
+      /* [V33.340] ★막힌 이유를 상태에도 남긴다.★ 로그는 흘러가고 자가진단은 로그를 안 읽는다.
+         '체결시각 미상' 이 대다수가 되면 그건 시간외에 체결이 없는 게 아니라 ★수집 경로가
+         시각을 안 주기 시작한 것★ 이다 — 그 둘을 사람이 구분할 수 있어야 한다. */
+      if (extSessMkt) {
+        try {
+          await setState(DB, "ext_block:" + market, {
+            sess: extSessMkt, n: tickers.length, blocked: extNoPrice,
+            by: extBlock, ts: Date.now()
+          });
+        } catch (e) {}
+      }
 
       // [통계FIX] tried=0 무음 처리 방지 — 평가가능 0종목이면 ERROR로 집계(데이터 전멸 → 거래 마비 신호).
       if (tickers.length > 0 && fetched.length === 0) {
@@ -44926,6 +45023,28 @@ async function _luxSelfCheck(DB) {
           "미국 " + (_nowSess === "PRE" ? "장전" : "장후") + " 시세가 안 들어온다 — " + _sess +
           "종목 중 값이 있는 건 " + _have + "종목뿐. 화면 등락율이 정규장 종가에서 멈춘다" +
           "(v8 분봉 보강 회전 상한·예산 확인 필요)");
+    } catch (e) {}
+    /* [V33.340] ★시간외 거래가 조용히 멈추는 것을 막는다.★
+       V33.340 이 "체결 시각을 모르면 거래하지 않는다" 가드를 살렸다. 옳은 가드지만,
+       수집원이 시각을 안 주기 시작하면 시간외 거래가 통째로 멈추면서도 증상은
+       "오늘은 시간외 체결이 없었나 보다" 와 구별되지 않는다 — 이 저장소가 반복해서
+       당한 함정이다. 그래서 막힌 이유의 ★구성★ 을 본다.
+       체결없음이 대다수면 정상(시간외엔 원래 대부분 체결이 없다). 시각미상이 대다수면
+       그건 시장이 조용한 게 아니라 우리 수집이 고장난 것이다. */
+    try {
+      for (const _mk of ["us", "kr"]) {
+        const _eb = await getState(DB, "ext_block:" + _mk, null);
+        if (!_eb || !_eb.ts) continue;
+        if ((Date.now() - _eb.ts) > 45 * 60000) continue;   // 지난 세션 기록은 보지 않는다
+        const _by = _eb.by || {};
+        const _nots = _num(_by.nots, 0), _stale = _num(_by.stale, 0);
+        const _blocked = _num(_eb.blocked, 0);
+        if (_blocked >= 20 && (_nots + _stale) > _blocked * 0.5)
+          add("warn", "시간외",
+            _mk.toUpperCase() + " 시간외 거래가 시각 문제로 막히는 중 — 제외 " + _blocked +
+            "종목 중 시각미상 " + _nots + " · 낡은체결 " + _stale +
+            ". 체결이 없는 게 아니라 수집 경로가 체결 시각을 안 준다(v7 preMarketTime/postMarketTime · v8 분봉 봉시각 확인)");
+      }
     } catch (e) {}
     // [V32.55] ★성능·처리량 지표★ — fetch/로딩 속도, 유입 데이터량, AI 스캔 속도·스캔량
     try {

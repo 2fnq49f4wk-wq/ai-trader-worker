@@ -200,6 +200,14 @@ jobs:
       #   세션 경계 10곳과 마스크를 실제로 돌려 확인한다(서머타임은 IANA 가 처리).
       - name: Extended-hours rotation check
         run: node tools/check-extquote-rotation.mjs
+      # [V33.340] 시간외 체결가 신선도 — 가드가 실제로 걸리는가.
+      #   V33.331 이 넣은 "낡은 값으로는 거래하지 않는다" 가드는 q.ts 를 읽었는데,
+      #   거래 경로가 넘기는 quote(fetchBatchQuotes 산출물)에는 ts 필드가 아예 없어
+      #   ★한 번도 걸린 적이 없다★. 얇은 종목의 04:05 프리마켓 체결가로 09:00 에
+      #   손절이 나갈 수 있었다. 값을 만드는 세 경로가 체결 시각을 싣는지,
+      #   시각을 모르면 막는지, 낡으면 막고 신선하면 통과하는지를 실제로 돌려 본다.
+      - name: Extended-hours price freshness check
+        run: node tools/check-ext-freshness.mjs
       # [V33.140] 전진검증 누적 원장 — 창이 매일 밤 리셋돼 ★구조적으로★ 못 채워지던 것을 고쳤다.
       #   (memo: 총표본 177,868 인데 전진 357 = 어제 유입과 정확히 일치)
       #   교착 해소와 통계 정직성을 함께 본다: 잡음 통과율이 문턱의 명목값과 맞는지,
