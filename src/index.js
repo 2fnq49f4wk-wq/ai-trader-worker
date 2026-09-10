@@ -2981,7 +2981,7 @@ async function applySignalTypeWeights(DB, cfg) {
    화면·자가진단이 계속 "V33.272" 를 보고했다(운영 스냅샷이 그대로 그랬다). 배포는 됐는데
    ★배포됐다는 사실만 거짓말★ 을 하고 있었으니, "내 고침이 올라간 건가" 를 화면으로 확인할
    방법이 없었다. tools/check-build-ver.mjs 가 이제 소스에 적힌 최신 버전과 이 값을 대조한다. */
-const _BUILD_VER = "V33.342";
+const _BUILD_VER = "V33.343";
 
 // ═══ [V33.171] 평가 순서 계획 — ★승격과 순환을 교차해 굶주림을 구조적으로 없앤다★ ═══
 //   V33.50 의 형태트리거는 "급한 몇 종목을 앞으로 당긴다"는 의도였으나, 실제 운영로그에서는
@@ -33474,6 +33474,66 @@ const ROSTER_STATE_TXT = {
   bad:  "합류 보류 — 학습은 됐지만 문턱 미달이거나 아직 못 쟀다",
   off:  "미학습 또는 판(featVer) 불일치"
 };
+/* ══ [V33.343] ★V33.342 는 이미 닫힌 문을 열지 못했다★ ═══════════════════════════
+   V33.342 는 "대기 단계가 남으면 완주 도장을 찍지 않는다" 를 넣었다. 옳지만 부족했다 —
+   진입 게이트가 `ai_pipe_partial` 을 보는데, ★그 값은 파이프라인 안에서만 써진다.★
+   배포 시점에 이미 오늘 도장이 찍혀 있으면:
+     · _aiLast === _aiDay        → 첫 항 거짓
+     · ai_pipe_partial 없음      → _resume 거짓
+   ★닭과 달걀★ 이라 그날은 영영 안 열린다. 실측으로 확인했다 — V33.342 배포 89분 뒤
+   워커 로그 900줄에 "[SCHED]" 가 ★0줄★ 이었다(완주도 부분완주도 없다).
+   그래서 committee_cal 은 여전히 featVer 15 였다.
+
+   ★안 끝났다는 사실은 ai_pipe_partial 이 아니라 다른 두 곳에 있다.★ 거기를 직접 본다:
+     (A) ai_stage:* 에 오늘의 '대기' 표식이 남아 있다 — 단계가 스스로 그렇게 적었다.
+     (B) 단계의 ★산출물이 옛 판★ 이다 — 이번 판에서는 끝난 적이 없다는 직접 증거다.
+         (오늘의 실제 상황이 이쪽이다: calibrate 는 V33.339 이전에 찍힌 완료 도장을
+          갖고 있어 (A)로는 안 잡힌다. 하지만 committee_cal.featVer 15 ≠ 17 이 말해 준다.)
+   둘 다 6분에 한 번만 확인한다 — 매분 도는 크론에 스캔을 얹지 않는다. */
+const _STAGE_OUT_VER = [
+  /* 단계 ← 그 단계가 남기는 산출물. 산출물의 featVer 가 지금 판과 다르면 그 단계는
+     이번 판에서 완주한 적이 없다. 같은 성질의 단계가 생기면 여기 한 줄을 더한다. */
+  { stage: "calibrate", key: "committee_cal", want: function () { return LUXML.featVer; } }
+];
+async function _pipeOpenStages(env, aiDay) {
+  const out = [];
+  try {
+    const _scanAt = _num(await getState(env.DB, "ai_wait_scan", 0), 0);
+    if (Date.now() - _scanAt < 6 * 60000) return out;
+    await setState(env.DB, "ai_wait_scan", Date.now());
+    // (A) 스스로 "아직" 이라고 적어 둔 단계
+    try {
+      const _wr = await env.DB.prepare(
+        "SELECT k, v FROM state WHERE k >= 'ai_stage:' AND k < 'ai_stage;'").all();
+      for (const _r of ((_wr && _wr.results) || [])) {
+        let _v = _r.v; try { _v = JSON.parse(_r.v); } catch (e) {}
+        if (typeof _v === "string" && _v.indexOf(aiDay + "|wait|") === 0) out.push(String(_r.k).slice(9));
+      }
+    } catch (e) {}
+    // (B) 산출물이 옛 판인 단계 — 완료 도장을 무효화한다
+    for (const _o of _STAGE_OUT_VER) {
+      try {
+        const _rec = await getState(env.DB, _o.key, null);
+        if (!_rec) continue;
+        const _have = _num(_rec.featVer, null), _want = _o.want();
+        if (_have == null || _have === _want) continue;
+        await env.DB.prepare("DELETE FROM state WHERE k = ?").bind("ai_stage:" + _o.stage).run();
+        if (out.indexOf(_o.stage) < 0) out.push(_o.stage);
+        await log(env.DB, "INFO", null, "[SCHED] " + _o.stage + " 산출물이 옛 판(" + _o.key +
+          " featVer " + _have + " ≠ " + _want + ") — 완료 도장을 무효화하고 다시 돌린다");
+      } catch (e) {}
+    }
+    if (out.length) {
+      /* ts:0 → 쿨다운을 즉시 지난 것으로 본다(방금 스캔해서 알아낸 것이므로 또 기다릴 이유가 없다). */
+      await setState(env.DB, "ai_pipe_partial",
+        { day: aiDay, waiting: out.slice(0, 12), n: out.length, openedAt: Date.now(), ts: 0 });
+      await log(env.DB, "INFO", null, "[SCHED] 닫힌 날을 다시 연다 — 안 끝난 단계 " +
+        out.length + "개(" + out.slice(0, 6).join(", ") + ")");
+    }
+  } catch (e) {}
+  return out;
+}
+
 function rosterCls(o) {
   if (!o || !o.trained) return "off";
   if (o.featVerOk === false) return "off";
@@ -48500,7 +48560,12 @@ export default {
           const _partial = await getState(env.DB, "ai_pipe_partial", null);
           const _partialToday = !!(_partial && _partial.day === _aiDay);
           const _partialCool = _partialToday && (Date.now() - _num(_partial.ts, 0)) < 6 * 60000;
-          const _resume = _partialToday && !_partialCool;
+          const _resumeBase = _partialToday && !_partialCool;
+          /* [V33.343] 부분완주 기록이 없어도 ★진짜로 안 끝난 단계★ 를 직접 찾는다.
+             (근거는 _pipeOpenStages 주석 — 이미 닫힌 날은 기록이 없어 영영 안 열렸다) */
+          const _openStages = (_resumeBase || _aiLast !== _aiDay || _partialToday)
+            ? [] : await _pipeOpenStages(env, _aiDay);
+          const _resume = _resumeBase || _openStages.length > 0;
           if ((_aiLast !== _aiDay || _resume) && !_aiLockFresh) {
             await setState(env.DB, "ai_train_lock", Date.now());
             // [V12.40 단계별 체크포인트] trainWindow 확대 후 전체 파이프라인 CPU가 300s 한도를 넘겨
