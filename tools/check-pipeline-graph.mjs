@@ -71,8 +71,16 @@ const pos = {}; order.forEach((n, i) => { pos[n] = i; });
 // ── 3) 함수별 상태 채널(read/write) 추출 ──────────────────────────────────────
 //   최상위 함수의 줄 범위를 잡고, 그 안의 getState/setState 키를 모은다.
 //   (중첩 함수는 부모 범위에 포함된다 — 실행되면 어차피 부모가 부른 것이므로 맞다)
+/* [V33.338] ★평범한 객체로 이름표를 만들면 Object.prototype 이 섞인다.★
+   R 이 {} 였다. 그래서 코드에 toLocaleString·toString·valueOf·constructor 같은 이름이
+   나오면 R[name] 이 ★상속된 프로토타입 메서드★ 를 돌려주어 "아는 함수" 로 취급됐다.
+   그 뒤 ownChannels 가 R[fn] 의 [0]·[1] 을 읽으면 undefined 라
+   lines.slice(undefined, undefined) = ★파일 전체★ 가 되고, 파일 안 모든 setState 가
+   그 단계의 산출물로 붙는다 — 실제로 dnn 단계가 daily:·quote:·hist: 를 쓴다고 보고
+   순서 위반 25건을 만들어냈다(V33.338 에서 .toLocaleString() 한 줄을 추가하자 터졌다).
+   이름표를 담는 그릇은 프로토타입이 없어야 한다. */
 function fnRanges() {
-  const out = {};
+  const out = Object.create(null);
   for (let i = 0; i < lines.length; i++) {
     const m = lines[i].match(/^(?:async )?function (\w+)\s*\(/);
     if (!m) continue;
@@ -247,6 +255,19 @@ const INTENDED = {
     bad("화면 단계 목록에 없는 패널: " + unseen.map(w => w.key + "(" + w.fn + ")").join(", ") +
         " → 돌았는지 볼 수 없다");
   } else ok("패널 " + wanted.length + "종이 전부 /api/pipeline 단계 목록에 있다 — 신선도를 눈으로 잰다");
+}
+
+/* [V33.338] ★이 검사 자신의 함정을 못박는다.★
+   이름표 그릇이 다시 {} 로 돌아가면 Object.prototype 메서드(toString·valueOf·toLocaleString…)가
+   "아는 함수" 로 잡히고, ownChannels 가 undefined 범위를 slice 해 ★파일 전체★ 를 한 단계의
+   본문으로 읽는다 — 없는 순서 위반 수십 건이 생긴다. 실제로 V33.338 에서 소스에
+   .toLocaleString() 한 줄이 늘자 위반 25건이 터졌다(코드가 아니라 이 검사가 틀린 것이었다). */
+{
+  const R2 = fnRanges();
+  const polluted = ["toLocaleString", "toString", "valueOf", "constructor", "hasOwnProperty"]
+    .filter((k) => R2[k] !== undefined);
+  if (!polluted.length) ok("함수 이름표에 프로토타입이 안 섞인다(toString·valueOf 등이 '아는 함수'로 안 잡힌다)");
+  else { console.log("  FAIL ★이름표에 프로토타입이 섞였다: " + polluted.join(", ") + " — 파일 전체가 한 단계 산출물이 된다★"); fails++; }
 }
 
 console.log(fails ? "\n파이프라인 그래프 위반 " + fails + "건" : "\n  ok   파이프라인 그래프 통과");

@@ -2981,7 +2981,7 @@ async function applySignalTypeWeights(DB, cfg) {
    화면·자가진단이 계속 "V33.272" 를 보고했다(운영 스냅샷이 그대로 그랬다). 배포는 됐는데
    ★배포됐다는 사실만 거짓말★ 을 하고 있었으니, "내 고침이 올라간 건가" 를 화면으로 확인할
    방법이 없었다. tools/check-build-ver.mjs 가 이제 소스에 적힌 최신 버전과 이 값을 대조한다. */
-const _BUILD_VER = "V33.337";
+const _BUILD_VER = "V33.338";
 
 // ═══ [V33.171] 평가 순서 계획 — ★승격과 순환을 교차해 굶주림을 구조적으로 없앤다★ ═══
 //   V33.50 의 형태트리거는 "급한 몇 종목을 앞으로 당긴다"는 의도였으나, 실제 운영로그에서는
@@ -12468,6 +12468,10 @@ const SEQML = {
   trustFloor: 0.505,
   icPathAccFloor: 0.49,
   icPathWeightMult: 0.35,
+  /* [V33.338] 워커 폴백 가중 배수. GPU 망(은닉 10층·6시드)의 1/46 크기이고 표본도 6,000건
+     상한이라 같은 발언권을 줄 근거가 없다. 0 으로 두면 featVer 를 올릴 때마다 DNN 이 몇 시간
+     통째로 빠지므로(V33.50 이 고친 '영구 학습대기'의 반대편 함정), 절반만 준다. */
+  workerWeightMult: 0.5,
   /* 실측(2026-08-29, 320봉·L16): 종목당 조립 ★3.0ms★. 종전 상한 8ms 는 워커가 3배만
      느려도 ★전 종목이 기권★ 해 모델이 조용히 사라지는 값이었다 — 이 저장소가 반복해 당한
      '조용한 무력화' 그대로다. 실측의 8배로 잡고, 대신 사이클 총량으로 따로 막는다. */
@@ -33193,11 +33197,22 @@ async function buildRoster(DB) {
   const dStored = !!(dMeta && (_num(dMeta.chunks, 0) > 0 || dMeta.r2));
   const dVerOk = !!(dMeta && (typeof dMeta.featVer !== "number" || dMeta.featVer === LUXML.featVer));
   const dOn = !!(dt && dt.trusted && _num(dt.wDnn, 0) > 0 && dStored && dVerOk);
-  add("dnn", "DNN (다층 퍼셉트론)", "expert", {
+  /* [V33.338] ★어느 DNN 인지 화면이 말해야 한다.★
+     사용자가 "12층에서 4층 됐다" 고 층수를 세어 알아챘다 — 화면은 그냥 "신뢰 통과" 라고만 했다.
+     GPU 망(은닉 10층·6시드·460만 파라미터)과 워커 폴백(은닉 2층·1.7만, 1/46)은 전혀 다른 모델인데
+     같은 이름·같은 문구로 표시됐다. 어느 쪽이 앉아 있는지, 왜 그런지를 그대로 적는다. */
+  const _dWorker = !!(dt && dt.source === "worker");
+  const _dLayers = (dt && dt.hiddenLayers != null) ? _num(dt.hiddenLayers, null)
+                 : ((dMeta && Array.isArray(dMeta.dims)) ? Math.max(0, dMeta.dims.length - 2) : null);
+  add("dnn", _dWorker ? "DNN (워커 폴백 · 은닉 " + (_dLayers != null ? _dLayers : "?") + "층)"
+                      : "DNN (다층 퍼셉트론)", "expert", {
     trained: dStored, featVerOk: dVerOk,
     featVer: dMeta ? _num(dMeta.featVer, null) : null, wantVer: LUXML.featVer,
-    tier: dOn ? "full" : "reject", mult: dOn ? _num(dt.wDnn, 0) : 0,
-    why: dOn ? "신뢰 통과" : (!dStored ? "모델 없음" : (!dVerOk ? "판 불일치 — 재학습 대기"
+    source: (dt && dt.source) || (dMeta && dMeta.source) || null,
+    hiddenLayers: _dLayers, params: dt ? _num(dt.params, null) : null,
+    tier: dOn ? (_dWorker ? "provisional" : "full") : "reject", mult: dOn ? _num(dt.wDnn, 0) : 0,
+    why: dOn ? (_dWorker ? ((dt && dt.why) || "워커 폴백 — GPU 모델 재학습 대기") : "신뢰 통과")
+             : (!dStored ? "모델 없음" : (!dVerOk ? "판 불일치 — 재학습 대기"
          : ((dt && dt.reason) || "정확도 하한이 문턱 미달 — 자동 억제")))
   });
 
@@ -38679,6 +38694,26 @@ async function mlDNNTrainNightly(DB) {
       const eM = Math.exp(DNN.trustTemp * (mindLB - 0.5));
       trust.wDnn = +(eD / (eD + eM)).toFixed(4);
       trust.trusted = true;
+    }
+    /* [V33.338] ★이건 폴백이다 — 그렇게 말하고, 그만큼만 발언한다.★
+       사용자 지적: "dnn 또 12층에서 4층됐는데". featVer 를 올릴 때마다 GPU 모델(은닉 10층·
+       6시드·460만 파라미터)이 판 불일치로 빠지고, 그 자리를 워커 폴백(은닉 2층·1.7만 파라미터,
+       46분의 1)이 채운다. 그런데 종전엔 그 사실이 ★어디에도 안 적혔다★ — 화면은 그냥
+       "DNN 정식 합류" 라고 했고 가중도 GPU 모델과 같은 식으로 계산됐다.
+       그래서 46배 작은 망이 실제 돈을 걸고 같은 목소리로 투표했다.
+       구조를 기록하고(화면이 폴백임을 말할 수 있게), 가중을 배수로 깎는다
+       (이 저장소가 이미 쓰는 방식 — icPathWeightMult 0.35 · fwdWeak 0.60 과 같은 계열). */
+    trust.source = "worker";
+    trust.arch = dims.join("-");
+    trust.hiddenLayers = Math.max(0, dims.length - 2);
+    trust.seeds = nets.length;
+    trust.params = _dnnParamCount(dims) * Math.max(1, nets.length);
+    if (trust.trusted) {
+      const _fm = _num(DNN.workerWeightMult, 0.5);
+      trust.wDnnFull = trust.wDnn;
+      trust.wDnn = +(trust.wDnn * _fm).toFixed(4);
+      trust.why = "워커 폴백(은닉 " + trust.hiddenLayers + "층·" + trust.params +
+                  "파라미터) — GPU 모델 재학습 대기 중이라 가중 ×" + _fm;
     }
     await setState(DB, "dnn_trust", trust);
 
@@ -44836,7 +44871,16 @@ async function _luxAutoRetrainModal(env) {
        "GITHUB_TOKEN 미설정" 을 읽는다★ — 고쳤는데 고쳐졌다고 말해 주지 않는 상태다.
        여기까지 왔다는 것 자체가 토큰이 있다는 증거이므로, 그 사유는 지금 지운다. */
     if (meta.lastSkip === "no_github_token") delete meta.lastSkip;
-    if (meta.ts && (now - meta.ts) < 8 * 3600000) { try { await setState(DB, "modal_retrain_auto", meta); } catch (e) {} return; }   // 트리거 쿨다운 8h
+    /* [V33.338] ★판이 바뀐 직후엔 쿨다운을 한 번 건너뛴다.★
+       featVer 를 올리면 외부 GPU 모델(DNN 은닉 10층·SEQ·XGB/LGB/CAT)이 전부 판 불일치로 빠지고,
+       그 자리를 워커 폴백(은닉 2층, 1/46 크기)이 채운다 — 사용자가 "12층에서 4층 됐다" 고
+       본 것이 이것이다. 그런데 직전에 Modal 을 돌렸다면 8h 쿨다운에 막혀 ★가장 재학습이
+       급한 순간에 재학습이 가장 확실히 잠긴다★.
+       그래서 '이 판으로 아직 한 번도 안 돌렸다면' 쿨다운을 무시한다. 판당 딱 한 번이라
+       헛트리거가 늘어나지 않는다(같은 판에서 두 번째부터는 종전대로 8h 쿨다운). */
+    const _fvNow = (typeof LUXML !== "undefined") ? LUXML.featVer : null;
+    const _fvNew = (_fvNow != null && meta.fvDispatched !== _fvNow);
+    if (!_fvNew && meta.ts && (now - meta.ts) < 8 * 3600000) { try { await setState(DB, "modal_retrain_auto", meta); } catch (e) {} return; }   // 트리거 쿨다운 8h
     // 외부(Modal) 수신 신선도
     const S = await getStates(DB, ["mind_model", "dnn_trust", "gbdt_trust", "xgb_trust", "lgb_trust", "cat_trust"]);
     let freshestAge = Infinity, anyExt = false;
@@ -44871,8 +44915,11 @@ async function _luxAutoRetrainModal(env) {
       httpStatus = r.status; ok = (r.status === 204);
     } catch (e) { httpStatus = -1; }
     meta.ts = now; meta.triggered = ok; meta.httpStatus = httpStatus; meta.freshestAgeH = isFinite(freshestAge) ? +freshestAge.toFixed(1) : null; meta.anyExt = anyExt; meta.staleFeatVer = staleFV; delete meta.lastSkip;
+    // [V33.338] 이 판으로 디스패치했다고 기록 — 같은 판에서 두 번째부터는 종전 8h 쿨다운이 다시 적용된다.
+    //   ★성공했을 때만 기록한다★ — 실패했는데 기록하면 그 판에서는 다시 시도할 길이 없어진다.
+    if (ok && _fvNow != null) meta.fvDispatched = _fvNow;
     try { await setState(DB, "modal_retrain_auto", meta); } catch (e) {}
-    try { await log(DB, ok ? "INFO" : "WARN", null, "[MODAL-AUTO] 외부학습 지연 감지(최신수신 " + (isFinite(freshestAge) ? freshestAge.toFixed(1) + "h 전" : "이력없음") + (staleFV ? ", featVer 낙오 " + staleFV + "종" : "") + ", 표본 " + nSamp + ") → 재학습 자동 트리거 " + (ok ? "성공(재배포+즉시학습)" : "실패(GitHub " + httpStatus + ")")); } catch (e) {}
+    try { await log(DB, ok ? "INFO" : "WARN", null, "[MODAL-AUTO] 외부학습 지연 감지(최신수신 " + (isFinite(freshestAge) ? freshestAge.toFixed(1) + "h 전" : "이력없음") + (staleFV ? ", featVer 낙오 " + staleFV + "종" : "") + ", 표본 " + nSamp + (_fvNew ? ", 새 판 featVer " + _fvNow + " — 쿨다운 건너뜀" : "") + ") → 재학습 자동 트리거 " + (ok ? "성공(재배포+즉시학습)" : "실패(GitHub " + httpStatus + ")")); } catch (e) {}
   } catch (e) { /* silent — 자동 재트리거는 부가기능이라 실패해도 본 사이클 무영향 */ }
 }
 
