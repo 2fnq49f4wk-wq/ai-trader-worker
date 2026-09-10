@@ -2981,7 +2981,7 @@ async function applySignalTypeWeights(DB, cfg) {
    화면·자가진단이 계속 "V33.272" 를 보고했다(운영 스냅샷이 그대로 그랬다). 배포는 됐는데
    ★배포됐다는 사실만 거짓말★ 을 하고 있었으니, "내 고침이 올라간 건가" 를 화면으로 확인할
    방법이 없었다. tools/check-build-ver.mjs 가 이제 소스에 적힌 최신 버전과 이 값을 대조한다. */
-const _BUILD_VER = "V33.338";
+const _BUILD_VER = "V33.339";
 
 // ═══ [V33.171] 평가 순서 계획 — ★승격과 순환을 교차해 굶주림을 구조적으로 없앤다★ ═══
 //   V33.50 의 형태트리거는 "급한 몇 종목을 앞으로 당긴다"는 의도였으나, 실제 운영로그에서는
@@ -5346,6 +5346,42 @@ function isExtendedHoursWindow(market) {
   return false;
 }
 
+/* ══ [V33.339] ★미국 세션(mstate)은 우리 시계로 정한다 — 남의 서버에 묻지 않는다★ ══
+   운영 실측(2026-09-10 04:07 진단 스냅샷): 야후 v7 이 죽은 상태에서 quote 의
+   mstate 가 ★336종목에 그대로 남아★ 있었고 그중 값이 있는 건 2종목뿐이었다.
+   자가진단은 그걸 "시간외 시세가 안 들어온다" 로 읽었지만, 실제로는 수집원이 죽은 뒤
+   ★직전 세션 딱지가 안 지워진 것★ 이다. 세션은 시각의 함수다 — getUSEt 은 IANA 로
+   서머타임을 자동 반영하므로, 수집원이 죽었다고 우리가 지금이 장전인지 장후인지 모를 이유가 없다.
+   그리고 딱지가 낡으면 화면은 정규장 종가를 '장후 시세' 라고 말한다 — 값을 지어내지 않는 것과
+   같은 이치로, ★지난 값을 지금 값인 척 두지도 않는다.★ */
+function usMarketStateNow(now) {
+  const t = getUSEt(now || new Date());
+  if (t.day < 1 || t.day > 5) return "CLOSED";
+  if (t.totalMin >= 420 && t.totalMin < 570) return "PRE";
+  if (t.totalMin >= 570 && t.totalMin < 960) return "REGULAR";
+  if (t.totalMin >= 960 && t.totalMin < 1200) return "POST";
+  return "CLOSED";
+}
+/* 지금 세션에서 ★살아 있는★ 시간외 필드를 알려 준다.
+   · pre  는 장전(PRE) 동안만 지금 값이다. 정규장이 열리면 이미 지나간 값이다.
+   · post 는 장후(POST)와 그 뒤 휴장(CLOSED) 동안 유효하다 — 마지막 체결가 그것이다.
+     다음 장전이 열리는 순간 어제의 장후는 끝난다. */
+function extKeepMaskUS(state) {
+  const s = state || usMarketStateNow();
+  return { pre: s === "PRE", post: (s === "POST" || s === "POSTPOST" || s === "CLOSED") };
+}
+/* quote 객체 하나를 지금 세션 기준으로 정리한다(미국 전용).
+   수집원이 mstate 를 안 줘도 시계가 찍어 주고, 낡은 시간외 값은 날린다. */
+function normalizeExtUS(o, state) {
+  if (!o) return o;
+  const s = state || usMarketStateNow();
+  const keep = extKeepMaskUS(s);
+  if (o.mstate == null) o.mstate = s;
+  if (!keep.pre) { o.pre = null; o.prePct = null; }
+  if (!keep.post) { o.post = null; o.postPct = null; }
+  return o;
+}
+
 /* [V33.331] ★지금 이 시장이 "시간외 거래" 세션인가★ — "pre" / "post" / null.
    isExtendedHoursWindow(가격 갱신용)과 ★일부러 분리한다★. 가격은 언제나 받아도 되지만
    거래는 설정으로 열고 닫을 수 있어야 하고, 시장·세션별로 따로 꺼야 할 때가 있다.
@@ -7269,6 +7305,18 @@ async function fetchQuoteViaChartFallback(symbol) {
    마감 후엔 정규장 종가라 "차이 없음"으로 읽힌다(V33.330 에서 확인한 구조적 한계).
    includePrePost=true 를 붙인 분봉만이 프리·애프터 체결을 실제로 담는다.
    종목당 1 subrequest 라 호출부가 개수를 묶어 쓴다(보유종목 우선). */
+/* [V33.339] ★v7 이 왜 죽었는지 한 줄로 남긴다.★ 종전 상태 기록은 dead:true 만 남겨서,
+   인증(401/403)이 막은 것인지 fields= 를 거부한 것인지 단순 과부하(429)인지 구분할 수 없었다.
+   그 셋은 처방이 전혀 다르다 — 앞은 crumb 재발급, 가운데는 요청 형태, 뒤는 기다리기다. */
+function _v7ErrTag(e) {
+  const m = (e && e.message) ? String(e.message) : "err";
+  const h = m.match(/HTTP\s+(\d{3})/);
+  if (h) return "HTTP" + h[1];
+  if (/abort/i.test(m)) return "timeout";
+  if (/budget/i.test(m)) return "budget";
+  return m.slice(0, 40);
+}
+
 async function fetchExtendedQuoteUS(symbol) {
   const j = await yahooFetch("https://query1.finance.yahoo.com/v8/finance/chart/" +
     encodeURIComponent(symbol) + "?interval=5m&range=1d&includePrePost=true");
@@ -7493,17 +7541,34 @@ async function fetchBatchQuotes(symbols, opts) {
   //   naverXV에 이미 가격이 담긴 KR 종목은 v7 조회에서 제외(예산 절약, 접미사 오류 원천 차단)
   const v7Targets = symbols.filter(function(s){ return !out[s] && !naverXV[s]; });
   for (let i = 0; i < v7Targets.length; i += BATCH) slices.push(v7Targets.slice(i, i + BATCH));
-  let v7Dead = false, v7Fields = true, v7First = 0;
+  let v7Dead = false, v7Fields = true, v7First = 0, v7Err = null;
+  /* [V33.339] ★지난번에 통한 방식으로 먼저 물어본다.★ 종전엔 매 호출이 반드시
+     fields= 부터 시도했다 — fields 를 거부하는 환경에서는 그 한 번이 ★언제나 버려지는
+     subrequest★ 다(가격 샤드가 시장마다 분마다 돈다). 통한 방식을 기억해 두면
+     그 낭비가 사라지고, 남는 예산은 그대로 시간외 보강으로 간다.
+     ※ v7 이 죽어 있었으면 기억을 쓰지 않는다 — 죽은 판정 뒤엔 다시 fields 부터 본다
+       (야후가 되살아나며 필드셋을 복구할 수 있고, 그 길을 스스로 닫지 않는다). */
+  let v7Prefer = true;
+  if (opts.DB) {
+    try {
+      const _pv = await getState(opts.DB, "yahoo_v7", null);
+      if (_pv && _pv.dead !== true && _pv.fields === false) v7Prefer = false;
+    } catch (e) {}
+  }
   if (slices.length > 0 && fetchBudgetLeft() > 0) {
-    // 1) 첫 배치로 v7 생존 확인 — 먼저 fields 를 붙여서 본다.
-    try { v7First = parseV7(await yahooFetch(v7Url(slices[0], true), v7Headers)); } catch (e) {}
+    // 1) 첫 배치로 v7 생존 확인 — 지난번에 통한 방식(v7Prefer)부터 본다.
+    v7Fields = v7Prefer;
+    try { v7First = parseV7(await yahooFetch(v7Url(slices[0], v7Fields), v7Headers)); }
+    catch (e) { v7Err = _v7ErrTag(e); }
     if (v7First === 0 && fetchBudgetLeft() > 0) {
-      // fields= 자체를 거부하는 경우 — 필드 없이 한 번만 더. 이래도 0이면 진짜 죽은 것이다.
-      v7Fields = false;
-      try { v7First = parseV7(await yahooFetch(v7Url(slices[0], false), v7Headers)); } catch (e) {}
+      // 반대쪽으로 한 번만 더. 이래도 0이면 진짜 죽은 것이다.
+      v7Fields = !v7Prefer;
+      try { v7First = parseV7(await yahooFetch(v7Url(slices[0], v7Fields), v7Headers)); }
+      catch (e) { v7Err = (v7Err ? v7Err + "/" : "") + _v7ErrTag(e); }
     }
     if (v7First === 0) {
       v7Dead = true;
+      v7Fields = true;   // 다음 호출은 다시 fields 부터 — 기억이 사망 판정을 굳히지 않게 한다
     } else if (slices.length > 1) {
       // 2) 나머지 배치 병렬 실행 (예산 내) — 첫 배치에서 통한 방식 그대로.
       const rest = slices.slice(1).filter(function(){ return fetchBudgetLeft() > 0; });
@@ -7518,7 +7583,8 @@ async function fetchBatchQuotes(symbols, opts) {
   if (opts.DB) {
     try {
       await setState(opts.DB, "yahoo_v7", {
-        dead: v7Dead, fields: v7Fields, first: v7First, slices: slices.length, ts: Date.now()
+        dead: v7Dead, fields: v7Fields, first: v7First, slices: slices.length,
+        err: v7Err, ts: Date.now()
       });
     } catch (e) {}
   }
@@ -7557,6 +7623,14 @@ async function fetchBatchQuotes(symbols, opts) {
        ① 미국 시간외 창일 때만  ② 값이 실제로 비어 있는 종목만
        ③ 보유종목 먼저(opts.extPriority), 나머지는 회전하며 상한(extMax)까지만.
      못 채운 종목은 다음 사이클로 넘어간다 — 값을 지어내지 않는다. */
+  /* [V33.339] ★세션 딱지를 먼저 우리 시계로 찍는다.★ v7 이 죽으면 mstate 가 아예 안 오고,
+     그때 quote 에 남는 건 ★며칠 전 딱지★ 다. 아래 _lack 도 화면도 그 낡은 값을 읽는다.
+     수집원 생사와 무관하게 세션은 우리가 안다 — 먼저 찍고, 지난 세션 값은 지운다. */
+  const _usState = usMarketStateNow();
+  for (const _s of symbols) {
+    if (_s.endsWith(".KS") || _s.endsWith(".KQ")) continue;
+    if (out[_s]) normalizeExtUS(out[_s], _usState);
+  }
   if (isExtendedHoursWindow("us")) {
     const _lack = function (s) {
       if (s.endsWith(".KS") || s.endsWith(".KQ")) return false;
@@ -7564,7 +7638,7 @@ async function fetchBatchQuotes(symbols, opts) {
       if (!q || !(q.price > 0)) return false;
       if (q.mstate === "PRE") return !(typeof q.pre === "number" && q.pre > 0);
       if (q.mstate === "POST" || q.mstate === "POSTPOST") return !(typeof q.post === "number" && q.post > 0);
-      return true;   // 세션 표시조차 없다(=v8 폴백으로 들어온 종목) — 확인 대상
+      return false;  // 시간외 창이 아닌 세션(REGULAR/CLOSED) — 채울 것이 없다
     };
     const _pri = Array.isArray(opts.extPriority) ? opts.extPriority.filter(_lack) : [];
     const _rest = symbols.filter(function (s) { return _lack(s) && _pri.indexOf(s) < 0; });
@@ -7584,6 +7658,13 @@ async function fetchBatchQuotes(symbols, opts) {
         if (_r.x && out[_r.sym]) Object.assign(out[_r.sym], _r.x);
       }
     }
+    /* [V33.339] ★이번 회전에서 몇 종목을 시도했는지 호출부에 알려 준다★ —
+       호출부는 이 값만큼 커서를 밀어 ★다음 사이클에 다른 종목★ 을 본다.
+       종전엔 커서가 shard 로만 정해져(shard*7) 사이클마다 같은 24종목을 다시 물었다.
+       그래서 v7 이 죽은 동안 시간외 값이 있는 종목이 계속 두어 개뿐이었다. */
+    /* ★열거 불가로 심는다★ — 이 맵은 여러 호출부가 for..in / Object.keys 로 훑는다.
+       평범한 속성으로 두면 "__extTried" 가 종목처럼 섞여 들어간다. */
+    try { Object.defineProperty(out, "__extTried", { value: _todo.length, enumerable: false, configurable: true }); } catch (e) {}
   }
 
   // --- 3) [V58] KR 네이버 머지 — 네이버가 단독 primary (야후 KR 조회 완전 제거)
@@ -8354,7 +8435,7 @@ function analystRevScore(rec) {
 async function analystRevFitNightly(DB) {
   try {
     const led = await getState(DB, "analyst_rev", null);
-    if (!led || !led.bySym) return "[ANLREVK] 개정 원장 없음 — 대기";
+    if (!led || !led.bySym) return "\u27F3 " + "[ANLREVK] 개정 원장 없음 — 대기";
     const H = _num(AI_PARAMS.predictionHorizonDays, 10);
     const now = Date.now();
     const X = [], Y = [];
@@ -11857,10 +11938,20 @@ async function saveQuote(DB, symbol, market, q) {
     if (q[k] !== undefined && q[k] !== null) return q[k];
     return (_prev && _prev[k] !== undefined) ? _prev[k] : null;
   };
+  /* [V33.339] 이어받기는 ★아직 못 받은 값★ 을 지키는 장치이지 ★이미 끝난 세션의 값★ 을
+     되살리는 장치가 아니다. 미국은 지금 세션에서 살아 있는 필드만 이어받는다. */
+  /* ★마스크의 기준은 저장된 딱지가 아니다.★ _keep("mstate") 를 쓰면 낡은 딱지가 스스로를
+     증명한다 — POST 라 적혀 있으니 POST 값을 지키고, 그래서 영원히 POST 로 남는다.
+     이번 조회가 준 세션(q.mstate)이 있으면 그것을, 없으면 ★시계★ 를 기준으로 삼는다. */
+  const _usNow = (market === "us") ? usMarketStateNow() : null;
+  const _sessNow = (market === "us") ? ((q.mstate != null) ? q.mstate : _usNow) : null;
+  const _mask = (market === "us") ? extKeepMaskUS(_sessNow) : { pre: true, post: true };
+  const _keepExt = function (k, alive) { return alive ? _keep(k) : null; };
   await setState(DB, "quote:" + symbol, {
     market: market, price: q.price, prevClose: q.prevClose,
-    mstate: _keep("mstate"), pre: _keep("pre"), prePct: _keep("prePct"),
-    post: _keep("post"), postPct: _keep("postPct"),
+    mstate: (market === "us") ? _sessNow : _keep("mstate"),
+    pre: _keepExt("pre", _mask.pre), prePct: _keepExt("prePct", _mask.pre),
+    post: _keepExt("post", _mask.post), postPct: _keepExt("postPct", _mask.post),
     dayPct: q.dayPct, rsi: q.dailyRsi, ma: q.dailyMa, atr: q.dailyAtr,
     dailyAtr: q.dailyAtr, dailyMa: q.dailyMa, dailyMaShort: q.dailyMaShort,
     bbLower: q.bbLower, bbUpper: q.bbUpper,
@@ -13369,7 +13460,7 @@ async function optMicroNightly(DB) {
   if (!C || C.enabled === false) return "[OPTX] 꺼져 있음";
   try {
     if (fetchBudgetLeft() < _num(C.minBudgetReserve, 40))
-      return "[OPTX] fetch 예산 부족(" + fetchBudgetLeft() + ") — 건너뜀. 다음 밤에 다시 시도한다";
+      return "\u27F3 " + "[OPTX] fetch 예산 부족(" + fetchBudgetLeft() + ") — 예산이 회복되면 같은 날 다시 시도한다";
     const day = new Date().toISOString().slice(0, 10);
     const rec = { ts: Date.now(), day: day, syms: {} };
     const notes = [];
@@ -16418,10 +16509,23 @@ async function refreshPriceShard(env, market, shard) {
     _held = ((_hr && _hr.results) || []).map(function (r) { return r.symbol; })
       .filter(function (s) { return symbols.indexOf(s) >= 0; });
   } catch (e) {}
+  /* [V33.339] ★시간외 보강 커서를 실제로 돌린다.★ 종전 extOffset 은 shard * 7 —
+     같은 샤드는 사이클마다 ★같은 값★ 이라, 회전 상한(24종목)에 걸린 뒤로는 언제나
+     같은 24종목만 다시 물었다. 나머지 수백 종목은 영원히 차례가 오지 않는다.
+     실측(2026-09-10 스냅샷)에서 시간외 값이 있는 종목이 2개뿐이던 직접 원인이 이것이다.
+     가격 폴백은 이미 상태에 저장한 커서(qp_rr)로 회전한다 — 같은 방식을 여기에도 쓴다. */
+  const _extKey = "ext_rr:" + market;
+  let _extOff = await getState(DB, _extKey, 0);
+  if (typeof _extOff !== "number" || !isFinite(_extOff) || _extOff < 0) _extOff = 0;
+  const _extMax = 24;
   const bq = await fetchBatchQuotes(symbols, {
     maxFallback: symbols.length, DB: DB,
-    extPriority: _held, extOffset: shard * 7, extMax: 24
+    extPriority: _held, extOffset: _extOff, extMax: _extMax
   });
+  try {
+    const _tried = _num(bq && bq.__extTried, 0);
+    if (_tried > 0) await setState(DB, _extKey, (_extOff + _tried) % Math.max(1, symbols.length));
+  } catch (e) {}
   const tFetch = Date.now() - tFetch0;
   const results = symbols.map(function(symbol){
     const q = bq[symbol];
@@ -16441,8 +16545,15 @@ async function refreshPriceShard(env, market, shard) {
       const _post = (typeof r.post === "number" && r.post > 0) ? r.post : null;
       const _postPct = (typeof r.postPct === "number") ? r.postPct : null;
       // [V18] 신규 quote 기본값 (해당 키가 없을 때 INSERT)
+      /* [V33.339] ★지난 세션 값은 COALESCE 로 지켜서는 안 된다.★ COALESCE 는 "새 값이 없으면
+         옛 값" 인데, 세션이 바뀌면 옛 값은 '아직 못 받은 값' 이 아니라 ★이미 끝난 값★ 이다.
+         v7 이 죽어 새 값이 몇 사이클씩 안 들어오는 동안 그 차이가 그대로 화면에 남았다. */
+      const _mask = (market === "us") ? extKeepMaskUS(_m || usMarketStateNow()) : { pre: true, post: true };
+      const _clrPre = _mask.pre ? 0 : 1;
+      const _clrPost = _mask.post ? 0 : 1;
       const fresh = { market: market, price: r.price, prevClose: r.prevClose, dayPct: r.dayPct, ts: nowTs,
-        mstate: _m, pre: _pre, prePct: _prePct, post: _post, postPct: _postPct };
+        mstate: _m, pre: _clrPre ? null : _pre, prePct: _clrPre ? null : _prePct,
+        post: _clrPost ? null : _post, postPct: _clrPost ? null : _postPct };
       // ON CONFLICT: 기존 JSON에서 가격 3필드 + ts만 갱신, 일봉 지표(rsi/ma/atr 등)는 보존.
       // [프리/애프터마켓] 시간외 5필드는 COALESCE — 새 값 있으면 갱신, 없으면(null) 기존값 유지(잔상 제거는 cron이 mstate로 처리).
       // [V33] json_valid 가드 — 기존 v가 깨진 JSON이면 json_set이 실패하므로,
@@ -16453,13 +16564,13 @@ async function refreshPriceShard(env, market, shard) {
           "ON CONFLICT(k) DO UPDATE SET v = CASE WHEN json_valid(v) " +
           "THEN json_set(v, '$.price', ?3, '$.prevClose', ?4, '$.dayPct', ?5, '$.ts', ?6, " +
           "'$.mstate', COALESCE(?7, json_extract(v, '$.mstate')), " +
-          "'$.pre', COALESCE(?8, json_extract(v, '$.pre')), " +
-          "'$.prePct', COALESCE(?9, json_extract(v, '$.prePct')), " +
-          "'$.post', COALESCE(?10, json_extract(v, '$.post')), " +
-          "'$.postPct', COALESCE(?11, json_extract(v, '$.postPct'))) " +
+          "'$.pre', CASE WHEN ?12 = 1 THEN NULL ELSE COALESCE(?8, json_extract(v, '$.pre')) END, " +
+          "'$.prePct', CASE WHEN ?12 = 1 THEN NULL ELSE COALESCE(?9, json_extract(v, '$.prePct')) END, " +
+          "'$.post', CASE WHEN ?13 = 1 THEN NULL ELSE COALESCE(?10, json_extract(v, '$.post')) END, " +
+          "'$.postPct', CASE WHEN ?13 = 1 THEN NULL ELSE COALESCE(?11, json_extract(v, '$.postPct')) END) " +
           "ELSE ?2 END, updated_ts = ?6"
         ).bind("quote:" + r.symbol, JSON.stringify(fresh), r.price, r.prevClose, r.dayPct, nowTs,
-          _m, _pre, _prePct, _post, _postPct)
+          _m, _pre, _prePct, _post, _postPct, _clrPre, _clrPost)
       );
       ok++;
     } else if (r) { fail++; }
@@ -22506,17 +22617,26 @@ async function handleRequest(request, env, ctx) {
         //   승격본을 우선 보고, 없으면 섀도우본을 읽어 '섀도우'로 표시한다(정확도도 함께).
         const S1 = await getStates(env.DB, ["xgb_trust", "lgb_trust", "cat_trust",
           "xgb_trust_ext", "lgb_trust_ext", "cat_trust_ext", "ai_selfreview", "ai_picks:scan"]);
+        /* [V33.339] ★화면이 '가동 중' 이라 적는 기준을 실제 투표와 같게 한다.★
+           종전엔 <nm>_trust.trusted 만 읽어 trusted/promoted/w 를 그대로 내보냈다.
+           그 값은 ★업로드 시점의 판정★ 이라, 그 뒤 판(featVer)이 올라가 실제 투표에서
+           빠진 모델도 화면에서는 계속 "가동 · w 0.4766" 이었다(2026-09-10 스냅샷 실측).
+           판정은 _boosterDiag 하나가 한다 — 화면과 실물이 갈라질 자리를 없앤다. */
+        const _bdC = await _boosterDiag(env.DB);
         try {
           const _st = function (nm) {
             const live = S1[nm + "_trust"], ext = S1[nm + "_trust_ext"];
             const t = live || ext;
             if (!t) return null;
+            const d = _bdC[nm] || {};
+            const on = !!d.live;
             const acc = (typeof t.gbdtAccLB === "number") ? t.gbdtAccLB
                       : (typeof t.gbdtAcc === "number") ? t.gbdtAcc : null;
-            return { trusted: !!(live && t.trusted), shadow: !live || !t.trusted,
-                     accLB: acc, w: (typeof t.wGbdt === "number") ? t.wGbdt : null,
+            return { trusted: on, shadow: !on,
+                     accLB: acc, w: on ? ((typeof t.wGbdt === "number") ? t.wGbdt : null) : 0,
                      source: t.source || null, promoted: !!live,
-                     reason: (!live ? "섀도우(미승격)" : (!t.trusted ? "검증 미달" : null)) };
+                     featVer: (d.featVer != null) ? d.featVer : null, wantVer: LUXML.featVer,
+                     reason: on ? null : (d.why || "사유 미상") };
           };
           xgb = _st("xgb"); lgb = _st("lgb"); cat = _st("cat");
         } catch (e) {}
@@ -33231,16 +33351,22 @@ async function buildRoster(DB) {
   /* ④ 부스팅 3종 — ★가동 판정은 위원회가 실제로 쓰는 그 함수(_boostersCached)로 한다.★
      화면이 <name>_trust.trusted 만 보면, V33.191 이 읽는 쪽에 다시 둔 증거 문턱을
      화면은 모르는 채 '가동' 이라 적는다(실측 XGB 0.4836 이 그 상태였다). */
+  /* [V33.339] ★사유를 여기서 다시 적지 않는다.★ 종전엔 featVerOk 를 true 로 ★박아 두고★
+     막힌 이유를 전부 "검증 미달 — 억제" 한 문장으로 뭉갰다. 실제로는 판 불일치였는데
+     화면은 문턱 얘기를 했다(다른 위원들은 전부 "판 불일치 — 재학습 대기" 를 말할 수 있는데
+     부스터 3종만 그 말을 할 수 없는 구조였다). 판정 함수가 남긴 사유를 그대로 옮긴다. */
+  const _bd = await _boosterDiag(DB);
   [["xgb", "XGB"], ["lgb", "LGB"], ["cat", "CatBoost"]].forEach(function (p) {
     const nm = p[0];
     const t = S[nm + "_trust"] || S[nm + "_trust_ext"] || null;
-    const promoted = !!S[nm + "_trust"];
+    const d = _bd[nm] || {};
     const on = !!_live[nm];
     add(nm, p[1], "expert", {
-      trained: !!t, featVerOk: true,
+      trained: !!t, featVerOk: (d.featVerOk !== false),
+      featVer: (d.featVer != null) ? d.featVer : null, wantVer: LUXML.featVer,
+      source: d.source || null,
       tier: on ? "full" : "reject", mult: on ? 0.8 : 0,
-      why: on ? "합의 가중 ×0.8" : (!t ? "모델 없음"
-           : (!promoted ? "섀도우(미승격) — 업로드는 됐지만 승격 안 됨" : "검증 미달 — 억제"))
+      why: on ? "합의 가중 ×0.8" : (d.why || "모델 없음")
     });
   });
 
@@ -37582,7 +37708,7 @@ async function scalpMaeMult(DB) {
 async function scalpConfluenceFitNightly(DB) {
   try {
     const L = await mlScalpLoad(DB);
-    if (!L) return "[CONFK] 단타모델 미신뢰 — 측정 대기";
+    if (!L) return "\u27F3 " + "[CONFK] 단타모델 미신뢰 — 측정 대기";
     const D0 = LUXML.featNames.length;
     // [V33.100] ★R2 경로에서도 측정한다★
     //   V33.98 은 R2 면 그냥 생략했는데, 실제 운영은 R2 바인딩이 켜진 상태다
@@ -37687,7 +37813,7 @@ async function mindShadowPromoteNightly(DB) {
     const _shWhat = (_shKey === "mind_tree_ext") ? "트리" : "FM";
     if (sh.featVer !== LUXML.featVer) return "[MIND-SHADOW] " + _shWhat + " featVer 불일치 — 폐기 대기";
     const since = _num(sh.trainedAt, 0);
-    if (!(since > 0)) return "[MIND-SHADOW] 업로드 시각 없음 — 판정 불가";
+    if (!(since > 0)) return "\u27F3 " + "[MIND-SHADOW] 업로드 시각 없음 — 판정 불가";
     const rs = await DB.prepare(
       "SELECT ts, feat, label, pnl_pct FROM ml_samples WHERE featver = ? AND ts > ? ORDER BY ts ASC LIMIT 4000"
     ).bind(LUXML.featVer, since).all();
@@ -38813,36 +38939,87 @@ async function mlDNNLoad(DB) {
 // null 반환 시 상위 호출부는 mlMindDecide로 폴백.
 function _logitD(p) { const q = _clamp(p, 1e-4, 1 - 1e-4); return Math.log(q / (1 - q)); }
 
-// [V32.65] 부스터(XGB/LGB/Cat) 5분 메모 로드 — 그동안 학습만 하고 위원회에 미사용이던 3모델을 활용.
-//   전부 GBDT와 동일 트리포맷(mlGBDTScore)이라 즉시 채점 가능. trusted(검증바닥 통과)인 것만.
+/* ══ [V33.339] ★부스터 3종 합류 판정 — 사유까지 한 곳에서 낸다★ ═══════════════
+   운영 실측(2026-09-10 04:07 진단 스냅샷)에서 같은 세 모델을 두고 화면 세 곳이 다른 말을 했다:
+     · aiMode.committee.xgb : trusted true · promoted true · w 0.4766
+     · alt.roster.xgb       : tier reject · mult 0 · why "검증 미달 — 억제" · featVer null
+     · 실제 투표(_boostersCached) : 불참 — 위원회는 GBDT 한 명뿐
+   그리고 자가진단은 "XGB 미합류 accLB 51.46% (문턱 50.5%)" 라고 적었다.
+   ★문턱보다 높은 숫자를 미합류 사유로 적은 것★ 이다 — 그 문장을 믿으면 문턱을 만지러 간다.
+   진짜 이유는 셋 중 어디에도 없었다: XGB 21.5h · Cat 9.4h · LGB 3.5h 전 학습분이라
+   전부 featVer 16 이고 판이 17 로 올라간 건 그 뒤(V33.335)다 — ★판 불일치★ 다.
+   고칠 곳은 문턱이 아니라 재학습이었다.
+   → 판정도 사유도 이 함수 하나가 낸다. 읽는 곳이 늘어도 갈라지지 않는다.
+   ※ trust 레코드에 featVer 가 박혀 온다(gbdt-import) — 큰 모델 본문을 읽지 않고도 판을 안다. */
+function _boosterAdmit(live, ext) {
+  const t = live || ext || null;
+  const promoted = !!live;
+  const want = LUXML.featVer;
+  const fv = t ? _num(t.featVer, null) : null;
+  const fvOk = (t == null) ? true : (fv == null ? true : fv === want);
+  const lb = t ? _num(t.gbdtAccLB, 0) : 0;
+  const icT = t ? _num(t.valICt, null) : null;
+  const floor = _num(GBDT.trustFloor, 0.505);
+  const icFloorAcc = _num(GBDT.icPathAccFloor, 0.49);
+  const tMin = _num(ICGATE.provisional && ICGATE.provisional.tMin, 1.65);
+  /* [V33.191] ★읽는 쪽에도 같은 증거 문턱을 둔다.★ 승격 시점 판정(gbdt-import)만 고치면,
+     이미 trusted 로 저장돼 있는 모델은 다음 외부 업로드까지 그대로 투표한다. */
+  const okEv = (lb >= floor)
+    || (lb >= icFloorAcc && icT != null && isFinite(icT) && icT >= tMin);
+  let why = null;
+  if (!t) why = "모델 없음";
+  else if (!fvOk) why = "판 불일치(모델 featVer " + fv + " ≠ 현재 " + want + ") — 재학습 대기";
+  else if (!promoted) why = "섀도우(미승격) — 업로드는 됐지만 승격 안 됨";
+  else if (!t.trusted) why = "승격 기록이 미신뢰 — " + (t.reason || "사유 미기록");
+  else if (t.gbdtAccLB == null) why = "검증 정확도 미보고 — 판정 불가";
+  else if (!okEv) {
+    why = "검증 미달 — accLB " + (lb * 100).toFixed(2) + "% < 정확도 문턱 " + (floor * 100).toFixed(1) + "%" +
+          (lb < icFloorAcc ? " · IC 경로도 불가(정확도 바닥 " + (icFloorAcc * 100).toFixed(0) + "% 미달)"
+            : (icT == null ? " · 블록IC 미보고" : " · 블록IC t " + icT.toFixed(2) + " < " + tMin));
+  }
+  return { ok: why == null, promoted: promoted, shadow: !promoted,
+           featVer: fv, wantVer: want, featVerOk: fvOk,
+           accLB: t ? lb : null, w: t ? _num(t.wGbdt, null) : null,
+           source: (t && t.source) || null, why: why };
+}
+
+// [V32.65] 부스터(XGB/LGB/Cat) 5분 메모 로드 — 전부 GBDT와 동일 트리포맷(mlGBDTScore)이라 즉시 채점 가능.
 async function _boostersCached(DB) {
   try {
     const g = (typeof globalThis !== "undefined") ? globalThis : {};
     const c = g.__boostersCache;
     if (c && (Date.now() - c.ts) < 300000) return c.val;
     const out = [];
+    const diag = {};
     try {
-      const T = await getStates(DB, ["xgb_trust", "lgb_trust", "cat_trust"]);
+      const T = await getStates(DB, ["xgb_trust", "lgb_trust", "cat_trust",
+        "xgb_trust_ext", "lgb_trust_ext", "cat_trust_ext"]);
       for (const nm of ["xgb", "lgb", "cat"]) {
-        const t = T[nm + "_trust"];
-        /* [V33.191] ★읽는 쪽에도 같은 문턱을 둔다.★ 승격 시점 판정(gbdt-import)만 고치면,
-           이미 trusted 로 저장돼 있는 모델은 다음 외부 업로드(6시간 주기)까지 그대로 투표한다.
-           운영 실측 XGB 0.4836 / LGB 0.4871 이 지금 그 상태다 — 그 사이를 비워 두지 않는다.
-           (정확도로 통과한 모델은 여기서도 아무 변화가 없다.) */
-        const _lb = t ? _num(t.gbdtAccLB, 0) : 0;
-        const _tIC = t ? _num(t.valICt, null) : null;
-        const _okEvidence = (_lb >= _num(GBDT.trustFloor, 0.505))
-          || (_lb >= _num(GBDT.icPathAccFloor, 0.49)
-              && _tIC != null && _tIC >= _num(ICGATE.provisional && ICGATE.provisional.tMin, 1.65));
-        if (t && t.trusted && t.gbdtAccLB != null && _okEvidence) {
+        const a = _boosterAdmit(T[nm + "_trust"], T[nm + "_trust_ext"]);
+        let why = a.why;
+        if (a.ok) {
           let m = null; try { m = await getState(DB, nm + "_model", null); } catch (e) {}
-          if (m && m.featVer === LUXML.featVer && Array.isArray(m.trees) && m.trees.length) out.push({ name: nm, model: m, accLB: _num(t.gbdtAccLB, 0.5) });
+          if (!m) why = "모델 본문 없음 — 재업로드 대기";
+          else if (m.featVer !== LUXML.featVer)
+            why = "판 불일치(본문 featVer " + _num(m.featVer, null) + " ≠ 현재 " + LUXML.featVer + ") — 재학습 대기";
+          else if (!(Array.isArray(m.trees) && m.trees.length)) why = "트리 없음 — 업로드 손상";
+          else { out.push({ name: nm, model: m, accLB: _num(a.accLB, 0.5) }); why = null; }
         }
+        diag[nm] = Object.assign({}, a, { ok: why == null, live: why == null, why: why });
       }
     } catch (e) {}
-    g.__boostersCache = { ts: Date.now(), val: out };
+    g.__boostersCache = { ts: Date.now(), val: out, diag: diag };
     return out;
   } catch (e) { return []; }
+}
+
+/* 화면·자가진단이 읽는 창구. ★판정을 다시 적지 않는다★ — 위 함수가 남긴 사유를 그대로 준다. */
+async function _boosterDiag(DB) {
+  try {
+    await _boostersCached(DB);
+    const g = (typeof globalThis !== "undefined") ? globalThis : {};
+    return (g.__boostersCache && g.__boostersCache.diag) || {};
+  } catch (e) { return {}; }
 }
 
 /* ══ [V33.267] SEQ(Transformer) 를 ★읽는 쪽★ ═══════════════════════════════
@@ -39018,7 +39195,7 @@ async function expertRegimeFitNightly(DB) {
     const gT = await getState(DB, "gbdt_trust", null);
     const gbdt = (gT && gT.trusted) ? await mlGBDTLoad(DB) : null;
     const memo = await getState(DB, "memo_model", null);
-    if (!mind && !dnn && !gbdt && !memo) return "[EXPREG] 채점 가능한 전문가 없음";
+    if (!mind && !dnn && !gbdt && !memo) return "\u27F3 " + "[EXPREG] 채점 가능한 전문가 없음 — 판 갱신 대기";
     // 버킷별 (p, y) 수집
     const acc = {};   // name → bucket → { p:[], y:[], m:[] }
     let _curMkt = "";   // [V33.291] 지금 행의 시장 — put 이 셀마다 같이 쌓는다
@@ -40267,13 +40444,20 @@ async function mlGBDTStatus(DB) {
 // ============================================================================
 async function mlCalibrateCommittee(DB) {
   try {
+    /* [V33.339] ★여기가 committee_cal 이 featVer 15 에 박혀 있던 이유다.★
+       판이 15→16→17 로 오른 직후엔 ml_samples 에 새 판 표본이 아직 60건도 없다(이관 중).
+       그때 이 함수는 "표본 N/60 — 보정 대기" 를 돌려줬는데, ★그 문자열엔 ⟳ 가 없어서★
+       _stg 가 "오늘 할 일 끝" 으로 도장을 찍었다 — 다음 UTC 자정까지 재시도가 없다.
+       그 사이에 판이 또 올라가면 같은 일이 반복된다. 실제로 두 판을 그렇게 건너뛰었고,
+       그동안 위원회 확률 보정이 통째로 꺼져 있었다(읽는 쪽이 판 불일치 보정을 무시하므로).
+       ★준비가 안 된 것과 오늘 할 일을 마친 것은 다르다★ — 셋 다 ⟳ 로 되돌려 재시도를 남긴다. */
     const mind = await mlMindLoad(DB);
-    if (!mind) { return null; }   // 위원회 자체가 없으면 보정 없음
+    if (!mind) return "\u27F3 " + "[CAL] 위원장(MIND) 모델 없음 — 보정 대기";
     const rows = await DB.prepare(
       "SELECT ts, feat, label, pnl_pct FROM ml_samples WHERE featver = ? ORDER BY ts DESC LIMIT 400"
     ).bind(LUXML.featVer).all();
     const raw = (rows && rows.results) ? rows.results : [];
-    if (raw.length < 60) return "[CAL] 표본 " + raw.length + "/60 — 보정 대기";
+    if (raw.length < 60) return "\u27F3 " + "[CAL] 표본 " + raw.length + "/60 (featVer " + LUXML.featVer + ") — 보정 대기";
     const ens = await mlBrainLoad(DB);
     const dnnTrust = await getState(DB, "dnn_trust", null);
     const dnn = (dnnTrust && dnnTrust.trusted) ? await mlDNNLoad(DB) : null;
@@ -40410,7 +40594,7 @@ async function mlCalibrateCommittee(DB) {
            " ECE " + (_num(fit.eceRaw, 0) * 100).toFixed(1) +
            "% → " + (_num(fit.ece, 0) * 100).toFixed(1) + "% (n=" + preds.length +
            ", 교차검증 " + JSON.stringify(fit.cv) + ")";
-  } catch (e) { return "[CAL] fail: " + (e && e.message); }
+  } catch (e) { return "\u27F3 " + "[CAL] fail: " + (e && e.message); }
 }
 
 
@@ -40844,11 +41028,16 @@ async function aiSelfCheck(DB, env) {
     if (dnnT && !dnnT.trusted)
       R.warnings.push("DNN 미신뢰 accLB " + (_num(dnnT.dnnAccLB, 0) * 100).toFixed(2) +
         "% — 학습은 되는데 위원회에 못 든다(가중 0). GPU 는 계속 태우고 있다");
+    /* [V33.339] ★문턱보다 높은 숫자를 미합류 사유로 적던 자리다.★
+       실측 문장: "XGB 미합류 accLB 51.46% (문턱 50.5%)" — 읽는 사람은 문턱을 의심하게 된다.
+       진짜 이유는 판 불일치였다. 사유는 판정 함수가 낸 것을 그대로 옮긴다. */
+    const _bdS = await _boosterDiag(DB);
     for (const nm of ["xgb", "lgb", "cat"]) {
       if (_roster.indexOf(nm.toUpperCase()) >= 0) continue;
-      let t = null; try { t = await getState(DB, nm + "_trust", null); } catch (e) {}
-      if (t) R.warnings.push(nm.toUpperCase() + " 미합류 accLB " + (_num(t.gbdtAccLB, 0) * 100).toFixed(2) +
-        "% (문턱 " + (_num(GBDT.trustFloor, 0.505) * 100).toFixed(1) + "%)");
+      const d = _bdS[nm];
+      if (!d || !d.why) continue;
+      R.warnings.push(nm.toUpperCase() + " 미합류 — " + d.why +
+        (d.accLB != null ? " (accLB " + (d.accLB * 100).toFixed(2) + "%)" : ""));
     }
     if ((dnnT && dnnT.reason === "err")) R.errors.push("DNN 학습 오류: " + (dnnT.err || "?"));
     /* [V33.261] 유니버스 건강 — 종목을 늘릴 때마다 사람에게 "상장폐지 안 됐나" 를 묻는 대신,
@@ -44695,14 +44884,19 @@ async function _luxSelfCheck(DB) {
        한국(네이버)은 같은 시각 프리마켓이 정상 동작했다 — 표시 계층이 아니라 미국 수집 경로 문제다.
        이걸 아무도 못 잡은 이유는 감지기가 없어서다. v7Dead 는 계산만 하고 ★한 번도 안 읽는다★.
        "세션은 PRE/POST 라는데 그 값이 비어 있다" 는 조합을 여기서 소리 내게 한다. */
-    /* [V33.331] 미국 시세 1차 수집원(야후 v7)의 생사를 말한다.
-       v7 이 죽으면 v8 폴백이 라운드로빈으로 천천히 채우는데, 그 경로는 ★시간외를 못 만든다★.
-       즉 v7 사망 = 시간외 시세 전면 결측이다. 종전엔 이 사실이 어디에도 안 남았다. */
+    /* [V33.339] ★문장을 사실에 맞춘다.★ 종전엔 "v8 폴백은 시간외를 못 만든다(시간외 시세
+       전면 결측)" 라고 단정했는데, V33.331 이 이미 v8 분봉(includePrePost)에서 프리·애프터를
+       만드는 경로(fetchExtendedQuoteUS)를 넣었다 — 즉 이 문장은 자기 코드보다 낡아 있었다.
+       진짜 손실은 다른 것이다: v7 이 살아 있으면 50종목이 1 subrequest 인데, 죽으면 종목당
+       1 subrequest 가 된다(미국 558종목). 그 예산 압박이 시간외 보강 회전을 느리게 만든다.
+       그리고 왜 죽었는지(err)를 함께 적는다 — 인증·요청형태·과부하는 처방이 전혀 다르다. */
     try {
       const _v7 = await getState(DB, "yahoo_v7", null);
       if (_v7 && _v7.ts) {
         const _v7h = ageH(_v7.ts);
-        if (_v7.dead) add("error", "시세", "야후 v7(미국 시세 1차 수집원)이 응답하지 않는다 — v8 폴백은 시간외를 못 만든다(시간외 시세 전면 결측)");
+        const _v7e = _v7.err ? " [" + String(_v7.err).slice(0, 40) + "]" : "";
+        if (_v7.dead) add("error", "시세", "야후 v7(미국 시세 1차 수집원)이 응답하지 않는다" + _v7e +
+          " — 종목당 1회 v8 폴백으로 버티는 중(50종목/1회 → 1종목/1회). 시간외는 v8 분봉으로 계속 채운다 — 다만 예산 압박으로 회전이 느려진다");
         else if (!_v7.fields) add("warn", "시세", "야후 v7 이 fields 지정을 거부해 기본 필드셋으로 받는 중 — 프리·애프터 값이 빠질 수 있다");
         else if (_v7h != null && _v7h > 6) add("warn", "시세", "v7 상태 기록이 " + _v7h.toFixed(1) + "h 전 — 가격 샤드가 안 돌고 있을 수 있다");
       }
@@ -44711,18 +44905,27 @@ async function _luxSelfCheck(DB) {
       const _qs = await DB.prepare(
         "SELECT v FROM state WHERE k >= 'quote:' AND k < 'quote;' LIMIT 800"
       ).all();
+      /* [V33.339] ★세션은 저장된 딱지가 아니라 시계로 정한다.★ 종전엔 quote 의 mstate 를
+         읽어 셌는데, 수집원이 죽으면 그 딱지가 며칠 전 값으로 굳는다 — 실측에서 "세션 표시
+         336종목 중 2종목" 이 나온 게 그것이다. 시간외 창이 아닐 때는 아예 묻지 않는다
+         (정규장에 "시간외 시세가 안 들어온다" 고 경고하는 건 소음이다). */
+      const _nowSess = usMarketStateNow();
       let _sess = 0, _have = 0;
-      for (const _r of ((_qs && _qs.results) || [])) {
-        let _q = null; try { _q = JSON.parse(_r.v); } catch (e) { continue; }
-        if (!_q || _q.market !== "us") continue;
-        if (_q.mstate === "PRE") { _sess++; if (typeof _q.pre === "number" && _q.pre > 0) _have++; }
-        else if (_q.mstate === "POST" || _q.mstate === "POSTPOST") { _sess++; if (typeof _q.post === "number" && _q.post > 0) _have++; }
+      if (_nowSess === "PRE" || _nowSess === "POST") {
+        for (const _r of ((_qs && _qs.results) || [])) {
+          let _q = null; try { _q = JSON.parse(_r.v); } catch (e) { continue; }
+          if (!_q || _q.market !== "us" || !(_q.price > 0)) continue;
+          _sess++;
+          if (_nowSess === "PRE") { if (typeof _q.pre === "number" && _q.pre > 0) _have++; }
+          else if (typeof _q.post === "number" && _q.post > 0) _have++;
+        }
       }
-      // 표본이 적으면 우연일 수 있다 — 20종목 이상이 같은 세션인데 10% 미만만 값이 있을 때만 말한다.
+      // 표본이 적으면 우연일 수 있다 — 20종목 이상인데 10% 미만만 값이 있을 때만 말한다.
       if (_sess >= 20 && _have < _sess * 0.1)
         add("warn", "시간외",
-          "미국 시간외 시세가 안 들어온다 — 세션 표시 " + _sess + "종목 중 값이 있는 건 " + _have +
-          "종목뿐. 화면 등락율이 정규장 종가에서 멈춘다(수집원 v7 의 preMarket/postMarket 필드 확인 필요)");
+          "미국 " + (_nowSess === "PRE" ? "장전" : "장후") + " 시세가 안 들어온다 — " + _sess +
+          "종목 중 값이 있는 건 " + _have + "종목뿐. 화면 등락율이 정규장 종가에서 멈춘다" +
+          "(v8 분봉 보강 회전 상한·예산 확인 필요)");
     } catch (e) {}
     // [V32.55] ★성능·처리량 지표★ — fetch/로딩 속도, 유입 데이터량, AI 스캔 속도·스캔량
     try {

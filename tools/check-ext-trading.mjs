@@ -152,10 +152,22 @@ const _num = (v, d) => { const n = Number(v); return Number.isFinite(n) ? n : d;
   if (/preMarketPrice", "preMarketChangePercent"/.test(S) && /postMarketPrice", "postMarketChangePercent"/.test(S))
     ok("v7 요청이 preMarket·postMarket 필드를 명시적으로 요구한다(안 물으면 안 준다 — V33.330 의 원인)");
   else bad("★v7 에 시간외 필드를 요구하지 않는다 — 기본 필드셋만 받는다★");
-  const blk = cut("let v7Dead = false, v7Fields = true, v7First = 0;", "// --- 2) v7 으로 채워지지 않은");
-  if (/v7Url\(slices\[0\], true\)/.test(blk) && /v7Fields = false;/.test(blk) && /v7Url\(slices\[0\], false\)/.test(blk))
-    ok("fields= 를 거부하는 환경이면 필드 없이 한 번 더 본 뒤에야 v7 이 죽었다고 판정한다");
+  const blk = cut("let v7Dead = false, v7Fields = true, v7First = 0, v7Err = null;", "// --- 2) v7 으로 채워지지 않은");
+  if (/v7Fields = v7Prefer;/.test(blk) && /v7Fields = !v7Prefer;/.test(blk) && /v7Url\(slices\[0\], v7Fields\)/.test(blk))
+    ok("한 쪽이 0건이면 ★반대쪽으로 한 번 더★ 본 뒤에야 v7 이 죽었다고 판정한다 — 있는 길을 스스로 닫지 않는다");
   else bad("fields= 가 거부되면 v7 을 통째로 포기한다 — 있는 길을 스스로 닫는다");
+  /* [V33.339] 지난번에 통한 방식을 기억한다 — fields 를 거부하는 환경에서 매 호출 버려지던
+     subrequest 하나를 없앤다(가격 샤드가 시장마다 분마다 돈다). 다만 ★죽은 판정은 기억하지 않는다★ —
+     야후가 되살아나며 필드셋을 복구할 수 있어야 하기 때문이다. */
+  if (/if \(_pv && _pv\.dead !== true && _pv\.fields === false\) v7Prefer = false;/.test(blk))
+    ok("지난번에 통한 방식부터 물어본다 — 거부 환경에서 매번 버리던 호출이 사라진다");
+  else bad("★매 호출이 반드시 fields= 부터 시도한다★ — 거부 환경에서는 언제나 한 번씩 버린다");
+  if (/v7Dead = true;\s*\n\s*v7Fields = true;/.test(blk))
+    ok("죽었다고 판정하면 기억을 되돌린다 — 사망 판정이 스스로를 굳히지 않는다");
+  else bad("★사망 판정이 기억으로 굳는다★ — 야후가 살아나도 좁은 길로만 물어본다");
+  if (/err: v7Err,/.test(S) && /function _v7ErrTag\(/.test(S))
+    ok("v7 실패 사유(HTTP 상태·타임아웃·예산)를 함께 남긴다 — 인증·요청형태·과부하는 처방이 다르다");
+  else bad("★v7 이 왜 죽었는지 기록이 없다★ — dead:true 만으로는 고칠 곳을 못 정한다");
   if (/setState\(opts\.DB, "yahoo_v7"/.test(S))
     ok("v7 상태를 기록한다 — 종전엔 v7Dead 를 계산만 하고 안 읽어 수집원이 죽어도 신호가 없었다");
   else bad("v7 생사 신호가 여전히 없다");

@@ -127,11 +127,17 @@ const params = (D, hidden) => {
   chk(/if \(\(_passAcc \|\| _passIC\) && !_icBlockWhy\) \{/.test(src),
     "정확도로 통과한 모델(_passAcc)에는 아무 변화가 없다 — 문을 좁힌 것은 IC 경로뿐이다",
     "정확도 경로까지 함께 막혔다 — 의도보다 넓게 조인 것이다");
-  // 읽는 쪽에도 같은 문턱이 있어야 한다(이미 저장된 trusted 를 6시간 동안 그대로 쓰지 않게)
-  const bc = src.slice(src.indexOf("async function _boostersCached(DB) {"));
-  chk(/_okEvidence/.test(bc.slice(0, 2500)) && /GBDT\.icPathAccFloor/.test(bc.slice(0, 2500)),
-    "읽는 쪽(_boostersCached)에도 같은 문턱이 있다 — 저장된 옛 판정이 그대로 투표하지 않는다",
+  /* 읽는 쪽에도 같은 문턱이 있어야 한다(이미 저장된 trusted 를 다음 업로드까지 그대로 쓰지 않게).
+     [V33.339] 그 문턱은 이제 _boosterAdmit 한 곳에 있고, 읽는 쪽은 그 함수를 부른다 —
+     조건을 두 번 적지 않는 것이 목적이므로, ★같은 곳을 부르는지★ 를 본다. */
+  const ba = src.slice(src.indexOf("function _boosterAdmit("), src.indexOf("async function _boostersCached(DB)"));
+  chk(/const okEv =/.test(ba) && /GBDT\.icPathAccFloor/.test(ba) && /GBDT\.trustFloor/.test(ba),
+    "판정 함수(_boosterAdmit)가 정확도·IC 두 문턱을 함께 본다",
     "승격 시점만 고쳤다 — 이미 trusted 로 저장된 모델이 다음 업로드까지 계속 투표한다");
+  const bc = src.slice(src.indexOf("async function _boostersCached(DB) {"));
+  chk(/_boosterAdmit\(T\[nm \+ "_trust"\]/.test(bc.slice(0, 2500)),
+    "읽는 쪽(_boostersCached)이 그 판정 함수를 그대로 부른다 — 문턱이 두 벌이 될 자리가 없다",
+    "★읽는 쪽이 조건을 다시 적는다★ — 한쪽만 고쳐지면 화면과 실물이 갈라진다");
 }
 
 // ── ④ 시장 거버너 — 끄지 않고 줄인다 ───────────────────────────────────────

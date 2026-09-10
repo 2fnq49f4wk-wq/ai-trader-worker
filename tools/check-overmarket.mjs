@@ -56,22 +56,37 @@ function cut(a, b) {
 // ── ② 저장 경로가 시간외 5필드를 ★안 흘린다★ ───────────────────────────
 {
   const src = cut("async function saveQuote(DB, symbol, market, q) {", "\n// === [V8] 헬퍼: N일 최고가");
+  /* [V33.339] 이어받기가 ★세션에 따라★ 달라졌으므로 세션 함수도 함께 떼어 온다.
+     시계는 시험용으로 갈아 끼운다 — 이 검사가 보려는 건 "지금 세션에서 무엇을 이어받는가" 이지
+     실행한 시각이 아니다(시각에 따라 결과가 바뀌면 그건 검사가 아니라 주사위다). */
+  const helpers = cut("function usMarketStateNow(now) {", "/* [V33.331] ★지금 이 시장이");
   let saved = null;
   const ctx = vm.createContext({
     setState: async (_db, _k, v) => { saved = v; },
     getState: async () => ({ mstate: "POST", pre: null, prePct: null, post: 191.5, postPct: -1.2 }),
     Date
   });
-  vm.runInContext(src + "\n globalThis.f = saveQuote;", ctx);
+  vm.runInContext("var __et = { day: 3, totalMin: 1000 };\n function getUSEt(){ return __et; }\n" +
+                  helpers + "\n" + src + "\n globalThis.f = saveQuote;", ctx);
 
+  ctx.__et = { day: 3, totalMin: 1000 };   // 화요일 16:40 ET — 장후
   await ctx.f({}, "AAPL", "us", { price: 200, prevClose: 202, dayPct: -1 });
   if (saved && saved.post === 191.5 && saved.postPct === -1.2 && saved.mstate === "POST")
-    ok("새 값이 없으면 기존 시간외 값을 이어받는다 — 이 경로가 프리·애프터 표시를 지우지 않는다");
+    ok("장후 중엔 새 값이 없으면 기존 시간외 값을 이어받는다 — 이 경로가 프리·애프터 표시를 지우지 않는다");
   else bad("★saveQuote 가 시간외 값을 다시 날린다★: " + JSON.stringify(saved));
 
+  /* ★V33.339 계약★ 정규장이 열렸는데 어제 장후 값이 그대로 이어지면, 화면은 정규장 종가를
+     '장후 시세' 라 말한다. 실측 스냅샷에서 336종목이 그 상태였다. */
+  ctx.__et = { day: 3, totalMin: 700 };    // 화요일 11:40 ET — 정규장
+  await ctx.f({}, "AAPL", "us", { price: 200, prevClose: 202, dayPct: -1 });
+  if (saved && saved.post === null && saved.postPct === null && saved.mstate === "REGULAR")
+    ok("정규장이 열리면 어제 장후 값은 이어받지 않는다 — 낡은 세션 딱지가 굳지 않는다");
+  else bad("★정규장인데 지난 장후 값이 살아남는다★: " + JSON.stringify(saved));
+
+  ctx.__et = { day: 3, totalMin: 500 };    // 화요일 08:20 ET — 장전
   await ctx.f({}, "AAPL", "us", { price: 200, prevClose: 202, dayPct: -1, mstate: "PRE", pre: 205, prePct: 1.5 });
-  if (saved && saved.pre === 205 && saved.prePct === 1.5 && saved.mstate === "PRE")
-    ok("새 값이 있으면 새 값이 이긴다 — 잔상이 굳지 않는다");
+  if (saved && saved.pre === 205 && saved.prePct === 1.5 && saved.mstate === "PRE" && saved.post === null)
+    ok("새 값이 있으면 새 값이 이긴다 — 잔상이 굳지 않고, 장전에는 어제 장후가 지워진다");
   else bad("새 시간외 값이 반영되지 않는다: " + JSON.stringify(saved));
 
   const caller = cut("      const intra = (symbol.endsWith(\".KS\")", "      ok++; processed++;");
@@ -82,9 +97,14 @@ function cut(a, b) {
 
 // ── ③ ★감지기★ — 세션은 PRE/POST 인데 값이 비면 자가진단이 말한다 ────────
 {
-  if (/미국 시간외 시세가 안 들어온다/.test(S) && /_sess >= 20 && _have < _sess \* 0\.1/.test(S))
-    ok("자가진단이 '세션은 PRE/POST 인데 값이 비었다' 를 표본 20종목·10% 기준으로 경고한다");
+  /* [V33.339] 문구가 "시간외" 에서 "장전/장후" 로 갈렸다 — 세션을 시계로 정하게 됐기 때문이다. */
+  if (/시세가 안 들어온다 — " \+ _sess \+/.test(S) && /_sess >= 20 && _have < _sess \* 0\.1/.test(S))
+    ok("자가진단이 '지금 장전/장후인데 값이 비었다' 를 표본 20종목·10% 기준으로 경고한다");
   else bad("★시간외 결측 감지기가 없다 — 수집원이 죽어도 화면만 조용히 틀린다★");
+  /* 그리고 그 세션 판정이 ★저장된 딱지★ 가 아니라 시계에서 와야 한다 — 딱지는 굳는다. */
+  if (/const _nowSess = usMarketStateNow\(\);/.test(S))
+    ok("감지기가 세션을 시계에서 얻는다 — 죽은 수집원이 남긴 딱지를 세지 않는다");
+  else bad("★감지기가 저장된 mstate 를 세어 판단한다★ — 낡은 딱지가 유령 경고를 만든다");
 
   // 감지기의 판정식을 그대로 떼어 돌린다 — 문턱이 뒤집히면 여기서 걸린다.
   const judge = (sess, have) => sess >= 20 && have < sess * 0.1;
