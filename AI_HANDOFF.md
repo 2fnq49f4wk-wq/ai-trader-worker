@@ -4,12 +4,20 @@
 
 ## Current handoff
 
-- Status: V33.329 deployment/verification complete; resumed against current main V33.345 on 2026-09-11 and all102 gates passed. Model-quality/version limitations remain as recorded below; do not force promotion.
+- Status: Codex V33.346 implementation; all103 local regression gates passed, deployment/retraining verification pending. Do not force model promotion.
 - Owner: Codex
 - Branch: main (direct main authorized; no PR)
-- Last commit: runtime e7d1b5a / V33.345; latest HEAD may be this documentation-only verification commit (resolve with git log -1).
+- Last commit: this V33.346 implementation commit (resolve with git log -1); base 549dde6 / runtime e7d1b5a V33.345.
 - Base: f8251c4 / V33.328, fetched and fast-forwarded before edits; no concurrent upstream changes at final fetch.
-- Scope: 사용자 요청 — 매매법/신규 모델 합류 문제 수정, 기존 틀 유지 디자인 개선.
+- Scope: 사용자 상태파일 기반 AI/피처 오류 수정 및 시간외 거래·정보 정확성 점검. UI 변경 없음.
+
+### Codex V33.346 — 2026-09-11
+
+- See `docs/CODEX-AI-AUDIT-V33.346.md` for evidence and limitations.
+- Fixed global/per-market embargo weight misalignment (reproduced 3900 rows vs 4000 weights), all-required-model recovery, KR real trade timestamp provenance/NXT execution boundaries, Yahoo v7 active-session timestamps and cached timestamp inheritance.
+- Preserved existing model/risk gates, architecture, bindings, schedules and orders. Weak holdout candidates remain excluded; no profitability claim.
+- Added real-function regression and workflow gate. Existing source-anchor harnesses updated without dropping their assertions. Main deploy/trainer deploy and one corrected training run still require verification after push.
+- Local verification: all103 `tools/check-*.mjs` passed with PYTHONUTF8=1/NODE_NO_WARNINGS=1; new provenance test and anchor test re-run after final edits; `git diff --check` clean. Latest fetch: HEAD/origin main divergence 0/0 before commit.
 
 ### Codex V33.329 — 2026-09-09
 

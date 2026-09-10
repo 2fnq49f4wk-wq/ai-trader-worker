@@ -1531,7 +1531,8 @@ def _train_per_market(BASE, KEY, HDR, MKT, X, Y, TS, PNL, featver, D, UNIQ=None)
             loc = np.array([max(1e-6, np.median(Ps[max(0, i - k):i + 1])) for i in range(n)])
             W = 1.0 + np.clip(Ps / loc, 0.0, 4.0)
             W = W / W.mean()
-            Wtr = W[:-nval]
+            # Codex V33.346: weights must follow the same embargo indices as X/Y.
+            Wtr = W[_tri]
 
         print(f"   ── {mk.upper()} 전용 모델 (표본 {n}, 검증 {nval}) ──")
         # ★A/B★ 단일 LGBM 과 DoubleEnsemble 을 나란히 학습해 이 시장의 홀드아웃에서 이긴 쪽만 쓴다.
@@ -1795,7 +1796,8 @@ def _train_and_upload_boosters(BASE, KEY, HDR, X, Y, TS, featver, D, PNL=None, U
             raw = np.clip(raw, 0.0, 4.0)                    # 이상치 상한
             W = 1.0 + raw                                   # [1.0, 5.0]
             W = W / W.mean()                                # 평균 1로 정규화(학습률 영향 제거)
-            Wtr, Wva = W[:-nval], W[-nval:]
+            # Codex V33.346: old slices retained embargo rows and broke all three libraries.
+            Wtr, Wva = W[_tri], W[_vai]
             print(f"   크기가중 적용: 평균 {W.mean():.2f} 최대 {W.max():.2f} (표본 {N})")
     except Exception as e:
         print("   크기가중 생략:", e); Wtr = None; Wva = None

@@ -42,8 +42,8 @@ const cut = (a, b) => {
     ok("v7 경로가 그 시각을 ms 로 맞춰 싣는다(야후는 초 단위 epoch 로 준다)");
   else bad("★v7 경로가 시간외 체결 시각을 버린다★");
   const kr = cut("function applyKrOverMarket(o, d) {", "\n// [PRE/POST 표시]");
-  if (/o\.extTs = Date\.now\(\);/.test(kr))
-    ok("KR 네이버 경로 — 폴링은 호출 시점 값이므로 그 시각을 적는다(시장마다 다른 규칙을 두지 않는다)");
+  if (/Date\.parse\(info\.localTradedAt\)/.test(kr) && !/o\.extTs = Date\.now\(\);/.test(kr))
+    ok("KR 네이버 경로 — 조회 시각이 아닌 원본 체결 시각을 사용한다");
   else bad("★KR 경로만 시각을 안 싣는다★ — 신선도 규칙이 시장마다 갈린다");
   /* 폴백(일봉 chart) 경로가 ★추측★ 으로 시간외를 만들지 않는지도 본다. */
   const vc = cut("async function fetchQuoteViaChart(symbol) {", "async function fetchQuoteViaChartFallback");

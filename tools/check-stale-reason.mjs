@@ -34,7 +34,7 @@ const fn = S.slice(S.indexOf("async function _luxAutoRetrainModal"),
 
 // ── ② '정상 — 트리거 불필요' 가지도 사유를 지우는가 (여기가 실제로 걸린 곳) ──
 {
-  const i = fn.indexOf("anyExt && freshestAge <= 14");
+  const i = fn.indexOf("anyExt && !missingExt && !staleFV && oldestAge <= 14");
   chk(i >= 0, "'외부 학습 신선' 조기반환 가지가 있다", "조기반환 가지를 못 찾았다 — 이 검사의 전제가 깨졌다");
   const line = fn.slice(i, fn.indexOf("\n", fn.indexOf("return;", i)));
   chk(/delete meta\.lastSkip/.test(line),

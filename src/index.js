@@ -2981,7 +2981,7 @@ async function applySignalTypeWeights(DB, cfg) {
    화면·자가진단이 계속 "V33.272" 를 보고했다(운영 스냅샷이 그대로 그랬다). 배포는 됐는데
    ★배포됐다는 사실만 거짓말★ 을 하고 있었으니, "내 고침이 올라간 건가" 를 화면으로 확인할
    방법이 없었다. tools/check-build-ver.mjs 가 이제 소스에 적힌 최신 버전과 이 값을 대조한다. */
-const _BUILD_VER = "V33.345";
+const _BUILD_VER = "V33.346";
 
 // ═══ [V33.171] 평가 순서 계획 — ★승격과 순환을 교차해 굶주림을 구조적으로 없앤다★ ═══
 //   V33.50 의 형태트리거는 "급한 몇 종목을 앞으로 당긴다"는 의도였으나, 실제 운영로그에서는
@@ -5447,6 +5447,7 @@ function extTradePriceEx(q, session, cfg) {
        계속 보여 준다. 화면에 마지막 체결이 남는 것과 그 값으로 돈을 거는 것은 다른 문제다. */
   const _ets = _num(q.extTs, 0);
   if (!(_ets > 0)) return { px: null, why: "nots" };                            // 시각 미상 — 거래 금지
+  if (_ets > Date.now() + 60000) return { px: null, why: "nots" }; // Codex: future timestamps cannot prove freshness.
   if ((Date.now() - _ets) > _num(et.freshMs, 420000)) return { px: null, why: "stale" };
   return { px: px, why: null };
 }
@@ -7433,19 +7434,20 @@ function applyKrOverMarket(o, d) {
   // [PRE/POST FIX] 세션 판정을 네이버 tradingSessionType(불안정·직전세션 잔상)에 의존하지 않고
   //   KST 시각으로 확정한다. 08:00~09:00=장전(PRE), 15:30~20:00=장후(POST).
   const kst = getKST(new Date());
-  const inPre  = kst.totalMin >= 480 && kst.totalMin < 540;
-  const inPost = kst.totalMin >= 930 && kst.totalMin < 1200;
-  // 두 시간외 정보 중, 현재 창에 맞는 세션을 우선 선택(없으면 가용한 것).
+  const weekday = kst.day >= 1 && kst.day <= 5;
+  const inPre  = weekday && kst.totalMin >= 480 && kst.totalMin < 540;
+  const inPost = weekday && kst.totalMin >= 930 && kst.totalMin < 1200;
+  if (!inPre && !inPost) { o.mstate = "CLOSED"; return o; }
+  // 두 시간외 정보 중 현재 창에 맞는 세션의 최신 체결을 선택한다.
   const krx = d.overMarketPriceInfo || null;
   const nxt = d.nxtOverMarketPriceInfo || null;
   const wantSess = inPre ? "BEFORE_MARKET" : inPost ? "AFTER_MARKET" : null;
   function pick() {
     const cands = [krx, nxt].filter(Boolean);
-    if (wantSess) {
-      const m = cands.find(function(x){ return (x.tradingSessionType || "") === wantSess && num(x.overPrice) > 0; });
-      if (m) return m;
-    }
-    return cands.find(function(x){ return num(x.overPrice) > 0; }) || null;
+    // Codex V33.346: current Naver uses PRE_MARKET; never reuse the opposite session.
+    const aliases = inPre ? [wantSess, "PRE_MARKET"] : [wantSess, "POST_MARKET"];
+    return cands.filter(function(x){return aliases.includes(x.tradingSessionType) && num(x.overPrice) > 0;})
+      .sort(function(a,b){return (Date.parse(b.localTradedAt) || 0) - (Date.parse(a.localTradedAt) || 0);})[0] || null;
   }
   const info = pick();
   if (!info) { o.mstate = (inPre ? "PRE" : inPost ? "POST" : "CLOSED"); return o; }
@@ -7464,11 +7466,15 @@ function applyKrOverMarket(o, d) {
   } else {
     o.mstate = "POST"; o.post = op; o.postPct = pct;
   }
-  /* [V33.340] 네이버 realtime 폴링은 ★호출 시점의 값★ 이다(과거 봉을 훑지 않는다).
-     그래서 지금 시각을 그대로 체결 시각으로 적는다 — 미국처럼 '몇 시간 전 마지막 체결'
-     문제가 생기지 않는 경로지만, 신선도 가드가 시장마다 다른 규칙을 갖지 않으려면
-     ★모든 시간외 값이 자기 시각을 들고 다녀야★ 한다. */
-  o.extTs = Date.now();
+  // Codex V33.346: poll time is not trade time. Unknown/closed/halted data stays display-only.
+  const tradeTime = typeof info.localTradedAt === "string" && /(?:Z|[+-]\d\d:\d\d)$/.test(info.localTradedAt)
+    ? Date.parse(info.localTradedAt) : NaN;
+  // Codex: NXT executions stop at 08:50 and resume at 15:40 (15:30 is order collection).
+  const venueClosed = info === nxt && ((inPre && kst.totalMin >= 530) || (inPost && kst.totalMin < 940));
+  const blocked = venueClosed || (info.overMarketStatus && info.overMarketStatus !== "OPEN") ||
+    (info.tradeStopType && info.tradeStopType.code !== "1") ||
+    (info.tradableStatus && info.tradableStatus !== "tradable");
+  o.extTs = !blocked && Number.isFinite(tradeTime) && tradeTime > 0 ? tradeTime : 0;
   return o;
 }
 
@@ -7578,13 +7584,13 @@ async function fetchBatchQuotes(symbols, opts) {
           o.prePct = (typeof row.preMarketChangePercent === "number") ? row.preMarketChangePercent
                    : (prevClose ? ((row.preMarketPrice - prevClose) / prevClose) * 100 : 0);
           // [V33.340] 야후는 초 단위 epoch 로 준다 — ms 로 맞춘다.
-          if (typeof row.preMarketTime === "number" && row.preMarketTime > 0) o.extTs = row.preMarketTime * 1000;
+          if (typeof row.preMarketTime === "number" && row.preMarketTime > 0 && o.mstate === "PRE") o.extTs = row.preMarketTime * 1000;
         }
         if (typeof row.postMarketPrice === "number" && row.postMarketPrice > 0) {
           o.post = row.postMarketPrice;
           o.postPct = (typeof row.postMarketChangePercent === "number") ? row.postMarketChangePercent
                     : (price ? ((row.postMarketPrice - price) / price) * 100 : 0);
-          if (typeof row.postMarketTime === "number" && row.postMarketTime > 0) o.extTs = row.postMarketTime * 1000;
+          if (typeof row.postMarketTime === "number" && row.postMarketTime > 0 && o.mstate !== "PRE") o.extTs = row.postMarketTime * 1000;
         }
         out[sym] = o; got++;
       }
@@ -12075,6 +12081,8 @@ async function saveQuote(DB, symbol, market, q) {
   try { _prev = await getState(DB, "quote:" + symbol, null); } catch (e) {}
   const _keep = function (k) {
     if (q[k] !== undefined && q[k] !== null) return q[k];
+    // Codex V33.346: timestamp provenance cannot be inherited by a different incoming price.
+    if (k === "extTs" && ((typeof q.pre === "number" && q.pre > 0) || (typeof q.post === "number" && q.post > 0))) return 0;
     return (_prev && _prev[k] !== undefined) ? _prev[k] : null;
   };
   /* [V33.339] 이어받기는 ★아직 못 받은 값★ 을 지키는 장치이지 ★이미 끝난 세션의 값★ 을
@@ -16685,7 +16693,8 @@ async function refreshPriceShard(env, market, shard) {
       const _prePct = (typeof r.prePct === "number") ? r.prePct : null;
       const _post = (typeof r.post === "number" && r.post > 0) ? r.post : null;
       const _postPct = (typeof r.postPct === "number") ? r.postPct : null;
-      const _extTs = (typeof r.extTs === "number" && r.extTs > 0) ? r.extTs : null;
+      // Codex: a new price with unknown time must not inherit an older price's fresh time.
+      const _extTs = (typeof r.extTs === "number" && r.extTs > 0) ? r.extTs : ((_pre != null || _post != null) ? 0 : null);
       // [V18] 신규 quote 기본값 (해당 키가 없을 때 INSERT)
       /* [V33.339] ★지난 세션 값은 COALESCE 로 지켜서는 안 된다.★ COALESCE 는 "새 값이 없으면
          옛 값" 인데, 세션이 바뀌면 옛 값은 '아직 못 받은 값' 이 아니라 ★이미 끝난 값★ 이다.
@@ -41165,6 +41174,7 @@ async function aiSelfCheck(DB, env) {
            그래서 화면이 "DNN valAcc null" 을 몇 달째 보여줬고, '학습이 안 됐나' 로 읽히게
            만들었다. 실제로는 학습은 됐고 성적이 나빴다 — 전혀 다른 처방이 필요한 상태다. */
         R.externalTrain[k] = { trained: !!o, external: ext, ageH: ah,
+          featVer: o ? _num(o.featVer, null) : null, wantVer: LUXML.featVer,
           valAcc: (o && (o.valAcc != null ? o.valAcc : (o.gbdtAcc != null ? o.gbdtAcc : o.dnnAcc))) || null };
         if (ext) _extN++;
         if (!o) _extStale.push(k + "(미학습)"); else if (ah != null && ah > 24) _extStale.push(k + "(" + ah + "h)");
@@ -45348,7 +45358,7 @@ async function _luxSelfCheck(DB) {
           if (fr.ageH > 14) add(fr.ageH > 26 ? "error" : "warn", "Modal학습", "최근 Modal 학습 수신 " + fr.ageH.toFixed(0) + "h 전 — 6시간 주기 대비 지연(트레이너 다운/시크릿 만료/크론 미실행 의심)");
         }
         // 자동 재트리거 상태
-        try { const rt = S["modal_retrain_auto"] || null; if (rt) { if (rt.ts && rt.triggered) { perf.modal.autoRetrain = { triggeredAgoH: +((nowT - rt.ts) / 3600000).toFixed(1), ok: true }; add("info", "Modal학습", "지연 감지로 자동 재학습 트리거됨(" + ((nowT - rt.ts) / 3600000).toFixed(1) + "h 전) — 배포+학습 진행 중"); } else if (rt.lastSkip === "no_github_token") { perf.modal.autoRetrain = { disabled: "no_github_token" }; add("info", "Modal학습", "자동 재트리거 비활성(GITHUB_TOKEN 미설정) — 수동 재배포만 가능"); } } } catch (e) {}
+        try { const rt = S["modal_retrain_auto"] || null; if (rt) { if (rt.ts && rt.triggered) { perf.modal.autoRetrain = { triggeredAgoH: +((nowT - rt.ts) / 3600000).toFixed(1), ok: true }; add("info", "Modal학습", "자동 재학습 요청 접수(" + ((nowT - rt.ts) / 3600000).toFixed(1) + "h 전) — 실행·완료 여부는 모델별 수신 시각으로 확인"); } else if (rt.lastSkip === "no_github_token") { perf.modal.autoRetrain = { disabled: "no_github_token" }; add("info", "Modal학습", "자동 재트리거 비활성(GITHUB_TOKEN 미설정) — 수동 재배포만 가능"); } } } catch (e) {}
       } catch (e) {}
       // 성능 경고
       if (_sLoadMs != null && _sLoadMs > 800) add("warn", "속도", "상태 로딩 " + _sLoadMs + "ms — DB 응답 지연(일시적 부하 가능)");
@@ -45457,7 +45467,7 @@ async function _luxAutoRetrainModal(env) {
     if (!_fvNew && meta.ts && (now - meta.ts) < 8 * 3600000) { try { await setState(DB, "modal_retrain_auto", meta); } catch (e) {} return; }   // 트리거 쿨다운 8h
     // 외부(Modal) 수신 신선도
     const S = await getStates(DB, ["mind_model", "dnn_trust", "gbdt_trust", "xgb_trust", "lgb_trust", "cat_trust"]);
-    let freshestAge = Infinity, anyExt = false;
+    let freshestAge = Infinity, oldestAge = 0, anyExt = false, missingExt = 0;
     /* [V33.245] ★신선하다 ≠ 쓸 수 있다.★ 종전엔 trainedAt 만 봤다. featVer 를 올린 직후엔
        외부 모델 전부가 "몇 시간 전 학습" 이라 freshestAge ≤ 14h 로 걸려 '정상 — 트리거 불필요'
        가지로 빠졌다. 정작 그 모델들은 낡은 판이라 위원회에 한 명도 못 들어간다 —
@@ -45467,14 +45477,17 @@ async function _luxAutoRetrainModal(env) {
        프로덕션 레코드엔 새 필드가 없다). 헛트리거 비용은 8h 쿨다운 안의 Modal 1회뿐이다. */
     const _wantFV = (typeof LUXML !== "undefined") ? LUXML.featVer : null;
     let staleFV = 0;
-    for (const k of Object.keys(S)) {
+    for (const k of ["mind_model", "dnn_trust", "gbdt_trust", "xgb_trust", "lgb_trust", "cat_trust"]) {
       const o = S[k];
-      if (!(o && o.source === "external" && o.trainedAt)) continue;
+      if (!(o && o.source === "external" && o.trainedAt)) { missingExt++; continue; }
       if (_wantFV != null && o.featVer !== _wantFV) { staleFV++; continue; }
       anyExt = true; const a = (now - o.trainedAt) / 3600000; if (a < freshestAge) freshestAge = a;
+      if (a > oldestAge) oldestAge = a;
     }
     // 정상 — 트리거 불필요. [V33.235] 건너뛴 사유도 함께 지운다(지금은 아무것도 못 하고 있는 게 아니다).
-    if (anyExt && freshestAge <= 14) { meta.lastOk = now; meta.freshestAgeH = +freshestAge.toFixed(1); delete meta.lastSkip; try { await setState(DB, "modal_retrain_auto", meta); } catch (e) {} return; }
+    // Codex V33.346: one fresh model cannot conceal missing, stale or incompatible peers.
+    meta.oldestAgeH = +oldestAge.toFixed(1); meta.missingExt = missingExt; meta.staleFeatVer = staleFV;
+    if (anyExt && !missingExt && !staleFV && oldestAge <= 14) { meta.lastOk = now; meta.freshestAgeH = +freshestAge.toFixed(1); delete meta.lastSkip; try { await setState(DB, "modal_retrain_auto", meta); } catch (e) {} return; }
     // 학습표본 충분 여부(부족하면 재학습해도 승격 안 됨 → 스킵)
     let nSamp = 0; try { const r = await DB.prepare("SELECT COUNT(*) c FROM ml_samples WHERE featver=?").bind((typeof LUXML !== "undefined") ? LUXML.featVer : null).first(); nSamp = (r && r.c) || 0; } catch (e) {}
     if (nSamp < 200) { meta.lastSkip = "insufficient_samples:" + nSamp; try { await setState(DB, "modal_retrain_auto", meta); } catch (e) {} return; }
