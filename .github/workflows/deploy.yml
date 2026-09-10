@@ -175,6 +175,10 @@ jobs:
       #   상하한가(고가=저가)에서 0으로 나누지 않는가, 그리고 새 지표가 기존 판단을 덮어쓰지 않는가.
       - name: Indicator contract check (DMA / Stochastic slow)
         run: node tools/check-indicators.mjs
+      # [V33.333] 종목상세 — 확대하면 y축이 캔들을 따라오는가(먼 MA 가 축을 끌지 않는가),
+      #   넘치는 보조선을 지우지 않고 잘라 그리는가, 새 지표가 상세에 붙는가.
+      - name: Detail chart / indicator display check
+        run: node tools/check-detail-chart.mjs
       # [V33.140] 전진검증 누적 원장 — 창이 매일 밤 리셋돼 ★구조적으로★ 못 채워지던 것을 고쳤다.
       #   (memo: 총표본 177,868 인데 전진 357 = 어제 유입과 정확히 일치)
       #   교착 해소와 통계 정직성을 함께 본다: 잡음 통과율이 문턱의 명목값과 맞는지,
