@@ -8,8 +8,8 @@
      인데, 지금까지 화면에서 그걸 알 방법이 전혀 없었다(카카오톡 인앱 브라우저는 특히 강하게 캐시한다).
      서버가 내려주는 build 와 이 값을 비교해 다르면 배너로 알린다.
      ※ src/index.js 의 _BUILD_VER 와 항상 같아야 한다 — check-html-js 가 강제한다. -->
-<meta name="lux-build" content="V33.335">
-<script src="/neural-observatory.js?v=33.335"></script>
+<meta name="lux-build" content="V33.336">
+<script src="/neural-observatory.js?v=33.336"></script>
 <title>LUX-ENGINE V10</title>
 <!-- ══ [V33.156] 설치형 앱(PWA) — 폰·PC 에서 홈화면/독에 담아 앱처럼 연다 ══
      · manifest  : 이름·아이콘·standalone 표시(주소창 없이 앱처럼)
@@ -4256,6 +4256,8 @@ html[data-theme="light"] .m-brainbar button.active{color:#0b4f9e;background:rgba
               <button type="button" class="detail-ind-btn active" data-ind="vol">VOL</button>
               <button type="button" class="detail-ind-btn active" data-ind="rsi">RSI</button>
               <button type="button" class="detail-ind-btn" data-ind="macd">MACD</button>
+              <button type="button" class="detail-ind-btn" data-ind="dma" title="Displaced MA(20, +5봉) — 이동평균선을 5봉 앞으로 민 선(점선)">DMA</button>
+              <button type="button" class="detail-ind-btn" data-ind="stoch" title="스토캐스틱 슬로우(14,3,3) — %K·%D, 80↑ 과매수 / 20↓ 과매도">STOCH</button>
             </div>
             <div class="detail-zoom" id="detailZoom">
               <button type="button" class="detail-zoom-btn" data-z="out" title="축소">－</button>
@@ -8240,7 +8242,7 @@ html[data-theme="light"] .m-brainbar button.active{color:#0b4f9e;background:rgba
   // [V85] 종목 상세 — 캔들차트(분/일/주봉) + 등락률 + 엔진 수신 데이터
   // ════════════════════════════════════════════════════════════════════
   var detailState = { symbol: null, market: 'us', interval: '1d', selIdx: null,
-    ind: { ma: true, boll: true, vol: true, rsi: true, macd: false }, lastCandles: null,
+    ind: { ma: true, boll: true, vol: true, rsi: true, macd: false, dma: false, stoch: false }, lastCandles: null,
     view: { count: 150, off: 0 } };   // [V90] 줌(count)·팬(off)
 
   // ── [V86] 프로 차트 지표 계산 ──
@@ -8294,6 +8296,42 @@ html[data-theme="light"] .m-brainbar button.active{color:#0b4f9e;background:rgba
     for (i = 0; i < v.length; i++) if (macd[i] != null && sig[i] != null) hist[i] = macd[i] - sig[i];
     return { macd: macd, signal: sig, hist: hist };
   }
+  /* [V33.336] Displaced MA — 이동평균선을 sh 봉 ★앞(오른쪽)★ 으로 민 선.
+     out[i] = SMA(p) 를 봉 (i − sh) 에서 계산한 값. 앞으로만 미므로 미래를 보지 않는다.
+     서버의 getDisplacedMA 와 같은 정의다 — 화면과 엔진이 다른 선을 그리면 안 된다. */
+  function _dispMaArr(v, p, sh) {
+    var base = _smaArr(v, p), out = new Array(v.length).fill(null);
+    for (var i = sh; i < v.length; i++) out[i] = base[i - sh];
+    return out;
+  }
+  // 앞쪽 null 을 건너뛰고 이동평균 — 스토캐스틱 평활(슬로우)에 쓴다.
+  function _smaNullArr(v, p) {
+    var out = new Array(v.length).fill(null), buf = [], i;
+    for (i = 0; i < v.length; i++) {
+      if (v[i] == null) { buf.length = 0; continue; }
+      buf.push(v[i]); if (buf.length > p) buf.shift();
+      if (buf.length === p) { var s2 = 0; for (var j = 0; j < p; j++) s2 += buf[j]; out[i] = s2 / p; }
+    }
+    return out;
+  }
+  /* [V33.336] 스토캐스틱 슬로우 — Fast %K 를 평활한 것이 '스무딩'이다.
+     서버 getStochSlow 와 같은 정의(14,3,3). 고가=저가 구간은 0으로 나누지 않고 중립 50. */
+  function _stochSlowArr(hi, lo, cl, n, kS, dS) {
+    var L = cl.length, fast = new Array(L).fill(null), i, j;
+    for (i = n - 1; i < L; i++) {
+      var h = -Infinity, l = Infinity;
+      for (j = i - n + 1; j <= i; j++) {
+        var hh = (hi && typeof hi[j] === 'number') ? hi[j] : cl[j];
+        var ll = (lo && typeof lo[j] === 'number') ? lo[j] : cl[j];
+        if (hh > h) h = hh; if (ll < l) l = ll;
+      }
+      fast[i] = (h > l) ? ((cl[i] - l) / (h - l)) * 100 : 50;
+    }
+    var k = _smaNullArr(fast, kS);
+    return { k: k, d: _smaNullArr(k, dS) };
+  }
+  var PC_DMA = { p: 20, sh: 5, c: '#f59e0b' };
+  var PC_STO = { n: 14, k: 3, d: 3 };
   var PC_MA = [{ p: 5, c: '#e8b339' }, { p: 10, c: '#22d3ee' }, { p: 20, c: '#c07cf5' }, { p: 60, c: '#9aa7bd' }];
   var PC_UP = '#26a69a', PC_DN = '#ef5350';
 
@@ -8314,16 +8352,22 @@ html[data-theme="light"] .m-brainbar button.active{color:#0b4f9e;background:rgba
     //   해법: 캔들 데이터 서명(길이+마지막봉+MACD플래그)으로 지표 배열을 메모이즈 → 데이터가
     //   바뀔 때(신규 로드/폴링)만 재계산, 줌·팬은 캐시 재사용(프레임당 O(n) 슬라이스만).
     var _last = cs.length ? cs[cs.length - 1] : null;
-    var _sig = cs.length + '|' + (_last ? _last.c : '') + '|' + (_last ? (_last.t || _last.d || '') : '') + '|' + (ind.macd ? 1 : 0);
-    var maArr, boll, rsi, macd;
+    var _sig = cs.length + '|' + (_last ? _last.c : '') + '|' + (_last ? (_last.t || _last.d || '') : '')
+             + '|' + (ind.macd ? 1 : 0) + '|' + (ind.stoch ? 1 : 0) + '|' + (ind.dma ? 1 : 0);
+    var maArr, boll, rsi, macd, dmaA, stoA;
     if (_pcIndCache && _pcIndCache.sig === _sig) {
       maArr = _pcIndCache.maArr; boll = _pcIndCache.boll; rsi = _pcIndCache.rsi; macd = _pcIndCache.macd;
+      dmaA = _pcIndCache.dmaA; stoA = _pcIndCache.stoA;
     } else {
       maArr = PC_MA.map(function(m) { return _smaArr(fullC, m.p); });
       boll = _bollArr(fullC, 20, 2);
       rsi = _rsiArr(fullC, 14);
       macd = ind.macd ? _macdArr(fullC) : null;
-      _pcIndCache = { sig: _sig, maArr: maArr, boll: boll, rsi: rsi, macd: macd };
+      // [V33.336] 켰을 때만 계산한다 — 끈 지표를 매 프레임 계산하면 드래그가 버벅인다.
+      dmaA = ind.dma ? _dispMaArr(fullC, PC_DMA.p, PC_DMA.sh) : null;
+      stoA = ind.stoch ? _stochSlowArr(cs.map(function(c){ return c.h; }), cs.map(function(c){ return c.l; }),
+                                       fullC, PC_STO.n, PC_STO.k, PC_STO.d) : null;
+      _pcIndCache = { sig: _sig, maArr: maArr, boll: boll, rsi: rsi, macd: macd, dmaA: dmaA, stoA: stoA };
     }
     var end = Math.max(2, cs.length - off);
     var start = Math.max(0, end - N);
@@ -8332,12 +8376,15 @@ html[data-theme="light"] .m-brainbar button.active{color:#0b4f9e;background:rgba
     if (n < 2) return '<div class="detail-empty">차트 데이터 부족</div>';
     maArr = maArr.map(sl);
     var bU = sl(boll.up), bM = sl(boll.mid), bL = sl(boll.lo), rsiV = sl(rsi);
+    var dmaV = dmaA ? sl(dmaA) : null;
+    var stoK = stoA ? sl(stoA.k) : null, stoD = stoA ? sl(stoA.d) : null;
     var mH, mM, mS; if (macd) { mH = sl(macd.hist); mM = sl(macd.macd); mS = sl(macd.signal); }
 
     var W = 820, padL = 4, padR = 54, legendH = 15, priceH = 236, gap = 7, axisH = 15;
     var panels = [];
     if (ind.vol) panels.push('vol');
     if (ind.rsi) panels.push('rsi');
+    if (ind.stoch) panels.push('stoch');
     if (ind.macd) panels.push('macd');
     var subH = 48;
     var H = legendH + priceH + panels.length * (gap + subH) + axisH;
@@ -8363,6 +8410,7 @@ html[data-theme="light"] .m-brainbar button.active{color:#0b4f9e;background:rgba
     }
     if (ind.boll) for (i = 0; i < n; i++) { _grow(bU[i]); _grow(bL[i]); }
     if (ind.ma) for (var k = 0; k < maArr.length; k++) for (i = 0; i < n; i++) _grow(maArr[k][i]);
+    if (dmaV) for (i = 0; i < n; i++) _grow(dmaV[i]);
     var pspan = Math.max(1e-9, pmax - pmin); pmin -= pspan * 0.04; pmax += pspan * 0.06; pspan = pmax - pmin;
     // 구간 첫 봉 종가 — 우측 축에 "여기서 몇 % 움직였나"를 함께 적기 위한 기준.
     var baseC = null;
@@ -8447,11 +8495,18 @@ html[data-theme="light"] .m-brainbar button.active{color:#0b4f9e;background:rgba
       for (var m = 0; m < maArr.length; m++) _mp += poly(maArr[m], PY, PC_MA[m].c, 1.1);
       if (_mp) svg += '<g clip-path="url(#' + _clipId + ')">' + _mp + '</g>';
     }
+    /* [V33.336] Displaced MA — 이평선을 앞으로 민 선이라 ★일반 MA 와 구분되게★ 점선으로 그린다.
+       같은 색·같은 실선이면 사용자가 "MA 가 두 개 있네"로 읽고 밀어놓은 선인 줄 모른다. */
+    if (dmaV) svg += '<g clip-path="url(#' + _clipId + ')">'
+      + poly(dmaV, PY, PC_DMA.c, 1.3, '5 3') + '</g>';
 
     // 범례 (마지막 값)
     var lg = '', lx = padL + 2;
     function lastVal(a) { for (var j = a.length - 1; j >= 0; j--) if (a[j] != null) return a[j]; return null; }
     if (ind.ma) PC_MA.forEach(function(mm, idx) { var lv = lastVal(maArr[idx]); if (lv != null) { lg += '<tspan fill="' + mm.c + '"> MA' + mm.p + ':' + fmtP(lv) + '</tspan>'; } });
+    // [V33.336] 밀어놓은 선임을 범례에서도 못박는다 — '+5' 가 없으면 그냥 MA20 으로 읽힌다.
+    if (dmaV) { var _dv = lastVal(dmaV); if (_dv != null) lg += '<tspan fill="' + PC_DMA.c + '"> DMA'
+      + PC_DMA.p + '+' + PC_DMA.sh + ':' + fmtP(_dv) + '</tspan>'; }
     if (ind.boll) { var bu = lastVal(bU), bl = lastVal(bL); if (bu != null) lg += '<tspan fill="rgba(150,167,189,.9)">  BOLL(20,2) U:' + fmtP(bu) + ' L:' + fmtP(bl) + '</tspan>'; }
     svg += '<text class="pc-legend" x="' + lx + '" y="11">' + lg + '</text>';
 
@@ -8480,6 +8535,27 @@ html[data-theme="light"] .m-brainbar button.active{color:#0b4f9e;background:rgba
         svg += '<text class="pc-axis" x="' + (W - padR + 3) + '" y="' + (RY(30) + 3).toFixed(1) + '">30</text>';
         var rl = lastVal(rsiV);
         svg += '<text class="pc-legend" x="' + lx + '" y="' + (top + 10).toFixed(1) + '" fill="#e8b339">RSI(14) ' + (rl != null ? rl.toFixed(1) : '—') + '</text>';
+      } else if (type === 'stoch') {
+        /* [V33.336] 스토캐스틱 슬로우 — 20/50/80 밴드 위에 %K(실선)·%D(점선).
+           과매수(80↑)·과매도(20↓) 구간을 옅게 칠해 눈으로 바로 읽히게 한다. */
+        function SY(v) { return top + (1 - v / 100) * h; }
+        svg += '<rect x="' + padL + '" y="' + SY(100).toFixed(1) + '" width="' + (W - padR - padL)
+            + '" height="' + Math.max(0, SY(80) - SY(100)).toFixed(1) + '" fill="' + PC_DN + '" opacity="0.07"/>';
+        svg += '<rect x="' + padL + '" y="' + SY(20).toFixed(1) + '" width="' + (W - padR - padL)
+            + '" height="' + Math.max(0, SY(0) - SY(20)).toFixed(1) + '" fill="' + PC_UP + '" opacity="0.07"/>';
+        [20, 50, 80].forEach(function(lvl) {
+          svg += '<line class="pc-grid" x1="' + padL + '" y1="' + SY(lvl).toFixed(1) + '" x2="' + (W - padR)
+              + '" y2="' + SY(lvl).toFixed(1) + '" stroke-dasharray="' + (lvl === 50 ? '1 3' : '3 2') + '"/>';
+        });
+        svg += poly(stoK, SY, '#22d3ee', 1.2);
+        svg += poly(stoD, SY, '#f59e0b', 1, '4 2');
+        svg += '<text class="pc-axis" x="' + (W - padR + 3) + '" y="' + (SY(80) + 3).toFixed(1) + '">80</text>';
+        svg += '<text class="pc-axis" x="' + (W - padR + 3) + '" y="' + (SY(20) + 3).toFixed(1) + '">20</text>';
+        var _sk = lastVal(stoK), _sd = lastVal(stoD);
+        svg += '<text class="pc-legend" x="' + lx + '" y="' + (top + 10).toFixed(1) + '" fill="#9aa7bd">'
+            + 'STOCH(' + PC_STO.n + ',' + PC_STO.k + ',' + PC_STO.d + ') '
+            + '<tspan fill="#22d3ee">%K ' + (_sk != null ? _sk.toFixed(1) : '—') + '</tspan>'
+            + '<tspan fill="#f59e0b"> %D ' + (_sd != null ? _sd.toFixed(1) : '—') + '</tspan></text>';
       } else if (type === 'macd') {
         var mmax = 1e-9;
         for (i = 0; i < n; i++) { if (mM[i] != null) mmax = Math.max(mmax, Math.abs(mM[i])); if (mS[i] != null) mmax = Math.max(mmax, Math.abs(mS[i])); if (mH[i] != null) mmax = Math.max(mmax, Math.abs(mH[i])); }
@@ -19712,11 +19788,11 @@ body:has(#page-nnviz.active) .rail{
 </style>
 
 <!-- [Codex V33.314] Dedicated scoped design system. See AI_HANDOFF.md before changing model/UI contracts. -->
-<link rel="stylesheet" href="/brain-console.css?v=33.335">
-<link rel="stylesheet" href="/workspace-layout.css?v=33.335">
-<link rel="stylesheet" href="/neural-observatory.css?v=33.335">
-<link rel="stylesheet" href="/model-evidence.css?v=33.335.1">
-<script src="/model-evidence.js?v=33.335.1"></script>
-<script src="/workspace-ui.js?v=33.335"></script>
+<link rel="stylesheet" href="/brain-console.css?v=33.336">
+<link rel="stylesheet" href="/workspace-layout.css?v=33.336">
+<link rel="stylesheet" href="/neural-observatory.css?v=33.336">
+<link rel="stylesheet" href="/model-evidence.css?v=33.336.1">
+<script src="/model-evidence.js?v=33.336.1"></script>
+<script src="/workspace-ui.js?v=33.336"></script>
 </body>
 </html>

@@ -139,12 +139,21 @@ const names = M.LUXML.featNames, D = names.length, SN = M.DS_FEATS.length;
     x[iDay] = (px / closes[at - 1] - 1) * 100;
     x[iR5] = (px / closes[L - 6] - 1) * 100;
     x[iR20] = (px / closes[L - 21] - 1) * 100;
-    rows.push({ id: i + 1, ts: (day0 + at) * 86400000, symbol: "AAA",
+    rows.push({ id: i + 1, ts: (day0 + at) * 86400000, symbol: "AAA", strategy: "hv",
+      feat: JSON.stringify(x), featver: M.LUXML.featVer - 1 });
+  }
+  /* ★라이브 표본★ — ret5·ret20 을 그 순간 호가로 계산해 어떤 봉과도 안 맞는다(앵커 불일치).
+     대신 ts 가 진짜 날짜다. 날짜 경로가 없으면 이 표본들이 전부 dsKnown=0 이 되는데,
+     하필 학습가중이 가장 높은(liveSrcWeight 1.5) 표본들이다. */
+  for (let i = 0; i < 10; i++) {
+    const at = 200 + i;
+    const x = Array.from({ length: D - SN }, (_, j) => (j * 3 + i) % 11 + 0.137);   // 앵커와 안 맞는 값
+    rows.push({ id: 200 + i, ts: (day0 + at) * 86400000, symbol: "AAA", strategy: "trend",
       feat: JSON.stringify(x), featver: M.LUXML.featVer - 1 });
   }
   // 이력이 없는 종목 — 버리지 않고 중립으로 살아남아야 한다
   for (let i = 0; i < 10; i++) {
-    rows.push({ id: 100 + i, ts: (day0 + 150) * 86400000, symbol: "NOHIST",
+    rows.push({ id: 100 + i, ts: (day0 + 150) * 86400000, symbol: "NOHIST", strategy: "hv",
       feat: JSON.stringify(Array.from({ length: D - SN }, () => 1)), featver: M.LUXML.featVer - 1 });
   }
   // ★일봉 캐시를 실제로 심어 둔다★ — 안 심으면 전부 '이력 없음'으로 떨어져,
@@ -161,7 +170,7 @@ const names = M.LUXML.featNames, D = names.length, SN = M.DS_FEATS.length;
         return null;
       };
       q.all = async () => {
-        if (/FROM (ml_samples|ml_samples_st) WHERE featver <> \? AND id > \?/.test(sql)) {
+        if (/SELECT id, ts, symbol, strategy, feat FROM (ml_samples|ml_samples_st) WHERE featver <> \? AND id > \?/.test(sql)) {
           const tb = /ml_samples_st/.test(sql) ? "st" : "main";
           if (tb === "st") return { results: [] };
           const [fv, lastId, lim] = q.args;
@@ -205,9 +214,16 @@ const names = M.LUXML.featNames, D = names.length, SN = M.DS_FEATS.length;
   else bad(`${migrated}/${before} 만 옮겨졌다`);
   if (widths.size === 1 && widths.has(D)) ok(`모든 표본이 ${D}칸이 됐다(폭이 섞이지 않는다)`);
   else bad(`폭이 섞였다: ${[...widths].join(",")}`);
-  const known = rows.filter((r) => { try { const x = JSON.parse(r.feat); return x[names.indexOf("dsKnown")] === 1; } catch (e) { return false; } }).length;
-  if (known === 40) ok(`이력이 있는 40건은 실측값(dsKnown=1), 이력 없는 10건은 중립(dsKnown=0)으로 구분된다`);
-  else bad(`실측/중립 구분이 틀렸다: 실측 ${known}건 (기대 40)`);
+  const kOf = (pred) => rows.filter(pred).filter((r) => { try { return JSON.parse(r.feat)[names.indexOf("dsKnown")] === 1; } catch (e) { return false; } }).length;
+  const hvK = kOf((r) => r.strategy === "hv" && r.symbol === "AAA");
+  const liveK = kOf((r) => r.strategy === "trend");
+  const noHistK = kOf((r) => r.symbol === "NOHIST");
+  if (hvK === 40) ok("수확 표본 40건이 내용 앵커로 실측 복구된다(dsKnown=1)");
+  else bad(`수확 표본 복구가 틀렸다: ${hvK}/40`);
+  if (liveK === 10) ok("★라이브 표본 10건도 진짜 ts 로 실측 복구된다★ — 앵커가 안 맞는다고 버리지 않는다");
+  else bad(`라이브 표본이 복구되지 않는다: ${liveK}/10 — 가중이 가장 높은 표본이 통째로 '모름'이 된다`);
+  if (noHistK === 0) ok("이력이 없는 10건은 중립(dsKnown=0) — 없는 값을 지어내지 않는다");
+  else bad(`이력이 없는데 실측이라고 붙였다: ${noHistK}건`);
   if (res && res.done) ok("이관이 완료 상태로 마감된다 — 그때부터 구판 정리가 재개된다");
   else bad("이관이 끝나지 않는다 — 구판 정리가 영영 멈춘다");
   // getState 로 daily 를 읽는 경로가 stub 에 없어 NOHIST 와 AAA 모두 중립이 될 수 있다 —

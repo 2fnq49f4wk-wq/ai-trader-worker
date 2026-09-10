@@ -2981,7 +2981,7 @@ async function applySignalTypeWeights(DB, cfg) {
    화면·자가진단이 계속 "V33.272" 를 보고했다(운영 스냅샷이 그대로 그랬다). 배포는 됐는데
    ★배포됐다는 사실만 거짓말★ 을 하고 있었으니, "내 고침이 올라간 건가" 를 화면으로 확인할
    방법이 없었다. tools/check-build-ver.mjs 가 이제 소스에 적힌 최신 버전과 이 값을 대조한다. */
-const _BUILD_VER = "V33.335";
+const _BUILD_VER = "V33.336";
 
 // ═══ [V33.171] 평가 순서 계획 — ★승격과 순환을 교차해 굶주림을 구조적으로 없앤다★ ═══
 //   V33.50 의 형태트리거는 "급한 몇 종목을 앞으로 당긴다"는 의도였으나, 실제 운영로그에서는
@@ -40998,23 +40998,46 @@ async function mlFeatMigrate(DB, opts) {
     if (_ix[sym] !== undefined) return _ix[sym];
     if (_ixOrder.length >= _IX_MAX) { const old = _ixOrder.shift(); delete _ix[old]; }
     _ixOrder.push(sym);
-    let closes = null, highs = null, lows = null;
+    /* 두 갈래를 함께 들고 있는다 — 표본 종류가 두 가지이기 때문이다:
+         · 수확(hv) 표본  → ts 가 가짜라 ★내용 앵커★ 로 찾는다. 딥이력(2400봉)이 있으면 그쪽이 낫다.
+         · 라이브 표본    → ret5·ret20 이 ★그 순간의 호가★ 로 계산돼 어떤 봉과도 안 맞는다.
+                            대신 ts 가 진짜 날짜다 → daily 의 days 로 그 날 봉을 찾는다.
+       라이브를 앵커로만 찾으려 하면 전부 '못 찾음'이 되어, 가중이 가장 높은 표본들이
+       통째로 dsKnown=0 이 된다. 두 길을 다 두는 이유다. */
+    let a = null, dated = null;
     try {
       const dh = await histGet(DB, sym);
       if (dh && Array.isArray(dh.closes) && dh.closes.length >= DS_PARAMS.minBars) {
-        closes = dh.closes; highs = dh.highs || null; lows = dh.lows || null;
+        a = { closes: dh.closes, highs: dh.highs || null, lows: dh.lows || null };
       }
     } catch (e) {}
-    if (!closes) {
-      try {
-        const dd = await getState(DB, "daily:" + sym, null);
-        if (dd && Array.isArray(dd.closes) && dd.closes.length >= DS_PARAMS.minBars) {
-          closes = dd.closes; highs = dd.highs || null; lows = dd.lows || null;
+    try {
+      const dd = await getState(DB, "daily:" + sym, null);
+      if (dd && Array.isArray(dd.closes) && dd.closes.length >= DS_PARAMS.minBars) {
+        if (!a) a = { closes: dd.closes, highs: dd.highs || null, lows: dd.lows || null };
+        if (Array.isArray(dd.days) && dd.days.length === dd.closes.length) {
+          dated = { closes: dd.closes, highs: dd.highs || null, lows: dd.lows || null, days: dd.days };
         }
-      } catch (e) {}
-    }
-    _ix[sym] = closes ? { closes: closes, highs: highs, lows: lows, map: _dsAnchorIndex(closes) } : null;
+      }
+    } catch (e) {}
+    _ix[sym] = a ? { closes: a.closes, highs: a.highs, lows: a.lows,
+                     map: _dsAnchorIndex(a.closes), dated: dated } : (dated ? { closes: dated.closes,
+                     highs: dated.highs, lows: dated.lows, map: new Map(), dated: dated } : null);
     return _ix[sym];
+  };
+  /* 진짜 날짜(라이브 표본)로 봉 찾기 — 그 날짜 이하의 마지막 봉.
+     휴장·주말이면 직전 거래일 봉이 맞다(그 순간 라이브가 본 마지막 봉이 그것이다). */
+  const _datedIdx = function (days, ts) {
+    const want = Math.floor(_num(ts, 0) / 86400000);
+    if (!(want > 0)) return -1;
+    let lo = 0, hi = days.length - 1, best = -1;
+    while (lo <= hi) {
+      const mid = (lo + hi) >> 1;
+      if (_num(days[mid], 0) <= want) { best = mid; lo = mid + 1; } else hi = mid - 1;
+    }
+    // 표본이 이력보다 훨씬 최근이면(캐시가 오래됨) 쓰지 않는다 — 엉뚱한 옛 봉을 붙이게 된다.
+    if (best < 0 || (want - _num(days[best], 0)) > 10) return -1;
+    return best;
   };
   let rounds = 0;
   while (Date.now() - t0 < runMs && st.ti < FEATMIG.tables.length) {
@@ -41022,7 +41045,7 @@ async function mlFeatMigrate(DB, opts) {
     let rows = [];
     try {
       const r = await DB.prepare(
-        "SELECT id, ts, symbol, feat FROM " + tb + " WHERE featver <> ? AND id > ? ORDER BY id LIMIT ?"
+        "SELECT id, ts, symbol, strategy, feat FROM " + tb + " WHERE featver <> ? AND id > ? ORDER BY id LIMIT ?"
       ).bind(LUXML.featVer, _num(st.lastId, 0), FEATMIG.batch).all();
       rows = (r && r.results) || [];
     } catch (e) { st.ti++; st.lastId = 0; continue; }   // 표가 없으면 다음 표로
@@ -41035,13 +41058,22 @@ async function mlFeatMigrate(DB, opts) {
       if (!Array.isArray(x)) { st.skipped++; continue; }
       let vals = null;
       const ix = await _getIx(row.symbol);
-      if (ix && ix.map) {
-        // ★내용으로 봉을 찾는다★ — ts 는 수확 표본에서 실제 날짜가 아니다.
-        const bi = ix.map.get(_dsAnchorKey(x[iDay], x[iR5], x[iR20]));
+      if (ix) {
+        // ① ★내용으로 봉을 찾는다★ — ts 는 수확 표본에서 실제 날짜가 아니다.
+        const bi = ix.map ? ix.map.get(_dsAnchorKey(x[iDay], x[iR5], x[iR20])) : undefined;
         if (bi != null && bi >= DS_PARAMS.minBars - 1) {
           vals = _dsFeats(ix.closes.slice(0, bi + 1),
                           Array.isArray(ix.highs) ? ix.highs.slice(0, bi + 1) : null,
                           Array.isArray(ix.lows) ? ix.lows.slice(0, bi + 1) : null);
+        }
+        // ② 라이브 표본은 앵커가 안 맞는다(ret5 를 그 순간 호가로 계산했다) — 진짜 ts 로 찾는다.
+        if ((!vals || vals.dsKnown !== 1) && ix.dated && String(row.strategy || "") !== "hv") {
+          const di = _datedIdx(ix.dated.days, row.ts);
+          if (di >= DS_PARAMS.minBars - 1) {
+            vals = _dsFeats(ix.dated.closes.slice(0, di + 1),
+                            Array.isArray(ix.dated.highs) ? ix.dated.highs.slice(0, di + 1) : null,
+                            Array.isArray(ix.dated.lows) ? ix.dated.lows.slice(0, di + 1) : null);
+          }
         }
       }
       // 값이 없으면 중립(dsKnown=0). 폭만 맞추고 "모른다"고 적는다 — 버리지 않는다.

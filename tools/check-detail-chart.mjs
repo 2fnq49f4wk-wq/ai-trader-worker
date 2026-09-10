@@ -10,6 +10,7 @@
  */
 import { readFileSync } from "node:fs";
 import vm from "node:vm";
+const M = await import("../src/index.js");
 
 const H = readFileSync(new URL("../public/index.html", import.meta.url), "utf8");
 let fails = 0;
@@ -32,7 +33,7 @@ const chartSrc = (function () {
 
   function scale(candles, maLevels, withMA) {
     const ctx = vm.createContext({
-      Math, Infinity, isFinite, _pcClipSeq: 0,
+      Math, Infinity, isFinite, _pcClipSeq: 0, dmaV: null,
       show: candles, n: candles.length,
       ind: { boll: false, ma: withMA },
       bU: [], bL: [],
@@ -119,6 +120,80 @@ const chartSrc = (function () {
   if (/detailState\.symbol === sym/.test(l))
     ok("응답이 늦게 와도 지금 보고 있는 종목일 때만 다시 그린다 — 다른 종목 화면에 남의 지표를 덮지 않는다");
   else bad("늦게 온 응답이 다른 종목 화면을 덮어쓸 수 있다");
+}
+
+// ── ⑤ ★화면이 그리는 선과 엔진이 쓰는 값이 같은가★ ─────────────────────
+{
+  /* 지표가 두 곳(브라우저 JS · 워커 JS)에 각각 구현돼 있다. 이 저장소가 반복해 당한
+     "같은 규칙이 두 곳에 살다 갈라지는" 사고의 자리다. 그래서 ★둘을 실제로 돌려 비교★ 한다.
+     화면이 다른 선을 그리면 사용자는 엔진이 보지 않는 근거로 판단하게 된다. */
+  const a = H.indexOf("  function _smaArr(v, p) {");
+  const b = H.indexOf("\n  function bindCandleClick(box)");
+  const ctx = vm.createContext({ Math, Array, Infinity, isFinite, Number, String, Date,
+    fvFmtVol: (v) => String(v), fmtNum: (v, d) => Number(v).toFixed(d == null ? 2 : d), _pcIndCache: null });
+  vm.runInContext(H.slice(a, b) + "\n globalThis.dm = _dispMaArr; globalThis.st = _stochSlowArr;"
+    + "\n globalThis.PD = PC_DMA; globalThis.PS = PC_STO;", ctx);
+
+  const closes = [], highs = [], lows = [];
+  for (let i = 0; i < 260; i++) {
+    const c = 100 + i * 0.27 + Math.sin(i / 6) * 3.4;
+    closes.push(c); highs.push(c * 1.011); lows.push(c * 0.989);
+  }
+  // 설정이 서버와 같은가 — 화면만 20/5 를 쓰고 서버가 다른 값이면 두 선이 갈라진다.
+  if (ctx.PD.p === M.DS_PARAMS.maPeriod && ctx.PD.sh === M.DS_PARAMS.maShift)
+    ok(`DMA 설정이 서버와 같다(${ctx.PD.p}, +${ctx.PD.sh})`);
+  else bad(`DMA 설정이 서버와 다르다: 화면 ${ctx.PD.p}/${ctx.PD.sh} vs 서버 ${M.DS_PARAMS.maPeriod}/${M.DS_PARAMS.maShift}`);
+  if (ctx.PS.n === M.DS_PARAMS.stochN && ctx.PS.k === M.DS_PARAMS.stochK && ctx.PS.d === M.DS_PARAMS.stochD)
+    ok(`스토캐스틱 설정이 서버와 같다(${ctx.PS.n},${ctx.PS.k},${ctx.PS.d})`);
+  else bad("스토캐스틱 설정이 서버와 다르다");
+
+  const line = ctx.dm(closes, ctx.PD.p, ctx.PD.sh);
+  const srv = M.getDisplacedMA(closes, M.DS_PARAMS.maPeriod, M.DS_PARAMS.maShift);
+  const last = line[line.length - 1];
+  if (last != null && Math.abs(last - srv.ma) < 1e-9)
+    ok(`화면의 DMA 마지막 값이 엔진과 일치한다(${last.toFixed(4)})`);
+  else bad(`★화면과 엔진의 DMA 가 다르다: ${last} vs ${srv && srv.ma}★`);
+  // 앞으로 민 선인가 — 마지막 봉을 바꿔도 선이 안 변해야 한다(미래 미참조)
+  const mut = closes.slice(); mut[mut.length - 1] = 99999;
+  const line2 = ctx.dm(mut, ctx.PD.p, ctx.PD.sh);
+  if (line2[line2.length - 1] === last)
+    ok("화면 DMA 도 현재 봉을 쓰지 않는다 — 앞으로 민 선의 정의를 지킨다");
+  else bad("★화면 DMA 가 현재 봉을 쓴다 — 밀어놓은 선이 아니다★");
+
+  const cs = ctx.st(highs, lows, closes, ctx.PS.n, ctx.PS.k, ctx.PS.d);
+  const ss = M.getStochSlow(highs, lows, closes, M.DS_PARAMS.stochN, M.DS_PARAMS.stochK, M.DS_PARAMS.stochD);
+  const ck = cs.k[cs.k.length - 1], cd = cs.d[cs.d.length - 1];
+  if (ck != null && Math.abs(ck - ss.k) < 1e-9 && cd != null && Math.abs(cd - ss.d) < 1e-9)
+    ok(`화면의 %K·%D 가 엔진과 일치한다(${ck.toFixed(2)} / ${cd.toFixed(2)})`);
+  else bad(`★화면과 엔진의 스토캐스틱이 다르다: ${ck}/${cd} vs ${ss && ss.k}/${ss && ss.d}★`);
+  // 평활이 실제로 되는가 — 슬로우가 fast 와 같으면 '스무딩'이 아니다
+  const flat = ctx.st(null, null, new Array(120).fill(100), ctx.PS.n, ctx.PS.k, ctx.PS.d);
+  if (flat.k[flat.k.length - 1] === 50)
+    ok("가격이 고정(고가=저가)이어도 0으로 나누지 않고 중립 50 을 준다");
+  else bad("고가=저가 구간에서 화면 스토캐스틱이 깨진다");
+}
+
+// ── ⑥ 버튼이 MA·BOLL 과 같은 방식으로 붙어 있는가 ───────────────────────
+{
+  if (/data-ind="dma"/.test(H) && /data-ind="stoch"/.test(H))
+    ok("DMA·STOCH 버튼이 기존 지표 버튼과 같은 자리·같은 방식으로 있다");
+  else bad("차트 지표 버튼이 없다");
+  if (/ind: \{ ma: true, boll: true, vol: true, rsi: true, macd: false, dma: false, stoch: false \}/.test(H))
+    ok("기본은 꺼짐 — 화면이 갑자기 복잡해지지 않고 사용자가 켤 때만 그린다");
+  else bad("새 지표 기본값이 정해져 있지 않다");
+  const cb = H.slice(H.indexOf("var _sig = cs.length"), H.indexOf("var end = Math.max(2, cs.length - off);"));
+  if (/ind\.stoch \? 1 : 0/.test(cb) && /ind\.dma \? 1 : 0/.test(cb))
+    ok("지표 캐시 서명에 두 토글이 들어간다 — 켜고 끌 때 옛 캐시를 다시 쓰지 않는다");
+  else bad("★캐시 서명에 새 토글이 없다 — 버튼을 눌러도 그림이 안 바뀐다★");
+  if (/dmaA = ind\.dma \?/.test(cb) && /stoA = ind\.stoch \?/.test(cb))
+    ok("꺼져 있으면 계산하지 않는다 — 끈 지표를 매 프레임 계산하면 드래그가 버벅인다");
+  else bad("끈 지표도 매 프레임 계산한다");
+  if (/if \(dmaV\) for \(i = 0; i < n; i\+\+\) _grow\(dmaV\[i\]\);/.test(H))
+    ok("DMA 도 MA 와 같은 제한 규칙으로 y범위에 들어간다 — 먼 DMA 가 축을 끌지 않는다");
+  else bad("DMA 가 y범위 규칙 밖에 있다");
+  if (/poly\(dmaV, PY, PC_DMA\.c, 1\.3, '5 3'\)/.test(H))
+    ok("DMA 를 점선으로 그린다 — 일반 MA 와 눈으로 구분된다(밀어놓은 선임을 알 수 있다)");
+  else bad("DMA 가 일반 MA 와 구분되지 않는다");
 }
 
 if (fails) { console.error(`\n✗ 종목상세 차트·지표 계약 ${fails}건 실패`); process.exit(1); }
