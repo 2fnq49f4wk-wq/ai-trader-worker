@@ -95,7 +95,12 @@ function anchorsOf(src) {
     const lit = unquote(m[1]);
     if (lit == null || lit.length < 12 || !/\p{L}/u.test(lit)) continue;  // 짧거나 기호뿐이면 우연히 맞을 수 있다(한글 앵커도 앵커다)
     const tail = src.slice(m.index + m[0].length, m.index + m[0].length + 90);
-    if (/^\s*(?:,[^)]*)?\)\s*(?:[<>]=?\s*0|[!=]==?\s*-\s*1|>\s*-\s*1)/.test(tail)) continue;  // 존재 여부 검사
+    /* 존재 여부·접두사 검사는 제외한다 — 자르기 앵커가 아니다.
+         indexOf(x) < 0 / === -1  → "있는가/없는가"
+         indexOf(x) === 0         → "이 문자열로 시작하는가" (V33.337 에서 실제로 오탐이 났다:
+                                     런타임 값의 접두사 검사를 소스 앵커로 착각했다)
+       둘 다 그 문구가 소스에 없어도 정상이므로, 없다고 실패시키면 안 된다. */
+    if (/^\s*(?:,[^)]*)?\)\s*(?:[<>]=?\s*0|[!=]==?\s*-\s*1|>\s*-\s*1|[!=]==?\s*0)/.test(tail)) continue;
     out.push(lit);
   }
   /* 도우미 호출의 인자 중 ★실제로 indexOf 에 들어가는 자리★ 만 앵커로 본다. */
@@ -124,17 +129,19 @@ function anchorsOf(src) {
     'const blk = cut("async function payoutNightly(", "async function nextThing(");',
     'const one = S.indexOf("직접 잘라 쓰는 앵커 문구");',
     'if (S.indexOf("있으면 안 되는 금지 문구") >= 0) bad("금지 문구가 남아 있다");',
+    'if (mark.indexOf("이 값으로 시작하는가 검사") === 0) ok("접두사");',
     'check(/x/.test(blk), "통과했을 때 찍는 긴 안내 문구", "실패했을 때 찍는 긴 안내 문구");'
   ].join("\n");
   const got = anchorsOf(FAKE);
   const must = ["async function payoutNightly(", "async function nextThing(", "직접 잘라 쓰는 앵커 문구"];
-  const never = ["있으면 안 되는 금지 문구", "통과했을 때 찍는 긴 안내 문구", "실패했을 때 찍는 긴 안내 문구"];
+  const never = ["있으면 안 되는 금지 문구", "이 값으로 시작하는가 검사",
+                 "통과했을 때 찍는 긴 안내 문구", "실패했을 때 찍는 긴 안내 문구"];
   const missed = must.filter((x) => !got.includes(x));
   const wrong = never.filter((x) => got.includes(x));
   if (missed.length) bad("자가시험: 앵커를 놓쳤다 — " + missed.join(" / ") + " · 이 메타검사는 이제 헛돈다");
   if (wrong.length) bad("자가시험: 앵커가 아닌 문구를 앵커로 봤다 — " + wrong.join(" / ") + " · 오탐이 배포를 막는다");
   if (!missed.length && !wrong.length)
-    console.log("  ok   자가시험: 도우미 경유·직접 호출 앵커는 잡고, 금지문구 검사와 안내문구는 안 잡는다");
+    console.log("  ok   자가시험: 도우미 경유·직접 호출 앵커는 잡고, 금지문구·접두사 검사와 안내문구는 안 잡는다");
 }
 
 let nAnchor = 0, nDead = 0, nGate = 0, skipped = 0;

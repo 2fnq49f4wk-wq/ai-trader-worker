@@ -2981,7 +2981,7 @@ async function applySignalTypeWeights(DB, cfg) {
    화면·자가진단이 계속 "V33.272" 를 보고했다(운영 스냅샷이 그대로 그랬다). 배포는 됐는데
    ★배포됐다는 사실만 거짓말★ 을 하고 있었으니, "내 고침이 올라간 건가" 를 화면으로 확인할
    방법이 없었다. tools/check-build-ver.mjs 가 이제 소스에 적힌 최신 버전과 이 값을 대조한다. */
-const _BUILD_VER = "V33.336";
+const _BUILD_VER = "V33.337";
 
 // ═══ [V33.171] 평가 순서 계획 — ★승격과 순환을 교차해 굶주림을 구조적으로 없앤다★ ═══
 //   V33.50 의 형태트리거는 "급한 몇 종목을 앞으로 당긴다"는 의도였으나, 실제 운영로그에서는
@@ -30733,7 +30733,7 @@ async function memoTrainNightly(DB) {
       }
       if (Math.floor(_pool.length / 20) >= 8) _books.push({ m: -1, idx: _pool });
     }
-    if (!_books.length) return "[MEMO] 시장별 학습표본 부족(총 " + ntr + ") — 대기";
+    if (!_books.length) return "\u27F3 " + "[MEMO] 시장별 학습표본 부족(총 " + ntr + ") — 대기";
 
     // k-means++ 대신 결정적 초기화(고르게 뽑기) — 워커에서 재현 가능해야 진단이 된다.
     const _fitBook = function (idx, K) {
@@ -35018,14 +35018,19 @@ async function mlTrainNightly(DB) {
        기존 가중치는 그대로 두고 이관이 끝난 다음 밤에 제대로 배우는 편이 낫다.
        (표본은 지워지지 않는다 — 구판 정리도 같은 조건으로 멈춰 있다.) */
     if (await mlFeatMigPending(DB)) {
-      return "[ML] 표본 이관 중 — 학습 보류(기존 모델 가중치 유지, 이관 완료 후 재개)";
+      /* [V33.337] ★그냥 return 하면 안 된다.★ 야간 파이프라인의 _stg 는 함수가 무엇을 돌려주든
+         "오늘 완료" 도장을 찍는다 — 즉 여기서 조용히 물러나면 ★그날은 다시 학습하지 않는다★.
+         featVer 를 올린 날 위원장(MIND)과 L1 이 하루 종일 판 불일치로 남는 실체가 이것이었다.
+         재시도 신호(⟳)를 돌려주면 _stg 가 도장 대신 짧은 재시도 표식을 찍고, 이관이 끝나는
+         대로 같은 날 안에 다시 돈다. */
+      return "⟳ [ML] 표본 이관 중 — 학습 보류(기존 가중치 유지, 이관 완료 후 같은 날 재시도)";
     }
     await mlEnsureTable(DB);
     const rows = await DB.prepare(
       "SELECT ts, feat, label, pnl_pct, strategy FROM ml_samples WHERE featver = ? ORDER BY ts DESC LIMIT ?"
     ).bind(LUXML.featVer, LUXML.trainWindow).all();
     const raw = (rows && rows.results) ? rows.results : [];
-    if (raw.length < LUXML.minTrainSamples) return "[ML] 표본 " + raw.length + "/" + LUXML.minTrainSamples + " — 학습 대기(observe)";
+    if (raw.length < LUXML.minTrainSamples) return "⟳ [ML] 표본 " + raw.length + "/" + LUXML.minTrainSamples + " — 학습 대기(observe · 같은 날 재시도)";
 
     const nowTs = Date.now();
     const data = [];
@@ -35037,7 +35042,7 @@ async function mlTrainNightly(DB) {
       data.push({ ts: _num(r.ts, 0), x: v, y: _labelOfRow(r), pnl: _num(r.pnl_pct, 0), hv: r.strategy === "hv" });
     }
     const N = data.length;
-    if (N < LUXML.minTrainSamples) return "[ML] 유효표본 부족(" + N + ")";
+    if (N < LUXML.minTrainSamples) return "\u27F3 " + "[ML] 유효표본 부족(" + N + ")";
     const D = LUXML.featNames.length;
 
     const mean = new Array(D).fill(0), std = new Array(D).fill(0);
@@ -35674,12 +35679,12 @@ function mlGroupedPermutationTest(val, w, b, opts) {
 async function mlBanditNoiseNightly(DB) {
   try {
     const model = await mlLoadModel(DB);
-    if (!model) return "[BANDIT] 모델 없음 — 노이즈검정 대기";
+    if (!model) return "\u27F3 " + "[BANDIT] 모델 없음 — 노이즈검정 대기";
     const rows = await DB.prepare(
       "SELECT feat, label, pnl_pct, strategy FROM ml_samples WHERE featver = ? ORDER BY ts DESC LIMIT ?"
     ).bind(LUXML.featVer, LUXML.trainWindow).all();
     const raw = (rows && rows.results) ? rows.results : [];
-    if (raw.length < LUXML.minTrainSamples) return "[BANDIT] 표본 부족 — 노이즈검정 대기";
+    if (raw.length < LUXML.minTrainSamples) return "\u27F3 " + "[BANDIT] 표본 부족 — 노이즈검정 대기";
 
     const data = [];
     for (let i = raw.length - 1; i >= 0; i--) {
@@ -35690,7 +35695,7 @@ async function mlBanditNoiseNightly(DB) {
       data.push({ x: v, y: _labelOfRow(r) });
     }
     const N = data.length;
-    if (N < LUXML.minTrainSamples) return "[BANDIT] 유효표본 부족(" + N + ")";
+    if (N < LUXML.minTrainSamples) return "\u27F3 " + "[BANDIT] 유효표본 부족(" + N + ")";
 
     // 표준화 사본을 따로 만들지 않는다 — 같은 피처 배열을 제자리에서 z 로 덮어쓴다.
     const Z = data;
@@ -36041,7 +36046,7 @@ async function mlBrainTrainNightly(DB) {
       data.push({ ts: _num(r.ts, 0), x: v, y: _labelOfRow(r), pnl: _num(r.pnl_pct, 0), hv: r.strategy === "hv" });
     }
     let N = data.length;
-    if (N < BRAIN.minTrainSamples) return "[BRAIN] 유효표본 부족(" + N + ")";
+    if (N < BRAIN.minTrainSamples) return "\u27F3 " + "[BRAIN] 유효표본 부족(" + N + ")";
     const D = LUXML.featNames.length;
 
     /* ══ [V33.220] ★시간 순서가 뒤집혀 있었다 — 세 가지가 동시에 틀렸다.★ ══
@@ -36101,7 +36106,7 @@ async function mlBrainTrainNightly(DB) {
     let trainAll = Z.slice(0, N - nVal).filter(function (t) { return t.ts < cutTs; });
     if (trainAll.length < 20) trainAll = Z.slice(0, N - nVal);   // 퍼지로 부족해지면 폴백
     const val = Z.slice(N - nVal);
-    if (trainAll.length < 20) return "[BRAIN] 훈련셋 부족";
+    if (trainAll.length < 20) return "\u27F3 " + "[BRAIN] 훈련셋 부족";
 
     // K개 부트스트랩 + 피처 드롭아웃
     const members = [];
@@ -36534,7 +36539,9 @@ async function mlMindTrainNightly(DB) {
     } catch (e) {}
     const data = await _mindLoadSamples(DB);
     const N = data.length;
-    if (N < MIND.minTrainSamples) return "[MIND] 표본 " + N + "/" + MIND.minTrainSamples + " — 대기";
+    // [V33.337] 표본이 아직 모자란 것은 '실패'가 아니라 '아직'이다 — 재시도 신호로 돌려준다.
+    //   그냥 return 하면 _stg 가 오늘 완료로 도장을 찍어 그날 내내 위원장이 비게 된다.
+    if (N < MIND.minTrainSamples) return "⟳ [MIND] 표본 " + N + "/" + MIND.minTrainSamples + " — 대기(같은 날 재시도)";
     const D = LUXML.featNames.length;
     const st = _mindStats(data, D);
 
@@ -36552,7 +36559,7 @@ async function mlMindTrainNightly(DB) {
     let train = Z.slice(0, N - nVal).filter(function (t) { return t.ts < cutTs; });
     if (train.length < 30) train = Z.slice(0, N - nVal);
     const val = Z.slice(N - nVal);
-    if (train.length < 30) return "[MIND] 훈련셋 부족(" + train.length + ")";
+    if (train.length < 30) return "\u27F3 " + "[MIND] 훈련셋 부족(" + train.length + ")";
 
     // [V12.37 버그수정] trainWindow 12000→60000 확대 후 FM(_fmTrain, 고정 20에폭 SGD)이
     //   45초 예산 안에 1~2에폭도 못 돌고 잘려 "초기화에 가까운" 모델이 그대로 발행 → valAcc가
@@ -38598,7 +38605,7 @@ async function mlDNNTrainNightly(DB) {
       train = _thin;
     }
     const val = all.slice(N - nVal);
-    if (train.length < 60) { await setState(DB, "dnn_trust", { wDnn: 0, trusted: false, reason: "train" }); return "[DNN] 훈련셋 부족"; }
+    if (train.length < 60) { await setState(DB, "dnn_trust", { wDnn: 0, trusted: false, reason: "train" }); return "\u27F3 " + "[DNN] 훈련셋 부족"; }
 
     // 층 구조 [D, ...hidden, 1] — 멀티시드 앙상블(서로 다른 초기화·셔플 K개 → 로짓 평균)
     const dims = [D].concat(DNNW.hidden).concat([1]);   // [V33.191] 워커 폴백 구조(GPU 는 DNN.hidden)
@@ -40101,7 +40108,7 @@ async function mlGBDTTrainNightly(DB) {
       let tr = data.slice(0, N - nVal).filter(function (d) { return d.ts < cutTs; });
       if (tr.length < 60) tr = data.slice(0, N - nVal);
       const vl = data.slice(N - nVal);
-      if (tr.length < 60) { await setState(DB, "gbdt_trust", { wGbdt: 0, trusted: false, reason: "train" }); return "[GBDT] 훈련셋 부족"; }
+      if (tr.length < 60) { await setState(DB, "gbdt_trust", { wGbdt: 0, trusted: false, reason: "train" }); return "\u27F3 " + "[GBDT] 훈련셋 부족"; }
       const m = _gbdtFit(tr, vl, { deadline: cvDeadline });   // [V12.49] 홀드아웃도 CV 몫만 — 최종학습 절반 보장
       let c = 0; for (const d of vl) { const p = mlGBDTScore(m, d.x); if (p != null && (p >= 0.5 ? 1 : 0) === d.y) c++; }
       acc = c / Math.max(1, vl.length); valN = vl.length; cvMode = "홀드아웃";
@@ -40313,7 +40320,7 @@ async function mlCalibrateCommittee(DB) {
       }
       preds.push({ p: _pc0, y: y });
     }
-    if (preds.length < 60) return "[CAL] 유효예측 부족(" + preds.length + ")";
+    if (preds.length < 60) return "\u27F3 " + "[CAL] 유효예측 부족(" + preds.length + ")";
     // 전문가 신뢰도 저장(Wilson 하한 — 표본수 반영 보수적 추정)
     try {
       const relOut = {};
@@ -41044,15 +41051,19 @@ async function mlFeatMigrate(DB, opts) {
     const tb = FEATMIG.tables[st.ti];
     let rows = [];
     try {
+      /* [V33.337] ★최신 행부터 옮긴다.★ 종전엔 id 오름차순이라 가장 오래된 표본부터 옮겼는데,
+         학습은 ★최근 trainWindow(6만건)★ 만 본다 — 즉 학습에 필요한 구간이 제일 마지막에 준비됐다.
+         그 사이 위원들은 "표본 부족" 으로 대기하고 위원회는 규칙엔진 비상운용으로 떨어진다.
+         내림차순으로 바꾸면 몇 분 안에 학습창이 새 판으로 채워져 위원들이 곧바로 돌아온다. */
       const r = await DB.prepare(
-        "SELECT id, ts, symbol, strategy, feat FROM " + tb + " WHERE featver <> ? AND id > ? ORDER BY id LIMIT ?"
-      ).bind(LUXML.featVer, _num(st.lastId, 0), FEATMIG.batch).all();
+        "SELECT id, ts, symbol, strategy, feat FROM " + tb + " WHERE featver <> ? AND id < ? ORDER BY id DESC LIMIT ?"
+      ).bind(LUXML.featVer, _num(st.cursor, Number.MAX_SAFE_INTEGER), FEATMIG.batch).all();
       rows = (r && r.results) || [];
-    } catch (e) { st.ti++; st.lastId = 0; continue; }   // 표가 없으면 다음 표로
-    if (!rows.length) { st.ti++; st.lastId = 0; continue; }
+    } catch (e) { st.ti++; st.cursor = Number.MAX_SAFE_INTEGER; continue; }   // 표가 없으면 다음 표로
+    if (!rows.length) { st.ti++; st.cursor = Number.MAX_SAFE_INTEGER; continue; }
     const stmts = [];
     for (const row of rows) {
-      st.lastId = Math.max(_num(st.lastId, 0), _num(row.id, 0));
+      st.cursor = Math.min(_num(st.cursor, Number.MAX_SAFE_INTEGER), _num(row.id, Number.MAX_SAFE_INTEGER));
       let x = null;
       try { x = JSON.parse(row.feat); } catch (e) { x = null; }
       if (!Array.isArray(x)) { st.skipped++; continue; }
@@ -43166,7 +43177,7 @@ async function mlUniverseScanNightly(DB, opts) {
   try {
     const mind = await mlMindLoad(DB);
     const l1 = await mlLoadModel(DB);
-    if (!mind && !(l1 && l1.mode !== "observe")) return "[SCAN] 모델 미학습 — 전종목 스캔 대기";
+    if (!mind && !(l1 && l1.mode !== "observe")) return "\u27F3 " + "[SCAN] 모델 미학습 — 전종목 스캔 대기";
     const ens = mind ? await mlBrainLoad(DB) : null;
     const dnnT = await getState(DB, "dnn_trust", null);
     const dnn = (dnnT && dnnT.trusted) ? await mlDNNLoad(DB) : null;
@@ -47987,13 +47998,32 @@ export default {
               if (_prev && _prev.day === _aiDay && _prev.ms) _stgCost.ms = _prev.ms;
             } catch (e) {}
             const _STG_COST_MIN_MS = 500;
+            /* [V33.337] ★"아직 준비 안 됨" 과 "오늘 다 했음" 을 구분한다.★
+               종전 _stg 는 함수가 무엇을 돌려주든 "오늘 완료" 도장을 찍었다. 그래서 표본이
+               아직 모자라 물러난 단계도 그날은 다시 돌지 않았다 — featVer 를 올린 날
+               위원장(MIND)·L1 이 하루 종일 판 불일치로 남고 위원회가 규칙엔진 비상운용으로
+               떨어지는 실체가 이것이었다(모델이 나쁜 게 아니라 ★다시 시도할 기회가 없었다★).
+               이제 결과 문자열이 ⟳ 로 시작하면 완료 도장 대신 짧은 재시도 표식을 찍는다.
+               표식은 RETRY_MS 뒤에 만료되므로, 준비가 끝나면 같은 날 안에 스스로 다시 돈다.
+               (매 분 재시도하면 무거운 학습 질의가 반복되므로 간격을 둔다.) */
+            const _STG_RETRY_MS = 12 * 60000;
             const _stg = async function (nm, fn) {
               try {
-                if ((await getState(env.DB, "ai_stage:" + nm, null)) === _aiDay) return;   // 오늘 이미 완료
+                const _mark = await getState(env.DB, "ai_stage:" + nm, null);
+                if (_mark === _aiDay) return;                                   // 오늘 이미 완료
+                if (typeof _mark === "string" && _mark.indexOf(_aiDay + "|wait|") === 0) {
+                  const _at = _num(_mark.split("|wait|")[1], 0);
+                  if (Date.now() - _at < _STG_RETRY_MS) return;                 // 방금 "아직" 이라고 했다 — 잠시 뒤 다시
+                }
                 const _t0 = Date.now();
                 const _r = await fn();
                 const _ms = Date.now() - _t0;
                 if (_r) await log(env.DB, "INFO", null, _r);
+                if (typeof _r === "string" && _r.charAt(0) === "\u27F3") {
+                  // 아직 준비 안 됨 — 완료 도장을 찍지 않는다. 그래야 같은 날 다시 온다.
+                  await setState(env.DB, "ai_stage:" + nm, _aiDay + "|wait|" + Date.now());
+                  return;
+                }
                 await setState(env.DB, "ai_stage:" + nm, _aiDay);
                 if (_ms >= _STG_COST_MIN_MS) {
                   _stgCost.ms[nm] = _ms; _stgCost.ts = Date.now();

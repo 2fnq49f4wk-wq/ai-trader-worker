@@ -11,6 +11,7 @@
  *     ③ ★이관이 끝나기 전엔 구판 정리가 멈춘다★ — 안 그러면 이관 대상이 먼저 지워진다
  */
 import { readFileSync } from "node:fs";
+import vm from "node:vm";
 const S = readFileSync(new URL("../src/index.js", import.meta.url), "utf8");
 const M = await import("../src/index.js");
 let fails = 0;
@@ -110,9 +111,56 @@ const names = M.LUXML.featNames, D = names.length, SN = M.DS_FEATS.length;
   // 모르면 지우지 않는다 — 상태를 못 읽을 때의 기본값
   /* ★이관 중에는 학습도 미뤄야 한다.★ 반쪽 표본으로 배우면 정확도가 낮게 나오고
      신뢰게이트가 모델을 강등시킨다 — 데이터는 멀쩡한데 위원이 내려앉는 사고다. */
-  if (/if \(await mlFeatMigPending\(DB\)\) \{\n\s*return "\[ML\] 표본 이관 중/.test(S))
-    ok("야간 학습이 이관 중이면 보류한다 — 반쪽 표본으로 배워 모델이 강등되는 것을 막는다");
-  else bad("★이관 중에도 학습이 돈다 — 옮겨진 일부만 보고 배워 모델이 강등된다★");
+  /* ★보류는 '조용한 return' 이면 안 된다.★ 야간 파이프라인의 _stg 는 함수가 무엇을 돌려주든
+     "오늘 완료" 도장을 찍는다 — 그러면 그날은 다시 학습하지 않아, featVer 를 올린 날
+     위원장(MIND)·L1 이 하루 종일 판 불일치로 남고 위원회가 규칙엔진 비상운용으로 떨어진다.
+     실제로 그렇게 났다(2026-09-10 10:35 화면: 위원 좌석 2/10). 재시도 신호여야 한다. */
+  if (/return "\u27F3 \[ML\] 표본 이관 중/.test(S))
+    ok("이관 중 학습 보류가 ★재시도 신호(⟳)★ 다 — 완료 도장이 아니라 '아직'이라고 말한다");
+  else bad("★보류가 조용한 return 이다 — _stg 가 오늘 완료로 도장을 찍어 그날 내내 재학습이 없다★");
+  /* ★문장이 아니라 동작으로 못박는다.★ 처음엔 소스에 표식 문자열이 있는지만 봤는데,
+     분기를 if(false) 로 죽여도 문자열은 그대로 남아 검사가 통과했다 — 헛도는 검사였다.
+     그래서 _stg 를 꺼내 실제로 돌린다: ⟳ 를 돌려준 단계는 '오늘 완료' 도장이 찍히면 안 된다. */
+  {
+    // ★상수 선언까지 포함해 잘라야 한다★ — 처음엔 함수만 떼어 내 _STG_RETRY_MS 가 없었고,
+    //   _stg 자신의 catch 가 그 ReferenceError 를 삼켜 "재시도가 안 된다"로 보였다.
+    const a = S.indexOf("            const _STG_RETRY_MS =");
+    const b = S.indexOf("\n            // (1) 반사실 후보 라벨링", a);
+    const store = {};
+    const env = { DB: { prepare: () => ({ bind: () => ({ run: async () => ({}), first: async () => null, all: async () => ({ results: [] }) }) }) } };
+    const ctx = vm.createContext({
+      env, Date, Math, JSON, String,
+      _aiDay: "2026-09-10", _STG_COST_MIN_MS: 1e9, _stgCost: { ms: {}, ts: 0 },
+      _num: (v, d) => { const x = Number(v); return Number.isFinite(x) ? x : d; },
+      getState: async (_db, k) => (store[k] === undefined ? null : store[k]),
+      setState: async (_db, k, v) => { store[k] = v; },
+      log: async () => {}
+    });
+    vm.runInContext(S.slice(a, b) + "\n globalThis.stg = _stg;", ctx);
+    let ran = 0;
+    await ctx.stg("t1", async () => { ran++; return "⟳ [ML] 아직"; });
+    const markWait = store["ai_stage:t1"];
+    if (typeof markWait === "string" && markWait.indexOf("2026-09-10|wait|") === 0)
+      ok("⟳ 를 돌려준 단계는 완료 도장 대신 '아직' 표식이 찍힌다");
+    else bad(`★'아직'인데 완료 도장이 찍혔다(${markWait}) — 그날 내내 재학습이 없다★`);
+    await ctx.stg("t1", async () => { ran++; return "⟳ [ML] 아직"; });
+    if (ran === 1) ok("바로 다음 실행은 건너뛴다 — 매 분 무거운 학습 질의를 반복하지 않는다");
+    else bad("재시도 간격이 없다 — 매 분 학습 질의가 반복된다");
+    store["ai_stage:t1"] = "2026-09-10|wait|" + (Date.now() - 20 * 60000);
+    await ctx.stg("t1", async () => { ran++; return "[ML] 학습 완료"; });
+    if (ran === 2 && store["ai_stage:t1"] === "2026-09-10")
+      ok("표식이 만료되면 같은 날 안에 다시 돌고, 성공하면 그때 완료 도장이 찍힌다");
+    else bad(`재시도/완료 전이가 깨졌다(ran ${ran} · mark ${store["ai_stage:t1"]})`);
+    await ctx.stg("t1", async () => { ran++; return "다시"; });
+    if (ran === 2) ok("완료된 단계는 그날 다시 돌지 않는다 — 종전 동작 그대로다");
+    else bad("완료 도장이 무시된다 — 같은 학습이 하루에 여러 번 돈다");
+  }
+  const waits = (S.match(/return "\\u27F3 " \+ "\[/g) || []).length;
+  if (waits >= 8) ok(`표본 부족으로 물러나는 학습 단계 ${waits}곳이 재시도 신호를 쓴다(MIND·L1·BRAIN·GBDT·DNN·MEMO·BANDIT·SCAN 등)`);
+  else bad(`재시도 신호를 쓰는 단계가 ${waits}곳뿐이다 — 나머지는 그날 내내 멈춘다`);
+  if (/id < \? ORDER BY id DESC/.test(S))
+    ok("이관이 ★최신 행부터★ 돈다 — 학습창(최근 trainWindow)이 먼저 새 판이 되어 위원들이 빨리 돌아온다");
+  else bad("★이관이 오래된 행부터 돈다 — 학습에 쓰는 최근 구간이 가장 늦게 준비된다★");
   const src = S.slice(S.indexOf("async function mlFeatMigPending(DB)"), S.indexOf("async function mlMarketHarvestNightly"));
   if (/catch \(e\) \{ return true; \}/.test(src) && /if \(!st\) return true;/.test(src))
     ok("상태를 못 읽거나 아직 시작 전이면 '이관 중'으로 본다 — 모르면 지우지 않는다");
@@ -170,12 +218,12 @@ const names = M.LUXML.featNames, D = names.length, SN = M.DS_FEATS.length;
         return null;
       };
       q.all = async () => {
-        if (/SELECT id, ts, symbol, strategy, feat FROM (ml_samples|ml_samples_st) WHERE featver <> \? AND id > \?/.test(sql)) {
+        if (/SELECT id, ts, symbol, strategy, feat FROM (ml_samples|ml_samples_st) WHERE featver <> \? AND id < \? ORDER BY id DESC/.test(sql)) {
           const tb = /ml_samples_st/.test(sql) ? "st" : "main";
           if (tb === "st") return { results: [] };
-          const [fv, lastId, lim] = q.args;
-          return { results: rows.filter((r) => r.featver !== fv && r.id > lastId)
-            .sort((a, b) => a.id - b.id).slice(0, lim) };
+          const [fv, cursor, lim] = q.args;
+          return { results: rows.filter((r) => r.featver !== fv && r.id < cursor)
+            .sort((a, b) => b.id - a.id).slice(0, lim) };
         }
         return { results: [] };
       };
