@@ -4,14 +4,24 @@
 
 ## Current handoff
 
-- Status: V33.329 ab4e950 deployed and live-verified; all four targeted retrains succeeded. Final evidence-panel sizing/docs commit requires its own deployment confirmation.
+- Status: V33.329 deployment/verification complete; resumed against current main V33.345 on 2026-09-11 and all102 gates passed. Model-quality/version limitations remain as recorded below; do not force promotion.
 - Owner: Codex
 - Branch: main (direct main authorized; no PR)
-- Last commit: HEAD / V33.329 (resolve with git log -1)
+- Last commit: runtime e7d1b5a / V33.345; latest HEAD may be this documentation-only verification commit (resolve with git log -1).
 - Base: f8251c4 / V33.328, fetched and fast-forwarded before edits; no concurrent upstream changes at final fetch.
 - Scope: 사용자 요청 — 매매법/신규 모델 합류 문제 수정, 기존 틀 유지 디자인 개선.
 
 ### Codex V33.329 — 2026-09-09
+
+### Codex continuation verification — 2026-09-11
+
+- Confirmed deployment34366234130 for508cc15 completed successfully. Fetched and fast-forwarded16 subsequent commits to e7d1b5a/V33.345; preserved all intervening work. No runtime, model or trading-setting changes in this continuation.
+- Current live browser confirms V33.345, model-evidence asset33.345.1,13 cards. Viewports390/820/1366 have no horizontal overflow. Tablet grid277.5px×2, desktop301.3px×3. Actual API-driven render preserved node identity, open disclosure, keyboard focus and scrollDelta0.
+- All102 check-*.mjs passed on current main with PYTHONUTF8=1/NODE_NO_WARNINGS=1; git diff --check clean.
+- IMPORTANT: September9 training outcomes below are historical, not current status. September11 live roster: GBDT full; SEQ provisional(mult0.1963), DUAL bear provisional0.25; DNN reject(acc lower bound), DUAL bull reject(evidence multiplier0.048 below0.12), FLOW/XALPHA/STACK/MEMO reject. XGB/LGB/CAT featVer15 vs current17 mismatch and require compatible retraining. No claim of universal promotion, model replacement or demonstrated profit improvement.
+- This completion records deployment and compatibility verification of Codex changes, not resolution of all subsequent model-quality/pipeline issues introduced or exposed in later versions. No additional retraining or manual orders triggered in this continuation.
+
+### Original V33.329 implementation evidence
 
 - Detailed evidence and limits: `docs/CODEX-TRADING-AUDIT-V33.329.md`.
 - Fixed AI_PRIMARY erasing scalp, contradictory snap routing and unvalidated bucket fallback. Reuses existing qualified setups and retains downstream risk gates. Records `meta.aiSetup` for audits. No model architecture or risk threshold changes.
