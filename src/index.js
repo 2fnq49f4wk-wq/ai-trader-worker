@@ -2981,7 +2981,7 @@ async function applySignalTypeWeights(DB, cfg) {
    화면·자가진단이 계속 "V33.272" 를 보고했다(운영 스냅샷이 그대로 그랬다). 배포는 됐는데
    ★배포됐다는 사실만 거짓말★ 을 하고 있었으니, "내 고침이 올라간 건가" 를 화면으로 확인할
    방법이 없었다. tools/check-build-ver.mjs 가 이제 소스에 적힌 최신 버전과 이 값을 대조한다. */
-const _BUILD_VER = "V33.343";
+const _BUILD_VER = "V33.344";
 
 // ═══ [V33.171] 평가 순서 계획 — ★승격과 순환을 교차해 굶주림을 구조적으로 없앤다★ ═══
 //   V33.50 의 형태트리거는 "급한 몇 종목을 앞으로 당긴다"는 의도였으나, 실제 운영로그에서는
@@ -45135,6 +45135,7 @@ async function _luxSelfCheck(DB) {
   const add = function (level, area, msg) { issues.push({ level: level, area: area, msg: msg }); };
   const ageH = function (ts) { return ts ? (nowT - ts) / 3600000 : null; };
   let perf = {};
+  let pipe = null;   // [V33.344] 야간 파이프라인 상태 — 아래에서 채운다(관측 가능하게)
   try {
     // [V32.55] fetch/로딩 속도 프록시 — 대표 상태 배치 read 왕복시간 측정
     let S = {}, _sLoadMs = null; try { const _t = Date.now(); S = await getStates(DB, ["ai_picks:scan", "crisis_gauge", "world_news", "tag_returns", "macro_data", "mkt_context", "committee_cal", "event_efficacy", "dnn_trust", "gbdt_trust", "ai_selfreview", "news_stats", "sector_news_sentiment", "mind_model", "modal_retrain_auto"]); _sLoadMs = Date.now() - _t; } catch (e) {}
@@ -45173,6 +45174,47 @@ async function _luxSelfCheck(DB) {
        진짜 손실은 다른 것이다: v7 이 살아 있으면 50종목이 1 subrequest 인데, 죽으면 종목당
        1 subrequest 가 된다(미국 558종목). 그 예산 압박이 시간외 보강 회전을 느리게 만든다.
        그리고 왜 죽었는지(err)를 함께 적는다 — 인증·요청형태·과부하는 처방이 전혀 다르다. */
+    /* ══ [V33.344] ★야간 파이프라인의 상태를 볼 수 있게 한다★ ═══════════════════
+       오늘 이 결함 하나(committee_cal 이 옛 판에 묶임)를 쫓느라 프로덕션 로그를 네 번
+       긁고도 답을 못 냈다. ai_trained_day 가 언제 찍혔는지, 어떤 단계가 대기 중인지,
+       스캔이 돌기는 했는지 — ★아무 데서도 볼 수 없었기 때문★ 이다.
+       그러면 남는 건 추측이고, 추측으로 코드를 고치면 이 저장소가 여러 번 겪은 방식으로 실패한다
+       (worker-logs 워크플로 주석이 같은 말을 한다: "진단이 사람 손을 거치면 추측으로 고치게 된다").
+       상태를 읽는 것은 D1 읽기 몇 번이다. 그 값이면 다음부터는 한 번의 조회로 답이 난다. */
+    try {
+      const _pDay = new Date().toISOString().slice(0, 10);
+      const _pDone = await getState(DB, "ai_trained_day", null);
+      const _pPart = await getState(DB, "ai_pipe_partial", null);
+      const _pScan = _num(await getState(DB, "ai_wait_scan", 0), 0);
+      const _pStage = { done: 0, wait: [], old: 0 };
+      try {
+        const _sr = await DB.prepare(
+          "SELECT k, v FROM state WHERE k >= 'ai_stage:' AND k < 'ai_stage;'").all();
+        for (const _r of ((_sr && _sr.results) || [])) {
+          let _v = _r.v; try { _v = JSON.parse(_r.v); } catch (e) {}
+          const _nm = String(_r.k).slice(9);
+          if (_v === _pDay) _pStage.done++;
+          else if (typeof _v === "string" && _v.indexOf(_pDay + "|wait|") === 0) _pStage.wait.push(_nm);
+          else _pStage.old++;
+        }
+      } catch (e) {}
+      pipe = {
+        day: _pDay, trainedDay: _pDone || null,
+        closed: _pDone === _pDay,
+        stagesToday: _pStage.done, stagesOld: _pStage.old,
+        waiting: _pStage.wait.slice(0, 12), waitingN: _pStage.wait.length,
+        partial: _pPart ? { day: _pPart.day, n: _pPart.n, ageMin: +((Date.now() - _num(_pPart.ts, 0)) / 60000).toFixed(1) } : null,
+        lastScanMin: _pScan > 0 ? +((Date.now() - _pScan) / 60000).toFixed(1) : null
+      };
+      /* ★닫혔는데 안 끝난 게 있다★ 는 조합이 바로 오늘의 사고다 — 그 조합을 소리 내게 한다. */
+      if (pipe.closed && (pipe.waitingN > 0 || pipe.stagesOld > 0))
+        add("warn", "파이프라인",
+          "야간 파이프라인이 오늘 완주 도장을 찍었는데 안 끝난 단계가 있다 — 대기 " + pipe.waitingN +
+          " · 옛 판 도장 " + pipe.stagesOld + "(마지막 스캔 " +
+          (pipe.lastScanMin == null ? "없음" : pipe.lastScanMin.toFixed(0) + "분 전") + ")");
+      else if (pipe.closed && pipe.lastScanMin != null && pipe.lastScanMin > 30)
+        add("info", "파이프라인", "야간 파이프라인 완주(" + pipe.trainedDay + ") · 단계 " + pipe.stagesToday + "개 완료");
+    } catch (e) {}
     try {
       const _v7 = await getState(DB, "yahoo_v7", null);
       if (_v7 && _v7.ts) {
@@ -45373,7 +45415,7 @@ async function _luxSelfCheck(DB) {
   const errCnt = issues.filter(function (x) { return x.level === "error"; }).length;
   const warnCnt = issues.filter(function (x) { return x.level === "warn"; }).length;
   const status = errCnt > 0 ? "error" : warnCnt > 0 ? "warn" : "ok";
-  return { status: status, errCnt: errCnt, warnCnt: warnCnt, issues: issues, perf: perf, ts: nowT };
+  return { status: status, errCnt: errCnt, warnCnt: warnCnt, issues: issues, perf: perf, pipe: pipe, ts: nowT };
 }
 
 // ═══════════ [V32.57] Modal 학습 지연 자동 재트리거 — 외부학습이 6h 크론 대비 지연되면 워커가 재학습 워크플로 자동 실행 ═══════════
@@ -48284,6 +48326,23 @@ export default {
       //    미학습/표본부족이면 각 함수가 자동 대기(observe)라 거래영향 0.
       try {
         if (typeof LUXML !== "undefined" && LUXML.enabled) {
+          /* ══ [V33.344] ★스캔은 블록 맨 앞에서 한다★ ═══════════════════════════════
+             V33.343 은 스캔을 진입 게이트 바로 앞(이 블록의 ★끝부분★)에 뒀다. 그런데
+             이 블록은 한 invocation 안에서 수확 캐치업·반사실·딥이력 같은 무거운 일을
+             먼저 하고, 그것들이 CPU·시간 예산을 먹으면 ★뒤쪽은 아예 도달하지 못한다.★
+             실측: 워커 로그 12시간치(01:30~13:51 UTC, 2498줄)에 [SCHED] 도 [CAL] 도
+             ★0줄★ 이었다 — 장중 내내 뒤쪽이 굶었다는 뜻이다.
+             스캔은 D1 읽기 몇 번이라 값싸고, 결과를 ai_pipe_partial 에 남기면
+             ★다음 틱의 진입 게이트가 그걸 보고 연다.★ 그러니 맨 앞에서 해 둔다.
+             (6분 스로틀이 있어 매분 스캔하지 않는다.) */
+          try {
+            const _dayNow = new Date().toISOString().slice(0, 10);
+            const _lastDone = await getState(env.DB, "ai_trained_day", null);
+            const _pp = await getState(env.DB, "ai_pipe_partial", null);
+            if (_lastDone === _dayNow && !(_pp && _pp.day === _dayNow)) {
+              await _pipeOpenStages(env, _dayNow);
+            }
+          } catch (e) {}
           // [V12.103] ★재수확 캐치업★ featVer 상향 후 표본 풀은 0부터 다시 채워야 하는데(구 featVer는
           //   피처차원이 달라 재사용 불가), 야간 1회 수확은 예산상 밤당 ~수만개라 120만 재구축에 수 주가
           //   걸렸다. 풀이 rebuildTarget 미만인 동안에는 '매 cron 틱'마다 짧은 예산(22s)으로 수확을 추가

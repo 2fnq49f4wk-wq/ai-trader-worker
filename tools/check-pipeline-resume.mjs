@@ -154,6 +154,32 @@ const bad = (m) => { fails++; console.error("  FAIL " + m); };
   }
 }
 
+// ── ②-c ★굶지 않는 자리에서 스캔하는가 + 상태가 보이는가★ ──────────────
+{
+  /* V33.343 은 스캔을 블록 ★끝부분★ 에 뒀다. 그 블록은 한 invocation 안에서 수확·딥이력 같은
+     무거운 일을 먼저 하고, 예산이 떨어지면 뒤쪽은 도달하지 못한다.
+     실측: 워커 로그 12시간치(2498줄)에 [SCHED] 도 [CAL] 도 0줄이었다. */
+  const bi = S.indexOf('if (typeof LUXML !== "undefined" && LUXML.enabled) {', S.indexOf("async scheduled("));
+  const head = bi >= 0 ? S.slice(bi, bi + 1600) : "";
+  if (/_pipeOpenStages\(env, _dayNow\)/.test(head))
+    ok("스캔이 야간 블록 ★맨 앞★ 에서 돈다 — 뒤쪽이 굶어도 다음 틱의 게이트가 열린다");
+  else bad("★스캔이 블록 뒤쪽에만 있다★ — 무거운 일이 예산을 먹으면 영영 도달하지 못한다");
+  if (/_lastDone === _dayNow && !\(_pp && _pp\.day === _dayNow\)/.test(head))
+    ok("이미 닫힌 날이고 기록이 없을 때만 스캔한다 — 정상 흐름에 군더더기를 얹지 않는다");
+  else bad("★스캔 조건이 없거나 매번 돈다★");
+
+  /* 오늘 이 결함을 쫓느라 프로덕션 로그를 네 번 긁고도 답을 못 냈다 —
+     파이프라인 상태를 볼 수 있는 곳이 아무 데도 없었기 때문이다. */
+  if (/pipe: pipe, ts: nowT/.test(S)) ok("자가진단이 파이프라인 상태를 함께 돌려준다(pipe)");
+  else bad("★파이프라인 상태를 어디서도 볼 수 없다★ — 다음에도 추측으로 고치게 된다");
+  if (/closed: _pDone === _pDay/.test(S) && /waitingN: _pStage\.wait\.length/.test(S) && /stagesOld: _pStage\.old/.test(S))
+    ok("완주 여부·대기 단계 수·옛 판 도장 수를 함께 싣는다 — 한 번의 조회로 원인이 갈린다");
+  else bad("★상태가 불완전하다★ — 무엇이 안 끝났는지 여전히 알 수 없다");
+  if (/pipe\.closed && \(pipe\.waitingN > 0 \|\| pipe\.stagesOld > 0\)/.test(S))
+    ok("★'닫혔는데 안 끝난 게 있다'★ 는 조합을 소리 내어 경고한다 — 오늘의 사고가 바로 그것이다");
+  else bad("★그 조합을 아무도 말하지 않는다★");
+}
+
 // ── ③ 보정 단계가 ⟳ 를 실제로 돌려주는가(그래야 위가 의미를 가진다) ────
 {
   const i = S.indexOf("async function mlCalibrateCommittee(DB)");
