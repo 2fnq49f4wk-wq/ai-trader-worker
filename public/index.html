@@ -8,8 +8,8 @@
      인데, 지금까지 화면에서 그걸 알 방법이 전혀 없었다(카카오톡 인앱 브라우저는 특히 강하게 캐시한다).
      서버가 내려주는 build 와 이 값을 비교해 다르면 배너로 알린다.
      ※ src/index.js 의 _BUILD_VER 와 항상 같아야 한다 — check-html-js 가 강제한다. -->
-<meta name="lux-build" content="V33.334">
-<script src="/neural-observatory.js?v=33.334"></script>
+<meta name="lux-build" content="V33.335">
+<script src="/neural-observatory.js?v=33.335"></script>
 <title>LUX-ENGINE V10</title>
 <!-- ══ [V33.156] 설치형 앱(PWA) — 폰·PC 에서 홈화면/독에 담아 앱처럼 연다 ══
      · manifest  : 이름·아이콘·standalone 표시(주소창 없이 앱처럼)
@@ -9410,12 +9410,12 @@ html[data-theme="light"] .m-brainbar button.active{color:#0b4f9e;background:rgba
     else if (_tx === null) { add('DMA(10,50)', '—'); add('스토캐스틱(14,3,3)', '—'); }
     else {
       if (typeof _tx.dmaPct === 'number' && isFinite(_tx.dmaPct)) {
-        var _dUp = (typeof _tx.amaPct === 'number') ? (_tx.dmaPct > _tx.amaPct) : (_tx.dmaPct > 0);
-        add('DMA(10,50)', (_tx.dmaPct >= 0 ? '+' : '') + _tx.dmaPct.toFixed(2) + '%'
-          + (typeof _tx.amaPct === 'number' ? ' / AMA ' + (_tx.amaPct >= 0 ? '+' : '') + _tx.amaPct.toFixed(2) + '%' : '')
-          + (_tx.dmaCross > 0 ? ' ▲골든' : (_tx.dmaCross < 0 ? ' ▼데드' : '')),
-          _tx.dmaCross > 0 ? 'pos' : (_tx.dmaCross < 0 ? 'neg' : (_dUp ? 'pos' : 'neg')));
-      } else add('DMA(10,50)', '—');
+        // [V33.335] Displaced MA — 이평(20)을 5봉 앞으로 민 선. 값은 '가격이 그 선보다 몇 % 위/아래'.
+        add('DMA(20,+5)', (_tx.dmaPct >= 0 ? '+' : '') + _tx.dmaPct.toFixed(2) + '%'
+          + (typeof _tx.dmaSlope === 'number' ? ' · 기울기 ' + (_tx.dmaSlope >= 0 ? '+' : '') + _tx.dmaSlope.toFixed(3) + '%' : '')
+          + (_tx.dmaCross > 0 ? ' ▲상향돌파' : (_tx.dmaCross < 0 ? ' ▼하향이탈' : '')),
+          _tx.dmaCross > 0 ? 'pos' : (_tx.dmaCross < 0 ? 'neg' : (_tx.dmaPct > 0 ? 'pos' : 'neg')));
+      } else add('DMA(20,+5)', '—');
       if (typeof _tx.stochK === 'number' && isFinite(_tx.stochK)) {
         var _k = _tx.stochK, _ob = _k >= 80, _os = _k <= 20;
         add('스토캐스틱(14,3,3)', '%K ' + _k.toFixed(1)
@@ -18755,12 +18755,12 @@ html:root .page > *{ flex-shrink:0; }
     if(!ex) return [];
     var out = [];
     if(ex.dmaPct != null && isFinite(ex.dmaPct)){
-      var dUp = (ex.amaPct != null) ? (ex.dmaPct > ex.amaPct) : (ex.dmaPct > 0);
       out.push({ label:'DMA', txt: (ex.dmaPct>=0?'+':'') + ex.dmaPct.toFixed(2) + '%'
           + (ex.dmaCross>0?' ▲':(ex.dmaCross<0?' ▼':'')),
-        dir: (ex.dmaCross>0?1:(ex.dmaCross<0?-1:(dUp?1:-1))),
-        title:'DMA(10,50) = 단기MA − 장기MA 를 가격 %로. 시그널선(AMA'
-          + (ex.amaPct!=null?' '+ex.amaPct.toFixed(2)+'%':'') + ') 위면 상승 우위, ▲는 상향돌파' });
+        dir: (ex.dmaCross>0?1:(ex.dmaCross<0?-1:(ex.dmaPct>0?1:-1))),
+        title:'Displaced MA(20, +5봉) — 이동평균선을 5봉 앞으로 민 선. 값은 가격이 그 선보다 몇 % 위/아래인가.'
+          + (ex.dmaSlope!=null?' 선 기울기 '+ex.dmaSlope.toFixed(3)+'%/봉.':'')
+          + ' 위면 추세 우위, ▲는 상향돌파' });
     }
     if(ex.stochK != null && isFinite(ex.stochK)){
       var k = ex.stochK, ob = k>=80, os = k<=20;
@@ -19712,11 +19712,11 @@ body:has(#page-nnviz.active) .rail{
 </style>
 
 <!-- [Codex V33.314] Dedicated scoped design system. See AI_HANDOFF.md before changing model/UI contracts. -->
-<link rel="stylesheet" href="/brain-console.css?v=33.334">
-<link rel="stylesheet" href="/workspace-layout.css?v=33.334">
-<link rel="stylesheet" href="/neural-observatory.css?v=33.334">
-<link rel="stylesheet" href="/model-evidence.css?v=33.334.1">
-<script src="/model-evidence.js?v=33.334.1"></script>
-<script src="/workspace-ui.js?v=33.334"></script>
+<link rel="stylesheet" href="/brain-console.css?v=33.335">
+<link rel="stylesheet" href="/workspace-layout.css?v=33.335">
+<link rel="stylesheet" href="/neural-observatory.css?v=33.335">
+<link rel="stylesheet" href="/model-evidence.css?v=33.335.1">
+<script src="/model-evidence.js?v=33.335.1"></script>
+<script src="/workspace-ui.js?v=33.335"></script>
 </body>
 </html>

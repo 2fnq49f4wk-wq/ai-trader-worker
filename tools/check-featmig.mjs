@@ -19,51 +19,72 @@ const bad = (m) => { fails++; console.error("  FAIL " + m); };
 const code = S.split("\n").filter((l) => !/^\s*(\/\/|\*|\/\*)/.test(l)).join("\n");
 const names = M.LUXML.featNames, D = names.length, SN = M.DS_FEATS.length;
 
-// ── ① 그 시점 값을 실제 이력에서 되계산하는가 ───────────────────────────
+// ── ① ★봉을 내용으로 찾는가★ — ts 로 찾으면 엉뚱한 봉을 붙인다 ──────────
 {
-  /* ★거래일만 담긴 배열★ 로 만든다 — 실제 daily 캐시가 그렇다(주말·공휴일에는 봉이 없다).
-     연속 배열로 시험하면 휴장 보정을 시험한 게 아니라 아무것도 시험하지 않은 것이 된다. */
-  const closes = [], highs = [], lows = [], days = [];
-  const day0 = Math.floor(Date.parse("2025-01-02T00:00:00Z") / 86400000);
-  let dcur = day0;
-  for (let i = 0; i < 300; i++) {
-    const c = 100 + i * 0.35 + Math.sin(i / 5) * 2.2;
-    closes.push(c); highs.push(c * 1.012); lows.push(c * 0.988); days.push(dcur);
-    dcur += ((i % 5) === 4) ? 3 : 1;              // 금요일 다음은 월요일(주말 2일 건너뛴다)
-  }
-  const at = 200;
-  const ts = days[at] * 86400000;
-  const bi = M._dsBarIndex(days, ts);
-  if (bi === at) ok(`표본 ts 로 봉 위치를 정확히 찾는다(${at}번째 봉)`);
-  else bad(`봉 위치를 못 찾는다: ${bi} (기대 ${at})`);
-  // 주말·공휴일에 찍힌 ts 는 ★직전 거래일 봉★ 으로 내려가야 한다
-  const fri = days.indexOf(days.find((d, i) => (i % 5) === 4 && i > 100));
-  const satTs = (days[fri] + 2) * 86400000;
-  if (M._dsBarIndex(days, satTs) === fri) ok("주말에 찍힌 ts 는 직전 거래일 봉을 쓴다(허용오차 안)");
-  else bad(`휴장 보정이 안 된다: ${M._dsBarIndex(days, satTs)} (기대 ${fri})`);
-  if (M._dsBarIndex(days, ts + 40 * 86400000) !== -1) {
-    // 40일 뒤에도 봉이 있으면 그 봉을 쓰는 게 맞다 — 허용오차는 '봉이 없을 때'의 이야기다.
-    const gapTs = (days[days.length - 1] + 40) * 86400000;
-    if (M._dsBarIndex(days, gapTs) === -1) ok("마지막 봉에서 40일이나 지난 ts 는 -1 — 엉뚱한 봉을 갖다 쓰지 않는다");
-    else bad("허용오차 밖인데도 봉을 갖다 쓴다");
-  } else ok("허용오차 밖 ts 에는 -1 을 준다");
-  if (M._dsBarIndex(null, ts) === -1 && M._dsBarIndex(days, 0) === -1) ok("days 나 ts 가 없으면 -1");
-  else bad("결측 입력에 -1 을 안 준다");
+  /* 수확 표본의 ts 는 실제 날짜가 아니다(소스: "봉 시점 근사, 일봉 1개=1일").
+     주말·휴장을 안 세므로 100봉 전 표본의 ts 는 실제보다 몇 주 앞선다.
+     그래서 저장된 벡터의 dayPct·ret5·ret20 로 봉을 특정한다 — 셋 다 종가만으로
+     정해지고 클램프도 없어 이력에서 그대로 재현된다. */
+  const closes = [];
+  for (let i = 0; i < 400; i++) closes.push(100 + i * 0.31 + Math.sin(i / 7) * 3.1);
+  const map = M._dsAnchorIndex(closes);
+  const at = 250, L = at + 1, price = closes[at];
+  const key = M._dsAnchorKey((price / closes[at - 1] - 1) * 100,
+                             (price / closes[L - 6] - 1) * 100,
+                             (price / closes[L - 21] - 1) * 100);
+  if (map.get(key) === at) ok(`저장된 dayPct·ret5·ret20 만으로 ${at}번째 봉을 정확히 특정한다`);
+  else bad(`내용으로 봉을 못 찾는다: ${map.get(key)} (기대 ${at})`);
+  if (map.get(M._dsAnchorKey(9.9, 9.9, 9.9)) === undefined)
+    ok("이력에 없는 조합은 찾지 못한다고 답한다 — 아무 봉이나 갖다 쓰지 않는다");
+  else bad("없는 조합에도 봉을 갖다 쓴다");
+  // 같은 세 값이 두 봉에서 나오면 애매하다 — 쓰지 않아야 한다
+  const flat = new Array(200).fill(100);
+  const fm = M._dsAnchorIndex(flat);
+  const dup = fm.get(M._dsAnchorKey(0, 0, 0));
+  if (dup === -1) ok("세 값이 같은 봉이 둘 이상이면 -1(애매) — 실측값이라고 붙이지 않는다");
+  else bad(`중복 앵커를 그대로 쓴다: ${dup}`);
+  if (map.size > 300) ok(`이력 400봉에서 앵커 ${map.size}개가 만들어진다(대부분의 봉이 특정된다)`);
+  else bad(`앵커가 ${map.size}개뿐이다 — 대부분의 표본을 못 찾는다`);
 
+  const highs = closes.map((c) => c * 1.01), lows = closes.map((c) => c * 0.99);
   const v = M._dsFeats(closes.slice(0, at + 1), highs.slice(0, at + 1), lows.slice(0, at + 1));
-  if (v.dsKnown === 1 && v.dmaPct > 0 && v.stochSlowK >= 0 && v.stochSlowK <= 100)
-    ok(`이력이 있으면 실측값을 낸다(dmaPct ${v.dmaPct.toFixed(2)}% · %K ${v.stochSlowK.toFixed(0)} · dsKnown 1)`);
+  if (v.dsKnown === 1 && Math.abs(v.dispMaPct) < 50 && v.stochSlowK >= 0 && v.stochSlowK <= 100)
+    ok(`이력이 있으면 실측값을 낸다(가격-DMA ${v.dispMaPct.toFixed(2)}% · %K ${v.stochSlowK.toFixed(0)} · dsKnown 1)`);
   else bad("실측값 계산이 틀렸다: " + JSON.stringify(v));
   const short = M._dsFeats(closes.slice(0, 30), null, null);
-  if (short.dsKnown === 0 && short.stochSlowK === 50 && short.dmaPct === 0)
+  if (short.dsKnown === 0 && short.stochSlowK === 50 && short.dispMaPct === 0)
     ok("이력이 모자라면 중립 + dsKnown=0 — 지어내지 않고 '모른다'고 적는다");
   else bad("짧은 이력에서 값을 지어낸다: " + JSON.stringify(short));
+  /* ★고가·저가가 없으면 getStochSlow 는 조용히 종가근사로 떨어진다.★ 그 값은 진짜
+     스토캐스틱과 분포가 달라, 섞으면 같은 칸에 다른 지표 둘을 밀어 넣는 셈이 된다. */
+  const noHL = M._dsFeats(closes.slice(0, at + 1), null, null);
+  if (noHL.dsKnown === 0)
+    ok("고가·저가가 없으면 실측이라고 하지 않는다 — 종가근사가 진짜 값으로 섞이지 않는다");
+  else bad("★고가·저가 없이 계산한 종가근사를 실측(dsKnown=1)이라고 붙인다★");
+  const misHL = M._dsFeats(closes.slice(0, at + 1), highs.slice(0, at), lows.slice(0, at + 1));
+  if (misHL.dsKnown === 0) ok("고가·저가 길이가 어긋나도 실측이라고 하지 않는다");
+  else bad("정렬이 어긋난 고가·저가로 계산하고 실측이라 붙인다");
+  if (/_IX_MAX/.test(S) && /_ixOrder\.shift\(\)/.test(S))
+    ok("이관의 종목 캐시에 상한이 있다 — 딥이력을 종목마다 들고 있으면 아이솔레이트 메모리를 넘긴다");
+  else bad("종목 캐시가 무한히 자란다 — 한 호출에서 수십 MB 가 된다");
+
+  /* ★Displaced MA 인가★ — V33.334 는 '이동평균 차이'였다. 사용자가 말한 것은 이쪽이다. */
+  const dm = M.getDisplacedMA(closes, M.DS_PARAMS.maPeriod, M.DS_PARAMS.maShift);
+  const n = closes.length, p = M.DS_PARAMS.maPeriod, sh = M.DS_PARAMS.maShift;
+  let sum = 0; for (let i = n - 1 - sh - p + 1; i <= n - 1 - sh; i++) sum += closes[i];
+  if (dm && Math.abs(dm.ma - sum / p) < 1e-9)
+    ok(`DMA 선이 ${sh}봉 전 MA(${p}) 와 정확히 같다 — 이동평균을 앞으로 민 선이다`);
+  else bad("DMA 가 Displaced MA 가 아니다");
+  const mutated = closes.slice(); mutated[n - 1] = 99999;
+  if (M.getDisplacedMA(mutated, p, sh).ma === dm.ma)
+    ok("마지막 봉을 바꿔도 선 값이 안 변한다 — 미래·현재 종가를 선에 쓰지 않는다(누출 없음)");
+  else bad("★DMA 선이 현재 봉을 쓴다 — 밀어놓은 선의 정의가 아니다★");
 }
 
 // ── ② ★앞칸이 밀리지 않는가★ — 밀리면 복구 불가능한 사고다 ─────────────
 {
   const oldVec = Array.from({ length: D - SN }, (_, j) => j * 0.5 - 3);
-  const vals = { dmaPct: 1.5, dmaGap: -0.4, stochSlowK: 72.5, stochSlowD: 68.1, dsKnown: 1 };
+  const vals = { dispMaPct: 1.5, dispMaSlope: -0.4, stochSlowK: 72.5, stochSlowD: 68.1, dsKnown: 1 };
   const nx = M._featBackfillX(oldVec, Date.parse("2026-05-05T00:00:00Z"), vals);
   if (nx && nx.length === D && oldVec.every((v, j) => nx[j] === v))
     ok(`옛 ${D - SN}칸이 한 칸도 안 밀리고 ${D}칸이 된다`);
@@ -107,10 +128,19 @@ const names = M.LUXML.featNames, D = names.length, SN = M.DS_FEATS.length;
     closes.push(c); highs.push(c * 1.01); lows.push(c * 0.99); days.push(day0 + i);
   }
   const daily = { closes, highs, lows, days, ts: Date.now() };
+  /* ★표본 벡터의 앵커 세 칸을 실제 이력값으로 채운다.★ 아무 값이나 넣으면 이관이
+     전부 '못 찾음(중립)' 으로 떨어져, "실측값을 되계산한다"는 이 검사의 핵심이
+     아무것도 시험하지 않게 된다 — 통과해도 의미가 없는 검사가 된다. */
+  const iDay = names.indexOf("dayPct"), iR5 = names.indexOf("ret5"), iR20 = names.indexOf("ret20");
   const rows = [];
   for (let i = 0; i < 40; i++) {
-    rows.push({ id: i + 1, ts: (day0 + 120 + i) * 86400000, symbol: "AAA",
-      feat: JSON.stringify(Array.from({ length: D - SN }, (_, j) => (j + i) % 7)), featver: M.LUXML.featVer - 1 });
+    const at = 120 + i, L = at + 1, px = closes[at];
+    const x = Array.from({ length: D - SN }, (_, j) => (j + i) % 7);
+    x[iDay] = (px / closes[at - 1] - 1) * 100;
+    x[iR5] = (px / closes[L - 6] - 1) * 100;
+    x[iR20] = (px / closes[L - 21] - 1) * 100;
+    rows.push({ id: i + 1, ts: (day0 + at) * 86400000, symbol: "AAA",
+      feat: JSON.stringify(x), featver: M.LUXML.featVer - 1 });
   }
   // 이력이 없는 종목 — 버리지 않고 중립으로 살아남아야 한다
   for (let i = 0; i < 10; i++) {
@@ -119,7 +149,9 @@ const names = M.LUXML.featNames, D = names.length, SN = M.DS_FEATS.length;
   }
   // ★일봉 캐시를 실제로 심어 둔다★ — 안 심으면 전부 '이력 없음'으로 떨어져,
   //   "실측값을 되계산한다"는 이 검사의 핵심이 아무것도 시험하지 않게 된다.
-  const state = { "daily:AAA": JSON.stringify(daily) };
+  /* 딥이력(hist:)을 먼저 본다 — 수확 표본이 거기서 나왔기 때문이다.
+     이 stub 에도 그대로 심어 둔다(R2 미바인딩이면 histGet 이 D1 의 hist: 로 떨어진다). */
+  const state = { "hist:AAA": JSON.stringify(daily), "daily:AAA": JSON.stringify(daily) };
   const DB = {
     prepare(sql) {
       const q = { sql, args: [] };
@@ -129,11 +161,11 @@ const names = M.LUXML.featNames, D = names.length, SN = M.DS_FEATS.length;
         return null;
       };
       q.all = async () => {
-        if (/FROM (ml_samples|ml_samples_st) WHERE featver = \? AND id > \?/.test(sql)) {
+        if (/FROM (ml_samples|ml_samples_st) WHERE featver <> \? AND id > \?/.test(sql)) {
           const tb = /ml_samples_st/.test(sql) ? "st" : "main";
           if (tb === "st") return { results: [] };
           const [fv, lastId, lim] = q.args;
-          return { results: rows.filter((r) => r.featver === fv && r.id > lastId)
+          return { results: rows.filter((r) => r.featver !== fv && r.id > lastId)
             .sort((a, b) => a.id - b.id).slice(0, lim) };
         }
         return { results: [] };

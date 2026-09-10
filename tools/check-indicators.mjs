@@ -25,52 +25,66 @@ const ctx = vm.createContext({
   _num: (v, d) => { const n = Number(v); return Number.isFinite(n) ? n : d; }
 });
 vm.runInContext(cut("function getMA(h, p) {", "// [V84] EMA 시리즈") +
-                cut("/* [V33.332] ★DMA", "// [신규] N일 수익률 계산") +
-                "\n globalThis.dma = getDMA; globalThis.st = getStochSlow;", ctx);
+                cut("/* [V33.335] ★DMA — Displaced", "// [신규] N일 수익률 계산") +
+                "\n globalThis.dma = getDisplacedMA; globalThis.st = getStochSlow;", ctx);
 
 const up = [], dn = [];
 for (let i = 0; i < 140; i++) { up.push(100 + i * 0.5 + Math.sin(i / 3) * 0.8); dn.push(170 - i * 0.5 + Math.sin(i / 3) * 0.8); }
 
-// ── ① DMA — 이동평균 차이 ────────────────────────────────────────────────
+// ── ① DMA — ★Displaced Moving Average★ (이동평균을 앞으로 민 선) ────────
 {
-  const a = ctx.dma(up), b = ctx.dma(dn);
-  if (a && a.dmaPct > 0 && b && b.dmaPct < 0)
-    ok(`상승추세 DMA ${a.dmaPct.toFixed(2)}% > 0, 하락추세 ${b.dmaPct.toFixed(2)}% < 0 — 방향이 맞다`);
-  else bad("DMA 부호가 추세 방향과 안 맞는다: " + JSON.stringify([a && a.dmaPct, b && b.dmaPct]));
+  /* V33.332 는 '이동평균 차이'로 구현했었다 — 사용자가 말한 것은 Displaced MA 였다.
+     이 검사는 정의 자체를 못박는다: 봉 i 의 값 = MA(n) 을 (i − shift) 에서 계산한 값. */
+  const P = 20, SH = 5;
+  const a = ctx.dma(up, P, SH), b = ctx.dma(dn, P, SH);
+  const maAt = (arr, e, p) => { let s2 = 0; for (let i = e - p + 1; i <= e; i++) s2 += arr[i]; return s2 / p; };
+  const want = maAt(up, up.length - 1 - SH, P);
+  if (a && Math.abs(a.ma - want) < 1e-9)
+    ok(`DMA 선이 ${SH}봉 전 MA(${P}) 와 정확히 같다 — 이동평균을 앞으로 민 선이다`);
+  else bad(`Displaced MA 가 아니다: ${a && a.ma} (기대 ${want})`);
 
-  // 가격 정규화 — 3달러짜리와 30만원짜리를 같은 잣대로 볼 수 있어야 위원회가 종목을 섞어 본다
+  const mut = up.slice(); mut[mut.length - 1] = 99999;
+  if (ctx.dma(mut, P, SH).ma === a.ma)
+    ok("현재 봉 종가를 바꿔도 선 값이 안 변한다 — 선이 미래·현재를 참조하지 않는다(누출 없음)");
+  else bad("★선이 현재 봉을 쓴다 — 앞으로 민 선의 정의가 아니다★");
+
+  if (a.pct > 0 && b.pct < 0)
+    ok(`상승추세에선 가격이 선 위(+${a.pct.toFixed(2)}%), 하락추세에선 아래(${b.pct.toFixed(2)}%)`);
+  else bad(`가격 위치 부호가 추세와 안 맞는다: ${a.pct} / ${b.pct}`);
+  if (a.slope > 0 && b.slope < 0)
+    ok(`선 기울기도 추세를 따른다(+${a.slope.toFixed(3)} / ${b.slope.toFixed(3)} %/봉)`);
+  else bad("선 기울기 부호가 추세와 안 맞는다");
+
+  // 가격 규모가 달라도 % 는 같아야 한다 — 종목을 섞어 보는 위원회의 전제다
   const big = up.map((x) => x * 1000);
-  const a2 = ctx.dma(big);
-  if (a2 && Math.abs(a2.dmaPct - a.dmaPct) < 1e-6)
-    ok("가격 규모가 1,000배여도 dmaPct 는 같다 — %정규화라 종목 간 비교가 된다");
-  else bad(`가격 규모에 따라 dmaPct 가 달라진다: ${a.dmaPct} vs ${a2 && a2.dmaPct}`);
+  const a2 = ctx.dma(big, P, SH);
+  if (a2 && Math.abs(a2.pct - a.pct) < 1e-9)
+    ok("가격 규모가 1,000배여도 pct 는 같다 — %정규화라 종목 간 비교가 된다");
+  else bad(`가격 규모에 따라 pct 가 달라진다: ${a.pct} vs ${a2 && a2.pct}`);
 
-  // 골든/데드 교차 — 바닥에서 반등하는 계열을 만들어 상향돌파를 실제로 일으킨다
+  // 돌파/이탈 — 바닥에서 반등하는 계열을 만들어 실제로 교차를 일으킨다
   const v = [];
-  for (let i = 0; i < 90; i++) v.push(120 - i);          // 길게 하락
-  for (let i = 0; i < 40; i++) v.push(30 + i * 1.6);     // 반등
-  /* 계산 가능한 첫 지점(longP+sigP+1=61)부터 훑는다.
-     ★처음엔 e=100 부터 봤는데 교차는 e=92 에서 이미 일어난 뒤였다★ — 검사 창을 좁게 잡아
-     "신호가 없다"고 잘못 읽을 뻔했다. 지표 검사는 계산 가능한 전 구간을 봐야 한다. */
+  for (let i = 0; i < 90; i++) v.push(120 - i);
+  for (let i = 0; i < 40; i++) v.push(30 + i * 1.6);
   let firstUp = null;
-  for (let e = 61; e <= v.length; e++) {
-    const r = ctx.dma(v.slice(0, e));
+  for (let e = P + SH + 3; e <= v.length; e++) {
+    const r = ctx.dma(v.slice(0, e), P, SH);
     if (r && r.cross > 0 && firstUp === null) firstUp = e;
   }
-  if (firstUp !== null) ok(`하락 뒤 반등 구간에서 DMA 골든크로스(+1)를 ${firstUp}번째 봉에서 잡아낸다`);
-  else bad("교차를 한 번도 못 잡는다 — cross 가 늘 0이면 그 신호는 없는 것과 같다");
+  if (firstUp !== null) ok(`하락 뒤 반등에서 가격의 상향돌파(+1)를 ${firstUp}번째 봉에서 잡는다`);
+  else bad("돌파를 한 번도 못 잡는다 — cross 가 늘 0이면 그 신호는 없는 것과 같다");
   let firstDn = null;
   const w = [];
-  for (let i = 0; i < 90; i++) w.push(30 + i);          // 길게 상승
-  for (let i = 0; i < 40; i++) w.push(120 - i * 1.6);   // 꺾임
-  for (let e = 61; e <= w.length; e++) {
-    const r = ctx.dma(w.slice(0, e));
+  for (let i = 0; i < 90; i++) w.push(30 + i);
+  for (let i = 0; i < 40; i++) w.push(120 - i * 1.6);
+  for (let e = P + SH + 3; e <= w.length; e++) {
+    const r = ctx.dma(w.slice(0, e), P, SH);
     if (r && r.cross < 0 && firstDn === null) firstDn = e;
   }
-  if (firstDn !== null) ok(`상승 뒤 꺾임 구간에서 DMA 데드크로스(-1)를 ${firstDn}번째 봉에서 잡아낸다`);
-  else bad("데드크로스를 못 잡는다 — 하락 전환 신호가 없는 것과 같다");
+  if (firstDn !== null) ok(`상승 뒤 꺾임에서 하향이탈(-1)을 ${firstDn}번째 봉에서 잡는다`);
+  else bad("하향이탈을 못 잡는다");
 
-  if (ctx.dma(up.slice(0, 20)) === null) ok("데이터가 모자라면 null — 없는 값을 지어내지 않는다");
+  if (ctx.dma(up.slice(0, 15), P, SH) === null) ok("데이터가 모자라면 null — 없는 값을 지어내지 않는다");
   else bad("짧은 계열에서도 값을 만들어낸다");
 }
 
@@ -125,10 +139,10 @@ for (let i = 0; i < 140; i++) { up.push(100 + i * 0.5 + Math.sin(i / 3) * 0.8); 
   if (/stochCrossW/.test(t) && w.stochCrossW > w.stochW)
     ok("스토캐스틱은 수준(과매수/과매도)보다 교차에 더 큰 가중 — 추세장에서 80 이상에 붙어 있어도 계속 거스르지 않는다");
   else bad("과매수/과매도 수준을 교차보다 크게 본다 — 상승 추세를 계속 거스르게 된다");
-  if (/getDMA\(closes, T\.dmaShort/.test(t) && /getStochSlow\(highs, lows, closes, T\.stochN/.test(t))
+  if (/getDisplacedMA\(closes, T\.dmaPeriod, T\.dmaShift\)/.test(t) && /getStochSlow\(highs, lows, closes, T\.stochN/.test(t))
     ok("두 지표가 기술 컨센서스(taPredictDirection)에 실제로 배선돼 있다 — 계산만 하고 안 쓰는 게 아니다");
   else bad("지표를 만들어 두고 판단에 안 쓴다");
-  if (/dmaPct: dmaR \?/.test(t) && /stochK: stR \?/.test(t))
+  if (/dmaPct: dmaR \? \+dmaR\.pct/.test(t) && /stochK: stR \?/.test(t))
     ok("components 에 실려 화면(/api/ta-explain)이 근거로 보여줄 수 있다");
   else bad("새 지표가 화면으로 안 내려간다 — '왜 그렇게 봤나'를 못 본다");
 }

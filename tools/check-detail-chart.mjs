@@ -103,14 +103,14 @@ const chartSrc = (function () {
 // ── ④ 종목상세에 DMA·스토캐스틱이 붙는가 ────────────────────────────────
 {
   const d = H.slice(H.indexOf("function renderDetailHeaderData()"), H.indexOf("function loadDetailTaExtra"));
-  if (/add\('DMA\(10,50\)'/.test(d) && /add\('스토캐스틱\(14,3,3\)'/.test(d))
+  if (/add\('DMA\(20,\+5\)'/.test(d) && /add\('스토캐스틱\(14,3,3\)'/.test(d))
     ok("종목상세에 DMA·스토캐스틱 행이 있다");
   else bad("종목상세에 새 지표 행이 없다");
   if (/_tx === undefined/.test(d) && /_tx === null/.test(d))
     ok("로딩 중('…')과 값 없음('—')을 구분한다 — 없다고 행을 빼면 '이 종목엔 지표가 없다'로 읽힌다");
   else bad("로딩 중과 값 없음을 구분하지 않는다");
-  if (/과매수/.test(d) && /과매도/.test(d) && /골든/.test(d))
-    ok("과매수·과매도·골든/데드를 말로 적는다 — 숫자만 있으면 해석을 사용자가 해야 한다");
+  if (/과매수/.test(d) && /과매도/.test(d) && /상향돌파/.test(d) && /기울기/.test(d))
+    ok("과매수·과매도·상향돌파·기울기를 말로 적는다 — 숫자만 있으면 해석을 사용자가 해야 한다");
   else bad("지표 해석이 숫자뿐이다");
   const l = H.slice(H.indexOf("function loadDetailTaExtra"), H.indexOf("function loadDetailTaExtra") + 1200);
   if (/DTX\.inflight\[sym\]/.test(l) && /DTX\.cache\[sym\] = null/.test(l))

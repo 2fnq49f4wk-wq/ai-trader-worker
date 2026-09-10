@@ -2981,7 +2981,7 @@ async function applySignalTypeWeights(DB, cfg) {
    화면·자가진단이 계속 "V33.272" 를 보고했다(운영 스냅샷이 그대로 그랬다). 배포는 됐는데
    ★배포됐다는 사실만 거짓말★ 을 하고 있었으니, "내 고침이 올라간 건가" 를 화면으로 확인할
    방법이 없었다. tools/check-build-ver.mjs 가 이제 소스에 적힌 최신 버전과 이 값을 대조한다. */
-const _BUILD_VER = "V33.334";
+const _BUILD_VER = "V33.335";
 
 // ═══ [V33.171] 평가 순서 계획 — ★승격과 순환을 교차해 굶주림을 구조적으로 없앤다★ ═══
 //   V33.50 의 형태트리거는 "급한 몇 종목을 앞으로 당긴다"는 의도였으나, 실제 운영로그에서는
@@ -6872,43 +6872,39 @@ function getBollingerBands(h, p, mult) {
 }
 
 
-/* [V33.332] ★DMA — 이동평균 차이(국내 HTS 표준형).★
-     DMA선 = MA(단기) − MA(장기)   ·   AMA선(시그널) = DMA선의 이동평균
-   해석: DMA > 0 이면 단기가 장기 위(상승 추세), DMA 가 AMA 를 위로 뚫으면 매수 신호.
-   ※ 'DMA' 는 Displaced MA(이동평균을 N봉 밀어 놓은 것)를 뜻하기도 한다. 여기서는
-     국내 HTS 에서 통용되는 ★이동평균 차이★ 를 구현했다 — 스토캐스틱과 같이 쓰이는 그 지표다.
-   가격으로 나눠 %로 정규화한다 — 안 그러면 30만원짜리와 3달러짜리의 DMA 를 같은 잣대로
-   못 본다(위원회는 종목을 섞어 보므로 절대값은 쓸 수 없다).
-   반환 {dma, ama, dmaPct, amaPct, cross} · cross: +1 골든(상향돌파) / -1 데드 / 0 없음. */
-function getDMA(closes, shortP, longP, sigP) {
-  shortP = shortP || 10; longP = longP || 50; sigP = sigP || 10;
-  if (!Array.isArray(closes) || closes.length < longP + sigP + 1) return null;
-  const dmaAt = function (endIdx) {
-    const seg = closes.slice(0, endIdx + 1);
-    const ms = getMA(seg, shortP), ml = getMA(seg, longP);
-    return (ms == null || ml == null) ? null : (ms - ml);
+/* [V33.335] ★DMA — Displaced Moving Average(이동평균을 N봉 앞으로 민 것).★
+   사용자 확인: "displaced ma 말한거였는데". V33.332 는 국내 HTS 의 '이동평균 차이'로
+   구현했었다 — 다른 지표다. 여기서 바로잡는다.
+
+   정의: 봉 i 에 그려지는 DMA 값 = MA(n) 을 봉 (i − d) 에서 계산한 값.
+     즉 이동평균선을 오른쪽으로 d 봉 밀어 놓은 선이다. 미는 방향이 ★앞(오른쪽)★ 이라
+     미래 값을 쓰지 않는다 — 뒤로 미는 변형은 미래를 참조하므로 학습에 쓰면 누출이다.
+   쓰임: 가격이 밀어 놓은 선 위에 있으면 추세 우위. 밀어 둔 만큼 잔진동에 덜 스치므로
+     일반 이평선보다 늦게, 대신 덜 속고 신호를 준다.
+   가격으로 나눠 %로 정규화한다 — 종목 간 비교가 돼야 위원회가 섞어 본다.
+   반환 {ma, pct, slope, cross} · cross: +1 가격이 위로 돌파 / -1 아래로 이탈 / 0 없음. */
+function getDisplacedMA(closes, period, shift) {
+  period = period || 20; shift = (shift == null) ? 5 : shift;
+  if (!Array.isArray(closes) || closes.length < period + shift + 2) return null;
+  const n = closes.length;
+  const at = function (i) {            // 봉 i 에 그려지는 값 = MA 를 (i − shift) 에서 계산
+    const e = i - shift;
+    if (e < period - 1) return null;
+    return getMA(closes.slice(0, e + 1), period);
   };
-  const series = [];
-  for (let i = closes.length - sigP - 1; i < closes.length; i++) {
-    const v = dmaAt(i);
-    if (v == null) return null;
-    series.push(v);
-  }
-  const dma = series[series.length - 1];
-  const prev = series[series.length - 2];
-  const ama = getMA(series, sigP);
-  const amaPrev = getMA(series.slice(0, series.length - 1), sigP);
-  if (ama == null) return null;
-  const px = closes[closes.length - 1];
+  const cur = at(n - 1), prev = at(n - 2);
+  if (cur == null || prev == null) return null;
+  const px = _num(closes[n - 1], 0), pxPrev = _num(closes[n - 2], 0);
+  if (!(px > 0)) return null;
   let cross = 0;
-  if (amaPrev != null) {
-    if (prev <= amaPrev && dma > ama) cross = 1;
-    else if (prev >= amaPrev && dma < ama) cross = -1;
+  if (pxPrev > 0) {
+    if (pxPrev <= prev && px > cur) cross = 1;
+    else if (pxPrev >= prev && px < cur) cross = -1;
   }
   return {
-    dma: dma, ama: ama, cross: cross,
-    dmaPct: px > 0 ? (dma / px) * 100 : 0,
-    amaPct: px > 0 ? (ama / px) * 100 : 0
+    ma: cur, cross: cross,
+    pct: ((px - cur) / px) * 100,          // 가격이 밀어놓은 선보다 얼마나 위/아래인가
+    slope: ((cur - prev) / px) * 100       // 밀어놓은 선 자체의 기울기(%/봉)
   };
 }
 
@@ -12737,7 +12733,19 @@ function _featBackfillX(x, ts, dsVals) {
     const names = LUXML.featNames, D = names.length;
     const C = CAL_FEATS.length, S = DS_FEATS.length;
     if (!Array.isArray(x)) return null;
-    if (x.length === D) return x.slice();                       // 이미 현재 판
+    /* [V33.335] 이미 현재 폭이면 — ★값을 주면 꼬리를 갈아 끼우고, 안 주면 그대로 둔다.★
+       V33.334 가 붙인 DS 값은 정의가 달랐고(이동평균 차이) 봉도 잘못 찾을 수 있었다.
+       그래서 폭이 맞는 표본도 다시 각인해야 한다. 다만 값을 안 주는 호출(내보내기 경로의
+       _calBackfillX)이 실값을 중립으로 덮어쓰면 안 되므로, dsVals 가 있을 때만 손댄다. */
+    if (x.length === D) {
+      if (!dsVals) return x.slice();
+      const y = x.slice();
+      for (let i = 0; i < DS_FEATS.length; i++) {
+        if (names[D - DS_FEATS.length + i] !== DS_FEATS[i]) return null;
+        y[D - DS_FEATS.length + i] = _num(dsVals[DS_FEATS[i]], _num(DS_NEUTRAL[DS_FEATS[i]], 0));
+      }
+      return y;
+    }
     for (let i = 0; i < S; i++) if (names[D - S + i] !== DS_FEATS[i]) return null;
     for (let i = 0; i < C; i++) if (names[D - S - C + i] !== CAL_FEATS[i]) return null;
     let out;
@@ -12762,22 +12770,30 @@ function _calBackfillX(x, ts) { return _featBackfillX(x, ts, null); }
    다만 달력은 '날짜'만 있으면 되는데 이쪽은 ★그 시점까지의 가격 이력★ 이 필요하다 —
    그래서 소급은 일봉 캐시(daily:*)의 days 배열로 봉 위치를 찾아 계산한다(mlFeatMigrate).
    이력을 못 찾으면 중립 + dsKnown=0 이다. 지어내지 않는다. */
-const DS_FEATS = ["dmaPct", "dmaGap", "stochSlowK", "stochSlowD", "dsKnown"];
-const DS_NEUTRAL = { dmaPct: 0, dmaGap: 0, stochSlowK: 50, stochSlowD: 50, dsKnown: 0 };
+const DS_FEATS = ["dispMaPct", "dispMaSlope", "stochSlowK", "stochSlowD", "dsKnown"];
+const DS_NEUTRAL = { dispMaPct: 0, dispMaSlope: 0, stochSlowK: 50, stochSlowD: 50, dsKnown: 0 };
+// 지표 설정은 ★한 곳★ — 라이브·소급·화면이 같은 값을 써야 숫자가 갈라지지 않는다.
+const DS_PARAMS = { maPeriod: 20, maShift: 5, stochN: 14, stochK: 3, stochD: 3, minBars: 61 };
 function _dsFeats(closes, highs, lows) {
-  const out = { dmaPct: 0, dmaGap: 0, stochSlowK: 50, stochSlowD: 50, dsKnown: 0 };
+  const out = Object.assign({}, DS_NEUTRAL);
   try {
-    if (!Array.isArray(closes) || closes.length < 61) return out;
+    if (!Array.isArray(closes) || closes.length < DS_PARAMS.minBars) return out;
     const px = _num(closes[closes.length - 1], 0);
-    const d = getDMA(closes, 10, 50, 10);
-    const st = getStochSlow(highs, lows, closes, 14, 3, 3);
+    /* ★고가·저가가 종가와 길이가 어긋나면 getStochSlow 는 조용히 종가근사로 떨어진다.★
+       그 값은 진짜 스토캐스틱과 분포가 다르다 — 섞어서 학습하면 같은 이름의 두 지표를
+       한 칸에 밀어 넣는 셈이다. 그래서 정렬이 안 맞으면 실측이라고 하지 않는다. */
+    const _hlOk = Array.isArray(highs) && Array.isArray(lows) &&
+                  highs.length === closes.length && lows.length === closes.length;
+    if (!_hlOk) return out;
+    const d = getDisplacedMA(closes, DS_PARAMS.maPeriod, DS_PARAMS.maShift);
+    const st = getStochSlow(highs, lows, closes, DS_PARAMS.stochN, DS_PARAMS.stochK, DS_PARAMS.stochD);
     if (!d || !st || !(px > 0)) return out;
-    out.dmaPct = _clamp(_num(d.dmaPct, 0), -50, 50);
-    out.dmaGap = _clamp(((_num(d.dma, 0) - _num(d.ama, 0)) / px) * 100, -25, 25);
+    out.dispMaPct = _clamp(_num(d.pct, 0), -50, 50);
+    out.dispMaSlope = _clamp(_num(d.slope, 0), -10, 10);
     out.stochSlowK = _clamp(_num(st.k, 50), 0, 100);
     out.stochSlowD = _clamp(_num(st.d, 50), 0, 100);
     out.dsKnown = 1;
-  } catch (e) { return { dmaPct: 0, dmaGap: 0, stochSlowK: 50, stochSlowD: 50, dsKnown: 0 }; }
+  } catch (e) { return Object.assign({}, DS_NEUTRAL); }
   return out;
 }
 
@@ -25474,7 +25490,7 @@ async function handleRequest(request, env, ctx) {
             const _c = pred.components || {};
             out.extra = {
               dmaPct: _c.dmaPct != null ? _c.dmaPct : null,
-              amaPct: _c.amaPct != null ? _c.amaPct : null,
+              dmaSlope: _c.dmaSlope != null ? _c.dmaSlope : null,
               dmaCross: _num(_c.dmaCross, 0),
               stochK: _c.stochK != null ? _c.stochK : null,
               stochD: _c.stochD != null ? _c.stochD : null,
@@ -27897,7 +27913,7 @@ function taPredictDirection(bars, params) {
     /* [V33.332] DMA·스토캐스틱 슬로우 파라미터/가중치 — ★설정으로 뺀다.★
        기존 항목들과 같은 크기대(0.3~0.9)로 잡았다. 새 지표를 크게 넣으면 검증된 기존
        신호를 덮어써 버린다 — 지표는 늘리되 판단의 무게중심은 옮기지 않는다. */
-    dmaShort: 10, dmaLong: 50, dmaSignal: 10, dmaW: 0.4, dmaCrossW: 0.3,
+    dmaPeriod: 20, dmaShift: 5, dmaW: 0.4, dmaCrossW: 0.3,
     stochN: 14, stochK: 3, stochD: 3, stochOB: 80, stochOS: 20, stochW: 0.25, stochCrossW: 0.45
   }, (params && params.technical) || params || {});
   const fibP = (params && params.fibonacci) || {};
@@ -27946,12 +27962,12 @@ function taPredictDirection(bars, params) {
     /* [V33.332] ★DMA — 이동평균 차이.★ MA기울기가 "지금 오르는가"라면 DMA 는
        "단기와 장기의 간격이 벌어지는가"를 본다. 시그널선(AMA) 돌파는 추세 전환의 초입이라
        기울기보다 먼저 켜지는 경우가 많아, 기울기와 겹치지 않는 정보를 준다. */
-    const dmaR = getDMA(closes, T.dmaShort, T.dmaLong, T.dmaSignal);
+    const dmaR = getDisplacedMA(closes, T.dmaPeriod, T.dmaShift);
     if (dmaR) {
-      if (dmaR.dma > dmaR.ama) { score += T.dmaW; }
-      else if (dmaR.dma < dmaR.ama) { score -= T.dmaW; }
-      if (dmaR.cross > 0) { score += T.dmaCrossW; R.push("DMA골든" + dmaR.dmaPct.toFixed(2) + "%"); }
-      else if (dmaR.cross < 0) { score -= T.dmaCrossW; R.push("DMA데드" + dmaR.dmaPct.toFixed(2) + "%"); }
+      if (dmaR.pct > 0) { score += T.dmaW; }        // 가격이 밀어놓은 선 위 = 추세 우위
+      else if (dmaR.pct < 0) { score -= T.dmaW; }
+      if (dmaR.cross > 0) { score += T.dmaCrossW; R.push("DMA상향돌파" + dmaR.pct.toFixed(2) + "%"); }
+      else if (dmaR.cross < 0) { score -= T.dmaCrossW; R.push("DMA하향이탈" + dmaR.pct.toFixed(2) + "%"); }
     }
     /* [V33.332] ★스토캐스틱 슬로우(스무딩).★ 과매수/과매도 자체보다
        ★과매도에서 %K가 %D를 위로 뚫는 순간★ 이 신호다 — 그래서 교차에 더 큰 가중을 준다.
@@ -27983,7 +27999,7 @@ function taPredictDirection(bars, params) {
       macdH: macd ? +macd.hist.toFixed(4) : 0, adx: +adx.toFixed(1), pctB: +pctB.toFixed(3),
       squeeze: +squeeze.toFixed(3), brk: +brk.toFixed(3), diverg: +diverg.toFixed(3),
       // [V33.332] 새 지표도 화면이 읽을 수 있게 같이 싣는다 — 안 실으면 "왜 그렇게 봤나"를 못 본다.
-      dmaPct: dmaR ? +dmaR.dmaPct.toFixed(3) : null, amaPct: dmaR ? +dmaR.amaPct.toFixed(3) : null,
+      dmaPct: dmaR ? +dmaR.pct.toFixed(3) : null, dmaSlope: dmaR ? +dmaR.slope.toFixed(3) : null,
       dmaCross: dmaR ? dmaR.cross : 0,
       stochK: stR ? +stR.k.toFixed(1) : null, stochD: stR ? +stR.d.toFixed(1) : null,
       stochCross: stR ? stR.cross : 0 };
@@ -31996,13 +32012,14 @@ const LUXML = {
        dsKnown 은 ★결측 표식★ 이다 — fomcKnown 과 같은 규율. 일봉 이력을 못 찾은 표본은
        0 으로 두고 나머지를 중립값으로 채운다. 이게 없으면 모델은 "스토캐스틱 50" 을
        진짜 관측값으로 읽는다. */
-    "dmaPct",      // DMA(10,50) = (MA10 − MA50)/가격 % — 단기·장기 간격(추세 강도·방향)
-    "dmaGap",      // (DMA − AMA)/가격 % — 시그널선 대비 위치. 부호 전환이 골든/데드 교차
+    "dispMaPct",   // Displaced MA(20,+5) 대비 가격 위치 % — 이평을 5봉 앞으로 민 선의 위/아래
+    "dispMaSlope", // 그 밀어놓은 선의 기울기(%/봉) — 추세 방향과 힘
     "stochSlowK",  // 스토캐스틱 슬로우 %K (14,3,3) 0~100 — 평활해 하루 노이즈에 안 흔들린다
     "stochSlowD",  // 슬로우 %D 0~100 — %K의 시그널선
     "dsKnown"      // ★1이면 위 4개가 실제 계산값, 0이면 이력이 없어 중립으로 채운 값★
   ],
-  featVer: 16,  // ★V33.334: DMA·스토캐스틱 슬로우 5종 추가(75→80). 기존 표본은 폐기하지 않고
+  featVer: 17,  // ★V33.335: DMA 를 Displaced MA 로 바로잡고(V33.334 는 이동평균 차이였다) 봉 찾기를 내용 기준으로 고침 — 전량 재각인.
+  //   ★V33.334: DMA·스토캐스틱 슬로우 5종 추가(75→80). 기존 표본은 폐기하지 않고
   //   ml_samples 를 제자리 이관한다(mlFeatMigrate) — 일봉 이력에서 그 시점 값을 다시 계산해 꼬리에 덧붙인다.
   //   이관이 끝나기 전엔 구판 정리(purge)를 멈춘다 — 안 그러면 이관 대상이 먼저 지워진다.
   //   ★V33.265: 달력사건 6종 추가(69→75) — OpEx 3 + FOMC 3. 소급 가능해 캐치업 수확이 딥이력에서 재구축.
@@ -32480,7 +32497,7 @@ function mlBuildFeatures(args) {
        ★이력이 모자라면 지어내지 않는다★ — 중립값 + dsKnown=0 으로 두어 모델이
        "모른다"를 구분해 배우게 한다(fomcKnown 과 같은 규율). */
     const _ds = _dsFeats(closes, args.highs, args.lows);
-    f.dmaPct = _ds.dmaPct; f.dmaGap = _ds.dmaGap;
+    f.dispMaPct = _ds.dispMaPct; f.dispMaSlope = _ds.dispMaSlope;
     f.stochSlowK = _ds.stochSlowK; f.stochSlowD = _ds.stochSlowD; f.dsKnown = _ds.dsKnown;
     return LUXML.featNames.map(function(n){ return _num(f[n], 0); });
   } catch (e) {
@@ -40924,39 +40941,80 @@ const FEATMIG = {
   key: "ml_featmig",
   tables: ["ml_samples", "ml_samples_st"],
   batch: 300,            // 한 번에 읽어 고치는 행 수
-  runMs: 9000,           // 한 호출의 시간 예산(크론 한 칸을 통째로 먹지 않는다)
-  dayTol: 6              // 봉을 못 찾을 때 허용하는 날짜 오차(휴장·상장일 어긋남 보정)
+  runMs: 9000            // 한 호출의 시간 예산(크론 한 칸을 통째로 먹지 않는다)
 };
-function _dsBarIndex(days, ts) {
-  if (!Array.isArray(days) || !days.length || !(ts > 0)) return -1;
-  const want = Math.floor(ts / 86400000);
-  let best = -1;
-  for (let i = days.length - 1; i >= 0; i--) {
-    const d = _num(days[i], 0);
-    if (d <= want) { best = (want - d <= FEATMIG.dayTol) ? i : -1; break; }
-  }
-  return best;
+/* [V33.335] ★표본의 ts 로 봉을 찾으면 안 된다.★
+   수확 표본의 ts 는 실제 날짜가 아니다 — 소스에 그렇게 적혀 있다:
+     "ts는 봉 시점 근사(일봉 1개=1일)로 역산"  →  ts = baseTs − (L−1−i) × 86400000
+   주말·휴장을 세지 않으므로 100봉 전 표본의 ts 는 실제 날짜보다 몇 주 앞선다.
+   그 ts 로 일봉을 찾으면 ★엉뚱한 봉의 지표를 실측값이라고 붙이게 된다★ — 중립으로 두는 것보다 나쁘다.
+
+   그래서 ★내용★ 으로 찾는다. 저장된 벡터에는 dayPct·ret5·ret20 이 들어 있고,
+   셋 다 종가만으로 정해지는 값이라(클램프도 없다) 이력에서 그대로 재현된다.
+   세 값이 같은 봉을 찾으면 그 봉이다. 둘 이상이 같으면 애매하므로 쓰지 않는다. */
+const _DS_ANCH = ["dayPct", "ret5", "ret20"];
+function _dsAnchorKey(dayPct, ret5, ret20) {
+  return _num(dayPct, 0).toFixed(6) + "|" + _num(ret5, 0).toFixed(6) + "|" + _num(ret20, 0).toFixed(6);
 }
+/* 이력의 모든 봉에 대해 (dayPct, ret5, ret20) → 봉 index 를 만든다.
+   계산식은 _mlStructFeats·수확 호출부와 ★같은 식★ 이다 — 다르면 한 건도 못 찾는다. */
+function _dsAnchorIndex(closes) {
+  const map = new Map();
+  if (!Array.isArray(closes)) return map;
+  for (let L = DS_PARAMS.minBars; L <= closes.length; L++) {
+    const price = _num(closes[L - 1], 0);
+    if (!(price > 0)) continue;
+    const pc = L >= 2 ? _num(closes[L - 2], 0) : 0;
+    const dayPct = pc > 0 ? (price / pc - 1) * 100 : 0;
+    const ret5 = (L >= 6 && _num(closes[L - 6], 0) > 0) ? (price / closes[L - 6] - 1) * 100 : 0;
+    const ret20 = (L >= 21 && _num(closes[L - 21], 0) > 0) ? (price / closes[L - 21] - 1) * 100 : 0;
+    const k = _dsAnchorKey(dayPct, ret5, ret20);
+    map.set(k, map.has(k) ? -1 : (L - 1));   // 중복이면 -1 — 애매하면 쓰지 않는다
+  }
+  return map;
+}
+
 async function mlFeatMigrate(DB, opts) {
   const t0 = Date.now();
   const runMs = _num(opts && opts.runMs, FEATMIG.runMs);
-  const D = LUXML.featNames.length, C = DS_FEATS.length;
+  const names = LUXML.featNames, D = names.length, C = DS_FEATS.length;
   // 꼬리가 DS 5종이 아니면 이관 자체를 하지 않는다 — 앞 칸의 뜻이 보존된다는 보장이 없다.
-  for (let i = 0; i < C; i++) if (LUXML.featNames[D - C + i] !== DS_FEATS[i]) return { skip: "tail" };
-  const prevVer = LUXML.featVer - 1;
+  for (let i = 0; i < C; i++) if (names[D - C + i] !== DS_FEATS[i]) return { skip: "tail" };
+  const iDay = names.indexOf("dayPct"), iR5 = names.indexOf("ret5"), iR20 = names.indexOf("ret20");
+  if (iDay < 0 || iR5 < 0 || iR20 < 0) return { skip: "anchor" };
   let st = null;
   try { st = await getState(DB, FEATMIG.key, null); } catch (e) {}
   if (st && st.to === LUXML.featVer && st.done) return { done: true, migrated: _num(st.migrated, 0) };
   if (!st || st.to !== LUXML.featVer) {
-    st = { from: prevVer, to: LUXML.featVer, ti: 0, lastId: 0, migrated: 0, neutral: 0, skipped: 0, done: false, ts: Date.now() };
+    st = { to: LUXML.featVer, ti: 0, lastId: 0, migrated: 0, neutral: 0, skipped: 0, done: false, ts: Date.now() };
   }
-  const _dailyCache = {};
-  const _loadDaily = async function (sym) {
-    if (_dailyCache[sym] !== undefined) return _dailyCache[sym];
-    let d = null;
-    try { d = await getState(DB, "daily:" + sym, null); } catch (e) {}
-    _dailyCache[sym] = d || null;
-    return _dailyCache[sym];
+  /* 종목별 이력 + 앵커색인을 이 호출 안에서만 캐시한다. 딥이력(hist:)을 먼저 본다 —
+     수확 표본은 딥이력에서 만들어졌고, 라이브 캐시(daily:)는 320봉뿐이라 오래된 표본을 못 덮는다. */
+  /* 종목 캐시는 ★작게★ 유지한다. 딥이력(2400봉 × 배열 3개) + 앵커맵을 종목마다 들고 있으면
+     한 호출에서 수십 MB 가 되어 아이솔레이트(128MB)를 위협한다.
+     행이 id 순이라 같은 종목이 연속으로 몰려 있어 몇 개만 들고 있어도 적중률이 높다. */
+  const _ix = {}; const _ixOrder = []; const _IX_MAX = 6;
+  const _getIx = async function (sym) {
+    if (_ix[sym] !== undefined) return _ix[sym];
+    if (_ixOrder.length >= _IX_MAX) { const old = _ixOrder.shift(); delete _ix[old]; }
+    _ixOrder.push(sym);
+    let closes = null, highs = null, lows = null;
+    try {
+      const dh = await histGet(DB, sym);
+      if (dh && Array.isArray(dh.closes) && dh.closes.length >= DS_PARAMS.minBars) {
+        closes = dh.closes; highs = dh.highs || null; lows = dh.lows || null;
+      }
+    } catch (e) {}
+    if (!closes) {
+      try {
+        const dd = await getState(DB, "daily:" + sym, null);
+        if (dd && Array.isArray(dd.closes) && dd.closes.length >= DS_PARAMS.minBars) {
+          closes = dd.closes; highs = dd.highs || null; lows = dd.lows || null;
+        }
+      } catch (e) {}
+    }
+    _ix[sym] = closes ? { closes: closes, highs: highs, lows: lows, map: _dsAnchorIndex(closes) } : null;
+    return _ix[sym];
   };
   let rounds = 0;
   while (Date.now() - t0 < runMs && st.ti < FEATMIG.tables.length) {
@@ -40964,8 +41022,8 @@ async function mlFeatMigrate(DB, opts) {
     let rows = [];
     try {
       const r = await DB.prepare(
-        "SELECT id, ts, symbol, feat FROM " + tb + " WHERE featver = ? AND id > ? ORDER BY id LIMIT ?"
-      ).bind(prevVer, _num(st.lastId, 0), FEATMIG.batch).all();
+        "SELECT id, ts, symbol, feat FROM " + tb + " WHERE featver <> ? AND id > ? ORDER BY id LIMIT ?"
+      ).bind(LUXML.featVer, _num(st.lastId, 0), FEATMIG.batch).all();
       rows = (r && r.results) || [];
     } catch (e) { st.ti++; st.lastId = 0; continue; }   // 표가 없으면 다음 표로
     if (!rows.length) { st.ti++; st.lastId = 0; continue; }
@@ -40976,18 +41034,18 @@ async function mlFeatMigrate(DB, opts) {
       try { x = JSON.parse(row.feat); } catch (e) { x = null; }
       if (!Array.isArray(x)) { st.skipped++; continue; }
       let vals = null;
-      const dd = await _loadDaily(row.symbol);
-      if (dd && Array.isArray(dd.closes) && Array.isArray(dd.days)) {
-        const bi = _dsBarIndex(dd.days, _num(row.ts, 0));
-        // 지표 계산에 필요한 최소 이력(61봉)이 그 시점 ★이전★ 에 있어야 한다.
-        if (bi >= 60) {
-          vals = _dsFeats(dd.closes.slice(0, bi + 1),
-                          Array.isArray(dd.highs) ? dd.highs.slice(0, bi + 1) : null,
-                          Array.isArray(dd.lows) ? dd.lows.slice(0, bi + 1) : null);
+      const ix = await _getIx(row.symbol);
+      if (ix && ix.map) {
+        // ★내용으로 봉을 찾는다★ — ts 는 수확 표본에서 실제 날짜가 아니다.
+        const bi = ix.map.get(_dsAnchorKey(x[iDay], x[iR5], x[iR20]));
+        if (bi != null && bi >= DS_PARAMS.minBars - 1) {
+          vals = _dsFeats(ix.closes.slice(0, bi + 1),
+                          Array.isArray(ix.highs) ? ix.highs.slice(0, bi + 1) : null,
+                          Array.isArray(ix.lows) ? ix.lows.slice(0, bi + 1) : null);
         }
       }
-      // 달력도 없는 옛 판(D−11)이면 달력까지 함께 되살아난다 — 통합 함수가 단계를 안다.
-      const nx = _featBackfillX(x, _num(row.ts, 0), vals);
+      // 값이 없으면 중립(dsKnown=0). 폭만 맞추고 "모른다"고 적는다 — 버리지 않는다.
+      const nx = _featBackfillX(x, _num(row.ts, 0), vals || DS_NEUTRAL);
       if (!nx) { st.skipped++; continue; }
       if (vals && vals.dsKnown === 1) st.migrated++; else st.neutral++;
       stmts.push(DB.prepare("UPDATE " + tb + " SET feat = ?, featver = ? WHERE id = ?")
@@ -48086,7 +48144,8 @@ export {
   /* [V33.273] 밴딧 상관강건 검정 · MEMO 관련도 가중거리 — tools/check-bandit-memo.mjs 가
      실제로 돌린다. 두 고침 다 "성적으로만 드러나는" 종류라 문장으로는 못 지킨다. */
   // [V33.275] 달력 소급복원 — tools/check-cal-backfill.mjs 가 라이브 조립과 대조한다.
-  _calBackfillX, CAL_FEATS, _featBackfillX, DS_FEATS, DS_NEUTRAL, _dsFeats, _dsBarIndex,
+  _calBackfillX, CAL_FEATS, _featBackfillX, DS_FEATS, DS_NEUTRAL, DS_PARAMS, _dsFeats,
+  _dsAnchorIndex, _dsAnchorKey, getDisplacedMA, getStochSlow,
   mlFeatMigrate, mlFeatMigPending, FEATMIG,
   mlPermutationTest, mlGroupedPermutationTest, _corrClusters, mlBanditContext,
   mlBanditNoiseNightly, LUXNOISE, LUXBANDIT,
