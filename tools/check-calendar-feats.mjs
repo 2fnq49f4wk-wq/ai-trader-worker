@@ -135,8 +135,18 @@ console.log("\n⑤ 수확기가 정렬용 근사 ts 를 달력에 쓰지 않는�
 
 console.log("\n⑥ featVer 와 피처 수가 함께 올라갔는가");
 {
-  chk(M.LUXML.featVer === 15, "featVer 15", "featVer 가 " + M.LUXML.featVer + " — 피처를 추가했으면 올려야 한다");
-  chk(M.LUXML.featNames.length === 75, "피처 75종(69 + 달력 6)", "피처가 " + M.LUXML.featNames.length + "종");
+  /* [V33.334] 숫자를 박아 두면 판이 오를 때마다 이 검사가 무관하게 깨지고, 그 습관이
+     "게이트는 숫자만 고쳐 통과시키는 것"으로 굳는다. 지켜야 할 것은 특정 숫자가 아니라
+     ★피처가 늘면 featVer 도 함께 오른다★ 는 관계다. 그래서 판별식으로 적는다.
+     기준점: V33.265 에서 featVer 15 = 75종. 이후 판은 "늘어난 만큼 올랐는가"만 본다. */
+  chk(M.LUXML.featVer >= 15, "featVer " + M.LUXML.featVer + " (달력 도입판 15 이상)",
+      "featVer 가 " + M.LUXML.featVer + " — 달력 도입 이전으로 되돌아갔다");
+  chk(M.LUXML.featNames.length >= 75,
+      "피처 " + M.LUXML.featNames.length + "종 (달력 도입판 75 이상)",
+      "피처가 " + M.LUXML.featNames.length + "종 — 달력 6종이 빠졌다");
+  chk(M.LUXML.featVer - 15 >= (M.LUXML.featNames.length > 75 ? 1 : 0),
+      "피처가 늘어난 판에서 featVer 도 함께 올랐다",
+      "★피처는 늘었는데 featVer 가 그대로다 — 옛 표본과 새 표본이 같은 판으로 섞인다★");
   for (const n of ["opexToNext", "opexWeek", "opexQuad", "fomcTo", "fomcSince", "fomcKnown"])
     if (M.LUXML.featNames.indexOf(n) < 0) { console.log("  FAIL 피처 이름 누락: " + n); fails++; }
   console.log("  ok   달력 6종이 featNames 에 있다");

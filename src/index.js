@@ -2981,7 +2981,7 @@ async function applySignalTypeWeights(DB, cfg) {
    화면·자가진단이 계속 "V33.272" 를 보고했다(운영 스냅샷이 그대로 그랬다). 배포는 됐는데
    ★배포됐다는 사실만 거짓말★ 을 하고 있었으니, "내 고침이 올라간 건가" 를 화면으로 확인할
    방법이 없었다. tools/check-build-ver.mjs 가 이제 소스에 적힌 최신 버전과 이 값을 대조한다. */
-const _BUILD_VER = "V33.333";
+const _BUILD_VER = "V33.334";
 
 // ═══ [V33.171] 평가 순서 계획 — ★승격과 순환을 교차해 굶주림을 구조적으로 없앤다★ ═══
 //   V33.50 의 형태트리거는 "급한 몇 종목을 앞으로 당긴다"는 의도였으나, 실제 운영로그에서는
@@ -12724,17 +12724,61 @@ const CAL_MIN_TS = 946684800000;
        보존된다는 보장이 없어지기 때문이다.
      · ts 가 2000년 이전이면(0·결측) 손대지 않는다. Date.now() 로 때우지 않는다 —
        그건 과거 표본에 오늘 달력을 붙이는 짓이고, V33.265 가 명시적으로 금지한 것이다. */
-function _calBackfillX(x, ts) {
+/* [V33.334] ★소급 복원이 두 단계가 됐다.★
+   달력 6칸(V33.265) 뒤에 DS 5칸(V33.334)이 꼬리에 붙어, 옛 벡터가 두 종류다:
+     · D−11칸 — 달력도 DS 도 없는 판 → 달력 6 을 붙이고 그 뒤에 DS 5 를 붙인다
+     · D−5칸  — 달력은 있고 DS 만 없는 판 → DS 5 만 붙인다
+   ★한 함수가 둘 다 처리한다.★ 판이 늘 때마다 복원 함수를 새로 만들면, 이 저장소가
+   반복해 당한 "같은 규칙이 두 곳에 살다 한쪽만 고쳐지는" 사고가 그대로 재현된다.
+   안전장치는 V33.265 그대로다: 꼬리 배치가 기대와 다르면 아무것도 안 하고,
+   달력을 붙여야 하는데 ts 가 없으면 Date.now() 로 때우지 않고 포기한다. */
+function _featBackfillX(x, ts, dsVals) {
   try {
-    const names = LUXML.featNames, D = names.length, C = CAL_FEATS.length;
-    if (!Array.isArray(x) || x.length !== D - C) return null;
-    if (!(_num(ts, 0) > CAL_MIN_TS)) return null;
-    for (let i = 0; i < C; i++) if (names[D - C + i] !== CAL_FEATS[i]) return null;
-    const c = _calFeats(_num(ts, 0));
-    const out = x.slice();
-    for (let i = 0; i < C; i++) out.push(_num(c[CAL_FEATS[i]], 0));
+    const names = LUXML.featNames, D = names.length;
+    const C = CAL_FEATS.length, S = DS_FEATS.length;
+    if (!Array.isArray(x)) return null;
+    if (x.length === D) return x.slice();                       // 이미 현재 판
+    for (let i = 0; i < S; i++) if (names[D - S + i] !== DS_FEATS[i]) return null;
+    for (let i = 0; i < C; i++) if (names[D - S - C + i] !== CAL_FEATS[i]) return null;
+    let out;
+    if (x.length === D - S) out = x.slice();                    // 달력까지는 있는 판
+    else if (x.length === D - S - C) {                          // 달력도 없는 옛 판
+      if (!(_num(ts, 0) > CAL_MIN_TS)) return null;             // 날짜를 모르면 지어내지 않는다
+      const c = _calFeats(_num(ts, 0));
+      out = x.slice();
+      for (let i = 0; i < C; i++) out.push(_num(c[CAL_FEATS[i]], 0));
+    } else return null;                                         // 그 밖의 폭은 정직하게 탈락
+    const v = dsVals || DS_NEUTRAL;
+    for (let i = 0; i < S; i++) out.push(_num(v[DS_FEATS[i]], _num(DS_NEUTRAL[DS_FEATS[i]], 0)));
     return out;
   } catch (e) { return null; }
+}
+// 종전 이름 보존 — 호출부(단타 표본 내보내기)와 게이트가 이 이름으로 계약을 건다.
+function _calBackfillX(x, ts) { return _featBackfillX(x, ts, null); }
+
+/* ══ [V33.334] DMA · 스토캐스틱 슬로우 — 피처화와 소급 ════════════════════════
+   달력 6종(_calFeats/_calBackfillX)과 ★같은 부류★ 다: 지금만 알 수 있는 값이 아니라
+   과거를 그대로 복원할 수 있는 값이다. 그래서 기존 표본을 버리지 않고 되살릴 수 있다.
+   다만 달력은 '날짜'만 있으면 되는데 이쪽은 ★그 시점까지의 가격 이력★ 이 필요하다 —
+   그래서 소급은 일봉 캐시(daily:*)의 days 배열로 봉 위치를 찾아 계산한다(mlFeatMigrate).
+   이력을 못 찾으면 중립 + dsKnown=0 이다. 지어내지 않는다. */
+const DS_FEATS = ["dmaPct", "dmaGap", "stochSlowK", "stochSlowD", "dsKnown"];
+const DS_NEUTRAL = { dmaPct: 0, dmaGap: 0, stochSlowK: 50, stochSlowD: 50, dsKnown: 0 };
+function _dsFeats(closes, highs, lows) {
+  const out = { dmaPct: 0, dmaGap: 0, stochSlowK: 50, stochSlowD: 50, dsKnown: 0 };
+  try {
+    if (!Array.isArray(closes) || closes.length < 61) return out;
+    const px = _num(closes[closes.length - 1], 0);
+    const d = getDMA(closes, 10, 50, 10);
+    const st = getStochSlow(highs, lows, closes, 14, 3, 3);
+    if (!d || !st || !(px > 0)) return out;
+    out.dmaPct = _clamp(_num(d.dmaPct, 0), -50, 50);
+    out.dmaGap = _clamp(((_num(d.dma, 0) - _num(d.ama, 0)) / px) * 100, -25, 25);
+    out.stochSlowK = _clamp(_num(st.k, 50), 0, 100);
+    out.stochSlowD = _clamp(_num(st.d, 50), 0, 100);
+    out.dsKnown = 1;
+  } catch (e) { return { dmaPct: 0, dmaGap: 0, stochSlowK: 50, stochSlowD: 50, dsKnown: 0 }; }
+  return out;
 }
 
 /* ══ [V33.264] 옵션 미시구조 — ★시계를 돌린다★ ═══════════════════════════════
@@ -31941,9 +31985,27 @@ const LUXML = {
     "opexQuad",    // 다음 만기가 네마녀(3·6·9·12월)면 1 — 만기 수급 규모가 다르다
     "fomcTo",      // 다음 FOMC 발표까지 일수 0~45 — pre-FOMC drift 구간
     "fomcSince",   // 직전 FOMC 발표 후 경과일 0~45 — 정보확산(post-FOMC) 구간
-    "fomcKnown"    // ★1이면 위 두 값이 실제 값, 0이면 모른다★ (표 밖·날짜 미상)
+    "fomcKnown",   // ★1이면 위 두 값이 실제 값, 0이면 모른다★ (표 밖·날짜 미상)
+    /* ── [V33.334] DMA · 스토캐스틱 슬로우 (5) ─────────────────────────────
+       사용자 지시: "피처 통합하는데 이거 학습표본 안 죽게 기존에 있는 데이터로 전부
+       계산해서 학습표본에 넣은 다음에 학습시켜".
+       둘 다 ★순수 종가·고가·저가 파생★ 이라 과거를 정확히 복원할 수 있다 —
+       옵션 체인처럼 "지금만 알 수 있는" 값이 아니다. 그래서 소급이 정직하게 성립한다.
+       ★반드시 featNames 의 꼬리에 붙인다.★ 중간에 끼우면 앞 75칸의 인덱스가 전부 밀려
+       기존 표본 51만 건의 의미가 통째로 어긋난다(되돌릴 수 없는 사고다).
+       dsKnown 은 ★결측 표식★ 이다 — fomcKnown 과 같은 규율. 일봉 이력을 못 찾은 표본은
+       0 으로 두고 나머지를 중립값으로 채운다. 이게 없으면 모델은 "스토캐스틱 50" 을
+       진짜 관측값으로 읽는다. */
+    "dmaPct",      // DMA(10,50) = (MA10 − MA50)/가격 % — 단기·장기 간격(추세 강도·방향)
+    "dmaGap",      // (DMA − AMA)/가격 % — 시그널선 대비 위치. 부호 전환이 골든/데드 교차
+    "stochSlowK",  // 스토캐스틱 슬로우 %K (14,3,3) 0~100 — 평활해 하루 노이즈에 안 흔들린다
+    "stochSlowD",  // 슬로우 %D 0~100 — %K의 시그널선
+    "dsKnown"      // ★1이면 위 4개가 실제 계산값, 0이면 이력이 없어 중립으로 채운 값★
   ],
-  featVer: 15,  // ★V33.265: 달력사건 6종 추가(69→75) — OpEx 3 + FOMC 3. 소급 가능해 캐치업 수확이 딥이력에서 재구축.
+  featVer: 16,  // ★V33.334: DMA·스토캐스틱 슬로우 5종 추가(75→80). 기존 표본은 폐기하지 않고
+  //   ml_samples 를 제자리 이관한다(mlFeatMigrate) — 일봉 이력에서 그 시점 값을 다시 계산해 꼬리에 덧붙인다.
+  //   이관이 끝나기 전엔 구판 정리(purge)를 멈춘다 — 안 그러면 이관 대상이 먼저 지워진다.
+  //   ★V33.265: 달력사건 6종 추가(69→75) — OpEx 3 + FOMC 3. 소급 가능해 캐치업 수확이 딥이력에서 재구축.
   //   ★V33.239: 하이킨아시 추세반전 4종 추가(65→69). featVer 상향 → 캐치업 수확이 딥이력에서 재구축.
   //   ★V32.10: 라이브전용 이벤트/뉴스 16종 제거(train/serve 스큐) + 장기모멘텀 6종 추가(75→65).
                 //   구버전(12) 표본은 featver 분리로 자동 정리·전종목 재수확. 라벨 지평 5→10, 임계 1.0→1.5.
@@ -32414,6 +32476,12 @@ function mlBuildFeatures(args) {
        "2022년 3월의 FOMC 까지 3일" 같은 거짓을 배우게 된다. 모르면 모른다고 둔다. */
     f.opexToNext = _cal.opexToNext; f.opexWeek = _cal.opexWeek; f.opexQuad = _cal.opexQuad;
     f.fomcTo = _cal.fomcTo; f.fomcSince = _cal.fomcSince; f.fomcKnown = _cal.fomcKnown;
+    /* [V33.334] DMA · 스토캐스틱 슬로우 — 순수 OHLC 파생이라 과거를 정확히 복원할 수 있다.
+       ★이력이 모자라면 지어내지 않는다★ — 중립값 + dsKnown=0 으로 두어 모델이
+       "모른다"를 구분해 배우게 한다(fomcKnown 과 같은 규율). */
+    const _ds = _dsFeats(closes, args.highs, args.lows);
+    f.dmaPct = _ds.dmaPct; f.dmaGap = _ds.dmaGap;
+    f.stochSlowK = _ds.stochSlowK; f.stochSlowD = _ds.stochSlowD; f.dsKnown = _ds.dsKnown;
     return LUXML.featNames.map(function(n){ return _num(f[n], 0); });
   } catch (e) {
     return LUXML.featNames.map(function(){ return 0; });
@@ -34926,6 +34994,15 @@ function _l1TrainOne(train, D, initW, initB) {
 async function mlTrainNightly(DB) {
   if (!LUXML.enabled) return null;
   try {
+    /* [V33.334] ★이관 중에는 학습을 미룬다 — 반쪽 표본으로 배우면 모델이 상한다.★
+       판을 올린 직후 표본은 옛 판에 있고, mlFeatMigrate 가 매 분 조금씩 옮긴다.
+       그 도중에 학습하면 "지금까지 옮겨진 몇 만 건" 만 보고 배운 뒤, 정확도가 낮게 나와
+       신뢰게이트가 모델을 강등시킨다 — 데이터는 멀쩡한데 위원이 내려앉는다.
+       기존 가중치는 그대로 두고 이관이 끝난 다음 밤에 제대로 배우는 편이 낫다.
+       (표본은 지워지지 않는다 — 구판 정리도 같은 조건으로 멈춰 있다.) */
+    if (await mlFeatMigPending(DB)) {
+      return "[ML] 표본 이관 중 — 학습 보류(기존 모델 가중치 유지, 이관 완료 후 재개)";
+    }
     await mlEnsureTable(DB);
     const rows = await DB.prepare(
       "SELECT ts, feat, label, pnl_pct, strategy FROM ml_samples WHERE featver = ? ORDER BY ts DESC LIMIT ?"
@@ -40831,6 +40908,109 @@ async function mlBuildXSPanel(DB) {
   } catch (e) { return "[XS] fail: " + (e && e.message); }
 }
 
+/* ══ [V33.334] 학습표본 제자리 이관 — ★표본을 버리지 않는다★ ══════════════════
+   종전 방식: featVer 를 올리면 옛 표본은 조회에서 빠지고(모든 질의가 featver=현재판),
+   야간 정리가 지운 뒤, 캐치업 수확이 딥이력에서 다시 만든다.
+   그 길은 되긴 하지만 ★며칠 동안 위원 전원이 굶는다★ — 표본이 0 에서 다시 자라기 때문이다.
+
+   여기서는 지우지 않고 옮긴다. DMA·스토캐스틱은 순수 OHLC 파생이라 ★그 시점 값을
+   일봉 이력에서 정확히 되계산★ 할 수 있다. 봉 위치는 daily 캐시의 days(에폭 이후 일수)로 찾는다.
+   찾지 못한 표본은 버리지 않고 중립 + dsKnown=0 으로 폭만 맞춘다 — 모델이 "모른다"를
+   구분해 배우게 하는 것이 표본을 통째로 잃는 것보다 낫다.
+
+   ★이관이 끝나기 전에는 구판 정리를 멈춘다.★ 안 그러면 이관 대상이 먼저 지워진다 —
+   이 저장소가 반복해 당한 "두 자동장치가 서로를 모르는" 사고의 전형이다. */
+const FEATMIG = {
+  key: "ml_featmig",
+  tables: ["ml_samples", "ml_samples_st"],
+  batch: 300,            // 한 번에 읽어 고치는 행 수
+  runMs: 9000,           // 한 호출의 시간 예산(크론 한 칸을 통째로 먹지 않는다)
+  dayTol: 6              // 봉을 못 찾을 때 허용하는 날짜 오차(휴장·상장일 어긋남 보정)
+};
+function _dsBarIndex(days, ts) {
+  if (!Array.isArray(days) || !days.length || !(ts > 0)) return -1;
+  const want = Math.floor(ts / 86400000);
+  let best = -1;
+  for (let i = days.length - 1; i >= 0; i--) {
+    const d = _num(days[i], 0);
+    if (d <= want) { best = (want - d <= FEATMIG.dayTol) ? i : -1; break; }
+  }
+  return best;
+}
+async function mlFeatMigrate(DB, opts) {
+  const t0 = Date.now();
+  const runMs = _num(opts && opts.runMs, FEATMIG.runMs);
+  const D = LUXML.featNames.length, C = DS_FEATS.length;
+  // 꼬리가 DS 5종이 아니면 이관 자체를 하지 않는다 — 앞 칸의 뜻이 보존된다는 보장이 없다.
+  for (let i = 0; i < C; i++) if (LUXML.featNames[D - C + i] !== DS_FEATS[i]) return { skip: "tail" };
+  const prevVer = LUXML.featVer - 1;
+  let st = null;
+  try { st = await getState(DB, FEATMIG.key, null); } catch (e) {}
+  if (st && st.to === LUXML.featVer && st.done) return { done: true, migrated: _num(st.migrated, 0) };
+  if (!st || st.to !== LUXML.featVer) {
+    st = { from: prevVer, to: LUXML.featVer, ti: 0, lastId: 0, migrated: 0, neutral: 0, skipped: 0, done: false, ts: Date.now() };
+  }
+  const _dailyCache = {};
+  const _loadDaily = async function (sym) {
+    if (_dailyCache[sym] !== undefined) return _dailyCache[sym];
+    let d = null;
+    try { d = await getState(DB, "daily:" + sym, null); } catch (e) {}
+    _dailyCache[sym] = d || null;
+    return _dailyCache[sym];
+  };
+  let rounds = 0;
+  while (Date.now() - t0 < runMs && st.ti < FEATMIG.tables.length) {
+    const tb = FEATMIG.tables[st.ti];
+    let rows = [];
+    try {
+      const r = await DB.prepare(
+        "SELECT id, ts, symbol, feat FROM " + tb + " WHERE featver = ? AND id > ? ORDER BY id LIMIT ?"
+      ).bind(prevVer, _num(st.lastId, 0), FEATMIG.batch).all();
+      rows = (r && r.results) || [];
+    } catch (e) { st.ti++; st.lastId = 0; continue; }   // 표가 없으면 다음 표로
+    if (!rows.length) { st.ti++; st.lastId = 0; continue; }
+    const stmts = [];
+    for (const row of rows) {
+      st.lastId = Math.max(_num(st.lastId, 0), _num(row.id, 0));
+      let x = null;
+      try { x = JSON.parse(row.feat); } catch (e) { x = null; }
+      if (!Array.isArray(x)) { st.skipped++; continue; }
+      let vals = null;
+      const dd = await _loadDaily(row.symbol);
+      if (dd && Array.isArray(dd.closes) && Array.isArray(dd.days)) {
+        const bi = _dsBarIndex(dd.days, _num(row.ts, 0));
+        // 지표 계산에 필요한 최소 이력(61봉)이 그 시점 ★이전★ 에 있어야 한다.
+        if (bi >= 60) {
+          vals = _dsFeats(dd.closes.slice(0, bi + 1),
+                          Array.isArray(dd.highs) ? dd.highs.slice(0, bi + 1) : null,
+                          Array.isArray(dd.lows) ? dd.lows.slice(0, bi + 1) : null);
+        }
+      }
+      // 달력도 없는 옛 판(D−11)이면 달력까지 함께 되살아난다 — 통합 함수가 단계를 안다.
+      const nx = _featBackfillX(x, _num(row.ts, 0), vals);
+      if (!nx) { st.skipped++; continue; }
+      if (vals && vals.dsKnown === 1) st.migrated++; else st.neutral++;
+      stmts.push(DB.prepare("UPDATE " + tb + " SET feat = ?, featver = ? WHERE id = ?")
+        .bind(JSON.stringify(nx), LUXML.featVer, row.id));
+    }
+    if (stmts.length) { try { await DB.batch(stmts); } catch (e) {} }
+    rounds++;
+  }
+  if (st.ti >= FEATMIG.tables.length) st.done = true;
+  st.ts = Date.now();
+  try { await setState(DB, FEATMIG.key, st); } catch (e) {}
+  return { done: !!st.done, table: FEATMIG.tables[Math.min(st.ti, FEATMIG.tables.length - 1)],
+           migrated: st.migrated, neutral: st.neutral, skipped: st.skipped, rounds: rounds };
+}
+/* 이관이 남아 있는가 — 구판 정리(purge)가 이걸 보고 멈춘다. */
+async function mlFeatMigPending(DB) {
+  try {
+    const st = await getState(DB, FEATMIG.key, null);
+    if (!st) return true;                                  // 아직 시작도 안 했다
+    return !(st.to === LUXML.featVer && st.done === true);
+  } catch (e) { return true; }                             // 모르면 지우지 않는다
+}
+
 async function mlMarketHarvestNightly(DB, opts) {
   if (!HARVEST.enabled || !LUXML.enabled) return null;
   opts = opts || {};
@@ -41173,14 +41353,24 @@ async function mlMarketHarvestNightly(DB, opts) {
     // [V12.102] 구 featVer 표본 능동 정리 가속 — 죽은 표본(현 학습이 절대 안 읽음)이 D1을 채워 신 featVer
     //   풀 성장·인서트를 방해하던 것. 밤당 80k→300k로 상향(≈1.2M을 4밤에 완전 정리). 단, 한 번의 대량
     //   삭제 timeout 방지를 위해 100k씩 3회 배치로 쪼갬. 삭제된 만큼 신 featVer 표본이 자랄 공간 확보.
-    try {
-      for (let _p = 0; _p < 3; _p++) {
-        const _r = await DB.prepare(
-          "DELETE FROM ml_samples WHERE id IN (SELECT id FROM ml_samples WHERE featver != ? ORDER BY id LIMIT 100000)"
-        ).bind(LUXML.featVer).run();
-        if (!(_r && _r.meta && _r.meta.changes)) break;   // 더 지울 구 표본 없으면 조기 종료
-      }
-    } catch (e) {}
+    /* [V33.334] ★이관이 끝나기 전엔 구판을 지우지 않는다.★
+       V33.334 는 옛 표본을 버리는 대신 제자리 이관한다(mlFeatMigrate). 그런데 이 정리는
+       "현재판이 아닌 행"을 밤마다 30만 건씩 지운다 — 이관 대상이 바로 그 행들이다.
+       둘을 그대로 두면 이관이 끝나기 전에 표본이 먼저 사라진다. 두 자동장치가 서로를
+       모르는 사고의 전형이라, 여기서 명시적으로 물어본다. 모르면 안 지운다. */
+    const _migPend = await mlFeatMigPending(DB);
+    if (_migPend) {
+      try { await log(DB, "INFO", null, "[FEATMIG] 이관 진행 중 — 구판 표본 정리를 건너뛴다(표본 보존)"); } catch (e) {}
+    } else {
+      try {
+        for (let _p = 0; _p < 3; _p++) {
+          const _r = await DB.prepare(
+            "DELETE FROM ml_samples WHERE id IN (SELECT id FROM ml_samples WHERE featver != ? ORDER BY id LIMIT 100000)"
+          ).bind(LUXML.featVer).run();
+          if (!(_r && _r.meta && _r.meta.changes)) break;   // 더 지울 구 표본 없으면 조기 종료
+        }
+      } catch (e) {}
+    }
     /* [V33.328] ★구 featVer 정리를 ml_samples 에만 해 왔다.★
        flow/xalpha/stack/단타 네 표는 판이 올라가도 옛 행이 영영 남았다.
        모든 조회가 `WHERE featver = 현재판` 으로 거르니 ★학습에는 안 읽히지만★,
@@ -41188,7 +41378,7 @@ async function mlMarketHarvestNightly(DB, opts) {
        ml_samples 에 있는 정리를 나머지 넷에도 똑같이 준다 —
        "한 곳만 고쳐져 나머지가 조용히 굶는" 이 저장소의 단골 함정이라 여기서 함께 맞춘다.
        읽히지 않는 행만 지우므로 모델 동작은 바뀌지 않는다. 표당 배치 2회로 timeout 을 피한다. */
-    try {
+    if (!_migPend) try {
       const _altPrune = [
         ["flow_samples", FLOWML.featVer], ["xalpha_samples", XALPHA.featVer],
         ["stack_samples", STACKML.featVer], ["ml_samples_st", LUXML.featVer]
@@ -41203,7 +41393,7 @@ async function mlMarketHarvestNightly(DB, opts) {
           if (!(_r2 && _r2.meta && _r2.meta.changes)) break;
         }
       }
-    } catch (e) {}
+    } catch (e) {}   // [V33.334] _migPend 면 통째로 건너뛴다 — ml_samples_st 도 이관 대상이다
     const _diagHv = "cand=" + _hv.cand + "(일봉" + (_hv.candD||0) + "+딥" + (_hv.candH||0) + ") 처리=" + scanned + " 봉=" + _hv.bars +
       " [탈락 진입조건=" + _hv.rejEntry + " 라벨=" + _hv.rejLabel + " 가격=" + _hv.rejPrice + " 봉수미달=" + _hv.symShort + "]" +
       " 단타표본=" + _hv.stMade + " 준비=" + _hv.prologueMs + "ms 총=" + (Date.now() - _hvT0) + "ms/" + (opts.budgetMs || HARVEST.budgetMs || 45000) + "ms" +
@@ -47003,6 +47193,27 @@ export default {
         }
       } catch (e) {}
 
+      /* [V33.334] ★학습표본 이관을 매 크론 조금씩 밀어 끝낸다.★
+         featVer 를 올린 순간부터 학습은 새 판 표본만 본다 — 이관이 늦어질수록 위원들이
+         굶는 시간이 길어진다. 그래서 밤에 한 번이 아니라 ★매 분★ 조금씩 옮긴다.
+         끝나면 상태 한 건만 읽고 즉시 빠져나오므로(mlFeatMigrate 첫 줄) 상시 부담이 없다.
+         이관이 끝나야 구판 정리가 다시 켜진다 — 그때까지 옛 표본은 보존된다. */
+      try {
+        const _mg = await mlFeatMigrate(env.DB, { runMs: 9000 });
+        if (_mg && !_mg.done && !_mg.skip && (_mg.migrated || _mg.neutral)) {
+          await log(env.DB, "INFO", null, "[FEATMIG] " + (_mg.table || "") + " 이관 " +
+            _mg.migrated + "건(실측) + " + _mg.neutral + "건(이력없음·중립)" +
+            (_mg.skipped ? " · 폭 안 맞아 제외 " + _mg.skipped : ""));
+        } else if (_mg && _mg.done) {
+          const _seen = await getState(env.DB, "ml_featmig_logged", null);
+          if (!_seen || _seen.ver !== LUXML.featVer) {
+            await log(env.DB, "INFO", null, "[FEATMIG] ★이관 완료★ featVer " + LUXML.featVer +
+              " — 구판 정리 재개. 표본을 버리지 않고 옮겼다.");
+            try { await setState(env.DB, "ml_featmig_logged", { ver: LUXML.featVer, ts: Date.now() }); } catch (e) {}
+          }
+        }
+      } catch (e) {}
+
       // [V32.57] Modal 학습 지연 자동 재트리거(30분 스로틀·8h 쿨다운 — 대부분 상태 1건 read 후 리턴)
       try { await _luxAutoRetrainModal(env); } catch (e) {}
 
@@ -47875,7 +48086,8 @@ export {
   /* [V33.273] 밴딧 상관강건 검정 · MEMO 관련도 가중거리 — tools/check-bandit-memo.mjs 가
      실제로 돌린다. 두 고침 다 "성적으로만 드러나는" 종류라 문장으로는 못 지킨다. */
   // [V33.275] 달력 소급복원 — tools/check-cal-backfill.mjs 가 라이브 조립과 대조한다.
-  _calBackfillX, CAL_FEATS,
+  _calBackfillX, CAL_FEATS, _featBackfillX, DS_FEATS, DS_NEUTRAL, _dsFeats, _dsBarIndex,
+  mlFeatMigrate, mlFeatMigPending, FEATMIG,
   mlPermutationTest, mlGroupedPermutationTest, _corrClusters, mlBanditContext,
   mlBanditNoiseNightly, LUXNOISE, LUXBANDIT,
   memoScore, memoTrainNightly, MEMOML,

@@ -179,6 +179,13 @@ jobs:
       #   넘치는 보조선을 지우지 않고 잘라 그리는가, 새 지표가 상세에 붙는가.
       - name: Detail chart / indicator display check
         run: node tools/check-detail-chart.mjs
+      # [V33.334] 학습표본 제자리 이관 — 판을 올리면서 표본을 버리지 않았는가.
+      #   ①앞칸이 한 칸도 안 밀리는가(밀리면 51만 표본의 뜻이 통째로 어긋난다 — 복구 불가)
+      #   ②이력이 없으면 지어내지 않고 dsKnown=0 으로 '모른다'고 적는가
+      #   ③이관이 끝나기 전엔 구판 정리와 야간 학습이 멈추는가
+      #   가짜 DB 로 이관을 실제로 돌려 표본 수·폭·실측/중립 구분을 확인한다.
+      - name: Feature migration contract check
+        run: node tools/check-featmig.mjs
       # [V33.140] 전진검증 누적 원장 — 창이 매일 밤 리셋돼 ★구조적으로★ 못 채워지던 것을 고쳤다.
       #   (memo: 총표본 177,868 인데 전진 357 = 어제 유입과 정확히 일치)
       #   교착 해소와 통계 정직성을 함께 본다: 잡음 통과율이 문턱의 명목값과 맞는지,
