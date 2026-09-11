@@ -47750,6 +47750,7 @@ async function mlFlushCandidates(DB, stmts) {
 //   그 결과 `all`이 cron 32단계 중 21단계만 돌아 "수동 1회 전체 실행"이 실제로는 전체가 아니었다.
 //   본문은 cron 쪽과 완전히 동일하다(경로 조회 + 지수 경로 정렬 → mlLabelCandidates).
 async function cfLabelNightly(DB) {
+  // ⚠️ B-7(docs/OPEN-DEFECTS.md): entryTs 를 받아 놓고 안 쓴다 — dd.days + _altBarIdx 로 진입 봉을 찾을 것.
   return await mlLabelCandidates(DB, async (sym, mkt, entryTs, horizon) => {
     try {
       const dd = await getState(DB, "daily:" + sym, null);
@@ -47790,6 +47791,14 @@ async function mlLabelCandidates(DB, priceLookup, opts) {
     //   후보가 딱 horizon 만큼 익었을 때만 둘이 일치한다. 15일 된 후보(horizon 5)를 라벨하면
     //   진입가 대비 '10~15일 뒤 구간' 을 재게 되고, 그 라벨은 틀린 값이 그대로 학습에 들어간다.
     //   daily 캐시에는 dates 가 없어 진입 봉을 되찾을 방법이 없다 — 없는 것을 추측하지 않는다.
+    /* ⚠️ 미해결 결함 B-7 — docs/OPEN-DEFECTS.md ★바로 윗줄의 전제가 이미 사실이 아니다★
+       V33.217 부터 daily 캐시는 days(봉별 에폭일수)를 담고, _dailyCacheOk(9606) 가
+       days.length === closes.length 를 강제한다. 진입 시각으로 봉을 찾는 _altBarIdx(30508) 도 있고
+       analystRevFitNightly(8596·8600) 는 이미 그 방식으로 지평 끝을 찾는다.
+       그런데 여기 가격 공급자(47753·48563)는 entryTs 를 ★인자로 받아 놓고 한 번도 쓰지 않는다.★
+       그래서 ① 라벨 창이 최대 3거래일 밀리고 ② 창 밖으로 늙은 후보를 misaligned 로 버린다 —
+       지금은 정확히 맞출 수 있으므로 버릴 이유가 없다. 고치면 아래 seg = path.slice(-horizon) 도
+       함께 없애야 한다(두 번 자르면 같은 종류의 조용한 어긋남이 다시 생긴다). */
     //   → 정렬이 보장되는 창 안에서만 라벨하고, 그 밖으로 늙은 후보는 ★삭제★ 한다.
     //   또 하나: 종전 성숙 판정은 horizon(거래일)을 달력일로 그대로 썼다. 5거래일은 달력으로
     //   약 7일이라 ★2일 일찍★ 라벨돼 구간이 짧았다. 거래일→달력일 환산(×7/5)을 넣는다.
@@ -48560,6 +48569,7 @@ export default {
             const _cfLock = _num(await getState(env.DB, "cf_label_lock", 0), 0);
             if (Date.now() - _cfLock > 600000) {
               await setState(env.DB, "cf_label_lock", Date.now());
+              // ⚠️ B-7(docs/OPEN-DEFECTS.md): 위 47753 과 같은 공급자다. 한쪽만 고치면 라벨이 갈린다.
               const _cfr = await mlLabelCandidates(env.DB, async (sym, mkt, entryTs, horizon) => {
                 try {
                   const dd = await getState(env.DB, "daily:" + sym, null);
