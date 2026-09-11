@@ -77,5 +77,21 @@ db2.prepare("DELETE FROM positions WHERE symbol='TSLA'").run();
 stmtRecordTradeIfPos(DB2, ST, GD).run();
 ok(n2() === 1, "매도: 포지션이 이미 정리됐으면 기록하지 않는다(중복 원장 없음)");
 
+// ⑤ 감사용 중복탐지 쿼리 — V33.348 이전에 이미 생긴 중복 행을 사람이 SQL 을 치지 않고도 보게 한다.
+//    auditAccounting 이 시장별 1시간 스로틀로 이 모양의 쿼리를 돌린다(지우지는 않는다 — D-1 참조).
+const db3 = freshDb(), DB3 = proxy(db3);
+const AUDIT = "SELECT ts, symbol, side, qty, price, COUNT(*) c FROM trades WHERE market = ? " +
+              "GROUP BY ts, symbol, side, qty, price HAVING c > 1 ORDER BY ts DESC LIMIT 20";
+const dupRows = () => db3.prepare(AUDIT).all("us");
+stmtRecordTrade(DB3, T).run();
+stmtRecordTrade(DB3, Object.assign({}, T, { ts: T.ts + 5 })).run();
+ok(dupRows().length === 0, "멱등 INSERT 만 쓰면 감사 쿼리가 중복을 찾지 못한다(정상)");
+// 옛 코드가 남겼을 법한 중복을 손으로 심어 본다 — 탐지가 실제로 되는지.
+db3.prepare("INSERT INTO trades (ts,market,symbol,side,qty,price,pnl,pnl_pct,reason) VALUES (?,?,?,?,?,?,?,?,?)")
+   .run(T.ts, T.market, T.symbol, T.side, T.qty, T.price, null, null, T.reason);
+const found = dupRows();
+ok(found.length === 1 && found[0].c === 2, `과거에 생긴 중복 행을 감사 쿼리가 찾아낸다 (${found.length}건, ×${found[0] ? found[0].c : "-"})`);
+ok(db3.prepare("SELECT COUNT(*) c FROM trades").get().c === 3, "감사는 세기만 한다 — 원장을 지우지 않는다");
+
 console.log(fail ? `\n실패 ${fail}건` : "\n전부 통과");
 process.exit(fail ? 1 : 0);

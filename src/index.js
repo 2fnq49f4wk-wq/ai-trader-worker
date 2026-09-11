@@ -22319,6 +22319,34 @@ async function auditAccounting(DB, market, cash, cfg) {
     const flags = [];
     // 1) 음수 현금
     if (cashVal < 0) flags.push("NEG_CASH(" + Math.round(cashVal) + ")");
+    /* [V33.348] ★원장 중복 행 — D-3(docs/OPEN-DEFECTS.md)이 남긴 흔적을 스스로 찾게 한다.★
+       V33.348 이전에는 D1 재시도가 매수 원장을 두 번 적을 수 있었다(결과를 모르는 실패에서
+       재시도 → 같은 배치가 두 번). 현금은 원장 재생으로 파생되므로 중복 행 하나가 곧
+       매수대금 이중차감이다. 앞으로는 조건부 INSERT 가 막지만 ★과거분은 이미 들어가 있을 수 있다.★
+       사람이 SQL 을 손으로 치지 않아도 보이게 여기서 센다.
+       ★지우지는 않는다★ — 원장을 소급해 고치는 일은 현금 체크포인트와 얽혀 있어(D-1)
+       자동으로 할 일이 아니다. 보이게만 하고 판단은 사람에게 맡긴다.
+       비용: trades 전체 GROUP BY 라 매 사이클 돌릴 수 없다 → 시장별 1시간 스로틀. */
+    try {
+      const _dk = "ledger_dup_chk:" + market;
+      const _prev = await getState(DB, _dk, null);
+      if (!_prev || (Date.now() - _num(_prev.ts, 0)) > 3600000) {
+        await setState(DB, _dk, { ts: Date.now() });
+        const _dr = await DB.prepare(
+          "SELECT ts, symbol, side, qty, price, COUNT(*) c FROM trades WHERE market = ? " +
+          "GROUP BY ts, symbol, side, qty, price HAVING c > 1 ORDER BY ts DESC LIMIT 20"
+        ).bind(market).all();
+        const _rows = (_dr && _dr.results) || [];
+        if (_rows.length) {
+          let _extra = 0;
+          for (const _r of _rows) _extra += Math.max(0, _num(_r.c, 1) - 1);
+          const _top = _rows.slice(0, 3).map(function (r) {
+            return r.symbol + " " + r.side + " x" + r.qty + "@" + r.price + " ×" + r.c;
+          }).join(", ");
+          flags.push("LEDGER_DUP(" + _rows.length + "건/초과 " + _extra + "행: " + _top + ")");
+        }
+      }
+    } catch (e) {}
     // 2) 중복 포지션 (KQ 마이그레이션 등으로 생기는 이중 계상)
     if (dups.length > 0) flags.push("DUP_POS(" + dups.join(",") + ")");
     // 3) 투자원금이 비정상적으로 큼 — 초기자본 대비 과투자 (현금 회계 붕괴 징후)
