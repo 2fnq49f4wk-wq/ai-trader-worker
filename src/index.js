@@ -404,7 +404,7 @@ const FOREIGN_TRACKING_KR_ETF = new Set([
 // 종목 한글/영문 이름 맵 (UI 표시용)
 const NAME_MAP = {
   "NVDA":"NVIDIA",
-  "SPCX":"SpaceX",   // ⚠️ F-3(docs/OPEN-DEFECTS.md): 이 티커가 실제 거래 가능한지 미검증.
+  "SPCX":"SpaceX",   // ⚠️ 미해결 F-3(docs/OPEN-DEFECTS.md): 이 티커가 실제 거래 가능한지 미검증.
                      //   SpaceX 는 비상장이고 SPCX 는 과거 SPAC 티커였다. 죽은 티커면 매 사이클
                      //   시세 fetch 예산을 태우면서 MCAP_RANK 9위로 우량주 보너스 상위를 차지한다.
   "GOOGL":"Alphabet A",
@@ -934,6 +934,22 @@ const NAME_MAP = {
   "XLF":"금융 섹터",
   "XLE":"에너지 섹터",
   "IWM":"러셀2000",
+  /* [V33.348 · F-1 해결 · 확인 한번 더] 미국 섹터/테마 ETF 12종 — ETF_SYMBOLS·ETF_TYPE 에만
+     등재돼 있고 NAME_MAP·MCAP_RANK 에는 빠져 있었다(CLAUDE.md 의 '세 곳 함께 갱신' 위반).
+     그래서 화면에 티커로만 떴고 시총 정렬에서 99999(최하위)로 밀렸다.
+     순위는 미국 ETF 관례대로 개별주 뒤(503~)에 이어 붙인다 — 시총이 아니라 표시 순서다. */
+  "XLK":"기술 섹터",
+  "XLV":"헬스케어 섹터",
+  "XLY":"경기소비재 섹터",
+  "XLI":"산업재 섹터",
+  "XLP":"필수소비재 섹터",
+  "XLU":"유틸리티 섹터",
+  "XLB":"소재 섹터",
+  "XLC":"커뮤니케이션 섹터",
+  "XLRE":"부동산 섹터",
+  "SOXX":"반도체 ETF(iShares)",
+  "IBB":"바이오텍 ETF",
+  "DIA":"다우30 ETF",
   "005930.KS":"삼성전자",
   // [V12.65 추가] 유니버스 확장 종목명(네이버 기준)
   "095660.KQ":"네오위즈",
@@ -1389,15 +1405,14 @@ const NAME_MAP = {
 };
 
 // 시가총액 순위 (UI 시총순 정렬용 — 값이 작을수록 대형주)
-/* ⚠️ 미해결 결함 F-1 · F-2 · F-4 — docs/OPEN-DEFECTS.md
-   CLAUDE.md 규칙: 종목 추가 시 DEFAULT_KR/US · NAME_MAP · MCAP_RANK ★세 곳★ 을 함께 갱신한다.
-   실행으로 검증한 결과(문자열 검색이 아니라 네 블록을 노드에서 직접 읽었다):
-     F-1 미국 섹터 ETF 12종(XLK XLV XLY XLI XLP XLU XLB XLC XLRE SOXX IBB DIA)이
-         ETF_SYMBOLS·ETF_TYPE 에는 있는데 NAME_MAP·MCAP_RANK 양쪽에 없다 — 두 곳만 갱신했다.
-     F-2 미국 구간에 동점 28쌍(9: SPCX·TSLA·TSM, 22: CSCO·ASML, …)과 결번 2개.
-         rvPanel 이 이 값을 '예전 순위' 로 삼아 드리프트를 재는데, 동점이면 그 답이 없다.
-     F-4 이걸 보는 게이트가 103종 중 하나도 없다 → tools/check-universe-sync.mjs 로 자동화할 것.
-   ※ 중복·접미사·고아 항목은 위반 0건이었다. 다시 파지 말 것. */
+/* [V33.348] CLAUDE.md 규칙: 종목 추가 시 DEFAULT_KR/US · NAME_MAP · MCAP_RANK ★세 곳★ 을 함께 갱신한다.
+   ✅ F-1 해결 — 미국 섹터 ETF 12종(XLK…DIA)이 ETF_SYMBOLS·ETF_TYPE 에만 있고 두 맵에서 빠져 있었다.
+      아래 520~531 로 넣었다. ✅ F-4 해결 — tools/check-universe-sync.mjs 가 이제 세 곳을 검사한다
+      (문자열이 아니라 네 블록을 노드에서 실제로 읽어 집합 연산으로 본다).
+   ⚠️ F-2 는 미해결 — 미국 구간에 동점 29종(그룹 28개, 9: SPCX·TSLA·TSM …)과 결번 2개가 남아 있다.
+      rvPanel(13909)이 이 값을 '예전 순위' 로 삼아 드리프트를 재는데 동점이면 그 답이 없다.
+      임의 재배정은 ★없는 시총을 지어내 우량주 보너스를 바꾸는 일★ 이라 하지 않았다 —
+      게이트가 상한(29)으로 늘어나는 것만 막는다. 제대로 고치려면 mcap_shares 로 재산출할 것. */
 const MCAP_RANK = {
   "NVDA":1,
   "GOOGL":2,
@@ -1921,6 +1936,19 @@ const MCAP_RANK = {
   "XLF":515,
   "XLE":516,
   "IWM":517,
+  // [V33.348 · F-1 해결 · 확인 한번 더] 위 NAME_MAP 과 같은 12종. 520~531 로 이어 붙인다.
+  "XLK":520,
+  "XLV":521,
+  "XLY":522,
+  "XLI":523,
+  "XLP":524,
+  "XLU":525,
+  "XLB":526,
+  "XLC":527,
+  "XLRE":528,
+  "SOXX":529,
+  "IBB":530,
+  "DIA":531,
   "005930.KS":1,
   // [V12.65 추가] 유니버스 확장 시총순위(정적 폴백 — 실시간 시총은 mcap_shares에서 가격×주식수로 산출)
   "095660.KQ":325,
@@ -2992,7 +3020,7 @@ async function applySignalTypeWeights(DB, cfg) {
    화면·자가진단이 계속 "V33.272" 를 보고했다(운영 스냅샷이 그대로 그랬다). 배포는 됐는데
    ★배포됐다는 사실만 거짓말★ 을 하고 있었으니, "내 고침이 올라간 건가" 를 화면으로 확인할
    방법이 없었다. tools/check-build-ver.mjs 가 이제 소스에 적힌 최신 버전과 이 값을 대조한다. */
-const _BUILD_VER = "V33.347";
+const _BUILD_VER = "V33.348";
 
 // ═══ [V33.171] 평가 순서 계획 — ★승격과 순환을 교차해 굶주림을 구조적으로 없앤다★ ═══
 //   V33.50 의 형태트리거는 "급한 몇 종목을 앞으로 당긴다"는 의도였으나, 실제 운영로그에서는
@@ -3609,11 +3637,10 @@ const DEFAULT_CFG = {
   marketCrashPct: -4.0,
   feeUS: 0.0001,
   feeKR: 0.00015,
-  /* ⚠️ 미해결 결함 D-2 — docs/OPEN-DEFECTS.md ★실제 법정세율과 다르다★
-     매도 합산세율(증권거래세+농특세)은 2024 0.18% → 2025 0.15% → 2026 0.20% 로 바뀌었다.
-     이 상수는 연도 구분이 없어 2년째 틀린 값으로 원장을 적고 있다(2026년은 0.02%p 과소).
-     비용을 낮게 잡는 것은 수익을 지어내는 것과 같고, 그 pnl 이 학습 라벨이 된다.
-     고칠 때는 ETF_TAX_EXEMPT_FROM·SLIPPAGE_FROM 과 같은 시행일 규율로 연도별 표를 둘 것. */
+  /* [D-2 해결 · 확인 한번 더] 한국 매도 합산세율의 ★연도별 기본값★.
+     이 값은 KR_SELL_TAX_BY_YEAR 에 연도가 없을 때만 쓰는 폴백이다(종전 동작 보존).
+     실제 세율은 _krSellTaxRate 가 체결 연도로 고른다 — 아래 표를 볼 것.
+     ※ 세법은 해마다 바뀐다. 연초에 이 표가 그 해를 담고 있는지 ★반드시 다시 확인할 것.★ */
   krSellTax: 0.0018,
   maPeriod: 20, maShortPeriod: 5,
   atrPeriod: 14, atrStopMult: 2.0,
@@ -10463,9 +10490,33 @@ function _rowsChanged(res) {
   } catch (e) {}
   return null;   // 알 수 없음 → 호출부는 보수적으로 진행(기존 동작)
 }
+/* [V33.348 · 해결 · 확인 한번 더] ★원장 INSERT 를 재시도에 안전하게 만든다.★
+   wrapD1(9900 부근)의 __d1Attempt 는 과부하성 오류에서 ★모든★ D1 호출을 최대 5회 재시도한다.
+   그 판정(__d1IsOverload)에는 "network connection lost" 와 "storage operation exceeded timeout"
+   이 들어 있는데, 이 둘은 ★결과를 모르는 실패★ 다 — 쓰기가 이미 커밋됐는데 응답만 유실됐을 수 있다.
+   그런 상황에서 재시도하면 같은 배치가 두 번 돈다.
+
+   매도 3경로는 이미 안전하다 — stmtRecordTradeIfPos 의 EXISTS(포지션이 아직 기대수량인가)가
+   두 번째 실행에서 거짓이 되어 0행이 된다. ★매수만 맨 INSERT 였다.★
+     · positions 는 절대 upsert(stmtSavePosition)라 두 번 써도 같은 값 → 멱등
+     · trades 는 맨 INSERT → ★행이 하나 더 생긴다★
+   그런데 현금은 원장 재생(computeCashFromTrades)으로 파생된다. 즉 중복 행 하나가 그대로
+   ★매수대금 이중 차감★ 이 된다. 자산은 한 번 치인 수량인데 돈만 두 번 나간다.
+   (isDuplicateRecentTrade 는 배치 ★앞★ 에서 도는 검사라 이 재시도를 막지 못한다.)
+
+   → 같은 자연키(ts·market·symbol·side·qty·price)가 이미 있으면 INSERT 하지 않는다.
+     ts 는 재시도 전에 한 번 잡히므로(바인딩 고정) 중복 시도는 정확히 같은 키로 들어온다.
+     서로 다른 진짜 체결이 ms 단위로 같은 종목·같은 방향·같은 수량·같은 가격이 될 수는 없다.
+     비용은 EXISTS 서브쿼리 1회 — idx_trades_ts 를 탄다.
+   ※ 매도 경로는 이미 조건부라 손대지 않는다(중복 조건을 두 벌 두지 않는다). */
 function stmtRecordTrade(DB, t) {
-  return DB.prepare("INSERT INTO trades (ts, market, symbol, side, qty, price, pnl, pnl_pct, reason) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)")
-    .bind(t.ts, t.market, t.symbol, t.side, t.qty, t.price, t.pnl == null ? null : t.pnl, t.pnl_pct == null ? null : t.pnl_pct, t.reason);
+  return DB.prepare(
+    "INSERT INTO trades (ts, market, symbol, side, qty, price, pnl, pnl_pct, reason) " +
+    "SELECT ?, ?, ?, ?, ?, ?, ?, ?, ? WHERE NOT EXISTS (" +
+    "SELECT 1 FROM trades WHERE ts = ? AND market = ? AND symbol = ? AND side = ? AND qty = ? AND price = ?)"
+  ).bind(t.ts, t.market, t.symbol, t.side, t.qty, t.price,
+         t.pnl == null ? null : t.pnl, t.pnl_pct == null ? null : t.pnl_pct, t.reason,
+         t.ts, t.market, t.symbol, t.side, t.qty, t.price);
 }
 
 // [V33.129] ★매도 원장을 포지션과 같은 조건으로 묶는 조건부 INSERT.★
@@ -11499,6 +11550,39 @@ async function savePosition(DB, market, symbol, strategy, pos) {
 //   해결: 회계 규칙 변경은 소급하지 않는다(실제 회계와 같다). 시행일 이전 체결은 그때의 규칙으로,
 //   이후 체결은 새 규칙으로 계산한다. 이러면 체크포인트 유무와 무관하게 같은 답이 나온다.
 const ETF_TAX_EXEMPT_FROM = Date.UTC(2026, 7, 2);   // 2026-08-02 (V33.73 배포일) 이후 체결부터 면제
+
+/* [V33.348 · D-2 해결] ★한국 매도세는 해마다 다르다 — 체결 연도로 고른다.★
+   종전엔 cfg.krSellTax 단일 상수(0.0018)로 언제 체결됐든 0.18% 를 물렸다. 실제 합산세율
+   (증권거래세 + 농어촌특별세)은 다음과 같이 바뀌었고, 개정은 각 해 1월 1일 이후 양도분부터다:
+     2024  코스피 0.03% + 농특 0.15% = 0.18%   · 코스닥 0.18%
+     2025  코스피 0.00% + 농특 0.15% = 0.15%   · 코스닥 0.15%
+     2026~ 코스피 0.05% + 농특 0.15% = 0.20%   · 코스닥 0.20%(농특세 없음)
+   즉 2025년은 0.03%p 과대, 2026년은 0.02%p 과소로 원장에 적혀 왔다. 비용을 낮게 잡는 것은
+   수익을 지어내는 것과 같고, 그 pnl 이 그대로 학습 라벨이 된다.
+
+   ★소급하지 않는다★ — V33.87 이 세운 회계 결정성 원칙 그대로다. 체결 시각의 연도로 고르므로
+   현금 체크포인트(cash_ckpt)가 지워져 전 구간을 재생해도 같은 잔고가 나온다.
+   ※ 표에 없는 연도는 ★가장 최근 연도의 값★ 을 잇는다(미래 연도가 0% 가 되는 사고 방지).
+   ※ 코스피/코스닥 합산세율이 2026 기준 같아 시장 구분을 두지 않았다. 구성(거래세 vs 농특세)이
+     다르므로 앞으로 갈릴 수 있다 — 갈리면 .KS/.KQ 로 나눌 자리가 여기다.
+   ⚠️ ★연초마다 이 표가 그 해를 담고 있는지 다시 확인할 것.★ 세법은 바뀐다. */
+const KR_SELL_TAX_BY_YEAR = { 2023: 0.0020, 2024: 0.0018, 2025: 0.0015, 2026: 0.0020 };
+/* 표 범위 밖 연도는 ★가장 가까운 끝 연도★ 로 잇는다 — 미래 연도가 0% 가 되면 그 해 내내
+   매도세를 한 푼도 안 물리게 된다(수익을 지어내는 쪽으로 조용히 틀어진다).
+   ※ 키는 문자열이라 parseInt 로 읽는다. _num 은 숫자만 받으므로 여기서 쓰면 전부 0 이 된다
+     (처음에 실제로 그렇게 썼고, 2027년 케이스가 0% 를 내며 잡혔다). */
+const _KR_TAX_YEARS = Object.keys(KR_SELL_TAX_BY_YEAR).map(function (k) { return parseInt(k, 10); })
+  .filter(function (n) { return isFinite(n); }).sort(function (a, b) { return a - b; });
+function _krSellTaxForYear(cfg, year) {
+  const y = _num(year, 0);
+  if (y > 0 && _KR_TAX_YEARS.length) {
+    if (KR_SELL_TAX_BY_YEAR[y] != null) return KR_SELL_TAX_BY_YEAR[y];
+    const lo = _KR_TAX_YEARS[0], hi = _KR_TAX_YEARS[_KR_TAX_YEARS.length - 1];
+    if (y < lo) return KR_SELL_TAX_BY_YEAR[lo];
+    if (y > hi) return KR_SELL_TAX_BY_YEAR[hi];
+  }
+  return _num(cfg && cfg.krSellTax, 0);
+}
 // [V33.109] 현금 사용가능 비율 — cashReservePct 를 실제로 읽는 유일한 지점.
 //   설정이 없거나 이상하면 종전 하드코딩(0.85)으로 폴백한다.
 function _cashUseFrac(cfg) {
@@ -11509,16 +11593,17 @@ function _cashUseFrac(cfg) {
     return _clamp(1 - r / 100, 0.4, 1);
   } catch (e) { return 0.85; }
 }
-/* ⚠️ 미해결 결함 D-2 — docs/OPEN-DEFECTS.md
-   ts 를 받아 놓고 ★ETF 면제 시행일 판정에만★ 쓴다. 세율 자체는 언제 체결됐든 0.18% 다.
-   실제 세율은 연도별로 다르다(2024 0.18 / 2025 0.15 / 2026 0.20). 여기가 그 표를 읽어야 한다.
-   연도는 getKST(new Date(ts)).year 로 뽑을 것 — UTC 연도를 쓰면 12/31 체결이 다음 해로 밀린다. */
+/* [V33.348 · D-2 해결 · 확인 한번 더] 세율을 ★체결 연도★ 로 고른다(KR_SELL_TAX_BY_YEAR).
+   종전엔 ts 를 받아 놓고 ETF 면제 시행일 판정에만 썼고, 세율 자체는 언제 체결됐든 0.18% 였다.
+   연도는 ★KST 기준★ 으로 뽑는다 — UTC 연도를 쓰면 12/31 밤 체결이 다음 해로 밀린다.
+   ts 가 없거나 이상하면 종전대로 cfg.krSellTax 폴백(호출부 동작 불변). */
 function _krSellTaxRate(cfg, symbol, market, ts) {
-  const base = cfg.krSellTax || 0;
+  const _tsOk = (typeof ts === "number" && isFinite(ts) && ts > 0);
+  const base = _tsOk ? _krSellTaxForYear(cfg, getKST(new Date(ts)).year) : _num(cfg && cfg.krSellTax, 0);
   if (!base) return 0;
   if (market !== "kr" && market !== "bdkr") return 0;   // USD 슬리브(us/cm/bdus)는 매도세 없음
   // 시행일 이전 체결은 종전 규칙(ETF 도 과세) 그대로 — 과거를 다시 쓰지 않는다.
-  if (typeof ts === "number" && isFinite(ts) && ts > 0 && ts < ETF_TAX_EXEMPT_FROM) return base;
+  if (_tsOk && ts < ETF_TAX_EXEMPT_FROM) return base;
   if (market === "bdkr") return 0;                      // 채권 슬리브 = 전부 국고채 ETF
   if (symbol && ETF_SYMBOLS.has(symbol)) return 0;      // KR 주식 슬리브 안의 ETF
   return base;
@@ -13759,7 +13844,14 @@ async function univHealthNightly(DB) {
        게이트가 존재하지도 않는 loadConfig 를 잡아내면서 함께 드러났다). */
     const cfg = migrateCfgToMarkets(Object.assign({}, DEFAULT_CFG, await getState(DB, "cfg", {})));
     const uni = { kr: (cfg && cfg.krTickers) || DEFAULT_KR, us: (cfg && cfg.usTickers) || DEFAULT_US };
-    const rows = ((await DB.prepare("SELECT k, updated_ts FROM state WHERE k LIKE 'daily:%'").all()) || {}).results || [];
+    /* [V33.348 · 해결 · 확인 한번 더] ★prefix LIKE 는 인덱스를 못 탄다 — state 전체 스캔이었다.★
+       SQLite 의 LIKE 최적화는 기본 설정(case_insensitive LIKE)에서 꺼져 있다. 그래서 이 한 줄이
+       state 테이블 전 행(daily: 수백 종목의 일봉 blob + hist:·quote:·chart: …)을 훑었다.
+       같은 파일의 다른 daily: 조회는 전부 범위형(k >= 'daily:' AND k < 'daily;')을 쓴다 —
+       ':' 다음 문자가 ';' 이라 집합이 정확히 같고, 이쪽은 PK 인덱스 범위 스캔이다.
+       ※ 키는 전부 소문자 "daily:" + 심볼 로 쓰므로 대소문자 차이로 달라질 여지가 없다. */
+    const rows = ((await DB.prepare(
+      "SELECT k, updated_ts FROM state WHERE k >= 'daily:' AND k < 'daily;'").all()) || {}).results || [];
     const seen = {};
     for (const r of rows) seen[String(r.k).slice(6)] = _num(r.updated_ts, 0);
 
@@ -19675,28 +19767,18 @@ async function runTradingCycle(env) {
           try {
             if (FLOWML.enabled) {
               __flowCollect = true;   // 표본이 없을수록 수집이 급하다 — 항상 켠다(피어는 네트워크 0)
-              const _dr = await DB.prepare("SELECT k, v FROM state WHERE k >= 'daily:' AND k < 'daily;'").all();
-              let _n = 0;
-              for (const _r of ((_dr && _dr.results) || [])) {
-                if (_n >= 900) break;
-                const _sy = String(_r.k).slice(6);
-                if (!_sy || _sy[0] === "^") continue;
-                try {
-                  const _v = (typeof _r.v === "string") ? JSON.parse(_r.v) : _r.v;
-                  if (_v && Array.isArray(_v.closes) && _v.closes.length >= 25) {
-                    // [V33.79] OHLCV 전체를 싣는다 — WorldQuant 형식알파는 시가/고가/저가/거래량이 필요하다.
-                    const _cut = -70;   // 60일치면 모든 알파의 최장 창(20일)을 충분히 덮는다
-                    __dailyCacheForFlow[_sy] = {
-                      closes: _v.closes.slice(_cut),
-                      opens: Array.isArray(_v.opens) ? _v.opens.slice(_cut) : null,
-                      highs: Array.isArray(_v.highs) ? _v.highs.slice(_cut) : null,
-                      lows: Array.isArray(_v.lows) ? _v.lows.slice(_cut) : null,
-                      volumes: Array.isArray(_v.volumes) ? _v.volumes.slice(_cut) : null
-                    };
-                    _n++;
-                  }
-                } catch (e2) {}
-              }
+              /* [V33.348 · 해결 · 확인 한번 더] ★D1 과부하의 남은 큰 축★
+                 이 자리는 'daily:' 전량(약 1,000종목 × 320~2,400봉 × 5배열)을 ★매 사이클·매 시장★
+                 통째로 읽고 JSON.parse 했다. 위 주석은 "사이클당 1회" 라고 적혀 있지만 이 블록은
+                 시장 루프(us/kr/…) 안이라 실제로는 시장 수만큼 돈다. 읽고 나서 쓰는 것은 마지막
+                 70봉뿐이다 — 수 MB 를 받아 수십 KB 를 쓰고 버린다.
+                 V12.131 이 19228 의 ★똑같은 쿼리★ 에 아이솔레이트 캐시를 붙이며 "prefetch 지연·
+                 D1 부하의 큰 축" 이라고 적어 뒀는데, 그 뒤에 같은 쿼리가 여기에 캐시 없이 다시
+                 들어왔다. 같은 처방을 같은 이유로 여기에도 건다 —
+                 ★잘라 놓은 결과(70봉)를 캐시한다★ 그래야 파싱 비용까지 같이 아낀다.
+                 신선도: 일봉은 하루 단위로 바뀌고, 당일 마지막 봉만 장중에 움직인다. FLOW/XALPHA 는
+                 60~70봉 창의 형식알파라 마지막 봉 10분 지연이 판정을 뒤집지 않는다(19228 과 같은 TTL). */
+              __dailyCacheForFlow = await flowDailyCacheLoad(DB);
             }
             /* ══ [V33.304] ★flow 6,737ms 의 정체 — CPU 가 아니라 D1 왕복이었다★ ═══════════
                운영 실측: 부가조회 지갑 7,242/7,200ms 소진 · 그중 ★flow 6,737ms★.
@@ -24117,8 +24199,14 @@ async function handleRequest(request, env, ctx) {
         }
       } catch (e) { /* 스냅샷 문제 시 아래 D1 경로로 폴백 */ }
       const anchorTs = beforeTs > 0 ? beforeTs : Date.now();
-      let total = 0;
-      try { const c = await env.DB.prepare("SELECT COUNT(*) AS c FROM ml_samples WHERE featver = ? AND ts <= ?").bind(LUXML.featVer, anchorTs).first(); total = (c && c.c) || 0; } catch (e) {}
+      /* [V33.348 · 해결 · 확인 한번 더] ★페이지마다 98만 행을 다시 세고 있었다.★
+         total 은 (featVer, anchorTs) 가 같으면 ★정의상 변하지 않는다★ — anchorTs 가 집합을
+         고정하기 때문이다. 그런데 트레이너는 2만건씩 50여 페이지를 당겨가고, 그때마다 이
+         COUNT 가 인덱스 전 구간을 훑었다. 학습 1회당 COUNT 50여 회 — 그 시간 내내 거래 사이클과
+         같은 D1 큐를 쓴다("D1 DB is overloaded" 의 재료다).
+         → (featVer, anchorTs) 키로 아이솔레이트에 캐시한다. 같은 키면 같은 답이므로 신선도 손실이 없다.
+         ※ 아이솔레이트가 갈리면 다시 세는데, 그건 정확성 문제가 아니라 절약폭 문제다. */
+      const total = await mlExportTotalCached(env.DB, LUXML.featVer, anchorTs);
       // [V33.12] ★OFFSET 페이지네이션 → 커서(keyset) 방식★ 종전엔 마지막 페이지가 OFFSET 160000이라
       //   D1이 매 페이지마다 앞선 행을 전부 훑고 버렸다(9페이지 합계 약 78만 스텝). 표본이 늘수록
       //   제곱으로 무거워져, D1이 조금만 바빠도 export가 실패 → Modal 학습 전체가 중단됐다.
@@ -32702,12 +32790,90 @@ function _mlShapeFeats(closes, volumes, opens, highs, lows, price) {
 }
 
 // [V7] 시장지수 일봉 로더(상대강도용) — 폴백 체인, 없으면 null(피처 0=중립)
+/* [V33.348 · 해결 · 확인 한번 더] ★표본 총수를 페이지마다 다시 세지 않는다.★
+   total 은 (featVer, anchorTs) 가 같으면 ★정의상 변하지 않는다★ — anchorTs 가 집합을 고정한다.
+   그런데 트레이너는 2만건씩 50여 페이지를 당겨가고, 그때마다 COUNT 가 98만 행 인덱스 구간을
+   훑었다. 학습 1회당 COUNT 50여 회, 그 시간 내내 거래 사이클과 같은 D1 큐를 쓴다.
+   ※ 아이솔레이트가 갈리면 다시 센다 — 정확성 문제가 아니라 절약폭 문제다.
+   ※ 함수로 빼 둔 이유는 게이트가 두 번 호출해 왕복이 한 번인지 세기 위해서다. */
+const ML_EXPORT_TOTAL_TTL_MS = 3600000;
+async function mlExportTotalCached(DB, featVer, anchorTs) {
+  const key = featVer + "|" + anchorTs;
+  const c = globalThis.__mlExportTotal;
+  if (c && c.k === key && (Date.now() - _num(c.ts, 0)) < ML_EXPORT_TOTAL_TTL_MS) return c.v;
+  let total = 0;
+  try {
+    const r = await DB.prepare("SELECT COUNT(*) AS c FROM ml_samples WHERE featver = ? AND ts <= ?")
+      .bind(featVer, anchorTs).first();
+    total = _num(r && r.c, 0);
+    globalThis.__mlExportTotal = { k: key, v: total, ts: Date.now() };
+  } catch (e) {}
+  return total;
+}
+
+/* ══ [V33.348 · 해결 · 확인 한번 더] ★FLOW/XALPHA 용 일봉을 한 번만 읽는다.★ ═══════════
+   종전엔 시장 루프 안에서 'daily:' 전량(약 1,000종목 × 320~2,400봉 × 5배열)을 ★매 사이클·
+   매 시장★ 통째로 읽고 JSON.parse 했다. 그 자리 주석은 "사이클당 1회" 라고 적혀 있었지만
+   블록이 시장 루프 안이라 실제로는 시장 수만큼 돌았다. 읽고 나서 쓰는 것은 마지막 70봉뿐이다 —
+   수 MB 를 받아 수십 KB 를 쓰고 버렸다. 거래 사이클과 같은 D1 큐를 쓰므로 이게 곧
+   "D1 DB is overloaded" 의 재료다.
+
+   V12.131 이 19228 의 ★똑같은 쿼리★ 에 아이솔레이트 캐시를 붙이며 "prefetch 지연·D1 부하의
+   큰 축" 이라고 적어 뒀는데, 그 뒤 같은 쿼리가 캐시 없이 여기 다시 들어왔다. 같은 처방을 건다.
+   ★잘라 놓은 결과(70봉)를 캐시한다★ — 그래야 D1 왕복뿐 아니라 파싱 비용까지 같이 아낀다.
+
+   신선도: 일봉은 하루 단위로 바뀌고 당일 마지막 봉만 장중에 움직인다. FLOW/XALPHA 는 60~70봉
+   창의 형식알파라 마지막 봉 10분 지연이 판정을 뒤집지 않는다(19228 과 같은 TTL).
+   ※ 함수로 빼 둔 이유는 tools/check-daily-bulk-cache.mjs 가 ★실제로 두 번 호출해★
+     D1 왕복이 한 번만 나는지 세기 위해서다(문자열 검사로는 지킬 수 없다). */
+const FLOW_DAILY_TTL_MS = 600000;
+async function flowDailyCacheLoad(DB, nowTs) {
+  const now = _num(nowTs, Date.now());
+  const c = globalThis.__flowDailyCache;
+  if (c && c.map && (now - _num(c.ts, 0)) < FLOW_DAILY_TTL_MS) return c.map;
+  const map = {};
+  const _dr = await DB.prepare("SELECT k, v FROM state WHERE k >= 'daily:' AND k < 'daily;'").all();
+  let _n = 0;
+  for (const _r of ((_dr && _dr.results) || [])) {
+    if (_n >= 900) break;
+    const _sy = String(_r.k).slice(6);
+    if (!_sy || _sy[0] === "^") continue;
+    try {
+      const _v = (typeof _r.v === "string") ? JSON.parse(_r.v) : _r.v;
+      if (_v && Array.isArray(_v.closes) && _v.closes.length >= 25) {
+        // [V33.79] OHLCV 전체를 싣는다 — WorldQuant 형식알파는 시가/고가/저가/거래량이 필요하다.
+        const _cut = -70;   // 60일치면 모든 알파의 최장 창(20일)을 충분히 덮는다
+        map[_sy] = {
+          closes: _v.closes.slice(_cut),
+          opens: Array.isArray(_v.opens) ? _v.opens.slice(_cut) : null,
+          highs: Array.isArray(_v.highs) ? _v.highs.slice(_cut) : null,
+          lows: Array.isArray(_v.lows) ? _v.lows.slice(_cut) : null,
+          volumes: Array.isArray(_v.volumes) ? _v.volumes.slice(_cut) : null
+        };
+        _n++;
+      }
+    } catch (e2) {}
+  }
+  globalThis.__flowDailyCache = { ts: now, map: map };
+  return map;
+}
+
 async function _mlLoadIndexCloses(DB, mkt) {
+  const d = await _mlLoadIndexClosesDated(DB, mkt);
+  return d ? d.closes : null;
+}
+/* [V33.348 · B-7] 지수 일봉을 ★날짜와 함께★ 돌려준다. 끝정렬(slice(-n))로는 진입 시각에
+   맞출 수 없어서, 반사실 라벨의 alpha 창이 종목 창과 어긋났다(_cfPriceLookup 주석 참조).
+   days 가 없는 옛 캐시는 days: null 로 돌려준다 — 호출부가 그때는 정렬을 포기한다. */
+async function _mlLoadIndexClosesDated(DB, mkt) {
   const cands = mkt === "kr" ? ["^KS11", "069500.KS"] : (mkt === "cm" ? ["GC=F"] : ["^GSPC", "SPY", "QQQ"]);
   for (const s of cands) {
     try {
       const d = await getState(DB, "daily:" + s, null);
-      if (d && Array.isArray(d.closes) && d.closes.length >= 61) return d.closes;
+      if (d && Array.isArray(d.closes) && d.closes.length >= 61) {
+        const _days = (Array.isArray(d.days) && d.days.length === d.closes.length) ? d.days : null;
+        return { closes: d.closes, days: _days };
+      }
     } catch (e) {}
   }
   return null;
@@ -41981,21 +42147,27 @@ async function mlMarketHarvestNightly(DB, opts) {
         }
         const _lab = _sampleLabel(pnl, idxRet);
         if (_lab == null) { _hv.rejLabel++; continue; }   // [V17] alpha 모드에서 지수 없으면 편입 보류(라벨 순도)
-        /* ⚠️ 미해결 결함 B-8(치명) — docs/OPEN-DEFECTS.md ★가짜 달력★
-           일봉 1개를 달력 1일로 센다. 실제는 1거래일 ≈ 1.448 달력일(365/252)이라
-           2400봉(실제 9.5년)이 6.6년으로 압축돼 찍힌다 — 표본이 실제보다 '최근'이 된다.
-           바로 위 obsTs 는 같은 봉의 진짜 날짜(dd.days[i])를 이미 쓰고 있다.
-           V33.265 는 이 문제를 보고 달력 피처만 고친 뒤 "시간순 분할에는 단조롭기만 하면
-           되지만" 이라고 적고 넘어갔다 — ★그 전제는 원천이 하나일 때만 참이다.★
-           수확은 가짜 시계, 실거래·반사실은 진짜 시계인데 둘이 같은 테이블에 들어가고
-           _split_ts 는 argsort(TS) 한 번으로 섞어 자른다. 엠바고도 밀리초로 잰다 —
-           가짜 시계 위의 엠바고는 진짜 시간의 겹침을 막지 못한다.
-           시뮬레이션: 수확 검증표본의 30% 가 자기 실제 시점보다 미래인 학습표본을 갖고,
-           내다보는 기간이 중앙값 49일·최대 96일이었다.
-           고치는 식은 위 obsTs 와 같다. 다만 기존 표본이 가짜 시계라 그냥 바꾸면 한 테이블에
-           두 시계가 섞인다 — featVer 를 올려 전량 재수확하는 경로로 갈 것. */
-        // ts는 봉 시점 근사(일봉 1개=1일)로 역산 — 시간순 검증분할의 정합 유지
-        const ts = baseTs - (L - 1 - i) * 86400000;
+        /* [V33.348 · B-8 코드 고침 · ★실효는 재수확 때★ · 확인 한번 더] ★가짜 달력을 없앤다.★
+           종전: ts = baseTs - (L-1-i)*86400000 — 일봉 1개를 달력 1일로 셌다.
+           실제는 1거래일 ≈ 1.448 달력일(365/252)이라 2400봉(실제 9.5년)이 6.6년으로 압축돼
+           찍혔다 — 표본이 실제보다 '최근' 으로 보인다. 바로 위 obsTs 는 같은 봉의 진짜 날짜
+           (dd.days[i])를 이미 쓰고 있었다. V33.265 가 달력 피처만 고치며 "시간순 분할에는
+           단조롭기만 하면 되지만" 이라 적고 넘어간 것이 화근이다 —
+           ★그 전제는 원천이 하나일 때만 참이다.★ 수확은 가짜 시계, 실거래·반사실은 진짜
+           시계인데 둘이 같은 ml_samples 에 들어가고 학습기는 argsort(TS) 한 번으로 섞어 자른다.
+           엠바고도 밀리초로 재므로, 가짜 시계 위의 엠바고는 진짜 시간의 겹침을 못 막는다.
+           재현: tools/repro-b8-leak.py — 수확 검증표본의 30% 가 자기 실제 시점보다 미래인
+           학습표본을 갖고, 내다보는 기간이 중앙값 49일·최대 96일이었다.
+
+           ★주의 — 이 한 줄만으로는 아직 낫지 않는다.★
+           진행 중인 수확은 ★프런티어 봉★ 만 더한다(startI = lastEnd - missed + 1). 거기서는
+           가짜와 진짜가 거의 같아서, 이미 적재된 98만 표본의 압축된 ts 는 그대로 남는다.
+           실효를 보려면 ★featVer 를 올려 전량 재수확★ 해야 한다(HARVEST.rebuildTarget 캐치업
+           경로가 이미 그 일을 한다). 그때까지는 "고쳐졌지만 효과는 대기" 상태다.
+           days 가 없는 옛 캐시는 종전 근사로 떨어진다 — 그건 지어내는 게 아니라 원래 값이다. */
+        const _dayTs = (Array.isArray(dd.days) && dd.days.length === closes.length && dd.days[i] != null)
+                         ? _num(dd.days[i], 0) * 86400000 : null;
+        const ts = (_dayTs != null && _dayTs > 0) ? _dayTs : (baseTs - (L - 1 - i) * 86400000);
         const _featJson = JSON.stringify(feat);
         stmts.push(DB.prepare(
           "INSERT INTO ml_samples (ts, market, symbol, strategy, feat, label, pnl_pct, featver, ins_ts) VALUES (?,?,?,?,?,?,?,?,?)"
@@ -47763,21 +47935,53 @@ async function mlFlushCandidates(DB, stmts) {
 //   그 결과 `all`이 cron 32단계 중 21단계만 돌아 "수동 1회 전체 실행"이 실제로는 전체가 아니었다.
 //   본문은 cron 쪽과 완전히 동일하다(경로 조회 + 지수 경로 정렬 → mlLabelCandidates).
 async function cfLabelNightly(DB) {
-  // ⚠️ B-7(docs/OPEN-DEFECTS.md): entryTs 를 받아 놓고 안 쓴다 — dd.days + _altBarIdx 로 진입 봉을 찾을 것.
-  return await mlLabelCandidates(DB, async (sym, mkt, entryTs, horizon) => {
-    try {
-      const dd = await getState(DB, "daily:" + sym, null);
-      if (!dd || !dd.closes || !dd.closes.length) return null;
-      // 진입 이후 경로가 필요 — 최근 (horizon+2)봉을 경로로 제공(손절선 도달 판정용).
-      const n = Math.max(1, horizon || 5) + 2;
-      // [V17] alpha 라벨용 지수 경로(동일 창) — 종목 경로와 같은 최근 n봉으로 정렬
-      let idxCloses = null;
-      try { const ic = await _mlLoadIndexCloses(DB, mkt); if (ic && ic.length >= 2) idxCloses = ic.slice(-n); } catch (e) {}
-      return { closes: dd.closes.slice(-n), idxCloses: idxCloses };
-    } catch (e) { return null; }
-  }, {});
+  return await mlLabelCandidates(DB, _cfPriceLookup(DB), {});
 }
 
+/* ══ [V33.348 · B-7 해결 · 확인 한번 더] ★반사실 라벨의 가격 경로를 진입 시각에 맞춘다.★ ══
+   종전 공급자는 두 곳(야간·틱)에 복붙돼 있었고, 둘 다 이렇게 생겼다:
+       async (sym, mkt, entryTs, horizon) => { … return { closes: dd.closes.slice(-n) }; }
+   ★entryTs 를 인자로 받아 놓고 본문에서 한 번도 쓰지 않았다.★ 그래서 라벨 구간이 언제나
+   "오늘 기준 마지막 n봉" 이었다 — 진입 시각과 무관하다. 성숙 창이 15~19 달력일이라
+   19일째 라벨되는 후보는 진입 후 4~13일 구간을 재면서 수익률 기준점은 진입가(0일)를 썼다.
+   배리어 판정 구간과 수익률 기준이 서로 다른 창을 보는 상태였다.
+
+   종전 주석이 적어 둔 이유("daily 캐시에는 dates 가 없어 진입 봉을 되찾을 방법이 없다")는
+   ★V33.217 에서 사라졌다★ — daily: 캐시가 days(봉별 에폭일수)를 싣고, _dailyCacheOk 가
+   days.length === closes.length 를 강제하며, _altBarIdx 가 진입 시각의 봉을 이분탐색으로 찾는다.
+   같은 저장소의 analystRevFitNightly 가 이미 그 방식으로 지평 끝을 찾고 있다.
+
+   · 진입 ★다음★ 봉부터 horizon봉을 준다(진입 당일 종가는 이미 entry_price 다).
+   · days 가 없는 옛 캐시는 null 을 돌려준다 — 어긋난 라벨을 만드느니 이번엔 안 만든다
+     (라운드로빈이 한 바퀴 돌면 새 스키마로 바뀐다. 없는 것을 추측하지 않는다는 규율 그대로다).
+   · 수확(41962)은 처음부터 i+1..i+h 로 정확히 정렬돼 있었다 — 이제 두 라벨 스트림이 같은 자를 쓴다.
+   · 지수(alpha) 경로도 같은 날짜로 자른다. 종전 ic.slice(-n) 은 진입 정렬이 아니었다.
+   ★소비 쪽(mlLabelCandidates)의 seg = path.slice(-horizon) 도 함께 없앴다★ —
+     공급자가 이미 정확한 창을 주므로 두 번 자르면 같은 종류의 어긋남이 다시 생긴다. */
+function _cfPriceLookup(DB) {
+  return async function (sym, mkt, entryTs, horizon) {
+    try {
+      const h = Math.max(1, _num(horizon, 5));
+      const dd = await getState(DB, "daily:" + sym, null);
+      if (!_dailyCacheOk(dd)) return null;             // days 없는 옛 캐시 → 라벨하지 않는다
+      const L = dd.closes.length;
+      const i0 = _altBarIdx(L, _num(entryTs, 0), Date.now(), dd.days);
+      if (!(i0 >= 0) || i0 + h > L - 1) return null;    // 진입 봉을 못 찾았거나 지평이 아직 안 끝났다
+      const closes = dd.closes.slice(i0 + 1, i0 + 1 + h);
+      if (closes.length !== h) return null;
+      // [V17] alpha 라벨용 지수 경로 — 지수도 ★같은 날짜★ 로 자른다(끝정렬이 아니다).
+      let idxCloses = null;
+      try {
+        const ix = await _mlLoadIndexClosesDated(DB, mkt);
+        if (ix && Array.isArray(ix.closes) && ix.closes.length > h) {
+          const j0 = _altBarIdx(ix.closes.length, _num(entryTs, 0), Date.now(), ix.days);
+          if (j0 >= 0 && j0 + h <= ix.closes.length - 1) idxCloses = ix.closes.slice(j0, j0 + h + 1);
+        }
+      } catch (e) {}
+      return { closes: closes, idxCloses: idxCloses };
+    } catch (e) { return null; }
+  };
+}
 // 야간 호출. priceLookup(symbol, market, entryTs, horizon) → 숫자(종가) 또는 {closes:[...]}(경로).
 //   경로가 오면 horizon 구간 내 손절선 도달 여부를 판정해 손절가로 라벨(실거래와 정합) —
 //   단순 buy&hold 낙관편향 제거. 라벨된 후보는 ml_samples로 편입 후 즉시 DELETE(테이블 정리).
@@ -47798,34 +48002,22 @@ async function mlLabelCandidates(DB, priceLookup, opts) {
     let labeled = 0, skipped = 0, purged = 0, deduped = 0;
     const delStmts = [];
     const seen = {}; // 같은 종목·전략·진입일 중복 표본 제거(여러 cron이 같은 날 반복로깅한 것)
-    // [V33.128] ★라벨 창 정렬 — 여기서 쓰는 가격경로는 '오늘 기준 마지막 n봉' 이다.★
-    //   priceLookup 이 dd.closes.slice(-n) 을 주고, 아래에서 다시 seg = path.slice(-horizon) 을 한다.
-    //   즉 라벨이 붙는 구간은 ★진입 이후 horizon봉★ 이 아니라 ★가장 최근 horizon봉★ 이다.
-    //   후보가 딱 horizon 만큼 익었을 때만 둘이 일치한다. 15일 된 후보(horizon 5)를 라벨하면
-    //   진입가 대비 '10~15일 뒤 구간' 을 재게 되고, 그 라벨은 틀린 값이 그대로 학습에 들어간다.
-    //   daily 캐시에는 dates 가 없어 진입 봉을 되찾을 방법이 없다 — 없는 것을 추측하지 않는다.
-    /* ⚠️ 미해결 결함 B-7 — docs/OPEN-DEFECTS.md ★바로 윗줄의 전제가 이미 사실이 아니다★
-       V33.217 부터 daily 캐시는 days(봉별 에폭일수)를 담고, _dailyCacheOk(9606) 가
-       days.length === closes.length 를 강제한다. 진입 시각으로 봉을 찾는 _altBarIdx(30508) 도 있고
-       analystRevFitNightly(8596·8600) 는 이미 그 방식으로 지평 끝을 찾는다.
-       그런데 여기 가격 공급자(47753·48563)는 entryTs 를 ★인자로 받아 놓고 한 번도 쓰지 않는다.★
-       그래서 ① 라벨 창이 최대 3거래일 밀리고 ② 창 밖으로 늙은 후보를 misaligned 로 버린다 —
-       지금은 정확히 맞출 수 있으므로 버릴 이유가 없다. 고치면 아래 seg = path.slice(-horizon) 도
-       함께 없애야 한다(두 번 자르면 같은 종류의 조용한 어긋남이 다시 생긴다). */
-    //   → 정렬이 보장되는 창 안에서만 라벨하고, 그 밖으로 늙은 후보는 ★삭제★ 한다.
-    //   또 하나: 종전 성숙 판정은 horizon(거래일)을 달력일로 그대로 썼다. 5거래일은 달력으로
-    //   약 7일이라 ★2일 일찍★ 라벨돼 구간이 짧았다. 거래일→달력일 환산(×7/5)을 넣는다.
+    /* [V33.348 · B-7 해결 · 확인 한번 더] ★라벨 창을 진입 시각에 맞춘다.★
+       종전 기록(V33.128): "여기서 쓰는 가격경로는 '오늘 기준 마지막 n봉' 이다. priceLookup 이
+       dd.closes.slice(-n) 을 주고, 아래에서 다시 seg = path.slice(-horizon) 을 한다. …
+       daily 캐시에는 dates 가 없어 진입 봉을 되찾을 방법이 없다."
+       ★그 전제가 V33.217 에서 사라졌다★ — 이제 daily: 캐시가 days 를 싣는다.
+       공급자(_cfPriceLookup)가 _altBarIdx 로 진입 봉을 찾아 ★진입 다음 봉부터 horizon봉★ 을
+       정확히 잘라 준다. 그래서 여기서는 ★두 번 자르지 않는다★(slice(-horizon) 제거).
+       그 결과 종전의 '창 정렬 불가' 폐기(misaligned)도 필요가 없어졌다 — 공급자가 맞출 수
+       없으면 null 을 주고, 그때는 아래 만료 정리가 종전대로 처리한다.
+       성숙 판정(거래일→달력일 ×7/5)은 그대로 둔다. 이건 "지평이 끝났나" 를 보는 것이고
+       여전히 맞다. 다만 늦게 라벨돼도 창이 밀리지 않으므로 _alignSlack 폐기 제한은 풀었다. */
     const _calDays = function (h) { return Math.ceil(Math.max(1, h) * 7 / 5) + 1; };
-    const _alignSlack = 4;   // 공휴일·장기휴장 여유(달력일)
-    let misaligned = 0;
     for (const c of cands) {
       const _h = c.horizon || 5;
       const _due = _calDays(_h) * 86400000;
       if (now - c.ts < _due) { skipped++; continue; } // 아직 미성숙(거래일→달력일 환산 적용)
-      if (now - c.ts > _due + _alignSlack * 86400000) {
-        // 최근 horizon봉이 더 이상 '진입 직후' 가 아니다 → 틀린 라벨을 만드느니 버린다.
-        delStmts.push(DB.prepare("DELETE FROM ml_candidates WHERE id=?").bind(c.id)); misaligned++; continue;
-      }
       const entryDay = Math.floor(c.ts / 86400000);
       const key = c.symbol + "|" + (c.strategy || "") + "|" + entryDay;
       if (seen[key]) { delStmts.push(DB.prepare("DELETE FROM ml_candidates WHERE id=?").bind(c.id)); deduped++; continue; }
@@ -47834,7 +48026,8 @@ async function mlLabelCandidates(DB, priceLookup, opts) {
       const path = Array.isArray(pr) ? pr : (pr && Array.isArray(pr.closes) ? pr.closes : null);
       let exitPct = null;
       if (path && path.length) {
-        const seg = path.slice(-(c.horizon || 5));
+        // [V33.348] 공급자가 이미 '진입 다음 봉부터 horizon봉' 을 준다 — 여기서 또 자르지 않는다.
+        const seg = path;
         const stopPct = (c.stop_pct > 0) ? c.stop_pct : 5;
         const stopLine = c.entry_price * (1 - stopPct / 100);
         // [V9.9] Triple-Barrier(de Prado) — 수확 라벨과 동일 규칙(라벨 일관성): 손절 우선 → 익절 → 만기.
@@ -47858,9 +48051,10 @@ async function mlLabelCandidates(DB, priceLookup, opts) {
       // [V17] alpha 라벨용 지수 수익률 — 종목 경로와 동일 창(진입~만기)의 지수 수익
       let idxRet = null;
       if (pr && Array.isArray(pr.idxCloses) && pr.idxCloses.length >= 2) {
-        // [V12.97] 지수 창을 종목 horizon에 정확 정렬 — 종전 ie=ic[0]은 (horizon+2)일 전이라 종목
-        //   창(horizon일)보다 ~2일 길어 alpha 라벨이 소폭 편향됐다. 만기 기준 horizon봉 전으로 진입 정렬.
-        const ic = pr.idxCloses, ie = ic[Math.max(0, ic.length - 1 - (c.horizon || 5))], ix = ic[ic.length - 1];
+        /* [V33.348] 공급자가 지수도 ★진입 봉 ~ 만기 봉★ 으로 날짜 정렬해 준다(길이 horizon+1).
+           종전에는 끝정렬된 배열에서 상대 위치로 잡았는데(V12.97), 그 만기 자체가 진입과
+           안 맞으면 같이 밀렸다. 이제 첫 원소가 진입 봉, 마지막이 만기 봉이다. */
+        const ic = pr.idxCloses, ie = ic[0], ix = ic[ic.length - 1];
         if (ie > 0 && ix > 0) idxRet = (ix / ie - 1) * 100;
       }
       await mlLogSample(DB, c.market, c.symbol, (c.strategy || "swing") + "_cf", feat, exitPct, idxRet);
@@ -47869,8 +48063,7 @@ async function mlLabelCandidates(DB, priceLookup, opts) {
     }
     for (let i = 0; i < delStmts.length; i += 100) { try { await DB.batch(delStmts.slice(i, i + 100)); } catch (e) {} }
     return "[CF] 반사실 라벨링 " + labeled + "건 편입" + (deduped ? "(+중복제거 " + deduped + ")" : "") +
-           ", 미성숙 " + skipped + "건 대기" + (purged ? ", 만료정리 " + purged + "건" : "") +
-           (misaligned ? ", 창정렬 불가로 폐기 " + misaligned + "건(틀린 라벨을 만드느니 버린다)" : "");
+           ", 미성숙 " + skipped + "건 대기" + (purged ? ", 만료정리 " + purged + "건" : "");
   } catch (e) { return "[CF] fail: " + (e && e.message); }
 }
 
@@ -48582,17 +48775,8 @@ export default {
             const _cfLock = _num(await getState(env.DB, "cf_label_lock", 0), 0);
             if (Date.now() - _cfLock > 600000) {
               await setState(env.DB, "cf_label_lock", Date.now());
-              // ⚠️ B-7(docs/OPEN-DEFECTS.md): 위 47753 과 같은 공급자다. 한쪽만 고치면 라벨이 갈린다.
-              const _cfr = await mlLabelCandidates(env.DB, async (sym, mkt, entryTs, horizon) => {
-                try {
-                  const dd = await getState(env.DB, "daily:" + sym, null);
-                  if (!dd || !dd.closes || !dd.closes.length) return null;
-                  const n = Math.max(1, horizon || 5) + 2;
-                  let idxCloses = null;
-                  try { const ic = await _mlLoadIndexCloses(env.DB, mkt); if (ic && ic.length >= 2) idxCloses = ic.slice(-n); } catch (e) {}
-                  return { closes: dd.closes.slice(-n), idxCloses: idxCloses };
-                } catch (e) { return null; }
-              }, {});
+              // [V33.348] 야간 경로와 ★같은 공급자★ 를 쓴다 — 한쪽만 고치면 라벨이 갈린다(B-7).
+              const _cfr = await mlLabelCandidates(env.DB, _cfPriceLookup(env.DB), {});
               // 편입 0건이어도 로그로 관측 — 종전엔 조용히 삼켜져 정체를 몰랐다.
               if (_cfr) await log(env.DB, "INFO", null, "[CF-TICK] " + _cfr);
             }
@@ -49059,6 +49243,12 @@ export {
   _srMoments, _expectedMaxSR, _probSR,
   // [V33.107] 회계 불변식 검증용 — tools/check-accounting.mjs
   computeCashFromTrades, _krSellTaxRate, _slipRate,
+  // [V33.348] 원장 멱등성 검사용 — tools/check-ledger-idempotent.mjs 가 실제 SQLite 로 돌린다.
+  stmtRecordTrade, stmtRecordTradeIfPos, KR_SELL_TAX_BY_YEAR,
+  // [V33.348 · B-7] 반사실 라벨 진입정렬 — tools/check-cf-label-align.mjs 가 실제로 호출한다.
+  _cfPriceLookup, _dailyCacheOk, _altBarIdx,
+  // [V33.348] D1 부하 — tools/check-daily-bulk-cache.mjs 가 두 번 호출해 왕복을 센다.
+  flowDailyCacheLoad, mlExportTotalCached, FLOW_DAILY_TTL_MS,
   // [V33.107] 상황별 반성기억(TradingAgents) 검증용
   _expRegBucket, _expRegIC, EXPREG,
   // [V33.228] STACK 홀드아웃 커서 계약 검증용 — tools/check-stack-oof.mjs 가 실제로 돌린다.

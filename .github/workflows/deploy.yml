@@ -223,6 +223,29 @@ jobs:
       #   조건식을 소스에서 뽑아 상태기계를 실제로 굴려 확인한다.
       - name: Nightly pipeline resume check
         run: node tools/check-pipeline-resume.mjs
+      # [V33.348] 원장 멱등성 — D1 재시도가 매수를 두 번 적을 수 있었다.
+      #   __d1Attempt 는 "network connection lost"·"storage operation exceeded timeout" 에서도
+      #   재시도한다. 그 둘은 결과를 모르는 실패라 쓰기가 이미 커밋됐을 수 있다.
+      #   매도는 조건부 INSERT 라 안전했고 매수만 맨 INSERT 였다 — 현금은 원장 파생이므로
+      #   중복 행 하나가 그대로 매수대금 이중차감이 된다. 실제 SQLite 에 돌려 확인한다.
+      - name: Ledger idempotency check
+        run: node tools/check-ledger-idempotent.mjs
+      # [V33.348] 한국 매도세 — 법정세율(2024 0.18 / 2025 0.15 / 2026 0.20)과 코드가 달랐다.
+      #   연 경계는 KST 로 갈려야 하고, 표 밖 연도가 0% 로 떨어지면 안 된다.
+      - name: KR sell tax by year check
+        run: node tools/check-kr-selltax.mjs
+      # [V33.348] 반사실 라벨 진입정렬 — 공급자가 entryTs 를 받아 놓고 안 썼다.
+      #   수확은 i+1..i+h 로 정확한데 반사실만 "최근 n봉" 이라 두 라벨이 다른 자를 썼다.
+      - name: Counterfactual label alignment check
+        run: node tools/check-cf-label-align.mjs
+      # [V33.348] D1 부하 — 수 MB 를 받아 수십 KB 를 쓰고 버리는 쿼리가 매 사이클 돌았다.
+      #   FLOW 일봉 전량 로드·export total COUNT·prefix LIKE 세 가지를 실제 호출/쿼리계획으로 본다.
+      - name: D1 bulk load and cache check
+        run: node tools/check-daily-bulk-cache.mjs
+      # [V33.348] 유니버스 3곳 동기화(CLAUDE.md 규칙) — 이걸 보는 게이트가 없어서
+      #   미국 섹터 ETF 12종이 NAME_MAP·MCAP_RANK 에서 빠진 채로 있었다.
+      - name: Universe three-place sync check
+        run: node tools/check-universe-sync.mjs
       # [V33.140] 전진검증 누적 원장 — 창이 매일 밤 리셋돼 ★구조적으로★ 못 채워지던 것을 고쳤다.
       #   (memo: 총표본 177,868 인데 전진 357 = 어제 유입과 정확히 일치)
       #   교착 해소와 통계 정직성을 함께 본다: 잡음 통과율이 문턱의 명목값과 맞는지,

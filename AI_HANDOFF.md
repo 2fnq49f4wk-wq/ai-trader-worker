@@ -1,10 +1,10 @@
-> ## ⚠️ 미해결 결함 목록 — `docs/OPEN-DEFECTS.md`
-> 2026-09-11 기준 미수정 결함이 그 파일에 전부 정리돼 있다(조사: Claude, 사용자 지시로 수정 보류).
-> 치명 3건: `A-1` 시간외 안전장치가 실제 경로에 안 걸림 · `B-1` 부스터 학습 전멸(수정됨/결과 미확인) ·
-> `B-8` 수확 표본 ts 가 가짜 달력(일봉 1개=1일)이라 검증에 미래가 샌다.
-> 돈이 직접 틀리는 것: `D-2` 한국 증권거래세율 0.18% 고정 — 2026년 법정세율은 0.20%(2025년은 0.15%였다).
-> 날짜가 오면 터지는 것: `A-8` 미국 조기폐장(2026-11-27·12-24) · 한국 수능일 10시 개장(2026-11-19).
-> 작업 전 반드시 확인하고, 고친 항목은 그 파일에서 해결 표시할 것.
+> ## ⚠️ 결함 목록 — `docs/OPEN-DEFECTS.md`
+> 미해결 결함과 **V33.348 에서 고친 것**이 함께 정리돼 있다. 작업 전 반드시 확인할 것.
+> - 미해결·치명: `A-1` 시간외 안전장치가 실제 경로에 안 걸림.
+> - 고쳤지만 한 번 더 확인: `D-3` D1 재시도 매수 이중기록(과거 중복 행 조회 필요) ·
+>   `D-2` 한국 매도세 연도별 · `C-3`·`C-4` D1 부하 · `B-7` 반사실 라벨 진입정렬 · `F-1`·`F-4`.
+> - 고쳤지만 실효는 재수확 때: `B-8` 수확 표본 ts 가 가짜 달력(featVer 상향 시점은 사람이 정한다).
+> - 고친 항목은 그 파일에 해결 표시 + 커밋해시를 남길 것.
 
 # AI 작업 인계 상태
 
@@ -12,7 +12,35 @@
 
 ## Current handoff
 
-- Status: Codex V33.346 implementation; all103 local regression gates passed, deployment/retraining verification pending. Do not force model promotion.
+- Status: **V33.348 — 데이터·원장·D1 부하 고침 6건 + 게이트 5종 신설.** 게이트 108종 전부 통과.
+  `node --check` 통과. 실운영 확인이 남아 있다(아래 "배포 뒤 볼 것").
+- Branch: `main` (CLAUDE.md 지시대로 main 직접 작업)
+- 사용자 지시(2026-09-11): "문제 더 찾아서 정리해라 데이터 문제 없는지 확인해서 더 수정해라
+  오버로드 걸리는 문제 더 찾아서 그리고 지금까지 나온것중 원인 확실하고 고칠 수 있는건 고쳐봐
+  고친건 고쳤다고 쓰는데 그래도 한번더 확인하라고 적어"
+
+### V33.348 에서 고친 것 (전부 docs/OPEN-DEFECTS.md 에 근거·검증 방법과 함께 있다)
+
+| 항목 | 요지 | 게이트 |
+|---|---|---|
+| **D-3 치명** | `__d1Attempt` 가 "network connection lost"·"storage operation exceeded timeout" 에서도 재시도하는데 그 둘은 ★결과를 모르는 실패★ 다. 매도는 조건부 INSERT 라 안전했고 **매수만 맨 INSERT** → 중복 행 하나가 곧 매수대금 이중차감(현금은 원장 파생). 자연키 조건부 INSERT 로 고침 | `check-ledger-idempotent` |
+| **D-2 중** | 한국 매도세가 연도 구분 없는 0.18% 고정. 실제는 2024 0.18 / 2025 0.15 / 2026 0.20. 연도별 표 + 체결 연도(**KST**)로 선택 | `check-kr-selltax` |
+| **C-3 중** | FLOW 일봉 전량(수 MB)을 **매 사이클·매 시장** 캐시 없이 읽고 파싱 → 쓰는 건 70봉뿐. V12.131 이 450줄 위 같은 쿼리에 이미 붙인 처방을 여기에도 적용 | `check-daily-bulk-cache` |
+| **C-4 중** | export `total` COUNT 를 페이지마다 재실행(학습 1회당 98만 행 ×50여 회) · `k LIKE 'daily:%'` 가 state 전체 스캔(쿼리계획으로 확인) | `check-daily-bulk-cache` |
+| **B-7 중** | 반사실 라벨 공급자가 `entryTs` 를 **받아 놓고 안 씀** → 라벨 창이 "최근 n봉". 수확은 `i+1..i+h` 로 정확했으니 두 라벨이 다른 자를 썼다. `days`+`_altBarIdx` 로 진입 정렬, 이중 슬라이스 제거, `misaligned` 폐기 경로 삭제 | `check-cf-label-align` |
+| **F-1·F-4 소** | 미국 섹터 ETF 12종이 `NAME_MAP`·`MCAP_RANK` 에서 누락(CLAUDE.md 세 곳 규칙 위반). 추가 + 규칙 게이트 신설 | `check-universe-sync` |
+| **B-8 치명** | 수확 표본 `ts` 가 가짜 달력 → **코드는 고쳤으나 실효는 재수확(featVer 상향) 때**. 98만 표본이 무효가 되는 대가라 시점은 사람이 정한다 | (없음 — 재수확 때 함께) |
+
+새 게이트 5종은 전부 ★돌연변이 검사★ 를 통과했다(되돌리거나 반대로 과하게 밀면 실패).
+`check-cf-label-align` 은 처음에 `days` 가드 돌연변이를 못 잡아, 대조군을 넣어 고쳤다.
+
+### 배포 뒤 볼 것 (★고쳤다고 적었지만 한 번 더 확인★)
+1. **과거 원장의 중복 행** — `SELECT ts,market,symbol,side,qty,price,COUNT(*) c FROM trades
+   GROUP BY 1,2,3,4,5,6 HAVING c>1;` 나오면 현금이 그만큼 잘못 파생돼 있다(D-3).
+2. **사이클 시간·`[EVAL-COST]` 의 `기타` 잔차**가 줄었는지 — C-1 의 미해명 잔차 일부가 C-3 였을 수 있다.
+3. **`[CF] 반사실 라벨링 N건 편입`** 의 N — 늘어야 정상(버려지던 후보가 살아난다).
+4. **다음 Modal 학습 때 `export 5xx` 재시도 로그**가 사라졌는지(C-4).
+5. **부스터 재학습 결과** — XGB/LGB/CAT 이 featVer 17 인지(B-1, 여전히 미확인).
 - Owner: Codex
 - Branch: main (direct main authorized; no PR)
 - Last commit: this V33.346 implementation commit (resolve with git log -1); base 549dde6 / runtime e7d1b5a V33.345.
