@@ -5388,6 +5388,10 @@ function normalizeExtUS(o, state) {
    isExtendedHoursWindow(가격 갱신용)과 ★일부러 분리한다★. 가격은 언제나 받아도 되지만
    거래는 설정으로 열고 닫을 수 있어야 하고, 시장·세션별로 따로 꺼야 할 때가 있다.
    창은 isExtendedHoursWindow 와 같은 시각을 쓴다 — 두 벌이 되면 한쪽만 고쳐진다. */
+/* ⚠️ 미해결 결함 A-2 — docs/OPEN-DEFECTS.md
+   같은 세션 창이 네 곳에 따로 적혀 있다(5339 · 5360 · 여기 · 11511).
+   그리고 KR 창(08:00~09:00 / 15:30~20:00)은 NXT 실제 체결창(08:00~08:50 / 15:40~20:00)과 다르다 —
+   Codex V33.346 은 시세 경로(7472)에만 반영했고 이 거래 세션 판정은 그대로다. */
 function extTradeSession(market, cfg) {
   const et = (cfg && cfg.extTrade) || DEFAULT_CFG.extTrade;
   if (!et || et.enabled === false) return null;
@@ -19052,6 +19056,14 @@ async function runTradingCycle(env) {
          단 ★일봉 라운드로빈 갱신은 하지 않는다★ — 일봉은 시간외에 변하지 않는다.
          없는 변화를 받으러 수백 건을 fetch 하면 예산만 태우고 얻는 게 없다.
          캐시된 일봉으로 평가하고(아래 missingDaily 일괄 로드), 가격만 시간외 체결가를 쓴다. */
+      /* ══ ⚠️ 미해결 결함 A-1 — docs/OPEN-DEFECTS.md ══════════════════════════════
+         ★이 경로에는 시간외 전용 안전장치가 하나도 안 걸려 있다.★
+         cfg.extTrade 의 sizeMult(0.5) · maxNewPerSession(2) · entries · minPickP 는
+         전부 fastWatch 블록에서만 참조되는데(21929 / 21974 / 22071 / 22095),
+         그 블록은 fastEntries:false 로 ★기본 꺼짐★ 이다(3648).
+         즉 실제 시간외 진입은 여기서 일어나면서 정규장과 같은 크기로, 세션당 개수 제한 없이 나간다.
+         (정규장 공통 게이트 — 위원회·동시보유·현금·재무 — 는 그대로 걸린다.)
+         ※ 사용자 지시로 조사만 하고 수정하지 않았다. 고칠 때 docs/OPEN-DEFECTS.md 의 A-1 을 함께 지울 것. */
       const extSessMkt = extOnly ? extTradeSession(market, cfg) : null;
       if (extOnly && !extSessMkt) continue;   // 시간외 거래를 껐거나 창 밖 — 종전대로 가격만 갱신
 
@@ -33391,7 +33403,10 @@ function expertAdmit(m) {
     const fwdT = (typeof m.fwdICt === "number" && isFinite(m.fwdICt)) ? m.fwdICt : null;
     const fwdN = _num(m.fwdN, 0);
 
-    // ★전진 IC 가 음수면 여기서 끝난다★ — 학습 밖에서 방향이 반대라는 직접 증거다.
+    /* ★전진 IC 가 음수면 여기서 끝난다★ — 학습 밖에서 방향이 반대라는 직접 증거다.
+       ⚠️ 미해결 결함 B-3 — docs/OPEN-DEFECTS.md : 이 가드는 fwdReady(전진표본 ≥ minForward 400)
+       일 때만 작동한다. 그 미만이면 ★측정된 음수 IC 를 통째로 버리고★ 홀드아웃만으로 잠정합류할 수 있다
+       (XALPHA 전진 IC −0.039 가 그 경우였다). "부족한 증거" 와 "반대 방향 증거" 를 같이 취급하는 셈이다. */
     if (fwdReady && fwdIC != null && fwdIC <= ICGATE.forwardFloor)
       return { admit: false, mult: 0, tier: "reject",
                why: "전진 IC " + fwdIC.toFixed(4) + " ≤ 0 — 학습 밖에서 방향이 반대다(문턱 문제가 아니다)" };

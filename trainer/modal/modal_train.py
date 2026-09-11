@@ -830,6 +830,12 @@ def _train_and_upload_seq(BASE, KEY, HDR, X, Y, TS, SYM, featver, D, UNIQ=None, 
     print(f"⑨ SEQ 시퀀스 조립 {N}×{L} ({time.time()-t0:.1f}s) — 익스포트 변경 0")
 
     # 표준화는 ★학습 구간에서만★ 구한다(검증 통계가 새면 그만큼 낙관적으로 나온다)
+    # ⚠️ 미해결 결함 B-2 — docs/OPEN-DEFECTS.md
+    #   ★SEQ 만 엠바고가 없다.★ 아래 tr/va 는 경계에 공백 없이 붙어 있어(882행)
+    #   라벨 지평(10일)만큼 학습·검증이 겹친다. V33.341 이 _split_ts 로 통일한 학습기는
+    #   DNN·GBDT·부스터·시장별·MIND 다섯이고 SEQ 는 빠졌다.
+    #   그런데 SEQ 는 잠정 위원으로 ★실제 투표 중★ 이다(mult 0.1838 · 블록IC t 5.27).
+    #   사용자 지시로 조사만 하고 수정하지 않았다. 고칠 때 OPEN-DEFECTS 의 B-2 를 함께 지울 것.
     n_val = max(200, int(N * 0.2))
     tr_end = N - n_val
     mean = X[:tr_end].mean(axis=0); std = X[:tr_end].std(axis=0); std[std < 1e-9] = 1.0
