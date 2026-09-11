@@ -404,7 +404,9 @@ const FOREIGN_TRACKING_KR_ETF = new Set([
 // 종목 한글/영문 이름 맵 (UI 표시용)
 const NAME_MAP = {
   "NVDA":"NVIDIA",
-  "SPCX":"SpaceX",
+  "SPCX":"SpaceX",   // ⚠️ F-3(docs/OPEN-DEFECTS.md): 이 티커가 실제 거래 가능한지 미검증.
+                     //   SpaceX 는 비상장이고 SPCX 는 과거 SPAC 티커였다. 죽은 티커면 매 사이클
+                     //   시세 fetch 예산을 태우면서 MCAP_RANK 9위로 우량주 보너스 상위를 차지한다.
   "GOOGL":"Alphabet A",
   "GOOG":"Alphabet C",
   "AAPL":"Apple",
@@ -1387,6 +1389,15 @@ const NAME_MAP = {
 };
 
 // 시가총액 순위 (UI 시총순 정렬용 — 값이 작을수록 대형주)
+/* ⚠️ 미해결 결함 F-1 · F-2 · F-4 — docs/OPEN-DEFECTS.md
+   CLAUDE.md 규칙: 종목 추가 시 DEFAULT_KR/US · NAME_MAP · MCAP_RANK ★세 곳★ 을 함께 갱신한다.
+   실행으로 검증한 결과(문자열 검색이 아니라 네 블록을 노드에서 직접 읽었다):
+     F-1 미국 섹터 ETF 12종(XLK XLV XLY XLI XLP XLU XLB XLC XLRE SOXX IBB DIA)이
+         ETF_SYMBOLS·ETF_TYPE 에는 있는데 NAME_MAP·MCAP_RANK 양쪽에 없다 — 두 곳만 갱신했다.
+     F-2 미국 구간에 동점 28쌍(9: SPCX·TSLA·TSM, 22: CSCO·ASML, …)과 결번 2개.
+         rvPanel 이 이 값을 '예전 순위' 로 삼아 드리프트를 재는데, 동점이면 그 답이 없다.
+     F-4 이걸 보는 게이트가 103종 중 하나도 없다 → tools/check-universe-sync.mjs 로 자동화할 것.
+   ※ 중복·접미사·고아 항목은 위반 0건이었다. 다시 파지 말 것. */
 const MCAP_RANK = {
   "NVDA":1,
   "GOOGL":2,
@@ -3598,6 +3609,11 @@ const DEFAULT_CFG = {
   marketCrashPct: -4.0,
   feeUS: 0.0001,
   feeKR: 0.00015,
+  /* ⚠️ 미해결 결함 D-2 — docs/OPEN-DEFECTS.md ★실제 법정세율과 다르다★
+     매도 합산세율(증권거래세+농특세)은 2024 0.18% → 2025 0.15% → 2026 0.20% 로 바뀌었다.
+     이 상수는 연도 구분이 없어 2년째 틀린 값으로 원장을 적고 있다(2026년은 0.02%p 과소).
+     비용을 낮게 잡는 것은 수익을 지어내는 것과 같고, 그 pnl 이 학습 라벨이 된다.
+     고칠 때는 ETF_TAX_EXEMPT_FROM·SLIPPAGE_FROM 과 같은 시행일 규율로 연도별 표를 둘 것. */
   krSellTax: 0.0018,
   maPeriod: 20, maShortPeriod: 5,
   atrPeriod: 14, atrStopMult: 2.0,
@@ -5354,6 +5370,17 @@ function isExtendedHoursWindow(market) {
    서머타임을 자동 반영하므로, 수집원이 죽었다고 우리가 지금이 장전인지 장후인지 모를 이유가 없다.
    그리고 딱지가 낡으면 화면은 정규장 종가를 '장후 시세' 라고 말한다 — 값을 지어내지 않는 것과
    같은 이치로, ★지난 값을 지금 값인 척 두지도 않는다.★ */
+/* ⚠️ 미해결 결함 A-8 · A-9 — docs/OPEN-DEFECTS.md
+   ① A-8 조기폐장(반장)을 모른다. 미국은 13:00 ET 에 닫는 날이 연 3회쯤 있다
+      (가까운 것: 2026-11-27 추수감사절 다음날 · 2026-12-24 성탄 전야).
+      그날 13:00~16:00 ET 에 여기가 "REGULAR" 를 찍으면 아래 normalizeExtUS 가
+      ★야후가 정확히 주고 있는 장후 체결가를 지운다★ — 얼어붙은 종가로 거래하면서
+      유일하게 살아 있는 가격을 우리 손으로 버리는 모양이다.
+      한국도 같은 종류다: 수능일·연초 개장일은 10:00 개장(2026-11-19 예정).
+   ② A-9 프리마켓을 07:00 ET 부터로 본다. 실제 개시는 04:00 ET 이고 야후 preMarketPrice 도
+      그때부터 채워진다. 04:00~07:00 ET = 17:00~20:00 KST — 사용자가 화면을 보는 시간대다.
+      그 3시간의 장전 시세를 extKeepMaskUS(pre:false) 가 통째로 버린다.
+   ※ 고칠 때는 A-2(세션 창 네 벌)를 먼저 통합할 것. 그러면 이 수정이 한 곳으로 끝난다. */
 function usMarketStateNow(now) {
   const t = getUSEt(now || new Date());
   if (t.day < 1 || t.day > 5) return "CLOSED";
@@ -7441,6 +7468,10 @@ function applyKrOverMarket(o, d) {
   const weekday = kst.day >= 1 && kst.day <= 5;
   const inPre  = weekday && kst.totalMin >= 480 && kst.totalMin < 540;
   const inPost = weekday && kst.totalMin >= 930 && kst.totalMin < 1200;
+  /* ⚠️ 미해결 결함 A-10 — docs/OPEN-DEFECTS.md
+     여기서 o.post 를 세팅하지 않고 나간다. US 는 extKeepMaskUS 가 CLOSED 동안 post 를 유지하는데
+     KR 은 20:00 KST 가 지나면 장후 체결가가 화면에서 사라지고 15:30 종가로 되돌아간다 —
+     같은 화면에서 두 시장이 다른 규칙으로 말한다. KR 에는 normalizeExtUS 에 해당하는 정규화가 없다. */
   if (!inPre && !inPost) { o.mstate = "CLOSED"; return o; }
   // 두 시간외 정보 중 현재 창에 맞는 세션의 최신 체결을 선택한다.
   const krx = d.overMarketPriceInfo || null;
@@ -11478,6 +11509,10 @@ function _cashUseFrac(cfg) {
     return _clamp(1 - r / 100, 0.4, 1);
   } catch (e) { return 0.85; }
 }
+/* ⚠️ 미해결 결함 D-2 — docs/OPEN-DEFECTS.md
+   ts 를 받아 놓고 ★ETF 면제 시행일 판정에만★ 쓴다. 세율 자체는 언제 체결됐든 0.18% 다.
+   실제 세율은 연도별로 다르다(2024 0.18 / 2025 0.15 / 2026 0.20). 여기가 그 표를 읽어야 한다.
+   연도는 getKST(new Date(ts)).year 로 뽑을 것 — UTC 연도를 쓰면 12/31 체결이 다음 해로 밀린다. */
 function _krSellTaxRate(cfg, symbol, market, ts) {
   const base = cfg.krSellTax || 0;
   if (!base) return 0;
