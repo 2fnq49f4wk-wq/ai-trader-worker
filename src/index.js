@@ -2981,7 +2981,7 @@ async function applySignalTypeWeights(DB, cfg) {
    화면·자가진단이 계속 "V33.272" 를 보고했다(운영 스냅샷이 그대로 그랬다). 배포는 됐는데
    ★배포됐다는 사실만 거짓말★ 을 하고 있었으니, "내 고침이 올라간 건가" 를 화면으로 확인할
    방법이 없었다. tools/check-build-ver.mjs 가 이제 소스에 적힌 최신 버전과 이 값을 대조한다. */
-const _BUILD_VER = "V33.346";
+const _BUILD_VER = "V33.347";
 
 // ═══ [V33.171] 평가 순서 계획 — ★승격과 순환을 교차해 굶주림을 구조적으로 없앤다★ ═══
 //   V33.50 의 형태트리거는 "급한 몇 종목을 앞으로 당긴다"는 의도였으나, 실제 운영로그에서는
@@ -7564,9 +7564,28 @@ async function fetchBatchQuotes(symbols, opts) {
   //         넘어가 예산(subrequest)을 아낀다.
   const BATCH = 50;
   const auth = await getYahooAuth(opts.DB || null);
+  /* [V33.347] ★A-6 — v7 이 200 을 주면서 0건을 줄 때 무엇이 비었는지 몰랐다.★
+     종전엔 dead:true 만 남아 quoteResponse 자체가 없는지, result 가 빈 배열인지,
+     error 필드가 실려 왔는지를 구분할 수 없었다. 셋은 처방이 전혀 다르다
+     (스키마 변경 / 심볼 거부 / 인증·쿼터). ★본문을 저장하지 않는다★ —
+     최상위 키 이름과 배열 길이, error 문자열만 남긴다(개인정보·용량 문제 없음). */
+  let _v7Shape = null;
+  function _v7ShapeOf(j) {
+    try {
+      if (j == null) return "null";
+      if (typeof j !== "object") return typeof j;
+      const keys = Object.keys(j).slice(0, 6).join(",");
+      const qr = j.quoteResponse;
+      if (!qr) return "keys=" + keys;
+      const n = Array.isArray(qr.result) ? qr.result.length : -1;
+      const err = qr.error ? String(typeof qr.error === "string" ? qr.error : JSON.stringify(qr.error)).slice(0, 80) : null;
+      return "result=" + n + (err ? " error=" + err : "") + " keys=" + keys;
+    } catch (e) { return "shape?"; }
+  }
   function parseV7(j) {
     let got = 0;
     const rows = (j && j.quoteResponse && j.quoteResponse.result) || [];
+    if (!rows.length && _v7Shape == null) _v7Shape = _v7ShapeOf(j);
     for (const row of rows) {
       const sym = row.symbol;
       const price = (typeof row.regularMarketPrice === "number" && row.regularMarketPrice > 0)
@@ -7673,7 +7692,7 @@ async function fetchBatchQuotes(symbols, opts) {
     try {
       await setState(opts.DB, "yahoo_v7", {
         dead: v7Dead, fields: v7Fields, first: v7First, slices: slices.length,
-        err: v7Err, ts: Date.now()
+        err: v7Err, shape: v7Dead ? _v7Shape : null, ts: Date.now()
       });
     } catch (e) {}
   }
@@ -19426,7 +19445,16 @@ async function runTradingCycle(env) {
       const _enrich = { spent: 0, budget: 0, flowRefresh: 0, skipped: 0, slow: [], timedOut: 0,
                        seqMs: 0, seqBuilt: 0, seqSkip: 0 };   // [V33.267] SEQ 조립 계측
       const _lsmCycle = { ms: 0, n: 0, dis: 0 };   // [V33.268] 최적정지 자문 계측(사이클 총량 상한)
-      const _phase = { scalp: 0, flow: 0, opt: 0, intra: 0, decide: 0, news: 0 };
+      /* [V33.347] ★계측이 문제인 부분을 안 보고 있었다.★
+         종전 버킷은 scalp/flow/opt/intra 넷만 실제로 채워졌고 decide·news 는 선언만 돼 있었다
+         (한 번도 기록되지 않는 죽은 키). 그런데 실측(2026-09-11 01:31)은
+           종목당 1,732ms · 13종목 = 22.5초 중 ★부가조회는 5.7초뿐★
+         이었다 — 나머지 ~17초(75%)가 통째로 계측 밖이라 원인을 격리할 수가 없었다.
+         V33.172 가 이 계측을 넣을 때의 원인은 부가조회였고, 그래서 거기만 쟀다.
+         이번 원인은 거기가 아니다. ★재는 곳을 늘리지 않으면 다음에도 못 찾는다.★
+         decide(위원회 채점) · feat(피처 조립) · sig(신호 생성) 을 추가하고,
+         마지막에 ★잔여(기타)★ 까지 적어 "어디도 아닌 시간" 이 얼마인지 남긴다. */
+      const _phase = { scalp: 0, flow: 0, opt: 0, intra: 0, decide: 0, feat: 0, sig: 0, news: 0 };
       let _symPrevT0 = 0, _symPrev = "", _symTotalMs = 0;   // [V33.172] 종목당 소요시간 계측
       // 부가조회 한 건을 지갑에서 결제한다. 잔액이 없으면 아예 실행하지 않고 건너뛴 횟수를 센다.
       //   ★핵심 평가(신호생성·판정)는 이 지갑을 쓰지 않는다★ — 부가정보 때문에 본체가 굶으면 안 된다.
@@ -19457,6 +19485,13 @@ async function runTradingCycle(env) {
       //   진입 직전 분봉확인·옵션심리는 '이미 매수하기로 한 종목'에만 걸린다(건수도 이미 상한이 있다).
       //   여기서 조회를 건너뛰면 결과가 undefined 가 되고, 확인 실패는 진입 차단으로 읽혀
       //   ★지갑이 비었다는 이유로 거래가 막히는★ 조용한 사고가 난다. 계측만 하고 통과시킨다.
+      /* [V33.347] 동기 호출용 — 피처 조립처럼 await 가 없는 무거운 작업도 재야
+         "어디도 아닌 시간" 이 줄어든다. try/finally 만 있고 동작은 안 바꾼다. */
+      const _phaseSync = function (kind, fn) {
+        const _t0 = Date.now();
+        try { return fn(); }
+        finally { const _d = Date.now() - _t0; if (_phase[kind] != null) _phase[kind] += _d; }
+      };
       const _phaseRun = async function (kind, fn) {
         const _t0 = Date.now();
         try { return await fn(); }
@@ -19968,7 +20003,7 @@ async function runTradingCycle(env) {
                       price: price, prevClose: daily.prevClose,
                       dayPct: daily.prevClose > 0 ? (price / daily.prevClose - 1) * 100 : 0,
                       regime: (regime && regime.regime) ? regime.regime : "NEUTRAL", strategy: "trend", market: market, ev: {}, obsTs: Date.now() });
-                    const _mdx = await mlDeepDecide(DB, _fx, { mind: __mind, guard: __guard, ens: __ensemble, trust: __dnnTrust, dnn: __dnn, gbdtTrust: __gbdtTrust, gbdt: __gbdt, cal: __cal, evstats: __evStats });
+                    const _mdx = await _phaseRun("decide", function () { return mlDeepDecide(DB, _fx, { mind: __mind, guard: __guard, ens: __ensemble, trust: __dnnTrust, dnn: __dnn, gbdtTrust: __gbdtTrust, gbdt: __gbdt, cal: __cal, evstats: __evStats }); });
                     // [V12.90] ★청산도 기술+뉴스 블렌드로 통일★ — 진입은 그래프 중심인데 청산이 위원회 원시
                     //   확률만 쓰면 기술적으로 강한 종목을 노이즈로 파는 모순. 진입과 동일 기준으로 통합확률 산출.
                     let _exitP = (_mdx && typeof _mdx.p === "number") ? _mdx.p : null;
@@ -21265,7 +21300,7 @@ async function runTradingCycle(env) {
                     if (_etf) _secCloses = __secCache[_etf] || null;   // [V12.130] 사이클 프리로드 캐시(종목당 최대 2 read 제거)
                   }
                 } catch (e) {}
-                signal.mlFeat = mlBuildFeatures({
+                signal.mlFeat = _phaseSync("feat", function () { return mlBuildFeatures({
                   closes: daily.closes, volumes: daily.volumes, opens: daily.opens,
                   highs: daily.highs, lows: daily.lows, idxCloses: __idxCloses, sectorCloses: _secCloses,
                   xsPanel: __xsPanel, barsAgo: 0,
@@ -21274,7 +21309,7 @@ async function runTradingCycle(env) {
                   sigWeight: (typeof signal.weight === "number") ? signal.weight : 1,
                   confluence: (signal.members) ? signal.members.length : 1,
                   strategy: strategy, market: market, ev: _col.ev, obsTs: Date.now()
-                });
+                }); });
                 signal.mlEvKeys = _col.evKeys;
                 // 반사실 후보 로깅 — 실매수 무관, 종목당 1회만 배치수집(사이클 끝에 1회 커밋 → D1 write 절약).
                 //   손절폭(stopDist/price)도 저장 → 라벨 시 손절 반영(buy&hold 낙관편향 제거).
@@ -21338,7 +21373,7 @@ async function runTradingCycle(env) {
                     if (__seqFeat) { signal.seqFeat = __seqFeat; _enrich.seqBuilt++; } else _enrich.seqSkip++;
                   } else if (__seqModel) _enrich.seqSkip++;
                 } catch (e) {}
-                try { _md = await mlDeepDecide(DB, signal.mlFeat, { mind: __mind, guard: __guard, ens: __ensemble, trust: __dnnTrust, dnn: __dnn, gbdtTrust: __gbdtTrust, gbdt: __gbdt, cal: __cal, evstats: __evStats, portStats: __portStats, shock: await _luxMarketShockCached(DB), sym: symbol, evCtx: await _luxEventContextCached(DB), applyEventPrior: true, market: market, seqFeat: __seqFeat, seqModel: __seqModel, flowFeat: __flowFeat, flowModel: __flowModel, xaFeat: __xaFeat, xaModel: __xaModel, stackModel: __stackModel, memoModel: __memoModel, dualBull: __dualBull, dualBear: __dualBear, dualShift: __dualShift, techK: __techK, finalCal: __finalCal }); } catch (e) {}
+                try { _md = await _phaseRun("decide", async function () { return await mlDeepDecide(DB, signal.mlFeat, { mind: __mind, guard: __guard, ens: __ensemble, trust: __dnnTrust, dnn: __dnn, gbdtTrust: __gbdtTrust, gbdt: __gbdt, cal: __cal, evstats: __evStats, portStats: __portStats, shock: await _luxMarketShockCached(DB), sym: symbol, evCtx: await _luxEventContextCached(DB), applyEventPrior: true, market: market, seqFeat: __seqFeat, seqModel: __seqModel, flowFeat: __flowFeat, flowModel: __flowModel, xaFeat: __xaFeat, xaModel: __xaModel, stackModel: __stackModel, memoModel: __memoModel, dualBull: __dualBull, dualBear: __dualBear, dualShift: __dualShift, techK: __techK, finalCal: __finalCal }); }); } catch (e) {}
                 if (!_md) { try { _md = await mlMindDecide(DB, signal.mlFeat, { mind: __mind, guard: __guard, ens: __ensemble }); } catch (e) {} }
                 // [V5] AI 픽 수집 — 개입 여부와 무관하게 예측 자체는 기록(종목당 1회)
                 try {
@@ -21726,7 +21761,15 @@ async function runTradingCycle(env) {
         if (evalProcessed > 0) {
           const _per = Math.round(_symTotalMs / evalProcessed);
           const _pp = [];
-          for (const _k of ["scalp", "flow", "opt", "intra"]) if (_phase[_k] > 0) _pp.push(_k + " " + Math.round(_phase[_k]) + "ms");
+          /* [V33.347] ★재는 것을 전부 찍는다 + 잔여를 남긴다.★
+             종전엔 넷만 찍어, 시간의 75%가 어디로 갔는지 로그만 봐서는 알 수 없었다. */
+          let _known = 0;
+          for (const _k of ["decide", "feat", "sig", "scalp", "flow", "opt", "intra", "news"]) {
+            const _v = Math.round(_num(_phase[_k], 0));
+            if (_v > 0) { _pp.push(_k + " " + _v + "ms"); _known += _v; }
+          }
+          const _resid = Math.round(_symTotalMs - _known);
+          if (_resid > 0) _pp.push("기타 " + _resid + "ms");
           await log(DB, _per > ENRICH.slowSymMs ? "WARN" : "INFO", null,
             "[EVAL-COST] " + market.toUpperCase() + " 종목당 평균 " + _per + "ms · 부가조회 " +
             Math.round(_enrich.spent) + "/" + _enrich.budget + "ms" +
@@ -45254,7 +45297,8 @@ async function _luxSelfCheck(DB) {
         if (_v7.dead) add("error", "시세",
           (_v7e
             ? "야후 v7(미국 시세 1차 수집원) 호출이 실패한다" + _v7e
-            : "야후 v7(미국 시세 1차 수집원)이 ★응답은 하는데 종목을 하나도 안 준다★(예외 없음 · 파싱 0건)") +
+            : "야후 v7(미국 시세 1차 수집원)이 ★응답은 하는데 종목을 하나도 안 준다★(예외 없음 · 파싱 0건" +
+              (_v7.shape ? " · 응답모양 " + String(_v7.shape).slice(0, 90) : "") + ")") +
           " — 종목당 1회 v8 폴백으로 버티는 중(50종목/1회 → 1종목/1회). 시간외는 v8 분봉으로 계속 채운다 — 다만 예산 압박으로 회전이 느려진다");
         else if (!_v7.fields) add("warn", "시세", "야후 v7 이 fields 지정을 거부해 기본 필드셋으로 받는 중 — 프리·애프터 값이 빠질 수 있다");
         else if (_v7h != null && _v7h > 6) add("warn", "시세", "v7 상태 기록이 " + _v7h.toFixed(1) + "h 전 — 가격 샤드가 안 돌고 있을 수 있다");
