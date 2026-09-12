@@ -14,6 +14,7 @@
 
 ### Codex active continuation — V33.349
 
+- Verified follow-up 2026-09-12: implementation b46024e; Worker deployment34665917663 and Modal deployment34665917673 completed successfully. SEQ-only training34665970392 remains in progress; do not dispatch a duplicate or claim admission. Live `/api/ai/selfcheck` at ts1789178072819 returns latest feat17 rejected-shadow receipts: XGB/LGB/CAT block-IC t1.18/1.38/1.19 below1.65. Their active feat15 warnings do not mean the new training failed to upload. MIND remains31h old. No data migration or deletion performed; B-8 approval remains pending.
 - Owner: Codex. Branch main. Base0de29e6 (Claude V33.348a), fast-forwarded nine commits while preserving own pending quote patch in stash. Only build-tag conflicts were resolved; all Claude changes retained. Stash remains as backup.
 - User expanded scope to all Claude findings; read all `docs/OPEN-DEFECTS.md`. Status: ongoing, not all findings fixed.
 - Current patch: shared final extended-entry guards (A-1), quote write provenance, fail-closed purchase risk check(E-2), SEQ embargo(B-2), latest rejected-shadow receipt reporting/recovery(B-1), export schema pinning, full-reset deposit keys(E-3). Build V33.349.
