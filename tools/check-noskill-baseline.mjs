@@ -126,7 +126,7 @@ console.log("\n⑥ 게이트가 실제로 이 기준점을 쓰는가 · 트레�
   chk(/def _no_skill_acc\(y, mkt=None\)/.test(PY), "파이썬도 같은 값을 낸다", "★파이썬에 없다 — 외부 모델은 기준점을 못 받는다★");
   chk(/out\["accBase"\] = round\(_ab, 4\)/.test(PY), "블록 IC 를 내는 자리에서 함께 낸다(두 자가 갈라지지 않는다)", "따로 계산한다");
   chk(/"valICK", "accBase"/.test(PY), "DNN 업로드가 accBase 를 함께 보낸다", "DNN 이 accBase 를 안 보낸다");
-  chk(/_ic_block_fields\(pva, yva, mkt=_mkt_of_X\(X\[tr_end:\]\)\)/.test(PY), "SEQ 도 시장·기준점을 함께 보낸다", "SEQ 가 안 보낸다");
+  chk(/_ic_block_fields\(pva, yva, mkt=_mkt_of_X\(X\[_vai\]\)\)/.test(PY), "SEQ 도 시장·기준점을 함께 보낸다", "SEQ 가 안 보낸다");
   // ★문턱 상수는 안 건드렸는가★ — 완화도 강화도 아니고 기준점만 바꾼 것이어야 한다.
   chk(/trustFloor: 0\.505/.test(S) && /_baseline \+ 0\.015/.test(S),
     "문턱 상수(0.505 · +1.5%p)는 그대로다 — 바꾼 것은 '무엇에 대해서' 하나뿐이다",

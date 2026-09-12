@@ -12,6 +12,18 @@
 
 ## Current handoff
 
+### Codex active continuation — V33.349
+
+- Owner: Codex. Branch main. Base0de29e6 (Claude V33.348a), fast-forwarded nine commits while preserving own pending quote patch in stash. Only build-tag conflicts were resolved; all Claude changes retained. Stash remains as backup.
+- User expanded scope to all Claude findings; read all `docs/OPEN-DEFECTS.md`. Status: ongoing, not all findings fixed.
+- Current patch: shared final extended-entry guards (A-1), quote write provenance, fail-closed purchase risk check(E-2), SEQ embargo(B-2), latest rejected-shadow receipt reporting/recovery(B-1), export schema pinning, full-reset deposit keys(E-3). Build V33.349.
+- Added Modal target selection for bounded tail-stage recovery without rerunning DNN; one-hour timeout/cron unchanged. No new training dispatch since run34542208755. A corrected SEQ targeted run is next after deploy, subject to concurrent-run check.
+- Baseline/current-other gates108 checked; two SEQ extraction assertions required matching the new indexed semantics and now pass. Real preprocessing/guard/risk-failure regression passes. Final full-suite/deploy verification follows this checkpoint.
+- 2026-09-12 continuation: final all108 check-*.mjs PASS, git diff --check clean, fetched origin with no intervening commits. V33.349 ready for main deployment; unresolved findings remain as listed.
+- Training run34542208755 uploaded feat17 XGB/LGB/CAT rejected shadows, then timed out at3600s during MIND. DNN latest LB0.497 below threshold. No claim of recovered live booster admission, SEQ/MEMO completion, or profit gain. Runtime V33.346 deployment34542166448 succeeded.
+- B-8: user asked whether to preserve old data and rebuild new version despite temporary reduced AI participation; decision pending. Do not delete samples/ledger or silently weaken stale-quote/profitability gates.
+- Remaining list and primary-source SPCX verification are at top of OPEN-DEFECTS. Continue there after this checkpoint; no additional parallel agent work permitted.
+
 - Status: **V33.348 — 데이터·원장·D1 부하 고침 6건 + 게이트 5종 신설.** 게이트 108종 전부 통과.
   `node --check` 통과. 실운영 확인이 남아 있다(아래 "배포 뒤 볼 것").
 - Branch: `main` (CLAUDE.md 지시대로 main 직접 작업)

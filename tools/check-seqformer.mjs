@@ -167,7 +167,7 @@ console.log("\n⑤ 트레이너가 워커와 같은 순서로 계산하는가");
   chk(/np\.lexsort\(\(TS, SYM\)\)/.test(py), "시퀀스를 종목→시각 순으로 쌓는다", "정렬 기준이 없다 — 시간이 섞인다");
   chk(/win = np\.concatenate\(\[np\.full\(L - len\(win\), win\[0\]/.test(py),
     "짧으면 가장 오래된 행으로 채운다(워커와 같은 규칙)", "패딩 규칙이 워커와 다르다 — 짧은 시퀀스에서 값이 갈린다");
-  chk(/mean = X\[:tr_end\]\.mean/.test(py),
+  chk(/mean = X\[_tri\]\.mean/.test(py),
     "표준화 통계를 ★학습 구간에서만★ 구한다", "검증 구간이 표준화에 샌다 — 그만큼 낙관적으로 나온다");
 }
 

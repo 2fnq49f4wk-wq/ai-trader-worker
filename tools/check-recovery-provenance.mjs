@@ -29,19 +29,56 @@ const v7=vm.createContext({out:{}});
 vm.runInContext(cut('  function parseV7(j) {','  /* [V33.331] ★시간외 필드를'),v7);
 v7.parseV7({quoteResponse:{result:[{symbol:'T',regularMarketPrice:100,preMarketPrice:105,preMarketTime:2000,postMarketPrice:99,postMarketTime:1000,marketState:'PRE'}]}});
 assert.equal(v7.out.T.extTs,2000000);
+// The production write helpers preserve the complete quote bundle, never a fake timestamp.
+const writes=vm.createContext({});
+vm.runInContext(cut('function quoteSessionFields(q) {','function applyDisplayOverMarket(q) {'),writes);
+assert.equal(writes.quoteSessionFields({pre:105,extTs:123}).extTs,123);
+assert.equal(writes.quoteSessionFields({pre:105}).extTs,0);
+assert.equal(writes.quoteSessionFields({mstate:'REGULAR'}).pre,null);
+assert.match(cut('const prevQ = prevQuoteMap[sym]','quoteStmts.push('),/quoteSessionFields\(bq\)/);
+assert.match(cut('const _qts = Date.now();','if (dailyRsi == null)'),/quoteSessionFields\(_quoteSource\)/);
+assert.match(cut('const targets = Array.from(new Set(missing','if (stmts2.length)'),/quoteSessionFields\(q\)/);
+// A-1: execute the common final guard with mocked committed ledger counts.
+let count=0;
+const entry=vm.createContext({Date,Number,Math,
+ _extSessionAt:()=> 'pre',extTradeSession:()=> 'pre',extTradePrice:()=>105,
+ _num:(x,d)=>typeof x==='number'?x:d,_clamp:(x,a,b)=>Math.min(b,Math.max(a,x)),
+ getUSEt:()=>({totalMin:490}),getKST:()=>({totalMin:490})});
+vm.runInContext(cut('async function extBuyGuard(','async function executeBuy('),entry);
+const entryDB={prepare:()=>({bind(){return this;},first:async()=>({n:count})})};
+const entryCfg={extTrade:{enabled:true,entries:true,minPickP:.62,sizeMult:.5,maxNewPerSession:2}};
+const guard=(c=entryCfg,p=.7)=>entry.extBuyGuard(entryDB,'us',10,105,{mlMindP:p},c,{quote:{}},Date.now());
+assert.equal((await guard()).qty,5);assert.equal((await guard(entryCfg,.61)).ok,false);
+assert.equal((await guard({extTrade:{...entryCfg.extTrade,entries:false}})).ok,false);
+count=2;assert.equal((await guard()).ok,false);
+count=0;entry.extTradePrice=()=>null;assert.equal((await guard()).ok,false);
+assert.match(cut('async function executeBuy(','const feeRate = market === "us" ? cfg.feeUS'),/await extBuyGuard/);
+let riskLogs=[];
+const risk=vm.createContext({Date,Math,isFinite,_num:(v,d)=>typeof v==='number'?v:d,
+ extBuyGuard:async(_db,_m,q)=>({ok:true,qty:q}),_slipRate:()=>0,
+ computeCashFromTrades:async()=>1000,riskPreTradeCheck:async()=>{throw Error('simulated unavailable');},
+ log:async(...args)=>riskLogs.push(args)});
+vm.runInContext(cut('async function executeBuy(','function getTrendSizing('),risk);
+const cash={us:1000};
+assert.equal(await risk.executeBuy({},'us','TEST','trend',1,100,{},null,{feeUS:0},cash),cash);
+assert.ok(riskLogs.some(x=>String(x[3]).includes('사전거래 리스크 검사 실패')));
 // Exercise Worker auto-recovery with a mock DB/fetch; never contacts a network.
 const now=Date.now(), keys=['mind_model','dnn_trust','gbdt_trust','xgb_trust','lgb_trust','cat_trust'];
 let models, dispatched, saved;
 const recovery=vm.createContext({Date,JSON,Object,Math,isFinite,LUXML:{featVer:17},
+ _num:(v,d)=>typeof v==='number'?v:d,
  getState:async()=>({fvDispatched:17}),getStates:async()=>models,setState:async(_db,_k,v)=>{saved=v;},log:async()=>{},
  fetch:async()=>{dispatched++;return {status:204};}});
 const start=src.indexOf('async function _luxAutoRetrainModal(env) {');
+vm.runInContext(cut('function latestExternalReceipt(live, shadow) {','async function _luxAutoRetrainModal(env) {'),recovery);
 vm.runInContext(src.slice(start,src.indexOf('\n}',start)+2),recovery);
 const db={prepare:()=>({bind(){return this;},async first(){return {c:1000};}})};
 async function run(change){models=Object.fromEntries(keys.map(k=>[k,{source:'external',trainedAt:now-3600000,featVer:17}]));dispatched=0;change?.(models);await recovery._luxAutoRetrainModal({DB:db,GITHUB_TOKEN:'mock-only'});return dispatched;}
 assert.equal(await run(),0);assert.equal(await run(m=>m.xgb_trust.featVer=15),1);
 assert.equal(await run(m=>m.cat_trust.trainedAt=now-30*3600000),1);
 assert.equal(await run(m=>delete m.lgb_trust),1);
+assert.equal(await run(m=>{m.xgb_trust.featVer=15;m.xgb_trust_ext={source:'external',trainedAt:now,featVer:17,trusted:false};}),0,
+ 'fresh rejected shadow proves training receipt, not admission');
 const py=String.raw`
 import ast, copy, pathlib, numpy as np, sys, types
 sys.dont_write_bytecode=True
@@ -77,6 +114,31 @@ for name in ('_train_and_upload_boosters','_train_per_market'):
  assert np.array_equal(z['Wtr'],z['W'][z['_tri']])
  assert len(z['W'][:-z['nval']])!=len(z['Xtr']), 'fixture must detect old broken slice'
  print(name,'aligned rows',len(z['Xtr']))
+# B-2: execute SEQ preprocessing on out-of-order rows; validation must be beyond the embargo.
+torch=types.ModuleType('torch'); torch.nn=types.ModuleType('torch.nn'); torch.device=lambda x:x; torch.cuda=types.SimpleNamespace(is_available=lambda:False)
+sys.modules['torch']=torch; sys.modules['torch.nn']=torch.nn
+ns['_build_sequences']=lambda X,TS,SYM,L:np.zeros((len(X),L),dtype=int)
+f=copy.deepcopy(next(n for n in tree.body if isinstance(n,ast.FunctionDef) and n.name=='_train_and_upload_seq'))
+f.body=f.body[:next(i for i,n in enumerate(f.body) if isinstance(n,ast.ClassDef))]+ast.parse('return locals()').body
+exec(compile(ast.fix_missing_locations(ast.Module(body=[f],type_ignores=[])),'seqprep','exec'),ns)
+n=20000; rng=np.random.default_rng(11); TS=rng.permutation(np.arange(n)*86400000/100); X=np.column_stack([TS,TS/2]); Y=np.arange(n)%2
+z=ns['_train_and_upload_seq']('','',{},X,Y,TS,np.array(['T']*n),17,2)
+assert TS[z['_tri']].max()+10*86400000 < TS[z['_vai']].min()
+assert np.allclose(z['mean'],X[z['_tri']].mean(axis=0))
+assert len(z['_tri'])<n-len(z['_vai'])
+try: ns['_split_ts'](np.ones(1000),.2,10*86400000)
+except ValueError: pass
+else: raise AssertionError('embargo silently abandoned')
+print('SEQ embargo and training-only normalization verified')
+# Targeted recovery runs only the requested auxiliary stage (not another full DNN pass).
+job=next(n for n in tree.body if isinstance(n,ast.FunctionDef) and n.name=='train_job')
+branch=next(n for n in job.body if isinstance(n,ast.If) and ast.unparse(n.test)=="target not in ('all', 'dnn')")
+tf=ast.parse('def run_target(target, dry=False): pass').body[0]; tf.body=[copy.deepcopy(branch)]
+calls=[]; ns.update(BASE='',KEY='',HDR={},X=X,Y=Y,TS=TS,SYM=np.array(['T']*n),featver=17,D=2,UNIQ=np.ones(n),cfg={},N=n)
+ns['_train_and_upload_seq']=lambda *a,**kw:calls.append('seq')
+exec(compile(ast.fix_missing_locations(ast.Module(body=[tf],type_ignores=[])),'target','exec'),ns)
+assert ns['run_target']('seq')['target']=='seq' and calls==['seq']
+ns['run_target']('seq',True); assert calls==['seq']
 `;
 const r=spawnSync('python',['-c',py],{cwd:new URL('..',import.meta.url),encoding:'utf8',env:{...process.env,PYTHONUTF8:'1'}});
 assert.equal(r.status,0,r.stdout+'\n'+r.stderr);console.log(r.stdout);

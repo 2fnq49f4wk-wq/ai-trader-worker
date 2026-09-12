@@ -1,5 +1,19 @@
 # 결함 목록 (OPEN DEFECTS + 해결분)
 
+## Codex continuation — V33.349 (implementation commit; resolve hash with git log)
+
+- A-1: common `extBuyGuard` now runs inside `executeBuy`, not just fastWatch. Enforces entries switch, source quote/freshness, probability floor, 0.5 default quantity multiplier and per-session committed-symbol count. Count failures block buys; cycle lock remains the entry serialization mechanism. FastWatch passes a real signal object and only counts cash-confirmed fills. Regression executes the guard. Deployment verification pending.
+- Additional live-confirmed quote defect: main evaluation writes erased session/price-time fields and replaced the regular anchor with the evaluation price. `quoteSessionFields` now carries the bundle through batch/evaluation/backfill writes. No synthesized timestamps.
+- B-1: run34542208755 actually uploaded all three feat17 booster candidates (2026-09-11 00:15–00:16 UTC). They were saved as rejected shadows, not promoted: XGB LB0.5135, LGB0.5059, CAT0.5095, conversion maxdiff0.0082/0/0. Old active version15 records are not proof that training failed. Receipt diagnostics/recovery now include latest shadow trust. No gate relaxed. The full run timed out at3600s during MIND, so later SEQ/MEMO were NOT verified.
+- B-2: SEQ preprocessing, standardization, labels, weights, IC groups and conversion probes use the same embargoed row indices. Synthetic shuffled-row execution confirms chronology. `_split_ts` now fails on insufficient honest history rather than silently dropping the embargo. Existing deployed SEQ still requires corrected retraining; do not call its old evidence repaired.
+- Timeout recovery: added validated `target` selection to Modal CLI/workflow so SEQ/MIND/MEMO can be recovered without repeating DNN. One-hour resource limit and recurring schedule unchanged. Targeted-stage regression executes actual dispatch branch, including dry mode. Full recurring pipeline runtime is still an open capacity issue.
+- E-2: confirmed money-path fail-open catch in `executeBuy` riskPreTradeCheck now logs ERROR and blocks purchase. Real-function regression throws the risk check and confirms no purchase. This is not a claim that all optional catches need removal.
+- E-3: full-reset deposits now explicitly include us/kr/cm/bdus/bdkr; no reset was executed.
+- F-3: verified NOT a defect. Nasdaq's own June26,2026 announcement identifies Space Exploration Technologies Corporation as Nasdaq:SPCX, joining Nasdaq100 July7. Keep the valid ticker: https://ir.nasdaq.com/news-releases/news-release-details/space-exploration-technologies-corporation-join-nasdaq-100 . Historical knowledge of private SpaceX must not override current official evidence.
+- B-8 migration: requested user decision on preserving old data while rebuilding a new version; no data deletion/version invalidation performed yet. A-3/A-4 are risk/data assumptions, not authority to trade stale quotes or invent measured slippage. Keep safeguards until evidence supports a change.
+- Open remainder: A-2/A-5/A-6/A-7/A-8/A-9/A-10, training timeout recovery, B-3/B-4/B-5/B-6, B-8 migration, C-1/C-2 live performance, D-1 accounting policy, E-1, F-2. Preserve original evidence below; items above are more recent.
+- Post-Claude V33.348 observation: selfcheck took21,405ms (C-2 still open). Recent KR EVAL-COST733–1097ms/symbol, known work~7s but residual10–13s; no evidence that model inference alone explains it. Latest CF tick0 admitted/2608 immature, which is not evidence that the alignment fix failed. Further isolation needed; do not label performance fully repaired.
+
 > **이 파일은 다음 작업자(Codex 포함)를 위한 단일 작업 목록이다.**
 >
 > - 기준: `main` **5943b26** 위에서 조사·수정 · 런타임 **V33.348**

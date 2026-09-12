@@ -44,7 +44,7 @@ SEEDS_OVERRIDE = 6     # 4→6 앙상블(로짓평균 안정화). 업로드~27MB
     gpu="T4",  # GPU 가속(20분→~2분). 12h마다 2분이라 월 크레딧 $1 수준(무료 $30 내).
 )
 def train_job(epochs: int = EPOCHS_DEFAULT, dry: bool = False,
-              depth_sweep: bool = False, sweep_seeds: int = 2):
+              depth_sweep: bool = False, sweep_seeds: int = 2, target: str = "all"):
     import os, json, math, time
     import numpy as np
     import requests
@@ -54,6 +54,8 @@ def train_job(epochs: int = EPOCHS_DEFAULT, dry: bool = False,
     BASE = os.environ["BASE_URL"].rstrip("/")
     KEY = os.environ["TRAIN_KEY"]
     HDR = {"x-train-key": KEY}
+    if target not in ("all", "dnn", "seq", "mind", "memo", "boosters", "markets", "scalp"):
+        raise ValueError("unknown training target")
 
     # ── 1) 표본 내려받기 ──
     def fetch_all():
@@ -90,6 +92,8 @@ def train_job(epochs: int = EPOCHS_DEFAULT, dry: bool = False,
                     time.sleep(wait)
             if j is None:
                 raise RuntimeError("export 재시도 소진")
+            if fv is not None and (j["featVer"] != fv or j["featNames"] != fn):
+                raise ValueError("feature schema changed during export; discard mixed snapshot and retry")
             cfg, fv, fn = j["config"], j["featVer"], j["featNames"]
             anchor = j.get("anchorTs") or anchor
             got = j.get("samples", [])
@@ -265,6 +269,25 @@ def train_job(epochs: int = EPOCHS_DEFAULT, dry: bool = False,
     else:
         UNIQ = _uniq_weights(TS, SYM, _hor_d * 86400000.0)
     print(f"   표본 고유도: 평균 {UNIQ.mean():.3f} · 유효 {UNIQ.sum():.0f}/{N} (라벨지평 {_hor_d:.0f}일, 종목 {_nsym}개)")
+    # Codex V33.349: recover a timed-out tail stage without paying for DNN again.
+    # Keep the existing one-hour resource limit and native schedule unchanged.
+    if target not in ("all", "dnn"):
+        if dry: return {"ok": True, "dry": True, "target": target, "n": N}
+        if target == "seq":
+            _train_and_upload_seq(BASE, KEY, HDR, X, Y, TS, SYM, featver, D, UNIQ, cfg)
+        elif target == "mind":
+            _train_and_upload_gbdt(BASE, KEY, HDR, X, Y, TS, featver, D, UNIQ,
+                endpoint="/api/mind-import", tag="MIND(tree)",
+                hp={"eta":0.02,"depth":6,"sub":0.7,"col":0.7,"trees":800,"minchild":8.0,"seed":77003,"algo":"gbdt-deep"})
+        elif target == "memo":
+            _train_and_upload_memo(BASE, KEY, HDR, X, Y, TS, PNL, featver, D, featnames=featnames, cfg=cfg, SYM=SYM)
+        elif target == "boosters":
+            _train_and_upload_boosters(BASE, KEY, HDR, X, Y, TS, featver, D, PNL, UNIQ)
+        elif target == "markets":
+            _train_per_market(BASE, KEY, HDR, MKT, X, Y, TS, PNL, featver, D, UNIQ)
+        elif target == "scalp":
+            _train_and_upload_scalp(BASE, KEY, HDR, featver)
+        return {"ok": True, "target": target, "note": "inspect individual upload/admission results"}
     mw = np.clip(absp / pnl_scale, 0.3, 3.0) * np.where(HV > 0, hv_w, live_w) * recency * UNIQ
     print(f"   출처 가중: 수확 ×{hv_w} · 실거래 ×{live_w} (수확 {int((HV > 0).sum())} · 실거래 {int((HV <= 0).sum())}건)")
 
@@ -663,6 +686,7 @@ def train_job(epochs: int = EPOCHS_DEFAULT, dry: bool = False,
     # 3) commit — Worker가 조립·검증·게이트 (무거움: 넉넉한 타임아웃 + D1과부하/타임아웃 재시도)
     res = _post({"key": KEY, "stage": "commit"}, {}, "commit", to=600, retries=5, retry_delay=45)
     print("✅", json.dumps(res.get("trust", {}), ensure_ascii=False), res.get("note", ""))
+    if target == "dnn": return {"ok": True, "target": target, "trust": res.get("trust")}
     # [V32.7] GBDT도 외부학습해 섀도우 업로드(같은 표본 재사용 — 추가 export 부하 0). 실패해도 DNN 결과엔 무영향.
     if not dry:
         print("⑤ GBDT 외부학습(섀도우)")
@@ -830,15 +854,11 @@ def _train_and_upload_seq(BASE, KEY, HDR, X, Y, TS, SYM, featver, D, UNIQ=None, 
     print(f"⑨ SEQ 시퀀스 조립 {N}×{L} ({time.time()-t0:.1f}s) — 익스포트 변경 0")
 
     # 표준화는 ★학습 구간에서만★ 구한다(검증 통계가 새면 그만큼 낙관적으로 나온다)
-    # ⚠️ 미해결 결함 B-2 — docs/OPEN-DEFECTS.md
-    #   ★SEQ 만 엠바고가 없다.★ 아래 tr/va 는 경계에 공백 없이 붙어 있어(882행)
-    #   라벨 지평(10일)만큼 학습·검증이 겹친다. V33.341 이 _split_ts 로 통일한 학습기는
-    #   DNN·GBDT·부스터·시장별·MIND 다섯이고 SEQ 는 빠졌다.
-    #   그런데 SEQ 는 잠정 위원으로 ★실제 투표 중★ 이다(mult 0.1838 · 블록IC t 5.27).
-    #   사용자 지시로 조사만 하고 수정하지 않았다. 고칠 때 OPEN-DEFECTS 의 B-2 를 함께 지울 것.
-    n_val = max(200, int(N * 0.2))
-    tr_end = N - n_val
-    mean = X[:tr_end].mean(axis=0); std = X[:tr_end].std(axis=0); std[std < 1e-9] = 1.0
+    # Codex V33.349 / B-2: SEQ uses the same embargo and exact row indices as other models.
+    _order, _tri, _, _vai, n_val, _emb = _split_ts(TS, 0.2, _EMBARGO_MS, min_val=200, horizon_ms=_HORIZON_MS)
+    _tri, _vai = _order[_tri], _order[_vai]  # indices into original X/sequence table
+    tr_end = len(_tri)  # training count only, never a boundary into X
+    mean = X[_tri].mean(axis=0); std = X[_tri].std(axis=0); std[std < 1e-9] = 1.0
     Xn = np.clip((X - mean) / std, -6, 6).astype(np.float32)
 
     class SeqBlock(nn.Module):
@@ -885,12 +905,12 @@ def _train_and_upload_seq(BASE, KEY, HDR, X, Y, TS, SYM, featver, D, UNIQ=None, 
     Xt = torch.tensor(Xn, device=dev)
     Yt = torch.tensor(Y.astype(np.float32), device=dev)
     Si = torch.tensor(seq_idx, device=dev)
-    tr = torch.arange(0, tr_end, device=dev); va = torch.arange(tr_end, N, device=dev)
-    yva = Y[tr_end:]
-    uw = UNIQ[tr_end:] if (UNIQ is not None and len(UNIQ) == N) else np.ones(len(yva))
+    tr = torch.tensor(_tri, device=dev); va = torch.tensor(_vai, device=dev)
+    yva = Y[_vai]
+    uw = UNIQ[_vai] if (UNIQ is not None and len(UNIQ) == N) else np.ones(len(yva))
     neff = max(8, int(round(float(uw.sum()))))
     ep = int(C.get("epochs", 12)); bs = 512
-    pos = float(Y[:tr_end].sum()); wpos = tr_end / (2 * pos) if pos > 0 else 1.0
+    pos = float(Y[_tri].sum()); wpos = tr_end / (2 * pos) if pos > 0 else 1.0
     wneg = tr_end / (2 * (tr_end - pos)) if (tr_end - pos) > 0 else 1.0
 
     def fit_seq(dm_, Hh_, nl_, tag=""):
@@ -956,7 +976,7 @@ def _train_and_upload_seq(BASE, KEY, HDR, X, Y, TS, SYM, featver, D, UNIQ=None, 
         except Exception as e:
             print("⑨ seq-arch 업로드 예외(무시):", e)
     lb, acc, pva, net, nparam = best
-    icf = _ic_block_fields(pva, yva, mkt=_mkt_of_X(X[tr_end:]))   # [V33.291/292]
+    icf = _ic_block_fields(pva, yva, mkt=_mkt_of_X(X[_vai]))   # [V33.291/292]
     print(f"⑨ SEQ 채택 d{dm}·헤드{Hh}·{NL}층 valAcc {acc*100:.2f}% 하한 {lb*100:.2f}% (유효 {neff}/{len(yva)})"
           + (f" 블록IC {icf['valICBlock']:.4f} t {icf['valICt']:.2f}" if "valICt" in icf else ""))
 
@@ -983,7 +1003,7 @@ def _train_and_upload_seq(BASE, KEY, HDR, X, Y, TS, SYM, featver, D, UNIQ=None, 
     pi = rng.choice(len(va), size=min(24, len(va)), replace=False)
     probe = []
     for i in pi:
-        gi = seq_idx[tr_end + int(i)]
+        gi = seq_idx[_vai[int(i)]]
         probe.append({"x": X[gi].astype(np.float64).round(6).tolist(), "p": float(pva[int(i)])})
 
     payload = {"model": model, "valAcc": round(acc, 4), "valAccLB": round(lb, 4),
@@ -1306,8 +1326,9 @@ def _split_ts(TS, val_frac, embargo_ms, min_val=200, horizon_ms=0, cal_frac=0.0)
     cut_ts = ts_s[n - nval] - emb
     idx = np.arange(n)
     tr_mask = (idx < n - nval) & (ts_s < cut_ts)
-    if tr_mask.sum() < 60:              # 엠바고가 학습을 다 먹으면 엠바고를 포기한다
-        tr_mask = idx < n - nval        # (표본이 적을 땐 학습이 아예 없는 것보다 낫다)
+    if tr_mask.sum() < 60:
+        # Codex V33.349: insufficient honest history is not permission to remove the embargo.
+        raise ValueError("insufficient training history after embargo")
     tr = idx[tr_mask]
     cal = np.array([], dtype=int)
     if cal_frac and cal_frac > 0 and len(tr) > 400:
@@ -2704,6 +2725,6 @@ def _train_and_upload_scalp(BASE, KEY, HDR, featver):
 
 
 @app.local_entrypoint()
-def main():
+def main(target: str = "all", depth_sweep: bool = False, sweep_seeds: int = 2):
     # `modal run modal_train.py` — 지금 즉시 1회 학습(스케줄과 별개)
-    train_job.remote()
+    train_job.remote(target=target, depth_sweep=depth_sweep, sweep_seeds=sweep_seeds)

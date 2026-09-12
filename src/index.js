@@ -3020,7 +3020,7 @@ async function applySignalTypeWeights(DB, cfg) {
    화면·자가진단이 계속 "V33.272" 를 보고했다(운영 스냅샷이 그대로 그랬다). 배포는 됐는데
    ★배포됐다는 사실만 거짓말★ 을 하고 있었으니, "내 고침이 올라간 건가" 를 화면으로 확인할
    방법이 없었다. tools/check-build-ver.mjs 가 이제 소스에 적힌 최신 버전과 이 값을 대조한다. */
-const _BUILD_VER = "V33.348";
+const _BUILD_VER = "V33.349";
 
 // ═══ [V33.171] 평가 순서 계획 — ★승격과 순환을 교차해 굶주림을 구조적으로 없앤다★ ═══
 //   V33.50 의 형태트리거는 "급한 몇 종목을 앞으로 당긴다"는 의도였으나, 실제 운영로그에서는
@@ -7543,6 +7543,16 @@ function applyKrOverMarket(o, d) {
 // [PRE/POST 표시] 워치리스트/무버/맵 payload용 — 시간외(PRE/POST)면 표시 가격·등락율을
 //   시간외 값으로 채운다(정규장 dayPct=0이라 0%로 보이던 문제). 정규/마감은 그대로.
 //   trading 경로는 DB quote를 직접 읽으므로 영향 없음(이 함수는 응답 payload 전용).
+// Codex V33.347: each complete quote write carries one price/session/time bundle.
+function quoteSessionFields(q) {
+  q = q || {};
+  return { mstate: q.mstate || null,
+    pre: typeof q.pre === "number" && q.pre > 0 ? q.pre : null,
+    prePct: typeof q.prePct === "number" ? q.prePct : null,
+    post: typeof q.post === "number" && q.post > 0 ? q.post : null,
+    postPct: typeof q.postPct === "number" ? q.postPct : null,
+    extTs: typeof q.extTs === "number" && q.extTs > 0 ? q.extTs : 0 };
+}
 function applyDisplayOverMarket(q) {
   if (!q) return q;
   const st = q.mstate;
@@ -15459,6 +15469,31 @@ function evaluateBuyBlocks(price, dayPct, dailyData, cfg, regime, signal, ctx) {
 //   실제 가용현금을 다시 계산하고, 그 현금으로 살 수 있는 최대 수량으로 qty를 잘라낸다(clamp).
 //   → 호출부의 budget 계산이 과대하든, in-memory cash가 오염됐든, 사이클이 겹쳐 실행되든
 //     수학적으로 예산 초과가 불가능하다.
+// Codex V33.349 / A-1: common final entry guard, including main-cycle and fast entries.
+async function extBuyGuard(DB, market, qty, price, signal, cfg, opts, now) {
+  const session = _extSessionAt(market, now);
+  if (!session || (market !== "us" && market !== "kr")) return { ok: true, qty: qty };
+  const et = cfg.extTrade || DEFAULT_CFG.extTrade;
+  if (!et || et.enabled === false || et.entries === false || extTradeSession(market, cfg, new Date(now)) !== session)
+    return { ok: false, why: "entries_disabled" };
+  const px = extTradePrice(opts && opts.quote, session, cfg);
+  if (px == null || Math.abs(px - price) > Math.max(1e-8, price * 1e-8)) return { ok: false, why: "quote_unverified" };
+  const p = signal && signal.mlMindP;
+  if (!(typeof p === "number" && Number.isFinite(p) && p >= _num(et.minPickP, 0.62)))
+    return { ok: false, why: "probability_floor" };
+  const t = market === "us" ? getUSEt(new Date(now)) : getKST(new Date(now));
+  const startMin = session === "pre" ? (market === "us" ? 420 : 480) : (market === "us" ? 960 : 930);
+  const startTs = Math.floor(now / 60000) * 60000 - (t.totalMin - startMin) * 60000;
+  // Count committed buys, not attempts or an unrelated fast-watch counter. The cycle lock serializes entries.
+  try {
+    const r = await DB.prepare("SELECT COUNT(DISTINCT symbol) n FROM trades WHERE market=? AND side='BUY' AND ts>=? AND ts<=?")
+      .bind(market, startTs, now).first();
+    if (!r || typeof r.n !== "number" || r.n >= Math.max(0, _num(et.maxNewPerSession, 2)))
+      return { ok: false, why: "session_cap" };
+  } catch (e) { return { ok: false, why: "session_count_unavailable" }; }
+  const scaled = Math.floor(qty * _clamp(_num(et.sizeMult, 0.5), 0, 1));
+  return { ok: scaled > 0, qty: scaled, why: scaled > 0 ? null : "size_zero" };
+}
 async function executeBuy(DB, market, symbol, strategy, qty, price, signal, dailyAtr, cfg, cash, opts) {
   // [V9.1] 입력 검증 — 비정상 가격/수량으로 인한 유령거래·NaN 방어
   if (!(typeof price === "number" && isFinite(price) && price > 0)) {
@@ -15469,6 +15504,10 @@ async function executeBuy(DB, market, symbol, strategy, qty, price, signal, dail
   }
   qty = Math.floor(qty);
   if (qty <= 0) { return cash; }
+
+  const _extGuard = await extBuyGuard(DB, market, qty, price, signal, cfg, opts, Date.now());
+  if (!_extGuard.ok) { await log(DB, "INFO", symbol, "BUY 시간외 차단 [" + _extGuard.why + "]"); return cash; }
+  qty = _extGuard.qty;
 
   const feeRate = market === "us" ? cfg.feeUS : cfg.feeKR;
   // [V33.92] 슬리피지(FillModel)를 수수료와 같은 방식의 비용률로 얹는다.
@@ -15508,7 +15547,10 @@ async function executeBuy(DB, market, symbol, strategy, qty, price, signal, dail
       await log(DB, "INFO", symbol, "BUY 수량 사전조정 " + qty + "→" + _pre.qty + " (리스크엔진)");
       qty = _pre.qty;
     }
-  } catch (e) {}
+  } catch (e) {
+    // Codex V33.349 / E-2: a failed risk check is not permission to spend.
+    await log(DB, "ERROR", symbol, "BUY aborted: 사전거래 리스크 검사 실패 " + e.message); return cash;
+  }
 
   // ★ 살 수 있는 최대 수량으로 clamp — "예산 안에서만 거래"
   const maxQty = Math.floor(availCash / unitCost);
@@ -19156,12 +19198,7 @@ async function runTradingCycle(env) {
           spark: prevQ ? (prevQ.spark || null) : null,  // [V80] 스파크라인 보존
           ret1y: prevQ ? prevQ.ret1y : null, ret5y: prevQ ? prevQ.ret5y : null,
           vol: prevQ ? prevQ.vol : null, avgVol20: prevQ ? prevQ.avgVol20 : null,
-          // [프리/애프터마켓] 시간외 실시간 — 값이 있으면 갱신, 없으면 직전 quote 보존(정규장 중엔 시간외 잔상 유지 방지 위해 mstate로 분기)
-          mstate: bq.mstate || (prevQ ? prevQ.mstate : null),
-          pre: (typeof bq.pre === "number" && bq.pre > 0) ? bq.pre : null,
-          prePct: (typeof bq.prePct === "number") ? bq.prePct : null,
-          post: (typeof bq.post === "number" && bq.post > 0) ? bq.post : null,
-          postPct: (typeof bq.postPct === "number") ? bq.postPct : null,
+          ...quoteSessionFields(bq),
           ts: nowTs
         };
         quoteStmts.push(
@@ -19977,10 +20014,14 @@ async function runTradingCycle(env) {
 
           // [성능] saveQuote(개별 D1 write) → batch 수집 (루프 끝에 일괄 커밋)
           const _qts = Date.now();
+          // Codex V33.347: evaluation price may be extended; retain the original regular anchor for display.
+          const _quoteSource = batchQuotes[symbol] || {};
           evalQuoteStmts.push(
             DB.prepare("INSERT INTO state (k, v, updated_ts) VALUES (?, ?, ?) ON CONFLICT(k) DO UPDATE SET v=excluded.v, updated_ts=excluded.updated_ts")
               .bind("quote:" + symbol, JSON.stringify({
-                market: market, price: price, prevClose: prevClose, dayPct: dayPct,
+                market: market, price: _quoteSource.price ?? price,
+                prevClose: _quoteSource.prevClose ?? prevClose, dayPct: _quoteSource.dayPct ?? dayPct,
+                ...quoteSessionFields(_quoteSource),
                 rsi: dailyRsi, ma: dailyMa, atr: dailyAtr,
                 dailyAtr: dailyAtr, dailyMa: dailyMa, dailyMaShort: dailyMaShort,
                 bbLower: bb ? bb.lower : null, bbUpper: bb ? bb.upper : null,
@@ -21751,7 +21792,8 @@ async function runTradingCycle(env) {
               // [V33.90] equity 를 함께 넘긴다 — 사전거래 체인의 '1주문 명목가 상한(총자산 35%)'
               //   검사는 총자산을 모르면 아예 성립하지 않는다(넘기지 않으면 그 검사가 죽은 코드가 된다).
               const buyOpts = Object.assign(
-                { equity: (typeof portfolioValue === "number" && portfolioValue > 0) ? portfolioValue : cash[market],
+                { quote: batchQuotes[symbol],
+                  equity: (typeof portfolioValue === "number" && portfolioValue > 0) ? portfolioValue : cash[market],
                   cashNow: cash[market],
                   // [V33.92] 20일 평균 거래대금 — 유동성 대비 주문 크기 검사에 쓴다.
                   //   daily 캐시에 이미 있는 값이라 추가 조회 0.
@@ -22139,11 +22181,12 @@ async function runFastWatch(env, cronStart) {
         /* [V33.331] 시간외 진입 후보 — ★그날 위원회가 이미 통과시킨 종목★ 에서만 고른다.
            시간외에 전종목 평가를 새로 돌리는 건 예산상 불가능하고, 얇은 호가에서 새 판단을
            내리는 것도 위험하다. "낮에 사도 좋다고 본 종목을, 시간외 가격으로 산다"까지가 한계다. */
-        let _cand = [];
+        let _cand = []; const _candP = {};
         if (_xs0 && _extEntryOn) {
           try {
             const _pk = await getState(DB, "ai_picks:" + market, null);
             const _minP = _num(cfg.extTrade && cfg.extTrade.minPickP, 0.62);
+            for (const p of ((_pk && _pk.picks) || [])) if (p && p.symbol) _candP[p.symbol] = p.p;
             _cand = (((_pk && _pk.picks) || [])
               .filter(function (p) { return p && !p.abstain && _num(p.p, 0) >= _minP && _heldSyms.indexOf(p.symbol) < 0; })
               .map(function (p) { return p.symbol; })).slice(0, 8);
@@ -22262,15 +22305,18 @@ async function runFastWatch(env, cronStart) {
                 const _px = extTradePrice(_q, _xs0, cfg);
                 if (_px == null) continue;
                 // 현금은 매수마다 줄어든다 — 루프 밖에서 한 번 읽어 두면 두 번째 매수가 없는 돈을 쓴다.
-                const _budget = _num(cash[market], 0) * (_num(_sz.maxPositionPct, 10) / 100) * _num(_et.sizeMult, 0.5);
+                const _budget = _num(cash[market], 0) * (_num(_sz.maxPositionPct, 10) / 100); // shared guard applies sizeMult once
                 const _qty = Math.floor(_budget / _px);
                 if (!(_qty > 0)) continue;
                 if (_qty * _px > _num(cash[market], 0)) continue;   // 현금을 넘겨 사지 않는다
                 const _d = c.dailyMap[_sym];
                 const _atr = (_d && _d.closes && _d.closes.length >= (mcfg.atrPeriod || 14) + 1)
                   ? getATR(_d.closes, mcfg.atrPeriod || 14, _d.highs || null, _d.lows || null) : null;
+                const _beforeCash = cash[market];
                 cash = await executeBuy(DB, market, _sym, "trend", _qty, _px,
-                  "EXT_" + _xs0.toUpperCase(), _atr, mcfg, cash);
+                  { name: "EXT_" + _xs0.toUpperCase(), detail: "validated daily pick", mlMindP: _candP[_sym] },
+                  _atr, mcfg, cash, { quote: _q });
+                if (!(cash[market] < _beforeCash)) continue; // rejected attempts are not fills
                 _room--; _made++; extBuys++; _openN++; _extBought.add(market + "|" + _sym);
                 await log(DB, "INFO", _sym, "[FAST][시간외 " + _xs0 + "] 진입 " + _qty + "주 @" + _px +
                   " (크기 ×" + _num(_et.sizeMult, 0.5) + " · 세션 잔여 " + _room + ")");
@@ -23010,16 +23056,19 @@ async function handleRequest(request, env, ctx) {
         try {
           const _st = function (nm) {
             const live = S1[nm + "_trust"], ext = S1[nm + "_trust_ext"];
-            const t = live || ext;
-            if (!t) return null;
             const d = _bdC[nm] || {};
             const on = !!d.live;
+            const receipt = latestExternalReceipt(live, ext);
+            const t = on ? live : receipt;
+            if (!t) return null;
             const acc = (typeof t.gbdtAccLB === "number") ? t.gbdtAccLB
                       : (typeof t.gbdtAcc === "number") ? t.gbdtAcc : null;
             return { trusted: on, shadow: !on,
                      accLB: acc, w: on ? ((typeof t.wGbdt === "number") ? t.wGbdt : null) : 0,
-                     source: t.source || null, promoted: !!live,
-                     featVer: (d.featVer != null) ? d.featVer : null, wantVer: LUXML.featVer,
+                     source: t.source || null, promoted: on,
+                     featVer: t.featVer ?? null, wantVer: LUXML.featVer,
+                     latestReceiptAt: receipt.trainedAt || null, latestReceiptShadow: receipt === ext,
+                     latestReceiptFeatVer: receipt.featVer ?? null, latestReceiptReason: receipt.reason || null,
                      reason: on ? null : (d.why || "사유 미상") };
           };
           xgb = _st("xgb"); lgb = _st("lgb"); cat = _st("cat");
@@ -24827,6 +24876,8 @@ async function handleRequest(request, env, ctx) {
         trust.wGbdt = +(eG / (eG + eM)).toFixed(4); trust.trusted = true;
         trust.passedBy = _passAcc ? (_passIC ? "acc+ic" : "acc") : "ic";
       }
+      if (!trust.trusted && !trust.reason) trust.reason = "정확도 하한 " + gLB.toFixed(4) + " < " + _gAccFloor.toFixed(4) +
+        " · 유효 IC " + (_icEff == null ? "미측정" : _icEff.toFixed(4)) + " < " + _icFloor;
       const activate = url.searchParams.get("activate") === "1";
       // 승격은 (1)activate 요청 + (2)self-검증 통과일 때만. 그 외엔 섀도우 저장(라이브 무영향).
       let promote = activate && _sane && trust.trusted;
@@ -26840,7 +26891,7 @@ async function handleRequest(request, env, ctx) {
       await env.DB.prepare("DELETE FROM logs").run();
       await env.DB.prepare("DELETE FROM state WHERE k NOT LIKE 'quote:%' AND k NOT LIKE 'index:%' AND k NOT LIKE 'daily:%'").run();
       await setState(env.DB, "cash", { us: cfg.initialCashUS, kr: cfg.initialCashKR, cm: cfg.initialCashCM });
-      await setState(env.DB, "deposits", { us: 0, kr: 0 });
+      await setState(env.DB, "deposits", { us: 0, kr: 0, cm: 0, bdus: 0, bdkr: 0 }); // Codex E-3: all sleeves
       await setState(env.DB, "outflows", { us: 0, kr: 0 });
       // TWR 초기화 — 전체 삭제(NOT LIKE) 시 twr:* 키도 지워지지만, 명시적으로 초기 상태를 심어 둔다.
       await setState(env.DB, "twr:us", { factor: 1, lastValue: cfg.initialCashUS });
@@ -41435,7 +41486,8 @@ async function aiSelfCheck(DB, env) {
     // [V33.10] ★"모달로 학습이 갔는지 / 모든 모델이 학습했는지"를 화면에서 확인 가능하게★
     //   종전엔 이 정보가 어디에도 안 나와, 외부 학습이 도달했는지 추측만 가능했다.
     try {
-      const _MS = await getStates(DB, ["modal_retrain_auto", "mind_model", "dnn_trust", "gbdt_trust", "xgb_trust", "lgb_trust", "cat_trust"]);
+      const _MS = await getStates(DB, ["modal_retrain_auto", "mind_model", "dnn_trust", "gbdt_trust", "xgb_trust", "lgb_trust", "cat_trust",
+        "gbdt_trust_ext", "xgb_trust_ext", "lgb_trust_ext", "cat_trust_ext"]);
       const _auto = _MS["modal_retrain_auto"] || {};
       /* [V33.235] ★있는지 없는지는 바인딩에게 묻는다.★ 종전엔 상태에 남은 lastSkip 부스러기로
          판단했는데, 그 부스러기는 '실제로 디스패치한' 가지에서만 지워졌다. 토큰을 등록해도
@@ -41452,7 +41504,7 @@ async function aiSelfCheck(DB, env) {
       R.externalTrain = {};
       let _extN = 0, _extStale = [];
       for (const k of Object.keys(_mm)) {
-        const o = _MS[_mm[k]];
+        const o = latestExternalReceipt(_MS[_mm[k]], _MS[_mm[k] + "_ext"]);
         const ext = !!(o && o.source === "external");
         const ah = o ? ageH(o.trainedAt) : null;
         /* [V33.260] ★DNN 만 valAcc 가 null 이던 이유 — 필드 이름이 다르다.★
@@ -41461,6 +41513,8 @@ async function aiSelfCheck(DB, env) {
            그래서 화면이 "DNN valAcc null" 을 몇 달째 보여줬고, '학습이 안 됐나' 로 읽히게
            만들었다. 실제로는 학습은 됐고 성적이 나빴다 — 전혀 다른 처방이 필요한 상태다. */
         R.externalTrain[k] = { trained: !!o, external: ext, ageH: ah,
+          shadow: !!o && o === _MS[_mm[k] + "_ext"], activeFeatVer: _MS[_mm[k]] ? _MS[_mm[k]].featVer : null,
+          admissionReason: o ? (o.reason || null) : null,
           featVer: o ? _num(o.featVer, null) : null, wantVer: LUXML.featVer,
           valAcc: (o && (o.valAcc != null ? o.valAcc : (o.gbdtAcc != null ? o.gbdtAcc : o.dnnAcc))) || null };
         if (ext) _extN++;
@@ -45655,7 +45709,12 @@ async function _luxSelfCheck(DB) {
         const ext = [];
         const chkE = function (name, obj) { if (obj && obj.source === "external" && obj.trainedAt) ext.push({ name: name, ageH: (nowT - obj.trainedAt) / 3600000 }); };
         chkE("MIND", S["mind_model"]); chkE("DNN", S["dnn_trust"]); chkE("GBDT", S["gbdt_trust"]);
-        try { const B = await getStates(DB, ["xgb_trust", "lgb_trust", "cat_trust"]); chkE("XGB", B["xgb_trust"]); chkE("LGB", B["lgb_trust"]); chkE("Cat", B["cat_trust"]); } catch (e) {}
+        try {
+          const B = await getStates(DB, ["xgb_trust", "lgb_trust", "cat_trust", "xgb_trust_ext", "lgb_trust_ext", "cat_trust_ext"]);
+          chkE("XGB", latestExternalReceipt(B["xgb_trust"], B["xgb_trust_ext"]));
+          chkE("LGB", latestExternalReceipt(B["lgb_trust"], B["lgb_trust_ext"]));
+          chkE("Cat", latestExternalReceipt(B["cat_trust"], B["cat_trust_ext"]));
+        } catch (e) {}
         if (!ext.length) { perf.modal = { received: 0 }; add("warn", "Modal학습", "외부(Modal) 학습결과 수신 이력 없음 — 트레이너 배포/시크릿(BASE_URL·TRAIN_KEY) 또는 크론 미실행 점검"); }
         else {
           ext.sort(function (a, b) { return a.ageH - b.ageH; });
@@ -45747,6 +45806,12 @@ async function _luxSelfCheck(DB) {
 // ═══════════ [V32.57] Modal 학습 지연 자동 재트리거 — 외부학습이 6h 크론 대비 지연되면 워커가 재학습 워크플로 자동 실행 ═══════════
 //   스로틀: 30분마다 1회만 판정(대부분 상태 1건 read 후 리턴). 트리거 후 8h 쿨다운(스팸·중복 방지).
 //   조건: GITHUB_TOKEN 존재 + (외부 수신 이력 없음 or 최신 외부수신>14h) + 학습표본 충분(≥200).
+// Codex V33.349: receipt freshness and live admission are different measurements.
+function latestExternalReceipt(live, shadow) {
+  if (!live) return shadow || null;
+  if (!shadow) return live;
+  return _num(shadow.trainedAt, 0) > _num(live.trainedAt, 0) ? shadow : live;
+}
 async function _luxAutoRetrainModal(env) {
   try {
     const DB = env.DB;
@@ -45773,7 +45838,8 @@ async function _luxAutoRetrainModal(env) {
     const _fvNew = (_fvNow != null && meta.fvDispatched !== _fvNow);
     if (!_fvNew && meta.ts && (now - meta.ts) < 8 * 3600000) { try { await setState(DB, "modal_retrain_auto", meta); } catch (e) {} return; }   // 트리거 쿨다운 8h
     // 외부(Modal) 수신 신선도
-    const S = await getStates(DB, ["mind_model", "dnn_trust", "gbdt_trust", "xgb_trust", "lgb_trust", "cat_trust"]);
+    const S = await getStates(DB, ["mind_model", "dnn_trust", "gbdt_trust", "xgb_trust", "lgb_trust", "cat_trust",
+      "gbdt_trust_ext", "xgb_trust_ext", "lgb_trust_ext", "cat_trust_ext"]);
     let freshestAge = Infinity, oldestAge = 0, anyExt = false, missingExt = 0;
     /* [V33.245] ★신선하다 ≠ 쓸 수 있다.★ 종전엔 trainedAt 만 봤다. featVer 를 올린 직후엔
        외부 모델 전부가 "몇 시간 전 학습" 이라 freshestAge ≤ 14h 로 걸려 '정상 — 트리거 불필요'
@@ -45785,7 +45851,7 @@ async function _luxAutoRetrainModal(env) {
     const _wantFV = (typeof LUXML !== "undefined") ? LUXML.featVer : null;
     let staleFV = 0;
     for (const k of ["mind_model", "dnn_trust", "gbdt_trust", "xgb_trust", "lgb_trust", "cat_trust"]) {
-      const o = S[k];
+      const o = latestExternalReceipt(S[k], S[k + "_ext"]);
       if (!(o && o.source === "external" && o.trainedAt)) { missingExt++; continue; }
       if (_wantFV != null && o.featVer !== _wantFV) { staleFV++; continue; }
       anyExt = true; const a = (now - o.trainedAt) / 3600000; if (a < freshestAge) freshestAge = a;
@@ -48612,10 +48678,8 @@ export default {
                 }
               } catch (e) {}
             }
-            // 시간외 필드는 새 값이 있을 때만 갱신(없으면 기존 유지)
-            if (q.mstate != null) merged.mstate = q.mstate;
-            if (typeof q.pre === "number" && q.pre > 0) { merged.pre = q.pre; merged.prePct = q.prePct; }
-            if (typeof q.post === "number" && q.post > 0) { merged.post = q.post; merged.postPct = q.postPct; }
+            // Codex V33.347: backfill must not attach the old price's timestamp to a new price.
+            Object.assign(merged, quoteSessionFields(q));
             if (typeof q.shares === "number" && q.shares > 0) merged.shares = q.shares;
             if (typeof q.mcap === "number" && q.mcap > 0) merged.mcap = q.mcap;
             stmts2.push(env.DB.prepare("INSERT INTO state (k, v, updated_ts) VALUES (?, ?, ?) ON CONFLICT(k) DO UPDATE SET v=excluded.v, updated_ts=excluded.updated_ts")
