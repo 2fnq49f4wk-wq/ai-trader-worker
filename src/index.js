@@ -336,6 +336,19 @@ const DEFAULT_KR = [
   "060250.KQ","030520.KQ","053800.KQ","032190.KQ","025900.KQ",
 ];
 
+/* [V33.350 · E-3 해결 · 확인 한번 더] ★슬리브 목록과 0 초기값을 한 곳에서 만든다.★
+   종전엔 `deposits` 기본값이 경로마다 { us, kr } · { us, kr, cm } · 5슬리브로 갈려 있었다.
+   읽을 때 undefined → 0 이라 숫자는 같았지만, 표의 ★모양★ 이 경로마다 달라
+   화면·리포트가 어떤 슬리브를 보여줄지가 어느 코드를 지나왔는지에 달려 있었다.
+   Codex 가 전체 리셋(26894)을 5슬리브로 고쳤고, 여기서 나머지 경로도 같은 모양으로 맞춘다.
+   ※ 슬리브를 추가할 일이 생기면 ★여기 한 줄★ 만 고치면 된다. */
+const SLEEVES = ["us", "kr", "cm", "bdus", "bdkr"];
+function sleeveZeros() {
+  const o = {};
+  for (const m of SLEEVES) o[m] = 0;
+  return o;
+}
+
 // ETF 심볼 셋 (레버리지 ETF 리스크 처리용)
 const ETF_SYMBOLS = new Set([
   "SPY","QQQ","IVV","VOO","VTI",
@@ -5424,6 +5437,43 @@ function extKeepMaskUS(state) {
   const s = state || usMarketStateNow();
   return { pre: s === "PRE", post: (s === "POST" || s === "POSTPOST" || s === "CLOSED") };
 }
+/* [V33.350 · A-10 해결 · 확인 한번 더] ★한국도 같은 규율로 정리한다.★
+   종전엔 배치 기록부의 마스크가 `market === "us" ? extKeepMaskUS(...) : { pre: true, post: true }`
+   였다 — ★한국은 무엇도 지우지 않았다.★ 그런데 applyKrOverMarket 은 시간외 체결이 없으면
+   mstate 만 PRE/POST 로 찍고 값은 안 넣는다(정상 — 없는 체결을 지어내지 않는다).
+   그러면 COALESCE 가 ★어제 그 세션의 값★ 을 살려 둔다:
+     · 오늘 08:10 KST, 아직 장전 체결이 없다 → mstate=PRE · pre = ★어제 08시대 가격★
+     · 화면(9726)은 mstate==='PRE' && pre>0 이면 그걸 "장전" 이라고 표시한다
+   V33.339 가 미국에서 고친 것과 ★같은 결함★ 이고, 한국만 안 고쳐져 있었다.
+   COALESCE 는 "새 값이 아직 안 왔다" 는 뜻이지 "지난 세션 값을 써라" 가 아니다.
+   ※ 창은 isExtendedHoursWindow("kr") 과 같은 시각을 쓴다(A-2 가 통합되면 그 한 곳을 볼 것). */
+function krMarketStateNow(now) {
+  const t = getKST(now || new Date());
+  if (t.day < 1 || t.day > 5) return "CLOSED";
+  if (t.totalMin >= 480 && t.totalMin < 540) return "PRE";
+  if (t.totalMin >= 540 && t.totalMin < 930) return "REGULAR";
+  if (t.totalMin >= 930 && t.totalMin < 1200) return "POST";
+  return "CLOSED";
+}
+/* 지금 세션에서 ★살아 있는★ 시간외 필드 — 미국과 같은 규칙이다.
+   · pre  는 장전(PRE) 동안만 지금 값이다.
+   · post 는 장후(POST)와 그 뒤 휴장(CLOSED) 동안 유효하다 — 그날의 마지막 체결가 그것이다.
+     다음 장전이 열리는 순간 어제의 장후는 끝난다. */
+function extKeepMaskKR(state) {
+  const s = state || krMarketStateNow();
+  return { pre: s === "PRE", post: (s === "POST" || s === "CLOSED") };
+}
+
+/* [V33.350] 시장 하나를 주면 그 시장의 세션 마스크를 준다 — ★기록부가 이 함수 하나만 부른다.★
+   종전엔 기록부 안에 삼항식으로 박혀 있어서, 배선이 빠져도 마스크 함수만 보는 검사는
+   그걸 못 잡았다(실제로 돌연변이 검사가 "못 잡음" 을 냈다). 배선 자체를 부를 수 있게 뺀다.
+   cm/bdus/bdkr 은 시간외 개념이 없어 종전대로 아무것도 지우지 않는다. */
+function extKeepMaskFor(market, mstate) {
+  if (market === "us") return extKeepMaskUS(mstate || usMarketStateNow());
+  if (market === "kr") return extKeepMaskKR(mstate || krMarketStateNow());
+  return { pre: true, post: true };
+}
+
 /* quote 객체 하나를 지금 세션 기준으로 정리한다(미국 전용).
    수집원이 mstate 를 안 줘도 시계가 찍어 주고, 낡은 시간외 값은 날린다. */
 function normalizeExtUS(o, state) {
@@ -7495,10 +7545,9 @@ function applyKrOverMarket(o, d) {
   const weekday = kst.day >= 1 && kst.day <= 5;
   const inPre  = weekday && kst.totalMin >= 480 && kst.totalMin < 540;
   const inPost = weekday && kst.totalMin >= 930 && kst.totalMin < 1200;
-  /* ⚠️ 미해결 결함 A-10 — docs/OPEN-DEFECTS.md
-     여기서 o.post 를 세팅하지 않고 나간다. US 는 extKeepMaskUS 가 CLOSED 동안 post 를 유지하는데
-     KR 은 20:00 KST 가 지나면 장후 체결가가 화면에서 사라지고 15:30 종가로 되돌아간다 —
-     같은 화면에서 두 시장이 다른 규칙으로 말한다. KR 에는 normalizeExtUS 에 해당하는 정규화가 없다. */
+  /* [V33.350 · A-10 해결] 여기서 값을 안 넣고 나가는 것 자체는 맞다 — 없는 체결을 지어내지 않는다.
+     문제는 기록부가 한국에 대해 아무것도 지우지 않아, 안 넣은 자리에 ★지난 세션 값★ 이
+     COALESCE 로 남던 것이었다. 이제 extKeepMaskKR 이 세션 밖 값을 지운다(16908 부근). */
   if (!inPre && !inPost) { o.mstate = "CLOSED"; return o; }
   // 두 시간외 정보 중 현재 창에 맞는 세션의 최신 체결을 선택한다.
   const krx = d.overMarketPriceInfo || null;
@@ -11706,7 +11755,7 @@ async function computeCashFromTrades(DB, market, cfg) {
   const feeRate = _isKRW ? (cfg.feeKR || 0) : (cfg.feeUS || 0);
   // [회계 재설계] deposits = 누적 입금액(inflows), outflows = 누적 출금액.
   //   실제 가용현금 = 초기자본 + 입금 − 출금 + 거래손익. (수익률 계산은 TWR로 별도 처리)
-  const deposits = await getState(DB, "deposits", { us: 0, kr: 0, cm: 0 });
+  const deposits = await getState(DB, "deposits", sleeveZeros());
   const dep = (deposits && typeof deposits[market] === "number") ? deposits[market] : 0;
   const outflowsState = await getState(DB, "outflows", { us: 0, kr: 0, cm: 0 });
   const outf = (outflowsState && typeof outflowsState[market] === "number") ? outflowsState[market] : 0;
@@ -16891,7 +16940,9 @@ async function refreshPriceShard(env, market, shard) {
       /* [V33.339] ★지난 세션 값은 COALESCE 로 지켜서는 안 된다.★ COALESCE 는 "새 값이 없으면
          옛 값" 인데, 세션이 바뀌면 옛 값은 '아직 못 받은 값' 이 아니라 ★이미 끝난 값★ 이다.
          v7 이 죽어 새 값이 몇 사이클씩 안 들어오는 동안 그 차이가 그대로 화면에 남았다. */
-      const _mask = (market === "us") ? extKeepMaskUS(_m || usMarketStateNow()) : { pre: true, post: true };
+      // [V33.350 · A-10] 한국도 세션 마스크를 쓴다 — 종전엔 한국만 { pre:true, post:true } 라
+      //   지난 세션 값이 COALESCE 로 살아남았다(extKeepMaskKR 주석 참조).
+      const _mask = extKeepMaskFor(market, _m);
       const _clrPre = _mask.pre ? 0 : 1;
       const _clrPost = _mask.post ? 0 : 1;
       const _clrExt = (_clrPre && _clrPost) ? 1 : 0;
@@ -19239,14 +19290,14 @@ async function runTradingCycle(env) {
          단 ★일봉 라운드로빈 갱신은 하지 않는다★ — 일봉은 시간외에 변하지 않는다.
          없는 변화를 받으러 수백 건을 fetch 하면 예산만 태우고 얻는 게 없다.
          캐시된 일봉으로 평가하고(아래 missingDaily 일괄 로드), 가격만 시간외 체결가를 쓴다. */
-      /* ══ ⚠️ 미해결 결함 A-1 — docs/OPEN-DEFECTS.md ══════════════════════════════
-         ★이 경로에는 시간외 전용 안전장치가 하나도 안 걸려 있다.★
-         cfg.extTrade 의 sizeMult(0.5) · maxNewPerSession(2) · entries · minPickP 는
-         전부 fastWatch 블록에서만 참조되는데(21929 / 21974 / 22071 / 22095),
-         그 블록은 fastEntries:false 로 ★기본 꺼짐★ 이다(3648).
-         즉 실제 시간외 진입은 여기서 일어나면서 정규장과 같은 크기로, 세션당 개수 제한 없이 나간다.
-         (정규장 공통 게이트 — 위원회·동시보유·현금·재무 — 는 그대로 걸린다.)
-         ※ 사용자 지시로 조사만 하고 수정하지 않았다. 고칠 때 docs/OPEN-DEFECTS.md 의 A-1 을 함께 지울 것. */
+      /* [A-1 해결 — Codex V33.349] 종전엔 이 경로에 시간외 전용 안전장치가 하나도 안 걸려 있었다.
+         cfg.extTrade 의 sizeMult·maxNewPerSession·entries·minPickP 가 전부 fastWatch 블록
+         에서만 참조됐고, 그 블록은 fastEntries:false 로 기본 꺼짐이었다 —
+         즉 실제 시간외 진입은 여기서 정규장과 같은 크기로, 세션당 개수 제한 없이 나갔다.
+         → 지금은 경로마다 걸지 않는다. ★executeBuy 안의 extBuyGuard(15473)★ 가 모든 매수를
+           가로채 entries·호가검증·minPickP·maxNewPerSession(원장 실체결 기준)·sizeMult 를 건다.
+         ※ 아직 열려 있는 것: A-8(조기폐장) — 반장 13:00~16:00 ET 는 정규장으로 보므로
+           그 3시간에는 이 가드가 아예 안 걸린다. */
       const extSessMkt = extOnly ? extTradeSession(market, cfg) : null;
       if (extOnly && !extSessMkt) continue;   // 시간외 거래를 껐거나 창 밖 — 종전대로 가격만 갱신
 
@@ -26180,7 +26231,7 @@ async function handleRequest(request, env, ctx) {
       const sectorGroups = { stats: sectorGroupStats, weights: (cfg.sectorGroups && cfg.sectorGroups.weights) || {} };
       const signalTypeStats = __S["signal_type_stats"] || {};
       const signalTypes = { stats: signalTypeStats, weights: (cfg.signalTypeWeights && cfg.signalTypeWeights.weights) || {} };
-      const deposits = __S["deposits"] || { us: 0, kr: 0 };
+      const deposits = __S["deposits"] || sleeveZeros();
       const outflows = __S["outflows"] || { us: 0, kr: 0 };
       // [회계 재설계] TWR 상태 — 프론트가 실시간 평가액으로 마지막 구간을 마감해 수익률% 산출
       const twr = { us: __S["twr:us"] || null, kr: __S["twr:kr"] || null };
@@ -26891,7 +26942,7 @@ async function handleRequest(request, env, ctx) {
       await env.DB.prepare("DELETE FROM logs").run();
       await env.DB.prepare("DELETE FROM state WHERE k NOT LIKE 'quote:%' AND k NOT LIKE 'index:%' AND k NOT LIKE 'daily:%'").run();
       await setState(env.DB, "cash", { us: cfg.initialCashUS, kr: cfg.initialCashKR, cm: cfg.initialCashCM });
-      await setState(env.DB, "deposits", { us: 0, kr: 0, cm: 0, bdus: 0, bdkr: 0 }); // Codex E-3: all sleeves
+      await setState(env.DB, "deposits", sleeveZeros());   // Codex E-3 → V33.350: 목록을 한 곳에서
       await setState(env.DB, "outflows", { us: 0, kr: 0 });
       // TWR 초기화 — 전체 삭제(NOT LIKE) 시 twr:* 키도 지워지지만, 명시적으로 초기 상태를 심어 둔다.
       await setState(env.DB, "twr:us", { factor: 1, lastValue: cfg.initialCashUS });
@@ -26911,7 +26962,7 @@ async function handleRequest(request, env, ctx) {
       await env.DB.prepare("DELETE FROM positions WHERE market = ?").bind(mkt).run();
       await env.DB.prepare("DELETE FROM trades WHERE market = ?").bind(mkt).run();
       await env.DB.prepare("DELETE FROM state WHERE k = ?").bind("cash_ckpt:" + mkt).run();
-      const deposits = await getState(env.DB, "deposits", { us: 0, kr: 0, cm: 0 });
+      const deposits = await getState(env.DB, "deposits", sleeveZeros());
       deposits[mkt] = 0;
       await setState(env.DB, "deposits", deposits);
       const outflows = await getState(env.DB, "outflows", { us: 0, kr: 0, cm: 0 });
@@ -26989,7 +27040,7 @@ async function handleRequest(request, env, ctx) {
       const body = await request.json();
       const cfg = migrateCfgToMarkets(Object.assign({}, DEFAULT_CFG, await getState(env.DB, "cfg", {})));
       const cash = await computeAllCash(env.DB, cfg);
-      const deposits = await getState(env.DB, "deposits", { us: 0, kr: 0 });
+      const deposits = await getState(env.DB, "deposits", sleeveZeros());
       const outflows = await getState(env.DB, "outflows", { us: 0, kr: 0 });
       const addUs = Number(body.us) || 0;
       const addKr = Number(body.kr) || 0;
@@ -27958,7 +28009,7 @@ async function handleRequest(request, env, ctx) {
       const logs = logsRes.results || [];
       const cfg = migrateCfgToMarkets(Object.assign({}, DEFAULT_CFG, await getState(env.DB, "cfg", {})));
       const cash = await computeAllCash(env.DB, cfg);
-      const deposits = await getState(env.DB, "deposits", { us: 0, kr: 0 });
+      const deposits = await getState(env.DB, "deposits", sleeveZeros());
       
       // 수익률 계산
       let totalPnL = 0, totalTrades = 0, winTrades = 0;
@@ -49337,6 +49388,8 @@ export {
   computeCashFromTrades, _krSellTaxRate, _slipRate,
   // [V33.348] 원장 멱등성 검사용 — tools/check-ledger-idempotent.mjs 가 실제 SQLite 로 돌린다.
   stmtRecordTrade, stmtRecordTradeIfPos, KR_SELL_TAX_BY_YEAR,
+  // [V33.350 · A-10] 한국 시간외 세션 마스크 — tools/check-ext-session-mask.mjs 가 실제로 호출한다.
+  krMarketStateNow, extKeepMaskKR, extKeepMaskUS, usMarketStateNow, extKeepMaskFor, sleeveZeros, SLEEVES,
   // [V33.348 · B-7] 반사실 라벨 진입정렬 — tools/check-cf-label-align.mjs 가 실제로 호출한다.
   _cfPriceLookup, _dailyCacheOk, _altBarIdx,
   // [V33.348] D1 부하 — tools/check-daily-bulk-cache.mjs 가 두 번 호출해 왕복을 센다.

@@ -251,6 +251,11 @@ jobs:
       #   파이썬 헬퍼를 실제로 실행해 회전이 굶주림을 없애는지 시뮬레이션으로 확인한다.
       - name: Trainer budget and rotation check
         run: node tools/check-trainer-budget.mjs
+      # [V33.350 · A-10] 한국 시간외 값이 세션이 바뀌어도 안 지워져, 어제 장전가가
+      #   오늘 아침 "장전" 으로 표시될 수 있었다(미국은 V33.339 에서 이미 고쳤다).
+      #   시각을 넣어 함수를 실제로 부르고, 마스크로 COALESCE 를 재현해 하루를 돌려 본다.
+      - name: Extended session mask check
+        run: node tools/check-ext-session-mask.mjs
       # [V33.140] 전진검증 누적 원장 — 창이 매일 밤 리셋돼 ★구조적으로★ 못 채워지던 것을 고쳤다.
       #   (memo: 총표본 177,868 인데 전진 357 = 어제 유입과 정확히 일치)
       #   교착 해소와 통계 정직성을 함께 본다: 잡음 통과율이 문턱의 명목값과 맞는지,
