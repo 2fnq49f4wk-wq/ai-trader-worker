@@ -36,11 +36,77 @@ EPOCHS_DEFAULT = 400   # 150→400 (조기종료가 과적합 차단, GPU라 시
 SEEDS_OVERRIDE = 6     # 4→6 앙상블(로짓평균 안정화). 업로드~27MB·추론 6패스(허용범위)
 
 
+# ══ [V33.350] ★작업이 예산을 넘겨 죽고, 뒤쪽 학습이 통째로 안 돌고 있었다.★ ═════════════
+#   실측(2026-09-13 00:33 GitHub Actions run #114, 표본 1,053,656):
+#       ① 표본 수집        4분 54초
+#       ② DNN 6시드       32분 30초   ← ★예산의 54%★
+#       ⑤ GBDT             8분 51초
+#       ⑥ 부스터 3종       2분 23초
+#       시장별(US·KR)      5분 58초
+#       ⑦ MIND            4분 51초 지점에서 ★timeout 3600s 로 강제 종료★
+#   그 뒤에 있는 단타·SEQ·MEMO·STACK 경계 통지는 ★한 번도 실행되지 않았다.★
+#   그리고 Modal 이 작업을 죽이므로 GitHub Actions 는 빨간 실패로 끝난다 —
+#   앞에서 성공적으로 올라간 GBDT·부스터·시장별 모델까지 "실패한 실행" 으로 뭻힌다.
+#   (workflow_dispatch 실행 #107·108·109·112·113·114 가 전부 이 모양이다. push 실행은
+#    modal deploy 만 하고 끝나서 초록이라 문제가 안 보였다.)
+#
+#   ★타임아웃을 늘리는 것은 답이 아니다.★ 크론이 6시간마다 도므로 지금도 하루 4 GPU-시간을
+#   쓴다(T4). 3시간으로 늘리면 청구가 그만큼 느다. 표본은 앞으로도 계속 늘어난다.
+#   → ★예산 안에서 끝나게 하고, 못 한 것을 다음 회차가 먼저 하게 한다.★
+#     · 남은 시간이 그 단계의 예상 소요보다 적으면 ★건너뛴다★ (죽지 않는다).
+#     · 무엇을 건너뛰었는지를 반환값과 로그에 남긴다 — 조용한 결손을 만들지 않는다.
+#     · 다음 회차는 ★건너뛴 단계부터★ 돌다(회전). 그래서 어떤 단계도 굶지 않는다.
+#     · 예상 소요는 ★실측을 적립★ 한다(modal.Dict). 처음엔 기본값, 돌수록 정확해진다.
+JOB_TIMEOUT_S = 3600
+JOB_MARGIN_S = 300          # 마무리·업로드·정리 여유 — 이만큼 남기고 새 단계를 시작하지 않는다
+# 단계별 예상 소요(초) 기본값 — 위 실측에서 왔고, 실측이 쌓이면 그 값으로 대체된다.
+STAGE_COST_DEFAULT = {"gbdt": 600, "boosters": 220, "markets": 450,
+                      "mind": 900, "scalp": 300, "seq": 900, "memo": 600}
+
+
+def _rotate_plan(names, rotate_from):
+    """지난 회차가 예산에 끊긴 단계부터 시작하도록 목록을 회전한다.
+
+    회전이 없으면 예산이 모자란 뒤쪽 단계가 ★매 회차 같은 자리에서 잘려 영원히 안 돌다.★
+    실측에서 MIND 이후(단타·SEQ·MEMO)가 정확히 그 상태였다.
+    rotate_from 이 없거나 목록에 없으면 원래 순서 그대로."""
+    names = list(names)
+    if rotate_from in names:
+        k = names.index(rotate_from)
+        return names[k:] + names[:k]
+    return names
+
+
+def _stage_fits(left_s, need_s):
+    """남은 예산으로 이 단계를 시작해도 되는가. 모자라면 ★죽지 말고 건너뛴다.★"""
+    try:
+        return float(left_s) >= float(need_s)
+    except Exception:
+        return False
+
+
+def _next_cost(prev_s, observed_s):
+    """다음 회차의 예상 소요 — 관측에 20% 여유. 추측이 아니라 실측을 적립한다."""
+    try:
+        return int(max(30, float(observed_s) * 1.2))
+    except Exception:
+        return int(prev_s or 600)
+
+
+def _trainer_state():
+    """회차 간에 남길 상태(회전 커서·단계 실측). 못 쓰면 None — 그때는 회전 없이 기본 순서."""
+    try:
+        return modal.Dict.from_name("lux-trainer-state", create_if_missing=True)
+    except Exception as e:
+        print("   상태 저장소 없음(회전·실측 비활성):", e)
+        return None
+
+
 @app.function(
     image=image,
     secrets=[modal.Secret.from_name("lux-dnn")],  # BASE_URL, TRAIN_KEY
     schedule=CRON,
-    timeout=3600,
+    timeout=JOB_TIMEOUT_S,
     gpu="T4",  # GPU 가속(20분→~2분). 12h마다 2분이라 월 크레딧 $1 수준(무료 $30 내).
 )
 def train_job(epochs: int = EPOCHS_DEFAULT, dry: bool = False,
@@ -56,6 +122,47 @@ def train_job(epochs: int = EPOCHS_DEFAULT, dry: bool = False,
     HDR = {"x-train-key": KEY}
     if target not in ("all", "dnn", "seq", "mind", "memo", "boosters", "markets", "scalp"):
         raise ValueError("unknown training target")
+
+    # [V33.350] 예산 시계 — 이 함수가 시작한 시각이 기준이다(모듈 로드 시각이 아니다).
+    _T0 = time.time()
+    _DEADLINE = _T0 + JOB_TIMEOUT_S - JOB_MARGIN_S
+
+    def _left():
+        return _DEADLINE - time.time()
+
+    _store = _trainer_state()
+    _costs = dict(STAGE_COST_DEFAULT)
+    _rot0 = None
+    if _store is not None:
+        try:
+            _costs.update({k: v for k, v in (_store.get("stage_cost") or {}).items() if v and v > 0})
+        except Exception:
+            pass
+        try:
+            _rot0 = _store.get("rotate_from")
+        except Exception:
+            _rot0 = None
+    _ran, _skipped = [], []
+
+    def _stage(name, fn):
+        # 예산이 남아 있을 때만 돌린다. 못 돌리면 건너뛴 것을 기록한다.
+        # 죽는 것과 건너뛰는 것은 다르다 — 죽으면 그때까지의 성공까지 실패로 뭻히고
+        # 뒤 단계가 영원히 안 돈다. 건너뛰면 다음 회차가 그것부터 한다.
+        need = _costs.get(name, 600)
+        if not _stage_fits(_left(), need):
+            _skipped.append(name)
+            print(f"   ⏭ {name} 생략 — 남은 예산 {_left():.0f}s < 예상 {need:.0f}s (다음 회차가 먼저 한다)")
+            return
+        t_s = time.time()
+        try:
+            fn()
+        except Exception as e:
+            print(f"   {name} 예외(무시):", e)
+        el = time.time() - t_s
+        _ran.append(name)
+        # 실측을 적립한다 — 다음 회차의 예상치가 추측이 아니라 관측이 된다(여유 20%).
+        _costs[name] = _next_cost(_costs.get(name), el)
+        print(f"   · {name} {el:.0f}s · 남은 예산 {_left():.0f}s")
 
     # ── 1) 표본 내려받기 ──
     def fetch_all():
@@ -269,25 +376,41 @@ def train_job(epochs: int = EPOCHS_DEFAULT, dry: bool = False,
     else:
         UNIQ = _uniq_weights(TS, SYM, _hor_d * 86400000.0)
     print(f"   표본 고유도: 평균 {UNIQ.mean():.3f} · 유효 {UNIQ.sum():.0f}/{N} (라벨지평 {_hor_d:.0f}일, 종목 {_nsym}개)")
+    # ══ [V33.350] ★후속 학습 단계를 ★한 곳에서만★ 정의한다.★ ═══════════════════════
+    #   종전엔 같은 단계가 두 벌로 적혀 있었다 — target 별 복구 경로(V33.349)와 target="all"
+    #   본 경로. MIND 의 하이퍼파라미터가 두 곳에 그대로 복사돼 있어, 한쪽만 고치면 조용히
+    #   갈라진다(이 저장소가 세션 창·라벨 공급자에서 이미 겪은 그 모양이다).
+    #   여기서 한 번 만들고 두 경로가 같은 것을 쓴다.
+    _PLAN = [
+        ("gbdt", lambda: _train_and_upload_gbdt(BASE, KEY, HDR, X, Y, TS, featver, D, UNIQ)),
+        ("boosters", lambda: _train_and_upload_boosters(BASE, KEY, HDR, X, Y, TS, featver, D, PNL, UNIQ)),
+        # [V33.76] ★미국장·한국장 분리학습★ (사용자 지시) — 거래시간·상하한가·세금·투자자구성이
+        #   전부 달라 조건부가 아니라 별도 모델이 맞다. 표본이 충분한 시장만 올린다.
+        ("markets", lambda: _train_per_market(BASE, KEY, HDR, MKT, X, Y, TS, PNL, featver, D, UNIQ)),
+        # [V33.249] 위원장(MIND) — FM 47.9% 에서 ★트리★ 로 교체. gbdt 의 사본이 되면 안 되므로
+        #   더 깊고(6) 더 느리게(0.02) 더 적게 뽑아(0.7) 다른 시드로 — 같은 학습기, 다른 관점.
+        ("mind", lambda: _train_and_upload_gbdt(
+            BASE, KEY, HDR, X, Y, TS, featver, D, UNIQ,
+            endpoint="/api/mind-import", tag="MIND(tree)",
+            hp={"eta": 0.02, "depth": 6, "sub": 0.7, "col": 0.7,
+                "trees": 800, "minchild": 8.0, "seed": 77003, "algo": "gbdt-deep"})),
+        # [V33.41] 장중 단타 — 표본 소스·라벨 지평·업로드 슬롯이 전부 위원회와 분리돼 있다.
+        ("scalp", lambda: _train_and_upload_scalp(BASE, KEY, HDR, featver)),
+        # [V33.267] SEQ(Transformer) — 같은 종목의 최근 L 봉을 순서대로 보는 유일한 위원.
+        ("seq", lambda: _train_and_upload_seq(BASE, KEY, HDR, X, Y, TS, SYM, featver, D, UNIQ, cfg)),
+        # [V33.305] MEMO(원형 기억) — 워커 CPU 에서 가장 무거웠던 학습. 여기선 창 제약이 없다.
+        ("memo", lambda: _train_and_upload_memo(BASE, KEY, HDR, X, Y, TS, PNL, featver, D,
+                                                featnames=featnames, cfg=cfg, SYM=SYM)),
+    ]
+    _PLAN_BY = dict(_PLAN)
     # Codex V33.349: recover a timed-out tail stage without paying for DNN again.
     # Keep the existing one-hour resource limit and native schedule unchanged.
+    # [V33.350] 정의는 위 _PLAN 한 곳에서만 — 여기서 다시 적지 않는다.
     if target not in ("all", "dnn"):
         if dry: return {"ok": True, "dry": True, "target": target, "n": N}
-        if target == "seq":
-            _train_and_upload_seq(BASE, KEY, HDR, X, Y, TS, SYM, featver, D, UNIQ, cfg)
-        elif target == "mind":
-            _train_and_upload_gbdt(BASE, KEY, HDR, X, Y, TS, featver, D, UNIQ,
-                endpoint="/api/mind-import", tag="MIND(tree)",
-                hp={"eta":0.02,"depth":6,"sub":0.7,"col":0.7,"trees":800,"minchild":8.0,"seed":77003,"algo":"gbdt-deep"})
-        elif target == "memo":
-            _train_and_upload_memo(BASE, KEY, HDR, X, Y, TS, PNL, featver, D, featnames=featnames, cfg=cfg, SYM=SYM)
-        elif target == "boosters":
-            _train_and_upload_boosters(BASE, KEY, HDR, X, Y, TS, featver, D, PNL, UNIQ)
-        elif target == "markets":
-            _train_per_market(BASE, KEY, HDR, MKT, X, Y, TS, PNL, featver, D, UNIQ)
-        elif target == "scalp":
-            _train_and_upload_scalp(BASE, KEY, HDR, featver)
-        return {"ok": True, "target": target, "note": "inspect individual upload/admission results"}
+        _stage(target, _PLAN_BY[target])
+        return {"ok": True, "target": target, "ran": _ran, "skipped": _skipped,
+                "note": "inspect individual upload/admission results"}
     mw = np.clip(absp / pnl_scale, 0.3, 3.0) * np.where(HV > 0, hv_w, live_w) * recency * UNIQ
     print(f"   출처 가중: 수확 ×{hv_w} · 실거래 ×{live_w} (수확 {int((HV > 0).sum())} · 실거래 {int((HV <= 0).sum())}건)")
 
@@ -392,7 +515,19 @@ def train_job(epochs: int = EPOCHS_DEFAULT, dry: bool = False,
             return net
 
         nets = []
+        _seed_t0 = time.time()
         for sd in range(K):
+            # [V33.350] ★시드를 하나 더 돌릴 예산이 없으면 거기서 멈춘다 — 죽지 않는다.★
+            #   실측에서 DNN 6시드가 32분 30초(예산의 54%)를 먹었고, 표본은 계속 는다.
+            #   예산을 넘기면 Modal 이 작업을 죽여 앙상블이 통째로 사라지고 뒤 단계도 다 날아간다.
+            #   시드가 하나 적은 앙상블은 조금 더 시끄러울 뿐 여전히 쓸 수 있다 —
+            #   ★모자란 앙상블이 없는 앙상블보다 낫다.★ 몇 개로 돌았는지는 seeds 로 올라간다.
+            if sd > 0 and nets:
+                _per = (time.time() - _seed_t0) / sd
+                if not _stage_fits(_left(), _per * 1.15 + 240):   # 다음 시드 + 업로드/커밋 여유
+                    print(f"  ⏭ 시드 {sd+1}/{K} 이후 생략 — 남은 예산 {_left():.0f}s "
+                          f"< 시드당 {_per:.0f}s (앙상블 {len(nets)}개로 진행)")
+                    break
             t0 = time.time(); nets.append(one_seed(1000 + sd * 7))
             print(f"  {tag + ' ' if tag else ''}시드 {sd+1}/{K} ({time.time()-t0:.1f}s)")
 
@@ -453,7 +588,11 @@ def train_job(epochs: int = EPOCHS_DEFAULT, dry: bool = False,
             n_eval = len(p_t)
             _p_ic, _y_ic = p_t, ys_t          # [V33.262] IC 도 ★같은 정직한 구간★ 으로 잰다
             _m_ic = _mk_va[half:] if _mk_va is not None else None   # [V33.291] 같은 구간의 시장
-            print(f"   캘리브레이션: τ*={tau:.3f} (logit 시프트 {delta:+.3f}) — 검증 전반 {half}건으로 선택, 후반 {n_eval}건으로 평가")
+            # [V33.350] 문구 정정 — half=0 이면 τ* 는 검증이 아니라 ★보정(cal) 구간★ 에서 골랐다.
+            #   종전 문장은 그때도 "검증 전반 0건으로 선택" 이라고 적어, 읽는 사람이
+            #   "아무 데서도 안 골랐다" 로 읽게 만들었다(V33.341 이 τ* 를 학습 꼬리로 옮긴 뒤부터).
+            _tau_src = (f"보정구간 {len(ps_c)}건" if half == 0 else f"검증 전반 {half}건")
+            print(f"   캘리브레이션: τ*={tau:.3f} (logit 시프트 {delta:+.3f}) — {_tau_src}에서 선택, 검증 {n_eval}건으로 평가")
         else:
             acc = float(((ps >= 0.5) == (ys > 0.5)).mean()); n_eval = len(ps)
             _p_ic, _y_ic = ps, ys
@@ -498,6 +637,12 @@ def train_job(epochs: int = EPOCHS_DEFAULT, dry: bool = False,
         _icf = _ic_block_fields(_p_ic, _y_ic, mkt=_m_ic)   # [V33.291] 시장 고정효과 제거
         out = {"nets": nets, "acc": acc, "lb": lb, "n_eval": n_eval, "dims": list(dims),
                "auc": auc, "base": base, "majority": majority,
+               # [V33.350] ★고유도 가중을 여기 실어 보낸다.★ 업로드부가 _dnn_uw 를 직접
+               #   참조했는데 그건 이 함수의 지역변수라 매 회차 NameError 가 났다
+               #   (실측 로그: "고유도 필드 생략: name '_dnn_uw' is not defined").
+               #   그래서 valNEff·valUniq 가 한 번도 워커에 안 올라갔다 — 워커는 유효표본을
+               #   모른 채 명목 valN(21만)만 받았다. 하한을 스스로 다시 재려면 그 값이 있어야 한다.
+               "uw": _dnn_uw,
                "params": int(sum(dims[i] * dims[i+1] + dims[i+1] for i in range(len(dims)-1)))}
         out.update(_icf)
         if "valICt" in out:
@@ -675,7 +820,7 @@ def train_job(epochs: int = EPOCHS_DEFAULT, dry: bool = False,
         if _k in _fin:
             _dnn_meta[_k] = _fin[_k]
     try:
-        _dnn_meta.update(_uniq_fields(_dnn_uw))
+        _dnn_meta.update(_uniq_fields(_fin["uw"]))   # [V33.350] 지역변수 참조 → 반환값 참조
     except Exception as _e:
         print("   고유도 필드 생략:", _e)
     _post({"key": KEY, "stage": "begin"}, _dnn_meta, "begin", retries=3)
@@ -689,81 +834,34 @@ def train_job(epochs: int = EPOCHS_DEFAULT, dry: bool = False,
     if target == "dnn": return {"ok": True, "target": target, "trust": res.get("trust")}
     # [V32.7] GBDT도 외부학습해 섀도우 업로드(같은 표본 재사용 — 추가 export 부하 0). 실패해도 DNN 결과엔 무영향.
     if not dry:
-        print("⑤ GBDT 외부학습(섀도우)")
-        try:
-            _train_and_upload_gbdt(BASE, KEY, HDR, X, Y, TS, featver, D, UNIQ)
-        except Exception as e:
-            print("GBDT 학습/업로드 예외(무시):", e)
-        print("⑥ 부스팅 3종(XGB·LGB·CatBoost) 외부학습(섀도우)")
-        try:
-            _train_and_upload_boosters(BASE, KEY, HDR, X, Y, TS, featver, D, PNL, UNIQ)
-        except Exception as e:
-            print("부스팅 학습/업로드 예외(무시):", e)
-        # [V33.76] ★미국장·한국장 분리학습★ (사용자 지시)
-        #   종전엔 두 시장 표본을 한 모델에 뭉쳐 학습했다. 피처에 mktUS/mktKR 원핫이 있긴 하나
-        #   depth4 얕은 트리가 65개 피처 위에서 시장별 상호작용을 잡아내기는 사실상 불가능하다.
-        #   두 시장은 거래시간·상하한가·세금·투자자구성·변동성 구조가 전부 다르므로 조건부가 아니라
-        #   아예 별도 모델이 맞다. 표본이 충분한 시장만 전용 모델을 올리고, 부족하면 통합 모델을
-        #   그대로 쓴다(워커가 <이름>_<시장> → <이름> 순으로 폴백).
-        try:
-            _train_per_market(BASE, KEY, HDR, MKT, X, Y, TS, PNL, featver, D, UNIQ)
-        except Exception as e:
-            print("시장별 분리학습 예외(무시):", e)
-        # ── [V33.249] ⑦ 위원장(MIND) — FM 에서 ★트리★ 로 교체 ──────────────────
-        #   실측(2026-08-25, 표본 518,004): FM 은 GPU 완전수렴(K=8 · 시드 6 · 검증 51,800행
-        #   · 유효 3,555)에서도 valAcc 47.9% / 하한 46.6% 로 trustFloor(50.5%)를 못 넘었다.
-        #   같은 표본 같은 날 트리들은 53.5~54.2%(IC t 2.5~4.7)다. CPU·수렴 문제가 아니라
-        #   ★모델 형태가 이 과제에 안 맞는 것★ 이다. 위원장 자리는 두고 내용물을 바꾼다.
+        # [V33.350] ★뒤쪽 단계를 목록으로 만들고 예산 안에서 회전시킨다.★
+        #   종전엔 이 자리가 try/except 로 줄줄이 늘어서 있었고, 예산이 끝나면 Modal 이
+        #   그 지점에서 작업을 ★죽였다★. 그러면 (1) 앞서 성공한 업로드까지 '실패한 실행' 으로
+        #   뭻히고 (2) 뒤 단계는 매 회차 같은 자리에서 잘려 ★영원히 한 번도 안 돈다.★
+        #   실측에서 MIND 이후(단타·SEQ·MEMO·STACK 경계)가 정확히 그 상태였다.
         #
-        #   ★gbdt_model 의 사본이 되면 안 된다.★ 같은 설정·같은 시드면 위원회에 같은 의견이
-        #   두 표 들어가고, 결합의 전제인 다양성이 사라진다. 더 깊고(6) 더 느리게(0.02)
-        #   더 적게 뽑아(sub/col 0.7) 다른 시드로 돌린다 — 같은 학습기, 다른 관점.
-        print("⑦ MIND(위원장) 외부학습 — 트리 앙상블 (V33.249: FM 47.9% → 트리로 교체)")
-        try:
-            _train_and_upload_gbdt(BASE, KEY, HDR, X, Y, TS, featver, D, UNIQ,
-                                   endpoint="/api/mind-import", tag="MIND(tree)",
-                                   hp={"eta": 0.02, "depth": 6, "sub": 0.7, "col": 0.7,
-                                       "trees": 800, "minchild": 8.0, "seed": 77003,
-                                       "algo": "gbdt-deep"})
-        except Exception as e:
-            print("MIND(트리) 학습/업로드 예외(무시):", e)
-        # FM 은 더 이상 위원장 슬롯을 차지하지 않는다. 참고 지표로도 남기지 않는다 —
-        # 47.9% 짜리를 매일 2분씩 GPU 로 다시 확인할 이유가 없다(필요하면 이 줄을 되살린다).
-        # [V33.41] 장중 단타 모델 — 표본 소스·라벨 지평·업로드 슬롯이 전부 위원회와 분리돼 있어
-        #   여기서 실패해도 위 스윙 모델들에는 영향이 없다(그래서 맨 마지막에, 예외도 삼킨다).
-        try:
-            _train_and_upload_scalp(BASE, KEY, HDR, featver)
-        except Exception as e:
-            print("단타 학습/업로드 예외(무시):", e)
-        # ── [V33.267] ⑨ SEQ(Transformer) — DNN 승급 요청의 결과물 ────────────────
-        #   위 모델들은 전부 "한 시점의 벡터 하나" 만 본다. 이것만 같은 종목의 최근 L 봉을
-        #   순서대로 본다 — 정보가 며칠에 걸쳐 스며드는 구간(FOMC 전후·OpEx 주간)을 볼 수 있는
-        #   유일한 위원이다. 표본은 위와 ★같은 것을 재사용★ 하므로 export 부하가 0 이고,
-        #   여기서 실패해도 위 모델들에는 영향이 없다(그래서 맨 뒤에서, 예외를 삼킨다).
-        print("⑨ SEQ(Transformer) 외부학습")
-        try:
-            _train_and_upload_seq(BASE, KEY, HDR, X, Y, TS, SYM, featver, D, UNIQ, cfg)
-        except Exception as e:
-            print("SEQ 학습/업로드 예외(무시):", e)
-        # ── [V33.305] ⑩ MEMO(원형 기억) — 워커 CPU 에서 가장 무거웠던 학습 ─────────
-        #   워커 야간은 k-means 를 14억 회 돌아야 해서 창을 24,000행(67일)으로 묶을 수밖에
-        #   없었다. 여기서는 그 제약이 없다 — 표본을 훨씬 크게 잡고, 워커 예산은 그만큼 빈다.
-        #   표본은 위와 ★같은 것을 재사용★ 하므로 export 부하가 0 이고, 실패해도 위 모델들에
-        #   영향이 없다(그래서 뒤에서, 예외를 삼킨다).
-        print("⑩ MEMO(원형 기억) 외부학습")
-        try:
-            _train_and_upload_memo(BASE, KEY, HDR, X, Y, TS, PNL, featver, D,
-                                   featnames=featnames, cfg=cfg, SYM=SYM)
-        except Exception as e:
-            print("MEMO 학습/업로드 예외(무시):", e)
+        #   단계들은 서로 독립이다 — 각자 자기 모델을 따로 업로드하고, 위 DNN 결과에도
+        #   서로에게도 영향을 주지 않는다(그래서 원래도 예외를 삼켰다). 순서를 바꿔도 된다.
+        #   → 남은 예산이 모자라면 건너뛰고, ★다음 회차는 건너뛴 그 단계부터★ 시작한다.
+        #     크론이 6시간마다 도니 하루면 모든 단계가 제 차례를 받는다.
+        #   ※ STACK 경계 통지는 회전에 넣지 않는다 — 한 줄 POST 라 비용이 없고,
+        #     이 회차가 무엇을 학습했든 홀드아웃 경계는 같기 때문이다.
+        _plan = list(_PLAN)
+        _byname = dict(_plan)
+        _order = _rotate_plan([n for n, _ in _plan], _rot0)
+        if _order and _order[0] != _plan[0][0]:
+            print(f"⑤~⑩ 회전 — 지난 회차가 '{_rot0}' 에서 예산이 끊겼다. 거기부터 시작한다.")
+        _plan = [(n, _byname[n]) for n in _order]
+        print(f"⑤~⑩ 후속 학습 {len(_plan)}단계 · 남은 예산 {_left():.0f}s "
+              f"(예상 합계 {sum(_costs.get(n, 600) for n, _ in _plan)}s)")
+        for _nm, _fn in _plan:
+            _stage(_nm, _fn)
+
         # ── [V33.205] 홀드아웃 경계를 워커에 알린다 ─────────────────────────────
-        #   위 모델들(DNN·GBDT·부스터·MIND)은 전부 ★시간순 뒤쪽 20%★ 를 홀드아웃으로 떼고
-        #   퍼지·엠바고를 건 뒤 앞쪽만으로 학습한다. 즉 방금 업로드한 모델들은 그 구간을
-        #   ★학습한 적이 없다★ — 그 구간을 워커가 지금 모델로 채점하면 그게 out-of-fold 예측이고,
-        #   스태킹(STACK)이 요구하는 값이 정확히 그것이다.
-        #   STACK 은 지금 "전문가가 학습한 적 없는 행" 을 하루치씩만 얻어(≈27건/일) 47.7일 동안
-        #   1,275건밖에 못 모았다. 이 경계 하나면 그 구간이 통째로 열린다 — 추가 GPU 비용 0.
-        #   ★모델이 아니라 경계 시각 하나만 보낸다★ (수십 MB 업로드가 아니라 한 줄이다).
+        #   위 모델들은 전부 ★시간순 뒤쪽 20%★ 를 홀드아웃으로 떼고 퍼지·엠바고를 건 뒤
+        #   앞쪽만으로 학습한다. 즉 방금 올린 모델들은 그 구간을 ★학습한 적이 없다★ —
+        #   워커가 지금 모델로 그 구간을 채점하면 그게 out-of-fold 예측이고, STACK 이
+        #   요구하는 값이 정확히 그것이다. ★모델이 아니라 경계 시각 하나만 보낸다.★
         try:
             _oof_min_ts = int(TS[N - n_val])          # 홀드아웃 첫 표본의 관측 시각
             _r = requests.post(BASE + "/api/stack-oof-window", params={"key": KEY}, headers=HDR,
@@ -772,13 +870,29 @@ def train_job(epochs: int = EPOCHS_DEFAULT, dry: bool = False,
                                                 "models": ["dnn", "gbdt", "boost", "mind"]}),
                                timeout=60)
             if _r.status_code == 200:
-                print(f"⑨ STACK 홀드아웃 경계 통지 — minTs={_oof_min_ts} ({int(n_val)}건)")
+                print(f"⑪ STACK 홀드아웃 경계 통지 — minTs={_oof_min_ts} ({int(n_val)}건)")
             else:
                 # 409 = 경계를 과거로 되돌리려 함(워커가 막는다). 실패해도 학습 결과엔 영향 없다.
-                print(f"⑨ STACK 경계 통지 실패 {_r.status_code}: {_r.text[:200]}")
+                print(f"⑪ STACK 경계 통지 실패 {_r.status_code}: {_r.text[:200]}")
         except Exception as e:
-            print("STACK 경계 통지 예외(무시):", e)
-    return {"ok": True, "valAcc": acc, "trust": res.get("trust"), "depthSweep": sweep_note}
+            print("⑪ STACK 경계 통지 예외(무시):", e)
+
+        # ── 회차 마무리 — 무엇을 했고 무엇을 못 했는지 ★남긴다★ ──
+        if _skipped:
+            print(f"⚠️ 예산으로 생략 {len(_skipped)}단계: {', '.join(_skipped)} "
+                  f"— 다음 회차가 '{_skipped[0]}' 부터 시작한다")
+        else:
+            print(f"✅ 후속 학습 전 단계 완주({len(_ran)}단계) · 남은 예산 {_left():.0f}s")
+        if _store is not None:
+            try:
+                _store["stage_cost"] = _costs
+                _store["rotate_from"] = _skipped[0] if _skipped else None
+                _store["last_run"] = {"ts": int(time.time()), "ran": _ran, "skipped": _skipped,
+                                      "elapsed": int(time.time() - _T0), "n": int(N)}
+            except Exception as e:
+                print("   상태 저장 실패(다음 회차는 기본 순서):", e)
+    return {"ok": True, "valAcc": acc, "trust": res.get("trust"), "depthSweep": sweep_note,
+            "ran": _ran, "skipped": _skipped, "elapsed": int(time.time() - _T0)}
 
 
 # ============================================================================

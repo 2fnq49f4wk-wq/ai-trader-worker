@@ -246,6 +246,11 @@ jobs:
       #   미국 섹터 ETF 12종이 NAME_MAP·MCAP_RANK 에서 빠진 채로 있었다.
       - name: Universe three-place sync check
         run: node tools/check-universe-sync.mjs
+      # [V33.350] Modal 학습 예산 — 작업이 timeout 으로 죽어 뒤쪽 단계(MIND 이후)가
+      #   ★한 번도 안 돌고★ 있었고, 앞서 성공한 업로드까지 실패한 실행으로 묻혔다.
+      #   파이썬 헬퍼를 실제로 실행해 회전이 굶주림을 없애는지 시뮬레이션으로 확인한다.
+      - name: Trainer budget and rotation check
+        run: node tools/check-trainer-budget.mjs
       # [V33.140] 전진검증 누적 원장 — 창이 매일 밤 리셋돼 ★구조적으로★ 못 채워지던 것을 고쳤다.
       #   (memo: 총표본 177,868 인데 전진 357 = 어제 유입과 정확히 일치)
       #   교착 해소와 통계 정직성을 함께 본다: 잡음 통과율이 문턱의 명목값과 맞는지,

@@ -12,120 +12,39 @@
 
 ## Current handoff
 
-### Codex active continuation — V33.349
+- Status: **V33.350 — Modal 학습이 예산을 넘겨 죽던 것을 고쳤다.** 게이트 109종 전부 통과.
+- Branch: `main`
+- 사용자 보고(2026-09-13): "github에 modal 학습 push전부다 실패하고 있던데 그것도 수정해"
 
-- Verified follow-up 2026-09-12: implementation b46024e; Worker deployment34665917663 and Modal deployment34665917673 completed successfully. SEQ-only training34665970392 remains in progress; do not dispatch a duplicate or claim admission. Live `/api/ai/selfcheck` at ts1789178072819 returns latest feat17 rejected-shadow receipts: XGB/LGB/CAT block-IC t1.18/1.38/1.19 below1.65. Their active feat15 warnings do not mean the new training failed to upload. MIND remains31h old. No data migration or deletion performed; B-8 approval remains pending.
-- Owner: Codex. Branch main. Base0de29e6 (Claude V33.348a), fast-forwarded nine commits while preserving own pending quote patch in stash. Only build-tag conflicts were resolved; all Claude changes retained. Stash remains as backup.
-- User expanded scope to all Claude findings; read all `docs/OPEN-DEFECTS.md`. Status: ongoing, not all findings fixed.
-- Current patch: shared final extended-entry guards (A-1), quote write provenance, fail-closed purchase risk check(E-2), SEQ embargo(B-2), latest rejected-shadow receipt reporting/recovery(B-1), export schema pinning, full-reset deposit keys(E-3). Build V33.349.
-- Added Modal target selection for bounded tail-stage recovery without rerunning DNN; one-hour timeout/cron unchanged. No new training dispatch since run34542208755. A corrected SEQ targeted run is next after deploy, subject to concurrent-run check.
-- Baseline/current-other gates108 checked; two SEQ extraction assertions required matching the new indexed semantics and now pass. Real preprocessing/guard/risk-failure regression passes. Final full-suite/deploy verification follows this checkpoint.
-- 2026-09-12 continuation: final all108 check-*.mjs PASS, git diff --check clean, fetched origin with no intervening commits. V33.349 ready for main deployment; unresolved findings remain as listed.
-- Training run34542208755 uploaded feat17 XGB/LGB/CAT rejected shadows, then timed out at3600s during MIND. DNN latest LB0.497 below threshold. No claim of recovered live booster admission, SEQ/MEMO completion, or profit gain. Runtime V33.346 deployment34542166448 succeeded.
-- B-8: user asked whether to preserve old data and rebuild new version despite temporary reduced AI participation; decision pending. Do not delete samples/ledger or silently weaken stale-quote/profitability gates.
-- Remaining list and primary-source SPCX verification are at top of OPEN-DEFECTS. Continue there after this checkpoint; no additional parallel agent work permitted.
+### B-9(치명) — 학습이 timeout 으로 죽고, MIND 뒤 단계가 ★한 번도 안 돌고 있었다★
 
-- Status: **V33.348 — 데이터·원장·D1 부하 고침 6건 + 게이트 5종 신설.** 게이트 108종 전부 통과.
-  `node --check` 통과. 실운영 확인이 남아 있다(아래 "배포 뒤 볼 것").
-- Branch: `main` (CLAUDE.md 지시대로 main 직접 작업)
-- 사용자 지시(2026-09-11): "문제 더 찾아서 정리해라 데이터 문제 없는지 확인해서 더 수정해라
-  오버로드 걸리는 문제 더 찾아서 그리고 지금까지 나온것중 원인 확실하고 고칠 수 있는건 고쳐봐
-  고친건 고쳤다고 쓰는데 그래도 한번더 확인하라고 적어"
+GitHub Actions run #114 실측(표본 1,053,656 · 예산 3600s):
+`① 수집 4:54 → ② DNN 6시드 32:30(예산의 54%) → ⑤ GBDT 8:51 → ⑥ 부스터 2:23 →
+시장별 5:58 → ⑦ MIND 4:51 지점에서 FunctionTimeoutError`.
+그 뒤의 **단타·SEQ·MEMO·STACK 경계 통지는 매 회차 같은 자리에서 잘려 한 번도 실행되지 않았다.**
+그리고 죽기 전에 성공한 GBDT·부스터·US/KR 업로드까지 "실패한 실행" 으로 묻혔다
+(dispatch 실행 #107·108·109·112·113·114 전부 같은 모양. push 실행은 deploy 만 해서 초록이었다).
 
-### V33.348 에서 고친 것 (전부 docs/OPEN-DEFECTS.md 에 근거·검증 방법과 함께 있다)
+고침 — **타임아웃은 안 늘렸다**(크론 6시간 × 1시간 = 하루 4 GPU-시간. 늘리면 청구만 는다):
+- `_stage` 예산 관문 — 남은 시간이 예상보다 적으면 죽지 말고 건너뛰고 **기록**
+- `_rotate_plan` 회전 — 다음 회차는 **건너뛴 단계부터**. 시뮬레이션으로 굶주림 0 확인
+  (회전 없음: markets·mind·seq·memo 가 6회차 동안 **0번**)
+- `_next_cost` 실측 적립(`modal.Dict`) · 시드 단위 가드(모자란 앙상블 > 없는 앙상블)
+- 단계 정의를 `_PLAN` 한 곳으로 — target 복구 경로와 본 경로에 MIND 설정이 복사돼 있었다
+- 워크플로가 `$GITHUB_STEP_SUMMARY` 에 실행/생략 단계를 올린다
 
-| 항목 | 요지 | 게이트 |
-|---|---|---|
-| **D-3 치명** | `__d1Attempt` 가 "network connection lost"·"storage operation exceeded timeout" 에서도 재시도하는데 그 둘은 ★결과를 모르는 실패★ 다. 매도는 조건부 INSERT 라 안전했고 **매수만 맨 INSERT** → 중복 행 하나가 곧 매수대금 이중차감(현금은 원장 파생). 자연키 조건부 INSERT 로 고침 | `check-ledger-idempotent` |
-| **D-2 중** | 한국 매도세가 연도 구분 없는 0.18% 고정. 실제는 2024 0.18 / 2025 0.15 / 2026 0.20. 연도별 표 + 체결 연도(**KST**)로 선택 | `check-kr-selltax` |
-| **C-3 중** | FLOW 일봉 전량(수 MB)을 **매 사이클·매 시장** 캐시 없이 읽고 파싱 → 쓰는 건 70봉뿐. V12.131 이 450줄 위 같은 쿼리에 이미 붙인 처방을 여기에도 적용 | `check-daily-bulk-cache` |
-| **C-4 중** | export `total` COUNT 를 페이지마다 재실행(학습 1회당 98만 행 ×50여 회) · `k LIKE 'daily:%'` 가 state 전체 스캔(쿼리계획으로 확인) | `check-daily-bulk-cache` |
-| **B-7 중** | 반사실 라벨 공급자가 `entryTs` 를 **받아 놓고 안 씀** → 라벨 창이 "최근 n봉". 수확은 `i+1..i+h` 로 정확했으니 두 라벨이 다른 자를 썼다. `days`+`_altBarIdx` 로 진입 정렬, 이중 슬라이스 제거, `misaligned` 폐기 경로 삭제 | `check-cf-label-align` |
-| **F-1·F-4 소** | 미국 섹터 ETF 12종이 `NAME_MAP`·`MCAP_RANK` 에서 누락(CLAUDE.md 세 곳 규칙 위반). 추가 + 규칙 게이트 신설 | `check-universe-sync` |
-| **B-8 치명** | 수확 표본 `ts` 가 가짜 달력 → **코드는 고쳤으나 실효는 재수확(featVer 상향) 때**. 98만 표본이 무효가 되는 대가라 시점은 사람이 정한다 | (없음 — 재수확 때 함께) |
+같이 잡힌 것: `고유도 필드 생략: name '_dnn_uw' is not defined` — 업로드부가 학습 함수의
+지역변수를 참조해 **`valNEff`·`valUniq` 가 한 번도 워커에 안 올라갔다**(응답 `valUniq: null`).
+캘리브레이션 로그 문구도 정정(τ* 출처가 검증이 아니라 보정구간인데 "검증 전반 0건" 이라 찍혔다).
 
-새 게이트 5종은 전부 ★돌연변이 검사★ 를 통과했다(되돌리거나 반대로 과하게 밀면 실패).
-`check-cf-label-align` 은 처음에 `days` 가드 돌연변이를 못 잡아, 대조군을 넣어 고쳤다.
-
-### 배포 뒤 볼 것 (★고쳤다고 적었지만 한 번 더 확인★)
-1. **과거 원장의 중복 행** — `SELECT ts,market,symbol,side,qty,price,COUNT(*) c FROM trades
-   GROUP BY 1,2,3,4,5,6 HAVING c>1;` 나오면 현금이 그만큼 잘못 파생돼 있다(D-3).
-2. **사이클 시간·`[EVAL-COST]` 의 `기타` 잔차**가 줄었는지 — C-1 의 미해명 잔차 일부가 C-3 였을 수 있다.
-3. **`[CF] 반사실 라벨링 N건 편입`** 의 N — 늘어야 정상(버려지던 후보가 살아난다).
-4. **다음 Modal 학습 때 `export 5xx` 재시도 로그**가 사라졌는지(C-4).
-5. **부스터 재학습 결과** — XGB/LGB/CAT 이 featVer 17 인지(B-1, 여전히 미확인).
-- Owner: Codex
-- Branch: main (direct main authorized; no PR)
-- Last commit: this V33.346 implementation commit (resolve with git log -1); base 549dde6 / runtime e7d1b5a V33.345.
-- Base: f8251c4 / V33.328, fetched and fast-forwarded before edits; no concurrent upstream changes at final fetch.
-- Scope: 사용자 상태파일 기반 AI/피처 오류 수정 및 시간외 거래·정보 정확성 점검. UI 변경 없음.
-
-### Codex V33.346 — 2026-09-11
-
-- See `docs/CODEX-AI-AUDIT-V33.346.md` for evidence and limitations.
-- Fixed global/per-market embargo weight misalignment (reproduced 3900 rows vs 4000 weights), all-required-model recovery, KR real trade timestamp provenance/NXT execution boundaries, Yahoo v7 active-session timestamps and cached timestamp inheritance.
-- Preserved existing model/risk gates, architecture, bindings, schedules and orders. Weak holdout candidates remain excluded; no profitability claim.
-- Added real-function regression and workflow gate. Existing source-anchor harnesses updated without dropping their assertions. Main deploy/trainer deploy and one corrected training run still require verification after push.
-- Local verification: all103 `tools/check-*.mjs` passed with PYTHONUTF8=1/NODE_NO_WARNINGS=1; new provenance test and anchor test re-run after final edits; `git diff --check` clean. Latest fetch: HEAD/origin main divergence 0/0 before commit.
-
-### Codex V33.329 — 2026-09-09
-
-### Codex continuation verification — 2026-09-11
-
-- Confirmed deployment34366234130 for508cc15 completed successfully. Fetched and fast-forwarded16 subsequent commits to e7d1b5a/V33.345; preserved all intervening work. No runtime, model or trading-setting changes in this continuation.
-- Current live browser confirms V33.345, model-evidence asset33.345.1,13 cards. Viewports390/820/1366 have no horizontal overflow. Tablet grid277.5px×2, desktop301.3px×3. Actual API-driven render preserved node identity, open disclosure, keyboard focus and scrollDelta0.
-- All102 check-*.mjs passed on current main with PYTHONUTF8=1/NODE_NO_WARNINGS=1; git diff --check clean.
-- IMPORTANT: September9 training outcomes below are historical, not current status. September11 live roster: GBDT full; SEQ provisional(mult0.1963), DUAL bear provisional0.25; DNN reject(acc lower bound), DUAL bull reject(evidence multiplier0.048 below0.12), FLOW/XALPHA/STACK/MEMO reject. XGB/LGB/CAT featVer15 vs current17 mismatch and require compatible retraining. No claim of universal promotion, model replacement or demonstrated profit improvement.
-- This completion records deployment and compatibility verification of Codex changes, not resolution of all subsequent model-quality/pipeline issues introduced or exposed in later versions. No additional retraining or manual orders triggered in this continuation.
-
-### Original V33.329 implementation evidence
-
-- Detailed evidence and limits: `docs/CODEX-TRADING-AUDIT-V33.329.md`.
-- Fixed AI_PRIMARY erasing scalp, contradictory snap routing and unvalidated bucket fallback. Reuses existing qualified setups and retains downstream risk gates. Records `meta.aiSetup` for audits. No model architecture or risk threshold changes.
-- Fixed icForwardCheck id+ts cursor, legacy unverifiable ledger repair, and elapsed-time expiry. Forward statistics may drop after invalid/expired evidence is removed; do not relabel that as a model regression or force trusted=true.
-- Added model-only monochrome evidence panel with server roster status/reasons, weights and measured validation values. Existing polling, no new network requests/timers, no sidebar/other page style changes. Keyed nodes preserve disclosures during refresh.
-- Tests: all 92 `tools/check-*.mjs` passed with PYTHONUTF8=1, NODE_NO_WARNINGS=1. New real-function regression is wired into deploy.yml. `git diff --check` passed. Browser local checks 390x844 / 820x1180 / desktop1262: no horizontal overflow; 13 model cards render; native details remain open across refresh. Preview only proxies read-only allowlisted production APIs; nonallowlisted preview503s are not app failures.
-- Deploy run34365326410 succeeded for ab4e950. Live browser build V33.329, 13 model cards; 390/820/1366px widths no overflow. Forced evidence refresh preserved same DOM node, open=true, focus=true, scrollDelta=0. Final tablet grid refined to two277.5px columns /586px panel height; phone remains312px single column. Full92 gates passed again after sizing refinement.
-- Authorized serial retrains on deployed V33.329: XALPHA34365561250, DUAL34365640535, STACK34365908600, FLOW34365985009 — all success. Verified actual live model timestamps, not just workflow conclusions. DUAL bull/bear now provisional×0.25 with holdout t4.269/5.818 (was pending from25day/2effective blocks); genuine forward0/400 still required for full. FLOW/XALPHA/STACK now70day/7effective blocks but reject at t0.448/0.296/-0.934. Old FLOW/XALPHA unverifiable4000-row forward ledgers correctly reset to0. Model shape selection remains evidence-driven: STACK lin selected over gbdt/mlp/blend; none passed holdout. SEQ remains provisional; MEMO remains reject, not retrained in this targeted pass.
-- ai-mode uses20s SWR and can return the prior snapshot immediately after training; re-read after refresh and compare model ts with training logs before claiming current state. Latest verified ts: FLOW1788965286885, XALPHA1788965059382, STACK1788965252443, DUAL bull1788965139961/bear1788965201838.
-- No secret, binding, cron, schema migration, model upload route or manual order changes. Previous Claude work preserved below.
-
-### Claude V33.327 — 2026-09-09
-
-- **① 부가조회 지갑: 한 건이 사이클을 통째로 굶겼다** (`src/index.js`)
-  자가진단 warn 3건 중 2건이 같은 사고를 가리켰다:
-    `[EVAL-COST] KR 부가조회 6773/7200ms — scalp 6773ms · 느린종목 052690.KS:★7071ms★`
-    `[EVAL-COST] KR 부가조회 7470/7200ms(★예산소진 14건 생략★)`
-    `[TIME-CAP] ★72회 반복★ — KR 평가 35/446종목(8%) 후 중단`
-  원인: `_enrichRun` 이 지갑을 ★쓰기 전 잔액★ 만 봤다. 한 번 시작한 조회는 얼마가 걸리든
-  끝까지 기다렸다 — 한 종목이 7,071ms 를 쓰면 7,200ms 예산이 그 자리에서 끝난다.
-  고침: 1건 상한(`ENRICH.perCallMs` 2,000ms)을 두고, 기다리는 시간은 ★남은 잔액과 상한 중
-  작은 쪽★ 으로 한다. 넘으면 그 건만 포기하고 지갑이 비었을 때와 같은 `undefined` 를
-  돌려준다(호출부가 이미 그 값을 다룬다). 값 근거: 같은 로그의 다른 느린 종목이
-  1,278~1,579ms 라 2,000ms 는 정상 조회를 안 깎고 병적인 건만 끊는다.
-  ★거래 확정 경로(`_phaseRun`)는 손대지 않았다★ — 거기에 상한을 걸면 "조회 실패 → 진입 차단"
-  이라는 조용한 사고가 난다(코드 주석이 이미 경고하고 있던 지점).
-  검증(실측): 새 게이트가 7,071ms 건을 2,003ms 에 끊고, 종전에 전부 생략되던 뒤 14종목이
-  전부 조회되는 것을 확인. 상한 제거·거래경로에 상한 추가 두 회귀를 넣어 둘 다 잡히는 것도 확인.
-- **② flow/xalpha/stack_samples 에 인덱스가 없었다** (`src/index.js`)
-  `ml_samples` 에는 `idx_samples_fv_ts(featver, ts)` 가 있는데 나머지 셋에는 ★인덱스가
-  하나도 없었다★(PK 뿐). 종전에도 `WHERE featver=? ORDER BY ts DESC LIMIT 40000` 이
-  전체 스캔+정렬이었지만 질의가 하나라 넘어갔다. 그런데 V33.326 의 달력 분할은 칸마다
-  범위 질의를 던져 ★질의가 13개★ 가 된다 — 인덱스가 없으면 그게 전부 풀스캔이 되어
-  야간 예산을 태운다. 즉 이 인덱스는 V33.326 의 ★전제★ 다.
-  인덱스를 필요로 하는 코드(`_miniLogisticTrain`)가 직접 `CREATE INDEX IF NOT EXISTS` 로
-  보장한다(야간 1회, 있으면 no-op). 표 이름은 코드 상수지만 DDL 이라 `^[a-z_]+$` 로 한 번 더 좁혔다.
-- **새 게이트** `tools/check-enrich-budget.mjs` (deploy.yml 배선): 소스에서 `_enrichRun` 을
-  꺼내 ★실제로 돌려★ 7항목을 본다 — 병적인 건 절단, 뒤 종목 회복, 정상 조회 보존, 지갑 소진
-  계약 유지, 오류 전파, ★거래 확정 경로에 상한 없음★, 잔액 우선.
-- **기존 게이트 보수** (`tools/check-eval-cost.mjs`): 같은 함수를 떼어 돌리는 하네스에
-  `_num`·`_enrich.timedOut` 이 없어 ReferenceError 로 죽었다. 빠진 것을 채워 ★계속 실제로
-  돌게★ 두었다(문자열 검사로 후퇴하지 않았다).
-- 남겨 둔 것(고치지 않고 보고만): `perf.scan.coverage 10%` 는 증분 스캔의 설계상 회전이라
-  결함이 아니다. XALPHA 는 전진 IC 가 음수(-0.039)인데 `fwdReady=false` 라 조기 거부에
-  안 걸린다 — 문턱 설계에 관한 판단이라 근거 없이 손대지 않았다.
-- 검증: `node --check` 통과, 89종 게이트 전체 통과, `git diff --check` 통과.
-- 학습·주문 트리거 없음, 정책 값 변경 없음, 시크릿 없음.
+### 배포 뒤 반드시 볼 것
+1. **다음 Modal 실행이 초록으로 끝나는가** · 요약에 `⏭ … 생략` 이 몇 개인가
+2. **`상태 저장소 없음` 이 찍히는가** — 찍히면 `modal.Dict` 권한이 없어 ★회전이 꺼진다★.
+   그러면 굶주림이 그대로다. 이 한 줄이 이번 고침의 전제다.
+3. **DNN 이 예산의 54%를 계속 먹을 것인가** — 이 판 실측은 valAcc 49.98% · AUC 0.501 ·
+   블록IC −0.0023 으로 ★동전과 구별되지 않는다★. 시드(6)·에폭(120)을 줄일지는 사람이 정한다.
+4. **실거래 표본 35건** — B-7(반사실 라벨 진입정렬) 고침으로 늘어야 한다. 다음 학습 로그에서 확인.
+5. V33.348 항목들(원장 중복 행 `LEDGER_DUP`, 세율, D1 부하)은 그대로 확인 대기.
 
 ## Previous handoff — V33.326
 

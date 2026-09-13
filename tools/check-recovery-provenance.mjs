@@ -131,14 +131,30 @@ except ValueError: pass
 else: raise AssertionError('embargo silently abandoned')
 print('SEQ embargo and training-only normalization verified')
 # Targeted recovery runs only the requested auxiliary stage (not another full DNN pass).
+# V33.350: the branch now looks the stage up in the single _PLAN table instead of repeating
+# every trainer call, so pull _PLAN/_PLAN_BY in with it and stub the budget gate.
 job=next(n for n in tree.body if isinstance(n,ast.FunctionDef) and n.name=='train_job')
 branch=next(n for n in job.body if isinstance(n,ast.If) and ast.unparse(n.test)=="target not in ('all', 'dnn')")
-tf=ast.parse('def run_target(target, dry=False): pass').body[0]; tf.body=[copy.deepcopy(branch)]
-calls=[]; ns.update(BASE='',KEY='',HDR={},X=X,Y=Y,TS=TS,SYM=np.array(['T']*n),featver=17,D=2,UNIQ=np.ones(n),cfg={},N=n)
+plan=[n for n in job.body if isinstance(n,ast.Assign) and any(isinstance(t,ast.Name) and t.id in ('_PLAN','_PLAN_BY') for t in n.targets)]
+assert len(plan)==2, 'expected a single _PLAN/_PLAN_BY definition in train_job'
+tf=ast.parse('def run_target(target, dry=False): pass').body[0]
+tf.body=[copy.deepcopy(x) for x in plan]+[copy.deepcopy(branch)]
+calls=[]; ns.update(BASE='',KEY='',HDR={},X=X,Y=Y,TS=TS,SYM=np.array(['T']*n),featver=17,D=2,UNIQ=np.ones(n),cfg={},N=n,
+                    PNL=np.ones(n),MKT=np.array(['us']*n),featnames=['f0','f1'],_ran=[],_skipped=[])
+ns['_stage']=lambda name,fn:fn()
+for _t in ('_train_and_upload_gbdt','_train_and_upload_boosters','_train_per_market',
+           '_train_and_upload_scalp','_train_and_upload_memo'):
+ ns[_t]=(lambda t: (lambda *a,**kw: calls.append(t)))(_t)
 ns['_train_and_upload_seq']=lambda *a,**kw:calls.append('seq')
 exec(compile(ast.fix_missing_locations(ast.Module(body=[tf],type_ignores=[])),'target','exec'),ns)
-assert ns['run_target']('seq')['target']=='seq' and calls==['seq']
-ns['run_target']('seq',True); assert calls==['seq']
+assert ns['run_target']('seq')['target']=='seq' and calls==['seq'], calls
+ns['run_target']('seq',True); assert calls==['seq'], calls
+# every other target routes to its own trainer and to nothing else
+for _tg,_want in (('mind','_train_and_upload_gbdt'),('memo','_train_and_upload_memo'),
+                  ('boosters','_train_and_upload_boosters'),('markets','_train_per_market'),
+                  ('scalp','_train_and_upload_scalp')):
+ calls.clear(); ns['run_target'](_tg); assert calls==[_want], (_tg,calls)
+print('targeted recovery routes each stage through the single plan table')
 `;
 const r=spawnSync('python',['-c',py],{cwd:new URL('..',import.meta.url),encoding:'utf8',env:{...process.env,PYTHONUTF8:'1'}});
 assert.equal(r.status,0,r.stdout+'\n'+r.stderr);console.log(r.stdout);

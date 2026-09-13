@@ -80,11 +80,33 @@ jobs:
           SWEEP_SEEDS: ${{ inputs.sweep_seeds }}
           TRAIN_TARGET: ${{ inputs.target || 'all' }}
         # 스윕은 후보 넷을 학습하므로 정기 실행보다 오래 걸린다 — 켤 때만 인자를 붙인다.
+        # [V33.350] 로그를 파일로도 받아 ★무엇을 돌리고 무엇을 건너뛰었는지★ 요약에 올린다.
+        #   종전엔 예산 초과로 작업이 죽어 빨간 실패만 남았고, 그 앞에서 성공한 업로드도
+        #   같이 묻혔다. 이제 작업은 예산 안에서 끝나므로 "무엇을 했나" 가 결과다.
         run: |
+          set -o pipefail
           if [ "$DEPTH_SWEEP" = "true" ]; then
             echo "★DNN 깊이 스윕★ — 후보당 시드 ${SWEEP_SEEDS:-2}, 승자만 전체 시드로 재학습"
             modal run trainer/modal/modal_train.py \
-              --depth-sweep --sweep-seeds "${SWEEP_SEEDS:-2}" --target "$TRAIN_TARGET"
+              --depth-sweep --sweep-seeds "${SWEEP_SEEDS:-2}" --target "$TRAIN_TARGET" 2>&1 | tee run.log
           else
-            modal run trainer/modal/modal_train.py --target "$TRAIN_TARGET"
+            modal run trainer/modal/modal_train.py --target "$TRAIN_TARGET" 2>&1 | tee run.log
           fi
+      - name: Training summary
+        if: always() && steps.sec.outputs.ok == 'true' && github.event_name == 'workflow_dispatch' && inputs.run_now
+        run: |
+          [ -f run.log ] || exit 0
+          {
+            echo "### Modal 학습 회차 요약"
+            echo ""
+            grep -E '^\s*(·|⏭|⚠️|✅) ' run.log || echo "(단계 로그 없음 — 표본 수집·DNN 단계에서 끝났을 수 있다)"
+            echo ""
+            if grep -q '예산으로 생략' run.log; then
+              echo "> ⚠️ 예산 때문에 생략된 단계가 있다. **다음 회차가 그 단계부터** 시작한다(회전)."
+              echo "> 지금 바로 돌리려면 Run workflow → target 에 그 단계 이름을 골라 실행하면 DNN 없이 그것만 학습한다."
+            fi
+            if grep -q 'FunctionTimeoutError' run.log; then
+              echo "> 🔴 **timeout 으로 강제 종료됐다** — 예산 가드가 못 막은 구간이 있다."
+              echo "> JOB_TIMEOUT_S·JOB_MARGIN_S 와 STAGE_COST_DEFAULT 를 실측으로 다시 볼 것."
+            fi
+          } >> "$GITHUB_STEP_SUMMARY"
