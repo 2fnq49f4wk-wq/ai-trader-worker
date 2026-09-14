@@ -274,6 +274,11 @@ jobs:
       #   가짜 fetch 를 끼우고 fetchBatchQuotes 를 실제로 돌려 예산 배분을 확인한다.
       - name: Extended enrichment budget check
         run: node tools/check-ext-enrich-budget.mjs
+      # [V33.354 · D-1+E-2] 원장 소급 — 비용 '규칙' 에는 시행일이 있는데 ETF 집합 '멤버십' 에는
+      #   없어서, 종목을 나중에 추가하면 과거 매도가 전부 비과세로 재계산됐다.
+      #   그리고 돈 경로의 감시자·탐지기가 예외를 삼켜 "이상 없음" 과 구별되지 않았다.
+      - name: Ledger retroactivity and watchdog check
+        run: node tools/check-ledger-retro.mjs
       # [V33.140] 전진검증 누적 원장 — 창이 매일 밤 리셋돼 ★구조적으로★ 못 채워지던 것을 고쳤다.
       #   (memo: 총표본 177,868 인데 전진 357 = 어제 유입과 정확히 일치)
       #   교착 해소와 통계 정직성을 함께 본다: 잡음 통과율이 문턱의 명목값과 맞는지,

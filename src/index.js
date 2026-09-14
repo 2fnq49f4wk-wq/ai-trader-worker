@@ -3033,7 +3033,7 @@ async function applySignalTypeWeights(DB, cfg) {
    화면·자가진단이 계속 "V33.272" 를 보고했다(운영 스냅샷이 그대로 그랬다). 배포는 됐는데
    ★배포됐다는 사실만 거짓말★ 을 하고 있었으니, "내 고침이 올라간 건가" 를 화면으로 확인할
    방법이 없었다. tools/check-build-ver.mjs 가 이제 소스에 적힌 최신 버전과 이 값을 대조한다. */
-const _BUILD_VER = "V33.353";
+const _BUILD_VER = "V33.354";
 
 // ═══ [V33.171] 평가 순서 계획 — ★승격과 순환을 교차해 굶주림을 구조적으로 없앤다★ ═══
 //   V33.50 의 형태트리거는 "급한 몇 종목을 앞으로 당긴다"는 의도였으나, 실제 운영로그에서는
@@ -10764,7 +10764,12 @@ async function verifyAfterTrade(DB, market, symbol, tag) {
     if (led < -1e-6) {
       await log(DB, "ERROR", symbol, "[정합성] " + tag + " 원장 순보유가 음수(" + led + ") — 유령매도 발생");
     }
-  } catch (e) {}
+  /* [V33.354 · E-2] ★감시자가 조용히 죽으면 안 된다.★ 이 블록은 체결 뒤 원장↔포지션을
+     대조하는 유일한 자리인데, 종전엔 예외를 통째로 삼켰다. 검사가 던지면 "이상 없음" 과
+     구별되지 않는다 — 사고가 나도 화면은 조용하다. 검사 실패는 ★검사 실패라고 말한다.★ */
+  } catch (e) {
+    try { await log(DB, "WARN", symbol, "[정합성] " + tag + " 체결 후 대조 자체가 실패 — 정합성 미확인: " + (e && e.message)); } catch (e2) {}
+  }
 }
 
 // ════════════════════════════════════════════════════════════════════════════
@@ -11750,6 +11755,30 @@ function _cashUseFrac(cfg) {
    종전엔 ts 를 받아 놓고 ETF 면제 시행일 판정에만 썼고, 세율 자체는 언제 체결됐든 0.18% 였다.
    연도는 ★KST 기준★ 으로 뽑는다 — UTC 연도를 쓰면 12/31 밤 체결이 다음 해로 밀린다.
    ts 가 없거나 이상하면 종전대로 cfg.krSellTax 폴백(호출부 동작 불변). */
+/* ══ [V33.354 · D-1 해결] ★규칙은 날짜로 지켰는데 집합 멤버십은 안 지켰다.★ ═══════════
+   `_krSellTaxRate` 는 ETF 매도세 면제에 시행일(ETF_TAX_EXEMPT_FROM)을 둔다 — 좋다.
+   그런데 "무엇이 ETF 인가" 를 정하는 ETF_SYMBOLS 집합 ★자체★ 에는 날짜가 없었다.
+   어떤 종목을 나중에 그 집합에 넣으면, 시행일 이후의 ★과거 매도 전부★ 가 비과세로
+   재계산된다 — 현금은 원장 재생으로 파생되므로 ★잔고가 소급해서 바뀐다.★
+   게다가 cash_ckpt 가 과거 구간을 얼려 두므로, 같은 원장이 체크포인트를 경계로
+   ★두 규칙으로 계산된다.★ 회계에서 있으면 안 되는 일이고, V33.87 이 세율에 대해
+   이미 막아 둔 것과 정확히 같은 종류다.
+
+   → 멤버십에도 시행일을 둔다. 여기 적힌 종목은 ★그 날짜 이후 체결부터★ 면제다.
+     비어 있으면 종전과 똑같이 동작한다(지금 집합에 있는 종목은 전부 시행일부터 면제).
+   ⚠️ ETF_SYMBOLS 에 ★한국 종목(.KS/.KQ)을 새로 넣을 때는 여기에 그날 날짜를 함께 적을 것.★
+      안 적으면 과거 매도가 소급해서 비과세가 된다.
+      tools/check-ledger-retro.mjs 가 기준 목록과 대조해 빠뜨림을 막는다.
+   ※ 미국·채권 슬리브는 애초에 매도세가 없어 이 표와 무관하다. */
+const ETF_TAX_MEMBER_FROM = {
+  // "종목코드.KS": Date.UTC(연, 월-1, 일),   ← 집합에 새로 넣은 날
+};
+function _etfTaxExemptAt(symbol, ts) {
+  if (!symbol || !ETF_SYMBOLS.has(symbol)) return false;
+  const from = ETF_TAX_MEMBER_FROM[symbol];
+  if (from == null) return true;                       // 기준 목록 — 시행일부터 면제(종전 동작)
+  return (typeof ts === "number" && isFinite(ts) && ts > 0) ? ts >= from : false;
+}
 function _krSellTaxRate(cfg, symbol, market, ts) {
   const _tsOk = (typeof ts === "number" && isFinite(ts) && ts > 0);
   const base = _tsOk ? _krSellTaxForYear(cfg, getKST(new Date(ts)).year) : _num(cfg && cfg.krSellTax, 0);
@@ -11758,7 +11787,8 @@ function _krSellTaxRate(cfg, symbol, market, ts) {
   // 시행일 이전 체결은 종전 규칙(ETF 도 과세) 그대로 — 과거를 다시 쓰지 않는다.
   if (_tsOk && ts < ETF_TAX_EXEMPT_FROM) return base;
   if (market === "bdkr") return 0;                      // 채권 슬리브 = 전부 국고채 ETF
-  if (symbol && ETF_SYMBOLS.has(symbol)) return 0;      // KR 주식 슬리브 안의 ETF
+  // [V33.354 · D-1] 멤버십에도 시행일이 있다 — 나중에 ETF 로 인정해도 과거를 다시 쓰지 않는다.
+  if (_etfTaxExemptAt(symbol, ts)) return 0;            // KR 주식 슬리브 안의 ETF
   return base;
 }
 
@@ -16052,7 +16082,11 @@ async function executeSell(DB, market, symbol, pos, sellQty, price, reason, cfg,
         const beStop = pos.avg * (1 + beLock);
         if (pos.meta.stopPrice == null || pos.meta.stopPrice < beStop) pos.meta.stopPrice = beStop;
         pos.meta.breakEvenLocked = true;
-      } catch (e) {}
+      /* [V33.354 · E-2] 여기서 던지면 ★본전 손절이 안 걸린다★ — 표시가 아니라 위험이다.
+         부분청산 흐름은 막지 않고, 안 걸렸다는 사실만 남긴다. */
+      } catch (e) {
+        try { await log(DB, "WARN", symbol, "[손절] 본전 잠금 실패 — 남은 수량의 손절가가 안 올라갔다: " + (e && e.message)); } catch (e2) {}
+      }
       }
       stmtPos = stmtUpdatePositionGuarded(DB, market, symbol, strategy, pos, origQty);
     } else {
@@ -22545,7 +22579,12 @@ async function auditAccounting(DB, market, cash, cfg) {
           flags.push("LEDGER_DUP(" + _rows.length + "건/초과 " + _extra + "행: " + _top + ")");
         }
       }
-    } catch (e) {}
+    /* [V33.354 · E-2] 탐지기가 조용히 죽으면 "중복 없음" 과 구별되지 않는다.
+       D-3 의 과거 흔적을 찾으라고 만든 것이라, 실패를 삼키면 만든 이유가 사라진다. */
+    } catch (e) {
+      try { await log(DB, "WARN", null, "[AUDIT] " + market.toUpperCase() +
+        " 원장 중복 검사 실패 — 중복 유무 미확인: " + (e && e.message)); } catch (e2) {}
+    }
     // 2) 중복 포지션 (KQ 마이그레이션 등으로 생기는 이중 계상)
     if (dups.length > 0) flags.push("DUP_POS(" + dups.join(",") + ")");
     // 3) 투자원금이 비정상적으로 큼 — 초기자본 대비 과투자 (현금 회계 붕괴 징후)
@@ -22560,8 +22599,18 @@ async function auditAccounting(DB, market, cash, cfg) {
       // [회계 재설계] 자가 치유 — 음수현금/자산팽창은 cash 체크포인트 오염 징후.
       //   체크포인트를 삭제하면 다음 계산이 trades 원장 전체에서 처음부터 정확히 재계산된다.
       if (cashVal < 0 || totalAsset > initial * 2) {
-        try { await DB.prepare("DELETE FROM state WHERE k = ?").bind("cash_ckpt:" + market).run(); } catch (e) {}
-        await log(DB, "WARN", null, "[AUDIT-FIX] " + market.toUpperCase() + " cash 체크포인트 무효화 → 다음 사이클에 원장 재계산");
+        /* [V33.354 · E-2] ★고치지 못했는데 고쳤다고 적고 있었다.★ 삭제가 던져도 바로 아래
+           "체크포인트 무효화 → 다음 사이클에 재계산" 이 그대로 찍혔다. 오염된 체크포인트는
+           그대로 남는데 로그는 처리됐다고 말한다 — 다음 사람이 그 줄을 보고 넘어간다.
+           ★못 고쳤으면 못 고쳤다고 말한다.★ (키가 원래 없어 0행인 것은 실패가 아니다.) */
+        let _healed = true;
+        try { await DB.prepare("DELETE FROM state WHERE k = ?").bind("cash_ckpt:" + market).run(); }
+        catch (e) {
+          _healed = false;
+          try { await log(DB, "ERROR", null, "[AUDIT-FIX] " + market.toUpperCase() +
+            " cash 체크포인트 삭제 실패 — ★오염이 그대로 남는다★: " + (e && e.message)); } catch (e2) {}
+        }
+        if (_healed) await log(DB, "WARN", null, "[AUDIT-FIX] " + market.toUpperCase() + " cash 체크포인트 무효화 → 다음 사이클에 원장 재계산");
       }
       // [V26] 자동 복구 — 중복 포지션만 정리(정상 거래는 보존). 전체 리셋 불필요.
       if (dups.length > 0) {
@@ -49524,6 +49573,8 @@ export {
   _mlCountsCached,
   // [V33.353 · A-5] 시간외 보강 예산 배분 — tools/check-ext-enrich-budget.mjs 가 실제로 돌린다.
   fetchBatchQuotes, resetFetchBudget, fetchBudgetLeft, EXT_ENRICH_MAX,
+  // [V33.354 · D-1] 원장 소급 방지 — tools/check-ledger-retro.mjs 가 멤버십 시행일을 지킨다.
+  ETF_TAX_MEMBER_FROM, ETF_TAX_EXEMPT_FROM, ETF_SYMBOLS, _etfTaxExemptAt,
   // [V33.348 · B-7] 반사실 라벨 진입정렬 — tools/check-cf-label-align.mjs 가 실제로 호출한다.
   _cfPriceLookup, _dailyCacheOk, _altBarIdx,
   // [V33.348] D1 부하 — tools/check-daily-bulk-cache.mjs 가 두 번 호출해 왕복을 센다.
