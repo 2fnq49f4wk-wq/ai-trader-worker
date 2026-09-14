@@ -298,6 +298,11 @@ jobs:
       #   1종목/1회 v8 폴백으로 떨어졌다. 죽었다고 하기 전에 다른 배치를 한 번 물어본다.
       - name: Yahoo v7 batch liveness check
         run: node tools/check-v7-batch.mjs
+      # [V33.357] R2 집계는 /api/r2-status 를 열 때만 갱신된다(Class A 과금이라 주기 호출 안 함).
+      #   그런데 화면이 그걸 현재값처럼 보여 줬다 — 실측 23일 전 값을 "오늘 단타 수집" 이라
+      #   부르며 초록으로 칠했다. 나이를 사람이 읽는 표기로, 옛 집계는 '오늘' 이라 안 부른다.
+      - name: R2 snapshot age honesty check
+        run: node tools/check-r2-age.mjs
       # [V33.140] 전진검증 누적 원장 — 창이 매일 밤 리셋돼 ★구조적으로★ 못 채워지던 것을 고쳤다.
       #   (memo: 총표본 177,868 인데 전진 357 = 어제 유입과 정확히 일치)
       #   교착 해소와 통계 정직성을 함께 본다: 잡음 통과율이 문턱의 명목값과 맞는지,
